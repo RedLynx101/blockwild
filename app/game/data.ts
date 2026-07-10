@@ -55,6 +55,10 @@ export enum BlockId {
   DoorClosedUpper = 53,
   DoorOpenLower = 54,
   DoorOpenUpper = 55,
+  DoorXClosedLower = 56,
+  DoorXClosedUpper = 57,
+  DoorXOpenLower = 58,
+  DoorXOpenUpper = 59,
 }
 
 export const Item = {
@@ -133,7 +137,7 @@ export type BlockDefinition = {
   color: string;
   preferredTool: BlockTool;
   requiredTier: number;
-  shape?: "cube" | "cross" | "door";
+  shape?: "cube" | "cross" | "door" | "chest";
   replaceable?: boolean;
   liquid?: "water" | "lava";
 };
@@ -226,8 +230,8 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.Ice]: block(BlockId.Ice, "Ice", 48, 48, 48, 0.45, "#8fd0e2", "pickaxe", 0, { layer: "transparent" }),
   [BlockId.Basalt]: block(BlockId.Basalt, "Basalt", 49, 49, 49, 2.35, "#3a3437", "pickaxe", 2),
   [BlockId.Obsidian]: block(BlockId.Obsidian, "Obsidian", 50, 50, 50, 7.5, "#29213d", "pickaxe", 4),
-  [BlockId.CrystalBlock]: block(BlockId.CrystalBlock, "Star Crystal Block", 51, 51, 51, 3.2, "#61dce5", "pickaxe", 3),
-  [BlockId.Chest]: block(BlockId.Chest, "Wildwood Chest", 11, 52, 11, 1.2, "#9f6b35", "axe"),
+  [BlockId.CrystalBlock]: block(BlockId.CrystalBlock, "Star Crystal Block", 51, 51, 51, 3.2, "#61dce5", "pickaxe", 3, { layer: "emissive" }),
+  [BlockId.Chest]: block(BlockId.Chest, "Wildwood Chest", 11, 52, 11, 1.2, "#9f6b35", "axe", 0, { shape: "chest" }),
   [BlockId.TallGrass]: block(BlockId.TallGrass, "Tall Grass", 53, 53, 53, 0.05, "#68a744", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
   [BlockId.RedFlower]: block(BlockId.RedFlower, "Ember Bloom", 54, 54, 54, 0.05, "#d64f49", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
   [BlockId.BlueFlower]: block(BlockId.BlueFlower, "Skybell", 55, 55, 55, 0.05, "#558ed9", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
@@ -235,9 +239,13 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.Farmland]: block(BlockId.Farmland, "Farmland", 57, 58, 2, 0.55, "#6b4328", "shovel"),
   [BlockId.WildwoodSapling]: block(BlockId.WildwoodSapling, "Wildwood Sapling", 59, 59, 59, 0.08, "#67a94a", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
   [BlockId.DoorClosedLower]: block(BlockId.DoorClosedLower, "Wildwood Door", 60, 60, 60, 0.9, "#9b6839", "axe", 0, { layer: "cutout", shape: "door" }),
-  [BlockId.DoorClosedUpper]: block(BlockId.DoorClosedUpper, "Wildwood Door", 60, 60, 60, 0.9, "#9b6839", "axe", 0, { layer: "cutout", shape: "door" }),
+  [BlockId.DoorClosedUpper]: block(BlockId.DoorClosedUpper, "Wildwood Door", 61, 61, 61, 0.9, "#9b6839", "axe", 0, { layer: "cutout", shape: "door" }),
   [BlockId.DoorOpenLower]: block(BlockId.DoorOpenLower, "Open Wildwood Door", 60, 60, 60, 0.9, "#9b6839", "axe", 0, { solid: false, layer: "cutout", shape: "door" }),
-  [BlockId.DoorOpenUpper]: block(BlockId.DoorOpenUpper, "Open Wildwood Door", 60, 60, 60, 0.9, "#9b6839", "axe", 0, { solid: false, layer: "cutout", shape: "door" }),
+  [BlockId.DoorOpenUpper]: block(BlockId.DoorOpenUpper, "Open Wildwood Door", 61, 61, 61, 0.9, "#9b6839", "axe", 0, { solid: false, layer: "cutout", shape: "door" }),
+  [BlockId.DoorXClosedLower]: block(BlockId.DoorXClosedLower, "Wildwood Door", 60, 60, 60, 0.9, "#9b6839", "axe", 0, { layer: "cutout", shape: "door" }),
+  [BlockId.DoorXClosedUpper]: block(BlockId.DoorXClosedUpper, "Wildwood Door", 61, 61, 61, 0.9, "#9b6839", "axe", 0, { layer: "cutout", shape: "door" }),
+  [BlockId.DoorXOpenLower]: block(BlockId.DoorXOpenLower, "Open Wildwood Door", 60, 60, 60, 0.9, "#9b6839", "axe", 0, { solid: false, layer: "cutout", shape: "door" }),
+  [BlockId.DoorXOpenUpper]: block(BlockId.DoorXOpenUpper, "Open Wildwood Door", 61, 61, 61, 0.9, "#9b6839", "axe", 0, { solid: false, layer: "cutout", shape: "door" }),
 };
 
 const tool = (
@@ -261,7 +269,10 @@ const armorItem = (
 ): ItemDefinition => ({ id, name, color, maxStack: 1, equipmentSlot, armor, maxDurability });
 
 export const ITEMS: Record<number, ItemDefinition> = {};
-const technicalBlocks = new Set<BlockId>([BlockId.DoorClosedLower, BlockId.DoorClosedUpper, BlockId.DoorOpenLower, BlockId.DoorOpenUpper]);
+const technicalBlocks = new Set<BlockId>([
+  BlockId.DoorClosedLower, BlockId.DoorClosedUpper, BlockId.DoorOpenLower, BlockId.DoorOpenUpper,
+  BlockId.DoorXClosedLower, BlockId.DoorXClosedUpper, BlockId.DoorXOpenLower, BlockId.DoorXOpenUpper,
+]);
 for (const definition of Object.values(BLOCKS)) {
   if (definition.id === BlockId.Air || definition.id === BlockId.Water || definition.id === BlockId.Lava || definition.id === BlockId.Bedrock || technicalBlocks.has(definition.id)) continue;
   ITEMS[definition.id] = { id: definition.id, name: definition.name, color: definition.color, maxStack: 64, placeBlock: definition.id };

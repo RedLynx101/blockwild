@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
-import { BlockId, ITEMS, Item } from "../app/game/data.ts";
-import { VoxelEngine } from "../app/game/engine.ts";
+import { BlockId, ITEMS, Item, type InventorySlot } from "../app/game/data.ts";
+import { VoxelEngine, migrateSavedWorld, restoreChestStorage, type WorldSave } from "../app/game/engine.ts";
 import { ChunkWorld, BIOME_NAMES, MIN_Y, SECTION_HEIGHT, WORLD_HEIGHT, blockIndex, chunkKey, splitCoordinate } from "../app/game/world.ts";
 
 test("chunk coordinates remain correct across negative boundaries", () => {
@@ -49,6 +49,18 @@ test("chunk edits survive unload and deterministic regeneration", () => {
   const regenerated = world.generateChunk(-1, -1);
   assert.equal(regenerated.blocks[blockIndex(15, 12, 15)], BlockId.Glowstone);
   world.dispose();
+});
+
+test("generator-v2 saves migrate their voxel edit indices into the deeper world", () => {
+  const legacy = {
+    version: 2,
+    generatorVersion: 2,
+    seed: "LEGACY-WORLD",
+    edits: { "0,0": [[8192, BlockId.Glowstone]] },
+  } as unknown as WorldSave;
+  const migrated = migrateSavedWorld(legacy);
+  assert.equal(migrated?.generatorVersion, 3);
+  assert.deepEqual(migrated?.edits["0,0"], [[16384, BlockId.Glowstone]], "an old y=0 edit must remain at y=0 after MIN_Y moves from -32 to -64");
 });
 
 test("climate sampler can produce all seventeen advertised biomes", () => {
@@ -119,6 +131,54 @@ test("adjacent blocks across a chunk seam do not render hidden faces", () => {
   world.dispose();
 });
 
+test("urgent edits rebuild the visible section immediately and keep the light index current", () => {
+  const world = new ChunkWorld();
+  world.reset("URGENT-EDIT");
+  const chunk = world.generateChunk(0, 0);
+  chunk.blocks.fill(BlockId.Air);
+  chunk.lightIndices.clear();
+  const y = 0;
+  const section = Math.floor((y - MIN_Y) / SECTION_HEIGHT);
+  world.rebuildSection(chunk, section);
+
+  world.setBlock(3, y, 4, BlockId.Stone, true, true);
+  assert.equal(chunk.sections.get(section)?.opaque?.geometry.getAttribute("position").count, 24, "a placed cube should be visible without waiting for the mesh queue");
+
+  world.setBlock(3, y, 4, BlockId.Air, true, true);
+  assert.equal(chunk.sections.get(section)?.opaque, undefined, "a broken cube should disappear in the same update");
+
+  world.setBlock(5, y, 6, BlockId.Torch, true, true);
+  assert.deepEqual(world.lightSourcesNear(5, y, 6, 2).map((source) => source.type), [BlockId.Torch]);
+  world.setBlock(5, y, 4, BlockId.Stone, true, true);
+  assert.equal(world.lightSourcesNear(5, y, 2, 8).length, 0, "opaque blocks should occlude placed light selection");
+  world.setBlock(5, y, 4, BlockId.Air, true, true);
+  world.setBlocksBatch([{ x: 5, y, z: 6, type: BlockId.Air }], true, true);
+  assert.equal(world.lightSourcesNear(5, y, 6, 2).length, 0, "breaking a light source must remove it from the pooled-light index");
+  world.dispose();
+});
+
+test("edits to retained invisible chunks remesh when the chunk becomes visible again", () => {
+  const world = new ChunkWorld();
+  world.reset("RETAINED-REMESH");
+  const chunk = world.generateChunk(0, 0);
+  chunk.blocks.fill(BlockId.Air);
+  const y = 0;
+  const section = Math.floor((y - MIN_Y) / SECTION_HEIGHT);
+  for (let current = 0; current < WORLD_HEIGHT / SECTION_HEIGHT; current += 1) world.rebuildSection(chunk, current);
+  chunk.group.visible = false;
+
+  world.setBlock(2, y, 2, BlockId.Stone, true, false);
+  world.processMesh();
+  assert.equal(chunk.sections.get(section)?.opaque, undefined, "hidden chunks should avoid wasted remesh work");
+  assert.equal(chunk.dirty.has(section), true, "the skipped remesh must remain dirty");
+
+  world.scheduleAround(0, 0, true);
+  for (let index = 0; index < 3; index += 1) world.processMesh();
+  assert.equal(chunk.sections.get(section)?.opaque?.geometry.getAttribute("position").count, 24);
+  assert.equal(chunk.dirty.has(section), false);
+  world.dispose();
+});
+
 test("stack inventory fills existing stacks before empty slots", () => {
   const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
   engine.inventory = Array.from({ length: 36 }, () => null);
@@ -126,6 +186,210 @@ test("stack inventory fills existing stacks before empty slots", () => {
   assert.equal(engine.addItem(Item.Coal, 10), 0);
   assert.equal(engine.inventory[0]?.count, 64);
   assert.deepEqual(engine.inventory[1], { item: Item.Coal, count: 6 });
+});
+
+test("shift-click moves stacks both ways between the player and an open chest", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  engine.inventory = Array.from({ length: 36 }, () => null);
+  engine.inventory[0] = { item: Item.Coal, count: 10 };
+  engine.chests = new Map([["0,0,0", [{ item: Item.Coal, count: 60 }, ...Array.from({ length: 26 }, () => null)]]]);
+  engine.activeChestKey = "0,0,0";
+  engine.activeFurnaceKey = null;
+  engine.equipment = { head: null, chest: null, legs: null, feet: null };
+  engine.audio = { play: () => undefined } as unknown as VoxelEngine["audio"];
+  engine.saveSoon = () => undefined;
+  engine.emitHud = () => undefined;
+
+  engine.inventoryClick(0, "left", true);
+  const chest = engine.chests.get("0,0,0")!;
+  assert.equal(engine.inventory[0], null);
+  assert.deepEqual(chest[0], { item: Item.Coal, count: 64 });
+  assert.deepEqual(chest[1], { item: Item.Coal, count: 6 });
+
+  engine.machineClick("chest", 1, "left", true);
+  assert.deepEqual(engine.inventory[9], { item: Item.Coal, count: 6 });
+  assert.equal(chest[1], null);
+});
+
+test("an open container wins over armor auto-equip when shift-clicking", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  engine.inventory = Array.from({ length: 36 }, () => null);
+  engine.inventory[0] = { item: Item.HideHood, count: 1, durability: 90 };
+  engine.equipment = { head: null, chest: null, legs: null, feet: null };
+  engine.chests = new Map([["0,0,0", Array.from({ length: 27 }, () => null)]]);
+  engine.activeChestKey = "0,0,0";
+  engine.activeFurnaceKey = null;
+  engine.saveSoon = () => undefined;
+  engine.shiftMove(0);
+  assert.equal(engine.equipment.head, null);
+  assert.deepEqual(engine.chests.get("0,0,0")?.[0], { item: Item.HideHood, count: 1, durability: 90 });
+});
+
+test("double-click collection gathers matching visible stacks up to the stack limit", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  engine.inventory = Array.from({ length: 36 }, () => null);
+  engine.inventory[0] = { item: Item.Coal, count: 20 };
+  engine.inventory[9] = { item: Item.Coal, count: 30 };
+  engine.craftGrid = Array.from({ length: 9 }, () => null);
+  engine.craftGrid[0] = { item: Item.Coal, count: 10 };
+  engine.chests = new Map([["0,0,0", [{ item: Item.Coal, count: 12 }, ...Array.from({ length: 26 }, () => null)]]]);
+  engine.activeChestKey = "0,0,0";
+  engine.activeFurnaceKey = null;
+  engine.cursor = null;
+  engine.audio = { play: () => undefined } as unknown as VoxelEngine["audio"];
+  engine.saveSoon = () => undefined;
+  engine.emitHud = () => undefined;
+
+  engine.collectMatching(Item.Coal);
+  assert.deepEqual(engine.cursor, { item: Item.Coal, count: 64 });
+  assert.equal(engine.inventory[0], null);
+  assert.equal(engine.inventory[9], null);
+  assert.equal(engine.craftGrid[0], null);
+  assert.deepEqual(engine.chests.get("0,0,0")?.[0], { item: Item.Coal, count: 8 });
+});
+
+test("adjacent chests merge into one canonical 54-slot double chest", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  const first: Array<InventorySlot | null> = [{ item: Item.Coal, count: 1 }, ...Array.from({ length: 26 }, () => null)];
+  const second: Array<InventorySlot | null> = [{ item: Item.Stick, count: 2 }, ...Array.from({ length: 26 }, () => null)];
+  engine.chests = new Map([["0,0,0", first], ["1,0,0", second]]);
+  engine.world = {
+    getBlock: (x: number, y: number, z: number) => y === 0 && z === 0 && (x === 0 || x === 1) ? BlockId.Chest : BlockId.Air,
+  } as unknown as VoxelEngine["world"];
+
+  const key = engine.resolveChest("0,0,0");
+  assert.equal(key, "0,0,0|1,0,0");
+  assert.equal(engine.chests.get(key)?.length, 54);
+  assert.deepEqual(engine.chests.get(key)?.[0], { item: Item.Coal, count: 1 });
+  assert.deepEqual(engine.chests.get(key)?.[27], { item: Item.Stick, count: 2 });
+  assert.equal(engine.chests.has("0,0,0"), false);
+  assert.equal(engine.chests.has("1,0,0"), false);
+});
+
+test("double-chest storage preserves all 54 slots when a world is rehydrated", () => {
+  const saved: Array<InventorySlot | null> = Array.from({ length: 54 }, () => null);
+  saved[0] = { item: Item.Coal, count: 3 };
+  saved[53] = { item: Item.CrystalShard, count: 2 };
+  const restored = restoreChestStorage({ "0,0,0|1,0,0": saved });
+  assert.equal(restored.get("0,0,0|1,0,0")?.length, 54);
+  assert.deepEqual(restored.get("0,0,0|1,0,0")?.[0], { item: Item.Coal, count: 3 });
+  assert.deepEqual(restored.get("0,0,0|1,0,0")?.[53], { item: Item.CrystalShard, count: 2 });
+});
+
+test("shift-click equips armor and armor reduces damage while losing durability", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  engine.inventory = Array.from({ length: 36 }, () => null);
+  engine.inventory[0] = { item: Item.SunmetalPlate, count: 1, durability: 100 };
+  engine.equipment = { head: null, chest: null, legs: null, feet: null };
+  engine.activeChestKey = null;
+  engine.activeFurnaceKey = null;
+  engine.saveSoon = () => undefined;
+  engine.shiftMove(0);
+  assert.deepEqual(engine.equipment.chest, { item: Item.SunmetalPlate, count: 1, durability: 100 });
+  assert.equal(engine.inventory[0], null);
+  assert.equal(engine.armorPoints(), 4);
+
+  engine.mode = "survival";
+  engine.health = 10;
+  engine.playerInvulnerability = 0;
+  engine.spawnProtection = 0;
+  engine.audio = { play: () => undefined } as unknown as VoxelEngine["audio"];
+  engine.events = { onToast: () => undefined } as unknown as VoxelEngine["events"];
+  engine.damagePlayer(4, "ridgeback");
+  assert.equal(engine.health, 6.5);
+  assert.equal(engine.equipment.chest?.durability, 99);
+});
+
+test("door interaction updates both halves with an immediate batch edit", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  const writes: Array<{ x: number; y: number; z: number; type: BlockId }> = [];
+  let immediate = false;
+  engine.world = {
+    setBlocksBatch: (changes: typeof writes, _record?: boolean, urgent?: boolean) => { writes.push(...changes); immediate = Boolean(urgent); },
+  } as unknown as VoxelEngine["world"];
+  engine.audio = { play: () => undefined } as unknown as VoxelEngine["audio"];
+  engine.saveSoon = () => undefined;
+  engine.toggleDoor(4, 9, 2, BlockId.DoorClosedUpper);
+  assert.deepEqual(writes, [
+    { x: 4, y: 8, z: 2, type: BlockId.DoorOpenLower },
+    { x: 4, y: 9, z: 2, type: BlockId.DoorOpenUpper },
+  ]);
+  assert.equal(immediate, true);
+});
+
+test("door collision matches the thin closed slab and the edge-hinged open slab", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  assert.equal(engine.playerIntersectsDoorCell(new THREE.Vector3(0, 0, 0), 0, 0, 0, BlockId.DoorClosedLower), true);
+  assert.equal(engine.playerIntersectsDoorCell(new THREE.Vector3(0, 0, 0.4), 0, 0, 0, BlockId.DoorClosedLower), false);
+  assert.equal(engine.playerIntersectsDoorCell(new THREE.Vector3(0, 0, 0), 0, 0, 0, BlockId.DoorOpenLower), false);
+  assert.equal(engine.playerIntersectsDoorCell(new THREE.Vector3(-0.42, 0, 0), 0, 0, 0, BlockId.DoorOpenLower), true);
+});
+
+test("a door cannot close around the player and X-axis doors keep their orientation", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  const writes: Array<{ x: number; y: number; z: number; type: BlockId }> = [];
+  engine.world = { setBlocksBatch: (changes: typeof writes) => writes.push(...changes) } as unknown as VoxelEngine["world"];
+  engine.audio = { play: () => undefined } as unknown as VoxelEngine["audio"];
+  engine.events = { onToast: () => undefined } as unknown as VoxelEngine["events"];
+  engine.saveSoon = () => undefined;
+  engine.position = new THREE.Vector3(0, 0, 0);
+  engine.toggleDoor(0, 0, 0, BlockId.DoorOpenLower);
+  assert.equal(writes.length, 0);
+
+  engine.position.set(3, 0, 3);
+  engine.toggleDoor(0, 0, 0, BlockId.DoorXClosedLower);
+  assert.deepEqual(writes, [
+    { x: 0, y: 0, z: 0, type: BlockId.DoorXOpenLower },
+    { x: 0, y: 1, z: 0, type: BlockId.DoorXOpenUpper },
+  ]);
+});
+
+test("due saplings remain scheduled while their chunk is unloaded", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  engine.saplings = new Map([["64,10,64", 0]]);
+  engine.saplingCheckTimer = 0;
+  engine.world = { getBlock: () => undefined } as unknown as VoxelEngine["world"];
+  engine.updateSaplings(1);
+  assert.equal(engine.saplings.has("64,10,64"), true);
+  assert.ok((engine.saplings.get("64,10,64") ?? 0) > Date.now());
+});
+
+test("tree felling takes only the rooted vertical trunk and leaves attached builds intact", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  engine.world = new ChunkWorld();
+  engine.world.reset("TREE-OWNERSHIP");
+  const chunk = engine.world.generateChunk(0, 0);
+  chunk.blocks.fill(BlockId.Air);
+  engine.world.setBlock(4, 0, 4, BlockId.Dirt, false);
+  for (let y = 1; y <= 3; y += 1) engine.world.setBlock(4, y, 4, BlockId.WildwoodLog, false);
+  engine.world.setBlock(5, 1, 4, BlockId.WildwoodLog, false);
+  for (const [dx, dy, dz] of [[-2, 0, -1], [-2, 0, 0], [-2, 0, 1], [-1, 0, -2], [-1, 0, -1], [-1, 0, 0], [-1, 0, 1], [-1, 0, 2], [0, 1, -1], [0, 1, 1]] as Array<[number, number, number]>) {
+    engine.world.setBlock(4 + dx, 3 + dy, 4 + dz, BlockId.WildwoodLeaves, false);
+  }
+  engine.scene = new THREE.Scene();
+  engine.position = new THREE.Vector3(0, 1, 0);
+  engine.fallingTrees = [];
+  engine.mode = "builder";
+  engine.persistent = false;
+  engine.yaw = 0;
+  engine.audio = { play: () => undefined } as unknown as VoxelEngine["audio"];
+  engine.events = { onToast: () => undefined } as unknown as VoxelEngine["events"];
+  assert.equal(engine.tryFellTree(4, 1, 4, BlockId.WildwoodLog), true);
+  assert.equal(engine.fallingTrees[0]?.logCount, 3);
+  assert.equal(engine.world.getBlock(5, 1, 4), BlockId.WildwoodLog, "a touching horizontal build log must not join the tree entity");
+  for (const tree of engine.fallingTrees) engine.disposeObject(tree.group);
+  engine.world.dispose();
+});
+
+test("furnaces complete smelting even when the surrounding game simulation is paused", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  engine.furnaces = new Map([["0,0,0", { input: { item: Item.RawSunmetal, count: 1 }, fuel: { item: Item.Coal, count: 1 }, output: null, progress: 0, burn: 0, burnMax: 0 }]]);
+  engine.audio = { play: () => undefined } as unknown as VoxelEngine["audio"];
+  engine.saveSoon = () => undefined;
+  engine.paused = true;
+  engine.updateFurnaces(8.1);
+  assert.deepEqual(engine.furnaces.get("0,0,0")?.output, { item: Item.SunmetalIngot, count: 1 });
+  assert.equal(engine.furnaces.get("0,0,0")?.input, null);
 });
 
 test("2×2 and 3×3 crafting recognize shaped recipes", () => {
@@ -196,6 +460,20 @@ test("dropped tools preserve their remaining durability", () => {
   engine.sharedDropGeometry = new THREE.BoxGeometry(0.2, 0.2, 0.2);
   engine.spawnDrop(Item.StonePickaxe, 1, new THREE.Vector3(), 37);
   assert.equal(engine.drops[0]?.durability, 37);
+  engine.sharedDropGeometry.dispose();
+  for (const material of engine.dropMaterials.values()) material.dispose();
+});
+
+test("oversized world drops split into legal stacks instead of losing items on save", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  engine.drops = [];
+  engine.nextDropId = 1;
+  engine.dropMaterials = new Map();
+  engine.dropGroup = new THREE.Group();
+  engine.sharedDropGeometry = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+  engine.spawnDrop(BlockId.WildwoodLog, 96, new THREE.Vector3());
+  assert.deepEqual(engine.drops.map((drop) => drop.count), [64, 32]);
+  assert.equal(engine.drops.reduce((total, drop) => total + drop.count, 0), 96);
   engine.sharedDropGeometry.dispose();
   for (const material of engine.dropMaterials.values()) material.dispose();
 });

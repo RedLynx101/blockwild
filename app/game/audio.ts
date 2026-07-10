@@ -20,6 +20,8 @@ export class SynthAudio {
   music = new Map<MusicScene, HTMLAudioElement>();
   musicScene: MusicScene = "day";
   musicStarted = false;
+  musicPlayPending = new Set<MusicScene>();
+  musicSuspended = false;
 
   constructor(settings: AudioSettings) {
     this.settings = settings;
@@ -98,7 +100,7 @@ export class SynthAudio {
     for (const [scene, source] of Object.entries(MUSIC_TRACKS) as Array<[MusicScene, string]>) {
       const element = new Audio(source);
       element.loop = true;
-      element.preload = "auto";
+      element.preload = scene === this.musicScene ? "auto" : "metadata";
       element.volume = 0;
       element.setAttribute("playsinline", "true");
       this.music.set(scene, element);
@@ -106,25 +108,52 @@ export class SynthAudio {
   }
 
   async startMusic() {
-    if (this.musicStarted || !this.music.size) return;
+    if (!this.music.size || this.musicSuspended) return;
     this.musicStarted = true;
-    await Promise.all([...this.music.values()].map(async (element) => {
-      try { await element.play(); } catch { this.musicStarted = false; }
-    }));
+    await this.playMusicScene(this.musicScene);
     this.mixMusic(true);
   }
 
-  setMusicScene(scene: MusicScene) {
-    this.musicScene = scene;
-    this.mixMusic(false);
+  async playMusicScene(scene: MusicScene) {
+    if (!this.musicStarted || this.musicSuspended || this.musicPlayPending.has(scene)) return;
+    const element = this.music.get(scene);
+    if (!element || !element.paused) return;
+    this.musicPlayPending.add(scene);
+    try { await element.play(); }
+    catch { this.musicStarted = false; }
+    finally { this.musicPlayPending.delete(scene); }
   }
 
-  mixMusic(immediate: boolean) {
+  setMusicScene(scene: MusicScene, dt = 1 / 60) {
+    const changed = scene !== this.musicScene;
+    this.musicScene = scene;
+    if (changed) void this.playMusicScene(scene);
+    this.mixMusic(false, dt);
+  }
+
+  mixMusic(immediate: boolean, dt = 1 / 60) {
     const base = this.settings.muted ? 0 : Math.min(0.46, this.settings.volume * 0.44);
+    const blend = immediate ? 1 : 1 - Math.exp(-Math.max(0, dt) * 1.55);
     for (const [scene, element] of this.music.entries()) {
       const target = scene === this.musicScene ? base : 0;
-      element.volume = immediate ? target : element.volume + (target - element.volume) * 0.025;
+      if (target > 0 && this.musicStarted && element.paused) void this.playMusicScene(scene);
+      element.volume += (target - element.volume) * blend;
+      if (target === 0 && element.volume < 0.001) {
+        element.volume = 0;
+        if (!element.paused) element.pause();
+      }
     }
+  }
+
+  suspendMusic() {
+    this.musicSuspended = true;
+    for (const element of this.music.values()) element.pause();
+  }
+
+  resumeMusic() {
+    this.musicSuspended = false;
+    this.musicStarted = false;
+    void this.startMusic();
   }
 
   noiseBurst(duration: number, frequency: number, gainValue: number, highpass = false, when = 0) {
@@ -210,6 +239,7 @@ export class SynthAudio {
         element.load();
       }
       this.music.clear();
+      this.musicPlayPending.clear();
       void this.context?.close();
     } catch {
       // Already closed.

@@ -34,6 +34,7 @@ export { BLOCKS, CREATIVE_BLOCKS, ITEMS, Item, RECIPES, BlockId, BIOME_NAMES, MO
 
 export const SAVE_KEY = "blockwild-world-v2";
 export const SETTINGS_KEY = "blockwild-settings-v2";
+const LEGACY_GENERATOR_MIN_Y = -32;
 
 export type GameSettings = {
   volume: number;
@@ -198,6 +199,7 @@ const PLAYER_RADIUS = 0.3;
 const PHYSICS_STEP = 1 / 60;
 const INVENTORY_SIZE = 36;
 const CRAFT_POSITIONS_2 = [0, 1, 3, 4];
+const MAIN_THEN_HOTBAR = [...Array.from({ length: 27 }, (_, index) => index + 9), ...Array.from({ length: 9 }, (_, index) => index)];
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
@@ -210,12 +212,34 @@ export function readSavedWorld(): WorldSave | null {
   try {
     const raw = window.localStorage.getItem(SAVE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as WorldSave;
-    if (parsed.version !== 2 || parsed.generatorVersion !== GENERATOR_VERSION || typeof parsed.seed !== "string") return null;
-    return parsed;
+    return migrateSavedWorld(JSON.parse(raw));
   } catch {
     return null;
   }
+}
+
+export function migrateSavedWorld(value: unknown): WorldSave | null {
+  if (!value || typeof value !== "object") return null;
+  const parsed = value as WorldSave;
+  if (parsed.version !== 2 || typeof parsed.seed !== "string") return null;
+  if (parsed.generatorVersion === GENERATOR_VERSION) return parsed;
+  if (parsed.generatorVersion !== 2) return null;
+  const indexOffset = (LEGACY_GENERATOR_MIN_Y - MIN_Y) * 16 * 16;
+  const edits: ChunkEditSave = {};
+  for (const [key, entries] of Object.entries(parsed.edits ?? {})) {
+    if (!Array.isArray(entries)) continue;
+    edits[key] = entries
+      .filter((entry): entry is [number, number] => Array.isArray(entry) && Number.isFinite(entry[0]) && Number.isFinite(entry[1]))
+      .map(([index, type]) => [Math.trunc(index) + indexOffset, Math.trunc(type)]);
+  }
+  return { ...parsed, generatorVersion: GENERATOR_VERSION, edits };
+}
+
+export function restoreChestStorage(saved: Record<string, ChestState> = {}) {
+  return new Map(Object.entries(saved).map(([key, value]) => {
+    const size = key.includes("|") ? 54 : 27;
+    return [key, Array.from({ length: size }, (_, index) => cloneSlot(value[index] ?? null))] as const;
+  }));
 }
 
 export function clearSavedWorld() {
@@ -551,7 +575,11 @@ export class VoxelEngine {
     if (document.hidden) {
       this.clearInput();
       this.saveNow(false);
-    } else if (this.running) void this.audio.unlock();
+      this.audio.suspendMusic();
+    } else if (this.running) {
+      this.audio.resumeMusic();
+      void this.audio.unlock();
+    }
   };
 
   look(dx: number, dy: number) {
@@ -701,11 +729,11 @@ export class VoxelEngine {
     this.day = Math.max(1, Number(save.day) || 1);
     this.weather = save.weather === "rain" ? "rain" : "clear";
     this.furnaces = new Map(Object.entries(save.furnaces ?? {}).map(([key, value]) => [key, { ...blankFurnace(), ...value }]));
-    this.chests = new Map(Object.entries(save.chests ?? {}).map(([key, value]) => [key, Array.from({ length: 27 }, (_, index) => cloneSlot(value[index] ?? null))]));
+    this.chests = restoreChestStorage(save.chests ?? {});
     if (this.collidesAt(this.position) || this.position.y < MIN_Y) this.respawn(false);
     for (const savedDrop of save.drops ?? []) {
       if (!ITEMS[savedDrop.item] || savedDrop.count <= 0) continue;
-      const drop = this.spawnDrop(savedDrop.item, Math.min(savedDrop.count, maxStack(savedDrop.item)), new THREE.Vector3(savedDrop.x, savedDrop.y, savedDrop.z), savedDrop.durability);
+      const drop = this.spawnDrop(savedDrop.item, savedDrop.count, new THREE.Vector3(savedDrop.x, savedDrop.y, savedDrop.z), savedDrop.durability);
       if (!drop) continue;
       drop.mesh.position.set(savedDrop.x, savedDrop.y, savedDrop.z);
       drop.velocity.set(0, 0, 0);
@@ -795,15 +823,22 @@ export class VoxelEngine {
     const depth = large && !alongX ? 1.86 : 0.88;
     const group = new THREE.Group();
     group.position.set(x, y, z);
+    const wood = new THREE.MeshLambertMaterial({ color: 0x9f6833 });
+    const base = new THREE.Mesh(new THREE.BoxGeometry(width + 0.025, 0.72, depth + 0.025), wood);
+    base.position.y = -0.14;
+    group.add(base);
+    const rim = new THREE.Mesh(new THREE.BoxGeometry(width + 0.055, 0.09, depth + 0.055), new THREE.MeshLambertMaterial({ color: 0x603a20 }));
+    rim.position.y = 0.2;
+    group.add(rim);
+    const latch = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.22, 0.07), new THREE.MeshLambertMaterial({ color: 0xe0b54e }));
+    latch.position.set(0, 0.03, -depth / 2 - 0.045);
+    group.add(latch);
     const pivot = new THREE.Group();
-    pivot.position.set(0, 0.5, depth / 2 - 0.08);
+    pivot.position.set(0, 0.39, depth / 2 - 0.08);
     const lidMaterial = new THREE.MeshLambertMaterial({ color: 0xa56c32 });
     const lid = new THREE.Mesh(new THREE.BoxGeometry(width, 0.18, depth), lidMaterial);
     lid.position.set(0, 0, -depth / 2 + 0.08);
     pivot.add(lid);
-    const latch = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.22, 0.08), new THREE.MeshLambertMaterial({ color: 0xe0b54e }));
-    latch.position.set(0, -0.03, -depth + 0.025);
-    pivot.add(latch);
     group.add(pivot);
     this.scene.add(group);
     this.activeChestModel = group;
@@ -894,7 +929,7 @@ export class VoxelEngine {
     this.emitHud(true);
   }
 
-  addItem(item: ItemCode, count: number, durability?: number) {
+  addItem(item: ItemCode, count: number, durability?: number, emptyOrder: number[] = Array.from({ length: this.inventory.length }, (_, index) => index)) {
     if (!ITEMS[item] || count <= 0) return count;
     let remaining = count;
     const stackLimit = maxStack(item);
@@ -907,7 +942,8 @@ export class VoxelEngine {
         if (remaining <= 0) return 0;
       }
     }
-    for (let index = 0; index < this.inventory.length; index += 1) {
+    for (const index of emptyOrder) {
+      if (index < 0 || index >= this.inventory.length) continue;
       if (this.inventory[index]) continue;
       const add = Math.min(remaining, stackLimit);
       this.inventory[index] = { item, count: add, ...(durability !== undefined ? { durability } : {}) };
@@ -1061,16 +1097,16 @@ export class VoxelEngine {
   shiftMove(index: number) {
     const slot = this.inventory[index];
     if (!slot) return;
+    if (this.activeChestKey) {
+      const chest = this.chests.get(this.activeChestKey);
+      if (chest && this.transferInto(slot, chest)) this.inventory[index] = null;
+      this.saveSoon();
+      return;
+    }
     const equipmentSlot = ITEMS[slot.item]?.equipmentSlot;
     if (equipmentSlot && !this.equipment[equipmentSlot]) {
       this.equipment[equipmentSlot] = slot;
       this.inventory[index] = null;
-      this.saveSoon();
-      return;
-    }
-    if (this.activeChestKey) {
-      const chest = this.chests.get(this.activeChestKey);
-      if (chest && this.transferInto(slot, chest)) this.inventory[index] = null;
       this.saveSoon();
       return;
     }
@@ -1107,7 +1143,7 @@ export class VoxelEngine {
     if (this.craftingSize === 2 && !CRAFT_POSITIONS_2.includes(index)) return;
     const slot = this.craftGrid[index];
     if (shift && slot) {
-      const leftover = this.addItem(slot.item, slot.count, slot.durability);
+      const leftover = this.addItem(slot.item, slot.count, slot.durability, MAIN_THEN_HOTBAR);
       slot.count = leftover;
       if (slot.count <= 0) this.craftGrid[index] = null;
       this.updateCraftResult();
@@ -1283,7 +1319,7 @@ export class VoxelEngine {
     const slot = slots[index];
     if (shift && slot) {
       const original = slot.count;
-      const leftover = this.addItem(slot.item, slot.count, slot.durability);
+      const leftover = this.addItem(slot.item, slot.count, slot.durability, MAIN_THEN_HOTBAR);
       slot.count = leftover;
       if (leftover <= 0) slots[index] = null;
       if (machine === "furnace") {
@@ -1438,9 +1474,18 @@ export class VoxelEngine {
     let processed = 0;
     for (const [key, due] of this.saplings.entries()) {
       if (due > now || processed >= 6) continue;
-      processed += 1;
       const [x, y, z] = key.split(",").map(Number);
-      if (this.world.getBlock(x, y, z) !== BlockId.WildwoodSapling) { this.saplings.delete(key); continue; }
+      const current = this.world.getBlock(x, y, z);
+      if (current === undefined) { this.saplings.set(key, now + 30_000); continue; }
+      processed += 1;
+      if (current !== BlockId.WildwoodSapling) { this.saplings.delete(key); continue; }
+      const soil = this.world.getBlock(x, y - 1, z);
+      if (![BlockId.Grass, BlockId.Dirt, BlockId.SnowyGrass, BlockId.SavannaGrass, BlockId.SwampGrass, BlockId.Farmland].includes(soil ?? BlockId.Air)) {
+        this.world.setBlock(x, y, z, BlockId.Air, true, true);
+        this.saplings.delete(key);
+        if (this.mode === "survival") this.spawnDrop(BlockId.WildwoodSapling, 1, new THREE.Vector3(x, y, z));
+        continue;
+      }
       const biome = this.world.biomeAt(x, z);
       const log = biome === BiomeId.Frostpine || biome === BiomeId.Snowfield ? BlockId.PineLog : biome === BiomeId.Birchlight ? BlockId.BirchLog : biome === BiomeId.Bloomwood ? BlockId.BloomLog : BlockId.WildwoodLog;
       const leaves = log === BlockId.PineLog ? BlockId.PineLeaves : log === BlockId.BirchLog ? BlockId.BirchLeaves : log === BlockId.BloomLog ? BlockId.BloomLeaves : BlockId.WildwoodLeaves;
@@ -1481,19 +1526,40 @@ export class VoxelEngine {
   }
 
   isDoor(type: BlockId) {
-    return type === BlockId.DoorClosedLower || type === BlockId.DoorClosedUpper || type === BlockId.DoorOpenLower || type === BlockId.DoorOpenUpper;
+    return [
+      BlockId.DoorClosedLower, BlockId.DoorClosedUpper, BlockId.DoorOpenLower, BlockId.DoorOpenUpper,
+      BlockId.DoorXClosedLower, BlockId.DoorXClosedUpper, BlockId.DoorXOpenLower, BlockId.DoorXOpenUpper,
+    ].includes(type);
+  }
+
+  doorIsOpen(type: BlockId) {
+    return [BlockId.DoorOpenLower, BlockId.DoorOpenUpper, BlockId.DoorXOpenLower, BlockId.DoorXOpenUpper].includes(type);
+  }
+
+  doorUsesXAxis(type: BlockId) {
+    return [BlockId.DoorXClosedLower, BlockId.DoorXClosedUpper, BlockId.DoorXOpenLower, BlockId.DoorXOpenUpper].includes(type);
   }
 
   doorLowerY(type: BlockId, y: number) {
-    return type === BlockId.DoorClosedUpper || type === BlockId.DoorOpenUpper ? y - 1 : y;
+    return [BlockId.DoorClosedUpper, BlockId.DoorOpenUpper, BlockId.DoorXClosedUpper, BlockId.DoorXOpenUpper].includes(type) ? y - 1 : y;
   }
 
   toggleDoor(x: number, y: number, z: number, type: BlockId) {
     const lowerY = this.doorLowerY(type, y);
-    const open = type === BlockId.DoorOpenLower || type === BlockId.DoorOpenUpper;
+    const open = this.doorIsOpen(type);
+    const xAxis = this.doorUsesXAxis(type);
+    const closedLower = xAxis ? BlockId.DoorXClosedLower : BlockId.DoorClosedLower;
+    const closedUpper = xAxis ? BlockId.DoorXClosedUpper : BlockId.DoorClosedUpper;
+    const openLower = xAxis ? BlockId.DoorXOpenLower : BlockId.DoorOpenLower;
+    const openUpper = xAxis ? BlockId.DoorXOpenUpper : BlockId.DoorOpenUpper;
+    if (open && (this.playerIntersectsDoorCell(this.position, x, lowerY, z, closedLower) || this.playerIntersectsDoorCell(this.position, x, lowerY + 1, z, closedUpper))) {
+      this.events.onToast("Step clear of the doorway before closing it.");
+      this.placeCooldown = 0.18;
+      return;
+    }
     this.world.setBlocksBatch([
-      { x, y: lowerY, z, type: open ? BlockId.DoorClosedLower : BlockId.DoorOpenLower },
-      { x, y: lowerY + 1, z, type: open ? BlockId.DoorClosedUpper : BlockId.DoorOpenUpper },
+      { x, y: lowerY, z, type: open ? closedLower : openLower },
+      { x, y: lowerY + 1, z, type: open ? closedUpper : openUpper },
     ], true, true);
     this.audio.play("place", BlockId.Planks);
     this.placeCooldown = 0.18;
@@ -1538,6 +1604,7 @@ export class VoxelEngine {
     const z = replacesTarget ? this.target.z : this.target.placeZ;
     if (y < MIN_Y || y > MAX_Y) return;
     const current = this.world.getBlock(x, y, z);
+    let replacedUpper: BlockId | undefined;
     if (current === undefined || (!BLOCKS[current]?.replaceable && current !== BlockId.Air)) return;
     if (type === BlockId.WildwoodSapling) {
       const soil = this.world.getBlock(x, y - 1, z);
@@ -1548,15 +1615,20 @@ export class VoxelEngine {
     }
     if (type === BlockId.DoorClosedLower) {
       const upper = this.world.getBlock(x, y + 1, z);
+      replacedUpper = upper;
       const support = this.world.getBlock(x, y - 1, z);
       if (y + 1 > MAX_Y || upper === undefined || (!BLOCKS[upper]?.replaceable && upper !== BlockId.Air) || !BLOCKS[support ?? BlockId.Air]?.solid) {
         this.events.onToast("A door needs two clear blocks and solid ground.");
         return;
       }
-      this.world.setBlocksBatch([{ x, y, z, type: BlockId.DoorClosedLower }, { x, y: y + 1, z, type: BlockId.DoorClosedUpper }], true, true);
+      const xAxis = Math.abs(Math.sin(this.yaw)) > Math.abs(Math.cos(this.yaw));
+      this.world.setBlocksBatch([
+        { x, y, z, type: xAxis ? BlockId.DoorXClosedLower : BlockId.DoorClosedLower },
+        { x, y: y + 1, z, type: xAxis ? BlockId.DoorXClosedUpper : BlockId.DoorClosedUpper },
+      ], true, true);
     } else this.world.setBlock(x, y, z, type, true, true);
     if (BLOCKS[type].solid && this.collidesAt(this.position)) {
-      if (type === BlockId.DoorClosedLower) this.world.setBlocksBatch([{ x, y, z, type: current ?? BlockId.Air }, { x, y: y + 1, z, type: BlockId.Air }], true, true);
+      if (type === BlockId.DoorClosedLower) this.world.setBlocksBatch([{ x, y, z, type: current ?? BlockId.Air }, { x, y: y + 1, z, type: replacedUpper ?? BlockId.Air }], true, true);
       else this.world.setBlock(x, y, z, current ?? BlockId.Air, true, true);
       this.events.onToast("You cannot place a block inside yourself.");
       return;
@@ -1616,26 +1688,29 @@ export class VoxelEngine {
     };
     const leafType = leavesByLog[type];
     if (leafType === undefined) return false;
-    const queue: Array<[number, number, number]> = [[x, y, z]];
     const logs = new Map<string, [number, number, number]>();
-    while (queue.length && logs.size < 96) {
-      const current = queue.shift()!;
-      const key = blockKey(...current);
-      if (logs.has(key) || Math.abs(current[0] - x) > 8 || Math.abs(current[1] - y) > 16 || Math.abs(current[2] - z) > 8) continue;
-      if (this.world.getBlock(...current) !== type) continue;
-      logs.set(key, current);
-      for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) queue.push([current[0] + dx, current[1] + dy, current[2] + dz]);
-    }
+    let bottom = y;
+    let top = y;
+    while (bottom > y - 16 && this.world.getBlock(x, bottom - 1, z) === type) bottom -= 1;
+    while (top < y + 16 && this.world.getBlock(x, top + 1, z) === type) top += 1;
+    for (let trunkY = bottom; trunkY <= top; trunkY += 1) logs.set(blockKey(x, trunkY, z), [x, trunkY, z]);
     if (logs.size < 3) return false;
+    const soil = this.world.getBlock(x, bottom - 1, z);
+    if (![BlockId.Grass, BlockId.Dirt, BlockId.SnowyGrass, BlockId.SavannaGrass, BlockId.SwampGrass, BlockId.Farmland].includes(soil ?? BlockId.Air)) return false;
     const leaves = new Map<string, [number, number, number]>();
-    for (const log of logs.values()) {
-      for (let dx = -3; dx <= 3 && leaves.size < 320; dx += 1) for (let dy = -3; dy <= 3 && leaves.size < 320; dy += 1) for (let dz = -3; dz <= 3 && leaves.size < 320; dz += 1) {
-        if (Math.abs(dx) + Math.abs(dy) + Math.abs(dz) > 6) continue;
-        const candidate: [number, number, number] = [log[0] + dx, log[1] + dy, log[2] + dz];
-        if (this.world.getBlock(...candidate) === leafType) leaves.set(blockKey(...candidate), candidate);
+    for (let dx = -3; dx <= 3 && leaves.size < 180; dx += 1) for (let dy = -3; dy <= 3 && leaves.size < 180; dy += 1) for (let dz = -3; dz <= 3 && leaves.size < 180; dz += 1) {
+      if (Math.abs(dx) + Math.abs(dy) + Math.abs(dz) > 6) continue;
+      const candidate: [number, number, number] = [x + dx, top + dy, z + dz];
+      if (this.world.getBlock(...candidate) !== leafType) continue;
+      const ownDistance = dx * dx + dz * dz;
+      let nearerTrunk = false;
+      for (let ox = -3; ox <= 3 && !nearerTrunk; ox += 1) for (let oz = -3; oz <= 3 && !nearerTrunk; oz += 1) {
+        if (ox === 0 && oz === 0 || (dx - ox) ** 2 + (dz - oz) ** 2 >= ownDistance) continue;
+        for (let trunkY = bottom; trunkY <= top + 2; trunkY += 1) if (this.world.getBlock(x + ox, trunkY, z + oz) === type) { nearerTrunk = true; break; }
       }
+      if (!nearerTrunk) leaves.set(blockKey(...candidate), candidate);
     }
-    if (leaves.size < 4) return false;
+    if (leaves.size < 8) return false;
     const root = [...logs.values()].sort((a, b) => a[1] - b[1])[0];
     const changes = [...logs.values(), ...leaves.values()].map(([bx, by, bz]) => ({ x: bx, y: by, z: bz, type: BlockId.Air }));
     this.world.setBlocksBatch(changes, true, true);
@@ -1658,6 +1733,7 @@ export class VoxelEngine {
     const away = new THREE.Vector3(root[0] - this.position.x, 0, root[2] - this.position.z).normalize();
     if (away.lengthSq() < 0.1) away.set(Math.sin(this.yaw), 0, Math.cos(this.yaw));
     this.fallingTrees.push({ group, root: new THREE.Vector3(...root), fallAxis: new THREE.Vector3(away.z, 0, -away.x).normalize(), progress: 0, logType: type, logCount: logs.size, leafCount: leaves.size, harvest: this.mode === "survival" });
+    if (this.persistent) window.clearTimeout(this.saveTimer);
     if (this.mode === "survival") this.damageSelectedTool(Math.max(1, Math.ceil(logs.size / 4)));
     this.audio.play("break", type);
     this.events.onToast(`${BLOCKS[type].name.replace(" Log", "")} timber!`);
@@ -1691,6 +1767,7 @@ export class VoxelEngine {
       if (tree.progress >= 1) {
         this.settleFallingTree(tree);
         this.fallingTrees.splice(index, 1);
+        this.saveSoon();
       }
     }
   }
@@ -1706,7 +1783,6 @@ export class VoxelEngine {
     if (this.tryFellTree(x, y, z, type)) {
       this.miningProgress = 0;
       this.target = null;
-      this.saveSoon();
       this.emitHud(true);
       return;
     }
@@ -1714,7 +1790,10 @@ export class VoxelEngine {
     if (this.isDoor(type)) {
       const lowerY = this.doorLowerY(type, y);
       this.world.setBlocksBatch([{ x, y: lowerY, z, type: BlockId.Air }, { x, y: lowerY + 1, z, type: BlockId.Air }], true, true);
-    } else this.world.setBlock(x, y, z, BlockId.Air, true, true);
+    } else {
+      this.world.setBlock(x, y, z, BlockId.Air, true, true);
+      this.breakUnsupportedAbove(x, y, z);
+    }
     if (this.mode === "survival") {
       if (harvested) this.dropBlockLoot(this.isDoor(type) ? BlockId.Air : type, x, y, z);
       else this.events.onToast(`${BLOCKS[type].name} crumbled without the right tool.`);
@@ -1967,9 +2046,47 @@ export class VoxelEngine {
     const maxZ = Math.floor(position.z + PLAYER_RADIUS - 0.001 + 0.5);
     for (let x = minX; x <= maxX; x += 1) for (let y = minY; y <= maxY; y += 1) for (let z = minZ; z <= maxZ; z += 1) {
       const type = this.world.getBlock(x, y, z);
-      if (type === undefined || BLOCKS[type]?.solid) return true;
+      if (type === undefined) return true;
+      if (this.isDoor(type)) {
+        if (this.playerIntersectsDoorCell(position, x, y, z, type)) return true;
+        continue;
+      }
+      if (BLOCKS[type]?.solid) return true;
     }
     return false;
+  }
+
+  playerIntersectsDoorCell(position: THREE.Vector3, x: number, y: number, z: number, type: BlockId) {
+    const open = this.doorIsOpen(type);
+    const planeAlongZ = this.doorUsesXAxis(type) !== open;
+    const playerMinX = position.x - PLAYER_RADIUS;
+    const playerMaxX = position.x + PLAYER_RADIUS;
+    const playerMinY = position.y;
+    const playerMaxY = position.y + PLAYER_HEIGHT;
+    const playerMinZ = position.z - PLAYER_RADIUS;
+    const playerMaxZ = position.z + PLAYER_RADIUS;
+    const slabMinX = planeAlongZ ? x + (open ? -0.5 : -0.08) : x - 0.48;
+    const slabMaxX = planeAlongZ ? x + (open ? -0.34 : 0.08) : x + 0.48;
+    const slabMinZ = planeAlongZ ? z - 0.48 : z + (open ? -0.5 : -0.08);
+    const slabMaxZ = planeAlongZ ? z + 0.48 : z + (open ? -0.34 : 0.08);
+    return playerMaxX > slabMinX && playerMinX < slabMaxX
+      && playerMaxY > y - 0.5 && playerMinY < y + 0.5
+      && playerMaxZ > slabMinZ && playerMinZ < slabMaxZ;
+  }
+
+  breakUnsupportedAbove(x: number, y: number, z: number) {
+    const aboveY = y + 1;
+    const above = this.world.getBlock(x, aboveY, z);
+    if (above === undefined) return;
+    if ([BlockId.DoorClosedLower, BlockId.DoorOpenLower, BlockId.DoorXClosedLower, BlockId.DoorXOpenLower].includes(above)) {
+      this.world.setBlocksBatch([{ x, y: aboveY, z, type: BlockId.Air }, { x, y: aboveY + 1, z, type: BlockId.Air }], true, true);
+      if (this.mode === "survival") this.spawnDrop(Item.WildwoodDoor, 1, new THREE.Vector3(x, aboveY, z));
+      return;
+    }
+    if (BLOCKS[above]?.shape !== "cross") return;
+    this.world.setBlock(x, aboveY, z, BlockId.Air, true, true);
+    if (above === BlockId.WildwoodSapling) this.saplings.delete(blockKey(x, aboveY, z));
+    if (this.mode === "survival") this.dropBlockLoot(above, x, aboveY, z);
   }
 
   blockUnderfoot() {
@@ -2148,10 +2265,12 @@ export class VoxelEngine {
       if (this.world.getBlock(x, y, z) === undefined || y <= SEA_LEVEL) return;
       const daylight = this.daylightAmount();
       const hostile = daylight < 0.2 && this.spawnProtection <= 0;
-      if (hostile) kind = Math.random() < 0.55 ? "shadecrawler" : "rattlekin";
+      const biome = this.world.biomeAt(x, z);
+      const nocturnalGlowmoth = hostile && passiveCount < passiveCap && [BiomeId.MushroomFen, BiomeId.Bloomwood, BiomeId.Siltfen].includes(biome) && Math.random() < 0.3;
+      if (nocturnalGlowmoth) kind = "glowmoth";
+      else if (hostile) kind = Math.random() < 0.55 ? "shadecrawler" : "rattlekin";
       else {
         if (passiveCount >= passiveCap) return;
-        const biome = this.world.biomeAt(x, z);
         kind = biome === BiomeId.Snowfield || biome === BiomeId.Frostpine ? "woolhorn"
           : biome === BiomeId.Siltfen || biome === BiomeId.Bloomwood ? "mossling"
             : biome === BiomeId.MushroomFen ? "glowmoth" : "ridgeback";
@@ -2207,7 +2326,7 @@ export class VoxelEngine {
         this.removeMob(index);
         continue;
       }
-      const aggressive = mob.hostile || (mob.kind === "ridgeback" && mob.fleeTimer > 0);
+      const aggressive = mob.hostile || ((mob.kind === "ridgeback" || mob.kind === "woolhorn") && mob.fleeTimer > 0);
       if (mob.state === "windup") {
         if (mob.stateTimer <= 0) {
           if (distance < mob.definition.attackRange + 0.7 && Math.abs(this.position.y - mob.group.position.y) < 2) {
@@ -2237,8 +2356,14 @@ export class VoxelEngine {
       const beforeX = mob.group.position.x;
       const beforeZ = mob.group.position.z;
       if (mob.kind === "glowmoth") {
-        mob.group.position.x += Math.cos(mob.angle) * speed * dt;
-        mob.group.position.z += Math.sin(mob.angle) * speed * dt;
+        const nx = mob.group.position.x + Math.cos(mob.angle) * speed * dt;
+        const nz = mob.group.position.z + Math.sin(mob.angle) * speed * dt;
+        const targetY = this.mobMoveTarget(mob, nx, nz);
+        if (targetY !== null) {
+          mob.group.position.x = nx;
+          mob.group.position.z = nz;
+          mob.baseY += (targetY - mob.baseY) * Math.min(1, dt * 4);
+        } else { mob.desiredAngle += Math.PI * (0.45 + Math.random() * 0.5); mob.wanderTimer = 0.35; }
         mob.group.position.y = mob.baseY + Math.sin(performance.now() * 0.003 + mob.id) * 0.22;
       } else {
         const nx = mob.group.position.x + Math.cos(mob.angle) * speed * dt;
@@ -2247,8 +2372,8 @@ export class VoxelEngine {
         if (targetY !== null) {
           mob.group.position.x = nx;
           mob.group.position.z = nz;
-          mob.group.position.y += (targetY - mob.group.position.y) * Math.min(1, dt * 9);
-          if (mob.kind === "caveblob") mob.group.position.y += Math.max(0, Math.sin(performance.now() * 0.006 + mob.id)) * 0.1;
+          const hop = mob.kind === "caveblob" ? Math.max(0, Math.sin(performance.now() * 0.006 + mob.id)) * 0.1 : 0;
+          mob.group.position.y += (targetY + hop - mob.group.position.y) * Math.min(1, dt * 9);
         } else { mob.desiredAngle += Math.PI * (0.45 + Math.random() * 0.5); mob.wanderTimer = 0.5; }
       }
       const moved = Math.hypot(mob.group.position.x - beforeX, mob.group.position.z - beforeZ);
@@ -2311,22 +2436,29 @@ export class VoxelEngine {
   spawnDrop(item: ItemCode, count: number, position: THREE.Vector3, durability?: number): DropEntity | undefined {
     if (!ITEMS[item] || count <= 0) return;
     const resolvedDurability = durability ?? ITEMS[item]?.maxDurability;
+    const stackLimit = maxStack(item);
+    let firstDrop: DropEntity | undefined;
     const nearby = this.drops.find((drop) => drop.item === item && drop.durability === resolvedDurability && drop.mesh.position.distanceToSquared(position) < 2.25 && drop.count < maxStack(item));
     if (nearby) {
-      const add = Math.min(count, maxStack(item) - nearby.count);
+      const add = Math.min(count, stackLimit - nearby.count);
       nearby.count += add;
       count -= add;
-      if (count <= 0) return nearby;
+      firstDrop = nearby;
     }
-    if (this.drops.length >= 120) this.removeDrop(0);
     let material = this.dropMaterials.get(item);
     if (!material) { material = new THREE.MeshLambertMaterial({ color: ITEMS[item].color }); this.dropMaterials.set(item, material); }
-    const mesh = new THREE.Mesh(this.sharedDropGeometry, material);
-    mesh.position.copy(position).add(new THREE.Vector3((Math.random() - 0.5) * 0.45, 0.25, (Math.random() - 0.5) * 0.45));
-    this.dropGroup.add(mesh);
-    const drop: DropEntity = { id: this.nextDropId++, item, count, ...(resolvedDurability !== undefined ? { durability: resolvedDurability } : {}), mesh, velocity: new THREE.Vector3((Math.random() - 0.5) * 1.4, 2 + Math.random(), (Math.random() - 0.5) * 1.4), age: 0, pickupDelay: 0.35 };
-    this.drops.push(drop);
-    return drop;
+    while (count > 0) {
+      if (this.drops.length >= 120) this.removeDrop(0);
+      const amount = Math.min(count, stackLimit);
+      const mesh = new THREE.Mesh(this.sharedDropGeometry, material);
+      mesh.position.copy(position).add(new THREE.Vector3((Math.random() - 0.5) * 0.45, 0.25, (Math.random() - 0.5) * 0.45));
+      this.dropGroup.add(mesh);
+      const drop: DropEntity = { id: this.nextDropId++, item, count: amount, ...(resolvedDurability !== undefined ? { durability: resolvedDurability } : {}), mesh, velocity: new THREE.Vector3((Math.random() - 0.5) * 1.4, 2 + Math.random(), (Math.random() - 0.5) * 1.4), age: 0, pickupDelay: 0.35 };
+      this.drops.push(drop);
+      firstDrop ??= drop;
+      count -= amount;
+    }
+    return firstDrop;
   }
 
   updateDrops(dt: number) {
@@ -2361,9 +2493,10 @@ export class VoxelEngine {
 
   disposeObject(root: THREE.Object3D) {
     root.traverse((object) => {
-      if (!(object instanceof THREE.Mesh)) return;
-      object.geometry.dispose();
-      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      const renderable = object as THREE.Object3D & { geometry?: THREE.BufferGeometry; material?: THREE.Material | THREE.Material[] };
+      renderable.geometry?.dispose();
+      if (!renderable.material) return;
+      const materials = Array.isArray(renderable.material) ? renderable.material : [renderable.material];
       for (const material of materials) material.dispose();
     });
   }
@@ -2478,7 +2611,7 @@ export class VoxelEngine {
     this.audio.setDepth(this.position.y, this.weather === "rain");
     const biome = this.world.biomeAt(Math.round(this.position.x), Math.round(this.position.z));
     const atSea = underwater || biome === BiomeId.Ocean || biome === BiomeId.DeepOcean || biome === BiomeId.Beach;
-    this.audio.setMusicScene(atSea ? "sea" : daylight < 0.24 ? "night" : "day");
+    this.audio.setMusicScene(atSea ? "sea" : daylight < 0.24 ? "night" : "day", dt);
   }
 
   updateRain(dt: number) {
@@ -2544,6 +2677,9 @@ export class VoxelEngine {
           addBox([0.08, 0.48, 0.08], [0, 0, 0], 0x8d542b, [0, 0, -0.12]);
           addBox([0.14, 0.14, 0.14], [-0.03, 0.27, 0], 0xffbe45, [0, 0, 0], true);
           addBox([0.07, 0.08, 0.07], [-0.04, 0.37, 0], 0xffef93, [0, 0, 0], true);
+        } else if (item === Item.WildwoodDoor) {
+          addBox([0.08, 0.62, 0.38], [0, 0.04, 0], definition.color, [0.08, 0.3, -0.08]);
+          addBox([0.09, 0.08, 0.09], [-0.07, 0.02, 0.16], 0xe9c366, [0.08, 0.3, -0.08], true);
         } else if (definition.toolKind) {
           addBox([0.08, 0.62, 0.08], [0, -0.02, 0], 0x8d5e34, [0, 0, -0.55]);
           if (definition.toolKind === "sword") {
@@ -2558,7 +2694,8 @@ export class VoxelEngine {
       }
     }
     this.heldUse = Math.max(0, this.heldUse - dt * 4.5);
-    const activeSwing = this.mineHeld || this.attackCooldown > 0 ? 1 : 0;
+    const miningSwing = this.mineHeld ? 0.42 + Math.abs(Math.sin(performance.now() * 0.012)) * 0.58 : 0;
+    const activeSwing = Math.max(miningSwing, this.attackCooldown > 0 ? 1 : 0);
     this.heldSwing += (activeSwing - this.heldSwing) * (1 - Math.exp(-dt * 14));
     const walk = this.grounded ? this.footstepDistance * 3.6 : 0;
     this.heldRoot.position.set(0.48 + Math.sin(walk) * 0.018, -0.43 + Math.abs(Math.cos(walk)) * 0.018 - this.heldUse * 0.1, -0.78 + this.heldUse * 0.08);
@@ -2608,10 +2745,10 @@ export class VoxelEngine {
     this.updateDayNight(dt);
     this.updateChestModel(dt);
     this.updateHeldItem(dt);
+    if (this.running && !this.titleMode) this.updateFurnaces(dt);
     if (this.running && !this.titleMode && !this.paused) {
       this.updateMobs(dt);
       this.updateDrops(dt);
-      this.updateFurnaces(dt);
       this.updateSaplings(dt);
       this.updateFallingTrees(dt);
     }
@@ -2627,7 +2764,10 @@ export class VoxelEngine {
     this.renderer.render(this.scene, this.camera);
     if (this.running && this.persistent) {
       this.autoSaveAccumulator += dt;
-      if (this.autoSaveAccumulator >= 15) { this.autoSaveAccumulator = 0; this.saveNow(false); }
+      if (this.autoSaveAccumulator >= 15) {
+        if (this.fallingTrees.length) this.autoSaveAccumulator = 14;
+        else { this.autoSaveAccumulator = 0; this.saveNow(false); }
+      }
     }
     this.emitHud(false, now);
     this.animationFrame = requestAnimationFrame(this.animate);
@@ -2844,6 +2984,17 @@ export class VoxelEngine {
     this.resizeObserver?.disconnect();
     this.audio.dispose();
     this.clearEntities();
+    this.hideChestModel(true);
+    this.disposeObject(this.heldRoot);
+    this.disposeObject(this.selection);
+    for (const celestial of [this.sun, this.moon]) {
+      const material = celestial.material as THREE.MeshBasicMaterial;
+      material.map?.dispose();
+      this.disposeObject(celestial);
+    }
+    this.disposeObject(this.stars);
+    this.disposeObject(this.rain);
+    this.disposeObject(this.ambienceGroup);
     this.world.dispose();
     this.sharedDropGeometry.dispose();
     for (const material of this.dropMaterials.values()) material.dispose();
