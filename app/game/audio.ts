@@ -2,7 +2,16 @@ import { BLOCKS, BlockId } from "./data";
 
 export type AudioSettings = { volume: number; muted: boolean };
 export type SoundKind = "step" | "mine" | "break" | "place" | "pickup" | "jump" | "land" | "hurt" | "ui" | "attack" | "mob" | "craft" | "furnace" | "splash" | "eat";
-export type MusicScene = "day" | "hoppin" | "night" | "sea" | "skyboss";
+export type MusicScene =
+  | "day"
+  | "hoppin"
+  | "night"
+  | "sea"
+  | "skyboss"
+  | "wildwoodA"
+  | "wildwoodB"
+  | "emberdeepA"
+  | "emberdeepB";
 export type SampleKind = "swordSwing" | "zombieMoan1" | "zombieMoan2" | "chestOpen" | "chestClose";
 export type SamplePlaybackOptions = { gain?: number; playbackRate?: number; detune?: number; when?: number };
 
@@ -12,6 +21,10 @@ const MUSIC_TRACKS: Record<MusicScene, string> = {
   night: "/music/blockwild-night.mp3",
   sea: "/music/blockwild-sea.mp3",
   skyboss: "/music/blockwild-skyboss.mp3",
+  wildwoodA: "/music/blockwild-wildwood-dawn-a.mp3",
+  wildwoodB: "/music/blockwild-wildwood-dawn-b.mp3",
+  emberdeepA: "/music/blockwild-emberdeep-a.mp3",
+  emberdeepB: "/music/blockwild-emberdeep-b.mp3",
 };
 
 const SAMPLES: Record<SampleKind, { source: string; gain: number }> = {

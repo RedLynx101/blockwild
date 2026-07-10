@@ -177,8 +177,10 @@ export function createRidgebackSpec(): ModelSpec {
     // the equivalent world-space box center after that pivot rotation.
     box("tail", "body", [0.12, 0.12, 0.48], [0, y(0.24 - Math.sin(0.55) * 0.24), 0.72 + Math.cos(0.55) * 0.24], dark, [0.55, 0, 0], { label: "Tail" }),
   ];
-  for (let plate = 0; plate < 5; plate += 1) {
-    boxes.push(box(`ridge-plate-${plate + 1}`, "body", [0.36 - plate * 0.025, 0.2, 0.16], [0, y(0.52), -0.4 + plate * 0.26], dark, ZERO_ROTATION, plate === 0 ? { label: "Back plates" } : {}));
+  for (let plate = 0; plate < 6; plate += 1) {
+    const height = 0.18 + Math.sin(((plate + 1) / 7) * Math.PI) * 0.13;
+    // The body top is local Y=.39; every ridge begins exactly on that plane.
+    boxes.push(box(`ridge-plate-${plate + 1}`, "body", [0.38 - plate * 0.027, height, 0.15], [0, y(0.39 + height / 2), -0.48 + plate * 0.225], dark, [0, plate % 2 ? 0.035 : -0.035, 0], plate === 0 ? { label: "Back plates" } : {}));
   }
   return assertModelSpec({
     id: "ridgeback",

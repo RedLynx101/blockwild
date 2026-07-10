@@ -161,4 +161,6 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
 };
 
 export const BUTTERFLY_ORDER: ButterflyKind[] = ["meadowwing", "azure-skippers", "embertip", "frostveil", "bloom-monarch", "fen-lantern"];
-export const MOB_ORDER: MobKind[] = ["mossling", "ridgeback", "woolhorn", "glowmoth", "shadecrawler", "caveblob", "rattlekin", "zombie", ...BUTTERFLY_ORDER];
+export type CoreMobKind = Exclude<MobKind, ButterflyKind>;
+export const CORE_MOB_ORDER: CoreMobKind[] = ["mossling", "ridgeback", "woolhorn", "glowmoth", "shadecrawler", "caveblob", "rattlekin", "zombie"];
+export const MOB_ORDER: MobKind[] = [...CORE_MOB_ORDER, ...BUTTERFLY_ORDER];

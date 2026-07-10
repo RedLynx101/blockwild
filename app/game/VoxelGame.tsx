@@ -11,8 +11,10 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import {
+  BlockId,
   CREATIVE_BLOCKS,
   ITEMS,
+  Item,
   MOB_DEFS,
   MOB_ORDER,
   RECIPES,
@@ -26,6 +28,7 @@ import {
   type MobKind,
   type OverlayKind,
 } from "./engine";
+import { BUTTERFLY_ORDER, CORE_MOB_ORDER } from "./mobs";
 import {
   DEFAULT_WORLD_OPTIONS,
   WORLD_OWNERSHIP_NOTICE,
@@ -34,7 +37,8 @@ import {
   type WorldOptions,
 } from "./world-storage";
 
-type Overlay = "title" | "new" | "pause" | "inventory" | "crafting" | "furnace" | "chest" | "bestiary" | "multiplayer" | "help" | "settings" | "reset" | null;
+type Overlay = "title" | "new" | "pause" | "inventory" | "crafting" | "furnace" | "chest" | "bestiary" | "multiplayer" | "sleep" | "help" | "settings" | "reset" | null;
+type BestiaryFilter = "all" | "creatures" | "winged";
 
 type MultiplayerPeerView = {
   token?: string;
@@ -126,15 +130,86 @@ const INITIAL_HUD: HudState = {
   onlinePlayers: 1,
 };
 
+function itemIconKind(item: ItemCode) {
+  const definition = ITEMS[item];
+  if (definition?.toolKind) return `tool-${definition.toolKind}`;
+  if (definition?.equipmentSlot) return `armor-${definition.equipmentSlot}`;
+  switch (item) {
+    case BlockId.Torch: return "torch";
+    case BlockId.RedFlower: return "flower-red";
+    case BlockId.BlueFlower: return "flower-blue";
+    case BlockId.TallGrass: return "grass";
+    case BlockId.WheatCrop: return "wheat";
+    case BlockId.WildwoodSapling: return "sapling";
+    case Item.Stick: return "stick";
+    case Item.Coal:
+    case Item.Charcoal: return "coal";
+    case Item.RawSunmetal:
+    case Item.RawGold: return "ore-chunk";
+    case Item.SunmetalIngot:
+    case Item.GoldIngot: return "ingot";
+    case Item.CrystalShard: return "crystal";
+    case Item.Berry: return "berries";
+    case Item.Apple: return "apple";
+    case Item.Bread: return "bread";
+    case Item.RawMeat:
+    case Item.CookedMeat:
+    case Item.RottenFlesh: return "meat";
+    case Item.Fiber: return "fiber";
+    case Item.Hide: return "hide";
+    case Item.BoneShard: return "bone";
+    case Item.GlowDust: return "glow-dust";
+    case Item.Wool: return "wool";
+    case Item.Wheat: return "wheat";
+    case Item.Flint:
+    case Item.ShadowShard: return "shard";
+    case Item.CaveGel: return "gel";
+    case Item.WildwoodDoor: return "door";
+    case Item.WildwoodBed: return "bed";
+    case Item.ButterflyNet: return "net";
+    case Item.MeadowwingJar:
+    case Item.AzureSkipperJar:
+    case Item.EmbertipJar:
+    case Item.FrostveilJar:
+    case Item.BloomMonarchJar:
+    case Item.FenLanternJar: return "jar";
+    default: return definition?.placeBlock !== undefined ? "block" : "item";
+  }
+}
+
 function ItemIcon({ item, small = false }: { item: ItemCode; small?: boolean }) {
   const definition = ITEMS[item];
   const isTool = Boolean(definition?.toolKind);
+  const iconKind = itemIconKind(item);
+  const custom = iconKind !== "block" && iconKind !== "item" && !isTool;
   return (
     <span
-      className={`item-icon ${small ? "item-icon-small" : ""} ${isTool ? `tool-icon tool-${definition.toolKind}` : "block-item-icon"}`}
+      className={`item-icon item-icon-kind-${iconKind} ${small ? "item-icon-small" : ""} ${isTool ? `tool-icon tool-${definition.toolKind}` : custom ? "custom-item-icon" : "block-item-icon"}`}
       style={{ "--item-color": definition?.color ?? "#777" } as CSSProperties}
+      data-item-icon={iconKind}
+      data-item-id={item}
       aria-hidden="true"
     />
+  );
+}
+
+const creaturePortraitPath = (kind: MobKind) => `/creatures/${BUTTERFLY_ORDER.includes(kind as (typeof BUTTERFLY_ORDER)[number]) ? `butterfly-${kind}` : kind}.svg`;
+
+function CreaturePortrait({ kind, seen, mini = false }: { kind: MobKind; seen: boolean; mini?: boolean }) {
+  const definition = MOB_DEFS[kind];
+  return (
+    <span
+      className={`creature-render ${mini ? "creature-render-mini" : "creature-render-hero"} ${seen ? "seen" : "unknown"}`}
+      style={{
+        "--mob-color": `#${definition.colors[0].toString(16).padStart(6, "0")}`,
+        "--mob-accent": `#${definition.colors[1].toString(16).padStart(6, "0")}`,
+      } as CSSProperties}
+    >
+      {/* Generated local SVGs preserve the exact production-model framing; image optimization would only proxy them. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={creaturePortraitPath(kind)} alt={mini ? "" : seen ? `${definition.name} three-dimensional model` : "Undiscovered creature silhouette"} aria-hidden={mini || undefined} />
+      {!seen && <b aria-hidden="true">?</b>}
+    </span>
   );
 }
 
@@ -223,6 +298,7 @@ export default function VoxelGame() {
   const [cursorPosition, setCursorPosition] = useState({ x: 0, y: 0 });
   const [inventoryTab, setInventoryTab] = useState<"inventory" | "recipes" | "creative">("inventory");
   const [selectedBestiary, setSelectedBestiary] = useState<MobKind>("mossling");
+  const [bestiaryFilter, setBestiaryFilter] = useState<BestiaryFilter>("all");
   const [multiplayerName, setMultiplayerName] = useState("Trailkeeper");
   const [multiplayerInvite, setMultiplayerInvite] = useState("");
   const [multiplayerAnswer, setMultiplayerAnswer] = useState("");
@@ -502,6 +578,13 @@ export default function VoxelGame() {
     engineRef.current?.activate();
   };
 
+  const restUntil = (target: "morning" | "night") => {
+    const engine = engineRef.current;
+    if (!engine?.sleepUntil(target)) return;
+    setOverlay(null);
+    engine.activate();
+  };
+
   const saveAndQuit = () => {
     const engine = engineRef.current;
     if (!engine) return;
@@ -779,6 +862,18 @@ export default function VoxelGame() {
   const xpNeeded = 12 + hud.level * 6;
   const bestiaryDefinition = MOB_DEFS[selectedBestiary];
   const bestiaryProgress = hud.bestiary[selectedBestiary];
+  const bestiaryVisibleKinds: readonly MobKind[] = bestiaryFilter === "creatures" ? CORE_MOB_ORDER : bestiaryFilter === "winged" ? BUTTERFLY_ORDER : MOB_ORDER;
+  const bestiarySeen = MOB_ORDER.filter((kind) => hud.bestiary[kind].seen).length;
+  const bestiaryVisibleIndex = Math.max(0, bestiaryVisibleKinds.indexOf(selectedBestiary));
+  const setBestiaryCategory = (filter: BestiaryFilter) => {
+    setBestiaryFilter(filter);
+    const kinds: readonly MobKind[] = filter === "creatures" ? CORE_MOB_ORDER : filter === "winged" ? BUTTERFLY_ORDER : MOB_ORDER;
+    if (!kinds.includes(selectedBestiary)) setSelectedBestiary(kinds[0]);
+  };
+  const stepBestiary = (direction: -1 | 1) => {
+    const next = (bestiaryVisibleIndex + direction + bestiaryVisibleKinds.length) % bestiaryVisibleKinds.length;
+    setSelectedBestiary(bestiaryVisibleKinds[next]);
+  };
   const selectedWorld = worlds.find((world) => world.id === selectedWorldId) ?? null;
   const cameraLabel = hud.cameraMode === "first" ? "FIRST PERSON" : hud.cameraMode === "third-rear" ? "THIRD PERSON · REAR" : "THIRD PERSON · FRONT";
 
@@ -958,6 +1053,8 @@ export default function VoxelGame() {
               <div className="advanced-option-grid">
                 <label><span>Difficulty <b>{worldOptions.difficulty.toUpperCase()}</b></span><select value={worldOptions.difficulty} onChange={(event) => setWorldOptions((current) => ({ ...current, difficulty: event.target.value as WorldOptions["difficulty"] }))}><option value="peaceful">Peaceful</option><option value="easy">Easy</option><option value="normal">Normal</option><option value="hard">Hard</option></select></label>
                 <label><span>Day length <b>{worldOptions.dayLengthMinutes} min</b></span><input type="range" min="5" max="120" step="5" value={worldOptions.dayLengthMinutes} onChange={(event) => setWorldOptions((current) => ({ ...current, dayLengthMinutes: Number(event.target.value) }))} /></label>
+                <label><span>Multiplayer rest <b>{worldOptions.sleepRule === "any-player" ? "ANY" : worldOptions.sleepRule === "all-players" ? "ALL" : `${worldOptions.sleepPercentage}%`}</b></span><select value={worldOptions.sleepRule} onChange={(event) => setWorldOptions((current) => ({ ...current, sleepRule: event.target.value as WorldOptions["sleepRule"] }))}><option value="any-player">Any player</option><option value="percentage">Player percentage</option><option value="all-players">All players</option></select></label>
+                {worldOptions.sleepRule === "percentage" && <label><span>Rest vote threshold <b>{worldOptions.sleepPercentage}%</b></span><input type="range" min="10" max="100" step="10" value={worldOptions.sleepPercentage} onChange={(event) => setWorldOptions((current) => ({ ...current, sleepPercentage: Number(event.target.value) }))} /></label>}
                 <label><span>Mob density <b>{worldOptions.mobDensity.toFixed(1)}×</b></span><input type="range" min="0" max="3" step="0.25" value={worldOptions.mobDensity} onChange={(event) => setWorldOptions((current) => ({ ...current, mobDensity: Number(event.target.value) }))} /></label>
                 <label><span>Butterflies <b>{worldOptions.butterflyDensity.toFixed(1)}×</b></span><input type="range" min="0" max="4" step="0.25" value={worldOptions.butterflyDensity} onChange={(event) => setWorldOptions((current) => ({ ...current, butterflyDensity: Number(event.target.value) }))} /></label>
                 <label><span>Cave frequency <b>{worldOptions.caveFrequency.toFixed(1)}×</b></span><input type="range" min="0" max="3" step="0.25" value={worldOptions.caveFrequency} onChange={(event) => setWorldOptions((current) => ({ ...current, caveFrequency: Number(event.target.value) }))} /></label>
@@ -1001,6 +1098,36 @@ export default function VoxelGame() {
               <PixelButton onClick={() => setOverlay("help")}>Field Manual</PixelButton>
               <PixelButton className="danger-button" onClick={() => setOverlay("reset")}>Delete & Regenerate World</PixelButton>
               <PixelButton className="secondary-button" onClick={saveAndQuit}>Save & Quit to Title</PixelButton>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {overlay === "sleep" && (
+        <section className="menu-overlay sleep-overlay" aria-labelledby="sleep-title">
+          <div className="pixel-panel sleep-panel">
+            <button type="button" className="panel-close sleep-close" onClick={resume} aria-label="Leave bed menu">×</button>
+            <span className="panel-eyebrow">WILDWOOD BED · DAY {hud.day} · {hud.clock}</span>
+            <h2 id="sleep-title">Choose when to wake</h2>
+            <p className="panel-flavor">Rest can move time forward from any hour. Pick the next dawn or the next dusk; time never runs backward.</p>
+            <div className="sleep-destinations">
+              <button type="button" className="sleep-destination sleep-morning" onClick={() => restUntil("morning")}>
+                <span className="sleep-celestial sleep-sun" aria-hidden="true" />
+                <small>NEXT DAWN</small>
+                <strong>Wake in morning</strong>
+                <em>About 6:30 AM</em>
+              </button>
+              <button type="button" className="sleep-destination sleep-night" onClick={() => restUntil("night")}>
+                <span className="sleep-celestial sleep-moon" aria-hidden="true" />
+                <small>NEXT DUSK</small>
+                <strong>Wake at night</strong>
+                <em>About 6:30 PM</em>
+              </button>
+            </div>
+            <div className="sleep-policy-note">
+              <span>Multiplayer rest rule</span>
+              <strong>{engineRef.current?.getSleepStatus().rule ?? "50% of players"}</strong>
+              <small>{engineRef.current?.getSleepStatus().required ?? 1} of {engineRef.current?.getSleepStatus().onlinePlayers ?? 1} online player(s) must choose the same destination.</small>
             </div>
           </div>
         </section>
@@ -1093,22 +1220,41 @@ export default function VoxelGame() {
         <section className="menu-overlay bestiary-overlay" aria-labelledby="bestiary-title">
           <div className="mc-window bestiary-window">
             <header className="mc-window-header">
-              <div><span className="panel-eyebrow">FIELD NOTES · {MOB_ORDER.filter((kind) => hud.bestiary[kind].seen).length}/{MOB_ORDER.length} DISCOVERED</span><h2 id="bestiary-title">Bestiary</h2></div>
+              <div><span className="panel-eyebrow">FIELD NOTES · {bestiarySeen}/{MOB_ORDER.length} DISCOVERED</span><h2 id="bestiary-title">Bestiary</h2></div>
+              <div className="bestiary-header-progress" aria-label={`${bestiarySeen} of ${MOB_ORDER.length} creatures discovered`}>
+                <span><i style={{ width: `${bestiarySeen / MOB_ORDER.length * 100}%` }} /></span>
+                <strong>{Math.round(bestiarySeen / MOB_ORDER.length * 100)}%</strong>
+              </div>
               <button type="button" className="panel-close" onClick={() => setOverlay("pause")}>×</button>
             </header>
+            <div className="bestiary-toolbar">
+              <div className="bestiary-filters" role="tablist" aria-label="Bestiary categories">
+                {([['all', 'All', MOB_ORDER.length], ['creatures', 'Creatures', CORE_MOB_ORDER.length], ['winged', 'Winged', BUTTERFLY_ORDER.length]] as Array<[BestiaryFilter, string, number]>).map(([filter, label, count]) => (
+                  <button type="button" role="tab" aria-selected={bestiaryFilter === filter} className={bestiaryFilter === filter ? "active" : ""} key={filter} onClick={() => setBestiaryCategory(filter)}>{label}<small>{count}</small></button>
+                ))}
+              </div>
+              <span className="bestiary-index">ENTRY {bestiaryVisibleIndex + 1} / {bestiaryVisibleKinds.length}</span>
+            </div>
             <div className="bestiary-layout">
               <nav className="bestiary-list" aria-label="Creature list">
-                {MOB_ORDER.map((kind) => {
+                {bestiaryVisibleKinds.map((kind) => {
                   const definition = MOB_DEFS[kind];
                   const progress = hud.bestiary[kind];
                   const observation = definition.family === "butterfly" ? `${progress.captures ?? 0} captured` : `${progress.kills} kills`;
-                  return <button type="button" key={kind} className={selectedBestiary === kind ? "active" : ""} onClick={() => setSelectedBestiary(kind)}><span className={`bestiary-mini ${progress.seen ? "seen" : ""}`} style={{ "--mob-color": `#${definition.colors[0].toString(16).padStart(6, "0")}` } as CSSProperties} /><strong>{progress.seen ? definition.name : "Unknown Creature"}</strong><small>{progress.seen ? `${definition.temperament} · ${observation}` : "Undiscovered"}</small></button>;
+                  return <button type="button" key={kind} className={selectedBestiary === kind ? "active" : ""} aria-current={selectedBestiary === kind ? "true" : undefined} onClick={() => setSelectedBestiary(kind)}><CreaturePortrait kind={kind} seen={progress.seen} mini /><span className="bestiary-list-copy"><strong>{progress.seen ? definition.name : "Unknown Creature"}</strong><small>{progress.seen ? `${definition.temperament} · ${observation}` : "Undiscovered"}</small></span><i className={`temperament-dot temperament-${definition.temperament.toLowerCase()}`} aria-hidden="true" /></button>;
                 })}
               </nav>
               <article className={`bestiary-detail ${bestiaryProgress.seen ? "seen" : "unknown"}`}>
-                <div className={`bestiary-portrait bestiary-portrait-${selectedBestiary}`} style={{ "--mob-color": `#${bestiaryDefinition.colors[0].toString(16).padStart(6, "0")}`, "--mob-accent": `#${bestiaryDefinition.colors[1].toString(16).padStart(6, "0")}` } as CSSProperties}><span /><i /><b>?</b></div>
+                <div className="bestiary-portrait" key={selectedBestiary} style={{ "--mob-color": `#${bestiaryDefinition.colors[0].toString(16).padStart(6, "0")}` } as CSSProperties}>
+                  <CreaturePortrait kind={selectedBestiary} seen={bestiaryProgress.seen} />
+                  <div className="bestiary-portrait-chrome">
+                    <button type="button" onClick={() => stepBestiary(-1)} aria-label="Previous bestiary entry">‹</button>
+                    <span>{bestiaryProgress.seen ? bestiaryDefinition.habitat.split(",")[0] : "Habitat unknown"}</span>
+                    <button type="button" onClick={() => stepBestiary(1)} aria-label="Next bestiary entry">›</button>
+                  </div>
+                </div>
                 {bestiaryProgress.seen ? <>
-                  <div className="bestiary-heading"><div><span>{bestiaryDefinition.temperament.toUpperCase()}</span><h3>{bestiaryDefinition.name}</h3></div><strong>{bestiaryDefinition.family === "butterfly" ? `${bestiaryProgress.captures ?? 0} CAPTURED` : `${bestiaryProgress.kills} DEFEATED`}</strong></div>
+                  <div className="bestiary-heading"><div><span className={`temperament-label temperament-${bestiaryDefinition.temperament.toLowerCase()}`}>{bestiaryDefinition.temperament.toUpperCase()}</span><h3>{bestiaryDefinition.name}</h3></div><strong>{bestiaryDefinition.family === "butterfly" ? `${bestiaryProgress.captures ?? 0} CAPTURED` : `${bestiaryProgress.kills} DEFEATED`}</strong></div>
                   <p className="bestiary-lore">{bestiaryDefinition.lore}</p>
                   <div className="bestiary-facts"><div><small>HABITAT</small><strong>{bestiaryDefinition.habitat}</strong></div><div><small>ACTIVE</small><strong>{bestiaryDefinition.active}</strong></div><div><small>HEALTH</small><strong>{bestiaryDefinition.health} hearts</strong></div><div><small>DANGER</small><strong>{bestiaryDefinition.damage ? `${bestiaryDefinition.damage} damage` : "Harmless"}</strong></div></div>
                   <section className="behavior-note"><small>BEHAVIOR</small><p>{bestiaryDefinition.behavior}</p></section>

@@ -59,6 +59,18 @@ export enum BlockId {
   DoorXClosedUpper = 57,
   DoorXOpenLower = 58,
   DoorXOpenUpper = 59,
+  TorchWallNorth = 60,
+  TorchWallSouth = 61,
+  TorchWallEast = 62,
+  TorchWallWest = 63,
+  BedNorthFoot = 64,
+  BedNorthHead = 65,
+  BedSouthFoot = 66,
+  BedSouthHead = 67,
+  BedEastFoot = 68,
+  BedEastHead = 69,
+  BedWestFoot = 70,
+  BedWestHead = 71,
 }
 
 export const Item = {
@@ -117,6 +129,7 @@ export const Item = {
   FrostveilJar: 151,
   BloomMonarchJar: 152,
   FenLanternJar: 153,
+  WildwoodBed: 154,
 } as const;
 
 export type ItemCode = number;
@@ -145,7 +158,7 @@ export type BlockDefinition = {
   color: string;
   preferredTool: BlockTool;
   requiredTier: number;
-  shape?: "cube" | "cross" | "door" | "chest";
+  shape?: "cube" | "cross" | "torch" | "door" | "chest" | "bed";
   replaceable?: boolean;
   liquid?: "water" | "lava";
 };
@@ -228,7 +241,7 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.Cobblestone]: block(BlockId.Cobblestone, "Cobblestone", 35, 35, 35, 1.75, "#6a706f", "pickaxe", 1),
   [BlockId.CraftingTable]: block(BlockId.CraftingTable, "Crafting Table", 36, 37, 11, 1.1, "#9b6536", "axe"),
   [BlockId.Furnace]: block(BlockId.Furnace, "Furnace", 3, 38, 3, 2, "#666c6d", "pickaxe", 1),
-  [BlockId.Torch]: block(BlockId.Torch, "Torch", 39, 39, 39, 0.05, "#f4bd4f", "hand", 0, { solid: false, layer: "emissive", shape: "cross", replaceable: true }),
+  [BlockId.Torch]: block(BlockId.Torch, "Torch", 39, 39, 39, 0.05, "#f4bd4f", "hand", 0, { solid: false, layer: "emissive", shape: "torch", replaceable: true }),
   [BlockId.CopperOre]: block(BlockId.CopperOre, "Copper Ore", 40, 40, 40, 1.9, "#b16d4e", "pickaxe", 1),
   [BlockId.GoldOre]: block(BlockId.GoldOre, "Gold Ore", 41, 41, 41, 2.4, "#cda934", "pickaxe", 2),
   [BlockId.CrystalOre]: block(BlockId.CrystalOre, "Star Crystal Ore", 42, 42, 42, 3.1, "#64d6df", "pickaxe", 3),
@@ -256,7 +269,42 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.DoorXClosedUpper]: block(BlockId.DoorXClosedUpper, "Wildwood Door", 61, 61, 61, 0.9, "#9b6839", "axe", 0, { layer: "cutout", shape: "door" }),
   [BlockId.DoorXOpenLower]: block(BlockId.DoorXOpenLower, "Open Wildwood Door", 60, 60, 60, 0.9, "#9b6839", "axe", 0, { solid: false, layer: "cutout", shape: "door" }),
   [BlockId.DoorXOpenUpper]: block(BlockId.DoorXOpenUpper, "Open Wildwood Door", 61, 61, 61, 0.9, "#9b6839", "axe", 0, { solid: false, layer: "cutout", shape: "door" }),
+  [BlockId.TorchWallNorth]: block(BlockId.TorchWallNorth, "Wall Torch", 39, 39, 39, 0.05, "#f4bd4f", "hand", 0, { solid: false, layer: "emissive", shape: "torch", replaceable: true }),
+  [BlockId.TorchWallSouth]: block(BlockId.TorchWallSouth, "Wall Torch", 39, 39, 39, 0.05, "#f4bd4f", "hand", 0, { solid: false, layer: "emissive", shape: "torch", replaceable: true }),
+  [BlockId.TorchWallEast]: block(BlockId.TorchWallEast, "Wall Torch", 39, 39, 39, 0.05, "#f4bd4f", "hand", 0, { solid: false, layer: "emissive", shape: "torch", replaceable: true }),
+  [BlockId.TorchWallWest]: block(BlockId.TorchWallWest, "Wall Torch", 39, 39, 39, 0.05, "#f4bd4f", "hand", 0, { solid: false, layer: "emissive", shape: "torch", replaceable: true }),
+  [BlockId.BedNorthFoot]: block(BlockId.BedNorthFoot, "Wildwood Bed", 63, 63, 11, 0.45, "#a7463f", "axe", 0, { layer: "cutout", shape: "bed" }),
+  [BlockId.BedNorthHead]: block(BlockId.BedNorthHead, "Wildwood Bed", 63, 63, 11, 0.45, "#a7463f", "axe", 0, { layer: "cutout", shape: "bed" }),
+  [BlockId.BedSouthFoot]: block(BlockId.BedSouthFoot, "Wildwood Bed", 63, 63, 11, 0.45, "#a7463f", "axe", 0, { layer: "cutout", shape: "bed" }),
+  [BlockId.BedSouthHead]: block(BlockId.BedSouthHead, "Wildwood Bed", 63, 63, 11, 0.45, "#a7463f", "axe", 0, { layer: "cutout", shape: "bed" }),
+  [BlockId.BedEastFoot]: block(BlockId.BedEastFoot, "Wildwood Bed", 63, 63, 11, 0.45, "#a7463f", "axe", 0, { layer: "cutout", shape: "bed" }),
+  [BlockId.BedEastHead]: block(BlockId.BedEastHead, "Wildwood Bed", 63, 63, 11, 0.45, "#a7463f", "axe", 0, { layer: "cutout", shape: "bed" }),
+  [BlockId.BedWestFoot]: block(BlockId.BedWestFoot, "Wildwood Bed", 63, 63, 11, 0.45, "#a7463f", "axe", 0, { layer: "cutout", shape: "bed" }),
+  [BlockId.BedWestHead]: block(BlockId.BedWestHead, "Wildwood Bed", 63, 63, 11, 0.45, "#a7463f", "axe", 0, { layer: "cutout", shape: "bed" }),
 };
+
+export const TORCH_BLOCKS: readonly BlockId[] = [
+  BlockId.Torch,
+  BlockId.TorchWallNorth,
+  BlockId.TorchWallSouth,
+  BlockId.TorchWallEast,
+  BlockId.TorchWallWest,
+];
+
+export const BED_BLOCKS: readonly BlockId[] = [
+  BlockId.BedNorthFoot, BlockId.BedNorthHead,
+  BlockId.BedSouthFoot, BlockId.BedSouthHead,
+  BlockId.BedEastFoot, BlockId.BedEastHead,
+  BlockId.BedWestFoot, BlockId.BedWestHead,
+];
+
+export function isTorchBlock(type: BlockId | undefined): type is BlockId {
+  return type !== undefined && TORCH_BLOCKS.includes(type);
+}
+
+export function isBedBlock(type: BlockId | undefined): type is BlockId {
+  return type !== undefined && BED_BLOCKS.includes(type);
+}
 
 const tool = (
   id: ItemCode,
@@ -282,6 +330,8 @@ export const ITEMS: Record<number, ItemDefinition> = {};
 const technicalBlocks = new Set<BlockId>([
   BlockId.DoorClosedLower, BlockId.DoorClosedUpper, BlockId.DoorOpenLower, BlockId.DoorOpenUpper,
   BlockId.DoorXClosedLower, BlockId.DoorXClosedUpper, BlockId.DoorXOpenLower, BlockId.DoorXOpenUpper,
+  BlockId.TorchWallNorth, BlockId.TorchWallSouth, BlockId.TorchWallEast, BlockId.TorchWallWest,
+  ...BED_BLOCKS,
 ]);
 for (const definition of Object.values(BLOCKS)) {
   if (definition.id === BlockId.Air || definition.id === BlockId.Water || definition.id === BlockId.Lava || definition.id === BlockId.Bedrock || technicalBlocks.has(definition.id)) continue;
@@ -343,13 +393,14 @@ Object.assign(ITEMS, {
   [Item.FrostveilJar]: { id: Item.FrostveilJar, name: "Jarred Frostveil", color: "#d8f2f5", maxStack: 16, useKind: "release-creature", creatureKind: "frostveil" },
   [Item.BloomMonarchJar]: { id: Item.BloomMonarchJar, name: "Jarred Bloom Monarch", color: "#e88fc8", maxStack: 16, useKind: "release-creature", creatureKind: "bloom-monarch" },
   [Item.FenLanternJar]: { id: Item.FenLanternJar, name: "Jarred Fen Lantern", color: "#b6df62", maxStack: 16, useKind: "release-creature", creatureKind: "fen-lantern" },
+  [Item.WildwoodBed]: { id: Item.WildwoodBed, name: "Wildwood Bed", color: "#a7463f", maxStack: 1, placeBlock: BlockId.BedNorthFoot },
 } satisfies Record<number, ItemDefinition>);
 
 export const LOG_ITEMS: ItemCode[] = [BlockId.WildwoodLog, BlockId.PineLog, BlockId.BirchLog, BlockId.BloomLog];
 export const LEAF_BLOCKS: BlockId[] = [BlockId.WildwoodLeaves, BlockId.PineLeaves, BlockId.BirchLeaves, BlockId.BloomLeaves];
 export const CREATIVE_BLOCKS: ItemCode[] = [...Object.values(BLOCKS)
   .filter((definition) => ITEMS[definition.id] && !definition.replaceable && definition.id !== BlockId.WheatCrop)
-  .map((definition) => definition.id), Item.WildwoodDoor, Item.ButterflyNet, Item.MeadowwingJar, Item.AzureSkipperJar, Item.EmbertipJar, Item.FrostveilJar, Item.BloomMonarchJar, Item.FenLanternJar, Item.HideHood, Item.HideTunic, Item.HideLeggings, Item.HideBoots, Item.SunmetalHelm, Item.SunmetalPlate, Item.SunmetalGreaves, Item.SunmetalBoots];
+  .map((definition) => definition.id), Item.WildwoodDoor, Item.WildwoodBed, Item.ButterflyNet, Item.MeadowwingJar, Item.AzureSkipperJar, Item.EmbertipJar, Item.FrostveilJar, Item.BloomMonarchJar, Item.FenLanternJar, Item.HideHood, Item.HideTunic, Item.HideLeggings, Item.HideBoots, Item.SunmetalHelm, Item.SunmetalPlate, Item.SunmetalGreaves, Item.SunmetalBoots];
 
 export type Ingredient = ItemCode | ItemCode[];
 export type Recipe = {
@@ -373,6 +424,7 @@ export const RECIPES: Recipe[] = [
   { id: "furnace", name: "Furnace", width: 3, height: 3, pattern: [BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone, 0, BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone], output: { item: BlockId.Furnace, count: 1 }, table: true },
   { id: "chest", name: "Wildwood Chest", width: 3, height: 3, pattern: [BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks, 0, BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: BlockId.Chest, count: 1 }, table: true },
   { id: "door", name: "Wildwood Doors", width: 2, height: 3, pattern: [BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: Item.WildwoodDoor, count: 3 }, table: true },
+  { id: "bed", name: "Wildwood Bed", width: 3, height: 2, pattern: [Item.Wool, Item.Wool, Item.Wool, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: Item.WildwoodBed, count: 1 }, table: true },
   { id: "butterfly_net", name: "Butterfly Net", width: 3, height: 3, pattern: [Item.Fiber, Item.Fiber, Item.Fiber, Item.Fiber, 0, Item.Stick, 0, Item.Stick, 0], output: { item: Item.ButterflyNet, count: 1 }, table: true },
   { id: "wood_pick", name: "Wooden Pickaxe", width: 3, height: 3, pattern: [BlockId.Planks, BlockId.Planks, BlockId.Planks, 0, Item.Stick, 0, 0, Item.Stick, 0], output: { item: Item.WoodPickaxe, count: 1 }, table: true },
   { id: "stone_pick", name: "Stone Pickaxe", width: 3, height: 3, pattern: [BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone, 0, Item.Stick, 0, 0, Item.Stick, 0], output: { item: Item.StonePickaxe, count: 1 }, table: true },

@@ -94,6 +94,8 @@ export type DropSnapshotEntry = {
 
 export type DropSnapshot = { tick: number; drops: DropSnapshotEntry[] };
 export type TimeWeatherSnapshot = { tick: number; worldTime: number; day: number; weather: "clear" | "rain" };
+export type SleepTarget = "morning" | "night";
+export type SleepVote = { actorId: string; tick: number; target: SleepTarget; active: boolean };
 
 export type SessionWorldOptions = {
   difficulty: "peaceful" | "easy" | "normal" | "hard";
@@ -107,6 +109,8 @@ export type SessionWorldOptions = {
   weather: boolean;
   keepInventory: boolean;
   friendlyFire: boolean;
+  sleepRule?: "any-player" | "percentage" | "all-players";
+  sleepPercentage?: number;
 };
 
 export type InventoryEndpoint = {
@@ -168,6 +172,7 @@ export type MultiplayerPayloadMap = {
   "mob-snapshot": MobSnapshot;
   "drop-snapshot": DropSnapshot;
   "time-weather": TimeWeatherSnapshot;
+  "sleep-vote": SleepVote;
   "inventory-action": InventoryAction;
   "container-action": ContainerAction;
 };
@@ -302,10 +307,10 @@ type PeerRecord = {
 };
 
 const MESSAGE_TYPES = new Set<MultiplayerMessageType>([
-  "hello", "heartbeat", "goodbye", "snapshot", "player-pose", "block-action", "mob-snapshot", "drop-snapshot", "time-weather", "inventory-action", "container-action",
+  "hello", "heartbeat", "goodbye", "snapshot", "player-pose", "block-action", "mob-snapshot", "drop-snapshot", "time-weather", "sleep-vote", "inventory-action", "container-action",
 ]);
 const CONTROL_TYPES = new Set<MultiplayerMessageType>(["hello", "heartbeat", "goodbye"]);
-const GUEST_OUTBOUND_TYPES = new Set<MultiplayerMessageType>(["hello", "heartbeat", "goodbye", "player-pose", "block-action", "inventory-action", "container-action"]);
+const GUEST_OUTBOUND_TYPES = new Set<MultiplayerMessageType>(["hello", "heartbeat", "goodbye", "player-pose", "block-action", "sleep-vote", "inventory-action", "container-action"]);
 
 export class MultiplayerProtocolError extends Error {
   constructor(message: string) {
@@ -461,7 +466,9 @@ function validateSessionWorldOptions(value: unknown): value is SessionWorldOptio
     && typeof value.structures === "boolean"
     && typeof value.weather === "boolean"
     && typeof value.keepInventory === "boolean"
-    && typeof value.friendlyFire === "boolean";
+    && typeof value.friendlyFire === "boolean"
+    && (value.sleepRule === undefined || ["any-player", "percentage", "all-players"].includes(value.sleepRule as string))
+    && (value.sleepPercentage === undefined || isFiniteNumber(value.sleepPercentage, 1, 100));
 }
 
 export function validatePayload<K extends MultiplayerMessageType>(type: K, value: unknown): value is MultiplayerPayloadMap[K] {
@@ -497,6 +504,11 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
         && value.drops.every(validateDrop);
     case "time-weather":
       return validateTimeWeather(value);
+    case "sleep-vote":
+      return isId(value.actorId)
+        && isInteger(value.tick, 0, Number.MAX_SAFE_INTEGER)
+        && (value.target === "morning" || value.target === "night")
+        && typeof value.active === "boolean";
     case "inventory-action":
       return isId(value.requestId)
         && isId(value.actorId)
@@ -1092,6 +1104,7 @@ export class MultiplayerSession {
   sendMobSnapshot(payload: MobSnapshot, peerId?: string) { return this.send("mob-snapshot", payload, peerId); }
   sendDropSnapshot(payload: DropSnapshot, peerId?: string) { return this.send("drop-snapshot", payload, peerId); }
   sendTimeWeather(payload: TimeWeatherSnapshot, peerId?: string) { return this.send("time-weather", payload, peerId); }
+  sendSleepVote(payload: SleepVote, peerId?: string) { return this.send("sleep-vote", payload, peerId); }
   sendInventoryAction(payload: InventoryAction, peerId?: string) { return this.send("inventory-action", payload, peerId); }
   sendContainerAction(payload: ContainerAction, peerId?: string) { return this.send("container-action", payload, peerId); }
 
@@ -1115,6 +1128,7 @@ export class MultiplayerSession {
     if (envelope.type === "block-action" || envelope.type === "inventory-action" || envelope.type === "container-action") {
       return payload.actorId === peer.identity.id && (payload.status === undefined || payload.status === "request");
     }
+    if (envelope.type === "sleep-vote") return payload.actorId === peer.identity.id;
     return true;
   }
 

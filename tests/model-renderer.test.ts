@@ -3,12 +3,15 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { BUTTERFLY_ORDER, MOB_DEFS } from "../app/game/mobs.ts";
+import { BUTTERFLY_ORDER, CORE_MOB_ORDER, MOB_DEFS } from "../app/game/mobs.ts";
 import {
   buildInspectionSpecs,
   createButterflyInspectionSpec,
+  createMobInspectionSpecs,
   createPlayerInspectionSpecs,
   inspectGrounding,
+  renderModelPortrait,
+  renderModelPortraits,
   renderModelInspection,
 } from "../scripts/render-models.ts";
 
@@ -50,6 +53,26 @@ test("the inspector includes every butterfly species with runtime dimensions and
   }
 });
 
+test("the inspector captures all eight canonical production mob visuals", () => {
+  const specs = createMobInspectionSpecs();
+  assert.deepEqual(specs.map((spec) => spec.id), CORE_MOB_ORDER);
+  for (const spec of specs) {
+    assert.equal(spec.inspection?.source, "MobVisual");
+    assert.equal(spec.inspection?.mob, spec.id);
+    assert.ok(spec.boxes.length >= 8, `${spec.id} should retain its production detail geometry`);
+    assert.equal(inspectGrounding(spec).contact, spec.id === "glowmoth" ? "reference" : "exact");
+  }
+  const ridgeback = specs.find((spec) => spec.id === "ridgeback")!;
+  const body = ridgeback.boxes.find((box) => box.id === "ridgeback-body")!;
+  const plates = ridgeback.boxes.filter((box) => box.id.startsWith("ridgeback-plate-"));
+  const bodyTop = body.position[1] + body.size[1] / 2;
+  assert.equal(plates.length, 6);
+  for (const plate of plates) assert.ok(Math.abs(plate.position[1] - plate.size[1] / 2 - bodyTop) < 1e-7, `${plate.id} floats above the back`);
+  const portrait = renderModelPortrait(ridgeback);
+  assert.match(portrait, /front three-quarter model portrait/);
+  assert.match(portrait, /<polygon/);
+});
+
 test("the default inspection catalog appends players and butterflies without losing legacy specs", () => {
   const specs = buildInspectionSpecs();
   const ids = new Set(specs.map((spec) => spec.id));
@@ -72,6 +95,21 @@ test("render output includes screenshots plus a machine-readable grounding manif
     assert.equal(manifest.specs[1].contact, "reference");
     assert.equal(manifest.outputs.some((output) => output.format === "svg" && output.view === "iso"), true);
     assert.equal(result.files.some((file) => file.endsWith("blockwild-models-iso.svg")), true);
+  } finally {
+    await rm(out, { recursive: true, force: true });
+  }
+});
+
+test("portrait export writes individual creature renders and a clean contact sheet", async () => {
+  const out = await mkdtemp(path.join(tmpdir(), "blockwild-creature-portraits-"));
+  try {
+    const specs = createMobInspectionSpecs().slice(0, 2);
+    const result = await renderModelPortraits({ out, columns: 2, specs });
+    assert.deepEqual(result.specs, ["mossling", "ridgeback"]);
+    assert.equal(result.files.some((file) => file.endsWith("mossling.svg")), true);
+    const sheet = await readFile(result.sheetPath, "utf8");
+    assert.match(sheet, /BLOCKWILD FIELD GUIDE/);
+    assert.match(sheet, /2 specimens/);
   } finally {
     await rm(out, { recursive: true, force: true });
   }

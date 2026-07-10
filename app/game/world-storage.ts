@@ -15,6 +15,7 @@ const MAX_NAME_LENGTH = 64;
 const MAX_SEED_LENGTH = 160;
 
 export type WorldDifficulty = "peaceful" | "easy" | "normal" | "hard";
+export type SleepRule = "any-player" | "percentage" | "all-players";
 
 export type WorldOptions = {
   difficulty: WorldDifficulty;
@@ -28,6 +29,8 @@ export type WorldOptions = {
   weather: boolean;
   keepInventory: boolean;
   friendlyFire: boolean;
+  sleepRule: SleepRule;
+  sleepPercentage: number;
 };
 
 export const DEFAULT_WORLD_OPTIONS: Readonly<WorldOptions> = Object.freeze({
@@ -42,6 +45,8 @@ export const DEFAULT_WORLD_OPTIONS: Readonly<WorldOptions> = Object.freeze({
   weather: true,
   keepInventory: false,
   friendlyFire: false,
+  sleepRule: "percentage",
+  sleepPercentage: 50,
 });
 
 export type WorldMetadata = {
@@ -134,6 +139,9 @@ export function normalizeWorldOptions(value?: Partial<WorldOptions> | null): Wor
   const difficulty = ["peaceful", "easy", "normal", "hard"].includes(String(input.difficulty))
     ? input.difficulty as WorldDifficulty
     : DEFAULT_WORLD_OPTIONS.difficulty;
+  const sleepRule = ["any-player", "percentage", "all-players"].includes(String(input.sleepRule))
+    ? input.sleepRule as SleepRule
+    : DEFAULT_WORLD_OPTIONS.sleepRule;
   return {
     difficulty,
     dayLengthMinutes: normalizeNumber(input.dayLengthMinutes, DEFAULT_WORLD_OPTIONS.dayLengthMinutes, 5, 120, 1),
@@ -146,7 +154,16 @@ export function normalizeWorldOptions(value?: Partial<WorldOptions> | null): Wor
     weather: normalizeBoolean(input.weather, DEFAULT_WORLD_OPTIONS.weather),
     keepInventory: normalizeBoolean(input.keepInventory, DEFAULT_WORLD_OPTIONS.keepInventory),
     friendlyFire: normalizeBoolean(input.friendlyFire, DEFAULT_WORLD_OPTIONS.friendlyFire),
+    sleepRule,
+    sleepPercentage: normalizeNumber(input.sleepPercentage, DEFAULT_WORLD_OPTIONS.sleepPercentage, 1, 100, 0),
   };
+}
+
+export function requiredSleepers(options: Pick<WorldOptions, "sleepRule" | "sleepPercentage">, onlinePlayers: number) {
+  const players = Math.max(1, Math.floor(Number.isFinite(onlinePlayers) ? onlinePlayers : 1));
+  if (options.sleepRule === "any-player") return 1;
+  if (options.sleepRule === "all-players") return players;
+  return Math.max(1, Math.min(players, Math.ceil(players * Math.max(1, Math.min(100, options.sleepPercentage)) / 100)));
 }
 
 export function generationOptionsFromWorldOptions(value?: Partial<WorldOptions> | null): WorldGenerationOptions {

@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { BLOCKS, BlockId, type RenderLayer } from "./data";
+import { BLOCKS, TORCH_BLOCKS, BlockId, type RenderLayer } from "./data";
 
 export const CHUNK_SIZE = 16;
 export const MIN_Y = -64;
@@ -174,7 +174,7 @@ export function normalizeWorldGenerationOptions(value?: Partial<WorldGenerationO
     structures: typeof value?.structures === "boolean" ? value.structures : DEFAULT_WORLD_GENERATION_OPTIONS.structures,
   };
 }
-const LIGHT_BLOCKS = new Set<BlockId>([BlockId.Torch, BlockId.Glowstone, BlockId.CrystalBlock]);
+const LIGHT_BLOCKS = new Set<BlockId>([...TORCH_BLOCKS, BlockId.Glowstone, BlockId.CrystalBlock]);
 const ATLAS_GRID = 8;
 const ATLAS_PAD = 0.0008;
 const TILE_UVS = Array.from({ length: ATLAS_GRID * ATLAS_GRID }, (_, tile) => {
@@ -460,6 +460,26 @@ export function createBlockAtlas() {
       context.fillRect(ox + 5, oy + 5, 2, 1); context.fillRect(ox + 9, oy + 5, 2, 1);
       context.fillStyle = "#5d371f";
       context.fillRect(ox + 7, oy + 3, 2, 8); context.fillRect(ox + 3, oy + 9, 10, 2);
+    }
+    if (index === 62) {
+      context.fillStyle = "#6a3d22";
+      context.fillRect(ox, oy, 16, 16);
+      context.fillStyle = "#9a6235";
+      for (let x = 2; x < 16; x += 4) context.fillRect(ox + x, oy, 2, 16);
+      context.fillStyle = "#c18448";
+      for (let y = 1; y < 16; y += 5) context.fillRect(ox, oy + y, 16, 1);
+      context.fillStyle = "#4c2c1b";
+      context.fillRect(ox, oy, 1, 16); context.fillRect(ox + 15, oy, 1, 16);
+    }
+    if (index === 63) {
+      context.fillStyle = "#7f292c";
+      context.fillRect(ox, oy, 16, 16);
+      context.fillStyle = "#ad4141";
+      context.fillRect(ox + 1, oy + 1, 14, 14);
+      context.fillStyle = "#c55c4f";
+      for (let y = 3; y < 16; y += 5) context.fillRect(ox + 1, oy + y, 14, 1);
+      context.fillStyle = "#e9a26e";
+      for (let x = 3; x < 16; x += 6) for (let y = 2; y < 16; y += 6) context.fillRect(ox + x, oy + y, 2, 2);
     }
   }
   const texture = new THREE.CanvasTexture(canvas);
@@ -1136,7 +1156,8 @@ export class ChunkWorld {
     if (type === undefined) return false;
     return type === BlockId.Air
       || [BlockId.DoorOpenLower, BlockId.DoorOpenUpper, BlockId.DoorXOpenLower, BlockId.DoorXOpenUpper].includes(type)
-      || BLOCKS[type]?.shape === "cross";
+      || BLOCKS[type]?.shape === "cross"
+      || BLOCKS[type]?.shape === "torch";
   }
 
   biomeAt(x: number, z: number) {
@@ -1297,6 +1318,40 @@ export class ChunkWorld {
         const definition = BLOCKS[type];
         if (!definition || definition.layer === "none") continue;
         const bucket = buckets[definition.layer];
+        if (definition.shape === "torch") {
+          const tile = definition.side;
+          const environment = Math.max(0.82, shadeAt(lx, y, lz));
+          const outward = type === BlockId.TorchWallNorth ? [0, 0, -1]
+            : type === BlockId.TorchWallSouth ? [0, 0, 1]
+              : type === BlockId.TorchWallEast ? [1, 0, 0]
+                : type === BlockId.TorchWallWest ? [-1, 0, 0]
+                  : null;
+          const base = outward
+            ? [lx - outward[0] * 0.47, y - 0.18, lz - outward[2] * 0.47]
+            : [lx, y - 0.49, lz];
+          const tip = outward
+            ? [base[0] + outward[0] * 0.34, y + 0.48, base[2] + outward[2] * 0.34]
+            : [lx, y + 0.41, lz];
+          const axis = new THREE.Vector3(tip[0] - base[0], tip[1] - base[1], tip[2] - base[2]).normalize();
+          const widthA = outward
+            ? new THREE.Vector3(-outward[2], 0, outward[0]).normalize()
+            : new THREE.Vector3(1, 0, 0);
+          const widthB = new THREE.Vector3().crossVectors(axis, widthA).normalize();
+          const addTorchSprite = (width: THREE.Vector3, shade: number) => {
+            const half = width.clone().multiplyScalar(0.22);
+            const corners = [
+              [base[0] - half.x, base[1] - half.y, base[2] - half.z],
+              [tip[0] - half.x, tip[1] - half.y, tip[2] - half.z],
+              [tip[0] + half.x, tip[1] + half.y, tip[2] + half.z],
+              [base[0] + half.x, base[1] + half.y, base[2] + half.z],
+            ] as [number, number, number][];
+            const normal = new THREE.Vector3().crossVectors(width, axis).normalize();
+            addQuad(bucket, corners, [normal.x, normal.y, normal.z], tile, shade, [1, 1, 1], 0, 0, 0, 0, environment);
+          };
+          addTorchSprite(widthA, 1);
+          addTorchSprite(widthB, 0.91);
+          continue;
+        }
         if (definition.shape === "cross") {
           const tile = definition.side;
           const environment = definition.layer === "emissive" ? Math.max(0.82, shadeAt(lx, y, lz)) : shadeAt(lx, y, lz);
@@ -1327,11 +1382,51 @@ export class ChunkWorld {
             const x1 = lx + (open ? -0.34 : 0.08);
             addQuad(bucket, [[x0, y - 0.5, lz - 0.48], [x0, y + 0.5, lz - 0.48], [x0, y + 0.5, lz + 0.48], [x0, y - 0.5, lz + 0.48]], [-1, 0, 0], tile, 0.88, tint, 0, 0, 0, 0, environment);
             addQuad(bucket, [[x1, y - 0.5, lz + 0.48], [x1, y + 0.5, lz + 0.48], [x1, y + 0.5, lz - 0.48], [x1, y - 0.5, lz - 0.48]], [1, 0, 0], tile, 0.78, tint, 0, 0, 0, 0, environment);
+            addQuad(bucket, [[x0, y + 0.5, lz - 0.48], [x0, y + 0.5, lz + 0.48], [x1, y + 0.5, lz + 0.48], [x1, y + 0.5, lz - 0.48]], [0, 1, 0], 62, 0.94, tint, 0, 0, 0, 0, environment);
+            addQuad(bucket, [[x0, y - 0.5, lz + 0.48], [x0, y - 0.5, lz - 0.48], [x1, y - 0.5, lz - 0.48], [x1, y - 0.5, lz + 0.48]], [0, -1, 0], 62, 0.58, tint, 0, 0, 0, 0, environment);
+            addQuad(bucket, [[x1, y - 0.5, lz + 0.48], [x1, y + 0.5, lz + 0.48], [x0, y + 0.5, lz + 0.48], [x0, y - 0.5, lz + 0.48]], [0, 0, 1], 62, 0.84, tint, 0, 0, 0, 0, environment);
+            addQuad(bucket, [[x0, y - 0.5, lz - 0.48], [x0, y + 0.5, lz - 0.48], [x1, y + 0.5, lz - 0.48], [x1, y - 0.5, lz - 0.48]], [0, 0, -1], 62, 0.72, tint, 0, 0, 0, 0, environment);
           } else {
             const z0 = lz + (open ? -0.5 : -0.08);
             const z1 = lz + (open ? -0.34 : 0.08);
             addQuad(bucket, [[lx + 0.48, y - 0.5, z0], [lx + 0.48, y + 0.5, z0], [lx - 0.48, y + 0.5, z0], [lx - 0.48, y - 0.5, z0]], [0, 0, -1], tile, 0.9, tint, 0, 0, 0, 0, environment);
             addQuad(bucket, [[lx - 0.48, y - 0.5, z1], [lx - 0.48, y + 0.5, z1], [lx + 0.48, y + 0.5, z1], [lx + 0.48, y - 0.5, z1]], [0, 0, 1], tile, 0.8, tint, 0, 0, 0, 0, environment);
+            addQuad(bucket, [[lx - 0.48, y + 0.5, z0], [lx - 0.48, y + 0.5, z1], [lx + 0.48, y + 0.5, z1], [lx + 0.48, y + 0.5, z0]], [0, 1, 0], 62, 0.94, tint, 0, 0, 0, 0, environment);
+            addQuad(bucket, [[lx - 0.48, y - 0.5, z1], [lx - 0.48, y - 0.5, z0], [lx + 0.48, y - 0.5, z0], [lx + 0.48, y - 0.5, z1]], [0, -1, 0], 62, 0.58, tint, 0, 0, 0, 0, environment);
+            addQuad(bucket, [[lx + 0.48, y - 0.5, z0], [lx + 0.48, y + 0.5, z0], [lx + 0.48, y + 0.5, z1], [lx + 0.48, y - 0.5, z1]], [1, 0, 0], 62, 0.82, tint, 0, 0, 0, 0, environment);
+            addQuad(bucket, [[lx - 0.48, y - 0.5, z1], [lx - 0.48, y + 0.5, z1], [lx - 0.48, y + 0.5, z0], [lx - 0.48, y - 0.5, z0]], [-1, 0, 0], 62, 0.7, tint, 0, 0, 0, 0, environment);
+          }
+          continue;
+        }
+        if (definition.shape === "bed") {
+          const environment = shadeAt(lx, y, lz);
+          const direction = [BlockId.BedNorthFoot, BlockId.BedNorthHead].includes(type) ? [0, -1]
+            : [BlockId.BedSouthFoot, BlockId.BedSouthHead].includes(type) ? [0, 1]
+              : [BlockId.BedEastFoot, BlockId.BedEastHead].includes(type) ? [1, 0]
+                : [-1, 0];
+          const head = [BlockId.BedNorthHead, BlockId.BedSouthHead, BlockId.BedEastHead, BlockId.BedWestHead].includes(type);
+          const addCuboid = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, sideTile: number, topTile = sideTile, bottomTile = sideTile) => {
+            addQuad(bucket, [[x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]], [1, 0, 0], sideTile, 0.82, [1, 1, 1], 0, 0, 0, 0, environment);
+            addQuad(bucket, [[x0, y0, z1], [x0, y1, z1], [x0, y1, z0], [x0, y0, z0]], [-1, 0, 0], sideTile, 0.72, [1, 1, 1], 0, 0, 0, 0, environment);
+            addQuad(bucket, [[x0, y1, z0], [x0, y1, z1], [x1, y1, z1], [x1, y1, z0]], [0, 1, 0], topTile, 1, [1, 1, 1], 0, 0, 0, 0, environment);
+            addQuad(bucket, [[x0, y0, z1], [x0, y0, z0], [x1, y0, z0], [x1, y0, z1]], [0, -1, 0], bottomTile, 0.56, [1, 1, 1], 0, 0, 0, 0, environment);
+            addQuad(bucket, [[x1, y0, z1], [x1, y1, z1], [x0, y1, z1], [x0, y0, z1]], [0, 0, 1], sideTile, 0.88, [1, 1, 1], 0, 0, 0, 0, environment);
+            addQuad(bucket, [[x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [x1, y0, z0]], [0, 0, -1], sideTile, 0.76, [1, 1, 1], 0, 0, 0, 0, environment);
+          };
+          addCuboid(lx - 0.45, y - 0.5, lz - 0.45, lx + 0.45, y - 0.31, lz + 0.45, 62, 11, 11);
+          addCuboid(lx - 0.46, y - 0.3, lz - 0.46, lx + 0.46, y + 0.04, lz + 0.46, 63);
+          if (head) {
+            const [dx, dz] = direction;
+            const pillowX0 = dx > 0 ? lx + 0.08 : dx < 0 ? lx - 0.39 : lx - 0.34;
+            const pillowX1 = dx > 0 ? lx + 0.39 : dx < 0 ? lx - 0.08 : lx + 0.34;
+            const pillowZ0 = dz > 0 ? lz + 0.08 : dz < 0 ? lz - 0.39 : lz - 0.34;
+            const pillowZ1 = dz > 0 ? lz + 0.39 : dz < 0 ? lz - 0.08 : lz + 0.34;
+            addQuad(bucket, [[pillowX0, y + 0.055, pillowZ0], [pillowX0, y + 0.055, pillowZ1], [pillowX1, y + 0.055, pillowZ1], [pillowX1, y + 0.055, pillowZ0]], [0, 1, 0], 16, 1, [1, 1, 1], 0, 0, 0, 0, environment);
+            const boardX0 = dx > 0 ? lx + 0.39 : dx < 0 ? lx - 0.49 : lx - 0.46;
+            const boardX1 = dx > 0 ? lx + 0.49 : dx < 0 ? lx - 0.39 : lx + 0.46;
+            const boardZ0 = dz > 0 ? lz + 0.39 : dz < 0 ? lz - 0.49 : lz - 0.46;
+            const boardZ1 = dz > 0 ? lz + 0.49 : dz < 0 ? lz - 0.39 : lz + 0.46;
+            addCuboid(boardX0, y - 0.5, boardZ0, boardX1, y + 0.31, boardZ1, 62, 62, 11);
           }
           continue;
         }

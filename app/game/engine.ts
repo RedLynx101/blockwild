@@ -9,6 +9,8 @@ import {
   SMELTING,
   BlockId,
   cloneSlot,
+  isBedBlock,
+  isTorchBlock,
   itemName,
   maxStack,
   type GameMode,
@@ -30,7 +32,8 @@ import {
   type ChunkEditSave,
 } from "./world";
 import { BUTTERFLY_ORDER, MOB_DEFS, MOB_ORDER, type ButterflyKind, type MobDefinition, type MobKind } from "./mobs";
-import { RIDGEBACK_GROUND_LIFT, createHeldToolSpec, createZombieSpec } from "./model-specs";
+import { createHeldToolSpec } from "./model-specs";
+import { createMobVisual } from "./mob-models";
 import { ButterflySystem } from "./butterflies";
 import {
   BlockPlayerModel,
@@ -48,17 +51,20 @@ import {
   type PeerInfo,
   type PlayerPose,
   type WorldSnapshot,
+  type SleepTarget,
+  type SleepVote,
 } from "./multiplayer";
 import {
   DEFAULT_WORLD_OPTIONS,
   WorldStorage,
   generationOptionsFromWorldOptions,
   normalizeWorldOptions,
+  requiredSleepers,
   type WorldMetadata,
   type WorldOptions,
 } from "./world-storage";
 
-export { BLOCKS, CREATIVE_BLOCKS, ITEMS, Item, RECIPES, BlockId, BIOME_NAMES, MOB_DEFS, MOB_ORDER, WorldStorage, DEFAULT_WORLD_OPTIONS, type WorldOptions, type WorldMetadata, type GameMode, type InventorySlot, type ItemCode, type Recipe, type EquipmentSlot, type MobKind };
+export { BLOCKS, CREATIVE_BLOCKS, ITEMS, Item, RECIPES, BlockId, BIOME_NAMES, MOB_DEFS, MOB_ORDER, WorldStorage, DEFAULT_WORLD_OPTIONS, type WorldOptions, type WorldMetadata, type GameMode, type InventorySlot, type ItemCode, type Recipe, type EquipmentSlot, type MobKind, type SleepTarget };
 
 export const SAVE_KEY = "blockwild-world-v2";
 export const SETTINGS_KEY = "blockwild-settings-v2";
@@ -151,7 +157,7 @@ export type WorldSave = {
   savedAt: number;
 };
 
-export type OverlayKind = "inventory" | "crafting" | "furnace" | "chest" | "bestiary" | "multiplayer";
+export type OverlayKind = "inventory" | "crafting" | "furnace" | "chest" | "bestiary" | "multiplayer" | "sleep";
 export type CameraMode = "first" | "third-rear" | "third-front";
 
 export type MultiplayerUiState = {
@@ -292,11 +298,68 @@ const MAIN_THEN_HOTBAR = [...Array.from({ length: 27 }, (_, index) => index + 9)
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
 function environmentLightDistance(type: BlockId) {
-  return type === BlockId.Torch ? 13 : 15;
+  return isTorchBlock(type) ? 13 : 15;
 }
 
 function isEnvironmentLightBlock(type: BlockId) {
-  return type === BlockId.Torch || type === BlockId.Glowstone || type === BlockId.CrystalBlock;
+  return isTorchBlock(type) || type === BlockId.Glowstone || type === BlockId.CrystalBlock;
+}
+
+function setEnvironmentLightPosition(target: THREE.Vector3, source: Pick<EnvironmentLightSource, "x" | "y" | "z" | "type">) {
+  target.set(source.x, source.y, source.z);
+  if (!isTorchBlock(source.type)) return target;
+  target.y += 0.35;
+  if (source.type === BlockId.TorchWallNorth) target.z -= 0.2;
+  else if (source.type === BlockId.TorchWallSouth) target.z += 0.2;
+  else if (source.type === BlockId.TorchWallEast) target.x += 0.2;
+  else if (source.type === BlockId.TorchWallWest) target.x -= 0.2;
+  return target;
+}
+
+export function torchBlockForPlacement(target: Pick<VoxelHit, "x" | "y" | "z" | "placeX" | "placeY" | "placeZ">, replacingTarget = false) {
+  if (replacingTarget || target.placeY > target.y) return BlockId.Torch;
+  if (target.placeY < target.y) return null;
+  if (target.placeX > target.x) return BlockId.TorchWallEast;
+  if (target.placeX < target.x) return BlockId.TorchWallWest;
+  if (target.placeZ > target.z) return BlockId.TorchWallSouth;
+  if (target.placeZ < target.z) return BlockId.TorchWallNorth;
+  return BlockId.Torch;
+}
+
+export type BedPlacement = { foot: BlockId; head: BlockId; dx: number; dz: number };
+
+export function bedPlacementForYaw(yaw: number): BedPlacement {
+  const forwardX = -Math.sin(yaw);
+  const forwardZ = -Math.cos(yaw);
+  if (Math.abs(forwardX) > Math.abs(forwardZ)) {
+    return forwardX >= 0
+      ? { foot: BlockId.BedEastFoot, head: BlockId.BedEastHead, dx: 1, dz: 0 }
+      : { foot: BlockId.BedWestFoot, head: BlockId.BedWestHead, dx: -1, dz: 0 };
+  }
+  return forwardZ >= 0
+    ? { foot: BlockId.BedSouthFoot, head: BlockId.BedSouthHead, dx: 0, dz: 1 }
+    : { foot: BlockId.BedNorthFoot, head: BlockId.BedNorthHead, dx: 0, dz: -1 };
+}
+
+export function bedCounterpart(type: BlockId, x: number, y: number, z: number) {
+  switch (type) {
+    case BlockId.BedNorthFoot: return { x, y, z: z - 1, type: BlockId.BedNorthHead };
+    case BlockId.BedNorthHead: return { x, y, z: z + 1, type: BlockId.BedNorthFoot };
+    case BlockId.BedSouthFoot: return { x, y, z: z + 1, type: BlockId.BedSouthHead };
+    case BlockId.BedSouthHead: return { x, y, z: z - 1, type: BlockId.BedSouthFoot };
+    case BlockId.BedEastFoot: return { x: x + 1, y, z, type: BlockId.BedEastHead };
+    case BlockId.BedEastHead: return { x: x - 1, y, z, type: BlockId.BedEastFoot };
+    case BlockId.BedWestFoot: return { x: x - 1, y, z, type: BlockId.BedWestHead };
+    case BlockId.BedWestHead: return { x: x + 1, y, z, type: BlockId.BedWestFoot };
+    default: return null;
+  }
+}
+
+export function nextSleepTransition(worldTime: number, day: number, target: SleepTarget) {
+  const targetTime = target === "morning" ? 0.27 : 0.77;
+  const normalized = ((Number(worldTime) || 0) % 1 + 1) % 1;
+  const nextDay = day + (normalized + 0.0001 >= targetTime ? 1 : 0);
+  return { worldTime: targetTime, day: Math.max(1, Math.floor(nextDay)) };
 }
 
 /**
@@ -600,6 +663,7 @@ export class VoxelEngine {
   multiplayerWorldTimer = 0;
   multiplayerSnapshotTimer = 0;
   multiplayerReceivedSnapshot = false;
+  sleepVotes = new Map<string, SleepTarget>();
 
   constructor(canvas: HTMLCanvasElement, events: EngineEvents, settings = readSettings()) {
     this.canvas = canvas;
@@ -654,8 +718,8 @@ export class VoxelEngine {
     this.selection.visible = false;
     this.scene.add(this.selection);
 
-    this.sun = new THREE.Mesh(new THREE.PlaneGeometry(6.2, 6.2), new THREE.MeshBasicMaterial({ map: this.createCelestialTexture("sun"), transparent: true, alphaTest: 0.02, fog: false, depthWrite: false }));
-    this.moon = new THREE.Mesh(new THREE.PlaneGeometry(4.8, 4.8), new THREE.MeshBasicMaterial({ map: this.createCelestialTexture("moon"), transparent: true, alphaTest: 0.02, fog: false, depthWrite: false }));
+    this.sun = new THREE.Mesh(new THREE.PlaneGeometry(10.2, 10.2), new THREE.MeshBasicMaterial({ map: this.createCelestialTexture("sun"), transparent: true, alphaTest: 0.02, fog: false, depthWrite: false }));
+    this.moon = new THREE.Mesh(new THREE.PlaneGeometry(8.2, 8.2), new THREE.MeshBasicMaterial({ map: this.createCelestialTexture("moon"), transparent: true, alphaTest: 0.02, fog: false, depthWrite: false }));
     this.scene.add(this.sun, this.moon);
     this.stars = this.createStars();
     this.scene.add(this.stars);
@@ -774,11 +838,19 @@ export class VoxelEngine {
     this.look(event.movementX, event.movementY);
   };
 
+  requestPointerLockSafely() {
+    try {
+      void Promise.resolve(this.canvas.requestPointerLock()).catch(() => undefined);
+    } catch {
+      // Touch devices, embedded previews, and automation may reject pointer lock.
+    }
+  }
+
   onMouseDown = (event: MouseEvent) => {
     if (!this.running) return;
     void this.audio.unlock();
     if (!this.locked && !this.touchMode) {
-      void this.canvas.requestPointerLock();
+      this.requestPointerLockSafely();
       return;
     }
     if (event.button === 0) {
@@ -946,6 +1018,7 @@ export class VoxelEngine {
     this.craftGrid = Array.from({ length: 9 }, () => null);
     this.furnaces.clear();
     this.chests.clear();
+    this.sleepVotes.clear();
     this.clearEntities();
     this.world.reset(seed.trim() || this.randomSeed(), undefined, generationOptionsFromWorldOptions(this.worldOptions));
     const spawn = this.findSpawn();
@@ -985,6 +1058,7 @@ export class VoxelEngine {
     this.butterflyDensity = this.worldOptions.butterflyDensity;
     this.activeWorldId = worldId;
     this.worldSessionStartedAt = Date.now();
+    this.sleepVotes.clear();
     this.clearEntities();
     this.world.reset(save.seed, save.edits, generationOptionsFromWorldOptions(this.worldOptions));
     this.world.initializeAround(save.player.x, save.player.z);
@@ -1153,6 +1227,7 @@ export class VoxelEngine {
       error: "",
     };
     this.multiplayerReceivedSnapshot = false;
+    this.sleepVotes.clear();
     if (hadSession && !this.titleMode && !this.disposed) this.events.onToast("Multiplayer session closed. The host-device world remains saved locally.");
     if (!this.disposed) this.emitHud(true);
   }
@@ -1438,7 +1513,14 @@ export class VoxelEngine {
         this.sendHostWorldSnapshot(event.peer.identity.id);
         this.events.onToast(`${event.peer.identity.name} joined the session.`);
       }
-      if (["disconnected", "failed", "closed", "stale"].includes(event.peer.state) && event.peer.identity) this.removeRemotePlayer(event.peer.identity.id);
+      if (["disconnected", "failed", "closed", "stale"].includes(event.peer.state) && event.peer.identity) {
+        this.removeRemotePlayer(event.peer.identity.id);
+        this.sleepVotes.delete(event.peer.identity.id);
+        if (this.multiplayer?.role === "host") {
+          this.evaluateSleepVotes("morning");
+          this.evaluateSleepVotes("night");
+        }
+      }
       this.emitHud(true);
     } else if (event.type === "message") {
       const { envelope } = event;
@@ -1451,6 +1533,7 @@ export class VoxelEngine {
         if (this.multiplayerReceivedSnapshot) this.applyIncrementalWorldSnapshot(snapshot, event.peer);
         else this.applyInitialWorldSnapshot(snapshot, event.peer);
       } else if (envelope.type === "block-action") this.handleRemoteBlockAction(envelope.payload as BlockAction, event.peer);
+      else if (envelope.type === "sleep-vote") this.handleRemoteSleepVote(envelope.payload as SleepVote, event.peer);
       else if (envelope.type === "mob-snapshot" && this.multiplayer?.role === "guest") this.applyNetworkMobSnapshot((envelope.payload as { mobs: WorldSnapshot["mobs"] }).mobs);
       else if (envelope.type === "drop-snapshot" && this.multiplayer?.role === "guest") this.applyNetworkDropSnapshot((envelope.payload as { drops: WorldSnapshot["drops"] }).drops);
       else if (envelope.type === "time-weather" && this.multiplayer?.role === "guest") {
@@ -1510,9 +1593,7 @@ export class VoxelEngine {
     this.paused = false;
     this.titleMode = false;
     void this.audio.unlock();
-    if (!this.touchMode) {
-      try { void this.canvas.requestPointerLock(); } catch { /* Touch and embedded browsers may reject pointer lock. */ }
-    }
+    if (!this.touchMode) this.requestPointerLockSafely();
   }
 
   pause() {
@@ -1634,6 +1715,85 @@ export class VoxelEngine {
     if (!target && this.chestOpenAmount < 0.015) this.hideChestModel(true);
   }
 
+  getSleepStatus() {
+    const connected = this.multiplayer?.getPeers().filter((peer) => peer.state === "connected") ?? [];
+    const onlinePlayers = 1 + connected.length;
+    const required = requiredSleepers(this.worldOptions, onlinePlayers);
+    const rule = this.worldOptions.sleepRule === "any-player" ? "Any player"
+      : this.worldOptions.sleepRule === "all-players" ? "All players"
+        : `${this.worldOptions.sleepPercentage}% of players`;
+    return { onlinePlayers, required, rule };
+  }
+
+  private applySleepTransition(target: SleepTarget) {
+    const transition = nextSleepTransition(this.worldTime, this.day, target);
+    this.worldTime = transition.worldTime;
+    this.day = transition.day;
+    this.sleepVotes.clear();
+    this.audio.play("ui");
+    this.events.onToast(target === "morning" ? `You wake at dawn on day ${this.day}.` : `You rest until dusk on day ${this.day}.`);
+    this.saveSoon();
+    this.emitHud(true);
+    if (this.multiplayer?.role === "host") {
+      try { this.multiplayer.sendTimeWeather({ tick: this.multiplayerTick, worldTime: this.worldTime, day: this.day, weather: this.weather }); }
+      catch { /* A peer may disconnect while the vote resolves. */ }
+    }
+  }
+
+  private evaluateSleepVotes(target: SleepTarget) {
+    if (!this.multiplayer || this.multiplayer.role !== "host") return false;
+    const connectedIds = this.multiplayer.getPeers()
+      .filter((peer) => peer.state === "connected" && peer.identity)
+      .map((peer) => peer.identity!.id);
+    const onlineIds = new Set([this.multiplayer.identity.id, ...connectedIds]);
+    for (const id of [...this.sleepVotes.keys()]) if (!onlineIds.has(id)) this.sleepVotes.delete(id);
+    const votes = [...this.sleepVotes.entries()].filter(([id, vote]) => onlineIds.has(id) && vote === target).length;
+    const required = requiredSleepers(this.worldOptions, onlineIds.size);
+    if (votes >= required) {
+      this.applySleepTransition(target);
+      return true;
+    }
+    this.events.onToast(`Rest vote: ${votes}/${required} players chose ${target === "morning" ? "dawn" : "dusk"}.`);
+    return false;
+  }
+
+  sleepUntil(target: SleepTarget) {
+    if (target !== "morning" && target !== "night") return false;
+    const connected = this.multiplayer?.getPeers().some((peer) => peer.state === "connected") ?? false;
+    if (!this.multiplayer || !connected) {
+      this.applySleepTransition(target);
+      return true;
+    }
+    const vote: SleepVote = { actorId: this.multiplayer.identity.id, tick: this.multiplayerTick, target, active: true };
+    this.sleepVotes.set(vote.actorId, target);
+    try { this.multiplayer.sendSleepVote(vote); }
+    catch (error) {
+      this.multiplayerState.error = error instanceof Error ? error.message : String(error);
+      return false;
+    }
+    if (this.multiplayer.role === "host") {
+      this.evaluateSleepVotes(target);
+      return true;
+    }
+    const status = this.getSleepStatus();
+    this.events.onToast(`Rest vote sent. ${status.required} of ${status.onlinePlayers} players must choose the same destination.`);
+    return true;
+  }
+
+  private handleRemoteSleepVote(vote: SleepVote, peer: PeerInfo) {
+    if (!this.multiplayer) return;
+    if (this.multiplayer.role === "host") {
+      if (!peer.identity || vote.actorId !== peer.identity.id) return;
+      if (vote.active) this.sleepVotes.set(vote.actorId, vote.target);
+      else this.sleepVotes.delete(vote.actorId);
+      try { this.multiplayer.sendSleepVote(vote); } catch { /* A vote remains valid if another guest disconnects. */ }
+      this.evaluateSleepVotes(vote.target);
+      return;
+    }
+    if (vote.active) this.sleepVotes.set(vote.actorId, vote.target);
+    else this.sleepVotes.delete(vote.actorId);
+  }
+
   openOverlay(kind: OverlayKind, key?: string) {
     if (kind === "inventory") {
       this.craftingSize = 2;
@@ -1652,7 +1812,7 @@ export class VoxelEngine {
       this.activeChestTitle = this.activeChestKey.includes("|") ? "Large Wildwood Chest" : "Wildwood Chest";
       this.activeFurnaceKey = null;
       this.showChestModel(key, this.activeChestKey.includes("|"));
-    } else if (kind === "bestiary") {
+    } else if (kind === "bestiary" || kind === "sleep") {
       this.activeFurnaceKey = null;
       this.activeChestKey = null;
     }
@@ -2287,7 +2447,10 @@ export class VoxelEngine {
 
   pickTarget() {
     if (!this.target) return;
-    const blockItem = this.target.type as ItemCode;
+    const blockItem = isTorchBlock(this.target.type) ? BlockId.Torch
+      : this.isBed(this.target.type) ? Item.WildwoodBed
+        : this.isDoor(this.target.type) ? Item.WildwoodDoor
+          : this.target.type as ItemCode;
     const slotIndex = this.inventory.slice(0, 9).findIndex((slot) => slot?.item === blockItem);
     if (slotIndex >= 0) this.selectSlot(slotIndex);
     else if (this.mode === "builder" && ITEMS[blockItem]) this.setCreativeItem(blockItem);
@@ -2298,6 +2461,10 @@ export class VoxelEngine {
       BlockId.DoorClosedLower, BlockId.DoorClosedUpper, BlockId.DoorOpenLower, BlockId.DoorOpenUpper,
       BlockId.DoorXClosedLower, BlockId.DoorXClosedUpper, BlockId.DoorXOpenLower, BlockId.DoorXOpenUpper,
     ].includes(type);
+  }
+
+  isBed(type: BlockId) {
+    return isBedBlock(type);
   }
 
   doorIsOpen(type: BlockId) {
@@ -2392,6 +2559,7 @@ export class VoxelEngine {
     if (this.target) {
       const key = blockKey(this.target.x, this.target.y, this.target.z);
       if (this.isDoor(this.target.type)) { this.toggleDoor(this.target.x, this.target.y, this.target.z, this.target.type); return; }
+      if (this.isBed(this.target.type)) { this.openOverlay("sleep", key); return; }
       if (this.target.type === BlockId.CraftingTable) { this.openOverlay("crafting", key); return; }
       if (this.target.type === BlockId.Furnace) { this.openOverlay("furnace", key); return; }
       if (this.target.type === BlockId.Chest) { this.openOverlay("chest", key); return; }
@@ -2417,8 +2585,8 @@ export class VoxelEngine {
     const slot = this.selectedSlot();
     if (!slot) return;
     const itemDefinition = ITEMS[slot.item];
-    const type = itemDefinition?.placeBlock;
-    if (type === undefined) return;
+    const requestedType = itemDefinition?.placeBlock;
+    if (requestedType === undefined) return;
     const replacesTarget = BLOCKS[this.target.type]?.replaceable;
     const x = replacesTarget ? this.target.x : this.target.placeX;
     const y = replacesTarget ? this.target.y : this.target.placeY;
@@ -2426,8 +2594,28 @@ export class VoxelEngine {
     if (y < MIN_Y || y > MAX_Y) return;
     const current = this.world.getBlock(x, y, z);
     let replacedUpper: BlockId | undefined;
+    let replacedPartner: BlockId | undefined;
+    let type = requestedType;
     let placedEdits: Array<{ x: number; y: number; z: number; type: BlockId }>;
     if (current === undefined || (!BLOCKS[current]?.replaceable && current !== BlockId.Air)) return;
+    if (requestedType === BlockId.Torch) {
+      const orientedTorch = torchBlockForPlacement(this.target, replacesTarget);
+      if (orientedTorch === null) {
+        this.events.onToast("Torches attach to floors or walls, not ceilings.");
+        return;
+      }
+      type = orientedTorch;
+      const support = type === BlockId.Torch ? [x, y - 1, z]
+        : type === BlockId.TorchWallNorth ? [x, y, z + 1]
+          : type === BlockId.TorchWallSouth ? [x, y, z - 1]
+            : type === BlockId.TorchWallEast ? [x - 1, y, z]
+              : [x + 1, y, z];
+      const supportType = this.world.getBlock(support[0], support[1], support[2]);
+      if (!BLOCKS[supportType ?? BlockId.Air]?.solid) {
+        this.events.onToast("A torch needs a solid floor or wall.");
+        return;
+      }
+    }
     if (type === BlockId.WildwoodSapling) {
       const soil = this.world.getBlock(x, y - 1, z);
       if (![BlockId.Grass, BlockId.Dirt, BlockId.SnowyGrass, BlockId.SavannaGrass, BlockId.SwampGrass, BlockId.Farmland].includes(soil ?? BlockId.Air)) {
@@ -2435,7 +2623,26 @@ export class VoxelEngine {
         return;
       }
     }
-    if (type === BlockId.DoorClosedLower) {
+    if (requestedType === BlockId.BedNorthFoot) {
+      const bed = bedPlacementForYaw(this.yaw);
+      const headX = x + bed.dx;
+      const headZ = z + bed.dz;
+      const partner = this.world.getBlock(headX, y, headZ);
+      replacedPartner = partner;
+      const footSupport = this.world.getBlock(x, y - 1, z);
+      const headSupport = this.world.getBlock(headX, y - 1, headZ);
+      if (partner === undefined || (!BLOCKS[partner]?.replaceable && partner !== BlockId.Air)
+        || !BLOCKS[footSupport ?? BlockId.Air]?.solid || !BLOCKS[headSupport ?? BlockId.Air]?.solid) {
+        this.events.onToast("A bed needs two clear blocks on solid ground.");
+        return;
+      }
+      type = bed.foot;
+      placedEdits = [
+        { x, y, z, type: bed.foot },
+        { x: headX, y, z: headZ, type: bed.head },
+      ];
+      this.world.setBlocksBatch(placedEdits, true, true);
+    } else if (type === BlockId.DoorClosedLower) {
       const upper = this.world.getBlock(x, y + 1, z);
       replacedUpper = upper;
       const support = this.world.getBlock(x, y - 1, z);
@@ -2454,7 +2661,10 @@ export class VoxelEngine {
       this.world.setBlock(x, y, z, type, true, true);
     }
     if (BLOCKS[type].solid && this.collidesAt(this.position)) {
-      if (type === BlockId.DoorClosedLower) this.world.setBlocksBatch([{ x, y, z, type: current ?? BlockId.Air }, { x, y: y + 1, z, type: replacedUpper ?? BlockId.Air }], true, true);
+      if (requestedType === BlockId.BedNorthFoot) {
+        const partner = placedEdits[1];
+        this.world.setBlocksBatch([{ x, y, z, type: current ?? BlockId.Air }, { x: partner.x, y: partner.y, z: partner.z, type: replacedPartner ?? BlockId.Air }], true, true);
+      } else if (type === BlockId.DoorClosedLower) this.world.setBlocksBatch([{ x, y, z, type: current ?? BlockId.Air }, { x, y: y + 1, z, type: replacedUpper ?? BlockId.Air }], true, true);
       else this.world.setBlock(x, y, z, current ?? BlockId.Air, true, true);
       this.events.onToast("You cannot place a block inside yourself.");
       return;
@@ -2621,21 +2831,28 @@ export class VoxelEngine {
       const lowerY = this.doorLowerY(type, y);
       brokenEdits = [{ x, y: lowerY, z, type: BlockId.Air }, { x, y: lowerY + 1, z, type: BlockId.Air }];
       this.world.setBlocksBatch(brokenEdits, true, true);
+    } else if (this.isBed(type)) {
+      const partner = bedCounterpart(type, x, y, z);
+      brokenEdits = [{ x, y, z, type: BlockId.Air }];
+      if (partner && this.world.getBlock(partner.x, partner.y, partner.z) === partner.type) brokenEdits.push({ x: partner.x, y: partner.y, z: partner.z, type: BlockId.Air });
+      this.world.setBlocksBatch(brokenEdits, true, true);
     } else {
       brokenEdits = [{ x, y, z, type: BlockId.Air }];
       this.world.setBlock(x, y, z, BlockId.Air, true, true);
-      this.breakUnsupportedAbove(x, y, z);
     }
+    for (const edit of brokenEdits) this.breakUnsupportedAround(edit.x, edit.y, edit.z);
     this.publishBlockEdits(brokenEdits, brokenEdits.length > 1 ? "batch" : "break");
     if (this.mode === "survival") {
-      if (harvested) this.dropBlockLoot(this.isDoor(type) ? BlockId.Air : type, x, y, z);
-      else this.events.onToast(`${BLOCKS[type].name} crumbled without the right tool.`);
+      if (harvested) {
+        if (!this.isDoor(type) && !this.isBed(type)) this.dropBlockLoot(isTorchBlock(type) ? BlockId.Torch : type, x, y, z);
+      } else this.events.onToast(`${BLOCKS[type].name} crumbled without the right tool.`);
       this.damageSelectedTool();
     }
     const key = blockKey(x, y, z);
     if (isEnvironmentLightBlock(type)) this.lightRefreshTimer = 0;
     if (type === BlockId.WildwoodSapling) this.saplings.delete(key);
     if (this.isDoor(type) && this.mode === "survival") this.spawnDrop(Item.WildwoodDoor, 1, new THREE.Vector3(x, y + 0.3, z));
+    if (this.isBed(type) && this.mode === "survival" && harvested) this.spawnDrop(Item.WildwoodBed, 1, new THREE.Vector3(x, y + 0.3, z));
     if (type === BlockId.Furnace) {
       const furnace = this.furnaces.get(key);
       if (furnace) for (const slot of [furnace.input, furnace.fuel, furnace.output]) if (slot) this.spawnDrop(slot.item, slot.count, new THREE.Vector3(x, y + 0.5, z), slot.durability);
@@ -2932,11 +3149,37 @@ export class VoxelEngine {
       if (this.mode === "survival") this.spawnDrop(Item.WildwoodDoor, 1, new THREE.Vector3(x, aboveY, z));
       return;
     }
-    if (BLOCKS[above]?.shape !== "cross") return;
+    if (this.isBed(above)) {
+      const partner = bedCounterpart(above, x, aboveY, z);
+      const edits = [{ x, y: aboveY, z, type: BlockId.Air }];
+      if (partner && this.world.getBlock(partner.x, partner.y, partner.z) === partner.type) edits.push({ x: partner.x, y: partner.y, z: partner.z, type: BlockId.Air });
+      this.world.setBlocksBatch(edits, true, true);
+      this.publishBlockEdits(edits, "batch");
+      if (this.mode === "survival") this.spawnDrop(Item.WildwoodBed, 1, new THREE.Vector3(x, aboveY, z));
+      return;
+    }
+    if (BLOCKS[above]?.shape !== "cross" && above !== BlockId.Torch) return;
     this.world.setBlock(x, aboveY, z, BlockId.Air, true, true);
     this.publishBlockEdits([{ x, y: aboveY, z, type: BlockId.Air }], "break");
     if (above === BlockId.WildwoodSapling) this.saplings.delete(blockKey(x, aboveY, z));
     if (this.mode === "survival") this.dropBlockLoot(above, x, aboveY, z);
+  }
+
+  breakUnsupportedAround(x: number, y: number, z: number) {
+    this.breakUnsupportedAbove(x, y, z);
+    const wallTorches: Array<{ x: number; y: number; z: number; type: BlockId }> = [
+      { x: x + 1, y, z, type: BlockId.TorchWallEast },
+      { x: x - 1, y, z, type: BlockId.TorchWallWest },
+      { x, y, z: z + 1, type: BlockId.TorchWallSouth },
+      { x, y, z: z - 1, type: BlockId.TorchWallNorth },
+    ];
+    for (const torch of wallTorches) {
+      if (this.world.getBlock(torch.x, torch.y, torch.z) !== torch.type) continue;
+      this.world.setBlock(torch.x, torch.y, torch.z, BlockId.Air, true, true);
+      this.publishBlockEdits([{ x: torch.x, y: torch.y, z: torch.z, type: BlockId.Air }], "break");
+      if (this.mode === "survival") this.spawnDrop(BlockId.Torch, 1, new THREE.Vector3(torch.x, torch.y + 0.25, torch.z));
+      this.lightRefreshTimer = 0;
+    }
   }
 
   blockUnderfoot() {
@@ -3003,136 +3246,7 @@ export class VoxelEngine {
   }
 
   createMobVisual(kind: MobKind, id: number) {
-    const group = new THREE.Group();
-    const visual = new THREE.Group();
-    group.add(visual);
-    const parts: Record<string, THREE.Object3D[]> = { legs: [], wings: [], arms: [], head: [], body: [] };
-    const [bodyColor, accentColor, eyeColor] = MOB_DEFS[kind].colors;
-    const bodyMaterial = new THREE.MeshLambertMaterial({ color: bodyColor });
-    const accentMaterial = new THREE.MeshLambertMaterial({ color: accentColor });
-    const eyeMaterial = new THREE.MeshBasicMaterial({ color: eyeColor });
-    const darkMaterial = new THREE.MeshLambertMaterial({ color: new THREE.Color(bodyColor).multiplyScalar(0.62) });
-    const add = (parent: THREE.Object3D, size: [number, number, number], material: THREE.Material, position: [number, number, number], part?: string) => {
-      const geometry = new THREE.BoxGeometry(...size);
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.position.set(...position);
-      mesh.userData.mobId = id;
-      parent.add(mesh);
-      if (part) {
-        mesh.userData.bodyPart = part;
-        parts[part].push(mesh);
-      }
-      return mesh;
-    };
-    const pivotBox = (size: [number, number, number], material: THREE.Material, pivotPosition: [number, number, number], meshOffset: [number, number, number], part: string) => {
-      const pivot = new THREE.Group();
-      pivot.position.set(...pivotPosition);
-      visual.add(pivot);
-      const mesh = add(pivot, size, material, meshOffset);
-      mesh.userData.bodyPart = part;
-      parts[part].push(pivot);
-      return pivot;
-    };
-    if (kind === "mossling") {
-      add(visual, [0.64, 0.44, 0.56], bodyMaterial, [0, 0.1, 0], "body");
-      add(visual, [0.42, 0.34, 0.36], accentMaterial, [0, 0.28, -0.34], "head");
-      add(visual, [0.08, 0.08, 0.04], eyeMaterial, [-0.12, 0.32, -0.53]); add(visual, [0.08, 0.08, 0.04], eyeMaterial, [0.12, 0.32, -0.53]);
-      for (const [px, pz, phase] of [[-0.2, -0.05, 0], [0.2, -0.05, Math.PI]] as Array<[number, number, number]>) { const leg = pivotBox([0.16, 0.3, 0.16], darkMaterial, [px, -0.1, pz], [0, -0.15, 0], "legs"); leg.userData.phase = phase; }
-      for (const [px, py, pz, scale] of [[-0.18, 0.5, -0.03, 0.24], [0.12, 0.55, 0.02, 0.28], [0, 0.48, -0.18, 0.2]] as Array<[number, number, number, number]>) add(visual, [scale, 0.08, scale * 1.35], accentMaterial, [px, py, pz]);
-    } else if (kind === "ridgeback") {
-      visual.position.y = RIDGEBACK_GROUND_LIFT;
-      add(visual, [0.88, 0.62, 1.32], bodyMaterial, [0, 0.08, 0.05], "body");
-      add(visual, [0.64, 0.5, 0.62], accentMaterial, [0, 0.1, -0.8], "head");
-      add(visual, [0.48, 0.3, 0.38], darkMaterial, [0, -0.03, -1.18]);
-      add(visual, [0.07, 0.08, 0.04], eyeMaterial, [-0.19, 0.2, -1.13]); add(visual, [0.07, 0.08, 0.04], eyeMaterial, [0.19, 0.2, -1.13]);
-      add(visual, [0.08, 0.1, 0.3], new THREE.MeshLambertMaterial({ color: 0xe8d8af }), [-0.27, -0.03, -1.35]); add(visual, [0.08, 0.1, 0.3], new THREE.MeshLambertMaterial({ color: 0xe8d8af }), [0.27, -0.03, -1.35]);
-      for (let plate = 0; plate < 5; plate += 1) add(visual, [0.36 - plate * 0.025, 0.2, 0.16], darkMaterial, [0, 0.52, -0.4 + plate * 0.26]);
-      for (const [px, pz, phase] of [[-0.31, -0.38, 0], [0.31, -0.38, Math.PI], [-0.31, 0.42, Math.PI], [0.31, 0.42, 0]] as Array<[number, number, number]>) { const leg = pivotBox([0.18, 0.48, 0.2], bodyMaterial, [px, -0.18, pz], [0, -0.24, 0], "legs"); leg.userData.phase = phase; }
-      const tail = pivotBox([0.12, 0.12, 0.48], darkMaterial, [0, 0.24, 0.72], [0, 0, 0.24], "body"); tail.rotation.x = 0.55;
-    } else if (kind === "woolhorn") {
-      add(visual, [1.02, 0.84, 1.05], bodyMaterial, [0, 0.12, 0.08], "body");
-      add(visual, [0.58, 0.54, 0.5], accentMaterial, [0, 0.2, -0.67], "head");
-      add(visual, [0.08, 0.08, 0.04], eyeMaterial, [-0.18, 0.28, -0.93]); add(visual, [0.08, 0.08, 0.04], eyeMaterial, [0.18, 0.28, -0.93]);
-      for (const side of [-1, 1]) {
-        add(visual, [0.18, 0.18, 0.48], darkMaterial, [side * 0.4, 0.42, -0.64]);
-        add(visual, [0.22, 0.36, 0.18], darkMaterial, [side * 0.5, 0.28, -0.78]);
-      }
-      for (const [px, pz, phase] of [[-0.34, -0.3, 0], [0.34, -0.3, Math.PI], [-0.34, 0.34, Math.PI], [0.34, 0.34, 0]] as Array<[number, number, number]>) { const leg = pivotBox([0.16, 0.48, 0.16], accentMaterial, [px, -0.2, pz], [0, -0.24, 0], "legs"); leg.userData.phase = phase; }
-    } else if (kind === "glowmoth") {
-      add(visual, [0.24, 0.22, 0.42], bodyMaterial, [0, 0, -0.02], "body");
-      add(visual, [0.2, 0.2, 0.22], darkMaterial, [0, 0.02, -0.31], "head");
-      add(visual, [0.16, 0.16, 0.2], new THREE.MeshBasicMaterial({ color: 0xffdb59 }), [0, 0, 0.28]);
-      for (const side of [-1, 1]) for (const front of [-1, 1]) {
-        const wing = pivotBox([0.56, 0.045, front < 0 ? 0.42 : 0.32], new THREE.MeshLambertMaterial({ color: accentColor, transparent: true, opacity: 0.78 }), [side * 0.12, 0.05, front * 0.12], [side * 0.28, 0, front * 0.05], "wings");
-        wing.userData.side = side;
-        wing.userData.phase = front < 0 ? 0 : Math.PI;
-      }
-      for (const side of [-1, 1]) { const antenna = add(visual, [0.035, 0.035, 0.34], accentMaterial, [side * 0.08, 0.15, -0.43]); antenna.rotation.x = -0.55; antenna.rotation.z = side * 0.18; }
-    } else if (kind === "shadecrawler") {
-      add(visual, [0.86, 0.34, 0.9], bodyMaterial, [0, 0, 0.24], "body");
-      add(visual, [0.72, 0.3, 0.62], accentMaterial, [0, 0.03, -0.48], "head");
-      for (const ex of [-0.2, 0, 0.2]) add(visual, [0.075, 0.075, 0.04], eyeMaterial, [ex, 0.12, -0.81]);
-      for (const side of [-1, 1]) for (let legIndex = 0; legIndex < 4; legIndex += 1) {
-        const z = -0.46 + legIndex * 0.3;
-        const leg = pivotBox([0.56, 0.08, 0.1], darkMaterial, [side * 0.34, -0.05, z], [side * 0.28, -0.08, 0], "legs");
-        leg.rotation.z = side * -0.42;
-        leg.userData.phase = (legIndex % 2) * Math.PI;
-        leg.userData.side = side;
-      }
-    } else if (kind === "caveblob") {
-      add(visual, [0.82, 0.58, 0.82], bodyMaterial, [0, -0.02, 0], "body");
-      add(visual, [0.58, 0.4, 0.58], accentMaterial, [0, 0.34, -0.03], "body");
-      add(visual, [0.22, 0.2, 0.22], new THREE.MeshBasicMaterial({ color: 0xb9ffd9 }), [0, 0.22, 0.03]);
-      add(visual, [0.12, 0.12, 0.04], eyeMaterial, [-0.18, 0.37, -0.34]); add(visual, [0.12, 0.12, 0.04], eyeMaterial, [0.18, 0.37, -0.34]);
-    } else if (kind === "rattlekin") {
-      add(visual, [0.42, 0.32, 0.32], darkMaterial, [0, 0.35, 0], "body");
-      for (let rib = 0; rib < 3; rib += 1) add(visual, [0.72 - rib * 0.08, 0.08, 0.16], bodyMaterial, [0, 0.62 + rib * 0.16, 0]);
-      add(visual, [0.54, 0.5, 0.48], bodyMaterial, [0, 1.16, -0.04], "head");
-      add(visual, [0.12, 0.12, 0.05], eyeMaterial, [-0.16, 1.25, -0.3]); add(visual, [0.12, 0.12, 0.05], eyeMaterial, [0.16, 1.25, -0.3]);
-      for (const [px, phase] of [[-0.18, 0], [0.18, Math.PI]] as Array<[number, number]>) { const leg = pivotBox([0.16, 0.78, 0.18], bodyMaterial, [px, 0.32, 0], [0, -0.39, 0], "legs"); leg.userData.phase = phase; }
-      for (const side of [-1, 1]) { const arm = pivotBox([0.14, 0.72, 0.14], bodyMaterial, [side * 0.42, 0.9, 0], [0, -0.36, 0], "arms"); arm.userData.side = side; arm.userData.phase = side < 0 ? 0 : Math.PI; }
-      const club = add(parts.arms[1], [0.2, 0.86, 0.2], accentMaterial, [0, -0.76, -0.06]); club.rotation.z = -0.18;
-    } else {
-      const zombie = createZombieSpec();
-      const limbPivotPositions: Record<string, [number, number, number]> = {
-        leftLeg: [-0.16, 0.74, 0], rightLeg: [0.16, 0.74, 0],
-        leftArm: [-0.445, 1.25, 0.09], rightArm: [0.445, 1.25, 0.09],
-      };
-      const limbPivots = new Map<string, THREE.Group>();
-      for (const modelBox of zombie.boxes) {
-        const material = modelBox.emissive
-          ? new THREE.MeshBasicMaterial({ color: modelBox.color })
-          : new THREE.MeshLambertMaterial({ color: modelBox.color });
-        const semantic = modelBox.part.includes("Leg") ? "legs"
-          : modelBox.part.includes("Arm") ? "arms"
-            : modelBox.part === "head" ? "head" : "body";
-        const pivotPosition = limbPivotPositions[modelBox.part];
-        let parent: THREE.Object3D = visual;
-        let position = [...modelBox.position] as [number, number, number];
-        if (pivotPosition) {
-          let pivot = limbPivots.get(modelBox.part);
-          if (!pivot) {
-            pivot = new THREE.Group();
-            pivot.position.set(...pivotPosition);
-            pivot.userData.phase = modelBox.part === "leftLeg" || modelBox.part === "leftArm" ? 0 : Math.PI;
-            visual.add(pivot);
-            parts[semantic].push(pivot);
-            limbPivots.set(modelBox.part, pivot);
-          }
-          parent = pivot;
-          position = [modelBox.position[0] - pivotPosition[0], modelBox.position[1] - pivotPosition[1], modelBox.position[2] - pivotPosition[2]];
-        }
-        const mesh = add(parent, [...modelBox.size] as [number, number, number], material, position, pivotPosition ? undefined : semantic);
-        mesh.rotation.set(...(modelBox.rotation ?? [0, 0, 0]));
-        mesh.userData.bodyPart = modelBox.part;
-      }
-      bodyMaterial.dispose();
-      accentMaterial.dispose();
-      eyeMaterial.dispose();
-      darkMaterial.dispose();
-    }
-    group.userData.mobId = id;
-    return { group, visual, parts };
+    return createMobVisual(kind, id);
   }
 
   spawnMob(kind: MobKind, position: THREE.Vector3) {
@@ -3569,9 +3683,9 @@ export class VoxelEngine {
   configureEnvironmentLight(light: THREE.PointLight, source: EnvironmentLightCandidate) {
     const crystal = source.type === BlockId.CrystalBlock;
     light.color.setHex(crystal ? 0x69e8ef : source.type === BlockId.Glowstone ? 0xffd66b : 0xffb45e);
-    light.position.set(source.x, source.y + (source.type === BlockId.Torch ? 0.35 : 0), source.z);
+    setEnvironmentLightPosition(light.position, source);
     light.distance = environmentLightDistance(source.type);
-    light.userData.targetIntensity = source.type === BlockId.Torch ? 1.75 : crystal ? 1.05 : 1.45;
+    light.userData.targetIntensity = isTorchBlock(source.type) ? 1.75 : crystal ? 1.05 : 1.45;
     light.userData.phase = source.x * 0.73 + source.y * 0.37 + source.z * 0.19;
     light.userData.sourceX = source.x;
     light.userData.sourceY = source.y;
@@ -3595,7 +3709,7 @@ export class VoxelEngine {
     while (this.environmentLightCandidates.length) this.environmentLightCandidateCache.push(this.environmentLightCandidates.pop()!);
     for (const source of sources) {
       const lightDistance = environmentLightDistance(source.type);
-      this.lightSourcePosition.set(source.x, source.y + (source.type === BlockId.Torch ? 0.35 : 0), source.z);
+      setEnvironmentLightPosition(this.lightSourcePosition, source);
       this.lightInfluenceSphere.center.copy(this.lightSourcePosition);
       this.lightInfluenceSphere.radius = lightDistance;
       if (!this.lightFrustum.intersectsSphere(this.lightInfluenceSphere)) continue;
@@ -3748,7 +3862,16 @@ export class VoxelEngine {
     const atSea = underwater || biome === BiomeId.Ocean || biome === BiomeId.DeepOcean || biome === BiomeId.Beach;
     const lively = [BiomeId.Meadow, BiomeId.Wildwood, BiomeId.Savanna, BiomeId.Birchlight, BiomeId.Bloomwood].includes(biome);
     const skyChallenge = this.combatMusicTimer > 0 || (biome === BiomeId.Highlands && this.position.y > 57 && daylight > 0.35);
-    this.audio.setMusicScene(skyChallenge ? "skyboss" : atSea ? "sea" : daylight < 0.24 ? "night" : lively ? "hoppin" : "day", dt);
+    const alternateScore = (this.day + biome) % 2 === 0;
+    const explorationScore = this.day % 3 === 0
+      ? "hoppin"
+      : alternateScore ? "wildwoodA" : "wildwoodB";
+    const musicScene = skyChallenge ? "skyboss"
+      : atSea ? "sea"
+        : underground ? (alternateScore ? "emberdeepA" : "emberdeepB")
+          : daylight < 0.24 ? "night"
+            : lively ? explorationScore : "day";
+    this.audio.setMusicScene(musicScene, dt);
   }
 
   updateRain(dt: number) {
@@ -3960,6 +4083,10 @@ export class VoxelEngine {
         } else if (item === Item.WildwoodDoor) {
           addBox([0.08, 0.62, 0.38], [0, 0.04, 0], definition.color, [0.08, 0.3, -0.08]);
           addBox([0.09, 0.08, 0.09], [-0.07, 0.02, 0.16], 0xe9c366, [0.08, 0.3, -0.08], true);
+        } else if (item === Item.WildwoodBed) {
+          addBox([0.48, 0.1, 0.3], [0, -0.08, 0], 0x8b5632, [0.1, 0.28, -0.08]);
+          addBox([0.45, 0.13, 0.28], [0, 0.03, 0], definition.color, [0.1, 0.28, -0.08]);
+          addBox([0.13, 0.04, 0.24], [-0.13, 0.11, -0.02], 0xe8e1d2, [0.1, 0.28, -0.08]);
         } else if (definition.toolKind) {
           const toolGroup = new THREE.Group();
           const spec = createHeldToolSpec(definition.toolKind, definition.color, definition.name);

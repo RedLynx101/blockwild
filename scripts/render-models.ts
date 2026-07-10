@@ -3,7 +3,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import * as THREE from "three";
 import { INSPECTOR_MODEL_SPECS, assertModelSpec, type ModelBox, type ModelSpec } from "../app/game/model-specs.ts";
-import { BUTTERFLY_ORDER, MOB_DEFS, type ButterflyKind } from "../app/game/mobs.ts";
+import { createMobVisual } from "../app/game/mob-models.ts";
+import { BUTTERFLY_ORDER, CORE_MOB_ORDER, MOB_DEFS, type ButterflyKind, type CoreMobKind } from "../app/game/mobs.ts";
 import { BlockPlayerModel, type PlayerAnimation } from "../app/game/player-model.ts";
 
 export type ViewName = "iso" | "front" | "side";
@@ -23,9 +24,10 @@ type Face = {
   emissive: boolean;
 };
 export type InspectionMetadata = {
-  source: "model-specs" | "BlockPlayerModel" | "ButterflySystem";
+  source: "model-specs" | "BlockPlayerModel" | "MobVisual" | "ButterflySystem";
   pose?: "standing" | "crouching" | "running" | "mining";
   variant?: ButterflyKind;
+  mob?: CoreMobKind;
 };
 export type InspectionModelSpec = ModelSpec & { inspection?: InspectionMetadata };
 export type InspectionManifest = {
@@ -197,9 +199,47 @@ export function createButterflyInspectionSpec(kind: ButterflyKind): InspectionMo
   } as InspectionModelSpec) as InspectionModelSpec;
 }
 
+function disposeObject(root: THREE.Object3D) {
+  const materials = new Set<THREE.Material>();
+  root.traverse((object) => {
+    if (!(object instanceof THREE.Mesh)) return;
+    object.geometry.dispose();
+    for (const material of Array.isArray(object.material) ? object.material : [object.material]) materials.add(material);
+  });
+  for (const material of materials) material.dispose();
+}
+
+/** Captures all eight production mob models, after a neutral pose and grounding. */
+export function createMobInspectionSpecs(): InspectionModelSpec[] {
+  return CORE_MOB_ORDER.map((kind, index) => {
+    const model = createMobVisual(kind, -(index + 1));
+    model.group.updateMatrixWorld(true);
+    const airborne = kind === "glowmoth";
+    if (!airborne) {
+      const bounds = new THREE.Box3().setFromObject(model.visual);
+      model.visual.position.y -= bounds.min.y;
+      model.group.updateMatrixWorld(true);
+    }
+    const spec = objectToInspectionSpec(model.group, {
+      id: kind,
+      label: MOB_DEFS[kind].name,
+      category: "mob",
+      front: "-z",
+      groundY: airborne ? undefined : 0,
+      inspection: { source: "MobVisual", mob: kind },
+    });
+    disposeObject(model.group);
+    return spec;
+  });
+}
+
 export function buildInspectionSpecs(): InspectionModelSpec[] {
-  const base = INSPECTOR_MODEL_SPECS.map((spec) => ({ ...spec, inspection: { source: "model-specs" as const } }));
-  return [...base, ...createPlayerInspectionSpecs(), ...BUTTERFLY_ORDER.map(createButterflyInspectionSpec)];
+  // Ridgeback and Zombie are legacy standalone specs. The catalog substitutes
+  // production captures so all eight creatures are sourced from gameplay code.
+  const base = INSPECTOR_MODEL_SPECS
+    .filter((spec) => spec.id !== "ridgeback" && spec.id !== "zombie")
+    .map((spec) => ({ ...spec, inspection: { source: "model-specs" as const } }));
+  return [...base, ...createMobInspectionSpecs(), ...createPlayerInspectionSpecs(), ...BUTTERFLY_ORDER.map(createButterflyInspectionSpec)];
 }
 
 function escapeXml(value: string) {
@@ -212,6 +252,10 @@ function parseArguments() {
   let columns = 4;
   let views: ViewName[] = ["iso", "front", "side"];
   let requestedIds: string[] | null = null;
+  let creaturesOnly = false;
+  let portraits: string | null = null;
+  let portraitOnly = false;
+  let portraitPng = false;
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--out" && args[index + 1]) out = path.resolve(args[++index]);
@@ -220,15 +264,24 @@ function parseArguments() {
       const candidates = args[++index].split(",").filter((candidate): candidate is ViewName => ["iso", "front", "side"].includes(candidate));
       if (candidates.length) views = [...new Set(candidates)];
     } else if ((argument === "--ids" || argument === "--spec") && args[index + 1]) requestedIds = args[++index].split(",").filter(Boolean);
+    else if (argument === "--creatures") creaturesOnly = true;
+    else if (argument === "--portraits" && args[index + 1]) portraits = path.resolve(args[++index]);
+    else if (argument === "--portrait-only") portraitOnly = true;
+    else if (argument === "--portrait-png") portraitPng = true;
     else if (argument === "--help") {
-      process.stdout.write("Render Blockwild model inspection sheets and JSON manifest.\n\n  node --import tsx scripts/render-models.ts [--out DIR] [--views iso,front,side] [--ids player-running,butterfly-meadowwing] [--columns 4]\n");
+      process.stdout.write("Render Blockwild model inspection sheets, creature portraits, and a JSON manifest.\n\n  node --import tsx scripts/render-models.ts [--out DIR] [--views iso,front,side] [--ids ridgeback,player-running] [--creatures] [--columns 4] [--portraits DIR] [--portrait-only] [--portrait-png]\n");
       process.exit(0);
     }
   }
   const availableSpecs = buildInspectionSpecs();
-  const specs = requestedIds ? availableSpecs.filter((spec) => requestedIds.includes(spec.id)) : availableSpecs;
+  const specs = requestedIds
+    ? availableSpecs.filter((spec) => requestedIds.includes(spec.id))
+    : creaturesOnly
+      ? availableSpecs.filter((spec) => spec.category === "mob")
+      : availableSpecs;
   if (!specs.length) throw new Error(`No model specs matched: ${requestedIds?.join(", ") ?? "(none)"}`);
-  return { out, columns, views, specs };
+  if (portraitOnly && !portraits) throw new Error("--portrait-only requires --portraits DIR.");
+  return { out, columns, views, specs, portraits, portraitOnly, portraitPng };
 }
 
 function projectionFor(view: ViewName, targetY: number): Projection {
@@ -470,6 +523,117 @@ function renderContactSheet(specs: readonly ModelSpec[], columns: number, view: 
 </svg>`;
 }
 
+const PORTRAIT_WIDTH = 640;
+const PORTRAIT_HEIGHT = 420;
+
+function portraitProjection(targetY: number): Projection {
+  const target = new THREE.Vector3(0, targetY, 0);
+  // The model front is local -Z. A positive-X offset exposes just enough side
+  // plane to read as a dimensional specimen without losing its face.
+  const camera = new THREE.Vector3(4.2, targetY + 1.75, -7.4);
+  const forward = target.clone().sub(camera).normalize();
+  const right = forward.clone().cross(new THREE.Vector3(0, 1, 0)).normalize();
+  const up = right.clone().cross(forward).normalize();
+  return { camera, target, right, up, forward };
+}
+
+/** Renders a clean, transparent, front-three-quarter portrait from a model spec. */
+export function renderModelPortrait(spec: ModelSpec) {
+  assertModelSpec(spec);
+  const { bounds, centerY } = modelBounds(spec);
+  const projection = portraitProjection(centerY);
+  const faces = modelFaces(spec, projection);
+  const rawPoints = spec.boxes.flatMap((modelBox) => boxVertices(modelBox).vertices).map((point) => rawProject(point, projection));
+  const minX = Math.min(...rawPoints.map((point) => point.x));
+  const maxX = Math.max(...rawPoints.map((point) => point.x));
+  const minY = Math.min(...rawPoints.map((point) => point.y));
+  const maxY = Math.max(...rawPoints.map((point) => point.y));
+  const horizontalSpan = Math.max(0.08, maxX - minX);
+  const verticalSpan = Math.max(0.08, maxY - minY);
+  const draw = { x: 48, y: 24, width: PORTRAIT_WIDTH - 96, height: PORTRAIT_HEIGHT - 70 };
+  const scale = Math.min(draw.width / horizontalSpan, draw.height / verticalSpan);
+  const offsetX = draw.x + draw.width / 2 - ((minX + maxX) / 2) * scale;
+  const offsetY = draw.y + draw.height / 2 - ((minY + maxY) / 2) * scale;
+  const project = (point: THREE.Vector3) => {
+    const projected = rawProject(point, projection);
+    return { x: offsetX + projected.x * scale, y: offsetY + projected.y * scale };
+  };
+  const groundCenter = project(new THREE.Vector3((bounds.min.x + bounds.max.x) / 2, spec.groundY ?? bounds.min.y, (bounds.min.z + bounds.max.z) / 2));
+  const modelWidth = Math.min(PORTRAIT_WIDTH * 0.7, horizontalSpan * scale * 0.72);
+  const polygons = faces.map((face) => {
+    const points = face.points.map(project).map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(" ");
+    return `<polygon points="${points}" fill="${face.color}" stroke="${face.emissive ? "#ffe59a" : "#1c211e"}" stroke-opacity="${face.emissive ? ".74" : ".68"}" stroke-width="1.35" stroke-linejoin="round" vector-effect="non-scaling-stroke"${face.emissive ? " filter=\"url(#portrait-glow)\"" : ""}/>`;
+  }).join("");
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${PORTRAIT_WIDTH}" height="${PORTRAIT_HEIGHT}" viewBox="0 0 ${PORTRAIT_WIDTH} ${PORTRAIT_HEIGHT}" role="img" aria-labelledby="portrait-title">
+  <title id="portrait-title">${escapeXml(spec.label)} front three-quarter model portrait</title>
+  <defs>
+    <filter id="portrait-glow" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="4" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter id="portrait-shadow" x="-40%" y="-80%" width="180%" height="260%"><feGaussianBlur stdDeviation="8"/></filter>
+  </defs>
+${spec.groundY === undefined ? "" : `  <ellipse cx="${groundCenter.x.toFixed(2)}" cy="${Math.min(PORTRAIT_HEIGHT - 20, groundCenter.y + 10).toFixed(2)}" rx="${Math.max(34, modelWidth).toFixed(2)}" ry="13" fill="#0c120f" opacity=".32" filter="url(#portrait-shadow)"/>\n`}
+  <g>${polygons}</g>
+</svg>`;
+}
+
+function renderPortraitSheet(specs: readonly InspectionModelSpec[], rendered: ReadonlyMap<string, string>, requestedColumns = 4) {
+  const columns = Math.min(Math.max(1, requestedColumns), specs.length);
+  const tileWidth = 360;
+  const tileHeight = 310;
+  const headerHeight = 100;
+  const rows = Math.ceil(specs.length / columns);
+  const width = columns * tileWidth;
+  const height = headerHeight + rows * tileHeight;
+  const tiles = specs.map((spec, index) => {
+    const x = (index % columns) * tileWidth;
+    const y = headerHeight + Math.floor(index / columns) * tileHeight;
+    const portrait = rendered.get(spec.id) ?? "";
+    const data = Buffer.from(portrait, "utf8").toString("base64");
+    const mobKey = (spec.inspection?.mob ?? spec.inspection?.variant ?? spec.id.replace(/^butterfly-/, "")) as keyof typeof MOB_DEFS;
+    const definition = spec.category === "mob" && mobKey in MOB_DEFS ? MOB_DEFS[mobKey] : undefined;
+    return `<g transform="translate(${x} ${y})">
+      <rect x="8" y="8" width="${tileWidth - 16}" height="${tileHeight - 16}" rx="18" fill="#171d1a" stroke="#39473e" stroke-width="2"/>
+      <image href="data:image/svg+xml;base64,${data}" x="18" y="16" width="${tileWidth - 36}" height="${tileHeight - 82}" preserveAspectRatio="xMidYMid meet"/>
+      <text x="24" y="${tileHeight - 42}" fill="#f2ebd7" font-family="ui-sans-serif, system-ui, sans-serif" font-size="20" font-weight="800">${escapeXml(spec.label.replace(/^Butterfly · /, ""))}</text>
+      <text x="24" y="${tileHeight - 21}" fill="#95a99b" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" font-weight="700" letter-spacing="1.4">${escapeXml(definition ? `${definition.temperament.toUpperCase()} · ${definition.active.toUpperCase()}` : spec.category.toUpperCase())}</text>
+    </g>`;
+  }).join("");
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+  <rect width="100%" height="100%" fill="#0c100e"/>
+  <text x="28" y="43" fill="#e5bd68" font-family="ui-sans-serif, system-ui, sans-serif" font-size="26" font-weight="900" letter-spacing="1.8">BLOCKWILD FIELD GUIDE</text>
+  <text x="28" y="70" fill="#99a79e" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">Production creature models · front three-quarter portraits · ${specs.length} specimens</text>
+  ${tiles}
+</svg>`;
+}
+
+export async function renderModelPortraits(options: { out: string; columns?: number; specs: InspectionModelSpec[]; png?: boolean }) {
+  const { out, specs, columns = 4, png = false } = options;
+  await mkdir(out, { recursive: true });
+  const files: string[] = [];
+  const rendered = new Map<string, string>();
+  for (const spec of specs) {
+    const svg = renderModelPortrait(spec);
+    rendered.set(spec.id, svg);
+    const svgPath = path.join(out, `${spec.id}.svg`);
+    await writeFile(svgPath, svg, "utf8");
+    files.push(svgPath);
+    if (png) {
+      const pngPath = path.join(out, `${spec.id}.png`);
+      if (await writePng(svg, pngPath)) files.push(pngPath);
+    }
+  }
+  const sheet = renderPortraitSheet(specs, rendered, columns);
+  const sheetPath = path.join(out, "blockwild-creatures.svg");
+  await writeFile(sheetPath, sheet, "utf8");
+  files.push(sheetPath);
+  if (png) {
+    const pngPath = path.join(out, "blockwild-creatures.png");
+    if (await writePng(sheet, pngPath)) files.push(pngPath);
+  }
+  return { status: "rendered" as const, specs: specs.map((spec) => spec.id), files, sheetPath };
+}
+
 async function writePng(svg: string, destination: string) {
   try {
     const sharp = (await import("sharp")).default;
@@ -525,8 +689,17 @@ export async function renderModelInspection(options: { out: string; columns: num
 }
 
 async function main() {
-  const result = await renderModelInspection(parseArguments());
-  process.stdout.write(`${JSON.stringify({ status: result.status, specs: result.specs, files: result.files, manifest: result.manifestPath }, null, 2)}\n`);
+  const options = parseArguments();
+  const inspection = options.portraitOnly ? null : await renderModelInspection(options);
+  const portraits = options.portraits
+    ? await renderModelPortraits({ out: options.portraits, columns: options.columns, specs: options.specs, png: options.portraitPng })
+    : null;
+  process.stdout.write(`${JSON.stringify({
+    status: "rendered",
+    specs: options.specs.map((spec) => spec.id),
+    ...(inspection ? { files: inspection.files, manifest: inspection.manifestPath } : {}),
+    ...(portraits ? { portraitFiles: portraits.files, portraitSheet: portraits.sheetPath } : {}),
+  }, null, 2)}\n`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) await main();

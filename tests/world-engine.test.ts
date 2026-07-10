@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
-import { BlockId, ITEMS, Item, type InventorySlot } from "../app/game/data.ts";
-import { VoxelEngine, migrateSavedWorld, restoreChestStorage, type WorldSave } from "../app/game/engine.ts";
+import { BlockId, ITEMS, Item, RECIPES, type InventorySlot } from "../app/game/data.ts";
+import { VoxelEngine, bedCounterpart, bedPlacementForYaw, migrateSavedWorld, nextSleepTransition, restoreChestStorage, torchBlockForPlacement, type WorldSave } from "../app/game/engine.ts";
 import { ChunkWorld, BIOME_NAMES, MAX_Y, MIN_Y, SECTION_HEIGHT, WORLD_HEIGHT, blockIndex, chunkKey, environmentSkyShade, splitCoordinate } from "../app/game/world.ts";
 import { MOB_DEFS, MOB_ORDER } from "../app/game/mobs.ts";
 import { createHeldToolSpec, createRidgebackSpec, createZombieSpec, INSPECTOR_MODEL_SPECS, RIDGEBACK_GROUND_LIFT } from "../app/game/model-specs.ts";
@@ -50,6 +50,53 @@ test("chunk edits survive unload and deterministic regeneration", () => {
   world.reset("EDIT-TEST", edits);
   const regenerated = world.generateChunk(-1, -1);
   assert.equal(regenerated.blocks[blockIndex(15, 12, 15)], BlockId.Glowstone);
+  world.dispose();
+});
+
+test("wall torch attachment direction is encoded in the block edit and survives regeneration", () => {
+  const target = { x: 4, y: 20, z: 7, placeX: 5, placeY: 20, placeZ: 7 };
+  assert.equal(torchBlockForPlacement(target), BlockId.TorchWallEast);
+  assert.equal(torchBlockForPlacement({ ...target, placeX: 3 }), BlockId.TorchWallWest);
+  assert.equal(torchBlockForPlacement({ ...target, placeX: 4, placeZ: 6 }), BlockId.TorchWallNorth);
+  assert.equal(torchBlockForPlacement({ ...target, placeX: 4, placeZ: 8 }), BlockId.TorchWallSouth);
+  assert.equal(torchBlockForPlacement({ ...target, placeX: 4, placeY: 21 }), BlockId.Torch);
+  assert.equal(torchBlockForPlacement({ ...target, placeX: 4, placeY: 19 }), null);
+
+  const world = new ChunkWorld();
+  world.reset("WALL-TORCH-SAVE");
+  world.generateChunk(0, 0);
+  world.setBlock(5, 20, 7, BlockId.TorchWallEast, true, true);
+  const edits = world.serializeEdits();
+  assert.deepEqual(edits["0,0"].map((entry) => entry[1]), [BlockId.TorchWallEast]);
+  world.reset("WALL-TORCH-SAVE", edits);
+  world.generateChunk(0, 0);
+  assert.equal(world.getBlock(5, 20, 7), BlockId.TorchWallEast);
+  assert.deepEqual(world.lightSourcesNear(5, 20, 7, 1).map((source) => source.type), [BlockId.TorchWallEast]);
+  world.dispose();
+});
+
+test("bed orientation, counterpart lookup, recipe, and dawn/dusk transitions stay deterministic", () => {
+  assert.deepEqual(bedPlacementForYaw(0), { foot: BlockId.BedNorthFoot, head: BlockId.BedNorthHead, dx: 0, dz: -1 });
+  assert.deepEqual(bedPlacementForYaw(-Math.PI / 2), { foot: BlockId.BedEastFoot, head: BlockId.BedEastHead, dx: 1, dz: 0 });
+  assert.deepEqual(bedCounterpart(BlockId.BedNorthHead, 2, 8, -4), { x: 2, y: 8, z: -3, type: BlockId.BedNorthFoot });
+  assert.equal(RECIPES.find((recipe) => recipe.id === "bed")?.output.item, Item.WildwoodBed);
+  assert.deepEqual(nextSleepTransition(0.1, 3, "morning"), { worldTime: 0.27, day: 3 });
+  assert.deepEqual(nextSleepTransition(0.5, 3, "morning"), { worldTime: 0.27, day: 4 });
+  assert.deepEqual(nextSleepTransition(0.5, 3, "night"), { worldTime: 0.77, day: 3 });
+  assert.deepEqual(nextSleepTransition(0.9, 3, "night"), { worldTime: 0.77, day: 4 });
+
+  const world = new ChunkWorld();
+  world.reset("BED-SAVE");
+  world.generateChunk(0, 0);
+  world.setBlocksBatch([
+    { x: 6, y: 30, z: 6, type: BlockId.BedNorthFoot },
+    { x: 6, y: 30, z: 5, type: BlockId.BedNorthHead },
+  ], true, true);
+  const edits = world.serializeEdits();
+  world.reset("BED-SAVE", edits);
+  world.generateChunk(0, 0);
+  assert.equal(world.getBlock(6, 30, 6), BlockId.BedNorthFoot);
+  assert.equal(world.getBlock(6, 30, 5), BlockId.BedNorthHead);
   world.dispose();
 });
 
@@ -639,6 +686,57 @@ test("rejected solid placement records its rollback and player chests start empt
   const chest = engine.chests.get("2,4,6");
   assert.equal(chest?.length, 27);
   assert.ok(chest?.every((slot) => slot === null), "player-crafted chests must not inherit structure loot");
+});
+
+test("door meshes include textured top, bottom, and narrow side edges", () => {
+  const world = new ChunkWorld();
+  world.reset("DOOR-EDGE-MESH");
+  const chunk = world.generateChunk(0, 0);
+  const y = 100;
+  world.setBlock(2, y, 2, BlockId.DoorClosedLower, true, false);
+  const section = Math.floor((y - MIN_Y) / SECTION_HEIGHT);
+  world.rebuildSection(chunk, section);
+  const geometry = chunk.sections.get(section)?.cutout?.geometry;
+  assert.equal(geometry?.index?.count, 36, "a six-faced thin door slab should emit six textured quads");
+  assert.equal(geometry?.getAttribute("position").count, 24);
+  world.dispose();
+});
+
+test("placing a bed reserves two supported cells and writes its oriented halves as one batch", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  const cells = new Map<string, BlockId>([
+    ["2,3,6", BlockId.Stone],
+    ["2,3,5", BlockId.Stone],
+  ]);
+  const writes: Array<{ x: number; y: number; z: number; type: BlockId }> = [];
+  engine.world = {
+    getBlock: (x: number, y: number, z: number) => cells.get(`${x},${y},${z}`) ?? BlockId.Air,
+    setBlocksBatch: (changes: typeof writes) => {
+      writes.push(...changes);
+      for (const change of changes) cells.set(`${change.x},${change.y},${change.z}`, change.type);
+    },
+  } as unknown as VoxelEngine["world"];
+  engine.target = { x: 2, y: 3, z: 6, placeX: 2, placeY: 4, placeZ: 6, type: BlockId.Stone, distance: 1 };
+  engine.placeCooldown = 0;
+  engine.yaw = 0;
+  engine.selected = 0;
+  engine.inventory = Array.from({ length: 36 }, () => null);
+  engine.inventory[0] = { item: Item.WildwoodBed, count: 1 };
+  engine.mode = "survival";
+  engine.position = new THREE.Vector3(20, 20, 20);
+  engine.collidesAt = () => false;
+  engine.events = { onToast: () => undefined } as unknown as VoxelEngine["events"];
+  engine.publishBlockEdits = () => undefined;
+  engine.audio = { play: () => undefined } as unknown as VoxelEngine["audio"];
+  engine.spawnParticles = () => undefined;
+  engine.saveSoon = () => undefined;
+  engine.emitHud = () => undefined;
+  engine.placeBlock();
+  assert.deepEqual(writes, [
+    { x: 2, y: 4, z: 6, type: BlockId.BedNorthFoot },
+    { x: 2, y: 4, z: 5, type: BlockId.BedNorthHead },
+  ]);
+  assert.equal(engine.inventory[0], null);
 });
 
 test("dropped tools preserve their remaining durability", () => {

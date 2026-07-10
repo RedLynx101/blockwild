@@ -272,6 +272,11 @@ test("manual offer/answer creates both channel modes and carries host-authoritat
   assert.equal(hostMessages.some((event) => event.envelope.type === "block-action" && event.channel === "reliable"), true);
   assert.equal(hostMessages.some((event) => event.envelope.type === "player-pose" && event.channel === "movement"), true);
 
+  assert.equal(guest.sendSleepVote({ actorId: GUEST_A.id, tick: 2, target: "morning", active: true }), 1);
+  await flushMessages();
+  assert.equal(hostEvents.some((event) => event.type === "message" && event.envelope.type === "sleep-vote"), true);
+  assert.throws(() => guest.sendSleepVote({ actorId: HOST.id, tick: 2, target: "night", active: true }), /local peer identity/u);
+
   const time: TimeWeatherSnapshot = { tick: 3, worldTime: 0.75, day: 4, weather: "rain" };
   assert.equal(host.sendTimeWeather(time), 1);
   await flushMessages();

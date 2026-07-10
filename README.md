@@ -1,108 +1,211 @@
-# vinext-starter
+# Blockwild
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 17 surface biomes, cave networks, ruins, weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, touch controls, and direct host-authoritative multiplayer sessions.
 
-## Prerequisites
+The project is a real game rather than a voxel-rendering demo. You can mine, build, craft, smelt, farm, fight, collect field notes, manage several worlds, and carry those worlds between browsers with export files.
 
-- Node.js `>=22.13.0`
-- Linux with `flock`, `curl`, and GNU `timeout`
+![Blockwild field guide with all fourteen rendered creatures](public/creatures/blockwild-creatures.svg)
 
-## Sites Lifecycle
+## What is in the game
 
-The Sites lifecycle CLI runs the locked dependency install before returning this checkout. Edit the source under `app/`, then checkpoint when a coherent milestone is ready to inspect or share. The remote Sites builder runs `npm run build` against the pushed commit. Do not repeat install or build as a normal pre-checkpoint step.
+- **Endless deterministic terrain.** Oceans, rivers, coasts, forests, wetlands, deserts, snowfields, highlands, volcanic wastes, caves, aquifers, lava, ores, and structures are generated from a text seed.
+- **Survival and builder modes.** Survival tracks health, hunger, armor, XP, tool durability, fall and lava damage, hostile nights, and dropped inventory. Builder mode provides fast harvesting, infinite placement, and a creative catalog.
+- **A full item loop.** The 36-slot inventory supports stacking, splitting, double-click collection, hotbar selection, equipment slots, dropped items, and shift-click transfers. Hand crafting uses a 2 x 2 grid; crafting tables unlock shaped 3 x 3 recipes. Tools, armor, materials, plants, food, torches, doors, beds, nets, and jars have purpose-built inventory icons instead of flat color swatches.
+- **Machines and storage.** Furnaces continue processing against real elapsed time. Chests hold 27 slots, and adjacent chests merge into 54-slot storage. Farmland, crops, saplings, tree felling, loot-bearing generated chests, and interactive doors are implemented.
+- **Placement-aware building pieces.** Floor torches stand upright, while torches placed against a side face lean out from that wall, persist their direction, and break when their support disappears. Doors render textured narrow edges instead of exposing an untextured slab.
+- **Beds and flexible time skipping.** A Wildwood Bed can advance the world from any hour to the next dawn or next dusk, always moving forward. Multiplayer worlds can require any player, a configurable percentage, or every connected player to choose the same destination.
+- **Four material tiers.** Wood, stone, sunmetal, and star-crystal tools have different mining speeds, damage, harvest requirements, and durability. Trailhide and sunmetal armor reduce incoming damage and wear down in use.
+- **A living field guide.** The filterable bestiary tracks discovery, kills, drops, habitat, activity, behavior, and lore for eight larger creatures and six butterfly species. Each entry and list icon uses a front-three-quarter portrait rendered from the same model as gameplay; previous/next controls and All, Creatures, and Winged filters keep the catalog quick to navigate. Butterflies can be caught with a net, carried in jars, and released.
+- **A changing sky and soundscape.** Day/night lighting, larger sun and moon discs, stars, rain, underwater and underground atmosphere, placed and held lights, synthesized ambience, sampled effects, and biome/activity-driven music respond to the world state. The soundtrack includes four new scene variants: two Wildwood Dawn tracks and two Emberdeep Passage tracks.
+- **First- and third-person play.** The camera cycles between first person, rear third person, and front third person. The local and remote player models are articulated and animate for movement, crouching, running, mining, and held items.
+- **Direct multiplayer.** A host can create a single-use WebRTC offer for a guest, accept the returned answer, and maintain several peer connections. The host is authoritative for the world; there is no matchmaking service or cloud-owned save.
+- **Browser-owned worlds.** The title screen manages multiple local worlds with rename, duplicate, delete, import, and export operations. Saves are versioned and older supported saves are migrated without regenerating their edited blocks.
 
-This starter does not use `wrangler.jsonc`.
+## Gameplay loop
 
-`install:ci` is intentionally a single, non-retrying `npm ci`. It refuses a concurrent install for the same project, consumes a matching image-seeded npm cache with `--prefer-offline` while retaining registry fallback for a missing cache object, otherwise downloads and verifies the complete vinext tarball recorded in `package-lock.json`, limits npm to one socket, and terminates a stalled install. `build` applies a short timeout and then validates the Sites artifact. These helpers target Linux and use GNU `timeout`; they are not native macOS scripts.
+Start with a few moonberries and whatever the seed gives you. Harvest a tree, turn a log into planks, build a crafting table, then move through wood, cobblestone, sunmetal, and star crystal. A furnace opens smelting, cooked food, glass, and charcoal. Chests make a permanent base practical; doors, directional torches, crops, saplings, armor, and a bed make it survivable.
 
-Scripts that need writable project-scoped home, npm, XDG, and temporary paths use `scripts/sites-env.sh`. The `dev` and `start` scripts honor the caller's runtime environment and keep Wrangler logs inside the checkout. The generated `.sites-runtime/` directory is disposable and ignored by Git.
+The surface is safer in daylight, though not empty. At night and underground, hostile creatures become a larger part of the resource loop. Their drops unlock equipment and building materials while the bestiary records what you have learned. Deeper terrain carries better ores, lava, aquifers, and more dangerous encounters.
 
-## Included Shape
+Craft a Wildwood Bed at a crafting table with three Cloudwool across the top row and three Wildwood Planks below. It needs two clear, supported blocks and points away from the player when placed. Right-click either half to choose the next dawn (about 6:30 AM) or next dusk (about 6:30 PM); this works at any time and never rewinds the clock.
 
-- edit site code under `app/`
-- `app/chatgpt-auth.ts` provides optional dispatch-owned ChatGPT sign-in helpers
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/index.ts` reads the D1 binding from the Cloudflare Worker environment
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
+World creation exposes controls for difficulty, day length, multiplayer rest policy, mob and butterfly density, cave frequency, biome scale, resource abundance, structures, weather, inventory retention, and friendly fire. Percentage-based rest rules accept a 10%-100% threshold and default to 50%.
 
-## Workspace Auth Headers
+## Controls
 
-OpenAI workspace sites can read the current user's email from
-`oai-authenticated-user-email`.
+| Input | Action |
+| --- | --- |
+| `W` `A` `S` `D` | Move relative to the camera |
+| Mouse | Look; click the world to capture the pointer |
+| `Space` | Jump, or swim upward while held |
+| `Shift` | Crouch, move quietly, and stop at ledges |
+| `Ctrl` | Sprint while moving |
+| `V` | Cycle first person, rear third person, and front third person |
+| Hold left mouse | Mine the targeted block or attack the targeted creature |
+| Right mouse | Use, place, open, eat, rest, catch, or release |
+| `1`-`9` / mouse wheel | Select a hotbar slot |
+| `E` | Open the inventory and 2 x 2 crafting grid |
+| `Q` | Drop one item from the selected stack |
+| Middle mouse | Pick the targeted block in builder mode |
+| `F3` | Toggle coordinates, depth, chunk, seed, mode, and weather diagnostics |
+| `H` | Show the compact control reminder |
+| `Esc` | Pause or close the current menu |
 
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
+Coarse-pointer devices get an on-screen movement pad, touch-look zone, jump, mine, place/use, hotbar, and pause controls.
 
-Treat the full name as optional and fall back to email when it is absent:
+## Multiplayer model
 
-```tsx
-import { headers } from "next/headers";
+Multiplayer is a session layer over the host's existing world, not a shared cloud account:
 
-export default async function Home() {
-  const requestHeaders = await headers();
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
+1. The host opens **Pause > Multiplayer**, chooses a name, and creates an invite code.
+2. The guest pastes that invite, creates an answer code, and sends it back.
+3. The host accepts the answer to finish the direct WebRTC connection.
 
-  const displayName = fullName ?? email;
-  // ...
-}
+The host owns the world catalog entry and sends authoritative state for player poses, terrain edits, creatures, drops, time, weather, world options, and rest votes. A time skip resolves only when enough connected players choose the same dawn or dusk target under the world's Any Player, Percentage, or All Players rule. Guests receive session state but do not gain ownership of the host's save. Connection codes may contain session-negotiation data and should only be shared with people you trust.
+
+Inventory and container action types are already defined in the multiplayer protocol, but the current engine does not yet synchronize those systems between peers.
+
+Sessions require a secure context and browser WebRTC support. The default connection uses a public STUN server but has no TURN relay, so restrictive NAT or firewall configurations can still prevent peers from connecting.
+
+## Repository layout
+
+```text
+blockwild/
+|- app/
+|  |- page.tsx                 Next.js entry; mounts the game
+|  |- globals.css              Game UI, menus, HUD, and responsive controls
+|  |- chatgpt-auth.ts          Optional Sites identity helper; unused by the game
+|  `- game/
+|     |- VoxelGame.tsx         React shell: menus, HUD, inventory, and overlays
+|     |- engine.ts             Three.js simulation, physics, combat, and interaction
+|     |- world.ts              Terrain generation, chunks, meshing, and block edits
+|     |- world-storage.ts      Local world catalog, import/export, and migrations
+|     |- data.ts               Blocks, items, recipes, loot, fuel, and smelting
+|     |- mobs.ts               Creature definitions and bestiary data
+|     |- mob-models.ts         Canonical production models shared by game and tools
+|     |- butterflies.ts        Butterfly spawning, flight, capture, and release
+|     |- model-specs.ts        Shared box-model specifications and grounding data
+|     |- player-model.ts       Local/remote player model and pose interpolation
+|     |- multiplayer.ts        WebRTC signaling, channels, protocol, and peer state
+|     `- audio.ts              Music scenes, sampled effects, and synthesized audio
+|- public/                     Music, effects, generated creature portraits, and icons
+|- scripts/
+|  |- render-models.ts         Inspection sheets, creature portraits, and manifest
+|  |- install-ci.sh            Bounded, locked Sites dependency install
+|  |- build-verified.sh        Bounded Vinext build plus artifact validation
+|  `- validate-artifact.sh     Checks the Worker export and hosting manifest
+|- tests/                      Node test suite for game and deployment behavior
+|- worker/index.ts             Cloudflare Worker/Vinext request entry point
+|- build/sites-vite-plugin.ts  Packages the Sites deployment artifact
+|- vite.config.ts              Vinext, Sites, and local Worker configuration
+|- .openai/hosting.json        Sites project and optional binding declaration
+|- db/                         Unused Drizzle/D1 scaffold; schema is intentionally empty
+`- examples/d1/                Optional database example, not part of game state
 ```
 
-## Optional Dispatch-Owned ChatGPT Sign-In
+### Runtime boundaries
 
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
+React owns the interface and translates player actions into method calls on `VoxelEngine`. The engine owns mutable simulation state and emits compact HUD snapshots back to React. Keeping the frame loop outside React avoids rerendering the component tree for physics and animation updates.
 
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
+`ChunkWorld` owns deterministic generation, streamed chunk sections, geometry, terrain edits, skylight data, and nearby light indices. Generated terrain is reproducible from the seed, so saves store player-made edits rather than a copy of every generated block.
 
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
+`mob-models.ts` is the canonical builder for the eight full-size creatures. The game engine instantiates those models directly, while the inspection script extracts their actual posed Three.js geometry for grounding checks and bestiary portraits. This keeps the in-game mob, its catalog image, and its QA render on one implementation.
 
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
+The deployment is a Next.js 16 app compiled through Vinext and Vite for a Cloudflare Worker. D1 and R2 are currently disabled, and the game does not depend on a server database.
 
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
+## Local development
 
-## Diagnostic Commands
+Requirements:
 
-- `npm run install:ci`: perform the one bounded lockfile install
-- `npm run dev`: start the Vite/Vinext development server
-- `npm run build`: build and validate the deployable Sites artifact
-- `npm run start`: start the built Vinext application
-- `npm test`: build, validate, and verify the rendered development-preview metadata
-- `npm run validate:artifact`: recheck an existing artifact's manifest and ESM `default.fetch` export
-- `npm run db:generate`: generate Drizzle migrations after schema changes
+- Node.js `>=22.13.0`
+- A current WebGL-capable browser with hardware acceleration
+- Linux or WSL for the checked-in lifecycle scripts: Bash, `flock`, `curl`, `sha256sum`, and GNU `timeout`
 
-Use build and validation commands for targeted diagnosis after a remote failure, not as part of the normal checkpoint path.
+Recommended setup on Linux or WSL:
 
-The timeout defaults can be overridden for a controlled canary with `SITES_INSTALL_TIMEOUT`, `SITES_INSTALL_KILL_AFTER`, `SITES_BUILD_TIMEOUT`, and `SITES_BUILD_KILL_AFTER`. A timeout fails the command; the helpers never retry an unchanged install or build.
+```bash
+git clone https://github.com/RedLynx101/blockwild.git
+cd blockwild
+npm run install:ci
+npm run dev
+```
 
-## Learn More
+Open the local address printed by Vite. `install:ci` runs one bounded `npm ci`, verifies the lockfile-pinned Vinext package, and keeps its writable home, cache, temporary files, and Wrangler state under `.sites-runtime/`.
 
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+For a native PowerShell development loop, `npm ci` followed by `npx vite` can run the local server. The production build and full-test wrappers remain Bash/Linux scripts, so use WSL for the same path used by Sites. `.gitattributes` pins shell scripts to LF line endings so Windows checkouts do not corrupt those helpers.
+
+## Tests and model inspection
+
+```bash
+npm run lint
+npm test
+```
+
+`npm test` first creates and validates the production artifact, then runs the Node test suite. Coverage includes deterministic generation, chunk boundaries and streaming, save migration and failure isolation, world options, meshing, skylight and local lighting, directional torch persistence, bed placement and dawn/dusk transitions, multiplayer rest thresholds, inventory behavior, crafting, armor, doors, trees, furnaces, chests, drops, creature grounding and death, player animation, butterflies, portrait export, multiplayer protocol behavior, and rendered deployment metadata.
+
+A focused test can be run without the build wrapper:
+
+```bash
+node --import tsx --test tests/world-engine.test.ts
+```
+
+The model inspector reads the production creature and player models. It is useful for checking orientation, silhouettes, and ground contact after changing a creature, player pose, or held tool:
+
+```bash
+npm run models:render -- --out outputs/model-inspection
+```
+
+The command writes isometric, front, and side SVG sheets plus a machine-readable grounding manifest. PNG copies are also written when `sharp` is available.
+
+To render only the fourteen bestiary entries as individual front-three-quarter portraits and a field-guide sheet:
+
+```bash
+npm run models:render -- --creatures --portraits outputs/model-portraits --portrait-only --portrait-png
+```
+
+The browser-facing SVGs under `public/creatures/` are generated with the same path:
+
+```bash
+npm run models:render -- --creatures --portraits public/creatures --portrait-only
+```
+
+Review the contact sheet before committing regenerated portraits. `outputs/` is ignored so temporary inspection artifacts do not enter commits by accident.
+
+## Build and deployment
+
+```bash
+npm run build
+npm run validate:artifact
+npm run start
+```
+
+The build is intentionally bounded and non-retrying. It produces `dist/server/index.js`, packages `.openai/hosting.json`, and verifies that the Worker has an ESM `default.fetch` export. The configured Sites builder runs `npm run build` against the pushed commit. Generated `dist/`, `.sites-runtime/`, and Wrangler state should remain untracked.
+
+No `wrangler.jsonc` is required. Local Cloudflare bindings are derived from `.openai/hosting.json`; both D1 and R2 are currently `null`.
+
+## Saves, ownership, and limits
+
+Worlds live in `localStorage` for the current browser and origin. A save includes terrain edits, player and spawn position, inventory, equipment, crafting state, health, hunger, XP, time, weather, furnaces, chests, drops, sapling timers, bestiary progress, and world options.
+
+That design keeps single-player play private and serverless, but it has consequences:
+
+- Clearing site data, changing origin, using a temporary browser profile, or exceeding the browser's storage quota can remove or block saves.
+- Saves do not automatically follow a user to another browser or device.
+- The host's browser is the only owner of a multiplayer world's persistent catalog entry.
+- Long-running, heavily edited worlds can approach browser storage limits.
+
+Use the title screen's **Export** action to create a `.blockwild.json` backup, and **Import** to restore or move it. Keep important exports outside the browser profile.
+
+## Contributor notes
+
+- Keep frame-by-frame simulation in the engine rather than React state. React should receive HUD snapshots and overlay state, not every entity transform.
+- Preserve deterministic generation. Changes to voxel indexing, world height, seed sampling, or generated features need migration coverage and may require a generator-version change.
+- Treat save compatibility as a feature. New persistent fields should have safe defaults so existing worlds still load.
+- When adding a block or item, update its definition, placement and support rules, drop behavior, rendering or icon path, recipes where appropriate, and focused tests.
+- When changing a full-size creature, start in `mob-models.ts`, then keep its `mobs.ts` definition, dimensions, foot offset, animation semantics, and tests aligned. Regenerate the bestiary portraits and review the inspection sheets visually.
+- New world options must be normalized in `world-storage.ts`, represented in multiplayer snapshots/codecs when session-relevant, and given backward-compatible defaults.
+- Multiplayer changes should preserve host authority, bounded codecs, versioned envelopes, and the separation between reliable actions and disposable movement updates.
+- Audio under `public/` ships with the application. Compress new tracks and effects before committing them, then wire them into scene selection rather than leaving unreachable assets.
+- Do not add game persistence to the empty D1 scaffold unless the ownership and migration model is deliberately being changed.
+
+No license file is currently included in this repository.

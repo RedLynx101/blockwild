@@ -11,6 +11,7 @@ import {
   WorldStorage,
   generationOptionsFromWorldOptions,
   normalizeWorldOptions,
+  requiredSleepers,
 } from "../app/game/world-storage.ts";
 
 class MemoryStorage implements Storage {
@@ -67,6 +68,8 @@ test("advanced world options use safe defaults and bounded numeric controls", ()
     weather: false,
     keepInventory: true,
     friendlyFire: true,
+    sleepRule: "percentage",
+    sleepPercentage: 50,
   }), {
     difficulty: "hard",
     dayLengthMinutes: 120,
@@ -79,6 +82,8 @@ test("advanced world options use safe defaults and bounded numeric controls", ()
     weather: false,
     keepInventory: true,
     friendlyFire: true,
+    sleepRule: "percentage",
+    sleepPercentage: 50,
   });
   assert.deepEqual(generationOptionsFromWorldOptions({ caveFrequency: 2, biomeScale: 3, resourceAbundance: 4, structures: false }), {
     caveFrequency: 2,
@@ -86,6 +91,9 @@ test("advanced world options use safe defaults and bounded numeric controls", ()
     resourceAbundance: 4,
     structures: false,
   });
+  assert.equal(requiredSleepers({ sleepRule: "any-player", sleepPercentage: 50 }, 8), 1);
+  assert.equal(requiredSleepers({ sleepRule: "percentage", sleepPercentage: 50 }, 5), 3);
+  assert.equal(requiredSleepers({ sleepRule: "all-players", sleepPercentage: 50 }, 4), 4);
 });
 
 test("device-local catalog supports synchronous CRUD, active selection, metadata, and sorting", () => {
