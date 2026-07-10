@@ -3,7 +3,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import * as THREE from "three";
 import { INSPECTOR_MODEL_SPECS, assertModelSpec, type ModelBox, type ModelSpec } from "../app/game/model-specs.ts";
-import { createMobVisual } from "../app/game/mob-models.ts";
+import { createMobVisual, createSkeletonArrowVisual } from "../app/game/mob-models.ts";
 import { BUTTERFLY_ORDER, CORE_MOB_ORDER, MOB_DEFS, type ButterflyKind, type CoreMobKind } from "../app/game/mobs.ts";
 import { BlockPlayerModel, type PlayerAnimation } from "../app/game/player-model.ts";
 
@@ -210,11 +210,25 @@ function disposeObject(root: THREE.Object3D) {
 }
 
 /** Captures all eight production mob models, after a neutral pose and grounding. */
+export function createSkeletonArrowInspectionSpec(): InspectionModelSpec {
+  const arrow = createSkeletonArrowVisual();
+  const spec = objectToInspectionSpec(arrow, {
+    id: "skeleton-arrow",
+    label: "Skeleton Arrow",
+    category: "utility",
+    front: "-z",
+    inspection: { source: "MobVisual" },
+  });
+  disposeObject(arrow);
+  return spec;
+}
+
+/** Captures every canonical non-butterfly production creature model. */
 export function createMobInspectionSpecs(): InspectionModelSpec[] {
   return CORE_MOB_ORDER.map((kind, index) => {
     const model = createMobVisual(kind, -(index + 1));
     model.group.updateMatrixWorld(true);
-    const airborne = kind === "glowmoth";
+    const airborne = kind === "glowmoth" || MOB_DEFS[kind].flying || MOB_DEFS[kind].aquatic;
     if (!airborne) {
       const bounds = new THREE.Box3().setFromObject(model.visual);
       model.visual.position.y -= bounds.min.y;
@@ -239,7 +253,7 @@ export function buildInspectionSpecs(): InspectionModelSpec[] {
   const base = INSPECTOR_MODEL_SPECS
     .filter((spec) => spec.id !== "ridgeback" && spec.id !== "zombie")
     .map((spec) => ({ ...spec, inspection: { source: "model-specs" as const } }));
-  return [...base, ...createMobInspectionSpecs(), ...createPlayerInspectionSpecs(), ...BUTTERFLY_ORDER.map(createButterflyInspectionSpec)];
+  return [...base, createSkeletonArrowInspectionSpec(), ...createMobInspectionSpecs(), ...createPlayerInspectionSpecs(), ...BUTTERFLY_ORDER.map(createButterflyInspectionSpec)];
 }
 
 function escapeXml(value: string) {

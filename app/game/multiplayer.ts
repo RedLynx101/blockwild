@@ -53,6 +53,11 @@ export type PlayerPose = {
   crouching?: boolean;
   sprinting?: boolean;
   action?: "none" | "mine" | "use";
+  /** Optional for protocol-v1 peers; absent peers render with the legacy male model and no armor. */
+  variant?: "male" | "female";
+  equipment?: Partial<Record<"head" | "chest" | "legs" | "feet", number>>;
+  boatId?: string;
+  boatSeat?: number;
 };
 
 export type BlockEdit = { x: number; y: number; z: number; type: number };
@@ -93,7 +98,16 @@ export type DropSnapshotEntry = {
 };
 
 export type DropSnapshot = { tick: number; drops: DropSnapshotEntry[] };
-export type TimeWeatherSnapshot = { tick: number; worldTime: number; day: number; weather: "clear" | "rain" };
+export type SailboatSnapshotEntry = {
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  velocity: number;
+  passengers: string[];
+};
+export type TimeWeatherSnapshot = { tick: number; worldTime: number; day: number; weather: "clear" | "rain"; boats?: SailboatSnapshotEntry[] };
 export type SleepTarget = "morning" | "night";
 export type SleepVote = { actorId: string; tick: number; target: SleepTarget; active: boolean };
 
@@ -156,6 +170,7 @@ export type WorldSnapshot = {
   blockEdits: BlockEdit[];
   mobs: MobSnapshotEntry[];
   drops: DropSnapshotEntry[];
+  boats?: SailboatSnapshotEntry[];
   time: TimeWeatherSnapshot;
   worldOptions?: SessionWorldOptions;
   inventory?: InventorySnapshot;
@@ -366,6 +381,11 @@ function validateBlockEdit(value: unknown): value is BlockEdit {
 }
 
 function validatePose(value: unknown): value is PlayerPose {
+  const validEquipment = value && isRecord(value) && value.equipment !== undefined
+    ? isRecord(value.equipment)
+      && Object.keys(value.equipment).every((slot) => ["head", "chest", "legs", "feet"].includes(slot))
+      && Object.values(value.equipment).every((item) => isInteger(item, 0, 65_535))
+    : true;
   return isRecord(value)
     && isId(value.playerId)
     && isInteger(value.tick, 0, Number.MAX_SAFE_INTEGER)
@@ -381,7 +401,24 @@ function validatePose(value: unknown): value is PlayerPose {
     && (value.heldItem === undefined || isInteger(value.heldItem, 0, 65_535))
     && (value.crouching === undefined || typeof value.crouching === "boolean")
     && (value.sprinting === undefined || typeof value.sprinting === "boolean")
-    && (value.action === undefined || value.action === "none" || value.action === "mine" || value.action === "use");
+    && (value.action === undefined || value.action === "none" || value.action === "mine" || value.action === "use")
+    && (value.variant === undefined || value.variant === "male" || value.variant === "female")
+    && (value.boatId === undefined || isId(value.boatId))
+    && (value.boatSeat === undefined || isInteger(value.boatSeat, 0, 1))
+    && validEquipment;
+}
+
+function validateSailboat(value: unknown): value is SailboatSnapshotEntry {
+  return isRecord(value)
+    && isId(value.id)
+    && isFiniteNumber(value.x, -COORDINATE_LIMIT, COORDINATE_LIMIT)
+    && isFiniteNumber(value.y, -4096, 4096)
+    && isFiniteNumber(value.z, -COORDINATE_LIMIT, COORDINATE_LIMIT)
+    && isFiniteNumber(value.yaw, -100_000, 100_000)
+    && isFiniteNumber(value.velocity, -32, 32)
+    && Array.isArray(value.passengers)
+    && value.passengers.length <= 2
+    && value.passengers.every(isId);
 }
 
 function validateMob(value: unknown): value is MobSnapshotEntry {
@@ -413,7 +450,8 @@ function validateTimeWeather(value: unknown): value is TimeWeatherSnapshot {
     && isInteger(value.tick, 0, Number.MAX_SAFE_INTEGER)
     && isFiniteNumber(value.worldTime, 0, 1)
     && isInteger(value.day, 1, 1_000_000)
-    && (value.weather === "clear" || value.weather === "rain");
+    && (value.weather === "clear" || value.weather === "rain")
+    && (value.boats === undefined || (Array.isArray(value.boats) && value.boats.length <= 128 && value.boats.every(validateSailboat)));
 }
 
 function validateEndpoint(value: unknown): value is InventoryEndpoint {
@@ -544,6 +582,7 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
         && Array.isArray(value.drops)
         && value.drops.length <= 1024
         && value.drops.every(validateDrop)
+        && (value.boats === undefined || (Array.isArray(value.boats) && value.boats.length <= 128 && value.boats.every(validateSailboat)))
         && validateTimeWeather(value.time)
         && (value.worldOptions === undefined || validateSessionWorldOptions(value.worldOptions))
         && (value.inventory === undefined || validateInventorySnapshot(value.inventory))

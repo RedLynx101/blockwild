@@ -1,6 +1,7 @@
 import * as THREE from "three";
 
 export type PlayerModelMode = "local" | "remote";
+export type PlayerVariant = "male" | "female";
 export type PlayerAnimation = "idle" | "walk" | "run" | "crouch" | "jump" | "mine" | "use";
 export type PlayerLocomotion = "idle" | "walk" | "run";
 export type PlayerAction = "none" | "mine" | "use";
@@ -37,13 +38,18 @@ export type PlayerColors = {
   skin: THREE.ColorRepresentation;
   shirt: THREE.ColorRepresentation;
   trousers: THREE.ColorRepresentation;
+  hair: THREE.ColorRepresentation;
 };
+
+export type PlayerEquipmentAppearance = Partial<Record<"head" | "chest" | "legs" | "feet", THREE.ColorRepresentation | null>>;
 
 export type PlayerModelOptions = {
   playerId?: string;
   playerName?: string;
   mode?: PlayerModelMode;
+  variant?: PlayerVariant;
   colors?: Partial<PlayerColors>;
+  equipment?: PlayerEquipmentAppearance;
   castShadow?: boolean;
   receiveShadow?: boolean;
 };
@@ -62,12 +68,18 @@ export type PlayerModelMaterials = {
   shirt: THREE.MeshStandardMaterial;
   trousers: THREE.MeshStandardMaterial;
   details: THREE.MeshStandardMaterial;
+  hair: THREE.MeshStandardMaterial;
+  armorHead: THREE.MeshStandardMaterial;
+  armorChest: THREE.MeshStandardMaterial;
+  armorLegs: THREE.MeshStandardMaterial;
+  armorFeet: THREE.MeshStandardMaterial;
 };
 
 export const DEFAULT_PLAYER_COLORS: Readonly<PlayerColors> = Object.freeze({
   skin: "#c98f6b",
   shirt: "#3f7fba",
   trousers: "#293554",
+  hair: "#5a3826",
 });
 
 export const DEFAULT_PLAYER_POSE: Readonly<PlayerPoseSnapshot> = Object.freeze({
@@ -273,6 +285,11 @@ export class BlockPlayerModel {
   private readonly inverseRootMatrix = new THREE.Matrix4();
   private pose: PlayerPoseSnapshot = { ...DEFAULT_PLAYER_POSE };
   private heldItem: THREE.Object3D | null = null;
+  private readonly torsoBlock: THREE.Mesh;
+  private readonly maleHair = new THREE.Group();
+  private readonly femaleHair = new THREE.Group();
+  private readonly equipmentMeshes: Record<"head" | "chest" | "legs" | "feet", THREE.Mesh[]> = { head: [], chest: [], legs: [], feet: [] };
+  private _variant: PlayerVariant;
   private disposed = false;
   private _playerName = "Player";
 
@@ -280,12 +297,18 @@ export class BlockPlayerModel {
     this.mode = options.mode ?? "remote";
     this.playerId = options.playerId;
     const colors = { ...DEFAULT_PLAYER_COLORS, ...options.colors };
+    this._variant = options.variant ?? "male";
     const materialOptions = { roughness: 0.92, metalness: 0, flatShading: true };
     this.materials = {
       skin: new THREE.MeshStandardMaterial({ ...materialOptions, color: colors.skin }),
       shirt: new THREE.MeshStandardMaterial({ ...materialOptions, color: colors.shirt }),
       trousers: new THREE.MeshStandardMaterial({ ...materialOptions, color: colors.trousers }),
       details: new THREE.MeshStandardMaterial({ ...materialOptions, color: 0x17191d }),
+      hair: new THREE.MeshStandardMaterial({ ...materialOptions, color: colors.hair }),
+      armorHead: new THREE.MeshStandardMaterial({ ...materialOptions, color: 0xffffff }),
+      armorChest: new THREE.MeshStandardMaterial({ ...materialOptions, color: 0xffffff }),
+      armorLegs: new THREE.MeshStandardMaterial({ ...materialOptions, color: 0xffffff }),
+      armorFeet: new THREE.MeshStandardMaterial({ ...materialOptions, color: 0xffffff }),
     };
 
     this.group.name = "block-player";
@@ -306,13 +329,15 @@ export class BlockPlayerModel {
     this.rig.add(torso, leftLeg, rightLeg, this.nameAnchor);
     torso.add(head, leftArm, rightArm);
 
-    torso.add(this.createBlock("torso-block", [TORSO_WIDTH, TORSO_HEIGHT, TORSO_DEPTH], [0, TORSO_HEIGHT / 2, 0], this.materials.shirt, options));
+    this.torsoBlock = this.createBlock("torso-block", [TORSO_WIDTH, TORSO_HEIGHT, TORSO_DEPTH], [0, TORSO_HEIGHT / 2, 0], this.materials.shirt, options);
+    torso.add(this.torsoBlock);
 
     head.position.set(0, TORSO_HEIGHT, 0);
     head.rotation.order = "YXZ";
     head.add(this.createBlock("head-block", [HEAD_SIZE, HEAD_SIZE, HEAD_SIZE], [0, HEAD_SIZE / 2, 0], this.materials.skin, options));
     head.add(this.createBlock("left-eye", [0.075, 0.07, 0.026], [-0.12, 0.3, -HEAD_SIZE / 2 - 0.013], this.materials.details, options));
     head.add(this.createBlock("right-eye", [0.075, 0.07, 0.026], [0.12, 0.3, -HEAD_SIZE / 2 - 0.013], this.materials.details, options));
+    this.buildHair(head, options);
 
     const shoulderX = TORSO_WIDTH / 2 + ARM_WIDTH / 2;
     leftArm.position.set(-shoulderX, SHOULDER_Y, 0);
@@ -325,6 +350,7 @@ export class BlockPlayerModel {
     rightLeg.position.set(legX, LEG_LENGTH, 0);
     leftLeg.add(this.createBlock("left-leg-block", [LEG_WIDTH, LEG_LENGTH, LEG_DEPTH], [0, -LEG_LENGTH / 2, 0], this.materials.trousers, options));
     rightLeg.add(this.createBlock("right-leg-block", [LEG_WIDTH, LEG_LENGTH, LEG_DEPTH], [0, -LEG_LENGTH / 2, 0], this.materials.trousers, options));
+    this.buildEquipment(options);
 
     this.rightHandSocket.name = "right-hand-socket";
     this.rightHandSocket.userData.socket = "right-hand";
@@ -334,11 +360,17 @@ export class BlockPlayerModel {
     this.nameAnchor.name = "player-name-anchor";
     this.setPlayerName(options.playerName ?? "Player");
     this.blockGeometry.computeBoundingBox();
+    this.setVariant(this._variant);
+    this.setEquipmentAppearance(options.equipment ?? {});
     this.applyPose(this.pose);
   }
 
   get playerName(): string {
     return this._playerName;
+  }
+
+  get variant(): PlayerVariant {
+    return this._variant;
   }
 
   get isDisposed(): boolean {
@@ -362,15 +394,47 @@ export class BlockPlayerModel {
     if (colors.skin !== undefined) this.materials.skin.color.set(colors.skin);
     if (colors.shirt !== undefined) this.materials.shirt.color.set(colors.shirt);
     if (colors.trousers !== undefined) this.materials.trousers.color.set(colors.trousers);
+    if (colors.hair !== undefined) this.materials.hair.color.set(colors.hair);
     return this;
   }
 
-  getColors(): { skin: number; shirt: number; trousers: number } {
+  getColors(): { skin: number; shirt: number; trousers: number; hair: number } {
     return {
       skin: this.materials.skin.color.getHex(),
       shirt: this.materials.shirt.color.getHex(),
       trousers: this.materials.trousers.color.getHex(),
+      hair: this.materials.hair.color.getHex(),
     };
+  }
+
+  setVariant(variant: PlayerVariant): this {
+    this.assertUsable();
+    this._variant = variant === "female" ? "female" : "male";
+    this.group.userData.playerVariant = this._variant;
+    this.maleHair.visible = this._variant === "male";
+    this.femaleHair.visible = this._variant === "female";
+    this.torsoBlock.scale.x = this._variant === "female" ? TORSO_WIDTH * 0.92 : TORSO_WIDTH;
+    const shoulderX = (this._variant === "female" ? TORSO_WIDTH * 0.92 : TORSO_WIDTH) / 2 + ARM_WIDTH / 2;
+    this.parts.leftArm.position.x = -shoulderX;
+    this.parts.rightArm.position.x = shoulderX;
+    return this;
+  }
+
+  setEquipmentAppearance(equipment: PlayerEquipmentAppearance): this {
+    this.assertUsable();
+    const materials = {
+      head: this.materials.armorHead,
+      chest: this.materials.armorChest,
+      legs: this.materials.armorLegs,
+      feet: this.materials.armorFeet,
+    };
+    for (const slot of Object.keys(this.equipmentMeshes) as Array<keyof PlayerEquipmentAppearance>) {
+      const color = equipment[slot];
+      const visible = color !== null && color !== undefined;
+      for (const mesh of this.equipmentMeshes[slot]) mesh.visible = visible;
+      if (visible) materials[slot].color.set(color);
+    }
+    return this;
   }
 
   /** The item remains caller-owned and is detached, not disposed, with the rig. */
@@ -458,6 +522,7 @@ export class BlockPlayerModel {
     this.inverseRootMatrix.copy(this.group.matrixWorld).invert();
     target.makeEmpty();
     for (const mesh of this.ownedMeshes) {
+      if (!this.isMeshDisplayed(mesh)) continue;
       const geometryBounds = mesh.geometry.boundingBox;
       if (!geometryBounds) continue;
       this.boundsMatrix.multiplyMatrices(this.inverseRootMatrix, mesh.matrixWorld);
@@ -473,6 +538,7 @@ export class BlockPlayerModel {
     this.group.updateWorldMatrix(true, true);
     target.makeEmpty();
     for (const mesh of this.ownedMeshes) {
+      if (!this.isMeshDisplayed(mesh)) continue;
       const geometryBounds = mesh.geometry.boundingBox;
       if (!geometryBounds) continue;
       this.boundsBox.copy(geometryBounds).applyMatrix4(mesh.matrixWorld);
@@ -500,6 +566,15 @@ export class BlockPlayerModel {
     return part;
   }
 
+  private isMeshDisplayed(mesh: THREE.Mesh): boolean {
+    let object: THREE.Object3D | null = mesh;
+    while (object && object !== this.group) {
+      if (!object.visible) return false;
+      object = object.parent;
+    }
+    return this.group.visible;
+  }
+
   private createBlock(
     name: string,
     size: Vector3Tuple,
@@ -523,6 +598,51 @@ export class BlockPlayerModel {
     const handLength = ARM_LENGTH - sleeveLength;
     arm.add(this.createBlock(`${side}-sleeve`, [ARM_WIDTH, sleeveLength, ARM_WIDTH], [0, -sleeveLength / 2, 0], this.materials.shirt, options));
     arm.add(this.createBlock(`${side}-hand`, [ARM_WIDTH * 0.92, handLength, ARM_WIDTH * 0.92], [0, -sleeveLength - handLength / 2, 0], this.materials.skin, options));
+  }
+
+  private buildHair(head: THREE.Group, options: PlayerModelOptions): void {
+    this.maleHair.name = "male-hair";
+    this.femaleHair.name = "female-hair";
+    this.maleHair.add(
+      this.createBlock("male-hair-cap", [0.52, 0.1, 0.52], [0, 0.48, 0], this.materials.hair, options),
+      this.createBlock("male-hair-fringe", [0.5, 0.13, 0.055], [0, 0.4, -0.255], this.materials.hair, options),
+    );
+    this.femaleHair.add(
+      this.createBlock("female-hair-cap", [0.52, 0.11, 0.52], [0, 0.48, 0], this.materials.hair, options),
+      this.createBlock("female-hair-left", [0.09, 0.9, 0.5], [-0.29, 0.05, 0.01], this.materials.hair, options),
+      this.createBlock("female-hair-right", [0.09, 0.9, 0.5], [0.29, 0.05, 0.01], this.materials.hair, options),
+      this.createBlock("female-hair-back", [0.5, 0.92, 0.075], [0, 0.04, 0.285], this.materials.hair, options),
+      this.createBlock("female-hair-braid", [0.14, 0.74, 0.14], [0.34, -0.23, 0.24], this.materials.hair, options),
+    );
+    head.add(this.maleHair, this.femaleHair);
+  }
+
+  private buildEquipment(options: PlayerModelOptions): void {
+    const add = (
+      slot: keyof PlayerEquipmentAppearance,
+      parent: THREE.Object3D,
+      name: string,
+      size: Vector3Tuple,
+      position: Vector3Tuple,
+      material: THREE.Material,
+    ) => {
+      const mesh = this.createBlock(name, size, position, material, options);
+      mesh.visible = false;
+      this.equipmentMeshes[slot].push(mesh);
+      parent.add(mesh);
+    };
+
+    add("head", this.parts.head, "armor-head-cap", [0.59, 0.13, 0.59], [0, 0.5, 0], this.materials.armorHead);
+    add("head", this.parts.head, "armor-head-left", [0.07, 0.3, 0.57], [-0.29, 0.34, 0], this.materials.armorHead);
+    add("head", this.parts.head, "armor-head-right", [0.07, 0.3, 0.57], [0.29, 0.34, 0], this.materials.armorHead);
+    add("head", this.parts.head, "armor-head-back", [0.53, 0.35, 0.07], [0, 0.31, 0.29], this.materials.armorHead);
+    add("chest", this.parts.torso, "armor-chest", [TORSO_WIDTH + 0.075, TORSO_HEIGHT + 0.045, TORSO_DEPTH + 0.075], [0, TORSO_HEIGHT / 2, 0], this.materials.armorChest);
+    add("chest", this.parts.leftArm, "armor-left-shoulder", [ARM_WIDTH + 0.055, 0.33, ARM_WIDTH + 0.055], [0, -0.16, 0], this.materials.armorChest);
+    add("chest", this.parts.rightArm, "armor-right-shoulder", [ARM_WIDTH + 0.055, 0.33, ARM_WIDTH + 0.055], [0, -0.16, 0], this.materials.armorChest);
+    add("legs", this.parts.leftLeg, "armor-left-leg", [LEG_WIDTH + 0.045, LEG_LENGTH * 0.7, LEG_DEPTH + 0.045], [0, -LEG_LENGTH * 0.35, 0], this.materials.armorLegs);
+    add("legs", this.parts.rightLeg, "armor-right-leg", [LEG_WIDTH + 0.045, LEG_LENGTH * 0.7, LEG_DEPTH + 0.045], [0, -LEG_LENGTH * 0.35, 0], this.materials.armorLegs);
+    add("feet", this.parts.leftLeg, "armor-left-boot", [LEG_WIDTH + 0.06, LEG_LENGTH * 0.34, LEG_DEPTH + 0.11], [0, -LEG_LENGTH * 0.83, -0.025], this.materials.armorFeet);
+    add("feet", this.parts.rightLeg, "armor-right-boot", [LEG_WIDTH + 0.06, LEG_LENGTH * 0.34, LEG_DEPTH + 0.11], [0, -LEG_LENGTH * 0.83, -0.025], this.materials.armorFeet);
   }
 
   private applyPose(nextPose: PlayerPoseSnapshot): void {

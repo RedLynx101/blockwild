@@ -9,6 +9,7 @@ import {
   createButterflyInspectionSpec,
   createMobInspectionSpecs,
   createPlayerInspectionSpecs,
+  createSkeletonArrowInspectionSpec,
   inspectGrounding,
   renderModelPortrait,
   renderModelPortraits,
@@ -21,7 +22,7 @@ test("the inspector captures all four production player poses on the ground plan
   for (const spec of specs) {
     assert.equal(spec.category, "player");
     assert.equal(spec.inspection?.source, "BlockPlayerModel");
-    assert.equal(spec.boxes.length, 10);
+    assert.ok(spec.boxes.length >= 10, "player cosmetics and held equipment may add production boxes");
     assert.ok((spec.groundContactBoxIds?.length ?? 0) >= 1);
     const grounding = inspectGrounding(spec);
     assert.equal(grounding.contact, "exact");
@@ -53,14 +54,15 @@ test("the inspector includes every butterfly species with runtime dimensions and
   }
 });
 
-test("the inspector captures all eight canonical production mob visuals", () => {
+test("the inspector captures every canonical production mob visual", () => {
   const specs = createMobInspectionSpecs();
   assert.deepEqual(specs.map((spec) => spec.id), CORE_MOB_ORDER);
   for (const spec of specs) {
     assert.equal(spec.inspection?.source, "MobVisual");
     assert.equal(spec.inspection?.mob, spec.id);
     assert.ok(spec.boxes.length >= 8, `${spec.id} should retain its production detail geometry`);
-    assert.equal(inspectGrounding(spec).contact, spec.id === "glowmoth" ? "reference" : "exact");
+    const definition = MOB_DEFS[spec.id as keyof typeof MOB_DEFS];
+    assert.equal(inspectGrounding(spec).contact, spec.id === "glowmoth" || definition.flying || definition.aquatic ? "reference" : "exact");
   }
   const ridgeback = specs.find((spec) => spec.id === "ridgeback")!;
   const body = ridgeback.boxes.find((box) => box.id === "ridgeback-body")!;
@@ -71,6 +73,13 @@ test("the inspector captures all eight canonical production mob visuals", () => 
   const portrait = renderModelPortrait(ridgeback);
   assert.match(portrait, /front three-quarter model portrait/);
   assert.match(portrait, /<polygon/);
+});
+
+test("the inspector captures the visible Skeleton Archer projectile", () => {
+  const arrow = createSkeletonArrowInspectionSpec();
+  assert.equal(arrow.id, "skeleton-arrow");
+  assert.equal(arrow.boxes.length, 4);
+  assert.equal(arrow.boxes.some((box) => box.id === "arrow-tip"), true);
 });
 
 test("the default inspection catalog appends players and butterflies without losing legacy specs", () => {

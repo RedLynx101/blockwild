@@ -71,6 +71,14 @@ export enum BlockId {
   BedEastHead = 69,
   BedWestFoot = 70,
   BedWestHead = 71,
+  ButterflyExhibit = 72,
+  MeadowGrass = 73,
+  Sunpetal = 74,
+  MoonOrchid = 75,
+  DesertShrub = 76,
+  BananaPlant = 77,
+  TempleSandstone = 78,
+  RuneStone = 79,
 }
 
 export const Item = {
@@ -130,6 +138,16 @@ export const Item = {
   BloomMonarchJar: 152,
   FenLanternJar: 153,
   WildwoodBed: 154,
+  Sailboat: 155,
+  CreatureCage: 156,
+  Banana: 157,
+  StarrootScepter: 158,
+  Feather: 159,
+  RawFish: 160,
+  CookedFish: 161,
+  GlowScale: 162,
+  BreatherCharm: 163,
+  SunwardCompass: 164,
 } as const;
 
 export type ItemCode = number;
@@ -144,6 +162,8 @@ export type InventorySlot = {
   item: ItemCode;
   count: number;
   durability?: number;
+  /** Exact per-item state for cages, named creatures, and future artifacts. */
+  metadata?: Record<string, unknown>;
 };
 
 export type BlockDefinition = {
@@ -158,7 +178,7 @@ export type BlockDefinition = {
   color: string;
   preferredTool: BlockTool;
   requiredTier: number;
-  shape?: "cube" | "cross" | "torch" | "door" | "chest" | "bed";
+  shape?: "cube" | "cross" | "torch" | "door" | "chest" | "bed" | "exhibit";
   replaceable?: boolean;
   liquid?: "water" | "lava";
 };
@@ -178,7 +198,7 @@ export type ItemDefinition = {
   armor?: number;
   food?: number;
   fuel?: number;
-  useKind?: "net" | "release-creature";
+  useKind?: "net" | "release-creature" | "boat" | "creature-cage" | "magic-relic";
   creatureKind?: string;
 };
 
@@ -281,6 +301,14 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.BedEastHead]: block(BlockId.BedEastHead, "Wildwood Bed", 63, 63, 11, 0.45, "#a7463f", "axe", 0, { layer: "cutout", shape: "bed" }),
   [BlockId.BedWestFoot]: block(BlockId.BedWestFoot, "Wildwood Bed", 63, 63, 11, 0.45, "#a7463f", "axe", 0, { layer: "cutout", shape: "bed" }),
   [BlockId.BedWestHead]: block(BlockId.BedWestHead, "Wildwood Bed", 63, 63, 11, 0.45, "#a7463f", "axe", 0, { layer: "cutout", shape: "bed" }),
+  [BlockId.ButterflyExhibit]: block(BlockId.ButterflyExhibit, "Butterfly Conservatory", 13, 70, 11, 0.55, "#b9e5df", "pickaxe", 0, { layer: "transparent", shape: "exhibit" }),
+  [BlockId.MeadowGrass]: block(BlockId.MeadowGrass, "Meadow Grass", 64, 65, 2, 0.62, "#79ba54", "shovel"),
+  [BlockId.Sunpetal]: block(BlockId.Sunpetal, "Sunpetal", 66, 66, 66, 0.05, "#f5c952", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
+  [BlockId.MoonOrchid]: block(BlockId.MoonOrchid, "Moon Orchid", 67, 67, 67, 0.05, "#b29dea", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
+  [BlockId.DesertShrub]: block(BlockId.DesertShrub, "Dune Brush", 68, 68, 68, 0.08, "#a58c45", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
+  [BlockId.BananaPlant]: block(BlockId.BananaPlant, "Goldenleaf Plant", 69, 69, 69, 0.12, "#e8c542", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
+  [BlockId.TempleSandstone]: block(BlockId.TempleSandstone, "Sunglyph Sandstone", 71, 71, 71, 1.7, "#d8b868", "pickaxe", 1),
+  [BlockId.RuneStone]: block(BlockId.RuneStone, "Wild Rune Stone", 72, 72, 72, 2.1, "#58745d", "pickaxe", 2, { layer: "emissive" }),
 };
 
 export const TORCH_BLOCKS: readonly BlockId[] = [
@@ -394,13 +422,35 @@ Object.assign(ITEMS, {
   [Item.BloomMonarchJar]: { id: Item.BloomMonarchJar, name: "Jarred Bloom Monarch", color: "#e88fc8", maxStack: 16, useKind: "release-creature", creatureKind: "bloom-monarch" },
   [Item.FenLanternJar]: { id: Item.FenLanternJar, name: "Jarred Fen Lantern", color: "#b6df62", maxStack: 16, useKind: "release-creature", creatureKind: "fen-lantern" },
   [Item.WildwoodBed]: { id: Item.WildwoodBed, name: "Wildwood Bed", color: "#a7463f", maxStack: 1, placeBlock: BlockId.BedNorthFoot },
+  [Item.Sailboat]: { id: Item.Sailboat, name: "Wayfarer Sailboat", color: "#c58a4c", maxStack: 1, useKind: "boat" },
+  [Item.CreatureCage]: { id: Item.CreatureCage, name: "Waykeeper Cage", color: "#9f7a47", maxStack: 1, useKind: "creature-cage" },
+  [Item.Banana]: { id: Item.Banana, name: "Golden Banana", color: "#f4d34f", maxStack: 64, food: 3 },
+  [Item.StarrootScepter]: { ...tool(Item.StarrootScepter, "Starroot Scepter", "#83e7d5", "sword", 4, 1, 9, 1200), useKind: "magic-relic" },
+  [Item.Feather]: { id: Item.Feather, name: "Bright Feather", color: "#e9d6a7", maxStack: 64 },
+  [Item.RawFish]: { id: Item.RawFish, name: "Fresh Fish", color: "#72aeb9", maxStack: 64, food: 2 },
+  [Item.CookedFish]: { id: Item.CookedFish, name: "Ember-Roasted Fish", color: "#d98c58", maxStack: 64, food: 6 },
+  [Item.GlowScale]: { id: Item.GlowScale, name: "Gloomfin Scale", color: "#5bd6ca", maxStack: 64 },
+  [Item.BreatherCharm]: { id: Item.BreatherCharm, name: "Tideglass Charm", color: "#83e7df", maxStack: 1, maxDurability: 480 },
+  [Item.SunwardCompass]: { id: Item.SunwardCompass, name: "Sunward Compass", color: "#f2cb64", maxStack: 1, maxDurability: 4096, useKind: "magic-relic" },
 } satisfies Record<number, ItemDefinition>);
 
 export const LOG_ITEMS: ItemCode[] = [BlockId.WildwoodLog, BlockId.PineLog, BlockId.BirchLog, BlockId.BloomLog];
 export const LEAF_BLOCKS: BlockId[] = [BlockId.WildwoodLeaves, BlockId.PineLeaves, BlockId.BirchLeaves, BlockId.BloomLeaves];
+/** Replaceable flora is excluded from the broad block filter, but builders still need it in the pack. */
+export const CREATIVE_FLORA: readonly ItemCode[] = [
+  BlockId.TallGrass,
+  BlockId.RedFlower,
+  BlockId.BlueFlower,
+  BlockId.WildwoodSapling,
+  BlockId.Sunpetal,
+  BlockId.MoonOrchid,
+  BlockId.DesertShrub,
+  BlockId.BananaPlant,
+];
+
 export const CREATIVE_BLOCKS: ItemCode[] = [...Object.values(BLOCKS)
   .filter((definition) => ITEMS[definition.id] && !definition.replaceable && definition.id !== BlockId.WheatCrop)
-  .map((definition) => definition.id), Item.WildwoodDoor, Item.WildwoodBed, Item.ButterflyNet, Item.MeadowwingJar, Item.AzureSkipperJar, Item.EmbertipJar, Item.FrostveilJar, Item.BloomMonarchJar, Item.FenLanternJar, Item.HideHood, Item.HideTunic, Item.HideLeggings, Item.HideBoots, Item.SunmetalHelm, Item.SunmetalPlate, Item.SunmetalGreaves, Item.SunmetalBoots];
+  .map((definition) => definition.id), ...CREATIVE_FLORA, Item.WildwoodDoor, Item.WildwoodBed, Item.Sailboat, Item.CreatureCage, Item.Banana, Item.StarrootScepter, Item.Feather, Item.RawFish, Item.CookedFish, Item.GlowScale, Item.BreatherCharm, Item.SunwardCompass, Item.ButterflyNet, Item.MeadowwingJar, Item.AzureSkipperJar, Item.EmbertipJar, Item.FrostveilJar, Item.BloomMonarchJar, Item.FenLanternJar, Item.HideHood, Item.HideTunic, Item.HideLeggings, Item.HideBoots, Item.SunmetalHelm, Item.SunmetalPlate, Item.SunmetalGreaves, Item.SunmetalBoots];
 
 export type Ingredient = ItemCode | ItemCode[];
 export type Recipe = {
@@ -411,9 +461,25 @@ export type Recipe = {
   pattern: Array<Ingredient | 0>;
   output: InventorySlot;
   table: boolean;
+  /** When true, the shaped recipe is also valid when flipped left-to-right. */
+  mirrored?: boolean;
 };
 
+export function mirrorRecipePattern(recipe: Pick<Recipe, "width" | "height" | "pattern">): Recipe["pattern"] {
+  const mirrored: Recipe["pattern"] = [];
+  for (let y = 0; y < recipe.height; y += 1) {
+    for (let x = recipe.width - 1; x >= 0; x -= 1) mirrored.push(recipe.pattern[y * recipe.width + x]);
+  }
+  return mirrored;
+}
+
+export function recipePatterns(recipe: Recipe): Recipe["pattern"][] {
+  return recipe.mirrored ? [recipe.pattern, mirrorRecipePattern(recipe)] : [recipe.pattern];
+}
+
 const anyLog: ItemCode[] = [...LOG_ITEMS];
+const anyFlower: ItemCode[] = [BlockId.RedFlower, BlockId.BlueFlower, BlockId.Sunpetal, BlockId.MoonOrchid];
+const softNetting: ItemCode[] = [Item.Fiber, Item.Feather];
 
 export const RECIPES: Recipe[] = [
   { id: "planks", name: "Wildwood Planks", width: 1, height: 1, pattern: [anyLog], output: { item: BlockId.Planks, count: 4 }, table: false },
@@ -425,15 +491,20 @@ export const RECIPES: Recipe[] = [
   { id: "chest", name: "Wildwood Chest", width: 3, height: 3, pattern: [BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks, 0, BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: BlockId.Chest, count: 1 }, table: true },
   { id: "door", name: "Wildwood Doors", width: 2, height: 3, pattern: [BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: Item.WildwoodDoor, count: 3 }, table: true },
   { id: "bed", name: "Wildwood Bed", width: 3, height: 2, pattern: [Item.Wool, Item.Wool, Item.Wool, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: Item.WildwoodBed, count: 1 }, table: true },
-  { id: "butterfly_net", name: "Butterfly Net", width: 3, height: 3, pattern: [Item.Fiber, Item.Fiber, Item.Fiber, Item.Fiber, 0, Item.Stick, 0, Item.Stick, 0], output: { item: Item.ButterflyNet, count: 1 }, table: true },
+  { id: "butterfly_exhibit", name: "Butterfly Conservatory", width: 3, height: 3, pattern: [BlockId.Glass, BlockId.Glass, BlockId.Glass, BlockId.Glass, anyFlower, BlockId.Glass, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: BlockId.ButterflyExhibit, count: 4 }, table: true },
+  { id: "sailboat", name: "Wayfarer Sailboat", width: 3, height: 3, pattern: [0, Item.Wool, 0, BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks, 0, BlockId.Planks], output: { item: Item.Sailboat, count: 1 }, table: true },
+  { id: "creature_cage", name: "Waykeeper Cage", width: 3, height: 3, pattern: [Item.SunmetalIngot, Item.Stick, Item.SunmetalIngot, Item.Stick, 0, Item.Stick, Item.SunmetalIngot, Item.Stick, Item.SunmetalIngot], output: { item: Item.CreatureCage, count: 1 }, table: true },
+  { id: "tideglass_charm", name: "Tideglass Charm", width: 3, height: 1, pattern: [Item.GlowScale, Item.Fiber, Item.GlowScale], output: { item: Item.BreatherCharm, count: 1 }, table: true },
+  { id: "butterfly_net", name: "Butterfly Net", width: 3, height: 3, pattern: [softNetting, softNetting, softNetting, softNetting, 0, Item.Stick, 0, Item.Stick, 0], output: { item: Item.ButterflyNet, count: 1 }, table: true },
+  { id: "banana_harvest", name: "Golden Bananas", width: 1, height: 1, pattern: [BlockId.BananaPlant], output: { item: Item.Banana, count: 2 }, table: false },
   { id: "wood_pick", name: "Wooden Pickaxe", width: 3, height: 3, pattern: [BlockId.Planks, BlockId.Planks, BlockId.Planks, 0, Item.Stick, 0, 0, Item.Stick, 0], output: { item: Item.WoodPickaxe, count: 1 }, table: true },
   { id: "stone_pick", name: "Stone Pickaxe", width: 3, height: 3, pattern: [BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone, 0, Item.Stick, 0, 0, Item.Stick, 0], output: { item: Item.StonePickaxe, count: 1 }, table: true },
   { id: "iron_pick", name: "Sunmetal Pickaxe", width: 3, height: 3, pattern: [Item.SunmetalIngot, Item.SunmetalIngot, Item.SunmetalIngot, 0, Item.Stick, 0, 0, Item.Stick, 0], output: { item: Item.IronPickaxe, count: 1 }, table: true },
   { id: "crystal_pick", name: "Star Pickaxe", width: 3, height: 3, pattern: [Item.CrystalShard, Item.CrystalShard, Item.CrystalShard, 0, Item.Stick, 0, 0, Item.Stick, 0], output: { item: Item.CrystalPickaxe, count: 1 }, table: true },
-  { id: "wood_axe", name: "Wooden Axe", width: 2, height: 3, pattern: [BlockId.Planks, BlockId.Planks, BlockId.Planks, Item.Stick, 0, Item.Stick], output: { item: Item.WoodAxe, count: 1 }, table: true },
-  { id: "stone_axe", name: "Stone Axe", width: 2, height: 3, pattern: [BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone, Item.Stick, 0, Item.Stick], output: { item: Item.StoneAxe, count: 1 }, table: true },
-  { id: "iron_axe", name: "Sunmetal Axe", width: 2, height: 3, pattern: [Item.SunmetalIngot, Item.SunmetalIngot, Item.SunmetalIngot, Item.Stick, 0, Item.Stick], output: { item: Item.IronAxe, count: 1 }, table: true },
-  { id: "crystal_axe", name: "Star Axe", width: 2, height: 3, pattern: [Item.CrystalShard, Item.CrystalShard, Item.CrystalShard, Item.Stick, 0, Item.Stick], output: { item: Item.CrystalAxe, count: 1 }, table: true },
+  { id: "wood_axe", name: "Wooden Axe", width: 2, height: 3, pattern: [BlockId.Planks, BlockId.Planks, BlockId.Planks, Item.Stick, 0, Item.Stick], output: { item: Item.WoodAxe, count: 1 }, table: true, mirrored: true },
+  { id: "stone_axe", name: "Stone Axe", width: 2, height: 3, pattern: [BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone, Item.Stick, 0, Item.Stick], output: { item: Item.StoneAxe, count: 1 }, table: true, mirrored: true },
+  { id: "iron_axe", name: "Sunmetal Axe", width: 2, height: 3, pattern: [Item.SunmetalIngot, Item.SunmetalIngot, Item.SunmetalIngot, Item.Stick, 0, Item.Stick], output: { item: Item.IronAxe, count: 1 }, table: true, mirrored: true },
+  { id: "crystal_axe", name: "Star Axe", width: 2, height: 3, pattern: [Item.CrystalShard, Item.CrystalShard, Item.CrystalShard, Item.Stick, 0, Item.Stick], output: { item: Item.CrystalAxe, count: 1 }, table: true, mirrored: true },
   { id: "wood_sword", name: "Wooden Sword", width: 1, height: 3, pattern: [BlockId.Planks, BlockId.Planks, Item.Stick], output: { item: Item.WoodSword, count: 1 }, table: true },
   { id: "stone_sword", name: "Stone Sword", width: 1, height: 3, pattern: [BlockId.Cobblestone, BlockId.Cobblestone, Item.Stick], output: { item: Item.StoneSword, count: 1 }, table: true },
   { id: "iron_sword", name: "Sunmetal Sword", width: 1, height: 3, pattern: [Item.SunmetalIngot, Item.SunmetalIngot, Item.Stick], output: { item: Item.IronSword, count: 1 }, table: true },
@@ -459,6 +530,7 @@ export const SMELTING: Record<number, InventorySlot> = {
   [Item.RawGold]: { item: Item.GoldIngot, count: 1 },
   [BlockId.Sand]: { item: BlockId.Glass, count: 1 },
   [Item.RawMeat]: { item: Item.CookedMeat, count: 1 },
+  [Item.RawFish]: { item: Item.CookedFish, count: 1 },
   [BlockId.Cobblestone]: { item: BlockId.Stone, count: 1 },
   [BlockId.WildwoodLog]: { item: Item.Charcoal, count: 1 },
   [BlockId.PineLog]: { item: Item.Charcoal, count: 1 },
@@ -467,7 +539,13 @@ export const SMELTING: Record<number, InventorySlot> = {
 };
 
 export function cloneSlot(slot: InventorySlot | null): InventorySlot | null {
-  return slot ? { ...slot } : null;
+  if (!slot) return null;
+  const metadata = slot.metadata === undefined
+    ? undefined
+    : typeof structuredClone === "function"
+      ? structuredClone(slot.metadata)
+      : JSON.parse(JSON.stringify(slot.metadata)) as Record<string, unknown>;
+  return { ...slot, ...(metadata === undefined ? {} : { metadata }) };
 }
 
 export function itemName(item: ItemCode) {

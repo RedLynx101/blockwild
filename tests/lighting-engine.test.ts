@@ -40,7 +40,7 @@ test("the fixed light pool binds to an influence volume ahead instead of the nea
     { x: 0, y: 8, z: -42, type: BlockId.Torch, distanceSquared: 1764 },
   ];
   engine.world = { lightSourcesNear: () => sources } as unknown as ChunkWorld;
-  engine.settings = { volume: 0, muted: true, sensitivity: 0.002, fov: 72, weather: "clear", renderDistance: 5 } satisfies GameSettings;
+  engine.settings = { volume: 0, muted: true, sensitivity: 0.002, fov: 72, weather: "clear", renderDistance: 5, simulationDistance: 5 } satisfies GameSettings;
   engine.placedLightPool = [new THREE.PointLight()];
   engine.environmentLightCandidates = [];
   engine.environmentLightCandidateCache = [];

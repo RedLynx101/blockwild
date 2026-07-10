@@ -1,5 +1,15 @@
 import * as THREE from "three";
 import { BLOCKS, TORCH_BLOCKS, BlockId, type RenderLayer } from "./data";
+import {
+  planBiomeVegetation,
+  planStructure,
+  structureBiomeFromId,
+  structureCandidateForChunk,
+  structureMarkersForChunk,
+  structurePlacementsForChunk,
+  type PlannedBlock,
+  type StructureMarker,
+} from "./structures";
 
 export const CHUNK_SIZE = 16;
 export const MIN_Y = -64;
@@ -152,6 +162,8 @@ const TILE_COLORS = [
   "#b56f50", "#d4af3f", "#60d8e1", "#3d4448", "#ed642f", "#a74e62", "#4b8245", "#85817c",
   "#8fd0e2", "#3b3538", "#29213d", "#61dce5", "#9f6b35", "#65a842", "#d54f48", "#548ed8",
   "#caa64c", "#6d452b", "#69422a", "#5e9d43", "#9b6839", "#666666", "#555555", "#444444",
+  "#7fbd55", "#6fa14a", "#f4ca4f", "#b59be8", "#a88a48", "#72a94a", "#b8ded9", "#d7b667",
+  "#53735d",
 ];
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
@@ -174,8 +186,8 @@ export function normalizeWorldGenerationOptions(value?: Partial<WorldGenerationO
     structures: typeof value?.structures === "boolean" ? value.structures : DEFAULT_WORLD_GENERATION_OPTIONS.structures,
   };
 }
-const LIGHT_BLOCKS = new Set<BlockId>([...TORCH_BLOCKS, BlockId.Glowstone, BlockId.CrystalBlock]);
-const ATLAS_GRID = 8;
+const LIGHT_BLOCKS = new Set<BlockId>([...TORCH_BLOCKS, BlockId.Glowstone, BlockId.CrystalBlock, BlockId.RuneStone]);
+const ATLAS_GRID = 10;
 const ATLAS_PAD = 0.0008;
 const TILE_UVS = Array.from({ length: ATLAS_GRID * ATLAS_GRID }, (_, tile) => {
   const column = tile % ATLAS_GRID;
@@ -308,7 +320,7 @@ function shadeColor(hex: string, amount: number) {
 
 export function createBlockAtlas() {
   const tile = 16;
-  const grid = 8;
+  const grid = ATLAS_GRID;
   const canvas = document.createElement("canvas");
   canvas.width = tile * grid;
   canvas.height = tile * grid;
@@ -332,7 +344,7 @@ export function createBlockAtlas() {
   const leafTiles = new Set([7, 20, 23, 34]);
   const logSideTiles = new Set([5, 18, 21, 32]);
   const logTopTiles = new Set([6, 19, 22, 33]);
-  const crossTiles = new Set([39, 53, 54, 55, 56, 59]);
+  const crossTiles = new Set([39, 53, 54, 55, 56, 59, 66, 67, 68, 69]);
   for (let index = 0; index < grid * grid; index += 1) {
     const base = TILE_COLORS[index] ?? "#777777";
     const ox = (index % grid) * tile;
@@ -363,6 +375,20 @@ export function createBlockAtlas() {
           pixel(index, x, y, "#4b8d3c");
           if (x + 1 < 16) pixel(index, x + 1, y, "#75b653");
         }
+      } else if (index === 66 || index === 67) {
+        for (let y = 7; y < 16; y += 1) pixel(index, 7 + (y % 5 === 0 ? 1 : 0), y, "#578641");
+        const bloom = index === 66 ? "#f4c84e" : "#a68de1";
+        const highlight = index === 66 ? "#fff1a2" : "#e5ddff";
+        for (const [dx, dy] of [[0, -3], [-2, -1], [2, -1], [-2, 1], [2, 1], [0, 2]] as Array<[number, number]>) pixel(index, 8 + dx, 5 + dy, bloom);
+        pixel(index, 8, 5, highlight);
+      } else if (index === 68) {
+        for (const [x, lean, height] of [[4, -1, 7], [7, 1, 10], [10, -1, 8], [12, 0, 5]] as Array<[number, number, number]>) {
+          for (let step = 0; step < height; step += 1) pixel(index, x + Math.round((lean * step) / height), 15 - step, step % 2 ? "#9d843f" : "#c2a65a");
+        }
+      } else if (index === 69) {
+        for (let y = 8; y < 16; y += 1) pixel(index, 7, y, "#698a39");
+        for (const side of [-1, 1]) for (let step = 0; step < 5; step += 1) pixel(index, 7 + side * (step + 1), 9 - Math.floor(step / 2), step % 2 ? "#83b34f" : "#5c963d");
+        for (const [x, y] of [[6, 7], [8, 6], [9, 8], [7, 9]] as Array<[number, number]>) pixel(index, x, y, "#f0d34f");
       } else {
         const stem = index === 56 ? "#9a7a32" : "#54843b";
         for (let y = 7; y < 16; y += 1) pixel(index, 7 + (y % 4 === 0 ? 1 : 0), y, stem);
@@ -481,6 +507,49 @@ export function createBlockAtlas() {
       context.fillStyle = "#e9a26e";
       for (let x = 3; x < 16; x += 6) for (let y = 2; y < 16; y += 6) context.fillRect(ox + x, oy + y, 2, 2);
     }
+    if (index === 64) {
+      context.fillStyle = "#79b951";
+      context.fillRect(ox, oy, tile, tile);
+      for (let y = 0; y < tile; y += 1) for (let x = 0; x < tile; x += 1) {
+        if ((x * 5 + y * 3) % 17 === 0) pixel(index, x, y, "#a8d76c");
+        else if ((x * 7 + y * 11) % 29 === 0) pixel(index, x, y, "#e3c94f");
+      }
+    }
+    if (index === 65) {
+      context.fillStyle = "#765436";
+      context.fillRect(ox, oy, tile, tile);
+      context.fillStyle = "#76b650";
+      context.fillRect(ox, oy, tile, 5);
+      for (let x = 0; x < tile; x += 2) context.fillRect(ox + x, oy + 4, 1, 2 + (x % 3));
+    }
+    if (index === 70) {
+      context.clearRect(ox, oy, tile, tile);
+      context.fillStyle = "rgba(185,229,224,.22)";
+      context.fillRect(ox + 2, oy + 2, 12, 12);
+      context.fillStyle = "#8f6237";
+      context.fillRect(ox, oy, 2, tile); context.fillRect(ox + 14, oy, 2, tile);
+      context.fillRect(ox, oy, tile, 2); context.fillRect(ox, oy + 14, tile, 2);
+      context.fillStyle = "rgba(232,255,249,.72)";
+      context.fillRect(ox + 3, oy + 3, 1, 6); context.fillRect(ox + 4, oy + 3, 5, 1);
+    }
+    if (index === 71) {
+      context.fillStyle = "#d7b768";
+      context.fillRect(ox, oy, tile, tile);
+      context.fillStyle = "#a9803f";
+      for (let y = 0; y < tile; y += 5) context.fillRect(ox, oy + y, tile, 1);
+      context.fillRect(ox + 7, oy + 3, 2, 10); context.fillRect(ox + 4, oy + 7, 8, 2);
+      context.fillStyle = "#f4d98b";
+      context.fillRect(ox + 7, oy + 7, 2, 2);
+    }
+    if (index === 72) {
+      context.fillStyle = "#405447";
+      context.fillRect(ox, oy, tile, tile);
+      context.fillStyle = "#79c692";
+      context.fillRect(ox + 3, oy + 3, 2, 10); context.fillRect(ox + 11, oy + 3, 2, 10);
+      context.fillRect(ox + 5, oy + 7, 6, 2); context.fillRect(ox + 7, oy + 5, 2, 6);
+      context.fillStyle = "#b8f4c9";
+      context.fillRect(ox + 7, oy + 7, 2, 2);
+    }
   }
   const texture = new THREE.CanvasTexture(canvas);
   texture.magFilter = THREE.NearestFilter;
@@ -494,6 +563,7 @@ export class ChunkWorld {
   group = new THREE.Group();
   chunks = new Map<string, Chunk>();
   edits = new Map<string, Map<number, BlockId>>();
+  structureMarkers = new Map<string, StructureMarker>();
   generationQueue: Array<{ cx: number; cz: number; distance: number }> = [];
   generationQueued = new Set<string>();
   meshQueue: Array<{ key: string; section: number }> = [];
@@ -504,13 +574,16 @@ export class ChunkWorld {
   urgentMeshQueued = new Set<string>();
   seedText = "WILDERNESS";
   seed = seedToInt(this.seedText);
-  renderDistance = 3;
+  renderDistance = 10;
+  generationWorkPerFrame = 1;
+  meshWorkPerFrame = 2;
   generationOptions = normalizeWorldGenerationOptions();
   playerChunkX = Number.NaN;
   playerChunkZ = Number.NaN;
   frame = 0;
   atlas: THREE.Texture;
   materials: Record<Exclude<RenderLayer, "none">, THREE.Material>;
+  private waterAnimationFrame = -1;
 
   constructor() {
     this.atlas = typeof document === "undefined"
@@ -525,9 +598,39 @@ export class ChunkWorld {
     };
   }
 
+  /** Redraws only the 16px water tile; the shared atlas then animates every water face in one upload. */
+  updateWaterAnimation(timeMilliseconds: number) {
+    const frame = Math.floor(timeMilliseconds / 120);
+    if (frame === this.waterAnimationFrame) return;
+    const canvas = this.atlas.image;
+    if (typeof HTMLCanvasElement === "undefined" || !(canvas instanceof HTMLCanvasElement)) return;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    this.waterAnimationFrame = frame;
+    const tile = 16;
+    const index = 8;
+    const ox = (index % ATLAS_GRID) * tile;
+    const oy = Math.floor(index / ATLAS_GRID) * tile;
+    const phase = frame % tile;
+    context.globalAlpha = 1;
+    context.fillStyle = "#3d85c8";
+    context.fillRect(ox, oy, tile, tile);
+    for (let y = 0; y < tile; y += 1) for (let x = 0; x < tile; x += 1) {
+      const wave = (x + Math.floor(y * 0.55) + phase) % 8;
+      context.fillStyle = wave < 2 ? "rgba(128,198,235,.68)" : wave === 4 ? "rgba(42,111,180,.42)" : "rgba(78,157,213,.28)";
+      context.fillRect(ox + x, oy + y, 1, 1);
+    }
+    this.atlas.needsUpdate = true;
+  }
+
   setRenderDistance(distance: number) {
-    this.renderDistance = clamp(Math.round(distance), 2, 8);
+    this.renderDistance = clamp(Math.round(distance), 2, 16);
     this.playerChunkX = Number.NaN;
+  }
+
+  setStreamingBudgets(chunkGenerations: number, chunkMeshSections: number) {
+    this.generationWorkPerFrame = clamp(Math.round(chunkGenerations), 1, 3);
+    this.meshWorkPerFrame = clamp(Math.round(chunkMeshSections), 1, 8);
   }
 
   reset(seedText: string, savedEdits?: ChunkEditSave, generationOptions?: Partial<WorldGenerationOptions>) {
@@ -541,6 +644,7 @@ export class ChunkWorld {
     this.urgentMeshQueueHead = 0;
     this.urgentMeshQueued.clear();
     this.edits.clear();
+    this.structureMarkers.clear();
     this.seedText = seedText || "WILDERNESS";
     this.seed = seedToInt(this.seedText);
     this.generationOptions = normalizeWorldGenerationOptions(generationOptions);
@@ -573,8 +677,8 @@ export class ChunkWorld {
     const cx = Math.floor(x / CHUNK_SIZE);
     const cz = Math.floor(z / CHUNK_SIZE);
     if (cx !== this.playerChunkX || cz !== this.playerChunkZ || this.frame % 180 === 0) this.scheduleAround(x, z);
-    if (this.frame % 2 === 0) this.processGeneration();
-    this.processMesh();
+    for (let index = 0; index < this.generationWorkPerFrame; index += 1) this.processGeneration();
+    for (let index = 0; index < this.meshWorkPerFrame; index += 1) this.processMesh();
   }
 
   scheduleAround(x: number, z: number, force = false) {
@@ -921,6 +1025,7 @@ export class ChunkWorld {
     if (biome === BiomeId.Snowfield || (height > 72 && temperature < 0.48)) return [BlockId.SnowyGrass, BlockId.Dirt];
     if (biome === BiomeId.Volcanic) return [BlockId.Basalt, BlockId.Basalt];
     if (biome === BiomeId.Highlands) return [height > 76 ? BlockId.Snow : BlockId.Stone, BlockId.Stone];
+    if (biome === BiomeId.Meadow) return [BlockId.MeadowGrass, BlockId.Dirt];
     return [BlockId.Grass, BlockId.Dirt];
   }
 
@@ -1027,6 +1132,66 @@ export class ChunkWorld {
         }
       }
     }
+
+    const mapVegetationBlock = (placement: PlannedBlock) => {
+      if (placement.variant === "dry-shrub") return BlockId.DesertShrub;
+      if (placement.variant === "buttercup" || placement.variant === "butterfly-host") return BlockId.Sunpetal;
+      if (placement.variant === "violet-star") return BlockId.MoonOrchid;
+      return placement.block;
+    };
+    const centerBiome = sample(minX + CHUNK_SIZE / 2, minZ + CHUNK_SIZE / 2).biome;
+    if (centerBiome === BiomeId.Desert || centerBiome === BiomeId.Badlands || centerBiome === BiomeId.Meadow) {
+      const vegetation = planBiomeVegetation({
+        seed: this.seedText,
+        biome: centerBiome === BiomeId.Meadow ? "meadow" : "desert",
+        chunkX: chunk.cx,
+        chunkZ: chunk.cz,
+        surfaceYAt: (x, z) => sample(x, z).height,
+      });
+      for (const placement of vegetation.placements) set(placement.x, placement.y, placement.z, mapVegetationBlock(placement));
+    }
+
+    if (this.generationOptions.structures) {
+      // Named plans can span one chunk seam, so every chunk also inspects the
+      // eight neighboring candidate chunks and applies only its own slice.
+      for (let originCx = chunk.cx - 1; originCx <= chunk.cx + 1; originCx += 1) {
+        for (let originCz = chunk.cz - 1; originCz <= chunk.cz + 1; originCz += 1) {
+          const originX = originCx * CHUNK_SIZE + Math.floor(CHUNK_SIZE / 2);
+          const originZ = originCz * CHUNK_SIZE + Math.floor(CHUNK_SIZE / 2);
+          const originColumn = sample(originX, originZ);
+          const structureBiome = structureBiomeFromId(originColumn.biome);
+          if (!structureBiome || originColumn.height <= originColumn.waterline + 2) continue;
+          const kind = structureCandidateForChunk({ seed: this.seedText, chunkX: originCx, chunkZ: originCz, biome: structureBiome });
+          if (!kind) continue;
+          const plan = planStructure(kind, { x: originX, y: originColumn.height, z: originZ }, this.seedText);
+          for (const placement of structurePlacementsForChunk(plan, chunk.cx, chunk.cz, CHUNK_SIZE)) {
+            let type = placement.block;
+            if (kind === "desert-temple" && (type === BlockId.StoneBrick || type === BlockId.Sand)) type = BlockId.TempleSandstone;
+            else if (kind === "forest-temple" && placement.variant === "root-altar") type = BlockId.RuneStone;
+            else if ((kind === "sunbun-grove" || kind === "meadow-butterfly-sanctuary") && type === BlockId.Grass) type = BlockId.MeadowGrass;
+            else if (kind === "sunbun-grove" && placement.variant === "golden-clover") type = BlockId.BananaPlant;
+            else if (kind === "meadow-butterfly-sanctuary" && placement.variant === "buttercup") type = BlockId.Sunpetal;
+            else if (kind === "meadow-butterfly-sanctuary" && placement.variant === "violet-star") type = BlockId.MoonOrchid;
+            set(placement.x, placement.y, placement.z, type, false);
+          }
+          for (const marker of structureMarkersForChunk(plan, chunk.cx, chunk.cz, CHUNK_SIZE)) this.structureMarkers.set(`${plan.id}:${marker.type}:${marker.id}`, marker);
+        }
+      }
+    }
+  }
+
+  structureMarkersNear(x: number, y: number, z: number, radius = 48) {
+    const radiusSquared = radius * radius;
+    return [...this.structureMarkers.entries()].filter(([, marker]) => {
+      const dx = marker.position.x - x;
+      const dy = marker.position.y - y;
+      const dz = marker.position.z - z;
+      return dx * dx + dy * dy + dz * dz <= radiusSquared;
+    });
+  }
+
+  structureMarkerAt(x: number, y: number, z: number, type?: StructureMarker["type"]) {
+    return [...this.structureMarkers.entries()].find(([, marker]) => marker.position.x === x && marker.position.y === y && marker.position.z === z && (!type || marker.type === type));
   }
 
   getBlock(x: number, y: number, z: number): BlockId | undefined {
@@ -1357,6 +1522,18 @@ export class ChunkWorld {
           const environment = definition.layer === "emissive" ? Math.max(0.82, shadeAt(lx, y, lz)) : shadeAt(lx, y, lz);
           addQuad(bucket, [[lx - 0.36, y - 0.5, lz - 0.36], [lx - 0.36, y + 0.5, lz - 0.36], [lx + 0.36, y + 0.5, lz + 0.36], [lx + 0.36, y - 0.5, lz + 0.36]], [0.7, 0, -0.7], tile, 1, tint, 0, 0, 0, 0, environment);
           addQuad(bucket, [[lx + 0.36, y - 0.5, lz - 0.36], [lx + 0.36, y + 0.5, lz - 0.36], [lx - 0.36, y + 0.5, lz + 0.36], [lx - 0.36, y - 0.5, lz + 0.36]], [-0.7, 0, -0.7], tile, 0.92, tint, 0, 0, 0, 0, environment);
+          continue;
+        }
+        if (definition.shape === "exhibit") {
+          // Conservatory blocks visually fuse into one habitat: interior glass
+          // faces disappear while the atlas-painted brass frame remains around
+          // every exposed outer panel.
+          for (const face of FACES) {
+            const [dx, dy, dz] = face.direction;
+            if (neighborAt(lx + dx, y + dy, lz + dz) === BlockId.ButterflyExhibit) continue;
+            const environment = shadeAt(lx + dx, y + dy, lz + dz);
+            addQuad(bucket, face.corners, face.direction, definition.side, face.shade, [1, 1, 1], lx, y, lz, 0, environment);
+          }
           continue;
         }
         if (definition.shape === "chest") {

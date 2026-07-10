@@ -13,6 +13,7 @@ import {
   isTorchBlock,
   itemName,
   maxStack,
+  recipePatterns,
   type GameMode,
   type EquipmentSlot,
   type InventorySlot,
@@ -36,10 +37,87 @@ import { createHeldToolSpec } from "./model-specs";
 import { createMobVisual } from "./mob-models";
 import { ButterflySystem } from "./butterflies";
 import {
+  createBirdBehavior,
+  createStableSteering,
+  fishKindsForHabitat,
+  shouldKeepCreatureLoaded,
+  updateBirdBehavior,
+  updateStableSteering,
+  type BirdBehaviorState,
+  type StableSteeringState,
+} from "./fauna";
+import {
+  breedPeelops,
+  commandPeelop,
+  createPeelopState,
+  feedPeelop,
+  renamePeelop,
+  tickPeelop,
+  tryTamePeelop,
+  type PeelopCommand,
+  type PeelopFood,
+  type PeelopState,
+} from "./peelop";
+import {
+  captureCreature,
+  decodeCapturedCreature,
+  encodeCapturedCreature,
+  releaseCreature,
+  type CreatureMetadata,
+} from "./creature-cage";
+import {
+  buildExhibitTopology,
+  sampleExhibitButterflyPose,
+  type ExhibitButterfly,
+  type ExhibitTopology,
+} from "./butterfly-exhibit";
+import {
+  boardSailboat,
+  createSailboatVisual,
+  disposeSailboatVisual,
+  integrateSailboat,
+  leaveSailboat,
+  normalizeSailboatSave,
+  sailboatSeatOffset,
+  type SailboatSave,
+} from "./boats";
+import {
+  createArrowProjectile,
+  disposeArrowVisual,
+  stepArrowProjectile,
+  type ArrowProjectile,
+} from "./projectiles";
+import { GAME_VERSION } from "./version";
+import {
+  LiquidSimulator,
+  DEFAULT_SWIM_RULES,
+  stepSwimming,
+  type LiquidCell,
+} from "./liquids";
+import {
+  DEFAULT_RENDER_DISTANCE,
+  DEFAULT_SIMULATION_DISTANCE,
+  normalizeViewDistances,
+  PerformanceSampler,
+  AdaptiveBudgetController,
+} from "./performance";
+import {
+  createWeatherState,
+  planCloudField,
+  stepWeather,
+  weatherBiomeFromId,
+  weatherVisuals,
+  type WeatherBiome,
+  type WeatherState,
+} from "./weather";
+import { type ChestMarker, type SpawnMarker } from "./structures";
+import {
   BlockPlayerModel,
   updateThirdPersonCamera,
   type PlayerAction,
   type PlayerLocomotion,
+  type PlayerVariant,
+  type PlayerEquipmentAppearance,
 } from "./player-model";
 import {
   MultiplayerSession,
@@ -64,7 +142,7 @@ import {
   type WorldOptions,
 } from "./world-storage";
 
-export { BLOCKS, CREATIVE_BLOCKS, ITEMS, Item, RECIPES, BlockId, BIOME_NAMES, MOB_DEFS, MOB_ORDER, WorldStorage, DEFAULT_WORLD_OPTIONS, type WorldOptions, type WorldMetadata, type GameMode, type InventorySlot, type ItemCode, type Recipe, type EquipmentSlot, type MobKind, type SleepTarget };
+export { BLOCKS, CREATIVE_BLOCKS, ITEMS, Item, RECIPES, BlockId, BIOME_NAMES, MOB_DEFS, MOB_ORDER, WorldStorage, DEFAULT_WORLD_OPTIONS, type WorldOptions, type WorldMetadata, type GameMode, type InventorySlot, type ItemCode, type Recipe, type EquipmentSlot, type MobKind, type SleepTarget, type PlayerVariant };
 
 export const SAVE_KEY = "blockwild-world-v2";
 export const SETTINGS_KEY = "blockwild-settings-v2";
@@ -77,6 +155,7 @@ export type GameSettings = {
   fov: number;
   weather: Weather;
   renderDistance: number;
+  simulationDistance: number;
 };
 
 export type FurnaceState = {
@@ -90,6 +169,9 @@ export type FurnaceState = {
 
 export type ChestState = Array<InventorySlot | null>;
 export type BestiaryProgress = Record<MobKind, { seen: boolean; kills: number; captures: number }>;
+export type RecipePlanResult =
+  | { ok: true; recipeId: string; message: string }
+  | { ok: false; recipeId: string; reason: "unknown" | "needs-table" | "missing" | "inventory-full"; message: string; missing?: string[] };
 
 export type HudState = {
   health: number;
@@ -126,11 +208,36 @@ export type HudState = {
   crouching: boolean;
   sprinting: boolean;
   onlinePlayers: number;
+  playerVariant: PlayerVariant;
+  oxygen: number;
+  maxOxygen: number;
+  submerged: boolean;
+  averageFps: number;
+  simulationDistance: number;
+  weatherKind: string;
+  activePet: { id: number; name: string; command: PeelopCommand; health: number; maxHealth: number; baby: boolean; tamed: boolean } | null;
+  mountedBoat: boolean;
+};
+
+export type SavedCreature = {
+  id: number;
+  kind: MobKind;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  health: number;
+  age: number;
+  persistentPoiResident?: boolean;
+  poiMarkerId?: string;
+  enclosed?: boolean;
+  petState?: PeelopState;
 };
 
 export type WorldSave = {
   version: 2;
   generatorVersion: number;
+  lastSavedGameVersion?: string;
   seed: string;
   mode: GameMode;
   edits: ChunkEditSave;
@@ -152,12 +259,18 @@ export type WorldSave = {
   weather: Weather;
   furnaces: Record<string, FurnaceState>;
   chests: Record<string, ChestState>;
-  drops?: Array<{ item: ItemCode; count: number; durability?: number; x: number; y: number; z: number; age: number }>;
+  drops?: Array<{ item: ItemCode; count: number; durability?: number; metadata?: Record<string, unknown>; x: number; y: number; z: number; age: number }>;
   options?: Partial<WorldOptions>;
+  playerVariant?: PlayerVariant;
+  liquidLevels?: Array<[string, LiquidCell]>;
+  weatherState?: WeatherState;
+  creatures?: SavedCreature[];
+  activatedStructureMarkers?: string[];
+  boats?: SailboatSave[];
   savedAt: number;
 };
 
-export type OverlayKind = "inventory" | "crafting" | "furnace" | "chest" | "bestiary" | "multiplayer" | "sleep";
+export type OverlayKind = "inventory" | "crafting" | "furnace" | "chest" | "bestiary" | "multiplayer" | "sleep" | "pet";
 export type CameraMode = "first" | "third-rear" | "third-front";
 
 export type MultiplayerUiState = {
@@ -205,6 +318,7 @@ type MobEntity = {
   damage: number;
   angle: number;
   desiredAngle: number;
+  steering: StableSteeringState;
   wanderTimer: number;
   attackCooldown: number;
   hurtTimer: number;
@@ -216,6 +330,34 @@ type MobEntity = {
   stateTimer: number;
   baseY: number;
   voiceTimer: number;
+  birdState: BirdBehaviorState | null;
+  petState: PeelopState | null;
+  persistentPoiResident: boolean;
+  poiMarkerId: string | null;
+  enclosed: boolean;
+  enclosureTimer: number;
+};
+
+type SailboatEntity = {
+  save: SailboatSave;
+  group: THREE.Group;
+};
+
+type ExhibitVisual = {
+  group: THREE.Group;
+  topologySignature: string;
+  specimenSignature: string;
+};
+
+type SpawnMobOptions = {
+  id?: number;
+  health?: number;
+  age?: number;
+  yaw?: number;
+  persistentPoiResident?: boolean;
+  poiMarkerId?: string | null;
+  enclosed?: boolean;
+  petState?: PeelopState | null;
 };
 
 type MobFragment = {
@@ -259,6 +401,7 @@ type DropEntity = {
   item: ItemCode;
   count: number;
   durability?: number;
+  metadata?: Record<string, unknown>;
   mesh: THREE.Mesh;
   velocity: THREE.Vector3;
   age: number;
@@ -302,7 +445,7 @@ function environmentLightDistance(type: BlockId) {
 }
 
 function isEnvironmentLightBlock(type: BlockId) {
-  return isTorchBlock(type) || type === BlockId.Glowstone || type === BlockId.CrystalBlock;
+  return isTorchBlock(type) || type === BlockId.Glowstone || type === BlockId.CrystalBlock || type === BlockId.RuneStone;
 }
 
 function setEnvironmentLightPosition(target: THREE.Vector3, source: Pick<EnvironmentLightSource, "x" | "y" | "z" | "type">) {
@@ -400,9 +543,31 @@ export function nextAdaptivePixelRatio(current: number, nativeMaximum: number, a
   return Math.round(resolved * 100) / 100;
 }
 
+export function isDoubleForwardTap(previousTap: number, currentTap: number, windowMilliseconds = 310) {
+  const elapsed = currentTap - previousTap;
+  return Number.isFinite(elapsed) && elapsed >= 45 && elapsed <= windowMilliseconds;
+}
+
 function blockKey(x: number, y: number, z: number) {
   return `${x},${y},${z}`;
 }
+
+const STRUCTURE_LOOT_ITEMS: Readonly<Record<string, ItemCode>> = Object.freeze({
+  "gold-ingot": Item.GoldIngot,
+  "sunmetal-ingot": Item.SunmetalIngot,
+  "crystal-shard": Item.CrystalShard,
+  "bone-shard": Item.BoneShard,
+  "glow-dust": Item.GlowDust,
+  bread: Item.Bread,
+  apple: Item.Apple,
+  fiber: Item.Fiber,
+  "wildwood-planks": BlockId.Planks,
+  wheat: Item.Wheat,
+  "red-flower": BlockId.RedFlower,
+  "blue-flower": BlockId.BlueFlower,
+  "butterfly-net": Item.ButterflyNet,
+  "sunward-compass": Item.SunwardCompass,
+});
 
 export function readSavedWorld(): WorldSave | null {
   if (typeof window === "undefined") return null;
@@ -439,7 +604,11 @@ export function migrateSavedWorld(value: unknown): WorldSave | null {
 
 export function restoreChestStorage(saved: Record<string, ChestState> = {}) {
   return new Map(Object.entries(saved).map(([key, value]) => {
-    const size = key.includes("|") ? 54 : 27;
+    const size = key.startsWith("exhibit:")
+      ? clamp(value.length || 1, 1, 20)
+      : key.startsWith("boat:")
+        ? 18
+        : key.includes("|") ? 54 : 27;
     return [key, Array.from({ length: size }, (_, index) => cloneSlot(value[index] ?? null))] as const;
   }));
 }
@@ -457,18 +626,26 @@ export function clearSavedWorld() {
 
 export function readSettings(): GameSettings {
   const mobile = typeof window !== "undefined" && (window.matchMedia?.("(pointer: coarse)").matches ?? false);
-  const fallback: GameSettings = { volume: 0.55, muted: false, sensitivity: 0.0022, fov: 72, weather: "clear", renderDistance: mobile ? 2 : 3 };
+  const fallbackDistances = normalizeViewDistances({
+    renderDistance: mobile ? 6 : DEFAULT_RENDER_DISTANCE,
+    simulationDistance: mobile ? 4 : DEFAULT_SIMULATION_DISTANCE,
+  });
+  const fallback: GameSettings = { volume: 0.55, muted: false, sensitivity: 0.0022, fov: 72, weather: "clear", ...fallbackDistances };
   if (typeof window === "undefined") return fallback;
   try {
     const parsed = JSON.parse(window.localStorage.getItem(SETTINGS_KEY) ?? "null") as Partial<GameSettings> | null;
     if (!parsed) return fallback;
+    const distances = normalizeViewDistances({
+      renderDistance: Number(parsed.renderDistance ?? fallback.renderDistance),
+      simulationDistance: Number(parsed.simulationDistance ?? fallback.simulationDistance),
+    });
     return {
       volume: clamp(Number(parsed.volume ?? fallback.volume), 0, 1),
       muted: Boolean(parsed.muted ?? fallback.muted),
       sensitivity: clamp(Number(parsed.sensitivity ?? fallback.sensitivity), 0.0008, 0.005),
       fov: clamp(Number(parsed.fov ?? fallback.fov), 55, 100),
       weather: parsed.weather === "rain" ? "rain" : "clear",
-      renderDistance: clamp(Math.round(Number(parsed.renderDistance ?? fallback.renderDistance)), 2, 8),
+      ...distances,
     };
   } catch {
     return fallback;
@@ -510,6 +687,9 @@ export class VoxelEngine {
   ambienceGroup = new THREE.Group();
   creatureGroup = new THREE.Group();
   dropGroup = new THREE.Group();
+  boatGroup = new THREE.Group();
+  exhibitGroup = new THREE.Group();
+  projectileGroup = new THREE.Group();
   selection: THREE.LineSegments;
   sun: THREE.Mesh;
   moon: THREE.Mesh;
@@ -536,6 +716,7 @@ export class VoxelEngine {
   daylightSkyColor = new THREE.Color("#78b9ed");
   nightSkyColor = new THREE.Color("#020611");
   dawnSkyColor = new THREE.Color();
+  weatherSkyColor = new THREE.Color();
   celestialDirection = new THREE.Vector3();
   audio: SynthAudio;
   settings: GameSettings;
@@ -553,6 +734,18 @@ export class VoxelEngine {
   activeWorldId: string | null = null;
   worldOptions: WorldOptions = normalizeWorldOptions();
   worldSessionStartedAt = Date.now();
+  liquidCells = new Map<string, LiquidCell>();
+  liquidSimulator: LiquidSimulator;
+  liquidTickAccumulator = 0;
+  oxygenSeconds = DEFAULT_SWIM_RULES.maxOxygenSeconds;
+  drowningAccumulator = 0;
+  headSubmerged = false;
+  lastForwardTap = -Infinity;
+  sprintLatched = false;
+  performanceSampler = new PerformanceSampler(240);
+  budgetController = new AdaptiveBudgetController();
+  performanceReportTimer = 0;
+  averageFps = 60;
   yaw = 0;
   pitch = 0;
   grounded = false;
@@ -562,10 +755,12 @@ export class VoxelEngine {
   cameraMode: CameraMode = "first";
   cameraEyeHeight = 1.62;
   localPlayerModel = new BlockPlayerModel({ playerId: "local", playerName: "Player", mode: "local" });
+  playerVariant: PlayerVariant = "male";
   remotePlayers = new Map<string, RemotePlayer>();
   localAvatarHeld: THREE.Object3D | null = null;
   localAvatarHeldCode: ItemCode = -1;
   remoteAvatarHeldCodes = new Map<string, ItemCode>();
+  localEquipmentSignature = "";
   cameraCollisionOrigin = new THREE.Vector3();
   cameraCollisionDirection = new THREE.Vector3();
   collisionCandidate = new THREE.Vector3();
@@ -588,6 +783,15 @@ export class VoxelEngine {
   day = 1;
   mode: GameMode = "survival";
   weather: Weather = "clear";
+  weatherState: WeatherState = createWeatherState({ seed: "WILDERNESS", biome: "meadow" });
+  weatherBiome: WeatherBiome = "meadow";
+  weatherBiomeCandidate: WeatherBiome = "meadow";
+  weatherBiomeHold = 0;
+  cloudMesh: THREE.InstancedMesh | null = null;
+  cloudCellX = Number.NaN;
+  cloudCellZ = Number.NaN;
+  cloudWeatherCycle = -1;
+  cloudMatrixObject = new THREE.Object3D();
   health = 10;
   hunger = 10;
   xp = 0;
@@ -611,6 +815,8 @@ export class VoxelEngine {
   target: VoxelHit | null = null;
   targetKey = "";
   targetMob: MobEntity | null = null;
+  targetBoat: SailboatEntity | null = null;
+  activePet: MobEntity | null = null;
   mineHeld = false;
   miningProgress = 0;
   miningSoundTimer = 0;
@@ -630,6 +836,16 @@ export class VoxelEngine {
   particles: Particle[] = [];
   fallingTrees: FallingTree[] = [];
   mobs: MobEntity[] = [];
+  boats = new Map<string, SailboatEntity>();
+  mountedBoatId: string | null = null;
+  nextBoatId = 1;
+  boatRaycaster = new THREE.Raycaster();
+  exhibitVisuals = new Map<string, ExhibitVisual>();
+  exhibitVisualTimer = 0;
+  projectiles: ArrowProjectile[] = [];
+  nextProjectileId = 1;
+  activatedStructureMarkers = new Set<string>();
+  structureActivationTimer = 0;
   mobRemains: MobRemains[] = [];
   drops: DropEntity[] = [];
   nextMobId = 1;
@@ -670,6 +886,32 @@ export class VoxelEngine {
     this.events = events;
     this.settings = settings;
     this.weather = settings.weather;
+    this.liquidSimulator = new LiquidSimulator({
+      minY: MIN_Y,
+      maxY: MAX_Y,
+      isLoaded: ({ x, y, z }) => this.world.getBlock(x, y, z) !== undefined,
+      isSolid: ({ x, y, z }) => BLOCKS[this.world.getBlock(x, y, z) ?? BlockId.Bedrock]?.solid ?? true,
+      isReplaceable: ({ x, y, z }) => {
+        const type = this.world.getBlock(x, y, z);
+        return type !== undefined && (type === BlockId.Air || Boolean(BLOCKS[type]?.replaceable));
+      },
+      getLiquid: ({ x, y, z }) => {
+        const key = blockKey(x, y, z);
+        const tracked = this.liquidCells.get(key);
+        if (tracked) return tracked;
+        const type = this.world.getBlock(x, y, z);
+        if (type === BlockId.Water) return { kind: "water", level: 0, source: true, falling: false };
+        if (type === BlockId.Lava) return { kind: "lava", level: 0, source: true, falling: false };
+        return undefined;
+      },
+      setLiquid: ({ x, y, z }, next) => {
+        const key = blockKey(x, y, z);
+        if (next) this.liquidCells.set(key, { ...next });
+        else this.liquidCells.delete(key);
+        const type = next ? (next.kind === "water" ? BlockId.Water : BlockId.Lava) : BlockId.Air;
+        this.world.setBlock(x, y, z, type, true, false);
+      },
+    });
     this.touchMode = window.matchMedia?.("(pointer: coarse)").matches ?? false;
     this.audio = new SynthAudio(settings);
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: "high-performance" });
@@ -688,7 +930,7 @@ export class VoxelEngine {
       this.saveSoon();
       this.emitHud(true);
     });
-    this.scene.add(this.camera, this.world.group, this.ambienceGroup, this.creatureGroup, this.dropGroup);
+    this.scene.add(this.camera, this.world.group, this.ambienceGroup, this.creatureGroup, this.dropGroup, this.boatGroup, this.exhibitGroup, this.projectileGroup);
     this.scene.add(this.butterflies.group);
     this.localPlayerModel.group.visible = false;
     this.scene.add(this.localPlayerModel.group);
@@ -896,11 +1138,27 @@ export class VoxelEngine {
       const slot = Number(event.code.slice(5)) - 1;
       if (slot >= 0 && slot < 9) this.selectSlot(slot);
     }
+    if (event.code === "KeyW" && !event.repeat && !this.keys.has("KeyW")) {
+      const now = performance.now();
+      this.sprintLatched = isDoubleForwardTap(this.lastForwardTap, now);
+      this.lastForwardTap = now;
+    }
+    if (event.code === "Space" && !event.repeat && this.mountedBoatId) {
+      event.preventDefault();
+      this.dismountBoat();
+      return;
+    }
     this.keys.add(event.code);
   };
 
-  onKeyUp = (event: KeyboardEvent) => this.keys.delete(event.code);
-  clearInput = () => this.keys.clear();
+  onKeyUp = (event: KeyboardEvent) => {
+    this.keys.delete(event.code);
+    if (event.code === "KeyW") this.sprintLatched = false;
+  };
+  clearInput = () => {
+    this.keys.clear();
+    this.sprintLatched = false;
+  };
   onPageHide = () => this.saveNow(false);
 
   onVisibilityChange = () => {
@@ -929,9 +1187,25 @@ export class VoxelEngine {
     this.emitHud(true);
   }
 
+  setPlayerVariant(variant: PlayerVariant) {
+    this.playerVariant = variant === "female" ? "female" : "male";
+    this.localPlayerModel.setVariant(this.playerVariant);
+    if (this.running && this.persistent) this.saveSoon();
+    this.emitHud(true);
+  }
+
   setVirtualKey(code: string, down: boolean) {
-    if (down) this.keys.add(code);
-    else this.keys.delete(code);
+    if (down) {
+      if (code === "KeyW" && !this.keys.has(code)) {
+        const now = performance.now();
+        this.sprintLatched = isDoubleForwardTap(this.lastForwardTap, now);
+        this.lastForwardTap = now;
+      }
+      this.keys.add(code);
+    } else {
+      this.keys.delete(code);
+      if (code === "KeyW") this.sprintLatched = false;
+    }
   }
 
   setMining(down: boolean) {
@@ -983,12 +1257,15 @@ export class VoxelEngine {
     this.titleMode = true;
     this.mode = "builder";
     this.clearEntities();
+    this.activatedStructureMarkers.clear();
+    this.liquidCells.clear();
     this.world.reset(seed, undefined, generationOptionsFromWorldOptions(DEFAULT_WORLD_OPTIONS));
     const spawn = this.findSpawn();
     this.world.initializeAround(spawn.x, spawn.z);
     const y = this.world.surfaceAt(spawn.x, spawn.z) + 0.51;
     this.spawn.set(spawn.x, y, spawn.z);
     this.position.copy(this.spawn);
+    this.resetDynamicWeather();
     this.emitHud(true);
   }
 
@@ -998,6 +1275,7 @@ export class VoxelEngine {
     this.paused = false;
     this.titleMode = false;
     this.mode = mode;
+    this.localPlayerModel.setVariant(this.playerVariant);
     this.worldOptions = normalizeWorldOptions(options);
     this.butterflyDensity = this.worldOptions.butterflyDensity;
     if (!this.worldOptions.weather) this.weather = "clear";
@@ -1020,12 +1298,17 @@ export class VoxelEngine {
     this.chests.clear();
     this.sleepVotes.clear();
     this.clearEntities();
+    this.activatedStructureMarkers.clear();
+    this.liquidCells.clear();
+    this.oxygenSeconds = DEFAULT_SWIM_RULES.maxOxygenSeconds;
+    this.drowningAccumulator = 0;
     this.world.reset(seed.trim() || this.randomSeed(), undefined, generationOptionsFromWorldOptions(this.worldOptions));
     const spawn = this.findSpawn();
     this.world.initializeAround(spawn.x, spawn.z);
     const y = this.world.surfaceAt(spawn.x, spawn.z) + 0.51;
     this.spawn.set(spawn.x, y, spawn.z);
     this.position.copy(this.spawn);
+    this.resetDynamicWeather();
     for (let dx = -1; dx <= 1; dx += 1) for (let dz = -1; dz <= 1; dz += 1) {
       for (let clearY = Math.floor(y + 0.5); clearY <= Math.floor(y + 2.5); clearY += 1) this.world.setBlock(spawn.x + dx, clearY, spawn.z + dz, BlockId.Air);
     }
@@ -1054,18 +1337,25 @@ export class VoxelEngine {
     this.paused = false;
     this.titleMode = false;
     this.mode = save.mode === "builder" ? "builder" : "survival";
+    this.playerVariant = save.playerVariant === "female" ? "female" : "male";
+    this.localPlayerModel.setVariant(this.playerVariant);
     this.worldOptions = normalizeWorldOptions(options);
     this.butterflyDensity = this.worldOptions.butterflyDensity;
     this.activeWorldId = worldId;
     this.worldSessionStartedAt = Date.now();
     this.sleepVotes.clear();
     this.clearEntities();
+    this.activatedStructureMarkers = new Set(save.activatedStructureMarkers ?? []);
+    this.liquidCells = new Map((save.liquidLevels ?? []).filter(([key, cell]) => typeof key === "string" && (cell?.kind === "water" || cell?.kind === "lava")).map(([key, cell]) => [key, { ...cell }]));
+    this.oxygenSeconds = DEFAULT_SWIM_RULES.maxOxygenSeconds;
+    this.drowningAccumulator = 0;
     this.world.reset(save.seed, save.edits, generationOptionsFromWorldOptions(this.worldOptions));
     this.world.initializeAround(save.player.x, save.player.z);
     this.position.set(save.player.x, save.player.y, save.player.z);
     this.spawn.set(save.spawn?.x ?? 0, save.spawn?.y ?? this.world.surfaceAt(0, 0) + 0.51, save.spawn?.z ?? 0);
     this.yaw = Number(save.player.yaw) || 0;
     this.pitch = clamp(Number(save.player.pitch) || 0, -1.4, 1.4);
+    this.resetDynamicWeather(save.weatherState);
     this.inventory = blankInventory();
     for (let index = 0; index < Math.min(INVENTORY_SIZE, save.inventory?.length ?? 0); index += 1) this.inventory[index] = cloneSlot(save.inventory[index]);
     this.equipment = blankEquipment();
@@ -1077,7 +1367,7 @@ export class VoxelEngine {
     this.craftGrid = Array.from({ length: 9 }, () => null);
     const transientItems = [save.cursor, ...(save.craftGrid ?? [])].filter((slot): slot is InventorySlot => Boolean(slot));
     for (const slot of transientItems) {
-      const leftover = this.addItem(slot.item, slot.count, slot.durability);
+      const leftover = this.addItem(slot.item, slot.count, slot.durability, undefined, slot.metadata);
       if (leftover > 0) this.spawnDrop(slot.item, leftover, this.position.clone().add(new THREE.Vector3(0, 1, 0)), slot.durability);
     }
     this.selected = clamp(Number(save.selected) || 0, 0, 8);
@@ -1091,10 +1381,12 @@ export class VoxelEngine {
     if (!this.worldOptions.weather) this.weather = "clear";
     this.furnaces = new Map(Object.entries(save.furnaces ?? {}).map(([key, value]) => [key, { ...blankFurnace(), ...value }]));
     this.chests = restoreChestStorage(save.chests ?? {});
+    for (const savedBoat of save.boats ?? []) this.restoreSailboat(savedBoat);
+    for (const savedCreature of save.creatures ?? []) this.restoreCreature(savedCreature);
     if (this.collidesAt(this.position) || this.position.y < MIN_Y) this.respawn(false);
     for (const savedDrop of save.drops ?? []) {
       if (!ITEMS[savedDrop.item] || savedDrop.count <= 0) continue;
-      const drop = this.spawnDrop(savedDrop.item, savedDrop.count, new THREE.Vector3(savedDrop.x, savedDrop.y, savedDrop.z), savedDrop.durability);
+      const drop = this.spawnDrop(savedDrop.item, savedDrop.count, new THREE.Vector3(savedDrop.x, savedDrop.y, savedDrop.z), savedDrop.durability, savedDrop.metadata);
       if (!drop) continue;
       drop.mesh.position.set(savedDrop.x, savedDrop.y, savedDrop.z);
       drop.velocity.set(0, 0, 0);
@@ -1258,8 +1550,10 @@ export class VoxelEngine {
         playerId: pose.playerId,
         playerName: identity?.name ?? "Wanderer",
         mode: "remote",
+        variant: pose.variant ?? "male",
         colors: identity?.color ? { shirt: identity.color } : undefined,
       });
+      model.setEquipmentAppearance(this.equipmentAppearanceFromCodes(pose.equipment));
       model.group.position.set(pose.x, pose.y, pose.z);
       this.scene.add(model.group);
       remote = { model, pose: { ...pose }, target: { ...pose }, lastUpdate: performance.now() };
@@ -1267,11 +1561,21 @@ export class VoxelEngine {
     }
     remote.target = { ...pose };
     remote.lastUpdate = performance.now();
+    if (this.multiplayer?.role === "host") {
+      for (const boat of this.boats.values()) {
+        const shouldRide = pose.boatId === boat.save.id;
+        const isRiding = boat.save.passengers.includes(pose.playerId);
+        if (shouldRide && !isRiding && boat.save.passengers.length < 2) boat.save.passengers = boardSailboat(boat.save.passengers, pose.playerId);
+        else if (!shouldRide && isRiding) boat.save.passengers = leaveSailboat(boat.save.passengers, pose.playerId);
+      }
+    }
   }
 
   private localNetworkPose(): PlayerPose | null {
     const identity = this.multiplayer?.identity;
     if (!identity) return null;
+    const boat = this.mountedBoatId ? this.boats.get(this.mountedBoatId) : null;
+    const boatSeat = boat ? boat.save.passengers.indexOf(identity.id) : -1;
     return {
       playerId: identity.id,
       tick: this.multiplayerTick,
@@ -1288,6 +1592,10 @@ export class VoxelEngine {
       crouching: this.crouching,
       sprinting: this.sprinting,
       action: this.mineHeld || this.attackCooldown > 0 ? "mine" : this.heldUse > 0 ? "use" : "none",
+      variant: this.playerVariant,
+      equipment: Object.fromEntries((Object.keys(this.equipment) as EquipmentSlot[])
+        .flatMap((slot) => this.equipment[slot] ? [[slot, this.equipment[slot]!.item] as const] : [])),
+      ...(boat && boatSeat >= 0 ? { boatId: boat.save.id, boatSeat } : {}),
     };
   }
 
@@ -1354,6 +1662,9 @@ export class VoxelEngine {
       blockEdits: this.networkBlockEdits(),
       mobs: this.networkMobSnapshot(),
       drops: this.networkDropSnapshot(),
+      boats: [...this.boats.values()].map(({ save }) => ({
+        id: save.id, x: save.x, y: save.y, z: save.z, yaw: save.yaw, velocity: save.velocity, passengers: [...save.passengers],
+      })),
       time: { tick: this.multiplayerTick, worldTime: this.worldTime, day: this.day, weather: this.weather },
       worldOptions: { ...this.worldOptions },
     };
@@ -1388,6 +1699,7 @@ export class VoxelEngine {
     this.worldOptions = normalizeWorldOptions(snapshot.worldOptions ?? this.worldOptions);
     this.butterflyDensity = this.worldOptions.butterflyDensity;
     this.clearEntities();
+    this.liquidCells.clear();
     this.world.reset(snapshot.seed, this.editsFromNetwork(snapshot.blockEdits), generationOptionsFromWorldOptions(this.worldOptions));
     const centerX = hostPose?.x ?? 0;
     const centerZ = hostPose?.z ?? 0;
@@ -1410,6 +1722,7 @@ export class VoxelEngine {
     this.activeWorldId = null;
     this.applyNetworkMobSnapshot(snapshot.mobs);
     this.applyNetworkDropSnapshot(snapshot.drops);
+    this.applyNetworkBoatSnapshot(snapshot.boats ?? []);
     for (const pose of snapshot.players) this.upsertRemotePlayer(pose, pose.playerId === hostPeer.identity?.id ? hostPeer : undefined);
     this.multiplayerReceivedSnapshot = true;
     this.events.onToast(`Joined ${hostPeer.identity?.name ?? "the host"}'s world. The host device is authoritative for this session.`);
@@ -1428,6 +1741,7 @@ export class VoxelEngine {
     this.weather = snapshot.time.weather;
     this.applyNetworkMobSnapshot(snapshot.mobs);
     this.applyNetworkDropSnapshot(snapshot.drops);
+    this.applyNetworkBoatSnapshot(snapshot.boats ?? []);
     for (const pose of snapshot.players) this.upsertRemotePlayer(pose, pose.playerId === hostPeer.identity?.id ? hostPeer : undefined);
   }
 
@@ -1537,10 +1851,11 @@ export class VoxelEngine {
       else if (envelope.type === "mob-snapshot" && this.multiplayer?.role === "guest") this.applyNetworkMobSnapshot((envelope.payload as { mobs: WorldSnapshot["mobs"] }).mobs);
       else if (envelope.type === "drop-snapshot" && this.multiplayer?.role === "guest") this.applyNetworkDropSnapshot((envelope.payload as { drops: WorldSnapshot["drops"] }).drops);
       else if (envelope.type === "time-weather" && this.multiplayer?.role === "guest") {
-        const time = envelope.payload as WorldSnapshot["time"];
+        const time = envelope.payload as WorldSnapshot["time"] & { boats?: NonNullable<WorldSnapshot["boats"]> };
         this.worldTime = time.worldTime;
         this.day = time.day;
         this.weather = time.weather;
+        if (time.boats) this.applyNetworkBoatSnapshot(time.boats);
       }
     }
   }
@@ -1579,7 +1894,10 @@ export class VoxelEngine {
       try {
         session.sendMobSnapshot({ tick: this.multiplayerTick, mobs: this.networkMobSnapshot() });
         session.sendDropSnapshot({ tick: this.multiplayerTick, drops: this.networkDropSnapshot() });
-        session.sendTimeWeather({ tick: this.multiplayerTick, worldTime: this.worldTime, day: this.day, weather: this.weather });
+        session.sendTimeWeather({
+          tick: this.multiplayerTick, worldTime: this.worldTime, day: this.day, weather: this.weather,
+          boats: [...this.boats.values()].map(({ save }) => ({ id: save.id, x: save.x, y: save.y, z: save.z, yaw: save.yaw, velocity: save.velocity, passengers: [...save.passengers] })),
+        });
       } catch { /* No connected guest yet. */ }
     }
     if (session.role === "host" && this.multiplayerSnapshotTimer <= 0 && session.getPeers().some((peer) => peer.state === "connected")) {
@@ -1594,6 +1912,30 @@ export class VoxelEngine {
     this.titleMode = false;
     void this.audio.unlock();
     if (!this.touchMode) this.requestPointerLockSafely();
+  }
+
+  private applyNetworkBoatSnapshot(entries: NonNullable<WorldSnapshot["boats"]>) {
+    const incoming = new Set(entries.map((entry) => entry.id));
+    for (const [id, boat] of this.boats) {
+      if (incoming.has(id)) continue;
+      this.boatGroup.remove(boat.group);
+      disposeSailboatVisual(boat.group);
+      this.boats.delete(id);
+      this.chests.delete(`boat:${id}`);
+    }
+    for (const entry of entries) {
+      let boat = this.boats.get(entry.id);
+      if (!boat) boat = this.restoreSailboat({ ...entry, inventory: [] });
+      if (!boat) continue;
+      boat.save.x += (entry.x - boat.save.x) * 0.72;
+      boat.save.y += (entry.y - boat.save.y) * 0.72;
+      boat.save.z += (entry.z - boat.save.z) * 0.72;
+      boat.save.yaw += Math.atan2(Math.sin(entry.yaw - boat.save.yaw), Math.cos(entry.yaw - boat.save.yaw)) * 0.72;
+      boat.save.velocity = entry.velocity;
+      boat.save.passengers = [...entry.passengers].slice(0, 2);
+      boat.group.position.set(boat.save.x, boat.save.y, boat.save.z);
+      boat.group.rotation.y = boat.save.yaw;
+    }
   }
 
   pause() {
@@ -1630,6 +1972,82 @@ export class VoxelEngine {
     } catch {
       this.events.onToast("Fullscreen is unavailable in this browser.");
     }
+  }
+
+  exhibitTopologyAt(x: number, y: number, z: number) {
+    if (this.world.getBlock(x, y, z) !== BlockId.ButterflyExhibit) return null;
+    const queue = [{ x, y, z }];
+    const blocks: Array<{ x: number; y: number; z: number }> = [];
+    const visited = new Set<string>();
+    const offsets = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]] as const;
+    while (queue.length && blocks.length < 64) {
+      const current = queue.shift()!;
+      const key = blockKey(current.x, current.y, current.z);
+      if (visited.has(key) || this.world.getBlock(current.x, current.y, current.z) !== BlockId.ButterflyExhibit) continue;
+      visited.add(key);
+      blocks.push(current);
+      for (const [dx, dy, dz] of offsets) queue.push({ x: current.x + dx, y: current.y + dy, z: current.z + dz });
+    }
+    return buildExhibitTopology(blocks, { x, y, z });
+  }
+
+  exhibitStorageKey(topology: ExhibitTopology) {
+    return `exhibit:${topology.blocks.map((block) => block.key).sort()[0]}`;
+  }
+
+  consolidateExhibit(topology: ExhibitTopology) {
+    const blockKeys = new Set(topology.blocks.map((block) => block.key));
+    const related = [...this.chests.keys()].filter((key) => key.startsWith("exhibit:") && blockKeys.has(key.slice("exhibit:".length)));
+    const specimens: InventorySlot[] = [];
+    for (const key of related) {
+      for (const slot of this.chests.get(key) ?? []) {
+        if (!slot || !this.isButterflyJar(slot.item)) continue;
+        for (let count = 0; count < slot.count; count += 1) specimens.push(cloneSlot({ ...slot, count: 1 })!);
+      }
+      this.chests.delete(key);
+      const visual = this.exhibitVisuals.get(key);
+      if (visual) { this.exhibitGroup.remove(visual.group); this.disposeObject(visual.group); this.exhibitVisuals.delete(key); }
+    }
+    const key = this.exhibitStorageKey(topology);
+    const slots = Array.from({ length: topology.capacity }, (_, index) => specimens[index] ?? null);
+    this.chests.set(key, slots);
+    for (const overflow of specimens.slice(topology.capacity)) {
+      const leftover = this.addItem(overflow.item, 1, overflow.durability, undefined, overflow.metadata);
+      if (leftover) this.spawnDrop(overflow.item, leftover, new THREE.Vector3(topology.origin.x, topology.origin.y + 0.5, topology.origin.z), overflow.durability, overflow.metadata);
+    }
+    return key;
+  }
+
+  openExhibit(x: number, y: number, z: number) {
+    const topology = this.exhibitTopologyAt(x, y, z);
+    if (!topology) return;
+    const key = this.consolidateExhibit(topology);
+    this.syncExhibitVisuals(true);
+    this.openOverlay("chest", key);
+  }
+
+  rebuildExhibitAfterBreak(topology: ExhibitTopology, oldSlots: ChestState, broken: { x: number; y: number; z: number }) {
+    const oldKey = this.exhibitStorageKey(topology);
+    this.chests.delete(oldKey);
+    const oldVisual = this.exhibitVisuals.get(oldKey);
+    if (oldVisual) { this.exhibitGroup.remove(oldVisual.group); this.disposeObject(oldVisual.group); this.exhibitVisuals.delete(oldKey); }
+    const remaining = topology.blocks.filter((block) => block.x !== broken.x || block.y !== broken.y || block.z !== broken.z);
+    const assigned = new Set<string>();
+    const specimens = oldSlots.flatMap((slot) => slot ? Array.from({ length: slot.count }, () => cloneSlot({ ...slot, count: 1 })!) : []);
+    let specimenIndex = 0;
+    for (const block of remaining) {
+      if (assigned.has(block.key) || this.world.getBlock(block.x, block.y, block.z) !== BlockId.ButterflyExhibit) continue;
+      const component = this.exhibitTopologyAt(block.x, block.y, block.z);
+      if (!component) continue;
+      for (const entry of component.blocks) assigned.add(entry.key);
+      const key = this.exhibitStorageKey(component);
+      this.chests.set(key, Array.from({ length: component.capacity }, () => specimens[specimenIndex++] ?? null));
+    }
+    while (specimenIndex < specimens.length) {
+      const specimen = specimens[specimenIndex++];
+      this.spawnDrop(specimen.item, 1, new THREE.Vector3(broken.x, broken.y + 0.5, broken.z), specimen.durability, specimen.metadata);
+    }
+    this.syncExhibitVisuals(true);
   }
 
   chestStorageKey(block: string) {
@@ -1808,11 +2226,14 @@ export class VoxelEngine {
       this.activeChestKey = null;
       if (!this.furnaces.has(key)) this.furnaces.set(key, blankFurnace());
     } else if (kind === "chest" && key) {
-      this.activeChestKey = this.resolveChest(key);
-      this.activeChestTitle = this.activeChestKey.includes("|") ? "Large Wildwood Chest" : "Wildwood Chest";
+      const special = key.startsWith("boat:") || key.startsWith("exhibit:");
+      this.activeChestKey = special ? key : this.resolveChest(key);
+      this.activeChestTitle = key.startsWith("boat:") ? "Wayfarer Cargo Hold"
+        : key.startsWith("exhibit:") ? "Living Butterfly Conservatory"
+          : this.activeChestKey.includes("|") ? "Large Wildwood Chest" : "Wildwood Chest";
       this.activeFurnaceKey = null;
-      this.showChestModel(key, this.activeChestKey.includes("|"));
-    } else if (kind === "bestiary" || kind === "sleep") {
+      if (!special) this.showChestModel(key, this.activeChestKey.includes("|"));
+    } else if (kind === "bestiary" || kind === "sleep" || kind === "pet") {
       this.activeFurnaceKey = null;
       this.activeChestKey = null;
     }
@@ -1823,19 +2244,20 @@ export class VoxelEngine {
 
   closeContainer() {
     if (this.cursor) {
-      const leftover = this.addItem(this.cursor.item, this.cursor.count, this.cursor.durability);
+      const leftover = this.addItem(this.cursor.item, this.cursor.count, this.cursor.durability, undefined, this.cursor.metadata);
       if (leftover > 0) this.spawnDrop(this.cursor.item, leftover, this.position.clone().add(new THREE.Vector3(0, 1, 0)), this.cursor.durability);
       this.cursor = null;
     }
     for (let index = 0; index < this.craftGrid.length; index += 1) {
       const slot = this.craftGrid[index];
       if (!slot) continue;
-      const leftover = this.addItem(slot.item, slot.count, slot.durability);
+      const leftover = this.addItem(slot.item, slot.count, slot.durability, undefined, slot.metadata);
       if (leftover > 0) this.spawnDrop(slot.item, leftover, this.position.clone().add(new THREE.Vector3(0, 1, 0)), slot.durability);
       this.craftGrid[index] = null;
     }
     this.activeFurnaceKey = null;
     this.activeChestKey = null;
+    this.activePet = null;
     this.craftingSize = 2;
     this.hideChestModel();
     this.saveSoon();
@@ -1855,13 +2277,20 @@ export class VoxelEngine {
     this.emitHud(true);
   }
 
-  addItem(item: ItemCode, count: number, durability?: number, emptyOrder: number[] = Array.from({ length: this.inventory.length }, (_, index) => index)) {
+  addItem(
+    item: ItemCode,
+    count: number,
+    durability?: number,
+    emptyOrder: number[] = Array.from({ length: this.inventory.length }, (_, index) => index),
+    metadata?: Record<string, unknown>,
+  ) {
     if (!ITEMS[item] || count <= 0) return count;
     let remaining = count;
     const stackLimit = maxStack(item);
     if (stackLimit > 1) {
       for (const slot of this.inventory) {
-        if (!slot || slot.item !== item || slot.count >= stackLimit || slot.durability !== durability) continue;
+        if (!slot || slot.item !== item || slot.count >= stackLimit || slot.durability !== durability
+          || JSON.stringify(slot.metadata ?? null) !== JSON.stringify(metadata ?? null)) continue;
         const add = Math.min(remaining, stackLimit - slot.count);
         slot.count += add;
         remaining -= add;
@@ -1872,7 +2301,7 @@ export class VoxelEngine {
       if (index < 0 || index >= this.inventory.length) continue;
       if (this.inventory[index]) continue;
       const add = Math.min(remaining, stackLimit);
-      this.inventory[index] = { item, count: add, ...(durability !== undefined ? { durability } : {}) };
+      this.inventory[index] = cloneSlot({ item, count: add, ...(durability !== undefined ? { durability } : {}), ...(metadata ? { metadata } : {}) });
       remaining -= add;
       if (remaining <= 0) return 0;
     }
@@ -1898,7 +2327,8 @@ export class VoxelEngine {
   }
 
   sameStack(a: InventorySlot | null, b: InventorySlot | null) {
-    return Boolean(a && b && a.item === b.item && a.durability === b.durability);
+    return Boolean(a && b && a.item === b.item && a.durability === b.durability
+      && JSON.stringify(a.metadata ?? null) === JSON.stringify(b.metadata ?? null));
   }
 
   transferInto(source: InventorySlot, destination: Array<InventorySlot | null>, indices = destination.map((_, index) => index)) {
@@ -1912,7 +2342,7 @@ export class VoxelEngine {
     }
     for (const index of indices) {
       if (destination[index]) continue;
-      destination[index] = { ...source };
+      destination[index] = cloneSlot(source);
       source.count = 0;
       return true;
     }
@@ -2025,7 +2455,19 @@ export class VoxelEngine {
     if (!slot) return;
     if (this.activeChestKey) {
       const chest = this.chests.get(this.activeChestKey);
-      if (chest && this.transferInto(slot, chest)) this.inventory[index] = null;
+      if (this.activeChestKey.startsWith("exhibit:") && !this.isButterflyJar(slot.item)) {
+        this.events.onToast("The conservatory accepts only jarred butterflies.");
+        return;
+      }
+      if (chest && this.activeChestKey.startsWith("exhibit:")) {
+        for (let target = 0; target < chest.length && slot.count > 0; target += 1) {
+          if (chest[target]) continue;
+          chest[target] = cloneSlot({ ...slot, count: 1 });
+          slot.count -= 1;
+        }
+        if (slot.count <= 0) this.inventory[index] = null;
+        this.syncExhibitVisuals(true);
+      } else if (chest && this.transferInto(slot, chest)) this.inventory[index] = null;
       this.saveSoon();
       return;
     }
@@ -2069,7 +2511,7 @@ export class VoxelEngine {
     if (this.craftingSize === 2 && !CRAFT_POSITIONS_2.includes(index)) return;
     const slot = this.craftGrid[index];
     if (shift && slot) {
-      const leftover = this.addItem(slot.item, slot.count, slot.durability, MAIN_THEN_HOTBAR);
+      const leftover = this.addItem(slot.item, slot.count, slot.durability, MAIN_THEN_HOTBAR, slot.metadata);
       slot.count = leftover;
       if (slot.count <= 0) this.craftGrid[index] = null;
       this.updateCraftResult();
@@ -2129,16 +2571,18 @@ export class VoxelEngine {
     for (const recipe of RECIPES) {
       if (recipe.table && size < 3) continue;
       if (recipe.width !== width || recipe.height !== height) continue;
-      let matches = true;
-      for (let y = 0; y < size && matches; y += 1) for (let x = 0; x < size; x += 1) {
-        const inside = x >= minX && x <= maxX && y >= minY && y <= maxY;
-        const slot = this.craftGrid[y * 3 + x];
-        if (!inside && slot) { matches = false; break; }
-        if (!inside) continue;
-        const ingredient = recipe.pattern[(y - minY) * width + (x - minX)];
-        if (ingredient === 0 ? Boolean(slot) : !slot || !this.ingredientMatches(slot.item, ingredient)) { matches = false; break; }
+      for (const pattern of recipePatterns(recipe)) {
+        let matches = true;
+        for (let y = 0; y < size && matches; y += 1) for (let x = 0; x < size; x += 1) {
+          const inside = x >= minX && x <= maxX && y >= minY && y <= maxY;
+          const slot = this.craftGrid[y * 3 + x];
+          if (!inside && slot) { matches = false; break; }
+          if (!inside) continue;
+          const ingredient = pattern[(y - minY) * width + (x - minX)];
+          if (ingredient === 0 ? Boolean(slot) : !slot || !this.ingredientMatches(slot.item, ingredient)) { matches = false; break; }
+        }
+        if (matches) return { recipe, pattern, minX, minY };
       }
-      if (matches) return { recipe, minX, minY };
     }
     return null;
   }
@@ -2157,7 +2601,7 @@ export class VoxelEngine {
 
   consumeCraftMatch(match: NonNullable<ReturnType<VoxelEngine["findRecipe"]>>) {
     for (let y = 0; y < match.recipe.height; y += 1) for (let x = 0; x < match.recipe.width; x += 1) {
-      if (match.recipe.pattern[y * match.recipe.width + x] === 0) continue;
+      if (match.pattern[y * match.recipe.width + x] === 0) continue;
       const index = (match.minY + y) * 3 + match.minX + x;
       const slot = this.craftGrid[index];
       if (slot) { slot.count -= 1; if (slot.count <= 0) this.craftGrid[index] = null; }
@@ -2200,35 +2644,107 @@ export class VoxelEngine {
     this.emitHud(true);
   }
 
-  autoCraft(recipeId: string) {
+  planRecipe(recipeId: string): RecipePlanResult {
     const recipe = RECIPES.find((candidate) => candidate.id === recipeId);
-    if (!recipe || (recipe.table && this.craftingSize < 3)) {
-      this.events.onToast(recipe?.table ? "This recipe needs a crafting table." : "Recipe unavailable.");
-      return false;
+    if (!recipe) {
+      const result: RecipePlanResult = { ok: false, recipeId, reason: "unknown", message: "That recipe is no longer available." };
+      this.events.onToast(result.message);
+      return result;
     }
-    const required: ItemCode[] = [];
+    if (recipe.table && this.craftingSize < 3) {
+      const result: RecipePlanResult = { ok: false, recipeId, reason: "needs-table", message: "Open a crafting table to arrange this 3×3 recipe." };
+      this.events.onToast(result.message);
+      return result;
+    }
+
+    const inventory = this.inventory.map(cloneSlot);
+    const craftGrid = this.craftGrid.map(cloneSlot);
+    const available = (item: ItemCode) => [...inventory, ...craftGrid].reduce((total, slot) => total + (slot?.item === item ? slot.count : 0), 0);
+    const reserved = new Map<ItemCode, number>();
+    const arranged: Array<ItemCode | 0> = [];
+    const missing: string[] = [];
     for (const ingredient of recipe.pattern) {
-      if (ingredient === 0) continue;
+      if (ingredient === 0) {
+        arranged.push(0);
+        continue;
+      }
       if (Array.isArray(ingredient)) {
-        const choice = ingredient.find((item) => this.countItem(item) > required.filter((used) => used === item).length);
-        if (choice === undefined) { this.events.onToast("You do not have the ingredients yet."); return false; }
-        required.push(choice);
-      } else required.push(ingredient);
+        const choice = ingredient.find((item) => available(item) > (reserved.get(item) ?? 0));
+        if (choice === undefined) {
+          arranged.push(0);
+          missing.push(ingredient.slice(0, 3).map(itemName).join(" or "));
+        } else {
+          arranged.push(choice);
+          reserved.set(choice, (reserved.get(choice) ?? 0) + 1);
+        }
+      } else {
+        arranged.push(ingredient);
+        const needed = (reserved.get(ingredient) ?? 0) + 1;
+        reserved.set(ingredient, needed);
+        if (available(ingredient) < needed) missing.push(itemName(ingredient));
+      }
     }
-    const counts = new Map<number, number>();
-    for (const item of required) counts.set(item, (counts.get(item) ?? 0) + 1);
-    if ([...counts].some(([item, count]) => this.countItem(item) < count)) {
-      this.events.onToast("You do not have the ingredients yet.");
+    if (missing.length) {
+      const uniqueMissing = [...new Set(missing)];
+      const result: RecipePlanResult = {
+        ok: false,
+        recipeId,
+        reason: "missing",
+        missing: uniqueMissing,
+        message: `Missing: ${uniqueMissing.join(", ")}.`,
+      };
+      this.events.onToast(result.message);
+      return result;
+    }
+
+    const removeOne = (item: ItemCode) => {
+      for (const slots of [craftGrid, inventory]) {
+        for (let index = slots.length - 1; index >= 0; index -= 1) {
+          const slot = slots[index];
+          if (!slot || slot.item !== item) continue;
+          slot.count -= 1;
+          if (slot.count <= 0) slots[index] = null;
+          return true;
+        }
+      }
       return false;
+    };
+    for (const item of arranged) if (item !== 0) removeOne(item);
+
+    for (const existing of craftGrid) {
+      if (!existing) continue;
+      const returning = cloneSlot(existing)!;
+      if (!this.transferInto(returning, inventory)) {
+        const result: RecipePlanResult = { ok: false, recipeId, reason: "inventory-full", message: "Make room in your pack before replacing the crafting grid." };
+        this.events.onToast(result.message);
+        return result;
+      }
     }
-    for (const [item, count] of counts) this.removeItem(item, count);
-    const leftover = this.addItem(recipe.output.item, recipe.output.count, ITEMS[recipe.output.item]?.maxDurability);
-    if (leftover > 0) this.spawnDrop(recipe.output.item, leftover, this.position.clone().add(new THREE.Vector3(0, 1, 0)));
-    this.audio.play("craft");
-    this.events.onToast(`Crafted ${itemName(recipe.output.item)} ×${recipe.output.count}`);
+
+    const nextGrid = Array.from({ length: 9 }, () => null as InventorySlot | null);
+    for (let y = 0; y < recipe.height; y += 1) for (let x = 0; x < recipe.width; x += 1) {
+      const item = arranged[y * recipe.width + x];
+      if (item !== 0) nextGrid[y * 3 + x] = { item, count: 1 };
+    }
+    this.inventory = inventory;
+    this.craftGrid = nextGrid;
+    this.updateCraftResult();
+    this.audio.play("ui");
+    const result: RecipePlanResult = { ok: true, recipeId, message: `${recipe.name} arranged. Take the output when you are ready.` };
+    this.events.onToast(result.message);
     this.saveSoon();
     this.emitHud(true);
-    return true;
+    return result;
+  }
+
+  /** Compatibility alias; recipe-book actions now stage ingredients instead of crafting instantly. */
+  autoCraft(recipeId: string) {
+    return this.planRecipe(recipeId).ok;
+  }
+
+  isButterflyJar(item: ItemCode) {
+    const kind = ITEMS[item]?.creatureKind;
+    return Boolean(kind && BUTTERFLY_ORDER.includes(kind as ButterflyKind));
   }
 
   machineClick(machine: "furnace" | "chest", index: number, button: "left" | "right", shift = false) {
@@ -2242,10 +2758,41 @@ export class VoxelEngine {
       if (!chest || index < 0 || index >= chest.length) return;
       slots = chest;
     }
+    if (machine === "chest" && this.activeChestKey?.startsWith("exhibit:") && this.cursor && !this.isButterflyJar(this.cursor.item)) {
+      this.events.onToast("The conservatory accepts only jarred butterflies.");
+      return;
+    }
     const slot = slots[index];
+    if (machine === "chest" && this.activeChestKey?.startsWith("exhibit:")) {
+      if (shift && slot) {
+        const leftover = this.addItem(slot.item, slot.count, slot.durability, MAIN_THEN_HOTBAR, slot.metadata);
+        slot.count = leftover;
+        if (leftover <= 0) slots[index] = null;
+      } else if (!this.cursor && slot) {
+        this.cursor = cloneSlot(slot);
+        slots[index] = null;
+      } else if (this.cursor && !slot) {
+        slots[index] = cloneSlot({ ...this.cursor, count: 1 });
+        this.cursor.count -= 1;
+        if (this.cursor.count <= 0) this.cursor = null;
+      } else if (this.cursor && slot) {
+        if (this.cursor.count > 1) {
+          this.events.onToast("Each habitat block shelters one butterfly; split the stack first.");
+          return;
+        }
+        const previous = cloneSlot(slot);
+        slots[index] = cloneSlot(this.cursor);
+        this.cursor = previous;
+      }
+      this.syncExhibitVisuals(true);
+      this.audio.play("ui");
+      this.saveSoon();
+      this.emitHud(true);
+      return;
+    }
     if (shift && slot) {
       const original = slot.count;
-      const leftover = this.addItem(slot.item, slot.count, slot.durability, MAIN_THEN_HOTBAR);
+      const leftover = this.addItem(slot.item, slot.count, slot.durability, MAIN_THEN_HOTBAR, slot.metadata);
       slot.count = leftover;
       if (leftover <= 0) slots[index] = null;
       if (machine === "furnace") {
@@ -2327,6 +2874,19 @@ export class VoxelEngine {
   generateChestLoot(key: string): ChestState {
     const slots = Array.from({ length: 27 }, () => null as InventorySlot | null);
     const [x, y, z] = key.split(",").map(Number);
+    const structureMarker = this.world.structureMarkerAt(x, y, z, "chest")?.[1] as ChestMarker | undefined;
+    if (structureMarker) {
+      structureMarker.loot.forEach((loot, index) => {
+        const item = STRUCTURE_LOOT_ITEMS[loot.itemKey];
+        if (item === undefined || index >= slots.length) return;
+        slots[(index * 7 + 3) % slots.length] = {
+          item,
+          count: Math.max(1, loot.count),
+          ...(loot.durability !== undefined ? { durability: loot.durability } : ITEMS[item]?.maxDurability ? { durability: ITEMS[item].maxDurability } : {}),
+        };
+      });
+      return slots;
+    }
     let state = (this.world.seed ^ Math.imul(x || 0, 374761393) ^ Math.imul(y || 0, 1103515245) ^ Math.imul(z || 0, 668265263)) >>> 0;
     const random = () => {
       state += 0x6d2b79f5;
@@ -2360,6 +2920,29 @@ export class VoxelEngine {
     if (item === Item.Charcoal) return 72;
     if ([BlockId.WildwoodLog, BlockId.PineLog, BlockId.BirchLog, BlockId.BloomLog, BlockId.Planks].includes(item as BlockId)) return 15;
     return ITEMS[item]?.fuel ?? 0;
+  }
+
+  notifyLiquidChanged(x: number, y: number, z: number) {
+    // Several deterministic engine harnesses construct a deliberately partial
+    // engine with Object.create. Keep block placement usable in those harnesses
+    // while the production constructor still always owns a simulator.
+    this.liquidSimulator?.notifyBlockChanged({ x, y, z });
+  }
+
+  updateLiquids(dt: number) {
+    this.liquidTickAccumulator += dt;
+    if (this.liquidTickAccumulator < 0.08) return;
+    this.liquidTickAccumulator %= 0.08;
+    const changes = this.liquidSimulator.process(this.budgetController.current.liquidOperations);
+    if (!changes.length) return;
+    const edits = changes.map(({ position, next }) => ({
+      x: position.x,
+      y: position.y,
+      z: position.z,
+      type: next ? (next.kind === "water" ? BlockId.Water : BlockId.Lava) : BlockId.Air,
+    }));
+    this.publishBlockEdits(edits, "batch");
+    this.saveSoon();
   }
 
   updateFurnaces(dt: number) {
@@ -2433,10 +3016,7 @@ export class VoxelEngine {
       this.world.setBlocksBatch(changes, true, true);
       this.publishBlockEdits(changes, "batch");
       this.saplings.delete(key);
-      if (this.position.distanceToSquared(new THREE.Vector3(x, y, z)) < 400) {
-        this.audio.play("place", log);
-        this.events.onToast("A sapling unfurled into a living tree.");
-      }
+      if (this.position.distanceToSquared(new THREE.Vector3(x, y, z)) < 400) this.audio.play("place", log);
     }
     if (processed) this.saveSoon();
   }
@@ -2507,6 +3087,216 @@ export class VoxelEngine {
     if (this.placeCooldown > 0) return;
     const heldSlot = this.selectedSlot();
     const heldDefinition = heldSlot ? ITEMS[heldSlot.item] : null;
+    if (this.targetBoat) {
+      const boat = this.targetBoat;
+      if (this.crouching) {
+        const key = `boat:${boat.save.id}`;
+        this.chests.set(key, boat.save.inventory);
+        this.openOverlay("chest", key);
+        return;
+      }
+      const playerId = this.localPlayerId();
+      const passengers = boardSailboat(boat.save.passengers, playerId);
+      if (!passengers.includes(playerId)) {
+        this.events.onToast("Both Wayfarer seats are occupied.");
+        return;
+      }
+      boat.save.passengers = passengers;
+      this.mountedBoatId = boat.save.id;
+      this.placeCooldown = 0.3;
+      this.events.onToast(passengers.indexOf(playerId) === 0 ? "You take the tiller. Space dismounts." : "You settle into the passenger seat. Space dismounts.");
+      this.saveSoon();
+      return;
+    }
+    if (heldSlot?.item === Item.Sailboat) {
+      const water = this.waterPlacementPoint();
+      if (!water) {
+        this.events.onToast("The Wayfarer needs a clear patch of water.");
+        return;
+      }
+      if ([...this.boats.values()].some((boat) => boat.group.position.distanceToSquared(water) < 12)) {
+        this.events.onToast("Give the other boat a little room.");
+        return;
+      }
+      this.spawnSailboat(water);
+      if (this.mode === "survival") {
+        heldSlot.count -= 1;
+        if (heldSlot.count <= 0) this.inventory[this.selected] = null;
+      }
+      this.placeCooldown = 0.45;
+      this.heldUse = 1;
+      this.audio.play("place", BlockId.Planks);
+      this.events.onToast("Wayfarer launched. Right-click to board; crouch-right-click opens its hold.");
+      this.saveSoon();
+      this.emitHud(true);
+      return;
+    }
+    if (heldSlot?.item === Item.CreatureCage) {
+      const encoded = typeof heldSlot.metadata?.capturedCreature === "string" ? heldSlot.metadata.capturedCreature : null;
+      if (encoded) {
+        const captured = decodeCapturedCreature(encoded);
+        if (!captured) {
+          delete heldSlot.metadata?.capturedCreature;
+          this.events.onToast("The cage record was damaged and has been cleared.");
+          return;
+        }
+        const direction = this.camera.getWorldDirection(new THREE.Vector3());
+        const releasePosition = this.target
+          ? new THREE.Vector3(this.target.placeX, this.target.placeY + MOB_DEFS[captured.creature.kind].footOffset, this.target.placeZ)
+          : this.position.clone().add(direction.setY(0).normalize().multiplyScalar(1.8));
+        const ground = this.world.findWalkableY(Math.round(releasePosition.x), Math.round(releasePosition.z), releasePosition.y);
+        releasePosition.y = ground + MOB_DEFS[captured.creature.kind].footOffset;
+        const metadata = releaseCreature(captured);
+        const petState = metadata.kind === "peelop" && metadata.custom.petState
+          ? metadata.custom.petState as unknown as PeelopState : null;
+        const mob = this.spawnMob(metadata.kind, releasePosition, {
+          health: metadata.health,
+          age: metadata.ageTicks / 20,
+          petState,
+          persistentPoiResident: Boolean(metadata.custom.persistentPoiResident),
+          enclosed: Boolean(metadata.custom.enclosed),
+        });
+        mob.name = metadata.name || mob.name;
+        heldSlot.metadata = undefined;
+        this.placeCooldown = 0.35;
+        this.events.onToast(`${mob.name} steps out with its exact health, age, and bond intact.`);
+        this.saveSoon();
+        this.emitHud(true);
+        return;
+      }
+      if (!this.targetMob) {
+        this.events.onToast("Aim the empty cage at a creature. Hostiles must be below half health or at one heart.");
+        return;
+      }
+      const mob = this.targetMob;
+      const metadata: CreatureMetadata = {
+        schema: 1,
+        entityId: String(mob.id),
+        kind: mob.kind,
+        health: mob.health,
+        maxHealth: mob.maxHealth,
+        ageTicks: Math.floor(mob.age * 20),
+        baby: Boolean(mob.petState?.baby),
+        temperament: mob.definition.temperament,
+        hostile: mob.hostile,
+        tamed: Boolean(mob.petState?.tamed),
+        ownerId: mob.petState?.ownerId ?? null,
+        name: mob.petState?.name ?? (mob.name !== mob.definition.name ? mob.name : null),
+        geneticSeed: mob.petState?.geneticSeed ?? ((mob.id * 2654435761) >>> 0),
+        command: mob.petState?.command ?? null,
+        custom: JSON.parse(JSON.stringify({
+          ...(mob.petState ? { petState: mob.petState } : {}),
+          persistentPoiResident: mob.persistentPoiResident,
+          enclosed: mob.enclosed,
+        })) as CreatureMetadata["custom"],
+      };
+      const captured = captureCreature(`waykeeper-${Date.now().toString(36)}`, metadata);
+      if (!captured) {
+        this.events.onToast(`${mob.name} is fighting too strongly to cage.`);
+        return;
+      }
+      heldSlot.metadata = {
+        capturedCreature: encodeCapturedCreature(captured),
+        name: metadata.name ?? mob.definition.name,
+        kind: metadata.kind,
+        tamed: metadata.tamed,
+        baby: metadata.baby,
+      };
+      this.bestiary[mob.kind].seen = true;
+      this.bestiary[mob.kind].captures += 1;
+      const mobIndex = this.mobs.indexOf(mob);
+      if (mobIndex >= 0) this.removeMob(mobIndex);
+      this.placeCooldown = 0.4;
+      this.audio.play("craft");
+      this.events.onToast(`${metadata.name ?? mob.definition.name} is safely recorded in the Waykeeper Cage.`);
+      this.saveSoon();
+      this.emitHud(true);
+      return;
+    }
+    if (this.targetMob?.kind === "peelop") {
+      const pet = this.targetMob;
+      const state = pet.petState ?? createPeelopState((pet.id * 2654435761) >>> 0);
+      pet.petState = state;
+      const food: PeelopFood | null = heldSlot?.item === Item.Banana ? "banana"
+        : heldSlot?.item === Item.Apple ? "apple"
+          : heldSlot?.item === Item.Berry ? "berry"
+            : heldSlot?.item === Item.Wheat ? "wheat" : null;
+      if (food && heldSlot) {
+        const ownerId = this.localPlayerId();
+        if (!state.tamed) {
+          const result = tryTamePeelop(state, ownerId, food, Math.random());
+          pet.petState = result.state;
+          this.events.onToast(result.tamed ? "The Peelop's leaf-ears perk up. It has chosen you." : "The Peelop nibbles politely, but is not ready to follow.");
+        } else {
+          pet.petState = feedPeelop(state, food);
+          const partner = this.mobs.find((candidate) => candidate !== pet && candidate.kind === "peelop" && candidate.petState
+            && candidate.group.position.distanceToSquared(pet.group.position) < 25);
+          const family = partner?.petState ? breedPeelops(pet.petState, partner.petState, ownerId) : null;
+          if (family && partner) {
+            pet.petState = family.left;
+            partner.petState = family.right;
+            this.spawnMob("peelop", pet.group.position.clone().add(new THREE.Vector3(0.65, 0, 0.35)), { petState: family.child });
+            this.events.onToast("A tiny Peelip tumbles into the grove.");
+          } else this.events.onToast(`${pet.petState.name ?? "Peelop"} is fed and recovering.`);
+        }
+        pet.health = pet.petState.health;
+        pet.name = pet.petState.name || pet.definition.name;
+        if (this.mode === "survival") {
+          heldSlot.count -= 1;
+          if (heldSlot.count <= 0) this.inventory[this.selected] = null;
+        }
+        this.placeCooldown = 0.35;
+        this.saveSoon();
+        this.emitHud(true);
+        return;
+      }
+      if (state.tamed && state.ownerId === this.localPlayerId()) {
+        this.activePet = pet;
+        if (this.crouching) this.openOverlay("pet", String(pet.id));
+        else {
+          pet.petState = commandPeelop(state, this.localPlayerId(), state.command === "sit" ? "follow" : "sit");
+          this.events.onToast(`${pet.petState.name ?? "Peelop"} will ${pet.petState.command}.`);
+          this.saveSoon();
+          this.emitHud(true);
+        }
+        return;
+      }
+    }
+    if (heldSlot?.item === Item.SunwardCompass) {
+      const markers = this.world.structureMarkersNear(this.position.x, this.position.y, this.position.z, 36)
+        .filter(([, marker]) => marker.type === "landmark" || (marker.type === "chest" && !this.chests.has(blockKey(marker.position.x, marker.position.y, marker.position.z))))
+        .sort(([, left], [, right]) => {
+          const leftDistance = (left.position.x - this.position.x) ** 2 + (left.position.z - this.position.z) ** 2;
+          const rightDistance = (right.position.x - this.position.x) ** 2 + (right.position.z - this.position.z) ** 2;
+          return leftDistance - rightDistance;
+        });
+      const marker = markers[0]?.[1];
+      if (!marker) this.events.onToast("The Sunward Compass is cool. No unopened reliquary or recorded landmark answers nearby.");
+      else {
+        const dx = marker.position.x - this.position.x;
+        const dz = marker.position.z - this.position.z;
+        const direction = Math.abs(dx) > Math.abs(dz) * 1.6 ? (dx > 0 ? "east" : "west")
+          : Math.abs(dz) > Math.abs(dx) * 1.6 ? (dz > 0 ? "south" : "north")
+            : `${dz > 0 ? "south" : "north"}-${dx > 0 ? "east" : "west"}`;
+        this.events.onToast(`The compass pulses ${direction} · ${Math.round(Math.hypot(dx, dz))} blocks.`);
+      }
+      this.damageSelectedTool(1);
+      this.heldUse = 1;
+      this.placeCooldown = 0.55;
+      this.audio.play("craft");
+      this.emitHud(true);
+      return;
+    }
+    if (heldSlot?.item === Item.StarrootScepter) {
+      if (this.health < 10) this.health = Math.min(10, this.health + 2);
+      this.damageSelectedTool(5);
+      this.heldUse = 1;
+      this.placeCooldown = 1.2;
+      this.events.onToast("Starroot light knits the worst of your wounds.");
+      this.audio.play("craft");
+      this.emitHud(true);
+      return;
+    }
     if (heldSlot && heldDefinition?.useKind === "net") {
       const direction = new THREE.Vector3();
       this.camera.getWorldDirection(direction);
@@ -2563,6 +3353,7 @@ export class VoxelEngine {
       if (this.target.type === BlockId.CraftingTable) { this.openOverlay("crafting", key); return; }
       if (this.target.type === BlockId.Furnace) { this.openOverlay("furnace", key); return; }
       if (this.target.type === BlockId.Chest) { this.openOverlay("chest", key); return; }
+      if (this.target.type === BlockId.ButterflyExhibit) { this.openExhibit(this.target.x, this.target.y, this.target.z); return; }
     }
     const slot = this.selectedSlot();
     const definition = slot ? ITEMS[slot.item] : null;
@@ -2598,6 +3389,17 @@ export class VoxelEngine {
     let type = requestedType;
     let placedEdits: Array<{ x: number; y: number; z: number; type: BlockId }>;
     if (current === undefined || (!BLOCKS[current]?.replaceable && current !== BlockId.Air)) return;
+    if (requestedType === BlockId.ButterflyExhibit) {
+      const connectedBlocks = new Set<string>();
+      for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]] as const) {
+        const topology = this.exhibitTopologyAt(x + dx, y + dy, z + dz);
+        for (const block of topology?.blocks ?? []) connectedBlocks.add(block.key);
+      }
+      if (connectedBlocks.size >= 20) {
+        this.events.onToast("A conservatory reaches its natural limit at 20 connected habitat blocks.");
+        return;
+      }
+    }
     if (requestedType === BlockId.Torch) {
       const orientedTorch = torchBlockForPlacement(this.target, replacesTarget);
       if (orientedTorch === null) {
@@ -2670,8 +3472,14 @@ export class VoxelEngine {
       return;
     }
     this.publishBlockEdits(placedEdits, placedEdits.length > 1 ? "batch" : "place");
+    for (const edit of placedEdits) this.notifyLiquidChanged(edit.x, edit.y, edit.z);
     if (type === BlockId.Chest) this.chests.set(blockKey(x, y, z), Array.from({ length: 27 }, () => null));
     if (type === BlockId.Furnace) this.furnaces.set(blockKey(x, y, z), blankFurnace());
+    if (type === BlockId.ButterflyExhibit) {
+      const topology = this.exhibitTopologyAt(x, y, z);
+      if (topology) this.consolidateExhibit(topology);
+      this.syncExhibitVisuals(true);
+    }
     if (type === BlockId.WildwoodSapling) this.saplings.set(blockKey(x, y, z), Date.now() + 75_000 + Math.random() * 75_000);
     if (isEnvironmentLightBlock(type)) this.lightRefreshTimer = 0;
     if (this.mode === "survival") {
@@ -2819,6 +3627,10 @@ export class VoxelEngine {
   breakTarget() {
     if (!this.target || this.target.type === BlockId.Bedrock || this.target.type === BlockId.Water || this.target.type === BlockId.Lava) return;
     const { x, y, z, type } = this.target;
+    const exhibitTopology = type === BlockId.ButterflyExhibit ? this.exhibitTopologyAt(x, y, z) : null;
+    const exhibitSlots = exhibitTopology
+      ? (this.chests.get(this.consolidateExhibit(exhibitTopology)) ?? []).map(cloneSlot)
+      : null;
     if (this.tryFellTree(x, y, z, type)) {
       this.miningProgress = 0;
       this.target = null;
@@ -2841,6 +3653,7 @@ export class VoxelEngine {
       this.world.setBlock(x, y, z, BlockId.Air, true, true);
     }
     for (const edit of brokenEdits) this.breakUnsupportedAround(edit.x, edit.y, edit.z);
+    for (const edit of brokenEdits) this.notifyLiquidChanged(edit.x, edit.y, edit.z);
     this.publishBlockEdits(brokenEdits, brokenEdits.length > 1 ? "batch" : "break");
     if (this.mode === "survival") {
       if (harvested) {
@@ -2855,7 +3668,7 @@ export class VoxelEngine {
     if (this.isBed(type) && this.mode === "survival" && harvested) this.spawnDrop(Item.WildwoodBed, 1, new THREE.Vector3(x, y + 0.3, z));
     if (type === BlockId.Furnace) {
       const furnace = this.furnaces.get(key);
-      if (furnace) for (const slot of [furnace.input, furnace.fuel, furnace.output]) if (slot) this.spawnDrop(slot.item, slot.count, new THREE.Vector3(x, y + 0.5, z), slot.durability);
+      if (furnace) for (const slot of [furnace.input, furnace.fuel, furnace.output]) if (slot) this.spawnDrop(slot.item, slot.count, new THREE.Vector3(x, y + 0.5, z), slot.durability, slot.metadata);
       this.furnaces.delete(key);
     }
     if (type === BlockId.Chest) {
@@ -2866,14 +3679,17 @@ export class VoxelEngine {
         const half = Math.max(0, blocks.indexOf(key));
         const removed = chest.slice(half * 27, half * 27 + 27);
         const remaining = chest.slice(half === 0 ? 27 : 0, half === 0 ? 54 : 27);
-        for (const slot of removed) if (slot) this.spawnDrop(slot.item, slot.count, new THREE.Vector3(x, y + 0.5, z), slot.durability);
+        for (const slot of removed) if (slot) this.spawnDrop(slot.item, slot.count, new THREE.Vector3(x, y + 0.5, z), slot.durability, slot.metadata);
         this.chests.delete(storageKey);
         const other = blocks[half === 0 ? 1 : 0];
         this.chests.set(other, remaining);
       } else {
-        for (const slot of chest) if (slot) this.spawnDrop(slot.item, slot.count, new THREE.Vector3(x, y + 0.5, z), slot.durability);
+        for (const slot of chest) if (slot) this.spawnDrop(slot.item, slot.count, new THREE.Vector3(x, y + 0.5, z), slot.durability, slot.metadata);
         this.chests.delete(storageKey);
       }
+    }
+    if (type === BlockId.ButterflyExhibit && exhibitTopology && exhibitSlots) {
+      this.rebuildExhibitAfterBreak(exhibitTopology, exhibitSlots, { x, y, z });
     }
     this.audio.play("break", type);
     this.spawnParticles(x, y, z, type, 13);
@@ -2928,17 +3744,32 @@ export class VoxelEngine {
     if (!this.running || this.titleMode) {
       this.target = null;
       this.targetMob = null;
+      this.targetBoat = null;
       this.selection.visible = false;
       return;
     }
-    const direction = new THREE.Vector3();
-    this.camera.getWorldDirection(direction);
-    const blockHit = this.castVoxel(this.camera.position, direction, 6);
-    const mobHit = this.castMob(this.camera.position, direction, 5);
-    this.targetMob = mobHit && (!blockHit || mobHit.distance < blockHit.distance) ? mobHit.mob : null;
+    const direction = this.cameraMode === "first"
+      ? this.camera.getWorldDirection(new THREE.Vector3())
+      : new THREE.Vector3(
+        -Math.sin(this.yaw) * Math.cos(this.pitch),
+        Math.sin(this.pitch),
+        -Math.cos(this.yaw) * Math.cos(this.pitch),
+      ).normalize();
+    const interactionOrigin = this.cameraMode === "first"
+      ? this.camera.position
+      : this.cameraCollisionOrigin.set(this.position.x, this.position.y + this.cameraEyeHeight, this.position.z);
+    const blockHit = this.castVoxel(interactionOrigin, direction, 6);
+    const mobHit = this.castMob(interactionOrigin, direction, 5);
+    const boatHit = this.castBoat(interactionOrigin, direction, 6);
+    const nearestEntityDistance = Math.min(mobHit?.distance ?? Infinity, boatHit?.distance ?? Infinity);
+    const entityVisible = !blockHit || nearestEntityDistance < blockHit.distance;
+    this.targetBoat = entityVisible && boatHit && boatHit.distance <= (mobHit?.distance ?? Infinity) ? boatHit.boat : null;
+    this.targetMob = entityVisible && !this.targetBoat && mobHit ? mobHit.mob : null;
     if (this.targetMob && !this.bestiary[this.targetMob.kind].seen) { this.bestiary[this.targetMob.kind].seen = true; this.saveSoon(); }
-    this.target = this.targetMob ? null : blockHit;
-    const nextKey = this.target ? blockKey(this.target.x, this.target.y, this.target.z) : this.targetMob ? `mob:${this.targetMob.id}` : "";
+    this.target = this.targetMob || this.targetBoat ? null : blockHit;
+    const nextKey = this.target ? blockKey(this.target.x, this.target.y, this.target.z)
+      : this.targetMob ? `mob:${this.targetMob.id}`
+        : this.targetBoat ? `boat:${this.targetBoat.save.id}` : "";
     if (nextKey !== this.targetKey) { this.targetKey = nextKey; this.miningProgress = 0; }
     this.selection.visible = Boolean(this.target);
     if (this.target) {
@@ -2994,20 +3825,28 @@ export class VoxelEngine {
   }
 
   updatePlayer(dt: number) {
+    if (this.mountedBoatId) {
+      this.fallVelocity = 0;
+      this.velocity.set(0, 0, 0);
+      this.grounded = true;
+      return;
+    }
     const forwardAmount = (this.keys.has("KeyW") ? 1 : 0) - (this.keys.has("KeyS") ? 1 : 0);
     const rightAmount = (this.keys.has("KeyD") ? 1 : 0) - (this.keys.has("KeyA") ? 1 : 0);
     const moving = forwardAmount !== 0 || rightAmount !== 0;
     const feetBlock = this.world.getBlock(Math.floor(this.position.x + 0.5), Math.floor(this.position.y + 0.6), Math.floor(this.position.z + 0.5));
+    const headBlock = this.world.getBlock(Math.floor(this.position.x + 0.5), Math.floor(this.position.y + this.cameraEyeHeight + 0.5), Math.floor(this.position.z + 0.5));
     const inWater = feetBlock === BlockId.Water;
     const inLava = feetBlock === BlockId.Lava;
     const inLiquid = inWater || inLava;
+    this.headSubmerged = headBlock === BlockId.Water;
     if (inWater && !this.wasInWater) this.audio.play("splash");
     this.wasInWater = inWater;
     const wantsCrouch = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
     if (wantsCrouch) this.crouching = true;
     else if (!this.collidesAt(this.position, PLAYER_HEIGHT)) this.crouching = false;
-    const wantsSprint = this.keys.has("ControlLeft") || this.keys.has("ControlRight");
-    this.sprinting = moving && wantsSprint && !this.crouching && this.hunger > 0.5 && !inLiquid;
+    const wantsSprint = this.keys.has("ControlLeft") || this.keys.has("ControlRight") || (this.sprintLatched && forwardAmount > 0);
+    this.sprinting = forwardAmount > 0 && moving && wantsSprint && !this.crouching && this.hunger > 0.5 && !inLiquid;
     const speed = (this.crouching ? 2.15 : this.sprinting ? 6.35 : 4.35) * (inLiquid ? 0.55 : 1);
     const length = Math.hypot(forwardAmount, rightAmount) || 1;
     const f = forwardAmount / length;
@@ -3025,12 +3864,41 @@ export class VoxelEngine {
       this.velocity.z *= Math.max(0, 1 - drag * dt);
     }
 
-    if (inLiquid) {
+    if (inWater) {
+      this.fallVelocity = 0;
+      const bankX = Math.round(this.position.x - Math.sin(this.yaw) * 0.62);
+      const bankZ = Math.round(this.position.z - Math.cos(this.yaw) * 0.62);
+      const bankY = Math.floor(this.position.y + 0.6);
+      const bankType = this.world.getBlock(bankX, bankY, bankZ);
+      const bankHead = this.world.getBlock(bankX, bankY + 1, bankZ);
+      const horizontalCollision = Boolean(BLOCKS[bankType ?? BlockId.Air]?.solid) && !BLOCKS[bankHead ?? BlockId.Bedrock]?.solid;
+      const hasBreatherCharm = this.countItem(Item.BreatherCharm) > 0;
+      const swim = stepSwimming(
+        { velocityY: this.velocity.y, oxygenSeconds: this.oxygenSeconds, drowningAccumulator: this.drowningAccumulator },
+        { jumpHeld: this.keys.has("Space"), movingForward: forwardAmount > 0 },
+        {
+          submersion: this.headSubmerged ? 1 : 0.68,
+          headSubmerged: this.headSubmerged,
+          horizontalCollision,
+          shoreLedgeHeight: horizontalCollision ? 1 : undefined,
+          surfaceGap: this.headSubmerged ? 0.25 : 0.72,
+        },
+        dt,
+        hasBreatherCharm ? { ...DEFAULT_SWIM_RULES, maxOxygenSeconds: 24 } : DEFAULT_SWIM_RULES,
+      );
+      this.velocity.y = swim.state.velocityY;
+      this.oxygenSeconds = swim.state.oxygenSeconds;
+      this.drowningAccumulator = swim.state.drowningAccumulator;
+      if (swim.damage > 0 && this.mode === "survival") this.damagePlayer(swim.damage, "drowning", true);
+    } else if (inLava) {
       this.fallVelocity = 0;
       this.velocity.y -= 5 * dt;
       this.velocity.y *= Math.max(0, 1 - 2.4 * dt);
       if (this.keys.has("Space")) this.velocity.y += 9.5 * dt;
     } else {
+      const maxOxygen = this.countItem(Item.BreatherCharm) > 0 ? 24 : DEFAULT_SWIM_RULES.maxOxygenSeconds;
+      this.oxygenSeconds = Math.min(maxOxygen, this.oxygenSeconds + DEFAULT_SWIM_RULES.oxygenRecoveryPerSecond * dt);
+      this.drowningAccumulator = 0;
       if (this.grounded && this.keys.has("Space")) {
         this.velocity.y = 8.15;
         this.grounded = false;
@@ -3165,6 +4033,17 @@ export class VoxelEngine {
     if (this.mode === "survival") this.dropBlockLoot(above, x, aboveY, z);
   }
 
+  castBoat(origin: THREE.Vector3, direction: THREE.Vector3, reach: number) {
+    this.boatRaycaster.set(origin, direction);
+    this.boatRaycaster.far = reach;
+    const intersection = this.boatRaycaster.intersectObjects(this.boatGroup.children, true)[0];
+    if (!intersection) return null;
+    let object: THREE.Object3D | null = intersection.object;
+    while (object && typeof object.userData.boatId !== "string") object = object.parent;
+    const boat = object ? this.boats.get(object.userData.boatId as string) : null;
+    return boat ? { boat, distance: intersection.distance } : null;
+  }
+
   breakUnsupportedAround(x: number, y: number, z: number) {
     this.breakUnsupportedAbove(x, y, z);
     const wallTorches: Array<{ x: number; y: number; z: number; type: BlockId }> = [
@@ -3222,8 +4101,8 @@ export class VoxelEngine {
     const deathPosition = this.position.clone().add(new THREE.Vector3(0, 0.55, 0));
     const lostInventory = announce && this.mode === "survival" && !this.worldOptions.keepInventory;
     if (lostInventory) {
-      for (const slot of this.inventory) if (slot) this.spawnDrop(slot.item, slot.count, deathPosition, slot.durability);
-      for (const slot of Object.values(this.equipment)) if (slot) this.spawnDrop(slot.item, slot.count, deathPosition, slot.durability);
+      for (const slot of this.inventory) if (slot) this.spawnDrop(slot.item, slot.count, deathPosition, slot.durability, slot.metadata);
+      for (const slot of Object.values(this.equipment)) if (slot) this.spawnDrop(slot.item, slot.count, deathPosition, slot.durability, slot.metadata);
       this.inventory = blankInventory();
       this.equipment = blankEquipment();
     }
@@ -3245,20 +4124,309 @@ export class VoxelEngine {
     this.emitHud(true);
   }
 
+  renameActivePet(name: string) {
+    const pet = this.activePet;
+    if (!pet?.petState || pet.kind !== "peelop" || pet.petState.ownerId !== this.localPlayerId()) return false;
+    pet.petState = renamePeelop(pet.petState, name);
+    pet.name = pet.petState.name || pet.definition.name;
+    this.events.onToast(`${pet.name} will answer to that name.`);
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  commandActivePet(command: PeelopCommand) {
+    const pet = this.activePet;
+    if (!pet?.petState || pet.kind !== "peelop") return false;
+    const next = commandPeelop(pet.petState, this.localPlayerId(), command);
+    if (next === pet.petState) return false;
+    pet.petState = next;
+    this.events.onToast(`${pet.petState.name ?? "Peelop"} will ${command}.`);
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  localPlayerId() {
+    return this.multiplayer?.identity.id ?? "local";
+  }
+
+  restoreSailboat(value: Partial<SailboatSave>) {
+    const save = normalizeSailboatSave(value, `wayfarer-${this.nextBoatId++}`);
+    if (this.boats.has(save.id)) return this.boats.get(save.id)!;
+    const group = createSailboatVisual(save.id);
+    group.position.set(save.x, save.y, save.z);
+    group.rotation.y = save.yaw;
+    this.boatGroup.add(group);
+    const entity = { save, group };
+    this.boats.set(save.id, entity);
+    this.chests.set(`boat:${save.id}`, save.inventory);
+    return entity;
+  }
+
+  waterPlacementPoint(reach = 6) {
+    const origin = this.cameraMode === "first"
+      ? this.camera.position.clone()
+      : new THREE.Vector3(this.position.x, this.position.y + this.cameraEyeHeight, this.position.z);
+    const direction = this.cameraMode === "first"
+      ? this.camera.getWorldDirection(new THREE.Vector3())
+      : new THREE.Vector3(-Math.sin(this.yaw) * Math.cos(this.pitch), Math.sin(this.pitch), -Math.cos(this.yaw) * Math.cos(this.pitch)).normalize();
+    for (let distance = 0.5; distance <= reach; distance += 0.2) {
+      const point = origin.clone().addScaledVector(direction, distance);
+      const x = Math.floor(point.x + 0.5);
+      const y = Math.floor(point.y + 0.5);
+      const z = Math.floor(point.z + 0.5);
+      if (this.world.getBlock(x, y, z) !== BlockId.Water) continue;
+      let surfaceY = y;
+      while (surfaceY < MAX_Y && this.world.getBlock(x, surfaceY + 1, z) === BlockId.Water) surfaceY += 1;
+      return new THREE.Vector3(x, surfaceY + 0.58, z);
+    }
+    return null;
+  }
+
+  spawnSailboat(position: THREE.Vector3) {
+    const id = `wayfarer-${Date.now().toString(36)}-${this.nextBoatId++}`;
+    return this.restoreSailboat({ id, x: position.x, y: position.y, z: position.z, yaw: this.yaw, velocity: 0, passengers: [], inventory: [] });
+  }
+
+  dismountBoat() {
+    if (!this.mountedBoatId) return;
+    const boat = this.boats.get(this.mountedBoatId);
+    const playerId = this.localPlayerId();
+    if (boat) {
+      boat.save.passengers = leaveSailboat(boat.save.passengers, playerId);
+      const side = new THREE.Vector3(Math.cos(boat.save.yaw) * 1.45, 0, -Math.sin(boat.save.yaw) * 1.45);
+      this.position.set(boat.save.x + side.x, boat.save.y + 0.2, boat.save.z + side.z);
+    }
+    this.mountedBoatId = null;
+    this.velocity.set(0, 0, 0);
+    this.events.onToast("You step off the Wayfarer.");
+    this.saveSoon();
+  }
+
+  updateBoats(dt: number) {
+    const playerId = this.localPlayerId();
+    for (const boat of this.boats.values()) {
+      const localSeat = boat.save.passengers.indexOf(playerId);
+      const canDrive = localSeat === 0 && this.multiplayer?.role !== "guest";
+      if (canDrive) {
+        const forward = (this.keys.has("KeyW") ? 1 : 0) - (this.keys.has("KeyS") ? 1 : 0);
+        const turn = (this.keys.has("KeyD") ? 1 : 0) - (this.keys.has("KeyA") ? 1 : 0);
+        const next = integrateSailboat(boat.save, { forward, turn }, dt, (x, z) => {
+          const y = Math.floor(boat.save.y - 0.05);
+          return this.world.getBlock(Math.floor(x + 0.5), y, Math.floor(z + 0.5)) === BlockId.Water;
+        });
+        Object.assign(boat.save, next);
+      }
+      boat.group.position.set(boat.save.x, boat.save.y + Math.sin(performance.now() * 0.0018 + boat.save.x) * 0.025, boat.save.z);
+      boat.group.rotation.set(Math.sin(performance.now() * 0.0013 + boat.save.z) * 0.018, boat.save.yaw, Math.sin(performance.now() * 0.0016 + boat.save.x) * 0.025);
+      if (localSeat >= 0) {
+        this.mountedBoatId = boat.save.id;
+        const seat = sailboatSeatOffset(localSeat, boat.save.yaw);
+        this.position.set(boat.save.x + seat.x, boat.save.y + seat.y, boat.save.z + seat.z);
+        this.yaw = boat.save.yaw;
+        this.velocity.set(0, 0, 0);
+        this.grounded = true;
+      }
+    }
+    if (this.mountedBoatId) {
+      const boat = this.boats.get(this.mountedBoatId);
+      if (!boat || !boat.save.passengers.includes(playerId)) this.mountedBoatId = null;
+    }
+  }
+
+  exhibitSpecimen(slot: InventorySlot, key: string, index: number): ExhibitButterfly | null {
+    const kind = ITEMS[slot.item]?.creatureKind as ButterflyKind | undefined;
+    if (!kind || !BUTTERFLY_ORDER.includes(kind)) return null;
+    let seed = 2166136261;
+    const text = `${key}:${index}:${kind}`;
+    for (const character of text) seed = Math.imul(seed ^ character.charCodeAt(0), 16777619);
+    return {
+      schema: 1,
+      id: `${key}:${index}`,
+      kind,
+      capturedAt: Number(slot.metadata?.capturedAt) || 0,
+      ageTicks: Number(slot.metadata?.ageTicks) || 0,
+      name: typeof slot.metadata?.name === "string" ? slot.metadata.name : null,
+      geneticSeed: seed >>> 0,
+      custom: {},
+    };
+  }
+
+  createExhibitVisual(key: string, topology: ExhibitTopology, specimens: ExhibitButterfly[]) {
+    const group = new THREE.Group();
+    group.name = key;
+    group.userData.topology = topology;
+    group.userData.specimens = specimens;
+    const stemMaterial = new THREE.MeshLambertMaterial({ color: 0x3f7b42 });
+    const petalColors = [0xf2c84f, 0x8ab9ec, 0xea7da5];
+    topology.landingSites.forEach((site, index) => {
+      if (site.tier === "flower-floor") {
+        const stem = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.28, 0.055), stemMaterial.clone());
+        stem.position.set(site.x + site.localOffset[0], site.y - 0.25 + site.localOffset[1], site.z + site.localOffset[2]);
+        const petals = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.07, 0.28), new THREE.MeshLambertMaterial({ color: petalColors[index % petalColors.length] }));
+        petals.position.copy(stem.position).add(new THREE.Vector3(0, 0.15, 0));
+        group.add(stem, petals);
+      } else {
+        const branch = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.065, 0.08), new THREE.MeshLambertMaterial({ color: site.tier === "canopy" ? 0x557a3d : 0x765034 }));
+        branch.position.set(site.x, site.y - 0.18 + site.localOffset[1], site.z);
+        branch.rotation.y = (index % 2) * Math.PI / 2;
+        group.add(branch);
+      }
+    });
+    specimens.forEach((specimen, index) => {
+      const visual = new THREE.Group();
+      visual.userData.specimenIndex = index;
+      const colors = MOB_DEFS[specimen.kind].colors;
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.2), new THREE.MeshLambertMaterial({ color: colors[2] }));
+      const wingMaterial = new THREE.MeshLambertMaterial({ color: colors[0], transparent: true, opacity: 0.9, side: THREE.DoubleSide });
+      for (const side of [-1, 1]) {
+        const wing = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.025, 0.16), wingMaterial.clone());
+        wing.position.x = side * 0.12;
+        wing.userData.wingSide = side;
+        visual.add(wing);
+      }
+      visual.add(body);
+      group.add(visual);
+    });
+    return group;
+  }
+
+  syncExhibitVisuals(force = false, dt = 0) {
+    this.exhibitVisualTimer -= dt;
+    if (!force && this.exhibitVisualTimer > 0) return;
+    this.exhibitVisualTimer = 0.12;
+    const live = new Set<string>();
+    for (const [key, slots] of this.chests) {
+      if (!key.startsWith("exhibit:")) continue;
+      const [x, y, z] = key.slice("exhibit:".length).split(",").map(Number);
+      const topology = this.exhibitTopologyAt(x, y, z);
+      if (!topology) continue;
+      live.add(key);
+      const specimens = slots.flatMap((slot, index) => slot ? [this.exhibitSpecimen(slot, key, index)].filter((value): value is ExhibitButterfly => Boolean(value)) : []);
+      const topologySignature = topology.blocks.map((block) => block.key).sort().join("|");
+      const specimenSignature = specimens.map((specimen) => `${specimen.kind}:${specimen.id}`).join("|");
+      let visual = this.exhibitVisuals.get(key);
+      if (!visual || visual.topologySignature !== topologySignature || visual.specimenSignature !== specimenSignature) {
+        if (visual) { this.exhibitGroup.remove(visual.group); this.disposeObject(visual.group); }
+        const group = this.createExhibitVisual(key, topology, specimens);
+        this.exhibitGroup.add(group);
+        visual = { group, topologySignature, specimenSignature };
+        this.exhibitVisuals.set(key, visual);
+      }
+      const elapsed = performance.now() / 1000;
+      for (const child of visual.group.children) {
+        const index = child.userData.specimenIndex as number | undefined;
+        if (index === undefined) continue;
+        const specimen = specimens[index];
+        if (!specimen) continue;
+        const pose = sampleExhibitButterflyPose(specimen, topology, elapsed);
+        child.position.set(pose.x - (pose.landed ? 0 : 0.5), pose.y, pose.z - (pose.landed ? 0 : 0.5));
+        child.rotation.y = pose.yaw;
+        const flap = pose.landed ? 0.12 : 0.55 + Math.sin(elapsed * 14 + index) * 0.42;
+        for (const wing of child.children) if (wing.userData.wingSide) wing.rotation.z = Number(wing.userData.wingSide) * flap;
+      }
+    }
+    for (const [key, visual] of this.exhibitVisuals) {
+      if (live.has(key)) continue;
+      this.exhibitGroup.remove(visual.group);
+      this.disposeObject(visual.group);
+      this.exhibitVisuals.delete(key);
+    }
+  }
+
   createMobVisual(kind: MobKind, id: number) {
     return createMobVisual(kind, id);
   }
 
-  spawnMob(kind: MobKind, position: THREE.Vector3) {
+  spawnMob(kind: MobKind, position: THREE.Vector3, options: SpawnMobOptions = {}) {
     const definition = MOB_DEFS[kind];
-    const id = this.nextMobId++;
+    const id = options.id ?? this.nextMobId++;
+    this.nextMobId = Math.max(this.nextMobId, id + 1);
     const { group, visual, parts } = this.createMobVisual(kind, id);
     group.position.copy(position);
     this.creatureGroup.add(group);
-    const angle = Math.random() * Math.PI * 2;
-    const mob: MobEntity = { id, kind, name: definition.name, hostile: definition.hostile, definition, group, visual, parts, health: definition.health, maxHealth: definition.health, damage: definition.damage, angle, desiredAngle: angle, wanderTimer: 1 + Math.random() * 4, attackCooldown: 0, hurtTimer: 0, age: 0, bob: Math.random() * Math.PI * 2, gait: 0, fleeTimer: 0, state: "wander", stateTimer: 0, baseY: position.y, voiceTimer: 2 + Math.random() * 8 };
+    const angle = options.yaw ?? Math.random() * Math.PI * 2;
+    const petState = kind === "peelop" ? (options.petState ? { ...options.petState } : createPeelopState((id * 2654435761) >>> 0)) : null;
+    const mob: MobEntity = {
+      id, kind, name: petState?.name || definition.name, hostile: definition.hostile, definition, group, visual, parts,
+      health: options.health ?? petState?.health ?? definition.health, maxHealth: petState?.maxHealth ?? definition.health,
+      damage: definition.damage, angle, desiredAngle: angle, steering: createStableSteering(angle), wanderTimer: 1 + Math.random() * 4,
+      attackCooldown: 0, hurtTimer: 0, age: options.age ?? 0, bob: Math.random() * Math.PI * 2, gait: 0,
+      fleeTimer: 0, state: "wander", stateTimer: 0, baseY: position.y, voiceTimer: 2 + Math.random() * 8,
+      birdState: definition.family === "bird" ? createBirdBehavior(kind as "emberjay" | "canopy-lark", id * 0.71) : null,
+      petState,
+      persistentPoiResident: options.persistentPoiResident ?? Boolean(definition.persistent),
+      poiMarkerId: options.poiMarkerId ?? null,
+      enclosed: options.enclosed ?? false,
+      enclosureTimer: 0,
+    };
+    if (petState?.baby) mob.visual.scale.setScalar(0.62);
     this.mobs.push(mob);
     return mob;
+  }
+
+  restoreCreature(saved: SavedCreature) {
+    if (!(saved.kind in MOB_DEFS) || BUTTERFLY_ORDER.includes(saved.kind as ButterflyKind)) return null;
+    return this.spawnMob(saved.kind, new THREE.Vector3(saved.x, saved.y, saved.z), {
+      id: saved.id,
+      health: clamp(Number(saved.health) || MOB_DEFS[saved.kind].health, 0.1, MOB_DEFS[saved.kind].health),
+      age: Math.max(0, Number(saved.age) || 0),
+      yaw: Number(saved.yaw) || 0,
+      persistentPoiResident: Boolean(saved.persistentPoiResident),
+      poiMarkerId: saved.poiMarkerId ?? null,
+      enclosed: Boolean(saved.enclosed),
+      petState: saved.petState ?? null,
+    });
+  }
+
+  isMobEnclosed(mob: MobEntity) {
+    const x = Math.round(mob.group.position.x);
+    const y = Math.floor(mob.group.position.y);
+    const z = Math.round(mob.group.position.z);
+    return ([[1, 0], [-1, 0], [0, 1], [0, -1]] as const).every(([dx, dz]) => {
+      for (let distance = 1; distance <= 6; distance += 1) {
+        const feet = this.world.getBlock(x + dx * distance, y, z + dz * distance);
+        const head = this.world.getBlock(x + dx * distance, y + 1, z + dz * distance);
+        if (BLOCKS[feet ?? BlockId.Air]?.solid || BLOCKS[head ?? BlockId.Air]?.solid) return true;
+      }
+      return false;
+    });
+  }
+
+  updateStructureSpawns(dt: number) {
+    this.structureActivationTimer -= dt;
+    if (this.structureActivationTimer > 0) return;
+    this.structureActivationTimer = 0.9;
+    const aliases: Record<string, MobKind> = {
+      "dune-warden": "reliquary-sentinel",
+      "rootbound-sentinel": "reliquary-sentinel",
+      bananabun: "peelop",
+    };
+    for (const [markerKey, raw] of this.world.structureMarkersNear(this.position.x, this.position.y, this.position.z, 48)) {
+      if (raw.type !== "spawn" || this.activatedStructureMarkers.has(markerKey)) continue;
+      const marker = raw as SpawnMarker;
+      const butterfly = BUTTERFLY_ORDER.includes(marker.mobKind as ButterflyKind) ? marker.mobKind as ButterflyKind : null;
+      const kind = aliases[marker.mobKind] ?? (marker.mobKind in MOB_DEFS ? marker.mobKind as MobKind : null);
+      if (!butterfly && !kind) { this.activatedStructureMarkers.add(markerKey); continue; }
+      for (let index = 0; index < marker.count; index += 1) {
+        const angle = (index / Math.max(1, marker.count)) * Math.PI * 2 + marker.position.x * 0.17;
+        const radius = marker.radius * (0.3 + ((index * 37) % 61) / 100);
+        const x = marker.position.x + Math.cos(angle) * radius;
+        const z = marker.position.z + Math.sin(angle) * radius;
+        if (butterfly) this.butterflies.release(butterfly, new THREE.Vector3(x, marker.position.y + 0.8 + (index % 3) * 0.35, z));
+        else if (kind) {
+          const ground = this.world.findWalkableY(Math.round(x), Math.round(z), marker.position.y);
+          this.spawnMob(kind, new THREE.Vector3(x, ground + MOB_DEFS[kind].footOffset, z), {
+            persistentPoiResident: marker.persistent,
+            poiMarkerId: markerKey,
+            petState: kind === "peelop" ? createPeelopState(((marker.position.x * 73856093) ^ (marker.position.z * 19349663) ^ index) >>> 0, index % 5 === 0) : null,
+          });
+        }
+      }
+      this.activatedStructureMarkers.add(markerKey);
+      this.saveSoon();
+    }
   }
 
   trySpawnMob() {
@@ -3275,8 +4443,15 @@ export class VoxelEngine {
     let y: number;
     let kind: MobKind;
     if (underground) {
-      if (this.worldOptions.difficulty === "peaceful") return;
       y = this.world.findWalkableY(x, z, this.position.y);
+      const nearbyWaterY = [Math.round(this.position.y), Math.round(this.position.y) - 1, Math.round(this.position.y) + 1]
+        .find((candidateY) => this.world.getBlock(x, candidateY, z) === BlockId.Water);
+      if (nearbyWaterY !== undefined && passiveCount < passiveCap && Math.random() < 0.62) {
+        kind = fishKindsForHabitat("underground")[0];
+        this.spawnMob(kind, new THREE.Vector3(x, nearbyWaterY, z));
+        return;
+      }
+      if (this.worldOptions.difficulty === "peaceful") return;
       const feet = this.world.getBlock(x, y + 1, z);
       const head = this.world.getBlock(x, y + 2, z);
       if (Math.abs(y - this.position.y) > 14 || !this.world.isWalkThrough(feet) || !this.world.isWalkThrough(head)) return;
@@ -3284,21 +4459,38 @@ export class VoxelEngine {
       kind = roll < 0.38 ? "zombie" : roll < 0.72 ? "caveblob" : "shadecrawler";
     } else {
       y = this.world.surfaceAt(x, z);
+      const biome = this.world.biomeAt(x, z);
+      if ([BiomeId.DeepOcean, BiomeId.Ocean, BiomeId.River].includes(biome) && passiveCount < passiveCap) {
+        let waterY = SEA_LEVEL;
+        while (waterY > y && this.world.getBlock(x, waterY, z) !== BlockId.Water) waterY -= 1;
+        if (this.world.getBlock(x, waterY, z) === BlockId.Water) {
+          const habitat = biome === BiomeId.River ? "river" : "ocean";
+          const pool = fishKindsForHabitat(habitat);
+          kind = pool[Math.floor(Math.random() * pool.length)];
+          this.spawnMob(kind, new THREE.Vector3(x, waterY - Math.random() * Math.min(2, Math.max(0, waterY - y - 1)), z));
+        }
+        return;
+      }
       if (this.world.getBlock(x, y, z) === undefined || y <= SEA_LEVEL) return;
       const daylight = this.daylightAmount();
       const hostile = this.worldOptions.difficulty !== "peaceful" && daylight < 0.2 && this.spawnProtection <= 0;
-      const biome = this.world.biomeAt(x, z);
       const nocturnalGlowmoth = hostile && passiveCount < passiveCap && [BiomeId.MushroomFen, BiomeId.Bloomwood, BiomeId.Siltfen].includes(biome) && Math.random() < 0.3;
       if (nocturnalGlowmoth) kind = "glowmoth";
       else if (hostile) {
         const roll = Math.random();
-        kind = roll < 0.5 ? "zombie" : roll < 0.78 ? "shadecrawler" : "rattlekin";
+        kind = roll < 0.38 ? "zombie" : roll < 0.63 ? "shadecrawler" : roll < 0.82 ? "rattlekin" : "skeleton";
       }
       else {
         if (passiveCount >= passiveCap) return;
-        kind = biome === BiomeId.Snowfield || biome === BiomeId.Frostpine ? "woolhorn"
-          : biome === BiomeId.Siltfen || biome === BiomeId.Bloomwood ? "mossling"
-            : biome === BiomeId.MushroomFen ? "glowmoth" : "ridgeback";
+        const roll = Math.random();
+        kind = biome === BiomeId.Snowfield || biome === BiomeId.Frostpine ? (roll < 0.72 ? "woolhorn" : "canopy-lark")
+          : biome === BiomeId.Desert || biome === BiomeId.Badlands ? (roll < 0.66 ? "duneclatter" : "emberjay")
+            : biome === BiomeId.Savanna ? (roll < 0.62 ? "sunstep-grazer" : roll < 0.84 ? "emberjay" : "ridgeback")
+              : biome === BiomeId.Siltfen ? (roll < 0.62 ? "mossling" : roll < 0.84 ? "pebbletortoise" : "canopy-lark")
+                : biome === BiomeId.Bloomwood || biome === BiomeId.Wildwood ? (roll < 0.42 ? "brambleboar" : roll < 0.72 ? "mossling" : "canopy-lark")
+                  : biome === BiomeId.MushroomFen ? (roll < 0.58 ? "glowmoth" : "petalfox")
+                    : biome === BiomeId.Meadow ? (roll < 0.35 ? "petalfox" : roll < 0.58 ? "pebbletortoise" : roll < 0.78 ? "canopy-lark" : roll < 0.86 ? "peelop" : "ridgeback")
+                      : roll < 0.25 ? "sunstep-grazer" : roll < 0.45 ? "pebbletortoise" : roll < 0.63 ? "petalfox" : "ridgeback";
       }
     }
     this.spawnMob(kind, new THREE.Vector3(x, y + MOB_DEFS[kind].footOffset, z));
@@ -3306,7 +4498,15 @@ export class VoxelEngine {
 
   mobMoveTarget(mob: MobEntity, nx: number, nz: number) {
     const definition = mob.definition;
-    const samples: Array<[number, number]> = [[0, 0], [definition.radius, definition.radius], [-definition.radius, definition.radius], [definition.radius, -definition.radius], [-definition.radius, -definition.radius]];
+    const centerX = Math.round(nx);
+    const centerZ = Math.round(nz);
+    const centerGround = this.world.findWalkableY(centerX, centerZ, mob.group.position.y - definition.footOffset);
+    const centerFeet = this.world.getBlock(centerX, centerGround + 1, centerZ);
+    const centerHead = this.world.getBlock(centerX, centerGround + Math.max(1, Math.ceil(definition.height)), centerZ);
+    const insideOpenDoor = [centerFeet, centerHead].some((type) => type !== undefined && this.isDoor(type) && this.doorIsOpen(type));
+    const samples: Array<[number, number]> = insideOpenDoor
+      ? [[0, 0]]
+      : [[0, 0], [definition.radius, definition.radius], [-definition.radius, definition.radius], [definition.radius, -definition.radius], [-definition.radius, -definition.radius]];
     let groundY = -Infinity;
     for (const [ox, oz] of samples) {
       const ground = this.world.findWalkableY(Math.round(nx + ox), Math.round(nz + oz), mob.group.position.y - definition.footOffset);
@@ -3336,6 +4536,116 @@ export class VoxelEngine {
     } else mob.visual.scale.setScalar(hurtPulse);
   }
 
+  updateAquaticMob(mob: MobEntity, dt: number, distance: number, dx: number, dz: number) {
+    if (mob.wanderTimer <= 0) {
+      mob.desiredAngle += (Math.random() - 0.5) * 2.2;
+      mob.wanderTimer = 1.5 + Math.random() * 4;
+    }
+    if (mob.fleeTimer > 0 || distance < 2.2) mob.desiredAngle = Math.atan2(-dz, -dx);
+    const speed = mob.fleeTimer > 0 ? mob.definition.chaseSpeed : mob.definition.speed;
+    mob.steering = updateStableSteering(mob.steering, { dt, turnRate: mob.definition.turnRate, blocked: false, mobId: mob.id, desiredHeading: mob.desiredAngle });
+    mob.angle = mob.steering.heading;
+    const nx = mob.group.position.x + Math.cos(mob.angle) * speed * dt;
+    const nz = mob.group.position.z + Math.sin(mob.angle) * speed * dt;
+    const verticalWave = Math.sin(mob.age * 0.9 + mob.id) * 0.18;
+    const ny = mob.baseY + verticalWave;
+    const water = this.world.getBlock(Math.floor(nx + 0.5), Math.floor(ny + 0.5), Math.floor(nz + 0.5)) === BlockId.Water;
+    if (water) {
+      const before = mob.group.position.clone();
+      mob.group.position.set(nx, ny, nz);
+      mob.group.rotation.y = -mob.angle - Math.PI / 2;
+      mob.visual.rotation.z = Math.sin(mob.age * 6 + mob.id) * 0.055;
+      this.animateMob(mob, before.distanceTo(mob.group.position));
+    } else {
+      mob.desiredAngle += Math.PI * (0.7 + (mob.id % 7) * 0.04);
+      mob.steering = createStableSteering(mob.angle);
+      mob.wanderTimer = 0.7;
+    }
+  }
+
+  birdPerchNear(mob: MobEntity) {
+    const originX = Math.round(mob.group.position.x);
+    const originZ = Math.round(mob.group.position.z);
+    const treeBlocks = new Set([BlockId.WildwoodLog, BlockId.PineLog, BlockId.BirchLog, BlockId.BloomLog, BlockId.WildwoodLeaves, BlockId.PineLeaves, BlockId.BirchLeaves, BlockId.BloomLeaves]);
+    for (let radius = 0; radius <= 4; radius += 1) for (let dx = -radius; dx <= radius; dx += 1) for (let dz = -radius; dz <= radius; dz += 1) {
+      if (radius > 0 && Math.max(Math.abs(dx), Math.abs(dz)) !== radius) continue;
+      const x = originX + dx;
+      const z = originZ + dz;
+      const ground = this.world.surfaceAt(x, z);
+      for (let y = ground + 9; y >= ground + 1; y -= 1) {
+        const type = this.world.getBlock(x, y, z);
+        if (!treeBlocks.has(type ?? BlockId.Air) || !this.world.isWalkThrough(this.world.getBlock(x, y + 1, z))) continue;
+        return { id: `tree:${x},${y},${z}`, x, z, altitude: y + 0.56 - ground };
+      }
+    }
+    const ground = this.world.surfaceAt(originX, originZ);
+    return { id: `land:${originX},${ground},${originZ}`, x: originX, z: originZ, altitude: 0.12 };
+  }
+
+  updateBirdMob(mob: MobEntity, dt: number, distance: number, dx: number, dz: number) {
+    const ground = this.world.surfaceAt(Math.round(mob.group.position.x), Math.round(mob.group.position.z));
+    const perch = this.birdPerchNear(mob);
+    const playerSpeed = Math.hypot(this.velocity.x, this.velocity.z);
+    mob.birdState = updateBirdBehavior(mob.birdState ?? createBirdBehavior(mob.kind as "emberjay" | "canopy-lark"), {
+      dt,
+      distanceToHuman: distance,
+      humanSpeed: playerSpeed,
+      attacked: mob.fleeTimer > 0,
+      perchId: perch.id,
+      perchHeight: perch.altitude,
+      onGround: mob.group.position.y <= ground + 0.8,
+      random: ((mob.id * 17 + Math.floor(mob.age)) % 97) / 96,
+    });
+    if (mob.birdState.mode === "flee" || mob.birdState.mode === "takeoff") mob.desiredAngle = Math.atan2(-dz, -dx);
+    else if (mob.birdState.mode === "perch") mob.desiredAngle = Math.atan2(perch.z - mob.group.position.z, perch.x - mob.group.position.x);
+    else if (mob.wanderTimer <= 0) {
+      mob.desiredAngle += (Math.random() - 0.5) * 2.4;
+      mob.wanderTimer = 1.8 + Math.random() * 3.2;
+    }
+    const flying = !["perch", "forage"].includes(mob.birdState.mode);
+    const speed = flying ? (mob.birdState.mode === "flee" ? mob.definition.chaseSpeed : mob.definition.speed * 1.8) : mob.definition.speed * 0.22;
+    mob.steering = updateStableSteering(mob.steering, { dt, turnRate: mob.definition.turnRate, blocked: false, mobId: mob.id, desiredHeading: mob.desiredAngle });
+    mob.angle = mob.steering.heading;
+    const nx = mob.group.position.x + Math.cos(mob.angle) * speed * dt;
+    const nz = mob.group.position.z + Math.sin(mob.angle) * speed * dt;
+    const nextGround = this.world.surfaceAt(Math.round(nx), Math.round(nz));
+    const targetY = nextGround + mob.birdState.altitude + 0.52;
+    const before = mob.group.position.clone();
+    mob.group.position.x = nx;
+    mob.group.position.z = nz;
+    mob.group.position.y += (targetY - mob.group.position.y) * Math.min(1, dt * (flying ? 5 : 9));
+    mob.group.rotation.y = -mob.angle - Math.PI / 2;
+    for (const wing of mob.parts.wings) wing.rotation.z = (Number(wing.userData.side) || 1) * (flying ? 0.38 + Math.sin(mob.birdState.wingPhase) * 0.72 : 0.12);
+    this.animateMob(mob, before.distanceTo(mob.group.position));
+  }
+
+  fireSkeletonArrow(mob: MobEntity) {
+    const origin = mob.group.position.clone().add(new THREE.Vector3(0, mob.definition.height * 0.78, 0));
+    const target = this.position.clone().add(new THREE.Vector3(0, 1.1, 0));
+    const arrow = createArrowProjectile(this.nextProjectileId++, { kind: "mob", id: mob.id }, origin, target, mob.damage, 11.8);
+    this.projectileGroup.add(arrow.visual);
+    this.projectiles.push(arrow);
+    mob.attackCooldown = 2.1 + (mob.id % 5) * 0.12;
+    mob.state = "recover";
+    mob.stateTimer = 0.35;
+    this.audio.play("attack");
+  }
+
+  updateProjectiles(dt: number) {
+    for (let index = this.projectiles.length - 1; index >= 0; index -= 1) {
+      const projectile = this.projectiles[index];
+      const result = stepArrowProjectile(projectile, dt, (position) => {
+        const type = this.world.getBlock(Math.floor(position.x + 0.5), Math.floor(position.y + 0.5), Math.floor(position.z + 0.5));
+        return Boolean(BLOCKS[type ?? BlockId.Air]?.solid);
+      }, (position, radius) => position.distanceToSquared(this.position.clone().add(new THREE.Vector3(0, 0.9, 0))) <= (PLAYER_RADIUS + radius) ** 2 ? "local" : null);
+      if (result.kind === "flying") continue;
+      if (result.kind === "target") this.damagePlayer(projectile.damage, "skeleton arrow");
+      this.projectileGroup.remove(projectile.visual);
+      disposeArrowVisual(projectile.visual);
+      this.projectiles.splice(index, 1);
+    }
+  }
+
   updateMobs(dt: number) {
     this.mobSpawnTimer -= dt;
     if (this.mobSpawnTimer <= 0) {
@@ -3353,6 +4663,18 @@ export class VoxelEngine {
       mob.wanderTimer -= dt;
       mob.stateTimer -= dt;
       mob.voiceTimer -= dt;
+      mob.enclosureTimer -= dt;
+      if (mob.enclosureTimer <= 0) {
+        mob.enclosureTimer = 3 + (mob.id % 5) * 0.25;
+        mob.enclosed = this.isMobEnclosed(mob);
+      }
+      if (mob.petState) {
+        mob.petState = tickPeelop(mob.petState, dt * 20);
+        mob.petState.health = clamp(mob.health, 0, mob.petState.maxHealth);
+        mob.name = mob.petState.name || mob.definition.name;
+        mob.maxHealth = mob.petState.maxHealth;
+        mob.visual.scale.setScalar(mob.petState.baby ? 0.62 : 1);
+      }
       const dx = this.position.x - mob.group.position.x;
       const dz = this.position.z - mob.group.position.z;
       const distance = Math.hypot(dx, dz);
@@ -3372,12 +4694,38 @@ export class VoxelEngine {
           if (mob.health <= 0) { this.killMob(mob); continue; }
         }
       }
-      if (distance > 68 || mob.age > 300 || (mob.hostile && this.daylightAmount() > 0.65 && mob.group.position.y > SEA_LEVEL && distance > 25)) {
+      const protectedCreature = shouldKeepCreatureLoaded({
+        tamed: mob.petState?.tamed,
+        named: Boolean(mob.petState?.name || mob.name !== mob.definition.name),
+        enclosed: mob.enclosed,
+        persistentPoiResident: mob.persistentPoiResident,
+      });
+      const simulationRadius = this.settings.simulationDistance * CHUNK_SIZE + 10;
+      if (protectedCreature && distance > simulationRadius) {
+        mob.group.visible = false;
+        continue;
+      }
+      mob.group.visible = true;
+      if (!protectedCreature && (distance > simulationRadius || mob.age > 300 || (mob.hostile && this.daylightAmount() > 0.65 && mob.group.position.y > SEA_LEVEL && distance > 25))) {
         this.removeMob(index);
         continue;
       }
+      if (mob.definition.movement === "aquatic") {
+        this.updateAquaticMob(mob, dt, distance, dx, dz);
+        continue;
+      }
+      if (mob.definition.movement === "flying" && mob.definition.family === "bird") {
+        this.updateBirdMob(mob, dt, distance, dx, dz);
+        continue;
+      }
       const aggressive = mob.hostile || ((mob.kind === "ridgeback" || mob.kind === "woolhorn") && mob.fleeTimer > 0);
-      if (mob.state === "windup") {
+      const petFollowing = Boolean(mob.petState?.tamed && mob.petState.command === "follow" && distance > 2.2);
+      const petHolding = Boolean(mob.petState?.tamed && (mob.petState.command === "sit" || mob.petState.command === "stay"));
+      if (mob.definition.ranged && aggressive && distance < 17) {
+        mob.state = "chase";
+        mob.desiredAngle = distance < 4 ? Math.atan2(-dz, -dx) : Math.atan2(dz, dx);
+        if (distance >= 3.2 && mob.attackCooldown <= 0 && Math.abs(this.position.y - mob.group.position.y) < 5) this.fireSkeletonArrow(mob);
+      } else if (mob.state === "windup") {
         if (mob.stateTimer <= 0) {
           if (distance < mob.definition.attackRange + 0.7 && Math.abs(this.position.y - mob.group.position.y) < 2) {
             this.damagePlayer(mob.damage, mob.name);
@@ -3389,6 +4737,13 @@ export class VoxelEngine {
           mob.state = "recover"; mob.stateTimer = 0.55; mob.attackCooldown = 1.15;
         }
       } else if (mob.state === "recover" && mob.stateTimer <= 0) mob.state = "wander";
+      else if (petHolding) {
+        mob.state = "wander";
+        mob.desiredAngle = mob.angle;
+      } else if (petFollowing) {
+        mob.state = "chase";
+        mob.desiredAngle = Math.atan2(dz, dx);
+      }
       else if (aggressive && distance < (this.crouching ? 11 : 20)) {
         mob.state = "chase";
         mob.desiredAngle = Math.atan2(dz, dx);
@@ -3401,12 +4756,12 @@ export class VoxelEngine {
         mob.desiredAngle += (Math.random() - 0.5) * 2.4;
         mob.wanderTimer = 2 + Math.random() * 5;
       }
-      const turnDelta = Math.atan2(Math.sin(mob.desiredAngle - mob.angle), Math.cos(mob.desiredAngle - mob.angle));
-      mob.angle += turnDelta * (1 - Math.exp(-mob.definition.turnRate * dt));
       let speed = mob.state === "chase" ? mob.definition.chaseSpeed : mob.state === "flee" ? mob.definition.chaseSpeed * 0.86 : mob.definition.speed;
       if (mob.state === "windup" || mob.state === "recover") speed *= 0.08;
+      if (petHolding || (mob.petState?.tamed && mob.petState.command === "follow" && distance <= 2.2)) speed = 0;
       const beforeX = mob.group.position.x;
       const beforeZ = mob.group.position.z;
+      let blocked = false;
       if (mob.kind === "glowmoth") {
         const nx = mob.group.position.x + Math.cos(mob.angle) * speed * dt;
         const nz = mob.group.position.z + Math.sin(mob.angle) * speed * dt;
@@ -3415,7 +4770,7 @@ export class VoxelEngine {
           mob.group.position.x = nx;
           mob.group.position.z = nz;
           mob.baseY += (targetY - mob.baseY) * Math.min(1, dt * 4);
-        } else { mob.desiredAngle += Math.PI * (0.45 + Math.random() * 0.5); mob.wanderTimer = 0.35; }
+        } else { blocked = true; mob.wanderTimer = Math.max(mob.wanderTimer, 0.35); }
         mob.group.position.y = mob.baseY + Math.sin(performance.now() * 0.003 + mob.id) * 0.22;
       } else {
         const nx = mob.group.position.x + Math.cos(mob.angle) * speed * dt;
@@ -3426,9 +4781,13 @@ export class VoxelEngine {
           mob.group.position.z = nz;
           const hop = mob.kind === "caveblob" ? Math.max(0, Math.sin(performance.now() * 0.006 + mob.id)) * 0.1 : 0;
           mob.group.position.y += (targetY + hop - mob.group.position.y) * Math.min(1, dt * 9);
-        } else { mob.desiredAngle += Math.PI * (0.45 + Math.random() * 0.5); mob.wanderTimer = 0.5; }
+        } else { blocked = true; mob.wanderTimer = Math.max(mob.wanderTimer, 0.5); }
       }
       const moved = Math.hypot(mob.group.position.x - beforeX, mob.group.position.z - beforeZ);
+      mob.steering = updateStableSteering(mob.steering, {
+        dt, turnRate: mob.definition.turnRate, blocked, mobId: mob.id, desiredHeading: mob.desiredAngle,
+      });
+      mob.angle = mob.steering.heading;
       mob.group.rotation.y = -mob.angle - Math.PI / 2;
       this.animateMob(mob, moved);
     }
@@ -3442,6 +4801,7 @@ export class VoxelEngine {
     const damage = item?.damage ?? 1;
     this.attackCooldown = item?.toolKind === "sword" ? 0.38 : 0.55;
     mob.health -= damage;
+    if (mob.petState) mob.petState.health = Math.max(0, mob.health);
     mob.hurtTimer = 0.32;
     mob.fleeTimer = mob.hostile ? 0.45 : 3.2;
     mob.state = mob.hostile ? "chase" : "flee";
@@ -3571,12 +4931,14 @@ export class VoxelEngine {
     }
   }
 
-  spawnDrop(item: ItemCode, count: number, position: THREE.Vector3, durability?: number): DropEntity | undefined {
+  spawnDrop(item: ItemCode, count: number, position: THREE.Vector3, durability?: number, metadata?: Record<string, unknown>): DropEntity | undefined {
     if (!ITEMS[item] || count <= 0) return;
     const resolvedDurability = durability ?? ITEMS[item]?.maxDurability;
     const stackLimit = maxStack(item);
     let firstDrop: DropEntity | undefined;
-    const nearby = this.drops.find((drop) => drop.item === item && drop.durability === resolvedDurability && drop.mesh.position.distanceToSquared(position) < 2.25 && drop.count < maxStack(item));
+    const nearby = this.drops.find((drop) => drop.item === item && drop.durability === resolvedDurability
+      && JSON.stringify(drop.metadata ?? null) === JSON.stringify(metadata ?? null)
+      && drop.mesh.position.distanceToSquared(position) < 2.25 && drop.count < maxStack(item));
     if (nearby) {
       const add = Math.min(count, stackLimit - nearby.count);
       nearby.count += add;
@@ -3591,7 +4953,12 @@ export class VoxelEngine {
       const mesh = new THREE.Mesh(this.sharedDropGeometry, material);
       mesh.position.copy(position).add(new THREE.Vector3((Math.random() - 0.5) * 0.45, 0.25, (Math.random() - 0.5) * 0.45));
       this.dropGroup.add(mesh);
-      const drop: DropEntity = { id: this.nextDropId++, item, count: amount, ...(resolvedDurability !== undefined ? { durability: resolvedDurability } : {}), mesh, velocity: new THREE.Vector3((Math.random() - 0.5) * 1.4, 2 + Math.random(), (Math.random() - 0.5) * 1.4), age: 0, pickupDelay: 0.35 };
+      const drop: DropEntity = {
+        id: this.nextDropId++, item, count: amount,
+        ...(resolvedDurability !== undefined ? { durability: resolvedDurability } : {}),
+        ...(metadata ? { metadata: cloneSlot({ item, count: 1, metadata })?.metadata } : {}),
+        mesh, velocity: new THREE.Vector3((Math.random() - 0.5) * 1.4, 2 + Math.random(), (Math.random() - 0.5) * 1.4), age: 0, pickupDelay: 0.35,
+      };
       this.drops.push(drop);
       firstDrop ??= drop;
       count -= amount;
@@ -3615,7 +4982,7 @@ export class VoxelEngine {
       drop.mesh.position.y += Math.sin(drop.age * 4) * 0.001;
       const distance = drop.mesh.position.distanceTo(this.position.clone().add(new THREE.Vector3(0, 0.8, 0)));
       if (drop.pickupDelay <= 0 && distance < 1.45) {
-        const leftover = this.addItem(drop.item, drop.count, drop.durability);
+        const leftover = this.addItem(drop.item, drop.count, drop.durability, undefined, drop.metadata);
         if (leftover < drop.count) this.audio.play("pickup");
         drop.count = leftover;
         if (drop.count <= 0) { this.removeDrop(index); this.saveSoon(); this.emitHud(true); continue; }
@@ -3645,7 +5012,7 @@ export class VoxelEngine {
     if (!slot) return;
     const direction = new THREE.Vector3();
     this.camera.getWorldDirection(direction);
-    const drop = this.spawnDrop(slot.item, 1, this.camera.position.clone().add(direction.clone().multiplyScalar(0.8)), slot.durability);
+    const drop = this.spawnDrop(slot.item, 1, this.camera.position.clone().add(direction.clone().multiplyScalar(0.8)), slot.durability, slot.metadata);
     if (drop) drop.velocity.add(direction.multiplyScalar(3));
     slot.count -= 1;
     if (slot.count <= 0) this.inventory[this.selected] = null;
@@ -3671,6 +5038,24 @@ export class VoxelEngine {
       fragment.mesh.material.dispose();
     }
     this.mobRemains = [];
+    for (const boat of this.boats.values()) {
+      this.boatGroup.remove(boat.group);
+      disposeSailboatVisual(boat.group);
+    }
+    this.boats.clear();
+    this.mountedBoatId = null;
+    this.targetBoat = null;
+    for (const visual of this.exhibitVisuals.values()) {
+      this.exhibitGroup.remove(visual.group);
+      this.disposeObject(visual.group);
+    }
+    this.exhibitVisuals.clear();
+    for (const projectile of this.projectiles) {
+      this.projectileGroup.remove(projectile.visual);
+      disposeArrowVisual(projectile.visual);
+    }
+    this.projectiles = [];
+    this.activePet = null;
   }
 
   environmentLightWasAssigned(source: EnvironmentLightSource) {
@@ -3815,6 +5200,50 @@ export class VoxelEngine {
     return clamp((Math.sin(angle) + 0.15) / 0.42, 0, 1);
   }
 
+  resetDynamicWeather(saved?: WeatherState) {
+    const biome = weatherBiomeFromId(this.world.biomeAt(Math.round(this.position.x), Math.round(this.position.z)));
+    this.weatherBiome = biome;
+    this.weatherBiomeCandidate = biome;
+    this.weatherBiomeHold = 0;
+    this.weatherState = saved && typeof saved.kind === "string" && Number.isFinite(saved.durationSeconds)
+      ? { ...saved }
+      : createWeatherState({ seed: this.world.seedText, biome });
+    this.syncLegacyWeather();
+    this.refreshCloudField(true);
+  }
+
+  syncLegacyWeather() {
+    this.weather = ["drizzle", "rain", "thunder", "snow", "sandstorm", "ashfall"].includes(this.weatherState.kind) ? "rain" : "clear";
+  }
+
+  updateDynamicWeather(dt: number) {
+    if (!this.worldOptions.weather) {
+      if (this.weatherState.kind !== "clear") this.weatherState = {
+        kind: "clear", cycle: this.weatherState.cycle, elapsedSeconds: 0, durationSeconds: 86_400,
+        intensity: 0, windAngle: this.weatherState.windAngle, windSpeed: 0.25,
+      };
+      this.weather = "clear";
+      return;
+    }
+    const currentBiome = weatherBiomeFromId(this.world.biomeAt(Math.round(this.position.x), Math.round(this.position.z)));
+    if (currentBiome === this.weatherBiome) {
+      this.weatherBiomeCandidate = currentBiome;
+      this.weatherBiomeHold = 0;
+    } else if (currentBiome !== this.weatherBiomeCandidate) {
+      this.weatherBiomeCandidate = currentBiome;
+      this.weatherBiomeHold = 0;
+    } else {
+      this.weatherBiomeHold += dt;
+      if (this.weatherBiomeHold >= 8) {
+        this.weatherBiome = currentBiome;
+        this.weatherBiomeHold = 0;
+        this.weatherState = createWeatherState({ seed: `${this.world.seedText}:${this.weatherState.cycle}`, biome: currentBiome }, this.weatherState.cycle);
+      }
+    }
+    this.weatherState = stepWeather(this.weatherState, { seed: this.world.seedText, biome: this.weatherBiome }, dt);
+    this.syncLegacyWeather();
+  }
+
   updateDayNight(dt: number) {
     if (this.running && !this.titleMode && !this.paused) {
       this.worldTime += dt / Math.max(60, this.worldOptions.dayLengthMinutes * 60);
@@ -3825,25 +5254,31 @@ export class VoxelEngine {
     const daylight = this.daylightAmount();
     const moonlight = (1 - daylight) * clamp((-sunHeight + 0.05) / 0.7, 0, 1);
     const twilight = Math.pow(1 - Math.min(1, Math.abs(sunHeight)), 5) * (sunHeight > -0.38 ? 1 : 0);
+    const weatherFx = weatherVisuals(this.weatherState);
     this.dawnSkyColor.set(sunHeight >= 0 ? "#f1a46f" : "#c36b68");
     const sky = this.skyColor.copy(this.nightSkyColor).lerp(this.daylightSkyColor, daylight).lerp(this.dawnSkyColor, twilight * 0.52);
     const headBlock = this.world.getBlock(Math.floor(this.camera.position.x + 0.5), Math.floor(this.camera.position.y + 0.5), Math.floor(this.camera.position.z + 0.5));
     const underwater = headBlock === BlockId.Water;
     const underground = this.skyVisibility < 0.18 && !underwater;
     if (underwater) sky.set("#1d5d82");
+    else if (this.weatherState.kind === "sandstorm") sky.lerp(this.weatherSkyColor.set("#b88a55"), weatherFx.fogDensity * 0.62);
+    else if (this.weatherState.kind === "ashfall") sky.lerp(this.weatherSkyColor.set("#493f43"), weatherFx.skyDarkening * 0.8);
+    else sky.lerp(this.nightSkyColor, weatherFx.skyDarkening * 0.42);
     this.scene.background = sky;
     if (this.scene.fog instanceof THREE.Fog) {
       this.scene.fog.color.copy(sky);
       const view = this.settings.renderDistance * 16;
-      this.scene.fog.near = underwater ? 3 : underground ? 10 : view * 0.54;
-      this.scene.fog.far = underwater ? 24 : underground ? Math.max(30, view * 0.7) : view * 1.05;
+      const weatherVisibility = 1 - weatherFx.fogDensity * 0.72;
+      this.scene.fog.near = underwater ? 3 : underground ? 10 : view * 0.54 * weatherVisibility;
+      this.scene.fog.far = underwater ? 24 : underground ? Math.max(30, view * 0.7) : Math.max(28, view * 1.05 * weatherVisibility);
     }
     // Sun and moon are properties of the world, not the player's current
     // square. Player sky visibility still drives cave fog/celestial visibility,
     // but it must never dim a torchlit room or a sunlit opening farther ahead.
-    const weatherLight = this.weather === "rain" ? 0.78 : 1;
+    const weatherLight = 1 - weatherFx.skyDarkening * 0.62;
     this.hemisphere.intensity = underwater ? 0.05 : (0.025 + daylight * 0.36 + moonlight * 0.045) * weatherLight;
     this.directional.intensity = underwater ? 0.018 : (daylight * 0.78 + moonlight * 0.05) * weatherLight;
+    if (this.weatherState.kind === "thunder" && Math.random() < weatherFx.lightningChancePerSecond * dt) this.directional.intensity += 2.4;
     this.directional.color.set(twilight > 0.22 ? 0xffae7a : daylight > 0.2 ? 0xfff1ce : 0x8da5cf);
     const celestialDistance = 82;
     const celestialDirection = this.celestialDirection.set(Math.cos(angle), Math.sin(angle), -0.24).normalize();
@@ -3875,13 +5310,18 @@ export class VoxelEngine {
   }
 
   updateRain(dt: number) {
-    this.rain.visible = this.weather === "rain" && this.position.y > 5;
+    const visuals = weatherVisuals(this.weatherState);
+    this.rain.visible = visuals.precipitation > 0.02 && this.position.y > 5;
     if (!this.rain.visible) return;
+    const material = this.rain.material as THREE.LineBasicMaterial;
+    material.opacity = clamp(0.18 + visuals.precipitation * 0.5, 0.15, 0.72);
+    material.color.set(this.weatherState.kind === "snow" ? 0xf2f6ff : this.weatherState.kind === "sandstorm" ? 0xcda465 : this.weatherState.kind === "ashfall" ? 0x746b72 : 0xa8d8ff);
     const attribute = this.rain.geometry.getAttribute("position") as THREE.BufferAttribute;
     const array = attribute.array as Float32Array;
+    const fallSpeed = this.weatherState.kind === "snow" ? 4.2 : this.weatherState.kind === "ashfall" ? 6.5 : this.weatherState.kind === "sandstorm" ? 15 : 22;
     for (let index = 0; index < array.length; index += 6) {
-      array[index + 1] -= dt * 22;
-      array[index + 4] -= dt * 22;
+      array[index + 1] -= dt * fallSpeed;
+      array[index + 4] -= dt * fallSpeed;
       if (array[index + 1] < -2) {
         const reset = 14 + Math.random() * 10;
         array[index + 1] = reset;
@@ -3972,6 +5412,13 @@ export class VoxelEngine {
     return group;
   }
 
+  equipmentAppearanceFromCodes(codes?: Partial<Record<EquipmentSlot, ItemCode>>): PlayerEquipmentAppearance {
+    return Object.fromEntries(((["head", "chest", "legs", "feet"] as EquipmentSlot[]).map((slot) => {
+      const item = codes?.[slot];
+      return [slot, item === undefined ? null : (ITEMS[item]?.color ?? null)] as const;
+    }))) as PlayerEquipmentAppearance;
+  }
+
   syncAvatarHeldItem(model: BlockPlayerModel, item: ItemCode, remoteId?: string) {
     const previousCode = remoteId ? (this.remoteAvatarHeldCodes.get(remoteId) ?? -1) : this.localAvatarHeldCode;
     if (previousCode === item) return;
@@ -4004,6 +5451,15 @@ export class VoxelEngine {
       headYaw: 0,
       headPitch: this.pitch,
     });
+    const localEquipmentCodes = Object.fromEntries((Object.keys(this.equipment) as EquipmentSlot[])
+      .map((slot) => [slot, this.equipment[slot]?.item ?? -1] as const));
+    const equipmentSignature = JSON.stringify(localEquipmentCodes);
+    if (equipmentSignature !== this.localEquipmentSignature) {
+      this.localEquipmentSignature = equipmentSignature;
+      this.localPlayerModel.setEquipmentAppearance(this.equipmentAppearanceFromCodes(Object.fromEntries(
+        Object.entries(localEquipmentCodes).filter(([, item]) => item >= 0),
+      )));
+    }
     this.syncAvatarHeldItem(this.localPlayerModel, this.selectedSlot()?.item ?? -1);
 
     const now = performance.now();
@@ -4016,16 +5472,22 @@ export class VoxelEngine {
       remote.pose.pitch += (remote.target.pitch - remote.pose.pitch) * alpha;
       remote.model.group.position.set(remote.pose.x, remote.pose.y, remote.pose.z);
       remote.model.group.rotation.set(0, remote.pose.yaw, 0);
-      const speed = Math.hypot(remote.pose.vx, remote.pose.vz);
+      // Position is interpolated, but discrete appearance/action state should
+      // switch as soon as the newest packet arrives instead of lagging behind
+      // forever in the interpolation snapshot.
+      const latest = remote.target;
+      const speed = Math.hypot(latest.vx, latest.vz);
       remote.model.update(dt, {
-        locomotion: speed < 0.18 ? "idle" : remote.pose.sprinting || speed > 5.2 ? "run" : "walk",
-        action: remote.pose.action ?? "none",
-        crouch: remote.pose.crouching ? 1 : 0,
-        jump: remote.pose.grounded ? 0 : clamp(Math.abs(remote.pose.vy) / 8, 0.25, 1),
+        locomotion: speed < 0.18 ? "idle" : latest.sprinting || speed > 5.2 ? "run" : "walk",
+        action: latest.action ?? "none",
+        crouch: latest.crouching ? 1 : 0,
+        jump: latest.grounded ? 0 : clamp(Math.abs(latest.vy) / 8, 0.25, 1),
         headPitch: remote.pose.pitch,
         headYaw: 0,
       });
-      this.syncAvatarHeldItem(remote.model, remote.pose.heldItem ?? -1, id);
+      remote.model.setVariant(latest.variant ?? "male");
+      remote.model.setEquipmentAppearance(this.equipmentAppearanceFromCodes(latest.equipment));
+      this.syncAvatarHeldItem(remote.model, latest.heldItem ?? -1, id);
       if (now - remote.lastUpdate > 20_000) this.removeRemotePlayer(id);
     }
   }
@@ -4044,7 +5506,7 @@ export class VoxelEngine {
       view: this.cameraMode === "third-front" ? "front" : "rear",
       distance: 4.35,
       targetHeight: this.crouching ? 1.08 : 1.34,
-      pitch: clamp(this.pitch * 0.72, -0.78, 0.78),
+      pitch: clamp(-this.pitch * 0.72, -0.78, 0.78),
       shoulderOffset: this.cameraMode === "third-front" ? 0 : 0.22,
       collisionRadius: 0.18,
       collisionPadding: 0.16,
@@ -4087,6 +5549,30 @@ export class VoxelEngine {
           addBox([0.48, 0.1, 0.3], [0, -0.08, 0], 0x8b5632, [0.1, 0.28, -0.08]);
           addBox([0.45, 0.13, 0.28], [0, 0.03, 0], definition.color, [0.1, 0.28, -0.08]);
           addBox([0.13, 0.04, 0.24], [-0.13, 0.11, -0.02], 0xe8e1d2, [0.1, 0.28, -0.08]);
+        } else if (item === Item.Berry) {
+          addBox([0.11, 0.11, 0.11], [-0.07, 0.02, 0], 0x754399, [0.2, 0.1, 0]);
+          addBox([0.11, 0.11, 0.11], [0.06, 0.01, 0.02], 0x955bbb, [-0.1, 0.2, 0]);
+          addBox([0.1, 0.1, 0.1], [0, 0.12, -0.01], 0x854fa8, [0.1, -0.2, 0]);
+          addBox([0.2, 0.035, 0.1], [0, 0.2, 0], 0x568044, [0, 0, 0.28]);
+        } else if (item === Item.Apple) {
+          addBox([0.23, 0.22, 0.2], [0, 0.02, 0], 0xc8493e, [0.08, 0.18, 0]);
+          addBox([0.045, 0.15, 0.045], [0, 0.18, 0], 0x6b4226, [0, 0, -0.08]);
+          addBox([0.14, 0.035, 0.08], [0.07, 0.21, 0], 0x5f8d47, [0, 0, 0.32]);
+        } else if (item === Item.Stick) {
+          addBox([0.075, 0.54, 0.075], [0, 0.02, 0], 0x8b5a30, [0.2, 0.1, -0.36]);
+        } else if ([BlockId.RedFlower, BlockId.BlueFlower, BlockId.Sunpetal, BlockId.MoonOrchid].includes(item as BlockId)) {
+          addBox([0.05, 0.42, 0.05], [0, -0.05, 0], 0x4d863f, [0.12, 0, -0.16]);
+          addBox([0.26, 0.075, 0.26], [-0.03, 0.19, 0], definition.color, [0.08, 0.15, 0.18]);
+          addBox([0.07, 0.09, 0.07], [-0.03, 0.22, -0.01], 0xf2c34d, [0, 0, 0], true);
+        } else if (item === Item.Feather) {
+          addBox([0.045, 0.5, 0.045], [0, 0, 0], 0x8d6846, [0.1, 0.1, -0.42]);
+          addBox([0.16, 0.34, 0.035], [-0.06, 0.08, 0], 0xe9d6a7, [0.1, 0.1, -0.42]);
+        } else if (item === Item.RawFish || item === Item.CookedFish) {
+          addBox([0.32, 0.16, 0.12], [0, 0.02, 0], item === Item.RawFish ? 0x72aeb9 : 0xd98c58, [0.1, 0.25, 0]);
+          addBox([0.16, 0.2, 0.06], [0.22, 0.02, 0], item === Item.RawFish ? 0x4c8292 : 0xaa6041, [0.1, 0.25, 0.55]);
+        } else if (item === Item.Banana) {
+          addBox([0.1, 0.34, 0.09], [-0.08, 0, 0], 0xf4d34f, [0, 0, -0.5]);
+          addBox([0.1, 0.34, 0.09], [0.08, 0.04, 0], 0xf4d34f, [0, 0, 0.5]);
         } else if (definition.toolKind) {
           const toolGroup = new THREE.Group();
           const spec = createHeldToolSpec(definition.toolKind, definition.color, definition.name);
@@ -4146,6 +5632,7 @@ export class VoxelEngine {
       this.world.update(this.spawn.x, this.spawn.z);
     } else {
       this.world.update(this.position.x, this.position.z);
+      if (this.running && !this.paused) this.updateBoats(dt);
       if (this.running && !this.paused && (this.locked || this.touchMode)) {
         this.accumulator = Math.min(this.accumulator + dt, PHYSICS_STEP * 4);
         while (this.accumulator >= PHYSICS_STEP) {
@@ -4160,6 +5647,7 @@ export class VoxelEngine {
     }
 
     this.updateLocalLights(dt);
+    if (this.running && !this.titleMode && !this.paused) this.updateDynamicWeather(dt);
     this.updateDayNight(dt);
     this.updateChestModel(dt);
     this.updateHeldItem(dt);
@@ -4169,6 +5657,7 @@ export class VoxelEngine {
       if (multiplayerGuest) {
         for (const mob of this.mobs) this.animateMob(mob, dt * mob.definition.speed * 0.35);
       } else this.updateMobs(dt);
+      if (!multiplayerGuest) this.updateStructureSpawns(dt);
       this.smallEntityPositions.length = 0;
       for (const mob of this.mobs) if (mob.kind === "glowmoth") this.smallEntityPositions.push(mob.group.position);
       this.butterflies.update(dt, {
@@ -4184,19 +5673,39 @@ export class VoxelEngine {
         this.updateSaplings(dt);
         this.updateFallingTrees(dt);
         this.updateMobRemains(dt);
+        this.updateLiquids(dt);
+        this.updateProjectiles(dt);
       }
     }
     if (this.running && !this.titleMode) this.updateMultiplayer(dt);
     this.updateRain(dt);
+    this.world.updateWaterAnimation(now);
+    this.syncExhibitVisuals(false, dt);
     this.updateParticles(dt);
-    for (const cloud of this.ambienceGroup.children) if (cloud.userData.cloud) {
-      cloud.position.x += dt * 0.22;
-      if (cloud.position.x - this.camera.position.x > 65) cloud.position.x -= 130;
-      if (cloud.position.x - this.camera.position.x < -65) cloud.position.x += 130;
-      if (cloud.position.z - this.camera.position.z > 65) cloud.position.z -= 130;
-      if (cloud.position.z - this.camera.position.z < -65) cloud.position.z += 130;
+    this.refreshCloudField();
+    if (this.cloudMesh) {
+      const drift = now * 0.001;
+      this.cloudMesh.position.set(
+        ((Math.cos(this.weatherState.windAngle) * this.weatherState.windSpeed * drift) % 54 + 54) % 54 - 27,
+        0,
+        ((Math.sin(this.weatherState.windAngle) * this.weatherState.windSpeed * drift) % 54 + 54) % 54 - 27,
+      );
     }
     this.renderer.render(this.scene, this.camera);
+    this.performanceSampler.record({
+      frameMilliseconds: rawDt * 1000,
+      visibleChunks: this.world.loadedCount,
+      simulatedEntities: this.mobs.length + this.butterflies.entities.length,
+      triangles: this.renderer.info.render.triangles,
+    });
+    this.performanceReportTimer += dt;
+    if (this.performanceReportTimer >= 1.5) {
+      this.performanceReportTimer = 0;
+      const report = this.performanceSampler.summary();
+      this.averageFps = report.framesPerSecond || this.averageFps;
+      const budget = this.budgetController.observe(report);
+      this.world.setStreamingBudgets(budget.chunkGenerations, budget.chunkMeshSections);
+    }
     if (this.running && this.persistent) {
       this.autoSaveAccumulator += dt;
       if (this.autoSaveAccumulator >= 15) {
@@ -4214,6 +5723,61 @@ export class VoxelEngine {
     if (this.position.y > -28) return "Deepstone Caves";
     if (this.position.y > -52) return "Crystal Deeps";
     return "Worldheart";
+  }
+
+  renderGameToText() {
+    const nearbyMobs = this.mobs
+      .map((mob) => ({
+        id: mob.id,
+        kind: mob.kind,
+        name: mob.name,
+        position: [Number(mob.group.position.x.toFixed(2)), Number(mob.group.position.y.toFixed(2)), Number(mob.group.position.z.toFixed(2))],
+        health: Number(mob.health.toFixed(1)),
+        state: mob.petState?.command ?? mob.birdState?.mode ?? mob.state,
+      }))
+      .sort((left, right) => {
+        const ld = (left.position[0] - this.position.x) ** 2 + (left.position[2] - this.position.z) ** 2;
+        const rd = (right.position[0] - this.position.x) ** 2 + (right.position[2] - this.position.z) ** 2;
+        return ld - rd;
+      })
+      .slice(0, 16);
+    return JSON.stringify({
+      coordinateSystem: "World blocks use integer centers; +x east, +y up, +z south. Player y is feet height.",
+      version: GAME_VERSION,
+      state: this.titleMode ? "title" : this.paused ? "paused" : "playing",
+      player: {
+        position: [Number(this.position.x.toFixed(2)), Number(this.position.y.toFixed(2)), Number(this.position.z.toFixed(2))],
+        yaw: Number(this.yaw.toFixed(3)), pitch: Number(this.pitch.toFixed(3)),
+        health: this.health, hunger: this.hunger, oxygen: Number(this.oxygenSeconds.toFixed(2)),
+        variant: this.playerVariant, camera: this.cameraMode, sprinting: this.sprinting, crouching: this.crouching, mountedBoatId: this.mountedBoatId,
+      },
+      world: { seed: this.world.seedText, day: this.day, time: Number(this.worldTime.toFixed(4)), biome: BIOME_NAMES[this.world.biomeAt(Math.round(this.position.x), Math.round(this.position.z))], weather: this.weatherState.kind },
+      target: this.target ? { type: "block", name: BLOCKS[this.target.type].name, position: [this.target.x, this.target.y, this.target.z] }
+        : this.targetMob ? { type: "mob", id: this.targetMob.id, name: this.targetMob.name }
+          : this.targetBoat ? { type: "boat", id: this.targetBoat.save.id } : null,
+      nearbyMobs,
+      boats: [...this.boats.values()].map((boat) => ({ id: boat.save.id, position: [boat.save.x, boat.save.y, boat.save.z], passengers: boat.save.passengers.length, storageSlots: boat.save.inventory.filter(Boolean).length })),
+      exhibits: [...this.chests.entries()].filter(([key]) => key.startsWith("exhibit:")).map(([key, slots]) => ({ key, capacity: slots.length, butterflies: slots.filter(Boolean).length })),
+      performance: { averageFps: Number(this.averageFps.toFixed(1)), renderDistance: this.settings.renderDistance, simulationDistance: this.settings.simulationDistance, loadedChunks: this.world.loadedCount },
+    });
+  }
+
+  advanceSimulation(milliseconds: number) {
+    const duration = clamp(Number(milliseconds) || 0, 0, 10_000) / 1000;
+    const steps = Math.ceil(duration / PHYSICS_STEP);
+    for (let index = 0; index < steps; index += 1) {
+      const dt = Math.min(PHYSICS_STEP, duration - index * PHYSICS_STEP);
+      if (dt <= 0 || !this.running || this.paused || this.titleMode) break;
+      this.updateBoats(dt);
+      this.updatePlayer(dt);
+      this.updateMobs(dt);
+      this.updateProjectiles(dt);
+      this.updateLiquids(dt);
+      this.updateDynamicWeather(dt);
+    }
+    this.updateGameplayCamera(Math.min(duration, 0.1));
+    this.updateTarget();
+    this.renderer.render(this.scene, this.camera);
   }
 
   emitHud(force = false, now = performance.now()) {
@@ -4243,7 +5807,7 @@ export class VoxelEngine {
       activeChest: this.activeChestKey ? (this.chests.get(this.activeChestKey) ?? []).map(cloneSlot) : null,
       activeChestTitle: this.activeChestTitle,
       selected: this.selected,
-      targetName: this.target ? BLOCKS[this.target.type].name : null,
+      targetName: this.target ? BLOCKS[this.target.type].name : this.targetBoat ? "Wayfarer Sailboat" : null,
       targetMob: this.targetMob ? { name: this.targetMob.name, health: this.targetMob.health, maxHealth: this.targetMob.maxHealth } : null,
       breakProgress: clamp(this.miningProgress, 0, 1),
       day: this.day,
@@ -4261,6 +5825,23 @@ export class VoxelEngine {
       crouching: this.crouching,
       sprinting: this.sprinting,
       onlinePlayers: 1 + (this.multiplayer?.getPeers().filter((peer) => peer.state === "connected").length ?? 0),
+      playerVariant: this.playerVariant,
+      oxygen: this.oxygenSeconds,
+      maxOxygen: this.countItem(Item.BreatherCharm) > 0 ? 24 : DEFAULT_SWIM_RULES.maxOxygenSeconds,
+      submerged: this.headSubmerged,
+      averageFps: this.averageFps,
+      simulationDistance: this.settings.simulationDistance,
+      weatherKind: this.weatherState.kind,
+      activePet: this.activePet?.petState ? {
+        id: this.activePet.id,
+        name: this.activePet.petState.name ?? this.activePet.definition.name,
+        command: this.activePet.petState.command,
+        health: this.activePet.petState.health,
+        maxHealth: this.activePet.petState.maxHealth,
+        baby: this.activePet.petState.baby,
+        tamed: this.activePet.petState.tamed,
+      } : null,
+      mountedBoat: Boolean(this.mountedBoatId),
     });
   }
 
@@ -4328,28 +5909,60 @@ export class VoxelEngine {
   }
 
   createClouds() {
-    const material = new THREE.MeshLambertMaterial({ color: 0xf2f4ef, transparent: true, opacity: 0.82, depthWrite: false });
-    for (let index = 0; index < 14; index += 1) {
-      const cloud = new THREE.Group();
-      cloud.userData.cloud = true;
-      for (let piece = 0; piece < 2 + (index % 3); piece += 1) {
-        const cube = new THREE.Mesh(new THREE.BoxGeometry(4 + piece * 1.5, 0.8, 2.2), material);
-        cube.position.set(piece * 2.3, (piece % 2) * 0.35, (piece % 3) - 1);
-        cloud.add(cube);
-      }
-      cloud.position.set(-55 + ((index * 13) % 110), 74 + (index % 3) * 2, -50 + ((index * 17) % 100));
-      this.ambienceGroup.add(cloud);
+    if (this.cloudMesh) {
+      this.ambienceGroup.remove(this.cloudMesh);
+      this.cloudMesh.geometry.dispose();
+      (this.cloudMesh.material as THREE.Material).dispose();
     }
+    const geometry = new THREE.SphereGeometry(1, 6, 4);
+    const material = new THREE.MeshLambertMaterial({ color: 0xf2f4ef, transparent: true, opacity: 0.8, depthWrite: false });
+    this.cloudMesh = new THREE.InstancedMesh(geometry, material, 800);
+    this.cloudMesh.name = "poofy-cloud-field";
+    this.cloudMesh.userData.cloudField = true;
+    this.cloudMesh.frustumCulled = false;
+    this.cloudMesh.renderOrder = -1;
+    this.ambienceGroup.add(this.cloudMesh);
+    this.refreshCloudField(true);
+  }
+
+  refreshCloudField(force = false) {
+    if (!this.cloudMesh) return;
+    const cellX = Math.floor(this.camera.position.x / 54);
+    const cellZ = Math.floor(this.camera.position.z / 54);
+    if (!force && cellX === this.cloudCellX && cellZ === this.cloudCellZ && this.cloudWeatherCycle === this.weatherState.cycle) return;
+    this.cloudCellX = cellX;
+    this.cloudCellZ = cellZ;
+    this.cloudWeatherCycle = this.weatherState.cycle;
+    const plans = planCloudField(this.world.seedText, cellX, cellZ, 3, this.weatherState);
+    let instance = 0;
+    for (const plan of plans) for (const lobe of plan.lobes) {
+      if (instance >= this.cloudMesh.instanceMatrix.count) break;
+      this.cloudMatrixObject.position.set(plan.x + lobe.x, plan.y + lobe.y, plan.z + lobe.z);
+      this.cloudMatrixObject.scale.set(lobe.scaleX, lobe.scaleY, lobe.scaleZ);
+      this.cloudMatrixObject.rotation.set(0, (instance % 7) * 0.19, 0);
+      this.cloudMatrixObject.updateMatrix();
+      this.cloudMesh.setMatrixAt(instance, this.cloudMatrixObject.matrix);
+      instance += 1;
+    }
+    this.cloudMesh.count = instance;
+    this.cloudMesh.instanceMatrix.needsUpdate = true;
+    const material = this.cloudMesh.material as THREE.MeshLambertMaterial;
+    material.color.set(this.weatherState.kind === "thunder" ? 0x707982 : this.weatherState.kind === "sandstorm" ? 0xc3a06a : this.weatherState.kind === "ashfall" ? 0x777177 : 0xf2f4ef);
+    material.opacity = this.weatherState.kind === "clear" ? 0.72 : 0.86;
   }
 
   setSettings(next: Partial<GameSettings>) {
+    const distances = normalizeViewDistances({
+      renderDistance: next.renderDistance ?? this.settings.renderDistance,
+      simulationDistance: next.simulationDistance ?? this.settings.simulationDistance,
+    });
     this.settings = {
       ...this.settings,
       ...next,
       volume: clamp(next.volume ?? this.settings.volume, 0, 1),
       sensitivity: clamp(next.sensitivity ?? this.settings.sensitivity, 0.0008, 0.005),
       fov: clamp(next.fov ?? this.settings.fov, 55, 100),
-      renderDistance: clamp(Math.round(next.renderDistance ?? this.settings.renderDistance), 2, 8),
+      ...distances,
     };
     this.weather = this.worldOptions.weather ? this.settings.weather : "clear";
     this.camera.fov = this.settings.fov;
@@ -4367,6 +5980,13 @@ export class VoxelEngine {
       return;
     }
     this.weather = weather;
+    this.weatherState = {
+      ...this.weatherState,
+      kind: weather,
+      elapsedSeconds: 0,
+      durationSeconds: weather === "rain" ? 240 : 420,
+      intensity: weather === "rain" ? 0.78 : 0,
+    };
     this.setSettings({ weather });
     this.events.onToast(weather === "rain" ? "A rainstorm rolls across the wild." : "The clouds begin to clear.");
   }
@@ -4381,6 +6001,7 @@ export class VoxelEngine {
     return {
       version: 2,
       generatorVersion: GENERATOR_VERSION,
+      lastSavedGameVersion: GAME_VERSION,
       seed: this.world.seedText,
       mode: this.mode,
       edits: this.world.serializeEdits(),
@@ -4402,8 +6023,36 @@ export class VoxelEngine {
       weather: this.weather,
       furnaces: Object.fromEntries([...this.furnaces.entries()].map(([key, value]) => [key, { ...value, input: cloneSlot(value.input), fuel: cloneSlot(value.fuel), output: cloneSlot(value.output) }])),
       chests: Object.fromEntries([...this.chests.entries()].map(([key, value]) => [key, value.map(cloneSlot)])),
-      drops: this.drops.map((drop) => ({ item: drop.item, count: drop.count, ...(drop.durability !== undefined ? { durability: drop.durability } : {}), x: drop.mesh.position.x, y: drop.mesh.position.y, z: drop.mesh.position.z, age: drop.age })),
+      drops: this.drops.map((drop) => ({
+        item: drop.item, count: drop.count,
+        ...(drop.durability !== undefined ? { durability: drop.durability } : {}),
+        ...(drop.metadata ? { metadata: cloneSlot({ item: drop.item, count: 1, metadata: drop.metadata })?.metadata } : {}),
+        x: drop.mesh.position.x, y: drop.mesh.position.y, z: drop.mesh.position.z, age: drop.age,
+      })),
       options: { ...this.worldOptions },
+      playerVariant: this.playerVariant,
+      liquidLevels: [...this.liquidCells.entries()].map(([key, cell]) => [key, { ...cell }]),
+      weatherState: { ...this.weatherState },
+      creatures: this.mobs.map((mob) => ({
+        id: mob.id,
+        kind: mob.kind,
+        x: mob.group.position.x,
+        y: mob.group.position.y,
+        z: mob.group.position.z,
+        yaw: mob.angle,
+        health: mob.health,
+        age: mob.age,
+        ...(mob.persistentPoiResident ? { persistentPoiResident: true } : {}),
+        ...(mob.poiMarkerId ? { poiMarkerId: mob.poiMarkerId } : {}),
+        ...(mob.enclosed ? { enclosed: true } : {}),
+        ...(mob.petState ? { petState: { ...mob.petState } } : {}),
+      })),
+      activatedStructureMarkers: [...this.activatedStructureMarkers],
+      boats: [...this.boats.values()].map(({ save }) => ({
+        ...save,
+        passengers: [...save.passengers],
+        inventory: save.inventory.map(cloneSlot),
+      })),
       savedAt: Date.now(),
     };
   }

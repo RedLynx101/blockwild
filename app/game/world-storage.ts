@@ -1,6 +1,7 @@
 import type { GameMode } from "./data";
 import type { WorldSave } from "./engine";
 import { GENERATOR_VERSION, MIN_Y, WORLD_HEIGHT, type WorldGenerationOptions } from "./world";
+import { LEGACY_GAME_VERSION, normalizeGameVersion } from "./version";
 
 export const WORLD_CATALOG_VERSION = 1;
 export const WORLD_EXPORT_VERSION = 1;
@@ -59,6 +60,7 @@ export type WorldMetadata = {
   updatedAt: number;
   lastPlayedAt: number | null;
   playTimeMs: number;
+  lastSavedGameVersion: string;
 };
 
 export type StoredWorld = {
@@ -232,8 +234,10 @@ export function migrateLegacyWorldSave(value: unknown): WorldSave | null {
     ...value,
     version: 2,
     generatorVersion: GENERATOR_VERSION,
+    lastSavedGameVersion: normalizeGameVersion(value.lastSavedGameVersion),
     seed,
     mode,
+    playerVariant: value.playerVariant === "female" ? "female" : "male",
     edits: sanitizeEdits(value.edits, offset),
     player: {
       x: finite(player.x, 0),
@@ -283,6 +287,7 @@ function normalizeMetadata(value: unknown, fallback: { id: string; save: WorldSa
     updatedAt: Math.max(createdAt, finiteTimestamp(input.updatedAt, createdAt)),
     lastPlayedAt: input.lastPlayedAt === null || input.lastPlayedAt === undefined ? null : finiteTimestamp(input.lastPlayedAt, createdAt),
     playTimeMs: clamp(Math.trunc(finite(input.playTimeMs, 0)), 0, Number.MAX_SAFE_INTEGER),
+    lastSavedGameVersion: normalizeGameVersion(input.lastSavedGameVersion, normalizeGameVersion(fallback.save.lastSavedGameVersion)),
   };
 }
 
@@ -325,6 +330,7 @@ function metadataFromCatalog(value: unknown, now: number): WorldMetadata | null 
     updatedAt: Math.max(createdAt, finiteTimestamp(value.updatedAt, createdAt)),
     lastPlayedAt: value.lastPlayedAt === null || value.lastPlayedAt === undefined ? null : finiteTimestamp(value.lastPlayedAt, createdAt),
     playTimeMs: clamp(Math.trunc(finite(value.playTimeMs, 0)), 0, Number.MAX_SAFE_INTEGER),
+    lastSavedGameVersion: normalizeGameVersion(value.lastSavedGameVersion, LEGACY_GAME_VERSION),
   };
 }
 
@@ -390,6 +396,7 @@ export class WorldStorage {
       updatedAt: now,
       lastPlayedAt: null,
       playTimeMs: 0,
+      lastSavedGameVersion: normalizeGameVersion(save.lastSavedGameVersion),
     };
     const document: StoredWorld = { version: WORLD_CATALOG_VERSION, metadata, options: normalizeWorldOptions(input.options), save };
     const nextCatalog = this.copyCatalog({ activeWorldId: id, worlds: [...this.catalog.worlds, metadata] });
@@ -425,6 +432,7 @@ export class WorldStorage {
       updatedAt: now,
       lastPlayedAt: input.markPlayed === false ? loaded.value.metadata.lastPlayedAt : now,
       playTimeMs: clamp(Math.trunc(loaded.value.metadata.playTimeMs + normalizeNumber(input.playTimeDeltaMs, 0, 0, Number.MAX_SAFE_INTEGER, 0)), 0, Number.MAX_SAFE_INTEGER),
+      lastSavedGameVersion: normalizeGameVersion(save.lastSavedGameVersion),
     };
     const document: StoredWorld = {
       ...loaded.value,
@@ -652,6 +660,7 @@ export class WorldStorage {
       updatedAt: finiteTimestamp(save.savedAt, now),
       lastPlayedAt: finiteTimestamp(save.savedAt, now),
       playTimeMs: 0,
+      lastSavedGameVersion: normalizeGameVersion(save.lastSavedGameVersion),
     };
     const document: StoredWorld = { version: WORLD_CATALOG_VERSION, metadata, options: normalizeWorldOptions(), save };
     const nextCatalog = this.copyCatalog({ activeWorldId: id, legacyMigrated: true, worlds: [...this.catalog.worlds, metadata] });

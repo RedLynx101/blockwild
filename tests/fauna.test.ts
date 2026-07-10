@@ -1,0 +1,170 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import * as THREE from "three";
+import {
+  createBirdBehavior,
+  createStableSteering,
+  fishKindsForHabitat,
+  shouldKeepCreatureLoaded,
+  updateBirdBehavior,
+  updateStableSteering,
+} from "../app/game/fauna.ts";
+import {
+  canCaptureCreature,
+  captureCreature,
+  decodeCapturedCreature,
+  encodeCapturedCreature,
+  releaseCreature,
+  type CreatureMetadata,
+} from "../app/game/creature-cage.ts";
+import {
+  buildExhibitTopology,
+  createExhibitInventory,
+  MAX_EXHIBIT_BLOCKS,
+  sampleExhibitButterflyPose,
+  storeExhibitButterfly,
+  takeExhibitButterfly,
+  type ExhibitButterfly,
+} from "../app/game/butterfly-exhibit.ts";
+import {
+  breedPeelops,
+  canBreedPeelops,
+  commandPeelop,
+  createPeelopState,
+  deserializePeelop,
+  feedPeelop,
+  renamePeelop,
+  serializePeelop,
+  tryTamePeelop,
+} from "../app/game/peelop.ts";
+import {
+  AQUATIC_MOB_ORDER,
+  BIRD_ORDER,
+  CORE_MOB_ORDER,
+  MOB_DEFS,
+  SURFACE_MOB_ORDER,
+} from "../app/game/mobs.ts";
+import { createMobVisual, createSkeletonArrowVisual } from "../app/game/mob-models.ts";
+
+test("new ecology catalog has five other surface creatures, two birds, four fish, a pet, temple guardian, and archer", () => {
+  assert.equal(SURFACE_MOB_ORDER.length, 5);
+  assert.equal(new Set(SURFACE_MOB_ORDER).size, 5);
+  assert.equal(BIRD_ORDER.length, 2);
+  assert.equal(AQUATIC_MOB_ORDER.length, 4);
+  assert.deepEqual(fishKindsForHabitat("ocean"), ["shoalfin", "coralback"]);
+  assert.deepEqual(fishKindsForHabitat("river"), ["brookdart"]);
+  assert.deepEqual(fishKindsForHabitat("underground"), ["gloomfin"]);
+  assert.equal(MOB_DEFS.peelop.persistent, true);
+  assert.equal(MOB_DEFS.skeleton.ranged, true);
+  assert.equal(MOB_DEFS["reliquary-sentinel"].hostile, true);
+});
+
+test("every non-butterfly catalog entry has a detailed production model", () => {
+  for (const [index, kind] of CORE_MOB_ORDER.entries()) {
+    const model = createMobVisual(kind, -(index + 1));
+    let meshes = 0;
+    model.group.traverse((object) => { if (object instanceof THREE.Mesh) meshes += 1; });
+    assert.ok(meshes >= 8, `${kind} should have at least eight visual components`);
+  }
+  const arrow = createSkeletonArrowVisual();
+  assert.equal(arrow.children.length, 4);
+});
+
+test("blocked Ridgeback steering holds one avoidance decision instead of rotationally twitching", () => {
+  let steering = createStableSteering(0);
+  const headings: number[] = [];
+  const targets: number[] = [];
+  for (let frame = 0; frame < 24; frame += 1) {
+    steering = updateStableSteering(steering, { dt: 1 / 60, turnRate: MOB_DEFS.ridgeback.turnRate, blocked: true, mobId: 17 });
+    headings.push(steering.heading);
+    targets.push(steering.targetHeading);
+  }
+  assert.equal(new Set(targets.map((value) => value.toFixed(6))).size, 1, "avoidance target must not be rerolled every blocked frame");
+  const signs = headings.map(Math.sign).filter(Boolean);
+  assert.equal(new Set(signs).size, 1, "turn direction must remain stable through the avoidance hold");
+  assert.ok(Math.abs(headings.at(-1)!) > Math.abs(headings[0]));
+});
+
+test("birds perch, forage, and flee fast approaching or attacking humans", () => {
+  const perched = createBirdBehavior("emberjay");
+  const rushed = updateBirdBehavior(perched, { dt: 1 / 60, distanceToHuman: 5, humanSpeed: 3.4, attacked: false, onGround: false });
+  assert.equal(rushed.mode, "takeoff");
+  assert.equal(rushed.perchId, null);
+  const attacked = updateBirdBehavior(createBirdBehavior("canopy-lark"), { dt: 1 / 60, distanceToHuman: 9, humanSpeed: 0, attacked: true, onGround: true });
+  assert.equal(attacked.mode, "takeoff");
+  assert.ok(attacked.timer >= 5.9);
+});
+
+test("creature cages preserve exact metadata and gate healthy hostiles", () => {
+  const hostile: CreatureMetadata = {
+    schema: 1, entityId: "sentinel:44", kind: "reliquary-sentinel", health: 18, maxHealth: 18,
+    ageTicks: 9123, baby: false, temperament: "Hostile", hostile: true, tamed: false,
+    ownerId: null, name: "Vaultkeeper", geneticSeed: 991, command: null,
+    custom: { awakened: true, room: [4, 8, 15], lootBond: { tier: 3 } },
+  };
+  assert.equal(canCaptureCreature(hostile), false);
+  assert.equal(canCaptureCreature({ ...hostile, health: 9 }), false, "exactly half health is not yet subdued");
+  assert.equal(canCaptureCreature({ ...hostile, health: 8.99 }), true);
+  assert.equal(canCaptureCreature({ ...hostile, health: 1, maxHealth: 1 }), true, "one-health dangerous creatures remain cageable");
+  const wounded = { ...hostile, health: 8 };
+  const captured = captureCreature("cage:1", wounded, 12345)!;
+  const decoded = decodeCapturedCreature(encodeCapturedCreature(captured))!;
+  assert.deepEqual(releaseCreature(decoded), wounded);
+  const released = releaseCreature(decoded);
+  released.custom.awakened = false;
+  assert.equal(decoded.creature.custom.awakened, true, "released metadata must not alias storage");
+});
+
+test("tamed or enclosed creatures are protected from distance and age despawn", () => {
+  assert.equal(shouldKeepCreatureLoaded({}), false);
+  assert.equal(shouldKeepCreatureLoaded({ tamed: true }), true);
+  assert.equal(shouldKeepCreatureLoaded({ enclosed: true }), true);
+  assert.equal(shouldKeepCreatureLoaded({ named: true }), true);
+});
+
+test("Peelops tame, heal, rename, obey, persist, and breed with inherited metadata", () => {
+  let left = createPeelopState(123);
+  const tame = tryTamePeelop(left, "player-a", "apple", 0.2);
+  assert.equal(tame.tamed, true);
+  left = commandPeelop(renamePeelop(tame.state, "  Pudding   Peel  "), "player-a", "sit");
+  assert.equal(left.name, "Pudding Peel");
+  assert.equal(left.command, "sit");
+  left = feedPeelop({ ...left, health: 2 }, "berry");
+  assert.equal(left.health, 4);
+  left = { ...left, health: 7 };
+  const right = { ...createPeelopState(456), tamed: true, ownerId: "player-a", command: "follow" as const };
+  assert.equal(canBreedPeelops(left, right), true);
+  const family = breedPeelops(left, right)!;
+  assert.equal(family.child.baby, true);
+  assert.equal(family.child.ownerId, "player-a");
+  assert.notEqual(family.child.geneticSeed, left.geneticSeed);
+  assert.deepEqual(deserializePeelop(serializePeelop(family.child)), family.child);
+});
+
+test("connected exhibit blocks cap at 20, grow lower flowers, and store one exact butterfly per block", () => {
+  const blocks = Array.from({ length: 24 }, (_, y) => ({ x: 2, y: 10 + y, z: -3 }));
+  const topology = buildExhibitTopology(blocks, blocks[0]);
+  assert.equal(topology.capacity, MAX_EXHIBIT_BLOCKS);
+  assert.equal(topology.truncated, true);
+  assert.equal(topology.blocks[0].tier, "flower-floor");
+  assert.ok(topology.landingSites.filter((site) => site.flower).length >= 2);
+  let inventory = createExhibitInventory();
+  for (let index = 0; index < MAX_EXHIBIT_BLOCKS; index += 1) {
+    const butterfly: ExhibitButterfly = {
+      schema: 1, id: `wing-${index}`, kind: index % 2 ? "meadowwing" : "bloom-monarch",
+      capturedAt: 100 + index, ageTicks: index * 12, name: index === 0 ? "Goldie" : null,
+      geneticSeed: index + 10, custom: { favoriteFlower: index % 3, history: [index, index + 1] },
+    };
+    const stored = storeExhibitButterfly(inventory, topology, butterfly);
+    assert.equal(stored.stored, true);
+    inventory = stored.inventory;
+  }
+  const overflow = storeExhibitButterfly(inventory, topology, { ...inventory.butterflies[0], id: "overflow" });
+  assert.equal(overflow.stored, false);
+  const taken = takeExhibitButterfly(inventory, "wing-0");
+  assert.equal(taken.butterfly?.name, "Goldie");
+  assert.deepEqual(taken.butterfly?.custom, { favoriteFlower: 0, history: [0, 1] });
+  const poses = Array.from({ length: 20 }, (_, time) => sampleExhibitButterflyPose(inventory.butterflies[3], topology, time));
+  assert.equal(poses.some((pose) => pose.landed), true);
+  assert.equal(poses.some((pose) => !pose.landed), true);
+});

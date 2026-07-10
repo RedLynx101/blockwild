@@ -10,6 +10,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import * as THREE from "three";
 import {
   BlockId,
   CREATIVE_BLOCKS,
@@ -27,8 +28,14 @@ import {
   type ItemCode,
   type MobKind,
   type OverlayKind,
+  type PlayerVariant,
+  type Recipe,
+  type RecipePlanResult,
 } from "./engine";
 import { BUTTERFLY_ORDER, CORE_MOB_ORDER } from "./mobs";
+import { createHeldToolSpec } from "./model-specs";
+import { BlockPlayerModel, type PlayerEquipmentAppearance } from "./player-model";
+import { GAME_RELEASE_NAME, GAME_VERSION, GAME_VERSION_LABEL } from "./version";
 import {
   DEFAULT_WORLD_OPTIONS,
   WORLD_OWNERSHIP_NOTICE,
@@ -37,8 +44,9 @@ import {
   type WorldOptions,
 } from "./world-storage";
 
-type Overlay = "title" | "new" | "pause" | "inventory" | "crafting" | "furnace" | "chest" | "bestiary" | "multiplayer" | "sleep" | "help" | "settings" | "reset" | null;
+type Overlay = "title" | "new" | "pause" | "inventory" | "crafting" | "furnace" | "chest" | "bestiary" | "multiplayer" | "sleep" | "pet" | "help" | "settings" | "reset" | null;
 type BestiaryFilter = "all" | "creatures" | "winged";
+type PetCommand = NonNullable<HudState["activePet"]>["command"];
 
 type MultiplayerPeerView = {
   token?: string;
@@ -128,16 +136,32 @@ const INITIAL_HUD: HudState = {
   crouching: false,
   sprinting: false,
   onlinePlayers: 1,
+  playerVariant: "male",
+  oxygen: 12,
+  maxOxygen: 12,
+  submerged: false,
+  averageFps: 60,
+  simulationDistance: 8,
+  weatherKind: "clear",
+  activePet: null,
+  mountedBoat: false,
 };
 
 function itemIconKind(item: ItemCode) {
   const definition = ITEMS[item];
+  if (item === Item.StarrootScepter) return "scepter";
   if (definition?.toolKind) return `tool-${definition.toolKind}`;
   if (definition?.equipmentSlot) return `armor-${definition.equipmentSlot}`;
   switch (item) {
     case BlockId.Torch: return "torch";
     case BlockId.RedFlower: return "flower-red";
     case BlockId.BlueFlower: return "flower-blue";
+    case BlockId.Sunpetal: return "flower-sun";
+    case BlockId.MoonOrchid: return "flower-moon";
+    case BlockId.Cactus: return "cactus";
+    case BlockId.DesertShrub: return "shrub";
+    case BlockId.BananaPlant: return "banana-plant";
+    case BlockId.ButterflyExhibit: return "exhibit";
     case BlockId.TallGrass: return "grass";
     case BlockId.WheatCrop: return "wheat";
     case BlockId.WildwoodSapling: return "sapling";
@@ -166,6 +190,15 @@ function itemIconKind(item: ItemCode) {
     case Item.CaveGel: return "gel";
     case Item.WildwoodDoor: return "door";
     case Item.WildwoodBed: return "bed";
+    case Item.Sailboat: return "sailboat";
+    case Item.CreatureCage: return "cage";
+    case Item.Banana: return "banana";
+    case Item.Feather: return "feather";
+    case Item.RawFish: return "fish-raw";
+    case Item.CookedFish: return "fish-cooked";
+    case Item.GlowScale: return "scale";
+    case Item.BreatherCharm: return "charm";
+    case Item.SunwardCompass: return "compass";
     case Item.ButterflyNet: return "net";
     case Item.MeadowwingJar:
     case Item.AzureSkipperJar:
@@ -177,10 +210,20 @@ function itemIconKind(item: ItemCode) {
   }
 }
 
+function itemMetadataSummary(slot: InventorySlot | null) {
+  if (!slot?.metadata) return "";
+  const metadata = slot.metadata;
+  const name = typeof metadata.name === "string" ? metadata.name : typeof metadata.customName === "string" ? metadata.customName : "";
+  const species = typeof metadata.species === "string" ? metadata.species : typeof metadata.kind === "string" ? metadata.kind : typeof metadata.mobKind === "string" ? metadata.mobKind : "";
+  const traits = [metadata.tamed === true ? "Tamed" : "", metadata.baby === true || metadata.isBaby === true ? "Baby" : ""].filter(Boolean);
+  const details = [name ? `“${name}”` : "", species ? species.replace(/[-_]/g, " ") : "", ...traits].filter(Boolean);
+  return details.length ? ` · ${details.join(" · ")}` : " · Preserved creature data";
+}
+
 function ItemIcon({ item, small = false }: { item: ItemCode; small?: boolean }) {
   const definition = ITEMS[item];
-  const isTool = Boolean(definition?.toolKind);
   const iconKind = itemIconKind(item);
+  const isTool = Boolean(definition?.toolKind) && iconKind.startsWith("tool-");
   const custom = iconKind !== "block" && iconKind !== "item" && !isTool;
   return (
     <span
@@ -211,6 +254,156 @@ function CreaturePortrait({ kind, seen, mini = false }: { kind: MobKind; seen: b
       {!seen && <b aria-hidden="true">?</b>}
     </span>
   );
+}
+
+function createPreviewHeldItem(item: ItemCode | undefined) {
+  if (item === undefined) return null;
+  const definition = ITEMS[item];
+  if (!definition) return null;
+  const group = new THREE.Group();
+  const addBox = (
+    size: readonly [number, number, number],
+    position: readonly [number, number, number],
+    color: THREE.ColorRepresentation,
+    rotation: readonly [number, number, number] = [0, 0, 0],
+    emissive = false,
+  ) => {
+    const material = emissive ? new THREE.MeshBasicMaterial({ color }) : new THREE.MeshLambertMaterial({ color });
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
+    mesh.position.set(...position);
+    mesh.rotation.set(...rotation);
+    group.add(mesh);
+  };
+  if (definition.toolKind) {
+    const spec = createHeldToolSpec(definition.toolKind, definition.color, definition.name);
+    for (const box of spec.boxes) addBox(box.size, box.position, box.color, box.rotation, box.emissive);
+    group.scale.setScalar(0.5);
+    group.rotation.set(-0.1, 0, -0.34);
+    group.position.set(0, -0.16, -0.02);
+  } else if (item === BlockId.Torch) {
+    addBox([0.1, 0.62, 0.1], [0, 0.22, 0], 0x8d542b);
+    addBox([0.16, 0.14, 0.16], [0, 0.58, 0], 0xffb33e, [0, 0, 0], true);
+    group.rotation.z = -0.24;
+  } else if (definition.placeBlock !== undefined) {
+    addBox([0.42, 0.42, 0.42], [0, 0.1, 0], definition.color, [0.16, 0.2, 0]);
+  } else {
+    addBox([0.28, 0.38, 0.2], [0, 0.1, 0], definition.color, [0.12, 0.15, -0.06]);
+  }
+  return group;
+}
+
+function disposePreviewObject(object: THREE.Object3D | null) {
+  object?.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) return;
+    child.geometry.dispose();
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    for (const material of materials) material.dispose();
+  });
+}
+
+function PlayerAvatarPreview({
+  variant,
+  equipment,
+  heldItem,
+  compact = false,
+}: {
+  variant: PlayerVariant;
+  equipment?: HudState["equipment"];
+  heldItem?: ItemCode;
+  compact?: boolean;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const head = equipment?.head?.item;
+  const chest = equipment?.chest?.item;
+  const legs = equipment?.legs?.item;
+  const feet = equipment?.feet?.item;
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, powerPreference: "low-power" });
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(compact ? 28 : 31, 1, 0.1, 20);
+    camera.position.set(compact ? 1.9 : 2.65, compact ? 1.92 : 2.18, compact ? -3.25 : -4.3);
+    camera.lookAt(0, 1.02, 0);
+    scene.add(new THREE.HemisphereLight(0xe7f4ff, 0x604c38, 2.1));
+    const key = new THREE.DirectionalLight(0xfff2cf, 2.6);
+    key.position.set(-3, 5, -4);
+    key.castShadow = true;
+    scene.add(key);
+    const model = new BlockPlayerModel({ variant, mode: "local", castShadow: true, receiveShadow: true });
+    const appearance: PlayerEquipmentAppearance = {
+      head: head === undefined ? null : ITEMS[head]?.color,
+      chest: chest === undefined ? null : ITEMS[chest]?.color,
+      legs: legs === undefined ? null : ITEMS[legs]?.color,
+      feet: feet === undefined ? null : ITEMS[feet]?.color,
+    };
+    model.setEquipmentAppearance(appearance);
+    model.group.rotation.y = -0.32;
+    scene.add(model.group);
+    const held = createPreviewHeldItem(heldItem);
+    model.setHeldItem(held);
+    const floor = new THREE.Mesh(new THREE.CircleGeometry(1.15, 32), new THREE.ShadowMaterial({ opacity: 0.28 }));
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = -0.01;
+    floor.receiveShadow = true;
+    scene.add(floor);
+
+    let previous = performance.now();
+    let animationFrame = 0;
+    const resize = () => {
+      const width = Math.max(120, Math.round(canvas.clientWidth));
+      const height = Math.max(150, Math.round(canvas.clientHeight));
+      renderer.setPixelRatio(Math.min(1.5, window.devicePixelRatio || 1));
+      renderer.setSize(width, height, false);
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+    };
+    const observer = new ResizeObserver(resize);
+    observer.observe(canvas);
+    resize();
+    const render = (now: number) => {
+      const dt = Math.min(0.05, (now - previous) / 1000);
+      previous = now;
+      model.update(dt, { locomotion: "idle", headYaw: Math.sin(now * 0.0007) * 0.08 });
+      model.group.rotation.y = -0.32 + Math.sin(now * 0.00035) * 0.045;
+      renderer.render(scene, camera);
+      animationFrame = requestAnimationFrame(render);
+    };
+    animationFrame = requestAnimationFrame(render);
+    return () => {
+      cancelAnimationFrame(animationFrame);
+      observer.disconnect();
+      model.setHeldItem(null);
+      disposePreviewObject(held);
+      model.dispose();
+      floor.geometry.dispose();
+      (floor.material as THREE.Material).dispose();
+      renderer.dispose();
+    };
+  }, [variant, head, chest, legs, feet, heldItem, compact]);
+
+  return <canvas ref={canvasRef} className={`player-avatar-preview ${compact ? "compact" : ""}`} aria-label={`${variant === "female" ? "Female" : "Male"} player model preview`} />;
+}
+
+export function recipePreviewGrid(recipe: Recipe): Array<ItemCode | 0> {
+  const cells = Array.from({ length: 9 }, () => 0 as ItemCode | 0);
+  for (let y = 0; y < recipe.height; y += 1) for (let x = 0; x < recipe.width; x += 1) {
+    const ingredient = recipe.pattern[y * recipe.width + x];
+    cells[y * 3 + x] = ingredient === 0 ? 0 : Array.isArray(ingredient) ? ingredient[0] : ingredient;
+  }
+  return cells;
+}
+
+export function recipeMatchesQuery(recipe: Recipe, query: string) {
+  const normalized = query.trim().toLocaleLowerCase();
+  if (!normalized) return true;
+  const ingredientNames = recipe.pattern.flatMap((ingredient) => ingredient === 0 ? [] : (Array.isArray(ingredient) ? ingredient : [ingredient]))
+    .map((item) => ITEMS[item]?.name ?? "");
+  return [recipe.name, ITEMS[recipe.output.item]?.name ?? "", ...ingredientNames].some((name) => name.toLocaleLowerCase().includes(normalized));
 }
 
 function PixelButton({
@@ -251,6 +444,15 @@ function ArmorPips({ value }: { value: number }) {
   );
 }
 
+function OxygenPips({ value, maximum }: { value: number; maximum: number }) {
+  const filled = Math.ceil(Math.max(0, Math.min(1, maximum > 0 ? value / maximum : 0)) * 10);
+  return (
+    <div className="oxygen-pips" aria-label={`Oxygen: ${Math.ceil(value)} of ${Math.ceil(maximum)} seconds`}>
+      {Array.from({ length: 10 }, (_, index) => <span key={index} className={index < filled ? "filled" : "empty"}>○</span>)}
+    </div>
+  );
+}
+
 function SlotContents({ slot }: { slot: InventorySlot | null }) {
   if (!slot) return null;
   const definition = ITEMS[slot.item];
@@ -277,6 +479,7 @@ export default function VoxelGame() {
   const overlayRef = useRef<Overlay>("title");
   const toastTimerRef = useRef<number>(0);
   const lookPointerRef = useRef<{ id: number; x: number; y: number } | null>(null);
+  const activePetDraftIdRef = useRef<number | null>(null);
 
   const [overlay, setOverlayState] = useState<Overlay>("title");
   const [started, setStarted] = useState(false);
@@ -297,6 +500,11 @@ export default function VoxelGame() {
   const [webglError, setWebglError] = useState(false);
   const [cursorPosition, setCursorPosition] = useState({ x: 0, y: 0 });
   const [inventoryTab, setInventoryTab] = useState<"inventory" | "recipes" | "creative">("inventory");
+  const [recipeQuery, setRecipeQuery] = useState("");
+  const [previewRecipeId, setPreviewRecipeId] = useState<string | null>(null);
+  const [recipeFeedback, setRecipeFeedback] = useState<RecipePlanResult | null>(null);
+  const [playerVariant, setPlayerVariant] = useState<PlayerVariant>("male");
+  const [petNameDraft, setPetNameDraft] = useState("");
   const [selectedBestiary, setSelectedBestiary] = useState<MobKind>("mossling");
   const [bestiaryFilter, setBestiaryFilter] = useState<BestiaryFilter>("all");
   const [multiplayerName, setMultiplayerName] = useState("Trailkeeper");
@@ -304,6 +512,24 @@ export default function VoxelGame() {
   const [multiplayerAnswer, setMultiplayerAnswer] = useState("");
   const [multiplayerState, setMultiplayerState] = useState<MultiplayerViewState>(EMPTY_MULTIPLAYER_STATE);
   const [multiplayerBusy, setMultiplayerBusy] = useState(false);
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem("blockwild-player-variant");
+      if (stored === "female" || stored === "male") setPlayerVariant(stored);
+    } catch { /* Character selection remains available without persistent browser storage. */ }
+  }, []);
+
+  useEffect(() => {
+    if (overlay !== "pet") {
+      activePetDraftIdRef.current = null;
+      return;
+    }
+    if (hud.activePet && activePetDraftIdRef.current !== hud.activePet.id) {
+      activePetDraftIdRef.current = hud.activePet.id;
+      setPetNameDraft(hud.activePet.name);
+    }
+  }, [overlay, hud.activePet]);
 
   const setOverlay = useCallback((next: Overlay) => {
     overlayRef.current = next;
@@ -375,12 +601,23 @@ export default function VoxelGame() {
     // autosaves, and play-time accounting cannot diverge or double-commit.
     engine.worldStorage = storage;
     engineRef.current = engine;
+    const automationWindow = window as Window & {
+      render_game_to_text?: () => string;
+      advanceTime?: (milliseconds: number) => Promise<void>;
+    };
+    automationWindow.render_game_to_text = () => engine.renderGameToText();
+    automationWindow.advanceTime = async (milliseconds: number) => {
+      engine.advanceSimulation(milliseconds);
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    };
     if (initialWorld) engine.previewWorld(initialWorld.seed);
     return () => {
       window.clearTimeout(toastTimerRef.current);
       engine.dispose();
       engineRef.current = null;
       worldStorageRef.current = null;
+      delete automationWindow.render_game_to_text;
+      delete automationWindow.advanceTime;
     };
     // The engine owns its listeners for the lifetime of the canvas.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -390,7 +627,7 @@ export default function VoxelGame() {
     const handleMenuKeys = (event: KeyboardEvent) => {
       const current = overlayRef.current;
       const engine = engineRef.current;
-      if (event.code === "KeyE" && ["inventory", "crafting", "furnace", "chest"].includes(current ?? "")) {
+      if (event.code === "KeyE" && ["inventory", "crafting", "furnace", "chest", "pet"].includes(current ?? "")) {
         event.preventDefault();
         event.stopImmediatePropagation();
         engine?.closeContainer();
@@ -403,7 +640,7 @@ export default function VoxelGame() {
       event.stopImmediatePropagation();
       if (event.repeat) return;
       if (current !== null) {
-        if (["inventory", "crafting", "furnace", "chest"].includes(current)) engine?.closeContainer();
+        if (["inventory", "crafting", "furnace", "chest", "pet"].includes(current)) engine?.closeContainer();
         if (startedRef.current) {
           if (current === "pause") { setOverlay(null); engine?.activate(); }
           else if (current === "settings" || current === "help" || current === "reset" || current === "bestiary" || current === "multiplayer") setOverlay("pause");
@@ -418,6 +655,12 @@ export default function VoxelGame() {
     return () => window.removeEventListener("keydown", handleMenuKeys, true);
   }, [setOverlay]);
 
+  const choosePlayerVariant = (variant: PlayerVariant) => {
+    setPlayerVariant(variant);
+    engineRef.current?.setPlayerVariant(variant);
+    try { window.localStorage.setItem("blockwild-player-variant", variant); } catch { /* Session-only selection. */ }
+  };
+
   const beginNewWorld = () => {
     const engine = engineRef.current;
     if (engine) setSeed(engine.randomSeed());
@@ -430,6 +673,7 @@ export default function VoxelGame() {
   const createWorld = () => {
     const engine = engineRef.current;
     if (!engine) return;
+    engine.setPlayerVariant(playerVariant);
     const created = engine.createWorld(seed, mode, worldOptions, worldName);
     const storage = worldStorageRef.current;
     if (created) {
@@ -458,6 +702,7 @@ export default function VoxelGame() {
       return;
     }
     engine.loadWorld(loaded.value.save, loaded.value.options, worldId);
+    engine.setPlayerVariant(playerVariant);
     activeWorldIdRef.current = worldId;
     setSelectedWorldId(worldId);
     setMode(loaded.value.metadata.mode);
@@ -797,8 +1042,8 @@ export default function VoxelGame() {
       type="button"
       key={key}
       className={`mc-slot ${className}`}
-      title={slot ? `${ITEMS[slot.item]?.name ?? "Item"}${slot.durability !== undefined ? ` · ${slot.durability} durability` : ""}` : label}
-      aria-label={slot ? `${ITEMS[slot.item]?.name ?? "Item"}, ${slot.count}` : label ?? "Empty slot"}
+      title={slot ? `${ITEMS[slot.item]?.name ?? "Item"}${slot.durability !== undefined ? ` · ${slot.durability} durability` : ""}${itemMetadataSummary(slot)}` : label}
+      aria-label={slot ? `${ITEMS[slot.item]?.name ?? "Item"}, ${slot.count}${itemMetadataSummary(slot)}` : label ?? "Empty slot"}
       onClick={(event) => {
         if (event.detail >= 2) engineRef.current?.collectMatching(slot?.item ?? hud.cursor?.item);
         else onLeft(event.shiftKey);
@@ -821,28 +1066,64 @@ export default function VoxelGame() {
     </div>
   );
 
-  const recipeAvailable = (recipeId: string) => {
-    const recipe = RECIPES.find((candidate) => candidate.id === recipeId);
-    if (!recipe) return false;
-    if (recipe.table && hud.craftingSize < 3) return false;
-    return true;
+  const arrangeRecipe = (recipeId: string) => {
+    const result = engineRef.current?.planRecipe(recipeId) ?? { ok: false, recipeId, reason: "unknown", message: "The crafting engine is not ready." } satisfies RecipePlanResult;
+    setRecipeFeedback(result);
+    setPreviewRecipeId(recipeId);
   };
 
-  const renderRecipeBook = (includeTable: boolean) => (
-    <aside className="recipe-book">
-      <div className="recipe-book-title"><span>▤</span><strong>RECIPE BOOK</strong></div>
-      <div className="recipe-scroll">
-        {RECIPES.filter((recipe) => includeTable || !recipe.table).map((recipe) => (
-          <button type="button" key={recipe.id} className="recipe-entry" disabled={!recipeAvailable(recipe.id)} onClick={() => engineRef.current?.autoCraft(recipe.id)}>
-            <ItemIcon item={recipe.output.item} small />
-            <span><strong>{recipe.name}</strong><small>{recipe.output.count > 1 ? `Makes ${recipe.output.count}` : recipe.table ? "Crafting table" : "Hand craftable"}</small></span>
-            <b>+</b>
-          </button>
-        ))}
-      </div>
-      <p>Click a known recipe to craft directly when you have the ingredients. Or arrange the grid yourself, cube scholar.</p>
-    </aside>
-  );
+  const renderRecipeBook = (includeTable: boolean) => {
+    const filtered = RECIPES.filter((recipe) => recipeMatchesQuery(recipe, recipeQuery));
+    const preview = filtered.find((recipe) => recipe.id === previewRecipeId) ?? filtered[0] ?? null;
+    const previewCells = preview ? recipePreviewGrid(preview) : [];
+    return (
+      <aside className="recipe-book">
+        <div className="recipe-book-title"><span aria-hidden="true">▤</span><strong>RECIPE BOOK</strong><small>{filtered.length}/{RECIPES.length}</small></div>
+        <label className="recipe-search">
+          <span className="sr-only">Search recipes</span>
+          <span aria-hidden="true">⌕</span>
+          <input type="search" value={recipeQuery} placeholder="Search recipes or materials…" onChange={(event) => { setRecipeQuery(event.target.value); setRecipeFeedback(null); }} />
+          {recipeQuery && <button type="button" onClick={() => setRecipeQuery("")} aria-label="Clear recipe search">×</button>}
+        </label>
+        <div className="recipe-plan-preview" aria-live="polite">
+          {preview ? (
+            <>
+              <div className="recipe-preview-copy"><strong>{preview.name}</strong><small>{preview.mirrored ? "Either left or right orientation" : `${preview.width}×${preview.height} shaped recipe`}</small></div>
+              <div className="recipe-preview-row">
+                <div className="recipe-preview-grid" aria-label={`${preview.name} crafting pattern`}>
+                  {previewCells.map((item, index) => <span key={index} className="recipe-preview-slot">{item !== 0 && <ItemIcon item={item} small />}</span>)}
+                </div>
+                <span className="recipe-preview-arrow" aria-hidden="true" />
+                <span className="recipe-preview-output"><ItemIcon item={preview.output.item} /><b>{preview.output.count}</b></span>
+              </div>
+            </>
+          ) : <div className="recipe-empty-search"><strong>No matching recipes</strong><small>Try an item or material name.</small></div>}
+        </div>
+        <div className="recipe-scroll">
+          {filtered.map((recipe) => {
+            const needsTable = recipe.table && !includeTable;
+            return (
+              <button
+                type="button"
+                key={recipe.id}
+                className={`recipe-entry ${preview?.id === recipe.id ? "previewing" : ""} ${needsTable ? "needs-table" : ""}`}
+                onMouseEnter={() => setPreviewRecipeId(recipe.id)}
+                onFocus={() => setPreviewRecipeId(recipe.id)}
+                onClick={() => arrangeRecipe(recipe.id)}
+                aria-describedby={preview?.id === recipe.id ? "recipe-book-help" : undefined}
+              >
+                <ItemIcon item={recipe.output.item} small />
+                <span><strong>{recipe.name}</strong><small>{recipe.output.count > 1 ? `Makes ${recipe.output.count}` : needsTable ? "Needs crafting table" : recipe.table ? "Crafting table" : "Hand craftable"}</small></span>
+                <b aria-hidden="true">{needsTable ? "▦" : "→"}</b>
+              </button>
+            );
+          })}
+        </div>
+        {recipeFeedback && <p className={`recipe-feedback ${recipeFeedback.ok ? "success" : "error"}`} role={recipeFeedback.ok ? "status" : "alert"}>{recipeFeedback.message}</p>}
+        <p id="recipe-book-help">Hover or focus to inspect. Click to arrange available ingredients; take the output to craft.</p>
+      </aside>
+    );
+  };
 
   const renderCraftingArea = (size: 2 | 3) => {
     const positions = size === 2 ? [0, 1, 3, 4] : Array.from({ length: 9 }, (_, index) => index);
@@ -851,7 +1132,7 @@ export default function VoxelGame() {
         <div className={`mc-grid craft-grid craft-${size}`}>
           {positions.map((position) => renderSlot(hud.craftGrid[position], `craft-${position}`, (shift) => engineRef.current?.craftSlotClick(position, "left", shift), () => engineRef.current?.craftSlotClick(position, "right")))}
         </div>
-        <div className="craft-arrow"><span>▶</span></div>
+        <div className="craft-arrow" aria-hidden="true" />
         {renderSlot(hud.craftOutput, "craft-output", (shift) => engineRef.current?.craftOutputClick(shift), () => undefined, "craft-output-slot", "Crafting output")}
       </div>
     );
@@ -889,6 +1170,7 @@ export default function VoxelGame() {
             <span>{hud.clock}</span>
             <span>{hud.biome}</span>
             <span className="depth-readout">{hud.depth}</span>
+            <span className={`weather-readout weather-${hud.weatherKind}`}>{hud.weatherKind.replace(/-/g, " ").toUpperCase()}</span>
           </div>
           <div className="objective-card">
             <span className="objective-kicker">THE FIRST LONG NIGHT</span>
@@ -901,13 +1183,15 @@ export default function VoxelGame() {
             <span className={hud.crouching ? "active" : ""}><kbd>SHIFT</kbd><strong>{hud.crouching ? "CROUCHING" : hud.sprinting ? "SPRINTING" : "CROUCH"}</strong></span>
             {hud.onlinePlayers > 1 && <span className="online"><kbd>●</kbd><strong>{hud.onlinePlayers} ONLINE</strong></span>}
           </div>
+          {hud.mountedBoat && <div className="boat-hud" role="status"><strong>WAYFARER</strong><span><kbd>WASD</kbd> SAIL</span><span><kbd>SPACE</kbd> DISMOUNT</span></div>}
 
           {hud.debug && (
             <div className="debug-card">
               XYZ {hud.coordinates.join(" / ")}<br />
-              {hud.mode.toUpperCase()} · {hud.weather.toUpperCase()} · {hud.depth.toUpperCase()}<br />
+              {hud.mode.toUpperCase()} · {hud.weatherKind.toUpperCase()} · {hud.depth.toUpperCase()}<br />
               Seed: {currentWorldSeed}<br />
-              Chunks: {hud.loadedChunks} loaded · {hud.queuedChunks} queued
+              Chunks: {hud.loadedChunks} loaded · {hud.queuedChunks} queued · simulation {hud.simulationDistance}<br />
+              Performance: {hud.averageFps.toFixed(0)} FPS
             </div>
           )}
 
@@ -932,6 +1216,7 @@ export default function VoxelGame() {
                 {hud.armor > 0 && <ArmorPips value={hud.armor} />}
               </div>
             )}
+            {hud.mode === "survival" && (hud.submerged || hud.oxygen < hud.maxOxygen) && <div className="oxygen-hud"><OxygenPips value={hud.oxygen} maximum={hud.maxOxygen} /></div>}
             <div className="xp-bar" aria-label={`Level ${hud.level}, ${hud.xp} of ${xpNeeded} experience`}><span style={{ width: `${Math.min(100, hud.xp / xpNeeded * 100)}%` }} /><b>{hud.level || ""}</b></div>
             <div className="hotbar" role="toolbar" aria-label="Item hotbar">
               {hud.inventory.slice(0, 9).map((slot, index) => (
@@ -970,6 +1255,10 @@ export default function VoxelGame() {
       {overlay === "title" && (
         <section className="menu-overlay title-overlay" aria-labelledby="game-title">
           <div className="title-mist" />
+          <div className="title-screen-utility">
+            <span className="game-version-badge"><b>{GAME_VERSION_LABEL}</b> {GAME_RELEASE_NAME}</span>
+            <button type="button" onClick={() => engineRef.current?.toggleFullscreen()} aria-label={hud.fullscreen ? "Exit fullscreen" : "Enter fullscreen"}>{hud.fullscreen ? "EXIT FULLSCREEN" : "FULLSCREEN"}</button>
+          </div>
           <div className="title-content">
             <div className="logo-wrap">
               <h1 id="game-title" className="block-logo">BLOCKWILD</h1>
@@ -984,13 +1273,21 @@ export default function VoxelGame() {
                   <PixelButton onClick={() => setOverlay("help")}>How to Play</PixelButton>
                   <PixelButton onClick={() => openSettings("title")}>Settings</PixelButton>
                 </div>
+                <div className="title-character-choice">
+                  <PlayerAvatarPreview variant={playerVariant} compact />
+                  <fieldset>
+                    <legend>PLAYER CHARACTER</legend>
+                    <button type="button" className={playerVariant === "male" ? "active" : ""} aria-pressed={playerVariant === "male"} onClick={() => choosePlayerVariant("male")}><span>MALE</span><small>Trailblazer</small></button>
+                    <button type="button" className={playerVariant === "female" ? "active" : ""} aria-pressed={playerVariant === "female"} onClick={() => choosePlayerVariant("female")}><span>FEMALE</span><small>Trailblazer</small></button>
+                  </fieldset>
+                </div>
                 <p className="browser-ownership-note">{WORLD_OWNERSHIP_NOTICE}</p>
               </div>
               <aside className="world-catalog-panel" aria-label="Worlds stored in this browser">
                 <header>
                   <div><span className="panel-eyebrow">THIS BROWSER · {worlds.length} {worlds.length === 1 ? "WORLD" : "WORLDS"}</span><strong>World Catalog</strong></div>
                   <button type="button" onClick={() => importWorldInputRef.current?.click()}>IMPORT</button>
-                  <input ref={importWorldInputRef} type="file" hidden accept=".json,.blockwild.json,application/json" onChange={(event) => void importWorld(event)} />
+                  <input ref={importWorldInputRef} type="file" hidden style={{ caretColor: "transparent" }} accept=".json,.blockwild.json,application/json" onChange={(event) => void importWorld(event)} />
                 </header>
                 <div className="world-catalog-list">
                   {worlds.length ? worlds.map((world) => (
@@ -1002,7 +1299,7 @@ export default function VoxelGame() {
                       onDoubleClick={() => playWorld(world.id)}
                     >
                       <span className="world-thumbnail" aria-hidden="true"><i /><b>{world.mode === "builder" ? "◆" : "▲"}</b></span>
-                      <span className="world-card-copy"><strong>{world.name}</strong><small>Seed {world.seed}</small><small>{formatWorldDate(world.lastPlayedAt)} · {formatPlayTime(world.playTimeMs)}</small></span>
+                      <span className="world-card-copy"><strong>{world.name}</strong><small>Seed {world.seed}</small><small>{formatWorldDate(world.lastPlayedAt)} · {formatPlayTime(world.playTimeMs)}</small><small>Last saved in v{world.lastSavedGameVersion}</small></span>
                       <em>{world.mode.toUpperCase()}</em>
                     </button>
                   )) : <div className="empty-world-catalog"><b>◇</b><strong>No worlds in this browser</strong><span>Create one here or import a Blockwild world file.</span></div>}
@@ -1017,7 +1314,7 @@ export default function VoxelGame() {
               </aside>
             </div>
             <div className="title-footer">
-              <span>Endless streamed terrain · original procedural textures · browser-owned persistent worlds</span>
+              <span>Blockwild {GAME_VERSION} · Endless streamed terrain · original procedural textures · browser-owned persistent worlds</span>
               <button type="button" className="sound-quick-toggle" onClick={() => updateSettings({ muted: !settings.muted })} aria-label={settings.muted ? "Turn sound on" : "Mute sound"}>{settings.muted ? "SOUND: OFF" : "SOUND: ON"}</button>
             </div>
           </div>
@@ -1071,7 +1368,7 @@ export default function VoxelGame() {
               </div>
             </details>
             <div className="world-feature-strip">
-              <span><b>∞</b> STREAMED WORLD</span><span><b>17</b> BIOMES</span><span><b>14</b> CREATURES</span><span><b>192</b> BLOCKS TALL</span>
+              <span><b>∞</b> STREAMED WORLD</span><span><b>17</b> BIOMES</span><span><b>28</b> CREATURES</span><span><b>192</b> BLOCKS TALL</span>
             </div>
             <p className="browser-ownership-note setup-ownership-note">This world will belong to this browser on this host device. Export it to make a backup or move it.</p>
             <div className="panel-actions">
@@ -1133,6 +1430,48 @@ export default function VoxelGame() {
         </section>
       )}
 
+      {overlay === "pet" && (
+        <section className="menu-overlay pet-overlay" aria-labelledby="pet-title">
+          <div className="pixel-panel pet-panel">
+            <button type="button" className="panel-close pet-close" onClick={resume} aria-label="Close companion commands">×</button>
+            {hud.activePet ? (
+              <>
+                <span className="panel-eyebrow">PEELOP COMPANION · {hud.activePet.baby ? "YOUNG" : "ADULT"}</span>
+                <div className="pet-panel-hero">
+                  <CreaturePortrait kind={"peelop" as MobKind} seen />
+                  <div>
+                    <h2 id="pet-title">{hud.activePet.name}</h2>
+                    <p>{hud.activePet.tamed ? "Your bright little grove scout." : "This Peelop is still deciding whether you are trustworthy."}</p>
+                    <div className="pet-health" aria-label={`${hud.activePet.health} of ${hud.activePet.maxHealth} health`}><span style={{ width: `${Math.max(0, Math.min(100, hud.activePet.health / hud.activePet.maxHealth * 100))}%` }} /><b>{hud.activePet.health}/{hud.activePet.maxHealth}</b></div>
+                  </div>
+                </div>
+                <form className="pet-name-form" onSubmit={(event) => { event.preventDefault(); engineRef.current?.renameActivePet(petNameDraft); }}>
+                  <label htmlFor="pet-name">Name</label>
+                  <input id="pet-name" className="pixel-input" value={petNameDraft} maxLength={32} onChange={(event) => setPetNameDraft(event.target.value)} />
+                  <PixelButton disabled={!petNameDraft.trim()} onClick={() => engineRef.current?.renameActivePet(petNameDraft)}>SAVE NAME</PixelButton>
+                </form>
+                <fieldset className="pet-command-grid">
+                  <legend>COMMAND</legend>
+                  {([
+                    ["follow", "FOLLOW", "Stay close while you travel."],
+                    ["sit", "SIT", "Rest here until called."],
+                    ["stay", "STAY", "Guard this immediate area."],
+                    ["wander", "WANDER", "Explore nearby on its own."],
+                  ] as Array<[PetCommand, string, string]>).map(([command, label, description]) => (
+                    <button type="button" key={command} className={hud.activePet?.command === command ? "active" : ""} aria-pressed={hud.activePet?.command === command} onClick={() => engineRef.current?.commandActivePet(command)}>
+                      <strong>{label}</strong><span>{description}</span>
+                    </button>
+                  ))}
+                </fieldset>
+                <p className="pet-panel-hint">Feed Golden Bananas to heal, tame, and breed Peelops. Crouch-use again for detailed commands.</p>
+              </>
+            ) : (
+              <div className="pet-panel-empty"><h2 id="pet-title">No companion selected</h2><p>Move close to a tamed Peelop and crouch-use it to open its commands.</p></div>
+            )}
+          </div>
+        </section>
+      )}
+
       {(overlay === "inventory" || overlay === "crafting") && (
         <section className="menu-overlay inventory-overlay" aria-labelledby="inventory-title" onPointerMove={trackCursor}>
           <div className="mc-window inventory-window">
@@ -1155,6 +1494,7 @@ export default function VoxelGame() {
               <div className="inventory-workbench-layout">
                 {inventoryTab === "recipes" ? renderRecipeBook(overlay === "crafting") : (
                   <div className="player-paper-doll">
+                    <div className="paper-doll-identity"><span>ACTIVE TRAILBLAZER</span><strong>{multiplayerName.trim() || "Trailkeeper"}</strong><small>{hud.playerVariant === "female" ? "Female" : "Male"} character</small></div>
                     <div className="paper-doll-stage">
                       <div className="equipment-slots">
                         {renderSlot(hud.equipment.head, "armor-head", (shift) => engineRef.current?.equipmentClick("head", "left", shift), () => engineRef.current?.equipmentClick("head", "right"), "equipment-slot", "Head armor")}
@@ -1162,8 +1502,9 @@ export default function VoxelGame() {
                         {renderSlot(hud.equipment.legs, "armor-legs", (shift) => engineRef.current?.equipmentClick("legs", "left", shift), () => engineRef.current?.equipmentClick("legs", "right"), "equipment-slot", "Leg armor")}
                         {renderSlot(hud.equipment.feet, "armor-feet", (shift) => engineRef.current?.equipmentClick("feet", "left", shift), () => engineRef.current?.equipmentClick("feet", "right"), "equipment-slot", "Boots")}
                       </div>
-                      <div className="avatar-cube"><span className="avatar-head" /><span className="avatar-body" /><span className="avatar-leg leg-a" /><span className="avatar-leg leg-b" /></div>
+                      <PlayerAvatarPreview variant={hud.playerVariant} equipment={hud.equipment} heldItem={selectedSlot?.item} />
                     </div>
+                    <span className="paper-doll-held"><small>HELD</small>{selectedSlot ? <><ItemIcon item={selectedSlot.item} small /><b>{selectedName}</b></> : <b>Empty hand</b>}</span>
                     <span className="armor-readout">ARMOR {hud.armor}</span>
                     <small>LEVEL {hud.level}</small>
                     <b>{hud.depth}</b>
@@ -1192,7 +1533,7 @@ export default function VoxelGame() {
                 <div className={`furnace-flame ${(hud.activeFurnace?.burn ?? 0) > 0 ? "lit" : ""}`}><span>♨</span><i style={{ height: `${hud.activeFurnace?.burnMax ? hud.activeFurnace.burn / hud.activeFurnace.burnMax * 100 : 0}%` }} /></div>
                 {renderSlot(hud.activeFurnace?.fuel ?? null, "furnace-fuel", (shift) => engineRef.current?.machineClick("furnace", 1, "left", shift), () => engineRef.current?.machineClick("furnace", 1, "right"), "machine-slot", "Fuel")}
               </div>
-              <div className="smelt-progress"><span style={{ width: `${Math.min(100, (hud.activeFurnace?.progress ?? 0) / 8 * 100)}%` }} /><b>▶</b></div>
+              <div className="smelt-progress" aria-label={`Smelting ${Math.round(Math.min(100, (hud.activeFurnace?.progress ?? 0) / 8 * 100))}% complete`}><span style={{ width: `${Math.min(100, (hud.activeFurnace?.progress ?? 0) / 8 * 100)}%` }} /><i aria-hidden="true" /></div>
               {renderSlot(hud.activeFurnace?.output ?? null, "furnace-output", (shift) => engineRef.current?.machineClick("furnace", 2, "left", shift), () => engineRef.current?.machineClick("furnace", 2, "right"), "machine-slot furnace-output-slot", "Smelted output")}
               <div className="smelt-guide"><strong>SMELTING</strong><span>Ore → ingot</span><span>Sand → glass</span><span>Raw meat → cooked</span><span>Log → charcoal</span><span>Cobble → stone</span><small>Coal burns longest. Sticks burn with admirable optimism.</small></div>
             </div>
@@ -1357,9 +1698,10 @@ export default function VoxelGame() {
             <label className="setting-row"><span><strong>Master volume</strong><small>{settings.muted ? "Muted" : `${Math.round(settings.volume * 100)}%`}</small></span><input type="range" min="0" max="1" step="0.05" value={settings.volume} onChange={(event) => updateSettings({ volume: Number(event.target.value), muted: false })} /></label>
             <label className="setting-row"><span><strong>Look sensitivity</strong><small>{Math.round((settings.sensitivity / 0.005) * 100)}%</small></span><input type="range" min="0.0008" max="0.005" step="0.0001" value={settings.sensitivity} onChange={(event) => updateSettings({ sensitivity: Number(event.target.value) })} /></label>
             <label className="setting-row"><span><strong>Field of view</strong><small>{Math.round(settings.fov)}°</small></span><input type="range" min="55" max="100" step="1" value={settings.fov} onChange={(event) => updateSettings({ fov: Number(event.target.value) })} /></label>
-            <label className="setting-row"><span><strong>Render distance</strong><small>{settings.renderDistance} chunks · about {settings.renderDistance * 16} blocks · streamed queues + adaptive resolution</small></span><input type="range" min="2" max="8" step="1" value={settings.renderDistance} onChange={(event) => updateSettings({ renderDistance: Number(event.target.value) })} /></label>
+            <label className="setting-row"><span><strong>Render distance</strong><small>{settings.renderDistance} chunks · about {settings.renderDistance * 16} blocks · default 10, maximum 16</small></span><input type="range" min="2" max="16" step="1" value={settings.renderDistance} onChange={(event) => updateSettings({ renderDistance: Number(event.target.value), simulationDistance: Math.min(settings.simulationDistance, Number(event.target.value)) })} /></label>
+            <label className="setting-row"><span><strong>Simulation distance</strong><small>{settings.simulationDistance} chunks · creatures, liquids, crops, and POIs tick inside this radius</small></span><input type="range" min="2" max={settings.renderDistance} step="1" value={settings.simulationDistance} onChange={(event) => updateSettings({ simulationDistance: Number(event.target.value) })} /></label>
             <div className="toggle-setting"><span><strong>Music, sound effects & ambience</strong><small>Includes the Blockwild day, night, and sea score.</small></span><button type="button" className={settings.muted ? "" : "active"} onClick={() => updateSettings({ muted: !settings.muted })}>{settings.muted ? "OFF" : "ON"}</button></div>
-            <div className="toggle-setting"><span><strong>Weather</strong><small>Rain affects atmosphere and visibility.</small></span><button type="button" className={settings.weather === "rain" ? "active" : ""} onClick={() => { const weather = settings.weather === "rain" ? "clear" : "rain"; updateSettings({ weather }); }}>{settings.weather === "rain" ? "RAIN" : "CLEAR"}</button></div>
+            <div className="toggle-setting"><span><strong>Dynamic weather</strong><small>Biome-aware rain, thunder, snow, mist, sandstorms, ashfall, and overcast skies.</small></span><button type="button" className={settings.weather === "rain" ? "active" : ""} onClick={() => { const weather = settings.weather === "rain" ? "clear" : "rain"; updateSettings({ weather }); }}>{settings.weather === "rain" ? "ON" : "OFF"}</button></div>
             <div className="fullscreen-setting"><PixelButton onClick={() => engineRef.current?.toggleFullscreen()}>{hud.fullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}</PixelButton></div>
             <div className="panel-actions"><PixelButton className="gold-button" onClick={() => setOverlay(settingsReturn)}>Done</PixelButton></div>
           </div>

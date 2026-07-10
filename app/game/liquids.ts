@@ -1,0 +1,408 @@
+/**
+ * Bounded liquid simulation primitives.
+ *
+ * The simulator deliberately knows nothing about chunks or rendering. The game
+ * supplies a tiny adapter, processes a fixed number of cells each tick, and
+ * translates the returned changes into chunk edits. This keeps a waterfall or
+ * a broken reservoir from monopolising a frame.
+ */
+
+export type LiquidKind = "water" | "lava";
+
+export type LiquidPosition = Readonly<{ x: number; y: number; z: number }>;
+
+export type LiquidCell = Readonly<{
+  kind: LiquidKind;
+  /** 0 is reserved for a source; larger values are progressively thinner. */
+  level: number;
+  source: boolean;
+  /** Falling columns do not create infinite sources. */
+  falling: boolean;
+}>;
+
+export type LiquidChange = Readonly<{
+  position: LiquidPosition;
+  previous?: LiquidCell;
+  next?: LiquidCell;
+}>;
+
+export interface LiquidWorldAdapter {
+  getLiquid(position: LiquidPosition): LiquidCell | undefined;
+  setLiquid(position: LiquidPosition, liquid: LiquidCell | undefined): void;
+  isSolid(position: LiquidPosition): boolean;
+  /** Defaults to true for a non-solid cell. Plants can opt in here. */
+  isReplaceable?(position: LiquidPosition): boolean;
+  /** Returning false defers propagation until the chunk is available. */
+  isLoaded?(position: LiquidPosition): boolean;
+  minY?: number;
+  maxY?: number;
+}
+
+export type LiquidSimulationOptions = Readonly<{
+  waterSpread: number;
+  lavaSpread: number;
+  maxOperationsPerTick: number;
+}>;
+
+export const DEFAULT_LIQUID_SIMULATION_OPTIONS: LiquidSimulationOptions = Object.freeze({
+  waterSpread: 7,
+  lavaSpread: 3,
+  maxOperationsPerTick: 192,
+});
+
+const CARDINAL_OFFSETS = [
+  [1, 0, 0],
+  [-1, 0, 0],
+  [0, 0, 1],
+  [0, 0, -1],
+] as const;
+
+const NEIGHBOR_OFFSETS = [
+  ...CARDINAL_OFFSETS,
+  [0, 1, 0] as const,
+  [0, -1, 0] as const,
+];
+
+const positionKey = ({ x, y, z }: LiquidPosition) => `${Math.trunc(x)},${Math.trunc(y)},${Math.trunc(z)}`;
+const offsetPosition = (position: LiquidPosition, offset: readonly [number, number, number]): LiquidPosition => ({
+  x: position.x + offset[0],
+  y: position.y + offset[1],
+  z: position.z + offset[2],
+});
+
+const sameLiquid = (a: LiquidCell | undefined, b: LiquidCell | undefined) =>
+  a === b || Boolean(a && b && a.kind === b.kind && a.level === b.level && a.source === b.source && a.falling === b.falling);
+
+const normalizedCell = (cell: LiquidCell, maxSpread: number): LiquidCell => {
+  if (cell.source) return { kind: cell.kind, level: 0, source: true, falling: false };
+  return {
+    kind: cell.kind,
+    level: Math.max(1, Math.min(maxSpread, Math.round(cell.level))),
+    source: false,
+    falling: Boolean(cell.falling),
+  };
+};
+
+export class LiquidSimulator {
+  private queue: LiquidPosition[] = [];
+  private queueHead = 0;
+  private queued = new Set<string>();
+  readonly options: LiquidSimulationOptions;
+
+  constructor(readonly world: LiquidWorldAdapter, options: Partial<LiquidSimulationOptions> = {}) {
+    this.options = Object.freeze({
+      waterSpread: Math.max(1, Math.min(15, Math.round(options.waterSpread ?? DEFAULT_LIQUID_SIMULATION_OPTIONS.waterSpread))),
+      lavaSpread: Math.max(1, Math.min(15, Math.round(options.lavaSpread ?? DEFAULT_LIQUID_SIMULATION_OPTIONS.lavaSpread))),
+      maxOperationsPerTick: Math.max(1, Math.round(options.maxOperationsPerTick ?? DEFAULT_LIQUID_SIMULATION_OPTIONS.maxOperationsPerTick)),
+    });
+  }
+
+  get pendingCount() {
+    return this.queue.length - this.queueHead;
+  }
+
+  enqueue(position: LiquidPosition) {
+    const normalized = { x: Math.trunc(position.x), y: Math.trunc(position.y), z: Math.trunc(position.z) };
+    if (!this.isInsideWorld(normalized) || !this.isLoaded(normalized)) return false;
+    const key = positionKey(normalized);
+    if (this.queued.has(key)) return false;
+    this.queued.add(key);
+    this.queue.push(normalized);
+    return true;
+  }
+
+  enqueueNeighborhood(position: LiquidPosition) {
+    this.enqueue(position);
+    for (const offset of NEIGHBOR_OFFSETS) this.enqueue(offsetPosition(position, offset));
+  }
+
+  /** Call after a solid/replaceable block changes next to liquid. */
+  notifyBlockChanged(position: LiquidPosition) {
+    this.enqueueNeighborhood(position);
+  }
+
+  addSource(position: LiquidPosition, kind: LiquidKind = "water") {
+    if (!this.canOccupy(position, kind)) return false;
+    this.write(position, { kind, level: 0, source: true, falling: false }, []);
+    return true;
+  }
+
+  /**
+   * Advances at most `operationBudget` queued cells. Runtime is O(budget) and
+   * memory is O(changed frontier), independent of world size.
+   */
+  process(operationBudget = this.options.maxOperationsPerTick): LiquidChange[] {
+    const changes: LiquidChange[] = [];
+    const budget = Math.max(0, Math.floor(operationBudget));
+    let operations = 0;
+
+    while (operations < budget && this.queueHead < this.queue.length) {
+      const position = this.queue[this.queueHead++];
+      this.queued.delete(positionKey(position));
+      if (this.isLoaded(position)) this.updateCell(position, changes);
+      operations += 1;
+    }
+
+    if (this.queueHead >= this.queue.length) {
+      this.queue = [];
+      this.queueHead = 0;
+    } else if (this.queueHead > 1024 && this.queueHead * 2 > this.queue.length) {
+      this.queue = this.queue.slice(this.queueHead);
+      this.queueHead = 0;
+    }
+    return changes;
+  }
+
+  private maxSpread(kind: LiquidKind) {
+    return kind === "water" ? this.options.waterSpread : this.options.lavaSpread;
+  }
+
+  private isInsideWorld(position: LiquidPosition) {
+    return (this.world.minY === undefined || position.y >= this.world.minY)
+      && (this.world.maxY === undefined || position.y <= this.world.maxY);
+  }
+
+  private isLoaded(position: LiquidPosition) {
+    return this.world.isLoaded?.(position) ?? true;
+  }
+
+  private canOccupy(position: LiquidPosition, kind: LiquidKind) {
+    if (!this.isInsideWorld(position) || !this.isLoaded(position) || this.world.isSolid(position)) return false;
+    const existing = this.world.getLiquid(position);
+    if (existing) return existing.kind === kind;
+    return this.world.isReplaceable?.(position) ?? true;
+  }
+
+  private hasSourceSupport(position: LiquidPosition) {
+    const below = offsetPosition(position, [0, -1, 0]);
+    if (this.world.isSolid(below)) return true;
+    const liquid = this.world.getLiquid(below);
+    return Boolean(liquid?.kind === "water" && liquid.source);
+  }
+
+  private canBecomeWaterSource(position: LiquidPosition) {
+    if (!this.hasSourceSupport(position)) return false;
+    let adjacentSources = 0;
+    for (const offset of CARDINAL_OFFSETS) {
+      const neighbor = this.world.getLiquid(offsetPosition(position, offset));
+      if (neighbor?.kind === "water" && neighbor.source && !neighbor.falling) adjacentSources += 1;
+    }
+    return adjacentSources >= 2;
+  }
+
+  private deriveFlow(position: LiquidPosition, kind: LiquidKind): LiquidCell | undefined {
+    if (kind === "water" && this.canBecomeWaterSource(position)) {
+      return { kind: "water", level: 0, source: true, falling: false };
+    }
+
+    const maxSpread = this.maxSpread(kind);
+    const above = this.world.getLiquid(offsetPosition(position, [0, 1, 0]));
+    if (above?.kind === kind) {
+      return { kind, level: Math.min(maxSpread, Math.max(1, above.level)), source: false, falling: true };
+    }
+
+    let bestLevel = Number.POSITIVE_INFINITY;
+    for (const offset of CARDINAL_OFFSETS) {
+      const neighbor = this.world.getLiquid(offsetPosition(position, offset));
+      if (!neighbor || neighbor.kind !== kind) continue;
+      const candidate = neighbor.source ? 1 : neighbor.level + 1;
+      if (candidate < bestLevel) bestLevel = candidate;
+    }
+    if (bestLevel > maxSpread) return undefined;
+    return { kind, level: bestLevel, source: false, falling: false };
+  }
+
+  private write(position: LiquidPosition, next: LiquidCell | undefined, changes: LiquidChange[]) {
+    const previous = this.world.getLiquid(position);
+    const normalized = next ? normalizedCell(next, this.maxSpread(next.kind)) : undefined;
+    if (sameLiquid(previous, normalized)) return false;
+    this.world.setLiquid(position, normalized);
+    changes.push({ position: { ...position }, previous, next: normalized });
+    this.enqueueNeighborhood(position);
+    return true;
+  }
+
+  private flowInto(position: LiquidPosition, liquid: LiquidCell, changes: LiquidChange[]) {
+    if (!this.canOccupy(position, liquid.kind)) return false;
+    const existing = this.world.getLiquid(position);
+    if (existing?.source) return false;
+    const proposed = liquid.kind === "water" && this.canBecomeWaterSource(position)
+      ? { kind: "water" as const, level: 0, source: true, falling: false }
+      : liquid;
+    if (existing && existing.kind === proposed.kind) {
+      const existingStrength = existing.source ? -1 : existing.level;
+      const proposedStrength = proposed.source ? -1 : proposed.level;
+      if (existingStrength < proposedStrength) return false;
+      // Equal-strength proposals must be stable. In particular, a sideways
+      // proposal may not toggle a falling column back to non-falling every
+      // time its horizontal neighbour is processed.
+      if (existingStrength === proposedStrength) return false;
+    }
+    return this.write(position, proposed, changes);
+  }
+
+  private updateCell(position: LiquidPosition, changes: LiquidChange[]) {
+    let cell = this.world.getLiquid(position);
+    if (!cell) return;
+
+    if (!cell.source) {
+      const derived = this.deriveFlow(position, cell.kind);
+      if (!derived) {
+        this.write(position, undefined, changes);
+        return;
+      }
+      if (!sameLiquid(cell, derived)) {
+        this.write(position, derived, changes);
+        cell = derived;
+      }
+    }
+
+    const maxSpread = this.maxSpread(cell.kind);
+    const below = offsetPosition(position, [0, -1, 0]);
+    const canContinueDownward = this.canOccupy(below, cell.kind);
+    this.flowInto(below, {
+      kind: cell.kind,
+      level: Math.min(maxSpread, Math.max(1, cell.level)),
+      source: false,
+      falling: true,
+    }, changes);
+
+    // A falling stream spreads when it meets a floor, rather than producing a
+    // wide curtain at every Y level. Sources still spill over their rim.
+    if (!cell.source && canContinueDownward) return;
+
+    const nextLevel = cell.source ? 1 : cell.level + 1;
+    if (nextLevel > maxSpread) return;
+    for (const offset of CARDINAL_OFFSETS) {
+      const target = offsetPosition(position, offset);
+      this.flowInto(target, { kind: cell.kind, level: nextLevel, source: false, falling: false }, changes);
+    }
+  }
+}
+
+/** Stable [0, 1) animation phase with a small per-column phase offset. */
+export function waterAnimationPhase(timeMilliseconds: number, x = 0, z = 0, cyclesPerSecond = 0.11) {
+  const spatialOffset = ((Math.imul(Math.trunc(x), 73856093) ^ Math.imul(Math.trunc(z), 19349663)) >>> 0) / 4294967296;
+  const phase = timeMilliseconds * 0.001 * cyclesPerSecond + spatialOffset;
+  return ((phase % 1) + 1) % 1;
+}
+
+export function waterSurfaceSample(timeMilliseconds: number, x: number, z: number) {
+  const phase = waterAnimationPhase(timeMilliseconds, x, z);
+  const radians = phase * Math.PI * 2;
+  return {
+    phase,
+    /** Subtle enough not to expose gaps between voxel faces. */
+    heightOffset: Math.sin(radians) * 0.025 + Math.sin(radians * 0.47 + x * 0.31 - z * 0.23) * 0.012,
+    uvOffset: {
+      u: Math.sin(radians * 0.73) * 0.018,
+      v: Math.cos(radians * 0.61) * 0.014,
+    },
+    shimmer: 0.5 + Math.sin(radians * 1.37 + x * 0.12) * 0.12,
+  };
+}
+
+export type SwimmerState = Readonly<{
+  velocityY: number;
+  oxygenSeconds: number;
+  drowningAccumulator: number;
+}>;
+
+export type SwimEnvironment = Readonly<{
+  /** 0 is dry, 1 is fully submerged. */
+  submersion: number;
+  headSubmerged: boolean;
+  /** True when forward motion is meeting the bank. */
+  horizontalCollision: boolean;
+  /** Top of the candidate bank relative to the player's feet. */
+  shoreLedgeHeight?: number;
+  /** Vertical distance from the eyes to the water surface. */
+  surfaceGap?: number;
+}>;
+
+export type SwimInput = Readonly<{
+  jumpHeld: boolean;
+  movingForward: boolean;
+}>;
+
+export type SwimStep = Readonly<{
+  state: SwimmerState;
+  damage: number;
+  shoreBoosted: boolean;
+  horizontalSpeedScale: number;
+}>;
+
+export type SwimRules = Readonly<{
+  maxOxygenSeconds: number;
+  oxygenRecoveryPerSecond: number;
+  drowningIntervalSeconds: number;
+  drowningDamage: number;
+  buoyancyAcceleration: number;
+  swimAcceleration: number;
+  waterDrag: number;
+  shoreExitVelocity: number;
+}>;
+
+export const DEFAULT_SWIM_RULES: SwimRules = Object.freeze({
+  maxOxygenSeconds: 12,
+  oxygenRecoveryPerSecond: 4,
+  drowningIntervalSeconds: 1.5,
+  drowningDamage: 1,
+  buoyancyAcceleration: 8.5,
+  swimAcceleration: 7.5,
+  waterDrag: 2.8,
+  shoreExitVelocity: 7.4,
+});
+
+/** Pure player-water step; the caller applies returned velocity and damage. */
+export function stepSwimming(
+  state: SwimmerState,
+  input: SwimInput,
+  environment: SwimEnvironment,
+  deltaSeconds: number,
+  rules: SwimRules = DEFAULT_SWIM_RULES,
+): SwimStep {
+  const dt = Math.max(0, Math.min(1, deltaSeconds));
+  const submersion = Math.max(0, Math.min(1, environment.submersion));
+  let oxygenSeconds = Math.max(0, Math.min(rules.maxOxygenSeconds, state.oxygenSeconds));
+  let drowningAccumulator = Math.max(0, state.drowningAccumulator);
+  let damage = 0;
+
+  if (environment.headSubmerged) {
+    oxygenSeconds = Math.max(0, oxygenSeconds - dt);
+    if (oxygenSeconds <= 0) {
+      drowningAccumulator += dt;
+      while (drowningAccumulator >= rules.drowningIntervalSeconds) {
+        drowningAccumulator -= rules.drowningIntervalSeconds;
+        damage += rules.drowningDamage;
+      }
+    } else {
+      drowningAccumulator = 0;
+    }
+  } else {
+    oxygenSeconds = Math.min(rules.maxOxygenSeconds, oxygenSeconds + rules.oxygenRecoveryPerSecond * dt);
+    drowningAccumulator = 0;
+  }
+
+  let velocityY = state.velocityY;
+  let shoreBoosted = false;
+  if (submersion > 0) {
+    velocityY *= Math.exp(-rules.waterDrag * submersion * dt);
+    velocityY += rules.buoyancyAcceleration * Math.max(0, submersion - 0.34) * dt;
+    if (input.jumpHeld) velocityY += rules.swimAcceleration * dt;
+
+    const ledgeHeight = environment.shoreLedgeHeight ?? Number.POSITIVE_INFINITY;
+    const surfaceGap = environment.surfaceGap ?? Number.POSITIVE_INFINITY;
+    if (input.jumpHeld && input.movingForward && environment.horizontalCollision && ledgeHeight <= 1.15 && surfaceGap <= 0.9) {
+      velocityY = Math.max(velocityY, rules.shoreExitVelocity);
+      shoreBoosted = true;
+    }
+  }
+
+  return {
+    state: { velocityY, oxygenSeconds, drowningAccumulator },
+    damage,
+    shoreBoosted,
+    horizontalSpeedScale: 1 - submersion * 0.38,
+  };
+}
