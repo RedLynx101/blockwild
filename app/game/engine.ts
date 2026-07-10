@@ -633,6 +633,7 @@ export class VoxelEngine {
   pitch = 0;
   grounded = false;
   locked = false;
+  touchMode = false;
   running = false;
   titleMode = true;
   persistent = false;
@@ -663,6 +664,7 @@ export class VoxelEngine {
   lastHudTime = 0;
   saveTimer = 0;
   toastStage = 0;
+  autoSaveAccumulator = 0;
   particles: { mesh: THREE.Mesh; velocity: THREE.Vector3; life: number }[] = [];
   creatures: { group: THREE.Group; angle: number; timer: number; bob: number }[] = [];
 
@@ -670,6 +672,7 @@ export class VoxelEngine {
     this.canvas = canvas;
     this.events = events;
     this.settings = settings;
+    this.touchMode = window.matchMedia?.("(pointer: coarse)").matches ?? false;
     this.weather = settings.weather;
     this.audio = new SynthAudio(settings);
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: "high-performance" });
@@ -1040,7 +1043,7 @@ export class VoxelEngine {
   }
 
   updateMining(dt: number) {
-    if (!this.mineHeld || !this.target || !this.locked) {
+    if (!this.mineHeld || !this.target || (!this.locked && !this.touchMode)) {
       if (this.miningProgress > 0) {
         this.miningProgress = Math.max(0, this.miningProgress - dt * 3);
       }
@@ -1377,7 +1380,7 @@ export class VoxelEngine {
       this.camera.position.set(Math.sin(t) * 20, 13 + Math.sin(t * 1.8) * 1.2, Math.cos(t) * 20);
       this.camera.lookAt(0, 6, 0);
     } else {
-      if (this.running && this.locked) {
+      if (this.running && (this.locked || this.touchMode)) {
         this.accumulator = Math.min(this.accumulator + dt, PHYSICS_STEP * 4);
         while (this.accumulator >= PHYSICS_STEP) {
           this.updatePlayer(PHYSICS_STEP);
@@ -1401,6 +1404,13 @@ export class VoxelEngine {
       }
     });
     this.renderer.render(this.scene, this.camera);
+    if (this.running && this.persistent) {
+      this.autoSaveAccumulator += dt;
+      if (this.autoSaveAccumulator >= 15) {
+        this.autoSaveAccumulator = 0;
+        this.saveNow(false);
+      }
+    }
     this.emitHud(false, now);
     this.animationFrame = requestAnimationFrame(this.animate);
   };
@@ -1444,8 +1454,13 @@ export class VoxelEngine {
 
   rebuildTerrain() {
     while (this.terrainGroup.children.length) {
-      const child = this.terrainGroup.children.pop();
-      if (child instanceof THREE.Mesh) child.geometry.dispose();
+      const child = this.terrainGroup.children[0];
+      this.terrainGroup.remove(child);
+      if (child instanceof THREE.Mesh) {
+        child.geometry.dispose();
+        const materials = Array.isArray(child.material) ? child.material : [child.material];
+        for (const material of materials) material.dispose();
+      }
     }
     const buckets: Record<Exclude<RenderLayer, "none">, GeometryBucket> = {
       opaque: emptyBucket(),
@@ -1650,12 +1665,12 @@ export class VoxelEngine {
     };
   }
 
-  saveNow() {
+  saveNow(notify = true) {
     if (!this.persistent) return;
     window.clearTimeout(this.saveTimer);
     try {
       window.localStorage.setItem(SAVE_KEY, JSON.stringify(this.serialize()));
-      this.events.onSave();
+      if (notify) this.events.onSave();
     } catch {
       this.events.onToast("This browser could not save the world.");
     }
