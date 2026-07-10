@@ -67,8 +67,10 @@ export type Chunk = {
   group: THREE.Group;
   sections: Map<number, ChunkMeshes>;
   dirty: Set<number>;
+  sectionBlockCounts: Uint16Array;
+  /** Highest full opaque cube in each column, maintained independently from terrain height. */
+  skyTops: Int16Array;
   lightIndices: Set<number>;
-  lastTouched: number;
 };
 
 type ColumnSample = {
@@ -146,6 +148,32 @@ const smoothstep = (edge0: number, edge1: number, value: number) => {
   return t * t * (3 - 2 * t);
 };
 const LIGHT_BLOCKS = new Set<BlockId>([BlockId.Torch, BlockId.Glowstone, BlockId.CrystalBlock]);
+const ATLAS_GRID = 8;
+const ATLAS_PAD = 0.0008;
+const TILE_UVS = Array.from({ length: ATLAS_GRID * ATLAS_GRID }, (_, tile) => {
+  const column = tile % ATLAS_GRID;
+  const row = Math.floor(tile / ATLAS_GRID);
+  return [column / ATLAS_GRID + ATLAS_PAD, 1 - (row + 1) / ATLAS_GRID + ATLAS_PAD, (column + 1) / ATLAS_GRID - ATLAS_PAD, 1 - row / ATLAS_GRID - ATLAS_PAD] as const;
+});
+
+function blocksSky(type: BlockId) {
+  const definition = BLOCKS[type];
+  const fullCube = !definition?.shape || definition.shape === "cube";
+  return Boolean(definition?.solid && fullCube && definition.layer !== "transparent" && definition.layer !== "cutout");
+}
+
+/**
+ * A cheap baked skylight approximation used by chunk vertex colors. Sunlit
+ * surfaces stay bright even when the player is under a roof, while deep cave
+ * faces retain enough albedo for a nearby point light to reveal them.
+ */
+export function environmentSkyShade(cellY: number, skyTopY: number) {
+  const depth = skyTopY - cellY;
+  if (depth < 0) return 1;
+  if (depth <= 1) return 0.78;
+  if (depth <= 4) return 0.58;
+  return 0.38;
+}
 
 export function seedToInt(seed: string) {
   let value = 2166136261;
@@ -422,8 +450,10 @@ export class ChunkWorld {
   generationQueue: Array<{ cx: number; cz: number; distance: number }> = [];
   generationQueued = new Set<string>();
   meshQueue: Array<{ key: string; section: number }> = [];
+  meshQueueHead = 0;
   meshQueued = new Set<string>();
   urgentMeshQueue: Array<{ key: string; section: number }> = [];
+  urgentMeshQueueHead = 0;
   urgentMeshQueued = new Set<string>();
   seedText = "WILDERNESS";
   seed = seedToInt(this.seedText);
@@ -448,7 +478,7 @@ export class ChunkWorld {
   }
 
   setRenderDistance(distance: number) {
-    this.renderDistance = clamp(Math.round(distance), 2, 5);
+    this.renderDistance = clamp(Math.round(distance), 2, 6);
     this.playerChunkX = Number.NaN;
   }
 
@@ -457,8 +487,10 @@ export class ChunkWorld {
     this.generationQueue = [];
     this.generationQueued.clear();
     this.meshQueue = [];
+    this.meshQueueHead = 0;
     this.meshQueued.clear();
     this.urgentMeshQueue = [];
+    this.urgentMeshQueueHead = 0;
     this.urgentMeshQueued.clear();
     this.edits.clear();
     this.seedText = seedText || "WILDERNESS";
@@ -507,17 +539,38 @@ export class ChunkWorld {
       .filter((entry) => !this.chunks.has(chunkKey(entry.cx, entry.cz)) && Math.max(Math.abs(entry.cx - cx), Math.abs(entry.cz - cz)) <= generationRadius)
       .map((entry) => ({ ...entry, distance: Math.max(Math.abs(entry.cx - cx), Math.abs(entry.cz - cz)) }));
     this.generationQueued = new Set(this.generationQueue.map((entry) => chunkKey(entry.cx, entry.cz)));
-    this.meshQueue = this.meshQueue.filter((entry) => {
+    const activeMeshQueued = this.meshQueued;
+    const seenMeshEntries = new Set<string>();
+    this.meshQueue = this.meshQueue.slice(this.meshQueueHead).filter((entry) => {
+      const queueKey = `${entry.key}:${entry.section}`;
+      if (!activeMeshQueued.has(queueKey) || seenMeshEntries.has(queueKey)) return false;
       const chunk = this.chunks.get(entry.key);
       if (!chunk) return false;
-      return Math.max(Math.abs(chunk.cx - cx), Math.abs(chunk.cz - cz)) <= this.renderDistance;
+      if (Math.max(Math.abs(chunk.cx - cx), Math.abs(chunk.cz - cz)) > this.renderDistance) return false;
+      seenMeshEntries.add(queueKey);
+      return true;
+    });
+    this.meshQueueHead = 0;
+    this.meshQueue.sort((a, b) => {
+      const chunkA = this.chunks.get(a.key);
+      const chunkB = this.chunks.get(b.key);
+      const distanceA = chunkA ? Math.max(Math.abs(chunkA.cx - cx), Math.abs(chunkA.cz - cz)) : Infinity;
+      const distanceB = chunkB ? Math.max(Math.abs(chunkB.cx - cx), Math.abs(chunkB.cz - cz)) : Infinity;
+      return distanceA - distanceB;
     });
     this.meshQueued = new Set(this.meshQueue.map((entry) => `${entry.key}:${entry.section}`));
-    this.urgentMeshQueue = this.urgentMeshQueue.filter((entry) => {
+    const activeUrgentMeshQueued = this.urgentMeshQueued;
+    const seenUrgentMeshEntries = new Set<string>();
+    this.urgentMeshQueue = this.urgentMeshQueue.slice(this.urgentMeshQueueHead).filter((entry) => {
+      const queueKey = `${entry.key}:${entry.section}`;
+      if (!activeUrgentMeshQueued.has(queueKey) || seenUrgentMeshEntries.has(queueKey)) return false;
       const chunk = this.chunks.get(entry.key);
       if (!chunk) return false;
-      return Math.max(Math.abs(chunk.cx - cx), Math.abs(chunk.cz - cz)) <= this.renderDistance;
+      if (Math.max(Math.abs(chunk.cx - cx), Math.abs(chunk.cz - cz)) > this.renderDistance) return false;
+      seenUrgentMeshEntries.add(queueKey);
+      return true;
     });
+    this.urgentMeshQueueHead = 0;
     this.urgentMeshQueued = new Set(this.urgentMeshQueue.map((entry) => `${entry.key}:${entry.section}`));
     for (let dx = -generationRadius; dx <= generationRadius; dx += 1) {
       for (let dz = -generationRadius; dz <= generationRadius; dz += 1) {
@@ -530,12 +583,12 @@ export class ChunkWorld {
         } else if (chunk && distance <= this.renderDistance) {
           chunk.group.visible = true;
           for (let section = 0; section < SECTION_COUNT; section += 1) {
-            if (!chunk.sections.has(section) || chunk.dirty.has(section)) this.queueMesh(key, section);
+            if (chunk.dirty.has(section) || (!chunk.sections.has(section) && chunk.sectionBlockCounts[section] > 0)) this.queueMesh(key, section);
           }
         }
       }
     }
-    this.generationQueue.sort((a, b) => a.distance - b.distance);
+    this.generationQueue.sort((a, b) => b.distance - a.distance);
 
     const retainRadius = this.renderDistance + 2;
     for (const [key, chunk] of this.chunks.entries()) {
@@ -546,43 +599,88 @@ export class ChunkWorld {
   }
 
   processGeneration() {
-    const next = this.generationQueue.shift();
+    const next = this.generationQueue.pop();
     if (!next) return;
     const key = chunkKey(next.cx, next.cz);
     this.generationQueued.delete(key);
     if (this.chunks.has(key)) return;
     const chunk = this.generateChunk(next.cx, next.cz);
     const distance = Math.max(Math.abs(next.cx - this.playerChunkX), Math.abs(next.cz - this.playerChunkZ));
-    if (distance <= this.renderDistance) for (let section = 0; section < SECTION_COUNT; section += 1) this.queueMesh(key, section);
+    chunk.group.visible = distance <= this.renderDistance;
+    if (distance <= this.renderDistance) {
+      for (let section = 0; section < SECTION_COUNT; section += 1) {
+        if (chunk.sectionBlockCounts[section] > 0) this.queueMesh(key, section);
+      }
+    }
     for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
       const neighbor = this.chunks.get(chunkKey(next.cx + dx, next.cz + dz));
-      if (!neighbor) continue;
+      if (!neighbor || !neighbor.group.visible) continue;
       for (let section = 0; section < SECTION_COUNT; section += 1) {
-        this.queueMesh(key, section);
-        this.queueMesh(neighbor.key, section);
+        if (neighbor.sectionBlockCounts[section] > 0) this.queueMesh(neighbor.key, section);
       }
     }
     return chunk;
   }
 
   processMesh() {
-    const urgent = this.urgentMeshQueue.shift();
-    if (urgent) this.urgentMeshQueued.delete(`${urgent.key}:${urgent.section}`);
-    const next = urgent ?? this.meshQueue.shift();
-    if (!next) return;
-    if (!urgent) this.meshQueued.delete(`${next.key}:${next.section}`);
-    const chunk = this.chunks.get(next.key);
-    if (!chunk || !chunk.group.visible) return;
-    this.rebuildSection(chunk, next.section);
+    while (true) {
+      const next = this.takeQueuedMesh(true) ?? this.takeQueuedMesh(false);
+      if (!next) return;
+      const chunk = this.chunks.get(next.key);
+      if (!chunk || !chunk.group.visible) continue;
+      this.rebuildSection(chunk, next.section);
+      return;
+    }
+  }
+
+  takeQueuedMesh(urgent: boolean) {
+    let queue = urgent ? this.urgentMeshQueue : this.meshQueue;
+    let head = urgent ? this.urgentMeshQueueHead : this.meshQueueHead;
+    const queued = urgent ? this.urgentMeshQueued : this.meshQueued;
+    while (head < queue.length) {
+      const next = queue[head];
+      head += 1;
+      const queueKey = `${next.key}:${next.section}`;
+      if (!queued.delete(queueKey)) continue;
+      if (head >= 256 && head * 2 >= queue.length) {
+        queue = queue.slice(head);
+        head = 0;
+      }
+      if (urgent) {
+        this.urgentMeshQueue = queue;
+        this.urgentMeshQueueHead = head;
+      } else {
+        this.meshQueue = queue;
+        this.meshQueueHead = head;
+      }
+      return next;
+    }
+    queue = [];
+    if (urgent) {
+      this.urgentMeshQueue = queue;
+      this.urgentMeshQueueHead = 0;
+    } else {
+      this.meshQueue = queue;
+      this.meshQueueHead = 0;
+    }
+    return undefined;
   }
 
   queueMesh(key: string, section: number, urgent = false) {
     if (section < 0 || section >= SECTION_COUNT) return;
-    this.chunks.get(key)?.dirty.add(section);
+    const chunk = this.chunks.get(key);
+    if (!chunk) return;
+    const existing = chunk.sections.get(section);
+    const hasGeometry = existing ? Object.values(existing).some(Boolean) : false;
+    if (chunk.sectionBlockCounts[section] === 0 && !hasGeometry) {
+      chunk.dirty.delete(section);
+      return;
+    }
+    chunk.dirty.add(section);
     const queueKey = `${key}:${section}`;
     if (urgent) {
       if (this.urgentMeshQueued.has(queueKey)) return;
-      if (this.meshQueued.delete(queueKey)) this.meshQueue = this.meshQueue.filter((entry) => `${entry.key}:${entry.section}` !== queueKey);
+      this.meshQueued.delete(queueKey);
       this.urgentMeshQueued.add(queueKey);
       this.urgentMeshQueue.push({ key, section });
       return;
@@ -594,8 +692,8 @@ export class ChunkWorld {
 
   cancelQueuedMesh(key: string, section: number) {
     const queueKey = `${key}:${section}`;
-    if (this.meshQueued.delete(queueKey)) this.meshQueue = this.meshQueue.filter((entry) => `${entry.key}:${entry.section}` !== queueKey);
-    if (this.urgentMeshQueued.delete(queueKey)) this.urgentMeshQueue = this.urgentMeshQueue.filter((entry) => `${entry.key}:${entry.section}` !== queueKey);
+    this.meshQueued.delete(queueKey);
+    this.urgentMeshQueued.delete(queueKey);
   }
 
   sampleColumn(x: number, z: number): ColumnSample {
@@ -654,8 +752,9 @@ export class ChunkWorld {
       group: new THREE.Group(),
       sections: new Map(),
       dirty: new Set(),
+      sectionBlockCounts: new Uint16Array(SECTION_COUNT),
+      skyTops: new Int16Array(CHUNK_SIZE * CHUNK_SIZE).fill(MIN_Y - 1),
       lightIndices: new Set(),
-      lastTouched: this.frame,
     };
     chunk.group.position.set(cx * CHUNK_SIZE, 0, cz * CHUNK_SIZE);
     this.group.add(chunk.group);
@@ -729,7 +828,19 @@ export class ChunkWorld {
     this.generateFeatures(chunk, sample);
     const saved = this.edits.get(key);
     if (saved) for (const [index, type] of saved.entries()) chunk.blocks[index] = type;
-    for (let index = 0; index < chunk.blocks.length; index += 1) if (LIGHT_BLOCKS.has(chunk.blocks[index] as BlockId)) chunk.lightIndices.add(index);
+    const sectionVolume = CHUNK_SIZE * CHUNK_SIZE * SECTION_HEIGHT;
+    for (let section = 0; section < SECTION_COUNT; section += 1) {
+      const end = (section + 1) * sectionVolume;
+      let occupied = 0;
+      for (let index = section * sectionVolume; index < end; index += 1) {
+        const type = chunk.blocks[index] as BlockId;
+        if (type === BlockId.Air) continue;
+        occupied += 1;
+        if (LIGHT_BLOCKS.has(type)) chunk.lightIndices.add(index);
+        if (blocksSky(type)) chunk.skyTops[index % (CHUNK_SIZE * CHUNK_SIZE)] = MIN_Y + Math.floor(index / (CHUNK_SIZE * CHUNK_SIZE));
+      }
+      chunk.sectionBlockCounts[section] = occupied;
+    }
     this.chunks.set(key, chunk);
     return chunk;
   }
@@ -856,12 +967,51 @@ export class ChunkWorld {
     const sz = splitCoordinate(z);
     const chunk = this.chunks.get(chunkKey(sx.chunk, sz.chunk));
     if (!chunk) return undefined;
-    chunk.lastTouched = this.frame;
     return chunk.blocks[blockIndex(sx.local, y, sz.local)] as BlockId;
   }
 
   getBlockForMesh(x: number, y: number, z: number) {
     return this.getBlock(x, y, z) ?? BlockId.Air;
+  }
+
+  writeChunkBlock(chunk: Chunk, index: number, type: BlockId) {
+    const previous = chunk.blocks[index] as BlockId;
+    if (previous === type) return;
+    chunk.blocks[index] = type;
+    const columnArea = CHUNK_SIZE * CHUNK_SIZE;
+    const section = Math.floor(index / (columnArea * SECTION_HEIGHT));
+    const column = index % columnArea;
+    const y = MIN_Y + Math.floor(index / columnArea);
+    if (previous === BlockId.Air && type !== BlockId.Air) chunk.sectionBlockCounts[section] += 1;
+    else if (previous !== BlockId.Air && type === BlockId.Air) chunk.sectionBlockCounts[section] -= 1;
+    if (LIGHT_BLOCKS.has(type)) chunk.lightIndices.add(index);
+    else chunk.lightIndices.delete(index);
+    const previousBlockedSky = blocksSky(previous);
+    const nextBlocksSky = blocksSky(type);
+    const previousSkyTop = chunk.skyTops[column];
+    if (nextBlocksSky && y > previousSkyTop) chunk.skyTops[column] = y;
+    else if (previousBlockedSky && !nextBlocksSky && chunk.skyTops[column] === y) {
+      let nextTop = MIN_Y - 1;
+      for (let scanY = y - 1, scanIndex = index - columnArea; scanY >= MIN_Y; scanY -= 1, scanIndex -= columnArea) {
+        if (!blocksSky(chunk.blocks[scanIndex] as BlockId)) continue;
+        nextTop = scanY;
+        break;
+      }
+      chunk.skyTops[column] = nextTop;
+    }
+    if (chunk.skyTops[column] !== previousSkyTop) {
+      // The edited block itself is still rebuilt synchronously by the caller.
+      // Lower sections update through the normal bounded mesh queue so a roof
+      // can darken an entire column without creating a one-frame hitch.
+      for (let affectedSection = 0; affectedSection <= section; affectedSection += 1) this.queueMesh(chunk.key, affectedSection);
+    }
+  }
+
+  skyTopAt(x: number, z: number) {
+    const sx = splitCoordinate(x);
+    const sz = splitCoordinate(z);
+    const chunk = this.chunks.get(chunkKey(sx.chunk, sz.chunk));
+    return chunk?.skyTops[sx.local + sz.local * CHUNK_SIZE];
   }
 
   setBlock(x: number, y: number, z: number, type: BlockId, record = true, immediate = false) {
@@ -871,9 +1021,7 @@ export class ChunkWorld {
     const key = chunkKey(sx.chunk, sz.chunk);
     const chunk = this.chunks.get(key) ?? this.generateChunk(sx.chunk, sz.chunk);
     const index = blockIndex(sx.local, y, sz.local);
-    chunk.blocks[index] = type;
-    if (LIGHT_BLOCKS.has(type)) chunk.lightIndices.add(index);
-    else chunk.lightIndices.delete(index);
+    this.writeChunkBlock(chunk, index, type);
     if (record) {
       let edits = this.edits.get(key);
       if (!edits) { edits = new Map(); this.edits.set(key, edits); }
@@ -892,9 +1040,7 @@ export class ChunkWorld {
       const key = chunkKey(sx.chunk, sz.chunk);
       const chunk = this.chunks.get(key) ?? this.generateChunk(sx.chunk, sz.chunk);
       const index = blockIndex(sx.local, change.y, sz.local);
-      chunk.blocks[index] = change.type;
-      if (LIGHT_BLOCKS.has(change.type)) chunk.lightIndices.add(index);
-      else chunk.lightIndices.delete(index);
+      this.writeChunkBlock(chunk, index, change.type);
       if (record) {
         let edits = this.edits.get(key);
         if (!edits) { edits = new Map(); this.edits.set(key, edits); }
@@ -961,20 +1107,25 @@ export class ChunkWorld {
   lightSourcesNear(x: number, y: number, z: number, radius = 18) {
     const radiusSquared = radius * radius;
     const sources: Array<{ x: number; y: number; z: number; type: BlockId; distanceSquared: number }> = [];
-    for (const chunk of this.chunks.values()) {
-      const chunkCenterX = chunk.cx * CHUNK_SIZE + CHUNK_SIZE / 2;
-      const chunkCenterZ = chunk.cz * CHUNK_SIZE + CHUNK_SIZE / 2;
-      if (Math.abs(chunkCenterX - x) > radius + CHUNK_SIZE || Math.abs(chunkCenterZ - z) > radius + CHUNK_SIZE) continue;
-      for (const index of chunk.lightIndices) {
-        const layer = Math.floor(index / (CHUNK_SIZE * CHUNK_SIZE));
-        const horizontal = index % (CHUNK_SIZE * CHUNK_SIZE);
-        const localZ = Math.floor(horizontal / CHUNK_SIZE);
-        const localX = horizontal % CHUNK_SIZE;
-        const worldX = chunk.cx * CHUNK_SIZE + localX;
-        const worldY = MIN_Y + layer;
-        const worldZ = chunk.cz * CHUNK_SIZE + localZ;
-        const distanceSquared = (worldX - x) ** 2 + (worldY - y) ** 2 + (worldZ - z) ** 2;
-        if (distanceSquared <= radiusSquared) sources.push({ x: worldX, y: worldY, z: worldZ, type: chunk.blocks[index] as BlockId, distanceSquared });
+    const minChunkX = Math.floor((x - radius) / CHUNK_SIZE);
+    const maxChunkX = Math.floor((x + radius) / CHUNK_SIZE);
+    const minChunkZ = Math.floor((z - radius) / CHUNK_SIZE);
+    const maxChunkZ = Math.floor((z + radius) / CHUNK_SIZE);
+    for (let cx = minChunkX; cx <= maxChunkX; cx += 1) {
+      for (let cz = minChunkZ; cz <= maxChunkZ; cz += 1) {
+        const chunk = this.chunks.get(chunkKey(cx, cz));
+        if (!chunk || chunk.lightIndices.size === 0) continue;
+        for (const index of chunk.lightIndices) {
+          const layer = Math.floor(index / (CHUNK_SIZE * CHUNK_SIZE));
+          const horizontal = index % (CHUNK_SIZE * CHUNK_SIZE);
+          const localZ = Math.floor(horizontal / CHUNK_SIZE);
+          const localX = horizontal % CHUNK_SIZE;
+          const worldX = cx * CHUNK_SIZE + localX;
+          const worldY = MIN_Y + layer;
+          const worldZ = cz * CHUNK_SIZE + localZ;
+          const distanceSquared = (worldX - x) ** 2 + (worldY - y) ** 2 + (worldZ - z) ** 2;
+          if (distanceSquared <= radiusSquared) sources.push({ x: worldX, y: worldY, z: worldZ, type: chunk.blocks[index] as BlockId, distanceSquared });
+        }
       }
     }
     return sources.sort((a, b) => a.distanceSquared - b.distanceSquared);
@@ -985,14 +1136,22 @@ export class ChunkWorld {
     let visible = 0;
     for (const [dx, dz] of samples) {
       let transmission = 1;
-      for (let scanY = Math.floor(y); scanY <= MAX_Y; scanY += 1) {
-        const type = this.getBlock(Math.floor(x + dx), scanY, Math.floor(z + dz));
-        if (type === undefined) continue;
-        const definition = BLOCKS[type];
-        if (!definition?.solid) continue;
-        if (definition.layer === "cutout") transmission *= 0.55;
-        else { transmission = 0; break; }
-        if (transmission < 0.12) break;
+      const startY = Math.floor(y);
+      if (startY < MIN_Y) transmission = 0;
+      else {
+        const sx = splitCoordinate(Math.floor(x + dx));
+        const sz = splitCoordinate(Math.floor(z + dz));
+        const chunk = this.chunks.get(chunkKey(sx.chunk, sz.chunk));
+        if (chunk) {
+          let index = blockIndex(sx.local, startY, sz.local);
+          for (let scanY = startY; scanY <= MAX_Y; scanY += 1, index += CHUNK_SIZE * CHUNK_SIZE) {
+            const definition = BLOCKS[chunk.blocks[index] as BlockId];
+            if (!definition?.solid) continue;
+            if (definition.layer === "cutout") transmission *= 0.55;
+            else { transmission = 0; break; }
+            if (transmission < 0.12) break;
+          }
+        }
       }
       visible += transmission;
     }
@@ -1028,6 +1187,11 @@ export class ChunkWorld {
     if (old) {
       for (const mesh of Object.values(old)) if (mesh) { chunk.group.remove(mesh); mesh.geometry.dispose(); }
     }
+    if (chunk.sectionBlockCounts[section] === 0) {
+      chunk.sections.set(section, {});
+      chunk.dirty.delete(section);
+      return;
+    }
     const buckets: Record<Exclude<RenderLayer, "none">, GeometryBucket> = { opaque: emptyBucket(), cutout: emptyBucket(), transparent: emptyBucket(), emissive: emptyBucket() };
     const startY = MIN_Y + section * SECTION_HEIGHT;
     const endY = Math.min(MAX_Y, startY + SECTION_HEIGHT - 1);
@@ -1044,21 +1208,34 @@ export class ChunkWorld {
       if (localZ < 0) return north ? north.blocks[blockIndex(localX, y, CHUNK_SIZE - 1)] as BlockId : BlockId.Air;
       return south ? south.blocks[blockIndex(localX, y, 0)] as BlockId : BlockId.Air;
     };
-    const grid = 8;
-    const pad = 0.0008;
-    const uvFor = (tile: number) => {
-      const column = tile % grid;
-      const row = Math.floor(tile / grid);
-      return [column / grid + pad, 1 - (row + 1) / grid + pad, (column + 1) / grid - pad, 1 - row / grid - pad] as const;
+    const skyTopAtLocal = (localX: number, localZ: number) => {
+      if (localX >= 0 && localX < CHUNK_SIZE && localZ >= 0 && localZ < CHUNK_SIZE) return chunk.skyTops[localX + localZ * CHUNK_SIZE];
+      if (localX < 0) return west ? west.skyTops[CHUNK_SIZE - 1 + localZ * CHUNK_SIZE] : MIN_Y - 1;
+      if (localX >= CHUNK_SIZE) return east ? east.skyTops[localZ * CHUNK_SIZE] : MIN_Y - 1;
+      if (localZ < 0) return north ? north.skyTops[localX + (CHUNK_SIZE - 1) * CHUNK_SIZE] : MIN_Y - 1;
+      return south ? south.skyTops[localX] : MIN_Y - 1;
     };
-    const addQuad = (bucket: GeometryBucket, corners: Array<[number, number, number]>, normal: [number, number, number], tile: number, shade: number, tint: [number, number, number]) => {
+    const shadeAt = (localX: number, y: number, localZ: number) => environmentSkyShade(y, skyTopAtLocal(localX, localZ));
+    const addQuad = (
+      bucket: GeometryBucket,
+      corners: ReadonlyArray<readonly [number, number, number]>,
+      normal: [number, number, number],
+      tile: number,
+      shade: number,
+      tint: [number, number, number],
+      offsetX = 0,
+      offsetY = 0,
+      offsetZ = 0,
+      topOffset = 0,
+      environment = 1,
+    ) => {
       const base = bucket.positions.length / 3;
       for (const corner of corners) {
-        bucket.positions.push(...corner);
-        bucket.normals.push(...normal);
-        bucket.colors.push(shade * tint[0], shade * tint[1], shade * tint[2]);
+        bucket.positions.push(corner[0] + offsetX, corner[1] + offsetY + (corner[1] > 0 ? topOffset : 0), corner[2] + offsetZ);
+        bucket.normals.push(normal[0], normal[1], normal[2]);
+        bucket.colors.push(shade * environment * tint[0], shade * environment * tint[1], shade * environment * tint[2]);
       }
-      const [u0, v0, u1, v1] = uvFor(tile);
+      const [u0, v0, u1, v1] = TILE_UVS[tile];
       bucket.uvs.push(u0, v0, u0, v1, u1, v1, u1, v0);
       bucket.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
     };
@@ -1073,37 +1250,39 @@ export class ChunkWorld {
         const bucket = buckets[definition.layer];
         if (definition.shape === "cross") {
           const tile = definition.side;
-          addQuad(bucket, [[lx - 0.36, y - 0.5, lz - 0.36], [lx - 0.36, y + 0.5, lz - 0.36], [lx + 0.36, y + 0.5, lz + 0.36], [lx + 0.36, y - 0.5, lz + 0.36]], [0.7, 0, -0.7], tile, 1, tint);
-          addQuad(bucket, [[lx + 0.36, y - 0.5, lz - 0.36], [lx + 0.36, y + 0.5, lz - 0.36], [lx - 0.36, y + 0.5, lz + 0.36], [lx - 0.36, y - 0.5, lz + 0.36]], [-0.7, 0, -0.7], tile, 0.92, tint);
+          const environment = definition.layer === "emissive" ? Math.max(0.82, shadeAt(lx, y, lz)) : shadeAt(lx, y, lz);
+          addQuad(bucket, [[lx - 0.36, y - 0.5, lz - 0.36], [lx - 0.36, y + 0.5, lz - 0.36], [lx + 0.36, y + 0.5, lz + 0.36], [lx + 0.36, y - 0.5, lz + 0.36]], [0.7, 0, -0.7], tile, 1, tint, 0, 0, 0, 0, environment);
+          addQuad(bucket, [[lx + 0.36, y - 0.5, lz - 0.36], [lx + 0.36, y + 0.5, lz - 0.36], [lx - 0.36, y + 0.5, lz + 0.36], [lx - 0.36, y - 0.5, lz + 0.36]], [-0.7, 0, -0.7], tile, 0.92, tint, 0, 0, 0, 0, environment);
           continue;
         }
         if (definition.shape === "chest") {
           const x0 = lx - 0.44; const x1 = lx + 0.44;
           const y0 = y - 0.5; const y1 = y + 0.29;
           const z0 = lz - 0.44; const z1 = lz + 0.44;
-          addQuad(bucket, [[x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]], [1, 0, 0], definition.bottom, 0.82, tint);
-          addQuad(bucket, [[x0, y0, z1], [x0, y1, z1], [x0, y1, z0], [x0, y0, z0]], [-1, 0, 0], definition.bottom, 0.72, tint);
-          addQuad(bucket, [[x0, y1, z0], [x0, y1, z1], [x1, y1, z1], [x1, y1, z0]], [0, 1, 0], definition.top, 1, tint);
-          addQuad(bucket, [[x0, y0, z1], [x0, y0, z0], [x1, y0, z0], [x1, y0, z1]], [0, -1, 0], definition.bottom, 0.55, tint);
-          addQuad(bucket, [[x1, y0, z1], [x1, y1, z1], [x0, y1, z1], [x0, y0, z1]], [0, 0, 1], definition.side, 0.9, tint);
-          addQuad(bucket, [[x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [x1, y0, z0]], [0, 0, -1], definition.bottom, 0.76, tint);
+          addQuad(bucket, [[x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]], [1, 0, 0], definition.bottom, 0.82, tint, 0, 0, 0, 0, shadeAt(lx + 1, y, lz));
+          addQuad(bucket, [[x0, y0, z1], [x0, y1, z1], [x0, y1, z0], [x0, y0, z0]], [-1, 0, 0], definition.bottom, 0.72, tint, 0, 0, 0, 0, shadeAt(lx - 1, y, lz));
+          addQuad(bucket, [[x0, y1, z0], [x0, y1, z1], [x1, y1, z1], [x1, y1, z0]], [0, 1, 0], definition.top, 1, tint, 0, 0, 0, 0, shadeAt(lx, y + 1, lz));
+          addQuad(bucket, [[x0, y0, z1], [x0, y0, z0], [x1, y0, z0], [x1, y0, z1]], [0, -1, 0], definition.bottom, 0.55, tint, 0, 0, 0, 0, shadeAt(lx, y - 1, lz));
+          addQuad(bucket, [[x1, y0, z1], [x1, y1, z1], [x0, y1, z1], [x0, y0, z1]], [0, 0, 1], definition.side, 0.9, tint, 0, 0, 0, 0, shadeAt(lx, y, lz + 1));
+          addQuad(bucket, [[x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [x1, y0, z0]], [0, 0, -1], definition.bottom, 0.76, tint, 0, 0, 0, 0, shadeAt(lx, y, lz - 1));
           continue;
         }
         if (definition.shape === "door") {
           const tile = definition.side;
+          const environment = shadeAt(lx, y, lz);
           const open = [BlockId.DoorOpenLower, BlockId.DoorOpenUpper, BlockId.DoorXOpenLower, BlockId.DoorXOpenUpper].includes(type);
           const xAxis = [BlockId.DoorXClosedLower, BlockId.DoorXClosedUpper, BlockId.DoorXOpenLower, BlockId.DoorXOpenUpper].includes(type);
           const planeAlongZ = xAxis !== open;
           if (planeAlongZ) {
             const x0 = lx + (open ? -0.5 : -0.08);
             const x1 = lx + (open ? -0.34 : 0.08);
-            addQuad(bucket, [[x0, y - 0.5, lz - 0.48], [x0, y + 0.5, lz - 0.48], [x0, y + 0.5, lz + 0.48], [x0, y - 0.5, lz + 0.48]], [-1, 0, 0], tile, 0.88, tint);
-            addQuad(bucket, [[x1, y - 0.5, lz + 0.48], [x1, y + 0.5, lz + 0.48], [x1, y + 0.5, lz - 0.48], [x1, y - 0.5, lz - 0.48]], [1, 0, 0], tile, 0.78, tint);
+            addQuad(bucket, [[x0, y - 0.5, lz - 0.48], [x0, y + 0.5, lz - 0.48], [x0, y + 0.5, lz + 0.48], [x0, y - 0.5, lz + 0.48]], [-1, 0, 0], tile, 0.88, tint, 0, 0, 0, 0, environment);
+            addQuad(bucket, [[x1, y - 0.5, lz + 0.48], [x1, y + 0.5, lz + 0.48], [x1, y + 0.5, lz - 0.48], [x1, y - 0.5, lz - 0.48]], [1, 0, 0], tile, 0.78, tint, 0, 0, 0, 0, environment);
           } else {
             const z0 = lz + (open ? -0.5 : -0.08);
             const z1 = lz + (open ? -0.34 : 0.08);
-            addQuad(bucket, [[lx + 0.48, y - 0.5, z0], [lx + 0.48, y + 0.5, z0], [lx - 0.48, y + 0.5, z0], [lx - 0.48, y - 0.5, z0]], [0, 0, -1], tile, 0.9, tint);
-            addQuad(bucket, [[lx - 0.48, y - 0.5, z1], [lx - 0.48, y + 0.5, z1], [lx + 0.48, y + 0.5, z1], [lx + 0.48, y - 0.5, z1]], [0, 0, 1], tile, 0.8, tint);
+            addQuad(bucket, [[lx + 0.48, y - 0.5, z0], [lx + 0.48, y + 0.5, z0], [lx - 0.48, y + 0.5, z0], [lx - 0.48, y - 0.5, z0]], [0, 0, -1], tile, 0.9, tint, 0, 0, 0, 0, environment);
+            addQuad(bucket, [[lx - 0.48, y - 0.5, z1], [lx - 0.48, y + 0.5, z1], [lx + 0.48, y + 0.5, z1], [lx + 0.48, y - 0.5, z1]], [0, 0, 1], tile, 0.8, tint, 0, 0, 0, 0, environment);
           }
           continue;
         }
@@ -1113,8 +1292,10 @@ export class ChunkWorld {
           if (!this.faceVisible(type, neighbor)) continue;
           const tile = dy > 0 ? definition.top : dy < 0 ? definition.bottom : definition.side;
           const waterDrop = type === BlockId.Water || type === BlockId.Lava ? -0.045 : 0;
-          const corners = face.corners.map(([x, cy, z]) => [lx + x, y + (cy > 0 && waterDrop ? cy - 0.09 : cy) + waterDrop, lz + z] as [number, number, number]);
-          addQuad(bucket, corners, face.direction, tile, face.shade, tint);
+          const environment = definition.layer === "emissive"
+            ? Math.max(0.82, shadeAt(lx + dx, y + dy, lz + dz))
+            : shadeAt(lx + dx, y + dy, lz + dz);
+          addQuad(bucket, face.corners, face.direction, tile, face.shade, tint, lx, y + waterDrop, lz, waterDrop ? -0.09 : 0, environment);
         }
       }
     }
@@ -1129,7 +1310,11 @@ export class ChunkWorld {
       geometry.setAttribute("color", new THREE.Float32BufferAttribute(bucket.colors, 3));
       geometry.setAttribute("uv", new THREE.Float32BufferAttribute(bucket.uvs, 2));
       geometry.setIndex(bucket.indices);
-      geometry.computeBoundingSphere();
+      const centerY = (startY + endY) / 2;
+      geometry.boundingSphere = new THREE.Sphere(
+        new THREE.Vector3((CHUNK_SIZE - 1) / 2, centerY, (CHUNK_SIZE - 1) / 2),
+        Math.sqrt(2 * (CHUNK_SIZE / 2) ** 2 + ((endY - startY + 1) / 2) ** 2),
+      );
       const mesh = new THREE.Mesh(geometry, this.materials[layer]);
       mesh.renderOrder = layer === "transparent" ? 3 : layer === "emissive" ? 2 : layer === "cutout" ? 1 : 0;
       chunk.group.add(mesh);
@@ -1142,6 +1327,11 @@ export class ChunkWorld {
   unloadChunk(key: string) {
     const chunk = this.chunks.get(key);
     if (!chunk) return;
+    for (let section = 0; section < SECTION_COUNT; section += 1) {
+      const queueKey = `${key}:${section}`;
+      this.meshQueued.delete(queueKey);
+      this.urgentMeshQueued.delete(queueKey);
+    }
     for (const section of chunk.sections.values()) for (const mesh of Object.values(section)) if (mesh) mesh.geometry.dispose();
     this.group.remove(chunk.group);
     this.chunks.delete(key);
@@ -1162,7 +1352,7 @@ export class ChunkWorld {
   }
 
   get queuedCount() {
-    return this.generationQueue.length + this.meshQueue.length + this.urgentMeshQueue.length;
+    return this.generationQueue.length + this.meshQueued.size + this.urgentMeshQueued.size;
   }
 
   dispose() {

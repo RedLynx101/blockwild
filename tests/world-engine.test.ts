@@ -3,9 +3,9 @@ import test from "node:test";
 import * as THREE from "three";
 import { BlockId, ITEMS, Item, type InventorySlot } from "../app/game/data.ts";
 import { VoxelEngine, migrateSavedWorld, restoreChestStorage, type WorldSave } from "../app/game/engine.ts";
-import { ChunkWorld, BIOME_NAMES, MIN_Y, SECTION_HEIGHT, WORLD_HEIGHT, blockIndex, chunkKey, splitCoordinate } from "../app/game/world.ts";
+import { ChunkWorld, BIOME_NAMES, MAX_Y, MIN_Y, SECTION_HEIGHT, WORLD_HEIGHT, blockIndex, chunkKey, environmentSkyShade, splitCoordinate } from "../app/game/world.ts";
 import { MOB_DEFS, MOB_ORDER } from "../app/game/mobs.ts";
-import { createHeldToolSpec, createZombieSpec } from "../app/game/model-specs.ts";
+import { createHeldToolSpec, createRidgebackSpec, createZombieSpec, INSPECTOR_MODEL_SPECS, RIDGEBACK_GROUND_LIFT } from "../app/game/model-specs.ts";
 
 test("chunk coordinates remain correct across negative boundaries", () => {
   assert.equal(MIN_Y, -64);
@@ -102,6 +102,47 @@ test("zombie data, bestiary registration, and shared model orientation stay cohe
   assert.ok(eyes.every((eye) => eye.position[2] < head.position[2]), "eyes must sit on the declared local -Z front");
 });
 
+test("Ridgeback production and inspection models put every hoof exactly on the block top", () => {
+  const spec = createRidgebackSpec();
+  assert.equal(INSPECTOR_MODEL_SPECS.some((candidate) => candidate.id === "ridgeback"), true);
+  assert.equal(spec.groundY, 0);
+  assert.equal(RIDGEBACK_GROUND_LIFT, 0.66);
+
+  const boundsFor = (id?: string) => {
+    const boxes = id ? spec.boxes.filter((modelBox) => modelBox.id === id) : spec.boxes;
+    const points = boxes.flatMap((modelBox) => {
+      const half = modelBox.size.map((value) => value / 2) as [number, number, number];
+      const rotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(...(modelBox.rotation ?? [0, 0, 0]), "XYZ"));
+      const position = new THREE.Vector3(...modelBox.position);
+      return [-1, 1].flatMap((x) => [-1, 1].flatMap((y) => [-1, 1].map((z) => (
+        new THREE.Vector3(x * half[0], y * half[1], z * half[2]).applyQuaternion(rotation).add(position)
+      ))));
+    });
+    return new THREE.Box3().setFromPoints(points);
+  };
+
+  assert.ok(Math.abs(boundsFor().min.y) < 1e-9, "the canonical Ridgeback must not penetrate its local ground plane");
+  for (const contactId of spec.groundContactBoxIds ?? []) {
+    assert.ok(Math.abs(boundsFor(contactId).min.y) < 1e-9, `${contactId} must touch local ground Y=0`);
+  }
+
+  // findWalkableY reports the supporting solid block's center. With normalized
+  // hooves at local Y=0, a +0.5 group offset lands them on its top face.
+  assert.equal(MOB_DEFS.ridgeback.footOffset + boundsFor().min.y, 0.5);
+
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  const visual = engine.createMobVisual("ridgeback", 9001);
+  visual.group.updateMatrixWorld(true);
+  const productionBounds = new THREE.Box3().setFromObject(visual.visual);
+  assert.ok(Math.abs(productionBounds.min.y) < 1e-6, `production Ridgeback hoof plane was ${productionBounds.min.y}`);
+  visual.group.traverse((object) => {
+    if (!(object instanceof THREE.Mesh)) return;
+    object.geometry.dispose();
+    const materials = Array.isArray(object.material) ? object.material : [object.material];
+    for (const material of materials) material.dispose();
+  });
+});
+
 test("held-tool production specs form connected silhouettes without floating heads", () => {
   for (const kind of ["pickaxe", "axe", "shovel", "sword"] as const) {
     const spec = createHeldToolSpec(kind, "#888");
@@ -144,6 +185,101 @@ test("streaming queues re-center after a long-distance jump", () => {
   assert.ok(world.generationQueue.length > 0);
   assert.ok(world.generationQueue.every((entry) => Math.max(Math.abs(entry.cx - 100), Math.abs(entry.cz + 100)) <= 3));
   assert.equal(world.generationQueued.size, world.generationQueue.length);
+  world.dispose();
+});
+
+test("streaming skips empty sections, lazily cancels stale mesh work, and keeps the generation halo hidden", () => {
+  const world = new ChunkWorld();
+  world.reset("STREAMING-BUDGETS");
+  world.setRenderDistance(6);
+  assert.equal(world.renderDistance, 6);
+  world.setRenderDistance(2);
+  world.playerChunkX = 0;
+  world.playerChunkZ = 0;
+
+  const chunk = world.generateChunk(0, 0);
+  const emptySection = chunk.sectionBlockCounts.findIndex((count) => count === 0);
+  const occupiedSection = chunk.sectionBlockCounts.findIndex((count) => count > 0);
+  assert.ok(emptySection >= 0, "the upper air sections should be tracked without scanning their 4,096 voxels");
+  assert.ok(occupiedSection >= 0);
+  world.queueMesh(chunk.key, emptySection);
+  assert.equal(world.queuedCount, 0, "an untouched empty section should not enter the mesh queue");
+
+  for (let section = 0; section < WORLD_HEIGHT / SECTION_HEIGHT; section += 1) world.rebuildSection(chunk, section);
+  let rebuilds = 0;
+  const rebuildSection = world.rebuildSection.bind(world);
+  world.rebuildSection = ((target, section) => { rebuilds += 1; rebuildSection(target, section); }) as typeof world.rebuildSection;
+  world.queueMesh(chunk.key, occupiedSection);
+  world.cancelQueuedMesh(chunk.key, occupiedSection);
+  chunk.dirty.delete(occupiedSection); // mirrors the immediate rebuild that consumes a canceled edit
+  assert.equal(world.queuedCount, 0, "canceling an edit should be O(1) from the active queue's perspective");
+  world.scheduleAround(0, 0, true);
+  assert.equal(world.meshQueued.size + world.urgentMeshQueued.size, 0, "re-centering must not resurrect a lazily canceled entry");
+  world.generationQueue = [];
+  world.generationQueued.clear();
+  world.queueMesh(chunk.key, occupiedSection, true);
+  world.processMesh();
+  world.processMesh();
+  assert.equal(rebuilds, 1, "the lazily canceled normal entry must not cause a duplicate rebuild");
+
+  const haloKey = chunkKey(3, 0);
+  world.generationQueue.push({ cx: 3, cz: 0, distance: 3 });
+  world.generationQueued.add(haloKey);
+  world.processGeneration();
+  const halo = world.chunks.get(haloKey);
+  assert.equal(halo?.group.visible, false);
+  assert.equal([...world.meshQueued].some((entry) => entry.startsWith(`${haloKey}:`)), false, "prefetched halo chunks should not consume mesh time");
+  world.dispose();
+});
+
+test("section occupancy and nearby-light indices stay incremental as blocks change", () => {
+  const world = new ChunkWorld();
+  world.reset("SPATIAL-INDICES");
+  const chunk = world.generateChunk(0, 0);
+  let airIndex = -1;
+  for (let index = chunk.blocks.length - 1; index >= 0; index -= 1) {
+    if (chunk.blocks[index] === BlockId.Air) { airIndex = index; break; }
+  }
+  assert.ok(airIndex >= 0);
+  const layer = Math.floor(airIndex / (16 * 16));
+  const horizontal = airIndex % (16 * 16);
+  const localZ = Math.floor(horizontal / 16);
+  const localX = horizontal % 16;
+  const y = MIN_Y + layer;
+  const section = Math.floor(layer / SECTION_HEIGHT);
+  const before = chunk.sectionBlockCounts[section];
+  world.setBlock(localX, y, localZ, BlockId.Torch, false, false);
+  assert.equal(chunk.sectionBlockCounts[section], before + 1);
+  assert.deepEqual(world.lightSourcesNear(localX, y, localZ, 1).map((source) => source.type), [BlockId.Torch]);
+  world.setBlock(localX, y, localZ, BlockId.Air, false, true);
+  assert.equal(chunk.sectionBlockCounts[section], before);
+  assert.equal(world.lightSourcesNear(localX, y, localZ, 1).length, 0);
+
+  // Nearby light lookup addresses only intersecting chunk keys; it must not scan
+  // every retained chunk as render distance grows.
+  const originalValues = world.chunks.values.bind(world.chunks);
+  Object.defineProperty(world.chunks, "values", { configurable: true, value: () => { throw new Error("full chunk scan"); } });
+  assert.doesNotThrow(() => world.lightSourcesNear(0, MAX_Y, 0, 20));
+  Object.defineProperty(world.chunks, "values", { configurable: true, value: originalValues });
+  world.dispose();
+});
+
+test("world-space skylight stays attached to exposed and roofed columns", () => {
+  assert.equal(environmentSkyShade(12, 4), 1, "an exposed face should keep full daylight even if the player is elsewhere");
+  assert.equal(environmentSkyShade(3, 12), 0.38, "a face deep below an opaque roof should remain dark");
+
+  const world = new ChunkWorld();
+  world.reset("SKYLIGHT-COLUMNS");
+  const chunk = world.generateChunk(0, 0);
+  const x = 3;
+  const z = 4;
+  const originalTop = world.skyTopAt(x, z)!;
+  const roofY = Math.min(MAX_Y, originalTop + 8);
+  world.setBlock(x, roofY, z, BlockId.Stone, false, false);
+  assert.equal(world.skyTopAt(x, z), roofY, "a placed roof must darken the column beneath it");
+  world.setBlock(x, roofY, z, BlockId.Air, false, false);
+  assert.equal(world.skyTopAt(x, z), originalTop, "breaking the roof must restore the exposed column immediately");
+  assert.equal(chunk.skyTops[x + z * 16], originalTop);
   world.dispose();
 });
 

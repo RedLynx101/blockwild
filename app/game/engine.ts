@@ -29,7 +29,7 @@ import {
   type ChunkEditSave,
 } from "./world";
 import { MOB_DEFS, MOB_ORDER, type MobDefinition, type MobKind } from "./mobs";
-import { createHeldToolSpec, createZombieSpec } from "./model-specs";
+import { RIDGEBACK_GROUND_LIFT, createHeldToolSpec, createZombieSpec } from "./model-specs";
 
 export { BLOCKS, CREATIVE_BLOCKS, ITEMS, Item, RECIPES, BlockId, BIOME_NAMES, MOB_DEFS, MOB_ORDER, type GameMode, type InventorySlot, type ItemCode, type Recipe, type EquipmentSlot, type MobKind };
 
@@ -214,6 +214,22 @@ type Particle = {
   life: number;
 };
 
+export type EnvironmentLightSource = {
+  x: number;
+  y: number;
+  z: number;
+  type: BlockId;
+  distanceSquared: number;
+};
+
+type EnvironmentLightCandidate = EnvironmentLightSource & {
+  priority: number;
+  selected: boolean;
+  assigned: boolean;
+};
+
+const compareEnvironmentLightCandidates = (a: EnvironmentLightCandidate, b: EnvironmentLightCandidate) => a.priority - b.priority;
+
 const PLAYER_HEIGHT = 1.8;
 const PLAYER_RADIUS = 0.3;
 const PHYSICS_STEP = 1 / 60;
@@ -222,6 +238,52 @@ const CRAFT_POSITIONS_2 = [0, 1, 3, 4];
 const MAIN_THEN_HOTBAR = [...Array.from({ length: 27 }, (_, index) => index + 9), ...Array.from({ length: 9 }, (_, index) => index)];
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+function environmentLightDistance(type: BlockId) {
+  return type === BlockId.Torch ? 13 : 15;
+}
+
+function isEnvironmentLightBlock(type: BlockId) {
+  return type === BlockId.Torch || type === BlockId.Glowstone || type === BlockId.CrystalBlock;
+}
+
+/**
+ * Scores the part of a world-space light volume that can illuminate the view.
+ * This intentionally measures distance from the view ray rather than distance
+ * from the player, so a farther lamp lighting terrain ahead outranks an
+ * irrelevant lamp beside or behind the camera. The frustum intersection is
+ * handled separately by the engine with the source's full influence sphere.
+ */
+export function environmentLightPriority(
+  source: Pick<EnvironmentLightSource, "x" | "y" | "z" | "type">,
+  cameraPosition: Pick<THREE.Vector3, "x" | "y" | "z">,
+  cameraForward: Pick<THREE.Vector3, "x" | "y" | "z">,
+  previouslyAssigned = false,
+) {
+  const dx = source.x - cameraPosition.x;
+  const dy = source.y - cameraPosition.y;
+  const dz = source.z - cameraPosition.z;
+  const forwardDistance = dx * cameraForward.x + dy * cameraForward.y + dz * cameraForward.z;
+  const distanceSquared = dx * dx + dy * dy + dz * dz;
+  const radialDistance = Math.sqrt(Math.max(0, distanceSquared - forwardDistance * forwardDistance));
+  const radius = environmentLightDistance(source.type);
+  const radialGap = Math.max(0, radialDistance - radius * 0.72);
+  const behindGap = Math.max(0, -forwardDistance - radius);
+  const depthTieBreak = Math.max(0, forwardDistance - radius) * 0.018;
+  const sourceBias = source.type === BlockId.CrystalBlock ? -1.25 : source.type === BlockId.Glowstone ? -0.7 : 0;
+  return radialGap * radialGap * 1.35 + behindGap * behindGap * 4 + depthTieBreak + sourceBias - (previouslyAssigned ? 9 : 0);
+}
+
+/** Bounded dynamic-resolution governor; chunk distance and simulation stay intact. */
+export function nextAdaptivePixelRatio(current: number, nativeMaximum: number, averageFrameMs: number, touchMode: boolean) {
+  const minimum = Math.min(nativeMaximum, touchMode ? 0.72 : 0.82);
+  const resolved = averageFrameMs > 22.5
+    ? clamp(current - 0.1, minimum, nativeMaximum)
+    : averageFrameMs < 15.2
+      ? clamp(current + 0.05, minimum, nativeMaximum)
+      : clamp(current, minimum, nativeMaximum);
+  return Math.round(resolved * 100) / 100;
+}
 
 function blockKey(x: number, y: number, z: number) {
   return `${x},${y},${z}`;
@@ -279,7 +341,7 @@ export function readSettings(): GameSettings {
       sensitivity: clamp(Number(parsed.sensitivity ?? fallback.sensitivity), 0.0008, 0.005),
       fov: clamp(Number(parsed.fov ?? fallback.fov), 55, 100),
       weather: parsed.weather === "rain" ? "rain" : "clear",
-      renderDistance: clamp(Math.round(Number(parsed.renderDistance ?? fallback.renderDistance)), 2, 5),
+      renderDistance: clamp(Math.round(Number(parsed.renderDistance ?? fallback.renderDistance)), 2, 6),
     };
   } catch {
     return fallback;
@@ -329,13 +391,32 @@ export class VoxelEngine {
   hemisphere: THREE.HemisphereLight;
   caveLight: THREE.PointLight;
   placedLightPool: THREE.PointLight[] = [];
+  environmentLightCandidates: EnvironmentLightCandidate[] = [];
+  environmentLightCandidateCache: EnvironmentLightCandidate[] = [];
+  environmentLightSelection: EnvironmentLightCandidate[] = [];
+  lightFrustum = new THREE.Frustum();
+  lightViewProjection = new THREE.Matrix4();
+  lightInfluenceSphere = new THREE.Sphere();
+  lightForward = new THREE.Vector3(0, 0, -1);
+  lightSourcePosition = new THREE.Vector3();
+  heldLightOffset = new THREE.Vector3(0.34, -0.24, -0.62);
+  heldLightWorldOffset = new THREE.Vector3();
   lightRefreshTimer = 0;
   skyVisibility = 1;
   skyVisibilityTarget = 1;
+  skyColor = new THREE.Color();
+  daylightSkyColor = new THREE.Color("#78b9ed");
+  nightSkyColor = new THREE.Color("#020611");
+  dawnSkyColor = new THREE.Color();
+  celestialDirection = new THREE.Vector3();
   audio: SynthAudio;
   settings: GameSettings;
   resizeObserver: ResizeObserver | null = null;
   keyboardEscapeLocked = false;
+  nativePixelRatio = 1;
+  renderPixelRatio = 1;
+  averageFrameMs = 16.7;
+  performanceSampleTime = 0;
 
   position = new THREE.Vector3(0, 48, 0);
   spawn = new THREE.Vector3(0, 48, 0);
@@ -427,7 +508,9 @@ export class VoxelEngine {
     this.touchMode = window.matchMedia?.("(pointer: coarse)").matches ?? false;
     this.audio = new SynthAudio(settings);
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: "high-performance" });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.touchMode ? 1.2 : 1.5));
+    this.nativePixelRatio = Math.min(window.devicePixelRatio || 1, this.touchMode ? 1.2 : 1.5);
+    this.renderPixelRatio = this.nativePixelRatio;
+    this.renderer.setPixelRatio(this.renderPixelRatio);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.camera = new THREE.PerspectiveCamera(settings.fov, 1, 0.05, 256);
     this.camera.rotation.order = "YXZ";
@@ -514,6 +597,20 @@ export class VoxelEngine {
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
   };
+
+  updateAdaptiveResolution(rawDt: number) {
+    if (!Number.isFinite(rawDt) || rawDt <= 0 || rawDt > 0.2 || document.hidden) return;
+    this.averageFrameMs += (rawDt * 1000 - this.averageFrameMs) * 0.045;
+    this.performanceSampleTime += rawDt;
+    if (this.performanceSampleTime < 1.2) return;
+    this.performanceSampleTime = 0;
+    if (!this.running || this.paused) return;
+    const nextRatio = nextAdaptivePixelRatio(this.renderPixelRatio, this.nativePixelRatio, this.averageFrameMs, this.touchMode);
+    if (Math.abs(nextRatio - this.renderPixelRatio) < 0.025) return;
+    this.renderPixelRatio = nextRatio;
+    this.renderer.setPixelRatio(nextRatio);
+    this.resize();
+  }
 
   preventContextMenu = (event: Event) => event.preventDefault();
 
@@ -1687,6 +1784,7 @@ export class VoxelEngine {
     if (type === BlockId.Chest) this.chests.set(blockKey(x, y, z), Array.from({ length: 27 }, () => null));
     if (type === BlockId.Furnace) this.furnaces.set(blockKey(x, y, z), blankFurnace());
     if (type === BlockId.WildwoodSapling) this.saplings.set(blockKey(x, y, z), Date.now() + 75_000 + Math.random() * 75_000);
+    if (isEnvironmentLightBlock(type)) this.lightRefreshTimer = 0;
     if (this.mode === "survival") {
       slot.count -= 1;
       if (slot.count <= 0) this.inventory[this.selected] = null;
@@ -1851,6 +1949,7 @@ export class VoxelEngine {
       this.damageSelectedTool();
     }
     const key = blockKey(x, y, z);
+    if (isEnvironmentLightBlock(type)) this.lightRefreshTimer = 0;
     if (type === BlockId.WildwoodSapling) this.saplings.delete(key);
     if (this.isDoor(type) && this.mode === "survival") this.spawnDrop(Item.WildwoodDoor, 1, new THREE.Vector3(x, y + 0.3, z));
     if (type === BlockId.Furnace) {
@@ -2229,6 +2328,7 @@ export class VoxelEngine {
       for (const [px, pz, phase] of [[-0.2, -0.05, 0], [0.2, -0.05, Math.PI]] as Array<[number, number, number]>) { const leg = pivotBox([0.16, 0.3, 0.16], darkMaterial, [px, -0.1, pz], [0, -0.15, 0], "legs"); leg.userData.phase = phase; }
       for (const [px, py, pz, scale] of [[-0.18, 0.5, -0.03, 0.24], [0.12, 0.55, 0.02, 0.28], [0, 0.48, -0.18, 0.2]] as Array<[number, number, number, number]>) add(visual, [scale, 0.08, scale * 1.35], accentMaterial, [px, py, pz]);
     } else if (kind === "ridgeback") {
+      visual.position.y = RIDGEBACK_GROUND_LIFT;
       add(visual, [0.88, 0.62, 1.32], bodyMaterial, [0, 0.08, 0.05], "body");
       add(visual, [0.64, 0.5, 0.62], accentMaterial, [0, 0.1, -0.8], "head");
       add(visual, [0.48, 0.3, 0.38], darkMaterial, [0, -0.03, -1.18]);
@@ -2739,36 +2839,134 @@ export class VoxelEngine {
     this.mobRemains = [];
   }
 
+  environmentLightWasAssigned(source: EnvironmentLightSource) {
+    for (const light of this.placedLightPool) {
+      if (light.userData.sourceX === source.x && light.userData.sourceY === source.y && light.userData.sourceZ === source.z) return true;
+    }
+    return false;
+  }
+
+  configureEnvironmentLight(light: THREE.PointLight, source: EnvironmentLightCandidate) {
+    const crystal = source.type === BlockId.CrystalBlock;
+    light.color.setHex(crystal ? 0x69e8ef : source.type === BlockId.Glowstone ? 0xffd66b : 0xffb45e);
+    light.position.set(source.x, source.y + (source.type === BlockId.Torch ? 0.35 : 0), source.z);
+    light.distance = environmentLightDistance(source.type);
+    light.userData.targetIntensity = source.type === BlockId.Torch ? 1.75 : crystal ? 1.05 : 1.45;
+    light.userData.phase = source.x * 0.73 + source.y * 0.37 + source.z * 0.19;
+    light.userData.sourceX = source.x;
+    light.userData.sourceY = source.y;
+    light.userData.sourceZ = source.z;
+    light.userData.refreshAssigned = true;
+    source.assigned = true;
+  }
+
+  refreshEnvironmentLights() {
+    this.camera.updateMatrixWorld();
+    this.camera.getWorldDirection(this.lightForward);
+    this.lightViewProjection.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
+    this.lightFrustum.setFromProjectionMatrix(this.lightViewProjection);
+
+    // Query the entire rendered environment plus one light radius. Selection is
+    // then based on whether each light's influence volume intersects the view,
+    // not on how close its source block happens to be to the player.
+    const queryRadius = Math.min(this.camera.far, this.settings.renderDistance * 16 + 18);
+    const sources = this.world.lightSourcesNear(this.camera.position.x, this.camera.position.y, this.camera.position.z, queryRadius);
+    this.environmentLightSelection.length = 0;
+    while (this.environmentLightCandidates.length) this.environmentLightCandidateCache.push(this.environmentLightCandidates.pop()!);
+    for (const source of sources) {
+      const lightDistance = environmentLightDistance(source.type);
+      this.lightSourcePosition.set(source.x, source.y + (source.type === BlockId.Torch ? 0.35 : 0), source.z);
+      this.lightInfluenceSphere.center.copy(this.lightSourcePosition);
+      this.lightInfluenceSphere.radius = lightDistance;
+      if (!this.lightFrustum.intersectsSphere(this.lightInfluenceSphere)) continue;
+      let candidate = this.environmentLightCandidateCache.pop();
+      if (!candidate) {
+        candidate = { x: 0, y: 0, z: 0, type: BlockId.Torch, distanceSquared: 0, priority: 0, selected: false, assigned: false };
+      }
+      candidate.x = source.x;
+      candidate.y = source.y;
+      candidate.z = source.z;
+      candidate.type = source.type;
+      candidate.distanceSquared = source.distanceSquared;
+      candidate.priority = environmentLightPriority(source, this.camera.position, this.lightForward, this.environmentLightWasAssigned(source));
+      candidate.selected = false;
+      candidate.assigned = false;
+      this.environmentLightCandidates.push(candidate);
+    }
+    this.environmentLightCandidates.sort(compareEnvironmentLightCandidates);
+
+    // First cover distinct illuminated regions, then fill spare slots from the
+    // remaining ranked sources. This stops one dense torch cluster from
+    // consuming the whole fixed shader-light budget.
+    for (let pass = 0; pass < 2 && this.environmentLightSelection.length < this.placedLightPool.length; pass += 1) {
+      for (const candidate of this.environmentLightCandidates) {
+        if (candidate.selected) continue;
+        if (pass === 0) {
+          let clustered = false;
+          for (const selected of this.environmentLightSelection) {
+            const dx = candidate.x - selected.x;
+            const dy = candidate.y - selected.y;
+            const dz = candidate.z - selected.z;
+            if (dx * dx + dy * dy + dz * dz < 49) { clustered = true; break; }
+          }
+          if (clustered) continue;
+        }
+        candidate.selected = true;
+        this.environmentLightSelection.push(candidate);
+        if (this.environmentLightSelection.length >= this.placedLightPool.length) break;
+      }
+    }
+
+    // Keep a source in its existing point-light slot whenever possible. Stable
+    // uniforms avoid visible popping and unnecessary renderer state churn.
+    for (const light of this.placedLightPool) {
+      light.userData.refreshAssigned = false;
+      for (const source of this.environmentLightSelection) {
+        if (source.assigned) continue;
+        if (light.userData.sourceX === source.x && light.userData.sourceY === source.y && light.userData.sourceZ === source.z) {
+          this.configureEnvironmentLight(light, source);
+          break;
+        }
+      }
+    }
+    for (const light of this.placedLightPool) {
+      if (light.userData.refreshAssigned) continue;
+      let source: EnvironmentLightCandidate | undefined;
+      for (const candidate of this.environmentLightSelection) {
+        if (!candidate.assigned) { source = candidate; break; }
+      }
+      if (source) this.configureEnvironmentLight(light, source);
+      else {
+        light.userData.targetIntensity = 0;
+        light.userData.sourceX = Number.NaN;
+        light.userData.sourceY = Number.NaN;
+        light.userData.sourceZ = Number.NaN;
+      }
+    }
+  }
+
   updateLocalLights(dt: number) {
     this.lightRefreshTimer -= dt;
     if (this.lightRefreshTimer <= 0) {
-      this.lightRefreshTimer = 0.2;
+      this.lightRefreshTimer = 0.18;
       this.skyVisibilityTarget = this.world.skyVisibilityAt(this.camera.position.x, this.camera.position.y, this.camera.position.z);
-      const sources = this.world.lightSourcesNear(this.camera.position.x, this.camera.position.y, this.camera.position.z, 20);
-      for (let index = 0; index < this.placedLightPool.length; index += 1) {
-        const light = this.placedLightPool[index];
-        const source = sources[index];
-        if (!source) { light.intensity = 0; light.userData.baseIntensity = 0; continue; }
-        const crystal = source.type === BlockId.CrystalBlock;
-        light.color.set(crystal ? 0x69e8ef : source.type === BlockId.Glowstone ? 0xffd66b : 0xffb45e);
-        light.position.set(source.x, source.y + (source.type === BlockId.Torch ? 0.35 : 0), source.z);
-        light.distance = source.type === BlockId.Torch ? 13 : 15;
-        light.userData.baseIntensity = source.type === BlockId.Torch ? 1.75 : crystal ? 1.05 : 1.45;
-        light.userData.phase = source.x * 0.73 + source.y * 0.37 + source.z * 0.19;
-      }
+      this.refreshEnvironmentLights();
     }
     this.skyVisibility += (this.skyVisibilityTarget - this.skyVisibility) * (1 - Math.exp(-dt * 5));
     const now = performance.now() * 0.004;
     for (const light of this.placedLightPool) {
-      const base = Number(light.userData.baseIntensity) || 0;
+      const target = Number(light.userData.targetIntensity) || 0;
+      const current = Number(light.userData.baseIntensity) || 0;
+      const base = current + (target - current) * (1 - Math.exp(-dt * (target > current ? 12 : 7)));
+      light.userData.baseIntensity = base;
       light.intensity = base * (1 + Math.sin(now + (Number(light.userData.phase) || 0)) * 0.045);
     }
     const selected = this.selectedSlot();
     const heldTorch = selected?.item === BlockId.Torch;
     const heldGlow = selected?.item === BlockId.Glowstone || selected?.item === BlockId.CrystalBlock;
-    const offset = new THREE.Vector3(0.34, -0.24, -0.62).applyQuaternion(this.camera.quaternion);
-    this.caveLight.position.copy(this.camera.position).add(offset);
-    this.caveLight.color.set(selected?.item === BlockId.CrystalBlock ? 0x69e8ef : 0xffb45e);
+    this.heldLightWorldOffset.copy(this.heldLightOffset).applyQuaternion(this.camera.quaternion);
+    this.caveLight.position.copy(this.camera.position).add(this.heldLightWorldOffset);
+    this.caveLight.color.setHex(selected?.item === BlockId.CrystalBlock ? 0x69e8ef : 0xffb45e);
     this.caveLight.intensity = heldTorch ? 3.35 : heldGlow ? 2.55 : 0;
     this.caveLight.distance = heldTorch ? 24 : 20;
   }
@@ -2788,10 +2986,8 @@ export class VoxelEngine {
     const daylight = this.daylightAmount();
     const moonlight = (1 - daylight) * clamp((-sunHeight + 0.05) / 0.7, 0, 1);
     const twilight = Math.pow(1 - Math.min(1, Math.abs(sunHeight)), 5) * (sunHeight > -0.38 ? 1 : 0);
-    const night = new THREE.Color("#020611");
-    const day = new THREE.Color("#78b9ed");
-    const dawn = new THREE.Color(sunHeight >= 0 ? "#f1a46f" : "#c36b68");
-    const sky = night.clone().lerp(day, daylight).lerp(dawn, twilight * 0.52);
+    this.dawnSkyColor.set(sunHeight >= 0 ? "#f1a46f" : "#c36b68");
+    const sky = this.skyColor.copy(this.nightSkyColor).lerp(this.daylightSkyColor, daylight).lerp(this.dawnSkyColor, twilight * 0.52);
     const headBlock = this.world.getBlock(Math.floor(this.camera.position.x + 0.5), Math.floor(this.camera.position.y + 0.5), Math.floor(this.camera.position.z + 0.5));
     const underwater = headBlock === BlockId.Water;
     const underground = this.skyVisibility < 0.18 && !underwater;
@@ -2803,12 +2999,15 @@ export class VoxelEngine {
       this.scene.fog.near = underwater ? 3 : underground ? 10 : view * 0.54;
       this.scene.fog.far = underwater ? 24 : underground ? Math.max(30, view * 0.7) : view * 1.05;
     }
-    const skyLight = underwater ? 0.04 : this.skyVisibility;
-    this.hemisphere.intensity = 0.012 + skyLight * (0.03 + daylight * 0.72 + moonlight * 0.05);
-    this.directional.intensity = skyLight * (daylight * 1.08 + moonlight * 0.055);
+    // Sun and moon are properties of the world, not the player's current
+    // square. Player sky visibility still drives cave fog/celestial visibility,
+    // but it must never dim a torchlit room or a sunlit opening farther ahead.
+    const weatherLight = this.weather === "rain" ? 0.78 : 1;
+    this.hemisphere.intensity = underwater ? 0.05 : (0.025 + daylight * 0.36 + moonlight * 0.045) * weatherLight;
+    this.directional.intensity = underwater ? 0.018 : (daylight * 0.78 + moonlight * 0.05) * weatherLight;
     this.directional.color.set(twilight > 0.22 ? 0xffae7a : daylight > 0.2 ? 0xfff1ce : 0x8da5cf);
     const celestialDistance = 82;
-    const celestialDirection = new THREE.Vector3(Math.cos(angle), Math.sin(angle), -0.24).normalize();
+    const celestialDirection = this.celestialDirection.set(Math.cos(angle), Math.sin(angle), -0.24).normalize();
     this.sun.position.copy(this.camera.position).addScaledVector(celestialDirection, celestialDistance);
     this.moon.position.copy(this.camera.position).addScaledVector(celestialDirection, -celestialDistance);
     this.sun.lookAt(this.camera.position);
@@ -2939,6 +3138,7 @@ export class VoxelEngine {
     const rawDt = (now - this.previousTime) / 1000;
     const dt = Math.min(0.08, Math.max(0, rawDt));
     this.previousTime = now;
+    this.updateAdaptiveResolution(rawDt);
     this.placeCooldown = Math.max(0, this.placeCooldown - dt);
     this.attackCooldown = Math.max(0, this.attackCooldown - dt);
     this.zombieVoiceCooldown = Math.max(0, this.zombieVoiceCooldown - dt);
@@ -3134,12 +3334,13 @@ export class VoxelEngine {
       volume: clamp(next.volume ?? this.settings.volume, 0, 1),
       sensitivity: clamp(next.sensitivity ?? this.settings.sensitivity, 0.0008, 0.005),
       fov: clamp(next.fov ?? this.settings.fov, 55, 100),
-      renderDistance: clamp(Math.round(next.renderDistance ?? this.settings.renderDistance), 2, 5),
+      renderDistance: clamp(Math.round(next.renderDistance ?? this.settings.renderDistance), 2, 6),
     };
     this.weather = this.settings.weather;
     this.camera.fov = this.settings.fov;
     this.camera.updateProjectionMatrix();
     this.world.setRenderDistance(this.settings.renderDistance);
+    this.lightRefreshTimer = 0;
     this.audio.setSettings(this.settings);
     writeSettings(this.settings);
     this.emitHud(true);

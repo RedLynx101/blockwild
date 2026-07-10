@@ -46,7 +46,8 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
   ridgeback: {
     kind: "ridgeback", name: "Ridgeback", temperament: "Defensive", hostile: false,
     health: 10, damage: 2, xp: 3, speed: 0.52, chaseSpeed: 2.8, turnRate: 4.2, attackRange: 1.35,
-    footOffset: 0.64, radius: 0.62, height: 1.05, habitat: "Meadows, savannas and open woodland", active: "Day",
+    // findWalkableY returns the solid block center; +0.5 is its top surface.
+    footOffset: 0.5, radius: 0.62, height: 1.05, habitat: "Meadows, savannas and open woodland", active: "Day",
     behavior: "Travels in loose herds. Usually calm, but an injured Ridgeback lowers its plated head and charges.",
     lore: "Its warm stone plates store the afternoon sun. A charging herd sounds like distant summer thunder.",
     colors: [0x875437, 0xc07d54, 0x291912],

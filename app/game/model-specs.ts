@@ -26,6 +26,10 @@ export type ModelSpec = {
   category: "tool" | "mob" | "block" | "utility";
   /** All character and held-item specs face toward local negative Z. */
   front: "-z";
+  /** Local Y coordinate of the intended terrain surface, when the model is grounded. */
+  groundY?: number;
+  /** Boxes whose lowest vertices are intended to touch groundY. */
+  groundContactBoxIds?: readonly string[];
   boxes: readonly ModelBox[];
 };
 
@@ -49,6 +53,7 @@ function box(
 export function assertModelSpec(spec: ModelSpec): ModelSpec {
   const ids = new Set<string>();
   if (!spec.id || !spec.label || !spec.boxes.length) throw new Error("A model spec requires an id, label, and at least one box.");
+  if (spec.groundY !== undefined && !Number.isFinite(spec.groundY)) throw new Error(`Model '${spec.id}' has an invalid ground plane.`);
   for (const modelBox of spec.boxes) {
     if (ids.has(modelBox.id)) throw new Error(`Duplicate box id '${modelBox.id}' in model '${spec.id}'.`);
     ids.add(modelBox.id);
@@ -56,6 +61,9 @@ export function assertModelSpec(spec: ModelSpec): ModelSpec {
     if (modelBox.size.some((value) => !Number.isFinite(value) || value <= 0)) throw new Error(`Box '${modelBox.id}' in model '${spec.id}' has an invalid size.`);
     if (modelBox.position.some((value) => !Number.isFinite(value))) throw new Error(`Box '${modelBox.id}' in model '${spec.id}' has an invalid position.`);
     if (modelBox.rotation?.some((value) => !Number.isFinite(value))) throw new Error(`Box '${modelBox.id}' in model '${spec.id}' has an invalid rotation.`);
+  }
+  for (const contactId of spec.groundContactBoxIds ?? []) {
+    if (!ids.has(contactId)) throw new Error(`Ground-contact box '${contactId}' does not exist in model '${spec.id}'.`);
   }
   return spec;
 }
@@ -128,7 +136,59 @@ export function createZombieSpec(): ModelSpec {
     box("right-eye", "head", [0.1, 0.075, 0.035], [0.14, 1.73, -0.295], "#171912", ZERO_ROTATION, { emissive: true }),
     box("mouth", "head", [0.24, 0.065, 0.035], [0, 1.57, -0.295], "#3d3228"),
   ];
-  return assertModelSpec({ id: "zombie", label: "Zombie", category: "mob", front: "-z", boxes });
+  return assertModelSpec({
+    id: "zombie",
+    label: "Zombie",
+    category: "mob",
+    front: "-z",
+    groundY: 0,
+    groundContactBoxIds: ["left-leg", "right-leg"],
+    boxes,
+  });
+}
+
+/** Lift applied to legacy Ridgeback cuboids so their hoof plane becomes local Y=0. */
+export const RIDGEBACK_GROUND_LIFT = 0.66;
+
+/**
+ * Canonical Ridgeback inspection geometry. It mirrors the production cuboids,
+ * but is normalized so every hoof bottoms out exactly on local ground Y=0.
+ */
+export function createRidgebackSpec(): ModelSpec {
+  const body = "#875437";
+  const accent = "#c07d54";
+  const dark = "#543423";
+  const eye = "#291912";
+  const bone = "#e8d8af";
+  const y = (productionY: number) => productionY + RIDGEBACK_GROUND_LIFT;
+  const boxes: ModelBox[] = [
+    box("body", "body", [0.88, 0.62, 1.32], [0, y(0.08), 0.05], body, ZERO_ROTATION, { label: "Body" }),
+    box("head", "head", [0.64, 0.5, 0.62], [0, y(0.1), -0.8], accent, ZERO_ROTATION, { label: "Head" }),
+    box("muzzle", "head", [0.48, 0.3, 0.38], [0, y(-0.03), -1.18], dark),
+    box("left-eye", "head", [0.07, 0.08, 0.04], [-0.19, y(0.2), -1.13], eye, ZERO_ROTATION, { emissive: true }),
+    box("right-eye", "head", [0.07, 0.08, 0.04], [0.19, y(0.2), -1.13], eye, ZERO_ROTATION, { emissive: true }),
+    box("left-tusk", "head", [0.08, 0.1, 0.3], [-0.27, y(-0.03), -1.35], bone),
+    box("right-tusk", "head", [0.08, 0.1, 0.3], [0.27, y(-0.03), -1.35], bone),
+    box("front-left-leg", "legs", [0.18, 0.48, 0.2], [-0.31, 0.24, -0.38], body, ZERO_ROTATION, { label: "Hooves" }),
+    box("front-right-leg", "legs", [0.18, 0.48, 0.2], [0.31, 0.24, -0.38], body),
+    box("rear-left-leg", "legs", [0.18, 0.48, 0.2], [-0.31, 0.24, 0.42], body),
+    box("rear-right-leg", "legs", [0.18, 0.48, 0.2], [0.31, 0.24, 0.42], body),
+    // The production tail rotates around a pivot at [0, .24, .72]. This is
+    // the equivalent world-space box center after that pivot rotation.
+    box("tail", "body", [0.12, 0.12, 0.48], [0, y(0.24 - Math.sin(0.55) * 0.24), 0.72 + Math.cos(0.55) * 0.24], dark, [0.55, 0, 0], { label: "Tail" }),
+  ];
+  for (let plate = 0; plate < 5; plate += 1) {
+    boxes.push(box(`ridge-plate-${plate + 1}`, "body", [0.36 - plate * 0.025, 0.2, 0.16], [0, y(0.52), -0.4 + plate * 0.26], dark, ZERO_ROTATION, plate === 0 ? { label: "Back plates" } : {}));
+  }
+  return assertModelSpec({
+    id: "ridgeback",
+    label: "Ridgeback",
+    category: "mob",
+    front: "-z",
+    groundY: 0,
+    groundContactBoxIds: ["front-left-leg", "front-right-leg", "rear-left-leg", "rear-right-leg"],
+    boxes,
+  });
 }
 
 export function createChestSpec(): ModelSpec {
@@ -176,6 +236,7 @@ export const INSPECTOR_MODEL_SPECS: readonly ModelSpec[] = [
   createHeldToolSpec("axe", "#858b89", "Stone Axe"),
   createHeldToolSpec("shovel", "#858b89", "Stone Shovel"),
   createHeldToolSpec("sword", "#d4b9a7", "Sunmetal Sword"),
+  createRidgebackSpec(),
   createZombieSpec(),
   createChestSpec(),
   createTorchSpec(),

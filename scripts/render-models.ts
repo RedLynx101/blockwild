@@ -21,7 +21,7 @@ type Face = {
 };
 
 const TILE_WIDTH = 440;
-const TILE_HEIGHT = 410;
+const TILE_HEIGHT = 430;
 const HEADER_HEIGHT = 104;
 const FACE_INDICES = [
   [0, 3, 2, 1], // -Z, declared model front
@@ -146,19 +146,23 @@ function renderTile(spec: ModelSpec, view: ViewName, tileX: number, tileY: numbe
   const { bounds, centerY } = modelBounds(spec);
   const projection = projectionFor(view, centerY);
   const faces = modelFaces(spec, projection);
+  const groundY = spec.groundY ?? 0;
+  const lowestY = bounds.min.y;
+  const groundDelta = lowestY - groundY;
+  const exactGroundContact = Math.abs(groundDelta) < 0.0001;
   const gridRadius = Math.max(1.1, Math.max(bounds.max.x - bounds.min.x, bounds.max.z - bounds.min.z) * 0.82);
+  const groundThickness = Math.max(0.07, (bounds.max.y - bounds.min.y) * 0.035);
   const fitPoints = spec.boxes.flatMap((modelBox) => boxVertices(modelBox).vertices);
-  fitPoints.push(
-    new THREE.Vector3(-gridRadius, 0, -gridRadius), new THREE.Vector3(gridRadius, 0, -gridRadius),
-    new THREE.Vector3(-gridRadius, 0, gridRadius), new THREE.Vector3(gridRadius, 0, gridRadius),
-    new THREE.Vector3(0, bounds.max.y + 0.18, 0),
-  );
+  for (const y of [groundY - groundThickness, groundY]) {
+    for (const x of [-gridRadius, gridRadius]) for (const z of [-gridRadius, gridRadius]) fitPoints.push(new THREE.Vector3(x, y, z));
+  }
+  fitPoints.push(new THREE.Vector3(0, bounds.max.y + 0.18, 0));
   const raw = fitPoints.map((point) => rawProject(point, projection));
   const minX = Math.min(...raw.map((point) => point.x));
   const maxX = Math.max(...raw.map((point) => point.x));
   const minY = Math.min(...raw.map((point) => point.y));
   const maxY = Math.max(...raw.map((point) => point.y));
-  const draw = { x: tileX + 26, y: tileY + 72, width: TILE_WIDTH - 52, height: TILE_HEIGHT - 130 };
+  const draw = { x: tileX + 26, y: tileY + 91, width: TILE_WIDTH - 52, height: TILE_HEIGHT - 150 };
   const scale = Math.min(draw.width / Math.max(0.2, maxX - minX), draw.height / Math.max(0.2, maxY - minY));
   const offsetX = draw.x + draw.width / 2 - ((minX + maxX) / 2) * scale;
   const offsetY = draw.y + draw.height / 2 - ((minY + maxY) / 2) * scale;
@@ -177,19 +181,47 @@ function renderTile(spec: ModelSpec, view: ViewName, tileX: number, tileY: numbe
     if (!previous || modelBox.label) partLabels.set(modelBox.part, modelBox.label ?? modelBox.part);
   }
   const parts = [...partLabels.values()];
+  const groundStatus = spec.groundY === undefined
+    ? `REFERENCE GROUND Y=${groundY.toFixed(2)}`
+    : exactGroundContact
+      ? `GROUND Y=${groundY.toFixed(2)} · LOWEST Y=${lowestY.toFixed(3)} · CONTACT EXACT`
+      : groundDelta > 0
+        ? `GROUND Y=${groundY.toFixed(2)} · FLOATING +${groundDelta.toFixed(3)}`
+        : `GROUND Y=${groundY.toFixed(2)} · PENETRATION ${groundDelta.toFixed(3)}`;
+  const groundStatusColor = spec.groundY === undefined ? "#91a098" : exactGroundContact ? "#8ee6a3" : "#ff837a";
   const output: string[] = [
-    `<g>`,
+    `<g data-model-id="${escapeXml(spec.id)}" data-ground-y="${groundY.toFixed(4)}" data-lowest-y="${lowestY.toFixed(4)}">`,
     `<rect x="${tileX + 7}" y="${tileY + 7}" width="${TILE_WIDTH - 14}" height="${TILE_HEIGHT - 14}" rx="13" fill="#161a1f" stroke="#39424c" stroke-width="2"/>`,
     `<text x="${tileX + 25}" y="${tileY + 36}" fill="#f3eee0" font-size="20" font-weight="800">${escapeXml(spec.label)}</text>`,
     `<text x="${tileX + 25}" y="${tileY + 57}" fill="#93a0ad" font-size="11" font-weight="700" letter-spacing="1.2">${spec.category.toUpperCase()} · ${view === "iso" ? "ORTHOGRAPHIC ISOMETRIC" : `${view.toUpperCase()} ORTHOGRAPHIC`}</text>`,
+    `<text x="${tileX + 25}" y="${tileY + 77}" fill="${groundStatusColor}" font-size="10" font-weight="800" letter-spacing="0.45">${groundStatus}</text>`,
   ];
+
+  const groundTop = [
+    new THREE.Vector3(-gridRadius, groundY, -gridRadius),
+    new THREE.Vector3(gridRadius, groundY, -gridRadius),
+    new THREE.Vector3(gridRadius, groundY, gridRadius),
+    new THREE.Vector3(-gridRadius, groundY, gridRadius),
+  ];
+  const groundBottom = groundTop.map((point) => point.clone().setY(groundY - groundThickness));
+  const groundPolygon = (points: THREE.Vector3[], fill: string, stroke: string, width: number, opacity = 1) => {
+    const projected = points.map(project).map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(" ");
+    return `<polygon points="${projected}" fill="${fill}" stroke="${stroke}" stroke-width="${width}" opacity="${opacity}" stroke-linejoin="round"/>`;
+  };
+  // A shallow terrain slab keeps the floor readable even in front/side views,
+  // where an infinitely thin plane would nearly collapse to a single line.
+  for (let edge = 0; edge < 4; edge += 1) {
+    const next = (edge + 1) % 4;
+    output.push(groundPolygon([groundTop[edge], groundTop[next], groundBottom[next], groundBottom[edge]], "#1b241f", "#617267", 1.1));
+  }
+  output.push(groundPolygon(groundTop, "#243128", "#7c9182", 1.5));
 
   const divisions = 8;
   for (let index = 0; index <= divisions; index += 1) {
     const value = -gridRadius + (gridRadius * 2 * index) / divisions;
     const major = index === divisions / 2;
-    output.push(line(new THREE.Vector3(value, 0, -gridRadius), new THREE.Vector3(value, 0, gridRadius), major ? "#59636d" : "#303840", major ? 1.4 : 0.8, "", major ? 0.82 : 0.62));
-    output.push(line(new THREE.Vector3(-gridRadius, 0, value), new THREE.Vector3(gridRadius, 0, value), major ? "#59636d" : "#303840", major ? 1.4 : 0.8, "", major ? 0.82 : 0.62));
+    output.push(line(new THREE.Vector3(value, groundY + 0.001, -gridRadius), new THREE.Vector3(value, groundY + 0.001, gridRadius), major ? "#8fa294" : "#45564b", major ? 1.5 : 0.85, "", major ? 0.9 : 0.78));
+    output.push(line(new THREE.Vector3(-gridRadius, groundY + 0.001, value), new THREE.Vector3(gridRadius, groundY + 0.001, value), major ? "#8fa294" : "#45564b", major ? 1.5 : 0.85, "", major ? 0.9 : 0.78));
   }
 
   for (const face of faces) {
@@ -197,12 +229,29 @@ function renderTile(spec: ModelSpec, view: ViewName, tileX: number, tileY: numbe
     output.push(`<polygon points="${points}" fill="${face.color}" stroke="${face.emissive ? "#ffd66c" : "#20252a"}" stroke-width="1.25" stroke-linejoin="round"/>`);
   }
 
+  for (const contactId of spec.groundContactBoxIds ?? []) {
+    const contactBox = spec.boxes.find((modelBox) => modelBox.id === contactId);
+    if (!contactBox) continue;
+    const vertices = boxVertices(contactBox).vertices;
+    const contactMinY = Math.min(...vertices.map((vertex) => vertex.y));
+    const lowestVertices = vertices.filter((vertex) => Math.abs(vertex.y - contactMinY) < 0.0001);
+    const center = lowestVertices.reduce((sum, vertex) => sum.add(vertex), new THREE.Vector3()).multiplyScalar(1 / lowestVertices.length);
+    const point = project(new THREE.Vector3(center.x, groundY + 0.004, center.z));
+    output.push(`<circle cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="4.2" fill="#dfffe2" fill-opacity="0.38" stroke="#a7ffb6" stroke-width="2"/>`);
+  }
+
+  const groundBadgePoint = project(new THREE.Vector3(-gridRadius * 0.92, groundY + 0.008, gridRadius * 0.88));
+  const groundBadgeX = THREE.MathUtils.clamp(groundBadgePoint.x - 4, tileX + 18, tileX + TILE_WIDTH - 110);
+  const groundBadgeY = THREE.MathUtils.clamp(groundBadgePoint.y - 17, tileY + 92, tileY + TILE_HEIGHT - 67);
+  output.push(`<rect x="${groundBadgeX.toFixed(2)}" y="${groundBadgeY.toFixed(2)}" width="92" height="17" rx="4" fill="#142019" fill-opacity="0.94" stroke="#789782"/>`);
+  output.push(`<text x="${(groundBadgeX + 6).toFixed(2)}" y="${(groundBadgeY + 12).toFixed(2)}" fill="#bce7c6" font-size="9" font-weight="900">GROUND Y=${groundY.toFixed(2)}</text>`);
+
   const axisLength = Math.max(0.72, gridRadius * 0.72);
-  const origin = new THREE.Vector3(0, 0, 0);
-  const xEnd = new THREE.Vector3(axisLength, 0, 0);
-  const yEnd = new THREE.Vector3(0, axisLength, 0);
-  const zEnd = new THREE.Vector3(0, 0, axisLength);
-  const frontEnd = new THREE.Vector3(0, 0.035, -axisLength * 1.28);
+  const origin = new THREE.Vector3(0, groundY, 0);
+  const xEnd = new THREE.Vector3(axisLength, groundY, 0);
+  const yEnd = new THREE.Vector3(0, groundY + axisLength, 0);
+  const zEnd = new THREE.Vector3(0, groundY, axisLength);
+  const frontEnd = new THREE.Vector3(0, groundY + 0.035, -axisLength * 1.28);
   output.push(line(origin, xEnd, "#f05c55", 2.4, "arrow-red"));
   output.push(line(origin, yEnd, "#5ed47a", 2.4, "arrow-green"));
   output.push(line(origin, zEnd, "#5d9df4", 2.4, "arrow-blue"));
@@ -224,6 +273,7 @@ function renderContactSheet(specs: readonly ModelSpec[], columns: number, view: 
   const rows = Math.ceil(specs.length / resolvedColumns);
   const width = resolvedColumns * TILE_WIDTH;
   const height = HEADER_HEIGHT + rows * TILE_HEIGHT;
+  const compactHeader = width < 900;
   const tiles = specs.map((spec, index) => renderTile(spec, view, (index % resolvedColumns) * TILE_WIDTH, HEADER_HEIGHT + Math.floor(index / resolvedColumns) * TILE_HEIGHT)).join("");
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
@@ -234,9 +284,9 @@ function renderContactSheet(specs: readonly ModelSpec[], columns: number, view: 
     ${arrowMarker("arrow-front", "#ffd55f")}
   </defs>
   <rect width="100%" height="100%" fill="#0c0f12"/>
-  <text x="28" y="42" fill="#f4d36a" font-size="26" font-weight="900" letter-spacing="1.2">BLOCKWILD MODEL ORIENTATION</text>
-  <text x="28" y="69" fill="#aeb7bf" font-size="13">Shared production specs · ${view === "iso" ? "orthographic isometric inspection" : `${view} orthographic inspection`} · broad character/tool face is local -Z</text>
-  <text x="${width - 28}" y="42" text-anchor="end" fill="#62707b" font-size="12">X red · Y green · Z blue · FRONT gold</text>
+  <text x="28" y="${compactHeader ? 36 : 42}" fill="#f4d36a" font-size="${compactHeader ? 21 : 26}" font-weight="900" letter-spacing="1.2">BLOCKWILD MODEL ${compactHeader ? "INSPECTOR" : "ORIENTATION"}</text>
+  <text x="28" y="${compactHeader ? 61 : 69}" fill="#aeb7bf" font-size="${compactHeader ? 11 : 13}">${compactHeader ? `${view === "iso" ? "ISOMETRIC" : view.toUpperCase()} · GROUND + CONTACT INSPECTION` : `Shared production specs · ${view === "iso" ? "orthographic isometric inspection" : `${view} orthographic inspection`} · broad character/tool face is local -Z`}</text>
+  <text x="${compactHeader ? 28 : width - 28}" y="${compactHeader ? 84 : 42}" text-anchor="${compactHeader ? "start" : "end"}" fill="#62707b" font-size="${compactHeader ? 10 : 12}">X red · Y green · Z blue · FRONT gold</text>
   ${tiles}
 </svg>`;
 }
