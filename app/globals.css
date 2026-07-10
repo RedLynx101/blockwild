@@ -2260,6 +2260,275 @@ input:focus-visible {
   }
 }
 
+/* Living-world expansion: armor, large storage and field bestiary */
+.stat-armor {
+  color: #d9e5ef;
+  text-shadow: 1px 1px 0 #34404b;
+}
+
+.stat-armor .empty {
+  color: #3e4850;
+  opacity: .72;
+}
+
+.paper-doll-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 150px;
+}
+
+.equipment-slots {
+  display: grid;
+  gap: 5px;
+}
+
+.equipment-slot {
+  width: 38px;
+  height: 38px;
+  position: relative;
+}
+
+.equipment-slot:empty::after,
+.equipment-slot:not(:has(.item-icon))::after {
+  content: "◇";
+  color: #777;
+  font-size: 17px;
+}
+
+.armor-readout {
+  color: #d7e1e8;
+  font-size: 10px;
+  letter-spacing: .12em;
+}
+
+.chest-window {
+  max-height: min(92vh, 820px);
+  overflow-y: auto;
+}
+
+.chest-grid {
+  grid-template-columns: repeat(9, minmax(32px, 42px));
+  align-self: center;
+}
+
+.bestiary-overlay {
+  padding: 22px;
+}
+
+.bestiary-window {
+  width: min(980px, 96vw);
+  max-height: 92vh;
+  overflow: hidden;
+}
+
+.bestiary-layout {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  min-height: 560px;
+  border: 3px solid #303030;
+  background: #aaa;
+}
+
+.bestiary-list {
+  padding: 8px;
+  overflow-y: auto;
+  background: #777;
+  border-right: 3px solid #303030;
+}
+
+.bestiary-list button {
+  width: 100%;
+  min-height: 62px;
+  display: grid;
+  grid-template-columns: 42px 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 2px 8px;
+  align-items: center;
+  padding: 7px;
+  color: #eee;
+  text-align: left;
+  background: #555;
+  border: 2px solid #242424;
+  box-shadow: inset 2px 2px 0 #777, inset -2px -2px 0 #383838;
+  margin-bottom: 6px;
+}
+
+.bestiary-list button.active {
+  background: #6a704c;
+  border-color: #e9d181;
+}
+
+.bestiary-list strong,
+.bestiary-list small {
+  grid-column: 2;
+}
+
+.bestiary-list small {
+  color: #d0d0d0;
+  font-size: 9px;
+}
+
+.bestiary-mini {
+  grid-row: 1 / span 2;
+  width: 35px;
+  height: 28px;
+  background: #252525;
+  border-radius: 45% 45% 30% 30%;
+  box-shadow: 0 8px 0 -4px #181818;
+}
+
+.bestiary-mini.seen {
+  background: var(--mob-color);
+}
+
+.bestiary-detail {
+  overflow-y: auto;
+  padding: 24px;
+  color: #25221e;
+  background: linear-gradient(#d5d0bc, #b8b39e);
+}
+
+.bestiary-portrait {
+  height: 178px;
+  display: grid;
+  place-items: center;
+  position: relative;
+  margin-bottom: 18px;
+  background: radial-gradient(circle, #88906c 0 22%, #525b47 23% 42%, #2f352c 43% 100%);
+  border: 4px solid #40392f;
+  box-shadow: inset 0 0 0 4px #7c735f;
+}
+
+.bestiary-portrait span {
+  width: 126px;
+  height: 74px;
+  background: var(--mob-color);
+  box-shadow: 0 22px 0 -13px var(--mob-accent), -42px 22px 0 -25px var(--mob-color), 42px 22px 0 -25px var(--mob-color);
+  border-radius: 40% 40% 28% 28%;
+}
+
+.bestiary-portrait i {
+  position: absolute;
+  width: 48px;
+  height: 38px;
+  top: 82px;
+  background: var(--mob-accent);
+  border-radius: 35%;
+}
+
+.bestiary-portrait b {
+  display: none;
+}
+
+.bestiary-detail.unknown .bestiary-portrait span,
+.bestiary-detail.unknown .bestiary-portrait i {
+  filter: brightness(.16);
+}
+
+.bestiary-detail.unknown .bestiary-portrait b {
+  display: block;
+  position: absolute;
+  color: #eee0a0;
+  font-size: 42px;
+}
+
+.bestiary-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: end;
+  border-bottom: 3px solid #625a4c;
+  padding-bottom: 10px;
+}
+
+.bestiary-heading span,
+.bestiary-heading > strong,
+.bestiary-facts small,
+.behavior-note small,
+.bestiary-loot > small {
+  font-size: 9px;
+  letter-spacing: .12em;
+  color: #665d4f;
+}
+
+.bestiary-heading h3,
+.unknown-entry h3 {
+  margin: 3px 0 0;
+  font-size: clamp(24px, 4vw, 40px);
+}
+
+.bestiary-lore {
+  font-family: Georgia, serif;
+  font-style: italic;
+  line-height: 1.55;
+  color: #514a40;
+}
+
+.bestiary-facts {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.bestiary-facts > div,
+.behavior-note,
+.bestiary-loot {
+  padding: 10px;
+  background: rgba(255,255,255,.26);
+  border: 2px solid #837a69;
+}
+
+.bestiary-facts strong {
+  display: block;
+  margin-top: 5px;
+  font-size: 12px;
+}
+
+.behavior-note p {
+  margin: 6px 0 0;
+  line-height: 1.45;
+}
+
+.bestiary-loot {
+  margin-top: 10px;
+}
+
+.bestiary-loot > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 7px;
+  background: rgba(50,45,38,.12);
+}
+
+.bestiary-loot > div span {
+  display: grid;
+}
+
+.bestiary-loot small {
+  font-size: 9px;
+}
+
+.unknown-entry {
+  text-align: center;
+  padding: 36px 10px;
+}
+
+@media (max-width: 720px) {
+  .bestiary-overlay { padding: 6px; }
+  .bestiary-layout { grid-template-columns: 1fr; min-height: 0; }
+  .bestiary-list { display: flex; border-right: 0; border-bottom: 3px solid #303030; overflow-x: auto; }
+  .bestiary-list button { min-width: 180px; margin: 0 5px 0 0; }
+  .bestiary-detail { padding: 12px; }
+  .bestiary-portrait { height: 120px; }
+  .bestiary-portrait i { top: 56px; }
+  .chest-grid { grid-template-columns: repeat(9, minmax(25px, 1fr)); }
+}
+
 @media (max-width: 560px) {
   .mc-window {
     padding: 14px 10px;

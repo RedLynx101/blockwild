@@ -2,6 +2,13 @@ import { BLOCKS, BlockId } from "./data";
 
 export type AudioSettings = { volume: number; muted: boolean };
 export type SoundKind = "step" | "mine" | "break" | "place" | "pickup" | "jump" | "land" | "hurt" | "ui" | "attack" | "mob" | "craft" | "furnace" | "splash" | "eat";
+export type MusicScene = "day" | "night" | "sea";
+
+const MUSIC_TRACKS: Record<MusicScene, string> = {
+  day: "/music/blockwild-theme.mp3",
+  night: "/music/blockwild-night.mp3",
+  sea: "/music/blockwild-sea.mp3",
+};
 
 export class SynthAudio {
   context: AudioContext | null = null;
@@ -10,6 +17,9 @@ export class SynthAudio {
   ambience: AudioBufferSourceNode | null = null;
   noise: AudioBuffer | null = null;
   settings: AudioSettings;
+  music = new Map<MusicScene, HTMLAudioElement>();
+  musicScene: MusicScene = "day";
+  musicStarted = false;
 
   constructor(settings: AudioSettings) {
     this.settings = settings;
@@ -26,9 +36,11 @@ export class SynthAudio {
         this.master.connect(compressor).connect(this.context.destination);
         this.noise = this.createNoiseBuffer(1.5);
         this.startAmbience();
+        this.prepareMusic();
         this.applyVolume();
       }
       if (this.context.state !== "running") await this.context.resume();
+      await this.startMusic();
     } catch {
       // Audio is optional in restrictive embedded browsers.
     }
@@ -67,6 +79,7 @@ export class SynthAudio {
   applyVolume() {
     if (!this.master || !this.context) return;
     this.master.gain.setTargetAtTime(this.settings.muted ? 0 : this.settings.volume, this.context.currentTime, 0.02);
+    this.mixMusic(true);
   }
 
   setSettings(settings: AudioSettings) {
@@ -78,6 +91,40 @@ export class SynthAudio {
     if (!this.ambienceGain || !this.context) return;
     const target = (depth < 0 ? 0.012 : 0.018) + (raining ? 0.012 : 0);
     this.ambienceGain.gain.setTargetAtTime(target, this.context.currentTime, 0.4);
+  }
+
+  prepareMusic() {
+    if (typeof Audio === "undefined" || this.music.size) return;
+    for (const [scene, source] of Object.entries(MUSIC_TRACKS) as Array<[MusicScene, string]>) {
+      const element = new Audio(source);
+      element.loop = true;
+      element.preload = "auto";
+      element.volume = 0;
+      element.setAttribute("playsinline", "true");
+      this.music.set(scene, element);
+    }
+  }
+
+  async startMusic() {
+    if (this.musicStarted || !this.music.size) return;
+    this.musicStarted = true;
+    await Promise.all([...this.music.values()].map(async (element) => {
+      try { await element.play(); } catch { this.musicStarted = false; }
+    }));
+    this.mixMusic(true);
+  }
+
+  setMusicScene(scene: MusicScene) {
+    this.musicScene = scene;
+    this.mixMusic(false);
+  }
+
+  mixMusic(immediate: boolean) {
+    const base = this.settings.muted ? 0 : Math.min(0.46, this.settings.volume * 0.44);
+    for (const [scene, element] of this.music.entries()) {
+      const target = scene === this.musicScene ? base : 0;
+      element.volume = immediate ? target : element.volume + (target - element.volume) * 0.025;
+    }
   }
 
   noiseBurst(duration: number, frequency: number, gainValue: number, highpass = false, when = 0) {
@@ -157,6 +204,12 @@ export class SynthAudio {
   dispose() {
     try {
       this.ambience?.stop();
+      for (const element of this.music.values()) {
+        element.pause();
+        element.removeAttribute("src");
+        element.load();
+      }
+      this.music.clear();
       void this.context?.close();
     } catch {
       // Already closed.

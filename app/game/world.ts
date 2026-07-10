@@ -2,13 +2,13 @@ import * as THREE from "three";
 import { BLOCKS, BlockId, type RenderLayer } from "./data";
 
 export const CHUNK_SIZE = 16;
-export const MIN_Y = -32;
-export const MAX_Y = 95;
+export const MIN_Y = -64;
+export const MAX_Y = 127;
 export const WORLD_HEIGHT = MAX_Y - MIN_Y + 1;
 export const SEA_LEVEL = 32;
 export const SECTION_HEIGHT = 16;
 export const SECTION_COUNT = WORLD_HEIGHT / SECTION_HEIGHT;
-export const GENERATOR_VERSION = 2;
+export const GENERATOR_VERSION = 3;
 
 export enum BiomeId {
   DeepOcean = 0,
@@ -54,6 +54,7 @@ type ChunkMeshes = {
   opaque?: THREE.Mesh;
   cutout?: THREE.Mesh;
   transparent?: THREE.Mesh;
+  emissive?: THREE.Mesh;
 };
 
 export type Chunk = {
@@ -66,6 +67,7 @@ export type Chunk = {
   group: THREE.Group;
   sections: Map<number, ChunkMeshes>;
   dirty: Set<number>;
+  lightIndices: Set<number>;
   lastTouched: number;
 };
 
@@ -133,7 +135,7 @@ const TILE_COLORS = [
   "#7b4f58", "#a36e78", "#d887ad", "#6b716f", "#a36b3c", "#8d592f", "#686e70", "#f2b94b",
   "#b56f50", "#d4af3f", "#60d8e1", "#3d4448", "#ed642f", "#a74e62", "#4b8245", "#85817c",
   "#8fd0e2", "#3b3538", "#29213d", "#61dce5", "#9f6b35", "#65a842", "#d54f48", "#548ed8",
-  "#caa64c", "#6d452b", "#69422a", "#888888", "#777777", "#666666", "#555555", "#444444",
+  "#caa64c", "#6d452b", "#69422a", "#5e9d43", "#9b6839", "#666666", "#555555", "#444444",
 ];
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
@@ -143,6 +145,7 @@ const smoothstep = (edge0: number, edge1: number, value: number) => {
   const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
   return t * t * (3 - 2 * t);
 };
+const LIGHT_BLOCKS = new Set<BlockId>([BlockId.Torch, BlockId.Glowstone, BlockId.CrystalBlock]);
 
 export function seedToInt(seed: string) {
   let value = 2166136261;
@@ -274,7 +277,7 @@ export function createBlockAtlas() {
   const leafTiles = new Set([7, 20, 23, 34]);
   const logSideTiles = new Set([5, 18, 21, 32]);
   const logTopTiles = new Set([6, 19, 22, 33]);
-  const crossTiles = new Set([39, 53, 54, 55, 56]);
+  const crossTiles = new Set([39, 53, 54, 55, 56, 59]);
   for (let index = 0; index < grid * grid; index += 1) {
     const base = TILE_COLORS[index] ?? "#777777";
     const ox = (index % grid) * tile;
@@ -289,10 +292,35 @@ export function createBlockAtlas() {
     }
     if (crossTiles.has(index)) {
       context.clearRect(ox, oy, tile, tile);
-      const stem = index === 39 ? "#8b5a2f" : "#5e873b";
-      for (let y = 4; y < 16; y += 1) pixel(index, 7 + (y % 3 === 0 ? 1 : 0), y, stem);
-      const bloom = index === 54 ? "#de4e49" : index === 55 ? "#568fdd" : index === 56 ? "#d2b04f" : index === 39 ? "#f5c35c" : "#71ac4a";
-      for (let y = 2; y < 10; y += 1) for (let x = 3; x < 13; x += 1) if (Math.abs(x - 8) + Math.abs(y - 6) < 6 && random() > 0.26) pixel(index, x, y, bloom);
+      if (index === 39) {
+        for (let y = 7; y < 16; y += 1) {
+          pixel(index, 7, y, y % 3 === 0 ? "#6b3d20" : "#9b6030");
+          pixel(index, 8, y, "#c07a38");
+        }
+        for (const [x, y, color] of [[7, 6, "#ffd85a"], [8, 6, "#fff0a0"], [6, 5, "#f09132"], [7, 4, "#ffb43f"], [8, 3, "#ffe56d"], [9, 5, "#db5a27"]] as Array<[number, number, string]>) pixel(index, x, y, color);
+      } else if (index === 53) {
+        for (const [x, lean, height] of [[4, -1, 8], [7, 0, 12], [10, 1, 10], [12, 0, 6]] as Array<[number, number, number]>) {
+          for (let step = 0; step < height; step += 1) pixel(index, x + Math.round((lean * step) / height), 15 - step, step % 3 ? "#65a844" : "#86bd58");
+        }
+      } else if (index === 59) {
+        for (let y = 8; y < 16; y += 1) pixel(index, 7, y, "#704325");
+        for (const [x, y] of [[5, 8], [4, 7], [6, 6], [9, 8], [10, 7], [8, 5], [7, 4]]) {
+          pixel(index, x, y, "#4b8d3c");
+          if (x + 1 < 16) pixel(index, x + 1, y, "#75b653");
+        }
+      } else {
+        const stem = index === 56 ? "#9a7a32" : "#54843b";
+        for (let y = 7; y < 16; y += 1) pixel(index, 7 + (y % 4 === 0 ? 1 : 0), y, stem);
+        if (index === 56) {
+          for (let y = 3; y < 10; y += 2) {
+            pixel(index, 6, y, "#d7b84e"); pixel(index, 8, y + 1, "#edce62"); pixel(index, 9, y, "#bd9637");
+          }
+        } else {
+          const bloom = index === 54 ? "#e54f49" : "#5796e5";
+          for (const [dx, dy] of [[0, -2], [-2, 0], [2, 0], [0, 2], [-1, -1], [1, -1]]) pixel(index, 8 + dx, 5 + dy, bloom);
+          pixel(index, 8, 5, index === 54 ? "#ffd75e" : "#e7f3ff");
+        }
+      }
       continue;
     }
     for (let y = 0; y < tile; y += 1) for (let x = 0; x < tile; x += 1) {
@@ -324,11 +352,47 @@ export function createBlockAtlas() {
     }
     if (index === 38) {
       context.fillStyle = "#242727";
-      context.fillRect(ox + 3, oy + 4, 10, 8);
+      context.fillRect(ox + 2, oy + 3, 12, 10);
       context.fillStyle = "#131515";
-      context.fillRect(ox + 5, oy + 6, 6, 4);
+      context.fillRect(ox + 4, oy + 6, 8, 5);
       context.fillStyle = "#d2843c";
-      context.fillRect(ox + 6, oy + 7, 4, 2);
+      context.fillRect(ox + 5, oy + 8, 6, 2);
+      context.fillStyle = "#f5b348";
+      context.fillRect(ox + 7, oy + 7, 2, 2);
+    }
+    if (index === 36) {
+      context.fillStyle = "#5a351f";
+      context.fillRect(ox, oy, 16, 2); context.fillRect(ox, oy + 14, 16, 2); context.fillRect(ox, oy, 2, 16); context.fillRect(ox + 14, oy, 2, 16);
+      context.fillStyle = "#d0a25e";
+      for (let p = 4; p <= 12; p += 4) { context.fillRect(ox + p, oy + 2, 1, 12); context.fillRect(ox + 2, oy + p, 12, 1); }
+      context.fillStyle = "#3f4341";
+      context.fillRect(ox + 5, oy + 5, 6, 2); context.fillRect(ox + 7, oy + 3, 2, 6);
+    }
+    if (index === 37) {
+      context.fillStyle = "#5a351f";
+      context.fillRect(ox, oy, 16, 2); context.fillRect(ox, oy + 14, 16, 2);
+      context.fillStyle = "#d7ad67";
+      context.fillRect(ox + 3, oy + 4, 10, 1); context.fillRect(ox + 3, oy + 10, 10, 1);
+      context.fillStyle = "#59605d";
+      context.fillRect(ox + 5, oy + 6, 7, 2); context.fillRect(ox + 4, oy + 8, 2, 3);
+    }
+    if (index === 52) {
+      context.fillStyle = "#633d20";
+      context.fillRect(ox, oy + 2, 16, 2); context.fillRect(ox, oy + 12, 16, 2); context.fillRect(ox + 1, oy, 2, 16); context.fillRect(ox + 13, oy, 2, 16);
+      context.fillStyle = "#d5a04c";
+      context.fillRect(ox + 6, oy + 6, 4, 5);
+      context.fillStyle = "#5a4531";
+      context.fillRect(ox + 7, oy + 7, 2, 2);
+    }
+    if (index === 60) {
+      context.fillStyle = "#5d371f";
+      context.fillRect(ox, oy, 2, 16); context.fillRect(ox + 14, oy, 2, 16); context.fillRect(ox, oy, 16, 2); context.fillRect(ox, oy + 14, 16, 2);
+      context.fillStyle = "#c18a4b";
+      context.fillRect(ox + 3, oy + 3, 10, 4); context.fillRect(ox + 3, oy + 9, 10, 4);
+      context.fillStyle = "#6b4428";
+      context.fillRect(ox + 3, oy + 7, 10, 2);
+      context.fillStyle = "#e9c366";
+      context.fillRect(ox + 11, oy + 8, 1, 1);
     }
   }
   const texture = new THREE.CanvasTexture(canvas);
@@ -347,6 +411,8 @@ export class ChunkWorld {
   generationQueued = new Set<string>();
   meshQueue: Array<{ key: string; section: number }> = [];
   meshQueued = new Set<string>();
+  urgentMeshQueue: Array<{ key: string; section: number }> = [];
+  urgentMeshQueued = new Set<string>();
   seedText = "WILDERNESS";
   seed = seedToInt(this.seedText);
   renderDistance = 3;
@@ -365,6 +431,7 @@ export class ChunkWorld {
       opaque: new THREE.MeshLambertMaterial({ map: this.atlas, vertexColors: true }),
       cutout: new THREE.MeshLambertMaterial({ map: this.atlas, vertexColors: true, alphaTest: 0.32, side: THREE.DoubleSide }),
       transparent: new THREE.MeshLambertMaterial({ map: this.atlas, vertexColors: true, transparent: true, opacity: 0.76, depthWrite: false, side: THREE.DoubleSide }),
+      emissive: new THREE.MeshLambertMaterial({ map: this.atlas, vertexColors: true, alphaTest: 0.2, side: THREE.DoubleSide, emissive: new THREE.Color(0xffd77b), emissiveMap: this.atlas, emissiveIntensity: 0.72 }),
     };
   }
 
@@ -379,6 +446,8 @@ export class ChunkWorld {
     this.generationQueued.clear();
     this.meshQueue = [];
     this.meshQueued.clear();
+    this.urgentMeshQueue = [];
+    this.urgentMeshQueued.clear();
     this.edits.clear();
     this.seedText = seedText || "WILDERNESS";
     this.seed = seedToInt(this.seedText);
@@ -432,6 +501,12 @@ export class ChunkWorld {
       return Math.max(Math.abs(chunk.cx - cx), Math.abs(chunk.cz - cz)) <= this.renderDistance;
     });
     this.meshQueued = new Set(this.meshQueue.map((entry) => `${entry.key}:${entry.section}`));
+    this.urgentMeshQueue = this.urgentMeshQueue.filter((entry) => {
+      const chunk = this.chunks.get(entry.key);
+      if (!chunk) return false;
+      return Math.max(Math.abs(chunk.cx - cx), Math.abs(chunk.cz - cz)) <= this.renderDistance;
+    });
+    this.urgentMeshQueued = new Set(this.urgentMeshQueue.map((entry) => `${entry.key}:${entry.section}`));
     for (let dx = -generationRadius; dx <= generationRadius; dx += 1) {
       for (let dz = -generationRadius; dz <= generationRadius; dz += 1) {
         const key = chunkKey(cx + dx, cz + dz);
@@ -477,18 +552,27 @@ export class ChunkWorld {
   }
 
   processMesh() {
-    const next = this.meshQueue.shift();
+    const urgent = this.urgentMeshQueue.shift();
+    if (urgent) this.urgentMeshQueued.delete(`${urgent.key}:${urgent.section}`);
+    const next = urgent ?? this.meshQueue.shift();
     if (!next) return;
-    this.meshQueued.delete(`${next.key}:${next.section}`);
+    if (!urgent) this.meshQueued.delete(`${next.key}:${next.section}`);
     const chunk = this.chunks.get(next.key);
     if (!chunk || !chunk.group.visible) return;
     this.rebuildSection(chunk, next.section);
   }
 
-  queueMesh(key: string, section: number) {
+  queueMesh(key: string, section: number, urgent = false) {
     if (section < 0 || section >= SECTION_COUNT) return;
     const queueKey = `${key}:${section}`;
-    if (this.meshQueued.has(queueKey)) return;
+    if (urgent) {
+      if (this.urgentMeshQueued.has(queueKey)) return;
+      if (this.meshQueued.delete(queueKey)) this.meshQueue = this.meshQueue.filter((entry) => `${entry.key}:${entry.section}` !== queueKey);
+      this.urgentMeshQueued.add(queueKey);
+      this.urgentMeshQueue.push({ key, section });
+      return;
+    }
+    if (this.meshQueued.has(queueKey) || this.urgentMeshQueued.has(queueKey)) return;
     this.meshQueued.add(queueKey);
     this.meshQueue.push({ key, section });
   }
@@ -549,6 +633,7 @@ export class ChunkWorld {
       group: new THREE.Group(),
       sections: new Map(),
       dirty: new Set(),
+      lightIndices: new Set(),
       lastTouched: this.frame,
     };
     chunk.group.position.set(cx * CHUNK_SIZE, 0, cz * CHUNK_SIZE);
@@ -576,7 +661,7 @@ export class ChunkWorld {
           else if (y <= column.height) {
             if (y === column.height) type = top;
             else if (y >= column.height - (column.biome === BiomeId.Desert || column.biome === BiomeId.Beach ? 5 : 3)) type = filler;
-            else type = y < -10 ? BlockId.Deepstone : column.biome === BiomeId.Volcanic ? BlockId.Basalt : BlockId.Stone;
+            else type = y < MIN_Y + 18 ? BlockId.Basalt : y < -10 ? BlockId.Deepstone : column.biome === BiomeId.Volcanic ? BlockId.Basalt : BlockId.Stone;
 
             if (y < column.height - 4 && y > MIN_Y + 4) {
               const depth = column.height - y;
@@ -587,7 +672,7 @@ export class ChunkWorld {
               const tunnelWarp = valueNoise2(gx / 76, gz / 76, this.seed ^ 0x91e10da5) * 4;
               const spaghetti = Math.abs(Math.sin(gx * 0.115 + y * 0.083 + gz * 0.041 + tunnelWarp)) < 0.052
                 && Math.abs(Math.sin(gz * 0.129 - y * 0.071 + gx * 0.033 - tunnelWarp)) < 0.16;
-              const deepCavern = y < -12 && valueNoise3(gx / 68, y / 58, gz / 68, this.seed ^ 0x5bd1e995) > 0.5
+              const deepCavern = y < -24 && valueNoise3(gx / 68, y / 58, gz / 68, this.seed ^ 0x5bd1e995) > 0.47
                 && Math.sin(gx * 0.09 + gz * 0.07 + y * 0.11) > -0.05;
               const ravineLine = Math.abs(fbm2(gx, gz, this.seed ^ 0x165667c5, 1 / 230, 2));
               const ravineSegment = fbm2(gx, gz, this.seed ^ 0x9e3779f9, 1 / 520, 2);
@@ -610,7 +695,7 @@ export class ChunkWorld {
               if (y < 48 && cellHash < 0.008 && detailHash > 0.3) type = BlockId.IronOre;
               if (y < 54 && cellHash > 0.983 && cellHash < 0.987 && detailHash > 0.35) type = BlockId.CopperOre;
               if (y < 8 && cellHash > 0.976 && cellHash < 0.9785 && detailHash > 0.4) type = BlockId.GoldOre;
-              if (y < -10 && cellHash > 0.97 && cellHash < 0.9715 && detailHash > 0.5) type = BlockId.CrystalOre;
+              if (y < -24 && cellHash > 0.97 && cellHash < 0.9715 && detailHash > 0.5) type = BlockId.CrystalOre;
             }
           } else if (y <= column.waterline) {
             type = column.temperature < 0.14 && y === column.waterline ? BlockId.Ice : BlockId.Water;
@@ -623,6 +708,7 @@ export class ChunkWorld {
     this.generateFeatures(chunk, sample);
     const saved = this.edits.get(key);
     if (saved) for (const [index, type] of saved.entries()) chunk.blocks[index] = type;
+    for (let index = 0; index < chunk.blocks.length; index += 1) if (LIGHT_BLOCKS.has(chunk.blocks[index] as BlockId)) chunk.lightIndices.add(index);
     this.chunks.set(key, chunk);
     return chunk;
   }
@@ -702,8 +788,12 @@ export class ChunkWorld {
       if (column.biome === BiomeId.Desert && roll > 0.985) {
         const cactusHeight = 2 + Math.floor(hash2(x, z, this.seed ^ 0x55555555) * 3);
         for (let y = 1; y <= cactusHeight; y += 1) set(x, column.height + y, z, BlockId.Cactus);
-      } else if ([BiomeId.Meadow, BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Bloomwood].includes(column.biome) && roll > 0.86) {
-        const plant = roll > 0.965 ? BlockId.BlueFlower : roll > 0.925 ? BlockId.RedFlower : roll > 0.89 ? BlockId.WheatCrop : BlockId.TallGrass;
+      } else if ([BiomeId.Meadow, BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Bloomwood, BiomeId.Savanna, BiomeId.Siltfen].includes(column.biome)) {
+        const patch = 0.72 * valueNoise2(x / 19, z / 19, this.seed ^ 0x35f1a93b) + 0.28 * valueNoise2(x / 6, z / 6, this.seed ^ 0x6c8e9cf5);
+        const density = column.biome === BiomeId.Meadow ? 0.72 : column.biome === BiomeId.Bloomwood ? 0.79 : column.biome === BiomeId.Savanna ? 0.9 : 0.84;
+        if (roll + patch * 0.11 <= density) continue;
+        const flowerBias = column.biome === BiomeId.Meadow || column.biome === BiomeId.Bloomwood;
+        const plant = flowerBias && roll > 0.965 ? BlockId.BlueFlower : flowerBias && roll > 0.925 ? BlockId.RedFlower : roll > 0.895 ? BlockId.WheatCrop : BlockId.TallGrass;
         set(x, column.height + 1, z, plant);
       } else if (column.biome === BiomeId.MushroomFen && roll > 0.9) {
         set(x, column.height + 1, z, BlockId.MushroomCap);
@@ -753,7 +843,7 @@ export class ChunkWorld {
     return this.getBlock(x, y, z) ?? BlockId.Air;
   }
 
-  setBlock(x: number, y: number, z: number, type: BlockId, record = true) {
+  setBlock(x: number, y: number, z: number, type: BlockId, record = true, immediate = false) {
     if (y < MIN_Y || y > MAX_Y) return false;
     const sx = splitCoordinate(x);
     const sz = splitCoordinate(z);
@@ -761,20 +851,74 @@ export class ChunkWorld {
     const chunk = this.chunks.get(key) ?? this.generateChunk(sx.chunk, sz.chunk);
     const index = blockIndex(sx.local, y, sz.local);
     chunk.blocks[index] = type;
+    if (LIGHT_BLOCKS.has(type)) chunk.lightIndices.add(index);
+    else chunk.lightIndices.delete(index);
     if (record) {
       let edits = this.edits.get(key);
       if (!edits) { edits = new Map(); this.edits.set(key, edits); }
       edits.set(index, type);
     }
-    const section = sectionForY(y);
-    this.queueMesh(key, section);
-    if ((y - MIN_Y) % SECTION_HEIGHT === 0) this.queueMesh(key, section - 1);
-    if ((y - MIN_Y) % SECTION_HEIGHT === SECTION_HEIGHT - 1) this.queueMesh(key, section + 1);
-    if (sx.local === 0) this.queueMesh(chunkKey(sx.chunk - 1, sz.chunk), section);
-    if (sx.local === CHUNK_SIZE - 1) this.queueMesh(chunkKey(sx.chunk + 1, sz.chunk), section);
-    if (sz.local === 0) this.queueMesh(chunkKey(sx.chunk, sz.chunk - 1), section);
-    if (sz.local === CHUNK_SIZE - 1) this.queueMesh(chunkKey(sx.chunk, sz.chunk + 1), section);
+    this.refreshEditedBlock(sx.chunk, sz.chunk, sx.local, y, sz.local, immediate);
     return true;
+  }
+
+  setBlocksBatch(changes: Array<{ x: number; y: number; z: number; type: BlockId }>, record = true, immediate = false) {
+    const affected = new Set<string>();
+    for (const change of changes) {
+      if (change.y < MIN_Y || change.y > MAX_Y) continue;
+      const sx = splitCoordinate(change.x);
+      const sz = splitCoordinate(change.z);
+      const key = chunkKey(sx.chunk, sz.chunk);
+      const chunk = this.chunks.get(key) ?? this.generateChunk(sx.chunk, sz.chunk);
+      const index = blockIndex(sx.local, change.y, sz.local);
+      chunk.blocks[index] = change.type;
+      if (LIGHT_BLOCKS.has(change.type)) chunk.lightIndices.add(index);
+      else chunk.lightIndices.delete(index);
+      if (record) {
+        let edits = this.edits.get(key);
+        if (!edits) { edits = new Map(); this.edits.set(key, edits); }
+        edits.set(index, change.type);
+      }
+      const section = sectionForY(change.y);
+      affected.add(`${key}:${section}`);
+      if ((change.y - MIN_Y) % SECTION_HEIGHT === 0) affected.add(`${key}:${section - 1}`);
+      if ((change.y - MIN_Y) % SECTION_HEIGHT === SECTION_HEIGHT - 1) affected.add(`${key}:${section + 1}`);
+      if (sx.local === 0) affected.add(`${chunkKey(sx.chunk - 1, sz.chunk)}:${section}`);
+      if (sx.local === CHUNK_SIZE - 1) affected.add(`${chunkKey(sx.chunk + 1, sz.chunk)}:${section}`);
+      if (sz.local === 0) affected.add(`${chunkKey(sx.chunk, sz.chunk - 1)}:${section}`);
+      if (sz.local === CHUNK_SIZE - 1) affected.add(`${chunkKey(sx.chunk, sz.chunk + 1)}:${section}`);
+    }
+    for (const entry of affected) {
+      const separator = entry.lastIndexOf(":");
+      const key = entry.slice(0, separator);
+      const section = Number(entry.slice(separator + 1));
+      if (section < 0 || section >= SECTION_COUNT) continue;
+      const chunk = this.chunks.get(key);
+      if (immediate && chunk?.group.visible) this.rebuildSection(chunk, section);
+      else this.queueMesh(key, section, true);
+    }
+  }
+
+  refreshEditedBlock(cx: number, cz: number, localX: number, y: number, localZ: number, immediate: boolean) {
+    const section = sectionForY(y);
+    const targets: Array<[string, number]> = [[chunkKey(cx, cz), section]];
+    if ((y - MIN_Y) % SECTION_HEIGHT === 0) targets.push([chunkKey(cx, cz), section - 1]);
+    if ((y - MIN_Y) % SECTION_HEIGHT === SECTION_HEIGHT - 1) targets.push([chunkKey(cx, cz), section + 1]);
+    if (localX === 0) targets.push([chunkKey(cx - 1, cz), section]);
+    if (localX === CHUNK_SIZE - 1) targets.push([chunkKey(cx + 1, cz), section]);
+    if (localZ === 0) targets.push([chunkKey(cx, cz - 1), section]);
+    if (localZ === CHUNK_SIZE - 1) targets.push([chunkKey(cx, cz + 1), section]);
+    for (const [key, targetSection] of targets) {
+      if (targetSection < 0 || targetSection >= SECTION_COUNT) continue;
+      const targetChunk = this.chunks.get(key);
+      if (immediate && targetChunk?.group.visible) this.rebuildSection(targetChunk, targetSection);
+      else this.queueMesh(key, targetSection, true);
+    }
+  }
+
+  isWalkThrough(type: BlockId | undefined) {
+    if (type === undefined) return false;
+    return type === BlockId.Air || type === BlockId.DoorOpenLower || type === BlockId.DoorOpenUpper || BLOCKS[type]?.shape === "cross";
   }
 
   biomeAt(x: number, z: number) {
@@ -791,6 +935,47 @@ export class ChunkWorld {
     return chunk ? chunk.heightmap[sx.local + sz.local * CHUNK_SIZE] : this.sampleColumn(x, z).height;
   }
 
+  lightSourcesNear(x: number, y: number, z: number, radius = 18) {
+    const radiusSquared = radius * radius;
+    const sources: Array<{ x: number; y: number; z: number; type: BlockId; distanceSquared: number }> = [];
+    for (const chunk of this.chunks.values()) {
+      const chunkCenterX = chunk.cx * CHUNK_SIZE + CHUNK_SIZE / 2;
+      const chunkCenterZ = chunk.cz * CHUNK_SIZE + CHUNK_SIZE / 2;
+      if (Math.abs(chunkCenterX - x) > radius + CHUNK_SIZE || Math.abs(chunkCenterZ - z) > radius + CHUNK_SIZE) continue;
+      for (const index of chunk.lightIndices) {
+        const layer = Math.floor(index / (CHUNK_SIZE * CHUNK_SIZE));
+        const horizontal = index % (CHUNK_SIZE * CHUNK_SIZE);
+        const localZ = Math.floor(horizontal / CHUNK_SIZE);
+        const localX = horizontal % CHUNK_SIZE;
+        const worldX = chunk.cx * CHUNK_SIZE + localX;
+        const worldY = MIN_Y + layer;
+        const worldZ = chunk.cz * CHUNK_SIZE + localZ;
+        const distanceSquared = (worldX - x) ** 2 + (worldY - y) ** 2 + (worldZ - z) ** 2;
+        if (distanceSquared <= radiusSquared) sources.push({ x: worldX, y: worldY, z: worldZ, type: chunk.blocks[index] as BlockId, distanceSquared });
+      }
+    }
+    return sources.sort((a, b) => a.distanceSquared - b.distanceSquared);
+  }
+
+  skyVisibilityAt(x: number, y: number, z: number) {
+    const samples: Array<[number, number]> = [[0, 0], [2, 0], [-2, 0], [0, 2], [0, -2]];
+    let visible = 0;
+    for (const [dx, dz] of samples) {
+      let transmission = 1;
+      for (let scanY = Math.floor(y); scanY <= MAX_Y; scanY += 1) {
+        const type = this.getBlock(Math.floor(x + dx), scanY, Math.floor(z + dz));
+        if (type === undefined) continue;
+        const definition = BLOCKS[type];
+        if (!definition?.solid) continue;
+        if (definition.layer === "cutout") transmission *= 0.55;
+        else { transmission = 0; break; }
+        if (transmission < 0.12) break;
+      }
+      visible += transmission;
+    }
+    return visible / samples.length;
+  }
+
   findWalkableY(x: number, z: number, aroundY = MAX_Y) {
     const top = clamp(Math.round(aroundY + 8), MIN_Y + 1, MAX_Y - 2);
     const bottom = clamp(Math.round(aroundY - 16), MIN_Y + 1, MAX_Y - 2);
@@ -798,7 +983,7 @@ export class ChunkWorld {
       const ground = this.getBlock(x, y, z);
       const feet = this.getBlock(x, y + 1, z);
       const head = this.getBlock(x, y + 2, z);
-      if (ground !== undefined && BLOCKS[ground]?.solid && feet === BlockId.Air && head === BlockId.Air) return y;
+      if (ground !== undefined && BLOCKS[ground]?.solid && this.isWalkThrough(feet) && this.isWalkThrough(head)) return y;
     }
     return this.surfaceAt(x, z);
   }
@@ -808,10 +993,11 @@ export class ChunkWorld {
     const current = BLOCKS[type];
     const next = BLOCKS[neighbor];
     if (!current || !next) return true;
-    if (next.shape === "cross") return true;
-    if (current.layer === "transparent") return neighbor !== type && next.layer !== "opaque";
-    if (current.layer === "cutout") return neighbor !== type && next.layer !== "opaque";
-    return next.layer === "transparent" || next.layer === "cutout";
+    if (next.shape === "cross" || next.shape === "door") return true;
+    const nextOccludes = next.solid && next.layer !== "transparent" && next.layer !== "cutout";
+    if (current.layer === "transparent") return neighbor !== type && !nextOccludes;
+    if (current.layer === "cutout" || (current.layer === "emissive" && !current.solid)) return neighbor !== type && !nextOccludes;
+    return !nextOccludes;
   }
 
   rebuildSection(chunk: Chunk, section: number) {
@@ -819,9 +1005,22 @@ export class ChunkWorld {
     if (old) {
       for (const mesh of Object.values(old)) if (mesh) { chunk.group.remove(mesh); mesh.geometry.dispose(); }
     }
-    const buckets: Record<Exclude<RenderLayer, "none">, GeometryBucket> = { opaque: emptyBucket(), cutout: emptyBucket(), transparent: emptyBucket() };
+    const buckets: Record<Exclude<RenderLayer, "none">, GeometryBucket> = { opaque: emptyBucket(), cutout: emptyBucket(), transparent: emptyBucket(), emissive: emptyBucket() };
     const startY = MIN_Y + section * SECTION_HEIGHT;
     const endY = Math.min(MAX_Y, startY + SECTION_HEIGHT - 1);
+    const west = this.chunks.get(chunkKey(chunk.cx - 1, chunk.cz));
+    const east = this.chunks.get(chunkKey(chunk.cx + 1, chunk.cz));
+    const north = this.chunks.get(chunkKey(chunk.cx, chunk.cz - 1));
+    const south = this.chunks.get(chunkKey(chunk.cx, chunk.cz + 1));
+    const neighborAt = (localX: number, y: number, localZ: number) => {
+      if (y > MAX_Y) return BlockId.Air;
+      if (y < MIN_Y) return BlockId.Bedrock;
+      if (localX >= 0 && localX < CHUNK_SIZE && localZ >= 0 && localZ < CHUNK_SIZE) return chunk.blocks[blockIndex(localX, y, localZ)] as BlockId;
+      if (localX < 0) return west ? west.blocks[blockIndex(CHUNK_SIZE - 1, y, localZ)] as BlockId : BlockId.Air;
+      if (localX >= CHUNK_SIZE) return east ? east.blocks[blockIndex(0, y, localZ)] as BlockId : BlockId.Air;
+      if (localZ < 0) return north ? north.blocks[blockIndex(localX, y, CHUNK_SIZE - 1)] as BlockId : BlockId.Air;
+      return south ? south.blocks[blockIndex(localX, y, 0)] as BlockId : BlockId.Air;
+    };
     const grid = 8;
     const pad = 0.0008;
     const uvFor = (tile: number) => {
@@ -842,8 +1041,6 @@ export class ChunkWorld {
     };
 
     for (let lx = 0; lx < CHUNK_SIZE; lx += 1) for (let lz = 0; lz < CHUNK_SIZE; lz += 1) {
-      const gx = chunk.cx * CHUNK_SIZE + lx;
-      const gz = chunk.cz * CHUNK_SIZE + lz;
       const tint = BIOME_TINT[chunk.biomes[lx + lz * CHUNK_SIZE]] ?? [1, 1, 1];
       for (let y = startY; y <= endY; y += 1) {
         const type = chunk.blocks[blockIndex(lx, y, lz)] as BlockId;
@@ -857,9 +1054,21 @@ export class ChunkWorld {
           addQuad(bucket, [[lx + 0.36, y - 0.5, lz - 0.36], [lx + 0.36, y + 0.5, lz - 0.36], [lx - 0.36, y + 0.5, lz + 0.36], [lx - 0.36, y - 0.5, lz + 0.36]], [-0.7, 0, -0.7], tile, 0.92, tint);
           continue;
         }
+        if (definition.shape === "door") {
+          const tile = definition.side;
+          const open = type === BlockId.DoorOpenLower || type === BlockId.DoorOpenUpper;
+          if (open) {
+            addQuad(bucket, [[lx - 0.08, y - 0.5, lz - 0.48], [lx - 0.08, y + 0.5, lz - 0.48], [lx - 0.08, y + 0.5, lz + 0.48], [lx - 0.08, y - 0.5, lz + 0.48]], [-1, 0, 0], tile, 0.88, tint);
+            addQuad(bucket, [[lx + 0.08, y - 0.5, lz + 0.48], [lx + 0.08, y + 0.5, lz + 0.48], [lx + 0.08, y + 0.5, lz - 0.48], [lx + 0.08, y - 0.5, lz - 0.48]], [1, 0, 0], tile, 0.78, tint);
+          } else {
+            addQuad(bucket, [[lx + 0.48, y - 0.5, lz - 0.08], [lx + 0.48, y + 0.5, lz - 0.08], [lx - 0.48, y + 0.5, lz - 0.08], [lx - 0.48, y - 0.5, lz - 0.08]], [0, 0, -1], tile, 0.9, tint);
+            addQuad(bucket, [[lx - 0.48, y - 0.5, lz + 0.08], [lx - 0.48, y + 0.5, lz + 0.08], [lx + 0.48, y + 0.5, lz + 0.08], [lx + 0.48, y - 0.5, lz + 0.08]], [0, 0, 1], tile, 0.8, tint);
+          }
+          continue;
+        }
         for (const face of FACES) {
           const [dx, dy, dz] = face.direction;
-          const neighbor = this.getBlockForMesh(gx + dx, y + dy, gz + dz);
+          const neighbor = neighborAt(lx + dx, y + dy, lz + dz);
           if (!this.faceVisible(type, neighbor)) continue;
           const tile = dy > 0 ? definition.top : dy < 0 ? definition.bottom : definition.side;
           const waterDrop = type === BlockId.Water || type === BlockId.Lava ? -0.045 : 0;
@@ -870,7 +1079,7 @@ export class ChunkWorld {
     }
 
     const nextMeshes: ChunkMeshes = {};
-    for (const layer of ["opaque", "cutout", "transparent"] as const) {
+    for (const layer of ["opaque", "cutout", "transparent", "emissive"] as const) {
       const bucket = buckets[layer];
       if (!bucket.positions.length) continue;
       const geometry = new THREE.BufferGeometry();
@@ -881,7 +1090,7 @@ export class ChunkWorld {
       geometry.setIndex(bucket.indices);
       geometry.computeBoundingSphere();
       const mesh = new THREE.Mesh(geometry, this.materials[layer]);
-      mesh.renderOrder = layer === "transparent" ? 2 : layer === "cutout" ? 1 : 0;
+      mesh.renderOrder = layer === "transparent" ? 3 : layer === "emissive" ? 2 : layer === "cutout" ? 1 : 0;
       chunk.group.add(mesh);
       nextMeshes[layer] = mesh;
     }
@@ -911,7 +1120,7 @@ export class ChunkWorld {
   }
 
   get queuedCount() {
-    return this.generationQueue.length + this.meshQueue.length;
+    return this.generationQueue.length + this.meshQueue.length + this.urgentMeshQueue.length;
   }
 
   dispose() {

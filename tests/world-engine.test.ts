@@ -3,9 +3,11 @@ import test from "node:test";
 import * as THREE from "three";
 import { BlockId, ITEMS, Item } from "../app/game/data.ts";
 import { VoxelEngine } from "../app/game/engine.ts";
-import { ChunkWorld, BIOME_NAMES, blockIndex, chunkKey, splitCoordinate } from "../app/game/world.ts";
+import { ChunkWorld, BIOME_NAMES, MIN_Y, SECTION_HEIGHT, WORLD_HEIGHT, blockIndex, chunkKey, splitCoordinate } from "../app/game/world.ts";
 
 test("chunk coordinates remain correct across negative boundaries", () => {
+  assert.equal(MIN_Y, -64);
+  assert.equal(WORLD_HEIGHT, 192);
   const cases = [
     [-17, -2, 15],
     [-16, -1, 0],
@@ -106,10 +108,11 @@ test("adjacent blocks across a chunk seam do not render hidden faces", () => {
   right.blocks.fill(BlockId.Air);
   left.blocks[blockIndex(15, 0, 0)] = BlockId.Stone;
   right.blocks[blockIndex(0, 0, 0)] = BlockId.Stone;
-  world.rebuildSection(left, 2);
-  world.rebuildSection(right, 2);
+  const section = Math.floor((0 - MIN_Y) / SECTION_HEIGHT);
+  world.rebuildSection(left, section);
+  world.rebuildSection(right, section);
   const vertexCount = [left, right].reduce((total, chunk) => {
-    const mesh = chunk.sections.get(2)?.opaque;
+    const mesh = chunk.sections.get(section)?.opaque;
     return total + (mesh?.geometry.getAttribute("position").count ?? 0);
   }, 0);
   assert.equal(vertexCount, 40, "two touching cubes should expose exactly ten quads");

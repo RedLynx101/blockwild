@@ -14,6 +14,8 @@ import {
 import {
   CREATIVE_BLOCKS,
   ITEMS,
+  MOB_DEFS,
+  MOB_ORDER,
   RECIPES,
   VoxelEngine,
   clearSavedWorld,
@@ -24,10 +26,11 @@ import {
   type HudState,
   type InventorySlot,
   type ItemCode,
+  type MobKind,
   type OverlayKind,
 } from "./engine";
 
-type Overlay = "title" | "new" | "pause" | "inventory" | "crafting" | "furnace" | "chest" | "help" | "settings" | "reset" | null;
+type Overlay = "title" | "new" | "pause" | "inventory" | "crafting" | "furnace" | "chest" | "bestiary" | "help" | "settings" | "reset" | null;
 
 const blankSlots = (count: number) => Array.from({ length: count }, () => null as InventorySlot | null);
 
@@ -43,6 +46,10 @@ const INITIAL_HUD: HudState = {
   craftingSize: 2,
   activeFurnace: null,
   activeChest: null,
+  activeChestTitle: "Wildwood Chest",
+  equipment: { head: null, chest: null, legs: null, feet: null },
+  armor: 0,
+  bestiary: Object.fromEntries(MOB_ORDER.map((kind) => [kind, { seen: false, kills: 0 }])) as HudState["bestiary"],
   selected: 0,
   targetName: null,
   targetMob: null,
@@ -102,6 +109,14 @@ function StatPips({ kind, value }: { kind: "heart" | "hunger"; value: number }) 
   );
 }
 
+function ArmorPips({ value }: { value: number }) {
+  return (
+    <div className="stat-pips stat-armor" aria-label={`Armor: ${value} points`}>
+      {Array.from({ length: 10 }, (_, index) => <span key={index} className={index < Math.ceil(value / 1.2) ? "filled" : "empty"}>⬟</span>)}
+    </div>
+  );
+}
+
 function SlotContents({ slot }: { slot: InventorySlot | null }) {
   if (!slot) return null;
   const definition = ITEMS[slot.item];
@@ -140,6 +155,7 @@ export default function VoxelGame() {
   const [webglError, setWebglError] = useState(false);
   const [cursorPosition, setCursorPosition] = useState({ x: 0, y: 0 });
   const [inventoryTab, setInventoryTab] = useState<"inventory" | "recipes" | "creative">("inventory");
+  const [selectedBestiary, setSelectedBestiary] = useState<MobKind>("mossling");
 
   const setOverlay = useCallback((next: Overlay) => {
     overlayRef.current = next;
@@ -197,6 +213,37 @@ export default function VoxelGame() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setOverlay, showToast]);
 
+  useEffect(() => {
+    const handleMenuKeys = (event: KeyboardEvent) => {
+      const current = overlayRef.current;
+      const engine = engineRef.current;
+      if (event.code === "KeyE" && ["inventory", "crafting", "furnace", "chest"].includes(current ?? "")) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        engine?.closeContainer();
+        setOverlay(null);
+        engine?.activate();
+        return;
+      }
+      if (event.code !== "Escape") return;
+      if (current !== null) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (["inventory", "crafting", "furnace", "chest"].includes(current)) engine?.closeContainer();
+        if (startedRef.current) {
+          if (current === "pause") { setOverlay(null); engine?.activate(); }
+          else if (current === "settings" || current === "help" || current === "reset" || current === "bestiary") setOverlay("pause");
+          else { setOverlay(null); engine?.activate(); }
+        } else if (current !== "title") setOverlay("title");
+      } else if (startedRef.current) {
+        engine?.pause();
+        setOverlay("pause");
+      }
+    };
+    window.addEventListener("keydown", handleMenuKeys, true);
+    return () => window.removeEventListener("keydown", handleMenuKeys, true);
+  }, [setOverlay]);
+
   const beginNewWorld = () => {
     const engine = engineRef.current;
     if (engine) setSeed(engine.randomSeed());
@@ -213,7 +260,7 @@ export default function VoxelGame() {
     setHasSave(true);
     setOverlay(null);
     engine.activate();
-    showToast("WASD move · Space jump/swim · Shift sprint · Left harvest/attack · Right use/build · E inventory · F fullscreen");
+    showToast("WASD move · Space jump/swim · Shift sprint · Left harvest/attack · Right use/build · E inventory · Esc menu");
   };
 
   const continueWorld = () => {
@@ -314,7 +361,10 @@ export default function VoxelGame() {
       className={`mc-slot ${className}`}
       title={slot ? `${ITEMS[slot.item]?.name ?? "Item"}${slot.durability !== undefined ? ` · ${slot.durability} durability` : ""}` : label}
       aria-label={slot ? `${ITEMS[slot.item]?.name ?? "Item"}, ${slot.count}` : label ?? "Empty slot"}
-      onClick={(event) => onLeft(event.shiftKey)}
+      onClick={(event) => {
+        if (event.detail >= 2) engineRef.current?.collectMatching(slot?.item ?? hud.cursor?.item);
+        else onLeft(event.shiftKey);
+      }}
       onContextMenu={(event) => slotContext(event, onRight)}
     >
       <SlotContents slot={slot} />
@@ -361,10 +411,10 @@ export default function VoxelGame() {
     return (
       <div className="crafting-workspace">
         <div className={`mc-grid craft-grid craft-${size}`}>
-          {positions.map((position) => renderSlot(hud.craftGrid[position], `craft-${position}`, () => engineRef.current?.craftSlotClick(position, "left"), () => engineRef.current?.craftSlotClick(position, "right")))}
+          {positions.map((position) => renderSlot(hud.craftGrid[position], `craft-${position}`, (shift) => engineRef.current?.craftSlotClick(position, "left", shift), () => engineRef.current?.craftSlotClick(position, "right")))}
         </div>
         <div className="craft-arrow"><span>▶</span></div>
-        {renderSlot(hud.craftOutput, "craft-output", () => engineRef.current?.craftOutputClick(), () => undefined, "craft-output-slot", "Crafting output")}
+        {renderSlot(hud.craftOutput, "craft-output", (shift) => engineRef.current?.craftOutputClick(shift), () => undefined, "craft-output-slot", "Crafting output")}
       </div>
     );
   };
@@ -372,6 +422,8 @@ export default function VoxelGame() {
   const selectedSlot = hud.inventory[hud.selected];
   const selectedName = selectedSlot ? ITEMS[selectedSlot.item]?.name ?? "Unknown Item" : "Empty Hand";
   const xpNeeded = 12 + hud.level * 6;
+  const bestiaryDefinition = MOB_DEFS[selectedBestiary];
+  const bestiaryProgress = hud.bestiary[selectedBestiary];
 
   return (
     <main className="game-shell">
@@ -389,7 +441,7 @@ export default function VoxelGame() {
           <div className="objective-card">
             <span className="objective-kicker">THE FIRST LONG NIGHT</span>
             <strong>Wood → table → pickaxe → shelter</strong>
-            <span>Then dig. The rarest crystals wait below Y −10. The hungriest things do too.</span>
+            <span>Then dig. The rarest crystals wait below Y −24. The hungriest things do too.</span>
           </div>
           <button type="button" className="hud-fullscreen-button" onClick={() => engineRef.current?.toggleFullscreen()} aria-label={hud.fullscreen ? "Exit fullscreen" : "Enter fullscreen"}>{hud.fullscreen ? "⊡" : "□"}</button>
 
@@ -420,6 +472,7 @@ export default function VoxelGame() {
               <div className="survival-stats">
                 <StatPips kind="heart" value={hud.health} />
                 <StatPips kind="hunger" value={hud.hunger} />
+                {hud.armor > 0 && <ArmorPips value={hud.armor} />}
               </div>
             )}
             <div className="xp-bar" aria-label={`Level ${hud.level}, ${hud.xp} of ${xpNeeded} experience`}><span style={{ width: `${Math.min(100, hud.xp / xpNeeded * 100)}%` }} /><b>{hud.level || ""}</b></div>
@@ -487,7 +540,7 @@ export default function VoxelGame() {
           <div className="pixel-panel world-setup-panel expanded-setup-panel">
             <span className="panel-eyebrow">ENDLESS WORLD GENERATOR</span>
             <h2 id="new-world-title">Create a New World</h2>
-            <p className="setup-intro">Every seed grows continents, oceans, rivers, mountains, seventeen surface biomes, cave networks, ruins, cabins, and a worldheart thirty-two blocks below zero.</p>
+            <p className="setup-intro">Every seed grows continents, oceans, rivers, mountains, seventeen surface biomes, cave networks, ruins, cabins, and a worldheart sixty-four blocks below zero.</p>
             <label className="field-label" htmlFor="world-seed">World seed</label>
             <div className="seed-row">
               <input id="world-seed" className="pixel-input" value={seed} maxLength={32} onChange={(event) => setSeed(event.target.value.toUpperCase())} />
@@ -505,7 +558,7 @@ export default function VoxelGame() {
               </button>
             </fieldset>
             <div className="world-feature-strip">
-              <span><b>∞</b> STREAMED WORLD</span><span><b>17</b> BIOMES</span><span><b>7</b> MOB SPECIES</span><span><b>128</b> BLOCKS TALL</span>
+              <span><b>∞</b> STREAMED WORLD</span><span><b>17</b> BIOMES</span><span><b>7</b> MOB SPECIES</span><span><b>192</b> BLOCKS TALL</span>
             </div>
             <div className="panel-actions">
               <PixelButton className="secondary-button" onClick={() => setOverlay("title")}>Cancel</PixelButton>
@@ -524,6 +577,7 @@ export default function VoxelGame() {
             <div className="stacked-menu-buttons">
               <PixelButton className="gold-button" onClick={() => { setOverlay(null); engineRef.current?.activate(); }}>Back to Game</PixelButton>
               <PixelButton onClick={() => engineRef.current?.openOverlay("inventory")}>Inventory & Crafting</PixelButton>
+              <PixelButton onClick={() => engineRef.current?.openOverlay("bestiary")}>Bestiary</PixelButton>
               <PixelButton onClick={() => engineRef.current?.toggleFullscreen()}>{hud.fullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}</PixelButton>
               <PixelButton onClick={() => openSettings("pause")}>Settings</PixelButton>
               <PixelButton onClick={() => setOverlay("help")}>Field Manual</PixelButton>
@@ -556,7 +610,16 @@ export default function VoxelGame() {
               <div className="inventory-workbench-layout">
                 {inventoryTab === "recipes" ? renderRecipeBook(overlay === "crafting") : (
                   <div className="player-paper-doll">
-                    <div className="avatar-cube"><span className="avatar-head" /><span className="avatar-body" /><span className="avatar-leg leg-a" /><span className="avatar-leg leg-b" /></div>
+                    <div className="paper-doll-stage">
+                      <div className="equipment-slots">
+                        {renderSlot(hud.equipment.head, "armor-head", (shift) => engineRef.current?.equipmentClick("head", "left", shift), () => engineRef.current?.equipmentClick("head", "right"), "equipment-slot", "Head armor")}
+                        {renderSlot(hud.equipment.chest, "armor-chest", (shift) => engineRef.current?.equipmentClick("chest", "left", shift), () => engineRef.current?.equipmentClick("chest", "right"), "equipment-slot", "Chest armor")}
+                        {renderSlot(hud.equipment.legs, "armor-legs", (shift) => engineRef.current?.equipmentClick("legs", "left", shift), () => engineRef.current?.equipmentClick("legs", "right"), "equipment-slot", "Leg armor")}
+                        {renderSlot(hud.equipment.feet, "armor-feet", (shift) => engineRef.current?.equipmentClick("feet", "left", shift), () => engineRef.current?.equipmentClick("feet", "right"), "equipment-slot", "Boots")}
+                      </div>
+                      <div className="avatar-cube"><span className="avatar-head" /><span className="avatar-body" /><span className="avatar-leg leg-a" /><span className="avatar-leg leg-b" /></div>
+                    </div>
+                    <span className="armor-readout">ARMOR {hud.armor}</span>
                     <small>LEVEL {hud.level}</small>
                     <b>{hud.depth}</b>
                   </div>
@@ -568,7 +631,7 @@ export default function VoxelGame() {
                 </div>
               </div>
             )}
-            <div className="inventory-instructions">Left click moves stacks · Right click splits/places one · Shift-click moves between pack and hotbar · Q drops the selected item</div>
+            <div className="inventory-instructions">Left click moves stacks · Double-click gathers matching items · Right click splits/places one · Shift-click transfers to armor, chests, furnaces, pack or hotbar</div>
           </div>
           {hud.cursor && <div className="held-stack" style={{ left: cursorPosition.x, top: cursorPosition.y }}><SlotContents slot={hud.cursor} /></div>}
         </section>
@@ -580,12 +643,12 @@ export default function VoxelGame() {
             <header className="mc-window-header"><div><span className="panel-eyebrow">SMELTING STATION</span><h2 id="furnace-title">Furnace</h2></div><button type="button" className="panel-close" onClick={resume}>×</button></header>
             <div className="furnace-layout">
               <div className="furnace-input-stack">
-                {renderSlot(hud.activeFurnace?.input ?? null, "furnace-input", () => engineRef.current?.machineClick("furnace", 0, "left"), () => engineRef.current?.machineClick("furnace", 0, "right"), "machine-slot", "Smelting input")}
+                {renderSlot(hud.activeFurnace?.input ?? null, "furnace-input", (shift) => engineRef.current?.machineClick("furnace", 0, "left", shift), () => engineRef.current?.machineClick("furnace", 0, "right"), "machine-slot", "Smelting input")}
                 <div className={`furnace-flame ${(hud.activeFurnace?.burn ?? 0) > 0 ? "lit" : ""}`}><span>♨</span><i style={{ height: `${hud.activeFurnace?.burnMax ? hud.activeFurnace.burn / hud.activeFurnace.burnMax * 100 : 0}%` }} /></div>
-                {renderSlot(hud.activeFurnace?.fuel ?? null, "furnace-fuel", () => engineRef.current?.machineClick("furnace", 1, "left"), () => engineRef.current?.machineClick("furnace", 1, "right"), "machine-slot", "Fuel")}
+                {renderSlot(hud.activeFurnace?.fuel ?? null, "furnace-fuel", (shift) => engineRef.current?.machineClick("furnace", 1, "left", shift), () => engineRef.current?.machineClick("furnace", 1, "right"), "machine-slot", "Fuel")}
               </div>
               <div className="smelt-progress"><span style={{ width: `${Math.min(100, (hud.activeFurnace?.progress ?? 0) / 8 * 100)}%` }} /><b>▶</b></div>
-              {renderSlot(hud.activeFurnace?.output ?? null, "furnace-output", () => engineRef.current?.machineClick("furnace", 2, "left"), () => engineRef.current?.machineClick("furnace", 2, "right"), "machine-slot furnace-output-slot", "Smelted output")}
+              {renderSlot(hud.activeFurnace?.output ?? null, "furnace-output", (shift) => engineRef.current?.machineClick("furnace", 2, "left", shift), () => engineRef.current?.machineClick("furnace", 2, "right"), "machine-slot furnace-output-slot", "Smelted output")}
               <div className="smelt-guide"><strong>SMELTING</strong><span>Ore → ingot</span><span>Sand → glass</span><span>Raw meat → cooked</span><span>Log → charcoal</span><span>Cobble → stone</span><small>Coal burns longest. Sticks burn with admirable optimism.</small></div>
             </div>
             {renderPlayerInventory()}
@@ -597,14 +660,44 @@ export default function VoxelGame() {
       {overlay === "chest" && (
         <section className="menu-overlay inventory-overlay" aria-labelledby="chest-title" onPointerMove={trackCursor}>
           <div className="mc-window chest-window">
-            <header className="mc-window-header"><div><span className="panel-eyebrow">WILDWOOD STORAGE</span><h2 id="chest-title">Chest</h2></div><button type="button" className="panel-close" onClick={resume}>×</button></header>
+            <header className="mc-window-header"><div><span className="panel-eyebrow">WILDWOOD STORAGE</span><h2 id="chest-title">{hud.activeChestTitle}</h2></div><button type="button" className="panel-close" onClick={resume}>×</button></header>
             <span className="grid-label">CHEST</span>
             <div className="mc-grid chest-grid">
-              {(hud.activeChest ?? blankSlots(27)).map((slot, index) => renderSlot(slot, `chest-${index}`, () => engineRef.current?.machineClick("chest", index, "left"), () => engineRef.current?.machineClick("chest", index, "right")))}
+              {(hud.activeChest ?? blankSlots(27)).map((slot, index) => renderSlot(slot, `chest-${index}`, (shift) => engineRef.current?.machineClick("chest", index, "left", shift), () => engineRef.current?.machineClick("chest", index, "right")))}
             </div>
             {renderPlayerInventory()}
           </div>
           {hud.cursor && <div className="held-stack" style={{ left: cursorPosition.x, top: cursorPosition.y }}><SlotContents slot={hud.cursor} /></div>}
+        </section>
+      )}
+
+      {overlay === "bestiary" && (
+        <section className="menu-overlay bestiary-overlay" aria-labelledby="bestiary-title">
+          <div className="mc-window bestiary-window">
+            <header className="mc-window-header">
+              <div><span className="panel-eyebrow">FIELD NOTES · {MOB_ORDER.filter((kind) => hud.bestiary[kind].seen).length}/{MOB_ORDER.length} DISCOVERED</span><h2 id="bestiary-title">Bestiary</h2></div>
+              <button type="button" className="panel-close" onClick={() => setOverlay("pause")}>×</button>
+            </header>
+            <div className="bestiary-layout">
+              <nav className="bestiary-list" aria-label="Creature list">
+                {MOB_ORDER.map((kind) => {
+                  const definition = MOB_DEFS[kind];
+                  const progress = hud.bestiary[kind];
+                  return <button type="button" key={kind} className={selectedBestiary === kind ? "active" : ""} onClick={() => setSelectedBestiary(kind)}><span className={`bestiary-mini ${progress.seen ? "seen" : ""}`} style={{ "--mob-color": `#${definition.colors[0].toString(16).padStart(6, "0")}` } as CSSProperties} /><strong>{progress.seen ? definition.name : "Unknown Creature"}</strong><small>{progress.seen ? `${definition.temperament} · ${progress.kills} kills` : "Undiscovered"}</small></button>;
+                })}
+              </nav>
+              <article className={`bestiary-detail ${bestiaryProgress.seen ? "seen" : "unknown"}`}>
+                <div className="bestiary-portrait" style={{ "--mob-color": `#${bestiaryDefinition.colors[0].toString(16).padStart(6, "0")}`, "--mob-accent": `#${bestiaryDefinition.colors[1].toString(16).padStart(6, "0")}` } as CSSProperties}><span /><i /><b>?</b></div>
+                {bestiaryProgress.seen ? <>
+                  <div className="bestiary-heading"><div><span>{bestiaryDefinition.temperament.toUpperCase()}</span><h3>{bestiaryDefinition.name}</h3></div><strong>{bestiaryProgress.kills} DEFEATED</strong></div>
+                  <p className="bestiary-lore">{bestiaryDefinition.lore}</p>
+                  <div className="bestiary-facts"><div><small>HABITAT</small><strong>{bestiaryDefinition.habitat}</strong></div><div><small>ACTIVE</small><strong>{bestiaryDefinition.active}</strong></div><div><small>HEALTH</small><strong>{bestiaryDefinition.health} hearts</strong></div><div><small>DANGER</small><strong>{bestiaryDefinition.damage ? `${bestiaryDefinition.damage} damage` : "Harmless"}</strong></div></div>
+                  <section className="behavior-note"><small>BEHAVIOR</small><p>{bestiaryDefinition.behavior}</p></section>
+                  <section className="bestiary-loot"><small>OBSERVED DROPS</small>{bestiaryDefinition.drops.map((drop) => <div key={drop.item}><ItemIcon item={drop.item} small /><span><strong>{bestiaryProgress.kills ? ITEMS[drop.item]?.name : "Unknown drop"}</strong><small>{bestiaryProgress.kills ? `${drop.min}${drop.max !== drop.min ? `–${drop.max}` : ""} · ${Math.round(drop.chance * 100)}% chance` : "Defeat one to record it"}</small></span></div>)}</section>
+                </> : <div className="unknown-entry"><span className="panel-eyebrow">NO RELIABLE OBSERVATION</span><h3>Unknown Creature</h3><p>Find this creature in the wild and bring it within view to reveal its field notes.</p></div>}
+              </article>
+            </div>
+          </div>
         </section>
       )}
 
@@ -623,7 +716,7 @@ export default function VoxelGame() {
               <div><kbd>1–9 / WHEEL</kbd><span><strong>Select</strong>Choose a hotbar stack.</span></div>
               <div><kbd>E</kbd><span><strong>Inventory</strong>2×2 hand crafting and the full stack inventory.</span></div>
               <div><kbd>Q</kbd><span><strong>Drop item</strong>Toss one from the selected stack.</span></div>
-              <div><kbd>F</kbd><span><strong>Fullscreen</strong>Give the cubes all available pixels.</span></div>
+              <div><kbd>ESC</kbd><span><strong>Menu</strong>Open or close the current menu. Fullscreen remains a menu button.</span></div>
               <div><kbd>MIDDLE</kbd><span><strong>Pick block</strong>Match the targeted block in Builder mode.</span></div>
               <div><kbd>F3</kbd><span><strong>Debug</strong>Coordinates, depth, chunks, seed, and weather.</span></div>
             </div>
@@ -635,7 +728,7 @@ export default function VoxelGame() {
               <div><b>5</b><strong>Own the night</strong><span>Hostiles drop shards, gel, bone, coal, and XP.</span></div>
               <div><b>6</b><strong>Go below zero</strong><span>Crystal deeps, lava, aquifers, and the worldheart await.</span></div>
             </div>
-            <div className="panel-actions"><PixelButton className="gold-button" onClick={() => started ? (() => { setOverlay(null); engineRef.current?.activate(); })() : setOverlay("title")}>{started ? "Back to Game" : "Back"}</PixelButton></div>
+            <div className="panel-actions"><PixelButton className="gold-button" onClick={() => setOverlay(started ? "pause" : "title")}>{started ? "Back to Menu" : "Back"}</PixelButton></div>
           </div>
         </section>
       )}
@@ -649,7 +742,7 @@ export default function VoxelGame() {
             <label className="setting-row"><span><strong>Look sensitivity</strong><small>{Math.round((settings.sensitivity / 0.005) * 100)}%</small></span><input type="range" min="0.0008" max="0.005" step="0.0001" value={settings.sensitivity} onChange={(event) => updateSettings({ sensitivity: Number(event.target.value) })} /></label>
             <label className="setting-row"><span><strong>Field of view</strong><small>{Math.round(settings.fov)}°</small></span><input type="range" min="55" max="100" step="1" value={settings.fov} onChange={(event) => updateSettings({ fov: Number(event.target.value) })} /></label>
             <label className="setting-row"><span><strong>Render distance</strong><small>{settings.renderDistance} chunks · about {settings.renderDistance * 16} blocks</small></span><input type="range" min="2" max="5" step="1" value={settings.renderDistance} onChange={(event) => updateSettings({ renderDistance: Number(event.target.value) })} /></label>
-            <div className="toggle-setting"><span><strong>Sound effects & ambience</strong><small>Procedurally synthesized in your browser.</small></span><button type="button" className={settings.muted ? "" : "active"} onClick={() => updateSettings({ muted: !settings.muted })}>{settings.muted ? "OFF" : "ON"}</button></div>
+            <div className="toggle-setting"><span><strong>Music, sound effects & ambience</strong><small>Includes the Blockwild day, night, and sea score.</small></span><button type="button" className={settings.muted ? "" : "active"} onClick={() => updateSettings({ muted: !settings.muted })}>{settings.muted ? "OFF" : "ON"}</button></div>
             <div className="toggle-setting"><span><strong>Weather</strong><small>Rain affects atmosphere and visibility.</small></span><button type="button" className={settings.weather === "rain" ? "active" : ""} onClick={() => { const weather = settings.weather === "rain" ? "clear" : "rain"; updateSettings({ weather }); }}>{settings.weather === "rain" ? "RAIN" : "CLEAR"}</button></div>
             <div className="fullscreen-setting"><PixelButton onClick={() => engineRef.current?.toggleFullscreen()}>{hud.fullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}</PixelButton></div>
             <div className="panel-actions"><PixelButton className="gold-button" onClick={() => setOverlay(settingsReturn)}>Done</PixelButton></div>

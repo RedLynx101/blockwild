@@ -50,6 +50,11 @@ export enum BlockId {
   BlueFlower = 48,
   WheatCrop = 49,
   Farmland = 50,
+  WildwoodSapling = 51,
+  DoorClosedLower = 52,
+  DoorClosedUpper = 53,
+  DoorOpenLower = 54,
+  DoorOpenUpper = 55,
 }
 
 export const Item = {
@@ -91,14 +96,24 @@ export const Item = {
   ShadowShard: 134,
   Apple: 135,
   Charcoal: 136,
+  WildwoodDoor: 137,
+  HideHood: 138,
+  HideTunic: 139,
+  HideLeggings: 140,
+  HideBoots: 141,
+  SunmetalHelm: 142,
+  SunmetalPlate: 143,
+  SunmetalGreaves: 144,
+  SunmetalBoots: 145,
 } as const;
 
 export type ItemCode = number;
 export type GameMode = "builder" | "survival";
 export type Weather = "clear" | "rain";
-export type RenderLayer = "opaque" | "cutout" | "transparent" | "none";
+export type RenderLayer = "opaque" | "cutout" | "transparent" | "emissive" | "none";
 export type ToolKind = "pickaxe" | "axe" | "shovel" | "sword";
 export type BlockTool = "pickaxe" | "axe" | "shovel" | "hand";
+export type EquipmentSlot = "head" | "chest" | "legs" | "feet";
 
 export type InventorySlot = {
   item: ItemCode;
@@ -118,7 +133,7 @@ export type BlockDefinition = {
   color: string;
   preferredTool: BlockTool;
   requiredTier: number;
-  shape?: "cube" | "cross";
+  shape?: "cube" | "cross" | "door";
   replaceable?: boolean;
   liquid?: "water" | "lava";
 };
@@ -134,6 +149,8 @@ export type ItemDefinition = {
   miningSpeed?: number;
   damage?: number;
   maxDurability?: number;
+  equipmentSlot?: EquipmentSlot;
+  armor?: number;
   food?: number;
   fuel?: number;
 };
@@ -178,7 +195,7 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.Planks]: block(BlockId.Planks, "Wildwood Planks", 11, 11, 11, 0.9, "#b6844d", "axe"),
   [BlockId.StoneBrick]: block(BlockId.StoneBrick, "Stone Brick", 12, 12, 12, 1.65, "#8b7770", "pickaxe", 1),
   [BlockId.Glass]: block(BlockId.Glass, "Glass", 13, 13, 13, 0.35, "#b9e5e3", "hand", 0, { layer: "transparent" }),
-  [BlockId.Glowstone]: block(BlockId.Glowstone, "Glowstone", 14, 14, 14, 0.7, "#e3c35c", "pickaxe"),
+  [BlockId.Glowstone]: block(BlockId.Glowstone, "Glowstone", 14, 14, 14, 0.7, "#e3c35c", "pickaxe", 0, { layer: "emissive" }),
   [BlockId.Bedrock]: block(BlockId.Bedrock, "Bedrock", 15, 15, 15, 9999, "#303334", "pickaxe", 99),
   [BlockId.SnowyGrass]: block(BlockId.SnowyGrass, "Snowy Grass", 16, 17, 2, 0.65, "#dfe7e4", "shovel"),
   [BlockId.Snow]: block(BlockId.Snow, "Snow Block", 16, 16, 16, 0.35, "#e8efee", "shovel"),
@@ -197,7 +214,7 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.Cobblestone]: block(BlockId.Cobblestone, "Cobblestone", 35, 35, 35, 1.75, "#6a706f", "pickaxe", 1),
   [BlockId.CraftingTable]: block(BlockId.CraftingTable, "Crafting Table", 36, 37, 11, 1.1, "#9b6536", "axe"),
   [BlockId.Furnace]: block(BlockId.Furnace, "Furnace", 3, 38, 3, 2, "#666c6d", "pickaxe", 1),
-  [BlockId.Torch]: block(BlockId.Torch, "Torch", 39, 39, 39, 0.05, "#f4bd4f", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
+  [BlockId.Torch]: block(BlockId.Torch, "Torch", 39, 39, 39, 0.05, "#f4bd4f", "hand", 0, { solid: false, layer: "emissive", shape: "cross", replaceable: true }),
   [BlockId.CopperOre]: block(BlockId.CopperOre, "Copper Ore", 40, 40, 40, 1.9, "#b16d4e", "pickaxe", 1),
   [BlockId.GoldOre]: block(BlockId.GoldOre, "Gold Ore", 41, 41, 41, 2.4, "#cda934", "pickaxe", 2),
   [BlockId.CrystalOre]: block(BlockId.CrystalOre, "Star Crystal Ore", 42, 42, 42, 3.1, "#64d6df", "pickaxe", 3),
@@ -216,6 +233,11 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.BlueFlower]: block(BlockId.BlueFlower, "Skybell", 55, 55, 55, 0.05, "#558ed9", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
   [BlockId.WheatCrop]: block(BlockId.WheatCrop, "Wild Wheat", 56, 56, 56, 0.08, "#cba74e", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
   [BlockId.Farmland]: block(BlockId.Farmland, "Farmland", 57, 58, 2, 0.55, "#6b4328", "shovel"),
+  [BlockId.WildwoodSapling]: block(BlockId.WildwoodSapling, "Wildwood Sapling", 59, 59, 59, 0.08, "#67a94a", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
+  [BlockId.DoorClosedLower]: block(BlockId.DoorClosedLower, "Wildwood Door", 60, 60, 60, 0.9, "#9b6839", "axe", 0, { layer: "cutout", shape: "door" }),
+  [BlockId.DoorClosedUpper]: block(BlockId.DoorClosedUpper, "Wildwood Door", 60, 60, 60, 0.9, "#9b6839", "axe", 0, { layer: "cutout", shape: "door" }),
+  [BlockId.DoorOpenLower]: block(BlockId.DoorOpenLower, "Open Wildwood Door", 60, 60, 60, 0.9, "#9b6839", "axe", 0, { solid: false, layer: "cutout", shape: "door" }),
+  [BlockId.DoorOpenUpper]: block(BlockId.DoorOpenUpper, "Open Wildwood Door", 60, 60, 60, 0.9, "#9b6839", "axe", 0, { solid: false, layer: "cutout", shape: "door" }),
 };
 
 const tool = (
@@ -229,9 +251,19 @@ const tool = (
   maxDurability: number,
 ): ItemDefinition => ({ id, name, color, maxStack: 1, toolKind, tier, miningSpeed, damage, maxDurability });
 
+const armorItem = (
+  id: ItemCode,
+  name: string,
+  color: string,
+  equipmentSlot: EquipmentSlot,
+  armor: number,
+  maxDurability: number,
+): ItemDefinition => ({ id, name, color, maxStack: 1, equipmentSlot, armor, maxDurability });
+
 export const ITEMS: Record<number, ItemDefinition> = {};
+const technicalBlocks = new Set<BlockId>([BlockId.DoorClosedLower, BlockId.DoorClosedUpper, BlockId.DoorOpenLower, BlockId.DoorOpenUpper]);
 for (const definition of Object.values(BLOCKS)) {
-  if (definition.id === BlockId.Air || definition.id === BlockId.Water || definition.id === BlockId.Lava || definition.id === BlockId.Bedrock) continue;
+  if (definition.id === BlockId.Air || definition.id === BlockId.Water || definition.id === BlockId.Lava || definition.id === BlockId.Bedrock || technicalBlocks.has(definition.id)) continue;
   ITEMS[definition.id] = { id: definition.id, name: definition.name, color: definition.color, maxStack: 64, placeBlock: definition.id };
 }
 
@@ -273,13 +305,22 @@ Object.assign(ITEMS, {
   [Item.ShadowShard]: { id: Item.ShadowShard, name: "Shadow Shard", color: "#51426b", maxStack: 64 },
   [Item.Apple]: { id: Item.Apple, name: "Wild Apple", color: "#c8493e", maxStack: 64, food: 4 },
   [Item.Charcoal]: { id: Item.Charcoal, name: "Charcoal", color: "#3d3d3b", maxStack: 64, fuel: 72 },
+  [Item.WildwoodDoor]: { id: Item.WildwoodDoor, name: "Wildwood Door", color: "#9b6839", maxStack: 64, placeBlock: BlockId.DoorClosedLower },
+  [Item.HideHood]: armorItem(Item.HideHood, "Trailhide Hood", "#8a6548", "head", 1, 90),
+  [Item.HideTunic]: armorItem(Item.HideTunic, "Trailhide Tunic", "#8a6548", "chest", 2, 130),
+  [Item.HideLeggings]: armorItem(Item.HideLeggings, "Trailhide Leggings", "#73533d", "legs", 2, 120),
+  [Item.HideBoots]: armorItem(Item.HideBoots, "Trailhide Boots", "#654733", "feet", 1, 80),
+  [Item.SunmetalHelm]: armorItem(Item.SunmetalHelm, "Sunmetal Helm", "#d4b9a7", "head", 2, 190),
+  [Item.SunmetalPlate]: armorItem(Item.SunmetalPlate, "Sunmetal Plate", "#d4b9a7", "chest", 4, 280),
+  [Item.SunmetalGreaves]: armorItem(Item.SunmetalGreaves, "Sunmetal Greaves", "#c7a995", "legs", 3, 250),
+  [Item.SunmetalBoots]: armorItem(Item.SunmetalBoots, "Sunmetal Boots", "#b99580", "feet", 2, 170),
 } satisfies Record<number, ItemDefinition>);
 
 export const LOG_ITEMS: ItemCode[] = [BlockId.WildwoodLog, BlockId.PineLog, BlockId.BirchLog, BlockId.BloomLog];
 export const LEAF_BLOCKS: BlockId[] = [BlockId.WildwoodLeaves, BlockId.PineLeaves, BlockId.BirchLeaves, BlockId.BloomLeaves];
-export const CREATIVE_BLOCKS: ItemCode[] = Object.values(BLOCKS)
+export const CREATIVE_BLOCKS: ItemCode[] = [...Object.values(BLOCKS)
   .filter((definition) => ITEMS[definition.id] && !definition.replaceable && definition.id !== BlockId.WheatCrop)
-  .map((definition) => definition.id);
+  .map((definition) => definition.id), Item.WildwoodDoor, Item.HideHood, Item.HideTunic, Item.HideLeggings, Item.HideBoots, Item.SunmetalHelm, Item.SunmetalPlate, Item.SunmetalGreaves, Item.SunmetalBoots];
 
 export type Ingredient = ItemCode | ItemCode[];
 export type Recipe = {
@@ -302,6 +343,7 @@ export const RECIPES: Recipe[] = [
   { id: "bread", name: "Field Bread", width: 3, height: 1, pattern: [Item.Wheat, Item.Wheat, Item.Wheat], output: { item: Item.Bread, count: 1 }, table: true },
   { id: "furnace", name: "Furnace", width: 3, height: 3, pattern: [BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone, 0, BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone], output: { item: BlockId.Furnace, count: 1 }, table: true },
   { id: "chest", name: "Wildwood Chest", width: 3, height: 3, pattern: [BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks, 0, BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: BlockId.Chest, count: 1 }, table: true },
+  { id: "door", name: "Wildwood Doors", width: 2, height: 3, pattern: [BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: Item.WildwoodDoor, count: 3 }, table: true },
   { id: "wood_pick", name: "Wooden Pickaxe", width: 3, height: 3, pattern: [BlockId.Planks, BlockId.Planks, BlockId.Planks, 0, Item.Stick, 0, 0, Item.Stick, 0], output: { item: Item.WoodPickaxe, count: 1 }, table: true },
   { id: "stone_pick", name: "Stone Pickaxe", width: 3, height: 3, pattern: [BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone, 0, Item.Stick, 0, 0, Item.Stick, 0], output: { item: Item.StonePickaxe, count: 1 }, table: true },
   { id: "iron_pick", name: "Sunmetal Pickaxe", width: 3, height: 3, pattern: [Item.SunmetalIngot, Item.SunmetalIngot, Item.SunmetalIngot, 0, Item.Stick, 0, 0, Item.Stick, 0], output: { item: Item.IronPickaxe, count: 1 }, table: true },
@@ -317,6 +359,14 @@ export const RECIPES: Recipe[] = [
   { id: "wood_shovel", name: "Wooden Shovel", width: 1, height: 3, pattern: [BlockId.Planks, Item.Stick, Item.Stick], output: { item: Item.WoodShovel, count: 1 }, table: true },
   { id: "stone_shovel", name: "Stone Shovel", width: 1, height: 3, pattern: [BlockId.Cobblestone, Item.Stick, Item.Stick], output: { item: Item.StoneShovel, count: 1 }, table: true },
   { id: "iron_shovel", name: "Sunmetal Shovel", width: 1, height: 3, pattern: [Item.SunmetalIngot, Item.Stick, Item.Stick], output: { item: Item.IronShovel, count: 1 }, table: true },
+  { id: "hide_hood", name: "Trailhide Hood", width: 3, height: 2, pattern: [Item.Hide, Item.Hide, Item.Hide, Item.Hide, 0, Item.Hide], output: { item: Item.HideHood, count: 1 }, table: true },
+  { id: "hide_tunic", name: "Trailhide Tunic", width: 3, height: 3, pattern: [Item.Hide, 0, Item.Hide, Item.Hide, Item.Hide, Item.Hide, Item.Hide, Item.Hide, Item.Hide], output: { item: Item.HideTunic, count: 1 }, table: true },
+  { id: "hide_leggings", name: "Trailhide Leggings", width: 3, height: 3, pattern: [Item.Hide, Item.Hide, Item.Hide, Item.Hide, 0, Item.Hide, Item.Hide, 0, Item.Hide], output: { item: Item.HideLeggings, count: 1 }, table: true },
+  { id: "hide_boots", name: "Trailhide Boots", width: 3, height: 2, pattern: [Item.Hide, 0, Item.Hide, Item.Hide, 0, Item.Hide], output: { item: Item.HideBoots, count: 1 }, table: true },
+  { id: "sunmetal_helm", name: "Sunmetal Helm", width: 3, height: 2, pattern: [Item.SunmetalIngot, Item.SunmetalIngot, Item.SunmetalIngot, Item.SunmetalIngot, 0, Item.SunmetalIngot], output: { item: Item.SunmetalHelm, count: 1 }, table: true },
+  { id: "sunmetal_plate", name: "Sunmetal Plate", width: 3, height: 3, pattern: [Item.SunmetalIngot, 0, Item.SunmetalIngot, Item.SunmetalIngot, Item.SunmetalIngot, Item.SunmetalIngot, Item.SunmetalIngot, Item.SunmetalIngot, Item.SunmetalIngot], output: { item: Item.SunmetalPlate, count: 1 }, table: true },
+  { id: "sunmetal_greaves", name: "Sunmetal Greaves", width: 3, height: 3, pattern: [Item.SunmetalIngot, Item.SunmetalIngot, Item.SunmetalIngot, Item.SunmetalIngot, 0, Item.SunmetalIngot, Item.SunmetalIngot, 0, Item.SunmetalIngot], output: { item: Item.SunmetalGreaves, count: 1 }, table: true },
+  { id: "sunmetal_boots", name: "Sunmetal Boots", width: 3, height: 2, pattern: [Item.SunmetalIngot, 0, Item.SunmetalIngot, Item.SunmetalIngot, 0, Item.SunmetalIngot], output: { item: Item.SunmetalBoots, count: 1 }, table: true },
   { id: "glowstone", name: "Glowstone", width: 2, height: 2, pattern: [Item.GlowDust, Item.GlowDust, Item.GlowDust, Item.GlowDust], output: { item: BlockId.Glowstone, count: 1 }, table: false },
 ];
 
