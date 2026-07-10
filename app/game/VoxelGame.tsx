@@ -688,7 +688,7 @@ export default function VoxelGame() {
                 })}
               </nav>
               <article className={`bestiary-detail ${bestiaryProgress.seen ? "seen" : "unknown"}`}>
-                <div className="bestiary-portrait" style={{ "--mob-color": `#${bestiaryDefinition.colors[0].toString(16).padStart(6, "0")}`, "--mob-accent": `#${bestiaryDefinition.colors[1].toString(16).padStart(6, "0")}` } as CSSProperties}><span /><i /><b>?</b></div>
+                <div className={`bestiary-portrait bestiary-portrait-${selectedBestiary}`} style={{ "--mob-color": `#${bestiaryDefinition.colors[0].toString(16).padStart(6, "0")}`, "--mob-accent": `#${bestiaryDefinition.colors[1].toString(16).padStart(6, "0")}` } as CSSProperties}><span /><i /><b>?</b></div>
                 {bestiaryProgress.seen ? <>
                   <div className="bestiary-heading"><div><span>{bestiaryDefinition.temperament.toUpperCase()}</span><h3>{bestiaryDefinition.name}</h3></div><strong>{bestiaryProgress.kills} DEFEATED</strong></div>
                   <p className="bestiary-lore">{bestiaryDefinition.lore}</p>
