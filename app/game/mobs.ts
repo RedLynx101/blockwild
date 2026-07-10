@@ -1,6 +1,7 @@
 import { Item, type ItemCode } from "./data";
 
-export type MobKind = "mossling" | "ridgeback" | "woolhorn" | "glowmoth" | "shadecrawler" | "caveblob" | "rattlekin" | "zombie";
+export type ButterflyKind = "meadowwing" | "azure-skippers" | "embertip" | "frostveil" | "bloom-monarch" | "fen-lantern";
+export type MobKind = "mossling" | "ridgeback" | "woolhorn" | "glowmoth" | "shadecrawler" | "caveblob" | "rattlekin" | "zombie" | ButterflyKind;
 export type MobTemperament = "Gentle" | "Skittish" | "Defensive" | "Hostile";
 
 export type MobDrop = {
@@ -31,6 +32,8 @@ export type MobDefinition = {
   lore: string;
   colors: [number, number, number];
   drops: MobDrop[];
+  family?: "butterfly";
+  captureItem?: ItemCode;
 };
 
 export const MOB_DEFS: Record<MobKind, MobDefinition> = {
@@ -107,6 +110,55 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     colors: [0x5f8f54, 0x3e7470, 0x263c74],
     drops: [{ item: Item.RottenFlesh, min: 1, max: 2, chance: 0.82 }, { item: Item.SunmetalIngot, min: 1, max: 1, chance: 0.025 }],
   },
+  meadowwing: {
+    kind: "meadowwing", name: "Meadowwing", temperament: "Gentle", hostile: false,
+    health: 1, damage: 0, xp: 0, speed: 1.3, chaseSpeed: 1.8, turnRate: 9, attackRange: 0,
+    footOffset: 0.12, radius: 0.12, height: 0.18, habitat: "Flower meadows and sunny Wildwood edges", active: "Clear daylight",
+    behavior: "Drifts between Ember Blooms, lands to drink, and rises when a shadow passes overhead.",
+    lore: "The first bright wings of spring. Trailkeepers judge the health of a meadow by how many dance above it.",
+    colors: [0xf3d451, 0x4b3b25, 0xfff4a8], drops: [], family: "butterfly", captureItem: Item.MeadowwingJar,
+  },
+  "azure-skippers": {
+    kind: "azure-skippers", name: "Azure Skipper", temperament: "Skittish", hostile: false,
+    health: 1, damage: 0, xp: 0, speed: 1.7, chaseSpeed: 2.2, turnRate: 11, attackRange: 0,
+    footOffset: 0.12, radius: 0.11, height: 0.17, habitat: "Skybells in Birchlight and Wildwood", active: "Bright morning",
+    behavior: "Flies in quick blue dashes, shares flowers reluctantly, and rarely rests for long.",
+    lore: "A chip of summer sky that refused to stay put.",
+    colors: [0x54bce8, 0x244f78, 0xdaf7ff], drops: [], family: "butterfly", captureItem: Item.AzureSkipperJar,
+  },
+  embertip: {
+    kind: "embertip", name: "Embertip", temperament: "Gentle", hostile: false,
+    health: 1, damage: 0, xp: 0, speed: 1.45, chaseSpeed: 2, turnRate: 9.5, attackRange: 0,
+    footOffset: 0.12, radius: 0.12, height: 0.18, habitat: "Savanna blooms and warm badland oases", active: "Hot daylight",
+    behavior: "Warms its dark wings on stone before circling red flowers in wide loops.",
+    lore: "Its wing tips hold sunset long after noon has passed.",
+    colors: [0xed743d, 0x3b2722, 0xffc35a], drops: [], family: "butterfly", captureItem: Item.EmbertipJar,
+  },
+  frostveil: {
+    kind: "frostveil", name: "Frostveil", temperament: "Skittish", hostile: false,
+    health: 1, damage: 0, xp: 0, speed: 1.15, chaseSpeed: 1.75, turnRate: 8.5, attackRange: 0,
+    footOffset: 0.12, radius: 0.13, height: 0.19, habitat: "Rare flowers along Frostpine snow lines", active: "Still, sunny afternoons",
+    behavior: "Glides more than it flaps and folds into the snow whenever the wind rises.",
+    lore: "Often mistaken for a loose snowflake until it chooses a flower.",
+    colors: [0xd8f2f5, 0x7896af, 0xffffff], drops: [], family: "butterfly", captureItem: Item.FrostveilJar,
+  },
+  "bloom-monarch": {
+    kind: "bloom-monarch", name: "Bloom Monarch", temperament: "Gentle", hostile: false,
+    health: 1, damage: 0, xp: 0, speed: 1.25, chaseSpeed: 1.8, turnRate: 8, attackRange: 0,
+    footOffset: 0.12, radius: 0.15, height: 0.2, habitat: "Bloomwood Vale flower canopies", active: "Sunlit noon",
+    behavior: "Claims a small court of flowers and returns to the same favorite bloom throughout the day.",
+    lore: "Bloomwood children insist every Monarch rules exactly seven flowers.",
+    colors: [0xe88fc8, 0x713c70, 0xffd5ee], drops: [], family: "butterfly", captureItem: Item.BloomMonarchJar,
+  },
+  "fen-lantern": {
+    kind: "fen-lantern", name: "Fen Lantern", temperament: "Gentle", hostile: false,
+    health: 1, damage: 0, xp: 0, speed: 1.05, chaseSpeed: 1.55, turnRate: 7.5, attackRange: 0,
+    footOffset: 0.12, radius: 0.13, height: 0.18, habitat: "Sunny clearings in Siltfen and Mooncap Fen", active: "Humid daylight",
+    behavior: "Hovers close to flowers and flashes pale green when another tiny creature approaches.",
+    lore: "A daytime cousin of the Glowmoth, carrying a softer and more patient light.",
+    colors: [0xb6df62, 0x3e6040, 0xf1ffb5], drops: [], family: "butterfly", captureItem: Item.FenLanternJar,
+  },
 };
 
-export const MOB_ORDER: MobKind[] = ["mossling", "ridgeback", "woolhorn", "glowmoth", "shadecrawler", "caveblob", "rattlekin", "zombie"];
+export const BUTTERFLY_ORDER: ButterflyKind[] = ["meadowwing", "azure-skippers", "embertip", "frostveil", "bloom-monarch", "fen-lantern"];
+export const MOB_ORDER: MobKind[] = ["mossling", "ridgeback", "woolhorn", "glowmoth", "shadecrawler", "caveblob", "rattlekin", "zombie", ...BUTTERFLY_ORDER];

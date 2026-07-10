@@ -10,6 +10,20 @@ export const SECTION_HEIGHT = 16;
 export const SECTION_COUNT = WORLD_HEIGHT / SECTION_HEIGHT;
 export const GENERATOR_VERSION = 3;
 
+export type WorldGenerationOptions = {
+  caveFrequency: number;
+  biomeScale: number;
+  resourceAbundance: number;
+  structures: boolean;
+};
+
+export const DEFAULT_WORLD_GENERATION_OPTIONS: Readonly<WorldGenerationOptions> = Object.freeze({
+  caveFrequency: 1,
+  biomeScale: 1,
+  resourceAbundance: 1,
+  structures: true,
+});
+
 export enum BiomeId {
   DeepOcean = 0,
   Ocean = 1,
@@ -147,6 +161,19 @@ const smoothstep = (edge0: number, edge1: number, value: number) => {
   const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
   return t * t * (3 - 2 * t);
 };
+
+export function normalizeWorldGenerationOptions(value?: Partial<WorldGenerationOptions> | null): WorldGenerationOptions {
+  const finiteOption = (candidate: unknown, fallback: number, min: number, max: number) => {
+    const resolved = typeof candidate === "number" && Number.isFinite(candidate) ? candidate : fallback;
+    return Math.round(clamp(resolved, min, max) * 100) / 100;
+  };
+  return {
+    caveFrequency: finiteOption(value?.caveFrequency, DEFAULT_WORLD_GENERATION_OPTIONS.caveFrequency, 0, 3),
+    biomeScale: finiteOption(value?.biomeScale, DEFAULT_WORLD_GENERATION_OPTIONS.biomeScale, 0.25, 4),
+    resourceAbundance: finiteOption(value?.resourceAbundance, DEFAULT_WORLD_GENERATION_OPTIONS.resourceAbundance, 0.25, 4),
+    structures: typeof value?.structures === "boolean" ? value.structures : DEFAULT_WORLD_GENERATION_OPTIONS.structures,
+  };
+}
 const LIGHT_BLOCKS = new Set<BlockId>([BlockId.Torch, BlockId.Glowstone, BlockId.CrystalBlock]);
 const ATLAS_GRID = 8;
 const ATLAS_PAD = 0.0008;
@@ -458,6 +485,7 @@ export class ChunkWorld {
   seedText = "WILDERNESS";
   seed = seedToInt(this.seedText);
   renderDistance = 3;
+  generationOptions = normalizeWorldGenerationOptions();
   playerChunkX = Number.NaN;
   playerChunkZ = Number.NaN;
   frame = 0;
@@ -478,11 +506,11 @@ export class ChunkWorld {
   }
 
   setRenderDistance(distance: number) {
-    this.renderDistance = clamp(Math.round(distance), 2, 6);
+    this.renderDistance = clamp(Math.round(distance), 2, 8);
     this.playerChunkX = Number.NaN;
   }
 
-  reset(seedText: string, savedEdits?: ChunkEditSave) {
+  reset(seedText: string, savedEdits?: ChunkEditSave, generationOptions?: Partial<WorldGenerationOptions>) {
     this.disposeChunks();
     this.generationQueue = [];
     this.generationQueued.clear();
@@ -495,6 +523,7 @@ export class ChunkWorld {
     this.edits.clear();
     this.seedText = seedText || "WILDERNESS";
     this.seed = seedToInt(this.seedText);
+    this.generationOptions = normalizeWorldGenerationOptions(generationOptions);
     this.playerChunkX = Number.NaN;
     this.playerChunkZ = Number.NaN;
     if (savedEdits) {
@@ -697,11 +726,14 @@ export class ChunkWorld {
   }
 
   sampleColumn(x: number, z: number): ColumnSample {
-    const warpX = x + 34 * fbm2(x, z, this.seed ^ 0x1f123bb5, 1 / 420, 3);
-    const warpZ = z + 34 * fbm2(x, z, this.seed ^ 0x72e8a1d3, 1 / 420, 3);
+    const biomeScale = this.generationOptions.biomeScale;
+    const sampleX = x / biomeScale;
+    const sampleZ = z / biomeScale;
+    const warpX = sampleX + 34 * fbm2(sampleX, sampleZ, this.seed ^ 0x1f123bb5, 1 / 420, 3);
+    const warpZ = sampleZ + 34 * fbm2(sampleX, sampleZ, this.seed ^ 0x72e8a1d3, 1 / 420, 3);
     const continental = 0.72 * fbm2(warpX, warpZ, this.seed ^ 0x9e3779b9, 1 / 720, 5) + 0.28 * fbm2(warpX, warpZ, this.seed ^ 0x85ebca6b, 1 / 240, 3);
-    const temperature = clamp(0.5 + 0.5 * (0.78 * fbm2(x, z, this.seed ^ 0xc2b2ae35, 1 / 560, 4) + 0.22 * fbm2(x, z, this.seed ^ 0x27d4eb2d, 1 / 140, 2)), 0, 1);
-    const moisture = clamp(0.5 + 0.5 * (0.8 * fbm2(x, z, this.seed ^ 0x165667b1, 1 / 510, 4) + 0.2 * fbm2(x, z, this.seed ^ 0xd3a2646c, 1 / 125, 2)), 0, 1);
+    const temperature = clamp(0.5 + 0.5 * (0.78 * fbm2(sampleX, sampleZ, this.seed ^ 0xc2b2ae35, 1 / 560, 4) + 0.22 * fbm2(sampleX, sampleZ, this.seed ^ 0x27d4eb2d, 1 / 140, 2)), 0, 1);
+    const moisture = clamp(0.5 + 0.5 * (0.8 * fbm2(sampleX, sampleZ, this.seed ^ 0x165667b1, 1 / 510, 4) + 0.2 * fbm2(sampleX, sampleZ, this.seed ^ 0xd3a2646c, 1 / 125, 2)), 0, 1);
     const erosion = clamp(0.5 + 0.5 * fbm2(warpX, warpZ, this.seed ^ 0xfd7046c5, 1 / 390, 4), 0, 1);
     const region = clamp(0.5 + 0.5 * fbm2(warpX, warpZ, this.seed ^ 0xb55a4f09, 1 / 440, 3), 0, 1);
     const variant = clamp(0.5 + 0.5 * fbm2(warpX - 900, warpZ + 600, this.seed ^ 0x94d049bb, 1 / 270, 3), 0, 1);
@@ -765,6 +797,8 @@ export class ChunkWorld {
       if (!value) { value = this.sampleColumn(x, z); samples.set(sampleKey, value); }
       return value;
     };
+    const caveFrequency = this.generationOptions.caveFrequency;
+    const resourceAbundance = this.generationOptions.resourceAbundance;
 
     for (let lx = 0; lx < CHUNK_SIZE; lx += 1) {
       for (let lz = 0; lz < CHUNK_SIZE; lz += 1) {
@@ -789,18 +823,23 @@ export class ChunkWorld {
             else if (y >= column.height - (column.biome === BiomeId.Desert || column.biome === BiomeId.Beach ? 5 : 3)) type = filler;
             else type = y < MIN_Y + 18 ? BlockId.Basalt : y < -10 ? BlockId.Deepstone : column.biome === BiomeId.Volcanic ? BlockId.Basalt : BlockId.Stone;
 
-            if (y < column.height - 4 && y > MIN_Y + 4) {
+            if (caveFrequency > 0 && y < column.height - 4 && y > MIN_Y + 4) {
               const depth = column.height - y;
-              const cheeseThreshold = lerp(0.5, 0.34, smoothstep(12, 52, depth));
+              const baseCheeseThreshold = lerp(0.5, 0.34, smoothstep(12, 52, depth));
+              const cheeseThreshold = caveFrequency === 1 ? baseCheeseThreshold : baseCheeseThreshold + (1 - caveFrequency) * 0.1;
               const cheeseField = valueNoise3(gx / 42, y / 50, gz / 42, this.seed ^ 0x6d2b79f5) * 0.72
                 + valueNoise3(gx / 18, y / 22, gz / 18, this.seed ^ 0x27d4eb2f) * 0.28;
               const cheese = cheeseField > cheeseThreshold;
-              const spaghetti = Math.abs(Math.sin(gx * 0.115 + y * 0.083 + gz * 0.041 + tunnelWarp)) < 0.052
-                && Math.abs(Math.sin(gz * 0.129 - y * 0.071 + gx * 0.033 - tunnelWarp)) < 0.16;
-              const deepCavern = y < -24 && valueNoise3(gx / 68, y / 58, gz / 68, this.seed ^ 0x5bd1e995) > 0.47
+              const spaghettiWidth = caveFrequency === 1 ? 0.052 : 0.052 * caveFrequency;
+              const spaghettiDepth = caveFrequency === 1 ? 0.16 : 0.16 * Math.sqrt(caveFrequency);
+              const spaghetti = Math.abs(Math.sin(gx * 0.115 + y * 0.083 + gz * 0.041 + tunnelWarp)) < spaghettiWidth
+                && Math.abs(Math.sin(gz * 0.129 - y * 0.071 + gx * 0.033 - tunnelWarp)) < spaghettiDepth;
+              const cavernThreshold = caveFrequency === 1 ? 0.47 : 0.47 + (1 - caveFrequency) * 0.08;
+              const deepCavern = y < -24 && valueNoise3(gx / 68, y / 58, gz / 68, this.seed ^ 0x5bd1e995) > cavernThreshold
                 && Math.sin(gx * 0.09 + gz * 0.07 + y * 0.11) > -0.05;
               const ravineP = (y - ravineBottom) / Math.max(1, ravineTop - ravineBottom);
-              const ravine = ravineSegment > 0.1 && y > ravineBottom && y < ravineTop && ravineLine < 0.02 * (0.35 + 0.65 * Math.sin(Math.PI * ravineP));
+              const ravineWidth = caveFrequency === 1 ? 0.02 : 0.02 * caveFrequency;
+              const ravine = ravineSegment > 0.1 && y > ravineBottom && y < ravineTop && ravineLine < ravineWidth * (0.35 + 0.65 * Math.sin(Math.PI * ravineP));
               if (cheese || spaghetti || deepCavern || ravine) {
                 if (y <= MIN_Y + 7) type = BlockId.Lava;
                 else if (y <= waterTable && valueNoise3(gx / 64, y / 58, gz / 64, this.seed ^ 0x94d049bd) > 0.28) type = BlockId.Water;
@@ -811,11 +850,19 @@ export class ChunkWorld {
             if (type === BlockId.Stone || type === BlockId.Deepstone || type === BlockId.Basalt) {
               const cellHash = hash3(Math.floor(gx / 2), Math.floor(y / 2), Math.floor(gz / 2), this.seed ^ 0x1234567);
               const detailHash = hash3(gx, y, gz, this.seed ^ 0x89abcdef);
-              if (y < 66 && cellHash > 0.992 && detailHash > 0.25) type = BlockId.CoalOre;
-              if (y < 48 && cellHash < 0.008 && detailHash > 0.3) type = BlockId.IronOre;
-              if (y < 54 && cellHash > 0.983 && cellHash < 0.987 && detailHash > 0.35) type = BlockId.CopperOre;
-              if (y < 8 && cellHash > 0.976 && cellHash < 0.9785 && detailHash > 0.4) type = BlockId.GoldOre;
-              if (y < -24 && cellHash > 0.97 && cellHash < 0.9715 && detailHash > 0.5) type = BlockId.CrystalOre;
+              if (resourceAbundance === 1) {
+                if (y < 66 && cellHash > 0.992 && detailHash > 0.25) type = BlockId.CoalOre;
+                if (y < 48 && cellHash < 0.008 && detailHash > 0.3) type = BlockId.IronOre;
+                if (y < 54 && cellHash > 0.983 && cellHash < 0.987 && detailHash > 0.35) type = BlockId.CopperOre;
+                if (y < 8 && cellHash > 0.976 && cellHash < 0.9785 && detailHash > 0.4) type = BlockId.GoldOre;
+                if (y < -24 && cellHash > 0.97 && cellHash < 0.9715 && detailHash > 0.5) type = BlockId.CrystalOre;
+              } else {
+                if (y < 66 && cellHash > 1 - 0.008 * resourceAbundance && detailHash > 0.25) type = BlockId.CoalOre;
+                if (y < 48 && cellHash < 0.008 * resourceAbundance && detailHash > 0.3) type = BlockId.IronOre;
+                if (y < 54 && Math.abs(cellHash - 0.985) < 0.002 * resourceAbundance && detailHash > 0.35) type = BlockId.CopperOre;
+                if (y < 8 && Math.abs(cellHash - 0.97725) < 0.00125 * resourceAbundance && detailHash > 0.4) type = BlockId.GoldOre;
+                if (y < -24 && Math.abs(cellHash - 0.97075) < 0.00075 * resourceAbundance && detailHash > 0.5) type = BlockId.CrystalOre;
+              }
             }
           } else if (y <= column.waterline) {
             type = column.temperature < 0.14 && y === column.waterline ? BlockId.Ice : BlockId.Water;
@@ -932,29 +979,31 @@ export class ChunkWorld {
       }
     }
 
-    const regionSize = 96;
-    for (let rx = Math.floor((minX - 10) / regionSize); rx <= Math.floor((minX + CHUNK_SIZE + 10) / regionSize); rx += 1) {
-      for (let rz = Math.floor((minZ - 10) / regionSize); rz <= Math.floor((minZ + CHUNK_SIZE + 10) / regionSize); rz += 1) {
-        if (hash2(rx, rz, this.seed ^ 0x66666666) < 0.62) continue;
-        const x = rx * regionSize + 18 + Math.floor(hash2(rx, rz, this.seed ^ 0x77777777) * (regionSize - 36));
-        const z = rz * regionSize + 18 + Math.floor(hash2(rx, rz, this.seed ^ 0x88888888) * (regionSize - 36));
-        const column = sample(x, z);
-        if (column.height <= column.waterline + 2 || [BiomeId.Ocean, BiomeId.DeepOcean, BiomeId.River].includes(column.biome)) continue;
-        const cabin = hash2(rx, rz, this.seed ^ 0x99999999) > 0.63 && [BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Frostpine].includes(column.biome);
-        if (cabin) {
-          for (let dx = -3; dx <= 3; dx += 1) for (let dz = -3; dz <= 3; dz += 1) set(x + dx, column.height, z + dz, BlockId.Planks, false);
-          for (let dy = 1; dy <= 3; dy += 1) for (let dx = -3; dx <= 3; dx += 1) for (let dz = -3; dz <= 3; dz += 1) {
-            const wall = Math.abs(dx) === 3 || Math.abs(dz) === 3;
-            if (wall && !(dz === -3 && dx === 0 && dy < 3)) set(x + dx, column.height + dy, z + dz, (Math.abs(dx) === 3 && Math.abs(dz) === 3) ? BlockId.WildwoodLog : BlockId.Planks, false);
+    if (this.generationOptions.structures) {
+      const regionSize = 96;
+      for (let rx = Math.floor((minX - 10) / regionSize); rx <= Math.floor((minX + CHUNK_SIZE + 10) / regionSize); rx += 1) {
+        for (let rz = Math.floor((minZ - 10) / regionSize); rz <= Math.floor((minZ + CHUNK_SIZE + 10) / regionSize); rz += 1) {
+          if (hash2(rx, rz, this.seed ^ 0x66666666) < 0.62) continue;
+          const x = rx * regionSize + 18 + Math.floor(hash2(rx, rz, this.seed ^ 0x77777777) * (regionSize - 36));
+          const z = rz * regionSize + 18 + Math.floor(hash2(rx, rz, this.seed ^ 0x88888888) * (regionSize - 36));
+          const column = sample(x, z);
+          if (column.height <= column.waterline + 2 || [BiomeId.Ocean, BiomeId.DeepOcean, BiomeId.River].includes(column.biome)) continue;
+          const cabin = hash2(rx, rz, this.seed ^ 0x99999999) > 0.63 && [BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Frostpine].includes(column.biome);
+          if (cabin) {
+            for (let dx = -3; dx <= 3; dx += 1) for (let dz = -3; dz <= 3; dz += 1) set(x + dx, column.height, z + dz, BlockId.Planks, false);
+            for (let dy = 1; dy <= 3; dy += 1) for (let dx = -3; dx <= 3; dx += 1) for (let dz = -3; dz <= 3; dz += 1) {
+              const wall = Math.abs(dx) === 3 || Math.abs(dz) === 3;
+              if (wall && !(dz === -3 && dx === 0 && dy < 3)) set(x + dx, column.height + dy, z + dz, (Math.abs(dx) === 3 && Math.abs(dz) === 3) ? BlockId.WildwoodLog : BlockId.Planks, false);
+            }
+            for (let dx = -4; dx <= 4; dx += 1) for (let dz = -4; dz <= 4; dz += 1) set(x + dx, column.height + 4 + (Math.abs(dx) <= 2 && Math.abs(dz) <= 2 ? 1 : 0), z + dz, BlockId.Planks);
+            set(x - 2, column.height + 1, z + 1, BlockId.CraftingTable, false);
+            set(x + 2, column.height + 1, z + 1, BlockId.Chest, false);
+            set(x, column.height + 2, z + 2, BlockId.Torch, false);
+          } else {
+            for (let dx = -2; dx <= 2; dx += 1) for (let dz = -2; dz <= 2; dz += 1) if (Math.abs(dx) === 2 || Math.abs(dz) === 2 || (dx === 0 && dz === 0)) set(x + dx, column.height, z + dz, hash2(x + dx, z + dz, this.seed) > 0.25 ? BlockId.StoneBrick : BlockId.Moss, false);
+            for (let dy = 1; dy <= 4; dy += 1) set(x, column.height + dy, z, dy === 4 ? BlockId.Glowstone : BlockId.StoneBrick, false);
+            set(x + 2, column.height + 1, z + 2, BlockId.Chest, false);
           }
-          for (let dx = -4; dx <= 4; dx += 1) for (let dz = -4; dz <= 4; dz += 1) set(x + dx, column.height + 4 + (Math.abs(dx) <= 2 && Math.abs(dz) <= 2 ? 1 : 0), z + dz, BlockId.Planks);
-          set(x - 2, column.height + 1, z + 1, BlockId.CraftingTable, false);
-          set(x + 2, column.height + 1, z + 1, BlockId.Chest, false);
-          set(x, column.height + 2, z + 2, BlockId.Torch, false);
-        } else {
-          for (let dx = -2; dx <= 2; dx += 1) for (let dz = -2; dz <= 2; dz += 1) if (Math.abs(dx) === 2 || Math.abs(dz) === 2 || (dx === 0 && dz === 0)) set(x + dx, column.height, z + dz, hash2(x + dx, z + dz, this.seed) > 0.25 ? BlockId.StoneBrick : BlockId.Moss, false);
-          for (let dy = 1; dy <= 4; dy += 1) set(x, column.height + dy, z, dy === 4 ? BlockId.Glowstone : BlockId.StoneBrick, false);
-          set(x + 2, column.height + 1, z + 2, BlockId.Chest, false);
         }
       }
     }

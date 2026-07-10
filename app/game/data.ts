@@ -110,6 +110,13 @@ export const Item = {
   SunmetalGreaves: 144,
   SunmetalBoots: 145,
   RottenFlesh: 146,
+  ButterflyNet: 147,
+  MeadowwingJar: 148,
+  AzureSkipperJar: 149,
+  EmbertipJar: 150,
+  FrostveilJar: 151,
+  BloomMonarchJar: 152,
+  FenLanternJar: 153,
 } as const;
 
 export type ItemCode = number;
@@ -158,6 +165,8 @@ export type ItemDefinition = {
   armor?: number;
   food?: number;
   fuel?: number;
+  useKind?: "net" | "release-creature";
+  creatureKind?: string;
 };
 
 const block = (
@@ -327,13 +336,20 @@ Object.assign(ITEMS, {
   [Item.SunmetalGreaves]: armorItem(Item.SunmetalGreaves, "Sunmetal Greaves", "#c7a995", "legs", 3, 250),
   [Item.SunmetalBoots]: armorItem(Item.SunmetalBoots, "Sunmetal Boots", "#b99580", "feet", 2, 170),
   [Item.RottenFlesh]: { id: Item.RottenFlesh, name: "Rotten Flesh", color: "#866044", maxStack: 64, food: 1 },
+  [Item.ButterflyNet]: { id: Item.ButterflyNet, name: "Butterfly Net", color: "#d8c892", maxStack: 1, maxDurability: 96, useKind: "net" },
+  [Item.MeadowwingJar]: { id: Item.MeadowwingJar, name: "Jarred Meadowwing", color: "#f3d451", maxStack: 16, useKind: "release-creature", creatureKind: "meadowwing" },
+  [Item.AzureSkipperJar]: { id: Item.AzureSkipperJar, name: "Jarred Azure Skipper", color: "#54bce8", maxStack: 16, useKind: "release-creature", creatureKind: "azure-skippers" },
+  [Item.EmbertipJar]: { id: Item.EmbertipJar, name: "Jarred Embertip", color: "#ed743d", maxStack: 16, useKind: "release-creature", creatureKind: "embertip" },
+  [Item.FrostveilJar]: { id: Item.FrostveilJar, name: "Jarred Frostveil", color: "#d8f2f5", maxStack: 16, useKind: "release-creature", creatureKind: "frostveil" },
+  [Item.BloomMonarchJar]: { id: Item.BloomMonarchJar, name: "Jarred Bloom Monarch", color: "#e88fc8", maxStack: 16, useKind: "release-creature", creatureKind: "bloom-monarch" },
+  [Item.FenLanternJar]: { id: Item.FenLanternJar, name: "Jarred Fen Lantern", color: "#b6df62", maxStack: 16, useKind: "release-creature", creatureKind: "fen-lantern" },
 } satisfies Record<number, ItemDefinition>);
 
 export const LOG_ITEMS: ItemCode[] = [BlockId.WildwoodLog, BlockId.PineLog, BlockId.BirchLog, BlockId.BloomLog];
 export const LEAF_BLOCKS: BlockId[] = [BlockId.WildwoodLeaves, BlockId.PineLeaves, BlockId.BirchLeaves, BlockId.BloomLeaves];
 export const CREATIVE_BLOCKS: ItemCode[] = [...Object.values(BLOCKS)
   .filter((definition) => ITEMS[definition.id] && !definition.replaceable && definition.id !== BlockId.WheatCrop)
-  .map((definition) => definition.id), Item.WildwoodDoor, Item.HideHood, Item.HideTunic, Item.HideLeggings, Item.HideBoots, Item.SunmetalHelm, Item.SunmetalPlate, Item.SunmetalGreaves, Item.SunmetalBoots];
+  .map((definition) => definition.id), Item.WildwoodDoor, Item.ButterflyNet, Item.MeadowwingJar, Item.AzureSkipperJar, Item.EmbertipJar, Item.FrostveilJar, Item.BloomMonarchJar, Item.FenLanternJar, Item.HideHood, Item.HideTunic, Item.HideLeggings, Item.HideBoots, Item.SunmetalHelm, Item.SunmetalPlate, Item.SunmetalGreaves, Item.SunmetalBoots];
 
 export type Ingredient = ItemCode | ItemCode[];
 export type Recipe = {
@@ -357,6 +373,7 @@ export const RECIPES: Recipe[] = [
   { id: "furnace", name: "Furnace", width: 3, height: 3, pattern: [BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone, 0, BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone], output: { item: BlockId.Furnace, count: 1 }, table: true },
   { id: "chest", name: "Wildwood Chest", width: 3, height: 3, pattern: [BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks, 0, BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: BlockId.Chest, count: 1 }, table: true },
   { id: "door", name: "Wildwood Doors", width: 2, height: 3, pattern: [BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: Item.WildwoodDoor, count: 3 }, table: true },
+  { id: "butterfly_net", name: "Butterfly Net", width: 3, height: 3, pattern: [Item.Fiber, Item.Fiber, Item.Fiber, Item.Fiber, 0, Item.Stick, 0, Item.Stick, 0], output: { item: Item.ButterflyNet, count: 1 }, table: true },
   { id: "wood_pick", name: "Wooden Pickaxe", width: 3, height: 3, pattern: [BlockId.Planks, BlockId.Planks, BlockId.Planks, 0, Item.Stick, 0, 0, Item.Stick, 0], output: { item: Item.WoodPickaxe, count: 1 }, table: true },
   { id: "stone_pick", name: "Stone Pickaxe", width: 3, height: 3, pattern: [BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone, 0, Item.Stick, 0, 0, Item.Stick, 0], output: { item: Item.StonePickaxe, count: 1 }, table: true },
   { id: "iron_pick", name: "Sunmetal Pickaxe", width: 3, height: 3, pattern: [Item.SunmetalIngot, Item.SunmetalIngot, Item.SunmetalIngot, 0, Item.Stick, 0, 0, Item.Stick, 0], output: { item: Item.IronPickaxe, count: 1 }, table: true },

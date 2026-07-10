@@ -1,9 +1,12 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import * as THREE from "three";
 import { INSPECTOR_MODEL_SPECS, assertModelSpec, type ModelBox, type ModelSpec } from "../app/game/model-specs.ts";
+import { BUTTERFLY_ORDER, MOB_DEFS, type ButterflyKind } from "../app/game/mobs.ts";
+import { BlockPlayerModel, type PlayerAnimation } from "../app/game/player-model.ts";
 
-type ViewName = "iso" | "front" | "side";
+export type ViewName = "iso" | "front" | "side";
 type Point2 = { x: number; y: number };
 type Projection = {
   camera: THREE.Vector3;
@@ -18,6 +21,32 @@ type Face = {
   depth: number;
   color: string;
   emissive: boolean;
+};
+export type InspectionMetadata = {
+  source: "model-specs" | "BlockPlayerModel" | "ButterflySystem";
+  pose?: "standing" | "crouching" | "running" | "mining";
+  variant?: ButterflyKind;
+};
+export type InspectionModelSpec = ModelSpec & { inspection?: InspectionMetadata };
+export type InspectionManifest = {
+  version: 1;
+  renderer: "blockwild-model-inspector";
+  views: ViewName[];
+  columns: number;
+  specs: Array<{
+    id: string;
+    label: string;
+    category: ModelSpec["category"];
+    source: InspectionMetadata["source"];
+    pose?: InspectionMetadata["pose"];
+    variant?: ButterflyKind;
+    boxCount: number;
+    groundY: number;
+    lowestY: number;
+    groundDelta: number;
+    contact: "exact" | "floating" | "penetrating" | "reference";
+  }>;
+  outputs: Array<{ view: ViewName; format: "svg" | "png"; file: string }>;
 };
 
 const TILE_WIDTH = 440;
@@ -41,6 +70,138 @@ const FACE_NORMALS = [
 ] as const;
 const LIGHT = new THREE.Vector3(-0.45, 0.9, -0.65).normalize();
 
+function materialAppearance(material: THREE.Material | THREE.Material[]) {
+  const resolved = (Array.isArray(material) ? material[0] : material) as THREE.Material & {
+    color?: THREE.Color;
+    emissive?: THREE.Color;
+    emissiveIntensity?: number;
+  };
+  const color = resolved.color?.getHex() ?? 0x9aa1a6;
+  const emissive = resolved.type === "MeshBasicMaterial"
+    || Boolean(resolved.emissive && resolved.emissive.getHex() !== 0 && (resolved.emissiveIntensity ?? 1) > 0);
+  return { color, emissive };
+}
+
+function semanticPart(mesh: THREE.Mesh, root: THREE.Object3D) {
+  if (typeof mesh.userData.inspectorPart === "string") return mesh.userData.inspectorPart;
+  let current: THREE.Object3D | null = mesh.parent;
+  while (current && current !== root) {
+    if (typeof current.userData.playerPart === "string") return current.userData.playerPart;
+    current = current.parent;
+  }
+  return mesh.name || "body";
+}
+
+/** Converts the actual posed Three.js hierarchy into renderer-independent boxes. */
+export function objectToInspectionSpec(
+  root: THREE.Object3D,
+  descriptor: Pick<InspectionModelSpec, "id" | "label" | "category" | "front" | "groundY" | "inspection">,
+) {
+  root.updateWorldMatrix(true, true);
+  const inverseRoot = root.matrixWorld.clone().invert();
+  const boxes: ModelBox[] = [];
+  const usedIds = new Set<string>();
+  root.traverse((object) => {
+    if (!(object instanceof THREE.Mesh) || !object.visible || !(object.geometry instanceof THREE.BufferGeometry)) return;
+    object.geometry.computeBoundingBox();
+    const geometryBounds = object.geometry.boundingBox;
+    if (!geometryBounds || geometryBounds.isEmpty()) return;
+    const localMatrix = new THREE.Matrix4().multiplyMatrices(inverseRoot, object.matrixWorld);
+    const center = geometryBounds.getCenter(new THREE.Vector3()).applyMatrix4(localMatrix);
+    const geometrySize = geometryBounds.getSize(new THREE.Vector3());
+    const position = new THREE.Vector3();
+    const quaternion = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    localMatrix.decompose(position, quaternion, scale);
+    const rotation = new THREE.Euler().setFromQuaternion(quaternion, "XYZ");
+    const appearance = materialAppearance(object.material);
+    const baseId = (object.name || `${semanticPart(object, root)}-${boxes.length + 1}`).replace(/[^A-Za-z0-9_-]+/gu, "-").replace(/^-|-$/gu, "") || `box-${boxes.length + 1}`;
+    let id = baseId;
+    for (let suffix = 2; usedIds.has(id); suffix += 1) id = `${baseId}-${suffix}`;
+    usedIds.add(id);
+    boxes.push({
+      id,
+      part: semanticPart(object, root),
+      label: boxes.some((box) => box.part === semanticPart(object, root)) ? undefined : semanticPart(object, root),
+      size: [Math.abs(geometrySize.x * scale.x), Math.abs(geometrySize.y * scale.y), Math.abs(geometrySize.z * scale.z)],
+      position: [center.x, center.y, center.z],
+      rotation: [rotation.x, rotation.y, rotation.z],
+      color: appearance.color,
+      ...(appearance.emissive ? { emissive: true } : {}),
+    });
+  });
+  if (!boxes.length) throw new Error(`Object '${descriptor.id}' did not contain renderable box meshes.`);
+  const provisional: InspectionModelSpec = { ...descriptor, boxes };
+  const minimums = boxes.map((modelBox) => Math.min(...boxVertices(modelBox).vertices.map((vertex) => vertex.y)));
+  const lowest = Math.min(...minimums);
+  provisional.groundContactBoxIds = descriptor.groundY === undefined
+    ? undefined
+    : boxes.filter((_, index) => Math.abs(minimums[index] - lowest) < 0.0001).map((modelBox) => modelBox.id);
+  return assertModelSpec(provisional) as InspectionModelSpec;
+}
+
+export function createPlayerInspectionSpecs() {
+  const poses: Array<{ id: string; label: string; animation: PlayerAnimation; phase: number; pose: NonNullable<InspectionMetadata["pose"]> }> = [
+    { id: "player-standing", label: "Player · Standing", animation: "idle", phase: 0.08, pose: "standing" },
+    { id: "player-crouching", label: "Player · Crouching", animation: "crouch", phase: 0.25, pose: "crouching" },
+    { id: "player-running", label: "Player · Running", animation: "run", phase: 0.125, pose: "running" },
+    { id: "player-mining", label: "Player · Mining", animation: "mine", phase: 0.25, pose: "mining" },
+  ];
+  return poses.map(({ id, label, animation, phase, pose }) => {
+    const player = new BlockPlayerModel({
+      playerName: "Inspector",
+      mode: "remote",
+      colors: { skin: "#c98f6b", shirt: "#3f7fba", trousers: "#293554" },
+      castShadow: false,
+      receiveShadow: false,
+    });
+    player.setAnimation(animation, phase);
+    const spec = objectToInspectionSpec(player.group, {
+      id,
+      label,
+      category: "player",
+      front: "-z",
+      groundY: 0,
+      inspection: { source: "BlockPlayerModel", pose },
+    });
+    player.dispose();
+    return spec;
+  });
+}
+
+function rotatedWingCenter(pivotX: number, localX: number, y: number, rotationZ: number) {
+  return new THREE.Vector3(localX, 0, 0).applyEuler(new THREE.Euler(0, 0, rotationZ, "XYZ")).add(new THREE.Vector3(pivotX, y, 0));
+}
+
+export function createButterflyInspectionSpec(kind: ButterflyKind): InspectionModelSpec {
+  const definition = MOB_DEFS[kind];
+  const [wingColor, bodyColor, accentColor] = definition.colors;
+  const flightY = 0.62;
+  const flap = 0.58;
+  const leftCenter = rotatedWingCenter(-0.035, -0.1, flightY, flap);
+  const rightCenter = rotatedWingCenter(0.035, 0.1, flightY, -flap);
+  const boxes: ModelBox[] = [
+    { id: "body", part: "body", label: "Body", size: [0.055, 0.055, 0.17], position: [0, flightY, 0], color: bodyColor },
+    { id: "left-wing", part: "wings", label: "Wings", size: [0.2, 0.018, 0.14], position: [leftCenter.x, leftCenter.y, leftCenter.z], rotation: [0, 0, flap], color: wingColor },
+    { id: "right-wing", part: "wings", size: [0.2, 0.018, 0.14], position: [rightCenter.x, rightCenter.y, rightCenter.z], rotation: [0, 0, -flap], color: wingColor },
+    { id: "left-antenna", part: "antennae", label: "Antennae", size: [0.012, 0.012, 0.12], position: [-0.02, flightY + 0.025, -0.125], rotation: [-0.38, 0, -0.18], color: accentColor, emissive: true },
+    { id: "right-antenna", part: "antennae", size: [0.012, 0.012, 0.12], position: [0.02, flightY + 0.025, -0.125], rotation: [-0.38, 0, 0.18], color: accentColor, emissive: true },
+  ];
+  return assertModelSpec({
+    id: `butterfly-${kind}`,
+    label: `Butterfly · ${definition.name}`,
+    category: "mob",
+    front: "-z",
+    boxes,
+    inspection: { source: "ButterflySystem", variant: kind },
+  } as InspectionModelSpec) as InspectionModelSpec;
+}
+
+export function buildInspectionSpecs(): InspectionModelSpec[] {
+  const base = INSPECTOR_MODEL_SPECS.map((spec) => ({ ...spec, inspection: { source: "model-specs" as const } }));
+  return [...base, ...createPlayerInspectionSpecs(), ...BUTTERFLY_ORDER.map(createButterflyInspectionSpec)];
+}
+
 function escapeXml(value: string) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
@@ -60,11 +221,12 @@ function parseArguments() {
       if (candidates.length) views = [...new Set(candidates)];
     } else if ((argument === "--ids" || argument === "--spec") && args[index + 1]) requestedIds = args[++index].split(",").filter(Boolean);
     else if (argument === "--help") {
-      process.stdout.write("Render Blockwild model inspection sheets.\n\n  node --import tsx scripts/render-models.ts [--out DIR] [--views iso,front,side] [--ids zombie,held-pickaxe] [--columns 4]\n");
+      process.stdout.write("Render Blockwild model inspection sheets and JSON manifest.\n\n  node --import tsx scripts/render-models.ts [--out DIR] [--views iso,front,side] [--ids player-running,butterfly-meadowwing] [--columns 4]\n");
       process.exit(0);
     }
   }
-  const specs = requestedIds ? INSPECTOR_MODEL_SPECS.filter((spec) => requestedIds.includes(spec.id)) : [...INSPECTOR_MODEL_SPECS];
+  const availableSpecs = buildInspectionSpecs();
+  const specs = requestedIds ? availableSpecs.filter((spec) => requestedIds.includes(spec.id)) : availableSpecs;
   if (!specs.length) throw new Error(`No model specs matched: ${requestedIds?.join(", ") ?? "(none)"}`);
   return { out, columns, views, specs };
 }
@@ -131,10 +293,25 @@ function rawProject(point: THREE.Vector3, projection: Projection): Point2 {
   return { x: relative.dot(projection.right), y: -relative.dot(projection.up) };
 }
 
-function modelBounds(spec: ModelSpec) {
+export function modelBounds(spec: ModelSpec) {
   const points = spec.boxes.flatMap((modelBox) => boxVertices(modelBox).vertices);
   const bounds = new THREE.Box3().setFromPoints(points);
   return { bounds, centerY: (bounds.min.y + bounds.max.y) / 2 };
+}
+
+export function inspectGrounding(spec: ModelSpec) {
+  const { bounds } = modelBounds(spec);
+  const groundY = spec.groundY ?? 0;
+  const lowestY = bounds.min.y;
+  const groundDelta = lowestY - groundY;
+  const contact = spec.groundY === undefined
+    ? "reference" as const
+    : Math.abs(groundDelta) < 0.0001
+      ? "exact" as const
+      : groundDelta > 0
+        ? "floating" as const
+        : "penetrating" as const;
+  return { groundY, lowestY, groundDelta, contact };
 }
 
 function arrowMarker(id: string, color: string) {
@@ -150,8 +327,10 @@ function renderTile(spec: ModelSpec, view: ViewName, tileX: number, tileY: numbe
   const lowestY = bounds.min.y;
   const groundDelta = lowestY - groundY;
   const exactGroundContact = Math.abs(groundDelta) < 0.0001;
-  const gridRadius = Math.max(1.1, Math.max(bounds.max.x - bounds.min.x, bounds.max.z - bounds.min.z) * 0.82);
-  const groundThickness = Math.max(0.07, (bounds.max.y - bounds.min.y) * 0.035);
+  const horizontalSpan = Math.max(bounds.max.x - bounds.min.x, bounds.max.z - bounds.min.z);
+  const tinyModel = horizontalSpan < 0.55 && bounds.max.y - bounds.min.y < 0.35;
+  const gridRadius = tinyModel ? Math.max(0.34, horizontalSpan * 1.35) : Math.max(1.1, horizontalSpan * 0.82);
+  const groundThickness = Math.max(tinyModel ? 0.025 : 0.07, (bounds.max.y - bounds.min.y) * 0.035);
   const fitPoints = spec.boxes.flatMap((modelBox) => boxVertices(modelBox).vertices);
   for (const y of [groundY - groundThickness, groundY]) {
     for (const x of [-gridRadius, gridRadius]) for (const z of [-gridRadius, gridRadius]) fitPoints.push(new THREE.Vector3(x, y, z));
@@ -246,7 +425,7 @@ function renderTile(spec: ModelSpec, view: ViewName, tileX: number, tileY: numbe
   output.push(`<rect x="${groundBadgeX.toFixed(2)}" y="${groundBadgeY.toFixed(2)}" width="92" height="17" rx="4" fill="#142019" fill-opacity="0.94" stroke="#789782"/>`);
   output.push(`<text x="${(groundBadgeX + 6).toFixed(2)}" y="${(groundBadgeY + 12).toFixed(2)}" fill="#bce7c6" font-size="9" font-weight="900">GROUND Y=${groundY.toFixed(2)}</text>`);
 
-  const axisLength = Math.max(0.72, gridRadius * 0.72);
+  const axisLength = Math.max(tinyModel ? 0.22 : 0.72, gridRadius * 0.72);
   const origin = new THREE.Vector3(0, groundY, 0);
   const xEnd = new THREE.Vector3(axisLength, groundY, 0);
   const yEnd = new THREE.Vector3(0, groundY + axisLength, 0);
@@ -302,19 +481,52 @@ async function writePng(svg: string, destination: string) {
   }
 }
 
-async function main() {
-  const { out, columns, views, specs } = parseArguments();
+export async function renderModelInspection(options: { out: string; columns: number; views: ViewName[]; specs: InspectionModelSpec[] }) {
+  const { out, columns, views, specs } = options;
   await mkdir(out, { recursive: true });
   const files: string[] = [];
+  const outputs: InspectionManifest["outputs"] = [];
   for (const view of views) {
     const svg = renderContactSheet(specs, columns, view);
     const svgPath = path.join(out, `blockwild-models-${view}.svg`);
     const pngPath = path.join(out, `blockwild-models-${view}.png`);
     await writeFile(svgPath, svg, "utf8");
     files.push(svgPath);
-    if (await writePng(svg, pngPath)) files.push(pngPath);
+    outputs.push({ view, format: "svg", file: path.basename(svgPath) });
+    if (await writePng(svg, pngPath)) {
+      files.push(pngPath);
+      outputs.push({ view, format: "png", file: path.basename(pngPath) });
+    }
   }
-  process.stdout.write(`${JSON.stringify({ status: "rendered", specs: specs.map((spec) => spec.id), files }, null, 2)}\n`);
+  const manifest: InspectionManifest = {
+    version: 1,
+    renderer: "blockwild-model-inspector",
+    views,
+    columns: Math.min(columns, specs.length),
+    specs: specs.map((spec) => {
+      const grounding = inspectGrounding(spec);
+      return {
+        id: spec.id,
+        label: spec.label,
+        category: spec.category,
+        source: spec.inspection?.source ?? "model-specs",
+        ...(spec.inspection?.pose ? { pose: spec.inspection.pose } : {}),
+        ...(spec.inspection?.variant ? { variant: spec.inspection.variant } : {}),
+        boxCount: spec.boxes.length,
+        ...grounding,
+      };
+    }),
+    outputs,
+  };
+  const manifestPath = path.join(out, "blockwild-model-manifest.json");
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  files.push(manifestPath);
+  return { status: "rendered" as const, specs: specs.map((spec) => spec.id), files, manifestPath, manifest };
 }
 
-await main();
+async function main() {
+  const result = await renderModelInspection(parseArguments());
+  process.stdout.write(`${JSON.stringify({ status: result.status, specs: result.specs, files: result.files, manifest: result.manifestPath }, null, 2)}\n`);
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) await main();

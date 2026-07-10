@@ -1,0 +1,351 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  MAX_MOVEMENT_MESSAGE_BYTES,
+  MOVEMENT_CHANNEL_LABEL,
+  MULTIPLAYER_PROTOCOL_VERSION,
+  MultiplayerProtocolError,
+  MultiplayerSession,
+  RELIABLE_CHANNEL_LABEL,
+  decodeEnvelope,
+  decodeInviteCode,
+  detectMultiplayerSupport,
+  encodeEnvelope,
+  encodeInviteCode,
+  validateEnvelope,
+  validatePeerIdentity,
+  type BlockAction,
+  type DataChannelLike,
+  type ManualSignal,
+  type MultiplayerEnvelope,
+  type MultiplayerEvent,
+  type PeerConnectionFactory,
+  type PeerConnectionLike,
+  type PeerIdentity,
+  type PlayerPose,
+  type TimeWeatherSnapshot,
+  type WorldSnapshot,
+} from "../app/game/multiplayer.ts";
+
+const HOST: PeerIdentity = { id: "player_host_001", name: "Host", color: "#44aaee" };
+const GUEST_A: PeerIdentity = { id: "player_guest_01", name: "Guest A", color: "#ee8844" };
+const GUEST_B: PeerIdentity = { id: "player_guest_02", name: "Guest B", color: "#88dd66" };
+
+function deterministicIds(namespace: string) {
+  let sequence = 0;
+  return (prefix: string) => `${prefix}_${namespace}_${String(++sequence).padStart(4, "0")}`;
+}
+
+class FakeDataChannel implements DataChannelLike {
+  readonly label: string;
+  readonly ordered: boolean;
+  readonly maxRetransmits: number | null;
+  readyState: RTCDataChannelState = "connecting";
+  bufferedAmount = 0;
+  binaryType: BinaryType = "blob";
+  onopen: ((event: Event) => void) | null = null;
+  onclose: ((event: Event) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  remote: FakeDataChannel | null = null;
+  sent: string[] = [];
+
+  constructor(label: string, options: RTCDataChannelInit = {}) {
+    this.label = label;
+    this.ordered = options.ordered ?? true;
+    this.maxRetransmits = options.maxRetransmits ?? null;
+  }
+
+  open() {
+    if (this.readyState !== "connecting") return;
+    this.readyState = "open";
+    this.onopen?.({ type: "open" } as Event);
+  }
+
+  send(data: string) {
+    if (this.readyState !== "open") throw new Error("channel is not open");
+    this.sent.push(data);
+    const target = this.remote;
+    queueMicrotask(() => {
+      if (target?.readyState === "open") target.onmessage?.({ data } as MessageEvent);
+    });
+  }
+
+  close() {
+    if (this.readyState === "closed") return;
+    this.readyState = "closed";
+    const target = this.remote;
+    this.remote = null;
+    this.onclose?.({ type: "close" } as Event);
+    target?.remoteClose();
+  }
+
+  private remoteClose() {
+    if (this.readyState === "closed") return;
+    this.readyState = "closed";
+    this.remote = null;
+    this.onclose?.({ type: "close" } as Event);
+  }
+}
+
+class FakeRtcNetwork {
+  private sequence = 0;
+  readonly connections = new Map<string, FakePeerConnection>();
+
+  factory: PeerConnectionFactory = () => {
+    const connection = new FakePeerConnection(this, `rtc_${++this.sequence}`);
+    this.connections.set(connection.id, connection);
+    return connection;
+  };
+}
+
+class FakePeerConnection implements PeerConnectionLike {
+  localDescription: RTCSessionDescriptionInit | null = null;
+  remoteDescription: RTCSessionDescriptionInit | null = null;
+  iceGatheringState: RTCIceGatheringState = "complete";
+  connectionState: RTCPeerConnectionState = "new";
+  onicegatheringstatechange: ((event: Event) => void) | null = null;
+  onconnectionstatechange: ((event: Event) => void) | null = null;
+  ondatachannel: ((event: RTCDataChannelEvent) => void) | null = null;
+  readonly channels: FakeDataChannel[] = [];
+  private remoteOfferId: string | null = null;
+
+  constructor(private readonly network: FakeRtcNetwork, readonly id: string) {}
+
+  createDataChannel(label: string, options?: RTCDataChannelInit) {
+    const channel = new FakeDataChannel(label, options);
+    this.channels.push(channel);
+    return channel;
+  }
+
+  async createOffer() {
+    return { type: "offer" as const, sdp: `fake-offer:${this.id}` };
+  }
+
+  async createAnswer() {
+    if (!this.remoteOfferId) throw new Error("missing remote offer");
+    return { type: "answer" as const, sdp: `fake-answer:${this.id}:${this.remoteOfferId}` };
+  }
+
+  async setLocalDescription(description: RTCSessionDescriptionInit) {
+    this.localDescription = { type: description.type, sdp: description.sdp };
+  }
+
+  async setRemoteDescription(description: RTCSessionDescriptionInit) {
+    this.remoteDescription = { type: description.type, sdp: description.sdp };
+    if (description.type === "offer") {
+      this.remoteOfferId = description.sdp?.split(":")[1] ?? null;
+      return;
+    }
+    const [, guestId, hostId] = description.sdp?.split(":") ?? [];
+    const guest = this.network.connections.get(guestId);
+    if (!guest || hostId !== this.id) throw new Error("fake answer points to an unknown connection");
+    this.connectToGuest(guest);
+  }
+
+  private connectToGuest(guest: FakePeerConnection) {
+    for (const local of this.channels) {
+      const remote = new FakeDataChannel(local.label, { ordered: local.ordered, ...(local.maxRetransmits === null ? {} : { maxRetransmits: local.maxRetransmits }) });
+      local.remote = remote;
+      remote.remote = local;
+      guest.channels.push(remote);
+      guest.ondatachannel?.({ channel: remote } as unknown as RTCDataChannelEvent);
+      local.open();
+      remote.open();
+    }
+    this.connectionState = "connected";
+    guest.connectionState = "connected";
+    this.onconnectionstatechange?.({ type: "connectionstatechange" } as Event);
+    guest.onconnectionstatechange?.({ type: "connectionstatechange" } as Event);
+  }
+
+  close() {
+    if (this.connectionState === "closed") return;
+    this.connectionState = "closed";
+    for (const channel of this.channels) channel.close();
+  }
+}
+
+function makeSession(identity: PeerIdentity, network: FakeRtcNetwork, now: () => number, events: MultiplayerEvent[]) {
+  return new MultiplayerSession({
+    identity,
+    peerConnectionFactory: network.factory,
+    randomId: deterministicIds(identity.name.replace(/\s/gu, "")),
+    now,
+    heartbeatIntervalMs: 1_000,
+    peerTimeoutMs: 4_000,
+    connectionTimeoutMs: 10_000,
+    iceGatheringTimeoutMs: 500,
+    autoMaintenance: false,
+    onEvent: (event) => events.push(event),
+  });
+}
+
+async function flushMessages() {
+  await new Promise<void>((resolve) => queueMicrotask(resolve));
+  await new Promise<void>((resolve) => queueMicrotask(resolve));
+}
+
+async function connect(host: MultiplayerSession, guest: MultiplayerSession) {
+  const offer = await host.createHostInvite();
+  const answer = await guest.createGuestAnswer(offer.inviteCode);
+  await host.acceptGuestAnswer(answer.answerCode);
+  await flushMessages();
+  return offer.token;
+}
+
+function pose(playerId: string, tick = 1): PlayerPose {
+  return { playerId, tick, x: 2, y: 40, z: -6, yaw: 0.3, pitch: -0.1, vx: 1, vy: 0, vz: -1, grounded: true, heldItem: 32 };
+}
+
+test("identity, invite, and versioned envelope codecs round-trip with bounds", () => {
+  assert.equal(validatePeerIdentity(HOST), true);
+  assert.equal(validatePeerIdentity({ ...HOST, color: "blue" }), false);
+  const offer: ManualSignal = {
+    version: MULTIPLAYER_PROTOCOL_VERSION,
+    protocol: "blockwild-webrtc",
+    kind: "offer",
+    sessionId: "session_codec_01",
+    token: "invite_codec_001",
+    identity: HOST,
+    description: { type: "offer", sdp: "v=0\r\na=fingerprint:sha-256 test" },
+  };
+  assert.deepEqual(decodeInviteCode(encodeInviteCode(offer)), offer);
+
+  const envelope: MultiplayerEnvelope<"player-pose"> = {
+    version: MULTIPLAYER_PROTOCOL_VERSION,
+    sessionId: "session_codec_01",
+    type: "player-pose",
+    sequence: 3,
+    sentAt: 100,
+    from: HOST.id,
+    payload: pose(HOST.id),
+  };
+  const encoded = encodeEnvelope(envelope, MAX_MOVEMENT_MESSAGE_BYTES);
+  assert.deepEqual(decodeEnvelope(encoded, MAX_MOVEMENT_MESSAGE_BYTES), envelope);
+  const bytes = new TextEncoder().encode(encoded);
+  assert.deepEqual(decodeEnvelope(bytes, MAX_MOVEMENT_MESSAGE_BYTES), envelope);
+  assert.equal(validateEnvelope({ ...envelope, version: 999 }), false);
+  assert.throws(() => encodeEnvelope(envelope, 20), MultiplayerProtocolError);
+  assert.throws(() => decodeEnvelope("{bad json"), MultiplayerProtocolError);
+  assert.throws(() => decodeInviteCode("BW9.not-supported"), MultiplayerProtocolError);
+});
+
+test("feature detection reports missing browser WebRTC without throwing", () => {
+  const support = detectMultiplayerSupport({ TextEncoder, TextDecoder, btoa, atob, crypto } as unknown as typeof globalThis);
+  assert.equal(support.supported, false);
+  assert.equal(support.webRTC, false);
+  assert.ok(support.reasons.some((reason) => reason.includes("RTCPeerConnection")));
+});
+
+test("manual offer/answer creates both channel modes and carries host-authoritative messages", async () => {
+  const network = new FakeRtcNetwork();
+  let clock = 1_000;
+  const hostEvents: MultiplayerEvent[] = [];
+  const guestEvents: MultiplayerEvent[] = [];
+  const host = makeSession(HOST, network, () => clock, hostEvents);
+  const guest = makeSession(GUEST_A, network, () => clock, guestEvents);
+  await connect(host, guest);
+
+  assert.equal(host.state, "connected");
+  assert.equal(guest.state, "connected");
+  assert.equal(host.getPeers().length, 1);
+  assert.equal(host.getPeers()[0].identity?.id, GUEST_A.id);
+  const hostConnection = [...network.connections.values()][0];
+  assert.equal(hostConnection.channels.find((channel) => channel.label === RELIABLE_CHANNEL_LABEL)?.ordered, true);
+  const movement = hostConnection.channels.find((channel) => channel.label === MOVEMENT_CHANNEL_LABEL);
+  assert.equal(movement?.ordered, false);
+  assert.equal(movement?.maxRetransmits, 0);
+
+  const action: BlockAction = {
+    requestId: "request_block_01",
+    actorId: GUEST_A.id,
+    tick: 2,
+    kind: "place",
+    edits: [{ x: 3, y: 41, z: -6, type: 10 }],
+    status: "request",
+  };
+  assert.equal(guest.sendBlockAction(action), 1);
+  assert.equal(guest.sendPlayerPose(pose(GUEST_A.id, 2)), 1);
+  await flushMessages();
+  const hostMessages = hostEvents.filter((event): event is Extract<MultiplayerEvent, { type: "message" }> => event.type === "message");
+  assert.equal(hostMessages.some((event) => event.envelope.type === "block-action" && event.channel === "reliable"), true);
+  assert.equal(hostMessages.some((event) => event.envelope.type === "player-pose" && event.channel === "movement"), true);
+
+  const time: TimeWeatherSnapshot = { tick: 3, worldTime: 0.75, day: 4, weather: "rain" };
+  assert.equal(host.sendTimeWeather(time), 1);
+  await flushMessages();
+  assert.equal(guestEvents.some((event) => event.type === "message" && event.envelope.type === "time-weather"), true);
+  assert.throws(() => guest.sendMobSnapshot({ tick: 3, mobs: [] }), /Guests cannot authoritatively send/u);
+  assert.throws(() => guest.sendPlayerPose(pose(HOST.id)), /local peer identity/u);
+  assert.throws(() => guest.sendBlockAction({ ...action, status: "accepted" }), /only send action requests/u);
+
+  clock = 2_500;
+  host.maintenanceTick();
+  await flushMessages();
+  assert.notEqual(host.getPeers()[0].latencyMs, null);
+
+  clock = 8_000;
+  host.maintenanceTick();
+  assert.equal(host.getPeers().length, 0);
+  assert.equal(host.state, "hosting");
+  host.dispose();
+  guest.dispose();
+});
+
+test("one host maintains independent star links for multiple guests and broadcasts snapshots", async () => {
+  const network = new FakeRtcNetwork();
+  let clock = 10;
+  const hostEvents: MultiplayerEvent[] = [];
+  const firstEvents: MultiplayerEvent[] = [];
+  const secondEvents: MultiplayerEvent[] = [];
+  const host = makeSession(HOST, network, () => clock, hostEvents);
+  const first = makeSession(GUEST_A, network, () => clock, firstEvents);
+  const second = makeSession(GUEST_B, network, () => clock, secondEvents);
+  await connect(host, first);
+  await connect(host, second);
+  assert.equal(host.getPeers().length, 2);
+
+  const update: TimeWeatherSnapshot = { tick: 5, worldTime: 0.2, day: 2, weather: "clear" };
+  assert.equal(host.sendTimeWeather(update), 2);
+  await flushMessages();
+  assert.equal(firstEvents.some((event) => event.type === "message" && event.envelope.type === "time-weather"), true);
+  assert.equal(secondEvents.some((event) => event.type === "message" && event.envelope.type === "time-weather"), true);
+
+  const snapshot: WorldSnapshot = {
+    tick: 6,
+    seed: "shared-advanced-world",
+    generatorVersion: 3,
+    players: [pose(HOST.id, 6)],
+    blockEdits: [],
+    mobs: [],
+    drops: [],
+    time: { tick: 6, worldTime: 0.21, day: 2, weather: "clear" },
+    worldOptions: {
+      difficulty: "hard",
+      dayLengthMinutes: 35,
+      mobDensity: 1.5,
+      butterflyDensity: 2,
+      caveFrequency: 1.75,
+      biomeScale: 1.5,
+      resourceAbundance: 1.25,
+      structures: true,
+      weather: true,
+      keepInventory: false,
+      friendlyFire: false,
+    },
+  };
+  assert.equal(host.sendSnapshot(snapshot), 2);
+  await flushMessages();
+  assert.equal(firstEvents.some((event) => event.type === "message" && event.envelope.type === "snapshot" && (event.envelope.payload as WorldSnapshot).worldOptions?.difficulty === "hard"), true);
+
+  const firstPeer = host.getPeers().find((peer) => peer.identity?.id === GUEST_A.id)!;
+  assert.equal(host.disconnectPeer(firstPeer.identity!.id, "kick-test"), true);
+  assert.equal(host.getPeers().length, 1);
+  assert.equal(host.getPeers()[0].identity?.id, GUEST_B.id);
+  clock += 1;
+  host.dispose();
+  first.dispose();
+  second.dispose();
+  assert.equal(host.state, "closed");
+});

@@ -20,6 +20,7 @@ import {
 } from "./data";
 import {
   BIOME_NAMES,
+  CHUNK_SIZE,
   GENERATOR_VERSION,
   MAX_Y,
   MIN_Y,
@@ -28,10 +29,36 @@ import {
   ChunkWorld,
   type ChunkEditSave,
 } from "./world";
-import { MOB_DEFS, MOB_ORDER, type MobDefinition, type MobKind } from "./mobs";
+import { BUTTERFLY_ORDER, MOB_DEFS, MOB_ORDER, type ButterflyKind, type MobDefinition, type MobKind } from "./mobs";
 import { RIDGEBACK_GROUND_LIFT, createHeldToolSpec, createZombieSpec } from "./model-specs";
+import { ButterflySystem } from "./butterflies";
+import {
+  BlockPlayerModel,
+  updateThirdPersonCamera,
+  type PlayerAction,
+  type PlayerLocomotion,
+} from "./player-model";
+import {
+  MultiplayerSession,
+  createPeerIdentity,
+  detectMultiplayerSupport,
+  type BlockAction,
+  type MultiplayerEvent,
+  type MultiplayerSessionState,
+  type PeerInfo,
+  type PlayerPose,
+  type WorldSnapshot,
+} from "./multiplayer";
+import {
+  DEFAULT_WORLD_OPTIONS,
+  WorldStorage,
+  generationOptionsFromWorldOptions,
+  normalizeWorldOptions,
+  type WorldMetadata,
+  type WorldOptions,
+} from "./world-storage";
 
-export { BLOCKS, CREATIVE_BLOCKS, ITEMS, Item, RECIPES, BlockId, BIOME_NAMES, MOB_DEFS, MOB_ORDER, type GameMode, type InventorySlot, type ItemCode, type Recipe, type EquipmentSlot, type MobKind };
+export { BLOCKS, CREATIVE_BLOCKS, ITEMS, Item, RECIPES, BlockId, BIOME_NAMES, MOB_DEFS, MOB_ORDER, WorldStorage, DEFAULT_WORLD_OPTIONS, type WorldOptions, type WorldMetadata, type GameMode, type InventorySlot, type ItemCode, type Recipe, type EquipmentSlot, type MobKind };
 
 export const SAVE_KEY = "blockwild-world-v2";
 export const SETTINGS_KEY = "blockwild-settings-v2";
@@ -56,7 +83,7 @@ export type FurnaceState = {
 };
 
 export type ChestState = Array<InventorySlot | null>;
-export type BestiaryProgress = Record<MobKind, { seen: boolean; kills: number }>;
+export type BestiaryProgress = Record<MobKind, { seen: boolean; kills: number; captures: number }>;
 
 export type HudState = {
   health: number;
@@ -89,6 +116,10 @@ export type HudState = {
   loadedChunks: number;
   queuedChunks: number;
   fullscreen: boolean;
+  cameraMode: CameraMode;
+  crouching: boolean;
+  sprinting: boolean;
+  onlinePlayers: number;
 };
 
 export type WorldSave = {
@@ -116,10 +147,23 @@ export type WorldSave = {
   furnaces: Record<string, FurnaceState>;
   chests: Record<string, ChestState>;
   drops?: Array<{ item: ItemCode; count: number; durability?: number; x: number; y: number; z: number; age: number }>;
+  options?: Partial<WorldOptions>;
   savedAt: number;
 };
 
-export type OverlayKind = "inventory" | "crafting" | "furnace" | "chest" | "bestiary";
+export type OverlayKind = "inventory" | "crafting" | "furnace" | "chest" | "bestiary" | "multiplayer";
+export type CameraMode = "first" | "third-rear" | "third-front";
+
+export type MultiplayerUiState = {
+  supported: boolean;
+  reasons: string[];
+  status: MultiplayerSessionState;
+  role: "host" | "guest" | null;
+  peers: PeerInfo[];
+  inviteCode: string;
+  answerCode: string;
+  error: string;
+};
 
 export type EngineEvents = {
   onHud: (hud: HudState) => void;
@@ -181,6 +225,13 @@ type MobRemains = {
   fragments: MobFragment[];
 };
 
+type RemotePlayer = {
+  model: BlockPlayerModel;
+  pose: PlayerPose;
+  target: PlayerPose;
+  lastUpdate: number;
+};
+
 type KeyboardLockApi = {
   lock: (keys?: string[]) => Promise<void>;
   unlock: () => void;
@@ -231,6 +282,7 @@ type EnvironmentLightCandidate = EnvironmentLightSource & {
 const compareEnvironmentLightCandidates = (a: EnvironmentLightCandidate, b: EnvironmentLightCandidate) => a.priority - b.priority;
 
 const PLAYER_HEIGHT = 1.8;
+const CROUCH_HEIGHT = 1.48;
 const PLAYER_RADIUS = 0.3;
 const PHYSICS_STEP = 1 / 60;
 const INVENTORY_SIZE = 36;
@@ -292,9 +344,14 @@ function blockKey(x: number, y: number, z: number) {
 export function readSavedWorld(): WorldSave | null {
   if (typeof window === "undefined") return null;
   try {
+    const storage = new WorldStorage(window.localStorage);
+    const id = storage.activeWorldId;
+    if (id) {
+      const loaded = storage.loadWorld(id, false);
+      if (loaded.ok) return { ...loaded.value.save, options: loaded.value.options };
+    }
     const raw = window.localStorage.getItem(SAVE_KEY);
-    if (!raw) return null;
-    return migrateSavedWorld(JSON.parse(raw));
+    return raw ? migrateSavedWorld(JSON.parse(raw)) : null;
   } catch {
     return null;
   }
@@ -325,7 +382,14 @@ export function restoreChestStorage(saved: Record<string, ChestState> = {}) {
 }
 
 export function clearSavedWorld() {
-  if (typeof window !== "undefined") window.localStorage.removeItem(SAVE_KEY);
+  if (typeof window === "undefined") return;
+  try {
+    const storage = new WorldStorage(window.localStorage);
+    if (storage.activeWorldId) storage.deleteWorld(storage.activeWorldId);
+    window.localStorage.removeItem(SAVE_KEY);
+  } catch {
+    // Storage can be unavailable in private browsing.
+  }
 }
 
 export function readSettings(): GameSettings {
@@ -341,7 +405,7 @@ export function readSettings(): GameSettings {
       sensitivity: clamp(Number(parsed.sensitivity ?? fallback.sensitivity), 0.0008, 0.005),
       fov: clamp(Number(parsed.fov ?? fallback.fov), 55, 100),
       weather: parsed.weather === "rain" ? "rain" : "clear",
-      renderDistance: clamp(Math.round(Number(parsed.renderDistance ?? fallback.renderDistance)), 2, 6),
+      renderDistance: clamp(Math.round(Number(parsed.renderDistance ?? fallback.renderDistance)), 2, 8),
     };
   } catch {
     return fallback;
@@ -369,7 +433,7 @@ function blankEquipment(): Record<EquipmentSlot, InventorySlot | null> {
 }
 
 function blankBestiary(): BestiaryProgress {
-  return Object.fromEntries(MOB_ORDER.map((kind) => [kind, { seen: false, kills: 0 }])) as BestiaryProgress;
+  return Object.fromEntries(MOB_ORDER.map((kind) => [kind, { seen: false, kills: 0, captures: 0 }])) as BestiaryProgress;
 }
 
 export class VoxelEngine {
@@ -379,6 +443,7 @@ export class VoxelEngine {
   scene = new THREE.Scene();
   camera: THREE.PerspectiveCamera;
   world = new ChunkWorld();
+  butterflies: ButterflySystem;
   ambienceGroup = new THREE.Group();
   creatureGroup = new THREE.Group();
   dropGroup = new THREE.Group();
@@ -421,9 +486,30 @@ export class VoxelEngine {
   position = new THREE.Vector3(0, 48, 0);
   spawn = new THREE.Vector3(0, 48, 0);
   velocity = new THREE.Vector3();
+  worldStorage = new WorldStorage();
+  activeWorldId: string | null = null;
+  worldOptions: WorldOptions = normalizeWorldOptions();
+  worldSessionStartedAt = Date.now();
   yaw = 0;
   pitch = 0;
   grounded = false;
+  crouching = false;
+  sprinting = false;
+  butterflyDensity = 1;
+  cameraMode: CameraMode = "first";
+  cameraEyeHeight = 1.62;
+  localPlayerModel = new BlockPlayerModel({ playerId: "local", playerName: "Player", mode: "local" });
+  remotePlayers = new Map<string, RemotePlayer>();
+  localAvatarHeld: THREE.Object3D | null = null;
+  localAvatarHeldCode: ItemCode = -1;
+  remoteAvatarHeldCodes = new Map<string, ItemCode>();
+  cameraCollisionOrigin = new THREE.Vector3();
+  cameraCollisionDirection = new THREE.Vector3();
+  collisionCandidate = new THREE.Vector3();
+  collisionSupport = new THREE.Vector3();
+  groundProbe = new THREE.Vector3();
+  worldUp = new THREE.Vector3(0, 1, 0);
+  smallEntityPositions: THREE.Vector3[] = [];
   locked = false;
   touchMode = false;
   running = false;
@@ -499,6 +585,21 @@ export class VoxelEngine {
   activeChestModel: THREE.Group | null = null;
   chestLidPivot: THREE.Group | null = null;
   chestOpenAmount = 0;
+  multiplayer: MultiplayerSession | null = null;
+  multiplayerState: MultiplayerUiState = {
+    ...detectMultiplayerSupport(),
+    status: "idle",
+    role: null,
+    peers: [],
+    inviteCode: "",
+    answerCode: "",
+    error: "",
+  };
+  multiplayerTick = 0;
+  multiplayerPoseTimer = 0;
+  multiplayerWorldTimer = 0;
+  multiplayerSnapshotTimer = 0;
+  multiplayerReceivedSnapshot = false;
 
   constructor(canvas: HTMLCanvasElement, events: EngineEvents, settings = readSettings()) {
     this.canvas = canvas;
@@ -515,7 +616,18 @@ export class VoxelEngine {
     this.camera = new THREE.PerspectiveCamera(settings.fov, 1, 0.05, 256);
     this.camera.rotation.order = "YXZ";
     this.world.setRenderDistance(settings.renderDistance);
+    this.butterflies = new ButterflySystem(this.world, (kind, captured) => {
+      const progress = this.bestiary[kind];
+      if (!progress) return;
+      progress.seen = true;
+      if (captured) progress.captures += 1;
+      this.saveSoon();
+      this.emitHud(true);
+    });
     this.scene.add(this.camera, this.world.group, this.ambienceGroup, this.creatureGroup, this.dropGroup);
+    this.scene.add(this.butterflies.group);
+    this.localPlayerModel.group.visible = false;
+    this.scene.add(this.localPlayerModel.group);
     this.scene.background = new THREE.Color("#78baf2");
     this.scene.fog = new THREE.Fog("#78baf2", 30, 62);
 
@@ -692,13 +804,17 @@ export class VoxelEngine {
 
   onKeyDown = (event: KeyboardEvent) => {
     if (!this.running) return;
-    if (["KeyW", "KeyA", "KeyS", "KeyD", "Space", "ShiftLeft", "ShiftRight", "ControlLeft"].includes(event.code)) event.preventDefault();
+    if (["KeyW", "KeyA", "KeyS", "KeyD", "Space", "ShiftLeft", "ShiftRight", "ControlLeft", "ControlRight"].includes(event.code)) event.preventDefault();
     if (event.code === "KeyE" && !event.repeat) {
       this.openOverlay("inventory");
       return;
     }
     if (event.code === "KeyQ" && !event.repeat) this.dropSelectedItem();
-    if (event.code === "KeyH" && !event.repeat) this.events.onToast("WASD move · Space jump/swim · Shift sprint · Left harvest/attack · Right use/build · E inventory · Q drop");
+    if (event.code === "KeyV" && !event.repeat) {
+      this.cycleCameraMode();
+      return;
+    }
+    if (event.code === "KeyH" && !event.repeat) this.events.onToast("WASD move · Space jump/swim · Shift crouch · Ctrl sprint · V camera · Left harvest/attack · Right use/build · E inventory · Q drop");
     if (event.code === "F3" && !event.repeat) {
       event.preventDefault();
       this.debug = !this.debug;
@@ -730,6 +846,15 @@ export class VoxelEngine {
     this.yaw -= dx * this.settings.sensitivity;
     this.pitch -= dy * this.settings.sensitivity;
     this.pitch = clamp(this.pitch, -Math.PI / 2 + 0.04, Math.PI / 2 - 0.04);
+  }
+
+  cycleCameraMode() {
+    this.cameraMode = this.cameraMode === "first" ? "third-rear" : this.cameraMode === "third-rear" ? "third-front" : "first";
+    this.localPlayerModel.group.visible = this.cameraMode !== "first" && !this.titleMode;
+    this.heldRoot.visible = this.cameraMode === "first";
+    const label = this.cameraMode === "first" ? "First person" : this.cameraMode === "third-rear" ? "Third person — rear" : "Third person — front";
+    this.events.onToast(`${label}. Press V to cycle the camera.`);
+    this.emitHud(true);
   }
 
   setVirtualKey(code: string, down: boolean) {
@@ -786,7 +911,7 @@ export class VoxelEngine {
     this.titleMode = true;
     this.mode = "builder";
     this.clearEntities();
-    this.world.reset(seed);
+    this.world.reset(seed, undefined, generationOptionsFromWorldOptions(DEFAULT_WORLD_OPTIONS));
     const spawn = this.findSpawn();
     this.world.initializeAround(spawn.x, spawn.z);
     const y = this.world.surfaceAt(spawn.x, spawn.z) + 0.51;
@@ -795,13 +920,17 @@ export class VoxelEngine {
     this.emitHud(true);
   }
 
-  createWorld(seed: string, mode: GameMode) {
-    clearSavedWorld();
+  createWorld(seed: string, mode: GameMode, options: Partial<WorldOptions> = {}, name = "New World") {
     this.persistent = true;
     this.running = true;
     this.paused = false;
     this.titleMode = false;
     this.mode = mode;
+    this.worldOptions = normalizeWorldOptions(options);
+    this.butterflyDensity = this.worldOptions.butterflyDensity;
+    if (!this.worldOptions.weather) this.weather = "clear";
+    this.activeWorldId = null;
+    this.worldSessionStartedAt = Date.now();
     this.worldTime = 0.32;
     this.day = 1;
     this.health = 10;
@@ -818,7 +947,7 @@ export class VoxelEngine {
     this.furnaces.clear();
     this.chests.clear();
     this.clearEntities();
-    this.world.reset(seed.trim() || this.randomSeed());
+    this.world.reset(seed.trim() || this.randomSeed(), undefined, generationOptionsFromWorldOptions(this.worldOptions));
     const spawn = this.findSpawn();
     this.world.initializeAround(spawn.x, spawn.z);
     const y = this.world.surfaceAt(spawn.x, spawn.z) + 0.51;
@@ -833,18 +962,31 @@ export class VoxelEngine {
       for (let index = 0; index < Math.min(INVENTORY_SIZE, CREATIVE_BLOCKS.length); index += 1) this.inventory[index] = { item: CREATIVE_BLOCKS[index], count: 64 };
     }
     this.spawnProtection = 22;
-    this.saveSoon();
+    const created = this.worldStorage.createWorld({ name, save: this.serialize(), options: this.worldOptions });
+    if (created.ok) {
+      this.activeWorldId = created.value.id;
+      this.worldStorage.setActiveWorld(created.value.id);
+      this.events.onSave();
+    } else {
+      this.events.onToast(created.error.message);
+      this.saveSoon();
+    }
     this.emitHud(true);
+    return created.ok ? created.value : null;
   }
 
-  loadWorld(save: WorldSave) {
+  loadWorld(save: WorldSave, options: Partial<WorldOptions> = save.options ?? {}, worldId: string | null = this.worldStorage.activeWorldId) {
     this.persistent = true;
     this.running = true;
     this.paused = false;
     this.titleMode = false;
     this.mode = save.mode === "builder" ? "builder" : "survival";
+    this.worldOptions = normalizeWorldOptions(options);
+    this.butterflyDensity = this.worldOptions.butterflyDensity;
+    this.activeWorldId = worldId;
+    this.worldSessionStartedAt = Date.now();
     this.clearEntities();
-    this.world.reset(save.seed, save.edits);
+    this.world.reset(save.seed, save.edits, generationOptionsFromWorldOptions(this.worldOptions));
     this.world.initializeAround(save.player.x, save.player.z);
     this.position.set(save.player.x, save.player.y, save.player.z);
     this.spawn.set(save.spawn?.x ?? 0, save.spawn?.y ?? this.world.surfaceAt(0, 0) + 0.51, save.spawn?.z ?? 0);
@@ -872,6 +1014,7 @@ export class VoxelEngine {
     this.worldTime = ((Number(save.time) || 0.32) % 1 + 1) % 1;
     this.day = Math.max(1, Number(save.day) || 1);
     this.weather = save.weather === "rain" ? "rain" : "clear";
+    if (!this.worldOptions.weather) this.weather = "clear";
     this.furnaces = new Map(Object.entries(save.furnaces ?? {}).map(([key, value]) => [key, { ...blankFurnace(), ...value }]));
     this.chests = restoreChestStorage(save.chests ?? {});
     if (this.collidesAt(this.position) || this.position.y < MIN_Y) this.respawn(false);
@@ -886,6 +1029,480 @@ export class VoxelEngine {
     }
     this.spawnProtection = 8;
     this.emitHud(true);
+  }
+
+  loadStoredWorld(id: string) {
+    const loaded = this.worldStorage.loadWorld(id);
+    if (!loaded.ok) {
+      this.events.onToast(loaded.error.message);
+      return false;
+    }
+    this.loadWorld(loaded.value.save, loaded.value.options, id);
+    return true;
+  }
+
+  getMultiplayerState(): MultiplayerUiState {
+    if (this.multiplayer) {
+      this.multiplayerState.status = this.multiplayer.state;
+      this.multiplayerState.role = this.multiplayer.role;
+      this.multiplayerState.peers = this.multiplayer.getPeers();
+    }
+    return {
+      ...this.multiplayerState,
+      peers: this.multiplayerState.peers.map((peer) => ({ ...peer, identity: peer.identity ? { ...peer.identity } : null })),
+      reasons: [...this.multiplayerState.reasons],
+    };
+  }
+
+  private multiplayerIdentity(name: string) {
+    const cleanName = name.trim().slice(0, 24) || "Wanderer";
+    let hash = 2166136261;
+    for (const character of cleanName) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
+    const palette = ["#4f91d8", "#d36c55", "#68a864", "#b66fc4", "#d0a447", "#3fa7a0", "#d17a9f", "#7b83d5"];
+    return createPeerIdentity(cleanName, palette[Math.abs(hash) % palette.length]);
+  }
+
+  private beginMultiplayerSession(name: string) {
+    this.multiplayer?.dispose("new-session");
+    this.removeAllRemotePlayers();
+    this.multiplayerState.inviteCode = "";
+    this.multiplayerState.answerCode = "";
+    this.multiplayerState.error = "";
+    const support = detectMultiplayerSupport();
+    this.multiplayerState.supported = support.supported;
+    this.multiplayerState.reasons = support.reasons;
+    if (!support.supported) throw new Error(support.reasons.join(" "));
+    const identity = this.multiplayerIdentity(name);
+    this.localPlayerModel.setPlayerName(identity.name).setColors({ shirt: identity.color });
+    this.multiplayer = new MultiplayerSession({ identity, onEvent: (event) => this.handleMultiplayerEvent(event) });
+    this.multiplayerState.status = "idle";
+    this.multiplayerState.role = null;
+    this.multiplayerState.peers = [];
+    this.multiplayerPoseTimer = 0;
+    this.multiplayerWorldTimer = 0;
+    this.multiplayerSnapshotTimer = 0;
+    this.multiplayerReceivedSnapshot = false;
+    return this.multiplayer;
+  }
+
+  async hostMultiplayer(playerName: string) {
+    if (!this.running || this.titleMode) throw new Error("Open a world before hosting a multiplayer session.");
+    try {
+      const session = this.multiplayer?.role === "host" && this.multiplayer.state !== "closed"
+        ? this.multiplayer
+        : this.beginMultiplayerSession(playerName);
+      const invite = await session.createHostInvite();
+      this.multiplayerState.inviteCode = invite.inviteCode;
+      this.multiplayerState.answerCode = "";
+      this.multiplayerState.status = session.state;
+      this.multiplayerState.role = "host";
+      this.events.onToast("Host invite created. Send it privately to one guest, then paste their answer.");
+      return { inviteCode: invite.inviteCode };
+    } catch (error) {
+      this.multiplayerState.error = error instanceof Error ? error.message : String(error);
+      this.multiplayerState.status = "error";
+      throw error;
+    }
+  }
+
+  async joinMultiplayer(inviteCode: string, playerName: string) {
+    try {
+      const session = this.beginMultiplayerSession(playerName);
+      const answer = await session.createGuestAnswer(inviteCode.trim());
+      this.multiplayerState.answerCode = answer.answerCode;
+      this.multiplayerState.inviteCode = inviteCode.trim();
+      this.multiplayerState.status = session.state;
+      this.multiplayerState.role = "guest";
+      this.events.onToast(`Answer created for ${answer.host.name}. Send it back to the host to finish connecting.`);
+      return { answerCode: answer.answerCode };
+    } catch (error) {
+      this.multiplayerState.error = error instanceof Error ? error.message : String(error);
+      this.multiplayerState.status = "error";
+      throw error;
+    }
+  }
+
+  async acceptMultiplayerAnswer(answerCode: string) {
+    if (!this.multiplayer || this.multiplayer.role !== "host") throw new Error("Create a host invite first.");
+    try {
+      await this.multiplayer.acceptGuestAnswer(answerCode.trim());
+      this.multiplayerState.answerCode = answerCode.trim();
+      this.multiplayerState.status = this.multiplayer.state;
+      this.multiplayerState.peers = this.multiplayer.getPeers();
+      this.events.onToast("Guest answer accepted. The peer connection is opening now.");
+    } catch (error) {
+      this.multiplayerState.error = error instanceof Error ? error.message : String(error);
+      throw error;
+    }
+  }
+
+  disconnectMultiplayer() {
+    const hadSession = Boolean(this.multiplayer);
+    this.multiplayer?.dispose("local-disconnect");
+    this.multiplayer = null;
+    this.removeAllRemotePlayers();
+    const support = detectMultiplayerSupport();
+    this.multiplayerState = {
+      supported: support.supported,
+      reasons: support.reasons,
+      status: "idle",
+      role: null,
+      peers: [],
+      inviteCode: "",
+      answerCode: "",
+      error: "",
+    };
+    this.multiplayerReceivedSnapshot = false;
+    if (hadSession && !this.titleMode && !this.disposed) this.events.onToast("Multiplayer session closed. The host-device world remains saved locally.");
+    if (!this.disposed) this.emitHud(true);
+  }
+
+  private removeRemotePlayer(id: string) {
+    const remote = this.remotePlayers.get(id);
+    if (!remote) return;
+    const held = remote.model.rightHandSocket.children[0];
+    if (held) {
+      remote.model.setHeldItem(null);
+      this.disposeObject(held);
+    }
+    remote.model.dispose();
+    this.remotePlayers.delete(id);
+    this.remoteAvatarHeldCodes.delete(id);
+  }
+
+  private removeAllRemotePlayers() {
+    for (const id of [...this.remotePlayers.keys()]) this.removeRemotePlayer(id);
+  }
+
+  private upsertRemotePlayer(pose: PlayerPose, peer?: PeerInfo) {
+    if (pose.playerId === this.multiplayer?.identity.id) return;
+    let remote = this.remotePlayers.get(pose.playerId);
+    if (!remote) {
+      const identity = peer?.identity ?? this.multiplayer?.getPeer(pose.playerId)?.identity;
+      const model = new BlockPlayerModel({
+        playerId: pose.playerId,
+        playerName: identity?.name ?? "Wanderer",
+        mode: "remote",
+        colors: identity?.color ? { shirt: identity.color } : undefined,
+      });
+      model.group.position.set(pose.x, pose.y, pose.z);
+      this.scene.add(model.group);
+      remote = { model, pose: { ...pose }, target: { ...pose }, lastUpdate: performance.now() };
+      this.remotePlayers.set(pose.playerId, remote);
+    }
+    remote.target = { ...pose };
+    remote.lastUpdate = performance.now();
+  }
+
+  private localNetworkPose(): PlayerPose | null {
+    const identity = this.multiplayer?.identity;
+    if (!identity) return null;
+    return {
+      playerId: identity.id,
+      tick: this.multiplayerTick,
+      x: this.position.x,
+      y: this.position.y,
+      z: this.position.z,
+      yaw: this.yaw,
+      pitch: this.pitch,
+      vx: this.velocity.x,
+      vy: this.velocity.y,
+      vz: this.velocity.z,
+      grounded: this.grounded,
+      heldItem: this.selectedSlot()?.item,
+      crouching: this.crouching,
+      sprinting: this.sprinting,
+      action: this.mineHeld || this.attackCooldown > 0 ? "mine" : this.heldUse > 0 ? "use" : "none",
+    };
+  }
+
+  private networkBlockEdits(limit = 5200) {
+    const edits: Array<{ x: number; y: number; z: number; type: number }> = [];
+    for (const [key, entries] of Object.entries(this.world.serializeEdits())) {
+      const [cx, cz] = key.split(",").map(Number);
+      if (!Number.isFinite(cx) || !Number.isFinite(cz)) continue;
+      for (const [index, type] of entries) {
+        const layer = Math.floor(index / (CHUNK_SIZE * CHUNK_SIZE));
+        const horizontal = index % (CHUNK_SIZE * CHUNK_SIZE);
+        edits.push({
+          x: cx * CHUNK_SIZE + horizontal % CHUNK_SIZE,
+          y: MIN_Y + layer,
+          z: cz * CHUNK_SIZE + Math.floor(horizontal / CHUNK_SIZE),
+          type,
+        });
+      }
+    }
+    if (edits.length <= limit) return edits;
+    const playerPositions = [this.position, ...[...this.remotePlayers.values()].map((remote) => remote.target)];
+    const nearestPlayerDistance = (edit: { x: number; z: number }) => {
+      let best = Infinity;
+      for (const player of playerPositions) best = Math.min(best, (edit.x - player.x) ** 2 + (edit.z - player.z) ** 2);
+      return best;
+    };
+    edits.sort((a, b) => nearestPlayerDistance(a) - nearestPlayerDistance(b));
+    return edits.slice(0, limit);
+  }
+
+  private networkMobSnapshot() {
+    return this.mobs.map((mob) => ({
+      id: mob.id,
+      kind: mob.kind,
+      x: mob.group.position.x,
+      y: mob.group.position.y,
+      z: mob.group.position.z,
+      yaw: mob.group.rotation.y,
+      health: mob.health,
+      state: mob.state,
+    }));
+  }
+
+  private networkDropSnapshot() {
+    return this.drops.map((drop) => ({
+      id: drop.id,
+      item: drop.item,
+      count: drop.count,
+      x: drop.mesh.position.x,
+      y: drop.mesh.position.y,
+      z: drop.mesh.position.z,
+      age: drop.age,
+      ...(drop.durability !== undefined ? { durability: drop.durability } : {}),
+    }));
+  }
+
+  private hostWorldSnapshot(): WorldSnapshot {
+    const local = this.localNetworkPose();
+    return {
+      tick: this.multiplayerTick,
+      seed: this.world.seedText,
+      generatorVersion: GENERATOR_VERSION,
+      players: [local, ...[...this.remotePlayers.values()].map((remote) => remote.target)].filter((pose): pose is PlayerPose => Boolean(pose)),
+      blockEdits: this.networkBlockEdits(),
+      mobs: this.networkMobSnapshot(),
+      drops: this.networkDropSnapshot(),
+      time: { tick: this.multiplayerTick, worldTime: this.worldTime, day: this.day, weather: this.weather },
+      worldOptions: { ...this.worldOptions },
+    };
+  }
+
+  private sendHostWorldSnapshot(peerId?: string) {
+    if (!this.multiplayer || this.multiplayer.role !== "host") return;
+    try { this.multiplayer.sendSnapshot(this.hostWorldSnapshot(), peerId); }
+    catch (error) { this.multiplayerState.error = error instanceof Error ? error.message : String(error); }
+  }
+
+  private editsFromNetwork(blockEdits: WorldSnapshot["blockEdits"]): ChunkEditSave {
+    const edits: ChunkEditSave = {};
+    for (const edit of blockEdits) {
+      const cx = Math.floor(edit.x / CHUNK_SIZE);
+      const cz = Math.floor(edit.z / CHUNK_SIZE);
+      const lx = edit.x - cx * CHUNK_SIZE;
+      const lz = edit.z - cz * CHUNK_SIZE;
+      const index = lx + lz * CHUNK_SIZE + (edit.y - MIN_Y) * CHUNK_SIZE * CHUNK_SIZE;
+      const key = `${cx},${cz}`;
+      (edits[key] ??= []).push([index, edit.type]);
+    }
+    return edits;
+  }
+
+  private applyInitialWorldSnapshot(snapshot: WorldSnapshot, hostPeer: PeerInfo) {
+    if (snapshot.generatorVersion !== GENERATOR_VERSION) {
+      this.multiplayerState.error = "Host and guest use different world-generator versions.";
+      return;
+    }
+    const hostPose = snapshot.players.find((pose) => pose.playerId === hostPeer.identity?.id) ?? snapshot.players[0];
+    this.worldOptions = normalizeWorldOptions(snapshot.worldOptions ?? this.worldOptions);
+    this.butterflyDensity = this.worldOptions.butterflyDensity;
+    this.clearEntities();
+    this.world.reset(snapshot.seed, this.editsFromNetwork(snapshot.blockEdits), generationOptionsFromWorldOptions(this.worldOptions));
+    const centerX = hostPose?.x ?? 0;
+    const centerZ = hostPose?.z ?? 0;
+    this.world.initializeAround(centerX, centerZ);
+    const candidates = [[1.4, 0], [-1.4, 0], [0, 1.4], [0, -1.4]];
+    let joined = false;
+    for (const [dx, dz] of candidates) {
+      const candidate = new THREE.Vector3(centerX + dx, hostPose?.y ?? this.world.surfaceAt(centerX + dx, centerZ + dz) + 0.51, centerZ + dz);
+      if (!this.collidesAt(candidate, PLAYER_HEIGHT)) { this.position.copy(candidate); joined = true; break; }
+    }
+    if (!joined) this.position.set(centerX, this.world.surfaceAt(centerX, centerZ) + 0.51, centerZ);
+    this.spawn.copy(this.position);
+    this.worldTime = snapshot.time.worldTime;
+    this.day = snapshot.time.day;
+    this.weather = snapshot.time.weather;
+    this.running = true;
+    this.paused = true;
+    this.titleMode = false;
+    this.persistent = false;
+    this.activeWorldId = null;
+    this.applyNetworkMobSnapshot(snapshot.mobs);
+    this.applyNetworkDropSnapshot(snapshot.drops);
+    for (const pose of snapshot.players) this.upsertRemotePlayer(pose, pose.playerId === hostPeer.identity?.id ? hostPeer : undefined);
+    this.multiplayerReceivedSnapshot = true;
+    this.events.onToast(`Joined ${hostPeer.identity?.name ?? "the host"}'s world. The host device is authoritative for this session.`);
+  }
+
+  private applyIncrementalWorldSnapshot(snapshot: WorldSnapshot, hostPeer: PeerInfo) {
+    if (snapshot.generatorVersion !== GENERATOR_VERSION || snapshot.seed !== this.world.seedText) return;
+    this.worldOptions = normalizeWorldOptions(snapshot.worldOptions ?? this.worldOptions);
+    this.butterflyDensity = this.worldOptions.butterflyDensity;
+    if (snapshot.blockEdits.length) {
+      this.world.setBlocksBatch(snapshot.blockEdits.map((edit) => ({ ...edit, type: edit.type as BlockId })), true, false);
+      this.lightRefreshTimer = 0;
+    }
+    this.worldTime = snapshot.time.worldTime;
+    this.day = snapshot.time.day;
+    this.weather = snapshot.time.weather;
+    this.applyNetworkMobSnapshot(snapshot.mobs);
+    this.applyNetworkDropSnapshot(snapshot.drops);
+    for (const pose of snapshot.players) this.upsertRemotePlayer(pose, pose.playerId === hostPeer.identity?.id ? hostPeer : undefined);
+  }
+
+  private applyNetworkMobSnapshot(entries: WorldSnapshot["mobs"]) {
+    const incoming = new Set(entries.map((entry) => entry.id));
+    for (let index = this.mobs.length - 1; index >= 0; index -= 1) if (!incoming.has(this.mobs[index].id)) this.removeMob(index);
+    for (const entry of entries) {
+      if (!(entry.kind in MOB_DEFS) || BUTTERFLY_ORDER.includes(entry.kind as ButterflyKind)) continue;
+      let mob = this.mobs.find((candidate) => candidate.id === entry.id);
+      if (!mob || mob.kind !== entry.kind) {
+        if (mob) this.removeMob(this.mobs.indexOf(mob));
+        mob = this.spawnMob(entry.kind as MobKind, new THREE.Vector3(entry.x, entry.y, entry.z));
+        mob.id = entry.id;
+        mob.group.userData.mobId = entry.id;
+        mob.group.traverse((object) => { if (object.userData.mobId !== undefined) object.userData.mobId = entry.id; });
+        this.nextMobId = Math.max(this.nextMobId, entry.id + 1);
+      }
+      mob.group.position.lerp(new THREE.Vector3(entry.x, entry.y, entry.z), 0.72);
+      mob.group.rotation.y = entry.yaw;
+      mob.health = entry.health;
+      if (["wander", "flee", "chase", "windup", "recover"].includes(entry.state)) mob.state = entry.state as MobEntity["state"];
+    }
+  }
+
+  private applyNetworkDropSnapshot(entries: WorldSnapshot["drops"]) {
+    const incoming = new Set(entries.map((entry) => entry.id));
+    for (let index = this.drops.length - 1; index >= 0; index -= 1) if (!incoming.has(this.drops[index].id)) this.removeDrop(index);
+    for (const entry of entries) {
+      if (!ITEMS[entry.item] || entry.count <= 0) continue;
+      let drop = this.drops.find((candidate) => candidate.id === entry.id);
+      if (!drop || drop.item !== entry.item) {
+        if (drop) this.removeDrop(this.drops.indexOf(drop));
+        drop = this.spawnDrop(entry.item, entry.count, new THREE.Vector3(entry.x, entry.y, entry.z), entry.durability) ?? undefined;
+        if (!drop) continue;
+        drop.id = entry.id;
+        drop.mesh.position.set(entry.x, entry.y, entry.z);
+      } else {
+        drop.count = entry.count;
+        drop.durability = entry.durability;
+        drop.mesh.position.lerp(new THREE.Vector3(entry.x, entry.y, entry.z), 0.78);
+      }
+      drop.velocity.set(0, 0, 0);
+      drop.age = entry.age;
+      drop.pickupDelay = 0.5;
+      this.nextDropId = Math.max(this.nextDropId, entry.id + 1);
+    }
+  }
+
+  private handleRemoteBlockAction(action: BlockAction, peer: PeerInfo) {
+    if (!this.multiplayer) return;
+    if (this.multiplayer.role === "host" && action.status !== "accepted") {
+      const remote = peer.identity ? this.remotePlayers.get(peer.identity.id) : null;
+      const valid = Boolean(remote) && action.edits.length > 0 && action.edits.length <= 512 && action.edits.every((edit) => {
+        const definition = BLOCKS[edit.type as BlockId];
+        const dx = edit.x - remote!.target.x;
+        const dy = edit.y - (remote!.target.y + 1);
+        const dz = edit.z - remote!.target.z;
+        return Boolean(definition) && edit.y >= MIN_Y && edit.y <= MAX_Y && dx * dx + dy * dy + dz * dz <= 64;
+      });
+      const resolved: BlockAction = { ...action, status: valid ? "accepted" : "rejected", ...(valid ? {} : { reason: "The host rejected an out-of-range or invalid block edit." }) };
+      if (valid) {
+        this.world.setBlocksBatch(action.edits.map((edit) => ({ ...edit, type: edit.type as BlockId })), true, true);
+        this.lightRefreshTimer = 0;
+        this.saveSoon();
+        this.multiplayer.sendBlockAction(resolved);
+      } else if (peer.identity) this.multiplayer.sendBlockAction(resolved, peer.identity.id);
+      return;
+    }
+    if (this.multiplayer.role === "guest" && action.status === "accepted") {
+      this.world.setBlocksBatch(action.edits.map((edit) => ({ ...edit, type: edit.type as BlockId })), true, true);
+      this.lightRefreshTimer = 0;
+    }
+  }
+
+  private handleMultiplayerEvent(event: MultiplayerEvent) {
+    if (event.type === "state") this.multiplayerState.status = event.state;
+    else if (event.type === "error") {
+      this.multiplayerState.error = event.error.message;
+      this.events.onToast(`Multiplayer: ${event.error.message}`);
+    } else if (event.type === "peer") {
+      this.multiplayerState.peers = this.multiplayer?.getPeers() ?? [];
+      if (event.peer.state === "connected" && this.multiplayer?.role === "host" && event.peer.identity) {
+        this.sendHostWorldSnapshot(event.peer.identity.id);
+        this.events.onToast(`${event.peer.identity.name} joined the session.`);
+      }
+      if (["disconnected", "failed", "closed", "stale"].includes(event.peer.state) && event.peer.identity) this.removeRemotePlayer(event.peer.identity.id);
+      this.emitHud(true);
+    } else if (event.type === "message") {
+      const { envelope } = event;
+      if (envelope.type === "player-pose") {
+        const pose = envelope.payload as PlayerPose;
+        this.upsertRemotePlayer(pose, event.peer);
+        if (this.multiplayer?.role === "host") this.multiplayer.sendPlayerPose(pose);
+      } else if (envelope.type === "snapshot" && this.multiplayer?.role === "guest") {
+        const snapshot = envelope.payload as WorldSnapshot;
+        if (this.multiplayerReceivedSnapshot) this.applyIncrementalWorldSnapshot(snapshot, event.peer);
+        else this.applyInitialWorldSnapshot(snapshot, event.peer);
+      } else if (envelope.type === "block-action") this.handleRemoteBlockAction(envelope.payload as BlockAction, event.peer);
+      else if (envelope.type === "mob-snapshot" && this.multiplayer?.role === "guest") this.applyNetworkMobSnapshot((envelope.payload as { mobs: WorldSnapshot["mobs"] }).mobs);
+      else if (envelope.type === "drop-snapshot" && this.multiplayer?.role === "guest") this.applyNetworkDropSnapshot((envelope.payload as { drops: WorldSnapshot["drops"] }).drops);
+      else if (envelope.type === "time-weather" && this.multiplayer?.role === "guest") {
+        const time = envelope.payload as WorldSnapshot["time"];
+        this.worldTime = time.worldTime;
+        this.day = time.day;
+        this.weather = time.weather;
+      }
+    }
+  }
+
+  publishBlockEdits(edits: Array<{ x: number; y: number; z: number; type: BlockId }>, kind?: BlockAction["kind"]) {
+    if (!this.multiplayer || !edits.length) return;
+    const identity = this.multiplayer.identity;
+    const action: BlockAction = {
+      requestId: `action_${Date.now().toString(36)}_${(this.multiplayerTick % 46656).toString(36).padStart(3, "0")}`,
+      actorId: identity.id,
+      tick: this.multiplayerTick,
+      kind: kind ?? (edits.length > 1 ? "batch" : edits[0].type === BlockId.Air ? "break" : "place"),
+      edits,
+      status: this.multiplayer.role === "host" ? "accepted" : "request",
+    };
+    try { this.multiplayer.sendBlockAction(action); }
+    catch (error) { this.multiplayerState.error = error instanceof Error ? error.message : String(error); }
+  }
+
+  updateMultiplayer(dt: number) {
+    const session = this.multiplayer;
+    if (!session || !session.role || session.state === "closed" || session.state === "error") return;
+    this.multiplayerTick += 1;
+    this.multiplayerPoseTimer -= dt;
+    this.multiplayerWorldTimer -= dt;
+    this.multiplayerSnapshotTimer -= dt;
+    if (this.multiplayerPoseTimer <= 0) {
+      this.multiplayerPoseTimer = 0.05;
+      const pose = this.localNetworkPose();
+      if (pose) {
+        try { session.sendPlayerPose(pose); } catch { /* Channels may still be opening. */ }
+      }
+    }
+    if (session.role === "host" && this.multiplayerWorldTimer <= 0) {
+      this.multiplayerWorldTimer = 0.65;
+      try {
+        session.sendMobSnapshot({ tick: this.multiplayerTick, mobs: this.networkMobSnapshot() });
+        session.sendDropSnapshot({ tick: this.multiplayerTick, drops: this.networkDropSnapshot() });
+        session.sendTimeWeather({ tick: this.multiplayerTick, worldTime: this.worldTime, day: this.day, weather: this.weather });
+      } catch { /* No connected guest yet. */ }
+    }
+    if (session.role === "host" && this.multiplayerSnapshotTimer <= 0 && session.getPeers().some((peer) => peer.state === "connected")) {
+      this.multiplayerSnapshotTimer = 10;
+      this.sendHostWorldSnapshot();
+    }
   }
 
   activate() {
@@ -908,6 +1525,7 @@ export class VoxelEngine {
   quitToTitle() {
     this.closeContainer();
     this.saveNow();
+    this.disconnectMultiplayer();
     this.running = false;
     this.paused = true;
     this.titleMode = true;
@@ -1630,6 +2248,7 @@ export class VoxelEngine {
       const soil = this.world.getBlock(x, y - 1, z);
       if (![BlockId.Grass, BlockId.Dirt, BlockId.SnowyGrass, BlockId.SavannaGrass, BlockId.SwampGrass, BlockId.Farmland].includes(soil ?? BlockId.Air)) {
         this.world.setBlock(x, y, z, BlockId.Air, true, true);
+        this.publishBlockEdits([{ x, y, z, type: BlockId.Air }], "break");
         this.saplings.delete(key);
         if (this.mode === "survival") this.spawnDrop(BlockId.WildwoodSapling, 1, new THREE.Vector3(x, y, z));
         continue;
@@ -1652,6 +2271,7 @@ export class VoxelEngine {
         changes.push({ x: x + dx, y: y + height - 1 + dy, z: z + dz, type: leaves });
       }
       this.world.setBlocksBatch(changes, true, true);
+      this.publishBlockEdits(changes, "batch");
       this.saplings.delete(key);
       if (this.position.distanceToSquared(new THREE.Vector3(x, y, z)) < 400) {
         this.audio.play("place", log);
@@ -1705,10 +2325,12 @@ export class VoxelEngine {
       this.placeCooldown = 0.18;
       return;
     }
-    this.world.setBlocksBatch([
+    const edits = [
       { x, y: lowerY, z, type: open ? closedLower : openLower },
       { x, y: lowerY + 1, z, type: open ? closedUpper : openUpper },
-    ], true, true);
+    ];
+    this.world.setBlocksBatch(edits, true, true);
+    this.publishBlockEdits(edits, "batch");
     this.audio.play("place", BlockId.Planks);
     this.placeCooldown = 0.18;
     this.saveSoon();
@@ -1716,6 +2338,57 @@ export class VoxelEngine {
 
   useSelected() {
     if (this.placeCooldown > 0) return;
+    const heldSlot = this.selectedSlot();
+    const heldDefinition = heldSlot ? ITEMS[heldSlot.item] : null;
+    if (heldSlot && heldDefinition?.useKind === "net") {
+      const direction = new THREE.Vector3();
+      this.camera.getWorldDirection(direction);
+      const captured = this.butterflies.capture(this.camera.position, direction);
+      this.heldUse = 1;
+      this.placeCooldown = 0.28;
+      this.damageSelectedTool();
+      if (!captured) {
+        this.events.onToast("The net swept through empty air. Try leading the butterfly.");
+        this.audio.play("step", BlockId.TallGrass);
+        return;
+      }
+      const leftover = this.addItem(captured.item, 1);
+      if (leftover > 0) {
+        const releasePosition = this.camera.position.clone().add(direction.multiplyScalar(1.2));
+        this.butterflies.release(captured.kind, releasePosition);
+        this.events.onToast("Your pack is full; the butterfly slipped free.");
+      } else {
+        this.events.onToast(`Captured ${MOB_DEFS[captured.kind].name}. Release it from its jar whenever you like.`);
+        this.audio.play("craft");
+      }
+      this.saveSoon();
+      this.emitHud(true);
+      return;
+    }
+    if (heldSlot && heldDefinition?.useKind === "release-creature" && heldDefinition.creatureKind
+      && BUTTERFLY_ORDER.includes(heldDefinition.creatureKind as ButterflyKind)) {
+      const direction = new THREE.Vector3();
+      this.camera.getWorldDirection(direction);
+      const releasePosition = this.target
+        ? new THREE.Vector3(this.target.placeX, this.target.placeY + 0.55, this.target.placeZ)
+        : this.camera.position.clone().add(direction.multiplyScalar(1.4));
+      const kind = heldDefinition.creatureKind as ButterflyKind;
+      if (!this.butterflies.release(kind, releasePosition)) {
+        this.events.onToast("That butterfly needs a little clear air before leaving the jar.");
+        return;
+      }
+      if (this.mode === "survival") {
+        heldSlot.count -= 1;
+        if (heldSlot.count <= 0) this.inventory[this.selected] = null;
+      }
+      this.heldUse = 1;
+      this.placeCooldown = 0.25;
+      this.audio.play("place", BlockId.RedFlower);
+      this.events.onToast(`${MOB_DEFS[kind].name} returned to the wild.`);
+      this.saveSoon();
+      this.emitHud(true);
+      return;
+    }
     if (this.target) {
       const key = blockKey(this.target.x, this.target.y, this.target.z);
       if (this.isDoor(this.target.type)) { this.toggleDoor(this.target.x, this.target.y, this.target.z, this.target.type); return; }
@@ -1753,6 +2426,7 @@ export class VoxelEngine {
     if (y < MIN_Y || y > MAX_Y) return;
     const current = this.world.getBlock(x, y, z);
     let replacedUpper: BlockId | undefined;
+    let placedEdits: Array<{ x: number; y: number; z: number; type: BlockId }>;
     if (current === undefined || (!BLOCKS[current]?.replaceable && current !== BlockId.Air)) return;
     if (type === BlockId.WildwoodSapling) {
       const soil = this.world.getBlock(x, y - 1, z);
@@ -1770,17 +2444,22 @@ export class VoxelEngine {
         return;
       }
       const xAxis = Math.abs(Math.sin(this.yaw)) > Math.abs(Math.cos(this.yaw));
-      this.world.setBlocksBatch([
+      placedEdits = [
         { x, y, z, type: xAxis ? BlockId.DoorXClosedLower : BlockId.DoorClosedLower },
         { x, y: y + 1, z, type: xAxis ? BlockId.DoorXClosedUpper : BlockId.DoorClosedUpper },
-      ], true, true);
-    } else this.world.setBlock(x, y, z, type, true, true);
+      ];
+      this.world.setBlocksBatch(placedEdits, true, true);
+    } else {
+      placedEdits = [{ x, y, z, type }];
+      this.world.setBlock(x, y, z, type, true, true);
+    }
     if (BLOCKS[type].solid && this.collidesAt(this.position)) {
       if (type === BlockId.DoorClosedLower) this.world.setBlocksBatch([{ x, y, z, type: current ?? BlockId.Air }, { x, y: y + 1, z, type: replacedUpper ?? BlockId.Air }], true, true);
       else this.world.setBlock(x, y, z, current ?? BlockId.Air, true, true);
       this.events.onToast("You cannot place a block inside yourself.");
       return;
     }
+    this.publishBlockEdits(placedEdits, placedEdits.length > 1 ? "batch" : "place");
     if (type === BlockId.Chest) this.chests.set(blockKey(x, y, z), Array.from({ length: 27 }, () => null));
     if (type === BlockId.Furnace) this.furnaces.set(blockKey(x, y, z), blankFurnace());
     if (type === BlockId.WildwoodSapling) this.saplings.set(blockKey(x, y, z), Date.now() + 75_000 + Math.random() * 75_000);
@@ -1863,6 +2542,7 @@ export class VoxelEngine {
     const root = [...logs.values()].sort((a, b) => a[1] - b[1])[0];
     const changes = [...logs.values(), ...leaves.values()].map(([bx, by, bz]) => ({ x: bx, y: by, z: bz, type: BlockId.Air }));
     this.world.setBlocksBatch(changes, true, true);
+    this.publishBlockEdits(changes, "batch");
     const group = new THREE.Group();
     group.position.set(root[0], root[1], root[2]);
     const matrix = new THREE.Matrix4();
@@ -1936,13 +2616,17 @@ export class VoxelEngine {
       return;
     }
     const harvested = this.toolCanHarvest(type, this.selectedSlot());
+    let brokenEdits: Array<{ x: number; y: number; z: number; type: BlockId }>;
     if (this.isDoor(type)) {
       const lowerY = this.doorLowerY(type, y);
-      this.world.setBlocksBatch([{ x, y: lowerY, z, type: BlockId.Air }, { x, y: lowerY + 1, z, type: BlockId.Air }], true, true);
+      brokenEdits = [{ x, y: lowerY, z, type: BlockId.Air }, { x, y: lowerY + 1, z, type: BlockId.Air }];
+      this.world.setBlocksBatch(brokenEdits, true, true);
     } else {
+      brokenEdits = [{ x, y, z, type: BlockId.Air }];
       this.world.setBlock(x, y, z, BlockId.Air, true, true);
       this.breakUnsupportedAbove(x, y, z);
     }
+    this.publishBlockEdits(brokenEdits, brokenEdits.length > 1 ? "batch" : "break");
     if (this.mode === "survival") {
       if (harvested) this.dropBlockLoot(this.isDoor(type) ? BlockId.Air : type, x, y, z);
       else this.events.onToast(`${BLOCKS[type].name} crumbled without the right tool.`);
@@ -2102,9 +2786,12 @@ export class VoxelEngine {
     const inLiquid = inWater || inLava;
     if (inWater && !this.wasInWater) this.audio.play("splash");
     this.wasInWater = inWater;
-    const sprinting = moving && (this.keys.has("ShiftLeft") || this.keys.has("ShiftRight")) && this.hunger > 0.5 && !inLiquid;
-    const crouching = this.keys.has("ControlLeft");
-    const speed = (crouching ? 2.15 : sprinting ? 6.35 : 4.35) * (inLiquid ? 0.55 : 1);
+    const wantsCrouch = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
+    if (wantsCrouch) this.crouching = true;
+    else if (!this.collidesAt(this.position, PLAYER_HEIGHT)) this.crouching = false;
+    const wantsSprint = this.keys.has("ControlLeft") || this.keys.has("ControlRight");
+    this.sprinting = moving && wantsSprint && !this.crouching && this.hunger > 0.5 && !inLiquid;
+    const speed = (this.crouching ? 2.15 : this.sprinting ? 6.35 : 4.35) * (inLiquid ? 0.55 : 1);
     const length = Math.hypot(forwardAmount, rightAmount) || 1;
     const f = forwardAmount / length;
     const r = rightAmount / length;
@@ -2140,7 +2827,8 @@ export class VoxelEngine {
     this.moveWithCollisions(0, this.velocity.y * dt, 0);
     this.moveWithCollisions(0, 0, this.velocity.z * dt);
     const wasGrounded = this.grounded;
-    this.grounded = this.collidesAt(new THREE.Vector3(this.position.x, this.position.y - 0.055, this.position.z));
+    this.groundProbe.set(this.position.x, this.position.y - 0.055, this.position.z);
+    this.grounded = this.collidesAt(this.groundProbe);
     if (!wasGrounded && this.grounded && !inLiquid) {
       this.audio.play("land", this.blockUnderfoot());
       if (this.mode === "survival" && this.fallVelocity < -11.2) this.damagePlayer(Math.min(6, Math.max(1, Math.floor((-this.fallVelocity - 9) / 2))), "the fall", true);
@@ -2151,15 +2839,18 @@ export class VoxelEngine {
     const horizontalTravel = Math.hypot(this.position.x - this.lastPosition.x, this.position.z - this.lastPosition.z);
     if (this.grounded && moving && !inLiquid) {
       this.footstepDistance += horizontalTravel;
-      if (this.footstepDistance > (sprinting ? 1.45 : 1.85)) { this.footstepDistance = 0; this.audio.play("step", this.blockUnderfoot()); }
+      if (this.footstepDistance > (this.sprinting ? 1.45 : this.crouching ? 2.25 : 1.85)) { this.footstepDistance = 0; this.audio.play("step", this.blockUnderfoot()); }
     }
     this.lastPosition.copy(this.position);
 
     if (this.mode === "survival") {
-      this.hunger = Math.max(0, this.hunger - dt * (sprinting ? 0.009 : 0.0024));
+      const peaceful = this.worldOptions.difficulty === "peaceful";
+      this.hunger = peaceful
+        ? Math.min(10, this.hunger + dt * 0.08)
+        : Math.max(0, this.hunger - dt * (this.sprinting ? 0.009 : 0.0024));
       this.regenTimer += dt;
-      if (this.hunger >= 8 && this.health < 10 && this.regenTimer > 5) { this.health += 1; this.hunger = Math.max(0, this.hunger - 0.35); this.regenTimer = 0; }
-      if (this.hunger <= 0 && this.regenTimer > 4) { this.damagePlayer(1, "hunger", true); this.regenTimer = 0; }
+      if (this.hunger >= 8 && this.health < 10 && this.regenTimer > (peaceful ? 2.5 : 5)) { this.health += 1; if (!peaceful) this.hunger = Math.max(0, this.hunger - 0.35); this.regenTimer = 0; }
+      if (!peaceful && this.hunger <= 0 && this.regenTimer > 4) { this.damagePlayer(1, "hunger", true); this.regenTimer = 0; }
       if (inLava) {
         this.fluidDamageTimer -= dt;
         if (this.fluidDamageTimer <= 0) { this.damagePlayer(2, "lava"); this.fluidDamageTimer = 0.8; }
@@ -2176,8 +2867,10 @@ export class VoxelEngine {
     const sy = dy / steps;
     const sz = dz / steps;
     for (let index = 0; index < steps; index += 1) {
-      const candidate = new THREE.Vector3(this.position.x + sx, this.position.y + sy, this.position.z + sz);
-      if (!this.collidesAt(candidate)) this.position.copy(candidate);
+      const candidate = this.collisionCandidate.set(this.position.x + sx, this.position.y + sy, this.position.z + sz);
+      const edgeBlocked = this.crouching && this.grounded && !dy
+        && !this.collidesAt(this.collisionSupport.set(candidate.x, candidate.y - 0.12, candidate.z), this.currentPlayerHeight());
+      if (!this.collidesAt(candidate) && !edgeBlocked) this.position.copy(candidate);
       else {
         if (dx) this.velocity.x = 0;
         if (dy) this.velocity.y = 0;
@@ -2187,18 +2880,22 @@ export class VoxelEngine {
     }
   }
 
-  collidesAt(position: THREE.Vector3) {
+  currentPlayerHeight() {
+    return this.crouching ? CROUCH_HEIGHT : PLAYER_HEIGHT;
+  }
+
+  collidesAt(position: THREE.Vector3, height = this.currentPlayerHeight()) {
     const minX = Math.floor(position.x - PLAYER_RADIUS + 0.5);
     const maxX = Math.floor(position.x + PLAYER_RADIUS - 0.001 + 0.5);
     const minY = Math.floor(position.y + 0.5);
-    const maxY = Math.floor(position.y + PLAYER_HEIGHT - 0.001 + 0.5);
+    const maxY = Math.floor(position.y + height - 0.001 + 0.5);
     const minZ = Math.floor(position.z - PLAYER_RADIUS + 0.5);
     const maxZ = Math.floor(position.z + PLAYER_RADIUS - 0.001 + 0.5);
     for (let x = minX; x <= maxX; x += 1) for (let y = minY; y <= maxY; y += 1) for (let z = minZ; z <= maxZ; z += 1) {
       const type = this.world.getBlock(x, y, z);
       if (type === undefined) return true;
       if (this.isDoor(type)) {
-        if (this.playerIntersectsDoorCell(position, x, y, z, type)) return true;
+        if (this.playerIntersectsDoorCell(position, x, y, z, type, height)) return true;
         continue;
       }
       if (BLOCKS[type]?.solid) return true;
@@ -2206,13 +2903,13 @@ export class VoxelEngine {
     return false;
   }
 
-  playerIntersectsDoorCell(position: THREE.Vector3, x: number, y: number, z: number, type: BlockId) {
+  playerIntersectsDoorCell(position: THREE.Vector3, x: number, y: number, z: number, type: BlockId, height = this.currentPlayerHeight()) {
     const open = this.doorIsOpen(type);
     const planeAlongZ = this.doorUsesXAxis(type) !== open;
     const playerMinX = position.x - PLAYER_RADIUS;
     const playerMaxX = position.x + PLAYER_RADIUS;
     const playerMinY = position.y;
-    const playerMaxY = position.y + PLAYER_HEIGHT;
+    const playerMaxY = position.y + height;
     const playerMinZ = position.z - PLAYER_RADIUS;
     const playerMaxZ = position.z + PLAYER_RADIUS;
     const slabMinX = planeAlongZ ? x + (open ? -0.5 : -0.08) : x - 0.48;
@@ -2229,12 +2926,15 @@ export class VoxelEngine {
     const above = this.world.getBlock(x, aboveY, z);
     if (above === undefined) return;
     if ([BlockId.DoorClosedLower, BlockId.DoorOpenLower, BlockId.DoorXClosedLower, BlockId.DoorXOpenLower].includes(above)) {
-      this.world.setBlocksBatch([{ x, y: aboveY, z, type: BlockId.Air }, { x, y: aboveY + 1, z, type: BlockId.Air }], true, true);
+      const edits = [{ x, y: aboveY, z, type: BlockId.Air }, { x, y: aboveY + 1, z, type: BlockId.Air }];
+      this.world.setBlocksBatch(edits, true, true);
+      this.publishBlockEdits(edits, "batch");
       if (this.mode === "survival") this.spawnDrop(Item.WildwoodDoor, 1, new THREE.Vector3(x, aboveY, z));
       return;
     }
     if (BLOCKS[above]?.shape !== "cross") return;
     this.world.setBlock(x, aboveY, z, BlockId.Air, true, true);
+    this.publishBlockEdits([{ x, y: aboveY, z, type: BlockId.Air }], "break");
     if (above === BlockId.WildwoodSapling) this.saplings.delete(blockKey(x, aboveY, z));
     if (this.mode === "survival") this.dropBlockLoot(above, x, aboveY, z);
   }
@@ -2264,7 +2964,9 @@ export class VoxelEngine {
     if (this.mode !== "survival" || this.playerInvulnerability > 0 || this.spawnProtection > 0) return;
     const armor = bypassArmor ? 0 : this.armorPoints();
     const reduction = Math.min(0.62, armor * 0.045);
-    const finalAmount = Math.max(0.5, Math.round(amount * (1 - reduction) * 2) / 2);
+    const difficulty = this.worldOptions?.difficulty ?? DEFAULT_WORLD_OPTIONS.difficulty;
+    const difficultyScale = difficulty === "hard" ? 1.35 : difficulty === "easy" ? 0.75 : difficulty === "peaceful" ? 0.6 : 1;
+    const finalAmount = Math.max(0.5, Math.round(amount * difficultyScale * (1 - reduction) * 2) / 2);
     this.health -= finalAmount;
     if (armor > 0 && !bypassArmor) this.damageArmor();
     this.playerInvulnerability = 0.7;
@@ -2274,6 +2976,14 @@ export class VoxelEngine {
   }
 
   respawn(announce: boolean) {
+    const deathPosition = this.position.clone().add(new THREE.Vector3(0, 0.55, 0));
+    const lostInventory = announce && this.mode === "survival" && !this.worldOptions.keepInventory;
+    if (lostInventory) {
+      for (const slot of this.inventory) if (slot) this.spawnDrop(slot.item, slot.count, deathPosition, slot.durability);
+      for (const slot of Object.values(this.equipment)) if (slot) this.spawnDrop(slot.item, slot.count, deathPosition, slot.durability);
+      this.inventory = blankInventory();
+      this.equipment = blankEquipment();
+    }
     this.position.copy(this.spawn);
     this.velocity.set(0, 0, 0);
     this.yaw = 0;
@@ -2284,7 +2994,9 @@ export class VoxelEngine {
     this.spawnProtection = 8;
     if (announce) {
       this.events.onDeath();
-      this.events.onToast("The wild carried you home—with your inventory, because cruelty is not a feature.");
+      this.events.onToast(lostInventory
+        ? "The wild carried you home. Your dropped pack remains where you fell."
+        : "The wild carried you home—with your inventory intact.");
     }
     this.saveSoon();
     this.emitHud(true);
@@ -2436,7 +3148,8 @@ export class VoxelEngine {
   }
 
   trySpawnMob() {
-    const cap = this.touchMode ? 13 : 22;
+    const cap = Math.floor((this.touchMode ? 13 : 22) * this.worldOptions.mobDensity);
+    if (cap <= 0) return;
     if (this.mobs.length >= cap) return;
     const passiveCap = Math.ceil(cap * 0.55);
     const passiveCount = this.mobs.reduce((count, mob) => count + (mob.hostile ? 0 : 1), 0);
@@ -2448,6 +3161,7 @@ export class VoxelEngine {
     let y: number;
     let kind: MobKind;
     if (underground) {
+      if (this.worldOptions.difficulty === "peaceful") return;
       y = this.world.findWalkableY(x, z, this.position.y);
       const feet = this.world.getBlock(x, y + 1, z);
       const head = this.world.getBlock(x, y + 2, z);
@@ -2458,7 +3172,7 @@ export class VoxelEngine {
       y = this.world.surfaceAt(x, z);
       if (this.world.getBlock(x, y, z) === undefined || y <= SEA_LEVEL) return;
       const daylight = this.daylightAmount();
-      const hostile = daylight < 0.2 && this.spawnProtection <= 0;
+      const hostile = this.worldOptions.difficulty !== "peaceful" && daylight < 0.2 && this.spawnProtection <= 0;
       const biome = this.world.biomeAt(x, z);
       const nocturnalGlowmoth = hostile && passiveCount < passiveCap && [BiomeId.MushroomFen, BiomeId.Bloomwood, BiomeId.Siltfen].includes(biome) && Math.random() < 0.3;
       if (nocturnalGlowmoth) kind = "glowmoth";
@@ -2510,9 +3224,14 @@ export class VoxelEngine {
 
   updateMobs(dt: number) {
     this.mobSpawnTimer -= dt;
-    if (this.mobSpawnTimer <= 0) { this.mobSpawnTimer = 2.2 + Math.random() * 1.8; this.trySpawnMob(); }
+    if (this.mobSpawnTimer <= 0) {
+      const density = Math.max(0.08, this.worldOptions.mobDensity);
+      this.mobSpawnTimer = (2.2 + Math.random() * 1.8) / density;
+      this.trySpawnMob();
+    }
     for (let index = this.mobs.length - 1; index >= 0; index -= 1) {
       const mob = this.mobs[index];
+      if (mob.hostile && this.worldOptions.difficulty === "peaceful") { this.removeMob(index); continue; }
       mob.age += dt;
       mob.attackCooldown = Math.max(0, mob.attackCooldown - dt);
       mob.hurtTimer = Math.max(0, mob.hurtTimer - dt);
@@ -2556,7 +3275,7 @@ export class VoxelEngine {
           mob.state = "recover"; mob.stateTimer = 0.55; mob.attackCooldown = 1.15;
         }
       } else if (mob.state === "recover" && mob.stateTimer <= 0) mob.state = "wander";
-      else if (aggressive && distance < 20) {
+      else if (aggressive && distance < (this.crouching ? 11 : 20)) {
         mob.state = "chase";
         mob.desiredAngle = Math.atan2(dz, dx);
         if (distance < mob.definition.attackRange && mob.attackCooldown <= 0) { mob.state = "windup"; mob.stateTimer = mob.kind === "rattlekin" ? 0.52 : mob.kind === "zombie" ? 0.44 : 0.34; }
@@ -2821,6 +3540,7 @@ export class VoxelEngine {
   }
 
   clearEntities() {
+    this.butterflies.clear();
     while (this.mobs.length) this.removeMob(this.mobs.length - 1);
     while (this.drops.length) this.removeDrop(this.drops.length - 1);
     for (const tree of this.fallingTrees) { this.disposeObject(tree.group); this.scene.remove(tree.group); }
@@ -2964,8 +3684,13 @@ export class VoxelEngine {
     const selected = this.selectedSlot();
     const heldTorch = selected?.item === BlockId.Torch;
     const heldGlow = selected?.item === BlockId.Glowstone || selected?.item === BlockId.CrystalBlock;
-    this.heldLightWorldOffset.copy(this.heldLightOffset).applyQuaternion(this.camera.quaternion);
-    this.caveLight.position.copy(this.camera.position).add(this.heldLightWorldOffset);
+    if (this.cameraMode === "first") {
+      this.heldLightWorldOffset.copy(this.heldLightOffset).applyQuaternion(this.camera.quaternion);
+      this.caveLight.position.copy(this.camera.position).add(this.heldLightWorldOffset);
+    } else {
+      this.heldLightWorldOffset.set(0.28, this.crouching ? 0.82 : 1.08, -0.25).applyAxisAngle(this.worldUp, this.yaw);
+      this.caveLight.position.copy(this.position).add(this.heldLightWorldOffset);
+    }
     this.caveLight.color.setHex(selected?.item === BlockId.CrystalBlock ? 0x69e8ef : 0xffb45e);
     this.caveLight.intensity = heldTorch ? 3.35 : heldGlow ? 2.55 : 0;
     this.caveLight.distance = heldTorch ? 24 : 20;
@@ -2978,7 +3703,7 @@ export class VoxelEngine {
 
   updateDayNight(dt: number) {
     if (this.running && !this.titleMode && !this.paused) {
-      this.worldTime += dt / 420;
+      this.worldTime += dt / Math.max(60, this.worldOptions.dayLengthMinutes * 60);
       if (this.worldTime >= 1) { this.worldTime -= 1; this.day += 1; }
     }
     const angle = this.worldTime * Math.PI * 2 - Math.PI / 2;
@@ -3064,6 +3789,149 @@ export class VoxelEngine {
         this.particles.splice(index, 1);
       }
     }
+  }
+
+  createAvatarHeldItem(item: ItemCode) {
+    const definition = ITEMS[item];
+    if (!definition) return null;
+    const group = new THREE.Group();
+    group.name = `avatar-held-${definition.name.toLowerCase().replace(/\s+/g, "-")}`;
+    const addBox = (
+      size: [number, number, number],
+      position: [number, number, number],
+      color: string | number,
+      rotation: [number, number, number] = [0, 0, 0],
+      emissive = false,
+    ) => {
+      const material = emissive
+        ? new THREE.MeshBasicMaterial({ color })
+        : new THREE.MeshLambertMaterial({ color });
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
+      mesh.position.set(...position);
+      mesh.rotation.set(...rotation);
+      group.add(mesh);
+    };
+    if (item === BlockId.Torch) {
+      addBox([0.1, 0.62, 0.1], [0, 0.22, 0], 0x8d542b);
+      addBox([0.16, 0.14, 0.16], [0, 0.58, 0], 0xffb33e, [0, 0, 0], true);
+      addBox([0.08, 0.11, 0.08], [0, 0.7, 0], 0xfff0a0, [0, 0, 0], true);
+    } else if (definition.toolKind) {
+      const spec = createHeldToolSpec(definition.toolKind, definition.color, definition.name);
+      for (const box of spec.boxes) addBox(
+        [...box.size] as [number, number, number],
+        [...box.position] as [number, number, number],
+        box.color,
+        [...(box.rotation ?? [0, 0, 0])] as [number, number, number],
+        Boolean(box.emissive),
+      );
+      group.scale.setScalar(0.5);
+      group.rotation.set(-0.1, 0, -0.34);
+      group.position.set(0, -0.16, -0.02);
+    } else if (definition.useKind === "net") {
+      addBox([0.08, 0.9, 0.08], [0, 0.14, 0], 0x7b542f);
+      for (let segment = 0; segment < 8; segment += 1) {
+        const angle = segment / 8 * Math.PI * 2;
+        addBox([0.05, 0.24, 0.05], [Math.cos(angle) * 0.29, 0.66 + Math.sin(angle) * 0.29, 0], 0xd8c892, [0, 0, angle]);
+      }
+      addBox([0.48, 0.48, 0.025], [0, 0.66, 0], 0xb6d7ce);
+      group.scale.setScalar(0.58);
+      group.rotation.z = -0.28;
+    } else if (definition.useKind === "release-creature") {
+      addBox([0.3, 0.38, 0.24], [0, 0.12, 0], 0xbad9dc);
+      addBox([0.26, 0.08, 0.22], [0, 0.34, 0], 0x7a5a38);
+      addBox([0.13, 0.05, 0.03], [0, 0.14, -0.135], definition.color, [0, 0, 0], true);
+      group.scale.setScalar(0.78);
+    } else if (definition.placeBlock !== undefined) {
+      addBox([0.42, 0.42, 0.42], [0, 0.1, 0], definition.color, [0.16, 0.2, 0]);
+    } else {
+      addBox([0.28, 0.38, 0.2], [0, 0.1, 0], definition.color, [0.12, 0.15, -0.06]);
+    }
+    return group;
+  }
+
+  syncAvatarHeldItem(model: BlockPlayerModel, item: ItemCode, remoteId?: string) {
+    const previousCode = remoteId ? (this.remoteAvatarHeldCodes.get(remoteId) ?? -1) : this.localAvatarHeldCode;
+    if (previousCode === item) return;
+    const previous = model.rightHandSocket.children[0];
+    if (previous) {
+      model.setHeldItem(null);
+      this.disposeObject(previous);
+    }
+    const held = item >= 0 ? this.createAvatarHeldItem(item) : null;
+    model.setHeldItem(held);
+    if (remoteId) this.remoteAvatarHeldCodes.set(remoteId, item);
+    else {
+      this.localAvatarHeld = held;
+      this.localAvatarHeldCode = item;
+    }
+  }
+
+  updatePlayerModels(dt: number) {
+    const horizontalSpeed = Math.hypot(this.velocity.x, this.velocity.z);
+    const locomotion: PlayerLocomotion = horizontalSpeed < 0.18 ? "idle" : this.sprinting ? "run" : "walk";
+    const action: PlayerAction = this.mineHeld || this.attackCooldown > 0 ? "mine" : this.heldUse > 0 ? "use" : "none";
+    this.localPlayerModel.group.position.copy(this.position);
+    this.localPlayerModel.group.rotation.set(0, this.yaw, 0);
+    this.localPlayerModel.group.visible = this.cameraMode !== "first" && !this.titleMode;
+    this.localPlayerModel.update(dt, {
+      locomotion,
+      action,
+      crouch: this.crouching ? 1 : 0,
+      jump: this.grounded ? 0 : clamp(Math.abs(this.velocity.y) / 8, 0.25, 1),
+      headYaw: 0,
+      headPitch: this.pitch,
+    });
+    this.syncAvatarHeldItem(this.localPlayerModel, this.selectedSlot()?.item ?? -1);
+
+    const now = performance.now();
+    for (const [id, remote] of this.remotePlayers) {
+      const alpha = 1 - Math.exp(-dt * 11);
+      remote.pose.x += (remote.target.x - remote.pose.x) * alpha;
+      remote.pose.y += (remote.target.y - remote.pose.y) * alpha;
+      remote.pose.z += (remote.target.z - remote.pose.z) * alpha;
+      remote.pose.yaw += Math.atan2(Math.sin(remote.target.yaw - remote.pose.yaw), Math.cos(remote.target.yaw - remote.pose.yaw)) * alpha;
+      remote.pose.pitch += (remote.target.pitch - remote.pose.pitch) * alpha;
+      remote.model.group.position.set(remote.pose.x, remote.pose.y, remote.pose.z);
+      remote.model.group.rotation.set(0, remote.pose.yaw, 0);
+      const speed = Math.hypot(remote.pose.vx, remote.pose.vz);
+      remote.model.update(dt, {
+        locomotion: speed < 0.18 ? "idle" : remote.pose.sprinting || speed > 5.2 ? "run" : "walk",
+        action: remote.pose.action ?? "none",
+        crouch: remote.pose.crouching ? 1 : 0,
+        jump: remote.pose.grounded ? 0 : clamp(Math.abs(remote.pose.vy) / 8, 0.25, 1),
+        headPitch: remote.pose.pitch,
+        headYaw: 0,
+      });
+      this.syncAvatarHeldItem(remote.model, remote.pose.heldItem ?? -1, id);
+      if (now - remote.lastUpdate > 20_000) this.removeRemotePlayer(id);
+    }
+  }
+
+  updateGameplayCamera(dt: number) {
+    const targetEye = this.crouching ? 1.3 : 1.62;
+    this.cameraEyeHeight += (targetEye - this.cameraEyeHeight) * (1 - Math.exp(-dt * 16));
+    if (this.cameraMode === "first") {
+      this.camera.position.set(this.position.x, this.position.y + this.cameraEyeHeight, this.position.z);
+      this.camera.rotation.set(this.pitch, this.yaw, 0);
+      this.heldRoot.visible = true;
+      return;
+    }
+    this.heldRoot.visible = false;
+    updateThirdPersonCamera(this.camera, this.position, this.yaw, {
+      view: this.cameraMode === "third-front" ? "front" : "rear",
+      distance: 4.35,
+      targetHeight: this.crouching ? 1.08 : 1.34,
+      pitch: clamp(this.pitch * 0.72, -0.78, 0.78),
+      shoulderOffset: this.cameraMode === "third-front" ? 0 : 0.22,
+      collisionRadius: 0.18,
+      collisionPadding: 0.16,
+      minDistance: 0.28,
+      deltaSeconds: dt,
+      positionSharpness: 18,
+    }, (query) => {
+      const hit = this.castVoxel(query.origin, query.direction, query.maxDistance + query.radius);
+      return hit?.distance ?? null;
+    });
   }
 
   updateHeldItem(dt: number) {
@@ -3159,8 +4027,8 @@ export class VoxelEngine {
           this.accumulator -= PHYSICS_STEP;
         }
       }
-      this.camera.position.set(this.position.x, this.position.y + 1.62, this.position.z);
-      this.camera.rotation.set(this.pitch, this.yaw, 0);
+      this.updatePlayerModels(dt);
+      this.updateGameplayCamera(dt);
       this.updateTarget();
     }
 
@@ -3168,14 +4036,30 @@ export class VoxelEngine {
     this.updateDayNight(dt);
     this.updateChestModel(dt);
     this.updateHeldItem(dt);
-    if (this.running && !this.titleMode) this.updateFurnaces(dt);
+    const multiplayerGuest = this.multiplayer?.role === "guest" && this.multiplayerReceivedSnapshot;
+    if (this.running && !this.titleMode && !multiplayerGuest) this.updateFurnaces(dt);
     if (this.running && !this.titleMode && !this.paused) {
-      this.updateMobs(dt);
-      this.updateDrops(dt);
-      this.updateSaplings(dt);
-      this.updateFallingTrees(dt);
-      this.updateMobRemains(dt);
+      if (multiplayerGuest) {
+        for (const mob of this.mobs) this.animateMob(mob, dt * mob.definition.speed * 0.35);
+      } else this.updateMobs(dt);
+      this.smallEntityPositions.length = 0;
+      for (const mob of this.mobs) if (mob.kind === "glowmoth") this.smallEntityPositions.push(mob.group.position);
+      this.butterflies.update(dt, {
+        player: this.position,
+        daylight: this.daylightAmount(),
+        weather: this.weather,
+        density: this.butterflyDensity,
+        cap: Math.max(0, Math.floor((this.touchMode ? 10 : 18) * this.butterflyDensity)),
+        smallEntities: this.smallEntityPositions,
+      });
+      if (!multiplayerGuest) {
+        this.updateDrops(dt);
+        this.updateSaplings(dt);
+        this.updateFallingTrees(dt);
+        this.updateMobRemains(dt);
+      }
     }
+    if (this.running && !this.titleMode) this.updateMultiplayer(dt);
     this.updateRain(dt);
     this.updateParticles(dt);
     for (const cloud of this.ambienceGroup.children) if (cloud.userData.cloud) {
@@ -3246,6 +4130,10 @@ export class VoxelEngine {
       loadedChunks: this.world.loadedCount,
       queuedChunks: this.world.queuedCount,
       fullscreen: this.fullscreen,
+      cameraMode: this.cameraMode,
+      crouching: this.crouching,
+      sprinting: this.sprinting,
+      onlinePlayers: 1 + (this.multiplayer?.getPeers().filter((peer) => peer.state === "connected").length ?? 0),
     });
   }
 
@@ -3334,9 +4222,9 @@ export class VoxelEngine {
       volume: clamp(next.volume ?? this.settings.volume, 0, 1),
       sensitivity: clamp(next.sensitivity ?? this.settings.sensitivity, 0.0008, 0.005),
       fov: clamp(next.fov ?? this.settings.fov, 55, 100),
-      renderDistance: clamp(Math.round(next.renderDistance ?? this.settings.renderDistance), 2, 6),
+      renderDistance: clamp(Math.round(next.renderDistance ?? this.settings.renderDistance), 2, 8),
     };
-    this.weather = this.settings.weather;
+    this.weather = this.worldOptions.weather ? this.settings.weather : "clear";
     this.camera.fov = this.settings.fov;
     this.camera.updateProjectionMatrix();
     this.world.setRenderDistance(this.settings.renderDistance);
@@ -3347,6 +4235,10 @@ export class VoxelEngine {
   }
 
   setWeather(weather: Weather) {
+    if (!this.worldOptions.weather && weather === "rain") {
+      this.events.onToast("Weather was disabled when this world was created.");
+      return;
+    }
     this.weather = weather;
     this.setSettings({ weather });
     this.events.onToast(weather === "rain" ? "A rainstorm rolls across the wild." : "The clouds begin to clear.");
@@ -3384,6 +4276,7 @@ export class VoxelEngine {
       furnaces: Object.fromEntries([...this.furnaces.entries()].map(([key, value]) => [key, { ...value, input: cloneSlot(value.input), fuel: cloneSlot(value.fuel), output: cloneSlot(value.output) }])),
       chests: Object.fromEntries([...this.chests.entries()].map(([key, value]) => [key, value.map(cloneSlot)])),
       drops: this.drops.map((drop) => ({ item: drop.item, count: drop.count, ...(drop.durability !== undefined ? { durability: drop.durability } : {}), x: drop.mesh.position.x, y: drop.mesh.position.y, z: drop.mesh.position.z, age: drop.age })),
+      options: { ...this.worldOptions },
       savedAt: Date.now(),
     };
   }
@@ -3392,9 +4285,25 @@ export class VoxelEngine {
     if (!this.persistent) return;
     window.clearTimeout(this.saveTimer);
     if (this.fallingTrees.length) this.settleAllFallingTrees();
+    const save = this.serialize();
     try {
-      window.localStorage.setItem(SAVE_KEY, JSON.stringify(this.serialize()));
+      const now = Date.now();
+      const playTimeDeltaMs = Math.max(0, now - this.worldSessionStartedAt);
+      const result = this.activeWorldId
+        ? this.worldStorage.saveWorld(this.activeWorldId, { save, playTimeDeltaMs })
+        : this.worldStorage.createWorld({ name: this.world.seedText || "New World", save, options: this.worldOptions });
+      if (result.ok) {
+        this.activeWorldId = result.value.id;
+        this.worldSessionStartedAt = now;
+        window.localStorage.removeItem(SAVE_KEY);
+        if (notify) this.events.onSave();
+        return;
+      }
+      // A legacy single-save fallback keeps the current session recoverable if
+      // a browser cannot commit the catalog transaction.
+      window.localStorage.setItem(SAVE_KEY, JSON.stringify(save));
       if (notify) this.events.onSave();
+      this.events.onToast(result.error.message);
     } catch {
       this.events.onToast("This world grew beyond the browser's save allowance. The current session is safe, but storage is full.");
     }
@@ -3409,6 +4318,7 @@ export class VoxelEngine {
     this.unbindEvents();
     this.resizeObserver?.disconnect();
     this.audio.dispose();
+    this.disconnectMultiplayer();
     this.clearEntities();
     this.hideChestModel(true);
     this.disposeObject(this.heldRoot);
@@ -3421,6 +4331,10 @@ export class VoxelEngine {
     this.disposeObject(this.stars);
     this.disposeObject(this.rain);
     this.disposeObject(this.ambienceGroup);
+    this.butterflies.dispose();
+    this.localPlayerModel.dispose();
+    for (const remote of this.remotePlayers.values()) remote.model.dispose();
+    this.remotePlayers.clear();
     this.world.dispose();
     this.sharedDropGeometry.dispose();
     for (const material of this.dropMaterials.values()) material.dispose();

@@ -23,7 +23,7 @@ export type ModelBox = {
 export type ModelSpec = {
   id: string;
   label: string;
-  category: "tool" | "mob" | "block" | "utility";
+  category: "tool" | "mob" | "player" | "block" | "utility";
   /** All character and held-item specs face toward local negative Z. */
   front: "-z";
   /** Local Y coordinate of the intended terrain surface, when the model is grounded. */
