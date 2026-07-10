@@ -91,6 +91,8 @@ export type WorldSave = {
   player: { x: number; y: number; z: number; yaw: number; pitch: number };
   spawn: { x: number; y: number; z: number };
   inventory: Array<InventorySlot | null>;
+  cursor?: InventorySlot | null;
+  craftGrid?: Array<InventorySlot | null>;
   selected: number;
   health: number;
   hunger: number;
@@ -101,6 +103,7 @@ export type WorldSave = {
   weather: Weather;
   furnaces: Record<string, FurnaceState>;
   chests: Record<string, ChestState>;
+  drops?: Array<{ item: ItemCode; count: number; durability?: number; x: number; y: number; z: number; age: number }>;
   savedAt: number;
 };
 
@@ -149,6 +152,7 @@ type DropEntity = {
   id: number;
   item: ItemCode;
   count: number;
+  durability?: number;
   mesh: THREE.Mesh;
   velocity: THREE.Vector3;
   age: number;
@@ -434,8 +438,8 @@ export class VoxelEngine {
       return;
     }
     if (event.button === 0) {
+      this.mineHeld = true;
       if (this.targetMob) this.attackTargetMob();
-      else this.mineHeld = true;
     } else if (event.button === 2) this.useSelected();
     else if (event.button === 1) this.pickTarget();
   };
@@ -518,26 +522,29 @@ export class VoxelEngine {
   }
 
   findSpawn() {
-    let best = { x: 0, z: 0, score: -Infinity };
-    for (let radius = 0; radius <= 128; radius += 4) {
-      const steps = Math.max(1, Math.ceil((Math.PI * 2 * radius) / 8));
+    const friendly = new Set([BiomeId.Meadow, BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Savanna]);
+    let bestFriendly = { x: 0, z: 0, radius: Infinity, score: -Infinity };
+    let bestLand = { x: 0, z: 0, score: -Infinity };
+    for (let radius = 0; radius <= 1024; radius += 8) {
+      const steps = radius === 0 ? 1 : Math.max(8, Math.ceil((Math.PI * 2 * radius) / 12));
       for (let step = 0; step < steps; step += 1) {
         const angle = (step / steps) * Math.PI * 2;
         const x = Math.round(Math.cos(angle) * radius);
         const z = Math.round(Math.sin(angle) * radius);
         const sample = this.world.sampleColumn(x, z);
         if (sample.height <= sample.waterline + 2) continue;
-        if (![BiomeId.Meadow, BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Savanna].includes(sample.biome)) continue;
-        const slope = Math.max(
-          Math.abs(sample.height - this.world.sampleColumn(x + 2, z).height),
-          Math.abs(sample.height - this.world.sampleColumn(x, z + 2).height),
-        );
-        const score = -radius - slope * 18 + (sample.biome === BiomeId.Meadow ? 15 : 0);
-        if (slope <= 2 && score > best.score) best = { x, z, score };
+        const neighbors = [this.world.sampleColumn(x + 2, z), this.world.sampleColumn(x - 2, z), this.world.sampleColumn(x, z + 2), this.world.sampleColumn(x, z - 2)];
+        if (neighbors.some((neighbor) => neighbor.height <= neighbor.waterline + 1)) continue;
+        const slope = Math.max(...neighbors.map((neighbor) => Math.abs(sample.height - neighbor.height)));
+        if (slope > 3) continue;
+        const dangerPenalty = sample.biome === BiomeId.Volcanic ? 45 : sample.biome === BiomeId.Highlands ? 18 : sample.biome === BiomeId.Badlands ? 10 : 0;
+        const score = -radius * 0.08 - slope * 16 - Math.abs(sample.height - (SEA_LEVEL + 10)) * 0.18 - dangerPenalty;
+        if (score > bestLand.score) bestLand = { x, z, score };
+        if (friendly.has(sample.biome) && score + 55 > bestFriendly.score) bestFriendly = { x, z, radius, score: score + 55 };
       }
-      if (best.score > -Infinity && radius > 28) break;
+      if (bestFriendly.score > -Infinity && radius > bestFriendly.radius + 96) break;
     }
-    return best;
+    return bestFriendly.score > -Infinity ? bestFriendly : bestLand;
   }
 
   previewWorld(seed: string) {
@@ -583,7 +590,7 @@ export class VoxelEngine {
     this.spawn.set(spawn.x, y, spawn.z);
     this.position.copy(this.spawn);
     for (let dx = -1; dx <= 1; dx += 1) for (let dz = -1; dz <= 1; dz += 1) {
-      for (let clearY = Math.floor(y + 0.5); clearY <= Math.floor(y + 2.5); clearY += 1) this.world.setBlock(spawn.x + dx, clearY, spawn.z + dz, BlockId.Air, false);
+      for (let clearY = Math.floor(y + 0.5); clearY <= Math.floor(y + 2.5); clearY += 1) this.world.setBlock(spawn.x + dx, clearY, spawn.z + dz, BlockId.Air);
     }
     if (mode === "survival") {
       this.inventory[0] = { item: Item.Berry, count: 3 };
@@ -610,6 +617,13 @@ export class VoxelEngine {
     this.pitch = clamp(Number(save.player.pitch) || 0, -1.4, 1.4);
     this.inventory = blankInventory();
     for (let index = 0; index < Math.min(INVENTORY_SIZE, save.inventory?.length ?? 0); index += 1) this.inventory[index] = cloneSlot(save.inventory[index]);
+    this.cursor = null;
+    this.craftGrid = Array.from({ length: 9 }, () => null);
+    const transientItems = [save.cursor, ...(save.craftGrid ?? [])].filter((slot): slot is InventorySlot => Boolean(slot));
+    for (const slot of transientItems) {
+      const leftover = this.addItem(slot.item, slot.count, slot.durability);
+      if (leftover > 0) this.spawnDrop(slot.item, leftover, this.position.clone().add(new THREE.Vector3(0, 1, 0)), slot.durability);
+    }
     this.selected = clamp(Number(save.selected) || 0, 0, 8);
     this.health = clamp(Number(save.health) || 10, 1, 10);
     this.hunger = clamp(Number(save.hunger) || 10, 0, 10);
@@ -621,6 +635,15 @@ export class VoxelEngine {
     this.furnaces = new Map(Object.entries(save.furnaces ?? {}).map(([key, value]) => [key, { ...blankFurnace(), ...value }]));
     this.chests = new Map(Object.entries(save.chests ?? {}).map(([key, value]) => [key, Array.from({ length: 27 }, (_, index) => cloneSlot(value[index] ?? null))]));
     if (this.collidesAt(this.position) || this.position.y < MIN_Y) this.respawn(false);
+    for (const savedDrop of save.drops ?? []) {
+      if (!ITEMS[savedDrop.item] || savedDrop.count <= 0) continue;
+      const drop = this.spawnDrop(savedDrop.item, Math.min(savedDrop.count, maxStack(savedDrop.item)), new THREE.Vector3(savedDrop.x, savedDrop.y, savedDrop.z), savedDrop.durability);
+      if (!drop) continue;
+      drop.mesh.position.set(savedDrop.x, savedDrop.y, savedDrop.z);
+      drop.velocity.set(0, 0, 0);
+      drop.age = clamp(Number(savedDrop.age) || 0, 0, 115);
+      drop.pickupDelay = 0.25;
+    }
     this.spawnProtection = 8;
     this.emitHud(true);
   }
@@ -689,14 +712,14 @@ export class VoxelEngine {
   closeContainer() {
     if (this.cursor) {
       const leftover = this.addItem(this.cursor.item, this.cursor.count, this.cursor.durability);
-      if (leftover > 0) this.spawnDrop(this.cursor.item, leftover, this.position.clone().add(new THREE.Vector3(0, 1, 0)));
+      if (leftover > 0) this.spawnDrop(this.cursor.item, leftover, this.position.clone().add(new THREE.Vector3(0, 1, 0)), this.cursor.durability);
       this.cursor = null;
     }
     for (let index = 0; index < this.craftGrid.length; index += 1) {
       const slot = this.craftGrid[index];
       if (!slot) continue;
       const leftover = this.addItem(slot.item, slot.count, slot.durability);
-      if (leftover > 0) this.spawnDrop(slot.item, leftover, this.position.clone().add(new THREE.Vector3(0, 1, 0)));
+      if (leftover > 0) this.spawnDrop(slot.item, leftover, this.position.clone().add(new THREE.Vector3(0, 1, 0)), slot.durability);
       this.craftGrid[index] = null;
     }
     this.activeFurnaceKey = null;
@@ -900,7 +923,8 @@ export class VoxelEngine {
   craftOutputClick() {
     const match = this.findRecipe();
     if (!match) return;
-    const output = match.recipe.output;
+    const output = cloneSlot(match.recipe.output)!;
+    output.durability ??= ITEMS[output.item]?.maxDurability;
     if (this.cursor && (this.cursor.item !== output.item || this.cursor.count + output.count > maxStack(output.item))) return;
     if (!this.cursor) this.cursor = cloneSlot(output);
     else this.cursor.count += output.count;
@@ -981,6 +1005,16 @@ export class VoxelEngine {
       this.saveSoon();
       this.emitHud(true);
       return;
+    }
+    if (machine === "furnace" && this.cursor) {
+      if (index === 0 && !SMELTING[this.cursor.item]) {
+        this.events.onToast("That item cannot be smelted.");
+        return;
+      }
+      if (index === 1 && this.fuelValue(this.cursor.item) <= 0) {
+        this.events.onToast("That item is not furnace fuel.");
+        return;
+      }
     }
     if (button === "left") {
       if (!this.cursor && slot) { this.cursor = slot; slots[index] = null; }
@@ -1135,10 +1169,12 @@ export class VoxelEngine {
     if (current === undefined || (!BLOCKS[current]?.replaceable && current !== BlockId.Air)) return;
     this.world.setBlock(x, y, z, type);
     if (BLOCKS[type].solid && this.collidesAt(this.position)) {
-      this.world.setBlock(x, y, z, current ?? BlockId.Air, false);
+      this.world.setBlock(x, y, z, current ?? BlockId.Air);
       this.events.onToast("You cannot place a block inside yourself.");
       return;
     }
+    if (type === BlockId.Chest) this.chests.set(blockKey(x, y, z), Array.from({ length: 27 }, () => null));
+    if (type === BlockId.Furnace) this.furnaces.set(blockKey(x, y, z), blankFurnace());
     if (this.mode === "survival") {
       slot.count -= 1;
       if (slot.count <= 0) this.inventory[this.selected] = null;
@@ -1194,12 +1230,12 @@ export class VoxelEngine {
     const key = blockKey(x, y, z);
     if (type === BlockId.Furnace) {
       const furnace = this.furnaces.get(key);
-      if (furnace) for (const slot of [furnace.input, furnace.fuel, furnace.output]) if (slot) this.spawnDrop(slot.item, slot.count, new THREE.Vector3(x, y + 0.5, z));
+      if (furnace) for (const slot of [furnace.input, furnace.fuel, furnace.output]) if (slot) this.spawnDrop(slot.item, slot.count, new THREE.Vector3(x, y + 0.5, z), slot.durability);
       this.furnaces.delete(key);
     }
     if (type === BlockId.Chest) {
-      const chest = this.chests.get(key);
-      if (chest) for (const slot of chest) if (slot) this.spawnDrop(slot.item, slot.count, new THREE.Vector3(x, y + 0.5, z));
+      const chest = this.chests.get(key) ?? this.generateChestLoot(key);
+      if (chest) for (const slot of chest) if (slot) this.spawnDrop(slot.item, slot.count, new THREE.Vector3(x, y + 0.5, z), slot.durability);
       this.chests.delete(key);
     }
     this.audio.play("break", type);
@@ -1347,6 +1383,7 @@ export class VoxelEngine {
     }
 
     if (inLiquid) {
+      this.fallVelocity = 0;
       this.velocity.y -= 5 * dt;
       this.velocity.y *= Math.max(0, 1 - 2.4 * dt);
       if (this.keys.has("Space")) this.velocity.y += 9.5 * dt;
@@ -1525,6 +1562,8 @@ export class VoxelEngine {
   trySpawnMob() {
     const cap = this.touchMode ? 13 : 22;
     if (this.mobs.length >= cap) return;
+    const passiveCap = Math.ceil(cap * 0.55);
+    const passiveCount = this.mobs.reduce((count, mob) => count + (mob.hostile ? 0 : 1), 0);
     const angle = Math.random() * Math.PI * 2;
     const radius = 14 + Math.random() * 20;
     const x = Math.round(this.position.x + Math.cos(angle) * radius);
@@ -1535,7 +1574,8 @@ export class VoxelEngine {
     if (underground) {
       y = this.world.findWalkableY(x, z, this.position.y);
       const feet = this.world.getBlock(x, y + 1, z);
-      if (feet !== BlockId.Air) return;
+      const head = this.world.getBlock(x, y + 2, z);
+      if (Math.abs(y - this.position.y) > 14 || feet !== BlockId.Air || head !== BlockId.Air) return;
       kind = Math.random() < 0.58 ? "caveblob" : "shadecrawler";
     } else {
       y = this.world.surfaceAt(x, z);
@@ -1544,6 +1584,7 @@ export class VoxelEngine {
       const hostile = daylight < 0.2 && this.spawnProtection <= 0;
       if (hostile) kind = Math.random() < 0.55 ? "shadecrawler" : "rattlekin";
       else {
+        if (passiveCount >= passiveCap) return;
         const biome = this.world.biomeAt(x, z);
         kind = biome === BiomeId.Snowfield || biome === BiomeId.Frostpine ? "woolhorn"
           : biome === BiomeId.Siltfen || biome === BiomeId.Bloomwood ? "mossling"
@@ -1664,14 +1705,15 @@ export class VoxelEngine {
     }
   }
 
-  spawnDrop(item: ItemCode, count: number, position: THREE.Vector3) {
+  spawnDrop(item: ItemCode, count: number, position: THREE.Vector3, durability?: number): DropEntity | undefined {
     if (!ITEMS[item] || count <= 0) return;
-    const nearby = this.drops.find((drop) => drop.item === item && drop.mesh.position.distanceToSquared(position) < 2.25 && drop.count < maxStack(item));
+    const resolvedDurability = durability ?? ITEMS[item]?.maxDurability;
+    const nearby = this.drops.find((drop) => drop.item === item && drop.durability === resolvedDurability && drop.mesh.position.distanceToSquared(position) < 2.25 && drop.count < maxStack(item));
     if (nearby) {
       const add = Math.min(count, maxStack(item) - nearby.count);
       nearby.count += add;
       count -= add;
-      if (count <= 0) return;
+      if (count <= 0) return nearby;
     }
     if (this.drops.length >= 120) this.removeDrop(0);
     let material = this.dropMaterials.get(item);
@@ -1679,7 +1721,9 @@ export class VoxelEngine {
     const mesh = new THREE.Mesh(this.sharedDropGeometry, material);
     mesh.position.copy(position).add(new THREE.Vector3((Math.random() - 0.5) * 0.45, 0.25, (Math.random() - 0.5) * 0.45));
     this.dropGroup.add(mesh);
-    this.drops.push({ id: this.nextDropId++, item, count, mesh, velocity: new THREE.Vector3((Math.random() - 0.5) * 1.4, 2 + Math.random(), (Math.random() - 0.5) * 1.4), age: 0, pickupDelay: 0.35 });
+    const drop: DropEntity = { id: this.nextDropId++, item, count, ...(resolvedDurability !== undefined ? { durability: resolvedDurability } : {}), mesh, velocity: new THREE.Vector3((Math.random() - 0.5) * 1.4, 2 + Math.random(), (Math.random() - 0.5) * 1.4), age: 0, pickupDelay: 0.35 };
+    this.drops.push(drop);
+    return drop;
   }
 
   updateDrops(dt: number) {
@@ -1698,7 +1742,7 @@ export class VoxelEngine {
       drop.mesh.position.y += Math.sin(drop.age * 4) * 0.001;
       const distance = drop.mesh.position.distanceTo(this.position.clone().add(new THREE.Vector3(0, 0.8, 0)));
       if (drop.pickupDelay <= 0 && distance < 1.45) {
-        const leftover = this.addItem(drop.item, drop.count, ITEMS[drop.item].maxDurability);
+        const leftover = this.addItem(drop.item, drop.count, drop.durability);
         if (leftover < drop.count) this.audio.play("pickup");
         drop.count = leftover;
         if (drop.count <= 0) { this.removeDrop(index); this.saveSoon(); this.emitHud(true); continue; }
@@ -1718,8 +1762,7 @@ export class VoxelEngine {
     if (!slot) return;
     const direction = new THREE.Vector3();
     this.camera.getWorldDirection(direction);
-    this.spawnDrop(slot.item, 1, this.camera.position.clone().add(direction.multiplyScalar(0.8)));
-    const drop = this.drops[this.drops.length - 1];
+    const drop = this.spawnDrop(slot.item, 1, this.camera.position.clone().add(direction.clone().multiplyScalar(0.8)), slot.durability);
     if (drop) drop.velocity.add(direction.multiplyScalar(3));
     slot.count -= 1;
     if (slot.count <= 0) this.inventory[this.selected] = null;
@@ -1744,7 +1787,7 @@ export class VoxelEngine {
   }
 
   updateDayNight(dt: number) {
-    if (this.running && !this.titleMode) {
+    if (this.running && !this.titleMode && !this.paused) {
       this.worldTime += dt / 420;
       if (this.worldTime >= 1) { this.worldTime -= 1; this.day += 1; }
     }
@@ -2024,6 +2067,8 @@ export class VoxelEngine {
       player: { x: this.position.x, y: this.position.y, z: this.position.z, yaw: this.yaw, pitch: this.pitch },
       spawn: { x: this.spawn.x, y: this.spawn.y, z: this.spawn.z },
       inventory: this.inventory.map(cloneSlot),
+      cursor: cloneSlot(this.cursor),
+      craftGrid: this.craftGrid.map(cloneSlot),
       selected: this.selected,
       health: this.health,
       hunger: this.hunger,
@@ -2034,6 +2079,7 @@ export class VoxelEngine {
       weather: this.weather,
       furnaces: Object.fromEntries([...this.furnaces.entries()].map(([key, value]) => [key, { ...value, input: cloneSlot(value.input), fuel: cloneSlot(value.fuel), output: cloneSlot(value.output) }])),
       chests: Object.fromEntries([...this.chests.entries()].map(([key, value]) => [key, value.map(cloneSlot)])),
+      drops: this.drops.map((drop) => ({ item: drop.item, count: drop.count, ...(drop.durability !== undefined ? { durability: drop.durability } : {}), x: drop.mesh.position.x, y: drop.mesh.position.y, z: drop.mesh.position.z, age: drop.age })),
       savedAt: Date.now(),
     };
   }

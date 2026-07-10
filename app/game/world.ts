@@ -422,6 +422,16 @@ export class ChunkWorld {
     this.playerChunkX = cx;
     this.playerChunkZ = cz;
     const generationRadius = this.renderDistance + 1;
+    this.generationQueue = this.generationQueue
+      .filter((entry) => !this.chunks.has(chunkKey(entry.cx, entry.cz)) && Math.max(Math.abs(entry.cx - cx), Math.abs(entry.cz - cz)) <= generationRadius)
+      .map((entry) => ({ ...entry, distance: Math.max(Math.abs(entry.cx - cx), Math.abs(entry.cz - cz)) }));
+    this.generationQueued = new Set(this.generationQueue.map((entry) => chunkKey(entry.cx, entry.cz)));
+    this.meshQueue = this.meshQueue.filter((entry) => {
+      const chunk = this.chunks.get(entry.key);
+      if (!chunk) return false;
+      return Math.max(Math.abs(chunk.cx - cx), Math.abs(chunk.cz - cz)) <= this.renderDistance;
+    });
+    this.meshQueued = new Set(this.meshQueue.map((entry) => `${entry.key}:${entry.section}`));
     for (let dx = -generationRadius; dx <= generationRadius; dx += 1) {
       for (let dz = -generationRadius; dz <= generationRadius; dz += 1) {
         const key = chunkKey(cx + dx, cz + dz);
@@ -511,8 +521,8 @@ export class ChunkWorld {
     else if (height <= SEA_LEVEL - 2) biome = temperature < 0.15 ? BiomeId.Snowfield : BiomeId.Ocean;
     else if (river > 0.52) biome = BiomeId.River;
     else if (height <= SEA_LEVEL + 2) biome = BiomeId.Beach;
+    else if (variant > 0.86 && mountain > 0.18 && temperature > 0.42) biome = BiomeId.Volcanic;
     else if (mountain > 0.36 || height >= 68) biome = temperature < 0.35 || height > 78 ? BiomeId.Snowfield : BiomeId.Highlands;
-    else if (variant > 0.9 && mountain > 0.22) biome = BiomeId.Volcanic;
     else if (temperature < 0.2) biome = BiomeId.Snowfield;
     else if (temperature < 0.36 && moisture >= 0.42) biome = BiomeId.Frostpine;
     else if (temperature > 0.62 && moisture < 0.2 && variant > 0.52) biome = BiomeId.Badlands;
@@ -596,11 +606,11 @@ export class ChunkWorld {
             if (type === BlockId.Stone || type === BlockId.Deepstone || type === BlockId.Basalt) {
               const cellHash = hash3(Math.floor(gx / 2), Math.floor(y / 2), Math.floor(gz / 2), this.seed ^ 0x1234567);
               const detailHash = hash3(gx, y, gz, this.seed ^ 0x89abcdef);
-              if (y < 66 && cellHash > 0.965 && detailHash > 0.22) type = BlockId.CoalOre;
-              if (y < 48 && cellHash < 0.035 && detailHash > 0.25) type = BlockId.IronOre;
-              if (y < 54 && cellHash > 0.94 && cellHash < 0.956 && detailHash > 0.2) type = BlockId.CopperOre;
-              if (y < 8 && cellHash > 0.928 && cellHash < 0.94 && detailHash > 0.3) type = BlockId.GoldOre;
-              if (y < -10 && cellHash > 0.913 && cellHash < 0.921 && detailHash > 0.42) type = BlockId.CrystalOre;
+              if (y < 66 && cellHash > 0.992 && detailHash > 0.25) type = BlockId.CoalOre;
+              if (y < 48 && cellHash < 0.008 && detailHash > 0.3) type = BlockId.IronOre;
+              if (y < 54 && cellHash > 0.983 && cellHash < 0.987 && detailHash > 0.35) type = BlockId.CopperOre;
+              if (y < 8 && cellHash > 0.976 && cellHash < 0.9785 && detailHash > 0.4) type = BlockId.GoldOre;
+              if (y < -10 && cellHash > 0.97 && cellHash < 0.9715 && detailHash > 0.5) type = BlockId.CrystalOre;
             }
           } else if (y <= column.waterline) {
             type = column.temperature < 0.14 && y === column.waterline ? BlockId.Ice : BlockId.Water;
