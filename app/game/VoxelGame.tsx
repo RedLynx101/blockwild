@@ -226,9 +226,10 @@ export default function VoxelGame() {
         return;
       }
       if (event.code !== "Escape") return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (event.repeat) return;
       if (current !== null) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
         if (["inventory", "crafting", "furnace", "chest"].includes(current)) engine?.closeContainer();
         if (startedRef.current) {
           if (current === "pause") { setOverlay(null); engine?.activate(); }

@@ -2,12 +2,24 @@ import { BLOCKS, BlockId } from "./data";
 
 export type AudioSettings = { volume: number; muted: boolean };
 export type SoundKind = "step" | "mine" | "break" | "place" | "pickup" | "jump" | "land" | "hurt" | "ui" | "attack" | "mob" | "craft" | "furnace" | "splash" | "eat";
-export type MusicScene = "day" | "night" | "sea";
+export type MusicScene = "day" | "hoppin" | "night" | "sea" | "skyboss";
+export type SampleKind = "swordSwing" | "zombieMoan1" | "zombieMoan2" | "chestOpen" | "chestClose";
+export type SamplePlaybackOptions = { gain?: number; playbackRate?: number; detune?: number; when?: number };
 
 const MUSIC_TRACKS: Record<MusicScene, string> = {
   day: "/music/blockwild-theme.mp3",
+  hoppin: "/music/blockwild-hoppin.mp3",
   night: "/music/blockwild-night.mp3",
   sea: "/music/blockwild-sea.mp3",
+  skyboss: "/music/blockwild-skyboss.mp3",
+};
+
+const SAMPLES: Record<SampleKind, { source: string; gain: number }> = {
+  swordSwing: { source: "/sfx/sword-swing-1.wav", gain: 0.72 },
+  zombieMoan1: { source: "/sfx/zombie-moan-1.wav", gain: 0.5 },
+  zombieMoan2: { source: "/sfx/zombie-moan-2.wav", gain: 0.28 },
+  chestOpen: { source: "/sfx/chest-open.wav", gain: 0.72 },
+  chestClose: { source: "/sfx/chest-close.wav", gain: 0.58 },
 };
 
 export class SynthAudio {
@@ -22,6 +34,11 @@ export class SynthAudio {
   musicStarted = false;
   musicPlayPending = new Set<MusicScene>();
   musicSuspended = false;
+  samples = new Map<SampleKind, AudioBuffer>();
+  sampleLoads = new Map<SampleKind, Promise<AudioBuffer | null>>();
+  activeSamples = new Map<AudioBufferSourceNode, GainNode>();
+  sampleAbort: AbortController | null = null;
+  disposed = false;
 
   constructor(settings: AudioSettings) {
     this.settings = settings;
@@ -39,6 +56,7 @@ export class SynthAudio {
         this.noise = this.createNoiseBuffer(1.5);
         this.startAmbience();
         this.prepareMusic();
+        this.preloadSamples();
         this.applyVolume();
       }
       if (this.context.state !== "running") await this.context.resume();
@@ -156,6 +174,72 @@ export class SynthAudio {
     void this.startMusic();
   }
 
+  preloadSamples() {
+    for (const kind of Object.keys(SAMPLES) as SampleKind[]) void this.loadSample(kind);
+  }
+
+  loadSample(kind: SampleKind): Promise<AudioBuffer | null> {
+    const cached = this.samples.get(kind);
+    if (cached) return Promise.resolve(cached);
+    const pending = this.sampleLoads.get(kind);
+    if (pending) return pending;
+    const context = this.context;
+    if (!context || context.state === "closed" || this.disposed) return Promise.resolve(null);
+    this.sampleAbort ??= new AbortController();
+    const signal = this.sampleAbort.signal;
+    const load = (async () => {
+      try {
+        const response = await fetch(SAMPLES[kind].source, { signal });
+        if (!response.ok) return null;
+        const encoded = await response.arrayBuffer();
+        if (this.disposed || signal.aborted || this.context !== context) return null;
+        const decoded = await context.decodeAudioData(encoded);
+        if (this.disposed || signal.aborted || this.context !== context || context.state === "closed") return null;
+        this.samples.set(kind, decoded);
+        return decoded;
+      } catch {
+        return null;
+      }
+    })();
+    this.sampleLoads.set(kind, load);
+    void load.finally(() => {
+      if (this.sampleLoads.get(kind) === load) this.sampleLoads.delete(kind);
+    });
+    return load;
+  }
+
+  playSample(kind: SampleKind, options: SamplePlaybackOptions = {}) {
+    if (this.settings.muted || this.disposed) return;
+    const buffer = this.samples.get(kind);
+    if (buffer) {
+      this.startSample(kind, buffer, options);
+      return;
+    }
+    void this.loadSample(kind).then((loaded) => {
+      if (loaded && !this.disposed) this.startSample(kind, loaded, options);
+    });
+  }
+
+  startSample(kind: SampleKind, buffer: AudioBuffer, options: SamplePlaybackOptions) {
+    const context = this.context;
+    const master = this.master;
+    if (!context || !master || context.state === "closed" || this.settings.muted || this.disposed) return;
+    const source = context.createBufferSource();
+    const gain = context.createGain();
+    source.buffer = buffer;
+    source.playbackRate.value = Math.max(0.25, Math.min(4, options.playbackRate ?? 1));
+    source.detune.value = Math.max(-2400, Math.min(2400, options.detune ?? 0));
+    gain.gain.value = SAMPLES[kind].gain * Math.max(0, Math.min(2, options.gain ?? 1));
+    source.connect(gain).connect(master);
+    source.onended = () => {
+      this.activeSamples.delete(source);
+      source.disconnect();
+      gain.disconnect();
+    };
+    this.activeSamples.set(source, gain);
+    source.start(context.currentTime + Math.max(0, options.when ?? 0));
+  }
+
   noiseBurst(duration: number, frequency: number, gainValue: number, highpass = false, when = 0) {
     if (!this.context || !this.master || !this.noise || this.settings.muted) return;
     const now = this.context.currentTime + when;
@@ -231,8 +315,19 @@ export class SynthAudio {
   }
 
   dispose() {
+    this.disposed = true;
+    this.sampleAbort?.abort();
     try {
       this.ambience?.stop();
+      for (const [source, gain] of this.activeSamples) {
+        source.onended = null;
+        try { source.stop(); } catch { /* The source may already have ended. */ }
+        try { source.disconnect(); } catch { /* Already disconnected. */ }
+        try { gain.disconnect(); } catch { /* Already disconnected. */ }
+      }
+      this.activeSamples.clear();
+      this.samples.clear();
+      this.sampleLoads.clear();
       for (const element of this.music.values()) {
         element.pause();
         element.removeAttribute("src");

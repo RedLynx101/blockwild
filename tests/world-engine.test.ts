@@ -4,6 +4,8 @@ import * as THREE from "three";
 import { BlockId, ITEMS, Item, type InventorySlot } from "../app/game/data.ts";
 import { VoxelEngine, migrateSavedWorld, restoreChestStorage, type WorldSave } from "../app/game/engine.ts";
 import { ChunkWorld, BIOME_NAMES, MIN_Y, SECTION_HEIGHT, WORLD_HEIGHT, blockIndex, chunkKey, splitCoordinate } from "../app/game/world.ts";
+import { MOB_DEFS, MOB_ORDER } from "../app/game/mobs.ts";
+import { createHeldToolSpec, createZombieSpec } from "../app/game/model-specs.ts";
 
 test("chunk coordinates remain correct across negative boundaries", () => {
   assert.equal(MIN_Y, -64);
@@ -87,6 +89,40 @@ test("the initial 3×3 playable area generates within a bounded budget", () => {
   world.dispose();
 });
 
+test("zombie data, bestiary registration, and shared model orientation stay coherent", () => {
+  assert.equal(MOB_ORDER.includes("zombie"), true);
+  assert.equal(MOB_DEFS.zombie.hostile, true);
+  assert.equal(MOB_DEFS.zombie.health, 10);
+  assert.equal(ITEMS[Item.RottenFlesh].name, "Rotten Flesh");
+  const zombie = createZombieSpec();
+  const semanticParts = new Set(zombie.boxes.map((part) => part.part));
+  for (const required of ["body", "head", "leftArm", "rightArm", "leftLeg", "rightLeg"]) assert.equal(semanticParts.has(required), true, `missing ${required}`);
+  const head = zombie.boxes.find((part) => part.id === "head")!;
+  const eyes = zombie.boxes.filter((part) => part.id.endsWith("eye"));
+  assert.ok(eyes.every((eye) => eye.position[2] < head.position[2]), "eyes must sit on the declared local -Z front");
+});
+
+test("held-tool production specs form connected silhouettes without floating heads", () => {
+  for (const kind of ["pickaxe", "axe", "shovel", "sword"] as const) {
+    const spec = createHeldToolSpec(kind, "#888");
+    const structural = spec.boxes.filter((part) => part.part === "handle" || part.part === "guard" || part.part === "head");
+    const connected = new Set([structural[0].id]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const candidate of structural) {
+        if (connected.has(candidate.id)) continue;
+        const touches = structural.some((other) => {
+          if (!connected.has(other.id)) return false;
+          return [0, 1, 2].every((axis) => Math.abs(candidate.position[axis] - other.position[axis]) <= (candidate.size[axis] + other.size[axis]) / 2 + 0.075);
+        });
+        if (touches) { connected.add(candidate.id); changed = true; }
+      }
+    }
+    assert.equal(connected.size, structural.length, `${kind} contains a visually detached component`);
+  }
+});
+
 test("spawn search finds dry, walkable land across varied seeds", () => {
   const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
   engine.world = new ChunkWorld();
@@ -131,6 +167,24 @@ test("adjacent blocks across a chunk seam do not render hidden faces", () => {
   world.dispose();
 });
 
+test("partial block shapes preserve the full cube faces beside them", () => {
+  const world = new ChunkWorld();
+  world.reset("PARTIAL-FACE");
+  const chunk = world.generateChunk(0, 0);
+  chunk.blocks.fill(BlockId.Air);
+  chunk.blocks[blockIndex(0, 0, 0)] = BlockId.Stone;
+  chunk.blocks[blockIndex(1, 0, 0)] = BlockId.Chest;
+  const section = Math.floor((0 - MIN_Y) / SECTION_HEIGHT);
+  world.rebuildSection(chunk, section);
+
+  const vertexCount = chunk.sections.get(section)?.opaque?.geometry.getAttribute("position").count ?? 0;
+  assert.equal(vertexCount, 48, "an inset chest must not remove the neighboring stone face");
+  assert.equal(world.faceVisible(BlockId.Stone, BlockId.Chest), true);
+  assert.equal(world.faceVisible(BlockId.Stone, BlockId.DoorClosedLower), true);
+  assert.equal(world.faceVisible(BlockId.Stone, BlockId.Stone), false);
+  world.dispose();
+});
+
 test("urgent edits rebuild the visible section immediately and keep the light index current", () => {
   const world = new ChunkWorld();
   world.reset("URGENT-EDIT");
@@ -150,7 +204,7 @@ test("urgent edits rebuild the visible section immediately and keep the light in
   world.setBlock(5, y, 6, BlockId.Torch, true, true);
   assert.deepEqual(world.lightSourcesNear(5, y, 6, 2).map((source) => source.type), [BlockId.Torch]);
   world.setBlock(5, y, 4, BlockId.Stone, true, true);
-  assert.equal(world.lightSourcesNear(5, y, 2, 8).length, 0, "opaque blocks should occlude placed light selection");
+  assert.deepEqual(world.lightSourcesNear(5, y, 2, 8).map((source) => source.type), [BlockId.Torch], "an intervening wall must not evict a nearby placed light");
   world.setBlock(5, y, 4, BlockId.Air, true, true);
   world.setBlocksBatch([{ x: 5, y, z: 6, type: BlockId.Air }], true, true);
   assert.equal(world.lightSourcesNear(5, y, 6, 2).length, 0, "breaking a light source must remove it from the pooled-light index");
@@ -476,4 +530,22 @@ test("oversized world drops split into legal stacks instead of losing items on s
   assert.equal(engine.drops.reduce((total, drop) => total + drop.count, 0), 96);
   engine.sharedDropGeometry.dispose();
   for (const material of engine.dropMaterials.values()) material.dispose();
+});
+
+test("mob deaths detach semantic body blocks and fully burn them away", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  engine.scene = new THREE.Scene();
+  engine.creatureGroup = new THREE.Group();
+  engine.mobs = [];
+  engine.mobRemains = [];
+  engine.nextMobId = 1;
+  engine.world = { getBlock: () => BlockId.Air } as unknown as VoxelEngine["world"];
+  const zombie = engine.spawnMob("zombie", new THREE.Vector3(0, 1, 0));
+  engine.spawnMobRemains(zombie);
+  assert.ok(engine.mobRemains[0]?.fragments.length >= 8);
+  const parts = new Set(engine.mobRemains[0]?.fragments.map((fragment) => fragment.mesh.userData.bodyPart));
+  for (const required of ["body", "head", "leftArm", "rightArm", "leftLeg", "rightLeg"]) assert.equal(parts.has(required), true, `death breakup missing ${required}`);
+  engine.removeMob(0);
+  engine.updateMobRemains(2.4);
+  assert.equal(engine.mobRemains.length, 0, "burn-away fragments must have a finite lifetime");
 });

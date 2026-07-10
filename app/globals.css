@@ -19,11 +19,35 @@ html,
 body {
   width: 100%;
   height: 100%;
+  max-width: 100%;
+  max-height: 100%;
   margin: 0;
-  overflow: hidden;
+  overflow: clip;
+  overscroll-behavior: none;
   background: #071329;
   color: var(--ink);
   font-family: var(--font-geist-mono), "Courier New", monospace;
+}
+
+html {
+  position: fixed;
+  inset: 0;
+}
+
+body {
+  position: fixed;
+  inset: 0;
+}
+
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 button,
@@ -45,10 +69,21 @@ input:focus-visible {
   position: fixed;
   inset: 0;
   isolation: isolate;
-  overflow: hidden;
+  width: 100%;
+  height: 100%;
+  overflow: clip;
+  overscroll-behavior: none;
   background: #78baf2;
   user-select: none;
   touch-action: none;
+}
+
+.game-shell:fullscreen {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: clip;
 }
 
 .game-canvas {
@@ -57,6 +92,8 @@ input:focus-visible {
   display: block;
   width: 100%;
   height: 100%;
+  contain: strict;
+  touch-action: none;
   image-rendering: pixelated;
 }
 
@@ -390,7 +427,8 @@ input:focus-visible {
   display: grid;
   place-items: center;
   padding: max(18px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
-  overflow: auto;
+  overflow-x: clip;
+  overflow-y: auto;
   background: rgba(7, 10, 11, 0.56);
   backdrop-filter: blur(5px);
 }
@@ -581,7 +619,8 @@ input:focus-visible {
   width: min(640px, calc(100vw - 32px));
   max-height: calc(100vh - 34px);
   padding: clamp(22px, 4vw, 38px);
-  overflow: auto;
+  overflow-x: clip;
+  overflow-y: auto;
   border: 4px solid #92958c;
   border-top-color: #d9d9cf;
   border-left-color: #d9d9cf;
@@ -1396,48 +1435,60 @@ input:focus-visible {
 }
 
 .tool-icon {
-  width: 13px;
-  height: 32px;
+  width: 7px;
+  height: 29px;
   border: 0;
-  background: linear-gradient(90deg, color-mix(in srgb, var(--item-color), #000 28%), var(--item-color) 48%, color-mix(in srgb, var(--item-color), #fff 25%));
-  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.65);
+  background: linear-gradient(90deg, #59351f 0 28%, #a26b38 28% 70%, #6d4226 70%);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.72);
   transform: rotate(39deg);
-  transform-origin: center;
+  transform-origin: 50% 62%;
 }
 
 .tool-icon::before {
-  top: -3px;
-  left: -7px;
+  top: -2px;
+  left: -10px;
   width: 27px;
-  height: 8px;
-  background: var(--item-color);
-  box-shadow: inset -3px -2px 0 rgba(0, 0, 0, 0.25);
+  height: 9px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--item-color), #fff 25%) 0 28%, transparent 28%),
+    var(--item-color);
+  clip-path: polygon(0 24%, 18% 0, 82% 0, 100% 24%, 92% 75%, 68% 100%, 32% 100%, 8% 75%);
+  box-shadow: none;
 }
 
 .tool-sword::before {
-  top: 19px;
-  left: -5px;
-  width: 23px;
-  height: 5px;
+  top: -9px;
+  left: -2px;
+  width: 11px;
+  height: 28px;
+  clip-path: polygon(50% 0, 100% 18%, 84% 100%, 16% 100%, 0 18%);
 }
 
 .tool-sword::after {
   content: "";
   position: absolute;
-  top: -4px;
-  left: 3px;
-  width: 7px;
-  height: 7px;
-  background: #eee3c7;
-  transform: rotate(45deg);
+  top: 17px;
+  left: -7px;
+  width: 21px;
+  height: 6px;
+  background: #7a532e;
+  box-shadow: inset 0 2px 0 #b88446, 2px 2px 0 rgba(0, 0, 0, 0.55);
+}
+
+.tool-axe::before {
+  top: -3px;
+  left: -11px;
+  width: 24px;
+  height: 18px;
+  clip-path: polygon(9% 0, 70% 0, 100% 24%, 86% 78%, 58% 100%, 14% 82%, 0 38%);
 }
 
 .tool-shovel::before {
-  top: -7px;
-  left: -3px;
-  width: 19px;
-  height: 13px;
-  clip-path: polygon(50% 0, 100% 45%, 78% 100%, 22% 100%, 0 45%);
+  top: -8px;
+  left: -5px;
+  width: 17px;
+  height: 17px;
+  clip-path: polygon(50% 0, 100% 34%, 82% 100%, 18% 100%, 0 34%);
 }
 
 .hotbar-slot .item-icon {
@@ -1610,7 +1661,8 @@ input:focus-visible {
   width: min(940px, calc(100vw - 28px));
   max-height: calc(100vh - 28px);
   padding: 22px;
-  overflow: auto;
+  overflow-x: clip;
+  overflow-y: auto;
   border: 4px solid #b2b2aa;
   border-top-color: #e8e8df;
   border-left-color: #e8e8df;
@@ -1919,7 +1971,8 @@ input:focus-visible {
   flex: 1;
   max-height: 335px;
   padding: 8px;
-  overflow: auto;
+  overflow-x: clip;
+  overflow-y: auto;
 }
 
 .recipe-entry {
@@ -1973,7 +2026,8 @@ input:focus-visible {
   gap: 6px;
   max-height: 520px;
   padding: 8px;
-  overflow: auto;
+  overflow-x: clip;
+  overflow-y: auto;
   border: 3px inset #8a8b85;
   background: #aeb0aa;
 }

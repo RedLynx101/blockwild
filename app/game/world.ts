@@ -974,27 +974,10 @@ export class ChunkWorld {
         const worldY = MIN_Y + layer;
         const worldZ = chunk.cz * CHUNK_SIZE + localZ;
         const distanceSquared = (worldX - x) ** 2 + (worldY - y) ** 2 + (worldZ - z) ** 2;
-        if (distanceSquared <= radiusSquared && this.hasLightPath(x, y, z, worldX, worldY, worldZ)) sources.push({ x: worldX, y: worldY, z: worldZ, type: chunk.blocks[index] as BlockId, distanceSquared });
+        if (distanceSquared <= radiusSquared) sources.push({ x: worldX, y: worldY, z: worldZ, type: chunk.blocks[index] as BlockId, distanceSquared });
       }
     }
     return sources.sort((a, b) => a.distanceSquared - b.distanceSquared);
-  }
-
-  hasLightPath(fromX: number, fromY: number, fromZ: number, toX: number, toY: number, toZ: number) {
-    const distance = Math.hypot(toX - fromX, toY - fromY, toZ - fromZ);
-    const steps = Math.max(1, Math.ceil(distance * 2.2));
-    for (let step = 1; step < steps; step += 1) {
-      const t = step / steps;
-      const x = Math.floor(lerp(fromX, toX, t) + 0.5);
-      const y = Math.floor(lerp(fromY, toY, t) + 0.5);
-      const z = Math.floor(lerp(fromZ, toZ, t) + 0.5);
-      if (x === toX && y === toY && z === toZ) continue;
-      const type = this.getBlock(x, y, z);
-      if (type === undefined) return false;
-      const definition = BLOCKS[type];
-      if (definition?.solid && definition.layer !== "cutout" && definition.shape !== "door") return false;
-    }
-    return true;
   }
 
   skyVisibilityAt(x: number, y: number, z: number) {
@@ -1033,8 +1016,8 @@ export class ChunkWorld {
     const current = BLOCKS[type];
     const next = BLOCKS[neighbor];
     if (!current || !next) return true;
-    if (next.shape === "cross" || next.shape === "door") return true;
-    const nextOccludes = next.solid && next.layer !== "transparent" && next.layer !== "cutout";
+    const nextIsFullCube = !next.shape || next.shape === "cube";
+    const nextOccludes = nextIsFullCube && next.solid && next.layer !== "transparent" && next.layer !== "cutout";
     if (current.layer === "transparent") return neighbor !== type && !nextOccludes;
     if (current.layer === "cutout" || (current.layer === "emissive" && !current.solid)) return neighbor !== type && !nextOccludes;
     return !nextOccludes;

@@ -1,6 +1,6 @@
 import { Item, type ItemCode } from "./data";
 
-export type MobKind = "mossling" | "ridgeback" | "woolhorn" | "glowmoth" | "shadecrawler" | "caveblob" | "rattlekin";
+export type MobKind = "mossling" | "ridgeback" | "woolhorn" | "glowmoth" | "shadecrawler" | "caveblob" | "rattlekin" | "zombie";
 export type MobTemperament = "Gentle" | "Skittish" | "Defensive" | "Hostile";
 
 export type MobDrop = {
@@ -97,6 +97,15 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     colors: [0xd8cfb9, 0x807664, 0x2a2520],
     drops: [{ item: Item.BoneShard, min: 1, max: 2, chance: 1 }, { item: Item.Coal, min: 1, max: 1, chance: 0.2 }],
   },
+  zombie: {
+    kind: "zombie", name: "Zombie", temperament: "Hostile", hostile: true,
+    health: 10, damage: 2, xp: 5, speed: 0.66, chaseSpeed: 1.62, turnRate: 5.2, attackRange: 1.42,
+    footOffset: 0.9, radius: 0.38, height: 1.8, habitat: "Dark caves and the night surface", active: "Darkness",
+    behavior: "Shambles toward living creatures with both arms raised. Direct sunlight slowly burns it away.",
+    lore: "A miner who stayed below one night too many. It remembers doors, footsteps, and almost nothing else.",
+    colors: [0x5f8f54, 0x3e7470, 0x263c74],
+    drops: [{ item: Item.RottenFlesh, min: 1, max: 2, chance: 0.82 }, { item: Item.SunmetalIngot, min: 1, max: 1, chance: 0.025 }],
+  },
 };
 
-export const MOB_ORDER: MobKind[] = ["mossling", "ridgeback", "woolhorn", "glowmoth", "shadecrawler", "caveblob", "rattlekin"];
+export const MOB_ORDER: MobKind[] = ["mossling", "ridgeback", "woolhorn", "glowmoth", "shadecrawler", "caveblob", "rattlekin", "zombie"];

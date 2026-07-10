@@ -109,6 +109,7 @@ export const Item = {
   SunmetalPlate: 143,
   SunmetalGreaves: 144,
   SunmetalBoots: 145,
+  RottenFlesh: 146,
 } as const;
 
 export type ItemCode = number;
@@ -325,6 +326,7 @@ Object.assign(ITEMS, {
   [Item.SunmetalPlate]: armorItem(Item.SunmetalPlate, "Sunmetal Plate", "#d4b9a7", "chest", 4, 280),
   [Item.SunmetalGreaves]: armorItem(Item.SunmetalGreaves, "Sunmetal Greaves", "#c7a995", "legs", 3, 250),
   [Item.SunmetalBoots]: armorItem(Item.SunmetalBoots, "Sunmetal Boots", "#b99580", "feet", 2, 170),
+  [Item.RottenFlesh]: { id: Item.RottenFlesh, name: "Rotten Flesh", color: "#866044", maxStack: 64, food: 1 },
 } satisfies Record<number, ItemDefinition>);
 
 export const LOG_ITEMS: ItemCode[] = [BlockId.WildwoodLog, BlockId.PineLog, BlockId.BirchLog, BlockId.BloomLog];

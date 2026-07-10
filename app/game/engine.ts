@@ -29,6 +29,7 @@ import {
   type ChunkEditSave,
 } from "./world";
 import { MOB_DEFS, MOB_ORDER, type MobDefinition, type MobKind } from "./mobs";
+import { createHeldToolSpec, createZombieSpec } from "./model-specs";
 
 export { BLOCKS, CREATIVE_BLOCKS, ITEMS, Item, RECIPES, BlockId, BIOME_NAMES, MOB_DEFS, MOB_ORDER, type GameMode, type InventorySlot, type ItemCode, type Recipe, type EquipmentSlot, type MobKind };
 
@@ -164,6 +165,25 @@ type MobEntity = {
   state: "wander" | "flee" | "chase" | "windup" | "recover";
   stateTimer: number;
   baseY: number;
+  voiceTimer: number;
+};
+
+type MobFragment = {
+  mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshLambertMaterial>;
+  velocity: THREE.Vector3;
+  angularVelocity: THREE.Vector3;
+  baseScale: THREE.Vector3;
+  baseColor: THREE.Color;
+};
+
+type MobRemains = {
+  age: number;
+  fragments: MobFragment[];
+};
+
+type KeyboardLockApi = {
+  lock: (keys?: string[]) => Promise<void>;
+  unlock: () => void;
 };
 
 type FallingTree = {
@@ -315,6 +335,7 @@ export class VoxelEngine {
   audio: SynthAudio;
   settings: GameSettings;
   resizeObserver: ResizeObserver | null = null;
+  keyboardEscapeLocked = false;
 
   position = new THREE.Vector3(0, 48, 0);
   spawn = new THREE.Vector3(0, 48, 0);
@@ -379,10 +400,13 @@ export class VoxelEngine {
   particles: Particle[] = [];
   fallingTrees: FallingTree[] = [];
   mobs: MobEntity[] = [];
+  mobRemains: MobRemains[] = [];
   drops: DropEntity[] = [];
   nextMobId = 1;
   nextDropId = 1;
   mobSpawnTimer = 2;
+  zombieVoiceCooldown = 0;
+  combatMusicTimer = 0;
   mobRaycaster = new THREE.Raycaster();
   activeRecipe: Recipe | null = null;
   sharedDropGeometry = new THREE.BoxGeometry(0.23, 0.23, 0.23);
@@ -493,8 +517,31 @@ export class VoxelEngine {
 
   preventContextMenu = (event: Event) => event.preventDefault();
 
+  keyboardLockApi() {
+    return (navigator as Navigator & { keyboard?: KeyboardLockApi }).keyboard;
+  }
+
+  async lockFullscreenEscape() {
+    const keyboard = this.keyboardLockApi();
+    if (!keyboard || !document.fullscreenElement) return;
+    try {
+      await keyboard.lock(["Escape"]);
+      this.keyboardEscapeLocked = true;
+    } catch {
+      this.keyboardEscapeLocked = false;
+    }
+  }
+
+  unlockFullscreenEscape() {
+    if (!this.keyboardEscapeLocked) return;
+    try { this.keyboardLockApi()?.unlock(); } catch { /* The browser may have released it already. */ }
+    this.keyboardEscapeLocked = false;
+  }
+
   onFullscreenChange = () => {
     this.fullscreen = Boolean(document.fullscreenElement);
+    if (this.fullscreen) void this.lockFullscreenEscape();
+    else this.unlockFullscreenEscape();
     this.resize();
     this.emitHud(true);
   };
@@ -778,8 +825,12 @@ export class VoxelEngine {
       if (!document.fullscreenElement) {
         try { await shell?.requestFullscreen({ navigationUI: "hide" }); }
         catch { await shell?.requestFullscreen(); }
+        await this.lockFullscreenEscape();
       }
-      else await document.exitFullscreen();
+      else {
+        this.unlockFullscreenEscape();
+        await document.exitFullscreen();
+      }
     } catch {
       this.events.onToast("Fullscreen is unavailable in this browser.");
     }
@@ -844,13 +895,13 @@ export class VoxelEngine {
     this.activeChestModel = group;
     this.chestLidPivot = pivot;
     this.chestOpenAmount = 0;
-    this.audio.play("place", BlockId.Chest);
+    this.audio.playSample("chestOpen");
   }
 
   hideChestModel(immediate = false) {
     if (!this.activeChestModel) return;
     if (!immediate) {
-      this.audio.play("place", BlockId.Chest);
+      this.audio.playSample("chestClose");
       return;
     }
     this.disposeObject(this.activeChestModel);
@@ -2156,14 +2207,18 @@ export class VoxelEngine {
       mesh.position.set(...position);
       mesh.userData.mobId = id;
       parent.add(mesh);
-      if (part) parts[part].push(mesh);
+      if (part) {
+        mesh.userData.bodyPart = part;
+        parts[part].push(mesh);
+      }
       return mesh;
     };
     const pivotBox = (size: [number, number, number], material: THREE.Material, pivotPosition: [number, number, number], meshOffset: [number, number, number], part: string) => {
       const pivot = new THREE.Group();
       pivot.position.set(...pivotPosition);
       visual.add(pivot);
-      add(pivot, size, material, meshOffset);
+      const mesh = add(pivot, size, material, meshOffset);
+      mesh.userData.bodyPart = part;
       parts[part].push(pivot);
       return pivot;
     };
@@ -2217,7 +2272,7 @@ export class VoxelEngine {
       add(visual, [0.58, 0.4, 0.58], accentMaterial, [0, 0.34, -0.03], "body");
       add(visual, [0.22, 0.2, 0.22], new THREE.MeshBasicMaterial({ color: 0xb9ffd9 }), [0, 0.22, 0.03]);
       add(visual, [0.12, 0.12, 0.04], eyeMaterial, [-0.18, 0.37, -0.34]); add(visual, [0.12, 0.12, 0.04], eyeMaterial, [0.18, 0.37, -0.34]);
-    } else {
+    } else if (kind === "rattlekin") {
       add(visual, [0.42, 0.32, 0.32], darkMaterial, [0, 0.35, 0], "body");
       for (let rib = 0; rib < 3; rib += 1) add(visual, [0.72 - rib * 0.08, 0.08, 0.16], bodyMaterial, [0, 0.62 + rib * 0.16, 0]);
       add(visual, [0.54, 0.5, 0.48], bodyMaterial, [0, 1.16, -0.04], "head");
@@ -2225,6 +2280,44 @@ export class VoxelEngine {
       for (const [px, phase] of [[-0.18, 0], [0.18, Math.PI]] as Array<[number, number]>) { const leg = pivotBox([0.16, 0.78, 0.18], bodyMaterial, [px, 0.32, 0], [0, -0.39, 0], "legs"); leg.userData.phase = phase; }
       for (const side of [-1, 1]) { const arm = pivotBox([0.14, 0.72, 0.14], bodyMaterial, [side * 0.42, 0.9, 0], [0, -0.36, 0], "arms"); arm.userData.side = side; arm.userData.phase = side < 0 ? 0 : Math.PI; }
       const club = add(parts.arms[1], [0.2, 0.86, 0.2], accentMaterial, [0, -0.76, -0.06]); club.rotation.z = -0.18;
+    } else {
+      const zombie = createZombieSpec();
+      const limbPivotPositions: Record<string, [number, number, number]> = {
+        leftLeg: [-0.16, 0.74, 0], rightLeg: [0.16, 0.74, 0],
+        leftArm: [-0.445, 1.25, 0.09], rightArm: [0.445, 1.25, 0.09],
+      };
+      const limbPivots = new Map<string, THREE.Group>();
+      for (const modelBox of zombie.boxes) {
+        const material = modelBox.emissive
+          ? new THREE.MeshBasicMaterial({ color: modelBox.color })
+          : new THREE.MeshLambertMaterial({ color: modelBox.color });
+        const semantic = modelBox.part.includes("Leg") ? "legs"
+          : modelBox.part.includes("Arm") ? "arms"
+            : modelBox.part === "head" ? "head" : "body";
+        const pivotPosition = limbPivotPositions[modelBox.part];
+        let parent: THREE.Object3D = visual;
+        let position = [...modelBox.position] as [number, number, number];
+        if (pivotPosition) {
+          let pivot = limbPivots.get(modelBox.part);
+          if (!pivot) {
+            pivot = new THREE.Group();
+            pivot.position.set(...pivotPosition);
+            pivot.userData.phase = modelBox.part === "leftLeg" || modelBox.part === "leftArm" ? 0 : Math.PI;
+            visual.add(pivot);
+            parts[semantic].push(pivot);
+            limbPivots.set(modelBox.part, pivot);
+          }
+          parent = pivot;
+          position = [modelBox.position[0] - pivotPosition[0], modelBox.position[1] - pivotPosition[1], modelBox.position[2] - pivotPosition[2]];
+        }
+        const mesh = add(parent, [...modelBox.size] as [number, number, number], material, position, pivotPosition ? undefined : semantic);
+        mesh.rotation.set(...(modelBox.rotation ?? [0, 0, 0]));
+        mesh.userData.bodyPart = modelBox.part;
+      }
+      bodyMaterial.dispose();
+      accentMaterial.dispose();
+      eyeMaterial.dispose();
+      darkMaterial.dispose();
     }
     group.userData.mobId = id;
     return { group, visual, parts };
@@ -2237,7 +2330,7 @@ export class VoxelEngine {
     group.position.copy(position);
     this.creatureGroup.add(group);
     const angle = Math.random() * Math.PI * 2;
-    const mob: MobEntity = { id, kind, name: definition.name, hostile: definition.hostile, definition, group, visual, parts, health: definition.health, maxHealth: definition.health, damage: definition.damage, angle, desiredAngle: angle, wanderTimer: 1 + Math.random() * 4, attackCooldown: 0, hurtTimer: 0, age: 0, bob: Math.random() * Math.PI * 2, gait: 0, fleeTimer: 0, state: "wander", stateTimer: 0, baseY: position.y };
+    const mob: MobEntity = { id, kind, name: definition.name, hostile: definition.hostile, definition, group, visual, parts, health: definition.health, maxHealth: definition.health, damage: definition.damage, angle, desiredAngle: angle, wanderTimer: 1 + Math.random() * 4, attackCooldown: 0, hurtTimer: 0, age: 0, bob: Math.random() * Math.PI * 2, gait: 0, fleeTimer: 0, state: "wander", stateTimer: 0, baseY: position.y, voiceTimer: 2 + Math.random() * 8 };
     this.mobs.push(mob);
     return mob;
   }
@@ -2259,7 +2352,8 @@ export class VoxelEngine {
       const feet = this.world.getBlock(x, y + 1, z);
       const head = this.world.getBlock(x, y + 2, z);
       if (Math.abs(y - this.position.y) > 14 || !this.world.isWalkThrough(feet) || !this.world.isWalkThrough(head)) return;
-      kind = Math.random() < 0.58 ? "caveblob" : "shadecrawler";
+      const roll = Math.random();
+      kind = roll < 0.38 ? "zombie" : roll < 0.72 ? "caveblob" : "shadecrawler";
     } else {
       y = this.world.surfaceAt(x, z);
       if (this.world.getBlock(x, y, z) === undefined || y <= SEA_LEVEL) return;
@@ -2268,7 +2362,10 @@ export class VoxelEngine {
       const biome = this.world.biomeAt(x, z);
       const nocturnalGlowmoth = hostile && passiveCount < passiveCap && [BiomeId.MushroomFen, BiomeId.Bloomwood, BiomeId.Siltfen].includes(biome) && Math.random() < 0.3;
       if (nocturnalGlowmoth) kind = "glowmoth";
-      else if (hostile) kind = Math.random() < 0.55 ? "shadecrawler" : "rattlekin";
+      else if (hostile) {
+        const roll = Math.random();
+        kind = roll < 0.5 ? "zombie" : roll < 0.78 ? "shadecrawler" : "rattlekin";
+      }
       else {
         if (passiveCount >= passiveCap) return;
         kind = biome === BiomeId.Snowfield || biome === BiomeId.Frostpine ? "woolhorn"
@@ -2298,7 +2395,11 @@ export class VoxelEngine {
     mob.gait += moved * 9;
     mob.bob += moved * 4;
     for (const leg of mob.parts.legs) leg.rotation.x = Math.sin(mob.gait + (Number(leg.userData.phase) || 0)) * (mob.kind === "shadecrawler" ? 0.35 : 0.58);
-    for (const arm of mob.parts.arms) arm.rotation.x = Math.sin(mob.gait + (Number(arm.userData.phase) || 0)) * 0.5 + (mob.state === "windup" ? -1.1 : 0);
+    for (const arm of mob.parts.arms) {
+      arm.rotation.x = mob.kind === "zombie"
+        ? Math.sin(mob.gait + (Number(arm.userData.phase) || 0)) * 0.055 + (mob.state === "windup" ? -0.38 : -0.06)
+        : Math.sin(mob.gait + (Number(arm.userData.phase) || 0)) * 0.5 + (mob.state === "windup" ? -1.1 : 0);
+    }
     for (const wing of mob.parts.wings) wing.rotation.z = (Number(wing.userData.side) || 1) * (0.35 + Math.sin(performance.now() * 0.018 + (Number(wing.userData.phase) || 0)) * 0.72);
     const hurtPulse = mob.hurtTimer > 0 ? 1 + Math.sin(mob.hurtTimer * 45) * 0.06 : 1;
     if (mob.kind === "caveblob") {
@@ -2318,10 +2419,26 @@ export class VoxelEngine {
       mob.fleeTimer = Math.max(0, mob.fleeTimer - dt);
       mob.wanderTimer -= dt;
       mob.stateTimer -= dt;
+      mob.voiceTimer -= dt;
       const dx = this.position.x - mob.group.position.x;
       const dz = this.position.z - mob.group.position.z;
       const distance = Math.hypot(dx, dz);
       if (distance < 10 && !this.bestiary[mob.kind].seen) { this.bestiary[mob.kind].seen = true; this.saveSoon(); }
+      if (mob.kind === "zombie") {
+        if (distance < 24 && mob.voiceTimer <= 0 && this.zombieVoiceCooldown <= 0) {
+          this.audio.playSample(Math.random() < 0.5 ? "zombieMoan1" : "zombieMoan2", { gain: 0.78 + Math.random() * 0.18, playbackRate: 0.94 + Math.random() * 0.1 });
+          mob.voiceTimer = 7 + Math.random() * 9;
+          this.zombieVoiceCooldown = 3.2;
+        }
+        const mx = Math.round(mob.group.position.x);
+        const mz = Math.round(mob.group.position.z);
+        const onSurface = mob.group.position.y >= this.world.surfaceAt(mx, mz) + mob.definition.footOffset - 0.3;
+        if (onSurface && this.daylightAmount() > 0.72) {
+          mob.health -= dt * 1.35;
+          mob.hurtTimer = Math.max(mob.hurtTimer, 0.08);
+          if (mob.health <= 0) { this.killMob(mob); continue; }
+        }
+      }
       if (distance > 68 || mob.age > 300 || (mob.hostile && this.daylightAmount() > 0.65 && mob.group.position.y > SEA_LEVEL && distance > 25)) {
         this.removeMob(index);
         continue;
@@ -2332,7 +2449,9 @@ export class VoxelEngine {
           if (distance < mob.definition.attackRange + 0.7 && Math.abs(this.position.y - mob.group.position.y) < 2) {
             this.damagePlayer(mob.damage, mob.name);
             this.velocity.add(new THREE.Vector3(dx, 0.1, dz).normalize().multiplyScalar(mob.kind === "ridgeback" ? 4.4 : 3.2));
-            this.audio.play("mob");
+            this.combatMusicTimer = Math.max(this.combatMusicTimer, 8);
+            if (mob.kind === "zombie") this.audio.playSample(Math.random() < 0.5 ? "zombieMoan1" : "zombieMoan2", { gain: 0.9 });
+            else this.audio.play("mob");
           }
           mob.state = "recover"; mob.stateTimer = 0.55; mob.attackCooldown = 1.15;
         }
@@ -2340,7 +2459,7 @@ export class VoxelEngine {
       else if (aggressive && distance < 20) {
         mob.state = "chase";
         mob.desiredAngle = Math.atan2(dz, dx);
-        if (distance < mob.definition.attackRange && mob.attackCooldown <= 0) { mob.state = "windup"; mob.stateTimer = mob.kind === "rattlekin" ? 0.52 : 0.34; }
+        if (distance < mob.definition.attackRange && mob.attackCooldown <= 0) { mob.state = "windup"; mob.stateTimer = mob.kind === "rattlekin" ? 0.52 : mob.kind === "zombie" ? 0.44 : 0.34; }
       } else if (mob.fleeTimer > 0) {
         mob.state = "flee";
         mob.desiredAngle = Math.atan2(-dz, -dx);
@@ -2395,11 +2514,96 @@ export class VoxelEngine {
     mob.state = mob.hostile ? "chase" : "flee";
     const away = mob.group.position.clone().sub(this.position).setY(0).normalize().multiplyScalar(0.65);
     mob.group.position.add(away);
-    this.audio.play("attack");
+    if (item?.toolKind === "sword") this.audio.playSample("swordSwing", { playbackRate: 0.96 + Math.random() * 0.08 });
+    else this.audio.play("attack");
+    if (mob.hostile) this.combatMusicTimer = Math.max(this.combatMusicTimer, 9);
     this.spawnParticles(mob.group.position.x, mob.group.position.y, mob.group.position.z, mob.hostile ? BlockId.Obsidian : BlockId.Dirt, 7);
     if (item?.toolKind) this.damageSelectedTool();
     if (mob.health <= 0) this.killMob(mob);
     this.emitHud(true);
+  }
+
+  spawnMobRemains(mob: MobEntity) {
+    if (this.mobRemains.length >= 6) {
+      const oldest = this.mobRemains.shift();
+      for (const fragment of oldest?.fragments ?? []) {
+        this.scene.remove(fragment.mesh);
+        fragment.mesh.geometry.dispose();
+        fragment.mesh.material.dispose();
+      }
+    }
+    mob.group.updateWorldMatrix(true, true);
+    const fragments: MobFragment[] = [];
+    mob.visual.traverse((object) => {
+      if (fragments.length >= 32 || !(object instanceof THREE.Mesh) || !(object.geometry instanceof THREE.BufferGeometry)) return;
+      const sourceMaterial = Array.isArray(object.material) ? object.material[0] : object.material;
+      const sourceColor = sourceMaterial && "color" in sourceMaterial
+        ? (sourceMaterial as THREE.Material & { color: THREE.Color }).color
+        : new THREE.Color(mob.definition.colors[0]);
+      const material = new THREE.MeshLambertMaterial({ color: sourceColor, transparent: true, opacity: 1, emissive: 0x000000 });
+      const mesh = new THREE.Mesh(object.geometry.clone(), material);
+      const baseScale = new THREE.Vector3();
+      object.matrixWorld.decompose(mesh.position, mesh.quaternion, baseScale);
+      mesh.scale.copy(baseScale);
+      mesh.userData.bodyPart = object.userData.bodyPart ?? "fragment";
+      const outward = mesh.position.clone().sub(mob.group.position).setY(0);
+      if (outward.lengthSq() < 0.01) outward.set(Math.random() - 0.5, 0, Math.random() - 0.5);
+      outward.normalize();
+      const velocity = outward.multiplyScalar(0.7 + Math.random() * 1.55);
+      velocity.y = 2.2 + Math.random() * 2.4;
+      this.scene.add(mesh);
+      fragments.push({
+        mesh,
+        velocity,
+        angularVelocity: new THREE.Vector3((Math.random() - 0.5) * 7, (Math.random() - 0.5) * 7, (Math.random() - 0.5) * 7),
+        baseScale,
+        baseColor: sourceColor.clone(),
+      });
+    });
+    if (fragments.length) this.mobRemains.push({ age: 0, fragments });
+  }
+
+  updateMobRemains(dt: number) {
+    const ember = new THREE.Color(0xf06b2f);
+    const ash = new THREE.Color(0x1c1714);
+    for (let remainsIndex = this.mobRemains.length - 1; remainsIndex >= 0; remainsIndex -= 1) {
+      const remains = this.mobRemains[remainsIndex];
+      remains.age += dt;
+      const burn = clamp((remains.age - 0.72) / 1.55, 0, 1);
+      for (const fragment of remains.fragments) {
+        fragment.velocity.y -= 11.5 * dt;
+        const nextY = fragment.mesh.position.y + fragment.velocity.y * dt;
+        const ground = this.world.getBlock(
+          Math.floor(fragment.mesh.position.x + 0.5),
+          Math.floor(nextY - 0.12 + 0.5),
+          Math.floor(fragment.mesh.position.z + 0.5),
+        );
+        if (ground !== undefined && BLOCKS[ground]?.solid && fragment.velocity.y < 0) {
+          fragment.velocity.y *= -0.24;
+          fragment.velocity.x *= 0.66;
+          fragment.velocity.z *= 0.66;
+        } else fragment.mesh.position.y = nextY;
+        fragment.mesh.position.x += fragment.velocity.x * dt;
+        fragment.mesh.position.z += fragment.velocity.z * dt;
+        fragment.mesh.rotation.x += fragment.angularVelocity.x * dt;
+        fragment.mesh.rotation.y += fragment.angularVelocity.y * dt;
+        fragment.mesh.rotation.z += fragment.angularVelocity.z * dt;
+        fragment.angularVelocity.multiplyScalar(Math.exp(-dt * 1.2));
+        if (burn > 0) {
+          fragment.mesh.material.color.copy(fragment.baseColor).lerp(ember, Math.min(1, burn * 1.8)).lerp(ash, Math.max(0, burn - 0.48) * 1.92);
+          fragment.mesh.material.emissive.set(0x8f260b).multiplyScalar(Math.sin(burn * Math.PI) * 0.58);
+          fragment.mesh.material.opacity = 1 - burn;
+          fragment.mesh.scale.copy(fragment.baseScale).multiplyScalar(1 - burn * 0.78);
+        }
+      }
+      if (remains.age < 2.32) continue;
+      for (const fragment of remains.fragments) {
+        this.scene.remove(fragment.mesh);
+        fragment.mesh.geometry.dispose();
+        fragment.mesh.material.dispose();
+      }
+      this.mobRemains.splice(remainsIndex, 1);
+    }
   }
 
   killMob(mob: MobEntity) {
@@ -2409,6 +2613,7 @@ export class VoxelEngine {
     this.bestiary[mob.kind].seen = true;
     this.bestiary[mob.kind].kills += 1;
     this.events.onToast(`${mob.name} defeated · Bestiary kill ${this.bestiary[mob.kind].kills}`);
+    this.spawnMobRemains(mob);
     const index = this.mobs.indexOf(mob);
     if (index >= 0) this.removeMob(index);
     this.audio.play("pickup");
@@ -2526,6 +2731,12 @@ export class VoxelEngine {
       (particle.mesh.material as THREE.Material).dispose();
     }
     this.particles = [];
+    for (const remains of this.mobRemains) for (const fragment of remains.fragments) {
+      this.scene.remove(fragment.mesh);
+      fragment.mesh.geometry.dispose();
+      fragment.mesh.material.dispose();
+    }
+    this.mobRemains = [];
   }
 
   updateLocalLights(dt: number) {
@@ -2611,7 +2822,9 @@ export class VoxelEngine {
     this.audio.setDepth(this.position.y, this.weather === "rain");
     const biome = this.world.biomeAt(Math.round(this.position.x), Math.round(this.position.z));
     const atSea = underwater || biome === BiomeId.Ocean || biome === BiomeId.DeepOcean || biome === BiomeId.Beach;
-    this.audio.setMusicScene(atSea ? "sea" : daylight < 0.24 ? "night" : "day", dt);
+    const lively = [BiomeId.Meadow, BiomeId.Wildwood, BiomeId.Savanna, BiomeId.Birchlight, BiomeId.Bloomwood].includes(biome);
+    const skyChallenge = this.combatMusicTimer > 0 || (biome === BiomeId.Highlands && this.position.y > 57 && daylight > 0.35);
+    this.audio.setMusicScene(skyChallenge ? "skyboss" : atSea ? "sea" : daylight < 0.24 ? "night" : lively ? "hoppin" : "day", dt);
   }
 
   updateRain(dt: number) {
@@ -2666,12 +2879,12 @@ export class VoxelEngine {
       const definition = ITEMS[item];
       if (definition) {
         const material = (color: string | number, emissive = false) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity: emissive ? 1 : 0.96, depthTest: false, depthWrite: false });
-        const addBox = (size: [number, number, number], position: [number, number, number], color: string | number, rotation: [number, number, number] = [0, 0, 0], emissive = false) => {
+        const addBox = (size: [number, number, number], position: [number, number, number], color: string | number, rotation: [number, number, number] = [0, 0, 0], emissive = false, parent: THREE.Object3D = this.heldRoot) => {
           const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material(color, emissive));
           mesh.position.set(...position);
           mesh.rotation.set(...rotation);
           mesh.renderOrder = 20;
-          this.heldRoot.add(mesh);
+          parent.add(mesh);
         };
         if (item === BlockId.Torch) {
           addBox([0.08, 0.48, 0.08], [0, 0, 0], 0x8d542b, [0, 0, -0.12]);
@@ -2681,13 +2894,21 @@ export class VoxelEngine {
           addBox([0.08, 0.62, 0.38], [0, 0.04, 0], definition.color, [0.08, 0.3, -0.08]);
           addBox([0.09, 0.08, 0.09], [-0.07, 0.02, 0.16], 0xe9c366, [0.08, 0.3, -0.08], true);
         } else if (definition.toolKind) {
-          addBox([0.08, 0.62, 0.08], [0, -0.02, 0], 0x8d5e34, [0, 0, -0.55]);
-          if (definition.toolKind === "sword") {
-            addBox([0.12, 0.58, 0.05], [-0.17, 0.34, 0], definition.color, [0, 0, -0.55]);
-            addBox([0.32, 0.06, 0.08], [-0.08, 0.08, 0], 0x6b4c2e, [0, 0, -0.55]);
-          } else if (definition.toolKind === "pickaxe") addBox([0.58, 0.1, 0.12], [-0.08, 0.22, 0], definition.color, [0, 0, -0.22]);
-          else if (definition.toolKind === "axe") addBox([0.34, 0.3, 0.1], [-0.18, 0.24, 0], definition.color, [0, 0, -0.22]);
-          else addBox([0.22, 0.3, 0.08], [-0.16, 0.25, 0], definition.color, [0, 0, -0.55]);
+          const toolGroup = new THREE.Group();
+          const spec = createHeldToolSpec(definition.toolKind, definition.color, definition.name);
+          for (const modelBox of spec.boxes) {
+            addBox(
+              [...modelBox.size] as [number, number, number],
+              [...modelBox.position] as [number, number, number],
+              modelBox.color,
+              [...(modelBox.rotation ?? [0, 0, 0])] as [number, number, number],
+              Boolean(modelBox.emissive),
+              toolGroup,
+            );
+          }
+          toolGroup.scale.setScalar(0.62);
+          toolGroup.rotation.set(0.03, -0.08, -0.54);
+          this.heldRoot.add(toolGroup);
         } else if (definition.placeBlock !== undefined) {
           addBox([0.34, 0.34, 0.34], [0, 0.02, 0], definition.color, [0.18, 0.24, 0]);
         } else addBox([0.26, 0.34, 0.18], [0, 0.02, 0], definition.color, [0.12, 0.2, -0.08]);
@@ -2720,6 +2941,8 @@ export class VoxelEngine {
     this.previousTime = now;
     this.placeCooldown = Math.max(0, this.placeCooldown - dt);
     this.attackCooldown = Math.max(0, this.attackCooldown - dt);
+    this.zombieVoiceCooldown = Math.max(0, this.zombieVoiceCooldown - dt);
+    this.combatMusicTimer = Math.max(0, this.combatMusicTimer - dt);
 
     if (this.titleMode) {
       const t = now * 0.000045;
@@ -2751,6 +2974,7 @@ export class VoxelEngine {
       this.updateDrops(dt);
       this.updateSaplings(dt);
       this.updateFallingTrees(dt);
+      this.updateMobRemains(dt);
     }
     this.updateRain(dt);
     this.updateParticles(dt);
@@ -2977,6 +3201,7 @@ export class VoxelEngine {
 
   dispose() {
     this.disposed = true;
+    this.unlockFullscreenEscape();
     this.saveNow(false);
     cancelAnimationFrame(this.animationFrame);
     window.clearTimeout(this.saveTimer);
