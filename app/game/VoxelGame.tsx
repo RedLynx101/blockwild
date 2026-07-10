@@ -1,10 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+/* eslint-disable react-hooks/refs -- engine access occurs only inside event callbacks produced by render helpers. */
+
 import {
-  BLOCKS,
-  BlockId,
-  PLACEABLE_BLOCKS,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
+import {
+  CREATIVE_BLOCKS,
+  ITEMS,
+  RECIPES,
   VoxelEngine,
   clearSavedWorld,
   readSavedWorld,
@@ -12,33 +22,51 @@ import {
   type GameMode,
   type GameSettings,
   type HudState,
+  type InventorySlot,
+  type ItemCode,
+  type OverlayKind,
 } from "./engine";
 
-type Overlay = "title" | "new" | "pause" | "inventory" | "help" | "settings" | "reset" | null;
+type Overlay = "title" | "new" | "pause" | "inventory" | "crafting" | "furnace" | "chest" | "help" | "settings" | "reset" | null;
+
+const blankSlots = (count: number) => Array.from({ length: count }, () => null as InventorySlot | null);
 
 const INITIAL_HUD: HudState = {
   health: 10,
   hunger: 10,
-  hotbar: [...PLACEABLE_BLOCKS],
+  xp: 0,
+  level: 0,
+  inventory: blankSlots(36),
+  cursor: null,
+  craftGrid: blankSlots(9),
+  craftOutput: null,
+  craftingSize: 2,
+  activeFurnace: null,
+  activeChest: null,
   selected: 0,
-  counts: {},
   targetName: null,
+  targetMob: null,
   breakProgress: 0,
   day: 1,
   clock: "8:00 AM",
-  biome: "Wildwood Meadow",
+  biome: "Flower Meadow",
+  depth: "Surface",
   coordinates: [0, 0, 0],
   debug: false,
-  mode: "builder",
+  mode: "survival",
   weather: "clear",
+  loadedChunks: 9,
+  queuedChunks: 0,
+  fullscreen: false,
 };
 
-function BlockIcon({ id, small = false }: { id: BlockId; small?: boolean }) {
-  const definition = BLOCKS[id];
+function ItemIcon({ item, small = false }: { item: ItemCode; small?: boolean }) {
+  const definition = ITEMS[item];
+  const isTool = Boolean(definition?.toolKind);
   return (
     <span
-      className={`block-icon ${small ? "block-icon-small" : ""}`}
-      style={{ "--block-color": definition.color } as CSSProperties}
+      className={`item-icon ${small ? "item-icon-small" : ""} ${isTool ? `tool-icon tool-${definition.toolKind}` : "block-item-icon"}`}
+      style={{ "--item-color": definition?.color ?? "#777" } as CSSProperties}
       aria-hidden="true"
     />
   );
@@ -68,11 +96,25 @@ function StatPips({ kind, value }: { kind: "heart" | "hunger"; value: number }) 
   return (
     <div className={`stat-pips stat-${kind}`} aria-label={`${kind === "heart" ? "Health" : "Hunger"}: ${Math.ceil(value)} of 10`}>
       {Array.from({ length: 10 }, (_, index) => (
-        <span key={index} className={index < Math.ceil(value) ? "filled" : "empty"}>
-          {kind === "heart" ? "♥" : "◆"}
-        </span>
+        <span key={index} className={index < Math.ceil(value) ? "filled" : "empty"}>{kind === "heart" ? "♥" : "◆"}</span>
       ))}
     </div>
+  );
+}
+
+function SlotContents({ slot }: { slot: InventorySlot | null }) {
+  if (!slot) return null;
+  const definition = ITEMS[slot.item];
+  const maxDurability = definition?.maxDurability;
+  const durability = slot.durability ?? maxDurability;
+  return (
+    <>
+      <ItemIcon item={slot.item} />
+      {slot.count > 1 && <span className="item-count">{slot.count}</span>}
+      {maxDurability && durability !== undefined && (
+        <span className="durability-track"><span style={{ width: `${Math.max(0, durability / maxDurability) * 100}%` }} /></span>
+      )}
+    </>
   );
 }
 
@@ -88,14 +130,16 @@ export default function VoxelGame() {
   const [started, setStarted] = useState(false);
   const [hasSave, setHasSave] = useState(false);
   const [hud, setHud] = useState<HudState>(INITIAL_HUD);
-  const [toast, setToast] = useState("Take only blocks. Leave only impossible architecture.");
+  const [toast, setToast] = useState("There is always another horizon. Usually with teeth.");
   const [savedPulse, setSavedPulse] = useState(false);
   const [seed, setSeed] = useState("WILDERNESS");
   const [currentWorldSeed, setCurrentWorldSeed] = useState("WILDERNESS");
-  const [mode, setMode] = useState<GameMode>("builder");
+  const [mode, setMode] = useState<GameMode>("survival");
   const [settings, setSettingsState] = useState<GameSettings>(() => readSettings());
   const [settingsReturn, setSettingsReturn] = useState<"title" | "pause">("title");
   const [webglError, setWebglError] = useState(false);
+  const [cursorPosition, setCursorPosition] = useState({ x: 0, y: 0 });
+  const [inventoryTab, setInventoryTab] = useState<"inventory" | "recipes" | "creative">("inventory");
 
   const setOverlay = useCallback((next: Overlay) => {
     overlayRef.current = next;
@@ -105,7 +149,7 @@ export default function VoxelGame() {
   const showToast = useCallback((message: string) => {
     setToast(message);
     window.clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = window.setTimeout(() => setToast(""), 4200);
+    toastTimerRef.current = window.setTimeout(() => setToast(""), 4300);
   }, []);
 
   useEffect(() => {
@@ -119,7 +163,6 @@ export default function VoxelGame() {
         setCurrentWorldSeed(saved.seed);
       }
     });
-
     let engine: VoxelEngine;
     try {
       engine = new VoxelEngine(canvas, {
@@ -128,9 +171,10 @@ export default function VoxelGame() {
         onLockChange: (locked) => {
           if (!locked && startedRef.current && overlayRef.current === null) setOverlay("pause");
         },
-        onInventoryRequest: () => {
+        onOverlayRequest: (kind: OverlayKind) => {
           if (!startedRef.current) return;
-          setOverlay("inventory");
+          setInventoryTab(kind === "inventory" ? "inventory" : "recipes");
+          setOverlay(kind);
         },
         onDeath: () => undefined,
         onSave: () => {
@@ -169,7 +213,7 @@ export default function VoxelGame() {
     setHasSave(true);
     setOverlay(null);
     engine.activate();
-    showToast("WASD move · Mouse look · Space jump · Hold left to harvest · Right click to build");
+    showToast("WASD move · Space jump/swim · Shift sprint · Left harvest/attack · Right use/build · E inventory · F fullscreen");
   };
 
   const continueWorld = () => {
@@ -186,10 +230,11 @@ export default function VoxelGame() {
     setStarted(true);
     setOverlay(null);
     engine.activate();
-    showToast(`Welcome back to ${save.seed}.`);
+    showToast(`Welcome back to ${save.seed}. The horizon kept going without you.`);
   };
 
   const resume = () => {
+    engineRef.current?.closeContainer();
     setOverlay(null);
     engineRef.current?.activate();
   };
@@ -197,7 +242,6 @@ export default function VoxelGame() {
   const saveAndQuit = () => {
     const engine = engineRef.current;
     if (!engine) return;
-    engine.saveNow();
     engine.quitToTitle();
     startedRef.current = false;
     setStarted(false);
@@ -225,8 +269,6 @@ export default function VoxelGame() {
     setOverlay("settings");
   };
 
-  const closeInventory = () => resume();
-
   const handleLookDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.pointerType === "mouse") return;
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -253,67 +295,141 @@ export default function VoxelGame() {
     engineRef.current?.setVirtualKey(code, down);
   };
 
-  const selectedBlock = hud.hotbar[hud.selected] ?? BlockId.Grass;
+  const trackCursor = (event: ReactPointerEvent<HTMLElement>) => setCursorPosition({ x: event.clientX, y: event.clientY });
+
+  const slotAction = (index: number, button: "left" | "right", shift = false) => engineRef.current?.inventoryClick(index, button, shift);
+  const slotContext = (event: ReactMouseEvent, action: () => void) => { event.preventDefault(); action(); };
+
+  const renderSlot = (
+    slot: InventorySlot | null,
+    key: string,
+    onLeft: (shift: boolean) => void,
+    onRight: () => void,
+    className = "",
+    label?: string,
+  ) => (
+    <button
+      type="button"
+      key={key}
+      className={`mc-slot ${className}`}
+      title={slot ? `${ITEMS[slot.item]?.name ?? "Item"}${slot.durability !== undefined ? ` · ${slot.durability} durability` : ""}` : label}
+      aria-label={slot ? `${ITEMS[slot.item]?.name ?? "Item"}, ${slot.count}` : label ?? "Empty slot"}
+      onClick={(event) => onLeft(event.shiftKey)}
+      onContextMenu={(event) => slotContext(event, onRight)}
+    >
+      <SlotContents slot={slot} />
+    </button>
+  );
+
+  const renderPlayerInventory = () => (
+    <div className="player-inventory-section">
+      <span className="grid-label">INVENTORY</span>
+      <div className="mc-grid main-inventory-grid">
+        {hud.inventory.slice(9, 36).map((slot, offset) => renderSlot(slot, `main-${offset}`, (shift) => slotAction(offset + 9, "left", shift), () => slotAction(offset + 9, "right")))}
+      </div>
+      <div className="mc-grid inventory-hotbar-grid">
+        {hud.inventory.slice(0, 9).map((slot, index) => renderSlot(slot, `inv-hot-${index}`, (shift) => slotAction(index, "left", shift), () => slotAction(index, "right"), hud.selected === index ? "selected" : ""))}
+      </div>
+    </div>
+  );
+
+  const recipeAvailable = (recipeId: string) => {
+    const recipe = RECIPES.find((candidate) => candidate.id === recipeId);
+    if (!recipe) return false;
+    if (recipe.table && hud.craftingSize < 3) return false;
+    return true;
+  };
+
+  const renderRecipeBook = (includeTable: boolean) => (
+    <aside className="recipe-book">
+      <div className="recipe-book-title"><span>▤</span><strong>RECIPE BOOK</strong></div>
+      <div className="recipe-scroll">
+        {RECIPES.filter((recipe) => includeTable || !recipe.table).map((recipe) => (
+          <button type="button" key={recipe.id} className="recipe-entry" disabled={!recipeAvailable(recipe.id)} onClick={() => engineRef.current?.autoCraft(recipe.id)}>
+            <ItemIcon item={recipe.output.item} small />
+            <span><strong>{recipe.name}</strong><small>{recipe.output.count > 1 ? `Makes ${recipe.output.count}` : recipe.table ? "Crafting table" : "Hand craftable"}</small></span>
+            <b>+</b>
+          </button>
+        ))}
+      </div>
+      <p>Click a known recipe to craft directly when you have the ingredients. Or arrange the grid yourself, cube scholar.</p>
+    </aside>
+  );
+
+  const renderCraftingArea = (size: 2 | 3) => {
+    const positions = size === 2 ? [0, 1, 3, 4] : Array.from({ length: 9 }, (_, index) => index);
+    return (
+      <div className="crafting-workspace">
+        <div className={`mc-grid craft-grid craft-${size}`}>
+          {positions.map((position) => renderSlot(hud.craftGrid[position], `craft-${position}`, () => engineRef.current?.craftSlotClick(position, "left"), () => engineRef.current?.craftSlotClick(position, "right")))}
+        </div>
+        <div className="craft-arrow"><span>▶</span></div>
+        {renderSlot(hud.craftOutput, "craft-output", () => engineRef.current?.craftOutputClick(), () => undefined, "craft-output-slot", "Crafting output")}
+      </div>
+    );
+  };
+
+  const selectedSlot = hud.inventory[hud.selected];
+  const selectedName = selectedSlot ? ITEMS[selectedSlot.item]?.name ?? "Unknown Item" : "Empty Hand";
+  const xpNeeded = 12 + hud.level * 6;
 
   return (
     <main className="game-shell">
-      <canvas ref={canvasRef} className="game-canvas" aria-label="Blockwild 3D game world" />
+      <canvas ref={canvasRef} className="game-canvas" aria-label="Blockwild endless 3D game world" />
       <div className="sky-vignette" aria-hidden="true" />
 
       {started && overlay === null && (
         <div className="game-hud" aria-live="polite">
-          <div className="world-readout">
+          <div className="world-readout expanded-readout">
             <strong>DAY {hud.day}</strong>
             <span>{hud.clock}</span>
             <span>{hud.biome}</span>
+            <span className="depth-readout">{hud.depth}</span>
           </div>
-
           <div className="objective-card">
-            <span className="objective-kicker">THE WILD CALLS</span>
-            <strong>Find the golden waystone</strong>
-            <span>Somewhere beyond the southeast ridge.</span>
+            <span className="objective-kicker">THE FIRST LONG NIGHT</span>
+            <strong>Wood → table → pickaxe → shelter</strong>
+            <span>Then dig. The rarest crystals wait below Y −10. The hungriest things do too.</span>
           </div>
+          <button type="button" className="hud-fullscreen-button" onClick={() => engineRef.current?.toggleFullscreen()} aria-label={hud.fullscreen ? "Exit fullscreen" : "Enter fullscreen"}>{hud.fullscreen ? "⊡" : "□"}</button>
 
           {hud.debug && (
             <div className="debug-card">
               XYZ {hud.coordinates.join(" / ")}<br />
-              {hud.mode.toUpperCase()} · {hud.weather.toUpperCase()}<br />
-              Seed: {currentWorldSeed}
+              {hud.mode.toUpperCase()} · {hud.weather.toUpperCase()} · {hud.depth.toUpperCase()}<br />
+              Seed: {currentWorldSeed}<br />
+              Chunks: {hud.loadedChunks} loaded · {hud.queuedChunks} queued
             </div>
           )}
 
           <div className="crosshair" aria-hidden="true"><span /><span /></div>
           {hud.breakProgress > 0 && (
-            <div className="break-meter" aria-label={`Mining progress ${Math.round(hud.breakProgress * 100)} percent`}>
-              <span style={{ width: `${hud.breakProgress * 100}%` }} />
+            <div className="break-meter" aria-label={`Mining progress ${Math.round(hud.breakProgress * 100)} percent`}><span style={{ width: `${hud.breakProgress * 100}%` }} /></div>
+          )}
+          {hud.targetMob && (
+            <div className="mob-target-card">
+              <strong>{hud.targetMob.name}</strong>
+              <span><i style={{ width: `${Math.max(0, hud.targetMob.health / hud.targetMob.maxHealth) * 100}%` }} /></span>
+              <small>{Math.max(0, hud.targetMob.health)} / {hud.targetMob.maxHealth}</small>
             </div>
           )}
 
           <div className="bottom-hud">
-            <div className="active-block-name">{BLOCKS[selectedBlock].name}</div>
+            <div className="active-block-name">{selectedName}</div>
             {hud.mode === "survival" && (
               <div className="survival-stats">
                 <StatPips kind="heart" value={hud.health} />
                 <StatPips kind="hunger" value={hud.hunger} />
               </div>
             )}
-            <div className="hotbar" role="toolbar" aria-label="Block hotbar">
-              {hud.hotbar.map((block, index) => {
-                const count = hud.counts[block] ?? 0;
-                return (
-                  <button
-                    type="button"
-                    key={`${block}-${index}`}
-                    className={`hotbar-slot ${hud.selected === index ? "selected" : ""}`}
-                    aria-label={`Slot ${index + 1}: ${BLOCKS[block].name}${hud.mode === "survival" ? `, ${count} available` : ""}`}
-                    onClick={() => engineRef.current?.selectSlot(index)}
-                  >
-                    <span className="slot-number">{index + 1}</span>
-                    <BlockIcon id={block} />
-                    <span className="slot-count">{hud.mode === "builder" ? "∞" : count || ""}</span>
-                  </button>
-                );
-              })}
+            <div className="xp-bar" aria-label={`Level ${hud.level}, ${hud.xp} of ${xpNeeded} experience`}><span style={{ width: `${Math.min(100, hud.xp / xpNeeded * 100)}%` }} /><b>{hud.level || ""}</b></div>
+            <div className="hotbar" role="toolbar" aria-label="Item hotbar">
+              {hud.inventory.slice(0, 9).map((slot, index) => (
+                <button type="button" key={`hotbar-${index}`} className={`hotbar-slot ${hud.selected === index ? "selected" : ""}`} aria-label={`Slot ${index + 1}: ${slot ? ITEMS[slot.item]?.name : "empty"}`} onClick={() => engineRef.current?.selectSlot(index)}>
+                  <span className="slot-number">{index + 1}</span>
+                  <SlotContents slot={slot} />
+                </button>
+              ))}
             </div>
             <div className="target-label">{hud.targetName ? `▣ ${hud.targetName}` : ""}</div>
           </div>
@@ -333,16 +449,9 @@ export default function VoxelGame() {
             <button type="button" className="touch-key key-right" aria-label="Move right" onPointerDown={(event) => handleVirtualKey(event, "KeyD", true)} onPointerUp={(event) => handleVirtualKey(event, "KeyD", false)} onPointerCancel={(event) => handleVirtualKey(event, "KeyD", false)}>▶</button>
           </div>
           <div className="action-pad">
-            <button type="button" className="touch-action jump-action" aria-label="Jump" onPointerDown={(event) => { event.preventDefault(); engineRef.current?.jump(); }}>↑</button>
-            <button
-              type="button"
-              className="touch-action mine-action"
-              aria-label="Harvest block"
-              onPointerDown={(event) => { event.preventDefault(); engineRef.current?.setMining(true); }}
-              onPointerUp={() => engineRef.current?.setMining(false)}
-              onPointerCancel={() => engineRef.current?.setMining(false)}
-            >⛏</button>
-            <button type="button" className="touch-action place-action" aria-label="Place block" onPointerDown={(event) => { event.preventDefault(); engineRef.current?.placeBlock(); }}>▣</button>
+            <button type="button" className="touch-action jump-action" aria-label="Jump or swim" onPointerDown={(event) => { event.preventDefault(); engineRef.current?.jump(); }}>↑</button>
+            <button type="button" className="touch-action mine-action" aria-label="Harvest or attack" onPointerDown={(event) => { event.preventDefault(); engineRef.current?.setMining(true); }} onPointerUp={() => engineRef.current?.setMining(false)} onPointerCancel={() => engineRef.current?.setMining(false)}>⚒</button>
+            <button type="button" className="touch-action place-action" aria-label="Use or place" onPointerDown={(event) => { event.preventDefault(); engineRef.current?.useSelected(); }}>▣</button>
           </div>
           <button type="button" className="mobile-menu-button" aria-label="Pause game" onClick={() => { engineRef.current?.pause(); setOverlay("pause"); }}>Ⅱ</button>
         </div>
@@ -354,8 +463,8 @@ export default function VoxelGame() {
           <div className="title-content">
             <div className="logo-wrap">
               <h1 id="game-title" className="block-logo">BLOCKWILD</h1>
-              <p className="logo-subtitle">A WORLD MADE ONE CUBE AT A TIME</p>
-              <span className="splash-text">Now with 100% more corners!</span>
+              <p className="logo-subtitle">ENDLESS HORIZONS · SEVENTEEN BIOMES · A VERY DEEP DOWN</p>
+              <span className="splash-text">Now actually endless!</span>
             </div>
             <div className="main-menu-buttons">
               <PixelButton className="primary-menu-button" disabled={!hasSave} onClick={continueWorld}>Continue World</PixelButton>
@@ -366,10 +475,8 @@ export default function VoxelGame() {
               </div>
             </div>
             <div className="title-footer">
-              <span>Original procedural textures · local worlds · no creepers were copied</span>
-              <button type="button" className="sound-quick-toggle" onClick={() => updateSettings({ muted: !settings.muted })} aria-label={settings.muted ? "Turn sound on" : "Mute sound"}>
-                {settings.muted ? "SOUND: OFF" : "SOUND: ON"}
-              </button>
+              <span>Endless streamed terrain · original procedural textures · local persistent worlds</span>
+              <button type="button" className="sound-quick-toggle" onClick={() => updateSettings({ muted: !settings.muted })} aria-label={settings.muted ? "Turn sound on" : "Mute sound"}>{settings.muted ? "SOUND: OFF" : "SOUND: ON"}</button>
             </div>
           </div>
         </section>
@@ -377,9 +484,10 @@ export default function VoxelGame() {
 
       {overlay === "new" && (
         <section className="menu-overlay" aria-labelledby="new-world-title">
-          <div className="pixel-panel world-setup-panel">
-            <span className="panel-eyebrow">WORLD GENERATOR</span>
+          <div className="pixel-panel world-setup-panel expanded-setup-panel">
+            <span className="panel-eyebrow">ENDLESS WORLD GENERATOR</span>
             <h2 id="new-world-title">Create a New World</h2>
+            <p className="setup-intro">Every seed grows continents, oceans, rivers, mountains, seventeen surface biomes, cave networks, ruins, cabins, and a worldheart thirty-two blocks below zero.</p>
             <label className="field-label" htmlFor="world-seed">World seed</label>
             <div className="seed-row">
               <input id="world-seed" className="pixel-input" value={seed} maxLength={32} onChange={(event) => setSeed(event.target.value.toUpperCase())} />
@@ -387,15 +495,18 @@ export default function VoxelGame() {
             </div>
             <fieldset className="mode-picker">
               <legend>Game mode</legend>
+              <button type="button" className={mode === "survival" ? "active" : ""} onClick={() => setMode("survival")}>
+                <strong>SURVIVAL</strong>
+                <span>Stack inventory, tools, durability, hunger, crafting tables, furnaces, hostile nights, mob loot, XP, and irresponsible spelunking.</span>
+              </button>
               <button type="button" className={mode === "builder" ? "active" : ""} onClick={() => setMode("builder")}>
                 <strong>BUILDER</strong>
-                <span>Infinite blocks. Fast harvesting. Pure construction.</span>
-              </button>
-              <button type="button" className={mode === "survival" ? "active" : ""} onClick={() => setMode("survival")}>
-                <strong>SURVIVAL-LITE</strong>
-                <span>Gather, craft, mind your hearts, and watch your hunger.</span>
+                <span>Fast harvesting, infinite placement, creative catalog, no hunger, and fewer consequences for architectural hubris.</span>
               </button>
             </fieldset>
+            <div className="world-feature-strip">
+              <span><b>∞</b> STREAMED WORLD</span><span><b>17</b> BIOMES</span><span><b>7</b> MOB SPECIES</span><span><b>128</b> BLOCKS TALL</span>
+            </div>
             <div className="panel-actions">
               <PixelButton className="secondary-button" onClick={() => setOverlay("title")}>Cancel</PixelButton>
               <PixelButton className="gold-button" onClick={createWorld}>Generate World</PixelButton>
@@ -407,102 +518,124 @@ export default function VoxelGame() {
       {overlay === "pause" && (
         <section className="menu-overlay pause-overlay" aria-labelledby="pause-title">
           <div className="pixel-panel pause-panel">
-            <span className="panel-eyebrow">DAY {hud.day} · {hud.clock}</span>
+            <span className="panel-eyebrow">{hud.biome} · DAY {hud.day} · {hud.clock}</span>
             <h2 id="pause-title">Game Paused</h2>
-            <p className="panel-flavor">The mosslings will pretend not to move while you are looking.</p>
+            <p className="panel-flavor">Loaded {hud.loadedChunks} chunks around you. The rest of infinity is waiting politely offscreen.</p>
             <div className="stacked-menu-buttons">
-              <PixelButton className="gold-button" onClick={resume}>Back to Game</PixelButton>
-              <PixelButton onClick={() => setOverlay("inventory")}>Inventory & Crafting</PixelButton>
+              <PixelButton className="gold-button" onClick={() => { setOverlay(null); engineRef.current?.activate(); }}>Back to Game</PixelButton>
+              <PixelButton onClick={() => engineRef.current?.openOverlay("inventory")}>Inventory & Crafting</PixelButton>
+              <PixelButton onClick={() => engineRef.current?.toggleFullscreen()}>{hud.fullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}</PixelButton>
               <PixelButton onClick={() => openSettings("pause")}>Settings</PixelButton>
-              <PixelButton onClick={() => setOverlay("help")}>How to Play</PixelButton>
-              <PixelButton className="danger-button" onClick={() => setOverlay("reset")}>Regenerate World</PixelButton>
+              <PixelButton onClick={() => setOverlay("help")}>Field Manual</PixelButton>
+              <PixelButton className="danger-button" onClick={() => setOverlay("reset")}>Delete & Regenerate World</PixelButton>
               <PixelButton className="secondary-button" onClick={saveAndQuit}>Save & Quit to Title</PixelButton>
             </div>
           </div>
         </section>
       )}
 
-      {overlay === "inventory" && (
-        <section className="menu-overlay inventory-overlay" aria-labelledby="inventory-title">
-          <div className="pixel-panel inventory-panel">
-            <header className="panel-header">
-              <div>
-                <span className="panel-eyebrow">{hud.mode === "builder" ? "BUILDER CATALOG" : "YOUR PACK"}</span>
-                <h2 id="inventory-title">Inventory & Crafting</h2>
-              </div>
-              <button type="button" className="panel-close" onClick={closeInventory} aria-label="Close inventory">×</button>
+      {(overlay === "inventory" || overlay === "crafting") && (
+        <section className="menu-overlay inventory-overlay" aria-labelledby="inventory-title" onPointerMove={trackCursor}>
+          <div className="mc-window inventory-window">
+            <header className="mc-window-header">
+              <div><span className="panel-eyebrow">{overlay === "crafting" ? "CRAFTING TABLE · 3×3" : hud.mode === "builder" ? "BUILDER INVENTORY" : "PACK · 2×2 CRAFTING"}</span><h2 id="inventory-title">{overlay === "crafting" ? "Crafting Table" : "Inventory"}</h2></div>
+              <button type="button" className="panel-close" onClick={resume} aria-label="Close inventory">×</button>
             </header>
-            <p className="inventory-hint">Choose a block to place it in hotbar slot {hud.selected + 1}. Press 1–9 or use the mouse wheel in-game.</p>
-            <div className="inventory-layout">
-              <div>
-                <h3>BLOCKS</h3>
-                <div className="inventory-grid">
-                  {PLACEABLE_BLOCKS.map((block) => {
-                    const count = hud.counts[block] ?? 0;
-                    const available = hud.mode === "builder" || count > 0;
-                    return (
-                      <button type="button" key={block} className={`inventory-slot ${hud.hotbar[hud.selected] === block ? "equipped" : ""}`} disabled={!available} onClick={() => engineRef.current?.assignSelected(block)}>
-                        <BlockIcon id={block} />
-                        <span className="inventory-count">{hud.mode === "builder" ? "∞" : count}</span>
-                        <span className="inventory-name">{BLOCKS[block].name}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-              <div className="crafting-column">
-                <h3>FIELD RECIPES</h3>
-                {[
-                  { id: "planks" as const, name: "Planks ×4", cost: "1 Wildwood Log", icon: BlockId.Planks },
-                  { id: "brick" as const, name: "Stone Brick ×4", cost: "2 Stone", icon: BlockId.Brick },
-                  { id: "glass" as const, name: "Glass ×4", cost: "2 Sand", icon: BlockId.Glass },
-                  { id: "glow" as const, name: "Glowstone ×2", cost: "1 Coal + 1 Glass", icon: BlockId.Glow },
-                ].map((recipe) => (
-                  <button type="button" key={recipe.id} className="recipe-card" onClick={() => engineRef.current?.craft(recipe.id)}>
-                    <BlockIcon id={recipe.icon} small />
-                    <span><strong>{recipe.name}</strong><small>{recipe.cost}</small></span>
-                    <b>CRAFT</b>
-                  </button>
+            <div className="inventory-tabs">
+              <button type="button" className={inventoryTab === "inventory" ? "active" : ""} onClick={() => setInventoryTab("inventory")}>PACK</button>
+              <button type="button" className={inventoryTab === "recipes" ? "active" : ""} onClick={() => setInventoryTab("recipes")}>RECIPES</button>
+              {hud.mode === "builder" && <button type="button" className={inventoryTab === "creative" ? "active" : ""} onClick={() => setInventoryTab("creative")}>ALL BLOCKS</button>}
+            </div>
+            {inventoryTab === "creative" && hud.mode === "builder" ? (
+              <div className="creative-catalog">
+                {CREATIVE_BLOCKS.map((item) => (
+                  <button type="button" key={item} className="creative-entry" onClick={() => engineRef.current?.setCreativeItem(item)}><ItemIcon item={item} /><span>{ITEMS[item]?.name}</span></button>
                 ))}
-                <div className="ore-pouch">
-                  <span>Coal</span><strong>{hud.counts[BlockId.Coal] ?? 0}</strong>
-                  <span>Sunmetal</span><strong>{hud.counts[BlockId.Iron] ?? 0}</strong>
-                  <span>Wildwood</span><strong>{hud.counts[BlockId.Log] ?? 0}</strong>
+              </div>
+            ) : (
+              <div className="inventory-workbench-layout">
+                {inventoryTab === "recipes" ? renderRecipeBook(overlay === "crafting") : (
+                  <div className="player-paper-doll">
+                    <div className="avatar-cube"><span className="avatar-head" /><span className="avatar-body" /><span className="avatar-leg leg-a" /><span className="avatar-leg leg-b" /></div>
+                    <small>LEVEL {hud.level}</small>
+                    <b>{hud.depth}</b>
+                  </div>
+                )}
+                <div className="crafting-and-pack">
+                  <div className="craft-title">CRAFTING {overlay === "crafting" ? "3×3" : "2×2"}</div>
+                  {renderCraftingArea(overlay === "crafting" ? 3 : 2)}
+                  {renderPlayerInventory()}
                 </div>
               </div>
-            </div>
-            <div className="inventory-hotbar-preview">
-              {hud.hotbar.map((block, index) => (
-                <button type="button" key={`${block}-preview-${index}`} className={hud.selected === index ? "selected" : ""} onClick={() => engineRef.current?.selectSlot(index)} aria-label={`Select hotbar slot ${index + 1}`}>
-                  <span>{index + 1}</span><BlockIcon id={block} small />
-                </button>
-              ))}
-            </div>
+            )}
+            <div className="inventory-instructions">Left click moves stacks · Right click splits/places one · Shift-click moves between pack and hotbar · Q drops the selected item</div>
           </div>
+          {hud.cursor && <div className="held-stack" style={{ left: cursorPosition.x, top: cursorPosition.y }}><SlotContents slot={hud.cursor} /></div>}
+        </section>
+      )}
+
+      {overlay === "furnace" && (
+        <section className="menu-overlay inventory-overlay" aria-labelledby="furnace-title" onPointerMove={trackCursor}>
+          <div className="mc-window machine-window">
+            <header className="mc-window-header"><div><span className="panel-eyebrow">SMELTING STATION</span><h2 id="furnace-title">Furnace</h2></div><button type="button" className="panel-close" onClick={resume}>×</button></header>
+            <div className="furnace-layout">
+              <div className="furnace-input-stack">
+                {renderSlot(hud.activeFurnace?.input ?? null, "furnace-input", () => engineRef.current?.machineClick("furnace", 0, "left"), () => engineRef.current?.machineClick("furnace", 0, "right"), "machine-slot", "Smelting input")}
+                <div className={`furnace-flame ${(hud.activeFurnace?.burn ?? 0) > 0 ? "lit" : ""}`}><span>♨</span><i style={{ height: `${hud.activeFurnace?.burnMax ? hud.activeFurnace.burn / hud.activeFurnace.burnMax * 100 : 0}%` }} /></div>
+                {renderSlot(hud.activeFurnace?.fuel ?? null, "furnace-fuel", () => engineRef.current?.machineClick("furnace", 1, "left"), () => engineRef.current?.machineClick("furnace", 1, "right"), "machine-slot", "Fuel")}
+              </div>
+              <div className="smelt-progress"><span style={{ width: `${Math.min(100, (hud.activeFurnace?.progress ?? 0) / 8 * 100)}%` }} /><b>▶</b></div>
+              {renderSlot(hud.activeFurnace?.output ?? null, "furnace-output", () => engineRef.current?.machineClick("furnace", 2, "left"), () => engineRef.current?.machineClick("furnace", 2, "right"), "machine-slot furnace-output-slot", "Smelted output")}
+              <div className="smelt-guide"><strong>SMELTING</strong><span>Ore → ingot</span><span>Sand → glass</span><span>Raw meat → cooked</span><span>Log → charcoal</span><span>Cobble → stone</span><small>Coal burns longest. Sticks burn with admirable optimism.</small></div>
+            </div>
+            {renderPlayerInventory()}
+          </div>
+          {hud.cursor && <div className="held-stack" style={{ left: cursorPosition.x, top: cursorPosition.y }}><SlotContents slot={hud.cursor} /></div>}
+        </section>
+      )}
+
+      {overlay === "chest" && (
+        <section className="menu-overlay inventory-overlay" aria-labelledby="chest-title" onPointerMove={trackCursor}>
+          <div className="mc-window chest-window">
+            <header className="mc-window-header"><div><span className="panel-eyebrow">WILDWOOD STORAGE</span><h2 id="chest-title">Chest</h2></div><button type="button" className="panel-close" onClick={resume}>×</button></header>
+            <span className="grid-label">CHEST</span>
+            <div className="mc-grid chest-grid">
+              {(hud.activeChest ?? blankSlots(27)).map((slot, index) => renderSlot(slot, `chest-${index}`, () => engineRef.current?.machineClick("chest", index, "left"), () => engineRef.current?.machineClick("chest", index, "right")))}
+            </div>
+            {renderPlayerInventory()}
+          </div>
+          {hud.cursor && <div className="held-stack" style={{ left: cursorPosition.x, top: cursorPosition.y }}><SlotContents slot={hud.cursor} /></div>}
         </section>
       )}
 
       {overlay === "help" && (
         <section className="menu-overlay" aria-labelledby="help-title">
-          <div className="pixel-panel help-panel">
-            <span className="panel-eyebrow">FIELD MANUAL</span>
-            <h2 id="help-title">How to Roam the Wild</h2>
+          <div className="pixel-panel help-panel mega-help-panel">
+            <span className="panel-eyebrow">FIELD MANUAL · REVISED AFTER SEVERAL INCIDENTS</span>
+            <h2 id="help-title">How to Survive the Wild</h2>
             <div className="control-grid">
-              <div><kbd>W A S D</kbd><span><strong>Move</strong>Walk relative to where you look.</span></div>
+              <div><kbd>W A S D</kbd><span><strong>Move</strong>Walk relative to your view.</span></div>
               <div><kbd>MOUSE</kbd><span><strong>Look</strong>Click the world to capture the cursor.</span></div>
-              <div><kbd>SPACE</kbd><span><strong>Jump</strong>Scale blocks and hop gaps.</span></div>
-              <div><kbd>SHIFT</kbd><span><strong>Sprint</strong>Move faster; survival sprinting uses hunger.</span></div>
-              <div><kbd>HOLD LMB</kbd><span><strong>Harvest</strong>Harder blocks take longer.</span></div>
-              <div><kbd>RMB</kbd><span><strong>Build</strong>Place the selected block on a face.</span></div>
-              <div><kbd>1–9 / WHEEL</kbd><span><strong>Select</strong>Choose a hotbar block.</span></div>
-              <div><kbd>E</kbd><span><strong>Inventory</strong>Equip blocks and craft materials.</span></div>
-              <div><kbd>MIDDLE</kbd><span><strong>Pick block</strong>Match the block under your crosshair.</span></div>
-              <div><kbd>F3</kbd><span><strong>Debug</strong>Show coordinates, mode, seed, and weather.</span></div>
+              <div><kbd>SPACE</kbd><span><strong>Jump / swim</strong>Hold it underwater to rise.</span></div>
+              <div><kbd>SHIFT</kbd><span><strong>Sprint</strong>Faster, louder, hungrier.</span></div>
+              <div><kbd>HOLD LMB</kbd><span><strong>Harvest / attack</strong>The crosshair decides which.</span></div>
+              <div><kbd>RMB</kbd><span><strong>Use / build / eat</strong>Tables, furnaces, chests, food, and blocks.</span></div>
+              <div><kbd>1–9 / WHEEL</kbd><span><strong>Select</strong>Choose a hotbar stack.</span></div>
+              <div><kbd>E</kbd><span><strong>Inventory</strong>2×2 hand crafting and the full stack inventory.</span></div>
+              <div><kbd>Q</kbd><span><strong>Drop item</strong>Toss one from the selected stack.</span></div>
+              <div><kbd>F</kbd><span><strong>Fullscreen</strong>Give the cubes all available pixels.</span></div>
+              <div><kbd>MIDDLE</kbd><span><strong>Pick block</strong>Match the targeted block in Builder mode.</span></div>
+              <div><kbd>F3</kbd><span><strong>Debug</strong>Coordinates, depth, chunks, seed, and weather.</span></div>
             </div>
-            <p className="help-tip"><strong>First expedition:</strong> collect a log, uncover coal in a cliff, craft glowstone, then find the golden waystone across the southeast ridge.</p>
-            <div className="panel-actions">
-              <PixelButton className="gold-button" onClick={() => started ? resume() : setOverlay("title")}>{started ? "Back to Game" : "Back"}</PixelButton>
+            <div className="progression-guide">
+              <div><b>1</b><strong>Punch a tree</strong><span>Turn one log into four planks in your 2×2 grid.</span></div>
+              <div><b>2</b><strong>Craft a table</strong><span>Four planks unlock the 3×3 recipes.</span></div>
+              <div><b>3</b><strong>Make tools</strong><span>Wood → cobble → sunmetal → star crystal.</span></div>
+              <div><b>4</b><strong>Build a furnace</strong><span>Eight cobble. Smelt ore, glass, meat, and charcoal.</span></div>
+              <div><b>5</b><strong>Own the night</strong><span>Hostiles drop shards, gel, bone, coal, and XP.</span></div>
+              <div><b>6</b><strong>Go below zero</strong><span>Crystal deeps, lava, aquifers, and the worldheart await.</span></div>
             </div>
+            <div className="panel-actions"><PixelButton className="gold-button" onClick={() => started ? (() => { setOverlay(null); engineRef.current?.activate(); })() : setOverlay("title")}>{started ? "Back to Game" : "Back"}</PixelButton></div>
           </div>
         </section>
       )}
@@ -512,33 +645,14 @@ export default function VoxelGame() {
           <div className="pixel-panel settings-panel">
             <span className="panel-eyebrow">OPTIONS</span>
             <h2 id="settings-title">Settings</h2>
-            <label className="setting-row">
-              <span><strong>Master volume</strong><small>{settings.muted ? "Muted" : `${Math.round(settings.volume * 100)}%`}</small></span>
-              <input type="range" min="0" max="1" step="0.05" value={settings.volume} onChange={(event) => updateSettings({ volume: Number(event.target.value), muted: false })} />
-            </label>
-            <label className="setting-row">
-              <span><strong>Look sensitivity</strong><small>{Math.round((settings.sensitivity / 0.005) * 100)}%</small></span>
-              <input type="range" min="0.0008" max="0.005" step="0.0001" value={settings.sensitivity} onChange={(event) => updateSettings({ sensitivity: Number(event.target.value) })} />
-            </label>
-            <label className="setting-row">
-              <span><strong>Field of view</strong><small>{Math.round(settings.fov)}°</small></span>
-              <input type="range" min="55" max="100" step="1" value={settings.fov} onChange={(event) => updateSettings({ fov: Number(event.target.value) })} />
-            </label>
-            <div className="toggle-setting">
-              <span><strong>Sound effects & ambience</strong><small>Synthesized live in your browser.</small></span>
-              <button type="button" className={settings.muted ? "" : "active"} onClick={() => updateSettings({ muted: !settings.muted })}>{settings.muted ? "OFF" : "ON"}</button>
-            </div>
-            <div className="toggle-setting">
-              <span><strong>Weather</strong><small>Rain falls in the world, not on the menu.</small></span>
-              <button type="button" className={settings.weather === "rain" ? "active" : ""} onClick={() => {
-                const weather = settings.weather === "rain" ? "clear" : "rain";
-                updateSettings({ weather });
-                engineRef.current?.setWeather(weather);
-              }}>{settings.weather === "rain" ? "RAIN" : "CLEAR"}</button>
-            </div>
-            <div className="panel-actions">
-              <PixelButton className="gold-button" onClick={() => setOverlay(settingsReturn)}>Done</PixelButton>
-            </div>
+            <label className="setting-row"><span><strong>Master volume</strong><small>{settings.muted ? "Muted" : `${Math.round(settings.volume * 100)}%`}</small></span><input type="range" min="0" max="1" step="0.05" value={settings.volume} onChange={(event) => updateSettings({ volume: Number(event.target.value), muted: false })} /></label>
+            <label className="setting-row"><span><strong>Look sensitivity</strong><small>{Math.round((settings.sensitivity / 0.005) * 100)}%</small></span><input type="range" min="0.0008" max="0.005" step="0.0001" value={settings.sensitivity} onChange={(event) => updateSettings({ sensitivity: Number(event.target.value) })} /></label>
+            <label className="setting-row"><span><strong>Field of view</strong><small>{Math.round(settings.fov)}°</small></span><input type="range" min="55" max="100" step="1" value={settings.fov} onChange={(event) => updateSettings({ fov: Number(event.target.value) })} /></label>
+            <label className="setting-row"><span><strong>Render distance</strong><small>{settings.renderDistance} chunks · about {settings.renderDistance * 16} blocks</small></span><input type="range" min="2" max="5" step="1" value={settings.renderDistance} onChange={(event) => updateSettings({ renderDistance: Number(event.target.value) })} /></label>
+            <div className="toggle-setting"><span><strong>Sound effects & ambience</strong><small>Procedurally synthesized in your browser.</small></span><button type="button" className={settings.muted ? "" : "active"} onClick={() => updateSettings({ muted: !settings.muted })}>{settings.muted ? "OFF" : "ON"}</button></div>
+            <div className="toggle-setting"><span><strong>Weather</strong><small>Rain affects atmosphere and visibility.</small></span><button type="button" className={settings.weather === "rain" ? "active" : ""} onClick={() => { const weather = settings.weather === "rain" ? "clear" : "rain"; updateSettings({ weather }); }}>{settings.weather === "rain" ? "RAIN" : "CLEAR"}</button></div>
+            <div className="fullscreen-setting"><PixelButton onClick={() => engineRef.current?.toggleFullscreen()}>{hud.fullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}</PixelButton></div>
+            <div className="panel-actions"><PixelButton className="gold-button" onClick={() => setOverlay(settingsReturn)}>Done</PixelButton></div>
           </div>
         </section>
       )}
@@ -547,24 +661,15 @@ export default function VoxelGame() {
         <section className="menu-overlay" aria-labelledby="reset-title">
           <div className="pixel-panel confirm-panel">
             <div className="warning-cube" aria-hidden="true">!</div>
-            <h2 id="reset-title">Regenerate this world?</h2>
-            <p>This permanently erases placed and harvested blocks, inventory, and your current position. The cube remembers nothing.</p>
-            <div className="panel-actions">
-              <PixelButton onClick={() => setOverlay("pause")}>Keep World</PixelButton>
-              <PixelButton className="danger-button" onClick={confirmReset}>Erase & Regenerate</PixelButton>
-            </div>
+            <h2 id="reset-title">Delete this endless world?</h2>
+            <p>This erases every placed block, mined tunnel, inventory stack, furnace, chest, level, and position in this seed. Infinity will regenerate with no memory of your little house.</p>
+            <div className="panel-actions"><PixelButton onClick={() => setOverlay("pause")}>Keep World</PixelButton><PixelButton className="danger-button" onClick={confirmReset}>Erase Everything</PixelButton></div>
           </div>
         </section>
       )}
 
       {webglError && (
-        <section className="webgl-fallback" role="alert" aria-labelledby="webgl-title">
-          <div className="pixel-panel confirm-panel">
-            <div className="warning-cube" aria-hidden="true">◇</div>
-            <h2 id="webgl-title">The world could not render</h2>
-            <p>Blockwild needs WebGL hardware acceleration. Try a current desktop browser and make sure graphics acceleration is enabled.</p>
-          </div>
-        </section>
+        <section className="webgl-fallback" role="alert" aria-labelledby="webgl-title"><div className="pixel-panel confirm-panel"><div className="warning-cube" aria-hidden="true">◇</div><h2 id="webgl-title">The world could not render</h2><p>Blockwild needs WebGL hardware acceleration. Try a current desktop browser and make sure graphics acceleration is enabled.</p></div></section>
       )}
     </main>
   );

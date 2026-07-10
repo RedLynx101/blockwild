@@ -1,89 +1,37 @@
 import * as THREE from "three";
+import { SynthAudio } from "./audio";
+import {
+  BLOCKS,
+  CREATIVE_BLOCKS,
+  ITEMS,
+  Item,
+  RECIPES,
+  SMELTING,
+  BlockId,
+  cloneSlot,
+  itemName,
+  maxStack,
+  type GameMode,
+  type InventorySlot,
+  type ItemCode,
+  type Recipe,
+  type Weather,
+} from "./data";
+import {
+  BIOME_NAMES,
+  GENERATOR_VERSION,
+  MAX_Y,
+  MIN_Y,
+  SEA_LEVEL,
+  BiomeId,
+  ChunkWorld,
+  type ChunkEditSave,
+} from "./world";
 
-export const SAVE_KEY = "blockwild-world-v1";
-export const SETTINGS_KEY = "blockwild-settings-v1";
+export { BLOCKS, CREATIVE_BLOCKS, ITEMS, Item, RECIPES, BlockId, BIOME_NAMES, type GameMode, type InventorySlot, type ItemCode, type Recipe };
 
-export enum BlockId {
-  Air = 0,
-  Grass = 1,
-  Dirt = 2,
-  Stone = 3,
-  Sand = 4,
-  Log = 5,
-  Leaves = 6,
-  Water = 7,
-  Coal = 8,
-  Iron = 9,
-  Planks = 10,
-  Brick = 11,
-  Glass = 12,
-  Glow = 13,
-  Bedrock = 14,
-}
-
-type RenderLayer = "opaque" | "cutout" | "transparent" | "none";
-
-export type BlockDefinition = {
-  id: BlockId;
-  name: string;
-  top: number;
-  side: number;
-  bottom: number;
-  hardness: number;
-  solid: boolean;
-  layer: RenderLayer;
-  color: string;
-};
-
-export const BLOCKS: Record<BlockId, BlockDefinition> = {
-  [BlockId.Air]: { id: BlockId.Air, name: "Air", top: 0, side: 0, bottom: 0, hardness: 0, solid: false, layer: "none", color: "#ffffff" },
-  [BlockId.Grass]: { id: BlockId.Grass, name: "Grass Block", top: 0, side: 1, bottom: 2, hardness: 0.65, solid: true, layer: "opaque", color: "#6b9f3a" },
-  [BlockId.Dirt]: { id: BlockId.Dirt, name: "Dirt", top: 2, side: 2, bottom: 2, hardness: 0.55, solid: true, layer: "opaque", color: "#7b5636" },
-  [BlockId.Stone]: { id: BlockId.Stone, name: "Stone", top: 3, side: 3, bottom: 3, hardness: 1.45, solid: true, layer: "opaque", color: "#747b7d" },
-  [BlockId.Sand]: { id: BlockId.Sand, name: "Sand", top: 4, side: 4, bottom: 4, hardness: 0.5, solid: true, layer: "opaque", color: "#d8c27b" },
-  [BlockId.Log]: { id: BlockId.Log, name: "Wildwood Log", top: 6, side: 5, bottom: 6, hardness: 1.1, solid: true, layer: "opaque", color: "#705033" },
-  [BlockId.Leaves]: { id: BlockId.Leaves, name: "Wildwood Leaves", top: 7, side: 7, bottom: 7, hardness: 0.35, solid: true, layer: "cutout", color: "#3f7d36" },
-  [BlockId.Water]: { id: BlockId.Water, name: "Water", top: 8, side: 8, bottom: 8, hardness: 0, solid: false, layer: "transparent", color: "#3e83c6" },
-  [BlockId.Coal]: { id: BlockId.Coal, name: "Coal Ore", top: 9, side: 9, bottom: 9, hardness: 1.8, solid: true, layer: "opaque", color: "#45494a" },
-  [BlockId.Iron]: { id: BlockId.Iron, name: "Sunmetal Ore", top: 10, side: 10, bottom: 10, hardness: 2.05, solid: true, layer: "opaque", color: "#a68168" },
-  [BlockId.Planks]: { id: BlockId.Planks, name: "Wildwood Planks", top: 11, side: 11, bottom: 11, hardness: 0.9, solid: true, layer: "opaque", color: "#b6844d" },
-  [BlockId.Brick]: { id: BlockId.Brick, name: "Stone Brick", top: 12, side: 12, bottom: 12, hardness: 1.65, solid: true, layer: "opaque", color: "#8b7770" },
-  [BlockId.Glass]: { id: BlockId.Glass, name: "Glass", top: 13, side: 13, bottom: 13, hardness: 0.4, solid: true, layer: "transparent", color: "#b9e5e3" },
-  [BlockId.Glow]: { id: BlockId.Glow, name: "Glowstone", top: 14, side: 14, bottom: 14, hardness: 0.75, solid: true, layer: "opaque", color: "#e3c35c" },
-  [BlockId.Bedrock]: { id: BlockId.Bedrock, name: "Bedrock", top: 15, side: 15, bottom: 15, hardness: 999, solid: true, layer: "opaque", color: "#303334" },
-};
-
-export const PLACEABLE_BLOCKS: BlockId[] = [
-  BlockId.Grass,
-  BlockId.Dirt,
-  BlockId.Stone,
-  BlockId.Sand,
-  BlockId.Log,
-  BlockId.Planks,
-  BlockId.Glass,
-  BlockId.Brick,
-  BlockId.Glow,
-];
-
-export type GameMode = "builder" | "survival";
-export type Weather = "clear" | "rain";
-
-export type HudState = {
-  health: number;
-  hunger: number;
-  hotbar: BlockId[];
-  selected: number;
-  counts: Record<number, number>;
-  targetName: string | null;
-  breakProgress: number;
-  day: number;
-  clock: string;
-  biome: string;
-  coordinates: [number, number, number];
-  debug: boolean;
-  mode: GameMode;
-  weather: Weather;
-};
+export const SAVE_KEY = "blockwild-world-v2";
+export const SETTINGS_KEY = "blockwild-settings-v2";
 
 export type GameSettings = {
   volume: number;
@@ -91,30 +39,78 @@ export type GameSettings = {
   sensitivity: number;
   fov: number;
   weather: Weather;
+  renderDistance: number;
+};
+
+export type FurnaceState = {
+  input: InventorySlot | null;
+  fuel: InventorySlot | null;
+  output: InventorySlot | null;
+  progress: number;
+  burn: number;
+  burnMax: number;
+};
+
+export type ChestState = Array<InventorySlot | null>;
+
+export type HudState = {
+  health: number;
+  hunger: number;
+  xp: number;
+  level: number;
+  inventory: Array<InventorySlot | null>;
+  cursor: InventorySlot | null;
+  craftGrid: Array<InventorySlot | null>;
+  craftOutput: InventorySlot | null;
+  craftingSize: 2 | 3;
+  activeFurnace: FurnaceState | null;
+  activeChest: ChestState | null;
+  selected: number;
+  targetName: string | null;
+  targetMob: { name: string; health: number; maxHealth: number } | null;
+  breakProgress: number;
+  day: number;
+  clock: string;
+  biome: string;
+  depth: string;
+  coordinates: [number, number, number];
+  debug: boolean;
+  mode: GameMode;
+  weather: Weather;
+  loadedChunks: number;
+  queuedChunks: number;
+  fullscreen: boolean;
 };
 
 export type WorldSave = {
-  version: 1;
+  version: 2;
+  generatorVersion: number;
   seed: string;
   mode: GameMode;
-  edits: Record<string, number>;
+  edits: ChunkEditSave;
   player: { x: number; y: number; z: number; yaw: number; pitch: number };
-  inventory: Record<string, number>;
-  hotbar: BlockId[];
+  spawn: { x: number; y: number; z: number };
+  inventory: Array<InventorySlot | null>;
   selected: number;
   health: number;
   hunger: number;
+  xp: number;
+  level: number;
   time: number;
   day: number;
   weather: Weather;
+  furnaces: Record<string, FurnaceState>;
+  chests: Record<string, ChestState>;
   savedAt: number;
 };
+
+export type OverlayKind = "inventory" | "crafting" | "furnace" | "chest";
 
 export type EngineEvents = {
   onHud: (hud: HudState) => void;
   onToast: (message: string) => void;
   onLockChange: (locked: boolean) => void;
-  onInventoryRequest: () => void;
+  onOverlayRequest: (kind: OverlayKind, key?: string) => void;
   onDeath: () => void;
   onSave: () => void;
 };
@@ -127,93 +123,54 @@ type VoxelHit = {
   placeY: number;
   placeZ: number;
   type: BlockId;
+  distance: number;
 };
 
-type Face = {
-  direction: [number, number, number];
-  shade: number;
-  corners: [number, number, number][];
+type MobKind = "mossling" | "ridgeback" | "woolhorn" | "glowmoth" | "shadecrawler" | "caveblob" | "rattlekin";
+
+type MobEntity = {
+  id: number;
+  kind: MobKind;
+  name: string;
+  hostile: boolean;
+  group: THREE.Group;
+  health: number;
+  maxHealth: number;
+  damage: number;
+  angle: number;
+  wanderTimer: number;
+  attackCooldown: number;
+  hurtTimer: number;
+  age: number;
+  bob: number;
 };
 
-const WORLD_SIZE = 56;
-const WORLD_HALF = WORLD_SIZE / 2;
-const WATER_LEVEL = 6;
-const MAX_WORLD_Y = 28;
+type DropEntity = {
+  id: number;
+  item: ItemCode;
+  count: number;
+  mesh: THREE.Mesh;
+  velocity: THREE.Vector3;
+  age: number;
+  pickupDelay: number;
+};
+
+type Particle = {
+  mesh: THREE.Mesh;
+  velocity: THREE.Vector3;
+  life: number;
+};
+
 const PLAYER_HEIGHT = 1.8;
 const PLAYER_RADIUS = 0.3;
 const PHYSICS_STEP = 1 / 60;
+const INVENTORY_SIZE = 36;
+const CRAFT_POSITIONS_2 = [0, 1, 3, 4];
 
-const FACES: Face[] = [
-  { direction: [1, 0, 0], shade: 0.82, corners: [[0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [0.5, 0.5, 0.5], [0.5, -0.5, 0.5]] },
-  { direction: [-1, 0, 0], shade: 0.7, corners: [[-0.5, -0.5, 0.5], [-0.5, 0.5, 0.5], [-0.5, 0.5, -0.5], [-0.5, -0.5, -0.5]] },
-  { direction: [0, 1, 0], shade: 1, corners: [[-0.5, 0.5, -0.5], [-0.5, 0.5, 0.5], [0.5, 0.5, 0.5], [0.5, 0.5, -0.5]] },
-  { direction: [0, -1, 0], shade: 0.54, corners: [[-0.5, -0.5, 0.5], [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, -0.5, 0.5]] },
-  { direction: [0, 0, 1], shade: 0.88, corners: [[0.5, -0.5, 0.5], [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5], [-0.5, -0.5, 0.5]] },
-  { direction: [0, 0, -1], shade: 0.76, corners: [[-0.5, -0.5, -0.5], [-0.5, 0.5, -0.5], [0.5, 0.5, -0.5], [0.5, -0.5, -0.5]] },
-];
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
-function clamp(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, value));
-}
-
-function lerp(a: number, b: number, t: number) {
-  return a + (b - a) * t;
-}
-
-function smooth(t: number) {
-  return t * t * (3 - 2 * t);
-}
-
-function seedToInt(seed: string) {
-  let value = 2166136261;
-  for (let i = 0; i < seed.length; i += 1) {
-    value ^= seed.charCodeAt(i);
-    value = Math.imul(value, 16777619);
-  }
-  return value >>> 0;
-}
-
-function hash2(x: number, z: number, seed: number) {
-  let n = Math.imul(x, 374761393) + Math.imul(z, 668265263) + Math.imul(seed, 1442695041);
-  n = Math.imul(n ^ (n >>> 13), 1274126177);
-  return ((n ^ (n >>> 16)) >>> 0) / 4294967295;
-}
-
-function hash3(x: number, y: number, z: number, seed: number) {
-  return hash2(x + y * 1013, z - y * 1619, seed ^ Math.imul(y, 2246822519));
-}
-
-function valueNoise2(x: number, z: number, seed: number) {
-  const x0 = Math.floor(x);
-  const z0 = Math.floor(z);
-  const tx = smooth(x - x0);
-  const tz = smooth(z - z0);
-  const a = lerp(hash2(x0, z0, seed), hash2(x0 + 1, z0, seed), tx);
-  const b = lerp(hash2(x0, z0 + 1, seed), hash2(x0 + 1, z0 + 1, seed), tx);
-  return lerp(a, b, tz);
-}
-
-function fbm(x: number, z: number, seed: number) {
-  let value = 0;
-  let amplitude = 0.55;
-  let frequency = 0.055;
-  let total = 0;
-  for (let octave = 0; octave < 4; octave += 1) {
-    value += valueNoise2(x * frequency, z * frequency, seed + octave * 997) * amplitude;
-    total += amplitude;
-    amplitude *= 0.5;
-    frequency *= 2;
-  }
-  return value / total;
-}
-
-function keyOf(x: number, y: number, z: number) {
+function blockKey(x: number, y: number, z: number) {
   return `${x},${y},${z}`;
-}
-
-function parseKey(key: string): [number, number, number] {
-  const [x, y, z] = key.split(",").map(Number);
-  return [x, y, z];
 }
 
 export function readSavedWorld(): WorldSave | null {
@@ -222,7 +179,7 @@ export function readSavedWorld(): WorldSave | null {
     const raw = window.localStorage.getItem(SAVE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as WorldSave;
-    if (parsed.version !== 1 || typeof parsed.seed !== "string" || !parsed.player) return null;
+    if (parsed.version !== 2 || parsed.generatorVersion !== GENERATOR_VERSION || typeof parsed.seed !== "string") return null;
     return parsed;
   } catch {
     return null;
@@ -234,7 +191,8 @@ export function clearSavedWorld() {
 }
 
 export function readSettings(): GameSettings {
-  const fallback: GameSettings = { volume: 0.55, muted: false, sensitivity: 0.0022, fov: 72, weather: "clear" };
+  const mobile = typeof window !== "undefined" && (window.matchMedia?.("(pointer: coarse)").matches ?? false);
+  const fallback: GameSettings = { volume: 0.55, muted: false, sensitivity: 0.0022, fov: 72, weather: "clear", renderDistance: mobile ? 2 : 3 };
   if (typeof window === "undefined") return fallback;
   try {
     const parsed = JSON.parse(window.localStorage.getItem(SETTINGS_KEY) ?? "null") as Partial<GameSettings> | null;
@@ -245,6 +203,7 @@ export function readSettings(): GameSettings {
       sensitivity: clamp(Number(parsed.sensitivity ?? fallback.sensitivity), 0.0008, 0.005),
       fov: clamp(Number(parsed.fov ?? fallback.fov), 55, 100),
       weather: parsed.weather === "rain" ? "rain" : "clear",
+      renderDistance: clamp(Math.round(Number(parsed.renderDistance ?? fallback.renderDistance)), 2, 5),
     };
   } catch {
     return fallback;
@@ -255,355 +214,16 @@ function writeSettings(settings: GameSettings) {
   try {
     window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   } catch {
-    // Storage can be unavailable in hardened browsers; gameplay still works.
+    // Private browsing may disable storage.
   }
 }
 
-class VoxelWorld {
-  blocks = new Map<string, BlockId>();
-  edits = new Map<string, BlockId>();
-  seedText = "WILDERNESS";
-  seed = seedToInt(this.seedText);
-
-  get(x: number, y: number, z: number): BlockId {
-    if (y < 0 || y > MAX_WORLD_Y) return BlockId.Air;
-    return this.blocks.get(keyOf(x, y, z)) ?? BlockId.Air;
-  }
-
-  set(x: number, y: number, z: number, type: BlockId, record = true) {
-    const key = keyOf(x, y, z);
-    if (type === BlockId.Air) this.blocks.delete(key);
-    else this.blocks.set(key, type);
-    if (record) this.edits.set(key, type);
-  }
-
-  surfaceY(x: number, z: number) {
-    for (let y = MAX_WORLD_Y; y >= 0; y -= 1) {
-      const type = this.get(x, y, z);
-      if (BLOCKS[type].solid) return y;
-    }
-    return 0;
-  }
-
-  generate(seedText: string, edits?: Record<string, number>) {
-    this.blocks.clear();
-    this.edits.clear();
-    this.seedText = seedText || "WILDERNESS";
-    this.seed = seedToInt(this.seedText);
-    const heights = new Map<string, number>();
-
-    for (let x = -WORLD_HALF; x < WORLD_HALF; x += 1) {
-      for (let z = -WORLD_HALF; z < WORLD_HALF; z += 1) {
-        const continental = valueNoise2(x * 0.018, z * 0.018, this.seed ^ 0x9e3779b9);
-        const ridges = Math.abs(fbm(x + 120, z - 80, this.seed ^ 0x85ebca6b) - 0.5) * 2;
-        let height = Math.floor(3.5 + fbm(x, z, this.seed) * 8 + continental * 3 + ridges * 2);
-        const edge = Math.max(Math.abs(x), Math.abs(z)) / WORLD_HALF;
-        if (edge > 0.82) height -= Math.floor((edge - 0.82) * 18);
-        height = clamp(height, 3, 17);
-        heights.set(`${x},${z}`, height);
-
-        this.set(x, 0, z, BlockId.Bedrock, false);
-        for (let y = 1; y <= height; y += 1) {
-          let type = BlockId.Stone;
-          if (y === height) type = height <= WATER_LEVEL + 1 ? BlockId.Sand : BlockId.Grass;
-          else if (y >= height - 3) type = height <= WATER_LEVEL + 1 ? BlockId.Sand : BlockId.Dirt;
-          else {
-            const oreRoll = hash3(x, y, z, this.seed);
-            if (y < height - 2 && oreRoll > 0.968) type = BlockId.Coal;
-            if (y < 8 && oreRoll < 0.022) type = BlockId.Iron;
-            const cave = hash3(Math.floor(x / 2), y, Math.floor(z / 2), this.seed ^ 0xc2b2ae35);
-            if (y > 2 && y < height - 3 && cave > 0.987) type = BlockId.Air;
-          }
-          if (type !== BlockId.Air) this.set(x, y, z, type, false);
-        }
-        for (let y = height + 1; y <= WATER_LEVEL; y += 1) this.set(x, y, z, BlockId.Water, false);
-      }
-    }
-
-    for (let x = -WORLD_HALF + 3; x < WORLD_HALF - 3; x += 1) {
-      for (let z = -WORLD_HALF + 3; z < WORLD_HALF - 3; z += 1) {
-        const height = heights.get(`${x},${z}`) ?? 0;
-        const treeRoll = hash2(x, z, this.seed ^ 0x27d4eb2d);
-        if (treeRoll < 0.975 || height <= WATER_LEVEL + 1 || x * x + z * z < 36) continue;
-        const trunkHeight = 3 + Math.floor(hash2(x, z, this.seed ^ 0x165667b1) * 3);
-        for (let y = 1; y <= trunkHeight; y += 1) this.set(x, height + y, z, BlockId.Log, false);
-        for (let dx = -2; dx <= 2; dx += 1) {
-          for (let dz = -2; dz <= 2; dz += 1) {
-            for (let dy = -1; dy <= 2; dy += 1) {
-              const distance = Math.abs(dx) + Math.abs(dz) + Math.max(0, dy);
-              if (distance > 4 || (dx === 0 && dz === 0 && dy <= 0)) continue;
-              if (hash3(x + dx, height + trunkHeight + dy, z + dz, this.seed) > 0.12) {
-                this.set(x + dx, height + trunkHeight + dy, z + dz, BlockId.Leaves, false);
-              }
-            }
-          }
-        }
-      }
-    }
-
-    // A small, original landmark gives the finite island a destination.
-    const markerX = 16;
-    const markerZ = -14;
-    const markerY = this.surfaceY(markerX, markerZ) + 1;
-    for (let y = 0; y < 4; y += 1) this.set(markerX, markerY + y, markerZ, y === 3 ? BlockId.Glow : BlockId.Brick, false);
-    this.set(markerX + 1, markerY, markerZ, BlockId.Brick, false);
-    this.set(markerX - 1, markerY, markerZ, BlockId.Brick, false);
-    this.set(markerX, markerY, markerZ + 1, BlockId.Brick, false);
-    this.set(markerX, markerY, markerZ - 1, BlockId.Brick, false);
-
-    if (edits) {
-      for (const [key, rawType] of Object.entries(edits)) {
-        const type = Number(rawType) as BlockId;
-        const [x, y, z] = parseKey(key);
-        this.set(x, y, z, type, false);
-        this.edits.set(key, type);
-      }
-    }
-  }
+function blankInventory() {
+  return Array.from({ length: INVENTORY_SIZE }, () => null as InventorySlot | null);
 }
 
-class SynthAudio {
-  context: AudioContext | null = null;
-  master: GainNode | null = null;
-  ambienceGain: GainNode | null = null;
-  ambience: AudioBufferSourceNode | null = null;
-  noise: AudioBuffer | null = null;
-  settings: GameSettings;
-
-  constructor(settings: GameSettings) {
-    this.settings = settings;
-  }
-
-  async unlock() {
-    try {
-      if (!this.context) {
-        this.context = new AudioContext();
-        this.master = this.context.createGain();
-        const compressor = this.context.createDynamicsCompressor();
-        compressor.threshold.value = -12;
-        compressor.ratio.value = 8;
-        this.master.connect(compressor).connect(this.context.destination);
-        this.noise = this.createNoiseBuffer(1.5);
-        this.startAmbience();
-        this.applyVolume();
-      }
-      if (this.context.state !== "running") await this.context.resume();
-    } catch {
-      // Audio is an enhancement. Some embedded browsers block it entirely.
-    }
-  }
-
-  createNoiseBuffer(seconds: number) {
-    if (!this.context) return null;
-    const length = Math.floor(this.context.sampleRate * seconds);
-    const buffer = this.context.createBuffer(1, length, this.context.sampleRate);
-    const data = buffer.getChannelData(0);
-    let previous = 0;
-    for (let i = 0; i < length; i += 1) {
-      const white = Math.random() * 2 - 1;
-      previous = previous * 0.78 + white * 0.22;
-      data[i] = previous;
-    }
-    return buffer;
-  }
-
-  startAmbience() {
-    if (!this.context || !this.master || !this.noise || this.ambience) return;
-    const source = this.context.createBufferSource();
-    const filter = this.context.createBiquadFilter();
-    const gain = this.context.createGain();
-    source.buffer = this.noise;
-    source.loop = true;
-    filter.type = "lowpass";
-    filter.frequency.value = 420;
-    gain.gain.value = 0.022;
-    source.connect(filter).connect(gain).connect(this.master);
-    source.start();
-    this.ambience = source;
-    this.ambienceGain = gain;
-  }
-
-  applyVolume() {
-    if (!this.master || !this.context) return;
-    const value = this.settings.muted ? 0 : this.settings.volume;
-    this.master.gain.setTargetAtTime(value, this.context.currentTime, 0.02);
-  }
-
-  setSettings(settings: GameSettings) {
-    this.settings = settings;
-    this.applyVolume();
-  }
-
-  noiseBurst(duration: number, frequency: number, gainValue: number, highpass = false, when = 0) {
-    if (!this.context || !this.master || !this.noise || this.settings.muted) return;
-    const now = this.context.currentTime + when;
-    const source = this.context.createBufferSource();
-    const filter = this.context.createBiquadFilter();
-    const gain = this.context.createGain();
-    source.buffer = this.noise;
-    source.playbackRate.value = 0.88 + Math.random() * 0.24;
-    filter.type = highpass ? "highpass" : "bandpass";
-    filter.frequency.value = frequency * (0.9 + Math.random() * 0.2);
-    filter.Q.value = 0.8;
-    gain.gain.setValueAtTime(gainValue, now);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-    source.connect(filter).connect(gain).connect(this.master);
-    source.start(now, Math.random() * 0.4, duration);
-    source.stop(now + duration + 0.02);
-  }
-
-  tone(frequency: number, duration: number, gainValue: number, type: OscillatorType = "triangle", when = 0, endFrequency?: number) {
-    if (!this.context || !this.master || this.settings.muted) return;
-    const now = this.context.currentTime + when;
-    const oscillator = this.context.createOscillator();
-    const gain = this.context.createGain();
-    oscillator.type = type;
-    oscillator.frequency.setValueAtTime(frequency, now);
-    if (endFrequency) oscillator.frequency.exponentialRampToValueAtTime(endFrequency, now + duration);
-    gain.gain.setValueAtTime(gainValue, now);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-    oscillator.connect(gain).connect(this.master);
-    oscillator.start(now);
-    oscillator.stop(now + duration + 0.02);
-  }
-
-  play(kind: "step" | "mine" | "break" | "place" | "pickup" | "jump" | "land" | "hurt" | "ui", material: BlockId = BlockId.Grass) {
-    const stoneLike = [BlockId.Stone, BlockId.Coal, BlockId.Iron, BlockId.Brick, BlockId.Bedrock].includes(material);
-    const woodLike = [BlockId.Log, BlockId.Planks].includes(material);
-    const base = stoneLike ? 1250 : woodLike ? 690 : 410;
-    if (kind === "step") {
-      this.noiseBurst(stoneLike ? 0.038 : 0.065, base * 0.65, 0.055, stoneLike);
-    } else if (kind === "mine") {
-      this.noiseBurst(0.075, base, 0.085, stoneLike);
-      this.tone(stoneLike ? 105 : 82, 0.045, 0.025, "sine");
-    } else if (kind === "break") {
-      for (let i = 0; i < 4; i += 1) this.noiseBurst(0.07, base * (0.8 + i * 0.12), 0.1, stoneLike, i * 0.026);
-      this.tone(95, 0.11, 0.045, "sine", 0, 55);
-    } else if (kind === "place") {
-      this.noiseBurst(0.07, 510, 0.07);
-      this.tone(115, 0.09, 0.06, "sine", 0, 64);
-    } else if (kind === "pickup") {
-      this.tone(660, 0.055, 0.045, "triangle");
-      this.tone(990, 0.07, 0.04, "triangle", 0.052);
-    } else if (kind === "jump") {
-      this.noiseBurst(0.075, 280, 0.045);
-    } else if (kind === "land") {
-      this.noiseBurst(0.11, 210, 0.09);
-      this.tone(74, 0.08, 0.03, "sine");
-    } else if (kind === "hurt") {
-      this.tone(150, 0.18, 0.09, "sawtooth", 0, 72);
-    } else if (kind === "ui") {
-      this.tone(430, 0.035, 0.025, "square");
-    }
-  }
-
-  dispose() {
-    try {
-      this.ambience?.stop();
-      void this.context?.close();
-    } catch {
-      // Already stopped.
-    }
-  }
-}
-
-function makeAtlas() {
-  const tile = 16;
-  const grid = 4;
-  const canvas = document.createElement("canvas");
-  canvas.width = tile * grid;
-  canvas.height = tile * grid;
-  const context = canvas.getContext("2d", { alpha: true });
-  if (!context) throw new Error("Canvas textures are unavailable.");
-  context.imageSmoothingEnabled = false;
-
-  let randomState = 0x72a4f11d;
-  const random = () => {
-    randomState = Math.imul(randomState ^ (randomState >>> 15), 2246822519);
-    randomState = Math.imul(randomState ^ (randomState >>> 13), 3266489917);
-    return ((randomState ^ (randomState >>> 16)) >>> 0) / 4294967295;
-  };
-  const pixel = (index: number, x: number, y: number, color: string, alpha = 1) => {
-    const ox = (index % grid) * tile;
-    const oy = Math.floor(index / grid) * tile;
-    context.globalAlpha = alpha;
-    context.fillStyle = color;
-    context.fillRect(ox + x, oy + y, 1, 1);
-    context.globalAlpha = 1;
-  };
-  const fillNoise = (index: number, palette: string[], weights?: number[]) => {
-    for (let y = 0; y < tile; y += 1) {
-      for (let x = 0; x < tile; x += 1) {
-        let choice = Math.floor(random() * palette.length);
-        if (weights) {
-          const roll = random();
-          let sum = 0;
-          choice = 0;
-          for (let i = 0; i < weights.length; i += 1) {
-            sum += weights[i];
-            if (roll <= sum) { choice = i; break; }
-          }
-        }
-        pixel(index, x, y, palette[choice]);
-      }
-    }
-  };
-
-  fillNoise(0, ["#629b38", "#6fa943", "#548831", "#7bb34a"], [0.5, 0.23, 0.18, 0.09]);
-  fillNoise(1, ["#765035", "#80583a", "#67452f", "#8b6040"]);
-  for (let y = 0; y < 5; y += 1) for (let x = 0; x < tile; x += 1) pixel(1, x, y, random() > 0.28 ? "#619a38" : "#477d2c");
-  for (let x = 0; x < tile; x += 1) if (random() > 0.45) pixel(1, x, 5 + Math.floor(random() * 3), "#4f8730");
-  fillNoise(2, ["#795337", "#6a472f", "#875e3d", "#5f402d"], [0.46, 0.22, 0.24, 0.08]);
-  fillNoise(3, ["#777d7e", "#858b8b", "#676d6f", "#919696"], [0.46, 0.22, 0.2, 0.12]);
-  fillNoise(4, ["#d5c17b", "#e0cd88", "#c6b16c", "#ead893"], [0.48, 0.25, 0.18, 0.09]);
-  fillNoise(5, ["#735033", "#65442d", "#805b39", "#4e3526"]);
-  for (let x = 2; x < tile; x += 4) for (let y = 0; y < tile; y += 1) pixel(5, x, y, "#4b3324", 0.65);
-  fillNoise(6, ["#9a7244", "#805c37", "#ac8050"]);
-  context.strokeStyle = "#5f412a";
-  context.lineWidth = 1;
-  context.strokeRect((6 % grid) * tile + 3.5, Math.floor(6 / grid) * tile + 3.5, 9, 9);
-  context.strokeRect((6 % grid) * tile + 6.5, Math.floor(6 / grid) * tile + 6.5, 3, 3);
-  fillNoise(7, ["#3f7c36", "#4d8b3e", "#2f692e", "#599847"]);
-  for (let y = 0; y < tile; y += 1) for (let x = 0; x < tile; x += 1) if (random() < 0.16) context.clearRect((7 % grid) * tile + x, Math.floor(7 / grid) * tile + y, 1, 1);
-  fillNoise(8, ["#377fc1", "#438dcc", "#2f72b4", "#559bd3"]);
-  for (let y = 2; y < tile; y += 5) for (let x = 0; x < tile; x += 1) if ((x + y) % 3) pixel(8, x, y, "#73b2de", 0.42);
-  fillNoise(9, ["#767c7d", "#858b8b", "#686d6e"]);
-  for (let i = 0; i < 20; i += 1) pixel(9, Math.floor(random() * tile), Math.floor(random() * tile), random() > 0.3 ? "#272b2d" : "#3c4142");
-  fillNoise(10, ["#777d7e", "#858b8b", "#686d6e"]);
-  for (let i = 0; i < 18; i += 1) pixel(10, Math.floor(random() * tile), Math.floor(random() * tile), random() > 0.4 ? "#b07c5f" : "#d0a37d");
-  fillNoise(11, ["#b9864c", "#aa7541", "#c49155", "#976638"]);
-  for (let y = 0; y < tile; y += 4) for (let x = 0; x < tile; x += 1) pixel(11, x, y, "#76502f");
-  for (let y = 1; y < tile; y += 4) pixel(11, (y * 3) % tile, y, "#724d2e");
-  fillNoise(12, ["#92766b", "#a18376", "#82695f"]);
-  for (let y = 0; y < tile; y += 5) for (let x = 0; x < tile; x += 1) pixel(12, x, y, "#554f4b");
-  for (let x = 0; x < tile; x += 8) for (let y = 0; y < tile; y += 1) pixel(12, x + (Math.floor(y / 5) % 2) * 4, y, "#554f4b");
-  context.clearRect((13 % grid) * tile, Math.floor(13 / grid) * tile, tile, tile);
-  for (let y = 0; y < tile; y += 1) for (let x = 0; x < tile; x += 1) {
-    const edge = x < 2 || y < 2 || x > 13 || y > 13;
-    if (edge || (x + y) % 13 === 0) pixel(13, x, y, edge ? "#b7dfdf" : "#d7f1ed", edge ? 0.76 : 0.38);
-  }
-  fillNoise(14, ["#d6ae43", "#efcd66", "#b9882f", "#f5dc7c"]);
-  for (let i = 0; i < 24; i += 1) pixel(14, Math.floor(random() * tile), Math.floor(random() * tile), "#fff2ac");
-  fillNoise(15, ["#2f3233", "#454849", "#252829", "#585b5b"]);
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.magFilter = THREE.NearestFilter;
-  texture.minFilter = THREE.NearestFilter;
-  texture.generateMipmaps = false;
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
-}
-
-type GeometryBucket = {
-  positions: number[];
-  normals: number[];
-  colors: number[];
-  uvs: number[];
-  indices: number[];
-};
-
-function emptyBucket(): GeometryBucket {
-  return { positions: [], normals: [], colors: [], uvs: [], indices: [] };
+function blankFurnace(): FurnaceState {
+  return { input: null, fuel: null, output: null, progress: 0, burn: 0, burnMax: 0 };
 }
 
 export class VoxelEngine {
@@ -612,11 +232,10 @@ export class VoxelEngine {
   renderer: THREE.WebGLRenderer;
   scene = new THREE.Scene();
   camera: THREE.PerspectiveCamera;
-  world = new VoxelWorld();
-  atlas: THREE.CanvasTexture;
-  terrainGroup = new THREE.Group();
+  world = new ChunkWorld();
   ambienceGroup = new THREE.Group();
   creatureGroup = new THREE.Group();
+  dropGroup = new THREE.Group();
   selection: THREE.LineSegments;
   sun: THREE.Mesh;
   moon: THREE.Mesh;
@@ -624,10 +243,13 @@ export class VoxelEngine {
   rain: THREE.LineSegments;
   directional: THREE.DirectionalLight;
   hemisphere: THREE.HemisphereLight;
+  caveLight: THREE.PointLight;
   audio: SynthAudio;
   settings: GameSettings;
+  resizeObserver: ResizeObserver | null = null;
 
-  position = new THREE.Vector3(0, 12, 0);
+  position = new THREE.Vector3(0, 48, 0);
+  spawn = new THREE.Vector3(0, 48, 0);
   velocity = new THREE.Vector3();
   yaw = 0;
   pitch = 0;
@@ -635,6 +257,7 @@ export class VoxelEngine {
   locked = false;
   touchMode = false;
   running = false;
+  paused = true;
   titleMode = true;
   persistent = false;
   disposed = false;
@@ -644,51 +267,75 @@ export class VoxelEngine {
   animationFrame = 0;
   worldTime = 0.32;
   day = 1;
-  mode: GameMode = "builder";
+  mode: GameMode = "survival";
   weather: Weather = "clear";
   health = 10;
   hunger = 10;
+  xp = 0;
+  level = 0;
   selected = 0;
-  hotbar: BlockId[] = [...PLACEABLE_BLOCKS];
-  inventory: Record<number, number> = {};
+  inventory = blankInventory();
+  cursor: InventorySlot | null = null;
+  craftGrid: Array<InventorySlot | null> = Array.from({ length: 9 }, () => null);
+  craftingSize: 2 | 3 = 2;
+  activeFurnaceKey: string | null = null;
+  activeChestKey: string | null = null;
+  furnaces = new Map<string, FurnaceState>();
+  chests = new Map<string, ChestState>();
   debug = false;
+  fullscreen = false;
   target: VoxelHit | null = null;
   targetKey = "";
+  targetMob: MobEntity | null = null;
   mineHeld = false;
   miningProgress = 0;
   miningSoundTimer = 0;
   placeCooldown = 0;
+  attackCooldown = 0;
+  playerInvulnerability = 0;
+  fluidDamageTimer = 0;
+  regenTimer = 0;
+  spawnProtection = 20;
   footstepDistance = 0;
   lastPosition = new THREE.Vector3();
   fallVelocity = 0;
+  wasInWater = false;
   lastHudTime = 0;
   saveTimer = 0;
-  toastStage = 0;
   autoSaveAccumulator = 0;
-  particles: { mesh: THREE.Mesh; velocity: THREE.Vector3; life: number }[] = [];
-  creatures: { group: THREE.Group; angle: number; timer: number; bob: number }[] = [];
+  particles: Particle[] = [];
+  mobs: MobEntity[] = [];
+  drops: DropEntity[] = [];
+  nextMobId = 1;
+  nextDropId = 1;
+  mobSpawnTimer = 2;
+  mobRaycaster = new THREE.Raycaster();
+  activeRecipe: Recipe | null = null;
+  sharedDropGeometry = new THREE.BoxGeometry(0.23, 0.23, 0.23);
+  dropMaterials = new Map<number, THREE.MeshLambertMaterial>();
 
   constructor(canvas: HTMLCanvasElement, events: EngineEvents, settings = readSettings()) {
     this.canvas = canvas;
     this.events = events;
     this.settings = settings;
-    this.touchMode = window.matchMedia?.("(pointer: coarse)").matches ?? false;
     this.weather = settings.weather;
+    this.touchMode = window.matchMedia?.("(pointer: coarse)").matches ?? false;
     this.audio = new SynthAudio(settings);
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: "high-performance" });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.touchMode ? 1.2 : 1.5));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.camera = new THREE.PerspectiveCamera(settings.fov, 1, 0.05, 90);
+    this.camera = new THREE.PerspectiveCamera(settings.fov, 1, 0.05, 256);
     this.camera.rotation.order = "YXZ";
-    this.atlas = makeAtlas();
-    this.scene.add(this.terrainGroup, this.ambienceGroup, this.creatureGroup);
+    this.world.setRenderDistance(settings.renderDistance);
+    this.scene.add(this.world.group, this.ambienceGroup, this.creatureGroup, this.dropGroup);
     this.scene.background = new THREE.Color("#78baf2");
-    this.scene.fog = new THREE.Fog("#78baf2", 21, 49);
+    this.scene.fog = new THREE.Fog("#78baf2", 30, 62);
 
     this.hemisphere = new THREE.HemisphereLight(0xb9ddff, 0x4b3a2d, 1.05);
     this.directional = new THREE.DirectionalLight(0xfff1c7, 1.15);
     this.directional.position.set(18, 30, 12);
-    this.scene.add(this.hemisphere, this.directional);
+    this.caveLight = new THREE.PointLight(0xffd694, 0, 13, 1.4);
+    this.scene.add(this.hemisphere, this.directional, this.caveLight);
 
     const outlineGeometry = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.008, 1.008, 1.008));
     this.selection = new THREE.LineSegments(outlineGeometry, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthTest: false }));
@@ -696,20 +343,19 @@ export class VoxelEngine {
     this.selection.visible = false;
     this.scene.add(this.selection);
 
-    const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xfff3bd, fog: false });
-    const moonMaterial = new THREE.MeshBasicMaterial({ color: 0xd8e6f4, fog: false });
-    this.sun = new THREE.Mesh(new THREE.PlaneGeometry(5, 5), sunMaterial);
-    this.moon = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 3.6), moonMaterial);
+    this.sun = new THREE.Mesh(new THREE.PlaneGeometry(5, 5), new THREE.MeshBasicMaterial({ color: 0xfff3bd, fog: false }));
+    this.moon = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 3.6), new THREE.MeshBasicMaterial({ color: 0xd8e6f4, fog: false }));
     this.scene.add(this.sun, this.moon);
     this.stars = this.createStars();
     this.scene.add(this.stars);
     this.rain = this.createRain();
     this.scene.add(this.rain);
-
     this.createClouds();
     this.previewWorld("WILDERNESS");
     this.bindEvents();
     this.resize();
+    this.resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(this.resize) : null;
+    this.resizeObserver?.observe(this.canvas);
     this.animationFrame = requestAnimationFrame(this.animate);
   }
 
@@ -721,6 +367,7 @@ export class VoxelEngine {
     window.addEventListener("pagehide", this.onPageHide);
     document.addEventListener("visibilitychange", this.onVisibilityChange);
     document.addEventListener("pointerlockchange", this.onPointerLockChange);
+    document.addEventListener("fullscreenchange", this.onFullscreenChange);
     document.addEventListener("mousemove", this.onMouseMove);
     this.canvas.addEventListener("mousedown", this.onMouseDown);
     window.addEventListener("mouseup", this.onMouseUp);
@@ -736,6 +383,7 @@ export class VoxelEngine {
     window.removeEventListener("pagehide", this.onPageHide);
     document.removeEventListener("visibilitychange", this.onVisibilityChange);
     document.removeEventListener("pointerlockchange", this.onPointerLockChange);
+    document.removeEventListener("fullscreenchange", this.onFullscreenChange);
     document.removeEventListener("mousemove", this.onMouseMove);
     this.canvas.removeEventListener("mousedown", this.onMouseDown);
     window.removeEventListener("mouseup", this.onMouseUp);
@@ -753,12 +401,20 @@ export class VoxelEngine {
 
   preventContextMenu = (event: Event) => event.preventDefault();
 
+  onFullscreenChange = () => {
+    this.fullscreen = Boolean(document.fullscreenElement);
+    this.resize();
+    this.emitHud(true);
+  };
+
   onPointerLockChange = () => {
     this.locked = document.pointerLockElement === this.canvas;
     if (!this.locked) {
+      if (this.running && !this.touchMode) this.paused = true;
       this.clearInput();
       this.mineHeld = false;
     } else {
+      this.paused = false;
       this.titleMode = false;
       void this.audio.unlock();
     }
@@ -773,12 +429,14 @@ export class VoxelEngine {
   onMouseDown = (event: MouseEvent) => {
     if (!this.running) return;
     void this.audio.unlock();
-    if (!this.locked) {
+    if (!this.locked && !this.touchMode) {
       void this.canvas.requestPointerLock();
       return;
     }
-    if (event.button === 0) this.mineHeld = true;
-    else if (event.button === 2) this.placeBlock();
+    if (event.button === 0) {
+      if (this.targetMob) this.attackTargetMob();
+      else this.mineHeld = true;
+    } else if (event.button === 2) this.useSelected();
     else if (event.button === 1) this.pickTarget();
   };
 
@@ -800,13 +458,15 @@ export class VoxelEngine {
     if (!this.running) return;
     if (["KeyW", "KeyA", "KeyS", "KeyD", "Space", "ShiftLeft", "ShiftRight", "ControlLeft"].includes(event.code)) event.preventDefault();
     if (event.code === "KeyE" && !event.repeat) {
-      this.events.onInventoryRequest();
-      if (document.pointerLockElement) document.exitPointerLock();
+      this.openOverlay("inventory");
       return;
     }
-    if (event.code === "KeyH" && !event.repeat) {
-      this.events.onToast("WASD move · Mouse look · Space jump · Hold left harvest · Right click build · E inventory");
+    if (event.code === "KeyF" && !event.repeat) {
+      event.preventDefault();
+      void this.toggleFullscreen();
     }
+    if (event.code === "KeyQ" && !event.repeat) this.dropSelectedItem();
+    if (event.code === "KeyH" && !event.repeat) this.events.onToast("WASD move · Space jump/swim · Shift sprint · Left harvest/attack · Right use/build · E inventory · F fullscreen");
     if (event.code === "F3" && !event.repeat) {
       event.preventDefault();
       this.debug = !this.debug;
@@ -819,23 +479,15 @@ export class VoxelEngine {
     this.keys.add(event.code);
   };
 
-  onKeyUp = (event: KeyboardEvent) => {
-    this.keys.delete(event.code);
-  };
-
-  clearInput = () => {
-    this.keys.clear();
-  };
-
-  onPageHide = () => this.saveNow();
+  onKeyUp = (event: KeyboardEvent) => this.keys.delete(event.code);
+  clearInput = () => this.keys.clear();
+  onPageHide = () => this.saveNow(false);
 
   onVisibilityChange = () => {
     if (document.hidden) {
       this.clearInput();
-      this.saveNow();
-    } else if (this.running) {
-      void this.audio.unlock();
-    }
+      this.saveNow(false);
+    } else if (this.running) void this.audio.unlock();
   };
 
   look(dx: number, dy: number) {
@@ -856,20 +508,51 @@ export class VoxelEngine {
 
   jump() {
     this.keys.add("Space");
-    window.setTimeout(() => this.keys.delete("Space"), 120);
+    window.setTimeout(() => this.keys.delete("Space"), 130);
+  }
+
+  randomSeed() {
+    const first = ["MOSS", "EMBER", "CLOUD", "RIVER", "MOON", "PINE", "ECHO", "STAR", "CRYSTAL", "THUNDER"];
+    const second = ["HOLLOW", "WILD", "VALE", "REACH", "ISLE", "FIELD", "RIDGE", "GROVE", "DEEPS", "FRONTIER"];
+    return `${first[Math.floor(Math.random() * first.length)]}-${second[Math.floor(Math.random() * second.length)]}-${Math.floor(100 + Math.random() * 900)}`;
+  }
+
+  findSpawn() {
+    let best = { x: 0, z: 0, score: -Infinity };
+    for (let radius = 0; radius <= 128; radius += 4) {
+      const steps = Math.max(1, Math.ceil((Math.PI * 2 * radius) / 8));
+      for (let step = 0; step < steps; step += 1) {
+        const angle = (step / steps) * Math.PI * 2;
+        const x = Math.round(Math.cos(angle) * radius);
+        const z = Math.round(Math.sin(angle) * radius);
+        const sample = this.world.sampleColumn(x, z);
+        if (sample.height <= sample.waterline + 2) continue;
+        if (![BiomeId.Meadow, BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Savanna].includes(sample.biome)) continue;
+        const slope = Math.max(
+          Math.abs(sample.height - this.world.sampleColumn(x + 2, z).height),
+          Math.abs(sample.height - this.world.sampleColumn(x, z + 2).height),
+        );
+        const score = -radius - slope * 18 + (sample.biome === BiomeId.Meadow ? 15 : 0);
+        if (slope <= 2 && score > best.score) best = { x, z, score };
+      }
+      if (best.score > -Infinity && radius > 28) break;
+    }
+    return best;
   }
 
   previewWorld(seed: string) {
     this.persistent = false;
     this.running = false;
+    this.paused = true;
     this.titleMode = true;
     this.mode = "builder";
-    this.world.generate(seed);
-    this.rebuildTerrain();
-    this.spawnCreatures();
-    this.position.set(0, this.world.surfaceY(0, 0) + 0.51, 0);
-    this.camera.position.set(16, 13, 18);
-    this.camera.lookAt(0, 6, 0);
+    this.clearEntities();
+    this.world.reset(seed);
+    const spawn = this.findSpawn();
+    this.world.initializeAround(spawn.x, spawn.z);
+    const y = this.world.surfaceAt(spawn.x, spawn.z) + 0.51;
+    this.spawn.set(spawn.x, y, spawn.z);
+    this.position.copy(this.spawn);
     this.emitHud(true);
   }
 
@@ -877,23 +560,37 @@ export class VoxelEngine {
     clearSavedWorld();
     this.persistent = true;
     this.running = true;
+    this.paused = false;
     this.titleMode = false;
     this.mode = mode;
     this.worldTime = 0.32;
     this.day = 1;
     this.health = 10;
     this.hunger = 10;
+    this.xp = 0;
+    this.level = 0;
     this.selected = 0;
-    this.hotbar = [...PLACEABLE_BLOCKS];
-    this.inventory = {};
-    if (mode === "survival") {
-      this.inventory[BlockId.Log] = 2;
-      this.inventory[BlockId.Glow] = 4;
+    this.inventory = blankInventory();
+    this.cursor = null;
+    this.craftGrid = Array.from({ length: 9 }, () => null);
+    this.furnaces.clear();
+    this.chests.clear();
+    this.clearEntities();
+    this.world.reset(seed.trim() || this.randomSeed());
+    const spawn = this.findSpawn();
+    this.world.initializeAround(spawn.x, spawn.z);
+    const y = this.world.surfaceAt(spawn.x, spawn.z) + 0.51;
+    this.spawn.set(spawn.x, y, spawn.z);
+    this.position.copy(this.spawn);
+    for (let dx = -1; dx <= 1; dx += 1) for (let dz = -1; dz <= 1; dz += 1) {
+      for (let clearY = Math.floor(y + 0.5); clearY <= Math.floor(y + 2.5); clearY += 1) this.world.setBlock(spawn.x + dx, clearY, spawn.z + dz, BlockId.Air, false);
     }
-    this.world.generate(seed.trim() || this.randomSeed());
-    this.rebuildTerrain();
-    this.spawnCreatures();
-    this.respawn(false);
+    if (mode === "survival") {
+      this.inventory[0] = { item: Item.Berry, count: 3 };
+    } else {
+      for (let index = 0; index < Math.min(INVENTORY_SIZE, CREATIVE_BLOCKS.length); index += 1) this.inventory[index] = { item: CREATIVE_BLOCKS[index], count: 64 };
+    }
+    this.spawnProtection = 22;
     this.saveSoon();
     this.emitHud(true);
   }
@@ -901,57 +598,111 @@ export class VoxelEngine {
   loadWorld(save: WorldSave) {
     this.persistent = true;
     this.running = true;
+    this.paused = false;
     this.titleMode = false;
-    this.mode = save.mode === "survival" ? "survival" : "builder";
-    this.world.generate(save.seed, save.edits);
-    this.rebuildTerrain();
-    this.spawnCreatures();
+    this.mode = save.mode === "builder" ? "builder" : "survival";
+    this.clearEntities();
+    this.world.reset(save.seed, save.edits);
+    this.world.initializeAround(save.player.x, save.player.z);
     this.position.set(save.player.x, save.player.y, save.player.z);
+    this.spawn.set(save.spawn?.x ?? 0, save.spawn?.y ?? this.world.surfaceAt(0, 0) + 0.51, save.spawn?.z ?? 0);
     this.yaw = Number(save.player.yaw) || 0;
     this.pitch = clamp(Number(save.player.pitch) || 0, -1.4, 1.4);
-    this.inventory = {};
-    for (const [key, value] of Object.entries(save.inventory ?? {})) this.inventory[Number(key)] = Number(value) || 0;
-    this.hotbar = Array.isArray(save.hotbar) && save.hotbar.length === 9 ? save.hotbar : [...PLACEABLE_BLOCKS];
+    this.inventory = blankInventory();
+    for (let index = 0; index < Math.min(INVENTORY_SIZE, save.inventory?.length ?? 0); index += 1) this.inventory[index] = cloneSlot(save.inventory[index]);
     this.selected = clamp(Number(save.selected) || 0, 0, 8);
     this.health = clamp(Number(save.health) || 10, 1, 10);
     this.hunger = clamp(Number(save.hunger) || 10, 0, 10);
+    this.xp = Math.max(0, Number(save.xp) || 0);
+    this.level = Math.max(0, Number(save.level) || 0);
     this.worldTime = ((Number(save.time) || 0.32) % 1 + 1) % 1;
     this.day = Math.max(1, Number(save.day) || 1);
-    this.weather = save.weather === "rain" ? "rain" : this.settings.weather;
-    if (this.collidesAt(this.position) || this.position.y < 0) this.respawn(false);
+    this.weather = save.weather === "rain" ? "rain" : "clear";
+    this.furnaces = new Map(Object.entries(save.furnaces ?? {}).map(([key, value]) => [key, { ...blankFurnace(), ...value }]));
+    this.chests = new Map(Object.entries(save.chests ?? {}).map(([key, value]) => [key, Array.from({ length: 27 }, (_, index) => cloneSlot(value[index] ?? null))]));
+    if (this.collidesAt(this.position) || this.position.y < MIN_Y) this.respawn(false);
+    this.spawnProtection = 8;
     this.emitHud(true);
   }
 
   activate() {
     this.running = true;
+    this.paused = false;
     this.titleMode = false;
     void this.audio.unlock();
-    try {
-      void this.canvas.requestPointerLock();
-    } catch {
-      // Touch devices do not support pointer lock and use the overlay controls.
+    if (!this.touchMode) {
+      try { void this.canvas.requestPointerLock(); } catch { /* Touch and embedded browsers may reject pointer lock. */ }
     }
   }
 
   pause() {
+    this.paused = true;
     this.clearInput();
     this.mineHeld = false;
     if (document.pointerLockElement) document.exitPointerLock();
   }
 
   quitToTitle() {
+    this.closeContainer();
     this.saveNow();
     this.running = false;
+    this.paused = true;
     this.titleMode = true;
     this.persistent = false;
     this.clearInput();
     if (document.pointerLockElement) document.exitPointerLock();
   }
 
-  randomSeed() {
-    const first = ["MOSS", "EMBER", "CLOUD", "RIVER", "MOON", "PINE", "ECHO", "STAR"];
-    const second = ["HOLLOW", "WILD", "VALE", "REACH", "ISLE", "FIELD", "RIDGE", "GROVE"];
-    return `${first[Math.floor(Math.random() * first.length)]}-${second[Math.floor(Math.random() * second.length)]}-${Math.floor(100 + Math.random() * 900)}`;
+  async toggleFullscreen() {
+    try {
+      const shell = this.canvas.parentElement;
+      if (!document.fullscreenElement) await shell?.requestFullscreen({ navigationUI: "hide" });
+      else await document.exitFullscreen();
+    } catch {
+      this.events.onToast("Fullscreen is unavailable in this browser.");
+    }
+  }
+
+  openOverlay(kind: OverlayKind, key?: string) {
+    if (kind === "inventory") {
+      this.craftingSize = 2;
+      this.activeFurnaceKey = null;
+      this.activeChestKey = null;
+    } else if (kind === "crafting") {
+      this.craftingSize = 3;
+      this.activeFurnaceKey = null;
+      this.activeChestKey = null;
+    } else if (kind === "furnace" && key) {
+      this.activeFurnaceKey = key;
+      this.activeChestKey = null;
+      if (!this.furnaces.has(key)) this.furnaces.set(key, blankFurnace());
+    } else if (kind === "chest" && key) {
+      this.activeChestKey = key;
+      this.activeFurnaceKey = null;
+      if (!this.chests.has(key)) this.chests.set(key, this.generateChestLoot(key));
+    }
+    this.pause();
+    this.events.onOverlayRequest(kind, key);
+    this.emitHud(true);
+  }
+
+  closeContainer() {
+    if (this.cursor) {
+      const leftover = this.addItem(this.cursor.item, this.cursor.count, this.cursor.durability);
+      if (leftover > 0) this.spawnDrop(this.cursor.item, leftover, this.position.clone().add(new THREE.Vector3(0, 1, 0)));
+      this.cursor = null;
+    }
+    for (let index = 0; index < this.craftGrid.length; index += 1) {
+      const slot = this.craftGrid[index];
+      if (!slot) continue;
+      const leftover = this.addItem(slot.item, slot.count, slot.durability);
+      if (leftover > 0) this.spawnDrop(slot.item, leftover, this.position.clone().add(new THREE.Vector3(0, 1, 0)));
+      this.craftGrid[index] = null;
+    }
+    this.activeFurnaceKey = null;
+    this.activeChestKey = null;
+    this.craftingSize = 2;
+    this.emitHud(true);
   }
 
   selectSlot(slot: number) {
@@ -960,102 +711,536 @@ export class VoxelEngine {
     this.emitHud(true);
   }
 
-  assignSelected(block: BlockId) {
-    if (!PLACEABLE_BLOCKS.includes(block)) return;
-    this.hotbar[this.selected] = block;
+  setCreativeItem(item: ItemCode) {
+    if (this.mode !== "builder" || !ITEMS[item]) return;
+    this.inventory[this.selected] = { item, count: 64 };
+    this.audio.play("ui");
+    this.emitHud(true);
+  }
+
+  addItem(item: ItemCode, count: number, durability?: number) {
+    if (!ITEMS[item] || count <= 0) return count;
+    let remaining = count;
+    const stackLimit = maxStack(item);
+    if (stackLimit > 1) {
+      for (const slot of this.inventory) {
+        if (!slot || slot.item !== item || slot.count >= stackLimit || slot.durability !== durability) continue;
+        const add = Math.min(remaining, stackLimit - slot.count);
+        slot.count += add;
+        remaining -= add;
+        if (remaining <= 0) return 0;
+      }
+    }
+    for (let index = 0; index < this.inventory.length; index += 1) {
+      if (this.inventory[index]) continue;
+      const add = Math.min(remaining, stackLimit);
+      this.inventory[index] = { item, count: add, ...(durability !== undefined ? { durability } : {}) };
+      remaining -= add;
+      if (remaining <= 0) return 0;
+    }
+    return remaining;
+  }
+
+  countItem(item: ItemCode) {
+    return this.inventory.reduce((sum, slot) => sum + (slot?.item === item ? slot.count : 0), 0);
+  }
+
+  removeItem(item: ItemCode, count: number) {
+    let remaining = count;
+    for (let index = this.inventory.length - 1; index >= 0; index -= 1) {
+      const slot = this.inventory[index];
+      if (!slot || slot.item !== item) continue;
+      const remove = Math.min(remaining, slot.count);
+      slot.count -= remove;
+      remaining -= remove;
+      if (slot.count <= 0) this.inventory[index] = null;
+      if (remaining <= 0) return true;
+    }
+    return false;
+  }
+
+  inventoryClick(index: number, button: "left" | "right", shift = false) {
+    if (index < 0 || index >= this.inventory.length) return;
+    if (shift && this.inventory[index]) {
+      this.shiftMove(index);
+      this.audio.play("ui");
+      this.emitHud(true);
+      return;
+    }
+    const slot = this.inventory[index];
+    if (button === "left") {
+      if (!this.cursor && slot) {
+        this.cursor = slot;
+        this.inventory[index] = null;
+      } else if (this.cursor && !slot) {
+        this.inventory[index] = this.cursor;
+        this.cursor = null;
+      } else if (this.cursor && slot && this.cursor.item === slot.item && this.cursor.durability === slot.durability && slot.count < maxStack(slot.item)) {
+        const add = Math.min(this.cursor.count, maxStack(slot.item) - slot.count);
+        slot.count += add;
+        this.cursor.count -= add;
+        if (this.cursor.count <= 0) this.cursor = null;
+      } else if (this.cursor && slot) {
+        this.inventory[index] = this.cursor;
+        this.cursor = slot;
+      }
+    } else {
+      if (!this.cursor && slot) {
+        const take = Math.ceil(slot.count / 2);
+        this.cursor = { ...slot, count: take };
+        slot.count -= take;
+        if (slot.count <= 0) this.inventory[index] = null;
+      } else if (this.cursor && !slot) {
+        this.inventory[index] = { ...this.cursor, count: 1 };
+        this.cursor.count -= 1;
+        if (this.cursor.count <= 0) this.cursor = null;
+      } else if (this.cursor && slot && this.cursor.item === slot.item && slot.count < maxStack(slot.item)) {
+        slot.count += 1;
+        this.cursor.count -= 1;
+        if (this.cursor.count <= 0) this.cursor = null;
+      }
+    }
     this.audio.play("ui");
     this.saveSoon();
     this.emitHud(true);
   }
 
-  craft(recipeId: "planks" | "brick" | "glass" | "glow") {
-    const recipes = {
-      planks: { cost: [[BlockId.Log, 1]] as [BlockId, number][], output: [BlockId.Planks, 4] as [BlockId, number] },
-      brick: { cost: [[BlockId.Stone, 2]] as [BlockId, number][], output: [BlockId.Brick, 4] as [BlockId, number] },
-      glass: { cost: [[BlockId.Sand, 2]] as [BlockId, number][], output: [BlockId.Glass, 4] as [BlockId, number] },
-      glow: { cost: [[BlockId.Coal, 1], [BlockId.Glass, 1]] as [BlockId, number][], output: [BlockId.Glow, 2] as [BlockId, number] },
-    };
-    const recipe = recipes[recipeId];
-    if (this.mode === "survival" && recipe.cost.some(([id, amount]) => (this.inventory[id] ?? 0) < amount)) {
-      this.events.onToast("Not enough materials yet.");
-      this.audio.play("ui");
+  shiftMove(index: number) {
+    const slot = this.inventory[index];
+    if (!slot) return;
+    const targets = index < 9 ? [...Array.from({ length: 27 }, (_, i) => i + 9)] : [...Array.from({ length: 9 }, (_, i) => i)];
+    for (const target of targets) {
+      const other = this.inventory[target];
+      if (other && other.item === slot.item && other.count < maxStack(slot.item)) {
+        const add = Math.min(slot.count, maxStack(slot.item) - other.count);
+        other.count += add;
+        slot.count -= add;
+        if (slot.count <= 0) { this.inventory[index] = null; return; }
+      }
+    }
+    for (const target of targets) if (!this.inventory[target]) {
+      this.inventory[target] = slot;
+      this.inventory[index] = null;
+      return;
+    }
+  }
+
+  craftSlotClick(index: number, button: "left" | "right") {
+    if (index < 0 || index >= 9) return;
+    if (this.craftingSize === 2 && !CRAFT_POSITIONS_2.includes(index)) return;
+    const slot = this.craftGrid[index];
+    if (button === "left") {
+      if (!this.cursor && slot) { this.cursor = slot; this.craftGrid[index] = null; }
+      else if (this.cursor && !slot) { this.craftGrid[index] = this.cursor; this.cursor = null; }
+      else if (this.cursor && slot && this.cursor.item === slot.item && slot.count < maxStack(slot.item)) {
+        const add = Math.min(this.cursor.count, maxStack(slot.item) - slot.count);
+        slot.count += add;
+        this.cursor.count -= add;
+        if (this.cursor.count <= 0) this.cursor = null;
+      } else if (this.cursor && slot) { this.craftGrid[index] = this.cursor; this.cursor = slot; }
+    } else {
+      if (!this.cursor && slot) {
+        const take = Math.ceil(slot.count / 2);
+        this.cursor = { ...slot, count: take };
+        slot.count -= take;
+        if (slot.count <= 0) this.craftGrid[index] = null;
+      } else if (this.cursor && !slot) {
+        this.craftGrid[index] = { ...this.cursor, count: 1 };
+        this.cursor.count -= 1;
+        if (this.cursor.count <= 0) this.cursor = null;
+      } else if (this.cursor && slot && this.cursor.item === slot.item && slot.count < maxStack(slot.item)) {
+        slot.count += 1;
+        this.cursor.count -= 1;
+        if (this.cursor.count <= 0) this.cursor = null;
+      }
+    }
+    this.updateCraftResult();
+    this.audio.play("ui");
+    this.emitHud(true);
+  }
+
+  ingredientMatches(value: ItemCode, ingredient: ItemCode | ItemCode[]) {
+    return Array.isArray(ingredient) ? ingredient.includes(value) : value === ingredient;
+  }
+
+  findRecipe() {
+    const size = this.craftingSize;
+    let minX: number = size;
+    let minY: number = size;
+    let maxX: number = -1;
+    let maxY: number = -1;
+    for (let y = 0; y < size; y += 1) for (let x = 0; x < size; x += 1) {
+      const slot = this.craftGrid[y * 3 + x];
+      if (slot) { minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); }
+    }
+    if (maxX < 0) return null;
+    const width = maxX - minX + 1;
+    const height = maxY - minY + 1;
+    for (const recipe of RECIPES) {
+      if (recipe.table && size < 3) continue;
+      if (recipe.width !== width || recipe.height !== height) continue;
+      let matches = true;
+      for (let y = 0; y < size && matches; y += 1) for (let x = 0; x < size; x += 1) {
+        const inside = x >= minX && x <= maxX && y >= minY && y <= maxY;
+        const slot = this.craftGrid[y * 3 + x];
+        if (!inside && slot) { matches = false; break; }
+        if (!inside) continue;
+        const ingredient = recipe.pattern[(y - minY) * width + (x - minX)];
+        if (ingredient === 0 ? Boolean(slot) : !slot || !this.ingredientMatches(slot.item, ingredient)) { matches = false; break; }
+      }
+      if (matches) return { recipe, minX, minY };
+    }
+    return null;
+  }
+
+  updateCraftResult() {
+    this.activeRecipe = this.findRecipe()?.recipe ?? null;
+  }
+
+  craftOutputClick() {
+    const match = this.findRecipe();
+    if (!match) return;
+    const output = match.recipe.output;
+    if (this.cursor && (this.cursor.item !== output.item || this.cursor.count + output.count > maxStack(output.item))) return;
+    if (!this.cursor) this.cursor = cloneSlot(output);
+    else this.cursor.count += output.count;
+    for (let y = 0; y < match.recipe.height; y += 1) for (let x = 0; x < match.recipe.width; x += 1) {
+      if (match.recipe.pattern[y * match.recipe.width + x] === 0) continue;
+      const index = (match.minY + y) * 3 + match.minX + x;
+      const slot = this.craftGrid[index];
+      if (slot) { slot.count -= 1; if (slot.count <= 0) this.craftGrid[index] = null; }
+    }
+    this.updateCraftResult();
+    this.audio.play("craft");
+    this.saveSoon();
+    this.emitHud(true);
+  }
+
+  autoCraft(recipeId: string) {
+    const recipe = RECIPES.find((candidate) => candidate.id === recipeId);
+    if (!recipe || (recipe.table && this.craftingSize < 3)) {
+      this.events.onToast(recipe?.table ? "This recipe needs a crafting table." : "Recipe unavailable.");
       return false;
     }
-    if (this.mode === "survival") for (const [id, amount] of recipe.cost) this.inventory[id] = (this.inventory[id] ?? 0) - amount;
-    const [output, amount] = recipe.output;
-    this.inventory[output] = (this.inventory[output] ?? 0) + amount;
-    this.audio.play("pickup");
-    this.events.onToast(`Crafted ${BLOCKS[output].name} ×${amount}`);
+    const required: ItemCode[] = [];
+    for (const ingredient of recipe.pattern) {
+      if (ingredient === 0) continue;
+      if (Array.isArray(ingredient)) {
+        const choice = ingredient.find((item) => this.countItem(item) > required.filter((used) => used === item).length);
+        if (choice === undefined) { this.events.onToast("You do not have the ingredients yet."); return false; }
+        required.push(choice);
+      } else required.push(ingredient);
+    }
+    const counts = new Map<number, number>();
+    for (const item of required) counts.set(item, (counts.get(item) ?? 0) + 1);
+    if ([...counts].some(([item, count]) => this.countItem(item) < count)) {
+      this.events.onToast("You do not have the ingredients yet.");
+      return false;
+    }
+    for (const [item, count] of counts) this.removeItem(item, count);
+    const leftover = this.addItem(recipe.output.item, recipe.output.count, ITEMS[recipe.output.item]?.maxDurability);
+    if (leftover > 0) this.spawnDrop(recipe.output.item, leftover, this.position.clone().add(new THREE.Vector3(0, 1, 0)));
+    this.audio.play("craft");
+    this.events.onToast(`Crafted ${itemName(recipe.output.item)} ×${recipe.output.count}`);
     this.saveSoon();
     this.emitHud(true);
     return true;
   }
 
+  machineClick(machine: "furnace" | "chest", index: number, button: "left" | "right") {
+    let slots: Array<InventorySlot | null>;
+    if (machine === "furnace") {
+      const furnace = this.activeFurnaceKey ? this.furnaces.get(this.activeFurnaceKey) : null;
+      if (!furnace || index < 0 || index > 2) return;
+      slots = [furnace.input, furnace.fuel, furnace.output];
+    } else {
+      const chest = this.activeChestKey ? this.chests.get(this.activeChestKey) : null;
+      if (!chest || index < 0 || index >= chest.length) return;
+      slots = chest;
+    }
+    const slot = slots[index];
+    if (machine === "furnace" && index === 2) {
+      if (!slot) return;
+      if (!this.cursor) {
+        if (button === "left") { this.cursor = slot; slots[index] = null; }
+        else {
+          const take = Math.ceil(slot.count / 2);
+          this.cursor = { ...slot, count: take };
+          slot.count -= take;
+          if (slot.count <= 0) slots[index] = null;
+        }
+      } else if (this.cursor.item === slot.item && this.cursor.count < maxStack(slot.item)) {
+        const take = button === "right" ? 1 : Math.min(slot.count, maxStack(slot.item) - this.cursor.count);
+        this.cursor.count += take;
+        slot.count -= take;
+        if (slot.count <= 0) slots[index] = null;
+      }
+      const furnace = this.furnaces.get(this.activeFurnaceKey ?? "");
+      if (furnace) furnace.output = slots[2];
+      this.audio.play("pickup");
+      this.saveSoon();
+      this.emitHud(true);
+      return;
+    }
+    if (button === "left") {
+      if (!this.cursor && slot) { this.cursor = slot; slots[index] = null; }
+      else if (this.cursor && !slot) { slots[index] = this.cursor; this.cursor = null; }
+      else if (this.cursor && slot && this.cursor.item === slot.item && slot.count < maxStack(slot.item)) {
+        const add = Math.min(this.cursor.count, maxStack(slot.item) - slot.count);
+        slot.count += add;
+        this.cursor.count -= add;
+        if (this.cursor.count <= 0) this.cursor = null;
+      } else if (this.cursor && slot) { slots[index] = this.cursor; this.cursor = slot; }
+    } else {
+      if (!this.cursor && slot) {
+        const take = Math.ceil(slot.count / 2);
+        this.cursor = { ...slot, count: take };
+        slot.count -= take;
+        if (slot.count <= 0) slots[index] = null;
+      } else if (this.cursor && !slot) {
+        slots[index] = { ...this.cursor, count: 1 };
+        this.cursor.count -= 1;
+        if (this.cursor.count <= 0) this.cursor = null;
+      } else if (this.cursor && slot && this.cursor.item === slot.item && slot.count < maxStack(slot.item)) {
+        slot.count += 1;
+        this.cursor.count -= 1;
+        if (this.cursor.count <= 0) this.cursor = null;
+      }
+    }
+    if (machine === "furnace") {
+      const furnace = this.furnaces.get(this.activeFurnaceKey ?? "");
+      if (furnace) [furnace.input, furnace.fuel, furnace.output] = slots as [InventorySlot | null, InventorySlot | null, InventorySlot | null];
+    }
+    this.audio.play("ui");
+    this.saveSoon();
+    this.emitHud(true);
+  }
+
+  generateChestLoot(key: string): ChestState {
+    const slots = Array.from({ length: 27 }, () => null as InventorySlot | null);
+    const [x, y, z] = key.split(",").map(Number);
+    let state = (this.world.seed ^ Math.imul(x || 0, 374761393) ^ Math.imul(y || 0, 1103515245) ^ Math.imul(z || 0, 668265263)) >>> 0;
+    const random = () => {
+      state += 0x6d2b79f5;
+      let value = state;
+      value = Math.imul(value ^ (value >>> 15), value | 1);
+      value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+      return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+    };
+    const put = (item: ItemCode, min: number, max: number, chance = 1) => {
+      if (random() > chance) return;
+      const empty = slots.map((slot, index) => slot ? -1 : index).filter((index) => index >= 0);
+      if (!empty.length) return;
+      slots[empty[Math.floor(random() * empty.length)]] = { item, count: min + Math.floor(random() * (max - min + 1)), ...(ITEMS[item]?.maxDurability ? { durability: ITEMS[item].maxDurability } : {}) };
+    };
+    put(Item.Coal, 2, 7);
+    put(BlockId.Torch, 3, 9);
+    put(Item.Bread, 1, 3, 0.82);
+    put(Item.Berry, 2, 5, 0.7);
+    put(Item.SunmetalIngot, 1, 3, 0.38);
+    put(Item.GoldIngot, 1, 2, 0.2);
+    put(Item.CrystalShard, 1, 2, 0.08);
+    put(Item.StonePickaxe, 1, 1, 0.14);
+    put(Item.IronSword, 1, 1, 0.045);
+    put(Item.GlowDust, 1, 4, 0.28);
+    put(Item.Wheat, 2, 6, 0.5);
+    return slots;
+  }
+
+  fuelValue(item: ItemCode) {
+    if (item === Item.Coal) return 80;
+    if (item === Item.Charcoal) return 72;
+    if ([BlockId.WildwoodLog, BlockId.PineLog, BlockId.BirchLog, BlockId.BloomLog, BlockId.Planks].includes(item as BlockId)) return 15;
+    return ITEMS[item]?.fuel ?? 0;
+  }
+
+  updateFurnaces(dt: number) {
+    for (const furnace of this.furnaces.values()) {
+      const result = furnace.input ? SMELTING[furnace.input.item] : null;
+      const outputFits = result && (!furnace.output || (furnace.output.item === result.item && furnace.output.count + result.count <= maxStack(result.item)));
+      if (!result || !outputFits) { furnace.progress = Math.max(0, furnace.progress - dt * 0.3); furnace.burn = Math.max(0, furnace.burn - dt); continue; }
+      if (furnace.burn <= 0 && furnace.fuel) {
+        const fuel = this.fuelValue(furnace.fuel.item);
+        if (fuel > 0) {
+          furnace.fuel.count -= 1;
+          if (furnace.fuel.count <= 0) furnace.fuel = null;
+          furnace.burn = fuel;
+          furnace.burnMax = fuel;
+          this.audio.play("furnace");
+        }
+      }
+      if (furnace.burn > 0) {
+        furnace.burn = Math.max(0, furnace.burn - dt);
+        furnace.progress += dt;
+        if (furnace.progress >= 8) {
+          furnace.progress = 0;
+          if (furnace.input) { furnace.input.count -= 1; if (furnace.input.count <= 0) furnace.input = null; }
+          if (!furnace.output) furnace.output = cloneSlot(result);
+          else furnace.output.count += result.count;
+          this.audio.play("craft");
+          this.saveSoon();
+        }
+      }
+    }
+  }
+
+  selectedSlot() {
+    return this.inventory[this.selected];
+  }
+
   pickTarget() {
     if (!this.target) return;
-    const slot = this.hotbar.indexOf(this.target.type);
-    if (slot >= 0) this.selectSlot(slot);
-    else this.assignSelected(this.target.type);
+    const blockItem = this.target.type as ItemCode;
+    const slotIndex = this.inventory.slice(0, 9).findIndex((slot) => slot?.item === blockItem);
+    if (slotIndex >= 0) this.selectSlot(slotIndex);
+    else if (this.mode === "builder" && ITEMS[blockItem]) this.setCreativeItem(blockItem);
+  }
+
+  useSelected() {
+    if (this.placeCooldown > 0) return;
+    if (this.target) {
+      const key = blockKey(this.target.x, this.target.y, this.target.z);
+      if (this.target.type === BlockId.CraftingTable) { this.openOverlay("crafting", key); return; }
+      if (this.target.type === BlockId.Furnace) { this.openOverlay("furnace", key); return; }
+      if (this.target.type === BlockId.Chest) { this.openOverlay("chest", key); return; }
+    }
+    const slot = this.selectedSlot();
+    const definition = slot ? ITEMS[slot.item] : null;
+    if (definition?.food && this.mode === "survival" && this.hunger < 10) {
+      this.hunger = Math.min(10, this.hunger + definition.food);
+      slot!.count -= 1;
+      if (slot!.count <= 0) this.inventory[this.selected] = null;
+      this.audio.play("eat");
+      this.events.onToast(`Ate ${definition.name}.`);
+      this.saveSoon();
+      this.emitHud(true);
+      return;
+    }
+    this.placeBlock();
   }
 
   placeBlock() {
     if (!this.target || this.placeCooldown > 0) return;
-    const type = this.hotbar[this.selected];
-    if (!PLACEABLE_BLOCKS.includes(type)) return;
-    if (this.mode === "survival" && (this.inventory[type] ?? 0) <= 0) {
-      this.events.onToast(`Harvest or craft ${BLOCKS[type].name} first.`);
-      this.audio.play("ui");
-      return;
-    }
-    const { placeX: x, placeY: y, placeZ: z } = this.target;
-    if (y < 1 || y > MAX_WORLD_Y || Math.abs(x) >= WORLD_HALF || Math.abs(z) >= WORLD_HALF) return;
-    if (this.world.get(x, y, z) !== BlockId.Air && this.world.get(x, y, z) !== BlockId.Water) return;
-    const previous = this.world.get(x, y, z);
-    this.world.set(x, y, z, type);
-    if (this.collidesAt(this.position)) {
-      this.world.set(x, y, z, previous, false);
-      this.world.edits.set(keyOf(x, y, z), previous);
+    const slot = this.selectedSlot();
+    if (!slot) return;
+    const itemDefinition = ITEMS[slot.item];
+    const type = itemDefinition?.placeBlock;
+    if (type === undefined) return;
+    const replacesTarget = BLOCKS[this.target.type]?.replaceable;
+    const x = replacesTarget ? this.target.x : this.target.placeX;
+    const y = replacesTarget ? this.target.y : this.target.placeY;
+    const z = replacesTarget ? this.target.z : this.target.placeZ;
+    if (y < MIN_Y || y > MAX_Y) return;
+    const current = this.world.getBlock(x, y, z);
+    if (current === undefined || (!BLOCKS[current]?.replaceable && current !== BlockId.Air)) return;
+    this.world.setBlock(x, y, z, type);
+    if (BLOCKS[type].solid && this.collidesAt(this.position)) {
+      this.world.setBlock(x, y, z, current ?? BlockId.Air, false);
       this.events.onToast("You cannot place a block inside yourself.");
       return;
     }
-    if (this.mode === "survival") this.inventory[type] = Math.max(0, (this.inventory[type] ?? 0) - 1);
-    this.placeCooldown = 0.18;
+    if (this.mode === "survival") {
+      slot.count -= 1;
+      if (slot.count <= 0) this.inventory[this.selected] = null;
+    }
+    this.placeCooldown = 0.16;
     this.audio.play("place", type);
     this.spawnParticles(x, y, z, type, 5);
-    this.rebuildTerrain();
     this.saveSoon();
     this.emitHud(true);
+  }
+
+  toolCanHarvest(block: BlockId, slot: InventorySlot | null) {
+    const definition = BLOCKS[block];
+    if (!definition || definition.requiredTier <= 0) return true;
+    const item = slot ? ITEMS[slot.item] : null;
+    return item?.toolKind === definition.preferredTool && (item.tier ?? 0) >= definition.requiredTier;
+  }
+
+  miningMultiplier(block: BlockId) {
+    if (this.mode === "builder") return 8;
+    const definition = BLOCKS[block];
+    const slot = this.selectedSlot();
+    const item = slot ? ITEMS[slot.item] : null;
+    if (item?.toolKind === definition.preferredTool) return item.miningSpeed ?? 1;
+    if (definition.preferredTool === "hand") return 1.1;
+    return 0.48;
+  }
+
+  damageSelectedTool(amount = 1) {
+    if (this.mode === "builder") return;
+    const slot = this.selectedSlot();
+    if (!slot) return;
+    const definition = ITEMS[slot.item];
+    if (!definition?.maxDurability) return;
+    slot.durability = (slot.durability ?? definition.maxDurability) - amount;
+    if (slot.durability <= 0) {
+      this.events.onToast(`${definition.name} broke.`);
+      this.audio.play("break");
+      this.inventory[this.selected] = null;
+    }
   }
 
   breakTarget() {
-    if (!this.target || this.target.type === BlockId.Bedrock || this.target.type === BlockId.Water) return;
+    if (!this.target || this.target.type === BlockId.Bedrock || this.target.type === BlockId.Water || this.target.type === BlockId.Lava) return;
     const { x, y, z, type } = this.target;
-    this.world.set(x, y, z, BlockId.Air);
-    this.inventory[type] = (this.inventory[type] ?? 0) + 1;
+    const harvested = this.toolCanHarvest(type, this.selectedSlot());
+    this.world.setBlock(x, y, z, BlockId.Air);
+    if (this.mode === "survival") {
+      if (harvested) this.dropBlockLoot(type, x, y, z);
+      else this.events.onToast(`${BLOCKS[type].name} crumbled without the right tool.`);
+      this.damageSelectedTool();
+    }
+    const key = blockKey(x, y, z);
+    if (type === BlockId.Furnace) {
+      const furnace = this.furnaces.get(key);
+      if (furnace) for (const slot of [furnace.input, furnace.fuel, furnace.output]) if (slot) this.spawnDrop(slot.item, slot.count, new THREE.Vector3(x, y + 0.5, z));
+      this.furnaces.delete(key);
+    }
+    if (type === BlockId.Chest) {
+      const chest = this.chests.get(key);
+      if (chest) for (const slot of chest) if (slot) this.spawnDrop(slot.item, slot.count, new THREE.Vector3(x, y + 0.5, z));
+      this.chests.delete(key);
+    }
     this.audio.play("break", type);
-    window.setTimeout(() => this.audio.play("pickup", type), 55);
     this.spawnParticles(x, y, z, type, 13);
     this.miningProgress = 0;
     this.target = null;
-    this.rebuildTerrain();
     this.saveSoon();
     this.emitHud(true);
   }
 
+  randomDrop(item: ItemCode, min: number, max: number, chance = 1) {
+    if (Math.random() > chance) return [] as Array<[ItemCode, number]>;
+    return [[item, min + Math.floor(Math.random() * (max - min + 1))] as [ItemCode, number]];
+  }
+
+  dropBlockLoot(type: BlockId, x: number, y: number, z: number) {
+    let drops: Array<[ItemCode, number]> = [];
+    if (type === BlockId.Grass || type === BlockId.SnowyGrass || type === BlockId.SavannaGrass || type === BlockId.SwampGrass) drops = [[BlockId.Dirt, 1]];
+    else if (type === BlockId.Stone || type === BlockId.Deepstone || type === BlockId.Basalt) drops = [[BlockId.Cobblestone, 1]];
+    else if (type === BlockId.CoalOre) drops = this.randomDrop(Item.Coal, 1, 2);
+    else if (type === BlockId.IronOre) drops = [[Item.RawSunmetal, 1]];
+    else if (type === BlockId.CopperOre) drops = this.randomDrop(Item.RawSunmetal, 1, 2);
+    else if (type === BlockId.GoldOre) drops = [[Item.RawGold, 1]];
+    else if (type === BlockId.CrystalOre) drops = this.randomDrop(Item.CrystalShard, 1, 2);
+    else if ([BlockId.WildwoodLeaves, BlockId.PineLeaves, BlockId.BirchLeaves, BlockId.BloomLeaves].includes(type)) {
+      drops = [...this.randomDrop(Item.Stick, 1, 2, 0.22), ...this.randomDrop(Item.Apple, 1, 1, 0.06)];
+    } else if (type === BlockId.Gravel) drops = Math.random() < 0.16 ? [[Item.Flint, 1]] : [[BlockId.Gravel, 1]];
+    else if (type === BlockId.WheatCrop) drops = [...this.randomDrop(Item.Wheat, 1, 2), ...this.randomDrop(Item.Wheat, 1, 1, 0.35)];
+    else if (ITEMS[type]) drops = [[type, 1]];
+    for (const [item, count] of drops) this.spawnDrop(item, count, new THREE.Vector3(x, y + 0.3, z));
+  }
+
   updateMining(dt: number) {
-    if (!this.mineHeld || !this.target || (!this.locked && !this.touchMode)) {
-      if (this.miningProgress > 0) {
-        this.miningProgress = Math.max(0, this.miningProgress - dt * 3);
-      }
+    if (this.targetMob && this.mineHeld && this.attackCooldown <= 0) this.attackTargetMob();
+    if (!this.mineHeld || !this.target || this.targetMob || (!this.locked && !this.touchMode)) {
+      this.miningProgress = Math.max(0, this.miningProgress - dt * 3);
       return;
     }
-    if (this.target.type === BlockId.Bedrock) {
-      this.miningProgress = 0;
-      return;
-    }
+    if (this.target.type === BlockId.Bedrock) { this.miningProgress = 0; return; }
     const hardness = BLOCKS[this.target.type].hardness;
-    const speed = this.mode === "builder" ? 3.6 : 1;
-    this.miningProgress += (dt * speed) / Math.max(0.15, hardness);
+    this.miningProgress += (dt * this.miningMultiplier(this.target.type)) / Math.max(0.12, hardness);
     this.miningSoundTimer -= dt;
     if (this.miningSoundTimer <= 0) {
       this.audio.play("mine", this.target.type);
@@ -1067,23 +1252,22 @@ export class VoxelEngine {
   updateTarget() {
     if (!this.running || this.titleMode) {
       this.target = null;
+      this.targetMob = null;
       this.selection.visible = false;
       return;
     }
     const direction = new THREE.Vector3();
     this.camera.getWorldDirection(direction);
-    const hit = this.castVoxel(this.camera.position, direction, 6);
-    const nextKey = hit ? keyOf(hit.x, hit.y, hit.z) : "";
-    if (nextKey !== this.targetKey) {
-      this.targetKey = nextKey;
-      this.miningProgress = 0;
-    }
-    this.target = hit;
-    this.selection.visible = Boolean(hit);
-    if (hit) {
-      this.selection.position.set(hit.x, hit.y, hit.z);
-      const material = this.selection.material as THREE.LineBasicMaterial;
-      material.color.setHSL(0.12, 0.25, 0.9 - this.miningProgress * 0.35);
+    const blockHit = this.castVoxel(this.camera.position, direction, 6);
+    const mobHit = this.castMob(this.camera.position, direction, 5);
+    this.targetMob = mobHit && (!blockHit || mobHit.distance < blockHit.distance) ? mobHit.mob : null;
+    this.target = this.targetMob ? null : blockHit;
+    const nextKey = this.target ? blockKey(this.target.x, this.target.y, this.target.z) : this.targetMob ? `mob:${this.targetMob.id}` : "";
+    if (nextKey !== this.targetKey) { this.targetKey = nextKey; this.miningProgress = 0; }
+    this.selection.visible = Boolean(this.target);
+    if (this.target) {
+      this.selection.position.set(this.target.x, this.target.y, this.target.z);
+      (this.selection.material as THREE.LineBasicMaterial).color.setHSL(0.12, 0.25, 0.9 - this.miningProgress * 0.35);
     }
   }
 
@@ -1107,28 +1291,28 @@ export class VoxelEngine {
     let previousX = x;
     let previousY = y;
     let previousZ = z;
-
     while (distance <= reach) {
-      const type = this.world.get(x, y, z);
-      if (type !== BlockId.Air && type !== BlockId.Water) {
-        return { x, y, z, placeX: previousX, placeY: previousY, placeZ: previousZ, type };
-      }
-      previousX = x;
-      previousY = y;
-      previousZ = z;
-      if (maxX < maxY && maxX < maxZ) {
-        x += stepX;
-        distance = maxX;
-        maxX += deltaX;
-      } else if (maxY < maxZ) {
-        y += stepY;
-        distance = maxY;
-        maxY += deltaY;
-      } else {
-        z += stepZ;
-        distance = maxZ;
-        maxZ += deltaZ;
-      }
+      const type = this.world.getBlock(x, y, z);
+      if (type === undefined) return null;
+      if (type !== BlockId.Air && type !== BlockId.Water && type !== BlockId.Lava) return { x, y, z, placeX: previousX, placeY: previousY, placeZ: previousZ, type, distance };
+      previousX = x; previousY = y; previousZ = z;
+      if (maxX < maxY && maxX < maxZ) { x += stepX; distance = maxX; maxX += deltaX; }
+      else if (maxY < maxZ) { y += stepY; distance = maxY; maxY += deltaY; }
+      else { z += stepZ; distance = maxZ; maxZ += deltaZ; }
+    }
+    return null;
+  }
+
+  castMob(origin: THREE.Vector3, direction: THREE.Vector3, reach: number) {
+    this.mobRaycaster.set(origin, direction);
+    this.mobRaycaster.far = reach;
+    const intersections = this.mobRaycaster.intersectObjects(this.creatureGroup.children, true);
+    for (const intersection of intersections) {
+      let object: THREE.Object3D | null = intersection.object;
+      while (object && object.userData.mobId === undefined) object = object.parent;
+      const id = object?.userData.mobId as number | undefined;
+      const mob = id === undefined ? null : this.mobs.find((candidate) => candidate.id === id);
+      if (mob) return { mob, distance: intersection.distance };
     }
     return null;
   }
@@ -1137,9 +1321,15 @@ export class VoxelEngine {
     const forwardAmount = (this.keys.has("KeyW") ? 1 : 0) - (this.keys.has("KeyS") ? 1 : 0);
     const rightAmount = (this.keys.has("KeyD") ? 1 : 0) - (this.keys.has("KeyA") ? 1 : 0);
     const moving = forwardAmount !== 0 || rightAmount !== 0;
-    const sprinting = moving && (this.keys.has("ShiftLeft") || this.keys.has("ShiftRight")) && this.hunger > 0.5;
+    const feetBlock = this.world.getBlock(Math.floor(this.position.x + 0.5), Math.floor(this.position.y + 0.6), Math.floor(this.position.z + 0.5));
+    const inWater = feetBlock === BlockId.Water;
+    const inLava = feetBlock === BlockId.Lava;
+    const inLiquid = inWater || inLava;
+    if (inWater && !this.wasInWater) this.audio.play("splash");
+    this.wasInWater = inWater;
+    const sprinting = moving && (this.keys.has("ShiftLeft") || this.keys.has("ShiftRight")) && this.hunger > 0.5 && !inLiquid;
     const crouching = this.keys.has("ControlLeft");
-    const speed = crouching ? 2.15 : sprinting ? 6.35 : 4.35;
+    const speed = (crouching ? 2.15 : sprinting ? 6.35 : 4.35) * (inLiquid ? 0.55 : 1);
     const length = Math.hypot(forwardAmount, rightAmount) || 1;
     const f = forwardAmount / length;
     const r = rightAmount / length;
@@ -1147,61 +1337,60 @@ export class VoxelEngine {
     const cos = Math.cos(this.yaw);
     const desiredX = (-sin * f + cos * r) * speed;
     const desiredZ = (-cos * f - sin * r) * speed;
-    const acceleration = this.grounded ? 18 : 7;
+    const acceleration = this.grounded || inLiquid ? 18 : 7;
     this.velocity.x += (desiredX - this.velocity.x) * Math.min(1, acceleration * dt);
     this.velocity.z += (desiredZ - this.velocity.z) * Math.min(1, acceleration * dt);
     if (!moving) {
-      const drag = this.grounded ? 13 : 1.2;
+      const drag = this.grounded ? 13 : inLiquid ? 4 : 1.2;
       this.velocity.x *= Math.max(0, 1 - drag * dt);
       this.velocity.z *= Math.max(0, 1 - drag * dt);
     }
 
-    if (this.grounded && this.keys.has("Space")) {
-      this.velocity.y = 8.15;
-      this.grounded = false;
-      this.audio.play("jump");
+    if (inLiquid) {
+      this.velocity.y -= 5 * dt;
+      this.velocity.y *= Math.max(0, 1 - 2.4 * dt);
+      if (this.keys.has("Space")) this.velocity.y += 9.5 * dt;
+    } else {
+      if (this.grounded && this.keys.has("Space")) {
+        this.velocity.y = 8.15;
+        this.grounded = false;
+        this.audio.play("jump");
+      }
+      this.velocity.y -= 24 * dt;
+      this.fallVelocity = Math.min(this.fallVelocity, this.velocity.y);
     }
-    this.velocity.y -= 24 * dt;
-    this.fallVelocity = Math.min(this.fallVelocity, this.velocity.y);
 
     this.moveWithCollisions(this.velocity.x * dt, 0, 0);
     this.moveWithCollisions(0, this.velocity.y * dt, 0);
     this.moveWithCollisions(0, 0, this.velocity.z * dt);
     const wasGrounded = this.grounded;
     this.grounded = this.collidesAt(new THREE.Vector3(this.position.x, this.position.y - 0.055, this.position.z));
-    if (!wasGrounded && this.grounded) {
+    if (!wasGrounded && this.grounded && !inLiquid) {
       this.audio.play("land", this.blockUnderfoot());
-      if (this.mode === "survival" && this.fallVelocity < -11.2) {
-        const damage = Math.min(6, Math.max(1, Math.floor((-this.fallVelocity - 9) / 2)));
-        this.health -= damage;
-        this.audio.play("hurt");
-        this.events.onToast(`Oof. You lost ${damage} ${damage === 1 ? "heart" : "hearts"}.`);
-        if (this.health <= 0) this.respawn(true);
-      }
+      if (this.mode === "survival" && this.fallVelocity < -11.2) this.damagePlayer(Math.min(6, Math.max(1, Math.floor((-this.fallVelocity - 9) / 2))), "the fall");
       this.fallVelocity = 0;
     }
-
-    this.position.x = clamp(this.position.x, -WORLD_HALF + 0.8, WORLD_HALF - 0.8);
-    this.position.z = clamp(this.position.z, -WORLD_HALF + 0.8, WORLD_HALF - 0.8);
-    if (this.position.y < -4) this.respawn(true);
+    if (this.position.y < MIN_Y - 8) this.respawn(true);
 
     const horizontalTravel = Math.hypot(this.position.x - this.lastPosition.x, this.position.z - this.lastPosition.z);
-    if (this.grounded && moving) {
+    if (this.grounded && moving && !inLiquid) {
       this.footstepDistance += horizontalTravel;
-      if (this.footstepDistance > (sprinting ? 1.45 : 1.85)) {
-        this.footstepDistance = 0;
-        this.audio.play("step", this.blockUnderfoot());
-      }
+      if (this.footstepDistance > (sprinting ? 1.45 : 1.85)) { this.footstepDistance = 0; this.audio.play("step", this.blockUnderfoot()); }
     }
     this.lastPosition.copy(this.position);
 
     if (this.mode === "survival") {
-      this.hunger = Math.max(0, this.hunger - dt * (sprinting ? 0.009 : 0.0025));
-      if (this.hunger <= 0 && Math.floor(performance.now() / 2500) !== Math.floor((performance.now() - dt * 1000) / 2500)) {
-        this.health -= 1;
-        if (this.health <= 0) this.respawn(true);
-      }
+      this.hunger = Math.max(0, this.hunger - dt * (sprinting ? 0.009 : 0.0024));
+      this.regenTimer += dt;
+      if (this.hunger >= 8 && this.health < 10 && this.regenTimer > 5) { this.health += 1; this.hunger = Math.max(0, this.hunger - 0.35); this.regenTimer = 0; }
+      if (this.hunger <= 0 && this.regenTimer > 4) { this.damagePlayer(1, "hunger"); this.regenTimer = 0; }
+      if (inLava) {
+        this.fluidDamageTimer -= dt;
+        if (this.fluidDamageTimer <= 0) { this.damagePlayer(2, "lava"); this.fluidDamageTimer = 0.8; }
+      } else this.fluidDamageTimer = 0;
     }
+    this.spawnProtection = Math.max(0, this.spawnProtection - dt);
+    this.playerInvulnerability = Math.max(0, this.playerInvulnerability - dt);
   }
 
   moveWithCollisions(dx: number, dy: number, dz: number) {
@@ -1210,11 +1399,10 @@ export class VoxelEngine {
     const sx = dx / steps;
     const sy = dy / steps;
     const sz = dz / steps;
-    for (let i = 0; i < steps; i += 1) {
+    for (let index = 0; index < steps; index += 1) {
       const candidate = new THREE.Vector3(this.position.x + sx, this.position.y + sy, this.position.z + sz);
-      if (!this.collidesAt(candidate)) {
-        this.position.copy(candidate);
-      } else {
+      if (!this.collidesAt(candidate)) this.position.copy(candidate);
+      else {
         if (dx) this.velocity.x = 0;
         if (dy) this.velocity.y = 0;
         if (dz) this.velocity.z = 0;
@@ -1230,119 +1418,393 @@ export class VoxelEngine {
     const maxY = Math.floor(position.y + PLAYER_HEIGHT - 0.001 + 0.5);
     const minZ = Math.floor(position.z - PLAYER_RADIUS + 0.5);
     const maxZ = Math.floor(position.z + PLAYER_RADIUS - 0.001 + 0.5);
-    for (let x = minX; x <= maxX; x += 1) {
-      for (let y = minY; y <= maxY; y += 1) {
-        for (let z = minZ; z <= maxZ; z += 1) {
-          if (BLOCKS[this.world.get(x, y, z)].solid) return true;
-        }
-      }
+    for (let x = minX; x <= maxX; x += 1) for (let y = minY; y <= maxY; y += 1) for (let z = minZ; z <= maxZ; z += 1) {
+      const type = this.world.getBlock(x, y, z);
+      if (type === undefined || BLOCKS[type]?.solid) return true;
     }
     return false;
   }
 
   blockUnderfoot() {
-    return this.world.get(Math.floor(this.position.x + 0.5), Math.floor(this.position.y - 0.08 + 0.5), Math.floor(this.position.z + 0.5));
+    return this.world.getBlock(Math.floor(this.position.x + 0.5), Math.floor(this.position.y - 0.08 + 0.5), Math.floor(this.position.z + 0.5)) ?? BlockId.Stone;
+  }
+
+  damagePlayer(amount: number, source: string) {
+    if (this.mode !== "survival" || this.playerInvulnerability > 0 || this.spawnProtection > 0) return;
+    this.health -= amount;
+    this.playerInvulnerability = 0.7;
+    this.audio.play("hurt");
+    this.events.onToast(`${source[0].toUpperCase()}${source.slice(1)} cost ${amount} ${amount === 1 ? "heart" : "hearts"}.`);
+    if (this.health <= 0) this.respawn(true);
   }
 
   respawn(announce: boolean) {
-    this.position.set(0, this.world.surfaceY(0, 0) + 0.51, 0);
+    this.position.copy(this.spawn);
     this.velocity.set(0, 0, 0);
     this.yaw = 0;
     this.pitch = 0;
     this.health = 10;
     this.hunger = Math.max(this.hunger, 6);
     this.fallVelocity = 0;
+    this.spawnProtection = 8;
     if (announce) {
-      this.audio.play("hurt");
       this.events.onDeath();
-      this.events.onToast("The wild carried you home.");
+      this.events.onToast("The wild carried you home—with your inventory, because cruelty is not a feature.");
     }
     this.saveSoon();
     this.emitHud(true);
   }
 
+  createMobVisual(kind: MobKind, id: number) {
+    const group = new THREE.Group();
+    const palette: Record<MobKind, [number, number, number]> = {
+      mossling: [0x5c8f46, 0xa7c47f, 0x182016],
+      ridgeback: [0x8b5b3f, 0xbd8460, 0x211815],
+      woolhorn: [0xe2dfd2, 0x736a5c, 0x20211e],
+      glowmoth: [0xf0c65a, 0x8fc9b2, 0x40351a],
+      shadecrawler: [0x3d334e, 0x79658f, 0xff6f76],
+      caveblob: [0x56b58b, 0x94e0bd, 0x17382d],
+      rattlekin: [0xd6ceb8, 0x817966, 0x2b2521],
+    };
+    const [bodyColor, accentColor, eyeColor] = palette[kind];
+    const bodyMaterial = new THREE.MeshLambertMaterial({ color: bodyColor });
+    const accentMaterial = new THREE.MeshLambertMaterial({ color: accentColor });
+    const eyeMaterial = new THREE.MeshBasicMaterial({ color: eyeColor });
+    const add = (geometry: THREE.BufferGeometry, material: THREE.Material, x: number, y: number, z: number) => {
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.position.set(x, y, z);
+      mesh.userData.mobId = id;
+      group.add(mesh);
+      return mesh;
+    };
+    if (kind === "glowmoth") {
+      add(new THREE.BoxGeometry(0.3, 0.28, 0.42), bodyMaterial, 0, 0, 0);
+      add(new THREE.BoxGeometry(0.62, 0.05, 0.38), accentMaterial, -0.42, 0, 0);
+      add(new THREE.BoxGeometry(0.62, 0.05, 0.38), accentMaterial, 0.42, 0, 0);
+    } else if (kind === "caveblob") {
+      add(new THREE.BoxGeometry(0.82, 0.72, 0.82), bodyMaterial, 0, 0, 0);
+      add(new THREE.BoxGeometry(0.13, 0.13, 0.04), eyeMaterial, -0.18, 0.1, -0.43);
+      add(new THREE.BoxGeometry(0.13, 0.13, 0.04), eyeMaterial, 0.18, 0.1, -0.43);
+    } else {
+      const low = kind === "shadecrawler";
+      add(new THREE.BoxGeometry(low ? 1.05 : 0.86, low ? 0.42 : 0.62, low ? 0.75 : 0.58), bodyMaterial, 0, 0, 0);
+      add(new THREE.BoxGeometry(0.52, 0.48, 0.48), accentMaterial, 0, low ? 0.1 : 0.28, -0.45);
+      add(new THREE.BoxGeometry(0.08, 0.08, 0.04), eyeMaterial, -0.14, low ? 0.16 : 0.34, -0.7);
+      add(new THREE.BoxGeometry(0.08, 0.08, 0.04), eyeMaterial, 0.14, low ? 0.16 : 0.34, -0.7);
+      const legGeometry = new THREE.BoxGeometry(0.17, low ? 0.22 : 0.34, 0.17);
+      for (const lx of [-0.27, 0.27]) for (const lz of [-0.17, 0.18]) add(legGeometry, bodyMaterial, lx, low ? -0.28 : -0.39, lz);
+      if (kind === "woolhorn") {
+        add(new THREE.BoxGeometry(0.18, 0.18, 0.4), accentMaterial, -0.3, 0.52, -0.5);
+        add(new THREE.BoxGeometry(0.18, 0.18, 0.4), accentMaterial, 0.3, 0.52, -0.5);
+      }
+    }
+    group.userData.mobId = id;
+    return group;
+  }
+
+  spawnMob(kind: MobKind, position: THREE.Vector3) {
+    const definitions: Record<MobKind, { name: string; hostile: boolean; health: number; damage: number }> = {
+      mossling: { name: "Mossling", hostile: false, health: 5, damage: 0 },
+      ridgeback: { name: "Ridgeback", hostile: false, health: 8, damage: 0 },
+      woolhorn: { name: "Woolhorn", hostile: false, health: 9, damage: 0 },
+      glowmoth: { name: "Glowmoth", hostile: false, health: 3, damage: 0 },
+      shadecrawler: { name: "Shadecrawler", hostile: true, health: 10, damage: 2 },
+      caveblob: { name: "Cave Blob", hostile: true, health: 7, damage: 1 },
+      rattlekin: { name: "Rattlekin", hostile: true, health: 12, damage: 2 },
+    };
+    const definition = definitions[kind];
+    const id = this.nextMobId++;
+    const group = this.createMobVisual(kind, id);
+    group.position.copy(position);
+    this.creatureGroup.add(group);
+    const mob: MobEntity = { id, kind, name: definition.name, hostile: definition.hostile, group, health: definition.health, maxHealth: definition.health, damage: definition.damage, angle: Math.random() * Math.PI * 2, wanderTimer: 1 + Math.random() * 4, attackCooldown: 0, hurtTimer: 0, age: 0, bob: Math.random() * Math.PI * 2 };
+    this.mobs.push(mob);
+    return mob;
+  }
+
+  trySpawnMob() {
+    const cap = this.touchMode ? 13 : 22;
+    if (this.mobs.length >= cap) return;
+    const angle = Math.random() * Math.PI * 2;
+    const radius = 14 + Math.random() * 20;
+    const x = Math.round(this.position.x + Math.cos(angle) * radius);
+    const z = Math.round(this.position.z + Math.sin(angle) * radius);
+    const underground = this.position.y < 16;
+    let y: number;
+    let kind: MobKind;
+    if (underground) {
+      y = this.world.findWalkableY(x, z, this.position.y);
+      const feet = this.world.getBlock(x, y + 1, z);
+      if (feet !== BlockId.Air) return;
+      kind = Math.random() < 0.58 ? "caveblob" : "shadecrawler";
+    } else {
+      y = this.world.surfaceAt(x, z);
+      if (this.world.getBlock(x, y, z) === undefined || y <= SEA_LEVEL) return;
+      const daylight = this.daylightAmount();
+      const hostile = daylight < 0.2 && this.spawnProtection <= 0;
+      if (hostile) kind = Math.random() < 0.55 ? "shadecrawler" : "rattlekin";
+      else {
+        const biome = this.world.biomeAt(x, z);
+        kind = biome === BiomeId.Snowfield || biome === BiomeId.Frostpine ? "woolhorn"
+          : biome === BiomeId.Siltfen || biome === BiomeId.Bloomwood ? "mossling"
+            : biome === BiomeId.MushroomFen ? "glowmoth" : "ridgeback";
+      }
+    }
+    this.spawnMob(kind, new THREE.Vector3(x, y + (kind === "glowmoth" ? 2 : 0.65), z));
+  }
+
+  updateMobs(dt: number) {
+    this.mobSpawnTimer -= dt;
+    if (this.mobSpawnTimer <= 0) { this.mobSpawnTimer = 2.2 + Math.random() * 1.8; this.trySpawnMob(); }
+    for (let index = this.mobs.length - 1; index >= 0; index -= 1) {
+      const mob = this.mobs[index];
+      mob.age += dt;
+      mob.attackCooldown = Math.max(0, mob.attackCooldown - dt);
+      mob.hurtTimer = Math.max(0, mob.hurtTimer - dt);
+      mob.wanderTimer -= dt;
+      mob.bob += dt * 4;
+      const dx = this.position.x - mob.group.position.x;
+      const dz = this.position.z - mob.group.position.z;
+      const distance = Math.hypot(dx, dz);
+      if (distance > 68 || mob.age > 300 || (mob.hostile && this.daylightAmount() > 0.65 && mob.group.position.y > SEA_LEVEL && distance > 25)) {
+        this.removeMob(index);
+        continue;
+      }
+      let speed = mob.hostile ? 1.55 : 0.38;
+      if (mob.hostile && distance < 20) mob.angle = Math.atan2(dz, dx);
+      else if (mob.hurtTimer > 0) { mob.angle = Math.atan2(-dz, -dx); speed = 2.2; }
+      else if (mob.wanderTimer <= 0) { mob.angle += (Math.random() - 0.5) * 2.2; mob.wanderTimer = 2 + Math.random() * 5; }
+      if (mob.hostile && distance < 1.55 && Math.abs(this.position.y - mob.group.position.y) < 1.7 && mob.attackCooldown <= 0) {
+        mob.attackCooldown = 1.1;
+        this.damagePlayer(mob.damage, mob.name);
+        const push = new THREE.Vector3(dx, 0.15, dz).normalize().multiplyScalar(3.2);
+        this.velocity.add(push);
+        this.audio.play("mob");
+      }
+      if (mob.kind === "glowmoth") {
+        mob.group.position.x += Math.cos(mob.angle) * speed * dt;
+        mob.group.position.z += Math.sin(mob.angle) * speed * dt;
+        mob.group.position.y += Math.sin(mob.bob) * 0.008;
+      } else {
+        const nx = mob.group.position.x + Math.cos(mob.angle) * speed * dt;
+        const nz = mob.group.position.z + Math.sin(mob.angle) * speed * dt;
+        const ground = this.world.findWalkableY(Math.round(nx), Math.round(nz), mob.group.position.y);
+        if (Math.abs(ground + 0.65 - mob.group.position.y) <= 1.25 && this.world.getBlock(Math.round(nx), ground + 1, Math.round(nz)) === BlockId.Air) {
+          mob.group.position.x = nx;
+          mob.group.position.z = nz;
+          mob.group.position.y += (ground + 0.65 - mob.group.position.y) * Math.min(1, dt * 9);
+        } else mob.angle += Math.PI * (0.45 + Math.random() * 0.5);
+        mob.group.position.y += Math.sin(mob.bob) * 0.0015;
+      }
+      mob.group.rotation.y = -mob.angle + Math.PI / 2;
+      const pulse = mob.hurtTimer > 0 ? 1 + Math.sin(mob.hurtTimer * 45) * 0.06 : 1;
+      mob.group.scale.setScalar(pulse);
+    }
+  }
+
+  attackTargetMob() {
+    const mob = this.targetMob;
+    if (!mob || this.attackCooldown > 0) return;
+    const slot = this.selectedSlot();
+    const item = slot ? ITEMS[slot.item] : null;
+    const damage = item?.damage ?? 1;
+    this.attackCooldown = item?.toolKind === "sword" ? 0.38 : 0.55;
+    mob.health -= damage;
+    mob.hurtTimer = 0.32;
+    const away = mob.group.position.clone().sub(this.position).setY(0).normalize().multiplyScalar(0.65);
+    mob.group.position.add(away);
+    this.audio.play("attack");
+    this.spawnParticles(mob.group.position.x, mob.group.position.y, mob.group.position.z, mob.hostile ? BlockId.Obsidian : BlockId.Dirt, 7);
+    if (item?.toolKind) this.damageSelectedTool();
+    if (mob.health <= 0) this.killMob(mob);
+    this.emitHud(true);
+  }
+
+  killMob(mob: MobEntity) {
+    const position = mob.group.position.clone();
+    const dropsByKind: Record<MobKind, Array<[ItemCode, number, number]>> = {
+      mossling: [[Item.Fiber, 1 + Math.floor(Math.random() * 2), 0.9], [Item.Berry, 1, 0.3]],
+      ridgeback: [[Item.RawMeat, 1 + Math.floor(Math.random() * 3), 1], [Item.Hide, 1, 0.58]],
+      woolhorn: [[Item.Wool, 1 + Math.floor(Math.random() * 2), 1], [Item.RawMeat, 1, 0.55]],
+      glowmoth: [[Item.GlowDust, 1 + Math.floor(Math.random() * 2), 0.82]],
+      shadecrawler: [[Item.ShadowShard, 1, 0.84], [Item.Coal, 1, 0.34]],
+      caveblob: [[Item.CaveGel, 1 + Math.floor(Math.random() * 2), 1]],
+      rattlekin: [[Item.BoneShard, 1 + Math.floor(Math.random() * 2), 1], [Item.Coal, 1, 0.18]],
+    };
+    const drops = dropsByKind[mob.kind];
+    for (const [item, count, chance] of drops) if (Math.random() <= chance) this.spawnDrop(item, count, position);
+    this.addXp(mob.hostile ? 5 : 2);
+    const index = this.mobs.indexOf(mob);
+    if (index >= 0) this.removeMob(index);
+    this.audio.play("pickup");
+  }
+
+  removeMob(index: number) {
+    const mob = this.mobs[index];
+    this.creatureGroup.remove(mob.group);
+    mob.group.traverse((object) => {
+      if (object instanceof THREE.Mesh) {
+        object.geometry.dispose();
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        for (const material of materials) material.dispose();
+      }
+    });
+    this.mobs.splice(index, 1);
+    if (this.targetMob === mob) this.targetMob = null;
+  }
+
+  addXp(amount: number) {
+    this.xp += amount;
+    const needed = 12 + this.level * 6;
+    if (this.xp >= needed) {
+      this.xp -= needed;
+      this.level += 1;
+      this.events.onToast(`Level ${this.level}! The wild knows your name now.`);
+      this.audio.play("craft");
+    }
+  }
+
+  spawnDrop(item: ItemCode, count: number, position: THREE.Vector3) {
+    if (!ITEMS[item] || count <= 0) return;
+    const nearby = this.drops.find((drop) => drop.item === item && drop.mesh.position.distanceToSquared(position) < 2.25 && drop.count < maxStack(item));
+    if (nearby) {
+      const add = Math.min(count, maxStack(item) - nearby.count);
+      nearby.count += add;
+      count -= add;
+      if (count <= 0) return;
+    }
+    if (this.drops.length >= 120) this.removeDrop(0);
+    let material = this.dropMaterials.get(item);
+    if (!material) { material = new THREE.MeshLambertMaterial({ color: ITEMS[item].color }); this.dropMaterials.set(item, material); }
+    const mesh = new THREE.Mesh(this.sharedDropGeometry, material);
+    mesh.position.copy(position).add(new THREE.Vector3((Math.random() - 0.5) * 0.45, 0.25, (Math.random() - 0.5) * 0.45));
+    this.dropGroup.add(mesh);
+    this.drops.push({ id: this.nextDropId++, item, count, mesh, velocity: new THREE.Vector3((Math.random() - 0.5) * 1.4, 2 + Math.random(), (Math.random() - 0.5) * 1.4), age: 0, pickupDelay: 0.35 });
+  }
+
+  updateDrops(dt: number) {
+    for (let index = this.drops.length - 1; index >= 0; index -= 1) {
+      const drop = this.drops[index];
+      drop.age += dt;
+      drop.pickupDelay -= dt;
+      drop.velocity.y -= 12 * dt;
+      const nextY = drop.mesh.position.y + drop.velocity.y * dt;
+      const groundBlock = this.world.getBlock(Math.floor(drop.mesh.position.x + 0.5), Math.floor(nextY - 0.15 + 0.5), Math.floor(drop.mesh.position.z + 0.5));
+      if (groundBlock !== undefined && BLOCKS[groundBlock]?.solid && drop.velocity.y < 0) { drop.velocity.y *= -0.28; drop.velocity.x *= 0.72; drop.velocity.z *= 0.72; }
+      else drop.mesh.position.y = nextY;
+      drop.mesh.position.x += drop.velocity.x * dt;
+      drop.mesh.position.z += drop.velocity.z * dt;
+      drop.mesh.rotation.y += dt * 2.5;
+      drop.mesh.position.y += Math.sin(drop.age * 4) * 0.001;
+      const distance = drop.mesh.position.distanceTo(this.position.clone().add(new THREE.Vector3(0, 0.8, 0)));
+      if (drop.pickupDelay <= 0 && distance < 1.45) {
+        const leftover = this.addItem(drop.item, drop.count, ITEMS[drop.item].maxDurability);
+        if (leftover < drop.count) this.audio.play("pickup");
+        drop.count = leftover;
+        if (drop.count <= 0) { this.removeDrop(index); this.saveSoon(); this.emitHud(true); continue; }
+      }
+      if (drop.age > 120 || distance > 85) this.removeDrop(index);
+    }
+  }
+
+  removeDrop(index: number) {
+    this.dropGroup.remove(this.drops[index].mesh);
+    this.drops.splice(index, 1);
+  }
+
+  dropSelectedItem() {
+    if (this.mode === "builder") return;
+    const slot = this.selectedSlot();
+    if (!slot) return;
+    const direction = new THREE.Vector3();
+    this.camera.getWorldDirection(direction);
+    this.spawnDrop(slot.item, 1, this.camera.position.clone().add(direction.multiplyScalar(0.8)));
+    const drop = this.drops[this.drops.length - 1];
+    if (drop) drop.velocity.add(direction.multiplyScalar(3));
+    slot.count -= 1;
+    if (slot.count <= 0) this.inventory[this.selected] = null;
+    this.saveSoon();
+    this.emitHud(true);
+  }
+
+  clearEntities() {
+    while (this.mobs.length) this.removeMob(this.mobs.length - 1);
+    while (this.drops.length) this.removeDrop(this.drops.length - 1);
+    for (const particle of this.particles) {
+      this.scene.remove(particle.mesh);
+      particle.mesh.geometry.dispose();
+      (particle.mesh.material as THREE.Material).dispose();
+    }
+    this.particles = [];
+  }
+
+  daylightAmount() {
+    const angle = this.worldTime * Math.PI * 2 - Math.PI / 2;
+    return clamp((Math.sin(angle) + 0.18) / 0.45, 0.06, 1);
+  }
+
   updateDayNight(dt: number) {
     if (this.running && !this.titleMode) {
-      this.worldTime += dt / 300;
-      if (this.worldTime >= 1) {
-        this.worldTime -= 1;
-        this.day += 1;
-      }
+      this.worldTime += dt / 420;
+      if (this.worldTime >= 1) { this.worldTime -= 1; this.day += 1; }
     }
     const angle = this.worldTime * Math.PI * 2 - Math.PI / 2;
     const sunHeight = Math.sin(angle);
-    const daylight = clamp((sunHeight + 0.18) / 0.45, 0.06, 1);
+    const daylight = this.daylightAmount();
     const dawn = Math.pow(1 - Math.abs(sunHeight), 5) * (sunHeight > -0.35 ? 1 : 0);
     const night = new THREE.Color("#071329");
     const day = new THREE.Color("#79baf1");
     const dusk = new THREE.Color("#e88b62");
     const sky = night.clone().lerp(day, daylight).lerp(dusk, dawn * 0.32);
+    const headBlock = this.world.getBlock(Math.floor(this.camera.position.x + 0.5), Math.floor(this.camera.position.y + 0.5), Math.floor(this.camera.position.z + 0.5));
+    const underwater = headBlock === BlockId.Water;
+    const underground = this.position.y < 12 && !underwater;
+    if (underwater) sky.set("#1d5d82");
     this.scene.background = sky;
-    if (this.scene.fog instanceof THREE.Fog) this.scene.fog.color.copy(sky);
-    this.hemisphere.intensity = 0.18 + daylight * 0.92;
-    this.hemisphere.color.set(daylight > 0.3 ? 0xb9ddff : 0x5875a3);
-    this.directional.intensity = 0.12 + daylight * 1.05;
+    if (this.scene.fog instanceof THREE.Fog) {
+      this.scene.fog.color.copy(sky);
+      const view = this.settings.renderDistance * 16;
+      this.scene.fog.near = underwater ? 3 : underground ? 10 : view * 0.54;
+      this.scene.fog.far = underwater ? 24 : underground ? Math.max(30, view * 0.7) : view * 1.05;
+    }
+    this.camera.far = Math.max(128, this.settings.renderDistance * 16 * 1.8);
+    this.camera.updateProjectionMatrix();
+    this.hemisphere.intensity = underground ? 0.12 : 0.18 + daylight * 0.92;
+    this.directional.intensity = underground ? 0.03 : 0.12 + daylight * 1.05;
     this.directional.color.set(dawn > 0.25 ? 0xffb483 : 0xfff1c7);
-
-    const celestialDistance = 43;
-    this.sun.position.set(
-      this.camera.position.x + Math.cos(angle) * celestialDistance,
-      this.camera.position.y + Math.sin(angle) * celestialDistance,
-      this.camera.position.z - 18,
-    );
-    this.moon.position.set(
-      this.camera.position.x - Math.cos(angle) * celestialDistance,
-      this.camera.position.y - Math.sin(angle) * celestialDistance,
-      this.camera.position.z + 18,
-    );
+    const selected = this.selectedSlot();
+    const carryingLight = selected?.item === BlockId.Torch || selected?.item === BlockId.Glowstone;
+    this.caveLight.position.copy(this.camera.position);
+    this.caveLight.intensity = underground ? (carryingLight ? 1.15 : 0.42) : carryingLight ? 0.25 : 0;
+    const celestialDistance = 70;
+    this.sun.position.set(this.camera.position.x + Math.cos(angle) * celestialDistance, this.camera.position.y + Math.sin(angle) * celestialDistance, this.camera.position.z - 24);
+    this.moon.position.set(this.camera.position.x - Math.cos(angle) * celestialDistance, this.camera.position.y - Math.sin(angle) * celestialDistance, this.camera.position.z + 24);
     this.sun.lookAt(this.camera.position);
     this.moon.lookAt(this.camera.position);
-    this.sun.visible = sunHeight > -0.18;
-    this.moon.visible = sunHeight < 0.22;
-    (this.stars.material as THREE.PointsMaterial).opacity = clamp(1 - daylight * 1.45, 0, 0.9);
+    this.sun.visible = !underground && sunHeight > -0.18;
+    this.moon.visible = !underground && sunHeight < 0.22;
+    (this.stars.material as THREE.PointsMaterial).opacity = underground ? 0 : clamp(1 - daylight * 1.45, 0, 0.9);
     this.stars.position.copy(this.camera.position);
-    this.directional.position.set(Math.cos(angle) * 25, Math.sin(angle) * 35, -14);
-  }
-
-  updateCreatures(dt: number) {
-    for (const creature of this.creatures) {
-      creature.timer -= dt;
-      creature.bob += dt * 4;
-      if (creature.timer <= 0) {
-        creature.angle += (Math.random() - 0.5) * 2.2;
-        creature.timer = 2 + Math.random() * 4;
-      }
-      const speed = 0.28;
-      const nx = creature.group.position.x + Math.cos(creature.angle) * speed * dt;
-      const nz = creature.group.position.z + Math.sin(creature.angle) * speed * dt;
-      if (Math.abs(nx) < WORLD_HALF - 2 && Math.abs(nz) < WORLD_HALF - 2) {
-        const surface = this.world.surfaceY(Math.round(nx), Math.round(nz));
-        if (surface > WATER_LEVEL) {
-          creature.group.position.x = nx;
-          creature.group.position.z = nz;
-          creature.group.position.y = surface + 0.63 + Math.sin(creature.bob) * 0.025;
-        } else creature.angle += Math.PI * 0.7;
-      }
-      creature.group.rotation.y = -creature.angle + Math.PI / 2;
-    }
+    this.directional.position.set(Math.cos(angle) * 25, Math.sin(angle) * 35, -14).add(this.camera.position);
+    this.audio.setDepth(this.position.y, this.weather === "rain");
   }
 
   updateRain(dt: number) {
-    this.rain.visible = this.weather === "rain";
+    this.rain.visible = this.weather === "rain" && this.position.y > 5;
     if (!this.rain.visible) return;
     const attribute = this.rain.geometry.getAttribute("position") as THREE.BufferAttribute;
     const array = attribute.array as Float32Array;
-    for (let i = 0; i < array.length; i += 6) {
-      array[i + 1] -= dt * 22;
-      array[i + 4] -= dt * 22;
-      if (array[i + 1] < -2) {
+    for (let index = 0; index < array.length; index += 6) {
+      array[index + 1] -= dt * 22;
+      array[index + 4] -= dt * 22;
+      if (array[index + 1] < -2) {
         const reset = 14 + Math.random() * 10;
-        array[i + 1] = reset;
-        array[i + 4] = reset - 0.75;
+        array[index + 1] = reset;
+        array[index + 4] = reset - 0.75;
         const x = (Math.random() - 0.5) * 30;
         const z = (Math.random() - 0.5) * 30;
-        array[i] = array[i + 3] = x;
-        array[i + 2] = array[i + 5] = z;
+        array[index] = array[index + 3] = x;
+        array[index + 2] = array[index + 5] = z;
       }
     }
     attribute.needsUpdate = true;
@@ -1350,21 +1812,31 @@ export class VoxelEngine {
   }
 
   updateParticles(dt: number) {
-    for (let i = this.particles.length - 1; i >= 0; i -= 1) {
-      const particle = this.particles[i];
+    for (let index = this.particles.length - 1; index >= 0; index -= 1) {
+      const particle = this.particles[index];
       particle.life -= dt;
       particle.velocity.y -= 12 * dt;
       particle.mesh.position.addScaledVector(particle.velocity, dt);
       particle.mesh.rotation.x += dt * 5;
       particle.mesh.rotation.y += dt * 4;
-      const scale = clamp(particle.life * 2.4, 0, 1);
-      particle.mesh.scale.setScalar(scale);
+      particle.mesh.scale.setScalar(clamp(particle.life * 2.4, 0, 1));
       if (particle.life <= 0) {
         this.scene.remove(particle.mesh);
         particle.mesh.geometry.dispose();
         (particle.mesh.material as THREE.Material).dispose();
-        this.particles.splice(i, 1);
+        this.particles.splice(index, 1);
       }
+    }
+  }
+
+  spawnParticles(x: number, y: number, z: number, type: BlockId, count: number) {
+    const color = BLOCKS[type]?.color ?? "#777777";
+    for (let index = 0; index < count; index += 1) {
+      const size = 0.07 + Math.random() * 0.09;
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(size, size, size), new THREE.MeshBasicMaterial({ color }));
+      mesh.position.set(x + (Math.random() - 0.5) * 0.7, y + (Math.random() - 0.5) * 0.7, z + (Math.random() - 0.5) * 0.7);
+      this.scene.add(mesh);
+      this.particles.push({ mesh, velocity: new THREE.Vector3((Math.random() - 0.5) * 2.5, 1.4 + Math.random() * 2.1, (Math.random() - 0.5) * 2.5), life: 0.45 + Math.random() * 0.35 });
     }
   }
 
@@ -1374,13 +1846,16 @@ export class VoxelEngine {
     const dt = Math.min(0.08, Math.max(0, rawDt));
     this.previousTime = now;
     this.placeCooldown = Math.max(0, this.placeCooldown - dt);
+    this.attackCooldown = Math.max(0, this.attackCooldown - dt);
 
     if (this.titleMode) {
-      const t = now * 0.000055;
-      this.camera.position.set(Math.sin(t) * 20, 13 + Math.sin(t * 1.8) * 1.2, Math.cos(t) * 20);
-      this.camera.lookAt(0, 6, 0);
+      const t = now * 0.000045;
+      this.camera.position.set(this.spawn.x + Math.sin(t) * 24, this.spawn.y + 13 + Math.sin(t * 1.8) * 1.2, this.spawn.z + Math.cos(t) * 24);
+      this.camera.lookAt(this.spawn.x, this.spawn.y + 4, this.spawn.z);
+      this.world.update(this.spawn.x, this.spawn.z);
     } else {
-      if (this.running && (this.locked || this.touchMode)) {
+      this.world.update(this.position.x, this.position.z);
+      if (this.running && !this.paused && (this.locked || this.touchMode)) {
         this.accumulator = Math.min(this.accumulator + dt, PHYSICS_STEP * 4);
         while (this.accumulator >= PHYSICS_STEP) {
           this.updatePlayer(PHYSICS_STEP);
@@ -1394,149 +1869,93 @@ export class VoxelEngine {
     }
 
     this.updateDayNight(dt);
-    this.updateCreatures(dt);
+    if (this.running && !this.titleMode && !this.paused) {
+      this.updateMobs(dt);
+      this.updateDrops(dt);
+      this.updateFurnaces(dt);
+    }
     this.updateRain(dt);
     this.updateParticles(dt);
-    this.ambienceGroup.children.forEach((cloud, index) => {
-      if (cloud.userData.cloud) {
-        cloud.position.x += dt * (0.18 + index * 0.015);
-        if (cloud.position.x > WORLD_HALF + 14) cloud.position.x = -WORLD_HALF - 14;
-      }
-    });
+    for (const cloud of this.ambienceGroup.children) if (cloud.userData.cloud) {
+      cloud.position.x += dt * 0.22;
+      if (cloud.position.x - this.camera.position.x > 65) cloud.position.x -= 130;
+      if (cloud.position.x - this.camera.position.x < -65) cloud.position.x += 130;
+      if (cloud.position.z - this.camera.position.z > 65) cloud.position.z -= 130;
+      if (cloud.position.z - this.camera.position.z < -65) cloud.position.z += 130;
+    }
     this.renderer.render(this.scene, this.camera);
     if (this.running && this.persistent) {
       this.autoSaveAccumulator += dt;
-      if (this.autoSaveAccumulator >= 15) {
-        this.autoSaveAccumulator = 0;
-        this.saveNow(false);
-      }
+      if (this.autoSaveAccumulator >= 15) { this.autoSaveAccumulator = 0; this.saveNow(false); }
     }
     this.emitHud(false, now);
     this.animationFrame = requestAnimationFrame(this.animate);
   };
 
+  depthName() {
+    if (this.position.y > 28) return "Surface";
+    if (this.position.y > 4) return "Stoneways";
+    if (this.position.y > -14) return "Deepstone Caves";
+    if (this.position.y > MIN_Y + 8) return "Crystal Deeps";
+    return "Worldheart";
+  }
+
   emitHud(force = false, now = performance.now()) {
-    if (!force && now - this.lastHudTime < 125) return;
+    if (!force && now - this.lastHudTime < 140) return;
     this.lastHudTime = now;
+    this.updateCraftResult();
     const totalMinutes = Math.floor(((this.worldTime + 0.25) % 1) * 24 * 60);
     const hours = Math.floor(totalMinutes / 60);
     const minutes = totalMinutes % 60;
     const suffix = hours >= 12 ? "PM" : "AM";
     const displayHour = hours % 12 || 12;
-    const surface = this.world.surfaceY(Math.round(this.position.x), Math.round(this.position.z));
-    const biome = surface <= WATER_LEVEL ? "Shallows" : surface >= 13 ? "Highlands" : "Wildwood Meadow";
+    const biome = this.world.biomeAt(Math.round(this.position.x), Math.round(this.position.z));
     this.events.onHud({
       health: clamp(this.health, 0, 10),
       hunger: clamp(this.hunger, 0, 10),
-      hotbar: [...this.hotbar],
+      xp: this.xp,
+      level: this.level,
+      inventory: this.inventory.map(cloneSlot),
+      cursor: cloneSlot(this.cursor),
+      craftGrid: this.craftGrid.map(cloneSlot),
+      craftOutput: this.activeRecipe ? cloneSlot(this.activeRecipe.output) : null,
+      craftingSize: this.craftingSize,
+      activeFurnace: this.activeFurnaceKey ? { ...(this.furnaces.get(this.activeFurnaceKey) ?? blankFurnace()), input: cloneSlot(this.furnaces.get(this.activeFurnaceKey)?.input ?? null), fuel: cloneSlot(this.furnaces.get(this.activeFurnaceKey)?.fuel ?? null), output: cloneSlot(this.furnaces.get(this.activeFurnaceKey)?.output ?? null) } : null,
+      activeChest: this.activeChestKey ? (this.chests.get(this.activeChestKey) ?? []).map(cloneSlot) : null,
       selected: this.selected,
-      counts: { ...this.inventory },
       targetName: this.target ? BLOCKS[this.target.type].name : null,
+      targetMob: this.targetMob ? { name: this.targetMob.name, health: this.targetMob.health, maxHealth: this.targetMob.maxHealth } : null,
       breakProgress: clamp(this.miningProgress, 0, 1),
       day: this.day,
       clock: `${displayHour}:${String(minutes).padStart(2, "0")} ${suffix}`,
-      biome,
+      biome: BIOME_NAMES[biome] ?? "The Unmapped Wild",
+      depth: this.depthName(),
       coordinates: [Math.round(this.position.x), Math.round(this.position.y), Math.round(this.position.z)],
       debug: this.debug,
       mode: this.mode,
       weather: this.weather,
+      loadedChunks: this.world.loadedCount,
+      queuedChunks: this.world.queuedCount,
+      fullscreen: this.fullscreen,
     });
-  }
-
-  faceVisible(type: BlockId, neighbor: BlockId) {
-    if (neighbor === BlockId.Air) return true;
-    const currentLayer = BLOCKS[type].layer;
-    const neighborLayer = BLOCKS[neighbor].layer;
-    if (currentLayer === "transparent") return neighbor !== type && neighborLayer !== "opaque";
-    if (currentLayer === "cutout") return neighbor !== type && neighborLayer !== "opaque";
-    return neighborLayer === "transparent" || neighborLayer === "cutout";
-  }
-
-  rebuildTerrain() {
-    while (this.terrainGroup.children.length) {
-      const child = this.terrainGroup.children[0];
-      this.terrainGroup.remove(child);
-      if (child instanceof THREE.Mesh) {
-        child.geometry.dispose();
-        const materials = Array.isArray(child.material) ? child.material : [child.material];
-        for (const material of materials) material.dispose();
-      }
-    }
-    const buckets: Record<Exclude<RenderLayer, "none">, GeometryBucket> = {
-      opaque: emptyBucket(),
-      cutout: emptyBucket(),
-      transparent: emptyBucket(),
-    };
-    const grid = 4;
-    const pad = 0.0015;
-
-    for (const [key, type] of this.world.blocks.entries()) {
-      const definition = BLOCKS[type];
-      if (definition.layer === "none") continue;
-      const [x, y, z] = parseKey(key);
-      const bucket = buckets[definition.layer];
-      for (let faceIndex = 0; faceIndex < FACES.length; faceIndex += 1) {
-        const face = FACES[faceIndex];
-        const [dx, dy, dz] = face.direction;
-        const neighbor = this.world.get(x + dx, y + dy, z + dz);
-        if (!this.faceVisible(type, neighbor)) continue;
-        const tileIndex = dy > 0 ? definition.top : dy < 0 ? definition.bottom : definition.side;
-        const column = tileIndex % grid;
-        const row = Math.floor(tileIndex / grid);
-        const u0 = column / grid + pad;
-        const u1 = (column + 1) / grid - pad;
-        const v0 = 1 - (row + 1) / grid + pad;
-        const v1 = 1 - row / grid - pad;
-        const base = bucket.positions.length / 3;
-        const waterDrop = type === BlockId.Water ? -0.045 : 0;
-        for (const [cx, cy, cz] of face.corners) {
-          const adjustedY = type === BlockId.Water && cy > 0 ? cy - 0.09 : cy;
-          bucket.positions.push(x + cx, y + adjustedY + waterDrop, z + cz);
-          bucket.normals.push(dx, dy, dz);
-          bucket.colors.push(face.shade, face.shade, face.shade);
-        }
-        bucket.uvs.push(u0, v0, u0, v1, u1, v1, u1, v0);
-        bucket.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
-      }
-    }
-
-    const materials: Record<Exclude<RenderLayer, "none">, THREE.Material> = {
-      opaque: new THREE.MeshLambertMaterial({ map: this.atlas, vertexColors: true }),
-      cutout: new THREE.MeshLambertMaterial({ map: this.atlas, vertexColors: true, alphaTest: 0.35, side: THREE.DoubleSide }),
-      transparent: new THREE.MeshLambertMaterial({ map: this.atlas, vertexColors: true, transparent: true, opacity: 0.72, depthWrite: false, side: THREE.DoubleSide }),
-    };
-    for (const layer of ["opaque", "cutout", "transparent"] as const) {
-      const bucket = buckets[layer];
-      if (!bucket.positions.length) continue;
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute("position", new THREE.Float32BufferAttribute(bucket.positions, 3));
-      geometry.setAttribute("normal", new THREE.Float32BufferAttribute(bucket.normals, 3));
-      geometry.setAttribute("color", new THREE.Float32BufferAttribute(bucket.colors, 3));
-      geometry.setAttribute("uv", new THREE.Float32BufferAttribute(bucket.uvs, 2));
-      geometry.setIndex(bucket.indices);
-      geometry.computeBoundingSphere();
-      const mesh = new THREE.Mesh(geometry, materials[layer]);
-      mesh.renderOrder = layer === "transparent" ? 2 : layer === "cutout" ? 1 : 0;
-      this.terrainGroup.add(mesh);
-    }
   }
 
   createStars() {
     const positions: number[] = [];
-    for (let i = 0; i < 240; i += 1) {
+    for (let index = 0; index < 260; index += 1) {
       const theta = Math.random() * Math.PI * 2;
       const phi = Math.acos(0.15 + Math.random() * 0.85);
-      const radius = 54;
+      const radius = 80;
       positions.push(Math.sin(phi) * Math.cos(theta) * radius, Math.cos(phi) * radius, Math.sin(phi) * Math.sin(theta) * radius);
     }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-    return new THREE.Points(geometry, new THREE.PointsMaterial({ color: 0xffffff, size: 0.38, sizeAttenuation: true, transparent: true, opacity: 0 }));
+    return new THREE.Points(geometry, new THREE.PointsMaterial({ color: 0xffffff, size: 0.42, sizeAttenuation: true, transparent: true, opacity: 0 }));
   }
 
   createRain() {
     const positions: number[] = [];
-    for (let i = 0; i < 420; i += 1) {
+    for (let index = 0; index < 420; index += 1) {
       const x = (Math.random() - 0.5) * 30;
       const y = Math.random() * 22;
       const z = (Math.random() - 0.5) * 30;
@@ -1544,8 +1963,7 @@ export class VoxelEngine {
     }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-    const material = new THREE.LineBasicMaterial({ color: 0xa8d8ff, transparent: true, opacity: 0.45, depthWrite: false });
-    const rain = new THREE.LineSegments(geometry, material);
+    const rain = new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color: 0xa8d8ff, transparent: true, opacity: 0.45, depthWrite: false }));
     rain.visible = false;
     rain.renderOrder = 4;
     return rain;
@@ -1553,68 +1971,16 @@ export class VoxelEngine {
 
   createClouds() {
     const material = new THREE.MeshLambertMaterial({ color: 0xf2f4ef, transparent: true, opacity: 0.82, depthWrite: false });
-    for (let i = 0; i < 10; i += 1) {
+    for (let index = 0; index < 14; index += 1) {
       const cloud = new THREE.Group();
       cloud.userData.cloud = true;
-      const pieces = 2 + (i % 3);
-      for (let p = 0; p < pieces; p += 1) {
-        const cube = new THREE.Mesh(new THREE.BoxGeometry(4 + p * 1.5, 0.8, 2.2), material);
-        cube.position.set(p * 2.3, (p % 2) * 0.35, (p % 3) - 1);
+      for (let piece = 0; piece < 2 + (index % 3); piece += 1) {
+        const cube = new THREE.Mesh(new THREE.BoxGeometry(4 + piece * 1.5, 0.8, 2.2), material);
+        cube.position.set(piece * 2.3, (piece % 2) * 0.35, (piece % 3) - 1);
         cloud.add(cube);
       }
-      cloud.position.set(-WORLD_HALF + ((i * 13) % (WORLD_SIZE + 20)), 20 + (i % 3) * 1.8, -24 + ((i * 11) % 48));
+      cloud.position.set(-55 + ((index * 13) % 110), 74 + (index % 3) * 2, -50 + ((index * 17) % 100));
       this.ambienceGroup.add(cloud);
-    }
-  }
-
-  spawnCreatures() {
-    while (this.creatureGroup.children.length) this.creatureGroup.remove(this.creatureGroup.children[0]);
-    this.creatures = [];
-    const bodyMaterial = new THREE.MeshLambertMaterial({ color: 0x5c8f46 });
-    const bellyMaterial = new THREE.MeshLambertMaterial({ color: 0xa7c47f });
-    const eyeMaterial = new THREE.MeshBasicMaterial({ color: 0x182016 });
-    for (let i = 0; i < 6; i += 1) {
-      const angle = (i / 6) * Math.PI * 2 + 0.7;
-      const radius = 8 + (i % 3) * 5;
-      const x = Math.round(Math.cos(angle) * radius);
-      const z = Math.round(Math.sin(angle) * radius);
-      const y = this.world.surfaceY(x, z) + 0.63;
-      if (y <= WATER_LEVEL + 0.6) continue;
-      const group = new THREE.Group();
-      const body = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.62, 0.55), bodyMaterial);
-      const belly = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.34, 0.57), bellyMaterial);
-      belly.position.set(0, -0.08, 0.08);
-      const head = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.48, 0.48), bodyMaterial);
-      head.position.set(0, 0.28, -0.42);
-      const eyeLeft = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 0.03), eyeMaterial);
-      eyeLeft.position.set(-0.13, 0.35, -0.675);
-      const eyeRight = eyeLeft.clone();
-      eyeRight.position.x = 0.13;
-      const legGeometry = new THREE.BoxGeometry(0.16, 0.32, 0.16);
-      for (const lx of [-0.26, 0.26]) for (const lz of [-0.16, 0.18]) {
-        const leg = new THREE.Mesh(legGeometry, bodyMaterial);
-        leg.position.set(lx, -0.38, lz);
-        group.add(leg);
-      }
-      group.add(body, belly, head, eyeLeft, eyeRight);
-      group.position.set(x, y, z);
-      this.creatureGroup.add(group);
-      this.creatures.push({ group, angle: Math.random() * Math.PI * 2, timer: 1 + Math.random() * 3, bob: Math.random() * 5 });
-    }
-  }
-
-  spawnParticles(x: number, y: number, z: number, type: BlockId, count: number) {
-    const color = BLOCKS[type].color;
-    for (let i = 0; i < count; i += 1) {
-      const size = 0.07 + Math.random() * 0.09;
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(size, size, size), new THREE.MeshBasicMaterial({ color }));
-      mesh.position.set(x + (Math.random() - 0.5) * 0.7, y + (Math.random() - 0.5) * 0.7, z + (Math.random() - 0.5) * 0.7);
-      this.scene.add(mesh);
-      this.particles.push({
-        mesh,
-        velocity: new THREE.Vector3((Math.random() - 0.5) * 2.5, 1.4 + Math.random() * 2.1, (Math.random() - 0.5) * 2.5),
-        life: 0.45 + Math.random() * 0.35,
-      });
     }
   }
 
@@ -1625,10 +1991,12 @@ export class VoxelEngine {
       volume: clamp(next.volume ?? this.settings.volume, 0, 1),
       sensitivity: clamp(next.sensitivity ?? this.settings.sensitivity, 0.0008, 0.005),
       fov: clamp(next.fov ?? this.settings.fov, 55, 100),
+      renderDistance: clamp(Math.round(next.renderDistance ?? this.settings.renderDistance), 2, 5),
     };
     this.weather = this.settings.weather;
     this.camera.fov = this.settings.fov;
     this.camera.updateProjectionMatrix();
+    this.world.setRenderDistance(this.settings.renderDistance);
     this.audio.setSettings(this.settings);
     writeSettings(this.settings);
     this.emitHud(true);
@@ -1643,24 +2011,29 @@ export class VoxelEngine {
   saveSoon() {
     if (!this.persistent) return;
     window.clearTimeout(this.saveTimer);
-    this.saveTimer = window.setTimeout(() => this.saveNow(), 650);
+    this.saveTimer = window.setTimeout(() => this.saveNow(), 700);
   }
 
   serialize(): WorldSave {
     return {
-      version: 1,
+      version: 2,
+      generatorVersion: GENERATOR_VERSION,
       seed: this.world.seedText,
       mode: this.mode,
-      edits: Object.fromEntries(this.world.edits.entries()),
+      edits: this.world.serializeEdits(),
       player: { x: this.position.x, y: this.position.y, z: this.position.z, yaw: this.yaw, pitch: this.pitch },
-      inventory: Object.fromEntries(Object.entries(this.inventory).map(([key, value]) => [String(key), value])),
-      hotbar: [...this.hotbar],
+      spawn: { x: this.spawn.x, y: this.spawn.y, z: this.spawn.z },
+      inventory: this.inventory.map(cloneSlot),
       selected: this.selected,
       health: this.health,
       hunger: this.hunger,
+      xp: this.xp,
+      level: this.level,
       time: this.worldTime,
       day: this.day,
       weather: this.weather,
+      furnaces: Object.fromEntries([...this.furnaces.entries()].map(([key, value]) => [key, { ...value, input: cloneSlot(value.input), fuel: cloneSlot(value.fuel), output: cloneSlot(value.output) }])),
+      chests: Object.fromEntries([...this.chests.entries()].map(([key, value]) => [key, value.map(cloneSlot)])),
       savedAt: Date.now(),
     };
   }
@@ -1672,22 +2045,22 @@ export class VoxelEngine {
       window.localStorage.setItem(SAVE_KEY, JSON.stringify(this.serialize()));
       if (notify) this.events.onSave();
     } catch {
-      this.events.onToast("This browser could not save the world.");
+      this.events.onToast("This world grew beyond the browser's save allowance. The current session is safe, but storage is full.");
     }
   }
 
   dispose() {
     this.disposed = true;
-    this.saveNow();
+    this.saveNow(false);
     cancelAnimationFrame(this.animationFrame);
     window.clearTimeout(this.saveTimer);
     this.unbindEvents();
+    this.resizeObserver?.disconnect();
     this.audio.dispose();
-    this.atlas.dispose();
+    this.clearEntities();
+    this.world.dispose();
+    this.sharedDropGeometry.dispose();
+    for (const material of this.dropMaterials.values()) material.dispose();
     this.renderer.dispose();
-    for (const particle of this.particles) {
-      particle.mesh.geometry.dispose();
-      (particle.mesh.material as THREE.Material).dispose();
-    }
   }
 }

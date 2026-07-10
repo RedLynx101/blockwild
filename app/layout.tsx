@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Blockwild — Browser Voxel Sandbox",
-  description: "Explore, harvest, craft, and build in an original browser-based voxel world.",
+  title: "Blockwild — Endless Browser Voxel Survival",
+  description: "Explore endless streamed biomes, mine deep caves, craft tools, build, smelt, fight creatures, and survive in an original browser voxel world.",
   other: {
     "codex-preview": "development",
   },
