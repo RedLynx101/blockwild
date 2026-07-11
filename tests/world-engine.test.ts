@@ -3,7 +3,8 @@ import test from "node:test";
 import * as THREE from "three";
 import { BlockId, ITEMS, Item, RECIPES, type InventorySlot } from "../app/game/data.ts";
 import { VoxelEngine, bedCounterpart, bedPlacementForYaw, migrateSavedWorld, nextSleepTransition, restoreChestStorage, torchBlockForPlacement, type WorldSave } from "../app/game/engine.ts";
-import { ChunkWorld, BIOME_NAMES, MAX_Y, MIN_Y, SECTION_HEIGHT, WORLD_HEIGHT, blockIndex, chunkKey, environmentSkyShade, splitCoordinate } from "../app/game/world.ts";
+import { harvestPlant } from "../app/game/farming.ts";
+import { ChunkWorld, BIOME_NAMES, GENERATOR_VERSION, MAX_Y, MIN_Y, SECTION_HEIGHT, WORLD_HEIGHT, blockIndex, chunkKey, environmentSkyShade, splitCoordinate } from "../app/game/world.ts";
 import { MOB_DEFS, MOB_ORDER } from "../app/game/mobs.ts";
 import { createHeldToolSpec, createRidgebackSpec, createZombieSpec, INSPECTOR_MODEL_SPECS, RIDGEBACK_GROUND_LIFT } from "../app/game/model-specs.ts";
 
@@ -75,6 +76,68 @@ test("wall torch attachment direction is encoded in the block edit and survives 
   world.dispose();
 });
 
+test("empty-bucket raycasts stop on liquids while normal interaction rays still pass through", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  (engine as unknown as { world: { getBlock: (x: number, y: number, z: number) => BlockId } }).world = {
+    getBlock: (x, y, z) => x === 1 && y === 0 && z === 0 ? BlockId.Water : x === 2 && y === 0 && z === 0 ? BlockId.Stone : BlockId.Air,
+  };
+  const origin = new THREE.Vector3(0, 0, 0);
+  const direction = new THREE.Vector3(1, 0, 0);
+  assert.equal(engine.castVoxel(origin, direction, 6, true)?.type, BlockId.Water);
+  assert.equal(engine.castVoxel(origin, direction, 6, false)?.type, BlockId.Stone);
+});
+
+test("breaking an orchard support leaf clears and drops its hanging apple", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  const edits: Array<{ x: number; y: number; z: number; type: BlockId }> = [];
+  const drops: Array<{ type: BlockId; x: number; y: number; z: number }> = [];
+  const blocks = new Map<string, BlockId>([["3,19,-2", BlockId.AppleFruit]]);
+  (engine as unknown as {
+    world: {
+      getBlock: (x: number, y: number, z: number) => BlockId;
+      setBlock: (x: number, y: number, z: number, type: BlockId) => void;
+    };
+  }).world = {
+    getBlock: (x, y, z) => blocks.get(`${x},${y},${z}`) ?? BlockId.Air,
+    setBlock: (x, y, z, type) => { blocks.set(`${x},${y},${z}`, type); },
+  };
+  engine.mode = "survival";
+  engine.breakUnsupportedAbove = () => undefined;
+  engine.publishBlockEdits = (next) => { edits.push(...next); };
+  engine.dropBlockLoot = (type, x, y, z) => { drops.push({ type, x, y, z }); };
+  engine.breakUnsupportedAround(3, 20, -2);
+  assert.equal(blocks.get("3,19,-2"), BlockId.Air);
+  assert.deepEqual(edits, [{ x: 3, y: 19, z: -2, type: BlockId.Air }]);
+  assert.deepEqual(drops, [{ type: BlockId.AppleFruit, x: 3, y: 19, z: -2 }]);
+  assert.deepEqual(harvestPlant(BlockId.AppleFruit), { replacement: BlockId.Air, drops: [{ item: Item.Apple, count: 1 }], replanted: false });
+});
+
+test("bucket inventory swaps preserve stacked empties and return an empty after pouring", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  const runtime = engine as unknown as {
+    mode: "survival";
+    selected: number;
+    inventory: Array<InventorySlot | null>;
+    addItem: (item: number, count: number) => number;
+  };
+  runtime.mode = "survival";
+  runtime.selected = 0;
+  runtime.inventory = [{ item: Item.WaterBucket, count: 1 }];
+  runtime.addItem = () => 0;
+  engine.replaceSelectedUnit(Item.Bucket);
+  assert.deepEqual(runtime.inventory[0], { item: Item.Bucket, count: 1 });
+
+  let filledAdded = 0;
+  runtime.inventory[0] = { item: Item.Bucket, count: 2 };
+  runtime.addItem = (item, count) => {
+    if (item === Item.WaterBucket) filledAdded += count;
+    return 0;
+  };
+  engine.replaceSelectedUnit(Item.WaterBucket);
+  assert.deepEqual(runtime.inventory[0], { item: Item.Bucket, count: 1 });
+  assert.equal(filledAdded, 1);
+});
+
 test("bed orientation, counterpart lookup, recipe, and dawn/dusk transitions stay deterministic", () => {
   assert.deepEqual(bedPlacementForYaw(0), { foot: BlockId.BedNorthFoot, head: BlockId.BedNorthHead, dx: 0, dz: -1 });
   assert.deepEqual(bedPlacementForYaw(-Math.PI / 2), { foot: BlockId.BedEastFoot, head: BlockId.BedEastHead, dx: 1, dz: 0 });
@@ -108,7 +171,7 @@ test("generator-v2 saves migrate their voxel edit indices into the deeper world"
     edits: { "0,0": [[8192, BlockId.Glowstone]] },
   } as unknown as WorldSave;
   const migrated = migrateSavedWorld(legacy);
-  assert.equal(migrated?.generatorVersion, 3);
+  assert.equal(migrated?.generatorVersion, GENERATOR_VERSION);
   assert.deepEqual(migrated?.edits["0,0"], [[16384, BlockId.Glowstone]], "an old y=0 edit must remain at y=0 after MIN_Y moves from -32 to -64");
 });
 

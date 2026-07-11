@@ -218,6 +218,14 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       leg.userData.phase = (legIndex % 2) * Math.PI;
       leg.userData.side = side;
     }
+    const saddle = new THREE.Group();
+    saddle.name = "shadecrawler-saddle";
+    saddle.visible = false;
+    visual.add(saddle);
+    add(saddle, [0.78, 0.12, 0.72], material(0x75492f), [0, 0.31, 0.08], undefined, "shadecrawler-saddle-pad");
+    add(saddle, [0.52, 0.22, 0.46], material(0x9a6843), [0, 0.43, 0.08], undefined, "shadecrawler-saddle-seat");
+    add(saddle, [0.1, 0.4, 0.12], material(0x493126), [-0.43, 0.12, 0.08], undefined, "shadecrawler-left-girth");
+    add(saddle, [0.1, 0.4, 0.12], material(0x493126), [0.43, 0.12, 0.08], undefined, "shadecrawler-right-girth");
   } else if (kind === "caveblob") {
     add(visual, [0.82, 0.58, 0.82], material(bodyColor, false, 0.86), [0, -0.02, 0], "body", "caveblob-body");
     add(visual, [0.58, 0.4, 0.58], material(accentColor, false, 0.88), [0, 0.34, -0.03], "body", "caveblob-crown");
@@ -332,6 +340,68 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       antenna.rotation.y = side * 0.22;
       antenna.rotation.x = -0.2;
     }
+  } else if (kind === "thimbledeer") {
+    add(visual, [0.68, 0.58, 1.04], bodyMaterial, [0, 0.18, 0.1], "body", "thimbledeer-body");
+    add(visual, [0.24, 0.58, 0.26], accentMaterial, [0, 0.5, -0.48], "body", "thimbledeer-neck").rotation.x = -0.2;
+    add(visual, [0.46, 0.4, 0.5], bodyMaterial, [0, 0.72, -0.72], "head", "thimbledeer-head");
+    add(visual, [0.28, 0.2, 0.3], darkMaterial, [0, 0.61, -1.03], undefined, "thimbledeer-muzzle");
+    eyePair(0.145, 0.78, -0.96, 0.055, "thimbledeer");
+    for (const side of [-1, 1]) {
+      const ear = add(visual, [0.18, 0.32, 0.12], accentMaterial, [side * 0.24, 0.9, -0.69], undefined, `thimbledeer-${side < 0 ? "left" : "right"}-ear`);
+      ear.rotation.z = side * -0.32;
+      const antler = add(visual, [0.12, 0.28, 0.12], material(0xe5d6ad), [side * 0.14, 1.04, -0.69], undefined, `thimbledeer-${side < 0 ? "left" : "right"}-thimble-antler`);
+      antler.rotation.z = side * -0.08;
+      add(visual, [0.18, 0.09, 0.16], material(0xe5d6ad), [side * 0.14, 1.19, -0.69], undefined, `thimbledeer-${side < 0 ? "left" : "right"}-antler-cap`);
+    }
+    quadrupedLegs(0.23, -0.28, 0.34, -0.03, 0.6, 0.12, darkMaterial, "thimbledeer");
+    const tail = add(visual, [0.16, 0.18, 0.34], accentMaterial, [0, 0.3, 0.71], "body", "thimbledeer-tail");
+    tail.rotation.x = 0.55;
+  } else if (kind === "lanternshell") {
+    add(visual, [0.88, 0.18, 1.15], darkMaterial, [0, -0.18, 0.08], "body", "lanternshell-foot");
+    add(visual, [0.58, 0.28, 0.58], bodyMaterial, [0, -0.04, -0.52], "head", "lanternshell-head");
+    add(visual, [0.92, 0.82, 0.48], accentMaterial, [0, 0.26, 0.2], "body", "lanternshell-shell");
+    const glowMaterial = material(eyeColor, true, 0.9);
+    for (const [index, size, y, z] of [
+      [1, 0.56, 0.28, -0.055], [2, 0.38, 0.29, -0.315], [3, 0.2, 0.3, -0.5],
+    ] as Array<[number, number, number, number]>) {
+      add(visual, [size, size, 0.055], glowMaterial, [0, y, z], undefined, `lanternshell-spiral-${index}`);
+    }
+    for (const side of [-1, 1]) {
+      const stalk = add(visual, [0.045, 0.36, 0.045], bodyMaterial, [side * 0.17, 0.15, -0.78], undefined, `lanternshell-${side < 0 ? "left" : "right"}-stalk`);
+      stalk.rotation.x = -0.42;
+      stalk.rotation.z = side * -0.12;
+      add(visual, [0.085, 0.085, 0.085], eyeMaterial, [side * 0.18, 0.29, -0.91], undefined, `lanternshell-${side < 0 ? "left" : "right"}-eye`);
+    }
+  } else if (kind === "puddlehopper") {
+    add(visual, [0.72, 0.4, 0.68], bodyMaterial, [0, 0, 0.08], "body", "puddlehopper-body");
+    add(visual, [0.64, 0.36, 0.48], accentMaterial, [0, 0.08, -0.4], "head", "puddlehopper-head");
+    eyePair(0.19, 0.22, -0.61, 0.09, "puddlehopper");
+    add(visual, [0.26, 0.065, 0.04], darkMaterial, [0, -0.04, -0.65], undefined, "puddlehopper-mouth");
+    for (const side of [-1, 1]) {
+      const thigh = pivotBox([0.34, 0.18, 0.52], darkMaterial, [side * 0.28, -0.08, 0.25], [side * 0.12, -0.07, 0.12], "legs", `puddlehopper-${side < 0 ? "left" : "right"}-rear-leg`);
+      thigh.rotation.y = side * -0.34;
+      thigh.userData.phase = side < 0 ? 0 : Math.PI;
+      add(visual, [0.34, 0.1, 0.38], accentMaterial, [side * 0.43, -0.25, -0.18], "legs", `puddlehopper-${side < 0 ? "left" : "right"}-front-foot`);
+      add(visual, [0.44, 0.1, 0.5], accentMaterial, [side * 0.45, -0.25, 0.48], undefined, `puddlehopper-${side < 0 ? "left" : "right"}-webbed-foot`);
+    }
+    add(visual, [0.42, 0.24, 0.08], material(0xe8d46f, false, 0.82), [0, -0.03, -0.66], undefined, "puddlehopper-throat-pouch");
+  } else if (kind === "reedstrider") {
+    add(visual, [0.56, 0.72, 0.82], bodyMaterial, [0, 0.58, 0.08], "body", "reedstrider-body");
+    add(visual, [0.24, 0.74, 0.24], accentMaterial, [0, 0.98, -0.36], "body", "reedstrider-neck").rotation.x = -0.16;
+    add(visual, [0.42, 0.38, 0.42], bodyMaterial, [0, 1.32, -0.62], "head", "reedstrider-head");
+    add(visual, [0.16, 0.14, 0.66], material(0xd9b666), [0, 1.25, -1.14], undefined, "reedstrider-beak").rotation.x = -0.05;
+    eyePair(0.13, 1.39, -0.83, 0.06, "reedstrider");
+    const crest = add(visual, [0.12, 0.42, 0.18], darkMaterial, [0, 1.61, -0.56], undefined, "reedstrider-hollow-crest");
+    crest.rotation.x = -0.28;
+    for (const side of [-1, 1]) {
+      const wing = pivotBox([0.46, 0.12, 0.76], darkMaterial, [side * 0.23, 0.69, 0.06], [side * 0.22, 0, 0], "wings", `reedstrider-${side < 0 ? "left" : "right"}-wing`);
+      wing.rotation.z = side * -0.12;
+      wing.userData.side = side;
+      const leg = pivotBox([0.11, 0.9, 0.12], accentMaterial, [side * 0.16, 0.38, 0.08], [0, -0.45, 0], "legs", `reedstrider-${side < 0 ? "left" : "right"}-leg`);
+      leg.userData.phase = side < 0 ? 0 : Math.PI;
+      add(leg, [0.3, 0.08, 0.44], darkMaterial, [0, -0.94, -0.12], undefined, `reedstrider-${side < 0 ? "left" : "right"}-foot`);
+    }
+    add(visual, [0.34, 0.16, 0.58], accentMaterial, [0, 0.61, 0.65], undefined, "reedstrider-tail").rotation.x = 0.25;
   } else if (kind === "emberjay" || kind === "canopy-lark") {
     const prefix = kind;
     add(visual, [0.44, 0.4, 0.7], bodyMaterial, [0, 0.04, 0.05], "body", `${prefix}-body`);

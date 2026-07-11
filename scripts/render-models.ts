@@ -104,7 +104,9 @@ export function objectToInspectionSpec(
   const boxes: ModelBox[] = [];
   const usedIds = new Set<string>();
   root.traverse((object) => {
-    if (!(object instanceof THREE.Mesh) || !object.visible || !(object.geometry instanceof THREE.BufferGeometry)) return;
+    let visible = object.visible;
+    for (let ancestor = object.parent; visible && ancestor && ancestor !== root; ancestor = ancestor.parent) visible = ancestor.visible;
+    if (!(object instanceof THREE.Mesh) || !visible || !(object.geometry instanceof THREE.BufferGeometry)) return;
     object.geometry.computeBoundingBox();
     const geometryBounds = object.geometry.boundingBox;
     if (!geometryBounds || geometryBounds.isEmpty()) return;
@@ -209,7 +211,7 @@ function disposeObject(root: THREE.Object3D) {
   for (const material of materials) material.dispose();
 }
 
-/** Captures all eight production mob models, after a neutral pose and grounding. */
+/** Captures a visible Skeleton projectile in the same box renderer as creatures. */
 export function createSkeletonArrowInspectionSpec(): InspectionModelSpec {
   const arrow = createSkeletonArrowVisual();
   const spec = objectToInspectionSpec(arrow, {
@@ -227,14 +229,17 @@ export function createSkeletonArrowInspectionSpec(): InspectionModelSpec {
 export function createMobInspectionSpecs(): InspectionModelSpec[] {
   return CORE_MOB_ORDER.map((kind, index) => {
     const model = createMobVisual(kind, -(index + 1));
-    model.group.updateMatrixWorld(true);
     const airborne = kind === "glowmoth" || MOB_DEFS[kind].flying || MOB_DEFS[kind].aquatic;
-    if (!airborne) {
-      const bounds = new THREE.Box3().setFromObject(model.visual);
-      model.visual.position.y -= bounds.min.y;
-      model.group.updateMatrixWorld(true);
-    }
-    const spec = objectToInspectionSpec(model.group, {
+    // The old inspector shifted every visual until its lowest vertex touched
+    // the ground. That produced attractive sheets while hiding bad runtime
+    // foot offsets. This wrapper instead reproduces the actual engine spawn:
+    // block centers are Y=0 and their top surface is Y=0.5.
+    const runtime = new THREE.Group();
+    runtime.name = `${kind}-runtime-ground-audit`;
+    runtime.add(model.group);
+    if (!airborne) model.group.position.y = MOB_DEFS[kind].footOffset - 0.5;
+    runtime.updateMatrixWorld(true);
+    const spec = objectToInspectionSpec(runtime, {
       id: kind,
       label: MOB_DEFS[kind].name,
       category: "mob",
@@ -242,7 +247,7 @@ export function createMobInspectionSpecs(): InspectionModelSpec[] {
       groundY: airborne ? undefined : 0,
       inspection: { source: "MobVisual", mob: kind },
     });
-    disposeObject(model.group);
+    disposeObject(runtime);
     return spec;
   });
 }
@@ -262,7 +267,7 @@ function escapeXml(value: string) {
 
 function parseArguments() {
   const args = process.argv.slice(2);
-  let out = "/workspace/model-inspection";
+  let out = path.resolve("output/model-inspection");
   let columns = 4;
   let views: ViewName[] = ["iso", "front", "side"];
   let requestedIds: string[] | null = null;

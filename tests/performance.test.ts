@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   AdaptiveBudgetController,
+  applyResourceMode,
   DEFAULT_FRAME_WORK_BUDGET,
   DEFAULT_RENDER_DISTANCE,
   DEFAULT_SIMULATION_DISTANCE,
@@ -10,6 +11,7 @@ import {
   benchmarkTask,
   chunkOffsetsByDistance,
   chunksWithinDistance,
+  chunkRetentionPadding,
   classifyBudgetPressure,
   normalizeViewDistances,
   recommendFrameWorkBudget,
@@ -61,6 +63,15 @@ test("the fixed sampler reports percentiles and adaptive pressure", () => {
   assert.deepEqual(controller.current, DEFAULT_FRAME_WORK_BUDGET);
   controller.observe(slowSummary);
   assert.ok(controller.current.liquidOperations < DEFAULT_FRAME_WORK_BUDGET.liquidOperations);
+});
+
+test("resource modes trade CPU or memory for steadier traversal", () => {
+  const cpu = applyResourceMode("cpu", DEFAULT_FRAME_WORK_BUDGET);
+  assert.ok(cpu.chunkMeshSections >= 5);
+  assert.ok(cpu.liquidOperations >= 384);
+  assert.deepEqual(applyResourceMode("memory", DEFAULT_FRAME_WORK_BUDGET), DEFAULT_FRAME_WORK_BUDGET);
+  assert.equal(chunkRetentionPadding("auto"), 2);
+  assert.equal(chunkRetentionPadding("memory"), 6);
 });
 
 test("task benchmarks accept an injectable clock", () => {

@@ -32,20 +32,40 @@ import {
   ChunkWorld,
   type ChunkEditSave,
 } from "./world";
-import { BUTTERFLY_ORDER, MOB_DEFS, MOB_ORDER, type ButterflyKind, type MobDefinition, type MobKind } from "./mobs";
+import { BUTTERFLY_ORDER, MOB_DEFS, MOB_ORDER, type ButterflyKind, type CoreMobKind, type MobDefinition, type MobKind } from "./mobs";
 import { createHeldToolSpec } from "./model-specs";
 import { createMobVisual } from "./mob-models";
 import { ButterflySystem } from "./butterflies";
 import {
   createBirdBehavior,
   createStableSteering,
+  chooseLocalWalkableGround,
   fishKindsForHabitat,
+  passiveMobKindForBiome,
   shouldKeepCreatureLoaded,
   updateBirdBehavior,
   updateStableSteering,
   type BirdBehaviorState,
   type StableSteeringState,
 } from "./fauna";
+import {
+  breedCreatureStates,
+  canBreedCreatures,
+  feedCreatureForHusbandry,
+  normalizeCreatureHusbandryState,
+  tickCreatureHusbandry,
+  type CreatureHusbandryState,
+} from "./creature-care";
+import {
+  canRideShadecrawler,
+  createShadecrawlerState,
+  equipShadecrawlerSaddle,
+  feedShadecrawler,
+  normalizeShadecrawlerState,
+  shadecrawlerScale,
+  type ShadecrawlerState,
+} from "./shadecrawler";
+import { CREATURE_SOUND_EVENTS, creatureSoundCue, type CreatureSoundEvent } from "./creature-sounds";
 import {
   breedPeelops,
   commandPeelop,
@@ -100,6 +120,9 @@ import {
   normalizeViewDistances,
   PerformanceSampler,
   AdaptiveBudgetController,
+  applyResourceMode,
+  chunkRetentionPadding,
+  type ResourceMode,
 } from "./performance";
 import {
   createWeatherState,
@@ -133,6 +156,13 @@ import {
   type SleepVote,
 } from "./multiplayer";
 import {
+  createRoomCode,
+  hostByRoomCode,
+  joinByRoomCode,
+  type HostRendezvous,
+  type RendezvousStatus,
+} from "./invite-rendezvous";
+import {
   DEFAULT_WORLD_OPTIONS,
   WorldStorage,
   generationOptionsFromWorldOptions,
@@ -141,6 +171,34 @@ import {
   type WorldMetadata,
   type WorldOptions,
 } from "./world-storage";
+import {
+  canGrowPlant,
+  canHitchLead,
+  canTill,
+  constrainLead,
+  farmlandState,
+  FENCE_BLOCKS,
+  fenceGateForYaw,
+  growthDelaySeconds,
+  harvestPlant,
+  nextPlantStage,
+  planAppleFruitRegrowth,
+  planAppleTree,
+  plantProfileForBlock,
+  plantingResult,
+  resolveBucketAction,
+  restoreLeadAnchors,
+  serializeLeadAnchors,
+  toggleFenceGate,
+  type LeadAnchor,
+  type SavedLeadAnchor,
+} from "./farming";
+import {
+  planLeafParticles,
+  stepLeafParticle,
+  torchAnimationSample,
+  type LeafParticle,
+} from "./world-effects";
 
 export { BLOCKS, CREATIVE_BLOCKS, ITEMS, Item, RECIPES, BlockId, BIOME_NAMES, MOB_DEFS, MOB_ORDER, WorldStorage, DEFAULT_WORLD_OPTIONS, type WorldOptions, type WorldMetadata, type GameMode, type InventorySlot, type ItemCode, type Recipe, type EquipmentSlot, type MobKind, type SleepTarget, type PlayerVariant };
 
@@ -156,6 +214,8 @@ export type GameSettings = {
   weather: Weather;
   renderDistance: number;
   simulationDistance: number;
+  showFps: boolean;
+  resourceMode: ResourceMode;
 };
 
 export type FurnaceState = {
@@ -168,7 +228,14 @@ export type FurnaceState = {
 };
 
 export type ChestState = Array<InventorySlot | null>;
-export type BestiaryProgress = Record<MobKind, { seen: boolean; kills: number; captures: number }>;
+export type BestiaryProgress = Record<MobKind, {
+  seen: boolean;
+  kills: number;
+  captures: number;
+  tames?: number;
+  breeds?: number;
+  secretUnlocked?: boolean;
+}>;
 export type RecipePlanResult =
   | { ok: true; recipeId: string; message: string }
   | { ok: false; recipeId: string; reason: "unknown" | "needs-table" | "missing" | "inventory-full"; message: string; missing?: string[] };
@@ -217,6 +284,7 @@ export type HudState = {
   weatherKind: string;
   activePet: { id: number; name: string; command: PeelopCommand; health: number; maxHealth: number; baby: boolean; tamed: boolean } | null;
   mountedBoat: boolean;
+  mountedCreature?: boolean;
 };
 
 export type SavedCreature = {
@@ -232,6 +300,8 @@ export type SavedCreature = {
   poiMarkerId?: string;
   enclosed?: boolean;
   petState?: PeelopState;
+  careState?: CreatureHusbandryState;
+  shadeState?: ShadecrawlerState;
 };
 
 export type WorldSave = {
@@ -267,6 +337,7 @@ export type WorldSave = {
   creatures?: SavedCreature[];
   activatedStructureMarkers?: string[];
   boats?: SailboatSave[];
+  leads?: SavedLeadAnchor[];
   savedAt: number;
 };
 
@@ -281,11 +352,15 @@ export type MultiplayerUiState = {
   peers: PeerInfo[];
   inviteCode: string;
   answerCode: string;
+  roomCode: string;
+  rendezvousStatus: RendezvousStatus;
   error: string;
 };
 
 export type EngineEvents = {
   onHud: (hud: HudState) => void;
+  /** Immediate, lightweight selection signal for responsive React hotbar chrome. */
+  onSelectedSlot?: (slot: number) => void;
   onToast: (message: string) => void;
   onLockChange: (locked: boolean) => void;
   onOverlayRequest: (kind: OverlayKind, key?: string) => void;
@@ -332,6 +407,11 @@ type MobEntity = {
   voiceTimer: number;
   birdState: BirdBehaviorState | null;
   petState: PeelopState | null;
+  careState: CreatureHusbandryState | null;
+  shadeState: ShadecrawlerState | null;
+  shadeSaddle: THREE.Object3D | null;
+  visualBaseY: number;
+  visualMinY: number;
   persistentPoiResident: boolean;
   poiMarkerId: string | null;
   enclosed: boolean;
@@ -358,6 +438,8 @@ type SpawnMobOptions = {
   poiMarkerId?: string | null;
   enclosed?: boolean;
   petState?: PeelopState | null;
+  careState?: CreatureHusbandryState | null;
+  shadeState?: ShadecrawlerState | null;
 };
 
 type MobFragment = {
@@ -414,6 +496,11 @@ type Particle = {
   life: number;
 };
 
+type LeafParticleVisual = {
+  object: THREE.Group;
+  state: LeafParticle;
+};
+
 export type EnvironmentLightSource = {
   x: number;
   y: number;
@@ -435,6 +522,10 @@ const CROUCH_HEIGHT = 1.48;
 const PLAYER_RADIUS = 0.3;
 const PHYSICS_STEP = 1 / 60;
 const INVENTORY_SIZE = 36;
+const TREE_PERCH_BLOCKS = new Set<BlockId>([
+  BlockId.WildwoodLog, BlockId.PineLog, BlockId.BirchLog, BlockId.BloomLog,
+  BlockId.WildwoodLeaves, BlockId.PineLeaves, BlockId.BirchLeaves, BlockId.BloomLeaves,
+]);
 const CRAFT_POSITIONS_2 = [0, 1, 3, 4];
 const MAIN_THEN_HOTBAR = [...Array.from({ length: 27 }, (_, index) => index + 9), ...Array.from({ length: 9 }, (_, index) => index)];
 
@@ -590,6 +681,7 @@ export function migrateSavedWorld(value: unknown): WorldSave | null {
   const parsed = value as WorldSave;
   if (parsed.version !== 2 || typeof parsed.seed !== "string") return null;
   if (parsed.generatorVersion === GENERATOR_VERSION) return parsed;
+  if (parsed.generatorVersion === 3) return { ...parsed, generatorVersion: GENERATOR_VERSION };
   if (parsed.generatorVersion !== 2) return null;
   const indexOffset = (LEGACY_GENERATOR_MIN_Y - MIN_Y) * 16 * 16;
   const edits: ChunkEditSave = {};
@@ -630,7 +722,7 @@ export function readSettings(): GameSettings {
     renderDistance: mobile ? 6 : DEFAULT_RENDER_DISTANCE,
     simulationDistance: mobile ? 4 : DEFAULT_SIMULATION_DISTANCE,
   });
-  const fallback: GameSettings = { volume: 0.55, muted: false, sensitivity: 0.0022, fov: 72, weather: "clear", ...fallbackDistances };
+  const fallback: GameSettings = { volume: 0.55, muted: false, sensitivity: 0.0022, fov: 72, weather: "clear", showFps: false, resourceMode: "auto", ...fallbackDistances };
   if (typeof window === "undefined") return fallback;
   try {
     const parsed = JSON.parse(window.localStorage.getItem(SETTINGS_KEY) ?? "null") as Partial<GameSettings> | null;
@@ -645,6 +737,8 @@ export function readSettings(): GameSettings {
       sensitivity: clamp(Number(parsed.sensitivity ?? fallback.sensitivity), 0.0008, 0.005),
       fov: clamp(Number(parsed.fov ?? fallback.fov), 55, 100),
       weather: parsed.weather === "rain" ? "rain" : "clear",
+      showFps: Boolean(parsed.showFps ?? fallback.showFps),
+      resourceMode: parsed.resourceMode === "cpu" || parsed.resourceMode === "memory" ? parsed.resourceMode : "auto",
       ...distances,
     };
   } catch {
@@ -673,7 +767,14 @@ function blankEquipment(): Record<EquipmentSlot, InventorySlot | null> {
 }
 
 function blankBestiary(): BestiaryProgress {
-  return Object.fromEntries(MOB_ORDER.map((kind) => [kind, { seen: false, kills: 0, captures: 0 }])) as BestiaryProgress;
+  return Object.fromEntries(MOB_ORDER.map((kind) => [kind, { seen: false, kills: 0, captures: 0, tames: 0, breeds: 0, secretUnlocked: false }])) as BestiaryProgress;
+}
+
+/** Keyboard gameplay shortcuts must never fire while a player is typing in UI. */
+export function isEditableKeyboardTarget(target: EventTarget | null) {
+  const element = target as { tagName?: string; isContentEditable?: boolean; getAttribute?: (name: string) => string | null } | null;
+  const tag = element?.tagName?.toUpperCase();
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || Boolean(element?.isContentEditable) || element?.getAttribute?.("role") === "textbox";
 }
 
 export class VoxelEngine {
@@ -834,10 +935,16 @@ export class VoxelEngine {
   saveTimer = 0;
   autoSaveAccumulator = 0;
   particles: Particle[] = [];
+  leafParticles: LeafParticleVisual[] = [];
+  leafParticleTimer = 0;
   fallingTrees: FallingTree[] = [];
   mobs: MobEntity[] = [];
+  leadAnchors = new Map<number, LeadAnchor>();
+  leadLines = new Map<number, THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>>();
   boats = new Map<string, SailboatEntity>();
   mountedBoatId: string | null = null;
+  mountedCreatureId: number | null = null;
+  mobBounds = new THREE.Box3();
   nextBoatId = 1;
   boatRaycaster = new THREE.Raycaster();
   exhibitVisuals = new Map<string, ExhibitVisual>();
@@ -865,6 +972,7 @@ export class VoxelEngine {
   chestLidPivot: THREE.Group | null = null;
   chestOpenAmount = 0;
   multiplayer: MultiplayerSession | null = null;
+  hostRendezvous: HostRendezvous | null = null;
   multiplayerState: MultiplayerUiState = {
     ...detectMultiplayerSupport(),
     status: "idle",
@@ -872,6 +980,8 @@ export class VoxelEngine {
     peers: [],
     inviteCode: "",
     answerCode: "",
+    roomCode: "",
+    rendezvousStatus: "closed",
     error: "",
   };
   multiplayerTick = 0;
@@ -922,6 +1032,7 @@ export class VoxelEngine {
     this.camera = new THREE.PerspectiveCamera(settings.fov, 1, 0.05, 256);
     this.camera.rotation.order = "YXZ";
     this.world.setRenderDistance(settings.renderDistance);
+    this.world.setRetentionPadding(chunkRetentionPadding(settings.resourceMode));
     this.butterflies = new ButterflySystem(this.world, (kind, captured) => {
       const progress = this.bestiary[kind];
       if (!progress) return;
@@ -1064,7 +1175,7 @@ export class VoxelEngine {
   onPointerLockChange = () => {
     this.locked = document.pointerLockElement === this.canvas;
     if (!this.locked) {
-      if (this.running && !this.touchMode) this.paused = true;
+      if (this.running && !this.touchMode) this.paused = !this.multiplayerSimulationActive();
       this.clearInput();
       this.mineHeld = false;
     } else {
@@ -1118,6 +1229,7 @@ export class VoxelEngine {
 
   onKeyDown = (event: KeyboardEvent) => {
     if (!this.running) return;
+    if (isEditableKeyboardTarget(event.target)) return;
     if (["KeyW", "KeyA", "KeyS", "KeyD", "Space", "ShiftLeft", "ShiftRight", "ControlLeft", "ControlRight"].includes(event.code)) event.preventDefault();
     if (event.code === "KeyE" && !event.repeat) {
       this.openOverlay("inventory");
@@ -1146,6 +1258,11 @@ export class VoxelEngine {
     if (event.code === "Space" && !event.repeat && this.mountedBoatId) {
       event.preventDefault();
       this.dismountBoat();
+      return;
+    }
+    if (event.code === "Space" && !event.repeat && this.mountedCreatureId !== null) {
+      event.preventDefault();
+      this.dismountCreature();
       return;
     }
     this.keys.add(event.code);
@@ -1214,6 +1331,8 @@ export class VoxelEngine {
   }
 
   jump() {
+    if (this.mountedCreatureId !== null) { this.dismountCreature(); return; }
+    if (this.mountedBoatId) { this.dismountBoat(); return; }
     this.keys.add("Space");
     window.setTimeout(() => this.keys.delete("Space"), 130);
   }
@@ -1259,6 +1378,7 @@ export class VoxelEngine {
     this.clearEntities();
     this.activatedStructureMarkers.clear();
     this.liquidCells.clear();
+    this.world.setRenderDistance(Math.min(this.settings.renderDistance, this.touchMode ? 4 : 6));
     this.world.reset(seed, undefined, generationOptionsFromWorldOptions(DEFAULT_WORLD_OPTIONS));
     const spawn = this.findSpawn();
     this.world.initializeAround(spawn.x, spawn.z);
@@ -1275,6 +1395,7 @@ export class VoxelEngine {
     this.paused = false;
     this.titleMode = false;
     this.mode = mode;
+    this.world.setRenderDistance(this.titleMode ? Math.min(this.settings.renderDistance, this.touchMode ? 4 : 6) : this.settings.renderDistance);
     this.localPlayerModel.setVariant(this.playerVariant);
     this.worldOptions = normalizeWorldOptions(options);
     this.butterflyDensity = this.worldOptions.butterflyDensity;
@@ -1338,6 +1459,7 @@ export class VoxelEngine {
     this.titleMode = false;
     this.mode = save.mode === "builder" ? "builder" : "survival";
     this.playerVariant = save.playerVariant === "female" ? "female" : "male";
+    this.world.setRenderDistance(this.settings.renderDistance);
     this.localPlayerModel.setVariant(this.playerVariant);
     this.worldOptions = normalizeWorldOptions(options);
     this.butterflyDensity = this.worldOptions.butterflyDensity;
@@ -1383,6 +1505,8 @@ export class VoxelEngine {
     this.chests = restoreChestStorage(save.chests ?? {});
     for (const savedBoat of save.boats ?? []) this.restoreSailboat(savedBoat);
     for (const savedCreature of save.creatures ?? []) this.restoreCreature(savedCreature);
+    this.leadAnchors = restoreLeadAnchors(save.leads, new Set(this.mobs.map((mob) => mob.id)));
+    for (const mobId of this.leadAnchors.keys()) this.ensureLeadLine(mobId);
     if (this.collidesAt(this.position) || this.position.y < MIN_Y) this.respawn(false);
     for (const savedDrop of save.drops ?? []) {
       if (!ITEMS[savedDrop.item] || savedDrop.count <= 0) continue;
@@ -1451,6 +1575,84 @@ export class VoxelEngine {
     return this.multiplayer;
   }
 
+  suggestMultiplayerRoomCode() {
+    return createRoomCode();
+  }
+
+  private setRendezvousStatus(status: RendezvousStatus) {
+    this.multiplayerState.rendezvousStatus = status;
+    if (!this.disposed) this.emitHud(true);
+  }
+
+  async createMultiplayerRoom(roomCode: string, playerName: string) {
+    if (!this.running || this.titleMode) throw new Error("Open a world before hosting a multiplayer session.");
+    try {
+      if (this.hostRendezvous) await this.hostRendezvous.close();
+      this.hostRendezvous = null;
+      const session = this.beginMultiplayerSession(playerName);
+      const code = roomCode.trim() || createRoomCode();
+      const handle = await hostByRoomCode({
+        code,
+        hostName: session.identity.name,
+        createInvite: async () => {
+          const invite = await session.createHostInvite();
+          this.multiplayerState.status = session.state;
+          this.multiplayerState.role = "host";
+          this.multiplayerState.peers = session.getPeers();
+          return { inviteCode: invite.inviteCode };
+        },
+        acceptAnswer: async (answerCode) => {
+          await session.acceptGuestAnswer(answerCode.trim());
+          this.multiplayerState.status = session.state;
+          this.multiplayerState.peers = session.getPeers();
+        },
+        onStatus: (status) => this.setRendezvousStatus(status),
+      });
+      this.hostRendezvous = handle;
+      this.multiplayerState.roomCode = handle.code;
+      this.multiplayerState.status = session.state;
+      this.multiplayerState.role = "host";
+      this.multiplayerState.error = "";
+      this.events.onToast(`Invite room ${handle.code} is open. Share that one code with your trailmates.`);
+      this.emitHud(true);
+      return { roomCode: handle.code };
+    } catch (error) {
+      this.multiplayerState.error = error instanceof Error ? error.message : String(error);
+      this.multiplayerState.rendezvousStatus = "error";
+      this.multiplayerState.status = "error";
+      throw error;
+    }
+  }
+
+  async joinMultiplayerRoom(roomCode: string, playerName: string) {
+    if (!this.running || this.titleMode) throw new Error("Open a world before joining a multiplayer session.");
+    try {
+      if (this.hostRendezvous) await this.hostRendezvous.close();
+      this.hostRendezvous = null;
+      const session = this.beginMultiplayerSession(playerName);
+      const joined = await joinByRoomCode({
+        code: roomCode,
+        guestName: session.identity.name,
+        createAnswer: async (inviteCode) => session.createGuestAnswer(inviteCode),
+        onStatus: (status) => this.setRendezvousStatus(status),
+      });
+      this.multiplayerState.roomCode = joined.code;
+      this.multiplayerState.inviteCode = "";
+      this.multiplayerState.answerCode = "";
+      this.multiplayerState.status = session.state;
+      this.multiplayerState.role = "guest";
+      this.multiplayerState.error = "";
+      this.events.onToast(`Connected to ${joined.hostName}'s world through room ${joined.code}.`);
+      this.emitHud(true);
+      return { hostName: joined.hostName };
+    } catch (error) {
+      this.multiplayerState.error = error instanceof Error ? error.message : String(error);
+      this.multiplayerState.rendezvousStatus = "error";
+      this.multiplayerState.status = "error";
+      throw error;
+    }
+  }
+
   async hostMultiplayer(playerName: string) {
     if (!this.running || this.titleMode) throw new Error("Open a world before hosting a multiplayer session.");
     try {
@@ -1504,6 +1706,8 @@ export class VoxelEngine {
 
   disconnectMultiplayer() {
     const hadSession = Boolean(this.multiplayer);
+    if (this.hostRendezvous) void this.hostRendezvous.close();
+    this.hostRendezvous = null;
     this.multiplayer?.dispose("local-disconnect");
     this.multiplayer = null;
     this.removeAllRemotePlayers();
@@ -1516,6 +1720,8 @@ export class VoxelEngine {
       peers: [],
       inviteCode: "",
       answerCode: "",
+      roomCode: "",
+      rendezvousStatus: "closed",
       error: "",
     };
     this.multiplayerReceivedSnapshot = false;
@@ -1636,6 +1842,10 @@ export class VoxelEngine {
       yaw: mob.group.rotation.y,
       health: mob.health,
       state: mob.state,
+      scale: this.mobBaseScale(mob),
+      tamed: Boolean(mob.petState?.tamed || mob.shadeState?.tamed),
+      saddled: Boolean(mob.shadeState?.saddled),
+      baby: Boolean(mob.petState?.baby || mob.careState?.baby),
     }));
   }
 
@@ -1716,7 +1926,7 @@ export class VoxelEngine {
     this.day = snapshot.time.day;
     this.weather = snapshot.time.weather;
     this.running = true;
-    this.paused = true;
+    this.paused = !this.multiplayerSimulationActive();
     this.titleMode = false;
     this.persistent = false;
     this.activeWorldId = null;
@@ -1762,6 +1972,20 @@ export class VoxelEngine {
       mob.group.position.lerp(new THREE.Vector3(entry.x, entry.y, entry.z), 0.72);
       mob.group.rotation.y = entry.yaw;
       mob.health = entry.health;
+      if (mob.kind === "shadecrawler" && mob.shadeState) {
+        mob.shadeState = normalizeShadecrawlerState({
+          ...mob.shadeState,
+          tamed: Boolean(entry.tamed),
+          growth: clamp(((entry.scale ?? 1) - 1) / 2, 0, 1),
+          growthFeeds: Math.round(clamp(((entry.scale ?? 1) - 1) / 2, 0, 1) * 12),
+          saddled: Boolean(entry.saddled),
+        });
+        mob.hostile = mob.definition.hostile && !mob.shadeState.tamed;
+      }
+      if (mob.careState && entry.baby !== undefined) {
+        mob.careState = { ...mob.careState, baby: entry.baby, ageTicks: entry.baby ? Math.min(mob.careState.ageTicks, 23_999) : Math.max(24_000, mob.careState.ageTicks) };
+      }
+      this.applyMobScale(mob, entry.scale ?? this.mobBaseScale(mob));
       if (["wander", "flee", "chase", "windup", "recover"].includes(entry.state)) mob.state = entry.state as MobEntity["state"];
     }
   }
@@ -1817,7 +2041,11 @@ export class VoxelEngine {
   }
 
   private handleMultiplayerEvent(event: MultiplayerEvent) {
-    if (event.type === "state") this.multiplayerState.status = event.state;
+    if (event.type === "state") {
+      this.multiplayerState.status = event.state;
+      if (event.state === "connected") this.paused = false;
+      else if (!this.locked && !this.touchMode && this.running && !this.titleMode) this.paused = true;
+    }
     else if (event.type === "error") {
       this.multiplayerState.error = event.error.message;
       this.events.onToast(`Multiplayer: ${event.error.message}`);
@@ -1914,6 +2142,10 @@ export class VoxelEngine {
     if (!this.touchMode) this.requestPointerLockSafely();
   }
 
+  private multiplayerSimulationActive() {
+    return this.multiplayer?.state === "connected";
+  }
+
   private applyNetworkBoatSnapshot(entries: NonNullable<WorldSnapshot["boats"]>) {
     const incoming = new Set(entries.map((entry) => entry.id));
     for (const [id, boat] of this.boats) {
@@ -1939,7 +2171,7 @@ export class VoxelEngine {
   }
 
   pause() {
-    this.paused = true;
+    this.paused = !this.multiplayerSimulationActive();
     this.clearInput();
     this.mineHeld = false;
     if (document.pointerLockElement) document.exitPointerLock();
@@ -2266,6 +2498,7 @@ export class VoxelEngine {
 
   selectSlot(slot: number) {
     this.selected = (slot + 9) % 9;
+    this.events.onSelectedSlot?.(this.selected);
     this.audio.play("ui");
     this.emitHud(true);
   }
@@ -2933,7 +3166,7 @@ export class VoxelEngine {
     this.liquidTickAccumulator += dt;
     if (this.liquidTickAccumulator < 0.08) return;
     this.liquidTickAccumulator %= 0.08;
-    const changes = this.liquidSimulator.process(this.budgetController.current.liquidOperations);
+    const changes = this.liquidSimulator.process(applyResourceMode(this.settings.resourceMode, this.budgetController.current).liquidOperations);
     if (!changes.length) return;
     const edits = changes.map(({ position, next }) => ({
       x: position.x,
@@ -2987,9 +3220,68 @@ export class VoxelEngine {
       const current = this.world.getBlock(x, y, z);
       if (current === undefined) { this.saplings.set(key, now + 30_000); continue; }
       processed += 1;
+      if (current === BlockId.AppleSapling) {
+        const soil = this.world.getBlock(x, y - 1, z);
+        if (![BlockId.Grass, BlockId.Dirt, BlockId.MeadowGrass, BlockId.SnowyGrass, BlockId.SavannaGrass, BlockId.SwampGrass, BlockId.Farmland, BlockId.HydratedFarmland].includes(soil ?? BlockId.Air)) {
+          this.world.setBlock(x, y, z, BlockId.Air, true, true);
+          this.publishBlockEdits([{ x, y, z, type: BlockId.Air }], "break");
+          this.saplings.delete(key);
+          if (this.mode === "survival") this.spawnDrop(Item.Apple, 1, new THREE.Vector3(x, y, z));
+          continue;
+        }
+        const plan = planAppleTree({ x, y, z }, this.world.seedText);
+        const clear = plan.every((block) => {
+          const occupied = this.world.getBlock(block.x, block.y, block.z);
+          return occupied !== undefined && (block.x === x && block.y === y && block.z === z
+            || occupied === BlockId.Air || Boolean(BLOCKS[occupied]?.replaceable));
+        });
+        if (!clear) { this.saplings.set(key, now + 40_000); continue; }
+        const changes = [...plan];
+        this.world.setBlocksBatch(changes, true, true);
+        this.publishBlockEdits(changes, "batch");
+        this.saplings.set(key, now + 180_000 + Math.random() * 90_000);
+        if (this.position.distanceToSquared(new THREE.Vector3(x, y, z)) < 400) this.audio.play("place", BlockId.WildwoodLog);
+        continue;
+      }
+      if (current === BlockId.WildwoodLog) {
+        let appleCanopy = false;
+        for (let dx = -3; dx <= 3 && !appleCanopy; dx += 1) for (let dy = 2; dy <= 8 && !appleCanopy; dy += 1) for (let dz = -3; dz <= 3; dz += 1) {
+          if (this.world.getBlock(x + dx, y + dy, z + dz) === BlockId.AppleLeaves) { appleCanopy = true; break; }
+        }
+        if (!appleCanopy) { this.saplings.delete(key); continue; }
+        const fruit = planAppleFruitRegrowth({ x, y, z }, this.world.seedText, Math.floor(now / 120_000), (bx, by, bz) => this.world.getBlock(bx, by, bz), 2);
+        if (fruit.length) {
+          const changes = [...fruit];
+          this.world.setBlocksBatch(changes, true, true);
+          this.publishBlockEdits(changes, "batch");
+        }
+        this.saplings.set(key, now + 150_000 + Math.random() * 120_000);
+        continue;
+      }
+      const plant = plantProfileForBlock(current);
+      if (plant) {
+        const soil = this.world.getBlock(x, y - 1, z);
+        const hydratedSoil = soil === BlockId.Farmland || soil === BlockId.HydratedFarmland
+          ? farmlandState((bx, by, bz) => this.world.getBlock(bx, by, bz), { x, y: y - 1, z })
+          : soil;
+        if (hydratedSoil !== soil && hydratedSoil !== undefined) {
+          this.world.setBlock(x, y - 1, z, hydratedSoil, true, true);
+          this.publishBlockEdits([{ x, y: y - 1, z, type: hydratedSoil }], "place");
+        }
+        const next = nextPlantStage(current);
+        if (next === null) { this.saplings.delete(key); continue; }
+        if (!canGrowPlant(current, hydratedSoil, this.daylightAmount())) {
+          this.saplings.set(key, now + 25_000);
+          continue;
+        }
+        this.world.setBlock(x, y, z, next, true, true);
+        this.publishBlockEdits([{ x, y, z, type: next }], "place");
+        this.schedulePlantGrowth(x, y, z, next, plant.stage + 1);
+        continue;
+      }
       if (current !== BlockId.WildwoodSapling) { this.saplings.delete(key); continue; }
       const soil = this.world.getBlock(x, y - 1, z);
-      if (![BlockId.Grass, BlockId.Dirt, BlockId.SnowyGrass, BlockId.SavannaGrass, BlockId.SwampGrass, BlockId.Farmland].includes(soil ?? BlockId.Air)) {
+      if (![BlockId.Grass, BlockId.Dirt, BlockId.SnowyGrass, BlockId.SavannaGrass, BlockId.SwampGrass, BlockId.Farmland, BlockId.HydratedFarmland].includes(soil ?? BlockId.Air)) {
         this.world.setBlock(x, y, z, BlockId.Air, true, true);
         this.publishBlockEdits([{ x, y, z, type: BlockId.Air }], "break");
         this.saplings.delete(key);
@@ -3022,7 +3314,7 @@ export class VoxelEngine {
   }
 
   selectedSlot() {
-    return this.inventory[this.selected];
+    return this.inventory?.[this.selected] ?? null;
   }
 
   pickTarget() {
@@ -3081,6 +3373,79 @@ export class VoxelEngine {
     this.audio.play("place", BlockId.Planks);
     this.placeCooldown = 0.18;
     this.saveSoon();
+  }
+
+  playCreatureEvent(mob: MobEntity, event: CreatureSoundEvent) {
+    const sound = creatureSoundCue(mob.kind as CoreMobKind, event);
+    const sample = sound.asset === "ridgeback-warm-huff"
+      ? "ridgebackWarmHuff"
+      : sound.asset === "shadecrawler-stone-chitter"
+        ? "shadecrawlerStoneChitter"
+        : null;
+    if (sample) {
+      this.audio.playSample(sample, {
+        gain: sound.gain,
+        playbackRate: 1 + (Math.random() * 2 - 1) * sound.pitchJitter,
+      });
+      return;
+    }
+    this.audio.play(sound.fallback);
+  }
+
+  consumeSelectedUnit() {
+    const slot = this.selectedSlot();
+    if (!slot || this.mode !== "survival") return;
+    slot.count -= 1;
+    if (slot.count <= 0) this.inventory[this.selected] = null;
+  }
+
+  replaceSelectedUnit(resultItem: ItemCode) {
+    if (this.mode !== "survival") return;
+    const slot = this.selectedSlot();
+    if (!slot) return;
+    if (slot.count <= 1) this.inventory[this.selected] = { item: resultItem, count: 1 };
+    else {
+      slot.count -= 1;
+      const leftover = this.addItem(resultItem, 1);
+      if (leftover) this.spawnDrop(resultItem, leftover, this.position.clone().add(new THREE.Vector3(0, 0.7, 0)));
+    }
+  }
+
+  schedulePlantGrowth(x: number, y: number, z: number, type: BlockId, cycle = 0) {
+    this.saplings ??= new Map<string, number>();
+    const now = Date.now();
+    if (type === BlockId.WildwoodSapling) {
+      this.saplings.set(blockKey(x, y, z), now + 75_000 + Math.random() * 75_000);
+      return;
+    }
+    if (type === BlockId.AppleSapling) {
+      this.saplings.set(blockKey(x, y, z), now + 95_000 + Math.random() * 80_000);
+      return;
+    }
+    const soil = this.world.getBlock(x, y - 1, z);
+    const delay = growthDelaySeconds(type, soil === BlockId.HydratedFarmland, this.world.seedText, { x, y, z }, cycle);
+    if (delay !== null && nextPlantStage(type) !== null) this.saplings.set(blockKey(x, y, z), now + delay * 1000);
+    else this.saplings.delete(blockKey(x, y, z));
+  }
+
+  applyHarvest(x: number, y: number, z: number, type: BlockId, useScythe: boolean) {
+    const result = harvestPlant(type, useScythe, Math.random());
+    if (!result) return false;
+    this.world.setBlock(x, y, z, result.replacement, true, true);
+    this.publishBlockEdits([{ x, y, z, type: result.replacement }], "place");
+    for (const drop of result.drops) {
+      const leftover = this.mode === "survival" ? this.addItem(drop.item, drop.count) : 0;
+      if (leftover) this.spawnDrop(drop.item, leftover, new THREE.Vector3(x, y + 0.25, z));
+    }
+    if (useScythe) this.damageSelectedTool();
+    this.schedulePlantGrowth(x, y, z, result.replacement, 1);
+    this.placeCooldown = 0.2;
+    this.heldUse = 1;
+    this.audio.play("pickup", type);
+    this.spawnParticles(x, y, z, type, 4);
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
   }
 
   useSelected() {
@@ -3149,10 +3514,16 @@ export class VoxelEngine {
         const metadata = releaseCreature(captured);
         const petState = metadata.kind === "peelop" && metadata.custom.petState
           ? metadata.custom.petState as unknown as PeelopState : null;
+        const careState = metadata.custom.careState
+          ? metadata.custom.careState as unknown as CreatureHusbandryState : null;
+        const shadeState = metadata.kind === "shadecrawler" && metadata.custom.shadeState
+          ? metadata.custom.shadeState as unknown as ShadecrawlerState : null;
         const mob = this.spawnMob(metadata.kind, releasePosition, {
           health: metadata.health,
           age: metadata.ageTicks / 20,
           petState,
+          careState,
+          shadeState,
           persistentPoiResident: Boolean(metadata.custom.persistentPoiResident),
           enclosed: Boolean(metadata.custom.enclosed),
         });
@@ -3176,16 +3547,18 @@ export class VoxelEngine {
         health: mob.health,
         maxHealth: mob.maxHealth,
         ageTicks: Math.floor(mob.age * 20),
-        baby: Boolean(mob.petState?.baby),
+        baby: Boolean(mob.petState?.baby || mob.careState?.baby),
         temperament: mob.definition.temperament,
         hostile: mob.hostile,
-        tamed: Boolean(mob.petState?.tamed),
-        ownerId: mob.petState?.ownerId ?? null,
+        tamed: Boolean(mob.petState?.tamed || mob.shadeState?.tamed),
+        ownerId: mob.petState?.ownerId ?? mob.shadeState?.ownerId ?? null,
         name: mob.petState?.name ?? (mob.name !== mob.definition.name ? mob.name : null),
         geneticSeed: mob.petState?.geneticSeed ?? ((mob.id * 2654435761) >>> 0),
         command: mob.petState?.command ?? null,
         custom: JSON.parse(JSON.stringify({
           ...(mob.petState ? { petState: mob.petState } : {}),
+          ...(mob.careState ? { careState: mob.careState } : {}),
+          ...(mob.shadeState ? { shadeState: mob.shadeState } : {}),
           persistentPoiResident: mob.persistentPoiResident,
           enclosed: mob.enclosed,
         })) as CreatureMetadata["custom"],
@@ -3213,6 +3586,93 @@ export class VoxelEngine {
       this.emitHud(true);
       return;
     }
+    if (heldSlot?.item === Item.Lead && this.targetMob) {
+      const mob = this.targetMob;
+      if (this.leadAnchors.has(mob.id)) {
+        this.events.onToast(`${mob.name} is already on a lead.`);
+        this.placeCooldown = 0.18;
+        return;
+      }
+      this.leadAnchors.set(mob.id, { mobId: String(mob.id), maximumLength: 9 });
+      this.consumeSelectedUnit();
+      this.ensureLeadLine(mob.id);
+      this.placeCooldown = 0.25;
+      this.audio.play("craft");
+      this.events.onToast(`${mob.name} is now on a braided lead. Crouch-use a fence to hitch it.`);
+      this.saveSoon();
+      this.emitHud(true);
+      return;
+    }
+    if (this.targetMob?.kind === "shadecrawler") {
+      const shade = this.targetMob;
+      const ownerId = this.localPlayerId();
+      shade.shadeState = normalizeShadecrawlerState(shade.shadeState ?? createShadecrawlerState());
+      if (heldSlot?.item === Item.Saddle) {
+        const next = equipShadecrawlerSaddle(shade.shadeState, ownerId);
+        if (next !== shade.shadeState) {
+          shade.shadeState = next;
+          this.consumeSelectedUnit();
+          this.bestiary.shadecrawler.secretUnlocked = true;
+          this.events.onToast("The saddle settles between the grown Shadecrawler's plates. It is ready to ride.");
+          this.playCreatureEvent(shade, "mount");
+          this.saveSoon();
+          this.emitHud(true);
+        } else if (!shade.shadeState.tamed) this.events.onToast("This Shadecrawler does not trust you yet.");
+        else if (shade.shadeState.growth < 1) this.events.onToast("It must reach full size before it can carry a saddle.");
+        else this.events.onToast("This Shadecrawler already wears a saddle.");
+        this.placeCooldown = 0.3;
+        return;
+      }
+      if (heldSlot && (heldSlot.item === Item.Berry || heldSlot.item === Item.RottenFlesh
+        || heldSlot.item === Item.RawMeat || heldSlot.item === Item.NocturneHeart)) {
+        const beforeGrowth = shade.shadeState.growth;
+        const result = feedShadecrawler(shade.shadeState, ownerId, heldSlot.item);
+        if (!result.accepted) {
+          this.events.onToast(result.catalystNeeded
+            ? "It is calm enough to accept a rare Nocturne Heart."
+            : shade.shadeState.tamed ? "Only its keeper can deepen this bond." : "Moonberries first; patient feeding quiets its fear.");
+          this.placeCooldown = 0.22;
+          return;
+        }
+        shade.shadeState = result.state;
+        shade.hostile = false;
+        const nextMaxHealth = Math.round(shade.definition.health * shadecrawlerScale(shade.shadeState));
+        shade.health = Math.min(nextMaxHealth, shade.health + (result.tamedNow ? 5 : shade.shadeState.growth > beforeGrowth ? 3 : 1));
+        shade.maxHealth = nextMaxHealth;
+        this.applyMobScale(shade, shadecrawlerScale(shade.shadeState));
+        this.consumeSelectedUnit();
+        this.bestiary.shadecrawler.seen = true;
+        if (result.tamedNow) {
+          this.bestiary.shadecrawler.tames = (this.bestiary.shadecrawler.tames ?? 0) + 1;
+          this.bestiary.shadecrawler.secretUnlocked = true;
+          this.events.onToast("The Nocturne Heart steadies. The Shadecrawler accepts you as its keeper.");
+          this.playCreatureEvent(shade, "tame");
+        } else if (!shade.shadeState.tamed) {
+          this.events.onToast(result.catalystNeeded
+            ? "It takes the Moonberry gently. A Nocturne Heart could now complete the bond."
+            : `Trust ${shade.shadeState.trustFeeds}/6 · keep offering Moonberries.`);
+          this.playCreatureEvent(shade, "feed");
+        } else {
+          const percent = Math.round(shade.shadeState.growth * 100);
+          this.events.onToast(percent >= 100 ? "The Shadecrawler has reached its full, rideable size." : `Shadecrawler growth ${percent}% · continue feeding it.`);
+          this.playCreatureEvent(shade, "feed");
+        }
+        this.placeCooldown = 0.32;
+        this.saveSoon();
+        this.emitHud(true);
+        return;
+      }
+      if (canRideShadecrawler(shade.shadeState, ownerId)) {
+        this.mountedCreatureId = shade.id;
+        if (this.cameraMode === "first") this.cameraMode = "third-rear";
+        this.keys.clear();
+        this.events.onToast("Mounted Shadecrawler · WASD ride · Space dismount · V changes view.");
+        this.playCreatureEvent(shade, "mount");
+        this.placeCooldown = 0.35;
+        this.emitHud(true);
+        return;
+      }
+    }
     if (this.targetMob?.kind === "peelop") {
       const pet = this.targetMob;
       const state = pet.petState ?? createPeelopState((pet.id * 2654435761) >>> 0);
@@ -3226,6 +3686,7 @@ export class VoxelEngine {
         if (!state.tamed) {
           const result = tryTamePeelop(state, ownerId, food, Math.random());
           pet.petState = result.state;
+          if (result.tamed) this.bestiary.peelop.tames = (this.bestiary.peelop.tames ?? 0) + 1;
           this.events.onToast(result.tamed ? "The Peelop's leaf-ears perk up. It has chosen you." : "The Peelop nibbles politely, but is not ready to follow.");
         } else {
           pet.petState = feedPeelop(state, food);
@@ -3236,6 +3697,7 @@ export class VoxelEngine {
             pet.petState = family.left;
             partner.petState = family.right;
             this.spawnMob("peelop", pet.group.position.clone().add(new THREE.Vector3(0.65, 0, 0.35)), { petState: family.child });
+            this.bestiary.peelop.breeds = (this.bestiary.peelop.breeds ?? 0) + 1;
             this.events.onToast("A tiny Peelip tumbles into the grove.");
           } else this.events.onToast(`${pet.petState.name ?? "Peelop"} is fed and recovering.`);
         }
@@ -3259,6 +3721,48 @@ export class VoxelEngine {
           this.saveSoon();
           this.emitHud(true);
         }
+        return;
+      }
+    }
+    if (this.targetMob?.careState && this.targetMob.kind !== "peelop" && heldSlot) {
+      const mob = this.targetMob;
+      const fed = feedCreatureForHusbandry(mob.definition, mob.careState!, heldSlot.item);
+      if (fed.accepted) {
+        mob.careState = fed.state;
+        mob.health = Math.min(mob.maxHealth, mob.health + 1);
+        this.consumeSelectedUnit();
+        this.bestiary[mob.kind].seen = true;
+        let bred = false;
+        if (fed.breedingFood) {
+          const partner = this.mobs.find((candidate) => candidate !== mob
+            && candidate.kind === mob.kind
+            && candidate.careState
+            && candidate.group.position.distanceToSquared(mob.group.position) < 25
+            && canBreedCreatures(mob.kind, fed.state, candidate.kind, candidate.careState));
+          const partnerState = partner?.careState;
+          const family = partner && partnerState
+            ? breedCreatureStates(mob.kind, fed.state, partner.kind, partnerState)
+            : null;
+          if (family && partner) {
+            mob.careState = family.left;
+            partner.careState = family.right;
+            const child = this.spawnMob(mob.kind, mob.group.position.clone().add(new THREE.Vector3(0.58, 0, 0.42)), { careState: family.child });
+            const childGroundY = this.mobMoveTarget(child, child.group.position.x, child.group.position.z);
+            if (childGroundY !== null) child.group.position.y = childGroundY;
+            child.baseY = child.group.position.y;
+            this.bestiary[mob.kind].breeds = (this.bestiary[mob.kind].breeds ?? 0) + 1;
+            this.events.onToast(`A young ${mob.definition.name} joins the pair.`);
+            this.playCreatureEvent(mob, "breed");
+            bred = true;
+          }
+        }
+        if (!bred) {
+          this.events.onToast(fed.breedingFood ? `${mob.name} is ready to pair with another well-fed adult nearby.` : `${mob.name} accepts the food and recovers.`);
+          this.playCreatureEvent(mob, "feed");
+        }
+        this.placeCooldown = 0.32;
+        this.saveSoon();
+        this.emitHud(true);
         return;
       }
     }
@@ -3348,6 +3852,90 @@ export class VoxelEngine {
     }
     if (this.target) {
       const key = blockKey(this.target.x, this.target.y, this.target.z);
+      const gate = toggleFenceGate(this.target.type);
+      if (gate !== null) {
+        this.world.setBlock(this.target.x, this.target.y, this.target.z, gate, true, true);
+        this.publishBlockEdits([{ x: this.target.x, y: this.target.y, z: this.target.z, type: gate }], "place");
+        this.placeCooldown = 0.18;
+        this.audio.play("place", BlockId.Planks);
+        this.saveSoon();
+        return;
+      }
+      if (canHitchLead(this.crouching, this.target.type, this.leadAnchors.values())) {
+        const candidate = [...this.leadAnchors.entries()]
+          .filter(([, anchor]) => !anchor.fence)
+          .map(([mobId]) => this.mobs.find((mob) => mob.id === mobId))
+          .filter((mob): mob is MobEntity => Boolean(mob))
+          .sort((a, b) => a.group.position.distanceToSquared(this.position) - b.group.position.distanceToSquared(this.position))[0];
+        if (!candidate) this.events.onToast("Put a creature on the lead first, then crouch-use the fence.");
+        else {
+          const anchor = this.leadAnchors.get(candidate.id)!;
+          this.leadAnchors.set(candidate.id, {
+            ...anchor,
+            fence: { x: this.target.x, y: this.target.y, z: this.target.z },
+          });
+          this.events.onToast(`${candidate.name}'s lead is hitched to the fence.`);
+          this.audio.play("place", BlockId.Planks);
+          this.saveSoon();
+        }
+        this.placeCooldown = 0.22;
+        return;
+      }
+      const useScythe = heldDefinition?.useKind === "scythe";
+      if (this.applyHarvest(this.target.x, this.target.y, this.target.z, this.target.type, useScythe)) return;
+      if (heldDefinition?.useKind === "hoe") {
+        const above = this.world.getBlock(this.target.x, this.target.y + 1, this.target.z);
+        if (canTill(this.target.type, above)) {
+          const tilled = farmlandState((x, y, z) => this.world.getBlock(x, y, z), this.target);
+          this.world.setBlock(this.target.x, this.target.y, this.target.z, tilled, true, true);
+          this.publishBlockEdits([{ x: this.target.x, y: this.target.y, z: this.target.z, type: tilled }], "place");
+          this.damageSelectedTool();
+          this.placeCooldown = 0.24;
+          this.heldUse = 1;
+          this.audio.play("place", BlockId.Dirt);
+          this.saveSoon();
+          this.emitHud(true);
+          return;
+        }
+      }
+      if (heldSlot && heldDefinition?.useKind === "plant") {
+        const plantY = this.target.y + 1;
+        const above = this.world.getBlock(this.target.x, plantY, this.target.z);
+        const planted = plantingResult(heldSlot.item, this.target.type, above);
+        if (planted) {
+          this.world.setBlock(this.target.x, plantY, this.target.z, planted.block, true, true);
+          this.publishBlockEdits([{ x: this.target.x, y: plantY, z: this.target.z, type: planted.block }], "place");
+          this.consumeSelectedUnit();
+          this.schedulePlantGrowth(this.target.x, plantY, this.target.z, planted.block);
+          this.placeCooldown = 0.22;
+          this.heldUse = 1;
+          this.audio.play("place", this.target.type);
+          this.events.onToast(`${planted.description} planted.`);
+          this.saveSoon();
+          this.emitHud(true);
+          return;
+        }
+      }
+      if (heldSlot && heldDefinition?.useKind === "bucket") {
+        const placement = this.world.getBlock(this.target.placeX, this.target.placeY, this.target.placeZ);
+        const bucket = resolveBucketAction(heldSlot.item, this.target.type, placement);
+        if (bucket) {
+          const edit = bucket.kind === "fill"
+            ? { x: this.target.x, y: this.target.y, z: this.target.z, type: BlockId.Air }
+            : { x: this.target.placeX, y: this.target.placeY, z: this.target.placeZ, type: bucket.place! };
+          this.world.setBlock(edit.x, edit.y, edit.z, edit.type, true, true);
+          this.publishBlockEdits([edit], bucket.kind === "fill" ? "break" : "place");
+          this.notifyLiquidChanged(edit.x, edit.y, edit.z);
+          this.replaceSelectedUnit(bucket.resultItem);
+          this.placeCooldown = 0.26;
+          this.heldUse = 1;
+          this.audio.play("splash");
+          this.events.onToast(bucket.kind === "fill" ? `Filled ${ITEMS[bucket.resultItem].name}.` : `${BLOCKS[bucket.place!].name} poured.`);
+          this.saveSoon();
+          this.emitHud(true);
+          return;
+        }
+      }
       if (this.isDoor(this.target.type)) { this.toggleDoor(this.target.x, this.target.y, this.target.z, this.target.type); return; }
       if (this.isBed(this.target.type)) { this.openOverlay("sleep", key); return; }
       if (this.target.type === BlockId.CraftingTable) { this.openOverlay("crafting", key); return; }
@@ -3418,6 +4006,7 @@ export class VoxelEngine {
         return;
       }
     }
+    if (requestedType === BlockId.FenceGateNorthSouthClosed) type = fenceGateForYaw(this.yaw);
     if (type === BlockId.WildwoodSapling) {
       const soil = this.world.getBlock(x, y - 1, z);
       if (![BlockId.Grass, BlockId.Dirt, BlockId.SnowyGrass, BlockId.SavannaGrass, BlockId.SwampGrass, BlockId.Farmland].includes(soil ?? BlockId.Air)) {
@@ -3480,7 +4069,7 @@ export class VoxelEngine {
       if (topology) this.consolidateExhibit(topology);
       this.syncExhibitVisuals(true);
     }
-    if (type === BlockId.WildwoodSapling) this.saplings.set(blockKey(x, y, z), Date.now() + 75_000 + Math.random() * 75_000);
+    this.schedulePlantGrowth(x, y, z, type);
     if (isEnvironmentLightBlock(type)) this.lightRefreshTimer = 0;
     if (this.mode === "survival") {
       slot.count -= 1;
@@ -3663,7 +4252,7 @@ export class VoxelEngine {
     }
     const key = blockKey(x, y, z);
     if (isEnvironmentLightBlock(type)) this.lightRefreshTimer = 0;
-    if (type === BlockId.WildwoodSapling) this.saplings.delete(key);
+    this.saplings.delete(key);
     if (this.isDoor(type) && this.mode === "survival") this.spawnDrop(Item.WildwoodDoor, 1, new THREE.Vector3(x, y + 0.3, z));
     if (this.isBed(type) && this.mode === "survival" && harvested) this.spawnDrop(Item.WildwoodBed, 1, new THREE.Vector3(x, y + 0.3, z));
     if (type === BlockId.Furnace) {
@@ -3718,7 +4307,12 @@ export class VoxelEngine {
     } else if (type === BlockId.TallGrass) {
       drops = this.randomDrop(Item.Fiber, 1, 1, 0.35);
     } else if (type === BlockId.Gravel) drops = Math.random() < 0.16 ? [[Item.Flint, 1]] : [[BlockId.Gravel, 1]];
-    else if (type === BlockId.WheatCrop) drops = [...this.randomDrop(Item.Wheat, 1, 2), ...this.randomDrop(Item.Wheat, 1, 1, 0.35)];
+    else if (type === BlockId.WheatCrop) drops = [...this.randomDrop(Item.Wheat, 1, 2), ...this.randomDrop(Item.WheatSeeds, 1, 2)];
+    else if (type === BlockId.WheatSprout || type === BlockId.WheatYoung) drops = [[Item.WheatSeeds, 1]];
+    else if (type === BlockId.MoonberryShoot || type === BlockId.MoonberryBush || type === BlockId.MoonberryBushRipe) drops = [[Item.Berry, 1]];
+    else if (type === BlockId.SunberryShoot || type === BlockId.SunberryBush || type === BlockId.SunberryBushRipe) drops = [[Item.Sunberry, 1]];
+    else if (type === BlockId.AppleSapling || type === BlockId.AppleFruit) drops = [[Item.Apple, 1]];
+    else if (type === BlockId.AppleLeaves) drops = [...this.randomDrop(Item.Stick, 1, 2, 0.2), ...this.randomDrop(Item.Apple, 1, 1, 0.08)];
     else if (ITEMS[type]) drops = [[type, 1]];
     for (const [item, count] of drops) this.spawnDrop(item, count, new THREE.Vector3(x, y + 0.3, z));
   }
@@ -3758,7 +4352,9 @@ export class VoxelEngine {
     const interactionOrigin = this.cameraMode === "first"
       ? this.camera.position
       : this.cameraCollisionOrigin.set(this.position.x, this.position.y + this.cameraEyeHeight, this.position.z);
-    const blockHit = this.castVoxel(interactionOrigin, direction, 6);
+    // Normal interaction rays pass through liquid so underwater blocks remain
+    // usable. An empty bucket deliberately stops on the first liquid cell.
+    const blockHit = this.castVoxel(interactionOrigin, direction, 6, this.selectedSlot()?.item === Item.Bucket);
     const mobHit = this.castMob(interactionOrigin, direction, 5);
     const boatHit = this.castBoat(interactionOrigin, direction, 6);
     const nearestEntityDistance = Math.min(mobHit?.distance ?? Infinity, boatHit?.distance ?? Infinity);
@@ -3778,7 +4374,7 @@ export class VoxelEngine {
     }
   }
 
-  castVoxel(origin: THREE.Vector3, direction: THREE.Vector3, reach: number): VoxelHit | null {
+  castVoxel(origin: THREE.Vector3, direction: THREE.Vector3, reach: number, includeLiquids = false): VoxelHit | null {
     const ox = origin.x + 0.5;
     const oy = origin.y + 0.5;
     const oz = origin.z + 0.5;
@@ -3801,7 +4397,9 @@ export class VoxelEngine {
     while (distance <= reach) {
       const type = this.world.getBlock(x, y, z);
       if (type === undefined) return null;
-      if (type !== BlockId.Air && type !== BlockId.Water && type !== BlockId.Lava) return { x, y, z, placeX: previousX, placeY: previousY, placeZ: previousZ, type, distance };
+      if (type !== BlockId.Air && (includeLiquids || (type !== BlockId.Water && type !== BlockId.Lava))) {
+        return { x, y, z, placeX: previousX, placeY: previousY, placeZ: previousZ, type, distance };
+      }
       previousX = x; previousY = y; previousZ = z;
       if (maxX < maxY && maxX < maxZ) { x += stepX; distance = maxX; maxX += deltaX; }
       else if (maxY < maxZ) { y += stepY; distance = maxY; maxY += deltaY; }
@@ -3826,6 +4424,13 @@ export class VoxelEngine {
 
   updatePlayer(dt: number) {
     if (this.mountedBoatId) {
+      this.fallVelocity = 0;
+      this.velocity.set(0, 0, 0);
+      this.grounded = true;
+      return;
+    }
+    if (this.mountedCreatureId !== null) {
+      this.updateMountedCreature(dt);
       this.fallVelocity = 0;
       this.velocity.set(0, 0, 0);
       this.grounded = true;
@@ -3972,7 +4577,9 @@ export class VoxelEngine {
   collidesAt(position: THREE.Vector3, height = this.currentPlayerHeight()) {
     const minX = Math.floor(position.x - PLAYER_RADIUS + 0.5);
     const maxX = Math.floor(position.x + PLAYER_RADIUS - 0.001 + 0.5);
-    const minY = Math.floor(position.y + 0.5);
+    // Scan a quarter block below the feet so 1.25-block fences remain solid
+    // during the top of an otherwise valid one-block jump.
+    const minY = Math.floor(position.y + 0.25);
     const maxY = Math.floor(position.y + height - 0.001 + 0.5);
     const minZ = Math.floor(position.z - PLAYER_RADIUS + 0.5);
     const maxZ = Math.floor(position.z + PLAYER_RADIUS - 0.001 + 0.5);
@@ -3983,7 +4590,12 @@ export class VoxelEngine {
         if (this.playerIntersectsDoorCell(position, x, y, z, type, height)) return true;
         continue;
       }
-      if (BLOCKS[type]?.solid) return true;
+      const definition = BLOCKS[type];
+      if (definition?.solid) {
+        const bottom = y - 0.5;
+        const top = bottom + (definition.collisionHeight ?? 1);
+        if (position.y + height > bottom && position.y < top) return true;
+      }
     }
     return false;
   }
@@ -4026,10 +4638,10 @@ export class VoxelEngine {
       if (this.mode === "survival") this.spawnDrop(Item.WildwoodBed, 1, new THREE.Vector3(x, aboveY, z));
       return;
     }
-    if (BLOCKS[above]?.shape !== "cross" && above !== BlockId.Torch) return;
+    if (!["cross", "bush", "fruit"].includes(BLOCKS[above]?.shape ?? "") && above !== BlockId.Torch) return;
     this.world.setBlock(x, aboveY, z, BlockId.Air, true, true);
     this.publishBlockEdits([{ x, y: aboveY, z, type: BlockId.Air }], "break");
-    if (above === BlockId.WildwoodSapling) this.saplings.delete(blockKey(x, aboveY, z));
+    this.saplings.delete(blockKey(x, aboveY, z));
     if (this.mode === "survival") this.dropBlockLoot(above, x, aboveY, z);
   }
 
@@ -4046,6 +4658,14 @@ export class VoxelEngine {
 
   breakUnsupportedAround(x: number, y: number, z: number) {
     this.breakUnsupportedAbove(x, y, z);
+    // Orchard fruit hangs from the leaf directly above it. Removing that leaf
+    // must use the ordinary block-drop path instead of leaving a floating apple.
+    const fruitY = y - 1;
+    if (this.world.getBlock(x, fruitY, z) === BlockId.AppleFruit) {
+      this.world.setBlock(x, fruitY, z, BlockId.Air, true, true);
+      this.publishBlockEdits([{ x, y: fruitY, z, type: BlockId.Air }], "break");
+      if (this.mode === "survival") this.dropBlockLoot(BlockId.AppleFruit, x, fruitY, z);
+    }
     const wallTorches: Array<{ x: number; y: number; z: number; type: BlockId }> = [
       { x: x + 1, y, z, type: BlockId.TorchWallEast },
       { x: x - 1, y, z, type: BlockId.TorchWallWest },
@@ -4204,6 +4824,64 @@ export class VoxelEngine {
     this.saveSoon();
   }
 
+  dismountCreature() {
+    if (this.mountedCreatureId === null) return;
+    const mob = this.mobs.find((candidate) => candidate.id === this.mountedCreatureId);
+    if (mob) {
+      const sideX = Math.cos(mob.angle + Math.PI / 2) * 1.7;
+      const sideZ = Math.sin(mob.angle + Math.PI / 2) * 1.7;
+      const x = Math.round(mob.group.position.x + sideX);
+      const z = Math.round(mob.group.position.z + sideZ);
+      const ground = this.world.findWalkableY(x, z, mob.group.position.y);
+      this.position.set(x, ground + 0.51, z);
+    }
+    this.mountedCreatureId = null;
+    this.velocity.set(0, 0, 0);
+    this.events.onToast("You slide down from the Shadecrawler.");
+    this.saveSoon();
+  }
+
+  updateMountedCreature(dt: number) {
+    const mob = this.mobs.find((candidate) => candidate.id === this.mountedCreatureId);
+    const ownerId = this.localPlayerId();
+    if (!mob?.shadeState || !canRideShadecrawler(mob.shadeState, ownerId)) {
+      this.mountedCreatureId = null;
+      return;
+    }
+    const forward = (this.keys.has("KeyW") ? 1 : 0) - (this.keys.has("KeyS") ? 1 : 0);
+    const right = (this.keys.has("KeyD") ? 1 : 0) - (this.keys.has("KeyA") ? 1 : 0);
+    const length = Math.hypot(forward, right) || 1;
+    const desiredX = -Math.sin(this.yaw) * (forward / length) + Math.cos(this.yaw) * (right / length);
+    const desiredZ = -Math.cos(this.yaw) * (forward / length) - Math.sin(this.yaw) * (right / length);
+    const moving = forward !== 0 || right !== 0;
+    if (moving) mob.desiredAngle = Math.atan2(desiredZ, desiredX);
+    const speed = moving ? 5.75 : 0;
+    const before = mob.group.position.clone();
+    const nx = mob.group.position.x + Math.cos(mob.angle) * speed * dt;
+    const nz = mob.group.position.z + Math.sin(mob.angle) * speed * dt;
+    const targetY = moving ? this.mobMoveTarget(mob, nx, nz, 1.7) : mob.group.position.y;
+    const blocked = targetY === null;
+    if (!blocked && targetY !== null) {
+      mob.group.position.x = nx;
+      mob.group.position.z = nz;
+      mob.group.position.y += (targetY - mob.group.position.y) * Math.min(1, dt * 10);
+      mob.baseY = mob.group.position.y;
+    }
+    mob.steering = updateStableSteering(mob.steering, {
+      dt,
+      turnRate: mob.definition.turnRate * 0.78,
+      blocked,
+      mobId: mob.id,
+      desiredHeading: mob.desiredAngle,
+    });
+    mob.angle = mob.steering.heading;
+    mob.group.rotation.y = -mob.angle - Math.PI / 2;
+    this.animateMob(mob, before.distanceTo(mob.group.position));
+    this.mobBounds.setFromObject(mob.visual);
+    this.position.set(mob.group.position.x, this.mobBounds.max.y + 0.1, mob.group.position.z);
+    this.lastPosition.copy(this.position);
+  }
+
   updateBoats(dt: number) {
     const playerId = this.localPlayerId();
     for (const boat of this.boats.values()) {
@@ -4339,44 +5017,93 @@ export class VoxelEngine {
     return createMobVisual(kind, id);
   }
 
+  mobBaseScale(mob: MobEntity) {
+    if (mob.shadeState) return shadecrawlerScale(mob.shadeState);
+    if (mob.petState?.baby || mob.careState?.baby) return 0.62;
+    return 1;
+  }
+
+  /** Scale around the creature's original foot plane, never around its belly. */
+  applyMobScale(mob: MobEntity, scale: number) {
+    const safeScale = clamp(scale, 0.25, 3.2);
+    if (Math.abs(mob.visual.scale.x - safeScale) > 0.0001 || Math.abs(mob.visual.scale.y - safeScale) > 0.0001 || Math.abs(mob.visual.scale.z - safeScale) > 0.0001) {
+      mob.visual.scale.setScalar(safeScale);
+    }
+    const groundedY = mob.visualBaseY + (1 - safeScale) * (mob.visualMinY - mob.visualBaseY);
+    if (Math.abs(mob.visual.position.y - groundedY) > 0.0001) mob.visual.position.y = groundedY;
+    if (mob.shadeSaddle) {
+      const saddled = Boolean(mob.shadeState?.saddled);
+      if (mob.shadeSaddle.visible !== saddled) mob.shadeSaddle.visible = saddled;
+    }
+  }
+
   spawnMob(kind: MobKind, position: THREE.Vector3, options: SpawnMobOptions = {}) {
     const definition = MOB_DEFS[kind];
     const id = options.id ?? this.nextMobId++;
     this.nextMobId = Math.max(this.nextMobId, id + 1);
     const { group, visual, parts } = this.createMobVisual(kind, id);
+    group.updateMatrixWorld(true);
+    const visualBounds = new THREE.Box3().setFromObject(visual);
+    const visualBaseY = visual.position.y;
+    const visualMinY = visualBounds.min.y;
     group.position.copy(position);
     this.creatureGroup.add(group);
     const angle = options.yaw ?? Math.random() * Math.PI * 2;
     const petState = kind === "peelop" ? (options.petState ? { ...options.petState } : createPeelopState((id * 2654435761) >>> 0)) : null;
+    const careState = kind !== "peelop" && definition.breedable
+      ? normalizeCreatureHusbandryState(options.careState, (id * 2246822519) >>> 0)
+      : null;
+    const shadeState = kind === "shadecrawler" ? normalizeShadecrawlerState(options.shadeState ?? createShadecrawlerState()) : null;
+    const shadeHealthScale = shadeState ? shadecrawlerScale(shadeState) : 1;
     const mob: MobEntity = {
-      id, kind, name: petState?.name || definition.name, hostile: definition.hostile, definition, group, visual, parts,
-      health: options.health ?? petState?.health ?? definition.health, maxHealth: petState?.maxHealth ?? definition.health,
+      id, kind, name: petState?.name || definition.name, hostile: definition.hostile && !shadeState?.tamed, definition, group, visual, parts,
+      health: options.health ?? petState?.health ?? definition.health * shadeHealthScale,
+      maxHealth: petState?.maxHealth ?? definition.health * shadeHealthScale,
       damage: definition.damage, angle, desiredAngle: angle, steering: createStableSteering(angle), wanderTimer: 1 + Math.random() * 4,
       attackCooldown: 0, hurtTimer: 0, age: options.age ?? 0, bob: Math.random() * Math.PI * 2, gait: 0,
       fleeTimer: 0, state: "wander", stateTimer: 0, baseY: position.y, voiceTimer: 2 + Math.random() * 8,
       birdState: definition.family === "bird" ? createBirdBehavior(kind as "emberjay" | "canopy-lark", id * 0.71) : null,
-      petState,
+      petState, careState, shadeState, shadeSaddle: visual.getObjectByName("shadecrawler-saddle") ?? null, visualBaseY, visualMinY,
       persistentPoiResident: options.persistentPoiResident ?? Boolean(definition.persistent),
       poiMarkerId: options.poiMarkerId ?? null,
       enclosed: options.enclosed ?? false,
       enclosureTimer: 0,
     };
-    if (petState?.baby) mob.visual.scale.setScalar(0.62);
+    this.applyMobScale(mob, shadeState ? shadecrawlerScale(shadeState) : petState?.baby || careState?.baby ? 0.62 : 1);
     this.mobs.push(mob);
     return mob;
   }
 
   restoreCreature(saved: SavedCreature) {
     if (!(saved.kind in MOB_DEFS) || BUTTERFLY_ORDER.includes(saved.kind as ButterflyKind)) return null;
-    return this.spawnMob(saved.kind, new THREE.Vector3(saved.x, saved.y, saved.z), {
+    const definition = MOB_DEFS[saved.kind];
+    const position = new THREE.Vector3(saved.x, saved.y, saved.z);
+    if (definition.movement !== "flying" && definition.movement !== "aquatic" && saved.kind !== "glowmoth") {
+      const x = Math.round(saved.x);
+      const z = Math.round(saved.z);
+      const clearance = Math.max(1, Math.ceil(definition.height));
+      const localGround = chooseLocalWalkableGround(Math.floor(saved.y), (candidateY) => {
+        const type = this.world.getBlock(x, candidateY, z);
+        if (type === undefined || !BLOCKS[type]?.solid) return false;
+        for (let offset = 1; offset <= clearance; offset += 1) {
+          if (!this.world.isWalkThrough(this.world.getBlock(x, candidateY + offset, z))) return false;
+        }
+        return true;
+      }, 1, 2);
+      const ground = localGround ?? this.world.findWalkableY(x, z, saved.y);
+      position.y = ground + definition.footOffset;
+    }
+    return this.spawnMob(saved.kind, position, {
       id: saved.id,
-      health: clamp(Number(saved.health) || MOB_DEFS[saved.kind].health, 0.1, MOB_DEFS[saved.kind].health),
+      health: Math.max(0.1, Number(saved.health) || MOB_DEFS[saved.kind].health),
       age: Math.max(0, Number(saved.age) || 0),
       yaw: Number(saved.yaw) || 0,
       persistentPoiResident: Boolean(saved.persistentPoiResident),
       poiMarkerId: saved.poiMarkerId ?? null,
       enclosed: Boolean(saved.enclosed),
       petState: saved.petState ?? null,
+      careState: saved.careState ?? null,
+      shadeState: saved.shadeState ?? null,
     });
   }
 
@@ -4482,38 +5209,54 @@ export class VoxelEngine {
       }
       else {
         if (passiveCount >= passiveCap) return;
-        const roll = Math.random();
-        kind = biome === BiomeId.Snowfield || biome === BiomeId.Frostpine ? (roll < 0.72 ? "woolhorn" : "canopy-lark")
-          : biome === BiomeId.Desert || biome === BiomeId.Badlands ? (roll < 0.66 ? "duneclatter" : "emberjay")
-            : biome === BiomeId.Savanna ? (roll < 0.62 ? "sunstep-grazer" : roll < 0.84 ? "emberjay" : "ridgeback")
-              : biome === BiomeId.Siltfen ? (roll < 0.62 ? "mossling" : roll < 0.84 ? "pebbletortoise" : "canopy-lark")
-                : biome === BiomeId.Bloomwood || biome === BiomeId.Wildwood ? (roll < 0.42 ? "brambleboar" : roll < 0.72 ? "mossling" : "canopy-lark")
-                  : biome === BiomeId.MushroomFen ? (roll < 0.58 ? "glowmoth" : "petalfox")
-                    : biome === BiomeId.Meadow ? (roll < 0.35 ? "petalfox" : roll < 0.58 ? "pebbletortoise" : roll < 0.78 ? "canopy-lark" : roll < 0.86 ? "peelop" : "ridgeback")
-                      : roll < 0.25 ? "sunstep-grazer" : roll < 0.45 ? "pebbletortoise" : roll < 0.63 ? "petalfox" : "ridgeback";
+        kind = passiveMobKindForBiome(biome, Math.random());
       }
     }
     this.spawnMob(kind, new THREE.Vector3(x, y + MOB_DEFS[kind].footOffset, z));
   }
 
-  mobMoveTarget(mob: MobEntity, nx: number, nz: number) {
+  mobMoveTarget(mob: MobEntity, nx: number, nz: number, collisionScale = this.mobBaseScale(mob)) {
     const definition = mob.definition;
     const centerX = Math.round(nx);
     const centerZ = Math.round(nz);
-    const centerGround = this.world.findWalkableY(centerX, centerZ, mob.group.position.y - definition.footOffset);
-    const centerFeet = this.world.getBlock(centerX, centerGround + 1, centerZ);
-    const centerHead = this.world.getBlock(centerX, centerGround + Math.max(1, Math.ceil(definition.height)), centerZ);
-    const insideOpenDoor = [centerFeet, centerHead].some((type) => type !== undefined && this.isDoor(type) && this.doorIsOpen(type));
+    const currentGround = Math.round(mob.group.position.y - definition.footOffset);
+    const effectiveHeight = Math.max(0.52, definition.height * Math.min(3, Math.max(0.62, collisionScale)));
+    const clearanceCells = Math.max(1, Math.ceil(effectiveHeight));
+    const standableAt = (x: number, z: number, groundY: number) => {
+      const ground = this.world.getBlock(x, groundY, z);
+      if (ground === undefined || !BLOCKS[ground]?.solid) return false;
+      for (let offset = 1; offset <= clearanceCells; offset += 1) {
+        if (!this.world.isWalkThrough(this.world.getBlock(x, groundY + offset, z))) return false;
+      }
+      return true;
+    };
+    const centerGround = chooseLocalWalkableGround(
+      currentGround,
+      (groundY) => standableAt(centerX, centerZ, groundY),
+      1,
+      mob.kind === "caveblob" || mob.kind === "puddlehopper" ? 2 : 1,
+    );
+    if (centerGround === null) return null;
+    let insideOpenDoor = false;
+    for (let offset = 1; offset <= clearanceCells; offset += 1) {
+      const type = this.world.getBlock(centerX, centerGround + offset, centerZ);
+      if (type !== undefined && this.isDoor(type) && this.doorIsOpen(type)) { insideOpenDoor = true; break; }
+    }
+    const effectiveRadius = Math.min(1.18, definition.radius * Math.max(0.62, collisionScale));
     const samples: Array<[number, number]> = insideOpenDoor
       ? [[0, 0]]
-      : [[0, 0], [definition.radius, definition.radius], [-definition.radius, definition.radius], [definition.radius, -definition.radius], [-definition.radius, -definition.radius]];
+      : [[0, 0], [effectiveRadius, effectiveRadius], [-effectiveRadius, effectiveRadius], [effectiveRadius, -effectiveRadius], [-effectiveRadius, -effectiveRadius]];
     let groundY = -Infinity;
     for (const [ox, oz] of samples) {
-      const ground = this.world.findWalkableY(Math.round(nx + ox), Math.round(nz + oz), mob.group.position.y - definition.footOffset);
-      if (Math.abs(ground + definition.footOffset - mob.group.position.y) > (mob.kind === "caveblob" ? 1.7 : 1.2)) return null;
-      const feet = this.world.getBlock(Math.round(nx + ox), ground + 1, Math.round(nz + oz));
-      const head = this.world.getBlock(Math.round(nx + ox), ground + Math.max(1, Math.ceil(definition.height)), Math.round(nz + oz));
-      if (!this.world.isWalkThrough(feet) || !this.world.isWalkThrough(head)) return null;
+      const sampleX = Math.round(nx + ox);
+      const sampleZ = Math.round(nz + oz);
+      const ground = chooseLocalWalkableGround(
+        currentGround,
+        (candidateY) => standableAt(sampleX, sampleZ, candidateY),
+        1,
+        mob.kind === "caveblob" || mob.kind === "puddlehopper" ? 2 : 1,
+      );
+      if (ground === null) return null;
       groundY = Math.max(groundY, ground);
     }
     return groundY + definition.footOffset;
@@ -4530,10 +5273,13 @@ export class VoxelEngine {
     }
     for (const wing of mob.parts.wings) wing.rotation.z = (Number(wing.userData.side) || 1) * (0.35 + Math.sin(performance.now() * 0.018 + (Number(wing.userData.phase) || 0)) * 0.72);
     const hurtPulse = mob.hurtTimer > 0 ? 1 + Math.sin(mob.hurtTimer * 45) * 0.06 : 1;
+    const baseScale = this.mobBaseScale(mob);
     if (mob.kind === "caveblob") {
       const squash = 1 + Math.sin(mob.bob * 1.8) * 0.12;
-      mob.visual.scale.set(hurtPulse / Math.sqrt(squash), hurtPulse * squash, hurtPulse / Math.sqrt(squash));
-    } else mob.visual.scale.setScalar(hurtPulse);
+      const scaleY = baseScale * hurtPulse * squash;
+      mob.visual.scale.set(baseScale * hurtPulse / Math.sqrt(squash), scaleY, baseScale * hurtPulse / Math.sqrt(squash));
+      mob.visual.position.y = mob.visualBaseY + (1 - scaleY) * (mob.visualMinY - mob.visualBaseY);
+    } else this.applyMobScale(mob, baseScale * hurtPulse);
   }
 
   updateAquaticMob(mob: MobEntity, dt: number, distance: number, dx: number, dz: number) {
@@ -4566,7 +5312,6 @@ export class VoxelEngine {
   birdPerchNear(mob: MobEntity) {
     const originX = Math.round(mob.group.position.x);
     const originZ = Math.round(mob.group.position.z);
-    const treeBlocks = new Set([BlockId.WildwoodLog, BlockId.PineLog, BlockId.BirchLog, BlockId.BloomLog, BlockId.WildwoodLeaves, BlockId.PineLeaves, BlockId.BirchLeaves, BlockId.BloomLeaves]);
     for (let radius = 0; radius <= 4; radius += 1) for (let dx = -radius; dx <= radius; dx += 1) for (let dz = -radius; dz <= radius; dz += 1) {
       if (radius > 0 && Math.max(Math.abs(dx), Math.abs(dz)) !== radius) continue;
       const x = originX + dx;
@@ -4574,7 +5319,7 @@ export class VoxelEngine {
       const ground = this.world.surfaceAt(x, z);
       for (let y = ground + 9; y >= ground + 1; y -= 1) {
         const type = this.world.getBlock(x, y, z);
-        if (!treeBlocks.has(type ?? BlockId.Air) || !this.world.isWalkThrough(this.world.getBlock(x, y + 1, z))) continue;
+        if (!TREE_PERCH_BLOCKS.has(type ?? BlockId.Air) || !this.world.isWalkThrough(this.world.getBlock(x, y + 1, z))) continue;
         return { id: `tree:${x},${y},${z}`, x, z, altitude: y + 0.56 - ground };
       }
     }
@@ -4673,8 +5418,14 @@ export class VoxelEngine {
         mob.petState.health = clamp(mob.health, 0, mob.petState.maxHealth);
         mob.name = mob.petState.name || mob.definition.name;
         mob.maxHealth = mob.petState.maxHealth;
-        mob.visual.scale.setScalar(mob.petState.baby ? 0.62 : 1);
       }
+      if (mob.careState) mob.careState = tickCreatureHusbandry(mob.careState, dt * 20);
+      if (mob.shadeState) {
+        mob.shadeState = normalizeShadecrawlerState(mob.shadeState);
+        mob.hostile = mob.definition.hostile && !mob.shadeState.tamed;
+        mob.maxHealth = Math.round(mob.definition.health * shadecrawlerScale(mob.shadeState));
+      }
+      this.applyMobScale(mob, this.mobBaseScale(mob));
       const dx = this.position.x - mob.group.position.x;
       const dz = this.position.z - mob.group.position.z;
       const distance = Math.hypot(dx, dz);
@@ -4693,11 +5444,15 @@ export class VoxelEngine {
           mob.hurtTimer = Math.max(mob.hurtTimer, 0.08);
           if (mob.health <= 0) { this.killMob(mob); continue; }
         }
+      } else if (distance < 22 && mob.voiceTimer <= 0 && CREATURE_SOUND_EVENTS[mob.kind as CoreMobKind]?.ambient) {
+        this.playCreatureEvent(mob, "ambient");
+        mob.voiceTimer = 8 + (mob.id % 7) * 1.4 + Math.random() * 5;
       }
       const protectedCreature = shouldKeepCreatureLoaded({
-        tamed: mob.petState?.tamed,
+        tamed: mob.petState?.tamed || mob.shadeState?.tamed || Boolean(mob.shadeState?.trustFeeds),
         named: Boolean(mob.petState?.name || mob.name !== mob.definition.name),
         enclosed: mob.enclosed,
+        leashed: this.leadAnchors.has(mob.id),
         persistentPoiResident: mob.persistentPoiResident,
       });
       const simulationRadius = this.settings.simulationDistance * CHUNK_SIZE + 10;
@@ -4710,6 +5465,7 @@ export class VoxelEngine {
         this.removeMob(index);
         continue;
       }
+      if (mob.id === this.mountedCreatureId) continue;
       if (mob.definition.movement === "aquatic") {
         this.updateAquaticMob(mob, dt, distance, dx, dz);
         continue;
@@ -4718,7 +5474,10 @@ export class VoxelEngine {
         this.updateBirdMob(mob, dt, distance, dx, dz);
         continue;
       }
-      const aggressive = mob.hostile || ((mob.kind === "ridgeback" || mob.kind === "woolhorn") && mob.fleeTimer > 0);
+      if (mob.definition.temperament === "Skittish" && (distance < 3.4 || (this.sprinting && distance < 8))) {
+        mob.fleeTimer = Math.max(mob.fleeTimer, 2.4);
+      }
+      const aggressive = mob.hostile || (mob.definition.temperament === "Defensive" && mob.fleeTimer > 0);
       const petFollowing = Boolean(mob.petState?.tamed && mob.petState.command === "follow" && distance > 2.2);
       const petHolding = Boolean(mob.petState?.tamed && (mob.petState.command === "sit" || mob.petState.command === "stay"));
       if (mob.definition.ranged && aggressive && distance < 17) {
@@ -4757,6 +5516,7 @@ export class VoxelEngine {
         mob.wanderTimer = 2 + Math.random() * 5;
       }
       let speed = mob.state === "chase" ? mob.definition.chaseSpeed : mob.state === "flee" ? mob.definition.chaseSpeed * 0.86 : mob.definition.speed;
+      if (mob.kind === "lanternshell" && this.weather === "rain") speed *= 1.55;
       if (mob.state === "windup" || mob.state === "recover") speed *= 0.08;
       if (petHolding || (mob.petState?.tamed && mob.petState.command === "follow" && distance <= 2.2)) speed = 0;
       const beforeX = mob.group.position.x;
@@ -4779,7 +5539,8 @@ export class VoxelEngine {
         if (targetY !== null) {
           mob.group.position.x = nx;
           mob.group.position.z = nz;
-          const hop = mob.kind === "caveblob" ? Math.max(0, Math.sin(performance.now() * 0.006 + mob.id)) * 0.1 : 0;
+          const hop = mob.kind === "caveblob" ? Math.max(0, Math.sin(performance.now() * 0.006 + mob.id)) * 0.1
+            : mob.kind === "puddlehopper" && speed > 0 ? Math.max(0, Math.sin(performance.now() * 0.014 + mob.id)) * 0.18 : 0;
           mob.group.position.y += (targetY + hop - mob.group.position.y) * Math.min(1, dt * 9);
         } else { blocked = true; mob.wanderTimer = Math.max(mob.wanderTimer, 0.5); }
       }
@@ -4809,6 +5570,9 @@ export class VoxelEngine {
     mob.group.position.add(away);
     if (item?.toolKind === "sword") this.audio.playSample("swordSwing", { playbackRate: 0.96 + Math.random() * 0.08 });
     else this.audio.play("attack");
+    // Every creature hit remains audible even before a custom generated cue is
+    // installed; per-species assets can replace this stable fallback hook.
+    this.playCreatureEvent(mob, "hurt");
     if (mob.hostile) this.combatMusicTimer = Math.max(this.combatMusicTimer, 9);
     this.spawnParticles(mob.group.position.x, mob.group.position.y, mob.group.position.z, mob.hostile ? BlockId.Obsidian : BlockId.Dirt, 7);
     if (item?.toolKind) this.damageSelectedTool();
@@ -4912,8 +5676,73 @@ export class VoxelEngine {
     this.audio.play("pickup");
   }
 
+  ensureLeadLine(mobId: number) {
+    this.leadLines ??= new Map();
+    this.leadAnchors ??= new Map();
+    const existing = this.leadLines.get(mobId);
+    if (existing) return existing;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(6), 3));
+    const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: 0x8d6b43, transparent: true, opacity: 0.9 }));
+    line.frustumCulled = false;
+    this.scene.add(line);
+    this.leadLines.set(mobId, line);
+    return line;
+  }
+
+  removeLead(mobId: number, drop = false) {
+    const mob = this.mobs.find((candidate) => candidate.id === mobId);
+    if (drop && mob) this.spawnDrop(Item.Lead, 1, mob.group.position.clone());
+    const line = this.leadLines?.get(mobId);
+    if (line) {
+      this.scene.remove(line);
+      line.geometry.dispose();
+      line.material.dispose();
+      this.leadLines?.delete(mobId);
+    }
+    this.leadAnchors?.delete(mobId);
+  }
+
+  updateLeads() {
+    for (const [mobId, lead] of [...this.leadAnchors]) {
+      const mob = this.mobs.find((candidate) => candidate.id === mobId);
+      if (!mob) { this.removeLead(mobId); continue; }
+      const fenceBlock = lead.fence ? this.world.getBlock(lead.fence.x, lead.fence.y, lead.fence.z) : undefined;
+      if (lead.fence && fenceBlock !== undefined && !FENCE_BLOCKS.has(fenceBlock)) {
+        this.removeLead(mobId, true);
+        this.saveSoon();
+        continue;
+      }
+      const anchor = lead.fence
+        ? { x: lead.fence.x, y: lead.fence.y + 0.35, z: lead.fence.z }
+        : { x: this.position.x, y: this.position.y + 1.05, z: this.position.z };
+      const constraint = constrainLead(mob.group.position, anchor, lead.maximumLength);
+      if (constraint.breaks) {
+        this.removeLead(mobId, true);
+        this.events.onToast(`${mob.name}'s lead snapped loose.`);
+        this.saveSoon();
+        continue;
+      }
+      if (constraint.taut && mob.id !== this.mountedCreatureId) {
+        mob.group.position.x += constraint.x;
+        mob.group.position.z += constraint.z;
+        const ground = this.mobMoveTarget(mob, mob.group.position.x, mob.group.position.z);
+        if (ground !== null) mob.group.position.y = ground;
+        mob.baseY = mob.group.position.y;
+      }
+      const line = this.ensureLeadLine(mobId);
+      const positions = line.geometry.getAttribute("position") as THREE.BufferAttribute;
+      positions.setXYZ(0, anchor.x, anchor.y, anchor.z);
+      positions.setXYZ(1, mob.group.position.x, mob.group.position.y + mob.definition.height * this.mobBaseScale(mob) * 0.55, mob.group.position.z);
+      positions.needsUpdate = true;
+      line.visible = mob.group.visible;
+    }
+  }
+
   removeMob(index: number) {
     const mob = this.mobs[index];
+    if (mob.id === this.mountedCreatureId) this.mountedCreatureId = null;
+    this.removeLead(mob.id);
     this.creatureGroup.remove(mob.group);
     this.disposeObject(mob.group);
     this.mobs.splice(index, 1);
@@ -5032,6 +5861,13 @@ export class VoxelEngine {
       (particle.mesh.material as THREE.Material).dispose();
     }
     this.particles = [];
+    for (const particle of this.leafParticles) {
+      this.scene.remove(particle.object);
+      this.disposeObject(particle.object);
+    }
+    this.leafParticles = [];
+    this.leafParticleTimer = 0;
+    for (const mobId of [...this.leadAnchors.keys()]) this.removeLead(mobId);
     for (const remains of this.mobRemains) for (const fragment of remains.fragments) {
       this.scene.remove(fragment.mesh);
       fragment.mesh.geometry.dispose();
@@ -5044,6 +5880,7 @@ export class VoxelEngine {
     }
     this.boats.clear();
     this.mountedBoatId = null;
+    this.mountedCreatureId = null;
     this.targetBoat = null;
     for (const visual of this.exhibitVisuals.values()) {
       this.exhibitGroup.remove(visual.group);
@@ -5075,6 +5912,7 @@ export class VoxelEngine {
     light.userData.sourceX = source.x;
     light.userData.sourceY = source.y;
     light.userData.sourceZ = source.z;
+    light.userData.sourceType = source.type;
     light.userData.refreshAssigned = true;
     source.assigned = true;
   }
@@ -5160,6 +5998,7 @@ export class VoxelEngine {
         light.userData.sourceX = Number.NaN;
         light.userData.sourceY = Number.NaN;
         light.userData.sourceZ = Number.NaN;
+        light.userData.sourceType = BlockId.Air;
       }
     }
   }
@@ -5172,13 +6011,22 @@ export class VoxelEngine {
       this.refreshEnvironmentLights();
     }
     this.skyVisibility += (this.skyVisibilityTarget - this.skyVisibility) * (1 - Math.exp(-dt * 5));
-    const now = performance.now() * 0.004;
+    const timeSeconds = performance.now() / 1000;
     for (const light of this.placedLightPool) {
       const target = Number(light.userData.targetIntensity) || 0;
       const current = Number(light.userData.baseIntensity) || 0;
       const base = current + (target - current) * (1 - Math.exp(-dt * (target > current ? 12 : 7)));
       light.userData.baseIntensity = base;
-      light.intensity = base * (1 + Math.sin(now + (Number(light.userData.phase) || 0)) * 0.045);
+      const sourceType = Number(light.userData.sourceType) as BlockId;
+      if (isTorchBlock(sourceType)) {
+        const flicker = torchAnimationSample(timeSeconds, {
+          x: Number(light.userData.sourceX) || 0,
+          y: Number(light.userData.sourceY) || 0,
+          z: Number(light.userData.sourceZ) || 0,
+        });
+        light.intensity = base * flicker.lightIntensity;
+        light.distance = flicker.lightRadius * 1.75;
+      } else light.intensity = base * (1 + Math.sin(timeSeconds * 4 + (Number(light.userData.phase) || 0)) * 0.045);
     }
     const selected = this.selectedSlot();
     const heldTorch = selected?.item === BlockId.Torch;
@@ -5191,8 +6039,9 @@ export class VoxelEngine {
       this.caveLight.position.copy(this.position).add(this.heldLightWorldOffset);
     }
     this.caveLight.color.setHex(selected?.item === BlockId.CrystalBlock ? 0x69e8ef : 0xffb45e);
-    this.caveLight.intensity = heldTorch ? 3.35 : heldGlow ? 2.55 : 0;
-    this.caveLight.distance = heldTorch ? 24 : 20;
+    const heldFlicker = torchAnimationSample(timeSeconds, this.position, true);
+    this.caveLight.intensity = heldTorch ? 3.15 * heldFlicker.lightIntensity : heldGlow ? 2.55 : 0;
+    this.caveLight.distance = heldTorch ? heldFlicker.lightRadius * 3 : 20;
   }
 
   daylightAmount() {
@@ -5295,7 +6144,7 @@ export class VoxelEngine {
     this.audio.setDepth(this.position.y, this.weather === "rain");
     const biome = this.world.biomeAt(Math.round(this.position.x), Math.round(this.position.z));
     const atSea = underwater || biome === BiomeId.Ocean || biome === BiomeId.DeepOcean || biome === BiomeId.Beach;
-    const lively = [BiomeId.Meadow, BiomeId.Wildwood, BiomeId.Savanna, BiomeId.Birchlight, BiomeId.Bloomwood].includes(biome);
+    const forestBiome = [BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Bloomwood].includes(biome);
     const skyChallenge = this.combatMusicTimer > 0 || (biome === BiomeId.Highlands && this.position.y > 57 && daylight > 0.35);
     const alternateScore = (this.day + biome) % 2 === 0;
     const explorationScore = this.day % 3 === 0
@@ -5305,7 +6154,11 @@ export class VoxelEngine {
       : atSea ? "sea"
         : underground ? (alternateScore ? "emberdeepA" : "emberdeepB")
           : daylight < 0.24 ? "night"
-            : lively ? explorationScore : "day";
+            : biome === BiomeId.Meadow ? "meadowglass"
+              : forestBiome && this.day % 4 === 0 ? "fernlight"
+                : forestBiome ? explorationScore
+                  : biome === BiomeId.Savanna && this.day % 3 === 0 ? "hoppin"
+                    : "day";
     this.audio.setMusicScene(musicScene, dt);
   }
 
@@ -5352,6 +6205,43 @@ export class VoxelEngine {
         this.particles.splice(index, 1);
       }
     }
+    this.leafParticleTimer -= dt;
+    if (this.running && !this.titleMode && !this.paused && this.leafParticleTimer <= 0) {
+      this.leafParticleTimer = 0.5;
+      const capacity = Math.max(0, 18 - this.leafParticles.length);
+      if (capacity) {
+        const nearbyLeaves = this.world.leafBlocksNear(this.camera.position.x, this.camera.position.y, this.camera.position.z, 32);
+        const planned = planLeafParticles(this.world.seedText, Date.now(), nearbyLeaves, this.camera.position, Math.min(3, capacity));
+        for (const state of planned) {
+          const object = new THREE.Group();
+          const geometry = new THREE.PlaneGeometry(0.14, 0.09);
+          const material = new THREE.MeshBasicMaterial({ color: state.color, side: THREE.DoubleSide, transparent: true, opacity: 0.82 });
+          const first = new THREE.Mesh(geometry, material);
+          const second = new THREE.Mesh(geometry, material);
+          first.rotation.y = Math.PI / 4;
+          second.rotation.y = -Math.PI / 4;
+          object.add(first, second);
+          object.position.set(state.position.x, state.position.y, state.position.z);
+          object.rotation.z = state.rotation;
+          this.scene.add(object);
+          this.leafParticles.push({ object, state });
+        }
+      }
+    }
+    for (let index = this.leafParticles.length - 1; index >= 0; index -= 1) {
+      const particle = this.leafParticles[index];
+      const ground = this.world.surfaceAt(Math.round(particle.state.position.x), Math.round(particle.state.position.z)) + 0.5;
+      const next = stepLeafParticle(particle.state, dt, ground);
+      if (!next) {
+        this.scene.remove(particle.object);
+        this.disposeObject(particle.object);
+        this.leafParticles.splice(index, 1);
+        continue;
+      }
+      particle.state = next;
+      particle.object.position.set(next.position.x, next.position.y, next.position.z);
+      particle.object.rotation.set(next.rotation * 0.34, next.rotation, next.rotation * 0.7);
+    }
   }
 
   createAvatarHeldItem(item: ItemCode) {
@@ -5373,11 +6263,16 @@ export class VoxelEngine {
       mesh.position.set(...position);
       mesh.rotation.set(...rotation);
       group.add(mesh);
+      return mesh;
     };
     if (item === BlockId.Torch) {
       addBox([0.1, 0.62, 0.1], [0, 0.22, 0], 0x8d542b);
-      addBox([0.16, 0.14, 0.16], [0, 0.58, 0], 0xffb33e, [0, 0, 0], true);
-      addBox([0.08, 0.11, 0.08], [0, 0.7, 0], 0xfff0a0, [0, 0, 0], true);
+      const outer = addBox([0.16, 0.14, 0.16], [0, 0.58, 0], 0xffb33e, [0, 0, 0], true);
+      const inner = addBox([0.08, 0.11, 0.08], [0, 0.7, 0], 0xfff0a0, [0, 0, 0], true);
+      outer.name = "torch-flame-outer";
+      inner.name = "torch-flame-inner";
+      outer.userData.torchBase = outer.position.toArray();
+      inner.userData.torchBase = inner.position.toArray();
     } else if (definition.toolKind) {
       const spec = createHeldToolSpec(definition.toolKind, definition.color, definition.name);
       for (const box of spec.boxes) addBox(
@@ -5404,6 +6299,17 @@ export class VoxelEngine {
       addBox([0.26, 0.08, 0.22], [0, 0.34, 0], 0x7a5a38);
       addBox([0.13, 0.05, 0.03], [0, 0.14, -0.135], definition.color, [0, 0, 0], true);
       group.scale.setScalar(0.78);
+    } else if (definition.iconKind === "bucket") {
+      const metal = 0x9aa5a6;
+      addBox([0.3, 0.07, 0.25], [0, -0.1, 0], metal);
+      addBox([0.055, 0.3, 0.25], [-0.145, 0.03, 0], metal, [0, 0, -0.08]);
+      addBox([0.055, 0.3, 0.25], [0.145, 0.03, 0], metal, [0, 0, 0.08]);
+      addBox([0.28, 0.28, 0.045], [0, 0.03, -0.115], metal);
+      addBox([0.28, 0.28, 0.045], [0, 0.03, 0.115], metal);
+      addBox([0.36, 0.035, 0.035], [0, 0.26, 0], 0xc6cece);
+      if (definition.bucketLiquid) addBox([0.23, 0.035, 0.18], [0, 0.17, 0], definition.color, [0, 0, 0], definition.bucketLiquid === "lava");
+      group.scale.setScalar(0.72);
+      group.rotation.set(0.08, 0.25, -0.12);
     } else if (definition.placeBlock !== undefined) {
       addBox([0.42, 0.42, 0.42], [0, 0.1, 0], definition.color, [0.16, 0.2, 0]);
     } else {
@@ -5436,6 +6342,23 @@ export class VoxelEngine {
     }
   }
 
+  animateTorchVisual(root: THREE.Object3D | null, position: Pick<THREE.Vector3, "x" | "y" | "z">) {
+    if (!root) return;
+    const sample = torchAnimationSample(performance.now() / 1000, position, true);
+    for (const name of ["torch-flame-outer", "torch-flame-inner"] as const) {
+      const flame = root.getObjectByName(name);
+      if (!flame) continue;
+      const base = flame.userData.torchBase as [number, number, number] | undefined;
+      if (base) flame.position.set(
+        base[0] + sample.flameOffsetX,
+        base[1] + sample.flameOffsetY,
+        base[2] + sample.flameOffsetZ,
+      );
+      const innerScale = name === "torch-flame-inner" ? 0.86 : 1;
+      flame.scale.setScalar(sample.flameScale * innerScale);
+    }
+  }
+
   updatePlayerModels(dt: number) {
     const horizontalSpeed = Math.hypot(this.velocity.x, this.velocity.z);
     const locomotion: PlayerLocomotion = horizontalSpeed < 0.18 ? "idle" : this.sprinting ? "run" : "walk";
@@ -5461,6 +6384,7 @@ export class VoxelEngine {
       )));
     }
     this.syncAvatarHeldItem(this.localPlayerModel, this.selectedSlot()?.item ?? -1);
+    if (this.localAvatarHeldCode === BlockId.Torch) this.animateTorchVisual(this.localAvatarHeld, this.position);
 
     const now = performance.now();
     for (const [id, remote] of this.remotePlayers) {
@@ -5488,6 +6412,7 @@ export class VoxelEngine {
       remote.model.setVariant(latest.variant ?? "male");
       remote.model.setEquipmentAppearance(this.equipmentAppearanceFromCodes(latest.equipment));
       this.syncAvatarHeldItem(remote.model, latest.heldItem ?? -1, id);
+      if (latest.heldItem === BlockId.Torch) this.animateTorchVisual(remote.model.rightHandSocket.children[0] ?? null, remote.model.group.position);
       if (now - remote.lastUpdate > 20_000) this.removeRemotePlayer(id);
     }
   }
@@ -5537,11 +6462,16 @@ export class VoxelEngine {
           mesh.rotation.set(...rotation);
           mesh.renderOrder = 20;
           parent.add(mesh);
+          return mesh;
         };
         if (item === BlockId.Torch) {
           addBox([0.08, 0.48, 0.08], [0, 0, 0], 0x8d542b, [0, 0, -0.12]);
-          addBox([0.14, 0.14, 0.14], [-0.03, 0.27, 0], 0xffbe45, [0, 0, 0], true);
-          addBox([0.07, 0.08, 0.07], [-0.04, 0.37, 0], 0xffef93, [0, 0, 0], true);
+          const outer = addBox([0.14, 0.14, 0.14], [-0.03, 0.27, 0], 0xffbe45, [0, 0, 0], true);
+          const inner = addBox([0.07, 0.08, 0.07], [-0.04, 0.37, 0], 0xffef93, [0, 0, 0], true);
+          outer.name = "torch-flame-outer";
+          inner.name = "torch-flame-inner";
+          outer.userData.torchBase = outer.position.toArray();
+          inner.userData.torchBase = inner.position.toArray();
         } else if (item === Item.WildwoodDoor) {
           addBox([0.08, 0.62, 0.38], [0, 0.04, 0], definition.color, [0.08, 0.3, -0.08]);
           addBox([0.09, 0.08, 0.09], [-0.07, 0.02, 0.16], 0xe9c366, [0.08, 0.3, -0.08], true);
@@ -5573,6 +6503,15 @@ export class VoxelEngine {
         } else if (item === Item.Banana) {
           addBox([0.1, 0.34, 0.09], [-0.08, 0, 0], 0xf4d34f, [0, 0, -0.5]);
           addBox([0.1, 0.34, 0.09], [0.08, 0.04, 0], 0xf4d34f, [0, 0, 0.5]);
+        } else if (definition.iconKind === "bucket") {
+          const metal = 0x9aa5a6;
+          addBox([0.3, 0.07, 0.25], [0, -0.1, 0], metal);
+          addBox([0.055, 0.3, 0.25], [-0.145, 0.03, 0], metal, [0, 0, -0.08]);
+          addBox([0.055, 0.3, 0.25], [0.145, 0.03, 0], metal, [0, 0, 0.08]);
+          addBox([0.28, 0.28, 0.045], [0, 0.03, -0.115], metal);
+          addBox([0.28, 0.28, 0.045], [0, 0.03, 0.115], metal);
+          addBox([0.36, 0.035, 0.035], [0, 0.26, 0], 0xc6cece);
+          if (definition.bucketLiquid) addBox([0.23, 0.035, 0.18], [0, 0.17, 0], definition.color, [0, 0, 0], definition.bucketLiquid === "lava");
         } else if (definition.toolKind) {
           const toolGroup = new THREE.Group();
           const spec = createHeldToolSpec(definition.toolKind, definition.color, definition.name);
@@ -5601,6 +6540,7 @@ export class VoxelEngine {
     const walk = this.grounded ? this.footstepDistance * 3.6 : 0;
     this.heldRoot.position.set(0.48 + Math.sin(walk) * 0.018, -0.43 + Math.abs(Math.cos(walk)) * 0.018 - this.heldUse * 0.1, -0.78 + this.heldUse * 0.08);
     this.heldRoot.rotation.set(-0.18 - this.heldSwing * 0.62, -0.32, -0.08 - this.heldSwing * 0.48);
+    if (item === BlockId.Torch) this.animateTorchVisual(this.heldRoot, this.position);
   }
 
   spawnParticles(x: number, y: number, z: number, type: BlockId, count: number) {
@@ -5657,6 +6597,7 @@ export class VoxelEngine {
       if (multiplayerGuest) {
         for (const mob of this.mobs) this.animateMob(mob, dt * mob.definition.speed * 0.35);
       } else this.updateMobs(dt);
+      this.updateLeads();
       if (!multiplayerGuest) this.updateStructureSpawns(dt);
       this.smallEntityPositions.length = 0;
       for (const mob of this.mobs) if (mob.kind === "glowmoth") this.smallEntityPositions.push(mob.group.position);
@@ -5703,7 +6644,7 @@ export class VoxelEngine {
       this.performanceReportTimer = 0;
       const report = this.performanceSampler.summary();
       this.averageFps = report.framesPerSecond || this.averageFps;
-      const budget = this.budgetController.observe(report);
+      const budget = applyResourceMode(this.settings.resourceMode, this.budgetController.observe(report));
       this.world.setStreamingBudgets(budget.chunkGenerations, budget.chunkMeshSections);
     }
     if (this.running && this.persistent) {
@@ -5733,7 +6674,8 @@ export class VoxelEngine {
         name: mob.name,
         position: [Number(mob.group.position.x.toFixed(2)), Number(mob.group.position.y.toFixed(2)), Number(mob.group.position.z.toFixed(2))],
         health: Number(mob.health.toFixed(1)),
-        state: mob.petState?.command ?? mob.birdState?.mode ?? mob.state,
+        state: mob.shadeState?.tamed ? `bonded-${Math.round(mob.shadeState.growth * 100)}%-${mob.shadeState.saddled ? "saddled" : "unsaddled"}`
+          : mob.petState?.command ?? mob.birdState?.mode ?? mob.state,
       }))
       .sort((left, right) => {
         const ld = (left.position[0] - this.position.x) ** 2 + (left.position[2] - this.position.z) ** 2;
@@ -5749,7 +6691,8 @@ export class VoxelEngine {
         position: [Number(this.position.x.toFixed(2)), Number(this.position.y.toFixed(2)), Number(this.position.z.toFixed(2))],
         yaw: Number(this.yaw.toFixed(3)), pitch: Number(this.pitch.toFixed(3)),
         health: this.health, hunger: this.hunger, oxygen: Number(this.oxygenSeconds.toFixed(2)),
-        variant: this.playerVariant, camera: this.cameraMode, sprinting: this.sprinting, crouching: this.crouching, mountedBoatId: this.mountedBoatId,
+        variant: this.playerVariant, camera: this.cameraMode, sprinting: this.sprinting, crouching: this.crouching,
+        mountedBoatId: this.mountedBoatId, mountedCreatureId: this.mountedCreatureId,
       },
       world: { seed: this.world.seedText, day: this.day, time: Number(this.worldTime.toFixed(4)), biome: BIOME_NAMES[this.world.biomeAt(Math.round(this.position.x), Math.round(this.position.z))], weather: this.weatherState.kind },
       target: this.target ? { type: "block", name: BLOCKS[this.target.type].name, position: [this.target.x, this.target.y, this.target.z] }
@@ -5842,6 +6785,7 @@ export class VoxelEngine {
         tamed: this.activePet.petState.tamed,
       } : null,
       mountedBoat: Boolean(this.mountedBoatId),
+      mountedCreature: this.mountedCreatureId !== null,
     });
   }
 
@@ -5967,7 +6911,8 @@ export class VoxelEngine {
     this.weather = this.worldOptions.weather ? this.settings.weather : "clear";
     this.camera.fov = this.settings.fov;
     this.camera.updateProjectionMatrix();
-    this.world.setRenderDistance(this.settings.renderDistance);
+    this.world.setRenderDistance(this.titleMode ? Math.min(this.settings.renderDistance, this.touchMode ? 4 : 6) : this.settings.renderDistance);
+    this.world.setRetentionPadding(chunkRetentionPadding(this.settings.resourceMode));
     this.lightRefreshTimer = 0;
     this.audio.setSettings(this.settings);
     writeSettings(this.settings);
@@ -6046,6 +6991,8 @@ export class VoxelEngine {
         ...(mob.poiMarkerId ? { poiMarkerId: mob.poiMarkerId } : {}),
         ...(mob.enclosed ? { enclosed: true } : {}),
         ...(mob.petState ? { petState: { ...mob.petState } } : {}),
+        ...(mob.careState ? { careState: { ...mob.careState } } : {}),
+        ...(mob.shadeState ? { shadeState: { ...mob.shadeState } } : {}),
       })),
       activatedStructureMarkers: [...this.activatedStructureMarkers],
       boats: [...this.boats.values()].map(({ save }) => ({
@@ -6053,6 +7000,7 @@ export class VoxelEngine {
         passengers: [...save.passengers],
         inventory: save.inventory.map(cloneSlot),
       })),
+      leads: serializeLeadAnchors(this.leadAnchors, new Set(this.mobs.map((mob) => mob.id))),
       savedAt: Date.now(),
     };
   }

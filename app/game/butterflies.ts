@@ -51,6 +51,14 @@ const BUTTERFLY_BIOMES = new Set<BiomeId>([
   BiomeId.Siltfen, BiomeId.MushroomFen,
 ]);
 
+export const BUTTERFLY_FLIGHT_TUNING = Object.freeze({
+  seekFlowerChance: 0.32,
+  flightSecondsMin: 1.8,
+  flightSecondsRange: 4.2,
+  landedSecondsMin: 0.65,
+  landedSecondsRange: 1.9,
+});
+
 export function butterflyKindForBiome(biome: BiomeId, roll = Math.random()): ButterflyKind | null {
   if (biome === BiomeId.Bloomwood) return roll < 0.74 ? "bloom-monarch" : "azure-skippers";
   if (biome === BiomeId.Siltfen || biome === BiomeId.MushroomFen) return roll < 0.82 ? "fen-lantern" : "meadowwing";
@@ -217,7 +225,7 @@ export class ButterflySystem {
         }
       } else {
         if (butterfly.stateTimer <= 0) {
-          const flower = environment.daylight > 0.38 && environment.weather !== "rain" && Math.random() < 0.68
+          const flower = environment.daylight > 0.38 && environment.weather !== "rain" && Math.random() < BUTTERFLY_FLIGHT_TUNING.seekFlowerChance
             ? this.findFlowerNear(butterfly.group.position.x, butterfly.group.position.z, 7)
             : null;
           if (flower) {
@@ -230,7 +238,7 @@ export class ButterflySystem {
               butterfly.flower.z + (Math.random() - 0.5) * 7,
             );
           }
-          butterfly.stateTimer = 1.1 + Math.random() * 3.4;
+          butterfly.stateTimer = BUTTERFLY_FLIGHT_TUNING.flightSecondsMin + Math.random() * BUTTERFLY_FLIGHT_TUNING.flightSecondsRange;
         }
         this.desired.copy(butterfly.target).sub(butterfly.group.position);
         const targetDistance = this.desired.length();
@@ -248,7 +256,7 @@ export class ButterflySystem {
         }
         if (flowerStillThere && butterfly.group.position.distanceTo(butterfly.target) < 0.16 && environment.daylight > 0.35) {
           butterfly.landed = true;
-          butterfly.stateTimer = 1.5 + Math.random() * 5.5;
+          butterfly.stateTimer = BUTTERFLY_FLIGHT_TUNING.landedSecondsMin + Math.random() * BUTTERFLY_FLIGHT_TUNING.landedSecondsRange;
         }
       }
 

@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { BiomeId } from "./world";
 import type { BirdKind, MobKind } from "./mobs";
 
 const TAU = Math.PI * 2;
@@ -45,9 +46,9 @@ export function updateStableSteering(state: StableSteeringState, input: StableSt
     // A stable per-encounter side prevents tiny collision differences from
     // alternating the animal's turn direction across adjacent frames.
     const side = ((input.mobId * 31 + avoidanceSequence * 17) & 1) === 0 ? -1 : 1;
-    const turn = 0.78 + ((input.mobId + avoidanceSequence) % 4) * 0.16;
+    const turn = 0.96 + ((input.mobId + avoidanceSequence) % 4) * 0.17;
     targetHeading = normalizeAngle(state.heading + side * turn);
-    avoidanceHold = 0.46 + (input.mobId % 3) * 0.08;
+    avoidanceHold = 0.78 + (input.mobId % 3) * 0.11;
     avoidanceSequence += 1;
   }
 
@@ -135,15 +136,76 @@ export function fishKindsForHabitat(habitat: FishHabitat): MobKind[] {
   return ["gloomfin"];
 }
 
+/**
+ * Searches only the ledges a creature can actually step onto. A top-down world
+ * query sees a tree canopy before the floor beneath it and was the main reason
+ * short creatures stalled under trees despite having ample headroom.
+ */
+export function chooseLocalWalkableGround(
+  currentGround: number,
+  isStandable: (groundY: number) => boolean,
+  maxStepUp = 1,
+  maxDrop = 1,
+) {
+  const candidates = [0];
+  for (let step = 1; step <= Math.max(0, Math.floor(maxStepUp)); step += 1) candidates.push(step);
+  for (let drop = 1; drop <= Math.max(0, Math.floor(maxDrop)); drop += 1) candidates.push(-drop);
+  for (const offset of candidates) {
+    const candidate = currentGround + offset;
+    if (isStandable(candidate)) return candidate;
+  }
+  return null;
+}
+
+type WeightedMob = readonly [kind: MobKind, weight: number];
+
+function weightedMob(entries: readonly WeightedMob[], roll: number) {
+  const normalized = THREE.MathUtils.clamp(Number.isFinite(roll) ? roll : 0.5, 0, 0.999999);
+  const total = entries.reduce((sum, [, weight]) => sum + Math.max(0, weight), 0);
+  let cursor = normalized * total;
+  for (const [kind, weight] of entries) {
+    cursor -= Math.max(0, weight);
+    if (cursor < 0) return kind;
+  }
+  return entries.at(-1)?.[0] ?? "mossling";
+}
+
+/** Shared passive spawn table, including the four v0.3 surface species. */
+export function passiveMobKindForBiome(biome: BiomeId, roll = Math.random()): MobKind {
+  if (biome === BiomeId.Snowfield || biome === BiomeId.Frostpine) {
+    return weightedMob([["woolhorn", 0.68], ["canopy-lark", 0.22], ["thimbledeer", 0.1]], roll);
+  }
+  if (biome === BiomeId.Desert || biome === BiomeId.Badlands) {
+    return weightedMob([["duneclatter", 0.68], ["emberjay", 0.24], ["pebbletortoise", 0.08]], roll);
+  }
+  if (biome === BiomeId.Savanna) {
+    return weightedMob([["sunstep-grazer", 0.46], ["emberjay", 0.2], ["ridgeback", 0.2], ["reedstrider", 0.14]], roll);
+  }
+  if (biome === BiomeId.Siltfen) {
+    return weightedMob([["mossling", 0.22], ["lanternshell", 0.23], ["puddlehopper", 0.2], ["reedstrider", 0.18], ["pebbletortoise", 0.1], ["canopy-lark", 0.07]], roll);
+  }
+  if (biome === BiomeId.Bloomwood || biome === BiomeId.Wildwood || biome === BiomeId.Birchlight) {
+    return weightedMob([["brambleboar", 0.24], ["mossling", 0.2], ["canopy-lark", 0.18], ["thimbledeer", 0.2], ["petalfox", 0.18]], roll);
+  }
+  if (biome === BiomeId.MushroomFen) {
+    return weightedMob([["lanternshell", 0.38], ["glowmoth", 0.24], ["puddlehopper", 0.22], ["petalfox", 0.16]], roll);
+  }
+  if (biome === BiomeId.Meadow) {
+    return weightedMob([["thimbledeer", 0.22], ["petalfox", 0.15], ["puddlehopper", 0.09], ["reedstrider", 0.11], ["pebbletortoise", 0.11], ["canopy-lark", 0.12], ["peelop", 0.06], ["ridgeback", 0.14]], roll);
+  }
+  return weightedMob([["sunstep-grazer", 0.2], ["pebbletortoise", 0.16], ["petalfox", 0.15], ["thimbledeer", 0.18], ["puddlehopper", 0.08], ["reedstrider", 0.08], ["ridgeback", 0.15]], roll);
+}
+
 export type PersistenceContext = {
   tamed?: boolean;
   named?: boolean;
   enclosed?: boolean;
   captured?: boolean;
+  leashed?: boolean;
   persistentPoiResident?: boolean;
 };
 
-/** Tamed, named, caged, POI-bound, or genuinely enclosed creatures never despawn. */
+/** Tamed, named, caged, leashed, POI-bound, or genuinely enclosed creatures never despawn. */
 export function shouldKeepCreatureLoaded(context: PersistenceContext) {
-  return Boolean(context.tamed || context.named || context.enclosed || context.captured || context.persistentPoiResident);
+  return Boolean(context.tamed || context.named || context.enclosed || context.captured || context.leashed || context.persistentPoiResident);
 }

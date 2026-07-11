@@ -82,6 +82,11 @@ export type MobSnapshotEntry = {
   yaw: number;
   health: number;
   state: string;
+  /** Optional appearance/bond hints; old clients safely ignore them. */
+  scale?: number;
+  tamed?: boolean;
+  saddled?: boolean;
+  baby?: boolean;
 };
 
 export type MobSnapshot = { tick: number; mobs: MobSnapshotEntry[] };

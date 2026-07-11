@@ -40,3 +40,56 @@ Original prompt: Rework recipes and the pack GUI/avatar; fix twitchy Ridgebacks;
 
 - Runtime, content, browser, visual, benchmark, and production-build verification are complete.
 - This validated source tree is ready for the v0.2.0 GitHub and Sites publication step.
+
+## v0.3 UI pass
+
+- Visual thesis: keep Blockwild's field-journal materials, but make every inventory silhouette readable at its real 22px recipe size and 28px pack/hotbar size.
+- Content plan: immediate hotbar feedback; audited item artwork and food tooltips; deeper, filterable bestiary records; lean pause/settings and one-code multiplayer surfaces.
+- Interaction thesis: synchronous slot-selection feedback, fast category switching without costly remounts, and keyboard shortcuts that never escape focused text fields.
+- 2026-07-10: Added backward-compatible bestiary progress fields (`tames`, `breeds`, `secretUnlocked`), care/discovery metadata slots on mob definitions, an immediate selected-slot event hook, and the FPS preference schema entry. UI wiring and visual QA are in progress.
+
+## v0.3 release brief — 2026-07-10
+
+New request: fix live hotbar-selection feedback; audit and resize every displayed inventory icon; add plantable/harvestable berry bushes and fruit trees; sparse falling leaves; creature sounds, general breeding data, richer dynamic bestiary knowledge, and two forest/meadow music concepts; add four varied surface creatures; remove destructive pause actions and keep multiplayer simulation running behind menus; add biome blocks; correct all creature ground alignment and pathing; improve butterfly roaming; animate held/world torches; add generic hit and terrain-step audio; FPS toggle; correct closed-chest visuals; remove manual weather settings; add optional compute/memory performance modes; suppress gameplay hotkeys while typing; simplify multiplayer to an invite-code flow; show food values; finish farming, hydration, scythes, buckets, fences, gates, and leads; deepen cave/terrain generation; improve menu performance and bestiary filtering/framing; add full Shadecrawler tame/grow/saddle/ride progression. Publish the completed release to GitHub and the existing live Sites project.
+
+Release direction:
+
+- Visual thesis: readable full-scale inventory art and a field-journal bestiary layered over the existing handcrafted voxel world.
+- Content plan: cultivation and husbandry, surface ecology, cave renewal, practical building systems, then creature mastery.
+- Interaction thesis: immediate hotbar state, restrained menu motion, living foliage/torch feedback, and knowledge that unfolds as creatures are encountered and tamed.
+
+Work begins from clean v0.2.0 commit `2a47c8f` with `render_game_to_text`, `advanceTime(ms)`, production Sites packaging, and the 28-creature render pipeline already verified.
+
+### v0.3 fauna, grounding, and navigation
+
+- Replaced the model inspector's hidden auto-grounding with a truthful runtime spawn-offset audit. Corrected every ground creature's foot offset, including Shadecrawler penetration, Woolhorn penetration, Zombie floating, and subtler errors on Mossling, Cave Blob, Rattlekin, Peelop, Reliquary Sentinel, Skeleton Archer, and all Menagerie surface animals. Old saves are locally re-grounded without mistaking overhead leaves for a floor.
+- Added foot-anchored scaling so young creatures and the three-times-size Shadecrawler keep their feet on the same terrain plane. The 32-creature audit manifest reports exact contact for every ground model; flying and aquatic models remain explicitly marked as reference-ground renders.
+- Added Thimbledeer, Lanternshell, Puddlehopper, and Reedstrider as non-evil surface fauna with unique production models, habitat-weighted spawning, discovery/utility notes, diets, breeding foods, behavior tuning, drops, and deployable bestiary portraits.
+- Reworked creature ground navigation around a bounded local ledge search. It ignores tree canopies above the current floor, checks every occupied clearance cell, steps onto one-block ledges, permits controlled drops for hopping creatures, respects open doors, and retains one deterministic avoidance turn long enough to route around trunks without Ridgeback twitching.
+- Added generic husbandry state and persistence for eligible fauna: diet feeding, healing, love state, paired breeding, inherited baby metadata, maturation, foot-anchored young models, cages, saves, and bestiary breed counters.
+- Added the Shadecrawler bond path: six Moonberry trust feeds, a rare Nocturne Heart catalyst, post-tame feeding to 3x size/health, Trail Saddle equipment, owner-only riding, default third-person mount camera, WASD movement, Space dismount, save/cage persistence, and hidden bestiary progression counters.
+- Multiplayer mob snapshots now carry backward-compatible scale, baby, tame, and saddle appearance hints so guests see grown Shadecrawlers and young fauna at the same size as the authoritative host.
+- Wild butterflies now choose independent roaming targets more often, remain airborne significantly longer, and rest for shorter flower visits.
+- Added stable per-creature sound-event metadata for Ridgeback, Woolhorn, Shadecrawler, Peelop, Lanternshell, Puddlehopper, and Reedstrider, with generic hit/ambient/feed fallbacks until generated WAV assets land.
+- Focused fauna/model verification passes: 26/26 tests plus full TypeScript. Regenerated and manually reviewed the full isometric/front/side 32-creature audit and field guide; all new silhouettes are readable and every ground-contact badge is exact.
+
+### v0.3 world, farming, and building slice
+
+- 2026-07-10: Added deterministic staged Moonberry/Sunberry bushes and wild wheat, edible-fruit planting, attractive batch-planned apple trees with separately harvestable hanging fruit and bounded regrowth, hydrated/dry farmland, hoe/scythe/bucket/lead contracts, connected fences and four gate orientation/open states. Added recipes, item semantics, food/plant hooks, flora world-texture hooks, and content blocks/items through BlockId 99 / Item 177.
+- 2026-07-10: Reworked generator v4 with sparse overworld cave funnels, distinct chamber/chimney features, climate-weighted local relief, natural limestone/moon-slate/sunbaked-clay strata, and substantially rarer wild wheat. Generator-3 edits migrate unchanged; generator-2 keeps its vertical-index migration.
+- 2026-07-10: Rebuilt the closed chest's atlas treatment and six-face mapping; added procedural bush/crop/fruit/fence/gate/stone textures and connected partial-block fence/gate geometry. Closed fences/gates declare 1.25-block collision and open gates are walk-through.
+- 2026-07-10: Added capped deterministic falling-leaf planning/physics with immediate ground-impact removal plus shared held/world torch flicker parameters. Exact engine integration ordering and bounded update guidance is recorded in `app/game/FARMING_SYSTEMS.md`.
+- 2026-07-10: New farming/world suite passes 9/9 and existing generation-options suite passes 3/3. A 25-chunk content scan verifies exposed cave mouths, biome accent blocks, vertical variance, and wild wheat below 9% of sampled flora in about 1.7 seconds on this machine.
+- 2026-07-10: Final focused verification passes: full TypeScript, targeted ESLint for all changed farming/data/world files, 12/12 farming plus generator-option tests, the wider 52/52 world/engine/farming regression set, and scoped `git diff --check`. Cave-mouth columns now reject trees/flora so openings stay visually and physically clear.
+
+### v0.3 UI, inventory, and bestiary slice
+
+- 2026-07-10: Hotbar number-key selection now sends a synchronous lightweight `onSelectedSlot(slot)` signal before the larger HUD snapshot, so the selected border and held-item label update immediately even while movement input is active. Slots expose matching `aria-pressed` state for UI regression checks.
+- 2026-07-10: Added a query-gated actual-size icon audit (`?icon-audit=1`) that renders every registered item at its real 28px inventory/hotbar size and 22px recipe-book size. Rebuilt undersized silhouettes including Stick, Rotten Flesh, Wild Wheat, Crafting Table, ores, materials, tools, buckets, fences, leads, produce, and Shadecrawler equipment. Cross-plane flowers reuse their recognizable world-flora treatment. The reviewed audit is `output/ui-icon-audit-final.png`.
+- 2026-07-10: Consumable hover labels now include explicit food value, durability/creature metadata remains visible, held/world torch artwork shares a restrained flicker, and the HUD includes an optional compact FPS counter plus a Shadecrawler mount hint.
+- 2026-07-10: Reworked the Bestiary as a field journal with a high-contrast black title, zoomed-out production portrait, completion rings, discovery-location hints for unknown entries, and dynamic All/Surface/Birds/Butterflies/Aquatic/Monsters/Tameable filters. Care records read creature definition data for tameability, breeding, diet, sentience, and post-tame notes; progress incorporates seen/captured/defeated/tamed/bred/secret states without describing peaceful sightings as kills.
+- 2026-07-10: Removed Delete and Regenerate from the in-world pause menu and removed player-facing weather controls. Settings now offer an FPS toggle and Auto/CPU boost/Memory cache resource reserve. Menu panels use bounded containment and restrained backdrop work to reduce UI repaint pressure.
+- 2026-07-10: Simplified multiplayer around one short normalized room code with Host, Join, Generate, Copy, and rendezvous status. The manual offer/answer exchange remains tucked into an advanced fallback. Gameplay hotkeys are suppressed for input, textarea, select, contenteditable, and ARIA textboxes, verified by typing `e` in the player-name field without opening or closing inventory.
+- 2026-07-10: Live browser QA passed in a fresh Builder world: keyboard slot 4 selection immediately changed the pressed hotbar slot; pause contains no destructive world buttons; Settings exposes FPS/resource modes and no weather option; the FPS readout appears when enabled; Bestiary filters, hints, completion rings, black title, and framing render cleanly; one-code multiplayer remains open while typing. Actual-size icon, Bestiary, and multiplayer visuals were manually reviewed.
+- 2026-07-10: Final UI verification passes full TypeScript, 17/17 focused crafting/avatar/invite/lighting regressions, scoped `git diff --check`, and targeted ESLint with no errors. Seven current warnings are the concurrently added farming/leaf/torch helper imports awaiting production engine use; they are outside the UI slice.
+- 2026-07-10: Fixed Bestiary specimen framing after browser QA exposed a 560×323 replaced-image sizing cycle inside the 820×213 stage. The hero viewport now explicitly reserves its 38px navigation chrome and constrains every portrait to a transform-free 560×203 contain box. Fresh 1280×720 captures show the complete Ridgeback and airborne Emberjay; a focused CSS contract regression keeps feet, ridges, wings, and crests from being cropped again.

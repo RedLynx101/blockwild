@@ -1,5 +1,6 @@
 import * as THREE from "three";
-import { BLOCKS, TORCH_BLOCKS, BlockId, type RenderLayer } from "./data";
+import { BLOCKS, LEAF_BLOCKS, TORCH_BLOCKS, BlockId, type RenderLayer } from "./data";
+import { caveEntranceAt, caveFeatureAt } from "./caves";
 import {
   planBiomeVegetation,
   planStructure,
@@ -18,7 +19,7 @@ export const WORLD_HEIGHT = MAX_Y - MIN_Y + 1;
 export const SEA_LEVEL = 32;
 export const SECTION_HEIGHT = 16;
 export const SECTION_COUNT = WORLD_HEIGHT / SECTION_HEIGHT;
-export const GENERATOR_VERSION = 3;
+export const GENERATOR_VERSION = 4;
 
 export type WorldGenerationOptions = {
   caveFrequency: number;
@@ -95,7 +96,11 @@ export type Chunk = {
   /** Highest full opaque cube in each column, maintained independently from terrain height. */
   skyTops: Int16Array;
   lightIndices: Set<number>;
+  /** Sparse foliage index used by the constant-cost ambient leaf emitter. */
+  leafIndices: Set<number>;
 };
+
+const LEAF_BLOCK_SET = new Set<BlockId>(LEAF_BLOCKS);
 
 type ColumnSample = {
   height: number;
@@ -164,6 +169,9 @@ const TILE_COLORS = [
   "#caa64c", "#6d452b", "#69422a", "#5e9d43", "#9b6839", "#666666", "#555555", "#444444",
   "#7fbd55", "#6fa14a", "#f4ca4f", "#b59be8", "#a88a48", "#72a94a", "#b8ded9", "#d7b667",
   "#53735d",
+  "#5f7f47", "#4f7c42", "#704b8e", "#718943", "#63833d", "#d89542", "#659b48", "#4f8a40",
+  "#c84b40", "#79a54f", "#aab14d", "#523824", "#9a693c", "#d8cca4", "#4e5765", "#b96845",
+  "#9f6b35", "#b9874e",
 ];
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
@@ -341,10 +349,10 @@ export function createBlockAtlas() {
   };
 
   const oreTiles = new Set([9, 10, 40, 41, 42]);
-  const leafTiles = new Set([7, 20, 23, 34]);
+  const leafTiles = new Set([7, 20, 23, 34, 80]);
   const logSideTiles = new Set([5, 18, 21, 32]);
   const logTopTiles = new Set([6, 19, 22, 33]);
-  const crossTiles = new Set([39, 53, 54, 55, 56, 59, 66, 67, 68, 69]);
+  const crossTiles = new Set([39, 53, 54, 55, 56, 59, 66, 67, 68, 69, 73, 74, 75, 76, 77, 78, 79, 81, 82, 83]);
   for (let index = 0; index < grid * grid; index += 1) {
     const base = TILE_COLORS[index] ?? "#777777";
     const ox = (index % grid) * tile;
@@ -365,6 +373,47 @@ export function createBlockAtlas() {
           pixel(index, 8, y, "#c07a38");
         }
         for (const [x, y, color] of [[7, 6, "#ffd85a"], [8, 6, "#fff0a0"], [6, 5, "#f09132"], [7, 4, "#ffb43f"], [8, 3, "#ffe56d"], [9, 5, "#db5a27"]] as Array<[number, number, string]>) pixel(index, x, y, color);
+      } else if (index >= 73 && index <= 78) {
+        const young = index === 73 || index === 76;
+        const ripe = index === 75 || index === 78;
+        const leafA = index <= 75 ? "#4f7f43" : "#698c42";
+        const leafB = index <= 75 ? "#72a554" : "#91ad50";
+        const berry = index <= 75 ? "#955cbb" : "#eda748";
+        const height = young ? 8 : 13;
+        for (const [x, lean] of [[4, -1], [7, 0], [10, 1], [12, -1]] as Array<[number, number]>) {
+          for (let step = 0; step < height; step += 1) {
+            const px = x + Math.round(lean * step / Math.max(1, height));
+            const py = 15 - step;
+            pixel(index, px, py, step % 3 ? "#55783d" : "#7b9150");
+            if (step > 2 && step % 3 === 0) {
+              pixel(index, Math.max(0, px - 1), py, leafA);
+              pixel(index, Math.min(15, px + 1), py - 1, leafB);
+            }
+          }
+        }
+        if (ripe) for (const [x, y] of [[4, 7], [7, 4], [9, 9], [12, 6], [6, 11]] as Array<[number, number]>) {
+          pixel(index, x, y, berry);
+          if (x < 15) pixel(index, x + 1, y, index <= 75 ? "#c38bdd" : "#ffd36b");
+        }
+      } else if (index === 79) {
+        for (let y = 7; y < 16; y += 1) pixel(index, 7, y, "#744525");
+        for (const [x, y] of [[5, 9], [4, 8], [6, 6], [9, 9], [10, 7], [8, 5], [7, 3]] as Array<[number, number]>) {
+          pixel(index, x, y, "#4f8a40");
+          if (x + 1 < 16) pixel(index, x + 1, y, "#79b55a");
+        }
+      } else if (index === 81) {
+        for (let y = 1; y < 7; y += 1) pixel(index, 8, y, "#6b4226");
+        for (let y = 6; y < 14; y += 1) for (let x = 4; x < 13; x += 1) {
+          const dx = x - 8; const dy = y - 9;
+          if (dx * dx + dy * dy <= 17) pixel(index, x, y, dx < -1 ? "#a83834" : dx > 2 ? "#e0644c" : "#c8493e");
+        }
+        pixel(index, 6, 6, "#62954a"); pixel(index, 7, 5, "#78aa55");
+      } else if (index === 82 || index === 83) {
+        const height = index === 82 ? 6 : 10;
+        for (const [x, lean] of [[5, -1], [8, 0], [11, 1]] as Array<[number, number]>) {
+          for (let step = 0; step < height; step += 1) pixel(index, x + Math.round(lean * step / height), 15 - step, step % 2 ? "#7ea04c" : "#a5ad4d");
+          if (index === 83) { pixel(index, x - 1, 5, "#c0a848"); pixel(index, x + 1, 6, "#d0ba54"); }
+        }
       } else if (index === 53) {
         for (const [x, lean, height] of [[4, -1, 8], [7, 0, 12], [10, 1, 10], [12, 0, 6]] as Array<[number, number, number]>) {
           for (let step = 0; step < height; step += 1) pixel(index, x + Math.round((lean * step) / height), 15 - step, step % 3 ? "#65a844" : "#86bd58");
@@ -550,6 +599,60 @@ export function createBlockAtlas() {
       context.fillStyle = "#b8f4c9";
       context.fillRect(ox + 7, oy + 7, 2, 2);
     }
+    if (index === 84) {
+      context.fillStyle = "#523824";
+      context.fillRect(ox, oy, tile, tile);
+      for (let x = 1; x < tile; x += 4) {
+        context.fillStyle = x % 8 === 1 ? "#735139" : "#67452f";
+        context.fillRect(ox + x, oy, 2, tile);
+      }
+      context.fillStyle = "rgba(76,139,171,.52)";
+      for (let y = 3; y < tile; y += 6) context.fillRect(ox, oy + y, tile, 1);
+    }
+    if (index === 85) {
+      context.fillStyle = "#895b35";
+      context.fillRect(ox, oy, tile, tile);
+      context.fillStyle = "#b17b47";
+      for (let x = 2; x < tile; x += 5) context.fillRect(ox + x, oy, 2, tile);
+      context.fillStyle = "#624127";
+      context.fillRect(ox, oy + 4, tile, 1); context.fillRect(ox, oy + 11, tile, 1);
+    }
+    if (index === 86) {
+      context.fillStyle = "#d8cca4"; context.fillRect(ox, oy, tile, tile);
+      context.fillStyle = "#b9aa83";
+      for (let y = 3; y < tile; y += 5) context.fillRect(ox, oy + y, tile, 1);
+      for (let y = 0; y < tile; y += 5) context.fillRect(ox + ((y / 5) % 2 ? 4 : 10), oy + y, 1, 4);
+    }
+    if (index === 87) {
+      context.fillStyle = "#4e5765"; context.fillRect(ox, oy, tile, tile);
+      context.fillStyle = "#76808d";
+      for (let y = 2; y < tile; y += 4) context.fillRect(ox, oy + y, tile, 1);
+      context.fillStyle = "#353d49";
+      context.fillRect(ox + 4, oy, 1, tile); context.fillRect(ox + 11, oy, 1, tile);
+    }
+    if (index === 88) {
+      context.fillStyle = "#b96845"; context.fillRect(ox, oy, tile, tile);
+      for (let y = 2; y < tile; y += 4) {
+        context.fillStyle = y % 8 === 2 ? "#d38458" : "#934d3a";
+        context.fillRect(ox, oy + y, tile, 2);
+      }
+    }
+    if (index === 89) {
+      context.fillStyle = "#9f6b35"; context.fillRect(ox, oy, tile, tile);
+      context.fillStyle = "#633d20";
+      context.fillRect(ox, oy + 2, tile, 2); context.fillRect(ox, oy + 12, tile, 2);
+      context.fillRect(ox + 1, oy, 2, tile); context.fillRect(ox + 13, oy, 2, tile);
+      context.fillStyle = "#d5a04c"; context.fillRect(ox + 6, oy + 6, 4, 5);
+      context.fillStyle = "#51402f"; context.fillRect(ox + 7, oy + 7, 2, 2);
+    }
+    if (index === 90) {
+      context.fillStyle = "#b9874e"; context.fillRect(ox, oy, tile, tile);
+      context.fillStyle = "#704724";
+      context.fillRect(ox, oy, tile, 2); context.fillRect(ox, oy + 14, tile, 2);
+      context.fillRect(ox, oy, 2, tile); context.fillRect(ox + 14, oy, 2, tile);
+      context.fillStyle = "#d2a463"; context.fillRect(ox + 3, oy + 3, 10, 10);
+      context.fillStyle = "#8b5b31"; context.fillRect(ox + 7, oy + 3, 2, 10);
+    }
   }
   const texture = new THREE.CanvasTexture(canvas);
   texture.magFilter = THREE.NearestFilter;
@@ -575,6 +678,7 @@ export class ChunkWorld {
   seedText = "WILDERNESS";
   seed = seedToInt(this.seedText);
   renderDistance = 10;
+  retentionPadding = 2;
   generationWorkPerFrame = 1;
   meshWorkPerFrame = 2;
   generationOptions = normalizeWorldGenerationOptions();
@@ -626,6 +730,10 @@ export class ChunkWorld {
   setRenderDistance(distance: number) {
     this.renderDistance = clamp(Math.round(distance), 2, 16);
     this.playerChunkX = Number.NaN;
+  }
+
+  setRetentionPadding(padding: number) {
+    this.retentionPadding = clamp(Math.round(padding), 2, 6);
   }
 
   setStreamingBudgets(chunkGenerations: number, chunkMeshSections: number) {
@@ -743,7 +851,7 @@ export class ChunkWorld {
     }
     this.generationQueue.sort((a, b) => b.distance - a.distance);
 
-    const retainRadius = this.renderDistance + 2;
+    const retainRadius = this.renderDistance + this.retentionPadding;
     for (const [key, chunk] of this.chunks.entries()) {
       const distance = Math.max(Math.abs(chunk.cx - cx), Math.abs(chunk.cz - cz));
       if (distance > retainRadius) this.unloadChunk(key);
@@ -873,6 +981,11 @@ export class ChunkWorld {
     height = lerp(height, SEA_LEVEL + 2 + 1.4 * fbm2(warpX, warpZ, this.seed ^ 0xe17a1465, 1 / 42, 2), swampWeight * 0.76);
     const dryWeight = smoothstep(0.6, 0.77, temperature) * (1 - smoothstep(0.23, 0.36, moisture));
     height += 3.6 * dryWeight * Math.pow(1 - Math.abs(fbm2(warpX, warpZ, this.seed ^ 0xa24baed4, 1 / 50, 3)), 2);
+    // Fine relief is climate-weighted: dry shelves, wet hummocks, and cold
+    // ridges now read differently without adding another biome lookup.
+    const localRelief = fbm2(warpX + 53, warpZ - 91, this.seed ^ 0x4cf5ad43, 1 / 46, 3);
+    const reliefAmplitude = 1.15 + dryWeight * 2.15 + moisture * 0.65 + mountain * 1.5;
+    height += localRelief * reliefAmplitude;
     height = clamp(Math.round(height), MIN_Y + 7, MAX_Y - 8);
 
     let biome = BiomeId.Meadow;
@@ -911,6 +1024,7 @@ export class ChunkWorld {
       sectionBlockCounts: new Uint16Array(SECTION_COUNT),
       skyTops: new Int16Array(CHUNK_SIZE * CHUNK_SIZE).fill(MIN_Y - 1),
       lightIndices: new Set(),
+      leafIndices: new Set(),
     };
     chunk.group.position.set(cx * CHUNK_SIZE, 0, cz * CHUNK_SIZE);
     this.group.add(chunk.group);
@@ -939,6 +1053,7 @@ export class ChunkWorld {
         const ravineTop = column.height - 5;
         const ravineBottom = Math.max(MIN_Y + 5, column.height - 38);
         const waterTable = -4 + Math.floor(7 * fbm2(gx, gz, this.seed ^ 0x7ed55d16, 1 / 170, 2));
+        const caveEntrance = caveFrequency > 0 ? caveEntranceAt(this.seed, gx, gz, column.height, column.waterline) : null;
         for (let y = MIN_Y; y <= Math.max(column.height, column.waterline); y += 1) {
           let type = BlockId.Air;
           if (y <= MIN_Y + extraBedrock) type = BlockId.Bedrock;
@@ -947,7 +1062,8 @@ export class ChunkWorld {
             else if (y >= column.height - (column.biome === BiomeId.Desert || column.biome === BiomeId.Beach ? 5 : 3)) type = filler;
             else type = y < MIN_Y + 18 ? BlockId.Basalt : y < -10 ? BlockId.Deepstone : column.biome === BiomeId.Volcanic ? BlockId.Basalt : BlockId.Stone;
 
-            if (caveFrequency > 0 && y < column.height - 4 && y > MIN_Y + 4) {
+            const surfaceMouth = caveEntrance !== null && y >= caveEntrance.floorY && y <= column.height;
+            if (caveFrequency > 0 && (y < column.height - 4 || surfaceMouth) && y > MIN_Y + 4) {
               const depth = column.height - y;
               const baseCheeseThreshold = lerp(0.5, 0.34, smoothstep(12, 52, depth));
               const cheeseThreshold = caveFrequency === 1 ? baseCheeseThreshold : baseCheeseThreshold + (1 - caveFrequency) * 0.1;
@@ -964,7 +1080,8 @@ export class ChunkWorld {
               const ravineP = (y - ravineBottom) / Math.max(1, ravineTop - ravineBottom);
               const ravineWidth = caveFrequency === 1 ? 0.02 : 0.02 * caveFrequency;
               const ravine = ravineSegment > 0.1 && y > ravineBottom && y < ravineTop && ravineLine < ravineWidth * (0.35 + 0.65 * Math.sin(Math.PI * ravineP));
-              if (cheese || spaghetti || deepCavern || ravine) {
+              const feature = caveFeatureAt(this.seed, gx, y, gz, column.height, caveFrequency);
+              if (cheese || spaghetti || deepCavern || ravine || feature.chamber || feature.chimney || surfaceMouth) {
                 if (y <= MIN_Y + 7) type = BlockId.Lava;
                 else if (y <= waterTable && valueNoise3(gx / 64, y / 58, gz / 64, this.seed ^ 0x94d049bd) > 0.28) type = BlockId.Water;
                 else type = BlockId.Air;
@@ -988,6 +1105,13 @@ export class ChunkWorld {
                 if (y < -24 && Math.abs(cellHash - 0.97075) < 0.00075 * resourceAbundance && detailHash > 0.5) type = BlockId.CrystalOre;
               }
             }
+            if (type === BlockId.Stone || type === BlockId.Deepstone || type === BlockId.Basalt) {
+              const accent = hash3(Math.floor(gx / 3), Math.floor(y / 3), Math.floor(gz / 3), this.seed ^ 0x73a2d49b);
+              const limestoneBiome = [BiomeId.Desert, BiomeId.Beach, BiomeId.Highlands, BiomeId.Savanna].includes(column.biome);
+              const slateBiome = [BiomeId.Frostpine, BiomeId.Snowfield, BiomeId.Bloomwood, BiomeId.MushroomFen].includes(column.biome);
+              if (limestoneBiome && y > column.height - 24 && accent > 0.58) type = BlockId.Limestone;
+              else if (slateBiome && y < column.height - 12 && accent < 0.34) type = BlockId.MoonSlate;
+            }
           } else if (y <= column.waterline) {
             type = column.temperature < 0.14 && y === column.waterline ? BlockId.Ice : BlockId.Water;
           }
@@ -1008,6 +1132,7 @@ export class ChunkWorld {
         if (type === BlockId.Air) continue;
         occupied += 1;
         if (LIGHT_BLOCKS.has(type)) chunk.lightIndices.add(index);
+        if (LEAF_BLOCK_SET.has(type)) chunk.leafIndices.add(index);
         if (blocksSky(type)) chunk.skyTops[index % (CHUNK_SIZE * CHUNK_SIZE)] = MIN_Y + Math.floor(index / (CHUNK_SIZE * CHUNK_SIZE));
       }
       chunk.sectionBlockCounts[section] = occupied;
@@ -1019,7 +1144,7 @@ export class ChunkWorld {
   surfaceBlocks(biome: BiomeId, height: number, temperature: number): [BlockId, BlockId] {
     if (biome === BiomeId.DeepOcean || biome === BiomeId.Ocean || biome === BiomeId.River) return [BlockId.Gravel, hash2(height, biome, this.seed) > 0.5 ? BlockId.Clay : BlockId.Sand];
     if (biome === BiomeId.Beach || biome === BiomeId.Desert) return [BlockId.Sand, BlockId.Sand];
-    if (biome === BiomeId.Badlands) return [BlockId.RedSand, BlockId.RedSand];
+    if (biome === BiomeId.Badlands) return [BlockId.RedSand, BlockId.SunbakedClay];
     if (biome === BiomeId.Siltfen || biome === BiomeId.MushroomFen) return [BlockId.SwampGrass, BlockId.Mud];
     if (biome === BiomeId.Savanna) return [BlockId.SavannaGrass, BlockId.Dirt];
     if (biome === BiomeId.Snowfield || (height > 72 && temperature < 0.48)) return [BlockId.SnowyGrass, BlockId.Dirt];
@@ -1048,6 +1173,7 @@ export class ChunkWorld {
         const z = cellZ * cellSize + Math.floor(hash2(cellX, cellZ, this.seed ^ 0x22222222) * cellSize);
         if (x * x + z * z < 28) continue;
         const column = sample(x, z);
+        if (caveEntranceAt(this.seed, x, z, column.height, column.waterline)) continue;
         const roll = hash2(cellX, cellZ, this.seed ^ 0x33333333);
         const density: Partial<Record<BiomeId, number>> = {
           [BiomeId.Meadow]: 0.06,
@@ -1086,6 +1212,7 @@ export class ChunkWorld {
       const z = minZ + lz;
       const column = sample(x, z);
       if (column.height <= column.waterline) continue;
+      if (caveEntranceAt(this.seed, x, z, column.height, column.waterline)) continue;
       const aboveIndex = blockIndex(lx, column.height + 1, lz);
       if (chunk.blocks[aboveIndex] !== BlockId.Air) continue;
       const roll = hash2(x, z, this.seed ^ 0x44444444);
@@ -1097,7 +1224,8 @@ export class ChunkWorld {
         const density = column.biome === BiomeId.Meadow ? 0.72 : column.biome === BiomeId.Bloomwood ? 0.79 : column.biome === BiomeId.Savanna ? 0.9 : 0.84;
         if (roll + patch * 0.11 <= density) continue;
         const flowerBias = column.biome === BiomeId.Meadow || column.biome === BiomeId.Bloomwood;
-        const plant = flowerBias && roll > 0.965 ? BlockId.BlueFlower : flowerBias && roll > 0.925 ? BlockId.RedFlower : roll > 0.895 ? BlockId.WheatCrop : BlockId.TallGrass;
+        const wheatPatch = hash2(x, z, this.seed ^ 0x7a9d35f1) > 0.986;
+        const plant = flowerBias && roll > 0.965 ? BlockId.BlueFlower : flowerBias && roll > 0.925 ? BlockId.RedFlower : wheatPatch ? BlockId.WheatCrop : BlockId.TallGrass;
         set(x, column.height + 1, z, plant);
       } else if (column.biome === BiomeId.MushroomFen && roll > 0.9) {
         set(x, column.height + 1, z, BlockId.MushroomCap);
@@ -1220,6 +1348,8 @@ export class ChunkWorld {
     else if (previous !== BlockId.Air && type === BlockId.Air) chunk.sectionBlockCounts[section] -= 1;
     if (LIGHT_BLOCKS.has(type)) chunk.lightIndices.add(index);
     else chunk.lightIndices.delete(index);
+    if (LEAF_BLOCK_SET.has(type)) chunk.leafIndices.add(index);
+    else chunk.leafIndices.delete(index);
     const previousBlockedSky = blocksSky(previous);
     const nextBlocksSky = blocksSky(type);
     const previousSkyTop = chunk.skyTops[column];
@@ -1321,8 +1451,11 @@ export class ChunkWorld {
     if (type === undefined) return false;
     return type === BlockId.Air
       || [BlockId.DoorOpenLower, BlockId.DoorOpenUpper, BlockId.DoorXOpenLower, BlockId.DoorXOpenUpper].includes(type)
+      || [BlockId.FenceGateNorthSouthOpen, BlockId.FenceGateEastWestOpen].includes(type)
       || BLOCKS[type]?.shape === "cross"
-      || BLOCKS[type]?.shape === "torch";
+      || BLOCKS[type]?.shape === "torch"
+      || BLOCKS[type]?.shape === "bush"
+      || BLOCKS[type]?.shape === "fruit";
   }
 
   biomeAt(x: number, z: number) {
@@ -1364,6 +1497,32 @@ export class ChunkWorld {
       }
     }
     return sources.sort((a, b) => a.distanceSquared - b.distanceSquared);
+  }
+
+  leafBlocksNear(x: number, y: number, z: number, radius = 32) {
+    const boundedRadius = Math.max(4, Math.min(40, radius));
+    const radiusSquared = boundedRadius * boundedRadius;
+    const leaves: Array<{ x: number; y: number; z: number; type: BlockId }> = [];
+    const minChunkX = Math.floor((x - boundedRadius) / CHUNK_SIZE);
+    const maxChunkX = Math.floor((x + boundedRadius) / CHUNK_SIZE);
+    const minChunkZ = Math.floor((z - boundedRadius) / CHUNK_SIZE);
+    const maxChunkZ = Math.floor((z + boundedRadius) / CHUNK_SIZE);
+    for (let cx = minChunkX; cx <= maxChunkX; cx += 1) for (let cz = minChunkZ; cz <= maxChunkZ; cz += 1) {
+      const chunk = this.chunks.get(chunkKey(cx, cz));
+      if (!chunk?.group.visible || chunk.leafIndices.size === 0) continue;
+      for (const index of chunk.leafIndices) {
+        const layer = Math.floor(index / (CHUNK_SIZE * CHUNK_SIZE));
+        const horizontal = index % (CHUNK_SIZE * CHUNK_SIZE);
+        const localZ = Math.floor(horizontal / CHUNK_SIZE);
+        const localX = horizontal % CHUNK_SIZE;
+        const worldX = cx * CHUNK_SIZE + localX;
+        const worldY = MIN_Y + layer;
+        const worldZ = cz * CHUNK_SIZE + localZ;
+        if ((worldX - x) ** 2 + (worldY - y) ** 2 + (worldZ - z) ** 2 > radiusSquared) continue;
+        leaves.push({ x: worldX, y: worldY, z: worldZ, type: chunk.blocks[index] as BlockId });
+      }
+    }
+    return leaves;
   }
 
   skyVisibilityAt(x: number, y: number, z: number) {
@@ -1517,11 +1676,71 @@ export class ChunkWorld {
           addTorchSprite(widthB, 0.91);
           continue;
         }
+        if (definition.shape === "bush" || definition.shape === "fruit") {
+          const tile = definition.side;
+          const environment = shadeAt(lx, y, lz);
+          const halfWidth = definition.shape === "fruit" ? 0.24 : 0.48;
+          const y0 = definition.shape === "fruit" ? y - 0.17 : y - 0.5;
+          const y1 = definition.shape === "fruit" ? y + 0.44 : y + 0.48;
+          addQuad(bucket, [[lx - halfWidth, y0, lz - halfWidth], [lx - halfWidth, y1, lz - halfWidth], [lx + halfWidth, y1, lz + halfWidth], [lx + halfWidth, y0, lz + halfWidth]], [0.7, 0, -0.7], tile, 1, tint, 0, 0, 0, 0, environment);
+          addQuad(bucket, [[lx + halfWidth, y0, lz - halfWidth], [lx + halfWidth, y1, lz - halfWidth], [lx - halfWidth, y1, lz + halfWidth], [lx - halfWidth, y0, lz + halfWidth]], [-0.7, 0, -0.7], tile, 0.92, tint, 0, 0, 0, 0, environment);
+          if (definition.shape === "bush") {
+            addQuad(bucket, [[lx, y0, lz - halfWidth], [lx, y1, lz - halfWidth], [lx, y1, lz + halfWidth], [lx, y0, lz + halfWidth]], [-1, 0, 0], tile, 0.96, tint, 0, 0, 0, 0, environment);
+          }
+          continue;
+        }
         if (definition.shape === "cross") {
           const tile = definition.side;
           const environment = definition.layer === "emissive" ? Math.max(0.82, shadeAt(lx, y, lz)) : shadeAt(lx, y, lz);
           addQuad(bucket, [[lx - 0.36, y - 0.5, lz - 0.36], [lx - 0.36, y + 0.5, lz - 0.36], [lx + 0.36, y + 0.5, lz + 0.36], [lx + 0.36, y - 0.5, lz + 0.36]], [0.7, 0, -0.7], tile, 1, tint, 0, 0, 0, 0, environment);
           addQuad(bucket, [[lx + 0.36, y - 0.5, lz - 0.36], [lx + 0.36, y + 0.5, lz - 0.36], [lx - 0.36, y + 0.5, lz + 0.36], [lx - 0.36, y - 0.5, lz + 0.36]], [-0.7, 0, -0.7], tile, 0.92, tint, 0, 0, 0, 0, environment);
+          continue;
+        }
+        if (definition.shape === "fence" || definition.shape === "gate") {
+          const tile = definition.side;
+          const environment = shadeAt(lx, y, lz);
+          const addWoodCuboid = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number) => {
+            addQuad(bucket, [[x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]], [1, 0, 0], tile, 0.82, tint, 0, 0, 0, 0, environment);
+            addQuad(bucket, [[x0, y0, z1], [x0, y1, z1], [x0, y1, z0], [x0, y0, z0]], [-1, 0, 0], tile, 0.72, tint, 0, 0, 0, 0, environment);
+            addQuad(bucket, [[x0, y1, z0], [x0, y1, z1], [x1, y1, z1], [x1, y1, z0]], [0, 1, 0], tile, 1, tint, 0, 0, 0, 0, environment);
+            addQuad(bucket, [[x0, y0, z1], [x0, y0, z0], [x1, y0, z0], [x1, y0, z1]], [0, -1, 0], tile, 0.55, tint, 0, 0, 0, 0, environment);
+            addQuad(bucket, [[x1, y0, z1], [x1, y1, z1], [x0, y1, z1], [x0, y0, z1]], [0, 0, 1], tile, 0.9, tint, 0, 0, 0, 0, environment);
+            addQuad(bucket, [[x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [x1, y0, z0]], [0, 0, -1], tile, 0.76, tint, 0, 0, 0, 0, environment);
+          };
+          if (definition.shape === "fence") {
+            addWoodCuboid(lx - 0.14, y - 0.5, lz - 0.14, lx + 0.14, y + 0.75, lz + 0.14);
+            const connectable = (dx: number, dz: number) => {
+              const neighbor = neighborAt(lx + dx, y, lz + dz);
+              const next = BLOCKS[neighbor];
+              return next?.connectGroup === "fence" || Boolean(next?.solid && (!next.shape || next.shape === "cube"));
+            };
+            if (connectable(1, 0)) for (const railY of [-0.06, 0.38]) addWoodCuboid(lx + 0.08, y + railY - 0.1, lz - 0.09, lx + 0.5, y + railY + 0.1, lz + 0.09);
+            if (connectable(-1, 0)) for (const railY of [-0.06, 0.38]) addWoodCuboid(lx - 0.5, y + railY - 0.1, lz - 0.09, lx - 0.08, y + railY + 0.1, lz + 0.09);
+            if (connectable(0, 1)) for (const railY of [-0.06, 0.38]) addWoodCuboid(lx - 0.09, y + railY - 0.1, lz + 0.08, lx + 0.09, y + railY + 0.1, lz + 0.5);
+            if (connectable(0, -1)) for (const railY of [-0.06, 0.38]) addWoodCuboid(lx - 0.09, y + railY - 0.1, lz - 0.5, lx + 0.09, y + railY + 0.1, lz - 0.08);
+          } else {
+            const northSouth = type === BlockId.FenceGateNorthSouthClosed || type === BlockId.FenceGateNorthSouthOpen;
+            const open = type === BlockId.FenceGateNorthSouthOpen || type === BlockId.FenceGateEastWestOpen;
+            if (northSouth) {
+              addWoodCuboid(lx - 0.48, y - 0.5, lz - 0.12, lx - 0.34, y + 0.72, lz + 0.12);
+              addWoodCuboid(lx + 0.34, y - 0.5, lz - 0.12, lx + 0.48, y + 0.72, lz + 0.12);
+              if (open) {
+                for (const railY of [-0.06, 0.36]) {
+                  addWoodCuboid(lx - 0.46, y + railY - 0.09, lz - 0.12, lx - 0.34, y + railY + 0.09, lz + 0.34);
+                  addWoodCuboid(lx + 0.34, y + railY - 0.09, lz - 0.12, lx + 0.46, y + railY + 0.09, lz + 0.34);
+                }
+              } else for (const railY of [-0.06, 0.36]) addWoodCuboid(lx - 0.36, y + railY - 0.09, lz - 0.08, lx + 0.36, y + railY + 0.09, lz + 0.08);
+            } else {
+              addWoodCuboid(lx - 0.12, y - 0.5, lz - 0.48, lx + 0.12, y + 0.72, lz - 0.34);
+              addWoodCuboid(lx - 0.12, y - 0.5, lz + 0.34, lx + 0.12, y + 0.72, lz + 0.48);
+              if (open) {
+                for (const railY of [-0.06, 0.36]) {
+                  addWoodCuboid(lx - 0.12, y + railY - 0.09, lz - 0.46, lx + 0.34, y + railY + 0.09, lz - 0.34);
+                  addWoodCuboid(lx - 0.12, y + railY - 0.09, lz + 0.34, lx + 0.34, y + railY + 0.09, lz + 0.46);
+                }
+              } else for (const railY of [-0.06, 0.36]) addWoodCuboid(lx - 0.08, y + railY - 0.09, lz - 0.36, lx + 0.08, y + railY + 0.09, lz + 0.36);
+            }
+          }
           continue;
         }
         if (definition.shape === "exhibit") {
@@ -1540,12 +1759,12 @@ export class ChunkWorld {
           const x0 = lx - 0.44; const x1 = lx + 0.44;
           const y0 = y - 0.5; const y1 = y + 0.29;
           const z0 = lz - 0.44; const z1 = lz + 0.44;
-          addQuad(bucket, [[x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]], [1, 0, 0], definition.bottom, 0.82, tint, 0, 0, 0, 0, shadeAt(lx + 1, y, lz));
-          addQuad(bucket, [[x0, y0, z1], [x0, y1, z1], [x0, y1, z0], [x0, y0, z0]], [-1, 0, 0], definition.bottom, 0.72, tint, 0, 0, 0, 0, shadeAt(lx - 1, y, lz));
+          addQuad(bucket, [[x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]], [1, 0, 0], definition.side, 0.82, tint, 0, 0, 0, 0, shadeAt(lx + 1, y, lz));
+          addQuad(bucket, [[x0, y0, z1], [x0, y1, z1], [x0, y1, z0], [x0, y0, z0]], [-1, 0, 0], definition.side, 0.72, tint, 0, 0, 0, 0, shadeAt(lx - 1, y, lz));
           addQuad(bucket, [[x0, y1, z0], [x0, y1, z1], [x1, y1, z1], [x1, y1, z0]], [0, 1, 0], definition.top, 1, tint, 0, 0, 0, 0, shadeAt(lx, y + 1, lz));
           addQuad(bucket, [[x0, y0, z1], [x0, y0, z0], [x1, y0, z0], [x1, y0, z1]], [0, -1, 0], definition.bottom, 0.55, tint, 0, 0, 0, 0, shadeAt(lx, y - 1, lz));
           addQuad(bucket, [[x1, y0, z1], [x1, y1, z1], [x0, y1, z1], [x0, y0, z1]], [0, 0, 1], definition.side, 0.9, tint, 0, 0, 0, 0, shadeAt(lx, y, lz + 1));
-          addQuad(bucket, [[x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [x1, y0, z0]], [0, 0, -1], definition.bottom, 0.76, tint, 0, 0, 0, 0, shadeAt(lx, y, lz - 1));
+          addQuad(bucket, [[x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [x1, y0, z0]], [0, 0, -1], definition.side, 0.76, tint, 0, 0, 0, 0, shadeAt(lx, y, lz - 1));
           continue;
         }
         if (definition.shape === "door") {

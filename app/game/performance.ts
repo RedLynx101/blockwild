@@ -4,6 +4,7 @@ export const MIN_RENDER_DISTANCE = 2;
 export const DEFAULT_RENDER_DISTANCE = 10;
 export const MAX_RENDER_DISTANCE = 16;
 export const DEFAULT_SIMULATION_DISTANCE = 8;
+export type ResourceMode = "auto" | "cpu" | "memory";
 
 export type ViewDistanceSettings = Readonly<{
   renderDistance: number;
@@ -138,6 +139,19 @@ export type FrameWorkBudget = Readonly<{
   entitySteps: number;
   structureColumns: number;
 }>;
+
+export function applyResourceMode(mode: ResourceMode, adaptive: FrameWorkBudget): FrameWorkBudget {
+  if (mode !== "cpu") return adaptive;
+  return {
+    chunkGenerations: Math.max(2, adaptive.chunkGenerations),
+    chunkMeshSections: Math.max(5, adaptive.chunkMeshSections),
+    liquidOperations: Math.max(384, adaptive.liquidOperations),
+    entitySteps: Math.max(256, adaptive.entitySteps),
+    structureColumns: Math.max(64, adaptive.structureColumns),
+  };
+}
+
+export const chunkRetentionPadding = (mode: ResourceMode) => mode === "memory" ? 6 : 2;
 
 export const DEFAULT_FRAME_WORK_BUDGET: FrameWorkBudget = Object.freeze({
   chunkGenerations: 1,

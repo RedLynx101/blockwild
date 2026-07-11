@@ -1,0 +1,374 @@
+import { BLOCKS, BlockId, Item, type ItemCode } from "./data";
+
+export type BlockPosition = Readonly<{ x: number; y: number; z: number }>;
+export type ReadBlock = (x: number, y: number, z: number) => BlockId | undefined;
+
+export type PlantKind = "wild-wheat" | "moonberry" | "sunberry";
+
+export type PlantGrowthProfile = Readonly<{
+  kind: PlantKind;
+  stages: readonly BlockId[];
+  minimumLight: number;
+  baseStageSeconds: number;
+  requiresFarmland: boolean;
+}>;
+
+export const PLANT_GROWTH: Readonly<Record<PlantKind, PlantGrowthProfile>> = Object.freeze({
+  "wild-wheat": Object.freeze({
+    kind: "wild-wheat",
+    stages: Object.freeze([BlockId.WheatSprout, BlockId.WheatYoung, BlockId.WheatCrop]),
+    minimumLight: 0.42,
+    baseStageSeconds: 58,
+    requiresFarmland: true,
+  }),
+  moonberry: Object.freeze({
+    kind: "moonberry",
+    stages: Object.freeze([BlockId.MoonberryShoot, BlockId.MoonberryBush, BlockId.MoonberryBushRipe]),
+    minimumLight: 0.24,
+    baseStageSeconds: 86,
+    requiresFarmland: false,
+  }),
+  sunberry: Object.freeze({
+    kind: "sunberry",
+    stages: Object.freeze([BlockId.SunberryShoot, BlockId.SunberryBush, BlockId.SunberryBushRipe]),
+    minimumLight: 0.55,
+    baseStageSeconds: 72,
+    requiresFarmland: false,
+  }),
+});
+
+const FARM_SOILS = new Set<BlockId>([BlockId.Farmland, BlockId.HydratedFarmland]);
+const LIVING_SOILS = new Set<BlockId>([
+  BlockId.Grass,
+  BlockId.Dirt,
+  BlockId.MeadowGrass,
+  BlockId.SnowyGrass,
+  BlockId.SavannaGrass,
+  BlockId.SwampGrass,
+  BlockId.Farmland,
+  BlockId.HydratedFarmland,
+]);
+const TILLABLE_SOILS = new Set<BlockId>([
+  BlockId.Grass,
+  BlockId.Dirt,
+  BlockId.MeadowGrass,
+  BlockId.SavannaGrass,
+  BlockId.SwampGrass,
+]);
+
+export function plantProfileForBlock(block: BlockId): { profile: PlantGrowthProfile; stage: number } | null {
+  for (const profile of Object.values(PLANT_GROWTH)) {
+    const stage = profile.stages.indexOf(block);
+    if (stage >= 0) return { profile, stage };
+  }
+  return null;
+}
+
+export function isRipePlant(block: BlockId) {
+  const found = plantProfileForBlock(block);
+  return Boolean(found && found.stage === found.profile.stages.length - 1);
+}
+
+export function nextPlantStage(block: BlockId): BlockId | null {
+  const found = plantProfileForBlock(block);
+  if (!found || found.stage >= found.profile.stages.length - 1) return null;
+  return found.profile.stages[found.stage + 1];
+}
+
+/** A stable 0..1 value suitable for growth jitter without touching Math.random. */
+export function farmHash01(seed: string | number, x: number, y: number, z: number, cycle = 0) {
+  let state = typeof seed === "number" ? seed | 0 : 2166136261;
+  if (typeof seed === "string") for (let index = 0; index < seed.length; index += 1) state = Math.imul(state ^ seed.charCodeAt(index), 16777619);
+  state ^= Math.imul(x | 0, 374761393) ^ Math.imul(y | 0, 668265263) ^ Math.imul(z | 0, 1103515245) ^ Math.imul(cycle | 0, 2246822519);
+  state = Math.imul(state ^ (state >>> 13), 1274126177);
+  state ^= state >>> 16;
+  return (state >>> 0) / 4294967295;
+}
+
+export function growthDelaySeconds(block: BlockId, hydrated: boolean, seed: string | number, position: BlockPosition, cycle = 0) {
+  const found = plantProfileForBlock(block);
+  if (!found) return null;
+  const hydrationFactor = found.profile.requiresFarmland ? (hydrated ? 0.72 : 1.8) : (hydrated ? 0.9 : 1);
+  const jitter = 0.82 + farmHash01(seed, position.x, position.y, position.z, cycle) * 0.36;
+  return found.profile.baseStageSeconds * hydrationFactor * jitter;
+}
+
+export function canGrowPlant(block: BlockId, soil: BlockId | undefined, light: number) {
+  const found = plantProfileForBlock(block);
+  if (!found || light < found.profile.minimumLight) return false;
+  return found.profile.requiresFarmland ? FARM_SOILS.has(soil ?? BlockId.Air) : LIVING_SOILS.has(soil ?? BlockId.Air);
+}
+
+export function hasNearbyWater(readBlock: ReadBlock, position: BlockPosition, radius = 4) {
+  const boundedRadius = Math.max(1, Math.min(6, Math.floor(radius)));
+  for (let dy = -1; dy <= 1; dy += 1) {
+    for (let dx = -boundedRadius; dx <= boundedRadius; dx += 1) {
+      for (let dz = -boundedRadius; dz <= boundedRadius; dz += 1) {
+        if (Math.abs(dx) + Math.abs(dz) > boundedRadius * 1.5) continue;
+        if (readBlock(position.x + dx, position.y + dy, position.z + dz) === BlockId.Water) return true;
+      }
+    }
+  }
+  return false;
+}
+
+export function farmlandState(readBlock: ReadBlock, position: BlockPosition) {
+  return hasNearbyWater(readBlock, position) ? BlockId.HydratedFarmland : BlockId.Farmland;
+}
+
+export function canTill(soil: BlockId | undefined, above: BlockId | undefined) {
+  return TILLABLE_SOILS.has(soil ?? BlockId.Air)
+    && (above === BlockId.Air || Boolean(BLOCKS[above ?? BlockId.Air]?.replaceable));
+}
+
+export type PlantingResult = Readonly<{ block: BlockId; consumes: ItemCode; description: string }>;
+
+export function plantingResult(item: ItemCode, soil: BlockId | undefined, above: BlockId | undefined): PlantingResult | null {
+  if (above !== BlockId.Air && !BLOCKS[above ?? BlockId.Air]?.replaceable) return null;
+  if (item === Item.WheatSeeds && FARM_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.WheatSprout, consumes: item, description: "Wild wheat seeds" };
+  if (item === Item.Berry && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.MoonberryShoot, consumes: item, description: "Moonberry cutting" };
+  if (item === Item.Sunberry && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.SunberryShoot, consumes: item, description: "Sunberry cutting" };
+  if (item === Item.Apple && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.AppleSapling, consumes: item, description: "Wild apple pip" };
+  return null;
+}
+
+export type HarvestDrop = Readonly<{ item: ItemCode; count: number }>;
+export type HarvestResult = Readonly<{
+  replacement: BlockId;
+  drops: readonly HarvestDrop[];
+  replanted: boolean;
+}>;
+
+export function harvestPlant(block: BlockId, useScythe = false, yieldRoll = 0.5): HarvestResult | null {
+  const roll = Math.max(0, Math.min(0.9999, yieldRoll));
+  if (block === BlockId.WheatCrop) {
+    const wheat = 2 + Math.floor(roll * 2) + (useScythe ? 1 : 0);
+    const seeds = 1 + (roll > 0.56 ? 1 : 0) + (useScythe && roll > 0.82 ? 1 : 0);
+    return {
+      replacement: useScythe ? BlockId.WheatSprout : BlockId.Air,
+      drops: [{ item: Item.Wheat, count: wheat }, { item: Item.WheatSeeds, count: seeds }],
+      replanted: useScythe,
+    };
+  }
+  if (block === BlockId.MoonberryBushRipe) {
+    return {
+      replacement: BlockId.MoonberryBush,
+      drops: [{ item: Item.Berry, count: 2 + Math.floor(roll * 3) + (useScythe ? 1 : 0) }],
+      replanted: true,
+    };
+  }
+  if (block === BlockId.SunberryBushRipe) {
+    return {
+      replacement: BlockId.SunberryBush,
+      drops: [{ item: Item.Sunberry, count: 2 + Math.floor(roll * 2) + (useScythe ? 1 : 0) }],
+      replanted: true,
+    };
+  }
+  if (block === BlockId.AppleFruit) return { replacement: BlockId.Air, drops: [{ item: Item.Apple, count: 1 }], replanted: false };
+  return null;
+}
+
+export type PlannedFarmBlock = Readonly<{ x: number; y: number; z: number; type: BlockId }>;
+
+/**
+ * Plans a compact, asymmetric orchard tree. Fruit occupies its own hanging
+ * block below lower canopy leaves, so players can harvest it without damaging
+ * the tree. The same seed/origin always produces the same plan.
+ */
+export function planAppleTree(origin: BlockPosition, seed: string | number): readonly PlannedFarmBlock[] {
+  const height = 5 + Math.floor(farmHash01(seed, origin.x, origin.y, origin.z) * 2);
+  const blocks = new Map<string, PlannedFarmBlock>();
+  const put = (x: number, y: number, z: number, type: BlockId) => blocks.set(`${x},${y},${z}`, { x, y, z, type });
+  for (let dy = 0; dy < height; dy += 1) put(origin.x, origin.y + dy, origin.z, BlockId.WildwoodLog);
+
+  const canopyY = origin.y + height - 1;
+  for (let dy = -1; dy <= 2; dy += 1) {
+    const radius = dy >= 2 ? 1 : 2;
+    for (let dx = -radius; dx <= radius; dx += 1) {
+      for (let dz = -radius; dz <= radius; dz += 1) {
+        const edge = Math.abs(dx) + Math.abs(dz) + Math.max(0, dy);
+        if (edge > 4 || (dx === 0 && dz === 0 && dy <= 0)) continue;
+        if (edge === 4 && farmHash01(seed, origin.x + dx, canopyY + dy, origin.z + dz, 3) < 0.34) continue;
+        put(origin.x + dx, canopyY + dy, origin.z + dz, BlockId.AppleLeaves);
+      }
+    }
+  }
+
+  const fruitCandidates: BlockPosition[] = [];
+  for (let dx = -2; dx <= 2; dx += 1) for (let dz = -2; dz <= 2; dz += 1) {
+    if (Math.abs(dx) + Math.abs(dz) < 2 || Math.abs(dx) + Math.abs(dz) > 3) continue;
+    const x = origin.x + dx;
+    const y = canopyY - 2;
+    const z = origin.z + dz;
+    if (blocks.get(`${x},${y + 1},${z}`)?.type === BlockId.AppleLeaves && !blocks.has(`${x},${y},${z}`)) fruitCandidates.push({ x, y, z });
+  }
+  fruitCandidates
+    .sort((a, b) => farmHash01(seed, a.x, a.y, a.z, 9) - farmHash01(seed, b.x, b.y, b.z, 9))
+    .slice(0, 2 + Math.floor(farmHash01(seed, origin.x, origin.y, origin.z, 10) * 3))
+    .forEach(({ x, y, z }) => put(x, y, z, BlockId.AppleFruit));
+  return [...blocks.values()];
+}
+
+/** Selects a bounded set of empty hanging-fruit positions for periodic regrowth. */
+export function planAppleFruitRegrowth(
+  origin: BlockPosition,
+  seed: string | number,
+  cycle: number,
+  readBlock: ReadBlock,
+  maximum = 3,
+) {
+  const tree = planAppleTree(origin, seed);
+  const candidates = tree
+    .filter((block) => block.type === BlockId.AppleFruit)
+    .filter((block) => readBlock(block.x, block.y, block.z) === BlockId.Air && readBlock(block.x, block.y + 1, block.z) === BlockId.AppleLeaves)
+    .sort((a, b) => farmHash01(seed, a.x, a.y, a.z, cycle) - farmHash01(seed, b.x, b.y, b.z, cycle));
+  return candidates.slice(0, Math.max(0, Math.min(maximum, 4)));
+}
+
+export type BucketAction = Readonly<{
+  kind: "fill" | "pour";
+  removeTarget: boolean;
+  place?: BlockId;
+  resultItem: ItemCode;
+}>;
+
+export function resolveBucketAction(item: ItemCode, target: BlockId | undefined, placement: BlockId | undefined): BucketAction | null {
+  if (item === Item.Bucket && target === BlockId.Water) return { kind: "fill", removeTarget: true, resultItem: Item.WaterBucket };
+  if (item === Item.Bucket && target === BlockId.Lava) return { kind: "fill", removeTarget: true, resultItem: Item.LavaBucket };
+  const canReplace = placement === BlockId.Air || Boolean(BLOCKS[placement ?? BlockId.Air]?.replaceable);
+  if (!canReplace) return null;
+  if (item === Item.WaterBucket) return { kind: "pour", removeTarget: false, place: BlockId.Water, resultItem: Item.Bucket };
+  if (item === Item.LavaBucket) return { kind: "pour", removeTarget: false, place: BlockId.Lava, resultItem: Item.Bucket };
+  return null;
+}
+
+export const FENCE_BLOCKS = new Set<BlockId>([
+  BlockId.WildwoodFence,
+  BlockId.FenceGateNorthSouthClosed,
+  BlockId.FenceGateEastWestClosed,
+  BlockId.FenceGateNorthSouthOpen,
+  BlockId.FenceGateEastWestOpen,
+]);
+
+export type FenceConnections = Readonly<{ north: boolean; east: boolean; south: boolean; west: boolean; mask: number }>;
+
+export function fenceConnections(readBlock: ReadBlock, position: BlockPosition): FenceConnections {
+  const connects = (x: number, z: number) => {
+    const type = readBlock(x, position.y, z);
+    const definition = BLOCKS[type ?? BlockId.Air];
+    return FENCE_BLOCKS.has(type ?? BlockId.Air) || Boolean(definition?.solid && (!definition.shape || definition.shape === "cube"));
+  };
+  const north = connects(position.x, position.z - 1);
+  const east = connects(position.x + 1, position.z);
+  const south = connects(position.x, position.z + 1);
+  const west = connects(position.x - 1, position.z);
+  return { north, east, south, west, mask: (north ? 1 : 0) | (east ? 2 : 0) | (south ? 4 : 0) | (west ? 8 : 0) };
+}
+
+export function fenceGateForYaw(yaw: number) {
+  return Math.abs(Math.sin(yaw)) > Math.abs(Math.cos(yaw)) ? BlockId.FenceGateEastWestClosed : BlockId.FenceGateNorthSouthClosed;
+}
+
+export function toggleFenceGate(block: BlockId): BlockId | null {
+  if (block === BlockId.FenceGateNorthSouthClosed) return BlockId.FenceGateNorthSouthOpen;
+  if (block === BlockId.FenceGateEastWestClosed) return BlockId.FenceGateEastWestOpen;
+  if (block === BlockId.FenceGateNorthSouthOpen) return BlockId.FenceGateNorthSouthClosed;
+  if (block === BlockId.FenceGateEastWestOpen) return BlockId.FenceGateEastWestClosed;
+  return null;
+}
+
+export function fenceCollisionHeight(block: BlockId) {
+  return BLOCKS[block]?.collisionHeight ?? (BLOCKS[block]?.solid ? 1 : 0);
+}
+
+export type LeadAnchor = Readonly<{
+  mobId: string;
+  fence?: BlockPosition;
+  maximumLength: number;
+}>;
+
+export type SavedLeadAnchor = Readonly<{
+  mobId: number;
+  fence?: BlockPosition;
+  maximumLength: number;
+}>;
+
+const MAX_SAVED_LEADS = 128;
+const MAX_LEAD_COORDINATE = 30_000_000;
+
+function safeLeadCoordinate(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && Math.abs(value) <= MAX_LEAD_COORDINATE
+    ? Math.round(value)
+    : null;
+}
+
+/** Produces a small, data-only save payload and ignores stale creature ids. */
+export function serializeLeadAnchors(leads: ReadonlyMap<number, LeadAnchor>, liveMobIds: ReadonlySet<number>) {
+  const saved: SavedLeadAnchor[] = [];
+  for (const [mobId, lead] of leads) {
+    if (saved.length >= MAX_SAVED_LEADS) break;
+    if (!Number.isSafeInteger(mobId) || mobId < 0 || !liveMobIds.has(mobId)) continue;
+    const maximumLength = Math.max(2, Math.min(16, Number.isFinite(lead.maximumLength) ? lead.maximumLength : 9));
+    const fenceX = safeLeadCoordinate(lead.fence?.x);
+    const fenceY = safeLeadCoordinate(lead.fence?.y);
+    const fenceZ = safeLeadCoordinate(lead.fence?.z);
+    saved.push({
+      mobId,
+      maximumLength,
+      ...(fenceX !== null && fenceY !== null && fenceZ !== null ? { fence: { x: fenceX, y: fenceY, z: fenceZ } } : {}),
+    });
+  }
+  return saved;
+}
+
+/** Backward-compatible and hostile-input-safe lead restoration. */
+export function restoreLeadAnchors(value: unknown, liveMobIds: ReadonlySet<number>) {
+  const restored = new Map<number, LeadAnchor>();
+  if (!Array.isArray(value)) return restored;
+  for (const candidate of value.slice(0, MAX_SAVED_LEADS)) {
+    if (!candidate || typeof candidate !== "object") continue;
+    const entry = candidate as Partial<SavedLeadAnchor>;
+    const mobId = entry.mobId;
+    if (!Number.isSafeInteger(mobId) || (mobId ?? -1) < 0 || !liveMobIds.has(mobId!)) continue;
+    const maximumLength = Math.max(2, Math.min(16, typeof entry.maximumLength === "number" && Number.isFinite(entry.maximumLength) ? entry.maximumLength : 9));
+    const fenceX = safeLeadCoordinate(entry.fence?.x);
+    const fenceY = safeLeadCoordinate(entry.fence?.y);
+    const fenceZ = safeLeadCoordinate(entry.fence?.z);
+    restored.set(mobId!, {
+      mobId: String(mobId),
+      maximumLength,
+      ...(fenceX !== null && fenceY !== null && fenceZ !== null ? { fence: { x: fenceX, y: fenceY, z: fenceZ } } : {}),
+    });
+  }
+  return restored;
+}
+
+/**
+ * Hitching completes an already-consumed lead, so it must not depend on the
+ * player still holding a second lead item after attaching the first one.
+ */
+export function canHitchLead(crouching: boolean, target: BlockId, leads: Iterable<LeadAnchor>) {
+  if (!crouching || !FENCE_BLOCKS.has(target)) return false;
+  for (const lead of leads) if (!lead.fence) return true;
+  return false;
+}
+
+export type LeadConstraint = Readonly<{ x: number; y: number; z: number; distance: number; taut: boolean; breaks: boolean }>;
+
+export function constrainLead(mob: BlockPosition, anchor: BlockPosition, maximumLength = 9): LeadConstraint {
+  const dx = anchor.x - mob.x;
+  const dy = anchor.y - mob.y;
+  const dz = anchor.z - mob.z;
+  const distance = Math.hypot(dx, dy, dz);
+  const limit = Math.max(2, maximumLength);
+  if (distance <= limit || distance === 0) return { x: 0, y: 0, z: 0, distance, taut: false, breaks: false };
+  const correction = Math.min(0.45, (distance - limit) * 0.28);
+  return {
+    x: dx / distance * correction,
+    y: dy / distance * correction * 0.35,
+    z: dz / distance * correction,
+    distance,
+    taut: true,
+    breaks: distance > limit * 1.85,
+  };
+}

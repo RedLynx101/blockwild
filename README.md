@@ -1,27 +1,31 @@
 # Blockwild
 
-Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 17 surface biomes, cave networks, temples, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v0.2.0 Menagerie**.
+Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 17 surface biomes, cave networks, temples, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v0.3.0 Hearthwild**.
 
 The project is a real game rather than a voxel-rendering demo. You can mine, build, craft, smelt, farm, fight, collect field notes, manage several worlds, and carry those worlds between browsers with export files.
 
-![Blockwild field guide with all 28 rendered creatures](public/creatures/blockwild-creatures.svg)
+**Play the current hosted build:** [blockwild.noahhicks.chatgpt.site](https://blockwild.noahhicks.chatgpt.site)
+
+![Blockwild field guide with all 32 rendered creatures](public/creatures/blockwild-creatures.svg)
 
 ## What is in the game
 
 - **Endless deterministic terrain.** Oceans, rivers, coasts, forests, wetlands, deserts, snowfields, highlands, volcanic wastes, caves, aquifers, lava, ores, and structures are generated from a text seed.
 - **Survival and builder modes.** Survival tracks health, hunger, armor, XP, tool durability, fall and lava damage, hostile nights, and dropped inventory. Builder mode provides fast harvesting, infinite placement, and a creative catalog.
 - **A full item loop.** The 36-slot inventory supports stacking, splitting, double-click collection, hotbar selection, equipment slots, dropped items, and shift-click transfers. Hand crafting uses a 2 x 2 grid; crafting tables unlock shaped 3 x 3 recipes. The searchable recipe book previews patterns on hover and stages ingredients into the board when clicked; it never silently crafts an output. Mirrored axe patterns work from either side. Tools, armor, materials, plants, food, torches, doors, beds, boats, cages, nets, and jars have purpose-built inventory icons instead of flat color swatches.
-- **Machines and storage.** Furnaces continue processing against real elapsed time. Chests hold 27 slots, and adjacent chests merge into 54-slot storage. Farmland, crops, saplings, tree felling, loot-bearing generated chests, and interactive doors are implemented.
+- **Machines, storage, and farming.** Furnaces continue processing against real elapsed time. Chests hold 27 slots, and adjacent chests merge into 54-slot storage. Hoes till soil, nearby water hydrates farmland, wild wheat grows through visible stages, and a scythe harvests and replants it in one action. Moonberry and Sunberry bushes regrow fruit after right-click harvesting. Planted apples become asymmetric orchard trees with separately harvestable hanging fruit that returns over time. Empty buckets collect water or lava and filled buckets place it again.
 - **Placement-aware building pieces.** Floor torches stand upright, while torches placed against a side face lean out from that wall, persist their direction, and break when their support disappears. Doors render textured narrow edges instead of exposing an untextured slab.
+- **Connected enclosures.** Wildwood fences join neighboring fences, gates, and solid blocks; closed pieces use 1.25-block collision while open gates remain pathable. Braided Leads attach creatures to the player and can be hitched to an enclosure.
 - **Beds and flexible time skipping.** A Wildwood Bed can advance the world from any hour to the next dawn or next dusk, always moving forward. Multiplayer worlds can require any player, a configurable percentage, or every connected player to choose the same destination.
 - **Four material tiers.** Wood, stone, sunmetal, and star-crystal tools have different mining speeds, damage, harvest requirements, and durability. Trailhide and sunmetal armor reduce incoming damage and wear down in use.
-- **A living field guide.** The filterable bestiary tracks discovery, kills, captures, drops, habitat, activity, behavior, utility, and lore for 22 core creatures and six butterfly species. Each entry and list icon uses a front-three-quarter portrait rendered from the same model as gameplay. The roster includes distinct surface wildlife, perching birds, ocean/river/cave fish, temple guardians, a ranged Skeleton Archer, and the tameable banana-rabbit Peelop.
-- **Creature keeping.** Waykeeper Cages preserve health, age, baby state, name, temperament, ownership, and pet commands. Friendly and neutral creatures can be moved freely; hostiles must be below half health or at one heart. Tamed, named, POI-resident, and enclosed creatures are protected from normal despawning. Connected Butterfly Conservatory blocks grow into habitats up to 20 blocks, accept one jarred butterfly per block, add flowers and branches by tier, and animate their residents landing and flying inside.
+- **A living field guide.** The filterable bestiary tracks discovery, kills, captures, taming, breeding, food, sentience, drops, habitat, activity, behavior, utility, and lore for 26 core creatures and six butterfly species. Each entry and list icon uses a front-three-quarter portrait rendered from the same model as gameplay, with a completion ring and a hidden post-tame section where relevant. Unknown entries retain a habitat clue instead of becoming blank cards.
+- **Creature keeping.** Waykeeper Cages preserve health, age, baby state, name, temperament, ownership, and pet commands. Friendly and neutral creatures can be moved freely; hostiles must be below half health or at one heart. Tamed, named, POI-resident, and enclosed creatures are protected from normal despawning. Eligible wildlife can be fed, healed, bred, and raised from babies. A Shadecrawler can be calmed with Moonberries, bonded with a rare Nocturne Heart, fed to three times its wild size, saddled, and ridden. Connected Butterfly Conservatory blocks grow into habitats up to 20 blocks, accept one jarred butterfly per block, add flowers and branches by tier, and animate their residents landing and flying inside.
 - **Water travel and ecology.** Water animates, flows downward and outward, renews a source between supported adjacent sources, and has oxygen/drowning mechanics plus a shore-exit boost. Oceans, rivers, and underground aquifers have distinct attackable fish. The two-seat Wayfarer is a larger sailboat with a working sail, water-constrained steering, and an 18-slot cargo hold opened with crouch-right-click.
 - **Temples and biome landmarks.** Sparse desert and forest temples contain generated chests, Reliquary Sentinel guardians, and a rare 4,096-use Sunward Compass that points toward nearby unopened structure caches. Peelop groves and meadow butterfly sanctuaries add gentler deterministic landmarks without turning the world into a dense POI map.
-- **A changing sky and soundscape.** Day/night lighting, larger sun and moon discs, stars, poofy instanced cloud banks, biome-aware rain, thunder, snow, mist, sandstorms and ashfall, underwater and underground atmosphere, placed and held lights, synthesized ambience, sampled effects, and biome/activity-driven music respond to the world state. The soundtrack includes two Wildwood Dawn variants and two Emberdeep Passage variants.
+- **A changing sky and soundscape.** Day/night lighting, larger sun and moon discs, stars, poofy instanced cloud banks, biome-aware rain, thunder, snow, mist, sandstorms and ashfall, underwater and underground atmosphere, falling leaves, animated torchlight, sampled creature calls, terrain-aware footsteps, synthesized fallbacks, and biome/activity-driven music respond to the world state. The soundtrack includes Wildwood Dawn and Emberdeep pairs plus the Fernlight Ramble forest cue and Meadowglass Morning meadow cue.
 - **First- and third-person play.** The camera cycles between first person, rear third person, and front third person. The local and remote player models are articulated and animate for movement, crouching, running, mining, and held items.
-- **Direct multiplayer.** A host can create a single-use WebRTC offer for a guest, accept the returned answer, and maintain several peer connections. The host is authoritative for the world; there is no matchmaking service or cloud-owned save.
+- **Adjustable performance policy.** Render distance defaults to 10 chunks and scales to 16, while simulation distance defaults to 8 and never exceeds the view. Adaptive budgets protect frame time; optional CPU and memory reserve modes trade additional local resources for steadier streaming. The settings menu can enable a compact live FPS counter.
+- **One-code multiplayer.** A host chooses one short invite code and shares it with guests. A lightweight [Trystero](https://github.com/dmotz/trystero) rendezvous exchanges the underlying WebRTC offer and answer automatically; the existing manual exchange remains under an advanced fallback. The host stays authoritative for the world, multiplayer menus do not pause the simulation, and there is no cloud-owned save.
 - **Browser-owned worlds.** The title screen manages multiple local worlds with rename, duplicate, delete, import, and export operations. Saves are versioned and older supported saves are migrated without regenerating their edited blocks.
 
 ## Gameplay loop
@@ -32,7 +36,7 @@ The surface is safer in daylight, though not empty. At night and underground, ho
 
 Craft a Wildwood Bed at a crafting table with three Cloudwool across the top row and three Wildwood Planks below. It needs two clear, supported blocks and points away from the player when placed. Right-click either half to choose the next dawn (about 6:30 AM) or next dusk (about 6:30 PM); this works at any time and never rewinds the clock.
 
-World creation exposes controls for difficulty, day length, multiplayer rest policy, mob and butterfly density, cave frequency, biome scale, resource abundance, structures, weather, inventory retention, and friendly fire. Percentage-based rest rules accept a 10%-100% threshold and default to 50%.
+World creation exposes controls for difficulty, day length, multiplayer rest policy, mob and butterfly density, cave frequency, biome scale, resource abundance, structures, inventory retention, and friendly fire. Weather belongs to the seeded biome-aware world simulation rather than a player-facing toggle. Percentage-based rest rules accept a 10%-100% threshold and default to 50%.
 
 ## Controls
 
@@ -45,7 +49,7 @@ World creation exposes controls for difficulty, day length, multiplayer rest pol
 | `Ctrl` | Sprint while moving (alternate to double-tap `W`) |
 | `V` | Cycle first person, rear third person, and front third person |
 | Hold left mouse | Mine the targeted block or attack the targeted creature |
-| Right mouse | Use, place, open, eat, rest, board, catch, or release; crouch-use opens boat cargo and pet commands |
+| Right mouse | Use, place, open, eat, plant, till, harvest, pour, rest, board, catch, or release; crouch-use opens boat cargo and pet commands or hitches a lead to a fence |
 | `1`-`9` / mouse wheel | Select a hotbar slot |
 | `E` | Open the inventory and 2 x 2 crafting grid |
 | `Q` | Drop one item from the selected stack |
@@ -60,15 +64,14 @@ Coarse-pointer devices get an on-screen movement pad, touch-look zone, jump, min
 
 Multiplayer is a session layer over the host's existing world, not a shared cloud account:
 
-1. The host opens **Pause > Multiplayer**, chooses a name, and creates an invite code.
-2. The guest pastes that invite, creates an answer code, and sends it back.
-3. The host accepts the answer to finish the direct WebRTC connection.
+1. The host opens **Pause > Multiplayer**, chooses a name and invite code, then selects **Host with this code**.
+2. Each guest enters the same code and selects **Join with code**. Blockwild performs the WebRTC negotiation in the background.
 
-The host owns the world catalog entry and sends authoritative state for player poses, appearance, terrain edits, creatures, drops, Wayfarer positions/passengers, time, weather, world options, and rest votes. A time skip resolves only when enough connected players choose the same dawn or dusk target under the world's Any Player, Percentage, or All Players rule. Guests receive session state but do not gain ownership of the host's save. Connection codes may contain session-negotiation data and should only be shared with people you trust.
+The host owns the world catalog entry and sends authoritative state for player poses, appearance, terrain edits, creatures, drops, Wayfarer positions/passengers, time, weather, world options, and rest votes. A time skip resolves only when enough connected players choose the same dawn or dusk target under the world's Any Player, Percentage, or All Players rule. Guests receive session state but do not gain ownership of the host's save. The invite code scopes the decentralized signaling room and should only be shared with people you trust.
 
 Inventory and container action types are already defined in the multiplayer protocol, but the current engine does not yet synchronize those systems between peers.
 
-Sessions require a secure context and browser WebRTC support. The default connection uses a public STUN server but has no TURN relay, so restrictive NAT or firewall configurations can still prevent peers from connecting.
+Sessions require a secure context and browser WebRTC support. One-code discovery uses Trystero's Nostr signaling strategy; the negotiated game session remains peer-to-peer and host-authoritative. The default connection uses a public STUN server but has no TURN relay, so restrictive NAT or firewall configurations can still prevent peers from connecting. The advanced manual offer/answer flow is retained for rendezvous outages, but it does not solve a network that blocks direct WebRTC.
 
 ## Repository layout
 
@@ -82,12 +85,18 @@ blockwild/
 |     |- VoxelGame.tsx         React shell: menus, HUD, inventory, and overlays
 |     |- engine.ts             Three.js simulation, physics, combat, and interaction
 |     |- world.ts              Terrain generation, chunks, meshing, and block edits
+|     |- caves.ts              Generator-v4 cave mouths, chambers, chimneys, and strata
 |     |- world-storage.ts      Local world catalog, import/export, and migrations
 |     |- data.ts               Blocks, items, recipes, loot, fuel, and smelting
+|     |- farming.ts            Crops, orchards, buckets, fences, gates, and lead rules
+|     |- world-effects.ts      Bounded falling leaves and shared torch flicker samples
 |     |- mobs.ts               Creature definitions and bestiary data
 |     |- mob-models.ts         Canonical production models shared by game and tools
 |     |- fauna.ts              Stable steering, bird behavior, habitats, and despawn rules
+|     |- creature-care.ts      Generic feeding, breeding, babies, and maturation
+|     |- creature-sounds.ts    Species event cues and synthesized fallback metadata
 |     |- peelop.ts             Pet taming, care, commands, naming, breeding, and persistence
+|     |- shadecrawler.ts       Trust, taming, growth, saddle, and mount progression
 |     |- creature-cage.ts      Exact creature metadata capture/release codec
 |     |- butterflies.ts        Butterfly spawning, flight, capture, and release
 |     |- butterfly-exhibit.ts  Connected habitat topology, capacity, flowers, and poses
@@ -101,6 +110,7 @@ blockwild/
 |     |- model-specs.ts        Shared box-model specifications and grounding data
 |     |- player-model.ts       Local/remote player model and pose interpolation
 |     |- multiplayer.ts        WebRTC signaling, channels, protocol, and peer state
+|     |- invite-rendezvous.ts  One-code Trystero discovery and automatic negotiation
 |     `- audio.ts              Music scenes, sampled effects, and synthesized audio
 |- public/                     Music, effects, generated creature portraits, and icons
 |- scripts/
@@ -124,7 +134,7 @@ React owns the interface and translates player actions into method calls on `Vox
 
 `ChunkWorld` owns deterministic generation, streamed chunk sections, geometry, terrain edits, skylight data, and nearby light indices. Generated terrain is reproducible from the seed, so saves store player-made edits rather than a copy of every generated block.
 
-`mob-models.ts` is the canonical builder for the 22 core creatures. The game engine instantiates those models directly, while the inspection script extracts their actual posed Three.js geometry for grounding checks and bestiary portraits. This keeps the in-game mob, its catalog image, and its QA render on one implementation.
+`mob-models.ts` is the canonical builder for the 26 core creatures. The game engine instantiates those models directly, while the inspection script extracts their actual posed Three.js geometry for grounding checks and bestiary portraits. This keeps the in-game mob, its catalog image, and its QA render on one implementation.
 
 The deployment is a Next.js 16 app compiled through Vinext and Vite for a Cloudflare Worker. D1 and R2 are currently disabled, and the game does not depend on a server database.
 
@@ -157,7 +167,7 @@ npm test
 npm run benchmark:simulation
 ```
 
-`npm test` first creates and validates the production artifact, then runs the Node test suite. Coverage includes deterministic generation, chunk boundaries and streaming, save migration and failure isolation, world options, meshing, skylight and local lighting, directional torch persistence, bed placement and dawn/dusk transitions, multiplayer rest thresholds, inventory behavior, crafting, armor, doors, trees, furnaces, chests, drops, creature grounding and death, player animation, butterflies, portrait export, multiplayer protocol behavior, and rendered deployment metadata.
+`npm test` first creates and validates the production artifact, then runs the Node test suite. Coverage includes deterministic generation, cave and terrain variance, chunk boundaries and streaming, save migration and failure isolation, world options, meshing, skylight and local lighting, directional torch persistence, plant growth and harvest rules, orchards, buckets, fences and leads, bed placement and dawn/dusk transitions, one-code and manual multiplayer negotiation, inventory behavior, icon semantics, crafting, armor, doors, trees, furnaces, chests, drops, creature grounding, husbandry and death, Shadecrawler progression, player animation, butterflies, portrait export, multiplayer protocol behavior, and rendered deployment metadata.
 
 A focused test can be run without the build wrapper:
 
@@ -173,7 +183,7 @@ npm run models:render -- --out outputs/model-inspection
 
 The command writes isometric, front, and side SVG sheets plus a machine-readable grounding manifest. PNG copies are also written when `sharp` is available.
 
-To render all 28 bestiary entries as individual front-three-quarter portraits and a field-guide sheet:
+To render all 32 bestiary entries as individual front-three-quarter portraits and a field-guide sheet:
 
 ```bash
 npm run models:render -- --creatures --portraits outputs/model-portraits --portrait-only --portrait-png
@@ -201,7 +211,7 @@ No `wrangler.jsonc` is required. Local Cloudflare bindings are derived from `.op
 
 ## Saves, ownership, and limits
 
-Worlds live in `localStorage` for the current browser and origin. A save includes its last-written game version, terrain and liquid edits, player appearance and position, inventory metadata, equipment, crafting state, health, hunger, XP, time, dynamic weather, furnaces, chests, conservatories, boats, persistent creatures and pets, drops, sapling timers, activated POI residents, bestiary progress, and world options.
+Worlds live in `localStorage` for the current browser and origin. A save includes its last-written game version, terrain and liquid edits, player appearance and position, inventory metadata, equipment, crafting state, health, hunger, XP, time, dynamic weather, furnaces, chests, conservatories, boats, persistent creatures and pets, active lead anchors, drops, crop/sapling/orchard timers, activated POI residents, bestiary progress, and world options.
 
 That design keeps single-player play private and serverless, but it has consequences:
 

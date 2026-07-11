@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
 import { Item } from "../app/game/data.ts";
-import { butterflyCaptureAlongRay, butterflyKindForBiome } from "../app/game/butterflies.ts";
+import { BUTTERFLY_FLIGHT_TUNING, butterflyCaptureAlongRay, butterflyKindForBiome } from "../app/game/butterflies.ts";
 import { MOB_DEFS } from "../app/game/mobs.ts";
 import { BiomeId } from "../app/game/world.ts";
 
@@ -23,4 +23,11 @@ test("the net captures the nearest butterfly inside its view cone", () => {
     { id: 3, kind: "embertip", x: 0, y: 2, z: -5 },
   ], origin, direction, 4.2);
   assert.equal(id, 2);
+});
+
+test("wild butterflies spend substantially more time flying than perched", () => {
+  assert.ok(BUTTERFLY_FLIGHT_TUNING.seekFlowerChance < 0.4);
+  const averageFlight = BUTTERFLY_FLIGHT_TUNING.flightSecondsMin + BUTTERFLY_FLIGHT_TUNING.flightSecondsRange / 2;
+  const averageLanding = BUTTERFLY_FLIGHT_TUNING.landedSecondsMin + BUTTERFLY_FLIGHT_TUNING.landedSecondsRange / 2;
+  assert.ok(averageFlight > averageLanding * 1.75);
 });

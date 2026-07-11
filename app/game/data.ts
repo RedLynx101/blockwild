@@ -79,6 +79,26 @@ export enum BlockId {
   BananaPlant = 77,
   TempleSandstone = 78,
   RuneStone = 79,
+  MoonberryShoot = 80,
+  MoonberryBush = 81,
+  MoonberryBushRipe = 82,
+  SunberryShoot = 83,
+  SunberryBush = 84,
+  SunberryBushRipe = 85,
+  AppleSapling = 86,
+  AppleLeaves = 87,
+  AppleFruit = 88,
+  WheatSprout = 89,
+  WheatYoung = 90,
+  HydratedFarmland = 91,
+  WildwoodFence = 92,
+  FenceGateNorthSouthClosed = 93,
+  FenceGateEastWestClosed = 94,
+  FenceGateNorthSouthOpen = 95,
+  FenceGateEastWestOpen = 96,
+  Limestone = 97,
+  MoonSlate = 98,
+  SunbakedClay = 99,
 }
 
 export const Item = {
@@ -148,6 +168,19 @@ export const Item = {
   GlowScale: 162,
   BreatherCharm: 163,
   SunwardCompass: 164,
+  Sunberry: 165,
+  WheatSeeds: 166,
+  WoodHoe: 167,
+  StoneHoe: 168,
+  IronHoe: 169,
+  HarvestScythe: 170,
+  Bucket: 171,
+  WaterBucket: 172,
+  LavaBucket: 173,
+  Lead: 174,
+  WildwoodFenceGate: 175,
+  Saddle: 176,
+  NocturneHeart: 177,
 } as const;
 
 export type ItemCode = number;
@@ -178,9 +211,13 @@ export type BlockDefinition = {
   color: string;
   preferredTool: BlockTool;
   requiredTier: number;
-  shape?: "cube" | "cross" | "torch" | "door" | "chest" | "bed" | "exhibit";
+  shape?: "cube" | "cross" | "torch" | "door" | "chest" | "bed" | "exhibit" | "bush" | "fruit" | "fence" | "gate";
   replaceable?: boolean;
   liquid?: "water" | "lava";
+  /** Partial-height collision used by connected fences and similar blocks. */
+  collisionHeight?: number;
+  /** Blocks in the same group visually connect across horizontal faces. */
+  connectGroup?: "fence";
 };
 
 export type ItemDefinition = {
@@ -198,8 +235,16 @@ export type ItemDefinition = {
   armor?: number;
   food?: number;
   fuel?: number;
-  useKind?: "net" | "release-creature" | "boat" | "creature-cage" | "magic-relic";
+  useKind?: "net" | "release-creature" | "boat" | "creature-cage" | "magic-relic" | "plant" | "hoe" | "scythe" | "bucket" | "lead";
   creatureKind?: string;
+  /** Initial world block produced by planting this item rather than placing it directly. */
+  plantBlock?: BlockId;
+  /** Contents rendered in and placed from a bucket. */
+  bucketLiquid?: "water" | "lava";
+  /** Semantic UI hook for non-cube inventory artwork. */
+  iconKind?: "crafting-table" | "bucket" | "fence-gate" | "lead" | "seed" | "produce";
+  /** Reuse a world atlas texture for the handheld/icon representation. */
+  worldTextureBlock?: BlockId;
 };
 
 const block = (
@@ -274,7 +319,7 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.Basalt]: block(BlockId.Basalt, "Basalt", 49, 49, 49, 2.35, "#3a3437", "pickaxe", 2),
   [BlockId.Obsidian]: block(BlockId.Obsidian, "Obsidian", 50, 50, 50, 7.5, "#29213d", "pickaxe", 4),
   [BlockId.CrystalBlock]: block(BlockId.CrystalBlock, "Star Crystal Block", 51, 51, 51, 3.2, "#61dce5", "pickaxe", 3, { layer: "emissive" }),
-  [BlockId.Chest]: block(BlockId.Chest, "Wildwood Chest", 11, 52, 11, 1.2, "#9f6b35", "axe", 0, { shape: "chest" }),
+  [BlockId.Chest]: block(BlockId.Chest, "Wildwood Chest", 90, 89, 11, 1.2, "#9f6b35", "axe", 0, { shape: "chest" }),
   [BlockId.TallGrass]: block(BlockId.TallGrass, "Tall Grass", 53, 53, 53, 0.05, "#68a744", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
   [BlockId.RedFlower]: block(BlockId.RedFlower, "Ember Bloom", 54, 54, 54, 0.05, "#d64f49", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
   [BlockId.BlueFlower]: block(BlockId.BlueFlower, "Skybell", 55, 55, 55, 0.05, "#558ed9", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
@@ -309,6 +354,26 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.BananaPlant]: block(BlockId.BananaPlant, "Goldenleaf Plant", 69, 69, 69, 0.12, "#e8c542", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
   [BlockId.TempleSandstone]: block(BlockId.TempleSandstone, "Sunglyph Sandstone", 71, 71, 71, 1.7, "#d8b868", "pickaxe", 1),
   [BlockId.RuneStone]: block(BlockId.RuneStone, "Wild Rune Stone", 72, 72, 72, 2.1, "#58745d", "pickaxe", 2, { layer: "emissive" }),
+  [BlockId.MoonberryShoot]: block(BlockId.MoonberryShoot, "Moonberry Shoot", 73, 73, 73, 0.12, "#526f3f", "hand", 0, { solid: false, layer: "cutout", shape: "bush" }),
+  [BlockId.MoonberryBush]: block(BlockId.MoonberryBush, "Moonberry Bush", 74, 74, 74, 0.18, "#47713d", "hand", 0, { solid: false, layer: "cutout", shape: "bush" }),
+  [BlockId.MoonberryBushRipe]: block(BlockId.MoonberryBushRipe, "Ripe Moonberry Bush", 75, 75, 75, 0.18, "#67458a", "hand", 0, { solid: false, layer: "cutout", shape: "bush" }),
+  [BlockId.SunberryShoot]: block(BlockId.SunberryShoot, "Sunberry Shoot", 76, 76, 76, 0.12, "#6d813c", "hand", 0, { solid: false, layer: "cutout", shape: "bush" }),
+  [BlockId.SunberryBush]: block(BlockId.SunberryBush, "Sunberry Bush", 77, 77, 77, 0.18, "#66863c", "hand", 0, { solid: false, layer: "cutout", shape: "bush" }),
+  [BlockId.SunberryBushRipe]: block(BlockId.SunberryBushRipe, "Ripe Sunberry Bush", 78, 78, 78, 0.18, "#d58b3c", "hand", 0, { solid: false, layer: "cutout", shape: "bush" }),
+  [BlockId.AppleSapling]: block(BlockId.AppleSapling, "Wild Apple Sapling", 79, 79, 79, 0.08, "#609544", "hand", 0, { solid: false, layer: "cutout", shape: "cross" }),
+  [BlockId.AppleLeaves]: block(BlockId.AppleLeaves, "Wild Apple Leaves", 80, 80, 80, 0.3, "#4f893e", "hand", 0, { layer: "cutout" }),
+  [BlockId.AppleFruit]: block(BlockId.AppleFruit, "Wild Apple Fruit", 81, 81, 81, 0.05, "#c8493e", "hand", 0, { solid: false, layer: "cutout", shape: "fruit" }),
+  [BlockId.WheatSprout]: block(BlockId.WheatSprout, "Wild Wheat Sprout", 82, 82, 82, 0.05, "#77a24a", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
+  [BlockId.WheatYoung]: block(BlockId.WheatYoung, "Young Wild Wheat", 83, 83, 83, 0.06, "#a6ad4b", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
+  [BlockId.HydratedFarmland]: block(BlockId.HydratedFarmland, "Hydrated Farmland", 84, 58, 2, 0.55, "#543824", "shovel"),
+  [BlockId.WildwoodFence]: block(BlockId.WildwoodFence, "Wildwood Fence", 85, 85, 85, 0.9, "#9a693c", "axe", 0, { shape: "fence", collisionHeight: 1.25, connectGroup: "fence" }),
+  [BlockId.FenceGateNorthSouthClosed]: block(BlockId.FenceGateNorthSouthClosed, "Wildwood Fence Gate", 85, 85, 85, 0.9, "#9a693c", "axe", 0, { shape: "gate", collisionHeight: 1.25, connectGroup: "fence" }),
+  [BlockId.FenceGateEastWestClosed]: block(BlockId.FenceGateEastWestClosed, "Wildwood Fence Gate", 85, 85, 85, 0.9, "#9a693c", "axe", 0, { shape: "gate", collisionHeight: 1.25, connectGroup: "fence" }),
+  [BlockId.FenceGateNorthSouthOpen]: block(BlockId.FenceGateNorthSouthOpen, "Open Wildwood Fence Gate", 85, 85, 85, 0.9, "#9a693c", "axe", 0, { solid: false, shape: "gate", connectGroup: "fence" }),
+  [BlockId.FenceGateEastWestOpen]: block(BlockId.FenceGateEastWestOpen, "Open Wildwood Fence Gate", 85, 85, 85, 0.9, "#9a693c", "axe", 0, { solid: false, shape: "gate", connectGroup: "fence" }),
+  [BlockId.Limestone]: block(BlockId.Limestone, "Sunwash Limestone", 86, 86, 86, 1.55, "#d8cca4", "pickaxe", 1),
+  [BlockId.MoonSlate]: block(BlockId.MoonSlate, "Moon Slate", 87, 87, 87, 2.05, "#4e5765", "pickaxe", 2),
+  [BlockId.SunbakedClay]: block(BlockId.SunbakedClay, "Sunbaked Clay", 88, 88, 88, 0.72, "#b96845", "shovel"),
 };
 
 export const TORCH_BLOCKS: readonly BlockId[] = [
@@ -359,11 +424,25 @@ const technicalBlocks = new Set<BlockId>([
   BlockId.DoorClosedLower, BlockId.DoorClosedUpper, BlockId.DoorOpenLower, BlockId.DoorOpenUpper,
   BlockId.DoorXClosedLower, BlockId.DoorXClosedUpper, BlockId.DoorXOpenLower, BlockId.DoorXOpenUpper,
   BlockId.TorchWallNorth, BlockId.TorchWallSouth, BlockId.TorchWallEast, BlockId.TorchWallWest,
+  BlockId.MoonberryShoot, BlockId.MoonberryBush, BlockId.MoonberryBushRipe,
+  BlockId.SunberryShoot, BlockId.SunberryBush, BlockId.SunberryBushRipe,
+  BlockId.AppleSapling, BlockId.AppleLeaves, BlockId.AppleFruit,
+  BlockId.WheatSprout, BlockId.WheatYoung, BlockId.HydratedFarmland,
+  BlockId.FenceGateNorthSouthClosed, BlockId.FenceGateEastWestClosed,
+  BlockId.FenceGateNorthSouthOpen, BlockId.FenceGateEastWestOpen,
   ...BED_BLOCKS,
 ]);
 for (const definition of Object.values(BLOCKS)) {
   if (definition.id === BlockId.Air || definition.id === BlockId.Water || definition.id === BlockId.Lava || definition.id === BlockId.Bedrock || technicalBlocks.has(definition.id)) continue;
-  ITEMS[definition.id] = { id: definition.id, name: definition.name, color: definition.color, maxStack: 64, placeBlock: definition.id };
+  ITEMS[definition.id] = {
+    id: definition.id,
+    name: definition.name,
+    color: definition.color,
+    maxStack: 64,
+    placeBlock: definition.id,
+    ...(definition.shape === "cross" ? { worldTextureBlock: definition.id } : {}),
+    ...(definition.id === BlockId.CraftingTable ? { iconKind: "crafting-table" as const } : {}),
+  };
 }
 
 Object.assign(ITEMS, {
@@ -432,10 +511,28 @@ Object.assign(ITEMS, {
   [Item.GlowScale]: { id: Item.GlowScale, name: "Gloomfin Scale", color: "#5bd6ca", maxStack: 64 },
   [Item.BreatherCharm]: { id: Item.BreatherCharm, name: "Tideglass Charm", color: "#83e7df", maxStack: 1, maxDurability: 480 },
   [Item.SunwardCompass]: { id: Item.SunwardCompass, name: "Sunward Compass", color: "#f2cb64", maxStack: 1, maxDurability: 4096, useKind: "magic-relic" },
+  [Item.Sunberry]: { id: Item.Sunberry, name: "Sunberry", color: "#e49a3f", maxStack: 64, food: 3, useKind: "plant", plantBlock: BlockId.SunberryShoot, iconKind: "produce" },
+  [Item.WheatSeeds]: { id: Item.WheatSeeds, name: "Wild Wheat Seeds", color: "#a99143", maxStack: 64, useKind: "plant", plantBlock: BlockId.WheatSprout, iconKind: "seed" },
+  [Item.WoodHoe]: { id: Item.WoodHoe, name: "Wooden Hoe", color: "#aa7542", maxStack: 1, maxDurability: 72, useKind: "hoe" },
+  [Item.StoneHoe]: { id: Item.StoneHoe, name: "Stone Hoe", color: "#858b89", maxStack: 1, maxDurability: 148, useKind: "hoe" },
+  [Item.IronHoe]: { id: Item.IronHoe, name: "Sunmetal Hoe", color: "#d4b9a7", maxStack: 1, maxDurability: 286, useKind: "hoe" },
+  [Item.HarvestScythe]: { id: Item.HarvestScythe, name: "Harvest Scythe", color: "#d4b9a7", maxStack: 1, maxDurability: 360, useKind: "scythe" },
+  [Item.Bucket]: { id: Item.Bucket, name: "Empty Bucket", color: "#aeb6b5", maxStack: 16, useKind: "bucket", iconKind: "bucket" },
+  [Item.WaterBucket]: { id: Item.WaterBucket, name: "Water Bucket", color: "#4d9bd2", maxStack: 1, useKind: "bucket", bucketLiquid: "water", iconKind: "bucket" },
+  [Item.LavaBucket]: { id: Item.LavaBucket, name: "Lava Bucket", color: "#ef7034", maxStack: 1, useKind: "bucket", bucketLiquid: "lava", iconKind: "bucket" },
+  [Item.Lead]: { id: Item.Lead, name: "Braided Lead", color: "#9a7548", maxStack: 16, useKind: "lead", iconKind: "lead" },
+  [Item.WildwoodFenceGate]: { id: Item.WildwoodFenceGate, name: "Wildwood Fence Gate", color: "#9a693c", maxStack: 64, placeBlock: BlockId.FenceGateNorthSouthClosed, iconKind: "fence-gate" },
+  [Item.Saddle]: { id: Item.Saddle, name: "Trail Saddle", color: "#875a3c", maxStack: 1 },
+  [Item.NocturneHeart]: { id: Item.NocturneHeart, name: "Nocturne Heart", color: "#7b5bb4", maxStack: 16 },
 } satisfies Record<number, ItemDefinition>);
 
+// Existing forage doubles as planting stock. Keeping the edible item itself as
+// the seed makes orchard/bush starts intuitive and avoids one-off seed clutter.
+ITEMS[Item.Berry] = { ...ITEMS[Item.Berry], useKind: "plant", plantBlock: BlockId.MoonberryShoot, iconKind: "produce" };
+ITEMS[Item.Apple] = { ...ITEMS[Item.Apple], useKind: "plant", plantBlock: BlockId.AppleSapling, iconKind: "produce" };
+
 export const LOG_ITEMS: ItemCode[] = [BlockId.WildwoodLog, BlockId.PineLog, BlockId.BirchLog, BlockId.BloomLog];
-export const LEAF_BLOCKS: BlockId[] = [BlockId.WildwoodLeaves, BlockId.PineLeaves, BlockId.BirchLeaves, BlockId.BloomLeaves];
+export const LEAF_BLOCKS: BlockId[] = [BlockId.WildwoodLeaves, BlockId.PineLeaves, BlockId.BirchLeaves, BlockId.BloomLeaves, BlockId.AppleLeaves];
 /** Replaceable flora is excluded from the broad block filter, but builders still need it in the pack. */
 export const CREATIVE_FLORA: readonly ItemCode[] = [
   BlockId.TallGrass,
@@ -450,7 +547,12 @@ export const CREATIVE_FLORA: readonly ItemCode[] = [
 
 export const CREATIVE_BLOCKS: ItemCode[] = [...Object.values(BLOCKS)
   .filter((definition) => ITEMS[definition.id] && !definition.replaceable && definition.id !== BlockId.WheatCrop)
-  .map((definition) => definition.id), ...CREATIVE_FLORA, Item.WildwoodDoor, Item.WildwoodBed, Item.Sailboat, Item.CreatureCage, Item.Banana, Item.StarrootScepter, Item.Feather, Item.RawFish, Item.CookedFish, Item.GlowScale, Item.BreatherCharm, Item.SunwardCompass, Item.ButterflyNet, Item.MeadowwingJar, Item.AzureSkipperJar, Item.EmbertipJar, Item.FrostveilJar, Item.BloomMonarchJar, Item.FenLanternJar, Item.HideHood, Item.HideTunic, Item.HideLeggings, Item.HideBoots, Item.SunmetalHelm, Item.SunmetalPlate, Item.SunmetalGreaves, Item.SunmetalBoots];
+  .map((definition) => definition.id), ...CREATIVE_FLORA, Item.WildwoodDoor, Item.WildwoodBed, Item.Sailboat, Item.CreatureCage, Item.Berry, Item.Sunberry, Item.Apple, Item.Banana, Item.Wheat, Item.WheatSeeds, Item.StarrootScepter, Item.Feather, Item.RawFish, Item.CookedFish, Item.GlowScale, Item.BreatherCharm, Item.SunwardCompass, Item.WoodHoe, Item.StoneHoe, Item.IronHoe, Item.HarvestScythe, Item.Bucket, Item.WaterBucket, Item.LavaBucket, Item.Lead, Item.WildwoodFenceGate, Item.Saddle, Item.NocturneHeart, Item.ButterflyNet, Item.MeadowwingJar, Item.AzureSkipperJar, Item.EmbertipJar, Item.FrostveilJar, Item.BloomMonarchJar, Item.FenLanternJar, Item.HideHood, Item.HideTunic, Item.HideLeggings, Item.HideBoots, Item.SunmetalHelm, Item.SunmetalPlate, Item.SunmetalGreaves, Item.SunmetalBoots];
+
+export function worldTextureBlockForItem(item: ItemCode): BlockId | undefined {
+  const definition = ITEMS[item];
+  return definition?.worldTextureBlock ?? (definition?.placeBlock !== undefined && BLOCKS[definition.placeBlock]?.shape === "cross" ? definition.placeBlock : undefined);
+}
 
 export type Ingredient = ItemCode | ItemCode[];
 export type Recipe = {
@@ -497,6 +599,16 @@ export const RECIPES: Recipe[] = [
   { id: "tideglass_charm", name: "Tideglass Charm", width: 3, height: 1, pattern: [Item.GlowScale, Item.Fiber, Item.GlowScale], output: { item: Item.BreatherCharm, count: 1 }, table: true },
   { id: "butterfly_net", name: "Butterfly Net", width: 3, height: 3, pattern: [softNetting, softNetting, softNetting, softNetting, 0, Item.Stick, 0, Item.Stick, 0], output: { item: Item.ButterflyNet, count: 1 }, table: true },
   { id: "banana_harvest", name: "Golden Bananas", width: 1, height: 1, pattern: [BlockId.BananaPlant], output: { item: Item.Banana, count: 2 }, table: false },
+  { id: "wood_hoe", name: "Wooden Hoe", width: 2, height: 3, pattern: [BlockId.Planks, BlockId.Planks, 0, Item.Stick, 0, Item.Stick], output: { item: Item.WoodHoe, count: 1 }, table: true, mirrored: true },
+  { id: "stone_hoe", name: "Stone Hoe", width: 2, height: 3, pattern: [BlockId.Cobblestone, BlockId.Cobblestone, 0, Item.Stick, 0, Item.Stick], output: { item: Item.StoneHoe, count: 1 }, table: true, mirrored: true },
+  { id: "iron_hoe", name: "Sunmetal Hoe", width: 2, height: 3, pattern: [Item.SunmetalIngot, Item.SunmetalIngot, 0, Item.Stick, 0, Item.Stick], output: { item: Item.IronHoe, count: 1 }, table: true, mirrored: true },
+  { id: "harvest_scythe", name: "Harvest Scythe", width: 3, height: 3, pattern: [Item.SunmetalIngot, Item.SunmetalIngot, Item.SunmetalIngot, Item.Stick, 0, 0, Item.Stick, 0, 0], output: { item: Item.HarvestScythe, count: 1 }, table: true, mirrored: true },
+  { id: "bucket", name: "Empty Bucket", width: 3, height: 2, pattern: [Item.SunmetalIngot, 0, Item.SunmetalIngot, 0, Item.SunmetalIngot, 0], output: { item: Item.Bucket, count: 1 }, table: true },
+  { id: "wildwood_fence", name: "Wildwood Fence", width: 3, height: 2, pattern: [BlockId.Planks, Item.Stick, BlockId.Planks, BlockId.Planks, Item.Stick, BlockId.Planks], output: { item: BlockId.WildwoodFence, count: 3 }, table: true },
+  { id: "wildwood_fence_gate", name: "Wildwood Fence Gate", width: 3, height: 2, pattern: [Item.Stick, BlockId.Planks, Item.Stick, Item.Stick, BlockId.Planks, Item.Stick], output: { item: Item.WildwoodFenceGate, count: 1 }, table: true },
+  { id: "lead", name: "Braided Lead", width: 3, height: 2, pattern: [Item.Fiber, Item.Fiber, 0, 0, Item.Fiber, Item.Fiber], output: { item: Item.Lead, count: 2 }, table: true, mirrored: true },
+  { id: "trail_saddle", name: "Trail Saddle", width: 3, height: 3, pattern: [Item.Hide, Item.Hide, Item.Hide, Item.Hide, Item.SunmetalIngot, Item.Hide, Item.Fiber, 0, Item.Fiber], output: { item: Item.Saddle, count: 1 }, table: true },
+  { id: "nocturne_heart", name: "Nocturne Heart", width: 3, height: 3, pattern: [Item.ShadowShard, Item.GlowDust, Item.ShadowShard, Item.GlowDust, Item.CrystalShard, Item.GlowDust, Item.ShadowShard, Item.GlowDust, Item.ShadowShard], output: { item: Item.NocturneHeart, count: 1 }, table: true },
   { id: "wood_pick", name: "Wooden Pickaxe", width: 3, height: 3, pattern: [BlockId.Planks, BlockId.Planks, BlockId.Planks, 0, Item.Stick, 0, 0, Item.Stick, 0], output: { item: Item.WoodPickaxe, count: 1 }, table: true },
   { id: "stone_pick", name: "Stone Pickaxe", width: 3, height: 3, pattern: [BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone, 0, Item.Stick, 0, 0, Item.Stick, 0], output: { item: Item.StonePickaxe, count: 1 }, table: true },
   { id: "iron_pick", name: "Sunmetal Pickaxe", width: 3, height: 3, pattern: [Item.SunmetalIngot, Item.SunmetalIngot, Item.SunmetalIngot, 0, Item.Stick, 0, 0, Item.Stick, 0], output: { item: Item.IronPickaxe, count: 1 }, table: true },

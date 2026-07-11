@@ -2,7 +2,16 @@ import { Item, type ItemCode } from "./data";
 
 export type ButterflyKind = "meadowwing" | "azure-skippers" | "embertip" | "frostveil" | "bloom-monarch" | "fen-lantern";
 export type LegacyMobKind = "mossling" | "ridgeback" | "woolhorn" | "glowmoth" | "shadecrawler" | "caveblob" | "rattlekin" | "zombie";
-export type SurfaceMobKind = "sunstep-grazer" | "pebbletortoise" | "brambleboar" | "petalfox" | "duneclatter";
+export type SurfaceMobKind =
+  | "sunstep-grazer"
+  | "pebbletortoise"
+  | "brambleboar"
+  | "petalfox"
+  | "duneclatter"
+  | "thimbledeer"
+  | "lanternshell"
+  | "puddlehopper"
+  | "reedstrider";
 export type BirdKind = "emberjay" | "canopy-lark";
 export type AquaticMobKind = "shoalfin" | "coralback" | "brookdart" | "gloomfin";
 export type SpecialMobKind = "peelop" | "reliquary-sentinel" | "skeleton";
@@ -48,17 +57,31 @@ export type MobDefinition = {
   persistent?: boolean;
   utility?: string;
   captureItem?: ItemCode;
+  /** Bestiary-facing care metadata. Omitted values are displayed as false/unknown. */
+  sentient?: boolean;
+  tameable?: boolean;
+  tameItems?: ItemCode[];
+  breedable?: boolean;
+  breedingFoods?: ItemCode[];
+  diet?: ItemCode[];
+  /** Extra field notes that only become readable after the creature has been tamed. */
+  postTameNotes?: string;
+  secretHint?: string;
+  /** A useful biome-level clue shown before the creature has been discovered. */
+  discoveryHint?: string;
 };
 
 export const MOB_DEFS: Record<MobKind, MobDefinition> = {
   mossling: {
     kind: "mossling", name: "Mossling", temperament: "Skittish", hostile: false,
     health: 5, damage: 0, xp: 2, speed: 0.72, chaseSpeed: 1.9, turnRate: 6, attackRange: 0,
-    footOffset: 0.42, radius: 0.36, height: 0.82, habitat: "Wet forests, Bloomwood and Siltfen", active: "Day and rain",
+    footOffset: 0.9, radius: 0.36, height: 0.82, habitat: "Wet forests, Bloomwood and Siltfen", active: "Day and rain",
     behavior: "Forages in short hops, gathers near flowers, and bounds away when struck.",
     lore: "A walking knot of moss and root. Old trailkeepers say every grove begins with one curious Mossling.",
     colors: [0x4f8a43, 0x9bc878, 0x172517],
     drops: [{ item: Item.Fiber, min: 1, max: 2, chance: 0.9 }, { item: Item.Berry, min: 1, max: 1, chance: 0.3 }],
+    sentient: false, breedable: true, breedingFoods: [Item.Berry], diet: [Item.Berry, Item.Wheat],
+    discoveryHint: "Look beneath rain-dark leaves in Bloomwood and Siltfen.",
   },
   ridgeback: {
     kind: "ridgeback", name: "Ridgeback", temperament: "Defensive", hostile: false,
@@ -69,15 +92,19 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "Its warm stone plates store the afternoon sun. A charging herd sounds like distant summer thunder.",
     colors: [0x875437, 0xc07d54, 0x291912],
     drops: [{ item: Item.RawMeat, min: 1, max: 3, chance: 1 }, { item: Item.Hide, min: 1, max: 2, chance: 0.62 }],
+    sentient: false, breedable: true, breedingFoods: [Item.Wheat, Item.Apple], diet: [Item.Wheat, Item.Apple, Item.Berry],
+    discoveryHint: "Open meadow and savanna herds leave broad, plated tracks.",
   },
   woolhorn: {
     kind: "woolhorn", name: "Woolhorn", temperament: "Gentle", hostile: false,
     health: 9, damage: 1, xp: 3, speed: 0.42, chaseSpeed: 1.55, turnRate: 3.8, attackRange: 1.1,
-    footOffset: 0.63, radius: 0.52, height: 1.18, habitat: "Frostpine taiga and snowy fields", active: "Day",
+    footOffset: 1.25, radius: 0.52, height: 1.18, habitat: "Frostpine taiga and snowy fields", active: "Day",
     behavior: "Grazes through snow, follows nearby Woolhorns, and braces behind its curled horns when cornered.",
     lore: "Cloud-soft wool hides a stubborn mountain heart. Their tracks are often the safest path through a blizzard.",
     colors: [0xe8e5d8, 0x756c61, 0x20211f],
     drops: [{ item: Item.Wool, min: 1, max: 2, chance: 1 }, { item: Item.RawMeat, min: 1, max: 1, chance: 0.58 }],
+    sentient: false, breedable: true, breedingFoods: [Item.Wheat], diet: [Item.Wheat, Item.Apple],
+    discoveryHint: "Follow wool caught on low Frostpine branches.",
   },
   glowmoth: {
     kind: "glowmoth", name: "Glowmoth", temperament: "Gentle", hostile: false,
@@ -91,16 +118,24 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
   shadecrawler: {
     kind: "shadecrawler", name: "Shadecrawler", temperament: "Hostile", hostile: true,
     health: 11, damage: 2, xp: 6, speed: 1.05, chaseSpeed: 2.55, turnRate: 8, attackRange: 1.45,
-    footOffset: 0.32, radius: 0.7, height: 0.62, habitat: "Deep caves and moonless forests", active: "Darkness",
+    footOffset: 0.887916526, radius: 0.7, height: 0.62, habitat: "Deep caves and moonless forests", active: "Darkness",
     behavior: "Circles just outside torchlight, then lunges. Bright daylight forces it back underground.",
     lore: "A many-legged absence between stones. Its eyes appear a moment before the rest of it decides to exist.",
     colors: [0x332b43, 0x725d8c, 0xff6e78],
-    drops: [{ item: Item.ShadowShard, min: 1, max: 1, chance: 0.84 }, { item: Item.Coal, min: 1, max: 1, chance: 0.34 }],
+    drops: [
+      { item: Item.ShadowShard, min: 1, max: 1, chance: 0.84 },
+      { item: Item.Coal, min: 1, max: 1, chance: 0.34 },
+      { item: Item.NocturneHeart, min: 1, max: 1, chance: 0.08 },
+    ],
+    sentient: false, tameable: true, tameItems: [Item.NocturneHeart], diet: [Item.Berry, Item.RottenFlesh, Item.RawMeat],
+    postTameNotes: "Patient feeding deepens the bond and grows a Shadecrawler to three times its wild size. A full-grown companion accepts a saddle and can be ridden.",
+    secretHint: "Six Moonberries calm its hunger before a rare Nocturne Heart can form a lasting bond.",
+    discoveryHint: "Search broad deepstone chambers beyond direct torchlight.",
   },
   caveblob: {
     kind: "caveblob", name: "Cave Blob", temperament: "Hostile", hostile: true,
     health: 7, damage: 1, xp: 4, speed: 0.55, chaseSpeed: 1.65, turnRate: 5, attackRange: 1.25,
-    footOffset: 0.42, radius: 0.48, height: 0.82, habitat: "Aquifers and deepstone caverns", active: "Underground",
+    footOffset: 0.81, radius: 0.48, height: 0.82, habitat: "Aquifers and deepstone caverns", active: "Underground",
     behavior: "Squashes flat, springs forward, and splashes cave gel on impact.",
     lore: "Mineral-rich water learned to hop. Cave Blobs remember every boot that has ever stepped in their pools.",
     colors: [0x4ca47e, 0x8ee0b8, 0x15362b],
@@ -109,7 +144,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
   rattlekin: {
     kind: "rattlekin", name: "Rattlekin", temperament: "Hostile", hostile: true,
     health: 13, damage: 3, xp: 7, speed: 0.8, chaseSpeed: 1.85, turnRate: 5.5, attackRange: 1.55,
-    footOffset: 0.92, radius: 0.38, height: 1.78, habitat: "Ruins, badlands and the night surface", active: "Night",
+    footOffset: 1.04, radius: 0.38, height: 1.78, habitat: "Ruins, badlands and the night surface", active: "Night",
     behavior: "Patrols upright, raises a stone club, then commits to a heavy timed swing.",
     lore: "Not bones, but stone remembering the shape of a traveler. The rhythm of its steps is older than the ruins.",
     colors: [0xd8cfb9, 0x807664, 0x2a2520],
@@ -118,7 +153,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
   zombie: {
     kind: "zombie", name: "Zombie", temperament: "Hostile", hostile: true,
     health: 10, damage: 2, xp: 5, speed: 0.66, chaseSpeed: 1.62, turnRate: 5.2, attackRange: 1.42,
-    footOffset: 0.9, radius: 0.38, height: 1.8, habitat: "Dark caves and the night surface", active: "Darkness",
+    footOffset: 0.5, radius: 0.38, height: 1.8, habitat: "Dark caves and the night surface", active: "Darkness",
     behavior: "Shambles toward living creatures with both arms raised. Direct sunlight slowly burns it away.",
     lore: "A miner who stayed below one night too many. It remembers doors, footsteps, and almost nothing else.",
     colors: [0x5f8f54, 0x3e7470, 0x263c74],
@@ -128,47 +163,103 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
   "sunstep-grazer": {
     kind: "sunstep-grazer", name: "Sunstep Grazer", temperament: "Skittish", hostile: false,
     health: 8, damage: 0, xp: 3, speed: 0.86, chaseSpeed: 2.72, turnRate: 5.4, attackRange: 0,
-    footOffset: 0.72, radius: 0.48, height: 1.42, habitat: "Sunstep savannas and meadow margins", active: "Morning and late afternoon",
+    footOffset: 1.27, radius: 0.48, height: 1.42, habitat: "Sunstep savannas and meadow margins", active: "Morning and late afternoon",
     behavior: "Browses in pairs, stamps a warning, then escapes in long bounding strides.",
     lore: "Its fan-shaped ears shade its face and flush copper when rain is coming.",
     colors: [0xd7a44e, 0x7b4a2e, 0x20170f], drops: [{ item: Item.Hide, min: 1, max: 2, chance: 0.54 }, { item: Item.RawMeat, min: 1, max: 2, chance: 0.66 }],
     family: "surface", movement: "ground", utility: "A reliable source of hide in dry country, if a player can catch one.",
+    sentient: false, breedable: true, breedingFoods: [Item.Wheat, Item.Apple], diet: [Item.Wheat, Item.Apple],
+    discoveryHint: "Listen for warning stamps along bright savanna margins.",
   },
   pebbletortoise: {
     kind: "pebbletortoise", name: "Pebbletortoise", temperament: "Gentle", hostile: false,
     health: 14, damage: 0, xp: 3, speed: 0.24, chaseSpeed: 0.42, turnRate: 2.2, attackRange: 0,
-    footOffset: 0.28, radius: 0.58, height: 0.58, habitat: "Stony meadows, riverbanks and badland shelves", active: "Warm daylight",
+    footOffset: 0.78, radius: 0.58, height: 0.58, habitat: "Stony meadows, riverbanks and badland shelves", active: "Warm daylight",
     behavior: "Nibbles low plants and withdraws into its lichen-covered shell when startled.",
     lore: "Sleeping specimens are almost indistinguishable from the cairns they slowly rearrange.",
     colors: [0x68705b, 0x9caf73, 0x24291f], drops: [{ item: Item.Flint, min: 1, max: 2, chance: 0.42 }],
     family: "surface", movement: "ground", utility: "Passively clears tall grass around its resting place.",
+    sentient: false, breedable: true, breedingFoods: [Item.Berry], diet: [Item.Berry, Item.Wheat],
+    discoveryHint: "Inspect lichen-covered stones beside warm riverbanks.",
   },
   brambleboar: {
     kind: "brambleboar", name: "Brambleboar", temperament: "Defensive", hostile: false,
     health: 12, damage: 3, xp: 4, speed: 0.62, chaseSpeed: 2.4, turnRate: 4.4, attackRange: 1.28,
-    footOffset: 0.5, radius: 0.62, height: 0.98, habitat: "Dense Wildwood and Bloomwood underbrush", active: "Dawn and dusk",
+    footOffset: 1.08, radius: 0.62, height: 0.98, habitat: "Dense Wildwood and Bloomwood underbrush", active: "Dawn and dusk",
     behavior: "Roots beneath berry bushes. A threatened boar rattles its thorny mane before a short charge.",
     lore: "Seeds caught in its coat germinate as it travels, leaving crooked green trails through old forest.",
     colors: [0x5e3d2b, 0x486a35, 0xf0d7ac], drops: [{ item: Item.RawMeat, min: 1, max: 3, chance: 0.9 }, { item: Item.Fiber, min: 1, max: 2, chance: 0.72 }],
     family: "surface", movement: "ground", utility: "Occasionally tills a dirt block while rooting.",
+    sentient: false, breedable: true, breedingFoods: [Item.Apple, Item.Berry], diet: [Item.Apple, Item.Berry, Item.Wheat],
+    discoveryHint: "Bramble trails and freshly rooted soil mark dense forest underbrush.",
   },
   petalfox: {
     kind: "petalfox", name: "Petalfox", temperament: "Skittish", hostile: false,
     health: 6, damage: 0, xp: 3, speed: 0.78, chaseSpeed: 2.9, turnRate: 7.2, attackRange: 0,
-    footOffset: 0.42, radius: 0.4, height: 0.78, habitat: "Meadows and flower-rich Bloomwood clearings", active: "Day",
+    footOffset: 0.95, radius: 0.4, height: 0.78, habitat: "Meadows and flower-rich Bloomwood clearings", active: "Day",
     behavior: "Pounces after insects, naps in flower patches, and flees noisy travelers in a spray of petals.",
     lore: "Its tail changes scent with the flowers it sleeps among.",
     colors: [0xe78ba7, 0xffd4b8, 0x4b2735], drops: [{ item: Item.Fiber, min: 1, max: 1, chance: 0.34 }],
     family: "surface", movement: "ground", utility: "Leads observant players toward dense flower patches and butterflies.",
+    sentient: false, breedable: true, breedingFoods: [Item.Berry], diet: [Item.Berry, Item.Apple],
+    discoveryHint: "Watch for drifting petals that move against the wind.",
   },
   duneclatter: {
     kind: "duneclatter", name: "Duneclatter", temperament: "Defensive", hostile: false,
     health: 7, damage: 2, xp: 4, speed: 0.58, chaseSpeed: 1.92, turnRate: 6.2, attackRange: 1.05,
-    footOffset: 0.3, radius: 0.5, height: 0.55, habitat: "Desert dunes, cactus flats and temple outskirts", active: "Hot daylight",
+    footOffset: 0.87505902, radius: 0.5, height: 0.55, habitat: "Desert dunes, cactus flats and temple outskirts", active: "Hot daylight",
     behavior: "Burrows beneath loose sand, then clicks bright wing-cases to warn intruders away.",
     lore: "Caravans follow its evening tracks to firm ground and avoid sinking dunes.",
     colors: [0xc96f32, 0x5f3428, 0xffcf63], drops: [{ item: Item.Flint, min: 1, max: 2, chance: 0.7 }, { item: Item.GlowDust, min: 1, max: 1, chance: 0.16 }],
     family: "surface", movement: "ground", utility: "Its wing-case glint points toward nearby sandstone ruins at sunset.",
+  },
+  thimbledeer: {
+    kind: "thimbledeer", name: "Thimbledeer", temperament: "Skittish", hostile: false,
+    health: 7, damage: 0, xp: 3, speed: 0.82, chaseSpeed: 3.05, turnRate: 6.8, attackRange: 0,
+    footOffset: 1.13, radius: 0.42, height: 1.28, habitat: "Meadows and pale Birchlight glades", active: "Morning and late afternoon",
+    behavior: "Browses flower heads with its narrow muzzle, freezes when watched, then bounds through openings between trees.",
+    lore: "Its tiny thimble-shaped antlers collect seeds. Every seasonal migration quietly redraws the edge of a meadow.",
+    colors: [0xb9865b, 0xe8d8b0, 0x292118],
+    drops: [{ item: Item.Hide, min: 1, max: 1, chance: 0.48 }, { item: Item.Fiber, min: 1, max: 2, chance: 0.38 }],
+    family: "surface", movement: "ground", utility: "Occasionally carries a flower seed from one meadow patch to another.",
+    sentient: false, breedable: true, breedingFoods: [Item.Apple], diet: [Item.Apple, Item.Berry, Item.Wheat],
+    discoveryHint: "Search quiet Birchlight glades at the edge of flower meadows.",
+  },
+  lanternshell: {
+    kind: "lanternshell", name: "Lanternshell", temperament: "Gentle", hostile: false,
+    health: 9, damage: 0, xp: 3, speed: 0.2, chaseSpeed: 0.44, turnRate: 2.2, attackRange: 0,
+    footOffset: 0.77, radius: 0.56, height: 0.74, habitat: "Siltfen roots and luminous mushroom hollows", active: "Rain, dusk and humid nights",
+    behavior: "Glides over moss, rests beneath broad leaves, and brightens its glassy spiral shell when rain begins.",
+    lore: "Fen paths once used sleeping Lanternshells as milestones. They moved slowly enough that the maps were usually right.",
+    colors: [0x526845, 0x7fd6a8, 0xf2ffb0],
+    drops: [{ item: Item.CaveGel, min: 1, max: 1, chance: 0.42 }, { item: Item.GlowDust, min: 1, max: 1, chance: 0.22 }],
+    family: "surface", movement: "ground", utility: "A calm living night-light whose shell glows brighter before rain.",
+    sentient: false, breedable: true, breedingFoods: [Item.Berry], diet: [Item.Berry, Item.Wheat],
+    discoveryHint: "Look under Siltfen roots after rain or near glowing mushrooms at dusk.",
+  },
+  puddlehopper: {
+    kind: "puddlehopper", name: "Puddlehopper", temperament: "Skittish", hostile: false,
+    health: 4, damage: 0, xp: 2, speed: 0.58, chaseSpeed: 2.55, turnRate: 8.2, attackRange: 0,
+    footOffset: 0.8, radius: 0.38, height: 0.58, habitat: "River reeds, Siltfen pools and rainy meadow hollows", active: "Rain and humid daylight",
+    behavior: "Waits as still as a wet stone, then crosses open ground in three springy hops when startled.",
+    lore: "Each throat pouch carries a different hollow note. A whole pond sounds like rain falling into clay cups.",
+    colors: [0x5e9b69, 0xd5c85b, 0x182a20],
+    drops: [{ item: Item.CaveGel, min: 1, max: 1, chance: 0.28 }],
+    family: "surface", movement: "ground", utility: "Its evening calls mark nearby surface water and incoming rain.",
+    sentient: false, breedable: true, breedingFoods: [Item.Berry], diet: [Item.Berry],
+    discoveryHint: "Wait beside reeds during rain and listen for hollow plunks.",
+  },
+  reedstrider: {
+    kind: "reedstrider", name: "Reedstrider", temperament: "Defensive", hostile: false,
+    health: 8, damage: 2, xp: 4, speed: 0.64, chaseSpeed: 2.35, turnRate: 5.8, attackRange: 1.25,
+    footOffset: 1.1, radius: 0.4, height: 1.64, habitat: "Siltfen shallows, broad rivers and meadow wetlands", active: "Dawn and overcast daylight",
+    behavior: "Stalks tiny fish between reeds, fans its broad wings to warn intruders, and only kicks when cornered.",
+    lore: "Its hollow crest amplifies a call that carries over fog. River travelers use the answering echoes to judge a channel's width.",
+    colors: [0x668a78, 0xc9a65f, 0x243039],
+    drops: [{ item: Item.Feather, min: 1, max: 2, chance: 0.86 }, { item: Item.RawFish, min: 1, max: 1, chance: 0.18 }],
+    family: "surface", movement: "ground", utility: "Its calls point toward large rivers, while nearby birds alarm at approaching danger.",
+    sentient: false, breedable: true, breedingFoods: [Item.RawFish], diet: [Item.RawFish, Item.Berry],
+    discoveryHint: "Follow resonant dawn calls across foggy wetlands.",
   },
   emberjay: {
     kind: "emberjay", name: "Emberjay", temperament: "Skittish", hostile: false,
@@ -227,16 +318,21 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
   peelop: {
     kind: "peelop", name: "Peelop", temperament: "Gentle", hostile: false,
     health: 7, damage: 0, xp: 3, speed: 0.7, chaseSpeed: 2.8, turnRate: 7.8, attackRange: 0,
-    footOffset: 0.46, radius: 0.42, height: 0.82, habitat: "Sunny orchard hollows and Peelop picnic groves", active: "Day",
+    footOffset: 0.95, radius: 0.42, height: 0.82, habitat: "Sunny orchard hollows and Peelop picnic groves", active: "Day",
     behavior: "A banana-eared rabbit that loafs in shade, follows trusted keepers, and sits on command.",
     lore: "Its ears ripen from green to gold. A content Peelop smells faintly of warm bread and bananas.",
     colors: [0xf4d34f, 0xfff0a1, 0x5b3a22], drops: [],
     family: "pet", movement: "ground", persistent: true, utility: "Tameable companion; follows, sits, stays, can be named, fed and bred.",
+    sentient: false, tameable: true, tameItems: [Item.Banana, Item.Apple, Item.Berry, Item.Wheat],
+    breedable: true, breedingFoods: [Item.Banana], diet: [Item.Banana, Item.Apple, Item.Berry, Item.Wheat],
+    postTameNotes: "A trusted Peelop can follow, sit, stay or wander; crouch-use opens its detailed companion commands.",
+    secretHint: "Golden Bananas are the quickest path to trust and healthy young.",
+    discoveryHint: "Sunny orchard hollows and Peelop picnic groves sometimes shelter a small family.",
   },
   "reliquary-sentinel": {
     kind: "reliquary-sentinel", name: "Reliquary Sentinel", temperament: "Hostile", hostile: true,
     health: 18, damage: 4, xp: 11, speed: 0.5, chaseSpeed: 1.72, turnRate: 4.8, attackRange: 1.6,
-    footOffset: 0.82, radius: 0.5, height: 1.65, habitat: "Desert and forest temple sanctums", active: "When a reliquary is disturbed",
+    footOffset: 1.05, radius: 0.5, height: 1.65, habitat: "Desert and forest temple sanctums", active: "When a reliquary is disturbed",
     behavior: "Sleeps as a carved idol, unfolds when a chest is opened, and guards the room with heavy sunlit strikes.",
     lore: "Two vanished orders carved the same guardian in different stone. Neither admitted learning from the other.",
     colors: [0x8d7a62, 0x4f7555, 0xffd36c], drops: [{ item: Item.CrystalShard, min: 1, max: 2, chance: 0.62 }, { item: Item.GoldIngot, min: 1, max: 1, chance: 0.22 }],
@@ -245,7 +341,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
   skeleton: {
     kind: "skeleton", name: "Skeleton Archer", temperament: "Hostile", hostile: true,
     health: 10, damage: 2, xp: 7, speed: 0.72, chaseSpeed: 1.45, turnRate: 6.2, attackRange: 12,
-    footOffset: 0.9, radius: 0.38, height: 1.8, habitat: "Ruins, caves and the night surface", active: "Darkness",
+    footOffset: 1.03, radius: 0.38, height: 1.8, habitat: "Ruins, caves and the night surface", active: "Darkness",
     behavior: "Keeps its distance, draws a visible bone bow, and leads moving targets with arcing arrows.",
     lore: "A patient hunter held together by old cord and an even older grudge.",
     colors: [0xd9d1bb, 0x6e604c, 0x26211d], drops: [{ item: Item.BoneShard, min: 1, max: 3, chance: 1 }, { item: Item.Stick, min: 1, max: 2, chance: 0.4 }],
@@ -303,7 +399,10 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
 
 export const BUTTERFLY_ORDER: ButterflyKind[] = ["meadowwing", "azure-skippers", "embertip", "frostveil", "bloom-monarch", "fen-lantern"];
 export const LEGACY_MOB_ORDER: LegacyMobKind[] = ["mossling", "ridgeback", "woolhorn", "glowmoth", "shadecrawler", "caveblob", "rattlekin", "zombie"];
-export const SURFACE_MOB_ORDER: SurfaceMobKind[] = ["sunstep-grazer", "pebbletortoise", "brambleboar", "petalfox", "duneclatter"];
+export const SURFACE_MOB_ORDER: SurfaceMobKind[] = [
+  "sunstep-grazer", "pebbletortoise", "brambleboar", "petalfox", "duneclatter",
+  "thimbledeer", "lanternshell", "puddlehopper", "reedstrider",
+];
 export const BIRD_ORDER: BirdKind[] = ["emberjay", "canopy-lark"];
 export const AQUATIC_MOB_ORDER: AquaticMobKind[] = ["shoalfin", "coralback", "brookdart", "gloomfin"];
 export const SPECIAL_MOB_ORDER: SpecialMobKind[] = ["peelop", "reliquary-sentinel", "skeleton"];

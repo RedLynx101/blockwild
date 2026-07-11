@@ -10,9 +10,18 @@ export type MusicScene =
   | "skyboss"
   | "wildwoodA"
   | "wildwoodB"
+  | "fernlight"
+  | "meadowglass"
   | "emberdeepA"
   | "emberdeepB";
-export type SampleKind = "swordSwing" | "zombieMoan1" | "zombieMoan2" | "chestOpen" | "chestClose";
+export type SampleKind =
+  | "swordSwing"
+  | "zombieMoan1"
+  | "zombieMoan2"
+  | "chestOpen"
+  | "chestClose"
+  | "ridgebackWarmHuff"
+  | "shadecrawlerStoneChitter";
 export type SamplePlaybackOptions = { gain?: number; playbackRate?: number; detune?: number; when?: number };
 
 const MUSIC_TRACKS: Record<MusicScene, string> = {
@@ -23,6 +32,8 @@ const MUSIC_TRACKS: Record<MusicScene, string> = {
   skyboss: "/music/blockwild-skyboss.mp3",
   wildwoodA: "/music/blockwild-wildwood-dawn-a.mp3",
   wildwoodB: "/music/blockwild-wildwood-dawn-b.mp3",
+  fernlight: "/music/blockwild-fernlight-ramble.mp3",
+  meadowglass: "/music/blockwild-meadowglass-morning.mp3",
   emberdeepA: "/music/blockwild-emberdeep-a.mp3",
   emberdeepB: "/music/blockwild-emberdeep-b.mp3",
 };
@@ -33,6 +44,8 @@ const SAMPLES: Record<SampleKind, { source: string; gain: number }> = {
   zombieMoan2: { source: "/sfx/zombie-moan-2.wav", gain: 0.28 },
   chestOpen: { source: "/sfx/chest-open.wav", gain: 0.72 },
   chestClose: { source: "/sfx/chest-close.wav", gain: 0.58 },
+  ridgebackWarmHuff: { source: "/sfx/ridgeback-warm-huff.mp3", gain: 0.62 },
+  shadecrawlerStoneChitter: { source: "/sfx/shadecrawler-stone-chitter.mp3", gain: 0.52 },
 };
 
 export class SynthAudio {
@@ -290,8 +303,25 @@ export class SynthAudio {
     const definition = BLOCKS[material];
     const stoneLike = definition?.preferredTool === "pickaxe";
     const woodLike = definition?.preferredTool === "axe";
+    const sandLike = material === BlockId.Sand || material === BlockId.RedSand || material === BlockId.SunbakedClay;
+    const softLike = material === BlockId.Grass || material === BlockId.Dirt || material === BlockId.MeadowGrass
+      || material === BlockId.TallGrass || definition?.shape === "cross";
     const base = stoneLike ? 1240 : woodLike ? 680 : 400;
-    if (kind === "step") this.noiseBurst(stoneLike ? 0.038 : 0.064, base * 0.64, 0.055, stoneLike);
+    if (kind === "step") {
+      if (sandLike) {
+        this.noiseBurst(0.082, 520, 0.046);
+        this.noiseBurst(0.045, 880, 0.022, true, 0.025);
+      } else if (softLike) {
+        this.noiseBurst(0.072, 300, 0.052);
+        this.tone(72 + Math.random() * 12, 0.045, 0.012, "sine");
+      } else if (woodLike) {
+        this.noiseBurst(0.047, 720, 0.048, true);
+        this.tone(118, 0.055, 0.022, "triangle", 0, 84);
+      } else {
+        // Crisp stone/ore steps and a neutral fallback share one compact path.
+        this.noiseBurst(stoneLike ? 0.038 : 0.064, base * 0.64, 0.055, stoneLike);
+      }
+    }
     else if (kind === "mine") {
       this.noiseBurst(0.075, base, 0.085, stoneLike);
       this.tone(stoneLike ? 105 : 82, 0.045, 0.025, "sine");

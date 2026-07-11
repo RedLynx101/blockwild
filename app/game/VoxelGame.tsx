@@ -20,6 +20,7 @@ import {
   MOB_ORDER,
   RECIPES,
   VoxelEngine,
+  isEditableKeyboardTarget,
   readSettings,
   type GameMode,
   type GameSettings,
@@ -32,7 +33,8 @@ import {
   type Recipe,
   type RecipePlanResult,
 } from "./engine";
-import { BUTTERFLY_ORDER, CORE_MOB_ORDER } from "./mobs";
+import { BUTTERFLY_ORDER } from "./mobs";
+import type { MobDefinition } from "./mobs";
 import { createHeldToolSpec } from "./model-specs";
 import { BlockPlayerModel, type PlayerEquipmentAppearance } from "./player-model";
 import { GAME_RELEASE_NAME, GAME_VERSION, GAME_VERSION_LABEL } from "./version";
@@ -44,9 +46,19 @@ import {
   type WorldOptions,
 } from "./world-storage";
 
-type Overlay = "title" | "new" | "pause" | "inventory" | "crafting" | "furnace" | "chest" | "bestiary" | "multiplayer" | "sleep" | "pet" | "help" | "settings" | "reset" | null;
-type BestiaryFilter = "all" | "creatures" | "winged";
+type Overlay = "title" | "new" | "pause" | "inventory" | "crafting" | "furnace" | "chest" | "bestiary" | "multiplayer" | "sleep" | "pet" | "help" | "settings" | null;
+export type BestiaryFilter = "all" | "surface" | "birds" | "butterflies" | "fish" | "monsters" | "companions";
 type PetCommand = NonNullable<HudState["activePet"]>["command"];
+
+const BESTIARY_FILTERS: ReadonlyArray<[BestiaryFilter, string]> = [
+  ["all", "All"],
+  ["surface", "Surface"],
+  ["birds", "Birds"],
+  ["butterflies", "Butterflies"],
+  ["fish", "Aquatic"],
+  ["monsters", "Monsters"],
+  ["companions", "Tameable"],
+];
 
 type MultiplayerPeerView = {
   token?: string;
@@ -65,6 +77,8 @@ type MultiplayerViewState = {
   peers: MultiplayerPeerView[];
   inviteCode: string;
   answerCode: string;
+  roomCode: string;
+  rendezvousStatus: "opening" | "waiting" | "exchanging" | "connected" | "closed" | "error" | "idle";
   error: string | null;
 };
 
@@ -75,6 +89,9 @@ type MultiplayerEngineApi = {
   hostMultiplayer?: (playerName: string) => MultiplayerActionResult | Promise<MultiplayerActionResult>;
   joinMultiplayer?: (inviteCode: string, playerName: string) => MultiplayerActionResult | Promise<MultiplayerActionResult>;
   acceptMultiplayerAnswer?: (answerCode: string) => void | Promise<void>;
+  createMultiplayerRoom?: (roomCode: string, playerName: string) => Promise<{ roomCode: string }>;
+  joinMultiplayerRoom?: (roomCode: string, playerName: string) => Promise<{ hostName: string }>;
+  suggestMultiplayerRoomCode?: () => string;
   disconnectMultiplayer?: () => void | Promise<void>;
 };
 
@@ -86,8 +103,14 @@ const EMPTY_MULTIPLAYER_STATE: MultiplayerViewState = {
   peers: [],
   inviteCode: "",
   answerCode: "",
+  roomCode: "",
+  rendezvousStatus: "idle",
   error: null,
 };
+
+export function normalizeMultiplayerRoomCode(value: string) {
+  return value.toLocaleUpperCase().replace(/[^A-Z0-9-]/gu, "").replace(/-{2,}/gu, "-").slice(0, 24);
+}
 
 const formatPlayTime = (milliseconds: number) => {
   const minutes = Math.max(0, Math.floor(milliseconds / 60_000));
@@ -145,19 +168,23 @@ const INITIAL_HUD: HudState = {
   weatherKind: "clear",
   activePet: null,
   mountedBoat: false,
+  mountedCreature: false,
 };
 
-function itemIconKind(item: ItemCode) {
+export function itemIconKind(item: ItemCode) {
   const definition = ITEMS[item];
   if (item === Item.StarrootScepter) return "scepter";
   if (definition?.toolKind) return `tool-${definition.toolKind}`;
   if (definition?.equipmentSlot) return `armor-${definition.equipmentSlot}`;
+  if (definition?.useKind === "hoe") return "hoe";
+  if (definition?.useKind === "scythe") return "scythe";
   switch (item) {
+    case BlockId.CraftingTable: return "crafting-table";
     case BlockId.Torch: return "torch";
-    case BlockId.RedFlower: return "flower-red";
-    case BlockId.BlueFlower: return "flower-blue";
-    case BlockId.Sunpetal: return "flower-sun";
-    case BlockId.MoonOrchid: return "flower-moon";
+    case BlockId.RedFlower: return "world-flora-red";
+    case BlockId.BlueFlower: return "world-flora-blue";
+    case BlockId.Sunpetal: return "world-flora-sun";
+    case BlockId.MoonOrchid: return "world-flora-moon";
     case BlockId.Cactus: return "cactus";
     case BlockId.DesertShrub: return "shrub";
     case BlockId.BananaPlant: return "banana-plant";
@@ -177,8 +204,8 @@ function itemIconKind(item: ItemCode) {
     case Item.Apple: return "apple";
     case Item.Bread: return "bread";
     case Item.RawMeat:
-    case Item.CookedMeat:
-    case Item.RottenFlesh: return "meat";
+    case Item.CookedMeat: return "meat";
+    case Item.RottenFlesh: return "rotten-flesh";
     case Item.Fiber: return "fiber";
     case Item.Hide: return "hide";
     case Item.BoneShard: return "bone";
@@ -199,6 +226,8 @@ function itemIconKind(item: ItemCode) {
     case Item.GlowScale: return "scale";
     case Item.BreatherCharm: return "charm";
     case Item.SunwardCompass: return "compass";
+    case Item.Saddle: return "saddle";
+    case Item.NocturneHeart: return "nocturne-heart";
     case Item.ButterflyNet: return "net";
     case Item.MeadowwingJar:
     case Item.AzureSkipperJar:
@@ -206,8 +235,63 @@ function itemIconKind(item: ItemCode) {
     case Item.FrostveilJar:
     case Item.BloomMonarchJar:
     case Item.FenLanternJar: return "jar";
-    default: return definition?.placeBlock !== undefined ? "block" : "item";
+    default:
+      if (definition?.worldTextureBlock !== undefined) return "world-texture";
+      if (definition?.iconKind) return definition.iconKind;
+      return definition?.placeBlock !== undefined ? "block" : "item";
   }
+}
+
+export function itemHoverText(slot: InventorySlot | null, fallback = "Empty slot") {
+  if (!slot) return fallback;
+  const definition = ITEMS[slot.item];
+  const details = [definition?.name ?? "Item"];
+  if (definition?.food) details.push(`Food +${definition.food}`);
+  if (slot.durability !== undefined) details.push(`${slot.durability} durability`);
+  const metadata = itemMetadataSummary(slot).replace(/^\s*·\s*/u, "");
+  if (metadata) details.push(metadata);
+  return details.join(" · ");
+}
+
+export function acceptsTextInput(target: EventTarget | null) {
+  return isEditableKeyboardTarget(target);
+}
+
+type BestiaryProgressEntry = HudState["bestiary"][MobKind];
+
+export function bestiaryEntryCompletion(definition: MobDefinition, progress: BestiaryProgressEntry) {
+  const tasks = [progress.seen];
+  if (definition.family === "butterfly") tasks.push((progress.captures ?? 0) > 0);
+  else if (definition.hostile) tasks.push(progress.kills > 0);
+  if (definition.tameable) tasks.push((progress.tames ?? 0) > 0);
+  if (definition.breedable) tasks.push((progress.breeds ?? 0) > 0);
+  if (definition.postTameNotes) tasks.push(Boolean(progress.secretUnlocked));
+  return Math.round(tasks.filter(Boolean).length / tasks.length * 100);
+}
+
+export function bestiaryKindsForFilter(filter: BestiaryFilter): MobKind[] {
+  return MOB_ORDER.filter((kind) => {
+    const definition = MOB_DEFS[kind];
+    if (filter === "all") return true;
+    if (filter === "birds") return definition.family === "bird";
+    if (filter === "butterflies") return definition.family === "butterfly";
+    if (filter === "fish") return definition.family === "fish";
+    if (filter === "monsters") return definition.hostile || definition.family === "undead" || definition.family === "construct";
+    if (filter === "companions") return Boolean(definition.tameable || definition.family === "pet");
+    return !definition.hostile && !["bird", "butterfly", "fish", "pet"].includes(definition.family ?? "surface");
+  });
+}
+
+export function undiscoveredHabitatHint(definition: MobDefinition) {
+  return definition.discoveryHint ?? `Search ${definition.habitat.charAt(0).toLocaleLowerCase()}${definition.habitat.slice(1)}.`;
+}
+
+function bestiaryObservation(definition: MobDefinition, progress: BestiaryProgressEntry) {
+  if (definition.family === "butterfly") return `${progress.captures ?? 0} captured`;
+  if (definition.tameable && (progress.tames ?? 0) > 0) return `${progress.tames} tamed`;
+  if (definition.breedable && (progress.breeds ?? 0) > 0) return `${progress.breeds} bred`;
+  if (definition.hostile) return `${progress.kills} defeated`;
+  return progress.seen ? "observed in the wild" : "not yet observed";
 }
 
 function itemMetadataSummary(slot: InventorySlot | null) {
@@ -231,6 +315,7 @@ function ItemIcon({ item, small = false }: { item: ItemCode; small?: boolean }) 
       style={{ "--item-color": definition?.color ?? "#777" } as CSSProperties}
       data-item-icon={iconKind}
       data-item-id={item}
+      data-world-texture={definition?.worldTextureBlock}
       aria-hidden="true"
     />
   );
@@ -508,16 +593,22 @@ export default function VoxelGame() {
   const [selectedBestiary, setSelectedBestiary] = useState<MobKind>("mossling");
   const [bestiaryFilter, setBestiaryFilter] = useState<BestiaryFilter>("all");
   const [multiplayerName, setMultiplayerName] = useState("Trailkeeper");
+  const [multiplayerRoomCode, setMultiplayerRoomCode] = useState("");
   const [multiplayerInvite, setMultiplayerInvite] = useState("");
   const [multiplayerAnswer, setMultiplayerAnswer] = useState("");
   const [multiplayerState, setMultiplayerState] = useState<MultiplayerViewState>(EMPTY_MULTIPLAYER_STATE);
   const [multiplayerBusy, setMultiplayerBusy] = useState(false);
+  const [iconAuditMode, setIconAuditMode] = useState(false);
 
   useEffect(() => {
     try {
       const stored = window.localStorage.getItem("blockwild-player-variant");
       if (stored === "female" || stored === "male") setPlayerVariant(stored);
     } catch { /* Character selection remains available without persistent browser storage. */ }
+  }, []);
+
+  useEffect(() => {
+    setIconAuditMode(new URLSearchParams(window.location.search).get("icon-audit") === "1");
   }, []);
 
   useEffect(() => {
@@ -576,6 +667,7 @@ export default function VoxelGame() {
     try {
       engine = new VoxelEngine(canvas, {
         onHud: setHud,
+        onSelectedSlot: (selected) => setHud((current) => current.selected === selected ? current : { ...current, selected }),
         onToast: showToast,
         onLockChange: (locked) => {
           if (!locked && startedRef.current && overlayRef.current === null) setOverlay("pause");
@@ -627,6 +719,7 @@ export default function VoxelGame() {
     const handleMenuKeys = (event: KeyboardEvent) => {
       const current = overlayRef.current;
       const engine = engineRef.current;
+      if (acceptsTextInput(event.target) && event.code !== "Escape") return;
       if (event.code === "KeyE" && ["inventory", "crafting", "furnace", "chest", "pet"].includes(current ?? "")) {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -643,7 +736,7 @@ export default function VoxelGame() {
         if (["inventory", "crafting", "furnace", "chest", "pet"].includes(current)) engine?.closeContainer();
         if (startedRef.current) {
           if (current === "pause") { setOverlay(null); engine?.activate(); }
-          else if (current === "settings" || current === "help" || current === "reset" || current === "bestiary" || current === "multiplayer") setOverlay("pause");
+          else if (current === "settings" || current === "help" || current === "bestiary" || current === "multiplayer") setOverlay("pause");
           else { setOverlay(null); engine?.activate(); }
         } else if (current !== "title") setOverlay("title");
       } else if (startedRef.current) {
@@ -838,23 +931,9 @@ export default function VoxelGame() {
     setStarted(false);
     activeWorldIdRef.current = null;
     setMultiplayerState(EMPTY_MULTIPLAYER_STATE);
+    setMultiplayerRoomCode("");
     refreshWorldCatalog();
     setOverlay("title");
-  };
-
-  const confirmReset = () => {
-    const activeWorldId = activeWorldIdRef.current;
-    activeWorldIdRef.current = null;
-    engineRef.current?.quitToTitle();
-    if (activeWorldId) {
-      const deleted = worldStorageRef.current?.deleteWorld(activeWorldId);
-      if (deleted && !deleted.ok) setWorldNotice(deleted.error.message);
-    }
-    startedRef.current = false;
-    setStarted(false);
-    refreshWorldCatalog();
-    engineRef.current?.previewWorld("WILDERNESS");
-    beginNewWorld();
   };
 
   const updateSettings = (change: Partial<GameSettings>) => {
@@ -887,6 +966,8 @@ export default function VoxelGame() {
         peers: Array.isArray(state.peers) ? state.peers : [],
         inviteCode: typeof state.inviteCode === "string" ? state.inviteCode : current.inviteCode,
         answerCode: typeof state.answerCode === "string" ? state.answerCode : current.answerCode,
+        roomCode: typeof state.roomCode === "string" ? state.roomCode : current.roomCode,
+        rendezvousStatus: ["opening", "waiting", "exchanging", "connected", "closed", "error"].includes(String(state.rendezvousStatus)) ? state.rendezvousStatus as MultiplayerViewState["rendezvousStatus"] : current.rendezvousStatus,
         error: typeof state.error === "string" ? state.error : null,
       }));
     } catch (error) {
@@ -918,6 +999,60 @@ export default function VoxelGame() {
       refreshMultiplayerState();
     } catch (error) {
       setMultiplayerState((current) => ({ ...current, error: error instanceof Error ? error.message : String(error) }));
+    } finally {
+      setMultiplayerBusy(false);
+    }
+  };
+
+  const suggestMultiplayerCode = () => {
+    const api = engineRef.current as unknown as MultiplayerEngineApi | null;
+    const suggested = api?.suggestMultiplayerRoomCode?.() ?? `WILD-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    setMultiplayerRoomCode(normalizeMultiplayerRoomCode(suggested));
+  };
+
+  const createMultiplayerRoom = async () => {
+    const api = engineRef.current as unknown as MultiplayerEngineApi | null;
+    const requestedCode = normalizeMultiplayerRoomCode(multiplayerRoomCode || api?.suggestMultiplayerRoomCode?.() || "");
+    if (!requestedCode) {
+      setMultiplayerState((current) => ({ ...current, error: "Generate or enter an invite code first." }));
+      return;
+    }
+    if (!api?.createMultiplayerRoom) {
+      setMultiplayerState((current) => ({ ...current, error: "One-code hosting is unavailable in this engine build. Use Advanced direct connection below." }));
+      return;
+    }
+    setMultiplayerBusy(true);
+    try {
+      const result = await api.createMultiplayerRoom(requestedCode, multiplayerName.trim() || "Trailkeeper");
+      const roomCode = normalizeMultiplayerRoomCode(result.roomCode);
+      setMultiplayerRoomCode(roomCode);
+      setMultiplayerState((current) => ({ ...current, roomCode, rendezvousStatus: "waiting", error: null }));
+      refreshMultiplayerState();
+    } catch (error) {
+      setMultiplayerState((current) => ({ ...current, rendezvousStatus: "error", error: error instanceof Error ? error.message : String(error) }));
+    } finally {
+      setMultiplayerBusy(false);
+    }
+  };
+
+  const joinMultiplayerRoom = async () => {
+    const api = engineRef.current as unknown as MultiplayerEngineApi | null;
+    const roomCode = normalizeMultiplayerRoomCode(multiplayerRoomCode);
+    if (!roomCode) {
+      setMultiplayerState((current) => ({ ...current, error: "Enter the host's invite code first." }));
+      return;
+    }
+    if (!api?.joinMultiplayerRoom) {
+      setMultiplayerState((current) => ({ ...current, error: "One-code joining is unavailable in this engine build. Use Advanced direct connection below." }));
+      return;
+    }
+    setMultiplayerBusy(true);
+    try {
+      await api.joinMultiplayerRoom(roomCode, multiplayerName.trim() || "Trailkeeper");
+      setMultiplayerState((current) => ({ ...current, roomCode, rendezvousStatus: "exchanging", error: null }));
+      refreshMultiplayerState();
+    } catch (error) {
+      setMultiplayerState((current) => ({ ...current, rendezvousStatus: "error", error: error instanceof Error ? error.message : String(error) }));
     } finally {
       setMultiplayerBusy(false);
     }
@@ -978,6 +1113,7 @@ export default function VoxelGame() {
     try {
       await api.disconnectMultiplayer();
       setMultiplayerState(EMPTY_MULTIPLAYER_STATE);
+      setMultiplayerRoomCode("");
       setMultiplayerInvite("");
       setMultiplayerAnswer("");
       refreshMultiplayerState();
@@ -1042,8 +1178,8 @@ export default function VoxelGame() {
       type="button"
       key={key}
       className={`mc-slot ${className}`}
-      title={slot ? `${ITEMS[slot.item]?.name ?? "Item"}${slot.durability !== undefined ? ` · ${slot.durability} durability` : ""}${itemMetadataSummary(slot)}` : label}
-      aria-label={slot ? `${ITEMS[slot.item]?.name ?? "Item"}, ${slot.count}${itemMetadataSummary(slot)}` : label ?? "Empty slot"}
+      title={itemHoverText(slot, label)}
+      aria-label={slot ? `${itemHoverText(slot)}, ${slot.count}` : label ?? "Empty slot"}
       onClick={(event) => {
         if (event.detail >= 2) engineRef.current?.collectMatching(slot?.item ?? hud.cursor?.item);
         else onLeft(event.shiftKey);
@@ -1143,13 +1279,13 @@ export default function VoxelGame() {
   const xpNeeded = 12 + hud.level * 6;
   const bestiaryDefinition = MOB_DEFS[selectedBestiary];
   const bestiaryProgress = hud.bestiary[selectedBestiary];
-  const bestiaryVisibleKinds: readonly MobKind[] = bestiaryFilter === "creatures" ? CORE_MOB_ORDER : bestiaryFilter === "winged" ? BUTTERFLY_ORDER : MOB_ORDER;
+  const bestiaryVisibleKinds: readonly MobKind[] = bestiaryKindsForFilter(bestiaryFilter);
   const bestiarySeen = MOB_ORDER.filter((kind) => hud.bestiary[kind].seen).length;
   const bestiaryVisibleIndex = Math.max(0, bestiaryVisibleKinds.indexOf(selectedBestiary));
   const setBestiaryCategory = (filter: BestiaryFilter) => {
     setBestiaryFilter(filter);
-    const kinds: readonly MobKind[] = filter === "creatures" ? CORE_MOB_ORDER : filter === "winged" ? BUTTERFLY_ORDER : MOB_ORDER;
-    if (!kinds.includes(selectedBestiary)) setSelectedBestiary(kinds[0]);
+    const kinds = bestiaryKindsForFilter(filter);
+    if (!kinds.includes(selectedBestiary) && kinds[0]) setSelectedBestiary(kinds[0]);
   };
   const stepBestiary = (direction: -1 | 1) => {
     const next = (bestiaryVisibleIndex + direction + bestiaryVisibleKinds.length) % bestiaryVisibleKinds.length;
@@ -1184,6 +1320,7 @@ export default function VoxelGame() {
             {hud.onlinePlayers > 1 && <span className="online"><kbd>●</kbd><strong>{hud.onlinePlayers} ONLINE</strong></span>}
           </div>
           {hud.mountedBoat && <div className="boat-hud" role="status"><strong>WAYFARER</strong><span><kbd>WASD</kbd> SAIL</span><span><kbd>SPACE</kbd> DISMOUNT</span></div>}
+          {hud.mountedCreature && <div className="boat-hud creature-mount-hud" role="status"><strong>SHADECRAWLER</strong><span><kbd>WASD</kbd> RIDE</span><span><kbd>SPACE</kbd> DISMOUNT</span></div>}
 
           {hud.debug && (
             <div className="debug-card">
@@ -1194,6 +1331,7 @@ export default function VoxelGame() {
               Performance: {hud.averageFps.toFixed(0)} FPS
             </div>
           )}
+          {settings.showFps && <div className="fps-counter" role="status" aria-label={`${Math.round(hud.averageFps)} frames per second`}>{Math.round(hud.averageFps)} FPS</div>}
 
           <div className="crosshair" aria-hidden="true"><span /><span /></div>
           {hud.breakProgress > 0 && (
@@ -1220,7 +1358,7 @@ export default function VoxelGame() {
             <div className="xp-bar" aria-label={`Level ${hud.level}, ${hud.xp} of ${xpNeeded} experience`}><span style={{ width: `${Math.min(100, hud.xp / xpNeeded * 100)}%` }} /><b>{hud.level || ""}</b></div>
             <div className="hotbar" role="toolbar" aria-label="Item hotbar">
               {hud.inventory.slice(0, 9).map((slot, index) => (
-                <button type="button" key={`hotbar-${index}`} className={`hotbar-slot ${hud.selected === index ? "selected" : ""}`} aria-label={`Slot ${index + 1}: ${slot ? ITEMS[slot.item]?.name : "empty"}`} onClick={() => engineRef.current?.selectSlot(index)}>
+                <button type="button" key={`hotbar-${index}`} className={`hotbar-slot ${hud.selected === index ? "selected" : ""}`} aria-pressed={hud.selected === index} aria-label={`Slot ${index + 1}: ${slot ? itemHoverText(slot) : "empty"}`} title={slot ? itemHoverText(slot) : `Empty hotbar slot ${index + 1}`} onClick={() => engineRef.current?.selectSlot(index)}>
                   <span className="slot-number">{index + 1}</span>
                   <SlotContents slot={slot} />
                 </button>
@@ -1346,7 +1484,7 @@ export default function VoxelGame() {
               </button>
             </fieldset>
             <details className="advanced-world-options">
-              <summary><span>Advanced world options</span><small>Difficulty, ecology, terrain, weather, and inventory rules</small></summary>
+              <summary><span>Advanced world options</span><small>Difficulty, ecology, terrain, and inventory rules</small></summary>
               <div className="advanced-option-grid">
                 <label><span>Difficulty <b>{worldOptions.difficulty.toUpperCase()}</b></span><select value={worldOptions.difficulty} onChange={(event) => setWorldOptions((current) => ({ ...current, difficulty: event.target.value as WorldOptions["difficulty"] }))}><option value="peaceful">Peaceful</option><option value="easy">Easy</option><option value="normal">Normal</option><option value="hard">Hard</option></select></label>
                 <label><span>Day length <b>{worldOptions.dayLengthMinutes} min</b></span><input type="range" min="5" max="120" step="5" value={worldOptions.dayLengthMinutes} onChange={(event) => setWorldOptions((current) => ({ ...current, dayLengthMinutes: Number(event.target.value) }))} /></label>
@@ -1361,14 +1499,13 @@ export default function VoxelGame() {
               <div className="advanced-toggle-grid">
                 {([
                   ["structures", "Structures"],
-                  ["weather", "Dynamic weather"],
                   ["keepInventory", "Keep inventory"],
                   ["friendlyFire", "Friendly fire"],
                 ] as const).map(([key, label]) => <button type="button" key={key} className={worldOptions[key] ? "active" : ""} onClick={() => setWorldOptions((current) => ({ ...current, [key]: !current[key] }))}><span>{label}</span><b>{worldOptions[key] ? "ON" : "OFF"}</b></button>)}
               </div>
             </details>
             <div className="world-feature-strip">
-              <span><b>∞</b> STREAMED WORLD</span><span><b>17</b> BIOMES</span><span><b>28</b> CREATURES</span><span><b>192</b> BLOCKS TALL</span>
+              <span><b>∞</b> STREAMED WORLD</span><span><b>17</b> BIOMES</span><span><b>{MOB_ORDER.length}</b> CREATURES</span><span><b>192</b> BLOCKS TALL</span>
             </div>
             <p className="browser-ownership-note setup-ownership-note">This world will belong to this browser on this host device. Export it to make a backup or move it.</p>
             <div className="panel-actions">
@@ -1383,8 +1520,8 @@ export default function VoxelGame() {
         <section className="menu-overlay pause-overlay" aria-labelledby="pause-title">
           <div className="pixel-panel pause-panel">
             <span className="panel-eyebrow">{hud.biome} · DAY {hud.day} · {hud.clock}</span>
-            <h2 id="pause-title">Game Paused</h2>
-            <p className="panel-flavor">Loaded {hud.loadedChunks} chunks around you. The rest of infinity is waiting politely offscreen.</p>
+            <h2 id="pause-title">{hud.onlinePlayers > 1 ? "Session Menu" : "Game Paused"}</h2>
+            <p className="panel-flavor">{hud.onlinePlayers > 1 ? "This shared world keeps running while the session menu is open." : `Loaded ${hud.loadedChunks} chunks around you. The rest of infinity is waiting politely offscreen.`}</p>
             <div className="stacked-menu-buttons">
               <PixelButton className="gold-button" onClick={() => { setOverlay(null); engineRef.current?.activate(); }}>Back to Game</PixelButton>
               <PixelButton onClick={() => engineRef.current?.openOverlay("inventory")}>Inventory & Crafting</PixelButton>
@@ -1393,7 +1530,6 @@ export default function VoxelGame() {
               <PixelButton onClick={() => engineRef.current?.toggleFullscreen()}>{hud.fullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}</PixelButton>
               <PixelButton onClick={() => openSettings("pause")}>Settings</PixelButton>
               <PixelButton onClick={() => setOverlay("help")}>Field Manual</PixelButton>
-              <PixelButton className="danger-button" onClick={() => setOverlay("reset")}>Delete & Regenerate World</PixelButton>
               <PixelButton className="secondary-button" onClick={saveAndQuit}>Save & Quit to Title</PixelButton>
             </div>
           </div>
@@ -1570,8 +1706,8 @@ export default function VoxelGame() {
             </header>
             <div className="bestiary-toolbar">
               <div className="bestiary-filters" role="tablist" aria-label="Bestiary categories">
-                {([['all', 'All', MOB_ORDER.length], ['creatures', 'Creatures', CORE_MOB_ORDER.length], ['winged', 'Winged', BUTTERFLY_ORDER.length]] as Array<[BestiaryFilter, string, number]>).map(([filter, label, count]) => (
-                  <button type="button" role="tab" aria-selected={bestiaryFilter === filter} className={bestiaryFilter === filter ? "active" : ""} key={filter} onClick={() => setBestiaryCategory(filter)}>{label}<small>{count}</small></button>
+                {BESTIARY_FILTERS.map(([filter, label]) => (
+                  <button type="button" role="tab" aria-selected={bestiaryFilter === filter} className={bestiaryFilter === filter ? "active" : ""} key={filter} onClick={() => setBestiaryCategory(filter)}>{label}<small>{bestiaryKindsForFilter(filter).length}</small></button>
                 ))}
               </div>
               <span className="bestiary-index">ENTRY {bestiaryVisibleIndex + 1} / {bestiaryVisibleKinds.length}</span>
@@ -1581,8 +1717,9 @@ export default function VoxelGame() {
                 {bestiaryVisibleKinds.map((kind) => {
                   const definition = MOB_DEFS[kind];
                   const progress = hud.bestiary[kind];
-                  const observation = definition.family === "butterfly" ? `${progress.captures ?? 0} captured` : `${progress.kills} kills`;
-                  return <button type="button" key={kind} className={selectedBestiary === kind ? "active" : ""} aria-current={selectedBestiary === kind ? "true" : undefined} onClick={() => setSelectedBestiary(kind)}><CreaturePortrait kind={kind} seen={progress.seen} mini /><span className="bestiary-list-copy"><strong>{progress.seen ? definition.name : "Unknown Creature"}</strong><small>{progress.seen ? `${definition.temperament} · ${observation}` : "Undiscovered"}</small></span><i className={`temperament-dot temperament-${definition.temperament.toLowerCase()}`} aria-hidden="true" /></button>;
+                  const observation = bestiaryObservation(definition, progress);
+                  const completion = bestiaryEntryCompletion(definition, progress);
+                  return <button type="button" key={kind} className={selectedBestiary === kind ? "active" : ""} aria-current={selectedBestiary === kind ? "true" : undefined} onClick={() => setSelectedBestiary(kind)}><span className="bestiary-icon-progress" style={{ "--entry-progress": `${completion}%` } as CSSProperties} title={`${completion}% field notes complete`}><CreaturePortrait kind={kind} seen={progress.seen} mini /><i>{completion}</i></span><span className="bestiary-list-copy"><strong>{progress.seen ? definition.name : "Unknown Creature"}</strong><small>{progress.seen ? `${definition.temperament} · ${observation}` : undiscoveredHabitatHint(definition)}</small></span><i className={`temperament-dot temperament-${definition.temperament.toLowerCase()}`} aria-hidden="true" /></button>;
                 })}
               </nav>
               <article className={`bestiary-detail ${bestiaryProgress.seen ? "seen" : "unknown"}`}>
@@ -1595,12 +1732,22 @@ export default function VoxelGame() {
                   </div>
                 </div>
                 {bestiaryProgress.seen ? <>
-                  <div className="bestiary-heading"><div><span className={`temperament-label temperament-${bestiaryDefinition.temperament.toLowerCase()}`}>{bestiaryDefinition.temperament.toUpperCase()}</span><h3>{bestiaryDefinition.name}</h3></div><strong>{bestiaryDefinition.family === "butterfly" ? `${bestiaryProgress.captures ?? 0} CAPTURED` : `${bestiaryProgress.kills} DEFEATED`}</strong></div>
+                  <div className="bestiary-heading"><div><span className={`temperament-label temperament-${bestiaryDefinition.temperament.toLowerCase()}`}>{bestiaryDefinition.temperament.toUpperCase()}</span><h3>{bestiaryDefinition.name}</h3></div><strong>{bestiaryObservation(bestiaryDefinition, bestiaryProgress).toUpperCase()}</strong></div>
                   <p className="bestiary-lore">{bestiaryDefinition.lore}</p>
                   <div className="bestiary-facts"><div><small>HABITAT</small><strong>{bestiaryDefinition.habitat}</strong></div><div><small>ACTIVE</small><strong>{bestiaryDefinition.active}</strong></div><div><small>HEALTH</small><strong>{bestiaryDefinition.health} hearts</strong></div><div><small>DANGER</small><strong>{bestiaryDefinition.damage ? `${bestiaryDefinition.damage} damage` : "Harmless"}</strong></div></div>
                   <section className="behavior-note"><small>BEHAVIOR</small><p>{bestiaryDefinition.behavior}</p></section>
+                  <section className="bestiary-care" aria-label={`${bestiaryDefinition.name} care information`}>
+                    <div className="bestiary-care-heading"><small>CREATURE CARE</small><span>Recorded dynamically from known interactions</span></div>
+                    <div className="bestiary-care-grid">
+                      <div><small>TAMEABLE</small><strong>{bestiaryDefinition.tameable ? "Yes" : "No"}</strong>{bestiaryDefinition.tameable && <span>{bestiaryDefinition.tameItems?.length ? bestiaryDefinition.tameItems.map((item) => ITEMS[item]?.name).filter(Boolean).join(", ") : "Method not yet recorded"}</span>}</div>
+                      <div><small>BREEDABLE</small><strong>{bestiaryDefinition.breedable ? "Yes" : "No"}</strong>{bestiaryDefinition.breedable && <span>{bestiaryDefinition.breedingFoods?.length ? bestiaryDefinition.breedingFoods.map((item) => ITEMS[item]?.name).filter(Boolean).join(", ") : "Breeding food unknown"}</span>}</div>
+                      <div><small>EATS</small><strong>{bestiaryDefinition.diet?.length ? bestiaryDefinition.diet.map((item) => ITEMS[item]?.name).filter(Boolean).join(", ") : "No feeding response recorded"}</strong></div>
+                      <div><small>SENTIENT</small><strong>{bestiaryDefinition.sentient ? "Yes" : "No"}</strong><span>No known creature is sentient yet.</span></div>
+                    </div>
+                  </section>
+                  {bestiaryDefinition.postTameNotes && <section className={`bestiary-secret ${bestiaryProgress.secretUnlocked || (bestiaryProgress.tames ?? 0) > 0 ? "unlocked" : "locked"}`}><small>COMPANION FIELD NOTES</small>{bestiaryProgress.secretUnlocked || (bestiaryProgress.tames ?? 0) > 0 ? <p>{bestiaryDefinition.postTameNotes}</p> : <p>Locked · {bestiaryDefinition.secretHint ?? `Tame a ${bestiaryDefinition.name} to reveal its deeper care and riding notes.`}</p>}</section>}
                   {bestiaryDefinition.family === "butterfly" ? <section className="bestiary-loot butterfly-capture-record"><small>CAPTURE RECORD</small>{bestiaryDefinition.captureItem !== undefined && <div><ItemIcon item={bestiaryDefinition.captureItem} small /><span><strong>{bestiaryProgress.captures ? `${bestiaryProgress.captures} ${bestiaryProgress.captures === 1 ? "specimen" : "specimens"} cataloged` : "No specimen captured yet"}</strong><small>Equip a Butterfly Net and catch one gently to preserve it in a field jar.</small></span></div>}</section> : <section className="bestiary-loot"><small>OBSERVED DROPS</small>{bestiaryDefinition.drops.map((drop) => <div key={drop.item}><ItemIcon item={drop.item} small /><span><strong>{bestiaryProgress.kills ? ITEMS[drop.item]?.name : "Unknown drop"}</strong><small>{bestiaryProgress.kills ? `${drop.min}${drop.max !== drop.min ? `–${drop.max}` : ""} · ${Math.round(drop.chance * 100)}% chance` : "Defeat one to record it"}</small></span></div>)}</section>}
-                </> : <div className="unknown-entry"><span className="panel-eyebrow">NO RELIABLE OBSERVATION</span><h3>Unknown Creature</h3><p>Find this creature in the wild and bring it within view to reveal its field notes.</p></div>}
+                </> : <div className="unknown-entry"><span className="panel-eyebrow">NO RELIABLE OBSERVATION</span><h3>Unknown Creature</h3><p>{undiscoveredHabitatHint(bestiaryDefinition)} Bring it within view to reveal its field notes.</p></div>}
               </article>
             </div>
           </div>
@@ -1610,7 +1757,7 @@ export default function VoxelGame() {
       {overlay === "multiplayer" && (
         <section className="menu-overlay" aria-labelledby="multiplayer-title">
           <div className="pixel-panel multiplayer-panel">
-            <span className="panel-eyebrow">HOST-AUTHORITATIVE · MANUAL WEBRTC CONNECTION</span>
+            <span className="panel-eyebrow">HOST-AUTHORITATIVE · ONE INVITE CODE</span>
             <h2 id="multiplayer-title">Multiplayer Session</h2>
             <div className="multiplayer-status-row">
               <span className={`multiplayer-status-light status-${multiplayerState.status}`} aria-hidden="true" />
@@ -1624,25 +1771,35 @@ export default function VoxelGame() {
 
             <label className="multiplayer-name-field"><span>Your player name</span><input className="pixel-input world-name-input" maxLength={32} value={multiplayerName} onChange={(event) => setMultiplayerName(event.target.value)} /></label>
 
-            <div className="multiplayer-connection-grid">
-              <section>
-                <span className="panel-eyebrow">HOST THIS WORLD</span>
-                <h3>Invite a trailmate</h3>
-                <p>Create an offer, send it to one guest, then paste their answer below. Each invite is single-use.</p>
-                <PixelButton disabled={multiplayerBusy || !multiplayerState.supported || multiplayerState.role === "guest"} onClick={() => void hostMultiplayer()}>{multiplayerState.inviteCode ? "Create Another Invite" : "Create Host Invite"}</PixelButton>
-                {multiplayerState.inviteCode && <div className="connection-code"><label>Host invite code</label><textarea readOnly value={multiplayerState.inviteCode} aria-label="Host invite code" /><button type="button" onClick={() => void copyMultiplayerCode(multiplayerState.inviteCode)}>COPY INVITE</button></div>}
-                {(multiplayerState.role === "host" || multiplayerState.inviteCode) && <div className="connection-code"><label htmlFor="guest-answer-code">Guest answer code</label><textarea id="guest-answer-code" value={multiplayerAnswer} onChange={(event) => setMultiplayerAnswer(event.target.value)} placeholder="Paste the answer returned by your guest" /><button type="button" disabled={multiplayerBusy || !multiplayerAnswer.trim()} onClick={() => void acceptMultiplayerAnswer()}>ACCEPT ANSWER</button></div>}
-              </section>
+            <section className="multiplayer-room-flow">
+              <div className="multiplayer-room-copy"><span className="panel-eyebrow">INVITE CODE</span><h3>Share one short code</h3><p>The host starts the room, then every guest enters the same code. Blockwild handles the connection exchange in the background.</p></div>
+              <label className="multiplayer-room-code" htmlFor="multiplayer-room-code"><span>Room code</span><div><input id="multiplayer-room-code" className="pixel-input" autoComplete="off" spellCheck={false} maxLength={24} value={multiplayerRoomCode} onChange={(event) => setMultiplayerRoomCode(normalizeMultiplayerRoomCode(event.target.value))} placeholder="WILD-TRAIL" /><button type="button" onClick={suggestMultiplayerCode}>GENERATE</button></div></label>
+              <div className="multiplayer-room-actions">
+                <PixelButton className="gold-button" disabled={multiplayerBusy || !multiplayerState.supported || multiplayerState.role === "guest"} onClick={() => void createMultiplayerRoom()}>Host with this code</PixelButton>
+                <PixelButton disabled={multiplayerBusy || !multiplayerState.supported || !multiplayerRoomCode || multiplayerState.role === "host"} onClick={() => void joinMultiplayerRoom()}>Join with code</PixelButton>
+                {(multiplayerState.roomCode || multiplayerRoomCode) && <button type="button" className="multiplayer-copy-room" onClick={() => void copyMultiplayerCode(multiplayerState.roomCode || multiplayerRoomCode)}>COPY CODE</button>}
+              </div>
+              <p className={`multiplayer-rendezvous status-${multiplayerState.rendezvousStatus}`} role="status"><b>{multiplayerState.rendezvousStatus.toUpperCase()}</b><span>{multiplayerState.rendezvousStatus === "waiting" ? "Room open · waiting for a guest" : multiplayerState.rendezvousStatus === "exchanging" ? "Guest found · securing the direct connection" : multiplayerState.rendezvousStatus === "connected" ? "Connected · the host world is live" : "Choose Host or Join to begin"}</span></p>
+            </section>
 
-              <section>
-                <span className="panel-eyebrow">JOIN A HOST</span>
-                <h3>Enter another wild</h3>
-                <p>Paste the host&apos;s offer. Send the generated answer back so they can finish the direct connection.</p>
-                <div className="connection-code"><label htmlFor="host-invite-code">Host invite code</label><textarea id="host-invite-code" value={multiplayerInvite} onChange={(event) => setMultiplayerInvite(event.target.value)} placeholder="Paste the host invite here" /></div>
-                <PixelButton disabled={multiplayerBusy || !multiplayerState.supported || !multiplayerInvite.trim() || multiplayerState.role === "host"} onClick={() => void joinMultiplayer()}>Create Guest Answer</PixelButton>
-                {multiplayerState.answerCode && <div className="connection-code guest-answer-output"><label>Answer for the host</label><textarea readOnly value={multiplayerState.answerCode} aria-label="Guest answer code" /><button type="button" onClick={() => void copyMultiplayerCode(multiplayerState.answerCode)}>COPY ANSWER</button></div>}
-              </section>
-            </div>
+            <details className="multiplayer-advanced">
+              <summary>Advanced direct connection fallback</summary>
+              <p>Use this only if the one-code rendezvous service cannot be reached. It requires one offer and one return answer.</p>
+              <div className="multiplayer-connection-grid">
+                <section>
+                  <span className="panel-eyebrow">HOST OFFER</span>
+                  <PixelButton disabled={multiplayerBusy || !multiplayerState.supported || multiplayerState.role === "guest"} onClick={() => void hostMultiplayer()}>Create direct offer</PixelButton>
+                  {multiplayerState.inviteCode && <div className="connection-code"><label>Host offer</label><textarea readOnly value={multiplayerState.inviteCode} aria-label="Host offer code" /><button type="button" onClick={() => void copyMultiplayerCode(multiplayerState.inviteCode)}>COPY OFFER</button></div>}
+                  {(multiplayerState.role === "host" || multiplayerState.inviteCode) && <div className="connection-code"><label htmlFor="guest-answer-code">Guest answer</label><textarea id="guest-answer-code" value={multiplayerAnswer} onChange={(event) => setMultiplayerAnswer(event.target.value)} placeholder="Paste the guest answer" /><button type="button" disabled={multiplayerBusy || !multiplayerAnswer.trim()} onClick={() => void acceptMultiplayerAnswer()}>ACCEPT ANSWER</button></div>}
+                </section>
+                <section>
+                  <span className="panel-eyebrow">JOIN OFFER</span>
+                  <div className="connection-code"><label htmlFor="host-invite-code">Host offer</label><textarea id="host-invite-code" value={multiplayerInvite} onChange={(event) => setMultiplayerInvite(event.target.value)} placeholder="Paste the host offer" /></div>
+                  <PixelButton disabled={multiplayerBusy || !multiplayerState.supported || !multiplayerInvite.trim() || multiplayerState.role === "host"} onClick={() => void joinMultiplayer()}>Create return answer</PixelButton>
+                  {multiplayerState.answerCode && <div className="connection-code guest-answer-output"><label>Answer for the host</label><textarea readOnly value={multiplayerState.answerCode} aria-label="Guest answer code" /><button type="button" onClick={() => void copyMultiplayerCode(multiplayerState.answerCode)}>COPY ANSWER</button></div>}
+                </section>
+              </div>
+            </details>
 
             {multiplayerState.peers.length > 0 && <section className="multiplayer-peer-list"><span className="panel-eyebrow">SESSION PLAYERS</span>{multiplayerState.peers.map((peer, index) => <div key={peer.id ?? peer.token ?? index}><span className="peer-cube" aria-hidden="true" /><strong>{peer.identity?.name ?? peer.name ?? peer.id ?? `Player ${index + 1}`}</strong><small>{(peer.state ?? "connected").toUpperCase()}{typeof peer.latencyMs === "number" ? ` · ${Math.round(peer.latencyMs)}ms` : ""}</small></div>)}</section>}
 
@@ -1700,27 +1857,27 @@ export default function VoxelGame() {
             <label className="setting-row"><span><strong>Field of view</strong><small>{Math.round(settings.fov)}°</small></span><input type="range" min="55" max="100" step="1" value={settings.fov} onChange={(event) => updateSettings({ fov: Number(event.target.value) })} /></label>
             <label className="setting-row"><span><strong>Render distance</strong><small>{settings.renderDistance} chunks · about {settings.renderDistance * 16} blocks · default 10, maximum 16</small></span><input type="range" min="2" max="16" step="1" value={settings.renderDistance} onChange={(event) => updateSettings({ renderDistance: Number(event.target.value), simulationDistance: Math.min(settings.simulationDistance, Number(event.target.value)) })} /></label>
             <label className="setting-row"><span><strong>Simulation distance</strong><small>{settings.simulationDistance} chunks · creatures, liquids, crops, and POIs tick inside this radius</small></span><input type="range" min="2" max={settings.renderDistance} step="1" value={settings.simulationDistance} onChange={(event) => updateSettings({ simulationDistance: Number(event.target.value) })} /></label>
+            <label className="setting-row resource-setting"><span><strong>Resource reserve</strong><small>{settings.resourceMode === "cpu" ? "CPU boost raises streaming and simulation work budgets." : settings.resourceMode === "memory" ? "Memory cache retains more nearby chunks to reduce traversal reload stutter." : "Auto adapts work and cache pressure to this device."}</small></span><select value={settings.resourceMode} onChange={(event) => updateSettings({ resourceMode: event.target.value as GameSettings["resourceMode"] })}><option value="auto">Auto (adaptive)</option><option value="cpu">CPU boost</option><option value="memory">Memory cache</option></select></label>
             <div className="toggle-setting"><span><strong>Music, sound effects & ambience</strong><small>Includes the Blockwild day, night, and sea score.</small></span><button type="button" className={settings.muted ? "" : "active"} onClick={() => updateSettings({ muted: !settings.muted })}>{settings.muted ? "OFF" : "ON"}</button></div>
-            <div className="toggle-setting"><span><strong>Dynamic weather</strong><small>Biome-aware rain, thunder, snow, mist, sandstorms, ashfall, and overcast skies.</small></span><button type="button" className={settings.weather === "rain" ? "active" : ""} onClick={() => { const weather = settings.weather === "rain" ? "clear" : "rain"; updateSettings({ weather }); }}>{settings.weather === "rain" ? "ON" : "OFF"}</button></div>
+            <div className="toggle-setting"><span><strong>FPS counter</strong><small>Shows a compact live performance readout while playing.</small></span><button type="button" className={settings.showFps ? "active" : ""} onClick={() => updateSettings({ showFps: !settings.showFps })}>{settings.showFps ? "ON" : "OFF"}</button></div>
             <div className="fullscreen-setting"><PixelButton onClick={() => engineRef.current?.toggleFullscreen()}>{hud.fullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}</PixelButton></div>
             <div className="panel-actions"><PixelButton className="gold-button" onClick={() => setOverlay(settingsReturn)}>Done</PixelButton></div>
           </div>
         </section>
       )}
 
-      {overlay === "reset" && (
-        <section className="menu-overlay" aria-labelledby="reset-title">
-          <div className="pixel-panel confirm-panel">
-            <div className="warning-cube" aria-hidden="true">!</div>
-            <h2 id="reset-title">Delete this endless world?</h2>
-            <p>This erases every placed block, mined tunnel, inventory stack, furnace, chest, level, and position in this seed. Infinity will regenerate with no memory of your little house.</p>
-            <div className="panel-actions"><PixelButton onClick={() => setOverlay("pause")}>Keep World</PixelButton><PixelButton className="danger-button" onClick={confirmReset}>Erase Everything</PixelButton></div>
-          </div>
-        </section>
-      )}
-
       {webglError && (
         <section className="webgl-fallback" role="alert" aria-labelledby="webgl-title"><div className="pixel-panel confirm-panel"><div className="warning-cube" aria-hidden="true">◇</div><h2 id="webgl-title">The world could not render</h2><p>Blockwild needs WebGL hardware acceleration. Try a current desktop browser and make sure graphics acceleration is enabled.</p><PixelButton className="secondary-button" onClick={() => setWebglError(false)}>Browse Menus Anyway</PixelButton></div></section>
+      )}
+
+      {iconAuditMode && (
+        <section className="item-icon-audit" aria-label="Inventory item icon size audit">
+          <header><div><span className="panel-eyebrow">UI ART QA · ACTUAL DISPLAY SIZES</span><h2>Inventory Icon Audit</h2></div><button type="button" onClick={() => setIconAuditMode(false)} aria-label="Close icon audit">×</button></header>
+          <p>Left: 28px inventory and hotbar artwork. Right: the same artwork at its 22px recipe-book size.</p>
+          <div className="item-icon-audit-grid">
+            {Object.values(ITEMS).map((definition) => <article key={definition.id}><span className="item-audit-large"><ItemIcon item={definition.id} /></span><span className="item-audit-small"><ItemIcon item={definition.id} small /></span><strong>{definition.name}</strong><small>{itemIconKind(definition.id)}</small></article>)}
+          </div>
+        </section>
       )}
     </main>
   );
