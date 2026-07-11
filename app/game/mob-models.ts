@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { createZombieSpec, RIDGEBACK_GROUND_LIFT } from "./model-specs";
+import { createZombieSpec, RATTLEKIN_CLUB_CONTRACT, RIDGEBACK_GROUND_LIFT } from "./model-specs";
 import { CORE_MOB_ORDER, MOB_DEFS, type CoreMobKind, type MobKind } from "./mobs";
 import { createArrowVisual } from "./projectiles";
 
@@ -261,9 +261,28 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       arm.userData.side = side;
       arm.userData.phase = side < 0 ? 0 : Math.PI;
     }
-    const club = add(parts.arms[1], [0.2, 0.86, 0.2], accentMaterial, [0, -0.76, -0.06], undefined, "rattlekin-club-handle");
-    club.rotation.z = -0.18;
-    add(parts.arms[1], [0.36, 0.34, 0.34], darkMaterial, [-0.11, -1.17, -0.06], undefined, "rattlekin-club-head").rotation.z = -0.18;
+    const clubRoot = parts.arms[1];
+    add(
+      clubRoot,
+      [...RATTLEKIN_CLUB_CONTRACT.handleSize],
+      accentMaterial,
+      [...RATTLEKIN_CLUB_CONTRACT.handleCenter],
+      undefined,
+      "rattlekin-club-handle",
+    );
+    add(
+      clubRoot,
+      [...RATTLEKIN_CLUB_CONTRACT.headSize],
+      darkMaterial,
+      [...RATTLEKIN_CLUB_CONTRACT.headCenter],
+      undefined,
+      "rattlekin-club-head",
+    );
+    add(clubRoot, [0.52, 0.18, 0.22], bodyMaterial, [0, -0.72, -1.02], undefined, "rattlekin-club-stone-band");
+    for (const side of [-1, 1]) {
+      const spike = add(clubRoot, [0.12, 0.18, 0.14], accentMaterial, [side * 0.29, -0.72, -1.02], undefined, `rattlekin-club-spike-${side < 0 ? "left" : "right"}`);
+      spike.rotation.z = side * 0.55;
+    }
   } else if (kind === "sunstep-grazer") {
     add(visual, [0.72, 0.62, 1.12], bodyMaterial, [0, 0.16, 0.08], "body", "sunstep-grazer-body");
     add(visual, [0.28, 0.72, 0.3], accentMaterial, [0, 0.5, -0.54], "body", "sunstep-grazer-neck").rotation.x = -0.22;
@@ -277,6 +296,7 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     }
     quadrupedLegs(0.25, -0.32, 0.4, -0.05, 0.72, 0.13, darkMaterial, "sunstep-grazer");
     add(visual, [0.1, 0.1, 0.48], darkMaterial, [0, 0.27, 0.79], "body", "sunstep-grazer-tail").rotation.x = -0.28;
+    visual.scale.setScalar(1.22);
   } else if (kind === "pebbletortoise") {
     add(visual, [1.08, 0.44, 1.18], bodyMaterial, [0, 0.02, 0.05], "body", "pebbletortoise-shell");
     add(visual, [0.82, 0.25, 0.9], accentMaterial, [0, 0.27, 0.06], undefined, "pebbletortoise-shell-crown");
@@ -402,6 +422,45 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       add(leg, [0.3, 0.08, 0.44], darkMaterial, [0, -0.94, -0.12], undefined, `reedstrider-${side < 0 ? "left" : "right"}-foot`);
     }
     add(visual, [0.34, 0.16, 0.58], accentMaterial, [0, 0.61, 0.65], undefined, "reedstrider-tail").rotation.x = 0.25;
+    visual.userData.saddleAnchor = [0, 1.03, 0.1];
+  } else if (kind === "wild-horse") {
+    add(visual, [0.82, 0.78, 1.46], bodyMaterial, [0, 0.54, 0.15], "body", "wild-horse-body");
+    add(visual, [0.34, 0.92, 0.42], accentMaterial, [0, 0.94, -0.52], "body", "wild-horse-neck").rotation.x = -0.25;
+    add(visual, [0.52, 0.52, 0.66], bodyMaterial, [0, 1.27, -0.88], "head", "wild-horse-head");
+    add(visual, [0.4, 0.3, 0.48], accentMaterial, [0, 1.13, -1.35], undefined, "wild-horse-muzzle");
+    eyePair(0.17, 1.35, -1.23, 0.07, "wild-horse");
+    for (const side of [-1, 1]) {
+      const ear = add(visual, [0.14, 0.38, 0.16], darkMaterial, [side * 0.18, 1.68, -0.86], undefined, `wild-horse-${side < 0 ? "left" : "right"}-ear`);
+      ear.rotation.z = side * -0.12;
+    }
+    quadrupedLegs(0.28, -0.34, 0.48, 0.35, 0.9, 0.16, darkMaterial, "wild-horse");
+    for (let index = 0; index < 5; index += 1) add(visual, [0.11, 0.34, 0.24], darkMaterial, [0, 1.25 - index * 0.16, -0.42 + index * 0.13], undefined, `wild-horse-mane-${index + 1}`).rotation.x = -0.2;
+    const tail = pivotBox([0.28, 0.32, 0.95], darkMaterial, [0, 0.75, 0.84], [0, -0.12, 0.42], "body", "wild-horse-tail");
+    tail.rotation.x = 0.42;
+    visual.userData.saddleAnchor = [0, 1.02, 0.12];
+  } else if (kind === "meadow-cow") {
+    add(visual, [1.04, 0.82, 1.48], bodyMaterial, [0, 0.49, 0.14], "body", "meadow-cow-body");
+    add(visual, [0.72, 0.66, 0.68], accentMaterial, [0, 0.67, -0.82], "head", "meadow-cow-head");
+    add(visual, [0.52, 0.28, 0.36], material(0xe3b5a0), [0, 0.52, -1.28], undefined, "meadow-cow-muzzle");
+    eyePair(0.22, 0.78, -1.16, 0.072, "meadow-cow");
+    for (const side of [-1, 1]) {
+      add(visual, [0.38, 0.14, 0.26], darkMaterial, [side * 0.48, 0.92, -0.76], undefined, `meadow-cow-${side < 0 ? "left" : "right"}-ear`).rotation.z = side * -0.25;
+      add(visual, [0.12, 0.28, 0.12], material(0xe8d8af), [side * 0.22, 1.08, -0.77], undefined, `meadow-cow-${side < 0 ? "left" : "right"}-horn`).rotation.z = side * -0.35;
+    }
+    quadrupedLegs(0.36, -0.36, 0.48, 0.3, 0.76, 0.2, darkMaterial, "meadow-cow");
+    add(visual, [0.56, 0.08, 0.68], material(0x6e9b51), [0, 0.92, 0.12], undefined, "meadow-cow-clover-patch").rotation.y = 0.25;
+    add(visual, [0.38, 0.24, 0.32], material(0xe7b5a4), [0, -0.02, 0.3], undefined, "meadow-cow-udder");
+    add(visual, [0.12, 0.12, 0.74], darkMaterial, [0, 0.52, 0.92], "body", "meadow-cow-tail").rotation.x = -0.36;
+  } else if (kind === "mistmane") {
+    add(visual, [0.82, 0.88, 1.18], bodyMaterial, [0, 0.46, 0.12], "body", "mistmane-body");
+    add(visual, [0.38, 0.72, 0.4], accentMaterial, [0, 0.78, -0.53], "body", "mistmane-neck").rotation.x = -0.18;
+    add(visual, [0.58, 0.52, 0.56], bodyMaterial, [0, 1.02, -0.78], "head", "mistmane-head");
+    add(visual, [0.34, 0.22, 0.28], darkMaterial, [0, 0.91, -1.16], undefined, "mistmane-muzzle");
+    eyePair(0.18, 1.09, -1.04, 0.065, "mistmane");
+    for (const side of [-1, 1]) add(visual, [0.2, 0.38, 0.16], accentMaterial, [side * 0.24, 1.34, -0.73], undefined, `mistmane-${side < 0 ? "left" : "right"}-ear`).rotation.z = side * -0.28;
+    quadrupedLegs(0.28, -0.3, 0.38, 0.28, 0.7, 0.16, darkMaterial, "mistmane");
+    for (let lock = 0; lock < 6; lock += 1) add(visual, [0.18, 0.5, 0.18], material(lock % 2 ? 0xdff1ec : 0xb8d6cf, false, 0.92), [-0.26 + lock * 0.105, 0.82, -0.02 + (lock % 2) * 0.1], undefined, `mistmane-mane-lock-${lock + 1}`).rotation.z = (lock - 2.5) * 0.04;
+    add(visual, [0.28, 0.42, 0.48], accentMaterial, [0, 0.42, 0.76], "body", "mistmane-tail").rotation.x = 0.35;
   } else if (kind === "emberjay" || kind === "canopy-lark") {
     const prefix = kind;
     add(visual, [0.44, 0.4, 0.7], bodyMaterial, [0, 0.04, 0.05], "body", `${prefix}-body`);
@@ -425,11 +484,13 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     }
     if (kind === "emberjay") add(visual, [0.14, 0.28, 0.12], accentMaterial, [0, 0.48, -0.35], undefined, "emberjay-crest").rotation.x = -0.24;
     else add(visual, [0.3, 0.08, 0.3], material(0xf0e59f), [0, 0.05, -0.37], undefined, "canopy-lark-breast-mark");
-  } else if (kind === "shoalfin" || kind === "coralback" || kind === "brookdart" || kind === "gloomfin") {
+  } else if (kind === "shoalfin" || kind === "coralback" || kind === "brookdart" || kind === "gloomfin"
+    || kind === "silverthread" || kind === "reedneedle" || kind === "emberribbon" || kind === "cavefilament") {
     const prefix = kind;
-    const large = kind === "coralback" ? 1.28 : kind === "brookdart" ? 0.72 : kind === "gloomfin" ? 0.92 : 0.82;
-    add(visual, [0.5 * large, 0.42 * large, 0.92 * large], bodyMaterial, [0, 0, 0], "body", `${prefix}-body`);
-    add(visual, [0.43 * large, 0.38 * large, 0.42 * large], accentMaterial, [0, 0, -0.55 * large], "head", `${prefix}-head`);
+    const thin = kind === "silverthread" || kind === "reedneedle" || kind === "emberribbon" || kind === "cavefilament";
+    const large = kind === "coralback" ? 1.28 : kind === "brookdart" ? 0.72 : kind === "gloomfin" ? 0.92 : thin ? 0.88 : 0.82;
+    add(visual, [0.5 * large * (thin ? 0.5 : 1), 0.42 * large * (thin ? 0.48 : 1), 0.92 * large * (thin ? 1.35 : 1)], bodyMaterial, [0, 0, 0], "body", `${prefix}-body`);
+    add(visual, [0.43 * large * (thin ? 0.52 : 1), 0.38 * large * (thin ? 0.55 : 1), 0.42 * large], accentMaterial, [0, 0, -0.67 * large * (thin ? 1.2 : 0.82)], "head", `${prefix}-head`);
     eyePair(0.15 * large, 0.08 * large, -0.78 * large, 0.055 * large, prefix);
     for (const side of [-1, 1]) {
       const fin = add(visual, [0.36 * large, 0.055, 0.34 * large], accentMaterial, [side * 0.34 * large, -0.03, 0.02], "wings", `${prefix}-${side < 0 ? "left" : "right"}-fin`);
@@ -453,6 +514,45 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     } else {
       add(visual, [0.3 * large, 0.055, 0.5 * large], material(eyeColor), [0, 0.18 * large, 0.02], undefined, `${prefix}-back-stripe`);
     }
+  } else if (kind === "honeybee" || kind === "hive-queen") {
+    const queen = kind === "hive-queen";
+    const beeChildStart = visual.children.length;
+    const scale = queen ? 1.45 : 1;
+    add(visual, [0.24 * scale, 0.22 * scale, 0.34 * scale], bodyMaterial, [0, 0, 0.12], "body", `${kind}-abdomen-back`);
+    add(visual, [0.25 * scale, 0.23 * scale, 0.22 * scale], darkMaterial, [0, 0, -0.08], "body", `${kind}-abdomen-band`);
+    add(visual, [0.24 * scale, 0.21 * scale, 0.28 * scale], bodyMaterial, [0, 0, -0.29], "body", `${kind}-thorax`);
+    add(visual, [0.23 * scale, 0.22 * scale, 0.22 * scale], accentMaterial, [0, 0.02, -0.52 * scale], "head", `${kind}-head`);
+    eyePair(0.075 * scale, 0.06 * scale, -0.64 * scale, 0.055 * scale, kind);
+    const wingMaterial = material(0xd9f5f0, false, 0.62);
+    for (const side of [-1, 1]) {
+      const wing = add(visual, [0.34 * scale, 0.035, 0.42 * scale], wingMaterial, [side * 0.21 * scale, 0.12 * scale, -0.08], "wings", `${kind}-${side < 0 ? "left" : "right"}-wing`);
+      wing.rotation.z = side * -0.22;
+      wing.rotation.y = side * -0.18;
+      const antenna = add(visual, [0.035, 0.035, 0.28 * scale], darkMaterial, [side * 0.075 * scale, 0.13 * scale, -0.73 * scale], undefined, `${kind}-${side < 0 ? "left" : "right"}-antenna`);
+      antenna.rotation.y = side * 0.18;
+      antenna.rotation.x = -0.18;
+    }
+    add(visual, [0.04, 0.04, 0.23 * scale], darkMaterial, [0, -0.02, 0.38 * scale], undefined, `${kind}-stinger`);
+    if (queen) for (const [index, x] of [-0.1, 0, 0.1].entries()) add(visual, [0.06, index === 1 ? 0.2 : 0.15, 0.06], material(0xf5d96a, true), [x, 0.27 + (index === 1 ? 0.025 : 0), -0.5], undefined, `hive-queen-crown-${index + 1}`);
+    // Workers should read as genuinely tiny pollinators beside butterflies;
+    // the queen remains an intentionally oversized, readable encounter.
+    const speciesScale = queen ? 0.62 : 0.22;
+    for (const child of visual.children.slice(beeChildStart)) {
+      child.position.multiplyScalar(speciesScale);
+      child.scale.multiplyScalar(speciesScale);
+    }
+  } else if (kind === "reed-dragonfly") {
+    add(visual, [0.16, 0.14, 0.62], bodyMaterial, [0, 0, 0.15], "body", "reed-dragonfly-abdomen");
+    add(visual, [0.2, 0.18, 0.22], darkMaterial, [0, 0, -0.28], "body", "reed-dragonfly-thorax");
+    add(visual, [0.24, 0.2, 0.22], accentMaterial, [0, 0.02, -0.49], "head", "reed-dragonfly-head");
+    eyePair(0.09, 0.07, -0.61, 0.09, "reed-dragonfly");
+    const wingMaterial = material(0xcff8ed, false, 0.55);
+    for (const side of [-1, 1]) for (const [pair, z] of [["front", -0.22], ["rear", 0.02]] as const) {
+      const wing = add(visual, [0.54, 0.028, 0.2], wingMaterial, [side * 0.31, 0.11, z], "wings", `reed-dragonfly-${side < 0 ? "left" : "right"}-${pair}-wing`);
+      wing.rotation.y = side * (pair === "front" ? -0.14 : 0.12);
+      wing.rotation.z = side * -0.08;
+    }
+    for (let segment = 0; segment < 3; segment += 1) add(visual, [0.18 - segment * 0.02, 0.04, 0.1], accentMaterial, [0, 0.02, 0.11 + segment * 0.18], undefined, `reed-dragonfly-abdomen-band-${segment + 1}`);
   } else if (kind === "peelop") {
     add(visual, [0.7, 0.58, 0.86], bodyMaterial, [0, 0, 0.13], "body", "peelop-body");
     add(visual, [0.6, 0.56, 0.54], accentMaterial, [0, 0.18, -0.51], "head", "peelop-head");
@@ -503,8 +603,12 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       arm.userData.phase = side < 0 ? 0 : Math.PI;
     }
     const bowMaterial = material(0x7b4d27);
-    add(parts.arms[0], [0.08, 1.05, 0.08], bowMaterial, [-0.12, -0.66, -0.23], undefined, "skeleton-bow").rotation.z = -0.18;
-    add(parts.arms[0], [0.025, 1.0, 0.025], material(0xe5d7b6), [0.02, -0.66, -0.25], undefined, "skeleton-bow-string");
+    const bowRoot = parts.arms[0];
+    add(bowRoot, [0.09, 0.34, 0.08], bowMaterial, [-0.04, -0.66, -0.23], undefined, "skeleton-bow-grip").rotation.z = -0.18;
+    add(bowRoot, [0.08, 0.5, 0.08], bowMaterial, [-0.14, -0.25, -0.23], undefined, "skeleton-bow-upper-limb").rotation.z = 0.2;
+    add(bowRoot, [0.08, 0.5, 0.08], bowMaterial, [-0.14, -1.07, -0.23], undefined, "skeleton-bow-lower-limb").rotation.z = -0.56;
+    add(bowRoot, [0.025, 0.91, 0.025], material(0xe5d7b6), [0.02, -0.66, -0.25], undefined, "skeleton-bow-string");
+    add(bowRoot, [0.035, 0.035, 0.74], material(0x8a6339), [0.02, -0.65, -0.62], undefined, "skeleton-nocked-arrow");
   } else if (kind === "zombie") {
     const zombie = createZombieSpec();
     const limbPivotPositions: Record<string, [number, number, number]> = {

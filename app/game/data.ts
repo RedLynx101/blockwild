@@ -99,6 +99,16 @@ export enum BlockId {
   Limestone = 97,
   MoonSlate = 98,
   SunbakedClay = 99,
+  /** v0.5 furniture/flora use the unused high byte range; item ids occupy 100-199. */
+  Apiary = 240,
+  CaptureOrbRack = 241,
+  CreatureHealer = 242,
+  RiverRibbon = 243,
+  GlowKelp = 244,
+  ReedBloom = 245,
+  CloudreedGrass = 246,
+  Cloudbell = 247,
+  WildBeehive = 248,
 }
 
 export const Item = {
@@ -181,6 +191,18 @@ export const Item = {
   WildwoodFenceGate: 175,
   Saddle: 176,
   NocturneHeart: 177,
+  /** Save-compatible alias: the former Waykeeper Cage is now the Capture Orb. */
+  CaptureOrb: 156,
+  /** Brief pre-release v0.5 builds used this id; loaders migrate it. */
+  LegacyCaptureOrb: 178,
+  Honeycomb: 179,
+  HoneyJar: 180,
+  RoyalJelly: 181,
+  Beeswax: 182,
+  MilkBottle: 183,
+  CloudglassRelic: 184,
+  QueenCell: 185,
+  WorkerBee: 186,
 } as const;
 
 export type ItemCode = number;
@@ -211,7 +233,7 @@ export type BlockDefinition = {
   color: string;
   preferredTool: BlockTool;
   requiredTier: number;
-  shape?: "cube" | "cross" | "torch" | "door" | "chest" | "bed" | "exhibit" | "bush" | "fruit" | "fence" | "gate";
+  shape?: "cube" | "cross" | "torch" | "door" | "chest" | "bed" | "exhibit" | "bush" | "fruit" | "fence" | "gate" | "apiary" | "wild-hive" | "orb-rack" | "orb-healer";
   replaceable?: boolean;
   liquid?: "water" | "lava";
   /** Partial-height collision used by connected fences and similar blocks. */
@@ -235,16 +257,19 @@ export type ItemDefinition = {
   armor?: number;
   food?: number;
   fuel?: number;
-  useKind?: "net" | "release-creature" | "boat" | "creature-cage" | "magic-relic" | "plant" | "hoe" | "scythe" | "bucket" | "lead";
+  useKind?: "net" | "release-creature" | "boat" | "creature-cage" | "capture-orb" | "magic-relic" | "plant" | "hoe" | "scythe" | "bucket" | "lead";
   creatureKind?: string;
   /** Initial world block produced by planting this item rather than placing it directly. */
   plantBlock?: BlockId;
   /** Contents rendered in and placed from a bucket. */
   bucketLiquid?: "water" | "lava";
   /** Semantic UI hook for non-cube inventory artwork. */
-  iconKind?: "crafting-table" | "bucket" | "fence-gate" | "lead" | "seed" | "produce";
+  iconKind?: "crafting-table" | "chest" | "apiary" | "capture-orb" | "orb-rack" | "orb-healer" | "bucket" | "fence-gate" | "lead" | "seed" | "produce" | "honeycomb" | "honey" | "jelly" | "wax" | "milk" | "relic" | "queen-cell" | "bee";
   /** Reuse a world atlas texture for the handheld/icon representation. */
   worldTextureBlock?: BlockId;
+  /** Shared semantic model hooks consumed by held-item and dropped-item renderers. */
+  heldModel?: "wildwood-chest" | "apiary" | "capture-orb" | "orb-rack" | "orb-healer";
+  dropModel?: "wildwood-chest" | "apiary" | "capture-orb" | "orb-rack" | "orb-healer";
 };
 
 const block = (
@@ -374,6 +399,15 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.Limestone]: block(BlockId.Limestone, "Sunwash Limestone", 86, 86, 86, 1.55, "#d8cca4", "pickaxe", 1),
   [BlockId.MoonSlate]: block(BlockId.MoonSlate, "Moon Slate", 87, 87, 87, 2.05, "#4e5765", "pickaxe", 2),
   [BlockId.SunbakedClay]: block(BlockId.SunbakedClay, "Sunbaked Clay", 88, 88, 88, 0.72, "#b96845", "shovel"),
+  [BlockId.Apiary]: block(BlockId.Apiary, "Wildwood Apiary", 92, 91, 11, 1.15, "#bd7b32", "axe", 0, { shape: "apiary" }),
+  [BlockId.CaptureOrbRack]: block(BlockId.CaptureOrbRack, "Capture Orb Rack", 94, 94, 11, 0.85, "#795031", "axe", 0, { shape: "orb-rack" }),
+  [BlockId.CreatureHealer]: block(BlockId.CreatureHealer, "Creature Healer", 95, 94, 11, 1.4, "#67d8d4", "pickaxe", 2, { shape: "orb-healer" }),
+  [BlockId.RiverRibbon]: block(BlockId.RiverRibbon, "River Ribbon", 53, 53, 53, 0.04, "#3f8c68", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
+  [BlockId.GlowKelp]: block(BlockId.GlowKelp, "Glow Kelp", 67, 67, 67, 0.04, "#58d7b0", "hand", 0, { solid: false, layer: "emissive", shape: "cross", replaceable: true }),
+  [BlockId.ReedBloom]: block(BlockId.ReedBloom, "Reed Bloom", 66, 66, 66, 0.05, "#d8a84d", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
+  [BlockId.CloudreedGrass]: block(BlockId.CloudreedGrass, "Cloudreed Turf", 64, 65, 2, 0.62, "#4f8b6c", "shovel"),
+  [BlockId.Cloudbell]: block(BlockId.Cloudbell, "Cloudbell", 67, 67, 67, 0.05, "#96cfe0", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
+  [BlockId.WildBeehive]: block(BlockId.WildBeehive, "Wild Beehive", 93, 93, 11, 0.9, "#d09a3f", "axe", 0, { shape: "wild-hive" }),
 };
 
 export const TORCH_BLOCKS: readonly BlockId[] = [
@@ -442,6 +476,11 @@ for (const definition of Object.values(BLOCKS)) {
     placeBlock: definition.id,
     ...(definition.shape === "cross" ? { worldTextureBlock: definition.id } : {}),
     ...(definition.id === BlockId.CraftingTable ? { iconKind: "crafting-table" as const } : {}),
+    ...(definition.id === BlockId.Chest ? { iconKind: "chest" as const, heldModel: "wildwood-chest" as const, dropModel: "wildwood-chest" as const } : {}),
+    ...(definition.id === BlockId.Apiary ? { iconKind: "apiary" as const, heldModel: "apiary" as const, dropModel: "apiary" as const } : {}),
+    ...(definition.id === BlockId.CaptureOrbRack ? { iconKind: "orb-rack" as const, heldModel: "orb-rack" as const, dropModel: "orb-rack" as const } : {}),
+    ...(definition.id === BlockId.CreatureHealer ? { iconKind: "orb-healer" as const, heldModel: "orb-healer" as const, dropModel: "orb-healer" as const } : {}),
+    ...(definition.id === BlockId.WildBeehive ? { iconKind: "apiary" as const, heldModel: "apiary" as const, dropModel: "apiary" as const } : {}),
   };
 }
 
@@ -502,7 +541,7 @@ Object.assign(ITEMS, {
   [Item.FenLanternJar]: { id: Item.FenLanternJar, name: "Jarred Fen Lantern", color: "#b6df62", maxStack: 16, useKind: "release-creature", creatureKind: "fen-lantern" },
   [Item.WildwoodBed]: { id: Item.WildwoodBed, name: "Wildwood Bed", color: "#a7463f", maxStack: 1, placeBlock: BlockId.BedNorthFoot },
   [Item.Sailboat]: { id: Item.Sailboat, name: "Wayfarer Sailboat", color: "#c58a4c", maxStack: 1, useKind: "boat" },
-  [Item.CreatureCage]: { id: Item.CreatureCage, name: "Waykeeper Cage", color: "#9f7a47", maxStack: 1, useKind: "creature-cage" },
+  [Item.CreatureCage]: { id: Item.CreatureCage, name: "Waykeeper Capture Orb", color: "#71d6d2", maxStack: 16, useKind: "creature-cage", iconKind: "capture-orb", heldModel: "capture-orb", dropModel: "capture-orb" },
   [Item.Banana]: { id: Item.Banana, name: "Golden Banana", color: "#f4d34f", maxStack: 64, food: 3 },
   [Item.StarrootScepter]: { ...tool(Item.StarrootScepter, "Starroot Scepter", "#83e7d5", "sword", 4, 1, 9, 1200), useKind: "magic-relic" },
   [Item.Feather]: { id: Item.Feather, name: "Bright Feather", color: "#e9d6a7", maxStack: 64 },
@@ -524,6 +563,15 @@ Object.assign(ITEMS, {
   [Item.WildwoodFenceGate]: { id: Item.WildwoodFenceGate, name: "Wildwood Fence Gate", color: "#9a693c", maxStack: 64, placeBlock: BlockId.FenceGateNorthSouthClosed, iconKind: "fence-gate" },
   [Item.Saddle]: { id: Item.Saddle, name: "Trail Saddle", color: "#875a3c", maxStack: 1 },
   [Item.NocturneHeart]: { id: Item.NocturneHeart, name: "Nocturne Heart", color: "#7b5bb4", maxStack: 16 },
+  [Item.LegacyCaptureOrb]: { id: Item.LegacyCaptureOrb, name: "Waykeeper Capture Orb (Legacy)", color: "#71d6d2", maxStack: 1, useKind: "capture-orb", iconKind: "capture-orb", heldModel: "capture-orb", dropModel: "capture-orb" },
+  [Item.Honeycomb]: { id: Item.Honeycomb, name: "Wild Honeycomb", color: "#d99b31", maxStack: 64, food: 2, iconKind: "honeycomb" },
+  [Item.HoneyJar]: { id: Item.HoneyJar, name: "Wildflower Honey", color: "#e5ad39", maxStack: 16, food: 5, iconKind: "honey" },
+  [Item.RoyalJelly]: { id: Item.RoyalJelly, name: "Royal Jelly", color: "#f5dc72", maxStack: 16, food: 7, iconKind: "jelly" },
+  [Item.Beeswax]: { id: Item.Beeswax, name: "Beeswax", color: "#e8c158", maxStack: 64, fuel: 20, iconKind: "wax" },
+  [Item.MilkBottle]: { id: Item.MilkBottle, name: "Meadow Milk", color: "#f2eee0", maxStack: 16, food: 4, iconKind: "milk" },
+  [Item.CloudglassRelic]: { id: Item.CloudglassRelic, name: "Cloudglass Reliquary", color: "#9edfe7", maxStack: 1, maxDurability: 1800, useKind: "magic-relic", iconKind: "relic" },
+  [Item.QueenCell]: { id: Item.QueenCell, name: "Queen Cell", color: "#f4cf55", maxStack: 16, iconKind: "queen-cell" },
+  [Item.WorkerBee]: { id: Item.WorkerBee, name: "Apiary Worker Bee", color: "#e8ad32", maxStack: 16, iconKind: "bee" },
 } satisfies Record<number, ItemDefinition>);
 
 // Existing forage doubles as planting stock. Keeping the edible item itself as
@@ -543,11 +591,15 @@ export const CREATIVE_FLORA: readonly ItemCode[] = [
   BlockId.MoonOrchid,
   BlockId.DesertShrub,
   BlockId.BananaPlant,
+  BlockId.RiverRibbon,
+  BlockId.GlowKelp,
+  BlockId.ReedBloom,
+  BlockId.Cloudbell,
 ];
 
 export const CREATIVE_BLOCKS: ItemCode[] = [...Object.values(BLOCKS)
   .filter((definition) => ITEMS[definition.id] && !definition.replaceable && definition.id !== BlockId.WheatCrop)
-  .map((definition) => definition.id), ...CREATIVE_FLORA, Item.WildwoodDoor, Item.WildwoodBed, Item.Sailboat, Item.CreatureCage, Item.Berry, Item.Sunberry, Item.Apple, Item.Banana, Item.Wheat, Item.WheatSeeds, Item.StarrootScepter, Item.Feather, Item.RawFish, Item.CookedFish, Item.GlowScale, Item.BreatherCharm, Item.SunwardCompass, Item.WoodHoe, Item.StoneHoe, Item.IronHoe, Item.HarvestScythe, Item.Bucket, Item.WaterBucket, Item.LavaBucket, Item.Lead, Item.WildwoodFenceGate, Item.Saddle, Item.NocturneHeart, Item.ButterflyNet, Item.MeadowwingJar, Item.AzureSkipperJar, Item.EmbertipJar, Item.FrostveilJar, Item.BloomMonarchJar, Item.FenLanternJar, Item.HideHood, Item.HideTunic, Item.HideLeggings, Item.HideBoots, Item.SunmetalHelm, Item.SunmetalPlate, Item.SunmetalGreaves, Item.SunmetalBoots];
+  .map((definition) => definition.id), ...CREATIVE_FLORA, Item.WildwoodDoor, Item.WildwoodBed, Item.Sailboat, Item.CaptureOrb, Item.Honeycomb, Item.HoneyJar, Item.RoyalJelly, Item.Beeswax, Item.MilkBottle, Item.CloudglassRelic, Item.QueenCell, Item.WorkerBee, Item.Berry, Item.Sunberry, Item.Apple, Item.Banana, Item.Wheat, Item.WheatSeeds, Item.StarrootScepter, Item.Feather, Item.RawFish, Item.CookedFish, Item.GlowScale, Item.BreatherCharm, Item.SunwardCompass, Item.WoodHoe, Item.StoneHoe, Item.IronHoe, Item.HarvestScythe, Item.Bucket, Item.WaterBucket, Item.LavaBucket, Item.Lead, Item.WildwoodFenceGate, Item.Saddle, Item.NocturneHeart, Item.ButterflyNet, Item.MeadowwingJar, Item.AzureSkipperJar, Item.EmbertipJar, Item.FrostveilJar, Item.BloomMonarchJar, Item.FenLanternJar, Item.HideHood, Item.HideTunic, Item.HideLeggings, Item.HideBoots, Item.SunmetalHelm, Item.SunmetalPlate, Item.SunmetalGreaves, Item.SunmetalBoots];
 
 export function worldTextureBlockForItem(item: ItemCode): BlockId | undefined {
   const definition = ITEMS[item];
@@ -595,7 +647,11 @@ export const RECIPES: Recipe[] = [
   { id: "bed", name: "Wildwood Bed", width: 3, height: 2, pattern: [Item.Wool, Item.Wool, Item.Wool, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: Item.WildwoodBed, count: 1 }, table: true },
   { id: "butterfly_exhibit", name: "Butterfly Conservatory", width: 3, height: 3, pattern: [BlockId.Glass, BlockId.Glass, BlockId.Glass, BlockId.Glass, anyFlower, BlockId.Glass, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: BlockId.ButterflyExhibit, count: 4 }, table: true },
   { id: "sailboat", name: "Wayfarer Sailboat", width: 3, height: 3, pattern: [0, Item.Wool, 0, BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks, 0, BlockId.Planks], output: { item: Item.Sailboat, count: 1 }, table: true },
-  { id: "creature_cage", name: "Waykeeper Cage", width: 3, height: 3, pattern: [Item.SunmetalIngot, Item.Stick, Item.SunmetalIngot, Item.Stick, 0, Item.Stick, Item.SunmetalIngot, Item.Stick, Item.SunmetalIngot], output: { item: Item.CreatureCage, count: 1 }, table: true },
+  { id: "creature_cage", name: "Waykeeper Capture Orbs", width: 3, height: 3, pattern: [Item.SunmetalIngot, Item.Stick, Item.SunmetalIngot, Item.Stick, 0, Item.Stick, Item.SunmetalIngot, Item.Stick, Item.SunmetalIngot], output: { item: Item.CaptureOrb, count: 2 }, table: true },
+  { id: "capture_orb_rack", name: "Capture Orb Rack", width: 3, height: 2, pattern: [Item.Stick, Item.CrystalShard, Item.Stick, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: BlockId.CaptureOrbRack, count: 1 }, table: true },
+  { id: "creature_healer", name: "Creature Healer", width: 3, height: 3, pattern: [BlockId.Glass, Item.GlowDust, BlockId.Glass, Item.CaveGel, Item.CrystalShard, Item.CaveGel, Item.SunmetalIngot, BlockId.Planks, Item.SunmetalIngot], output: { item: BlockId.CreatureHealer, count: 1 }, table: true },
+  { id: "wildwood_apiary", name: "Wildwood Apiary", width: 3, height: 3, pattern: [BlockId.Planks, BlockId.Planks, BlockId.Planks, Item.Fiber, Item.Honeycomb, Item.Fiber, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: BlockId.Apiary, count: 1 }, table: true },
+  { id: "queen_cell", name: "Queen Cell", width: 2, height: 1, pattern: [Item.WorkerBee, Item.RoyalJelly], output: { item: Item.QueenCell, count: 1 }, table: true },
   { id: "tideglass_charm", name: "Tideglass Charm", width: 3, height: 1, pattern: [Item.GlowScale, Item.Fiber, Item.GlowScale], output: { item: Item.BreatherCharm, count: 1 }, table: true },
   { id: "butterfly_net", name: "Butterfly Net", width: 3, height: 3, pattern: [softNetting, softNetting, softNetting, softNetting, 0, Item.Stick, 0, Item.Stick, 0], output: { item: Item.ButterflyNet, count: 1 }, table: true },
   { id: "banana_harvest", name: "Golden Bananas", width: 1, height: 1, pattern: [BlockId.BananaPlant], output: { item: Item.Banana, count: 2 }, table: false },

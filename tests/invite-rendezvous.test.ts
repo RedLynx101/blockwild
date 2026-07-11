@@ -22,9 +22,10 @@ test("invite room codes are readable, normalized, and validated", () => {
 
 type Handler = (data: Record<string, string | number | boolean | null>, context: { peerId: string }) => Record<string, string | number | boolean | null> | Promise<Record<string, string | number | boolean | null>>;
 
-function pairedRoomFactory() {
+function pairedRoomFactory(options: { failInviteResponseOnce?: boolean; leaveErrorRole?: RendezvousRole } = {}) {
   const rooms = new Map<RendezvousRole, FakeRoom>();
   const handlers = new Map<string, Handler>();
+  let failedInviteResponse = false;
 
   class FakeRoom implements RendezvousRoom {
     onPeerJoin: ((peerId: string) => void) | null = null;
@@ -45,11 +46,19 @@ function pairedRoomFactory() {
           const remoteRole = this.role === "host" ? "guest" : "host";
           const handler = handlers.get(`${remoteRole}:${namespace}`);
           if (!handler) throw new Error(`Missing ${remoteRole} ${namespace} handler`);
-          return await handler(data, { peerId: `${this.role}-peer` }) as R;
+          const response = await handler(data, { peerId: `${this.role}-peer` }) as R;
+          if (namespace === "bwinvite" && options.failInviteResponseOnce && !failedInviteResponse) {
+            failedInviteResponse = true;
+            throw new Error("Request timed out after the host handled it");
+          }
+          return response;
         },
       };
     }
-    async leave() { this.closed = true; }
+    async leave() {
+      this.closed = true;
+      if (options.leaveErrorRole === this.role) throw new Error("User-Initiated Abort/Close called");
+    }
   }
 
   const factory: RendezvousRoomFactory = async (role) => {
@@ -86,5 +95,58 @@ test("one room code exchanges the WebRTC offer and answer automatically", async 
   });
   assert.deepEqual(joined, { code: "GROVE-7429", hostName: "Host" });
   assert.deepEqual(accepted, ["encoded-answer"]);
+  await host.close();
+});
+
+test("a guest can begin first and waits for the host room to finish opening", async () => {
+  const { factory } = pairedRoomFactory();
+  const joinedPromise = joinByRoomCode({
+    code: "TRAIL-9021",
+    guestName: "Early Guest",
+    createAnswer: async () => ({ answerCode: "early-answer" }),
+    roomFactory: factory,
+    timeoutMs: 700,
+    retryDelayMs: 1,
+  });
+  await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  const host = await hostByRoomCode({
+    code: "TRAIL-9021",
+    hostName: "Late Host",
+    createInvite: async () => ({ inviteCode: "late-offer" }),
+    acceptAnswer: async () => undefined,
+    roomFactory: factory,
+  });
+
+  assert.deepEqual(await joinedPromise, { code: "TRAIL-9021", hostName: "Late Host" });
+  await host.close();
+});
+
+test("lost responses retry one host offer and cleanup aborts cannot replace success", async () => {
+  const { factory } = pairedRoomFactory({ failInviteResponseOnce: true, leaveErrorRole: "guest" });
+  let inviteCalls = 0;
+  const statuses: string[] = [];
+  const host = await hostByRoomCode({
+    code: "EMBER-4432",
+    hostName: "Host",
+    createInvite: async () => {
+      inviteCalls += 1;
+      return { inviteCode: "stable-offer" };
+    },
+    acceptAnswer: async () => undefined,
+    roomFactory: factory,
+  });
+  const joined = await joinByRoomCode({
+    code: "EMBER-4432",
+    guestName: "Guest",
+    createAnswer: async () => ({ answerCode: "stable-answer" }),
+    roomFactory: factory,
+    timeoutMs: 700,
+    retryDelayMs: 1,
+    onStatus: (status) => statuses.push(status),
+  });
+
+  assert.equal(joined.hostName, "Host");
+  assert.equal(inviteCalls, 1, "a response retry must share the per-peer host offer flight");
+  assert.ok(statuses.includes("retrying"));
   await host.close();
 });

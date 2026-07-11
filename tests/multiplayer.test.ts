@@ -4,6 +4,7 @@ import {
   MAX_MOVEMENT_MESSAGE_BYTES,
   MOVEMENT_CHANNEL_LABEL,
   MULTIPLAYER_PROTOCOL_VERSION,
+  MultiplayerOperationCancelledError,
   MultiplayerProtocolError,
   MultiplayerSession,
   RELIABLE_CHANNEL_LABEL,
@@ -92,6 +93,8 @@ class FakeRtcNetwork {
   private sequence = 0;
   readonly connections = new Map<string, FakePeerConnection>();
 
+  constructor(readonly nativeDescriptionPrototype = false) {}
+
   factory: PeerConnectionFactory = () => {
     const connection = new FakePeerConnection(this, `rtc_${++this.sequence}`);
     this.connections.set(connection.id, connection);
@@ -128,7 +131,10 @@ class FakePeerConnection implements PeerConnectionLike {
   }
 
   async setLocalDescription(description: RTCSessionDescriptionInit) {
-    this.localDescription = { type: description.type, sdp: description.sdp };
+    const plain = { type: description.type, sdp: description.sdp };
+    this.localDescription = this.network.nativeDescriptionPrototype
+      ? Object.assign(Object.create({ toJSON() { return plain; } }) as RTCSessionDescriptionInit, plain)
+      : plain;
   }
 
   async setRemoteDescription(description: RTCSessionDescriptionInit) {
@@ -236,6 +242,40 @@ test("feature detection reports missing browser WebRTC without throwing", () => 
   assert.equal(support.supported, false);
   assert.equal(support.webRTC, false);
   assert.ok(support.reasons.some((reason) => reason.includes("RTCPeerConnection")));
+});
+
+test("closing a session during ICE setup cancels cleanly without a false transport error", async () => {
+  const network = new FakeRtcNetwork();
+  const events: MultiplayerEvent[] = [];
+  const host = makeSession(HOST, network, () => 1_000, events);
+  const invitePromise = host.createHostInvite();
+  const connection = [...network.connections.values()][0];
+  assert.ok(connection);
+  connection.iceGatheringState = "gathering";
+  await flushMessages();
+  host.dispose();
+
+  await assert.rejects(invitePromise, (error: unknown) => {
+    assert.ok(error instanceof MultiplayerOperationCancelledError);
+    assert.doesNotMatch(error.message, /missing local offer description/iu);
+    return true;
+  });
+  assert.equal(events.some((event) => event.type === "error"), false);
+});
+
+test("browser-native local descriptions survive the automatic offer and answer exchange", async () => {
+  const network = new FakeRtcNetwork(true);
+  const hostEvents: MultiplayerEvent[] = [];
+  const guestEvents: MultiplayerEvent[] = [];
+  const host = makeSession(HOST, network, () => 1_000, hostEvents);
+  const guest = makeSession(GUEST_A, network, () => 1_000, guestEvents);
+
+  await connect(host, guest);
+
+  assert.equal(host.state, "connected");
+  assert.equal(guest.state, "connected");
+  assert.equal(hostEvents.some((event) => event.type === "error"), false);
+  assert.equal(guestEvents.some((event) => event.type === "error"), false);
 });
 
 test("manual offer/answer creates both channel modes and carries host-authoritative messages", async () => {

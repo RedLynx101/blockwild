@@ -82,6 +82,20 @@ export const DEFAULT_PLAYER_COLORS: Readonly<PlayerColors> = Object.freeze({
   hair: "#5a3826",
 });
 
+export const PLAYER_VARIANT_HEIGHT_SCALE: Readonly<Record<PlayerVariant, number>> = Object.freeze({
+  male: 1,
+  female: 0.8,
+});
+export const FEMALE_HAIR_COLOR = 0x111318;
+
+export function playerVariantHeightScale(variant: PlayerVariant) {
+  return PLAYER_VARIANT_HEIGHT_SCALE[variant === "female" ? "female" : "male"];
+}
+
+export function playerEyeHeightForVariant(variant: PlayerVariant, crouching = false) {
+  return (crouching ? 1.3 : 1.62) * playerVariantHeightScale(variant);
+}
+
 export const DEFAULT_PLAYER_POSE: Readonly<PlayerPoseSnapshot> = Object.freeze({
   locomotion: "idle",
   action: "none",
@@ -288,6 +302,7 @@ export class BlockPlayerModel {
   private readonly torsoBlock: THREE.Mesh;
   private readonly maleHair = new THREE.Group();
   private readonly femaleHair = new THREE.Group();
+  private readonly baseHairColor = new THREE.Color(DEFAULT_PLAYER_COLORS.hair);
   private readonly equipmentMeshes: Record<"head" | "chest" | "legs" | "feet", THREE.Mesh[]> = { head: [], chest: [], legs: [], feet: [] };
   private _variant: PlayerVariant;
   private disposed = false;
@@ -297,6 +312,7 @@ export class BlockPlayerModel {
     this.mode = options.mode ?? "remote";
     this.playerId = options.playerId;
     const colors = { ...DEFAULT_PLAYER_COLORS, ...options.colors };
+    this.baseHairColor.set(colors.hair);
     this._variant = options.variant ?? "male";
     const materialOptions = { roughness: 0.92, metalness: 0, flatShading: true };
     this.materials = {
@@ -396,7 +412,10 @@ export class BlockPlayerModel {
     if (colors.skin !== undefined) this.materials.skin.color.set(colors.skin);
     if (colors.shirt !== undefined) this.materials.shirt.color.set(colors.shirt);
     if (colors.trousers !== undefined) this.materials.trousers.color.set(colors.trousers);
-    if (colors.hair !== undefined) this.materials.hair.color.set(colors.hair);
+    if (colors.hair !== undefined) {
+      this.baseHairColor.set(colors.hair);
+      if (this._variant === "male") this.materials.hair.color.copy(this.baseHairColor);
+    }
     return this;
   }
 
@@ -413,9 +432,13 @@ export class BlockPlayerModel {
     this.assertUsable();
     this._variant = variant === "female" ? "female" : "male";
     this.group.userData.playerVariant = this._variant;
+    const heightScale = playerVariantHeightScale(this._variant);
+    this.group.userData.playerHeightScale = heightScale;
+    this.rig.scale.y = heightScale;
     this.maleHair.visible = this._variant === "male";
     this.femaleHair.visible = this._variant === "female";
-    this.torsoBlock.scale.x = this._variant === "female" ? TORSO_WIDTH * 0.92 : TORSO_WIDTH;
+    this.materials.hair.color.set(this._variant === "female" ? FEMALE_HAIR_COLOR : this.baseHairColor);
+    this.torsoBlock.scale.x = this._variant === "female" ? 0.92 : 1;
     const shoulderX = (this._variant === "female" ? TORSO_WIDTH * 0.92 : TORSO_WIDTH) / 2 + ARM_WIDTH / 2;
     this.parts.leftArm.position.x = -shoulderX;
     this.parts.rightArm.position.x = shoulderX;

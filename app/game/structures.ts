@@ -10,7 +10,13 @@ import { BlockId } from "./data";
 
 export type WorldPosition = Readonly<{ x: number; y: number; z: number }>;
 
-export type StructureKind = "desert-temple" | "forest-temple" | "sunbun-grove" | "meadow-butterfly-sanctuary";
+export type StructureKind =
+  | "desert-temple"
+  | "forest-temple"
+  | "sunbun-grove"
+  | "meadow-butterfly-sanctuary"
+  | "abandoned-apiary"
+  | "waykeeper-healing-grotto";
 export type StructureBiome = "desert" | "forest" | "meadow";
 
 export type PlannedBlock = Readonly<{
@@ -90,7 +96,7 @@ type BonusLootEntry = Readonly<{
   durability?: number;
 }>;
 
-export type StructureLootTableId = "desert-temple" | "forest-temple" | "sunbun-cache" | "butterfly-cache";
+export type StructureLootTableId = "desert-temple" | "forest-temple" | "sunbun-cache" | "butterfly-cache" | "apiary-cache" | "healer-cache";
 
 const LOOT_TABLES: Readonly<Record<StructureLootTableId, Readonly<{
   entries: readonly WeightedLootEntry[];
@@ -137,6 +143,30 @@ const LOOT_TABLES: Readonly<Record<StructureLootTableId, Readonly<{
       { itemKey: "butterfly-net", weight: 10, min: 1, max: 1 },
     ],
     bonuses: [],
+  },
+  "apiary-cache": {
+    entries: [
+      { itemKey: "wild-honeycomb", weight: 31, min: 2, max: 6 },
+      { itemKey: "beeswax", weight: 24, min: 2, max: 5 },
+      { itemKey: "wildflower-honey", weight: 18, min: 1, max: 3 },
+      { itemKey: "royal-jelly", weight: 5, min: 1, max: 1 },
+      { itemKey: "red-flower", weight: 11, min: 2, max: 5 },
+      { itemKey: "blue-flower", weight: 11, min: 2, max: 5 },
+    ],
+    bonuses: [
+      { itemKey: "queen-cell", chance: 0.14, min: 1, max: 1 },
+      { itemKey: "cloudglass-reliquary", chance: 0.018, min: 1, max: 1, durability: 1800 },
+    ],
+  },
+  "healer-cache": {
+    entries: [
+      { itemKey: "waykeeper-capture-orb", weight: 24, min: 1, max: 2 },
+      { itemKey: "cave-gel", weight: 27, min: 2, max: 7 },
+      { itemKey: "glow-dust", weight: 20, min: 2, max: 6 },
+      { itemKey: "crystal-shard", weight: 15, min: 1, max: 4 },
+      { itemKey: "moonberry", weight: 14, min: 2, max: 5 },
+    ],
+    bonuses: [{ itemKey: "cloudglass-reliquary", chance: 0.035, min: 1, max: 1, durability: 1800 }],
   },
 });
 
@@ -366,12 +396,69 @@ function planButterflySanctuary(origin: WorldPosition, seed: string | number): S
   };
 }
 
+function planAbandonedApiary(origin: WorldPosition, seed: string | number): StructurePlan {
+  const builder = new PlanBuilder(origin);
+  for (let z = -6; z <= 6; z += 1) for (let x = -6; x <= 6; x += 1) {
+    if (Math.hypot(x, z) <= 6.4) builder.set(x, 0, z, BlockId.MeadowGrass, "apiary-clearing");
+    if (Math.hypot(x, z) > 4.2 && Math.hypot(x, z) < 6.2 && hashUnit(seed, `apiary-bloom:${x},${z}`) > 0.58) {
+      builder.set(x, 1, z, hashUnit(seed, `apiary-color:${x},${z}`) > 0.5 ? BlockId.RedFlower : BlockId.BlueFlower, "forager-bloom");
+    }
+  }
+  builder.fill(-3, 1, 2, 3, 1, 2, BlockId.Planks, "weathered-apiary-bench");
+  builder.fill(-3, 1, -2, 3, 1, -2, BlockId.Planks, "weathered-apiary-bench");
+  builder.set(-2, 2, 2, BlockId.Apiary, "abandoned-apiary");
+  builder.set(2, 2, -2, BlockId.WildBeehive, "wild-hive");
+  builder.chest(0, 1, 0, "apiary-cache", seed, "beekeeper-cache");
+  const workers = Math.floor(hashUnit(seed, "abandoned-apiary-workers") * 9);
+  builder.spawn(2, 3, -2, "hive-queen", 1, 2, "wild-hive-queen", true, ["apiary-resident", "defensive"]);
+  if (workers > 0) builder.spawn(2, 3, -2, "honeybee", workers, 6, "wild-hive-workers", true, ["apiary-resident", "forager"]);
+  builder.landmark(0, 1, 0, "abandoned-apiary", "apiary-heart");
+  return {
+    kind: "abandoned-apiary",
+    id: `abandoned-apiary:${origin.x},${origin.z}`,
+    origin,
+    bounds: boundsAround(origin, 6, 5, 6),
+    placements: builder.placements(),
+    markers: builder.markers,
+  };
+}
+
+function planWaykeeperHealingGrotto(origin: WorldPosition, seed: string | number): StructurePlan {
+  const builder = new PlanBuilder(origin);
+  builder.fill(-5, 0, -5, 5, 0, 5, BlockId.Moss, "grotto-floor");
+  for (const [x, z] of [[-5, -5], [5, -5], [-5, 5], [5, 5]] as const) {
+    builder.fill(x, 1, z, x, 4, z, BlockId.MoonSlate, "waykeeper-pillar");
+    builder.set(x, 5, z, BlockId.Glowstone, "grotto-beacon");
+  }
+  for (let edge = -4; edge <= 4; edge += 1) {
+    builder.set(edge, 4, -5, BlockId.Glass, "grotto-canopy");
+    builder.set(edge, 4, 5, BlockId.Glass, "grotto-canopy");
+    builder.set(-5, 4, edge, BlockId.Glass, "grotto-canopy");
+    builder.set(5, 4, edge, BlockId.Glass, "grotto-canopy");
+  }
+  builder.set(0, 1, 0, BlockId.CreatureHealer, "four-orb-healer");
+  builder.set(-2, 1, 0, BlockId.CaptureOrbRack, "four-orb-rack");
+  builder.chest(2, 1, 0, "healer-cache", seed, "waykeeper-supplies");
+  builder.spawn(0, 2, 3, "reed-dragonfly", 3, 4, "grotto-dragonflies", true, ["grotto-resident", "ambient"]);
+  builder.landmark(0, 1, 0, "waykeeper-healing-grotto", "healing-heart");
+  return {
+    kind: "waykeeper-healing-grotto",
+    id: `waykeeper-healing-grotto:${origin.x},${origin.z}`,
+    origin,
+    bounds: boundsAround(origin, 5, 6, 5),
+    placements: builder.placements(),
+    markers: builder.markers,
+  };
+}
+
 export function planStructure(kind: StructureKind, origin: WorldPosition, seed: string | number): StructurePlan {
   const normalizedOrigin = { x: Math.round(origin.x), y: Math.round(origin.y), z: Math.round(origin.z) };
   if (kind === "desert-temple") return planDesertTemple(normalizedOrigin, seed);
   if (kind === "forest-temple") return planForestTemple(normalizedOrigin, seed);
   if (kind === "sunbun-grove") return planSunbunGrove(normalizedOrigin, seed);
-  return planButterflySanctuary(normalizedOrigin, seed);
+  if (kind === "meadow-butterfly-sanctuary") return planButterflySanctuary(normalizedOrigin, seed);
+  if (kind === "abandoned-apiary") return planAbandonedApiary(normalizedOrigin, seed);
+  return planWaykeeperHealingGrotto(normalizedOrigin, seed);
 }
 
 export const worldCoordinateToChunk = (coordinate: number, chunkSize = 16) =>
@@ -434,7 +521,7 @@ export function chunksTouchedByStructure(plan: StructurePlan, chunkSize = 16) {
 export function structureBiomeFromId(biomeId: number): StructureBiome | undefined {
   if (biomeId === 6 || biomeId === 10) return "desert";
   if (biomeId === 4 || biomeId === 5 || biomeId === 11 || biomeId === 12) return "forest";
-  if (biomeId === 3) return "meadow";
+  if (biomeId === 3 || biomeId === 17) return "meadow";
   return undefined;
 }
 
@@ -456,8 +543,12 @@ export function structureCandidateForChunk(input: Readonly<{
   const candidateZ = regionZ * regionSize + localZ;
   if (candidateX !== input.chunkX || candidateZ !== input.chunkZ) return undefined;
   if (input.biome === "desert") return "desert-temple";
-  if (input.biome === "forest") return "forest-temple";
-  return hashUnit(input.seed, `meadow-poi:${regionX},${regionZ}`) < 0.42 ? "sunbun-grove" : "meadow-butterfly-sanctuary";
+  const roll = hashUnit(input.seed, `poi:${input.biome}:${regionX},${regionZ}`);
+  if (input.biome === "forest") return roll < 0.22 ? "abandoned-apiary" : "forest-temple";
+  if (roll < 0.24) return "sunbun-grove";
+  if (roll < 0.52) return "abandoned-apiary";
+  if (roll < 0.68) return "waykeeper-healing-grotto";
+  return "meadow-butterfly-sanctuary";
 }
 
 export type VegetationVariant =

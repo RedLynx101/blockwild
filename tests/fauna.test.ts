@@ -6,10 +6,14 @@ import {
   createStableSteering,
   chooseLocalWalkableGround,
   fishKindsForHabitat,
+  fishSpawnTableForHabitat,
+  naturalGroupSizeForMob,
   passiveMobKindForBiome,
+  passiveMobSpawnTableForBiome,
   shouldKeepCreatureLoaded,
   updateBirdBehavior,
   updateStableSteering,
+  wildHiveResidentSpawnPlan,
 } from "../app/game/fauna.ts";
 import { Item } from "../app/game/data.ts";
 import { BiomeId } from "../app/game/world.ts";
@@ -67,6 +71,7 @@ import {
   BIRD_ORDER,
   CORE_MOB_ORDER,
   MOB_DEFS,
+  POLLINATOR_ORDER,
   SURFACE_MOB_ORDER,
 } from "../app/game/mobs.ts";
 import { createMobVisual, createSkeletonArrowVisual } from "../app/game/mob-models.ts";
@@ -81,9 +86,9 @@ import {
   shouldTeleportFollower,
 } from "../app/game/creature-pathing.ts";
 
-test("expanded ecology catalog has nine surface creatures, two birds, four fish, a pet, temple guardian, and archer", () => {
-  assert.equal(SURFACE_MOB_ORDER.length, 9);
-  assert.equal(new Set(SURFACE_MOB_ORDER).size, 9);
+test("expanded ecology catalog includes mounts, livestock, thin fish, pollinators, a pet, guardian, and archer", () => {
+  assert.equal(SURFACE_MOB_ORDER.length, 12);
+  assert.equal(new Set(SURFACE_MOB_ORDER).size, 12);
   for (const kind of ["thimbledeer", "lanternshell", "puddlehopper", "reedstrider"] as const) {
     assert.ok(SURFACE_MOB_ORDER.includes(kind));
     assert.equal(MOB_DEFS[kind].hostile, false);
@@ -91,10 +96,11 @@ test("expanded ecology catalog has nine surface creatures, two birds, four fish,
     assert.ok(MOB_DEFS[kind].utility);
   }
   assert.equal(BIRD_ORDER.length, 2);
-  assert.equal(AQUATIC_MOB_ORDER.length, 4);
-  assert.deepEqual(fishKindsForHabitat("ocean"), ["shoalfin", "coralback"]);
-  assert.deepEqual(fishKindsForHabitat("river"), ["brookdart"]);
-  assert.deepEqual(fishKindsForHabitat("underground"), ["gloomfin"]);
+  assert.equal(AQUATIC_MOB_ORDER.length, 8);
+  assert.equal(POLLINATOR_ORDER.length, 3);
+  assert.deepEqual(fishKindsForHabitat("ocean"), ["shoalfin", "silverthread", "coralback", "emberribbon"]);
+  assert.deepEqual(fishKindsForHabitat("river"), ["brookdart", "reedneedle"]);
+  assert.deepEqual(fishKindsForHabitat("underground"), ["gloomfin", "cavefilament"]);
   assert.equal(MOB_DEFS.peelop.persistent, true);
   assert.equal(MOB_DEFS.skeleton.ranged, true);
   assert.equal(MOB_DEFS["reliquary-sentinel"].hostile, true);
@@ -103,6 +109,42 @@ test("expanded ecology catalog has nine surface creatures, two birds, four fish,
   assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.52), "puddlehopper");
   assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.72), "reedstrider");
   assert.equal(CORE_MOB_ORDER.every((kind) => MOB_DEFS[kind].sentient !== true), true);
+});
+
+test("v0.5 habitat tables place mammals, pollinators, and fish without ambient queen spam", () => {
+  assert.equal(passiveMobKindForBiome(BiomeId.Meadow, 0.8), "wild-horse");
+  assert.equal(passiveMobKindForBiome(BiomeId.Meadow, 0.9), "meadow-cow");
+  assert.equal(passiveMobKindForBiome(BiomeId.CloudreedGlen, 0.01), "mistmane");
+  assert.equal(passiveMobKindForBiome(BiomeId.CloudreedGlen, 0.5), "reed-dragonfly");
+  assert.equal(passiveMobKindForBiome(BiomeId.River, 0.35), "reed-dragonfly");
+  assert.equal(passiveMobKindForBiome(BiomeId.Wildwood, 0.93), "wild-horse");
+  assert.equal(passiveMobKindForBiome(BiomeId.Wildwood, 0.99), "meadow-cow");
+
+  for (const biome of Object.values(BiomeId).filter((value): value is BiomeId => typeof value === "number")) {
+    const kinds = passiveMobSpawnTableForBiome(biome).map(([kind]) => kind);
+    assert.equal(kinds.includes("hive-queen"), false, `${BiomeId[biome]} must not ambient-spawn queens`);
+    assert.equal(kinds.includes("honeybee"), false, `${BiomeId[biome]} must keep workers hive-owned`);
+    assert.ok(passiveMobSpawnTableForBiome(biome).reduce((sum, [, weight]) => sum + weight, 0) > 0);
+  }
+
+  assert.deepEqual(fishSpawnTableForHabitat("river").map(([kind]) => kind), ["brookdart", "reedneedle"]);
+  assert.deepEqual(fishSpawnTableForHabitat("underground").map(([kind]) => kind), ["gloomfin", "cavefilament"]);
+  assert.equal(new Set(fishSpawnTableForHabitat("ocean").map(([kind]) => kind)).size, 4);
+});
+
+test("natural group ranges remain capped and wild hives own exactly one queen", () => {
+  assert.equal(naturalGroupSizeForMob("sunstep-grazer", 0), 4);
+  assert.equal(naturalGroupSizeForMob("sunstep-grazer", 0.999999), 7);
+  assert.equal(naturalGroupSizeForMob("silverthread", 0), 8);
+  assert.equal(naturalGroupSizeForMob("silverthread", 0.999999), 12);
+  assert.equal(naturalGroupSizeForMob("mistmane", 0.5), 4);
+  assert.equal(naturalGroupSizeForMob("peelop", 0.9), 1);
+  assert.deepEqual(wildHiveResidentSpawnPlan(-4), [{ kind: "hive-queen", count: 1, group: "hive" }]);
+  assert.deepEqual(wildHiveResidentSpawnPlan(3), [
+    { kind: "hive-queen", count: 1, group: "hive" },
+    { kind: "honeybee", count: 3, group: "hive" },
+  ]);
+  assert.equal(wildHiveResidentSpawnPlan(99).at(-1)?.count, 8);
 });
 
 test("every non-butterfly catalog entry has a detailed production model", () => {

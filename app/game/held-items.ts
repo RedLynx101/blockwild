@@ -4,8 +4,8 @@ import { createButterflyVisual } from "./butterflies";
 import { BUTTERFLY_ORDER, type ButterflyKind } from "./mobs";
 import { createHeldToolSpec } from "./model-specs";
 
-/** Shared third-person, remote-player, and paper-doll held-item production model. */
-export function createAvatarHeldItemModel(item: ItemCode) {
+/** Shared first/third-person, remote-player, dropped-item, and paper-doll model. */
+export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptureOrb?: boolean } = {}) {
   const definition = ITEMS[item];
   if (!definition) return null;
   const group = new THREE.Group();
@@ -25,8 +25,50 @@ export function createAvatarHeldItemModel(item: ItemCode) {
     parent.add(mesh);
     return mesh;
   };
+  const addSphere = (radius: number, position: [number, number, number], color: string | number, emissive = false, parent: THREE.Object3D = group) => {
+    const material = emissive ? new THREE.MeshBasicMaterial({ color }) : new THREE.MeshLambertMaterial({ color });
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, 12, 8), material);
+    mesh.position.set(...position);
+    parent.add(mesh);
+    return mesh;
+  };
 
-  if (item === BlockId.Torch) {
+  if (definition.heldModel === "wildwood-chest") {
+    addBox([0.52, 0.34, 0.42], [0, -0.03, 0], 0x9f6833);
+    addBox([0.55, 0.14, 0.45], [0, 0.22, 0], 0xb9874e);
+    addBox([0.12, 0.18, 0.045], [0, 0.08, -0.235], 0xe0b54e, [0, 0, 0], true);
+    group.scale.setScalar(0.82);
+    group.rotation.set(0.12, 0.24, -0.08);
+  } else if (definition.heldModel === "apiary") {
+    addBox([0.5, 0.36, 0.42], [0, -0.02, 0], 0xb97630);
+    addBox([0.56, 0.14, 0.48], [0, 0.23, 0], 0xefc451);
+    addBox([0.2, 0.12, 0.04], [0, 0.01, -0.23], 0x4b301f);
+    for (const x of [-0.14, 0, 0.14]) addBox([0.05, 0.05, 0.04], [x, 0.13, -0.235], 0xf4d455, [0, 0, x * 0.8], true);
+    group.scale.setScalar(0.78);
+    group.rotation.set(0.1, 0.26, -0.08);
+  } else if (definition.heldModel === "capture-orb") {
+    addSphere(0.22, [0, 0.08, 0], options.filledCaptureOrb ? 0x3c605e : 0x697579);
+    addBox([0.43, 0.08, 0.08], [0, 0.08, -0.17], options.filledCaptureOrb ? 0x78f0c5 : 0x73d8d2, [0, 0, 0], true);
+    addSphere(0.065, [0, 0.08, -0.205], options.filledCaptureOrb ? 0xf0fff7 : 0xc5ffff, true);
+    addBox([0.2, 0.03, 0.08], [-0.04, 0.22, -0.08], 0xeaf1ef, [0.28, 0, -0.35]);
+    group.scale.setScalar(1.02);
+    group.rotation.set(0.08, 0.22, -0.1);
+    group.userData.filledCaptureOrb = Boolean(options.filledCaptureOrb);
+  } else if (definition.heldModel === "orb-rack") {
+    addBox([0.54, 0.1, 0.34], [0, -0.13, 0], 0x765139);
+    for (const x of [-0.23, 0.23]) addBox([0.07, 0.48, 0.08], [x, 0.08, 0], 0x4e3526);
+    for (const y of [-0.01, 0.19]) addBox([0.43, 0.055, 0.07], [0, y, 0], 0x8a6042);
+    for (const x of [-0.15, -0.05, 0.05, 0.15]) addSphere(0.045, [x, 0.25, -0.035], 0x7de0d9, true);
+    group.scale.setScalar(0.82);
+    group.rotation.set(0.12, 0.28, -0.08);
+  } else if (definition.heldModel === "orb-healer") {
+    addBox([0.5, 0.1, 0.45], [0, -0.16, 0], 0x46575a);
+    addBox([0.44, 0.44, 0.4], [0, 0.08, 0], 0x2f5558);
+    addSphere(0.16, [0, 0.09, -0.19], 0x8df2e8, true);
+    addBox([0.52, 0.08, 0.47], [0, 0.34, 0], 0x637376);
+    group.scale.setScalar(0.74);
+    group.rotation.set(0.1, 0.25, -0.08);
+  } else if (item === BlockId.Torch) {
     addBox([0.1, 0.62, 0.1], [0, 0.22, 0], 0x8d542b);
     const outer = addBox([0.16, 0.14, 0.16], [0, 0.58, 0], 0xffb33e, [0, 0, 0], true);
     const inner = addBox([0.08, 0.11, 0.08], [0, 0.7, 0], 0xfff0a0, [0, 0, 0], true);
@@ -44,8 +86,9 @@ export function createAvatarHeldItemModel(item: ItemCode) {
       Boolean(box.emissive),
     );
     group.scale.setScalar(0.5);
-    group.rotation.set(-0.1, 0, -0.34);
-    group.position.set(0, -0.16, -0.02);
+    group.rotation.set(-Math.PI / 2, 0.02, -0.12);
+    group.position.set(0, -0.08, -0.2);
+    group.userData.workingAngle = Math.PI / 2;
   } else if (definition.useKind === "net") {
     addBox([0.08, 0.9, 0.08], [0, 0.14, 0], 0x7b542f);
     for (let segment = 0; segment < 12; segment += 1) {
@@ -63,7 +106,9 @@ export function createAvatarHeldItemModel(item: ItemCode) {
       horizontal.name = `butterfly-net-thread-h-${line + 3}`;
     }
     group.scale.setScalar(0.62);
-    group.rotation.set(-0.08, 0.15, -0.3);
+    group.rotation.set(-Math.PI / 2, 0.1, -0.1);
+    group.position.set(0, -0.05, -0.22);
+    group.userData.workingAngle = Math.PI / 2;
   } else if (definition.useKind === "release-creature" && definition.creatureKind
     && BUTTERFLY_ORDER.includes(definition.creatureKind as ButterflyKind)) {
     const butterfly = createButterflyVisual(definition.creatureKind as ButterflyKind, `held-${definition.creatureKind}`);

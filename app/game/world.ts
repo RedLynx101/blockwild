@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { BLOCKS, LEAF_BLOCKS, TORCH_BLOCKS, BlockId, type RenderLayer } from "./data";
 import { caveEntranceAt, caveFeatureAt } from "./caves";
+import { DENSE_CUTOUT_LEAF_POLICY, planFullTree, planSubmergedFlora, type TreeForm } from "./ecology";
 import {
   planBiomeVegetation,
   planStructure,
@@ -20,7 +21,7 @@ export const WORLD_HEIGHT = MAX_Y - MIN_Y + 1;
 export const SEA_LEVEL = 32;
 export const SECTION_HEIGHT = 16;
 export const SECTION_COUNT = WORLD_HEIGHT / SECTION_HEIGHT;
-export const GENERATOR_VERSION = 5;
+export const GENERATOR_VERSION = 6;
 
 export type WorldGenerationOptions = {
   caveFrequency: number;
@@ -54,6 +55,7 @@ export enum BiomeId {
   Volcanic = 14,
   MushroomFen = 15,
   River = 16,
+  CloudreedGlen = 17,
 }
 
 export const BIOME_NAMES: Record<number, string> = {
@@ -74,12 +76,15 @@ export const BIOME_NAMES: Record<number, string> = {
   [BiomeId.Volcanic]: "Ember Wastes",
   [BiomeId.MushroomFen]: "Mooncap Fen",
   [BiomeId.River]: "Wandering River",
+  [BiomeId.CloudreedGlen]: "Cloudreed Glen",
 };
 
+type WorldRenderLayer = Exclude<RenderLayer, "none"> | "glass";
 type ChunkMeshes = {
   opaque?: THREE.Mesh;
   cutout?: THREE.Mesh;
   transparent?: THREE.Mesh;
+  glass?: THREE.Mesh;
   emissive?: THREE.Mesh;
 };
 
@@ -117,6 +122,9 @@ const GENERATED_GROWTH_BLOCK_SET = new Set<BlockId>([
   BlockId.WildwoodSapling,
   BlockId.Sunpetal,
   BlockId.MoonOrchid,
+  BlockId.Cloudbell,
+  BlockId.ReedBloom,
+  BlockId.RiverRibbon,
   BlockId.DesertShrub,
   BlockId.BananaPlant,
 ]);
@@ -175,6 +183,7 @@ const BIOME_TINT: Record<number, [number, number, number]> = {
   [BiomeId.Volcanic]: [0.76, 0.7, 0.72],
   [BiomeId.MushroomFen]: [0.96, 0.78, 0.94],
   [BiomeId.River]: [0.82, 0.94, 0.94],
+  [BiomeId.CloudreedGlen]: [0.76, 1.02, 0.91],
 };
 
 const TILE_COLORS = [
@@ -190,7 +199,7 @@ const TILE_COLORS = [
   "#53735d",
   "#5f7f47", "#4f7c42", "#704b8e", "#718943", "#63833d", "#d89542", "#659b48", "#4f8a40",
   "#c84b40", "#79a54f", "#aab14d", "#523824", "#9a693c", "#d8cca4", "#4e5765", "#b96845",
-  "#9f6b35", "#b9874e",
+  "#9f6b35", "#b9874e", "#bd7b32", "#efc451", "#d7a33d", "#6f5745", "#62d8d4",
 ];
 
 export const MEADOW_GRASS_PALETTE = Object.freeze({
@@ -203,8 +212,8 @@ export const MEADOW_GRASS_PALETTE = Object.freeze({
   sideGrass: "#5c9447",
 });
 
-/** Leaf tiles are fully painted; same-type interior faces remain culled. */
-export const LEAF_TEXTURE_CUTOUT_CHANCE = 0;
+/** Restores the airy leaf pixels; fuller crowns come from geometry, not opacity. */
+export const LEAF_TEXTURE_CUTOUT_CHANCE = 1 - DENSE_CUTOUT_LEAF_POLICY.exteriorPixelCoverage;
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -226,7 +235,7 @@ export function normalizeWorldGenerationOptions(value?: Partial<WorldGenerationO
     structures: typeof value?.structures === "boolean" ? value.structures : DEFAULT_WORLD_GENERATION_OPTIONS.structures,
   };
 }
-const LIGHT_BLOCKS = new Set<BlockId>([...TORCH_BLOCKS, BlockId.Glowstone, BlockId.CrystalBlock, BlockId.RuneStone]);
+const LIGHT_BLOCKS = new Set<BlockId>([...TORCH_BLOCKS, BlockId.Glowstone, BlockId.CrystalBlock, BlockId.RuneStone, BlockId.CreatureHealer]);
 const ATLAS_GRID = 10;
 const ATLAS_PAD = 0.0008;
 const TILE_UVS = Array.from({ length: ATLAS_GRID * ATLAS_GRID }, (_, tile) => {
@@ -234,6 +243,27 @@ const TILE_UVS = Array.from({ length: ATLAS_GRID * ATLAS_GRID }, (_, tile) => {
   const row = Math.floor(tile / ATLAS_GRID);
   return [column / ATLAS_GRID + ATLAS_PAD, 1 - (row + 1) / ATLAS_GRID + ATLAS_PAD, (column + 1) / ATLAS_GRID - ATLAS_PAD, 1 - row / ATLAS_GRID - ATLAS_PAD] as const;
 });
+export const GLASS_OPACITY = 0.42;
+
+/** A cube with every face remapped to the same atlas contract used by chunk meshes. */
+export function createAtlasBlockGeometry(type: BlockId, size = 1) {
+  const definition = BLOCKS[type];
+  const geometry = new THREE.BoxGeometry(size, size, size);
+  const uv = geometry.getAttribute("uv") as THREE.BufferAttribute;
+  // Three BoxGeometry face order: +X, -X, +Y, -Y, +Z, -Z.
+  const tiles = [definition.side, definition.side, definition.top, definition.bottom, definition.side, definition.side];
+  for (let face = 0; face < 6; face += 1) {
+    const [u0, v0, u1, v1] = TILE_UVS[tiles[face]];
+    for (let vertex = 0; vertex < 4; vertex += 1) {
+      const index = face * 4 + vertex;
+      const sourceU = uv.getX(index);
+      const sourceV = uv.getY(index);
+      uv.setXY(index, lerp(u0, u1, sourceU), lerp(v0, v1, sourceV));
+    }
+  }
+  uv.needsUpdate = true;
+  return geometry;
+}
 
 function blocksSky(type: BlockId) {
   const definition = BLOCKS[type];
@@ -499,6 +529,26 @@ export function createBlockAtlas() {
       context.strokeRect(ox + 3.5, oy + 3.5, 9, 9);
       context.strokeRect(ox + 6.5, oy + 6.5, 3, 3);
     }
+    if (index === 91) {
+      for (let y = 2; y < tile; y += 4) for (let x = 0; x < tile; x += 1) pixel(index, x, y, "#754522");
+      for (const [x, y] of [[3, 5], [11, 9], [7, 13]] as Array<[number, number]>) {
+        pixel(index, x, y, "#f4d455"); pixel(index, x + 1, y, "#2d251e"); pixel(index, x + 2, y, "#f4d455");
+      }
+    } else if (index === 92) {
+      for (let y = 2; y < 15; y += 4) for (let x = (y / 4) % 2 ? 1 : 3; x < 15; x += 6) {
+        for (const [dx, dy] of [[1, 0], [2, 0], [0, 1], [3, 1], [1, 2], [2, 2]] as Array<[number, number]>) pixel(index, x + dx, y + dy, "#8d5b22");
+      }
+    } else if (index === 93) {
+      for (let y = 1; y < 16; y += 3) for (let x = 0; x < 16; x += 1) pixel(index, x, y, y % 2 ? "#9a6227" : "#f0bd48");
+      for (let y = 9; y < 14; y += 1) for (let x = 6; x < 10; x += 1) pixel(index, x, y, "#33251b");
+    } else if (index === 94) {
+      for (let y = 1; y < 16; y += 5) for (let x = 0; x < 16; x += 1) pixel(index, x, y, "#b8b29d");
+      for (let x = 2; x < 16; x += 6) for (let y = 0; y < 16; y += 1) pixel(index, x, y, "#3b3534");
+    } else if (index === 95) {
+      for (let y = 1; y < 15; y += 4) for (let x = 1; x < 15; x += 4) {
+        pixel(index, x, y, "#d9ffff"); pixel(index, x + 1, y, "#8ff5ee"); pixel(index, x, y + 1, "#67d8d4");
+      }
+    }
     if (leafTiles.has(index) && LEAF_TEXTURE_CUTOUT_CHANCE > 0) {
       for (let y = 0; y < tile; y += 1) for (let x = 0; x < tile; x += 1) {
         if (random() < LEAF_TEXTURE_CUTOUT_CHANCE) context.clearRect(ox + x, oy + y, 1, 1);
@@ -565,8 +615,10 @@ export function createBlockAtlas() {
       context.fillRect(ox, oy, 2, 16); context.fillRect(ox + 14, oy, 2, 16); context.fillRect(ox, oy, 16, 2); context.fillRect(ox, oy + 14, 16, 2);
       context.fillStyle = "#b77d42";
       context.fillRect(ox + 3, oy + 3, 10, 10);
-      context.fillStyle = "#88b7b3";
-      context.fillRect(ox + 4, oy + 4, 8, 6);
+      // The upper door pane is actual transparency in the cutout atlas, not
+      // blue-painted wood. A few opaque glints keep the glass readable while
+      // the world behind it remains visible.
+      context.clearRect(ox + 4, oy + 4, 8, 6);
       context.fillStyle = "#d9eee7";
       context.fillRect(ox + 5, oy + 5, 2, 1); context.fillRect(ox + 9, oy + 5, 2, 1);
       context.fillStyle = "#5d371f";
@@ -724,7 +776,13 @@ export class ChunkWorld {
   playerChunkZ = Number.NaN;
   frame = 0;
   atlas: THREE.Texture;
-  materials: Record<Exclude<RenderLayer, "none">, THREE.Material>;
+  materials: Record<WorldRenderLayer, THREE.Material>;
+  /**
+   * Open chests are drawn by the engine as articulated models. Keeping their
+   * static chunk geometry out of the same frame avoids the dark z-fighting
+   * seams that appeared through the animated lid and body.
+   */
+  hiddenChestVisuals = new Set<string>();
   private waterAnimationFrame = -1;
 
   constructor() {
@@ -736,6 +794,7 @@ export class ChunkWorld {
       opaque: new THREE.MeshLambertMaterial({ map: this.atlas, vertexColors: true }),
       cutout: new THREE.MeshLambertMaterial({ map: this.atlas, vertexColors: true, alphaTest: 0.32, side: THREE.DoubleSide }),
       transparent: new THREE.MeshLambertMaterial({ map: this.atlas, vertexColors: true, transparent: true, opacity: 0.76, depthWrite: false, side: THREE.DoubleSide }),
+      glass: new THREE.MeshLambertMaterial({ map: this.atlas, vertexColors: true, transparent: true, opacity: GLASS_OPACITY, depthWrite: false, side: THREE.DoubleSide }),
       emissive: new THREE.MeshLambertMaterial({ map: this.atlas, vertexColors: true, alphaTest: 0.2, side: THREE.DoubleSide, emissive: new THREE.Color(0xffffff), emissiveMap: this.atlas, emissiveIntensity: 0.72 }),
     };
   }
@@ -791,6 +850,7 @@ export class ChunkWorld {
     this.urgentMeshQueued.clear();
     this.edits.clear();
     this.structureMarkers.clear();
+    this.hiddenChestVisuals.clear();
     this.seedText = seedText || "WILDERNESS";
     this.seed = seedToInt(this.seedText);
     this.generationOptions = normalizeWorldGenerationOptions(generationOptions);
@@ -1048,6 +1108,7 @@ export class ChunkWorld {
     else if (temperature > 0.62 && moisture < 0.2 && variant > 0.52) biome = BiomeId.Badlands;
     else if (temperature > 0.64 && moisture < 0.3) biome = BiomeId.Desert;
     else if (temperature > 0.58 && moisture < 0.54) biome = BiomeId.Savanna;
+    else if (height >= 42 && height <= 66 && temperature >= 0.3 && temperature <= 0.55 && moisture >= 0.68 && moisture <= 0.92 && variant < 0.58) biome = BiomeId.CloudreedGlen;
     else if (moisture > 0.78 && height < SEA_LEVEL + 12) biome = variant > 0.82 ? BiomeId.MushroomFen : BiomeId.Siltfen;
     else if (moisture > 0.63 && variant > 0.72) biome = BiomeId.Bloomwood;
     else if (moisture > 0.54 && variant > 0.55) biome = BiomeId.Birchlight;
@@ -1199,6 +1260,7 @@ export class ChunkWorld {
     if (biome === BiomeId.Volcanic) return [BlockId.Basalt, BlockId.Basalt];
     if (biome === BiomeId.Highlands) return [height > 76 ? BlockId.Snow : BlockId.Stone, BlockId.Stone];
     if (biome === BiomeId.Meadow) return [BlockId.MeadowGrass, BlockId.Dirt];
+    if (biome === BiomeId.CloudreedGlen) return [BlockId.CloudreedGrass, BlockId.Dirt];
     return [BlockId.Grass, BlockId.Dirt];
   }
 
@@ -1235,8 +1297,8 @@ export class ChunkWorld {
     };
 
     const cellSize = 4;
-    for (let cellX = Math.floor((minX - 4) / cellSize); cellX <= Math.floor((minX + CHUNK_SIZE + 4) / cellSize); cellX += 1) {
-      for (let cellZ = Math.floor((minZ - 4) / cellSize); cellZ <= Math.floor((minZ + CHUNK_SIZE + 4) / cellSize); cellZ += 1) {
+    for (let cellX = Math.floor((minX - 8) / cellSize); cellX <= Math.floor((minX + CHUNK_SIZE + 8) / cellSize); cellX += 1) {
+      for (let cellZ = Math.floor((minZ - 8) / cellSize); cellZ <= Math.floor((minZ + CHUNK_SIZE + 8) / cellSize); cellZ += 1) {
         const x = cellX * cellSize + Math.floor(hash2(cellX, cellZ, this.seed ^ 0x11111111) * cellSize);
         const z = cellZ * cellSize + Math.floor(hash2(cellX, cellZ, this.seed ^ 0x22222222) * cellSize);
         if (x * x + z * z < 28) continue;
@@ -1253,22 +1315,28 @@ export class ChunkWorld {
           [BiomeId.Bloomwood]: 0.38,
           [BiomeId.Snowfield]: 0.07,
           [BiomeId.MushroomFen]: 0.23,
+          [BiomeId.CloudreedGlen]: 0.16,
         };
         if (roll < (density[column.biome] ?? 0) && column.height > column.waterline + 1) {
           const trunk = column.biome === BiomeId.Frostpine || column.biome === BiomeId.Snowfield ? BlockId.PineLog
             : column.biome === BiomeId.Birchlight ? BlockId.BirchLog
-              : column.biome === BiomeId.Bloomwood ? BlockId.BloomLog : BlockId.WildwoodLog;
+              : column.biome === BiomeId.Bloomwood ? BlockId.BloomLog
+                : column.biome === BiomeId.CloudreedGlen ? BlockId.BirchLog : BlockId.WildwoodLog;
           const leaves = trunk === BlockId.PineLog ? BlockId.PineLeaves : trunk === BlockId.BirchLog ? BlockId.BirchLeaves : trunk === BlockId.BloomLog ? BlockId.BloomLeaves : BlockId.WildwoodLeaves;
           const height = trunk === BlockId.PineLog ? 6 + Math.floor(hash2(x, z, this.seed) * 3) : 4 + Math.floor(hash2(x, z, this.seed) * 3);
-          for (let y = 1; y <= height; y += 1) set(x, column.height + y, z, trunk, false);
           if (trunk === BlockId.PineLog) {
+            for (let y = 1; y <= height; y += 1) set(x, column.height + y, z, trunk, false);
             for (let dy = -3; dy <= 1; dy += 1) {
               const radius = dy % 2 === 0 ? 2 : 1;
               for (let dx = -radius; dx <= radius; dx += 1) for (let dz = -radius; dz <= radius; dz += 1) if (Math.abs(dx) + Math.abs(dz) <= radius + 1) set(x + dx, column.height + height + dy, z + dz, leaves);
             }
           } else {
-            for (let dx = -2; dx <= 2; dx += 1) for (let dz = -2; dz <= 2; dz += 1) for (let dy = -1; dy <= 2; dy += 1) {
-              if (Math.abs(dx) + Math.abs(dz) + Math.max(0, dy) <= 4 && !(dx === 0 && dz === 0 && dy <= 0)) set(x + dx, column.height + height + dy, z + dz, leaves);
+            const formRoll = hash2(x, z, this.seed ^ 0x51a6c72d);
+            const form: TreeForm = formRoll > 0.975 ? "ancient"
+              : column.biome === BiomeId.CloudreedGlen || formRoll > 0.77 ? "windswept"
+                : formRoll > 0.45 ? "layered" : "rounded";
+            for (const planned of planFullTree(`${this.seedText}:${x},${z}`, { x, y: column.height + 1, z }, form, trunk, leaves)) {
+              set(planned.x, planned.y, planned.z, planned.block, false);
             }
           }
         }
@@ -1287,13 +1355,17 @@ export class ChunkWorld {
       if (column.biome === BiomeId.Desert && roll > 0.985) {
         const cactusHeight = 2 + Math.floor(hash2(x, z, this.seed ^ 0x55555555) * 3);
         for (let y = 1; y <= cactusHeight; y += 1) set(x, column.height + y, z, BlockId.Cactus);
-      } else if ([BiomeId.Meadow, BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Bloomwood, BiomeId.Savanna, BiomeId.Siltfen].includes(column.biome)) {
+      } else if ([BiomeId.Meadow, BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Bloomwood, BiomeId.Savanna, BiomeId.Siltfen, BiomeId.CloudreedGlen].includes(column.biome)) {
         const patch = 0.72 * valueNoise2(x / 19, z / 19, this.seed ^ 0x35f1a93b) + 0.28 * valueNoise2(x / 6, z / 6, this.seed ^ 0x6c8e9cf5);
         const density = column.biome === BiomeId.Meadow ? 0.72 : column.biome === BiomeId.Bloomwood ? 0.79 : column.biome === BiomeId.Savanna ? 0.9 : 0.84;
         if (roll + patch * 0.11 <= density) continue;
-        const flowerBias = column.biome === BiomeId.Meadow || column.biome === BiomeId.Bloomwood;
+        const flowerBias = column.biome === BiomeId.Meadow || column.biome === BiomeId.Bloomwood || column.biome === BiomeId.CloudreedGlen;
         const wheatPatch = hash2(x, z, this.seed ^ 0x7a9d35f1) > 0.986;
-        const plant = flowerBias && roll > 0.965 ? BlockId.BlueFlower : flowerBias && roll > 0.925 ? BlockId.RedFlower : wheatPatch ? BlockId.WheatCrop : BlockId.TallGrass;
+        const plant = column.biome === BiomeId.CloudreedGlen && roll > 0.955 ? BlockId.Cloudbell
+          : column.biome === BiomeId.CloudreedGlen && roll > 0.905 ? BlockId.ReedBloom
+            : flowerBias && roll > 0.965 ? BlockId.BlueFlower
+              : flowerBias && roll > 0.925 ? BlockId.RedFlower
+                : wheatPatch ? BlockId.WheatCrop : BlockId.TallGrass;
         set(x, column.height + 1, z, plant);
       } else if (column.biome === BiomeId.MushroomFen && roll > 0.9) {
         set(x, column.height + 1, z, BlockId.MushroomCap);
@@ -1472,6 +1544,25 @@ export class ChunkWorld {
       edits.set(index, type);
     }
     this.refreshEditedBlock(sx.chunk, sz.chunk, sx.local, y, sz.local, immediate);
+    return true;
+  }
+
+  setChestVisualHidden(x: number, y: number, z: number, hidden: boolean) {
+    const visualKey = `${x},${y},${z}`;
+    if (this.hiddenChestVisuals.has(visualKey) === hidden) return false;
+    if (hidden) this.hiddenChestVisuals.add(visualKey);
+    else this.hiddenChestVisuals.delete(visualKey);
+
+    const sx = splitCoordinate(x);
+    const sz = splitCoordinate(z);
+    const key = chunkKey(sx.chunk, sz.chunk);
+    const chunk = this.chunks.get(key);
+    if (!chunk) return true;
+    const section = sectionForY(y);
+    if (chunk.group.visible) {
+      this.cancelQueuedMesh(key, section);
+      this.rebuildSection(chunk, section);
+    } else this.queueMesh(key, section, true);
     return true;
   }
 
@@ -1666,7 +1757,7 @@ export class ChunkWorld {
       chunk.dirty.delete(section);
       return;
     }
-    const buckets: Record<Exclude<RenderLayer, "none">, GeometryBucket> = { opaque: emptyBucket(), cutout: emptyBucket(), transparent: emptyBucket(), emissive: emptyBucket() };
+    const buckets: Record<WorldRenderLayer, GeometryBucket> = { opaque: emptyBucket(), cutout: emptyBucket(), transparent: emptyBucket(), glass: emptyBucket(), emissive: emptyBucket() };
     const startY = MIN_Y + section * SECTION_HEIGHT;
     const endY = Math.min(MAX_Y, startY + SECTION_HEIGHT - 1);
     const west = this.chunks.get(chunkKey(chunk.cx - 1, chunk.cz));
@@ -1714,14 +1805,64 @@ export class ChunkWorld {
       bucket.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
     };
 
+    const addWaterloggedFlora = (localX: number, y: number, localZ: number, tint: [number, number, number]) => {
+      // The source water remains the stored block. Natural aquatic plants are
+      // a deterministic mesh occupant, so they neither plug rivers nor break
+      // liquid flow/source renewal. A stem is at most three cells high, making
+      // the ground and depth probes constant-time.
+      let bedY = y - 1;
+      for (let probe = 0; probe < 3 && neighborAt(localX, bedY, localZ) === BlockId.Water; probe += 1) bedY -= 1;
+      const bed = neighborAt(localX, bedY, localZ);
+      if (!BLOCKS[bed]?.solid) return;
+      let depth = 0;
+      while (depth < 12 && neighborAt(localX, bedY + depth + 1, localZ) === BlockId.Water) depth += 1;
+      if (depth < 2) return;
+      const worldX = chunk.cx * CHUNK_SIZE + localX;
+      const worldZ = chunk.cz * CHUNK_SIZE + localZ;
+      const placement = planSubmergedFlora(this.seedText, worldX, bedY, worldZ, depth).find((candidate) => candidate.y === y);
+      if (!placement) return;
+      const flora = BLOCKS[placement.block];
+      if (!flora || flora.layer === "none") return;
+      const floraBucket = buckets[flora.layer as Exclude<RenderLayer, "none">];
+      const environment = flora.layer === "emissive" ? Math.max(0.82, shadeAt(localX, y, localZ)) : shadeAt(localX, y, localZ);
+      const tile = flora.side;
+      const half = placement.block === BlockId.RiverRibbon ? 0.42 : 0.34;
+      addQuad(floraBucket, [[localX - half, y - 0.5, localZ - half], [localX - half, y + 0.5, localZ - half], [localX + half, y + 0.5, localZ + half], [localX + half, y - 0.5, localZ + half]], [0.7, 0, -0.7], tile, 0.94, tint, 0, 0, 0, 0, environment);
+      addQuad(floraBucket, [[localX + half, y - 0.5, localZ - half], [localX + half, y + 0.5, localZ - half], [localX - half, y + 0.5, localZ + half], [localX - half, y - 0.5, localZ + half]], [-0.7, 0, -0.7], tile, 0.86, tint, 0, 0, 0, 0, environment);
+    };
+
+    const addTexturedCuboid = (
+      bucket: GeometryBucket,
+      x0: number,
+      y0: number,
+      z0: number,
+      x1: number,
+      y1: number,
+      z1: number,
+      sideTile: number,
+      topTile = sideTile,
+      bottomTile = sideTile,
+      tint: [number, number, number] = [1, 1, 1],
+      environment = 1,
+    ) => {
+      addQuad(bucket, [[x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]], [1, 0, 0], sideTile, 0.82, tint, 0, 0, 0, 0, environment);
+      addQuad(bucket, [[x0, y0, z1], [x0, y1, z1], [x0, y1, z0], [x0, y0, z0]], [-1, 0, 0], sideTile, 0.72, tint, 0, 0, 0, 0, environment);
+      addQuad(bucket, [[x0, y1, z0], [x0, y1, z1], [x1, y1, z1], [x1, y1, z0]], [0, 1, 0], topTile, 1, tint, 0, 0, 0, 0, environment);
+      addQuad(bucket, [[x0, y0, z1], [x0, y0, z0], [x1, y0, z0], [x1, y0, z1]], [0, -1, 0], bottomTile, 0.55, tint, 0, 0, 0, 0, environment);
+      addQuad(bucket, [[x1, y0, z1], [x1, y1, z1], [x0, y1, z1], [x0, y0, z1]], [0, 0, 1], sideTile, 0.9, tint, 0, 0, 0, 0, environment);
+      addQuad(bucket, [[x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [x1, y0, z0]], [0, 0, -1], sideTile, 0.76, tint, 0, 0, 0, 0, environment);
+    };
+
     for (let lx = 0; lx < CHUNK_SIZE; lx += 1) for (let lz = 0; lz < CHUNK_SIZE; lz += 1) {
       const tint = BIOME_TINT[chunk.biomes[lx + lz * CHUNK_SIZE]] ?? [1, 1, 1];
       for (let y = startY; y <= endY; y += 1) {
         const type = chunk.blocks[blockIndex(lx, y, lz)] as BlockId;
         if (type === BlockId.Air) continue;
+        if (type === BlockId.Chest && this.hiddenChestVisuals.has(`${chunk.cx * CHUNK_SIZE + lx},${y},${chunk.cz * CHUNK_SIZE + lz}`)) continue;
         const definition = BLOCKS[type];
         if (!definition || definition.layer === "none") continue;
-        const bucket = buckets[definition.layer];
+        if (type === BlockId.Water) addWaterloggedFlora(lx, y, lz, tint);
+        const bucket = buckets[type === BlockId.Glass ? "glass" : definition.layer as Exclude<RenderLayer, "none">];
         if (definition.shape === "torch") {
           const tile = definition.side;
           const environment = Math.max(0.82, shadeAt(lx, y, lz));
@@ -1774,6 +1915,39 @@ export class ChunkWorld {
           const environment = definition.layer === "emissive" ? Math.max(0.82, shadeAt(lx, y, lz)) : shadeAt(lx, y, lz);
           addQuad(bucket, [[lx - 0.36, y - 0.5, lz - 0.36], [lx - 0.36, y + 0.5, lz - 0.36], [lx + 0.36, y + 0.5, lz + 0.36], [lx + 0.36, y - 0.5, lz + 0.36]], [0.7, 0, -0.7], tile, 1, tint, 0, 0, 0, 0, environment);
           addQuad(bucket, [[lx + 0.36, y - 0.5, lz - 0.36], [lx + 0.36, y + 0.5, lz - 0.36], [lx - 0.36, y + 0.5, lz + 0.36], [lx - 0.36, y - 0.5, lz + 0.36]], [-0.7, 0, -0.7], tile, 0.92, tint, 0, 0, 0, 0, environment);
+          continue;
+        }
+        if (definition.shape === "apiary") {
+          const environment = shadeAt(lx, y, lz);
+          addTexturedCuboid(bucket, lx - 0.4, y - 0.46, lz - 0.36, lx + 0.4, y + 0.18, lz + 0.36, definition.side, definition.top, definition.bottom, tint, environment);
+          addTexturedCuboid(bucket, lx - 0.46, y + 0.18, lz - 0.42, lx + 0.46, y + 0.36, lz + 0.42, definition.top, definition.top, definition.side, tint, environment);
+          addTexturedCuboid(bucket, lx - 0.13, y - 0.06, lz - 0.405, lx + 0.13, y + 0.13, lz - 0.355, 92, 92, 92, [1, 1, 1], environment);
+          continue;
+        }
+        if (definition.shape === "wild-hive") {
+          const environment = shadeAt(lx, y, lz);
+          addTexturedCuboid(bucket, lx - 0.35, y - 0.46, lz - 0.35, lx + 0.35, y - 0.17, lz + 0.35, definition.side, definition.top, definition.bottom, tint, environment);
+          addTexturedCuboid(bucket, lx - 0.45, y - 0.17, lz - 0.42, lx + 0.45, y + 0.16, lz + 0.42, definition.side, definition.top, definition.bottom, tint, environment);
+          addTexturedCuboid(bucket, lx - 0.33, y + 0.16, lz - 0.32, lx + 0.33, y + 0.42, lz + 0.32, definition.side, definition.top, definition.bottom, tint, environment);
+          addTexturedCuboid(bucket, lx - 0.11, y - 0.03, lz - 0.455, lx + 0.11, y + 0.13, lz - 0.405, 94, 94, 94, [0.55, 0.48, 0.4], environment);
+          continue;
+        }
+        if (definition.shape === "orb-rack") {
+          const environment = shadeAt(lx, y, lz);
+          addTexturedCuboid(bucket, lx - 0.47, y - 0.48, lz - 0.38, lx + 0.47, y - 0.34, lz + 0.38, definition.side, definition.top, definition.bottom, tint, environment);
+          for (const x of [lx - 0.4, lx + 0.31]) addTexturedCuboid(bucket, x, y - 0.34, lz - 0.11, x + 0.09, y + 0.42, lz + 0.11, definition.side, definition.top, definition.bottom, tint, environment);
+          for (const railY of [y - 0.08, y + 0.25]) addTexturedCuboid(bucket, lx - 0.35, railY - 0.045, lz - 0.09, lx + 0.35, railY + 0.045, lz + 0.09, definition.side, definition.top, definition.bottom, tint, environment);
+          for (const socketX of [lx - 0.27, lx - 0.09, lx + 0.09, lx + 0.27]) addTexturedCuboid(bucket, socketX - 0.055, y + 0.29, lz - 0.13, socketX + 0.055, y + 0.4, lz + 0.13, 95, 95, 94, [0.68, 0.88, 0.86], Math.max(0.82, environment));
+          continue;
+        }
+        if (definition.shape === "orb-healer") {
+          const environment = shadeAt(lx, y, lz);
+          addTexturedCuboid(bucket, lx - 0.48, y - 0.48, lz - 0.48, lx + 0.48, y - 0.3, lz + 0.48, definition.side, definition.top, definition.bottom, tint, environment);
+          for (const [dx, dz] of [[-0.4, -0.4], [0.31, -0.4], [-0.4, 0.31], [0.31, 0.31]] as Array<[number, number]>) {
+            addTexturedCuboid(bucket, lx + dx, y - 0.3, lz + dz, lx + dx + 0.09, y + 0.36, lz + dz + 0.09, definition.side, definition.top, definition.bottom, tint, environment);
+          }
+          addTexturedCuboid(buckets.emissive, lx - 0.28, y - 0.25, lz - 0.28, lx + 0.28, y + 0.28, lz + 0.28, 95, 95, 95, [1, 1, 1], 1);
+          addTexturedCuboid(bucket, lx - 0.42, y + 0.3, lz - 0.42, lx + 0.42, y + 0.42, lz + 0.42, definition.side, definition.top, definition.bottom, tint, environment);
           continue;
         }
         if (definition.shape === "fence" || definition.shape === "gate") {
@@ -1837,15 +2011,18 @@ export class ChunkWorld {
           continue;
         }
         if (definition.shape === "chest") {
-          const x0 = lx - 0.44; const x1 = lx + 0.44;
-          const y0 = y - 0.5; const y1 = y + 0.29;
-          const z0 = lz - 0.44; const z1 = lz + 0.44;
-          addQuad(bucket, [[x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]], [1, 0, 0], definition.side, 0.82, tint, 0, 0, 0, 0, shadeAt(lx + 1, y, lz));
-          addQuad(bucket, [[x0, y0, z1], [x0, y1, z1], [x0, y1, z0], [x0, y0, z0]], [-1, 0, 0], definition.side, 0.72, tint, 0, 0, 0, 0, shadeAt(lx - 1, y, lz));
-          addQuad(bucket, [[x0, y1, z0], [x0, y1, z1], [x1, y1, z1], [x1, y1, z0]], [0, 1, 0], definition.top, 1, tint, 0, 0, 0, 0, shadeAt(lx, y + 1, lz));
-          addQuad(bucket, [[x0, y0, z1], [x0, y0, z0], [x1, y0, z0], [x1, y0, z1]], [0, -1, 0], definition.bottom, 0.55, tint, 0, 0, 0, 0, shadeAt(lx, y - 1, lz));
-          addQuad(bucket, [[x1, y0, z1], [x1, y1, z1], [x0, y1, z1], [x0, y0, z1]], [0, 0, 1], definition.side, 0.9, tint, 0, 0, 0, 0, shadeAt(lx, y, lz + 1));
-          addQuad(bucket, [[x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [x1, y0, z0]], [0, 0, -1], definition.side, 0.76, tint, 0, 0, 0, 0, shadeAt(lx, y, lz - 1));
+          const environment = shadeAt(lx, y, lz);
+          const addChestCuboid = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, frontTile = definition.side) => {
+            addQuad(bucket, [[x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]], [1, 0, 0], definition.side, 0.82, tint, 0, 0, 0, 0, environment);
+            addQuad(bucket, [[x0, y0, z1], [x0, y1, z1], [x0, y1, z0], [x0, y0, z0]], [-1, 0, 0], definition.side, 0.72, tint, 0, 0, 0, 0, environment);
+            addQuad(bucket, [[x0, y1, z0], [x0, y1, z1], [x1, y1, z1], [x1, y1, z0]], [0, 1, 0], definition.top, 1, tint, 0, 0, 0, 0, environment);
+            addQuad(bucket, [[x0, y0, z1], [x0, y0, z0], [x1, y0, z0], [x1, y0, z1]], [0, -1, 0], definition.bottom, 0.55, tint, 0, 0, 0, 0, environment);
+            addQuad(bucket, [[x1, y0, z1], [x1, y1, z1], [x0, y1, z1], [x0, y0, z1]], [0, 0, 1], definition.side, 0.9, tint, 0, 0, 0, 0, environment);
+            addQuad(bucket, [[x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [x1, y0, z0]], [0, 0, -1], frontTile, 0.82, tint, 0, 0, 0, 0, environment);
+          };
+          addChestCuboid(lx - 0.44, y - 0.5, lz - 0.44, lx + 0.44, y + 0.13, lz + 0.44, definition.top);
+          addChestCuboid(lx - 0.46, y + 0.16, lz - 0.46, lx + 0.46, y + 0.37, lz + 0.46, definition.top);
+          addChestCuboid(lx - 0.09, y + 0.03, lz - 0.49, lx + 0.09, y + 0.24, lz - 0.425, definition.top);
           continue;
         }
         if (definition.shape === "door") {
@@ -1910,7 +2087,11 @@ export class ChunkWorld {
         for (const face of FACES) {
           const [dx, dy, dz] = face.direction;
           const neighbor = neighborAt(lx + dx, y + dy, lz + dz);
-          if (!this.faceVisible(type, neighbor)) continue;
+          const internalLeafFace = LEAF_BLOCK_SET.has(type)
+            && neighbor === type
+            && dx + dy + dz > 0
+            && hash3(chunk.cx * CHUNK_SIZE + lx + dx, y + dy, chunk.cz * CHUNK_SIZE + lz + dz, this.seed ^ 0x37b41cd9) < DENSE_CUTOUT_LEAF_POLICY.renderInternalFaceFraction;
+          if (!this.faceVisible(type, neighbor) && !internalLeafFace) continue;
           const tile = dy > 0 ? definition.top : dy < 0 ? definition.bottom : definition.side;
           const waterDrop = type === BlockId.Water || type === BlockId.Lava ? -0.045 : 0;
           const environment = definition.layer === "emissive"
@@ -1922,7 +2103,7 @@ export class ChunkWorld {
     }
 
     const nextMeshes: ChunkMeshes = {};
-    for (const layer of ["opaque", "cutout", "transparent", "emissive"] as const) {
+    for (const layer of ["opaque", "cutout", "transparent", "glass", "emissive"] as const) {
       const bucket = buckets[layer];
       if (!bucket.positions.length) continue;
       const geometry = new THREE.BufferGeometry();
@@ -1937,7 +2118,7 @@ export class ChunkWorld {
         Math.sqrt(2 * (CHUNK_SIZE / 2) ** 2 + ((endY - startY + 1) / 2) ** 2),
       );
       const mesh = new THREE.Mesh(geometry, this.materials[layer]);
-      mesh.renderOrder = layer === "transparent" ? 3 : layer === "emissive" ? 2 : layer === "cutout" ? 1 : 0;
+      mesh.renderOrder = layer === "glass" ? 4 : layer === "transparent" ? 3 : layer === "emissive" ? 2 : layer === "cutout" ? 1 : 0;
       chunk.group.add(mesh);
       nextMeshes[layer] = mesh;
     }

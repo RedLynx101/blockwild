@@ -36,6 +36,7 @@ import {
 import { BUTTERFLY_ORDER } from "./mobs";
 import type { MobDefinition } from "./mobs";
 import { createAvatarHeldItemModel } from "./held-items";
+import { captureOrbFromInventorySlot } from "./capture-orbs";
 import { BlockPlayerModel, type PlayerEquipmentAppearance } from "./player-model";
 import { GAME_RELEASE_NAME, GAME_VERSION, GAME_VERSION_LABEL } from "./version";
 import {
@@ -46,7 +47,8 @@ import {
   type WorldOptions,
 } from "./world-storage";
 
-type Overlay = "title" | "new" | "pause" | "inventory" | "crafting" | "furnace" | "chest" | "bestiary" | "multiplayer" | "sleep" | "pet" | "help" | "settings" | null;
+type WorkstationOverlay = "apiary" | "orb-rack" | "healing-station";
+type Overlay = "title" | "new" | "pause" | "inventory" | "crafting" | "furnace" | "chest" | WorkstationOverlay | "bestiary" | "multiplayer" | "sleep" | "pet" | "help" | "settings" | null;
 export type BestiaryFilter = "all" | "surface" | "birds" | "butterflies" | "fish" | "monsters" | "companions";
 type PetCommand = NonNullable<HudState["activePet"]>["command"];
 
@@ -78,7 +80,7 @@ type MultiplayerViewState = {
   inviteCode: string;
   answerCode: string;
   roomCode: string;
-  rendezvousStatus: "opening" | "waiting" | "exchanging" | "connected" | "closed" | "error" | "idle";
+  rendezvousStatus: "opening" | "waiting" | "retrying" | "exchanging" | "connected" | "closed" | "error" | "idle";
   error: string | null;
 };
 
@@ -95,6 +97,10 @@ type MultiplayerEngineApi = {
   disconnectMultiplayer?: () => void | Promise<void>;
 };
 
+type WorkstationEngineApi = {
+  machineClick?: (machine: WorkstationOverlay, index: number, button: "left" | "right", shift?: boolean) => void;
+};
+
 const EMPTY_MULTIPLAYER_STATE: MultiplayerViewState = {
   supported: false,
   reasons: [],
@@ -107,6 +113,291 @@ const EMPTY_MULTIPLAYER_STATE: MultiplayerViewState = {
   rendezvousStatus: "idle",
   error: null,
 };
+
+type ApiaryBeeHud = { alive?: boolean; home?: boolean; id?: string; name?: string };
+export type ApiaryHudState = {
+  queen?: boolean | ApiaryBeeHud | null;
+  queenPresent?: boolean;
+  queenName?: string;
+  workers?: readonly ApiaryBeeHud[];
+  workerCount?: number;
+  maxWorkers?: number;
+  nectar?: number;
+  nectarStatus?: string;
+  honey?: number;
+  honeyMax?: number;
+  royalJelly?: number;
+  royalJellyMax?: number;
+  productionProgress?: number;
+  honeyClock?: number;
+  honeyCycleSeconds?: number;
+  slots?: readonly (InventorySlot | null)[];
+};
+
+export type OrbRackHudState = {
+  slots?: readonly (InventorySlot | null)[];
+};
+
+export type HealingStationHudState = OrbRackHudState & {
+  gelUnits?: number;
+  healClock?: number;
+  healIntervalSeconds?: number;
+  healingProgress?: readonly number[];
+};
+
+type ExtendedHudState = HudState & {
+  activeApiary?: ApiaryHudState | null;
+  activeOrbRack?: OrbRackHudState | null;
+  activeHealingStation?: HealingStationHudState | null;
+};
+
+export type ApiaryUiState = {
+  queenPresent: boolean;
+  queenName: string;
+  workerCount: number;
+  maxWorkers: number;
+  nectarStatus: string;
+  honey: number;
+  honeyMax: number;
+  royalJelly: number;
+  royalJellyMax: number;
+  productionProgress: number;
+  slots: Array<InventorySlot | null>;
+};
+
+const finiteNumber = (value: unknown, fallback = 0) => typeof value === "number" && Number.isFinite(value) ? value : fallback;
+const boundedInteger = (value: unknown, minimum: number, maximum: number) => Math.min(maximum, Math.max(minimum, Math.floor(finiteNumber(value, minimum))));
+const normalizedProgress = (value: unknown) => {
+  const numeric = finiteNumber(value);
+  return Math.min(1, Math.max(0, numeric > 1 ? numeric / 100 : numeric));
+};
+
+export function normalizeApiaryUiState(state?: ApiaryHudState | null): ApiaryUiState {
+  const queen = state?.queen;
+  const queenRecord = queen && typeof queen === "object" ? queen : null;
+  const queenPresent = state?.queenPresent ?? (queen === true || Boolean(queenRecord && queenRecord.alive !== false));
+  const livingWorkers = state?.workers?.filter((worker) => worker.alive !== false) ?? [];
+  const maxWorkers = boundedInteger(state?.maxWorkers ?? 8, 1, 8);
+  const workerCount = boundedInteger(state?.workerCount ?? livingWorkers.length, 0, maxWorkers);
+  const awayWorkers = livingWorkers.filter((worker) => worker.home === false).length;
+  const nectar = Math.max(0, finiteNumber(state?.nectar));
+  const nectarStatus = state?.nectarStatus?.trim()
+    || (!queenPresent ? "Awaiting a queen"
+      : workerCount === 0 ? "Awaiting worker bees"
+        : awayWorkers > 0 ? `${awayWorkers} foraging · nectar return pending`
+          : nectar > 0 ? "Workers home · nectar returned"
+            : "Workers home · awaiting daylight");
+  const honeyMax = boundedInteger(state?.honeyMax ?? 12, 1, 12);
+  const royalJellyMax = boundedInteger(state?.royalJellyMax ?? 12, 1, 12);
+  const honey = boundedInteger(state?.honey, 0, honeyMax);
+  const royalJelly = boundedInteger(state?.royalJelly, 0, royalJellyMax);
+  const fallbackProgress = finiteNumber(state?.honeyClock) / Math.max(1, finiteNumber(state?.honeyCycleSeconds, 180));
+  return {
+    queenPresent,
+    queenName: state?.queenName?.trim() || queenRecord?.name?.trim() || (queenPresent ? "Resident Queen" : "No Queen"),
+    workerCount,
+    maxWorkers,
+    nectarStatus,
+    honey,
+    honeyMax,
+    royalJelly,
+    royalJellyMax,
+    productionProgress: normalizedProgress(state?.productionProgress ?? fallbackProgress),
+    slots: Array.from({ length: 3 }, (_, index) => state?.slots?.[index] ?? null),
+  };
+}
+
+export type OrbSlotUiState = {
+  hasOrb: boolean;
+  occupied: boolean;
+  kind: MobKind | null;
+  name: string;
+  health: number;
+  maxHealth: number;
+  healthProgress: number;
+  hostile: boolean;
+  baby: boolean;
+  tamed: boolean;
+  fullyHealed: boolean;
+};
+
+const isKnownMobKind = (value: unknown): value is MobKind => typeof value === "string" && Object.prototype.hasOwnProperty.call(MOB_DEFS, value);
+
+export function captureOrbUiState(slot: InventorySlot | null | undefined): OrbSlotUiState {
+  const orb = captureOrbFromInventorySlot(slot);
+  const creature = orb?.creature;
+  const metadata = slot?.metadata;
+  const kindValue = creature?.kind ?? metadata?.species ?? metadata?.kind ?? metadata?.mobKind;
+  const kind = isKnownMobKind(kindValue) ? kindValue : null;
+  const hasOrb = slot?.item === Item.CaptureOrb;
+  const occupied = Boolean(creature || kind || (hasOrb && (typeof metadata?.name === "string" || typeof metadata?.species === "string")));
+  const health = Math.max(0, finiteNumber(creature?.health ?? metadata?.health));
+  const maxHealth = Math.max(0, finiteNumber(creature?.maxHealth ?? metadata?.maxHealth));
+  const definition = kind ? MOB_DEFS[kind] : null;
+  const metadataName = typeof metadata?.name === "string" ? metadata.name.trim() : "";
+  const name = creature?.name?.trim() || metadataName || definition?.name || (occupied ? "Unknown Specimen" : hasOrb ? "Ready Capture Orb" : "Empty Rack");
+  return {
+    hasOrb,
+    occupied,
+    kind,
+    name,
+    health,
+    maxHealth,
+    healthProgress: maxHealth > 0 ? Math.min(1, health / maxHealth) : 0,
+    hostile: creature?.hostile ?? (metadata?.hostile === true),
+    baby: creature?.baby ?? (metadata?.baby === true),
+    tamed: creature?.tamed ?? (metadata?.tamed === true),
+    fullyHealed: occupied && maxHealth > 0 && health >= maxHealth,
+  };
+}
+
+export function healingProgressForOrb(slot: InventorySlot | null | undefined, state: HealingStationHudState | null | undefined, index: number) {
+  const specimen = captureOrbUiState(slot);
+  if (!specimen.occupied) return 0;
+  if (specimen.fullyHealed) return 1;
+  const explicit = state?.healingProgress?.[index];
+  if (explicit !== undefined) return normalizedProgress(explicit);
+  return normalizedProgress(finiteNumber(state?.healClock) / Math.max(1, finiteNumber(state?.healIntervalSeconds, 10)));
+}
+
+function workstationAuditOrb(kind: MobKind, name: string, health: number, maxHealth: number): InventorySlot {
+  const definition = MOB_DEFS[kind];
+  return {
+    item: Item.CaptureOrb,
+    count: 1,
+    metadata: {
+      name,
+      species: kind,
+      hostile: definition.hostile,
+      health,
+      maxHealth,
+      captureOrb: JSON.stringify({
+        schema: 1,
+        orbId: `audit-${kind}`,
+        capturedAt: 1,
+        creature: {
+          schema: 1,
+          entityId: `audit-${kind}`,
+          kind,
+          health,
+          maxHealth,
+          ageTicks: 1200,
+          baby: false,
+          temperament: definition.temperament,
+          hostile: definition.hostile,
+          tamed: kind === "peelop",
+          ownerId: kind === "peelop" ? "audit-player" : null,
+          name,
+          geneticSeed: 42,
+          command: kind === "peelop" ? "follow" : null,
+          custom: {},
+        },
+      }),
+    },
+  };
+}
+
+export const INITIAL_GAME_SETTINGS: Readonly<GameSettings> = Object.freeze({
+  volume: 0.55,
+  muted: false,
+  sensitivity: 0.0022,
+  fov: 72,
+  weather: "clear",
+  renderDistance: 10,
+  simulationDistance: 8,
+  showFps: false,
+  resourceMode: "auto",
+});
+
+export function initialHydrationSettings(): GameSettings {
+  return { ...INITIAL_GAME_SETTINGS };
+}
+
+export type TouchControlsMode = "auto" | "off" | "on";
+export type PrimaryPointerKind = "unknown" | "mouse" | "pen" | "touch";
+export type InputCapabilities = {
+  coarsePrimary: boolean;
+  hoverNone: boolean;
+  anyFine: boolean;
+  primaryPointer: PrimaryPointerKind;
+};
+export type UiPreferences = {
+  touchControls: TouchControlsMode;
+  targetOutlineOpacity: number;
+};
+
+export const INITIAL_UI_PREFERENCES: Readonly<UiPreferences> = Object.freeze({
+  touchControls: "auto",
+  targetOutlineOpacity: 0.9,
+});
+
+const UI_PREFERENCES_KEY = "blockwild-ui-preferences-v1";
+const INITIAL_INPUT_CAPABILITIES: Readonly<InputCapabilities> = Object.freeze({
+  coarsePrimary: false,
+  hoverNone: false,
+  anyFine: true,
+  primaryPointer: "unknown",
+});
+
+export function sanitizeUiPreferences(value: unknown): UiPreferences {
+  const parsed = value && typeof value === "object" ? value as Partial<UiPreferences> : {};
+  const touchControls = parsed.touchControls === "off" || parsed.touchControls === "on" ? parsed.touchControls : "auto";
+  const rawOpacity = Number(parsed.targetOutlineOpacity ?? INITIAL_UI_PREFERENCES.targetOutlineOpacity);
+  const targetOutlineOpacity = Number.isFinite(rawOpacity) ? Math.min(1, Math.max(0.05, rawOpacity)) : INITIAL_UI_PREFERENCES.targetOutlineOpacity;
+  return { touchControls, targetOutlineOpacity };
+}
+
+export function resolveTouchControls(mode: TouchControlsMode, capabilities: InputCapabilities) {
+  if (mode === "on") return true;
+  if (mode === "off") return false;
+  if (capabilities.primaryPointer === "touch") return true;
+  if (capabilities.primaryPointer === "mouse" || capabilities.primaryPointer === "pen") return false;
+  return capabilities.coarsePrimary || (capabilities.hoverNone && !capabilities.anyFine);
+}
+
+export type SingleFlightGate = { current: Promise<unknown> | null };
+
+export async function runSingleFlight<T>(gate: SingleFlightGate, operation: () => Promise<T>) {
+  if (gate.current) return { started: false as const };
+  const flight = Promise.resolve().then(operation);
+  gate.current = flight;
+  try {
+    return { started: true as const, value: await flight };
+  } finally {
+    if (gate.current === flight) gate.current = null;
+  }
+}
+
+export function formatMultiplayerError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/user[- ]initiated.*(?:abort|close)|(?:abort|close).*called|session (?:changed|closed)|setup was cancelled/iu.test(message)) {
+    return "That connection attempt was cancelled safely because the session changed. Keep the host room open, then try the invite code again.";
+  }
+  if (/missing local offer description/iu.test(message)) {
+    return "The host connection restarted before its offer finished. Keep the host room open, then try Join again.";
+  }
+  if (/no host|no .*answered|peer .*unavailable/iu.test(message)) {
+    return "No host is visible for that code yet. Check the code, leave the host room open, and try again.";
+  }
+  if (/timed? ?out/iu.test(message)) {
+    return "The host did not finish the secure exchange in time. Keep the room open and try Join again.";
+  }
+  return message;
+}
+
+export function clearFirstPersonHeldPresentation(engine: VoxelEngine) {
+  for (const child of [...engine.heldRoot.children]) {
+    engine.disposeObject(child);
+    engine.heldRoot.remove(child);
+  }
+  engine.heldRoot.visible = false;
+  engine.heldItemCode = engine.selectedSlot()?.item ?? -1;
+}
+
+export function prepareFirstPersonHeldPresentation(engine: VoxelEngine) {
+  engine.heldItemCode = -1;
+  engine.heldRoot.visible = true;
+}
 
 export function normalizeMultiplayerRoomCode(value: string) {
   return value.toLocaleUpperCase().replace(/[^A-Z0-9-]/gu, "").replace(/-{2,}/gu, "-").slice(0, 24);
@@ -124,7 +415,7 @@ const formatWorldDate = (timestamp: number | null) => timestamp
 
 const blankSlots = (count: number) => Array.from({ length: count }, () => null as InventorySlot | null);
 
-const INITIAL_HUD: HudState = {
+const INITIAL_HUD: ExtendedHudState = {
   health: 10,
   hunger: 10,
   xp: 0,
@@ -218,7 +509,7 @@ export function itemIconKind(item: ItemCode) {
     case Item.WildwoodDoor: return "door";
     case Item.WildwoodBed: return "bed";
     case Item.Sailboat: return "sailboat";
-    case Item.CreatureCage: return "cage";
+    case Item.CreatureCage: return "capture-orb";
     case Item.Banana: return "banana";
     case Item.Feather: return "feather";
     case Item.RawFish: return "fish-raw";
@@ -304,14 +595,15 @@ function itemMetadataSummary(slot: InventorySlot | null) {
   return details.length ? ` · ${details.join(" · ")}` : " · Preserved creature data";
 }
 
-function ItemIcon({ item, small = false }: { item: ItemCode; small?: boolean }) {
+function ItemIcon({ item, slot, small = false }: { item: ItemCode; slot?: InventorySlot | null; small?: boolean }) {
   const definition = ITEMS[item];
   const iconKind = itemIconKind(item);
   const isTool = Boolean(definition?.toolKind) && iconKind.startsWith("tool-");
   const custom = iconKind !== "block" && iconKind !== "item" && !isTool;
+  const filledCaptureOrb = item === Item.CaptureOrb && Boolean(captureOrbFromInventorySlot(slot)?.creature);
   return (
     <span
-      className={`item-icon item-icon-kind-${iconKind} ${small ? "item-icon-small" : ""} ${isTool ? `tool-icon tool-${definition.toolKind}` : custom ? "custom-item-icon" : "block-item-icon"}`}
+      className={`item-icon item-icon-kind-${iconKind} ${filledCaptureOrb ? "item-icon-filled" : ""} ${small ? "item-icon-small" : ""} ${isTool ? `tool-icon tool-${definition.toolKind}` : custom ? "custom-item-icon" : "block-item-icon"}`}
       style={{ "--item-color": definition?.color ?? "#777" } as CSSProperties}
       data-item-icon={iconKind}
       data-item-id={item}
@@ -513,7 +805,7 @@ function SlotContents({ slot }: { slot: InventorySlot | null }) {
   const durability = slot.durability ?? maxDurability;
   return (
     <>
-      <ItemIcon item={slot.item} />
+      <ItemIcon item={slot.item} slot={slot} />
       {slot.count > 1 && <span className="item-count">{slot.count}</span>}
       {maxDurability && durability !== undefined && (
         <span className="durability-track"><span style={{ width: `${Math.max(0, durability / maxDurability) * 100}%` }} /></span>
@@ -533,11 +825,12 @@ export default function VoxelGame() {
   const toastTimerRef = useRef<number>(0);
   const lookPointerRef = useRef<{ id: number; x: number; y: number } | null>(null);
   const activePetDraftIdRef = useRef<number | null>(null);
+  const multiplayerFlightRef = useRef<Promise<unknown> | null>(null);
 
   const [overlay, setOverlayState] = useState<Overlay>("title");
   const [started, setStarted] = useState(false);
   const [hasSave, setHasSave] = useState(false);
-  const [hud, setHud] = useState<HudState>(INITIAL_HUD);
+  const [hud, setHud] = useState<ExtendedHudState>(INITIAL_HUD);
   const [toast, setToast] = useState("There is always another horizon. Usually with teeth.");
   const [savedPulse, setSavedPulse] = useState(false);
   const [worlds, setWorlds] = useState<WorldMetadata[]>([]);
@@ -548,7 +841,9 @@ export default function VoxelGame() {
   const [seed, setSeed] = useState("WILDERNESS");
   const [currentWorldSeed, setCurrentWorldSeed] = useState("WILDERNESS");
   const [mode, setMode] = useState<GameMode>("survival");
-  const [settings, setSettingsState] = useState<GameSettings>(() => readSettings());
+  const [settings, setSettingsState] = useState<GameSettings>(initialHydrationSettings);
+  const [uiPreferences, setUiPreferencesState] = useState<UiPreferences>(() => ({ ...INITIAL_UI_PREFERENCES }));
+  const [inputCapabilities, setInputCapabilities] = useState<InputCapabilities>(() => ({ ...INITIAL_INPUT_CAPABILITIES }));
   const [settingsReturn, setSettingsReturn] = useState<"title" | "pause">("title");
   const [webglError, setWebglError] = useState(false);
   const [cursorPosition, setCursorPosition] = useState({ x: 0, y: 0 });
@@ -569,6 +864,8 @@ export default function VoxelGame() {
   const [multiplayerReturn, setMultiplayerReturn] = useState<"title" | "pause">("title");
   const [iconAuditMode, setIconAuditMode] = useState(false);
   const [heldAuditMode, setHeldAuditMode] = useState(false);
+  const [workstationAuditMode, setWorkstationAuditMode] = useState<WorkstationOverlay | null>(null);
+  const showTouchControls = resolveTouchControls(uiPreferences.touchControls, inputCapabilities);
 
   useEffect(() => {
     try {
@@ -581,6 +878,8 @@ export default function VoxelGame() {
     const parameters = new URLSearchParams(window.location.search);
     setIconAuditMode(parameters.get("icon-audit") === "1");
     setHeldAuditMode(parameters.get("held-audit") === "1");
+    const workstationAudit = parameters.get("workstation-audit");
+    setWorkstationAuditMode(workstationAudit === "apiary" || workstationAudit === "orb-rack" || workstationAudit === "healing-station" ? workstationAudit : null);
   }, []);
 
   useEffect(() => {
@@ -647,7 +946,7 @@ export default function VoxelGame() {
         onOverlayRequest: (kind: OverlayKind) => {
           if (!startedRef.current) return;
           if (kind === "inventory" || kind === "crafting") setInventoryTab(kind === "inventory" ? "inventory" : "recipes");
-          setOverlay(kind);
+          setOverlay(kind as Overlay);
         },
         onDeath: () => undefined,
         onSave: () => {
@@ -688,11 +987,68 @@ export default function VoxelGame() {
   }, [refreshWorldCatalog, setOverlay, showToast]);
 
   useEffect(() => {
+    const stored = readSettings();
+    setSettingsState(stored);
+    engineRef.current?.setSettings(stored);
+  }, []);
+
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(UI_PREFERENCES_KEY) ?? "null") as unknown;
+      if (stored) setUiPreferencesState(sanitizeUiPreferences(stored));
+    } catch { /* UI preferences remain session-local when browser storage is unavailable. */ }
+
+    const coarsePrimary = window.matchMedia("(pointer: coarse)");
+    const hoverNone = window.matchMedia("(hover: none)");
+    const anyFine = window.matchMedia("(any-pointer: fine)");
+    const refreshCapabilities = () => setInputCapabilities((current) => ({
+      ...current,
+      coarsePrimary: coarsePrimary.matches,
+      hoverNone: hoverNone.matches,
+      anyFine: anyFine.matches,
+    }));
+    const rememberPrimaryPointer = (event: PointerEvent) => {
+      if (!event.isPrimary) return;
+      const primaryPointer: PrimaryPointerKind = event.pointerType === "touch" || event.pointerType === "pen" || event.pointerType === "mouse"
+        ? event.pointerType
+        : "unknown";
+      setInputCapabilities((current) => current.primaryPointer === primaryPointer ? current : { ...current, primaryPointer });
+    };
+
+    refreshCapabilities();
+    coarsePrimary.addEventListener("change", refreshCapabilities);
+    hoverNone.addEventListener("change", refreshCapabilities);
+    anyFine.addEventListener("change", refreshCapabilities);
+    window.addEventListener("pointerdown", rememberPrimaryPointer, true);
+    return () => {
+      coarsePrimary.removeEventListener("change", refreshCapabilities);
+      hoverNone.removeEventListener("change", refreshCapabilities);
+      anyFine.removeEventListener("change", refreshCapabilities);
+      window.removeEventListener("pointerdown", rememberPrimaryPointer, true);
+    };
+  }, []);
+
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    engine.touchMode = showTouchControls;
+  }, [showTouchControls]);
+
+  useEffect(() => {
+    const material = engineRef.current?.selection.material;
+    if (!material || Array.isArray(material)) return;
+    const outline = material as THREE.LineBasicMaterial;
+    outline.opacity = uiPreferences.targetOutlineOpacity;
+    outline.transparent = uiPreferences.targetOutlineOpacity < 1;
+    outline.needsUpdate = true;
+  }, [uiPreferences.targetOutlineOpacity]);
+
+  useEffect(() => {
     const handleMenuKeys = (event: KeyboardEvent) => {
       const current = overlayRef.current;
       const engine = engineRef.current;
       if (acceptsTextInput(event.target) && event.code !== "Escape") return;
-      if (event.code === "KeyE" && ["inventory", "crafting", "furnace", "chest", "pet"].includes(current ?? "")) {
+      if (event.code === "KeyE" && ["inventory", "crafting", "furnace", "chest", "apiary", "orb-rack", "healing-station", "pet"].includes(current ?? "")) {
         event.preventDefault();
         event.stopImmediatePropagation();
         engine?.closeContainer();
@@ -705,7 +1061,7 @@ export default function VoxelGame() {
       event.stopImmediatePropagation();
       if (event.repeat) return;
       if (current !== null) {
-        if (["inventory", "crafting", "furnace", "chest", "pet"].includes(current)) engine?.closeContainer();
+        if (["inventory", "crafting", "furnace", "chest", "apiary", "orb-rack", "healing-station", "pet"].includes(current)) engine?.closeContainer();
         if (startedRef.current) {
           if (current === "pause") { setOverlay(null); engine?.activate(); }
           else if (current === "settings" || current === "help" || current === "bestiary" || current === "multiplayer") setOverlay("pause");
@@ -738,6 +1094,7 @@ export default function VoxelGame() {
   const createWorld = () => {
     const engine = engineRef.current;
     if (!engine) return;
+    prepareFirstPersonHeldPresentation(engine);
     engine.setPlayerVariant(playerVariant);
     const created = engine.createWorld(seed, mode, worldOptions, worldName);
     const storage = worldStorageRef.current;
@@ -767,6 +1124,7 @@ export default function VoxelGame() {
       return;
     }
     engine.loadWorld(loaded.value.save, loaded.value.options, worldId);
+    prepareFirstPersonHeldPresentation(engine);
     engine.setPlayerVariant(playerVariant);
     activeWorldIdRef.current = worldId;
     setSelectedWorldId(worldId);
@@ -898,6 +1256,7 @@ export default function VoxelGame() {
   const saveAndQuit = () => {
     const engine = engineRef.current;
     if (!engine) return;
+    clearFirstPersonHeldPresentation(engine);
     engine.quitToTitle();
     startedRef.current = false;
     setStarted(false);
@@ -939,7 +1298,7 @@ export default function VoxelGame() {
         inviteCode: typeof state.inviteCode === "string" ? state.inviteCode : current.inviteCode,
         answerCode: typeof state.answerCode === "string" ? state.answerCode : current.answerCode,
         roomCode: typeof state.roomCode === "string" ? state.roomCode : current.roomCode,
-        rendezvousStatus: ["opening", "waiting", "exchanging", "connected", "closed", "error"].includes(String(state.rendezvousStatus)) ? state.rendezvousStatus as MultiplayerViewState["rendezvousStatus"] : current.rendezvousStatus,
+        rendezvousStatus: ["opening", "waiting", "retrying", "exchanging", "connected", "closed", "error"].includes(String(state.rendezvousStatus)) ? state.rendezvousStatus as MultiplayerViewState["rendezvousStatus"] : current.rendezvousStatus,
         error: typeof state.error === "string" ? state.error : null,
       }));
     } catch (error) {
@@ -959,21 +1318,36 @@ export default function VoxelGame() {
     if (code) setMultiplayerState((current) => ({ ...current, [key]: code }));
   };
 
+  const runMultiplayerAction = useCallback(async <T,>(operation: () => Promise<T>) => {
+    if (multiplayerFlightRef.current) return { started: false as const };
+    setMultiplayerBusy(true);
+    try {
+      return await runSingleFlight(multiplayerFlightRef, operation);
+    } finally {
+      setMultiplayerBusy(false);
+    }
+  }, []);
+
   const hostMultiplayer = async () => {
     const api = engineRef.current as unknown as MultiplayerEngineApi | null;
     if (!api?.hostMultiplayer) {
       setMultiplayerState((current) => ({ ...current, error: "Hosting is unavailable in this engine build." }));
       return;
     }
-    setMultiplayerBusy(true);
     try {
-      recordMultiplayerResult(await api.hostMultiplayer(multiplayerName.trim() || "Trailkeeper"), "inviteCode");
+      const result = await runMultiplayerAction(() => Promise.resolve(api.hostMultiplayer!(multiplayerName.trim() || "Trailkeeper")));
+      if (!result.started) return;
+      recordMultiplayerResult(result.value, "inviteCode");
       refreshMultiplayerState();
     } catch (error) {
-      setMultiplayerState((current) => ({ ...current, error: error instanceof Error ? error.message : String(error) }));
-    } finally {
-      setMultiplayerBusy(false);
+      setMultiplayerState((current) => ({ ...current, error: formatMultiplayerError(error) }));
     }
+  };
+
+  const updateUiPreferences = (change: Partial<UiPreferences>) => {
+    const next = sanitizeUiPreferences({ ...uiPreferences, ...change });
+    setUiPreferencesState(next);
+    try { window.localStorage.setItem(UI_PREFERENCES_KEY, JSON.stringify(next)); } catch { /* Session-only UI preferences. */ }
   };
 
   const openMultiplayer = (returnTo: "title" | "pause") => {
@@ -999,17 +1373,15 @@ export default function VoxelGame() {
       setMultiplayerState((current) => ({ ...current, error: "One-code hosting is unavailable in this engine build. Use Advanced direct connection below." }));
       return;
     }
-    setMultiplayerBusy(true);
     try {
-      const result = await api.createMultiplayerRoom(requestedCode, multiplayerName.trim() || "Trailkeeper");
-      const roomCode = normalizeMultiplayerRoomCode(result.roomCode);
+      const result = await runMultiplayerAction(() => api.createMultiplayerRoom!(requestedCode, multiplayerName.trim() || "Trailkeeper"));
+      if (!result.started) return;
+      const roomCode = normalizeMultiplayerRoomCode(result.value.roomCode);
       setMultiplayerRoomCode(roomCode);
       setMultiplayerState((current) => ({ ...current, roomCode, rendezvousStatus: "waiting", error: null }));
       refreshMultiplayerState();
     } catch (error) {
-      setMultiplayerState((current) => ({ ...current, rendezvousStatus: "error", error: error instanceof Error ? error.message : String(error) }));
-    } finally {
-      setMultiplayerBusy(false);
+      setMultiplayerState((current) => ({ ...current, rendezvousStatus: "error", error: formatMultiplayerError(error) }));
     }
   };
 
@@ -1024,12 +1396,14 @@ export default function VoxelGame() {
       setMultiplayerState((current) => ({ ...current, error: "One-code joining is unavailable in this engine build. Use Advanced direct connection below." }));
       return;
     }
-    setMultiplayerBusy(true);
     try {
-      const result = await api.joinMultiplayerRoom(roomCode, multiplayerName.trim() || "Trailkeeper");
+      const flight = await runMultiplayerAction(() => api.joinMultiplayerRoom!(roomCode, multiplayerName.trim() || "Trailkeeper"));
+      if (!flight.started) return;
+      const result = flight.value;
       setMultiplayerState((current) => ({ ...current, roomCode, rendezvousStatus: "exchanging", error: null }));
       refreshMultiplayerState();
       if (multiplayerReturn === "title" && result.worldReady) {
+        if (engineRef.current) prepareFirstPersonHeldPresentation(engineRef.current);
         startedRef.current = true;
         setStarted(true);
         activeWorldIdRef.current = null;
@@ -1039,9 +1413,7 @@ export default function VoxelGame() {
         showToast(`Joined ${result.hostName}'s world. The host owns this session save.`);
       }
     } catch (error) {
-      setMultiplayerState((current) => ({ ...current, rendezvousStatus: "error", error: error instanceof Error ? error.message : String(error) }));
-    } finally {
-      setMultiplayerBusy(false);
+      setMultiplayerState((current) => ({ ...current, rendezvousStatus: "error", error: formatMultiplayerError(error) }));
     }
   };
 
@@ -1056,14 +1428,13 @@ export default function VoxelGame() {
       setMultiplayerState((current) => ({ ...current, error: "Joining is unavailable in this engine build." }));
       return;
     }
-    setMultiplayerBusy(true);
     try {
-      recordMultiplayerResult(await api.joinMultiplayer(inviteCode, multiplayerName.trim() || "Trailkeeper"), "answerCode");
+      const result = await runMultiplayerAction(() => Promise.resolve(api.joinMultiplayer!(inviteCode, multiplayerName.trim() || "Trailkeeper")));
+      if (!result.started) return;
+      recordMultiplayerResult(result.value, "answerCode");
       refreshMultiplayerState();
     } catch (error) {
-      setMultiplayerState((current) => ({ ...current, error: error instanceof Error ? error.message : String(error) }));
-    } finally {
-      setMultiplayerBusy(false);
+      setMultiplayerState((current) => ({ ...current, error: formatMultiplayerError(error) }));
     }
   };
 
@@ -1078,15 +1449,13 @@ export default function VoxelGame() {
       setMultiplayerState((current) => ({ ...current, error: "Guest answer acceptance is unavailable in this engine build." }));
       return;
     }
-    setMultiplayerBusy(true);
     try {
-      await api.acceptMultiplayerAnswer(answerCode);
+      const result = await runMultiplayerAction(() => Promise.resolve(api.acceptMultiplayerAnswer!(answerCode)));
+      if (!result.started) return;
       setMultiplayerAnswer("");
       refreshMultiplayerState();
     } catch (error) {
-      setMultiplayerState((current) => ({ ...current, error: error instanceof Error ? error.message : String(error) }));
-    } finally {
-      setMultiplayerBusy(false);
+      setMultiplayerState((current) => ({ ...current, error: formatMultiplayerError(error) }));
     }
   };
 
@@ -1096,18 +1465,16 @@ export default function VoxelGame() {
       setMultiplayerState((current) => ({ ...current, error: "Disconnect is unavailable in this engine build." }));
       return;
     }
-    setMultiplayerBusy(true);
     try {
-      await api.disconnectMultiplayer();
+      const result = await runMultiplayerAction(() => Promise.resolve(api.disconnectMultiplayer!()));
+      if (!result.started) return;
       setMultiplayerState(EMPTY_MULTIPLAYER_STATE);
       setMultiplayerRoomCode("");
       setMultiplayerInvite("");
       setMultiplayerAnswer("");
       refreshMultiplayerState();
     } catch (error) {
-      setMultiplayerState((current) => ({ ...current, error: error instanceof Error ? error.message : String(error) }));
-    } finally {
-      setMultiplayerBusy(false);
+      setMultiplayerState((current) => ({ ...current, error: formatMultiplayerError(error) }));
     }
   };
 
@@ -1188,6 +1555,110 @@ export default function VoxelGame() {
       </div>
     </div>
   );
+
+  const workstationClick = (machine: WorkstationOverlay, index: number, button: "left" | "right", shift = false) => {
+    const api = engineRef.current as unknown as WorkstationEngineApi | null;
+    api?.machineClick?.(machine, index, button, shift);
+  };
+
+  const renderApiaryPanel = (source: ApiaryHudState | null | undefined, audit = false) => {
+    const apiary = normalizeApiaryUiState(source);
+    const productionPercent = Math.round(apiary.productionProgress * 100);
+    return (
+      <section className={`menu-overlay inventory-overlay workstation-overlay apiary-overlay ${audit ? "workstation-audit-overlay" : ""}`} aria-labelledby="apiary-title" onPointerMove={trackCursor}>
+        <div className="mc-window workstation-window apiary-window">
+          <header className="mc-window-header workstation-header">
+            <div><span className="panel-eyebrow">WILDWOOD APIARY · COLONY JOURNAL</span><h2 id="apiary-title">Apiary</h2></div>
+            {!audit && <button type="button" className="panel-close" onClick={resume} aria-label="Close apiary">×</button>}
+          </header>
+          <div className="apiary-workspace">
+            <section className={`apiary-queen ${apiary.queenPresent ? "resident" : "vacant"}`} aria-label={apiary.queenPresent ? `${apiary.queenName} is present` : "No queen present"}>
+              <div className="apiary-bee-portrait" aria-hidden="true"><i /><b /><span>♛</span></div>
+              <div className="apiary-queen-copy"><small>QUEEN</small><strong>{apiary.queenName}</strong><span>{apiary.queenPresent ? "The colony is organized and able to produce." : "Add a Queen Cell to wake this apiary."}</span></div>
+              <div className="workstation-transfer-slot">
+                {renderSlot(apiary.slots[0], "apiary-queen-slot", (shift) => workstationClick("apiary", 0, "left", shift), () => workstationClick("apiary", 0, "right"), "machine-slot", "Queen cell")}
+                <small>QUEEN CELL</small>
+              </div>
+            </section>
+
+            <section className="apiary-colony" aria-label={`${apiary.workerCount} of ${apiary.maxWorkers} worker bees`}>
+              <div className="apiary-section-heading"><span><small>WORKER FLIGHT</small><strong>{apiary.workerCount}/{apiary.maxWorkers}</strong></span><em>{apiary.workerCount === apiary.maxWorkers ? "FULL COLONY" : `${apiary.maxWorkers - apiary.workerCount} OPEN`}</em></div>
+              <div className="worker-honeycomb" aria-hidden="true">
+                {Array.from({ length: apiary.maxWorkers }, (_, index) => <span key={index} className={index < apiary.workerCount ? "active" : ""}><i /></span>)}
+              </div>
+              <div className="nectar-return-status"><span className="nectar-drop" aria-hidden="true" /><div><small>NECTAR RETURN</small><strong>{apiary.nectarStatus}</strong></div></div>
+            </section>
+
+            <section className="apiary-yield" aria-label="Apiary stores">
+              <div className="apiary-resource honey-resource">
+                <div className="apiary-jar" aria-hidden="true"><span style={{ height: `${apiary.honey / apiary.honeyMax * 100}%` }} /></div>
+                <div><small>HONEY</small><strong>{apiary.honey}<b>/{apiary.honeyMax}</b></strong></div>
+                {renderSlot(apiary.slots[1], "apiary-honey-slot", (shift) => workstationClick("apiary", 1, "left", shift), () => workstationClick("apiary", 1, "right"), "machine-slot apiary-output-slot", "Honey output")}
+              </div>
+              <div className="apiary-resource jelly-resource">
+                <div className="apiary-jar" aria-hidden="true"><span style={{ height: `${apiary.royalJelly / apiary.royalJellyMax * 100}%` }} /></div>
+                <div><small>ROYAL JELLY</small><strong>{apiary.royalJelly}<b>/{apiary.royalJellyMax}</b></strong></div>
+                {renderSlot(apiary.slots[2], "apiary-jelly-slot", (shift) => workstationClick("apiary", 2, "left", shift), () => workstationClick("apiary", 2, "right"), "machine-slot apiary-output-slot", "Royal jelly output")}
+              </div>
+            </section>
+
+            <section className="apiary-production" aria-label={`Production ${productionPercent}% complete`}>
+              <div><span><small>NEXT HARVEST</small><strong>{apiary.queenPresent && apiary.workerCount ? `${productionPercent}% complete` : "Colony paused"}</strong></span><em>{apiary.workerCount ? "FLOWER-LED · EVENT DRIVEN" : "ADD WORKERS"}</em></div>
+              <span className="apiary-progress-track"><i style={{ width: `${productionPercent}%` }} /></span>
+            </section>
+          </div>
+          {!audit && renderPlayerInventory()}
+          {audit && <p className="workstation-audit-note">Production preview · inventory transfer slots use the same left, right, double, and shift-click rules as other containers.</p>}
+        </div>
+        {!audit && hud.cursor && <div className="held-stack" style={{ left: cursorPosition.x, top: cursorPosition.y }}><SlotContents slot={hud.cursor} /></div>}
+      </section>
+    );
+  };
+
+  const renderOrbStationPanel = (machine: "orb-rack" | "healing-station", source: OrbRackHudState | HealingStationHudState | null | undefined, audit = false) => {
+    const healing = machine === "healing-station";
+    const healer = healing ? source as HealingStationHudState | null | undefined : null;
+    const slots = Array.from({ length: 4 }, (_, index) => source?.slots?.[index] ?? null);
+    const gelUnits = boundedInteger(healer?.gelUnits, 0, 64);
+    const title = healing ? "Healing Station" : "Capture Orb Rack";
+    const titleId = healing ? "healing-station-title" : "orb-rack-title";
+    return (
+      <section className={`menu-overlay inventory-overlay workstation-overlay orb-station-overlay ${healing ? "healing-station-overlay" : "orb-rack-overlay"} ${audit ? "workstation-audit-overlay" : ""}`} aria-labelledby={titleId} onPointerMove={trackCursor}>
+        <div className={`mc-window workstation-window orb-station-window ${healing ? "healing-station-window" : "orb-rack-window"}`}>
+          <header className="mc-window-header workstation-header">
+            <div><span className="panel-eyebrow">{healing ? `RESTORATIVE FIELD LAB · ${gelUnits}/64 CAVE GEL` : "WAYKEEPER DISPLAY · FOUR PRESERVED SPECIMENS"}</span><h2 id={titleId}>{title}</h2></div>
+            {!audit && <button type="button" className="panel-close" onClick={resume} aria-label={`Close ${title.toLocaleLowerCase()}`}>×</button>}
+          </header>
+          {healing && <div className="healing-gel-status" aria-label={`${gelUnits} of 64 Cave Gel units`}><span><i style={{ width: `${gelUnits / 64 * 100}%` }} /></span><div><small>RESTORATIVE RESERVE</small><strong>{gelUnits ? `${gelUnits} Cave Gel ready` : "Add Cave Gel to begin healing"}</strong></div></div>}
+          <div className="orb-specimen-grid">
+            {slots.map((slot, index) => {
+              const specimen = captureOrbUiState(slot);
+              const healingProgress = healingProgressForOrb(slot, healer, index);
+              const pulsePercent = Math.round(healingProgress * 100);
+              return (
+                <article key={`${machine}-${index}`} className={`orb-specimen-card ${specimen.occupied ? "occupied" : specimen.hasOrb ? "ready" : "empty"} ${specimen.hostile ? "hostile" : ""} ${specimen.fullyHealed ? "fully-healed" : ""}`}>
+                  <div className="orb-card-slot"><span>{String(index + 1).padStart(2, "0")}</span>{renderSlot(slot, `${machine}-${index}`, (shift) => workstationClick(machine, index, "left", shift), () => workstationClick(machine, index, "right"), "machine-slot orb-transfer-slot", `${title} orb slot ${index + 1}`)}</div>
+                  <div className="orb-specimen-portrait">
+                    {specimen.kind ? <CreaturePortrait kind={specimen.kind} seen mini /> : <span className={`capture-orb-placeholder ${specimen.hasOrb ? "ready" : ""}`} aria-hidden="true"><i /></span>}
+                  </div>
+                  <div className="orb-specimen-copy">
+                    <small>{specimen.occupied ? specimen.kind ? MOB_DEFS[specimen.kind].name.toLocaleUpperCase() : "PRESERVED SPECIMEN" : specimen.hasOrb ? "EMPTY CAPTURE ORB" : "OPEN RACK"}</small>
+                    <strong>{specimen.name}</strong>
+                    <span>{specimen.occupied ? [specimen.tamed ? "TAMED" : specimen.hostile ? "HOSTILE · SECURED" : "WILD", specimen.baby ? "YOUNG" : "ADULT"].join(" · ") : specimen.hasOrb ? "Ready for a creature" : "Place a capture orb"}</span>
+                  </div>
+                  {specimen.occupied && specimen.maxHealth > 0 && <div className="orb-health" aria-label={`${specimen.name} health ${specimen.health} of ${specimen.maxHealth}`}><span><i style={{ width: `${specimen.healthProgress * 100}%` }} /></span><b>{Math.ceil(specimen.health)}/{Math.ceil(specimen.maxHealth)}</b></div>}
+                  {healing && specimen.occupied && <div className={`orb-healing-progress ${specimen.fullyHealed ? "complete" : ""}`} aria-label={specimen.fullyHealed ? `${specimen.name} is fully healed` : `${specimen.name} healing pulse ${pulsePercent}% complete`}><div><small>{specimen.fullyHealed ? specimen.hostile ? "SECURED · FULL HEALTH" : "READY TO RELEASE" : "NEXT HEALING PULSE"}</small><strong>{specimen.fullyHealed ? "100%" : `${pulsePercent}%`}</strong></div><span><i style={{ width: `${pulsePercent}%` }} /></span></div>}
+                </article>
+              );
+            })}
+          </div>
+          {!audit && renderPlayerInventory()}
+          {audit && <p className="workstation-audit-note">Exact creature metadata stays inside each orb. Fully healed hostile specimens remain secured and removable.</p>}
+        </div>
+        {!audit && hud.cursor && <div className="held-stack" style={{ left: cursorPosition.x, top: cursorPosition.y }}><SlotContents slot={hud.cursor} /></div>}
+      </section>
+    );
+  };
 
   const arrangeRecipe = (recipeId: string) => {
     const result = engineRef.current?.planRecipe(recipeId) ?? { ok: false, recipeId, reason: "unknown", message: "The crafting engine is not ready." } satisfies RecipePlanResult;
@@ -1282,7 +1753,7 @@ export default function VoxelGame() {
   const cameraLabel = hud.cameraMode === "first" ? "FIRST PERSON" : hud.cameraMode === "third-rear" ? "THIRD PERSON · REAR" : "THIRD PERSON · FRONT";
 
   return (
-    <main className="game-shell">
+    <main className={`game-shell ${showTouchControls ? "touch-controls-active" : ""}`}>
       <canvas ref={canvasRef} className="game-canvas" aria-label="Blockwild endless 3D game world" />
       <div className="sky-vignette" aria-hidden="true" />
 
@@ -1359,8 +1830,8 @@ export default function VoxelGame() {
       {toast && started && overlay === null && <div className="toast-message">{toast}</div>}
       {savedPulse && <div className="save-pulse">WORLD SAVED</div>}
 
-      {started && overlay === null && (
-        <div className="mobile-controls" aria-label="Touch game controls">
+      {started && overlay === null && showTouchControls && (
+        <div className="mobile-controls touch-controls-visible" aria-label="Touch game controls">
           <div className="touch-look-zone" onPointerDown={handleLookDown} onPointerMove={handleLookMove} onPointerUp={handleLookUp} onPointerCancel={handleLookUp} />
           <div className="move-pad">
             <button type="button" className="touch-key key-up" aria-label="Move forward" onPointerDown={(event) => handleVirtualKey(event, "KeyW", true)} onPointerUp={(event) => handleVirtualKey(event, "KeyW", false)} onPointerCancel={(event) => handleVirtualKey(event, "KeyW", false)}>▲</button>
@@ -1387,7 +1858,7 @@ export default function VoxelGame() {
           <div className="title-content">
             <div className="logo-wrap">
               <h1 id="game-title" className="block-logo">BLOCKWILD</h1>
-              <p className="logo-subtitle">ENDLESS HORIZONS · SEVENTEEN BIOMES · A VERY DEEP DOWN</p>
+              <p className="logo-subtitle">ENDLESS HORIZONS · EIGHTEEN BIOMES · A VERY DEEP DOWN</p>
               <span className="splash-text">Now actually endless!</span>
             </div>
             <div className="title-menu-layout">
@@ -1452,7 +1923,7 @@ export default function VoxelGame() {
           <div className="pixel-panel world-setup-panel expanded-setup-panel">
             <span className="panel-eyebrow">ENDLESS WORLD GENERATOR</span>
             <h2 id="new-world-title">Create a New World</h2>
-            <p className="setup-intro">Every seed grows continents, oceans, rivers, mountains, seventeen surface biomes, cave networks, ruins, cabins, and a worldheart sixty-four blocks below zero.</p>
+            <p className="setup-intro">Every seed grows continents, oceans, rivers, mountains, eighteen surface biomes, cave networks, ruins, cabins, and a worldheart sixty-four blocks below zero.</p>
             <label className="field-label" htmlFor="world-name">World name</label>
             <input id="world-name" className="pixel-input world-name-input" value={worldName} maxLength={64} onChange={(event) => setWorldName(event.target.value)} />
             <label className="field-label" htmlFor="world-seed">World seed</label>
@@ -1493,7 +1964,7 @@ export default function VoxelGame() {
               </div>
             </details>
             <div className="world-feature-strip">
-              <span><b>∞</b> STREAMED WORLD</span><span><b>17</b> BIOMES</span><span><b>{MOB_ORDER.length}</b> CREATURES</span><span><b>192</b> BLOCKS TALL</span>
+              <span><b>∞</b> STREAMED WORLD</span><span><b>18</b> BIOMES</span><span><b>{MOB_ORDER.length}</b> CREATURES</span><span><b>192</b> BLOCKS TALL</span>
             </div>
             <p className="browser-ownership-note setup-ownership-note">This world will belong to this browser on this host device. Export it to make a backup or move it.</p>
             <div className="panel-actions">
@@ -1628,7 +2099,7 @@ export default function VoxelGame() {
                       </div>
                       <PlayerAvatarPreview variant={hud.playerVariant} equipment={hud.equipment} heldItem={selectedSlot?.item} />
                     </div>
-                    <span className="paper-doll-held"><small>HELD</small>{selectedSlot ? <><ItemIcon item={selectedSlot.item} small /><b>{selectedName}</b></> : <b>Empty hand</b>}</span>
+                    <span className="paper-doll-held"><small>HELD</small>{selectedSlot ? <><ItemIcon item={selectedSlot.item} slot={selectedSlot} small /><b>{selectedName}</b></> : <b>Empty hand</b>}</span>
                     <span className="armor-readout">ARMOR {hud.armor}</span>
                     <small>LEVEL {hud.level}</small>
                     <b>{hud.depth}</b>
@@ -1680,6 +2151,10 @@ export default function VoxelGame() {
           {hud.cursor && <div className="held-stack" style={{ left: cursorPosition.x, top: cursorPosition.y }}><SlotContents slot={hud.cursor} /></div>}
         </section>
       )}
+
+      {overlay === "apiary" && renderApiaryPanel(hud.activeApiary)}
+      {overlay === "orb-rack" && renderOrbStationPanel("orb-rack", hud.activeOrbRack)}
+      {overlay === "healing-station" && renderOrbStationPanel("healing-station", hud.activeHealingStation)}
 
       {overlay === "bestiary" && (
         <section className="menu-overlay bestiary-overlay" aria-labelledby="bestiary-title">
@@ -1767,7 +2242,7 @@ export default function VoxelGame() {
                 <PixelButton className={multiplayerReturn === "title" ? "gold-button" : ""} disabled={multiplayerBusy || !multiplayerState.supported || !multiplayerRoomCode || multiplayerState.role === "host"} onClick={() => void joinMultiplayerRoom()}>{multiplayerBusy && multiplayerReturn === "title" ? "Joining host world…" : "Join with code"}</PixelButton>
                 {(multiplayerState.roomCode || multiplayerRoomCode) && <button type="button" className="multiplayer-copy-room" onClick={() => void copyMultiplayerCode(multiplayerState.roomCode || multiplayerRoomCode)}>COPY CODE</button>}
               </div>
-              <p className={`multiplayer-rendezvous status-${multiplayerState.rendezvousStatus}`} role="status"><b>{multiplayerState.rendezvousStatus.toUpperCase()}</b><span>{multiplayerState.rendezvousStatus === "waiting" ? "Room open · waiting for a guest" : multiplayerState.rendezvousStatus === "exchanging" ? "Guest found · securing the direct connection" : multiplayerState.rendezvousStatus === "connected" ? "Connected · the host world is live" : multiplayerReturn === "title" ? "Enter the host code, then Join" : "Choose Host or Join to begin"}</span></p>
+              <p className={`multiplayer-rendezvous status-${multiplayerState.rendezvousStatus}`} role="status"><b>{multiplayerState.rendezvousStatus.toUpperCase()}</b><span>{multiplayerState.rendezvousStatus === "waiting" ? (multiplayerState.role === "host" ? "Room open · waiting for a guest" : "Waiting for the host room to finish opening") : multiplayerState.rendezvousStatus === "retrying" ? "Host found · retrying the secure exchange" : multiplayerState.rendezvousStatus === "exchanging" ? "Guest found · securing the direct connection" : multiplayerState.rendezvousStatus === "connected" ? "Connected · the host world is live" : multiplayerReturn === "title" ? "Enter the host code, then Join" : "Choose Host or Join to begin"}</span></p>
             </section>
 
             {multiplayerReturn === "pause" && <details className="multiplayer-advanced">
@@ -1846,6 +2321,8 @@ export default function VoxelGame() {
             <label className="setting-row"><span><strong>Render distance</strong><small>{settings.renderDistance} chunks · about {settings.renderDistance * 16} blocks · default 10, maximum 16</small></span><input type="range" min="2" max="16" step="1" value={settings.renderDistance} onChange={(event) => updateSettings({ renderDistance: Number(event.target.value), simulationDistance: Math.min(settings.simulationDistance, Number(event.target.value)) })} /></label>
             <label className="setting-row"><span><strong>Simulation distance</strong><small>{settings.simulationDistance} chunks · creatures, liquids, crops, and POIs tick inside this radius</small></span><input type="range" min="2" max={settings.renderDistance} step="1" value={settings.simulationDistance} onChange={(event) => updateSettings({ simulationDistance: Number(event.target.value) })} /></label>
             <label className="setting-row resource-setting"><span><strong>Resource reserve</strong><small>{settings.resourceMode === "cpu" ? "CPU boost raises streaming and simulation work budgets." : settings.resourceMode === "memory" ? "Memory cache retains more nearby chunks to reduce traversal reload stutter." : "Auto adapts work and cache pressure to this device."}</small></span><select value={settings.resourceMode} onChange={(event) => updateSettings({ resourceMode: event.target.value as GameSettings["resourceMode"] })}><option value="auto">Auto (adaptive)</option><option value="cpu">CPU boost</option><option value="memory">Memory cache</option></select></label>
+            <label className="setting-row resource-setting"><span><strong>Touch controls</strong><small>Auto follows the active pointer: touch shows the overlay, while mouse or pen keeps hybrid PCs clear.</small></span><select value={uiPreferences.touchControls} onChange={(event) => updateUiPreferences({ touchControls: event.target.value as TouchControlsMode })}><option value="auto">Auto (active pointer)</option><option value="off">Off</option><option value="on">On</option></select></label>
+            <label className="setting-row"><span><strong>Target outline</strong><small>{Math.round(uiPreferences.targetOutlineOpacity * 100)}% opacity</small></span><input type="range" min="0.05" max="1" step="0.05" value={uiPreferences.targetOutlineOpacity} onChange={(event) => updateUiPreferences({ targetOutlineOpacity: Number(event.target.value) })} /></label>
             <div className="toggle-setting"><span><strong>Music, sound effects & ambience</strong><small>Includes the Blockwild day, night, and sea score.</small></span><button type="button" className={settings.muted ? "" : "active"} onClick={() => updateSettings({ muted: !settings.muted })}>{settings.muted ? "OFF" : "ON"}</button></div>
             <div className="toggle-setting"><span><strong>FPS counter</strong><small>Shows a compact live performance readout while playing.</small></span><button type="button" className={settings.showFps ? "active" : ""} onClick={() => updateSettings({ showFps: !settings.showFps })}>{settings.showFps ? "ON" : "OFF"}</button></div>
             <div className="fullscreen-setting"><PixelButton onClick={() => engineRef.current?.toggleFullscreen()}>{hud.fullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}</PixelButton></div>
@@ -1857,6 +2334,35 @@ export default function VoxelGame() {
       {webglError && (
         <section className="webgl-fallback" role="alert" aria-labelledby="webgl-title"><div className="pixel-panel confirm-panel"><div className="warning-cube" aria-hidden="true">◇</div><h2 id="webgl-title">The world could not render</h2><p>Blockwild needs WebGL hardware acceleration. Try a current desktop browser and make sure graphics acceleration is enabled.</p><PixelButton className="secondary-button" onClick={() => setWebglError(false)}>Browse Menus Anyway</PixelButton></div></section>
       )}
+
+      {workstationAuditMode === "apiary" && renderApiaryPanel({
+        queen: { alive: true, home: true, name: "Queen Marigold" },
+        workers: Array.from({ length: 8 }, (_, index) => ({ alive: true, home: index > 4 })),
+        nectar: 28,
+        nectarStatus: "3 foraging · nectar return at dusk",
+        honey: 9,
+        royalJelly: 4,
+        productionProgress: 0.68,
+        slots: [{ item: Item.QueenCell, count: 1 }, { item: Item.HoneyJar, count: 9 }, { item: Item.RoyalJelly, count: 4 }],
+      }, true)}
+      {workstationAuditMode === "orb-rack" && renderOrbStationPanel("orb-rack", {
+        slots: [
+          workstationAuditOrb("peelop", "Pip", MOB_DEFS.peelop.health, MOB_DEFS.peelop.health),
+          workstationAuditOrb("emberjay", "Cinder", 3, MOB_DEFS.emberjay.health),
+          { item: Item.CaptureOrb, count: 1, metadata: { captureOrb: JSON.stringify({ schema: 1, orbId: "audit-empty", capturedAt: 0, creature: null }) } },
+          null,
+        ],
+      }, true)}
+      {workstationAuditMode === "healing-station" && renderOrbStationPanel("healing-station", {
+        gelUnits: 37,
+        healClock: 6.4,
+        slots: [
+          workstationAuditOrb("shadecrawler", "Nightglass", MOB_DEFS.shadecrawler.health, MOB_DEFS.shadecrawler.health),
+          workstationAuditOrb("ridgeback", "Bracken", 6, MOB_DEFS.ridgeback.health),
+          workstationAuditOrb("peelop", "Pip", 2, MOB_DEFS.peelop.health),
+          null,
+        ],
+      }, true)}
 
       {iconAuditMode && (
         <section className="item-icon-audit" aria-label="Inventory item icon size audit">

@@ -1,6 +1,6 @@
 type JsonRecord = Record<string, string | number | boolean | null>;
 
-export type RendezvousStatus = "opening" | "waiting" | "exchanging" | "connected" | "closed" | "error";
+export type RendezvousStatus = "opening" | "waiting" | "retrying" | "exchanging" | "connected" | "closed" | "error";
 
 type RequestContext = { peerId: string };
 type RequestOptions = { target: string; timeoutMs?: number };
@@ -72,26 +72,54 @@ export async function defaultRendezvousRoomFactory(role: RendezvousRole, code: s
 function waitForPeer(room: RendezvousRoom, timeoutMs: number) {
   return new Promise<string>((resolve, reject) => {
     let settled = false;
+    const previous = room.onPeerJoin;
+    const cleanup = () => {
+      clearTimeout(timer);
+      if (room.onPeerJoin === listener) room.onPeerJoin = previous;
+    };
     const finish = (peerId: string) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      cleanup();
       resolve(peerId);
     };
-    const previous = room.onPeerJoin;
-    room.onPeerJoin = (peerId) => {
+    const listener = (peerId: string) => {
       previous?.(peerId);
       finish(peerId);
     };
+    room.onPeerJoin = listener;
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
+      cleanup();
       reject(new Error("No host answered that invite code. Check the code and that the host is still waiting."));
     }, timeoutMs);
     const existing = Object.keys(room.getPeers())[0];
     if (existing) finish(existing);
   });
 }
+
+export function isBenignRendezvousCloseError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /user[- ]initiated.*(?:abort|close)|(?:abort|close).*called|room (?:is )?closed|already (?:left|closed)/iu.test(message);
+}
+
+export function isRetryableRendezvousError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /missing .* handler|no .* peer|peer .* unavailable|request .* timed? ?out|timed? ?out|not (?:yet )?connected|connection .* opening|abort|close/iu.test(message);
+}
+
+async function leaveQuietly(room: RendezvousRoom) {
+  try {
+    await room.leave();
+  } catch {
+    // Rendezvous teardown is best-effort after the direct WebRTC exchange. A
+    // cleanup failure must never replace either the real join result or its
+    // actionable primary error.
+  }
+}
+
+const delay = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
 export type HostRendezvous = {
   code: string;
@@ -109,18 +137,33 @@ export async function hostByRoomCode(options: {
   const code = normalizeRoomCode(options.code);
   options.onStatus?.("opening");
   const room = await (options.roomFactory ?? defaultRendezvousRoomFactory)("host", code);
+  const inviteFlights = new Map<string, Promise<InviteResponse>>();
+  const answerFlights = new Map<string, { answerCode: string; flight: Promise<AnswerResponse> }>();
   const invite = room.makeAction<InviteRequest, InviteResponse>(INVITE_ACTION, {
     kind: "request",
-    onRequest: async () => {
+    onRequest: async (_request, context) => {
       options.onStatus?.("exchanging");
-      const created = await options.createInvite();
-      return { inviteCode: created.inviteCode, hostName: options.hostName };
+      let flight = inviteFlights.get(context.peerId);
+      if (!flight) {
+        flight = options.createInvite().then((created) => ({ inviteCode: created.inviteCode, hostName: options.hostName }));
+        inviteFlights.set(context.peerId, flight);
+        void flight.catch(() => { if (inviteFlights.get(context.peerId) === flight) inviteFlights.delete(context.peerId); });
+      }
+      return await flight;
     },
   });
   const answer = room.makeAction<AnswerRequest, AnswerResponse>(ANSWER_ACTION, {
     kind: "request",
-    onRequest: async ({ answerCode }) => {
-      await options.acceptAnswer(answerCode);
+    onRequest: async ({ answerCode }, context) => {
+      const previous = answerFlights.get(context.peerId);
+      if (previous && previous.answerCode !== answerCode) throw new Error("That guest changed answers during connection setup. Please join again.");
+      let flight = previous?.flight;
+      if (!flight) {
+        flight = options.acceptAnswer(answerCode).then(() => ({ accepted: true }));
+        answerFlights.set(context.peerId, { answerCode, flight });
+        void flight.catch(() => { if (answerFlights.get(context.peerId)?.flight === flight) answerFlights.delete(context.peerId); });
+      }
+      await flight;
       options.onStatus?.("connected");
       return { accepted: true };
     },
@@ -129,11 +172,12 @@ export async function hostByRoomCode(options: {
   void invite;
   void answer;
   options.onStatus?.("waiting");
+  let closeFlight: Promise<void> | null = null;
   return {
     code,
     async close() {
-      await room.leave();
-      options.onStatus?.("closed");
+      closeFlight ??= leaveQuietly(room).finally(() => options.onStatus?.("closed"));
+      await closeFlight;
     },
   };
 }
@@ -144,28 +188,53 @@ export async function joinByRoomCode(options: {
   createAnswer(inviteCode: string): Promise<{ answerCode: string }>;
   roomFactory?: RendezvousRoomFactory;
   timeoutMs?: number;
+  retryDelayMs?: number;
   onStatus?: (status: RendezvousStatus) => void;
 }) {
   const code = normalizeRoomCode(options.code);
-  const timeoutMs = Math.max(5_000, options.timeoutMs ?? 35_000);
+  const timeoutMs = Math.max(options.roomFactory ? 100 : 5_000, options.timeoutMs ?? 35_000);
+  const retryDelayMs = Math.max(0, options.retryDelayMs ?? 350);
+  const deadline = Date.now() + timeoutMs;
   options.onStatus?.("opening");
   const room = await (options.roomFactory ?? defaultRendezvousRoomFactory)("guest", code);
   try {
     options.onStatus?.("waiting");
-    const hostPeerId = await waitForPeer(room, timeoutMs);
-    options.onStatus?.("exchanging");
     const invite = room.makeAction<InviteRequest, InviteResponse>(INVITE_ACTION, { kind: "request" });
     const answer = room.makeAction<AnswerRequest, AnswerResponse>(ANSWER_ACTION, { kind: "request" });
-    const offered = await invite.request({ guestName: options.guestName }, { target: hostPeerId, timeoutMs });
-    const created = await options.createAnswer(offered.inviteCode);
-    const accepted = await answer.request({ answerCode: created.answerCode }, { target: hostPeerId, timeoutMs });
-    if (!accepted.accepted) throw new Error("The host declined the multiplayer answer.");
-    options.onStatus?.("connected");
-    return { code, hostName: offered.hostName };
+    let peerId = "";
+    let offered: InviteResponse | null = null;
+    let created: { answerCode: string } | null = null;
+    let lastError: unknown = null;
+    while (Date.now() < deadline) {
+      try {
+        const peers = Object.keys(room.getPeers());
+        const nextPeerId = peers.includes(peerId) ? peerId : peers[0] ?? await waitForPeer(room, Math.max(50, deadline - Date.now()));
+        if (nextPeerId !== peerId) {
+          peerId = nextPeerId;
+          offered = null;
+          created = null;
+        }
+        options.onStatus?.("exchanging");
+        const requestTimeout = Math.max(50, Math.min(4_000, deadline - Date.now()));
+        offered ??= await invite.request({ guestName: options.guestName }, { target: peerId, timeoutMs: requestTimeout });
+        created ??= await options.createAnswer(offered.inviteCode);
+        const accepted = await answer.request({ answerCode: created.answerCode }, { target: peerId, timeoutMs: requestTimeout });
+        if (!accepted.accepted) throw new Error("The host declined the multiplayer answer.");
+        options.onStatus?.("connected");
+        return { code, hostName: offered.hostName };
+      } catch (error) {
+        lastError = error;
+        if (!isRetryableRendezvousError(error) || Date.now() + retryDelayMs >= deadline) throw error;
+        options.onStatus?.("retrying");
+        if (retryDelayMs) await delay(retryDelayMs);
+        options.onStatus?.("waiting");
+      }
+    }
+    throw lastError ?? new Error("No host answered that invite code before the connection window closed.");
   } catch (error) {
     options.onStatus?.("error");
     throw error;
   } finally {
-    await room.leave();
+    await leaveQuietly(room);
   }
 }

@@ -11,15 +11,19 @@ export type SurfaceMobKind =
   | "thimbledeer"
   | "lanternshell"
   | "puddlehopper"
-  | "reedstrider";
+  | "reedstrider"
+  | "wild-horse"
+  | "meadow-cow"
+  | "mistmane";
 export type BirdKind = "emberjay" | "canopy-lark";
-export type AquaticMobKind = "shoalfin" | "coralback" | "brookdart" | "gloomfin";
+export type AquaticMobKind = "shoalfin" | "coralback" | "brookdart" | "gloomfin" | "silverthread" | "reedneedle" | "emberribbon" | "cavefilament";
+export type PollinatorKind = "honeybee" | "hive-queen" | "reed-dragonfly";
 export type SpecialMobKind = "peelop" | "reliquary-sentinel" | "skeleton";
-export type CoreMobKind = LegacyMobKind | SurfaceMobKind | BirdKind | AquaticMobKind | SpecialMobKind;
+export type CoreMobKind = LegacyMobKind | SurfaceMobKind | BirdKind | AquaticMobKind | PollinatorKind | SpecialMobKind;
 export type MobKind = CoreMobKind | ButterflyKind;
 export type MobTemperament = "Gentle" | "Skittish" | "Defensive" | "Hostile";
 export type MobMovement = "ground" | "flying" | "aquatic";
-export type MobFamily = "surface" | "bird" | "fish" | "pet" | "construct" | "undead" | "butterfly";
+export type MobFamily = "surface" | "bird" | "fish" | "pet" | "mount" | "pollinator" | "construct" | "undead" | "butterfly";
 
 export type MobDrop = {
   item: ItemCode;
@@ -162,9 +166,9 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
   },
   "sunstep-grazer": {
     kind: "sunstep-grazer", name: "Sunstep Grazer", temperament: "Skittish", hostile: false,
-    health: 8, damage: 0, xp: 3, speed: 0.86, chaseSpeed: 2.72, turnRate: 5.4, attackRange: 0,
-    footOffset: 1.27, radius: 0.48, height: 1.42, habitat: "Sunstep savannas and meadow margins", active: "Morning and late afternoon",
-    behavior: "Browses in pairs, stamps a warning, then escapes in long bounding strides.",
+    health: 11, damage: 0, xp: 4, speed: 0.82, chaseSpeed: 2.72, turnRate: 4.8, attackRange: 0,
+    footOffset: 1.4394, radius: 0.62, height: 1.73, habitat: "Sunstep savannas and meadow margins", active: "Morning and late afternoon",
+    behavior: "Moves in broad herds of four to seven, stamps a warning, then escapes in coordinated bounding strides.",
     lore: "Its fan-shaped ears shade its face and flush copper when rain is coming.",
     colors: [0xd7a44e, 0x7b4a2e, 0x20170f], drops: [{ item: Item.Hide, min: 1, max: 2, chance: 0.54 }, { item: Item.RawMeat, min: 1, max: 2, chance: 0.66 }],
     family: "surface", movement: "ground", utility: "A reliable source of hide in dry country, if a player can catch one.",
@@ -241,7 +245,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     kind: "puddlehopper", name: "Puddlehopper", temperament: "Skittish", hostile: false,
     health: 4, damage: 0, xp: 2, speed: 0.58, chaseSpeed: 2.55, turnRate: 8.2, attackRange: 0,
     footOffset: 0.8, radius: 0.38, height: 0.58, habitat: "River reeds, Siltfen pools and rainy meadow hollows", active: "Rain and humid daylight",
-    behavior: "Waits as still as a wet stone, then crosses open ground in three springy hops when startled.",
+    behavior: "Bounds frequently between reeds, doubles its hop cadence in rain, and launches into faster springing leaps when startled.",
     lore: "Each throat pouch carries a different hollow note. A whole pond sounds like rain falling into clay cups.",
     colors: [0x5e9b69, 0xd5c85b, 0x182a20],
     drops: [{ item: Item.CaveGel, min: 1, max: 1, chance: 0.28 }],
@@ -257,9 +261,47 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "Its hollow crest amplifies a call that carries over fog. River travelers use the answering echoes to judge a channel's width.",
     colors: [0x668a78, 0xc9a65f, 0x243039],
     drops: [{ item: Item.Feather, min: 1, max: 2, chance: 0.86 }, { item: Item.RawFish, min: 1, max: 1, chance: 0.18 }],
-    family: "surface", movement: "ground", utility: "Its calls point toward large rivers, while nearby birds alarm at approaching danger.",
-    sentient: false, breedable: true, breedingFoods: [Item.RawFish], diet: [Item.RawFish, Item.Berry],
+    family: "mount", movement: "ground", persistent: true, utility: "A tame, saddled Reedstrider is a fast amphibious mount and crosses water faster than land.",
+    sentient: false, tameable: true, tameItems: [Item.RawFish, Item.CookedFish, Item.GlowScale],
+    breedable: true, breedingFoods: [Item.RawFish], diet: [Item.RawFish, Item.CookedFish, Item.GlowScale, Item.Berry],
+    postTameNotes: "Build trust with fish, then fit a Trail Saddle. Its long stride is steady on land and exceptionally quick through shallows.",
+    secretHint: "Glow Scales build trust much faster than ordinary fish.",
     discoveryHint: "Follow resonant dawn calls across foggy wetlands.",
+  },
+  "wild-horse": {
+    kind: "wild-horse", name: "Wildwood Courser", temperament: "Skittish", hostile: false,
+    health: 14, damage: 1, xp: 5, speed: 1.05, chaseSpeed: 4.5, turnRate: 5.2, attackRange: 1.2,
+    footOffset: 1.05, radius: 0.62, height: 1.75, habitat: "Open meadows, forest roads and upland glens", active: "Day",
+    behavior: "Travels in small family bands, circles foals when threatened, and bolts into open terrain rather than trees.",
+    lore: "Wildwood Coursers remember old roads long after roots and flowers have hidden them.",
+    colors: [0x8b5b3d, 0xd6b17b, 0x2b211d], drops: [{ item: Item.Hide, min: 1, max: 3, chance: 0.78 }],
+    family: "mount", movement: "ground", persistent: true, utility: "A fast land mount after patient feeding and fitting a Trail Saddle.",
+    sentient: false, tameable: true, tameItems: [Item.Apple, Item.Wheat], breedable: true,
+    breedingFoods: [Item.Apple], diet: [Item.Apple, Item.Wheat], captureItem: Item.CaptureOrb,
+    postTameNotes: "A saddled Courser carries one rider and prefers clear ground.",
+    discoveryHint: "Look for hoofprints along broad meadow edges and old forest roads.",
+  },
+  "meadow-cow": {
+    kind: "meadow-cow", name: "Cloverback", temperament: "Gentle", hostile: false,
+    health: 12, damage: 0, xp: 4, speed: 0.45, chaseSpeed: 1.65, turnRate: 3.8, attackRange: 0,
+    footOffset: 0.96, radius: 0.66, height: 1.38, habitat: "Flower meadows and settled pasture clearings", active: "Day",
+    behavior: "Grazes in loose herds, follows wheat, and stands beneath trees during hard rain.",
+    lore: "Clover patterns bloom across its back in spring, making every herd look like a moving meadow.",
+    colors: [0xf0e3c2, 0x6f513b, 0x6e9b51], drops: [{ item: Item.RawMeat, min: 1, max: 3, chance: 1 }, { item: Item.Hide, min: 1, max: 2, chance: 0.72 }],
+    family: "surface", movement: "ground", utility: "Can be milked for Meadow Milk and bred with wheat.",
+    sentient: false, breedable: true, breedingFoods: [Item.Wheat], diet: [Item.Wheat, Item.Apple], captureItem: Item.CaptureOrb,
+    discoveryHint: "Listen for soft bells where meadow flowers give way to shade.",
+  },
+  mistmane: {
+    kind: "mistmane", name: "Mistmane", temperament: "Gentle", hostile: false,
+    health: 9, damage: 0, xp: 4, speed: 0.62, chaseSpeed: 2.2, turnRate: 5.4, attackRange: 0,
+    footOffset: 0.92, radius: 0.48, height: 1.32, habitat: "Cool Cloudreed Glens above wet valleys", active: "Overcast day and dawn",
+    behavior: "Browses cloudreeds in quiet groups and shakes beads of fog from its long glassy mane.",
+    lore: "Its wool traps morning mist. Trailkeepers once wrung drinking water from shed curls on dry climbs.",
+    colors: [0xb8d6cf, 0x6d8f8a, 0xeaf7e9], drops: [{ item: Item.Fiber, min: 1, max: 3, chance: 0.9 }],
+    family: "surface", movement: "ground", utility: "A renewable source of soft fiber in Cloudreed country.",
+    sentient: false, breedable: true, breedingFoods: [Item.Wheat], diet: [Item.Wheat, Item.Berry], captureItem: Item.CaptureOrb,
+    discoveryHint: "Search cool upland reed basins where bells sound in the fog.",
   },
   emberjay: {
     kind: "emberjay", name: "Emberjay", temperament: "Skittish", hostile: false,
@@ -317,11 +359,77 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     colors: [0x27334f, 0x5bd6ca, 0xc8fff2], drops: [{ item: Item.GlowScale, min: 1, max: 2, chance: 1 }, { item: Item.RawFish, min: 1, max: 1, chance: 0.65 }],
     family: "fish", movement: "aquatic", aquatic: true, utility: "A faint mobile light source for underground pools.",
   },
+  silverthread: {
+    kind: "silverthread", name: "Silverthread", temperament: "Skittish", hostile: false,
+    health: 2, damage: 0, xp: 2, speed: 1.75, chaseSpeed: 3.6, turnRate: 11, attackRange: 0,
+    footOffset: 0, radius: 0.13, height: 0.11, habitat: "Sunlit ocean shallows", active: "Daylight underwater",
+    behavior: "Forms glittering shoals of six to twelve and folds into narrow ribbons around rocks.",
+    lore: "From shore, a turning shoal looks like a silver stitch holding sea to sky.",
+    colors: [0xb9e4e8, 0x638fa7, 0xf7ffff], drops: [{ item: Item.RawFish, min: 1, max: 1, chance: 0.72 }],
+    family: "fish", movement: "aquatic", aquatic: true, utility: "A quick, delicate food fish.", captureItem: Item.CaptureOrb,
+  },
+  reedneedle: {
+    kind: "reedneedle", name: "Reedneedle", temperament: "Skittish", hostile: false,
+    health: 2, damage: 0, xp: 2, speed: 1.9, chaseSpeed: 3.8, turnRate: 12, attackRange: 0,
+    footOffset: 0, radius: 0.12, height: 0.1, habitat: "Deep river channels and reed beds", active: "Morning and rain",
+    behavior: "Holds perfectly straight into the current, then darts as a single green shoal when startled.",
+    lore: "Anglers used to mistake its shadow for waving grass until the grass swam upstream.",
+    colors: [0x698d55, 0xc2d68a, 0x243e35], drops: [{ item: Item.RawFish, min: 1, max: 1, chance: 0.8 }],
+    family: "fish", movement: "aquatic", aquatic: true, utility: "Its shoals reveal the main current in broad rivers.", captureItem: Item.CaptureOrb,
+  },
+  emberribbon: {
+    kind: "emberribbon", name: "Emberribbon", temperament: "Skittish", hostile: false,
+    health: 3, damage: 0, xp: 3, speed: 1.55, chaseSpeed: 3.2, turnRate: 9.5, attackRange: 0,
+    footOffset: 0, radius: 0.15, height: 0.12, habitat: "Warm reef shelves and volcanic springs", active: "All hours underwater",
+    behavior: "Threads through warm coral in loose red shoals and hides inside steam-dark crevices.",
+    lore: "Its heat never boils water, but a handful can keep a traveler's fingers warm.",
+    colors: [0xe46c45, 0xffc25e, 0x542a2c], drops: [{ item: Item.RawFish, min: 1, max: 1, chance: 0.84 }, { item: Item.GlowScale, min: 1, max: 1, chance: 0.12 }],
+    family: "fish", movement: "aquatic", aquatic: true, utility: "A warm-water food fish with a rare luminous scale.", captureItem: Item.CaptureOrb,
+  },
+  cavefilament: {
+    kind: "cavefilament", name: "Cave Filament", temperament: "Gentle", hostile: false,
+    health: 2, damage: 0, xp: 3, speed: 1.2, chaseSpeed: 2.7, turnRate: 8.5, attackRange: 0,
+    footOffset: 0, radius: 0.14, height: 0.11, habitat: "Underground water and flooded crystal seams", active: "Darkness underwater",
+    behavior: "Suspends in vertical shoals until vibration sends pale lines spiraling through the pool.",
+    lore: "Cave Filaments make invisible aquifers readable, sketching every current in living light.",
+    colors: [0x6ed6c8, 0xd9fff4, 0x263c5a], drops: [{ item: Item.GlowScale, min: 1, max: 1, chance: 0.55 }],
+    family: "fish", movement: "aquatic", aquatic: true, utility: "Reveals hidden movement in dark underground pools.", captureItem: Item.CaptureOrb,
+  },
+  honeybee: {
+    kind: "honeybee", name: "Wild Honeybee", temperament: "Defensive", hostile: false,
+    health: 2, damage: 1, xp: 1, speed: 1.55, chaseSpeed: 2.8, turnRate: 11, attackRange: 0.55,
+    footOffset: 1.25, radius: 0.12, height: 0.13, habitat: "Flower meadows, orchards and wild apiaries", active: "Daylight",
+    behavior: "Selects a flower, lands to gather nectar, and returns to its queen before dusk.",
+    lore: "Each worker carries a map of flowers written in sunlight and scent.",
+    colors: [0xe8ad32, 0x35291f, 0xf2e4bd], drops: [{ item: Item.Beeswax, min: 1, max: 1, chance: 0.16 }],
+    family: "pollinator", movement: "flying", flying: true, persistent: true, utility: "Pollinates crops and returns nectar to a queen.", captureItem: Item.WorkerBee,
+  },
+  "hive-queen": {
+    kind: "hive-queen", name: "Hive Queen", temperament: "Defensive", hostile: false,
+    health: 8, damage: 3, xp: 5, speed: 1.1, chaseSpeed: 2.4, turnRate: 8, attackRange: 0.75,
+    footOffset: 1.3, radius: 0.2, height: 0.22, habitat: "Wild hives and stocked apiaries", active: "Daylight",
+    behavior: "Builds a colony from as few as zero workers, defends it with a heavy sting, and directs workers home at dusk.",
+    lore: "A queen's wingbeat is lower than a worker's and can quiet an entire hive.",
+    colors: [0xf0c850, 0x3d2b24, 0xffefaf], drops: [{ item: Item.QueenCell, min: 1, max: 1, chance: 0.28 }, { item: Item.Honeycomb, min: 1, max: 2, chance: 0.65 }],
+    family: "pollinator", movement: "flying", flying: true, persistent: true, utility: "Produces workers and can be tamed with Royal Jelly below half health.",
+    sentient: false, tameable: true, tameItems: [Item.RoyalJelly], diet: [Item.RoyalJelly], captureItem: Item.CaptureOrb,
+    postTameNotes: "A trusted queen directs her workers to defend the keeper who fed her Royal Jelly.",
+    secretHint: "A net or Capture Orb only catches a queen once she is below half health.",
+  },
+  "reed-dragonfly": {
+    kind: "reed-dragonfly", name: "Reed Dragonfly", temperament: "Skittish", hostile: false,
+    health: 2, damage: 0, xp: 1, speed: 2.2, chaseSpeed: 4.4, turnRate: 13, attackRange: 0,
+    footOffset: 1.1, radius: 0.19, height: 0.12, habitat: "River ribbons, fen pools and Cloudreed Glens", active: "Warm daylight",
+    behavior: "Patrols a short waterline, perches on reed tips, and snaps up tiny insects in abrupt sideways dashes.",
+    lore: "Its four glass wings briefly show the color of whatever water lies below.",
+    colors: [0x4ab6a0, 0x274958, 0xbdebd9], drops: [],
+    family: "pollinator", movement: "flying", flying: true, utility: "A living marker for healthy reeds and insect-rich water.", captureItem: Item.CaptureOrb,
+  },
   peelop: {
     kind: "peelop", name: "Peelop", temperament: "Gentle", hostile: false,
-    health: 7, damage: 0, xp: 3, speed: 0.7, chaseSpeed: 2.8, turnRate: 7.8, attackRange: 0,
+    health: 7, damage: 2, xp: 3, speed: 0.7, chaseSpeed: 2.8, turnRate: 7.8, attackRange: 1.55,
     footOffset: 0.95, radius: 0.42, height: 0.82, habitat: "Sunny orchard hollows and Peelop picnic groves", active: "Day",
-    behavior: "A banana-eared rabbit that loafs in shade, follows trusted keepers, and sits on command.",
+    behavior: "A banana-eared rabbit that loafs in shade, sheds ripe bananas, and only leap-attacks after it or its keeper is struck.",
     lore: "Its ears ripen from green to gold. A content Peelop smells faintly of warm bread and bananas.",
     colors: [0xf4d34f, 0xfff0a1, 0x5b3a22], drops: [],
     family: "pet", movement: "ground", persistent: true, utility: "Tameable companion; follows, sits, stays, can be named, fed and bred.",
@@ -403,10 +511,11 @@ export const BUTTERFLY_ORDER: ButterflyKind[] = ["meadowwing", "azure-skippers",
 export const LEGACY_MOB_ORDER: LegacyMobKind[] = ["mossling", "ridgeback", "woolhorn", "glowmoth", "shadecrawler", "caveblob", "rattlekin", "zombie"];
 export const SURFACE_MOB_ORDER: SurfaceMobKind[] = [
   "sunstep-grazer", "pebbletortoise", "brambleboar", "petalfox", "duneclatter",
-  "thimbledeer", "lanternshell", "puddlehopper", "reedstrider",
+  "thimbledeer", "lanternshell", "puddlehopper", "reedstrider", "wild-horse", "meadow-cow", "mistmane",
 ];
 export const BIRD_ORDER: BirdKind[] = ["emberjay", "canopy-lark"];
-export const AQUATIC_MOB_ORDER: AquaticMobKind[] = ["shoalfin", "coralback", "brookdart", "gloomfin"];
+export const AQUATIC_MOB_ORDER: AquaticMobKind[] = ["shoalfin", "coralback", "brookdart", "gloomfin", "silverthread", "reedneedle", "emberribbon", "cavefilament"];
+export const POLLINATOR_ORDER: PollinatorKind[] = ["honeybee", "hive-queen", "reed-dragonfly"];
 export const SPECIAL_MOB_ORDER: SpecialMobKind[] = ["peelop", "reliquary-sentinel", "skeleton"];
-export const CORE_MOB_ORDER: CoreMobKind[] = [...LEGACY_MOB_ORDER, ...SURFACE_MOB_ORDER, ...BIRD_ORDER, ...AQUATIC_MOB_ORDER, ...SPECIAL_MOB_ORDER];
+export const CORE_MOB_ORDER: CoreMobKind[] = [...LEGACY_MOB_ORDER, ...SURFACE_MOB_ORDER, ...BIRD_ORDER, ...AQUATIC_MOB_ORDER, ...POLLINATOR_ORDER, ...SPECIAL_MOB_ORDER];
 export const MOB_ORDER: MobKind[] = [...CORE_MOB_ORDER, ...BUTTERFLY_ORDER];

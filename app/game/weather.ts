@@ -23,7 +23,8 @@ export type WeatherBiome =
   | "snowfield"
   | "highlands"
   | "volcanic"
-  | "river";
+  | "river"
+  | "cloudreed";
 
 export type WeightedWeather = Readonly<{ kind: WeatherKind; weight: number }>;
 
@@ -91,6 +92,10 @@ const WEATHER_PROFILES: Readonly<Record<WeatherBiome, readonly WeightedWeather[]
     { kind: "clear", weight: 0.38 }, { kind: "overcast", weight: 0.16 }, { kind: "drizzle", weight: 0.17 },
     { kind: "rain", weight: 0.16 }, { kind: "thunder", weight: 0.05 }, { kind: "mist", weight: 0.08 },
   ],
+  cloudreed: [
+    { kind: "clear", weight: 0.24 }, { kind: "overcast", weight: 0.22 }, { kind: "drizzle", weight: 0.18 },
+    { kind: "rain", weight: 0.12 }, { kind: "thunder", weight: 0.04 }, { kind: "mist", weight: 0.2 },
+  ],
 });
 
 const DURATION_RANGES: Readonly<Record<WeatherKind, readonly [number, number]>> = Object.freeze({
@@ -135,6 +140,7 @@ export function weatherBiomeFromId(biomeId: number): WeatherBiome {
   if (biomeId === 13) return "highlands";
   if (biomeId === 14) return "volcanic";
   if (biomeId === 16) return "river";
+  if (biomeId === 17) return "cloudreed";
   return "meadow";
 }
 

@@ -11,6 +11,7 @@ import {
   structurePlacementsForChunk,
   structureCandidateForChunk,
   structureClearanceBounds,
+  structureBiomeFromId,
   isInsideStructureClearance,
   structureLootTable,
   type StructureKind,
@@ -34,6 +35,11 @@ test("weather is deterministic and constrained by biome", () => {
   assert.equal(options.includes("snow"), false);
   assert.equal(weatherBiomeFromId(3), "meadow");
   assert.equal(weatherBiomeFromId(14), "volcanic");
+  assert.equal(weatherBiomeFromId(17), "cloudreed");
+  assert.equal(structureBiomeFromId(17), "meadow");
+  const cloudreedOptions = weatherOptionsForBiome("cloudreed");
+  assert.ok(cloudreedOptions.some((entry) => entry.kind === "mist"));
+  assert.ok(cloudreedOptions.some((entry) => entry.kind === "drizzle"));
 
   const initial = createWeatherState(context, 3);
   const advanced = stepWeather(initial, context, initial.durationSeconds + 1);

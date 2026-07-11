@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as THREE from "three";
 import { BlockId, Item, VoxelEngine, isDoubleForwardTap, restoreChestStorage, type InventorySlot } from "../app/game/engine";
 import { MOB_DEFS } from "../app/game/mobs";
-import { validatePayload, type WorldSnapshot } from "../app/game/multiplayer";
+import { MultiplayerOperationCancelledError, validatePayload, type WorldSnapshot } from "../app/game/multiplayer";
 import { captureCreature, encodeCapturedCreature, type CreatureMetadata } from "../app/game/creature-cage";
 
 test("special storage restores conservatory capacity and Wayfarer cargo size", () => {
@@ -68,9 +68,14 @@ test("net and butterfly production models are distinct in third and first person
   const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
   const net = engine.createAvatarHeldItem(Item.ButterflyNet)!;
   assert.ok(net.getObjectByName("butterfly-net-thread-v-3"));
+  assert.equal(net.userData.workingAngle, Math.PI / 2);
   assert.equal(net.getObjectByName("held-butterfly-meadowwing"), undefined);
   const butterfly = engine.createAvatarHeldItem(Item.MeadowwingJar)!;
   assert.ok(butterfly.getObjectByName("held-butterfly-meadowwing"));
+  const axe = engine.createAvatarHeldItem(Item.WoodAxe)!;
+  assert.equal(axe.userData.workingAngle, Math.PI / 2);
+  const chest = engine.createAvatarHeldItem(BlockId.Chest)!;
+  assert.ok(chest.children.length >= 3, "held and dropped chests use a recognizable body, lid, and latch");
 
   engine.inventory = Array.from({ length: 36 }, (_, index) => index === 0 ? { item: Item.ButterflyNet, count: 1 } : null);
   engine.selected = 0;
@@ -91,6 +96,8 @@ test("net and butterfly production models are distinct in third and first person
   assert.ok(engine.heldRoot.getObjectByName("held-butterfly-meadowwing"), "first person shows the actual butterfly model");
   engine.disposeObject(net);
   engine.disposeObject(butterfly);
+  engine.disposeObject(axe);
+  engine.disposeObject(chest);
   engine.disposeObject(engine.heldRoot);
 });
 
@@ -143,6 +150,16 @@ test("multiplayer snapshots accept a two-seat Wayfarer and mounted player pose",
     time: { tick: 8, worldTime: 0.4, day: 2, weather: "clear" },
   };
   assert.equal(validatePayload("snapshot", snapshot), true);
+});
+
+test("normal rendezvous cancellation closes quietly instead of becoming a fatal multiplayer error", async () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  engine.hostRendezvous = {
+    code: "QUIET-CLOSE",
+    close: async () => { throw new MultiplayerOperationCancelledError("session closed during normal cleanup"); },
+  } as never;
+  await (engine as unknown as { closeHostRendezvous(): Promise<void> }).closeHostRendezvous();
+  assert.equal(engine.hostRendezvous, null);
 });
 
 test("double-tap sprint timing and third-person targeting use the player sightline", () => {

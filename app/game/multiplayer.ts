@@ -50,6 +50,8 @@ export type PlayerPose = {
   vz: number;
   grounded: boolean;
   heldItem?: number;
+  /** Optional protocol-v1 appearance hint for metadata-backed Capture Orbs. */
+  heldItemFilled?: boolean;
   crouching?: boolean;
   sprinting?: boolean;
   action?: "none" | "mine" | "use";
@@ -374,7 +376,17 @@ export function validatePeerIdentity(value: unknown): value is PeerIdentity {
 }
 
 function validateDescription(value: unknown, type: "offer" | "answer"): value is RTCSessionDescriptionInit {
-  return isRecord(value) && value.type === type && typeof value.sdp === "string" && value.sdp.length > 0 && value.sdp.length <= MAX_SDP_CHARS;
+  // `RTCPeerConnection.localDescription` is a browser-native
+  // RTCSessionDescription instance, not a plain JSON record. The wire decoder
+  // still supplies plain objects, but rejecting the native prototype here made
+  // every real invite fail after ICE gathering with "Missing local offer
+  // description" even though the SDP was present and valid.
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const description = value as { type?: unknown; sdp?: unknown };
+  return description.type === type
+    && typeof description.sdp === "string"
+    && description.sdp.length > 0
+    && description.sdp.length <= MAX_SDP_CHARS;
 }
 
 function validateBlockEdit(value: unknown): value is BlockEdit {
@@ -404,6 +416,7 @@ function validatePose(value: unknown): value is PlayerPose {
     && isFiniteNumber(value.vz, -256, 256)
     && typeof value.grounded === "boolean"
     && (value.heldItem === undefined || isInteger(value.heldItem, 0, 65_535))
+    && (value.heldItemFilled === undefined || typeof value.heldItemFilled === "boolean")
     && (value.crouching === undefined || typeof value.crouching === "boolean")
     && (value.sprinting === undefined || typeof value.sprinting === "boolean")
     && (value.action === undefined || value.action === "none" || value.action === "mine" || value.action === "use")
@@ -411,6 +424,19 @@ function validatePose(value: unknown): value is PlayerPose {
     && (value.boatId === undefined || isId(value.boatId))
     && (value.boatSeat === undefined || isInteger(value.boatSeat, 0, 1))
     && validEquipment;
+}
+
+export class MultiplayerOperationCancelledError extends Error {
+  constructor(message = "Multiplayer setup was cancelled because the session changed") {
+    super(message);
+    this.name = "MultiplayerOperationCancelledError";
+  }
+}
+
+export function isMultiplayerOperationCancellation(error: unknown) {
+  if (error instanceof MultiplayerOperationCancelledError) return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /user[- ]initiated.*(?:abort|close)|(?:abort|close).*called|session (?:changed|closed)|setup was cancelled/iu.test(message);
 }
 
 function validateSailboat(value: unknown): value is SailboatSnapshotEntry {
@@ -930,21 +956,28 @@ export class MultiplayerSession {
     else if (this.role === "guest") this.setState("disconnected");
   }
 
-  private async waitForIceGathering(connection: PeerConnectionLike) {
+  private async waitForIceGathering(connection: PeerConnectionLike, isCancelled: () => boolean) {
+    if (isCancelled()) throw new MultiplayerOperationCancelledError();
     if (connection.iceGatheringState === "complete") return;
-    await new Promise<void>((resolve) => {
+    await new Promise<void>((resolve, reject) => {
       let finished = false;
-      const finish = () => {
+      const finish = (error?: Error) => {
         if (finished) return;
         finished = true;
         clearTimeout(timeout);
+        clearInterval(poll);
         connection.onicegatheringstatechange = null;
-        resolve();
+        if (error) reject(error);
+        else resolve();
       };
       const timeout = setTimeout(finish, this.iceGatheringTimeoutMs);
-      connection.onicegatheringstatechange = () => {
-        if (connection.iceGatheringState === "complete") finish();
+      const check = () => {
+        if (isCancelled()) finish(new MultiplayerOperationCancelledError());
+        else if (connection.iceGatheringState === "complete") finish();
       };
+      const poll = setInterval(check, 25);
+      connection.onicegatheringstatechange = check;
+      check();
     });
   }
 
@@ -965,7 +998,8 @@ export class MultiplayerSession {
       const offer = await peer.connection.createOffer();
       if (!validateDescription(offer, "offer")) throw new MultiplayerProtocolError("Browser created an invalid WebRTC offer");
       await peer.connection.setLocalDescription(offer);
-      await this.waitForIceGathering(peer.connection);
+      await this.waitForIceGathering(peer.connection, () => this.disposed || peer.closed);
+      if (this.disposed || peer.closed) throw new MultiplayerOperationCancelledError("Host invite setup was cancelled because the session changed");
       const signal: OfferSignal = {
         version: MULTIPLAYER_PROTOCOL_VERSION,
         protocol: MULTIPLAYER_PROTOCOL_NAME,
@@ -978,9 +1012,12 @@ export class MultiplayerSession {
       this.emitPeer(peer, "invite-created");
       return { token, inviteCode: encodeInviteCode(signal) };
     } catch (error) {
+      const normalized = this.disposed || peer.closed || isMultiplayerOperationCancellation(error)
+        ? new MultiplayerOperationCancelledError("Host invite setup was cancelled because the session changed")
+        : error;
       this.closePeer(peer, "invite-failed", "failed");
-      this.emitError(error, peer);
-      throw error;
+      if (!isMultiplayerOperationCancellation(normalized)) this.emitError(normalized, peer);
+      throw normalized;
     }
   }
 
@@ -1005,7 +1042,8 @@ export class MultiplayerSession {
       const answer = await peer.connection.createAnswer();
       if (!validateDescription(answer, "answer")) throw new MultiplayerProtocolError("Browser created an invalid WebRTC answer");
       await peer.connection.setLocalDescription(answer);
-      await this.waitForIceGathering(peer.connection);
+      await this.waitForIceGathering(peer.connection, () => this.disposed || peer.closed);
+      if (this.disposed || peer.closed) throw new MultiplayerOperationCancelledError("Guest answer setup was cancelled because the session changed");
       const response: AnswerSignal = {
         version: MULTIPLAYER_PROTOCOL_VERSION,
         protocol: MULTIPLAYER_PROTOCOL_NAME,
@@ -1017,10 +1055,15 @@ export class MultiplayerSession {
       };
       return { host: copyIdentity(signal.identity), answerCode: encodeInviteCode(response) };
     } catch (error) {
+      const normalized = this.disposed || peer.closed || isMultiplayerOperationCancellation(error)
+        ? new MultiplayerOperationCancelledError("Guest answer setup was cancelled because the session changed")
+        : error;
       this.closePeer(peer, "join-failed", "failed");
-      this.setState("error");
-      this.emitError(error, peer);
-      throw error;
+      if (!isMultiplayerOperationCancellation(normalized)) {
+        this.setState("error");
+        this.emitError(normalized, peer);
+      }
+      throw normalized;
     }
   }
 

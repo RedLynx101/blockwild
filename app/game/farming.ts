@@ -1,4 +1,4 @@
-import { BLOCKS, BlockId, Item, type ItemCode } from "./data";
+import { BLOCKS, LEAF_BLOCKS, BlockId, Item, type ItemCode } from "./data";
 
 export type BlockPosition = Readonly<{ x: number; y: number; z: number }>;
 export type ReadBlock = (x: number, y: number, z: number) => BlockId | undefined;
@@ -25,17 +25,21 @@ export const PLANT_GROWTH: Readonly<Record<PlantKind, PlantGrowthProfile>> = Obj
     kind: "moonberry",
     stages: Object.freeze([BlockId.MoonberryShoot, BlockId.MoonberryBush, BlockId.MoonberryBushRipe]),
     minimumLight: 0.24,
-    baseStageSeconds: 86,
+    baseStageSeconds: 50,
     requiresFarmland: false,
   }),
   sunberry: Object.freeze({
     kind: "sunberry",
     stages: Object.freeze([BlockId.SunberryShoot, BlockId.SunberryBush, BlockId.SunberryBushRipe]),
     minimumLight: 0.55,
-    baseStageSeconds: 72,
+    baseStageSeconds: 44,
     requiresFarmland: false,
   }),
 });
+
+/** Orchard fruit returns in roughly one in-game minute instead of several. */
+export const ORCHARD_REGROWTH_BASE_MS = 45_000;
+export const ORCHARD_REGROWTH_JITTER_MS = 30_000;
 
 const FARM_SOILS = new Set<BlockId>([BlockId.Farmland, BlockId.HydratedFarmland]);
 const LIVING_SOILS = new Set<BlockId>([
@@ -55,6 +59,137 @@ const TILLABLE_SOILS = new Set<BlockId>([
   BlockId.SavannaGrass,
   BlockId.SwampGrass,
 ]);
+const TREE_LEAF_BLOCKS = new Set<BlockId>(LEAF_BLOCKS);
+const TREE_NEIGHBORS = [
+  [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1],
+] as const;
+
+export type DiscoveredTreeBlock = Readonly<BlockPosition & { type: BlockId }>;
+export type DiscoveredRootedTree = Readonly<{
+  root: DiscoveredTreeBlock;
+  logs: readonly DiscoveredTreeBlock[];
+  leaves: readonly DiscoveredTreeBlock[];
+}>;
+
+/** Catalog-driven so future generated log variants join felling without another hardcoded map. */
+export function isTreeLogBlock(block: BlockId | undefined) {
+  const definition = block === undefined ? undefined : BLOCKS[block];
+  return Boolean(definition?.solid && definition.preferredTool === "axe" && /(?:^|\s)(?:log|trunk|stem)(?:$|\s)/iu.test(definition.name));
+}
+
+export function isTreeLeafBlock(block: BlockId | undefined) {
+  if (block === undefined) return false;
+  const definition = BLOCKS[block];
+  return TREE_LEAF_BLOCKS.has(block)
+    || Boolean(definition?.layer === "cutout" && /leaves|needles|foliage/iu.test(definition.name));
+}
+
+export function isRootableTreeSoil(block: BlockId | undefined) {
+  if (block === undefined) return false;
+  if (LIVING_SOILS.has(block) || block === BlockId.Mud) return true;
+  return /grass|dirt|farmland|soil|moss|mud/iu.test(BLOCKS[block]?.name ?? "");
+}
+
+/**
+ * Finds the complete face-connected trunk first, proves it reaches living
+ * soil, then claims only nearby canopy cells that are not closer to another
+ * trunk. This handles branches and mixed future log variants without felling
+ * a neighboring tree merely because their leaves touch.
+ */
+export function discoverRootedTree(
+  start: BlockPosition,
+  readBlock: ReadBlock,
+  maximumLogs = 192,
+  maximumLeaves = 384,
+): DiscoveredRootedTree | null {
+  const startType = readBlock(start.x, start.y, start.z);
+  if (!isTreeLogBlock(startType)) return null;
+  const logLimit = Math.max(3, Math.min(512, Math.floor(maximumLogs)));
+  const leafLimit = Math.max(0, Math.min(768, Math.floor(maximumLeaves)));
+  const keyOf = (x: number, y: number, z: number) => `${x},${y},${z}`;
+  const logs = new Map<string, DiscoveredTreeBlock>();
+  const logQueue: BlockPosition[] = [start];
+  while (logQueue.length && logs.size < logLimit) {
+    const position = logQueue.shift()!;
+    const key = keyOf(position.x, position.y, position.z);
+    if (logs.has(key)) continue;
+    const type = readBlock(position.x, position.y, position.z);
+    if (!isTreeLogBlock(type)) continue;
+    logs.set(key, { ...position, type: type! });
+    for (const [dx, dy, dz] of TREE_NEIGHBORS) logQueue.push({ x: position.x + dx, y: position.y + dy, z: position.z + dz });
+  }
+  if (logs.size < 3) return null;
+  const roots = [...logs.values()]
+    .filter((log) => isRootableTreeSoil(readBlock(log.x, log.y - 1, log.z)))
+    .sort((left, right) => left.y - right.y || left.x - right.x || left.z - right.z);
+  if (!roots.length) return null;
+
+  const ownedLogs = [...logs.values()];
+  const leaves = new Map<string, DiscoveredTreeBlock>();
+  const leafQueue: Array<{ position: BlockPosition; depth: number }> = [];
+  for (const log of ownedLogs) {
+    for (let dx = -1; dx <= 1; dx += 1) for (let dy = -1; dy <= 1; dy += 1) for (let dz = -1; dz <= 1; dz += 1) {
+      if (!dx && !dy && !dz) continue;
+      leafQueue.push({ position: { x: log.x + dx, y: log.y + dy, z: log.z + dz }, depth: 0 });
+    }
+  }
+  while (leafQueue.length && leaves.size < leafLimit) {
+    const { position, depth } = leafQueue.shift()!;
+    const key = keyOf(position.x, position.y, position.z);
+    if (leaves.has(key)) continue;
+    const type = readBlock(position.x, position.y, position.z);
+    if (!isTreeLeafBlock(type)) continue;
+    const ownDistance = ownedLogs.reduce((best, log) => Math.min(best,
+      (position.x - log.x) ** 2 + (position.y - log.y) ** 2 + (position.z - log.z) ** 2), Number.POSITIVE_INFINITY);
+    let foreignDistance = Number.POSITIVE_INFINITY;
+    const radius = Math.min(4, Math.max(2, Math.ceil(Math.sqrt(ownDistance))));
+    for (let dx = -radius; dx <= radius; dx += 1) for (let dy = -radius; dy <= radius; dy += 1) for (let dz = -radius; dz <= radius; dz += 1) {
+      const candidateKey = keyOf(position.x + dx, position.y + dy, position.z + dz);
+      const candidate = readBlock(position.x + dx, position.y + dy, position.z + dz);
+      if (!isTreeLogBlock(candidate) || logs.has(candidateKey)) continue;
+      foreignDistance = Math.min(foreignDistance, dx * dx + dy * dy + dz * dz);
+    }
+    if (foreignDistance < ownDistance) continue;
+    leaves.set(key, { ...position, type: type! });
+    if (depth >= 4) continue;
+    for (const [dx, dy, dz] of TREE_NEIGHBORS) leafQueue.push({
+      position: { x: position.x + dx, y: position.y + dy, z: position.z + dz },
+      depth: depth + 1,
+    });
+  }
+  const selectedRoot = roots[0];
+  const rootKey = keyOf(selectedRoot.x, selectedRoot.y, selectedRoot.z);
+  const parents = new Map<string, string | null>([[rootKey, null]]);
+  const connectedQueue = [selectedRoot];
+  while (connectedQueue.length) {
+    const current = connectedQueue.shift()!;
+    const currentKey = keyOf(current.x, current.y, current.z);
+    for (const [dx, dy, dz] of TREE_NEIGHBORS) {
+      const nextKey = keyOf(current.x + dx, current.y + dy, current.z + dz);
+      const next = logs.get(nextKey);
+      if (!next || parents.has(nextKey)) continue;
+      parents.set(nextKey, currentKey);
+      connectedQueue.push(next);
+    }
+  }
+  const retained = new Set<string>([rootKey]);
+  for (const log of ownedLogs) {
+    let touchesCanopy = false;
+    for (let dx = -1; dx <= 1 && !touchesCanopy; dx += 1) for (let dy = -1; dy <= 1 && !touchesCanopy; dy += 1) for (let dz = -1; dz <= 1; dz += 1) {
+      if (leaves.has(keyOf(log.x + dx, log.y + dy, log.z + dz))) { touchesCanopy = true; break; }
+    }
+    if (!touchesCanopy) continue;
+    let key: string | null | undefined = keyOf(log.x, log.y, log.z);
+    while (key && !retained.has(key)) {
+      retained.add(key);
+      key = parents.get(key);
+    }
+  }
+  const treeLogs = ownedLogs.filter((log) => retained.has(keyOf(log.x, log.y, log.z)));
+  if (treeLogs.length < 3) return null;
+  const stableSort = (left: DiscoveredTreeBlock, right: DiscoveredTreeBlock) => left.y - right.y || left.x - right.x || left.z - right.z;
+  return { root: selectedRoot, logs: treeLogs.sort(stableSort), leaves: [...leaves.values()].sort(stableSort) };
+}
 
 export function plantProfileForBlock(block: BlockId): { profile: PlantGrowthProfile; stage: number } | null {
   for (const profile of Object.values(PLANT_GROWTH)) {

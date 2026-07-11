@@ -3,6 +3,8 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import * as THREE from "three";
+import { BUTTERFLY_ANTENNA_CONTRACT, RATTLEKIN_CLUB_CONTRACT, ZOMBIE_EYE_COLOR } from "../app/game/model-specs.ts";
 import { BUTTERFLY_ORDER, CORE_MOB_ORDER, MOB_DEFS } from "../app/game/mobs.ts";
 import {
   buildInspectionSpecs,
@@ -47,11 +49,29 @@ test("the inspector includes every butterfly species with runtime dimensions and
     assert.equal(spec.id, `butterfly-${kind}`);
     assert.equal(spec.inspection?.source, "ButterflySystem");
     assert.equal(spec.inspection?.variant, kind);
-    assert.equal(spec.boxes.length, 5);
-    assert.equal(spec.boxes.find((box) => box.id === "body")?.color, MOB_DEFS[kind].colors[1]);
-    assert.equal(spec.boxes.find((box) => box.id === "left-wing")?.color, MOB_DEFS[kind].colors[0]);
+    assert.equal(spec.boxes.length, 7);
+    assert.equal(spec.boxes.find((box) => box.id === `${kind}-body`)?.color, MOB_DEFS[kind].colors[1]);
+    assert.equal(spec.boxes.find((box) => box.id === `${kind}-left-wing-panel`)?.color, MOB_DEFS[kind].colors[0]);
+    const body = spec.boxes.find((box) => box.id === `${kind}-body`)!;
+    const bodyFront = body.position[2] - body.size[2] / 2;
+    const bodyTop = body.position[1] + body.size[1] / 2;
+    for (const side of ["left", "right"] as const) {
+      const antenna = spec.boxes.find((box) => box.id === `${kind}-${side}-antenna`)!;
+      const tipBox = spec.boxes.find((box) => box.id === `${kind}-${side}-antenna-tip`)!;
+      const rotation = new THREE.Euler(...(antenna.rotation ?? [0, 0, 0]), "XYZ");
+      const halfAxis = new THREE.Vector3(0, 0, antenna.size[2] / 2).applyEuler(rotation);
+      const center = new THREE.Vector3(...antenna.position);
+      const root = center.clone().add(halfAxis);
+      const tip = center.clone().sub(halfAxis);
+      assert.ok(root.z >= bodyFront - 0.01 && root.z <= bodyFront + 0.02, `${kind} ${side} antenna root must overlap the head/body face`);
+      assert.ok(root.y <= bodyTop + 0.01 && root.y >= body.position[1], `${kind} ${side} antenna root must attach near the body top`);
+      assert.ok(tip.y > bodyTop + 0.04, `${kind} ${side} antenna tip must rise above the body`);
+      assert.ok(tip.z < bodyFront - 0.1, `${kind} ${side} antenna tip must extend forward`);
+      assert.ok(tip.distanceTo(new THREE.Vector3(...tipBox.position)) < 0.002, `${kind} ${side} antenna tip cap must stay connected`);
+    }
     assert.equal(inspectGrounding(spec).contact, "reference", "airborne variants should show the ground without claiming foot contact");
   }
+  assert.ok(BUTTERFLY_ANTENNA_CONTRACT.forwardTiltRadians > 0);
 });
 
 test("the inspector captures every canonical production mob visual", () => {
@@ -70,6 +90,23 @@ test("the inspector captures every canonical production mob visual", () => {
   const bodyTop = body.position[1] + body.size[1] / 2;
   assert.equal(plates.length, 6);
   for (const plate of plates) assert.ok(Math.abs(plate.position[1] - plate.size[1] / 2 - bodyTop) < 1e-7, `${plate.id} floats above the back`);
+  const rattlekin = specs.find((spec) => spec.id === "rattlekin")!;
+  const clubHandle = rattlekin.boxes.find((box) => box.id === "rattlekin-club-handle")!;
+  const clubHead = rattlekin.boxes.find((box) => box.id === "rattlekin-club-head")!;
+  assert.equal(RATTLEKIN_CLUB_CONTRACT.forwardAxis, "-z");
+  assert.ok(clubHandle.size[2] > clubHandle.size[1] * 4, "Rattlekin club handle must lie forward, not hang vertically");
+  assert.ok(clubHead.position[2] < clubHandle.position[2] - 0.35, "Rattlekin club head must project ahead of the grip");
+  const zombie = specs.find((spec) => spec.id === "zombie")!;
+  for (const eyeId of ["zombie-left-eye", "zombie-right-eye"]) {
+    const eye = zombie.boxes.find((box) => box.id === eyeId)!;
+    assert.equal(eye.color, Number.parseInt(ZOMBIE_EYE_COLOR.slice(1), 16), `${eyeId} must be pure white`);
+    assert.equal(eye.emissive, true);
+  }
+  const skeleton = specs.find((spec) => spec.id === "skeleton")!;
+  const nockedArrow = skeleton.boxes.find((box) => box.id === "skeleton-nocked-arrow")!;
+  const bowGrip = skeleton.boxes.find((box) => box.id === "skeleton-bow-grip")!;
+  assert.ok(nockedArrow.size[2] > nockedArrow.size[1] * 10, "Skeleton arrow must remain aligned along forward Z");
+  assert.ok(nockedArrow.position[2] < bowGrip.position[2], "Skeleton arrowhead direction must remain in front of the bow");
   const portrait = renderModelPortrait(ridgeback);
   assert.match(portrait, /front three-quarter model portrait/);
   assert.match(portrait, /<polygon/);

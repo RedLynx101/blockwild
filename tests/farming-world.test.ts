@@ -7,6 +7,7 @@ import {
   canHitchLead,
   canTill,
   constrainLead,
+  discoverRootedTree,
   farmlandState,
   fenceCollisionHeight,
   fenceConnections,
@@ -14,6 +15,8 @@ import {
   growthDelaySeconds,
   harvestPlant,
   nextPlantStage,
+  ORCHARD_REGROWTH_BASE_MS,
+  ORCHARD_REGROWTH_JITTER_MS,
   planAppleFruitRegrowth,
   planAppleTree,
   plantingResult,
@@ -61,6 +64,31 @@ test("farmland hydration, tilling, and deterministic growth timings are bounded"
   const dry = growthDelaySeconds(BlockId.WheatSprout, false, "FARM", { x: 3, y: 20, z: -5 }, 2);
   assert.equal(first, again);
   assert.ok((dry ?? 0) > (first ?? 0));
+  assert.ok((growthDelaySeconds(BlockId.MoonberryBush, false, "FARM", { x: 1, y: 2, z: 3 }) ?? Infinity) < 60);
+  assert.ok((growthDelaySeconds(BlockId.SunberryBush, false, "FARM", { x: 1, y: 2, z: 3 }) ?? Infinity) < 53);
+  assert.equal(ORCHARD_REGROWTH_BASE_MS + ORCHARD_REGROWTH_JITTER_MS, 75_000, "orchard fruit returns within a bounded short cycle");
+});
+
+test("rooted tree discovery follows connected branches and does not require a hardcoded trunk variant", () => {
+  const blocks = new Map<string, BlockId>();
+  const put = (x: number, y: number, z: number, type: BlockId) => blocks.set(`${x},${y},${z}`, type);
+  put(0, -1, 0, BlockId.MeadowGrass);
+  for (let y = 0; y <= 4; y += 1) put(0, y, 0, BlockId.WildwoodLog);
+  put(1, 3, 0, BlockId.PineLog);
+  put(2, 3, 0, BlockId.PineLog);
+  put(2, 4, 0, BlockId.WildwoodLeaves);
+  for (let x = -2; x <= 2; x += 1) for (let z = -2; z <= 2; z += 1) put(x, 5, z, BlockId.WildwoodLeaves);
+  // A neighboring rooted trunk may share canopy contact but cannot be claimed.
+  put(4, -1, 0, BlockId.Grass);
+  for (let y = 0; y <= 4; y += 1) put(4, y, 0, BlockId.BirchLog);
+  put(3, 5, 0, BlockId.BirchLeaves);
+  const read = (x: number, y: number, z: number) => blocks.get(`${x},${y},${z}`) ?? BlockId.Air;
+  const tree = discoverRootedTree({ x: 2, y: 3, z: 0 }, read);
+  assert.ok(tree);
+  assert.deepEqual(tree!.root, { x: 0, y: 0, z: 0, type: BlockId.WildwoodLog });
+  assert.equal(tree!.logs.length, 7);
+  assert.equal(tree!.logs.some((log) => log.x === 4), false);
+  assert.ok(tree!.leaves.length >= 12);
 });
 
 test("right-click harvest preserves bushes and scythes replant wheat with seeds", () => {
@@ -282,12 +310,12 @@ test("legacy cabin and ruin generation reserves the same flora-free clearing", (
   world.dispose();
 });
 
-test("meadow grass is darker and leaf blocks use full exterior tiles with interior culling", () => {
+test("meadow grass is darker and dense crowns preserve airy leaf cutouts", () => {
   const channel = (hex: string, shift: number) => (Number.parseInt(hex.slice(1), 16) >> shift) & 255;
   const average = (hex: string) => (channel(hex, 16) + channel(hex, 8) + channel(hex, 0)) / 3;
   assert.ok(average(MEADOW_GRASS_PALETTE.top) < average("#79b951"));
   assert.notEqual(MEADOW_GRASS_PALETTE.clover, MEADOW_GRASS_PALETTE.top);
-  assert.equal(LEAF_TEXTURE_CUTOUT_CHANCE, 0);
+  assert.ok(LEAF_TEXTURE_CUTOUT_CHANCE >= 0.25 && LEAF_TEXTURE_CUTOUT_CHANCE <= 0.32);
   const world = new ChunkWorld();
   for (const leaf of LEAF_BLOCKS) {
     assert.equal(world.faceVisible(leaf, BlockId.Air), true, `${BlockId[leaf]} must paint every exposed face`);

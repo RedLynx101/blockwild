@@ -8,6 +8,8 @@ export type MusicScene =
   | "night"
   | "sea"
   | "skyboss"
+  | "combatA"
+  | "combatB"
   | "wildwoodA"
   | "wildwoodB"
   | "fernlight"
@@ -30,6 +32,8 @@ const MUSIC_TRACKS: Record<MusicScene, string> = {
   night: "/music/blockwild-night.mp3",
   sea: "/music/blockwild-sea.mp3",
   skyboss: "/music/blockwild-skyboss.mp3",
+  combatA: "/music/blockwild-ironbloom-skirmish-a.mp3",
+  combatB: "/music/blockwild-ironbloom-skirmish-b.mp3",
   wildwoodA: "/music/blockwild-wildwood-dawn-a.mp3",
   wildwoodB: "/music/blockwild-wildwood-dawn-b.mp3",
   fernlight: "/music/blockwild-fernlight-ramble.mp3",
@@ -46,6 +50,10 @@ const SAMPLES: Record<SampleKind, { source: string; gain: number }> = {
   chestClose: { source: "/sfx/chest-close.wav", gain: 0.58 },
   ridgebackWarmHuff: { source: "/sfx/ridgeback-warm-huff.mp3", gain: 0.62 },
   shadecrawlerStoneChitter: { source: "/sfx/shadecrawler-stone-chitter.mp3", gain: 0.52 },
+};
+const MUSIC_FALLBACKS: Partial<Record<MusicScene, string>> = {
+  combatA: MUSIC_TRACKS.skyboss,
+  combatB: MUSIC_TRACKS.skyboss,
 };
 
 export class SynthAudio {
@@ -143,6 +151,17 @@ export class SynthAudio {
     if (typeof Audio === "undefined" || this.music.size) return;
     for (const [scene, source] of Object.entries(MUSIC_TRACKS) as Array<[MusicScene, string]>) {
       const element = new Audio(source);
+      const fallback = MUSIC_FALLBACKS[scene];
+      if (fallback) element.addEventListener("error", () => {
+        if (element.dataset.fallbackActive === "1") return;
+        element.dataset.fallbackActive = "1";
+        element.src = fallback;
+        element.load();
+        if (scene === this.musicScene && !this.musicSuspended) window.setTimeout(() => {
+          this.musicStarted = true;
+          void this.playMusicScene(scene);
+        }, 0);
+      });
       element.loop = true;
       element.preload = scene === this.musicScene ? "auto" : "metadata";
       element.volume = 0;
@@ -329,8 +348,8 @@ export class SynthAudio {
       for (let index = 0; index < 4; index += 1) this.noiseBurst(0.07, base * (0.8 + index * 0.12), 0.1, stoneLike, index * 0.026);
       this.tone(95, 0.11, 0.045, "sine", 0, 55);
     } else if (kind === "place") {
-      this.noiseBurst(0.07, 510, 0.07);
-      this.tone(115, 0.09, 0.06, "sine", 0, 64);
+      this.noiseBurst(0.085, 560, 0.105);
+      this.tone(122, 0.1, 0.09, "sine", 0, 68);
     } else if (kind === "pickup") {
       this.tone(660, 0.055, 0.045, "triangle");
       this.tone(990, 0.07, 0.04, "triangle", 0.052);

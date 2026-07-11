@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import * as THREE from "three";
+import { createButterflyVisual } from "../app/game/butterflies.ts";
 import { INSPECTOR_MODEL_SPECS, assertModelSpec, type ModelBox, type ModelSpec } from "../app/game/model-specs.ts";
 import { createMobVisual, createSkeletonArrowVisual } from "../app/game/mob-models.ts";
 import { BUTTERFLY_ORDER, CORE_MOB_ORDER, MOB_DEFS, type ButterflyKind, type CoreMobKind } from "../app/game/mobs.ts";
@@ -173,32 +174,26 @@ export function createPlayerInspectionSpecs() {
   });
 }
 
-function rotatedWingCenter(pivotX: number, localX: number, y: number, rotationZ: number) {
-  return new THREE.Vector3(localX, 0, 0).applyEuler(new THREE.Euler(0, 0, rotationZ, "XYZ")).add(new THREE.Vector3(pivotX, y, 0));
-}
-
 export function createButterflyInspectionSpec(kind: ButterflyKind): InspectionModelSpec {
   const definition = MOB_DEFS[kind];
-  const [wingColor, bodyColor, accentColor] = definition.colors;
   const flightY = 0.62;
   const flap = 0.58;
-  const leftCenter = rotatedWingCenter(-0.035, -0.1, flightY, flap);
-  const rightCenter = rotatedWingCenter(0.035, 0.1, flightY, -flap);
-  const boxes: ModelBox[] = [
-    { id: "body", part: "body", label: "Body", size: [0.055, 0.055, 0.17], position: [0, flightY, 0], color: bodyColor },
-    { id: "left-wing", part: "wings", label: "Wings", size: [0.2, 0.018, 0.14], position: [leftCenter.x, leftCenter.y, leftCenter.z], rotation: [0, 0, flap], color: wingColor },
-    { id: "right-wing", part: "wings", size: [0.2, 0.018, 0.14], position: [rightCenter.x, rightCenter.y, rightCenter.z], rotation: [0, 0, -flap], color: wingColor },
-    { id: "left-antenna", part: "antennae", label: "Antennae", size: [0.012, 0.012, 0.12], position: [-0.02, flightY + 0.025, -0.125], rotation: [-0.38, 0, -0.18], color: accentColor, emissive: true },
-    { id: "right-antenna", part: "antennae", size: [0.012, 0.012, 0.12], position: [0.02, flightY + 0.025, -0.125], rotation: [-0.38, 0, 0.18], color: accentColor, emissive: true },
-  ];
-  return assertModelSpec({
+  const butterfly = createButterflyVisual(kind, `inspector-${kind}`);
+  const inspectionRoot = new THREE.Group();
+  inspectionRoot.name = `butterfly-${kind}-inspection-root`;
+  inspectionRoot.add(butterfly.group);
+  butterfly.group.position.y = flightY;
+  butterfly.leftWing.rotation.z = flap;
+  butterfly.rightWing.rotation.z = -flap;
+  const spec = objectToInspectionSpec(inspectionRoot, {
     id: `butterfly-${kind}`,
     label: `Butterfly · ${definition.name}`,
     category: "mob",
     front: "-z",
-    boxes,
     inspection: { source: "ButterflySystem", variant: kind },
-  } as InspectionModelSpec) as InspectionModelSpec;
+  });
+  disposeObject(inspectionRoot);
+  return spec;
 }
 
 function disposeObject(root: THREE.Object3D) {

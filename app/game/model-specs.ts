@@ -36,6 +36,7 @@ export type ModelSpec = {
 const ZERO_ROTATION: ModelVector3 = [0, 0, 0];
 const HANDLE_COLOR = "#81542f";
 const HANDLE_DARK = "#4d301d";
+export const ZOMBIE_EYE_COLOR = "#ffffff";
 
 function box(
   id: string,
@@ -132,8 +133,10 @@ export function createZombieSpec(): ModelSpec {
     box("right-arm", "rightArm", [0.22, 0.22, 0.5], [0.445, 1.25, -0.49], skin, ZERO_ROTATION),
     box("head", "head", [0.52, 0.52, 0.52], [0, 1.7, -0.02], skin, ZERO_ROTATION, { label: "Head" }),
     box("brow", "head", [0.38, 0.08, 0.035], [0, 1.82, -0.292], skinDark),
-    box("left-eye", "head", [0.1, 0.075, 0.035], [-0.14, 1.73, -0.295], "#171912", ZERO_ROTATION, { emissive: true }),
-    box("right-eye", "head", [0.1, 0.075, 0.035], [0.14, 1.73, -0.295], "#171912", ZERO_ROTATION, { emissive: true }),
+    box("left-eye", "head", [0.12, 0.09, 0.035], [-0.14, 1.73, -0.295], ZOMBIE_EYE_COLOR, ZERO_ROTATION, { emissive: true }),
+    box("right-eye", "head", [0.12, 0.09, 0.035], [0.14, 1.73, -0.295], ZOMBIE_EYE_COLOR, ZERO_ROTATION, { emissive: true }),
+    box("left-pupil", "head", [0.045, 0.055, 0.018], [-0.14, 1.725, -0.323], "#171912"),
+    box("right-pupil", "head", [0.045, 0.055, 0.018], [0.14, 1.725, -0.323], "#171912"),
     box("mouth", "head", [0.24, 0.065, 0.035], [0, 1.57, -0.295], "#3d3228"),
   ];
   return assertModelSpec({
@@ -208,6 +211,106 @@ export function createChestSpec(): ModelSpec {
   });
 }
 
+export const BUTTERFLY_ANTENNA_CONTRACT = Object.freeze({
+  count: 2,
+  rootCenter: [0, 0.02, -0.078] as const,
+  rootLateral: 0.012,
+  length: 0.16,
+  thickness: 0.008,
+  lateralSplayRadians: 0.22,
+  /** Positive X pitch lifts a shaft whose local tip points toward negative Z. */
+  forwardTiltRadians: 0.42,
+  tipScale: 1.35,
+});
+
+export const RATTLEKIN_CLUB_CONTRACT = Object.freeze({
+  forwardAxis: "-z" as const,
+  handAnchor: [0, -0.72, -0.04] as const,
+  handleSize: [0.18, 0.18, 0.86] as const,
+  handleCenter: [0, -0.72, -0.47] as const,
+  headSize: [0.48, 0.42, 0.4] as const,
+  headCenter: [0, -0.72, -1.02] as const,
+});
+
+export function createApiarySpec(): ModelSpec {
+  return assertModelSpec({
+    id: "wildwood-apiary",
+    label: "Wildwood Apiary",
+    category: "utility",
+    front: "-z",
+    boxes: [
+      box("apiary-body", "body", [0.9, 0.66, 0.76], [0, 0.55, 0], "#b97932", ZERO_ROTATION, { label: "Hive body" }),
+      box("apiary-roof", "roof", [1.02, 0.16, 0.88], [0, 0.96, 0], "#684224", ZERO_ROTATION, { label: "Weather roof" }),
+      box("apiary-lip", "entrance", [0.72, 0.1, 0.22], [0, 0.35, -0.48], "#d39a45", ZERO_ROTATION, { label: "Landing board" }),
+      box("apiary-slot", "entrance", [0.48, 0.1, 0.05], [0, 0.54, -0.405], "#332219"),
+      box("apiary-band-upper", "body", [0.94, 0.08, 0.8], [0, 0.79, 0], "#78502d"),
+      box("apiary-band-lower", "body", [0.94, 0.08, 0.8], [0, 0.36, 0], "#78502d"),
+      box("apiary-left-foot", "base", [0.16, 0.28, 0.16], [-0.31, 0.14, 0.22], "#604021"),
+      box("apiary-right-foot", "base", [0.16, 0.28, 0.16], [0.31, 0.14, 0.22], "#604021"),
+      box("apiary-comb-window", "honey", [0.34, 0.28, 0.045], [0, 0.69, -0.405], "#e3aa32", ZERO_ROTATION, { emissive: true }),
+    ],
+  });
+}
+
+export function createCaptureOrbSpec(): ModelSpec {
+  return assertModelSpec({
+    id: "waykeeper-capture-orb",
+    label: "Waykeeper Capture Orb",
+    category: "utility",
+    front: "-z",
+    boxes: [
+      box("orb-core", "core", [0.38, 0.38, 0.38], [0, 0.42, 0], "#75dfda", [0, Math.PI / 4, 0], { label: "Tideglass core", emissive: true }),
+      box("orb-core-front", "core", [0.28, 0.28, 0.08], [0, 0.42, -0.235], "#c8fff5", [0, 0, Math.PI / 4], { emissive: true }),
+      box("orb-band-x", "frame", [0.58, 0.08, 0.1], [0, 0.42, 0], "#57402f"),
+      box("orb-band-y", "frame", [0.08, 0.58, 0.1], [0, 0.42, 0], "#57402f"),
+      box("orb-band-z", "frame", [0.1, 0.08, 0.58], [0, 0.42, 0], "#8f6b3c"),
+      box("orb-top-cap", "frame", [0.18, 0.12, 0.18], [0, 0.72, 0], "#d6b45b"),
+      box("orb-bottom-cap", "frame", [0.18, 0.12, 0.18], [0, 0.12, 0], "#d6b45b"),
+      box("orb-rune", "rune", [0.11, 0.11, 0.03], [0, 0.42, -0.29], "#fff1a2", [0, 0, Math.PI / 4], { emissive: true, label: "Capture rune" }),
+    ],
+  });
+}
+
+export function createOrbRackSpec(): ModelSpec {
+  const boxes: ModelBox[] = [
+    box("rack-base", "base", [1.18, 0.18, 0.48], [0, 0.12, 0], "#6f492b", ZERO_ROTATION, { label: "Four-orb rack" }),
+    box("rack-back", "frame", [1.18, 0.48, 0.12], [0, 0.39, 0.18], "#8e5b32"),
+  ];
+  for (let slot = 0; slot < 4; slot += 1) {
+    const x = -0.42 + slot * 0.28;
+    boxes.push(
+      box(`rack-socket-${slot + 1}`, "socket", [0.2, 0.08, 0.22], [x, 0.25, -0.08], "#3e3029"),
+      box(`rack-orb-${slot + 1}`, "orb", [0.15, 0.15, 0.15], [x, 0.4, -0.08], slot % 2 ? "#71d6d2" : "#9eeae1", [0, Math.PI / 4, 0], { emissive: true }),
+    );
+  }
+  return assertModelSpec({ id: "capture-orb-rack", label: "Four-Orb Rack", category: "utility", front: "-z", boxes });
+}
+
+export function createHealingStationSpec(): ModelSpec {
+  const boxes: ModelBox[] = [
+    box("healer-base", "base", [1.25, 0.2, 1.0], [0, 0.12, 0], "#4b5551", ZERO_ROTATION, { label: "Healing station" }),
+    box("healer-core", "core", [0.3, 0.72, 0.3], [0, 0.56, 0.12], "#65cfc7", [0, Math.PI / 4, 0], { emissive: true }),
+    box("healer-canopy", "frame", [1.12, 0.12, 0.88], [0, 1.0, 0], "#88aa9d"),
+  ];
+  for (const [slot, x, z] of [[1, -0.38, -0.25], [2, 0.38, -0.25], [3, -0.38, 0.32], [4, 0.38, 0.32]] as const) {
+    boxes.push(
+      box(`healer-pedestal-${slot}`, "pedestal", [0.24, 0.3, 0.24], [x, 0.31, z], "#65706c"),
+      box(`healer-orb-glow-${slot}`, "orb", [0.17, 0.17, 0.17], [x, 0.55, z], "#9af0dc", [0, Math.PI / 4, 0], { emissive: true }),
+    );
+  }
+  return assertModelSpec({ id: "creature-healing-station", label: "Four-Slot Creature Healer", category: "utility", front: "-z", boxes });
+}
+
+export type ItemModelKey = "wildwood-chest" | "apiary" | "capture-orb" | "orb-rack" | "orb-healer";
+
+export function modelSpecForItemModel(key: ItemModelKey): ModelSpec {
+  if (key === "wildwood-chest") return createChestSpec();
+  if (key === "apiary") return createApiarySpec();
+  if (key === "capture-orb") return createCaptureOrbSpec();
+  if (key === "orb-rack") return createOrbRackSpec();
+  return createHealingStationSpec();
+}
+
 export function createTorchSpec(): ModelSpec {
   return assertModelSpec({
     id: "torch",
@@ -241,6 +344,10 @@ export const INSPECTOR_MODEL_SPECS: readonly ModelSpec[] = [
   createRidgebackSpec(),
   createZombieSpec(),
   createChestSpec(),
+  createApiarySpec(),
+  createCaptureOrbSpec(),
+  createOrbRackSpec(),
+  createHealingStationSpec(),
   createTorchSpec(),
   createStoneBlockSpec(),
 ];

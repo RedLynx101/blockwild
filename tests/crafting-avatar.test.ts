@@ -1,20 +1,34 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { createElement } from "react";
+import { renderToString } from "react-dom/server";
+import * as THREE from "three";
 import { BlockId, Item, RECIPES, mirrorRecipePattern } from "../app/game/data.ts";
 import { VoxelEngine, isEditableKeyboardTarget, type InventorySlot } from "../app/game/engine.ts";
+import { createAvatarHeldItemModel } from "../app/game/held-items.ts";
 import { MOB_DEFS } from "../app/game/mobs.ts";
-import { BlockPlayerModel } from "../app/game/player-model.ts";
+import { BlockPlayerModel, FEMALE_HAIR_COLOR, playerEyeHeightForVariant } from "../app/game/player-model.ts";
 import { GAME_RELEASE_NAME, GAME_VERSION, normalizeGameVersion } from "../app/game/version.ts";
 import {
   bestiaryEntryCompletion,
   bestiaryKindsForFilter,
+  captureOrbUiState,
+  clearFirstPersonHeldPresentation,
+  healingProgressForOrb,
+  initialHydrationSettings,
   itemHoverText,
   itemIconKind,
   normalizeMultiplayerRoomCode,
+  normalizeApiaryUiState,
+  prepareFirstPersonHeldPresentation,
   recipeMatchesQuery,
   recipePreviewGrid,
+  resolveTouchControls,
+  runSingleFlight,
+  type SingleFlightGate,
 } from "../app/game/VoxelGame.tsx";
+import VoxelGame from "../app/game/VoxelGame.tsx";
 
 function craftingHarness(inventory: Array<InventorySlot | null>, size: 2 | 3 = 3) {
   const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
@@ -78,17 +92,151 @@ test("player variants and equipment alter the production rig", () => {
   assert.equal(player.group.userData.playerVariant, "female");
   assert.equal(player.group.getObjectByName("female-hair")?.visible, true);
   assert.equal(player.group.getObjectByName("male-hair")?.visible, false);
+  assert.equal(player.rig.scale.y, 0.8);
+  assert.equal(player.materials.hair.color.getHex(), FEMALE_HAIR_COLOR);
   player.setEquipmentAppearance({ head: "#d4b9a7", chest: "#8a6548" });
   assert.equal(player.group.getObjectByName("armor-head-cap")?.visible, true);
   assert.equal(player.group.getObjectByName("armor-chest")?.visible, true);
+  const femaleHeight = player.getLocalBounds().getSize(new THREE.Vector3()).y;
   player.setVariant("male");
   assert.equal(player.group.getObjectByName("male-hair")?.visible, true);
+  const maleHeight = player.getLocalBounds().getSize(new THREE.Vector3()).y;
+  assert.ok(Math.abs(femaleHeight / maleHeight - 0.8) < 0.01);
+  assert.ok(Math.abs(playerEyeHeightForVariant("female") - 1.296) < 1e-10);
+  assert.ok(Math.abs(playerEyeHeightForVariant("female", true) - 1.04) < 1e-10);
   player.dispose();
 });
 
+test("SSR and the first browser render share deterministic settings text", () => {
+  assert.deepEqual(initialHydrationSettings(), {
+    volume: 0.55, muted: false, sensitivity: 0.0022, fov: 72, weather: "clear",
+    renderDistance: 10, simulationDistance: 8, showFps: false, resourceMode: "auto",
+  });
+  const serverHtml = renderToString(createElement(VoxelGame));
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      localStorage: { getItem: () => JSON.stringify({ muted: true, volume: 0.1, fov: 99 }) },
+      matchMedia: () => ({ matches: true }),
+    },
+  });
+  try {
+    assert.equal(renderToString(createElement(VoxelGame)), serverHtml);
+  } finally {
+    if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
+    else delete (globalThis as { window?: unknown }).window;
+  }
+});
+
+test("touch controls follow actual input on hybrids and remain available on tablets", () => {
+  const hybrid = { coarsePrimary: false, hoverNone: false, anyFine: true, primaryPointer: "unknown" as const };
+  assert.equal(resolveTouchControls("auto", hybrid), false);
+  assert.equal(resolveTouchControls("auto", { ...hybrid, coarsePrimary: true, hoverNone: true }), true);
+  assert.equal(resolveTouchControls("auto", { ...hybrid, primaryPointer: "touch" }), true);
+  assert.equal(resolveTouchControls("auto", { ...hybrid, primaryPointer: "mouse" }), false);
+  assert.equal(resolveTouchControls("on", { ...hybrid, primaryPointer: "mouse" }), true);
+  assert.equal(resolveTouchControls("off", { ...hybrid, primaryPointer: "touch" }), false);
+});
+
+test("multiplayer actions are single-flight and title mode clears first-person held geometry", async () => {
+  const gate: SingleFlightGate = { current: null };
+  let operationCalls = 0;
+  let release!: () => void;
+  const first = runSingleFlight(gate, async () => {
+    operationCalls += 1;
+    await new Promise<void>((resolve) => { release = resolve; });
+    return "connected";
+  });
+  const second = await runSingleFlight(gate, async () => {
+    operationCalls += 1;
+    return "duplicate";
+  });
+  assert.deepEqual(second, { started: false });
+  release();
+  assert.deepEqual(await first, { started: true, value: "connected" });
+  assert.equal(operationCalls, 1);
+
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  engine.heldRoot = new THREE.Group();
+  engine.heldRoot.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial()));
+  let disposed = 0;
+  engine.disposeObject = () => { disposed += 1; };
+  engine.selectedSlot = () => ({ item: Item.Stick, count: 1 });
+  clearFirstPersonHeldPresentation(engine);
+  assert.equal(engine.heldRoot.children.length, 0);
+  assert.equal(engine.heldRoot.visible, false);
+  assert.equal(engine.heldItemCode, Item.Stick);
+  assert.equal(disposed, 1);
+  prepareFirstPersonHeldPresentation(engine);
+  assert.equal(engine.heldRoot.visible, true);
+  assert.equal(engine.heldItemCode, -1);
+});
+
+test("workstation UI normalizes apiary production and exact capture-orb metadata", () => {
+  const apiary = normalizeApiaryUiState({
+    queen: { alive: true, home: true, name: "Queen Marigold" },
+    workers: Array.from({ length: 10 }, (_, index) => ({ alive: index !== 9, home: index > 2 })),
+    nectar: 22,
+    honey: 99,
+    royalJelly: 99,
+    productionProgress: 68,
+  });
+  assert.equal(apiary.queenPresent, true);
+  assert.equal(apiary.queenName, "Queen Marigold");
+  assert.equal(apiary.workerCount, 8);
+  assert.equal(apiary.maxWorkers, 8);
+  assert.match(apiary.nectarStatus, /nectar return pending/u);
+  assert.equal(apiary.honey, 12);
+  assert.equal(apiary.royalJelly, 12);
+  assert.equal(apiary.productionProgress, 0.68);
+  assert.equal(apiary.slots.length, 3);
+
+  const fullHostile: InventorySlot = {
+    item: Item.CaptureOrb,
+    count: 1,
+    metadata: {
+      captureOrb: JSON.stringify({
+        schema: 1,
+        orbId: "orb-shadecrawler",
+        capturedAt: 42,
+        creature: {
+          schema: 1,
+          entityId: "shade-1",
+          kind: "shadecrawler",
+          health: 16,
+          maxHealth: 16,
+          ageTicks: 500,
+          baby: false,
+          temperament: "Hostile",
+          hostile: true,
+          tamed: false,
+          ownerId: null,
+          name: "Nightglass",
+          geneticSeed: 7,
+          command: null,
+          custom: {},
+        },
+      }),
+    },
+  };
+  const specimen = captureOrbUiState(fullHostile);
+  assert.equal(specimen.kind, "shadecrawler");
+  assert.equal(specimen.name, "Nightglass");
+  assert.equal(specimen.hostile, true);
+  assert.equal(specimen.fullyHealed, true);
+  assert.equal(healingProgressForOrb(fullHostile, { healClock: 2 }, 0), 1, "fully healed hostile specimens remain valid station occupants");
+
+  const wounded = structuredClone(fullHostile);
+  const encoded = JSON.parse(String(wounded.metadata?.captureOrb)) as { creature: { health: number } };
+  encoded.creature.health = 5;
+  wounded.metadata!.captureOrb = JSON.stringify(encoded);
+  assert.equal(healingProgressForOrb(wounded, { healClock: 5, healIntervalSeconds: 10 }, 0), 0.5);
+});
+
 test("human release identity stays separate from save schemas", () => {
-  assert.equal(GAME_VERSION, "0.4.0");
-  assert.equal(GAME_RELEASE_NAME, "Wayfinder");
+  assert.equal(GAME_VERSION, "0.5.0");
+  assert.equal(GAME_RELEASE_NAME, "Wildbond");
   assert.equal(normalizeGameVersion("garbage"), "0.1.0");
 });
 
@@ -136,7 +284,27 @@ test("inventory artwork stays semantic at real slot sizes and food hover copy is
   assert.equal(itemIconKind(Item.Wheat), "wheat");
   assert.equal(itemIconKind(BlockId.CraftingTable), "crafting-table");
   assert.equal(itemIconKind(BlockId.RedFlower), "world-flora-red");
+  assert.equal(itemIconKind(BlockId.Chest), "chest");
+  assert.equal(itemIconKind(Item.CaptureOrb), "capture-orb");
+  assert.equal(itemIconKind(BlockId.Apiary), "apiary");
+  assert.equal(itemIconKind(BlockId.CaptureOrbRack), "orb-rack");
+  assert.equal(itemIconKind(BlockId.CreatureHealer), "orb-healer");
+  assert.equal(itemIconKind(Item.Honeycomb), "honeycomb");
+  assert.equal(itemIconKind(Item.RoyalJelly), "jelly");
+  assert.equal(itemIconKind(Item.QueenCell), "queen-cell");
+  assert.equal(itemIconKind(Item.WorkerBee), "bee");
   assert.match(itemHoverText({ item: Item.Apple, count: 1 }), /Food \+4/u);
+});
+
+test("v0.5 furniture and capture orbs use production held and drop silhouettes", () => {
+  for (const item of [BlockId.Chest, BlockId.Apiary, BlockId.CaptureOrbRack, BlockId.CreatureHealer, Item.CaptureOrb]) {
+    const model = createAvatarHeldItemModel(item);
+    assert.ok(model && model.children.length >= 3, `${item} needs a readable multi-part held model`);
+  }
+  const filled = createAvatarHeldItemModel(Item.CaptureOrb, { filledCaptureOrb: true });
+  const empty = createAvatarHeldItemModel(Item.CaptureOrb);
+  assert.equal(filled?.userData.filledCaptureOrb, true);
+  assert.equal(empty?.userData.filledCaptureOrb, false);
 });
 
 test("bestiary filters and completion respond to care progress", () => {
@@ -162,6 +330,17 @@ test("bestiary portraits stay contained above their navigation chrome", () => {
   assert.match(portraitRule, /max-height:\s*100%/u);
   assert.match(portraitRule, /object-fit:\s*contain/u);
   assert.match(portraitRule, /transform:\s*none/u);
+});
+
+test("field workstations keep four readable orb slots and responsive single-column fallbacks", () => {
+  const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
+  const orbGridRule = css.split(".orb-specimen-grid {").slice(1).map((rule) => rule.split("}")[0]).find((rule) => /repeat\(4,/u.test(rule)) ?? "";
+  const mobileRules = css.split("@media (max-width: 520px)").at(-1) ?? "";
+  assert.match(orbGridRule, /grid-template-columns:\s*repeat\(4,/u);
+  assert.match(css, /\.apiary-workspace\s*\{[\s\S]*grid-template-columns:/u);
+  assert.match(css, /\.worker-honeycomb\s*\{[\s\S]*repeat\(8,/u);
+  assert.match(mobileRules, /\.orb-specimen-grid\s*\{\s*grid-template-columns:\s*1fr/u);
+  assert.match(mobileRules, /\.apiary-yield\s*\{\s*grid-template-columns:\s*1fr/u);
 });
 
 test("multiplayer room codes remain short and shareable", () => {

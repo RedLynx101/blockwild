@@ -130,10 +130,32 @@ export function updateBirdBehavior(state: BirdBehaviorState, stimulus: BirdStimu
 
 export type FishHabitat = "ocean" | "river" | "underground";
 
+export type WeightedMob = readonly [kind: MobKind, weight: number];
+
+const OCEAN_FISH: readonly WeightedMob[] = Object.freeze([
+  ["shoalfin", 0.38],
+  ["silverthread", 0.34],
+  ["coralback", 0.18],
+  ["emberribbon", 0.1],
+]);
+const RIVER_FISH: readonly WeightedMob[] = Object.freeze([
+  ["brookdart", 0.55],
+  ["reedneedle", 0.45],
+]);
+const UNDERGROUND_FISH: readonly WeightedMob[] = Object.freeze([
+  ["gloomfin", 0.48],
+  ["cavefilament", 0.52],
+]);
+
+/** Small immutable tables let the engine choose habitat fish without scanning all mobs. */
+export function fishSpawnTableForHabitat(habitat: FishHabitat): readonly WeightedMob[] {
+  if (habitat === "ocean") return OCEAN_FISH;
+  if (habitat === "river") return RIVER_FISH;
+  return UNDERGROUND_FISH;
+}
+
 export function fishKindsForHabitat(habitat: FishHabitat): MobKind[] {
-  if (habitat === "ocean") return ["shoalfin", "coralback"];
-  if (habitat === "river") return ["brookdart"];
-  return ["gloomfin"];
+  return fishSpawnTableForHabitat(habitat).map(([kind]) => kind);
 }
 
 /**
@@ -157,8 +179,6 @@ export function chooseLocalWalkableGround(
   return null;
 }
 
-type WeightedMob = readonly [kind: MobKind, weight: number];
-
 function weightedMob(entries: readonly WeightedMob[], roll: number) {
   const normalized = THREE.MathUtils.clamp(Number.isFinite(roll) ? roll : 0.5, 0, 0.999999);
   const total = entries.reduce((sum, [, weight]) => sum + Math.max(0, weight), 0);
@@ -170,30 +190,107 @@ function weightedMob(entries: readonly WeightedMob[], roll: number) {
   return entries.at(-1)?.[0] ?? "mossling";
 }
 
-/** Shared passive spawn table, including the four v0.3 surface species. */
-export function passiveMobKindForBiome(biome: BiomeId, roll = Math.random()): MobKind {
+const SNOW_PASSIVES: readonly WeightedMob[] = Object.freeze([["woolhorn", 0.68], ["canopy-lark", 0.22], ["thimbledeer", 0.1]]);
+const DESERT_PASSIVES: readonly WeightedMob[] = Object.freeze([["duneclatter", 0.68], ["emberjay", 0.24], ["pebbletortoise", 0.08]]);
+const SAVANNA_PASSIVES: readonly WeightedMob[] = Object.freeze([["sunstep-grazer", 0.46], ["emberjay", 0.2], ["ridgeback", 0.2], ["reedstrider", 0.14]]);
+const SILTFEN_PASSIVES: readonly WeightedMob[] = Object.freeze([
+  ["mossling", 0.22], ["lanternshell", 0.23], ["puddlehopper", 0.2], ["reedstrider", 0.18],
+  ["reed-dragonfly", 0.1], ["pebbletortoise", 0.04], ["canopy-lark", 0.03],
+]);
+const FOREST_PASSIVES: readonly WeightedMob[] = Object.freeze([
+  ["brambleboar", 0.21], ["mossling", 0.18], ["canopy-lark", 0.16], ["thimbledeer", 0.18],
+  ["petalfox", 0.17], ["wild-horse", 0.07], ["meadow-cow", 0.03],
+]);
+const MUSHROOM_PASSIVES: readonly WeightedMob[] = Object.freeze([["lanternshell", 0.38], ["glowmoth", 0.24], ["puddlehopper", 0.22], ["petalfox", 0.16]]);
+const MEADOW_PASSIVES: readonly WeightedMob[] = Object.freeze([
+  ["thimbledeer", 0.16], ["petalfox", 0.12], ["puddlehopper", 0.07], ["reedstrider", 0.08],
+  ["pebbletortoise", 0.08], ["canopy-lark", 0.08], ["peelop", 0.04], ["ridgeback", 0.1],
+  ["wild-horse", 0.13], ["meadow-cow", 0.14],
+]);
+const RIVER_PASSIVES: readonly WeightedMob[] = Object.freeze([
+  ["reedstrider", 0.3], ["reed-dragonfly", 0.22], ["puddlehopper", 0.18], ["lanternshell", 0.12],
+  ["pebbletortoise", 0.1], ["canopy-lark", 0.08],
+]);
+const CLOUDREED_PASSIVES: readonly WeightedMob[] = Object.freeze([
+  ["mistmane", 0.45], ["reed-dragonfly", 0.15], ["reedstrider", 0.12], ["canopy-lark", 0.1],
+  ["puddlehopper", 0.1], ["lanternshell", 0.08],
+]);
+const UPLAND_PASSIVES: readonly WeightedMob[] = Object.freeze([
+  ["wild-horse", 0.25], ["sunstep-grazer", 0.16], ["pebbletortoise", 0.14], ["petalfox", 0.12],
+  ["thimbledeer", 0.14], ["puddlehopper", 0.05], ["reedstrider", 0.05], ["ridgeback", 0.09],
+]);
+
+/**
+ * Ambient table for each surface habitat. Hive Queens and worker Honeybees are
+ * deliberately absent: they enter through a Wild Beehive/Apiary resident plan,
+ * preventing queen spam and preserving colony ownership.
+ */
+export function passiveMobSpawnTableForBiome(biome: BiomeId): readonly WeightedMob[] {
   if (biome === BiomeId.Snowfield || biome === BiomeId.Frostpine) {
-    return weightedMob([["woolhorn", 0.68], ["canopy-lark", 0.22], ["thimbledeer", 0.1]], roll);
+    return SNOW_PASSIVES;
   }
   if (biome === BiomeId.Desert || biome === BiomeId.Badlands) {
-    return weightedMob([["duneclatter", 0.68], ["emberjay", 0.24], ["pebbletortoise", 0.08]], roll);
+    return DESERT_PASSIVES;
   }
   if (biome === BiomeId.Savanna) {
-    return weightedMob([["sunstep-grazer", 0.46], ["emberjay", 0.2], ["ridgeback", 0.2], ["reedstrider", 0.14]], roll);
+    return SAVANNA_PASSIVES;
   }
   if (biome === BiomeId.Siltfen) {
-    return weightedMob([["mossling", 0.22], ["lanternshell", 0.23], ["puddlehopper", 0.2], ["reedstrider", 0.18], ["pebbletortoise", 0.1], ["canopy-lark", 0.07]], roll);
+    return SILTFEN_PASSIVES;
   }
   if (biome === BiomeId.Bloomwood || biome === BiomeId.Wildwood || biome === BiomeId.Birchlight) {
-    return weightedMob([["brambleboar", 0.24], ["mossling", 0.2], ["canopy-lark", 0.18], ["thimbledeer", 0.2], ["petalfox", 0.18]], roll);
+    return FOREST_PASSIVES;
   }
   if (biome === BiomeId.MushroomFen) {
-    return weightedMob([["lanternshell", 0.38], ["glowmoth", 0.24], ["puddlehopper", 0.22], ["petalfox", 0.16]], roll);
+    return MUSHROOM_PASSIVES;
   }
   if (biome === BiomeId.Meadow) {
-    return weightedMob([["thimbledeer", 0.22], ["petalfox", 0.15], ["puddlehopper", 0.09], ["reedstrider", 0.11], ["pebbletortoise", 0.11], ["canopy-lark", 0.12], ["peelop", 0.06], ["ridgeback", 0.14]], roll);
+    return MEADOW_PASSIVES;
   }
-  return weightedMob([["sunstep-grazer", 0.2], ["pebbletortoise", 0.16], ["petalfox", 0.15], ["thimbledeer", 0.18], ["puddlehopper", 0.08], ["reedstrider", 0.08], ["ridgeback", 0.15]], roll);
+  if (biome === BiomeId.River) return RIVER_PASSIVES;
+  if (biome === BiomeId.CloudreedGlen) return CLOUDREED_PASSIVES;
+  return UPLAND_PASSIVES;
+}
+
+/** Shared bounded passive selector for the complete v0.5 surface catalog. */
+export function passiveMobKindForBiome(biome: BiomeId, roll = Math.random()): MobKind {
+  return weightedMob(passiveMobSpawnTableForBiome(biome), roll);
+}
+
+export const NATURAL_GROUP_RANGES: Readonly<Partial<Record<MobKind, readonly [minimum: number, maximum: number]>>> = Object.freeze({
+  "sunstep-grazer": [4, 7],
+  "wild-horse": [3, 6],
+  "meadow-cow": [4, 7],
+  mistmane: [3, 5],
+  ridgeback: [2, 4],
+  woolhorn: [3, 6],
+  shoalfin: [6, 10],
+  silverthread: [8, 12],
+  reedneedle: [6, 10],
+  emberribbon: [4, 8],
+  cavefilament: [5, 9],
+  brookdart: [3, 6],
+  gloomfin: [2, 4],
+  coralback: [1, 3],
+  "reed-dragonfly": [2, 5],
+});
+
+/** Bounded group count; unlisted creatures remain solitary. */
+export function naturalGroupSizeForMob(kind: MobKind, roll = Math.random()) {
+  const [minimum, maximum] = NATURAL_GROUP_RANGES[kind] ?? [1, 1];
+  const normalized = THREE.MathUtils.clamp(Number.isFinite(roll) ? roll : 0.5, 0, 0.999999);
+  return minimum + Math.floor(normalized * (maximum - minimum + 1));
+}
+
+export type HiveResidentSpawn = Readonly<{ kind: "hive-queen" | "honeybee"; count: number; group: "hive" }>;
+
+/** The only natural queen/worker source: one owned queen plus at most eight workers. */
+export function wildHiveResidentSpawnPlan(workerCount: number): readonly HiveResidentSpawn[] {
+  const workers = Math.max(0, Math.min(8, Math.floor(workerCount)));
+  return Object.freeze([
+    { kind: "hive-queen", count: 1, group: "hive" as const },
+    ...(workers > 0 ? [{ kind: "honeybee" as const, count: workers, group: "hive" as const }] : []),
+  ]);
 }
 
 export type PersistenceContext = {

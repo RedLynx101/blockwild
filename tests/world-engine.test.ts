@@ -2,9 +2,26 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
 import { BlockId, ITEMS, Item, RECIPES, type InventorySlot } from "../app/game/data.ts";
-import { VoxelEngine, bedCounterpart, bedPlacementForYaw, migrateSavedWorld, nextSleepTransition, restoreChestStorage, torchBlockForPlacement, type WorldSave } from "../app/game/engine.ts";
+import {
+  DEFAULT_UNARMED_DAMAGE,
+  VoxelEngine,
+  bedCounterpart,
+  bedPlacementForYaw,
+  bedRespawnCandidates,
+  combatSceneForEncounter,
+  isInstantBreakBlock,
+  migrateSavedWorld,
+  mobPopulationCaps,
+  nextPeelopBananaShedSeconds,
+  nextSleepTransition,
+  positionInPlayerViewCone,
+  restoreChestStorage,
+  shouldBypassOpenableUse,
+  torchBlockForPlacement,
+  type WorldSave,
+} from "../app/game/engine.ts";
 import { harvestPlant } from "../app/game/farming.ts";
-import { ChunkWorld, BIOME_NAMES, GENERATOR_VERSION, MAX_Y, MIN_Y, SECTION_HEIGHT, WORLD_HEIGHT, blockIndex, chunkKey, environmentSkyShade, splitCoordinate } from "../app/game/world.ts";
+import { ChunkWorld, BIOME_NAMES, GENERATOR_VERSION, GLASS_OPACITY, MAX_Y, MIN_Y, SECTION_HEIGHT, WORLD_HEIGHT, blockIndex, chunkKey, environmentSkyShade, splitCoordinate } from "../app/game/world.ts";
 import { MOB_DEFS, MOB_ORDER } from "../app/game/mobs.ts";
 import { createHeldToolSpec, createRidgebackSpec, createZombieSpec, INSPECTOR_MODEL_SPECS, RIDGEBACK_GROUND_LIFT } from "../app/game/model-specs.ts";
 
@@ -214,6 +231,53 @@ test("bed orientation, counterpart lookup, recipe, and dawn/dusk transitions sta
   world.dispose();
 });
 
+test("v0.5 interaction policies keep respawns, instant flora, placement bypass, spawn pressure, and combat tracks deterministic", () => {
+  const candidates = bedRespawnCandidates(BlockId.BedNorthFoot, 0, 10, 0);
+  assert.equal(candidates.some((candidate) => candidate.x === 0 && candidate.z === -1), false, "the head cell is not a respawn candidate");
+  assert.ok(candidates.length >= 6);
+  assert.equal(isInstantBreakBlock(BlockId.RedFlower), true);
+  assert.equal(isInstantBreakBlock(BlockId.AppleFruit), true);
+  assert.equal(isInstantBreakBlock(BlockId.Stone), false);
+  assert.equal(shouldBypassOpenableUse(true, true, BlockId.Chest), true);
+  assert.equal(shouldBypassOpenableUse(false, true, BlockId.Chest), false);
+  assert.deepEqual(mobPopulationCaps(22), { total: 22, passive: 13, hostile: 6 });
+  assert.equal(positionInPlayerViewCone(0, 0, -10), true);
+  assert.equal(positionInPlayerViewCone(0, 0, 10), false);
+  assert.equal(DEFAULT_UNARMED_DAMAGE, 1);
+  assert.equal(nextPeelopBananaShedSeconds(7, 2), nextPeelopBananaShedSeconds(7, 2));
+  assert.ok(nextPeelopBananaShedSeconds(7, 2) >= 135 && nextPeelopBananaShedSeconds(7, 2) <= 210);
+  assert.deepEqual([0, 1, 2, 3].map(combatSceneForEncounter), ["combatA", "combatB", "combatA", "combatB"]);
+
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  engine.spawn = new THREE.Vector3();
+  engine.events = { onToast() {} } as never;
+  engine.saveSoon = () => undefined;
+  engine.world = {
+    getBlock: (x: number, y: number, z: number) => x === 0 && y === 9 && z === 1 ? BlockId.Stone : BlockId.Air,
+    isWalkThrough: (type: BlockId) => type === BlockId.Air,
+  } as never;
+  assert.equal(engine.setRespawnFromBed(0, 10, 0, BlockId.BedNorthFoot), true);
+  assert.deepEqual(engine.spawn.toArray(), [0, 9.51, 1]);
+
+  engine.mode = "survival";
+  engine.selected = 0;
+  engine.inventory = [{ item: Item.Berry, count: 2 }];
+  engine.consumeSelectedUnit();
+  assert.deepEqual(engine.inventory[0], { item: Item.Berry, count: 1 }, "planting a Moonberry consumes the selected unit");
+});
+
+test("line of sight ignores glass but blocks acquisition through opaque full cubes", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  let blocker = BlockId.Stone;
+  engine.world = {
+    getBlock: (x: number) => x === 2 ? blocker : BlockId.Air,
+    isWalkThrough: (type: BlockId) => type === BlockId.Air,
+  } as never;
+  assert.equal(engine.hasClearLineOfSight(new THREE.Vector3(0, 0, 0), new THREE.Vector3(4, 0, 0)), false);
+  blocker = BlockId.Glass;
+  assert.equal(engine.hasClearLineOfSight(new THREE.Vector3(0, 0, 0), new THREE.Vector3(4, 0, 0)), true);
+});
+
 test("generator-v2 saves migrate their voxel edit indices into the deeper world", () => {
   const legacy = {
     version: 2,
@@ -226,7 +290,7 @@ test("generator-v2 saves migrate their voxel edit indices into the deeper world"
   assert.deepEqual(migrated?.edits["0,0"], [[16384, BlockId.Glowstone]], "an old y=0 edit must remain at y=0 after MIN_Y moves from -32 to -64");
 });
 
-test("climate sampler can produce all seventeen advertised biomes", () => {
+test("climate sampler can produce all eighteen advertised biomes", () => {
   const world = new ChunkWorld();
   world.reset("BIOME-SAFARI");
   const biomes = new Set<number>();
@@ -235,7 +299,7 @@ test("climate sampler can produce all seventeen advertised biomes", () => {
     const z = ((index * 104729) % 240_000) - 120_000;
     biomes.add(world.sampleColumn(x, z).biome);
   }
-  assert.equal(biomes.size, 17, `expected all biomes, found ${[...biomes].map((id) => BIOME_NAMES[id]).join(", ")}`);
+  assert.equal(biomes.size, 18, `expected all biomes, found ${[...biomes].map((id) => BIOME_NAMES[id]).join(", ")}`);
   world.dispose();
 });
 
@@ -475,10 +539,15 @@ test("partial block shapes preserve the full cube faces beside them", () => {
   world.rebuildSection(chunk, section);
 
   const vertexCount = chunk.sections.get(section)?.opaque?.geometry.getAttribute("position").count ?? 0;
-  assert.equal(vertexCount, 48, "an inset chest must not remove the neighboring stone face");
+  assert.equal(vertexCount, 96, "the closed chest body, separate lid, and latch must not remove the neighboring stone face");
+  world.setChestVisualHidden(1, 0, 0, true);
+  assert.equal(chunk.sections.get(section)?.opaque?.geometry.getAttribute("position").count, 24, "the articulated open model must replace, not overlap, the closed chunk chest");
+  world.setChestVisualHidden(1, 0, 0, false);
+  assert.equal(chunk.sections.get(section)?.opaque?.geometry.getAttribute("position").count, 96, "closing restores the standing chest mesh without mutating its block");
   assert.equal(world.faceVisible(BlockId.Stone, BlockId.Chest), true);
   assert.equal(world.faceVisible(BlockId.Stone, BlockId.DoorClosedLower), true);
   assert.equal(world.faceVisible(BlockId.Stone, BlockId.Stone), false);
+  assert.equal((world.materials.glass as THREE.MeshLambertMaterial).opacity, GLASS_OPACITY);
   world.dispose();
 });
 
@@ -802,10 +871,10 @@ test("rejected solid placement records its rollback and player chests start empt
   assert.ok(chest?.every((slot) => slot === null), "player-crafted chests must not inherit structure loot");
 });
 
-test("generator-v4 saves advance to v5 without moving existing voxel edits", () => {
+test("generator-v5 saves advance to v6 without moving existing voxel edits", () => {
   const previous = {
     version: 2,
-    generatorVersion: 4,
+    generatorVersion: 5,
     seed: "WAYFINDER-MIGRATION",
     edits: { "-2,3": [[24_731, BlockId.MeadowGrass], [24_732, BlockId.Air]] },
   } as unknown as WorldSave;
@@ -826,6 +895,17 @@ test("door meshes include textured top, bottom, and narrow side edges", () => {
   assert.equal(geometry?.index?.count, 36, "a six-faced thin door slab should emit six textured quads");
   assert.equal(geometry?.getAttribute("position").count, 24);
   world.dispose();
+});
+
+test("the runtime chest lid opens upward around its rear hinge", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  engine.activeChestModel = new THREE.Group();
+  engine.chestLidPivot = new THREE.Group();
+  engine.activeChestKey = "0,0,0";
+  engine.chestOpenAmount = 0;
+  engine.updateChestModel(0.2);
+  assert.ok(engine.chestOpenAmount > 0);
+  assert.ok(engine.chestLidPivot.rotation.x > 0, "positive X raises the front edge instead of folding through the chest");
 });
 
 test("placing a bed reserves two supported cells and writes its oriented halves as one batch", () => {

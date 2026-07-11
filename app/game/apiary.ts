@@ -1,0 +1,365 @@
+import { Item, type InventorySlot, type ItemCode } from "./data";
+
+export const APIARY_WORKER_CAP = 8;
+export const APIARY_CONTAINER_KIND = "apiary" as const;
+export const APIARY_NECTAR_CAP = 64;
+export const APIARY_HONEY_CAP = 12;
+export const APIARY_JELLY_CAP = 12;
+export const APIARY_HONEY_CYCLE_SECONDS = 180;
+export const APIARY_JELLY_CYCLE_SECONDS = APIARY_HONEY_CYCLE_SECONDS * 4;
+export const APIARY_WORKER_GROWTH_SECONDS = 300;
+
+export type BeeRole = "queen" | "worker";
+export type ApiaryBee = Readonly<{
+  id: string;
+  role: BeeRole;
+  alive: boolean;
+  home: boolean;
+  outbound: boolean;
+  carryingNectar: number;
+  lastReturnDay: number;
+  disconnectedDay: number | null;
+  geneticSeed: number;
+  angry: boolean;
+  tamed: boolean;
+  ownerId: string | null;
+}>;
+
+export type ApiaryState = Readonly<{
+  schema: 1;
+  attached: boolean;
+  queen: ApiaryBee;
+  workers: readonly ApiaryBee[];
+  nectar: number;
+  honey: number;
+  royalJelly: number;
+  honeyClock: number;
+  jellyClock: number;
+  workerGrowthClock: number;
+  nextWorkerSerial: number;
+}>;
+
+export type ApiaryPhase = "day" | "dusk" | "night";
+export type ApiaryEvent =
+  | "workers-departed"
+  | "workers-returned"
+  | "worker-created"
+  | "worker-disconnected"
+  | "worker-died"
+  | "honey-ready"
+  | "royal-jelly-ready"
+  | "detached"
+  | "queen-dead";
+
+export type ApiaryStepInput = Readonly<{
+  phase: ApiaryPhase;
+  nearbyFlowers: number;
+  attached: boolean;
+  deltaSeconds: number;
+  /** Monotonic world-day index. Used only for bounded missing-worker recovery. */
+  worldDay?: number;
+  /** False models a worker that cannot path home or whose home chunk is absent. */
+  workersCanReturn?: boolean;
+}>;
+
+export type DetachedApiary = Readonly<{
+  queen: ApiaryBee | null;
+  workers: readonly ApiaryBee[];
+  storedNectar: number;
+}>;
+
+export type BrokenApiary = Readonly<{
+  drops: readonly InventorySlot[];
+  released: DetachedApiary;
+}>;
+
+export type EmptyApiaryBlock = Readonly<{ schema: 1; attached: true; queen: null }>;
+
+export const createEmptyApiaryBlock = (): EmptyApiaryBlock => ({ schema: 1, attached: true, queen: null });
+
+/** Explicit Queen Cell insertion path for a freshly placed crafted apiary. */
+export function insertQueenCellIntoApiary(
+  apiary: EmptyApiaryBlock,
+  item: ItemCode,
+  queenId: string,
+  seed = 1,
+  worldDay = 0,
+) {
+  return apiary.attached && item === Item.QueenCell ? createApiary(queenId, [], seed, worldDay) : null;
+}
+
+/** A netted worker becomes the tangible crafting ingredient used for a Queen Cell. */
+export function captureWorkerBeeItem(worker: ApiaryBee): InventorySlot | null {
+  if (!worker.alive || worker.role !== "worker") return null;
+  return { item: Item.WorkerBee, count: 1, metadata: { beeId: worker.id, geneticSeed: worker.geneticSeed } };
+}
+
+const bee = (id: string, role: BeeRole, geneticSeed: number, day = 0): ApiaryBee => ({
+  id: id.slice(0, 80),
+  role,
+  alive: true,
+  home: true,
+  outbound: false,
+  carryingNectar: 0,
+  lastReturnDay: day,
+  disconnectedDay: null,
+  geneticSeed: geneticSeed >>> 0,
+  angry: false,
+  tamed: false,
+  ownerId: null,
+});
+
+/** A valid crafted apiary starts with one queen and any number of workers up to eight. */
+export function createApiary(queenId: string, workerIds: readonly string[] = [], seed = 1, worldDay = 0): ApiaryState {
+  if (workerIds.length > APIARY_WORKER_CAP) throw new Error(`An apiary holds at most ${APIARY_WORKER_CAP} workers.`);
+  if (new Set([queenId, ...workerIds]).size !== workerIds.length + 1) throw new Error("Apiary bee ids must be unique.");
+  return {
+    schema: 1,
+    attached: true,
+    queen: bee(queenId, "queen", seed ^ 0x9e3779b9, worldDay),
+    workers: workerIds.map((id, index) => bee(id, "worker", seed + index * 977, worldDay)),
+    nectar: 0,
+    honey: 0,
+    royalJelly: 0,
+    honeyClock: 0,
+    jellyClock: 0,
+    workerGrowthClock: 0,
+    nextWorkerSerial: workerIds.length,
+  };
+}
+
+/** Convenience for authored hives and tests that intentionally begin at full strength. */
+export function createStockedApiary(queenId: string, workerIds: readonly string[], seed = 1): ApiaryState {
+  if (workerIds.length !== APIARY_WORKER_CAP) throw new Error(`A stocked apiary requires exactly ${APIARY_WORKER_CAP} workers.`);
+  return createApiary(queenId, workerIds, seed);
+}
+
+const hashUnit = (seed: string | number, salt: string | number) => {
+  const text = `${seed}:${salt}`;
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) hash = Math.imul(hash ^ text.charCodeAt(index), 16777619);
+  hash ^= hash >>> 16;
+  return (hash >>> 0) / 4294967296;
+};
+
+/** Deterministic natural hive population, including genuinely queen-only hives. */
+export function createWildApiary(seed: string | number, worldDay = 0) {
+  const count = Math.floor(hashUnit(seed, "wild-apiary-workers") * (APIARY_WORKER_CAP + 1));
+  return createApiary(`wild-queen-${seed}`, Array.from({ length: count }, (_, index) => `wild-worker-${seed}-${index}`),
+    Math.floor(hashUnit(seed, "wild-apiary-genetics") * 0xffffffff), worldDay);
+}
+
+export function livingApiaryWorkers(state: ApiaryState) {
+  return state.workers.filter((worker) => worker.alive);
+}
+
+export function connectedApiaryWorkers(state: ApiaryState) {
+  return livingApiaryWorkers(state).filter((worker) => worker.disconnectedDay === null);
+}
+
+export function apiaryCanProduce(state: ApiaryState) {
+  return state.attached && state.queen.alive;
+}
+
+export function apiaryContainerStatus(state: ApiaryState) {
+  const workers = livingApiaryWorkers(state);
+  return {
+    kind: APIARY_CONTAINER_KIND,
+    queen: state.queen.alive,
+    workers: workers.length,
+    connectedWorkers: workers.filter((worker) => worker.disconnectedDay === null).length,
+    outboundWorkers: workers.filter((worker) => worker.outbound).length,
+    workerCapacity: APIARY_WORKER_CAP,
+    nectar: state.nectar,
+    nectarCapacity: APIARY_NECTAR_CAP,
+    honey: state.honey,
+    honeyCapacity: APIARY_HONEY_CAP,
+    jelly: state.royalJelly,
+    jellyCapacity: APIARY_JELLY_CAP,
+    honeyProgress: Math.min(1, state.honeyClock / APIARY_HONEY_CYCLE_SECONDS),
+    jellyProgress: Math.min(1, state.jellyClock / APIARY_JELLY_CYCLE_SECONDS),
+    workerProgress: Math.min(1, state.workerGrowthClock / APIARY_WORKER_GROWTH_SECONDS),
+    attached: state.attached,
+  } as const;
+}
+
+export function killApiaryBee(state: ApiaryState, beeId: string): { state: ApiaryState; events: ApiaryEvent[] } {
+  if (state.queen.id === beeId && state.queen.alive) {
+    return { state: { ...state, queen: { ...state.queen, alive: false, home: false, outbound: false } }, events: ["queen-dead"] };
+  }
+  return {
+    state: { ...state, workers: state.workers.map((worker) => worker.id === beeId ? { ...worker, alive: false, home: false, outbound: false } : worker) },
+    events: [],
+  };
+}
+
+export function detachApiary(state: ApiaryState, angry = false): { state: ApiaryState; released: DetachedApiary; events: ApiaryEvent[] } {
+  const release = (value: ApiaryBee) => ({ ...value, home: false, outbound: false, angry });
+  const released = {
+    queen: state.queen.alive ? release(state.queen) : null,
+    workers: livingApiaryWorkers(state).map(release),
+    storedNectar: state.nectar,
+  };
+  return {
+    state: {
+      ...state,
+      attached: false,
+      queen: { ...state.queen, home: false, outbound: false },
+      workers: state.workers.map((worker) => ({ ...worker, home: false, outbound: false })),
+    },
+    released,
+    events: ["detached"],
+  };
+}
+
+/** Breaking a hive preserves its products and releases every survivor in an angry state. */
+export function breakApiary(state: ApiaryState): BrokenApiary {
+  const detached = detachApiary(state, true);
+  const drops: InventorySlot[] = [];
+  if (state.honey > 0) drops.push({ item: Item.HoneyJar, count: state.honey });
+  if (state.royalJelly > 0) drops.push({ item: Item.RoyalJelly, count: state.royalJelly });
+  return { drops, released: detached.released };
+}
+
+const addWorker = (state: ApiaryState, worldDay: number): ApiaryState => {
+  const serial = state.nextWorkerSerial;
+  const worker = bee(`${state.queen.id}-worker-${serial}`, "worker", state.queen.geneticSeed + serial * 977, worldDay);
+  const vacant = state.workers.findIndex((candidate) => !candidate.alive);
+  const workers = vacant >= 0
+    ? state.workers.map((candidate, index) => index === vacant ? worker : candidate)
+    : [...state.workers, worker];
+  return { ...state, workers, nextWorkerSerial: serial + 1 };
+};
+
+/**
+ * Bounded O(8) apiary simulation. Queens bootstrap a hive, outbound workers
+ * return nectar at dusk, and missing workers disconnect after one day then die
+ * after two additional days without a successful return.
+ */
+export function stepApiary(state: ApiaryState, input: ApiaryStepInput): { state: ApiaryState; events: ApiaryEvent[] } {
+  if (!input.attached && state.attached) {
+    const detached = detachApiary(state);
+    return { state: detached.state, events: detached.events };
+  }
+  const dt = Math.max(0, Math.min(3600, input.deltaSeconds));
+  const worldDay = Math.max(0, Math.floor(input.worldDay ?? 0));
+  const canReturn = input.workersCanReturn !== false;
+  const events: ApiaryEvent[] = [];
+  let returnedNectar = 0;
+  let departed = false;
+  let returned = false;
+  const workers = state.workers.map((worker): ApiaryBee => {
+    if (!worker.alive) return worker;
+    if (input.phase === "day" && worker.disconnectedDay === null) {
+      departed ||= worker.home;
+      const flowerShare = Math.min(1, Math.max(0, input.nearbyFlowers) / Math.max(1, connectedApiaryWorkers(state).length));
+      return { ...worker, home: false, outbound: true, carryingNectar: Math.min(4, worker.carryingNectar + dt / 45 * flowerShare) };
+    }
+    if (input.phase !== "day" && worker.outbound && canReturn) {
+      returned = true;
+      returnedNectar += worker.carryingNectar;
+      return { ...worker, home: true, outbound: false, carryingNectar: 0, lastReturnDay: worldDay, disconnectedDay: null };
+    }
+    if (input.phase !== "day" && worker.outbound && !canReturn) {
+      const disconnectedDay = worker.disconnectedDay ?? (worldDay - worker.lastReturnDay >= 1 ? worldDay : null);
+      if (worker.disconnectedDay === null && disconnectedDay !== null) events.push("worker-disconnected");
+      if (disconnectedDay !== null && worldDay - disconnectedDay >= 2) {
+        events.push("worker-died");
+        return { ...worker, alive: false, home: false, outbound: false, disconnectedDay };
+      }
+      return { ...worker, home: false, outbound: true, disconnectedDay };
+    }
+    return worker;
+  });
+  if (departed) events.push("workers-departed");
+  if (returned) events.push("workers-returned");
+
+  let next: ApiaryState = {
+    ...state,
+    attached: input.attached,
+    workers,
+    // A queen alone gathers a trickle; worker nectar is delivered only on return.
+    nectar: Math.min(APIARY_NECTAR_CAP, state.nectar + returnedNectar + (state.queen.alive ? dt / 90 : 0)),
+  };
+  if (!apiaryCanProduce(next)) return { state: next, events };
+
+  let workerGrowthClock = next.workerGrowthClock + dt;
+  let living = livingApiaryWorkers(next).length;
+  const growthCycles = Math.min(APIARY_WORKER_CAP, Math.floor(workerGrowthClock / APIARY_WORKER_GROWTH_SECONDS));
+  workerGrowthClock -= growthCycles * APIARY_WORKER_GROWTH_SECONDS;
+  for (let cycle = 0; cycle < growthCycles && living < APIARY_WORKER_CAP; cycle += 1) {
+    next = addWorker(next, worldDay);
+    living += 1;
+    events.push("worker-created");
+  }
+
+  // Queen-only production is 1/4 speed; each connected worker adds 3/4 speed.
+  const activeWorkers = connectedApiaryWorkers(next).filter((worker) => worker.home).length;
+  const productionScale = 0.25 + activeWorkers * 0.75;
+  let honeyClock = next.honeyClock + dt * productionScale;
+  let jellyClock = next.jellyClock + dt * productionScale;
+  let nectar = next.nectar;
+  let honey = next.honey;
+  let royalJelly = next.royalJelly;
+  const honeyCycles = Math.min(64, Math.floor(honeyClock / APIARY_HONEY_CYCLE_SECONDS));
+  honeyClock -= honeyCycles * APIARY_HONEY_CYCLE_SECONDS;
+  for (let cycle = 0; cycle < honeyCycles && honey < APIARY_HONEY_CAP && nectar >= 4; cycle += 1) {
+    nectar -= 4;
+    honey += 1;
+    events.push("honey-ready");
+  }
+  const jellyCycles = Math.min(64, Math.floor(jellyClock / APIARY_JELLY_CYCLE_SECONDS));
+  jellyClock -= jellyCycles * APIARY_JELLY_CYCLE_SECONDS;
+  for (let cycle = 0; cycle < jellyCycles && royalJelly < APIARY_JELLY_CAP && nectar >= 10 && living >= 6; cycle += 1) {
+    nectar -= 10;
+    royalJelly += 1;
+    events.push("royal-jelly-ready");
+  }
+  return { state: { ...next, nectar, honey, royalJelly, honeyClock, jellyClock, workerGrowthClock }, events };
+}
+
+export function harvestApiary(state: ApiaryState): { state: ApiaryState; drops: InventorySlot[] } {
+  const drops: InventorySlot[] = [];
+  if (state.honey > 0) drops.push({ item: Item.HoneyJar, count: state.honey });
+  if (state.royalJelly > 0) drops.push({ item: Item.RoyalJelly, count: state.royalJelly });
+  return { state: { ...state, honey: 0, royalJelly: 0 }, drops };
+}
+
+export function canCatchHiveQueen(health: number, maxHealth: number, tool: "net" | "capture-orb") {
+  return (tool === "net" || tool === "capture-orb") && maxHealth > 0 && health < maxHealth / 2;
+}
+
+export function tameHiveQueen(queen: ApiaryBee, item: ItemCode, ownerId: string): ApiaryBee {
+  if (!queen.alive || queen.role !== "queen" || item !== Item.RoyalJelly) return queen;
+  return { ...queen, tamed: true, ownerId, angry: false };
+}
+
+export function beeStingProfile(bee: Pick<ApiaryBee, "role" | "tamed" | "ownerId">, ownerAttacked = false) {
+  const defendsOwner = bee.tamed && bee.ownerId !== null && ownerAttacked;
+  return { damage: bee.role === "queen" ? 3 : 1, cooldownSeconds: bee.role === "queen" ? 0.9 : 1.4, defendsOwner } as const;
+}
+
+export type WorkerForagingPlan = Readonly<{
+  mode: "seek-flower" | "land" | "return" | "idle";
+  target: Readonly<{ x: number; y: number; z: number }>;
+  collectNectar: boolean;
+}>;
+
+/** Pure worker movement decision used by both wild bees and apiary residents. */
+export function planWorkerForaging(input: Readonly<{
+  phase: ApiaryPhase;
+  position: Readonly<{ x: number; y: number; z: number }>;
+  hive: Readonly<{ x: number; y: number; z: number }>;
+  flowers: readonly Readonly<{ x: number; y: number; z: number }>[];
+  carryingNectar: number;
+}>): WorkerForagingPlan {
+  if (input.phase !== "day" || input.carryingNectar >= 4 || input.flowers.length === 0) {
+    return { mode: input.phase === "day" && input.flowers.length === 0 ? "idle" : "return", target: input.hive, collectNectar: false };
+  }
+  const flower = [...input.flowers].sort((a, b) =>
+    Math.hypot(a.x - input.position.x, a.y - input.position.y, a.z - input.position.z)
+      - Math.hypot(b.x - input.position.x, b.y - input.position.y, b.z - input.position.z)
+      || a.x - b.x || a.z - b.z)[0];
+  const distance = Math.hypot(flower.x - input.position.x, flower.y - input.position.y, flower.z - input.position.z);
+  return { mode: distance <= 0.22 ? "land" : "seek-flower", target: flower, collectNectar: distance <= 0.22 };
+}

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { BLOCKS, BlockId, type ItemCode, type Weather } from "./data";
+import { BUTTERFLY_ANTENNA_CONTRACT } from "./model-specs";
 import { BUTTERFLY_ORDER, MOB_DEFS, type ButterflyKind } from "./mobs";
 import { BiomeId, type ChunkWorld } from "./world";
 
@@ -118,20 +119,59 @@ export function createButterflyVisual(kind: ButterflyKind, id: string | number =
   rightWing.position.x = 0.035;
   for (const [pivot, side] of [[leftWing, -1], [rightWing, 1]] as const) {
     const wing = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.018, 0.14), wingMaterial.clone());
+    wing.name = `${kind}-${side < 0 ? "left" : "right"}-wing-panel`;
     wing.position.x = side * 0.1;
     wing.userData.butterflyId = id;
     pivot.add(wing);
   }
   wingMaterial.dispose();
   group.add(leftWing, rightWing);
+  const antennaGeometry = new THREE.BoxGeometry(
+    BUTTERFLY_ANTENNA_CONTRACT.thickness,
+    BUTTERFLY_ANTENNA_CONTRACT.thickness,
+    BUTTERFLY_ANTENNA_CONTRACT.length,
+  );
+  const tipSize = BUTTERFLY_ANTENNA_CONTRACT.thickness * BUTTERFLY_ANTENNA_CONTRACT.tipScale;
+  const antennaTipGeometry = new THREE.BoxGeometry(tipSize, tipSize, tipSize);
+  const antennaMaterial = new THREE.MeshBasicMaterial({ color: accentColor });
   for (const side of [-1, 1]) {
-    const antenna = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.012, 0.12), new THREE.MeshBasicMaterial({ color: accentColor }));
-    antenna.position.set(side * 0.02, 0.025, -0.125);
-    antenna.rotation.x = -0.38;
-    antenna.rotation.z = side * 0.18;
-    group.add(antenna);
+    attachButterflyAntenna(group, side, antennaGeometry, antennaTipGeometry, antennaMaterial, kind, id);
   }
   return { group, leftWing, rightWing };
+}
+
+function attachButterflyAntenna(
+  group: THREE.Group,
+  side: number,
+  shaftGeometry: THREE.BoxGeometry,
+  tipGeometry: THREE.BoxGeometry,
+  material: THREE.Material,
+  prefix: string,
+  id: string | number,
+) {
+  const sideName = side < 0 ? "left" : "right";
+  const root = new THREE.Group();
+  root.name = `${prefix}-${sideName}-antenna-root`;
+  root.position.set(
+    side * BUTTERFLY_ANTENNA_CONTRACT.rootLateral,
+    BUTTERFLY_ANTENNA_CONTRACT.rootCenter[1],
+    BUTTERFLY_ANTENNA_CONTRACT.rootCenter[2],
+  );
+  root.rotation.set(
+    BUTTERFLY_ANTENNA_CONTRACT.forwardTiltRadians,
+    -side * BUTTERFLY_ANTENNA_CONTRACT.lateralSplayRadians,
+    0,
+  );
+  const antenna = new THREE.Mesh(shaftGeometry, material);
+  antenna.name = `${prefix}-${sideName}-antenna`;
+  antenna.position.z = -BUTTERFLY_ANTENNA_CONTRACT.length / 2;
+  antenna.userData.butterflyId = id;
+  const tip = new THREE.Mesh(tipGeometry, material);
+  tip.name = `${prefix}-${sideName}-antenna-tip`;
+  tip.position.z = -BUTTERFLY_ANTENNA_CONTRACT.length;
+  tip.userData.butterflyId = id;
+  root.add(antenna, tip);
+  group.add(root);
 }
 
 export class ButterflySystem {
@@ -139,7 +179,16 @@ export class ButterflySystem {
   readonly entities: ButterflyEntity[] = [];
   private readonly bodyGeometry = new THREE.BoxGeometry(0.055, 0.055, 0.17);
   private readonly wingGeometry = new THREE.BoxGeometry(0.2, 0.018, 0.14);
-  private readonly antennaGeometry = new THREE.BoxGeometry(0.012, 0.012, 0.12);
+  private readonly antennaGeometry = new THREE.BoxGeometry(
+    BUTTERFLY_ANTENNA_CONTRACT.thickness,
+    BUTTERFLY_ANTENNA_CONTRACT.thickness,
+    BUTTERFLY_ANTENNA_CONTRACT.length,
+  );
+  private readonly antennaTipGeometry = new THREE.BoxGeometry(
+    BUTTERFLY_ANTENNA_CONTRACT.thickness * BUTTERFLY_ANTENNA_CONTRACT.tipScale,
+    BUTTERFLY_ANTENNA_CONTRACT.thickness * BUTTERFLY_ANTENNA_CONTRACT.tipScale,
+    BUTTERFLY_ANTENNA_CONTRACT.thickness * BUTTERFLY_ANTENNA_CONTRACT.tipScale,
+  );
   private readonly materials = new Map<ButterflyKind, { body: THREE.MeshLambertMaterial; wing: THREE.MeshLambertMaterial; accent: THREE.MeshBasicMaterial }>();
   private readonly scratch = new THREE.Vector3();
   private readonly desired = new THREE.Vector3();
@@ -178,6 +227,8 @@ export class ButterflySystem {
     rightWing.position.x = 0.035;
     const left = new THREE.Mesh(this.wingGeometry, material.wing);
     const right = new THREE.Mesh(this.wingGeometry, material.wing);
+    left.name = `${kind}-left-wing-panel`;
+    right.name = `${kind}-right-wing-panel`;
     left.position.x = -0.1;
     right.position.x = 0.1;
     left.userData.butterflyId = right.userData.butterflyId = this.nextId;
@@ -186,11 +237,7 @@ export class ButterflySystem {
     group.add(leftWing, rightWing);
 
     for (const side of [-1, 1]) {
-      const antenna = new THREE.Mesh(this.antennaGeometry, material.accent);
-      antenna.position.set(side * 0.02, 0.025, -0.125);
-      antenna.rotation.x = -0.38;
-      antenna.rotation.z = side * 0.18;
-      group.add(antenna);
+      attachButterflyAntenna(group, side, this.antennaGeometry, this.antennaTipGeometry, material.accent, kind, this.nextId);
     }
     const entity: ButterflyEntity = {
       id: this.nextId++, kind, group, leftWing, rightWing,
@@ -365,6 +412,7 @@ export class ButterflySystem {
     this.bodyGeometry.dispose();
     this.wingGeometry.dispose();
     this.antennaGeometry.dispose();
+    this.antennaTipGeometry.dispose();
     for (const material of this.materials.values()) {
       material.body.dispose();
       material.wing.dispose();

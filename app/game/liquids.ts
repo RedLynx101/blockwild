@@ -323,6 +323,7 @@ export type SwimEnvironment = Readonly<{
 export type SwimInput = Readonly<{
   jumpHeld: boolean;
   movingForward: boolean;
+  crouching?: boolean;
 }>;
 
 export type SwimStep = Readonly<{
@@ -342,6 +343,8 @@ export type SwimRules = Readonly<{
   passiveSinkAcceleration: number;
   /** Prevents passive sinking from becoming a damaging free-fall. */
   maximumSinkSpeed: number;
+  crouchSinkAcceleration: number;
+  crouchMaximumSinkSpeed: number;
   swimAcceleration: number;
   waterDrag: number;
   shoreExitVelocity: number;
@@ -357,6 +360,8 @@ export const DEFAULT_SWIM_RULES: SwimRules = Object.freeze({
   buoyancyAcceleration: 3.2,
   passiveSinkAcceleration: 4.25,
   maximumSinkSpeed: 2.3,
+  crouchSinkAcceleration: 7.5,
+  crouchMaximumSinkSpeed: 4.2,
   swimAcceleration: 12.5,
   waterDrag: 2.8,
   shoreExitVelocity: 8.15,
@@ -401,8 +406,9 @@ export function stepSwimming(
     // surface and Space produces an intentional swim stroke.
     velocityY += rules.buoyancyAcceleration * Math.max(0, submersion - 0.84) * dt;
     velocityY -= rules.passiveSinkAcceleration * dt;
+    if (input.crouching && !input.jumpHeld) velocityY -= rules.crouchSinkAcceleration * dt;
     if (input.jumpHeld) velocityY += rules.swimAcceleration * dt;
-    velocityY = Math.max(-rules.maximumSinkSpeed, velocityY);
+    velocityY = Math.max(-(input.crouching ? rules.crouchMaximumSinkSpeed : rules.maximumSinkSpeed), velocityY);
 
     const ledgeHeight = environment.shoreLedgeHeight ?? Number.POSITIVE_INFINITY;
     const surfaceGap = environment.surfaceGap ?? Number.POSITIVE_INFINITY;

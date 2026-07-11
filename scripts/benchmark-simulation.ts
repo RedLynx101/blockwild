@@ -1,4 +1,7 @@
 import { LiquidSimulator, type LiquidCell, type LiquidPosition, type LiquidWorldAdapter } from "../app/game/liquids.ts";
+import { createStockedApiary, stepApiary } from "../app/game/apiary.ts";
+import { planFullTree, planSocialGroupMotion } from "../app/game/ecology.ts";
+import { BlockId } from "../app/game/data.ts";
 import { benchmarkTask, chunkOffsetsByDistance } from "../app/game/performance.ts";
 import { planStructure, type StructureKind } from "../app/game/structures.ts";
 import { createWeatherState, planCloudField, stepWeather } from "../app/game/weather.ts";
@@ -39,7 +42,7 @@ const liquid = benchmarkTask("four-water-source-settle", () => {
   return { processedTicks, changes, liquidCells: world.liquids.size, remainingQueue: simulator.pendingCount };
 });
 
-const kinds: StructureKind[] = ["desert-temple", "forest-temple", "sunbun-grove", "meadow-butterfly-sanctuary"];
+const kinds: StructureKind[] = ["desert-temple", "forest-temple", "sunbun-grove", "meadow-butterfly-sanctuary", "abandoned-apiary", "waykeeper-healing-grotto"];
 const structures = benchmarkTask("one-thousand-structure-plans", () => {
   let placements = 0;
   let markers = 0;
@@ -67,8 +70,42 @@ const weather = benchmarkTask("weather-and-cloud-plans", () => {
 
 const chunkOrdering = benchmarkTask("radius-sixteen-chunk-order", () => chunkOffsetsByDistance(16).length);
 
+const apiaries = benchmarkTask("sixty-four-apiary-twelve-minute-cycles", () => {
+  let honey = 0;
+  let jelly = 0;
+  let workers = 0;
+  for (let hive = 0; hive < 64; hive += 1) {
+    let state = createStockedApiary(`queen-${hive}`, Array.from({ length: 8 }, (_, worker) => `worker-${hive}-${worker}`), hive + 1);
+    for (let second = 0; second < 12 * 60; second += 1) {
+      const cycleSecond = second % 60;
+      state = stepApiary(state, {
+        phase: cycleSecond < 48 ? "day" : "dusk",
+        nearbyFlowers: 12,
+        attached: true,
+        deltaSeconds: 1,
+        worldDay: 4 + Math.floor(second / 60),
+      }).state;
+    }
+    honey += state.honey;
+    jelly += state.royalJelly;
+    workers += state.workers.filter((worker) => worker.alive).length;
+  }
+  return { hives: 64, workers, honey, jelly };
+});
+
+const socialEcology = benchmarkTask("herd-shoal-and-tree-plans", () => {
+  const members = Array.from({ length: 16 }, (_, index) => ({ id: String(index), x: index % 4 * 1.4, z: Math.floor(index / 4) * 1.4, vx: 0.4, vz: -0.2 }));
+  let motions = 0;
+  let treeBlocks = 0;
+  for (let index = 0; index < 1_000; index += 1) {
+    motions += planSocialGroupMotion(members, index % 2 ? "herd" : "shoal").length;
+    treeBlocks += planFullTree(`bench-tree:${index}`, { x: index, y: 40, z: -index }, index % 11 === 0 ? "ancient" : index % 3 === 0 ? "windswept" : "rounded", BlockId.WildwoodLog, BlockId.WildwoodLeaves).length;
+  }
+  return { motions, treeBlocks };
+});
+
 process.stdout.write(`${JSON.stringify({
   generatedAt: new Date().toISOString(),
   note: "Wall-clock values are machine-specific; compare runs from the same browser/hardware.",
-  benchmarks: [liquid, structures, weather, chunkOrdering],
+  benchmarks: [liquid, structures, weather, chunkOrdering, apiaries, socialEcology],
 }, null, 2)}\n`);

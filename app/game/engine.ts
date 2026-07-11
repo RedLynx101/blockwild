@@ -30,6 +30,7 @@ import {
   SEA_LEVEL,
   BiomeId,
   ChunkWorld,
+  createAtlasBlockGeometry,
   type ChunkEditSave,
 } from "./world";
 import { BUTTERFLY_ORDER, MOB_DEFS, MOB_ORDER, type ButterflyKind, type CoreMobKind, type MobDefinition, type MobKind } from "./mobs";
@@ -41,6 +42,7 @@ import {
   createStableSteering,
   chooseLocalWalkableGround,
   fishKindsForHabitat,
+  naturalGroupSizeForMob,
   passiveMobKindForBiome,
   shouldKeepCreatureLoaded,
   updateBirdBehavior,
@@ -155,6 +157,8 @@ import {
 import { type ChestMarker, type SpawnMarker } from "./structures";
 import {
   BlockPlayerModel,
+  playerEyeHeightForVariant,
+  playerVariantHeightScale,
   updateThirdPersonCamera,
   type PlayerAction,
   type PlayerLocomotion,
@@ -165,6 +169,7 @@ import {
   MultiplayerSession,
   createPeerIdentity,
   detectMultiplayerSupport,
+  isMultiplayerOperationCancellation,
   type BlockAction,
   type MultiplayerEvent,
   type MultiplayerSessionState,
@@ -195,12 +200,15 @@ import {
   canHitchLead,
   canTill,
   constrainLead,
+  discoverRootedTree,
   farmlandState,
   FENCE_BLOCKS,
   fenceGateForYaw,
   growthDelaySeconds,
   harvestPlant,
   nextPlantStage,
+  ORCHARD_REGROWTH_BASE_MS,
+  ORCHARD_REGROWTH_JITTER_MS,
   planAppleFruitRegrowth,
   planAppleTree,
   plantProfileForBlock,
@@ -218,11 +226,75 @@ import {
   torchAnimationSample,
   type LeafParticle,
 } from "./world-effects";
+import {
+  APIARY_HONEY_CAP,
+  APIARY_HONEY_CYCLE_SECONDS,
+  APIARY_JELLY_CAP,
+  APIARY_NECTAR_CAP,
+  APIARY_WORKER_CAP,
+  apiaryContainerStatus,
+  beeStingProfile,
+  breakApiary,
+  canCatchHiveQueen,
+  captureWorkerBeeItem,
+  createApiary,
+  createEmptyApiaryBlock,
+  createWildApiary,
+  insertQueenCellIntoApiary,
+  livingApiaryWorkers,
+  planWorkerForaging,
+  stepApiary,
+  tameHiveQueen,
+  type ApiaryBee,
+  type ApiaryPhase,
+  type ApiaryState,
+  type EmptyApiaryBlock,
+} from "./apiary";
+import {
+  CAPTURE_ORB_RACK_SIZE,
+  CREATURE_HEAL_INTERVAL_SECONDS,
+  CREATURE_HEALER_GEL_CAP,
+  captureIntoOrb,
+  captureOrbFromInventorySlot,
+  captureOrbInventorySlot,
+  createCreatureHealer,
+  createEmptyCaptureOrb,
+  createOrbRack,
+  decodeCaptureOrb,
+  encodeCaptureOrb,
+  healingStationContainerStatus,
+  migrateCaptureOrbInventorySlot,
+  orbRackContainerStatus,
+  releaseCaptureOrb,
+  setHealerOrb,
+  setRackOrb,
+  stepCreatureHealer,
+  type CaptureOrb,
+  type CreatureHealerState,
+  type OrbRackState,
+} from "./capture-orbs";
+import {
+  canRideReedstrider,
+  createPeelopSheddingState,
+  createReedstriderBond,
+  feedReedstrider,
+  peelopDefenseAction,
+  planSocialGroupMotion,
+  puddlehopperJumpPlan,
+  reedstriderRideSpeed,
+  saddleReedstrider,
+  stepPeelopShedding,
+  type PeelopSheddingState,
+  type ReedstriderBond,
+  type SocialGroupMode,
+  type SocialGroupMotion,
+} from "./ecology";
 
 export { BLOCKS, CREATIVE_BLOCKS, ITEMS, Item, RECIPES, BlockId, BIOME_NAMES, MOB_DEFS, MOB_ORDER, WorldStorage, DEFAULT_WORLD_OPTIONS, type WorldOptions, type WorldMetadata, type GameMode, type InventorySlot, type ItemCode, type Recipe, type EquipmentSlot, type MobKind, type SleepTarget, type PlayerVariant };
 
 export const SAVE_KEY = "blockwild-world-v2";
 export const SETTINGS_KEY = "blockwild-settings-v2";
+export const CLOVERBACK_MILK_COOLDOWN_SECONDS = 90;
 const LEGACY_GENERATOR_MIN_Y = -32;
 
 export type GameSettings = {
@@ -247,6 +319,32 @@ export type FurnaceState = {
 };
 
 export type ChestState = Array<InventorySlot | null>;
+export type ApiaryBlockState = ApiaryState | EmptyApiaryBlock;
+export type ApiaryHudState = {
+  queen: ApiaryBee | null;
+  queenPresent: boolean;
+  queenName: string;
+  workers: readonly ApiaryBee[];
+  workerCount: number;
+  maxWorkers: number;
+  nectar: number;
+  nectarStatus: string;
+  honey: number;
+  honeyMax: number;
+  royalJelly: number;
+  royalJellyMax: number;
+  productionProgress: number;
+  honeyClock: number;
+  honeyCycleSeconds: number;
+  slots: Array<InventorySlot | null>;
+};
+export type OrbRackHudState = { slots: Array<InventorySlot | null> };
+export type HealingStationHudState = OrbRackHudState & {
+  gelUnits: number;
+  healClock: number;
+  healIntervalSeconds: number;
+  healingProgress: number[];
+};
 export type BestiaryProgress = Record<MobKind, {
   seen: boolean;
   kills: number;
@@ -272,6 +370,9 @@ export type HudState = {
   activeFurnace: FurnaceState | null;
   activeChest: ChestState | null;
   activeChestTitle: string;
+  activeApiary?: ApiaryHudState | null;
+  activeOrbRack?: OrbRackHudState | null;
+  activeHealingStation?: HealingStationHudState | null;
   equipment: Record<EquipmentSlot, InventorySlot | null>;
   armor: number;
   bestiary: BestiaryProgress;
@@ -321,6 +422,12 @@ export type SavedCreature = {
   petState?: PeelopState;
   careState?: CreatureHusbandryState;
   shadeState?: ShadecrawlerState;
+  reedstriderBond?: ReedstriderBond;
+  courserBond?: ReedstriderBond;
+  apiaryBee?: ApiaryBee;
+  socialGroupId?: string;
+  peelopShedding?: PeelopSheddingState;
+  milkCooldown?: number;
 };
 
 export type WorldSave = {
@@ -348,6 +455,9 @@ export type WorldSave = {
   weather: Weather;
   furnaces: Record<string, FurnaceState>;
   chests: Record<string, ChestState>;
+  apiaries?: Record<string, ApiaryBlockState>;
+  orbRacks?: Record<string, OrbRackState>;
+  healingStations?: Record<string, CreatureHealerState>;
   drops?: Array<{ item: ItemCode; count: number; durability?: number; metadata?: Record<string, unknown>; x: number; y: number; z: number; age: number }>;
   options?: Partial<WorldOptions>;
   playerVariant?: PlayerVariant;
@@ -360,7 +470,7 @@ export type WorldSave = {
   savedAt: number;
 };
 
-export type OverlayKind = "inventory" | "crafting" | "furnace" | "chest" | "bestiary" | "multiplayer" | "sleep" | "pet";
+export type OverlayKind = "inventory" | "crafting" | "furnace" | "chest" | "apiary" | "orb-rack" | "healing-station" | "bestiary" | "multiplayer" | "sleep" | "pet";
 export type CameraMode = "first" | "third-rear" | "third-front";
 
 export type MultiplayerUiState = {
@@ -429,6 +539,13 @@ type MobEntity = {
   petState: PeelopState | null;
   careState: CreatureHusbandryState | null;
   shadeState: ShadecrawlerState | null;
+  reedstriderBond: ReedstriderBond | null;
+  courserBond: ReedstriderBond | null;
+  apiaryBee: ApiaryBee | null;
+  beeHiveKey: string | null;
+  socialGroupId: string | null;
+  peelopShedding: PeelopSheddingState | null;
+  milkCooldown: number;
   shadeSaddle: THREE.Object3D | null;
   visualBaseY: number;
   visualMinY: number;
@@ -436,6 +553,9 @@ type MobEntity = {
   poiMarkerId: string | null;
   enclosed: boolean;
   enclosureTimer: number;
+  sightCheckTimer: number;
+  awarenessTimer: number;
+  seesPlayer: boolean;
 };
 
 type SailboatEntity = {
@@ -461,6 +581,13 @@ type SpawnMobOptions = {
   petState?: PeelopState | null;
   careState?: CreatureHusbandryState | null;
   shadeState?: ShadecrawlerState | null;
+  reedstriderBond?: ReedstriderBond | null;
+  courserBond?: ReedstriderBond | null;
+  apiaryBee?: ApiaryBee | null;
+  beeHiveKey?: string | null;
+  socialGroupId?: string | null;
+  peelopShedding?: PeelopSheddingState | null;
+  milkCooldown?: number;
 };
 
 type MobFragment = {
@@ -493,7 +620,8 @@ type FallingTree = {
   root: THREE.Vector3;
   fallAxis: THREE.Vector3;
   progress: number;
-  logType: BlockId;
+  primaryLogType: BlockId;
+  logDrops: Array<[BlockId, number]>;
   logCount: number;
   leafCount: number;
   harvest: boolean;
@@ -505,7 +633,8 @@ type DropEntity = {
   count: number;
   durability?: number;
   metadata?: Record<string, unknown>;
-  mesh: THREE.Mesh;
+  mesh: THREE.Object3D;
+  ownsVisual?: boolean;
   velocity: THREE.Vector3;
   age: number;
   pickupDelay: number;
@@ -549,6 +678,10 @@ const TREE_PERCH_BLOCKS = new Set<BlockId>([
 ]);
 const CRAFT_POSITIONS_2 = [0, 1, 3, 4];
 const MAIN_THEN_HOTBAR = [...Array.from({ length: 27 }, (_, index) => index + 9), ...Array.from({ length: 9 }, (_, index) => index)];
+export const COMBAT_MUSIC_HOLD_SECONDS = 22.5;
+export const DEFAULT_UNARMED_DAMAGE = 1;
+export const HOSTILE_SPAWN_ATTEMPT_SCALE = 1.5;
+export const HOSTILE_CAP_SCALE = 0.7;
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
@@ -608,6 +741,64 @@ export function bedCounterpart(type: BlockId, x: number, y: number, z: number) {
     case BlockId.BedWestHead: return { x: x + 1, y, z, type: BlockId.BedWestFoot };
     default: return null;
   }
+}
+
+export function bedRespawnCandidates(type: BlockId, x: number, y: number, z: number) {
+  const partner = bedCounterpart(type, x, y, z);
+  const bedCells = [{ x, y, z }, ...(partner ? [{ x: partner.x, y: partner.y, z: partner.z }] : [])];
+  const seen = new Set<string>();
+  const candidates: Array<{ x: number; y: number; z: number }> = [];
+  for (const bed of bedCells) for (const [dx, dz] of [[0, 1], [1, 0], [0, -1], [-1, 0]] as const) {
+    const candidate = { x: bed.x + dx, y: bed.y, z: bed.z + dz };
+    const key = `${candidate.x},${candidate.y},${candidate.z}`;
+    if (bedCells.some((cell) => cell.x === candidate.x && cell.z === candidate.z) || seen.has(key)) continue;
+    seen.add(key);
+    candidates.push(candidate);
+  }
+  return candidates;
+}
+
+export function isInstantBreakBlock(type: BlockId) {
+  return ["cross", "bush", "fruit"].includes(BLOCKS[type]?.shape ?? "");
+}
+
+export function isOpenableBlock(type: BlockId) {
+  return [
+    BlockId.DoorClosedLower, BlockId.DoorClosedUpper, BlockId.DoorOpenLower, BlockId.DoorOpenUpper,
+    BlockId.DoorXClosedLower, BlockId.DoorXClosedUpper, BlockId.DoorXOpenLower, BlockId.DoorXOpenUpper,
+    BlockId.FenceGateNorthSouthClosed, BlockId.FenceGateNorthSouthOpen, BlockId.FenceGateEastWestClosed, BlockId.FenceGateEastWestOpen,
+    BlockId.CraftingTable, BlockId.Furnace, BlockId.Chest, BlockId.ButterflyExhibit,
+    BlockId.Apiary, BlockId.WildBeehive, BlockId.CaptureOrbRack, BlockId.CreatureHealer,
+    BlockId.BedNorthFoot, BlockId.BedNorthHead, BlockId.BedSouthFoot, BlockId.BedSouthHead,
+    BlockId.BedEastFoot, BlockId.BedEastHead, BlockId.BedWestFoot, BlockId.BedWestHead,
+  ].includes(type);
+}
+
+export function shouldBypassOpenableUse(crouching: boolean, heldPlacesBlock: boolean, target: BlockId) {
+  return crouching && heldPlacesBlock && isOpenableBlock(target);
+}
+
+export function mobPopulationCaps(totalCap: number) {
+  const total = Math.max(0, Math.floor(totalCap));
+  const passive = Math.ceil(total * 0.55);
+  return { total, passive, hostile: total === 0 ? 0 : Math.max(1, Math.floor((total - passive) * HOSTILE_CAP_SCALE)) };
+}
+
+export function positionInPlayerViewCone(yaw: number, dx: number, dz: number, halfAngle = Math.PI * 0.34) {
+  const distance = Math.hypot(dx, dz);
+  if (distance < 0.0001) return true;
+  const forwardX = -Math.sin(yaw);
+  const forwardZ = -Math.cos(yaw);
+  return (dx * forwardX + dz * forwardZ) / distance >= Math.cos(halfAngle);
+}
+
+export function nextPeelopBananaShedSeconds(id: number, cycle: number) {
+  const mixed = Math.imul((id | 0) ^ Math.imul(cycle | 0, 0x45d9f3b), 0x27d4eb2d) >>> 0;
+  return 135 + (mixed % 76);
+}
+
+export function combatSceneForEncounter(encounter: number): "combatA" | "combatB" {
+  return Math.abs(Math.floor(encounter)) % 2 === 0 ? "combatA" : "combatB";
 }
 
 export function nextSleepTransition(worldTime: number, day: number, target: SleepTarget) {
@@ -679,7 +870,20 @@ const STRUCTURE_LOOT_ITEMS: Readonly<Record<string, ItemCode>> = Object.freeze({
   "blue-flower": BlockId.BlueFlower,
   "butterfly-net": Item.ButterflyNet,
   "sunward-compass": Item.SunwardCompass,
+  "wild-honeycomb": Item.Honeycomb,
+  beeswax: Item.Beeswax,
+  "wildflower-honey": Item.HoneyJar,
+  "royal-jelly": Item.RoyalJelly,
+  "queen-cell": Item.QueenCell,
+  "cloudglass-reliquary": Item.CloudglassRelic,
+  "waykeeper-capture-orb": Item.CaptureOrb,
+  "cave-gel": Item.CaveGel,
+  moonberry: Item.Berry,
 });
+
+export function resolveStructureLootItem(itemKey: string): ItemCode | null {
+  return STRUCTURE_LOOT_ITEMS[itemKey] ?? null;
+}
 
 export function readSavedWorld(): WorldSave | null {
   if (typeof window === "undefined") return null;
@@ -702,7 +906,7 @@ export function migrateSavedWorld(value: unknown): WorldSave | null {
   const parsed = value as WorldSave;
   if (parsed.version !== 2 || typeof parsed.seed !== "string") return null;
   if (parsed.generatorVersion === GENERATOR_VERSION) return parsed;
-  if (parsed.generatorVersion === 3 || parsed.generatorVersion === 4) return { ...parsed, generatorVersion: GENERATOR_VERSION };
+  if (parsed.generatorVersion === 3 || parsed.generatorVersion === 4 || parsed.generatorVersion === 5) return { ...parsed, generatorVersion: GENERATOR_VERSION };
   if (parsed.generatorVersion !== 2) return null;
   const indexOffset = (LEGACY_GENERATOR_MIN_Y - MIN_Y) * 16 * 16;
   const edits: ChunkEditSave = {};
@@ -722,8 +926,151 @@ export function restoreChestStorage(saved: Record<string, ChestState> = {}) {
       : key.startsWith("boat:")
         ? 18
         : key.includes("|") ? 54 : 27;
-    return [key, Array.from({ length: size }, (_, index) => cloneSlot(value[index] ?? null))] as const;
+    return [key, Array.from({ length: size }, (_, index) => normalizeCaptureOrbInventorySlot(value[index] ?? null))] as const;
   }));
+}
+
+export function normalizeCaptureOrbInventorySlot(slot: InventorySlot | null | undefined) {
+  const copy = cloneSlot(slot ?? null);
+  return copy ? migrateCaptureOrbInventorySlot(copy) : null;
+}
+
+let looseCaptureOrbSerial = 0;
+
+export function captureOrbUnitFromInventorySlot(slot: InventorySlot | null | undefined) {
+  if (!slot || (slot.item !== Item.CaptureOrb && slot.item !== Item.LegacyCaptureOrb) || slot.count <= 0) return null;
+  if (slot.metadata?.captureOrb || slot.metadata?.capturedCreature) return slot.count === 1 ? captureOrbFromInventorySlot(slot) : null;
+  // Plain crafted orbs do not carry identity metadata until first use. Mint it
+  // at that boundary so two orbs split from the same stack never share an id.
+  looseCaptureOrbSerial += 1;
+  return createEmptyCaptureOrb(`orb-loose-${Date.now().toString(36)}-${looseCaptureOrbSerial.toString(36)}-${slot.item}-${slot.count}`);
+}
+
+export function apiaryPhaseForWorldTime(worldTime: number): ApiaryPhase {
+  const time = ((Number(worldTime) || 0) % 1 + 1) % 1;
+  if (time >= 0.235 && time < 0.69) return "day";
+  if (time >= 0.69 && time < 0.805) return "dusk";
+  return "night";
+}
+
+const HERD_MOB_KINDS = new Set<MobKind>(["ridgeback", "woolhorn", "sunstep-grazer", "wild-horse", "meadow-cow", "mistmane"]);
+
+export function socialGroupModeForMob(kind: MobKind): SocialGroupMode | null {
+  if (HERD_MOB_KINDS.has(kind)) return "herd";
+  return MOB_DEFS[kind]?.family === "fish" ? "shoal" : null;
+}
+
+export function feedCourserBond(state: ReedstriderBond, ownerId: string, item: ItemCode): ReedstriderBond {
+  if (item !== Item.Apple && item !== Item.Wheat) return state;
+  const trust = Math.min(8, state.trust + (item === Item.Apple ? 2 : 1));
+  return { ...state, trust, tamed: state.tamed || trust >= 6, ownerId: state.ownerId ?? (trust >= 6 ? ownerId : null) };
+}
+
+export function isStockedApiary(state: ApiaryBlockState): state is ApiaryState {
+  return state.queen !== null;
+}
+
+function cloneApiaryBlockState(value: ApiaryBlockState): ApiaryBlockState {
+  if (!value || value.schema !== 1 || value.queen === null) return createEmptyApiaryBlock();
+  const clone = JSON.parse(JSON.stringify(value)) as ApiaryState;
+  return {
+    ...clone,
+    workers: Array.isArray(clone.workers) ? clone.workers.slice(0, APIARY_WORKER_CAP) : [],
+    nectar: clamp(Number(clone.nectar) || 0, 0, APIARY_NECTAR_CAP),
+    honey: clamp(Number(clone.honey) || 0, 0, APIARY_HONEY_CAP),
+    royalJelly: clamp(Number(clone.royalJelly) || 0, 0, APIARY_JELLY_CAP),
+    honeyClock: Math.max(0, Number(clone.honeyClock) || 0),
+    jellyClock: Math.max(0, Number(clone.jellyClock) || 0),
+    workerGrowthClock: Math.max(0, Number(clone.workerGrowthClock) || 0),
+    nextWorkerSerial: Math.max(0, Math.floor(Number(clone.nextWorkerSerial) || 0)),
+  };
+}
+
+export function restoreApiaryStorage(saved: Record<string, ApiaryBlockState> = {}) {
+  return new Map(Object.entries(saved).map(([key, state]) => [key, cloneApiaryBlockState(state)] as const));
+}
+
+function cloneCaptureOrb(orb: CaptureOrb | null | undefined) {
+  return orb ? decodeCaptureOrb(encodeCaptureOrb(orb)) : null;
+}
+
+export function restoreOrbRackStorage(saved: Record<string, OrbRackState> = {}) {
+  return new Map(Object.entries(saved).map(([key, state]) => [key, createOrbRack((state?.slots ?? []).map(cloneCaptureOrb))] as const));
+}
+
+export function restoreHealingStationStorage(saved: Record<string, CreatureHealerState> = {}) {
+  return new Map(Object.entries(saved).map(([key, state]) => {
+    const base = createCreatureHealer((state?.slots ?? []).map(cloneCaptureOrb), state?.gelUnits ?? 0);
+    return [key, {
+      ...base,
+      healClock: clamp(Number(state?.healClock) || 0, 0, CREATURE_HEAL_INTERVAL_SECONDS),
+      healCycles: Math.max(0, Math.floor(Number(state?.healCycles) || 0)),
+    }] as const;
+  }));
+}
+
+export function apiaryHudState(state: ApiaryBlockState): ApiaryHudState {
+  if (!isStockedApiary(state)) return {
+    queen: null,
+    queenPresent: false,
+    queenName: "No Queen",
+    workers: [],
+    workerCount: 0,
+    maxWorkers: APIARY_WORKER_CAP,
+    nectar: 0,
+    nectarStatus: "Awaiting a queen",
+    honey: 0,
+    honeyMax: APIARY_HONEY_CAP,
+    royalJelly: 0,
+    royalJellyMax: APIARY_JELLY_CAP,
+    productionProgress: 0,
+    honeyClock: 0,
+    honeyCycleSeconds: APIARY_HONEY_CYCLE_SECONDS,
+    slots: [null, null, null],
+  };
+  const status = apiaryContainerStatus(state);
+  const workers = livingApiaryWorkers(state);
+  const away = workers.filter((worker) => !worker.home || worker.outbound).length;
+  return {
+    queen: state.queen.alive ? state.queen : null,
+    queenPresent: state.queen.alive,
+    queenName: state.queen.tamed ? "Bonded Hive Queen" : "Resident Hive Queen",
+    workers,
+    workerCount: workers.length,
+    maxWorkers: status.workerCapacity,
+    nectar: status.nectar,
+    nectarStatus: away > 0 ? `${away} foraging · nectar return pending`
+      : status.nectar > 0 ? "Workers home · nectar returned" : "Workers home · awaiting daylight",
+    honey: status.honey,
+    honeyMax: status.honeyCapacity,
+    royalJelly: status.jelly,
+    royalJellyMax: status.jellyCapacity,
+    productionProgress: status.honeyProgress,
+    honeyClock: state.honeyClock,
+    honeyCycleSeconds: APIARY_HONEY_CYCLE_SECONDS,
+    slots: [
+      null,
+      status.honey > 0 ? { item: Item.HoneyJar, count: status.honey } : null,
+      status.jelly > 0 ? { item: Item.RoyalJelly, count: status.jelly } : null,
+    ],
+  };
+}
+
+export function orbRackHudState(state: OrbRackState): OrbRackHudState {
+  const status = orbRackContainerStatus(state);
+  return { slots: status.slots.map((orb) => orb ? captureOrbInventorySlot(orb) : null) };
+}
+
+export function healingStationHudState(state: CreatureHealerState): HealingStationHudState {
+  const status = healingStationContainerStatus(state);
+  return {
+    slots: state.slots.map((orb) => orb ? captureOrbInventorySlot(orb) : null),
+    gelUnits: status.gelUnits,
+    healClock: state.healClock,
+    healIntervalSeconds: CREATURE_HEAL_INTERVAL_SECONDS,
+    healingProgress: state.slots.map((orb) => !orb?.creature || orb.creature.health >= orb.creature.maxHealth
+      ? 1 : clamp(state.healClock / CREATURE_HEAL_INTERVAL_SECONDS, 0, 1)),
+  };
 }
 
 export function clearSavedWorld() {
@@ -881,7 +1228,9 @@ export class VoxelEngine {
   remotePlayers = new Map<string, RemotePlayer>();
   localAvatarHeld: THREE.Object3D | null = null;
   localAvatarHeldCode: ItemCode = -1;
+  localAvatarHeldFilled = false;
   remoteAvatarHeldCodes = new Map<string, ItemCode>();
+  remoteAvatarHeldFilled = new Map<string, boolean>();
   localEquipmentSignature = "";
   cameraCollisionOrigin = new THREE.Vector3();
   cameraCollisionDirection = new THREE.Vector3();
@@ -929,9 +1278,21 @@ export class VoxelEngine {
   craftingSize: 2 | 3 = 2;
   activeFurnaceKey: string | null = null;
   activeChestKey: string | null = null;
+  activeApiaryKey: string | null = null;
+  activeOrbRackKey: string | null = null;
+  activeHealingStationKey: string | null = null;
   activeChestTitle = "Chest";
   furnaces = new Map<string, FurnaceState>();
   chests = new Map<string, ChestState>();
+  apiaries = new Map<string, ApiaryBlockState>();
+  orbRacks = new Map<string, OrbRackState>();
+  healingStations = new Map<string, CreatureHealerState>();
+  persistentMachineTimer = 0;
+  persistentMachineCursor = 0;
+  persistentMachineLastStep = new Map<string, number>();
+  apiaryFlowerCache = new Map<string, Array<{ x: number; y: number; z: number }>>();
+  socialMotionTimer = 0;
+  socialMotions = new Map<number, SocialGroupMotion>();
   debug = false;
   fullscreen = false;
   target: VoxelHit | null = null;
@@ -982,6 +1343,8 @@ export class VoxelEngine {
   mobSpawnTimer = 2;
   zombieVoiceCooldown = 0;
   combatMusicTimer = 0;
+  combatEncounter = -1;
+  combatMusicScene: "combatA" | "combatB" = "combatA";
   mobRaycaster = new THREE.Raycaster();
   activeRecipe: Recipe | null = null;
   sharedDropGeometry = new THREE.BoxGeometry(0.23, 0.23, 0.23);
@@ -993,6 +1356,7 @@ export class VoxelEngine {
   activeChestModel: THREE.Group | null = null;
   chestLidPivot: THREE.Group | null = null;
   chestOpenAmount = 0;
+  activeChestBlocks: Array<readonly [number, number, number]> = [];
   multiplayer: MultiplayerSession | null = null;
   hostRendezvous: HostRendezvous | null = null;
   multiplayerState: MultiplayerUiState = {
@@ -1088,7 +1452,7 @@ export class VoxelEngine {
     this.camera.add(this.heldRoot);
 
     const outlineGeometry = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.008, 1.008, 1.008));
-    this.selection = new THREE.LineSegments(outlineGeometry, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthTest: false }));
+    this.selection = new THREE.LineSegments(outlineGeometry, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthTest: true }));
     this.selection.renderOrder = 10;
     this.selection.visible = false;
     this.scene.add(this.selection);
@@ -1231,6 +1595,10 @@ export class VoxelEngine {
     if (event.button === 0) {
       this.mineHeld = true;
       if (this.targetMob) this.attackTargetMob();
+      else if (this.target && isInstantBreakBlock(this.target.type)) {
+        this.breakTarget();
+        this.mineHeld = false;
+      }
     } else if (event.button === 2) this.useSelected();
     else if (event.button === 1) this.pickTarget();
   };
@@ -1398,6 +1766,11 @@ export class VoxelEngine {
     this.titleMode = true;
     this.mode = "builder";
     this.clearEntities();
+    this.apiaries.clear();
+    this.orbRacks.clear();
+    this.healingStations.clear();
+    this.persistentMachineLastStep.clear();
+    this.apiaryFlowerCache.clear();
     this.activatedStructureMarkers.clear();
     this.liquidCells.clear();
     this.world.setRenderDistance(Math.min(this.settings.renderDistance, this.touchMode ? 4 : 6));
@@ -1439,6 +1812,11 @@ export class VoxelEngine {
     this.craftGrid = Array.from({ length: 9 }, () => null);
     this.furnaces.clear();
     this.chests.clear();
+    this.apiaries.clear();
+    this.orbRacks.clear();
+    this.healingStations.clear();
+    this.persistentMachineLastStep.clear();
+    this.apiaryFlowerCache.clear();
     this.sleepVotes.clear();
     this.clearEntities();
     this.activatedStructureMarkers.clear();
@@ -1501,15 +1879,17 @@ export class VoxelEngine {
     this.pitch = clamp(Number(save.player.pitch) || 0, -1.4, 1.4);
     this.resetDynamicWeather(save.weatherState);
     this.inventory = blankInventory();
-    for (let index = 0; index < Math.min(INVENTORY_SIZE, save.inventory?.length ?? 0); index += 1) this.inventory[index] = cloneSlot(save.inventory[index]);
+    for (let index = 0; index < Math.min(INVENTORY_SIZE, save.inventory?.length ?? 0); index += 1) this.inventory[index] = normalizeCaptureOrbInventorySlot(save.inventory[index]);
     this.equipment = blankEquipment();
-    for (const slot of ["head", "chest", "legs", "feet"] as EquipmentSlot[]) this.equipment[slot] = cloneSlot(save.equipment?.[slot] ?? null);
+    for (const slot of ["head", "chest", "legs", "feet"] as EquipmentSlot[]) this.equipment[slot] = normalizeCaptureOrbInventorySlot(save.equipment?.[slot] ?? null);
     this.bestiary = blankBestiary();
     for (const kind of MOB_ORDER) this.bestiary[kind] = { ...this.bestiary[kind], ...(save.bestiary?.[kind] ?? {}) };
     this.saplings = new Map(Object.entries(save.saplings ?? {}).map(([key, value]) => [key, Number(value) || 0]));
     this.cursor = null;
     this.craftGrid = Array.from({ length: 9 }, () => null);
-    const transientItems = [save.cursor, ...(save.craftGrid ?? [])].filter((slot): slot is InventorySlot => Boolean(slot));
+    const transientItems = [save.cursor, ...(save.craftGrid ?? [])]
+      .map((slot) => normalizeCaptureOrbInventorySlot(slot))
+      .filter((slot): slot is InventorySlot => Boolean(slot));
     for (const slot of transientItems) {
       const leftover = this.addItem(slot.item, slot.count, slot.durability, undefined, slot.metadata);
       if (leftover > 0) this.spawnDrop(slot.item, leftover, this.position.clone().add(new THREE.Vector3(0, 1, 0)), slot.durability);
@@ -1523,8 +1903,21 @@ export class VoxelEngine {
     this.day = Math.max(1, Number(save.day) || 1);
     this.weather = save.weather === "rain" ? "rain" : "clear";
     if (!this.worldOptions.weather) this.weather = "clear";
-    this.furnaces = new Map(Object.entries(save.furnaces ?? {}).map(([key, value]) => [key, { ...blankFurnace(), ...value }]));
+    this.furnaces = new Map(Object.entries(save.furnaces ?? {}).map(([key, value]) => [key, {
+      ...blankFurnace(),
+      ...value,
+      input: normalizeCaptureOrbInventorySlot(value.input),
+      fuel: normalizeCaptureOrbInventorySlot(value.fuel),
+      output: normalizeCaptureOrbInventorySlot(value.output),
+    }]));
     this.chests = restoreChestStorage(save.chests ?? {});
+    this.apiaries = restoreApiaryStorage(save.apiaries ?? {});
+    this.orbRacks = restoreOrbRackStorage(save.orbRacks ?? {});
+    this.healingStations = restoreHealingStationStorage(save.healingStations ?? {});
+    this.persistentMachineLastStep.clear();
+    const restoredAt = Number.isFinite(save.savedAt) ? Math.min(Date.now(), save.savedAt) : Date.now();
+    for (const key of [...this.apiaries.keys(), ...this.healingStations.keys()]) this.persistentMachineLastStep.set(key, restoredAt);
+    this.persistentMachineTimer = 0;
     for (const savedBoat of save.boats ?? []) this.restoreSailboat(savedBoat);
     for (const savedCreature of save.creatures ?? []) this.restoreCreature(savedCreature);
     this.leadAnchors = restoreLeadAnchors(save.leads, new Set(this.mobs.map((mob) => mob.id)));
@@ -1532,7 +1925,9 @@ export class VoxelEngine {
     if (this.collidesAt(this.position) || this.position.y < MIN_Y) this.respawn(false);
     for (const savedDrop of save.drops ?? []) {
       if (!ITEMS[savedDrop.item] || savedDrop.count <= 0) continue;
-      const drop = this.spawnDrop(savedDrop.item, savedDrop.count, new THREE.Vector3(savedDrop.x, savedDrop.y, savedDrop.z), savedDrop.durability, savedDrop.metadata);
+      const normalizedDrop = normalizeCaptureOrbInventorySlot({ item: savedDrop.item, count: savedDrop.count, ...(savedDrop.durability !== undefined ? { durability: savedDrop.durability } : {}), ...(savedDrop.metadata ? { metadata: savedDrop.metadata } : {}) });
+      if (!normalizedDrop) continue;
+      const drop = this.spawnDrop(normalizedDrop.item, normalizedDrop.count, new THREE.Vector3(savedDrop.x, savedDrop.y, savedDrop.z), normalizedDrop.durability, normalizedDrop.metadata);
       if (!drop) continue;
       drop.mesh.position.set(savedDrop.x, savedDrop.y, savedDrop.z);
       drop.velocity.set(0, 0, 0);
@@ -1606,11 +2001,20 @@ export class VoxelEngine {
     if (!this.disposed) this.emitHud(true);
   }
 
+  private async closeHostRendezvous() {
+    const handle = this.hostRendezvous;
+    this.hostRendezvous = null;
+    if (!handle) return;
+    try { await handle.close(); }
+    catch (error) {
+      if (!isMultiplayerOperationCancellation(error)) throw error;
+    }
+  }
+
   async createMultiplayerRoom(roomCode: string, playerName: string) {
     if (!this.running || this.titleMode) throw new Error("Open a world before hosting a multiplayer session.");
     try {
-      if (this.hostRendezvous) await this.hostRendezvous.close();
-      this.hostRendezvous = null;
+      await this.closeHostRendezvous();
       const session = this.beginMultiplayerSession(playerName);
       const code = roomCode.trim() || createRoomCode();
       const handle = await hostByRoomCode({
@@ -1639,6 +2043,12 @@ export class VoxelEngine {
       this.emitHud(true);
       return { roomCode: handle.code };
     } catch (error) {
+      if (isMultiplayerOperationCancellation(error)) {
+        this.multiplayerState.error = "";
+        this.multiplayerState.rendezvousStatus = this.hostRendezvous ? "waiting" : "closed";
+        this.multiplayerState.status = this.multiplayer && this.multiplayer.state !== "closed" ? this.multiplayer.state : "idle";
+        throw error;
+      }
       this.multiplayerState.error = error instanceof Error ? error.message : String(error);
       this.multiplayerState.rendezvousStatus = "error";
       this.multiplayerState.status = "error";
@@ -1649,8 +2059,7 @@ export class VoxelEngine {
   async joinMultiplayerRoom(roomCode: string, playerName: string) {
     const joiningFromTitle = this.titleMode;
     try {
-      if (this.hostRendezvous) await this.hostRendezvous.close();
-      this.hostRendezvous = null;
+      await this.closeHostRendezvous();
       const session = this.beginMultiplayerSession(playerName);
       const joined = await joinByRoomCode({
         code: roomCode,
@@ -1676,6 +2085,15 @@ export class VoxelEngine {
       this.emitHud(true);
       return { hostName: joined.hostName, seed: this.world.seedText, worldReady: true as const };
     } catch (error) {
+      if (isMultiplayerOperationCancellation(error)) {
+        if (joiningFromTitle) this.disconnectMultiplayer();
+        else {
+          this.multiplayerState.error = "";
+          this.multiplayerState.rendezvousStatus = "closed";
+          this.multiplayerState.status = this.multiplayer && this.multiplayer.state !== "closed" ? this.multiplayer.state : "idle";
+        }
+        throw error;
+      }
       this.multiplayerState.error = error instanceof Error ? error.message : String(error);
       this.multiplayerState.rendezvousStatus = "error";
       this.multiplayerState.status = "error";
@@ -1737,7 +2155,7 @@ export class VoxelEngine {
 
   disconnectMultiplayer() {
     const hadSession = Boolean(this.multiplayer);
-    if (this.hostRendezvous) void this.hostRendezvous.close();
+    if (this.hostRendezvous) void this.hostRendezvous.close().catch(() => undefined);
     this.hostRendezvous = null;
     this.multiplayer?.dispose("local-disconnect");
     this.multiplayer = null;
@@ -1772,6 +2190,7 @@ export class VoxelEngine {
     remote.model.dispose();
     this.remotePlayers.delete(id);
     this.remoteAvatarHeldCodes.delete(id);
+    this.remoteAvatarHeldFilled.delete(id);
   }
 
   private removeAllRemotePlayers() {
@@ -1826,6 +2245,8 @@ export class VoxelEngine {
       vz: this.velocity.z,
       grounded: this.grounded,
       heldItem: this.selectedSlot()?.item,
+      heldItemFilled: this.selectedSlot()?.item === Item.CaptureOrb
+        && Boolean(captureOrbFromInventorySlot(this.selectedSlot())?.creature),
       crouching: this.crouching,
       sprinting: this.sprinting,
       action: this.mineHeld || this.attackCooldown > 0 ? "mine" : this.heldUse > 0 ? "use" : "none",
@@ -1874,8 +2295,8 @@ export class VoxelEngine {
       health: mob.health,
       state: mob.state,
       scale: this.mobBaseScale(mob),
-      tamed: Boolean(mob.petState?.tamed || mob.shadeState?.tamed),
-      saddled: Boolean(mob.shadeState?.saddled),
+      tamed: Boolean(mob.petState?.tamed || mob.shadeState?.tamed || mob.reedstriderBond?.tamed || mob.courserBond?.tamed || mob.apiaryBee?.tamed),
+      saddled: Boolean(mob.shadeState?.saddled || mob.reedstriderBond?.saddled || mob.courserBond?.saddled),
       baby: Boolean(mob.petState?.baby || mob.careState?.baby),
     }));
   }
@@ -1949,7 +2370,7 @@ export class VoxelEngine {
     let joined = false;
     for (const [dx, dz] of candidates) {
       const candidate = new THREE.Vector3(centerX + dx, hostPose?.y ?? this.world.surfaceAt(centerX + dx, centerZ + dz) + 0.51, centerZ + dz);
-      if (!this.collidesAt(candidate, PLAYER_HEIGHT)) { this.position.copy(candidate); joined = true; break; }
+      if (!this.collidesAt(candidate, PLAYER_HEIGHT * playerVariantHeightScale(this.playerVariant))) { this.position.copy(candidate); joined = true; break; }
     }
     if (!joined) this.position.set(centerX, this.world.surfaceAt(centerX, centerZ) + 0.51, centerZ);
     this.spawn.copy(this.position);
@@ -2013,6 +2434,16 @@ export class VoxelEngine {
         });
         mob.hostile = mob.definition.hostile && !mob.shadeState.tamed;
       }
+      if (mob.kind === "reedstrider" && mob.reedstriderBond) mob.reedstriderBond = {
+        ...mob.reedstriderBond,
+        tamed: Boolean(entry.tamed),
+        saddled: Boolean(entry.saddled),
+      };
+      if (mob.kind === "wild-horse" && mob.courserBond) mob.courserBond = {
+        ...mob.courserBond,
+        tamed: Boolean(entry.tamed),
+        saddled: Boolean(entry.saddled),
+      };
       if (mob.careState && entry.baby !== undefined) {
         mob.careState = { ...mob.careState, baby: entry.baby, ageTicks: entry.baby ? Math.min(mob.careState.ageTicks, 23_999) : Math.max(24_000, mob.careState.ageTicks) };
       }
@@ -2308,7 +2739,7 @@ export class VoxelEngine {
     }
     while (specimenIndex < specimens.length) {
       const specimen = specimens[specimenIndex++];
-      this.spawnDrop(specimen.item, 1, new THREE.Vector3(broken.x, broken.y + 0.5, broken.z), specimen.durability, specimen.metadata);
+      this.spawnDrop(specimen.item, 1, new THREE.Vector3(broken.x, broken.y, broken.z), specimen.durability, specimen.metadata);
     }
     this.syncExhibitVisuals(true);
   }
@@ -2342,30 +2773,33 @@ export class VoxelEngine {
   showChestModel(block: string, large: boolean) {
     this.hideChestModel(true);
     const blocks = (this.activeChestKey ?? block).split("|");
-    const positions = blocks.map((key) => key.split(",").map(Number));
+    const positions = blocks.map((key) => key.split(",").map(Number) as [number, number, number]);
+    this.activeChestBlocks = positions;
+    for (const [blockX, blockY, blockZ] of positions) this.world.setChestVisualHidden(blockX, blockY, blockZ, true);
     const x = positions.reduce((sum, value) => sum + value[0], 0) / positions.length;
     const y = positions[0][1];
     const z = positions.reduce((sum, value) => sum + value[2], 0) / positions.length;
     const alongX = large && positions[0][2] === positions.at(-1)?.[2];
-    const width = large && alongX ? 1.86 : 0.88;
-    const depth = large && !alongX ? 1.86 : 0.88;
+    const bodyWidth = large && alongX ? 1.88 : 0.88;
+    const bodyDepth = large && !alongX ? 1.88 : 0.88;
+    const lidWidth = large && alongX ? 1.92 : 0.92;
+    const lidDepth = large && !alongX ? 1.92 : 0.92;
     const group = new THREE.Group();
     group.position.set(x, y, z);
-    const wood = new THREE.MeshLambertMaterial({ color: 0x9f6833 });
-    const base = new THREE.Mesh(new THREE.BoxGeometry(width + 0.025, 0.72, depth + 0.025), wood);
-    base.position.y = -0.14;
+    const wood = new THREE.MeshLambertMaterial({ map: this.world.atlas, color: 0xffffff });
+    const base = new THREE.Mesh(createAtlasBlockGeometry(BlockId.Chest), wood);
+    base.scale.set(bodyWidth, 0.63, bodyDepth);
+    base.position.y = -0.185;
     group.add(base);
-    const rim = new THREE.Mesh(new THREE.BoxGeometry(width + 0.055, 0.09, depth + 0.055), new THREE.MeshLambertMaterial({ color: 0x603a20 }));
-    rim.position.y = 0.2;
-    group.add(rim);
     const latch = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.22, 0.07), new THREE.MeshLambertMaterial({ color: 0xe0b54e }));
-    latch.position.set(0, 0.03, -depth / 2 - 0.045);
+    latch.position.set(0, 0.135, -bodyDepth / 2 - 0.045);
     group.add(latch);
     const pivot = new THREE.Group();
-    pivot.position.set(0, 0.39, depth / 2 - 0.08);
-    const lidMaterial = new THREE.MeshLambertMaterial({ color: 0xa56c32 });
-    const lid = new THREE.Mesh(new THREE.BoxGeometry(width, 0.18, depth), lidMaterial);
-    lid.position.set(0, 0, -depth / 2 + 0.08);
+    pivot.position.set(0, 0.16, lidDepth / 2);
+    const lidMaterial = new THREE.MeshLambertMaterial({ map: this.world.atlas, color: 0xffffff });
+    const lid = new THREE.Mesh(createAtlasBlockGeometry(BlockId.Chest), lidMaterial);
+    lid.scale.set(lidWidth, 0.21, lidDepth);
+    lid.position.set(0, 0.105, -lidDepth / 2);
     pivot.add(lid);
     group.add(pivot);
     this.scene.add(group);
@@ -2376,24 +2810,45 @@ export class VoxelEngine {
   }
 
   hideChestModel(immediate = false) {
-    if (!this.activeChestModel) return;
+    if (!this.activeChestModel && !(this.activeChestBlocks?.length)) return;
     if (!immediate) {
       this.audio.playSample("chestClose");
       return;
     }
-    this.disposeObject(this.activeChestModel);
-    this.scene.remove(this.activeChestModel);
+    if (this.activeChestModel) {
+      this.disposeObject(this.activeChestModel);
+      this.scene.remove(this.activeChestModel);
+    }
     this.activeChestModel = null;
     this.chestLidPivot = null;
     this.chestOpenAmount = 0;
+    for (const [blockX, blockY, blockZ] of this.activeChestBlocks ?? []) this.world.setChestVisualHidden(blockX, blockY, blockZ, false);
+    this.activeChestBlocks = [];
   }
 
   updateChestModel(dt: number) {
     if (!this.activeChestModel || !this.chestLidPivot) return;
     const target = this.activeChestKey ? 1 : 0;
     this.chestOpenAmount += (target - this.chestOpenAmount) * (1 - Math.exp(-dt * 10));
-    this.chestLidPivot.rotation.x = -this.chestOpenAmount * 1.08;
+    // Positive X raises the front edge around the rear hinge. The previous
+    // sign drove the lid downward through the chest body.
+    this.chestLidPivot.rotation.x = this.chestOpenAmount * 1.08;
     if (!target && this.chestOpenAmount < 0.015) this.hideChestModel(true);
+  }
+
+  setRespawnFromBed(x: number, y: number, z: number, type: BlockId) {
+    for (const candidate of bedRespawnCandidates(type, x, y, z)) {
+      const support = this.world.getBlock(candidate.x, candidate.y - 1, candidate.z);
+      const feet = this.world.getBlock(candidate.x, candidate.y, candidate.z);
+      const head = this.world.getBlock(candidate.x, candidate.y + 1, candidate.z);
+      if (!BLOCKS[support ?? BlockId.Air]?.solid || !this.world.isWalkThrough(feet) || !this.world.isWalkThrough(head)) continue;
+      this.spawn.set(candidate.x, candidate.y - 0.49, candidate.z);
+      this.events.onToast("Respawn set beside this bed.");
+      this.saveSoon();
+      return true;
+    }
+    this.events.onToast("Clear some room beside the bed to set a safe respawn point.");
+    return false;
   }
 
   getSleepStatus() {
@@ -2475,7 +2930,23 @@ export class VoxelEngine {
     else this.sleepVotes.delete(vote.actorId);
   }
 
+  ensureApiaryState(key: string) {
+    const existing = this.apiaries.get(key);
+    if (existing) return existing;
+    const [x, y, z] = key.split(",").map(Number);
+    const type = this.world.getBlock(x, y, z);
+    const state: ApiaryBlockState = type === BlockId.WildBeehive
+      ? createWildApiary(`${this.world.seedText}:${key}`, this.day)
+      : createEmptyApiaryBlock();
+    this.apiaries.set(key, state);
+    this.persistentMachineLastStep.set(key, Date.now());
+    return state;
+  }
+
   openOverlay(kind: OverlayKind, key?: string) {
+    if (kind !== "apiary") this.activeApiaryKey = null;
+    if (kind !== "orb-rack") this.activeOrbRackKey = null;
+    if (kind !== "healing-station") this.activeHealingStationKey = null;
     if (kind === "inventory") {
       this.craftingSize = 2;
       this.activeFurnaceKey = null;
@@ -2496,6 +2967,21 @@ export class VoxelEngine {
           : this.activeChestKey.includes("|") ? "Large Wildwood Chest" : "Wildwood Chest";
       this.activeFurnaceKey = null;
       if (!special) this.showChestModel(key, this.activeChestKey.includes("|"));
+    } else if (kind === "apiary" && key) {
+      this.activeApiaryKey = key;
+      this.activeFurnaceKey = null;
+      this.activeChestKey = null;
+      this.ensureApiaryState(key);
+    } else if (kind === "orb-rack" && key) {
+      this.activeOrbRackKey = key;
+      this.activeFurnaceKey = null;
+      this.activeChestKey = null;
+      if (!this.orbRacks.has(key)) this.orbRacks.set(key, createOrbRack());
+    } else if (kind === "healing-station" && key) {
+      this.activeHealingStationKey = key;
+      this.activeFurnaceKey = null;
+      this.activeChestKey = null;
+      if (!this.healingStations.has(key)) this.healingStations.set(key, createCreatureHealer());
     } else if (kind === "bestiary" || kind === "sleep" || kind === "pet") {
       this.activeFurnaceKey = null;
       this.activeChestKey = null;
@@ -2520,6 +3006,9 @@ export class VoxelEngine {
     }
     this.activeFurnaceKey = null;
     this.activeChestKey = null;
+    this.activeApiaryKey = null;
+    this.activeOrbRackKey = null;
+    this.activeHealingStationKey = null;
     this.activePet = null;
     this.craftingSize = 2;
     this.hideChestModel();
@@ -2717,6 +3206,49 @@ export class VoxelEngine {
   shiftMove(index: number) {
     const slot = this.inventory[index];
     if (!slot) return;
+    if (this.activeApiaryKey) {
+      if (this.insertQueenCell(this.activeApiaryKey, slot)) {
+        if (slot.count <= 0) this.inventory[index] = null;
+        this.audio.play("craft");
+        this.saveSoon();
+        this.emitHud(true);
+      } else this.events.onToast("A vacant apiary accepts a Queen Cell or a Capture Orb holding a Hive Queen.");
+      return;
+    }
+    if (this.activeOrbRackKey || this.activeHealingStationKey) {
+      if (this.activeHealingStationKey && slot.item === Item.CaveGel) {
+        const station = this.healingStations.get(this.activeHealingStationKey);
+        if (!station) return;
+        const moved = Math.min(slot.count, CREATURE_HEALER_GEL_CAP - station.gelUnits);
+        if (moved <= 0) { this.events.onToast("The healing station's Cave Gel reserve is full."); return; }
+        this.healingStations.set(this.activeHealingStationKey, { ...station, gelUnits: station.gelUnits + moved });
+        slot.count -= moved;
+        if (slot.count <= 0) this.inventory[index] = null;
+        this.audio.play("craft");
+        this.saveSoon();
+        this.emitHud(true);
+        return;
+      }
+      const orb = captureOrbUnitFromInventorySlot(slot);
+      if (!orb) { this.events.onToast("This station accepts single Waykeeper Capture Orbs."); return; }
+      if (this.activeOrbRackKey) {
+        const rack = this.orbRacks.get(this.activeOrbRackKey);
+        const target = rack?.slots.findIndex((entry) => !entry) ?? -1;
+        if (!rack || target < 0) { this.events.onToast("The Capture Orb Rack is full."); return; }
+        this.orbRacks.set(this.activeOrbRackKey, setRackOrb(rack, target, orb));
+      } else {
+        const station = this.healingStations.get(this.activeHealingStationKey!);
+        const target = station?.slots.findIndex((entry) => !entry) ?? -1;
+        if (!station || target < 0) { this.events.onToast("The Healing Station is full."); return; }
+        this.healingStations.set(this.activeHealingStationKey!, setHealerOrb(station, target, orb));
+      }
+      slot.count -= 1;
+      if (slot.count <= 0) this.inventory[index] = null;
+      this.audio.play("ui");
+      this.saveSoon();
+      this.emitHud(true);
+      return;
+    }
     if (this.activeChestKey) {
       const chest = this.chests.get(this.activeChestKey);
       if (this.activeChestKey.startsWith("exhibit:") && !this.isExhibitResidentSlot(slot)) {
@@ -3022,7 +3554,147 @@ export class VoxelEngine {
     return this.isButterflyJar(slot.item) || Boolean(this.exhibitCagedCreature(slot));
   }
 
-  machineClick(machine: "furnace" | "chest", index: number, button: "left" | "right", shift = false) {
+  insertQueenCell(key: string, slot: InventorySlot) {
+    if (slot.count <= 0) return false;
+    const state = this.ensureApiaryState(key);
+    if (isStockedApiary(state)) return false;
+    const [x, y, z] = key.split(",").map(Number);
+    const seed = (this.world.seed ^ Math.imul(x | 0, 374761393) ^ Math.imul(y | 0, 668265263) ^ Math.imul(z | 0, 1103515245)) >>> 0;
+    const orb = slot.count === 1 ? captureOrbFromInventorySlot(slot) : null;
+    if (orb?.creature?.kind === "hive-queen") {
+      const released = releaseCaptureOrb(orb);
+      if (!released) return false;
+      const metadata = released.creature;
+      const preserved = metadata.custom.apiaryBee as ApiaryBee | undefined;
+      const base = createApiary(preserved?.id ?? metadata.entityId ?? `queen-${key}-${this.day}`, [], preserved?.geneticSeed ?? metadata.geneticSeed ?? seed, this.day);
+      const queen: ApiaryBee = {
+        ...base.queen,
+        ...(preserved ?? {}),
+        id: preserved?.id ?? metadata.entityId ?? base.queen.id,
+        role: "queen",
+        alive: true,
+        home: true,
+        outbound: false,
+        carryingNectar: 0,
+        lastReturnDay: this.day,
+        disconnectedDay: null,
+        geneticSeed: preserved?.geneticSeed ?? metadata.geneticSeed ?? seed,
+        angry: false,
+        tamed: preserved?.tamed ?? metadata.tamed,
+        ownerId: preserved?.ownerId ?? metadata.ownerId ?? null,
+      };
+      this.apiaries.set(key, { ...base, queen });
+      const empty = captureOrbInventorySlot(released.orb);
+      slot.item = empty.item;
+      slot.count = 1;
+      slot.metadata = empty.metadata;
+      delete slot.durability;
+      this.persistentMachineLastStep.set(key, Date.now());
+      this.events.onToast(`${metadata.name ?? "The Hive Queen"} settles into the apiary; the Capture Orb returns empty.`);
+      return true;
+    }
+    if (slot.item !== Item.QueenCell) return false;
+    const queenId = typeof slot.metadata?.beeId === "string" ? slot.metadata.beeId : `queen-${key}-${this.day}`;
+    const queenSeed = Number.isFinite(slot.metadata?.geneticSeed) ? Number(slot.metadata?.geneticSeed) : seed;
+    const next = insertQueenCellIntoApiary(state, Item.QueenCell, queenId, queenSeed, this.day);
+    if (!next) return false;
+    this.apiaries.set(key, next);
+    this.persistentMachineLastStep.set(key, Date.now());
+    slot.count -= 1;
+    this.events.onToast("The Queen Cell wakes. A new colony begins to organize the apiary.");
+    return true;
+  }
+
+  apiaryMachineClick(index: number, button: "left" | "right", shift: boolean) {
+    const key = this.activeApiaryKey;
+    if (!key || index < 0 || index > 2) return;
+    const state = this.ensureApiaryState(key);
+    if (index === 0) {
+      if (!this.cursor) return;
+      if (!this.insertQueenCell(key, this.cursor)) {
+        this.events.onToast(isStockedApiary(state)
+          ? "This apiary already has a resident Hive Queen."
+          : "Place a Queen Cell or a Capture Orb holding a Hive Queen in this chamber.");
+        return;
+      }
+      if (this.cursor.count <= 0) this.cursor = null;
+      this.audio.play("craft");
+      this.saveSoon();
+      this.emitHud(true);
+      return;
+    }
+    if (!isStockedApiary(state)) return;
+    const item = index === 1 ? Item.HoneyJar : Item.RoyalJelly;
+    const available = index === 1 ? state.honey : state.royalJelly;
+    if (available <= 0) return;
+    let moved = 0;
+    if (shift) {
+      moved = available - this.addItem(item, available, undefined, MAIN_THEN_HOTBAR);
+    } else if (!this.cursor) {
+      moved = button === "right" ? Math.ceil(available / 2) : Math.min(available, maxStack(item));
+      this.cursor = { item, count: moved };
+    } else if (this.cursor.item === item && this.cursor.count < maxStack(item)) {
+      moved = button === "right" ? 1 : Math.min(available, maxStack(item) - this.cursor.count);
+      this.cursor.count += moved;
+    }
+    if (moved <= 0) return;
+    this.apiaries.set(key, index === 1 ? { ...state, honey: state.honey - moved } : { ...state, royalJelly: state.royalJelly - moved });
+    this.audio.play("pickup");
+    this.saveSoon();
+    this.emitHud(true);
+  }
+
+  orbStationMachineClick(machine: "orb-rack" | "healing-station", index: number, button: "left" | "right", shift: boolean) {
+    if (index < 0 || index >= CAPTURE_ORB_RACK_SIZE) return;
+    const key = machine === "orb-rack" ? this.activeOrbRackKey : this.activeHealingStationKey;
+    if (!key) return;
+    const rack = machine === "orb-rack" ? this.orbRacks.get(key) : this.healingStations.get(key);
+    if (!rack) return;
+    if (machine === "healing-station" && this.cursor?.item === Item.CaveGel) {
+      const healer = rack as CreatureHealerState;
+      const moved = Math.min(button === "right" ? 1 : this.cursor.count, CREATURE_HEALER_GEL_CAP - healer.gelUnits);
+      if (moved <= 0) return;
+      this.healingStations.set(key, { ...healer, gelUnits: healer.gelUnits + moved });
+      this.cursor.count -= moved;
+      if (this.cursor.count <= 0) this.cursor = null;
+      this.audio.play("craft");
+      this.saveSoon();
+      this.emitHud(true);
+      return;
+    }
+    const existing = rack.slots[index] ?? null;
+    if (shift && existing) {
+      const slot = captureOrbInventorySlot(existing);
+      if (this.addItem(slot.item, 1, slot.durability, MAIN_THEN_HOTBAR, slot.metadata) > 0) return;
+      if (machine === "orb-rack") this.orbRacks.set(key, setRackOrb(rack as OrbRackState, index, null));
+      else this.healingStations.set(key, setHealerOrb(rack as CreatureHealerState, index, null));
+    } else if (!this.cursor && existing) {
+      this.cursor = captureOrbInventorySlot(existing);
+      if (machine === "orb-rack") this.orbRacks.set(key, setRackOrb(rack as OrbRackState, index, null));
+      else this.healingStations.set(key, setHealerOrb(rack as CreatureHealerState, index, null));
+    } else if (this.cursor) {
+      const incoming = captureOrbUnitFromInventorySlot(this.cursor);
+      if (!incoming) { this.events.onToast("This slot accepts one Waykeeper Capture Orb."); return; }
+      if (existing && this.cursor.count !== 1) {
+        this.events.onToast("Split the orb stack before swapping with an occupied station slot.");
+        return;
+      }
+      if (existing) this.cursor = captureOrbInventorySlot(existing);
+      else {
+        this.cursor.count -= 1;
+        if (this.cursor.count <= 0) this.cursor = null;
+      }
+      if (machine === "orb-rack") this.orbRacks.set(key, setRackOrb(rack as OrbRackState, index, incoming));
+      else this.healingStations.set(key, setHealerOrb(rack as CreatureHealerState, index, incoming));
+    } else return;
+    this.audio.play("ui");
+    this.saveSoon();
+    this.emitHud(true);
+  }
+
+  machineClick(machine: "furnace" | "chest" | "apiary" | "orb-rack" | "healing-station", index: number, button: "left" | "right", shift = false) {
+    if (machine === "apiary") { this.apiaryMachineClick(index, button, shift); return; }
+    if (machine === "orb-rack" || machine === "healing-station") { this.orbStationMachineClick(machine, index, button, shift); return; }
     let slots: Array<InventorySlot | null>;
     if (machine === "furnace") {
       const furnace = this.activeFurnaceKey ? this.furnaces.get(this.activeFurnaceKey) : null;
@@ -3152,8 +3824,8 @@ export class VoxelEngine {
     const structureMarker = this.world.structureMarkerAt(x, y, z, "chest")?.[1] as ChestMarker | undefined;
     if (structureMarker) {
       structureMarker.loot.forEach((loot, index) => {
-        const item = STRUCTURE_LOOT_ITEMS[loot.itemKey];
-        if (item === undefined || index >= slots.length) return;
+        const item = resolveStructureLootItem(loot.itemKey);
+        if (item === null || index >= slots.length) return;
         slots[(index * 7 + 3) % slots.length] = {
           item,
           count: Math.max(1, loot.count),
@@ -3281,7 +3953,7 @@ export class VoxelEngine {
         const changes = [...plan];
         this.world.setBlocksBatch(changes, true, true);
         this.publishBlockEdits(changes, "batch");
-        this.saplings.set(key, now + 180_000 + Math.random() * 90_000);
+        this.saplings.set(key, now + ORCHARD_REGROWTH_BASE_MS + Math.random() * ORCHARD_REGROWTH_JITTER_MS);
         if (this.position.distanceToSquared(new THREE.Vector3(x, y, z)) < 400) this.audio.play("place", BlockId.WildwoodLog);
         continue;
       }
@@ -3291,13 +3963,13 @@ export class VoxelEngine {
           if (this.world.getBlock(x + dx, y + dy, z + dz) === BlockId.AppleLeaves) { appleCanopy = true; break; }
         }
         if (!appleCanopy) { this.saplings.delete(key); continue; }
-        const fruit = planAppleFruitRegrowth({ x, y, z }, this.world.seedText, Math.floor(now / 120_000), (bx, by, bz) => this.world.getBlock(bx, by, bz), 2);
+        const fruit = planAppleFruitRegrowth({ x, y, z }, this.world.seedText, Math.floor(now / 60_000), (bx, by, bz) => this.world.getBlock(bx, by, bz), 2);
         if (fruit.length) {
           const changes = [...fruit];
           this.world.setBlocksBatch(changes, true, true);
           this.publishBlockEdits(changes, "batch");
         }
-        this.saplings.set(key, now + 150_000 + Math.random() * 120_000);
+        this.saplings.set(key, now + ORCHARD_REGROWTH_BASE_MS + Math.random() * ORCHARD_REGROWTH_JITTER_MS);
         continue;
       }
       const plant = plantProfileForBlock(current);
@@ -3359,6 +4031,122 @@ export class VoxelEngine {
     return this.inventory?.[this.selected] ?? null;
   }
 
+  apiaryFlowersNear(key: string, radius = 5) {
+    const [x, y, z] = key.split(",").map(Number);
+    const flowers: Array<{ x: number; y: number; z: number }> = [];
+    for (let dx = -radius; dx <= radius; dx += 1) for (let dz = -radius; dz <= radius; dz += 1) {
+      if (dx * dx + dz * dz > radius * radius) continue;
+      for (let dy = -3; dy <= 3; dy += 1) {
+        const type = this.world.getBlock(x + dx, y + dy, z + dz);
+        if (type === undefined) continue;
+        const name = BLOCKS[type]?.name ?? "";
+        if (!/flower|orchid|sunpetal|cloudbell|berry|bloom/iu.test(name)) continue;
+        flowers.push({ x: x + dx, y: y + dy, z: z + dz });
+        break;
+      }
+    }
+    return flowers;
+  }
+
+  syncApiaryWorkerMobs(key: string, state: ApiaryState, phase: ApiaryPhase) {
+    const [x, y, z] = key.split(",").map(Number);
+    const withinSimulation = (x - this.position.x) ** 2 + (z - this.position.z) ** 2
+      <= (this.settings.simulationDistance * CHUNK_SIZE) ** 2;
+    const livingIds = new Set(livingApiaryWorkers(state).map((worker) => worker.id));
+    for (let index = this.mobs.length - 1; index >= 0; index -= 1) {
+      const mob = this.mobs[index];
+      if (mob.beeHiveKey !== key) continue;
+      const belongs = mob.kind === "hive-queen"
+        ? state.queen.alive && mob.apiaryBee?.id === state.queen.id
+        : livingIds.has(mob.apiaryBee?.id ?? "");
+      if (!belongs || !withinSimulation) this.removeMob(index);
+    }
+    if (withinSimulation && state.queen.alive
+      && !this.mobs.some((mob) => mob.beeHiveKey === key && mob.kind === "hive-queen" && mob.apiaryBee?.id === state.queen.id)) {
+      this.spawnMob("hive-queen", new THREE.Vector3(x, y + 0.86, z), {
+        apiaryBee: { ...state.queen, home: true, outbound: false },
+        beeHiveKey: key,
+        persistentPoiResident: true,
+      });
+    }
+    if (phase !== "day" || !withinSimulation) return;
+    const visualWorkers = livingApiaryWorkers(state).slice(0, 3);
+    for (let index = 0; index < visualWorkers.length; index += 1) {
+      const worker = visualWorkers[index];
+      if (this.mobs.some((mob) => mob.beeHiveKey === key && mob.apiaryBee?.id === worker.id)) continue;
+      const angle = index / Math.max(1, visualWorkers.length) * Math.PI * 2;
+      this.spawnMob("honeybee", new THREE.Vector3(x + Math.cos(angle) * 0.42, y + 0.8, z + Math.sin(angle) * 0.42), {
+        apiaryBee: { ...worker, home: false, outbound: true },
+        beeHiveKey: key,
+        persistentPoiResident: true,
+      });
+    }
+  }
+
+  updatePersistentMachines(dt: number) {
+    this.persistentMachineTimer -= dt;
+    if (this.persistentMachineTimer > 0) return;
+    this.persistentMachineTimer = 1;
+    const entries = [
+      ...[...this.apiaries.keys()].map((key) => ({ kind: "apiary" as const, key })),
+      ...[...this.healingStations.keys()].map((key) => ({ kind: "healer" as const, key })),
+    ];
+    if (!entries.length) return;
+    const now = Date.now();
+    const maximum = Math.min(8, entries.length);
+    let meaningfulChange = false;
+    for (let offset = 0; offset < maximum; offset += 1) {
+      const entry = entries[(this.persistentMachineCursor + offset) % entries.length];
+      const previous = this.persistentMachineLastStep.get(entry.key) ?? now;
+      const elapsed = clamp((now - previous) / 1000, 0, 3600);
+      this.persistentMachineLastStep.set(entry.key, now);
+      if (entry.kind === "apiary") {
+        const state = this.apiaries.get(entry.key);
+        if (!state || !isStockedApiary(state)) continue;
+        const [x, y, z] = entry.key.split(",").map(Number);
+        const block = this.world.getBlock(x, y, z);
+        const attached = block === undefined || block === BlockId.Apiary || block === BlockId.WildBeehive;
+        const flowers = block === undefined ? (this.apiaryFlowerCache.get(entry.key) ?? []) : this.apiaryFlowersNear(entry.key);
+        this.apiaryFlowerCache.set(entry.key, flowers);
+        const phase = apiaryPhaseForWorldTime(this.worldTime);
+        const result = stepApiary(state, {
+          phase,
+          nearbyFlowers: flowers.length,
+          attached,
+          deltaSeconds: elapsed,
+          worldDay: this.day,
+          workersCanReturn: attached,
+        });
+        this.apiaries.set(entry.key, result.state);
+        this.syncApiaryWorkerMobs(entry.key, result.state, phase);
+        if (result.events.some((event) => event === "honey-ready" || event === "royal-jelly-ready" || event === "worker-created")) {
+          meaningfulChange = true;
+          if (block !== undefined && (x - this.position.x) ** 2 + (z - this.position.z) ** 2 < 256) {
+            this.spawnParticles(x, y + 0.45, z, BlockId.Glowstone, 3);
+          }
+        }
+      } else {
+        const station = this.healingStations.get(entry.key);
+        if (!station) continue;
+        const result = stepCreatureHealer(station, elapsed);
+        this.healingStations.set(entry.key, result.state);
+        if (result.healed > 0) {
+          meaningfulChange = true;
+          const [x, y, z] = entry.key.split(",").map(Number);
+          if ((x - this.position.x) ** 2 + (z - this.position.z) ** 2 < 256) {
+            this.spawnParticles(x, y + 0.5, z, BlockId.CrystalBlock, Math.min(8, 2 + result.healed));
+            this.audio.play("craft");
+          }
+        }
+      }
+    }
+    this.persistentMachineCursor = (this.persistentMachineCursor + maximum) % entries.length;
+    if (meaningfulChange) {
+      this.saveSoon();
+      this.emitHud(true);
+    }
+  }
+
   pickTarget() {
     if (!this.target) return;
     const blockItem = isTorchBlock(this.target.type) ? BlockId.Torch
@@ -3412,7 +4200,7 @@ export class VoxelEngine {
     ];
     this.world.setBlocksBatch(edits, true, true);
     this.publishBlockEdits(edits, "batch");
-    this.audio.play("place", BlockId.Planks);
+    this.audio.playSample?.(open ? "chestClose" : "chestOpen", { gain: 0.62, playbackRate: 1.22 });
     this.placeCooldown = 0.18;
     this.saveSoon();
   }
@@ -3432,6 +4220,14 @@ export class VoxelEngine {
       return;
     }
     this.audio.play(sound.fallback);
+  }
+
+  engageCombat(seconds = COMBAT_MUSIC_HOLD_SECONDS) {
+    if (this.combatMusicTimer <= 0.001) {
+      this.combatEncounter += 1;
+      this.combatMusicScene = combatSceneForEncounter(this.combatEncounter);
+    }
+    this.combatMusicTimer = Math.max(this.combatMusicTimer, seconds);
   }
 
   consumeSelectedUnit() {
@@ -3477,7 +4273,7 @@ export class VoxelEngine {
     this.publishBlockEdits([{ x, y, z, type: result.replacement }], "place");
     for (const drop of result.drops) {
       const leftover = this.mode === "survival" ? this.addItem(drop.item, drop.count) : 0;
-      if (leftover) this.spawnDrop(drop.item, leftover, new THREE.Vector3(x, y + 0.25, z));
+      if (leftover) this.spawnDrop(drop.item, leftover, new THREE.Vector3(x, y, z));
     }
     if (useScythe) this.damageSelectedTool();
     this.schedulePlantGrowth(x, y, z, result.replacement, 1);
@@ -3488,6 +4284,152 @@ export class VoxelEngine {
     this.saveSoon();
     this.emitHud(true);
     return true;
+  }
+
+  creatureMetadataForMob(mob: MobEntity): CreatureMetadata {
+    return {
+      schema: 1,
+      entityId: String(mob.id),
+      kind: mob.kind,
+      health: mob.health,
+      maxHealth: mob.maxHealth,
+      ageTicks: Math.floor(mob.age * 20),
+      baby: Boolean(mob.petState?.baby || mob.careState?.baby),
+      temperament: mob.definition.temperament,
+      hostile: mob.hostile,
+      tamed: Boolean(mob.petState?.tamed || mob.shadeState?.tamed || mob.reedstriderBond?.tamed || mob.courserBond?.tamed || mob.apiaryBee?.tamed),
+      ownerId: mob.petState?.ownerId ?? mob.shadeState?.ownerId ?? mob.reedstriderBond?.ownerId ?? mob.courserBond?.ownerId ?? mob.apiaryBee?.ownerId ?? null,
+      name: mob.petState?.name ?? (mob.name !== mob.definition.name ? mob.name : null),
+      geneticSeed: mob.petState?.geneticSeed ?? mob.apiaryBee?.geneticSeed ?? ((mob.id * 2654435761) >>> 0),
+      command: mob.petState?.command ?? null,
+      custom: JSON.parse(JSON.stringify({
+        ...(mob.petState ? { petState: mob.petState } : {}),
+        ...(mob.careState ? { careState: mob.careState } : {}),
+        ...(mob.shadeState ? { shadeState: mob.shadeState } : {}),
+        ...(mob.reedstriderBond ? { reedstriderBond: mob.reedstriderBond } : {}),
+        ...(mob.courserBond ? { courserBond: mob.courserBond } : {}),
+        ...(mob.apiaryBee ? { apiaryBee: mob.apiaryBee } : {}),
+        ...(mob.socialGroupId ? { socialGroupId: mob.socialGroupId } : {}),
+        ...(mob.peelopShedding ? { peelopShedding: mob.peelopShedding } : {}),
+        ...(mob.kind === "meadow-cow" && mob.milkCooldown > 0 ? { milkCooldown: mob.milkCooldown } : {}),
+        persistentPoiResident: mob.persistentPoiResident,
+        enclosed: mob.enclosed,
+      })) as CreatureMetadata["custom"],
+    };
+  }
+
+  spawnCreatureMetadata(metadata: CreatureMetadata, releasePosition: THREE.Vector3) {
+    const definition = MOB_DEFS[metadata.kind];
+    const ground = this.world.findWalkableY(Math.round(releasePosition.x), Math.round(releasePosition.z), releasePosition.y);
+    releasePosition.y = ground + definition.footOffset;
+    const mob = this.spawnMob(metadata.kind, releasePosition, {
+      health: metadata.health,
+      age: metadata.ageTicks / 20,
+      petState: metadata.kind === "peelop" && metadata.custom.petState ? metadata.custom.petState as unknown as PeelopState : null,
+      careState: metadata.custom.careState ? metadata.custom.careState as unknown as CreatureHusbandryState : null,
+      shadeState: metadata.kind === "shadecrawler" && metadata.custom.shadeState ? metadata.custom.shadeState as unknown as ShadecrawlerState : null,
+      reedstriderBond: metadata.kind === "reedstrider" && metadata.custom.reedstriderBond ? metadata.custom.reedstriderBond as unknown as ReedstriderBond : null,
+      courserBond: metadata.kind === "wild-horse" && metadata.custom.courserBond ? metadata.custom.courserBond as unknown as ReedstriderBond : null,
+      apiaryBee: metadata.custom.apiaryBee ? metadata.custom.apiaryBee as unknown as ApiaryBee : null,
+      socialGroupId: typeof metadata.custom.socialGroupId === "string" ? metadata.custom.socialGroupId : null,
+      peelopShedding: metadata.custom.peelopShedding ? metadata.custom.peelopShedding as unknown as PeelopSheddingState : null,
+      milkCooldown: metadata.kind === "meadow-cow" ? Math.max(0, Number(metadata.custom.milkCooldown) || 0) : 0,
+      persistentPoiResident: Boolean(metadata.custom.persistentPoiResident),
+      enclosed: Boolean(metadata.custom.enclosed),
+    });
+    mob.name = metadata.name || mob.name;
+    return mob;
+  }
+
+  storeFilledCaptureOrb(heldSlot: InventorySlot, orb: CaptureOrb) {
+    const filled = captureOrbInventorySlot(orb);
+    if (heldSlot.count <= 1) {
+      this.inventory[this.selected] = filled;
+      return true;
+    }
+    const emptyIndex = this.inventory.findIndex((slot, index) => index !== this.selected && !slot);
+    if (emptyIndex < 0) return false;
+    heldSlot.count -= 1;
+    this.inventory[emptyIndex] = filled;
+    return true;
+  }
+
+  activateCloudglassReliquary() {
+    const ownerId = this.localPlayerId();
+    const rangeSquared = 20 * 20;
+    const companions = this.mobs.filter((mob) => {
+      const owned = (mob.petState?.tamed && mob.petState.ownerId === ownerId)
+        || (mob.shadeState?.tamed && mob.shadeState.ownerId === ownerId)
+        || (mob.reedstriderBond?.tamed && mob.reedstriderBond.ownerId === ownerId)
+        || (mob.courserBond?.tamed && mob.courserBond.ownerId === ownerId)
+        || (mob.apiaryBee?.tamed && mob.apiaryBee.ownerId === ownerId);
+      return Boolean(owned && mob.group.position.distanceToSquared(this.position) <= rangeSquared);
+    });
+    let healed = 0;
+    let recalled = 0;
+    companions.forEach((mob, index) => {
+      const before = mob.health;
+      mob.health = Math.min(mob.maxHealth, mob.health + 2);
+      if (mob.health > before) healed += 1;
+      if (mob.petState) mob.petState.health = mob.health;
+      const follows = (mob.petState?.command === "follow") || Boolean(mob.shadeState?.tamed);
+      const distanceSquared = mob.group.position.distanceToSquared(this.position);
+      if (!follows || distanceSquared <= 9 * 9) return;
+      const angle = this.followerHeading + Math.PI + (index - (companions.length - 1) / 2) * 0.62;
+      const x = this.position.x + Math.cos(angle) * 3.1;
+      const z = this.position.z + Math.sin(angle) * 3.1;
+      const targetY = mob.definition.movement === "ground" ? this.mobMoveTarget(mob, x, z) : this.position.y + 1.2;
+      if (targetY === null) return;
+      mob.group.position.set(x, targetY, z);
+      mob.baseY = targetY;
+      mob.route = createCreatureRouteState(mob.angle);
+      mob.state = "wander";
+      mob.stateTimer = 0;
+      mob.wanderTimer = 0.4;
+      recalled += 1;
+    });
+
+    let message: string;
+    if (companions.length) {
+      message = recalled || healed
+        ? `Cloudglass pulse: ${healed} companion${healed === 1 ? "" : "s"} mended, ${recalled} follower${recalled === 1 ? "" : "s"} recalled.`
+        : `Cloudglass finds ${companions.length} bonded companion${companions.length === 1 ? "" : "s"}; all are already near and whole.`;
+    } else {
+      const sightings: Array<{ name: string; x: number; z: number; distanceSquared: number }> = this.mobs.map((mob) => ({
+        name: mob.name,
+        x: mob.group.position.x,
+        z: mob.group.position.z,
+        distanceSquared: mob.group.position.distanceToSquared(this.position),
+      }));
+      for (const key of this.apiaries?.keys?.() ?? []) {
+        const [x, , z] = key.split(",").map(Number);
+        sightings.push({ name: "apiary habitat", x, z, distanceSquared: (x - this.position.x) ** 2 + (z - this.position.z) ** 2 });
+      }
+      for (const key of this.chests?.keys?.() ?? []) {
+        if (!key.startsWith("exhibit:")) continue;
+        const [x, , z] = key.slice("exhibit:".length).split(",").map(Number);
+        sightings.push({ name: "living conservatory", x, z, distanceSquared: (x - this.position.x) ** 2 + (z - this.position.z) ** 2 });
+      }
+      const nearest = sightings.sort((left, right) => left.distanceSquared - right.distanceSquared)[0];
+      if (!nearest) message = "Cloudglass sends a clear note into the wild, but no creature or tended habitat answers.";
+      else {
+        const dx = nearest.x - this.position.x;
+        const dz = nearest.z - this.position.z;
+        const direction = Math.abs(dx) > Math.abs(dz) * 1.6 ? (dx > 0 ? "east" : "west")
+          : Math.abs(dz) > Math.abs(dx) * 1.6 ? (dz > 0 ? "south" : "north")
+            : `${dz > 0 ? "south" : "north"}-${dx > 0 ? "east" : "west"}`;
+        message = `Cloudglass answers faintly: ${nearest.name}, ${Math.round(Math.sqrt(nearest.distanceSquared))} blocks ${direction}.`;
+      }
+    }
+    this.spawnParticles(this.position.x, this.position.y + 0.85, this.position.z, BlockId.CrystalBlock, 14);
+    this.damageSelectedTool(1);
+    this.heldUse = 1;
+    this.placeCooldown = 0.8;
+    this.audio.play("craft");
+    this.events.onToast(message);
+    this.saveSoon();
+    this.emitHud(true);
+    return { healed, recalled, companions: companions.length, message };
   }
 
   useSelected() {
@@ -3538,92 +4480,60 @@ export class VoxelEngine {
       this.emitHud(true);
       return;
     }
-    if (heldSlot?.item === Item.CreatureCage) {
-      const encoded = typeof heldSlot.metadata?.capturedCreature === "string" ? heldSlot.metadata.capturedCreature : null;
-      if (encoded) {
-        const captured = decodeCapturedCreature(encoded);
-        if (!captured) {
-          delete heldSlot.metadata?.capturedCreature;
-          this.events.onToast("The cage record was damaged and has been cleared.");
-          return;
-        }
+    if (heldSlot && (heldSlot.item === Item.CaptureOrb || heldSlot.item === Item.LegacyCaptureOrb)) {
+      const orb = captureOrbUnitFromInventorySlot(heldSlot);
+      if (!orb) {
+        this.inventory[this.selected] = captureOrbInventorySlot(createEmptyCaptureOrb(`orb-${Date.now().toString(36)}`));
+        this.heldItemCode = -1;
+        this.events.onToast("The damaged orb record dissolved; its shell is ready to use again.");
+        return;
+      }
+      if (orb.creature) {
+        const released = releaseCaptureOrb(orb);
+        if (!released) return;
         const direction = this.camera.getWorldDirection(new THREE.Vector3());
         const releasePosition = this.target
-          ? new THREE.Vector3(this.target.placeX, this.target.placeY + MOB_DEFS[captured.creature.kind].footOffset, this.target.placeZ)
+          ? new THREE.Vector3(this.target.placeX, this.target.placeY + MOB_DEFS[released.creature.kind].footOffset, this.target.placeZ)
           : this.position.clone().add(direction.setY(0).normalize().multiplyScalar(1.8));
-        const ground = this.world.findWalkableY(Math.round(releasePosition.x), Math.round(releasePosition.z), releasePosition.y);
-        releasePosition.y = ground + MOB_DEFS[captured.creature.kind].footOffset;
-        const metadata = releaseCreature(captured);
-        const petState = metadata.kind === "peelop" && metadata.custom.petState
-          ? metadata.custom.petState as unknown as PeelopState : null;
-        const careState = metadata.custom.careState
-          ? metadata.custom.careState as unknown as CreatureHusbandryState : null;
-        const shadeState = metadata.kind === "shadecrawler" && metadata.custom.shadeState
-          ? metadata.custom.shadeState as unknown as ShadecrawlerState : null;
-        const mob = this.spawnMob(metadata.kind, releasePosition, {
-          health: metadata.health,
-          age: metadata.ageTicks / 20,
-          petState,
-          careState,
-          shadeState,
-          persistentPoiResident: Boolean(metadata.custom.persistentPoiResident),
-          enclosed: Boolean(metadata.custom.enclosed),
-        });
-        mob.name = metadata.name || mob.name;
-        heldSlot.metadata = undefined;
+        const mob = this.spawnCreatureMetadata(released.creature, releasePosition);
+        this.inventory[this.selected] = captureOrbInventorySlot(released.orb);
+        this.heldItemCode = -1;
+        this.spawnParticles(mob.group.position.x, mob.group.position.y + mob.definition.height * 0.45, mob.group.position.z, BlockId.CrystalBlock, 12);
         this.placeCooldown = 0.35;
         this.events.onToast(`${mob.name} steps out with its exact health, age, and bond intact.`);
+        this.audio.play("craft");
         this.saveSoon();
         this.emitHud(true);
         return;
       }
       if (!this.targetMob) {
-        this.events.onToast("Aim the empty cage at a creature. Hostiles must be below half health or at one heart.");
+        this.events.onToast("Aim the empty Capture Orb at a creature. Hostiles must be below half health or at one heart.");
         return;
       }
       const mob = this.targetMob;
-      const metadata: CreatureMetadata = {
-        schema: 1,
-        entityId: String(mob.id),
-        kind: mob.kind,
-        health: mob.health,
-        maxHealth: mob.maxHealth,
-        ageTicks: Math.floor(mob.age * 20),
-        baby: Boolean(mob.petState?.baby || mob.careState?.baby),
-        temperament: mob.definition.temperament,
-        hostile: mob.hostile,
-        tamed: Boolean(mob.petState?.tamed || mob.shadeState?.tamed),
-        ownerId: mob.petState?.ownerId ?? mob.shadeState?.ownerId ?? null,
-        name: mob.petState?.name ?? (mob.name !== mob.definition.name ? mob.name : null),
-        geneticSeed: mob.petState?.geneticSeed ?? ((mob.id * 2654435761) >>> 0),
-        command: mob.petState?.command ?? null,
-        custom: JSON.parse(JSON.stringify({
-          ...(mob.petState ? { petState: mob.petState } : {}),
-          ...(mob.careState ? { careState: mob.careState } : {}),
-          ...(mob.shadeState ? { shadeState: mob.shadeState } : {}),
-          persistentPoiResident: mob.persistentPoiResident,
-          enclosed: mob.enclosed,
-        })) as CreatureMetadata["custom"],
-      };
-      const captured = captureCreature(`waykeeper-${Date.now().toString(36)}`, metadata);
-      if (!captured) {
-        this.events.onToast(`${mob.name} is fighting too strongly to cage.`);
+      if (mob.kind === "hive-queen" && !canCatchHiveQueen(mob.health, mob.maxHealth, "capture-orb")) {
+        this.events.onToast("The Hive Queen is too strong for the orb. Weaken her below half health first.");
         return;
       }
-      heldSlot.metadata = {
-        capturedCreature: encodeCapturedCreature(captured),
-        name: metadata.name ?? mob.definition.name,
-        kind: metadata.kind,
-        tamed: metadata.tamed,
-        baby: metadata.baby,
-      };
+      const metadata = this.creatureMetadataForMob(mob);
+      const captured = captureIntoOrb(orb, metadata);
+      if (!captured) {
+        this.events.onToast(`${mob.name} is fighting too strongly to capture.`);
+        return;
+      }
+      if (!this.storeFilledCaptureOrb(heldSlot, captured)) {
+        this.events.onToast("Make one empty pack slot before splitting a filled orb from this stack.");
+        return;
+      }
       this.bestiary[mob.kind].seen = true;
       this.bestiary[mob.kind].captures += 1;
+      this.spawnParticles(mob.group.position.x, mob.group.position.y + mob.definition.height * 0.45, mob.group.position.z, BlockId.CrystalBlock, 12);
       const mobIndex = this.mobs.indexOf(mob);
       if (mobIndex >= 0) this.removeMob(mobIndex);
+      this.heldItemCode = -1;
       this.placeCooldown = 0.4;
       this.audio.play("craft");
-      this.events.onToast(`${metadata.name ?? mob.definition.name} is safely recorded in the Waykeeper Cage.`);
+      this.events.onToast(`${metadata.name ?? mob.definition.name} is safely preserved in the Waykeeper Capture Orb.`);
       this.saveSoon();
       this.emitHud(true);
       return;
@@ -3644,6 +4554,144 @@ export class VoxelEngine {
       this.saveSoon();
       this.emitHud(true);
       return;
+    }
+    if (this.targetMob?.kind === "meadow-cow" && heldSlot?.item === Item.Bucket) {
+      const cloverback = this.targetMob;
+      const remaining = Math.max(0, cloverback.milkCooldown ?? 0);
+      if (remaining > 0) {
+        this.events.onToast(`This Cloverback needs another ${Math.ceil(remaining)} seconds before it can be milked again.`);
+        this.placeCooldown = 0.22;
+        return;
+      }
+      cloverback.milkCooldown = CLOVERBACK_MILK_COOLDOWN_SECONDS;
+      this.replaceSelectedUnit(Item.MilkBottle);
+      this.heldItemCode = -1;
+      this.heldUse = 1;
+      this.placeCooldown = 0.38;
+      this.audio.play("pickup");
+      this.events.onToast("The Cloverback fills one bucket with cool Meadow Milk.");
+      this.saveSoon();
+      this.emitHud(true);
+      return;
+    }
+    if (this.targetMob?.kind === "hive-queen" && heldSlot?.item === Item.RoyalJelly) {
+      const queen = this.targetMob;
+      if (queen.health > queen.maxHealth / 2) {
+        this.events.onToast("The Hive Queen is too agitated to accept Royal Jelly. Weaken her below half health first.");
+        this.placeCooldown = 0.25;
+        return;
+      }
+      queen.apiaryBee ??= {
+        id: `queen-mob-${queen.id}`,
+        role: "queen",
+        alive: true,
+        home: false,
+        outbound: false,
+        carryingNectar: 0,
+        lastReturnDay: this.day,
+        disconnectedDay: null,
+        geneticSeed: (queen.id * 2654435761) >>> 0,
+        angry: true,
+        tamed: false,
+        ownerId: null,
+      };
+      const before = queen.apiaryBee;
+      queen.apiaryBee = tameHiveQueen(before, heldSlot.item, this.localPlayerId());
+      if (queen.apiaryBee === before) return;
+      queen.hostile = false;
+      queen.fleeTimer = 0;
+      this.consumeSelectedUnit();
+      this.bestiary["hive-queen"].tames = (this.bestiary["hive-queen"].tames ?? 0) + 1;
+      this.events.onToast("The queen accepts the Royal Jelly and turns her colony's defense toward you.");
+      this.audio.play("craft");
+      this.placeCooldown = 0.35;
+      this.saveSoon();
+      this.emitHud(true);
+      return;
+    }
+    if (this.targetMob?.kind === "wild-horse") {
+      const courser = this.targetMob;
+      const ownerId = this.localPlayerId();
+      courser.courserBond ??= createReedstriderBond();
+      if (heldSlot && (heldSlot.item === Item.Apple || heldSlot.item === Item.Wheat)) {
+        const before = courser.courserBond;
+        const next = feedCourserBond(before, ownerId, heldSlot.item);
+        courser.courserBond = next;
+        this.consumeSelectedUnit();
+        if (!before.tamed && next.tamed) {
+          this.bestiary["wild-horse"].tames = (this.bestiary["wild-horse"].tames ?? 0) + 1;
+          this.events.onToast("The Wildwood Courser stops circling and chooses you as its rider.");
+        } else this.events.onToast(`Courser trust ${next.trust}/8 · apples build trust fastest.`);
+        this.audio.play("eat");
+        this.placeCooldown = 0.3;
+        this.saveSoon();
+        this.emitHud(true);
+        return;
+      }
+      if (heldSlot?.item === Item.Saddle) {
+        const next = saddleReedstrider(courser.courserBond, ownerId);
+        if (next !== courser.courserBond) {
+          courser.courserBond = next;
+          this.consumeSelectedUnit();
+          this.events.onToast("The Trail Saddle settles onto the Courser.");
+          this.saveSoon();
+          this.emitHud(true);
+        } else this.events.onToast(courser.courserBond.tamed ? "Only this Courser's keeper can saddle it." : "Feed it patiently before fitting a saddle.");
+        this.placeCooldown = 0.3;
+        return;
+      }
+      if (canRideReedstrider(courser.courserBond, ownerId)) {
+        this.mountedCreatureId = courser.id;
+        if (this.cameraMode === "first") this.cameraMode = "third-rear";
+        this.keys.clear();
+        this.events.onToast("Mounted Wildwood Courser · sprint on open land · Space dismounts · V changes view.");
+        this.placeCooldown = 0.35;
+        this.emitHud(true);
+        return;
+      }
+    }
+    if (this.targetMob?.kind === "reedstrider") {
+      const reedstrider = this.targetMob;
+      const ownerId = this.localPlayerId();
+      reedstrider.reedstriderBond ??= createReedstriderBond();
+      if (heldSlot && (heldSlot.item === Item.RawFish || heldSlot.item === Item.CookedFish || heldSlot.item === Item.GlowScale)) {
+        const before = reedstrider.reedstriderBond;
+        const next = feedReedstrider(before, ownerId, heldSlot.item);
+        if (next !== before) {
+          reedstrider.reedstriderBond = next;
+          this.consumeSelectedUnit();
+          if (!before.tamed && next.tamed) {
+            this.bestiary.reedstrider.tames = (this.bestiary.reedstrider.tames ?? 0) + 1;
+            this.events.onToast("The Reedstrider lowers its sail-like crest and accepts you as its keeper.");
+          } else this.events.onToast(`Reedstrider trust ${next.trust}/8 · Glow Scales build trust fastest.`);
+          this.audio.play("eat");
+          this.saveSoon();
+          this.emitHud(true);
+        }
+        this.placeCooldown = 0.3;
+        return;
+      }
+      if (heldSlot?.item === Item.Saddle) {
+        const next = saddleReedstrider(reedstrider.reedstriderBond, ownerId);
+        if (next !== reedstrider.reedstriderBond) {
+          reedstrider.reedstriderBond = next;
+          this.consumeSelectedUnit();
+          this.events.onToast("The saddle sits securely behind the Reedstrider's crest.");
+          this.saveSoon();
+          this.emitHud(true);
+        } else this.events.onToast(reedstrider.reedstriderBond.tamed ? "Only this Reedstrider's keeper can saddle it." : "Build its trust before fitting a saddle.");
+        this.placeCooldown = 0.3;
+        return;
+      }
+      if (canRideReedstrider(reedstrider.reedstriderBond, ownerId)) {
+        this.mountedCreatureId = reedstrider.id;
+        if (this.cameraMode === "first") this.cameraMode = "third-rear";
+        this.keys.clear();
+        this.events.onToast("Mounted Reedstrider · faster through water · Space dismounts · V changes view.");
+        this.placeCooldown = 0.35;
+        this.emitHud(true);
+        return;
+      }
     }
     if (this.targetMob?.kind === "shadecrawler") {
       const shade = this.targetMob;
@@ -3808,6 +4856,10 @@ export class VoxelEngine {
         return;
       }
     }
+    if (heldSlot?.item === Item.CloudglassRelic) {
+      this.activateCloudglassReliquary();
+      return;
+    }
     if (heldSlot?.item === Item.SunwardCompass) {
       const markers = this.world.structureMarkersNear(this.position.x, this.position.y, this.position.z, 36)
         .filter(([, marker]) => marker.type === "landmark" || (marker.type === "chest" && !this.chests.has(blockKey(marker.position.x, marker.position.y, marker.position.z))))
@@ -3844,6 +4896,59 @@ export class VoxelEngine {
       return;
     }
     if (heldSlot && heldDefinition?.useKind === "net") {
+      if (this.targetMob?.kind === "honeybee") {
+        const worker = this.targetMob;
+        const workerBee = worker.apiaryBee ?? {
+          id: `worker-mob-${worker.id}`,
+          role: "worker" as const,
+          alive: true,
+          home: false,
+          outbound: false,
+          carryingNectar: 0,
+          lastReturnDay: this.day,
+          disconnectedDay: null,
+          geneticSeed: (worker.id * 2654435761) >>> 0,
+          angry: false,
+          tamed: false,
+          ownerId: null,
+        };
+        const workerItem = captureWorkerBeeItem(workerBee);
+        if (workerItem && this.addItem(workerItem.item, 1, workerItem.durability, undefined, workerItem.metadata) === 0) {
+          this.removeMob(this.mobs.indexOf(worker));
+          this.damageSelectedTool();
+          this.heldUse = 1;
+          this.placeCooldown = 0.3;
+          this.events.onToast("The worker settles into a breathable apiary capsule for Queen Cell crafting.");
+          this.audio.play("craft");
+          this.saveSoon();
+          this.emitHud(true);
+        } else this.events.onToast("Make room in your pack before netting this worker.");
+        return;
+      }
+      if (this.targetMob?.kind === "hive-queen") {
+        const queen = this.targetMob;
+        if (!canCatchHiveQueen(queen.health, queen.maxHealth, "net")) {
+          this.events.onToast("The Hive Queen tears free. A net only holds her below half health.");
+          this.damageSelectedTool();
+          this.placeCooldown = 0.3;
+          return;
+        }
+        const metadata = queen.apiaryBee ? { beeId: queen.apiaryBee.id, geneticSeed: queen.apiaryBee.geneticSeed } : { beeId: `queen-${queen.id}`, geneticSeed: queen.id };
+        if (this.addItem(Item.QueenCell, 1, undefined, undefined, metadata) > 0) {
+          this.events.onToast("Make room in your pack before securing the queen.");
+          return;
+        }
+        this.removeMob(this.mobs.indexOf(queen));
+        this.damageSelectedTool();
+        this.heldUse = 1;
+        this.placeCooldown = 0.35;
+        this.bestiary["hive-queen"].captures += 1;
+        this.events.onToast("The weakened queen is secured as a living Queen Cell, ready for an empty apiary.");
+        this.audio.play("craft");
+        this.saveSoon();
+        this.emitHud(true);
+        return;
+      }
       const direction = new THREE.Vector3();
       this.camera.getWorldDirection(direction);
       const captured = this.butterflies.capture(this.camera.position, direction);
@@ -3894,12 +4999,17 @@ export class VoxelEngine {
     }
     if (this.target) {
       const key = blockKey(this.target.x, this.target.y, this.target.z);
+      if (shouldBypassOpenableUse(this.crouching, heldDefinition?.placeBlock !== undefined, this.target.type)) {
+        this.placeBlock();
+        return;
+      }
       const gate = toggleFenceGate(this.target.type);
       if (gate !== null) {
         this.world.setBlock(this.target.x, this.target.y, this.target.z, gate, true, true);
         this.publishBlockEdits([{ x: this.target.x, y: this.target.y, z: this.target.z, type: gate }], "place");
         this.placeCooldown = 0.18;
-        this.audio.play("place", BlockId.Planks);
+        this.audio.playSample?.(this.target.type === BlockId.FenceGateNorthSouthOpen || this.target.type === BlockId.FenceGateEastWestOpen
+          ? "chestClose" : "chestOpen", { gain: 0.55, playbackRate: 1.28 });
         this.saveSoon();
         return;
       }
@@ -3979,10 +5089,17 @@ export class VoxelEngine {
         }
       }
       if (this.isDoor(this.target.type)) { this.toggleDoor(this.target.x, this.target.y, this.target.z, this.target.type); return; }
-      if (this.isBed(this.target.type)) { this.openOverlay("sleep", key); return; }
+      if (this.isBed(this.target.type)) {
+        this.setRespawnFromBed(this.target.x, this.target.y, this.target.z, this.target.type);
+        this.openOverlay("sleep", key);
+        return;
+      }
       if (this.target.type === BlockId.CraftingTable) { this.openOverlay("crafting", key); return; }
       if (this.target.type === BlockId.Furnace) { this.openOverlay("furnace", key); return; }
       if (this.target.type === BlockId.Chest) { this.openOverlay("chest", key); return; }
+      if (this.target.type === BlockId.Apiary || this.target.type === BlockId.WildBeehive) { this.openOverlay("apiary", key); return; }
+      if (this.target.type === BlockId.CaptureOrbRack) { this.openOverlay("orb-rack", key); return; }
+      if (this.target.type === BlockId.CreatureHealer) { this.openOverlay("healing-station", key); return; }
       if (this.target.type === BlockId.ButterflyExhibit) { this.openExhibit(this.target.x, this.target.y, this.target.z); return; }
     }
     const slot = this.selectedSlot();
@@ -4104,8 +5221,12 @@ export class VoxelEngine {
     }
     this.publishBlockEdits(placedEdits, placedEdits.length > 1 ? "batch" : "place");
     for (const edit of placedEdits) this.notifyLiquidChanged(edit.x, edit.y, edit.z);
-    if (type === BlockId.Chest) this.chests.set(blockKey(x, y, z), Array.from({ length: 27 }, () => null));
-    if (type === BlockId.Furnace) this.furnaces.set(blockKey(x, y, z), blankFurnace());
+    const placedKey = blockKey(x, y, z);
+    if (type === BlockId.Chest) this.chests.set(placedKey, Array.from({ length: 27 }, () => null));
+    if (type === BlockId.Furnace) this.furnaces.set(placedKey, blankFurnace());
+    if (type === BlockId.Apiary) this.apiaries.set(placedKey, createEmptyApiaryBlock());
+    if (type === BlockId.CaptureOrbRack) this.orbRacks.set(placedKey, createOrbRack());
+    if (type === BlockId.CreatureHealer) this.healingStations.set(placedKey, createCreatureHealer());
     if (type === BlockId.ButterflyExhibit) {
       const topology = this.exhibitTopologyAt(x, y, z);
       if (topology) this.consolidateExhibit(topology);
@@ -4156,65 +5277,60 @@ export class VoxelEngine {
     }
   }
 
-  tryFellTree(x: number, y: number, z: number, type: BlockId) {
-    const leavesByLog: Partial<Record<BlockId, BlockId>> = {
-      [BlockId.WildwoodLog]: BlockId.WildwoodLeaves,
-      [BlockId.PineLog]: BlockId.PineLeaves,
-      [BlockId.BirchLog]: BlockId.BirchLeaves,
-      [BlockId.BloomLog]: BlockId.BloomLeaves,
-    };
-    const leafType = leavesByLog[type];
-    if (leafType === undefined) return false;
-    const logs = new Map<string, [number, number, number]>();
-    let bottom = y;
-    let top = y;
-    while (bottom > y - 16 && this.world.getBlock(x, bottom - 1, z) === type) bottom -= 1;
-    while (top < y + 16 && this.world.getBlock(x, top + 1, z) === type) top += 1;
-    for (let trunkY = bottom; trunkY <= top; trunkY += 1) logs.set(blockKey(x, trunkY, z), [x, trunkY, z]);
-    if (logs.size < 3) return false;
-    const soil = this.world.getBlock(x, bottom - 1, z);
-    if (![BlockId.Grass, BlockId.Dirt, BlockId.SnowyGrass, BlockId.SavannaGrass, BlockId.SwampGrass, BlockId.Farmland].includes(soil ?? BlockId.Air)) return false;
-    const leaves = new Map<string, [number, number, number]>();
-    for (let dx = -3; dx <= 3 && leaves.size < 180; dx += 1) for (let dy = -3; dy <= 3 && leaves.size < 180; dy += 1) for (let dz = -3; dz <= 3 && leaves.size < 180; dz += 1) {
-      if (Math.abs(dx) + Math.abs(dy) + Math.abs(dz) > 6) continue;
-      const candidate: [number, number, number] = [x + dx, top + dy, z + dz];
-      if (this.world.getBlock(...candidate) !== leafType) continue;
-      const ownDistance = dx * dx + dz * dz;
-      let nearerTrunk = false;
-      for (let ox = -3; ox <= 3 && !nearerTrunk; ox += 1) for (let oz = -3; oz <= 3 && !nearerTrunk; oz += 1) {
-        if (ox === 0 && oz === 0 || (dx - ox) ** 2 + (dz - oz) ** 2 >= ownDistance) continue;
-        for (let trunkY = bottom; trunkY <= top + 2; trunkY += 1) if (this.world.getBlock(x + ox, trunkY, z + oz) === type) { nearerTrunk = true; break; }
-      }
-      if (!nearerTrunk) leaves.set(blockKey(...candidate), candidate);
-    }
-    if (leaves.size < 8) return false;
-    const root = [...logs.values()].sort((a, b) => a[1] - b[1])[0];
-    const changes = [...logs.values(), ...leaves.values()].map(([bx, by, bz]) => ({ x: bx, y: by, z: bz, type: BlockId.Air }));
+  tryFellTree(x: number, y: number, z: number, _legacyType?: BlockId) {
+    // Keep the former block-type argument source-compatible for older callers;
+    // discovery now reads every connected segment directly from the world.
+    void _legacyType;
+    const tree = discoverRootedTree({ x, y, z }, (bx, by, bz) => this.world.getBlock(bx, by, bz));
+    if (!tree) return false;
+    const root: [number, number, number] = [tree.root.x, tree.root.y, tree.root.z];
+    const changes = [...tree.logs, ...tree.leaves].map((block) => ({ x: block.x, y: block.y, z: block.z, type: BlockId.Air }));
     this.world.setBlocksBatch(changes, true, true);
     this.publishBlockEdits(changes, "batch");
     const group = new THREE.Group();
     group.position.set(root[0], root[1], root[2]);
     const matrix = new THREE.Matrix4();
-    const logGeometry = new THREE.BoxGeometry(0.94, 0.94, 0.94);
-    const logMaterial = new THREE.MeshLambertMaterial({ color: BLOCKS[type].color });
-    const logMesh = new THREE.InstancedMesh(logGeometry, logMaterial, logs.size);
-    [...logs.values()].forEach(([bx, by, bz], index) => { matrix.makeTranslation(bx - root[0], by - root[1], bz - root[2]); logMesh.setMatrixAt(index, matrix); });
-    group.add(logMesh);
-    if (leaves.size) {
-      const leafGeometry = new THREE.BoxGeometry(0.9, 0.9, 0.9);
-      const leafMaterial = new THREE.MeshLambertMaterial({ color: BLOCKS[leafType].color, transparent: true, opacity: 0.88 });
-      const leafMesh = new THREE.InstancedMesh(leafGeometry, leafMaterial, leaves.size);
-      [...leaves.values()].forEach(([bx, by, bz], index) => { matrix.makeTranslation(bx - root[0], by - root[1], bz - root[2]); leafMesh.setMatrixAt(index, matrix); });
-      group.add(leafMesh);
-    }
+    const addTexturedSegments = (blocks: typeof tree.logs, leafy: boolean) => {
+      const byType = new Map<BlockId, typeof tree.logs>();
+      for (const block of blocks) byType.set(block.type, [...(byType.get(block.type) ?? []), block]);
+      for (const [blockType, positions] of byType) {
+        const geometry = createAtlasBlockGeometry(blockType, leafy ? 0.9 : 0.94);
+        const material = new THREE.MeshLambertMaterial({
+          map: this.world.atlas,
+          color: 0xffffff,
+          ...(leafy ? { transparent: true, alphaTest: 0.32, side: THREE.DoubleSide } : {}),
+        });
+        const mesh = new THREE.InstancedMesh(geometry, material, positions.length);
+        positions.forEach((block, index) => {
+          matrix.makeTranslation(block.x - root[0], block.y - root[1], block.z - root[2]);
+          mesh.setMatrixAt(index, matrix);
+        });
+        mesh.instanceMatrix.needsUpdate = true;
+        group.add(mesh);
+      }
+    };
+    addTexturedSegments(tree.logs, false);
+    addTexturedSegments(tree.leaves, true);
     this.scene.add(group);
     const away = new THREE.Vector3(root[0] - this.position.x, 0, root[2] - this.position.z).normalize();
     if (away.lengthSq() < 0.1) away.set(Math.sin(this.yaw), 0, Math.cos(this.yaw));
-    this.fallingTrees.push({ group, root: new THREE.Vector3(...root), fallAxis: new THREE.Vector3(away.z, 0, -away.x).normalize(), progress: 0, logType: type, logCount: logs.size, leafCount: leaves.size, harvest: this.mode === "survival" });
+    const logCounts = new Map<BlockId, number>();
+    for (const log of tree.logs) logCounts.set(log.type, (logCounts.get(log.type) ?? 0) + 1);
+    this.fallingTrees.push({
+      group,
+      root: new THREE.Vector3(...root),
+      fallAxis: new THREE.Vector3(away.z, 0, -away.x).normalize(),
+      progress: 0,
+      primaryLogType: tree.root.type,
+      logDrops: [...logCounts],
+      logCount: tree.logs.length,
+      leafCount: tree.leaves.length,
+      harvest: this.mode === "survival",
+    });
     if (this.persistent) window.clearTimeout(this.saveTimer);
-    if (this.mode === "survival") this.damageSelectedTool(Math.max(1, Math.ceil(logs.size / 4)));
-    this.audio.play("break", type);
-    this.events.onToast(`${BLOCKS[type].name.replace(" Log", "")} timber!`);
+    if (this.mode === "survival") this.damageSelectedTool(Math.max(1, Math.ceil(tree.logs.length / 4)));
+    this.audio.play("break", tree.root.type);
+    this.events.onToast(`${BLOCKS[tree.root.type].name.replace(" Log", "")} timber!`);
     return true;
   }
 
@@ -4223,15 +5339,15 @@ export class VoxelEngine {
     const direction = new THREE.Vector3(-tree.fallAxis.z, 0, tree.fallAxis.x);
     const landing = tree.root.clone().add(direction.multiplyScalar(Math.min(7, height * 0.7))).add(new THREE.Vector3(0, 0.4, 0));
     if (tree.harvest) {
-      this.spawnDrop(tree.logType, tree.logCount, landing);
+      for (const [type, count] of tree.logDrops) this.spawnDrop(type, count, landing);
       const sticks = Math.floor(tree.leafCount * 0.09);
       if (sticks > 0) this.spawnDrop(Item.Stick, sticks, landing.clone().add(new THREE.Vector3(0.5, 0, 0.5)));
       const saplings = Math.max(1, Math.floor(tree.leafCount * 0.035));
       this.spawnDrop(BlockId.WildwoodSapling, saplings, landing.clone().add(new THREE.Vector3(-0.5, 0, -0.4)));
-      if (tree.logType === BlockId.WildwoodLog && Math.random() < 0.55) this.spawnDrop(Item.Apple, 1, landing.clone().add(new THREE.Vector3(0.2, 0, -0.5)));
+      if (tree.primaryLogType === BlockId.WildwoodLog && Math.random() < 0.55) this.spawnDrop(Item.Apple, 1, landing.clone().add(new THREE.Vector3(0.2, 0, -0.5)));
     }
-    this.spawnParticles(landing.x, landing.y, landing.z, tree.logType, 18);
-    this.audio.play("land", tree.logType);
+    this.spawnParticles(landing.x, landing.y, landing.z, tree.primaryLogType, 18);
+    this.audio.play("land", tree.primaryLogType);
     this.disposeObject(tree.group);
     this.scene.remove(tree.group);
   }
@@ -4255,6 +5371,42 @@ export class VoxelEngine {
     this.fallingTrees = [];
   }
 
+  releaseApiaryResidents(key: string, released: ReturnType<typeof breakApiary>["released"], position: THREE.Vector3) {
+    for (let index = this.mobs.length - 1; index >= 0; index -= 1) {
+      if (this.mobs[index].beeHiveKey === key) this.removeMob(index);
+    }
+    const residents = [
+      ...(released.queen ? [{ kind: "hive-queen" as const, bee: released.queen }] : []),
+      ...released.workers.map((bee) => ({ kind: "honeybee" as const, bee })),
+    ];
+    residents.forEach(({ kind, bee }, index) => {
+      const angle = index / Math.max(1, residents.length) * Math.PI * 2;
+      this.spawnMob(kind, position.clone().add(new THREE.Vector3(Math.cos(angle) * 0.45, 0.8 + (index % 3) * 0.16, Math.sin(angle) * 0.45)), {
+        apiaryBee: { ...bee, home: false, outbound: false, angry: true },
+        persistentPoiResident: true,
+      });
+    });
+  }
+
+  breakApiaryAt(key: string, type: BlockId, position: THREE.Vector3) {
+    const state = this.apiaries.get(key) ?? (type === BlockId.WildBeehive ? createWildApiary(`${this.world.seedText}:${key}`, this.day) : createEmptyApiaryBlock());
+    if (isStockedApiary(state)) {
+      const broken = breakApiary(state);
+      if (this.mode === "survival") {
+        for (const slot of broken.drops) this.spawnDrop(slot.item, slot.count, position, slot.durability, slot.metadata);
+        if (type === BlockId.WildBeehive) {
+          const combs = Math.max(1, Math.min(4, Math.ceil((broken.released.workers.length + 1) / 3)));
+          this.spawnDrop(Item.Honeycomb, combs, position);
+          if (broken.released.workers.length >= 4) this.spawnDrop(Item.Beeswax, 1, position);
+        }
+      }
+      this.releaseApiaryResidents(key, broken.released, position);
+    }
+    this.apiaries.delete(key);
+    this.apiaryFlowerCache.delete(key);
+    this.persistentMachineLastStep.delete(key);
+  }
+
   breakTarget() {
     if (!this.target || this.target.type === BlockId.Bedrock || this.target.type === BlockId.Water || this.target.type === BlockId.Lava) return;
     const { x, y, z, type } = this.target;
@@ -4262,7 +5414,7 @@ export class VoxelEngine {
     const exhibitSlots = exhibitTopology
       ? (this.chests.get(this.consolidateExhibit(exhibitTopology)) ?? []).map(cloneSlot)
       : null;
-    if (this.tryFellTree(x, y, z, type)) {
+    if (this.tryFellTree(x, y, z)) {
       this.miningProgress = 0;
       this.target = null;
       this.emitHud(true);
@@ -4288,18 +5440,18 @@ export class VoxelEngine {
     this.publishBlockEdits(brokenEdits, brokenEdits.length > 1 ? "batch" : "break");
     if (this.mode === "survival") {
       if (harvested) {
-        if (!this.isDoor(type) && !this.isBed(type)) this.dropBlockLoot(isTorchBlock(type) ? BlockId.Torch : type, x, y, z);
+        if (!this.isDoor(type) && !this.isBed(type) && type !== BlockId.WildBeehive) this.dropBlockLoot(isTorchBlock(type) ? BlockId.Torch : type, x, y, z);
       } else this.events.onToast(`${BLOCKS[type].name} crumbled without the right tool.`);
       this.damageSelectedTool();
     }
     const key = blockKey(x, y, z);
     if (isEnvironmentLightBlock(type)) this.lightRefreshTimer = 0;
     this.saplings.delete(key);
-    if (this.isDoor(type) && this.mode === "survival") this.spawnDrop(Item.WildwoodDoor, 1, new THREE.Vector3(x, y + 0.3, z));
-    if (this.isBed(type) && this.mode === "survival" && harvested) this.spawnDrop(Item.WildwoodBed, 1, new THREE.Vector3(x, y + 0.3, z));
+    if (this.isDoor(type) && this.mode === "survival") this.spawnDrop(Item.WildwoodDoor, 1, new THREE.Vector3(x, y, z));
+    if (this.isBed(type) && this.mode === "survival" && harvested) this.spawnDrop(Item.WildwoodBed, 1, new THREE.Vector3(x, y, z));
     if (type === BlockId.Furnace) {
       const furnace = this.furnaces.get(key);
-      if (furnace) for (const slot of [furnace.input, furnace.fuel, furnace.output]) if (slot) this.spawnDrop(slot.item, slot.count, new THREE.Vector3(x, y + 0.5, z), slot.durability, slot.metadata);
+      if (furnace) for (const slot of [furnace.input, furnace.fuel, furnace.output]) if (slot) this.spawnDrop(slot.item, slot.count, new THREE.Vector3(x, y, z), slot.durability, slot.metadata);
       this.furnaces.delete(key);
     }
     if (type === BlockId.Chest) {
@@ -4310,14 +5462,35 @@ export class VoxelEngine {
         const half = Math.max(0, blocks.indexOf(key));
         const removed = chest.slice(half * 27, half * 27 + 27);
         const remaining = chest.slice(half === 0 ? 27 : 0, half === 0 ? 54 : 27);
-        for (const slot of removed) if (slot) this.spawnDrop(slot.item, slot.count, new THREE.Vector3(x, y + 0.5, z), slot.durability, slot.metadata);
+        for (const slot of removed) if (slot) this.spawnDrop(slot.item, slot.count, new THREE.Vector3(x, y, z), slot.durability, slot.metadata);
         this.chests.delete(storageKey);
         const other = blocks[half === 0 ? 1 : 0];
         this.chests.set(other, remaining);
       } else {
-        for (const slot of chest) if (slot) this.spawnDrop(slot.item, slot.count, new THREE.Vector3(x, y + 0.5, z), slot.durability, slot.metadata);
+        for (const slot of chest) if (slot) this.spawnDrop(slot.item, slot.count, new THREE.Vector3(x, y, z), slot.durability, slot.metadata);
         this.chests.delete(storageKey);
       }
+    }
+    if (type === BlockId.Apiary || type === BlockId.WildBeehive) this.breakApiaryAt(key, type, new THREE.Vector3(x, y, z));
+    if (type === BlockId.CaptureOrbRack) {
+      const rack = this.orbRacks.get(key);
+      if (this.mode === "survival" && rack) for (const orb of rack.slots) if (orb) {
+        const slot = captureOrbInventorySlot(orb);
+        this.spawnDrop(slot.item, 1, new THREE.Vector3(x, y, z), slot.durability, slot.metadata);
+      }
+      this.orbRacks.delete(key);
+    }
+    if (type === BlockId.CreatureHealer) {
+      const station = this.healingStations.get(key);
+      if (this.mode === "survival" && station) {
+        for (const orb of station.slots) if (orb) {
+          const slot = captureOrbInventorySlot(orb);
+          this.spawnDrop(slot.item, 1, new THREE.Vector3(x, y, z), slot.durability, slot.metadata);
+        }
+        if (station.gelUnits > 0) this.spawnDrop(Item.CaveGel, station.gelUnits, new THREE.Vector3(x, y, z));
+      }
+      this.healingStations.delete(key);
+      this.persistentMachineLastStep.delete(key);
     }
     if (type === BlockId.ButterflyExhibit && exhibitTopology && exhibitSlots) {
       this.rebuildExhibitAfterBreak(exhibitTopology, exhibitSlots, { x, y, z });
@@ -4356,7 +5529,7 @@ export class VoxelEngine {
     else if (type === BlockId.AppleSapling || type === BlockId.AppleFruit) drops = [[Item.Apple, 1]];
     else if (type === BlockId.AppleLeaves) drops = [...this.randomDrop(Item.Stick, 1, 2, 0.2), ...this.randomDrop(Item.Apple, 1, 1, 0.08)];
     else if (ITEMS[type]) drops = [[type, 1]];
-    for (const [item, count] of drops) this.spawnDrop(item, count, new THREE.Vector3(x, y + 0.3, z));
+    for (const [item, count] of drops) this.spawnDrop(item, count, new THREE.Vector3(x, y, z));
   }
 
   updateMining(dt: number) {
@@ -4366,6 +5539,7 @@ export class VoxelEngine {
       return;
     }
     if (this.target.type === BlockId.Bedrock) { this.miningProgress = 0; return; }
+    if (isInstantBreakBlock(this.target.type)) { this.breakTarget(); return; }
     const hardness = BLOCKS[this.target.type].hardness;
     this.miningProgress += (dt * this.miningMultiplier(this.target.type)) / Math.max(0.12, hardness);
     this.miningSoundTimer -= dt;
@@ -4491,7 +5665,7 @@ export class VoxelEngine {
     this.wasInWater = inWater;
     const wantsCrouch = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
     if (wantsCrouch) this.crouching = true;
-    else if (!this.collidesAt(this.position, PLAYER_HEIGHT)) this.crouching = false;
+    else if (!this.collidesAt(this.position, PLAYER_HEIGHT * playerVariantHeightScale(this.playerVariant))) this.crouching = false;
     const wantsSprint = this.keys.has("ControlLeft") || this.keys.has("ControlRight") || (this.sprintLatched && forwardAmount > 0);
     this.sprinting = forwardAmount > 0 && moving && wantsSprint && !this.crouching && this.hunger > 0.5 && !inLiquid;
     const speed = (this.crouching ? 2.15 : this.sprinting ? 6.35 : 4.35) * (inLiquid ? 0.55 : 1);
@@ -4522,7 +5696,7 @@ export class VoxelEngine {
       const hasBreatherCharm = this.countItem(Item.BreatherCharm) > 0;
       const swim = stepSwimming(
         { velocityY: this.velocity.y, oxygenSeconds: this.oxygenSeconds, drowningAccumulator: this.drowningAccumulator },
-        { jumpHeld: this.keys.has("Space"), movingForward: forwardAmount > 0 },
+        { jumpHeld: this.keys.has("Space"), movingForward: forwardAmount > 0, crouching: this.crouching },
         {
           submersion: this.headSubmerged ? 1 : 0.68,
           headSubmerged: this.headSubmerged,
@@ -4614,7 +5788,7 @@ export class VoxelEngine {
   }
 
   currentPlayerHeight() {
-    return this.crouching ? CROUCH_HEIGHT : PLAYER_HEIGHT;
+    return (this.crouching ? CROUCH_HEIGHT : PLAYER_HEIGHT) * playerVariantHeightScale(this.playerVariant);
   }
 
   /** Medium and large ground creatures have horizontal presence without becoming unstable moving platforms. */
@@ -4745,7 +5919,7 @@ export class VoxelEngine {
       if (this.world.getBlock(torch.x, torch.y, torch.z) !== torch.type) continue;
       this.world.setBlock(torch.x, torch.y, torch.z, BlockId.Air, true, true);
       this.publishBlockEdits([{ x: torch.x, y: torch.y, z: torch.z, type: BlockId.Air }], "break");
-      if (this.mode === "survival") this.spawnDrop(BlockId.Torch, 1, new THREE.Vector3(torch.x, torch.y + 0.25, torch.z));
+      if (this.mode === "survival") this.spawnDrop(BlockId.Torch, 1, new THREE.Vector3(torch.x, torch.y, torch.z));
       this.lightRefreshTimer = 0;
     }
   }
@@ -4842,6 +6016,7 @@ export class VoxelEngine {
 
   restoreSailboat(value: Partial<SailboatSave>) {
     const save = normalizeSailboatSave(value, `wayfarer-${this.nextBoatId++}`);
+    save.inventory = save.inventory.map(normalizeCaptureOrbInventorySlot);
     if (this.boats.has(save.id)) return this.boats.get(save.id)!;
     const group = createSailboatVisual(save.id);
     group.position.set(save.x, save.y, save.z);
@@ -4906,14 +6081,18 @@ export class VoxelEngine {
     }
     this.mountedCreatureId = null;
     this.velocity.set(0, 0, 0);
-    this.events.onToast("You slide down from the Shadecrawler.");
+    this.events.onToast(mob?.kind === "reedstrider" ? "You step down from the Reedstrider."
+      : mob?.kind === "wild-horse" ? "You swing down from the Wildwood Courser." : "You slide down from the Shadecrawler.");
     this.saveSoon();
   }
 
   updateMountedCreature(dt: number) {
     const mob = this.mobs.find((candidate) => candidate.id === this.mountedCreatureId);
     const ownerId = this.localPlayerId();
-    if (!mob?.shadeState || !canRideShadecrawler(mob.shadeState, ownerId)) {
+    const ridingShadecrawler = Boolean(mob?.shadeState && canRideShadecrawler(mob.shadeState, ownerId));
+    const ridingReedstrider = Boolean(mob?.reedstriderBond && canRideReedstrider(mob.reedstriderBond, ownerId));
+    const ridingCourser = Boolean(mob?.courserBond && canRideReedstrider(mob.courserBond, ownerId));
+    if (!mob || (!ridingShadecrawler && !ridingReedstrider && !ridingCourser)) {
       this.mountedCreatureId = null;
       return;
     }
@@ -4924,11 +6103,16 @@ export class VoxelEngine {
     const desiredZ = -Math.cos(this.yaw) * (forward / length) - Math.sin(this.yaw) * (right / length);
     const moving = forward !== 0 || right !== 0;
     if (moving) mob.desiredAngle = Math.atan2(desiredZ, desiredX);
-    const speed = moving ? 5.75 : 0;
+    const mountedInWater = this.world.getBlock(Math.floor(mob.group.position.x + 0.5), Math.floor(mob.group.position.y + 0.5), Math.floor(mob.group.position.z + 0.5)) === BlockId.Water;
+    const mountedSprint = this.keys.has("ControlLeft") || this.keys.has("ControlRight") || this.sprintLatched;
+    const speed = moving ? (ridingReedstrider ? reedstriderRideSpeed(mountedInWater, mountedSprint)
+      : ridingCourser ? (mountedInWater ? 3.2 : mountedSprint ? 8.6 : 7.15) : 5.75) : 0;
     const before = mob.group.position.clone();
     const nx = mob.group.position.x + Math.cos(mob.angle) * speed * dt;
     const nz = mob.group.position.z + Math.sin(mob.angle) * speed * dt;
-    const targetY = moving ? this.mobMoveTarget(mob, nx, nz, 1.7) : mob.group.position.y;
+    const targetY = ridingReedstrider && mountedInWater
+      ? mob.group.position.y
+      : moving ? this.mobMoveTarget(mob, nx, nz, ridingShadecrawler ? 1.7 : 1) : mob.group.position.y;
     const blocked = targetY === null;
     if (!blocked && targetY !== null) {
       mob.group.position.x = nx;
@@ -5333,6 +6517,15 @@ export class VoxelEngine {
       ? normalizeCreatureHusbandryState(options.careState, (id * 2246822519) >>> 0)
       : null;
     const shadeState = kind === "shadecrawler" ? normalizeShadecrawlerState(options.shadeState ?? createShadecrawlerState()) : null;
+    const reedstriderBond = kind === "reedstrider" ? { ...(options.reedstriderBond ?? createReedstriderBond()) } : null;
+    const courserBond = kind === "wild-horse" ? { ...(options.courserBond ?? createReedstriderBond()) } : null;
+    const apiaryBee = options.apiaryBee ? { ...options.apiaryBee } : null;
+    const socialMode = socialGroupModeForMob(kind);
+    const socialGroupId = options.socialGroupId ?? (socialMode
+      ? `${socialMode}:${kind}:${Math.floor(position.x / 16)},${Math.floor(position.z / 16)}` : null);
+    const peelopShedding = kind === "peelop"
+      ? { ...(options.peelopShedding ?? createPeelopSheddingState(petState?.geneticSeed ?? id)) }
+      : null;
     const shadeHealthScale = shadeState ? shadecrawlerScale(shadeState) : 1;
     const mob: MobEntity = {
       id, kind, name: petState?.name || definition.name, hostile: definition.hostile && !shadeState?.tamed, definition, group, visual, parts,
@@ -5342,11 +6535,17 @@ export class VoxelEngine {
       attackCooldown: 0, hurtTimer: 0, age: options.age ?? 0, bob: Math.random() * Math.PI * 2, gait: 0,
       fleeTimer: 0, state: "wander", stateTimer: 0, baseY: position.y, voiceTimer: 2 + Math.random() * 8,
       birdState: definition.family === "bird" ? createBirdBehavior(kind as "emberjay" | "canopy-lark", id * 0.71) : null,
-      petState, careState, shadeState, shadeSaddle: visual.getObjectByName("shadecrawler-saddle") ?? null, visualBaseY, visualMinY,
+      petState, careState, shadeState, reedstriderBond, courserBond, apiaryBee, beeHiveKey: options.beeHiveKey ?? null,
+      socialGroupId, peelopShedding,
+      milkCooldown: kind === "meadow-cow" ? clamp(Number(options.milkCooldown) || 0, 0, CLOVERBACK_MILK_COOLDOWN_SECONDS) : 0,
+      shadeSaddle: visual.getObjectByName("shadecrawler-saddle") ?? null, visualBaseY, visualMinY,
       persistentPoiResident: options.persistentPoiResident ?? Boolean(definition.persistent),
       poiMarkerId: options.poiMarkerId ?? null,
       enclosed: options.enclosed ?? false,
       enclosureTimer: 0,
+      sightCheckTimer: (id % 5) * 0.045,
+      awarenessTimer: 0,
+      seesPlayer: false,
     };
     this.applyMobScale(mob, shadeState ? shadecrawlerScale(shadeState) : petState?.baby || careState?.baby ? 0.62 : 1);
     this.mobs.push(mob);
@@ -5383,6 +6582,12 @@ export class VoxelEngine {
       petState: saved.petState ?? null,
       careState: saved.careState ?? null,
       shadeState: saved.shadeState ?? null,
+      reedstriderBond: saved.reedstriderBond ?? null,
+      courserBond: saved.courserBond ?? null,
+      apiaryBee: saved.apiaryBee ?? null,
+      socialGroupId: saved.socialGroupId ?? null,
+      peelopShedding: saved.peelopShedding ?? null,
+      milkCooldown: saved.milkCooldown ?? 0,
     });
   }
 
@@ -5400,6 +6605,53 @@ export class VoxelEngine {
     });
   }
 
+  hostileSpawnSuppressedByTorch(x: number, y: number, z: number, radius = 7) {
+    const verticalRadius = 4;
+    for (let dx = -radius; dx <= radius; dx += 1) for (let dz = -radius; dz <= radius; dz += 1) {
+      if (dx * dx + dz * dz > radius * radius) continue;
+      for (let dy = -verticalRadius; dy <= verticalRadius; dy += 1) {
+        if (isTorchBlock(this.world.getBlock(x + dx, y + dy, z + dz) ?? BlockId.Air)) return true;
+      }
+    }
+    return false;
+  }
+
+  hasClearLineOfSight(origin: THREE.Vector3, target: THREE.Vector3) {
+    const offset = target.clone().sub(origin);
+    const distance = offset.length();
+    if (distance <= 0.001) return true;
+    const steps = Math.max(1, Math.ceil(distance / 0.24));
+    offset.multiplyScalar(1 / steps);
+    const sample = origin.clone();
+    for (let step = 1; step < steps; step += 1) {
+      sample.add(offset);
+      const type = this.world.getBlock(Math.floor(sample.x + 0.5), Math.floor(sample.y + 0.5), Math.floor(sample.z + 0.5));
+      if (type === undefined) return false;
+      const definition = BLOCKS[type];
+      if (!definition?.solid || definition.layer === "transparent" || this.world.isWalkThrough(type)) continue;
+      const fullOccluder = !definition.shape || ["cube", "door", "chest", "apiary", "wild-hive", "orb-healer"].includes(definition.shape);
+      if (fullOccluder) return false;
+    }
+    return true;
+  }
+
+  mobCanSeePlayer(mob: MobEntity) {
+    const scale = this.mobBaseScale(mob);
+    const origin = mob.group.position.clone().setY(this.mobFootY(mob) + mob.definition.height * scale * 0.72);
+    const target = this.position.clone().add(new THREE.Vector3(0, this.cameraEyeHeight * 0.82, 0));
+    return this.hasClearLineOfSight(origin, target);
+  }
+
+  hostileSpawnVisibleToPlayer(x: number, y: number, z: number) {
+    const dx = x - this.position.x;
+    const dz = z - this.position.z;
+    if (!positionInPlayerViewCone(this.yaw, dx, dz)) return false;
+    return this.hasClearLineOfSight(
+      this.position.clone().add(new THREE.Vector3(0, this.cameraEyeHeight, 0)),
+      new THREE.Vector3(x, y + 1, z),
+    );
+  }
+
   updateStructureSpawns(dt: number) {
     this.structureActivationTimer -= dt;
     if (this.structureActivationTimer > 0) return;
@@ -5415,6 +6667,23 @@ export class VoxelEngine {
       const butterfly = BUTTERFLY_ORDER.includes(marker.mobKind as ButterflyKind) ? marker.mobKind as ButterflyKind : null;
       const kind = aliases[marker.mobKind] ?? (marker.mobKind in MOB_DEFS ? marker.mobKind as MobKind : null);
       if (!butterfly && !kind) { this.activatedStructureMarkers.add(markerKey); continue; }
+      let hiveKey: string | null = null;
+      let boundApiary: ApiaryState | null = null;
+      if (kind === "hive-queen" || kind === "honeybee") {
+        const hiveX = Math.round(marker.position.x);
+        const hiveY = Math.round(marker.position.y) - 1;
+        const hiveZ = Math.round(marker.position.z);
+        if (this.world.getBlock(hiveX, hiveY, hiveZ) === BlockId.WildBeehive) {
+          hiveKey = blockKey(hiveX, hiveY, hiveZ);
+          const current = this.ensureApiaryState(hiveKey);
+          if (isStockedApiary(current)) {
+            boundApiary = kind === "honeybee"
+              ? createApiary(current.queen.id, Array.from({ length: Math.min(APIARY_WORKER_CAP, marker.count) }, (_, index) => `${current.queen.id}-poi-worker-${index}`), current.queen.geneticSeed, this.day)
+              : current;
+            this.apiaries.set(hiveKey, boundApiary);
+          }
+        }
+      }
       for (let index = 0; index < marker.count; index += 1) {
         const angle = (index / Math.max(1, marker.count)) * Math.PI * 2 + marker.position.x * 0.17;
         const radius = marker.radius * (0.3 + ((index * 37) % 61) / 100);
@@ -5427,6 +6696,9 @@ export class VoxelEngine {
             persistentPoiResident: marker.persistent,
             poiMarkerId: markerKey,
             petState: kind === "peelop" ? createPeelopState(((marker.position.x * 73856093) ^ (marker.position.z * 19349663) ^ index) >>> 0, index % 5 === 0) : null,
+            apiaryBee: kind === "hive-queen" ? boundApiary?.queen ?? null
+              : kind === "honeybee" ? boundApiary?.workers[index] ?? null : null,
+            beeHiveKey: (kind === "hive-queen" || kind === "honeybee") ? hiveKey : null,
           });
         }
       }
@@ -5435,12 +6707,39 @@ export class VoxelEngine {
     }
   }
 
+  spawnNaturalGroup(kind: MobKind, center: THREE.Vector3, maximum: number, aquatic = false) {
+    const count = Math.max(0, Math.min(maximum, naturalGroupSizeForMob(kind, Math.random())));
+    if (count <= 0) return [] as MobEntity[];
+    const mode = socialGroupModeForMob(kind);
+    const groupId = `${mode ?? "solitary"}:${kind}:${this.nextMobId}:${Math.floor(center.x)},${Math.floor(center.z)}`;
+    const radius = mode === "herd" ? 4.8 : mode === "shoal" ? 1.8 : 1.2;
+    const spawned: MobEntity[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const angle = index / Math.max(1, count) * Math.PI * 2 + (this.nextMobId % 17) * 0.19;
+      const distance = index === 0 ? 0 : radius * (0.35 + (index % 3) * 0.22);
+      const x = center.x + Math.cos(angle) * distance;
+      const z = center.z + Math.sin(angle) * distance;
+      let y = center.y;
+      if (aquatic) {
+        if (this.world.getBlock(Math.floor(x + 0.5), Math.floor(y + 0.5), Math.floor(z + 0.5)) !== BlockId.Water) continue;
+      } else {
+        const ground = this.world.surfaceAt(Math.round(x), Math.round(z));
+        const feet = this.world.getBlock(Math.round(x), ground + 1, Math.round(z));
+        if (!this.world.isWalkThrough(feet)) continue;
+        y = ground + MOB_DEFS[kind].footOffset;
+      }
+      spawned.push(this.spawnMob(kind, new THREE.Vector3(x, y, z), { socialGroupId: groupId }));
+    }
+    return spawned;
+  }
+
   trySpawnMob() {
     const cap = Math.floor((this.touchMode ? 13 : 22) * this.worldOptions.mobDensity);
-    if (cap <= 0) return;
-    if (this.mobs.length >= cap) return;
-    const passiveCap = Math.ceil(cap * 0.55);
+    const caps = mobPopulationCaps(cap);
+    if (caps.total <= 0 || this.mobs.length >= caps.total) return;
+    const passiveCap = caps.passive;
     const passiveCount = this.mobs.reduce((count, mob) => count + (mob.hostile ? 0 : 1), 0);
+    const hostileCount = this.mobs.length - passiveCount;
     const angle = Math.random() * Math.PI * 2;
     const radius = 14 + Math.random() * 20;
     const x = Math.round(this.position.x + Math.cos(angle) * radius);
@@ -5454,13 +6753,14 @@ export class VoxelEngine {
         .find((candidateY) => this.world.getBlock(x, candidateY, z) === BlockId.Water);
       if (nearbyWaterY !== undefined && passiveCount < passiveCap && Math.random() < 0.62) {
         kind = fishKindsForHabitat("underground")[0];
-        this.spawnMob(kind, new THREE.Vector3(x, nearbyWaterY, z));
+        this.spawnNaturalGroup(kind, new THREE.Vector3(x, nearbyWaterY, z), Math.min(passiveCap - passiveCount, caps.total - this.mobs.length), true);
         return;
       }
       if (this.worldOptions.difficulty === "peaceful") return;
       const feet = this.world.getBlock(x, y + 1, z);
       const head = this.world.getBlock(x, y + 2, z);
       if (Math.abs(y - this.position.y) > 14 || !this.world.isWalkThrough(feet) || !this.world.isWalkThrough(head)) return;
+      if (hostileCount >= caps.hostile || this.hostileSpawnSuppressedByTorch(x, y + 1, z) || this.hostileSpawnVisibleToPlayer(x, y, z)) return;
       const roll = Math.random();
       kind = roll < 0.38 ? "zombie" : roll < 0.72 ? "caveblob" : "shadecrawler";
     } else {
@@ -5473,7 +6773,7 @@ export class VoxelEngine {
           const habitat = biome === BiomeId.River ? "river" : "ocean";
           const pool = fishKindsForHabitat(habitat);
           kind = pool[Math.floor(Math.random() * pool.length)];
-          this.spawnMob(kind, new THREE.Vector3(x, waterY - Math.random() * Math.min(2, Math.max(0, waterY - y - 1)), z));
+          this.spawnNaturalGroup(kind, new THREE.Vector3(x, waterY - Math.random() * Math.min(2, Math.max(0, waterY - y - 1)), z), Math.min(passiveCap - passiveCount, caps.total - this.mobs.length), true);
         }
         return;
       }
@@ -5483,6 +6783,7 @@ export class VoxelEngine {
       const nocturnalGlowmoth = hostile && passiveCount < passiveCap && [BiomeId.MushroomFen, BiomeId.Bloomwood, BiomeId.Siltfen].includes(biome) && Math.random() < 0.3;
       if (nocturnalGlowmoth) kind = "glowmoth";
       else if (hostile) {
+        if (hostileCount >= caps.hostile || this.hostileSpawnSuppressedByTorch(x, y + 1, z) || this.hostileSpawnVisibleToPlayer(x, y, z)) return;
         const roll = Math.random();
         kind = roll < 0.38 ? "zombie" : roll < 0.63 ? "shadecrawler" : roll < 0.82 ? "rattlekin" : "skeleton";
       }
@@ -5491,7 +6792,8 @@ export class VoxelEngine {
         kind = passiveMobKindForBiome(biome, Math.random());
       }
     }
-    this.spawnMob(kind, new THREE.Vector3(x, y + MOB_DEFS[kind].footOffset, z));
+    const available = MOB_DEFS[kind].hostile ? 1 : Math.min(passiveCap - passiveCount, caps.total - this.mobs.length);
+    this.spawnNaturalGroup(kind, new THREE.Vector3(x, y + MOB_DEFS[kind].footOffset, z), available);
   }
 
   mobMoveTarget(
@@ -5571,13 +6873,131 @@ export class VoxelEngine {
     } else this.applyMobScale(mob, baseScale * hurtPulse);
   }
 
+  updateBeeMob(mob: MobEntity, dt: number, distance: number, dx: number, dz: number) {
+    const bee = mob.apiaryBee;
+    if (bee?.tamed && bee.ownerId === this.localPlayerId() && this.playerInvulnerability > 0) {
+      let target: MobEntity | null = null;
+      let targetDistanceSquared = 64;
+      for (const candidate of this.mobs) {
+        if (candidate === mob || !candidate.hostile || candidate.health <= 0) continue;
+        const candidateDistance = candidate.group.position.distanceToSquared(mob.group.position);
+        if (candidateDistance >= targetDistanceSquared) continue;
+        target = candidate;
+        targetDistanceSquared = candidateDistance;
+      }
+      if (target) {
+        const targetDx = target.group.position.x - mob.group.position.x;
+        const targetDz = target.group.position.z - mob.group.position.z;
+        const guardDistance = Math.hypot(targetDx, targetDz);
+        mob.angle = Math.atan2(targetDz, targetDx);
+        const speed = mob.definition.chaseSpeed;
+        mob.group.position.x += Math.cos(mob.angle) * speed * dt;
+        mob.group.position.z += Math.sin(mob.angle) * speed * dt;
+        mob.group.position.y += (target.group.position.y + target.definition.height * 0.55 - mob.group.position.y) * Math.min(1, dt * 5);
+        const sting = beeStingProfile(bee, true);
+        if (sting.defendsOwner && guardDistance <= mob.definition.attackRange + 0.35 && mob.attackCooldown <= 0) {
+          target.health -= sting.damage;
+          target.hurtTimer = 0.3;
+          mob.attackCooldown = sting.cooldownSeconds;
+          this.engageCombat();
+          if (target.health <= 0) this.killMob(target);
+        }
+        mob.group.rotation.y = -mob.angle - Math.PI / 2;
+        this.animateMob(mob, speed * dt);
+        return false;
+      }
+    }
+    if (bee?.angry && distance < 9) {
+      const heading = Math.atan2(dz, dx);
+      mob.angle += Math.atan2(Math.sin(heading - mob.angle), Math.cos(heading - mob.angle)) * Math.min(1, dt * mob.definition.turnRate);
+      const speed = mob.definition.chaseSpeed;
+      mob.group.position.x += Math.cos(mob.angle) * speed * dt;
+      mob.group.position.z += Math.sin(mob.angle) * speed * dt;
+      mob.group.position.y += (this.position.y + this.cameraEyeHeight * 0.72 - mob.group.position.y) * Math.min(1, dt * 4.5);
+      const sting = beeStingProfile(bee);
+      if (distance <= mob.definition.attackRange + 0.45 && mob.attackCooldown <= 0) {
+        this.damagePlayer(sting.damage, mob.name);
+        mob.attackCooldown = sting.cooldownSeconds;
+        this.engageCombat();
+      }
+      mob.group.rotation.y = -mob.angle - Math.PI / 2;
+      this.animateMob(mob, speed * dt);
+      return false;
+    }
+
+    if (!mob.beeHiveKey) {
+      if (mob.wanderTimer <= 0) {
+        mob.desiredAngle += (Math.random() - 0.5) * 2.5;
+        mob.wanderTimer = 1.4 + Math.random() * 3.2;
+      }
+      mob.angle += Math.atan2(Math.sin(mob.desiredAngle - mob.angle), Math.cos(mob.desiredAngle - mob.angle)) * Math.min(1, dt * mob.definition.turnRate);
+      const speed = mob.definition.speed;
+      mob.group.position.x += Math.cos(mob.angle) * speed * dt;
+      mob.group.position.z += Math.sin(mob.angle) * speed * dt;
+      mob.group.position.y = mob.baseY + Math.sin(mob.age * 3.4 + mob.id) * 0.24;
+      mob.group.rotation.y = -mob.angle - Math.PI / 2;
+      this.animateMob(mob, speed * dt);
+      return false;
+    }
+
+    const [hiveX, hiveY, hiveZ] = mob.beeHiveKey.split(",").map(Number);
+    const phase = apiaryPhaseForWorldTime(this.worldTime);
+    if (mob.kind === "hive-queen") {
+      const angle = mob.age * 0.22 + mob.id;
+      const targetX = hiveX + Math.cos(angle) * 0.42;
+      const targetY = hiveY + 0.86 + Math.sin(angle * 1.7) * 0.12;
+      const targetZ = hiveZ + Math.sin(angle) * 0.42;
+      mob.group.position.x += (targetX - mob.group.position.x) * Math.min(1, dt * 2.4);
+      mob.group.position.y += (targetY - mob.group.position.y) * Math.min(1, dt * 2.4);
+      mob.group.position.z += (targetZ - mob.group.position.z) * Math.min(1, dt * 2.4);
+      mob.angle = Math.atan2(targetZ - mob.group.position.z, targetX - mob.group.position.x);
+      mob.group.rotation.y = -mob.angle - Math.PI / 2;
+      this.animateMob(mob, mob.definition.speed * dt * 0.2);
+      return false;
+    }
+    const flowers = this.apiaryFlowerCache.get(mob.beeHiveKey) ?? [];
+    const plan = planWorkerForaging({
+      phase,
+      position: mob.group.position,
+      hive: { x: hiveX, y: hiveY + 0.75, z: hiveZ },
+      flowers,
+      carryingNectar: bee?.carryingNectar ?? 0,
+    });
+    const targetDx = plan.target.x - mob.group.position.x;
+    const targetDy = plan.target.y + (plan.mode === "return" ? 0 : 0.55) - mob.group.position.y;
+    const targetDz = plan.target.z - mob.group.position.z;
+    const targetDistance = Math.hypot(targetDx, targetDy, targetDz);
+    if (plan.mode === "return" && targetDistance <= 0.3) {
+      if (phase !== "day") return true;
+      if (mob.apiaryBee) mob.apiaryBee = { ...mob.apiaryBee, carryingNectar: 0 };
+      return false;
+    }
+    if (plan.collectNectar && mob.apiaryBee) mob.apiaryBee = {
+      ...mob.apiaryBee,
+      carryingNectar: Math.min(4, mob.apiaryBee.carryingNectar + dt * 0.8),
+    };
+    if (targetDistance > 0.001) {
+      const speed = plan.mode === "land" ? 0.22 : mob.definition.speed;
+      const step = Math.min(targetDistance, speed * dt);
+      mob.group.position.x += targetDx / targetDistance * step;
+      mob.group.position.y += targetDy / targetDistance * step;
+      mob.group.position.z += targetDz / targetDistance * step;
+      mob.angle = Math.atan2(targetDz, targetDx);
+      mob.group.rotation.y = -mob.angle - Math.PI / 2;
+      this.animateMob(mob, step);
+    }
+    return false;
+  }
+
   updateAquaticMob(mob: MobEntity, dt: number, distance: number, dx: number, dz: number) {
     if (mob.wanderTimer <= 0) {
       mob.desiredAngle += (Math.random() - 0.5) * 2.2;
       mob.wanderTimer = 1.5 + Math.random() * 4;
     }
     if (mob.fleeTimer > 0 || distance < 2.2) mob.desiredAngle = Math.atan2(-dz, -dx);
-    const speed = mob.fleeTimer > 0 ? mob.definition.chaseSpeed : mob.definition.speed;
+    const social = this.socialMotions.get(mob.id);
+    if (social && mob.fleeTimer <= 0 && distance >= 2.2) mob.desiredAngle = Math.atan2(social.z, social.x);
+    const speed = (mob.fleeTimer > 0 ? mob.definition.chaseSpeed : mob.definition.speed) * (social?.speedScale ?? 1);
     mob.steering = updateStableSteering(mob.steering, { dt, turnRate: mob.definition.turnRate, blocked: false, mobId: mob.id, desiredHeading: mob.desiredAngle });
     mob.angle = mob.steering.heading;
     const nx = mob.group.position.x + Math.cos(mob.angle) * speed * dt;
@@ -5680,14 +7100,42 @@ export class VoxelEngine {
     }
   }
 
+  refreshSocialMotions(dt: number) {
+    this.socialMotionTimer -= dt;
+    if (this.socialMotionTimer > 0) return;
+    this.socialMotionTimer = 0.35;
+    this.socialMotions.clear();
+    const groups = new Map<string, { mode: SocialGroupMode; mobs: MobEntity[] }>();
+    for (const mob of this.mobs) {
+      const mode = socialGroupModeForMob(mob.kind);
+      if (!mode || !mob.socialGroupId || mob.health <= 0 || !mob.group.visible) continue;
+      const key = `${mode}:${mob.socialGroupId}`;
+      const group = groups.get(key) ?? { mode, mobs: [] };
+      group.mobs.push(mob);
+      groups.set(key, group);
+    }
+    for (const group of groups.values()) {
+      if (group.mobs.length < 2) continue;
+      const motions = planSocialGroupMotion(group.mobs.map((mob) => ({
+        id: String(mob.id),
+        x: mob.group.position.x,
+        z: mob.group.position.z,
+        vx: Math.cos(mob.angle) * mob.definition.speed,
+        vz: Math.sin(mob.angle) * mob.definition.speed,
+      })), group.mode);
+      for (const motion of motions) this.socialMotions.set(Number(motion.id), motion);
+    }
+  }
+
   updateMobs(dt: number) {
     this.mobSpawnTimer -= dt;
     if (this.mobSpawnTimer <= 0) {
       const density = Math.max(0.08, this.worldOptions.mobDensity);
-      this.mobSpawnTimer = (2.2 + Math.random() * 1.8) / density;
+      this.mobSpawnTimer = ((2.2 + Math.random() * 1.8) * HOSTILE_SPAWN_ATTEMPT_SCALE) / density;
       this.trySpawnMob();
     }
     const ownerId = this.localPlayerId();
+    this.refreshSocialMotions(dt);
     const leaderSpeed = Math.hypot(this.velocity.x, this.velocity.z);
     if (leaderSpeed > 0.12) this.followerHeading = Math.atan2(this.velocity.z, this.velocity.x);
     const leaderHeading = this.followerHeading;
@@ -5706,17 +7154,22 @@ export class VoxelEngine {
         radius: Math.max(0.22, this.mobCollisionProfile(mob).radius || mob.definition.radius * this.mobBaseScale(mob) * 0.72),
       })),
     ).map((slot) => [slot.id, slot] as const));
+    const companionKills = new Set<MobEntity>();
     for (let index = this.mobs.length - 1; index >= 0; index -= 1) {
       const mob = this.mobs[index];
+      if (mob.health <= 0) continue;
       if (mob.hostile && this.worldOptions.difficulty === "peaceful") { this.removeMob(index); continue; }
       mob.age += dt;
       mob.attackCooldown = Math.max(0, mob.attackCooldown - dt);
+      mob.milkCooldown = Math.max(0, mob.milkCooldown - dt);
       mob.hurtTimer = Math.max(0, mob.hurtTimer - dt);
       mob.fleeTimer = Math.max(0, mob.fleeTimer - dt);
       mob.wanderTimer -= dt;
       mob.stateTimer -= dt;
       mob.voiceTimer -= dt;
       mob.enclosureTimer -= dt;
+      mob.sightCheckTimer -= dt;
+      mob.awarenessTimer = Math.max(0, mob.awarenessTimer - dt);
       if (mob.enclosureTimer <= 0) {
         mob.enclosureTimer = 3 + (mob.id % 5) * 0.25;
         mob.enclosed = this.isMobEnclosed(mob);
@@ -5726,6 +7179,15 @@ export class VoxelEngine {
         mob.petState.health = clamp(mob.health, 0, mob.petState.maxHealth);
         mob.name = mob.petState.name || mob.definition.name;
         mob.maxHealth = mob.petState.maxHealth;
+        if (mob.petState.tamed && !mob.petState.baby && this.multiplayer?.role !== "guest") {
+          const shedding = stepPeelopShedding(mob.peelopShedding ?? createPeelopSheddingState(mob.petState.geneticSeed), Math.floor(mob.age * 20));
+          mob.peelopShedding = shedding.state;
+          if (shedding.drop) {
+            this.spawnDrop(shedding.drop.item, shedding.drop.count, mob.group.position.clone());
+            if (mob.group.position.distanceToSquared(this.position) < 64) this.audio.play("pickup");
+            this.saveSoon();
+          }
+        }
       }
       if (mob.careState) mob.careState = tickCreatureHusbandry(mob.careState, dt * 20);
       if (mob.shadeState) {
@@ -5793,6 +7255,10 @@ export class VoxelEngine {
         continue;
       }
       if (mob.id === this.mountedCreatureId) continue;
+      if (mob.kind === "honeybee" || mob.kind === "hive-queen") {
+        if (this.updateBeeMob(mob, dt, distance, dx, dz)) this.removeMob(index);
+        continue;
+      }
       if (mob.definition.movement === "aquatic") {
         this.updateAquaticMob(mob, dt, distance, dx, dz);
         continue;
@@ -5805,21 +7271,65 @@ export class VoxelEngine {
         mob.fleeTimer = Math.max(mob.fleeTimer, 2.4);
       }
       const aggressive = mob.hostile || (mob.definition.temperament === "Defensive" && mob.fleeTimer > 0);
+      if (aggressive && distance < 24 && mob.sightCheckTimer <= 0) {
+        mob.seesPlayer = this.mobCanSeePlayer(mob);
+        mob.sightCheckTimer = 0.18 + (mob.id % 5) * 0.035;
+        if (mob.seesPlayer) mob.awarenessTimer = Math.max(mob.awarenessTimer, 3.2);
+      } else if (!aggressive || distance >= 24) mob.seesPlayer = false;
       const petHolding = Boolean(mob.petState?.tamed && (mob.petState.command === "sit" || mob.petState.command === "stay"));
       const followerDistance = followerSlot
         ? Math.hypot(followerSlot.x - mob.group.position.x, followerSlot.z - mob.group.position.z)
         : 0;
       const followerSettled = Boolean(followerSlot && followerDistance <= followerSlot.arrivalRadius);
-      if (mob.definition.ranged && aggressive && distance < 17) {
+      let peelopTarget: MobEntity | null = null;
+      if (mob.kind === "peelop" && mob.petState?.tamed && !mob.petState.baby
+        && mob.petState.ownerId === ownerId && !petHolding
+        && (mob.hurtTimer > 0 || this.playerInvulnerability > 0 || this.combatMusicTimer > 0)) {
+        let nearestDistanceSquared = 64;
+        const sightOrigin = mob.group.position.clone().add(new THREE.Vector3(0, mob.definition.height * 0.7, 0));
+        for (const candidate of this.mobs) {
+          if (!candidate.hostile || candidate.health <= 0) continue;
+          const candidateDistanceSquared = candidate.group.position.distanceToSquared(mob.group.position);
+          if (candidateDistanceSquared > nearestDistanceSquared) continue;
+          const sightTarget = candidate.group.position.clone().add(new THREE.Vector3(0, candidate.definition.height * 0.55, 0));
+          if (!this.hasClearLineOfSight(sightOrigin, sightTarget)) continue;
+          nearestDistanceSquared = candidateDistanceSquared;
+          peelopTarget = candidate;
+        }
+      }
+      if (peelopTarget) {
+        const guardDx = peelopTarget.group.position.x - mob.group.position.x;
+        const guardDz = peelopTarget.group.position.z - mob.group.position.z;
+        const guardDistance = Math.hypot(guardDx, guardDz);
+        const defense = peelopDefenseAction({
+          tamed: true,
+          selfAttacked: mob.hurtTimer > 0,
+          ownerAttacked: this.playerInvulnerability > 0 || this.combatMusicTimer > 0,
+          hostileDistance: guardDistance,
+          cooldownSeconds: mob.attackCooldown,
+        });
+        mob.state = "chase";
+        mob.desiredAngle = Math.atan2(guardDz, guardDx);
+        if (defense.attacks) {
+          peelopTarget.health -= defense.damage;
+          peelopTarget.hurtTimer = 0.3;
+          peelopTarget.awarenessTimer = Math.max(peelopTarget.awarenessTimer, 3.2);
+          mob.attackCooldown = defense.nextCooldownSeconds;
+          this.playCreatureEvent(mob, "hurt");
+          this.spawnParticles(peelopTarget.group.position.x, peelopTarget.group.position.y, peelopTarget.group.position.z, BlockId.Dirt, 4);
+          this.engageCombat();
+          if (peelopTarget.health <= 0) companionKills.add(peelopTarget);
+        }
+      } else if (mob.definition.ranged && aggressive && mob.awarenessTimer > 0 && distance < 17) {
         mob.state = "chase";
         mob.desiredAngle = distance < 4 ? Math.atan2(-dz, -dx) : Math.atan2(dz, dx);
-        if (distance >= 3.2 && mob.attackCooldown <= 0 && Math.abs(this.position.y - mob.group.position.y) < 5) this.fireSkeletonArrow(mob);
+        if (mob.seesPlayer && distance >= 3.2 && mob.attackCooldown <= 0 && Math.abs(this.position.y - mob.group.position.y) < 5) this.fireSkeletonArrow(mob);
       } else if (mob.state === "windup") {
         if (mob.stateTimer <= 0) {
           if (distance < mob.definition.attackRange + 0.7 && Math.abs(this.position.y - mob.group.position.y) < 2) {
             this.damagePlayer(mob.damage, mob.name);
             this.velocity.add(new THREE.Vector3(dx, 0.1, dz).normalize().multiplyScalar(mob.kind === "ridgeback" ? 4.4 : 3.2));
-            this.combatMusicTimer = Math.max(this.combatMusicTimer, 8);
+            this.engageCombat();
             if (mob.kind === "zombie") this.audio.playSample(Math.random() < 0.5 ? "zombieMoan1" : "zombieMoan2", { gain: 0.9 });
             else this.audio.play("mob");
           }
@@ -5833,10 +7343,13 @@ export class VoxelEngine {
         mob.state = "chase";
         mob.desiredAngle = Math.atan2(followerSlot.z - mob.group.position.z, followerSlot.x - mob.group.position.x);
       }
-      else if (aggressive && distance < (this.crouching ? 11 : 20)) {
+      else if (aggressive && mob.awarenessTimer > 0 && distance < (this.crouching ? 11 : 20)) {
         mob.state = "chase";
         mob.desiredAngle = Math.atan2(dz, dx);
         if (distance < mob.definition.attackRange && mob.attackCooldown <= 0) { mob.state = "windup"; mob.stateTimer = mob.kind === "rattlekin" ? 0.52 : mob.kind === "zombie" ? 0.44 : 0.34; }
+      } else if (aggressive && mob.awarenessTimer <= 0 && mob.state === "chase") {
+        mob.state = "wander";
+        mob.desiredAngle = mob.angle;
       } else if (mob.fleeTimer > 0) {
         mob.state = "flee";
         mob.desiredAngle = Math.atan2(-dz, -dx);
@@ -5845,17 +7358,24 @@ export class VoxelEngine {
         mob.desiredAngle += (Math.random() - 0.5) * 2.4;
         mob.wanderTimer = 2 + Math.random() * 5;
       }
-      let speed = mob.state === "chase" ? mob.definition.chaseSpeed : mob.state === "flee" ? mob.definition.chaseSpeed * 0.86 : mob.definition.speed;
+      const social = this.socialMotions.get(mob.id);
+      if (social && mob.state === "wander" && mob.fleeTimer <= 0 && !followerSlot) mob.desiredAngle = Math.atan2(social.z, social.x);
+      let speed = (mob.state === "chase" ? mob.definition.chaseSpeed : mob.state === "flee" ? mob.definition.chaseSpeed * 0.86 : mob.definition.speed)
+        * (mob.state === "wander" ? social?.speedScale ?? 1 : 1);
+      const puddleJump = mob.kind === "puddlehopper"
+        ? puddlehopperJumpPlan(mob.id, mob.age, this.weather === "rain", mob.fleeTimer > 0)
+        : null;
+      if (puddleJump?.jumps) speed = Math.max(speed, puddleJump.forwardVelocity);
       if (mob.kind === "lanternshell" && this.weather === "rain") speed *= 1.55;
       if (mob.state === "windup" || mob.state === "recover") speed *= 0.08;
-      if (followerSlot) speed = followerTravelSpeed({
+      if (followerSlot && !peelopTarget) speed = followerTravelSpeed({
         walkSpeed: mob.definition.speed,
         chaseSpeed: mob.definition.chaseSpeed,
         leaderSpeed,
         distanceToSlot: followerDistance,
         arrivalRadius: followerSlot.arrivalRadius,
       });
-      if (petHolding || followerSettled) speed = 0;
+      if (petHolding || (followerSettled && !peelopTarget)) speed = 0;
       const beforeX = mob.group.position.x;
       const beforeZ = mob.group.position.z;
       const movement = mob.definition.movement ?? (mob.definition.aquatic ? "aquatic" : mob.definition.flying ? "flying" : "ground");
@@ -5864,7 +7384,7 @@ export class VoxelEngine {
       if (movement === "ground" && speed > 0.001) {
         const profile = this.mobCollisionProfile(mob);
         const baseLookahead = Math.max(0.72, (profile.radius || mob.definition.radius * this.mobBaseScale(mob)) + 0.36, speed * 0.42);
-        const lookahead = followerSlot ? Math.max(0.3, Math.min(baseLookahead, followerDistance)) : baseLookahead;
+        const lookahead = followerSlot && !peelopTarget ? Math.max(0.3, Math.min(baseLookahead, followerDistance)) : baseLookahead;
         const route = chooseCreatureRoute({
           state: mob.route,
           dt,
@@ -5902,8 +7422,10 @@ export class VoxelEngine {
         if (targetY !== null) {
           mob.group.position.x = nx;
           mob.group.position.z = nz;
+          const puddleInterval = this.weather === "rain" ? 1.45 : 2.8;
+          const puddlePhase = mob.age % puddleInterval / puddleInterval;
           const hop = mob.kind === "caveblob" ? Math.max(0, Math.sin(performance.now() * 0.006 + mob.id)) * 0.1
-            : mob.kind === "puddlehopper" && speed > 0 ? Math.max(0, Math.sin(performance.now() * 0.014 + mob.id)) * 0.18 : 0;
+            : puddleJump?.jumps && speed > 0 ? Math.max(0, Math.sin(puddlePhase * Math.PI)) * Math.min(0.75, puddleJump.verticalVelocity * 0.1) : 0;
           mob.group.position.y += (targetY + hop - mob.group.position.y) * Math.min(1, dt * 9);
         } else { blocked = true; mob.wanderTimer = Math.max(mob.wanderTimer, 0.5); }
       }
@@ -5916,6 +7438,7 @@ export class VoxelEngine {
       mob.group.rotation.y = -mob.angle - Math.PI / 2;
       this.animateMob(mob, moved);
     }
+    for (const defeated of companionKills) if (this.mobs.includes(defeated) && defeated.health <= 0) this.killMob(defeated);
   }
 
   attackTargetMob() {
@@ -5923,13 +7446,14 @@ export class VoxelEngine {
     if (!mob || this.attackCooldown > 0) return;
     const slot = this.selectedSlot();
     const item = slot ? ITEMS[slot.item] : null;
-    const damage = item?.damage ?? 1;
+    const damage = item?.damage ?? DEFAULT_UNARMED_DAMAGE;
     this.attackCooldown = item?.toolKind === "sword" ? 0.38 : 0.55;
     mob.health -= damage;
     if (mob.petState) mob.petState.health = Math.max(0, mob.health);
     mob.hurtTimer = 0.32;
     mob.fleeTimer = mob.hostile ? 0.45 : 3.2;
     mob.state = mob.hostile ? "chase" : "flee";
+    if (mob.hostile) mob.awarenessTimer = Math.max(mob.awarenessTimer, 4.5);
     const away = mob.group.position.clone().sub(this.position).setY(0).normalize().multiplyScalar(0.65);
     mob.group.position.add(away);
     if (item?.toolKind === "sword") this.audio.playSample("swordSwing", { playbackRate: 0.96 + Math.random() * 0.08 });
@@ -5937,7 +7461,7 @@ export class VoxelEngine {
     // Every creature hit remains audible even before a custom generated cue is
     // installed; per-species assets can replace this stable fallback hook.
     this.playCreatureEvent(mob, "hurt");
-    if (mob.hostile) this.combatMusicTimer = Math.max(this.combatMusicTimer, 9);
+    if (mob.hostile) this.engageCombat();
     this.spawnParticles(mob.group.position.x, mob.group.position.y, mob.group.position.z, mob.hostile ? BlockId.Obsidian : BlockId.Dirt, 7);
     if (item?.toolKind) this.damageSelectedTool();
     if (mob.health <= 0) this.killMob(mob);
@@ -6138,19 +7662,30 @@ export class VoxelEngine {
       count -= add;
       firstDrop = nearby;
     }
-    let material = this.dropMaterials.get(item);
-    if (!material) { material = new THREE.MeshLambertMaterial({ color: ITEMS[item].color }); this.dropMaterials.set(item, material); }
     while (count > 0) {
       if (this.drops.length >= 120) this.removeDrop(0);
       const amount = Math.min(count, stackLimit);
-      const mesh = new THREE.Mesh(this.sharedDropGeometry, material);
+      let mesh: THREE.Object3D;
+      let ownsVisual = false;
+      if (ITEMS[item].dropModel) {
+        const filledCaptureOrb = item === Item.CaptureOrb
+          && Boolean(captureOrbFromInventorySlot({ item, count: 1, ...(metadata ? { metadata } : {}) })?.creature);
+        mesh = createAvatarHeldItemModel(item, { filledCaptureOrb }) ?? new THREE.Object3D();
+        mesh.name = `dropped-${ITEMS[item].dropModel}`;
+        mesh.scale.multiplyScalar(0.52);
+        ownsVisual = true;
+      } else {
+        let material = this.dropMaterials.get(item);
+        if (!material) { material = new THREE.MeshLambertMaterial({ color: ITEMS[item].color }); this.dropMaterials.set(item, material); }
+        mesh = new THREE.Mesh(this.sharedDropGeometry, material);
+      }
       mesh.position.copy(position).add(new THREE.Vector3((Math.random() - 0.5) * 0.45, 0.25, (Math.random() - 0.5) * 0.45));
       this.dropGroup.add(mesh);
       const drop: DropEntity = {
         id: this.nextDropId++, item, count: amount,
         ...(resolvedDurability !== undefined ? { durability: resolvedDurability } : {}),
         ...(metadata ? { metadata: cloneSlot({ item, count: 1, metadata })?.metadata } : {}),
-        mesh, velocity: new THREE.Vector3((Math.random() - 0.5) * 1.4, 2 + Math.random(), (Math.random() - 0.5) * 1.4), age: 0, pickupDelay: 0.35,
+        mesh, ...(ownsVisual ? { ownsVisual: true } : {}), velocity: new THREE.Vector3((Math.random() - 0.5) * 1.4, 2 + Math.random(), (Math.random() - 0.5) * 1.4), age: 0, pickupDelay: 0.35,
       };
       this.drops.push(drop);
       firstDrop ??= drop;
@@ -6185,7 +7720,9 @@ export class VoxelEngine {
   }
 
   removeDrop(index: number) {
-    this.dropGroup.remove(this.drops[index].mesh);
+    const drop = this.drops[index];
+    this.dropGroup.remove(drop.mesh);
+    if (drop.ownsVisual) this.disposeObject(drop.mesh);
     this.drops.splice(index, 1);
   }
 
@@ -6517,12 +8054,13 @@ export class VoxelEngine {
     const biome = this.world.biomeAt(Math.round(this.position.x), Math.round(this.position.z));
     const atSea = underwater || biome === BiomeId.Ocean || biome === BiomeId.DeepOcean || biome === BiomeId.Beach;
     const forestBiome = [BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Bloomwood].includes(biome);
-    const skyChallenge = this.combatMusicTimer > 0 || (biome === BiomeId.Highlands && this.position.y > 57 && daylight > 0.35);
+    const skyChallenge = biome === BiomeId.Highlands && this.position.y > 57 && daylight > 0.35;
     const alternateScore = (this.day + biome) % 2 === 0;
     const explorationScore = this.day % 3 === 0
       ? "hoppin"
       : alternateScore ? "wildwoodA" : "wildwoodB";
-    const musicScene = skyChallenge ? "skyboss"
+    const musicScene = this.combatMusicTimer > 0 ? this.combatMusicScene
+      : skyChallenge ? "skyboss"
       : atSea ? "sea"
         : underground ? (alternateScore ? "emberdeepA" : "emberdeepB")
           : daylight < 0.24 ? "night"
@@ -6616,8 +8154,8 @@ export class VoxelEngine {
     }
   }
 
-  createAvatarHeldItem(item: ItemCode) {
-    return createAvatarHeldItemModel(item);
+  createAvatarHeldItem(item: ItemCode, filledCaptureOrb = false) {
+    return createAvatarHeldItemModel(item, { filledCaptureOrb });
   }
 
   equipmentAppearanceFromCodes(codes?: Partial<Record<EquipmentSlot, ItemCode>>): PlayerEquipmentAppearance {
@@ -6627,20 +8165,24 @@ export class VoxelEngine {
     }))) as PlayerEquipmentAppearance;
   }
 
-  syncAvatarHeldItem(model: BlockPlayerModel, item: ItemCode, remoteId?: string) {
+  syncAvatarHeldItem(model: BlockPlayerModel, item: ItemCode, remoteId?: string, filledCaptureOrb = false) {
     const previousCode = remoteId ? (this.remoteAvatarHeldCodes.get(remoteId) ?? -1) : this.localAvatarHeldCode;
-    if (previousCode === item) return;
+    const previousFilled = remoteId ? (this.remoteAvatarHeldFilled.get(remoteId) ?? false) : this.localAvatarHeldFilled;
+    if (previousCode === item && previousFilled === filledCaptureOrb) return;
     const previous = model.rightHandSocket.children[0];
     if (previous) {
       model.setHeldItem(null);
       this.disposeObject(previous);
     }
-    const held = item >= 0 ? this.createAvatarHeldItem(item) : null;
+    const held = item >= 0 ? this.createAvatarHeldItem(item, filledCaptureOrb) : null;
     model.setHeldItem(held);
-    if (remoteId) this.remoteAvatarHeldCodes.set(remoteId, item);
-    else {
+    if (remoteId) {
+      this.remoteAvatarHeldCodes.set(remoteId, item);
+      this.remoteAvatarHeldFilled.set(remoteId, filledCaptureOrb);
+    } else {
       this.localAvatarHeld = held;
       this.localAvatarHeldCode = item;
+      this.localAvatarHeldFilled = filledCaptureOrb;
     }
   }
 
@@ -6685,7 +8227,9 @@ export class VoxelEngine {
         Object.entries(localEquipmentCodes).filter(([, item]) => item >= 0),
       )));
     }
-    this.syncAvatarHeldItem(this.localPlayerModel, this.selectedSlot()?.item ?? -1);
+    const localSelected = this.selectedSlot();
+    const localOrbFilled = localSelected?.item === Item.CaptureOrb && Boolean(captureOrbFromInventorySlot(localSelected)?.creature);
+    this.syncAvatarHeldItem(this.localPlayerModel, localSelected?.item ?? -1, undefined, localOrbFilled);
     if (this.localAvatarHeldCode === BlockId.Torch) this.animateTorchVisual(this.localAvatarHeld, this.position);
 
     const now = performance.now();
@@ -6713,14 +8257,14 @@ export class VoxelEngine {
       });
       remote.model.setVariant(latest.variant ?? "male");
       remote.model.setEquipmentAppearance(this.equipmentAppearanceFromCodes(latest.equipment));
-      this.syncAvatarHeldItem(remote.model, latest.heldItem ?? -1, id);
+      this.syncAvatarHeldItem(remote.model, latest.heldItem ?? -1, id, Boolean(latest.heldItemFilled));
       if (latest.heldItem === BlockId.Torch) this.animateTorchVisual(remote.model.rightHandSocket.children[0] ?? null, remote.model.group.position);
       if (now - remote.lastUpdate > 20_000) this.removeRemotePlayer(id);
     }
   }
 
   updateGameplayCamera(dt: number) {
-    const targetEye = this.crouching ? 1.3 : 1.62;
+    const targetEye = playerEyeHeightForVariant(this.playerVariant, this.crouching);
     this.cameraEyeHeight += (targetEye - this.cameraEyeHeight) * (1 - Math.exp(-dt * 16));
     if (this.cameraMode === "first") {
       this.camera.position.set(this.position.x, this.position.y + this.cameraEyeHeight, this.position.z);
@@ -6732,7 +8276,7 @@ export class VoxelEngine {
     updateThirdPersonCamera(this.camera, this.position, this.yaw, {
       view: this.cameraMode === "third-front" ? "front" : "rear",
       distance: 4.35,
-      targetHeight: this.crouching ? 1.08 : 1.34,
+      targetHeight: (this.crouching ? 1.08 : 1.34) * playerVariantHeightScale(this.playerVariant),
       pitch: clamp(-this.pitch * 0.72, -0.78, 0.78),
       shoulderOffset: this.cameraMode === "third-front" ? 0 : 0.22,
       collisionRadius: 0.18,
@@ -6805,13 +8349,16 @@ export class VoxelEngine {
         } else if (item === Item.Banana) {
           addBox([0.1, 0.34, 0.09], [-0.08, 0, 0], 0xf4d34f, [0, 0, -0.5]);
           addBox([0.1, 0.34, 0.09], [0.08, 0.04, 0], 0xf4d34f, [0, 0, 0.5]);
-        } else if (definition.useKind === "net" || (definition.useKind === "release-creature" && definition.creatureKind
+        } else if (definition.heldModel || definition.useKind === "net" || (definition.useKind === "release-creature" && definition.creatureKind
           && BUTTERFLY_ORDER.includes(definition.creatureKind as ButterflyKind))) {
-          const productionHeld = createAvatarHeldItemModel(item);
+          const selectedSlot = this.selectedSlot();
+          const filledCaptureOrb = item === Item.CaptureOrb && Boolean(captureOrbFromInventorySlot(selectedSlot)?.creature);
+          const productionHeld = createAvatarHeldItemModel(item, { filledCaptureOrb });
           if (productionHeld) {
             productionHeld.name = `first-person-${productionHeld.name}`;
-            productionHeld.position.set(-0.02, -0.08, -0.04);
-            productionHeld.scale.multiplyScalar(definition.useKind === "net" ? 0.86 : 0.95);
+            const workingTool = definition.useKind === "net";
+            productionHeld.position.set(-0.02, -0.08, workingTool ? -0.2 : -0.08);
+            productionHeld.scale.multiplyScalar(workingTool ? 0.86 : definition.heldModel === "capture-orb" ? 1.05 : 0.95);
             productionHeld.traverse((object) => {
               const renderable = object as THREE.Object3D & { material?: THREE.Material | THREE.Material[] };
               const materials = renderable.material ? (Array.isArray(renderable.material) ? renderable.material : [renderable.material]) : [];
@@ -6847,7 +8394,9 @@ export class VoxelEngine {
             );
           }
           toolGroup.scale.setScalar(0.62);
-          toolGroup.rotation.set(0.03, -0.08, -0.54);
+          toolGroup.rotation.set(-Math.PI / 2, -0.04, -0.12);
+          toolGroup.position.set(0, -0.04, -0.2);
+          toolGroup.userData.workingAngle = Math.PI / 2;
           this.heldRoot.add(toolGroup);
         } else if (definition.placeBlock !== undefined) {
           addBox([0.34, 0.34, 0.34], [0, 0.02, 0], definition.color, [0.18, 0.24, 0]);
@@ -6859,8 +8408,8 @@ export class VoxelEngine {
     const activeSwing = Math.max(miningSwing, this.attackCooldown > 0 ? 1 : 0);
     this.heldSwing += (activeSwing - this.heldSwing) * (1 - Math.exp(-dt * 14));
     const walk = this.grounded ? this.footstepDistance * 3.6 : 0;
-    this.heldRoot.position.set(0.48 + Math.sin(walk) * 0.018, -0.43 + Math.abs(Math.cos(walk)) * 0.018 - this.heldUse * 0.1, -0.78 + this.heldUse * 0.08);
-    this.heldRoot.rotation.set(-0.18 - this.heldSwing * 0.62, -0.32, -0.08 - this.heldSwing * 0.48);
+    this.heldRoot.position.set(0.48 + Math.sin(walk) * 0.018, -0.43 + Math.abs(Math.cos(walk)) * 0.018 - this.heldUse * 0.12, -0.84 + this.heldUse * 0.06);
+    this.heldRoot.rotation.set(-0.12 + this.heldSwing * 0.78, -0.3 - this.heldSwing * 0.12, -0.06 - this.heldSwing * 0.64);
     if (item === BlockId.Torch) this.animateTorchVisual(this.heldRoot, this.position);
   }
 
@@ -6913,7 +8462,10 @@ export class VoxelEngine {
     this.updateChestModel(dt);
     this.updateHeldItem(dt);
     const multiplayerGuest = this.multiplayer?.role === "guest" && this.multiplayerReceivedSnapshot;
-    if (this.running && !this.titleMode && !multiplayerGuest) this.updateFurnaces(dt);
+    if (this.running && !this.titleMode && !multiplayerGuest) {
+      this.updateFurnaces(dt);
+      this.updatePersistentMachines(dt);
+    }
     if (this.running && !this.titleMode && !this.paused) {
       if (multiplayerGuest) {
         for (const mob of this.mobs) this.animateMob(mob, dt * mob.definition.speed * 0.35);
@@ -7038,6 +8590,7 @@ export class VoxelEngine {
       this.updateProjectiles(dt);
       this.updateLiquids(dt);
       this.updateDynamicWeather(dt);
+      this.updatePersistentMachines(dt);
     }
     this.updateGameplayCamera(Math.min(duration, 0.1));
     this.updateTarget();
@@ -7070,6 +8623,9 @@ export class VoxelEngine {
       activeFurnace: this.activeFurnaceKey ? { ...(this.furnaces.get(this.activeFurnaceKey) ?? blankFurnace()), input: cloneSlot(this.furnaces.get(this.activeFurnaceKey)?.input ?? null), fuel: cloneSlot(this.furnaces.get(this.activeFurnaceKey)?.fuel ?? null), output: cloneSlot(this.furnaces.get(this.activeFurnaceKey)?.output ?? null) } : null,
       activeChest: this.activeChestKey ? (this.chests.get(this.activeChestKey) ?? []).map(cloneSlot) : null,
       activeChestTitle: this.activeChestTitle,
+      activeApiary: this.activeApiaryKey ? apiaryHudState(this.apiaries.get(this.activeApiaryKey) ?? createEmptyApiaryBlock()) : null,
+      activeOrbRack: this.activeOrbRackKey ? orbRackHudState(this.orbRacks.get(this.activeOrbRackKey) ?? createOrbRack()) : null,
+      activeHealingStation: this.activeHealingStationKey ? healingStationHudState(this.healingStations.get(this.activeHealingStationKey) ?? createCreatureHealer()) : null,
       selected: this.selected,
       targetName: this.target ? BLOCKS[this.target.type].name : this.targetBoat ? "Wayfarer Sailboat" : null,
       targetMob: this.targetMob ? { name: this.targetMob.name, health: this.targetMob.health, maxHealth: this.targetMob.maxHealth } : null,
@@ -7276,12 +8832,12 @@ export class VoxelEngine {
       edits: this.world.serializeEdits(),
       player: { x: this.position.x, y: this.position.y, z: this.position.z, yaw: this.yaw, pitch: this.pitch },
       spawn: { x: this.spawn.x, y: this.spawn.y, z: this.spawn.z },
-      inventory: this.inventory.map(cloneSlot),
-      equipment: Object.fromEntries((Object.keys(this.equipment) as EquipmentSlot[]).map((slot) => [slot, cloneSlot(this.equipment[slot])])),
+      inventory: this.inventory.map(normalizeCaptureOrbInventorySlot),
+      equipment: Object.fromEntries((Object.keys(this.equipment) as EquipmentSlot[]).map((slot) => [slot, normalizeCaptureOrbInventorySlot(this.equipment[slot])])),
       bestiary: Object.fromEntries(MOB_ORDER.map((kind) => [kind, { ...this.bestiary[kind] }])),
       saplings: Object.fromEntries(this.saplings.entries()),
-      cursor: cloneSlot(this.cursor),
-      craftGrid: this.craftGrid.map(cloneSlot),
+      cursor: normalizeCaptureOrbInventorySlot(this.cursor),
+      craftGrid: this.craftGrid.map(normalizeCaptureOrbInventorySlot),
       selected: this.selected,
       health: this.health,
       hunger: this.hunger,
@@ -7290,19 +8846,39 @@ export class VoxelEngine {
       time: this.worldTime,
       day: this.day,
       weather: this.weather,
-      furnaces: Object.fromEntries([...this.furnaces.entries()].map(([key, value]) => [key, { ...value, input: cloneSlot(value.input), fuel: cloneSlot(value.fuel), output: cloneSlot(value.output) }])),
-      chests: Object.fromEntries([...this.chests.entries()].map(([key, value]) => [key, value.map(cloneSlot)])),
-      drops: this.drops.map((drop) => ({
-        item: drop.item, count: drop.count,
-        ...(drop.durability !== undefined ? { durability: drop.durability } : {}),
-        ...(drop.metadata ? { metadata: cloneSlot({ item: drop.item, count: 1, metadata: drop.metadata })?.metadata } : {}),
-        x: drop.mesh.position.x, y: drop.mesh.position.y, z: drop.mesh.position.z, age: drop.age,
-      })),
+      furnaces: Object.fromEntries([...this.furnaces.entries()].map(([key, value]) => [key, {
+        ...value,
+        input: normalizeCaptureOrbInventorySlot(value.input),
+        fuel: normalizeCaptureOrbInventorySlot(value.fuel),
+        output: normalizeCaptureOrbInventorySlot(value.output),
+      }])),
+      chests: Object.fromEntries([...this.chests.entries()].map(([key, value]) => [key, value.map(normalizeCaptureOrbInventorySlot)])),
+      apiaries: Object.fromEntries([...this.apiaries.entries()].map(([key, value]) => [key, cloneApiaryBlockState(value)])),
+      orbRacks: Object.fromEntries([...this.orbRacks.entries()].map(([key, value]) => [key, createOrbRack(value.slots.map(cloneCaptureOrb))])),
+      healingStations: Object.fromEntries([...this.healingStations.entries()].map(([key, value]) => [key, {
+        ...value,
+        slots: value.slots.map(cloneCaptureOrb),
+      }])),
+      drops: this.drops.map((drop) => {
+        const slot = normalizeCaptureOrbInventorySlot({
+          item: drop.item,
+          count: drop.count,
+          ...(drop.durability !== undefined ? { durability: drop.durability } : {}),
+          ...(drop.metadata ? { metadata: drop.metadata } : {}),
+        })!;
+        return {
+          item: slot.item,
+          count: slot.count,
+          ...(slot.durability !== undefined ? { durability: slot.durability } : {}),
+          ...(slot.metadata ? { metadata: slot.metadata } : {}),
+          x: drop.mesh.position.x, y: drop.mesh.position.y, z: drop.mesh.position.z, age: drop.age,
+        };
+      }),
       options: { ...this.worldOptions },
       playerVariant: this.playerVariant,
       liquidLevels: [...this.liquidCells.entries()].map(([key, cell]) => [key, { ...cell }]),
       weatherState: { ...this.weatherState },
-      creatures: this.mobs.map((mob) => ({
+      creatures: this.mobs.filter((mob) => !mob.beeHiveKey).map((mob) => ({
         id: mob.id,
         kind: mob.kind,
         x: mob.group.position.x,
@@ -7317,12 +8893,18 @@ export class VoxelEngine {
         ...(mob.petState ? { petState: { ...mob.petState } } : {}),
         ...(mob.careState ? { careState: { ...mob.careState } } : {}),
         ...(mob.shadeState ? { shadeState: { ...mob.shadeState } } : {}),
+        ...(mob.reedstriderBond ? { reedstriderBond: { ...mob.reedstriderBond } } : {}),
+        ...(mob.courserBond ? { courserBond: { ...mob.courserBond } } : {}),
+        ...(mob.apiaryBee ? { apiaryBee: { ...mob.apiaryBee } } : {}),
+        ...(mob.socialGroupId ? { socialGroupId: mob.socialGroupId } : {}),
+        ...(mob.peelopShedding ? { peelopShedding: { ...mob.peelopShedding } } : {}),
+        ...(mob.kind === "meadow-cow" && mob.milkCooldown > 0 ? { milkCooldown: mob.milkCooldown } : {}),
       })),
       activatedStructureMarkers: [...this.activatedStructureMarkers],
       boats: [...this.boats.values()].map(({ save }) => ({
         ...save,
         passengers: [...save.passengers],
-        inventory: save.inventory.map(cloneSlot),
+        inventory: save.inventory.map(normalizeCaptureOrbInventorySlot),
       })),
       leads: serializeLeadAnchors(this.leadAnchors, new Set(this.mobs.map((mob) => mob.id))),
       savedAt: Date.now(),
