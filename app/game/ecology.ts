@@ -9,6 +9,157 @@ const hashUnit = (seed: string | number, salt: string | number) => {
   return (hash >>> 0) / 4294967296;
 };
 
+export const SYRUP_POND_CELL_SIZE = 48;
+
+export type SyrupPondSample = Readonly<{
+  height: number;
+  waterline: number;
+  biome: number;
+}>;
+
+export type SyrupPondColumn = Readonly<{
+  x: number;
+  z: number;
+  /** Uniform liquid surface shared by every column in one pond. */
+  surfaceY: number;
+  /** Solid sugar-soil floor beneath the source liquid. */
+  bedY: number;
+  originalSurfaceY: number;
+  floor: BlockId.SugarSoil;
+  liquid: BlockId.Syrup;
+}>;
+
+export type SyrupPondPlan = Readonly<{
+  id: string;
+  center: Readonly<{ x: number; y: number; z: number }>;
+  radiusX: number;
+  radiusZ: number;
+  columns: readonly SyrupPondColumn[];
+}>;
+
+type SyrupPondCandidate = Omit<SyrupPondPlan, "columns"> & Readonly<{ cellX: number; cellZ: number }>;
+
+function syrupPondCandidate(
+  seed: string | number,
+  cellX: number,
+  cellZ: number,
+  sample: (x: number, z: number) => SyrupPondSample,
+  sugarplumBiome: number,
+): SyrupPondCandidate | null {
+  // A cell owns at most one pond and leaves an eight-block inset. This makes
+  // candidates independent of chunk traversal and prevents neighboring cells
+  // from overlapping even at their widest possible radii.
+  if (hashUnit(seed, `syrup-pond:${cellX},${cellZ}:presence`) < 0.46) return null;
+  const inset = 8;
+  const span = SYRUP_POND_CELL_SIZE - inset * 2;
+  const x = cellX * SYRUP_POND_CELL_SIZE + inset + Math.floor(hashUnit(seed, `syrup-pond:${cellX},${cellZ}:x`) * span);
+  const z = cellZ * SYRUP_POND_CELL_SIZE + inset + Math.floor(hashUnit(seed, `syrup-pond:${cellX},${cellZ}:z`) * span);
+  const radiusX = 4 + Math.floor(hashUnit(seed, `syrup-pond:${cellX},${cellZ}:rx`) * 4);
+  const radiusZ = 3 + Math.floor(hashUnit(seed, `syrup-pond:${cellX},${cellZ}:rz`) * 4);
+  const center = sample(x, z);
+  if (center.biome !== sugarplumBiome || center.height <= center.waterline + 3) return null;
+  const edgeSamples = [[radiusX, 0], [-radiusX, 0], [0, radiusZ], [0, -radiusZ]] as const;
+  for (const [dx, dz] of edgeSamples) {
+    const edge = sample(x + dx, z + dz);
+    if (edge.biome !== sugarplumBiome || Math.abs(edge.height - center.height) > 2 || edge.height <= edge.waterline + 2) return null;
+  }
+  const surfaceY = center.height - 1;
+  return {
+    id: `syrup-pond:${cellX}:${cellZ}`,
+    cellX,
+    cellZ,
+    center: { x, y: surfaceY, z },
+    radiusX,
+    radiusZ,
+  };
+}
+
+function syrupPondColumnForCandidate(
+  seed: string | number,
+  candidate: SyrupPondCandidate,
+  x: number,
+  z: number,
+  sample: (x: number, z: number) => SyrupPondSample,
+  sugarplumBiome: number,
+): SyrupPondColumn | null {
+  const nx = (x - candidate.center.x) / candidate.radiusX;
+  const nz = (z - candidate.center.z) / candidate.radiusZ;
+  const radial = nx * nx + nz * nz;
+  const edgeWobble = (hashUnit(seed, `${candidate.id}:edge:${x},${z}`) - 0.5) * 0.12;
+  if (radial > 1 + edgeWobble) return null;
+  const local = sample(x, z);
+  if (local.biome !== sugarplumBiome || Math.abs(local.height - candidate.center.y - 1) > 2) return null;
+  const depth = 1 + Math.floor(Math.max(0, 1 - radial) * 2.25);
+  return {
+    x,
+    z,
+    surfaceY: candidate.center.y,
+    bedY: candidate.center.y - depth,
+    originalSurfaceY: local.height,
+    floor: BlockId.SugarSoil,
+    liquid: BlockId.Syrup,
+  };
+}
+
+/** Returns the deterministic pond cell at one world coordinate, if any. */
+export function syrupPondColumnAt(
+  seed: string | number,
+  x: number,
+  z: number,
+  sample: (x: number, z: number) => SyrupPondSample,
+  sugarplumBiome: number,
+): SyrupPondColumn | null {
+  const cellX = Math.floor(x / SYRUP_POND_CELL_SIZE);
+  const cellZ = Math.floor(z / SYRUP_POND_CELL_SIZE);
+  for (let offsetX = -1; offsetX <= 1; offsetX += 1) for (let offsetZ = -1; offsetZ <= 1; offsetZ += 1) {
+    const candidate = syrupPondCandidate(seed, cellX + offsetX, cellZ + offsetZ, sample, sugarplumBiome);
+    if (!candidate) continue;
+    const column = syrupPondColumnForCandidate(seed, candidate, x, z, sample, sugarplumBiome);
+    if (column) return column;
+  }
+  return null;
+}
+
+/**
+ * Plans only the slice belonging to one chunk. Neighboring chunks derive the
+ * same candidate and surface height independently, so ponds cannot tear at a
+ * chunk boundary and generation order does not matter.
+ */
+export function planSyrupPondsForChunk(input: Readonly<{
+  seed: string | number;
+  chunkX: number;
+  chunkZ: number;
+  chunkSize: number;
+  sample: (x: number, z: number) => SyrupPondSample;
+  sugarplumBiome: number;
+}>): SyrupPondPlan[] {
+  const chunkSize = Math.max(1, Math.floor(input.chunkSize));
+  const minX = input.chunkX * chunkSize;
+  const minZ = input.chunkZ * chunkSize;
+  const maxX = minX + chunkSize - 1;
+  const maxZ = minZ + chunkSize - 1;
+  const plans: SyrupPondPlan[] = [];
+  const cellStartX = Math.floor((minX - 7) / SYRUP_POND_CELL_SIZE);
+  const cellEndX = Math.floor((maxX + 7) / SYRUP_POND_CELL_SIZE);
+  const cellStartZ = Math.floor((minZ - 7) / SYRUP_POND_CELL_SIZE);
+  const cellEndZ = Math.floor((maxZ + 7) / SYRUP_POND_CELL_SIZE);
+  for (let cellX = cellStartX; cellX <= cellEndX; cellX += 1) for (let cellZ = cellStartZ; cellZ <= cellEndZ; cellZ += 1) {
+    const candidate = syrupPondCandidate(input.seed, cellX, cellZ, input.sample, input.sugarplumBiome);
+    if (!candidate) continue;
+    const columns: SyrupPondColumn[] = [];
+    const startX = Math.max(minX, candidate.center.x - candidate.radiusX);
+    const endX = Math.min(maxX, candidate.center.x + candidate.radiusX);
+    const startZ = Math.max(minZ, candidate.center.z - candidate.radiusZ);
+    const endZ = Math.min(maxZ, candidate.center.z + candidate.radiusZ);
+    for (let x = startX; x <= endX; x += 1) for (let z = startZ; z <= endZ; z += 1) {
+      const column = syrupPondColumnForCandidate(input.seed, candidate, x, z, input.sample, input.sugarplumBiome);
+      if (column) columns.push(column);
+    }
+    if (columns.length) plans.push({ id: candidate.id, center: candidate.center, radiusX: candidate.radiusX, radiusZ: candidate.radiusZ, columns });
+  }
+  return plans.sort((left, right) => left.id.localeCompare(right.id));
+}
+
 export type SocialGroupMode = "herd" | "shoal";
 export type SocialGroupMember = Readonly<{ id: string; x: number; z: number; vx: number; vz: number }>;
 export type SocialGroupMotion = Readonly<{ id: string; x: number; z: number; speedScale: number }>;

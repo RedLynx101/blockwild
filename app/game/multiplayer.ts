@@ -93,6 +93,9 @@ export type MobSnapshotEntry = {
   lifeStage?: "tiny" | "juvenile" | "adult";
   aquaticOnly?: boolean;
   airProgress?: number;
+  /** Optional culture provenance keeps aligned settlement creatures authoritative for guests. */
+  factionId?: "player" | "hobbits" | "goblins" | "atlantians" | "sugarcourt" | null;
+  aligned?: boolean;
 };
 
 export type MobSnapshot = { tick: number; mobs: MobSnapshotEntry[] };
@@ -138,6 +141,7 @@ export type SessionWorldOptions = {
   friendlyFire: boolean;
   sleepRule?: "any-player" | "percentage" | "all-players";
   sleepPercentage?: number;
+  enabledFactions?: readonly ("hobbits" | "goblins" | "atlantians" | "sugarcourt")[];
 };
 
 export type InventoryEndpoint = {
@@ -490,7 +494,10 @@ function validateMob(value: unknown): value is MobSnapshotEntry {
     && (value.cargoChests === undefined || isInteger(value.cargoChests, 0, 6))
     && (value.lifeStage === undefined || value.lifeStage === "tiny" || value.lifeStage === "juvenile" || value.lifeStage === "adult")
     && (value.aquaticOnly === undefined || typeof value.aquaticOnly === "boolean")
-    && (value.airProgress === undefined || isFiniteNumber(value.airProgress, 0, 1));
+    && (value.airProgress === undefined || isFiniteNumber(value.airProgress, 0, 1))
+    && (value.factionId === undefined || value.factionId === null
+      || ["player", "hobbits", "goblins", "atlantians", "sugarcourt"].includes(value.factionId as string))
+    && (value.aligned === undefined || typeof value.aligned === "boolean");
 }
 
 function validateDropMetadata(value: unknown) {
@@ -574,7 +581,11 @@ function validateSessionWorldOptions(value: unknown): value is SessionWorldOptio
     && typeof value.keepInventory === "boolean"
     && typeof value.friendlyFire === "boolean"
     && (value.sleepRule === undefined || ["any-player", "percentage", "all-players"].includes(value.sleepRule as string))
-    && (value.sleepPercentage === undefined || isFiniteNumber(value.sleepPercentage, 1, 100));
+    && (value.sleepPercentage === undefined || isFiniteNumber(value.sleepPercentage, 1, 100))
+    && (value.enabledFactions === undefined || (Array.isArray(value.enabledFactions)
+      && value.enabledFactions.length <= 4
+      && new Set(value.enabledFactions).size === value.enabledFactions.length
+      && value.enabledFactions.every((entry) => ["hobbits", "goblins", "atlantians", "sugarcourt"].includes(entry as string))));
 }
 
 export function validatePayload<K extends MultiplayerMessageType>(type: K, value: unknown): value is MultiplayerPayloadMap[K] {

@@ -1,6 +1,6 @@
 import { Item, type ItemCode } from "./data";
 
-export type ButterflyKind = "meadowwing" | "azure-skippers" | "embertip" | "frostveil" | "bloom-monarch" | "fen-lantern";
+export type ButterflyKind = "meadowwing" | "azure-skippers" | "embertip" | "frostveil" | "bloom-monarch" | "fen-lantern" | "bonbonwing";
 export type LegacyMobKind = "mossling" | "ridgeback" | "woolhorn" | "glowmoth" | "shadecrawler" | "caveblob" | "rattlekin" | "zombie";
 export type SurfaceMobKind =
   | "sunstep-grazer"
@@ -16,7 +16,11 @@ export type SurfaceMobKind =
   | "meadow-cow"
   | "mistmane"
   | "sakurakit"
-  | "sunwash-crab";
+  | "sunwash-crab"
+  | "taffy-hound"
+  | "praline-cat"
+  | "sprinklebug"
+  | "taffalo";
 export type BirdKind = "emberjay" | "canopy-lark" | "tidewing-gull";
 export type AquaticMobKind = "shoalfin" | "coralback" | "brookdart" | "gloomfin" | "silverthread" | "reedneedle" | "emberribbon" | "cavefilament";
 export type PollinatorKind = "honeybee" | "hive-queen" | "reed-dragonfly";
@@ -31,6 +35,7 @@ export type TideglassAquaticKind =
   | "worldshell-leviathan"
   | "aetherbell-larva"
   | "aetherbell-leviathan";
+export type SugarplumAquaticKind = "syrupfin";
 export type HobbitKind =
   | "hobbit-mayor"
   | "hobbit-farmer"
@@ -52,8 +57,16 @@ export type AtlantianKind =
   | "atlantian-pearlbroker"
   | "atlantian-glowmender"
   | "atlantian-trident-guard";
-export type SentientMobKind = HobbitKind | GoblinKind | AtlantianKind;
-export type FactionKind = "hobbits" | "goblins" | "atlantians";
+export type SugarcourtKind =
+  | "sugarcourt-crown-confectioner"
+  | "sugarcourt-brittle-guard"
+  | "sugarcourt-gumdrop-gardener"
+  | "sugarcourt-sweetbroker"
+  | "sugarcourt-kennelkeeper"
+  | "sugarcourt-sugarboiler"
+  | "sugarcourt-candysmith";
+export type SentientMobKind = HobbitKind | GoblinKind | AtlantianKind | SugarcourtKind;
+export type FactionKind = "hobbits" | "goblins" | "atlantians" | "sugarcourt";
 export type SentientRole = "mayor" | "chieftain" | "farmer" | "worker" | "miner" | "merchant" | "banker" | "alchemist" | "guard";
 export type SpecialMobKind = "peelop" | "reliquary-sentinel" | "skeleton" | "warg";
 export type CoreMobKind =
@@ -65,6 +78,7 @@ export type CoreMobKind =
   | HearthroadsWildlifeKind
   | HearthroadsAquaticKind
   | TideglassAquaticKind
+  | SugarplumAquaticKind
   | SentientMobKind
   | SpecialMobKind;
 export type MobKind = CoreMobKind | ButterflyKind;
@@ -131,12 +145,14 @@ export type MobDefinition = {
   tameRequiresUnaligned?: boolean;
   rideable?: boolean;
   /** Cultural identity used before a culture is wired into diplomacy proper. */
-  culture?: "atlantians";
+  culture?: "atlantians" | "sugarcourt";
   /** Save-friendly ecology flags consumed by the ocean lifecycle helpers. */
   laysEggs?: boolean;
   aquaticYoungOnly?: boolean;
   airSeaMorph?: boolean;
   cargoChestLimit?: number;
+  /** Restricts an aquatic species to a specific liquid rather than ordinary water. */
+  liquidHabitat?: "water" | "syrup";
 };
 
 export const MOB_DEFS: Record<MobKind, MobDefinition> = {
@@ -786,6 +802,68 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     postTameNotes: "Sakurakits can sit, follow, stay and wander. They warn their keeper, but remain intentionally weak in combat.",
     utility: "A quiet companion that notices nearby flowers and butterflies.", discoveryHint: "Follow low swirls of pink petals through a blossom glade.",
   },
+  "taffy-hound": {
+    kind: "taffy-hound", name: "Taffy Hound", temperament: "Defensive", hostile: false,
+    health: 12, damage: 2, xp: 4, speed: 0.82, chaseSpeed: 3.55, turnRate: 9.2, attackRange: 0.92,
+    footOffset: 0.91, radius: 0.42, height: 0.78, habitat: "Sugarcourt kennels, hard-candy gates and Bonbon Borough lanes", active: "Day and settlement watch shifts",
+    behavior: "Patrols beside Sugarcourt guards, wags a curled licorice tail at friends, and challenges danger without straying far from its borough.",
+    lore: "Every Taffy Hound is given a collar pressed with its borough's crest. The sweet is ceremonial; the loyalty is entirely real.",
+    colors: [0xd96f9f, 0xf2c76e, 0x30213c], drops: [],
+    family: "pet", movement: "ground", persistent: true, sentient: false, factionAffinity: "sugarcourt", tameRequiresUnaligned: true,
+    tameable: true, tameItems: [Item.Gumdrop, Item.PeppermintCane], breedable: true, breedingFoods: [Item.Gumdrop],
+    diet: [Item.Gumdrop, Item.PeppermintCane, Item.CookedMeat], captureItem: Item.CaptureOrb,
+    postTameNotes: "Only an unaligned Taffy Hound can bond. A trusted hound follows, holds position, wanders on command, and bravely nips at threats to its keeper.",
+    secretHint: "Borough hounds are faction-aligned and cannot be tamed. Sugarcourt Kennelkeepers sometimes sell neutral youngsters in Capture Orbs.",
+    utility: "A loyal, low-damage companion and warning dog.", discoveryHint: "Listen for candy-tag collars clicking near Sugarcourt gates.",
+  },
+  "praline-cat": {
+    kind: "praline-cat", name: "Praline Cat", temperament: "Skittish", hostile: false,
+    health: 7, damage: 1, xp: 3, speed: 0.76, chaseSpeed: 3.2, turnRate: 10.5, attackRange: 0.68,
+    footOffset: 0.88, radius: 0.33, height: 0.62, habitat: "Sugarcourt homes, sweet markets and warm Sugarworks counters", active: "Day, dusk and inconvenient moments",
+    behavior: "Stretches across warm counters, pounces on loose sprinkles, and slips behind furniture when fighting reaches the market.",
+    lore: "Praline Cats always smell faintly toasted. Sugarboilers insist this proves they understand quality control.",
+    colors: [0x8c573e, 0xe0a15e, 0xffefc1], drops: [],
+    family: "pet", movement: "ground", persistent: true, sentient: false, factionAffinity: "sugarcourt", tameRequiresUnaligned: true,
+    tameable: true, tameItems: [Item.SyrupfinFillet, Item.RawFish], breedable: true, breedingFoods: [Item.SyrupfinFillet],
+    diet: [Item.SyrupfinFillet, Item.RawFish, Item.CookedFish], captureItem: Item.CaptureOrb,
+    postTameNotes: "An unaligned Praline Cat can sit, follow, hold or wander. It avoids serious fights but alerts its keeper to nearby tiny creatures.",
+    secretHint: "Village cats remain loyal to the Sugarcourt. Kennelkeepers occasionally sell neutral cats in filled Capture Orbs.",
+    utility: "A gentle decorative companion that notices small fauna.", discoveryHint: "Look on warm counters and candywood shelves inside Bonbon Boroughs.",
+  },
+  sprinklebug: {
+    kind: "sprinklebug", name: "Sprinklebug", temperament: "Skittish", hostile: false,
+    health: 2, damage: 0, xp: 1, speed: 0.38, chaseSpeed: 1.65, turnRate: 12, attackRange: 0,
+    footOffset: 0.82150109, radius: 0.17, height: 0.2, habitat: "Sugarplum Vale gumdrop bushes, lollipop orchids and marshmallow shade", active: "Warm daylight",
+    behavior: "Travels in glittering little clusters, carries candy pollen between low flowers, and vanishes beneath foliage when startled.",
+    lore: "One Sprinklebug is almost silent. A whole cluster sounds like a jar of decorations being carefully turned over.",
+    colors: [0xf0a1cf, 0x6ac9a7, 0xffec78], drops: [{ item: Item.Gumdrop, min: 1, max: 1, chance: 0.34 }],
+    family: "surface", movement: "ground", sentient: false,
+    utility: "A harmless candy-pollen carrier and very small forage source.", discoveryHint: "Watch the ground beneath Lollipop Orchids for moving sprinkles.",
+  },
+  taffalo: {
+    kind: "taffalo", name: "Taffalo", temperament: "Defensive", hostile: false,
+    health: 28, damage: 2, xp: 7, speed: 0.58, chaseSpeed: 3.15, turnRate: 4.5, attackRange: 1.22,
+    footOffset: 1.12, radius: 0.72, height: 1.58, habitat: "Open Sugarplum Vale clearings and peppermint terraces", active: "Morning and late afternoon",
+    behavior: "Moves in soft-footed herds, browses peppermint, and plants its broad feet when a calf is threatened rather than seeking a fight.",
+    lore: "Pulled taffy folds form its coat, but the warm marshmallow mane never seems to gather dust.",
+    colors: [0xb96f98, 0xf6e4e7, 0x40283b], drops: [{ item: Item.MarshmallowTuft, min: 1, max: 2, chance: 0.88 }],
+    family: "mount", movement: "ground", persistent: true, sentient: false,
+    tameable: true, tameItems: [Item.PeppermintCane, Item.Gumdrop], breedable: true, breedingFoods: [Item.CocoaNib],
+    diet: [Item.PeppermintCane, Item.Gumdrop, Item.CocoaNib, Item.MarshmallowTuft], captureItem: Item.CaptureOrb, rideable: true,
+    postTameNotes: "A trusted adult Taffalo accepts a Trail Saddle and carries one rider at a steady pace. It remains intentionally weak in combat.",
+    secretHint: "Peppermint builds trust quickly. Only an adult bonded to its rider will accept a saddle.",
+    utility: "A sturdy one-seat Sugarplum mount with a calm herd temperament.", discoveryHint: "Broad candy-soft tracks cross peppermint clearings in groups.",
+  },
+  syrupfin: {
+    kind: "syrupfin", name: "Syrupfin", temperament: "Skittish", hostile: false,
+    health: 4, damage: 0, xp: 3, speed: 1.35, chaseSpeed: 3.25, turnRate: 9.5, attackRange: 0,
+    footOffset: 0, radius: 0.23, height: 0.2, habitat: "Natural syrup ponds in the Sugarplum Vale", active: "All hours within syrup",
+    behavior: "Shoals through slow amber currents, turns in broad synchronized loops, and cannot survive in ordinary water or honey.",
+    lore: "A Syrupfin's glassy fins stay perfectly clean no matter how slowly the pond moves.",
+    colors: [0xb96835, 0xf0b467, 0xfff0bf], drops: [{ item: Item.SyrupfinFillet, min: 1, max: 1, chance: 1 }],
+    family: "fish", movement: "aquatic", aquatic: true, sentient: false, captureItem: Item.CaptureOrb, liquidHabitat: "syrup",
+    utility: "An edible syrup-pond fish and favored Praline Cat food.", discoveryHint: "Look for amber ripples moving against the surface of a Sugarplum syrup pond.",
+  },
   "worldshell-leviathan": {
     kind: "worldshell-leviathan", name: "Worldshell Leviathan", temperament: "Gentle", hostile: false,
     health: 1200, damage: 0, xp: 0, speed: 0.34, chaseSpeed: 0.72, turnRate: 0.72, attackRange: 0,
@@ -883,6 +961,76 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     sentient: true, faction: "atlantians", culture: "atlantians", role: "guard", profession: "Trident Guard", tradeSpecialty: "Aquatic settlement defense",
     utility: "Fast underwater guard with a reach weapon.", discoveryHint: "Trident Guards patrol the glowing current markers outside town.",
   },
+  "sugarcourt-crown-confectioner": {
+    kind: "sugarcourt-crown-confectioner", name: "Sugarcourt Crown Confectioner", temperament: "Defensive", hostile: false,
+    health: 20, damage: 4, xp: 0, speed: 0.68, chaseSpeed: 2.25, turnRate: 7, attackRange: 1.2,
+    footOffset: 0.86, radius: 0.36, height: 1.42, habitat: "Sugar Palace halls in Sugarplum Vale Bonbon Boroughs", active: "Day and early evening",
+    behavior: "Hears contracts beneath a spun-sugar crown, settles disputes by measured tasting, and directs borough defense when the candywall is threatened.",
+    lore: "A Crown Confectioner's first duty is to know when sweetness has become excess.",
+    colors: [0xd86e9d, 0xf8dfc5, 0xf7d16b], drops: [], family: "sentient", movement: "ground", persistent: true,
+    sentient: true, faction: "sugarcourt", culture: "sugarcourt", role: "mayor", profession: "Crown Confectioner", tradeSpecialty: "Borough authority, contracts and trusted hires",
+    utility: "Sugarcourt settlement leader and quest giver.", discoveryHint: "The tallest sugarbrick hall shelters a crown of translucent spun sugar.",
+  },
+  "sugarcourt-brittle-guard": {
+    kind: "sugarcourt-brittle-guard", name: "Sugarcourt Brittle Guard", temperament: "Defensive", hostile: false,
+    health: 22, damage: 7, xp: 0, speed: 0.76, chaseSpeed: 2.8, turnRate: 8, attackRange: 2.25,
+    footOffset: 0.86, radius: 0.38, height: 1.48, habitat: "Sugarplum Vale hard-candy walls, gate arches and Brittle Barracks", active: "All shifts",
+    behavior: "Patrols candybrick gates beside Taffy Hounds, braces a long Peppermint Pike, and cracks into formation rather than pursuing danger alone.",
+    lore: "Their armor is tempered to flex once before it breaks, much like the oath beneath it.",
+    colors: [0xb94e75, 0x83d8b4, 0x38283c], drops: [], family: "sentient", movement: "ground", persistent: true,
+    sentient: true, faction: "sugarcourt", culture: "sugarcourt", role: "guard", profession: "Brittle Guard", tradeSpecialty: "Peppermint Pike training and borough defense",
+    utility: "Reach-focused Sugarcourt defender.", discoveryHint: "Mint-striped pikes mark the gates of a Bonbon Borough.",
+  },
+  "sugarcourt-gumdrop-gardener": {
+    kind: "sugarcourt-gumdrop-gardener", name: "Sugarcourt Gumdrop Gardener", temperament: "Gentle", hostile: false,
+    health: 12, damage: 1, xp: 0, speed: 0.66, chaseSpeed: 1.9, turnRate: 7.5, attackRange: 0.85,
+    footOffset: 0.86, radius: 0.34, height: 1.38, habitat: "Gumdrop gardens and peppermint terraces in Sugarplum Vale Bonbon Boroughs", active: "Dawn through dusk",
+    behavior: "Prunes gumdrop bushes by color, turns cocoa soil, and pauses whenever a Bonbonwing needs the flower being tended.",
+    lore: "Gardeners claim every gumdrop has a preferred direction to face. Their harvest rows make the claim difficult to dismiss.",
+    colors: [0x72b878, 0xef8eba, 0x4b3146], drops: [], family: "sentient", movement: "ground", persistent: true,
+    sentient: true, faction: "sugarcourt", culture: "sugarcourt", role: "farmer", profession: "Gumdrop Gardener", tradeSpecialty: "Peppermint, cocoa, gumdrops and planting stock",
+    utility: "Sugarcourt crop and flora merchant.", discoveryHint: "Orderly rows of jewel-colored bushes lead to a Gumdrop Gardener.",
+  },
+  "sugarcourt-sweetbroker": {
+    kind: "sugarcourt-sweetbroker", name: "Sugarcourt Sweetbroker", temperament: "Defensive", hostile: false,
+    health: 13, damage: 2, xp: 0, speed: 0.67, chaseSpeed: 2, turnRate: 7, attackRange: 0.9,
+    footOffset: 0.86, radius: 0.35, height: 1.4, habitat: "Sweet markets and syrup-lit kiosks in Sugarplum Vale Bonbon Boroughs", active: "Day and early evening",
+    behavior: "Weighs arbitrary goods against a striped ledger, adjusts demand with local stock, and always keeps one sample where customers can see it.",
+    lore: "A Sweetbroker can price anything except a recipe remembered from childhood.",
+    colors: [0x8e67b5, 0xf0bd67, 0xffedca], drops: [], family: "sentient", movement: "ground", persistent: true,
+    sentient: true, faction: "sugarcourt", culture: "sugarcourt", role: "merchant", profession: "Sweetbroker", tradeSpecialty: "General goods, finished candy and borough materials",
+    utility: "Sugarcourt general merchant.", discoveryHint: "Striped awnings and brass candy scales mark the sweet market.",
+  },
+  "sugarcourt-kennelkeeper": {
+    kind: "sugarcourt-kennelkeeper", name: "Sugarcourt Kennelkeeper", temperament: "Defensive", hostile: false,
+    health: 15, damage: 2, xp: 0, speed: 0.69, chaseSpeed: 2.15, turnRate: 7.6, attackRange: 1,
+    footOffset: 0.86, radius: 0.35, height: 1.42, habitat: "Sugarplum Vale taffy kennels, catteries and quiet borough courtyards", active: "Morning through dusk",
+    behavior: "Tends faction hounds and cats, checks every collar twice, and sells only neutral youngsters prepared to choose their own keeper.",
+    lore: "Kennelkeepers say a crest may be inherited, but companionship must never be.",
+    colors: [0x68b9a5, 0xe98caf, 0x3d2d45], drops: [], family: "sentient", movement: "ground", persistent: true,
+    sentient: true, faction: "sugarcourt", culture: "sugarcourt", role: "worker", profession: "Kennelkeeper", tradeSpecialty: "Neutral companion Capture Orbs and care food",
+    utility: "Merchant for unaligned Taffy Hounds and Praline Cats.", discoveryHint: "Listen for collar tags and soft paws near the borough kennel yard.",
+  },
+  "sugarcourt-sugarboiler": {
+    kind: "sugarcourt-sugarboiler", name: "Sugarcourt Sugarboiler", temperament: "Defensive", hostile: false,
+    health: 15, damage: 3, xp: 0, speed: 0.65, chaseSpeed: 2.05, turnRate: 6.8, attackRange: 1,
+    footOffset: 0.86, radius: 0.35, height: 1.43, habitat: "Copper-kettled Sugarworks in Sugarplum Vale Bonbon Boroughs", active: "Late morning through evening",
+    behavior: "Keeps syrup at exact heat, cools potion candy on stone slabs, and snaps a kettle lid shut when danger enters the workshop.",
+    lore: "A Sugarboiler judges temperature by sound: bubble, sigh, then the single clear note before a batch catches.",
+    colors: [0xc87945, 0xf6ddbb, 0x72d2b2], drops: [], family: "sentient", movement: "ground", persistent: true,
+    sentient: true, faction: "sugarcourt", culture: "sugarcourt", role: "alchemist", profession: "Sugarboiler", tradeSpecialty: "Syrup goods, potions and Sugarworks formulas",
+    utility: "Sugarcourt potion and facility merchant.", discoveryHint: "Copper steam and slow amber bubbles mark an active Sugarworks.",
+  },
+  "sugarcourt-candysmith": {
+    kind: "sugarcourt-candysmith", name: "Sugarcourt Candysmith", temperament: "Defensive", hostile: false,
+    health: 18, damage: 5, xp: 0, speed: 0.68, chaseSpeed: 2.35, turnRate: 7.2, attackRange: 1.25,
+    footOffset: 0.86, radius: 0.37, height: 1.45, habitat: "Tempering halls and Candysmith forges in Sugarplum Vale Bonbon Boroughs", active: "Day and evening",
+    behavior: "Tempers candy alloy through repeated heat and cooling, tests every blade edge on sugar thread, and joins the guard when walls crack.",
+    lore: "Candysmiths do not mind when visitors doubt their armor. They keep a hammer nearby for demonstrations.",
+    colors: [0xc65a7f, 0xe9b5cd, 0x34313d], drops: [], family: "sentient", movement: "ground", persistent: true,
+    sentient: true, faction: "sugarcourt", culture: "sugarcourt", role: "worker", profession: "Candysmith", tradeSpecialty: "Candy weapons, Sugarplate armor and blueprints",
+    utility: "Sugarcourt equipment smith and blueprint merchant.", discoveryHint: "Rhythmic glassy hammer notes lead to the borough Candysmith.",
+  },
   meadowwing: {
     kind: "meadowwing", name: "Meadowwing", temperament: "Gentle", hostile: false,
     health: 1, damage: 0, xp: 0, speed: 1.3, chaseSpeed: 1.8, turnRate: 9, attackRange: 0,
@@ -931,13 +1079,23 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "A daytime cousin of the Glowmoth, carrying a softer and more patient light.",
     colors: [0xb6df62, 0x3e6040, 0xf1ffb5], drops: [], family: "butterfly", movement: "flying", flying: true, captureItem: Item.FenLanternJar,
   },
+  bonbonwing: {
+    kind: "bonbonwing", name: "Bonbonwing", temperament: "Gentle", hostile: false,
+    health: 1, damage: 0, xp: 0, speed: 1.42, chaseSpeed: 2.05, turnRate: 9.8, attackRange: 0,
+    footOffset: 0.12, radius: 0.14, height: 0.19, habitat: "Lollipop Orchids and gumdrop clearings in the Sugarplum Vale", active: "Clear daylight",
+    behavior: "Loops between candy flowers on four wrapper-shaped wings and rests only briefly before the next bright patch catches its attention.",
+    lore: "Bonbonwings are living sweets: caught gently, one may be released again or eaten as a small traveling treat.",
+    colors: [0xf08fbd, 0x51314d, 0xffed79], drops: [], family: "butterfly", movement: "flying", flying: true, captureItem: Item.BonbonwingTreat,
+    utility: "A releasable and edible candy butterfly.", discoveryHint: "Search sunlit Lollipop Orchids in the Sugarplum Vale.",
+  },
 };
 
-export const BUTTERFLY_ORDER: ButterflyKind[] = ["meadowwing", "azure-skippers", "embertip", "frostveil", "bloom-monarch", "fen-lantern"];
+export const BUTTERFLY_ORDER: ButterflyKind[] = ["meadowwing", "azure-skippers", "embertip", "frostveil", "bloom-monarch", "fen-lantern", "bonbonwing"];
 export const LEGACY_MOB_ORDER: LegacyMobKind[] = ["mossling", "ridgeback", "woolhorn", "glowmoth", "shadecrawler", "caveblob", "rattlekin", "zombie"];
 export const SURFACE_MOB_ORDER: SurfaceMobKind[] = [
   "sunstep-grazer", "pebbletortoise", "brambleboar", "petalfox", "duneclatter",
   "thimbledeer", "lanternshell", "puddlehopper", "reedstrider", "wild-horse", "meadow-cow", "mistmane", "sakurakit", "sunwash-crab",
+  "taffy-hound", "praline-cat", "sprinklebug", "taffalo",
 ];
 export const BIRD_ORDER: BirdKind[] = ["emberjay", "canopy-lark", "tidewing-gull"];
 export const AQUATIC_MOB_ORDER: AquaticMobKind[] = ["shoalfin", "coralback", "brookdart", "gloomfin", "silverthread", "reedneedle", "emberribbon", "cavefilament"];
@@ -947,6 +1105,7 @@ export const HEARTHROADS_AQUATIC_ORDER: HearthroadsAquaticKind[] = ["redfin-salm
 export const TIDEGLASS_AQUATIC_ORDER: TideglassAquaticKind[] = [
   "glassfin", "lanternjaw", "abyss-skater", "dreadcoil", "tidepup", "worldshell-leviathan", "aetherbell-larva", "aetherbell-leviathan",
 ];
+export const SUGARPLUM_AQUATIC_ORDER: SugarplumAquaticKind[] = ["syrupfin"];
 export const HOBBIT_ORDER: HobbitKind[] = [
   "hobbit-mayor", "hobbit-farmer", "hobbit-miner", "hobbit-merchant", "hobbit-banker", "hobbit-hammer-guard", "hobbit-crossbow-guard",
 ];
@@ -954,7 +1113,11 @@ export const GOBLIN_ORDER: GoblinKind[] = ["goblin-chieftain", "goblin-worker", 
 export const ATLANTIAN_ORDER: AtlantianKind[] = [
   "atlantian-tidewarden", "atlantian-kelpkeeper", "atlantian-coralwright", "atlantian-pearlbroker", "atlantian-glowmender", "atlantian-trident-guard",
 ];
-export const SENTIENT_MOB_ORDER: SentientMobKind[] = [...HOBBIT_ORDER, ...GOBLIN_ORDER, ...ATLANTIAN_ORDER];
+export const SUGARCOURT_ORDER: SugarcourtKind[] = [
+  "sugarcourt-crown-confectioner", "sugarcourt-gumdrop-gardener", "sugarcourt-sugarboiler", "sugarcourt-candysmith",
+  "sugarcourt-sweetbroker", "sugarcourt-kennelkeeper", "sugarcourt-brittle-guard",
+];
+export const SENTIENT_MOB_ORDER: SentientMobKind[] = [...HOBBIT_ORDER, ...GOBLIN_ORDER, ...ATLANTIAN_ORDER, ...SUGARCOURT_ORDER];
 export const SPECIAL_MOB_ORDER: SpecialMobKind[] = ["peelop", "reliquary-sentinel", "skeleton", "warg"];
 export const CORE_MOB_ORDER: CoreMobKind[] = [
   ...LEGACY_MOB_ORDER,
@@ -965,6 +1128,7 @@ export const CORE_MOB_ORDER: CoreMobKind[] = [
   ...HEARTHROADS_WILDLIFE_ORDER,
   ...HEARTHROADS_AQUATIC_ORDER,
   ...TIDEGLASS_AQUATIC_ORDER,
+  ...SUGARPLUM_AQUATIC_ORDER,
   ...SENTIENT_MOB_ORDER,
   ...SPECIAL_MOB_ORDER,
 ];

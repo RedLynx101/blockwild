@@ -128,7 +128,7 @@ export function updateBirdBehavior(state: BirdBehaviorState, stimulus: BirdStimu
   return { ...state, mode, timer, perchId, altitude, wingPhase: (state.wingPhase + dt * flapRate) % TAU };
 }
 
-export type FishHabitat = "ocean" | "deep-ocean" | "lumen-trench" | "river" | "underground";
+export type FishHabitat = "ocean" | "deep-ocean" | "lumen-trench" | "river" | "underground" | "syrup-pond";
 
 export type WeightedMob = readonly [kind: MobKind, weight: number];
 
@@ -175,6 +175,9 @@ const UNDERGROUND_FISH: readonly WeightedMob[] = Object.freeze([
   ["gloomfin", 0.48],
   ["cavefilament", 0.52],
 ]);
+const SYRUP_POND_FISH: readonly WeightedMob[] = Object.freeze([
+  ["syrupfin", 1],
+]);
 
 /** Small immutable tables let the engine choose habitat fish without scanning all mobs. */
 export function fishSpawnTableForHabitat(habitat: FishHabitat): readonly WeightedMob[] {
@@ -182,6 +185,7 @@ export function fishSpawnTableForHabitat(habitat: FishHabitat): readonly Weighte
   if (habitat === "deep-ocean") return DEEP_OCEAN_FISH;
   if (habitat === "lumen-trench") return LUMEN_TRENCH_FAUNA;
   if (habitat === "river") return RIVER_FISH;
+  if (habitat === "syrup-pond") return SYRUP_POND_FISH;
   return UNDERGROUND_FISH;
 }
 
@@ -266,6 +270,9 @@ const SAKURABLOOM_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["sakurakit", 0.38], ["petalfox", 0.18], ["thimbledeer", 0.14], ["canopy-lark", 0.1],
   ["mossling", 0.08], ["wild-horse", 0.05], ["burrowbell", 0.04], ["reed-dragonfly", 0.03],
 ]);
+const SUGARPLUM_PASSIVES: readonly WeightedMob[] = Object.freeze([
+  ["sprinklebug", 0.56], ["taffalo", 0.34], ["reed-dragonfly", 0.06], ["puddlehopper", 0.04],
+]);
 
 /**
  * Ambient table for each surface habitat. Hive Queens and worker Honeybees are
@@ -297,6 +304,7 @@ export function passiveMobSpawnTableForBiome(biome: BiomeId): readonly WeightedM
   }
   if (biome === BiomeId.RainveilJungle) return RAINVEIL_PASSIVES;
   if (biome === BiomeId.SakurabloomGrove) return SAKURABLOOM_PASSIVES;
+  if (biome === BiomeId.SugarplumVale) return SUGARPLUM_PASSIVES;
   if (biome === BiomeId.River) return RIVER_PASSIVES;
   if (biome === BiomeId.CloudreedGlen) return CLOUDREED_PASSIVES;
   return UPLAND_PASSIVES;
@@ -336,6 +344,11 @@ export const NATURAL_GROUP_RANGES: Readonly<Partial<Record<MobKind, readonly [mi
   "worldshell-leviathan": [1, 1],
   "aetherbell-larva": [2, 5],
   "aetherbell-leviathan": [1, 1],
+  "taffy-hound": [1, 3],
+  "praline-cat": [1, 3],
+  sprinklebug: [3, 7],
+  taffalo: [2, 5],
+  syrupfin: [4, 8],
   burrowbell: [3, 6],
   "dewback-tapir": [2, 4],
   warg: [2, 3],
@@ -654,7 +667,7 @@ export function stepAetherbellMorph(
   return { schemaVersion: 1, medium, targetMedium, airProgress, phase };
 }
 
-export type RideableCreatureKind = "wild-horse" | "warg" | "reedstrider" | "worldshell-leviathan" | "aetherbell-leviathan";
+export type RideableCreatureKind = "wild-horse" | "warg" | "reedstrider" | "taffalo" | "worldshell-leviathan" | "aetherbell-leviathan";
 export type CreatureMountProfile = Readonly<{
   kind: RideableCreatureKind;
   saddleRequired: true;
@@ -671,6 +684,7 @@ export const CREATURE_MOUNT_PROFILES: Readonly<Record<RideableCreatureKind, Crea
   "wild-horse": Object.freeze({ kind: "wild-horse", saddleRequired: true, adultRequired: true, controllable: true, cargoChestLimit: 0, landSpeed: 4.5, waterSpeed: 1.1, airSpeed: 0, alignedCannotTame: false }),
   warg: Object.freeze({ kind: "warg", saddleRequired: true, adultRequired: true, controllable: true, cargoChestLimit: 0, landSpeed: 4.25, waterSpeed: 1.05, airSpeed: 0, alignedCannotTame: true }),
   reedstrider: Object.freeze({ kind: "reedstrider", saddleRequired: true, adultRequired: true, controllable: true, cargoChestLimit: 0, landSpeed: 3.15, waterSpeed: 4.4, airSpeed: 0, alignedCannotTame: false }),
+  taffalo: Object.freeze({ kind: "taffalo", saddleRequired: true, adultRequired: true, controllable: true, cargoChestLimit: 0, landSpeed: 4.1, waterSpeed: 0.75, airSpeed: 0, alignedCannotTame: false }),
   "worldshell-leviathan": Object.freeze({ kind: "worldshell-leviathan", saddleRequired: true, adultRequired: true, controllable: true, cargoChestLimit: 6, landSpeed: 0.12, waterSpeed: 1.28, airSpeed: 0, alignedCannotTame: false }),
   "aetherbell-leviathan": Object.freeze({ kind: "aetherbell-leviathan", saddleRequired: true, adultRequired: true, controllable: true, cargoChestLimit: 1, landSpeed: 0, waterSpeed: 1.45, airSpeed: 2.6, alignedCannotTame: false }),
 });
@@ -696,6 +710,19 @@ export function canRideCreature(context: CreatureRideContext) {
   if (profile.alignedCannotTame && context.aligned) return false;
   return true;
 }
+
+export const GENERIC_BOND_MOB_KINDS = Object.freeze([
+  "wild-horse", "warg", "tidepup", "sakurakit", "taffy-hound", "praline-cat", "taffalo",
+] as const satisfies readonly CoreMobKind[]);
+
+/** One source of truth for the reusable trust/follow/saddle state in the engine and Capture Orbs. */
+export function usesGenericCreatureBond(kind: CoreMobKind): kind is (typeof GENERIC_BOND_MOB_KINDS)[number] {
+  return GENERIC_BOND_MOB_KINDS.includes(kind as (typeof GENERIC_BOND_MOB_KINDS)[number]);
+}
+
+export const SUGARPLUM_MOB_KINDS = Object.freeze([
+  "taffy-hound", "praline-cat", "sprinklebug", "taffalo", "syrupfin", "bonbonwing",
+] as const satisfies readonly MobKind[]);
 
 /** Roster used by biome integration without exposing settlement-only Atlantians as ambient wildlife. */
 export const LUMEN_TRENCH_MOB_KINDS: readonly TideglassAquaticKind[] = Object.freeze([

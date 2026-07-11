@@ -155,6 +155,32 @@ export const ATLANTIAN_FACTION_QUESTS: readonly QuestDefinition[] = Object.freez
   },
 ] as readonly QuestDefinition[]);
 
+export const SUGARCOURT_FACTION_QUESTS: readonly QuestDefinition[] = Object.freeze([
+  {
+    id: "sugarcourt-beyond-sugarwind",
+    questlineId: "sugarcourt-measured-welcome",
+    kind: "side",
+    name: "Beyond the Sugarwind",
+    summary: "Find a Bonbon Borough where the Sugarplum Vale begins to smell of mint and warm syrup.",
+    objectives: [{ id: "discover-sugarcourt-town", label: "Discover a Sugarcourt settlement", kind: "discover-town", factionId: "sugarcourt" }],
+    rewards: { gold: 20, items: [{ itemId: "peppermint-starts", count: 3 }], blueprints: [], factionAlignment: { sugarcourt: 5 } },
+    abandonable: true,
+    reacceptAfterAbandon: true,
+  },
+  {
+    id: "sugarcourt-measured-trade",
+    questlineId: "sugarcourt-measured-welcome",
+    kind: "side",
+    name: "A Measured Welcome",
+    summary: "Learn the Concord's rule of hospitality: a sweet bargain should leave both sides glad they measured twice.",
+    objectives: [{ id: "trade-with-sugarcourt", label: "Complete a Sugarcourt trade", kind: "trade", count: 1, factionId: "sugarcourt" }],
+    prerequisites: { allOf: ["sugarcourt-beyond-sugarwind"] },
+    rewards: { gold: 32, items: [{ itemId: "syrup-bucket", count: 1 }], blueprints: [], factionAlignment: { sugarcourt: 7 } },
+    abandonable: true,
+    reacceptAfterAbandon: true,
+  },
+] as readonly QuestDefinition[]);
+
 export const HEARTHROADS_QUESTLINES: readonly QuestlineDefinition[] = Object.freeze([
   {
     id: "hearthroads-main",
@@ -173,14 +199,24 @@ export const ATLANTIAN_QUESTLINE: QuestlineDefinition = Object.freeze({
   questIds: ATLANTIAN_FACTION_QUESTS.map((quest) => quest.id),
 });
 
+export const SUGARCOURT_QUESTLINE: QuestlineDefinition = Object.freeze({
+  id: "sugarcourt-measured-welcome",
+  name: "A Measured Welcome",
+  description: "A first-contact line about finding a Bonbon Borough and learning the Sugarcourt Concord's careful craft of trade.",
+  kind: "side",
+  questIds: SUGARCOURT_FACTION_QUESTS.map((quest) => quest.id),
+});
+
 export const DEFAULT_QUEST_DEFINITIONS: readonly QuestDefinition[] = Object.freeze([
   ...HEARTHROADS_MAIN_QUESTS,
   ...ATLANTIAN_FACTION_QUESTS,
+  ...SUGARCOURT_FACTION_QUESTS,
 ]);
 
 export const DEFAULT_QUESTLINES: readonly QuestlineDefinition[] = Object.freeze([
   ...HEARTHROADS_QUESTLINES,
   ATLANTIAN_QUESTLINE,
+  SUGARCOURT_QUESTLINE,
 ]);
 
 export function createQuestBook(): QuestBook {

@@ -1,13 +1,16 @@
 import {
   FACTIONS,
+  NPC_FACTION_IDS,
   checkAuthority,
   factionCanOccupyEnvironment,
   raceBreathesWater,
+  normalizeEnabledFactions,
   stampAuthority,
   type AuthorityCommand,
   type AuthorityStampedState,
   type FactionId,
   type FactionRace,
+  type NpcFactionId,
   type TownCaptureReceipt,
 } from "./factions.ts";
 import type { GoldAmount, MerchantProfession } from "./economy.ts";
@@ -27,7 +30,8 @@ export type SettlementBiome =
   | "cloudreed-glen"
   | "rocky-forest"
   | "deep-ocean"
-  | "lumen-trench";
+  | "lumen-trench"
+  | "sugarplum-vale";
 
 export const SETTLEMENT_SIZE_RULES: Readonly<Record<SettlementSize, Readonly<{
   radiusBlocks: number;
@@ -79,7 +83,9 @@ function hashPick<T>(values: readonly T[], seed: string, salt: string | number) 
 }
 
 export function settlementId(worldSeed: string, regionX: number, regionZ: number, factionId: Exclude<FactionId, "player">) {
-  const prefix = factionId === "hobbits" ? "freehold" : factionId === "goblins" ? "clanhold" : "tidehold";
+  const prefix = factionId === "hobbits" ? "freehold"
+    : factionId === "goblins" ? "clanhold"
+      : factionId === "atlantians" ? "tidehold" : "bonbon-borough";
   return `${prefix}-${regionX.toString(36)}-${regionZ.toString(36)}-${hash32(`${worldSeed}|${regionX}|${regionZ}|${factionId}`).toString(36)}`;
 }
 
@@ -87,8 +93,15 @@ export function settlementBiomeEligible(factionId: Exclude<FactionId, "player">,
   return FACTIONS[factionId].homeBiomes.includes(biome);
 }
 
-function chooseFactionForBiome(worldSeed: string, regionX: number, regionZ: number, biome: SettlementBiome): Exclude<FactionId, "player"> | null {
-  const eligible = (["hobbits", "goblins", "atlantians"] as const).filter((factionId) => settlementBiomeEligible(factionId, biome));
+function chooseFactionForBiome(
+  worldSeed: string,
+  regionX: number,
+  regionZ: number,
+  biome: SettlementBiome,
+  enabledFactions: readonly NpcFactionId[] = NPC_FACTION_IDS,
+): NpcFactionId | null {
+  const enabled = new Set(enabledFactions);
+  const eligible = NPC_FACTION_IDS.filter((factionId) => enabled.has(factionId) && settlementBiomeEligible(factionId, biome));
   if (eligible.length === 0) return null;
   return eligible[Math.min(eligible.length - 1, Math.floor(hashUnit(worldSeed, `${regionX}|${regionZ}|faction`) * eligible.length))];
 }
@@ -109,9 +122,11 @@ export function planSettlementCandidate(input: Readonly<{
   biome: SettlementBiome;
   existing: readonly ExistingSettlementLocation[];
   floorY?: number;
+  enabledFactions?: readonly NpcFactionId[];
 }>): SettlementCandidate | null {
-  const factionId = chooseFactionForBiome(input.worldSeed, input.regionX, input.regionZ, input.biome);
-  const density = factionId === "atlantians" ? 0.18 : 0.34;
+  const enabledFactions = input.enabledFactions === undefined ? NPC_FACTION_IDS : normalizeEnabledFactions(input.enabledFactions);
+  const factionId = chooseFactionForBiome(input.worldSeed, input.regionX, input.regionZ, input.biome, enabledFactions);
+  const density = factionId === "atlantians" ? 0.18 : factionId === "sugarcourt" ? 0.3 : 0.34;
   if (!factionId || hashUnit(input.worldSeed, `${input.regionX}|${input.regionZ}|density`) >= density) return null;
   const sizeRoll = hashUnit(input.worldSeed, `${input.regionX}|${input.regionZ}|size`);
   const size: SettlementSize = sizeRoll < 0.58 ? "hamlet" : sizeRoll < 0.9 ? "village" : "town";
@@ -160,7 +175,15 @@ export type SettlementBuildingRole =
   | "pearl-market"
   | "glow-clinic"
   | "guard-grotto"
-  | "current-store";
+  | "current-store"
+  | "sugar-palace"
+  | "bonbon-home"
+  | "gumdrop-garden"
+  | "sugarworks"
+  | "candysmith"
+  | "sweet-market"
+  | "taffy-kennel"
+  | "brittle-barracks";
 
 export type SettlementFurniture = Readonly<{
   kind:
@@ -178,7 +201,11 @@ export type SettlementFurniture = Readonly<{
     | "kelp-trough"
     | "coral-loom"
     | "pearl-counter"
-    | "glow-basin";
+    | "glow-basin"
+    | "sugarworks-kettle"
+    | "syrup-vat"
+    | "confection-counter"
+    | "pet-bed";
   position: SettlementPoint;
   facing: 0 | 1 | 2 | 3;
   functional: boolean;
@@ -263,6 +290,14 @@ function buildingRoles(factionId: Exclude<FactionId, "player">, size: Settlement
     ];
     return aquatic.slice(0, SETTLEMENT_SIZE_RULES[size].buildingCount);
   }
+  if (factionId === "sugarcourt") {
+    const sugarcourt: SettlementBuildingRole[] = [
+      "sugar-palace", "brittle-barracks", "sweet-market", "bonbon-home", "bonbon-home", "gumdrop-garden",
+      "sugarworks", "candysmith", "taffy-kennel", "bonbon-home", "gumdrop-garden", "sweet-market",
+      "bonbon-home", "brittle-barracks", "sugarworks", "bonbon-home", "gumdrop-garden", "candysmith",
+    ];
+    return sugarcourt.slice(0, SETTLEMENT_SIZE_RULES[size].buildingCount);
+  }
   const common: SettlementBuildingRole[] = ["mayor-hall", "guardhouse", "market", "home", "home", "farm"];
   const themed: SettlementBuildingRole[] = factionId === "hobbits"
     ? ["brewery", "bank", "farm", "home", "alchemist", "warehouse"]
@@ -279,6 +314,11 @@ function paletteFor(factionId: Exclude<FactionId, "player">, role: SettlementBui
   }
   if (factionId === "hobbits") {
     return role === "bank" ? ["river-stone", "dark-oak", "copper"] : ["wildwood", "plaster", "mossy-thatch"];
+  }
+  if (factionId === "sugarcourt") {
+    if (role === "sugar-palace") return ["boiled-sugarbrick", "candywood", "sugar-glass"];
+    if (role === "candysmith" || role === "sugarworks") return ["boiled-sugarbrick", "candywood", "copper-kettle"];
+    return ["candywood", "wafer-plaster", "boiled-sugarbrick"];
   }
   return role === "blacksmith" ? ["basalt", "iron", "ember-brick"] : ["stone", "brasswood", "patched-slate"];
 }
@@ -298,6 +338,21 @@ function furnitureFor(factionId: Exclude<FactionId, "player">, buildingId: strin
     if (role === "coral-workshop") add("coral-loom", 0, 0);
     if (role === "pearl-market") add("pearl-counter", 0, 0);
     if (role === "glow-clinic") add("glow-basin", 0, 0);
+    void buildingId;
+    return entries;
+  }
+  if (factionId === "sugarcourt") {
+    const entries: SettlementFurniture[] = [{ kind: "door", position: { x: position.x, z: position.z - 2 }, facing, functional: true }];
+    const add = (kind: SettlementFurniture["kind"], dx: number, dz: number, functional = true) => entries.push({ kind, position: { x: position.x + dx, z: position.z + dz }, facing, functional });
+    if (["bonbon-home", "sugar-palace", "brittle-barracks"].includes(role)) add("bed", -1, 1);
+    if (role === "bonbon-home" || role === "sugar-palace") add("bed", 1, 1);
+    add("chair", -1, 0);
+    add("table", 0, 0);
+    if (role === "sugarworks") { add("sugarworks-kettle", 1, 1); add("syrup-vat", -1, 1); }
+    if (role === "gumdrop-garden") add("syrup-vat", 1, 1);
+    if (role === "sweet-market") add("confection-counter", 1, 0);
+    if (role === "candysmith") add("forge", 1, 1);
+    if (role === "taffy-kennel") { add("pet-bed", -1, 1); add("pet-bed", 1, 1); }
     void buildingId;
     return entries;
   }
@@ -361,8 +416,8 @@ export function planSettlementLayout(candidate: SettlementCandidate): Settlement
       ...(center.y === undefined ? {} : { y: center.y + verticalOffset }),
     };
     const facing = (Math.floor((angle + Math.PI / 4) / (Math.PI / 2)) & 3) as 0 | 1 | 2 | 3;
-    const civicHall = role === "mayor-hall" || role === "tide-hall";
-    const width = civicHall ? 9 : role === "warehouse" || role === "current-store" ? 8 : 5 + Math.floor(hashUnit(candidate.id, `width-${index}`) * 3);
+    const civicHall = role === "mayor-hall" || role === "tide-hall" || role === "sugar-palace";
+    const width = civicHall ? 9 : role === "warehouse" || role === "current-store" || role === "sugarworks" ? 8 : 5 + Math.floor(hashUnit(candidate.id, `width-${index}`) * 3);
     const depth = civicHall ? 8 : 5 + Math.floor(hashUnit(candidate.id, `depth-${index}`) * 3);
     const id = `${candidate.id}-building-${index}`;
     buildings.push({
@@ -491,6 +546,13 @@ export const RESIDENT_PROFESSIONS = [
   "atlantian-pearlbroker",
   "atlantian-glowmender",
   "atlantian-trident-guard",
+  "sugarcourt-crown-confectioner",
+  "sugarcourt-gumdrop-gardener",
+  "sugarcourt-sugarboiler",
+  "sugarcourt-candysmith",
+  "sugarcourt-sweetbroker",
+  "sugarcourt-kennelkeeper",
+  "sugarcourt-brittle-guard",
 ] as const;
 export type ResidentProfession = (typeof RESIDENT_PROFESSIONS)[number];
 export type ResidentCombatStance = "passive" | "defensive" | "offensive";
@@ -528,8 +590,8 @@ export type SettlementResident = Readonly<{
 
 export type AlignedSettlementCreature = Readonly<{
   id: string;
-  kind: "warg";
-  factionId: "goblins";
+  kind: "warg" | "taffy-hound" | "praline-cat";
+  factionId: "goblins" | "sugarcourt";
   position: SettlementPoint;
   patrolGateId: string;
   tameable: false;
@@ -605,24 +667,31 @@ const GOBLIN_CLAN = ["Brassroot", "Cinderknuckle", "Flintcap", "Rattlepot", "Rus
 const WAYFARER_GIVEN = ["Ash", "Ember", "Fern", "Juniper", "Mica", "River", "Rowan", "Vale"] as const;
 const ATLANTIAN_GIVEN = ["Aelune", "Caelis", "Ilyra", "Marev", "Neris", "Oruun", "Selyth", "Thal", "Vaela", "Ysara"] as const;
 const ATLANTIAN_TIDES = ["Bluecurrent", "Coralwake", "Glassfin", "Lumenveil", "Pearldeep", "Reefsinger", "Softtide"] as const;
+const CONFECTKIN_GIVEN = ["Bonnie", "Cinna", "Dulce", "Mallow", "Mint", "Nougat", "Poppy", "Praline", "Toffee", "Truffle", "Waffle", "Zest"] as const;
+const CONFECTKIN_FAMILY = ["Brittlebrook", "Candleglass", "Honeyspun", "Peppermere", "Sugarwick", "Taffyfold", "Waferby"] as const;
 
 export function generateResidentName(race: FactionRace, seed: string) {
   if (race === "hearthkin") return `${hashPick(HEARTHKIN_GIVEN, seed, "given")} ${hashPick(HEARTHKIN_FAMILY, seed, "family")}`;
   if (race === "goblin") return `${hashPick(GOBLIN_GIVEN, seed, "given")} ${hashPick(GOBLIN_CLAN, seed, "clan")}`;
   if (race === "atlantian") return `${hashPick(ATLANTIAN_GIVEN, seed, "given")} ${hashPick(ATLANTIAN_TIDES, seed, "tide")}`;
+  if (race === "confectkin") return `${hashPick(CONFECTKIN_GIVEN, seed, "given")} ${hashPick(CONFECTKIN_FAMILY, seed, "family")}`;
   return hashPick(WAYFARER_GIVEN, seed, "given");
 }
 
 export function isMayorProfession(profession: ResidentProfession) {
-  return profession === "mayor" || profession === "atlantian-tidewarden";
+  return profession === "mayor" || profession === "atlantian-tidewarden" || profession === "sugarcourt-crown-confectioner";
 }
 
 export function isWarriorProfession(profession: ResidentProfession) {
-  return profession === "warrior" || profession === "atlantian-trident-guard";
+  return profession === "warrior" || profession === "atlantian-trident-guard" || profession === "sugarcourt-brittle-guard";
 }
 
 export function isAquaticProfession(profession: ResidentProfession) {
   return profession.startsWith("atlantian-");
+}
+
+export function isSugarcourtProfession(profession: ResidentProfession) {
+  return profession.startsWith("sugarcourt-");
 }
 
 function professionPlan(candidate: SettlementCandidate, count: number) {
@@ -641,6 +710,21 @@ function professionPlan(candidate: SettlementCandidate, count: number) {
     ];
     return Array.from({ length: count }, (_, index) => aquatic[index % aquatic.length]);
   }
+  if (candidate.factionId === "sugarcourt") {
+    const sugarcourt: ResidentProfession[] = [
+      "sugarcourt-crown-confectioner",
+      "sugarcourt-brittle-guard",
+      "sugarcourt-gumdrop-gardener",
+      "sugarcourt-sweetbroker",
+      "sugarcourt-kennelkeeper",
+      "sugarcourt-sugarboiler",
+      "sugarcourt-candysmith",
+      "sugarcourt-brittle-guard",
+      "sugarcourt-gumdrop-gardener",
+      "sugarcourt-sweetbroker",
+    ];
+    return Array.from({ length: count }, (_, index) => sugarcourt[index % sugarcourt.length]);
+  }
   const common: ResidentProfession[] = ["mayor", "warrior", "farmer", "general", "warrior", "general"];
   const faction: ResidentProfession[] = candidate.factionId === "hobbits"
     ? ["brewer", "banker", "farmer", "alchemist", "blacksmith", "general"]
@@ -655,6 +739,13 @@ function preferredBuilding(layout: SettlementLayoutPlan, profession: ResidentPro
         : profession === "atlantian-coralwright" ? "coral-workshop"
           : profession === "atlantian-pearlbroker" ? "pearl-market"
             : profession === "atlantian-glowmender" ? "glow-clinic"
+              : profession === "sugarcourt-crown-confectioner" ? "sugar-palace"
+                : profession === "sugarcourt-brittle-guard" ? "brittle-barracks"
+                  : profession === "sugarcourt-gumdrop-gardener" ? "gumdrop-garden"
+                    : profession === "sugarcourt-sugarboiler" ? "sugarworks"
+                      : profession === "sugarcourt-candysmith" ? "candysmith"
+                        : profession === "sugarcourt-sweetbroker" ? "sweet-market"
+                          : profession === "sugarcourt-kennelkeeper" ? "taffy-kennel"
               : profession === "mayor" ? "mayor-hall"
     : profession === "warrior" ? "guardhouse"
       : profession === "farmer" ? "farm"
@@ -675,6 +766,13 @@ function defaultEquipment(factionId: Exclude<FactionId, "player">, profession: R
     if (profession === "atlantian-glowmender") return { weapon: null, tool: "lumen-vial" };
     return { weapon: null, tool: null };
   }
+  if (factionId === "sugarcourt") {
+    if (profession === "sugarcourt-brittle-guard") return { weapon: "peppermint-pike", tool: null };
+    if (profession === "sugarcourt-candysmith") return { weapon: null, tool: "candy-hammer" };
+    if (profession === "sugarcourt-gumdrop-gardener") return { weapon: null, tool: "hoe" };
+    if (profession === "sugarcourt-sugarboiler") return { weapon: null, tool: "sugar-ladle" };
+    return { weapon: null, tool: null };
+  }
   if (profession === "warrior") {
     if (factionId === "hobbits") return { weapon: index % 4 === 1 ? "crossbow" : "hearth-hammer", tool: null };
     return { weapon: "goblin-spear", tool: null };
@@ -683,6 +781,41 @@ function defaultEquipment(factionId: Exclude<FactionId, "player">, profession: R
   if (profession === "miner") return { weapon: null, tool: "pickaxe" };
   if (profession === "blacksmith") return { weapon: null, tool: "hammer" };
   return { weapon: null, tool: null };
+}
+
+function alignedCreaturesForFaction(
+  settlementIdValue: string,
+  factionId: FactionId,
+  layout: SettlementLayoutPlan,
+  generation = "founding",
+): readonly AlignedSettlementCreature[] {
+  if (factionId === "goblins") return layout.gates.slice(0, Math.min(3, layout.gates.length)).map((gate, index) => ({
+    id: `${settlementIdValue}-warg-${generation}-${index}`,
+    kind: "warg" as const,
+    factionId: "goblins" as const,
+    position: gate.position,
+    patrolGateId: gate.id,
+    tameable: false as const,
+  }));
+  if (factionId !== "sugarcourt") return [];
+  const hounds = layout.gates.slice(0, Math.min(3, layout.gates.length)).map((gate, index) => ({
+    id: `${settlementIdValue}-taffy-hound-${generation}-${index}`,
+    kind: "taffy-hound" as const,
+    factionId: "sugarcourt" as const,
+    position: gate.position,
+    patrolGateId: gate.id,
+    tameable: false as const,
+  }));
+  const catHomes = layout.buildings.filter((building) => building.role === "bonbon-home" || building.role === "sweet-market").slice(0, 3);
+  const cats = catHomes.map((building, index) => ({
+    id: `${settlementIdValue}-praline-cat-${generation}-${index}`,
+    kind: "praline-cat" as const,
+    factionId: "sugarcourt" as const,
+    position: building.position,
+    patrolGateId: building.id,
+    tameable: false as const,
+  }));
+  return [...hounds, ...cats];
 }
 
 export function createSettlementState(authorityId: string, candidate: SettlementCandidate, layout = planSettlementLayout(candidate)): SettlementState {
@@ -709,16 +842,7 @@ export function createSettlementState(authorityId: string, candidate: Settlement
       orders: { stance: "defensive", follow: false, followDistance: "dynamic", holdPosition: null },
     };
   });
-  const alignedCreatures: AlignedSettlementCreature[] = candidate.factionId === "goblins"
-    ? layout.gates.slice(0, Math.min(3, layout.gates.length)).map((gate, index) => ({
-      id: `${candidate.id}-warg-${index}`,
-      kind: "warg",
-      factionId: "goblins",
-      position: gate.position,
-      patrolGateId: gate.id,
-      tameable: false,
-    }))
-    : [];
+  const alignedCreatures = alignedCreaturesForFaction(candidate.id, candidate.factionId, layout);
   return {
     schema: 1,
     authorityId,
@@ -759,7 +883,11 @@ export type ScheduleAction =
   | "shape-coral"
   | "trade-pearls"
   | "mend-glow"
-  | "gather-current";
+  | "gather-current"
+  | "tend-sweets"
+  | "boil-sugar"
+  | "shape-candy"
+  | "tend-menagerie";
 
 export type ResidentSchedulePlan = Readonly<{
   action: ScheduleAction;
@@ -795,13 +923,18 @@ export function planResidentSchedule(
     if (resident.profession === "atlantian-tidewarden") return { action: hour >= 17 ? "socialize" : "gather-current", target: approach?.position ?? settlement.layout.center, reason: "tide-moot" };
     return { action: "gather-current", target: approach?.position ?? settlement.layout.center, reason: "aquatic-daily-life" };
   }
-  if (resident.profession === "warrior") return { action: "patrol-gate", target: gate?.position ?? settlement.layout.center, reason: "gate-watch" };
+  if (isWarriorProfession(resident.profession)) return { action: "patrol-gate", target: gate?.position ?? settlement.layout.center, reason: "gate-watch" };
   if (hour >= 21 || hour < 6) return { action: "sleep", target: resident.position, reason: "night" };
   const socialRoll = hashUnit(`${settlement.id}|${resident.id}|${input.worldDay}`, Math.floor(hour));
   if ((hour >= 18 || (hour >= 12 && hour < 14)) && socialRoll < 0.42) {
     const chairs = settlement.layout.buildings.flatMap((building) => building.furniture).filter((entry) => entry.kind === "chair");
     return { action: socialRoll < 0.2 ? "sit" : "socialize", target: hashPick(chairs, resident.id, input.worldDay)?.position ?? settlement.layout.center, reason: "daily-life" };
   }
+  if (resident.profession === "sugarcourt-gumdrop-gardener") return { action: "tend-sweets", target: resident.position, reason: "gumdrop-cycle" };
+  if (resident.profession === "sugarcourt-sugarboiler") return { action: "boil-sugar", target: resident.position, reason: "sugarworks-batch" };
+  if (resident.profession === "sugarcourt-candysmith") return { action: "shape-candy", target: resident.position, reason: "candy-tempering" };
+  if (resident.profession === "sugarcourt-kennelkeeper") return { action: "tend-menagerie", target: resident.position, reason: "village-companions" };
+  if (resident.profession === "sugarcourt-sweetbroker" || resident.profession === "sugarcourt-crown-confectioner") return { action: "trade", target: resident.position, reason: resident.profession };
   if (["banker", "brewer", "alchemist", "blacksmith", "farmer", "miner"].includes(resident.profession)) return { action: "work", target: resident.position, reason: resident.profession };
   if (resident.profession === "general" || resident.profession === "mayor") return { action: "trade", target: resident.position, reason: resident.profession };
   return { action: "idle", target: settlement.layout.center, reason: "unassigned" };
@@ -834,7 +967,7 @@ export function electMayorAtEight(
   const elected = [...candidates].sort((a, b) => hash32(`${settlement.id}|${day}|${a.id}`) - hash32(`${settlement.id}|${day}|${b.id}`))[0];
   const mayorProfession: ResidentProfession = settlementEnvironmentOf(settlement) === "underwater" || settlement.cultureRace === "atlantian"
     ? "atlantian-tidewarden"
-    : "mayor";
+    : settlement.cultureRace === "confectkin" ? "sugarcourt-crown-confectioner" : "mayor";
   const residents = settlement.residents.map((resident) => resident.id === elected.id ? { ...resident, profession: mayorProfession } : resident);
   return {
     state: stampAuthority({ ...settlement, residents, lastMayorElectionDay: day }, command),
@@ -860,7 +993,8 @@ export function growSettlementPopulation(
   const race = settlement.ownerFactionId === "player" ? settlement.cultureRace : FACTIONS[settlement.ownerFactionId].race;
   const id = `${settlement.id}-born-${day}-${index}`;
   const home = settlement.layout.buildings.find((building) => building.role === "home") ?? settlement.layout.buildings[0];
-  const profession: ResidentProfession = race === "atlantian" ? "atlantian-kelpkeeper" : "general";
+  const profession: ResidentProfession = race === "atlantian" ? "atlantian-kelpkeeper"
+    : race === "confectkin" ? "sugarcourt-gumdrop-gardener" : "general";
   const child: SettlementResident = {
     id,
     factionId: settlement.ownerFactionId,
@@ -907,16 +1041,7 @@ export function applySettlementCapture(
     : settlement.residents;
   const cultureRace = receipt.to === "player" ? settlement.cultureRace : FACTIONS[receipt.to].race;
   const history: SettlementOwnershipRecord = { day: Math.max(0, Math.floor(worldDay)), from: settlement.ownerFactionId, to: receipt.to, captureReceiptId: receipt.id };
-  const alignedCreatures: readonly AlignedSettlementCreature[] = receipt.to === "goblins"
-    ? settlement.layout.gates.slice(0, Math.min(3, settlement.layout.gates.length)).map((gate, index) => ({
-      id: `${settlement.id}-warg-${history.day}-${index}`,
-      kind: "warg" as const,
-      factionId: "goblins" as const,
-      position: gate.position,
-      patrolGateId: gate.id,
-      tameable: false as const,
-    }))
-    : [];
+  const alignedCreatures = alignedCreaturesForFaction(settlement.id, receipt.to, settlement.layout, String(history.day));
   return {
     state: stampAuthority({
       ...settlement,
@@ -1088,6 +1213,37 @@ export const ATLANTIAN_SIDE_QUESTS: readonly SideQuestTemplate[] = [
   },
 ];
 
+export const SUGARCOURT_SIDE_QUESTS: readonly SideQuestTemplate[] = [
+  {
+    id: "sugarcourt-kettle-moving", factionId: "sugarcourt", title: "Keep the Kettle Moving",
+    summary: "Bring honey and ripe gumdrops to a Sugarboiler before the cooling slab goes quiet.",
+    giverProfessions: ["sugarcourt-sugarboiler", "sugarcourt-sweetbroker"],
+    criteria: [{ kind: "deliver", target: "honey-jar", count: 3 }, { kind: "deliver", target: "gumdrop", count: 8 }],
+    failureConditions: ["giver-dies"], rewards: { gold: 68, alignment: 6, items: [{ itemKey: "peppermint-rush", count: 2 }], delivery: "giver-drops" }, abandonable: true,
+  },
+  {
+    id: "sugarcourt-cracks-in-wall", factionId: "sugarcourt", title: "Cracks in the Candywall",
+    summary: "Supply fresh sugarbricks and crystal for a Candysmith repairing the borough wall.",
+    giverProfessions: ["sugarcourt-candysmith", "sugarcourt-crown-confectioner"],
+    criteria: [{ kind: "deliver", target: "boiled-sugarbrick", count: 12 }, { kind: "deliver", target: "crystal-shard", count: 4 }],
+    failureConditions: ["giver-dies"], rewards: { gold: 92, alignment: 8, items: [{ itemKey: "candied-alloy", count: 2 }], delivery: "giver-drops" }, abandonable: true,
+  },
+  {
+    id: "sugarcourt-collars-without-crests", factionId: "sugarcourt", title: "Collars Without Crests",
+    summary: "Clear prowlers from the kennel road and bring soft treats for the frightened village companions.",
+    giverProfessions: ["sugarcourt-kennelkeeper", "sugarcourt-brittle-guard"],
+    criteria: [{ kind: "defeat", target: "overworld-monster", count: 4 }, { kind: "deliver", target: "marshmallow-tuft", count: 6 }],
+    failureConditions: ["giver-dies", "deadline"], rewards: { gold: 96, alignment: 9, items: [{ itemKey: "syrup-bucket", count: 1 }], delivery: "giver-drops" }, abandonable: true,
+  },
+];
+
+const SIDE_QUESTS_BY_FACTION: Readonly<Record<NpcFactionId, readonly SideQuestTemplate[]>> = {
+  hobbits: HOBBIT_SIDE_QUESTS,
+  goblins: GOBLIN_SIDE_QUESTS,
+  atlantians: ATLANTIAN_SIDE_QUESTS,
+  sugarcourt: SUGARCOURT_SIDE_QUESTS,
+};
+
 export function sideQuestOffersFor(
   factionId: Exclude<FactionId, "player">,
   profession: ResidentProfession,
@@ -1095,11 +1251,7 @@ export function sideQuestOffersFor(
   worldDay: number,
   limit = 2,
 ) {
-  const table = factionId === "hobbits"
-    ? HOBBIT_SIDE_QUESTS
-    : factionId === "goblins"
-      ? GOBLIN_SIDE_QUESTS
-      : ATLANTIAN_SIDE_QUESTS;
+  const table = SIDE_QUESTS_BY_FACTION[factionId];
   return table
     .filter((quest) => quest.giverProfessions.includes(profession))
     .sort((a, b) => hash32(`${settlementIdValue}|${worldDay}|${a.id}`) - hash32(`${settlementIdValue}|${worldDay}|${b.id}`))

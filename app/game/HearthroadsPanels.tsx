@@ -35,6 +35,7 @@ import type {
   RecipeIngredient,
   ResourceInventory,
 } from "./alchemy";
+import type { SugarworksRecipe, SugarworksState } from "./candyworks";
 import {
   bankBalanceWholeGold,
   COMMERCE_CATALOG,
@@ -66,6 +67,7 @@ import {
 } from "./settlements";
 
 type AtlantianProfession = Extract<ResidentProfession, `atlantian-${string}`>;
+type SugarcourtProfession = Extract<ResidentProfession, `sugarcourt-${string}`>;
 
 export type SentientRolePresentation = Readonly<{
   label: string;
@@ -113,6 +115,51 @@ export const ATLANTIAN_ROLE_PRESENTATION = {
   },
 } as const satisfies Readonly<Record<AtlantianProfession, SentientRolePresentation>>;
 
+export const SUGARCOURT_ROLE_PRESENTATION = {
+  "sugarcourt-crown-confectioner": {
+    label: "Crown Confectioner",
+    glyph: "♔",
+    description: "Keeps the borough's measure, hears disputes, and authorizes contracts and trusted hires.",
+    portraitUrl: "/creatures/sugarcourt-crown-confectioner.svg",
+  },
+  "sugarcourt-gumdrop-gardener": {
+    label: "Gumdrop Gardener",
+    glyph: "✿",
+    description: "Tends peppermint rows, cocoa puffs, gumdrop bushes, and the flowers that flavor every batch.",
+    portraitUrl: "/creatures/sugarcourt-gumdrop-gardener.svg",
+  },
+  "sugarcourt-sugarboiler": {
+    label: "Sugarboiler",
+    glyph: "♨",
+    description: "Runs the Sugarworks kettles and bottles the Concord's carefully measured tonics.",
+    portraitUrl: "/creatures/sugarcourt-sugarboiler.svg",
+  },
+  "sugarcourt-candysmith": {
+    label: "Candysmith",
+    glyph: "◇",
+    description: "Tempers candy alloy into hard walls, bright weapons, and flexible Sugarplate armor.",
+    portraitUrl: "/creatures/sugarcourt-candysmith.svg",
+  },
+  "sugarcourt-sweetbroker": {
+    label: "Sweetbroker",
+    glyph: "¤",
+    description: "Balances local stock, general trade, and the borough's rule that every bargain be measured fairly.",
+    portraitUrl: "/creatures/sugarcourt-sweetbroker.svg",
+  },
+  "sugarcourt-kennelkeeper": {
+    label: "Kennelkeeper",
+    glyph: "●",
+    description: "Cares for sworn Taffy Hounds and Praline Cats, and sells unaligned companions in safe Capture Orbs.",
+    portraitUrl: "/creatures/sugarcourt-kennelkeeper.svg",
+  },
+  "sugarcourt-brittle-guard": {
+    label: "Brittle Guard",
+    glyph: "†",
+    description: "Patrols candywall gates with a Peppermint Pike and defends every resident and sworn companion inside.",
+    portraitUrl: "/creatures/sugarcourt-brittle-guard.svg",
+  },
+} as const satisfies Readonly<Record<SugarcourtProfession, SentientRolePresentation>>;
+
 const HOBBIT_PORTRAIT_ROLES: Readonly<Partial<Record<ResidentProfession, string>>> = {
   mayor: "mayor",
   warrior: "hammer-guard",
@@ -145,6 +192,10 @@ export function sentientPortraitPath(factionId: Exclude<FactionId, "player">, pr
   if (factionId === "atlantians") {
     const aquaticRole = profession.startsWith("atlantian-") ? profession as AtlantianProfession : "atlantian-tidewarden";
     return ATLANTIAN_ROLE_PRESENTATION[aquaticRole]?.portraitUrl ?? ATLANTIAN_ROLE_PRESENTATION["atlantian-tidewarden"].portraitUrl;
+  }
+  if (factionId === "sugarcourt") {
+    const sugarcourtRole = profession.startsWith("sugarcourt-") ? profession as SugarcourtProfession : "sugarcourt-sweetbroker";
+    return SUGARCOURT_ROLE_PRESENTATION[sugarcourtRole]?.portraitUrl ?? SUGARCOURT_ROLE_PRESENTATION["sugarcourt-sweetbroker"].portraitUrl;
   }
   const roles = factionId === "hobbits" ? HOBBIT_PORTRAIT_ROLES : GOBLIN_PORTRAIT_ROLES;
   const fallback = factionId === "hobbits" ? "merchant" : "worker";
@@ -212,6 +263,9 @@ function prettyId(value: string) {
 function rolePresentation(profession: ResidentProfession) {
   if (profession.startsWith("atlantian-")) {
     return ATLANTIAN_ROLE_PRESENTATION[profession as AtlantianProfession];
+  }
+  if (profession.startsWith("sugarcourt-")) {
+    return SUGARCOURT_ROLE_PRESENTATION[profession as SugarcourtProfession];
   }
   return {
     label: prettyId(profession),
@@ -817,12 +871,12 @@ export function QuestPanel({
   );
 }
 
-export type HearthroadsStationKind = "alchemy" | "distillery";
-type StationRecipe = AlchemyRecipe | DistilleryRecipe;
-type StationState = AlchemyStandState | DistilleryState;
+export type HearthroadsStationKind = "alchemy" | "distillery" | "sugarworks";
+type StationRecipe = AlchemyRecipe | DistilleryRecipe | SugarworksRecipe;
+type StationState = AlchemyStandState | DistilleryState | SugarworksState;
 
 function stationDuration(recipe: StationRecipe) {
-  return "brewSeconds" in recipe ? recipe.brewSeconds : recipe.fermentSeconds;
+  return "brewSeconds" in recipe ? recipe.brewSeconds : "fermentSeconds" in recipe ? recipe.fermentSeconds : recipe.batchSeconds;
 }
 
 function ingredientStatus(ingredient: RecipeIngredient, inventory: ResourceInventory) {
@@ -869,14 +923,18 @@ export function StationPanel({
   const selectedLocked = Boolean(selected?.blueprintId)
     && (blueprints ? !hasBlueprint(blueprints, selected?.blueprintId ?? "") : Boolean(lockReasonByRecipeId[selected?.id ?? ""]));
   const ingredientsReady = selected?.inputs.every((ingredient) => ingredientStatus(ingredient, inventory).ready) ?? false;
-  const stationName = kind === "alchemy" ? "Alchemy Stand" : "Distillery";
+  const stationName = kind === "alchemy" ? "Alchemy Stand" : kind === "distillery" ? "Distillery" : "Sugarworks";
+  const stationEyebrow = kind === "alchemy" ? "Bottles & remedies" : kind === "distillery" ? "Slow craft · barrel batch" : "Sugarcourt craft · kettle batch";
+  const stationSubtitle = kind === "alchemy" ? "Choose a draught, gather the ingredients, and let it settle."
+    : kind === "distillery" ? "Set a recipe, load a batch, and give it time to become itself."
+      : "Measure a candywork pattern, heat the kettle, and cool one clean batch at a time.";
 
   return (
     <PanelShell className={`hearthroads-station-panel station-${kind}`} labelledBy={titleId}>
       <PanelHeader
-        eyebrow={kind === "alchemy" ? "Bottles & remedies" : "Slow craft · barrel batch"}
+        eyebrow={stationEyebrow}
         title={stationName}
-        subtitle={kind === "alchemy" ? "Choose a draught, gather the ingredients, and let it settle." : "Set a recipe, load a batch, and give it time to become itself."}
+        subtitle={stationSubtitle}
         titleId={titleId}
         onClose={onClose}
         meta={state.activeBatch ? <span className="hearthroads-batch-status">Batch working</span> : <span className="hearthroads-batch-status idle">Ready</span>}
@@ -895,7 +953,7 @@ export function StationPanel({
                 onClick={() => onSelectRecipe(recipe.id)}
                 aria-pressed={selected?.id === recipe.id}
               >
-                <span className="hearthroads-recipe-vial" aria-hidden="true">{locked ? "⌑" : kind === "alchemy" ? "⚗" : "◉"}</span>
+                <span className="hearthroads-recipe-vial" aria-hidden="true">{locked ? "⌑" : kind === "alchemy" ? "⚗" : kind === "distillery" ? "◉" : "♨"}</span>
                 <span>
                   <strong>{recipe.name}</strong>
                   <small>{locked ? "Blueprint needed" : `${stationDuration(recipe)} sec · ${recipe.output.count} made`}</small>
@@ -909,7 +967,7 @@ export function StationPanel({
           {selected ? (
             <>
               <header>
-                <span>{kind === "alchemy" ? "Selected formula" : "Selected batch"}</span>
+                <span>{kind === "alchemy" ? "Selected formula" : kind === "distillery" ? "Selected batch" : "Selected candywork"}</span>
                 <h3>{selected.name}</h3>
                 <p>{selected.description}</p>
               </header>
@@ -951,7 +1009,7 @@ export function StationPanel({
                 disabled={selectedLocked || !ingredientsReady || Boolean(state.activeBatch) || Boolean(state.output)}
                 onClick={() => onStartBatch(selected.id)}
               >
-                {kind === "alchemy" ? "Brew formula" : "Begin fermentation"}
+                {kind === "alchemy" ? "Brew formula" : kind === "distillery" ? "Begin fermentation" : "Heat Sugarworks batch"}
               </button>
             </>
           ) : <p>No recipes are available at this station yet.</p>}
@@ -959,7 +1017,7 @@ export function StationPanel({
 
         <aside className="hearthroads-station-output" aria-label="Batch and output">
           <div className="hearthroads-station-apparatus" data-active={Boolean(state.activeBatch)} aria-hidden="true">
-            <span>{kind === "alchemy" ? "⚗" : "◉"}</span>
+            <span>{kind === "alchemy" ? "⚗" : kind === "distillery" ? "◉" : "♨"}</span>
             <i />
           </div>
           <div className="hearthroads-batch-readout">
@@ -1028,7 +1086,7 @@ export function SentientDialoguePanel({ character, greeting, body, choices, onCh
       <PanelHeader
         eyebrow={`${factionName} · ${role.label}`}
         title={character.name}
-        subtitle={`${prettyId(standing)} standing${character.factionId === "atlantians" ? " · underwater citizen" : ""}`}
+        subtitle={`${prettyId(standing)} standing${character.factionId === "atlantians" ? " · underwater citizen" : character.factionId === "sugarcourt" ? " · Bonbon Borough resident" : ""}`}
         titleId={titleId}
         onClose={onClose}
       />
@@ -1038,7 +1096,7 @@ export function SentientDialoguePanel({ character, greeting, body, choices, onCh
             key={character.portraitUrl ?? character.id}
             src={character.portraitUrl}
             alt={`${character.name}, ${role.label}`}
-            fallback={character.factionId === "atlantians" ? role.glyph : character.name.slice(0, 1).toUpperCase()}
+            fallback={character.factionId === "atlantians" || character.factionId === "sugarcourt" ? role.glyph : character.name.slice(0, 1).toUpperCase()}
           />
           <figcaption>
             <span>{standing}</span>
@@ -1050,7 +1108,7 @@ export function SentientDialoguePanel({ character, greeting, body, choices, onCh
         <div className="hearthroads-dialogue-copy" aria-live="polite">
           <blockquote>“{greeting}”</blockquote>
           {body ? <p>{body}</p> : null}
-          {character.factionId === "atlantians" ? <p className="hearthroads-role-note"><b>{role.label}</b>{role.description}</p> : null}
+          {character.factionId === "atlantians" || character.factionId === "sugarcourt" ? <p className="hearthroads-role-note"><b>{role.label}</b>{role.description}</p> : null}
         </div>
         <nav className="hearthroads-dialogue-choices" aria-label={`Talk to ${character.name}`}>
           {choices.map((choice) => (
@@ -1164,7 +1222,9 @@ export function TradePanel({
         title={`Trade with ${merchantName}`}
         subtitle={merchant.factionId === "atlantians"
           ? "Trade through the open current: kelp, reefglass, coralwork, medicines, and pearls move with local demand."
-          : "Buy what they carry, or offer anything from your pack. Demand changes the price."}
+          : merchant.factionId === "sugarcourt"
+            ? "Trade across the cooling counter: crops, candywork, companion orbs, formulas, arms, and armor move by careful measure."
+            : "Buy what they carry, or offer anything from your pack. Demand changes the price."}
         titleId={titleId}
         onClose={onClose}
         meta={(
@@ -1417,6 +1477,7 @@ export function SettlementPanel({
   const selectedRole = roles.find(([profession]) => profession === activeProfession) ?? roles[0] ?? null;
   const livingPopulation = settlement.residents.filter((resident) => resident.alive).length;
   const aquatic = settlementEnvironmentOf(settlement) === "underwater";
+  const sugarcourt = settlement.ownerFactionId === "sugarcourt" || settlement.cultureRace === "confectkin";
   const mayor = settlement.residents.find((resident) => resident.alive && isMayorProfession(resident.profession)) ?? null;
   const waypoint = selectedRole ? findRoleWaypoint(settlement, selectedRole[0]) : null;
   const standing = factionStanding(alignment);
@@ -1434,7 +1495,9 @@ export function SettlementPanel({
         title={settlementName ?? prettyId(settlement.id)}
         subtitle={aquatic
           ? "An unwalled Lumen Tidemoot shaped around reef homes, glow-lit current lanes, shared nests, and water-breathing residents."
-          : `A ${ownerLabel(settlement.ownerFactionId).toLowerCase()} settlement with working homes, gates, and daily routines.`}
+          : sugarcourt
+            ? "A Bonbon Borough gathered behind hard-candy walls, with warm Sugarworks kettles, companion yards, gardens, and measured daily routines."
+            : `A ${ownerLabel(settlement.ownerFactionId).toLowerCase()} settlement with working homes, gates, and daily routines.`}
         titleId={titleId}
         onClose={onClose}
         meta={<span className={`hearthroads-standing standing-${standing}`}>{standing} · {alignment >= 0 ? "+" : ""}{alignment}</span>}
@@ -1442,7 +1505,7 @@ export function SettlementPanel({
 
       <div className="hearthroads-settlement-summary">
         <div><small>Owner</small><strong>{ownerLabel(settlement.ownerFactionId)}</strong></div>
-        <div><small>{aquatic ? "Tidewarden" : "Mayor"}</small><strong>{mayor?.name ?? "Election at 8:00"}</strong></div>
+        <div><small>{aquatic ? "Tidewarden" : sugarcourt ? "Crown Confectioner" : "Mayor"}</small><strong>{mayor?.name ?? "Election at 8:00"}</strong></div>
         <div><small>Population</small><strong>{livingPopulation} / {settlement.layout.populationSoftCap}</strong></div>
         <div><small>{aquatic ? "Kelp reserve" : "Food reserve"}</small><strong>{settlement.foodReserve}</strong></div>
       </div>
@@ -1475,10 +1538,10 @@ export function SettlementPanel({
                 {selectedRole[1].map((resident) => (
                   <li key={resident.id}>
                     <button type="button" disabled={!onSelectResident} onClick={() => onSelectResident?.(resident.id)}>
-                      {resident.race === "atlantian" ? (
+                      {resident.race === "atlantian" || resident.race === "confectkin" ? (
                         <PortraitAsset
                           key={`${resident.id}-${resident.profession}`}
-                          src={sentientPortraitPath("atlantians", resident.profession)}
+                          src={sentientPortraitPath(resident.race === "atlantian" ? "atlantians" : "sugarcourt", resident.profession)}
                           alt=""
                           fallback={rolePresentation(resident.profession).glyph}
                           compact
@@ -1518,7 +1581,9 @@ export function SettlementPanel({
           <div className="hearthroads-town-plan-legend"><span><i />{aquatic ? "Reef home" : "Building"}</span><span><b />{aquatic ? "Open current" : "Gate"}</span></div>
           <p>{aquatic
             ? "No wall closes the water. Glowstone lanes, reef arches, and vertical current layers orient swimmers without blocking sea life."
-            : "Waypoints follow the living resident, even when beds, doors, or paths change."}</p>
+            : sugarcourt
+              ? "Boiled Sugarbrick walls ring every borough. Taffy Hounds watch the gates while Praline Cats keep close to homes and market counters."
+              : "Waypoints follow the living resident, even when beds, doors, or paths change."}</p>
         </aside>
       </div>
     </PanelShell>

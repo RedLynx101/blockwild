@@ -77,6 +77,7 @@ import {
   MOB_DEFS,
   POLLINATOR_ORDER,
   SENTIENT_MOB_ORDER,
+  SUGARCOURT_ORDER,
   SURFACE_MOB_ORDER,
 } from "../app/game/mobs.ts";
 import { createMobVisual, createSkeletonArrowVisual } from "../app/game/mob-models.ts";
@@ -92,8 +93,8 @@ import {
 } from "../app/game/creature-pathing.ts";
 
 test("expanded ecology catalog includes mounts, livestock, thin fish, pollinators, a pet, guardian, and archer", () => {
-  assert.equal(SURFACE_MOB_ORDER.length, 14);
-  assert.equal(new Set(SURFACE_MOB_ORDER).size, 14);
+  assert.equal(SURFACE_MOB_ORDER.length, 18);
+  assert.equal(new Set(SURFACE_MOB_ORDER).size, 18);
   for (const kind of ["thimbledeer", "lanternshell", "puddlehopper", "reedstrider"] as const) {
     assert.ok(SURFACE_MOB_ORDER.includes(kind));
     assert.equal(MOB_DEFS[kind].hostile, false);
@@ -113,7 +114,13 @@ test("expanded ecology catalog includes mounts, livestock, thin fish, pollinator
   assert.deepEqual(HEARTHROADS_AQUATIC_ORDER, ["redfin-salmon", "blue-mackerel", "deepwater-shark"]);
   assert.equal(HOBBIT_ORDER.length, 7);
   assert.equal(GOBLIN_ORDER.length, 5);
-  assert.equal(SENTIENT_MOB_ORDER.length, 18);
+  assert.equal(SENTIENT_MOB_ORDER.length, 25);
+  assert.equal(SUGARCOURT_ORDER.length, 7);
+  for (const kind of SUGARCOURT_ORDER) {
+    assert.equal(MOB_DEFS[kind].sentient, true);
+    assert.equal(MOB_DEFS[kind].faction, "sugarcourt");
+    assert.ok(MOB_DEFS[kind].role);
+  }
   for (const kind of HOBBIT_ORDER) {
     assert.equal(MOB_DEFS[kind].sentient, true);
     assert.equal(MOB_DEFS[kind].faction, "hobbits");
@@ -139,7 +146,7 @@ test("expanded ecology catalog includes mounts, livestock, thin fish, pollinator
   assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.3), "lanternshell");
   assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.52), "puddlehopper");
   assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.65), "reedstrider");
-  assert.equal(CORE_MOB_ORDER.filter((kind) => MOB_DEFS[kind].sentient).length, 18);
+  assert.equal(CORE_MOB_ORDER.filter((kind) => MOB_DEFS[kind].sentient).length, 25);
 });
 
 test("v0.5 habitat tables place mammals, pollinators, and fish without ambient queen spam", () => {

@@ -6,7 +6,7 @@
 export const BLUEPRINT_SCHEMA = 1 as const;
 export const MAX_UNLOCKED_BLUEPRINTS = 512;
 
-export type BlueprintFaction = "hobbits" | "goblins" | "waykeepers" | "neutral";
+export type BlueprintFaction = "hobbits" | "goblins" | "sugarcourt" | "waykeepers" | "neutral";
 
 export type BlueprintDefinition = Readonly<{
   id: string;
@@ -65,6 +65,43 @@ export const BLUEPRINTS: readonly BlueprintDefinition[] = Object.freeze([
     faction: "hobbits",
     recipeIds: ["honeymead-batch"],
     resaleGold: 95,
+  },
+  {
+    id: "sugarcourt-arms",
+    name: "Sugarcourt Arms Blueprint",
+    description: "Teaches the Sugarworks tempering patterns for a Rockcandy Saber and Peppermint Pike.",
+    faction: "sugarcourt",
+    recipeIds: ["sugarcourt-rockcandy-saber", "sugarcourt-peppermint-pike"],
+    resaleGold: 190,
+  },
+  {
+    id: "sugarcourt-armor",
+    name: "Sugarplate Armor Pattern",
+    description: "Teaches all four resilient layers of glazed Fondant armor.",
+    faction: "sugarcourt",
+    recipeIds: [
+      "sugarcourt-fondant-crown",
+      "sugarcourt-fondant-cuirass",
+      "sugarcourt-fondant-greaves",
+      "sugarcourt-fondant-boots",
+    ],
+    resaleGold: 280,
+  },
+  {
+    id: "sugarcourt-peppermint-rush",
+    name: "Peppermint Rush Formula",
+    description: "A Sugarcourt formula for a brisk, clear-footed burst of travel speed.",
+    faction: "sugarcourt",
+    recipeIds: ["peppermint-rush"],
+    resaleGold: 125,
+  },
+  {
+    id: "sugarcourt-marshmallow-ward",
+    name: "Marshmallow Ward Formula",
+    description: "A pillowy ward that softens hard blows and dangerous knockback.",
+    faction: "sugarcourt",
+    recipeIds: ["marshmallow-ward"],
+    resaleGold: 145,
   },
 ]);
 

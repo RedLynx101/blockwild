@@ -4,6 +4,7 @@ import {
   type AuthorityCommand,
   type AuthorityStampedState,
   type FactionId,
+  type NpcFactionId,
 } from "./factions.ts";
 
 /** Decimal-string ledgers stay exact, JSON-safe, and are not capped at 64. */
@@ -112,7 +113,14 @@ export type MerchantProfession =
   | "atlantian-coralwright"
   | "atlantian-pearlbroker"
   | "atlantian-glowmender"
-  | "atlantian-trident-guard";
+  | "atlantian-trident-guard"
+  | "sugarcourt-crown-confectioner"
+  | "sugarcourt-gumdrop-gardener"
+  | "sugarcourt-sugarboiler"
+  | "sugarcourt-candysmith"
+  | "sugarcourt-sweetbroker"
+  | "sugarcourt-kennelkeeper"
+  | "sugarcourt-brittle-guard";
 
 export type CommerceCategory =
   | "food"
@@ -122,6 +130,7 @@ export type CommerceCategory =
   | "material"
   | "ore"
   | "weapon"
+  | "armor"
   | "ammunition"
   | "potion"
   | "blueprint"
@@ -188,6 +197,32 @@ export const COMMERCE_CATALOG: Readonly<Record<string, CommerceItem>> = Object.f
   { key: "prismatic-pearl", name: "Prismatic Pearl", category: "treasure", baseValue: 145, stackLimit: 16, tags: ["aquatic", "atlantian", "pearl", "rare"] },
   { key: "tideglass-trident", name: "Tideglass Trident", category: "weapon", baseValue: 168, stackLimit: 1, tags: ["aquatic", "atlantian"] },
   { key: "glowmender-salve", name: "Glowmender Salve", category: "potion", baseValue: 76, stackLimit: 16, tags: ["aquatic", "atlantian", "medicine"] },
+  { key: "peppermint-cane", name: "Peppermint Cane", category: "crop", baseValue: 7, stackLimit: 64, tags: ["sugarcourt", "mint"] },
+  { key: "peppermint-starts", name: "Peppermint Starts", category: "crop", baseValue: 9, stackLimit: 64, tags: ["sugarcourt", "seed"] },
+  { key: "cocoa-nib", name: "Cocoa Puff Nib", category: "food", baseValue: 6, stackLimit: 64, tags: ["sugarcourt", "crop"] },
+  { key: "cocoa-seeds", name: "Cocoa Puff Seeds", category: "crop", baseValue: 10, stackLimit: 64, tags: ["sugarcourt", "seed"] },
+  { key: "gumdrop", name: "Wild Gumdrop", category: "food", baseValue: 6, stackLimit: 64, tags: ["sugarcourt", "candy"] },
+  { key: "lollipop-petal", name: "Lollipop Orchid Petal", category: "crop", baseValue: 8, stackLimit: 64, tags: ["sugarcourt", "flower"] },
+  { key: "marshmallow-tuft", name: "Marshmallow Tuft", category: "food", baseValue: 8, stackLimit: 64, tags: ["sugarcourt", "candy"] },
+  { key: "candied-alloy", name: "Tempered Candy Alloy", category: "material", baseValue: 24, stackLimit: 64, tags: ["sugarcourt", "craft"] },
+  { key: "boiled-sugarbrick", name: "Boiled Sugarbrick", category: "material", baseValue: 12, stackLimit: 64, tags: ["sugarcourt", "building"] },
+  { key: "sugarworks", name: "Sugarworks", category: "misc", baseValue: 118, stackLimit: 16, tags: ["sugarcourt", "station"] },
+  { key: "honey-bucket", name: "Honey Bucket", category: "honey", baseValue: 58, stackLimit: 1, tags: ["sugarcourt", "liquid"] },
+  { key: "syrup-bucket", name: "Syrup Bucket", category: "drink", baseValue: 46, stackLimit: 1, tags: ["sugarcourt", "liquid"] },
+  { key: "rockcandy-saber", name: "Rockcandy Saber", category: "weapon", baseValue: 245, stackLimit: 1, tags: ["sugarcourt", "tier-3"] },
+  { key: "peppermint-pike", name: "Peppermint Pike", category: "weapon", baseValue: 178, stackLimit: 1, tags: ["sugarcourt", "tier-3"] },
+  { key: "fondant-crown", name: "Sugarplate Crown", category: "armor", baseValue: 170, stackLimit: 1, tags: ["sugarcourt", "sugarplate"] },
+  { key: "fondant-cuirass", name: "Sugarplate Cuirass", category: "armor", baseValue: 340, stackLimit: 1, tags: ["sugarcourt", "sugarplate"] },
+  { key: "fondant-greaves", name: "Sugarplate Greaves", category: "armor", baseValue: 270, stackLimit: 1, tags: ["sugarcourt", "sugarplate"] },
+  { key: "fondant-boots", name: "Sugarplate Boots", category: "armor", baseValue: 160, stackLimit: 1, tags: ["sugarcourt", "sugarplate"] },
+  { key: "peppermint-rush", name: "Peppermint Rush", category: "potion", baseValue: 72, stackLimit: 8, tags: ["sugarcourt", "potion"] },
+  { key: "marshmallow-ward", name: "Marshmallow Ward", category: "potion", baseValue: 84, stackLimit: 8, tags: ["sugarcourt", "potion"] },
+  { key: "blueprint-sugarcourt-arms", name: "Blueprint: Sugarcourt Arms", category: "blueprint", baseValue: 620, stackLimit: 16, tags: ["sugarcourt"] },
+  { key: "blueprint-sugarcourt-armor", name: "Pattern: Sugarplate Armor", category: "blueprint", baseValue: 980, stackLimit: 16, tags: ["sugarcourt"] },
+  { key: "blueprint-peppermint-rush", name: "Formula: Peppermint Rush", category: "blueprint", baseValue: 430, stackLimit: 16, tags: ["sugarcourt"] },
+  { key: "blueprint-marshmallow-ward", name: "Formula: Marshmallow Ward", category: "blueprint", baseValue: 520, stackLimit: 16, tags: ["sugarcourt"] },
+  { key: "unaligned-taffy-hound-orb", name: "Capture Orb: Taffy Hound", category: "creature", baseValue: 590, stackLimit: 1, tags: ["sugarcourt", "unaligned", "taffy-hound"] },
+  { key: "unaligned-praline-cat-orb", name: "Capture Orb: Praline Cat", category: "creature", baseValue: 520, stackLimit: 1, tags: ["sugarcourt", "unaligned", "praline-cat"] },
 ] satisfies CommerceItem[]).map((definition) => [definition.key, definition])) as Readonly<Record<string, CommerceItem>>;
 
 export type MerchantOffer = Readonly<MerchantStack & { professions: readonly MerchantProfession[] }>;
@@ -227,12 +262,43 @@ export const ATLANTIAN_MERCHANT_OFFERS: readonly MerchantOffer[] = [
   { itemKey: "glowmender-salve", count: 6, professions: ["atlantian-glowmender", "atlantian-tidewarden"] },
 ];
 
+export const SUGARCOURT_MERCHANT_OFFERS: readonly MerchantOffer[] = [
+  { itemKey: "peppermint-starts", count: 18, professions: ["sugarcourt-gumdrop-gardener"] },
+  { itemKey: "peppermint-cane", count: 24, professions: ["sugarcourt-gumdrop-gardener", "sugarcourt-sugarboiler"] },
+  { itemKey: "cocoa-seeds", count: 14, professions: ["sugarcourt-gumdrop-gardener"] },
+  { itemKey: "cocoa-nib", count: 20, professions: ["sugarcourt-gumdrop-gardener", "sugarcourt-sweetbroker"] },
+  { itemKey: "gumdrop", count: 24, professions: ["sugarcourt-gumdrop-gardener", "sugarcourt-sweetbroker", "sugarcourt-kennelkeeper"] },
+  { itemKey: "lollipop-petal", count: 18, professions: ["sugarcourt-gumdrop-gardener", "sugarcourt-sugarboiler"] },
+  { itemKey: "marshmallow-tuft", count: 18, professions: ["sugarcourt-sweetbroker", "sugarcourt-kennelkeeper"] },
+  { itemKey: "boiled-sugarbrick", count: 24, professions: ["sugarcourt-sweetbroker", "sugarcourt-candysmith"] },
+  { itemKey: "sugarworks", count: 2, professions: ["sugarcourt-sugarboiler", "sugarcourt-sweetbroker"] },
+  { itemKey: "honey-bucket", count: 2, professions: ["sugarcourt-sugarboiler"] },
+  { itemKey: "syrup-bucket", count: 3, professions: ["sugarcourt-sugarboiler", "sugarcourt-sweetbroker"] },
+  { itemKey: "peppermint-rush", count: 5, professions: ["sugarcourt-sugarboiler"] },
+  { itemKey: "marshmallow-ward", count: 4, professions: ["sugarcourt-sugarboiler"] },
+  { itemKey: "blueprint-peppermint-rush", count: 1, professions: ["sugarcourt-sugarboiler"] },
+  { itemKey: "blueprint-marshmallow-ward", count: 1, professions: ["sugarcourt-sugarboiler"] },
+  { itemKey: "rockcandy-saber", count: 2, professions: ["sugarcourt-candysmith"] },
+  { itemKey: "peppermint-pike", count: 3, professions: ["sugarcourt-candysmith", "sugarcourt-brittle-guard"] },
+  { itemKey: "fondant-crown", count: 1, professions: ["sugarcourt-candysmith"] },
+  { itemKey: "fondant-cuirass", count: 1, professions: ["sugarcourt-candysmith"] },
+  { itemKey: "fondant-greaves", count: 1, professions: ["sugarcourt-candysmith"] },
+  { itemKey: "fondant-boots", count: 1, professions: ["sugarcourt-candysmith"] },
+  { itemKey: "blueprint-sugarcourt-arms", count: 1, professions: ["sugarcourt-candysmith"] },
+  { itemKey: "blueprint-sugarcourt-armor", count: 1, professions: ["sugarcourt-candysmith"] },
+  { itemKey: "unaligned-taffy-hound-orb", count: 1, professions: ["sugarcourt-kennelkeeper"] },
+  { itemKey: "unaligned-praline-cat-orb", count: 1, professions: ["sugarcourt-kennelkeeper"] },
+];
+
+const MERCHANT_OFFERS_BY_FACTION: Readonly<Record<NpcFactionId, readonly MerchantOffer[]>> = {
+  hobbits: HOBBIT_MERCHANT_OFFERS,
+  goblins: GOBLIN_MERCHANT_OFFERS,
+  atlantians: ATLANTIAN_MERCHANT_OFFERS,
+  sugarcourt: SUGARCOURT_MERCHANT_OFFERS,
+};
+
 export function merchantOffersFor(factionId: Exclude<FactionId, "player">, profession: MerchantProfession) {
-  const offers = factionId === "hobbits"
-    ? HOBBIT_MERCHANT_OFFERS
-    : factionId === "goblins"
-      ? GOBLIN_MERCHANT_OFFERS
-      : ATLANTIAN_MERCHANT_OFFERS;
+  const offers = MERCHANT_OFFERS_BY_FACTION[factionId];
   return offers.filter((offer) => offer.professions.includes(profession)).map(({ itemKey, count }) => ({ itemKey, count }));
 }
 
@@ -283,9 +349,14 @@ function merchantDemandMultiplier(merchant: Pick<MerchantState, "factionId" | "p
   if (merchant.profession === "atlantian-pearlbroker" && item.tags?.includes("pearl")) multiplier *= 1.42;
   if (merchant.profession === "atlantian-glowmender" && ["potion", "crop"].includes(item.category)) multiplier *= 1.3;
   if (merchant.profession === "atlantian-trident-guard" && item.category === "weapon") multiplier *= 1.2;
+  if (merchant.profession === "sugarcourt-gumdrop-gardener" && ["food", "crop"].includes(item.category)) multiplier *= 1.34;
+  if (merchant.profession === "sugarcourt-sugarboiler" && ["honey", "potion", "crop"].includes(item.category)) multiplier *= 1.35;
+  if (merchant.profession === "sugarcourt-candysmith" && ["weapon", "armor", "material"].includes(item.category)) multiplier *= 1.32;
+  if (merchant.profession === "sugarcourt-kennelkeeper" && item.category === "creature") multiplier *= 1.38;
   if (merchant.factionId === "hobbits" && item.tags?.includes("mead")) multiplier *= 1.8;
   if (merchant.factionId === "goblins" && item.tags?.includes("goblin")) multiplier *= 1.15;
   if (merchant.factionId === "atlantians" && item.tags?.includes("aquatic")) multiplier *= 1.14;
+  if (merchant.factionId === "sugarcourt" && item.tags?.includes("sugarcourt")) multiplier *= 1.16;
   return multiplier;
 }
 

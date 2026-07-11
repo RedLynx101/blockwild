@@ -30,7 +30,7 @@ import { createWeatherState, planCloudField, weatherVisuals } from "../app/game/
 import { BiomeId, ChunkWorld, GENERATOR_VERSION, planPoiAmenities } from "../app/game/world.ts";
 
 test("shoreline, biome, crop and aquatic ids remain byte-safe and registered", () => {
-  assert.equal(GENERATOR_VERSION, 8);
+  assert.equal(GENERATOR_VERSION, 9);
   for (const block of [BlockId.Saltbrush, BlockId.CoastAster, BlockId.JungleGrass, BlockId.SakuraGrass, BlockId.LumenKelp, BlockId.AbyssBloom, BlockId.SunrootCrop]) {
     assert.ok(block > 99 && block <= 255);
     assert.ok(BLOCKS[block]);

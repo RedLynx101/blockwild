@@ -57,6 +57,7 @@ const BUTTERFLY_BIOMES = new Set<BiomeId>([
   BiomeId.Savanna, BiomeId.Badlands, BiomeId.Frostpine, BiomeId.Snowfield,
   BiomeId.Siltfen, BiomeId.MushroomFen,
   BiomeId.Beach, BiomeId.RainveilJungle, BiomeId.SakurabloomGrove,
+  BiomeId.SugarplumVale,
 ]);
 
 export const BUTTERFLY_FLIGHT_TUNING = Object.freeze({
@@ -68,6 +69,7 @@ export const BUTTERFLY_FLIGHT_TUNING = Object.freeze({
 });
 
 export function butterflyKindForBiome(biome: BiomeId, roll = Math.random()): ButterflyKind | null {
+  if (biome === BiomeId.SugarplumVale) return "bonbonwing";
   if (biome === BiomeId.SakurabloomGrove) return roll < 0.72 ? "bloom-monarch" : "azure-skippers";
   if (biome === BiomeId.RainveilJungle) return roll < 0.68 ? "fen-lantern" : "meadowwing";
   if (biome === BiomeId.Beach) return roll < 0.76 ? "meadowwing" : "embertip";
@@ -102,6 +104,26 @@ export function butterflyCaptureAlongRay(
   return best?.id ?? null;
 }
 
+export type ButterflyWingPanelProfile = Readonly<{
+  outward: number;
+  z: number;
+  scale: readonly [number, number, number];
+  yaw: number;
+}>;
+
+const ORDINARY_WING_PANELS: readonly ButterflyWingPanelProfile[] = Object.freeze([
+  { outward: 0.1, z: 0, scale: [1, 1, 1], yaw: 0 },
+]);
+const BONBONWING_PANELS: readonly ButterflyWingPanelProfile[] = Object.freeze([
+  { outward: 0.095, z: -0.055, scale: [1.08, 1, 0.78], yaw: 0.1 },
+  { outward: 0.08, z: 0.085, scale: [0.84, 1, 1.08], yaw: -0.12 },
+]);
+
+/** Shared by standalone, live, held and conservatory butterflies. */
+export function butterflyWingPanelProfile(kind: ButterflyKind) {
+  return kind === "bonbonwing" ? BONBONWING_PANELS : ORDINARY_WING_PANELS;
+}
+
 /** Standalone production butterfly used by held items and conservatories. */
 export function createButterflyVisual(kind: ButterflyKind, id: string | number = kind): ButterflyVisual {
   const [wingColor, bodyColor, accentColor] = MOB_DEFS[kind].colors;
@@ -113,6 +135,7 @@ export function createButterflyVisual(kind: ButterflyKind, id: string | number =
   body.userData.butterflyId = id;
   group.add(body);
   const wingMaterial = new THREE.MeshLambertMaterial({ color: wingColor, transparent: true, opacity: 0.92, side: THREE.DoubleSide });
+  const wingGeometry = new THREE.BoxGeometry(0.2, 0.018, 0.14);
   const leftWing = new THREE.Group();
   const rightWing = new THREE.Group();
   leftWing.name = `${kind}-left-wing`;
@@ -122,11 +145,15 @@ export function createButterflyVisual(kind: ButterflyKind, id: string | number =
   leftWing.position.x = -0.035;
   rightWing.position.x = 0.035;
   for (const [pivot, side] of [[leftWing, -1], [rightWing, 1]] as const) {
-    const wing = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.018, 0.14), wingMaterial.clone());
-    wing.name = `${kind}-${side < 0 ? "left" : "right"}-wing-panel`;
-    wing.position.x = side * 0.1;
-    wing.userData.butterflyId = id;
-    pivot.add(wing);
+    butterflyWingPanelProfile(kind).forEach((profile, panelIndex) => {
+      const wing = new THREE.Mesh(wingGeometry, wingMaterial.clone());
+      wing.name = `${kind}-${side < 0 ? "left" : "right"}-wing-panel${panelIndex ? `-${panelIndex + 1}` : ""}`;
+      wing.position.set(side * profile.outward, 0, profile.z);
+      wing.scale.set(...profile.scale);
+      wing.rotation.y = side * profile.yaw;
+      wing.userData.butterflyId = id;
+      pivot.add(wing);
+    });
   }
   wingMaterial.dispose();
   group.add(leftWing, rightWing);
@@ -229,15 +256,21 @@ export class ButterflySystem {
     const rightWing = new THREE.Group();
     leftWing.position.x = -0.035;
     rightWing.position.x = 0.035;
-    const left = new THREE.Mesh(this.wingGeometry, material.wing);
-    const right = new THREE.Mesh(this.wingGeometry, material.wing);
-    left.name = `${kind}-left-wing-panel`;
-    right.name = `${kind}-right-wing-panel`;
-    left.position.x = -0.1;
-    right.position.x = 0.1;
-    left.userData.butterflyId = right.userData.butterflyId = this.nextId;
-    leftWing.add(left);
-    rightWing.add(right);
+    butterflyWingPanelProfile(kind).forEach((profile, panelIndex) => {
+      const left = new THREE.Mesh(this.wingGeometry, material.wing);
+      const right = new THREE.Mesh(this.wingGeometry, material.wing);
+      left.name = `${kind}-left-wing-panel${panelIndex ? `-${panelIndex + 1}` : ""}`;
+      right.name = `${kind}-right-wing-panel${panelIndex ? `-${panelIndex + 1}` : ""}`;
+      left.position.set(-profile.outward, 0, profile.z);
+      right.position.set(profile.outward, 0, profile.z);
+      left.scale.set(...profile.scale);
+      right.scale.set(...profile.scale);
+      left.rotation.y = -profile.yaw;
+      right.rotation.y = profile.yaw;
+      left.userData.butterflyId = right.userData.butterflyId = this.nextId;
+      leftWing.add(left);
+      rightWing.add(right);
+    });
     group.add(leftWing, rightWing);
 
     for (const side of [-1, 1]) {

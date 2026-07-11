@@ -37,6 +37,23 @@ export const HEARTHROADS_RESOURCE_ITEMS: Readonly<Record<string, ItemCode>> = Ob
   "warg-feed": Item.WargFeed,
   "honeymead": Item.Honeymead,
   "crossbow-bolt": Item.CrossbowBolt,
+  "gumdrop": Item.Gumdrop,
+  "lollipop-petal": Item.LollipopPetal,
+  "cocoa-nib": Item.CocoaNib,
+  "peppermint-cane": Item.PeppermintCane,
+  "marshmallow-tuft": Item.MarshmallowTuft,
+  "candied-alloy": Item.CandiedAlloy,
+  "boiled-sugarbrick": Item.BoiledSugarbrickItem,
+  "crystal-shard": Item.CrystalShard,
+  "stick": Item.Stick,
+  "rockcandy-saber": Item.RockcandySaber,
+  "peppermint-pike": Item.PeppermintLance,
+  "fondant-crown": Item.FondantCrown,
+  "fondant-cuirass": Item.FondantCuirass,
+  "fondant-greaves": Item.FondantGreaves,
+  "fondant-boots": Item.FondantBoots,
+  "peppermint-rush": Item.PeppermintRush,
+  "marshmallow-ward": Item.MarshmallowWard,
 });
 
 const RESOURCE_BY_ITEM = new Map(Object.entries(HEARTHROADS_RESOURCE_ITEMS).map(([resource, item]) => [item, resource] as const));
@@ -76,6 +93,8 @@ export const POTION_RECIPE_BY_ITEM: Readonly<Partial<Record<ItemCode, string>>> 
   [Item.GloamstepElixir]: "gloamstep-elixir",
   [Item.WaterBreathingPotion]: "tidebreath-philter",
   [Item.GlowmenderSalve]: "glowmender-salve",
+  [Item.PeppermintRush]: "peppermint-rush",
+  [Item.MarshmallowWard]: "marshmallow-ward",
 });
 
 export const COMMERCE_ITEM_CODES: Readonly<Record<string, ItemCode>> = Object.freeze({
@@ -116,9 +135,39 @@ export const COMMERCE_ITEM_CODES: Readonly<Record<string, ItemCode>> = Object.fr
   "glowmender-salve": Item.GlowmenderSalve,
   "torch": BlockId.Torch,
   "tidevine-fiber": Item.TidevineFiber,
+  "peppermint-cane": Item.PeppermintCane,
+  "peppermint-starts": Item.PeppermintSeeds,
+  "cocoa-nib": Item.CocoaNib,
+  "cocoa-seeds": Item.CocoaSeeds,
+  gumdrop: Item.Gumdrop,
+  "lollipop-petal": Item.LollipopPetal,
+  "marshmallow-tuft": Item.MarshmallowTuft,
+  "candied-alloy": Item.CandiedAlloy,
+  "boiled-sugarbrick": Item.BoiledSugarbrickItem,
+  sugarworks: Item.SugarworksItem,
+  "honey-bucket": Item.HoneyBucket,
+  "syrup-bucket": Item.SyrupBucket,
+  "rockcandy-saber": Item.RockcandySaber,
+  "peppermint-pike": Item.PeppermintLance,
+  "fondant-crown": Item.FondantCrown,
+  "fondant-cuirass": Item.FondantCuirass,
+  "fondant-greaves": Item.FondantGreaves,
+  "fondant-boots": Item.FondantBoots,
+  "peppermint-rush": Item.PeppermintRush,
+  "marshmallow-ward": Item.MarshmallowWard,
+  "blueprint-sugarcourt-arms": Item.SugarcourtArmsBlueprint,
+  "blueprint-sugarcourt-armor": Item.FondantArmorBlueprint,
+  "blueprint-peppermint-rush": Item.PeppermintRushBlueprint,
+  "blueprint-marshmallow-ward": Item.MarshmallowWardBlueprint,
+  "unaligned-taffy-hound-orb": Item.CaptureOrb,
+  "unaligned-praline-cat-orb": Item.CaptureOrb,
 });
 
-const COMMERCE_BY_ITEM = new Map(Object.entries(COMMERCE_ITEM_CODES).map(([key, item]) => [item, key] as const));
+// Filled-orb offer keys are purchase templates, not safe reverse identities:
+// inventory metadata decides which creature is actually inside an orb.
+const COMMERCE_BY_ITEM = new Map(Object.entries(COMMERCE_ITEM_CODES)
+  .filter(([key]) => !key.startsWith("unaligned-") || !key.endsWith("-orb"))
+  .map(([key, item]) => [item, key] as const));
 
 export function commerceItemCode(itemKey: string) {
   return COMMERCE_ITEM_CODES[itemKey] ?? null;

@@ -85,6 +85,18 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
     }
     group.scale.setScalar(0.72);
     group.rotation.set(0.1, 0.25, -0.08);
+  } else if (definition.heldModel === "sugarworks") {
+    addBox([0.5, 0.12, 0.42], [0, -0.18, 0], 0x8f456d);
+    addBox([0.43, 0.38, 0.36], [0, 0.02, 0], 0xf39abe);
+    addBox([0.35, 0.08, 0.3], [0, 0.24, 0], 0xffd6e8);
+    addBox([0.12, 0.27, 0.1], [-0.12, 0.08, -0.22], 0xef5364, [0, 0, -0.16]);
+    addBox([0.12, 0.27, 0.1], [0.12, 0.08, -0.22], 0xf6f0e9, [0, 0, 0.16]);
+    const vat = addSphere(0.13, [0, 0.1, -0.23], 0xd8893f, true);
+    vat.scale.set(1.2, 0.55, 0.5);
+    addBox([0.07, 0.27, 0.07], [0.18, 0.39, 0], 0xf8edf2);
+    addSphere(0.075, [0.18, 0.54, 0], 0xe98cba, true);
+    group.scale.setScalar(0.7);
+    group.rotation.set(0.1, 0.28, -0.08);
   } else if (definition.heldModel === "wayshrine") {
     addBox([0.5, 0.12, 0.42], [0, -0.2, 0], 0x596c67);
     addBox([0.28, 0.6, 0.22], [0, 0.1, 0], 0x4f7f7c);

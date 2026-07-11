@@ -10,8 +10,9 @@ import {
   sentientPortraitPath,
 } from "../app/game/HearthroadsPanels.tsx";
 import { createGoldWallet, createMerchant } from "../app/game/economy.ts";
+import { isNpcFactionId } from "../app/game/factions.ts";
 import { createSettlementState, type SettlementCandidate } from "../app/game/settlements.ts";
-import { isNpcFactionId, sentientProfession } from "../app/game/VoxelGame.tsx";
+import { sentientProfession } from "../app/game/VoxelGame.tsx";
 
 const ATLANTIAN_ROLES = Object.keys(ATLANTIAN_ROLE_PRESENTATION) as Array<keyof typeof ATLANTIAN_ROLE_PRESENTATION>;
 

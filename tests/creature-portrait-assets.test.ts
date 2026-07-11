@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import {
   ATLANTIAN_ROLE_PRESENTATION,
+  SUGARCOURT_ROLE_PRESENTATION,
   sentientPortraitPath,
 } from "../app/game/HearthroadsPanels.tsx";
 import {
@@ -11,9 +12,11 @@ import {
   BUTTERFLY_ORDER,
   CORE_MOB_ORDER,
   MOB_DEFS,
+  SUGARCOURT_ORDER,
   type CoreMobKind,
 } from "../app/game/mobs.ts";
 import {
+  createButterflyInspectionSpec,
   createMobInspectionSpecs,
   renderModelPortrait,
 } from "../scripts/render-models.ts";
@@ -32,6 +35,15 @@ const NEWCOMER_KINDS = [
   "aetherbell-larva",
   "aetherbell-leviathan",
   ...ATLANTIAN_ORDER,
+] as const satisfies readonly CoreMobKind[];
+
+const CANDY_CREATURE_KINDS = [
+  "taffy-hound",
+  "praline-cat",
+  "sprinklebug",
+  "taffalo",
+  "syrupfin",
+  ...SUGARCOURT_ORDER,
 ] as const satisfies readonly CoreMobKind[];
 
 function localAssetPath(url: string) {
@@ -85,9 +97,43 @@ test("all six Atlantian portrait routes resolve to nonempty role-correct assets"
   }
 });
 
+test("every Sugarplum fauna and Sugarcourt role portrait is the current production render", async () => {
+  const productionSpecs = new Map(createMobInspectionSpecs().map((spec) => [spec.id, spec]));
+  for (const kind of CANDY_CREATURE_KINDS) {
+    const url = `/creatures/${kind}.svg`;
+    const deployedSvg = await readNonemptySvg(url);
+    const spec = productionSpecs.get(kind);
+    assert.ok(spec, `${kind} should remain in the production model catalog`);
+    assert.equal(deployedSvg, renderModelPortrait(spec), `${url} is stale; regenerate the public candy portraits`);
+  }
+});
+
+test("all seven Sugarcourt dialogue routes resolve to role-correct portraits", async () => {
+  const roles = Object.keys(SUGARCOURT_ROLE_PRESENTATION).sort();
+  assert.deepEqual(roles, [...SUGARCOURT_ORDER].sort());
+
+  for (const profession of SUGARCOURT_ORDER) {
+    const configuredUrl = SUGARCOURT_ROLE_PRESENTATION[profession].portraitUrl;
+    assert.equal(sentientPortraitPath("sugarcourt", profession), configuredUrl);
+    assert.equal(configuredUrl, `/creatures/${profession}.svg`);
+    const svg = await readNonemptySvg(configuredUrl);
+    assert.match(svg, new RegExp(`<title[^>]*>${MOB_DEFS[profession].name} front three-quarter model portrait</title>`, "u"));
+  }
+});
+
+test("Bonbonwing uses its four-panel production model in the public Bestiary portrait", async () => {
+  const url = "/creatures/butterfly-bonbonwing.svg";
+  const deployedSvg = await readNonemptySvg(url);
+  const spec = createButterflyInspectionSpec("bonbonwing");
+  assert.equal(deployedSvg, renderModelPortrait(spec), `${url} is stale; regenerate the public candy portraits`);
+  assert.equal(spec.boxes.filter((box) => box.id.includes("wing-panel")).length, 4);
+});
+
 test("the public creature sheet indexes the complete production catalog", async () => {
   const sheet = await readFile(path.resolve(PUBLIC_ROOT, "creatures", "blockwild-creatures.svg"), "utf8");
   assert.match(sheet, /BLOCKWILD FIELD GUIDE/u);
   assert.match(sheet, new RegExp(`${CORE_MOB_ORDER.length + BUTTERFLY_ORDER.length} specimens`, "u"));
-  for (const kind of NEWCOMER_KINDS) assert.ok(sheet.includes(MOB_DEFS[kind].name), `${kind} is missing from the public field guide`);
+  for (const kind of [...NEWCOMER_KINDS, ...CANDY_CREATURE_KINDS, "bonbonwing"] as const) {
+    assert.ok(sheet.includes(MOB_DEFS[kind].name), `${kind} is missing from the public field guide`);
+  }
 });

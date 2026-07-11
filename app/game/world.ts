@@ -1,7 +1,8 @@
 import * as THREE from "three";
 import { BLOCKS, LEAF_BLOCKS, TORCH_BLOCKS, BlockId, blockContainsWater, isWaterloggedFloraBlock, type RenderLayer } from "./data";
 import { caveEntranceAt, caveFeatureAt } from "./caves";
-import { DENSE_CUTOUT_LEAF_POLICY, planFullTree, planSubmergedFlora, type TreeForm, type TreePlanBlock } from "./ecology";
+import { DENSE_CUTOUT_LEAF_POLICY, planFullTree, planSubmergedFlora, planSyrupPondsForChunk, syrupPondColumnAt, type TreeForm, type TreePlanBlock } from "./ecology";
+import { NPC_FACTION_IDS, normalizeEnabledFactions, type NpcFactionId } from "./factions";
 import {
   planBiomeVegetation,
   planStructure,
@@ -32,7 +33,7 @@ export const WORLD_HEIGHT = MAX_Y - MIN_Y + 1;
 export const SEA_LEVEL = 32;
 export const SECTION_HEIGHT = 16;
 export const SECTION_COUNT = WORLD_HEIGHT / SECTION_HEIGHT;
-export const GENERATOR_VERSION = 8;
+export const GENERATOR_VERSION = 9;
 
 export type SettlementWorldPlan = Readonly<{
   candidate: SettlementCandidate;
@@ -44,6 +45,8 @@ export type WorldGenerationOptions = {
   biomeScale: number;
   resourceAbundance: number;
   structures: boolean;
+  /** Empty means a wilderness world; biome generation is never faction-gated. */
+  enabledFactions: readonly NpcFactionId[];
 };
 
 export const DEFAULT_WORLD_GENERATION_OPTIONS: Readonly<WorldGenerationOptions> = Object.freeze({
@@ -51,6 +54,7 @@ export const DEFAULT_WORLD_GENERATION_OPTIONS: Readonly<WorldGenerationOptions> 
   biomeScale: 1,
   resourceAbundance: 1,
   structures: true,
+  enabledFactions: Object.freeze([...NPC_FACTION_IDS]),
 });
 
 export enum BiomeId {
@@ -75,6 +79,7 @@ export enum BiomeId {
   RainveilJungle = 18,
   SakurabloomGrove = 19,
   LumenTrench = 20,
+  SugarplumVale = 21,
 }
 
 export const BIOME_NAMES: Record<number, string> = {
@@ -99,6 +104,7 @@ export const BIOME_NAMES: Record<number, string> = {
   [BiomeId.RainveilJungle]: "Rainveil Jungle",
   [BiomeId.SakurabloomGrove]: "Sakurabloom Grove",
   [BiomeId.LumenTrench]: "Lumen Trench",
+  [BiomeId.SugarplumVale]: "Sugarplum Vale",
 };
 
 /** Small deterministic amenity pass layered onto the older landmark shells. */
@@ -146,10 +152,20 @@ function settlementBiomeFromId(biome: BiomeId): SettlementBiome | null {
   if (biome === BiomeId.RainveilJungle || biome === BiomeId.SakurabloomGrove) return "forest";
   if (biome === BiomeId.DeepOcean) return "deep-ocean";
   if (biome === BiomeId.LumenTrench) return "lumen-trench";
+  if (biome === BiomeId.SugarplumVale) return "sugarplum-vale";
   return null;
 }
 
-function settlementResidentMobKind(resident: SettlementResident, faction: "hobbits" | "goblins" | "atlantians") {
+function settlementResidentMobKind(resident: SettlementResident, faction: "hobbits" | "goblins" | "atlantians" | "sugarcourt") {
+  if (faction === "sugarcourt") {
+    if (resident.profession === "sugarcourt-crown-confectioner") return "sugarcourt-crown-confectioner";
+    if (resident.profession === "sugarcourt-brittle-guard") return "sugarcourt-brittle-guard";
+    if (resident.profession === "sugarcourt-gumdrop-gardener") return "sugarcourt-gumdrop-gardener";
+    if (resident.profession === "sugarcourt-sweetbroker") return "sugarcourt-sweetbroker";
+    if (resident.profession === "sugarcourt-kennelkeeper") return "sugarcourt-kennelkeeper";
+    if (resident.profession === "sugarcourt-sugarboiler") return "sugarcourt-sugarboiler";
+    return "sugarcourt-candysmith";
+  }
   if (faction === "atlantians") {
     if (resident.profession === "atlantian-tidewarden") return "atlantian-tidewarden";
     if (resident.profession === "atlantian-trident-guard") return "atlantian-trident-guard";
@@ -171,6 +187,42 @@ function settlementResidentMobKind(resident: SettlementResident, faction: "hobbi
   if (resident.profession === "miner" || resident.profession === "blacksmith") return "goblin-miner";
   if (resident.profession === "alchemist") return "goblin-alchemist";
   return "goblin-worker";
+}
+
+export type SettlementBlockPalette = Readonly<{
+  path: BlockId;
+  perimeterWall: BlockId;
+  tower: BlockId;
+  lightBase: BlockId;
+  buildingWall: BlockId;
+  corner: BlockId;
+  roof: BlockId;
+  floor: BlockId;
+  hallFloor: BlockId;
+}>;
+
+/** Keyed palettes keep new cultures from silently inheriting Goblin materials. */
+export function settlementBlockPalette(factionId: string): SettlementBlockPalette {
+  if (factionId === "hobbits") return Object.freeze({
+    path: BlockId.Gravel, perimeterWall: BlockId.WildwoodFence, tower: BlockId.WildwoodLog, lightBase: BlockId.WildwoodFence,
+    buildingWall: BlockId.Planks, corner: BlockId.WildwoodLog, roof: BlockId.HobbitThatch, floor: BlockId.Planks, hallFloor: BlockId.StoneBrick,
+  });
+  if (factionId === "goblins") return Object.freeze({
+    path: BlockId.GoblinBrasswork, perimeterWall: BlockId.GoblinBrasswork, tower: BlockId.GoblinBrasswork, lightBase: BlockId.GoblinBrasswork,
+    buildingWall: BlockId.GoblinBrasswork, corner: BlockId.StoneBrick, roof: BlockId.GoblinBrasswork, floor: BlockId.Planks, hallFloor: BlockId.StoneBrick,
+  });
+  if (factionId === "atlantians") return Object.freeze({
+    path: BlockId.StarCoral, perimeterWall: BlockId.StarCoral, tower: BlockId.MoonSlate, lightBase: BlockId.StarCoral,
+    buildingWall: BlockId.Glass, corner: BlockId.MoonSlate, roof: BlockId.StarCoral, floor: BlockId.MoonSlate, hallFloor: BlockId.MoonSlate,
+  });
+  if (factionId === "sugarcourt") return Object.freeze({
+    path: BlockId.SugarSoil, perimeterWall: BlockId.BoiledSugarbrick, tower: BlockId.CandywoodLog, lightBase: BlockId.CandywoodLog,
+    buildingWall: BlockId.BoiledSugarbrick, corner: BlockId.CandywoodLog, roof: BlockId.BoiledSugarbrick, floor: BlockId.CandywoodLog, hallFloor: BlockId.BoiledSugarbrick,
+  });
+  return Object.freeze({
+    path: BlockId.Gravel, perimeterWall: BlockId.StoneBrick, tower: BlockId.StoneBrick, lightBase: BlockId.StoneBrick,
+    buildingWall: BlockId.Planks, corner: BlockId.WildwoodLog, roof: BlockId.Planks, floor: BlockId.Planks, hallFloor: BlockId.StoneBrick,
+  });
 }
 
 type WorldRenderLayer = Exclude<RenderLayer, "none"> | "glass";
@@ -243,6 +295,19 @@ const GENERATED_GROWTH_BLOCK_SET = new Set<BlockId>([
   BlockId.StarCoral,
   BlockId.AbyssBloom,
   BlockId.Tidevine,
+  BlockId.CandywoodLog,
+  BlockId.CandywoodLeaves,
+  BlockId.CandywoodSapling,
+  BlockId.GumdropBush,
+  BlockId.PeppermintTuft,
+  BlockId.LollipopOrchid,
+  BlockId.MarshmallowShrub,
+  BlockId.PeppermintSprout,
+  BlockId.PeppermintYoung,
+  BlockId.PeppermintCrop,
+  BlockId.CocoaSprout,
+  BlockId.CocoaYoung,
+  BlockId.CocoaCrop,
 ]);
 
 type ColumnSample = {
@@ -303,6 +368,7 @@ const BIOME_TINT: Record<number, [number, number, number]> = {
   [BiomeId.RainveilJungle]: [0.68, 1.04, 0.78],
   [BiomeId.SakurabloomGrove]: [1.08, 0.94, 1.02],
   [BiomeId.LumenTrench]: [0.62, 0.78, 1.08],
+  [BiomeId.SugarplumVale]: [1.08, 0.88, 1.04],
 };
 
 /**
@@ -396,6 +462,9 @@ const TILE_COLORS = [
   "#5d994d", "#765747", "#76514e", "#a67a75", "#ec9fc5", "#f3a7cd", "#ae8de8",
   "#63f0c8", "#ef798f", "#8f8cff", "#4db8a1", "#77a879", "#8ebd93", "#c9d8b1",
   "#77a64f", "#94b958", "#e3b64b", "#43a864", "#f3a765", "#9c6c3e", "#8a5b36", "#936136",
+  // 129-143: Sugarplum terrain, Candywood, liquids, flora, crops and Sugarworks.
+  "#8f6ac2", "#8a5ca2", "#76506f", "#9a557c", "#d58bad", "#e88fba", "#ef9ab9",
+  "#b76532", "#dda32f", "#d95d9a", "#e94f61", "#754838", "#f3a2d0", "#f6e5eb", "#e58fb9",
 ];
 
 export const MEADOW_GRASS_PALETTE = Object.freeze({
@@ -429,6 +498,7 @@ export function normalizeWorldGenerationOptions(value?: Partial<WorldGenerationO
     biomeScale: finiteOption(value?.biomeScale, DEFAULT_WORLD_GENERATION_OPTIONS.biomeScale, 0.25, 4),
     resourceAbundance: finiteOption(value?.resourceAbundance, DEFAULT_WORLD_GENERATION_OPTIONS.resourceAbundance, 0.25, 4),
     structures: typeof value?.structures === "boolean" ? value.structures : DEFAULT_WORLD_GENERATION_OPTIONS.structures,
+    enabledFactions: normalizeEnabledFactions(value?.enabledFactions),
   };
 }
 const LIGHT_BLOCKS = new Set<BlockId>([
@@ -618,11 +688,11 @@ export function createBlockAtlas() {
   };
 
   const oreTiles = new Set([9, 10, 40, 41, 42]);
-  const leafTiles = new Set([7, 20, 23, 34, 80, 106, 111]);
-  const logSideTiles = new Set([5, 18, 21, 32, 104, 109]);
-  const logTopTiles = new Set([6, 19, 22, 33, 105, 110]);
+  const leafTiles = new Set([7, 20, 23, 34, 80, 106, 111, 134]);
+  const logSideTiles = new Set([5, 18, 21, 32, 104, 109, 132]);
+  const logTopTiles = new Set([6, 19, 22, 33, 105, 110, 133]);
   const crossTiles = new Set([39, 53, 54, 55, 56, 59, 66, 67, 68, 69, 73, 74, 75, 76, 77, 78, 79, 81, 82, 83,
-    100, 101, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125]);
+    100, 101, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 138, 139, 140, 141, 142]);
   for (let index = 0; index < grid * grid; index += 1) {
     const base = TILE_COLORS[index] ?? "#777777";
     const ox = (index % grid) * tile;
@@ -643,6 +713,41 @@ export function createBlockAtlas() {
           pixel(index, 8, y, "#c07a38");
         }
         for (const [x, y, color] of [[7, 6, "#ffd85a"], [8, 6, "#fff0a0"], [6, 5, "#f09132"], [7, 4, "#ffb43f"], [8, 3, "#ffe56d"], [9, 5, "#db5a27"]] as Array<[number, number, string]>) pixel(index, x, y, color);
+      } else if (index === 138) {
+        // Shared by gumdrop bushes and young Candywood: a full silhouette
+        // with jewel fruit stays legible at both world and inventory scale.
+        for (let y = 8; y < 16; y += 1) pixel(index, 7, y, y % 2 ? "#81513f" : "#a46851");
+        for (let y = 4; y <= 13; y += 1) for (let x = 2; x <= 13; x += 1) {
+          const dx = (x - 7.5) / 5.8;
+          const dy = (y - 8.5) / 4.7;
+          if (dx * dx + dy * dy > 1 || (x * 7 + y * 11) % 17 === 0) continue;
+          pixel(index, x, y, (x + y) % 3 ? "#77b85f" : "#9bd274");
+        }
+        for (const [x, y, color] of [[3, 8, "#ef6aa3"], [7, 5, "#7ed36f"], [10, 7, "#79b9ed"], [6, 10, "#f4c553"], [11, 11, "#b487e7"]] as Array<[number, number, string]>) {
+          pixel(index, x, y, color); pixel(index, Math.min(15, x + 1), y, shadeColor(color, 24));
+          if (y + 1 < 16) pixel(index, x, y + 1, shadeColor(color, -24));
+        }
+      } else if (index === 139) {
+        for (const x of [5, 8, 11]) for (let y = 4; y < 16; y += 1) pixel(index, x, y, (y + x) % 4 < 2 ? "#f5eee7" : "#e64d5f");
+        for (const [x, y] of [[4, 8], [6, 10], [7, 6], [9, 9], [10, 5], [12, 8]] as Array<[number, number]>) pixel(index, x, y, "#6aa657");
+      } else if (index === 140) {
+        for (const x of [5, 8, 11]) for (let y = 6; y < 16; y += 1) pixel(index, x, y, "#659552");
+        for (const [x, y] of [[4, 8], [6, 6], [8, 10], [10, 7], [12, 9]] as Array<[number, number]>) {
+          pixel(index, x, y, "#6d4032"); pixel(index, Math.min(15, x + 1), y, "#a86c50");
+        }
+      } else if (index === 141) {
+        for (let y = 7; y < 16; y += 1) pixel(index, 7, y, y % 3 ? "#68a456" : "#8bc268");
+        for (let radius = 4; radius >= 1; radius -= 1) for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 10) {
+          const x = Math.round(8 + Math.cos(angle) * radius);
+          const y = Math.round(5 + Math.sin(angle) * radius);
+          pixel(index, x, y, radius % 2 ? "#fff0f8" : radius === 4 ? "#ee6cad" : "#f4a5d1");
+        }
+        pixel(index, 8, 5, "#f9d35a");
+      } else if (index === 142) {
+        for (let y = 9; y < 16; y += 1) pixel(index, 7, y, "#89a96f");
+        for (const [x, y] of [[4, 10], [6, 7], [9, 8], [11, 10], [8, 5]] as Array<[number, number]>) {
+          pixel(index, x, y, "#f7e8ed"); pixel(index, x + 1, y, "#fff8f8"); pixel(index, x, y + 1, "#e6cdd8");
+        }
       } else if (index >= 73 && index <= 78) {
         const young = index === 73 || index === 76;
         const ripe = index === 75 || index === 78;
@@ -726,6 +831,42 @@ export function createBlockAtlas() {
     for (let y = 0; y < tile; y += 1) for (let x = 0; x < tile; x += 1) {
       const variation = random() < 0.14 ? -18 : random() > 0.88 ? 15 : 0;
       pixel(index, x, y, shadeColor(base, variation));
+    }
+    if (index === 129) {
+      context.fillStyle = "#8964bc"; context.fillRect(ox, oy, tile, tile);
+      for (let y = 0; y < tile; y += 1) for (let x = 0; x < tile; x += 1) {
+        if ((x * 7 + y * 5) % 19 === 0) pixel(index, x, y, "#b58ad8");
+        else if ((x * 11 + y * 3) % 29 === 0) pixel(index, x, y, "#6b9e67");
+        else if ((x * 13 + y * 17) % 61 === 0) pixel(index, x, y, "#f0b1d5");
+      }
+    } else if (index === 130) {
+      context.fillStyle = "#76506f"; context.fillRect(ox, oy, tile, tile);
+      context.fillStyle = "#8f6ac2"; context.fillRect(ox, oy, tile, 5);
+      for (let x = 0; x < tile; x += 2) context.fillRect(ox + x, oy + 4, 1, 2 + (x % 4));
+    } else if (index === 131) {
+      context.fillStyle = "#76506f"; context.fillRect(ox, oy, tile, tile);
+      for (let y = 2; y < tile; y += 5) for (let x = (y * 3) % 7; x < tile; x += 7) pixel(index, x, y, "#925f86");
+    } else if (index === 135) {
+      context.fillStyle = "#ef9ab9"; context.fillRect(ox, oy, tile, tile);
+      context.fillStyle = "#c96f97";
+      for (let y = 0; y < tile; y += 5) context.fillRect(ox, oy + y, tile, 1);
+      for (let row = 0; row < 4; row += 1) for (let x = (row % 2 ? 3 : 7); x < tile; x += 8) context.fillRect(ox + x, oy + row * 5, 1, 5);
+      context.fillStyle = "rgba(255,241,248,.7)"; context.fillRect(ox + 2, oy + 2, 5, 1);
+    } else if (index === 136 || index === 137) {
+      const dark = index === 136 ? "#8b431f" : "#b6731f";
+      const shine = index === 136 ? "#dc8b4b" : "#ffd461";
+      for (let y = 2; y < tile; y += 4) for (let x = 0; x < tile; x += 1) if ((x + y) % 3 !== 0) pixel(index, x, y, shine, 0.5);
+      for (const [x, y] of [[3, 6], [9, 3], [12, 11]] as Array<[number, number]>) {
+        pixel(index, x, y, dark, 0.7); pixel(index, Math.min(15, x + 1), y, shine, 0.68);
+      }
+    } else if (index === 143) {
+      context.fillStyle = "#e58fb9"; context.fillRect(ox, oy, tile, tile);
+      context.fillStyle = "#9b5479";
+      context.fillRect(ox, oy, tile, 2); context.fillRect(ox, oy + 14, tile, 2);
+      context.fillRect(ox, oy, 2, tile); context.fillRect(ox + 14, oy, 2, tile);
+      context.fillStyle = "#f4cf56"; context.fillRect(ox + 4, oy + 5, 8, 6);
+      context.fillStyle = "#fff0f5"; context.fillRect(ox + 6, oy + 6, 4, 1);
+      context.fillStyle = "#75413f"; context.fillRect(ox + 7, oy + 8, 2, 5);
     }
     if (index === 1 || index === 17 || index === 29 || index === 31 || index === 103 || index === 108) {
       const topColor = index === 17 ? "#e9efed" : index === 29 ? "#586f37" : index === 31 ? "#aaa04f"
@@ -1333,6 +1474,11 @@ export class ChunkWorld {
     // Fine land relief fades toward the channel so it cannot accidentally
     // refill a river after the broad valley has been carved.
     height += localRelief * reliefAmplitude * (1 - smoothstep(0.2, 0.7, river) * 0.9);
+    // Sugarplum country has low rolling mounds rather than generic meadow
+    // flats. The same broad variant band below selects the actual biome.
+    const sugarplumRelief = smoothstep(0.68, 0.78, variant) * (1 - smoothstep(0.91, 0.98, variant))
+      * smoothstep(0.32, 0.46, moisture) * (1 - smoothstep(0.76, 0.9, moisture));
+    height += sugarplumRelief * (1.1 + 1.35 * fbm2(warpX + 193, warpZ - 307, this.seed ^ 0x7c15a4f3, 1 / 38, 3)) * (1 - river);
     if (river > 0.52) {
       const channelDepth = 3 + Math.floor(smoothstep(0.52, 0.9, river) * 3 + riverBedNoise * 2);
       height = Math.min(height, waterline - channelDepth);
@@ -1351,6 +1497,7 @@ export class ChunkWorld {
     else if (mountain > 0.36 || height >= 68) biome = temperature < 0.35 || height > 78 ? BiomeId.Snowfield : BiomeId.Highlands;
     else if (temperature < 0.2) biome = BiomeId.Snowfield;
     else if (temperature < 0.36 && moisture >= 0.42) biome = BiomeId.Frostpine;
+    else if (height < 68 && temperature >= 0.38 && temperature <= 0.7 && moisture >= 0.33 && moisture <= 0.76 && variant >= 0.7 && variant <= 0.93) biome = BiomeId.SugarplumVale;
     else if (temperature > 0.62 && moisture < 0.2 && variant > 0.52) biome = BiomeId.Badlands;
     else if (temperature > 0.64 && moisture < 0.3) biome = BiomeId.Desert;
     else if (temperature > 0.58 && moisture < 0.54) biome = BiomeId.Savanna;
@@ -1505,6 +1652,7 @@ export class ChunkWorld {
     if (biome === BiomeId.Badlands) return [BlockId.RedSand, BlockId.SunbakedClay];
     if (biome === BiomeId.Siltfen || biome === BiomeId.MushroomFen) return [BlockId.SwampGrass, BlockId.Mud];
     if (biome === BiomeId.Savanna) return [BlockId.SavannaGrass, BlockId.Dirt];
+    if (biome === BiomeId.SugarplumVale) return [BlockId.SugarplumGrass, BlockId.SugarSoil];
     if (biome === BiomeId.Snowfield || (height > 72 && temperature < 0.48)) return [BlockId.SnowyGrass, BlockId.Dirt];
     if (biome === BiomeId.Volcanic) return [BlockId.Basalt, BlockId.Basalt];
     if (biome === BiomeId.Highlands) return [height > 76 ? BlockId.Snow : BlockId.Stone, BlockId.Stone];
@@ -1526,9 +1674,9 @@ export class ChunkWorld {
       const lz = z - minZ;
       const index = blockIndex(lx, y, lz);
       const current = chunk.blocks[index] as BlockId;
-      // Generated flora may replace another plant, but never water/lava. This
-      // keeps planned meadow flowers from plugging river surfaces.
-      if (onlyAir && (current === BlockId.Water || current === BlockId.Lava)) return;
+      // Generated flora may replace another plant, but never a liquid. This
+      // keeps vegetation from plugging rivers or the new syrup/honey cells.
+      if (onlyAir && BLOCKS[current]?.liquid) return;
       if (!onlyAir || current === BlockId.Air || BLOCKS[current]?.replaceable) chunk.blocks[index] = type;
     };
     const clearGeneratedGrowth = (bounds: Readonly<{ minX: number; maxX: number; minZ: number; maxZ: number }>) => {
@@ -1548,6 +1696,25 @@ export class ChunkWorld {
       }
     };
 
+    const syrupPondCells = new Set<string>();
+    const syrupPonds = planSyrupPondsForChunk({
+      seed: this.seedText,
+      chunkX: chunk.cx,
+      chunkZ: chunk.cz,
+      chunkSize: CHUNK_SIZE,
+      sample,
+      sugarplumBiome: BiomeId.SugarplumVale,
+    });
+    for (const pond of syrupPonds) for (const column of pond.columns) {
+      const lx = column.x - minX;
+      const lz = column.z - minZ;
+      syrupPondCells.add(`${column.x},${column.z}`);
+      for (let y = column.bedY + 1; y <= Math.max(column.surfaceY, column.originalSurfaceY); y += 1) set(column.x, y, column.z, BlockId.Air, false);
+      set(column.x, column.bedY, column.z, column.floor, false);
+      for (let y = column.bedY + 1; y <= column.surfaceY; y += 1) set(column.x, y, column.z, column.liquid, false);
+      chunk.heightmap[lx + lz * CHUNK_SIZE] = column.bedY;
+    }
+
     const cellSize = 4;
     const plannedTreeLogs: TreePlanBlock[] = [];
     const plannedTreeLeaves: TreePlanBlock[] = [];
@@ -1561,6 +1728,7 @@ export class ChunkWorld {
         if (x * x + z * z < 28) continue;
         const column = sample(x, z);
         if (caveEntranceAt(this.seed, x, z, column.height, column.waterline)) continue;
+        if (syrupPondColumnAt(this.seedText, x, z, sample, BiomeId.SugarplumVale)) continue;
         const roll = hash2(cellX, cellZ, this.seed ^ 0x33333333);
         const density: Partial<Record<BiomeId, number>> = {
           [BiomeId.Meadow]: 0.06,
@@ -1575,6 +1743,7 @@ export class ChunkWorld {
           [BiomeId.CloudreedGlen]: 0.16,
           [BiomeId.RainveilJungle]: 0.5,
           [BiomeId.SakurabloomGrove]: 0.36,
+          [BiomeId.SugarplumVale]: 0.34,
         };
         if (roll < (density[column.biome] ?? 0) && column.height > column.waterline + 1) {
           const trunk = column.biome === BiomeId.Frostpine || column.biome === BiomeId.Snowfield ? BlockId.PineLog
@@ -1582,12 +1751,14 @@ export class ChunkWorld {
               : column.biome === BiomeId.Bloomwood ? BlockId.BloomLog
                 : column.biome === BiomeId.RainveilJungle ? BlockId.JungleLog
                   : column.biome === BiomeId.SakurabloomGrove ? BlockId.SakuraLog
-                    : column.biome === BiomeId.CloudreedGlen ? BlockId.BirchLog : BlockId.WildwoodLog;
+                    : column.biome === BiomeId.SugarplumVale ? BlockId.CandywoodLog
+                      : column.biome === BiomeId.CloudreedGlen ? BlockId.BirchLog : BlockId.WildwoodLog;
           const leaves = trunk === BlockId.PineLog ? BlockId.PineLeaves
             : trunk === BlockId.BirchLog ? BlockId.BirchLeaves
               : trunk === BlockId.BloomLog ? BlockId.BloomLeaves
                 : trunk === BlockId.JungleLog ? BlockId.JungleLeaves
-                  : trunk === BlockId.SakuraLog ? BlockId.SakuraLeaves : BlockId.WildwoodLeaves;
+                  : trunk === BlockId.SakuraLog ? BlockId.SakuraLeaves
+                    : trunk === BlockId.CandywoodLog ? BlockId.CandywoodLeaves : BlockId.WildwoodLeaves;
           const height = trunk === BlockId.PineLog ? 6 + Math.floor(hash2(x, z, this.seed) * 3) : 4 + Math.floor(hash2(x, z, this.seed) * 3);
           if (trunk === BlockId.PineLog) {
             for (let y = 1; y <= height; y += 1) queueTreeBlock({ x, y: column.height + y, z, block: trunk });
@@ -1599,7 +1770,8 @@ export class ChunkWorld {
             }
           } else {
             const formRoll = hash2(x, z, this.seed ^ 0x51a6c72d);
-            const form: TreeForm = column.biome === BiomeId.RainveilJungle && formRoll > 0.42 ? "ancient"
+            const form: TreeForm = column.biome === BiomeId.SugarplumVale ? (formRoll > 0.91 ? "ancient" : formRoll > 0.36 ? "layered" : "rounded")
+              : column.biome === BiomeId.RainveilJungle && formRoll > 0.42 ? "ancient"
               : formRoll > 0.975 ? "ancient"
               : column.biome === BiomeId.CloudreedGlen || formRoll > 0.77 ? "windswept"
                 : formRoll > 0.45 ? "layered" : "rounded";
@@ -1614,8 +1786,8 @@ export class ChunkWorld {
     // Compose every overlapping tree with explicit wood priority. Applying all
     // logs first and leaves through the replaceable-only path prevents a later
     // crown from cutting a leaf-shaped hole through an earlier trunk.
-    for (const planned of plannedTreeLogs) set(planned.x, planned.y, planned.z, planned.block, false);
-    for (const planned of plannedTreeLeaves) set(planned.x, planned.y, planned.z, planned.block, true);
+    for (const planned of plannedTreeLogs) if (!syrupPondCells.has(`${planned.x},${planned.z}`)) set(planned.x, planned.y, planned.z, planned.block, false);
+    for (const planned of plannedTreeLeaves) if (!syrupPondCells.has(`${planned.x},${planned.z}`)) set(planned.x, planned.y, planned.z, planned.block, true);
 
     for (let lx = 0; lx < CHUNK_SIZE; lx += 1) for (let lz = 0; lz < CHUNK_SIZE; lz += 1) {
       const x = minX + lx;
@@ -1632,13 +1804,18 @@ export class ChunkWorld {
       } else if (column.biome === BiomeId.Beach) {
         if (roll > 0.986) set(x, column.height + 1, z, BlockId.CoastAster);
         else if (roll > 0.965) set(x, column.height + 1, z, BlockId.Saltbrush);
-      } else if ([BiomeId.Meadow, BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Bloomwood, BiomeId.Savanna, BiomeId.Siltfen, BiomeId.CloudreedGlen, BiomeId.RainveilJungle, BiomeId.SakurabloomGrove].includes(column.biome)) {
+      } else if ([BiomeId.Meadow, BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Bloomwood, BiomeId.Savanna, BiomeId.Siltfen, BiomeId.CloudreedGlen, BiomeId.RainveilJungle, BiomeId.SakurabloomGrove, BiomeId.SugarplumVale].includes(column.biome)) {
         const patch = 0.72 * valueNoise2(x / 19, z / 19, this.seed ^ 0x35f1a93b) + 0.28 * valueNoise2(x / 6, z / 6, this.seed ^ 0x6c8e9cf5);
-        const density = column.biome === BiomeId.Meadow ? 0.72 : column.biome === BiomeId.Bloomwood ? 0.79 : column.biome === BiomeId.Savanna ? 0.9 : 0.84;
+        const density = column.biome === BiomeId.Meadow ? 0.72 : column.biome === BiomeId.Bloomwood ? 0.79
+          : column.biome === BiomeId.SugarplumVale ? 0.8 : column.biome === BiomeId.Savanna ? 0.9 : 0.84;
         if (roll + patch * 0.11 <= density) continue;
         const flowerBias = column.biome === BiomeId.Meadow || column.biome === BiomeId.Bloomwood || column.biome === BiomeId.CloudreedGlen || column.biome === BiomeId.SakurabloomGrove;
         const wheatPatch = hash2(x, z, this.seed ^ 0x7a9d35f1) > 0.986;
-        const plant = column.biome === BiomeId.RainveilJungle && roll > 0.972 ? BlockId.LanternLotus
+        const plant = column.biome === BiomeId.SugarplumVale && roll > 0.976 ? BlockId.LollipopOrchid
+          : column.biome === BiomeId.SugarplumVale && roll > 0.95 ? BlockId.MarshmallowShrub
+            : column.biome === BiomeId.SugarplumVale && roll > 0.89 ? BlockId.GumdropBush
+              : column.biome === BiomeId.SugarplumVale ? BlockId.PeppermintTuft
+          : column.biome === BiomeId.RainveilJungle && roll > 0.972 ? BlockId.LanternLotus
           : column.biome === BiomeId.RainveilJungle && roll > 0.88 ? BlockId.RainveilFern
             : column.biome === BiomeId.SakurabloomGrove && roll > 0.974 ? BlockId.Dreamblossom
               : column.biome === BiomeId.SakurabloomGrove && roll > 0.89 ? BlockId.SakuraBloom
@@ -1664,6 +1841,7 @@ export class ChunkWorld {
           const z = rz * regionSize + 18 + Math.floor(hash2(rx, rz, this.seed ^ 0x88888888) * (regionSize - 36));
           const column = sample(x, z);
           if (column.height <= column.waterline + 2 || [BiomeId.Ocean, BiomeId.DeepOcean, BiomeId.River].includes(column.biome)) continue;
+          if (syrupPondColumnAt(this.seedText, x, z, sample, BiomeId.SugarplumVale)) continue;
           const cabin = hash2(rx, rz, this.seed ^ 0x99999999) > 0.63 && [BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Frostpine].includes(column.biome);
           const legacyClearing = { minX: x - 6, maxX: x + 6, minZ: z - 6, maxZ: z + 6 } as const;
           legacyClearings.push(legacyClearing);
@@ -1726,6 +1904,7 @@ export class ChunkWorld {
       const x = minX + lx;
       const z = minZ + lz;
       const column = sample(x, z);
+      if (syrupPondCells.has(`${x},${z}`)) continue;
       const waterDepth = column.waterline - column.height;
       if (waterDepth < 2) continue;
       const habitat = column.biome === BiomeId.LumenTrench ? "lumen-trench"
@@ -1750,6 +1929,7 @@ export class ChunkWorld {
           const originColumn = sample(originX, originZ);
           const structureBiome = structureBiomeFromId(originColumn.biome);
           if (!structureBiome || originColumn.height <= originColumn.waterline + 2) continue;
+          if (syrupPondColumnAt(this.seedText, originX, originZ, sample, BiomeId.SugarplumVale)) continue;
           const kind = structureCandidateForChunk({ seed: this.seedText, chunkX: originCx, chunkZ: originCz, biome: structureBiome });
           if (!kind) continue;
           const plan = planStructure(kind, { x: originX, y: originColumn.height, z: originZ }, this.seedText);
@@ -1793,13 +1973,27 @@ export class ChunkWorld {
       const probe = sample(regionX * regionSize + regionSize / 2, regionZ * regionSize + regionSize / 2);
       const probeBiome = settlementBiomeFromId(probe.biome);
       if (!probeBiome) continue;
-      const plannedCandidate = planSettlementCandidate({ worldSeed: this.seedText, regionX, regionZ, biome: probeBiome, existing: [], floorY: probe.height });
+      const plannedCandidate = planSettlementCandidate({
+        worldSeed: this.seedText,
+        regionX,
+        regionZ,
+        biome: probeBiome,
+        existing: [],
+        floorY: probe.height,
+        enabledFactions: this.generationOptions.enabledFactions,
+      });
       if (!plannedCandidate) continue;
       const centerColumn = sample(plannedCandidate.center.x, plannedCandidate.center.z);
       const actualBiome = settlementBiomeFromId(centerColumn.biome);
       const underwater = plannedCandidate.environment === "underwater";
       if (!actualBiome || actualBiome !== plannedCandidate.biome) continue;
       if (underwater ? centerColumn.height >= centerColumn.waterline - 5 : centerColumn.height <= centerColumn.waterline + 3) continue;
+      if (!underwater) {
+        const pondProbe = Math.min(12, SETTLEMENT_SIZE_RULES[plannedCandidate.size].radiusBlocks);
+        const overlapsSyrup = [[0, 0], [pondProbe, 0], [-pondProbe, 0], [0, pondProbe], [0, -pondProbe]]
+          .some(([dx, dz]) => syrupPondColumnAt(this.seedText, plannedCandidate.center.x + dx, plannedCandidate.center.z + dz, sample, BiomeId.SugarplumVale));
+        if (overlapsSyrup) continue;
+      }
       const nearbyHeights = [[4, 0], [-4, 0], [0, 4], [0, -4]].map(([dx, dz]) => sample(plannedCandidate.center.x + dx, plannedCandidate.center.z + dz).height);
       if (nearbyHeights.some((height) => Math.abs(height - centerColumn.height) > (underwater ? 7 : 4))) continue;
 
@@ -1814,6 +2008,7 @@ export class ChunkWorld {
       const plannedLayout = planSettlementLayout(candidate);
       const layout = underwater ? fitUnderwaterSettlementLayout(plannedLayout, sample) : plannedLayout;
       if (!layout) continue;
+      const palette = settlementBlockPalette(candidate.factionId);
       this.settlementPlans.set(candidate.id, { candidate, layout });
       const bounds = {
         minX: candidate.center.x - layout.radiusBlocks - 2,
@@ -1824,19 +2019,17 @@ export class ChunkWorld {
       if (bounds.maxX < minX || bounds.minX >= minX + CHUNK_SIZE || bounds.maxZ < minZ || bounds.minZ >= minZ + CHUNK_SIZE) continue;
       clearGeneratedGrowth(bounds);
 
-      const pathBlock = candidate.factionId === "hobbits" ? BlockId.Gravel : candidate.factionId === "atlantians" ? BlockId.StarCoral : BlockId.GoblinBrasswork;
       for (const point of layout.paths) if (insideChunk(point.x, point.z)) {
         const column = sample(point.x, point.z);
-        if (underwater) set(point.x, point.y ?? column.height + 1, point.z, pathBlock, false);
-        else if (column.height > column.waterline) set(point.x, column.height, point.z, pathBlock, false);
+        if (underwater) set(point.x, point.y ?? column.height + 1, point.z, palette.path, false);
+        else if (column.height > column.waterline) set(point.x, column.height, point.z, palette.path, false);
       }
 
-      const wallBlock = candidate.factionId === "hobbits" ? BlockId.WildwoodFence : BlockId.GoblinBrasswork;
       for (const node of layout.wall) if (insideChunk(node.position.x, node.position.z)) {
         const ground = sample(node.position.x, node.position.z).height;
-        set(node.position.x, ground + 1, node.position.z, wallBlock, false);
+        set(node.position.x, ground + 1, node.position.z, palette.perimeterWall, false);
         if (node.kind === "tower") {
-          set(node.position.x, ground + 2, node.position.z, candidate.factionId === "hobbits" ? BlockId.WildwoodLog : BlockId.GoblinBrasswork, false);
+          set(node.position.x, ground + 2, node.position.z, palette.tower, false);
           set(node.position.x, ground + 3, node.position.z, BlockId.Torch, false);
         }
       }
@@ -1849,14 +2042,11 @@ export class ChunkWorld {
         const ground = sample(light.position.x, light.position.z).height;
         if (underwater) set(light.position.x, light.position.y ?? ground + 2, light.position.z, BlockId.Glowstone, false);
         else {
-          set(light.position.x, ground + 1, light.position.z, candidate.factionId === "hobbits" ? BlockId.WildwoodFence : BlockId.GoblinBrasswork, false);
+          set(light.position.x, ground + 1, light.position.z, palette.lightBase, false);
           set(light.position.x, ground + 2, light.position.z, BlockId.Torch, false);
         }
       }
 
-      const wallMaterial = candidate.factionId === "hobbits" ? BlockId.Planks : candidate.factionId === "atlantians" ? BlockId.Glass : BlockId.GoblinBrasswork;
-      const cornerMaterial = candidate.factionId === "hobbits" ? BlockId.WildwoodLog : candidate.factionId === "atlantians" ? BlockId.MoonSlate : BlockId.StoneBrick;
-      const roofMaterial = candidate.factionId === "hobbits" ? BlockId.HobbitThatch : candidate.factionId === "atlantians" ? BlockId.StarCoral : BlockId.GoblinBrasswork;
       for (const building of layout.buildings) {
         const halfWidth = Math.floor(building.width / 2);
         const halfDepth = Math.floor(building.depth / 2);
@@ -1879,25 +2069,25 @@ export class ChunkWorld {
             const corner = edgeX && edgeZ;
             const arch = edgeX || edgeZ;
             if (arch) set(x, baseY, z, BlockId.MoonSlate, false);
-            if (corner) for (let y = 1; y <= Math.min(4, wallHeight); y += 1) set(x, baseY + y, z, cornerMaterial, false);
-            else if (arch && ((x + z) & 3) === 0) set(x, baseY + 2, z, wallMaterial, false);
+            if (corner) for (let y = 1; y <= Math.min(4, wallHeight); y += 1) set(x, baseY + y, z, palette.corner, false);
+            else if (arch && ((x + z) & 3) === 0) set(x, baseY + 2, z, palette.buildingWall, false);
             if (arch && ((Math.abs(x - building.position.x) + Math.abs(z - building.position.z)) & 1) === 0) {
-              set(x, baseY + Math.min(5, wallHeight), z, roofMaterial, false);
+              set(x, baseY + Math.min(5, wallHeight), z, palette.roof, false);
             }
             continue;
           }
           const localHeight = sample(x, z).height;
-          for (let y = Math.min(localHeight + 1, baseY); y <= baseY; y += 1) set(x, y, z, cornerMaterial, false);
+          for (let y = Math.min(localHeight + 1, baseY); y <= baseY; y += 1) set(x, y, z, palette.corner, false);
           for (let y = baseY + 1; y <= Math.max(baseY + wallHeight + 2, localHeight + 2); y += 1) set(x, y, z, BlockId.Air, false);
-          set(x, baseY, z, building.role === "mayor-hall" ? BlockId.StoneBrick : BlockId.Planks, false);
+          set(x, baseY, z, building.role === "mayor-hall" || building.role === "sugar-palace" ? palette.hallFloor : palette.floor, false);
           const edgeX = x === buildingBounds.minX || x === buildingBounds.maxX;
           const edgeZ = z === buildingBounds.minZ || z === buildingBounds.maxZ;
           if (edgeX || edgeZ) for (let y = 1; y <= wallHeight; y += 1) {
             const corner = edgeX && edgeZ;
             const window = !corner && y % 3 === 2 && ((x + z) & 3) === 0;
-            set(x, baseY + y, z, window ? BlockId.Glass : corner ? cornerMaterial : wallMaterial, false);
+            set(x, baseY + y, z, window ? BlockId.Glass : corner ? palette.corner : palette.buildingWall, false);
           }
-          set(x, baseY + wallHeight + 1 + ((Math.abs(x - building.position.x) + Math.abs(z - building.position.z)) % 3 === 0 ? 1 : 0), z, roofMaterial, false);
+          set(x, baseY + wallHeight + 1 + ((Math.abs(x - building.position.x) + Math.abs(z - building.position.z)) % 3 === 0 ? 1 : 0), z, palette.roof, false);
         }
         const doorX = building.position.x;
         const doorZ = buildingBounds.minZ;
@@ -1906,12 +2096,16 @@ export class ChunkWorld {
           set(doorX, baseY + 2, doorZ, BlockId.DoorClosedUpper, false);
         }
         for (const furniture of building.furniture) if (insideChunk(furniture.position.x, furniture.position.z)) {
+          if (furniture.kind === "door") continue;
           const fy = underwater ? furniture.position.y ?? baseY + 1 : baseY + 1;
           const furnitureBlock = furniture.kind === "rest-alcove" || furniture.kind === "nest" ? BlockId.HearthChair
             : furniture.kind === "kelp-trough" ? BlockId.LumenKelp
               : furniture.kind === "coral-loom" ? BlockId.CartographyTable
                 : furniture.kind === "pearl-counter" ? BlockId.Chest
                   : furniture.kind === "glow-basin" ? BlockId.AlchemyStand
+                    : furniture.kind === "sugarworks-kettle" || furniture.kind === "syrup-vat" ? BlockId.Sugarworks
+                      : furniture.kind === "confection-counter" ? BlockId.WildwoodTable
+                        : furniture.kind === "pet-bed" ? BlockId.HearthChair
                     : furniture.kind === "bed" ? BlockId.BedNorthFoot
             : furniture.kind === "chair" ? BlockId.HearthChair
               : furniture.kind === "distillery" || furniture.kind === "barrel" ? BlockId.Distillery
@@ -1953,11 +2147,11 @@ export class ChunkWorld {
           type: "spawn",
           id: creature.id,
           position: { x: creature.position.x, y: sample(creature.position.x, creature.position.z).height + 1, z: creature.position.z },
-          mobKind: "warg",
+          mobKind: creature.kind,
           count: 1,
           radius: 2.5,
           persistent: true,
-          tags: [`settlement:${candidate.id}`, `faction:goblins`, "aligned:true"],
+          tags: [`settlement:${candidate.id}`, `faction:${creature.factionId}`, "aligned:true"],
         };
         this.structureMarkers.set(`${candidate.id}:spawn:${creature.id}`, marker);
       }
@@ -2468,6 +2662,18 @@ export class ChunkWorld {
           }
           continue;
         }
+        if (definition.shape === "sugarworks") {
+          const environment = shadeAt(lx, y, lz);
+          addTexturedCuboid(bucket, lx - 0.47, y - 0.5, lz - 0.43, lx + 0.47, y - 0.35, lz + 0.43, 143, 143, 135, tint, environment);
+          addTexturedCuboid(bucket, lx - 0.4, y - 0.35, lz - 0.36, lx + 0.4, y + 0.18, lz + 0.36, 143, 143, 135, tint, environment);
+          addTexturedCuboid(bucket, lx - 0.34, y + 0.18, lz - 0.31, lx + 0.34, y + 0.31, lz + 0.31, 143, 143, 143, [1, 1, 1], environment);
+          for (const x of [lx - 0.24, lx + 0.13]) {
+            addTexturedCuboid(bucket, x, y - 0.09, lz - 0.5, x + 0.11, y + 0.39, lz - 0.35, 143, 143, 143, [1, 1, 1], environment);
+          }
+          addTexturedCuboid(buckets.transparent, lx - 0.22, y + 0.29, lz - 0.22, lx + 0.22, y + 0.35, lz + 0.22, 136, 136, 136, [1, 1, 1], 1);
+          addTexturedCuboid(buckets.emissive, lx + 0.24, y + 0.31, lz - 0.08, lx + 0.32, y + 0.48, lz + 0.08, 143, 143, 143, [1, 1, 1], 1);
+          continue;
+        }
         if (definition.shape === "wayshrine") {
           const environment = shadeAt(lx, y, lz);
           addTexturedCuboid(buckets.opaque, lx - 0.46, y - 0.5, lz - 0.46, lx + 0.46, y - 0.28, lz + 0.46, 97, 97, 3, [0.82, 0.9, 0.88], environment);
@@ -2657,7 +2863,7 @@ export class ChunkWorld {
             && hash3(chunk.cx * CHUNK_SIZE + lx + dx, y + dy, chunk.cz * CHUNK_SIZE + lz + dz, this.seed ^ 0x37b41cd9) < DENSE_CUTOUT_LEAF_POLICY.renderInternalFaceFraction;
           if (!this.faceVisible(type, neighbor) && !internalLeafFace) continue;
           const tile = dy > 0 ? definition.top : dy < 0 ? definition.bottom : definition.side;
-          const waterDrop = type === BlockId.Water || type === BlockId.Lava ? -0.045 : 0;
+          const waterDrop = definition.liquid ? -0.045 : 0;
           const environment = definition.layer === "emissive"
             ? Math.max(0.82, shadeAt(lx + dx, y + dy, lz + dz))
             : shadeAt(lx + dx, y + dy, lz + dz);

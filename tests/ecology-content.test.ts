@@ -21,6 +21,7 @@ import {
 } from "../app/game/apiary.ts";
 import {
   captureIntoOrb,
+  decodeCaptureOrb,
   captureOrbFromInventorySlot,
   captureOrbInventorySlot,
   createCreatureHealer,
@@ -31,7 +32,7 @@ import {
   orbRackContainerStatus,
   stepCreatureHealer,
 } from "../app/game/capture-orbs.ts";
-import { captureCreature, encodeCapturedCreature, type CreatureMetadata } from "../app/game/creature-cage.ts";
+import { captureCreature, decodeCapturedCreature, encodeCapturedCreature, type CreatureMetadata } from "../app/game/creature-cage.ts";
 import { BLOCKS, BlockId, Item, ITEMS, RECIPES } from "../app/game/data.ts";
 import {
   CLOUDREED_GLEN,
@@ -185,6 +186,26 @@ test("Capture Orbs preserve exact metadata and migrate old Waykeeper Cages", () 
   assert.equal(migrated.item, Item.CaptureOrb);
   assert.deepEqual(captureOrbFromInventorySlot(migrated)?.creature, creature);
   assert.equal(captureOrbFromInventorySlot({ item: Item.LegacyCaptureOrb, count: 1 })?.creature, null);
+});
+
+test("imported creature containers reject unknown species and malformed faction provenance", () => {
+  const alignedPet: CreatureMetadata = {
+    ...creature,
+    entityId: "taffy-hound-bonbon",
+    kind: "taffy-hound",
+    factionId: "sugarcourt",
+    settlementId: "bonbon-borough-test",
+    aligned: true,
+  };
+  const captured = captureIntoOrb(createEmptyCaptureOrb("orb-sugarcourt"), alignedPet, 321)!;
+  const encoded = JSON.parse(JSON.stringify(captured)) as { creature: Record<string, unknown> };
+  assert.deepEqual(decodeCaptureOrb(JSON.stringify(captured))?.creature, alignedPet);
+  assert.deepEqual(decodeCapturedCreature(encodeCapturedCreature(captureCreature("legacy-safe", alignedPet, 321)!))?.creature, alignedPet);
+
+  assert.equal(decodeCaptureOrb(JSON.stringify({ ...encoded, creature: { ...encoded.creature, kind: "unknown-candy-beast" } })), null);
+  assert.equal(decodeCaptureOrb(JSON.stringify({ ...encoded, creature: { ...encoded.creature, factionId: "unknown-faction" } })), null);
+  assert.equal(decodeCaptureOrb(JSON.stringify({ ...encoded, creature: { ...encoded.creature, aligned: "yes" } })), null);
+  assert.equal(decodeCaptureOrb(JSON.stringify({ ...encoded, creature: { ...encoded.creature, health: 99, maxHealth: 12 } })), null);
 });
 
 test("four-slot racks and healers expose UI state; healing is passive with optional gel acceleration", () => {

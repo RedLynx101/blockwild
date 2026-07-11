@@ -1,5 +1,6 @@
 import type { GameMode } from "./data";
 import type { WorldSave } from "./engine";
+import { NPC_FACTION_IDS, normalizeEnabledFactions, type NpcFactionId } from "./factions";
 import { GENERATOR_VERSION, MIN_Y, WORLD_HEIGHT, type WorldGenerationOptions } from "./world";
 import { LEGACY_GAME_VERSION, normalizeGameVersion } from "./version";
 
@@ -32,6 +33,8 @@ export type WorldOptions = {
   friendlyFire: boolean;
   sleepRule: SleepRule;
   sleepPercentage: number;
+  /** Cultures allowed to generate settlements and their aligned residents. */
+  enabledFactions: readonly NpcFactionId[];
 };
 
 export const DEFAULT_WORLD_OPTIONS: Readonly<WorldOptions> = Object.freeze({
@@ -48,6 +51,7 @@ export const DEFAULT_WORLD_OPTIONS: Readonly<WorldOptions> = Object.freeze({
   friendlyFire: false,
   sleepRule: "percentage",
   sleepPercentage: 50,
+  enabledFactions: Object.freeze([...NPC_FACTION_IDS]),
 });
 
 export type WorldMetadata = {
@@ -158,6 +162,7 @@ export function normalizeWorldOptions(value?: Partial<WorldOptions> | null): Wor
     friendlyFire: normalizeBoolean(input.friendlyFire, DEFAULT_WORLD_OPTIONS.friendlyFire),
     sleepRule,
     sleepPercentage: normalizeNumber(input.sleepPercentage, DEFAULT_WORLD_OPTIONS.sleepPercentage, 1, 100, 0),
+    enabledFactions: normalizeEnabledFactions(input.enabledFactions),
   };
 }
 
@@ -175,6 +180,7 @@ export function generationOptionsFromWorldOptions(value?: Partial<WorldOptions> 
     biomeScale: options.biomeScale,
     resourceAbundance: options.resourceAbundance,
     structures: options.structures,
+    enabledFactions: options.enabledFactions,
   };
 }
 
@@ -224,7 +230,7 @@ export function migrateLegacyWorldSave(value: unknown): WorldSave | null {
   const mode = normalizeMode(value.mode);
   if (!seed || !mode || !isRecord(value.player)) return null;
   const generatorVersion = Math.trunc(finite(value.generatorVersion, -1));
-  if (![2, 3, 4, 5, 6, 7, GENERATOR_VERSION].includes(generatorVersion)) return null;
+  if (![2, 3, 4, 5, 6, 7, 8, GENERATOR_VERSION].includes(generatorVersion)) return null;
   const offset = generatorVersion === 2 ? (LEGACY_GENERATOR_MIN_Y - MIN_Y) * 16 * 16 : 0;
   const player = value.player;
   if (![player.x, player.y, player.z].every((coordinate) => typeof coordinate === "number" && Number.isFinite(coordinate))) return null;

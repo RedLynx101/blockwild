@@ -4624,6 +4624,110 @@ input:focus-visible {
   color: var(--gold);
 }
 
+.faction-spawn-options {
+  margin: 0 12px 12px;
+  padding: 12px;
+  border: 1px solid #4b514b;
+  background: linear-gradient(135deg, rgba(34, 39, 34, 0.96), rgba(24, 25, 24, 0.98));
+}
+
+.faction-spawn-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+
+.faction-spawn-heading h3 {
+  margin: 0 0 5px;
+  color: #fff0af;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.faction-spawn-heading p {
+  max-width: 580px;
+  margin: 0;
+  color: #aeb6aa;
+  font-size: 7px;
+  line-height: 1.55;
+}
+
+.faction-spawn-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.faction-spawn-actions button {
+  min-width: 44px;
+  padding: 6px 8px;
+  border: 1px solid #686f66;
+  background: #303630;
+  color: #dce1d8;
+  cursor: pointer;
+  font: inherit;
+  font-size: 7px;
+  text-transform: uppercase;
+}
+
+.faction-spawn-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.faction-spawn-grid > button {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-height: 76px;
+  padding: 9px;
+  border: 2px solid #4c514c;
+  background: #252a26;
+  color: #a8aea5;
+  cursor: pointer;
+  text-align: left;
+}
+
+.faction-spawn-grid > button span {
+  color: #e7e9e3;
+  font-size: 8px;
+  font-weight: 900;
+}
+
+.faction-spawn-grid > button small {
+  min-height: 22px;
+  color: #929a91;
+  font-size: 6px;
+  line-height: 1.35;
+}
+
+.faction-spawn-grid > button b {
+  color: #777f76;
+  font-size: 6px;
+  letter-spacing: 0.08em;
+}
+
+.faction-spawn-grid > button.active {
+  border-color: #d4b653;
+  background: linear-gradient(150deg, #3d402e, #292d28);
+}
+
+.faction-spawn-grid > button.active b {
+  color: #ffe48b;
+}
+
+.faction-spawn-grid > button.faction-spawn-sugarcourt.active {
+  border-color: #ef94bb;
+  background: linear-gradient(150deg, #533548, #302a31);
+}
+
+.faction-spawn-grid > button.faction-spawn-sugarcourt.active b {
+  color: #ffbad7;
+}
+
 .setup-ownership-note {
   margin: -12px 0 17px;
 }
@@ -4904,6 +5008,15 @@ input:focus-visible {
 
   .advanced-toggle-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .faction-spawn-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .faction-spawn-heading {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .multiplayer-name-field {
@@ -5326,6 +5439,28 @@ input:focus-visible {
   border: 2px solid #aeb6b5;
   border-bottom: 0;
   border-radius: 50% 50% 0 0;
+}
+
+.item-icon-kind-sugarworks::before {
+  left: 2px;
+  top: 7px;
+  width: 26px;
+  height: 21px;
+  border: 3px solid #8f456d;
+  border-radius: 3px 3px 7px 7px;
+  background: linear-gradient(90deg, #f7dce8 0 18%, #ed5969 19% 35%, #fff0f5 36% 52%, #ed5969 53% 69%, #f7dce8 70%);
+  box-shadow: inset 0 -6px #e98eb8, 2px 2px 0 rgba(0, 0, 0, .55);
+}
+
+.item-icon-kind-sugarworks::after {
+  left: 8px;
+  top: 0;
+  width: 14px;
+  height: 13px;
+  border: 3px solid #e6a5c1;
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  background: radial-gradient(circle at 50% 75%, #ffc05d 0 34%, #ad5d37 36% 58%, transparent 60%);
 }
 
 .item-icon-kind-lead::before {
@@ -6702,6 +6837,19 @@ input:focus-visible {
 .hearthroads-station-apparatus span { position: relative; z-index: 2; font-size: 72px; filter: drop-shadow(0 6px 0 rgba(51,42,27,.2)); }
 .hearthroads-station-apparatus i { position: absolute; bottom: 20px; width: 60px; height: 9px; border-radius: 50%; background: rgba(40, 34, 23, .22); }
 .hearthroads-station-apparatus[data-active="true"] span { animation: hearthroads-apparatus 1.6s ease-in-out infinite; }
+.station-sugarworks .hearthroads-recipe-ledger {
+  border-right-color: #a35b80;
+  background: linear-gradient(180deg, rgba(241, 164, 195, .25), rgba(128, 77, 112, .12));
+}
+.station-sugarworks .hearthroads-station-recipe { border-color: #b97d98; background: rgba(255, 230, 240, .55); }
+.station-sugarworks .hearthroads-station-recipe.selected { border-color: #a33f72; background: rgba(250, 190, 217, .62); box-shadow: inset 4px 0 #d44f8e; }
+.station-sugarworks .hearthroads-recipe-vial { border-color: #9d416f; color: #fff5fa; background: linear-gradient(135deg, #ef5364 0 33%, #fff1f4 34% 66%, #e984b2 67%); }
+.station-sugarworks .hearthroads-station-output { border-left-color: #a35b80; background: rgba(234, 126, 175, .13); }
+.station-sugarworks .hearthroads-station-apparatus {
+  border-color: #9b4c78;
+  background: radial-gradient(circle at 50% 44%, rgba(255, 221, 237, .92), transparent 37%), linear-gradient(145deg, #e884b1, #f4c0d7 52%, #bd6f9d);
+}
+.station-sugarworks .hearthroads-output-slot.filled { border-color: #a34a79; color: #65324e; background: rgba(246, 176, 210, .42); }
 .hearthroads-batch-readout { display: grid; gap: 6px; }
 .hearthroads-batch-readout small,
 .hearthroads-output-slot small { color: #6f6449; font-size: 7px; text-transform: uppercase; }

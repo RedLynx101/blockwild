@@ -18,6 +18,8 @@ export type PlantKind =
   | "wild-wheat"
   | "moonrice"
   | "sunroot"
+  | "peppermint"
+  | "cocoa"
   | "moonberry"
   | "sunberry"
   | `cultivated-flower-${number}`;
@@ -65,6 +67,20 @@ export const PLANT_GROWTH: Readonly<Record<PlantKind, PlantGrowthProfile>> = Obj
     baseStageSeconds: 72,
     requiresFarmland: true,
   }),
+  peppermint: Object.freeze({
+    kind: "peppermint",
+    stages: Object.freeze([BlockId.PeppermintSprout, BlockId.PeppermintYoung, BlockId.PeppermintCrop]),
+    minimumLight: 0.4,
+    baseStageSeconds: 56,
+    requiresFarmland: true,
+  }),
+  cocoa: Object.freeze({
+    kind: "cocoa",
+    stages: Object.freeze([BlockId.CocoaSprout, BlockId.CocoaYoung, BlockId.CocoaCrop]),
+    minimumLight: 0.48,
+    baseStageSeconds: 68,
+    requiresFarmland: true,
+  }),
   moonberry: Object.freeze({
     kind: "moonberry",
     stages: Object.freeze([BlockId.MoonberryShoot, BlockId.MoonberryBush, BlockId.MoonberryBushRipe]),
@@ -96,6 +112,8 @@ const LIVING_SOILS = new Set<BlockId>([
   BlockId.SwampGrass,
   BlockId.JungleGrass,
   BlockId.SakuraGrass,
+  BlockId.SugarplumGrass,
+  BlockId.SugarSoil,
   BlockId.Farmland,
   BlockId.HydratedFarmland,
 ]);
@@ -107,6 +125,8 @@ const TILLABLE_SOILS = new Set<BlockId>([
   BlockId.SwampGrass,
   BlockId.JungleGrass,
   BlockId.SakuraGrass,
+  BlockId.SugarplumGrass,
+  BlockId.SugarSoil,
 ]);
 const AQUATIC_SOILS = new Set<BlockId>([BlockId.Sand, BlockId.Gravel, BlockId.Clay, BlockId.Mud, BlockId.Stone, BlockId.Deepstone, BlockId.MoonSlate, BlockId.Limestone]);
 const AQUATIC_FLORA_SET = new Set<BlockId>(AQUATIC_FLORA);
@@ -334,11 +354,17 @@ export function plantingResult(item: ItemCode, soil: BlockId | undefined, above:
   if (item === Item.WheatSeeds && FARM_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.WheatSprout, consumes: item, description: "Wild wheat seeds" };
   if (item === Item.MoonriceSeeds && FARM_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.MoonriceSprout, consumes: item, description: "Moonrice seeds" };
   if (item === Item.SunrootStarts && FARM_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.SunrootSprout, consumes: item, description: "Sunroot starts" };
+  if (item === Item.PeppermintSeeds && FARM_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.PeppermintSprout, consumes: item, description: "Peppermint starts" };
+  if (item === Item.CocoaSeeds && FARM_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.CocoaSprout, consumes: item, description: "Cocoa puff seeds" };
   if (item === Item.Berry && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.MoonberryShoot, consumes: item, description: "Moonberry cutting" };
   if (item === Item.Sunberry && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.SunberryShoot, consumes: item, description: "Sunberry cutting" };
   if (item === Item.Apple && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.AppleSapling, consumes: item, description: "Wild apple pip" };
   if (item === Item.SaltbrushSprig && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.Saltbrush, consumes: item, description: "Saltbrush cutting" };
   if (item === Item.CoastAsterPetal && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.CoastAster, consumes: item, description: "Coast aster seedhead" };
+  if (item === Item.Gumdrop && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.GumdropBush, consumes: item, description: "Gumdrop cutting" };
+  if (item === Item.PeppermintCane && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.PeppermintTuft, consumes: item, description: "Wild peppermint cane" };
+  if (item === Item.MarshmallowTuft && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.MarshmallowShrub, consumes: item, description: "Marshmallow shrub cutting" };
+  if (item === Item.CandywoodSaplingItem && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.CandywoodSapling, consumes: item, description: "Candywood sapling" };
   const requestedPlant = ITEMS[item]?.plantBlock;
   if (requestedPlant !== undefined && ORDINARY_FLOWERS.includes(requestedPlant) && FARM_SOILS.has(soil ?? BlockId.Air)) {
     return { block: requestedPlant, consumes: item, description: `Cultivated ${BLOCKS[requestedPlant]?.name ?? "flower"}` };
@@ -430,6 +456,20 @@ export function harvestPlant(block: BlockId, useScythe = false, yieldRoll = 0.5)
       replanted: useScythe,
     };
   }
+  if (block === BlockId.PeppermintCrop) {
+    return {
+      replacement: useScythe ? BlockId.PeppermintSprout : BlockId.Air,
+      drops: [{ item: Item.PeppermintCane, count: 2 + Math.floor(roll * 3) + (useScythe ? 1 : 0) }, { item: Item.PeppermintSeeds, count: 1 + (roll > 0.58 ? 1 : 0) }],
+      replanted: useScythe,
+    };
+  }
+  if (block === BlockId.CocoaCrop) {
+    return {
+      replacement: useScythe ? BlockId.CocoaSprout : BlockId.Air,
+      drops: [{ item: Item.CocoaNib, count: 2 + Math.floor(roll * 3) + (useScythe ? 1 : 0) }, { item: Item.CocoaSeeds, count: 1 + (roll > 0.62 ? 1 : 0) }],
+      replanted: useScythe,
+    };
+  }
   if (block === BlockId.MoonberryBushRipe) {
     return {
       replacement: BlockId.MoonberryBush,
@@ -456,6 +496,10 @@ export function harvestPlant(block: BlockId, useScythe = false, yieldRoll = 0.5)
   if (block === BlockId.Dreamblossom) return { replacement: BlockId.Air, drops: [{ item: Item.DreamblossomItem, count: 1 + Math.floor(roll * 2) }], replanted: false };
   if (block === BlockId.LanternLotus) return { replacement: BlockId.Air, drops: [{ item: Item.LanternLotusItem, count: 1 + Math.floor(roll * 2) }], replanted: false };
   if (block === BlockId.RainveilFern) return { replacement: BlockId.Air, drops: [{ item: Item.RainveilFernItem, count: 1 }], replanted: false };
+  if (block === BlockId.GumdropBush) return { replacement: BlockId.Air, drops: [{ item: Item.Gumdrop, count: 1 + Math.floor(roll * 3) }], replanted: false };
+  if (block === BlockId.PeppermintTuft) return { replacement: BlockId.Air, drops: [{ item: Item.PeppermintCane, count: 1 + Math.floor(roll * 2) }], replanted: false };
+  if (block === BlockId.LollipopOrchid) return { replacement: BlockId.Air, drops: [{ item: Item.LollipopPetal, count: 1 + Math.floor(roll * 2) }], replanted: false };
+  if (block === BlockId.MarshmallowShrub) return { replacement: BlockId.Air, drops: [{ item: Item.MarshmallowTuft, count: 1 + Math.floor(roll * 2) }], replanted: false };
   if (block === BlockId.LumenKelp) return { replacement: BlockId.Water, drops: [{ item: Item.LumenKelpFrond, count: 1 + Math.floor(roll * 2) }], replanted: false };
   if (block === BlockId.StarCoral) return { replacement: BlockId.Water, drops: [{ item: Item.StarCoralShard, count: 1 + Math.floor(roll * 2) }], replanted: false };
   if (block === BlockId.AbyssBloom) return { replacement: BlockId.Water, drops: [{ item: Item.AbyssBloomNectar, count: 1 }], replanted: false };
@@ -527,13 +571,22 @@ export type BucketAction = Readonly<{
   resultItem: ItemCode;
 }>;
 
-export function resolveBucketAction(item: ItemCode, target: BlockId | undefined, placement: BlockId | undefined): BucketAction | null {
-  if (item === Item.Bucket && target === BlockId.Water) return { kind: "fill", removeTarget: true, resultItem: Item.WaterBucket };
-  if (item === Item.Bucket && target === BlockId.Lava) return { kind: "fill", removeTarget: true, resultItem: Item.LavaBucket };
+export function resolveBucketAction(
+  item: ItemCode,
+  target: BlockId | undefined,
+  placement: BlockId | undefined,
+  targetIsSource = true,
+): BucketAction | null {
+  if (item === Item.Bucket && targetIsSource && target === BlockId.Water) return { kind: "fill", removeTarget: true, resultItem: Item.WaterBucket };
+  if (item === Item.Bucket && targetIsSource && target === BlockId.Lava) return { kind: "fill", removeTarget: true, resultItem: Item.LavaBucket };
+  if (item === Item.Bucket && targetIsSource && target === BlockId.Honey) return { kind: "fill", removeTarget: true, resultItem: Item.HoneyBucket };
+  if (item === Item.Bucket && targetIsSource && target === BlockId.Syrup) return { kind: "fill", removeTarget: true, resultItem: Item.SyrupBucket };
   const canReplace = placement === BlockId.Air || Boolean(BLOCKS[placement ?? BlockId.Air]?.replaceable);
   if (!canReplace) return null;
   if (item === Item.WaterBucket) return { kind: "pour", removeTarget: false, place: BlockId.Water, resultItem: Item.Bucket };
   if (item === Item.LavaBucket) return { kind: "pour", removeTarget: false, place: BlockId.Lava, resultItem: Item.Bucket };
+  if (item === Item.HoneyBucket) return { kind: "pour", removeTarget: false, place: BlockId.Honey, resultItem: Item.Bucket };
+  if (item === Item.SyrupBucket) return { kind: "pour", removeTarget: false, place: BlockId.Syrup, resultItem: Item.Bucket };
   return null;
 }
 

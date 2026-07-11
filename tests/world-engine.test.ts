@@ -887,16 +887,18 @@ test("rejected solid placement records its rollback and player chests start empt
   assert.ok(chest?.every((slot) => slot === null), "player-crafted chests must not inherit structure loot");
 });
 
-test("generator-v5 saves advance to v6 without moving existing voxel edits", () => {
-  const previous = {
-    version: 2,
-    generatorVersion: 5,
-    seed: "WAYFINDER-MIGRATION",
-    edits: { "-2,3": [[24_731, BlockId.MeadowGrass], [24_732, BlockId.Air]] },
-  } as unknown as WorldSave;
-  const migrated = migrateSavedWorld(previous);
-  assert.equal(migrated?.generatorVersion, GENERATOR_VERSION);
-  assert.deepEqual(migrated?.edits, previous.edits);
+test("generator-v3 through v8 fallback saves advance without moving existing voxel edits", () => {
+  for (const generatorVersion of [3, 4, 5, 6, 7, 8]) {
+    const previous = {
+      version: 2,
+      generatorVersion,
+      seed: "WAYFINDER-MIGRATION",
+      edits: { "-2,3": [[24_731, BlockId.MeadowGrass], [24_732, BlockId.Air]] },
+    } as unknown as WorldSave;
+    const migrated = migrateSavedWorld(previous);
+    assert.equal(migrated?.generatorVersion, GENERATOR_VERSION);
+    assert.deepEqual(migrated?.edits, previous.edits);
+  }
 });
 
 test("door meshes include textured top, bottom, and narrow side edges", () => {

@@ -6,10 +6,12 @@
  * unbounded command log.
  */
 
-export const FACTION_IDS = ["player", "hobbits", "goblins", "atlantians"] as const;
+export const FACTION_IDS = ["player", "hobbits", "goblins", "atlantians", "sugarcourt"] as const;
+export const NPC_FACTION_IDS = ["hobbits", "goblins", "atlantians", "sugarcourt"] as const;
 
 export type FactionId = (typeof FACTION_IDS)[number];
-export type FactionRace = "wayfarer" | "hearthkin" | "goblin" | "atlantian";
+export type NpcFactionId = (typeof NPC_FACTION_IDS)[number];
+export type FactionRace = "wayfarer" | "hearthkin" | "goblin" | "atlantian" | "confectkin";
 export type DiplomacyStance = "allied" | "neutral" | "war";
 export type FactionStanding = "revered" | "friendly" | "neutral" | "unwelcome" | "hostile";
 
@@ -23,6 +25,7 @@ export const FACTION_RACE_TRAITS: Readonly<Record<FactionRace, FactionRaceTraits
   hearthkin: { aquatic: false, waterBreathing: false },
   goblin: { aquatic: false, waterBreathing: false },
   atlantian: { aquatic: true, waterBreathing: true },
+  confectkin: { aquatic: false, waterBreathing: false },
 };
 
 export type FactionDefinition = Readonly<{
@@ -43,7 +46,7 @@ export const FACTIONS: Readonly<Record<FactionId, FactionDefinition>> = {
     id: "player",
     name: "Wayfarers",
     race: "wayfarer",
-    permittedRaces: ["wayfarer", "hearthkin", "goblin", "atlantian"],
+    permittedRaces: ["wayfarer", "hearthkin", "goblin", "atlantian", "confectkin"],
     sentient: true,
     aquaticOnly: false,
     waterBreathing: false,
@@ -87,7 +90,30 @@ export const FACTIONS: Readonly<Record<FactionId, FactionDefinition>> = {
     warriorWeapons: ["tideglass-trident"],
     values: ["living reefs", "patient currents", "shared light"],
   },
+  sugarcourt: {
+    id: "sugarcourt",
+    name: "Sugarcourt Concord",
+    race: "confectkin",
+    permittedRaces: ["confectkin"],
+    sentient: true,
+    aquaticOnly: false,
+    waterBreathing: false,
+    homeBiomes: ["sugarplum-vale"],
+    warriorWeapons: ["peppermint-pike", "rockcandy-saber"],
+    values: ["precise craft", "generous hospitality", "measured indulgence"],
+  },
 };
+
+export function isNpcFactionId(value: unknown): value is NpcFactionId {
+  return typeof value === "string" && (NPC_FACTION_IDS as readonly string[]).includes(value);
+}
+
+/** Missing legacy data enables every culture; an explicit empty list means wilderness-only. */
+export function normalizeEnabledFactions(value: unknown): readonly NpcFactionId[] {
+  if (!Array.isArray(value)) return [...NPC_FACTION_IDS];
+  const enabled = new Set(value.filter(isNpcFactionId));
+  return NPC_FACTION_IDS.filter((factionId) => enabled.has(factionId));
+}
 
 export function factionAllowsRace(factionId: FactionId, race: FactionRace) {
   return FACTIONS[factionId].permittedRaces.includes(race);
@@ -138,13 +164,20 @@ export function stampAuthority<T extends AuthorityStampedState>(state: T, comman
   };
 }
 
-export type FactionRelationKey =
-  | "atlantians|goblins"
-  | "atlantians|hobbits"
-  | "atlantians|player"
-  | "goblins|hobbits"
-  | "goblins|player"
-  | "hobbits|player";
+export const FACTION_RELATION_KEYS = [
+  "atlantians|goblins",
+  "atlantians|hobbits",
+  "atlantians|player",
+  "atlantians|sugarcourt",
+  "goblins|hobbits",
+  "goblins|player",
+  "goblins|sugarcourt",
+  "hobbits|player",
+  "hobbits|sugarcourt",
+  "player|sugarcourt",
+] as const;
+
+export type FactionRelationKey = (typeof FACTION_RELATION_KEYS)[number];
 
 export type FactionRelationsState = AuthorityStampedState & Readonly<{
   schema: 1;
@@ -169,15 +202,8 @@ export function createFactionRelations(authorityId: string): FactionRelationsSta
     authorityId,
     revision: 0,
     recentEventIds: [],
-    alignments: { player: 100, hobbits: 0, goblins: 0, atlantians: 0 },
-    diplomacy: {
-      "atlantians|goblins": "neutral",
-      "atlantians|hobbits": "neutral",
-      "atlantians|player": "neutral",
-      "goblins|hobbits": "neutral",
-      "goblins|player": "neutral",
-      "hobbits|player": "neutral",
-    },
+    alignments: { player: 100, hobbits: 0, goblins: 0, atlantians: 0, sugarcourt: 0 },
+    diplomacy: Object.fromEntries(FACTION_RELATION_KEYS.map((key) => [key, "neutral"] as const)) as Record<FactionRelationKey, DiplomacyStance>,
   };
 }
 
@@ -244,7 +270,14 @@ export type FactionMemberRole =
   | "atlantian-coralwright"
   | "atlantian-pearlbroker"
   | "atlantian-glowmender"
-  | "atlantian-trident-guard";
+  | "atlantian-trident-guard"
+  | "sugarcourt-crown-confectioner"
+  | "sugarcourt-gumdrop-gardener"
+  | "sugarcourt-sugarboiler"
+  | "sugarcourt-candysmith"
+  | "sugarcourt-sweetbroker"
+  | "sugarcourt-kennelkeeper"
+  | "sugarcourt-brittle-guard";
 
 export const FACTION_KILL_PENALTIES: Readonly<Record<FactionMemberRole, number>> = {
   civilian: -18,
@@ -262,6 +295,13 @@ export const FACTION_KILL_PENALTIES: Readonly<Record<FactionMemberRole, number>>
   "atlantian-pearlbroker": -22,
   "atlantian-glowmender": -20,
   "atlantian-trident-guard": -12,
+  "sugarcourt-crown-confectioner": -35,
+  "sugarcourt-gumdrop-gardener": -18,
+  "sugarcourt-sugarboiler": -20,
+  "sugarcourt-candysmith": -22,
+  "sugarcourt-sweetbroker": -22,
+  "sugarcourt-kennelkeeper": -20,
+  "sugarcourt-brittle-guard": -12,
 };
 
 export function applyFactionMemberKill(

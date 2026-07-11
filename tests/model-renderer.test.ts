@@ -50,7 +50,7 @@ test("the inspector includes every butterfly species with runtime dimensions and
     assert.equal(spec.id, `butterfly-${kind}`);
     assert.equal(spec.inspection?.source, "ButterflySystem");
     assert.equal(spec.inspection?.variant, kind);
-    assert.equal(spec.boxes.length, 7);
+    assert.equal(spec.boxes.length, kind === "bonbonwing" ? 9 : 7);
     assert.equal(spec.boxes.find((box) => box.id === `${kind}-body`)?.color, MOB_DEFS[kind].colors[1]);
     assert.equal(spec.boxes.find((box) => box.id === `${kind}-left-wing-panel`)?.color, MOB_DEFS[kind].colors[0]);
     const body = spec.boxes.find((box) => box.id === `${kind}-body`)!;

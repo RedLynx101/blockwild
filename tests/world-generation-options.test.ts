@@ -21,7 +21,13 @@ test("generation options clamp safely and an omitted options object restores exa
     biomeScale: 4,
     resourceAbundance: 1,
     structures: false,
+    enabledFactions: ["hobbits", "goblins", "atlantians", "sugarcourt"],
   });
+  assert.deepEqual(normalizeWorldGenerationOptions({ enabledFactions: ["sugarcourt", "goblins", "sugarcourt"] }), {
+    ...DEFAULT_WORLD_GENERATION_OPTIONS,
+    enabledFactions: ["goblins", "sugarcourt"],
+  });
+  assert.deepEqual(normalizeWorldGenerationOptions({ enabledFactions: [] }).enabledFactions, [], "an explicit empty list creates a wilderness world");
 
   const implicit = new ChunkWorld();
   const explicit = new ChunkWorld();

@@ -52,6 +52,11 @@ test("new flora is selectable and Goldenleaf plants provide survival bananas", (
     BlockId.GlowKelp,
     BlockId.ReedBloom,
     BlockId.Cloudbell,
+    Item.Gumdrop,
+    Item.PeppermintCane,
+    Item.LollipopPetal,
+    Item.MarshmallowTuft,
+    Item.CandywoodSaplingItem,
   ]);
   for (const flora of CREATIVE_FLORA) assert.ok(CREATIVE_BLOCKS.includes(flora));
   const harvest = RECIPES.find((recipe) => recipe.id === "banana_harvest");

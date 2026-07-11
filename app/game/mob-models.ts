@@ -47,11 +47,12 @@ export function createSentientLodVisual(kind: MobKind, id: number, bounds: THREE
   const bottom = bounds.min.y;
   const atlantian = kind.startsWith("atlantian-");
   const hobbit = kind.startsWith("hobbit-");
-  const skinColor = atlantian ? 0x4e9eaa : hobbit ? 0xc9916c : 0x78924e;
+  const sugarcourt = kind.startsWith("sugarcourt-");
+  const skinColor = atlantian ? 0x4e9eaa : sugarcourt ? 0xf0b5c9 : hobbit ? 0xc9916c : 0x78924e;
   const [bodyColor, accentColor, eyeColor] = definition.colors;
   const role = definition.role ?? "resident";
   const roleColor = role === "mayor" || role === "chieftain" ? 0xf1cf73
-    : role === "guard" ? (atlantian ? 0x73f0dc : 0xc98556)
+    : role === "guard" ? (atlantian ? 0x73f0dc : sugarcourt ? 0x78d8b5 : 0xc98556)
       : role === "farmer" || role === "worker" ? 0x86b968
         : role === "miner" ? 0xa9b5ba
           : role === "merchant" || role === "banker" ? 0xb899d1
@@ -181,7 +182,8 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
   };
 
   const atlantianNpc = kind.startsWith("atlantian-");
-  const sentientNpc = kind.startsWith("hobbit-") || kind.startsWith("goblin-") || atlantianNpc;
+  const sugarcourtNpc = kind.startsWith("sugarcourt-");
+  const sentientNpc = kind.startsWith("hobbit-") || kind.startsWith("goblin-") || atlantianNpc || sugarcourtNpc;
   const buildAtlantianNpc = () => {
     const prefix = kind;
     const skin = material(0x4e9eaa);
@@ -252,9 +254,99 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       add(visual, [0.5, 0.24, 0.08], fin, [0.25, 1.2, -1.7], undefined, `${prefix}-trident-streamer`);
     }
   };
+  const buildSugarcourtNpc = () => {
+    const prefix = kind;
+    const candySkin = material(0xf0b5c9, false, 0.94);
+    const candyShade = material(0xc77f9a);
+    const cream = material(0xffe8ca);
+    const cocoa = material(0x4b3040);
+    const mint = material(0x7ad4b1);
+    const gold = material(0xf2c65d, true);
+    const copper = material(0xa96845);
+    const glass = material(0xffc5df, true, 0.82);
+
+    add(visual, [0.58, 0.66, 0.42], bodyMaterial, [0, 0.52, 0], "body", `${prefix}-sugarcoat`);
+    add(visual, [0.64, 0.18, 0.46], accentMaterial, [0, 0.25, 0.02], undefined, `${prefix}-fondant-coat-skirt`);
+    add(visual, [0.63, 0.09, 0.47], cocoa, [0, 0.47, 0], undefined, `${prefix}-wafer-belt`);
+    add(visual, [0.14, 0.15, 0.07], gold, [0, 0.47, -0.255], undefined, `${prefix}-sugarcourt-seal`);
+    add(visual, [0.54, 0.5, 0.48], candySkin, [0, 1.08, -0.03], "head", `${prefix}-glazed-head`);
+    add(visual, [0.28, 0.17, 0.22], candyShade, [0, 0.99, -0.34], undefined, `${prefix}-candy-nose`);
+    eyePair(0.16, 1.16, -0.29, 0.068, prefix);
+    add(visual, [0.2, 0.045, 0.035], cocoa, [0, 0.91, -0.295], undefined, `${prefix}-mouth`);
+    add(visual, [0.52, 0.15, 0.43], cream, [0, 1.33, 0], undefined, `${prefix}-icing-cap`);
+    for (const side of [-1, 1]) {
+      const sideName = side < 0 ? "left" : "right";
+      add(visual, [0.16, 0.2, 0.1], candySkin, [side * 0.31, 1.08, -0.01], undefined, `${prefix}-${sideName}-candy-ear`);
+      add(visual, [0.11, 0.2, 0.11], glass, [side * 0.2, 1.42, -0.02], undefined, `${prefix}-${sideName}-sugar-curl`).rotation.z = side * -0.24;
+      const leg = pivotBox([0.2, 0.48, 0.22], accentMaterial, [side * 0.17, 0.22, 0.02], [0, -0.24, 0], "legs", `${prefix}-${sideName}-leg`);
+      leg.userData.phase = side < 0 ? 0 : Math.PI;
+      add(leg, [0.31, 0.14, 0.4], cocoa, [0, -0.51, -0.08], undefined, `${prefix}-${sideName}-wafer-boot`);
+      const arm = pivotBox([0.17, 0.56, 0.18], bodyMaterial, [side * 0.38, 0.82, 0], [0, -0.28, 0], "arms", `${prefix}-${sideName}-arm`);
+      arm.userData.side = side;
+      arm.userData.phase = side < 0 ? 0 : Math.PI;
+      add(arm, [0.2, 0.2, 0.2], candySkin, [0, -0.61, 0], undefined, `${prefix}-${sideName}-hand`);
+    }
+
+    const rightArm = parts.arms.at(-1);
+    const leftArm = parts.arms.at(-2);
+    const readyHands = () => {
+      if (rightArm) rightArm.rotation.x = 1.02;
+      if (leftArm) leftArm.rotation.x = 0.88;
+    };
+    if (kind === "sugarcourt-crown-confectioner") {
+      add(visual, [0.62, 0.1, 0.5], gold, [0, 1.43, 0], undefined, `${prefix}-spun-sugar-crown-band`);
+      for (const side of [-1, 0, 1]) add(visual, [0.11, 0.28 + (side === 0 ? 0.12 : 0), 0.1], glass, [side * 0.2, 1.6, 0], undefined, `${prefix}-crown-spire-${side + 2}`);
+      add(visual, [0.14, 0.72, 0.06], gold, [-0.13, 0.72, -0.24], undefined, `${prefix}-mayoral-ribbon`).rotation.z = -0.3;
+      add(visual, [0.4, 0.33, 0.08], cocoa, [0.28, 0.48, -0.28], undefined, `${prefix}-borough-ledger`);
+    } else if (kind === "sugarcourt-brittle-guard") {
+      readyHands();
+      add(visual, [0.64, 0.16, 0.5], cream, [0, 1.41, 0], undefined, `${prefix}-brittle-helm`);
+      add(visual, [0.1, 0.1, 1.72], material(0xf4f0dd), [0.25, 0.72, -0.84], undefined, `${prefix}-peppermint-pike-shaft`);
+      for (let stripe = 0; stripe < 4; stripe += 1) add(visual, [0.115, 0.115, 0.18], material(stripe % 2 ? 0xef5364 : 0xfff7e8), [0.25, 0.72, -0.22 - stripe * 0.38], undefined, `${prefix}-pike-stripe-${stripe + 1}`);
+      add(visual, [0.18, 0.2, 0.42], mint, [0.25, 0.72, -1.82], undefined, `${prefix}-peppermint-pike-head`);
+      add(visual, [0.5, 0.34, 0.08], cream, [0, 0.67, -0.25], undefined, `${prefix}-sugarplate-breast`);
+    } else if (kind === "sugarcourt-gumdrop-gardener") {
+      add(visual, [0.48, 0.52, 0.05], cream, [0, 0.53, -0.235], undefined, `${prefix}-garden-apron`);
+      add(visual, [0.78, 0.09, 0.66], mint, [0, 1.39, 0], undefined, `${prefix}-leaf-hat-brim`);
+      add(visual, [0.42, 0.22, 0.38], accentMaterial, [0, 1.51, 0.02], undefined, `${prefix}-gumdrop-hat-crown`);
+      add(visual, [0.46, 0.38, 0.2], cocoa, [0, 0.58, 0.31], undefined, `${prefix}-gumdrop-basket`);
+      for (let drop = 0; drop < 3; drop += 1) add(visual, [0.14, 0.16, 0.14], material([0xef6ea8, 0x72d2b2, 0xf0c55e][drop]), [-0.16 + drop * 0.16, 0.7, 0.42], undefined, `${prefix}-basket-gumdrop-${drop + 1}`);
+    } else if (kind === "sugarcourt-sweetbroker") {
+      add(visual, [0.5, 0.48, 0.06], cream, [0, 0.55, -0.235], undefined, `${prefix}-broker-waistcoat`);
+      add(visual, [0.46, 0.35, 0.08], cocoa, [-0.27, 0.55, -0.28], undefined, `${prefix}-striped-ledger`);
+      add(visual, [0.08, 0.7, 0.08], gold, [0.28, 0.65, -0.16], undefined, `${prefix}-scale-post`);
+      add(visual, [0.54, 0.06, 0.12], gold, [0.28, 0.92, -0.16], undefined, `${prefix}-scale-beam`);
+      for (const side of [-1, 1]) add(visual, [0.2, 0.07, 0.2], mint, [0.28 + side * 0.2, 0.72, -0.16], undefined, `${prefix}-${side < 0 ? "left" : "right"}-scale-pan`);
+    } else if (kind === "sugarcourt-kennelkeeper") {
+      add(visual, [0.5, 0.5, 0.05], mint, [0, 0.54, -0.235], undefined, `${prefix}-kennel-apron`);
+      add(visual, [0.18, 0.18, 0.08], gold, [0, 0.67, -0.275], undefined, `${prefix}-paw-badge`);
+      add(visual, [0.42, 0.26, 0.18], cocoa, [0.25, 0.45, 0.29], undefined, `${prefix}-treat-pouch`);
+      for (const side of [-1, 1]) {
+        const loop = add(visual, [0.055, 0.68, 0.055], material(side < 0 ? 0xd96f9f : 0x8c573e), [side * 0.23, 0.59, 0.31], undefined, `${prefix}-${side < 0 ? "hound" : "cat"}-lead-loop`);
+        loop.rotation.z = side * 0.4;
+      }
+    } else if (kind === "sugarcourt-sugarboiler") {
+      add(visual, [0.5, 0.52, 0.06], cream, [0, 0.54, -0.235], undefined, `${prefix}-boiler-apron`);
+      add(visual, [0.5, 0.4, 0.25], copper, [0, 0.57, 0.34], undefined, `${prefix}-copper-kettle-pack`);
+      add(visual, [0.34, 0.1, 0.28], material(0xb96835, true, 0.82), [0, 0.8, 0.36], undefined, `${prefix}-syrup-window`);
+      add(visual, [0.08, 0.08, 0.96], copper, [0.28, 0.62, -0.36], undefined, `${prefix}-sugar-ladle-handle`);
+      add(visual, [0.3, 0.12, 0.28], gold, [0.28, 0.62, -0.88], undefined, `${prefix}-sugar-ladle-bowl`);
+    } else if (kind === "sugarcourt-candysmith") {
+      readyHands();
+      add(visual, [0.5, 0.54, 0.06], cocoa, [0, 0.55, -0.235], undefined, `${prefix}-smith-apron`);
+      add(visual, [0.1, 0.1, 1.0], copper, [0.25, 0.69, -0.5], undefined, `${prefix}-candy-hammer-handle`);
+      add(visual, [0.58, 0.3, 0.28], material(0xd76f9f), [0.25, 0.69, -1.05], undefined, `${prefix}-candy-hammer-head`);
+      add(visual, [0.17, 0.17, 0.08], mint, [-0.15, 1.17, -0.29], undefined, `${prefix}-goggle-left`);
+      add(visual, [0.17, 0.17, 0.08], mint, [0.15, 1.17, -0.29], undefined, `${prefix}-goggle-right`);
+    }
+  };
   const buildSentientNpc = () => {
     if (atlantianNpc) {
       buildAtlantianNpc();
+      return;
+    }
+    if (sugarcourtNpc) {
+      buildSugarcourtNpc();
       return;
     }
     const hobbit = kind.startsWith("hobbit-");
@@ -797,6 +889,103 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       const petal = add(tail, [0.25, 0.055, 0.34], material(index % 2 ? 0xffd2df : 0xf08fb4), [(side as number) * 0.17, 0.2 + index * 0.035, 0.35 + index * 0.16], undefined, `sakurakit-tail-petal-${index + 1}`);
       petal.rotation.z = (side as number) * 0.35;
     }
+  } else if (kind === "taffy-hound") {
+    add(visual, [0.76, 0.5, 1.08], bodyMaterial, [0, 0.02, 0.12], "body", "taffy-hound-body");
+    add(visual, [0.66, 0.58, 0.6], accentMaterial, [0, 0.28, -0.58], "head", "taffy-hound-head");
+    add(visual, [0.42, 0.26, 0.36], material(0xf4d49a), [0, 0.14, -0.99], undefined, "taffy-hound-gumdrop-muzzle");
+    eyePair(0.19, 0.36, -0.88, 0.075, "taffy-hound");
+    add(visual, [0.09, 0.07, 0.055], darkMaterial, [0, 0.19, -1.19], undefined, "taffy-hound-licorice-nose");
+    for (const side of [-1, 1]) {
+      const sideName = side < 0 ? "left" : "right";
+      const ear = add(visual, [0.25, 0.43, 0.2], bodyMaterial, [side * 0.25, 0.65, -0.55], undefined, `taffy-hound-${sideName}-hard-candy-ear`);
+      ear.rotation.z = side * -0.3;
+      add(visual, [0.12, 0.28, 0.08], material(0xffb7ce), [side * 0.25, 0.65, -0.65], undefined, `taffy-hound-${sideName}-inner-ear`).rotation.z = side * -0.3;
+    }
+    quadrupedLegs(0.25, -0.26, 0.34, -0.02, 0.39, 0.16, darkMaterial, "taffy-hound");
+    const tail = pivotBox([0.18, 0.18, 0.62], darkMaterial, [0, 0.18, 0.58], [0, 0.1, 0.28], "body", "taffy-hound-licorice-tail");
+    tail.rotation.x = 0.42;
+    add(tail, [0.18, 0.48, 0.18], darkMaterial, [0, 0.33, 0.53], undefined, "taffy-hound-licorice-tail-curl").rotation.z = 0.52;
+    const collar = new THREE.Group();
+    collar.name = "taffy-hound-faction-collar";
+    collar.visible = false;
+    visual.add(collar);
+    add(collar, [0.72, 0.13, 0.48], material(0xf5d667), [0, 0.27, -0.37], undefined, "taffy-hound-sugarcourt-collar-band");
+    add(collar, [0.18, 0.22, 0.08], material(0x84ddbc, true), [0, 0.13, -0.65], undefined, "taffy-hound-sugarcourt-collar-tag");
+  } else if (kind === "praline-cat") {
+    add(visual, [0.58, 0.38, 0.94], bodyMaterial, [0, -0.04, 0.12], "body", "praline-cat-body");
+    add(visual, [0.5, 0.48, 0.48], accentMaterial, [0, 0.22, -0.49], "head", "praline-cat-head");
+    add(visual, [0.3, 0.16, 0.22], material(0xeab77c), [0, 0.11, -0.82], undefined, "praline-cat-muzzle");
+    eyePair(0.15, 0.3, -0.75, 0.07, "praline-cat");
+    add(visual, [0.065, 0.055, 0.04], darkMaterial, [0, 0.16, -0.95], undefined, "praline-cat-nose");
+    for (const side of [-1, 1]) {
+      const sideName = side < 0 ? "left" : "right";
+      const ear = add(visual, [0.2, 0.42, 0.17], bodyMaterial, [side * 0.19, 0.58, -0.48], undefined, `praline-cat-${sideName}-ear`);
+      ear.rotation.z = side * -0.22;
+      for (let whisker = 0; whisker < 2; whisker += 1) {
+        const strand = add(visual, [0.34, 0.025, 0.025], darkMaterial, [side * 0.28, 0.14 + whisker * 0.07, -0.86], undefined, `praline-cat-${sideName}-whisker-${whisker + 1}`);
+        strand.rotation.z = side * (whisker ? 0.12 : -0.08);
+      }
+    }
+    quadrupedLegs(0.19, -0.22, 0.29, -0.06, 0.32, 0.12, darkMaterial, "praline-cat");
+    const tail = new THREE.Group();
+    tail.name = "praline-cat-licorice-tail-pivot";
+    tail.position.set(0, 0.08, 0.53);
+    tail.userData.bodyPart = "body";
+    parts.body.push(tail);
+    visual.add(tail);
+    add(tail, [0.14, 0.14, 0.52], darkMaterial, [0, 0.08, 0.23], undefined, "praline-cat-tail-base").rotation.x = 0.32;
+    add(tail, [0.14, 0.5, 0.14], darkMaterial, [0, 0.38, 0.47], undefined, "praline-cat-tail-tip").rotation.z = -0.28;
+    const bell = new THREE.Group();
+    bell.name = "praline-cat-faction-bell";
+    bell.visible = false;
+    visual.add(bell);
+    add(bell, [0.54, 0.1, 0.4], material(0xf1c85c), [0, 0.18, -0.3], undefined, "praline-cat-sugarcourt-collar");
+    add(bell, [0.13, 0.16, 0.12], material(0x7ed9b7, true), [0, 0.07, -0.54], undefined, "praline-cat-sugarcourt-bell");
+  } else if (kind === "sprinklebug") {
+    add(visual, [0.38, 0.24, 0.5], bodyMaterial, [0, -0.08, 0.05], "body", "sprinklebug-body");
+    add(visual, [0.34, 0.2, 0.34], accentMaterial, [0, -0.07, -0.32], "head", "sprinklebug-head");
+    add(visual, [0.3, 0.1, 0.42], material(0xffbddc), [0, 0.08, 0.05], undefined, "sprinklebug-shell-crown");
+    eyePair(0.1, -0.02, -0.5, 0.045, "sprinklebug");
+    for (const side of [-1, 1]) {
+      const sideName = side < 0 ? "left" : "right";
+      for (let leg = 0; leg < 3; leg += 1) {
+        const limb = add(visual, [0.28, 0.1, 0.075], darkMaterial, [side * 0.24, -0.23, -0.18 + leg * 0.2], "legs", `sprinklebug-${sideName}-leg-${leg + 1}`);
+        limb.rotation.z = side * -0.32;
+        limb.userData.phase = leg % 2 ? Math.PI : 0;
+      }
+      const antenna = add(visual, [0.035, 0.035, 0.3], darkMaterial, [side * 0.09, 0.05, -0.57], undefined, `sprinklebug-${sideName}-antenna`);
+      antenna.rotation.y = side * 0.3;
+    }
+    for (const [index, x, z, color] of [
+      [1, -0.12, -0.04, 0xffec78], [2, 0.11, 0.12, 0x72e1bf], [3, -0.08, 0.2, 0x8ac8ff], [4, 0.09, -0.16, 0xff8eac],
+    ] as Array<[number, number, number, number]>) add(visual, [0.055, 0.04, 0.13], material(color, true), [x, 0.145, z], undefined, `sprinklebug-sprinkle-${index}`).rotation.y = index * 0.62;
+  } else if (kind === "taffalo") {
+    add(visual, [1.2, 0.86, 1.7], bodyMaterial, [0, 0.28, 0.15], "body", "taffalo-body");
+    for (let fold = 0; fold < 5; fold += 1) add(visual, [1.28, 0.16, 0.3], material(fold % 2 ? 0xc77da3 : 0xa95d88), [0, 0.18 + fold * 0.13, -0.45 + fold * 0.25], undefined, `taffalo-taffy-fold-${fold + 1}`).rotation.y = (fold % 2 ? 1 : -1) * 0.06;
+    add(visual, [0.82, 0.8, 0.7], accentMaterial, [0, 0.58, -0.78], "body", "taffalo-marshmallow-mane");
+    add(visual, [0.78, 0.62, 0.72], bodyMaterial, [0, 0.61, -1.2], "head", "taffalo-head");
+    add(visual, [0.56, 0.3, 0.42], material(0xf2bdcf), [0, 0.45, -1.68], undefined, "taffalo-gumdrop-muzzle");
+    eyePair(0.23, 0.72, -1.56, 0.085, "taffalo");
+    add(visual, [0.14, 0.09, 0.06], darkMaterial, [0, 0.5, -1.92], undefined, "taffalo-nose");
+    for (const side of [-1, 1]) {
+      const sideName = side < 0 ? "left" : "right";
+      add(visual, [0.3, 0.16, 0.27], darkMaterial, [side * 0.46, 0.78, -1.14], undefined, `taffalo-${sideName}-ear`).rotation.z = side * -0.24;
+      const horn = add(visual, [0.18, 0.5, 0.18], material(0xf0e0b7), [side * 0.34, 1.16, -1.18], undefined, `taffalo-${sideName}-wafer-horn`);
+      horn.rotation.z = side * -0.5;
+      add(visual, [0.2, 0.3, 0.2], material(0xe9576a), [side * 0.52, 1.34, -1.18], undefined, `taffalo-${sideName}-peppermint-horn-tip`).rotation.z = side * -0.5;
+    }
+    quadrupedLegs(0.39, -0.36, 0.48, 0.27, 0.89, 0.23, darkMaterial, "taffalo");
+    for (const side of [-1, 1]) add(visual, [0.31, 0.12, 0.35], accentMaterial, [side * 0.39, -0.56, 0.48], undefined, `taffalo-${side < 0 ? "left" : "right"}-marshmallow-ankle`);
+    const tail = pivotBox([0.16, 0.16, 0.7], darkMaterial, [0, 0.4, 0.91], [0, -0.08, 0.31], "body", "taffalo-tail");
+    tail.rotation.x = -0.22;
+    add(tail, [0.32, 0.32, 0.32], accentMaterial, [0, -0.2, 0.67], undefined, "taffalo-tail-tuft");
+    const saddle = new THREE.Group();
+    saddle.name = "taffalo-saddle";
+    saddle.visible = false;
+    visual.add(saddle);
+    add(saddle, [0.92, 0.2, 0.86], material(0x70483d), [0, 0.83, 0.08], undefined, "taffalo-saddle-seat");
+    add(saddle, [1.23, 0.12, 0.2], material(0xd3ad62), [0, 0.71, 0.06], undefined, "taffalo-saddle-girth");
+    visual.userData.saddleAnchor = [0, 0.83, 0.08];
   } else if (kind === "sunwash-crab") {
     add(visual, [0.82, 0.28, 0.64], bodyMaterial, [0, -0.03, 0.02], "body", "sunwash-crab-shell");
     add(visual, [0.62, 0.12, 0.5], accentMaterial, [0, 0.15, 0.03], undefined, "sunwash-crab-sunburst-crown");
@@ -1088,13 +1277,13 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     visual.userData.fluidTailPrefix = `${kind}-fluid-tail-`;
   } else if (kind === "shoalfin" || kind === "coralback" || kind === "brookdart" || kind === "gloomfin"
     || kind === "silverthread" || kind === "reedneedle" || kind === "emberribbon" || kind === "cavefilament"
-    || kind === "redfin-salmon" || kind === "blue-mackerel" || kind === "glassfin" || kind === "lanternjaw") {
+    || kind === "redfin-salmon" || kind === "blue-mackerel" || kind === "glassfin" || kind === "lanternjaw" || kind === "syrupfin") {
     const prefix = kind;
     const thin = kind === "silverthread" || kind === "reedneedle" || kind === "emberribbon" || kind === "cavefilament"
       || kind === "redfin-salmon" || kind === "blue-mackerel" || kind === "glassfin";
     const large = kind === "coralback" ? 1.28 : kind === "brookdart" ? 0.72 : kind === "gloomfin" ? 0.92
       : kind === "redfin-salmon" ? 1.16 : kind === "blue-mackerel" ? 1.02 : kind === "glassfin" ? 0.98
-        : kind === "lanternjaw" ? 1.18 : thin ? 0.88 : 0.82;
+      : kind === "lanternjaw" ? 1.18 : kind === "syrupfin" ? 0.9 : thin ? 0.88 : 0.82;
     const bodyWidth = 0.5 * large * (thin ? 0.5 : 1);
     const bodyHeight = 0.42 * large * (thin ? 0.48 : 1);
     const bodyLength = 0.92 * large * (thin ? 1.35 : 1);
@@ -1149,6 +1338,11 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       add(visual, [0.58 * large, 0.18 * large, 0.36 * large], darkMaterial, [0, -0.18 * large, headZ - 0.13 * large], undefined, "lanternjaw-lower-jaw");
       for (let lamp = 0; lamp < 5; lamp += 1) add(visual, [0.1 * large, 0.1 * large, 0.06 * large], material(lamp % 2 ? 0x59e4cd : 0xc0fff4, true), [-0.22 * large + lamp * 0.11 * large, -0.09 * large, headZ - 0.35 * large], undefined, `lanternjaw-jaw-light-${lamp + 1}`);
       for (const side of [-1, 1]) add(visual, [0.24 * large, 0.4 * large, 0.08 * large], material(0x5ce5d0, true, 0.74), [side * 0.27 * large, 0.13 * large, -0.08], undefined, `lanternjaw-${side < 0 ? "left" : "right"}-signal-panel`).rotation.z = side * -0.2;
+    } else if (kind === "syrupfin") {
+      const candyGlass = material(0xffe0a1, false, 0.68);
+      add(visual, [bodyWidth * 0.82, bodyHeight * 0.32, bodyLength * 0.74], material(0x794124), [0, 0.04, 0.03], undefined, "syrupfin-molasses-stripe");
+      for (const side of [-1, 1]) add(visual, [0.28 * large, 0.04, 0.4 * large], candyGlass, [side * bodyWidth * 0.58, -0.01, 0.08], undefined, `syrupfin-${side < 0 ? "left" : "right"}-glass-fin-overlay`).rotation.y = side * -0.18;
+      add(visual, [0.07 * large, 0.42 * large, 0.36 * large], candyGlass, [0, dorsalCenterY + 0.03, 0.04], undefined, "syrupfin-glass-dorsal-overlay");
     } else {
       add(visual, [0.3 * large, 0.055, 0.5 * large], material(eyeColor), [0, 0.18 * large, 0.02], undefined, `${prefix}-back-stripe`);
     }
@@ -1306,7 +1500,7 @@ export function applyOceanCreaturePose(
   const time = Number.isFinite(timeSeconds) ? timeSeconds : 0;
   const travel = THREE.MathUtils.clamp(Number.isFinite(travelAmount) ? travelAmount : 0, 0, 1);
   const morph = THREE.MathUtils.clamp(Number.isFinite(airProgress) ? airProgress : 0, 0, 1);
-  if (["shoalfin", "coralback", "brookdart", "gloomfin", "silverthread", "reedneedle", "emberribbon", "cavefilament", "redfin-salmon", "blue-mackerel", "glassfin", "lanternjaw"].includes(kind)) {
+  if (["shoalfin", "coralback", "brookdart", "gloomfin", "silverthread", "reedneedle", "emberribbon", "cavefilament", "redfin-salmon", "blue-mackerel", "glassfin", "lanternjaw", "syrupfin"].includes(kind)) {
     for (const side of ["left", "right"] as const) {
       const tail = visual.getObjectByName(`${kind}-tail-${side}`);
       if (tail) tail.rotation.y = Math.sin(time * (4.2 + travel * 3) + (side === "left" ? 0 : 0.55)) * (0.15 + travel * 0.16);

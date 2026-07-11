@@ -1,7 +1,7 @@
 /** Human-facing release identity. Save-schema and generator versions are separate. */
-export const GAME_VERSION = "0.7.0" as const;
+export const GAME_VERSION = "0.8.0" as const;
 export const GAME_VERSION_LABEL = `v${GAME_VERSION}` as const;
-export const GAME_RELEASE_NAME = "Tidelight" as const;
+export const GAME_RELEASE_NAME = "Sugarcourt" as const;
 export const LEGACY_GAME_VERSION = "0.1.0" as const;
 
 export function normalizeGameVersion(value: unknown, fallback: string = LEGACY_GAME_VERSION): string {

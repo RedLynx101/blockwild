@@ -60,6 +60,7 @@ import {
   sentientPortraitPath,
 } from "./HearthroadsPanels";
 import { ALCHEMY_RECIPES, DISTILLERY_RECIPES } from "./alchemy";
+import { SUGARWORKS_RECIPES, createSugarworks } from "./candyworks";
 import { createBlueprintState } from "./blueprints";
 import {
   createBankAccount,
@@ -72,14 +73,22 @@ import {
   type MerchantTradeDirection,
   type StockSymbol,
 } from "./economy";
-import { alignmentFor, createFactionRelations, FACTIONS, type FactionId } from "./factions";
+import {
+  alignmentFor,
+  createFactionRelations,
+  FACTIONS,
+  isNpcFactionId,
+  NPC_FACTION_IDS,
+  type FactionId,
+  type NpcFactionId,
+} from "./factions";
 import { commerceKeyForItem, inventoryResourceCounts } from "./hearthroads-adapter";
 import { createMapKnowledge, type MapMarker } from "./map-system";
 import { PLANTS, createPlantBestiaryState, type PlantCategory } from "./plants";
 import { createQuestBook, type QuestObjective } from "./quests";
 import { createSettlementState, isMayorProfession, type ResidentProfession, type SettlementCandidate } from "./settlements";
 
-type WorkstationOverlay = "apiary" | "orb-rack" | "healing-station";
+type WorkstationOverlay = "apiary" | "orb-rack" | "healing-station" | "sugarworks";
 type CivicAuditMode = "atlantian-dialogue" | "atlantian-trade" | "atlantian-settlement";
 type Overlay = "title" | "new" | "pause" | "help" | "settings" | OverlayKind | null;
 export type BestiaryFilter = "all" | "surface" | "birds" | "butterflies" | "fish" | "monsters" | "companions";
@@ -106,8 +115,6 @@ const BESTIARY_FILTERS: ReadonlyArray<[BestiaryFilter, string]> = [
   ["companions", "Tameable"],
 ];
 
-type NpcFactionId = Exclude<FactionId, "player">;
-
 const SENTIENT_FACTION_COPY: Readonly<Record<NpcFactionId, Readonly<{
   fallbackName: string;
   greeting: string;
@@ -132,6 +139,12 @@ const SENTIENT_FACTION_COPY: Readonly<Record<NpcFactionId, Readonly<{
     settlementChoice: "Ask about this tidemoot",
     settlementChoiceDescription: "Find its Tidewarden, reefworkers, glowmenders, and open current lanes.",
   },
+  sugarcourt: {
+    fallbackName: "Sugarcourt Neighbor",
+    greeting: "Mind the warm syrup, traveler. A careful sweetmaker always leaves room at the counter.",
+    settlementChoice: "Ask about this borough",
+    settlementChoiceDescription: "Find its Crown Confectioner, Candysmiths, kennels, gates, and Sugarworks.",
+  },
 };
 
 const SETTLEMENT_DISPLAY_NAMES: Readonly<Record<FactionId, string>> = {
@@ -139,15 +152,14 @@ const SETTLEMENT_DISPLAY_NAMES: Readonly<Record<FactionId, string>> = {
   hobbits: "Hearthkin Freehold",
   goblins: "Brassroot Clanhold",
   atlantians: "Lumen Tidemoot",
+  sugarcourt: "Bonbon Borough",
 };
-
-export function isNpcFactionId(value: unknown): value is NpcFactionId {
-  return value === "hobbits" || value === "goblins" || value === "atlantians";
-}
 
 export function sentientProfession(value: unknown, factionId: NpcFactionId): ResidentProfession {
   if (isResidentProfession(value)) return value;
-  return factionId === "atlantians" ? "atlantian-tidewarden" : "general";
+  return factionId === "atlantians" ? "atlantian-tidewarden"
+    : factionId === "sugarcourt" ? "sugarcourt-crown-confectioner"
+      : "general";
 }
 
 const ATLANTIAN_UI_AUDIT_CANDIDATE: SettlementCandidate = {
@@ -220,8 +232,8 @@ type HearthroadsEngineApi = {
   removeMapMarker?: (markerId: string) => boolean;
   renameWayshrineMarker?: (markerId: string, name: string) => boolean;
   requestFastTravel?: (markerId: string) => boolean;
-  startStationBatch?: (machine: "alchemy" | "distillery", recipeId: string) => boolean;
-  collectStationOutput?: (machine: "alchemy" | "distillery") => boolean;
+  startStationBatch?: (machine: "alchemy" | "distillery" | "sugarworks", recipeId: string) => boolean;
+  collectStationOutput?: (machine: "alchemy" | "distillery" | "sugarworks") => boolean;
   tradeWithActiveMerchant?: (direction: MerchantTradeDirection, itemKey: string, quantity: number) => boolean;
   depositGold?: (amount: GoldAmount) => boolean;
   withdrawGold?: (amount: GoldAmount) => boolean;
@@ -602,6 +614,7 @@ const INITIAL_HUD: ExtendedHudState = {
   plantBestiary: createPlantBestiaryState(),
   activeAlchemy: null,
   activeDistillery: null,
+  activeSugarworks: null,
   goldWallet: createGoldWallet("preview", "local"),
   factionRelations: createFactionRelations("preview"),
   settlements: [],
@@ -1004,7 +1017,10 @@ export default function VoxelGame() {
   const [worlds, setWorlds] = useState<WorldMetadata[]>([]);
   const [selectedWorldId, setSelectedWorldId] = useState<string | null>(null);
   const [worldName, setWorldName] = useState("Untamed World");
-  const [worldOptions, setWorldOptions] = useState<WorldOptions>(() => ({ ...DEFAULT_WORLD_OPTIONS }));
+  const [worldOptions, setWorldOptions] = useState<WorldOptions>(() => ({
+    ...DEFAULT_WORLD_OPTIONS,
+    enabledFactions: [...DEFAULT_WORLD_OPTIONS.enabledFactions],
+  }));
   const [worldNotice, setWorldNotice] = useState("");
   const [seed, setSeed] = useState("WILDERNESS");
   const [currentWorldSeed, setCurrentWorldSeed] = useState("WILDERNESS");
@@ -1029,6 +1045,7 @@ export default function VoxelGame() {
   const [selectedMapMarkerId, setSelectedMapMarkerId] = useState<string | null>(null);
   const [selectedAlchemyRecipe, setSelectedAlchemyRecipe] = useState<string | null>(null);
   const [selectedDistilleryRecipe, setSelectedDistilleryRecipe] = useState<string | null>(null);
+  const [selectedSugarworksRecipe, setSelectedSugarworksRecipe] = useState<string | null>(null);
   const [hirelingNameDraft, setHirelingNameDraft] = useState("");
   const [multiplayerName, setMultiplayerName] = useState("Trailkeeper");
   const [multiplayerRoomCode, setMultiplayerRoomCode] = useState("");
@@ -1055,7 +1072,7 @@ export default function VoxelGame() {
     setIconAuditMode(parameters.get("icon-audit") === "1");
     setHeldAuditMode(parameters.get("held-audit") === "1");
     const workstationAudit = parameters.get("workstation-audit");
-    setWorkstationAuditMode(workstationAudit === "apiary" || workstationAudit === "orb-rack" || workstationAudit === "healing-station" ? workstationAudit : null);
+    setWorkstationAuditMode(workstationAudit === "apiary" || workstationAudit === "orb-rack" || workstationAudit === "healing-station" || workstationAudit === "sugarworks" ? workstationAudit : null);
     const civicAudit = parameters.get("civic-audit");
     setCivicAuditMode(civicAudit === "atlantian-dialogue" || civicAudit === "atlantian-trade" || civicAudit === "atlantian-settlement" ? civicAudit : null);
   }, []);
@@ -1264,7 +1281,7 @@ export default function VoxelGame() {
     const engine = engineRef.current;
     if (engine) setSeed(engine.randomSeed());
     setWorldName(`Untamed World ${worlds.length + 1}`);
-    setWorldOptions({ ...DEFAULT_WORLD_OPTIONS });
+    setWorldOptions({ ...DEFAULT_WORLD_OPTIONS, enabledFactions: [...DEFAULT_WORLD_OPTIONS.enabledFactions] });
     setWorldNotice("");
     setOverlay("new");
   };
@@ -1973,6 +1990,7 @@ export default function VoxelGame() {
   } : null;
   const alchemyState = hud.activeAlchemy ? { ...hud.activeAlchemy, selectedRecipeId: selectedAlchemyRecipe ?? hud.activeAlchemy.selectedRecipeId } : null;
   const distilleryState = hud.activeDistillery ? { ...hud.activeDistillery, selectedRecipeId: selectedDistilleryRecipe ?? hud.activeDistillery.selectedRecipeId } : null;
+  const sugarworksState = hud.activeSugarworks ? { ...hud.activeSugarworks, selectedRecipeId: selectedSugarworksRecipe ?? hud.activeSugarworks.selectedRecipeId } : null;
   const pinnedQuestDefinition = hud.questDefinitions.find((quest) => quest.id === hud.questBook.pinnedQuestId) ?? null;
   const pinnedQuestProgress = pinnedQuestDefinition
     ? hud.questBook.active.find((quest) => quest.questId === pinnedQuestDefinition.id) ?? null
@@ -2099,7 +2117,7 @@ export default function VoxelGame() {
           <div className="title-content">
             <div className="logo-wrap">
               <h1 id="game-title" className="block-logo">BLOCKWILD</h1>
-              <p className="logo-subtitle">ENDLESS HORIZONS · TWENTY-ONE BIOMES · A VERY DEEP DOWN</p>
+              <p className="logo-subtitle">ENDLESS HORIZONS · {Object.keys(BIOME_NAMES).length} BIOMES · A VERY DEEP DOWN</p>
               <span className="splash-text">Now actually endless!</span>
             </div>
             <div className="title-menu-layout">
@@ -2164,7 +2182,7 @@ export default function VoxelGame() {
           <div className="pixel-panel world-setup-panel expanded-setup-panel">
             <span className="panel-eyebrow">ENDLESS WORLD GENERATOR</span>
             <h2 id="new-world-title">Create a New World</h2>
-            <p className="setup-intro">Every seed grows continents, oceans, rivers, mountains, twenty-one biomes, cave networks, ruins, settlements, and a worldheart sixty-four blocks below zero.</p>
+            <p className="setup-intro">Every seed grows continents, oceans, rivers, mountains, {Object.keys(BIOME_NAMES).length} biomes, cave networks, ruins, settlements, and a worldheart sixty-four blocks below zero.</p>
             <label className="field-label" htmlFor="world-name">World name</label>
             <input id="world-name" className="pixel-input world-name-input" value={worldName} maxLength={64} onChange={(event) => setWorldName(event.target.value)} />
             <label className="field-label" htmlFor="world-seed">World seed</label>
@@ -2184,7 +2202,7 @@ export default function VoxelGame() {
               </button>
             </fieldset>
             <details className="advanced-world-options">
-              <summary><span>Advanced world options</span><small>Difficulty, ecology, terrain, and inventory rules</small></summary>
+              <summary><span>Advanced world options</span><small>Difficulty, ecology, cultures, terrain, and inventory rules</small></summary>
               <div className="advanced-option-grid">
                 <label><span>Difficulty <b>{worldOptions.difficulty.toUpperCase()}</b></span><select value={worldOptions.difficulty} onChange={(event) => setWorldOptions((current) => ({ ...current, difficulty: event.target.value as WorldOptions["difficulty"] }))}><option value="peaceful">Peaceful</option><option value="easy">Easy</option><option value="normal">Normal</option><option value="hard">Hard</option></select></label>
                 <label><span>Day length <b>{worldOptions.dayLengthMinutes} min</b></span><input type="range" min="5" max="120" step="5" value={worldOptions.dayLengthMinutes} onChange={(event) => setWorldOptions((current) => ({ ...current, dayLengthMinutes: Number(event.target.value) }))} /></label>
@@ -2203,6 +2221,42 @@ export default function VoxelGame() {
                   ["friendlyFire", "Friendly fire"],
                 ] as const).map(([key, label]) => <button type="button" key={key} className={worldOptions[key] ? "active" : ""} onClick={() => setWorldOptions((current) => ({ ...current, [key]: !current[key] }))}><span>{label}</span><b>{worldOptions[key] ? "ON" : "OFF"}</b></button>)}
               </div>
+              <section className="faction-spawn-options" aria-labelledby="faction-spawn-title">
+                <div className="faction-spawn-heading">
+                  <div>
+                    <h3 id="faction-spawn-title">Cultures in this world</h3>
+                    <p>Choose which factions may found settlements and bring aligned residents. Their home biomes and wild ecology still exist.</p>
+                  </div>
+                  <div className="faction-spawn-actions">
+                    <button type="button" onClick={() => setWorldOptions((current) => ({ ...current, enabledFactions: [...NPC_FACTION_IDS] }))}>All</button>
+                    <button type="button" onClick={() => setWorldOptions((current) => ({ ...current, enabledFactions: [] }))}>None</button>
+                  </div>
+                </div>
+                <div className="faction-spawn-grid">
+                  {NPC_FACTION_IDS.map((factionId) => {
+                    const enabled = worldOptions.enabledFactions.includes(factionId);
+                    const faction = FACTIONS[factionId];
+                    return (
+                      <button
+                        type="button"
+                        key={factionId}
+                        className={`${enabled ? "active" : ""} faction-spawn-${factionId}`}
+                        aria-pressed={enabled}
+                        onClick={() => setWorldOptions((current) => ({
+                          ...current,
+                          enabledFactions: enabled
+                            ? current.enabledFactions.filter((candidate) => candidate !== factionId)
+                            : NPC_FACTION_IDS.filter((candidate) => current.enabledFactions.includes(candidate) || candidate === factionId),
+                        }))}
+                      >
+                        <span>{faction.name}</span>
+                        <small>{faction.aquaticOnly ? "Aquatic settlements" : factionId === "sugarcourt" ? "Sugarplum Vale boroughs" : "Surface settlements"}</small>
+                        <b>{enabled ? "SPAWNS" : "DISABLED"}</b>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
             </details>
             <div className="world-feature-strip">
               <span><b>∞</b> STREAMED WORLD</span><span><b>{Object.keys(BIOME_NAMES).length}</b> BIOMES</span><span><b>{MOB_ORDER.length}</b> CREATURES</span><span><b>192</b> BLOCKS TALL</span>
@@ -2464,6 +2518,22 @@ export default function VoxelGame() {
             onSelectRecipe={setSelectedDistilleryRecipe}
             onStartBatch={(recipeId) => { hearthroadsApi?.startStationBatch?.("distillery", recipeId); }}
             onCollectOutput={() => { hearthroadsApi?.collectStationOutput?.("distillery"); }}
+            onClose={resume}
+          />
+        </section>
+      )}
+
+      {overlay === "sugarworks" && sugarworksState && (
+        <section className="menu-overlay hearthroads-overlay sugarworks-overlay" aria-label="Sugarworks">
+          <StationPanel
+            kind="sugarworks"
+            state={sugarworksState}
+            recipes={SUGARWORKS_RECIPES}
+            inventory={resourceInventory}
+            blueprints={hud.blueprints}
+            onSelectRecipe={setSelectedSugarworksRecipe}
+            onStartBatch={(recipeId) => { hearthroadsApi?.startStationBatch?.("sugarworks", recipeId); }}
+            onCollectOutput={() => { hearthroadsApi?.collectStationOutput?.("sugarworks"); }}
             onClose={resume}
           />
         </section>
@@ -2784,6 +2854,25 @@ export default function VoxelGame() {
           null,
         ],
       }, true)}
+      {workstationAuditMode === "sugarworks" && (
+        <section className="menu-overlay hearthroads-overlay sugarworks-overlay workstation-audit-overlay" aria-label="Sugarworks interface audit">
+          <StationPanel
+            kind="sugarworks"
+            state={{
+              ...createSugarworks(),
+              selectedRecipeId: "sugarcourt-candied-alloy",
+              activeBatch: { recipeId: "sugarcourt-candied-alloy", progressSeconds: 15, durationSeconds: 24 },
+            }}
+            recipes={SUGARWORKS_RECIPES}
+            inventory={{ gumdrop: 12, "lollipop-petal": 7, "honey-jar": 3, "cocoa-nib": 5, "candied-alloy": 9, "crystal-shard": 4, "marshmallow-tuft": 8, stick: 12, "peppermint-cane": 6 }}
+            blueprints={createBlueprintState()}
+            onSelectRecipe={() => undefined}
+            onStartBatch={() => undefined}
+            onCollectOutput={() => undefined}
+            onClose={() => setWorkstationAuditMode(null)}
+          />
+        </section>
+      )}
 
       {civicAuditMode && (
         <section className="menu-overlay hearthroads-overlay civic-audit-overlay" aria-label="Atlantian civic interface audit">

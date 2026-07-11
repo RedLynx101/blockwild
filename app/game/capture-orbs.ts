@@ -4,6 +4,7 @@ import {
   cloneCreatureMetadata,
   decodeCapturedCreature,
   encodeCapturedCreature,
+  normalizeCreatureMetadata,
   type CreatureMetadata,
 } from "./creature-cage";
 
@@ -62,12 +63,11 @@ export function encodeCaptureOrb(orb: CaptureOrb) {
 export function decodeCaptureOrb(value: string): CaptureOrb | null {
   try {
     const parsed = JSON.parse(value) as Partial<CaptureOrb>;
-    if (parsed.schema !== 1 || typeof parsed.orbId !== "string" || typeof parsed.capturedAt !== "number") return null;
+    if (parsed.schema !== 1 || typeof parsed.orbId !== "string" || parsed.orbId.length === 0 || parsed.orbId.length > 80
+      || typeof parsed.capturedAt !== "number" || !Number.isFinite(parsed.capturedAt) || parsed.capturedAt < 0) return null;
     if (parsed.creature === null) return createEmptyCaptureOrb(parsed.orbId);
-    const creature = parsed.creature as Partial<CreatureMetadata> | undefined;
-    if (!creature || creature.schema !== 1 || typeof creature.entityId !== "string" || typeof creature.kind !== "string") return null;
-    if (typeof creature.health !== "number" || typeof creature.maxHealth !== "number") return null;
-    return { schema: 1, orbId: parsed.orbId, capturedAt: parsed.capturedAt, creature: cloneCreatureMetadata(creature as CreatureMetadata) };
+    const creature = normalizeCreatureMetadata(parsed.creature);
+    return creature ? { schema: 1, orbId: parsed.orbId, capturedAt: parsed.capturedAt, creature } : null;
   } catch {
     return null;
   }

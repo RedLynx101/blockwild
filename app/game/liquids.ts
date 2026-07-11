@@ -7,7 +7,9 @@
  * a broken reservoir from monopolising a frame.
  */
 
-export type LiquidKind = "water" | "lava";
+import { BLOCKS, BlockId, blockContainsWater } from "./data";
+
+export type LiquidKind = "water" | "lava" | "honey" | "syrup";
 
 export type LiquidPosition = Readonly<{ x: number; y: number; z: number }>;
 
@@ -41,14 +43,56 @@ export interface LiquidWorldAdapter {
 export type LiquidSimulationOptions = Readonly<{
   waterSpread: number;
   lavaSpread: number;
+  honeySpread: number;
+  syrupSpread: number;
   maxOperationsPerTick: number;
 }>;
 
 export const DEFAULT_LIQUID_SIMULATION_OPTIONS: LiquidSimulationOptions = Object.freeze({
   waterSpread: 7,
   lavaSpread: 3,
+  // Both food liquids are deliberately thicker and non-renewing. Syrup
+  // travels a little farther than honey so natural ponds settle cleanly.
+  honeySpread: 2,
+  syrupSpread: 4,
   maxOperationsPerTick: 192,
 });
+
+export type LiquidProfile = Readonly<{
+  block: BlockId;
+  bucketItemName: string;
+  renewable: boolean;
+  spreadOption: keyof Pick<LiquidSimulationOptions, "waterSpread" | "lavaSpread" | "honeySpread" | "syrupSpread">;
+}>;
+
+export const LIQUID_PROFILES: Readonly<Record<LiquidKind, LiquidProfile>> = Object.freeze({
+  water: Object.freeze({ block: BlockId.Water, bucketItemName: "Water Bucket", renewable: true, spreadOption: "waterSpread" }),
+  lava: Object.freeze({ block: BlockId.Lava, bucketItemName: "Lava Bucket", renewable: false, spreadOption: "lavaSpread" }),
+  honey: Object.freeze({ block: BlockId.Honey, bucketItemName: "Honey Bucket", renewable: false, spreadOption: "honeySpread" }),
+  syrup: Object.freeze({ block: BlockId.Syrup, bucketItemName: "Syrup Bucket", renewable: false, spreadOption: "syrupSpread" }),
+});
+
+/** Canonical bridge between save-friendly liquid cells and placed blocks. */
+export function liquidBlockForKind(kind: LiquidKind) {
+  return LIQUID_PROFILES[kind].block;
+}
+
+/** Waterlogged flora still reports water even though its rendered block is a plant. */
+export function liquidKindForBlock(block: BlockId | undefined): LiquidKind | undefined {
+  if (block === undefined) return undefined;
+  if (blockContainsWater(block)) return "water";
+  const kind = BLOCKS[block]?.liquid;
+  return kind === "water" || kind === "lava" || kind === "honey" || kind === "syrup" ? kind : undefined;
+}
+
+export function blockContainsLiquid(block: BlockId | undefined, kind?: LiquidKind) {
+  const contained = liquidKindForBlock(block);
+  return kind === undefined ? contained !== undefined : contained === kind;
+}
+
+export function isRenewableLiquidKind(kind: LiquidKind) {
+  return LIQUID_PROFILES[kind].renewable;
+}
 
 const CARDINAL_OFFSETS = [
   [1, 0, 0],
@@ -93,6 +137,8 @@ export class LiquidSimulator {
     this.options = Object.freeze({
       waterSpread: Math.max(1, Math.min(15, Math.round(options.waterSpread ?? DEFAULT_LIQUID_SIMULATION_OPTIONS.waterSpread))),
       lavaSpread: Math.max(1, Math.min(15, Math.round(options.lavaSpread ?? DEFAULT_LIQUID_SIMULATION_OPTIONS.lavaSpread))),
+      honeySpread: Math.max(1, Math.min(15, Math.round(options.honeySpread ?? DEFAULT_LIQUID_SIMULATION_OPTIONS.honeySpread))),
+      syrupSpread: Math.max(1, Math.min(15, Math.round(options.syrupSpread ?? DEFAULT_LIQUID_SIMULATION_OPTIONS.syrupSpread))),
       maxOperationsPerTick: Math.max(1, Math.round(options.maxOperationsPerTick ?? DEFAULT_LIQUID_SIMULATION_OPTIONS.maxOperationsPerTick)),
     });
   }
@@ -154,7 +200,7 @@ export class LiquidSimulator {
   }
 
   private maxSpread(kind: LiquidKind) {
-    return kind === "water" ? this.options.waterSpread : this.options.lavaSpread;
+    return this.options[LIQUID_PROFILES[kind].spreadOption];
   }
 
   private isInsideWorld(position: LiquidPosition) {

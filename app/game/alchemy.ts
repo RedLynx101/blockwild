@@ -11,7 +11,7 @@ export type RecipeIngredient = Readonly<{ item: string; count: number; consume?:
 export type PotionEffect =
   | Readonly<{ kind: "heal"; amount: number }>
   | Readonly<{ kind: "bank-fast-travel"; charges: number }>
-  | Readonly<{ kind: "timed-buff"; buff: "hearthward" | "gloamstep" | "tidebreath"; durationSeconds: number }>;
+  | Readonly<{ kind: "timed-buff"; buff: "hearthward" | "gloamstep" | "tidebreath" | "peppermint-rush" | "marshmallow-ward"; durationSeconds: number }>;
 
 export type AlchemyRecipe = Readonly<{
   id: string;
@@ -94,6 +94,26 @@ export const ALCHEMY_RECIPES: readonly AlchemyRecipe[] = Object.freeze([
     brewSeconds: 34,
     blueprintId: null,
     effect: { kind: "timed-buff", buff: "tidebreath", durationSeconds: 300 },
+  },
+  {
+    id: "peppermint-rush",
+    name: "Peppermint Rush",
+    description: "Ribbon-bright mint and a wild gumdrop lend quick feet without shortening the road ahead.",
+    inputs: [{ item: "water-bottle", count: 1 }, { item: "peppermint-cane", count: 2 }, { item: "gumdrop", count: 1 }],
+    output: { item: "peppermint-rush", count: 1 },
+    brewSeconds: 38,
+    blueprintId: "sugarcourt-peppermint-rush",
+    effect: { kind: "timed-buff", buff: "peppermint-rush", durationSeconds: 180 },
+  },
+  {
+    id: "marshmallow-ward",
+    name: "Marshmallow Ward",
+    description: "Honey suspends a soft marshmallow charm that cushions harm and knockback.",
+    inputs: [{ item: "water-bottle", count: 1 }, { item: "marshmallow-tuft", count: 2 }, { item: "honey-jar", count: 1 }],
+    output: { item: "marshmallow-ward", count: 1 },
+    brewSeconds: 44,
+    blueprintId: "sugarcourt-marshmallow-ward",
+    effect: { kind: "timed-buff", buff: "marshmallow-ward", durationSeconds: 210 },
   },
 ]);
 

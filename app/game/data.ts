@@ -137,6 +137,27 @@ export enum BlockId {
   GiantLanternLotus = 134,
   JungleSapling = 135,
   SakuraSapling = 136,
+  /** v0.8 Sugarplum Vale terrain, liquids, cultivation and crafting. */
+  SugarplumGrass = 137,
+  SugarSoil = 138,
+  CandywoodLog = 139,
+  CandywoodLeaves = 140,
+  BoiledSugarbrick = 141,
+  Syrup = 142,
+  Honey = 143,
+  GumdropBush = 144,
+  PeppermintTuft = 145,
+  LollipopOrchid = 146,
+  MarshmallowShrub = 147,
+  PeppermintSprout = 148,
+  PeppermintYoung = 149,
+  PeppermintCrop = 150,
+  CocoaSprout = 151,
+  CocoaYoung = 152,
+  CocoaCrop = 153,
+  Sugarworks = 154,
+  CandywoodSapling = 155,
+  GiantLollipopOrchid = 156,
   /** v0.5 furniture/flora retain the high byte range; item ids occupy a separate namespace. */
   Apiary = 240,
   CaptureOrbRack = 241,
@@ -305,6 +326,37 @@ export const Item = {
   SakurabloomLeavesItem: 273,
   RainveilGrassBlock: 274,
   SakurabloomGrassBlock: 275,
+  HoneyBucket: 276,
+  SyrupBucket: 277,
+  PeppermintCane: 278,
+  PeppermintSeeds: 279,
+  CocoaNib: 280,
+  CocoaSeeds: 281,
+  Gumdrop: 282,
+  LollipopPetal: 283,
+  MarshmallowTuft: 284,
+  BonbonwingTreat: 285,
+  SyrupfinFillet: 286,
+  CandiedAlloy: 287,
+  RockcandySaber: 288,
+  PeppermintLance: 289,
+  FondantCrown: 290,
+  FondantCuirass: 291,
+  FondantGreaves: 292,
+  FondantBoots: 293,
+  PeppermintRush: 294,
+  MarshmallowWard: 295,
+  SugarcourtArmsBlueprint: 296,
+  FondantArmorBlueprint: 297,
+  PeppermintRushBlueprint: 298,
+  MarshmallowWardBlueprint: 299,
+  SugarworksItem: 300,
+  CandywoodLogItem: 301,
+  CandywoodLeavesItem: 302,
+  SugarplumGrassBlock: 303,
+  BoiledSugarbrickItem: 304,
+  CandywoodSaplingItem: 305,
+  SugarSoilBlock: 306,
 } as const;
 
 export type ItemCode = number;
@@ -335,9 +387,9 @@ export type BlockDefinition = {
   color: string;
   preferredTool: BlockTool;
   requiredTier: number;
-  shape?: "cube" | "cross" | "tall-flower" | "aquatic" | "torch" | "door" | "chest" | "bed" | "exhibit" | "bush" | "fruit" | "fence" | "gate" | "apiary" | "wild-hive" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "chair" | "table" | "stool" | "shelf" | "barrel";
+  shape?: "cube" | "cross" | "tall-flower" | "aquatic" | "torch" | "door" | "chest" | "bed" | "exhibit" | "bush" | "fruit" | "fence" | "gate" | "apiary" | "wild-hive" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "table" | "stool" | "shelf" | "barrel";
   replaceable?: boolean;
-  liquid?: "water" | "lava";
+  liquid?: "water" | "lava" | "honey" | "syrup";
   /** The block occupies a water source cell; breaking it restores the water. */
   waterlogged?: boolean;
   /** Adjacent stems in this group overlap slightly so stacked flora reads as one plant. */
@@ -372,14 +424,14 @@ export type ItemDefinition = {
   /** Initial world block produced by planting this item rather than placing it directly. */
   plantBlock?: BlockId;
   /** Contents rendered in and placed from a bucket. */
-  bucketLiquid?: "water" | "lava";
+  bucketLiquid?: "water" | "lava" | "honey" | "syrup";
   /** Semantic UI hook for non-cube inventory artwork. */
-  iconKind?: "crafting-table" | "chest" | "apiary" | "capture-orb" | "orb-rack" | "orb-healer" | "bucket" | "fence-gate" | "lead" | "seed" | "produce" | "honeycomb" | "honey" | "jelly" | "wax" | "milk" | "relic" | "queen-cell" | "bee" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "chair" | "bottle" | "potion" | "mead" | "blueprint" | "bolt" | "spear" | "crossbow";
+  iconKind?: "crafting-table" | "chest" | "apiary" | "capture-orb" | "orb-rack" | "orb-healer" | "bucket" | "fence-gate" | "lead" | "seed" | "produce" | "honeycomb" | "honey" | "jelly" | "wax" | "milk" | "relic" | "queen-cell" | "bee" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "potion" | "mead" | "blueprint" | "bolt" | "spear" | "crossbow" | "sword" | "armor";
   /** Reuse a world atlas texture for the handheld/icon representation. */
   worldTextureBlock?: BlockId;
   /** Shared semantic model hooks consumed by held-item and dropped-item renderers. */
-  heldModel?: "wildwood-chest" | "apiary" | "capture-orb" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "chair" | "bottle" | "potion" | "mead" | "blueprint" | "crossbow" | "spear";
-  dropModel?: "wildwood-chest" | "apiary" | "capture-orb" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "chair" | "bottle" | "potion" | "mead" | "blueprint" | "crossbow" | "spear";
+  heldModel?: "wildwood-chest" | "apiary" | "capture-orb" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "potion" | "mead" | "blueprint" | "crossbow" | "spear";
+  dropModel?: "wildwood-chest" | "apiary" | "capture-orb" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "potion" | "mead" | "blueprint" | "crossbow" | "spear";
 };
 
 const block = (
@@ -546,6 +598,26 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.GiantLanternLotus]: block(BlockId.GiantLanternLotus, "Cultivated Lantern Lotus", 125, 125, 125, 0.08, "#ffc17e", "hand", 0, { solid: false, layer: "emissive", shape: "tall-flower", replaceable: true, verticalConnectGroup: "cultivated-flower" }),
   [BlockId.JungleSapling]: block(BlockId.JungleSapling, "Rainveil Sapling", 124, 124, 124, 0.06, "#3c995a", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
   [BlockId.SakuraSapling]: block(BlockId.SakuraSapling, "Sakurabloom Sapling", 112, 112, 112, 0.06, "#df91b9", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
+  [BlockId.SugarplumGrass]: block(BlockId.SugarplumGrass, "Sugarplum Grass", 129, 130, 131, 0.64, "#a56fd0", "shovel"),
+  [BlockId.SugarSoil]: block(BlockId.SugarSoil, "Sugar Soil", 131, 131, 131, 0.56, "#78536f", "shovel"),
+  [BlockId.CandywoodLog]: block(BlockId.CandywoodLog, "Candywood Log", 133, 132, 133, 1.06, "#9f5b82", "axe"),
+  [BlockId.CandywoodLeaves]: block(BlockId.CandywoodLeaves, "Candywood Leaves", 134, 134, 134, 0.28, "#e990bb", "hand", 0, { layer: "cutout" }),
+  [BlockId.BoiledSugarbrick]: block(BlockId.BoiledSugarbrick, "Boiled Sugarbrick", 135, 135, 135, 2.05, "#f19bba", "pickaxe", 2),
+  [BlockId.Syrup]: block(BlockId.Syrup, "Sugarplum Syrup", 136, 136, 136, 0, "#b96835", "hand", 0, { solid: false, layer: "transparent", replaceable: true, liquid: "syrup" }),
+  [BlockId.Honey]: block(BlockId.Honey, "Wildflower Honey", 137, 137, 137, 0, "#d99c2f", "hand", 0, { solid: false, layer: "transparent", replaceable: true, liquid: "honey" }),
+  [BlockId.GumdropBush]: block(BlockId.GumdropBush, "Gumdrop Bush", 138, 138, 138, 0.12, "#d55f9a", "hand", 0, { solid: false, layer: "cutout", shape: "bush", replaceable: true }),
+  [BlockId.PeppermintTuft]: block(BlockId.PeppermintTuft, "Wild Peppermint", 139, 139, 139, 0.05, "#e95063", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
+  [BlockId.LollipopOrchid]: block(BlockId.LollipopOrchid, "Lollipop Orchid", 141, 141, 141, 0.05, "#f3a4d2", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
+  [BlockId.MarshmallowShrub]: block(BlockId.MarshmallowShrub, "Marshmallow Shrub", 142, 142, 142, 0.08, "#f8e9ec", "hand", 0, { solid: false, layer: "cutout", shape: "bush", replaceable: true }),
+  [BlockId.PeppermintSprout]: block(BlockId.PeppermintSprout, "Peppermint Sprout", 139, 139, 139, 0.04, "#73ae72", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
+  [BlockId.PeppermintYoung]: block(BlockId.PeppermintYoung, "Young Peppermint Cane", 139, 139, 139, 0.05, "#df6b78", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
+  [BlockId.PeppermintCrop]: block(BlockId.PeppermintCrop, "Ripe Peppermint Cane", 139, 139, 139, 0.07, "#f04d62", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
+  [BlockId.CocoaSprout]: block(BlockId.CocoaSprout, "Cocoa Sprout", 140, 140, 140, 0.04, "#75a65e", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
+  [BlockId.CocoaYoung]: block(BlockId.CocoaYoung, "Young Cocoa Puff", 140, 140, 140, 0.05, "#9b6a51", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
+  [BlockId.CocoaCrop]: block(BlockId.CocoaCrop, "Ripe Cocoa Puff", 140, 140, 140, 0.07, "#6f4636", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
+  [BlockId.Sugarworks]: block(BlockId.Sugarworks, "Sugarworks", 143, 143, 135, 1.45, "#ef9fc4", "pickaxe", 1, { shape: "sugarworks", layer: "cutout" }),
+  [BlockId.CandywoodSapling]: block(BlockId.CandywoodSapling, "Candywood Sapling", 138, 138, 138, 0.06, "#e57cad", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
+  [BlockId.GiantLollipopOrchid]: block(BlockId.GiantLollipopOrchid, "Cultivated Lollipop Orchid", 141, 141, 141, 0.08, "#f4acd7", "hand", 0, { solid: false, layer: "cutout", shape: "tall-flower", replaceable: true, verticalConnectGroup: "cultivated-flower" }),
   [BlockId.Apiary]: block(BlockId.Apiary, "Wildwood Apiary", 92, 91, 11, 1.15, "#bd7b32", "axe", 0, { shape: "apiary" }),
   [BlockId.CaptureOrbRack]: block(BlockId.CaptureOrbRack, "Capture Orb Rack", 94, 94, 11, 0.85, "#795031", "axe", 0, { shape: "orb-rack" }),
   [BlockId.CreatureHealer]: block(BlockId.CreatureHealer, "Creature Healer", 95, 94, 11, 1.4, "#67d8d4", "pickaxe", 2, { shape: "orb-healer" }),
@@ -625,12 +697,14 @@ const technicalBlocks = new Set<BlockId>([
   BlockId.SunberryShoot, BlockId.SunberryBush, BlockId.SunberryBushRipe,
   BlockId.AppleSapling, BlockId.AppleLeaves, BlockId.AppleFruit,
   BlockId.WheatSprout, BlockId.WheatYoung, BlockId.HydratedFarmland,
+  BlockId.PeppermintSprout, BlockId.PeppermintYoung, BlockId.PeppermintCrop,
+  BlockId.CocoaSprout, BlockId.CocoaYoung, BlockId.CocoaCrop,
   BlockId.FenceGateNorthSouthClosed, BlockId.FenceGateEastWestClosed,
   BlockId.FenceGateNorthSouthOpen, BlockId.FenceGateEastWestOpen,
   ...BED_BLOCKS,
 ]);
 for (const definition of Object.values(BLOCKS)) {
-  if (definition.id === BlockId.Air || definition.id === BlockId.Water || definition.id === BlockId.Lava || definition.id === BlockId.Bedrock || technicalBlocks.has(definition.id)) continue;
+  if (definition.id === BlockId.Air || definition.liquid || definition.id === BlockId.Bedrock || technicalBlocks.has(definition.id)) continue;
   ITEMS[definition.id] = {
     id: definition.id,
     name: definition.name,
@@ -648,6 +722,7 @@ for (const definition of Object.values(BLOCKS)) {
     ...(definition.id === BlockId.AlchemyStand ? { iconKind: "alchemy" as const, heldModel: "alchemy" as const, dropModel: "alchemy" as const } : {}),
     ...(definition.id === BlockId.Wayshrine ? { iconKind: "wayshrine" as const, heldModel: "wayshrine" as const, dropModel: "wayshrine" as const } : {}),
     ...(definition.id === BlockId.Distillery ? { iconKind: "distillery" as const, heldModel: "distillery" as const, dropModel: "distillery" as const } : {}),
+    ...(definition.id === BlockId.Sugarworks ? { iconKind: "sugarworks" as const, heldModel: "sugarworks" as const, dropModel: "sugarworks" as const } : {}),
     ...(definition.id === BlockId.HearthChair ? { iconKind: "chair" as const, heldModel: "chair" as const, dropModel: "chair" as const } : {}),
   };
 }
@@ -797,10 +872,41 @@ Object.assign(ITEMS, {
   [Item.SakurabloomLeavesItem]: { id: Item.SakurabloomLeavesItem, name: "Sakurabloom Leaves", color: "#ec9fc5", maxStack: 64, placeBlock: BlockId.SakuraLeaves },
   [Item.RainveilGrassBlock]: { id: Item.RainveilGrassBlock, name: "Rainveil Grass", color: "#368d51", maxStack: 64, placeBlock: BlockId.JungleGrass },
   [Item.SakurabloomGrassBlock]: { id: Item.SakurabloomGrassBlock, name: "Sakurabloom Grass", color: "#5d994d", maxStack: 64, placeBlock: BlockId.SakuraGrass },
+  [Item.HoneyBucket]: { id: Item.HoneyBucket, name: "Honey Bucket", color: "#d99c2f", maxStack: 1, useKind: "bucket", bucketLiquid: "honey", iconKind: "bucket" },
+  [Item.SyrupBucket]: { id: Item.SyrupBucket, name: "Syrup Bucket", color: "#b96835", maxStack: 1, useKind: "bucket", bucketLiquid: "syrup", iconKind: "bucket" },
+  [Item.PeppermintCane]: { id: Item.PeppermintCane, name: "Peppermint Cane", color: "#ef5364", maxStack: 64, food: 3, iconKind: "produce" },
+  [Item.PeppermintSeeds]: { id: Item.PeppermintSeeds, name: "Peppermint Starts", color: "#8ab56e", maxStack: 64, useKind: "plant", plantBlock: BlockId.PeppermintSprout, iconKind: "seed" },
+  [Item.CocoaNib]: { id: Item.CocoaNib, name: "Cocoa Puff Nib", color: "#754738", maxStack: 64, food: 2, iconKind: "produce" },
+  [Item.CocoaSeeds]: { id: Item.CocoaSeeds, name: "Cocoa Puff Seeds", color: "#967052", maxStack: 64, useKind: "plant", plantBlock: BlockId.CocoaSprout, iconKind: "seed" },
+  [Item.Gumdrop]: { id: Item.Gumdrop, name: "Wild Gumdrop", color: "#df629e", maxStack: 64, food: 3, useKind: "plant", plantBlock: BlockId.GumdropBush, iconKind: "produce", worldTextureBlock: BlockId.GumdropBush },
+  [Item.LollipopPetal]: { id: Item.LollipopPetal, name: "Lollipop Orchid Petal", color: "#f1a0cf", maxStack: 64, useKind: "plant", plantBlock: BlockId.LollipopOrchid, iconKind: "produce", worldTextureBlock: BlockId.LollipopOrchid },
+  [Item.MarshmallowTuft]: { id: Item.MarshmallowTuft, name: "Marshmallow Tuft", color: "#f8e9ec", maxStack: 64, food: 2, useKind: "plant", plantBlock: BlockId.MarshmallowShrub, iconKind: "produce", worldTextureBlock: BlockId.MarshmallowShrub },
+  [Item.BonbonwingTreat]: { id: Item.BonbonwingTreat, name: "Bonbonwing", color: "#f08fbd", maxStack: 16, food: 3, useKind: "release-creature", creatureKind: "bonbonwing", iconKind: "produce" },
+  [Item.SyrupfinFillet]: { id: Item.SyrupfinFillet, name: "Syrupfin Fillet", color: "#d48649", maxStack: 64, food: 3, iconKind: "produce" },
+  [Item.CandiedAlloy]: { id: Item.CandiedAlloy, name: "Tempered Candy Alloy", color: "#e68bb7", maxStack: 64, iconKind: "relic" },
+  [Item.RockcandySaber]: { ...tool(Item.RockcandySaber, "Rockcandy Saber", "#e681b2", "sword", 3, 1, 10, 780), iconKind: "sword" },
+  [Item.PeppermintLance]: { ...tool(Item.PeppermintLance, "Peppermint Pike", "#ef5364", "spear", 3, 1, 8, 620), useKind: "spear", iconKind: "spear", heldModel: "spear", dropModel: "spear" },
+  [Item.FondantCrown]: { ...armorItem(Item.FondantCrown, "Sugarplate Crown", "#f0a6c6", "head", 2, 460), iconKind: "armor" },
+  [Item.FondantCuirass]: { ...armorItem(Item.FondantCuirass, "Sugarplate Cuirass", "#e88db6", "chest", 4, 620), iconKind: "armor" },
+  [Item.FondantGreaves]: { ...armorItem(Item.FondantGreaves, "Sugarplate Greaves", "#d97eaa", "legs", 3, 570), iconKind: "armor" },
+  [Item.FondantBoots]: { ...armorItem(Item.FondantBoots, "Sugarplate Boots", "#cd709e", "feet", 2, 430), iconKind: "armor" },
+  [Item.PeppermintRush]: { id: Item.PeppermintRush, name: "Peppermint Rush", color: "#ee5365", maxStack: 8, useKind: "potion", potionId: "peppermint-rush", iconKind: "potion", heldModel: "potion", dropModel: "potion" },
+  [Item.MarshmallowWard]: { id: Item.MarshmallowWard, name: "Marshmallow Ward", color: "#f4dfe8", maxStack: 8, useKind: "potion", potionId: "marshmallow-ward", iconKind: "potion", heldModel: "potion", dropModel: "potion" },
+  [Item.SugarcourtArmsBlueprint]: { id: Item.SugarcourtArmsBlueprint, name: "Sugarcourt Arms Blueprint", color: "#f0a0c4", maxStack: 16, useKind: "blueprint", blueprintId: "sugarcourt-arms", iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
+  [Item.FondantArmorBlueprint]: { id: Item.FondantArmorBlueprint, name: "Sugarplate Armor Pattern", color: "#e7bad1", maxStack: 16, useKind: "blueprint", blueprintId: "sugarcourt-armor", iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
+  [Item.PeppermintRushBlueprint]: { id: Item.PeppermintRushBlueprint, name: "Peppermint Rush Formula", color: "#f07883", maxStack: 16, useKind: "blueprint", blueprintId: "sugarcourt-peppermint-rush", iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
+  [Item.MarshmallowWardBlueprint]: { id: Item.MarshmallowWardBlueprint, name: "Marshmallow Ward Formula", color: "#efd8e5", maxStack: 16, useKind: "blueprint", blueprintId: "sugarcourt-marshmallow-ward", iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
+  [Item.SugarworksItem]: { id: Item.SugarworksItem, name: "Sugarworks", color: "#ef9fc4", maxStack: 64, placeBlock: BlockId.Sugarworks, iconKind: "sugarworks", heldModel: "sugarworks", dropModel: "sugarworks" },
+  [Item.CandywoodLogItem]: { id: Item.CandywoodLogItem, name: "Candywood Log", color: "#9f5b82", maxStack: 64, placeBlock: BlockId.CandywoodLog },
+  [Item.CandywoodLeavesItem]: { id: Item.CandywoodLeavesItem, name: "Candywood Leaves", color: "#e990bb", maxStack: 64, placeBlock: BlockId.CandywoodLeaves },
+  [Item.SugarplumGrassBlock]: { id: Item.SugarplumGrassBlock, name: "Sugarplum Grass", color: "#a56fd0", maxStack: 64, placeBlock: BlockId.SugarplumGrass },
+  [Item.BoiledSugarbrickItem]: { id: Item.BoiledSugarbrickItem, name: "Boiled Sugarbrick", color: "#f19bba", maxStack: 64, placeBlock: BlockId.BoiledSugarbrick },
+  [Item.CandywoodSaplingItem]: { id: Item.CandywoodSaplingItem, name: "Candywood Sapling", color: "#e57cad", maxStack: 64, useKind: "plant", plantBlock: BlockId.CandywoodSapling, worldTextureBlock: BlockId.CandywoodSapling },
+  [Item.SugarSoilBlock]: { id: Item.SugarSoilBlock, name: "Sugar Soil", color: "#78536f", maxStack: 64, placeBlock: BlockId.SugarSoil },
 } satisfies Record<number, ItemDefinition>);
 
 /**
- * Block ids 100-136 overlap the legacy numeric item namespace. Inventory
+ * Block ids 100-156 overlap the legacy numeric item namespace. Inventory
  * stacks use these explicit aliases so a Rainveil Log can never become item
  * 103 (Sunmetal Ingot) merely because both enums share a number.
  */
@@ -843,6 +949,24 @@ export const BLOCK_ITEM_ALIASES: Readonly<Partial<Record<BlockId, ItemCode>>> = 
   [BlockId.GiantLanternLotus]: Item.LanternLotusItem,
   [BlockId.JungleSapling]: Item.RainveilSapling,
   [BlockId.SakuraSapling]: Item.SakurabloomSapling,
+  [BlockId.SugarplumGrass]: Item.SugarplumGrassBlock,
+  [BlockId.SugarSoil]: Item.SugarSoilBlock,
+  [BlockId.CandywoodLog]: Item.CandywoodLogItem,
+  [BlockId.CandywoodLeaves]: Item.CandywoodLeavesItem,
+  [BlockId.BoiledSugarbrick]: Item.BoiledSugarbrickItem,
+  [BlockId.GumdropBush]: Item.Gumdrop,
+  [BlockId.PeppermintTuft]: Item.PeppermintCane,
+  [BlockId.LollipopOrchid]: Item.LollipopPetal,
+  [BlockId.MarshmallowShrub]: Item.MarshmallowTuft,
+  [BlockId.PeppermintSprout]: Item.PeppermintSeeds,
+  [BlockId.PeppermintYoung]: Item.PeppermintSeeds,
+  [BlockId.PeppermintCrop]: Item.PeppermintCane,
+  [BlockId.CocoaSprout]: Item.CocoaSeeds,
+  [BlockId.CocoaYoung]: Item.CocoaSeeds,
+  [BlockId.CocoaCrop]: Item.CocoaNib,
+  [BlockId.Sugarworks]: Item.SugarworksItem,
+  [BlockId.CandywoodSapling]: Item.CandywoodSaplingItem,
+  [BlockId.GiantLollipopOrchid]: Item.LollipopPetal,
 });
 
 export function itemForBlock(block: BlockId): ItemCode {
@@ -865,6 +989,7 @@ export const ORDINARY_FLOWERS: readonly BlockId[] = Object.freeze([
   BlockId.SakuraBloom,
   BlockId.Dreamblossom,
   BlockId.LanternLotus,
+  BlockId.LollipopOrchid,
 ]);
 
 export const CULTIVATED_FLOWERS: readonly BlockId[] = Object.freeze([
@@ -877,6 +1002,7 @@ export const CULTIVATED_FLOWERS: readonly BlockId[] = Object.freeze([
   BlockId.GiantSakuraBloom,
   BlockId.GiantDreamblossom,
   BlockId.GiantLanternLotus,
+  BlockId.GiantLollipopOrchid,
 ]);
 
 export const POLLINATOR_FLOWERS: readonly BlockId[] = Object.freeze([...ORDINARY_FLOWERS, ...CULTIVATED_FLOWERS]);
@@ -898,8 +1024,8 @@ for (const aquatic of AQUATIC_FLORA) if (BLOCK_ITEM_ALIASES[aquatic] === undefin
   ITEMS[aquatic] = { ...ITEMS[aquatic], useKind: "plant", plantBlock: aquatic, worldTextureBlock: aquatic };
 }
 
-export const LOG_ITEMS: ItemCode[] = [BlockId.WildwoodLog, BlockId.PineLog, BlockId.BirchLog, BlockId.BloomLog, Item.RainveilLog, Item.SakurabloomLog];
-export const LEAF_BLOCKS: BlockId[] = [BlockId.WildwoodLeaves, BlockId.PineLeaves, BlockId.BirchLeaves, BlockId.BloomLeaves, BlockId.AppleLeaves, BlockId.JungleLeaves, BlockId.SakuraLeaves];
+export const LOG_ITEMS: ItemCode[] = [BlockId.WildwoodLog, BlockId.PineLog, BlockId.BirchLog, BlockId.BloomLog, Item.RainveilLog, Item.SakurabloomLog, Item.CandywoodLogItem];
+export const LEAF_BLOCKS: BlockId[] = [BlockId.WildwoodLeaves, BlockId.PineLeaves, BlockId.BirchLeaves, BlockId.BloomLeaves, BlockId.AppleLeaves, BlockId.JungleLeaves, BlockId.SakuraLeaves, BlockId.CandywoodLeaves];
 /** Replaceable flora is excluded from the broad block filter, but builders still need it in the pack. */
 export const CREATIVE_FLORA: readonly ItemCode[] = [
   BlockId.TallGrass,
@@ -914,11 +1040,16 @@ export const CREATIVE_FLORA: readonly ItemCode[] = [
   BlockId.GlowKelp,
   BlockId.ReedBloom,
   BlockId.Cloudbell,
+  Item.Gumdrop,
+  Item.PeppermintCane,
+  Item.LollipopPetal,
+  Item.MarshmallowTuft,
+  Item.CandywoodSaplingItem,
 ];
 
 export const CREATIVE_BLOCKS: ItemCode[] = [...new Set<ItemCode>([...Object.values(BLOCKS)
   .filter((definition) => ITEMS[definition.id] && BLOCK_ITEM_ALIASES[definition.id] === undefined && !definition.replaceable && definition.id !== BlockId.WheatCrop)
-  .map((definition) => definition.id), ...CREATIVE_FLORA, ...Object.values(BLOCK_ITEM_ALIASES).filter((item): item is ItemCode => item !== undefined), Item.WildwoodDoor, Item.WildwoodBed, Item.Sailboat, Item.CaptureOrb, Item.WorldshellEgg, Item.AetherbellEgg, Item.Shellfruit, Item.Reefglass, Item.LivingCoral, Item.LumenPearl, Item.PrismaticPearl, Item.TideglassTrident, Item.GlowmenderSalve, Item.TemperedRootspike, Item.RareSeedPouch, Item.WargFeed, Item.Honeycomb, Item.HoneyJar, Item.RoyalJelly, Item.Beeswax, Item.MilkBottle, Item.CloudglassRelic, Item.QueenCell, Item.WorkerBee, Item.GlassBottle, Item.WaterBottle, Item.HealthPotion, Item.WayfarerPotion, Item.HearthwardTonic, Item.GloamstepElixir, Item.WaterBreathingPotion, Item.Honeymead, Item.HobbitCrossbowBlueprint, Item.FineCrossbowBlueprint, Item.GoblinSpearBlueprint, Item.GloamstepBlueprint, Item.HearthwardBlueprint, Item.MeadBlueprint, Item.HearthguardCrossbow, Item.WayfarerCrossbow, Item.CrossbowBolt, Item.GoblinsmithSpear, Item.Berry, Item.Sunberry, Item.Apple, Item.Banana, Item.Wheat, Item.WheatSeeds, Item.Moonrice, Item.MoonriceSeeds, Item.Sunroot, Item.SunrootStarts, Item.SaltbrushSprig, Item.CoastAsterPetal, Item.LumenKelpFrond, Item.StarCoralShard, Item.AbyssBloomNectar, Item.TidevineFiber, Item.RainveilLog, Item.SakurabloomLog, Item.RainveilSapling, Item.SakurabloomSapling, Item.SakuraBloomItem, Item.DreamblossomItem, Item.RainveilFernItem, Item.LanternLotusItem, Item.WildwoodTableItem, Item.WildwoodStoolItem, Item.WildwoodShelfItem, Item.SealedBarrelItem, Item.RainveilLeavesItem, Item.SakurabloomLeavesItem, Item.RainveilGrassBlock, Item.SakurabloomGrassBlock, Item.StarrootScepter, Item.Feather, Item.RawFish, Item.CookedFish, Item.GlowScale, Item.BreatherCharm, Item.SunwardCompass, Item.WoodHoe, Item.StoneHoe, Item.IronHoe, Item.HarvestScythe, Item.Bucket, Item.WaterBucket, Item.LavaBucket, Item.Lead, Item.WildwoodFenceGate, Item.Saddle, Item.NocturneHeart, Item.ButterflyNet, Item.MeadowwingJar, Item.AzureSkipperJar, Item.EmbertipJar, Item.FrostveilJar, Item.BloomMonarchJar, Item.FenLanternJar, Item.HideHood, Item.HideTunic, Item.HideLeggings, Item.HideBoots, Item.SunmetalHelm, Item.SunmetalPlate, Item.SunmetalGreaves, Item.SunmetalBoots])];
+  .map((definition) => definition.id), ...CREATIVE_FLORA, ...Object.values(BLOCK_ITEM_ALIASES).filter((item): item is ItemCode => item !== undefined), Item.WildwoodDoor, Item.WildwoodBed, Item.Sailboat, Item.CaptureOrb, Item.WorldshellEgg, Item.AetherbellEgg, Item.Shellfruit, Item.Reefglass, Item.LivingCoral, Item.LumenPearl, Item.PrismaticPearl, Item.TideglassTrident, Item.GlowmenderSalve, Item.TemperedRootspike, Item.RareSeedPouch, Item.WargFeed, Item.Honeycomb, Item.HoneyJar, Item.RoyalJelly, Item.Beeswax, Item.MilkBottle, Item.CloudglassRelic, Item.QueenCell, Item.WorkerBee, Item.GlassBottle, Item.WaterBottle, Item.HealthPotion, Item.WayfarerPotion, Item.HearthwardTonic, Item.GloamstepElixir, Item.WaterBreathingPotion, Item.Honeymead, Item.HobbitCrossbowBlueprint, Item.FineCrossbowBlueprint, Item.GoblinSpearBlueprint, Item.GloamstepBlueprint, Item.HearthwardBlueprint, Item.MeadBlueprint, Item.HearthguardCrossbow, Item.WayfarerCrossbow, Item.CrossbowBolt, Item.GoblinsmithSpear, Item.Berry, Item.Sunberry, Item.Apple, Item.Banana, Item.Wheat, Item.WheatSeeds, Item.Moonrice, Item.MoonriceSeeds, Item.Sunroot, Item.SunrootStarts, Item.SaltbrushSprig, Item.CoastAsterPetal, Item.LumenKelpFrond, Item.StarCoralShard, Item.AbyssBloomNectar, Item.TidevineFiber, Item.RainveilLog, Item.SakurabloomLog, Item.RainveilSapling, Item.SakurabloomSapling, Item.SakuraBloomItem, Item.DreamblossomItem, Item.RainveilFernItem, Item.LanternLotusItem, Item.WildwoodTableItem, Item.WildwoodStoolItem, Item.WildwoodShelfItem, Item.SealedBarrelItem, Item.RainveilLeavesItem, Item.SakurabloomLeavesItem, Item.RainveilGrassBlock, Item.SakurabloomGrassBlock, Item.StarrootScepter, Item.Feather, Item.RawFish, Item.CookedFish, Item.GlowScale, Item.BreatherCharm, Item.SunwardCompass, Item.WoodHoe, Item.StoneHoe, Item.IronHoe, Item.HarvestScythe, Item.Bucket, Item.WaterBucket, Item.LavaBucket, Item.HoneyBucket, Item.SyrupBucket, Item.Lead, Item.WildwoodFenceGate, Item.Saddle, Item.NocturneHeart, Item.ButterflyNet, Item.MeadowwingJar, Item.AzureSkipperJar, Item.EmbertipJar, Item.FrostveilJar, Item.BloomMonarchJar, Item.FenLanternJar, Item.BonbonwingTreat, Item.SyrupfinFillet, Item.CandiedAlloy, Item.RockcandySaber, Item.PeppermintLance, Item.FondantCrown, Item.FondantCuirass, Item.FondantGreaves, Item.FondantBoots, Item.PeppermintRush, Item.MarshmallowWard, Item.SugarcourtArmsBlueprint, Item.FondantArmorBlueprint, Item.PeppermintRushBlueprint, Item.MarshmallowWardBlueprint, Item.HideHood, Item.HideTunic, Item.HideLeggings, Item.HideBoots, Item.SunmetalHelm, Item.SunmetalPlate, Item.SunmetalGreaves, Item.SunmetalBoots])];
 
 export function worldTextureBlockForItem(item: ItemCode): BlockId | undefined {
   const definition = ITEMS[item];
@@ -976,6 +1107,7 @@ export const RECIPES: Recipe[] = [
   { id: "alchemy_stand", name: "Alchemy Stand", width: 3, height: 3, pattern: [Item.GlassBottle, Item.CaveGel, Item.GlassBottle, 0, Item.CrystalShard, 0, BlockId.StoneBrick, BlockId.StoneBrick, BlockId.StoneBrick], output: { item: BlockId.AlchemyStand, count: 1 }, table: true },
   { id: "wayshrine", name: "Waystone Shrine", width: 3, height: 3, pattern: [Item.CrystalShard, Item.GlowDust, Item.CrystalShard, BlockId.StoneBrick, BlockId.RuneStone, BlockId.StoneBrick, BlockId.StoneBrick, BlockId.StoneBrick, BlockId.StoneBrick], output: { item: BlockId.Wayshrine, count: 1 }, table: true },
   { id: "distillery", name: "Honeymead Distillery", width: 3, height: 3, pattern: [BlockId.Planks, Item.Honeycomb, BlockId.Planks, BlockId.Planks, Item.SunmetalIngot, BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: BlockId.Distillery, count: 1 }, table: true },
+  { id: "sugarworks", name: "Sugarworks", width: 3, height: 3, pattern: [BlockId.Glass, Item.HoneyJar, BlockId.Glass, BlockId.Planks, Item.SunmetalIngot, BlockId.Planks, BlockId.StoneBrick, BlockId.StoneBrick, BlockId.StoneBrick], output: { item: Item.SugarworksItem, count: 1 }, table: true },
   { id: "hearth_chair", name: "Hearth Chair", width: 2, height: 3, pattern: [BlockId.Planks, 0, BlockId.Planks, BlockId.Planks, Item.Stick, Item.Stick], output: { item: BlockId.HearthChair, count: 2 }, table: true, mirrored: true },
   { id: "wildwood_table", name: "Wildwood Table", width: 3, height: 2, pattern: [BlockId.Planks, BlockId.Planks, BlockId.Planks, Item.Stick, 0, Item.Stick], output: { item: Item.WildwoodTableItem, count: 1 }, table: true },
   { id: "wildwood_stools", name: "Wildwood Stools", width: 2, height: 2, pattern: [BlockId.Planks, BlockId.Planks, Item.Stick, Item.Stick], output: { item: Item.WildwoodStoolItem, count: 2 }, table: false },
@@ -997,6 +1129,7 @@ export const RECIPES: Recipe[] = [
   { id: "iron_hoe", name: "Sunmetal Hoe", width: 2, height: 3, pattern: [Item.SunmetalIngot, Item.SunmetalIngot, 0, Item.Stick, 0, Item.Stick], output: { item: Item.IronHoe, count: 1 }, table: true, mirrored: true },
   { id: "harvest_scythe", name: "Harvest Scythe", width: 3, height: 3, pattern: [Item.SunmetalIngot, Item.SunmetalIngot, Item.SunmetalIngot, Item.Stick, 0, 0, Item.Stick, 0, 0], output: { item: Item.HarvestScythe, count: 1 }, table: true, mirrored: true },
   { id: "bucket", name: "Empty Bucket", width: 3, height: 2, pattern: [Item.SunmetalIngot, 0, Item.SunmetalIngot, 0, Item.SunmetalIngot, 0], output: { item: Item.Bucket, count: 1 }, table: true },
+  { id: "honey_bucket", name: "Honey Bucket", width: 2, height: 2, pattern: [Item.HoneyJar, Item.HoneyJar, Item.HoneyJar, Item.Bucket], output: { item: Item.HoneyBucket, count: 1 }, table: true },
   { id: "wildwood_fence", name: "Wildwood Fence", width: 3, height: 2, pattern: [BlockId.Planks, Item.Stick, BlockId.Planks, BlockId.Planks, Item.Stick, BlockId.Planks], output: { item: BlockId.WildwoodFence, count: 3 }, table: true },
   { id: "wildwood_fence_gate", name: "Wildwood Fence Gate", width: 3, height: 2, pattern: [Item.Stick, BlockId.Planks, Item.Stick, Item.Stick, BlockId.Planks, Item.Stick], output: { item: Item.WildwoodFenceGate, count: 1 }, table: true },
   { id: "lead", name: "Braided Lead", width: 3, height: 2, pattern: [Item.Fiber, Item.Fiber, 0, 0, Item.Fiber, Item.Fiber], output: { item: Item.Lead, count: 2 }, table: true, mirrored: true },

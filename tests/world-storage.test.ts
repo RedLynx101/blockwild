@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { WorldSave } from "../app/game/engine.ts";
 import { GENERATOR_VERSION } from "../app/game/world.ts";
+import { NPC_FACTION_IDS } from "../app/game/factions.ts";
 import {
   DEFAULT_WORLD_OPTIONS,
   LEGACY_WORLD_KEY,
@@ -84,12 +85,14 @@ test("advanced world options use safe defaults and bounded numeric controls", ()
     friendlyFire: true,
     sleepRule: "percentage",
     sleepPercentage: 50,
+    enabledFactions: NPC_FACTION_IDS,
   });
   assert.deepEqual(generationOptionsFromWorldOptions({ caveFrequency: 2, biomeScale: 3, resourceAbundance: 4, structures: false }), {
     caveFrequency: 2,
     biomeScale: 3,
     resourceAbundance: 4,
     structures: false,
+    enabledFactions: NPC_FACTION_IDS,
   });
   assert.equal(requiredSleepers({ sleepRule: "any-player", sleepPercentage: 50 }, 8), 1);
   assert.equal(requiredSleepers({ sleepRule: "percentage", sleepPercentage: 50 }, 5), 3);
