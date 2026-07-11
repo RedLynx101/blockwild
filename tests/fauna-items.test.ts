@@ -5,7 +5,9 @@ import {
   CREATIVE_BLOCKS,
   CREATIVE_FLORA,
   Item,
+  ORDINARY_FLOWERS,
   RECIPES,
+  itemForBlock,
   recipePatterns,
 } from "../app/game/data.ts";
 import { MOB_DEFS } from "../app/game/mobs.ts";
@@ -71,5 +73,5 @@ test("recipe refresh preserves mirrored axes and gives fauna materials a purpose
   assert.ok(Array.isArray(softSlot));
   assert.ok(softSlot.includes(Item.Feather));
   const exhibit = RECIPES.find((recipe) => recipe.id === "butterfly_exhibit")!;
-  assert.deepEqual(exhibit.pattern[4], [BlockId.RedFlower, BlockId.BlueFlower, BlockId.Sunpetal, BlockId.MoonOrchid]);
+  assert.deepEqual(exhibit.pattern[4], ORDINARY_FLOWERS.map(itemForBlock));
 });

@@ -11,7 +11,7 @@ export type RecipeIngredient = Readonly<{ item: string; count: number; consume?:
 export type PotionEffect =
   | Readonly<{ kind: "heal"; amount: number }>
   | Readonly<{ kind: "bank-fast-travel"; charges: number }>
-  | Readonly<{ kind: "timed-buff"; buff: "hearthward" | "gloamstep"; durationSeconds: number }>;
+  | Readonly<{ kind: "timed-buff"; buff: "hearthward" | "gloamstep" | "tidebreath"; durationSeconds: number }>;
 
 export type AlchemyRecipe = Readonly<{
   id: string;
@@ -84,6 +84,16 @@ export const ALCHEMY_RECIPES: readonly AlchemyRecipe[] = Object.freeze([
     brewSeconds: 42,
     blueprintId: "goblin-gloamstep-elixir",
     effect: { kind: "timed-buff", buff: "gloamstep", durationSeconds: 240 },
+  },
+  {
+    id: "tidebreath-philter",
+    name: "Tidebreath Philter",
+    description: "Lumen kelp and abyss-bloom nectar hold a pocket of living current in the lungs.",
+    inputs: [{ item: "water-bottle", count: 1 }, { item: "lumen-kelp-frond", count: 2 }, { item: "abyss-bloom-nectar", count: 1 }],
+    output: { item: "tidebreath-philter", count: 1 },
+    brewSeconds: 34,
+    blueprintId: null,
+    effect: { kind: "timed-buff", buff: "tidebreath", durationSeconds: 300 },
   },
 ]);
 

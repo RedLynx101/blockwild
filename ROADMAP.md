@@ -1,6 +1,6 @@
 # Blockwild roadmap
 
-Blockwild v0.6 Hearthroads establishes persistent maps, quests, settlements, faction standing, resident roles, trade, gold, banking, local ventures, alchemy, and blueprint knowledge. The systems below are intentionally outside the v0.6 release boundary. This is a direction document, not a schedule.
+Blockwild v0.7 Tidelight extends the Hearthroads foundation with deeper variable oceans, breakable and renewable aquatic flora, underwater breathing, leviathan lifecycles and mounts, Rainveil Jungle, Sakurabloom Grove, Lumen Trench, and the aquatic Atlantian culture. Persistent maps, quests, settlements, faction standing, resident roles, trade, gold, banking, local ventures, alchemy, and blueprint knowledge remain the shared progression layer. The systems below are intentionally outside the v0.7 release boundary. This is a direction document, not a schedule.
 
 ## Full settlement management and player towns
 
@@ -11,7 +11,7 @@ The player faction can already be represented in faction and settlement ownershi
 - Let buildings, paths, storage, workshops, farms, walls, and gates contribute to town function without making ordinary player building invalid.
 - Recover gracefully when a player removes a door, bed, workstation, wall, or role-preferred building.
 
-Hearthroads does not include a city-builder overlay, construction queue, town budget, or complete player-governance UI.
+Tidelight does not include a city-builder overlay, construction queue, town budget, or complete player-governance UI. Future mixed-race player settlements will also need explicit surface and underwater habitat rules rather than treating Atlantians as ordinary land residents.
 
 ## Raiding parties and hired forces
 
@@ -36,11 +36,11 @@ This needs bounded off-screen simulation and host-authoritative multiplayer mess
 
 ## Magic expansion
 
-Alchemy, potions, blueprint knowledge, wayshrines, and charged fast travel are the non-spell foundation. A later magic system can add spellcasting, magical resources, equipment effects, creatures, quests, and more flexible travel. Hearthroads does not add mana, spell schools, combat casting, enchantment, or unrestricted teleportation.
+Alchemy, Tidebreath and other potions, blueprint knowledge, wayshrines, and charged fast travel are the non-spell foundation. A later magic system can add spellcasting, magical resources, equipment effects, creatures, quests, and more flexible travel. Tidelight does not add mana, spell schools, combat casting, enchantment, or unrestricted teleportation.
 
-## Fishing and deeper water activity
+## Fishing and mature aquatic professions
 
-Fish in v0.6 are physical creatures: they swim, school, can be attacked, and belong to river, ocean, underground, or deep-ocean habitats. Rods, lines, bait, hooked-fish behavior, fishing loot, and fishing professions remain deferred.
+Fish and larger sea creatures in v0.7 are physical entities: they swim, school or patrol a habitat, can be attacked or tamed where appropriate, and belong to river, coast, ocean, underground, deep-ocean, or Lumen Trench populations. Water plants can be harvested and replanted, Atlantians trade aquatic goods, and leviathans provide long-range sea and air travel. Rods, lines, bait, hooked-fish behavior, fishing loot tables, boats specialized for fishing, and fishing professions remain deferred.
 
 ## Release guardrails
 

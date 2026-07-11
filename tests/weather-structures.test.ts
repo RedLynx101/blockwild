@@ -36,6 +36,9 @@ test("weather is deterministic and constrained by biome", () => {
   assert.equal(weatherBiomeFromId(3), "meadow");
   assert.equal(weatherBiomeFromId(14), "volcanic");
   assert.equal(weatherBiomeFromId(17), "cloudreed");
+  assert.equal(weatherBiomeFromId(18), "forest");
+  assert.equal(weatherBiomeFromId(19), "forest");
+  assert.equal(weatherBiomeFromId(20), "ocean");
   assert.equal(structureBiomeFromId(17), "meadow");
   const cloudreedOptions = weatherOptionsForBiome("cloudreed");
   assert.ok(cloudreedOptions.some((entry) => entry.kind === "mist"));
@@ -74,7 +77,7 @@ test("thunder owns the entire sky and hides celestial sprites", () => {
   assert.equal(visuals.cloudCoverage, 1);
   assert.equal(visuals.sunVisibility, 0);
   assert.equal(visuals.celestialVisibility, 0);
-  assert.equal(planCloudField("storm", 0, 0, 3, storm).length, 49, "every bounded sky cell participates in storm cover");
+  assert.equal(planCloudField("storm", 0, 0, 3, storm).length, 0, "the unified overcast sky replaces discrete storm clouds");
 });
 
 test("every POI emits deterministic blocks, a chest, and semantic spawn markers", () => {

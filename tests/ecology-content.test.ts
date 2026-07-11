@@ -48,6 +48,7 @@ import {
   puddlehopperJumpPlan,
   saddleReedstrider,
   stepPeelopShedding,
+  treeLogsAreFaceConnected,
 } from "../app/game/ecology.ts";
 import { createMobVisual } from "../app/game/mob-models.ts";
 import {
@@ -241,6 +242,10 @@ test("submerged flora stays waterlogged and tree crowns remain dense cutouts", (
   assert.equal(DENSE_CUTOUT_LEAF_POLICY.cullSameTypeInteriorFaces, "selective");
   const tree = planFullTree("dense", { x: 0, y: 0, z: 0 }, "ancient", BlockId.WildwoodLog, BlockId.WildwoodLeaves);
   assert.ok(tree.filter((block) => block.block === BlockId.WildwoodLeaves).length > 100);
+  for (const form of ["rounded", "layered", "windswept", "ancient"] as const) {
+    const plan = planFullTree(`connected-${form}`, { x: 0, y: 0, z: 0 }, form, BlockId.WildwoodLog, BlockId.WildwoodLeaves);
+    assert.equal(treeLogsAreFaceConnected(plan, BlockId.WildwoodLog), true, `${form} wood must be face-connected`);
+  }
 });
 
 test("new data, recipes, biome content and semantic held models are registered", () => {

@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { BLOCKS, BlockId, type ItemCode, type Weather } from "./data";
+import { BLOCKS, POLLINATOR_FLOWERS, BlockId, type ItemCode, type Weather } from "./data";
 import { BUTTERFLY_ANTENNA_CONTRACT } from "./model-specs";
 import { BUTTERFLY_ORDER, MOB_DEFS, type ButterflyKind } from "./mobs";
 import { BiomeId, type ChunkWorld } from "./world";
@@ -51,22 +51,26 @@ export type ButterflyVisual = {
   rightWing: THREE.Group;
 };
 
-const FLOWERS = new Set<BlockId>([BlockId.RedFlower, BlockId.BlueFlower]);
+const FLOWERS = new Set<BlockId>(POLLINATOR_FLOWERS);
 const BUTTERFLY_BIOMES = new Set<BiomeId>([
   BiomeId.Meadow, BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Bloomwood,
   BiomeId.Savanna, BiomeId.Badlands, BiomeId.Frostpine, BiomeId.Snowfield,
   BiomeId.Siltfen, BiomeId.MushroomFen,
+  BiomeId.Beach, BiomeId.RainveilJungle, BiomeId.SakurabloomGrove,
 ]);
 
 export const BUTTERFLY_FLIGHT_TUNING = Object.freeze({
-  seekFlowerChance: 0.32,
-  flightSecondsMin: 1.8,
-  flightSecondsRange: 4.2,
-  landedSecondsMin: 0.65,
-  landedSecondsRange: 1.9,
+  seekFlowerChance: 0.24,
+  flightSecondsMin: 3.1,
+  flightSecondsRange: 4.8,
+  landedSecondsMin: 0.4,
+  landedSecondsRange: 1.25,
 });
 
 export function butterflyKindForBiome(biome: BiomeId, roll = Math.random()): ButterflyKind | null {
+  if (biome === BiomeId.SakurabloomGrove) return roll < 0.72 ? "bloom-monarch" : "azure-skippers";
+  if (biome === BiomeId.RainveilJungle) return roll < 0.68 ? "fen-lantern" : "meadowwing";
+  if (biome === BiomeId.Beach) return roll < 0.76 ? "meadowwing" : "embertip";
   if (biome === BiomeId.Bloomwood) return roll < 0.74 ? "bloom-monarch" : "azure-skippers";
   if (biome === BiomeId.Siltfen || biome === BiomeId.MushroomFen) return roll < 0.82 ? "fen-lantern" : "meadowwing";
   if (biome === BiomeId.Frostpine || biome === BiomeId.Snowfield) return "frostveil";

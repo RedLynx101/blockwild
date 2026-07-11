@@ -6,18 +6,33 @@
  * unbounded command log.
  */
 
-export const FACTION_IDS = ["player", "hobbits", "goblins"] as const;
+export const FACTION_IDS = ["player", "hobbits", "goblins", "atlantians"] as const;
 
 export type FactionId = (typeof FACTION_IDS)[number];
-export type FactionRace = "wayfarer" | "hearthkin" | "goblin";
+export type FactionRace = "wayfarer" | "hearthkin" | "goblin" | "atlantian";
 export type DiplomacyStance = "allied" | "neutral" | "war";
 export type FactionStanding = "revered" | "friendly" | "neutral" | "unwelcome" | "hostile";
+
+export type FactionRaceTraits = Readonly<{
+  aquatic: boolean;
+  waterBreathing: boolean;
+}>;
+
+export const FACTION_RACE_TRAITS: Readonly<Record<FactionRace, FactionRaceTraits>> = {
+  wayfarer: { aquatic: false, waterBreathing: false },
+  hearthkin: { aquatic: false, waterBreathing: false },
+  goblin: { aquatic: false, waterBreathing: false },
+  atlantian: { aquatic: true, waterBreathing: true },
+};
 
 export type FactionDefinition = Readonly<{
   id: FactionId;
   name: string;
   race: FactionRace;
+  permittedRaces: readonly FactionRace[];
   sentient: true;
+  aquaticOnly: boolean;
+  waterBreathing: boolean;
   homeBiomes: readonly string[];
   warriorWeapons: readonly string[];
   values: readonly string[];
@@ -28,7 +43,10 @@ export const FACTIONS: Readonly<Record<FactionId, FactionDefinition>> = {
     id: "player",
     name: "Wayfarers",
     race: "wayfarer",
+    permittedRaces: ["wayfarer", "hearthkin", "goblin", "atlantian"],
     sentient: true,
+    aquaticOnly: false,
+    waterBreathing: false,
     homeBiomes: [],
     warriorWeapons: [],
     values: ["self-determination", "building", "exploration"],
@@ -37,7 +55,10 @@ export const FACTIONS: Readonly<Record<FactionId, FactionDefinition>> = {
     id: "hobbits",
     name: "Hearthkin Freeholds",
     race: "hearthkin",
+    permittedRaces: ["hearthkin"],
     sentient: true,
+    aquaticOnly: false,
+    waterBreathing: false,
     homeBiomes: ["forest", "meadow", "flower-meadow", "wildwood", "river-valley"],
     warriorWeapons: ["hearth-hammer", "crossbow", "fine-crossbow"],
     values: ["hospitality", "harvest", "trade"],
@@ -46,12 +67,43 @@ export const FACTIONS: Readonly<Record<FactionId, FactionDefinition>> = {
     id: "goblins",
     name: "Brassroot Clans",
     race: "goblin",
+    permittedRaces: ["goblin"],
     sentient: true,
+    aquaticOnly: false,
+    waterBreathing: false,
     homeBiomes: ["highlands", "badlands", "cloudreed-glen", "rocky-forest"],
     warriorWeapons: ["goblin-spear", "tempered-spear"],
     values: ["craft", "clever bargains", "clan strength"],
   },
+  atlantians: {
+    id: "atlantians",
+    name: "Lumen Tidemoots",
+    race: "atlantian",
+    permittedRaces: ["atlantian"],
+    sentient: true,
+    aquaticOnly: true,
+    waterBreathing: true,
+    homeBiomes: ["deep-ocean", "lumen-trench"],
+    warriorWeapons: ["tideglass-trident"],
+    values: ["living reefs", "patient currents", "shared light"],
+  },
 };
+
+export function factionAllowsRace(factionId: FactionId, race: FactionRace) {
+  return FACTIONS[factionId].permittedRaces.includes(race);
+}
+
+export function raceBreathesWater(race: FactionRace) {
+  return FACTION_RACE_TRAITS[race].waterBreathing;
+}
+
+export type FactionEnvironment = "surface" | "underwater";
+
+/** Players may lead mixed communities; every non-player culture keeps its native habitat. */
+export function factionCanOccupyEnvironment(factionId: FactionId, environment: FactionEnvironment) {
+  if (factionId === "player") return true;
+  return factionId === "atlantians" ? environment === "underwater" : environment === "surface";
+}
 
 export type AuthorityCommand = Readonly<{
   authorityId: string;
@@ -86,7 +138,13 @@ export function stampAuthority<T extends AuthorityStampedState>(state: T, comman
   };
 }
 
-export type FactionRelationKey = "goblins|hobbits" | "goblins|player" | "hobbits|player";
+export type FactionRelationKey =
+  | "atlantians|goblins"
+  | "atlantians|hobbits"
+  | "atlantians|player"
+  | "goblins|hobbits"
+  | "goblins|player"
+  | "hobbits|player";
 
 export type FactionRelationsState = AuthorityStampedState & Readonly<{
   schema: 1;
@@ -111,8 +169,11 @@ export function createFactionRelations(authorityId: string): FactionRelationsSta
     authorityId,
     revision: 0,
     recentEventIds: [],
-    alignments: { player: 100, hobbits: 0, goblins: 0 },
+    alignments: { player: 100, hobbits: 0, goblins: 0, atlantians: 0 },
     diplomacy: {
+      "atlantians|goblins": "neutral",
+      "atlantians|hobbits": "neutral",
+      "atlantians|player": "neutral",
       "goblins|hobbits": "neutral",
       "goblins|player": "neutral",
       "hobbits|player": "neutral",
@@ -134,19 +195,19 @@ export function factionStanding(alignment: number): FactionStanding {
 }
 
 export function alignmentFor(state: FactionRelationsState, faction: FactionId) {
-  return state.alignments[faction];
+  return state.alignments[faction] ?? (faction === "player" ? 100 : 0);
 }
 
 export function diplomacyBetween(state: FactionRelationsState, a: FactionId, b: FactionId): DiplomacyStance {
   const key = factionRelationKey(a, b);
-  return key ? state.diplomacy[key] : "allied";
+  return key ? state.diplomacy[key] ?? "neutral" : "allied";
 }
 
 export function factionsAreHostile(state: FactionRelationsState, a: FactionId, b: FactionId) {
   if (a === b) return false;
   if (diplomacyBetween(state, a, b) === "war") return true;
-  if (a === "player") return state.alignments[b] <= -50;
-  if (b === "player") return state.alignments[a] <= -50;
+  if (a === "player") return alignmentFor(state, b) <= -50;
+  if (b === "player") return alignmentFor(state, a) <= -50;
   return false;
 }
 
@@ -162,7 +223,7 @@ export function applyAlignmentChange(
     ...state,
     alignments: {
       ...state.alignments,
-      [faction]: clampAlignment(state.alignments[faction] + amount),
+      [faction]: clampAlignment(alignmentFor(state, faction) + amount),
     },
   };
   return { state: stampAuthority(next, command), applied: true, reason: "ok" };
@@ -177,7 +238,13 @@ export type FactionMemberRole =
   | "banker"
   | "warrior"
   | "mayor"
-  | "aligned-beast";
+  | "aligned-beast"
+  | "atlantian-tidewarden"
+  | "atlantian-kelpkeeper"
+  | "atlantian-coralwright"
+  | "atlantian-pearlbroker"
+  | "atlantian-glowmender"
+  | "atlantian-trident-guard";
 
 export const FACTION_KILL_PENALTIES: Readonly<Record<FactionMemberRole, number>> = {
   civilian: -18,
@@ -189,6 +256,12 @@ export const FACTION_KILL_PENALTIES: Readonly<Record<FactionMemberRole, number>>
   warrior: -12,
   mayor: -35,
   "aligned-beast": -8,
+  "atlantian-tidewarden": -35,
+  "atlantian-kelpkeeper": -18,
+  "atlantian-coralwright": -18,
+  "atlantian-pearlbroker": -22,
+  "atlantian-glowmender": -20,
+  "atlantian-trident-guard": -12,
 };
 
 export function applyFactionMemberKill(
@@ -231,6 +304,7 @@ export type TownCaptureRequest = Readonly<{
   livingMayor: boolean;
   mayorThreatened: boolean;
   claimantPresent: boolean;
+  environment?: FactionEnvironment;
 }>;
 
 export type TownCaptureReceipt = Readonly<{
@@ -246,7 +320,7 @@ export type TownCaptureReceipt = Readonly<{
 
 export type TownCaptureDecision = Readonly<{
   allowed: boolean;
-  reason: "ready" | "same-owner" | "claimant-absent" | "warriors-remain" | "mayor-missing" | "mayor-not-threatened" | "not-at-war";
+  reason: "ready" | "same-owner" | "claimant-absent" | "warriors-remain" | "mayor-missing" | "mayor-not-threatened" | "not-at-war" | "environment-incompatible";
   receipt: TownCaptureReceipt | null;
 }>;
 
@@ -267,6 +341,9 @@ function smallStableHash(value: string) {
 export function evaluateTownCapture(state: FactionRelationsState, request: TownCaptureRequest): TownCaptureDecision {
   if (request.claimant === request.currentOwner) return { allowed: false, reason: "same-owner", receipt: null };
   if (!request.claimantPresent) return { allowed: false, reason: "claimant-absent", receipt: null };
+  if (request.environment && !factionCanOccupyEnvironment(request.claimant, request.environment)) {
+    return { allowed: false, reason: "environment-incompatible", receipt: null };
+  }
   if (request.livingWarriors > 0) return { allowed: false, reason: "warriors-remain", receipt: null };
   if (!request.livingMayor) return { allowed: false, reason: "mayor-missing", receipt: null };
   if (!request.mayorThreatened) return { allowed: false, reason: "mayor-not-threatened", receipt: null };
@@ -299,7 +376,7 @@ export function applyTownCaptureConsequences(
   if (reason !== "ok" || command.eventId !== receipt.id) return { state, applied: false, reason: reason === "ok" ? "invalid-event" : reason };
   const key = factionRelationKey(receipt.from, receipt.to);
   const alignments = receipt.to === "player" && receipt.from !== "player"
-    ? { ...state.alignments, [receipt.from]: clampAlignment(state.alignments[receipt.from] + receipt.alignmentPenalty) }
+    ? { ...state.alignments, [receipt.from]: clampAlignment(alignmentFor(state, receipt.from) + receipt.alignmentPenalty) }
     : state.alignments;
   const diplomacy = key ? { ...state.diplomacy, [key]: receipt.diplomacyAfter } : state.diplomacy;
   return {

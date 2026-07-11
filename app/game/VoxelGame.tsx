@@ -14,6 +14,7 @@ import {
 import * as THREE from "three";
 import {
   BlockId,
+  BIOME_NAMES,
   CREATIVE_BLOCKS,
   ITEMS,
   Item,
@@ -55,12 +56,15 @@ import {
   SettlementPanel,
   StationPanel,
   TradePanel,
+  isResidentProfession,
+  sentientPortraitPath,
 } from "./HearthroadsPanels";
 import { ALCHEMY_RECIPES, DISTILLERY_RECIPES } from "./alchemy";
 import { createBlueprintState } from "./blueprints";
 import {
   createBankAccount,
   createGoldWallet,
+  createMerchant,
   createStockMarket,
   type CommerceItem,
   type GoldAmount,
@@ -68,14 +72,15 @@ import {
   type MerchantTradeDirection,
   type StockSymbol,
 } from "./economy";
-import { alignmentFor, createFactionRelations, FACTIONS } from "./factions";
+import { alignmentFor, createFactionRelations, FACTIONS, type FactionId } from "./factions";
 import { commerceKeyForItem, inventoryResourceCounts } from "./hearthroads-adapter";
 import { createMapKnowledge, type MapMarker } from "./map-system";
 import { PLANTS, createPlantBestiaryState, type PlantCategory } from "./plants";
 import { createQuestBook, type QuestObjective } from "./quests";
-import type { ResidentProfession } from "./settlements";
+import { createSettlementState, isMayorProfession, type ResidentProfession, type SettlementCandidate } from "./settlements";
 
 type WorkstationOverlay = "apiary" | "orb-rack" | "healing-station";
+type CivicAuditMode = "atlantian-dialogue" | "atlantian-trade" | "atlantian-settlement";
 type Overlay = "title" | "new" | "pause" | "help" | "settings" | OverlayKind | null;
 export type BestiaryFilter = "all" | "surface" | "birds" | "butterflies" | "fish" | "monsters" | "companions";
 type FieldGuideSection = "creatures" | "plants";
@@ -100,6 +105,67 @@ const BESTIARY_FILTERS: ReadonlyArray<[BestiaryFilter, string]> = [
   ["monsters", "Monsters"],
   ["companions", "Tameable"],
 ];
+
+type NpcFactionId = Exclude<FactionId, "player">;
+
+const SENTIENT_FACTION_COPY: Readonly<Record<NpcFactionId, Readonly<{
+  fallbackName: string;
+  greeting: string;
+  settlementChoice: string;
+  settlementChoiceDescription: string;
+}>>> = {
+  hobbits: {
+    fallbackName: "Hearthkin Neighbor",
+    greeting: "Come in from the road. There is always room by a warm hearth.",
+    settlementChoice: "Ask about this town",
+    settlementChoiceDescription: "Find its mayor, tradespeople, gates, and residents.",
+  },
+  goblins: {
+    fallbackName: "Brassroot Neighbor",
+    greeting: "State your business plainly, traveler, and we will get along.",
+    settlementChoice: "Ask about this clanhold",
+    settlementChoiceDescription: "Find its Roadboss, workshops, gates, and residents.",
+  },
+  atlantians: {
+    fallbackName: "Lumen Currentkeeper",
+    greeting: "Breathe slowly, surface-friend. The tidemoot has light enough to guide you home.",
+    settlementChoice: "Ask about this tidemoot",
+    settlementChoiceDescription: "Find its Tidewarden, reefworkers, glowmenders, and open current lanes.",
+  },
+};
+
+const SETTLEMENT_DISPLAY_NAMES: Readonly<Record<FactionId, string>> = {
+  player: "Wayfarer Holding",
+  hobbits: "Hearthkin Freehold",
+  goblins: "Brassroot Clanhold",
+  atlantians: "Lumen Tidemoot",
+};
+
+export function isNpcFactionId(value: unknown): value is NpcFactionId {
+  return value === "hobbits" || value === "goblins" || value === "atlantians";
+}
+
+export function sentientProfession(value: unknown, factionId: NpcFactionId): ResidentProfession {
+  if (isResidentProfession(value)) return value;
+  return factionId === "atlantians" ? "atlantian-tidewarden" : "general";
+}
+
+const ATLANTIAN_UI_AUDIT_CANDIDATE: SettlementCandidate = {
+  schema: 1,
+  id: "tidehold-ui-audit",
+  worldSeed: "TIDELIGHT-UI",
+  regionX: 0,
+  regionZ: 0,
+  center: { x: 0, y: -26, z: 0 },
+  size: "hamlet",
+  factionId: "atlantians",
+  biome: "lumen-trench",
+  environment: "underwater",
+  floorY: -28,
+};
+const ATLANTIAN_UI_AUDIT_SETTLEMENT = createSettlementState("ui-audit", ATLANTIAN_UI_AUDIT_CANDIDATE);
+const ATLANTIAN_UI_AUDIT_MERCHANT = createMerchant("ui-audit", "ui-audit-pearlbroker", "atlantians", "atlantian-pearlbroker", 420);
+const ATLANTIAN_UI_AUDIT_WALLET = createGoldWallet("ui-audit", "ui-audit-player", 800);
 
 type MultiplayerPeerView = {
   token?: string;
@@ -972,6 +1038,7 @@ export default function VoxelGame() {
   const [multiplayerBusy, setMultiplayerBusy] = useState(false);
   const [multiplayerReturn, setMultiplayerReturn] = useState<"title" | "pause">("title");
   const [iconAuditMode, setIconAuditMode] = useState(false);
+  const [civicAuditMode, setCivicAuditMode] = useState<CivicAuditMode | null>(null);
   const [heldAuditMode, setHeldAuditMode] = useState(false);
   const [workstationAuditMode, setWorkstationAuditMode] = useState<WorkstationOverlay | null>(null);
   const showTouchControls = resolveTouchControls(uiPreferences.touchControls, inputCapabilities);
@@ -989,6 +1056,8 @@ export default function VoxelGame() {
     setHeldAuditMode(parameters.get("held-audit") === "1");
     const workstationAudit = parameters.get("workstation-audit");
     setWorkstationAuditMode(workstationAudit === "apiary" || workstationAudit === "orb-rack" || workstationAudit === "healing-station" ? workstationAudit : null);
+    const civicAudit = parameters.get("civic-audit");
+    setCivicAuditMode(civicAudit === "atlantian-dialogue" || civicAudit === "atlantian-trade" || civicAudit === "atlantian-settlement" ? civicAudit : null);
   }, []);
 
   useEffect(() => {
@@ -1881,16 +1950,15 @@ export default function VoxelGame() {
   const activeSettlement = hud.settlements.find((settlement) => settlement.id === hud.activeSettlementId) ?? null;
   const activeMerchant = hud.activeMerchant;
   const activeResident = activeSettlement?.residents.find((resident) => resident.id === (hud.activeSentient?.residentId ?? activeMerchant?.id)) ?? null;
-  const activeFactionId = (hud.activeSentient?.factionId === "hobbits" || hud.activeSentient?.factionId === "goblins" ? hud.activeSentient.factionId : null)
-    ?? activeMerchant?.factionId
-    ?? (activeSettlement?.ownerFactionId === "goblins" ? "goblins" : "hobbits");
+  const activeFactionId: NpcFactionId = (isNpcFactionId(hud.activeSentient?.factionId) ? hud.activeSentient.factionId : null)
+    ?? (isNpcFactionId(activeMerchant?.factionId) ? activeMerchant.factionId : null)
+    ?? (isNpcFactionId(activeSettlement?.ownerFactionId) ? activeSettlement.ownerFactionId : null)
+    ?? "hobbits";
   const activeFactionAlignment = alignmentFor(hud.factionRelations, activeFactionId);
-  const activeProfession = hud.activeSentient?.profession ?? activeResident?.profession ?? activeMerchant?.profession ?? "general";
-  const activeCharacterName = hud.activeSentient?.name ?? activeResident?.name ?? hud.targetMob?.name ?? (activeFactionId === "hobbits" ? "Hearthkin Neighbor" : "Brassroot Neighbor");
-  const characterPortraitRole = activeFactionId === "hobbits"
-    ? ({ mayor: "mayor", warrior: "hammer-guard", farmer: "farmer", miner: "miner", banker: "banker", brewer: "merchant", alchemist: "merchant", blacksmith: "merchant", general: "merchant" } as const)[activeProfession as ResidentProfession] ?? "merchant"
-    : ({ mayor: "chieftain", warrior: "spear-guard", farmer: "worker", miner: "miner", banker: "worker", brewer: "alchemist", alchemist: "alchemist", blacksmith: "worker", general: "worker" } as const)[activeProfession as ResidentProfession] ?? "worker";
-  const characterPortrait = `/creatures/${activeFactionId === "hobbits" ? "hobbit" : "goblin"}-${characterPortraitRole}.svg`;
+  const activeProfession = sentientProfession(hud.activeSentient?.profession ?? activeResident?.profession ?? activeMerchant?.profession, activeFactionId);
+  const activeFactionCopy = SENTIENT_FACTION_COPY[activeFactionId];
+  const activeCharacterName = hud.activeSentient?.name ?? activeResident?.name ?? hud.targetMob?.name ?? activeFactionCopy.fallbackName;
+  const characterPortrait = sentientPortraitPath(activeFactionId, activeProfession);
   const currentPosition = { x: hud.coordinates[0], y: hud.coordinates[1], z: hud.coordinates[2] };
   const currentWayshrineId = hud.mapKnowledge.markers.find((marker) => marker.kind === "wayshrine"
     && Math.hypot(marker.position.x - currentPosition.x, marker.position.y - currentPosition.y, marker.position.z - currentPosition.z) <= 3.5)?.id ?? null;
@@ -2031,7 +2099,7 @@ export default function VoxelGame() {
           <div className="title-content">
             <div className="logo-wrap">
               <h1 id="game-title" className="block-logo">BLOCKWILD</h1>
-              <p className="logo-subtitle">ENDLESS HORIZONS · EIGHTEEN BIOMES · A VERY DEEP DOWN</p>
+              <p className="logo-subtitle">ENDLESS HORIZONS · TWENTY-ONE BIOMES · A VERY DEEP DOWN</p>
               <span className="splash-text">Now actually endless!</span>
             </div>
             <div className="title-menu-layout">
@@ -2057,7 +2125,7 @@ export default function VoxelGame() {
                 <header>
                   <div><span className="panel-eyebrow">THIS BROWSER · {worlds.length} {worlds.length === 1 ? "WORLD" : "WORLDS"}</span><strong>World Catalog</strong></div>
                   <button type="button" onClick={() => importWorldInputRef.current?.click()}>IMPORT</button>
-                  <input ref={importWorldInputRef} type="file" hidden accept=".json,.blockwild.json,application/json" onChange={(event) => void importWorld(event)} />
+                  <input ref={importWorldInputRef} type="file" hidden suppressHydrationWarning style={{ caretColor: "transparent" }} accept=".json,.blockwild.json,application/json" onChange={(event) => void importWorld(event)} />
                 </header>
                 <div className="world-catalog-list">
                   {worlds.length ? worlds.map((world) => (
@@ -2096,7 +2164,7 @@ export default function VoxelGame() {
           <div className="pixel-panel world-setup-panel expanded-setup-panel">
             <span className="panel-eyebrow">ENDLESS WORLD GENERATOR</span>
             <h2 id="new-world-title">Create a New World</h2>
-            <p className="setup-intro">Every seed grows continents, oceans, rivers, mountains, eighteen surface biomes, cave networks, ruins, cabins, and a worldheart sixty-four blocks below zero.</p>
+            <p className="setup-intro">Every seed grows continents, oceans, rivers, mountains, twenty-one biomes, cave networks, ruins, settlements, and a worldheart sixty-four blocks below zero.</p>
             <label className="field-label" htmlFor="world-name">World name</label>
             <input id="world-name" className="pixel-input world-name-input" value={worldName} maxLength={64} onChange={(event) => setWorldName(event.target.value)} />
             <label className="field-label" htmlFor="world-seed">World seed</label>
@@ -2137,7 +2205,7 @@ export default function VoxelGame() {
               </div>
             </details>
             <div className="world-feature-strip">
-              <span><b>∞</b> STREAMED WORLD</span><span><b>18</b> BIOMES</span><span><b>{MOB_ORDER.length}</b> CREATURES</span><span><b>192</b> BLOCKS TALL</span>
+              <span><b>∞</b> STREAMED WORLD</span><span><b>{Object.keys(BIOME_NAMES).length}</b> BIOMES</span><span><b>{MOB_ORDER.length}</b> CREATURES</span><span><b>192</b> BLOCKS TALL</span>
             </div>
             <p className="browser-ownership-note setup-ownership-note">This world will belong to this browser on this host device. Export it to make a backup or move it.</p>
             <div className="panel-actions">
@@ -2405,15 +2473,17 @@ export default function VoxelGame() {
         <section className="menu-overlay hearthroads-overlay" aria-label={`Talk to ${activeCharacterName}`}>
           <SentientDialoguePanel
             character={{ id: activeResident?.id ?? activeMerchant?.id ?? "nearby-resident", name: activeCharacterName, factionId: activeFactionId, profession: activeProfession, portraitUrl: characterPortrait, alignment: activeFactionAlignment }}
-            greeting={activeFactionId === "hobbits" ? "Come in from the road. There is always room by a warm hearth." : "State your business plainly, traveler, and we will get along."}
-            body={`${FACTIONS[activeFactionId].name} remember favors, trades, and harm. Your current standing is ${activeFactionAlignment >= 0 ? "+" : ""}${activeFactionAlignment}.`}
+            greeting={activeFactionCopy.greeting}
+            body={activeFactionId === "atlantians"
+              ? `The Lumen Tidemoots remember favors, trades, and harm through every shared current. Their unwalled homes remain underwater, lit by living reeflight. Your current standing is ${activeFactionAlignment >= 0 ? "+" : ""}${activeFactionAlignment}.`
+              : `${FACTIONS[activeFactionId].name} remember favors, trades, and harm. Your current standing is ${activeFactionAlignment >= 0 ? "+" : ""}${activeFactionAlignment}.`}
             choices={[
               ...(activeMerchant ? [{ id: "trade", label: "Trade", description: "Buy from their stock or sell goods from your pack.", badge: `${activeMerchant.gold}g`, tone: "warm" as const }] : []),
               ...(activeProfession === "banker" && activeFactionId === "hobbits" ? [{ id: "bank", label: "Use the freehold bank", description: "Deposit gold, withdraw freely, or review local ventures.", tone: "warm" as const }] : []),
               { id: "quests", label: "Ask about work", description: "Review story roads and any available side work.", tone: "plain" as const },
-              ...(activeSettlement ? [{ id: "settlement", label: "Ask about this town", description: "Find its mayor, tradespeople, gates, and residents.", tone: "plain" as const }] : []),
+              ...(activeSettlement ? [{ id: "settlement", label: activeFactionCopy.settlementChoice, description: activeFactionCopy.settlementChoiceDescription, tone: "plain" as const }] : []),
               ...(hud.activeSentient?.hired || activeResident?.hiredByPlayerId ? [{ id: "follower", label: "Review follower orders", description: "Rename this hireling or set stance, formation, and follow distance.", tone: "plain" as const }] : []),
-              ...(activeProfession === "mayor" && activeSettlement?.ownerFactionId !== "player" ? [{ id: "claim", label: "Threaten a claim", description: "Only possible after every settlement warrior has fallen. This severely harms faction standing.", tone: "warning" as const }] : []),
+              ...(isMayorProfession(activeProfession) && activeSettlement?.ownerFactionId !== "player" ? [{ id: "claim", label: "Threaten a claim", description: "Only possible after every settlement warrior has fallen. This severely harms faction standing.", tone: "warning" as const }] : []),
             ]}
             onChoose={(choiceId) => {
               if (choiceId === "trade") setOverlay("trade");
@@ -2467,13 +2537,13 @@ export default function VoxelGame() {
         <section className="menu-overlay hearthroads-overlay" aria-label="Settlement directory">
           <SettlementPanel
             settlement={activeSettlement}
-            settlementName={activeSettlement.ownerFactionId === "goblins" ? "Brassroot Clanhold" : activeSettlement.ownerFactionId === "hobbits" ? "Hearthkin Freehold" : "Wayfarer Holding"}
+            settlementName={SETTLEMENT_DISPLAY_NAMES[activeSettlement.ownerFactionId]}
             alignment={alignmentFor(hud.factionRelations, activeSettlement.ownerFactionId)}
             onSetRoleWaypoint={(profession) => {
               if (!hearthroadsApi?.setSettlementRoleWaypoint?.(profession)) showToast("No living resident currently fills that role.");
             }}
             onSelectResident={(residentId) => { hearthroadsApi?.selectSettlementResident?.(residentId); }}
-            onHireResident={activeProfession === "mayor" ? (residentId) => {
+            onHireResident={isMayorProfession(activeProfession) ? (residentId) => {
               if (!hearthroadsApi?.hireResidentFromMayor?.(residentId)) showToast("That resident is not currently available for hire.");
             } : undefined}
             onOpenSettlementMap={() => {
@@ -2714,6 +2784,51 @@ export default function VoxelGame() {
           null,
         ],
       }, true)}
+
+      {civicAuditMode && (
+        <section className="menu-overlay hearthroads-overlay civic-audit-overlay" aria-label="Atlantian civic interface audit">
+          {civicAuditMode === "atlantian-dialogue" ? (
+            <SentientDialoguePanel
+              character={{
+                id: "ui-audit-glowmender",
+                name: "Neri of the Lantern Tide",
+                factionId: "atlantians",
+                profession: "atlantian-glowmender",
+                portraitUrl: sentientPortraitPath("atlantians", "atlantian-glowmender"),
+                alignment: 18,
+              }}
+              greeting={SENTIENT_FACTION_COPY.atlantians.greeting}
+              body="The Lumen Tidemoots remember favors through every shared current. This unwalled home is lit by reeflight and tended by water-breathing citizens."
+              choices={[
+                { id: "trade", label: "Trade", description: "Browse salves, kelp, reefglass, and pearls carried on the open current.", badge: "420g", tone: "warm" },
+                { id: "quests", label: "Ask about work", description: "Learn what the reef nursery and current watch need today.", tone: "plain" },
+                { id: "settlement", label: SENTIENT_FACTION_COPY.atlantians.settlementChoice, description: SENTIENT_FACTION_COPY.atlantians.settlementChoiceDescription, tone: "plain" },
+              ]}
+              onChoose={() => undefined}
+              onClose={() => setCivicAuditMode(null)}
+            />
+          ) : civicAuditMode === "atlantian-trade" ? (
+            <TradePanel
+              merchant={ATLANTIAN_UI_AUDIT_MERCHANT}
+              playerGold={ATLANTIAN_UI_AUDIT_WALLET.balance}
+              playerInventory={[]}
+              merchantName="Sela of the Pearl Current"
+              onTrade={() => undefined}
+              onClose={() => setCivicAuditMode(null)}
+            />
+          ) : (
+            <SettlementPanel
+              settlement={ATLANTIAN_UI_AUDIT_SETTLEMENT}
+              settlementName="Lumen Tidemoot"
+              alignment={18}
+              onSetRoleWaypoint={() => undefined}
+              onSelectResident={() => undefined}
+              onOpenSettlementMap={() => undefined}
+              onClose={() => setCivicAuditMode(null)}
+            />
+          )}
+        </section>
+      )}
 
       {iconAuditMode && (
         <section className="item-icon-audit" aria-label="Inventory item icon size audit">

@@ -6466,6 +6466,60 @@ input:focus-visible {
   box-shadow: inset 0 0 0 2px #807250, 0 24px 70px rgba(0, 0, 0, .55);
 }
 
+/* Tidelight v0.7: Atlantians keep the same civic information hierarchy, but
+   trade parchment and hearth green for luminous reefglass and deep water. */
+.hearthroads-panel.faction-atlantians {
+  --hr-ink: #153d43;
+  --hr-muted: #4f7473;
+  --hr-rule: #4f8d8b;
+  --hr-paper: #d9ece3;
+  --hr-paper-deep: #a9d1c7;
+  --hr-moss: #22797d;
+  --hr-gold: #70d5c5;
+  background:
+    radial-gradient(circle at 78% 11%, rgba(132, 244, 226, .34), transparent 24%),
+    radial-gradient(circle at 11% 72%, rgba(71, 159, 174, .2), transparent 30%),
+    repeating-linear-gradient(168deg, transparent 0 32px, rgba(24, 103, 114, .045) 32px 33px),
+    var(--hr-paper);
+  border-color: #8dc9bd #285e69 #183f4c #b6ddd2;
+  box-shadow: inset 0 0 0 2px #4b8c8a, 0 24px 74px rgba(1, 19, 29, .62);
+}
+
+.hearthroads-panel.faction-atlantians .hearthroads-panel-header {
+  background:
+    radial-gradient(ellipse at 22% 0, rgba(111, 239, 218, .2), transparent 42%),
+    linear-gradient(112deg, rgba(255, 255, 255, .06), transparent 32%),
+    linear-gradient(135deg, #0d5e69, #082f43 72%);
+  border-bottom-color: #59a9a3;
+  animation: tidelight-header-drift 12s ease-in-out infinite alternate;
+}
+
+.hearthroads-panel.faction-atlantians .hearthroads-panel-header .panel-eyebrow { color: #8aead8; }
+.hearthroads-panel.faction-atlantians .hearthroads-panel-header p { color: #bbded8; }
+.hearthroads-panel.faction-atlantians .hearthroads-standing { border-color: rgba(132, 234, 216, .65); color: #d6fff5; }
+.hearthroads-panel.faction-atlantians .hearthroads-dialogue-choice:hover,
+.hearthroads-panel.faction-atlantians .hearthroads-trade-row.selected,
+.hearthroads-panel.faction-atlantians .hearthroads-role-list button.selected {
+  border-color: #2b8587;
+  background: rgba(176, 226, 211, .76);
+  box-shadow: inset 4px 0 #3eaaa3;
+}
+.hearthroads-panel.faction-atlantians .hearthroads-role-sigil,
+.hearthroads-panel.faction-atlantians .hearthroads-resident-avatar,
+.hearthroads-panel.faction-atlantians .hearthroads-item-stamp {
+  border-color: #306c70;
+  color: #d8fff3;
+  background: radial-gradient(circle at 36% 28%, #4fb7ac, #17606c 72%);
+}
+.hearthroads-panel.faction-atlantians .hearthroads-alignment-track i { background: linear-gradient(90deg, #2c858c, #74ddc8); }
+.hearthroads-panel.faction-atlantians .hearthroads-trade-total { color: #12565e; background: rgba(78, 186, 171, .2); border-color: #4d9a96; }
+.hearthroads-panel.faction-atlantians .gold-button { border-color: #4cafa5; background: linear-gradient(#6dcfc1, #348e8c); color: #092f38; }
+
+@keyframes tidelight-header-drift {
+  from { background-position: 0 0, 0 0, 0 0; }
+  to { background-position: 28px 8px, -18px 0, 0 0; }
+}
+
 .hearthroads-panel-header {
   flex: 0 0 auto;
   min-height: 88px;
@@ -6659,7 +6713,23 @@ input:focus-visible {
 .hearthroads-dialogue-layout { min-height: 0; flex: 1; display: grid; grid-template-columns: 290px minmax(0, 1fr) 330px; }
 .hearthroads-dialogue-portrait { min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; margin: 0; padding: 16px; border-right: 3px solid #827553; background: radial-gradient(circle at 50% 36%, rgba(229, 220, 169, .58), transparent 43%), rgba(93, 112, 80, .18); }
 .hearthroads-dialogue-portrait img { align-self: center; width: 100%; height: auto; max-height: 430px; object-fit: contain; filter: drop-shadow(0 15px 9px rgba(62, 49, 26, .22)); }
-.hearthroads-dialogue-portrait > span { align-self: center; justify-self: center; width: 150px; height: 150px; display: grid; place-items: center; border-radius: 50%; color: #f0d98f; background: #40503e; font-family: Georgia, serif; font-size: 70px; }
+.hearthroads-portrait-asset { position: relative; display: grid; place-items: center; overflow: hidden; }
+.hearthroads-dialogue-portrait .hearthroads-portrait-asset { align-self: center; width: 100%; min-height: 280px; }
+.hearthroads-portrait-asset > * { grid-area: 1 / 1; }
+.hearthroads-portrait-fallback { width: 150px; height: 150px; display: grid; place-items: center; border: 2px solid rgba(84, 100, 68, .62); border-radius: 50%; color: #f0d98f; background: #40503e; font-family: Georgia, serif; font-size: 70px; }
+.hearthroads-portrait-asset[data-portrait-state="model"] .hearthroads-portrait-fallback { opacity: 0; }
+.hearthroads-portrait-asset.compact { width: 38px; height: 38px; border: 1px solid #5d756f; border-radius: 50%; background: rgba(54, 112, 113, .18); }
+.hearthroads-portrait-asset.compact .hearthroads-portrait-fallback { width: 100%; height: 100%; border: 0; color: #d9fff4; background: #246d75; font-size: 16px; }
+.hearthroads-portrait-asset.compact img { width: 46px; height: 46px; object-fit: contain; }
+.hearthroads-dialogue-panel.faction-atlantians .hearthroads-portrait-asset:not(.compact) { animation: tidelight-portrait-float 5.5s ease-in-out infinite; }
+.hearthroads-dialogue-panel.faction-atlantians .hearthroads-portrait-fallback { border-color: #4caaa2; color: #cafff1; background: radial-gradient(circle at 38% 30%, #38989a, #174c5e 72%); }
+.hearthroads-dialogue-panel.faction-atlantians .hearthroads-dialogue-portrait { background: radial-gradient(circle at 50% 35%, rgba(95, 220, 202, .46), transparent 44%), linear-gradient(#b9ddd1, #9bc8c4); }
+.hearthroads-role-note { display: grid; gap: 5px; padding: 12px 0 0; border-top: 1px solid rgba(49, 112, 113, .35); }
+.hearthroads-role-note b { color: #17656a; font-family: Georgia, serif; font-size: 15px; }
+@keyframes tidelight-portrait-float {
+  0%, 100% { transform: translateY(2px) rotate(-.35deg); }
+  50% { transform: translateY(-5px) rotate(.35deg); }
+}
 .hearthroads-dialogue-portrait figcaption { display: grid; gap: 7px; color: #5f573f; font-size: 8px; text-transform: uppercase; }
 .hearthroads-alignment-track { display: block; height: 8px; overflow: hidden; border: 1px solid #665c43; background: linear-gradient(90deg, #9b5047 50%, #b1a27b 50%); }
 .hearthroads-alignment-track i { display: block; height: 100%; background: #668357; }
@@ -6767,6 +6837,24 @@ input:focus-visible {
 .hearthroads-town-plan-legend b { display: inline-block; width: 9px; height: 9px; margin-right: 4px; background: #8b6c43; }
 .hearthroads-town-plan-legend b { border-radius: 50%; background: #d5bd65; }
 .hearthroads-town-plan p { margin-top: 12px; color: #6c644f; font-size: 8px; line-height: 1.5; }
+.hearthroads-settlement-panel.aquatic-settlement .hearthroads-settlement-summary { background: #3b7477; }
+.hearthroads-settlement-panel.aquatic-settlement .hearthroads-settlement-summary div { background: rgba(195, 226, 216, .92); }
+.hearthroads-settlement-panel.aquatic-settlement .hearthroads-settlement-summary small { color: #47706f; }
+.hearthroads-settlement-panel.aquatic-settlement .hearthroads-role-list { background: linear-gradient(rgba(34, 122, 126, .16), rgba(86, 167, 153, .08)); border-color: #4f8884; }
+.hearthroads-settlement-panel.aquatic-settlement .hearthroads-role-detail header > p:first-of-type { max-width: 620px; margin: 8px 0 4px; color: #436f70; font-size: 9px; line-height: 1.55; }
+.hearthroads-settlement-panel.aquatic-settlement .hearthroads-town-plan { border-color: #4e8987; background: rgba(177, 220, 207, .34); }
+.hearthroads-settlement-panel.aquatic-settlement .hearthroads-town-plan-map {
+  border-color: #2d666f;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(142, 226, 209, .68) 0 9%, transparent 10%),
+    repeating-radial-gradient(circle, rgba(92, 178, 171, .35) 0 2px, transparent 3px 22px),
+    radial-gradient(circle, #94cbc3 0 67%, #43888d 68% 72%, #173f56 73%);
+  box-shadow: inset 0 0 26px rgba(18, 74, 83, .32), 0 8px 20px rgba(14, 61, 73, .18);
+}
+.hearthroads-settlement-panel.aquatic-settlement .hearthroads-town-plan-map i { border-color: #20545b; background: #4aa39c; }
+.hearthroads-settlement-panel.aquatic-settlement .hearthroads-town-plan-map b { border-color: #d6fff3; background: #70e5ce; box-shadow: 0 0 8px #7debd5; }
+.hearthroads-settlement-panel.aquatic-settlement .hearthroads-town-plan-legend i { background: #4aa39c; }
+.hearthroads-settlement-panel.aquatic-settlement .hearthroads-town-plan-legend b { background: #70e5ce; box-shadow: 0 0 5px #56bdaf; }
 .hearthroads-follower-panel { height: auto; max-height: 86vh; }
 .hearthroads-follower-orders { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 20px; }
 .hearthroads-hireling-name { grid-column: 1 / -1; display: grid; grid-template-columns: auto minmax(180px, 1fr) auto; gap: 8px; align-items: center; padding-bottom: 12px; border-bottom: 1px solid #9b8c68; }
@@ -6865,4 +6953,6 @@ input:focus-visible {
 
 @media (prefers-reduced-motion: reduce) {
   .hearthroads-station-apparatus[data-active="true"] span { animation: none; }
+  .hearthroads-panel.faction-atlantians .hearthroads-panel-header,
+  .hearthroads-dialogue-panel.faction-atlantians .hearthroads-portrait-asset:not(.compact) { animation: none; }
 }

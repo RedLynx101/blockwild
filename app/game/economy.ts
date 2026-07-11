@@ -106,7 +106,13 @@ export type MerchantProfession =
   | "blacksmith"
   | "banker"
   | "warrior"
-  | "mayor";
+  | "mayor"
+  | "atlantian-tidewarden"
+  | "atlantian-kelpkeeper"
+  | "atlantian-coralwright"
+  | "atlantian-pearlbroker"
+  | "atlantian-glowmender"
+  | "atlantian-trident-guard";
 
 export type CommerceCategory =
   | "food"
@@ -174,6 +180,14 @@ export const COMMERCE_CATALOG: Readonly<Record<string, CommerceItem>> = Object.f
   { key: "blueprint-mead", name: "Blueprint: Hearthgold Mead", category: "blueprint", baseValue: 360, stackLimit: 16 },
   { key: "unaligned-warg-orb", name: "Capture Orb: Young Warg", category: "creature", baseValue: 640, stackLimit: 1, tags: ["unaligned", "warg"] },
   { key: "cloudglass-relic", name: "Cloudglass Relic", category: "treasure", baseValue: 210, stackLimit: 1 },
+  { key: "glow-kelp", name: "Glow Kelp Frond", category: "crop", baseValue: 7, stackLimit: 64, tags: ["aquatic", "atlantian", "kelp"] },
+  { key: "shellfruit", name: "Shellfruit", category: "food", baseValue: 11, stackLimit: 32, tags: ["aquatic", "atlantian", "fruit"] },
+  { key: "reefglass", name: "Reefglass", category: "material", baseValue: 19, stackLimit: 64, tags: ["aquatic", "atlantian", "craft"] },
+  { key: "living-coral", name: "Living Coral", category: "material", baseValue: 16, stackLimit: 32, tags: ["aquatic", "atlantian", "coral"] },
+  { key: "lumen-pearl", name: "Lumen Pearl", category: "treasure", baseValue: 48, stackLimit: 32, tags: ["aquatic", "atlantian", "pearl"] },
+  { key: "prismatic-pearl", name: "Prismatic Pearl", category: "treasure", baseValue: 145, stackLimit: 16, tags: ["aquatic", "atlantian", "pearl", "rare"] },
+  { key: "tideglass-trident", name: "Tideglass Trident", category: "weapon", baseValue: 168, stackLimit: 1, tags: ["aquatic", "atlantian"] },
+  { key: "glowmender-salve", name: "Glowmender Salve", category: "potion", baseValue: 76, stackLimit: 16, tags: ["aquatic", "atlantian", "medicine"] },
 ] satisfies CommerceItem[]).map((definition) => [definition.key, definition])) as Readonly<Record<string, CommerceItem>>;
 
 export type MerchantOffer = Readonly<MerchantStack & { professions: readonly MerchantProfession[] }>;
@@ -202,8 +216,23 @@ export const GOBLIN_MERCHANT_OFFERS: readonly MerchantOffer[] = [
   { itemKey: "unaligned-warg-orb", count: 1, professions: ["mayor", "general"] },
 ];
 
+export const ATLANTIAN_MERCHANT_OFFERS: readonly MerchantOffer[] = [
+  { itemKey: "glow-kelp", count: 28, professions: ["atlantian-kelpkeeper", "atlantian-tidewarden"] },
+  { itemKey: "shellfruit", count: 18, professions: ["atlantian-kelpkeeper", "atlantian-pearlbroker"] },
+  { itemKey: "reefglass", count: 20, professions: ["atlantian-coralwright", "atlantian-pearlbroker"] },
+  { itemKey: "living-coral", count: 14, professions: ["atlantian-coralwright"] },
+  { itemKey: "lumen-pearl", count: 10, professions: ["atlantian-pearlbroker", "atlantian-tidewarden"] },
+  { itemKey: "prismatic-pearl", count: 2, professions: ["atlantian-pearlbroker"] },
+  { itemKey: "tideglass-trident", count: 3, professions: ["atlantian-coralwright", "atlantian-trident-guard"] },
+  { itemKey: "glowmender-salve", count: 6, professions: ["atlantian-glowmender", "atlantian-tidewarden"] },
+];
+
 export function merchantOffersFor(factionId: Exclude<FactionId, "player">, profession: MerchantProfession) {
-  const offers = factionId === "hobbits" ? HOBBIT_MERCHANT_OFFERS : GOBLIN_MERCHANT_OFFERS;
+  const offers = factionId === "hobbits"
+    ? HOBBIT_MERCHANT_OFFERS
+    : factionId === "goblins"
+      ? GOBLIN_MERCHANT_OFFERS
+      : ATLANTIAN_MERCHANT_OFFERS;
   return offers.filter((offer) => offer.professions.includes(profession)).map(({ itemKey, count }) => ({ itemKey, count }));
 }
 
@@ -249,8 +278,14 @@ function merchantDemandMultiplier(merchant: Pick<MerchantState, "factionId" | "p
   if (merchant.profession === "alchemist" && ["potion", "crop"].includes(item.category)) multiplier *= 1.3;
   if (merchant.profession === "blacksmith" && ["weapon", "ore", "ammunition"].includes(item.category)) multiplier *= 1.25;
   if (merchant.profession === "banker" && ["treasure", "ore"].includes(item.category)) multiplier *= 1.2;
+  if (merchant.profession === "atlantian-kelpkeeper" && ["crop", "food"].includes(item.category)) multiplier *= 1.34;
+  if (merchant.profession === "atlantian-coralwright" && ["material", "weapon"].includes(item.category)) multiplier *= 1.3;
+  if (merchant.profession === "atlantian-pearlbroker" && item.tags?.includes("pearl")) multiplier *= 1.42;
+  if (merchant.profession === "atlantian-glowmender" && ["potion", "crop"].includes(item.category)) multiplier *= 1.3;
+  if (merchant.profession === "atlantian-trident-guard" && item.category === "weapon") multiplier *= 1.2;
   if (merchant.factionId === "hobbits" && item.tags?.includes("mead")) multiplier *= 1.8;
   if (merchant.factionId === "goblins" && item.tags?.includes("goblin")) multiplier *= 1.15;
+  if (merchant.factionId === "atlantians" && item.tags?.includes("aquatic")) multiplier *= 1.14;
   return multiplier;
 }
 

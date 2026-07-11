@@ -7,10 +7,14 @@ import {
   Item,
   RECIPES,
   SMELTING,
+  POLLINATOR_FLOWERS,
   BlockId,
   cloneSlot,
+  blockContainsWater,
   isBedBlock,
   isTorchBlock,
+  isWaterloggedFloraBlock,
+  itemForBlock,
   itemName,
   maxStack,
   recipePatterns,
@@ -35,24 +39,42 @@ import {
 } from "./world";
 import { BUTTERFLY_ORDER, MOB_DEFS, MOB_ORDER, type ButterflyKind, type CoreMobKind, type MobDefinition, type MobKind } from "./mobs";
 import { createHeldToolSpec } from "./model-specs";
-import { createMobVisual } from "./mob-models";
+import { applyOceanCreaturePose, createMobVisual, createSentientLodVisual } from "./mob-models";
 import { ButterflySystem, createButterflyVisual } from "./butterflies";
 import {
   createBirdBehavior,
+  attachLeviathanChest,
+  bondLeviathan,
+  canRideCreature,
   createStableSteering,
+  collectLeviathanEgg,
+  LEVIATHAN_LIFECYCLE_CONTRACT,
+  createAetherbellMorphState,
+  createLeviathanEgg,
+  creatureMountProfile,
+  layLeviathanEggFromParents,
   chooseLocalWalkableGround,
-  fishKindsForHabitat,
+  fishKindForHabitat,
   naturalGroupSizeForMob,
   passiveMobKindForBiome,
   shouldKeepCreatureLoaded,
+  saddleLeviathan,
+  stepAetherbellMorph,
+  stepLeviathanEgg,
+  stepLeviathanGrowth,
   updateBirdBehavior,
   updateStableSteering,
   type BirdBehaviorState,
+  type AetherbellMorphState,
+  type LeviathanEggMetadata,
+  type LeviathanGrowthState,
+  type LeviathanSpecies,
   type StableSteeringState,
 } from "./fauna";
 import {
   breedCreatureStates,
   canBreedCreatures,
+  createCreatureHusbandryState,
   feedCreatureForHusbandry,
   normalizeCreatureHusbandryState,
   tickCreatureHusbandry,
@@ -141,8 +163,11 @@ import {
   normalizeViewDistances,
   PerformanceSampler,
   AdaptiveBudgetController,
+  advanceSentientCoarseSimulation,
   applyResourceMode,
   chunkRetentionPadding,
+  sentientSimulationTier,
+  type SentientSimulationTier,
   type ResourceMode,
 } from "./performance";
 import {
@@ -212,6 +237,8 @@ import {
   ORCHARD_REGROWTH_JITTER_MS,
   planAppleFruitRegrowth,
   planAppleTree,
+  planAquaticColumnRemoval,
+  planAquaticGrowth,
   plantProfileForBlock,
   plantingResult,
   resolveBucketAction,
@@ -311,6 +338,7 @@ import {
   type MapKnowledge,
 } from "./map-system";
 import {
+  DEFAULT_QUEST_DEFINITIONS,
   HEARTHROADS_MAIN_QUESTS,
   acceptQuest,
   abandonQuest,
@@ -366,6 +394,7 @@ import {
   createFactionRelations,
   evaluateTownCapture,
   factionStanding,
+  type FactionId,
   type FactionRelationsState,
 } from "./factions";
 import {
@@ -400,6 +429,9 @@ import {
   growSettlementPopulation,
   hireResident,
   merchantProfessionForResident,
+  isMayorProfession,
+  isWarriorProfession,
+  normalizeSettlementState,
   normalizeFollowDistance,
   planResidentSchedule,
   sideQuestOffersFor,
@@ -537,7 +569,7 @@ export type HudState = {
   settlements: readonly SettlementState[];
   activeSettlementId: string | null;
   activeMerchant: MerchantState | null;
-  activeSentient?: { id: number; residentId: string | null; name: string; profession: string | null; factionId: "hobbits" | "goblins" | "player" | null; hired: boolean; followDistance: FollowDistanceSetting } | null;
+  activeSentient?: { id: number; residentId: string | null; name: string; profession: string | null; factionId: FactionId | null; hired: boolean; followDistance: FollowDistanceSetting } | null;
   bankAccount: BankAccountState;
   stockMarket: StockMarketState;
   potionBuffs: Readonly<Record<string, number>>;
@@ -563,17 +595,20 @@ export type SavedCreature = {
   shadeState?: ShadecrawlerState;
   reedstriderBond?: ReedstriderBond;
   courserBond?: ReedstriderBond;
+  leviathanGrowth?: LeviathanGrowthState;
+  aetherbellMorph?: AetherbellMorphState;
   apiaryBee?: ApiaryBee;
   socialGroupId?: string;
   peelopShedding?: PeelopSheddingState;
   milkCooldown?: number;
-  factionId?: "hobbits" | "goblins" | "player" | null;
+  factionId?: FactionId | null;
   profession?: string | null;
   settlementId?: string | null;
   residentId?: string | null;
   aligned?: boolean;
   hiredByPlayerId?: string | null;
   followDistance?: FollowDistanceSetting;
+  followCommand?: "follow" | "hold";
 };
 
 export type WorldSave = {
@@ -677,6 +712,9 @@ type MobEntity = {
   definition: MobDefinition;
   group: THREE.Group;
   visual: THREE.Group;
+  sentientLod: THREE.Group | null;
+  sentientTier: SentientSimulationTier;
+  sentientSimulationAccumulator: number;
   parts: Record<string, THREE.Object3D[]>;
   health: number;
   maxHealth: number;
@@ -702,6 +740,8 @@ type MobEntity = {
   shadeState: ShadecrawlerState | null;
   reedstriderBond: ReedstriderBond | null;
   courserBond: ReedstriderBond | null;
+  leviathanGrowth: LeviathanGrowthState | null;
+  aetherbellMorph: AetherbellMorphState | null;
   apiaryBee: ApiaryBee | null;
   beeHiveKey: string | null;
   socialGroupId: string | null;
@@ -717,13 +757,14 @@ type MobEntity = {
   sightCheckTimer: number;
   awarenessTimer: number;
   seesPlayer: boolean;
-  factionId: "hobbits" | "goblins" | "player" | null;
+  factionId: FactionId | null;
   profession: string | null;
   settlementId: string | null;
   residentId: string | null;
   aligned: boolean;
   hiredByPlayerId: string | null;
   followDistance: FollowDistanceSetting;
+  followCommand: "follow" | "hold";
 };
 
 type SailboatEntity = {
@@ -751,19 +792,22 @@ type SpawnMobOptions = {
   shadeState?: ShadecrawlerState | null;
   reedstriderBond?: ReedstriderBond | null;
   courserBond?: ReedstriderBond | null;
+  leviathanGrowth?: LeviathanGrowthState | null;
+  aetherbellMorph?: AetherbellMorphState | null;
   apiaryBee?: ApiaryBee | null;
   beeHiveKey?: string | null;
   socialGroupId?: string | null;
   peelopShedding?: PeelopSheddingState | null;
   milkCooldown?: number;
   name?: string | null;
-  factionId?: "hobbits" | "goblins" | "player" | null;
+  factionId?: FactionId | null;
   profession?: string | null;
   settlementId?: string | null;
   residentId?: string | null;
   aligned?: boolean;
   hiredByPlayerId?: string | null;
   followDistance?: FollowDistanceSetting;
+  followCommand?: "follow" | "hold";
 };
 
 type MobFragment = {
@@ -797,7 +841,7 @@ type FallingTree = {
   fallAxis: THREE.Vector3;
   progress: number;
   primaryLogType: BlockId;
-  logDrops: Array<[BlockId, number]>;
+  logDrops: Array<[ItemCode, number]>;
   logCount: number;
   leafCount: number;
   harvest: boolean;
@@ -937,7 +981,7 @@ export function bedRespawnCandidates(type: BlockId, x: number, y: number, z: num
 }
 
 export function isInstantBreakBlock(type: BlockId) {
-  return ["cross", "bush", "fruit"].includes(BLOCKS[type]?.shape ?? "");
+  return ["cross", "bush", "fruit", "aquatic", "tall-flower"].includes(BLOCKS[type]?.shape ?? "");
 }
 
 export function isOpenableBlock(type: BlockId) {
@@ -963,12 +1007,71 @@ export function mobPopulationCaps(totalCap: number) {
   return { total, passive, hostile: total === 0 ? 0 : Math.max(1, Math.floor((total - passive) * HOSTILE_CAP_SCALE)) };
 }
 
+export type NaturalMobPopulationEntry = Readonly<{
+  hostile: boolean;
+  persistentPoiResident?: boolean;
+}>;
+
+/**
+ * Settlement and authored POI residents have their own population contracts.
+ * Keeping them out of the roaming wildlife budget prevents one visited town
+ * from permanently suppressing every later natural spawn.
+ */
+export function naturalMobPopulation(mobs: readonly NaturalMobPopulationEntry[]) {
+  let passive = 0;
+  let hostile = 0;
+  for (const mob of mobs) {
+    if (mob.persistentPoiResident) continue;
+    if (mob.hostile) hostile += 1;
+    else passive += 1;
+  }
+  return { total: passive + hostile, passive, hostile };
+}
+
 export function positionInPlayerViewCone(yaw: number, dx: number, dz: number, halfAngle = Math.PI * 0.34) {
   const distance = Math.hypot(dx, dz);
   if (distance < 0.0001) return true;
   const forwardX = -Math.sin(yaw);
   const forwardZ = -Math.cos(yaw);
   return (dx * forwardX + dz * forwardZ) / distance >= Math.cos(halfAngle);
+}
+
+const LEVIATHAN_KINDS = new Set<MobKind>(["worldshell-leviathan", "aetherbell-larva", "aetherbell-leviathan"]);
+
+function isLeviathanKind(kind: MobKind): kind is "worldshell-leviathan" | "aetherbell-larva" | "aetherbell-leviathan" {
+  return LEVIATHAN_KINDS.has(kind);
+}
+
+function createWildLeviathanGrowth(kind: "worldshell-leviathan" | "aetherbell-larva" | "aetherbell-leviathan", id: number): LeviathanGrowthState {
+  const species: LeviathanSpecies = kind === "worldshell-leviathan" ? "worldshell-leviathan" : "aetherbell-leviathan";
+  const adult = kind !== "aetherbell-larva";
+  const ageTicks = adult ? LEVIATHAN_LIFECYCLE_CONTRACT.adultAtTicks : 0;
+  return {
+    schemaVersion: 1,
+    creatureId: `${species}:wild:${id}`,
+    sourceEggId: `wild:${id}`,
+    species,
+    kind,
+    geneticSeed: Math.imul(id, 0x9e3779b1) >>> 0,
+    ageTicks,
+    stage: adult ? "adult" : "tiny",
+    growthScale: adult ? 1 : 0.08,
+    aquaticOnly: !adult,
+    customName: null,
+    tamed: false,
+    ownerId: null,
+    saddled: false,
+    chestModules: 0,
+  };
+}
+
+function placedLeviathanEggMetadata(metadata: Record<string, unknown> | undefined): LeviathanEggMetadata | null {
+  if (metadata?.kind !== "placed-leviathan-egg" || !metadata.egg || typeof metadata.egg !== "object") return null;
+  const egg = metadata.egg as Partial<LeviathanEggMetadata>;
+  if (egg.schemaVersion !== 1 || typeof egg.eggId !== "string"
+    || (egg.species !== "worldshell-leviathan" && egg.species !== "aetherbell-leviathan")
+    || typeof egg.geneticSeed !== "number" || typeof egg.incubationTicks !== "number" || typeof egg.submergedTicks !== "number") return null;
+  return egg as LeviathanEggMetadata;
 }
 
 export function nextPeelopBananaShedSeconds(id: number, cycle: number) {
@@ -1085,7 +1188,7 @@ export function migrateSavedWorld(value: unknown): WorldSave | null {
   const parsed = value as WorldSave;
   if (parsed.version !== 2 || typeof parsed.seed !== "string") return null;
   if (parsed.generatorVersion === GENERATOR_VERSION) return parsed;
-  if (parsed.generatorVersion === 3 || parsed.generatorVersion === 4 || parsed.generatorVersion === 5 || parsed.generatorVersion === 6) return { ...parsed, generatorVersion: GENERATOR_VERSION };
+  if (parsed.generatorVersion === 3 || parsed.generatorVersion === 4 || parsed.generatorVersion === 5 || parsed.generatorVersion === 6 || parsed.generatorVersion === 7) return { ...parsed, generatorVersion: GENERATOR_VERSION };
   if (parsed.generatorVersion !== 2) return null;
   const indexOffset = (LEGACY_GENERATOR_MIN_Y - MIN_Y) * 16 * 16;
   const edits: ChunkEditSave = {};
@@ -1104,14 +1207,74 @@ export function restoreChestStorage(saved: Record<string, ChestState> = {}) {
       ? clamp(value.length || 1, 1, 20)
       : key.startsWith("boat:")
         ? 18
+        : key.startsWith("leviathan:") && key.endsWith(":cargo")
+          ? clamp(Math.ceil(Math.max(27, value.length || 27) / 27) * 27, 27, 162)
         : key.includes("|") ? 54 : 27;
     return [key, Array.from({ length: size }, (_, index) => normalizeCaptureOrbInventorySlot(value[index] ?? null))] as const;
   }));
 }
 
+/** Converts real simulation seconds into the canonical 24,000-tick world day. */
+export function worldTicksForDelta(elapsedSeconds: number, dayLengthMinutes: number) {
+  if (!Number.isFinite(elapsedSeconds) || elapsedSeconds <= 0) return 0;
+  const daySeconds = Math.max(60, (Number.isFinite(dayLengthMinutes) ? dayLengthMinutes : 20) * 60);
+  return elapsedSeconds * LEVIATHAN_LIFECYCLE_CONTRACT.ticksPerDay / daySeconds;
+}
+
+export function aquaticSpawnHeight(kind: MobKind, floorY: number, waterSurfaceY: number, roll = 0.5) {
+  if (!Number.isFinite(floorY) || !Number.isFinite(waterSurfaceY) || waterSurfaceY <= floorY) return null;
+  const depth = Math.max(0, waterSurfaceY - floorY - 1);
+  const unit = clamp(Number.isFinite(roll) ? roll : 0.5, 0, 1);
+  if (kind === "abyss-skater") return floorY + 0.7;
+  if (kind === "worldshell-leviathan") return depth >= 3 ? waterSurfaceY - 0.8 : null;
+  if (kind === "aetherbell-leviathan") {
+    // The adult's trailing ribbons extend a little over five blocks below its
+    // origin, so shallow columns are not valid natural spawn sites.
+    return depth >= 6 ? clamp(floorY + 5.4 + unit * Math.max(0, depth - 6.1), floorY + 5.4, waterSurfaceY - 0.6) : null;
+  }
+  if (kind === "dreadcoil") return floorY + Math.max(1.2, depth * 0.28);
+  if (kind === "aetherbell-larva") return floorY + Math.max(1, depth * 0.36);
+  return floorY + 0.8 + unit * Math.max(0.2, depth - 1.2);
+}
+
+/**
+ * Aquatic structure markers carry an authored water-column height. Surface
+ * pathfinding intentionally ignores water, so preserve that height instead of
+ * grounding an underwater resident on the sea floor.
+ */
+export function structureMobSpawnY(
+  world: Pick<ChunkWorld, "findWalkableY" | "getBlock">,
+  kind: MobKind,
+  x: number,
+  z: number,
+  markerY: number,
+) {
+  const definition = MOB_DEFS[kind];
+  if (definition.movement === "aquatic") {
+    const blockX = Math.round(x);
+    const blockZ = Math.round(z);
+    const baseY = Math.round(markerY);
+    for (const offset of [0, 1, -1, 2, -2, 3, -3]) {
+      const candidateY = baseY + offset;
+      if (blockContainsWater(world.getBlock(blockX, candidateY, blockZ))) return candidateY;
+    }
+    return markerY;
+  }
+  return world.findWalkableY(Math.round(x), Math.round(z), markerY) + definition.footOffset;
+}
+
 export function normalizeCaptureOrbInventorySlot(slot: InventorySlot | null | undefined) {
   const copy = cloneSlot(slot ?? null);
   return copy ? migrateCaptureOrbInventorySlot(copy) : null;
+}
+
+export function normalizeLeviathanCargoStorage(value: unknown, chestModules: number): ChestState {
+  const size = clamp(Math.floor(Number(chestModules) || 0), 0, 6) * 27;
+  if (size <= 0) return [];
+  const slots = Array.isArray(value) ? value : [];
+  return Array.from({ length: size }, (_, index) => normalizeCaptureOrbInventorySlot(
+    slots[index] && typeof slots[index] === "object" ? slots[index] as InventorySlot : null,
+  ));
 }
 
 let looseCaptureOrbSerial = 0;
@@ -1507,6 +1670,7 @@ export class VoxelEngine {
   targetKey = "";
   targetMob: MobEntity | null = null;
   targetBoat: SailboatEntity | null = null;
+  targetEggDrop: DropEntity | null = null;
   activePet: MobEntity | null = null;
   mineHeld = false;
   miningProgress = 0;
@@ -1605,7 +1769,7 @@ export class VoxelEngine {
         const tracked = this.liquidCells.get(key);
         if (tracked) return tracked;
         const type = this.world.getBlock(x, y, z);
-        if (type === BlockId.Water) return { kind: "water", level: 0, source: true, falling: false };
+        if (blockContainsWater(type)) return { kind: "water", level: 0, source: true, falling: false };
         if (type === BlockId.Lava) return { kind: "lava", level: 0, source: true, falling: false };
         return undefined;
       },
@@ -1613,8 +1777,11 @@ export class VoxelEngine {
         const key = blockKey(x, y, z);
         if (next) this.liquidCells.set(key, { ...next });
         else this.liquidCells.delete(key);
+        const current = this.world.getBlock(x, y, z);
         const type = next ? (next.kind === "water" ? BlockId.Water : BlockId.Lava) : BlockId.Air;
-        this.world.setBlock(x, y, z, type, true, false);
+        if (!(next?.kind === "water" && current !== undefined && isWaterloggedFloraBlock(current))) {
+          this.world.setBlock(x, y, z, type, true, false);
+        }
       },
     });
     this.touchMode = window.matchMedia?.("(pointer: coarse)").matches ?? false;
@@ -2154,11 +2321,19 @@ export class VoxelEngine {
     this.potionBuffs = Object.fromEntries(Object.entries(save.potionBuffs ?? {}).filter(([, value]) => typeof value === "number" && Number.isFinite(value)).map(([key, value]) => [key.slice(0, 64), Math.max(0, value)]));
     this.fastTravelChannel = null;
     this.damageRevision = 0;
-    this.factionRelations = save.factionRelations?.schema === 1 ? save.factionRelations : createFactionRelations(authorityId);
+    const defaultFactionRelations = createFactionRelations(authorityId);
+    this.factionRelations = save.factionRelations?.schema === 1 ? {
+      ...defaultFactionRelations,
+      ...save.factionRelations,
+      alignments: { ...defaultFactionRelations.alignments, ...save.factionRelations.alignments },
+      diplomacy: { ...defaultFactionRelations.diplomacy, ...save.factionRelations.diplomacy },
+    } : defaultFactionRelations;
     this.goldWallet = save.goldWallet?.schema === 1 ? save.goldWallet : createGoldWallet(authorityId, playerId, 0);
     this.bankAccount = save.bankAccount?.schema === 1 ? save.bankAccount : createBankAccount(authorityId, playerId, this.day);
     this.stockMarket = save.stockMarket?.schema === 1 ? save.stockMarket : createStockMarket(authorityId, playerId, save.seed, this.day);
-    this.settlements = new Map((Array.isArray(save.settlements) ? save.settlements : []).filter((entry) => entry?.schema === 1 && typeof entry.id === "string").map((entry) => [entry.id, entry]));
+    this.settlements = new Map((Array.isArray(save.settlements) ? save.settlements : [])
+      .filter((entry) => entry?.schema === 1 && typeof entry.id === "string")
+      .map((entry) => [entry.id, normalizeSettlementState(entry)]));
     this.merchants = new Map(Object.entries(save.merchants ?? {}).filter(([, entry]) => entry?.schema === 1));
     this.rangedLoaded = new Map(Object.entries(save.rangedLoaded ?? {}).flatMap(([item, loaded]) => {
       const itemCode = Number(item);
@@ -2586,9 +2761,15 @@ export class VoxelEngine {
       health: mob.health,
       state: mob.state,
       scale: this.mobBaseScale(mob),
-      tamed: Boolean(mob.petState?.tamed || mob.shadeState?.tamed || mob.reedstriderBond?.tamed || mob.courserBond?.tamed || mob.apiaryBee?.tamed),
-      saddled: Boolean(mob.shadeState?.saddled || mob.reedstriderBond?.saddled || mob.courserBond?.saddled),
-      baby: Boolean(mob.petState?.baby || mob.careState?.baby),
+      tamed: Boolean(mob.petState?.tamed || mob.shadeState?.tamed || mob.reedstriderBond?.tamed || mob.courserBond?.tamed || mob.leviathanGrowth?.tamed || mob.apiaryBee?.tamed),
+      saddled: Boolean(mob.shadeState?.saddled || mob.reedstriderBond?.saddled || mob.courserBond?.saddled || mob.leviathanGrowth?.saddled),
+      baby: Boolean(mob.petState?.baby || mob.careState?.baby || (mob.leviathanGrowth && mob.leviathanGrowth.stage !== "adult")),
+      ...(mob.leviathanGrowth ? {
+        cargoChests: mob.leviathanGrowth.chestModules,
+        lifeStage: mob.leviathanGrowth.stage,
+        aquaticOnly: mob.leviathanGrowth.aquaticOnly,
+      } : {}),
+      ...(mob.aetherbellMorph ? { airProgress: mob.aetherbellMorph.airProgress } : {}),
     }));
   }
 
@@ -2602,6 +2783,7 @@ export class VoxelEngine {
       z: drop.mesh.position.z,
       age: drop.age,
       ...(drop.durability !== undefined ? { durability: drop.durability } : {}),
+      ...(drop.metadata ? { metadata: cloneSlot({ item: drop.item, count: 1, metadata: drop.metadata })?.metadata } : {}),
     }));
   }
 
@@ -2730,11 +2912,31 @@ export class VoxelEngine {
         tamed: Boolean(entry.tamed),
         saddled: Boolean(entry.saddled),
       };
-      if ((mob.kind === "wild-horse" || mob.kind === "warg") && mob.courserBond) mob.courserBond = {
+      if (["wild-horse", "warg", "tidepup", "sakurakit"].includes(mob.kind) && mob.courserBond) mob.courserBond = {
         ...mob.courserBond,
         tamed: Boolean(entry.tamed),
         saddled: Boolean(entry.saddled),
       };
+      if (mob.leviathanGrowth) mob.leviathanGrowth = {
+        ...mob.leviathanGrowth,
+        tamed: Boolean(entry.tamed),
+        saddled: Boolean(entry.saddled),
+        growthScale: entry.scale ?? mob.leviathanGrowth.growthScale,
+        stage: entry.lifeStage ?? (entry.baby ? "tiny" : mob.leviathanGrowth.stage),
+        aquaticOnly: entry.aquaticOnly ?? Boolean(entry.baby),
+        chestModules: entry.cargoChests ?? mob.leviathanGrowth.chestModules,
+      };
+      if (mob.aetherbellMorph && entry.airProgress !== undefined) {
+        const airProgress = clamp(entry.airProgress, 0, 1);
+        const phase = airProgress <= 0 ? "sea" : airProgress >= 1 ? "air" : "morphing";
+        mob.aetherbellMorph = {
+          ...mob.aetherbellMorph,
+          airProgress,
+          phase,
+          medium: phase === "morphing" ? mob.aetherbellMorph.medium : phase,
+          targetMedium: airProgress >= 0.5 ? "air" : "sea",
+        };
+      }
       if (mob.careState && entry.baby !== undefined) {
         mob.careState = { ...mob.careState, baby: entry.baby, ageTicks: entry.baby ? Math.min(mob.careState.ageTicks, 23_999) : Math.max(24_000, mob.careState.ageTicks) };
       }
@@ -2751,18 +2953,19 @@ export class VoxelEngine {
       let drop = this.drops.find((candidate) => candidate.id === entry.id);
       if (!drop || drop.item !== entry.item) {
         if (drop) this.removeDrop(this.drops.indexOf(drop));
-        drop = this.spawnDrop(entry.item, entry.count, new THREE.Vector3(entry.x, entry.y, entry.z), entry.durability) ?? undefined;
+        drop = this.spawnDrop(entry.item, entry.count, new THREE.Vector3(entry.x, entry.y, entry.z), entry.durability, entry.metadata) ?? undefined;
         if (!drop) continue;
         drop.id = entry.id;
         drop.mesh.position.set(entry.x, entry.y, entry.z);
       } else {
         drop.count = entry.count;
         drop.durability = entry.durability;
+        drop.metadata = entry.metadata ? cloneSlot({ item: entry.item, count: 1, metadata: entry.metadata })?.metadata : undefined;
         drop.mesh.position.lerp(new THREE.Vector3(entry.x, entry.y, entry.z), 0.78);
       }
       drop.velocity.set(0, 0, 0);
       drop.age = entry.age;
-      drop.pickupDelay = 0.5;
+      drop.pickupDelay = placedLeviathanEggMetadata(drop.metadata) ? Number.POSITIVE_INFINITY : 0.5;
       this.nextDropId = Math.max(this.nextDropId, entry.id + 1);
     }
   }
@@ -3265,7 +3468,7 @@ export class VoxelEngine {
   private stationHasWaterSource(key: string) {
     const [x, y, z] = key.split(",").map(Number);
     return ([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]] as const)
-      .some(([dx, dy, dz]) => this.world.getBlock(x + dx, y + dy, z + dz) === BlockId.Water);
+      .some(([dx, dy, dz]) => blockContainsWater(this.world.getBlock(x + dx, y + dy, z + dz)));
   }
 
   private consumeResourceDelta(consumed: Readonly<Record<string, number>>) {
@@ -4402,6 +4605,15 @@ export class VoxelEngine {
         this.saplings.set(key, now + ORCHARD_REGROWTH_BASE_MS + Math.random() * ORCHARD_REGROWTH_JITTER_MS);
         continue;
       }
+      if (isWaterloggedFloraBlock(current)) {
+        const growth = planAquaticGrowth(current, { x, y, z }, (bx, by, bz) => this.world.getBlock(bx, by, bz));
+        this.saplings.delete(key);
+        if (!growth) continue;
+        this.world.setBlock(growth.x, growth.y, growth.z, growth.type, true, true);
+        this.publishBlockEdits([{ x: growth.x, y: growth.y, z: growth.z, type: growth.type }], "place");
+        this.schedulePlantGrowth(growth.x, growth.y, growth.z, growth.type, growth.y - y + 1);
+        continue;
+      }
       const plant = plantProfileForBlock(current);
       if (plant) {
         const soil = this.world.getBlock(x, y - 1, z);
@@ -4423,19 +4635,25 @@ export class VoxelEngine {
         this.schedulePlantGrowth(x, y, z, next, plant.stage + 1);
         continue;
       }
-      if (current !== BlockId.WildwoodSapling) { this.saplings.delete(key); continue; }
+      if (![BlockId.WildwoodSapling, BlockId.JungleSapling, BlockId.SakuraSapling].includes(current)) { this.saplings.delete(key); continue; }
       const soil = this.world.getBlock(x, y - 1, z);
-      if (![BlockId.Grass, BlockId.Dirt, BlockId.SnowyGrass, BlockId.SavannaGrass, BlockId.SwampGrass, BlockId.Farmland, BlockId.HydratedFarmland].includes(soil ?? BlockId.Air)) {
+      if (![BlockId.Grass, BlockId.Dirt, BlockId.SnowyGrass, BlockId.SavannaGrass, BlockId.SwampGrass, BlockId.JungleGrass, BlockId.SakuraGrass, BlockId.Farmland, BlockId.HydratedFarmland].includes(soil ?? BlockId.Air)) {
         this.world.setBlock(x, y, z, BlockId.Air, true, true);
         this.publishBlockEdits([{ x, y, z, type: BlockId.Air }], "break");
         this.saplings.delete(key);
-        if (this.mode === "survival") this.spawnDrop(BlockId.WildwoodSapling, 1, new THREE.Vector3(x, y, z));
+        if (this.mode === "survival") this.spawnDrop(itemForBlock(current), 1, new THREE.Vector3(x, y, z));
         continue;
       }
       const biome = this.world.biomeAt(x, z);
-      const log = biome === BiomeId.Frostpine || biome === BiomeId.Snowfield ? BlockId.PineLog : biome === BiomeId.Birchlight ? BlockId.BirchLog : biome === BiomeId.Bloomwood ? BlockId.BloomLog : BlockId.WildwoodLog;
-      const leaves = log === BlockId.PineLog ? BlockId.PineLeaves : log === BlockId.BirchLog ? BlockId.BirchLeaves : log === BlockId.BloomLog ? BlockId.BloomLeaves : BlockId.WildwoodLeaves;
-      const height = 5 + Math.floor(Math.random() * 3);
+      const log = current === BlockId.JungleSapling ? BlockId.JungleLog
+        : current === BlockId.SakuraSapling ? BlockId.SakuraLog
+          : biome === BiomeId.Frostpine || biome === BiomeId.Snowfield ? BlockId.PineLog : biome === BiomeId.Birchlight ? BlockId.BirchLog : biome === BiomeId.Bloomwood ? BlockId.BloomLog : BlockId.WildwoodLog;
+      const leaves = log === BlockId.PineLog ? BlockId.PineLeaves
+        : log === BlockId.BirchLog ? BlockId.BirchLeaves
+          : log === BlockId.BloomLog ? BlockId.BloomLeaves
+            : log === BlockId.JungleLog ? BlockId.JungleLeaves
+              : log === BlockId.SakuraLog ? BlockId.SakuraLeaves : BlockId.WildwoodLeaves;
+      const height = log === BlockId.JungleLog ? 8 + Math.floor(Math.random() * 4) : 5 + Math.floor(Math.random() * 3);
       let clear = true;
       for (let dy = 1; dy <= height + 2 && clear; dy += 1) for (let dx = -2; dx <= 2 && clear; dx += 1) for (let dz = -2; dz <= 2; dz += 1) {
         if (dy < height - 2 && (dx !== 0 || dz !== 0)) continue;
@@ -4470,7 +4688,7 @@ export class VoxelEngine {
         const type = this.world.getBlock(x + dx, y + dy, z + dz);
         if (type === undefined) continue;
         const name = BLOCKS[type]?.name ?? "";
-        if (!/flower|orchid|sunpetal|cloudbell|berry|bloom/iu.test(name)) continue;
+        if (!POLLINATOR_FLOWERS.includes(type) && !/berry/iu.test(name)) continue;
         flowers.push({ x: x + dx, y: y + dy, z: z + dz });
         break;
       }
@@ -4698,12 +4916,17 @@ export class VoxelEngine {
   schedulePlantGrowth(x: number, y: number, z: number, type: BlockId, cycle = 0) {
     this.saplings ??= new Map<string, number>();
     const now = Date.now();
-    if (type === BlockId.WildwoodSapling) {
+    if (type === BlockId.WildwoodSapling || type === BlockId.JungleSapling || type === BlockId.SakuraSapling) {
       this.saplings.set(blockKey(x, y, z), now + 75_000 + Math.random() * 75_000);
       return;
     }
     if (type === BlockId.AppleSapling) {
       this.saplings.set(blockKey(x, y, z), now + 95_000 + Math.random() * 80_000);
+      return;
+    }
+    if (isWaterloggedFloraBlock(type)) {
+      const hash = Math.abs(Math.imul(x ^ Math.imul(y, 31) ^ Math.imul(z, 131) ^ cycle, 0x45d9f3b));
+      this.saplings.set(blockKey(x, y, z), now + 50_000 + (hash % 70_000));
       return;
     }
     const soil = this.world.getBlock(x, y - 1, z);
@@ -4715,14 +4938,22 @@ export class VoxelEngine {
   applyHarvest(x: number, y: number, z: number, type: BlockId, useScythe: boolean) {
     const result = harvestPlant(type, useScythe, Math.random());
     if (!result) return false;
-    this.world.setBlock(x, y, z, result.replacement, true, true);
-    this.publishBlockEdits([{ x, y, z, type: result.replacement }], "place");
-    for (const drop of result.drops) {
+    const aquaticColumn = isWaterloggedFloraBlock(type)
+      ? planAquaticColumnRemoval(type, { x, y, z }, (bx, by, bz) => this.world.getBlock(bx, by, bz))
+      : [];
+    const edits = aquaticColumn.length ? aquaticColumn : [{ x, y, z, type: result.replacement }];
+    if (edits.length > 1) this.world.setBlocksBatch(edits, true, true);
+    else this.world.setBlock(x, y, z, edits[0].type, true, true);
+    this.publishBlockEdits(edits, edits.length > 1 ? "batch" : "place");
+    const harvests = [result, ...edits.slice(1).map(() => harvestPlant(type, useScythe, Math.random())).filter((value) => value !== null)];
+    for (const harvest of harvests) for (const drop of harvest.drops) {
       const leftover = this.mode === "survival" ? this.addItem(drop.item, drop.count) : 0;
       if (leftover) this.spawnDrop(drop.item, leftover, new THREE.Vector3(x, y, z));
     }
     if (useScythe) this.damageSelectedTool();
-    this.schedulePlantGrowth(x, y, z, result.replacement, 1);
+    for (const edit of edits) this.saplings.delete(blockKey(edit.x, edit.y, edit.z));
+    if (aquaticColumn.length && this.world.getBlock(x, y - 1, z) === type) this.schedulePlantGrowth(x, y - 1, z, type, 1);
+    else if (!aquaticColumn.length) this.schedulePlantGrowth(x, y, z, result.replacement, 1);
     this.placeCooldown = 0.2;
     this.heldUse = 1;
     this.audio.play("pickup", type);
@@ -4743,8 +4974,8 @@ export class VoxelEngine {
       baby: Boolean(mob.petState?.baby || mob.careState?.baby),
       temperament: mob.definition.temperament,
       hostile: mob.hostile,
-      tamed: Boolean(mob.petState?.tamed || mob.shadeState?.tamed || mob.reedstriderBond?.tamed || mob.courserBond?.tamed || mob.apiaryBee?.tamed),
-      ownerId: mob.petState?.ownerId ?? mob.shadeState?.ownerId ?? mob.reedstriderBond?.ownerId ?? mob.courserBond?.ownerId ?? mob.apiaryBee?.ownerId ?? null,
+      tamed: Boolean(mob.petState?.tamed || mob.shadeState?.tamed || mob.reedstriderBond?.tamed || mob.courserBond?.tamed || mob.leviathanGrowth?.tamed || mob.apiaryBee?.tamed),
+      ownerId: mob.petState?.ownerId ?? mob.shadeState?.ownerId ?? mob.reedstriderBond?.ownerId ?? mob.courserBond?.ownerId ?? mob.leviathanGrowth?.ownerId ?? mob.apiaryBee?.ownerId ?? null,
       name: mob.petState?.name ?? (mob.name !== mob.definition.name ? mob.name : null),
       geneticSeed: mob.petState?.geneticSeed ?? mob.apiaryBee?.geneticSeed ?? ((mob.id * 2654435761) >>> 0),
       command: mob.petState?.command ?? null,
@@ -4754,36 +4985,90 @@ export class VoxelEngine {
         ...(mob.shadeState ? { shadeState: mob.shadeState } : {}),
         ...(mob.reedstriderBond ? { reedstriderBond: mob.reedstriderBond } : {}),
         ...(mob.courserBond ? { courserBond: mob.courserBond } : {}),
+        ...(mob.leviathanGrowth ? { leviathanGrowth: mob.leviathanGrowth } : {}),
+        ...(mob.aetherbellMorph ? { aetherbellMorph: mob.aetherbellMorph } : {}),
+        ...(mob.leviathanGrowth?.chestModules
+          ? { leviathanCargo: normalizeLeviathanCargoStorage(this.chests.get(`leviathan:${mob.id}:cargo`), mob.leviathanGrowth.chestModules) }
+          : {}),
         ...(mob.apiaryBee ? { apiaryBee: mob.apiaryBee } : {}),
         ...(mob.socialGroupId ? { socialGroupId: mob.socialGroupId } : {}),
         ...(mob.peelopShedding ? { peelopShedding: mob.peelopShedding } : {}),
         ...(mob.kind === "meadow-cow" && mob.milkCooldown > 0 ? { milkCooldown: mob.milkCooldown } : {}),
+        ...(mob.followCommand !== "follow" ? { followCommand: mob.followCommand } : {}),
         persistentPoiResident: mob.persistentPoiResident,
         enclosed: mob.enclosed,
       })) as CreatureMetadata["custom"],
     };
   }
 
-  spawnCreatureMetadata(metadata: CreatureMetadata, releasePosition: THREE.Vector3) {
+  creatureReleasePosition(metadata: CreatureMetadata, requested: THREE.Vector3) {
     const definition = MOB_DEFS[metadata.kind];
-    const ground = this.world.findWalkableY(Math.round(releasePosition.x), Math.round(releasePosition.z), releasePosition.y);
-    releasePosition.y = ground + definition.footOffset;
-    const mob = this.spawnMob(metadata.kind, releasePosition, {
+    const aquatic = definition.movement === "aquatic" || definition.aquatic || isLeviathanKind(metadata.kind);
+    if (aquatic) {
+      const growth = metadata.custom.leviathanGrowth as unknown as LeviathanGrowthState | undefined;
+      let best: { position: THREE.Vector3; score: number } | null = null;
+      for (let radius = 0; radius <= 6; radius += 1) {
+        for (let ox = -radius; ox <= radius; ox += 1) for (let oz = -radius; oz <= radius; oz += 1) {
+          if (radius > 0 && Math.max(Math.abs(ox), Math.abs(oz)) !== radius) continue;
+          const x = Math.round(requested.x) + ox;
+          const z = Math.round(requested.z) + oz;
+          for (let oy = 8; oy >= -12; oy -= 1) {
+            const y = Math.round(requested.y) + oy;
+            if (!blockContainsWater(this.world.getBlock(x, y, z))) continue;
+            let floorY = y - 1;
+            while (floorY > MIN_Y && blockContainsWater(this.world.getBlock(x, floorY, z))) floorY -= 1;
+            let surfaceY = y;
+            while (surfaceY < MAX_Y && blockContainsWater(this.world.getBlock(x, surfaceY + 1, z))) surfaceY += 1;
+            const adultHeight = !growth || growth.stage === "adult";
+            const resolvedY = adultHeight ? aquaticSpawnHeight(metadata.kind, floorY, surfaceY, 0.5) : y;
+            if (resolvedY === null || !blockContainsWater(this.world.getBlock(x, Math.round(resolvedY), z))) continue;
+            const score = ox * ox + oz * oz + Math.abs(resolvedY - requested.y) * 0.18;
+            if (!best || score < best.score) best = { position: new THREE.Vector3(x, resolvedY, z), score };
+            break;
+          }
+        }
+        if (best && radius >= 2) break;
+      }
+      return (best as { position: THREE.Vector3; score: number } | null)?.position ?? null;
+    }
+    if (definition.movement === "flying" || definition.flying) {
+      const surface = this.world.surfaceAt(Math.round(requested.x), Math.round(requested.z));
+      return new THREE.Vector3(requested.x, Math.max(requested.y, surface + definition.footOffset + 1.5), requested.z);
+    }
+    const ground = this.world.findWalkableY(Math.round(requested.x), Math.round(requested.z), requested.y);
+    return new THREE.Vector3(requested.x, ground + definition.footOffset, requested.z);
+  }
+
+  spawnCreatureMetadata(metadata: CreatureMetadata, releasePosition: THREE.Vector3) {
+    const resolvedPosition = this.creatureReleasePosition(metadata, releasePosition);
+    if (!resolvedPosition) return null;
+    const mob = this.spawnMob(metadata.kind, resolvedPosition, {
       health: metadata.health,
       age: metadata.ageTicks / 20,
       petState: metadata.kind === "peelop" && metadata.custom.petState ? metadata.custom.petState as unknown as PeelopState : null,
       careState: metadata.custom.careState ? metadata.custom.careState as unknown as CreatureHusbandryState : null,
       shadeState: metadata.kind === "shadecrawler" && metadata.custom.shadeState ? metadata.custom.shadeState as unknown as ShadecrawlerState : null,
       reedstriderBond: metadata.kind === "reedstrider" && metadata.custom.reedstriderBond ? metadata.custom.reedstriderBond as unknown as ReedstriderBond : null,
-      courserBond: (metadata.kind === "wild-horse" || metadata.kind === "warg") && metadata.custom.courserBond ? metadata.custom.courserBond as unknown as ReedstriderBond : null,
+      courserBond: ["wild-horse", "warg", "tidepup", "sakurakit"].includes(metadata.kind) && metadata.custom.courserBond ? metadata.custom.courserBond as unknown as ReedstriderBond : null,
+      leviathanGrowth: isLeviathanKind(metadata.kind) && metadata.custom.leviathanGrowth ? metadata.custom.leviathanGrowth as unknown as LeviathanGrowthState : null,
+      aetherbellMorph: (metadata.kind === "aetherbell-larva" || metadata.kind === "aetherbell-leviathan") && metadata.custom.aetherbellMorph ? metadata.custom.aetherbellMorph as unknown as AetherbellMorphState : null,
       apiaryBee: metadata.custom.apiaryBee ? metadata.custom.apiaryBee as unknown as ApiaryBee : null,
       socialGroupId: typeof metadata.custom.socialGroupId === "string" ? metadata.custom.socialGroupId : null,
       peelopShedding: metadata.custom.peelopShedding ? metadata.custom.peelopShedding as unknown as PeelopSheddingState : null,
       milkCooldown: metadata.kind === "meadow-cow" ? Math.max(0, Number(metadata.custom.milkCooldown) || 0) : 0,
       persistentPoiResident: Boolean(metadata.custom.persistentPoiResident),
       enclosed: Boolean(metadata.custom.enclosed),
+      followCommand: metadata.custom.followCommand === "hold" ? "hold" : "follow",
     });
+    mob.group.position.copy(resolvedPosition);
+    mob.baseY = resolvedPosition.y;
     mob.name = metadata.name || mob.name;
+    if (mob.leviathanGrowth?.chestModules) {
+      this.chests.set(
+        `leviathan:${mob.id}:cargo`,
+        normalizeLeviathanCargoStorage(metadata.custom.leviathanCargo, mob.leviathanGrowth.chestModules),
+      );
+    }
     return mob;
   }
 
@@ -4808,6 +5093,7 @@ export class VoxelEngine {
         || (mob.shadeState?.tamed && mob.shadeState.ownerId === ownerId)
         || (mob.reedstriderBond?.tamed && mob.reedstriderBond.ownerId === ownerId)
         || (mob.courserBond?.tamed && mob.courserBond.ownerId === ownerId)
+        || (mob.leviathanGrowth?.tamed && mob.leviathanGrowth.ownerId === ownerId)
         || (mob.apiaryBee?.tamed && mob.apiaryBee.ownerId === ownerId);
       return Boolean(owned && mob.group.position.distanceToSquared(this.position) <= rangeSquared);
     });
@@ -4818,7 +5104,7 @@ export class VoxelEngine {
       mob.health = Math.min(mob.maxHealth, mob.health + 2);
       if (mob.health > before) healed += 1;
       if (mob.petState) mob.petState.health = mob.health;
-      const follows = (mob.petState?.command === "follow") || Boolean(mob.shadeState?.tamed);
+      const follows = mob.followCommand !== "hold" && ((mob.petState?.command === "follow") || Boolean(mob.shadeState?.tamed || mob.reedstriderBond?.tamed || mob.courserBond?.tamed || mob.leviathanGrowth?.tamed));
       const distanceSquared = mob.group.position.distanceToSquared(this.position);
       if (!follows || distanceSquared <= 9 * 9) return;
       const angle = this.followerHeading + Math.PI + (index - (companions.length - 1) / 2) * 0.62;
@@ -4897,18 +5183,75 @@ export class VoxelEngine {
       this.placeCooldown = 0.25;
       return;
     }
+    if (heldSlot && heldDefinition?.useKind === "seed-pouch") {
+      const before = this.inventory.map((slot) => cloneSlot(slot));
+      this.consumeSelectedUnit();
+      const contents = [
+        { item: Item.MoonriceSeeds, count: 2 },
+        { item: Item.SunrootStarts, count: 2 },
+        { item: Item.SakurabloomSapling, count: 1 },
+      ] as const;
+      const unpacked = contents.every(({ item, count }) => this.addItem(item, count) === 0);
+      if (!unpacked) {
+        this.inventory = before;
+        this.events.onToast("Make room for three kinds of rare seed before opening the pouch.");
+        return;
+      }
+      this.heldUse = 1;
+      this.placeCooldown = 0.3;
+      this.audio.play("pickup");
+      this.events.onToast("The pouch holds Moonrice seed, Sunroot starts, and a Sakurabloom sapling.");
+      this.saveSoon();
+      this.emitHud(true);
+      return;
+    }
+    if (heldSlot && (heldSlot.item === Item.WorldshellEgg || heldSlot.item === Item.AetherbellEgg)) {
+      const placement = this.target ? { x: this.target.placeX, y: this.target.placeY, z: this.target.placeZ } : null;
+      const eggBed = placement ? this.world.getBlock(placement.x, placement.y - 1, placement.z) : undefined;
+      if (!placement || !blockContainsWater(this.world.getBlock(placement.x, placement.y, placement.z))
+        || eggBed === undefined || !BLOCKS[eggBed]?.solid) {
+        this.events.onToast("Leviathan eggs must be placed in a submerged water cell above a solid bed.");
+        return;
+      }
+      const stored = heldSlot.metadata?.kind === "leviathan-egg" && heldSlot.metadata.egg && typeof heldSlot.metadata.egg === "object"
+        ? heldSlot.metadata.egg as unknown as LeviathanEggMetadata : null;
+      const species: LeviathanSpecies = heldSlot.item === Item.WorldshellEgg ? "worldshell-leviathan" : "aetherbell-leviathan";
+      const worldTick = Math.floor((this.day + this.worldTime) * LEVIATHAN_LIFECYCLE_CONTRACT.ticksPerDay);
+      const egg = stored ?? createLeviathanEgg(species, {
+        eggId: `${species}:placed:${worldTick}:${this.nextDropId}`,
+        geneticSeed: Math.imul(worldTick ^ this.nextDropId, 0x85ebca6b) >>> 0,
+        laidAtTick: worldTick,
+      });
+      const drop = this.spawnDrop(heldSlot.item, 1, new THREE.Vector3(placement.x, placement.y, placement.z), undefined, {
+        kind: "placed-leviathan-egg",
+        egg: egg as unknown as Record<string, unknown>,
+      });
+      if (!drop) return;
+      drop.pickupDelay = Number.POSITIVE_INFINITY;
+      drop.velocity.set(0, 0, 0);
+      drop.mesh.position.set(placement.x, placement.y - 0.16, placement.z);
+      this.consumeSelectedUnit();
+      this.placeCooldown = 0.3;
+      this.heldUse = 1;
+      this.audio.play("place", BlockId.StarCoral);
+      this.events.onToast(`${ITEMS[heldSlot.item].name} placed · incubation advances only underwater.`);
+      this.saveSoon();
+      this.emitHud(true);
+      return;
+    }
     if (heldSlot && heldDefinition?.useKind === "potion") {
       const recipeId = POTION_RECIPE_BY_ITEM[heldSlot.item];
       if (!recipeId) return;
-      if (heldSlot.item === Item.HealthPotion && this.health >= 10) {
+      const isHealingPotion = heldSlot.item === Item.HealthPotion || heldSlot.item === Item.GlowmenderSalve;
+      if (isHealingPotion && this.health >= 10) {
         this.events.onToast("Your health is already full; the remedy stays corked.");
         return;
       }
-      if (heldSlot.item === Item.HealthPotion) this.health = Math.min(10, this.health + 8);
+      if (isHealingPotion) this.health = Math.min(10, this.health + (heldSlot.item === Item.HealthPotion ? 8 : 5));
       else if (heldSlot.item === Item.WayfarerPotion) this.mapKnowledge = bankFastTravelCharges(this.mapKnowledge, 1);
       else {
-        const duration = heldSlot.item === Item.HearthwardTonic ? 180 : 240;
-        const buff = heldSlot.item === Item.HearthwardTonic ? "hearthward" : "gloamstep";
+        const duration = heldSlot.item === Item.HearthwardTonic ? 180 : heldSlot.item === Item.WaterBreathingPotion ? 300 : 240;
+        const buff = heldSlot.item === Item.HearthwardTonic ? "hearthward" : heldSlot.item === Item.WaterBreathingPotion ? "tidebreath" : "gloamstep";
         this.potionBuffs[buff] = Math.max(this.potionBuffs[buff] ?? 0, this.worldSimulationSeconds() + duration);
       }
       this.consumeSelectedUnit();
@@ -4945,7 +5288,8 @@ export class VoxelEngine {
     }
     if (this.targetMob?.definition?.sentient && this.targetMob.factionId && this.targetMob.factionId !== "player") {
       const resident = this.targetMob;
-      const residentFaction = resident.factionId as "hobbits" | "goblins";
+      const residentFaction = resident.factionId;
+      if (!residentFaction || residentFaction === "player") return;
       const standing = factionStanding(this.factionRelations.alignments[residentFaction] ?? 0);
       if (standing === "hostile") {
         resident.hostile = true;
@@ -5002,6 +5346,10 @@ export class VoxelEngine {
           ? new THREE.Vector3(this.target.placeX, this.target.placeY + MOB_DEFS[released.creature.kind].footOffset, this.target.placeZ)
           : this.position.clone().add(direction.setY(0).normalize().multiplyScalar(1.8));
         const mob = this.spawnCreatureMetadata(released.creature, releasePosition);
+        if (!mob) {
+          this.events.onToast(`${MOB_DEFS[released.creature.kind].name} needs a nearby water column deep enough to be released safely.`);
+          return;
+        }
         this.inventory[this.selected] = captureOrbInventorySlot(released.orb);
         this.heldItemCode = -1;
         this.spawnParticles(mob.group.position.x, mob.group.position.y + mob.definition.height * 0.45, mob.group.position.z, BlockId.CrystalBlock, 12);
@@ -5035,7 +5383,10 @@ export class VoxelEngine {
       this.bestiary[mob.kind].captures += 1;
       this.spawnParticles(mob.group.position.x, mob.group.position.y + mob.definition.height * 0.45, mob.group.position.z, BlockId.CrystalBlock, 12);
       const mobIndex = this.mobs.indexOf(mob);
-      if (mobIndex >= 0) this.removeMob(mobIndex);
+      if (mobIndex >= 0) {
+        if (mob.leviathanGrowth?.chestModules) this.chests.delete(`leviathan:${mob.id}:cargo`);
+        this.removeMob(mobIndex);
+      }
       this.heldItemCode = -1;
       this.placeCooldown = 0.4;
       this.audio.play("craft");
@@ -5364,6 +5715,176 @@ export class VoxelEngine {
           this.saveSoon();
           this.emitHud(true);
         }
+        return;
+      }
+    }
+    if (this.targetMob && (this.targetMob.kind === "tidepup" || this.targetMob.kind === "sakurakit")) {
+      const companion = this.targetMob;
+      const ownerId = this.localPlayerId();
+      companion.courserBond ??= createReedstriderBond();
+      const bond = companion.courserBond;
+      const tamingFood = Boolean(heldSlot && companion.definition.tameItems?.includes(heldSlot.item));
+      const acceptedFood = Boolean(heldSlot && companion.definition.diet?.includes(heldSlot.item));
+      if (heldSlot && bond.tamed && bond.ownerId !== ownerId && (tamingFood || acceptedFood)) {
+        this.events.onToast(`${companion.name} is already bonded to another keeper.`);
+        this.placeCooldown = 0.2;
+        return;
+      }
+      if (heldSlot && (tamingFood || (bond.tamed && acceptedFood))) {
+        if (!bond.tamed) {
+          const gain = heldSlot.item === Item.GlowScale || heldSlot.item === Item.Apple ? 3 : 2;
+          const trust = Math.min(8, bond.trust + gain);
+          companion.courserBond = { ...bond, trust, tamed: trust >= 6, ownerId: trust >= 6 ? ownerId : null };
+          if (companion.courserBond.tamed) {
+            this.bestiary[companion.kind].tames = (this.bestiary[companion.kind].tames ?? 0) + 1;
+            this.events.onToast(`${companion.name} bounds close and chooses to follow you.`);
+            this.playCreatureEvent(companion, "tame");
+          } else this.events.onToast(`${companion.name} trust ${trust}/6.`);
+        } else if (bond.ownerId === ownerId) {
+          companion.health = Math.min(companion.maxHealth, companion.health + 2);
+          if (companion.careState) {
+            const fed = feedCreatureForHusbandry(companion.definition, companion.careState, heldSlot.item);
+            companion.careState = fed.state;
+            if (fed.breedingFood) {
+              const partner = this.mobs.find((candidate) => candidate !== companion && candidate.kind === companion.kind
+                && candidate.courserBond?.tamed && candidate.courserBond.ownerId === ownerId && candidate.careState
+                && candidate.group.position.distanceToSquared(companion.group.position) < 25
+                && canBreedCreatures(companion.kind, fed.state, candidate.kind, candidate.careState));
+              const family = partner?.careState ? breedCreatureStates(companion.kind, fed.state, partner.kind, partner.careState) : null;
+              if (family && partner) {
+                companion.careState = family.left;
+                partner.careState = family.right;
+                this.spawnMob(companion.kind, companion.group.position.clone().add(new THREE.Vector3(0.55, 0, 0.38)), {
+                  careState: family.child,
+                  courserBond: { ...createReedstriderBond(), tamed: true, ownerId, trust: 8 },
+                });
+                this.bestiary[companion.kind].breeds = (this.bestiary[companion.kind].breeds ?? 0) + 1;
+                this.events.onToast(`A tiny ${companion.definition.name} joins its family.`);
+              } else this.events.onToast(`${companion.name} is fed and recovering.`);
+            } else this.events.onToast(`${companion.name} is fed and recovering.`);
+          }
+        }
+        this.consumeSelectedUnit();
+        this.placeCooldown = 0.32;
+        this.saveSoon();
+        this.emitHud(true);
+        return;
+      }
+      if (bond.tamed && bond.ownerId === ownerId) {
+        this.activePet = companion;
+        if (this.crouching) this.openOverlay("follower", String(companion.id));
+        else this.events.onToast(`${companion.name} is following at ${companion.followDistance === "dynamic" ? "a dynamic distance" : `${companion.followDistance} blocks`}. Crouch-use for commands.`);
+        return;
+      }
+    }
+    if (this.targetMob?.leviathanGrowth) {
+      let leviathan = this.targetMob;
+      const ownerId = this.localPlayerId();
+      let growth = leviathan.leviathanGrowth!;
+      const tamingFood = Boolean(heldSlot && leviathan.definition.tameItems?.includes(heldSlot.item));
+      const acceptedFood = Boolean(heldSlot && leviathan.definition.diet?.includes(heldSlot.item));
+      if (heldSlot && growth.tamed && growth.ownerId !== ownerId && (tamingFood || acceptedFood)) {
+        this.events.onToast(`${leviathan.name} is already bonded to another keeper.`);
+        this.placeCooldown = 0.2;
+        return;
+      }
+      if (heldSlot && (tamingFood || (growth.tamed && growth.ownerId === ownerId && acceptedFood))) {
+        const wasTamed = growth.tamed;
+        const feedingUnderwater = blockContainsWater(this.world.getBlock(
+          Math.floor(leviathan.group.position.x + 0.5),
+          Math.floor(leviathan.group.position.y + 0.5),
+          Math.floor(leviathan.group.position.z + 0.5),
+        ));
+        let laidEgg = false;
+        if (wasTamed && leviathan.careState) {
+          const fed = feedCreatureForHusbandry(leviathan.definition, leviathan.careState, heldSlot.item);
+          leviathan.careState = fed.state;
+          if (fed.breedingFood) {
+            const partner = this.mobs.find((candidate) => candidate !== leviathan && candidate.leviathanGrowth?.species === growth.species
+              && candidate.leviathanGrowth.stage === "adult" && candidate.leviathanGrowth.tamed && candidate.leviathanGrowth.ownerId === ownerId && candidate.careState
+              && candidate.group.position.distanceToSquared(leviathan.group.position) < 64
+              && canBreedCreatures(leviathan.kind, fed.state, candidate.kind, candidate.careState));
+            const family = partner?.careState ? breedCreatureStates(leviathan.kind, fed.state, partner.kind, partner.careState) : null;
+            const worldTick = Math.floor((this.day + this.worldTime) * LEVIATHAN_LIFECYCLE_CONTRACT.ticksPerDay);
+            const egg = partner?.leviathanGrowth ? layLeviathanEggFromParents(growth, partner.leviathanGrowth, worldTick) : null;
+            if (family && partner && egg) {
+              leviathan.careState = family.left;
+              partner.careState = family.right;
+              const eggItem = egg.species === "worldshell-leviathan" ? Item.WorldshellEgg : Item.AetherbellEgg;
+              const drop = this.spawnDrop(eggItem, 1, leviathan.group.position.clone().lerp(partner.group.position, 0.5), undefined, {
+                kind: "placed-leviathan-egg",
+                egg: egg as unknown as Record<string, unknown>,
+              });
+              if (drop) {
+                drop.pickupDelay = Number.POSITIVE_INFINITY;
+                drop.velocity.set(0, 0.2, 0);
+              }
+              this.bestiary[leviathan.kind].breeds = (this.bestiary[leviathan.kind].breeds ?? 0) + 1;
+              this.events.onToast(`A ${ITEMS[eggItem].name} settles into the current. It will hatch only while submerged.`);
+              laidEgg = true;
+            }
+          }
+        }
+        growth = wasTamed ? stepLeviathanGrowth(growth, { elapsedTicks: 0, underwater: feedingUnderwater, fedGrowthTicks: LEVIATHAN_LIFECYCLE_CONTRACT.ticksPerDay })
+          : bondLeviathan(growth, ownerId);
+        leviathan.leviathanGrowth = growth;
+        leviathan.health = Math.min(leviathan.maxHealth, leviathan.health + Math.max(2, leviathan.maxHealth * 0.08));
+        this.consumeSelectedUnit();
+        if (!wasTamed) {
+          this.bestiary[leviathan.kind].tames = (this.bestiary[leviathan.kind].tames ?? 0) + 1;
+          this.events.onToast(`${leviathan.name} answers the offered food and accepts your bond.`);
+          this.playCreatureEvent(leviathan, "tame");
+        } else if (!laidEgg) this.events.onToast(growth.stage === "adult"
+          ? `${leviathan.name} is fully grown and ready for ocean travel.`
+          : `${leviathan.name} grows to ${Math.round(growth.growthScale * 100)}% of its adult size.`);
+        if (growth.kind !== leviathan.kind) leviathan = this.transformLeviathan(leviathan, growth);
+        this.applyMobScale(leviathan, growth.growthScale);
+        this.placeCooldown = 0.35;
+        this.saveSoon();
+        this.emitHud(true);
+        return;
+      }
+      if (heldSlot?.item === Item.Saddle) {
+        const equipped = saddleLeviathan(growth, ownerId);
+        if (equipped.equipped) {
+          leviathan.leviathanGrowth = equipped.state;
+          this.consumeSelectedUnit();
+          this.applyMobScale(leviathan, growth.growthScale);
+          this.events.onToast(`A broad travel saddle settles securely on ${leviathan.name}.`);
+        } else this.events.onToast(growth.stage !== "adult" ? "Only an adult leviathan can carry a saddle." : "This leviathan has not bonded with you.");
+        this.placeCooldown = 0.3;
+        this.saveSoon();
+        return;
+      }
+      if (heldSlot?.item === BlockId.Chest) {
+        const attached = attachLeviathanChest(growth, ownerId);
+        if (attached.attached) {
+          leviathan.leviathanGrowth = attached.state;
+          this.consumeSelectedUnit();
+          const cargoKey = `leviathan:${leviathan.id}:cargo`;
+          const size = attached.state.chestModules * 27;
+          const cargo = this.chests.get(cargoKey) ?? [];
+          this.chests.set(cargoKey, [...cargo, ...Array.from({ length: Math.max(0, size - cargo.length) }, () => null)]);
+          this.applyMobScale(leviathan, growth.growthScale);
+          this.events.onToast(`Cargo chest ${attached.state.chestModules}/${attached.limit} secured.`);
+        } else this.events.onToast(`This mount can carry ${attached.limit} chest module${attached.limit === 1 ? "" : "s"} once grown and bonded.`);
+        this.placeCooldown = 0.3;
+        this.saveSoon();
+        return;
+      }
+      if (growth.tamed && growth.ownerId === ownerId && this.crouching && growth.chestModules > 0) {
+        const cargoKey = `leviathan:${leviathan.id}:cargo`;
+        this.activeChestTitle = `${leviathan.name} Cargo · ${growth.chestModules} chest${growth.chestModules === 1 ? "" : "s"}`;
+        this.openOverlay("chest", cargoKey);
+        return;
+      }
+      if (canRideCreature({ kind: leviathan.kind as CoreMobKind, tamed: growth.tamed, ownerId: growth.ownerId, riderId: ownerId, saddled: growth.saddled, baby: growth.stage !== "adult", aligned: leviathan.aligned })) {
+        this.mountedCreatureId = leviathan.id;
+        if (this.cameraMode === "first") this.cameraMode = "third-rear";
+        this.keys.clear();
+        this.events.onToast(`Mounted ${leviathan.name} · steer with WASD · Space dismounts · V changes view.`);
+        this.placeCooldown = 0.35;
+        this.emitHud(true);
         return;
       }
     }
@@ -5737,9 +6258,9 @@ export class VoxelEngine {
       }
     }
     if (requestedType === BlockId.FenceGateNorthSouthClosed) type = fenceGateForYaw(this.yaw);
-    if (type === BlockId.WildwoodSapling) {
+    if ([BlockId.WildwoodSapling, BlockId.JungleSapling, BlockId.SakuraSapling].includes(type)) {
       const soil = this.world.getBlock(x, y - 1, z);
-      if (![BlockId.Grass, BlockId.Dirt, BlockId.SnowyGrass, BlockId.SavannaGrass, BlockId.SwampGrass, BlockId.Farmland].includes(soil ?? BlockId.Air)) {
+      if (![BlockId.Grass, BlockId.Dirt, BlockId.SnowyGrass, BlockId.SavannaGrass, BlockId.SwampGrass, BlockId.JungleGrass, BlockId.SakuraGrass, BlockId.Farmland, BlockId.HydratedFarmland].includes(soil ?? BlockId.Air)) {
         this.events.onToast("Saplings need living soil.");
         return;
       }
@@ -5895,8 +6416,11 @@ export class VoxelEngine {
     this.scene.add(group);
     const away = new THREE.Vector3(root[0] - this.position.x, 0, root[2] - this.position.z).normalize();
     if (away.lengthSq() < 0.1) away.set(Math.sin(this.yaw), 0, Math.cos(this.yaw));
-    const logCounts = new Map<BlockId, number>();
-    for (const log of tree.logs) logCounts.set(log.type, (logCounts.get(log.type) ?? 0) + 1);
+    const logCounts = new Map<ItemCode, number>();
+    for (const log of tree.logs) {
+      const item = itemForBlock(log.type);
+      logCounts.set(item, (logCounts.get(item) ?? 0) + 1);
+    }
     this.fallingTrees.push({
       group,
       root: new THREE.Vector3(...root),
@@ -5924,7 +6448,9 @@ export class VoxelEngine {
       const sticks = Math.floor(tree.leafCount * 0.09);
       if (sticks > 0) this.spawnDrop(Item.Stick, sticks, landing.clone().add(new THREE.Vector3(0.5, 0, 0.5)));
       const saplings = Math.max(1, Math.floor(tree.leafCount * 0.035));
-      this.spawnDrop(BlockId.WildwoodSapling, saplings, landing.clone().add(new THREE.Vector3(-0.5, 0, -0.4)));
+      const saplingItem = tree.primaryLogType === BlockId.JungleLog ? Item.RainveilSapling
+        : tree.primaryLogType === BlockId.SakuraLog ? Item.SakurabloomSapling : BlockId.WildwoodSapling;
+      this.spawnDrop(saplingItem, saplings, landing.clone().add(new THREE.Vector3(-0.5, 0, -0.4)));
       if (tree.primaryLogType === BlockId.WildwoodLog && Math.random() < 0.55) this.spawnDrop(Item.Apple, 1, landing.clone().add(new THREE.Vector3(0.2, 0, -0.5)));
     }
     this.spawnParticles(landing.x, landing.y, landing.z, tree.primaryLogType, 18);
@@ -6013,21 +6539,29 @@ export class VoxelEngine {
       if (partner && this.world.getBlock(partner.x, partner.y, partner.z) === partner.type) brokenEdits.push({ x: partner.x, y: partner.y, z: partner.z, type: BlockId.Air });
       this.world.setBlocksBatch(brokenEdits, true, true);
     } else {
-      brokenEdits = [{ x, y, z, type: BlockId.Air }];
-      this.world.setBlock(x, y, z, BlockId.Air, true, true);
+      const aquaticColumn = isWaterloggedFloraBlock(type)
+        ? planAquaticColumnRemoval(type, { x, y, z }, (bx, by, bz) => this.world.getBlock(bx, by, bz))
+        : [];
+      brokenEdits = aquaticColumn.length ? aquaticColumn : [{ x, y, z, type: isWaterloggedFloraBlock(type) ? BlockId.Water : BlockId.Air }];
+      if (brokenEdits.length > 1) this.world.setBlocksBatch(brokenEdits, true, true);
+      else this.world.setBlock(x, y, z, brokenEdits[0].type, true, true);
     }
     for (const edit of brokenEdits) this.breakUnsupportedAround(edit.x, edit.y, edit.z);
     for (const edit of brokenEdits) this.notifyLiquidChanged(edit.x, edit.y, edit.z);
     this.publishBlockEdits(brokenEdits, brokenEdits.length > 1 ? "batch" : "break");
     if (this.mode === "survival") {
       if (harvested) {
-        if (!this.isDoor(type) && !this.isBed(type) && type !== BlockId.WildBeehive) this.dropBlockLoot(isTorchBlock(type) ? BlockId.Torch : type, x, y, z);
+        if (!this.isDoor(type) && !this.isBed(type) && type !== BlockId.WildBeehive) {
+          this.dropBlockLoot(isTorchBlock(type) ? BlockId.Torch : type, x, y, z);
+          if (isWaterloggedFloraBlock(type)) for (const edit of brokenEdits.slice(1)) this.dropBlockLoot(type, edit.x, edit.y, edit.z);
+        }
       } else this.events.onToast(`${BLOCKS[type].name} crumbled without the right tool.`);
       this.damageSelectedTool();
     }
     const key = blockKey(x, y, z);
     if (isEnvironmentLightBlock(type)) this.lightRefreshTimer = 0;
-    this.saplings.delete(key);
+    for (const edit of brokenEdits) this.saplings.delete(blockKey(edit.x, edit.y, edit.z));
+    if (isWaterloggedFloraBlock(type) && this.world.getBlock(x, y - 1, z) === type) this.schedulePlantGrowth(x, y - 1, z, type, 1);
     if (this.isDoor(type) && this.mode === "survival") this.spawnDrop(Item.WildwoodDoor, 1, new THREE.Vector3(x, y, z));
     if (this.isBed(type) && this.mode === "survival" && harvested) this.spawnDrop(Item.WildwoodBed, 1, new THREE.Vector3(x, y, z));
     if (type === BlockId.Furnace) {
@@ -6113,29 +6647,59 @@ export class VoxelEngine {
 
   dropBlockLoot(type: BlockId, x: number, y: number, z: number) {
     let drops: Array<[ItemCode, number]> = [];
-    if (type === BlockId.Grass || type === BlockId.SnowyGrass || type === BlockId.SavannaGrass || type === BlockId.SwampGrass) drops = [[BlockId.Dirt, 1]];
+    const harvestedPlant = harvestPlant(type, false, Math.random());
+    if (harvestedPlant) drops = harvestedPlant.drops.map((drop) => [drop.item, drop.count]);
+    else if (type === BlockId.Grass || type === BlockId.SnowyGrass || type === BlockId.SavannaGrass || type === BlockId.SwampGrass || type === BlockId.JungleGrass || type === BlockId.SakuraGrass) drops = [[BlockId.Dirt, 1]];
     else if (type === BlockId.Stone || type === BlockId.Deepstone || type === BlockId.Basalt) drops = [[BlockId.Cobblestone, 1]];
     else if (type === BlockId.CoalOre) drops = this.randomDrop(Item.Coal, 1, 2);
     else if (type === BlockId.IronOre) drops = [[Item.RawSunmetal, 1]];
     else if (type === BlockId.CopperOre) drops = this.randomDrop(Item.RawSunmetal, 1, 2);
     else if (type === BlockId.GoldOre) drops = [[Item.RawGold, 1]];
     else if (type === BlockId.CrystalOre) drops = this.randomDrop(Item.CrystalShard, 1, 2);
-    else if ([BlockId.WildwoodLeaves, BlockId.PineLeaves, BlockId.BirchLeaves, BlockId.BloomLeaves].includes(type)) {
-      drops = [...this.randomDrop(Item.Stick, 1, 2, 0.22), ...this.randomDrop(BlockId.WildwoodSapling, 1, 1, 0.055), ...this.randomDrop(Item.Apple, 1, 1, 0.06)];
+    else if ([BlockId.WildwoodLeaves, BlockId.PineLeaves, BlockId.BirchLeaves, BlockId.BloomLeaves, BlockId.JungleLeaves, BlockId.SakuraLeaves].includes(type)) {
+      const sapling = type === BlockId.JungleLeaves ? Item.RainveilSapling
+        : type === BlockId.SakuraLeaves ? Item.SakurabloomSapling : BlockId.WildwoodSapling;
+      drops = [...this.randomDrop(Item.Stick, 1, 2, 0.22), ...this.randomDrop(sapling, 1, 1, 0.055), ...this.randomDrop(Item.Apple, 1, 1, 0.06)];
     } else if (type === BlockId.TallGrass) {
       drops = this.randomDrop(Item.Fiber, 1, 1, 0.35);
     } else if (type === BlockId.Gravel) drops = Math.random() < 0.16 ? [[Item.Flint, 1]] : [[BlockId.Gravel, 1]];
-    else if (type === BlockId.WheatCrop) drops = [...this.randomDrop(Item.Wheat, 1, 2), ...this.randomDrop(Item.WheatSeeds, 1, 2)];
     else if (type === BlockId.WheatSprout || type === BlockId.WheatYoung) drops = [[Item.WheatSeeds, 1]];
     else if (type === BlockId.MoonberryShoot || type === BlockId.MoonberryBush || type === BlockId.MoonberryBushRipe) drops = [[Item.Berry, 1]];
     else if (type === BlockId.SunberryShoot || type === BlockId.SunberryBush || type === BlockId.SunberryBushRipe) drops = [[Item.Sunberry, 1]];
     else if (type === BlockId.AppleSapling || type === BlockId.AppleFruit) drops = [[Item.Apple, 1]];
     else if (type === BlockId.AppleLeaves) drops = [...this.randomDrop(Item.Stick, 1, 2, 0.2), ...this.randomDrop(Item.Apple, 1, 1, 0.08)];
-    else if (ITEMS[type]) drops = [[type, 1]];
+    else if (BLOCKS[type]) drops = [[itemForBlock(type), 1]];
     for (const [item, count] of drops) this.spawnDrop(item, count, new THREE.Vector3(x, y, z));
   }
 
+  collectPlacedLeviathanEgg(drop: DropEntity) {
+    const egg = placedLeviathanEggMetadata(drop.metadata);
+    if (!egg) return false;
+    const item = egg.species === "worldshell-leviathan" ? Item.WorldshellEgg : Item.AetherbellEgg;
+    const payload = collectLeviathanEgg(egg, Math.floor((this.day + this.worldTime) * LEVIATHAN_LIFECYCLE_CONTRACT.ticksPerDay));
+    const metadata = payload as unknown as Record<string, unknown>;
+    const position = drop.mesh.position.clone();
+    const index = this.drops.indexOf(drop);
+    if (index >= 0) this.removeDrop(index);
+    // Builder inventory is normally inexhaustible, but a collected egg carries
+    // unique genetics and incubation progress that the catalogue cannot recreate.
+    const leftover = this.addItem(item, 1, undefined, undefined, metadata);
+    if (leftover > 0) this.spawnDrop(item, leftover, position, undefined, metadata);
+    this.targetEggDrop = null;
+    this.miningProgress = 0;
+    this.audio.play("break", BlockId.StarCoral);
+    this.spawnParticles(position.x, position.y, position.z, BlockId.StarCoral, 7);
+    this.events.onToast(`${ITEMS[item].name} collected with its incubation progress intact.`);
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
   updateMining(dt: number) {
+    if (this.targetEggDrop && this.mineHeld) {
+      this.collectPlacedLeviathanEgg(this.targetEggDrop);
+      return;
+    }
     if (this.targetMob && this.mineHeld && this.attackCooldown <= 0) this.attackTargetMob();
     if (!this.mineHeld || !this.target || this.targetMob || (!this.locked && !this.touchMode)) {
       this.miningProgress = Math.max(0, this.miningProgress - dt * 3);
@@ -6158,6 +6722,7 @@ export class VoxelEngine {
       this.target = null;
       this.targetMob = null;
       this.targetBoat = null;
+      this.targetEggDrop = null;
       this.selection.visible = false;
       return;
     }
@@ -6176,12 +6741,14 @@ export class VoxelEngine {
     const blockHit = this.castVoxel(interactionOrigin, direction, 6, this.selectedSlot()?.item === Item.Bucket);
     const mobHit = this.castMob(interactionOrigin, direction, 5);
     const boatHit = this.castBoat(interactionOrigin, direction, 6);
-    const nearestEntityDistance = Math.min(mobHit?.distance ?? Infinity, boatHit?.distance ?? Infinity);
+    const eggHit = this.castLeviathanEgg(interactionOrigin, direction, 5);
+    const nearestEntityDistance = Math.min(mobHit?.distance ?? Infinity, boatHit?.distance ?? Infinity, eggHit?.distance ?? Infinity);
     const entityVisible = !blockHit || nearestEntityDistance < blockHit.distance;
-    this.targetBoat = entityVisible && boatHit && boatHit.distance <= (mobHit?.distance ?? Infinity) ? boatHit.boat : null;
-    this.targetMob = entityVisible && !this.targetBoat && mobHit ? mobHit.mob : null;
+    this.targetBoat = entityVisible && boatHit && boatHit.distance <= Math.min(mobHit?.distance ?? Infinity, eggHit?.distance ?? Infinity) ? boatHit.boat : null;
+    this.targetEggDrop = entityVisible && !this.targetBoat && eggHit && eggHit.distance <= (mobHit?.distance ?? Infinity) ? eggHit.drop : null;
+    this.targetMob = entityVisible && !this.targetBoat && !this.targetEggDrop && mobHit ? mobHit.mob : null;
     if (this.targetMob && !this.bestiary[this.targetMob.kind].seen) { this.bestiary[this.targetMob.kind].seen = true; this.saveSoon(); }
-    this.target = this.targetMob || this.targetBoat ? null : blockHit;
+    this.target = this.targetMob || this.targetBoat || this.targetEggDrop ? null : blockHit;
     if (this.target) {
       const discoveredPlants = discoverPlantBlock(this.plantBestiary, this.target.type);
       if (discoveredPlants !== this.plantBestiary) {
@@ -6191,7 +6758,8 @@ export class VoxelEngine {
     }
     const nextKey = this.target ? blockKey(this.target.x, this.target.y, this.target.z)
       : this.targetMob ? `mob:${this.targetMob.id}`
-        : this.targetBoat ? `boat:${this.targetBoat.save.id}` : "";
+        : this.targetBoat ? `boat:${this.targetBoat.save.id}`
+          : this.targetEggDrop ? `egg:${this.targetEggDrop.id}` : "";
     if (nextKey !== this.targetKey) { this.targetKey = nextKey; this.miningProgress = 0; }
     this.selection.visible = Boolean(this.target);
     if (this.target) {
@@ -6248,6 +6816,20 @@ export class VoxelEngine {
     return null;
   }
 
+  castLeviathanEgg(origin: THREE.Vector3, direction: THREE.Vector3, reach: number) {
+    let nearest: { drop: DropEntity; distance: number } | null = null;
+    for (const drop of this.drops) {
+      if (!placedLeviathanEggMetadata(drop.metadata)) continue;
+      const offset = drop.mesh.position.clone().sub(origin);
+      const forward = offset.dot(direction);
+      if (forward < 0.1 || forward > reach) continue;
+      const radialSquared = Math.max(0, offset.lengthSq() - forward * forward);
+      if (radialSquared > 0.34 * 0.34 || (nearest && forward >= nearest.distance)) continue;
+      nearest = { drop, distance: forward };
+    }
+    return nearest;
+  }
+
   updatePlayer(dt: number) {
     if (this.mountedBoatId) {
       this.fallVelocity = 0;
@@ -6269,10 +6851,10 @@ export class VoxelEngine {
     const moving = forwardAmount !== 0 || rightAmount !== 0;
     const feetBlock = this.world.getBlock(Math.floor(this.position.x + 0.5), Math.floor(this.position.y + 0.6), Math.floor(this.position.z + 0.5));
     const headBlock = this.world.getBlock(Math.floor(this.position.x + 0.5), Math.floor(this.position.y + this.cameraEyeHeight + 0.5), Math.floor(this.position.z + 0.5));
-    const inWater = feetBlock === BlockId.Water;
+    const inWater = blockContainsWater(feetBlock);
     const inLava = feetBlock === BlockId.Lava;
     const inLiquid = inWater || inLava;
-    this.headSubmerged = headBlock === BlockId.Water;
+    this.headSubmerged = blockContainsWater(headBlock);
     if (inWater && !this.wasInWater) this.audio.play("splash");
     this.wasInWater = inWater;
     const wantsCrouch = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
@@ -6306,6 +6888,7 @@ export class VoxelEngine {
       const bankType = this.world.getBlock(bankX, bankY, bankZ);
       const bankHead = this.world.getBlock(bankX, bankY + 1, bankZ);
       const horizontalCollision = Boolean(BLOCKS[bankType ?? BlockId.Air]?.solid) && !BLOCKS[bankHead ?? BlockId.Bedrock]?.solid;
+      const tidebreathActive = (this.potionBuffs.tidebreath ?? 0) > this.worldSimulationSeconds();
       const hasBreatherCharm = this.countItem(Item.BreatherCharm) > 0;
       const swim = stepSwimming(
         { velocityY: this.velocity.y, oxygenSeconds: this.oxygenSeconds, drowningAccumulator: this.drowningAccumulator },
@@ -6318,7 +6901,9 @@ export class VoxelEngine {
           surfaceGap: this.headSubmerged ? 0.25 : 0.72,
         },
         dt,
-        hasBreatherCharm ? { ...DEFAULT_SWIM_RULES, maxOxygenSeconds: 24 } : DEFAULT_SWIM_RULES,
+        tidebreathActive
+          ? { ...DEFAULT_SWIM_RULES, maxOxygenSeconds: 300, oxygenDrainPerSecond: 0 }
+          : hasBreatherCharm ? { ...DEFAULT_SWIM_RULES, maxOxygenSeconds: 24 } : DEFAULT_SWIM_RULES,
       );
       this.velocity.y = swim.state.velocityY;
       this.oxygenSeconds = swim.state.oxygenSeconds;
@@ -6331,7 +6916,9 @@ export class VoxelEngine {
       this.velocity.y *= Math.max(0, 1 - 2.4 * dt);
       if (this.keys.has("Space")) this.velocity.y += 9.5 * dt;
     } else {
-      const maxOxygen = this.countItem(Item.BreatherCharm) > 0 ? 24 : DEFAULT_SWIM_RULES.maxOxygenSeconds;
+      const maxOxygen = (this.potionBuffs.tidebreath ?? 0) > this.worldSimulationSeconds()
+        ? 300
+        : this.countItem(Item.BreatherCharm) > 0 ? 24 : DEFAULT_SWIM_RULES.maxOxygenSeconds;
       this.oxygenSeconds = Math.min(maxOxygen, this.oxygenSeconds + DEFAULT_SWIM_RULES.oxygenRecoveryPerSecond * dt);
       this.drowningAccumulator = 0;
       if (this.grounded && this.keys.has("Space")) {
@@ -6639,7 +7226,7 @@ export class VoxelEngine {
   }
 
   private ensureSideQuestOffers(mob: MobEntity) {
-    if (!mob.residentId || !mob.settlementId || !mob.profession || (mob.factionId !== "hobbits" && mob.factionId !== "goblins")) return;
+    if (!mob.residentId || !mob.settlementId || !mob.profession || !mob.factionId || mob.factionId === "player") return;
     const templates = sideQuestOffersFor(mob.factionId, mob.profession as ResidentProfession, mob.settlementId, this.day, 2);
     for (const template of templates) {
       const id = `${template.id}:${mob.residentId}`;
@@ -6679,7 +7266,7 @@ export class VoxelEngine {
   }
 
   allQuestDefinitions() {
-    return [...HEARTHROADS_MAIN_QUESTS, ...this.sideQuestDefinitions] as readonly QuestDefinition[];
+    return [...DEFAULT_QUEST_DEFINITIONS, ...this.sideQuestDefinitions] as readonly QuestDefinition[];
   }
 
   private dispatchQuestEvent(event: QuestEvent) {
@@ -6942,12 +7529,13 @@ export class VoxelEngine {
 
   commandActiveFollower(command: FollowDistanceSetting | string) {
     const mob = this.activeSentient ?? this.activePet;
-    if (!mob || (!mob.hiredByPlayerId && !mob.petState?.tamed && !mob.shadeState?.tamed && !mob.reedstriderBond?.tamed && !mob.courserBond?.tamed)) return false;
+    if (!mob || (!mob.hiredByPlayerId && !mob.petState?.tamed && !mob.shadeState?.tamed && !mob.reedstriderBond?.tamed && !mob.courserBond?.tamed && !mob.leviathanGrowth?.tamed)) return false;
     let distance: FollowDistanceSetting | null = null;
     if (command === "dynamic") distance = "dynamic";
     else if (typeof command === "number") distance = command;
     else if (command.startsWith("distance:")) distance = command.slice(9) === "dynamic" ? "dynamic" : Number(command.slice(9));
     if (distance !== null) mob.followDistance = normalizeFollowDistance(distance);
+    if (typeof command === "string" && (command === "follow" || command === "hold")) mob.followCommand = command;
     if (mob.settlementId && mob.residentId && mob.hiredByPlayerId) {
       const settlement = this.settlements.get(mob.settlementId);
       const resident = settlement?.residents.find((entry) => entry.id === mob.residentId);
@@ -6988,12 +7576,12 @@ export class VoxelEngine {
   hireResidentFromMayor(residentId: string) {
     const mayor = this.activeSentient;
     const settlement = mayor?.settlementId ? this.settlements.get(mayor.settlementId) : null;
-    if (!mayor || mayor.profession !== "mayor" || !settlement || !mayor.factionId || mayor.factionId === "player") {
+    if (!mayor || !mayor.profession || !isMayorProfession(mayor.profession as ResidentProfession) || !settlement || !mayor.factionId || mayor.factionId === "player") {
       this.events.onToast("Hiring agreements must be made with that settlement's mayor.");
       return false;
     }
     const resident = settlement.residents.find((entry) => entry.id === residentId);
-    const expectedCost = resident?.profession === "warrior" ? 180 : 110;
+    const expectedCost = resident && isWarriorProfession(resident.profession) ? 180 : 110;
     if (!resident || BigInt(this.goldWallet.balance) < BigInt(expectedCost)) {
       this.events.onToast(`Hiring requires ${expectedCost} gold in your wallet.`);
       return false;
@@ -7051,8 +7639,8 @@ export class VoxelEngine {
   claimActiveSettlement() {
     const mayorMob = this.activeSentient;
     const settlement = mayorMob?.settlementId ? this.settlements.get(mayorMob.settlementId) : null;
-    if (!mayorMob || mayorMob.profession !== "mayor" || !settlement || settlement.ownerFactionId === "player") return false;
-    const livingWarriors = settlement.residents.filter((resident) => resident.alive && resident.profession === "warrior").length;
+    if (!mayorMob || !mayorMob.profession || !isMayorProfession(mayorMob.profession as ResidentProfession) || !settlement || settlement.ownerFactionId === "player") return false;
+    const livingWarriors = settlement.residents.filter((resident) => resident.alive && isWarriorProfession(resident.profession)).length;
     const decision = evaluateTownCapture(this.factionRelations, {
       townId: settlement.id,
       currentOwner: settlement.ownerFactionId,
@@ -7081,7 +7669,7 @@ export class VoxelEngine {
     this.factionRelations = factionResult.state;
     this.settlements.set(settlement.id, settlementResult.state);
     for (const mob of this.mobs) {
-      if (mob.settlementId !== settlement.id || mob.profession === "warrior" || mob.health <= 0) continue;
+      if (mob.settlementId !== settlement.id || (mob.profession && isWarriorProfession(mob.profession as ResidentProfession)) || mob.health <= 0) continue;
       mob.factionId = "player";
       mob.aligned = false;
       mob.hostile = false;
@@ -7106,7 +7694,7 @@ export class VoxelEngine {
     this.questBook = result.book;
     this.creditPlayerGold(result.reward.gold, `quest:${questId}`);
     for (const [factionId, reward] of Object.entries(result.reward.factionAlignment)) {
-      if ((factionId !== "hobbits" && factionId !== "goblins") || reward <= 0) continue;
+      if ((factionId !== "hobbits" && factionId !== "goblins" && factionId !== "atlantians") || reward <= 0) continue;
       const alignment = applyQuestAlignmentReward(this.factionRelations, factionId, reward, {
         authorityId: this.factionRelations.authorityId,
         expectedRevision: this.factionRelations.revision,
@@ -7237,7 +7825,8 @@ export class VoxelEngine {
       }
       for (const resident of settlement.residents) {
         if (this.merchants.has(resident.id)) continue;
-        const faction = resident.factionId === "goblins" ? "goblins" : "hobbits";
+        const faction = resident.factionId === "player" ? settlement.ownerFactionId : resident.factionId;
+        if (faction === "player") continue;
         this.merchants.set(resident.id, createMerchant(
           this.factionRelations.authorityId,
           resident.id,
@@ -7301,9 +7890,12 @@ export class VoxelEngine {
         settlement = population.state;
         for (const resident of settlement.residents) {
           if (priorIds.has(resident.id)) continue;
-          const kind: MobKind = settlement.ownerFactionId === "goblins" ? "goblin-worker" : "hobbit-merchant";
-          const ground = this.world.findWalkableY(Math.round(resident.position.x), Math.round(resident.position.z), this.position.y);
-          const child = this.spawnMob(kind, new THREE.Vector3(resident.position.x, ground + MOB_DEFS[kind].footOffset, resident.position.z), {
+          const kind: MobKind = resident.profession.startsWith("atlantian-") && resident.profession in MOB_DEFS
+            ? resident.profession as MobKind
+            : settlement.ownerFactionId === "goblins" ? "goblin-worker" : "hobbit-merchant";
+          const ground = this.world.findWalkableY(Math.round(resident.position.x), Math.round(resident.position.z), resident.position.y);
+          const spawnY = settlement.environment === "underwater" ? resident.position.y : ground + MOB_DEFS[kind].footOffset;
+          const child = this.spawnMob(kind, new THREE.Vector3(resident.position.x, spawnY, resident.position.z), {
             name: resident.name,
             factionId: settlement.ownerFactionId === "player" ? "player" : settlement.ownerFactionId,
             profession: resident.profession,
@@ -7317,9 +7909,9 @@ export class VoxelEngine {
       }
       if (settlement !== currentSettlement) this.settlements.set(settlementId, settlement);
       if (election.applied) {
-        const mayor = settlement.residents.find((resident) => resident.alive && resident.profession === "mayor");
+        const mayor = settlement.residents.find((resident) => resident.alive && isMayorProfession(resident.profession));
         const mayorMob = mayor ? this.mobs.find((mob) => mob.residentId === mayor.id) : null;
-        if (mayorMob) mayorMob.profession = "mayor";
+        if (mayorMob && mayor) mayorMob.profession = mayor.profession;
       }
     }
   }
@@ -7327,6 +7919,7 @@ export class VoxelEngine {
   private mapLocationName(tag: string) {
     if (tag.startsWith("settlement:hobbits")) return "Hearthkin Freehold";
     if (tag.startsWith("settlement:goblins")) return "Brassroot Clanhold";
+    if (tag.startsWith("settlement:atlantians")) return "Lumen Tidemoot";
     return tag.split(":")[0].split("-").map((part) => part ? part[0].toUpperCase() + part.slice(1) : part).join(" ");
   }
 
@@ -7395,9 +7988,9 @@ export class VoxelEngine {
       const x = Math.floor(point.x + 0.5);
       const y = Math.floor(point.y + 0.5);
       const z = Math.floor(point.z + 0.5);
-      if (this.world.getBlock(x, y, z) !== BlockId.Water) continue;
+      if (!blockContainsWater(this.world.getBlock(x, y, z))) continue;
       let surfaceY = y;
-      while (surfaceY < MAX_Y && this.world.getBlock(x, surfaceY + 1, z) === BlockId.Water) surfaceY += 1;
+      while (surfaceY < MAX_Y && blockContainsWater(this.world.getBlock(x, surfaceY + 1, z))) surfaceY += 1;
       return new THREE.Vector3(x, surfaceY + 0.58, z);
     }
     return null;
@@ -7431,14 +8024,20 @@ export class VoxelEngine {
       const sideZ = Math.sin(mob.angle + Math.PI / 2) * 1.7;
       const x = Math.round(mob.group.position.x + sideX);
       const z = Math.round(mob.group.position.z + sideZ);
-      const ground = this.world.findWalkableY(x, z, mob.group.position.y);
-      this.position.set(x, ground + 0.51, z);
+      if (mob.leviathanGrowth) {
+        this.mobBounds.setFromObject(mob.visual);
+        this.position.set(x, Math.max(mob.group.position.y + 0.6, this.mobBounds.max.y + 0.18), z);
+      } else {
+        const ground = this.world.findWalkableY(x, z, mob.group.position.y);
+        this.position.set(x, ground + 0.51, z);
+      }
     }
     this.mountedCreatureId = null;
     this.velocity.set(0, 0, 0);
     this.events.onToast(mob?.kind === "reedstrider" ? "You step down from the Reedstrider."
       : mob?.kind === "wild-horse" ? "You swing down from the Wildwood Courser."
-        : mob?.kind === "warg" ? "You swing down from the Road Warg." : "You slide down from the Shadecrawler.");
+        : mob?.kind === "warg" ? "You swing down from the Road Warg."
+          : mob?.leviathanGrowth ? `You dismount ${mob.name}.` : "You slide down from the Shadecrawler.");
     this.saveSoon();
   }
 
@@ -7448,7 +8047,16 @@ export class VoxelEngine {
     const ridingShadecrawler = Boolean(mob?.shadeState && canRideShadecrawler(mob.shadeState, ownerId));
     const ridingReedstrider = Boolean(mob?.reedstriderBond && canRideReedstrider(mob.reedstriderBond, ownerId));
     const ridingCourser = Boolean(mob?.courserBond && canRideReedstrider(mob.courserBond, ownerId));
-    if (!mob || (!ridingShadecrawler && !ridingReedstrider && !ridingCourser)) {
+    const ridingLeviathan = Boolean(mob?.leviathanGrowth && canRideCreature({
+      kind: mob.kind as CoreMobKind,
+      tamed: mob.leviathanGrowth.tamed,
+      ownerId: mob.leviathanGrowth.ownerId,
+      riderId: ownerId,
+      saddled: mob.leviathanGrowth.saddled,
+      baby: mob.leviathanGrowth.stage !== "adult",
+      aligned: mob.aligned,
+    }));
+    if (!mob || (!ridingShadecrawler && !ridingReedstrider && !ridingCourser && !ridingLeviathan)) {
       this.mountedCreatureId = null;
       return;
     }
@@ -7459,14 +8067,26 @@ export class VoxelEngine {
     const desiredZ = -Math.cos(this.yaw) * (forward / length) - Math.sin(this.yaw) * (right / length);
     const moving = forward !== 0 || right !== 0;
     if (moving) mob.desiredAngle = Math.atan2(desiredZ, desiredX);
-    const mountedInWater = this.world.getBlock(Math.floor(mob.group.position.x + 0.5), Math.floor(mob.group.position.y + 0.5), Math.floor(mob.group.position.z + 0.5)) === BlockId.Water;
+    const mountedInWater = blockContainsWater(this.world.getBlock(Math.floor(mob.group.position.x + 0.5), Math.floor(mob.group.position.y + 0.5), Math.floor(mob.group.position.z + 0.5)));
     const mountedSprint = this.keys.has("ControlLeft") || this.keys.has("ControlRight") || this.sprintLatched;
+    const leviathanProfile = ridingLeviathan ? creatureMountProfile(mob.kind as CoreMobKind) : null;
+    const leviathanAirborne = Boolean(ridingLeviathan && mob.kind === "aetherbell-leviathan" && !mountedInWater);
     const speed = moving ? (ridingReedstrider ? reedstriderRideSpeed(mountedInWater, mountedSprint)
-      : ridingCourser ? (mountedInWater ? 3.2 : mountedSprint ? 8.6 : 7.15) : 5.75) : 0;
+      : ridingLeviathan ? (leviathanAirborne ? leviathanProfile?.airSpeed ?? 2.6 : mountedInWater ? leviathanProfile?.waterSpeed ?? 1.3 : leviathanProfile?.landSpeed ?? 0.12) * (mountedSprint ? 1.22 : 1)
+        : ridingCourser ? (mountedInWater ? 3.2 : mountedSprint ? 8.6 : 7.15) : 5.75) : 0;
     const before = mob.group.position.clone();
     const nx = mob.group.position.x + Math.cos(mob.angle) * speed * dt;
     const nz = mob.group.position.z + Math.sin(mob.angle) * speed * dt;
-    const targetY = ridingReedstrider && mountedInWater
+    let targetY: number | null;
+    if (ridingLeviathan && (mountedInWater || leviathanAirborne)) {
+      const vertical = moving ? Math.sin(this.pitch) * speed * dt * (leviathanAirborne ? 0.9 : 0.55) : 0;
+      const candidateY = mob.group.position.y + vertical;
+      if (leviathanAirborne) {
+        const terrainClearance = this.world.surfaceAt(Math.round(nx), Math.round(nz)) + 5.5;
+        targetY = Math.max(candidateY, terrainClearance);
+      } else targetY = !blockContainsWater(this.world.getBlock(Math.floor(nx + 0.5), Math.floor(candidateY + 0.5), Math.floor(nz + 0.5)))
+        ? mob.group.position.y : candidateY;
+    } else targetY = ridingReedstrider && mountedInWater
       ? mob.group.position.y
       : moving ? this.mobMoveTarget(mob, nx, nz, ridingShadecrawler ? 1.7 : 1) : mob.group.position.y;
     const blocked = targetY === null;
@@ -7501,7 +8121,7 @@ export class VoxelEngine {
         const turn = (this.keys.has("KeyD") ? 1 : 0) - (this.keys.has("KeyA") ? 1 : 0);
         const next = integrateSailboat(boat.save, { forward, turn }, dt, (x, z) => {
           const y = Math.floor(boat.save.y - 0.05);
-          return this.world.getBlock(Math.floor(x + 0.5), y, Math.floor(z + 0.5)) === BlockId.Water;
+          return blockContainsWater(this.world.getBlock(Math.floor(x + 0.5), y, Math.floor(z + 0.5)));
         });
         Object.assign(boat.save, next);
       }
@@ -7700,7 +8320,35 @@ export class VoxelEngine {
     return createMobVisual(kind, id);
   }
 
+  transformLeviathan(mob: MobEntity, growth: LeviathanGrowthState) {
+    if (mob.kind === growth.kind) {
+      mob.leviathanGrowth = growth;
+      return mob;
+    }
+    const position = mob.group.position.clone();
+    const healthRatio = mob.health / Math.max(1, mob.maxHealth);
+    const index = this.mobs.indexOf(mob);
+    if (index >= 0) this.removeMob(index);
+    const replacement = this.spawnMob(growth.kind, position, {
+      id: mob.id,
+      age: mob.age,
+      yaw: mob.angle,
+      name: mob.name,
+      health: Math.max(1, MOB_DEFS[growth.kind].health * healthRatio),
+      careState: mob.careState,
+      leviathanGrowth: growth,
+      aetherbellMorph: mob.aetherbellMorph ?? createAetherbellMorphState("sea"),
+      persistentPoiResident: mob.persistentPoiResident,
+      enclosed: mob.enclosed,
+      followDistance: mob.followDistance,
+      followCommand: mob.followCommand,
+    });
+    this.targetMob = replacement;
+    return replacement;
+  }
+
   mobBaseScale(mob: MobEntity) {
+    if (mob.leviathanGrowth) return mob.leviathanGrowth.growthScale;
     if (mob.shadeState) return shadecrawlerScale(mob.shadeState);
     if (mob.petState?.baby || mob.careState?.baby) return 0.62;
     return 1;
@@ -7710,7 +8358,7 @@ export class VoxelEngine {
     return creatureCollisionProfile(
       mob.definition,
       this.mobBaseScale(mob),
-      Boolean(mob.petState?.baby || mob.careState?.baby),
+      Boolean(mob.petState?.baby || mob.careState?.baby || (mob.leviathanGrowth && mob.leviathanGrowth.stage !== "adult")),
     );
   }
 
@@ -7807,7 +8455,7 @@ export class VoxelEngine {
     const centerX = Math.round(x);
     const centerZ = Math.round(z);
     const feetType = this.world.getBlock(centerX, groundY + 1, centerZ);
-    const water = feetType === BlockId.Water;
+    const water = blockContainsWater(feetType);
     const hazard = feetType === BlockId.Lava;
     const dynamic = targetY === null
       ? { blocked: false, crowding: 0 }
@@ -7836,26 +8484,54 @@ export class VoxelEngine {
       if (targetY === null || Math.abs(this.mobFootY(mob, targetY) - this.position.y) > 2.2) return null;
       const groundY = Math.round(targetY - mob.definition.footOffset);
       const feetType = this.world.getBlock(Math.round(x), groundY + 1, Math.round(z));
-      if (feetType === BlockId.Water || feetType === BlockId.Lava) return null;
+      if (blockContainsWater(feetType) || feetType === BlockId.Lava) return null;
       if (this.mobDynamicObstaclesAt(mob, x, targetY, z, false).blocked) return null;
       return targetY;
     });
   }
 
+  setSentientDetailTier(mob: MobEntity, tier: SentientSimulationTier) {
+    mob.sentientTier = tier;
+    if (!mob.sentientLod) {
+      mob.group.visible = tier !== "sleep";
+      return;
+    }
+    mob.group.visible = tier !== "sleep";
+    mob.visual.visible = tier === "full";
+    mob.sentientLod.visible = tier === "coarse";
+  }
+
   /** Scale around the creature's original foot plane, never around its belly. */
   applyMobScale(mob: MobEntity, scale: number) {
-    const safeScale = clamp(scale, 0.25, 3.2);
+    const safeScale = clamp(scale, mob.leviathanGrowth ? 0.08 : 0.25, 3.2);
     if (Math.abs(mob.visual.scale.x - safeScale) > 0.0001 || Math.abs(mob.visual.scale.y - safeScale) > 0.0001 || Math.abs(mob.visual.scale.z - safeScale) > 0.0001) {
       mob.visual.scale.setScalar(safeScale);
     }
     const groundedY = mob.visualBaseY + (1 - safeScale) * (mob.visualMinY - mob.visualBaseY);
     if (Math.abs(mob.visual.position.y - groundedY) > 0.0001) mob.visual.position.y = groundedY;
+    if (mob.sentientLod) {
+      if (Math.abs(mob.sentientLod.scale.x - safeScale) > 0.0001) mob.sentientLod.scale.setScalar(safeScale);
+      if (Math.abs(mob.sentientLod.position.y - groundedY) > 0.0001) mob.sentientLod.position.y = groundedY;
+    }
     if (mob.shadeSaddle) {
       const saddled = Boolean(mob.shadeState?.saddled);
       if (mob.shadeSaddle.visible !== saddled) mob.shadeSaddle.visible = saddled;
     }
     const wargSaddle = mob.kind === "warg" ? mob.visual.getObjectByName("warg-saddle") : null;
     if (wargSaddle) wargSaddle.visible = Boolean(mob.courserBond?.saddled);
+    const courserSaddle = mob.kind === "wild-horse" ? mob.visual.getObjectByName("wild-horse-saddle") : null;
+    if (courserSaddle) courserSaddle.visible = Boolean(mob.courserBond?.saddled);
+    const reedstriderSaddle = mob.kind === "reedstrider" ? mob.visual.getObjectByName("reedstrider-saddle") : null;
+    if (reedstriderSaddle) reedstriderSaddle.visible = Boolean(mob.reedstriderBond?.saddled);
+    if (mob.leviathanGrowth) {
+      const saddle = mob.visual.getObjectByName(`${mob.kind}-saddle`);
+      if (saddle) saddle.visible = mob.leviathanGrowth.saddled;
+      const limit = mob.definition.cargoChestLimit ?? 0;
+      for (let index = 1; index <= limit; index += 1) {
+        const cargo = mob.visual.getObjectByName(`${mob.kind}-cargo-${index}`);
+        if (cargo) cargo.visible = index <= mob.leviathanGrowth.chestModules;
+      }
+    }
   }
 
   spawnMob(kind: MobKind, position: THREE.Vector3, options: SpawnMobOptions = {}) {
@@ -7867,6 +8543,8 @@ export class VoxelEngine {
     const visualBounds = new THREE.Box3().setFromObject(visual);
     const visualBaseY = visual.position.y;
     const visualMinY = visualBounds.min.y;
+    const sentientLod = definition.sentient ? createSentientLodVisual(kind, id, visualBounds) : null;
+    if (sentientLod) group.add(sentientLod);
     group.position.copy(position);
     this.creatureGroup.add(group);
     const angle = options.yaw ?? Math.random() * Math.PI * 2;
@@ -7876,7 +8554,12 @@ export class VoxelEngine {
       : null;
     const shadeState = kind === "shadecrawler" ? normalizeShadecrawlerState(options.shadeState ?? createShadecrawlerState()) : null;
     const reedstriderBond = kind === "reedstrider" ? { ...(options.reedstriderBond ?? createReedstriderBond()) } : null;
-    const courserBond = kind === "wild-horse" || kind === "warg" ? { ...(options.courserBond ?? createReedstriderBond()) } : null;
+    const courserBond = ["wild-horse", "warg", "tidepup", "sakurakit"].includes(kind)
+      ? { ...(options.courserBond ?? createReedstriderBond()) } : null;
+    const leviathanGrowth = isLeviathanKind(kind)
+      ? { ...(options.leviathanGrowth ?? createWildLeviathanGrowth(kind, id)) } : null;
+    const aetherbellMorph = kind === "aetherbell-larva" || kind === "aetherbell-leviathan"
+      ? { ...(options.aetherbellMorph ?? createAetherbellMorphState("sea")) } : null;
     const apiaryBee = options.apiaryBee ? { ...options.apiaryBee } : null;
     const socialMode = socialGroupModeForMob(kind);
     const socialGroupId = options.socialGroupId ?? (socialMode
@@ -7886,14 +8569,15 @@ export class VoxelEngine {
       : null;
     const shadeHealthScale = shadeState ? shadecrawlerScale(shadeState) : 1;
     const mob: MobEntity = {
-      id, kind, name: options.name?.trim() || petState?.name || definition.name, hostile: definition.hostile && !shadeState?.tamed, definition, group, visual, parts,
+      id, kind, name: options.name?.trim() || petState?.name || definition.name, hostile: definition.hostile && !shadeState?.tamed, definition, group, visual,
+      sentientLod, sentientTier: "full", sentientSimulationAccumulator: 0, parts,
       health: options.health ?? petState?.health ?? definition.health * shadeHealthScale,
       maxHealth: petState?.maxHealth ?? definition.health * shadeHealthScale,
       damage: definition.damage, angle, desiredAngle: angle, steering: createStableSteering(angle), route: createCreatureRouteState(angle), wanderTimer: 1 + Math.random() * 4,
       attackCooldown: 0, hurtTimer: 0, age: options.age ?? 0, bob: Math.random() * Math.PI * 2, gait: 0,
       fleeTimer: 0, state: "wander", stateTimer: 0, baseY: position.y, voiceTimer: 2 + Math.random() * 8,
-      birdState: definition.family === "bird" ? createBirdBehavior(kind as "emberjay" | "canopy-lark", id * 0.71) : null,
-      petState, careState, shadeState, reedstriderBond, courserBond, apiaryBee, beeHiveKey: options.beeHiveKey ?? null,
+      birdState: definition.family === "bird" ? createBirdBehavior(kind as Parameters<typeof createBirdBehavior>[0], id * 0.71) : null,
+      petState, careState, shadeState, reedstriderBond, courserBond, leviathanGrowth, aetherbellMorph, apiaryBee, beeHiveKey: options.beeHiveKey ?? null,
       socialGroupId, peelopShedding,
       milkCooldown: kind === "meadow-cow" ? clamp(Number(options.milkCooldown) || 0, 0, CLOVERBACK_MILK_COOLDOWN_SECONDS) : 0,
       shadeSaddle: visual.getObjectByName("shadecrawler-saddle") ?? null, visualBaseY, visualMinY,
@@ -7911,8 +8595,9 @@ export class VoxelEngine {
       aligned: options.aligned ?? Boolean(options.factionId ?? definition.faction),
       hiredByPlayerId: options.hiredByPlayerId ?? null,
       followDistance: options.followDistance ?? "dynamic",
+      followCommand: options.followCommand ?? "follow",
     };
-    this.applyMobScale(mob, shadeState ? shadecrawlerScale(shadeState) : petState?.baby || careState?.baby ? 0.62 : 1);
+    this.applyMobScale(mob, leviathanGrowth?.growthScale ?? (shadeState ? shadecrawlerScale(shadeState) : petState?.baby || careState?.baby ? 0.62 : 1));
     this.mobs.push(mob);
     return mob;
   }
@@ -7921,7 +8606,7 @@ export class VoxelEngine {
     if (!(saved.kind in MOB_DEFS) || BUTTERFLY_ORDER.includes(saved.kind as ButterflyKind)) return null;
     const definition = MOB_DEFS[saved.kind];
     const position = new THREE.Vector3(saved.x, saved.y, saved.z);
-    if (definition.movement !== "flying" && definition.movement !== "aquatic" && saved.kind !== "glowmoth") {
+    if (definition.movement !== "flying" && definition.movement !== "aquatic" && !isLeviathanKind(saved.kind) && saved.kind !== "glowmoth") {
       const x = Math.round(saved.x);
       const z = Math.round(saved.z);
       const clearance = Math.max(1, Math.ceil(definition.height));
@@ -7949,6 +8634,8 @@ export class VoxelEngine {
       shadeState: saved.shadeState ?? null,
       reedstriderBond: saved.reedstriderBond ?? null,
       courserBond: saved.courserBond ?? null,
+      leviathanGrowth: saved.leviathanGrowth ?? null,
+      aetherbellMorph: saved.aetherbellMorph ?? null,
       apiaryBee: saved.apiaryBee ?? null,
       socialGroupId: saved.socialGroupId ?? null,
       peelopShedding: saved.peelopShedding ?? null,
@@ -7961,6 +8648,7 @@ export class VoxelEngine {
       aligned: Boolean(saved.aligned),
       hiredByPlayerId: saved.hiredByPlayerId ?? null,
       followDistance: saved.followDistance ?? "dynamic",
+      followCommand: saved.followCommand ?? "follow",
     });
   }
 
@@ -8050,7 +8738,7 @@ export class VoxelEngine {
       const residentName = tagValue("name:");
       const profession = tagValue("profession:");
       const factionTag = tagValue("faction:");
-      const factionId = factionTag === "hobbits" || factionTag === "goblins" ? factionTag : null;
+      const factionId = factionTag === "hobbits" || factionTag === "goblins" || factionTag === "atlantians" ? factionTag : null;
       const aligned = marker.tags?.includes("aligned:true") ?? Boolean(factionId);
       const butterfly = BUTTERFLY_ORDER.includes(marker.mobKind as ButterflyKind) ? marker.mobKind as ButterflyKind : null;
       const kind = aliases[marker.mobKind] ?? (marker.mobKind in MOB_DEFS ? marker.mobKind as MobKind : null);
@@ -8079,8 +8767,8 @@ export class VoxelEngine {
         const z = marker.position.z + Math.sin(angle) * radius;
         if (butterfly) this.butterflies.release(butterfly, new THREE.Vector3(x, marker.position.y + 0.8 + (index % 3) * 0.35, z));
         else if (kind) {
-          const ground = this.world.findWalkableY(Math.round(x), Math.round(z), marker.position.y);
-          this.spawnMob(kind, new THREE.Vector3(x, ground + MOB_DEFS[kind].footOffset, z), {
+          const spawnY = structureMobSpawnY(this.world, kind, x, z, marker.position.y);
+          this.spawnMob(kind, new THREE.Vector3(x, spawnY, z), {
             persistentPoiResident: marker.persistent,
             poiMarkerId: markerKey,
             petState: kind === "peelop" ? createPeelopState(((marker.position.x * 73856093) ^ (marker.position.z * 19349663) ^ index) >>> 0, index % 5 === 0) : null,
@@ -8115,7 +8803,7 @@ export class VoxelEngine {
       const z = center.z + Math.sin(angle) * distance;
       let y = center.y;
       if (aquatic) {
-        if (this.world.getBlock(Math.floor(x + 0.5), Math.floor(y + 0.5), Math.floor(z + 0.5)) !== BlockId.Water) continue;
+        if (!blockContainsWater(this.world.getBlock(Math.floor(x + 0.5), Math.floor(y + 0.5), Math.floor(z + 0.5)))) continue;
       } else {
         const ground = this.world.surfaceAt(Math.round(x), Math.round(z));
         const feet = this.world.getBlock(Math.round(x), ground + 1, Math.round(z));
@@ -8130,10 +8818,11 @@ export class VoxelEngine {
   trySpawnMob() {
     const cap = Math.floor((this.touchMode ? 13 : 22) * this.worldOptions.mobDensity);
     const caps = mobPopulationCaps(cap);
-    if (caps.total <= 0 || this.mobs.length >= caps.total) return;
+    const population = naturalMobPopulation(this.mobs);
+    if (caps.total <= 0 || population.total >= caps.total) return;
     const passiveCap = caps.passive;
-    const passiveCount = this.mobs.reduce((count, mob) => count + (mob.hostile ? 0 : 1), 0);
-    const hostileCount = this.mobs.length - passiveCount;
+    const passiveCount = population.passive;
+    const hostileCount = population.hostile;
     const angle = Math.random() * Math.PI * 2;
     const radius = 14 + Math.random() * 20;
     const x = Math.round(this.position.x + Math.cos(angle) * radius);
@@ -8144,10 +8833,10 @@ export class VoxelEngine {
     if (underground) {
       y = this.world.findWalkableY(x, z, this.position.y);
       const nearbyWaterY = [Math.round(this.position.y), Math.round(this.position.y) - 1, Math.round(this.position.y) + 1]
-        .find((candidateY) => this.world.getBlock(x, candidateY, z) === BlockId.Water);
+        .find((candidateY) => blockContainsWater(this.world.getBlock(x, candidateY, z)));
       if (nearbyWaterY !== undefined && passiveCount < passiveCap && Math.random() < 0.62) {
-        kind = fishKindsForHabitat("underground")[0];
-        this.spawnNaturalGroup(kind, new THREE.Vector3(x, nearbyWaterY, z), Math.min(passiveCap - passiveCount, caps.total - this.mobs.length), true);
+        kind = fishKindForHabitat("underground");
+        this.spawnNaturalGroup(kind, new THREE.Vector3(x, nearbyWaterY, z), Math.min(passiveCap - passiveCount, caps.total - population.total), true);
         return;
       }
       if (this.worldOptions.difficulty === "peaceful") return;
@@ -8160,14 +8849,18 @@ export class VoxelEngine {
     } else {
       y = this.world.surfaceAt(x, z);
       const biome = this.world.biomeAt(x, z);
-      if ([BiomeId.DeepOcean, BiomeId.Ocean, BiomeId.River].includes(biome) && passiveCount < passiveCap) {
+      if ([BiomeId.DeepOcean, BiomeId.Ocean, BiomeId.River, BiomeId.LumenTrench].includes(biome) && passiveCount < passiveCap) {
         let waterY = SEA_LEVEL;
-        while (waterY > y && this.world.getBlock(x, waterY, z) !== BlockId.Water) waterY -= 1;
-        if (this.world.getBlock(x, waterY, z) === BlockId.Water) {
-          const habitat = biome === BiomeId.River ? "river" : biome === BiomeId.DeepOcean ? "deep-ocean" : "ocean";
-          const pool = fishKindsForHabitat(habitat);
-          kind = pool[Math.floor(Math.random() * pool.length)];
-          this.spawnNaturalGroup(kind, new THREE.Vector3(x, waterY - Math.random() * Math.min(2, Math.max(0, waterY - y - 1)), z), Math.min(passiveCap - passiveCount, caps.total - this.mobs.length), true);
+        while (waterY > y && !blockContainsWater(this.world.getBlock(x, waterY, z))) waterY -= 1;
+        if (blockContainsWater(this.world.getBlock(x, waterY, z))) {
+          const habitat = biome === BiomeId.River ? "river" : biome === BiomeId.LumenTrench ? "lumen-trench" : biome === BiomeId.DeepOcean ? "deep-ocean" : "ocean";
+          kind = fishKindForHabitat(habitat);
+          const aquaticY = aquaticSpawnHeight(kind, y, waterY, Math.random());
+          if (aquaticY === null) return;
+          const aquaticAvailable = MOB_DEFS[kind].hostile
+            ? Math.min(1, Math.max(0, caps.hostile - hostileCount), caps.total - population.total)
+            : Math.min(passiveCap - passiveCount, caps.total - population.total);
+          if (aquaticAvailable > 0) this.spawnNaturalGroup(kind, new THREE.Vector3(x, aquaticY, z), aquaticAvailable, true);
         }
         return;
       }
@@ -8186,7 +8879,7 @@ export class VoxelEngine {
         kind = passiveMobKindForBiome(biome, Math.random());
       }
     }
-    const available = MOB_DEFS[kind].hostile ? 1 : Math.min(passiveCap - passiveCount, caps.total - this.mobs.length);
+    const available = MOB_DEFS[kind].hostile ? 1 : Math.min(passiveCap - passiveCount, caps.total - population.total);
     this.spawnNaturalGroup(kind, new THREE.Vector3(x, y + MOB_DEFS[kind].footOffset, z), available);
   }
 
@@ -8265,6 +8958,7 @@ export class VoxelEngine {
       mob.visual.scale.set(baseScale * hurtPulse / Math.sqrt(squash), scaleY, baseScale * hurtPulse / Math.sqrt(squash));
       mob.visual.position.y = mob.visualBaseY + (1 - scaleY) * (mob.visualMinY - mob.visualBaseY);
     } else this.applyMobScale(mob, baseScale * hurtPulse);
+    applyOceanCreaturePose(mob.visual, mob.kind as CoreMobKind, mob.age, Math.min(1, moved * 4), mob.aetherbellMorph?.airProgress ?? 0);
   }
 
   updateBeeMob(mob: MobEntity, dt: number, distance: number, dx: number, dz: number) {
@@ -8388,9 +9082,31 @@ export class VoxelEngine {
       mob.desiredAngle += (Math.random() - 0.5) * 2.2;
       mob.wanderTimer = 1.5 + Math.random() * 4;
     }
-    const playerInWater = this.world.getBlock(Math.floor(this.position.x + 0.5), Math.floor(this.position.y + 0.6), Math.floor(this.position.z + 0.5)) === BlockId.Water;
-    const sharkHunting = mob.kind === "deepwater-shark" && !this.mountedBoatId && playerInWater && distance < 13;
-    if (sharkHunting) {
+    const playerInWater = blockContainsWater(this.world.getBlock(Math.floor(this.position.x + 0.5), Math.floor(this.position.y + 0.6), Math.floor(this.position.z + 0.5)));
+    if (mob.definition.sentient && mob.settlementId && mob.residentId) {
+      const settlement = this.settlements.get(mob.settlementId);
+      const resident = settlement?.residents.find((entry) => entry.id === mob.residentId && entry.alive);
+      if (settlement && resident) {
+        const plan = planResidentSchedule(resident, settlement, { worldDay: this.day, hour: this.worldTime * 24, monsterVisible: false });
+        if (plan.target) {
+          mob.desiredAngle = Math.atan2(plan.target.z - mob.group.position.z, plan.target.x - mob.group.position.x);
+          if (typeof plan.target.y === "number") mob.baseY += (plan.target.y - mob.baseY) * Math.min(1, dt * 0.45);
+        }
+      }
+    }
+    const ownedFollower = (mob.courserBond?.tamed && mob.courserBond.ownerId === this.localPlayerId())
+      || (mob.leviathanGrowth?.tamed && mob.leviathanGrowth.ownerId === this.localPlayerId());
+    const followsOwner = playerInWater && ownedFollower && mob.followCommand !== "hold";
+    const holding = ownedFollower && mob.followCommand === "hold";
+    if (followsOwner && distance > 3.2) {
+      mob.desiredAngle = Math.atan2(dz, dx);
+      if (distance > 42) {
+        mob.group.position.copy(this.position).add(new THREE.Vector3(Math.sin(this.yaw) * 4.5, 0.4, Math.cos(this.yaw) * 4.5));
+        mob.baseY = mob.group.position.y;
+      }
+    }
+    const seaHunter = mob.hostile && !this.mountedBoatId && playerInWater && distance < (mob.kind === "dreadcoil" ? 20 : 13);
+    if (seaHunter) {
       mob.desiredAngle = Math.atan2(dz, dx);
       mob.awarenessTimer = Math.max(mob.awarenessTimer, 2.5);
       if (distance < mob.definition.attackRange && mob.attackCooldown <= 0) {
@@ -8399,17 +9115,17 @@ export class VoxelEngine {
         this.engageCombat();
         this.audio.play("mob");
       }
-    } else if (mob.fleeTimer > 0 || distance < 2.2) mob.desiredAngle = Math.atan2(-dz, -dx);
+    } else if (!followsOwner && (mob.fleeTimer > 0 || distance < 2.2)) mob.desiredAngle = Math.atan2(-dz, -dx);
     const social = this.socialMotions.get(mob.id);
     if (social && mob.fleeTimer <= 0 && distance >= 2.2) mob.desiredAngle = Math.atan2(social.z, social.x);
-    const speed = (sharkHunting || mob.fleeTimer > 0 ? mob.definition.chaseSpeed : mob.definition.speed) * (social?.speedScale ?? 1);
+    const speed = holding ? 0 : (seaHunter || mob.fleeTimer > 0 ? mob.definition.chaseSpeed : mob.definition.speed) * (social?.speedScale ?? 1);
     mob.steering = updateStableSteering(mob.steering, { dt, turnRate: mob.definition.turnRate, blocked: false, mobId: mob.id, desiredHeading: mob.desiredAngle });
     mob.angle = mob.steering.heading;
     const nx = mob.group.position.x + Math.cos(mob.angle) * speed * dt;
     const nz = mob.group.position.z + Math.sin(mob.angle) * speed * dt;
     const verticalWave = Math.sin(mob.age * 0.9 + mob.id) * 0.18;
     const ny = mob.baseY + verticalWave;
-    const water = this.world.getBlock(Math.floor(nx + 0.5), Math.floor(ny + 0.5), Math.floor(nz + 0.5)) === BlockId.Water;
+    const water = blockContainsWater(this.world.getBlock(Math.floor(nx + 0.5), Math.floor(ny + 0.5), Math.floor(nz + 0.5)));
     if (water) {
       const before = mob.group.position.clone();
       mob.group.position.set(nx, ny, nz);
@@ -8421,6 +9137,73 @@ export class VoxelEngine {
       mob.steering = createStableSteering(mob.angle);
       mob.wanderTimer = 0.7;
     }
+  }
+
+  updateLeviathanMob(mob: MobEntity, dt: number, distance: number, dx: number, dz: number) {
+    const growth = mob.leviathanGrowth;
+    if (!growth) return;
+    const currentBlock = this.world.getBlock(
+      Math.floor(mob.group.position.x + 0.5),
+      Math.floor(mob.group.position.y + 0.5),
+      Math.floor(mob.group.position.z + 0.5),
+    );
+    const underwater = blockContainsWater(currentBlock);
+    if (growth.species === "aetherbell-leviathan" && growth.stage === "adult" && !underwater) {
+      const follows = growth.tamed && growth.ownerId === this.localPlayerId() && mob.followCommand !== "hold";
+      const holding = growth.tamed && growth.ownerId === this.localPlayerId() && mob.followCommand === "hold";
+      const migrationAirPhase = Math.floor((mob.age + mob.id * 11) / 75) % 2 === 1;
+      if (follows && distance > 5) mob.desiredAngle = Math.atan2(dz, dx);
+      else if (mob.wanderTimer <= 0) {
+        mob.desiredAngle += (Math.random() - 0.5) * 1.4;
+        mob.wanderTimer = 3 + Math.random() * 5;
+      }
+      const profile = creatureMountProfile(mob.kind as CoreMobKind);
+      const speed = holding ? 0 : (profile?.airSpeed ?? 2.2) * (follows && distance > 6 ? 1 : 0.42);
+      mob.angle += Math.atan2(Math.sin(mob.desiredAngle - mob.angle), Math.cos(mob.desiredAngle - mob.angle)) * Math.min(1, dt * mob.definition.turnRate);
+      mob.group.position.x += Math.cos(mob.angle) * speed * dt;
+      mob.group.position.z += Math.sin(mob.angle) * speed * dt;
+      const surface = this.world.surfaceAt(Math.round(mob.group.position.x), Math.round(mob.group.position.z));
+      const waterAboveSurface = blockContainsWater(this.world.getBlock(
+        Math.round(mob.group.position.x),
+        Math.min(SEA_LEVEL, surface + 1),
+        Math.round(mob.group.position.z),
+      ));
+      const seaDescentY = Math.max(surface + 5.5, Math.min(SEA_LEVEL - 0.6, surface + Math.max(5.5, (SEA_LEVEL - surface) * 0.56)));
+      const targetY = holding ? mob.group.position.y
+        : follows ? Math.max(this.position.y + 3.8, surface + 5.5)
+        : migrationAirPhase ? Math.max(mob.baseY, surface + 8) + Math.sin(mob.age * 0.38 + mob.id) * 1.4
+          : waterAboveSurface ? seaDescentY : surface + 5.5;
+      mob.group.position.y += (targetY - mob.group.position.y) * Math.min(1, dt * 0.75);
+      mob.group.rotation.y = -mob.angle - Math.PI / 2;
+      this.animateMob(mob, speed * dt);
+      return;
+    }
+    if (growth.species === "aetherbell-leviathan" && growth.stage === "adult" && underwater
+      && Math.floor((mob.age + mob.id * 11) / 75) % 2 === 1) {
+      mob.group.position.y += dt * 0.62;
+      mob.baseY = mob.group.position.y;
+      mob.group.rotation.y = -mob.angle - Math.PI / 2;
+      this.animateMob(mob, dt * 0.35);
+      return;
+    }
+    if (underwater || growth.aquaticOnly) {
+      this.updateAquaticMob(mob, dt, distance, dx, dz);
+      return;
+    }
+    const profile = creatureMountProfile(mob.kind as CoreMobKind);
+    const holding = growth.tamed && growth.ownerId === this.localPlayerId() && mob.followCommand === "hold";
+    const speed = holding ? 0 : profile?.landSpeed ?? 0.12;
+    if (mob.wanderTimer <= 0) {
+      mob.desiredAngle += (Math.random() - 0.5) * 1.1;
+      mob.wanderTimer = 5 + Math.random() * 6;
+    }
+    const nx = mob.group.position.x + Math.cos(mob.desiredAngle) * speed * dt;
+    const nz = mob.group.position.z + Math.sin(mob.desiredAngle) * speed * dt;
+    const targetY = this.mobMoveTarget(mob, nx, nz, this.mobBaseScale(mob), Math.round(mob.group.position.y - mob.definition.footOffset), false);
+    if (targetY !== null) mob.group.position.set(nx, targetY, nz);
+    mob.angle = mob.desiredAngle;
+    mob.group.rotation.y = -mob.angle - Math.PI / 2;
+    this.animateMob(mob, speed * dt);
   }
 
   birdPerchNear(mob: MobEntity) {
@@ -8674,9 +9457,9 @@ export class VoxelEngine {
         || mob.definition.movement === "flying" || mob.definition.movement === "aquatic") return false;
       return Boolean(
         (mob.petState?.tamed && mob.petState.ownerId === ownerId && mob.petState.command === "follow")
-        || (mob.shadeState?.tamed && mob.shadeState.ownerId === ownerId)
-        || (mob.reedstriderBond?.tamed && mob.reedstriderBond.ownerId === ownerId)
-        || (mob.courserBond?.tamed && mob.courserBond.ownerId === ownerId)
+        || (mob.shadeState?.tamed && mob.shadeState.ownerId === ownerId && mob.followCommand !== "hold")
+        || (mob.reedstriderBond?.tamed && mob.reedstriderBond.ownerId === ownerId && mob.followCommand !== "hold")
+        || (mob.courserBond?.tamed && mob.courserBond.ownerId === ownerId && mob.followCommand !== "hold")
         || (mob.hiredByPlayerId === ownerId && Boolean(mob.settlementId && mob.residentId
           && this.settlements.get(mob.settlementId)?.residents.find((resident) => resident.id === mob.residentId)?.orders.follow)),
       );
@@ -8702,23 +9485,62 @@ export class VoxelEngine {
       const mob = this.mobs[index];
       if (mob.health <= 0) continue;
       if (mob.hostile && this.worldOptions.difficulty === "peaceful") { this.removeMob(index); continue; }
+      let dx = this.position.x - mob.group.position.x;
+      let dz = this.position.z - mob.group.position.z;
+      let distance = Math.hypot(dx, dz);
+      const followerSlot = followerSlots.get(mob.id) ?? null;
+      const protectedCreature = shouldKeepCreatureLoaded({
+        tamed: mob.petState?.tamed || mob.shadeState?.tamed || mob.reedstriderBond?.tamed || mob.courserBond?.tamed || mob.leviathanGrowth?.tamed || Boolean(mob.shadeState?.trustFeeds),
+        named: Boolean(mob.petState?.name || mob.name !== mob.definition.name),
+        enclosed: mob.enclosed,
+        leashed: this.leadAnchors.has(mob.id),
+        persistentPoiResident: mob.persistentPoiResident,
+      });
+      const simulationRadius = this.settings.simulationDistance * CHUNK_SIZE + 10;
       mob.age += dt;
-      mob.attackCooldown = Math.max(0, mob.attackCooldown - dt);
-      mob.milkCooldown = Math.max(0, mob.milkCooldown - dt);
-      mob.hurtTimer = Math.max(0, mob.hurtTimer - dt);
-      mob.fleeTimer = Math.max(0, mob.fleeTimer - dt);
-      mob.wanderTimer -= dt;
-      mob.stateTimer -= dt;
-      mob.voiceTimer -= dt;
-      mob.enclosureTimer -= dt;
-      mob.sightCheckTimer -= dt;
-      mob.awarenessTimer = Math.max(0, mob.awarenessTimer - dt);
+      if (protectedCreature && distance > simulationRadius && !followerSlot && mob.id !== this.mountedCreatureId) {
+        if (mob.definition.sentient) this.setSentientDetailTier(mob, "sleep");
+        else mob.group.visible = false;
+        mob.sentientSimulationAccumulator = 0;
+        continue;
+      }
+      if (!protectedCreature && distance > simulationRadius) {
+        this.removeMob(index);
+        continue;
+      }
+
+      let mobDt = dt;
+      if (mob.definition.sentient) {
+        const tier = sentientSimulationTier({
+          distance,
+          simulationRadius: followerSlot ? Math.max(simulationRadius, distance) : simulationRadius,
+          requiresFullDetail: Boolean(followerSlot || mob.id === this.mountedCreatureId || this.targetMob === mob),
+        });
+        this.setSentientDetailTier(mob, tier);
+        if (tier === "coarse") {
+          const coarse = advanceSentientCoarseSimulation(mob.sentientSimulationAccumulator, dt);
+          mob.sentientSimulationAccumulator = coarse.accumulator;
+          if (!coarse.advance) continue;
+          mobDt = coarse.elapsedSeconds;
+        } else mob.sentientSimulationAccumulator = 0;
+      } else mob.group.visible = true;
+
+      mob.attackCooldown = Math.max(0, mob.attackCooldown - mobDt);
+      mob.milkCooldown = Math.max(0, mob.milkCooldown - mobDt);
+      mob.hurtTimer = Math.max(0, mob.hurtTimer - mobDt);
+      mob.fleeTimer = Math.max(0, mob.fleeTimer - mobDt);
+      mob.wanderTimer -= mobDt;
+      mob.stateTimer -= mobDt;
+      mob.voiceTimer -= mobDt;
+      mob.enclosureTimer -= mobDt;
+      mob.sightCheckTimer -= mobDt;
+      mob.awarenessTimer = Math.max(0, mob.awarenessTimer - mobDt);
       if (mob.enclosureTimer <= 0) {
         mob.enclosureTimer = 3 + (mob.id % 5) * 0.25;
         mob.enclosed = this.isMobEnclosed(mob);
       }
       if (mob.petState) {
-        mob.petState = tickPeelop(mob.petState, dt * 20);
+        mob.petState = tickPeelop(mob.petState, mobDt * 20);
         mob.petState.health = clamp(mob.health, 0, mob.petState.maxHealth);
         mob.name = mob.petState.name || mob.definition.name;
         mob.maxHealth = mob.petState.maxHealth;
@@ -8732,17 +9554,34 @@ export class VoxelEngine {
           }
         }
       }
-      if (mob.careState) mob.careState = tickCreatureHusbandry(mob.careState, dt * 20);
+      if (mob.careState) mob.careState = tickCreatureHusbandry(mob.careState, mobDt * 20);
+      if (mob.leviathanGrowth) {
+        const underwater = blockContainsWater(this.world.getBlock(
+          Math.floor(mob.group.position.x + 0.5),
+          Math.floor(mob.group.position.y + 0.5),
+          Math.floor(mob.group.position.z + 0.5),
+        ));
+        const growth = stepLeviathanGrowth(mob.leviathanGrowth, {
+          elapsedTicks: worldTicksForDelta(mobDt, this.worldOptions.dayLengthMinutes),
+          underwater,
+        });
+        mob.leviathanGrowth = growth;
+        if (growth.kind !== mob.kind) {
+          this.transformLeviathan(mob, growth);
+          continue;
+        }
+        if (mob.aetherbellMorph) mob.aetherbellMorph = stepAetherbellMorph(mob.aetherbellMorph, {
+          elapsedSeconds: mobDt,
+          underwater,
+          adult: growth.stage === "adult",
+        });
+      }
       if (mob.shadeState) {
         mob.shadeState = normalizeShadecrawlerState(mob.shadeState);
         mob.hostile = mob.definition.hostile && !mob.shadeState.tamed;
         mob.maxHealth = Math.round(mob.definition.health * shadecrawlerScale(mob.shadeState));
       }
       this.applyMobScale(mob, this.mobBaseScale(mob));
-      let dx = this.position.x - mob.group.position.x;
-      let dz = this.position.z - mob.group.position.z;
-      let distance = Math.hypot(dx, dz);
-      const followerSlot = followerSlots.get(mob.id) ?? null;
       if (followerSlot && shouldTeleportFollower({
         distanceToLeader: distance,
         verticalSeparation: this.mobFootY(mob) - this.position.y,
@@ -8772,7 +9611,7 @@ export class VoxelEngine {
         const mz = Math.round(mob.group.position.z);
         const onSurface = mob.group.position.y >= this.world.surfaceAt(mx, mz) + mob.definition.footOffset - 0.3;
         if (onSurface && this.daylightAmount() > 0.72) {
-          mob.health -= dt * 1.35;
+          mob.health -= mobDt * 1.35;
           mob.hurtTimer = Math.max(mob.hurtTimer, 0.08);
           if (mob.health <= 0) { this.killMob(mob); continue; }
         }
@@ -8780,40 +9619,31 @@ export class VoxelEngine {
         this.playCreatureEvent(mob, "ambient");
         mob.voiceTimer = 8 + (mob.id % 7) * 1.4 + Math.random() * 5;
       }
-      const protectedCreature = shouldKeepCreatureLoaded({
-        tamed: mob.petState?.tamed || mob.shadeState?.tamed || Boolean(mob.shadeState?.trustFeeds),
-        named: Boolean(mob.petState?.name || mob.name !== mob.definition.name),
-        enclosed: mob.enclosed,
-        leashed: this.leadAnchors.has(mob.id),
-        persistentPoiResident: mob.persistentPoiResident,
-      });
-      const simulationRadius = this.settings.simulationDistance * CHUNK_SIZE + 10;
-      if (protectedCreature && distance > simulationRadius) {
-        mob.group.visible = false;
-        continue;
-      }
-      mob.group.visible = true;
-      if (!protectedCreature && (distance > simulationRadius || mob.age > 300 || (mob.hostile && this.daylightAmount() > 0.65 && mob.group.position.y > SEA_LEVEL && distance > 25))) {
+      if (!protectedCreature && (mob.age > 300 || (mob.hostile && this.daylightAmount() > 0.65 && mob.group.position.y > SEA_LEVEL && distance > 25))) {
         this.removeMob(index);
         continue;
       }
       if (mob.id === this.mountedCreatureId) continue;
       if (mob.kind === "honeybee" || mob.kind === "hive-queen") {
-        if (this.updateBeeMob(mob, dt, distance, dx, dz)) this.removeMob(index);
+        if (this.updateBeeMob(mob, mobDt, distance, dx, dz)) this.removeMob(index);
+        continue;
+      }
+      if (mob.leviathanGrowth) {
+        this.updateLeviathanMob(mob, mobDt, distance, dx, dz);
         continue;
       }
       if (mob.definition.movement === "aquatic") {
-        this.updateAquaticMob(mob, dt, distance, dx, dz);
+        this.updateAquaticMob(mob, mobDt, distance, dx, dz);
         continue;
       }
       if (mob.definition.movement === "flying" && mob.definition.family === "bird") {
-        this.updateBirdMob(mob, dt, distance, dx, dz);
+        this.updateBirdMob(mob, mobDt, distance, dx, dz);
         continue;
       }
       if (mob.definition.temperament === "Skittish" && (distance < 3.4 || (this.sprinting && distance < 8))) {
         mob.fleeTimer = Math.max(mob.fleeTimer, 2.4);
       }
-      if ((mob.factionId === "hobbits" || mob.factionId === "goblins")
+      if ((mob.factionId === "hobbits" || mob.factionId === "goblins" || mob.factionId === "atlantians")
         && factionStanding(this.factionRelations.alignments[mob.factionId] ?? 0) === "hostile") mob.hostile = true;
       const aggressive = mob.hostile || (mob.definition.temperament === "Defensive" && mob.fleeTimer > 0);
       if (aggressive && distance < 24 && mob.sightCheckTimer <= 0) {
@@ -8821,7 +9651,11 @@ export class VoxelEngine {
         mob.sightCheckTimer = 0.18 + (mob.id % 5) * 0.035;
         if (mob.seesPlayer) mob.awarenessTimer = Math.max(mob.awarenessTimer, 3.2);
       } else if (!aggressive || distance >= 24) mob.seesPlayer = false;
-      const petHolding = Boolean(mob.petState?.tamed && (mob.petState.command === "sit" || mob.petState.command === "stay"));
+      const bondedToOwner = (mob.shadeState?.tamed && mob.shadeState.ownerId === ownerId)
+        || (mob.reedstriderBond?.tamed && mob.reedstriderBond.ownerId === ownerId)
+        || (mob.courserBond?.tamed && mob.courserBond.ownerId === ownerId);
+      const petHolding = Boolean((mob.petState?.tamed && (mob.petState.command === "sit" || mob.petState.command === "stay"))
+        || (bondedToOwner && mob.followCommand === "hold"));
       const followerDistance = followerSlot
         ? Math.hypot(followerSlot.x - mob.group.position.x, followerSlot.z - mob.group.position.z)
         : 0;
@@ -8994,7 +9828,7 @@ export class VoxelEngine {
         const lookahead = followerSlot && !peelopTarget ? Math.max(0.3, Math.min(baseLookahead, followerDistance)) : baseLookahead;
         const route = chooseCreatureRoute({
           state: mob.route,
-          dt,
+          dt: mobDt,
           desiredHeading: mob.desiredAngle,
           mobId: mob.id,
           movement,
@@ -9008,23 +9842,23 @@ export class VoxelEngine {
         routeHeading = route.heading;
       } else if (speed <= 0.001) mob.route = createCreatureRouteState(mob.angle);
       mob.steering = updateStableSteering(mob.steering, {
-        dt, turnRate: mob.definition.turnRate, blocked: routeBlocked, mobId: mob.id, desiredHeading: routeHeading,
+        dt: mobDt, turnRate: mob.definition.turnRate, blocked: routeBlocked, mobId: mob.id, desiredHeading: routeHeading,
       });
       mob.angle = mob.steering.heading;
       let blocked = routeBlocked;
       if (!routeBlocked && mob.kind === "glowmoth") {
-        const nx = mob.group.position.x + Math.cos(mob.angle) * speed * dt;
-        const nz = mob.group.position.z + Math.sin(mob.angle) * speed * dt;
+        const nx = mob.group.position.x + Math.cos(mob.angle) * speed * mobDt;
+        const nz = mob.group.position.z + Math.sin(mob.angle) * speed * mobDt;
         const targetY = this.mobMoveTarget(mob, nx, nz);
         if (targetY !== null) {
           mob.group.position.x = nx;
           mob.group.position.z = nz;
-          mob.baseY += (targetY - mob.baseY) * Math.min(1, dt * 4);
+          mob.baseY += (targetY - mob.baseY) * Math.min(1, mobDt * 4);
         } else { blocked = true; mob.wanderTimer = Math.max(mob.wanderTimer, 0.35); }
         mob.group.position.y = mob.baseY + Math.sin(performance.now() * 0.003 + mob.id) * 0.22;
       } else if (!routeBlocked && speed > 0.001) {
-        const nx = mob.group.position.x + Math.cos(mob.angle) * speed * dt;
-        const nz = mob.group.position.z + Math.sin(mob.angle) * speed * dt;
+        const nx = mob.group.position.x + Math.cos(mob.angle) * speed * mobDt;
+        const nz = mob.group.position.z + Math.sin(mob.angle) * speed * mobDt;
         const targetY = this.mobMoveTarget(mob, nx, nz);
         if (targetY !== null) {
           mob.group.position.x = nx;
@@ -9033,14 +9867,14 @@ export class VoxelEngine {
           const puddlePhase = mob.age % puddleInterval / puddleInterval;
           const hop = mob.kind === "caveblob" ? Math.max(0, Math.sin(performance.now() * 0.006 + mob.id)) * 0.1
             : puddleJump?.jumps && speed > 0 ? Math.max(0, Math.sin(puddlePhase * Math.PI)) * Math.min(0.75, puddleJump.verticalVelocity * 0.1) : 0;
-          mob.group.position.y += (targetY + hop - mob.group.position.y) * Math.min(1, dt * 9);
+          mob.group.position.y += (targetY + hop - mob.group.position.y) * Math.min(1, mobDt * 9);
         } else { blocked = true; mob.wanderTimer = Math.max(mob.wanderTimer, 0.5); }
       }
       const moved = Math.hypot(mob.group.position.x - beforeX, mob.group.position.z - beforeZ);
       if (blocked && !routeBlocked) mob.route = {
         heading: mob.route.heading,
         holdSeconds: 0,
-        blockedSeconds: mob.route.blockedSeconds + Math.min(0.1, Math.max(0, dt)),
+        blockedSeconds: mob.route.blockedSeconds + Math.min(0.1, Math.max(0, mobDt)),
       };
       mob.group.rotation.y = -mob.angle - Math.PI / 2;
       this.animateMob(mob, moved);
@@ -9161,6 +9995,13 @@ export class VoxelEngine {
   killMob(mob: MobEntity) {
     const position = mob.group.position.clone();
     for (const drop of mob.definition.drops) if (Math.random() <= drop.chance) this.spawnDrop(drop.item, drop.min + Math.floor(Math.random() * (drop.max - drop.min + 1)), position);
+    if (mob.leviathanGrowth?.chestModules) {
+      const cargoKey = `leviathan:${mob.id}:cargo`;
+      const cargo = normalizeLeviathanCargoStorage(this.chests.get(cargoKey), mob.leviathanGrowth.chestModules);
+      for (const slot of cargo) if (slot) this.spawnDrop(slot.item, slot.count, position, slot.durability, slot.metadata);
+      this.spawnDrop(BlockId.Chest, mob.leviathanGrowth.chestModules, position);
+      this.chests.delete(cargoKey);
+    }
     this.addXp(mob.definition.xp);
     this.bestiary[mob.kind].seen = true;
     this.bestiary[mob.kind].kills += 1;
@@ -9174,11 +10015,11 @@ export class VoxelEngine {
         residents: settlement.residents.map((resident) => resident.id === mob.residentId ? { ...resident, alive: false, health: 0 } : resident),
       });
     }
-    if (mob.factionId === "hobbits" || mob.factionId === "goblins") {
+    if (mob.factionId === "hobbits" || mob.factionId === "goblins" || mob.factionId === "atlantians") {
       const role = mob.definition.sentient
-        ? mob.profession === "mayor" ? "mayor" as const
+        ? isMayorProfession(mob.profession as ResidentProfession) ? "mayor" as const
           : mob.profession === "banker" ? "banker" as const
-            : mob.profession === "warrior" ? "warrior" as const
+            : isWarriorProfession(mob.profession as ResidentProfession) ? "warrior" as const
               : mob.profession === "farmer" ? "farmer" as const
                 : mob.profession === "miner" ? "miner" as const
                   : mob.profession === "brewer" ? "brewer" as const
@@ -9343,6 +10184,44 @@ export class VoxelEngine {
       drop.mesh.position.z += drop.velocity.z * dt;
       drop.mesh.rotation.y += dt * 2.5;
       drop.mesh.position.y += Math.sin(drop.age * 4) * 0.001;
+      const placedEgg = placedLeviathanEggMetadata(drop.metadata);
+      if (placedEgg) {
+        drop.pickupDelay = Number.POSITIVE_INFINITY;
+        drop.velocity.x = 0;
+        drop.velocity.z = 0;
+        drop.mesh.rotation.x = Math.sin(drop.age * 0.9) * 0.035;
+        const underwater = blockContainsWater(this.world.getBlock(
+          Math.floor(drop.mesh.position.x + 0.5),
+          Math.floor(drop.mesh.position.y + 0.5),
+          Math.floor(drop.mesh.position.z + 0.5),
+        ));
+        const stepped = stepLeviathanEgg(placedEgg, {
+          elapsedTicks: worldTicksForDelta(dt, this.worldOptions.dayLengthMinutes),
+          underwater,
+          intact: true,
+        });
+        if (stepped.hatchling) {
+          const hatchling = stepped.hatchling;
+          const position = drop.mesh.position.clone();
+          this.spawnMob(hatchling.kind, position, {
+            leviathanGrowth: hatchling,
+            careState: createCreatureHusbandryState(hatchling.geneticSeed, true),
+            aetherbellMorph: hatchling.species === "aetherbell-leviathan" ? createAetherbellMorphState("sea") : null,
+            persistentPoiResident: true,
+          });
+          this.removeDrop(index);
+          if (position.distanceToSquared(this.position) < 30 * 30) this.events.onToast(`A tiny ${MOB_DEFS[hatchling.kind].name} hatches into the current.`);
+          this.audio.play("craft");
+          this.saveSoon();
+          this.emitHud(true);
+          continue;
+        }
+        if (stepped.egg) drop.metadata = {
+          kind: "placed-leviathan-egg",
+          egg: stepped.egg as unknown as Record<string, unknown>,
+        };
+        continue;
+      }
       const distance = drop.mesh.position.distanceTo(this.position.clone().add(new THREE.Vector3(0, 0.8, 0)));
       if (drop.pickupDelay <= 0 && distance < 1.45) {
         const beforeCount = drop.count;
@@ -9362,6 +10241,7 @@ export class VoxelEngine {
 
   removeDrop(index: number) {
     const drop = this.drops[index];
+    if (this.targetEggDrop === drop) this.targetEggDrop = null;
     this.dropGroup.remove(drop.mesh);
     if (drop.ownsVisual) this.disposeObject(drop.mesh);
     this.drops.splice(index, 1);
@@ -9649,7 +10529,7 @@ export class VoxelEngine {
     this.dawnSkyColor.set(sunHeight >= 0 ? "#f1a46f" : "#c36b68");
     const sky = this.skyColor.copy(this.nightSkyColor).lerp(this.daylightSkyColor, daylight).lerp(this.dawnSkyColor, twilight * 0.52);
     const headBlock = this.world.getBlock(Math.floor(this.camera.position.x + 0.5), Math.floor(this.camera.position.y + 0.5), Math.floor(this.camera.position.z + 0.5));
-    const underwater = headBlock === BlockId.Water;
+    const underwater = blockContainsWater(headBlock);
     const underground = this.skyVisibility < 0.18 && !underwater;
     if (underwater) sky.set("#1d5d82");
     else if (this.weatherState.kind === "sandstorm") sky.lerp(this.weatherSkyColor.set("#b88a55"), weatherFx.fogDensity * 0.62);
@@ -9693,8 +10573,9 @@ export class VoxelEngine {
     this.directional.position.copy(this.camera.position).addScaledVector(celestialDirection, 55);
     this.audio.setDepth(this.position.y, this.weather === "rain" && this.skyVisibility > 0.56);
     const biome = this.world.biomeAt(Math.round(this.position.x), Math.round(this.position.z));
-    const atSea = underwater || biome === BiomeId.Ocean || biome === BiomeId.DeepOcean || biome === BiomeId.Beach;
-    const forestBiome = [BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Bloomwood].includes(biome);
+    const atSea = underwater || biome === BiomeId.Ocean || biome === BiomeId.DeepOcean || biome === BiomeId.LumenTrench || biome === BiomeId.Beach;
+    const deepAtSea = atSea && (biome === BiomeId.DeepOcean || biome === BiomeId.LumenTrench || this.position.y < SEA_LEVEL - 9);
+    const forestBiome = [BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Bloomwood, BiomeId.RainveilJungle, BiomeId.SakurabloomGrove].includes(biome);
     const skyChallenge = biome === BiomeId.Highlands && this.position.y > 57 && daylight > 0.35;
     const alternateScore = (this.day + biome) % 2 === 0;
     const explorationScore = this.day % 3 === 0
@@ -9705,10 +10586,12 @@ export class VoxelEngine {
       .filter(({ distance }) => distance <= 58)
       .sort((left, right) => left.distance - right.distance)[0]?.settlement ?? null : null;
     const settlementScore = nearbySettlement?.ownerFactionId === "hobbits" ? "hobbitSettlement" as const
-      : nearbySettlement?.ownerFactionId === "goblins" ? "goblinSettlement" as const : null;
+      : nearbySettlement?.ownerFactionId === "goblins" ? "goblinSettlement" as const
+        : nearbySettlement?.ownerFactionId === "atlantians" ? "atlantianSettlement" as const : null;
     const musicScene = this.combatMusicTimer > 0 ? this.combatMusicScene
       : settlementScore ?? (skyChallenge ? "skyboss"
-      : atSea ? "sea"
+      : deepAtSea ? "deepSea"
+        : atSea ? "sea"
         : underground ? (alternateScore ? "emberdeepA" : "emberdeepB")
           : daylight < 0.24 ? "night"
             : biome === BiomeId.Meadow ? "meadowglass"
@@ -10129,7 +11012,16 @@ export class VoxelEngine {
       this.updateMapDiscovery(dt);
       if (!multiplayerGuest) this.updateHearthroadsSimulation(dt);
       if (multiplayerGuest) {
-        for (const mob of this.mobs) this.animateMob(mob, dt * mob.definition.speed * 0.35);
+        const simulationRadius = this.settings.simulationDistance * CHUNK_SIZE + 10;
+        for (const mob of this.mobs) {
+          if (mob.definition.sentient) {
+            const distance = Math.hypot(this.position.x - mob.group.position.x, this.position.z - mob.group.position.z);
+            const tier = sentientSimulationTier({ distance, simulationRadius, requiresFullDetail: this.targetMob === mob });
+            this.setSentientDetailTier(mob, tier);
+            if (tier !== "full") continue;
+          }
+          this.animateMob(mob, dt * mob.definition.speed * 0.35);
+        }
       } else this.updateMobs(dt);
       this.updateLeads();
       if (!multiplayerGuest) this.updateStructureSpawns(dt);
@@ -10302,7 +11194,8 @@ export class VoxelEngine {
       activeOrbRack: this.activeOrbRackKey ? orbRackHudState(this.orbRacks.get(this.activeOrbRackKey) ?? createOrbRack()) : null,
       activeHealingStation: this.activeHealingStationKey ? healingStationHudState(this.healingStations.get(this.activeHealingStationKey) ?? createCreatureHealer()) : null,
       selected: this.selected,
-      targetName: this.target ? BLOCKS[this.target.type].name : this.targetBoat ? "Wayfarer Sailboat" : null,
+      targetName: this.target ? BLOCKS[this.target.type].name : this.targetBoat ? "Wayfarer Sailboat"
+        : this.targetEggDrop ? ITEMS[this.targetEggDrop.item]?.name ?? "Leviathan Egg" : null,
       targetMob: this.targetMob ? { name: this.targetMob.name, health: this.targetMob.health, maxHealth: this.targetMob.maxHealth } : null,
       breakProgress: clamp(this.miningProgress, 0, 1),
       day: this.day,
@@ -10322,7 +11215,9 @@ export class VoxelEngine {
       onlinePlayers: 1 + (this.multiplayer?.getPeers().filter((peer) => peer.state === "connected").length ?? 0),
       playerVariant: this.playerVariant,
       oxygen: this.oxygenSeconds,
-      maxOxygen: this.countItem(Item.BreatherCharm) > 0 ? 24 : DEFAULT_SWIM_RULES.maxOxygenSeconds,
+      maxOxygen: (this.potionBuffs.tidebreath ?? 0) > this.worldSimulationSeconds()
+        ? 300
+        : this.countItem(Item.BreatherCharm) > 0 ? 24 : DEFAULT_SWIM_RULES.maxOxygenSeconds,
       submerged: this.headSubmerged,
       averageFps: this.averageFps,
       simulationDistance: this.settings.simulationDistance,
@@ -10613,6 +11508,8 @@ export class VoxelEngine {
         ...(mob.shadeState ? { shadeState: { ...mob.shadeState } } : {}),
         ...(mob.reedstriderBond ? { reedstriderBond: { ...mob.reedstriderBond } } : {}),
         ...(mob.courserBond ? { courserBond: { ...mob.courserBond } } : {}),
+        ...(mob.leviathanGrowth ? { leviathanGrowth: { ...mob.leviathanGrowth } } : {}),
+        ...(mob.aetherbellMorph ? { aetherbellMorph: { ...mob.aetherbellMorph } } : {}),
         ...(mob.apiaryBee ? { apiaryBee: { ...mob.apiaryBee } } : {}),
         ...(mob.socialGroupId ? { socialGroupId: mob.socialGroupId } : {}),
         ...(mob.peelopShedding ? { peelopShedding: { ...mob.peelopShedding } } : {}),
@@ -10624,6 +11521,7 @@ export class VoxelEngine {
         ...(mob.aligned ? { aligned: true } : {}),
         ...(mob.hiredByPlayerId ? { hiredByPlayerId: mob.hiredByPlayerId } : {}),
         ...(mob.followDistance !== "dynamic" ? { followDistance: mob.followDistance } : {}),
+        ...(mob.followCommand !== "follow" ? { followCommand: mob.followCommand } : {}),
       })),
       activatedStructureMarkers: [...this.activatedStructureMarkers],
       boats: [...this.boats.values()].map(({ save }) => ({

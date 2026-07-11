@@ -275,6 +275,36 @@ export const FACTION_WEAPON_CONTRACTS = Object.freeze({
   }),
 });
 
+/** Minimum cuboid overlap used to keep fish fins visibly welded to the body. */
+export const FISH_FIN_ATTACHMENT_OVERLAP = 0.025;
+
+export const LEVIATHAN_VISUAL_CONTRACTS = Object.freeze({
+  worldshell: Object.freeze({
+    saddleAnchor: [0, 3.05, -0.35] as const,
+    cargoChestLimit: 6,
+    cargoAnchors: [
+      [-2.2, 2.55, -0.9], [0, 2.78, -1.25], [2.2, 2.55, -0.9],
+      [-2.2, 2.55, 1.3], [0, 2.78, 1.55], [2.2, 2.55, 1.3],
+    ] as const,
+    landSpeed: 0.12,
+  }),
+  aetherbell: Object.freeze({
+    saddleAnchor: [0, 2.42, -0.15] as const,
+    cargoChestLimit: 1,
+    cargoAnchor: [0, 1.82, 1.38] as const,
+    seaBellScale: [1, 1.08, 1] as const,
+    airBellScale: [1.22, 0.8, 1.22] as const,
+    morphSeconds: 3.2,
+  }),
+});
+
+export const ATLANTIAN_TRIDENT_CONTRACT = Object.freeze({
+  forwardAxis: "-z" as const,
+  shaftSize: [0.09, 0.09, 2.15] as const,
+  pointSize: [0.13, 0.16, 0.42] as const,
+  centerPointForward: -2.03,
+});
+
 export function createApiarySpec(): ModelSpec {
   return assertModelSpec({
     id: "wildwood-apiary",

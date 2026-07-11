@@ -10,9 +10,13 @@ const tracks = [
   "blockwild-hearthroad-home-b.mp3",
   "blockwild-brassroot-market-a.mp3",
   "blockwild-brassroot-market-b.mp3",
+  "blockwild-tidelight-shelf-a.mp3",
+  "blockwild-tidelight-shelf-b.mp3",
+  "blockwild-lantern-sea-a.mp3",
+  "blockwild-lantern-sea-b.mp3",
 ];
 
-test("Suno combat and Hearthroads settlement scores are present and complete", () => {
+test("Suno combat, settlement, coast, and deep-sea scores are present and complete", () => {
   for (const name of tracks) {
     const path = resolve("public", "music", name);
     assert.ok(statSync(path).size > 2_000_000, `${name} should be a complete music track`);

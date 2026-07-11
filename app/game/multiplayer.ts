@@ -89,6 +89,10 @@ export type MobSnapshotEntry = {
   tamed?: boolean;
   saddled?: boolean;
   baby?: boolean;
+  cargoChests?: number;
+  lifeStage?: "tiny" | "juvenile" | "adult";
+  aquaticOnly?: boolean;
+  airProgress?: number;
 };
 
 export type MobSnapshot = { tick: number; mobs: MobSnapshotEntry[] };
@@ -102,6 +106,8 @@ export type DropSnapshotEntry = {
   z: number;
   age: number;
   durability?: number;
+  /** Bounded JSON state for placed eggs and other exact-state world drops. */
+  metadata?: Record<string, unknown>;
 };
 
 export type DropSnapshot = { tick: number; drops: DropSnapshotEntry[] };
@@ -476,7 +482,22 @@ function validateMob(value: unknown): value is MobSnapshotEntry {
     && isFiniteNumber(value.z, -COORDINATE_LIMIT, COORDINATE_LIMIT)
     && isFiniteNumber(value.yaw, -100_000, 100_000)
     && isFiniteNumber(value.health, 0, 100_000)
-    && isShortString(value.state, 32);
+    && isShortString(value.state, 32)
+    && (value.scale === undefined || isFiniteNumber(value.scale, 0.01, 8))
+    && (value.tamed === undefined || typeof value.tamed === "boolean")
+    && (value.saddled === undefined || typeof value.saddled === "boolean")
+    && (value.baby === undefined || typeof value.baby === "boolean")
+    && (value.cargoChests === undefined || isInteger(value.cargoChests, 0, 6))
+    && (value.lifeStage === undefined || value.lifeStage === "tiny" || value.lifeStage === "juvenile" || value.lifeStage === "adult")
+    && (value.aquaticOnly === undefined || typeof value.aquaticOnly === "boolean")
+    && (value.airProgress === undefined || isFiniteNumber(value.airProgress, 0, 1));
+}
+
+function validateDropMetadata(value: unknown) {
+  if (value === undefined) return true;
+  if (!isRecord(value)) return false;
+  try { return JSON.stringify(value).length <= 8_192; }
+  catch { return false; }
 }
 
 function validateDrop(value: unknown): value is DropSnapshotEntry {
@@ -488,7 +509,8 @@ function validateDrop(value: unknown): value is DropSnapshotEntry {
     && isFiniteNumber(value.y, -4096, 4096)
     && isFiniteNumber(value.z, -COORDINATE_LIMIT, COORDINATE_LIMIT)
     && isFiniteNumber(value.age, 0, 1_000_000)
-    && (value.durability === undefined || isInteger(value.durability, 0, 1_000_000));
+    && (value.durability === undefined || isInteger(value.durability, 0, 1_000_000))
+    && validateDropMetadata(value.metadata);
 }
 
 function validateTimeWeather(value: unknown): value is TimeWeatherSnapshot {

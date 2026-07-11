@@ -6,6 +6,40 @@ export const MAX_RENDER_DISTANCE = 16;
 export const DEFAULT_SIMULATION_DISTANCE = 8;
 export type ResourceMode = "auto" | "cpu" | "memory";
 
+/**
+ * Sentient residents keep their authored model at conversational range, use a
+ * compact role-readable proxy across the wider town, and sleep once outside
+ * the active simulation window. The coarse cadence is deliberately independent
+ * of render FPS so a large settlement cannot turn AI work into a frame-rate
+ * multiplier.
+ */
+export const SENTIENT_FULL_DETAIL_DISTANCE = 18;
+export const SENTIENT_COARSE_STEP_SECONDS = 0.2;
+export type SentientSimulationTier = "full" | "coarse" | "sleep";
+
+export function sentientSimulationTier(input: Readonly<{
+  distance: number;
+  simulationRadius: number;
+  requiresFullDetail?: boolean;
+}>): SentientSimulationTier {
+  const distance = Math.max(0, Number.isFinite(input.distance) ? input.distance : 0);
+  const simulationRadius = Math.max(SENTIENT_FULL_DETAIL_DISTANCE, Number.isFinite(input.simulationRadius)
+    ? input.simulationRadius
+    : SENTIENT_FULL_DETAIL_DISTANCE);
+  if (distance > simulationRadius) return "sleep";
+  if (input.requiresFullDetail || distance <= SENTIENT_FULL_DETAIL_DISTANCE) return "full";
+  return "coarse";
+}
+
+export function advanceSentientCoarseSimulation(accumulator: number, elapsedSeconds: number) {
+  const next = Math.min(0.6, Math.max(0, Number.isFinite(accumulator) ? accumulator : 0)
+    + Math.max(0, Number.isFinite(elapsedSeconds) ? elapsedSeconds : 0));
+  if (next + 1e-9 < SENTIENT_COARSE_STEP_SECONDS) {
+    return { advance: false, elapsedSeconds: 0, accumulator: next } as const;
+  }
+  return { advance: true, elapsedSeconds: next, accumulator: 0 } as const;
+}
+
 export type ViewDistanceSettings = Readonly<{
   renderDistance: number;
   simulationDistance: number;

@@ -1,9 +1,26 @@
-import { BLOCKS, LEAF_BLOCKS, BlockId, Item, type ItemCode } from "./data";
+import {
+  AQUATIC_FLORA,
+  BLOCKS,
+  CULTIVATED_FLOWERS,
+  LEAF_BLOCKS,
+  ORDINARY_FLOWERS,
+  BlockId,
+  Item,
+  ITEMS,
+  itemForBlock,
+  type ItemCode,
+} from "./data";
 
 export type BlockPosition = Readonly<{ x: number; y: number; z: number }>;
 export type ReadBlock = (x: number, y: number, z: number) => BlockId | undefined;
 
-export type PlantKind = "wild-wheat" | "moonberry" | "sunberry";
+export type PlantKind =
+  | "wild-wheat"
+  | "moonrice"
+  | "sunroot"
+  | "moonberry"
+  | "sunberry"
+  | `cultivated-flower-${number}`;
 
 export type PlantGrowthProfile = Readonly<{
   kind: PlantKind;
@@ -13,12 +30,39 @@ export type PlantGrowthProfile = Readonly<{
   requiresFarmland: boolean;
 }>;
 
+const CULTIVATED_FLOWER_GROWTH: Readonly<Record<`cultivated-flower-${number}`, PlantGrowthProfile>> = Object.fromEntries(
+  ORDINARY_FLOWERS.map((flower, index) => {
+    const kind = `cultivated-flower-${flower}` as const;
+    return [kind, Object.freeze({
+      kind,
+      stages: Object.freeze([flower, CULTIVATED_FLOWERS[index]]),
+      minimumLight: 0.38,
+      baseStageSeconds: 70,
+      requiresFarmland: true,
+    })];
+  }),
+) as Record<`cultivated-flower-${number}`, PlantGrowthProfile>;
+
 export const PLANT_GROWTH: Readonly<Record<PlantKind, PlantGrowthProfile>> = Object.freeze({
   "wild-wheat": Object.freeze({
     kind: "wild-wheat",
     stages: Object.freeze([BlockId.WheatSprout, BlockId.WheatYoung, BlockId.WheatCrop]),
     minimumLight: 0.42,
     baseStageSeconds: 58,
+    requiresFarmland: true,
+  }),
+  moonrice: Object.freeze({
+    kind: "moonrice",
+    stages: Object.freeze([BlockId.MoonriceSprout, BlockId.MoonriceYoung, BlockId.MoonriceCrop]),
+    minimumLight: 0.3,
+    baseStageSeconds: 64,
+    requiresFarmland: true,
+  }),
+  sunroot: Object.freeze({
+    kind: "sunroot",
+    stages: Object.freeze([BlockId.SunrootSprout, BlockId.SunrootYoung, BlockId.SunrootCrop]),
+    minimumLight: 0.54,
+    baseStageSeconds: 72,
     requiresFarmland: true,
   }),
   moonberry: Object.freeze({
@@ -35,6 +79,7 @@ export const PLANT_GROWTH: Readonly<Record<PlantKind, PlantGrowthProfile>> = Obj
     baseStageSeconds: 44,
     requiresFarmland: false,
   }),
+  ...CULTIVATED_FLOWER_GROWTH,
 });
 
 /** Orchard fruit returns in roughly one in-game minute instead of several. */
@@ -49,6 +94,8 @@ const LIVING_SOILS = new Set<BlockId>([
   BlockId.SnowyGrass,
   BlockId.SavannaGrass,
   BlockId.SwampGrass,
+  BlockId.JungleGrass,
+  BlockId.SakuraGrass,
   BlockId.Farmland,
   BlockId.HydratedFarmland,
 ]);
@@ -58,7 +105,17 @@ const TILLABLE_SOILS = new Set<BlockId>([
   BlockId.MeadowGrass,
   BlockId.SavannaGrass,
   BlockId.SwampGrass,
+  BlockId.JungleGrass,
+  BlockId.SakuraGrass,
 ]);
+const AQUATIC_SOILS = new Set<BlockId>([BlockId.Sand, BlockId.Gravel, BlockId.Clay, BlockId.Mud, BlockId.Stone, BlockId.Deepstone, BlockId.MoonSlate, BlockId.Limestone]);
+const AQUATIC_FLORA_SET = new Set<BlockId>(AQUATIC_FLORA);
+export const AQUATIC_PROPAGULES: Readonly<Partial<Record<ItemCode, BlockId>>> = Object.freeze({
+  [Item.LumenKelpFrond]: BlockId.LumenKelp,
+  [Item.StarCoralShard]: BlockId.StarCoral,
+  [Item.AbyssBloomNectar]: BlockId.AbyssBloom,
+  [Item.TidevineFiber]: BlockId.Tidevine,
+});
 const TREE_LEAF_BLOCKS = new Set<BlockId>(LEAF_BLOCKS);
 const TREE_NEIGHBORS = [
   [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1],
@@ -117,6 +174,20 @@ export function discoverRootedTree(
     if (!isTreeLogBlock(type)) continue;
     logs.set(key, { ...position, type: type! });
     for (const [dx, dy, dz] of TREE_NEIGHBORS) logQueue.push({ x: position.x + dx, y: position.y + dy, z: position.z + dz });
+    // v0.6 windswept crowns could contain a one-cell diagonal rise between
+    // authored branch logs. Admit diagonal rises/falls only when the candidate
+    // is already surrounded by canopy; ground-level building beams remain excluded.
+    for (const stepY of [-1, 1]) for (let dx = -1; dx <= 1; dx += 1) for (let dz = -1; dz <= 1; dz += 1) {
+      if (!dx && !dz) continue;
+      const candidate = { x: position.x + dx, y: position.y + stepY, z: position.z + dz };
+      const candidateType = readBlock(candidate.x, candidate.y, candidate.z);
+      if (!isTreeLogBlock(candidateType)) continue;
+      let canopyEvidence = false;
+      for (let ox = -1; ox <= 1 && !canopyEvidence; ox += 1) for (let oy = -1; oy <= 2 && !canopyEvidence; oy += 1) for (let oz = -1; oz <= 1; oz += 1) {
+        if (isTreeLeafBlock(readBlock(candidate.x + ox, candidate.y + oy, candidate.z + oz))) { canopyEvidence = true; break; }
+      }
+      if (canopyEvidence) logQueue.push(candidate);
+    }
   }
   if (logs.size < 3) return null;
   const roots = [...logs.values()]
@@ -261,10 +332,70 @@ export type PlantingResult = Readonly<{ block: BlockId; consumes: ItemCode; desc
 export function plantingResult(item: ItemCode, soil: BlockId | undefined, above: BlockId | undefined): PlantingResult | null {
   if (above !== BlockId.Air && !BLOCKS[above ?? BlockId.Air]?.replaceable) return null;
   if (item === Item.WheatSeeds && FARM_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.WheatSprout, consumes: item, description: "Wild wheat seeds" };
+  if (item === Item.MoonriceSeeds && FARM_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.MoonriceSprout, consumes: item, description: "Moonrice seeds" };
+  if (item === Item.SunrootStarts && FARM_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.SunrootSprout, consumes: item, description: "Sunroot starts" };
   if (item === Item.Berry && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.MoonberryShoot, consumes: item, description: "Moonberry cutting" };
   if (item === Item.Sunberry && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.SunberryShoot, consumes: item, description: "Sunberry cutting" };
   if (item === Item.Apple && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.AppleSapling, consumes: item, description: "Wild apple pip" };
+  if (item === Item.SaltbrushSprig && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.Saltbrush, consumes: item, description: "Saltbrush cutting" };
+  if (item === Item.CoastAsterPetal && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.CoastAster, consumes: item, description: "Coast aster seedhead" };
+  const requestedPlant = ITEMS[item]?.plantBlock;
+  if (requestedPlant !== undefined && ORDINARY_FLOWERS.includes(requestedPlant) && FARM_SOILS.has(soil ?? BlockId.Air)) {
+    return { block: requestedPlant, consumes: item, description: `Cultivated ${BLOCKS[requestedPlant]?.name ?? "flower"}` };
+  }
+  if (requestedPlant !== undefined && ORDINARY_FLOWERS.includes(requestedPlant) && LIVING_SOILS.has(soil ?? BlockId.Air)) {
+    return { block: requestedPlant, consumes: item, description: BLOCKS[requestedPlant]?.name ?? "Flower" };
+  }
+  if (requestedPlant !== undefined && AQUATIC_FLORA_SET.has(requestedPlant) && AQUATIC_SOILS.has(soil ?? BlockId.Air) && above === BlockId.Water) {
+    return { block: requestedPlant, consumes: item, description: BLOCKS[requestedPlant]?.name ?? "Aquatic flora" };
+  }
+  const aquaticPropagule = AQUATIC_PROPAGULES[item];
+  if (aquaticPropagule !== undefined && AQUATIC_SOILS.has(soil ?? BlockId.Air) && above === BlockId.Water) {
+    return { block: aquaticPropagule, consumes: item, description: BLOCKS[aquaticPropagule].name };
+  }
   return null;
+}
+
+export type AquaticGrowthPlan = Readonly<{ x: number; y: number; z: number; type: BlockId; maximumHeight: number }>;
+export type AquaticColumnRemovalPlan = Readonly<BlockPosition & { type: BlockId.Water }>;
+
+export const AQUATIC_GROWTH_LIMITS: Readonly<Partial<Record<BlockId, number>>> = Object.freeze({
+  [BlockId.RiverRibbon]: 3,
+  [BlockId.GlowKelp]: 5,
+  [BlockId.ReedBloom]: 2,
+  [BlockId.LumenKelp]: 7,
+  [BlockId.StarCoral]: 3,
+  [BlockId.AbyssBloom]: 2,
+  [BlockId.Tidevine]: 5,
+});
+
+/** One bounded upward growth step; every occupied cell remains waterlogged. */
+export function planAquaticGrowth(block: BlockId, position: BlockPosition, readBlock: ReadBlock): AquaticGrowthPlan | null {
+  const maximumHeight = AQUATIC_GROWTH_LIMITS[block] ?? 0;
+  if (maximumHeight <= 1 || !AQUATIC_FLORA_SET.has(block)) return null;
+  let baseY = position.y;
+  for (let step = 1; step < maximumHeight && readBlock(position.x, baseY - 1, position.z) === block; step += 1) baseY -= 1;
+  let topY = position.y;
+  for (let step = 1; step < maximumHeight && readBlock(position.x, topY + 1, position.z) === block; step += 1) topY += 1;
+  const currentHeight = topY - baseY + 1;
+  if (currentHeight >= maximumHeight || readBlock(position.x, topY + 1, position.z) !== BlockId.Water) return null;
+  return { x: position.x, y: topY + 1, z: position.z, type: block, maximumHeight };
+}
+
+/**
+ * Removing any segment clears the contiguous column above it back to water.
+ * This mirrors rooted plants: a missing lower segment cannot leave an upper
+ * half floating, while a surviving segment immediately below can regrow.
+ */
+export function planAquaticColumnRemoval(block: BlockId, position: BlockPosition, readBlock: ReadBlock) {
+  if (!AQUATIC_FLORA_SET.has(block) || readBlock(position.x, position.y, position.z) !== block) return [] as AquaticColumnRemovalPlan[];
+  const edits: AquaticColumnRemovalPlan[] = [];
+  for (let offset = 0; offset < 32; offset += 1) {
+    const y = position.y + offset;
+    if (readBlock(position.x, y, position.z) !== block) break;
+    edits.push({ x: position.x, y, z: position.z, type: BlockId.Water });
+  }
+  return edits;
 }
 
 export type HarvestDrop = Readonly<{ item: ItemCode; count: number }>;
@@ -285,6 +416,20 @@ export function harvestPlant(block: BlockId, useScythe = false, yieldRoll = 0.5)
       replanted: useScythe,
     };
   }
+  if (block === BlockId.MoonriceCrop) {
+    return {
+      replacement: useScythe ? BlockId.MoonriceSprout : BlockId.Air,
+      drops: [{ item: Item.Moonrice, count: 2 + Math.floor(roll * 3) + (useScythe ? 1 : 0) }, { item: Item.MoonriceSeeds, count: 1 + (roll > 0.5 ? 1 : 0) }],
+      replanted: useScythe,
+    };
+  }
+  if (block === BlockId.SunrootCrop) {
+    return {
+      replacement: useScythe ? BlockId.SunrootSprout : BlockId.Air,
+      drops: [{ item: Item.Sunroot, count: 2 + Math.floor(roll * 3) + (useScythe ? 1 : 0) }, { item: Item.SunrootStarts, count: 1 + (roll > 0.62 ? 1 : 0) }],
+      replanted: useScythe,
+    };
+  }
   if (block === BlockId.MoonberryBushRipe) {
     return {
       replacement: BlockId.MoonberryBush,
@@ -300,6 +445,21 @@ export function harvestPlant(block: BlockId, useScythe = false, yieldRoll = 0.5)
     };
   }
   if (block === BlockId.AppleFruit) return { replacement: BlockId.Air, drops: [{ item: Item.Apple, count: 1 }], replanted: false };
+  const cultivatedIndex = CULTIVATED_FLOWERS.indexOf(block);
+  if (cultivatedIndex >= 0) {
+    const flower = ORDINARY_FLOWERS[cultivatedIndex];
+    return { replacement: flower, drops: [{ item: itemForBlock(flower), count: 4 + Math.floor(roll * 4) + (useScythe ? 2 : 0) }], replanted: true };
+  }
+  if (block === BlockId.Saltbrush) return { replacement: BlockId.Air, drops: [{ item: Item.SaltbrushSprig, count: 1 + Math.floor(roll * 2) }], replanted: false };
+  if (block === BlockId.CoastAster) return { replacement: BlockId.Air, drops: [{ item: Item.CoastAsterPetal, count: 2 + Math.floor(roll * 2) }], replanted: false };
+  if (block === BlockId.SakuraBloom) return { replacement: BlockId.Air, drops: [{ item: Item.SakuraBloomItem, count: 1 + Math.floor(roll * 2) }], replanted: false };
+  if (block === BlockId.Dreamblossom) return { replacement: BlockId.Air, drops: [{ item: Item.DreamblossomItem, count: 1 + Math.floor(roll * 2) }], replanted: false };
+  if (block === BlockId.LanternLotus) return { replacement: BlockId.Air, drops: [{ item: Item.LanternLotusItem, count: 1 + Math.floor(roll * 2) }], replanted: false };
+  if (block === BlockId.RainveilFern) return { replacement: BlockId.Air, drops: [{ item: Item.RainveilFernItem, count: 1 }], replanted: false };
+  if (block === BlockId.LumenKelp) return { replacement: BlockId.Water, drops: [{ item: Item.LumenKelpFrond, count: 1 + Math.floor(roll * 2) }], replanted: false };
+  if (block === BlockId.StarCoral) return { replacement: BlockId.Water, drops: [{ item: Item.StarCoralShard, count: 1 + Math.floor(roll * 2) }], replanted: false };
+  if (block === BlockId.AbyssBloom) return { replacement: BlockId.Water, drops: [{ item: Item.AbyssBloomNectar, count: 1 }], replanted: false };
+  if (block === BlockId.Tidevine) return { replacement: BlockId.Water, drops: [{ item: Item.TidevineFiber, count: 1 + Math.floor(roll * 3) }], replanted: false };
   return null;
 }
 

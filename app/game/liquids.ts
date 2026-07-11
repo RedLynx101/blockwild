@@ -335,6 +335,8 @@ export type SwimStep = Readonly<{
 
 export type SwimRules = Readonly<{
   maxOxygenSeconds: number;
+  /** Air consumed each submerged second; zero supports temporary water-breathing effects. */
+  oxygenDrainPerSecond?: number;
   oxygenRecoveryPerSecond: number;
   drowningIntervalSeconds: number;
   drowningDamage: number;
@@ -352,6 +354,7 @@ export type SwimRules = Readonly<{
 
 export const DEFAULT_SWIM_RULES: SwimRules = Object.freeze({
   maxOxygenSeconds: 12,
+  oxygenDrainPerSecond: 1,
   oxygenRecoveryPerSecond: 4,
   drowningIntervalSeconds: 1.5,
   drowningDamage: 1,
@@ -382,7 +385,7 @@ export function stepSwimming(
   let damage = 0;
 
   if (environment.headSubmerged) {
-    oxygenSeconds = Math.max(0, oxygenSeconds - dt);
+    oxygenSeconds = Math.max(0, oxygenSeconds - dt * Math.max(0, rules.oxygenDrainPerSecond ?? 1));
     if (oxygenSeconds <= 0) {
       drowningAccumulator += dt;
       while (drowningAccumulator >= rules.drowningIntervalSeconds) {

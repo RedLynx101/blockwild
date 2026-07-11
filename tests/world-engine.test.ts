@@ -12,6 +12,7 @@ import {
   isInstantBreakBlock,
   migrateSavedWorld,
   mobPopulationCaps,
+  naturalMobPopulation,
   nextPeelopBananaShedSeconds,
   nextSleepTransition,
   positionInPlayerViewCone,
@@ -266,6 +267,21 @@ test("v0.6 interaction policies keep respawns, instant flora, placement bypass, 
   assert.deepEqual(engine.inventory[0], { item: Item.Berry, count: 1 }, "planting a Moonberry consumes the selected unit");
 });
 
+test("persistent town and POI residents never consume the natural wildlife cap", () => {
+  const residents = Array.from({ length: 26 }, (_, index) => ({
+    hostile: index % 6 === 0,
+    persistentPoiResident: true,
+  }));
+  const wildlife = [
+    { hostile: false, persistentPoiResident: false },
+    { hostile: false },
+    { hostile: true },
+  ];
+  assert.deepEqual(naturalMobPopulation([...residents, ...wildlife]), { total: 3, passive: 2, hostile: 1 });
+  assert.ok(residents.length > mobPopulationCaps(22).total, "one authored town is large enough to reproduce the old cap starvation bug");
+  assert.deepEqual(naturalMobPopulation(residents), { total: 0, passive: 0, hostile: 0 });
+});
+
 test("line of sight ignores glass but blocks acquisition through opaque full cubes", () => {
   const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
   let blocker = BlockId.Stone;
@@ -290,7 +306,7 @@ test("generator-v2 saves migrate their voxel edit indices into the deeper world"
   assert.deepEqual(migrated?.edits["0,0"], [[16384, BlockId.Glowstone]], "an old y=0 edit must remain at y=0 after MIN_Y moves from -32 to -64");
 });
 
-test("climate sampler can produce all eighteen advertised biomes", () => {
+test("climate sampler can produce every advertised biome", () => {
   const world = new ChunkWorld();
   world.reset("BIOME-SAFARI");
   const biomes = new Set<number>();
@@ -299,7 +315,7 @@ test("climate sampler can produce all eighteen advertised biomes", () => {
     const z = ((index * 104729) % 240_000) - 120_000;
     biomes.add(world.sampleColumn(x, z).biome);
   }
-  assert.equal(biomes.size, 18, `expected all biomes, found ${[...biomes].map((id) => BIOME_NAMES[id]).join(", ")}`);
+  assert.equal(biomes.size, Object.keys(BIOME_NAMES).length, `expected all biomes, found ${[...biomes].map((id) => BIOME_NAMES[id]).join(", ")}`);
   world.dispose();
 });
 

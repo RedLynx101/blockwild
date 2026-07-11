@@ -14,12 +14,23 @@ export type SurfaceMobKind =
   | "reedstrider"
   | "wild-horse"
   | "meadow-cow"
-  | "mistmane";
-export type BirdKind = "emberjay" | "canopy-lark";
+  | "mistmane"
+  | "sakurakit"
+  | "sunwash-crab";
+export type BirdKind = "emberjay" | "canopy-lark" | "tidewing-gull";
 export type AquaticMobKind = "shoalfin" | "coralback" | "brookdart" | "gloomfin" | "silverthread" | "reedneedle" | "emberribbon" | "cavefilament";
 export type PollinatorKind = "honeybee" | "hive-queen" | "reed-dragonfly";
 export type HearthroadsWildlifeKind = "burrowbell" | "dewback-tapir";
 export type HearthroadsAquaticKind = "redfin-salmon" | "blue-mackerel" | "deepwater-shark";
+export type TideglassAquaticKind =
+  | "glassfin"
+  | "lanternjaw"
+  | "abyss-skater"
+  | "dreadcoil"
+  | "tidepup"
+  | "worldshell-leviathan"
+  | "aetherbell-larva"
+  | "aetherbell-leviathan";
 export type HobbitKind =
   | "hobbit-mayor"
   | "hobbit-farmer"
@@ -34,8 +45,15 @@ export type GoblinKind =
   | "goblin-miner"
   | "goblin-alchemist"
   | "goblin-spear-guard";
-export type SentientMobKind = HobbitKind | GoblinKind;
-export type FactionKind = "hobbits" | "goblins";
+export type AtlantianKind =
+  | "atlantian-tidewarden"
+  | "atlantian-kelpkeeper"
+  | "atlantian-coralwright"
+  | "atlantian-pearlbroker"
+  | "atlantian-glowmender"
+  | "atlantian-trident-guard";
+export type SentientMobKind = HobbitKind | GoblinKind | AtlantianKind;
+export type FactionKind = "hobbits" | "goblins" | "atlantians";
 export type SentientRole = "mayor" | "chieftain" | "farmer" | "worker" | "miner" | "merchant" | "banker" | "alchemist" | "guard";
 export type SpecialMobKind = "peelop" | "reliquary-sentinel" | "skeleton" | "warg";
 export type CoreMobKind =
@@ -46,12 +64,13 @@ export type CoreMobKind =
   | PollinatorKind
   | HearthroadsWildlifeKind
   | HearthroadsAquaticKind
+  | TideglassAquaticKind
   | SentientMobKind
   | SpecialMobKind;
 export type MobKind = CoreMobKind | ButterflyKind;
 export type MobTemperament = "Gentle" | "Skittish" | "Defensive" | "Hostile";
-export type MobMovement = "ground" | "flying" | "aquatic";
-export type MobFamily = "surface" | "bird" | "fish" | "pet" | "mount" | "pollinator" | "construct" | "undead" | "sentient" | "butterfly";
+export type MobMovement = "ground" | "flying" | "aquatic" | "amphibious";
+export type MobFamily = "surface" | "bird" | "fish" | "pet" | "mount" | "leviathan" | "pollinator" | "construct" | "undead" | "sentient" | "butterfly";
 
 export type MobDrop = {
   item: ItemCode;
@@ -111,6 +130,13 @@ export type MobDefinition = {
   /** Faction-aligned instances must be unaligned before the normal tame path applies. */
   tameRequiresUnaligned?: boolean;
   rideable?: boolean;
+  /** Cultural identity used before a culture is wired into diplomacy proper. */
+  culture?: "atlantians";
+  /** Save-friendly ecology flags consumed by the ocean lifecycle helpers. */
+  laysEggs?: boolean;
+  aquaticYoungOnly?: boolean;
+  airSeaMorph?: boolean;
+  cargoChestLimit?: number;
 };
 
 export const MOB_DEFS: Record<MobKind, MobDefinition> = {
@@ -302,7 +328,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     family: "mount", movement: "ground", persistent: true, utility: "A tame, saddled Reedstrider is a fast amphibious mount and crosses water faster than land.",
     sentient: false, tameable: true, tameItems: [Item.RawFish, Item.CookedFish, Item.GlowScale],
     breedable: true, breedingFoods: [Item.RawFish], diet: [Item.RawFish, Item.CookedFish, Item.GlowScale, Item.Berry],
-    postTameNotes: "Build trust with fish, then fit a Trail Saddle. Its long stride is steady on land and exceptionally quick through shallows.",
+    rideable: true, postTameNotes: "Build trust with fish, then fit a Trail Saddle. Its long stride is steady on land and exceptionally quick through shallows.",
     secretHint: "Glow Scales build trust much faster than ordinary fish.",
     discoveryHint: "Follow resonant dawn calls across foggy wetlands.",
   },
@@ -312,9 +338,9 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     footOffset: 1.05, radius: 0.62, height: 1.75, habitat: "Open meadows, forest roads and upland glens", active: "Day",
     behavior: "Travels in small family bands, circles foals when threatened, and bolts into open terrain rather than trees.",
     lore: "Wildwood Coursers remember old roads long after roots and flowers have hidden them.",
-    colors: [0x8b5b3d, 0xd6b17b, 0x2b211d], drops: [{ item: Item.Hide, min: 1, max: 3, chance: 0.78 }],
+    colors: [0x8b5b3d, 0xd6b17b, 0xffe69a], drops: [{ item: Item.Hide, min: 1, max: 3, chance: 0.78 }],
     family: "mount", movement: "ground", persistent: true, utility: "A fast land mount after patient feeding and fitting a Trail Saddle.",
-    sentient: false, tameable: true, tameItems: [Item.Apple, Item.Wheat], breedable: true,
+    sentient: false, tameable: true, tameItems: [Item.Apple, Item.Wheat], breedable: true, rideable: true,
     breedingFoods: [Item.Apple], diet: [Item.Apple, Item.Wheat], captureItem: Item.CaptureOrb,
     postTameNotes: "A saddled Courser carries one rider and prefers clear ground.",
     discoveryHint: "Look for hoofprints along broad meadow edges and old forest roads.",
@@ -623,7 +649,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "A Warg remembers every road it has guarded and every rider who treated it as a partner rather than a tool.",
     colors: [0x4d5148, 0x8a6b45, 0xe5c25a], drops: [{ item: Item.Hide, min: 1, max: 2, chance: 0.72 }, { item: Item.RawMeat, min: 1, max: 2, chance: 0.55 }],
     family: "mount", movement: "ground", persistent: true, sentient: false, factionAffinity: "goblins", tameRequiresUnaligned: true,
-    tameable: true, tameItems: [Item.RawMeat, Item.CookedMeat], breedable: true, breedingFoods: [Item.RawMeat], diet: [Item.RawMeat, Item.CookedMeat], rideable: true,
+    tameable: true, tameItems: [Item.WargFeed, Item.RawMeat, Item.CookedMeat], breedable: true, breedingFoods: [Item.WargFeed, Item.RawMeat], diet: [Item.WargFeed, Item.RawMeat, Item.CookedMeat], rideable: true,
     postTameNotes: "Only an unaligned Warg can bond. A trusted, saddled Warg accepts a rider and keeps its bite available in combat.",
     secretHint: "Settlement patrol Wargs are faction-aligned and cannot be tamed; unaligned specimens from rare orbs can be befriended with meat.",
     utility: "Fast combat-capable mount when unaligned, bonded and saddled.", discoveryHint: "Look for paired tracks beside Goblin patrol roads.",
@@ -675,6 +701,187 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     colors: [0x405766, 0xb7c5c4, 0xe6edf0], drops: [{ item: Item.RawFish, min: 2, max: 4, chance: 1 }, { item: Item.BoneShard, min: 1, max: 2, chance: 0.36 }],
     family: "fish", movement: "aquatic", aquatic: true, utility: "A sparse deep-ocean predator that never attacks players seated in boats.",
     discoveryHint: "Watch the dark water below large offshore shoals.",
+  },
+  "sunwash-crab": {
+    kind: "sunwash-crab", name: "Sunwash Crab", temperament: "Defensive", hostile: false,
+    health: 5, damage: 1, xp: 2, speed: 0.42, chaseSpeed: 1.7, turnRate: 8.5, attackRange: 0.75,
+    footOffset: 0.89742, radius: 0.36, height: 0.38, habitat: "Sunwash Coast tide pools and bright sand shelves", active: "Daylight and low tide",
+    behavior: "Scuttles sideways between tide pools, raises both claws when cornered, and buries itself during hard weather.",
+    lore: "Every shell carries a different sunburst. Coast children compare them like tiny heraldry.",
+    colors: [0xe68a55, 0xf4c87a, 0x2d2a38], drops: [{ item: Item.RawFish, min: 1, max: 1, chance: 0.45 }, { item: Item.Flint, min: 1, max: 1, chance: 0.14 }],
+    family: "surface", movement: "ground", utility: "A small coastal food source whose burrows mark safe tide-pool shelves.",
+    discoveryHint: "Look for paired tracks around Sunwash Coast tide pools.",
+  },
+  "tidewing-gull": {
+    kind: "tidewing-gull", name: "Tidewing Gull", temperament: "Skittish", hostile: false,
+    health: 4, damage: 0, xp: 2, speed: 1.4, chaseSpeed: 4.4, turnRate: 10.5, attackRange: 0,
+    footOffset: 1.25, radius: 0.31, height: 0.48, habitat: "Sunwash Coast cliffs, beaches and fishing water", active: "Daylight",
+    behavior: "Rides sea wind in broad circles, lands near shoals, and noisily flees anyone who rushes its perch.",
+    lore: "A Tidewing's cry arrives before the coast itself, carrying over dunes and salt grass.",
+    colors: [0xe8eee9, 0x6d9db0, 0x171f31], drops: [{ item: Item.Feather, min: 1, max: 2, chance: 1 }],
+    family: "bird", movement: "flying", flying: true, breedable: true, breedingFoods: [Item.RawFish], diet: [Item.RawFish],
+    utility: "Circling flocks point toward fish-rich water and nearby coast.", discoveryHint: "Listen for sharp calls above Sunwash cliffs.",
+  },
+  glassfin: {
+    kind: "glassfin", name: "Glassfin", temperament: "Skittish", hostile: false,
+    health: 3, damage: 0, xp: 3, speed: 1.75, chaseSpeed: 4.1, turnRate: 11, attackRange: 0,
+    footOffset: 0, radius: 0.26, height: 0.2, habitat: "Deep ocean thermoclines and Lumen Trenches", active: "All hours underwater",
+    behavior: "Schools in translucent spirals and scatters into dim prismatic flashes when a large shape approaches.",
+    lore: "Its clear fins catch colors the surface never sees.",
+    colors: [0x7db8c8, 0xa9ecdf, 0xdffcff], drops: [{ item: Item.RawFish, min: 1, max: 1, chance: 0.9 }, { item: Item.GlowScale, min: 1, max: 1, chance: 0.18 }],
+    family: "fish", movement: "aquatic", aquatic: true, utility: "A luminous deep-water food fish and future alchemy reagent.", captureItem: Item.CaptureOrb,
+    discoveryHint: "Watch for faint rainbow turns beneath the last blue light.",
+  },
+  lanternjaw: {
+    kind: "lanternjaw", name: "Lanternjaw", temperament: "Defensive", hostile: false,
+    health: 8, damage: 2, xp: 5, speed: 0.82, chaseSpeed: 2.65, turnRate: 7, attackRange: 0.95,
+    footOffset: 0, radius: 0.48, height: 0.42, habitat: "Lumen Trench ledges and deep reef caves", active: "Darkness underwater",
+    behavior: "Hovers beneath overhangs, pulses its jaw-lights to communicate, and snaps only after its hiding place is invaded.",
+    lore: "The pattern under its jaw is a name, warning and love song written in blue fire.",
+    colors: [0x233c52, 0x59d7bf, 0xb8fff0], drops: [{ item: Item.RawFish, min: 1, max: 2, chance: 1 }, { item: Item.GlowScale, min: 1, max: 2, chance: 0.7 }],
+    family: "fish", movement: "aquatic", aquatic: true, utility: "A strong renewable source of Glow Scales.", captureItem: Item.CaptureOrb,
+    discoveryHint: "Blue jaw-signals blink beneath Lumen Trench overhangs.",
+  },
+  "abyss-skater": {
+    kind: "abyss-skater", name: "Abyss Skater", temperament: "Defensive", hostile: false,
+    health: 14, damage: 3, xp: 7, speed: 0.48, chaseSpeed: 1.9, turnRate: 6.5, attackRange: 1.15,
+    footOffset: 0, radius: 0.92, height: 0.38, habitat: "Deep sea floor, trench silt and whale-fall gardens", active: "All hours underwater",
+    behavior: "Walks on six luminous stilts over silt, filters drifting scraps, and fans a cold warning halo when touched.",
+    lore: "Abyss Skaters cross the dark floor without leaving a track, carrying gardens of tiny lights beneath them.",
+    colors: [0x342a55, 0x5ce0d0, 0xe9fff2], drops: [{ item: Item.CaveGel, min: 1, max: 2, chance: 0.72 }, { item: Item.GlowDust, min: 1, max: 2, chance: 0.52 }],
+    family: "fish", movement: "aquatic", aquatic: true, utility: "Its luminous filter fans provide future deep-water ingredients.",
+    discoveryHint: "Look for six moving pin-lights across flat trench silt.",
+  },
+  dreadcoil: {
+    kind: "dreadcoil", name: "Dreadcoil", temperament: "Hostile", hostile: true,
+    health: 52, damage: 9, xp: 18, speed: 1.15, chaseSpeed: 3.25, turnRate: 4.3, attackRange: 2.25,
+    footOffset: 0, radius: 1.45, height: 1.2, habitat: "Rare deep-ocean ravines and the edges of Lumen Trenches", active: "Night and deep darkness",
+    behavior: "Hides its long body along ravine walls, detects swimmers before boats, then attacks in one committed spiraling rush.",
+    lore: "Old sailors call a sudden ring of silent fish a Dreadcoil's crown.",
+    colors: [0x1e2438, 0x7d315a, 0xff7b9b], drops: [{ item: Item.RawFish, min: 3, max: 6, chance: 1 }, { item: Item.ShadowShard, min: 1, max: 3, chance: 0.68 }],
+    family: "fish", movement: "aquatic", aquatic: true, utility: "A rare serious sea encounter with valuable shadow-rich remains.",
+    discoveryHint: "An unnaturally empty ring in a deep shoal may be its hunting ground.",
+  },
+  tidepup: {
+    kind: "tidepup", name: "Tidepup", temperament: "Gentle", hostile: false,
+    health: 10, damage: 1, xp: 5, speed: 1.05, chaseSpeed: 3.45, turnRate: 9.5, attackRange: 0.9,
+    footOffset: 0, radius: 0.48, height: 0.52, habitat: "Kelp shelves, warm reefs and quiet Atlantian outskirts", active: "Day and dusk underwater",
+    behavior: "Chases bubbles, naps in kelp, brings dropped shells to patient swimmers, and flees rather than fighting.",
+    lore: "A Tidepup recognizes a familiar swimmer by heartbeat before face.",
+    colors: [0x4da6a8, 0xa7dfc5, 0x132d43], drops: [{ item: Item.RawFish, min: 1, max: 1, chance: 0.45 }],
+    family: "pet", movement: "aquatic", aquatic: true, persistent: true, tameable: true, tameItems: [Item.RawFish, Item.GlowScale],
+    breedable: true, breedingFoods: [Item.RawFish], diet: [Item.RawFish, Item.CookedFish, Item.GlowScale], captureItem: Item.CaptureOrb,
+    postTameNotes: "A bonded Tidepup follows through water, waits near shore, and retrieves nearby floating drops.",
+    utility: "A gentle sea companion and underwater item retriever.", discoveryHint: "Bubbles moving against the current often reveal a playful Tidepup.",
+  },
+  sakurakit: {
+    kind: "sakurakit", name: "Sakurakit", temperament: "Skittish", hostile: false,
+    health: 6, damage: 1, xp: 3, speed: 0.72, chaseSpeed: 2.85, turnRate: 8.5, attackRange: 0.72,
+    footOffset: 0.94, radius: 0.35, height: 0.7, habitat: "Pink forest glades, Bloomwood edges and quiet orchards", active: "Day and blossom dusk",
+    behavior: "Pounces on falling petals, hides in low blossoms, and follows trusted keepers without seeking fights.",
+    lore: "Its tail keeps one blossom through every season. Nobody has seen it fall.",
+    colors: [0xf0a6c2, 0xffe0d6, 0x3d2753], drops: [{ item: Item.Fiber, min: 1, max: 1, chance: 0.22 }],
+    family: "pet", movement: "ground", persistent: true, tameable: true, tameItems: [Item.Berry, Item.Apple],
+    breedable: true, breedingFoods: [Item.Berry], diet: [Item.Berry, Item.Apple], captureItem: Item.CaptureOrb,
+    postTameNotes: "Sakurakits can sit, follow, stay and wander. They warn their keeper, but remain intentionally weak in combat.",
+    utility: "A quiet companion that notices nearby flowers and butterflies.", discoveryHint: "Follow low swirls of pink petals through a blossom glade.",
+  },
+  "worldshell-leviathan": {
+    kind: "worldshell-leviathan", name: "Worldshell Leviathan", temperament: "Gentle", hostile: false,
+    health: 1200, damage: 0, xp: 0, speed: 0.34, chaseSpeed: 0.72, turnRate: 0.72, attackRange: 0,
+    footOffset: 0, radius: 6.8, height: 4.8, habitat: "Rare open ocean routes, deep shelves and warm migration waters", active: "All hours",
+    behavior: "Migrates for days at a time, surfaces like a small green island, and moves almost impossibly slowly whenever it crawls onto land.",
+    lore: "Whole gardens take root on old Worldshells. Cartographers have occasionally mapped one by mistake.",
+    colors: [0x416d5c, 0x87a86a, 0xffe9a3], drops: [], family: "leviathan", movement: "amphibious", aquatic: true, persistent: true,
+    tameable: true, tameItems: [Item.GlowScale, Item.Apple], breedable: true, breedingFoods: [Item.GlowScale, Item.RawFish], diet: [Item.GlowScale, Item.RawFish, Item.Apple],
+    rideable: true, laysEggs: true, cargoChestLimit: 6,
+    postTameNotes: "Only an adult accepts a saddle. Up to six chest modules can be secured across its shell; it remains extremely slow on land.",
+    secretHint: "Raise a submerged hatchling to adulthood, then earn trust with patient Glow Scale feeding.",
+    utility: "A rare controllable ocean mount with six-chest cargo capacity.", discoveryHint: "A green island that moves against the wind may be a Worldshell.",
+  },
+  "aetherbell-larva": {
+    kind: "aetherbell-larva", name: "Aetherbell Larva", temperament: "Gentle", hostile: false,
+    health: 18, damage: 0, xp: 0, speed: 0.72, chaseSpeed: 1.5, turnRate: 5.4, attackRange: 0,
+    footOffset: 0, radius: 0.55, height: 0.95, habitat: "Submerged Lumen Trench nurseries", active: "All hours underwater",
+    behavior: "Pulses through nursery water on short glowing tails. It cannot leave water until its final growth molt.",
+    lore: "Every tiny bell contains the folded shape of a future sky-sailer.",
+    colors: [0x7d6ad9, 0x62e6d0, 0xf3e9ff], drops: [], family: "leviathan", movement: "aquatic", aquatic: true, persistent: true,
+    tameable: true, tameItems: [Item.GlowScale, Item.RoyalJelly], diet: [Item.GlowScale, Item.RoyalJelly], aquaticYoungOnly: true,
+    postTameNotes: "Feed it underwater as it grows. Its adult molt unlocks air-sea morphing, saddle and chest equipment.",
+    utility: "The tameable aquatic juvenile stage of an Aetherbell.", discoveryHint: "Small violet bells gather around submerged luminous gardens.",
+  },
+  "aetherbell-leviathan": {
+    kind: "aetherbell-leviathan", name: "Aetherbell Leviathan", temperament: "Gentle", hostile: false,
+    health: 620, damage: 0, xp: 0, speed: 0.64, chaseSpeed: 1.55, turnRate: 1.8, attackRange: 0,
+    footOffset: 5.4, radius: 4.4, height: 7.8, habitat: "Lumen Trench migrations and the high cloud sea", active: "All hours",
+    behavior: "Folds its fluid tails into lifting sails while leaving water, drifts between layered clouds, and flees upward when provoked.",
+    lore: "At night, a migrating Aetherbell makes the stars appear to swim.",
+    colors: [0x6f62c4, 0x57dfd3, 0xf4ecff], drops: [], family: "leviathan", movement: "flying", flying: true, aquatic: true, persistent: true,
+    tameable: true, tameItems: [Item.GlowScale, Item.RoyalJelly], breedable: true, breedingFoods: [Item.GlowScale], diet: [Item.GlowScale, Item.RoyalJelly],
+    rideable: true, laysEggs: true, airSeaMorph: true, cargoChestLimit: 1,
+    postTameNotes: "A tame adult accepts a saddle and one chest module, and can be steered through sea or sky as its bell morphs between both forms.",
+    secretHint: "Adults grow only from carefully fed aquatic larvae hatched from intact submerged eggs.",
+    utility: "A rare luminous sea-and-sky mount with one chest of cargo.", discoveryHint: "Look for a violet moving star above layered clouds or far below deep water.",
+  },
+  "atlantian-tidewarden": {
+    kind: "atlantian-tidewarden", name: "Atlantian Tidewarden", temperament: "Defensive", hostile: false,
+    health: 24, damage: 5, xp: 0, speed: 0.7, chaseSpeed: 2.5, turnRate: 6.5, attackRange: 1.55,
+    footOffset: 0, radius: 0.38, height: 1.82, habitat: "Atlantian council reefs and pearl halls", active: "All tidal shifts",
+    behavior: "Guides a reef-town's currents, hears disputes in the pearl hall, and coordinates defense when danger enters the water.",
+    lore: "A Tidewarden wears one shell from every nursery their town has protected.",
+    colors: [0x275d78, 0xd5b86f, 0xb9fff1], drops: [], family: "sentient", movement: "aquatic", aquatic: true, persistent: true,
+    sentient: true, faction: "atlantians", culture: "atlantians", role: "mayor", profession: "Tidewarden", tradeSpecialty: "Town authority and ocean contracts",
+    utility: "Aquatic settlement leader and quest giver.", discoveryHint: "The largest pearl hall shelters a shell-crowned Tidewarden.",
+  },
+  "atlantian-kelpkeeper": {
+    kind: "atlantian-kelpkeeper", name: "Atlantian Kelpkeeper", temperament: "Defensive", hostile: false,
+    health: 15, damage: 2, xp: 0, speed: 0.72, chaseSpeed: 2.1, turnRate: 7, attackRange: 1.1,
+    footOffset: 0, radius: 0.35, height: 1.72, habitat: "Atlantian kelp terraces and nursery gardens", active: "Daylit tide",
+    behavior: "Tends edible kelp, replants luminous shoots, and hides among nursery fronds when monsters approach.",
+    lore: "Kelpkeepers measure seasons by the direction their longest gardens lean.",
+    colors: [0x2b755f, 0x8fd19b, 0xd8fff0], drops: [], family: "sentient", movement: "aquatic", aquatic: true, persistent: true,
+    sentient: true, faction: "atlantians", culture: "atlantians", role: "farmer", profession: "Kelpkeeper", tradeSpecialty: "Aquatic crops and nursery supplies",
+    utility: "Aquatic farmer and plant trader.", discoveryHint: "Long planted rows of kelp lead to their keepers.",
+  },
+  "atlantian-coralwright": {
+    kind: "atlantian-coralwright", name: "Atlantian Coralwright", temperament: "Defensive", hostile: false,
+    health: 18, damage: 3, xp: 0, speed: 0.68, chaseSpeed: 2.15, turnRate: 6.7, attackRange: 1.25,
+    footOffset: 0, radius: 0.37, height: 1.78, habitat: "Atlantian coral workshops and stone gardens", active: "Day and evening tide",
+    behavior: "Shapes reefstone without killing living coral, repairs glowstone arches, and examines every new mineral twice.",
+    lore: "A Coralwright builds slowly because the building is expected to keep growing after they leave.",
+    colors: [0x36718a, 0xe28779, 0xe6fff5], drops: [], family: "sentient", movement: "aquatic", aquatic: true, persistent: true,
+    sentient: true, faction: "atlantians", culture: "atlantians", role: "worker", profession: "Coralwright", tradeSpecialty: "Reefstone, coralwork and building materials",
+    utility: "Aquatic builder and material merchant.", discoveryHint: "Colored stone frames and tool chimes mark Coralwright yards.",
+  },
+  "atlantian-pearlbroker": {
+    kind: "atlantian-pearlbroker", name: "Atlantian Pearlbroker", temperament: "Defensive", hostile: false,
+    health: 14, damage: 2, xp: 0, speed: 0.66, chaseSpeed: 1.95, turnRate: 7.2, attackRange: 1.1,
+    footOffset: 0, radius: 0.34, height: 1.7, habitat: "Atlantian current-markets and shell kiosks", active: "Daylit tide",
+    behavior: "Trades from a tethered shell counter, adjusts prices to local supply, and closes its shutters when predators pass.",
+    lore: "Pearlbrokers value a good story, then insist on paying separately for it.",
+    colors: [0x4b5d96, 0xd7bfdf, 0xb8fff5], drops: [], family: "sentient", movement: "aquatic", aquatic: true, persistent: true,
+    sentient: true, faction: "atlantians", culture: "atlantians", role: "merchant", profession: "Pearlbroker", tradeSpecialty: "General goods, pearls and ocean curios",
+    utility: "Aquatic general merchant.", discoveryHint: "Shell counters cluster where marker-streamers cross.",
+  },
+  "atlantian-glowmender": {
+    kind: "atlantian-glowmender", name: "Atlantian Glowmender", temperament: "Defensive", hostile: false,
+    health: 16, damage: 3, xp: 0, speed: 0.67, chaseSpeed: 2, turnRate: 7.5, attackRange: 4.5,
+    footOffset: 0, radius: 0.35, height: 1.74, habitat: "Atlantian glow gardens and healing grottoes", active: "All tidal shifts",
+    behavior: "Cultivates bioluminescent remedies, tends nursery eggs, and releases a dazzling defensive pulse when trapped.",
+    lore: "Glowmenders say light is only medicine that has not chosen a patient yet.",
+    colors: [0x315b70, 0x54dfc5, 0xf0fff7], drops: [], family: "sentient", movement: "aquatic", aquatic: true, persistent: true, ranged: true,
+    sentient: true, faction: "atlantians", culture: "atlantians", role: "alchemist", profession: "Glowmender", tradeSpecialty: "Water-breathing mixtures and luminous reagents",
+    utility: "Aquatic healer and alchemy merchant.", discoveryHint: "Turquoise light-gardens surround a Glowmender grotto.",
+  },
+  "atlantian-trident-guard": {
+    kind: "atlantian-trident-guard", name: "Atlantian Trident Guard", temperament: "Defensive", hostile: false,
+    health: 25, damage: 6, xp: 0, speed: 0.82, chaseSpeed: 2.9, turnRate: 8, attackRange: 2.4,
+    footOffset: 0, radius: 0.39, height: 1.86, habitat: "Atlantian current gates and open village approaches", active: "All shifts",
+    behavior: "Patrols un-walled current lanes, braces a long trident against sea monsters, and drives danger away from nurseries.",
+    lore: "Their three points stand for home, current and the stranger safely guided between them.",
+    colors: [0x244b67, 0x83b9c9, 0xe4fff8], drops: [], family: "sentient", movement: "aquatic", aquatic: true, persistent: true,
+    sentient: true, faction: "atlantians", culture: "atlantians", role: "guard", profession: "Trident Guard", tradeSpecialty: "Aquatic settlement defense",
+    utility: "Fast underwater guard with a reach weapon.", discoveryHint: "Trident Guards patrol the glowing current markers outside town.",
   },
   meadowwing: {
     kind: "meadowwing", name: "Meadowwing", temperament: "Gentle", hostile: false,
@@ -730,18 +937,24 @@ export const BUTTERFLY_ORDER: ButterflyKind[] = ["meadowwing", "azure-skippers",
 export const LEGACY_MOB_ORDER: LegacyMobKind[] = ["mossling", "ridgeback", "woolhorn", "glowmoth", "shadecrawler", "caveblob", "rattlekin", "zombie"];
 export const SURFACE_MOB_ORDER: SurfaceMobKind[] = [
   "sunstep-grazer", "pebbletortoise", "brambleboar", "petalfox", "duneclatter",
-  "thimbledeer", "lanternshell", "puddlehopper", "reedstrider", "wild-horse", "meadow-cow", "mistmane",
+  "thimbledeer", "lanternshell", "puddlehopper", "reedstrider", "wild-horse", "meadow-cow", "mistmane", "sakurakit", "sunwash-crab",
 ];
-export const BIRD_ORDER: BirdKind[] = ["emberjay", "canopy-lark"];
+export const BIRD_ORDER: BirdKind[] = ["emberjay", "canopy-lark", "tidewing-gull"];
 export const AQUATIC_MOB_ORDER: AquaticMobKind[] = ["shoalfin", "coralback", "brookdart", "gloomfin", "silverthread", "reedneedle", "emberribbon", "cavefilament"];
 export const POLLINATOR_ORDER: PollinatorKind[] = ["honeybee", "hive-queen", "reed-dragonfly"];
 export const HEARTHROADS_WILDLIFE_ORDER: HearthroadsWildlifeKind[] = ["burrowbell", "dewback-tapir"];
 export const HEARTHROADS_AQUATIC_ORDER: HearthroadsAquaticKind[] = ["redfin-salmon", "blue-mackerel", "deepwater-shark"];
+export const TIDEGLASS_AQUATIC_ORDER: TideglassAquaticKind[] = [
+  "glassfin", "lanternjaw", "abyss-skater", "dreadcoil", "tidepup", "worldshell-leviathan", "aetherbell-larva", "aetherbell-leviathan",
+];
 export const HOBBIT_ORDER: HobbitKind[] = [
   "hobbit-mayor", "hobbit-farmer", "hobbit-miner", "hobbit-merchant", "hobbit-banker", "hobbit-hammer-guard", "hobbit-crossbow-guard",
 ];
 export const GOBLIN_ORDER: GoblinKind[] = ["goblin-chieftain", "goblin-worker", "goblin-miner", "goblin-alchemist", "goblin-spear-guard"];
-export const SENTIENT_MOB_ORDER: SentientMobKind[] = [...HOBBIT_ORDER, ...GOBLIN_ORDER];
+export const ATLANTIAN_ORDER: AtlantianKind[] = [
+  "atlantian-tidewarden", "atlantian-kelpkeeper", "atlantian-coralwright", "atlantian-pearlbroker", "atlantian-glowmender", "atlantian-trident-guard",
+];
+export const SENTIENT_MOB_ORDER: SentientMobKind[] = [...HOBBIT_ORDER, ...GOBLIN_ORDER, ...ATLANTIAN_ORDER];
 export const SPECIAL_MOB_ORDER: SpecialMobKind[] = ["peelop", "reliquary-sentinel", "skeleton", "warg"];
 export const CORE_MOB_ORDER: CoreMobKind[] = [
   ...LEGACY_MOB_ORDER,
@@ -751,6 +964,7 @@ export const CORE_MOB_ORDER: CoreMobKind[] = [
   ...POLLINATOR_ORDER,
   ...HEARTHROADS_WILDLIFE_ORDER,
   ...HEARTHROADS_AQUATIC_ORDER,
+  ...TIDEGLASS_AQUATIC_ORDER,
   ...SENTIENT_MOB_ORDER,
   ...SPECIAL_MOB_ORDER,
 ];

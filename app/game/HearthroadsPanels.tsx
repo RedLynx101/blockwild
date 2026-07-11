@@ -8,7 +8,6 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import Image from "next/image";
 import {
   parseChunkKey,
   type CartographySession,
@@ -57,10 +56,100 @@ import {
 import { FACTIONS, factionStanding, type FactionId, type FactionStanding } from "./factions";
 import {
   findRoleWaypoint,
+  isMayorProfession,
+  isWarriorProfession,
+  RESIDENT_PROFESSIONS,
+  settlementEnvironmentOf,
   type ResidentProfession,
   type SettlementResident,
   type SettlementState,
 } from "./settlements";
+
+type AtlantianProfession = Extract<ResidentProfession, `atlantian-${string}`>;
+
+export type SentientRolePresentation = Readonly<{
+  label: string;
+  glyph: string;
+  description: string;
+  portraitUrl: string;
+}>;
+
+export const ATLANTIAN_ROLE_PRESENTATION = {
+  "atlantian-tidewarden": {
+    label: "Tidewarden",
+    glyph: "◉",
+    description: "Keeps the tidemoot's memory, settles disputes, and listens for changes in the deep currents.",
+    portraitUrl: "/creatures/atlantian-tidewarden.svg",
+  },
+  "atlantian-kelpkeeper": {
+    label: "Kelpkeeper",
+    glyph: "≋",
+    description: "Tends kelp gardens, shellfruit beds, and the living nurseries that feed the settlement.",
+    portraitUrl: "/creatures/atlantian-kelpkeeper.svg",
+  },
+  "atlantian-coralwright": {
+    label: "Coralwright",
+    glyph: "✥",
+    description: "Shapes reefglass, living coral, tools, and the open structures of an underwater home.",
+    portraitUrl: "/creatures/atlantian-coralwright.svg",
+  },
+  "atlantian-pearlbroker": {
+    label: "Pearlbroker",
+    glyph: "●",
+    description: "Trades pearls and rare ocean goods while keeping the tidemoot's exchange in balance.",
+    portraitUrl: "/creatures/atlantian-pearlbroker.svg",
+  },
+  "atlantian-glowmender": {
+    label: "Glowmender",
+    glyph: "✦",
+    description: "Uses luminous salves and patient craft to tend wounds, nests, and dimming reef life.",
+    portraitUrl: "/creatures/atlantian-glowmender.svg",
+  },
+  "atlantian-trident-guard": {
+    label: "Trident Guard",
+    glyph: "Ψ",
+    description: "Patrols open current lanes and turns deepwater predators away from the tidemoot.",
+    portraitUrl: "/creatures/atlantian-trident-guard.svg",
+  },
+} as const satisfies Readonly<Record<AtlantianProfession, SentientRolePresentation>>;
+
+const HOBBIT_PORTRAIT_ROLES: Readonly<Partial<Record<ResidentProfession, string>>> = {
+  mayor: "mayor",
+  warrior: "hammer-guard",
+  farmer: "farmer",
+  miner: "miner",
+  banker: "banker",
+  brewer: "merchant",
+  alchemist: "merchant",
+  blacksmith: "merchant",
+  general: "merchant",
+};
+
+const GOBLIN_PORTRAIT_ROLES: Readonly<Partial<Record<ResidentProfession, string>>> = {
+  mayor: "chieftain",
+  warrior: "spear-guard",
+  farmer: "worker",
+  miner: "miner",
+  banker: "worker",
+  brewer: "alchemist",
+  alchemist: "alchemist",
+  blacksmith: "worker",
+  general: "worker",
+};
+
+export function isResidentProfession(value: unknown): value is ResidentProfession {
+  return typeof value === "string" && (RESIDENT_PROFESSIONS as readonly string[]).includes(value);
+}
+
+export function sentientPortraitPath(factionId: Exclude<FactionId, "player">, profession: ResidentProfession) {
+  if (factionId === "atlantians") {
+    const aquaticRole = profession.startsWith("atlantian-") ? profession as AtlantianProfession : "atlantian-tidewarden";
+    return ATLANTIAN_ROLE_PRESENTATION[aquaticRole]?.portraitUrl ?? ATLANTIAN_ROLE_PRESENTATION["atlantian-tidewarden"].portraitUrl;
+  }
+  const roles = factionId === "hobbits" ? HOBBIT_PORTRAIT_ROLES : GOBLIN_PORTRAIT_ROLES;
+  const fallback = factionId === "hobbits" ? "merchant" : "worker";
+  return `/creatures/${factionId === "hobbits" ? "hobbit" : "goblin"}-${roles[profession] ?? fallback}.svg`;
+}
 
 type PanelHeaderProps = Readonly<{
   eyebrow: string;
@@ -118,6 +207,39 @@ function prettyId(value: string) {
   return value
     .replace(/[-_]+/gu, " ")
     .replace(/\b\w/gu, (letter) => letter.toUpperCase());
+}
+
+function rolePresentation(profession: ResidentProfession) {
+  if (profession.startsWith("atlantian-")) {
+    return ATLANTIAN_ROLE_PRESENTATION[profession as AtlantianProfession];
+  }
+  return {
+    label: prettyId(profession),
+    glyph: profession.slice(0, 1).toUpperCase(),
+    description: "A working resident whose routine, equipment, and waypoint follow their role in the settlement.",
+    portraitUrl: "",
+  } satisfies SentientRolePresentation;
+}
+
+function PortraitAsset({
+  src,
+  alt,
+  fallback,
+  compact = false,
+}: Readonly<{ src?: string | null; alt: string; fallback: string; compact?: boolean }>) {
+  const [failed, setFailed] = useState(false);
+  const size = compact ? 72 : 360;
+  return (
+    <span className={`hearthroads-portrait-asset${compact ? " compact" : ""}`} data-portrait-state={!src || failed ? "fallback" : "model"}>
+      <span className="hearthroads-portrait-fallback" aria-hidden="true">{fallback}</span>
+      {src && !failed ? (
+        // Local creature portraits are generated SVGs; a native image preserves
+        // their exact silhouette and gives the panel a reliable error fallback.
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={src} width={size} height={size} alt={alt} loading={compact ? "lazy" : "eager"} decoding="async" onError={() => setFailed(true)} />
+      ) : null}
+    </span>
+  );
 }
 
 function clamp(value: number, minimum: number, maximum: number) {
@@ -898,21 +1020,26 @@ export function SentientDialoguePanel({ character, greeting, body, choices, onCh
   const standing = character.standing ?? factionStanding(character.alignment);
   const factionName = character.factionName ?? FACTIONS[character.factionId].name;
   const alignmentPercent = clamp((character.alignment + 100) / 200, 0, 1) * 100;
+  const profession = isResidentProfession(character.profession) ? character.profession : "general";
+  const role = rolePresentation(profession);
 
   return (
-    <PanelShell className="hearthroads-dialogue-panel" labelledBy={titleId}>
+    <PanelShell className={`hearthroads-dialogue-panel faction-${character.factionId}`} labelledBy={titleId}>
       <PanelHeader
-        eyebrow={`${factionName} · ${prettyId(character.profession)}`}
+        eyebrow={`${factionName} · ${role.label}`}
         title={character.name}
-        subtitle={`${prettyId(standing)} standing`}
+        subtitle={`${prettyId(standing)} standing${character.factionId === "atlantians" ? " · underwater citizen" : ""}`}
         titleId={titleId}
         onClose={onClose}
       />
       <div className="hearthroads-dialogue-layout">
         <figure className="hearthroads-dialogue-portrait">
-          {character.portraitUrl ? <Image src={character.portraitUrl} width={360} height={360} unoptimized alt={`${character.name}, ${character.profession}`} /> : (
-            <span aria-hidden="true">{character.name.slice(0, 1).toUpperCase()}</span>
-          )}
+          <PortraitAsset
+            key={character.portraitUrl ?? character.id}
+            src={character.portraitUrl}
+            alt={`${character.name}, ${role.label}`}
+            fallback={character.factionId === "atlantians" ? role.glyph : character.name.slice(0, 1).toUpperCase()}
+          />
           <figcaption>
             <span>{standing}</span>
             <span className="hearthroads-alignment-track" aria-label={`Alignment ${character.alignment}`}>
@@ -923,6 +1050,7 @@ export function SentientDialoguePanel({ character, greeting, body, choices, onCh
         <div className="hearthroads-dialogue-copy" aria-live="polite">
           <blockquote>“{greeting}”</blockquote>
           {body ? <p>{body}</p> : null}
+          {character.factionId === "atlantians" ? <p className="hearthroads-role-note"><b>{role.label}</b>{role.description}</p> : null}
         </div>
         <nav className="hearthroads-dialogue-choices" aria-label={`Talk to ${character.name}`}>
           {choices.map((choice) => (
@@ -1030,11 +1158,13 @@ export function TradePanel({
   };
 
   return (
-    <PanelShell className="hearthroads-trade-panel" labelledBy={titleId}>
+    <PanelShell className={`hearthroads-trade-panel faction-${merchant.factionId}`} labelledBy={titleId}>
       <PanelHeader
         eyebrow={`${FACTIONS[merchant.factionId].name} market · ${prettyId(merchant.profession)}`}
         title={`Trade with ${merchantName}`}
-        subtitle="Buy what they carry, or offer anything from your pack. Demand changes the price."
+        subtitle={merchant.factionId === "atlantians"
+          ? "Trade through the open current: kelp, reefglass, coralwork, medicines, and pearls move with local demand."
+          : "Buy what they carry, or offer anything from your pack. Demand changes the price."}
         titleId={titleId}
         onClose={onClose}
         meta={(
@@ -1286,9 +1416,11 @@ export function SettlementPanel({
   const activeProfession = selectedProfession === undefined ? localProfession : selectedProfession;
   const selectedRole = roles.find(([profession]) => profession === activeProfession) ?? roles[0] ?? null;
   const livingPopulation = settlement.residents.filter((resident) => resident.alive).length;
-  const mayor = settlement.residents.find((resident) => resident.alive && resident.profession === "mayor") ?? null;
+  const aquatic = settlementEnvironmentOf(settlement) === "underwater";
+  const mayor = settlement.residents.find((resident) => resident.alive && isMayorProfession(resident.profession)) ?? null;
   const waypoint = selectedRole ? findRoleWaypoint(settlement, selectedRole[0]) : null;
   const standing = factionStanding(alignment);
+  const selectedRolePresentation = selectedRole ? rolePresentation(selectedRole[0]) : null;
 
   const selectRole = (profession: ResidentProfession) => {
     setLocalProfession(profession);
@@ -1296,11 +1428,13 @@ export function SettlementPanel({
   };
 
   return (
-    <PanelShell className="hearthroads-settlement-panel" labelledBy={titleId}>
+    <PanelShell className={`hearthroads-settlement-panel faction-${settlement.ownerFactionId}${aquatic ? " aquatic-settlement" : ""}`} labelledBy={titleId}>
       <PanelHeader
-        eyebrow={`${prettyId(settlement.size)} · ${prettyId(settlement.biome)}`}
+        eyebrow={`${prettyId(settlement.size)} · ${prettyId(settlement.biome)} · ${aquatic ? "underwater · open currents" : "surface roads"}`}
         title={settlementName ?? prettyId(settlement.id)}
-        subtitle={`A ${ownerLabel(settlement.ownerFactionId).toLowerCase()} settlement with working homes, gates, and daily routines.`}
+        subtitle={aquatic
+          ? "An unwalled Lumen Tidemoot shaped around reef homes, glow-lit current lanes, shared nests, and water-breathing residents."
+          : `A ${ownerLabel(settlement.ownerFactionId).toLowerCase()} settlement with working homes, gates, and daily routines.`}
         titleId={titleId}
         onClose={onClose}
         meta={<span className={`hearthroads-standing standing-${standing}`}>{standing} · {alignment >= 0 ? "+" : ""}{alignment}</span>}
@@ -1308,36 +1442,52 @@ export function SettlementPanel({
 
       <div className="hearthroads-settlement-summary">
         <div><small>Owner</small><strong>{ownerLabel(settlement.ownerFactionId)}</strong></div>
-        <div><small>Mayor</small><strong>{mayor?.name ?? "Election at 8:00"}</strong></div>
+        <div><small>{aquatic ? "Tidewarden" : "Mayor"}</small><strong>{mayor?.name ?? "Election at 8:00"}</strong></div>
         <div><small>Population</small><strong>{livingPopulation} / {settlement.layout.populationSoftCap}</strong></div>
-        <div><small>Food reserve</small><strong>{settlement.foodReserve}</strong></div>
+        <div><small>{aquatic ? "Kelp reserve" : "Food reserve"}</small><strong>{settlement.foodReserve}</strong></div>
       </div>
 
       <div className="hearthroads-settlement-layout">
         <nav className="hearthroads-role-list" aria-label="Settlement roles">
-          <header><span>People to find</span><small>{roles.length} active roles</small></header>
-          {roles.map(([profession, residents]) => (
-            <button className={selectedRole?.[0] === profession ? "selected" : ""} key={profession} type="button" onClick={() => selectRole(profession)} aria-pressed={selectedRole?.[0] === profession}>
-              <span className="hearthroads-role-sigil" aria-hidden="true">{profession.slice(0, 1).toUpperCase()}</span>
-              <span><strong>{prettyId(profession)}</strong><small>{residents.length} {residents.length === 1 ? "resident" : "residents"}</small></span>
-              <i aria-hidden="true">›</i>
-            </button>
-          ))}
+          <header><span>{aquatic ? "Currents to follow" : "People to find"}</span><small>{roles.length} active roles</small></header>
+          {roles.map(([profession, residents]) => {
+            const role = rolePresentation(profession);
+            return (
+              <button className={selectedRole?.[0] === profession ? "selected" : ""} key={profession} type="button" onClick={() => selectRole(profession)} aria-pressed={selectedRole?.[0] === profession}>
+                <span className="hearthroads-role-sigil" aria-hidden="true">{role.glyph}</span>
+                <span><strong>{role.label}</strong><small>{residents.length} {residents.length === 1 ? "resident" : "residents"}</small></span>
+                <i aria-hidden="true">›</i>
+              </button>
+            );
+          })}
         </nav>
 
         <section className="hearthroads-role-detail" aria-live="polite">
           {selectedRole ? (
             <>
-              <header><span>Town role</span><h3>{prettyId(selectedRole[0])}</h3><p>{waypoint ? `Nearest: ${waypoint.name}` : "No one currently fills this role."}</p></header>
+              <header>
+                <span>{aquatic ? "Tidemoot role" : "Town role"}</span>
+                <h3>{selectedRolePresentation?.label ?? prettyId(selectedRole[0])}</h3>
+                <p>{selectedRolePresentation?.description}</p>
+                <p>{waypoint ? `Nearest: ${waypoint.name}` : "No one currently fills this role."}</p>
+              </header>
               <ul className="hearthroads-resident-list">
                 {selectedRole[1].map((resident) => (
                   <li key={resident.id}>
                     <button type="button" disabled={!onSelectResident} onClick={() => onSelectResident?.(resident.id)}>
-                      <span className="hearthroads-resident-avatar" aria-hidden="true">{resident.name.slice(0, 1)}</span>
+                      {resident.race === "atlantian" ? (
+                        <PortraitAsset
+                          key={`${resident.id}-${resident.profession}`}
+                          src={sentientPortraitPath("atlantians", resident.profession)}
+                          alt=""
+                          fallback={rolePresentation(resident.profession).glyph}
+                          compact
+                        />
+                      ) : <span className="hearthroads-resident-avatar" aria-hidden="true">{resident.name.slice(0, 1)}</span>}
                       <span><strong>{resident.name}</strong><small>{resident.equipment.weapon ? `Carries ${prettyId(resident.equipment.weapon)}` : resident.equipment.tool ? `Uses ${prettyId(resident.equipment.tool)}` : "Unarmed"}</small></span>
                       <span className="hearthroads-health-readout">{resident.health}/{resident.maxHealth}</span>
                     </button>
-                    {onHireResident && !resident.hiredByPlayerId && resident.profession !== "mayor" ? <button className="hearthroads-hire-resident" type="button" onClick={() => onHireResident(resident.id)}>Hire · {resident.profession === "warrior" ? 180 : 110}g</button> : null}
+                    {onHireResident && !resident.hiredByPlayerId && !isMayorProfession(resident.profession) ? <button className="hearthroads-hire-resident" type="button" onClick={() => onHireResident(resident.id)}>Hire · {isWarriorProfession(resident.profession) ? 180 : 110}g</button> : null}
                   </li>
                 ))}
               </ul>
@@ -1349,8 +1499,8 @@ export function SettlementPanel({
           ) : <div className="hearthroads-selection-empty"><h3>The streets are quiet</h3><p>No living residents are registered here.</p></div>}
         </section>
 
-        <aside className="hearthroads-town-plan" aria-label="Settlement plan">
-          <span>Town plan</span>
+        <aside className="hearthroads-town-plan" aria-label={aquatic ? "Underwater tidemoot plan" : "Settlement plan"}>
+          <span>{aquatic ? "Tidemoot plan" : "Town plan"}</span>
           <div className="hearthroads-town-plan-map" aria-hidden="true">
             {settlement.layout.buildings.map((building) => {
               const radius = Math.max(1, settlement.layout.radiusBlocks);
@@ -1358,15 +1508,17 @@ export function SettlementPanel({
               const y = clamp((building.position.z - settlement.layout.center.z + radius) / (radius * 2), 0, 1) * 100;
               return <i className={`building-${building.role}`} key={building.id} style={{ left: `${x}%`, top: `${y}%` }} title={prettyId(building.role)} />;
             })}
-            {settlement.layout.gates.map((gate) => {
+            {(aquatic ? settlement.layout.approaches ?? [] : settlement.layout.gates).map((gate) => {
               const radius = Math.max(1, settlement.layout.radiusBlocks);
               const x = clamp((gate.position.x - settlement.layout.center.x + radius) / (radius * 2), 0, 1) * 100;
               const y = clamp((gate.position.z - settlement.layout.center.z + radius) / (radius * 2), 0, 1) * 100;
               return <b key={gate.id} style={{ left: `${x}%`, top: `${y}%` }} />;
             })}
           </div>
-          <div className="hearthroads-town-plan-legend"><span><i />Building</span><span><b />Gate</span></div>
-          <p>Waypoints follow the living resident, even when beds, doors, or paths change.</p>
+          <div className="hearthroads-town-plan-legend"><span><i />{aquatic ? "Reef home" : "Building"}</span><span><b />{aquatic ? "Open current" : "Gate"}</span></div>
+          <p>{aquatic
+            ? "No wall closes the water. Glowstone lanes, reef arches, and vertical current layers orient swimmers without blocking sea life."
+            : "Waypoints follow the living resident, even when beds, doors, or paths change."}</p>
         </aside>
       </div>
     </PanelShell>

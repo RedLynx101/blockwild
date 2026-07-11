@@ -92,26 +92,28 @@ import {
 } from "../app/game/creature-pathing.ts";
 
 test("expanded ecology catalog includes mounts, livestock, thin fish, pollinators, a pet, guardian, and archer", () => {
-  assert.equal(SURFACE_MOB_ORDER.length, 12);
-  assert.equal(new Set(SURFACE_MOB_ORDER).size, 12);
+  assert.equal(SURFACE_MOB_ORDER.length, 14);
+  assert.equal(new Set(SURFACE_MOB_ORDER).size, 14);
   for (const kind of ["thimbledeer", "lanternshell", "puddlehopper", "reedstrider"] as const) {
     assert.ok(SURFACE_MOB_ORDER.includes(kind));
     assert.equal(MOB_DEFS[kind].hostile, false);
     assert.ok(MOB_DEFS[kind].discoveryHint);
     assert.ok(MOB_DEFS[kind].utility);
   }
-  assert.equal(BIRD_ORDER.length, 2);
+  assert.equal(BIRD_ORDER.length, 3);
   assert.equal(AQUATIC_MOB_ORDER.length, 8);
   assert.equal(POLLINATOR_ORDER.length, 3);
-  assert.deepEqual(fishKindsForHabitat("ocean"), ["shoalfin", "silverthread", "blue-mackerel", "coralback", "emberribbon"]);
+  assert.deepEqual(fishKindsForHabitat("ocean"), ["shoalfin", "silverthread", "blue-mackerel", "coralback", "emberribbon", "glassfin", "tidepup"]);
   assert.deepEqual(fishKindsForHabitat("river"), ["brookdart", "reedneedle", "redfin-salmon"]);
-  assert.deepEqual(fishKindsForHabitat("deep-ocean"), ["blue-mackerel", "silverthread", "shoalfin", "coralback", "deepwater-shark"]);
+  assert.deepEqual(fishKindsForHabitat("deep-ocean"), [
+    "blue-mackerel", "glassfin", "silverthread", "lanternjaw", "shoalfin", "coralback", "deepwater-shark", "abyss-skater", "tidepup", "dreadcoil", "worldshell-leviathan", "aetherbell-leviathan",
+  ]);
   assert.deepEqual(fishKindsForHabitat("underground"), ["gloomfin", "cavefilament"]);
   assert.deepEqual(HEARTHROADS_WILDLIFE_ORDER, ["burrowbell", "dewback-tapir"]);
   assert.deepEqual(HEARTHROADS_AQUATIC_ORDER, ["redfin-salmon", "blue-mackerel", "deepwater-shark"]);
   assert.equal(HOBBIT_ORDER.length, 7);
   assert.equal(GOBLIN_ORDER.length, 5);
-  assert.equal(SENTIENT_MOB_ORDER.length, 12);
+  assert.equal(SENTIENT_MOB_ORDER.length, 18);
   for (const kind of HOBBIT_ORDER) {
     assert.equal(MOB_DEFS[kind].sentient, true);
     assert.equal(MOB_DEFS[kind].faction, "hobbits");
@@ -137,7 +139,7 @@ test("expanded ecology catalog includes mounts, livestock, thin fish, pollinator
   assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.3), "lanternshell");
   assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.52), "puddlehopper");
   assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.65), "reedstrider");
-  assert.equal(CORE_MOB_ORDER.filter((kind) => MOB_DEFS[kind].sentient).length, 12);
+  assert.equal(CORE_MOB_ORDER.filter((kind) => MOB_DEFS[kind].sentient).length, 18);
 });
 
 test("v0.5 habitat tables place mammals, pollinators, and fish without ambient queen spam", () => {
@@ -147,7 +149,8 @@ test("v0.5 habitat tables place mammals, pollinators, and fish without ambient q
   assert.equal(passiveMobKindForBiome(BiomeId.CloudreedGlen, 0.5), "reed-dragonfly");
   assert.equal(passiveMobKindForBiome(BiomeId.River, 0.35), "reed-dragonfly");
   assert.equal(passiveMobKindForBiome(BiomeId.Wildwood, 0.79), "wild-horse");
-  assert.equal(passiveMobKindForBiome(BiomeId.Wildwood, 0.99), "burrowbell");
+  assert.equal(passiveMobKindForBiome(BiomeId.Wildwood, 0.95), "burrowbell");
+  assert.equal(passiveMobKindForBiome(BiomeId.Wildwood, 0.99), "sakurakit");
 
   for (const biome of Object.values(BiomeId).filter((value): value is BiomeId => typeof value === "number")) {
     const kinds = passiveMobSpawnTableForBiome(biome).map(([kind]) => kind);
@@ -158,9 +161,10 @@ test("v0.5 habitat tables place mammals, pollinators, and fish without ambient q
 
   assert.deepEqual(fishSpawnTableForHabitat("river").map(([kind]) => kind), ["brookdart", "reedneedle", "redfin-salmon"]);
   assert.deepEqual(fishSpawnTableForHabitat("underground").map(([kind]) => kind), ["gloomfin", "cavefilament"]);
-  assert.equal(new Set(fishSpawnTableForHabitat("ocean").map(([kind]) => kind)).size, 5);
+  assert.equal(new Set(fishSpawnTableForHabitat("ocean").map(([kind]) => kind)).size, 7);
   assert.equal(fishSpawnTableForHabitat("ocean").some(([kind]) => kind === "deepwater-shark"), false);
-  assert.equal(fishSpawnTableForHabitat("deep-ocean").at(-1)?.[0], "deepwater-shark");
+  assert.equal(fishSpawnTableForHabitat("deep-ocean").some(([kind]) => kind === "deepwater-shark"), true);
+  assert.equal(fishSpawnTableForHabitat("deep-ocean").at(-1)?.[0], "aetherbell-leviathan");
 });
 
 test("natural group ranges remain capped and wild hives own exactly one queen", () => {

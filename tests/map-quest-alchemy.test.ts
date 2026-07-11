@@ -337,12 +337,14 @@ test("quest migration sanitizes duplicate histories, invalid pins, progress, and
   assert.deepEqual(normalized.factionAlignment, { hobbits: 10_000, goblins: -10_000 });
 });
 
-test("alchemy registers water, apple healing, travel, Hobbit, and Goblin formulas", () => {
+test("alchemy registers water, healing, travel, faction, and Tidebreath formulas", () => {
   assert.equal(ALCHEMY_RECIPES.some((recipe) => recipe.id === "fill-water-bottle"), true);
   assert.equal(alchemyRecipe("appleheart-potion")?.inputs.some((input) => input.item === "apple"), true);
   assert.equal(alchemyRecipe("wayfarer-draught")?.effect?.kind, "bank-fast-travel");
   assert.equal(alchemyRecipe("hearthward-tonic")?.blueprintId, "hobbit-hearthward-tonic");
   assert.equal(alchemyRecipe("gloamstep-elixir")?.blueprintId, "goblin-gloamstep-elixir");
+  assert.deepEqual(alchemyRecipe("tidebreath-philter")?.inputs.map((input) => input.item), ["water-bottle", "lumen-kelp-frond", "abyss-bloom-nectar"]);
+  assert.deepEqual(alchemyRecipe("tidebreath-philter")?.effect, { kind: "timed-buff", buff: "tidebreath", durationSeconds: 300 });
   assert.deepEqual(DISTILLERY_RECIPES.map((recipe) => recipe.id), ["honeymead-batch"]);
 });
 
@@ -366,6 +368,7 @@ test("potion use heals, banks one map journey, and records timed buffs without s
   const buffed = applyPotionEffect(base, "hearthward-tonic", 100);
   assert.equal(buffed.buffs.hearthward, 500, "drinking another tonic cannot shorten an existing ward");
   assert.equal(applyPotionEffect(base, "gloamstep-elixir", 100).buffs.gloamstep, 340);
+  assert.equal(applyPotionEffect(base, "tidebreath-philter", 100).buffs.tidebreath, 400);
 });
 
 test("faction potions stay locked until their physical blueprint is learned", () => {

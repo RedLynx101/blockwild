@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   AdaptiveBudgetController,
+  advanceSentientCoarseSimulation,
   applyResourceMode,
   DEFAULT_FRAME_WORK_BUDGET,
   DEFAULT_RENDER_DISTANCE,
@@ -15,6 +16,9 @@ import {
   classifyBudgetPressure,
   normalizeViewDistances,
   recommendFrameWorkBudget,
+  sentientSimulationTier,
+  SENTIENT_COARSE_STEP_SECONDS,
+  SENTIENT_FULL_DETAIL_DISTANCE,
 } from "../app/game/performance.ts";
 
 test("view distances default to 10/8 and simulation never exceeds rendering", () => {
@@ -78,4 +82,21 @@ test("task benchmarks accept an injectable clock", () => {
   const times = [5, 8.75];
   const measured = benchmarkTask("chunk-mesh", () => 42, () => times.shift() ?? 0);
   assert.deepEqual(measured, { label: "chunk-mesh", milliseconds: 3.75, result: 42 });
+});
+
+test("sentient towns keep full nearby detail and throttle distant residents", () => {
+  assert.equal(sentientSimulationTier({ distance: 5, simulationRadius: 138 }), "full", "conversation range must never use a proxy");
+  assert.equal(sentientSimulationTier({ distance: SENTIENT_FULL_DETAIL_DISTANCE + 1, simulationRadius: 138 }), "coarse");
+  assert.equal(sentientSimulationTier({ distance: 139, simulationRadius: 138 }), "sleep");
+  assert.equal(sentientSimulationTier({ distance: 80, simulationRadius: 138, requiresFullDetail: true }), "full", "active followers can force a full simulation tick");
+  assert.ok(SENTIENT_COARSE_STEP_SECONDS >= 0.1, "distant residents should run at no more than ten AI updates per second");
+  assert.ok(Math.ceil(1 / SENTIENT_COARSE_STEP_SECONDS) <= 5, "the authored coarse policy should reduce 60 Hz AI work by at least twelvefold");
+  let accumulator = 0;
+  let updates = 0;
+  for (let frame = 0; frame < 60; frame += 1) {
+    const step = advanceSentientCoarseSimulation(accumulator, 1 / 60);
+    accumulator = step.accumulator;
+    if (step.advance) updates += 1;
+  }
+  assert.equal(updates, 5, "sixty rendered frames should schedule exactly five distant resident AI steps");
 });

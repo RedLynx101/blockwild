@@ -6,6 +6,8 @@ import { consumedResourceDelta, inventoryResourceCounts, resourceIdForItem, reso
 test("Hearthroads resource ids round-trip stable item codes", () => {
   assert.equal(resourceItemCode("apple"), Item.Apple);
   assert.equal(resourceIdForItem(Item.HealthPotion), "appleheart-potion");
+  assert.equal(resourceItemCode("lumen-kelp-frond"), Item.LumenKelpFrond);
+  assert.equal(resourceIdForItem(Item.WaterBreathingPotion), "tidebreath-philter");
   assert.equal(resourceItemCode("unknown"), null);
 });
 

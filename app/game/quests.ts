@@ -129,6 +129,32 @@ export const HEARTHROADS_MAIN_QUESTS: readonly QuestDefinition[] = Object.freeze
   },
 ] as readonly QuestDefinition[]);
 
+export const ATLANTIAN_FACTION_QUESTS: readonly QuestDefinition[] = Object.freeze([
+  {
+    id: "atlantian-light-below",
+    questlineId: "atlantian-lumen-tides",
+    kind: "side",
+    name: "The Light Below",
+    summary: "Find the patient lights of an Atlantian tidehold beneath the open sea.",
+    objectives: [{ id: "discover-atlantian-town", label: "Discover an Atlantian settlement", kind: "discover-town", factionId: "atlantians" }],
+    rewards: { gold: 20, items: [{ itemId: "glowmender-salve", count: 1 }], blueprints: [], factionAlignment: { atlantians: 5 } },
+    abandonable: true,
+    reacceptAfterAbandon: true,
+  },
+  {
+    id: "atlantian-fair-current",
+    questlineId: "atlantian-lumen-tides",
+    kind: "side",
+    name: "A Fair Current",
+    summary: "Learn what the tidehold values by making a peaceful trade with its people.",
+    objectives: [{ id: "trade-with-atlantians", label: "Complete an Atlantian trade", kind: "trade", count: 1, factionId: "atlantians" }],
+    prerequisites: { allOf: ["atlantian-light-below"] },
+    rewards: { gold: 32, items: [{ itemId: "lumen-pearl", count: 1 }], blueprints: [], factionAlignment: { atlantians: 7 } },
+    abandonable: true,
+    reacceptAfterAbandon: true,
+  },
+] as readonly QuestDefinition[]);
+
 export const HEARTHROADS_QUESTLINES: readonly QuestlineDefinition[] = Object.freeze([
   {
     id: "hearthroads-main",
@@ -137,6 +163,24 @@ export const HEARTHROADS_QUESTLINES: readonly QuestlineDefinition[] = Object.fre
     kind: "main",
     questIds: HEARTHROADS_MAIN_QUESTS.map((quest) => quest.id),
   },
+]);
+
+export const ATLANTIAN_QUESTLINE: QuestlineDefinition = Object.freeze({
+  id: "atlantian-lumen-tides",
+  name: "The Lumen Tides",
+  description: "A peaceful first-contact line about reaching an underwater settlement and learning its current of trade.",
+  kind: "side",
+  questIds: ATLANTIAN_FACTION_QUESTS.map((quest) => quest.id),
+});
+
+export const DEFAULT_QUEST_DEFINITIONS: readonly QuestDefinition[] = Object.freeze([
+  ...HEARTHROADS_MAIN_QUESTS,
+  ...ATLANTIAN_FACTION_QUESTS,
+]);
+
+export const DEFAULT_QUESTLINES: readonly QuestlineDefinition[] = Object.freeze([
+  ...HEARTHROADS_QUESTLINES,
+  ATLANTIAN_QUESTLINE,
 ]);
 
 export function createQuestBook(): QuestBook {

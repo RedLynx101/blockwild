@@ -7,6 +7,7 @@ export type MusicScene =
   | "hoppin"
   | "night"
   | "sea"
+  | "deepSea"
   | "skyboss"
   | "combatA"
   | "combatB"
@@ -17,7 +18,8 @@ export type MusicScene =
   | "emberdeepA"
   | "emberdeepB"
   | "hobbitSettlement"
-  | "goblinSettlement";
+  | "goblinSettlement"
+  | "atlantianSettlement";
 export type SampleKind =
   | "swordSwing"
   | "zombieMoan1"
@@ -32,7 +34,15 @@ const MUSIC_TRACKS: Record<MusicScene, string | readonly string[]> = {
   day: "/music/blockwild-theme.mp3",
   hoppin: "/music/blockwild-hoppin.mp3",
   night: "/music/blockwild-night.mp3",
-  sea: "/music/blockwild-sea.mp3",
+  sea: [
+    "/music/blockwild-sea.mp3",
+    "/music/blockwild-tidelight-shelf-a.mp3",
+    "/music/blockwild-tidelight-shelf-b.mp3",
+  ],
+  deepSea: [
+    "/music/blockwild-lantern-sea-a.mp3",
+    "/music/blockwild-lantern-sea-b.mp3",
+  ],
   skyboss: "/music/blockwild-skyboss.mp3",
   combatA: "/music/blockwild-ironbloom-skirmish-a.mp3",
   combatB: "/music/blockwild-ironbloom-skirmish-b.mp3",
@@ -49,6 +59,10 @@ const MUSIC_TRACKS: Record<MusicScene, string | readonly string[]> = {
   goblinSettlement: [
     "/music/blockwild-brassroot-market-a.mp3",
     "/music/blockwild-brassroot-market-b.mp3",
+  ],
+  atlantianSettlement: [
+    "/music/blockwild-lantern-sea-a.mp3",
+    "/music/blockwild-lantern-sea-b.mp3",
   ],
 };
 

@@ -141,6 +141,8 @@ export function weatherBiomeFromId(biomeId: number): WeatherBiome {
   if (biomeId === 14) return "volcanic";
   if (biomeId === 16) return "river";
   if (biomeId === 17) return "cloudreed";
+  if (biomeId === 18 || biomeId === 19) return "forest";
+  if (biomeId === 20) return "ocean";
   return "meadow";
 }
 
@@ -244,6 +246,8 @@ export type CloudLobe = Readonly<{
   scaleX: number;
   scaleY: number;
   scaleZ: number;
+  /** Near-white per-lobe variation keeps fair-weather layers soft, not gray. */
+  brightness: number;
 }>;
 
 export type CloudClusterPlan = Readonly<{
@@ -263,7 +267,7 @@ export function planCloudCluster(
   weather: WeatherState,
 ): CloudClusterPlan {
   const id = `${Math.trunc(cellX)},${Math.trunc(cellZ)}`;
-  const weatherScale = weather.kind === "clear" ? 0.88 : weather.kind === "thunder" ? 1.24 : 1.08;
+  const weatherScale = weather.kind === "clear" ? 0.88 : 1.08;
   const x = cellX * 54 + (hashUnit(seed, `cloud:${id}:x`) - 0.5) * 24;
   const z = cellZ * 54 + (hashUnit(seed, `cloud:${id}:z`) - 0.5) * 24;
   const y = 88 + hashUnit(seed, `cloud:${id}:y`) * 19;
@@ -280,6 +284,7 @@ export function planCloudCluster(
       scaleX: (3.4 + hashUnit(seed, `cloud:${id}:${index}:sx`) * 4.8) * weatherScale,
       scaleY: (1.5 + hashUnit(seed, `cloud:${id}:${index}:sy`) * 2.4) * weatherScale,
       scaleZ: (2.9 + hashUnit(seed, `cloud:${id}:${index}:sz`) * 4.2) * weatherScale,
+      brightness: 0.92 + hashUnit(seed, `cloud:${id}:${index}:white`) * 0.08,
     });
   }
   return {
@@ -303,7 +308,11 @@ export function planCloudField(
 ) {
   const plans: CloudClusterPlan[] = [];
   const boundedRadius = Math.max(0, Math.min(8, Math.floor(radius)));
-  const coverage = weatherVisuals(weather).cloudCoverage;
+  const visuals = weatherVisuals(weather);
+  // Thunder uses the unified dark overcast sky dome. Discrete storm-cloud
+  // meshes would band and overlap that dome, so none are planned.
+  if (visuals.fullOvercast) return plans;
+  const coverage = visuals.cloudCoverage;
   for (let dz = -boundedRadius; dz <= boundedRadius; dz += 1) {
     for (let dx = -boundedRadius; dx <= boundedRadius; dx += 1) {
       const cellX = Math.floor(centerCellX) + dx;

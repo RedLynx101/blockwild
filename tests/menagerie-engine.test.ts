@@ -179,6 +179,7 @@ test("double-tap sprint timing and third-person targeting use the player sightli
   engine.target = null;
   engine.targetMob = null;
   engine.targetBoat = null;
+  engine.drops = [];
   engine.targetKey = "";
   engine.miningProgress = 0;
   engine.selection = { visible: false, position: new THREE.Vector3(), material: new THREE.LineBasicMaterial() } as never;

@@ -309,9 +309,11 @@ test("capture, hiring, command/equipment slots, and dynamic caravan spacing are 
   assert.equal(followerFormationSlot(0, 3, 0.25).distance, 1.5);
 });
 
-test("side-quest tables support multi-criteria delivery, failure, abandonment, and physical giver rewards", () => {
+test("side-quest tables support achievable multi-criteria work, deadlines, abandonment, and physical giver rewards", () => {
   assert.ok(HOBBIT_SIDE_QUESTS.some((quest) => quest.criteria.length > 1 && quest.rewards.delivery === "giver-drops"));
-  assert.ok(GOBLIN_SIDE_QUESTS.some((quest) => quest.failureConditions.includes("protected-target-dies")));
+  assert.ok(GOBLIN_SIDE_QUESTS.some((quest) => quest.failureConditions.includes("deadline")
+    && quest.criteria.some((criterion) => criterion.kind === "deliver" && criterion.target === "raw-iron")));
+  assert.equal([...HOBBIT_SIDE_QUESTS, ...GOBLIN_SIDE_QUESTS].every((quest) => quest.criteria.every((criterion) => criterion.kind !== "visit" && criterion.kind !== "protect")), true);
   assert.equal([...HOBBIT_SIDE_QUESTS, ...GOBLIN_SIDE_QUESTS].every((quest) => quest.abandonable), true);
   assert.deepEqual(sideQuestOffersFor("hobbits", "brewer", "freehold-test", 4), sideQuestOffersFor("hobbits", "brewer", "freehold-test", 4));
   assert.equal(merchantProfessionForResident("banker"), "banker");

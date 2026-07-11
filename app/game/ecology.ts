@@ -132,13 +132,41 @@ export type SubmergedFloraPlacement = Readonly<{
   replacesWater: false;
 }>;
 
-export function planSubmergedFlora(seed: string | number, x: number, bedY: number, z: number, waterDepth: number): SubmergedFloraPlacement[] {
+export type AquaticFloraHabitat = "river" | "coast" | "ocean" | "deep-ocean" | "lumen-trench";
+
+const AQUATIC_FLORA_HEIGHT: Readonly<Partial<Record<BlockId, number>>> = Object.freeze({
+  [BlockId.RiverRibbon]: 3,
+  [BlockId.GlowKelp]: 5,
+  [BlockId.ReedBloom]: 2,
+  [BlockId.LumenKelp]: 7,
+  [BlockId.StarCoral]: 1,
+  [BlockId.AbyssBloom]: 2,
+  [BlockId.Tidevine]: 5,
+});
+
+export function planSubmergedFlora(
+  seed: string | number,
+  x: number,
+  bedY: number,
+  z: number,
+  waterDepth: number,
+  habitat: AquaticFloraHabitat = waterDepth >= 14 ? "deep-ocean" : waterDepth >= 7 ? "ocean" : "river",
+): SubmergedFloraPlacement[] {
   const depth = Math.max(0, Math.floor(waterDepth));
   if (depth < 2) return [];
   const roll = hashUnit(seed, `submerged:${x},${z}`);
-  if (roll < 0.58) return [];
-  const block = depth >= 5 && roll > 0.91 ? BlockId.GlowKelp : depth >= 3 && roll > 0.75 ? BlockId.RiverRibbon : BlockId.ReedBloom;
-  const height = block === BlockId.GlowKelp ? Math.min(3, depth - 1) : block === BlockId.RiverRibbon ? Math.min(2, depth - 1) : 1;
+  const densityFloor = habitat === "lumen-trench" ? 0.7 : habitat === "deep-ocean" ? 0.77 : habitat === "ocean" ? 0.81 : habitat === "coast" ? 0.88 : 0.82;
+  if (roll < densityFloor) return [];
+  const speciesRoll = hashUnit(seed, `submerged-species:${habitat}:${x},${z}`);
+  let block: BlockId;
+  if (habitat === "lumen-trench") block = speciesRoll > 0.78 ? BlockId.AbyssBloom : speciesRoll > 0.44 ? BlockId.LumenKelp : speciesRoll > 0.2 ? BlockId.StarCoral : BlockId.GlowKelp;
+  else if (habitat === "deep-ocean") block = speciesRoll > 0.86 ? BlockId.AbyssBloom : speciesRoll > 0.58 ? BlockId.LumenKelp : speciesRoll > 0.28 ? BlockId.Tidevine : BlockId.StarCoral;
+  else if (habitat === "ocean") block = speciesRoll > 0.78 ? BlockId.StarCoral : speciesRoll > 0.42 ? BlockId.Tidevine : BlockId.GlowKelp;
+  else if (habitat === "coast") block = speciesRoll > 0.72 ? BlockId.StarCoral : speciesRoll > 0.34 ? BlockId.Tidevine : BlockId.ReedBloom;
+  else block = speciesRoll > 0.74 ? BlockId.RiverRibbon : BlockId.ReedBloom;
+  const naturalLimit = AQUATIC_FLORA_HEIGHT[block] ?? 1;
+  const heightRoll = 0.55 + hashUnit(seed, `submerged-height:${x},${z}`) * 0.75;
+  const height = Math.max(1, Math.min(naturalLimit, depth - 1, Math.round(naturalLimit * heightRoll)));
   return Array.from({ length: height }, (_, dy) => ({
     x,
     y: bedY + 1 + dy,
@@ -162,6 +190,27 @@ export const CLOUDREED_GLEN = Object.freeze({
 
 export type TreeForm = "rounded" | "layered" | "windswept" | "ancient";
 export type TreePlanBlock = Readonly<{ x: number; y: number; z: number; block: BlockId }>;
+
+const TREE_FACE_NEIGHBORS = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]] as const;
+
+/** Public invariant used by generation tests and future authored tree tools. */
+export function treeLogsAreFaceConnected(plan: readonly TreePlanBlock[], log: BlockId) {
+  const keys = new Set(plan.filter((entry) => entry.block === log).map((entry) => `${entry.x},${entry.y},${entry.z}`));
+  const first = keys.values().next().value as string | undefined;
+  if (!first) return false;
+  const visited = new Set<string>([first]);
+  const queue = [first];
+  while (queue.length) {
+    const [x, y, z] = queue.shift()!.split(",").map(Number);
+    for (const [dx, dy, dz] of TREE_FACE_NEIGHBORS) {
+      const key = `${x + dx},${y + dy},${z + dz}`;
+      if (!keys.has(key) || visited.has(key)) continue;
+      visited.add(key);
+      queue.push(key);
+    }
+  }
+  return visited.size === keys.size;
+}
 
 /**
  * Preserve the original airy cutout art. Crowns look full because generation
@@ -190,9 +239,19 @@ export function planFullTree(
 ): TreePlanBlock[] {
   const blocks = new Map<string, TreePlanBlock>();
   const set = (x: number, y: number, z: number, block: BlockId) => blocks.set(`${x},${y},${z}`, { x, y, z, block });
+  const setLeaf = (x: number, y: number, z: number) => {
+    const key = `${x},${y},${z}`;
+    if (blocks.get(key)?.block !== log) blocks.set(key, { x, y, z, block: leaves });
+  };
   const trunkHeight = form === "ancient" ? 8 : form === "layered" ? 7 : 5 + Math.floor(hashUnit(seed, "tree-height") * 2);
   for (let dy = 0; dy < trunkHeight; dy += 1) set(origin.x, origin.y + dy, origin.z, log);
-  if (form === "windswept") for (let step = 1; step <= 3; step += 1) set(origin.x + step, origin.y + trunkHeight - 2 + Math.floor(step / 2), origin.z, log);
+  if (form === "windswept") {
+    for (let step = 1; step <= 3; step += 1) {
+      const branchY = origin.y + trunkHeight - 2 + Math.floor(step / 2);
+      set(origin.x + step, branchY, origin.z, log);
+      if (step > 1) set(origin.x + step - 1, branchY, origin.z, log);
+    }
+  }
   if (form === "ancient") for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) for (let dy = 0; dy < 3; dy += 1) set(origin.x + dx, origin.y + dy, origin.z + dz, log);
   const centerX = origin.x + (form === "windswept" ? 2 : 0);
   const centerY = origin.y + trunkHeight;
@@ -200,7 +259,40 @@ export function planFullTree(
   for (const [dy, radius] of layers) for (let dz = -radius; dz <= radius; dz += 1) for (let dx = -radius; dx <= radius; dx += 1) {
     const edge = Math.abs(dx) === radius && Math.abs(dz) === radius;
     if (edge && hashUnit(seed, `leaf-edge:${dx},${dy},${dz}`) < 0.45) continue;
-    set(centerX + dx, centerY + dy, origin.z + dz, leaves);
+    setLeaf(centerX + dx, centerY + dy, origin.z + dz);
+  }
+  // Defensive topology repair for future authored forms: bridge any remaining
+  // log islands along a deterministic Manhattan path. Leaves never overwrite
+  // wood, so every vertical layer stays connected to the rooted trunk.
+  const connected = new Set<string>();
+  const rootKey = `${origin.x},${origin.y},${origin.z}`;
+  connected.add(rootKey);
+  const flood = () => {
+    const queue = [...connected];
+    while (queue.length) {
+      const key = queue.shift()!;
+      const [x, y, z] = key.split(",").map(Number);
+      for (const [dx, dy, dz] of TREE_FACE_NEIGHBORS) {
+        const nextKey = `${x + dx},${y + dy},${z + dz}`;
+        if (connected.has(nextKey) || blocks.get(nextKey)?.block !== log) continue;
+        connected.add(nextKey);
+        queue.push(nextKey);
+      }
+    }
+  };
+  flood();
+  const remainingLogs = () => [...blocks.values()].filter((entry) => entry.block === log && !connected.has(`${entry.x},${entry.y},${entry.z}`));
+  while (remainingLogs().length) {
+    const target = remainingLogs().sort((left, right) => left.y - right.y || left.x - right.x || left.z - right.z)[0];
+    const anchors = [...connected].map((key) => {
+      const [x, y, z] = key.split(",").map(Number);
+      return { x, y, z, distance: Math.abs(target.x - x) + Math.abs(target.y - y) + Math.abs(target.z - z) };
+    }).sort((left, right) => left.distance - right.distance || left.y - right.y || left.x - right.x || left.z - right.z);
+    const cursor = { x: anchors[0].x, y: anchors[0].y, z: anchors[0].z };
+    while (cursor.y !== target.y) { cursor.y += Math.sign(target.y - cursor.y); set(cursor.x, cursor.y, cursor.z, log); connected.add(`${cursor.x},${cursor.y},${cursor.z}`); }
+    while (cursor.x !== target.x) { cursor.x += Math.sign(target.x - cursor.x); set(cursor.x, cursor.y, cursor.z, log); connected.add(`${cursor.x},${cursor.y},${cursor.z}`); }
+    while (cursor.z !== target.z) { cursor.z += Math.sign(target.z - cursor.z); set(cursor.x, cursor.y, cursor.z, log); connected.add(`${cursor.x},${cursor.y},${cursor.z}`); }
+    flood();
   }
   return [...blocks.values()].sort((left, right) => left.y - right.y || left.z - right.z || left.x - right.x);
 }

@@ -5,7 +5,8 @@ import path from "node:path";
 import test from "node:test";
 import * as THREE from "three";
 import { BUTTERFLY_ANTENNA_CONTRACT, FACTION_WEAPON_CONTRACTS, RATTLEKIN_CLUB_CONTRACT, ZOMBIE_EYE_COLOR } from "../app/game/model-specs.ts";
-import { BUTTERFLY_ORDER, CORE_MOB_ORDER, GOBLIN_ORDER, HOBBIT_ORDER, MOB_DEFS } from "../app/game/mobs.ts";
+import { ATLANTIAN_ORDER, BUTTERFLY_ORDER, CORE_MOB_ORDER, GOBLIN_ORDER, HOBBIT_ORDER, MOB_DEFS, SENTIENT_MOB_ORDER } from "../app/game/mobs.ts";
+import { createMobVisual, createSentientLodVisual, SENTIENT_LOD_MAX_MESHES } from "../app/game/mob-models.ts";
 import {
   buildInspectionSpecs,
   createButterflyInspectionSpec,
@@ -135,6 +136,31 @@ test("the inspector captures every canonical production mob visual", () => {
   const portrait = renderModelPortrait(ridgeback);
   assert.match(portrait, /front three-quarter model portrait/);
   assert.match(portrait, /<polygon/);
+});
+
+test("sentient middle-distance proxies preserve roles while cutting town draw calls", () => {
+  let atlantianFullMeshes = 0;
+  let atlantianLodMeshes = 0;
+  for (const [index, kind] of SENTIENT_MOB_ORDER.entries()) {
+    const full = createMobVisual(kind, 10_000 + index);
+    full.group.updateMatrixWorld(true);
+    const bounds = new THREE.Box3().setFromObject(full.visual);
+    const lod = createSentientLodVisual(kind, 10_000 + index, bounds);
+    let fullMeshes = 0;
+    let lodMeshes = 0;
+    full.visual.traverse((object) => { if (object instanceof THREE.Mesh) fullMeshes += 1; });
+    lod.traverse((object) => { if (object instanceof THREE.Mesh) lodMeshes += 1; });
+    assert.ok(lodMeshes >= 4 && lodMeshes <= SENTIENT_LOD_MAX_MESHES, `${kind} LOD must stay within its draw-call contract`);
+    assert.equal(lod.userData.lodRole, MOB_DEFS[kind].role, `${kind} proxy must retain a role-readable marker`);
+    assert.ok(fullMeshes > lodMeshes * 3, `${kind} proxy should materially reduce model work`);
+    if (ATLANTIAN_ORDER.includes(kind as (typeof ATLANTIAN_ORDER)[number])) {
+      atlantianFullMeshes += fullMeshes;
+      atlantianLodMeshes += lodMeshes;
+    }
+  }
+  assert.ok(atlantianLodMeshes / atlantianFullMeshes <= 0.16,
+    `Atlantian role proxies should cut aggregate resident draw calls by at least 84% (${atlantianFullMeshes} to ${atlantianLodMeshes})`);
+  assert.equal(26 * SENTIENT_LOD_MAX_MESHES, 130, "a maximum-size 26-resident town has a bounded 130-draw-call proxy estimate");
 });
 
 test("the inspector captures the visible Skeleton Archer projectile", () => {
