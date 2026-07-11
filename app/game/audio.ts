@@ -1,7 +1,7 @@
 import { BLOCKS, BlockId } from "./data";
 
 export type AudioSettings = { volume: number; muted: boolean };
-export type SoundKind = "step" | "mine" | "break" | "place" | "pickup" | "jump" | "land" | "hurt" | "ui" | "attack" | "mob" | "craft" | "furnace" | "splash" | "eat";
+export type SoundKind = "step" | "mine" | "break" | "place" | "pickup" | "jump" | "fall" | "land" | "hurt" | "ui" | "attack" | "mob" | "craft" | "furnace" | "splash" | "eat";
 export type MusicScene =
   | "day"
   | "hoppin"
@@ -15,7 +15,9 @@ export type MusicScene =
   | "fernlight"
   | "meadowglass"
   | "emberdeepA"
-  | "emberdeepB";
+  | "emberdeepB"
+  | "hobbitSettlement"
+  | "goblinSettlement";
 export type SampleKind =
   | "swordSwing"
   | "zombieMoan1"
@@ -26,7 +28,7 @@ export type SampleKind =
   | "shadecrawlerStoneChitter";
 export type SamplePlaybackOptions = { gain?: number; playbackRate?: number; detune?: number; when?: number };
 
-const MUSIC_TRACKS: Record<MusicScene, string> = {
+const MUSIC_TRACKS: Record<MusicScene, string | readonly string[]> = {
   day: "/music/blockwild-theme.mp3",
   hoppin: "/music/blockwild-hoppin.mp3",
   night: "/music/blockwild-night.mp3",
@@ -40,6 +42,14 @@ const MUSIC_TRACKS: Record<MusicScene, string> = {
   meadowglass: "/music/blockwild-meadowglass-morning.mp3",
   emberdeepA: "/music/blockwild-emberdeep-a.mp3",
   emberdeepB: "/music/blockwild-emberdeep-b.mp3",
+  hobbitSettlement: [
+    "/music/blockwild-hearthroad-home-a.mp3",
+    "/music/blockwild-hearthroad-home-b.mp3",
+  ],
+  goblinSettlement: [
+    "/music/blockwild-brassroot-market-a.mp3",
+    "/music/blockwild-brassroot-market-b.mp3",
+  ],
 };
 
 const SAMPLES: Record<SampleKind, { source: string; gain: number }> = {
@@ -52,8 +62,8 @@ const SAMPLES: Record<SampleKind, { source: string; gain: number }> = {
   shadecrawlerStoneChitter: { source: "/sfx/shadecrawler-stone-chitter.mp3", gain: 0.52 },
 };
 const MUSIC_FALLBACKS: Partial<Record<MusicScene, string>> = {
-  combatA: MUSIC_TRACKS.skyboss,
-  combatB: MUSIC_TRACKS.skyboss,
+  combatA: "/music/blockwild-skyboss.mp3",
+  combatB: "/music/blockwild-skyboss.mp3",
 };
 
 export class SynthAudio {
@@ -149,20 +159,33 @@ export class SynthAudio {
 
   prepareMusic() {
     if (typeof Audio === "undefined" || this.music.size) return;
-    for (const [scene, source] of Object.entries(MUSIC_TRACKS) as Array<[MusicScene, string]>) {
-      const element = new Audio(source);
+    for (const [scene, source] of Object.entries(MUSIC_TRACKS) as Array<[MusicScene, string | readonly string[]]>) {
+      const playlist = typeof source === "string" ? [source] : [...source];
+      const element = new Audio(playlist[0]);
       const fallback = MUSIC_FALLBACKS[scene];
       if (fallback) element.addEventListener("error", () => {
         if (element.dataset.fallbackActive === "1") return;
         element.dataset.fallbackActive = "1";
         element.src = fallback;
+        element.loop = true;
         element.load();
         if (scene === this.musicScene && !this.musicSuspended) window.setTimeout(() => {
           this.musicStarted = true;
           void this.playMusicScene(scene);
         }, 0);
       });
-      element.loop = true;
+      element.dataset.playlistIndex = "0";
+      element.loop = playlist.length === 1;
+      if (playlist.length > 1) element.addEventListener("ended", () => {
+        const current = Number.parseInt(element.dataset.playlistIndex ?? "0", 10);
+        const next = (Number.isFinite(current) ? current + 1 : 1) % playlist.length;
+        element.dataset.playlistIndex = String(next);
+        element.src = playlist[next];
+        element.load();
+        if (scene === this.musicScene && this.musicStarted && !this.musicSuspended) {
+          void this.playMusicScene(scene);
+        }
+      });
       element.preload = scene === this.musicScene ? "auto" : "metadata";
       element.volume = 0;
       element.setAttribute("playsinline", "true");
@@ -354,6 +377,12 @@ export class SynthAudio {
       this.tone(660, 0.055, 0.045, "triangle");
       this.tone(990, 0.07, 0.04, "triangle", 0.052);
     } else if (kind === "jump") this.noiseBurst(0.075, 280, 0.045);
+    else if (kind === "fall") {
+      // A brief airy rush communicates that a fall has become dangerous
+      // without looping a sample or masking nearby creature sounds.
+      this.noiseBurst(0.42, 1040, 0.05, true);
+      this.tone(210, 0.38, 0.018, "sine", 0, 92);
+    }
     else if (kind === "land") {
       this.noiseBurst(0.11, 210, 0.09);
       this.tone(74, 0.08, 0.03, "sine");

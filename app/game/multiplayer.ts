@@ -168,6 +168,20 @@ export type ContainerAction = {
 export type ItemStackSnapshot = { item: number; count: number; durability?: number } | null;
 export type InventorySnapshot = { revision: number; slots: ItemStackSnapshot[]; selected: number };
 export type ContainerSnapshot = { id: string; kind: "chest" | "double-chest" | "furnace" | "crafting"; revision: number; slots: ItemStackSnapshot[] };
+export type CartographyMapShare = {
+  tableKey: string;
+  reply: boolean;
+  map: {
+    schema: number;
+    worldId: string;
+    playerId: string;
+    revision: number;
+    exploredChunks: string[];
+    markers: Array<Record<string, unknown>>;
+    activeBedId: string | null;
+    fastTravelCharges: number;
+  };
+};
 
 export type WorldSnapshot = {
   tick: number;
@@ -197,6 +211,7 @@ export type MultiplayerPayloadMap = {
   "sleep-vote": SleepVote;
   "inventory-action": InventoryAction;
   "container-action": ContainerAction;
+  "map-share": CartographyMapShare;
 };
 
 export type MultiplayerMessageType = keyof MultiplayerPayloadMap;
@@ -329,10 +344,10 @@ type PeerRecord = {
 };
 
 const MESSAGE_TYPES = new Set<MultiplayerMessageType>([
-  "hello", "heartbeat", "goodbye", "snapshot", "player-pose", "block-action", "mob-snapshot", "drop-snapshot", "time-weather", "sleep-vote", "inventory-action", "container-action",
+  "hello", "heartbeat", "goodbye", "snapshot", "player-pose", "block-action", "mob-snapshot", "drop-snapshot", "time-weather", "sleep-vote", "inventory-action", "container-action", "map-share",
 ]);
 const CONTROL_TYPES = new Set<MultiplayerMessageType>(["hello", "heartbeat", "goodbye"]);
-const GUEST_OUTBOUND_TYPES = new Set<MultiplayerMessageType>(["hello", "heartbeat", "goodbye", "player-pose", "block-action", "sleep-vote", "inventory-action", "container-action"]);
+const GUEST_OUTBOUND_TYPES = new Set<MultiplayerMessageType>(["hello", "heartbeat", "goodbye", "player-pose", "block-action", "sleep-vote", "inventory-action", "container-action", "map-share"]);
 
 export class MultiplayerProtocolError extends Error {
   constructor(message: string) {
@@ -597,6 +612,29 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
         && (value.count === undefined || isInteger(value.count, 1, 65_535))
         && (value.expectedRevision === undefined || isInteger(value.expectedRevision, 0, Number.MAX_SAFE_INTEGER))
         && validateStatusFields(value);
+    case "map-share": {
+      if (!isShortString(value.tableKey, 96) || typeof value.reply !== "boolean" || !isRecord(value.map)) return false;
+      const map = value.map;
+      return isInteger(map.schema, 1, 10)
+        && isShortString(map.worldId, 128)
+        && isShortString(map.playerId, 128)
+        && isInteger(map.revision, 0, Number.MAX_SAFE_INTEGER)
+        && Array.isArray(map.exploredChunks)
+        && map.exploredChunks.length <= 4096
+        && map.exploredChunks.every((entry) => isShortString(entry, 48))
+        && Array.isArray(map.markers)
+        && map.markers.length <= 512
+        && map.markers.every((entry) => isRecord(entry)
+          && isShortString(entry.id, 128)
+          && isShortString(entry.name, 160)
+          && ["natural-poi", "manual", "wayshrine", "bed-spawn"].includes(entry.kind as string)
+          && isRecord(entry.position)
+          && isFiniteNumber(entry.position.x, -COORDINATE_LIMIT, COORDINATE_LIMIT)
+          && isFiniteNumber(entry.position.y, -COORDINATE_LIMIT, COORDINATE_LIMIT)
+          && isFiniteNumber(entry.position.z, -COORDINATE_LIMIT, COORDINATE_LIMIT))
+        && (map.activeBedId === null || isShortString(map.activeBedId, 128))
+        && isInteger(map.fastTravelCharges, 0, 999);
+    }
     case "snapshot":
       return isInteger(value.tick, 0, Number.MAX_SAFE_INTEGER)
         && isShortString(value.seed, 128)
@@ -1194,6 +1232,7 @@ export class MultiplayerSession {
   sendSleepVote(payload: SleepVote, peerId?: string) { return this.send("sleep-vote", payload, peerId); }
   sendInventoryAction(payload: InventoryAction, peerId?: string) { return this.send("inventory-action", payload, peerId); }
   sendContainerAction(payload: ContainerAction, peerId?: string) { return this.send("container-action", payload, peerId); }
+  sendMapShare(payload: CartographyMapShare, peerId?: string) { return this.send("map-share", payload, peerId); }
 
   private protocolStrike(peer: PeerRecord, message: string) {
     if (peer.closed) return;

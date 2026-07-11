@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { createZombieSpec, RATTLEKIN_CLUB_CONTRACT, RIDGEBACK_GROUND_LIFT } from "./model-specs";
+import { createZombieSpec, FACTION_WEAPON_CONTRACTS, RATTLEKIN_CLUB_CONTRACT, RIDGEBACK_GROUND_LIFT } from "./model-specs";
 import { CORE_MOB_ORDER, MOB_DEFS, type CoreMobKind, type MobKind } from "./mobs";
 import { createArrowVisual } from "./projectiles";
 
@@ -93,7 +93,147 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     }
   };
 
-  if (kind === "mossling") {
+  const sentientNpc = kind.startsWith("hobbit-") || kind.startsWith("goblin-");
+  const buildSentientNpc = () => {
+    const hobbit = kind.startsWith("hobbit-");
+    const prefix = kind;
+    const skin = material(hobbit ? 0xc9916c : 0x78924e);
+    const skinShade = material(hobbit ? 0xa96e52 : 0x526b3b);
+    const hair = material(hobbit ? 0x5b3827 : 0x342b26);
+    const leather = material(0x5a3d2a);
+    const spearWood = material(0x9b6a39);
+    const metal = material(hobbit ? 0x8a8f86 : 0x727b72);
+    const cloth = bodyMaterial;
+    const trim = accentMaterial;
+    const baseY = hobbit ? 0 : 0.05;
+    const bodyWidth = hobbit ? 0.62 : 0.52;
+    const bodyHeight = hobbit ? 0.62 : 0.72;
+    const shoulderY = baseY + (hobbit ? 0.74 : 0.88);
+    const headY = baseY + (hobbit ? 1.05 : 1.2);
+    const legLength = hobbit ? 0.48 : 0.6;
+
+    add(visual, [bodyWidth, bodyHeight, 0.42], cloth, [0, baseY + 0.56, 0], "body", `${prefix}-tunic`);
+    add(visual, [bodyWidth + 0.05, 0.18, 0.46], trim, [0, baseY + 0.35, 0.01], undefined, `${prefix}-coat-skirt`);
+    add(visual, [bodyWidth + 0.08, 0.09, 0.47], leather, [0, baseY + 0.51, 0], undefined, `${prefix}-belt`);
+    add(visual, [0.12, 0.14, 0.06], metal, [0, baseY + 0.51, -0.255], undefined, `${prefix}-belt-buckle`);
+
+    const headWidth = hobbit ? 0.56 : 0.5;
+    add(visual, [headWidth, hobbit ? 0.48 : 0.52, hobbit ? 0.48 : 0.46], skin, [0, headY, -0.03], "head", `${prefix}-head`);
+    add(visual, [hobbit ? 0.26 : 0.34, hobbit ? 0.17 : 0.23, 0.22], skinShade, [0, headY - 0.08, -0.34], undefined, `${prefix}-nose`);
+    eyePair(hobbit ? 0.16 : 0.15, headY + 0.08, -0.285, hobbit ? 0.062 : 0.068, prefix);
+    add(visual, [0.2, 0.045, 0.035], material(hobbit ? 0x6b3d35 : 0x3a2e28), [0, headY - 0.17, -0.292], undefined, `${prefix}-mouth`);
+
+    if (hobbit) {
+      add(visual, [0.54, 0.16, 0.45], hair, [0, headY + 0.24, 0.01], undefined, `${prefix}-curly-hair-cap`);
+      for (const side of [-1, 1]) {
+        add(visual, [0.15, 0.17, 0.15], hair, [side * 0.27, headY + 0.1, 0.03], undefined, `${prefix}-${side < 0 ? "left" : "right"}-curl`);
+        add(visual, [0.16, 0.17, 0.08], skin, [side * 0.32, headY, -0.01], undefined, `${prefix}-${side < 0 ? "left" : "right"}-ear`);
+      }
+    } else {
+      for (const side of [-1, 1]) {
+        const ear = add(visual, [0.36, 0.13, 0.24], skin, [side * 0.37, headY + 0.03, -0.02], undefined, `${prefix}-${side < 0 ? "left" : "right"}-pointed-ear`);
+        ear.rotation.z = side * -0.22;
+        add(visual, [0.08, 0.13, 0.05], material(0xe9d2a4), [side * 0.12, headY - 0.13, -0.31], undefined, `${prefix}-${side < 0 ? "left" : "right"}-tusk`).rotation.z = side * 0.18;
+      }
+      add(visual, [0.45, 0.12, 0.38], hair, [0, headY + 0.29, 0.03], undefined, `${prefix}-scalp`);
+    }
+
+    for (const side of [-1, 1]) {
+      const sideName = side < 0 ? "left" : "right";
+      const leg = pivotBox([0.2, legLength, 0.22], trim, [side * (hobbit ? 0.18 : 0.15), baseY + 0.28, 0.01], [0, -legLength / 2, 0], "legs", `${prefix}-${sideName}-leg`);
+      leg.userData.phase = side < 0 ? 0 : Math.PI;
+      add(leg, [hobbit ? 0.34 : 0.26, 0.16, hobbit ? 0.48 : 0.36], hobbit ? skin : leather, [0, -legLength - 0.03, -0.1], undefined, `${prefix}-${sideName}-${hobbit ? "broad-foot" : "boot"}`);
+      const arm = pivotBox([0.16, hobbit ? 0.54 : 0.62, 0.18], cloth, [side * (bodyWidth / 2 + 0.08), shoulderY, 0], [0, -(hobbit ? 0.27 : 0.31), 0], "arms", `${prefix}-${sideName}-arm`);
+      arm.userData.side = side;
+      arm.userData.phase = side < 0 ? 0 : Math.PI;
+      add(arm, [0.2, 0.2, 0.2], skin, [0, -(hobbit ? 0.59 : 0.67), 0], undefined, `${prefix}-${sideName}-hand`);
+    }
+
+    const rightArm = parts.arms.at(-1);
+    const leftArm = parts.arms.at(-2);
+    const readyHands = () => {
+      if (rightArm) rightArm.rotation.x = 1.02;
+      if (leftArm) leftArm.rotation.x = 0.88;
+    };
+    const addForwardHammer = () => {
+      readyHands();
+      add(visual, [...FACTION_WEAPON_CONTRACTS.hammer.handleSize], leather, [0.27, baseY + 0.68, -0.56], undefined, `${prefix}-hammer-handle`);
+      add(visual, [...FACTION_WEAPON_CONTRACTS.hammer.headSize], metal, [0.27, baseY + 0.68, FACTION_WEAPON_CONTRACTS.hammer.headForward], undefined, `${prefix}-hammer-head`);
+      add(visual, [0.18, 0.38, 0.22], trim, [0.27, baseY + 0.68, -1.17], undefined, `${prefix}-hammer-center`);
+    };
+    const addForwardCrossbow = () => {
+      readyHands();
+      add(visual, [...FACTION_WEAPON_CONTRACTS.crossbow.stockSize], leather, [0, baseY + 0.69, -0.57], undefined, `${prefix}-crossbow-stock`);
+      add(visual, [...FACTION_WEAPON_CONTRACTS.crossbow.lathSize], metal, [0, baseY + 0.7, -1.02], undefined, `${prefix}-crossbow-lath`);
+      add(visual, [0.035, 0.64, 0.04], material(0xe7ddbf), [0, baseY + 0.7, -1.04], undefined, `${prefix}-crossbow-string`).rotation.z = Math.PI / 2;
+      add(visual, [...FACTION_WEAPON_CONTRACTS.crossbow.boltSize], material(0xa98454), [0, baseY + 0.76, -0.76], undefined, `${prefix}-loaded-bolt`);
+      add(visual, [0.2, 0.13, 0.22], metal, [0, baseY + 0.76, FACTION_WEAPON_CONTRACTS.crossbow.boltTipForward], undefined, `${prefix}-bolt-head`);
+    };
+    const addForwardSpear = () => {
+      readyHands();
+      add(visual, [...FACTION_WEAPON_CONTRACTS.spear.shaftSize], spearWood, [0.25, baseY + 0.77, -0.78], undefined, `${prefix}-spear-shaft`);
+      add(visual, [...FACTION_WEAPON_CONTRACTS.spear.headSize], metal, [0.25, baseY + 0.77, FACTION_WEAPON_CONTRACTS.spear.headForward], undefined, `${prefix}-spear-head`);
+      add(visual, [0.32, 0.2, 0.06], trim, [0.25, baseY + 0.91, -1.58], undefined, `${prefix}-spear-pennant`).rotation.z = -0.18;
+    };
+    const addForwardPick = () => {
+      readyHands();
+      add(visual, [0.09, 0.09, 1.05], leather, [0.24, baseY + 0.7, -0.5], undefined, `${prefix}-pick-handle`);
+      add(visual, [0.68, 0.12, 0.18], metal, [0.24, baseY + 0.7, -1.05], undefined, `${prefix}-pick-head`);
+    };
+
+    if (kind === "hobbit-hammer-guard") {
+      addForwardHammer();
+      add(visual, [0.64, 0.12, 0.52], metal, [0, headY + 0.3, -0.01], undefined, `${prefix}-helmet-brim`);
+      add(visual, [0.48, 0.28, 0.43], metal, [0, headY + 0.4, 0.01], undefined, `${prefix}-helmet-crown`);
+    } else if (kind === "hobbit-crossbow-guard") {
+      addForwardCrossbow();
+      add(visual, [0.62, 0.38, 0.5], trim, [0, headY + 0.2, 0.05], undefined, `${prefix}-hood`);
+    } else if (kind === "goblin-spear-guard") {
+      addForwardSpear();
+      add(visual, [0.55, 0.16, 0.48], metal, [0, headY + 0.28, 0], undefined, `${prefix}-helmet`);
+      add(visual, [0.12, 0.42, 0.14], trim, [0, headY + 0.55, 0.04], undefined, `${prefix}-helmet-crest`).rotation.z = -0.25;
+    } else if (kind === "hobbit-miner" || kind === "goblin-miner") {
+      addForwardPick();
+      add(visual, [0.58, 0.14, 0.5], metal, [0, headY + 0.28, 0], undefined, `${prefix}-miner-helmet`);
+      add(visual, [0.16, 0.16, 0.1], material(0xffdb69, true), [0, headY + 0.3, -0.29], undefined, `${prefix}-helmet-lamp`);
+    } else if (kind === "hobbit-farmer" || kind === "goblin-worker") {
+      add(visual, [0.46, 0.5, 0.05], material(0xe5d3a4), [0, baseY + 0.52, -0.235], undefined, `${prefix}-work-apron`);
+      if (hobbit) {
+        add(visual, [0.84, 0.1, 0.7], material(0xd8b560), [0, headY + 0.3, 0], undefined, `${prefix}-straw-hat-brim`);
+        add(visual, [0.46, 0.24, 0.42], material(0xc89c4c), [0, headY + 0.43, 0.03], undefined, `${prefix}-straw-hat-crown`);
+      } else {
+        add(visual, [0.5, 0.22, 0.18], leather, [0, baseY + 0.64, 0.29], undefined, `${prefix}-seed-pouch`);
+      }
+    } else if (kind === "hobbit-banker") {
+      add(visual, [0.45, 0.5, 0.05], material(0xf1ead1), [0, baseY + 0.59, -0.235], undefined, `${prefix}-waistcoat-front`);
+      add(visual, [0.4, 0.28, 0.08], material(0xd9b74e, true), [0.26, baseY + 0.47, -0.28], undefined, `${prefix}-gold-ledger`);
+      add(visual, [0.15, 0.15, 0.08], metal, [-0.16, baseY + 0.78, -0.25], undefined, `${prefix}-spectacles-left`);
+      add(visual, [0.15, 0.15, 0.08], metal, [0.16, baseY + 0.78, -0.25], undefined, `${prefix}-spectacles-right`);
+    } else if (kind === "hobbit-merchant") {
+      add(visual, [0.52, 0.5, 0.2], leather, [0, baseY + 0.57, 0.3], undefined, `${prefix}-merchant-pack`);
+      add(visual, [0.34, 0.4, 0.05], material(0xe7d4aa), [-0.26, baseY + 0.63, -0.25], undefined, `${prefix}-price-ledger`);
+    } else if (kind === "hobbit-mayor") {
+      add(visual, [0.13, 0.75, 0.06], material(0xe2bf5b), [-0.14, baseY + 0.72, -0.24], undefined, `${prefix}-mayoral-sash`).rotation.z = -0.32;
+      add(visual, [0.2, 0.2, 0.08], material(0xf0cf6a, true), [0.14, baseY + 0.64, -0.27], undefined, `${prefix}-town-seal`);
+      add(visual, [0.44, 0.36, 0.08], leather, [0.27, baseY + 0.49, -0.28], undefined, `${prefix}-town-ledger`);
+    } else if (kind === "goblin-chieftain") {
+      addForwardSpear();
+      add(visual, [0.64, 0.1, 0.54], metal, [0, headY + 0.29, 0], undefined, `${prefix}-key-crown`);
+      for (const side of [-1, 0, 1]) add(visual, [0.08, 0.25 + (side === 0 ? 0.12 : 0), 0.08], metal, [side * 0.2, headY + 0.45, 0], undefined, `${prefix}-crown-key-${side + 2}`);
+    } else if (kind === "goblin-alchemist") {
+      add(visual, [0.46, 0.52, 0.22], leather, [0, baseY + 0.61, 0.31], undefined, `${prefix}-bottle-pack`);
+      for (const [index, x, color] of [[1, -0.17, 0x7bdcc3], [2, 0, 0xe977b9], [3, 0.17, 0xf2c65b]] as Array<[number, number, number]>) {
+        add(visual, [0.12, 0.25, 0.12], material(color, true, 0.86), [x, baseY + 0.7, 0.46], undefined, `${prefix}-bottle-${index}`);
+      }
+      add(visual, [0.18, 0.18, 0.08], metal, [-0.15, headY + 0.11, -0.28], undefined, `${prefix}-goggle-left`);
+      add(visual, [0.18, 0.18, 0.08], metal, [0.15, headY + 0.11, -0.28], undefined, `${prefix}-goggle-right`);
+    }
+    if (hobbit) visual.scale.set(1.07, 0.84, 1.02);
+  };
+
+  if (sentientNpc) {
+    buildSentientNpc();
+  } else if (kind === "mossling") {
     add(visual, [0.64, 0.44, 0.56], bodyMaterial, [0, 0.1, 0], "body", "mossling-body");
     add(visual, [0.42, 0.34, 0.36], accentMaterial, [0, 0.28, -0.34], "head", "mossling-head");
     add(visual, [0.08, 0.08, 0.04], eyeMaterial, [-0.12, 0.32, -0.53], undefined, "mossling-left-eye");
@@ -484,11 +624,107 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     }
     if (kind === "emberjay") add(visual, [0.14, 0.28, 0.12], accentMaterial, [0, 0.48, -0.35], undefined, "emberjay-crest").rotation.x = -0.24;
     else add(visual, [0.3, 0.08, 0.3], material(0xf0e59f), [0, 0.05, -0.37], undefined, "canopy-lark-breast-mark");
+  } else if (kind === "warg") {
+    add(visual, [1.02, 0.72, 1.58], bodyMaterial, [0, 0.35, 0.12], "body", "warg-body");
+    add(visual, [0.62, 0.78, 0.6], accentMaterial, [0, 0.64, -0.58], "body", "warg-ruff");
+    add(visual, [0.72, 0.62, 0.7], bodyMaterial, [0, 0.67, -1.02], "head", "warg-head");
+    add(visual, [0.54, 0.34, 0.52], darkMaterial, [0, 0.52, -1.51], undefined, "warg-muzzle");
+    eyePair(0.22, 0.78, -1.36, 0.085, "warg");
+    add(visual, [0.1, 0.08, 0.06], material(0x1b1715), [0, 0.56, -1.8], undefined, "warg-nose");
+    for (const side of [-1, 1]) {
+      const ear = add(visual, [0.25, 0.52, 0.24], darkMaterial, [side * 0.25, 1.12, -0.96], undefined, `warg-${side < 0 ? "left" : "right"}-ear`);
+      ear.rotation.z = side * -0.24;
+      add(visual, [0.16, 0.28, 0.12], material(0xb98779), [side * 0.25, 1.13, -1.02], undefined, `warg-${side < 0 ? "left" : "right"}-inner-ear`).rotation.z = side * -0.24;
+      for (const [index, x] of [-0.15, 0.15].entries()) {
+        const tooth = add(visual, [0.08, 0.2, 0.08], material(0xe8dfc7), [side * 0.13 + x * 0.1, 0.36, -1.72 - index * 0.02], undefined, `warg-${side < 0 ? "left" : "right"}-fang-${index + 1}`);
+        tooth.rotation.x = -0.2;
+      }
+    }
+    quadrupedLegs(0.35, -0.38, 0.5, 0.25, 0.82, 0.22, darkMaterial, "warg");
+    for (const name of ["front-left", "front-right", "rear-left", "rear-right"]) {
+      const leg = visual.getObjectByName(`warg-${name}-leg-pivot`);
+      if (leg) add(leg, [0.28, 0.16, 0.38], bodyMaterial, [0, -0.87, -0.08], undefined, `warg-${name}-paw`);
+    }
+    const tail = pivotBox([0.34, 0.36, 1.08], accentMaterial, [0, 0.64, 0.86], [0, 0.08, 0.5], "body", "warg-tail");
+    tail.rotation.x = 0.45;
+    tail.rotation.z = -0.18;
+    const saddle = new THREE.Group();
+    saddle.name = "warg-saddle";
+    saddle.visible = false;
+    visual.add(saddle);
+    add(saddle, [0.9, 0.12, 0.78], material(0x5f3a28), [0, 0.76, 0.08], undefined, "warg-saddle-blanket");
+    add(saddle, [0.58, 0.28, 0.54], material(0x8b5f3c), [0, 0.91, 0.07], undefined, "warg-saddle-seat");
+    add(saddle, [0.1, 0.74, 0.12], material(0x3d2b23), [-0.48, 0.47, 0.07], undefined, "warg-left-girth");
+    add(saddle, [0.1, 0.74, 0.12], material(0x3d2b23), [0.48, 0.47, 0.07], undefined, "warg-right-girth");
+    visual.userData.saddleAnchor = [0, 0.92, 0.08];
+  } else if (kind === "burrowbell") {
+    add(visual, [0.7, 0.68, 0.84], bodyMaterial, [0, 0.02, 0.08], "body", "burrowbell-body");
+    add(visual, [0.5, 0.38, 0.48], material(0xe2c493), [0, 0.03, -0.36], undefined, "burrowbell-belly");
+    add(visual, [0.58, 0.54, 0.52], accentMaterial, [0, 0.25, -0.5], "head", "burrowbell-head");
+    add(visual, [0.32, 0.22, 0.28], material(0xd5a676), [0, 0.13, -0.86], undefined, "burrowbell-muzzle");
+    eyePair(0.16, 0.35, -0.78, 0.065, "burrowbell");
+    add(visual, [0.08, 0.07, 0.05], material(0x3a251e), [0, 0.17, -1.02], undefined, "burrowbell-nose");
+    for (const side of [-1, 1]) {
+      add(visual, [0.18, 0.2, 0.14], darkMaterial, [side * 0.2, 0.58, -0.48], undefined, `burrowbell-${side < 0 ? "left" : "right"}-ear`);
+      const forepaw = pivotBox([0.15, 0.38, 0.16], accentMaterial, [side * 0.18, 0.14, -0.38], [0, -0.19, -0.05], "arms", `burrowbell-${side < 0 ? "left" : "right"}-forepaw`);
+      forepaw.rotation.x = 0.24;
+      const hindpaw = pivotBox([0.22, 0.28, 0.34], darkMaterial, [side * 0.25, -0.18, 0.32], [0, -0.14, -0.04], "legs", `burrowbell-${side < 0 ? "left" : "right"}-hindpaw`);
+      hindpaw.userData.phase = side < 0 ? 0 : Math.PI;
+    }
+    add(visual, [0.34, 0.34, 0.4], darkMaterial, [0, 0.08, 0.62], "body", "burrowbell-bell-tail");
+    add(visual, [0.22, 0.22, 0.28], accentMaterial, [0, 0.1, 0.83], undefined, "burrowbell-tail-tip");
+    for (const side of [-1, 1]) for (let whisker = 0; whisker < 2; whisker += 1) {
+      const line = add(visual, [0.34, 0.018, 0.018], material(0xe9dcc6), [side * 0.29, 0.15 + whisker * 0.07, -0.93], undefined, `burrowbell-${side < 0 ? "left" : "right"}-whisker-${whisker + 1}`);
+      line.rotation.y = side * 0.18;
+      line.rotation.z = side * (whisker ? -0.12 : 0.08);
+    }
+  } else if (kind === "dewback-tapir") {
+    add(visual, [1.1, 0.82, 1.5], bodyMaterial, [0, 0.34, 0.14], "body", "dewback-tapir-body");
+    add(visual, [0.94, 0.32, 0.9], accentMaterial, [0, 0.73, 0.08], undefined, "dewback-tapir-dew-saddle");
+    add(visual, [0.72, 0.66, 0.72], bodyMaterial, [0, 0.43, -0.88], "head", "dewback-tapir-head");
+    const snout = add(visual, [0.38, 0.38, 0.76], accentMaterial, [0, 0.25, -1.48], undefined, "dewback-tapir-snout");
+    snout.rotation.x = -0.12;
+    eyePair(0.23, 0.58, -1.24, 0.07, "dewback-tapir");
+    add(visual, [0.22, 0.12, 0.1], material(0x342823), [0, 0.18, -1.88], undefined, "dewback-tapir-nose");
+    for (const side of [-1, 1]) {
+      const ear = add(visual, [0.24, 0.38, 0.2], darkMaterial, [side * 0.27, 0.87, -0.79], undefined, `dewback-tapir-${side < 0 ? "left" : "right"}-ear`);
+      ear.rotation.z = side * -0.25;
+    }
+    quadrupedLegs(0.38, -0.36, 0.48, 0.2, 0.66, 0.25, darkMaterial, "dewback-tapir");
+    for (const name of ["front-left", "front-right", "rear-left", "rear-right"]) {
+      const leg = visual.getObjectByName(`dewback-tapir-${name}-leg-pivot`);
+      if (leg) add(leg, [0.34, 0.17, 0.4], accentMaterial, [0, -0.71, -0.06], undefined, `dewback-tapir-${name}-three-toed-foot`);
+    }
+    add(visual, [0.16, 0.18, 0.38], darkMaterial, [0, 0.42, 0.96], "body", "dewback-tapir-tail").rotation.x = -0.26;
+    for (const [index, x, z] of [[1, -0.28, -0.05], [2, 0.05, 0.12], [3, 0.31, -0.13]] as Array<[number, number, number]>) {
+      add(visual, [0.1, 0.08, 0.1], material(0x9ed8d4, true, 0.72), [x, 0.94, z], undefined, `dewback-tapir-dewdrop-${index}`);
+    }
+  } else if (kind === "deepwater-shark") {
+    add(visual, [0.88, 0.7, 2.4], bodyMaterial, [0, 0, 0], "body", "deepwater-shark-body");
+    add(visual, [0.78, 0.48, 0.92], accentMaterial, [0, -0.14, -1.38], "head", "deepwater-shark-snout");
+    eyePair(0.3, 0.12, -1.82, 0.085, "deepwater-shark");
+    add(visual, [0.52, 0.13, 0.12], material(0x3a2222), [0, -0.31, -1.85], undefined, "deepwater-shark-mouth");
+    for (const side of [-1, 1]) for (let tooth = 0; tooth < 3; tooth += 1) {
+      add(visual, [0.07, 0.12, 0.07], material(0xf2eee2), [side * (0.09 + tooth * 0.09), -0.31, -1.93], undefined, `deepwater-shark-${side < 0 ? "left" : "right"}-tooth-${tooth + 1}`);
+    }
+    for (const side of [-1, 1]) {
+      const pectoral = add(visual, [0.9, 0.1, 0.66], darkMaterial, [side * 0.62, -0.16, -0.15], "wings", `deepwater-shark-${side < 0 ? "left" : "right"}-pectoral-fin`);
+      pectoral.rotation.z = side * -0.28;
+      pectoral.rotation.y = side * -0.2;
+      const tail = add(visual, [0.22, 0.96, 0.7], darkMaterial, [side * 0.08, 0, 1.63], undefined, `deepwater-shark-tail-${side < 0 ? "left" : "right"}`);
+      tail.rotation.z = side * 0.18;
+    }
+    const dorsal = add(visual, [0.16, 0.94, 0.72], darkMaterial, [0, 0.68, 0.2], undefined, "deepwater-shark-dorsal-fin");
+    dorsal.rotation.x = 0.14;
+    add(visual, [0.52, 0.18, 1.7], material(0xd7dfdc, false, 0.9), [0, -0.37, -0.06], undefined, "deepwater-shark-pale-belly");
   } else if (kind === "shoalfin" || kind === "coralback" || kind === "brookdart" || kind === "gloomfin"
-    || kind === "silverthread" || kind === "reedneedle" || kind === "emberribbon" || kind === "cavefilament") {
+    || kind === "silverthread" || kind === "reedneedle" || kind === "emberribbon" || kind === "cavefilament"
+    || kind === "redfin-salmon" || kind === "blue-mackerel") {
     const prefix = kind;
-    const thin = kind === "silverthread" || kind === "reedneedle" || kind === "emberribbon" || kind === "cavefilament";
-    const large = kind === "coralback" ? 1.28 : kind === "brookdart" ? 0.72 : kind === "gloomfin" ? 0.92 : thin ? 0.88 : 0.82;
+    const thin = kind === "silverthread" || kind === "reedneedle" || kind === "emberribbon" || kind === "cavefilament"
+      || kind === "redfin-salmon" || kind === "blue-mackerel";
+    const large = kind === "coralback" ? 1.28 : kind === "brookdart" ? 0.72 : kind === "gloomfin" ? 0.92
+      : kind === "redfin-salmon" ? 1.16 : kind === "blue-mackerel" ? 1.02 : thin ? 0.88 : 0.82;
     add(visual, [0.5 * large * (thin ? 0.5 : 1), 0.42 * large * (thin ? 0.48 : 1), 0.92 * large * (thin ? 1.35 : 1)], bodyMaterial, [0, 0, 0], "body", `${prefix}-body`);
     add(visual, [0.43 * large * (thin ? 0.52 : 1), 0.38 * large * (thin ? 0.55 : 1), 0.42 * large], accentMaterial, [0, 0, -0.67 * large * (thin ? 1.2 : 0.82)], "head", `${prefix}-head`);
     eyePair(0.15 * large, 0.08 * large, -0.78 * large, 0.055 * large, prefix);
@@ -511,6 +747,15 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     } else if (kind === "gloomfin") {
       add(visual, [0.22, 0.16, 0.12], material(0x89fff1, true), [0, -0.02, -0.82], undefined, "gloomfin-lure");
       add(visual, [0.035, 0.42, 0.035], darkMaterial, [0, 0.36, -0.45], undefined, "gloomfin-lure-stem").rotation.x = -0.46;
+    } else if (kind === "redfin-salmon") {
+      add(visual, [0.38 * large, 0.07, 0.62 * large], material(0xc84f45), [0, -0.17 * large, 0.06], undefined, "redfin-salmon-ventral-fin");
+      add(visual, [0.32 * large, 0.06, 0.42 * large], material(0xc84f45), [0, 0.22 * large, 0.11], undefined, "redfin-salmon-red-dorsal");
+      for (const side of [-1, 1]) add(visual, [0.32 * large, 0.04, 0.28 * large], material(0xc84f45), [side * 0.2 * large, -0.03, 0.03], undefined, `redfin-salmon-${side < 0 ? "left" : "right"}-red-fin`);
+    } else if (kind === "blue-mackerel") {
+      for (let stripe = 0; stripe < 5; stripe += 1) {
+        const mark = add(visual, [0.32 * large, 0.04, 0.12 * large], darkMaterial, [0, 0.15 * large, -0.3 * large + stripe * 0.24 * large], undefined, `blue-mackerel-stripe-${stripe + 1}`);
+        mark.rotation.y = (stripe % 2 ? 1 : -1) * 0.12;
+      }
     } else {
       add(visual, [0.3 * large, 0.055, 0.5 * large], material(eyeColor), [0, 0.18 * large, 0.02], undefined, `${prefix}-back-stripe`);
     }

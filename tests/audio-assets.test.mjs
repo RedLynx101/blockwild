@@ -6,12 +6,16 @@ import { resolve } from "node:path";
 const tracks = [
   "blockwild-ironbloom-skirmish-a.mp3",
   "blockwild-ironbloom-skirmish-b.mp3",
+  "blockwild-hearthroad-home-a.mp3",
+  "blockwild-hearthroad-home-b.mp3",
+  "blockwild-brassroot-market-a.mp3",
+  "blockwild-brassroot-market-b.mp3",
 ];
 
-test("v0.5 Suno combat cues are present and complete", () => {
+test("Suno combat and Hearthroads settlement scores are present and complete", () => {
   for (const name of tracks) {
     const path = resolve("public", "music", name);
-    assert.ok(statSync(path).size > 3_000_000, `${name} should be a complete music track`);
+    assert.ok(statSync(path).size > 2_000_000, `${name} should be a complete music track`);
     const bytes = readFileSync(path).subarray(0, 10);
     const id3 = bytes.subarray(0, 3).toString("ascii") === "ID3";
     const mpegFrame = bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0;

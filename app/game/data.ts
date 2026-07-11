@@ -109,6 +109,13 @@ export enum BlockId {
   CloudreedGrass = 246,
   Cloudbell = 247,
   WildBeehive = 248,
+  CartographyTable = 249,
+  AlchemyStand = 250,
+  Wayshrine = 251,
+  Distillery = 252,
+  HearthChair = 253,
+  HobbitThatch = 254,
+  GoblinBrasswork = 255,
 }
 
 export const Item = {
@@ -203,13 +210,30 @@ export const Item = {
   CloudglassRelic: 184,
   QueenCell: 185,
   WorkerBee: 186,
+  GlassBottle: 187,
+  WaterBottle: 188,
+  HealthPotion: 189,
+  WayfarerPotion: 190,
+  HearthwardTonic: 191,
+  GloamstepElixir: 192,
+  Honeymead: 193,
+  HobbitCrossbowBlueprint: 194,
+  FineCrossbowBlueprint: 195,
+  GoblinSpearBlueprint: 196,
+  GloamstepBlueprint: 197,
+  HearthwardBlueprint: 198,
+  MeadBlueprint: 199,
+  HearthguardCrossbow: 200,
+  WayfarerCrossbow: 201,
+  CrossbowBolt: 202,
+  GoblinsmithSpear: 203,
 } as const;
 
 export type ItemCode = number;
 export type GameMode = "builder" | "survival";
 export type Weather = "clear" | "rain";
 export type RenderLayer = "opaque" | "cutout" | "transparent" | "emissive" | "none";
-export type ToolKind = "pickaxe" | "axe" | "shovel" | "sword";
+export type ToolKind = "pickaxe" | "axe" | "shovel" | "sword" | "crossbow" | "spear";
 export type BlockTool = "pickaxe" | "axe" | "shovel" | "hand";
 export type EquipmentSlot = "head" | "chest" | "legs" | "feet";
 
@@ -233,7 +257,7 @@ export type BlockDefinition = {
   color: string;
   preferredTool: BlockTool;
   requiredTier: number;
-  shape?: "cube" | "cross" | "torch" | "door" | "chest" | "bed" | "exhibit" | "bush" | "fruit" | "fence" | "gate" | "apiary" | "wild-hive" | "orb-rack" | "orb-healer";
+  shape?: "cube" | "cross" | "torch" | "door" | "chest" | "bed" | "exhibit" | "bush" | "fruit" | "fence" | "gate" | "apiary" | "wild-hive" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "chair";
   replaceable?: boolean;
   liquid?: "water" | "lava";
   /** Partial-height collision used by connected fences and similar blocks. */
@@ -257,19 +281,23 @@ export type ItemDefinition = {
   armor?: number;
   food?: number;
   fuel?: number;
-  useKind?: "net" | "release-creature" | "boat" | "creature-cage" | "capture-orb" | "magic-relic" | "plant" | "hoe" | "scythe" | "bucket" | "lead";
+  useKind?: "net" | "release-creature" | "boat" | "creature-cage" | "capture-orb" | "magic-relic" | "plant" | "hoe" | "scythe" | "bucket" | "lead" | "blueprint" | "potion" | "ranged-weapon" | "spear";
+  blueprintId?: string;
+  potionId?: string;
+  ammoItem?: ItemCode;
+  magazineSize?: number;
   creatureKind?: string;
   /** Initial world block produced by planting this item rather than placing it directly. */
   plantBlock?: BlockId;
   /** Contents rendered in and placed from a bucket. */
   bucketLiquid?: "water" | "lava";
   /** Semantic UI hook for non-cube inventory artwork. */
-  iconKind?: "crafting-table" | "chest" | "apiary" | "capture-orb" | "orb-rack" | "orb-healer" | "bucket" | "fence-gate" | "lead" | "seed" | "produce" | "honeycomb" | "honey" | "jelly" | "wax" | "milk" | "relic" | "queen-cell" | "bee";
+  iconKind?: "crafting-table" | "chest" | "apiary" | "capture-orb" | "orb-rack" | "orb-healer" | "bucket" | "fence-gate" | "lead" | "seed" | "produce" | "honeycomb" | "honey" | "jelly" | "wax" | "milk" | "relic" | "queen-cell" | "bee" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "chair" | "bottle" | "potion" | "mead" | "blueprint" | "bolt" | "spear" | "crossbow";
   /** Reuse a world atlas texture for the handheld/icon representation. */
   worldTextureBlock?: BlockId;
   /** Shared semantic model hooks consumed by held-item and dropped-item renderers. */
-  heldModel?: "wildwood-chest" | "apiary" | "capture-orb" | "orb-rack" | "orb-healer";
-  dropModel?: "wildwood-chest" | "apiary" | "capture-orb" | "orb-rack" | "orb-healer";
+  heldModel?: "wildwood-chest" | "apiary" | "capture-orb" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "chair" | "bottle" | "potion" | "mead" | "blueprint" | "crossbow" | "spear";
+  dropModel?: "wildwood-chest" | "apiary" | "capture-orb" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "chair" | "bottle" | "potion" | "mead" | "blueprint" | "crossbow" | "spear";
 };
 
 const block = (
@@ -408,6 +436,13 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.CloudreedGrass]: block(BlockId.CloudreedGrass, "Cloudreed Turf", 64, 65, 2, 0.62, "#4f8b6c", "shovel"),
   [BlockId.Cloudbell]: block(BlockId.Cloudbell, "Cloudbell", 67, 67, 67, 0.05, "#96cfe0", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
   [BlockId.WildBeehive]: block(BlockId.WildBeehive, "Wild Beehive", 93, 93, 11, 0.9, "#d09a3f", "axe", 0, { shape: "wild-hive" }),
+  [BlockId.CartographyTable]: block(BlockId.CartographyTable, "Cartography Table", 96, 97, 11, 1.05, "#8e6841", "axe", 0, { shape: "cartography" }),
+  [BlockId.AlchemyStand]: block(BlockId.AlchemyStand, "Alchemy Stand", 98, 98, 3, 1.25, "#74658b", "pickaxe", 1, { shape: "alchemy", solid: false, layer: "cutout" }),
+  [BlockId.Wayshrine]: block(BlockId.Wayshrine, "Waystone Shrine", 99, 99, 99, 2.4, "#6aa9a7", "pickaxe", 2, { shape: "wayshrine", layer: "emissive" }),
+  [BlockId.Distillery]: block(BlockId.Distillery, "Honeymead Distillery", 92, 91, 11, 1.2, "#98643a", "axe", 0, { shape: "distillery" }),
+  [BlockId.HearthChair]: block(BlockId.HearthChair, "Hearth Chair", 11, 11, 11, 0.55, "#9f7144", "axe", 0, { shape: "chair", solid: false, layer: "cutout" }),
+  [BlockId.HobbitThatch]: block(BlockId.HobbitThatch, "Hearthkin Thatch", 56, 56, 56, 0.48, "#b79855", "axe"),
+  [BlockId.GoblinBrasswork]: block(BlockId.GoblinBrasswork, "Brassroot Masonry", 97, 97, 3, 1.85, "#7a6844", "pickaxe", 1),
 };
 
 export const TORCH_BLOCKS: readonly BlockId[] = [
@@ -481,6 +516,11 @@ for (const definition of Object.values(BLOCKS)) {
     ...(definition.id === BlockId.CaptureOrbRack ? { iconKind: "orb-rack" as const, heldModel: "orb-rack" as const, dropModel: "orb-rack" as const } : {}),
     ...(definition.id === BlockId.CreatureHealer ? { iconKind: "orb-healer" as const, heldModel: "orb-healer" as const, dropModel: "orb-healer" as const } : {}),
     ...(definition.id === BlockId.WildBeehive ? { iconKind: "apiary" as const, heldModel: "apiary" as const, dropModel: "apiary" as const } : {}),
+    ...(definition.id === BlockId.CartographyTable ? { iconKind: "cartography" as const, heldModel: "cartography" as const, dropModel: "cartography" as const } : {}),
+    ...(definition.id === BlockId.AlchemyStand ? { iconKind: "alchemy" as const, heldModel: "alchemy" as const, dropModel: "alchemy" as const } : {}),
+    ...(definition.id === BlockId.Wayshrine ? { iconKind: "wayshrine" as const, heldModel: "wayshrine" as const, dropModel: "wayshrine" as const } : {}),
+    ...(definition.id === BlockId.Distillery ? { iconKind: "distillery" as const, heldModel: "distillery" as const, dropModel: "distillery" as const } : {}),
+    ...(definition.id === BlockId.HearthChair ? { iconKind: "chair" as const, heldModel: "chair" as const, dropModel: "chair" as const } : {}),
   };
 }
 
@@ -572,6 +612,23 @@ Object.assign(ITEMS, {
   [Item.CloudglassRelic]: { id: Item.CloudglassRelic, name: "Cloudglass Reliquary", color: "#9edfe7", maxStack: 1, maxDurability: 1800, useKind: "magic-relic", iconKind: "relic" },
   [Item.QueenCell]: { id: Item.QueenCell, name: "Queen Cell", color: "#f4cf55", maxStack: 16, iconKind: "queen-cell" },
   [Item.WorkerBee]: { id: Item.WorkerBee, name: "Apiary Worker Bee", color: "#e8ad32", maxStack: 16, iconKind: "bee" },
+  [Item.GlassBottle]: { id: Item.GlassBottle, name: "Empty Glass Bottle", color: "#c7e7e3", maxStack: 16, iconKind: "bottle", heldModel: "bottle", dropModel: "bottle" },
+  [Item.WaterBottle]: { id: Item.WaterBottle, name: "Water Bottle", color: "#63b6df", maxStack: 16, iconKind: "bottle", heldModel: "bottle", dropModel: "bottle" },
+  [Item.HealthPotion]: { id: Item.HealthPotion, name: "Wild Apple Remedy", color: "#d75756", maxStack: 8, useKind: "potion", potionId: "health", iconKind: "potion", heldModel: "potion", dropModel: "potion" },
+  [Item.WayfarerPotion]: { id: Item.WayfarerPotion, name: "Wayskip Draught", color: "#68d5cd", maxStack: 8, useKind: "potion", potionId: "fast-travel", iconKind: "potion", heldModel: "potion", dropModel: "potion" },
+  [Item.HearthwardTonic]: { id: Item.HearthwardTonic, name: "Hearthward Tonic", color: "#efad54", maxStack: 8, useKind: "potion", potionId: "hearthward", iconKind: "potion", heldModel: "potion", dropModel: "potion" },
+  [Item.GloamstepElixir]: { id: Item.GloamstepElixir, name: "Gloamstep Elixir", color: "#7965b4", maxStack: 8, useKind: "potion", potionId: "gloamstep", iconKind: "potion", heldModel: "potion", dropModel: "potion" },
+  [Item.Honeymead]: { id: Item.Honeymead, name: "Bottle of Honeymead", color: "#d69735", maxStack: 16, food: 3, iconKind: "mead", heldModel: "mead", dropModel: "mead" },
+  [Item.HobbitCrossbowBlueprint]: { id: Item.HobbitCrossbowBlueprint, name: "Hearthguard Crossbow Blueprint", color: "#e2c98b", maxStack: 16, useKind: "blueprint", blueprintId: "hobbit-crossbow", iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
+  [Item.FineCrossbowBlueprint]: { id: Item.FineCrossbowBlueprint, name: "Wayfarer Crossbow Blueprint", color: "#8fd5c5", maxStack: 16, useKind: "blueprint", blueprintId: "hobbit-wayfarer-crossbow", iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
+  [Item.GoblinSpearBlueprint]: { id: Item.GoblinSpearBlueprint, name: "Goblinsmith Spear Blueprint", color: "#d5b95e", maxStack: 16, useKind: "blueprint", blueprintId: "goblin-spear", iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
+  [Item.GloamstepBlueprint]: { id: Item.GloamstepBlueprint, name: "Gloamstep Elixir Blueprint", color: "#a187c7", maxStack: 16, useKind: "blueprint", blueprintId: "goblin-gloamstep-elixir", iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
+  [Item.HearthwardBlueprint]: { id: Item.HearthwardBlueprint, name: "Hearthward Tonic Blueprint", color: "#e3ae67", maxStack: 16, useKind: "blueprint", blueprintId: "hobbit-hearthward-tonic", iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
+  [Item.MeadBlueprint]: { id: Item.MeadBlueprint, name: "Honeymead Distilling Blueprint", color: "#cf9e5c", maxStack: 16, useKind: "blueprint", blueprintId: "mead-distilling", iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
+  [Item.HearthguardCrossbow]: { ...tool(Item.HearthguardCrossbow, "Hearthguard Crossbow", "#9b6a3c", "crossbow", 2, 1, 7, 420), useKind: "ranged-weapon", ammoItem: Item.CrossbowBolt, magazineSize: 1, iconKind: "crossbow", heldModel: "crossbow", dropModel: "crossbow" },
+  [Item.WayfarerCrossbow]: { ...tool(Item.WayfarerCrossbow, "Wayfarer Crossbow", "#6fb5aa", "crossbow", 3, 1, 10, 820), useKind: "ranged-weapon", ammoItem: Item.CrossbowBolt, magazineSize: 1, iconKind: "crossbow", heldModel: "crossbow", dropModel: "crossbow" },
+  [Item.CrossbowBolt]: { id: Item.CrossbowBolt, name: "Crossbow Bolt", color: "#bdc6c2", maxStack: 64, iconKind: "bolt" },
+  [Item.GoblinsmithSpear]: { ...tool(Item.GoblinsmithSpear, "Goblinsmith Spear", "#aa8843", "spear", 2, 1, 6, 520), useKind: "spear", iconKind: "spear", heldModel: "spear", dropModel: "spear" },
 } satisfies Record<number, ItemDefinition>);
 
 // Existing forage doubles as planting stock. Keeping the edible item itself as
@@ -599,7 +656,7 @@ export const CREATIVE_FLORA: readonly ItemCode[] = [
 
 export const CREATIVE_BLOCKS: ItemCode[] = [...Object.values(BLOCKS)
   .filter((definition) => ITEMS[definition.id] && !definition.replaceable && definition.id !== BlockId.WheatCrop)
-  .map((definition) => definition.id), ...CREATIVE_FLORA, Item.WildwoodDoor, Item.WildwoodBed, Item.Sailboat, Item.CaptureOrb, Item.Honeycomb, Item.HoneyJar, Item.RoyalJelly, Item.Beeswax, Item.MilkBottle, Item.CloudglassRelic, Item.QueenCell, Item.WorkerBee, Item.Berry, Item.Sunberry, Item.Apple, Item.Banana, Item.Wheat, Item.WheatSeeds, Item.StarrootScepter, Item.Feather, Item.RawFish, Item.CookedFish, Item.GlowScale, Item.BreatherCharm, Item.SunwardCompass, Item.WoodHoe, Item.StoneHoe, Item.IronHoe, Item.HarvestScythe, Item.Bucket, Item.WaterBucket, Item.LavaBucket, Item.Lead, Item.WildwoodFenceGate, Item.Saddle, Item.NocturneHeart, Item.ButterflyNet, Item.MeadowwingJar, Item.AzureSkipperJar, Item.EmbertipJar, Item.FrostveilJar, Item.BloomMonarchJar, Item.FenLanternJar, Item.HideHood, Item.HideTunic, Item.HideLeggings, Item.HideBoots, Item.SunmetalHelm, Item.SunmetalPlate, Item.SunmetalGreaves, Item.SunmetalBoots];
+  .map((definition) => definition.id), ...CREATIVE_FLORA, Item.WildwoodDoor, Item.WildwoodBed, Item.Sailboat, Item.CaptureOrb, Item.Honeycomb, Item.HoneyJar, Item.RoyalJelly, Item.Beeswax, Item.MilkBottle, Item.CloudglassRelic, Item.QueenCell, Item.WorkerBee, Item.GlassBottle, Item.WaterBottle, Item.HealthPotion, Item.WayfarerPotion, Item.HearthwardTonic, Item.GloamstepElixir, Item.Honeymead, Item.HobbitCrossbowBlueprint, Item.FineCrossbowBlueprint, Item.GoblinSpearBlueprint, Item.GloamstepBlueprint, Item.HearthwardBlueprint, Item.MeadBlueprint, Item.HearthguardCrossbow, Item.WayfarerCrossbow, Item.CrossbowBolt, Item.GoblinsmithSpear, Item.Berry, Item.Sunberry, Item.Apple, Item.Banana, Item.Wheat, Item.WheatSeeds, Item.StarrootScepter, Item.Feather, Item.RawFish, Item.CookedFish, Item.GlowScale, Item.BreatherCharm, Item.SunwardCompass, Item.WoodHoe, Item.StoneHoe, Item.IronHoe, Item.HarvestScythe, Item.Bucket, Item.WaterBucket, Item.LavaBucket, Item.Lead, Item.WildwoodFenceGate, Item.Saddle, Item.NocturneHeart, Item.ButterflyNet, Item.MeadowwingJar, Item.AzureSkipperJar, Item.EmbertipJar, Item.FrostveilJar, Item.BloomMonarchJar, Item.FenLanternJar, Item.HideHood, Item.HideTunic, Item.HideLeggings, Item.HideBoots, Item.SunmetalHelm, Item.SunmetalPlate, Item.SunmetalGreaves, Item.SunmetalBoots];
 
 export function worldTextureBlockForItem(item: ItemCode): BlockId | undefined {
   const definition = ITEMS[item];
@@ -617,6 +674,8 @@ export type Recipe = {
   table: boolean;
   /** When true, the shaped recipe is also valid when flipped left-to-right. */
   mirrored?: boolean;
+  /** Recipe knowledge taught by a consumed blueprint item. */
+  blueprint?: string;
 };
 
 export function mirrorRecipePattern(recipe: Pick<Recipe, "width" | "height" | "pattern">): Recipe["pattern"] {
@@ -651,6 +710,18 @@ export const RECIPES: Recipe[] = [
   { id: "capture_orb_rack", name: "Capture Orb Rack", width: 3, height: 2, pattern: [Item.Stick, Item.CrystalShard, Item.Stick, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: BlockId.CaptureOrbRack, count: 1 }, table: true },
   { id: "creature_healer", name: "Creature Healer", width: 3, height: 3, pattern: [BlockId.Glass, Item.GlowDust, BlockId.Glass, Item.CaveGel, Item.CrystalShard, Item.CaveGel, Item.SunmetalIngot, BlockId.Planks, Item.SunmetalIngot], output: { item: BlockId.CreatureHealer, count: 1 }, table: true },
   { id: "wildwood_apiary", name: "Wildwood Apiary", width: 3, height: 3, pattern: [BlockId.Planks, BlockId.Planks, BlockId.Planks, Item.Fiber, Item.Honeycomb, Item.Fiber, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: BlockId.Apiary, count: 1 }, table: true },
+  { id: "cartography_table", name: "Cartography Table", width: 3, height: 3, pattern: [Item.Feather, BlockId.Glass, Item.Feather, BlockId.Planks, BlockId.Planks, BlockId.Planks, Item.Stick, 0, Item.Stick], output: { item: BlockId.CartographyTable, count: 1 }, table: true },
+  { id: "alchemy_stand", name: "Alchemy Stand", width: 3, height: 3, pattern: [Item.GlassBottle, Item.CaveGel, Item.GlassBottle, 0, Item.CrystalShard, 0, BlockId.StoneBrick, BlockId.StoneBrick, BlockId.StoneBrick], output: { item: BlockId.AlchemyStand, count: 1 }, table: true },
+  { id: "wayshrine", name: "Waystone Shrine", width: 3, height: 3, pattern: [Item.CrystalShard, Item.GlowDust, Item.CrystalShard, BlockId.StoneBrick, BlockId.RuneStone, BlockId.StoneBrick, BlockId.StoneBrick, BlockId.StoneBrick, BlockId.StoneBrick], output: { item: BlockId.Wayshrine, count: 1 }, table: true },
+  { id: "distillery", name: "Honeymead Distillery", width: 3, height: 3, pattern: [BlockId.Planks, Item.Honeycomb, BlockId.Planks, BlockId.Planks, Item.SunmetalIngot, BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: BlockId.Distillery, count: 1 }, table: true },
+  { id: "hearth_chair", name: "Hearth Chair", width: 2, height: 3, pattern: [BlockId.Planks, 0, BlockId.Planks, BlockId.Planks, Item.Stick, Item.Stick], output: { item: BlockId.HearthChair, count: 2 }, table: true, mirrored: true },
+  { id: "hearthkin_thatch", name: "Hearthkin Thatch", width: 2, height: 2, pattern: [Item.Wheat, Item.Wheat, Item.Fiber, Item.Fiber], output: { item: BlockId.HobbitThatch, count: 2 }, table: false },
+  { id: "brassroot_masonry", name: "Brassroot Masonry", width: 2, height: 2, pattern: [BlockId.Cobblestone, BlockId.CopperOre, BlockId.Cobblestone, Item.GoldIngot], output: { item: BlockId.GoblinBrasswork, count: 2 }, table: true },
+  { id: "glass_bottles", name: "Glass Bottles", width: 3, height: 2, pattern: [BlockId.Glass, 0, BlockId.Glass, 0, BlockId.Glass, 0], output: { item: Item.GlassBottle, count: 3 }, table: true },
+  { id: "hearthguard-crossbow", name: "Hearthguard Crossbow", width: 3, height: 3, pattern: [Item.Stick, Item.SunmetalIngot, Item.Stick, Item.Fiber, BlockId.Planks, Item.Fiber, 0, Item.Stick, 0], output: { item: Item.HearthguardCrossbow, count: 1 }, table: true, blueprint: "hobbit-crossbow" },
+  { id: "wayfarer-crossbow", name: "Wayfarer Crossbow", width: 3, height: 3, pattern: [Item.CrystalShard, Item.SunmetalIngot, Item.CrystalShard, Item.Fiber, Item.HearthguardCrossbow, Item.Fiber, 0, Item.Stick, 0], output: { item: Item.WayfarerCrossbow, count: 1 }, table: true, blueprint: "hobbit-wayfarer-crossbow" },
+  { id: "crossbow-bolts", name: "Crossbow Bolts", width: 1, height: 3, pattern: [Item.SunmetalIngot, Item.Stick, Item.Feather], output: { item: Item.CrossbowBolt, count: 8 }, table: true, blueprint: "hobbit-crossbow" },
+  { id: "goblinsmith-spear", name: "Goblinsmith Spear", width: 1, height: 3, pattern: [Item.SunmetalIngot, Item.Stick, Item.Stick], output: { item: Item.GoblinsmithSpear, count: 1 }, table: true, blueprint: "goblin-spear" },
   { id: "queen_cell", name: "Queen Cell", width: 2, height: 1, pattern: [Item.WorkerBee, Item.RoyalJelly], output: { item: Item.QueenCell, count: 1 }, table: true },
   { id: "tideglass_charm", name: "Tideglass Charm", width: 3, height: 1, pattern: [Item.GlowScale, Item.Fiber, Item.GlowScale], output: { item: Item.BreatherCharm, count: 1 }, table: true },
   { id: "butterfly_net", name: "Butterfly Net", width: 3, height: 3, pattern: [softNetting, softNetting, softNetting, softNetting, 0, Item.Stick, 0, Item.Stick, 0], output: { item: Item.ButterflyNet, count: 1 }, table: true },

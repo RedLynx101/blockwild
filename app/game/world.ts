@@ -13,6 +13,16 @@ import {
   type PlannedBlock,
   type StructureMarker,
 } from "./structures";
+import {
+  SETTLEMENT_SIZE_RULES,
+  createSettlementState,
+  planSettlementCandidate,
+  planSettlementLayout,
+  type SettlementBiome,
+  type SettlementCandidate,
+  type SettlementLayoutPlan,
+  type SettlementResident,
+} from "./settlements";
 
 export const CHUNK_SIZE = 16;
 export const MIN_Y = -64;
@@ -21,7 +31,12 @@ export const WORLD_HEIGHT = MAX_Y - MIN_Y + 1;
 export const SEA_LEVEL = 32;
 export const SECTION_HEIGHT = 16;
 export const SECTION_COUNT = WORLD_HEIGHT / SECTION_HEIGHT;
-export const GENERATOR_VERSION = 6;
+export const GENERATOR_VERSION = 7;
+
+export type SettlementWorldPlan = Readonly<{
+  candidate: SettlementCandidate;
+  layout: SettlementLayoutPlan;
+}>;
 
 export type WorldGenerationOptions = {
   caveFrequency: number;
@@ -78,6 +93,32 @@ export const BIOME_NAMES: Record<number, string> = {
   [BiomeId.River]: "Wandering River",
   [BiomeId.CloudreedGlen]: "Cloudreed Glen",
 };
+
+function settlementBiomeFromId(biome: BiomeId): SettlementBiome | null {
+  if (biome === BiomeId.Meadow) return "flower-meadow";
+  if (biome === BiomeId.Wildwood) return "wildwood";
+  if (biome === BiomeId.Birchlight || biome === BiomeId.Bloomwood) return "forest";
+  if (biome === BiomeId.Highlands) return "highlands";
+  if (biome === BiomeId.Badlands) return "badlands";
+  if (biome === BiomeId.CloudreedGlen) return "cloudreed-glen";
+  return null;
+}
+
+function settlementResidentMobKind(resident: SettlementResident, faction: "hobbits" | "goblins") {
+  if (faction === "hobbits") {
+    if (resident.profession === "mayor") return "hobbit-mayor";
+    if (resident.profession === "warrior") return resident.equipment.weapon === "crossbow" ? "hobbit-crossbow-guard" : "hobbit-hammer-guard";
+    if (resident.profession === "farmer") return "hobbit-farmer";
+    if (resident.profession === "miner" || resident.profession === "blacksmith") return "hobbit-miner";
+    if (resident.profession === "banker") return "hobbit-banker";
+    return "hobbit-merchant";
+  }
+  if (resident.profession === "mayor") return "goblin-chieftain";
+  if (resident.profession === "warrior") return "goblin-spear-guard";
+  if (resident.profession === "miner" || resident.profession === "blacksmith") return "goblin-miner";
+  if (resident.profession === "alchemist") return "goblin-alchemist";
+  return "goblin-worker";
+}
 
 type WorldRenderLayer = Exclude<RenderLayer, "none"> | "glass";
 type ChunkMeshes = {
@@ -200,6 +241,7 @@ const TILE_COLORS = [
   "#5f7f47", "#4f7c42", "#704b8e", "#718943", "#63833d", "#d89542", "#659b48", "#4f8a40",
   "#c84b40", "#79a54f", "#aab14d", "#523824", "#9a693c", "#d8cca4", "#4e5765", "#b96845",
   "#9f6b35", "#b9874e", "#bd7b32", "#efc451", "#d7a33d", "#6f5745", "#62d8d4",
+  "#d8c999", "#775c3d", "#75628e", "#5ca4a0",
 ];
 
 export const MEADOW_GRASS_PALETTE = Object.freeze({
@@ -548,6 +590,33 @@ export function createBlockAtlas() {
       for (let y = 1; y < 15; y += 4) for (let x = 1; x < 15; x += 4) {
         pixel(index, x, y, "#d9ffff"); pixel(index, x + 1, y, "#8ff5ee"); pixel(index, x, y + 1, "#67d8d4");
       }
+    } else if (index === 96) {
+      context.fillStyle = "#d8c999"; context.fillRect(ox, oy, tile, tile);
+      context.fillStyle = "#8a7551";
+      context.fillRect(ox, oy, tile, 1); context.fillRect(ox, oy + 15, tile, 1);
+      context.fillRect(ox, oy, 1, tile); context.fillRect(ox + 15, oy, 1, tile);
+      context.fillStyle = "#6e9f63";
+      context.fillRect(ox + 3, oy + 4, 5, 3); context.fillRect(ox + 9, oy + 9, 4, 3);
+      context.fillStyle = "#5597b2";
+      context.fillRect(ox + 2, oy + 10, 6, 1); context.fillRect(ox + 7, oy + 7, 1, 4); context.fillRect(ox + 11, oy + 3, 1, 5);
+      context.fillStyle = "#c05d4d"; context.fillRect(ox + 11, oy + 5, 2, 2);
+    } else if (index === 97) {
+      context.fillStyle = "#65503a"; context.fillRect(ox, oy, tile, tile);
+      context.fillStyle = "#987744";
+      for (let y = 1; y < tile; y += 5) context.fillRect(ox, oy + y, tile, 2);
+      context.fillStyle = "#c7a548";
+      for (const [x, y] of [[2, 2], [12, 2], [2, 12], [12, 12], [7, 7]] as Array<[number, number]>) context.fillRect(ox + x, oy + y, 2, 2);
+    } else if (index === 98) {
+      context.clearRect(ox, oy, tile, tile);
+      context.fillStyle = "rgba(90,72,112,.88)"; context.fillRect(ox + 2, oy + 2, 12, 12);
+      context.fillStyle = "#b69ed5";
+      context.fillRect(ox + 7, oy + 2, 2, 12); context.fillRect(ox + 3, oy + 7, 10, 2);
+      context.fillStyle = "#6be0cf"; context.fillRect(ox + 7, oy + 7, 2, 2);
+    } else if (index === 99) {
+      context.fillStyle = "#3d6665"; context.fillRect(ox, oy, tile, tile);
+      context.fillStyle = "#79d8cd";
+      context.fillRect(ox + 7, oy + 2, 2, 12); context.fillRect(ox + 4, oy + 5, 8, 2); context.fillRect(ox + 5, oy + 10, 6, 2);
+      context.fillStyle = "#d8fff5"; context.fillRect(ox + 7, oy + 6, 2, 2);
     }
     if (leafTiles.has(index) && LEAF_TEXTURE_CUTOUT_CHANCE > 0) {
       for (let y = 0; y < tile; y += 1) for (let x = 0; x < tile; x += 1) {
@@ -757,6 +826,7 @@ export class ChunkWorld {
   chunks = new Map<string, Chunk>();
   edits = new Map<string, Map<number, BlockId>>();
   structureMarkers = new Map<string, StructureMarker>();
+  settlementPlans = new Map<string, SettlementWorldPlan>();
   generationQueue: Array<{ cx: number; cz: number; distance: number }> = [];
   generationQueued = new Set<string>();
   meshQueue: Array<{ key: string; section: number }> = [];
@@ -850,6 +920,7 @@ export class ChunkWorld {
     this.urgentMeshQueued.clear();
     this.edits.clear();
     this.structureMarkers.clear();
+    this.settlementPlans.clear();
     this.hiddenChestVisuals.clear();
     this.seedText = seedText || "WILDERNESS";
     this.seed = seedToInt(this.seedText);
@@ -1458,6 +1529,162 @@ export class ChunkWorld {
         }
       }
     }
+    if (this.generationOptions.structures) this.generateSettlementsForChunk(chunk, sample, set, clearGeneratedGrowth);
+  }
+
+  private generateSettlementsForChunk(
+    chunk: Chunk,
+    sample: (x: number, z: number) => ColumnSample,
+    set: (x: number, y: number, z: number, type: BlockId, onlyAir?: boolean) => void,
+    clearGeneratedGrowth: (bounds: Readonly<{ minX: number; maxX: number; minZ: number; maxZ: number }>) => void,
+  ) {
+    const minX = chunk.cx * CHUNK_SIZE;
+    const minZ = chunk.cz * CHUNK_SIZE;
+    const regionSize = 32 * CHUNK_SIZE;
+    const reach = SETTLEMENT_SIZE_RULES.town.radiusBlocks + 3;
+    const startRegionX = Math.floor((minX - reach) / regionSize);
+    const endRegionX = Math.floor((minX + CHUNK_SIZE + reach) / regionSize);
+    const startRegionZ = Math.floor((minZ - reach) / regionSize);
+    const endRegionZ = Math.floor((minZ + CHUNK_SIZE + reach) / regionSize);
+    const insideChunk = (x: number, z: number) => x >= minX && x < minX + CHUNK_SIZE && z >= minZ && z < minZ + CHUNK_SIZE;
+
+    for (let regionX = startRegionX; regionX <= endRegionX; regionX += 1) for (let regionZ = startRegionZ; regionZ <= endRegionZ; regionZ += 1) {
+      const probe = sample(regionX * regionSize + regionSize / 2, regionZ * regionSize + regionSize / 2);
+      const probeBiome = settlementBiomeFromId(probe.biome);
+      if (!probeBiome) continue;
+      const candidate = planSettlementCandidate({ worldSeed: this.seedText, regionX, regionZ, biome: probeBiome, existing: [] });
+      if (!candidate) continue;
+      const centerColumn = sample(candidate.center.x, candidate.center.z);
+      const actualBiome = settlementBiomeFromId(centerColumn.biome);
+      if (!actualBiome || actualBiome !== candidate.biome || centerColumn.height <= centerColumn.waterline + 3) continue;
+      const nearbyHeights = [[4, 0], [-4, 0], [0, 4], [0, -4]].map(([dx, dz]) => sample(candidate.center.x + dx, candidate.center.z + dz).height);
+      if (nearbyHeights.some((height) => Math.abs(height - centerColumn.height) > 4)) continue;
+
+      const layout = planSettlementLayout(candidate);
+      this.settlementPlans.set(candidate.id, { candidate, layout });
+      const bounds = {
+        minX: candidate.center.x - layout.radiusBlocks - 2,
+        maxX: candidate.center.x + layout.radiusBlocks + 2,
+        minZ: candidate.center.z - layout.radiusBlocks - 2,
+        maxZ: candidate.center.z + layout.radiusBlocks + 2,
+      };
+      if (bounds.maxX < minX || bounds.minX >= minX + CHUNK_SIZE || bounds.maxZ < minZ || bounds.minZ >= minZ + CHUNK_SIZE) continue;
+      clearGeneratedGrowth(bounds);
+
+      const pathBlock = candidate.factionId === "hobbits" ? BlockId.Gravel : BlockId.GoblinBrasswork;
+      for (const point of layout.paths) if (insideChunk(point.x, point.z)) {
+        const column = sample(point.x, point.z);
+        if (column.height > column.waterline) set(point.x, column.height, point.z, pathBlock, false);
+      }
+
+      const wallBlock = candidate.factionId === "hobbits" ? BlockId.WildwoodFence : BlockId.GoblinBrasswork;
+      for (const node of layout.wall) if (insideChunk(node.position.x, node.position.z)) {
+        const ground = sample(node.position.x, node.position.z).height;
+        set(node.position.x, ground + 1, node.position.z, wallBlock, false);
+        if (node.kind === "tower") {
+          set(node.position.x, ground + 2, node.position.z, candidate.factionId === "hobbits" ? BlockId.WildwoodLog : BlockId.GoblinBrasswork, false);
+          set(node.position.x, ground + 3, node.position.z, BlockId.Torch, false);
+        }
+      }
+      for (const gate of layout.gates) if (insideChunk(gate.position.x, gate.position.z)) {
+        const ground = sample(gate.position.x, gate.position.z).height;
+        const gateBlock = gate.facing % 2 === 0 ? BlockId.FenceGateNorthSouthClosed : BlockId.FenceGateEastWestClosed;
+        set(gate.position.x, ground + 1, gate.position.z, gateBlock, false);
+      }
+      for (const light of layout.lights) if (insideChunk(light.position.x, light.position.z)) {
+        const ground = sample(light.position.x, light.position.z).height;
+        set(light.position.x, ground + 1, light.position.z, candidate.factionId === "hobbits" ? BlockId.WildwoodFence : BlockId.GoblinBrasswork, false);
+        set(light.position.x, ground + 2, light.position.z, BlockId.Torch, false);
+      }
+
+      const wallMaterial = candidate.factionId === "hobbits" ? BlockId.Planks : BlockId.GoblinBrasswork;
+      const cornerMaterial = candidate.factionId === "hobbits" ? BlockId.WildwoodLog : BlockId.StoneBrick;
+      const roofMaterial = candidate.factionId === "hobbits" ? BlockId.HobbitThatch : BlockId.GoblinBrasswork;
+      for (const building of layout.buildings) {
+        const halfWidth = Math.floor(building.width / 2);
+        const halfDepth = Math.floor(building.depth / 2);
+        const buildingBounds = {
+          minX: building.position.x - halfWidth,
+          maxX: building.position.x + halfWidth,
+          minZ: building.position.z - halfDepth,
+          maxZ: building.position.z + halfDepth,
+        };
+        if (buildingBounds.maxX < minX || buildingBounds.minX >= minX + CHUNK_SIZE || buildingBounds.maxZ < minZ || buildingBounds.minZ >= minZ + CHUNK_SIZE) continue;
+        const baseY = sample(building.position.x, building.position.z).height;
+        const wallHeight = building.floors * 3 + 1;
+        for (let x = buildingBounds.minX; x <= buildingBounds.maxX; x += 1) for (let z = buildingBounds.minZ; z <= buildingBounds.maxZ; z += 1) {
+          if (!insideChunk(x, z)) continue;
+          const localHeight = sample(x, z).height;
+          for (let y = Math.min(localHeight + 1, baseY); y <= baseY; y += 1) set(x, y, z, cornerMaterial, false);
+          for (let y = baseY + 1; y <= Math.max(baseY + wallHeight + 2, localHeight + 2); y += 1) set(x, y, z, BlockId.Air, false);
+          set(x, baseY, z, building.role === "mayor-hall" ? BlockId.StoneBrick : BlockId.Planks, false);
+          const edgeX = x === buildingBounds.minX || x === buildingBounds.maxX;
+          const edgeZ = z === buildingBounds.minZ || z === buildingBounds.maxZ;
+          if (edgeX || edgeZ) for (let y = 1; y <= wallHeight; y += 1) {
+            const corner = edgeX && edgeZ;
+            const window = !corner && y % 3 === 2 && ((x + z) & 3) === 0;
+            set(x, baseY + y, z, window ? BlockId.Glass : corner ? cornerMaterial : wallMaterial, false);
+          }
+          set(x, baseY + wallHeight + 1 + ((Math.abs(x - building.position.x) + Math.abs(z - building.position.z)) % 3 === 0 ? 1 : 0), z, roofMaterial, false);
+        }
+        const doorX = building.position.x;
+        const doorZ = buildingBounds.minZ;
+        if (insideChunk(doorX, doorZ)) {
+          set(doorX, baseY + 1, doorZ, BlockId.DoorClosedLower, false);
+          set(doorX, baseY + 2, doorZ, BlockId.DoorClosedUpper, false);
+        }
+        for (const furniture of building.furniture) if (insideChunk(furniture.position.x, furniture.position.z)) {
+          const fy = baseY + 1;
+          const furnitureBlock = furniture.kind === "bed" ? BlockId.BedNorthFoot
+            : furniture.kind === "chair" ? BlockId.HearthChair
+              : furniture.kind === "distillery" || furniture.kind === "barrel" ? BlockId.Distillery
+                : furniture.kind === "forge" ? BlockId.Furnace
+                  : furniture.kind === "bank-counter" || furniture.kind === "merchant-counter" ? BlockId.Chest
+                    : furniture.kind === "table" ? BlockId.CartographyTable
+                      : BlockId.CraftingTable;
+          set(furniture.position.x, fy, furniture.position.z, furnitureBlock, false);
+          if (furniture.kind === "bed") set(furniture.position.x, fy, furniture.position.z + 1, BlockId.BedNorthHead, false);
+        }
+      }
+
+      if (insideChunk(candidate.center.x, candidate.center.z)) {
+        const marker: StructureMarker = {
+          type: "landmark",
+          id: candidate.id,
+          position: { x: candidate.center.x, y: centerColumn.height + 2, z: candidate.center.z },
+          tag: `settlement:${candidate.factionId}:${candidate.size}`,
+        };
+        this.structureMarkers.set(`${candidate.id}:landmark:${candidate.id}`, marker);
+      }
+      const state = createSettlementState("world", candidate, layout);
+      for (const resident of state.residents) if (insideChunk(resident.position.x, resident.position.z)) {
+        const mobKind = settlementResidentMobKind(resident, candidate.factionId);
+        const marker: StructureMarker = {
+          type: "spawn",
+          id: resident.id,
+          position: { x: resident.position.x, y: sample(resident.position.x, resident.position.z).height + 1, z: resident.position.z },
+          mobKind,
+          count: 1,
+          radius: 1.5,
+          persistent: true,
+          tags: [`settlement:${candidate.id}`, `resident:${resident.id}`, `name:${resident.name}`, `profession:${resident.profession}`, `faction:${candidate.factionId}`],
+        };
+        this.structureMarkers.set(`${candidate.id}:spawn:${resident.id}`, marker);
+      }
+      for (const creature of state.alignedCreatures) if (insideChunk(creature.position.x, creature.position.z)) {
+        const marker: StructureMarker = {
+          type: "spawn",
+          id: creature.id,
+          position: { x: creature.position.x, y: sample(creature.position.x, creature.position.z).height + 1, z: creature.position.z },
+          mobKind: "warg",
+          count: 1,
+          radius: 2.5,
+          persistent: true,
+          tags: [`settlement:${candidate.id}`, `faction:goblins`, "aligned:true"],
+        };
+        this.structureMarkers.set(`${candidate.id}:spawn:${creature.id}`, marker);
+      }
+    }
   }
 
   structureMarkersNear(x: number, y: number, z: number, radius = 48) {
@@ -1948,6 +2175,49 @@ export class ChunkWorld {
           }
           addTexturedCuboid(buckets.emissive, lx - 0.28, y - 0.25, lz - 0.28, lx + 0.28, y + 0.28, lz + 0.28, 95, 95, 95, [1, 1, 1], 1);
           addTexturedCuboid(bucket, lx - 0.42, y + 0.3, lz - 0.42, lx + 0.42, y + 0.42, lz + 0.42, definition.side, definition.top, definition.bottom, tint, environment);
+          continue;
+        }
+        if (definition.shape === "cartography") {
+          const environment = shadeAt(lx, y, lz);
+          addTexturedCuboid(bucket, lx - 0.5, y + 0.21, lz - 0.5, lx + 0.5, y + 0.45, lz + 0.5, definition.side, definition.top, definition.bottom, tint, environment);
+          for (const [dx, dz] of [[-0.42, -0.42], [0.28, -0.42], [-0.42, 0.28], [0.28, 0.28]] as Array<[number, number]>) {
+            addTexturedCuboid(bucket, lx + dx, y - 0.5, lz + dz, lx + dx + 0.14, y + 0.22, lz + dz + 0.14, definition.side, definition.top, definition.bottom, tint, environment);
+          }
+          continue;
+        }
+        if (definition.shape === "alchemy") {
+          const environment = shadeAt(lx, y, lz);
+          addTexturedCuboid(bucket, lx - 0.42, y - 0.5, lz - 0.42, lx + 0.42, y - 0.36, lz + 0.42, 98, 98, 3, tint, environment);
+          addTexturedCuboid(bucket, lx - 0.09, y - 0.36, lz - 0.09, lx + 0.09, y + 0.33, lz + 0.09, 98, 98, 98, tint, environment);
+          addTexturedCuboid(bucket, lx - 0.38, y + 0.18, lz - 0.08, lx + 0.38, y + 0.3, lz + 0.08, 98, 98, 98, tint, environment);
+          for (const x of [lx - 0.29, lx, lx + 0.29]) {
+            addTexturedCuboid(buckets.emissive, x - 0.09, y - 0.1, lz - 0.11, x + 0.09, y + 0.17, lz + 0.11, 98, 98, 98, [1, 1, 1], 1);
+          }
+          continue;
+        }
+        if (definition.shape === "wayshrine") {
+          const environment = shadeAt(lx, y, lz);
+          addTexturedCuboid(buckets.opaque, lx - 0.46, y - 0.5, lz - 0.46, lx + 0.46, y - 0.28, lz + 0.46, 97, 97, 3, [0.82, 0.9, 0.88], environment);
+          addTexturedCuboid(buckets.opaque, lx - 0.27, y - 0.28, lz - 0.22, lx + 0.27, y + 0.34, lz + 0.22, 99, 99, 99, [0.72, 0.82, 0.8], environment);
+          addTexturedCuboid(buckets.emissive, lx - 0.12, y - 0.04, lz - 0.235, lx + 0.12, y + 0.22, lz - 0.205, 99, 99, 99, [1, 1, 1], 1);
+          addTexturedCuboid(buckets.opaque, lx - 0.36, y + 0.34, lz - 0.3, lx + 0.36, y + 0.48, lz + 0.3, 97, 99, 97, [0.86, 0.92, 0.9], environment);
+          continue;
+        }
+        if (definition.shape === "distillery") {
+          const environment = shadeAt(lx, y, lz);
+          addTexturedCuboid(bucket, lx - 0.42, y - 0.48, lz - 0.4, lx + 0.42, y + 0.3, lz + 0.4, 91, 92, 11, tint, environment);
+          for (const ringY of [y - 0.28, y + 0.12]) addTexturedCuboid(bucket, lx - 0.45, ringY, lz - 0.43, lx + 0.45, ringY + 0.08, lz + 0.43, 97, 97, 97, [0.86, 0.74, 0.5], environment);
+          addTexturedCuboid(bucket, lx - 0.07, y - 0.03, lz - 0.5, lx + 0.07, y + 0.12, lz - 0.39, 97, 97, 97, [0.9, 0.75, 0.45], environment);
+          addTexturedCuboid(bucket, lx - 0.13, y + 0.3, lz - 0.13, lx + 0.13, y + 0.49, lz + 0.13, 91, 92, 11, tint, environment);
+          continue;
+        }
+        if (definition.shape === "chair") {
+          const environment = shadeAt(lx, y, lz);
+          addTexturedCuboid(bucket, lx - 0.37, y - 0.08, lz - 0.34, lx + 0.37, y + 0.08, lz + 0.34, 11, 11, 11, tint, environment);
+          for (const [dx, dz] of [[-0.32, -0.29], [0.22, -0.29], [-0.32, 0.19], [0.22, 0.19]] as Array<[number, number]>) {
+            addTexturedCuboid(bucket, lx + dx, y - 0.5, lz + dz, lx + dx + 0.1, y - 0.07, lz + dz + 0.1, 11, 11, 11, tint, environment);
+          }
+          addTexturedCuboid(bucket, lx - 0.37, y + 0.08, lz + 0.24, lx + 0.37, y + 0.48, lz + 0.36, 11, 11, 11, tint, environment);
           continue;
         }
         if (definition.shape === "fence" || definition.shape === "gate") {

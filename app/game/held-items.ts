@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { BlockId, ITEMS, type ItemCode } from "./data";
+import { BlockId, Item, ITEMS, type ItemCode } from "./data";
 import { createButterflyVisual } from "./butterflies";
 import { BUTTERFLY_ORDER, type ButterflyKind } from "./mobs";
 import { createHeldToolSpec } from "./model-specs";
@@ -68,6 +68,73 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
     addBox([0.52, 0.08, 0.47], [0, 0.34, 0], 0x637376);
     group.scale.setScalar(0.74);
     group.rotation.set(0.1, 0.25, -0.08);
+  } else if (definition.heldModel === "cartography") {
+    addBox([0.58, 0.12, 0.48], [0, 0.08, 0], 0x76543a);
+    addBox([0.52, 0.035, 0.42], [0, 0.16, 0], 0xd8c999);
+    addBox([0.15, 0.025, 0.12], [0.1, 0.185, -0.05], 0x6e9f63);
+    addBox([0.28, 0.02, 0.025], [-0.07, 0.19, 0.06], 0x5597b2, [0, 0.3, 0]);
+    group.scale.setScalar(0.76);
+    group.rotation.set(0.12, 0.28, -0.08);
+  } else if (definition.heldModel === "alchemy") {
+    addBox([0.48, 0.08, 0.4], [0, -0.16, 0], 0x51465f);
+    addBox([0.07, 0.56, 0.07], [0, 0.08, 0], 0x8c76a6);
+    addBox([0.48, 0.06, 0.07], [0, 0.18, 0], 0x8c76a6);
+    for (const x of [-0.18, 0, 0.18]) {
+      addBox([0.12, 0.2, 0.12], [x, 0.02, -0.02], x === 0 ? 0x68d5cd : 0xa98ccc, [0, 0, 0], true);
+      addBox([0.05, 0.09, 0.05], [x, 0.17, -0.02], 0xc7e7e3);
+    }
+    group.scale.setScalar(0.72);
+    group.rotation.set(0.1, 0.25, -0.08);
+  } else if (definition.heldModel === "wayshrine") {
+    addBox([0.5, 0.12, 0.42], [0, -0.2, 0], 0x596c67);
+    addBox([0.28, 0.6, 0.22], [0, 0.1, 0], 0x4f7f7c);
+    addBox([0.13, 0.26, 0.025], [0, 0.12, -0.125], 0x79d8cd, [0, 0, 0], true);
+    addBox([0.4, 0.09, 0.3], [0, 0.43, 0], 0x806d4b);
+    group.scale.setScalar(0.66);
+    group.rotation.set(0.08, 0.25, -0.08);
+  } else if (definition.heldModel === "distillery") {
+    addBox([0.48, 0.54, 0.42], [0, 0.04, 0], 0x98643a);
+    for (const y of [-0.12, 0.18]) addBox([0.53, 0.06, 0.46], [0, y, 0], 0xb28c4c);
+    addBox([0.08, 0.15, 0.12], [0, 0.02, -0.25], 0xc7a548);
+    group.scale.setScalar(0.72);
+    group.rotation.set(0.1, 0.27, -0.08);
+  } else if (definition.heldModel === "chair") {
+    addBox([0.42, 0.1, 0.38], [0, -0.02, 0], 0x9f7144);
+    for (const [x, z] of [[-0.17, -0.15], [0.17, -0.15], [-0.17, 0.15], [0.17, 0.15]] as Array<[number, number]>) addBox([0.06, 0.4, 0.06], [x, -0.22, z], 0x70482b);
+    addBox([0.42, 0.44, 0.08], [0, 0.23, 0.15], 0x9f7144);
+    group.scale.setScalar(0.72);
+    group.rotation.set(0.12, 0.25, -0.08);
+  } else if (definition.heldModel === "bottle" || definition.heldModel === "potion" || definition.heldModel === "mead") {
+    const liquid = definition.heldModel === "bottle" && item === Item.GlassBottle ? null : definition.color;
+    addBox([0.2, 0.3, 0.16], [0, 0, 0], 0xc7e7e3);
+    if (liquid) addBox([0.16, 0.2, 0.13], [0, -0.035, -0.01], liquid, [0, 0, 0], definition.heldModel === "potion");
+    addBox([0.09, 0.14, 0.09], [0, 0.21, 0], 0xc7e7e3);
+    addBox([0.12, 0.06, 0.12], [0, 0.3, 0], definition.heldModel === "mead" ? 0x7a4b28 : 0x8d7654);
+    group.scale.setScalar(0.92);
+    group.rotation.set(0.08, 0.2, -0.08);
+  } else if (definition.heldModel === "blueprint") {
+    addBox([0.48, 0.04, 0.62], [0, 0.08, 0], 0xe2c98b, [0.08, 0.16, -0.05]);
+    for (const y of [-0.1, 0.04, 0.18]) addBox([0.28, 0.018, 0.02], [0, 0.13, y], 0x6f735d, [0.08, 0.16, -0.05]);
+    addBox([0.1, 0.02, 0.1], [0.12, 0.14, -0.2], definition.color, [0.08, 0.16, -0.05], true);
+    group.scale.setScalar(0.82);
+  } else if (definition.heldModel === "crossbow") {
+    addBox([0.11, 0.12, 0.9], [0, 0.02, -0.12], 0x765038);
+    addBox([0.08, 0.09, 0.72], [0, 0.04, -0.46], definition.color);
+    addBox([0.86, 0.09, 0.1], [0, 0.04, -0.64], 0x9a7847, [0, 0, 0.14]);
+    addBox([0.86, 0.035, 0.035], [0, 0.08, -0.58], 0xd6d2c5, [0, 0, -0.14]);
+    addBox([0.08, 0.08, 0.94], [0, 0.12, -0.18], 0xbdc6c2);
+    group.scale.setScalar(0.64);
+    group.rotation.set(0.02, 0.04, -0.08);
+    group.position.set(0, 0.03, -0.3);
+    group.userData.workingAngle = Math.PI / 2;
+  } else if (definition.heldModel === "spear") {
+    addBox([0.08, 0.08, 1.45], [0, 0, -0.26], 0x7b542f);
+    const point = addBox([0.18, 0.12, 0.34], [0, 0, -1.12], definition.color, [0, Math.PI / 4, 0]);
+    point.name = "spear-point";
+    group.scale.setScalar(0.72);
+    group.rotation.set(0.02, 0.04, -0.08);
+    group.position.set(0, 0.02, -0.25);
+    group.userData.workingAngle = Math.PI / 2;
   } else if (item === BlockId.Torch) {
     addBox([0.1, 0.62, 0.1], [0, 0.22, 0], 0x8d542b);
     const outer = addBox([0.16, 0.14, 0.16], [0, 0.58, 0], 0xffb33e, [0, 0, 0], true);

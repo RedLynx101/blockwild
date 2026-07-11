@@ -2452,6 +2452,25 @@ input:focus-visible {
   height: 20px;
 }
 
+.gold-wallet-slot {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 2px 7px;
+  width: calc(100% - 20px);
+  min-height: 38px;
+  margin: 0 10px 8px;
+  padding: 6px 7px;
+  border: 1px solid rgba(234, 203, 105, .48);
+  color: #f3d36d;
+  background: linear-gradient(90deg, rgba(98, 75, 26, .38), rgba(0, 0, 0, .22));
+}
+.gold-wallet-slot i { grid-row: span 2; display: grid; place-items: center; width: 23px; height: 23px; border: 1px solid #e3bd51; border-radius: 50%; color: #ffe392; background: #806128; font-style: normal; }
+.player-paper-doll .gold-wallet-slot small { margin: 0; color: #efd173; font-size: 6px; letter-spacing: .08em; }
+.player-paper-doll .gold-wallet-slot b { margin: 0; color: #fff1b1; font-size: 11px; }
+.gold-wallet-slot em { grid-column: 3; grid-row: 1 / span 2; color: #bdb69b; font-size: 6px; font-style: normal; }
+
 .player-paper-doll small {
   margin-top: 18px;
   color: #b5e276;
@@ -6413,4 +6432,437 @@ input:focus-visible {
   .orb-specimen-grid { grid-template-columns: 1fr; }
   .orb-specimen-card { min-height: 250px; }
   .healing-gel-status { grid-template-columns: 1fr; }
+}
+
+/* Hearthroads v0.6: shared parchment-and-hearth treatment for map, journal,
+   civic, trade, and crafting surfaces.  These panels intentionally reuse the
+   existing Minecraft-style window edge so they feel native to Blockwild. */
+.hearthroads-overlay {
+  padding: clamp(8px, 2vw, 24px);
+  background: rgba(12, 15, 12, .78);
+}
+
+.hearthroads-panel {
+  --hr-ink: #2f2b20;
+  --hr-muted: #716951;
+  --hr-rule: #8a7a55;
+  --hr-paper: #e3d8b9;
+  --hr-paper-deep: #c8b98f;
+  --hr-moss: #536d46;
+  --hr-gold: #b78a31;
+  width: min(1180px, 97vw);
+  height: min(820px, 94vh);
+  max-height: 94vh;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  color: var(--hr-ink);
+  background:
+    radial-gradient(circle at 12% 14%, rgba(255, 250, 216, .62), transparent 26%),
+    repeating-linear-gradient(0deg, transparent 0 29px, rgba(78, 65, 36, .035) 29px 30px),
+    var(--hr-paper);
+  border-color: #b9a776 #50462f #423923 #cdbf95;
+  box-shadow: inset 0 0 0 2px #807250, 0 24px 70px rgba(0, 0, 0, .55);
+}
+
+.hearthroads-panel-header {
+  flex: 0 0 auto;
+  min-height: 88px;
+  margin: 0;
+  padding: 15px 18px 13px;
+  align-items: center;
+  color: #f4edda;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, .05), transparent 28%),
+    linear-gradient(#384634, #252e25);
+  border-bottom: 3px solid #82724e;
+}
+
+.hearthroads-panel-heading { min-width: 0; display: grid; gap: 2px; }
+.hearthroads-panel-header .panel-eyebrow { color: #e6c46d; }
+.hearthroads-panel-header h2 {
+  margin: 0;
+  color: #fff8df;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(27px, 4vw, 43px);
+  letter-spacing: -.025em;
+  line-height: 1;
+  text-shadow: 2px 2px 0 #11180f;
+}
+.hearthroads-panel-header p { max-width: 680px; margin: 4px 0 0; color: #c9cfbc; font-size: 9px; line-height: 1.45; }
+.hearthroads-header-meta { margin-left: auto; }
+.hearthroads-panel .panel-close { flex: 0 0 auto; margin-left: 10px; }
+.hearthroads-panel h3,
+.hearthroads-panel h4,
+.hearthroads-panel p { margin-top: 0; }
+.hearthroads-panel button { cursor: pointer; }
+.hearthroads-panel button:disabled { cursor: default; filter: grayscale(.35); opacity: .48; }
+.hearthroads-panel .pixel-input {
+  color: #2c2a22;
+  background: rgba(255, 252, 229, .78);
+  border-color: #625a43;
+}
+.hearthroads-text-button { border: 0; background: transparent; font-size: 8px; font-weight: 900; text-decoration: underline; }
+.hearthroads-text-button.danger-button { color: #843c35; }
+.hearthroads-progress-track { display: block; height: 7px; overflow: hidden; border: 1px solid #6c6044; background: #9b8d6b; }
+.hearthroads-progress-track i { display: block; height: 100%; background: linear-gradient(90deg, #5f824d, #c3aa4f); transition: width .2s linear; }
+.hearthroads-selection-empty,
+.hearthroads-list-empty { display: grid; place-content: center; gap: 7px; min-height: 160px; padding: 24px; color: var(--hr-muted); text-align: center; }
+.hearthroads-selection-empty > span { font-size: 42px; opacity: .32; }
+
+/* Map */
+.hearthroads-map-layout { min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 330px; }
+.hearthroads-map-workspace { min-width: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; padding: 14px; background: rgba(94, 112, 75, .14); }
+.hearthroads-map-canvas {
+  position: relative;
+  min-height: 340px;
+  overflow: hidden;
+  border: 3px solid #655c41;
+  background:
+    radial-gradient(circle at 55% 38%, rgba(226, 214, 157, .4), transparent 25%),
+    linear-gradient(120deg, rgba(88, 115, 72, .2), transparent 34% 66%, rgba(96, 125, 147, .15)),
+    #c9bb8d;
+  box-shadow: inset 0 0 28px rgba(77, 55, 25, .32);
+}
+.hearthroads-map-canvas::after { content: ""; position: absolute; inset: 10px; pointer-events: none; border: 1px dashed rgba(71, 58, 34, .38); }
+.hearthroads-map-terrain { position: absolute; inset: 0; width: 100%; height: 100%; }
+.hearthroads-map-chunk { fill: rgba(89, 117, 67, .42); stroke: rgba(63, 77, 51, .32); stroke-width: .04; }
+.hearthroads-map-pin,
+.hearthroads-player-pin { position: absolute; z-index: 3; display: grid; place-items: center; transform: translate(-50%, -50%); }
+.hearthroads-map-pin { width: 31px; height: 31px; border: 2px solid #3d3728; border-radius: 50% 50% 50% 8px; color: #fff6d6; background: #5d744e; box-shadow: 2px 3px 0 rgba(45, 38, 25, .45); transform: translate(-50%, -50%) rotate(-45deg); }
+.hearthroads-map-pin span { transform: rotate(45deg); }
+.hearthroads-map-pin.selected { z-index: 5; outline: 3px solid #ffe58d; transform: translate(-50%, -50%) rotate(-45deg) scale(1.12); }
+.hearthroads-map-pin.marker-manual { background: #8b7041; }
+.hearthroads-map-pin.marker-bed-spawn { background: #76545b; }
+.hearthroads-map-pin.marker-wayshrine { background: #426f72; }
+.hearthroads-player-pin { width: 28px; height: 28px; color: #fff; background: #ba5d3c; border: 2px solid #fff4c4; border-radius: 50%; box-shadow: 0 3px 0 rgba(0, 0, 0, .34); }
+.hearthroads-player-pin i { font-style: normal; font-size: 13px; }
+.hearthroads-map-empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 30px; color: #665d42; font-family: Georgia, serif; font-size: 18px; text-align: center; }
+.hearthroads-map-legend { display: flex; flex-wrap: wrap; gap: 10px 16px; padding: 9px 3px 0; color: #625a43; font-size: 8px; }
+.hearthroads-map-legend span { display: flex; align-items: center; gap: 5px; }
+.hearthroads-map-legend i { color: #49664b; font-style: normal; font-size: 14px; }
+.hearthroads-map-inspector { min-height: 0; overflow-y: auto; padding: 17px; border-left: 3px solid #817352; background: rgba(255, 251, 224, .44); }
+.hearthroads-location-heading { display: grid; grid-template-columns: 50px minmax(0, 1fr); gap: 11px; align-items: center; padding-bottom: 12px; border-bottom: 1px solid #9e906a; }
+.hearthroads-location-sigil { width: 48px; height: 48px; display: grid; place-items: center; border: 2px solid #6c5f42; border-radius: 50%; color: #f8efd2; background: #5a704c; font-size: 21px; }
+.hearthroads-location-heading small,
+.hearthroads-location-heading h3 { display: block; margin: 0; }
+.hearthroads-location-heading small { color: #776b4f; font-size: 7px; text-transform: uppercase; }
+.hearthroads-location-heading h3 { margin-top: 4px; font-family: Georgia, serif; font-size: 21px; }
+.hearthroads-location-facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin: 12px 0; }
+.hearthroads-location-facts div { padding: 7px; border: 1px solid #aa9b73; background: rgba(255,255,255,.26); }
+.hearthroads-location-facts dt { color: #776b4e; font-size: 6px; }
+.hearthroads-location-facts dd { margin: 3px 0 0; font-weight: 900; }
+.hearthroads-inline-form,
+.hearthroads-manual-marker { display: grid; gap: 6px; margin: 14px 0; }
+.hearthroads-inline-form label,
+.hearthroads-manual-marker label { color: #665b40; font-size: 7px; font-weight: 900; text-transform: uppercase; }
+.hearthroads-inline-form > div,
+.hearthroads-manual-marker > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+.hearthroads-inline-form input,
+.hearthroads-manual-marker input { min-width: 0; }
+.hearthroads-travel-actions { display: grid; gap: 7px; margin: 12px 0; }
+.hearthroads-channel { display: grid; gap: 7px; margin: 14px 0; padding: 11px; border: 1px solid #8c7d58; background: rgba(104, 124, 83, .17); }
+.hearthroads-channel-copy { display: grid; gap: 3px; }
+.hearthroads-channel-copy strong { color: #40573b; }
+.hearthroads-channel-copy span { color: #6e654e; font-size: 8px; line-height: 1.4; }
+.hearthroads-channel > button { justify-self: start; border: 0; color: #803b33; background: transparent; font-size: 8px; text-decoration: underline; }
+.hearthroads-cartography-share { margin-top: 14px; padding: 11px; border: 2px solid #6c7053; background: rgba(202, 216, 176, .32); }
+.hearthroads-cartography-share div { display: flex; justify-content: space-between; gap: 10px; }
+.hearthroads-cartography-share p { margin: 8px 0; color: #655f4b; font-size: 8px; line-height: 1.45; }
+.hearthroads-travel-purse { display: grid; grid-template-columns: auto auto; column-gap: 7px; align-items: center; color: #f4d779; }
+.hearthroads-travel-purse span { grid-row: span 2; font-size: 25px; }
+.hearthroads-travel-purse strong { font-size: 18px; }
+.hearthroads-travel-purse small { color: #bdc5b5; font-size: 7px; }
+
+/* Quest journal */
+.hearthroads-quest-count,
+.hearthroads-batch-status,
+.hearthroads-bank-day,
+.hearthroads-standing { padding: 7px 9px; border: 1px solid rgba(234, 212, 145, .45); color: #f2d279; background: rgba(9, 13, 10, .3); font-size: 8px; text-transform: uppercase; }
+.hearthroads-journal-tabs { flex: 0 0 auto; margin: 0; padding: 8px 12px 0; background: rgba(93, 105, 71, .12); }
+.hearthroads-journal-layout { min-height: 0; flex: 1; display: grid; grid-template-columns: 310px minmax(0, 1fr); }
+.hearthroads-quest-list { min-height: 0; overflow-y: auto; padding: 10px; border-right: 3px solid #877958; background: rgba(118, 130, 91, .16); }
+.hearthroads-quest-row { width: 100%; min-height: 64px; display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 8px; align-items: center; margin-bottom: 6px; padding: 9px; border: 1px solid #94845f; color: #393427; background: rgba(242, 235, 205, .48); text-align: left; }
+.hearthroads-quest-row:hover,
+.hearthroads-quest-row.selected { border-color: #4f6443; background: rgba(231, 228, 185, .8); box-shadow: inset 4px 0 #668052; }
+.hearthroads-quest-row.status-locked { opacity: .58; }
+.hearthroads-quest-row.status-completed { background: rgba(192, 212, 173, .48); }
+.hearthroads-quest-knot { width: 29px; height: 29px; display: grid; place-items: center; border: 1px solid #807150; border-radius: 50%; color: #725b24; background: #d8c998; }
+.hearthroads-quest-row span:last-child { min-width: 0; display: grid; gap: 3px; }
+.hearthroads-quest-row strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hearthroads-quest-row small { color: #776c51; font-size: 7px; text-transform: uppercase; }
+.hearthroads-quest-detail { min-height: 0; overflow-y: auto; padding: clamp(17px, 3vw, 32px); background: rgba(255, 252, 227, .27); }
+.hearthroads-quest-detail > header { padding-bottom: 16px; border-bottom: 1px solid #9a8c68; }
+.hearthroads-quest-detail h3 { margin: 8px 0; font-family: Georgia, serif; font-size: clamp(26px, 4vw, 42px); line-height: 1.05; }
+.hearthroads-quest-detail > header p { max-width: 720px; color: #645d49; font-size: 10px; line-height: 1.6; }
+.hearthroads-status-ribbon { color: #5c6749; font-size: 8px; font-weight: 900; letter-spacing: .1em; text-transform: uppercase; }
+.hearthroads-objectives,
+.hearthroads-prerequisites,
+.hearthroads-quest-rewards { margin-top: 17px; }
+.hearthroads-objectives h4,
+.hearthroads-prerequisites h4,
+.hearthroads-quest-rewards h4 { margin-bottom: 9px; color: #665b3e; font-size: 8px; letter-spacing: .13em; text-transform: uppercase; }
+.hearthroads-objectives ol { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.hearthroads-objectives li { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 8px; padding: 10px; border: 1px solid #a99a74; background: rgba(255,255,255,.22); }
+.hearthroads-objectives li > span { color: #866f36; font-size: 18px; }
+.hearthroads-objectives li > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; align-items: center; }
+.hearthroads-objectives li .hearthroads-progress-track { grid-column: 1 / -1; }
+.hearthroads-objectives li.complete { background: rgba(182, 205, 162, .34); }
+.hearthroads-objectives li.complete > span { color: #4e7048; }
+.hearthroads-quest-rewards ul { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.hearthroads-quest-rewards li { padding: 6px 8px; border: 1px solid #aa8b48; color: #5e4a1c; background: rgba(232, 195, 99, .18); font-size: 8px; }
+.hearthroads-quest-failure { padding: 10px; border-left: 4px solid #9a4d44; background: rgba(164, 72, 61, .13); color: #7d352e; }
+.hearthroads-quest-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; padding-top: 13px; border-top: 1px solid #9b8e6a; }
+
+/* Alchemy and distillery */
+.hearthroads-station-layout { min-height: 0; flex: 1; display: grid; grid-template-columns: 250px minmax(0, 1fr) 250px; }
+.hearthroads-recipe-ledger { min-height: 0; overflow-y: auto; padding: 10px; border-right: 3px solid #847657; background: rgba(110, 126, 89, .15); }
+.hearthroads-station-recipe { width: 100%; display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 8px; align-items: center; margin-bottom: 6px; padding: 9px; border: 1px solid #9b8b66; color: #3c372a; background: rgba(245, 238, 204, .52); text-align: left; }
+.hearthroads-station-recipe.selected { border-color: #4f6d55; background: rgba(219, 226, 188, .75); box-shadow: inset 4px 0 #5c7a55; }
+.hearthroads-station-recipe.locked { color: #786b55; background: rgba(198, 186, 155, .46); }
+.hearthroads-recipe-vial { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid #756949; border-radius: 5px 5px 13px 13px; color: #f7e7a2; background: linear-gradient(#788166 35%, #526f65); font-size: 17px; }
+.hearthroads-station-recipe span:last-child { display: grid; gap: 4px; min-width: 0; }
+.hearthroads-station-recipe strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hearthroads-station-recipe small { color: #74694f; font-size: 7px; }
+.hearthroads-station-workspace { min-height: 0; overflow-y: auto; padding: clamp(18px, 3vw, 34px); }
+.hearthroads-station-workspace header span { color: #6a5d3d; font-size: 7px; font-weight: 900; text-transform: uppercase; }
+.hearthroads-station-workspace h3 { margin: 6px 0; font-family: Georgia, serif; font-size: 30px; }
+.hearthroads-station-workspace header p { color: #665f4d; font-size: 9px; line-height: 1.55; }
+.hearthroads-blueprint-lock { display: grid; grid-template-columns: 40px 1fr; gap: 10px; margin: 14px 0; padding: 11px; border: 1px solid #8b664c; background: rgba(156, 87, 62, .12); }
+.hearthroads-blueprint-lock > span { font-size: 26px; }
+.hearthroads-blueprint-lock p { margin: 3px 0 0; color: #765b4c; font-size: 8px; }
+.hearthroads-ingredient-board { margin: 17px 0; }
+.hearthroads-ingredient-board h4 { color: #655b40; font-size: 8px; text-transform: uppercase; }
+.hearthroads-ingredient-board ul { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; padding: 0; list-style: none; }
+.hearthroads-ingredient-board li { display: grid; grid-template-columns: 27px 1fr; gap: 7px; align-items: center; padding: 8px; border: 1px solid #a4936c; background: rgba(255,255,255,.2); }
+.hearthroads-ingredient-board li.missing { border-color: #a27466; }
+.hearthroads-ingredient-icon { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; color: white; background: #5e7c55; }
+.hearthroads-ingredient-board .missing .hearthroads-ingredient-icon { background: #a05f4d; }
+.hearthroads-ingredient-board li > span:last-child { display: grid; gap: 2px; }
+.hearthroads-ingredient-board small { color: #746a51; font-size: 7px; }
+.hearthroads-station-flow { display: flex; gap: 9px; align-items: center; margin: 15px 0; padding: 11px; border: 1px dashed #857552; color: #655a3d; background: rgba(246, 232, 180, .22); }
+.hearthroads-station-flow i { margin-left: auto; font-style: normal; }
+.hearthroads-station-output { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 18px; border-left: 3px solid #847657; background: rgba(87, 106, 79, .16); }
+.hearthroads-station-apparatus { position: relative; min-height: 170px; display: grid; place-items: center; border: 2px solid #675d45; background: radial-gradient(circle, rgba(160, 207, 170, .4), transparent 49%), #b4a983; }
+.hearthroads-station-apparatus span { position: relative; z-index: 2; font-size: 72px; filter: drop-shadow(0 6px 0 rgba(51,42,27,.2)); }
+.hearthroads-station-apparatus i { position: absolute; bottom: 20px; width: 60px; height: 9px; border-radius: 50%; background: rgba(40, 34, 23, .22); }
+.hearthroads-station-apparatus[data-active="true"] span { animation: hearthroads-apparatus 1.6s ease-in-out infinite; }
+.hearthroads-batch-readout { display: grid; gap: 6px; }
+.hearthroads-batch-readout small,
+.hearthroads-output-slot small { color: #6f6449; font-size: 7px; text-transform: uppercase; }
+.hearthroads-batch-readout > span:last-child { color: #6f6753; font-size: 8px; }
+.hearthroads-output-slot { min-height: 70px; display: grid; place-content: center; gap: 7px; padding: 9px; border: 2px dashed #8a7c5b; color: #746c57; text-align: center; }
+.hearthroads-output-slot.filled { border-style: solid; color: #344d37; background: rgba(182, 211, 162, .38); }
+
+/* Dialogue, trading and banking */
+.hearthroads-dialogue-layout { min-height: 0; flex: 1; display: grid; grid-template-columns: 290px minmax(0, 1fr) 330px; }
+.hearthroads-dialogue-portrait { min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; margin: 0; padding: 16px; border-right: 3px solid #827553; background: radial-gradient(circle at 50% 36%, rgba(229, 220, 169, .58), transparent 43%), rgba(93, 112, 80, .18); }
+.hearthroads-dialogue-portrait img { align-self: center; width: 100%; height: auto; max-height: 430px; object-fit: contain; filter: drop-shadow(0 15px 9px rgba(62, 49, 26, .22)); }
+.hearthroads-dialogue-portrait > span { align-self: center; justify-self: center; width: 150px; height: 150px; display: grid; place-items: center; border-radius: 50%; color: #f0d98f; background: #40503e; font-family: Georgia, serif; font-size: 70px; }
+.hearthroads-dialogue-portrait figcaption { display: grid; gap: 7px; color: #5f573f; font-size: 8px; text-transform: uppercase; }
+.hearthroads-alignment-track { display: block; height: 8px; overflow: hidden; border: 1px solid #665c43; background: linear-gradient(90deg, #9b5047 50%, #b1a27b 50%); }
+.hearthroads-alignment-track i { display: block; height: 100%; background: #668357; }
+.hearthroads-dialogue-copy { min-height: 0; overflow-y: auto; padding: clamp(22px, 4vw, 48px); }
+.hearthroads-dialogue-copy blockquote { margin: 0 0 20px; color: #393226; font-family: Georgia, serif; font-size: clamp(22px, 3.3vw, 38px); line-height: 1.25; }
+.hearthroads-dialogue-copy p { color: #655e4c; font-size: 10px; line-height: 1.65; }
+.hearthroads-dialogue-choices { min-height: 0; overflow-y: auto; display: grid; align-content: center; gap: 7px; padding: 16px; border-left: 3px solid #827553; background: rgba(255, 250, 221, .3); }
+.hearthroads-dialogue-choice { min-height: 65px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 10px; border: 1px solid #97865f; color: #383327; background: rgba(247, 239, 203, .56); text-align: left; }
+.hearthroads-dialogue-choice:hover { border-color: #4f6b4a; background: rgba(222, 228, 186, .8); transform: translateX(-3px); }
+.hearthroads-dialogue-choice > span { display: grid; gap: 4px; }
+.hearthroads-dialogue-choice small { color: #74694f; font-size: 7px; line-height: 1.35; }
+.hearthroads-dialogue-choice b { padding: 5px; color: #6e5218; background: rgba(222, 185, 84, .28); font-size: 8px; }
+
+.hearthroads-trade-tabs { flex: 0 0 auto; margin: 0; padding: 8px 12px 0; }
+.hearthroads-trade-layout { min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 350px; }
+.hearthroads-trade-inventory { min-height: 0; overflow-y: auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 7px; padding: 14px; border-right: 3px solid #857754; background: rgba(98, 115, 78, .12); }
+.hearthroads-trade-row { min-width: 0; min-height: 66px; display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 9px; border: 1px solid #9d8b62; color: #3a3528; background: rgba(246, 239, 205, .58); text-align: left; }
+.hearthroads-trade-row.selected { border-color: #506e4e; box-shadow: inset 4px 0 #688258; background: rgba(219, 226, 187, .75); }
+.hearthroads-trade-row > span:nth-child(2) { min-width: 0; display: grid; gap: 3px; }
+.hearthroads-trade-row strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hearthroads-trade-row small { color: #766a4f; font-size: 7px; }
+.hearthroads-item-stamp { width: 38px; height: 38px; display: grid; place-items: center; border: 2px solid #675b3e; color: #f7e8aa; background: #586d4a; font-family: Georgia, serif; font-size: 18px; }
+.hearthroads-item-stamp.large { width: 72px; height: 72px; font-size: 34px; }
+.hearthroads-trade-counter { min-height: 0; overflow-y: auto; display: grid; align-content: start; gap: 11px; padding: 20px; background: rgba(255, 250, 221, .38); }
+.hearthroads-trade-focus { display: flex; gap: 12px; align-items: center; padding-bottom: 12px; border-bottom: 1px solid #9b8d69; }
+.hearthroads-trade-focus h3 { margin: 4px 0 0; font-family: Georgia, serif; font-size: 24px; }
+.hearthroads-price-breakdown { display: grid; gap: 5px; margin: 0; }
+.hearthroads-price-breakdown div { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dotted #a09370; }
+.hearthroads-price-breakdown dt { color: #71664c; }
+.hearthroads-price-breakdown dd { margin: 0; font-weight: 900; }
+.hearthroads-trade-counter > label { color: #675d43; font-size: 8px; font-weight: 900; text-transform: uppercase; }
+.hearthroads-trade-total { display: flex; justify-content: space-between; align-items: baseline; padding: 11px; color: #5e4818; background: rgba(220, 182, 76, .2); border: 1px solid #a48842; }
+.hearthroads-trade-warning { color: #7c4035; font-size: 8px; line-height: 1.4; }
+.hearthroads-purse-pair { display: flex; gap: 12px; }
+.hearthroads-purse-pair span { display: grid; gap: 2px; color: #bbc3b4; font-size: 7px; }
+.hearthroads-purse-pair strong { color: #f0cf6b; font-size: 14px; }
+
+.hearthroads-bank-layout { min-height: 0; flex: 1; display: grid; grid-template-columns: 350px minmax(0, 1fr); }
+.hearthroads-bank-ledger { min-height: 0; overflow-y: auto; padding: 20px; border-right: 3px solid #867754; background: rgba(91, 109, 76, .15); }
+.hearthroads-bank-ledger h3,
+.hearthroads-stock-board h3 { margin: 0; font-family: Georgia, serif; font-size: 25px; }
+.hearthroads-bank-balances { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin: 16px 0; }
+.hearthroads-bank-balances div { padding: 12px; border: 1px solid #99865a; background: rgba(255, 249, 215, .45); }
+.hearthroads-bank-balances small { display: block; color: #71664b; font-size: 7px; }
+.hearthroads-bank-balances strong { display: block; margin-top: 5px; color: #5b481b; font-size: 20px; }
+.hearthroads-interest-note { display: grid; grid-template-columns: 28px 1fr; gap: 3px 7px; padding: 11px; border: 1px solid #6f845a; background: rgba(160, 190, 139, .24); }
+.hearthroads-interest-note > span { grid-row: span 2; font-size: 23px; }
+.hearthroads-interest-note small { color: #667058; font-size: 7px; line-height: 1.4; }
+.hearthroads-bank-transfer { display: grid; gap: 8px; margin-top: 18px; }
+.hearthroads-bank-transfer label { color: #6b6044; font-size: 8px; text-transform: uppercase; }
+.hearthroads-bank-transfer > div { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.hearthroads-stock-board { min-height: 0; overflow: hidden; display: grid; grid-template-columns: minmax(280px, 1fr) 290px; grid-template-rows: auto minmax(0, 1fr); }
+.hearthroads-stock-board > header { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid #958660; }
+.hearthroads-stock-board > header span { color: #6f6449; font-size: 7px; text-transform: uppercase; }
+.hearthroads-stock-board > header p { margin: 0; color: #655128; }
+.hearthroads-stock-tape { min-height: 0; overflow-y: auto; padding: 12px; border-right: 1px solid #958660; }
+.hearthroads-stock-row { width: 100%; display: grid; grid-template-columns: 50px minmax(0, 1fr) auto; gap: 8px; align-items: center; margin-bottom: 6px; padding: 10px; border: 1px solid #9a8961; color: #393428; background: rgba(249, 240, 204, .48); text-align: left; }
+.hearthroads-stock-row.selected { border-color: #526d4b; background: rgba(219, 226, 187, .72); }
+.hearthroads-stock-row > span { display: grid; gap: 3px; }
+.hearthroads-stock-row small { color: #74694f; font-size: 7px; }
+.hearthroads-stock-row .gain { color: #477243; }
+.hearthroads-stock-row .loss { color: #9a4c43; }
+.hearthroads-stock-order { min-height: 0; overflow-y: auto; display: grid; align-content: start; gap: 10px; padding: 16px; background: rgba(255, 250, 222, .34); }
+.hearthroads-stock-order h4 { margin: 3px 0; font-family: Georgia, serif; font-size: 20px; }
+.hearthroads-stock-order p { color: #6c634e; font-size: 8px; line-height: 1.4; }
+.hearthroads-stock-order dl { margin: 0; }
+.hearthroads-stock-order dl div { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dotted #9c8e6b; }
+.hearthroads-stock-order dd { margin: 0; font-weight: 900; }
+.hearthroads-stock-order > div:last-child { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+
+/* Settlement directory and follower orders */
+.hearthroads-settlement-summary { flex: 0 0 auto; display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; border-bottom: 3px solid #847656; background: #877956; }
+.hearthroads-settlement-summary div { padding: 10px 13px; background: #d6c9a5; }
+.hearthroads-settlement-summary small { display: block; color: #73684d; font-size: 7px; }
+.hearthroads-settlement-summary strong { display: block; margin-top: 4px; }
+.hearthroads-settlement-layout { min-height: 0; flex: 1; display: grid; grid-template-columns: 270px minmax(0, 1fr) 300px; }
+.hearthroads-role-list { min-height: 0; overflow-y: auto; padding: 10px; border-right: 3px solid #847656; background: rgba(91, 109, 77, .14); }
+.hearthroads-role-list > header { display: flex; justify-content: space-between; padding: 5px 4px 10px; color: #6b6045; font-size: 8px; }
+.hearthroads-role-list button { width: 100%; display: grid; grid-template-columns: 35px minmax(0, 1fr) auto; gap: 7px; align-items: center; margin-bottom: 5px; padding: 8px; border: 1px solid #9d8c65; color: #393429; background: rgba(246, 238, 204, .52); text-align: left; }
+.hearthroads-role-list button.selected { border-color: #4f6b49; background: rgba(218, 226, 186, .75); box-shadow: inset 4px 0 #668256; }
+.hearthroads-role-sigil,
+.hearthroads-resident-avatar { width: 31px; height: 31px; display: grid; place-items: center; border: 1px solid #665c42; border-radius: 50%; color: #f4df9f; background: #526749; font-family: Georgia, serif; }
+.hearthroads-role-list button > span:nth-child(2) { display: grid; gap: 3px; }
+.hearthroads-role-list small { color: #746a51; font-size: 7px; }
+.hearthroads-role-detail { min-height: 0; overflow-y: auto; padding: 20px; }
+.hearthroads-role-detail header span { color: #6e6349; font-size: 7px; text-transform: uppercase; }
+.hearthroads-role-detail h3 { margin: 4px 0; font-family: Georgia, serif; font-size: 28px; }
+.hearthroads-role-detail header p { color: #6e6652; font-size: 8px; }
+.hearthroads-resident-list { display: grid; gap: 6px; margin: 14px 0; padding: 0; list-style: none; }
+.hearthroads-resident-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; }
+.hearthroads-resident-list button { width: 100%; display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 9px; align-items: center; padding: 9px; border: 1px solid #9b8b65; color: #3a3529; background: rgba(250, 242, 208, .48); text-align: left; }
+.hearthroads-resident-list button > span:nth-child(2) { display: grid; gap: 3px; }
+.hearthroads-resident-list small { color: #756b51; font-size: 7px; }
+.hearthroads-health-readout { color: #684c3c; font-size: 8px; }
+.hearthroads-resident-list .hearthroads-hire-resident { width: auto; display: block; padding: 7px; border-color: #8b743f; color: #654d17; background: rgba(221, 183, 78, .25); font-size: 7px; font-weight: 900; text-align: center; }
+.hearthroads-role-detail footer { display: flex; flex-wrap: wrap; gap: 7px; }
+.hearthroads-town-plan { min-height: 0; overflow-y: auto; padding: 16px; border-left: 3px solid #847656; background: rgba(255, 250, 221, .3); }
+.hearthroads-town-plan > span { color: #685d42; font-size: 8px; font-weight: 900; text-transform: uppercase; }
+.hearthroads-town-plan-map { position: relative; aspect-ratio: 1; margin: 11px 0; border: 2px solid #685e45; border-radius: 50%; background: radial-gradient(circle, rgba(192, 204, 157, .72) 0 61%, rgba(98, 117, 79, .48) 62% 68%, transparent 69%), #c9bb90; }
+.hearthroads-town-plan-map i,
+.hearthroads-town-plan-map b { position: absolute; width: 11px; height: 11px; border: 1px solid #514832; background: #8b6c43; transform: translate(-50%, -50%) rotate(45deg); }
+.hearthroads-town-plan-map b { border-radius: 50%; background: #d5bd65; }
+.hearthroads-town-plan-legend { display: flex; gap: 12px; color: #6f654e; font-size: 7px; }
+.hearthroads-town-plan-legend i,
+.hearthroads-town-plan-legend b { display: inline-block; width: 9px; height: 9px; margin-right: 4px; background: #8b6c43; }
+.hearthroads-town-plan-legend b { border-radius: 50%; background: #d5bd65; }
+.hearthroads-town-plan p { margin-top: 12px; color: #6c644f; font-size: 8px; line-height: 1.5; }
+.hearthroads-follower-panel { height: auto; max-height: 86vh; }
+.hearthroads-follower-orders { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 20px; }
+.hearthroads-hireling-name { grid-column: 1 / -1; display: grid; grid-template-columns: auto minmax(180px, 1fr) auto; gap: 8px; align-items: center; padding-bottom: 12px; border-bottom: 1px solid #9b8c68; }
+.hearthroads-hireling-name label { color: #665b40; font-size: 8px; font-weight: 900; text-transform: uppercase; }
+.hearthroads-follower-orders section { display: grid; align-content: start; gap: 7px; }
+.hearthroads-follower-orders section > span { color: #665b40; font-size: 8px; font-weight: 900; text-transform: uppercase; }
+.hearthroads-follower-orders button { display: grid; gap: 4px; padding: 11px; border: 1px solid #96855e; color: #393429; background: rgba(246, 239, 205, .55); text-align: left; }
+.hearthroads-follower-orders button:hover { border-color: #526e4d; background: rgba(218, 227, 185, .75); }
+.hearthroads-follower-orders small { color: #746a51; font-size: 7px; }
+
+/* Field-guide plant wing */
+.field-guide-sections { flex: 0 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: #3c443e; border-bottom: 1px solid #3c443e; }
+.field-guide-sections button { min-height: 50px; display: grid; grid-template-columns: 35px auto; grid-template-rows: auto auto; column-gap: 9px; align-content: center; padding: 7px 16px; border: 0; color: #adb6aa; background: #151a17; text-align: left; }
+.field-guide-sections button > span { grid-row: span 2; align-self: center; color: #b8a56b; font-size: 23px; }
+.field-guide-sections button strong { color: #e7e8dd; }
+.field-guide-sections button small { font-size: 7px; }
+.field-guide-sections button.active { color: #48533f; background: #d8d1b8; box-shadow: inset 0 -4px #69805c; }
+.field-guide-sections button.active strong { color: #171a15; }
+.plant-bestiary-list .plant-entry-glyph { flex: 0 0 auto; width: 54px; height: 54px; display: grid; place-items: center; border: 2px solid #52604c; border-radius: 50%; color: #e8dc9d; background: radial-gradient(circle at 38% 30%, #7f9c68, #3f5942); font-size: 25px; }
+.plant-entry-glyph.plant-flower { color: #ffe1ac; background: radial-gradient(circle, #a66975, #5d4a5d); }
+.plant-entry-glyph.plant-aquatic { color: #b9f2e6; background: radial-gradient(circle, #42898b, #31545f); }
+.plant-entry-glyph.plant-wild { background: radial-gradient(circle, #a18a55, #645438); }
+.plant-detail { grid-template-columns: minmax(250px, .85fr) minmax(0, 1.15fr); }
+.plant-hero { min-height: 260px; display: grid; place-content: center; justify-items: center; gap: 13px; padding: 28px; border-right: 1px solid #414c44; background: radial-gradient(circle, rgba(143, 185, 112, .4), transparent 45%), #1a211c; }
+.plant-hero > span { width: 150px; height: 150px; display: grid; place-items: center; border: 3px solid #718267; border-radius: 50%; color: #f0dfa3; background: radial-gradient(circle at 40% 30%, #718e61, #34483a 70%); font-size: 77px; box-shadow: 0 14px 22px rgba(0,0,0,.3); }
+.plant-hero > div { display: grid; gap: 4px; color: #d7ddce; text-align: center; }
+.plant-hero strong { font-family: Georgia, serif; font-size: 21px; }
+.plant-hero small { color: #c3aa63; }
+.plant-facts { display: grid; gap: 8px; margin-top: 14px; }
+.plant-facts section { padding: 10px; border: 1px solid #414c44; background: #1b211d; }
+.plant-facts small { color: #b99e59; font-size: 7px; }
+.plant-facts p { margin: 5px 0 0; color: #c8cec2; font-size: 9px; line-height: 1.5; }
+.plant-drops { margin-top: 13px; }
+
+.pinned-quest-card { color: inherit; font-family: inherit; text-align: left; pointer-events: auto; cursor: pointer; }
+.pinned-quest-card:hover { border-color: rgba(255, 231, 147, .88); background: rgba(24, 31, 24, .86); transform: translateY(-1px); }
+.pinned-quest-card.unpinned { opacity: .7; }
+.ranged-ammo-hud { position: absolute; right: max(20px, env(safe-area-inset-right)); bottom: 132px; display: grid; justify-items: end; padding: 8px 10px; border-right: 4px solid #dfc46f; color: #f4e8ba; background: rgba(15, 20, 16, .74); text-shadow: 2px 2px #000; }
+.ranged-ammo-hud strong { font-size: 22px; }
+.ranged-ammo-hud span { font-size: 7px; letter-spacing: .08em; }
+.ranged-ammo-hud.reloading { border-color: #8caf83; }
+
+@keyframes hearthroads-apparatus {
+  0%, 100% { transform: translateY(0) rotate(-1deg); filter: drop-shadow(0 0 4px rgba(120, 205, 151, .2)); }
+  50% { transform: translateY(-5px) rotate(1deg); filter: drop-shadow(0 0 12px rgba(120, 205, 151, .7)); }
+}
+
+@media (max-width: 960px) {
+  .hearthroads-map-layout,
+  .hearthroads-dialogue-layout { grid-template-columns: minmax(0, 1fr) 300px; }
+  .hearthroads-dialogue-portrait { display: none; }
+  .hearthroads-station-layout { grid-template-columns: 210px minmax(0, 1fr); }
+  .hearthroads-station-output { grid-column: 1 / -1; display: grid; grid-template-columns: 150px minmax(0, 1fr) 180px; border-top: 3px solid #847657; border-left: 0; }
+  .hearthroads-station-apparatus { min-height: 110px; }
+  .hearthroads-bank-layout { grid-template-columns: 290px minmax(0, 1fr); }
+  .hearthroads-stock-board { grid-template-columns: 1fr; }
+  .hearthroads-stock-board > header { grid-column: 1; }
+  .hearthroads-stock-order { display: none; }
+  .hearthroads-settlement-layout { grid-template-columns: 230px minmax(0, 1fr); }
+  .hearthroads-town-plan { display: none; }
+}
+
+@media (max-width: 720px) {
+  .hearthroads-overlay { padding: 4px; }
+  .hearthroads-panel { width: 100vw; height: 100dvh; max-height: 100dvh; border-width: 0; }
+  .hearthroads-panel-header { min-height: 72px; padding: 10px; }
+  .hearthroads-panel-header h2 { font-size: 25px; }
+  .hearthroads-panel-header p,
+  .hearthroads-header-meta { display: none; }
+  .hearthroads-map-layout,
+  .hearthroads-journal-layout,
+  .hearthroads-dialogue-layout,
+  .hearthroads-trade-layout,
+  .hearthroads-bank-layout,
+  .hearthroads-settlement-layout { grid-template-columns: 1fr; }
+  .hearthroads-map-workspace { min-height: 48vh; }
+  .hearthroads-map-inspector,
+  .hearthroads-dialogue-choices,
+  .hearthroads-trade-counter,
+  .hearthroads-role-detail { border-top: 3px solid #827553; border-left: 0; }
+  .hearthroads-quest-list,
+  .hearthroads-role-list { max-height: 28vh; border-right: 0; border-bottom: 3px solid #847656; }
+  .hearthroads-station-layout { grid-template-columns: 1fr; }
+  .hearthroads-recipe-ledger { max-height: 24vh; border-right: 0; border-bottom: 3px solid #847657; }
+  .hearthroads-station-output { grid-column: 1; grid-template-columns: 110px minmax(0, 1fr); }
+  .hearthroads-output-slot { display: none; }
+  .hearthroads-trade-inventory { max-height: 42vh; grid-template-columns: 1fr; border-right: 0; border-bottom: 3px solid #857754; }
+  .hearthroads-bank-ledger { border-right: 0; border-bottom: 3px solid #867754; }
+  .hearthroads-settlement-summary { grid-template-columns: repeat(2, 1fr); }
+  .hearthroads-follower-orders { grid-template-columns: 1fr; overflow-y: auto; }
+  .field-guide-sections button { padding: 6px 9px; }
+  .field-guide-sections button small { display: none; }
+  .plant-detail { grid-template-columns: 1fr; }
+  .plant-hero { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hearthroads-station-apparatus[data-active="true"] span { animation: none; }
 }

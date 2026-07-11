@@ -231,7 +231,7 @@ test("bed orientation, counterpart lookup, recipe, and dawn/dusk transitions sta
   world.dispose();
 });
 
-test("v0.5 interaction policies keep respawns, instant flora, placement bypass, spawn pressure, and combat tracks deterministic", () => {
+test("v0.6 interaction policies keep respawns, instant flora, placement bypass, reduced spawn pressure, and combat tracks deterministic", () => {
   const candidates = bedRespawnCandidates(BlockId.BedNorthFoot, 0, 10, 0);
   assert.equal(candidates.some((candidate) => candidate.x === 0 && candidate.z === -1), false, "the head cell is not a respawn candidate");
   assert.ok(candidates.length >= 6);
@@ -240,7 +240,7 @@ test("v0.5 interaction policies keep respawns, instant flora, placement bypass, 
   assert.equal(isInstantBreakBlock(BlockId.Stone), false);
   assert.equal(shouldBypassOpenableUse(true, true, BlockId.Chest), true);
   assert.equal(shouldBypassOpenableUse(false, true, BlockId.Chest), false);
-  assert.deepEqual(mobPopulationCaps(22), { total: 22, passive: 13, hostile: 6 });
+  assert.deepEqual(mobPopulationCaps(22), { total: 22, passive: 13, hostile: 3 });
   assert.equal(positionInPlayerViewCone(0, 0, -10), true);
   assert.equal(positionInPlayerViewCone(0, 0, 10), false);
   assert.equal(DEFAULT_UNARMED_DAMAGE, 1);

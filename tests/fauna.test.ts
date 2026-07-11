@@ -70,8 +70,13 @@ import {
   AQUATIC_MOB_ORDER,
   BIRD_ORDER,
   CORE_MOB_ORDER,
+  GOBLIN_ORDER,
+  HEARTHROADS_AQUATIC_ORDER,
+  HEARTHROADS_WILDLIFE_ORDER,
+  HOBBIT_ORDER,
   MOB_DEFS,
   POLLINATOR_ORDER,
+  SENTIENT_MOB_ORDER,
   SURFACE_MOB_ORDER,
 } from "../app/game/mobs.ts";
 import { createMobVisual, createSkeletonArrowVisual } from "../app/game/mob-models.ts";
@@ -98,27 +103,51 @@ test("expanded ecology catalog includes mounts, livestock, thin fish, pollinator
   assert.equal(BIRD_ORDER.length, 2);
   assert.equal(AQUATIC_MOB_ORDER.length, 8);
   assert.equal(POLLINATOR_ORDER.length, 3);
-  assert.deepEqual(fishKindsForHabitat("ocean"), ["shoalfin", "silverthread", "coralback", "emberribbon"]);
-  assert.deepEqual(fishKindsForHabitat("river"), ["brookdart", "reedneedle"]);
+  assert.deepEqual(fishKindsForHabitat("ocean"), ["shoalfin", "silverthread", "blue-mackerel", "coralback", "emberribbon"]);
+  assert.deepEqual(fishKindsForHabitat("river"), ["brookdart", "reedneedle", "redfin-salmon"]);
+  assert.deepEqual(fishKindsForHabitat("deep-ocean"), ["blue-mackerel", "silverthread", "shoalfin", "coralback", "deepwater-shark"]);
   assert.deepEqual(fishKindsForHabitat("underground"), ["gloomfin", "cavefilament"]);
+  assert.deepEqual(HEARTHROADS_WILDLIFE_ORDER, ["burrowbell", "dewback-tapir"]);
+  assert.deepEqual(HEARTHROADS_AQUATIC_ORDER, ["redfin-salmon", "blue-mackerel", "deepwater-shark"]);
+  assert.equal(HOBBIT_ORDER.length, 7);
+  assert.equal(GOBLIN_ORDER.length, 5);
+  assert.equal(SENTIENT_MOB_ORDER.length, 12);
+  for (const kind of HOBBIT_ORDER) {
+    assert.equal(MOB_DEFS[kind].sentient, true);
+    assert.equal(MOB_DEFS[kind].faction, "hobbits");
+    assert.ok(MOB_DEFS[kind].role);
+    assert.ok(MOB_DEFS[kind].profession);
+  }
+  for (const kind of GOBLIN_ORDER) {
+    assert.equal(MOB_DEFS[kind].sentient, true);
+    assert.equal(MOB_DEFS[kind].faction, "goblins");
+    assert.ok(MOB_DEFS[kind].role);
+    assert.ok(MOB_DEFS[kind].tradeSpecialty);
+  }
+  assert.equal(MOB_DEFS.warg.sentient, false);
+  assert.equal(MOB_DEFS.warg.factionAffinity, "goblins");
+  assert.equal(MOB_DEFS.warg.tameRequiresUnaligned, true);
+  assert.equal(MOB_DEFS.warg.rideable, true);
+  assert.equal(MOB_DEFS["deepwater-shark"].hostile, true);
+  assert.match(MOB_DEFS["deepwater-shark"].behavior, /ignores occupied boats/i);
   assert.equal(MOB_DEFS.peelop.persistent, true);
   assert.equal(MOB_DEFS.skeleton.ranged, true);
   assert.equal(MOB_DEFS["reliquary-sentinel"].hostile, true);
   assert.equal(passiveMobKindForBiome(BiomeId.Meadow, 0.01), "thimbledeer");
   assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.3), "lanternshell");
   assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.52), "puddlehopper");
-  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.72), "reedstrider");
-  assert.equal(CORE_MOB_ORDER.every((kind) => MOB_DEFS[kind].sentient !== true), true);
+  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.65), "reedstrider");
+  assert.equal(CORE_MOB_ORDER.filter((kind) => MOB_DEFS[kind].sentient).length, 12);
 });
 
 test("v0.5 habitat tables place mammals, pollinators, and fish without ambient queen spam", () => {
-  assert.equal(passiveMobKindForBiome(BiomeId.Meadow, 0.8), "wild-horse");
+  assert.equal(passiveMobKindForBiome(BiomeId.Meadow, 0.75), "wild-horse");
   assert.equal(passiveMobKindForBiome(BiomeId.Meadow, 0.9), "meadow-cow");
   assert.equal(passiveMobKindForBiome(BiomeId.CloudreedGlen, 0.01), "mistmane");
   assert.equal(passiveMobKindForBiome(BiomeId.CloudreedGlen, 0.5), "reed-dragonfly");
   assert.equal(passiveMobKindForBiome(BiomeId.River, 0.35), "reed-dragonfly");
-  assert.equal(passiveMobKindForBiome(BiomeId.Wildwood, 0.93), "wild-horse");
-  assert.equal(passiveMobKindForBiome(BiomeId.Wildwood, 0.99), "meadow-cow");
+  assert.equal(passiveMobKindForBiome(BiomeId.Wildwood, 0.79), "wild-horse");
+  assert.equal(passiveMobKindForBiome(BiomeId.Wildwood, 0.99), "burrowbell");
 
   for (const biome of Object.values(BiomeId).filter((value): value is BiomeId => typeof value === "number")) {
     const kinds = passiveMobSpawnTableForBiome(biome).map(([kind]) => kind);
@@ -127,9 +156,11 @@ test("v0.5 habitat tables place mammals, pollinators, and fish without ambient q
     assert.ok(passiveMobSpawnTableForBiome(biome).reduce((sum, [, weight]) => sum + weight, 0) > 0);
   }
 
-  assert.deepEqual(fishSpawnTableForHabitat("river").map(([kind]) => kind), ["brookdart", "reedneedle"]);
+  assert.deepEqual(fishSpawnTableForHabitat("river").map(([kind]) => kind), ["brookdart", "reedneedle", "redfin-salmon"]);
   assert.deepEqual(fishSpawnTableForHabitat("underground").map(([kind]) => kind), ["gloomfin", "cavefilament"]);
-  assert.equal(new Set(fishSpawnTableForHabitat("ocean").map(([kind]) => kind)).size, 4);
+  assert.equal(new Set(fishSpawnTableForHabitat("ocean").map(([kind]) => kind)).size, 5);
+  assert.equal(fishSpawnTableForHabitat("ocean").some(([kind]) => kind === "deepwater-shark"), false);
+  assert.equal(fishSpawnTableForHabitat("deep-ocean").at(-1)?.[0], "deepwater-shark");
 });
 
 test("natural group ranges remain capped and wild hives own exactly one queen", () => {
@@ -138,6 +169,9 @@ test("natural group ranges remain capped and wild hives own exactly one queen", 
   assert.equal(naturalGroupSizeForMob("silverthread", 0), 8);
   assert.equal(naturalGroupSizeForMob("silverthread", 0.999999), 12);
   assert.equal(naturalGroupSizeForMob("mistmane", 0.5), 4);
+  assert.equal(naturalGroupSizeForMob("burrowbell", 0), 3);
+  assert.equal(naturalGroupSizeForMob("burrowbell", 0.999999), 6);
+  assert.equal(naturalGroupSizeForMob("deepwater-shark", 0.999999), 1);
   assert.equal(naturalGroupSizeForMob("peelop", 0.9), 1);
   assert.deepEqual(wildHiveResidentSpawnPlan(-4), [{ kind: "hive-queen", count: 1, group: "hive" }]);
   assert.deepEqual(wildHiveResidentSpawnPlan(3), [

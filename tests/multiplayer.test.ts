@@ -317,6 +317,23 @@ test("manual offer/answer creates both channel modes and carries host-authoritat
   assert.equal(hostEvents.some((event) => event.type === "message" && event.envelope.type === "sleep-vote"), true);
   assert.throws(() => guest.sendSleepVote({ actorId: HOST.id, tick: 2, target: "night", active: true }), /local peer identity/u);
 
+  assert.equal(guest.sendMapShare({
+    tableKey: "3,41,-6",
+    reply: false,
+    map: {
+      schema: 1,
+      worldId: "world:shared",
+      playerId: GUEST_A.id,
+      revision: 2,
+      exploredChunks: ["0,0", "-1,2"],
+      markers: [{ id: "poi:one", name: "Old Road", kind: "natural-poi", position: { x: 4, y: 42, z: -8 } }],
+      activeBedId: null,
+      fastTravelCharges: 0,
+    },
+  }), 1);
+  await flushMessages();
+  assert.equal(hostEvents.some((event) => event.type === "message" && event.envelope.type === "map-share"), true);
+
   const time: TimeWeatherSnapshot = { tick: 3, worldTime: 0.75, day: 4, weather: "rain" };
   assert.equal(host.sendTimeWeather(time), 1);
   await flushMessages();

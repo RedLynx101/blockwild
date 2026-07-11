@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import * as THREE from "three";
-import { BUTTERFLY_ANTENNA_CONTRACT, RATTLEKIN_CLUB_CONTRACT, ZOMBIE_EYE_COLOR } from "../app/game/model-specs.ts";
-import { BUTTERFLY_ORDER, CORE_MOB_ORDER, MOB_DEFS } from "../app/game/mobs.ts";
+import { BUTTERFLY_ANTENNA_CONTRACT, FACTION_WEAPON_CONTRACTS, RATTLEKIN_CLUB_CONTRACT, ZOMBIE_EYE_COLOR } from "../app/game/model-specs.ts";
+import { BUTTERFLY_ORDER, CORE_MOB_ORDER, GOBLIN_ORDER, HOBBIT_ORDER, MOB_DEFS } from "../app/game/mobs.ts";
 import {
   buildInspectionSpecs,
   createButterflyInspectionSpec,
@@ -107,6 +107,31 @@ test("the inspector captures every canonical production mob visual", () => {
   const bowGrip = skeleton.boxes.find((box) => box.id === "skeleton-bow-grip")!;
   assert.ok(nockedArrow.size[2] > nockedArrow.size[1] * 10, "Skeleton arrow must remain aligned along forward Z");
   assert.ok(nockedArrow.position[2] < bowGrip.position[2], "Skeleton arrowhead direction must remain in front of the bow");
+  const hammerguard = specs.find((spec) => spec.id === "hobbit-hammer-guard")!;
+  const hammerHandle = hammerguard.boxes.find((box) => box.id === "hobbit-hammer-guard-hammer-handle")!;
+  const hammerHead = hammerguard.boxes.find((box) => box.id === "hobbit-hammer-guard-hammer-head")!;
+  assert.equal(FACTION_WEAPON_CONTRACTS.hammer.forwardAxis, "-z");
+  assert.ok(hammerHandle.size[2] > hammerHandle.size[1] * 8);
+  assert.ok(hammerHead.position[2] < hammerHandle.position[2] - 0.4, "guard hammer must project naturally ahead of the hands");
+  const boltwatch = specs.find((spec) => spec.id === "hobbit-crossbow-guard")!;
+  const crossbowStock = boltwatch.boxes.find((box) => box.id === "hobbit-crossbow-guard-crossbow-stock")!;
+  const loadedBolt = boltwatch.boxes.find((box) => box.id === "hobbit-crossbow-guard-loaded-bolt")!;
+  assert.ok(crossbowStock.size[2] > crossbowStock.size[0] * 7);
+  assert.ok(loadedBolt.size[2] > loadedBolt.size[0] * 20);
+  const spearwarden = specs.find((spec) => spec.id === "goblin-spear-guard")!;
+  const spearShaft = spearwarden.boxes.find((box) => box.id === "goblin-spear-guard-spear-shaft")!;
+  const spearHead = spearwarden.boxes.find((box) => box.id === "goblin-spear-guard-spear-head")!;
+  assert.ok(spearShaft.size[2] > spearShaft.size[0] * 18);
+  assert.ok(spearHead.position[2] < spearShaft.position[2] - 0.9);
+  for (const kind of [...HOBBIT_ORDER, ...GOBLIN_ORDER]) {
+    const npc = specs.find((spec) => spec.id === kind)!;
+    assert.equal(MOB_DEFS[kind].sentient, true);
+    assert.ok(npc.boxes.some((box) => box.id.startsWith(`${kind}-left-eye`)));
+    assert.ok(npc.boxes.length >= 16, `${kind} should retain role-readable production detail`);
+  }
+  const shark = specs.find((spec) => spec.id === "deepwater-shark")!;
+  assert.ok(shark.boxes.some((box) => box.id === "deepwater-shark-dorsal-fin"));
+  assert.ok(shark.boxes.filter((box) => box.id.includes("tooth")).length >= 6);
   const portrait = renderModelPortrait(ridgeback);
   assert.match(portrait, /front three-quarter model portrait/);
   assert.match(portrait, /<polygon/);
@@ -123,10 +148,16 @@ test("the default inspection catalog appends players and butterflies without los
   const specs = buildInspectionSpecs();
   const ids = new Set(specs.map((spec) => spec.id));
   assert.equal(ids.has("held-pickaxe"), true);
+  assert.equal(ids.has("held-crossbow"), true);
+  assert.equal(ids.has("held-spear"), true);
   assert.equal(ids.has("ridgeback"), true);
   assert.equal(ids.has("player-crouching"), true);
   assert.equal(ids.has("butterfly-fen-lantern"), true);
   assert.equal(ids.size, specs.length, "inspection IDs must remain unique for --ids filtering and manifests");
+  const crossbow = specs.find((spec) => spec.id === "held-crossbow")!;
+  const spear = specs.find((spec) => spec.id === "held-spear")!;
+  assert.ok(crossbow.boxes.find((box) => box.id === "loaded-bolt")!.size[2] > 1, "held crossbow stays aimed along local forward -Z");
+  assert.ok(spear.boxes.find((box) => box.id === "spear-shaft")!.size[2] >= 1.9, "held spear retains its long readable shaft");
 });
 
 test("render output includes screenshots plus a machine-readable grounding manifest", async () => {

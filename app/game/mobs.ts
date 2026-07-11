@@ -18,12 +18,40 @@ export type SurfaceMobKind =
 export type BirdKind = "emberjay" | "canopy-lark";
 export type AquaticMobKind = "shoalfin" | "coralback" | "brookdart" | "gloomfin" | "silverthread" | "reedneedle" | "emberribbon" | "cavefilament";
 export type PollinatorKind = "honeybee" | "hive-queen" | "reed-dragonfly";
-export type SpecialMobKind = "peelop" | "reliquary-sentinel" | "skeleton";
-export type CoreMobKind = LegacyMobKind | SurfaceMobKind | BirdKind | AquaticMobKind | PollinatorKind | SpecialMobKind;
+export type HearthroadsWildlifeKind = "burrowbell" | "dewback-tapir";
+export type HearthroadsAquaticKind = "redfin-salmon" | "blue-mackerel" | "deepwater-shark";
+export type HobbitKind =
+  | "hobbit-mayor"
+  | "hobbit-farmer"
+  | "hobbit-miner"
+  | "hobbit-merchant"
+  | "hobbit-banker"
+  | "hobbit-hammer-guard"
+  | "hobbit-crossbow-guard";
+export type GoblinKind =
+  | "goblin-chieftain"
+  | "goblin-worker"
+  | "goblin-miner"
+  | "goblin-alchemist"
+  | "goblin-spear-guard";
+export type SentientMobKind = HobbitKind | GoblinKind;
+export type FactionKind = "hobbits" | "goblins";
+export type SentientRole = "mayor" | "chieftain" | "farmer" | "worker" | "miner" | "merchant" | "banker" | "alchemist" | "guard";
+export type SpecialMobKind = "peelop" | "reliquary-sentinel" | "skeleton" | "warg";
+export type CoreMobKind =
+  | LegacyMobKind
+  | SurfaceMobKind
+  | BirdKind
+  | AquaticMobKind
+  | PollinatorKind
+  | HearthroadsWildlifeKind
+  | HearthroadsAquaticKind
+  | SentientMobKind
+  | SpecialMobKind;
 export type MobKind = CoreMobKind | ButterflyKind;
 export type MobTemperament = "Gentle" | "Skittish" | "Defensive" | "Hostile";
 export type MobMovement = "ground" | "flying" | "aquatic";
-export type MobFamily = "surface" | "bird" | "fish" | "pet" | "mount" | "pollinator" | "construct" | "undead" | "butterfly";
+export type MobFamily = "surface" | "bird" | "fish" | "pet" | "mount" | "pollinator" | "construct" | "undead" | "sentient" | "butterfly";
 
 export type MobDrop = {
   item: ItemCode;
@@ -73,6 +101,16 @@ export type MobDefinition = {
   secretHint?: string;
   /** A useful biome-level clue shown before the creature has been discovered. */
   discoveryHint?: string;
+  /** Hearthroads faction and profession metadata for sentient NPCs. */
+  faction?: FactionKind;
+  role?: SentientRole;
+  profession?: string;
+  tradeSpecialty?: string;
+  /** Natural specimens can inherit this faction without making the species sentient. */
+  factionAffinity?: FactionKind;
+  /** Faction-aligned instances must be unaligned before the normal tame path applies. */
+  tameRequiresUnaligned?: boolean;
+  rideable?: boolean;
 };
 
 export const MOB_DEFS: Record<MobKind, MobDefinition> = {
@@ -457,6 +495,187 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     colors: [0xd9d1bb, 0x6e604c, 0x26211d], drops: [{ item: Item.BoneShard, min: 1, max: 3, chance: 1 }, { item: Item.Stick, min: 1, max: 2, chance: 0.4 }],
     family: "undead", movement: "ground", ranged: true, utility: "Ranged night enemy whose arrows provide readable, avoidable pressure.",
   },
+  "hobbit-mayor": {
+    kind: "hobbit-mayor", name: "Hobbit Hearthwarden", temperament: "Gentle", hostile: false,
+    health: 16, damage: 2, xp: 0, speed: 0.58, chaseSpeed: 1.8, turnRate: 6.2, attackRange: 1.3,
+    footOffset: 0.7604, radius: 0.34, height: 1.32, habitat: "Hobbit settlement hearth-halls", active: "Day; appoints a successor at eight in the morning",
+    behavior: "Keeps near the settlement hall, hears claims and contracts, and flees toward guards when badly hurt.",
+    lore: "A Hearthwarden carries the town ledger and the names of every family who helped raise its walls.",
+    colors: [0x7a4667, 0xd1a86f, 0x2d211b], drops: [], family: "sentient", movement: "ground", persistent: true,
+    sentient: true, faction: "hobbits", role: "mayor", profession: "Hearthwarden", tradeSpecialty: "Town charters, civic work and trusted hires",
+    utility: "Settlement leader for claims, hiring and high-trust civic quests.", discoveryHint: "A tall round-doored hearth-hall marks the center of a Hobbit settlement.",
+  },
+  "hobbit-farmer": {
+    kind: "hobbit-farmer", name: "Hobbit Tiller", temperament: "Gentle", hostile: false,
+    health: 11, damage: 1, xp: 0, speed: 0.56, chaseSpeed: 1.72, turnRate: 6, attackRange: 1.2,
+    footOffset: 0.7604, radius: 0.33, height: 1.28, habitat: "Hobbit field terraces and orchards", active: "Dawn through dusk",
+    behavior: "Tends nearby crops, carries produce between fields and stores, visits neighbors, and sleeps after sunset.",
+    lore: "Tiller aprons collect seeds, flour, gossip, and at least one stone that looked useful at the time.",
+    colors: [0x6d8b49, 0xd5b56d, 0x302116], drops: [], family: "sentient", movement: "ground", persistent: true,
+    sentient: true, faction: "hobbits", role: "farmer", profession: "Tiller", tradeSpecialty: "Crops, seeds, fruit and seasonal food",
+    utility: "Buys farm goods eagerly and offers harvest-side work.", discoveryHint: "Look for fenced terraces and broad round-roofed barns.",
+  },
+  "hobbit-miner": {
+    kind: "hobbit-miner", name: "Hobbit Delver", temperament: "Defensive", hostile: false,
+    health: 13, damage: 2, xp: 0, speed: 0.54, chaseSpeed: 1.7, turnRate: 5.8, attackRange: 1.25,
+    footOffset: 0.7604, radius: 0.34, height: 1.3, habitat: "Hobbit quarries, cellars and stone yards", active: "Day",
+    behavior: "Moves ore and stone between the mine shed and workshops, sheltering near guards when monsters approach.",
+    lore: "Delvers tap every beam twice: once for safety, and once so the mountain knows they asked politely.",
+    colors: [0x66737d, 0xc99a55, 0x2b2119], drops: [], family: "sentient", movement: "ground", persistent: true,
+    sentient: true, faction: "hobbits", role: "miner", profession: "Delver", tradeSpecialty: "Stone, coal, ore and mining supplies",
+    utility: "Trades raw materials and posts quarry contracts.", discoveryHint: "Stone yards and timber-braced cellar mouths sit near upland Hobbit towns.",
+  },
+  "hobbit-merchant": {
+    kind: "hobbit-merchant", name: "Hobbit Provisioner", temperament: "Gentle", hostile: false,
+    health: 11, damage: 1, xp: 0, speed: 0.55, chaseSpeed: 1.7, turnRate: 6.2, attackRange: 1.2,
+    footOffset: 0.7604, radius: 0.34, height: 1.29, habitat: "Hobbit markets and roadside inns", active: "Day and early evening",
+    behavior: "Circulates between market stalls, assesses any ordinary item, and pays more for what the settlement currently needs.",
+    lore: "Provisioners remember the fair price of a sack of onions from years before either trader was born.",
+    colors: [0xb06b45, 0xe0bd75, 0x2d1d18], drops: [], family: "sentient", movement: "ground", persistent: true,
+    sentient: true, faction: "hobbits", role: "merchant", profession: "Provisioner", tradeSpecialty: "General goods, mead and settlement demand",
+    utility: "General Skyrim-style buyer and seller with finite, restocking gold.", discoveryHint: "Canvas awnings and stacked barrels identify the market lane.",
+  },
+  "hobbit-banker": {
+    kind: "hobbit-banker", name: "Hobbit Goldkeeper", temperament: "Gentle", hostile: false,
+    health: 12, damage: 1, xp: 0, speed: 0.5, chaseSpeed: 1.62, turnRate: 5.8, attackRange: 1.2,
+    footOffset: 0.7604, radius: 0.34, height: 1.28, habitat: "Hobbit counting houses", active: "Day",
+    behavior: "Works at a secured counter, manages deposits and investments, and returns home under guard after closing.",
+    lore: "Goldkeepers measure wealth in promises kept, though their ledgers remain extremely particular about the gold.",
+    colors: [0x385f64, 0xd7b35e, 0x261e18], drops: [], family: "sentient", movement: "ground", persistent: true,
+    sentient: true, faction: "hobbits", role: "banker", profession: "Goldkeeper", tradeSpecialty: "Gold deposits, daily interest and investments",
+    utility: "Opens the settlement banking and investment ledger.", discoveryHint: "The counting house has brass-bound doors and a gold acorn sign.",
+  },
+  "hobbit-hammer-guard": {
+    kind: "hobbit-hammer-guard", name: "Hobbit Hammerguard", temperament: "Defensive", hostile: false,
+    health: 20, damage: 5, xp: 0, speed: 0.68, chaseSpeed: 2.55, turnRate: 7.2, attackRange: 1.7,
+    footOffset: 0.7604, radius: 0.38, height: 1.34, habitat: "Hobbit gates, walls and patrol lanes", active: "All shifts",
+    behavior: "Patrols gates, intercepts monsters and faction enemies, and keeps its square-headed hammer projected ahead in a ready stance.",
+    lore: "A Hammerguard learns every loose stone in the wall and every child who uses the gate as a shortcut.",
+    colors: [0x854d3f, 0xd2aa66, 0x201813], drops: [], family: "sentient", movement: "ground", persistent: true,
+    sentient: true, faction: "hobbits", role: "guard", profession: "Hammerguard", tradeSpecialty: "Local defense",
+    utility: "Melee settlement defender equipped with a compact war hammer.", discoveryHint: "Hammerguards favor the main gate and wall walk.",
+  },
+  "hobbit-crossbow-guard": {
+    kind: "hobbit-crossbow-guard", name: "Hobbit Boltwatch", temperament: "Defensive", hostile: false,
+    health: 17, damage: 5, xp: 0, speed: 0.62, chaseSpeed: 2.15, turnRate: 7.5, attackRange: 14,
+    footOffset: 0.7604, radius: 0.36, height: 1.33, habitat: "Hobbit gate towers and rooftops", active: "All shifts",
+    behavior: "Watches road approaches, shoulders a compact crossbow, and fires visible bolts past civilians only when it has a clear line.",
+    lore: "Boltwatches carve one small leaf into a stock for every winter their town has stood unbreached.",
+    colors: [0x496b4e, 0xbd8d4f, 0x251b15], drops: [], family: "sentient", movement: "ground", persistent: true, ranged: true,
+    sentient: true, faction: "hobbits", role: "guard", profession: "Boltwatch", tradeSpecialty: "Gate defense and crossbow training",
+    utility: "Ranged settlement defender using the same readable bolt path as player crossbows.", discoveryHint: "Look along gatehouse balconies for green hooded sentries.",
+  },
+  "goblin-chieftain": {
+    kind: "goblin-chieftain", name: "Goblin Roadboss", temperament: "Defensive", hostile: false,
+    health: 19, damage: 4, xp: 0, speed: 0.72, chaseSpeed: 2.45, turnRate: 7, attackRange: 1.5,
+    footOffset: 0.88, radius: 0.36, height: 1.5, habitat: "Goblin longhouses and road forts", active: "Day and evening",
+    behavior: "Directs patrols from the longhouse, negotiates with trusted outsiders, and chooses force quickly when relations collapse.",
+    lore: "A Roadboss earns the iron key-ring by keeping paths open, fires fed, and rival bosses at a useful distance.",
+    colors: [0x733c35, 0xb07a3d, 0xf1d45e], drops: [], family: "sentient", movement: "ground", persistent: true,
+    sentient: true, faction: "goblins", role: "chieftain", profession: "Roadboss", tradeSpecialty: "Town authority, mercenaries and faction contracts",
+    utility: "Goblin settlement leader for claims, hiring and high-trust work.", discoveryHint: "A bannered longhouse rises behind the main palisade gate.",
+  },
+  "goblin-worker": {
+    kind: "goblin-worker", name: "Goblin Grower", temperament: "Defensive", hostile: false,
+    health: 11, damage: 2, xp: 0, speed: 0.68, chaseSpeed: 2, turnRate: 7.2, attackRange: 1.25,
+    footOffset: 0.88, radius: 0.34, height: 1.45, habitat: "Goblin fungus yards and terrace fields", active: "Dawn through dusk",
+    behavior: "Tends hardy crops, hauls supplies, chats around work fires, and defends itself only after being badly wounded.",
+    lore: "Growers know which mushrooms cure a stew and which ones convince the stew to leave the pot.",
+    colors: [0x69713d, 0xb38143, 0xebcf52], drops: [], family: "sentient", movement: "ground", persistent: true,
+    sentient: true, faction: "goblins", role: "worker", profession: "Grower", tradeSpecialty: "Fungus, roots, fiber and common supplies",
+    utility: "Produces food and offers practical settlement errands.", discoveryHint: "Smoke, mushroom racks and terraced root beds mark working yards.",
+  },
+  "goblin-miner": {
+    kind: "goblin-miner", name: "Goblin Sparkdelver", temperament: "Defensive", hostile: false,
+    health: 14, damage: 3, xp: 0, speed: 0.66, chaseSpeed: 2.05, turnRate: 6.8, attackRange: 1.3,
+    footOffset: 0.88, radius: 0.35, height: 1.47, habitat: "Goblin mines, slag heaps and smith yards", active: "Day and late evening",
+    behavior: "Moves between mine and forge, tests ore against a chipped pick, and sells raw materials from a limited stock.",
+    lore: "Sparkdelvers name promising rock seams and apologize when the seam turns out to be ordinary dirt.",
+    colors: [0x495766, 0x9c7244, 0xf2d45f], drops: [], family: "sentient", movement: "ground", persistent: true,
+    sentient: true, faction: "goblins", role: "miner", profession: "Sparkdelver", tradeSpecialty: "Ore, coal, flint and tools",
+    utility: "Primary Goblin raw-material trader.", discoveryHint: "Follow cart grooves toward a roofed mine mouth and slag piles.",
+  },
+  "goblin-alchemist": {
+    kind: "goblin-alchemist", name: "Goblin Bottlesage", temperament: "Defensive", hostile: false,
+    health: 12, damage: 3, xp: 0, speed: 0.65, chaseSpeed: 1.95, turnRate: 7.4, attackRange: 5,
+    footOffset: 0.88, radius: 0.34, height: 1.49, habitat: "Goblin markets and smoking bottle shops", active: "Late morning through nightfall",
+    behavior: "Trades general goods and alchemical stock, checks bubbling bottles, and throws a weak defensive flask when cornered.",
+    lore: "Bottlesages label every mixture. Whether anyone else can read the labels is considered a separate craft.",
+    colors: [0x5c3f72, 0x9e7d44, 0xf6dc66], drops: [], family: "sentient", movement: "ground", persistent: true, ranged: true,
+    sentient: true, faction: "goblins", role: "alchemist", profession: "Bottlesage", tradeSpecialty: "General goods, potion blueprints and strange reagents",
+    utility: "Goblin merchant with special alchemy stock.", discoveryHint: "Colored bottle lanterns and violet smoke mark a Bottlesage shop.",
+  },
+  "goblin-spear-guard": {
+    kind: "goblin-spear-guard", name: "Goblin Spearwarden", temperament: "Defensive", hostile: false,
+    health: 18, damage: 5, xp: 0, speed: 0.78, chaseSpeed: 2.75, turnRate: 8, attackRange: 2.25,
+    footOffset: 0.88, radius: 0.37, height: 1.52, habitat: "Goblin palisade gates and road patrols", active: "All shifts",
+    behavior: "Patrols with Wargs, braces a long spear through gate openings, and closes ranks around civilians during attacks.",
+    lore: "Spearwardens keep bright ribbons below each spearhead so allies can read a patrol through dust and rain.",
+    colors: [0x68412f, 0xc0643e, 0xf4d75a], drops: [], family: "sentient", movement: "ground", persistent: true,
+    sentient: true, faction: "goblins", role: "guard", profession: "Spearwarden", tradeSpecialty: "Gate defense and spear training",
+    utility: "Reach-focused Goblin defender whose spear clearly projects ahead of its hands.", discoveryHint: "Red spear pennants move along Goblin walls and gate roads.",
+  },
+  warg: {
+    kind: "warg", name: "Road Warg", temperament: "Defensive", hostile: false,
+    health: 18, damage: 5, xp: 7, speed: 0.9, chaseSpeed: 4.25, turnRate: 7.4, attackRange: 1.55,
+    footOffset: 1.2, radius: 0.68, height: 1.28, habitat: "Goblin roads, scrubland forts and rare feral upland packs", active: "Dusk, night and patrol shifts",
+    behavior: "Runs in coordinated patrol pairs, snaps at faction enemies, and refuses bonding while sworn to a settlement.",
+    lore: "A Warg remembers every road it has guarded and every rider who treated it as a partner rather than a tool.",
+    colors: [0x4d5148, 0x8a6b45, 0xe5c25a], drops: [{ item: Item.Hide, min: 1, max: 2, chance: 0.72 }, { item: Item.RawMeat, min: 1, max: 2, chance: 0.55 }],
+    family: "mount", movement: "ground", persistent: true, sentient: false, factionAffinity: "goblins", tameRequiresUnaligned: true,
+    tameable: true, tameItems: [Item.RawMeat, Item.CookedMeat], breedable: true, breedingFoods: [Item.RawMeat], diet: [Item.RawMeat, Item.CookedMeat], rideable: true,
+    postTameNotes: "Only an unaligned Warg can bond. A trusted, saddled Warg accepts a rider and keeps its bite available in combat.",
+    secretHint: "Settlement patrol Wargs are faction-aligned and cannot be tamed; unaligned specimens from rare orbs can be befriended with meat.",
+    utility: "Fast combat-capable mount when unaligned, bonded and saddled.", discoveryHint: "Look for paired tracks beside Goblin patrol roads.",
+  },
+  burrowbell: {
+    kind: "burrowbell", name: "Burrowbell", temperament: "Skittish", hostile: false,
+    health: 6, damage: 0, xp: 3, speed: 0.55, chaseSpeed: 2.7, turnRate: 8.5, attackRange: 0,
+    footOffset: 0.96, radius: 0.4, height: 0.72, habitat: "Sunny upland meadows and grassy town margins", active: "Morning and late afternoon",
+    behavior: "Forages in small family rings, stands upright to whistle at danger, then vanishes into the nearest burrow.",
+    lore: "Its hollow tail tip makes a faint bell note when the whole colony races underground.",
+    colors: [0xaa7c4f, 0xe3c18a, 0x281d18], drops: [{ item: Item.Fiber, min: 1, max: 1, chance: 0.28 }],
+    family: "surface", movement: "ground", sentient: false, breedable: true, breedingFoods: [Item.Berry], diet: [Item.Berry, Item.Wheat],
+    utility: "Whistles when hostile creatures approach open grass.", discoveryHint: "Small round burrows and lookout stones dot quiet upland meadows.",
+  },
+  "dewback-tapir": {
+    kind: "dewback-tapir", name: "Dewback Tapir", temperament: "Gentle", hostile: false,
+    health: 14, damage: 2, xp: 5, speed: 0.52, chaseSpeed: 2.2, turnRate: 4.6, attackRange: 1.2,
+    footOffset: 1.095, radius: 0.68, height: 1.18, habitat: "Rain-dark forest pools and broad Siltfen banks", active: "Rain, dawn and dusk",
+    behavior: "Browses low leaves in family pairs, wallows at shallow banks, and shoulder-checks only when a calf is threatened.",
+    lore: "Water beads on the pale saddle of its back, carrying seeds until the animal brushes through new ground.",
+    colors: [0x564238, 0xc8a986, 0x211a18], drops: [{ item: Item.Hide, min: 1, max: 2, chance: 0.48 }, { item: Item.RawMeat, min: 1, max: 2, chance: 0.58 }],
+    family: "surface", movement: "ground", sentient: false, breedable: true, breedingFoods: [Item.Apple], diet: [Item.Apple, Item.Berry, Item.Wheat],
+    utility: "Carries wetland seeds between pools and can expose buried roots while browsing.", discoveryHint: "Wide three-toed tracks connect shaded forest pools after rain.",
+  },
+  "redfin-salmon": {
+    kind: "redfin-salmon", name: "Redfin Salmon", temperament: "Skittish", hostile: false,
+    health: 4, damage: 0, xp: 3, speed: 1.75, chaseSpeed: 3.8, turnRate: 9, attackRange: 0,
+    footOffset: 0, radius: 0.24, height: 0.22, habitat: "Cool rivers and forest tributaries", active: "Morning, rain and seasonal upstream runs",
+    behavior: "Holds in small schools below falls, then surges upstream through clear channels.",
+    lore: "Its red fins brighten on the long route home, sketching living arrows through a river.",
+    colors: [0x8397a2, 0xc74f45, 0x172932], drops: [{ item: Item.RawFish, min: 1, max: 2, chance: 1 }],
+    family: "fish", movement: "aquatic", aquatic: true, utility: "A sturdy river food fish.", captureItem: Item.CaptureOrb,
+  },
+  "blue-mackerel": {
+    kind: "blue-mackerel", name: "Blue Mackerel", temperament: "Skittish", hostile: false,
+    health: 3, damage: 0, xp: 2, speed: 1.95, chaseSpeed: 4.15, turnRate: 11, attackRange: 0,
+    footOffset: 0, radius: 0.22, height: 0.18, habitat: "Open ocean shelves and deep coastal water", active: "Daylight underwater",
+    behavior: "Forms tight striped schools that roll together when larger shadows pass overhead.",
+    lore: "A turning school flashes blue like rain seen from below the sea.",
+    colors: [0x356c94, 0xc7d6ce, 0x152838], drops: [{ item: Item.RawFish, min: 1, max: 1, chance: 1 }],
+    family: "fish", movement: "aquatic", aquatic: true, utility: "A common ocean food fish.", captureItem: Item.CaptureOrb,
+  },
+  "deepwater-shark": {
+    kind: "deepwater-shark", name: "Slatefin Shark", temperament: "Hostile", hostile: true,
+    health: 22, damage: 5, xp: 10, speed: 1.25, chaseSpeed: 3.45, turnRate: 4.8, attackRange: 1.55,
+    footOffset: 0, radius: 0.86, height: 0.78, habitat: "Deep ocean beyond coastal shelves", active: "All hours underwater",
+    behavior: "Cruises alone below shoals, investigates swimmers, and deliberately ignores occupied boats.",
+    lore: "Slatefins follow the cool seam below storms. Sailors fear them less than an ocean suddenly empty of them.",
+    colors: [0x405766, 0xb7c5c4, 0xe6edf0], drops: [{ item: Item.RawFish, min: 2, max: 4, chance: 1 }, { item: Item.BoneShard, min: 1, max: 2, chance: 0.36 }],
+    family: "fish", movement: "aquatic", aquatic: true, utility: "A sparse deep-ocean predator that never attacks players seated in boats.",
+    discoveryHint: "Watch the dark water below large offshore shoals.",
+  },
   meadowwing: {
     kind: "meadowwing", name: "Meadowwing", temperament: "Gentle", hostile: false,
     health: 1, damage: 0, xp: 0, speed: 1.3, chaseSpeed: 1.8, turnRate: 9, attackRange: 0,
@@ -516,6 +735,23 @@ export const SURFACE_MOB_ORDER: SurfaceMobKind[] = [
 export const BIRD_ORDER: BirdKind[] = ["emberjay", "canopy-lark"];
 export const AQUATIC_MOB_ORDER: AquaticMobKind[] = ["shoalfin", "coralback", "brookdart", "gloomfin", "silverthread", "reedneedle", "emberribbon", "cavefilament"];
 export const POLLINATOR_ORDER: PollinatorKind[] = ["honeybee", "hive-queen", "reed-dragonfly"];
-export const SPECIAL_MOB_ORDER: SpecialMobKind[] = ["peelop", "reliquary-sentinel", "skeleton"];
-export const CORE_MOB_ORDER: CoreMobKind[] = [...LEGACY_MOB_ORDER, ...SURFACE_MOB_ORDER, ...BIRD_ORDER, ...AQUATIC_MOB_ORDER, ...POLLINATOR_ORDER, ...SPECIAL_MOB_ORDER];
+export const HEARTHROADS_WILDLIFE_ORDER: HearthroadsWildlifeKind[] = ["burrowbell", "dewback-tapir"];
+export const HEARTHROADS_AQUATIC_ORDER: HearthroadsAquaticKind[] = ["redfin-salmon", "blue-mackerel", "deepwater-shark"];
+export const HOBBIT_ORDER: HobbitKind[] = [
+  "hobbit-mayor", "hobbit-farmer", "hobbit-miner", "hobbit-merchant", "hobbit-banker", "hobbit-hammer-guard", "hobbit-crossbow-guard",
+];
+export const GOBLIN_ORDER: GoblinKind[] = ["goblin-chieftain", "goblin-worker", "goblin-miner", "goblin-alchemist", "goblin-spear-guard"];
+export const SENTIENT_MOB_ORDER: SentientMobKind[] = [...HOBBIT_ORDER, ...GOBLIN_ORDER];
+export const SPECIAL_MOB_ORDER: SpecialMobKind[] = ["peelop", "reliquary-sentinel", "skeleton", "warg"];
+export const CORE_MOB_ORDER: CoreMobKind[] = [
+  ...LEGACY_MOB_ORDER,
+  ...SURFACE_MOB_ORDER,
+  ...BIRD_ORDER,
+  ...AQUATIC_MOB_ORDER,
+  ...POLLINATOR_ORDER,
+  ...HEARTHROADS_WILDLIFE_ORDER,
+  ...HEARTHROADS_AQUATIC_ORDER,
+  ...SENTIENT_MOB_ORDER,
+  ...SPECIAL_MOB_ORDER,
+];
 export const MOB_ORDER: MobKind[] = [...CORE_MOB_ORDER, ...BUTTERFLY_ORDER];

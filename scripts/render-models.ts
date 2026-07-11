@@ -509,8 +509,10 @@ function renderTile(spec: ModelSpec, view: ViewName, tileX: number, tileY: numbe
   const frontPoint = project(frontEnd);
   output.push(`<rect x="${frontPoint.x - 7}" y="${frontPoint.y - 22}" width="72" height="18" rx="4" fill="#181714" stroke="#8a7437"/>`);
   output.push(`<text x="${frontPoint.x - 2}" y="${frontPoint.y - 9}" fill="#ffe07b" font-size="10" font-weight="900">FRONT -Z</text>`);
-  output.push(`<text x="${tileX + 25}" y="${tileY + TILE_HEIGHT - 30}" fill="#aab3bc" font-size="10">${escapeXml(parts.join(" · ").slice(0, 74))}</text>`);
-  output.push(`<text x="${tileX + TILE_WIDTH - 25}" y="${tileY + TILE_HEIGHT - 30}" text-anchor="end" fill="#65717c" font-size="10">${escapeXml(spec.id)}</text>`, `</g>`);
+  const partSummary = parts.join(" · ");
+  const clippedPartSummary = partSummary.length > 58 ? `${partSummary.slice(0, 57)}…` : partSummary;
+  output.push(`<text x="${tileX + 25}" y="${tileY + TILE_HEIGHT - 42}" fill="#aab3bc" font-size="10">${escapeXml(clippedPartSummary)}</text>`);
+  output.push(`<text x="${tileX + TILE_WIDTH - 25}" y="${tileY + TILE_HEIGHT - 22}" text-anchor="end" fill="#65717c" font-size="10">${escapeXml(spec.id)}</text>`, `</g>`);
   return output.join("");
 }
 
@@ -605,11 +607,13 @@ function renderPortraitSheet(specs: readonly InspectionModelSpec[], rendered: Re
     const data = Buffer.from(portrait, "utf8").toString("base64");
     const mobKey = (spec.inspection?.mob ?? spec.inspection?.variant ?? spec.id.replace(/^butterfly-/, "")) as keyof typeof MOB_DEFS;
     const definition = spec.category === "mob" && mobKey in MOB_DEFS ? MOB_DEFS[mobKey] : undefined;
+    const rawFooter = definition ? `${definition.temperament.toUpperCase()} · ${definition.active.toUpperCase()}` : spec.category.toUpperCase();
+    const footerLabel = rawFooter.length > 42 ? `${rawFooter.slice(0, 41)}…` : rawFooter;
     return `<g transform="translate(${x} ${y})">
       <rect x="8" y="8" width="${tileWidth - 16}" height="${tileHeight - 16}" rx="18" fill="#171d1a" stroke="#39473e" stroke-width="2"/>
       <image href="data:image/svg+xml;base64,${data}" x="18" y="16" width="${tileWidth - 36}" height="${tileHeight - 82}" preserveAspectRatio="xMidYMid meet"/>
       <text x="24" y="${tileHeight - 42}" fill="#f2ebd7" font-family="ui-sans-serif, system-ui, sans-serif" font-size="20" font-weight="800">${escapeXml(spec.label.replace(/^Butterfly · /, ""))}</text>
-      <text x="24" y="${tileHeight - 21}" fill="#95a99b" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" font-weight="700" letter-spacing="1.4">${escapeXml(definition ? `${definition.temperament.toUpperCase()} · ${definition.active.toUpperCase()}` : spec.category.toUpperCase())}</text>
+      <text x="24" y="${tileHeight - 21}" fill="#95a99b" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" font-weight="700" letter-spacing="1.4">${escapeXml(footerLabel)}</text>
     </g>`;
   }).join("");
   return `<?xml version="1.0" encoding="UTF-8"?>

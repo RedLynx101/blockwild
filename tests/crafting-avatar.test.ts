@@ -4,6 +4,7 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToString } from "react-dom/server";
 import * as THREE from "three";
+import { createBlueprintState } from "../app/game/blueprints.ts";
 import { BlockId, Item, RECIPES, mirrorRecipePattern } from "../app/game/data.ts";
 import { VoxelEngine, isEditableKeyboardTarget, type InventorySlot } from "../app/game/engine.ts";
 import { createAvatarHeldItemModel } from "../app/game/held-items.ts";
@@ -37,6 +38,7 @@ function craftingHarness(inventory: Array<InventorySlot | null>, size: 2 | 3 = 3
   engine.craftingSize = size;
   engine.cursor = null;
   engine.activeRecipe = null;
+  engine.blueprints = createBlueprintState();
   engine.events = {
     onHud: () => undefined,
     onToast: () => undefined,
@@ -235,8 +237,8 @@ test("workstation UI normalizes apiary production and exact capture-orb metadata
 });
 
 test("human release identity stays separate from save schemas", () => {
-  assert.equal(GAME_VERSION, "0.5.0");
-  assert.equal(GAME_RELEASE_NAME, "Wildbond");
+  assert.equal(GAME_VERSION, "0.6.0");
+  assert.equal(GAME_RELEASE_NAME, "Hearthroads");
   assert.equal(normalizeGameVersion("garbage"), "0.1.0");
 });
 

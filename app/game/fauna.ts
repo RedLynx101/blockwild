@@ -128,19 +128,28 @@ export function updateBirdBehavior(state: BirdBehaviorState, stimulus: BirdStimu
   return { ...state, mode, timer, perchId, altitude, wingPhase: (state.wingPhase + dt * flapRate) % TAU };
 }
 
-export type FishHabitat = "ocean" | "river" | "underground";
+export type FishHabitat = "ocean" | "deep-ocean" | "river" | "underground";
 
 export type WeightedMob = readonly [kind: MobKind, weight: number];
 
 const OCEAN_FISH: readonly WeightedMob[] = Object.freeze([
-  ["shoalfin", 0.38],
-  ["silverthread", 0.34],
-  ["coralback", 0.18],
-  ["emberribbon", 0.1],
+  ["shoalfin", 0.3],
+  ["silverthread", 0.25],
+  ["blue-mackerel", 0.22],
+  ["coralback", 0.14],
+  ["emberribbon", 0.09],
+]);
+const DEEP_OCEAN_FISH: readonly WeightedMob[] = Object.freeze([
+  ["blue-mackerel", 0.36],
+  ["silverthread", 0.27],
+  ["shoalfin", 0.18],
+  ["coralback", 0.12],
+  ["deepwater-shark", 0.07],
 ]);
 const RIVER_FISH: readonly WeightedMob[] = Object.freeze([
-  ["brookdart", 0.55],
-  ["reedneedle", 0.45],
+  ["brookdart", 0.4],
+  ["reedneedle", 0.35],
+  ["redfin-salmon", 0.25],
 ]);
 const UNDERGROUND_FISH: readonly WeightedMob[] = Object.freeze([
   ["gloomfin", 0.48],
@@ -150,6 +159,7 @@ const UNDERGROUND_FISH: readonly WeightedMob[] = Object.freeze([
 /** Small immutable tables let the engine choose habitat fish without scanning all mobs. */
 export function fishSpawnTableForHabitat(habitat: FishHabitat): readonly WeightedMob[] {
   if (habitat === "ocean") return OCEAN_FISH;
+  if (habitat === "deep-ocean") return DEEP_OCEAN_FISH;
   if (habitat === "river") return RIVER_FISH;
   return UNDERGROUND_FISH;
 }
@@ -194,18 +204,18 @@ const SNOW_PASSIVES: readonly WeightedMob[] = Object.freeze([["woolhorn", 0.68],
 const DESERT_PASSIVES: readonly WeightedMob[] = Object.freeze([["duneclatter", 0.68], ["emberjay", 0.24], ["pebbletortoise", 0.08]]);
 const SAVANNA_PASSIVES: readonly WeightedMob[] = Object.freeze([["sunstep-grazer", 0.46], ["emberjay", 0.2], ["ridgeback", 0.2], ["reedstrider", 0.14]]);
 const SILTFEN_PASSIVES: readonly WeightedMob[] = Object.freeze([
-  ["mossling", 0.22], ["lanternshell", 0.23], ["puddlehopper", 0.2], ["reedstrider", 0.18],
-  ["reed-dragonfly", 0.1], ["pebbletortoise", 0.04], ["canopy-lark", 0.03],
+  ["mossling", 0.19], ["lanternshell", 0.2], ["puddlehopper", 0.17], ["reedstrider", 0.16],
+  ["reed-dragonfly", 0.09], ["pebbletortoise", 0.04], ["canopy-lark", 0.03], ["dewback-tapir", 0.12],
 ]);
 const FOREST_PASSIVES: readonly WeightedMob[] = Object.freeze([
-  ["brambleboar", 0.21], ["mossling", 0.18], ["canopy-lark", 0.16], ["thimbledeer", 0.18],
-  ["petalfox", 0.17], ["wild-horse", 0.07], ["meadow-cow", 0.03],
+  ["brambleboar", 0.18], ["mossling", 0.16], ["canopy-lark", 0.13], ["thimbledeer", 0.15],
+  ["petalfox", 0.14], ["wild-horse", 0.06], ["meadow-cow", 0.03], ["dewback-tapir", 0.09], ["burrowbell", 0.06],
 ]);
 const MUSHROOM_PASSIVES: readonly WeightedMob[] = Object.freeze([["lanternshell", 0.38], ["glowmoth", 0.24], ["puddlehopper", 0.22], ["petalfox", 0.16]]);
 const MEADOW_PASSIVES: readonly WeightedMob[] = Object.freeze([
-  ["thimbledeer", 0.16], ["petalfox", 0.12], ["puddlehopper", 0.07], ["reedstrider", 0.08],
+  ["thimbledeer", 0.14], ["petalfox", 0.11], ["puddlehopper", 0.06], ["reedstrider", 0.07],
   ["pebbletortoise", 0.08], ["canopy-lark", 0.08], ["peelop", 0.04], ["ridgeback", 0.1],
-  ["wild-horse", 0.13], ["meadow-cow", 0.14],
+  ["wild-horse", 0.12], ["meadow-cow", 0.12], ["burrowbell", 0.08],
 ]);
 const RIVER_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["reedstrider", 0.3], ["reed-dragonfly", 0.22], ["puddlehopper", 0.18], ["lanternshell", 0.12],
@@ -216,8 +226,8 @@ const CLOUDREED_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["puddlehopper", 0.1], ["lanternshell", 0.08],
 ]);
 const UPLAND_PASSIVES: readonly WeightedMob[] = Object.freeze([
-  ["wild-horse", 0.25], ["sunstep-grazer", 0.16], ["pebbletortoise", 0.14], ["petalfox", 0.12],
-  ["thimbledeer", 0.14], ["puddlehopper", 0.05], ["reedstrider", 0.05], ["ridgeback", 0.09],
+  ["wild-horse", 0.22], ["sunstep-grazer", 0.14], ["pebbletortoise", 0.12], ["petalfox", 0.1],
+  ["thimbledeer", 0.12], ["puddlehopper", 0.04], ["reedstrider", 0.04], ["ridgeback", 0.08], ["burrowbell", 0.14],
 ]);
 
 /**
@@ -272,6 +282,12 @@ export const NATURAL_GROUP_RANGES: Readonly<Partial<Record<MobKind, readonly [mi
   brookdart: [3, 6],
   gloomfin: [2, 4],
   coralback: [1, 3],
+  "redfin-salmon": [3, 7],
+  "blue-mackerel": [6, 11],
+  "deepwater-shark": [1, 1],
+  burrowbell: [3, 6],
+  "dewback-tapir": [2, 4],
+  warg: [2, 3],
   "reed-dragonfly": [2, 5],
 });
 

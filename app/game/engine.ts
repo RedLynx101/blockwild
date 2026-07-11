@@ -171,6 +171,7 @@ import {
   detectMultiplayerSupport,
   isMultiplayerOperationCancellation,
   type BlockAction,
+  type CartographyMapShare,
   type MultiplayerEvent,
   type MultiplayerSessionState,
   type PeerInfo,
@@ -289,6 +290,124 @@ import {
   type SocialGroupMode,
   type SocialGroupMotion,
 } from "./ecology";
+import {
+  advanceFastTravelChannel,
+  bankFastTravelCharges,
+  beginFastTravel,
+  commitFastTravel,
+  createCartographySession,
+  createMapKnowledge,
+  discoverNaturalPoi,
+  markChunksRendered,
+  normalizeMapKnowledge,
+  placeManualMapMarker,
+  placeWayshrine,
+  removeManualMapMarker,
+  renameWayshrine,
+  setBedSpawn,
+  joinCartographySession,
+  shareMapsAtCartographyTable,
+  type FastTravelChannel,
+  type MapKnowledge,
+} from "./map-system";
+import {
+  HEARTHROADS_MAIN_QUESTS,
+  acceptQuest,
+  abandonQuest,
+  applyQuestEvent,
+  createQuestBook,
+  normalizeQuestBook,
+  pinQuest,
+  turnInQuest,
+  type QuestBook,
+  type QuestDefinition,
+  type QuestEvent,
+} from "./quests";
+import {
+  collectAlchemyOutput,
+  collectDistilleryOutput,
+  createAlchemyStand,
+  createDistillery,
+  normalizeAlchemyStand,
+  normalizeDistillery,
+  startAlchemyBatch,
+  startDistilleryBatch,
+  stepAlchemyStand,
+  stepDistillery,
+  type AlchemyStandState,
+  type DistilleryState,
+} from "./alchemy";
+import {
+  blueprintCraftingLock,
+  createBlueprintState,
+  normalizeBlueprintState,
+  useBlueprintItem as consumeBlueprintItem,
+  type BlueprintState,
+} from "./blueprints";
+import {
+  createPlantBestiaryState,
+  discoverPlantBlock,
+  normalizePlantBestiaryState,
+  type PlantBestiaryState,
+} from "./plants";
+import {
+  POTION_RECIPE_BY_ITEM,
+  commerceItemCode,
+  commerceKeyForItem,
+  consumedResourceDelta,
+  inventoryResourceCounts,
+  resourceItemCode,
+  resourceIdForItem,
+} from "./hearthroads-adapter";
+import {
+  applyFactionMemberKill,
+  applyQuestAlignmentReward,
+  applyTownCaptureConsequences,
+  createFactionRelations,
+  evaluateTownCapture,
+  factionStanding,
+  type FactionRelationsState,
+} from "./factions";
+import {
+  STOCK_SYMBOLS,
+  buyFromMerchant,
+  buyStock,
+  debitGold,
+  compoundBankInterest,
+  createBankAccount,
+  createGoldWallet,
+  createMerchant,
+  createStockMarket,
+  creditGold,
+  depositAtBank,
+  restockMerchant,
+  sellStock,
+  sellToMerchant,
+  stepStockMarket,
+  withdrawFromBank,
+  type BankAccountState,
+  type CommerceItem,
+  type GoldWalletState,
+  type MerchantState,
+  type StockMarketState,
+  type StockSymbol,
+} from "./economy";
+import {
+  createSettlementState,
+  applySettlementCapture,
+  electMayorAtEight,
+  findRoleWaypoint,
+  growSettlementPopulation,
+  hireResident,
+  merchantProfessionForResident,
+  normalizeFollowDistance,
+  planResidentSchedule,
+  sideQuestOffersFor,
+  updateHirelingOrders,
+  type FollowDistanceSetting,
+  type ResidentProfession,
+  type SettlementState,
+} from "./settlements";
 
 export { BLOCKS, CREATIVE_BLOCKS, ITEMS, Item, RECIPES, BlockId, BIOME_NAMES, MOB_DEFS, MOB_ORDER, WorldStorage, DEFAULT_WORLD_OPTIONS, type WorldOptions, type WorldMetadata, type GameMode, type InventorySlot, type ItemCode, type Recipe, type EquipmentSlot, type MobKind, type SleepTarget, type PlayerVariant };
 
@@ -355,7 +474,7 @@ export type BestiaryProgress = Record<MobKind, {
 }>;
 export type RecipePlanResult =
   | { ok: true; recipeId: string; message: string }
-  | { ok: false; recipeId: string; reason: "unknown" | "needs-table" | "missing" | "inventory-full"; message: string; missing?: string[] };
+  | { ok: false; recipeId: string; reason: "unknown" | "needs-table" | "blueprint-locked" | "missing" | "inventory-full"; message: string; missing?: string[] };
 
 export type HudState = {
   health: number;
@@ -405,11 +524,31 @@ export type HudState = {
   activePet: { id: number; name: string; command: PeelopCommand; health: number; maxHealth: number; baby: boolean; tamed: boolean } | null;
   mountedBoat: boolean;
   mountedCreature?: boolean;
+  mountedCreatureName?: string | null;
+  mapKnowledge: MapKnowledge;
+  questBook: QuestBook;
+  questDefinitions: readonly QuestDefinition[];
+  blueprints: BlueprintState;
+  plantBestiary: PlantBestiaryState;
+  activeAlchemy: AlchemyStandState | null;
+  activeDistillery: DistilleryState | null;
+  goldWallet: GoldWalletState;
+  factionRelations: FactionRelationsState;
+  settlements: readonly SettlementState[];
+  activeSettlementId: string | null;
+  activeMerchant: MerchantState | null;
+  activeSentient?: { id: number; residentId: string | null; name: string; profession: string | null; factionId: "hobbits" | "goblins" | "player" | null; hired: boolean; followDistance: FollowDistanceSetting } | null;
+  bankAccount: BankAccountState;
+  stockMarket: StockMarketState;
+  potionBuffs: Readonly<Record<string, number>>;
+  fastTravelChannel: FastTravelChannel | null;
+  rangedWeapon: { loaded: number; magazine: number; spare: number; reloading: boolean } | null;
 };
 
 export type SavedCreature = {
   id: number;
   kind: MobKind;
+  name?: string;
   x: number;
   y: number;
   z: number;
@@ -428,6 +567,13 @@ export type SavedCreature = {
   socialGroupId?: string;
   peelopShedding?: PeelopSheddingState;
   milkCooldown?: number;
+  factionId?: "hobbits" | "goblins" | "player" | null;
+  profession?: string | null;
+  settlementId?: string | null;
+  residentId?: string | null;
+  aligned?: boolean;
+  hiredByPlayerId?: string | null;
+  followDistance?: FollowDistanceSetting;
 };
 
 export type WorldSave = {
@@ -458,6 +604,21 @@ export type WorldSave = {
   apiaries?: Record<string, ApiaryBlockState>;
   orbRacks?: Record<string, OrbRackState>;
   healingStations?: Record<string, CreatureHealerState>;
+  alchemyStands?: Record<string, AlchemyStandState>;
+  distilleries?: Record<string, DistilleryState>;
+  mapKnowledge?: MapKnowledge;
+  questBook?: QuestBook;
+  sideQuestDefinitions?: QuestDefinition[];
+  blueprints?: BlueprintState;
+  plantBestiary?: PlantBestiaryState;
+  goldWallet?: GoldWalletState;
+  factionRelations?: FactionRelationsState;
+  settlements?: SettlementState[];
+  merchants?: Record<string, MerchantState>;
+  bankAccount?: BankAccountState;
+  stockMarket?: StockMarketState;
+  potionBuffs?: Record<string, number>;
+  rangedLoaded?: Record<string, number>;
   drops?: Array<{ item: ItemCode; count: number; durability?: number; metadata?: Record<string, unknown>; x: number; y: number; z: number; age: number }>;
   options?: Partial<WorldOptions>;
   playerVariant?: PlayerVariant;
@@ -470,7 +631,7 @@ export type WorldSave = {
   savedAt: number;
 };
 
-export type OverlayKind = "inventory" | "crafting" | "furnace" | "chest" | "apiary" | "orb-rack" | "healing-station" | "bestiary" | "multiplayer" | "sleep" | "pet";
+export type OverlayKind = "inventory" | "crafting" | "furnace" | "chest" | "apiary" | "orb-rack" | "healing-station" | "bestiary" | "multiplayer" | "sleep" | "pet" | "map" | "quests" | "cartography" | "alchemy" | "distillery" | "sentient" | "trade" | "bank" | "settlement" | "follower";
 export type CameraMode = "first" | "third-rear" | "third-front";
 
 export type MultiplayerUiState = {
@@ -556,6 +717,13 @@ type MobEntity = {
   sightCheckTimer: number;
   awarenessTimer: number;
   seesPlayer: boolean;
+  factionId: "hobbits" | "goblins" | "player" | null;
+  profession: string | null;
+  settlementId: string | null;
+  residentId: string | null;
+  aligned: boolean;
+  hiredByPlayerId: string | null;
+  followDistance: FollowDistanceSetting;
 };
 
 type SailboatEntity = {
@@ -588,6 +756,14 @@ type SpawnMobOptions = {
   socialGroupId?: string | null;
   peelopShedding?: PeelopSheddingState | null;
   milkCooldown?: number;
+  name?: string | null;
+  factionId?: "hobbits" | "goblins" | "player" | null;
+  profession?: string | null;
+  settlementId?: string | null;
+  residentId?: string | null;
+  aligned?: boolean;
+  hiredByPlayerId?: string | null;
+  followDistance?: FollowDistanceSetting;
 };
 
 type MobFragment = {
@@ -680,8 +856,10 @@ const CRAFT_POSITIONS_2 = [0, 1, 3, 4];
 const MAIN_THEN_HOTBAR = [...Array.from({ length: 27 }, (_, index) => index + 9), ...Array.from({ length: 9 }, (_, index) => index)];
 export const COMBAT_MUSIC_HOLD_SECONDS = 22.5;
 export const DEFAULT_UNARMED_DAMAGE = 1;
-export const HOSTILE_SPAWN_ATTEMPT_SCALE = 1.5;
-export const HOSTILE_CAP_SCALE = 0.7;
+// Hearthroads trims the already-reduced night pressure by another 40% while
+// keeping encounters meaningful near genuine darkness.
+export const HOSTILE_SPAWN_ATTEMPT_SCALE = 2.5;
+export const HOSTILE_CAP_SCALE = 0.42;
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
@@ -769,6 +947,7 @@ export function isOpenableBlock(type: BlockId) {
     BlockId.FenceGateNorthSouthClosed, BlockId.FenceGateNorthSouthOpen, BlockId.FenceGateEastWestClosed, BlockId.FenceGateEastWestOpen,
     BlockId.CraftingTable, BlockId.Furnace, BlockId.Chest, BlockId.ButterflyExhibit,
     BlockId.Apiary, BlockId.WildBeehive, BlockId.CaptureOrbRack, BlockId.CreatureHealer,
+    BlockId.CartographyTable, BlockId.AlchemyStand, BlockId.Wayshrine, BlockId.Distillery, BlockId.HearthChair,
     BlockId.BedNorthFoot, BlockId.BedNorthHead, BlockId.BedSouthFoot, BlockId.BedSouthHead,
     BlockId.BedEastFoot, BlockId.BedEastHead, BlockId.BedWestFoot, BlockId.BedWestHead,
   ].includes(type);
@@ -906,7 +1085,7 @@ export function migrateSavedWorld(value: unknown): WorldSave | null {
   const parsed = value as WorldSave;
   if (parsed.version !== 2 || typeof parsed.seed !== "string") return null;
   if (parsed.generatorVersion === GENERATOR_VERSION) return parsed;
-  if (parsed.generatorVersion === 3 || parsed.generatorVersion === 4 || parsed.generatorVersion === 5) return { ...parsed, generatorVersion: GENERATOR_VERSION };
+  if (parsed.generatorVersion === 3 || parsed.generatorVersion === 4 || parsed.generatorVersion === 5 || parsed.generatorVersion === 6) return { ...parsed, generatorVersion: GENERATOR_VERSION };
   if (parsed.generatorVersion !== 2) return null;
   const indexOffset = (LEGACY_GENERATOR_MIN_Y - MIN_Y) * 16 * 16;
   const edits: ChunkEditSave = {};
@@ -1287,6 +1466,35 @@ export class VoxelEngine {
   apiaries = new Map<string, ApiaryBlockState>();
   orbRacks = new Map<string, OrbRackState>();
   healingStations = new Map<string, CreatureHealerState>();
+  alchemyStands = new Map<string, AlchemyStandState>();
+  distilleries = new Map<string, DistilleryState>();
+  mapKnowledge: MapKnowledge = createMapKnowledge("world", "local");
+  questBook: QuestBook = createQuestBook();
+  sideQuestDefinitions: QuestDefinition[] = [];
+  blueprints: BlueprintState = createBlueprintState();
+  plantBestiary: PlantBestiaryState = createPlantBestiaryState();
+  potionBuffs: Record<string, number> = {};
+  factionRelations: FactionRelationsState = createFactionRelations("world");
+  goldWallet: GoldWalletState = createGoldWallet("world", "local", 0);
+  bankAccount: BankAccountState = createBankAccount("world", "local", 0);
+  stockMarket: StockMarketState = createStockMarket("world", "local", "WILDERNESS", 0);
+  settlements = new Map<string, SettlementState>();
+  merchants = new Map<string, MerchantState>();
+  activeAlchemyKey: string | null = null;
+  activeDistilleryKey: string | null = null;
+  activeCartographyKey: string | null = null;
+  activeSettlementId: string | null = null;
+  activeSentient: MobEntity | null = null;
+  activeMerchantId: string | null = null;
+  fastTravelChannel: FastTravelChannel | null = null;
+  damageRevision = 0;
+  mapDiscoveryTimer = 0;
+  settlementTimer = 0;
+  lastQuestDay = 0;
+  rangedLoaded = new Map<ItemCode, number>();
+  rangedReloadItem: ItemCode | null = null;
+  rangedReloadTimer = 0;
+  aimingRanged = false;
   persistentMachineTimer = 0;
   persistentMachineCursor = 0;
   persistentMachineLastStep = new Map<string, number>();
@@ -1313,6 +1521,7 @@ export class VoxelEngine {
   lastPosition = new THREE.Vector3();
   followerHeading = -Math.PI / 2;
   fallVelocity = 0;
+  fallCuePlayed = false;
   wasInWater = false;
   lastHudTime = 0;
   saveTimer = 0;
@@ -1594,12 +1803,20 @@ export class VoxelEngine {
     }
     if (event.button === 0) {
       this.mineHeld = true;
-      if (this.targetMob) this.attackTargetMob();
+      if (ITEMS[this.selectedSlot()?.item ?? -1]?.useKind === "ranged-weapon") {
+        this.fireSelectedRangedWeapon();
+        this.mineHeld = false;
+      } else if (this.targetMob) this.attackTargetMob();
       else if (this.target && isInstantBreakBlock(this.target.type)) {
         this.breakTarget();
         this.mineHeld = false;
       }
-    } else if (event.button === 2) this.useSelected();
+    } else if (event.button === 2) {
+      if (ITEMS[this.selectedSlot()?.item ?? -1]?.useKind === "ranged-weapon") {
+        this.aimingRanged = true;
+        this.emitHud(true);
+      } else this.useSelected();
+    }
     else if (event.button === 1) this.pickTarget();
   };
 
@@ -1607,6 +1824,9 @@ export class VoxelEngine {
     if (event.button === 0) {
       this.mineHeld = false;
       this.miningProgress = 0;
+      this.emitHud(true);
+    } else if (event.button === 2 && this.aimingRanged) {
+      this.aimingRanged = false;
       this.emitHud(true);
     }
   };
@@ -1623,6 +1843,18 @@ export class VoxelEngine {
     if (["KeyW", "KeyA", "KeyS", "KeyD", "Space", "ShiftLeft", "ShiftRight", "ControlLeft", "ControlRight"].includes(event.code)) event.preventDefault();
     if (event.code === "KeyE" && !event.repeat) {
       this.openOverlay("inventory");
+      return;
+    }
+    if (event.code === "KeyM" && !event.repeat) {
+      this.openOverlay("map");
+      return;
+    }
+    if (event.code === "KeyJ" && !event.repeat) {
+      this.openOverlay("quests");
+      return;
+    }
+    if (event.code === "KeyR" && !event.repeat) {
+      this.startRangedReload();
       return;
     }
     if (event.code === "KeyQ" && !event.repeat) this.dropSelectedItem();
@@ -1769,6 +2001,10 @@ export class VoxelEngine {
     this.apiaries.clear();
     this.orbRacks.clear();
     this.healingStations.clear();
+    this.alchemyStands.clear();
+    this.distilleries.clear();
+    this.settlements.clear();
+    this.merchants.clear();
     this.persistentMachineLastStep.clear();
     this.apiaryFlowerCache.clear();
     this.activatedStructureMarkers.clear();
@@ -1799,6 +2035,7 @@ export class VoxelEngine {
     this.worldSessionStartedAt = Date.now();
     this.worldTime = 0.32;
     this.day = 1;
+    this.lastQuestDay = this.day;
     this.health = 10;
     this.hunger = 10;
     this.xp = 0;
@@ -1807,6 +2044,16 @@ export class VoxelEngine {
     this.inventory = blankInventory();
     this.equipment = blankEquipment();
     this.bestiary = blankBestiary();
+    this.plantBestiary = createPlantBestiaryState();
+    this.questBook = createQuestBook();
+    this.sideQuestDefinitions = [];
+    this.blueprints = createBlueprintState();
+    this.potionBuffs = {};
+    this.fastTravelChannel = null;
+    this.damageRevision = 0;
+    this.rangedLoaded.clear();
+    this.rangedReloadItem = null;
+    this.rangedReloadTimer = 0;
     this.saplings.clear();
     this.cursor = null;
     this.craftGrid = Array.from({ length: 9 }, () => null);
@@ -1815,6 +2062,10 @@ export class VoxelEngine {
     this.apiaries.clear();
     this.orbRacks.clear();
     this.healingStations.clear();
+    this.alchemyStands.clear();
+    this.distilleries.clear();
+    this.settlements.clear();
+    this.merchants.clear();
     this.persistentMachineLastStep.clear();
     this.apiaryFlowerCache.clear();
     this.sleepVotes.clear();
@@ -1824,6 +2075,15 @@ export class VoxelEngine {
     this.oxygenSeconds = DEFAULT_SWIM_RULES.maxOxygenSeconds;
     this.drowningAccumulator = 0;
     this.world.reset(seed.trim() || this.randomSeed(), undefined, generationOptionsFromWorldOptions(this.worldOptions));
+    const authorityId = `world:${this.world.seedText}`;
+    const playerId = this.localPlayerId();
+    this.mapKnowledge = createMapKnowledge(authorityId, playerId);
+    this.factionRelations = createFactionRelations(authorityId);
+    this.goldWallet = createGoldWallet(authorityId, playerId, 0);
+    this.bankAccount = createBankAccount(authorityId, playerId, this.day);
+    this.stockMarket = createStockMarket(authorityId, playerId, this.world.seedText, this.day);
+    const openingQuest = acceptQuest(this.questBook, HEARTHROADS_MAIN_QUESTS, "main-first-dawn", Date.now());
+    if (openingQuest.ok) this.questBook = pinQuest(openingQuest.book, "main-first-dawn");
     const spawn = this.findSpawn();
     this.world.initializeAround(spawn.x, spawn.z);
     const y = this.world.surfaceAt(spawn.x, spawn.z) + 0.51;
@@ -1884,6 +2144,28 @@ export class VoxelEngine {
     for (const slot of ["head", "chest", "legs", "feet"] as EquipmentSlot[]) this.equipment[slot] = normalizeCaptureOrbInventorySlot(save.equipment?.[slot] ?? null);
     this.bestiary = blankBestiary();
     for (const kind of MOB_ORDER) this.bestiary[kind] = { ...this.bestiary[kind], ...(save.bestiary?.[kind] ?? {}) };
+    const authorityId = `world:${save.seed}`;
+    const playerId = this.localPlayerId();
+    this.mapKnowledge = normalizeMapKnowledge(save.mapKnowledge, authorityId, playerId);
+    this.questBook = normalizeQuestBook(save.questBook);
+    this.sideQuestDefinitions = Array.isArray(save.sideQuestDefinitions) ? save.sideQuestDefinitions.slice(0, 128) : [];
+    this.blueprints = normalizeBlueprintState(save.blueprints);
+    this.plantBestiary = normalizePlantBestiaryState(save.plantBestiary);
+    this.potionBuffs = Object.fromEntries(Object.entries(save.potionBuffs ?? {}).filter(([, value]) => typeof value === "number" && Number.isFinite(value)).map(([key, value]) => [key.slice(0, 64), Math.max(0, value)]));
+    this.fastTravelChannel = null;
+    this.damageRevision = 0;
+    this.factionRelations = save.factionRelations?.schema === 1 ? save.factionRelations : createFactionRelations(authorityId);
+    this.goldWallet = save.goldWallet?.schema === 1 ? save.goldWallet : createGoldWallet(authorityId, playerId, 0);
+    this.bankAccount = save.bankAccount?.schema === 1 ? save.bankAccount : createBankAccount(authorityId, playerId, this.day);
+    this.stockMarket = save.stockMarket?.schema === 1 ? save.stockMarket : createStockMarket(authorityId, playerId, save.seed, this.day);
+    this.settlements = new Map((Array.isArray(save.settlements) ? save.settlements : []).filter((entry) => entry?.schema === 1 && typeof entry.id === "string").map((entry) => [entry.id, entry]));
+    this.merchants = new Map(Object.entries(save.merchants ?? {}).filter(([, entry]) => entry?.schema === 1));
+    this.rangedLoaded = new Map(Object.entries(save.rangedLoaded ?? {}).flatMap(([item, loaded]) => {
+      const itemCode = Number(item);
+      return Number.isFinite(itemCode) && Number.isFinite(loaded) ? [[itemCode, Math.max(0, Math.floor(loaded))] as const] : [];
+    }));
+    this.rangedReloadItem = null;
+    this.rangedReloadTimer = 0;
     this.saplings = new Map(Object.entries(save.saplings ?? {}).map(([key, value]) => [key, Number(value) || 0]));
     this.cursor = null;
     this.craftGrid = Array.from({ length: 9 }, () => null);
@@ -1901,6 +2183,7 @@ export class VoxelEngine {
     this.level = Math.max(0, Number(save.level) || 0);
     this.worldTime = ((Number(save.time) || 0.32) % 1 + 1) % 1;
     this.day = Math.max(1, Number(save.day) || 1);
+    this.lastQuestDay = this.day;
     this.weather = save.weather === "rain" ? "rain" : "clear";
     if (!this.worldOptions.weather) this.weather = "clear";
     this.furnaces = new Map(Object.entries(save.furnaces ?? {}).map(([key, value]) => [key, {
@@ -1914,6 +2197,14 @@ export class VoxelEngine {
     this.apiaries = restoreApiaryStorage(save.apiaries ?? {});
     this.orbRacks = restoreOrbRackStorage(save.orbRacks ?? {});
     this.healingStations = restoreHealingStationStorage(save.healingStations ?? {});
+    this.alchemyStands = new Map(Object.entries(save.alchemyStands ?? {}).map(([key, value]) => [key, normalizeAlchemyStand(value)]));
+    this.distilleries = new Map(Object.entries(save.distilleries ?? {}).map(([key, value]) => [key, normalizeDistillery(value)]));
+    this.activeAlchemyKey = null;
+    this.activeDistilleryKey = null;
+    this.activeCartographyKey = null;
+    this.activeSentient = null;
+    this.activeSettlementId = null;
+    this.activeMerchantId = null;
     this.persistentMachineLastStep.clear();
     const restoredAt = Number.isFinite(save.savedAt) ? Math.min(Date.now(), save.savedAt) : Date.now();
     for (const key of [...this.apiaries.keys(), ...this.healingStations.keys()]) this.persistentMachineLastStep.set(key, restoredAt);
@@ -2439,7 +2730,7 @@ export class VoxelEngine {
         tamed: Boolean(entry.tamed),
         saddled: Boolean(entry.saddled),
       };
-      if (mob.kind === "wild-horse" && mob.courserBond) mob.courserBond = {
+      if ((mob.kind === "wild-horse" || mob.kind === "warg") && mob.courserBond) mob.courserBond = {
         ...mob.courserBond,
         tamed: Boolean(entry.tamed),
         saddled: Boolean(entry.saddled),
@@ -2538,6 +2829,7 @@ export class VoxelEngine {
         else this.applyInitialWorldSnapshot(snapshot, event.peer);
       } else if (envelope.type === "block-action") this.handleRemoteBlockAction(envelope.payload as BlockAction, event.peer);
       else if (envelope.type === "sleep-vote") this.handleRemoteSleepVote(envelope.payload as SleepVote, event.peer);
+      else if (envelope.type === "map-share") this.handleRemoteMapShare(envelope.payload as CartographyMapShare, event.peer);
       else if (envelope.type === "mob-snapshot" && this.multiplayer?.role === "guest") this.applyNetworkMobSnapshot((envelope.payload as { mobs: WorldSnapshot["mobs"] }).mobs);
       else if (envelope.type === "drop-snapshot" && this.multiplayer?.role === "guest") this.applyNetworkDropSnapshot((envelope.payload as { drops: WorldSnapshot["drops"] }).drops);
       else if (envelope.type === "time-weather" && this.multiplayer?.role === "guest") {
@@ -2843,6 +3135,15 @@ export class VoxelEngine {
       const head = this.world.getBlock(candidate.x, candidate.y + 1, candidate.z);
       if (!BLOCKS[support ?? BlockId.Air]?.solid || !this.world.isWalkThrough(feet) || !this.world.isWalkThrough(head)) continue;
       this.spawn.set(candidate.x, candidate.y - 0.49, candidate.z);
+      this.mapKnowledge ??= createMapKnowledge(`world:${this.world.seedText ?? "world"}`, this.localPlayerId());
+      this.mapKnowledge = setBedSpawn(this.mapKnowledge, {
+        id: `bed:${x},${y},${z}`,
+        name: "Home Bed",
+        position: { x: this.spawn.x, y: this.spawn.y, z: this.spawn.z },
+        playerId: this.localPlayerId(),
+        discoveredAt: Date.now(),
+        icon: "bed",
+      });
       this.events.onToast("Respawn set beside this bed.");
       this.saveSoon();
       return true;
@@ -2930,6 +3231,103 @@ export class VoxelEngine {
     else this.sleepVotes.delete(vote.actorId);
   }
 
+  private cartographyPayload(tableKey: string, reply: boolean): CartographyMapShare {
+    return {
+      tableKey,
+      reply,
+      map: {
+        ...this.mapKnowledge,
+        exploredChunks: this.mapKnowledge.exploredChunks.slice(-4096),
+        markers: this.mapKnowledge.markers.slice(-512).map((marker) => ({ ...marker, position: { ...marker.position } })),
+      },
+    };
+  }
+
+  private handleRemoteMapShare(payload: CartographyMapShare, peer: PeerInfo) {
+    if (!this.multiplayer || !peer.identity || !this.activeCartographyKey || payload.tableKey !== this.activeCartographyKey) return;
+    const [x, y, z] = payload.tableKey.split(",").map(Number);
+    const remote = this.remotePlayers.get(peer.identity.id);
+    if (![x, y, z].every(Number.isFinite)
+      || this.position.distanceToSquared(new THREE.Vector3(x, y, z)) > 25
+      || !remote || new THREE.Vector3(remote.target.x, remote.target.y, remote.target.z).distanceToSquared(new THREE.Vector3(x, y, z)) > 25) return;
+    const remoteMap = normalizeMapKnowledge(payload.map, this.mapKnowledge.worldId, peer.identity.id);
+    const joined = joinCartographySession(createCartographySession(payload.tableKey, this.localPlayerId()), peer.identity.id);
+    if (!joined.joined) return;
+    const shared = shareMapsAtCartographyTable(joined.session, this.localPlayerId(), this.mapKnowledge, peer.identity.id, remoteMap);
+    if (!shared.ok) return;
+    this.mapKnowledge = shared.left;
+    if (!payload.reply) this.multiplayer.sendMapShare(this.cartographyPayload(payload.tableKey, true), peer.identity.id);
+    this.events.onToast(`Maps shared with ${peer.identity.name}: explored chunks and transferable markers are now merged.`);
+    this.saveSoon();
+    this.emitHud(true);
+  }
+
+  private stationHasWaterSource(key: string) {
+    const [x, y, z] = key.split(",").map(Number);
+    return ([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]] as const)
+      .some(([dx, dy, dz]) => this.world.getBlock(x + dx, y + dy, z + dz) === BlockId.Water);
+  }
+
+  private consumeResourceDelta(consumed: Readonly<Record<string, number>>) {
+    for (const [resource, count] of Object.entries(consumed)) {
+      const item = resourceItemCode(resource);
+      if (item !== null) this.removeItem(item, count);
+    }
+  }
+
+  startStationBatch(machine: "alchemy" | "distillery", recipeId: string) {
+    const key = machine === "alchemy" ? this.activeAlchemyKey : this.activeDistilleryKey;
+    if (!key) return false;
+    const before = inventoryResourceCounts(this.inventory, machine === "alchemy" && this.stationHasWaterSource(key) ? { "water-source": 1 } : {});
+    const result = machine === "alchemy"
+      ? startAlchemyBatch(this.alchemyStands.get(key) ?? createAlchemyStand(), recipeId, before, this.blueprints)
+      : startDistilleryBatch(this.distilleries.get(key) ?? createDistillery(), recipeId, before, this.blueprints);
+    if (!result.ok) {
+      const message = result.reason === "blueprint-locked" ? "That formula is still locked behind a blueprint."
+        : result.reason === "missing-inputs" ? "The station is missing one or more ingredients."
+          : result.reason === "station-busy" ? "This station is already tending a batch."
+            : result.reason === "output-blocked" ? "Collect the finished output before starting another batch."
+              : "That recipe cannot be started here.";
+      this.events.onToast(message);
+      return false;
+    }
+    this.consumeResourceDelta(consumedResourceDelta(before, result.inventory));
+    if (machine === "alchemy") this.alchemyStands.set(key, result.state as AlchemyStandState);
+    else this.distilleries.set(key, result.state as DistilleryState);
+    this.persistentMachineLastStep.set(key, Date.now());
+    this.audio.play("craft");
+    this.events.onToast(machine === "alchemy" ? "The alchemy stand begins to glow." : "The distillery begins a patient fermentation.");
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  collectStationOutput(machine: "alchemy" | "distillery") {
+    const key = machine === "alchemy" ? this.activeAlchemyKey : this.activeDistilleryKey;
+    if (!key) return false;
+    const state = machine === "alchemy" ? this.alchemyStands.get(key) : this.distilleries.get(key);
+    if (!state?.output) return false;
+    const item = resourceItemCode(state.output.item);
+    if (item === null) return false;
+    const count = Math.min(state.output.count, this.inventoryCapacity(item));
+    if (count <= 0) {
+      this.events.onToast("Make room in your pack before collecting this batch.");
+      return false;
+    }
+    const collected = machine === "alchemy"
+      ? collectAlchemyOutput(state as AlchemyStandState, count)
+      : collectDistilleryOutput(state as DistilleryState, count);
+    if (!collected.collected) return false;
+    this.addItem(item, collected.collected.count);
+    if (machine === "alchemy") this.alchemyStands.set(key, collected.state as AlchemyStandState);
+    else this.distilleries.set(key, collected.state as DistilleryState);
+    this.audio.play("pickup");
+    this.events.onToast(`Collected ${ITEMS[item].name} ×${collected.collected.count}.`);
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
   ensureApiaryState(key: string) {
     const existing = this.apiaries.get(key);
     if (existing) return existing;
@@ -2947,6 +3345,9 @@ export class VoxelEngine {
     if (kind !== "apiary") this.activeApiaryKey = null;
     if (kind !== "orb-rack") this.activeOrbRackKey = null;
     if (kind !== "healing-station") this.activeHealingStationKey = null;
+    if (kind !== "alchemy") this.activeAlchemyKey = null;
+    if (kind !== "distillery") this.activeDistilleryKey = null;
+    if (kind !== "cartography") this.activeCartographyKey = null;
     if (kind === "inventory") {
       this.craftingSize = 2;
       this.activeFurnaceKey = null;
@@ -2982,7 +3383,23 @@ export class VoxelEngine {
       this.activeFurnaceKey = null;
       this.activeChestKey = null;
       if (!this.healingStations.has(key)) this.healingStations.set(key, createCreatureHealer());
-    } else if (kind === "bestiary" || kind === "sleep" || kind === "pet") {
+    } else if (kind === "alchemy" && key) {
+      this.activeAlchemyKey = key;
+      this.activeFurnaceKey = null;
+      this.activeChestKey = null;
+      if (!this.alchemyStands.has(key)) this.alchemyStands.set(key, createAlchemyStand());
+      this.persistentMachineLastStep.set(key, Date.now());
+    } else if (kind === "distillery" && key) {
+      this.activeDistilleryKey = key;
+      this.activeFurnaceKey = null;
+      this.activeChestKey = null;
+      if (!this.distilleries.has(key)) this.distilleries.set(key, createDistillery());
+      this.persistentMachineLastStep.set(key, Date.now());
+    } else if (kind === "cartography" && key) {
+      this.activeCartographyKey = key;
+      this.activeFurnaceKey = null;
+      this.activeChestKey = null;
+    } else if (["bestiary", "sleep", "pet", "map", "quests", "sentient", "trade", "bank", "settlement", "follower"].includes(kind)) {
       this.activeFurnaceKey = null;
       this.activeChestKey = null;
     }
@@ -3009,6 +3426,11 @@ export class VoxelEngine {
     this.activeApiaryKey = null;
     this.activeOrbRackKey = null;
     this.activeHealingStationKey = null;
+    this.activeAlchemyKey = null;
+    this.activeDistilleryKey = null;
+    this.activeCartographyKey = null;
+    this.activeSentient = null;
+    this.activeMerchantId = null;
     this.activePet = null;
     this.craftingSize = 2;
     this.hideChestModel();
@@ -3352,6 +3774,7 @@ export class VoxelEngine {
   }
 
   findRecipe() {
+    this.blueprints ??= createBlueprintState();
     const size = this.craftingSize;
     let minX: number = size;
     let minY: number = size;
@@ -3366,6 +3789,7 @@ export class VoxelEngine {
     const height = maxY - minY + 1;
     for (const recipe of RECIPES) {
       if (recipe.table && size < 3) continue;
+      if (blueprintCraftingLock(this.blueprints, recipe.id, recipe.blueprint)) continue;
       if (recipe.width !== width || recipe.height !== height) continue;
       for (const pattern of recipePatterns(recipe)) {
         let matches = true;
@@ -3449,6 +3873,12 @@ export class VoxelEngine {
     }
     if (recipe.table && this.craftingSize < 3) {
       const result: RecipePlanResult = { ok: false, recipeId, reason: "needs-table", message: "Open a crafting table to arrange this 3×3 recipe." };
+      this.events.onToast(result.message);
+      return result;
+    }
+    const blueprintLock = blueprintCraftingLock(this.blueprints, recipe.id, recipe.blueprint);
+    if (blueprintLock) {
+      const result: RecipePlanResult = { ok: false, recipeId, reason: "blueprint-locked", message: blueprintLock.message };
       this.events.onToast(result.message);
       return result;
     }
@@ -4084,12 +4514,16 @@ export class VoxelEngine {
   }
 
   updatePersistentMachines(dt: number) {
+    this.alchemyStands ??= new Map();
+    this.distilleries ??= new Map();
     this.persistentMachineTimer -= dt;
     if (this.persistentMachineTimer > 0) return;
     this.persistentMachineTimer = 1;
     const entries = [
       ...[...this.apiaries.keys()].map((key) => ({ kind: "apiary" as const, key })),
       ...[...this.healingStations.keys()].map((key) => ({ kind: "healer" as const, key })),
+      ...[...this.alchemyStands.keys()].map((key) => ({ kind: "alchemy" as const, key })),
+      ...[...this.distilleries.keys()].map((key) => ({ kind: "distillery" as const, key })),
     ];
     if (!entries.length) return;
     const now = Date.now();
@@ -4125,7 +4559,7 @@ export class VoxelEngine {
             this.spawnParticles(x, y + 0.45, z, BlockId.Glowstone, 3);
           }
         }
-      } else {
+      } else if (entry.kind === "healer") {
         const station = this.healingStations.get(entry.key);
         if (!station) continue;
         const result = stepCreatureHealer(station, elapsed);
@@ -4138,6 +4572,18 @@ export class VoxelEngine {
             this.audio.play("craft");
           }
         }
+      } else if (entry.kind === "alchemy") {
+        const station = this.alchemyStands.get(entry.key);
+        if (!station) continue;
+        const next = stepAlchemyStand(station, elapsed);
+        this.alchemyStands.set(entry.key, next);
+        if (station.activeBatch && !next.activeBatch) meaningfulChange = true;
+      } else {
+        const station = this.distilleries.get(entry.key);
+        if (!station) continue;
+        const next = stepDistillery(station, elapsed);
+        this.distilleries.set(entry.key, next);
+        if (station.activeBatch && !next.activeBatch) meaningfulChange = true;
       }
     }
     this.persistentMachineCursor = (this.persistentMachineCursor + maximum) % entries.length;
@@ -4329,7 +4775,7 @@ export class VoxelEngine {
       careState: metadata.custom.careState ? metadata.custom.careState as unknown as CreatureHusbandryState : null,
       shadeState: metadata.kind === "shadecrawler" && metadata.custom.shadeState ? metadata.custom.shadeState as unknown as ShadecrawlerState : null,
       reedstriderBond: metadata.kind === "reedstrider" && metadata.custom.reedstriderBond ? metadata.custom.reedstriderBond as unknown as ReedstriderBond : null,
-      courserBond: metadata.kind === "wild-horse" && metadata.custom.courserBond ? metadata.custom.courserBond as unknown as ReedstriderBond : null,
+      courserBond: (metadata.kind === "wild-horse" || metadata.kind === "warg") && metadata.custom.courserBond ? metadata.custom.courserBond as unknown as ReedstriderBond : null,
       apiaryBee: metadata.custom.apiaryBee ? metadata.custom.apiaryBee as unknown as ApiaryBee : null,
       socialGroupId: typeof metadata.custom.socialGroupId === "string" ? metadata.custom.socialGroupId : null,
       peelopShedding: metadata.custom.peelopShedding ? metadata.custom.peelopShedding as unknown as PeelopSheddingState : null,
@@ -4436,6 +4882,46 @@ export class VoxelEngine {
     if (this.placeCooldown > 0) return;
     const heldSlot = this.selectedSlot();
     const heldDefinition = heldSlot ? ITEMS[heldSlot.item] : null;
+    if (heldSlot && heldDefinition?.useKind === "blueprint" && heldDefinition.blueprintId) {
+      const result = consumeBlueprintItem(this.blueprints, heldDefinition.blueprintId, Date.now());
+      this.blueprints = result.state;
+      if (result.consumeItem) {
+        this.consumeSelectedUnit();
+        this.events.onToast(`Blueprint learned: ${heldDefinition.name}. The linked recipes are now available.`);
+        this.audio.play("craft");
+        this.saveSoon();
+        this.emitHud(true);
+      } else if (result.outcome === "already-known") {
+        this.events.onToast(`You already know this design. A merchant may buy the duplicate for about ${result.resaleGold} gold.`);
+      } else this.events.onToast("This blueprint is too damaged to read.");
+      this.placeCooldown = 0.25;
+      return;
+    }
+    if (heldSlot && heldDefinition?.useKind === "potion") {
+      const recipeId = POTION_RECIPE_BY_ITEM[heldSlot.item];
+      if (!recipeId) return;
+      if (heldSlot.item === Item.HealthPotion && this.health >= 10) {
+        this.events.onToast("Your health is already full; the remedy stays corked.");
+        return;
+      }
+      if (heldSlot.item === Item.HealthPotion) this.health = Math.min(10, this.health + 8);
+      else if (heldSlot.item === Item.WayfarerPotion) this.mapKnowledge = bankFastTravelCharges(this.mapKnowledge, 1);
+      else {
+        const duration = heldSlot.item === Item.HearthwardTonic ? 180 : 240;
+        const buff = heldSlot.item === Item.HearthwardTonic ? "hearthward" : "gloamstep";
+        this.potionBuffs[buff] = Math.max(this.potionBuffs[buff] ?? 0, this.worldSimulationSeconds() + duration);
+      }
+      this.consumeSelectedUnit();
+      this.heldUse = 1;
+      this.placeCooldown = 0.42;
+      this.audio.play("eat");
+      this.events.onToast(heldSlot.item === Item.WayfarerPotion
+        ? `One journey banked. ${this.mapKnowledge.fastTravelCharges} map travel${this.mapKnowledge.fastTravelCharges === 1 ? "" : "s"} ready.`
+        : `${heldDefinition.name} takes effect.`);
+      this.saveSoon();
+      this.emitHud(true);
+      return;
+    }
     if (this.targetBoat) {
       const boat = this.targetBoat;
       if (this.crouching) {
@@ -4455,6 +4941,26 @@ export class VoxelEngine {
       this.placeCooldown = 0.3;
       this.events.onToast(passengers.indexOf(playerId) === 0 ? "You take the tiller. Space dismounts." : "You settle into the passenger seat. Space dismounts.");
       this.saveSoon();
+      return;
+    }
+    if (this.targetMob?.definition?.sentient && this.targetMob.factionId && this.targetMob.factionId !== "player") {
+      const resident = this.targetMob;
+      const residentFaction = resident.factionId as "hobbits" | "goblins";
+      const standing = factionStanding(this.factionRelations.alignments[residentFaction] ?? 0);
+      if (standing === "hostile") {
+        resident.hostile = true;
+        resident.awarenessTimer = Math.max(resident.awarenessTimer, 8);
+        resident.state = "chase";
+        this.events.onToast(`${resident.name} refuses parley; your standing with this faction is hostile.`);
+        this.engageCombat();
+        return;
+      }
+      this.activeSentient = resident;
+      this.activeSettlementId = resident.settlementId;
+      this.activeMerchantId = resident.residentId && this.merchants.has(resident.residentId) ? resident.residentId : null;
+      this.ensureSideQuestOffers(resident);
+      this.dispatchQuestEvent({ type: "entity-interacted", entityId: resident.residentId ?? String(resident.id), role: resident.profession, at: Date.now() });
+      this.openOverlay("sentient", resident.residentId ?? String(resident.id));
       return;
     }
     if (heldSlot?.item === Item.Sailboat) {
@@ -4645,6 +5151,53 @@ export class VoxelEngine {
         if (this.cameraMode === "first") this.cameraMode = "third-rear";
         this.keys.clear();
         this.events.onToast("Mounted Wildwood Courser · sprint on open land · Space dismounts · V changes view.");
+        this.placeCooldown = 0.35;
+        this.emitHud(true);
+        return;
+      }
+    }
+    if (this.targetMob?.kind === "warg") {
+      const warg = this.targetMob;
+      const ownerId = this.localPlayerId();
+      warg.courserBond ??= createReedstriderBond();
+      if (warg.aligned) {
+        this.events.onToast("This Road Warg is sworn to its settlement. Only an unaligned Warg can choose a rider.");
+        this.placeCooldown = 0.24;
+        return;
+      }
+      if (heldSlot && (heldSlot.item === Item.RawMeat || heldSlot.item === Item.CookedMeat)) {
+        const before = warg.courserBond;
+        const gain = heldSlot.item === Item.CookedMeat ? 2 : 1;
+        const trust = Math.min(8, before.trust + gain);
+        warg.courserBond = { ...before, trust, tamed: before.tamed || trust >= 6, ownerId: before.ownerId ?? (trust >= 6 ? ownerId : null) };
+        this.consumeSelectedUnit();
+        if (!before.tamed && warg.courserBond.tamed) {
+          this.bestiary.warg.tames = (this.bestiary.warg.tames ?? 0) + 1;
+          this.events.onToast("The unaligned Warg accepts you as its roadmate and rider.");
+        } else this.events.onToast(`Warg trust ${warg.courserBond.trust}/8.`);
+        this.audio.play("eat");
+        this.saveSoon();
+        this.emitHud(true);
+        this.placeCooldown = 0.3;
+        return;
+      }
+      if (heldSlot?.item === Item.Saddle) {
+        const next = saddleReedstrider(warg.courserBond, ownerId);
+        if (next !== warg.courserBond) {
+          warg.courserBond = next;
+          this.consumeSelectedUnit();
+          this.events.onToast("The Trail Saddle locks into the Warg's road harness.");
+          this.saveSoon();
+          this.emitHud(true);
+        } else this.events.onToast(warg.courserBond.tamed ? "Only this Warg's keeper can saddle it." : "Build trust with meat before fitting a saddle.");
+        this.placeCooldown = 0.3;
+        return;
+      }
+      if (canRideReedstrider(warg.courserBond, ownerId)) {
+        this.mountedCreatureId = warg.id;
+        if (this.cameraMode === "first") this.cameraMode = "third-rear";
+        this.keys.clear();
+        this.events.onToast("Mounted Road Warg - attacks and crossbows remain usable from the saddle.");
         this.placeCooldown = 0.35;
         this.emitHud(true);
         return;
@@ -5101,6 +5654,24 @@ export class VoxelEngine {
       if (this.target.type === BlockId.CaptureOrbRack) { this.openOverlay("orb-rack", key); return; }
       if (this.target.type === BlockId.CreatureHealer) { this.openOverlay("healing-station", key); return; }
       if (this.target.type === BlockId.ButterflyExhibit) { this.openExhibit(this.target.x, this.target.y, this.target.z); return; }
+      if (this.target.type === BlockId.CartographyTable) { this.openOverlay("cartography", key); return; }
+      if (this.target.type === BlockId.AlchemyStand) { this.openOverlay("alchemy", key); return; }
+      if (this.target.type === BlockId.Distillery) { this.openOverlay("distillery", key); return; }
+      if (this.target.type === BlockId.Wayshrine) {
+        const markerId = `wayshrine:${key}`;
+        if (!this.mapKnowledge.markers.some((marker) => marker.id === markerId)) {
+          this.mapKnowledge = placeWayshrine(this.mapKnowledge, {
+            id: markerId,
+            name: "Wayfarer's Wayshrine",
+            position: { x: this.target.x, y: this.target.y + 1, z: this.target.z },
+            playerId: this.localPlayerId(),
+            discoveredAt: Date.now(),
+            icon: "wayshrine",
+          });
+        }
+        this.openOverlay("map", key);
+        return;
+      }
     }
     const slot = this.selectedSlot();
     const definition = slot ? ITEMS[slot.item] : null;
@@ -5227,6 +5798,16 @@ export class VoxelEngine {
     if (type === BlockId.Apiary) this.apiaries.set(placedKey, createEmptyApiaryBlock());
     if (type === BlockId.CaptureOrbRack) this.orbRacks.set(placedKey, createOrbRack());
     if (type === BlockId.CreatureHealer) this.healingStations.set(placedKey, createCreatureHealer());
+    if (type === BlockId.AlchemyStand) this.alchemyStands.set(placedKey, createAlchemyStand());
+    if (type === BlockId.Distillery) this.distilleries.set(placedKey, createDistillery());
+    if (type === BlockId.Wayshrine) this.mapKnowledge = placeWayshrine(this.mapKnowledge, {
+      id: `wayshrine:${placedKey}`,
+      name: "Wayfarer's Wayshrine",
+      position: { x, y: y + 1, z },
+      playerId: this.localPlayerId(),
+      discoveredAt: Date.now(),
+      icon: "wayshrine",
+    });
     if (type === BlockId.ButterflyExhibit) {
       const topology = this.exhibitTopologyAt(x, y, z);
       if (topology) this.consolidateExhibit(topology);
@@ -5492,6 +6073,28 @@ export class VoxelEngine {
       this.healingStations.delete(key);
       this.persistentMachineLastStep.delete(key);
     }
+    if (type === BlockId.AlchemyStand) {
+      const station = this.alchemyStands.get(key);
+      const outputItem = station?.output ? resourceItemCode(station.output.item) : null;
+      if (this.mode === "survival" && outputItem !== null && station?.output) this.spawnDrop(outputItem, station.output.count, new THREE.Vector3(x, y, z));
+      this.alchemyStands.delete(key);
+      this.persistentMachineLastStep.delete(key);
+    }
+    if (type === BlockId.Distillery) {
+      const station = this.distilleries.get(key);
+      const outputItem = station?.output ? resourceItemCode(station.output.item) : null;
+      if (this.mode === "survival" && outputItem !== null && station?.output) this.spawnDrop(outputItem, station.output.count, new THREE.Vector3(x, y, z));
+      this.distilleries.delete(key);
+      this.persistentMachineLastStep.delete(key);
+    }
+    if (type === BlockId.Wayshrine) {
+      const markerId = `wayshrine:${key}`;
+      if (this.mapKnowledge.markers.some((marker) => marker.id === markerId)) this.mapKnowledge = {
+        ...this.mapKnowledge,
+        revision: this.mapKnowledge.revision + 1,
+        markers: this.mapKnowledge.markers.filter((marker) => marker.id !== markerId),
+      };
+    }
     if (type === BlockId.ButterflyExhibit && exhibitTopology && exhibitSlots) {
       this.rebuildExhibitAfterBreak(exhibitTopology, exhibitSlots, { x, y, z });
     }
@@ -5579,6 +6182,13 @@ export class VoxelEngine {
     this.targetMob = entityVisible && !this.targetBoat && mobHit ? mobHit.mob : null;
     if (this.targetMob && !this.bestiary[this.targetMob.kind].seen) { this.bestiary[this.targetMob.kind].seen = true; this.saveSoon(); }
     this.target = this.targetMob || this.targetBoat ? null : blockHit;
+    if (this.target) {
+      const discoveredPlants = discoverPlantBlock(this.plantBestiary, this.target.type);
+      if (discoveredPlants !== this.plantBestiary) {
+        this.plantBestiary = discoveredPlants;
+        this.saveSoon();
+      }
+    }
     const nextKey = this.target ? blockKey(this.target.x, this.target.y, this.target.z)
       : this.targetMob ? `mob:${this.targetMob.id}`
         : this.targetBoat ? `boat:${this.targetBoat.save.id}` : "";
@@ -5641,6 +6251,7 @@ export class VoxelEngine {
   updatePlayer(dt: number) {
     if (this.mountedBoatId) {
       this.fallVelocity = 0;
+      this.fallCuePlayed = false;
       this.velocity.set(0, 0, 0);
       this.grounded = true;
       return;
@@ -5648,6 +6259,7 @@ export class VoxelEngine {
     if (this.mountedCreatureId !== null) {
       this.updateMountedCreature(dt);
       this.fallVelocity = 0;
+      this.fallCuePlayed = false;
       this.velocity.set(0, 0, 0);
       this.grounded = true;
       return;
@@ -5687,6 +6299,7 @@ export class VoxelEngine {
 
     if (inWater) {
       this.fallVelocity = 0;
+      this.fallCuePlayed = false;
       const bankX = Math.round(this.position.x - Math.sin(this.yaw) * 0.62);
       const bankZ = Math.round(this.position.z - Math.cos(this.yaw) * 0.62);
       const bankY = Math.floor(this.position.y + 0.6);
@@ -5713,6 +6326,7 @@ export class VoxelEngine {
       if (swim.damage > 0 && this.mode === "survival") this.damagePlayer(swim.damage, "drowning", true);
     } else if (inLava) {
       this.fallVelocity = 0;
+      this.fallCuePlayed = false;
       this.velocity.y -= 5 * dt;
       this.velocity.y *= Math.max(0, 1 - 2.4 * dt);
       if (this.keys.has("Space")) this.velocity.y += 9.5 * dt;
@@ -5727,6 +6341,10 @@ export class VoxelEngine {
       }
       this.velocity.y -= 24 * dt;
       this.fallVelocity = Math.min(this.fallVelocity, this.velocity.y);
+      if (!this.fallCuePlayed && this.fallVelocity < -8.5) {
+        this.audio.play("fall");
+        this.fallCuePlayed = true;
+      }
     }
 
     this.moveWithCollisions(this.velocity.x * dt, 0, 0);
@@ -5739,6 +6357,7 @@ export class VoxelEngine {
       this.audio.play("land", this.blockUnderfoot());
       if (this.mode === "survival" && this.fallVelocity < -11.2) this.damagePlayer(Math.min(6, Math.max(1, Math.floor((-this.fallVelocity - 9) / 2))), "the fall", true);
       this.fallVelocity = 0;
+      this.fallCuePlayed = false;
     }
     if (this.position.y < MIN_Y - 8) this.respawn(true);
 
@@ -5953,6 +6572,7 @@ export class VoxelEngine {
     const difficultyScale = difficulty === "hard" ? 1.35 : difficulty === "easy" ? 0.75 : difficulty === "peaceful" ? 0.6 : 1;
     const finalAmount = Math.max(0.5, Math.round(amount * difficultyScale * (1 - reduction) * 2) / 2);
     this.health -= finalAmount;
+    this.damageRevision += 1;
     if (armor > 0 && !bypassArmor) this.damageArmor();
     this.playerInvulnerability = 0.7;
     this.audio.play("hurt");
@@ -6012,6 +6632,741 @@ export class VoxelEngine {
 
   localPlayerId() {
     return this.multiplayer?.identity.id ?? "local";
+  }
+
+  worldSimulationSeconds() {
+    return Date.now() / 1000;
+  }
+
+  private ensureSideQuestOffers(mob: MobEntity) {
+    if (!mob.residentId || !mob.settlementId || !mob.profession || (mob.factionId !== "hobbits" && mob.factionId !== "goblins")) return;
+    const templates = sideQuestOffersFor(mob.factionId, mob.profession as ResidentProfession, mob.settlementId, this.day, 2);
+    for (const template of templates) {
+      const id = `${template.id}:${mob.residentId}`;
+      if (this.sideQuestDefinitions.some((quest) => quest.id === id)) continue;
+      const objectives: QuestDefinition["objectives"] = template.criteria.map((criterion, index) => {
+        const objectiveId = `${id}:objective:${index}`;
+        if (criterion.kind === "deliver") return { id: objectiveId, label: `Deliver ${criterion.count} ${criterion.target}`, kind: "deliver-item" as const, itemId: criterion.target, count: criterion.count };
+        if (criterion.kind === "collect") return { id: objectiveId, label: `Gather ${criterion.count} ${criterion.target}`, kind: "collect-item" as const, itemId: criterion.target, count: criterion.count };
+        if (criterion.kind === "defeat") return { id: objectiveId, label: `Defeat ${criterion.count} ${criterion.target}`, kind: "kill" as const, mobKind: criterion.target, count: criterion.count };
+        return { id: objectiveId, label: `${criterion.kind === "protect" ? "Protect" : "Visit"} ${criterion.target}`, kind: "custom" as const, eventId: `${criterion.kind}:${criterion.target}`, count: criterion.count };
+      });
+      const failureConditions: NonNullable<QuestDefinition["failureConditions"]> = template.failureConditions.map((condition) => condition === "giver-dies"
+        ? { kind: "entity-dies" as const, entityId: mob.residentId, reason: `${mob.name}, who entrusted you with this task, has died.` }
+        : condition === "protected-target-dies"
+          ? { kind: "custom" as const, eventId: "protected-target-dies", reason: "The person or creature under your protection died." }
+          : { kind: "deadline" as const, afterDay: this.day + 3, reason: "The opportunity passed before the work was finished." });
+      this.sideQuestDefinitions.push({
+        id,
+        questlineId: `side:${mob.factionId}:${mob.settlementId}`,
+        kind: "side",
+        name: template.title,
+        summary: template.summary,
+        objectives,
+        giver: { role: mob.profession, factionId: mob.factionId, failOnDeath: true },
+        failureConditions,
+        rewards: {
+          gold: template.rewards.gold,
+          items: template.rewards.items.map((item) => ({ itemId: item.itemKey, count: item.count })),
+          blueprints: [],
+          factionAlignment: { [mob.factionId]: template.rewards.alignment },
+        },
+        abandonable: true,
+        reacceptAfterAbandon: true,
+      });
+    }
+    if (this.sideQuestDefinitions.length > 128) this.sideQuestDefinitions.splice(0, this.sideQuestDefinitions.length - 128);
+  }
+
+  allQuestDefinitions() {
+    return [...HEARTHROADS_MAIN_QUESTS, ...this.sideQuestDefinitions] as readonly QuestDefinition[];
+  }
+
+  private dispatchQuestEvent(event: QuestEvent) {
+    const next = applyQuestEvent(this.questBook, this.allQuestDefinitions(), event);
+    if (next !== this.questBook) {
+      this.questBook = next;
+      this.saveSoon();
+    }
+  }
+
+  acceptQuestById(questId: string, giverEntityId: string | null = this.activeSentient?.residentId ?? null) {
+    const definition = this.allQuestDefinitions().find((quest) => quest.id === questId);
+    if (definition?.kind === "side" && (!giverEntityId || !questId.endsWith(`:${giverEntityId}`))) {
+      this.events.onToast("Return to the resident offering this side quest to accept it.");
+      return false;
+    }
+    const result = acceptQuest(this.questBook, this.allQuestDefinitions(), questId, Date.now(), giverEntityId);
+    if (!result.ok) {
+      this.events.onToast(result.reason === "prerequisites" ? "That path has not opened yet." : "That quest is not currently available.");
+      return false;
+    }
+    this.questBook = pinQuest(result.book, result.book.pinnedQuestId ?? questId);
+    this.events.onToast(`Quest accepted: ${this.allQuestDefinitions().find((quest) => quest.id === questId)?.name ?? questId}.`);
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  pinQuestById(questId: string | null) {
+    this.questBook = pinQuest(this.questBook, questId);
+    this.saveSoon();
+    this.emitHud(true);
+  }
+
+  abandonQuestById(questId: string) {
+    const result = abandonQuest(this.questBook, this.allQuestDefinitions(), questId);
+    if (!result.ok) {
+      this.events.onToast("Main-story quests stay with you; only side quests can be abandoned.");
+      return false;
+    }
+    this.questBook = result.book;
+    this.events.onToast("Side quest abandoned. You can accept it again if the giver still offers it.");
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  private creditPlayerGold(amount: number, reason: string) {
+    if (amount <= 0) return;
+    const result = creditGold(this.goldWallet, amount, {
+      authorityId: this.goldWallet.authorityId,
+      expectedRevision: this.goldWallet.revision,
+      eventId: `${reason}:${Date.now()}:${this.goldWallet.revision}`,
+    });
+    if (result.applied) this.goldWallet = result.state;
+  }
+
+  tradeWithActiveMerchant(direction: "buy" | "sell", itemKeyOrCode: string | ItemCode, count = 1) {
+    const merchantId = this.activeMerchantId;
+    const merchant = merchantId ? this.merchants.get(merchantId) : null;
+    const quantity = Math.max(1, Math.min(64, Math.floor(count)));
+    if (!merchantId || !merchant) return false;
+    const command = {
+      authorityId: this.goldWallet.authorityId,
+      expectedWalletRevision: this.goldWallet.revision,
+      expectedCounterpartyRevision: merchant.revision,
+      eventId: `trade:${direction}:${merchantId}:${Date.now()}:${this.goldWallet.revision}`,
+    };
+    if (direction === "buy") {
+      const itemKey = typeof itemKeyOrCode === "string" ? itemKeyOrCode : commerceKeyForItem(itemKeyOrCode);
+      const item = itemKey ? commerceItemCode(itemKey) : null;
+      if (!itemKey || item === null) {
+        this.events.onToast("That stock cannot safely fit in a Wayfarer's pack yet.");
+        return false;
+      }
+      if (this.inventoryCapacity(item) < quantity) {
+        this.events.onToast("Make room in your pack before completing that purchase.");
+        return false;
+      }
+      const result = buyFromMerchant(this.goldWallet, merchant, itemKey, quantity, command);
+      if (!result.applied || !result.item) {
+        this.events.onToast(result.reason === "insufficient-gold" ? "Your gold wallet cannot cover that price."
+          : result.reason === "merchant-out-of-stock" ? "That merchant has sold through the requested stock."
+            : "The trade could not be completed.");
+        return false;
+      }
+      this.goldWallet = result.wallet;
+      this.merchants.set(merchantId, result.merchant);
+      if (itemKey === "unaligned-warg-orb") {
+        for (let index = 0; index < quantity; index += 1) {
+          const entityId = `trade-warg-${Date.now().toString(36)}-${index}`;
+          const metadata: CreatureMetadata = {
+            schema: 1,
+            entityId,
+            kind: "warg",
+            health: MOB_DEFS.warg.health,
+            maxHealth: MOB_DEFS.warg.health,
+            ageTicks: 24_000,
+            baby: false,
+            temperament: MOB_DEFS.warg.temperament,
+            hostile: false,
+            tamed: false,
+            ownerId: null,
+            name: null,
+            geneticSeed: (Date.now() + index * 2654435761) >>> 0,
+            command: null,
+            custom: JSON.parse(JSON.stringify({ courserBond: createReedstriderBond(), aligned: false })),
+          };
+          const orb = captureIntoOrb(createEmptyCaptureOrb(`warg-orb-${entityId}`), metadata);
+          const filled = orb ? captureOrbInventorySlot(orb) : null;
+          if (filled) this.addItem(filled.item, 1, filled.durability, undefined, filled.metadata);
+        }
+      } else this.addItem(item, quantity, ITEMS[item]?.maxDurability);
+      this.dispatchQuestEvent({ type: "trade-completed", factionId: merchant.factionId, count: quantity, at: Date.now() });
+      this.events.onToast(`Bought ${ITEMS[item].name} ×${quantity} for ${result.total} gold.`);
+    } else {
+      const item = typeof itemKeyOrCode === "number" ? itemKeyOrCode
+        : commerceItemCode(itemKeyOrCode) ?? (/^item-\d+$/u.test(itemKeyOrCode) ? Number(itemKeyOrCode.slice(5)) as ItemCode : null);
+      if (item === null || item === undefined || this.countItem(item) < quantity) {
+        this.events.onToast("You do not have that many to sell.");
+        return false;
+      }
+      const definition = ITEMS[item];
+      if (!definition) return false;
+      const catalogItem: CommerceItem = {
+        key: commerceKeyForItem(item) ?? `item-${item}`,
+        name: definition.name,
+        category: definition.useKind === "blueprint" ? "blueprint"
+          : definition.useKind === "potion" ? "potion"
+            : definition.food ? "food"
+              : definition.toolKind ? "weapon"
+                : "misc",
+        baseValue: Math.max(1, Math.round(2 + (definition.damage ?? 0) * 5 + (definition.tier ?? 0) * 4 + (definition.food ?? 0) * 2)),
+        stackLimit: Math.max(1, definition.maxStack),
+        tags: item === Item.Honeymead ? ["mead"] : undefined,
+      };
+      const result = sellToMerchant(this.goldWallet, merchant, catalogItem, quantity, command);
+      if (!result.applied) {
+        this.events.onToast(result.reason === "merchant-cannot-pay" ? "That merchant's purse is too light for this lot." : "The trade could not be completed.");
+        return false;
+      }
+      this.removeItem(item, quantity);
+      this.goldWallet = result.wallet;
+      this.merchants.set(merchantId, result.merchant);
+      this.dispatchQuestEvent({ type: "trade-completed", factionId: merchant.factionId, count: quantity, at: Date.now() });
+      this.events.onToast(`Sold ${definition.name} ×${quantity} for ${result.total} gold.`);
+    }
+    this.audio.play("pickup");
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  depositGold(amount: number | string) {
+    const wholeGold = typeof amount === "string" && /^\d+$/u.test(amount) ? amount : String(Math.max(0, Math.floor(Number(amount) || 0)));
+    if (BigInt(wholeGold) <= BigInt(0)) return false;
+    const result = depositAtBank(this.goldWallet, this.bankAccount, wholeGold, {
+      authorityId: this.goldWallet.authorityId,
+      expectedWalletRevision: this.goldWallet.revision,
+      expectedCounterpartyRevision: this.bankAccount.revision,
+      eventId: `bank-deposit:${Date.now()}:${this.goldWallet.revision}`,
+    });
+    if (!result.applied) { this.events.onToast("That deposit could not be completed."); return false; }
+    this.goldWallet = result.wallet;
+    this.bankAccount = result.account;
+    this.audio.play("pickup");
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  withdrawGold(amount: number | string) {
+    const wholeGold = typeof amount === "string" && /^\d+$/u.test(amount) ? amount : String(Math.max(0, Math.floor(Number(amount) || 0)));
+    if (BigInt(wholeGold) <= BigInt(0)) return false;
+    const result = withdrawFromBank(this.goldWallet, this.bankAccount, wholeGold, {
+      authorityId: this.goldWallet.authorityId,
+      expectedWalletRevision: this.goldWallet.revision,
+      expectedCounterpartyRevision: this.bankAccount.revision,
+      eventId: `bank-withdraw:${Date.now()}:${this.goldWallet.revision}`,
+    });
+    if (!result.applied) { this.events.onToast("That withdrawal is larger than the available whole-gold balance."); return false; }
+    this.goldWallet = result.wallet;
+    this.bankAccount = result.account;
+    this.audio.play("pickup");
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  buyStockShares(symbol: StockSymbol, shares: number | string) {
+    if (!STOCK_SYMBOLS.includes(symbol)) return false;
+    const shareCount = typeof shares === "string" && /^\d+$/u.test(shares) ? shares : String(Math.max(0, Math.floor(Number(shares) || 0)));
+    if (BigInt(shareCount) <= BigInt(0)) return false;
+    const result = buyStock(this.goldWallet, this.stockMarket, symbol, shareCount, {
+      authorityId: this.goldWallet.authorityId,
+      expectedWalletRevision: this.goldWallet.revision,
+      expectedCounterpartyRevision: this.stockMarket.revision,
+      eventId: `stock-buy:${symbol}:${Date.now()}:${this.goldWallet.revision}`,
+    });
+    if (!result.applied) { this.events.onToast("That purchase exceeds your available gold."); return false; }
+    this.goldWallet = result.wallet;
+    this.stockMarket = result.market;
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  sellStockShares(symbol: StockSymbol, shares: number | string) {
+    if (!STOCK_SYMBOLS.includes(symbol)) return false;
+    const shareCount = typeof shares === "string" && /^\d+$/u.test(shares) ? shares : String(Math.max(0, Math.floor(Number(shares) || 0)));
+    if (BigInt(shareCount) <= BigInt(0)) return false;
+    const result = sellStock(this.goldWallet, this.stockMarket, symbol, shareCount, {
+      authorityId: this.goldWallet.authorityId,
+      expectedWalletRevision: this.goldWallet.revision,
+      expectedCounterpartyRevision: this.stockMarket.revision,
+      eventId: `stock-sell:${symbol}:${Date.now()}:${this.goldWallet.revision}`,
+    });
+    if (!result.applied) { this.events.onToast("You do not hold that many shares."); return false; }
+    this.goldWallet = result.wallet;
+    this.stockMarket = result.market;
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  setSettlementRoleWaypoint(profession: ResidentProfession) {
+    const settlement = this.activeSettlementId ? this.settlements.get(this.activeSettlementId) : null;
+    const waypoint = settlement ? findRoleWaypoint(settlement, profession) : null;
+    if (!settlement || !waypoint) { this.events.onToast("No living resident with that role is currently recorded here."); return false; }
+    const id = `manual:role:${settlement.id}:${profession}`;
+    this.mapKnowledge = placeManualMapMarker(this.mapKnowledge, {
+      id,
+      name: `${profession[0].toUpperCase()}${profession.slice(1)} - ${settlement.cultureRace} ${settlement.size}`,
+      position: { x: waypoint.position.x, y: this.world.findWalkableY(Math.round(waypoint.position.x), Math.round(waypoint.position.z), this.position.y) + 1, z: waypoint.position.z },
+      playerId: this.localPlayerId(),
+      discoveredAt: Date.now(),
+      icon: "person",
+    });
+    this.events.onToast(`Waypoint set for the settlement ${profession}.`);
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  shareCartographyMaps() {
+    if (!this.activeCartographyKey) return false;
+    if (!this.multiplayer || !this.multiplayer.getPeers().some((peer) => peer.state === "connected")) {
+      this.events.onToast("A second connected Wayfarer must use this table at the same time.");
+      return false;
+    }
+    try { this.multiplayer.sendMapShare(this.cartographyPayload(this.activeCartographyKey, false)); }
+    catch (error) {
+      this.events.onToast(error instanceof Error ? error.message : "The map exchange could not be sent.");
+      return false;
+    }
+    this.events.onToast("Cartography exchange offered. Your partner must be using the same table.");
+    this.emitHud(true);
+    return true;
+  }
+
+  commandActiveFollower(command: FollowDistanceSetting | string) {
+    const mob = this.activeSentient ?? this.activePet;
+    if (!mob || (!mob.hiredByPlayerId && !mob.petState?.tamed && !mob.shadeState?.tamed && !mob.reedstriderBond?.tamed && !mob.courserBond?.tamed)) return false;
+    let distance: FollowDistanceSetting | null = null;
+    if (command === "dynamic") distance = "dynamic";
+    else if (typeof command === "number") distance = command;
+    else if (command.startsWith("distance:")) distance = command.slice(9) === "dynamic" ? "dynamic" : Number(command.slice(9));
+    if (distance !== null) mob.followDistance = normalizeFollowDistance(distance);
+    if (mob.settlementId && mob.residentId && mob.hiredByPlayerId) {
+      const settlement = this.settlements.get(mob.settlementId);
+      const resident = settlement?.residents.find((entry) => entry.id === mob.residentId);
+      if (settlement && resident) {
+        const stance = typeof command === "string" && command.startsWith("stance:")
+          ? command.slice(7) as "passive" | "defensive" | "offensive" : undefined;
+        const orders = command === "follow" ? { follow: true, holdPosition: null }
+          : command === "hold" ? { follow: false, holdPosition: { x: mob.group.position.x, z: mob.group.position.z } }
+            : stance && ["passive", "defensive", "offensive"].includes(stance) ? { stance }
+              : distance !== null ? { followDistance: mob.followDistance } : {};
+        const result = updateHirelingOrders(settlement, resident.id, orders, {}, {
+          authorityId: settlement.authorityId,
+          expectedRevision: settlement.revision,
+          eventId: `hireling-order:${resident.id}:${Date.now()}`,
+        });
+        if (result.applied) this.settlements.set(settlement.id, result.state);
+      }
+    } else if (mob.petState?.tamed && typeof command === "string" && (command === "follow" || command === "hold")) {
+      mob.petState = commandPeelop(mob.petState, this.localPlayerId(), command === "follow" ? "follow" : "stay");
+    }
+    this.events.onToast(distance !== null ? `${mob.name}'s follow distance is now ${mob.followDistance}.` : `${mob.name}'s orders were updated.`);
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  selectSettlementResident(residentId: string) {
+    const mob = this.mobs.find((candidate) => candidate.residentId === residentId && candidate.health > 0);
+    if (!mob) return false;
+    this.activeSentient = mob;
+    this.activeSettlementId = mob.settlementId;
+    this.activeMerchantId = mob.residentId && this.merchants.has(mob.residentId) ? mob.residentId : null;
+    this.ensureSideQuestOffers(mob);
+    this.openOverlay("sentient", residentId);
+    return true;
+  }
+
+  hireResidentFromMayor(residentId: string) {
+    const mayor = this.activeSentient;
+    const settlement = mayor?.settlementId ? this.settlements.get(mayor.settlementId) : null;
+    if (!mayor || mayor.profession !== "mayor" || !settlement || !mayor.factionId || mayor.factionId === "player") {
+      this.events.onToast("Hiring agreements must be made with that settlement's mayor.");
+      return false;
+    }
+    const resident = settlement.residents.find((entry) => entry.id === residentId);
+    const expectedCost = resident?.profession === "warrior" ? 180 : 110;
+    if (!resident || BigInt(this.goldWallet.balance) < BigInt(expectedCost)) {
+      this.events.onToast(`Hiring requires ${expectedCost} gold in your wallet.`);
+      return false;
+    }
+    const hired = hireResident(settlement, residentId, this.localPlayerId(), this.factionRelations.alignments[mayor.factionId] ?? 0, true, {
+      authorityId: settlement.authorityId,
+      expectedRevision: settlement.revision,
+      eventId: `hire:${residentId}:${Date.now()}`,
+    });
+    if (!hired.applied) {
+      this.events.onToast(hired.reason === "alignment-too-low" ? "This mayor only entrusts workers at 65 or higher faction alignment."
+        : "That resident is not currently available for hire.");
+      return false;
+    }
+    const payment = debitGold(this.goldWallet, hired.cost, {
+      authorityId: this.goldWallet.authorityId,
+      expectedRevision: this.goldWallet.revision,
+      eventId: `hire-payment:${residentId}:${Date.now()}`,
+    });
+    if (!payment.applied) return false;
+    this.goldWallet = payment.state;
+    this.settlements.set(settlement.id, hired.state);
+    const mob = this.mobs.find((candidate) => candidate.residentId === residentId);
+    if (mob) {
+      mob.factionId = "player";
+      mob.hiredByPlayerId = this.localPlayerId();
+      mob.followDistance = "dynamic";
+      mob.hostile = false;
+    }
+    this.events.onToast(`${resident.name} joins your Wayfarer faction. Commands and equipment are available from their follower panel.`);
+    this.audio.play("craft");
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  renameActiveHireling(name: string) {
+    const mob = this.activeSentient;
+    if (!mob?.hiredByPlayerId || mob.hiredByPlayerId !== this.localPlayerId()) return false;
+    const clean = name.trim().replace(/\s+/gu, " ").slice(0, 28);
+    if (!clean) return false;
+    mob.name = clean;
+    if (mob.settlementId && mob.residentId) {
+      const settlement = this.settlements.get(mob.settlementId);
+      if (settlement) this.settlements.set(settlement.id, {
+        ...settlement,
+        residents: settlement.residents.map((resident) => resident.id === mob.residentId ? { ...resident, name: clean } : resident),
+      });
+    }
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  claimActiveSettlement() {
+    const mayorMob = this.activeSentient;
+    const settlement = mayorMob?.settlementId ? this.settlements.get(mayorMob.settlementId) : null;
+    if (!mayorMob || mayorMob.profession !== "mayor" || !settlement || settlement.ownerFactionId === "player") return false;
+    const livingWarriors = settlement.residents.filter((resident) => resident.alive && resident.profession === "warrior").length;
+    const decision = evaluateTownCapture(this.factionRelations, {
+      townId: settlement.id,
+      currentOwner: settlement.ownerFactionId,
+      claimant: "player",
+      livingWarriors,
+      livingMayor: mayorMob.health > 0,
+      mayorThreatened: true,
+      claimantPresent: mayorMob.group.position.distanceToSquared(this.position) <= 25,
+    });
+    if (!decision.allowed || !decision.receipt) {
+      this.events.onToast(decision.reason === "warriors-remain" ? `${livingWarriors} settlement warrior${livingWarriors === 1 ? " remains" : "s remain"}; the mayor will not yield.`
+        : "This settlement cannot be claimed under the current conditions.");
+      return false;
+    }
+    const factionResult = applyTownCaptureConsequences(this.factionRelations, decision.receipt, {
+      authorityId: this.factionRelations.authorityId,
+      expectedRevision: this.factionRelations.revision,
+      eventId: decision.receipt.id,
+    });
+    const settlementResult = applySettlementCapture(settlement, decision.receipt, this.day, {
+      authorityId: settlement.authorityId,
+      expectedRevision: settlement.revision,
+      eventId: decision.receipt.id,
+    });
+    if (!factionResult.applied || !settlementResult.applied) return false;
+    this.factionRelations = factionResult.state;
+    this.settlements.set(settlement.id, settlementResult.state);
+    for (const mob of this.mobs) {
+      if (mob.settlementId !== settlement.id || mob.profession === "warrior" || mob.health <= 0) continue;
+      mob.factionId = "player";
+      mob.aligned = false;
+      mob.hostile = false;
+    }
+    this.events.onToast("The mayor yields the settlement to your Wayfarer faction. Full town management and raiding commands are planned for a later update.");
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  turnInQuestById(questId: string, giverEntityId: string | null = this.activeSentient?.residentId ?? null) {
+    const before = inventoryResourceCounts(this.inventory);
+    const result = turnInQuest(this.questBook, this.allQuestDefinitions(), questId, before, Date.now(), giverEntityId);
+    if (!result.ok) {
+      const message = result.reason === "delivery-items-missing" ? "You do not have all of the requested items."
+        : result.reason === "wrong-giver" ? "This quest must be reported to the person who gave it."
+          : "One or more objectives are still unfinished.";
+      this.events.onToast(message);
+      return false;
+    }
+    this.consumeResourceDelta(consumedResourceDelta(before, result.inventory));
+    this.questBook = result.book;
+    this.creditPlayerGold(result.reward.gold, `quest:${questId}`);
+    for (const [factionId, reward] of Object.entries(result.reward.factionAlignment)) {
+      if ((factionId !== "hobbits" && factionId !== "goblins") || reward <= 0) continue;
+      const alignment = applyQuestAlignmentReward(this.factionRelations, factionId, reward, {
+        authorityId: this.factionRelations.authorityId,
+        expectedRevision: this.factionRelations.revision,
+        eventId: `quest-alignment:${questId}:${factionId}:${Date.now()}`,
+      });
+      if (alignment.applied) this.factionRelations = alignment.state;
+    }
+    for (const blueprintId of result.reward.blueprints) this.blueprints = consumeBlueprintItem(this.blueprints, blueprintId, Date.now()).state;
+    const giver = result.rewardDelivery === "giver-drop" ? this.mobs.find((mob) => mob.residentId === giverEntityId) ?? null : null;
+    for (const reward of result.reward.items) {
+      const item = resourceItemCode(reward.itemId) ?? commerceItemCode(reward.itemId);
+      if (item === null) continue;
+      if (giver) this.spawnDrop(item, reward.count, giver.group.position.clone().add(new THREE.Vector3(0, 0.5, 0)));
+      else this.addItem(item, reward.count);
+    }
+    this.audio.play("craft");
+    this.events.onToast(`Quest complete · ${result.reward.gold} gold added to your wallet.`);
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  addManualMapMarker(name = "Trail Marker") {
+    const id = `manual:${this.localPlayerId()}:${Date.now().toString(36)}`;
+    this.mapKnowledge = placeManualMapMarker(this.mapKnowledge, {
+      id,
+      name,
+      position: { x: this.position.x, y: this.position.y, z: this.position.z },
+      playerId: this.localPlayerId(),
+      discoveredAt: Date.now(),
+      icon: "pin",
+    });
+    this.events.onToast(`${name} added at your current position.`);
+    this.saveSoon();
+    this.emitHud(true);
+    return id;
+  }
+
+  removeMapMarker(markerId: string) {
+    const next = removeManualMapMarker(this.mapKnowledge, markerId);
+    if (next === this.mapKnowledge) return false;
+    this.mapKnowledge = next;
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  renameWayshrineMarker(markerId: string, name: string) {
+    const next = renameWayshrine(this.mapKnowledge, markerId, name, Date.now());
+    if (next === this.mapKnowledge) return false;
+    this.mapKnowledge = next;
+    this.events.onToast(`Wayshrine renamed ${name.trim() || "Wayshrine"}.`);
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  requestFastTravel(markerId: string) {
+    if (this.fastTravelChannel?.status === "channeling") return false;
+    const destination = this.mapKnowledge.markers.find((marker) => marker.id === markerId);
+    if (!destination || destination.kind === "manual") {
+      this.events.onToast("Manual pins are waypoints only; travel needs a known POI, bed, or wayshrine.");
+      return false;
+    }
+    const originShrine = this.mapKnowledge.markers.find((marker) => marker.kind === "wayshrine"
+      && Math.hypot(marker.position.x - this.position.x, marker.position.y - this.position.y, marker.position.z - this.position.z) <= 3.5);
+    const mode = originShrine && destination.kind === "wayshrine" ? "wayshrine-network" as const : "map-charge" as const;
+    const begun = beginFastTravel(this.mapKnowledge, {
+      id: `travel:${Date.now().toString(36)}`,
+      mode,
+      destinationId: markerId,
+      originWayshrineId: originShrine?.id ?? null,
+    }, this.position, this.worldSimulationSeconds(), this.damageRevision);
+    if (!begun.ok) {
+      this.events.onToast(begun.reason === "no-banked-travel"
+        ? "Brew and drink a Wayskip Draught to bank a map journey. Wayshrine-to-wayshrine travel is free."
+        : "That destination is not available from here.");
+      return false;
+    }
+    this.fastTravelChannel = begun.channel;
+    this.keys.clear();
+    this.events.onToast(`Hold still for five seconds · channeling toward ${destination.name}.`);
+    this.emitHud(true);
+    return true;
+  }
+
+  private updateFastTravelChannel() {
+    const channel = this.fastTravelChannel;
+    if (!channel || channel.status !== "channeling") return;
+    const next = advanceFastTravelChannel(channel, this.position, this.worldSimulationSeconds(), this.damageRevision);
+    if (next === channel) return;
+    if (next.status === "cancelled") {
+      this.fastTravelChannel = null;
+      this.events.onToast(next.cancelledReason === "damaged" ? "Travel interrupted by damage." : "Travel interrupted because you moved.");
+      this.emitHud(true);
+      return;
+    }
+    if (next.status !== "completed") {
+      this.fastTravelChannel = next;
+      return;
+    }
+    const committed = commitFastTravel(this.mapKnowledge, next);
+    this.fastTravelChannel = null;
+    if (!committed.ok) {
+      this.events.onToast("The route faded before the journey completed.");
+      return;
+    }
+    this.mapKnowledge = committed.state;
+    const x = Math.round(committed.position.x);
+    const z = Math.round(committed.position.z);
+    const ground = this.world.findWalkableY(x, z, committed.position.y);
+    this.position.set(x, ground + 0.51, z);
+    this.velocity.set(0, 0, 0);
+    this.world.scheduleAround(x, z, true);
+    this.events.onToast(`Arrived · ${committed.chargeSpent ? "one banked journey spent" : "wayshrine network"}.`);
+    this.spawnParticles(x, ground + 1, z, BlockId.CrystalBlock, 18);
+    this.audio.play("craft");
+    this.saveSoon();
+    this.emitHud(true);
+  }
+
+  private syncSettlementPlans() {
+    for (const { candidate, layout } of this.world.settlementPlans.values()) {
+      let settlement = this.settlements.get(candidate.id);
+      if (!settlement) {
+        settlement = createSettlementState(this.factionRelations.authorityId, candidate, layout);
+        this.settlements.set(candidate.id, settlement);
+      }
+      for (const resident of settlement.residents) {
+        if (this.merchants.has(resident.id)) continue;
+        const faction = resident.factionId === "goblins" ? "goblins" : "hobbits";
+        this.merchants.set(resident.id, createMerchant(
+          this.factionRelations.authorityId,
+          resident.id,
+          faction,
+          merchantProfessionForResident(resident.profession),
+          resident.profession === "banker" ? 500 : 240,
+        ));
+      }
+    }
+  }
+
+  private updateHearthroadsSimulation(dt: number) {
+    const nowSeconds = this.worldSimulationSeconds();
+    for (const [buff, expiresAt] of Object.entries(this.potionBuffs)) if (expiresAt <= nowSeconds) delete this.potionBuffs[buff];
+    this.settlementTimer -= dt;
+    if (this.settlementTimer > 0) return;
+    this.settlementTimer = 2;
+    this.syncSettlementPlans();
+    const authorityId = this.factionRelations.authorityId;
+    if (this.bankAccount.lastInterestDay < this.day) {
+      const result = compoundBankInterest(this.bankAccount, this.day, {
+        authorityId,
+        expectedRevision: this.bankAccount.revision,
+        eventId: `bank-interest:${this.day}`,
+      });
+      if (result.applied) this.bankAccount = result.state;
+    }
+    if (this.stockMarket.day < this.day) {
+      const result = stepStockMarket(this.stockMarket, this.day, {
+        authorityId,
+        expectedRevision: this.stockMarket.revision,
+        eventId: `market-day:${this.day}`,
+      });
+      if (result.applied) this.stockMarket = result.state;
+    }
+    for (const [residentId, merchant] of this.merchants) {
+      if (this.day - merchant.lastRestockDay < 2) continue;
+      const result = restockMerchant(merchant, this.day, {
+        authorityId,
+        expectedRevision: merchant.revision,
+        eventId: `merchant-restock:${residentId}:${this.day}`,
+      });
+      if (result.applied) this.merchants.set(residentId, result.state);
+    }
+    const hour = this.worldTime * 24;
+    for (const [settlementId, currentSettlement] of [...this.settlements]) {
+      let settlement = currentSettlement;
+      const election = electMayorAtEight(settlement, this.day, hour, {
+        authorityId,
+        expectedRevision: settlement.revision,
+        eventId: `mayor-election:${settlementId}:${this.day}`,
+      });
+      if (election.applied) settlement = election.state;
+      const population = growSettlementPopulation(settlement, this.day, {
+        authorityId,
+        expectedRevision: settlement.revision,
+        eventId: `population:${settlementId}:${this.day}`,
+      });
+      if (population.applied) {
+        const priorIds = new Set(settlement.residents.map((resident) => resident.id));
+        settlement = population.state;
+        for (const resident of settlement.residents) {
+          if (priorIds.has(resident.id)) continue;
+          const kind: MobKind = settlement.ownerFactionId === "goblins" ? "goblin-worker" : "hobbit-merchant";
+          const ground = this.world.findWalkableY(Math.round(resident.position.x), Math.round(resident.position.z), this.position.y);
+          const child = this.spawnMob(kind, new THREE.Vector3(resident.position.x, ground + MOB_DEFS[kind].footOffset, resident.position.z), {
+            name: resident.name,
+            factionId: settlement.ownerFactionId === "player" ? "player" : settlement.ownerFactionId,
+            profession: resident.profession,
+            settlementId,
+            residentId: resident.id,
+            persistentPoiResident: true,
+            aligned: true,
+          });
+          this.applyMobScale(child, 0.72);
+        }
+      }
+      if (settlement !== currentSettlement) this.settlements.set(settlementId, settlement);
+      if (election.applied) {
+        const mayor = settlement.residents.find((resident) => resident.alive && resident.profession === "mayor");
+        const mayorMob = mayor ? this.mobs.find((mob) => mob.residentId === mayor.id) : null;
+        if (mayorMob) mayorMob.profession = "mayor";
+      }
+    }
+  }
+
+  private mapLocationName(tag: string) {
+    if (tag.startsWith("settlement:hobbits")) return "Hearthkin Freehold";
+    if (tag.startsWith("settlement:goblins")) return "Brassroot Clanhold";
+    return tag.split(":")[0].split("-").map((part) => part ? part[0].toUpperCase() + part.slice(1) : part).join(" ");
+  }
+
+  private updateMapDiscovery(dt: number) {
+    this.mapDiscoveryTimer -= dt;
+    if (this.mapDiscoveryTimer > 0) return;
+    this.mapDiscoveryTimer = 0.72;
+    let changed = false;
+    const renderedChunks = [...this.world.chunks.values()].filter((chunk) => chunk.group.visible).map((chunk) => ({ x: chunk.cx, z: chunk.cz }));
+    const explored = markChunksRendered(this.mapKnowledge, renderedChunks);
+    if (explored !== this.mapKnowledge) { this.mapKnowledge = explored; changed = true; }
+    this.syncSettlementPlans();
+    for (const [key, marker] of this.world.structureMarkers) {
+      if (marker.type !== "landmark") continue;
+      const markerChunk = this.world.chunks.get(`${Math.floor(marker.position.x / CHUNK_SIZE)},${Math.floor(marker.position.z / CHUNK_SIZE)}`);
+      if (!markerChunk?.group.visible || this.mapKnowledge.markers.some((entry) => entry.id === key)) continue;
+      this.mapKnowledge = discoverNaturalPoi(this.mapKnowledge, {
+        id: key,
+        name: this.mapLocationName(marker.tag),
+        position: marker.position,
+        playerId: this.localPlayerId(),
+        discoveredAt: Date.now(),
+        icon: marker.tag.startsWith("settlement:") ? "town" : "poi",
+      });
+      if (marker.tag.startsWith("settlement:")) {
+        const factionId = marker.tag.split(":")[1] ?? "neutral";
+        this.dispatchQuestEvent({ type: "town-discovered", townId: marker.id, factionId, at: Date.now() });
+        this.events.onToast(`Map updated · ${this.mapLocationName(marker.tag)} discovered.`);
+      }
+      changed = true;
+    }
+    if (this.day !== this.lastQuestDay) {
+      this.lastQuestDay = this.day;
+      this.dispatchQuestEvent({ type: "day-reached", day: this.day, at: Date.now() });
+      changed = true;
+    }
+    if (changed) {
+      this.saveSoon();
+      this.emitHud(true);
+    }
   }
 
   restoreSailboat(value: Partial<SailboatSave>) {
@@ -6082,7 +7437,8 @@ export class VoxelEngine {
     this.mountedCreatureId = null;
     this.velocity.set(0, 0, 0);
     this.events.onToast(mob?.kind === "reedstrider" ? "You step down from the Reedstrider."
-      : mob?.kind === "wild-horse" ? "You swing down from the Wildwood Courser." : "You slide down from the Shadecrawler.");
+      : mob?.kind === "wild-horse" ? "You swing down from the Wildwood Courser."
+        : mob?.kind === "warg" ? "You swing down from the Road Warg." : "You slide down from the Shadecrawler.");
     this.saveSoon();
   }
 
@@ -6498,6 +7854,8 @@ export class VoxelEngine {
       const saddled = Boolean(mob.shadeState?.saddled);
       if (mob.shadeSaddle.visible !== saddled) mob.shadeSaddle.visible = saddled;
     }
+    const wargSaddle = mob.kind === "warg" ? mob.visual.getObjectByName("warg-saddle") : null;
+    if (wargSaddle) wargSaddle.visible = Boolean(mob.courserBond?.saddled);
   }
 
   spawnMob(kind: MobKind, position: THREE.Vector3, options: SpawnMobOptions = {}) {
@@ -6518,7 +7876,7 @@ export class VoxelEngine {
       : null;
     const shadeState = kind === "shadecrawler" ? normalizeShadecrawlerState(options.shadeState ?? createShadecrawlerState()) : null;
     const reedstriderBond = kind === "reedstrider" ? { ...(options.reedstriderBond ?? createReedstriderBond()) } : null;
-    const courserBond = kind === "wild-horse" ? { ...(options.courserBond ?? createReedstriderBond()) } : null;
+    const courserBond = kind === "wild-horse" || kind === "warg" ? { ...(options.courserBond ?? createReedstriderBond()) } : null;
     const apiaryBee = options.apiaryBee ? { ...options.apiaryBee } : null;
     const socialMode = socialGroupModeForMob(kind);
     const socialGroupId = options.socialGroupId ?? (socialMode
@@ -6528,7 +7886,7 @@ export class VoxelEngine {
       : null;
     const shadeHealthScale = shadeState ? shadecrawlerScale(shadeState) : 1;
     const mob: MobEntity = {
-      id, kind, name: petState?.name || definition.name, hostile: definition.hostile && !shadeState?.tamed, definition, group, visual, parts,
+      id, kind, name: options.name?.trim() || petState?.name || definition.name, hostile: definition.hostile && !shadeState?.tamed, definition, group, visual, parts,
       health: options.health ?? petState?.health ?? definition.health * shadeHealthScale,
       maxHealth: petState?.maxHealth ?? definition.health * shadeHealthScale,
       damage: definition.damage, angle, desiredAngle: angle, steering: createStableSteering(angle), route: createCreatureRouteState(angle), wanderTimer: 1 + Math.random() * 4,
@@ -6546,6 +7904,13 @@ export class VoxelEngine {
       sightCheckTimer: (id % 5) * 0.045,
       awarenessTimer: 0,
       seesPlayer: false,
+      factionId: options.factionId ?? definition.faction ?? null,
+      profession: options.profession ?? definition.profession ?? null,
+      settlementId: options.settlementId ?? null,
+      residentId: options.residentId ?? null,
+      aligned: options.aligned ?? Boolean(options.factionId ?? definition.faction),
+      hiredByPlayerId: options.hiredByPlayerId ?? null,
+      followDistance: options.followDistance ?? "dynamic",
     };
     this.applyMobScale(mob, shadeState ? shadecrawlerScale(shadeState) : petState?.baby || careState?.baby ? 0.62 : 1);
     this.mobs.push(mob);
@@ -6588,6 +7953,14 @@ export class VoxelEngine {
       socialGroupId: saved.socialGroupId ?? null,
       peelopShedding: saved.peelopShedding ?? null,
       milkCooldown: saved.milkCooldown ?? 0,
+      name: saved.residentId ? saved.name ?? null : null,
+      factionId: saved.factionId ?? null,
+      profession: saved.profession ?? null,
+      settlementId: saved.settlementId ?? null,
+      residentId: saved.residentId ?? null,
+      aligned: Boolean(saved.aligned),
+      hiredByPlayerId: saved.hiredByPlayerId ?? null,
+      followDistance: saved.followDistance ?? "dynamic",
     });
   }
 
@@ -6614,6 +7987,13 @@ export class VoxelEngine {
       }
     }
     return false;
+  }
+
+  hostileSpawnSuppressedBySettlement(x: number, z: number) {
+    return [...this.settlements.values()].some((settlement) => {
+      const safeRadius = settlement.size === "hamlet" ? 34 : settlement.size === "village" ? 46 : 58;
+      return (settlement.layout.center.x - x) ** 2 + (settlement.layout.center.z - z) ** 2 <= safeRadius * safeRadius;
+    });
   }
 
   hasClearLineOfSight(origin: THREE.Vector3, target: THREE.Vector3) {
@@ -6664,6 +8044,14 @@ export class VoxelEngine {
     for (const [markerKey, raw] of this.world.structureMarkersNear(this.position.x, this.position.y, this.position.z, 48)) {
       if (raw.type !== "spawn" || this.activatedStructureMarkers.has(markerKey)) continue;
       const marker = raw as SpawnMarker;
+      const tagValue = (prefix: string) => marker.tags?.find((tag) => tag.startsWith(prefix))?.slice(prefix.length) ?? null;
+      const settlementId = tagValue("settlement:");
+      const residentId = tagValue("resident:");
+      const residentName = tagValue("name:");
+      const profession = tagValue("profession:");
+      const factionTag = tagValue("faction:");
+      const factionId = factionTag === "hobbits" || factionTag === "goblins" ? factionTag : null;
+      const aligned = marker.tags?.includes("aligned:true") ?? Boolean(factionId);
       const butterfly = BUTTERFLY_ORDER.includes(marker.mobKind as ButterflyKind) ? marker.mobKind as ButterflyKind : null;
       const kind = aliases[marker.mobKind] ?? (marker.mobKind in MOB_DEFS ? marker.mobKind as MobKind : null);
       if (!butterfly && !kind) { this.activatedStructureMarkers.add(markerKey); continue; }
@@ -6699,6 +8087,12 @@ export class VoxelEngine {
             apiaryBee: kind === "hive-queen" ? boundApiary?.queen ?? null
               : kind === "honeybee" ? boundApiary?.workers[index] ?? null : null,
             beeHiveKey: (kind === "hive-queen" || kind === "honeybee") ? hiveKey : null,
+            name: residentName,
+            factionId,
+            profession,
+            settlementId,
+            residentId,
+            aligned,
           });
         }
       }
@@ -6760,7 +8154,7 @@ export class VoxelEngine {
       const feet = this.world.getBlock(x, y + 1, z);
       const head = this.world.getBlock(x, y + 2, z);
       if (Math.abs(y - this.position.y) > 14 || !this.world.isWalkThrough(feet) || !this.world.isWalkThrough(head)) return;
-      if (hostileCount >= caps.hostile || this.hostileSpawnSuppressedByTorch(x, y + 1, z) || this.hostileSpawnVisibleToPlayer(x, y, z)) return;
+      if (hostileCount >= caps.hostile || this.hostileSpawnSuppressedByTorch(x, y + 1, z) || this.hostileSpawnSuppressedBySettlement(x, z) || this.hostileSpawnVisibleToPlayer(x, y, z)) return;
       const roll = Math.random();
       kind = roll < 0.38 ? "zombie" : roll < 0.72 ? "caveblob" : "shadecrawler";
     } else {
@@ -6770,7 +8164,7 @@ export class VoxelEngine {
         let waterY = SEA_LEVEL;
         while (waterY > y && this.world.getBlock(x, waterY, z) !== BlockId.Water) waterY -= 1;
         if (this.world.getBlock(x, waterY, z) === BlockId.Water) {
-          const habitat = biome === BiomeId.River ? "river" : "ocean";
+          const habitat = biome === BiomeId.River ? "river" : biome === BiomeId.DeepOcean ? "deep-ocean" : "ocean";
           const pool = fishKindsForHabitat(habitat);
           kind = pool[Math.floor(Math.random() * pool.length)];
           this.spawnNaturalGroup(kind, new THREE.Vector3(x, waterY - Math.random() * Math.min(2, Math.max(0, waterY - y - 1)), z), Math.min(passiveCap - passiveCount, caps.total - this.mobs.length), true);
@@ -6783,7 +8177,7 @@ export class VoxelEngine {
       const nocturnalGlowmoth = hostile && passiveCount < passiveCap && [BiomeId.MushroomFen, BiomeId.Bloomwood, BiomeId.Siltfen].includes(biome) && Math.random() < 0.3;
       if (nocturnalGlowmoth) kind = "glowmoth";
       else if (hostile) {
-        if (hostileCount >= caps.hostile || this.hostileSpawnSuppressedByTorch(x, y + 1, z) || this.hostileSpawnVisibleToPlayer(x, y, z)) return;
+        if (hostileCount >= caps.hostile || this.hostileSpawnSuppressedByTorch(x, y + 1, z) || this.hostileSpawnSuppressedBySettlement(x, z) || this.hostileSpawnVisibleToPlayer(x, y, z)) return;
         const roll = Math.random();
         kind = roll < 0.38 ? "zombie" : roll < 0.63 ? "shadecrawler" : roll < 0.82 ? "rattlekin" : "skeleton";
       }
@@ -6994,10 +8388,21 @@ export class VoxelEngine {
       mob.desiredAngle += (Math.random() - 0.5) * 2.2;
       mob.wanderTimer = 1.5 + Math.random() * 4;
     }
-    if (mob.fleeTimer > 0 || distance < 2.2) mob.desiredAngle = Math.atan2(-dz, -dx);
+    const playerInWater = this.world.getBlock(Math.floor(this.position.x + 0.5), Math.floor(this.position.y + 0.6), Math.floor(this.position.z + 0.5)) === BlockId.Water;
+    const sharkHunting = mob.kind === "deepwater-shark" && !this.mountedBoatId && playerInWater && distance < 13;
+    if (sharkHunting) {
+      mob.desiredAngle = Math.atan2(dz, dx);
+      mob.awarenessTimer = Math.max(mob.awarenessTimer, 2.5);
+      if (distance < mob.definition.attackRange && mob.attackCooldown <= 0) {
+        this.damagePlayer(mob.damage, mob.name);
+        mob.attackCooldown = 1.45;
+        this.engageCombat();
+        this.audio.play("mob");
+      }
+    } else if (mob.fleeTimer > 0 || distance < 2.2) mob.desiredAngle = Math.atan2(-dz, -dx);
     const social = this.socialMotions.get(mob.id);
     if (social && mob.fleeTimer <= 0 && distance >= 2.2) mob.desiredAngle = Math.atan2(social.z, social.x);
-    const speed = (mob.fleeTimer > 0 ? mob.definition.chaseSpeed : mob.definition.speed) * (social?.speedScale ?? 1);
+    const speed = (sharkHunting || mob.fleeTimer > 0 ? mob.definition.chaseSpeed : mob.definition.speed) * (social?.speedScale ?? 1);
     mob.steering = updateStableSteering(mob.steering, { dt, turnRate: mob.definition.turnRate, blocked: false, mobId: mob.id, desiredHeading: mob.desiredAngle });
     mob.angle = mob.steering.heading;
     const nx = mob.group.position.x + Math.cos(mob.angle) * speed * dt;
@@ -7085,15 +8490,140 @@ export class VoxelEngine {
     this.audio.play("attack");
   }
 
+  fireMobArrowAt(mob: MobEntity, targetMob: MobEntity) {
+    const origin = mob.group.position.clone().add(new THREE.Vector3(0, mob.definition.height * 0.76, 0));
+    const target = targetMob.group.position.clone().add(new THREE.Vector3(0, targetMob.definition.height * 0.55, 0));
+    const arrow = createArrowProjectile(this.nextProjectileId++, { kind: "mob", id: mob.id }, origin, target, mob.damage, 14.5);
+    this.projectileGroup.add(arrow.visual);
+    this.projectiles.push(arrow);
+    mob.attackCooldown = 1.7 + (mob.id % 4) * 0.12;
+    mob.state = "recover";
+    mob.stateTimer = 0.3;
+    this.audio.play("attack");
+  }
+
+  startRangedReload() {
+    const slot = this.selectedSlot();
+    const definition = slot ? ITEMS[slot.item] : null;
+    if (!slot || definition?.useKind !== "ranged-weapon" || !definition.ammoItem) return false;
+    const magazine = Math.max(1, definition.magazineSize ?? 1);
+    const loaded = this.rangedLoaded.get(slot.item) ?? 0;
+    if (loaded >= magazine || this.rangedReloadItem !== null) return false;
+    if (this.mode === "survival" && this.countItem(definition.ammoItem) <= 0) {
+      this.events.onToast(`No ${ITEMS[definition.ammoItem]?.name ?? "ammunition"} to reload.`);
+      return false;
+    }
+    this.rangedReloadItem = slot.item;
+    this.rangedReloadTimer = definition.id === Item.WayfarerCrossbow ? 0.82 : 1.12;
+    this.audio.play("ui");
+    this.events.onToast(`Reloading ${definition.name}...`);
+    this.emitHud(true);
+    return true;
+  }
+
+  private updateRangedWeapon(dt: number) {
+    if (this.rangedReloadItem === null) return;
+    const item = this.rangedReloadItem;
+    const definition = ITEMS[item];
+    if (!definition?.ammoItem || this.selectedSlot()?.item !== item) {
+      this.rangedReloadItem = null;
+      this.rangedReloadTimer = 0;
+      this.emitHud(true);
+      return;
+    }
+    this.rangedReloadTimer = Math.max(0, this.rangedReloadTimer - dt);
+    if (this.rangedReloadTimer > 0) return;
+    const magazine = Math.max(1, definition.magazineSize ?? 1);
+    const loaded = this.rangedLoaded.get(item) ?? 0;
+    const needed = Math.max(0, magazine - loaded);
+    const available = this.mode === "builder" ? needed : Math.min(needed, this.countItem(definition.ammoItem));
+    if (available > 0) {
+      if (this.mode === "survival") this.removeItem(definition.ammoItem, available);
+      this.rangedLoaded.set(item, loaded + available);
+      this.audio.play("place");
+    }
+    this.rangedReloadItem = null;
+    this.rangedReloadTimer = 0;
+    this.saveSoon();
+    this.emitHud(true);
+  }
+
+  private fireSelectedRangedWeapon() {
+    const slot = this.selectedSlot();
+    const definition = slot ? ITEMS[slot.item] : null;
+    if (!slot || definition?.useKind !== "ranged-weapon" || !definition.ammoItem || this.attackCooldown > 0) return false;
+    if (this.rangedReloadItem !== null) return false;
+    const loaded = this.rangedLoaded.get(slot.item) ?? 0;
+    if (loaded <= 0) {
+      this.audio.play("ui");
+      this.events.onToast(`Empty - press R to load ${ITEMS[definition.ammoItem]?.name ?? "ammunition"}.`);
+      this.emitHud(true);
+      return false;
+    }
+    const direction = this.camera.getWorldDirection(new THREE.Vector3()).normalize();
+    const origin = this.camera.position.clone().addScaledVector(direction, 0.48).add(new THREE.Vector3(0, -0.08, 0));
+    const target = origin.clone().addScaledVector(direction, 58);
+    const arrow = createArrowProjectile(this.nextProjectileId++, { kind: "player", id: this.localPlayerId() }, origin, target, definition.damage ?? 2, definition.id === Item.WayfarerCrossbow ? 23 : 19);
+    this.projectileGroup.add(arrow.visual);
+    this.projectiles.push(arrow);
+    this.rangedLoaded.set(slot.item, loaded - 1);
+    this.attackCooldown = definition.id === Item.WayfarerCrossbow ? 0.34 : 0.48;
+    this.audio.play("attack");
+    this.damageSelectedTool();
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
   updateProjectiles(dt: number) {
     for (let index = this.projectiles.length - 1; index >= 0; index -= 1) {
       const projectile = this.projectiles[index];
       const result = stepArrowProjectile(projectile, dt, (position) => {
         const type = this.world.getBlock(Math.floor(position.x + 0.5), Math.floor(position.y + 0.5), Math.floor(position.z + 0.5));
         return Boolean(BLOCKS[type ?? BlockId.Air]?.solid);
-      }, (position, radius) => position.distanceToSquared(this.position.clone().add(new THREE.Vector3(0, 0.9, 0))) <= (PLAYER_RADIUS + radius) ** 2 ? "local" : null);
+      }, (position, radius) => {
+        if (projectile.owner.kind === "mob") {
+          const owner = this.mobs.find((mob) => mob.id === projectile.owner.id);
+          if (!owner?.definition.sentient && !owner?.hiredByPlayerId) {
+            return position.distanceToSquared(this.position.clone().add(new THREE.Vector3(0, 0.9, 0))) <= (PLAYER_RADIUS + radius) ** 2 ? "local" : null;
+          }
+          for (const target of this.mobs) {
+            if (target.id === owner.id || target.health <= 0 || !target.hostile) continue;
+            const center = target.group.position.clone().add(new THREE.Vector3(0, target.definition.height * 0.5, 0));
+            const hitRadius = Math.max(0.28, target.definition.radius * 1.1) + radius;
+            if (position.distanceToSquared(center) <= hitRadius * hitRadius) return target.id;
+          }
+          return null;
+        }
+        let closest: MobEntity | null = null;
+        let closestDistance = Infinity;
+        for (const mob of this.mobs) {
+          if (mob.health <= 0 || !mob.group.visible) continue;
+          const center = mob.group.position.clone().add(new THREE.Vector3(0, mob.definition.height * 0.5, 0));
+          const hitRadius = Math.max(0.28, Math.min(1.2, mob.definition.radius * 1.1)) + radius;
+          const distance = position.distanceToSquared(center);
+          if (distance <= hitRadius * hitRadius && distance < closestDistance) { closest = mob; closestDistance = distance; }
+        }
+        return closest?.id ?? null;
+      });
       if (result.kind === "flying") continue;
-      if (result.kind === "target") this.damagePlayer(projectile.damage, "skeleton arrow");
+      if (result.kind === "target") {
+        if (projectile.owner.kind === "mob" && result.targetId === "local") this.damagePlayer(projectile.damage, "skeleton arrow");
+        else {
+          const mob = this.mobs.find((candidate) => candidate.id === result.targetId);
+          if (mob) {
+            mob.health -= projectile.damage;
+            if (mob.petState) mob.petState.health = Math.max(0, mob.health);
+            mob.hurtTimer = 0.34;
+            mob.fleeTimer = mob.hostile ? 0.45 : 3.2;
+            mob.state = mob.hostile ? "chase" : "flee";
+            if (mob.hostile) { mob.awarenessTimer = Math.max(mob.awarenessTimer, 5); this.engageCombat(); }
+            this.playCreatureEvent(mob, "hurt");
+            this.spawnParticles(mob.group.position.x, mob.group.position.y + mob.definition.height * 0.45, mob.group.position.z, mob.hostile ? BlockId.Obsidian : BlockId.Dirt, 8);
+            if (mob.health <= 0) this.killMob(mob);
+          }
+        }
+      }
       this.projectileGroup.remove(projectile.visual);
       disposeArrowVisual(projectile.visual);
       this.projectiles.splice(index, 1);
@@ -7144,16 +8674,29 @@ export class VoxelEngine {
         || mob.definition.movement === "flying" || mob.definition.movement === "aquatic") return false;
       return Boolean(
         (mob.petState?.tamed && mob.petState.ownerId === ownerId && mob.petState.command === "follow")
-        || (mob.shadeState?.tamed && mob.shadeState.ownerId === ownerId),
+        || (mob.shadeState?.tamed && mob.shadeState.ownerId === ownerId)
+        || (mob.reedstriderBond?.tamed && mob.reedstriderBond.ownerId === ownerId)
+        || (mob.courserBond?.tamed && mob.courserBond.ownerId === ownerId)
+        || (mob.hiredByPlayerId === ownerId && Boolean(mob.settlementId && mob.residentId
+          && this.settlements.get(mob.settlementId)?.residents.find((resident) => resident.id === mob.residentId)?.orders.follow)),
       );
     });
-    const followerSlots = new Map(planFollowerFormation(
+    const plannedFollowerSlots = planFollowerFormation(
       { x: this.position.x, z: this.position.z, heading: leaderHeading },
       followers.map((mob) => ({
         id: mob.id,
         radius: Math.max(0.22, this.mobCollisionProfile(mob).radius || mob.definition.radius * this.mobBaseScale(mob) * 0.72),
       })),
-    ).map((slot) => [slot.id, slot] as const));
+    ).map((slot) => {
+      const mob = followers.find((candidate) => candidate.id === slot.id);
+      if (!mob || mob.followDistance === "dynamic") return slot;
+      const dx = slot.x - this.position.x;
+      const dz = slot.z - this.position.z;
+      const currentDistance = Math.max(0.001, Math.hypot(dx, dz));
+      const desiredDistance = Math.max(1.5, Math.min(10, mob.followDistance));
+      return { ...slot, x: this.position.x + dx / currentDistance * desiredDistance, z: this.position.z + dz / currentDistance * desiredDistance, trailingDistance: desiredDistance };
+    });
+    const followerSlots = new Map(plannedFollowerSlots.map((slot) => [slot.id, slot] as const));
     const companionKills = new Set<MobEntity>();
     for (let index = this.mobs.length - 1; index >= 0; index -= 1) {
       const mob = this.mobs[index];
@@ -7270,6 +8813,8 @@ export class VoxelEngine {
       if (mob.definition.temperament === "Skittish" && (distance < 3.4 || (this.sprinting && distance < 8))) {
         mob.fleeTimer = Math.max(mob.fleeTimer, 2.4);
       }
+      if ((mob.factionId === "hobbits" || mob.factionId === "goblins")
+        && factionStanding(this.factionRelations.alignments[mob.factionId] ?? 0) === "hostile") mob.hostile = true;
       const aggressive = mob.hostile || (mob.definition.temperament === "Defensive" && mob.fleeTimer > 0);
       if (aggressive && distance < 24 && mob.sightCheckTimer <= 0) {
         mob.seesPlayer = this.mobCanSeePlayer(mob);
@@ -7281,6 +8826,66 @@ export class VoxelEngine {
         ? Math.hypot(followerSlot.x - mob.group.position.x, followerSlot.z - mob.group.position.z)
         : 0;
       const followerSettled = Boolean(followerSlot && followerDistance <= followerSlot.arrivalRadius);
+      let residentEnemy: MobEntity | null = null;
+      let residentTarget: { x: number; z: number } | null = null;
+      let residentHolding = false;
+      if (mob.definition.sentient && !mob.hostile && mob.settlementId && mob.residentId) {
+        const settlement = this.settlements.get(mob.settlementId);
+        const resident = settlement?.residents.find((entry) => entry.id === mob.residentId && entry.alive);
+        if (settlement && resident) {
+          if (resident.health !== mob.health || resident.name !== mob.name || resident.hiredByPlayerId !== mob.hiredByPlayerId) {
+            this.settlements.set(settlement.id, {
+              ...settlement,
+              residents: settlement.residents.map((entry) => entry.id === resident.id ? {
+                ...entry,
+                health: mob.health,
+                name: mob.name,
+                hiredByPlayerId: mob.hiredByPlayerId,
+              } : entry),
+            });
+          }
+          let nearestDistance = 18 * 18;
+          for (const candidate of this.mobs) {
+            if (candidate === mob || candidate.health <= 0 || !candidate.hostile || candidate.factionId === mob.factionId) continue;
+            const candidateDistance = candidate.group.position.distanceToSquared(mob.group.position);
+            if (candidateDistance >= nearestDistance) continue;
+            if (!this.hasClearLineOfSight(
+              mob.group.position.clone().add(new THREE.Vector3(0, mob.definition.height * 0.7, 0)),
+              candidate.group.position.clone().add(new THREE.Vector3(0, candidate.definition.height * 0.5, 0)),
+            )) continue;
+            nearestDistance = candidateDistance;
+            residentEnemy = candidate;
+          }
+          const plan = planResidentSchedule(resident, settlement, { worldDay: this.day, hour: this.worldTime * 24, monsterVisible: Boolean(residentEnemy) });
+          if (plan.action === "fight" && residentEnemy) {
+            const enemyDx = residentEnemy.group.position.x - mob.group.position.x;
+            const enemyDz = residentEnemy.group.position.z - mob.group.position.z;
+            const enemyDistance = Math.hypot(enemyDx, enemyDz);
+            mob.state = "chase";
+            mob.desiredAngle = Math.atan2(enemyDz, enemyDx);
+            if (mob.definition.ranged && enemyDistance >= 3 && enemyDistance < 16 && mob.attackCooldown <= 0) this.fireMobArrowAt(mob, residentEnemy);
+            else if (enemyDistance < mob.definition.attackRange + 0.35 && mob.attackCooldown <= 0) {
+              residentEnemy.health -= mob.damage;
+              residentEnemy.hurtTimer = 0.3;
+              residentEnemy.awarenessTimer = Math.max(residentEnemy.awarenessTimer, 4);
+              mob.attackCooldown = 0.9;
+              this.audio.play("attack");
+              if (residentEnemy.health <= 0) companionKills.add(residentEnemy);
+            }
+          } else if (plan.action !== "follow" && plan.target) {
+            residentTarget = plan.target;
+            const targetDistance = Math.hypot(plan.target.x - mob.group.position.x, plan.target.z - mob.group.position.z);
+            if (targetDistance > 0.75) {
+              mob.state = plan.action === "flee" ? "flee" : "chase";
+              mob.desiredAngle = Math.atan2(plan.target.z - mob.group.position.z, plan.target.x - mob.group.position.x);
+            } else {
+              residentHolding = true;
+              mob.state = "wander";
+              mob.desiredAngle = mob.angle;
+            }
+          }
+        }
+      }
       let peelopTarget: MobEntity | null = null;
       if (mob.kind === "peelop" && mob.petState?.tamed && !mob.petState.baby
         && mob.petState.ownerId === ownerId && !petHolding
@@ -7297,7 +8902,9 @@ export class VoxelEngine {
           peelopTarget = candidate;
         }
       }
-      if (peelopTarget) {
+      if (residentEnemy || residentTarget || residentHolding) {
+        // The schedule above owns this frame's direction and combat action.
+      } else if (peelopTarget) {
         const guardDx = peelopTarget.group.position.x - mob.group.position.x;
         const guardDz = peelopTarget.group.position.z - mob.group.position.z;
         const guardDistance = Math.hypot(guardDx, guardDz);
@@ -7375,7 +8982,7 @@ export class VoxelEngine {
         distanceToSlot: followerDistance,
         arrivalRadius: followerSlot.arrivalRadius,
       });
-      if (petHolding || (followerSettled && !peelopTarget)) speed = 0;
+      if (residentHolding || petHolding || (followerSettled && !peelopTarget)) speed = 0;
       const beforeX = mob.group.position.x;
       const beforeZ = mob.group.position.z;
       const movement = mob.definition.movement ?? (mob.definition.aquatic ? "aquatic" : mob.definition.flying ? "flying" : "ground");
@@ -7557,6 +9164,34 @@ export class VoxelEngine {
     this.addXp(mob.definition.xp);
     this.bestiary[mob.kind].seen = true;
     this.bestiary[mob.kind].kills += 1;
+    this.dispatchQuestEvent({ type: "mob-killed", mobKind: mob.kind, at: Date.now() });
+    if (mob.hostile) this.dispatchQuestEvent({ type: "mob-killed", mobKind: "overworld-monster", at: Date.now() });
+    if (mob.residentId) this.dispatchQuestEvent({ type: "entity-died", entityId: mob.residentId, role: mob.profession, at: Date.now() });
+    if (mob.settlementId && mob.residentId) {
+      const settlement = this.settlements.get(mob.settlementId);
+      if (settlement) this.settlements.set(mob.settlementId, {
+        ...settlement,
+        residents: settlement.residents.map((resident) => resident.id === mob.residentId ? { ...resident, alive: false, health: 0 } : resident),
+      });
+    }
+    if (mob.factionId === "hobbits" || mob.factionId === "goblins") {
+      const role = mob.definition.sentient
+        ? mob.profession === "mayor" ? "mayor" as const
+          : mob.profession === "banker" ? "banker" as const
+            : mob.profession === "warrior" ? "warrior" as const
+              : mob.profession === "farmer" ? "farmer" as const
+                : mob.profession === "miner" ? "miner" as const
+                  : mob.profession === "brewer" ? "brewer" as const
+                    : ["merchant", "blacksmith", "alchemist", "general"].includes(mob.profession ?? "") ? "merchant" as const
+                      : "civilian" as const
+        : "aligned-beast" as const;
+      const result = applyFactionMemberKill(this.factionRelations, mob.factionId, role, {
+        authorityId: this.factionRelations.authorityId,
+        expectedRevision: this.factionRelations.revision,
+        eventId: `faction-kill:${mob.id}:${Date.now()}`,
+      });
+      if (result.applied) this.factionRelations = result.state;
+    }
     this.events.onToast(`${mob.name} defeated · Bestiary kill ${this.bestiary[mob.kind].kills}`);
     this.spawnMobRemains(mob);
     const index = this.mobs.indexOf(mob);
@@ -7710,8 +9345,14 @@ export class VoxelEngine {
       drop.mesh.position.y += Math.sin(drop.age * 4) * 0.001;
       const distance = drop.mesh.position.distanceTo(this.position.clone().add(new THREE.Vector3(0, 0.8, 0)));
       if (drop.pickupDelay <= 0 && distance < 1.45) {
+        const beforeCount = drop.count;
         const leftover = this.addItem(drop.item, drop.count, drop.durability, undefined, drop.metadata);
-        if (leftover < drop.count) this.audio.play("pickup");
+        const acquired = beforeCount - leftover;
+        if (acquired > 0) {
+          this.audio.play("pickup");
+          const itemId = resourceIdForItem(drop.item) ?? commerceKeyForItem(drop.item);
+          if (itemId) this.dispatchQuestEvent({ type: "item-acquired", itemId, count: acquired, at: Date.now() });
+        }
         drop.count = leftover;
         if (drop.count <= 0) { this.removeDrop(index); this.saveSoon(); this.emitHud(true); continue; }
       }
@@ -8050,7 +9691,7 @@ export class VoxelEngine {
     this.stars.position.copy(this.camera.position);
     this.directional.target.position.copy(this.camera.position);
     this.directional.position.copy(this.camera.position).addScaledVector(celestialDirection, 55);
-    this.audio.setDepth(this.position.y, this.weather === "rain");
+    this.audio.setDepth(this.position.y, this.weather === "rain" && this.skyVisibility > 0.56);
     const biome = this.world.biomeAt(Math.round(this.position.x), Math.round(this.position.z));
     const atSea = underwater || biome === BiomeId.Ocean || biome === BiomeId.DeepOcean || biome === BiomeId.Beach;
     const forestBiome = [BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Bloomwood].includes(biome);
@@ -8059,8 +9700,14 @@ export class VoxelEngine {
     const explorationScore = this.day % 3 === 0
       ? "hoppin"
       : alternateScore ? "wildwoodA" : "wildwoodB";
+    const nearbySettlement = !underground ? [...(this.settlements?.values?.() ?? [])]
+      .map((settlement) => ({ settlement, distance: Math.hypot(settlement.layout.center.x - this.position.x, settlement.layout.center.z - this.position.z) }))
+      .filter(({ distance }) => distance <= 58)
+      .sort((left, right) => left.distance - right.distance)[0]?.settlement ?? null : null;
+    const settlementScore = nearbySettlement?.ownerFactionId === "hobbits" ? "hobbitSettlement" as const
+      : nearbySettlement?.ownerFactionId === "goblins" ? "goblinSettlement" as const : null;
     const musicScene = this.combatMusicTimer > 0 ? this.combatMusicScene
-      : skyChallenge ? "skyboss"
+      : settlementScore ?? (skyChallenge ? "skyboss"
       : atSea ? "sea"
         : underground ? (alternateScore ? "emberdeepA" : "emberdeepB")
           : daylight < 0.24 ? "night"
@@ -8068,13 +9715,17 @@ export class VoxelEngine {
               : forestBiome && this.day % 4 === 0 ? "fernlight"
                 : forestBiome ? explorationScore
                   : biome === BiomeId.Savanna && this.day % 3 === 0 ? "hoppin"
-                    : "day";
+                    : "day");
     this.audio.setMusicScene(musicScene, dt);
   }
 
   updateRain(dt: number) {
     const visuals = weatherVisuals(this.weatherState);
-    this.rain.visible = visuals.precipitation > 0.02 && this.position.y > 5;
+    // Precipitation follows the visible sky. This suppresses rain and snow in
+    // caves, under dense roofs, and inside settlements while leaving open
+    // porches and wide skylights naturally exposed.
+    const exposedToSky = Math.min(this.skyVisibility, this.skyVisibilityTarget);
+    this.rain.visible = visuals.precipitation > 0.02 && this.position.y > 5 && exposedToSky > 0.56;
     if (!this.rain.visible) return;
     const material = this.rain.material as THREE.LineBasicMaterial;
     material.opacity = clamp(0.18 + visuals.precipitation * 0.5, 0.15, 0.72);
@@ -8264,6 +9915,12 @@ export class VoxelEngine {
   }
 
   updateGameplayCamera(dt: number) {
+    const targetFov = this.aimingRanged ? Math.max(42, this.settings.fov * 0.68) : this.settings.fov;
+    const nextFov = this.camera.fov + (targetFov - this.camera.fov) * (1 - Math.exp(-dt * 14));
+    if (Math.abs(nextFov - this.camera.fov) > 0.01) {
+      this.camera.fov = nextFov;
+      this.camera.updateProjectionMatrix();
+    }
     const targetEye = playerEyeHeightForVariant(this.playerVariant, this.crouching);
     this.cameraEyeHeight += (targetEye - this.cameraEyeHeight) * (1 - Math.exp(-dt * 16));
     if (this.cameraMode === "first") {
@@ -8467,6 +10124,10 @@ export class VoxelEngine {
       this.updatePersistentMachines(dt);
     }
     if (this.running && !this.titleMode && !this.paused) {
+      this.updateRangedWeapon(dt);
+      this.updateFastTravelChannel();
+      this.updateMapDiscovery(dt);
+      if (!multiplayerGuest) this.updateHearthroadsSimulation(dt);
       if (multiplayerGuest) {
         for (const mob of this.mobs) this.animateMob(mob, dt * mob.definition.speed * 0.35);
       } else this.updateMobs(dt);
@@ -8591,6 +10252,10 @@ export class VoxelEngine {
       this.updateLiquids(dt);
       this.updateDynamicWeather(dt);
       this.updatePersistentMachines(dt);
+      this.updateRangedWeapon(dt);
+      this.updateFastTravelChannel();
+      this.updateMapDiscovery(dt);
+      this.updateHearthroadsSimulation(dt);
     }
     this.updateGameplayCamera(Math.min(duration, 0.1));
     this.updateTarget();
@@ -8607,6 +10272,16 @@ export class VoxelEngine {
     const suffix = hours >= 12 ? "PM" : "AM";
     const displayHour = hours % 12 || 12;
     const biome = this.world.biomeAt(Math.round(this.position.x), Math.round(this.position.z));
+    const selectedSlot = this.selectedSlot();
+    const selectedDefinition = selectedSlot ? ITEMS[selectedSlot.item] : null;
+    const rangedWeapon = selectedSlot && selectedDefinition?.useKind === "ranged-weapon" && selectedDefinition.ammoItem
+      ? {
+        loaded: this.rangedLoaded.get(selectedSlot.item) ?? 0,
+        magazine: Math.max(1, selectedDefinition.magazineSize ?? 1),
+        spare: this.mode === "builder" ? 999 : this.countItem(selectedDefinition.ammoItem),
+        reloading: this.rangedReloadItem === selectedSlot.item,
+      }
+      : null;
     this.events.onHud({
       health: clamp(this.health, 0, 10),
       hunger: clamp(this.hunger, 0, 10),
@@ -8663,6 +10338,33 @@ export class VoxelEngine {
       } : null,
       mountedBoat: Boolean(this.mountedBoatId),
       mountedCreature: this.mountedCreatureId !== null,
+      mountedCreatureName: this.mountedCreatureId === null ? null : this.mobs.find((mob) => mob.id === this.mountedCreatureId)?.name ?? "Creature",
+      mapKnowledge: this.mapKnowledge,
+      questBook: this.questBook,
+      questDefinitions: this.allQuestDefinitions(),
+      blueprints: this.blueprints,
+      plantBestiary: this.plantBestiary,
+      activeAlchemy: this.activeAlchemyKey ? this.alchemyStands.get(this.activeAlchemyKey) ?? null : null,
+      activeDistillery: this.activeDistilleryKey ? this.distilleries.get(this.activeDistilleryKey) ?? null : null,
+      goldWallet: this.goldWallet,
+      factionRelations: this.factionRelations,
+      settlements: [...this.settlements.values()],
+      activeSettlementId: this.activeSettlementId,
+      activeMerchant: this.activeMerchantId ? this.merchants.get(this.activeMerchantId) ?? null : null,
+      activeSentient: this.activeSentient ? {
+        id: this.activeSentient.id,
+        residentId: this.activeSentient.residentId,
+        name: this.activeSentient.name,
+        profession: this.activeSentient.profession,
+        factionId: this.activeSentient.factionId,
+        hired: Boolean(this.activeSentient.hiredByPlayerId),
+        followDistance: this.activeSentient.followDistance,
+      } : null,
+      bankAccount: this.bankAccount,
+      stockMarket: this.stockMarket,
+      potionBuffs: { ...this.potionBuffs },
+      fastTravelChannel: this.fastTravelChannel,
+      rangedWeapon,
     });
   }
 
@@ -8859,6 +10561,21 @@ export class VoxelEngine {
         ...value,
         slots: value.slots.map(cloneCaptureOrb),
       }])),
+      alchemyStands: Object.fromEntries(this.alchemyStands.entries()),
+      distilleries: Object.fromEntries(this.distilleries.entries()),
+      mapKnowledge: this.mapKnowledge,
+      questBook: this.questBook,
+      sideQuestDefinitions: this.sideQuestDefinitions,
+      blueprints: this.blueprints,
+      plantBestiary: this.plantBestiary,
+      goldWallet: this.goldWallet,
+      factionRelations: this.factionRelations,
+      settlements: [...this.settlements.values()],
+      merchants: Object.fromEntries(this.merchants.entries()),
+      bankAccount: this.bankAccount,
+      stockMarket: this.stockMarket,
+      potionBuffs: { ...this.potionBuffs },
+      rangedLoaded: Object.fromEntries(this.rangedLoaded.entries()),
       drops: this.drops.map((drop) => {
         const slot = normalizeCaptureOrbInventorySlot({
           item: drop.item,
@@ -8881,6 +10598,7 @@ export class VoxelEngine {
       creatures: this.mobs.filter((mob) => !mob.beeHiveKey).map((mob) => ({
         id: mob.id,
         kind: mob.kind,
+        ...(mob.name !== mob.definition.name ? { name: mob.name } : {}),
         x: mob.group.position.x,
         y: mob.group.position.y,
         z: mob.group.position.z,
@@ -8899,6 +10617,13 @@ export class VoxelEngine {
         ...(mob.socialGroupId ? { socialGroupId: mob.socialGroupId } : {}),
         ...(mob.peelopShedding ? { peelopShedding: { ...mob.peelopShedding } } : {}),
         ...(mob.kind === "meadow-cow" && mob.milkCooldown > 0 ? { milkCooldown: mob.milkCooldown } : {}),
+        ...(mob.factionId ? { factionId: mob.factionId } : {}),
+        ...(mob.profession ? { profession: mob.profession } : {}),
+        ...(mob.settlementId ? { settlementId: mob.settlementId } : {}),
+        ...(mob.residentId ? { residentId: mob.residentId } : {}),
+        ...(mob.aligned ? { aligned: true } : {}),
+        ...(mob.hiredByPlayerId ? { hiredByPlayerId: mob.hiredByPlayerId } : {}),
+        ...(mob.followDistance !== "dynamic" ? { followDistance: mob.followDistance } : {}),
       })),
       activatedStructureMarkers: [...this.activatedStructureMarkers],
       boats: [...this.boats.values()].map(({ save }) => ({

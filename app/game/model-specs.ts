@@ -103,6 +103,26 @@ export function createHeldToolSpec(kind: ToolKind, color: ModelColor, label?: st
       box("axe-blade-lower", "head", [0.24, 0.22, 0.12], [-0.31, 0.16, 0], color),
       box("axe-poll", "head", [0.2, 0.14, 0.14], [0.22, 0.28, 0], color),
     );
+  } else if (kind === "crossbow") {
+    boxes.push(
+      box("crossbow-stock", "handle", FACTION_WEAPON_CONTRACTS.crossbow.stockSize, [0, -0.02, 0.08], HANDLE_COLOR),
+      box("crossbow-butt", "handle", [0.28, 0.22, 0.34], [0, -0.03, 0.72], HANDLE_DARK),
+      box("crossbow-grip", "handle", [0.14, 0.34, 0.16], [0, -0.25, 0.23], HANDLE_DARK, [0.22, 0, 0]),
+      box("crossbow-lath", "head", FACTION_WEAPON_CONTRACTS.crossbow.lathSize, [0, 0.02, -0.45], color),
+      box("crossbow-left-string", "string", [0.035, 0.035, 0.56], [-0.27, 0.03, -0.44], "#e8dec6", [0, -0.78, 0]),
+      box("crossbow-right-string", "string", [0.035, 0.035, 0.56], [0.27, 0.03, -0.44], "#e8dec6", [0, 0.78, 0]),
+      box("loaded-bolt", "ammo", FACTION_WEAPON_CONTRACTS.crossbow.boltSize, [0, 0.1, -0.3], "#ad8751"),
+      box("loaded-bolt-head", "ammo", [0.18, 0.12, 0.22], [0, 0.1, FACTION_WEAPON_CONTRACTS.crossbow.boltTipForward], color),
+    );
+  } else if (kind === "spear") {
+    boxes.push(
+      box("spear-butt", "handle", [0.17, 0.17, 0.2], [0, 0, 0.78], HANDLE_DARK),
+      box("spear-shaft", "handle", FACTION_WEAPON_CONTRACTS.spear.shaftSize, [0, 0, -0.05], HANDLE_COLOR),
+      box("spear-collar", "head", [0.17, 0.17, 0.18], [0, 0, -1.02], color),
+      box("spear-head", "head", FACTION_WEAPON_CONTRACTS.spear.headSize, [0, 0, FACTION_WEAPON_CONTRACTS.spear.headForward], color),
+      box("spear-left-bevel", "head", [0.17, 0.13, 0.34], [-0.1, 0, -1.64], color, [0, -0.28, 0]),
+      box("spear-right-bevel", "head", [0.17, 0.13, 0.34], [0.1, 0, -1.64], color, [0, 0.28, 0]),
+    );
   } else {
     boxes.push(
       box("handle-cap", "handle", [0.16, 0.14, 0.15], [0, -0.64, 0], HANDLE_DARK),
@@ -232,6 +252,29 @@ export const RATTLEKIN_CLUB_CONTRACT = Object.freeze({
   headCenter: [0, -0.72, -1.02] as const,
 });
 
+/** Shared readability contract for settlement weapons in production portraits and runtime rigs. */
+export const FACTION_WEAPON_CONTRACTS = Object.freeze({
+  hammer: Object.freeze({
+    forwardAxis: "-z" as const,
+    handleSize: [0.1, 0.1, 1.18] as const,
+    headSize: [0.54, 0.3, 0.28] as const,
+    headForward: -1.17,
+  }),
+  crossbow: Object.freeze({
+    forwardAxis: "-z" as const,
+    stockSize: [0.12, 0.15, 1.12] as const,
+    lathSize: [0.9, 0.1, 0.12] as const,
+    boltSize: [0.035, 0.035, 1.25] as const,
+    boltTipForward: -1.4,
+  }),
+  spear: Object.freeze({
+    forwardAxis: "-z" as const,
+    shaftSize: [0.09, 0.09, 1.9] as const,
+    headSize: [0.24, 0.18, 0.42] as const,
+    headForward: -1.91,
+  }),
+});
+
 export function createApiarySpec(): ModelSpec {
   return assertModelSpec({
     id: "wildwood-apiary",
@@ -341,6 +384,8 @@ export const INSPECTOR_MODEL_SPECS: readonly ModelSpec[] = [
   createHeldToolSpec("axe", "#858b89", "Stone Axe"),
   createHeldToolSpec("shovel", "#858b89", "Stone Shovel"),
   createHeldToolSpec("sword", "#d4b9a7", "Sunmetal Sword"),
+  createHeldToolSpec("crossbow", "#9b6a3c", "Hearthguard Crossbow"),
+  createHeldToolSpec("spear", "#aa8843", "Goblinsmith Spear"),
   createRidgebackSpec(),
   createZombieSpec(),
   createChestSpec(),
