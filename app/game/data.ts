@@ -347,7 +347,7 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.BedWestFoot]: block(BlockId.BedWestFoot, "Wildwood Bed", 63, 63, 11, 0.45, "#a7463f", "axe", 0, { layer: "cutout", shape: "bed" }),
   [BlockId.BedWestHead]: block(BlockId.BedWestHead, "Wildwood Bed", 63, 63, 11, 0.45, "#a7463f", "axe", 0, { layer: "cutout", shape: "bed" }),
   [BlockId.ButterflyExhibit]: block(BlockId.ButterflyExhibit, "Butterfly Conservatory", 13, 70, 11, 0.55, "#b9e5df", "pickaxe", 0, { layer: "transparent", shape: "exhibit" }),
-  [BlockId.MeadowGrass]: block(BlockId.MeadowGrass, "Meadow Grass", 64, 65, 2, 0.62, "#79ba54", "shovel"),
+  [BlockId.MeadowGrass]: block(BlockId.MeadowGrass, "Meadow Grass", 64, 65, 2, 0.62, "#568e43", "shovel"),
   [BlockId.Sunpetal]: block(BlockId.Sunpetal, "Sunpetal", 66, 66, 66, 0.05, "#f5c952", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
   [BlockId.MoonOrchid]: block(BlockId.MoonOrchid, "Moon Orchid", 67, 67, 67, 0.05, "#b29dea", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
   [BlockId.DesertShrub]: block(BlockId.DesertShrub, "Dune Brush", 68, 68, 68, 0.08, "#a58c45", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),

@@ -87,8 +87,8 @@ test("player variants and equipment alter the production rig", () => {
 });
 
 test("human release identity stays separate from save schemas", () => {
-  assert.equal(GAME_VERSION, "0.3.0");
-  assert.equal(GAME_RELEASE_NAME, "Hearthwild");
+  assert.equal(GAME_VERSION, "0.4.0");
+  assert.equal(GAME_RELEASE_NAME, "Wayfinder");
   assert.equal(normalizeGameVersion("garbage"), "0.1.0");
 });
 

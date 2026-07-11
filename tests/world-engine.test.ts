@@ -54,6 +54,57 @@ test("chunk edits survive unload and deterministic regeneration", () => {
   world.dispose();
 });
 
+test("engine storm rendering hides the sun, moon, and stars behind a full overcast dome", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  const scene = new THREE.Scene();
+  scene.fog = new THREE.Fog(0x000000, 1, 100);
+  Object.assign(engine, {
+    running: false,
+    titleMode: false,
+    paused: true,
+    worldTime: 0.5,
+    day: 2,
+    worldOptions: { dayLengthMinutes: 20 },
+    weatherState: {
+      kind: "thunder",
+      cycle: 1,
+      elapsedSeconds: 30,
+      durationSeconds: 180,
+      intensity: 0.9,
+      windAngle: 0,
+      windSpeed: 5,
+    },
+    dawnSkyColor: new THREE.Color(),
+    skyColor: new THREE.Color(),
+    nightSkyColor: new THREE.Color("#11172a"),
+    daylightSkyColor: new THREE.Color("#78b9eb"),
+    weatherSkyColor: new THREE.Color(),
+    camera: new THREE.PerspectiveCamera(),
+    scene,
+    skyVisibility: 1,
+    settings: { renderDistance: 10 },
+    hemisphere: new THREE.HemisphereLight(),
+    directional: new THREE.DirectionalLight(),
+    sun: new THREE.Sprite(),
+    moon: new THREE.Sprite(),
+    stars: new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ transparent: true, opacity: 1 })),
+    celestialDirection: new THREE.Vector3(),
+    position: new THREE.Vector3(0, 40, 0),
+    weather: "rain",
+    combatMusicTimer: 0,
+    audio: { setDepth() {}, setMusicScene() {} },
+    world: {
+      getBlock: () => BlockId.Air,
+      biomeAt: () => 3,
+    },
+  });
+  engine.updateDayNight(0);
+  assert.equal(engine.sun.visible, false);
+  assert.equal(engine.moon.visible, false);
+  assert.equal((engine.stars.material as THREE.PointsMaterial).opacity, 0);
+  assert.ok((engine.scene.background as THREE.Color).getHex() !== engine.daylightSkyColor.getHex());
+});
+
 test("wall torch attachment direction is encoded in the block edit and survives regeneration", () => {
   const target = { x: 4, y: 20, z: 7, placeX: 5, placeY: 20, placeZ: 7 };
   assert.equal(torchBlockForPlacement(target), BlockId.TorchWallEast);
@@ -749,6 +800,18 @@ test("rejected solid placement records its rollback and player chests start empt
   const chest = engine.chests.get("2,4,6");
   assert.equal(chest?.length, 27);
   assert.ok(chest?.every((slot) => slot === null), "player-crafted chests must not inherit structure loot");
+});
+
+test("generator-v4 saves advance to v5 without moving existing voxel edits", () => {
+  const previous = {
+    version: 2,
+    generatorVersion: 4,
+    seed: "WAYFINDER-MIGRATION",
+    edits: { "-2,3": [[24_731, BlockId.MeadowGrass], [24_732, BlockId.Air]] },
+  } as unknown as WorldSave;
+  const migrated = migrateSavedWorld(previous);
+  assert.equal(migrated?.generatorVersion, GENERATOR_VERSION);
+  assert.deepEqual(migrated?.edits, previous.edits);
 });
 
 test("door meshes include textured top, bottom, and narrow side edges", () => {

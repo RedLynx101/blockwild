@@ -10,11 +10,14 @@ import {
   structureMarkersForChunk,
   structurePlacementsForChunk,
   structureCandidateForChunk,
+  structureClearanceBounds,
+  isInsideStructureClearance,
   structureLootTable,
   type StructureKind,
 } from "../app/game/structures.ts";
 import {
   createWeatherState,
+  isFullOvercastStorm,
   planCloudCluster,
   planCloudField,
   stepWeather,
@@ -49,6 +52,25 @@ test("weather visuals and cloud clusters are bounded and poofy", () => {
   assert.ok(visuals.cloudCoverage >= 0 && visuals.cloudCoverage <= 1);
 });
 
+test("thunder owns the entire sky and hides celestial sprites", () => {
+  const storm = {
+    kind: "thunder" as const,
+    cycle: 4,
+    elapsedSeconds: 30,
+    durationSeconds: 180,
+    intensity: 0.85,
+    windAngle: 0,
+    windSpeed: 6,
+  };
+  const visuals = weatherVisuals(storm);
+  assert.equal(isFullOvercastStorm(storm), true);
+  assert.equal(visuals.fullOvercast, true);
+  assert.equal(visuals.cloudCoverage, 1);
+  assert.equal(visuals.sunVisibility, 0);
+  assert.equal(visuals.celestialVisibility, 0);
+  assert.equal(planCloudField("storm", 0, 0, 3, storm).length, 49, "every bounded sky cell participates in storm cover");
+});
+
 test("every POI emits deterministic blocks, a chest, and semantic spawn markers", () => {
   const kinds: StructureKind[] = ["desert-temple", "forest-temple", "sunbun-grove", "meadow-butterfly-sanctuary"];
   for (const kind of kinds) {
@@ -78,6 +100,12 @@ test("cross-chunk structure helpers partition every placement and marker exactly
   assert.equal(blocks.length, plan.placements.length);
   assert.equal(new Set(blocks.map((block) => `${block.x},${block.y},${block.z}`)).size, plan.placements.length);
   assert.equal(markers.length, plan.markers.length);
+
+  const clearing = structureClearanceBounds(plan);
+  assert.equal(clearing.minX, plan.bounds.min.x - 4);
+  assert.equal(clearing.maxZ, plan.bounds.max.z + 4);
+  assert.equal(isInsideStructureClearance(plan, plan.bounds.max.x + 4, plan.origin.z), true);
+  assert.equal(isInsideStructureClearance(plan, plan.bounds.max.x + 5, plan.origin.z), false);
 });
 
 test("temple loot tables include a rare durable magical compass", () => {

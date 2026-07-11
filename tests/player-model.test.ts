@@ -27,6 +27,7 @@ test("the block player exposes articulated parts and rests on local Y=0", () => 
   assert.equal(player.parts.head.parent, player.parts.torso);
   assert.equal(player.parts.leftLeg.parent, player.rig);
   assert.equal(player.rightHandSocket.parent, player.parts.rightArm);
+  assert.ok(player.rightHandSocket.position.z <= -0.2, "held items sit in front of the arm in local and remote rigs");
   assert.equal(player.playerName, "Aria");
   assert.equal(player.nameAnchor.userData.playerName, "Aria");
   assert.equal(player.group.userData.playerMode, "remote");

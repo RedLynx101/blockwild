@@ -35,7 +35,7 @@ import {
 } from "./engine";
 import { BUTTERFLY_ORDER } from "./mobs";
 import type { MobDefinition } from "./mobs";
-import { createHeldToolSpec } from "./model-specs";
+import { createAvatarHeldItemModel } from "./held-items";
 import { BlockPlayerModel, type PlayerEquipmentAppearance } from "./player-model";
 import { GAME_RELEASE_NAME, GAME_VERSION, GAME_VERSION_LABEL } from "./version";
 import {
@@ -90,7 +90,7 @@ type MultiplayerEngineApi = {
   joinMultiplayer?: (inviteCode: string, playerName: string) => MultiplayerActionResult | Promise<MultiplayerActionResult>;
   acceptMultiplayerAnswer?: (answerCode: string) => void | Promise<void>;
   createMultiplayerRoom?: (roomCode: string, playerName: string) => Promise<{ roomCode: string }>;
-  joinMultiplayerRoom?: (roomCode: string, playerName: string) => Promise<{ hostName: string }>;
+  joinMultiplayerRoom?: (roomCode: string, playerName: string) => Promise<{ hostName: string; seed?: string; worldReady?: boolean }>;
   suggestMultiplayerRoomCode?: () => string;
   disconnectMultiplayer?: () => void | Promise<void>;
 };
@@ -342,39 +342,7 @@ function CreaturePortrait({ kind, seen, mini = false }: { kind: MobKind; seen: b
 }
 
 function createPreviewHeldItem(item: ItemCode | undefined) {
-  if (item === undefined) return null;
-  const definition = ITEMS[item];
-  if (!definition) return null;
-  const group = new THREE.Group();
-  const addBox = (
-    size: readonly [number, number, number],
-    position: readonly [number, number, number],
-    color: THREE.ColorRepresentation,
-    rotation: readonly [number, number, number] = [0, 0, 0],
-    emissive = false,
-  ) => {
-    const material = emissive ? new THREE.MeshBasicMaterial({ color }) : new THREE.MeshLambertMaterial({ color });
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
-    mesh.position.set(...position);
-    mesh.rotation.set(...rotation);
-    group.add(mesh);
-  };
-  if (definition.toolKind) {
-    const spec = createHeldToolSpec(definition.toolKind, definition.color, definition.name);
-    for (const box of spec.boxes) addBox(box.size, box.position, box.color, box.rotation, box.emissive);
-    group.scale.setScalar(0.5);
-    group.rotation.set(-0.1, 0, -0.34);
-    group.position.set(0, -0.16, -0.02);
-  } else if (item === BlockId.Torch) {
-    addBox([0.1, 0.62, 0.1], [0, 0.22, 0], 0x8d542b);
-    addBox([0.16, 0.14, 0.16], [0, 0.58, 0], 0xffb33e, [0, 0, 0], true);
-    group.rotation.z = -0.24;
-  } else if (definition.placeBlock !== undefined) {
-    addBox([0.42, 0.42, 0.42], [0, 0.1, 0], definition.color, [0.16, 0.2, 0]);
-  } else {
-    addBox([0.28, 0.38, 0.2], [0, 0.1, 0], definition.color, [0.12, 0.15, -0.06]);
-  }
-  return group;
+  return item === undefined ? null : createAvatarHeldItemModel(item);
 }
 
 function disposePreviewObject(object: THREE.Object3D | null) {
@@ -409,7 +377,7 @@ function PlayerAvatarPreview({
     const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, powerPreference: "low-power" });
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(compact ? 28 : 31, 1, 0.1, 20);
     camera.position.set(compact ? 1.9 : 2.65, compact ? 1.92 : 2.18, compact ? -3.25 : -4.3);
@@ -598,7 +566,9 @@ export default function VoxelGame() {
   const [multiplayerAnswer, setMultiplayerAnswer] = useState("");
   const [multiplayerState, setMultiplayerState] = useState<MultiplayerViewState>(EMPTY_MULTIPLAYER_STATE);
   const [multiplayerBusy, setMultiplayerBusy] = useState(false);
+  const [multiplayerReturn, setMultiplayerReturn] = useState<"title" | "pause">("title");
   const [iconAuditMode, setIconAuditMode] = useState(false);
+  const [heldAuditMode, setHeldAuditMode] = useState(false);
 
   useEffect(() => {
     try {
@@ -608,7 +578,9 @@ export default function VoxelGame() {
   }, []);
 
   useEffect(() => {
-    setIconAuditMode(new URLSearchParams(window.location.search).get("icon-audit") === "1");
+    const parameters = new URLSearchParams(window.location.search);
+    setIconAuditMode(parameters.get("icon-audit") === "1");
+    setHeldAuditMode(parameters.get("held-audit") === "1");
   }, []);
 
   useEffect(() => {
@@ -1004,6 +976,12 @@ export default function VoxelGame() {
     }
   };
 
+  const openMultiplayer = (returnTo: "title" | "pause") => {
+    setMultiplayerReturn(returnTo);
+    setMultiplayerState((current) => ({ ...current, error: null }));
+    setOverlay("multiplayer");
+  };
+
   const suggestMultiplayerCode = () => {
     const api = engineRef.current as unknown as MultiplayerEngineApi | null;
     const suggested = api?.suggestMultiplayerRoomCode?.() ?? `WILD-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
@@ -1048,9 +1026,18 @@ export default function VoxelGame() {
     }
     setMultiplayerBusy(true);
     try {
-      await api.joinMultiplayerRoom(roomCode, multiplayerName.trim() || "Trailkeeper");
+      const result = await api.joinMultiplayerRoom(roomCode, multiplayerName.trim() || "Trailkeeper");
       setMultiplayerState((current) => ({ ...current, roomCode, rendezvousStatus: "exchanging", error: null }));
       refreshMultiplayerState();
+      if (multiplayerReturn === "title" && result.worldReady) {
+        startedRef.current = true;
+        setStarted(true);
+        activeWorldIdRef.current = null;
+        if (result.seed) setCurrentWorldSeed(result.seed);
+        setOverlay(null);
+        engineRef.current?.activate();
+        showToast(`Joined ${result.hostName}'s world. The host owns this session save.`);
+      }
     } catch (error) {
       setMultiplayerState((current) => ({ ...current, rendezvousStatus: "error", error: error instanceof Error ? error.message : String(error) }));
     } finally {
@@ -1407,6 +1394,7 @@ export default function VoxelGame() {
               <div className="main-menu-buttons">
                 <PixelButton className="primary-menu-button" disabled={!hasSave || !selectedWorld} onClick={continueWorld}>{selectedWorld ? `Play ${selectedWorld.name}` : "No Local World Selected"}</PixelButton>
                 <PixelButton onClick={beginNewWorld}>Create New World</PixelButton>
+                <PixelButton className="title-join-button" onClick={() => openMultiplayer("title")}>Join with Invite Code</PixelButton>
                 <div className="menu-button-row">
                   <PixelButton onClick={() => setOverlay("help")}>How to Play</PixelButton>
                   <PixelButton onClick={() => openSettings("title")}>Settings</PixelButton>
@@ -1425,7 +1413,7 @@ export default function VoxelGame() {
                 <header>
                   <div><span className="panel-eyebrow">THIS BROWSER · {worlds.length} {worlds.length === 1 ? "WORLD" : "WORLDS"}</span><strong>World Catalog</strong></div>
                   <button type="button" onClick={() => importWorldInputRef.current?.click()}>IMPORT</button>
-                  <input ref={importWorldInputRef} type="file" hidden style={{ caretColor: "transparent" }} accept=".json,.blockwild.json,application/json" onChange={(event) => void importWorld(event)} />
+                  <input ref={importWorldInputRef} type="file" hidden accept=".json,.blockwild.json,application/json" onChange={(event) => void importWorld(event)} />
                 </header>
                 <div className="world-catalog-list">
                   {worlds.length ? worlds.map((world) => (
@@ -1526,7 +1514,7 @@ export default function VoxelGame() {
               <PixelButton className="gold-button" onClick={() => { setOverlay(null); engineRef.current?.activate(); }}>Back to Game</PixelButton>
               <PixelButton onClick={() => engineRef.current?.openOverlay("inventory")}>Inventory & Crafting</PixelButton>
               <PixelButton onClick={() => engineRef.current?.openOverlay("bestiary")}>Bestiary</PixelButton>
-              <PixelButton onClick={() => setOverlay("multiplayer")}>Multiplayer Session</PixelButton>
+              <PixelButton onClick={() => openMultiplayer("pause")}>Multiplayer Session</PixelButton>
               <PixelButton onClick={() => engineRef.current?.toggleFullscreen()}>{hud.fullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}</PixelButton>
               <PixelButton onClick={() => openSettings("pause")}>Settings</PixelButton>
               <PixelButton onClick={() => setOverlay("help")}>Field Manual</PixelButton>
@@ -1757,8 +1745,8 @@ export default function VoxelGame() {
       {overlay === "multiplayer" && (
         <section className="menu-overlay" aria-labelledby="multiplayer-title">
           <div className="pixel-panel multiplayer-panel">
-            <span className="panel-eyebrow">HOST-AUTHORITATIVE · ONE INVITE CODE</span>
-            <h2 id="multiplayer-title">Multiplayer Session</h2>
+            <span className="panel-eyebrow">{multiplayerReturn === "title" ? "JOIN A HOST WORLD · NO LOCAL SAVE REQUIRED" : "HOST-AUTHORITATIVE · ONE INVITE CODE"}</span>
+            <h2 id="multiplayer-title">{multiplayerReturn === "title" ? "Join Multiplayer" : "Multiplayer Session"}</h2>
             <div className="multiplayer-status-row">
               <span className={`multiplayer-status-light status-${multiplayerState.status}`} aria-hidden="true" />
               <div><strong>{multiplayerState.status.toUpperCase()}</strong><small>{multiplayerState.role ? `${multiplayerState.role.toUpperCase()} · ` : ""}{multiplayerState.peers.length} {multiplayerState.peers.length === 1 ? "peer" : "peers"}</small></div>
@@ -1772,17 +1760,17 @@ export default function VoxelGame() {
             <label className="multiplayer-name-field"><span>Your player name</span><input className="pixel-input world-name-input" maxLength={32} value={multiplayerName} onChange={(event) => setMultiplayerName(event.target.value)} /></label>
 
             <section className="multiplayer-room-flow">
-              <div className="multiplayer-room-copy"><span className="panel-eyebrow">INVITE CODE</span><h3>Share one short code</h3><p>The host starts the room, then every guest enters the same code. Blockwild handles the connection exchange in the background.</p></div>
+              <div className="multiplayer-room-copy"><span className="panel-eyebrow">INVITE CODE</span><h3>{multiplayerReturn === "title" ? "Enter the host's code" : "Share one short code"}</h3><p>{multiplayerReturn === "title" ? "You will enter the host's live world directly. No local world is created or overwritten on this browser." : "The host starts the room, then every guest enters the same code. Blockwild handles the connection exchange in the background."}</p></div>
               <label className="multiplayer-room-code" htmlFor="multiplayer-room-code"><span>Room code</span><div><input id="multiplayer-room-code" className="pixel-input" autoComplete="off" spellCheck={false} maxLength={24} value={multiplayerRoomCode} onChange={(event) => setMultiplayerRoomCode(normalizeMultiplayerRoomCode(event.target.value))} placeholder="WILD-TRAIL" /><button type="button" onClick={suggestMultiplayerCode}>GENERATE</button></div></label>
               <div className="multiplayer-room-actions">
-                <PixelButton className="gold-button" disabled={multiplayerBusy || !multiplayerState.supported || multiplayerState.role === "guest"} onClick={() => void createMultiplayerRoom()}>Host with this code</PixelButton>
-                <PixelButton disabled={multiplayerBusy || !multiplayerState.supported || !multiplayerRoomCode || multiplayerState.role === "host"} onClick={() => void joinMultiplayerRoom()}>Join with code</PixelButton>
+                {multiplayerReturn === "pause" && <PixelButton className="gold-button" disabled={multiplayerBusy || !multiplayerState.supported || multiplayerState.role === "guest"} onClick={() => void createMultiplayerRoom()}>Host with this code</PixelButton>}
+                <PixelButton className={multiplayerReturn === "title" ? "gold-button" : ""} disabled={multiplayerBusy || !multiplayerState.supported || !multiplayerRoomCode || multiplayerState.role === "host"} onClick={() => void joinMultiplayerRoom()}>{multiplayerBusy && multiplayerReturn === "title" ? "Joining host world…" : "Join with code"}</PixelButton>
                 {(multiplayerState.roomCode || multiplayerRoomCode) && <button type="button" className="multiplayer-copy-room" onClick={() => void copyMultiplayerCode(multiplayerState.roomCode || multiplayerRoomCode)}>COPY CODE</button>}
               </div>
-              <p className={`multiplayer-rendezvous status-${multiplayerState.rendezvousStatus}`} role="status"><b>{multiplayerState.rendezvousStatus.toUpperCase()}</b><span>{multiplayerState.rendezvousStatus === "waiting" ? "Room open · waiting for a guest" : multiplayerState.rendezvousStatus === "exchanging" ? "Guest found · securing the direct connection" : multiplayerState.rendezvousStatus === "connected" ? "Connected · the host world is live" : "Choose Host or Join to begin"}</span></p>
+              <p className={`multiplayer-rendezvous status-${multiplayerState.rendezvousStatus}`} role="status"><b>{multiplayerState.rendezvousStatus.toUpperCase()}</b><span>{multiplayerState.rendezvousStatus === "waiting" ? "Room open · waiting for a guest" : multiplayerState.rendezvousStatus === "exchanging" ? "Guest found · securing the direct connection" : multiplayerState.rendezvousStatus === "connected" ? "Connected · the host world is live" : multiplayerReturn === "title" ? "Enter the host code, then Join" : "Choose Host or Join to begin"}</span></p>
             </section>
 
-            <details className="multiplayer-advanced">
+            {multiplayerReturn === "pause" && <details className="multiplayer-advanced">
               <summary>Advanced direct connection fallback</summary>
               <p>Use this only if the one-code rendezvous service cannot be reached. It requires one offer and one return answer.</p>
               <div className="multiplayer-connection-grid">
@@ -1799,14 +1787,14 @@ export default function VoxelGame() {
                   {multiplayerState.answerCode && <div className="connection-code guest-answer-output"><label>Answer for the host</label><textarea readOnly value={multiplayerState.answerCode} aria-label="Guest answer code" /><button type="button" onClick={() => void copyMultiplayerCode(multiplayerState.answerCode)}>COPY ANSWER</button></div>}
                 </section>
               </div>
-            </details>
+            </details>}
 
             {multiplayerState.peers.length > 0 && <section className="multiplayer-peer-list"><span className="panel-eyebrow">SESSION PLAYERS</span>{multiplayerState.peers.map((peer, index) => <div key={peer.id ?? peer.token ?? index}><span className="peer-cube" aria-hidden="true" /><strong>{peer.identity?.name ?? peer.name ?? peer.id ?? `Player ${index + 1}`}</strong><small>{(peer.state ?? "connected").toUpperCase()}{typeof peer.latencyMs === "number" ? ` · ${Math.round(peer.latencyMs)}ms` : ""}</small></div>)}</section>}
 
-            <p className="multiplayer-ownership-note">Your world save stays owned by this browser on the host device. Guests receive session state; they do not become owners of the host&apos;s local catalog entry. Share connection codes only with people you trust.</p>
+            <p className="multiplayer-ownership-note">{multiplayerReturn === "title" ? "The host browser owns this world save. Joining creates no local world and never changes your existing catalog." : "Your world save stays owned by this browser on the host device. Guests receive session state; they do not become owners of the host's local catalog entry."} Share connection codes only with people you trust.</p>
             <div className="panel-actions multiplayer-actions">
-              <PixelButton className="secondary-button" onClick={() => setOverlay("pause")}>Back</PixelButton>
-              <PixelButton className="danger-button" disabled={multiplayerBusy || ["idle", "disconnected", "closed"].includes(multiplayerState.status)} onClick={() => void disconnectMultiplayer()}>Disconnect Session</PixelButton>
+              <PixelButton className="secondary-button" disabled={multiplayerBusy} onClick={() => setOverlay(multiplayerReturn)}>Back</PixelButton>
+              {multiplayerReturn === "pause" && <PixelButton className="danger-button" disabled={multiplayerBusy || ["idle", "disconnected", "closed"].includes(multiplayerState.status)} onClick={() => void disconnectMultiplayer()}>Disconnect Session</PixelButton>}
             </div>
           </div>
         </section>
@@ -1876,6 +1864,20 @@ export default function VoxelGame() {
           <p>Left: 28px inventory and hotbar artwork. Right: the same artwork at its 22px recipe-book size.</p>
           <div className="item-icon-audit-grid">
             {Object.values(ITEMS).map((definition) => <article key={definition.id}><span className="item-audit-large"><ItemIcon item={definition.id} /></span><span className="item-audit-small"><ItemIcon item={definition.id} small /></span><strong>{definition.name}</strong><small>{itemIconKind(definition.id)}</small></article>)}
+          </div>
+        </section>
+      )}
+      {heldAuditMode && (
+        <section className="held-model-audit" aria-label="Held item model audit">
+          <header><div><span className="panel-eyebrow">PRODUCTION MODEL QA · THIRD-PERSON SOCKET</span><h2>Held Item Framing</h2></div><button type="button" onClick={() => setHeldAuditMode(false)} aria-label="Close held model audit">×</button></header>
+          <p>Every preview uses the same model and forward hand socket used by local third-person and remote multiplayer players.</p>
+          <div className="held-model-audit-grid">
+            {([
+              [Item.ButterflyNet, "Textured Butterfly Net"],
+              [Item.MeadowwingJar, "Meadowwing model"],
+              [Item.BloomMonarchJar, "Bloom Monarch model"],
+              [BlockId.Torch, "Animated Torch profile"],
+            ] as const).map(([item, label], index) => <figure key={item}><PlayerAvatarPreview variant={index % 2 ? "female" : "male"} heldItem={item} /><figcaption><strong>{label}</strong><small>{ITEMS[item].name} · production scale</small></figcaption></figure>)}
           </div>
         </section>
       )}

@@ -2,7 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
 import { BlockId, Item, VoxelEngine, isDoubleForwardTap, restoreChestStorage, type InventorySlot } from "../app/game/engine";
+import { MOB_DEFS } from "../app/game/mobs";
 import { validatePayload, type WorldSnapshot } from "../app/game/multiplayer";
+import { captureCreature, encodeCapturedCreature, type CreatureMetadata } from "../app/game/creature-cage";
 
 test("special storage restores conservatory capacity and Wayfarer cargo size", () => {
   const restored = restoreChestStorage({
@@ -40,6 +42,89 @@ test("metadata-bearing creature cages never stack with a different captured crea
   const different: InventorySlot = { item: Item.CreatureCage, count: 1, metadata: { kind: "peelop", name: "Pip" } };
   assert.equal(engine.sameStack(left, same), true);
   assert.equal(engine.sameStack(left, different), false);
+});
+
+test("conservatories accept eligible caged residents and preserve their exact metadata", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  const metadata: CreatureMetadata = {
+    schema: 1, entityId: "emberjay-rare-4", kind: "emberjay", health: 2.25, maxHealth: 3, ageTicks: 55_321,
+    baby: false, temperament: "Skittish", hostile: false, tamed: true, ownerId: "keeper-7", name: "Cinder",
+    geneticSeed: 0xdeadbeef, command: "perch", custom: { plumage: ["gold", 3], nested: { bond: true } },
+  };
+  const captured = captureCreature("cage-exact-4", metadata, 123_456)!;
+  const slot: InventorySlot = { item: Item.CreatureCage, count: 1, metadata: { capturedCreature: encodeCapturedCreature(captured) } };
+  assert.equal(engine.isExhibitResidentSlot(slot), true);
+  const resident = engine.exhibitSpecimen(slot, "exhibit:0,8,0", 0);
+  assert.equal(resident?.source, "cage");
+  if (resident?.source !== "cage") assert.fail("expected a caged resident");
+  assert.deepEqual(resident.metadata, metadata);
+
+  const large = { ...metadata, entityId: "large", kind: "ridgeback" as const };
+  const largeSlot: InventorySlot = { item: Item.CreatureCage, count: 1, metadata: { capturedCreature: encodeCapturedCreature(captureCreature("large", large)!) } };
+  assert.equal(engine.isExhibitResidentSlot(largeSlot), false);
+});
+
+test("net and butterfly production models are distinct in third and first person", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  const net = engine.createAvatarHeldItem(Item.ButterflyNet)!;
+  assert.ok(net.getObjectByName("butterfly-net-thread-v-3"));
+  assert.equal(net.getObjectByName("held-butterfly-meadowwing"), undefined);
+  const butterfly = engine.createAvatarHeldItem(Item.MeadowwingJar)!;
+  assert.ok(butterfly.getObjectByName("held-butterfly-meadowwing"));
+
+  engine.inventory = Array.from({ length: 36 }, (_, index) => index === 0 ? { item: Item.ButterflyNet, count: 1 } : null);
+  engine.selected = 0;
+  engine.heldRoot = new THREE.Group();
+  engine.heldItemCode = -1;
+  engine.heldUse = 0;
+  engine.mineHeld = false;
+  engine.attackCooldown = 0;
+  engine.heldSwing = 0;
+  engine.grounded = true;
+  engine.footstepDistance = 0;
+  engine.position = new THREE.Vector3();
+  engine.updateHeldItem(0);
+  assert.ok(engine.heldRoot.getObjectByName("butterfly-net-thread-h-3"), "first person reuses the textured production net");
+
+  engine.inventory[0] = { item: Item.MeadowwingJar, count: 1 };
+  engine.updateHeldItem(0);
+  assert.ok(engine.heldRoot.getObjectByName("held-butterfly-meadowwing"), "first person shows the actual butterfly model");
+  engine.disposeObject(net);
+  engine.disposeObject(butterfly);
+  engine.disposeObject(engine.heldRoot);
+});
+
+test("engine collision gates medium ground creatures while babies and flying creatures remain non-solid", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  engine.position = new THREE.Vector3(0, 20.5, 0);
+  engine.crouching = false;
+  engine.mountedCreatureId = null;
+  const creature = (id: number, kind: "peelop" | "ridgeback" | "emberjay", x: number, baby = false) => {
+    const group = new THREE.Group();
+    group.position.set(x, 20 + MOB_DEFS[kind].footOffset, 0);
+    group.visible = true;
+    return {
+      id,
+      definition: MOB_DEFS[kind],
+      group,
+      shadeState: null,
+      careState: null,
+      petState: kind === "peelop" ? { baby } : null,
+    };
+  };
+
+  engine.mobs = [creature(1, "peelop", 0.55, false)] as never;
+  assert.equal(engine.playerIntersectsSolidMob(new THREE.Vector3(0, 20.5, 0)), true);
+  engine.mobs = [creature(2, "peelop", 0.2, true)] as never;
+  assert.equal(engine.playerIntersectsSolidMob(new THREE.Vector3(0, 20.5, 0)), false);
+  engine.mobs = [creature(3, "emberjay", 0.1)] as never;
+  assert.equal(engine.playerIntersectsSolidMob(new THREE.Vector3(0, 20.5, 0)), false);
+
+  const mover = creature(4, "ridgeback", 0);
+  const obstacle = creature(5, "ridgeback", 0.7);
+  engine.mobs = [mover, obstacle] as never;
+  assert.equal(engine.mobDynamicObstaclesAt(mover as never, 0.05, mover.group.position.y, 0).blocked, true);
+  assert.equal(engine.mobDynamicObstaclesAt(mover as never, -0.05, mover.group.position.y, 0, true).blocked, false, "an overlapped mob can move out instead of freezing");
 });
 
 test("multiplayer snapshots accept a two-seat Wayfarer and mounted player pose", () => {

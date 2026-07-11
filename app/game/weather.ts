@@ -197,9 +197,19 @@ export function weatherTransitionBlend(state: WeatherState, fadeSeconds = 12) {
   return Math.min(1, state.elapsedSeconds / fade, (state.durationSeconds - state.elapsedSeconds) / fade);
 }
 
+/**
+ * Thunder is the game's explicit full-storm state.  Keeping this decision in
+ * the pure weather module prevents the sky, clouds and celestial renderer from
+ * disagreeing about whether a storm is actually overcast.
+ */
+export function isFullOvercastStorm(state: Pick<WeatherState, "kind">) {
+  return state.kind === "thunder";
+}
+
 export function weatherVisuals(state: WeatherState) {
   const blend = weatherTransitionBlend(state);
   const effectiveIntensity = state.intensity * blend;
+  const fullOvercast = isFullOvercastStorm(state);
   const precipitation = ["drizzle", "rain", "thunder", "snow", "sandstorm", "ashfall"].includes(state.kind)
     ? effectiveIntensity
     : 0;
@@ -210,7 +220,14 @@ export function weatherVisuals(state: WeatherState) {
     skyDarkening: darkness * blend,
     fogDensity: (state.kind === "mist" ? 0.72 : state.kind === "sandstorm" ? 0.58 : state.kind === "ashfall" ? 0.34 : 0.08 * precipitation) * blend,
     lightningChancePerSecond: state.kind === "thunder" ? 0.018 * effectiveIntensity : 0,
-    cloudCoverage: Math.min(1, (state.kind === "clear" ? 0.22 : state.kind === "overcast" ? 0.74 : 0.58 + effectiveIntensity * 0.35) * blend + 0.08),
+    /** Storm cover is intentionally complete rather than a sparse cloud roll. */
+    cloudCoverage: fullOvercast
+      ? 1
+      : Math.min(1, (state.kind === "clear" ? 0.22 : state.kind === "overcast" ? 0.74 : 0.58 + effectiveIntensity * 0.35) * blend + 0.08),
+    fullOvercast,
+    /** Celestial sprites and stars use this directly; a thunder sky hides them. */
+    celestialVisibility: fullOvercast ? 0 : Math.max(0, 1 - darkness * blend * 1.65),
+    sunVisibility: fullOvercast ? 0 : Math.max(0, 1 - darkness * blend * 1.4),
   };
 }
 

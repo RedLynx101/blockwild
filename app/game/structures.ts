@@ -377,6 +377,33 @@ export function planStructure(kind: StructureKind, origin: WorldPosition, seed: 
 export const worldCoordinateToChunk = (coordinate: number, chunkSize = 16) =>
   Math.floor(coordinate / Math.max(1, Math.floor(chunkSize)));
 
+export const STRUCTURE_CLEARANCE_MARGIN = 4;
+
+/**
+ * Named POIs reserve a small natural clearing beyond their authored bounds.
+ * World generation removes only generated flora, logs and leaves in this
+ * footprint before applying the plan, so terrain and player edits are safe.
+ */
+export function structureClearanceBounds(plan: Pick<StructurePlan, "bounds">, margin = STRUCTURE_CLEARANCE_MARGIN) {
+  const padding = Math.max(0, Math.min(12, Math.floor(margin)));
+  return {
+    minX: plan.bounds.min.x - padding,
+    maxX: plan.bounds.max.x + padding,
+    minZ: plan.bounds.min.z - padding,
+    maxZ: plan.bounds.max.z + padding,
+  } as const;
+}
+
+export function isInsideStructureClearance(
+  plan: Pick<StructurePlan, "bounds">,
+  x: number,
+  z: number,
+  margin = STRUCTURE_CLEARANCE_MARGIN,
+) {
+  const bounds = structureClearanceBounds(plan, margin);
+  return x >= bounds.minX && x <= bounds.maxX && z >= bounds.minZ && z <= bounds.maxZ;
+}
+
 /** Filters an already-planned POI for safe cross-chunk application. */
 export function structurePlacementsForChunk(plan: StructurePlan, chunkX: number, chunkZ: number, chunkSize = 16) {
   return plan.placements.filter((placement) =>

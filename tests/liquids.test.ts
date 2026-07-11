@@ -104,3 +104,24 @@ test("swimming drains oxygen, applies drowning ticks, and boosts a same-level sh
   assert.equal(drowning.damage, 1);
   assert.ok(drowning.state.drowningAccumulator < 0.2);
 });
+
+test("an idle swimmer settles downward while an intentional swim stroke rises", () => {
+  let idle = { velocityY: 0, oxygenSeconds: 12, drowningAccumulator: 0 };
+  let rising = { ...idle };
+  for (let frame = 0; frame < 120; frame += 1) {
+    idle = stepSwimming(
+      idle,
+      { jumpHeld: false, movingForward: false },
+      { submersion: 1, headSubmerged: true, horizontalCollision: false },
+      1 / 60,
+    ).state;
+    rising = stepSwimming(
+      rising,
+      { jumpHeld: true, movingForward: false },
+      { submersion: 1, headSubmerged: true, horizontalCollision: false },
+      1 / 60,
+    ).state;
+  }
+  assert.ok(idle.velocityY < -0.75 && idle.velocityY >= -2.3, `idle sink velocity was ${idle.velocityY}`);
+  assert.ok(rising.velocityY > 1.5, `jump-held swim velocity was ${rising.velocityY}`);
+});

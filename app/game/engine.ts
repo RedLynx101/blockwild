@@ -35,7 +35,7 @@ import {
 import { BUTTERFLY_ORDER, MOB_DEFS, MOB_ORDER, type ButterflyKind, type CoreMobKind, type MobDefinition, type MobKind } from "./mobs";
 import { createHeldToolSpec } from "./model-specs";
 import { createMobVisual } from "./mob-models";
-import { ButterflySystem } from "./butterflies";
+import { ButterflySystem, createButterflyVisual } from "./butterflies";
 import {
   createBirdBehavior,
   createStableSteering,
@@ -56,6 +56,19 @@ import {
   tickCreatureHusbandry,
   type CreatureHusbandryState,
 } from "./creature-care";
+import {
+  chooseCreatureRoute,
+  createCreatureRouteState,
+  creatureCollisionProfile,
+  findFollowerTeleportTarget,
+  followerTravelSpeed,
+  planFollowerFormation,
+  separateCreatureCircles,
+  shouldTeleportFollower,
+  type CreatureRouteProbe,
+  type CreatureRouteState,
+  type FollowerFormationTarget,
+} from "./creature-pathing";
 import {
   canRideShadecrawler,
   createShadecrawlerState,
@@ -87,10 +100,16 @@ import {
 } from "./creature-cage";
 import {
   buildExhibitTopology,
-  sampleExhibitButterflyPose,
-  type ExhibitButterfly,
+  EXHIBIT_BREEDING_CYCLE_SECONDS,
+  exteriorExhibitFrameEdges,
+  isSmallExhibitCreature,
+  planExhibitBreeding,
+  sampleExhibitResidentPose,
+  type ExhibitCreature,
+  type ExhibitResident,
   type ExhibitTopology,
 } from "./butterfly-exhibit";
+import { createAvatarHeldItemModel } from "./held-items";
 import {
   boardSailboat,
   createSailboatVisual,
@@ -394,6 +413,7 @@ type MobEntity = {
   angle: number;
   desiredAngle: number;
   steering: StableSteeringState;
+  route: CreatureRouteState;
   wanderTimer: number;
   attackCooldown: number;
   hurtTimer: number;
@@ -427,6 +447,7 @@ type ExhibitVisual = {
   group: THREE.Group;
   topologySignature: string;
   specimenSignature: string;
+  lastBreedingCycle: number;
 };
 
 type SpawnMobOptions = {
@@ -681,7 +702,7 @@ export function migrateSavedWorld(value: unknown): WorldSave | null {
   const parsed = value as WorldSave;
   if (parsed.version !== 2 || typeof parsed.seed !== "string") return null;
   if (parsed.generatorVersion === GENERATOR_VERSION) return parsed;
-  if (parsed.generatorVersion === 3) return { ...parsed, generatorVersion: GENERATOR_VERSION };
+  if (parsed.generatorVersion === 3 || parsed.generatorVersion === 4) return { ...parsed, generatorVersion: GENERATOR_VERSION };
   if (parsed.generatorVersion !== 2) return null;
   const indexOffset = (LEGACY_GENERATOR_MIN_Y - MIN_Y) * 16 * 16;
   const edits: ChunkEditSave = {};
@@ -891,7 +912,7 @@ export class VoxelEngine {
   cloudMesh: THREE.InstancedMesh | null = null;
   cloudCellX = Number.NaN;
   cloudCellZ = Number.NaN;
-  cloudWeatherCycle = -1;
+  cloudWeatherSignature = "";
   cloudMatrixObject = new THREE.Object3D();
   health = 10;
   hunger = 10;
@@ -929,6 +950,7 @@ export class VoxelEngine {
   spawnProtection = 20;
   footstepDistance = 0;
   lastPosition = new THREE.Vector3();
+  followerHeading = -Math.PI / 2;
   fallVelocity = 0;
   wasInWater = false;
   lastHudTime = 0;
@@ -1625,7 +1647,7 @@ export class VoxelEngine {
   }
 
   async joinMultiplayerRoom(roomCode: string, playerName: string) {
-    if (!this.running || this.titleMode) throw new Error("Open a world before joining a multiplayer session.");
+    const joiningFromTitle = this.titleMode;
     try {
       if (this.hostRendezvous) await this.hostRendezvous.close();
       this.hostRendezvous = null;
@@ -1642,13 +1664,22 @@ export class VoxelEngine {
       this.multiplayerState.status = session.state;
       this.multiplayerState.role = "guest";
       this.multiplayerState.error = "";
+      // Rendezvous completes before the authoritative snapshot arrives. Keep a
+      // title guest on the safe preview scene until the host world is applied.
+      const deadline = performance.now() + 18_000;
+      while (!this.multiplayerReceivedSnapshot) {
+        if (this.disposed || this.multiplayer !== session || session.state === "closed" || session.state === "error") throw new Error("The host connection closed before its world arrived.");
+        if (performance.now() >= deadline) throw new Error("Connected to the host, but their world did not arrive in time. Try the invite code again.");
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 40));
+      }
       this.events.onToast(`Connected to ${joined.hostName}'s world through room ${joined.code}.`);
       this.emitHud(true);
-      return { hostName: joined.hostName };
+      return { hostName: joined.hostName, seed: this.world.seedText, worldReady: true as const };
     } catch (error) {
       this.multiplayerState.error = error instanceof Error ? error.message : String(error);
       this.multiplayerState.rendezvousStatus = "error";
       this.multiplayerState.status = "error";
+      if (joiningFromTitle) this.disconnectMultiplayer();
       throw error;
     }
   }
@@ -2233,7 +2264,7 @@ export class VoxelEngine {
     const specimens: InventorySlot[] = [];
     for (const key of related) {
       for (const slot of this.chests.get(key) ?? []) {
-        if (!slot || !this.isButterflyJar(slot.item)) continue;
+        if (!slot || !this.isExhibitResidentSlot(slot)) continue;
         for (let count = 0; count < slot.count; count += 1) specimens.push(cloneSlot({ ...slot, count: 1 })!);
       }
       this.chests.delete(key);
@@ -2461,7 +2492,7 @@ export class VoxelEngine {
       const special = key.startsWith("boat:") || key.startsWith("exhibit:");
       this.activeChestKey = special ? key : this.resolveChest(key);
       this.activeChestTitle = key.startsWith("boat:") ? "Wayfarer Cargo Hold"
-        : key.startsWith("exhibit:") ? "Living Butterfly Conservatory"
+        : key.startsWith("exhibit:") ? "Living Creature Conservatory"
           : this.activeChestKey.includes("|") ? "Large Wildwood Chest" : "Wildwood Chest";
       this.activeFurnaceKey = null;
       if (!special) this.showChestModel(key, this.activeChestKey.includes("|"));
@@ -2688,8 +2719,8 @@ export class VoxelEngine {
     if (!slot) return;
     if (this.activeChestKey) {
       const chest = this.chests.get(this.activeChestKey);
-      if (this.activeChestKey.startsWith("exhibit:") && !this.isButterflyJar(slot.item)) {
-        this.events.onToast("The conservatory accepts only jarred butterflies.");
+      if (this.activeChestKey.startsWith("exhibit:") && !this.isExhibitResidentSlot(slot)) {
+        this.events.onToast("The conservatory accepts butterfly specimens and eligible small creatures in Waykeeper Cages.");
         return;
       }
       if (chest && this.activeChestKey.startsWith("exhibit:")) {
@@ -2980,6 +3011,17 @@ export class VoxelEngine {
     return Boolean(kind && BUTTERFLY_ORDER.includes(kind as ButterflyKind));
   }
 
+  exhibitCagedCreature(slot: InventorySlot) {
+    if (slot.item !== Item.CreatureCage) return null;
+    const encoded = typeof slot.metadata?.capturedCreature === "string" ? slot.metadata.capturedCreature : null;
+    const captured = encoded ? decodeCapturedCreature(encoded) : null;
+    return captured && isSmallExhibitCreature(captured.creature.kind) ? captured : null;
+  }
+
+  isExhibitResidentSlot(slot: InventorySlot) {
+    return this.isButterflyJar(slot.item) || Boolean(this.exhibitCagedCreature(slot));
+  }
+
   machineClick(machine: "furnace" | "chest", index: number, button: "left" | "right", shift = false) {
     let slots: Array<InventorySlot | null>;
     if (machine === "furnace") {
@@ -2991,8 +3033,8 @@ export class VoxelEngine {
       if (!chest || index < 0 || index >= chest.length) return;
       slots = chest;
     }
-    if (machine === "chest" && this.activeChestKey?.startsWith("exhibit:") && this.cursor && !this.isButterflyJar(this.cursor.item)) {
-      this.events.onToast("The conservatory accepts only jarred butterflies.");
+    if (machine === "chest" && this.activeChestKey?.startsWith("exhibit:") && this.cursor && !this.isExhibitResidentSlot(this.cursor)) {
+      this.events.onToast("The conservatory accepts butterfly specimens and eligible small creatures in Waykeeper Cages.");
       return;
     }
     const slot = slots[index];
@@ -3010,7 +3052,7 @@ export class VoxelEngine {
         if (this.cursor.count <= 0) this.cursor = null;
       } else if (this.cursor && slot) {
         if (this.cursor.count > 1) {
-          this.events.onToast("Each habitat block shelters one butterfly; split the stack first.");
+          this.events.onToast("Each habitat block shelters one resident; split the stack first.");
           return;
         }
         const previous = cloneSlot(slot);
@@ -4560,7 +4602,8 @@ export class VoxelEngine {
       const candidate = this.collisionCandidate.set(this.position.x + sx, this.position.y + sy, this.position.z + sz);
       const edgeBlocked = this.crouching && this.grounded && !dy
         && !this.collidesAt(this.collisionSupport.set(candidate.x, candidate.y - 0.12, candidate.z), this.currentPlayerHeight());
-      if (!this.collidesAt(candidate) && !edgeBlocked) this.position.copy(candidate);
+      const creatureBlocked = !dy && this.playerIntersectsSolidMob(candidate, this.currentPlayerHeight(), true);
+      if (!this.collidesAt(candidate) && !edgeBlocked && !creatureBlocked) this.position.copy(candidate);
       else {
         if (dx) this.velocity.x = 0;
         if (dy) this.velocity.y = 0;
@@ -4572,6 +4615,32 @@ export class VoxelEngine {
 
   currentPlayerHeight() {
     return this.crouching ? CROUCH_HEIGHT : PLAYER_HEIGHT;
+  }
+
+  /** Medium and large ground creatures have horizontal presence without becoming unstable moving platforms. */
+  playerIntersectsSolidMob(position: THREE.Vector3, height = this.currentPlayerHeight(), allowEscape = false) {
+    const playerTop = position.y + height;
+    for (const mob of this.mobs) {
+      if (!mob.group.visible || mob.id === this.mountedCreatureId) continue;
+      const profile = this.mobCollisionProfile(mob);
+      if (!profile.solid) continue;
+      const mobBottom = this.mobFootY(mob);
+      if (playerTop <= mobBottom || position.y >= mobBottom + profile.height) continue;
+      const overlap = separateCreatureCircles(
+        { x: position.x, z: position.z, radius: PLAYER_RADIUS },
+        { x: mob.group.position.x, z: mob.group.position.z, radius: profile.radius },
+        0.04,
+        mob.id,
+      );
+      if (!overlap) continue;
+      if (allowEscape) {
+        const currentDistance = Math.hypot(this.position.x - mob.group.position.x, this.position.z - mob.group.position.z);
+        const candidateDistance = Math.hypot(position.x - mob.group.position.x, position.z - mob.group.position.z);
+        if (candidateDistance > currentDistance + 0.0001) continue;
+      }
+      return true;
+    }
+    return false;
   }
 
   collidesAt(position: THREE.Vector3, height = this.currentPlayerHeight()) {
@@ -4913,29 +4982,57 @@ export class VoxelEngine {
     }
   }
 
-  exhibitSpecimen(slot: InventorySlot, key: string, index: number): ExhibitButterfly | null {
+  exhibitSpecimen(slot: InventorySlot, key: string, index: number): ExhibitResident | null {
     const kind = ITEMS[slot.item]?.creatureKind as ButterflyKind | undefined;
-    if (!kind || !BUTTERFLY_ORDER.includes(kind)) return null;
     let seed = 2166136261;
-    const text = `${key}:${index}:${kind}`;
+    const caged = this.exhibitCagedCreature(slot);
+    const residentKind = caged?.creature.kind ?? kind;
+    if (!residentKind || (!caged && !BUTTERFLY_ORDER.includes(residentKind as ButterflyKind))) return null;
+    const text = `${key}:${index}:${residentKind}`;
     for (const character of text) seed = Math.imul(seed ^ character.charCodeAt(0), 16777619);
+    if (caged) {
+      if (!isSmallExhibitCreature(caged.creature.kind)) return null;
+      return {
+      schema: 1,
+      id: caged.creature.entityId,
+      kind: caged.creature.kind,
+      capturedAt: caged.capturedAt,
+      ageTicks: caged.creature.ageTicks,
+      name: caged.creature.name,
+      geneticSeed: caged.creature.geneticSeed >>> 0,
+      custom: JSON.parse(JSON.stringify(caged.creature.custom)) as ExhibitCreature["custom"],
+      source: "cage",
+      metadata: releaseCreature(caged),
+      };
+    }
     return {
       schema: 1,
       id: `${key}:${index}`,
-      kind,
+      kind: residentKind as ButterflyKind,
       capturedAt: Number(slot.metadata?.capturedAt) || 0,
       ageTicks: Number(slot.metadata?.ageTicks) || 0,
       name: typeof slot.metadata?.name === "string" ? slot.metadata.name : null,
       geneticSeed: seed >>> 0,
       custom: {},
+      source: "butterfly",
     };
   }
 
-  createExhibitVisual(key: string, topology: ExhibitTopology, specimens: ExhibitButterfly[]) {
+  createExhibitVisual(key: string, topology: ExhibitTopology, specimens: ExhibitResident[]) {
     const group = new THREE.Group();
     group.name = key;
     group.userData.topology = topology;
     group.userData.specimens = specimens;
+    const railColor = 0x6f5432;
+    for (const [index, edge] of exteriorExhibitFrameEdges(topology).entries()) {
+      const size: [number, number, number] = edge.axis === "x" ? [edge.length + 0.035, 0.055, 0.055]
+        : edge.axis === "y" ? [0.055, edge.length + 0.035, 0.055]
+          : [0.055, 0.055, edge.length + 0.035];
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(...size), new THREE.MeshLambertMaterial({ color: railColor }));
+      rail.name = `conservatory-perimeter-${index}`;
+      rail.position.set(...edge.center);
+      group.add(rail);
+    }
     const stemMaterial = new THREE.MeshLambertMaterial({ color: 0x3f7b42 });
     const petalColors = [0xf2c84f, 0x8ab9ec, 0xea7da5];
     topology.landingSites.forEach((site, index) => {
@@ -4955,16 +5052,25 @@ export class VoxelEngine {
     specimens.forEach((specimen, index) => {
       const visual = new THREE.Group();
       visual.userData.specimenIndex = index;
-      const colors = MOB_DEFS[specimen.kind].colors;
-      const body = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.2), new THREE.MeshLambertMaterial({ color: colors[2] }));
-      const wingMaterial = new THREE.MeshLambertMaterial({ color: colors[0], transparent: true, opacity: 0.9, side: THREE.DoubleSide });
-      for (const side of [-1, 1]) {
-        const wing = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.025, 0.16), wingMaterial.clone());
-        wing.position.x = side * 0.12;
-        wing.userData.wingSide = side;
-        visual.add(wing);
+      visual.userData.residentSource = specimen.source ?? "butterfly";
+      if ((specimen.source ?? "butterfly") === "butterfly") {
+        const butterfly = createButterflyVisual(specimen.kind as ButterflyKind, specimen.id);
+        visual.userData.wings = [butterfly.leftWing, butterfly.rightWing];
+        visual.add(butterfly.group);
+      } else {
+        const mob = createMobVisual(specimen.kind, -(index + 1));
+        mob.group.traverse((object) => { delete object.userData.mobId; });
+        mob.group.updateMatrixWorld(true);
+        const bounds = new THREE.Box3().setFromObject(mob.group);
+        const size = bounds.getSize(new THREE.Vector3());
+        const scale = Math.min(1, 0.62 / Math.max(0.001, size.x), 0.62 / Math.max(0.001, size.y), 0.62 / Math.max(0.001, size.z));
+        const center = bounds.getCenter(new THREE.Vector3());
+        mob.group.scale.setScalar(scale);
+        mob.group.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
+        visual.userData.poseYOffset = MOB_DEFS[specimen.kind].flying ? 0 : size.y * scale / 2;
+        visual.userData.wings = mob.parts.wings;
+        visual.add(mob.group);
       }
-      visual.add(body);
       group.add(visual);
     });
     return group;
@@ -4972,44 +5078,81 @@ export class VoxelEngine {
 
   syncExhibitVisuals(force = false, dt = 0) {
     this.exhibitVisualTimer -= dt;
-    if (!force && this.exhibitVisualTimer > 0) return;
-    this.exhibitVisualTimer = 0.12;
-    const live = new Set<string>();
-    for (const [key, slots] of this.chests) {
-      if (!key.startsWith("exhibit:")) continue;
-      const [x, y, z] = key.slice("exhibit:".length).split(",").map(Number);
-      const topology = this.exhibitTopologyAt(x, y, z);
-      if (!topology) continue;
-      live.add(key);
-      const specimens = slots.flatMap((slot, index) => slot ? [this.exhibitSpecimen(slot, key, index)].filter((value): value is ExhibitButterfly => Boolean(value)) : []);
-      const topologySignature = topology.blocks.map((block) => block.key).sort().join("|");
-      const specimenSignature = specimens.map((specimen) => `${specimen.kind}:${specimen.id}`).join("|");
-      let visual = this.exhibitVisuals.get(key);
-      if (!visual || visual.topologySignature !== topologySignature || visual.specimenSignature !== specimenSignature) {
-        if (visual) { this.exhibitGroup.remove(visual.group); this.disposeObject(visual.group); }
-        const group = this.createExhibitVisual(key, topology, specimens);
-        this.exhibitGroup.add(group);
-        visual = { group, topologySignature, specimenSignature };
-        this.exhibitVisuals.set(key, visual);
+    const rescan = force || this.exhibitVisualTimer <= 0;
+    if (rescan) {
+      this.exhibitVisualTimer = 0.65;
+      const live = new Set<string>();
+      const breedingCycle = Math.floor(performance.now() / 1000 / EXHIBIT_BREEDING_CYCLE_SECONDS);
+      for (const [key, slots] of this.chests) {
+        if (!key.startsWith("exhibit:")) continue;
+        const [x, y, z] = key.slice("exhibit:".length).split(",").map(Number);
+        const topology = this.exhibitTopologyAt(x, y, z);
+        if (!topology) continue;
+        live.add(key);
+        let specimens = slots.flatMap((slot, index) => slot ? [this.exhibitSpecimen(slot, key, index)].filter((value): value is ExhibitResident => Boolean(value)) : []);
+        let visual = this.exhibitVisuals.get(key);
+        if (visual && breedingCycle > visual.lastBreedingCycle) {
+          visual.lastBreedingCycle = breedingCycle;
+          const breeding = planExhibitBreeding(specimens, topology.capacity, breedingCycle);
+          const emptySlot = slots.findIndex((slot) => !slot);
+          if (breeding && emptySlot >= 0) {
+            const captured = captureCreature(`conservatory-${breeding.child.entityId}`, breeding.child);
+            if (captured) {
+              slots[emptySlot] = {
+                item: Item.CreatureCage,
+                count: 1,
+                metadata: {
+                  capturedCreature: encodeCapturedCreature(captured),
+                  kind: breeding.kind,
+                  baby: true,
+                  bornInConservatory: true,
+                },
+              };
+              this.bestiary[breeding.kind].breeds = (this.bestiary[breeding.kind].breeds ?? 0) + 1;
+              specimens = slots.flatMap((slot, index) => slot ? [this.exhibitSpecimen(slot, key, index)].filter((value): value is ExhibitResident => Boolean(value)) : []);
+              this.events.onToast(`A young ${MOB_DEFS[breeding.kind].name} was born in the conservatory.`);
+              this.saveSoon();
+            }
+          }
+        }
+        const topologySignature = topology.blocks.map((block) => block.key).sort().join("|");
+        const specimenSignature = specimens.map((specimen) => `${specimen.source ?? "butterfly"}:${specimen.kind}:${specimen.id}:${specimen.ageTicks}`).join("|");
+        if (!visual || visual.topologySignature !== topologySignature || visual.specimenSignature !== specimenSignature) {
+          const lastBreedingCycle = visual?.lastBreedingCycle ?? breedingCycle;
+          if (visual) { this.exhibitGroup.remove(visual.group); this.disposeObject(visual.group); }
+          const group = this.createExhibitVisual(key, topology, specimens);
+          this.exhibitGroup.add(group);
+          visual = { group, topologySignature, specimenSignature, lastBreedingCycle };
+          this.exhibitVisuals.set(key, visual);
+        } else {
+          visual.group.userData.topology = topology;
+          visual.group.userData.specimens = specimens;
+        }
       }
-      const elapsed = performance.now() / 1000;
+      for (const [key, visual] of this.exhibitVisuals) {
+        if (live.has(key)) continue;
+        this.exhibitGroup.remove(visual.group);
+        this.disposeObject(visual.group);
+        this.exhibitVisuals.delete(key);
+      }
+    }
+
+    // Motion is the only per-frame work: O(residents), with no block scans.
+    const elapsed = performance.now() / 1000;
+    for (const visual of this.exhibitVisuals.values()) {
+      const topology = visual.group.userData.topology as ExhibitTopology;
+      const specimens = visual.group.userData.specimens as ExhibitResident[];
       for (const child of visual.group.children) {
         const index = child.userData.specimenIndex as number | undefined;
         if (index === undefined) continue;
         const specimen = specimens[index];
         if (!specimen) continue;
-        const pose = sampleExhibitButterflyPose(specimen, topology, elapsed);
-        child.position.set(pose.x - (pose.landed ? 0 : 0.5), pose.y, pose.z - (pose.landed ? 0 : 0.5));
+        const pose = sampleExhibitResidentPose(specimen, topology, elapsed);
+        child.position.set(pose.x, pose.y + Number(child.userData.poseYOffset ?? 0), pose.z);
         child.rotation.y = pose.yaw;
         const flap = pose.landed ? 0.12 : 0.55 + Math.sin(elapsed * 14 + index) * 0.42;
-        for (const wing of child.children) if (wing.userData.wingSide) wing.rotation.z = Number(wing.userData.wingSide) * flap;
+        for (const wing of child.userData.wings ?? []) wing.rotation.z = Number(wing.userData.wingSide ?? 1) * flap;
       }
-    }
-    for (const [key, visual] of this.exhibitVisuals) {
-      if (live.has(key)) continue;
-      this.exhibitGroup.remove(visual.group);
-      this.disposeObject(visual.group);
-      this.exhibitVisuals.delete(key);
     }
   }
 
@@ -5021,6 +5164,142 @@ export class VoxelEngine {
     if (mob.shadeState) return shadecrawlerScale(mob.shadeState);
     if (mob.petState?.baby || mob.careState?.baby) return 0.62;
     return 1;
+  }
+
+  mobCollisionProfile(mob: MobEntity) {
+    return creatureCollisionProfile(
+      mob.definition,
+      this.mobBaseScale(mob),
+      Boolean(mob.petState?.baby || mob.careState?.baby),
+    );
+  }
+
+  /** Mob group origins vary by model; this converts one back to its common foot plane. */
+  mobFootY(mob: MobEntity, groupY = mob.group.position.y) {
+    return groupY - mob.definition.footOffset + 0.5;
+  }
+
+  mobDynamicObstaclesAt(mob: MobEntity, x: number, groupY: number, z: number, allowEscape = false) {
+    const profile = this.mobCollisionProfile(mob);
+    const navigationRadius = profile.solid
+      ? profile.radius
+      : Math.max(0.14, mob.definition.radius * this.mobBaseScale(mob) * 0.72);
+    const bottom = this.mobFootY(mob, groupY);
+    const top = bottom + Math.max(0.16, mob.definition.height * this.mobBaseScale(mob));
+    let blocked = false;
+    let crowding = 0;
+
+    const consider = (
+      obstacleX: number,
+      obstacleZ: number,
+      obstacleRadius: number,
+      obstacleBottom: number,
+      obstacleTop: number,
+      seed: number,
+      canBlock: boolean,
+      currentX: number,
+      currentZ: number,
+    ) => {
+      if (top <= obstacleBottom || bottom >= obstacleTop) return;
+      const distance = Math.hypot(x - obstacleX, z - obstacleZ);
+      const gap = distance - navigationRadius - obstacleRadius;
+      crowding = Math.max(crowding, clamp((1.05 - gap) / 1.05, 0, 1.25));
+      if (!canBlock) return;
+      const separation = separateCreatureCircles(
+        { x, z, radius: navigationRadius },
+        { x: obstacleX, z: obstacleZ, radius: obstacleRadius },
+        0.055,
+        seed,
+      );
+      if (!separation) return;
+      if (allowEscape) {
+        const currentDistance = Math.hypot(currentX - obstacleX, currentZ - obstacleZ);
+        if (distance > currentDistance + 0.0001) return;
+      }
+      blocked = true;
+    };
+
+    consider(
+      this.position.x,
+      this.position.z,
+      PLAYER_RADIUS,
+      this.position.y,
+      this.position.y + this.currentPlayerHeight(),
+      mob.id,
+      profile.solid,
+      mob.group.position.x,
+      mob.group.position.z,
+    );
+    for (const other of this.mobs) {
+      if (other.id === mob.id || !other.group.visible) continue;
+      const otherProfile = this.mobCollisionProfile(other);
+      if (!otherProfile.solid) continue;
+      const otherBottom = this.mobFootY(other);
+      consider(
+        other.group.position.x,
+        other.group.position.z,
+        otherProfile.radius,
+        otherBottom,
+        otherBottom + otherProfile.height,
+        mob.id ^ other.id,
+        profile.solid,
+        mob.group.position.x,
+        mob.group.position.z,
+      );
+    }
+    return { blocked, crowding };
+  }
+
+  creatureRouteProbe(mob: MobEntity, heading: number, lookahead: number): CreatureRouteProbe {
+    const x = mob.group.position.x + Math.cos(heading) * lookahead;
+    const z = mob.group.position.z + Math.sin(heading) * lookahead;
+    const targetY = this.mobMoveTarget(
+      mob,
+      x,
+      z,
+      this.mobBaseScale(mob),
+      Math.round(mob.group.position.y - mob.definition.footOffset),
+      false,
+    );
+    const groundY = targetY === null
+      ? Math.round(mob.group.position.y - mob.definition.footOffset)
+      : Math.round(targetY - mob.definition.footOffset);
+    const centerX = Math.round(x);
+    const centerZ = Math.round(z);
+    const feetType = this.world.getBlock(centerX, groundY + 1, centerZ);
+    const water = feetType === BlockId.Water;
+    const hazard = feetType === BlockId.Lava;
+    const dynamic = targetY === null
+      ? { blocked: false, crowding: 0 }
+      : this.mobDynamicObstaclesAt(mob, x, targetY, z, true);
+    const clearanceCells = Math.max(1, Math.ceil(mob.definition.height * this.mobBaseScale(mob)));
+    let openDoor = false;
+    for (let offset = 1; offset <= clearanceCells; offset += 1) {
+      const type = this.world.getBlock(centerX, groundY + offset, centerZ);
+      if (type !== undefined && this.isDoor(type) && this.doorIsOpen(type)) { openDoor = true; break; }
+    }
+    return {
+      walkable: targetY !== null && !dynamic.blocked,
+      elevationDelta: targetY === null ? 0 : targetY - mob.group.position.y,
+      water,
+      hazard,
+      crowding: dynamic.crowding,
+      clearance: targetY === null ? 0 : clamp(1 - dynamic.crowding * 0.42, 0, 1),
+      openDoor,
+    };
+  }
+
+  safeFollowerTeleportTarget(mob: MobEntity, slot: FollowerFormationTarget) {
+    const playerGround = Math.round(this.position.y - 0.5);
+    return findFollowerTeleportTarget(slot, mob.id, (x, z) => {
+      const targetY = this.mobMoveTarget(mob, x, z, this.mobBaseScale(mob), playerGround, false);
+      if (targetY === null || Math.abs(this.mobFootY(mob, targetY) - this.position.y) > 2.2) return null;
+      const groundY = Math.round(targetY - mob.definition.footOffset);
+      const feetType = this.world.getBlock(Math.round(x), groundY + 1, Math.round(z));
+      if (feetType === BlockId.Water || feetType === BlockId.Lava) return null;
+      if (this.mobDynamicObstaclesAt(mob, x, targetY, z, false).blocked) return null;
+      return targetY;
+    });
   }
 
   /** Scale around the creature's original foot plane, never around its belly. */
@@ -5059,7 +5338,7 @@ export class VoxelEngine {
       id, kind, name: petState?.name || definition.name, hostile: definition.hostile && !shadeState?.tamed, definition, group, visual, parts,
       health: options.health ?? petState?.health ?? definition.health * shadeHealthScale,
       maxHealth: petState?.maxHealth ?? definition.health * shadeHealthScale,
-      damage: definition.damage, angle, desiredAngle: angle, steering: createStableSteering(angle), wanderTimer: 1 + Math.random() * 4,
+      damage: definition.damage, angle, desiredAngle: angle, steering: createStableSteering(angle), route: createCreatureRouteState(angle), wanderTimer: 1 + Math.random() * 4,
       attackCooldown: 0, hurtTimer: 0, age: options.age ?? 0, bob: Math.random() * Math.PI * 2, gait: 0,
       fleeTimer: 0, state: "wander", stateTimer: 0, baseY: position.y, voiceTimer: 2 + Math.random() * 8,
       birdState: definition.family === "bird" ? createBirdBehavior(kind as "emberjay" | "canopy-lark", id * 0.71) : null,
@@ -5215,11 +5494,18 @@ export class VoxelEngine {
     this.spawnMob(kind, new THREE.Vector3(x, y + MOB_DEFS[kind].footOffset, z));
   }
 
-  mobMoveTarget(mob: MobEntity, nx: number, nz: number, collisionScale = this.mobBaseScale(mob)) {
+  mobMoveTarget(
+    mob: MobEntity,
+    nx: number,
+    nz: number,
+    collisionScale = this.mobBaseScale(mob),
+    referenceGround = Math.round(mob.group.position.y - mob.definition.footOffset),
+    checkCreatureCollision = true,
+  ) {
     const definition = mob.definition;
     const centerX = Math.round(nx);
     const centerZ = Math.round(nz);
-    const currentGround = Math.round(mob.group.position.y - definition.footOffset);
+    const currentGround = referenceGround;
     const effectiveHeight = Math.max(0.52, definition.height * Math.min(3, Math.max(0.62, collisionScale)));
     const clearanceCells = Math.max(1, Math.ceil(effectiveHeight));
     const standableAt = (x: number, z: number, groundY: number) => {
@@ -5259,7 +5545,10 @@ export class VoxelEngine {
       if (ground === null) return null;
       groundY = Math.max(groundY, ground);
     }
-    return groundY + definition.footOffset;
+    const targetY = groundY + definition.footOffset;
+    if (checkCreatureCollision && this.mobCollisionProfile(mob).solid
+      && this.mobDynamicObstaclesAt(mob, nx, targetY, nz, true).blocked) return null;
+    return targetY;
   }
 
   animateMob(mob: MobEntity, moved: number) {
@@ -5398,6 +5687,25 @@ export class VoxelEngine {
       this.mobSpawnTimer = (2.2 + Math.random() * 1.8) / density;
       this.trySpawnMob();
     }
+    const ownerId = this.localPlayerId();
+    const leaderSpeed = Math.hypot(this.velocity.x, this.velocity.z);
+    if (leaderSpeed > 0.12) this.followerHeading = Math.atan2(this.velocity.z, this.velocity.x);
+    const leaderHeading = this.followerHeading;
+    const followers = this.mobs.filter((mob) => {
+      if (mob.id === this.mountedCreatureId || this.leadAnchors.has(mob.id)
+        || mob.definition.movement === "flying" || mob.definition.movement === "aquatic") return false;
+      return Boolean(
+        (mob.petState?.tamed && mob.petState.ownerId === ownerId && mob.petState.command === "follow")
+        || (mob.shadeState?.tamed && mob.shadeState.ownerId === ownerId),
+      );
+    });
+    const followerSlots = new Map(planFollowerFormation(
+      { x: this.position.x, z: this.position.z, heading: leaderHeading },
+      followers.map((mob) => ({
+        id: mob.id,
+        radius: Math.max(0.22, this.mobCollisionProfile(mob).radius || mob.definition.radius * this.mobBaseScale(mob) * 0.72),
+      })),
+    ).map((slot) => [slot.id, slot] as const));
     for (let index = this.mobs.length - 1; index >= 0; index -= 1) {
       const mob = this.mobs[index];
       if (mob.hostile && this.worldOptions.difficulty === "peaceful") { this.removeMob(index); continue; }
@@ -5426,9 +5734,28 @@ export class VoxelEngine {
         mob.maxHealth = Math.round(mob.definition.health * shadecrawlerScale(mob.shadeState));
       }
       this.applyMobScale(mob, this.mobBaseScale(mob));
-      const dx = this.position.x - mob.group.position.x;
-      const dz = this.position.z - mob.group.position.z;
-      const distance = Math.hypot(dx, dz);
+      let dx = this.position.x - mob.group.position.x;
+      let dz = this.position.z - mob.group.position.z;
+      let distance = Math.hypot(dx, dz);
+      const followerSlot = followerSlots.get(mob.id) ?? null;
+      if (followerSlot && shouldTeleportFollower({
+        distanceToLeader: distance,
+        verticalSeparation: this.mobFootY(mob) - this.position.y,
+        blockedSeconds: mob.route.blockedSeconds,
+      })) {
+        const recovery = this.safeFollowerTeleportTarget(mob, followerSlot);
+        if (recovery) {
+          mob.group.position.set(recovery.x, recovery.y, recovery.z);
+          mob.baseY = recovery.y;
+          mob.angle = Math.atan2(this.position.z - recovery.z, this.position.x - recovery.x);
+          mob.desiredAngle = mob.angle;
+          mob.steering = createStableSteering(mob.angle);
+          mob.route = createCreatureRouteState(mob.angle);
+          dx = this.position.x - mob.group.position.x;
+          dz = this.position.z - mob.group.position.z;
+          distance = Math.hypot(dx, dz);
+        }
+      }
       if (distance < 10 && !this.bestiary[mob.kind].seen) { this.bestiary[mob.kind].seen = true; this.saveSoon(); }
       if (mob.kind === "zombie") {
         if (distance < 24 && mob.voiceTimer <= 0 && this.zombieVoiceCooldown <= 0) {
@@ -5478,8 +5805,11 @@ export class VoxelEngine {
         mob.fleeTimer = Math.max(mob.fleeTimer, 2.4);
       }
       const aggressive = mob.hostile || (mob.definition.temperament === "Defensive" && mob.fleeTimer > 0);
-      const petFollowing = Boolean(mob.petState?.tamed && mob.petState.command === "follow" && distance > 2.2);
       const petHolding = Boolean(mob.petState?.tamed && (mob.petState.command === "sit" || mob.petState.command === "stay"));
+      const followerDistance = followerSlot
+        ? Math.hypot(followerSlot.x - mob.group.position.x, followerSlot.z - mob.group.position.z)
+        : 0;
+      const followerSettled = Boolean(followerSlot && followerDistance <= followerSlot.arrivalRadius);
       if (mob.definition.ranged && aggressive && distance < 17) {
         mob.state = "chase";
         mob.desiredAngle = distance < 4 ? Math.atan2(-dz, -dx) : Math.atan2(dz, dx);
@@ -5496,12 +5826,12 @@ export class VoxelEngine {
           mob.state = "recover"; mob.stateTimer = 0.55; mob.attackCooldown = 1.15;
         }
       } else if (mob.state === "recover" && mob.stateTimer <= 0) mob.state = "wander";
-      else if (petHolding) {
+      else if (petHolding || followerSettled) {
         mob.state = "wander";
         mob.desiredAngle = mob.angle;
-      } else if (petFollowing) {
+      } else if (followerSlot) {
         mob.state = "chase";
-        mob.desiredAngle = Math.atan2(dz, dx);
+        mob.desiredAngle = Math.atan2(followerSlot.z - mob.group.position.z, followerSlot.x - mob.group.position.x);
       }
       else if (aggressive && distance < (this.crouching ? 11 : 20)) {
         mob.state = "chase";
@@ -5518,11 +5848,44 @@ export class VoxelEngine {
       let speed = mob.state === "chase" ? mob.definition.chaseSpeed : mob.state === "flee" ? mob.definition.chaseSpeed * 0.86 : mob.definition.speed;
       if (mob.kind === "lanternshell" && this.weather === "rain") speed *= 1.55;
       if (mob.state === "windup" || mob.state === "recover") speed *= 0.08;
-      if (petHolding || (mob.petState?.tamed && mob.petState.command === "follow" && distance <= 2.2)) speed = 0;
+      if (followerSlot) speed = followerTravelSpeed({
+        walkSpeed: mob.definition.speed,
+        chaseSpeed: mob.definition.chaseSpeed,
+        leaderSpeed,
+        distanceToSlot: followerDistance,
+        arrivalRadius: followerSlot.arrivalRadius,
+      });
+      if (petHolding || followerSettled) speed = 0;
       const beforeX = mob.group.position.x;
       const beforeZ = mob.group.position.z;
-      let blocked = false;
-      if (mob.kind === "glowmoth") {
+      const movement = mob.definition.movement ?? (mob.definition.aquatic ? "aquatic" : mob.definition.flying ? "flying" : "ground");
+      let routeBlocked = false;
+      let routeHeading = mob.desiredAngle;
+      if (movement === "ground" && speed > 0.001) {
+        const profile = this.mobCollisionProfile(mob);
+        const baseLookahead = Math.max(0.72, (profile.radius || mob.definition.radius * this.mobBaseScale(mob)) + 0.36, speed * 0.42);
+        const lookahead = followerSlot ? Math.max(0.3, Math.min(baseLookahead, followerDistance)) : baseLookahead;
+        const route = chooseCreatureRoute({
+          state: mob.route,
+          dt,
+          desiredHeading: mob.desiredAngle,
+          mobId: mob.id,
+          movement,
+          maxStepUp: 1,
+          maxDrop: mob.kind === "caveblob" || mob.kind === "puddlehopper" ? 2 : 1,
+          allowWater: false,
+          probe: (heading) => this.creatureRouteProbe(mob, heading, lookahead),
+        });
+        mob.route = route.state;
+        routeBlocked = route.blocked;
+        routeHeading = route.heading;
+      } else if (speed <= 0.001) mob.route = createCreatureRouteState(mob.angle);
+      mob.steering = updateStableSteering(mob.steering, {
+        dt, turnRate: mob.definition.turnRate, blocked: routeBlocked, mobId: mob.id, desiredHeading: routeHeading,
+      });
+      mob.angle = mob.steering.heading;
+      let blocked = routeBlocked;
+      if (!routeBlocked && mob.kind === "glowmoth") {
         const nx = mob.group.position.x + Math.cos(mob.angle) * speed * dt;
         const nz = mob.group.position.z + Math.sin(mob.angle) * speed * dt;
         const targetY = this.mobMoveTarget(mob, nx, nz);
@@ -5532,7 +5895,7 @@ export class VoxelEngine {
           mob.baseY += (targetY - mob.baseY) * Math.min(1, dt * 4);
         } else { blocked = true; mob.wanderTimer = Math.max(mob.wanderTimer, 0.35); }
         mob.group.position.y = mob.baseY + Math.sin(performance.now() * 0.003 + mob.id) * 0.22;
-      } else {
+      } else if (!routeBlocked && speed > 0.001) {
         const nx = mob.group.position.x + Math.cos(mob.angle) * speed * dt;
         const nz = mob.group.position.z + Math.sin(mob.angle) * speed * dt;
         const targetY = this.mobMoveTarget(mob, nx, nz);
@@ -5545,10 +5908,11 @@ export class VoxelEngine {
         } else { blocked = true; mob.wanderTimer = Math.max(mob.wanderTimer, 0.5); }
       }
       const moved = Math.hypot(mob.group.position.x - beforeX, mob.group.position.z - beforeZ);
-      mob.steering = updateStableSteering(mob.steering, {
-        dt, turnRate: mob.definition.turnRate, blocked, mobId: mob.id, desiredHeading: mob.desiredAngle,
-      });
-      mob.angle = mob.steering.heading;
+      if (blocked && !routeBlocked) mob.route = {
+        heading: mob.route.heading,
+        holdSeconds: 0,
+        blockedSeconds: mob.route.blockedSeconds + Math.min(0.1, Math.max(0, dt)),
+      };
       mob.group.rotation.y = -mob.angle - Math.PI / 2;
       this.animateMob(mob, moved);
     }
@@ -6112,6 +6476,12 @@ export class VoxelEngine {
     if (underwater) sky.set("#1d5d82");
     else if (this.weatherState.kind === "sandstorm") sky.lerp(this.weatherSkyColor.set("#b88a55"), weatherFx.fogDensity * 0.62);
     else if (this.weatherState.kind === "ashfall") sky.lerp(this.weatherSkyColor.set("#493f43"), weatherFx.skyDarkening * 0.8);
+    else if (weatherFx.fullOvercast) {
+      // Thunder owns the entire dome rather than leaving clear blue gaps
+      // between clusters. Lightning still flashes through the low cloud deck.
+      const stormSky = daylight > 0.18 ? "#596570" : "#252d38";
+      sky.lerp(this.weatherSkyColor.set(stormSky), 0.94);
+    }
     else sky.lerp(this.nightSkyColor, weatherFx.skyDarkening * 0.42);
     this.scene.background = sky;
     if (this.scene.fog instanceof THREE.Fog) {
@@ -6124,7 +6494,7 @@ export class VoxelEngine {
     // Sun and moon are properties of the world, not the player's current
     // square. Player sky visibility still drives cave fog/celestial visibility,
     // but it must never dim a torchlit room or a sunlit opening farther ahead.
-    const weatherLight = 1 - weatherFx.skyDarkening * 0.62;
+    const weatherLight = weatherFx.fullOvercast ? 0.42 : 1 - weatherFx.skyDarkening * 0.62;
     this.hemisphere.intensity = underwater ? 0.05 : (0.025 + daylight * 0.36 + moonlight * 0.045) * weatherLight;
     this.directional.intensity = underwater ? 0.018 : (daylight * 0.78 + moonlight * 0.05) * weatherLight;
     if (this.weatherState.kind === "thunder" && Math.random() < weatherFx.lightningChancePerSecond * dt) this.directional.intensity += 2.4;
@@ -6135,9 +6505,11 @@ export class VoxelEngine {
     this.moon.position.copy(this.camera.position).addScaledVector(celestialDirection, -celestialDistance);
     this.sun.lookAt(this.camera.position);
     this.moon.lookAt(this.camera.position);
-    this.sun.visible = !underground && sunHeight > -0.18;
-    this.moon.visible = !underground && sunHeight < 0.22;
-    (this.stars.material as THREE.PointsMaterial).opacity = underground ? 0 : clamp((1 - daylight) * 1.05, 0, 0.95);
+    this.sun.visible = !underground && weatherFx.sunVisibility > 0.01 && sunHeight > -0.18;
+    this.moon.visible = !underground && weatherFx.celestialVisibility > 0.01 && sunHeight < 0.22;
+    (this.stars.material as THREE.PointsMaterial).opacity = underground
+      ? 0
+      : clamp((1 - daylight) * 1.05 * weatherFx.celestialVisibility, 0, 0.95);
     this.stars.position.copy(this.camera.position);
     this.directional.target.position.copy(this.camera.position);
     this.directional.position.copy(this.camera.position).addScaledVector(celestialDirection, 55);
@@ -6245,77 +6617,7 @@ export class VoxelEngine {
   }
 
   createAvatarHeldItem(item: ItemCode) {
-    const definition = ITEMS[item];
-    if (!definition) return null;
-    const group = new THREE.Group();
-    group.name = `avatar-held-${definition.name.toLowerCase().replace(/\s+/g, "-")}`;
-    const addBox = (
-      size: [number, number, number],
-      position: [number, number, number],
-      color: string | number,
-      rotation: [number, number, number] = [0, 0, 0],
-      emissive = false,
-    ) => {
-      const material = emissive
-        ? new THREE.MeshBasicMaterial({ color })
-        : new THREE.MeshLambertMaterial({ color });
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
-      mesh.position.set(...position);
-      mesh.rotation.set(...rotation);
-      group.add(mesh);
-      return mesh;
-    };
-    if (item === BlockId.Torch) {
-      addBox([0.1, 0.62, 0.1], [0, 0.22, 0], 0x8d542b);
-      const outer = addBox([0.16, 0.14, 0.16], [0, 0.58, 0], 0xffb33e, [0, 0, 0], true);
-      const inner = addBox([0.08, 0.11, 0.08], [0, 0.7, 0], 0xfff0a0, [0, 0, 0], true);
-      outer.name = "torch-flame-outer";
-      inner.name = "torch-flame-inner";
-      outer.userData.torchBase = outer.position.toArray();
-      inner.userData.torchBase = inner.position.toArray();
-    } else if (definition.toolKind) {
-      const spec = createHeldToolSpec(definition.toolKind, definition.color, definition.name);
-      for (const box of spec.boxes) addBox(
-        [...box.size] as [number, number, number],
-        [...box.position] as [number, number, number],
-        box.color,
-        [...(box.rotation ?? [0, 0, 0])] as [number, number, number],
-        Boolean(box.emissive),
-      );
-      group.scale.setScalar(0.5);
-      group.rotation.set(-0.1, 0, -0.34);
-      group.position.set(0, -0.16, -0.02);
-    } else if (definition.useKind === "net") {
-      addBox([0.08, 0.9, 0.08], [0, 0.14, 0], 0x7b542f);
-      for (let segment = 0; segment < 8; segment += 1) {
-        const angle = segment / 8 * Math.PI * 2;
-        addBox([0.05, 0.24, 0.05], [Math.cos(angle) * 0.29, 0.66 + Math.sin(angle) * 0.29, 0], 0xd8c892, [0, 0, angle]);
-      }
-      addBox([0.48, 0.48, 0.025], [0, 0.66, 0], 0xb6d7ce);
-      group.scale.setScalar(0.58);
-      group.rotation.z = -0.28;
-    } else if (definition.useKind === "release-creature") {
-      addBox([0.3, 0.38, 0.24], [0, 0.12, 0], 0xbad9dc);
-      addBox([0.26, 0.08, 0.22], [0, 0.34, 0], 0x7a5a38);
-      addBox([0.13, 0.05, 0.03], [0, 0.14, -0.135], definition.color, [0, 0, 0], true);
-      group.scale.setScalar(0.78);
-    } else if (definition.iconKind === "bucket") {
-      const metal = 0x9aa5a6;
-      addBox([0.3, 0.07, 0.25], [0, -0.1, 0], metal);
-      addBox([0.055, 0.3, 0.25], [-0.145, 0.03, 0], metal, [0, 0, -0.08]);
-      addBox([0.055, 0.3, 0.25], [0.145, 0.03, 0], metal, [0, 0, 0.08]);
-      addBox([0.28, 0.28, 0.045], [0, 0.03, -0.115], metal);
-      addBox([0.28, 0.28, 0.045], [0, 0.03, 0.115], metal);
-      addBox([0.36, 0.035, 0.035], [0, 0.26, 0], 0xc6cece);
-      if (definition.bucketLiquid) addBox([0.23, 0.035, 0.18], [0, 0.17, 0], definition.color, [0, 0, 0], definition.bucketLiquid === "lava");
-      group.scale.setScalar(0.72);
-      group.rotation.set(0.08, 0.25, -0.12);
-    } else if (definition.placeBlock !== undefined) {
-      addBox([0.42, 0.42, 0.42], [0, 0.1, 0], definition.color, [0.16, 0.2, 0]);
-    } else {
-      addBox([0.28, 0.38, 0.2], [0, 0.1, 0], definition.color, [0.12, 0.15, -0.06]);
-    }
-    return group;
+    return createAvatarHeldItemModel(item);
   }
 
   equipmentAppearanceFromCodes(codes?: Partial<Record<EquipmentSlot, ItemCode>>): PlayerEquipmentAppearance {
@@ -6503,6 +6805,25 @@ export class VoxelEngine {
         } else if (item === Item.Banana) {
           addBox([0.1, 0.34, 0.09], [-0.08, 0, 0], 0xf4d34f, [0, 0, -0.5]);
           addBox([0.1, 0.34, 0.09], [0.08, 0.04, 0], 0xf4d34f, [0, 0, 0.5]);
+        } else if (definition.useKind === "net" || (definition.useKind === "release-creature" && definition.creatureKind
+          && BUTTERFLY_ORDER.includes(definition.creatureKind as ButterflyKind))) {
+          const productionHeld = createAvatarHeldItemModel(item);
+          if (productionHeld) {
+            productionHeld.name = `first-person-${productionHeld.name}`;
+            productionHeld.position.set(-0.02, -0.08, -0.04);
+            productionHeld.scale.multiplyScalar(definition.useKind === "net" ? 0.86 : 0.95);
+            productionHeld.traverse((object) => {
+              const renderable = object as THREE.Object3D & { material?: THREE.Material | THREE.Material[] };
+              const materials = renderable.material ? (Array.isArray(renderable.material) ? renderable.material : [renderable.material]) : [];
+              for (const heldMaterial of materials) {
+                heldMaterial.depthTest = false;
+                heldMaterial.depthWrite = false;
+                heldMaterial.transparent = true;
+              }
+              object.renderOrder = 20;
+            });
+            this.heldRoot.add(productionHeld);
+          }
         } else if (definition.iconKind === "bucket") {
           const metal = 0x9aa5a6;
           addBox([0.3, 0.07, 0.25], [0, -0.1, 0], metal);
@@ -6700,7 +7021,7 @@ export class VoxelEngine {
           : this.targetBoat ? { type: "boat", id: this.targetBoat.save.id } : null,
       nearbyMobs,
       boats: [...this.boats.values()].map((boat) => ({ id: boat.save.id, position: [boat.save.x, boat.save.y, boat.save.z], passengers: boat.save.passengers.length, storageSlots: boat.save.inventory.filter(Boolean).length })),
-      exhibits: [...this.chests.entries()].filter(([key]) => key.startsWith("exhibit:")).map(([key, slots]) => ({ key, capacity: slots.length, butterflies: slots.filter(Boolean).length })),
+      exhibits: [...this.chests.entries()].filter(([key]) => key.startsWith("exhibit:")).map(([key, slots]) => ({ key, capacity: slots.length, residents: slots.filter(Boolean).length })),
       performance: { averageFps: Number(this.averageFps.toFixed(1)), renderDistance: this.settings.renderDistance, simulationDistance: this.settings.simulationDistance, loadedChunks: this.world.loadedCount },
     });
   }
@@ -6873,10 +7194,13 @@ export class VoxelEngine {
     if (!this.cloudMesh) return;
     const cellX = Math.floor(this.camera.position.x / 54);
     const cellZ = Math.floor(this.camera.position.z / 54);
-    if (!force && cellX === this.cloudCellX && cellZ === this.cloudCellZ && this.cloudWeatherCycle === this.weatherState.cycle) return;
+    const visuals = weatherVisuals(this.weatherState);
+    const coverageBucket = Math.round(visuals.cloudCoverage * 8);
+    const signature = `${this.weatherState.cycle}:${this.weatherState.kind}:${coverageBucket}:${visuals.fullOvercast ? 1 : 0}`;
+    if (!force && cellX === this.cloudCellX && cellZ === this.cloudCellZ && this.cloudWeatherSignature === signature) return;
     this.cloudCellX = cellX;
     this.cloudCellZ = cellZ;
-    this.cloudWeatherCycle = this.weatherState.cycle;
+    this.cloudWeatherSignature = signature;
     const plans = planCloudField(this.world.seedText, cellX, cellZ, 3, this.weatherState);
     let instance = 0;
     for (const plan of plans) for (const lobe of plan.lobes) {
@@ -6892,7 +7216,7 @@ export class VoxelEngine {
     this.cloudMesh.instanceMatrix.needsUpdate = true;
     const material = this.cloudMesh.material as THREE.MeshLambertMaterial;
     material.color.set(this.weatherState.kind === "thunder" ? 0x707982 : this.weatherState.kind === "sandstorm" ? 0xc3a06a : this.weatherState.kind === "ashfall" ? 0x777177 : 0xf2f4ef);
-    material.opacity = this.weatherState.kind === "clear" ? 0.72 : 0.86;
+    material.opacity = visuals.fullOvercast ? 0.94 : this.weatherState.kind === "clear" ? 0.72 : 0.86;
   }
 
   setSettings(next: Partial<GameSettings>) {

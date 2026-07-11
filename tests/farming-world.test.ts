@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { BlockId, Item, ITEMS, RECIPES, worldTextureBlockForItem } from "../app/game/data.ts";
+import { BlockId, Item, ITEMS, LEAF_BLOCKS, RECIPES, worldTextureBlockForItem } from "../app/game/data.ts";
 import { caveEntranceAt, caveFeatureAt } from "../app/game/caves.ts";
 import {
   canGrowPlant,
@@ -24,7 +24,17 @@ import {
   type LeadAnchor,
 } from "../app/game/farming.ts";
 import { planLeafParticles, stepLeafParticle, torchAnimationSample } from "../app/game/world-effects.ts";
-import { ChunkWorld, MIN_Y, blockIndex } from "../app/game/world.ts";
+import { planStructure, structureBiomeFromId, structureCandidateForChunk, structureClearanceBounds } from "../app/game/structures.ts";
+import {
+  BiomeId,
+  ChunkWorld,
+  LEAF_TEXTURE_CUTOUT_CHANCE,
+  MAX_Y,
+  MEADOW_GRASS_PALETTE,
+  MIN_Y,
+  blockIndex,
+  splitCoordinate,
+} from "../app/game/world.ts";
 
 test("berries and wheat plant only on valid soil and advance through explicit stages", () => {
   assert.equal(plantingResult(Item.Berry, BlockId.MeadowGrass, BlockId.Air)?.block, BlockId.MoonberryShoot);
@@ -167,6 +177,122 @@ test("world generation exposes surface mouths, biome stone accents, greater reli
   assert.ok(accents > 0, "new stone/clay strata should appear naturally");
   assert.ok(Math.max(...heights) - Math.min(...heights) >= 12, "nearby terrain should have readable vertical variance");
   assert.ok(wheat / Math.max(1, flora) < 0.09, `wild wheat should be scarce, got ${(wheat / Math.max(1, flora) * 100).toFixed(1)}%`);
+  world.dispose();
+});
+
+test("rivers are deterministically deep and variable, and generated flora never occupies their water", () => {
+  const world = new ChunkWorld();
+  world.reset("RIVER-V04", undefined, { structures: false });
+  const riverChunks = new Set<string>();
+  const depths = new Set<number>();
+  for (let cz = -24; cz <= 24 && riverChunks.size < 8; cz += 1) {
+    for (let cx = -24; cx <= 24 && riverChunks.size < 8; cx += 1) {
+      for (let lz = 1; lz < 16 && riverChunks.size < 8; lz += 4) for (let lx = 1; lx < 16; lx += 4) {
+        const column = world.sampleColumn(cx * 16 + lx, cz * 16 + lz);
+        if (column.biome !== BiomeId.River) continue;
+        riverChunks.add(`${cx},${cz}`);
+        depths.add(column.waterline - column.height);
+        break;
+      }
+    }
+  }
+  assert.equal(riverChunks.size, 8, "fixture should discover several river chunks");
+  const flora = new Set<BlockId>([
+    BlockId.TallGrass,
+    BlockId.RedFlower,
+    BlockId.BlueFlower,
+    BlockId.WheatCrop,
+    BlockId.Sunpetal,
+    BlockId.MoonOrchid,
+  ]);
+  for (const key of riverChunks) {
+    const [cx, cz] = key.split(",").map(Number);
+    const chunk = world.generateChunk(cx, cz);
+    for (let lz = 0; lz < 16; lz += 1) for (let lx = 0; lx < 16; lx += 1) {
+      const column = world.sampleColumn(cx * 16 + lx, cz * 16 + lz);
+      if (column.biome !== BiomeId.River) continue;
+      depths.add(column.waterline - column.height);
+      for (let y = column.height + 1; y <= column.waterline + 1; y += 1) {
+        assert.equal(flora.has(chunk.blocks[blockIndex(lx, y, lz)] as BlockId), false, `flora occupied river cell ${cx * 16 + lx},${y},${cz * 16 + lz}`);
+      }
+    }
+  }
+  assert.ok(Math.min(...depths) >= 3, `river depth floor was ${Math.min(...depths)}`);
+  assert.ok(depths.size >= 3, `expected variable river beds, got depths ${[...depths].join(", ")}`);
+  world.dispose();
+});
+
+test("named forest POIs clear unauthored trees throughout their padded footprint", () => {
+  const world = new ChunkWorld();
+  world.reset("POI-CLEAR-V04", undefined, { structures: true });
+  let candidate: { cx: number; cz: number; x: number; z: number; y: number } | undefined;
+  for (let cz = -72; cz <= 72 && !candidate; cz += 1) for (let cx = -72; cx <= 72 && !candidate; cx += 1) {
+    const x = cx * 16 + 8;
+    const z = cz * 16 + 8;
+    const column = world.sampleColumn(x, z);
+    const biome = structureBiomeFromId(column.biome);
+    if (biome === "forest" && structureCandidateForChunk({ seed: world.seedText, chunkX: cx, chunkZ: cz, biome }) === "forest-temple") {
+      candidate = { cx, cz, x, z, y: column.height };
+    }
+  }
+  assert.ok(candidate, "fixture should locate a generated forest temple candidate");
+  const plan = planStructure("forest-temple", { x: candidate.x, y: candidate.y, z: candidate.z }, world.seedText);
+  const clearing = structureClearanceBounds(plan);
+  const authoredTrees = new Map(plan.placements
+    .filter((placement) => [BlockId.WildwoodLog, BlockId.WildwoodLeaves].includes(placement.block))
+    .map((placement) => [`${placement.x},${placement.y},${placement.z}`, placement.block]));
+  const minChunkX = splitCoordinate(clearing.minX).chunk;
+  const maxChunkX = splitCoordinate(clearing.maxX).chunk;
+  const minChunkZ = splitCoordinate(clearing.minZ).chunk;
+  const maxChunkZ = splitCoordinate(clearing.maxZ).chunk;
+  const treeBlocks = new Set<BlockId>([BlockId.WildwoodLog, BlockId.PineLog, BlockId.BirchLog, BlockId.BloomLog, ...LEAF_BLOCKS]);
+  for (let cz = minChunkZ; cz <= maxChunkZ; cz += 1) for (let cx = minChunkX; cx <= maxChunkX; cx += 1) {
+    const chunk = world.generateChunk(cx, cz);
+    for (let z = Math.max(clearing.minZ, cz * 16); z <= Math.min(clearing.maxZ, cz * 16 + 15); z += 1) {
+      for (let x = Math.max(clearing.minX, cx * 16); x <= Math.min(clearing.maxX, cx * 16 + 15); x += 1) {
+        for (let y = MIN_Y; y <= MAX_Y; y += 1) {
+          const block = chunk.blocks[blockIndex(x - cx * 16, y, z - cz * 16)] as BlockId;
+          if (!treeBlocks.has(block)) continue;
+          assert.equal(authoredTrees.get(`${x},${y},${z}`), block, `natural tree remained inside POI clearance at ${x},${y},${z}`);
+        }
+      }
+    }
+  }
+  world.dispose();
+});
+
+test("legacy cabin and ruin generation reserves the same flora-free clearing", () => {
+  const world = new ChunkWorld();
+  world.reset("WILDERNESS", undefined, { structures: true });
+  for (let cz = -3; cz <= -2; cz += 1) for (let cx = -3; cx <= -2; cx += 1) world.generateChunk(cx, cz);
+  assert.equal(world.getBlock(-28, 38, -30), BlockId.Chest, "fixture should contain the legacy ruin cache");
+  const unauthoredGrowth = new Set<BlockId>([
+    ...LEAF_BLOCKS,
+    BlockId.Cactus,
+    BlockId.TallGrass,
+    BlockId.RedFlower,
+    BlockId.BlueFlower,
+    BlockId.WheatCrop,
+    BlockId.Sunpetal,
+    BlockId.MoonOrchid,
+  ]);
+  for (let z = -38; z <= -26; z += 1) for (let x = -36; x <= -24; x += 1) for (let y = MIN_Y; y <= MAX_Y; y += 1) {
+    assert.equal(unauthoredGrowth.has(world.getBlock(x, y, z) ?? BlockId.Air), false, `legacy POI growth remained at ${x},${y},${z}`);
+  }
+  world.dispose();
+});
+
+test("meadow grass is darker and leaf blocks use full exterior tiles with interior culling", () => {
+  const channel = (hex: string, shift: number) => (Number.parseInt(hex.slice(1), 16) >> shift) & 255;
+  const average = (hex: string) => (channel(hex, 16) + channel(hex, 8) + channel(hex, 0)) / 3;
+  assert.ok(average(MEADOW_GRASS_PALETTE.top) < average("#79b951"));
+  assert.notEqual(MEADOW_GRASS_PALETTE.clover, MEADOW_GRASS_PALETTE.top);
+  assert.equal(LEAF_TEXTURE_CUTOUT_CHANCE, 0);
+  const world = new ChunkWorld();
+  for (const leaf of LEAF_BLOCKS) {
+    assert.equal(world.faceVisible(leaf, BlockId.Air), true, `${BlockId[leaf]} must paint every exposed face`);
+    assert.equal(world.faceVisible(leaf, leaf), false, `${BlockId[leaf]} should still cull hidden interior faces`);
+  }
   world.dispose();
 });
 

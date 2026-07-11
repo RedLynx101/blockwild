@@ -6,6 +6,7 @@ import {
   planStructure,
   structureBiomeFromId,
   structureCandidateForChunk,
+  structureClearanceBounds,
   structureMarkersForChunk,
   structurePlacementsForChunk,
   type PlannedBlock,
@@ -19,7 +20,7 @@ export const WORLD_HEIGHT = MAX_Y - MIN_Y + 1;
 export const SEA_LEVEL = 32;
 export const SECTION_HEIGHT = 16;
 export const SECTION_COUNT = WORLD_HEIGHT / SECTION_HEIGHT;
-export const GENERATOR_VERSION = 4;
+export const GENERATOR_VERSION = 5;
 
 export type WorldGenerationOptions = {
   caveFrequency: number;
@@ -101,6 +102,24 @@ export type Chunk = {
 };
 
 const LEAF_BLOCK_SET = new Set<BlockId>(LEAF_BLOCKS);
+const GENERATED_GROWTH_BLOCK_SET = new Set<BlockId>([
+  BlockId.WildwoodLog,
+  BlockId.PineLog,
+  BlockId.BirchLog,
+  BlockId.BloomLog,
+  ...LEAF_BLOCKS,
+  BlockId.Cactus,
+  BlockId.MushroomCap,
+  BlockId.TallGrass,
+  BlockId.RedFlower,
+  BlockId.BlueFlower,
+  BlockId.WheatCrop,
+  BlockId.WildwoodSapling,
+  BlockId.Sunpetal,
+  BlockId.MoonOrchid,
+  BlockId.DesertShrub,
+  BlockId.BananaPlant,
+]);
 
 type ColumnSample = {
   height: number;
@@ -142,7 +161,7 @@ const BIOME_TINT: Record<number, [number, number, number]> = {
   [BiomeId.DeepOcean]: [0.72, 0.83, 0.98],
   [BiomeId.Ocean]: [0.8, 0.9, 1],
   [BiomeId.Beach]: [1.04, 1.01, 0.86],
-  [BiomeId.Meadow]: [0.93, 1.08, 0.88],
+  [BiomeId.Meadow]: [0.9, 1, 0.86],
   [BiomeId.Wildwood]: [0.82, 1, 0.78],
   [BiomeId.Frostpine]: [0.74, 0.92, 0.88],
   [BiomeId.Desert]: [1.1, 0.96, 0.72],
@@ -167,12 +186,25 @@ const TILE_COLORS = [
   "#b56f50", "#d4af3f", "#60d8e1", "#3d4448", "#ed642f", "#a74e62", "#4b8245", "#85817c",
   "#8fd0e2", "#3b3538", "#29213d", "#61dce5", "#9f6b35", "#65a842", "#d54f48", "#548ed8",
   "#caa64c", "#6d452b", "#69422a", "#5e9d43", "#9b6839", "#666666", "#555555", "#444444",
-  "#7fbd55", "#6fa14a", "#f4ca4f", "#b59be8", "#a88a48", "#72a94a", "#b8ded9", "#d7b667",
+  "#568e43", "#6f4f34", "#f4ca4f", "#b59be8", "#a88a48", "#72a94a", "#b8ded9", "#d7b667",
   "#53735d",
   "#5f7f47", "#4f7c42", "#704b8e", "#718943", "#63833d", "#d89542", "#659b48", "#4f8a40",
   "#c84b40", "#79a54f", "#aab14d", "#523824", "#9a693c", "#d8cca4", "#4e5765", "#b96845",
   "#9f6b35", "#b9874e",
 ];
+
+export const MEADOW_GRASS_PALETTE = Object.freeze({
+  top: "#568e43",
+  topDark: "#3d7136",
+  topLight: "#79ac58",
+  clover: "#a8ca70",
+  flower: "#e2c45e",
+  sideDirt: "#6f4f34",
+  sideGrass: "#5c9447",
+});
+
+/** Leaf tiles are fully painted; same-type interior faces remain culled. */
+export const LEAF_TEXTURE_CUTOUT_CHANCE = 0;
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -467,7 +499,11 @@ export function createBlockAtlas() {
       context.strokeRect(ox + 3.5, oy + 3.5, 9, 9);
       context.strokeRect(ox + 6.5, oy + 6.5, 3, 3);
     }
-    if (leafTiles.has(index)) for (let y = 0; y < tile; y += 1) for (let x = 0; x < tile; x += 1) if (random() < 0.14) context.clearRect(ox + x, oy + y, 1, 1);
+    if (leafTiles.has(index) && LEAF_TEXTURE_CUTOUT_CHANCE > 0) {
+      for (let y = 0; y < tile; y += 1) for (let x = 0; x < tile; x += 1) {
+        if (random() < LEAF_TEXTURE_CUTOUT_CHANCE) context.clearRect(ox + x, oy + y, 1, 1);
+      }
+    }
     if (oreTiles.has(index)) {
       const oreColor = index === 9 ? "#25282a" : index === 10 ? "#c08e70" : index === 40 ? "#d27854" : index === 41 ? "#f0c94f" : "#67edf2";
       for (let i = 0; i < 20; i += 1) pixel(index, Math.floor(random() * tile), Math.floor(random() * tile), oreColor);
@@ -557,17 +593,19 @@ export function createBlockAtlas() {
       for (let x = 3; x < 16; x += 6) for (let y = 2; y < 16; y += 6) context.fillRect(ox + x, oy + y, 2, 2);
     }
     if (index === 64) {
-      context.fillStyle = "#79b951";
+      context.fillStyle = MEADOW_GRASS_PALETTE.top;
       context.fillRect(ox, oy, tile, tile);
       for (let y = 0; y < tile; y += 1) for (let x = 0; x < tile; x += 1) {
-        if ((x * 5 + y * 3) % 17 === 0) pixel(index, x, y, "#a8d76c");
-        else if ((x * 7 + y * 11) % 29 === 0) pixel(index, x, y, "#e3c94f");
+        if ((x * 5 + y * 3) % 19 === 0) pixel(index, x, y, MEADOW_GRASS_PALETTE.topDark);
+        else if ((x * 7 + y * 11) % 23 === 0) pixel(index, x, y, MEADOW_GRASS_PALETTE.topLight);
+        else if ((x * 11 + y * 5) % 41 === 0) pixel(index, x, y, MEADOW_GRASS_PALETTE.clover);
+        else if ((x * 13 + y * 17) % 67 === 0) pixel(index, x, y, MEADOW_GRASS_PALETTE.flower);
       }
     }
     if (index === 65) {
-      context.fillStyle = "#765436";
+      context.fillStyle = MEADOW_GRASS_PALETTE.sideDirt;
       context.fillRect(ox, oy, tile, tile);
-      context.fillStyle = "#76b650";
+      context.fillStyle = MEADOW_GRASS_PALETTE.sideGrass;
       context.fillRect(ox, oy, tile, 5);
       for (let x = 0; x < tile; x += 2) context.fillRect(ox + x, oy + 4, 1, 2 + (x % 3));
     }
@@ -976,7 +1014,9 @@ export class ChunkWorld {
     const riverField = Math.abs(fbm2(warpX + 211, warpZ - 173, this.seed ^ 0x85157af5, 1 / 320, 3));
     const river = (1 - smoothstep(0.018, 0.066, riverField)) * smoothstep(-0.16, 0.06, continental) * (1 - 0.75 * mountain);
     const waterline = SEA_LEVEL + Math.floor(2 * smoothstep(-0.05, 0.55, continental));
-    height = lerp(height, waterline - 2, river * 0.9);
+    const riverBedNoise = 0.5 + 0.5 * fbm2(warpX - 377, warpZ + 229, this.seed ^ 0xa511e9b3, 1 / 74, 3);
+    const broadChannel = smoothstep(0.12, 0.78, river);
+    height = lerp(height, waterline - (2.5 + riverBedNoise * 2), broadChannel * 0.92);
     const swampWeight = smoothstep(0.7, 0.86, moisture) * smoothstep(0.38, 0.57, temperature) * (1 - smoothstep(SEA_LEVEL + 10, SEA_LEVEL + 18, height));
     height = lerp(height, SEA_LEVEL + 2 + 1.4 * fbm2(warpX, warpZ, this.seed ^ 0xe17a1465, 1 / 42, 2), swampWeight * 0.76);
     const dryWeight = smoothstep(0.6, 0.77, temperature) * (1 - smoothstep(0.23, 0.36, moisture));
@@ -985,13 +1025,21 @@ export class ChunkWorld {
     // ridges now read differently without adding another biome lookup.
     const localRelief = fbm2(warpX + 53, warpZ - 91, this.seed ^ 0x4cf5ad43, 1 / 46, 3);
     const reliefAmplitude = 1.15 + dryWeight * 2.15 + moisture * 0.65 + mountain * 1.5;
-    height += localRelief * reliefAmplitude;
+    // Fine land relief fades toward the channel so it cannot accidentally
+    // refill a river after the broad valley has been carved.
+    height += localRelief * reliefAmplitude * (1 - smoothstep(0.2, 0.7, river) * 0.9);
+    if (river > 0.52) {
+      const channelDepth = 3 + Math.floor(smoothstep(0.52, 0.9, river) * 3 + riverBedNoise * 2);
+      height = Math.min(height, waterline - channelDepth);
+    }
     height = clamp(Math.round(height), MIN_Y + 7, MAX_Y - 8);
 
     let biome = BiomeId.Meadow;
-    if (height <= SEA_LEVEL - 10) biome = BiomeId.DeepOcean;
+    // River identity follows the channel field, not its freshly deepened bed;
+    // checking ocean depth first would relabel every useful river as ocean.
+    if (river > 0.52) biome = BiomeId.River;
+    else if (height <= SEA_LEVEL - 10) biome = BiomeId.DeepOcean;
     else if (height <= SEA_LEVEL - 2) biome = temperature < 0.15 ? BiomeId.Snowfield : BiomeId.Ocean;
-    else if (river > 0.52) biome = BiomeId.River;
     else if (height <= SEA_LEVEL + 2) biome = BiomeId.Beach;
     else if (variant > 0.86 && mountain > 0.18 && temperature > 0.42) biome = BiomeId.Volcanic;
     else if (mountain > 0.36 || height >= 68) biome = temperature < 0.35 || height > 78 ? BiomeId.Snowfield : BiomeId.Highlands;
@@ -1158,12 +1206,32 @@ export class ChunkWorld {
     const minX = chunk.cx * CHUNK_SIZE;
     const minZ = chunk.cz * CHUNK_SIZE;
     const inside = (x: number, z: number) => x >= minX && x < minX + CHUNK_SIZE && z >= minZ && z < minZ + CHUNK_SIZE;
+    const legacyClearings: Array<Readonly<{ minX: number; maxX: number; minZ: number; maxZ: number }>> = [];
     const set = (x: number, y: number, z: number, type: BlockId, onlyAir = true) => {
       if (!inside(x, z) || y < MIN_Y || y > MAX_Y) return;
       const lx = x - minX;
       const lz = z - minZ;
       const index = blockIndex(lx, y, lz);
-      if (!onlyAir || chunk.blocks[index] === BlockId.Air || BLOCKS[chunk.blocks[index]]?.replaceable) chunk.blocks[index] = type;
+      const current = chunk.blocks[index] as BlockId;
+      // Generated flora may replace another plant, but never water/lava. This
+      // keeps planned meadow flowers from plugging river surfaces.
+      if (onlyAir && (current === BlockId.Water || current === BlockId.Lava)) return;
+      if (!onlyAir || current === BlockId.Air || BLOCKS[current]?.replaceable) chunk.blocks[index] = type;
+    };
+    const clearGeneratedGrowth = (bounds: Readonly<{ minX: number; maxX: number; minZ: number; maxZ: number }>) => {
+      const startX = Math.max(minX, Math.floor(bounds.minX));
+      const endX = Math.min(minX + CHUNK_SIZE - 1, Math.ceil(bounds.maxX));
+      const startZ = Math.max(minZ, Math.floor(bounds.minZ));
+      const endZ = Math.min(minZ + CHUNK_SIZE - 1, Math.ceil(bounds.maxZ));
+      if (startX > endX || startZ > endZ) return;
+      for (let x = startX; x <= endX; x += 1) for (let z = startZ; z <= endZ; z += 1) {
+        const lx = x - minX;
+        const lz = z - minZ;
+        for (let y = MIN_Y; y <= MAX_Y; y += 1) {
+          const index = blockIndex(lx, y, lz);
+          if (GENERATED_GROWTH_BLOCK_SET.has(chunk.blocks[index] as BlockId)) chunk.blocks[index] = BlockId.Air;
+        }
+      }
     };
 
     const cellSize = 4;
@@ -1242,6 +1310,9 @@ export class ChunkWorld {
           const column = sample(x, z);
           if (column.height <= column.waterline + 2 || [BiomeId.Ocean, BiomeId.DeepOcean, BiomeId.River].includes(column.biome)) continue;
           const cabin = hash2(rx, rz, this.seed ^ 0x99999999) > 0.63 && [BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Frostpine].includes(column.biome);
+          const legacyClearing = { minX: x - 6, maxX: x + 6, minZ: z - 6, maxZ: z + 6 } as const;
+          legacyClearings.push(legacyClearing);
+          clearGeneratedGrowth(legacyClearing);
           if (cabin) {
             for (let dx = -3; dx <= 3; dx += 1) for (let dz = -3; dz <= 3; dz += 1) set(x + dx, column.height, z + dz, BlockId.Planks, false);
             for (let dy = 1; dy <= 3; dy += 1) for (let dx = -3; dx <= 3; dx += 1) for (let dz = -3; dz <= 3; dz += 1) {
@@ -1276,7 +1347,15 @@ export class ChunkWorld {
         chunkZ: chunk.cz,
         surfaceYAt: (x, z) => sample(x, z).height,
       });
-      for (const placement of vegetation.placements) set(placement.x, placement.y, placement.z, mapVegetationBlock(placement));
+      for (const placement of vegetation.placements) {
+        const column = sample(placement.x, placement.z);
+        const inWaterway = column.height <= column.waterline
+          || [BiomeId.DeepOcean, BiomeId.Ocean, BiomeId.River].includes(column.biome);
+        const inLegacyClearing = legacyClearings.some((bounds) => placement.x >= bounds.minX && placement.x <= bounds.maxX
+          && placement.z >= bounds.minZ && placement.z <= bounds.maxZ);
+        if (inWaterway || inLegacyClearing) continue;
+        set(placement.x, placement.y, placement.z, mapVegetationBlock(placement));
+      }
     }
 
     if (this.generationOptions.structures) {
@@ -1292,6 +1371,7 @@ export class ChunkWorld {
           const kind = structureCandidateForChunk({ seed: this.seedText, chunkX: originCx, chunkZ: originCz, biome: structureBiome });
           if (!kind) continue;
           const plan = planStructure(kind, { x: originX, y: originColumn.height, z: originZ }, this.seedText);
+          clearGeneratedGrowth(structureClearanceBounds(plan));
           for (const placement of structurePlacementsForChunk(plan, chunk.cx, chunk.cz, CHUNK_SIZE)) {
             let type = placement.block;
             if (kind === "desert-temple" && (type === BlockId.StoneBrick || type === BlockId.Sand)) type = BlockId.TempleSandstone;
@@ -1744,14 +1824,15 @@ export class ChunkWorld {
           continue;
         }
         if (definition.shape === "exhibit") {
-          // Conservatory blocks visually fuse into one habitat: interior glass
-          // faces disappear while the atlas-painted brass frame remains around
-          // every exposed outer panel.
+          // Conservatory blocks visually fuse into one habitat. Interior faces
+          // disappear and exposed faces use unframed glass; the engine draws a
+          // single component perimeter so coplanar blocks cannot z-fight or
+          // retain the old one-frame-per-block grid.
           for (const face of FACES) {
             const [dx, dy, dz] = face.direction;
             if (neighborAt(lx + dx, y + dy, lz + dz) === BlockId.ButterflyExhibit) continue;
             const environment = shadeAt(lx + dx, y + dy, lz + dz);
-            addQuad(bucket, face.corners, face.direction, definition.side, face.shade, [1, 1, 1], lx, y, lz, 0, environment);
+            addQuad(bucket, face.corners, face.direction, definition.top, face.shade, [1, 1, 1], lx, y, lz, 0, environment);
           }
           continue;
         }

@@ -44,6 +44,12 @@ type ButterflyEntity = {
   phase: number;
 };
 
+export type ButterflyVisual = {
+  group: THREE.Group;
+  leftWing: THREE.Group;
+  rightWing: THREE.Group;
+};
+
 const FLOWERS = new Set<BlockId>([BlockId.RedFlower, BlockId.BlueFlower]);
 const BUTTERFLY_BIOMES = new Set<BiomeId>([
   BiomeId.Meadow, BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Bloomwood,
@@ -89,6 +95,43 @@ export function butterflyCaptureAlongRay(
     if (!best || forward < best.forward) best = { id: snapshot.id, forward };
   }
   return best?.id ?? null;
+}
+
+/** Standalone production butterfly used by held items and conservatories. */
+export function createButterflyVisual(kind: ButterflyKind, id: string | number = kind): ButterflyVisual {
+  const [wingColor, bodyColor, accentColor] = MOB_DEFS[kind].colors;
+  const group = new THREE.Group();
+  group.name = `butterfly-${kind}`;
+  group.userData.butterflyId = id;
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.055, 0.17), new THREE.MeshLambertMaterial({ color: bodyColor }));
+  body.name = `${kind}-body`;
+  body.userData.butterflyId = id;
+  group.add(body);
+  const wingMaterial = new THREE.MeshLambertMaterial({ color: wingColor, transparent: true, opacity: 0.92, side: THREE.DoubleSide });
+  const leftWing = new THREE.Group();
+  const rightWing = new THREE.Group();
+  leftWing.name = `${kind}-left-wing`;
+  rightWing.name = `${kind}-right-wing`;
+  leftWing.userData.wingSide = 1;
+  rightWing.userData.wingSide = -1;
+  leftWing.position.x = -0.035;
+  rightWing.position.x = 0.035;
+  for (const [pivot, side] of [[leftWing, -1], [rightWing, 1]] as const) {
+    const wing = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.018, 0.14), wingMaterial.clone());
+    wing.position.x = side * 0.1;
+    wing.userData.butterflyId = id;
+    pivot.add(wing);
+  }
+  wingMaterial.dispose();
+  group.add(leftWing, rightWing);
+  for (const side of [-1, 1]) {
+    const antenna = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.012, 0.12), new THREE.MeshBasicMaterial({ color: accentColor }));
+    antenna.position.set(side * 0.02, 0.025, -0.125);
+    antenna.rotation.x = -0.38;
+    antenna.rotation.z = side * 0.18;
+    group.add(antenna);
+  }
+  return { group, leftWing, rightWing };
 }
 
 export class ButterflySystem {

@@ -36,6 +36,9 @@ test("sailboat movement remains on supported water and exposes two distinct seat
   const moved = integrateSailboat(initial, { forward: 1, turn: 0.4 }, 0.1, () => true);
   assert.ok(moved.z < 0);
   assert.ok(moved.velocity > 0);
+  assert.ok(moved.yaw < 0, "positive horizontal input turns the Wayfarer toward screen-right after control reversal");
+  const port = integrateSailboat(initial, { forward: 1, turn: -0.4 }, 0.1, () => true);
+  assert.ok(port.yaw > 0);
   const blocked = integrateSailboat(moved, { forward: 1, turn: 0 }, 0.1, (x, z) => Math.abs(x) < 0.5 && Math.abs(z) < 0.5);
   assert.ok(blocked.velocity <= 0, "the hull must not motor onto dry land");
   assert.notDeepEqual(sailboatSeatOffset(0, moved.yaw), sailboatSeatOffset(1, moved.yaw));

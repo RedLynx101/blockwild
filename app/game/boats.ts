@@ -86,7 +86,10 @@ export function integrateSailboat(
 ): SailboatKinematics {
   const dt = clamp(deltaSeconds, 0, 0.1);
   const throttle = clamp(input.forward, -1, 1);
-  const steer = clamp(input.turn, -1, 1);
+  // Screen-space horizontal controls are intentionally reversed at the boat
+  // boundary: D/starboard turns the bow to the player's right in the camera's
+  // forward view.  Reverse travel still inverts the rudder naturally below.
+  const steer = -clamp(input.turn, -1, 1);
   const targetSpeed = throttle >= 0 ? throttle * SAILBOAT_MAX_SPEED : throttle * SAILBOAT_MAX_SPEED * 0.38;
   const velocity = current.velocity + (targetSpeed - current.velocity) * (1 - Math.exp(-dt * (throttle ? 2.7 : 1.55)));
   const steeringAuthority = 0.38 + Math.min(1, Math.abs(velocity) / SAILBOAT_MAX_SPEED) * 0.92;

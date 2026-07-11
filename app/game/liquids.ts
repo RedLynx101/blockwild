@@ -338,6 +338,10 @@ export type SwimRules = Readonly<{
   drowningIntervalSeconds: number;
   drowningDamage: number;
   buoyancyAcceleration: number;
+  /** Downward acceleration applied without player input, Minecraft-style. */
+  passiveSinkAcceleration: number;
+  /** Prevents passive sinking from becoming a damaging free-fall. */
+  maximumSinkSpeed: number;
   swimAcceleration: number;
   waterDrag: number;
   shoreExitVelocity: number;
@@ -348,10 +352,14 @@ export const DEFAULT_SWIM_RULES: SwimRules = Object.freeze({
   oxygenRecoveryPerSecond: 4,
   drowningIntervalSeconds: 1.5,
   drowningDamage: 1,
-  buoyancyAcceleration: 8.5,
-  swimAcceleration: 7.5,
+  // A released swimmer settles downward at roughly 1.2 blocks/second. Space
+  // comfortably overcomes this and the dedicated shore boost handles banks.
+  buoyancyAcceleration: 3.2,
+  passiveSinkAcceleration: 4.25,
+  maximumSinkSpeed: 2.3,
+  swimAcceleration: 12.5,
   waterDrag: 2.8,
-  shoreExitVelocity: 7.4,
+  shoreExitVelocity: 8.15,
 });
 
 /** Pure player-water step; the caller applies returned velocity and damage. */
@@ -388,8 +396,13 @@ export function stepSwimming(
   let shoreBoosted = false;
   if (submersion > 0) {
     velocityY *= Math.exp(-rules.waterDrag * submersion * dt);
-    velocityY += rules.buoyancyAcceleration * Math.max(0, submersion - 0.34) * dt;
+    // Water is not an automatic elevator. A small deep-water buoyancy term
+    // softens the descent, while an idle player still settles beneath the
+    // surface and Space produces an intentional swim stroke.
+    velocityY += rules.buoyancyAcceleration * Math.max(0, submersion - 0.84) * dt;
+    velocityY -= rules.passiveSinkAcceleration * dt;
     if (input.jumpHeld) velocityY += rules.swimAcceleration * dt;
+    velocityY = Math.max(-rules.maximumSinkSpeed, velocityY);
 
     const ledgeHeight = environment.shoreLedgeHeight ?? Number.POSITIVE_INFINITY;
     const surfaceGap = environment.surfaceGap ?? Number.POSITIVE_INFINITY;

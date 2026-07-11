@@ -354,7 +354,9 @@ export class BlockPlayerModel {
 
     this.rightHandSocket.name = "right-hand-socket";
     this.rightHandSocket.userData.socket = "right-hand";
-    this.rightHandSocket.position.set(0, -ARM_LENGTH + 0.08, -0.015);
+    // Player-local forward is -Z. Keep held geometry beyond the hand so tools,
+    // nets, jars, and blocks remain readable instead of clipping into the arm.
+    this.rightHandSocket.position.set(0, -ARM_LENGTH + 0.08, -0.22);
     rightArm.add(this.rightHandSocket);
 
     this.nameAnchor.name = "player-name-anchor";

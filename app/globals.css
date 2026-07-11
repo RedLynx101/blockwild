@@ -4085,6 +4085,40 @@ input:focus-visible {
 .item-icon-audit-grid strong { overflow: hidden; color: #edf0eb; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .item-icon-audit-grid small { overflow: hidden; color: #829087; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
 
+.held-model-audit {
+  position: fixed;
+  inset: 0;
+  z-index: 101;
+  overflow: auto;
+  padding: 24px;
+  color: #e9eee7;
+  background: radial-gradient(circle at 50% 5%, #324037 0, #151a17 54%);
+}
+
+.held-model-audit > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  max-width: 1100px;
+  margin: 0 auto;
+  border-bottom: 1px solid #647168;
+}
+
+.held-model-audit h2 { margin: 4px 0 12px; color: #fff; }
+.held-model-audit > header button { width: 36px; height: 36px; color: #fff; background: #303833; border: 1px solid #79867d; font: inherit; cursor: pointer; }
+.held-model-audit > p { max-width: 1100px; margin: 12px auto 18px; color: #aeb9b1; font-size: 10px; }
+.held-model-audit-grid { display: grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap: 14px; max-width: 1100px; margin: 0 auto; }
+.held-model-audit-grid figure { margin: 0; min-width: 0; border: 1px solid #536158; background: rgba(28, 35, 30, .92); }
+.held-model-audit-grid .player-avatar-preview { width: 100%; height: min(58vh, 430px); background: linear-gradient(#9dc4bf 0 62%, #60775a 62%); }
+.held-model-audit-grid figcaption { display: grid; gap: 4px; min-height: 58px; padding: 10px 12px; border-top: 1px solid #536158; }
+.held-model-audit-grid figcaption strong { color: #fff3ce; font-size: 11px; }
+.held-model-audit-grid figcaption small { color: #9dac9f; font-size: 8px; }
+
+@media (max-width: 850px) {
+  .held-model-audit-grid { grid-template-columns: repeat(2, minmax(150px, 1fr)); }
+  .held-model-audit-grid .player-avatar-preview { height: 330px; }
+}
+
 .resource-setting select {
   min-width: 170px;
   min-height: 38px;

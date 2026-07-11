@@ -269,6 +269,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "A flash of banked fire in the canopy. Its alarm call makes nearby grazers lift their heads.",
     colors: [0xb9432e, 0xe9a141, 0x261b22], drops: [{ item: Item.Feather, min: 1, max: 2, chance: 1 }],
     family: "bird", movement: "flying", flying: true, utility: "Calls when hostile surface creatures are close.",
+    sentient: false, breedable: true, breedingFoods: [Item.Wheat], diet: [Item.Wheat, Item.Berry],
   },
   "canopy-lark": {
     kind: "canopy-lark", name: "Canopy Lark", temperament: "Skittish", hostile: false,
@@ -278,6 +279,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "Each flock improvises a local song, so patient explorers can hear when they have crossed into new woods.",
     colors: [0x4f9b75, 0xd9e7a4, 0x20362c], drops: [{ item: Item.Feather, min: 1, max: 2, chance: 1 }],
     family: "bird", movement: "flying", flying: true, utility: "Frequent perching marks mature trees that are suitable for saplings.",
+    sentient: false, breedable: true, breedingFoods: [Item.Berry], diet: [Item.Berry, Item.Wheat],
   },
   shoalfin: {
     kind: "shoalfin", name: "Silver Shoalfin", temperament: "Skittish", hostile: false,
