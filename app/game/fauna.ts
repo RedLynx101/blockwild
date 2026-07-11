@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { BiomeId } from "./world";
-import type { BirdKind, CoreMobKind, MobKind, TideglassAquaticKind } from "./mobs";
+import type { BirdKind, CoreMobKind, DragonKind, MobKind, TideglassAquaticKind } from "./mobs";
 
 const TAU = Math.PI * 2;
 
@@ -380,11 +380,13 @@ export type PersistenceContext = {
   captured?: boolean;
   leashed?: boolean;
   persistentPoiResident?: boolean;
+  /** Wild and tamed dragons persist as unloaded records even outside simulation range. */
+  dragon?: boolean;
 };
 
-/** Tamed, named, caged, leashed, POI-bound, or genuinely enclosed creatures never despawn. */
+/** Tamed, named, caged, leashed, POI-bound, enclosed, or draconic creatures never despawn. */
 export function shouldKeepCreatureLoaded(context: PersistenceContext) {
-  return Boolean(context.tamed || context.named || context.enclosed || context.captured || context.leashed || context.persistentPoiResident);
+  return Boolean(context.tamed || context.named || context.enclosed || context.captured || context.leashed || context.persistentPoiResident || context.dragon);
 }
 
 export type LeviathanSpecies = "worldshell-leviathan" | "aetherbell-leviathan";
@@ -723,6 +725,15 @@ export function usesGenericCreatureBond(kind: CoreMobKind): kind is (typeof GENE
 export const SUGARPLUM_MOB_KINDS = Object.freeze([
   "taffy-hound", "praline-cat", "sprinklebug", "taffalo", "syrupfin", "bonbonwing",
 ] as const satisfies readonly MobKind[]);
+
+/** Dragons are lair-bound POI guardians, never ambient biome spawn-table entries. */
+export const DRAGON_MOB_KINDS = Object.freeze([
+  "fire-dragon", "ice-dragon", "steel-dragon",
+] as const satisfies readonly DragonKind[]);
+
+export function isDragonMobKind(kind: MobKind): kind is DragonKind {
+  return DRAGON_MOB_KINDS.includes(kind as DragonKind);
+}
 
 /** Roster used by biome integration without exposing settlement-only Atlantians as ambient wildlife. */
 export const LUMEN_TRENCH_MOB_KINDS: readonly TideglassAquaticKind[] = Object.freeze([

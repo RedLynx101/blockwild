@@ -6,7 +6,13 @@ export const STATION_OUTPUT_CAP = 64;
 
 export type ResourceStack = Readonly<{ item: string; count: number }>;
 export type ResourceInventory = Readonly<Record<string, number>>;
-export type RecipeIngredient = Readonly<{ item: string; count: number; consume?: boolean }>;
+export type RecipeIngredient = Readonly<{
+  item: string;
+  count: number;
+  consume?: boolean;
+  /** Equivalent inventory resources accepted in place of the display item. */
+  alternatives?: readonly string[];
+}>;
 
 export type PotionEffect =
   | Readonly<{ kind: "heal"; amount: number }>
@@ -114,6 +120,24 @@ export const ALCHEMY_RECIPES: readonly AlchemyRecipe[] = Object.freeze([
     brewSeconds: 44,
     blueprintId: "sugarcourt-marshmallow-ward",
     effect: { kind: "timed-buff", buff: "marshmallow-ward", durationSeconds: 210 },
+  },
+  {
+    id: "manaheart-draught",
+    name: "Manaheart Draught",
+    description: "Raw gold steadies the enduring spark drawn from any elemental dragon heart.",
+    inputs: [
+      { item: "water-bottle", count: 1 },
+      { item: "raw-gold", count: 4 },
+      {
+        item: "dragon-heart",
+        count: 1,
+        alternatives: ["fire-dragon-heart", "ice-dragon-heart", "steel-dragon-heart"],
+      },
+    ],
+    output: { item: "manaheart-draught", count: 1 },
+    brewSeconds: 90,
+    blueprintId: null,
+    effect: null,
   },
 ]);
 
@@ -243,17 +267,29 @@ function outputCanAccept(output: ResourceStack | null, stack: ResourceStack) {
   return (!output || output.item === stack.item) && (output?.count ?? 0) + stack.count <= STATION_OUTPUT_CAP;
 }
 
+export function ingredientAvailableCount(ingredient: RecipeIngredient, inventory: ResourceInventory) {
+  const resourceIds = [...new Set([ingredient.item, ...(ingredient.alternatives ?? [])])];
+  return resourceIds.reduce((total, resourceId) => total + (inventory[resourceId] ?? 0), 0);
+}
+
 function ingredientsAvailable(inventory: ResourceInventory, inputs: readonly RecipeIngredient[]) {
-  return inputs.every((input) => (inventory[input.item] ?? 0) >= input.count);
+  return inputs.every((input) => ingredientAvailableCount(input, inventory) >= input.count);
 }
 
 function reserveIngredients(inventory: ResourceInventory, inputs: readonly RecipeIngredient[]) {
   const next = { ...inventory };
   for (const input of inputs) {
     if (input.consume === false) continue;
-    const count = (next[input.item] ?? 0) - input.count;
-    if (count > 0) next[input.item] = count;
-    else delete next[input.item];
+    let remaining = input.count;
+    for (const resourceId of new Set([input.item, ...(input.alternatives ?? [])])) {
+      const available = next[resourceId] ?? 0;
+      const consumed = Math.min(available, remaining);
+      const count = available - consumed;
+      if (count > 0) next[resourceId] = count;
+      else delete next[resourceId];
+      remaining -= consumed;
+      if (remaining <= 0) break;
+    }
   }
   return next;
 }

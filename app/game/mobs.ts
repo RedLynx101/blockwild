@@ -36,6 +36,7 @@ export type TideglassAquaticKind =
   | "aetherbell-larva"
   | "aetherbell-leviathan";
 export type SugarplumAquaticKind = "syrupfin";
+export type DragonKind = "fire-dragon" | "ice-dragon" | "steel-dragon";
 export type HobbitKind =
   | "hobbit-mayor"
   | "hobbit-farmer"
@@ -79,12 +80,13 @@ export type CoreMobKind =
   | HearthroadsAquaticKind
   | TideglassAquaticKind
   | SugarplumAquaticKind
+  | DragonKind
   | SentientMobKind
   | SpecialMobKind;
 export type MobKind = CoreMobKind | ButterflyKind;
 export type MobTemperament = "Gentle" | "Skittish" | "Defensive" | "Hostile";
 export type MobMovement = "ground" | "flying" | "aquatic" | "amphibious";
-export type MobFamily = "surface" | "bird" | "fish" | "pet" | "mount" | "leviathan" | "pollinator" | "construct" | "undead" | "sentient" | "butterfly";
+export type MobFamily = "surface" | "bird" | "fish" | "pet" | "mount" | "leviathan" | "dragon" | "pollinator" | "construct" | "undead" | "sentient" | "butterfly";
 
 export type MobDrop = {
   item: ItemCode;
@@ -153,6 +155,8 @@ export type MobDefinition = {
   cargoChestLimit?: number;
   /** Restricts an aquatic species to a specific liquid rather than ordinary water. */
   liquidHabitat?: "water" | "syrup";
+  /** Lifecycle discriminator; detailed stage/sex/equipment state lives in dragons.ts. */
+  dragonType?: "fire" | "ice" | "steel";
 };
 
 export const MOB_DEFS: Record<MobKind, MobDefinition> = {
@@ -1031,6 +1035,63 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     sentient: true, faction: "sugarcourt", culture: "sugarcourt", role: "worker", profession: "Candysmith", tradeSpecialty: "Candy weapons, Sugarplate armor and blueprints",
     utility: "Sugarcourt equipment smith and blueprint merchant.", discoveryHint: "Rhythmic glassy hammer notes lead to the borough Candysmith.",
   },
+  "fire-dragon": {
+    kind: "fire-dragon", name: "Fire Dragon", temperament: "Hostile", hostile: true,
+    health: 500, damage: 43, xp: 180, speed: 1.15, chaseSpeed: 4.8, turnRate: 2.6, attackRange: 4.7,
+    footOffset: 0.75, radius: 2.55, height: 3.4, habitat: "Charred subterranean lairs beneath warm and temperate country", active: "All hours near a guarded lair",
+    behavior: "Circles above intruders, rakes the ground with claws, and alternates a furnace-hot breath stream with arcing firebolts. Older dragons will abandon a chase to defend their hoard and eggs.",
+    lore: "Fire Dragons sleep beneath heaps of softened gold. Every twenty-five days of age leaves a darker ring along their horns and a wider shadow over the lair mouth.",
+    colors: [0x9d2f27, 0xe26a35, 0xffdf73], family: "dragon", movement: "flying", flying: true, ranged: true, persistent: true,
+    dragonType: "fire", tameable: true, tameItems: [Item.RawDragonMeat, Item.CookedDragonMeat], breedable: true,
+    breedingFoods: [Item.FireBreedingCatalyst], diet: [Item.RawMeat, Item.CookedMeat, Item.RawDragonMeat, Item.CookedDragonMeat],
+    rideable: true, cargoChestLimit: 2, laysEggs: true,
+    drops: [
+      { item: Item.RawDragonMeat, min: 4, max: 30, chance: 1 }, { item: Item.FireDragonScale, min: 7, max: 60, chance: 1 },
+      { item: Item.DragonBone, min: 6, max: 50, chance: 1 }, { item: Item.FireDragonSkull, min: 1, max: 1, chance: 1 },
+      { item: Item.FireDragonHeart, min: 1, max: 1, chance: 0.82 },
+    ],
+    postTameNotes: "A stage-one hatchling bonds after three patient meat feeds and can ride on a shoulder. Stage three unlocks saddling, flight, armor, and two cargo chests. Z, X, and C direct melee, breath, and firebolt attacks while mounted.",
+    secretHint: "Fire eggs stir only inside a sustained open flame, unless stabilized in a Draconic Incubator.",
+    discoveryHint: "Merchants rarely sell a Fire Lair Survey; otherwise seek scorched cave vents and gold fused into stone.",
+  },
+  "ice-dragon": {
+    kind: "ice-dragon", name: "Ice Dragon", temperament: "Hostile", hostile: true,
+    health: 520, damage: 40, xp: 185, speed: 1.08, chaseSpeed: 4.55, turnRate: 2.8, attackRange: 4.8,
+    footOffset: 0.75, radius: 2.62, height: 3.45, habitat: "Frozen subterranean lairs below Frostpine and high snowy country", active: "All hours near a guarded lair",
+    behavior: "Uses cavern water and open air as one hunting space, slowing prey with a crystalline breath before launching long ice shards or diving into a claw strike.",
+    lore: "An Ice Dragon does not merely endure winter; the oldest carry a private winter with them, writing frost across every surface they pass.",
+    colors: [0x5d8cae, 0xa9d9e9, 0xf3ffff], family: "dragon", movement: "flying", flying: true, ranged: true, persistent: true,
+    dragonType: "ice", tameable: true, tameItems: [Item.RawDragonMeat, Item.CookedDragonMeat], breedable: true,
+    breedingFoods: [Item.IceBreedingCatalyst], diet: [Item.RawMeat, Item.CookedMeat, Item.RawFish, Item.RawDragonMeat, Item.CookedDragonMeat],
+    rideable: true, cargoChestLimit: 2, laysEggs: true,
+    drops: [
+      { item: Item.RawDragonMeat, min: 4, max: 30, chance: 1 }, { item: Item.IceDragonScale, min: 7, max: 60, chance: 1 },
+      { item: Item.DragonBone, min: 6, max: 50, chance: 1 }, { item: Item.IceDragonSkull, min: 1, max: 1, chance: 1 },
+      { item: Item.IceDragonHeart, min: 1, max: 1, chance: 0.82 },
+    ],
+    postTameNotes: "A stage-one hatchling bonds after three patient meat feeds and can ride on a shoulder. Stage three unlocks saddling, flight, armor, and two cargo chests. Z, X, and C direct melee, freezing breath, and ice-shard attacks while mounted.",
+    secretHint: "Ice eggs need freezing water around the shell, unless stabilized in a Draconic Incubator.",
+    discoveryHint: "Merchants rarely sell an Ice Lair Survey; otherwise follow unnatural rime into deep Frostpine caves.",
+  },
+  "steel-dragon": {
+    kind: "steel-dragon", name: "Steel Dragon", temperament: "Hostile", hostile: true,
+    health: 570, damage: 41, xp: 205, speed: 0.98, chaseSpeed: 4.2, turnRate: 2.35, attackRange: 5,
+    footOffset: 0.75, radius: 2.72, height: 3.55, habitat: "Ore-rich subterranean foundry lairs below mountains and badlands", active: "All hours near a guarded lair",
+    behavior: "Builds pressure behind interlocking throat plates, scalds close targets with steam, and launches a forged metal spear across the full lair before closing with armored jaws and talons.",
+    lore: "Steel Dragons are neither machines nor metal given life. Their scales simply learned the same lesson as a good blade: heat, pressure, patience, and an edge worth respecting.",
+    colors: [0x56636b, 0x9aaab1, 0xe9fbff], family: "dragon", movement: "flying", flying: true, ranged: true, persistent: true,
+    dragonType: "steel", tameable: true, tameItems: [Item.RawDragonMeat, Item.CookedDragonMeat], breedable: true,
+    breedingFoods: [Item.SteelBreedingCatalyst], diet: [Item.RawMeat, Item.CookedMeat, Item.RawDragonMeat, Item.CookedDragonMeat],
+    rideable: true, cargoChestLimit: 2, laysEggs: true,
+    drops: [
+      { item: Item.RawDragonMeat, min: 4, max: 30, chance: 1 }, { item: Item.SteelDragonScale, min: 7, max: 60, chance: 1 },
+      { item: Item.DragonBone, min: 6, max: 50, chance: 1 }, { item: Item.SteelDragonSkull, min: 1, max: 1, chance: 1 },
+      { item: Item.SteelDragonHeart, min: 1, max: 1, chance: 0.82 },
+    ],
+    postTameNotes: "A stage-one hatchling bonds after three patient meat feeds and can ride on a shoulder. Stage three unlocks saddling, flight, armor, and two cargo chests. Z, X, and C direct melee, steam breath, and the long-range metal spear while mounted.",
+    secretHint: "Steel eggs wake where steam washes over heated metal, unless stabilized in a Draconic Incubator.",
+    discoveryHint: "Merchants rarely sell a Steel Lair Survey; otherwise listen for hammerlike wingbeats in ore-rich depths.",
+  },
   meadowwing: {
     kind: "meadowwing", name: "Meadowwing", temperament: "Gentle", hostile: false,
     health: 1, damage: 0, xp: 0, speed: 1.3, chaseSpeed: 1.8, turnRate: 9, attackRange: 0,
@@ -1106,6 +1167,7 @@ export const TIDEGLASS_AQUATIC_ORDER: TideglassAquaticKind[] = [
   "glassfin", "lanternjaw", "abyss-skater", "dreadcoil", "tidepup", "worldshell-leviathan", "aetherbell-larva", "aetherbell-leviathan",
 ];
 export const SUGARPLUM_AQUATIC_ORDER: SugarplumAquaticKind[] = ["syrupfin"];
+export const DRAGON_ORDER: DragonKind[] = ["fire-dragon", "ice-dragon", "steel-dragon"];
 export const HOBBIT_ORDER: HobbitKind[] = [
   "hobbit-mayor", "hobbit-farmer", "hobbit-miner", "hobbit-merchant", "hobbit-banker", "hobbit-hammer-guard", "hobbit-crossbow-guard",
 ];
@@ -1129,6 +1191,7 @@ export const CORE_MOB_ORDER: CoreMobKind[] = [
   ...HEARTHROADS_AQUATIC_ORDER,
   ...TIDEGLASS_AQUATIC_ORDER,
   ...SUGARPLUM_AQUATIC_ORDER,
+  ...DRAGON_ORDER,
   ...SENTIENT_MOB_ORDER,
   ...SPECIAL_MOB_ORDER,
 ];

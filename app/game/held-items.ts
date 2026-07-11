@@ -54,6 +54,29 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
     group.scale.setScalar(1.02);
     group.rotation.set(0.08, 0.22, -0.1);
     group.userData.filledCaptureOrb = Boolean(options.filledCaptureOrb);
+  } else if (definition.heldModel === "dragon-egg") {
+    const shell = new THREE.Color(definition.color);
+    const shellHighlight = shell.clone().lerp(new THREE.Color(0xffffff), 0.34).getHex();
+    const shellShadow = shell.clone().multiplyScalar(0.52).getHex();
+    const rune = definition.dragonType === "fire" ? 0xffd166 : definition.dragonType === "ice" ? 0xe9fbff : 0xffd47a;
+    const shellPieces = [
+      addBox([0.18, 0.09, 0.18], [0, -0.15, 0], shellShadow),
+      addBox([0.3, 0.12, 0.27], [0, -0.045, 0], definition.color),
+      addBox([0.36, 0.16, 0.32], [0, 0.095, 0], definition.color),
+      addBox([0.31, 0.14, 0.29], [0, 0.245, 0], shellHighlight),
+      addBox([0.19, 0.13, 0.18], [0, 0.38, 0], shellHighlight),
+    ];
+    shellPieces.forEach((piece, index) => { piece.name = `dragon-egg-shell-${index + 1}`; });
+    const crackStem = addBox([0.026, 0.13, 0.025], [0.015, 0.17, -0.172], rune, [0, 0, 0.38], true);
+    const crackLeft = addBox([0.026, 0.09, 0.025], [-0.035, 0.245, -0.172], rune, [0, 0, -0.62], true);
+    const crackRight = addBox([0.026, 0.085, 0.025], [0.075, 0.105, -0.172], rune, [0, 0, 0.72], true);
+    crackStem.name = "dragon-egg-rune-stem";
+    crackLeft.name = "dragon-egg-rune-left";
+    crackRight.name = "dragon-egg-rune-right";
+    group.scale.setScalar(0.78);
+    group.rotation.set(0.06, 0.28, -0.08);
+    group.position.set(0, -0.03, -0.06);
+    group.userData.dragonEggType = definition.dragonType;
   } else if (definition.heldModel === "orb-rack") {
     addBox([0.54, 0.1, 0.34], [0, -0.13, 0], 0x765139);
     for (const x of [-0.23, 0.23]) addBox([0.07, 0.48, 0.08], [x, 0.08, 0], 0x4e3526);

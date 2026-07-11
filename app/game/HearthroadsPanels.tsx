@@ -27,13 +27,14 @@ import {
   type QuestObjective,
 } from "./quests";
 import { hasBlueprint, type BlueprintState } from "./blueprints";
-import type {
-  AlchemyRecipe,
-  AlchemyStandState,
-  DistilleryRecipe,
-  DistilleryState,
-  RecipeIngredient,
-  ResourceInventory,
+import {
+  ingredientAvailableCount,
+  type AlchemyRecipe,
+  type AlchemyStandState,
+  type DistilleryRecipe,
+  type DistilleryState,
+  type RecipeIngredient,
+  type ResourceInventory,
 } from "./alchemy";
 import type { SugarworksRecipe, SugarworksState } from "./candyworks";
 import {
@@ -880,7 +881,7 @@ function stationDuration(recipe: StationRecipe) {
 }
 
 function ingredientStatus(ingredient: RecipeIngredient, inventory: ResourceInventory) {
-  const available = inventory[ingredient.item] ?? 0;
+  const available = ingredientAvailableCount(ingredient, inventory);
   return {
     available,
     ready: ingredient.consume === false ? available > 0 : available >= ingredient.count,

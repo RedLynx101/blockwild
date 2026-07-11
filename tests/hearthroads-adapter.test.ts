@@ -16,3 +16,19 @@ test("station resource adapter counts inventory and isolates consumption", () =>
   const consumed = consumedResourceDelta(before, { apple: 1, moonberry: 1, "water-source": 1 });
   assert.deepEqual(consumed, { apple: 2, moonberry: 1 });
 });
+
+test("each numeric dragon heart keeps a typed station resource identity", () => {
+  const counts = inventoryResourceCounts([
+    { item: Item.FireDragonHeart, count: 1 },
+    { item: Item.IceDragonHeart, count: 2 },
+    { item: Item.SteelDragonHeart, count: 3 },
+  ]);
+  assert.deepEqual(counts, {
+    "fire-dragon-heart": 1,
+    "ice-dragon-heart": 2,
+    "steel-dragon-heart": 3,
+  });
+  assert.equal(resourceItemCode("fire-dragon-heart"), Item.FireDragonHeart);
+  assert.equal(resourceItemCode("ice-dragon-heart"), Item.IceDragonHeart);
+  assert.equal(resourceItemCode("steel-dragon-heart"), Item.SteelDragonHeart);
+});

@@ -1,6 +1,39 @@
 # Blockwild roadmap
 
-Blockwild v0.8 Sugarcourt adds Sugarplum Vale, the Sugarcourt Concord and Bonbon Boroughs, candy flora and crops, aligned village companions, a tameable Taffalo mount, the Sugarworks, candy equipment and potions, placeable honey and syrup, and per-faction world-generation choices. Tidelight's variable oceans, aquatic flora, leviathans, Rainveil Jungle, Sakurabloom Grove, Lumen Trench, and Atlantian culture remain part of the same world. Persistent maps, quests, settlements, faction standing, resident roles, trade, gold, banking, local ventures, alchemy, and blueprint knowledge remain the shared progression layer. The systems below are intentionally outside the v0.8 release boundary. This is a direction document, not a schedule.
+Blockwild v0.9 Wyrmweave adds persistent Fire, Ice, and Steel Dragons, five-stage growth, underground lairs, elemental eggs, incubation, husbandry, shoulder companions, flight, rider-directed combat, draconic equipment, the Dragonwake quest branch, reusable spell tomes, mana, six spells, a ten-slot `Q` wheel, Archive Shelves, rank-1000 skills, and the first Ascendant safeguard. Sugarcourt, Tidelight, and Hearthroads remain part of the same deterministic world and progression layer. The systems below are intentionally outside the v0.9 release boundary. This is a direction document, not a schedule.
+
+## More dragons and cross-type hybrids
+
+Wyrmweave establishes one durable lifecycle for three types and stages one through five. Later dragon releases can extend that model without turning each creature into an unrelated boss script:
+
+- Add new dragon families with distinct silhouettes, habitats, lairs, breath rules, husbandry, equipment, and ecological pressure.
+- Add cross-type hybrids only after inheritance rules can preserve type, sex, genetics, attack identity, scale color, egg conditions, and save compatibility without combinatorial one-off code.
+- Consider stage-six elder variants, migration between lairs, richer territorial disputes, and wild breeding under bounded off-screen simulation.
+- Expand rider tactics, aerial enemies, dragon-vs-dragon behavior, and counterplay without making a bonded elder solve every other progression route.
+
+Hybrids are deliberately absent from v0.9. Same-type opposite-sex breeding and elemental catalysts are the shipped boundary.
+
+## Magic after Wyrmweave
+
+The first release includes attunement, mana, reusable tomes, a journal, favorites, five schools, six spells, cast effects, and Magic-1000 mastery. Later work can add:
+
+- More faction, quest, lair, exploration, and rare-loot tomes without collapsing every school into direct damage.
+- Enchantment, charged equipment, ritual or environmental magic, spell interactions, summons, and counterspells.
+- More noncombat utility for building, farming, creatures, weather, mapping, travel, and settlements.
+- Explicit multiplayer authority for collaborative or hostile spell effects before adding broad area magic.
+
+Unrestricted teleportation is still out of scope. Wayshrines, banked map travel, and safe Blinkstep collision remain the bounded travel rules.
+
+## Deeper skills and Ascendant modes
+
+The rank curve, perk graph, one-percent-per-rank multipliers, uncapped character level, mastery detection, and opt-in ten-percent health floor are foundations rather than a finished god-mode suite. Later progression should add:
+
+- More meaningful branching perks and active abilities at intermediate and high ranks.
+- Clear respec, loadout, and multiplayer presentation rules before trees become difficult to reverse.
+- Additional Ascendant switches such as resource immunity, altered hunger, flight, damage constraints, or creative-scale world interaction, each independently toggleable.
+- Balance rules that keep ordinary survival readable when only some players in a session are Ascendant.
+
+Wyrmweave does not ship invulnerability, arbitrary world editing, or the full set of godlike toggles.
 
 ## Full settlement management and player towns
 
@@ -11,7 +44,7 @@ The player faction can already be represented in faction and settlement ownershi
 - Let buildings, paths, storage, workshops, farms, walls, and gates contribute to town function without making ordinary player building invalid.
 - Recover gracefully when a player removes a door, bed, workstation, wall, or role-preferred building.
 
-Sugarcourt does not include a city-builder overlay, construction queue, town budget, or complete player-governance UI. Future mixed-race player settlements will also need explicit surface, underwater, and culture-specific habitat rules rather than treating Atlantians or Confectkin as generic residents.
+Wyrmweave still does not include a city-builder overlay, construction queue, town budget, or complete player-governance UI. Future mixed-race player settlements will also need explicit surface, underwater, and culture-specific habitat rules rather than treating Atlantians or Confectkin as generic residents.
 
 ## Raiding parties and hired forces
 
@@ -34,14 +67,10 @@ Faction relations already distinguish allied, neutral, and war states, and settl
 
 This needs bounded off-screen simulation and host-authoritative multiplayer messages before it is safe to ship.
 
-## Magic expansion
-
-Alchemy, Tidebreath and Sugarcourt potions, blueprint knowledge, wayshrines, and charged fast travel are the non-spell foundation. A later magic system can add spellcasting, magical resources, equipment effects, creatures, quests, and more flexible travel. Sugarcourt does not add mana, spell schools, combat casting, enchantment, or unrestricted teleportation.
-
 ## Fishing and mature aquatic professions
 
-Fish and larger sea creatures in v0.8 are physical entities: they swim, school or patrol a habitat, can be attacked or tamed where appropriate, and belong to river, coast, ocean, underground, deep-ocean, Lumen Trench, or syrup-pond populations. Water plants can be harvested and replanted, Atlantians trade aquatic goods, Syrupfins live only in syrup, and leviathans provide long-range sea and air travel. Rods, lines, bait, hooked-fish behavior, fishing loot tables, boats specialized for fishing, and fishing professions remain deferred.
+Fish and larger sea creatures in v0.9 are physical entities: they swim, school or patrol a habitat, can be attacked or tamed where appropriate, and belong to river, coast, ocean, underground, deep-ocean, Lumen Trench, or syrup-pond populations. Water plants can be harvested and replanted, Atlantians trade aquatic goods, Syrupfins live only in syrup, and leviathans provide long-range sea and air travel. Rods, lines, bait, hooked-fish behavior, fishing loot tables, boats specialized for fishing, and fishing professions remain deferred.
 
 ## Release guardrails
 
-These additions should preserve deterministic generation, migrate existing saves, keep the host authoritative in multiplayer, stay within the simulation-distance budget, and expose focused tests before entering the production engine. A feature is not complete because its data type exists; it is complete when the player-facing loop, persistence, multiplayer boundary, visuals, and failure behavior agree.
+These additions should preserve deterministic generation, migrate existing saves, keep the host authoritative in multiplayer, stay within the simulation-distance budget, and expose focused tests before entering the production engine. A feature is not complete because its data type exists; it is complete when the player-facing loop, persistence, multiplayer boundary, visuals, audio, and failure behavior agree. Dragon and spell work must also keep its production model or effect renderer, generated catalog assets, and visual-audit sheets aligned.

@@ -8,7 +8,7 @@ import {
   RATTLEKIN_CLUB_CONTRACT,
   RIDGEBACK_GROUND_LIFT,
 } from "./model-specs";
-import { CORE_MOB_ORDER, MOB_DEFS, type CoreMobKind, type MobKind } from "./mobs";
+import { CORE_MOB_ORDER, MOB_DEFS, type CoreMobKind, type DragonKind, type MobKind } from "./mobs";
 import { createArrowVisual } from "./projectiles";
 
 const TAU = Math.PI * 2;
@@ -20,6 +20,130 @@ export type MobVisual = {
   visual: THREE.Group;
   parts: MobVisualParts;
 };
+
+export type DragonAnimationMode = "idle" | "walk" | "fly" | "melee" | "breath" | "projectile" | "hurt" | "sleep";
+export type DragonRenderEquipment = Readonly<{
+  saddle?: boolean;
+  leftChest?: boolean;
+  rightChest?: boolean;
+  armor?: Partial<Record<"head" | "neck" | "body" | "tail", boolean>>;
+}>;
+export type DragonPoseInput = Readonly<{
+  timeSeconds: number;
+  mode?: DragonAnimationMode;
+  movement?: number;
+  attackProgress?: number;
+  bank?: number;
+  pitch?: number;
+  sex?: "female" | "male";
+  equipment?: DragonRenderEquipment;
+}>;
+
+export const DRAGON_MODEL_CONTRACT = Object.freeze({
+  neckSegments: 3,
+  tailSegments: 7,
+  wingPivotsPerSide: 2,
+  legJointsPerLeg: 3,
+  armorSlots: ["head", "neck", "body", "tail"] as const,
+  cargoChests: 2,
+  forwardAxis: "-z" as const,
+});
+
+/** Applies the same named dragon rig used by gameplay, portraits, and the inspector. */
+export function applyDragonPose(root: THREE.Object3D, input: DragonPoseInput) {
+  const type = root.userData.dragonType as "fire" | "ice" | "steel" | undefined;
+  if (!type) return false;
+  const prefix = `${type}-dragon`;
+  const time = Number.isFinite(input.timeSeconds) ? input.timeSeconds : 0;
+  const movement = THREE.MathUtils.clamp(input.movement ?? 0, 0, 1);
+  const attack = THREE.MathUtils.clamp(input.attackProgress ?? 0, 0, 1);
+  const mode = input.mode ?? "idle";
+  const airborne = mode === "fly" || mode === "breath" || mode === "projectile";
+  const object = (suffix: string) => root.getObjectByName(`${prefix}-${suffix}`);
+
+  const chest = object("breathing-chest-pivot");
+  if (chest) {
+    const breath = 1 + Math.sin(time * (mode === "breath" ? 7.5 : 2.2)) * (mode === "breath" ? 0.075 : 0.025);
+    chest.scale.set(1 / Math.sqrt(breath), breath, breath);
+  }
+  for (let index = 1; index <= DRAGON_MODEL_CONTRACT.neckSegments; index += 1) {
+    const neck = object(`neck-${index}-pivot`);
+    if (!neck) continue;
+    neck.rotation.y = Math.sin(time * 1.3 - index * 0.58) * 0.035 + (input.bank ?? 0) * 0.08;
+    neck.rotation.x = (input.pitch ?? 0) * (0.12 + index * 0.035) + (mode === "breath" ? -attack * 0.08 : 0);
+  }
+  const head = object("head-pivot");
+  if (head) {
+    head.rotation.x = (input.pitch ?? 0) * 0.34 + (mode === "melee" ? Math.sin(attack * Math.PI) * 0.42 : 0);
+    head.rotation.y = Math.sin(time * 0.65) * (mode === "idle" ? 0.035 : 0);
+  }
+  const jaw = object("jaw-pivot");
+  if (jaw) jaw.rotation.x = mode === "breath" || mode === "projectile" ? 0.52 * Math.sin(attack * Math.PI * 0.72) : mode === "melee" ? 0.72 * Math.sin(attack * Math.PI) : 0.025 + Math.sin(time * 1.1) * 0.01;
+
+  for (let index = 1; index <= DRAGON_MODEL_CONTRACT.tailSegments; index += 1) {
+    const tail = object(`tail-${index}-pivot`);
+    if (!tail) continue;
+    tail.rotation.y = Math.sin(time * (airborne ? 2.7 : 1.45) - index * 0.62) * (airborne ? 0.09 : 0.055) * index;
+    tail.rotation.x = airborne ? Math.sin(time * 1.2 - index * 0.35) * 0.025 : Math.max(0, index - 4) * 0.025;
+  }
+
+  for (const side of ["left", "right"] as const) {
+    const sign = side === "left" ? -1 : 1;
+    const wing = object(`${side}-wing-root-pivot`);
+    const forearm = object(`${side}-wing-forearm-pivot`);
+    if (wing) {
+      wing.rotation.z = sign * (airborne ? 0.22 + Math.sin(time * 4.2) * 0.48 : 0.34 + Math.sin(time * 0.9) * 0.025);
+      wing.rotation.x = airborne ? -0.08 + (input.pitch ?? 0) * 0.16 : -0.38;
+      wing.rotation.y = sign * (input.bank ?? 0) * 0.18;
+    }
+    if (forearm) forearm.rotation.z = sign * (airborne ? 0.14 + Math.sin(time * 4.2 + 0.4) * 0.18 : 0.28);
+  }
+
+  for (const position of ["front-left", "front-right", "rear-left", "rear-right"] as const) {
+    const sidePhase = position.includes("left") ? 0 : Math.PI;
+    const stride = Math.sin(time * 6.1 + sidePhase + (position.startsWith("rear") ? Math.PI : 0)) * movement;
+    const hip = object(`${position}-hip-pivot`);
+    const knee = object(`${position}-knee-pivot`);
+    const claw = object(`${position}-claw-pivot`);
+    if (hip) hip.rotation.x = airborne ? (position.startsWith("front") ? 0.72 : -0.42) : stride * 0.5;
+    if (knee) knee.rotation.x = airborne ? 0.84 : Math.max(0, -stride) * 0.65;
+    if (claw) claw.rotation.x = airborne ? -0.52 : -Math.max(0, stride) * 0.22;
+  }
+
+  const emitter = object("breath-emitter");
+  const projectile = object("projectile-origin");
+  if (emitter) emitter.visible = mode === "breath" && attack > 0.08 && attack < 0.94;
+  if (projectile) projectile.visible = mode === "projectile" && attack > 0.42 && attack < 0.8;
+  const maleWingMarkings = object("male-wing-markings");
+  const maleHornRack = object("male-horn-rack");
+  const femaleHornRack = object("female-horn-rack");
+  const sex = input.sex ?? root.userData.dragonSex;
+  if (maleWingMarkings) maleWingMarkings.visible = sex === "male";
+  if (maleHornRack) maleHornRack.visible = sex === "male";
+  if (femaleHornRack) femaleHornRack.visible = sex === "female";
+  root.traverse((child) => {
+    if (child.userData.sexMarker === "male") child.visible = sex === "male";
+    else if (child.userData.sexMarker === "female") child.visible = sex === "female";
+  });
+
+  if (input.equipment) {
+    const equipment = input.equipment;
+    const visibility: Record<string, boolean> = {
+      saddle: equipment.saddle === true,
+      "left-cargo": equipment.leftChest === true,
+      "right-cargo": equipment.rightChest === true,
+      "head-armor": equipment.armor?.head === true,
+      "neck-armor": equipment.armor?.neck === true,
+      "body-armor": equipment.armor?.body === true,
+      "tail-armor": equipment.armor?.tail === true,
+    };
+    for (const [suffix, visible] of Object.entries(visibility)) {
+      const attachment = object(suffix);
+      if (attachment) attachment.visible = visible;
+    }
+  }
+  return true;
+}
 
 export const SENTIENT_LOD_MAX_MESHES = 5;
 
@@ -179,6 +303,241 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       const leg = pivotBox([width, length, width], legMaterial, [px, pivotY, pz], [0, -length / 2, 0], "legs", `${prefix}-${name}-leg`);
       leg.userData.phase = phase;
     }
+  };
+
+  const buildDragon = (dragonKind: DragonKind) => {
+    const dragonType = dragonKind.replace("-dragon", "") as "fire" | "ice" | "steel";
+    const prefix = dragonKind;
+    const palette = dragonType === "fire"
+      ? { belly: 0x5e211f, membrane: 0xc8462d, horn: 0x3b2925, glow: 0xffc657, metal: 0xb8793e, armor: 0x6f2525 }
+      : dragonType === "ice"
+        ? { belly: 0x416f8c, membrane: 0x92d5e8, horn: 0xe8f6f4, glow: 0xcaffff, metal: 0x9fc8d2, armor: 0x587f9a }
+        : { belly: 0x343f46, membrane: 0x71838c, horn: 0x232a2f, glow: 0xe4fbff, metal: 0xb8c6ca, armor: 0x46545d };
+    const bellyMaterial = material(palette.belly);
+    const membraneMaterial = material(palette.membrane, false, 0.86);
+    const hornMaterial = material(palette.horn);
+    const glowMaterial = material(palette.glow, true, 0.94);
+    const metalMaterial = material(palette.metal);
+    const armorMaterial = material(palette.armor);
+    const leatherMaterial = material(0x5a3829);
+    const cargoMaterial = material(0x6f4930);
+    const cargoBandMaterial = material(0xc18a4c);
+
+    group.userData.dragonType = dragonType;
+    visual.userData.dragonType = dragonType;
+    group.userData.dragonSex = id % 2 === 0 ? "female" : "male";
+    visual.userData.dragonSex = group.userData.dragonSex;
+    group.userData.animatedRig = "dragon-v1";
+
+    const pivot = (parent: THREE.Object3D, suffix: string, position: readonly [number, number, number]) => {
+      const node = new THREE.Group();
+      node.name = `${prefix}-${suffix}-pivot`;
+      node.position.set(...position);
+      node.userData.mobId = id;
+      node.userData.dragonRigPart = suffix;
+      parent.add(node);
+      return node;
+    };
+    const rigBox = (
+      parent: THREE.Object3D,
+      suffix: string,
+      size: [number, number, number],
+      meshMaterial: THREE.Material,
+      position: [number, number, number],
+      rotation: [number, number, number] = [0, 0, 0],
+    ) => {
+      const mesh = add(parent, size, meshMaterial, position, undefined, `${prefix}-${suffix}`);
+      mesh.rotation.set(...rotation);
+      mesh.userData.dragonRigPart = suffix;
+      return mesh;
+    };
+    const attachment = (suffix: string, parent: THREE.Object3D = visual) => {
+      const node = new THREE.Group();
+      node.name = `${prefix}-${suffix}`;
+      node.userData.mobId = id;
+      node.userData.dragonAttachment = suffix;
+      node.visible = false;
+      parent.add(node);
+      return node;
+    };
+
+    const chest = pivot(visual, "breathing-chest", [0, 1.9, -0.05]);
+    rigBox(chest, "chest", [1.9, 1.32, 3.05], bodyMaterial, [0, 0, 0]);
+    rigBox(chest, "belly-keel", [1.18, 0.35, 2.7], bellyMaterial, [0, -0.58, -0.08]);
+    rigBox(visual, "haunches", [1.72, 1.18, 1.75], bodyMaterial, [0, 1.82, 1.47]);
+    rigBox(visual, "shoulder-mantle", [2.16, 0.56, 1.1], accentMaterial, [0, 2.42, -0.78]);
+    parts.body.push(chest);
+
+    for (let ridge = 0; ridge < 7; ridge += 1) {
+      const height = 0.42 + Math.sin((ridge / 6) * Math.PI) * 0.42;
+      const spine = rigBox(visual, `back-spine-${ridge + 1}`, [0.18, height, 0.28], accentMaterial, [0, 2.62 + height / 2, -1.18 + ridge * 0.47]);
+      spine.rotation.x = -0.08 + ridge * 0.018;
+    }
+    if (dragonType === "steel") {
+      for (let plate = 0; plate < 5; plate += 1) {
+        const left = rigBox(visual, `left-riveted-plate-${plate + 1}`, [0.72, 0.16, 0.62], metalMaterial, [-0.66, 2.42, -0.85 + plate * 0.58], [0, 0, -0.12]);
+        const right = rigBox(visual, `right-riveted-plate-${plate + 1}`, [0.72, 0.16, 0.62], metalMaterial, [0.66, 2.42, -0.85 + plate * 0.58], [0, 0, 0.12]);
+        left.userData.pressurePlate = true;
+        right.userData.pressurePlate = true;
+      }
+    }
+
+    let neckParent: THREE.Object3D = visual;
+    for (let segment = 1; segment <= DRAGON_MODEL_CONTRACT.neckSegments; segment += 1) {
+      const neck = pivot(neckParent, `neck-${segment}`, segment === 1 ? [0, 2.02, -1.3] : [0, 0.1, -0.94]);
+      const width = 1.38 - segment * 0.14;
+      rigBox(neck, `neck-${segment}`, [width, 1.08 - segment * 0.08, 1.24], segment % 2 ? bodyMaterial : accentMaterial, [0, 0, -0.5]);
+      rigBox(neck, `neck-${segment}-throat`, [width * 0.68, 0.25, 1.06], bellyMaterial, [0, -0.43, -0.52]);
+      rigBox(neck, `neck-${segment}-spine`, [0.16, 0.46 - segment * 0.04, 0.28], accentMaterial, [0, 0.63 - segment * 0.05, -0.42]);
+      neckParent = neck;
+    }
+
+    const head = pivot(neckParent, "head", [0, 0.06, -1.02]);
+    const headWidth = dragonType === "ice" ? 1.76 : dragonType === "steel" ? 1.66 : 1.58;
+    rigBox(head, "head", [headWidth, 1.12, 1.42], bodyMaterial, [0, 0, -0.46]);
+    rigBox(head, "brow", [headWidth * 1.04, 0.28, 0.7], accentMaterial, [0, 0.34, -0.93]);
+    rigBox(head, "snout", [headWidth * 0.7, 0.58, 1.15], bellyMaterial, [0, -0.18, -1.28]);
+    parts.head.push(head);
+
+    const jaw = pivot(head, "jaw", [0, -0.39, -1.1]);
+    rigBox(jaw, "lower-jaw", [headWidth * 0.72, 0.28, 1.15], bellyMaterial, [0, -0.08, -0.48]);
+    for (const side of [-1, 1]) {
+      for (let tooth = 0; tooth < 4; tooth += 1) {
+        rigBox(jaw, `${side < 0 ? "left" : "right"}-tooth-${tooth + 1}`, [0.09, 0.22, 0.1], hornMaterial, [side * (0.2 + tooth * 0.1), 0.1, -0.2 - tooth * 0.23], [0.12, 0, side * 0.05]);
+      }
+    }
+    const emitter = new THREE.Group();
+    emitter.name = `${prefix}-breath-emitter`;
+    emitter.position.set(0, 0.03, -1.08);
+    emitter.visible = false;
+    jaw.add(emitter);
+    for (let ember = 0; ember < 4; ember += 1) {
+      const mote = rigBox(emitter, `breath-mote-${ember + 1}`, [0.12 + ember * 0.04, 0.12 + ember * 0.04, 0.18 + ember * 0.08], glowMaterial, [(ember % 2 ? 1 : -1) * ember * 0.08, (ember - 1.5) * 0.06, -ember * 0.24]);
+      mote.rotation.z = ember * 0.38;
+    }
+    const projectileOrigin = new THREE.Group();
+    projectileOrigin.name = `${prefix}-projectile-origin`;
+    projectileOrigin.position.set(0, 0.14, -1.45);
+    projectileOrigin.visible = false;
+    head.add(projectileOrigin);
+    if (dragonType === "steel") {
+      rigBox(projectileOrigin, "loaded-metal-spear-shaft", [0.12, 0.12, 2.25], metalMaterial, [0, 0, -1.06]);
+      rigBox(projectileOrigin, "loaded-metal-spear-head", [0.38, 0.38, 0.68], glowMaterial, [0, 0, -2.45], [0, Math.PI / 4, 0]);
+      for (const side of [-1, 1]) rigBox(projectileOrigin, `${side < 0 ? "left" : "right"}-spear-fin`, [0.34, 0.08, 0.42], accentMaterial, [side * 0.18, 0, -0.22], [0, 0, side * 0.35]);
+    } else {
+      rigBox(projectileOrigin, `${dragonType}-projectile-core`, [0.48, 0.48, 0.48], glowMaterial, [0, 0, -0.25], [0, Math.PI / 4, Math.PI / 4]);
+      for (let trail = 0; trail < 3; trail += 1) rigBox(projectileOrigin, `${dragonType}-projectile-trail-${trail + 1}`, [0.15, 0.15, 0.38 + trail * 0.14], trail % 2 ? accentMaterial : glowMaterial, [0, 0, 0.15 + trail * 0.28]);
+    }
+
+    for (const side of [-1, 1]) {
+      const sideName = side < 0 ? "left" : "right";
+      const eye = pivot(head, `${sideName}-eye`, [side * (headWidth * 0.3), 0.16, -1.13]);
+      rigBox(eye, `${sideName}-eye`, [0.21, 0.18, 0.09], eyeMaterial, [0, 0, -0.02]);
+      rigBox(eye, `${sideName}-eye-glint`, [0.055, 0.055, 0.035], glowMaterial, [side * -0.035, 0.035, -0.075]);
+      const nostril = rigBox(head, `${sideName}-nostril`, [0.12, 0.08, 0.055], darkMaterial, [side * (headWidth * 0.19), -0.08, -1.88]);
+      nostril.userData.breathSource = true;
+    }
+
+    const maleHorns = new THREE.Group();
+    maleHorns.name = `${prefix}-male-horn-rack`;
+    maleHorns.visible = group.userData.dragonSex === "male";
+    head.add(maleHorns);
+    const femaleHorns = new THREE.Group();
+    femaleHorns.name = `${prefix}-female-horn-rack`;
+    femaleHorns.visible = group.userData.dragonSex === "female";
+    head.add(femaleHorns);
+    for (const side of [-1, 1]) {
+      const sideName = side < 0 ? "left" : "right";
+      rigBox(maleHorns, `${sideName}-straight-horn`, [0.24, 0.24, 1.25], hornMaterial, [side * 0.55, 0.43, 0.18], [-0.55, side * 0.12, side * 0.06]);
+      const outer = rigBox(femaleHorns, `${sideName}-curved-horn-outer`, [0.22, 0.22, 0.92], hornMaterial, [side * 0.58, 0.34, 0.08], [-0.5, side * 0.42, side * 0.18]);
+      rigBox(femaleHorns, `${sideName}-curved-horn-tip`, [0.18, 0.18, 0.62], hornMaterial, [side * 0.86, 0.62, 0.37], [-0.82, side * -0.2, side * -0.18]);
+      outer.userData.sexMarker = "female";
+      if (dragonType === "ice") rigBox(head, `${sideName}-ice-crown-horn`, [0.18, 0.48, 0.18], hornMaterial, [side * 0.27, 0.77, -0.42], [0, 0, side * -0.18]);
+    }
+
+    for (const side of [-1, 1]) {
+      const sideName = side < 0 ? "left" : "right";
+      const wingRoot = pivot(visual, `${sideName}-wing-root`, [side * 0.82, 2.42, -0.55]);
+      wingRoot.userData.side = side;
+      wingRoot.userData.phase = side < 0 ? 0 : Math.PI;
+      parts.wings.push(wingRoot);
+      rigBox(wingRoot, `${sideName}-wing-upper-bone`, [2.55, 0.25, 0.32], hornMaterial, [side * 1.18, 0, 0], [0, 0, side * -0.08]);
+      const wingForearm = pivot(wingRoot, `${sideName}-wing-forearm`, [side * 2.36, 0, 0]);
+      rigBox(wingForearm, `${sideName}-wing-forearm-bone`, [2.75, 0.22, 0.3], hornMaterial, [side * 1.3, 0, 0.18], [0, -side * 0.08, side * -0.16]);
+      rigBox(wingRoot, `${sideName}-inner-wing-membrane`, [2.38, 0.055, 2.85], membraneMaterial, [side * 1.05, -0.08, 1.02], [0.04, side * 0.1, side * -0.1]);
+      rigBox(wingForearm, `${sideName}-outer-wing-membrane`, [2.7, 0.05, 2.25], membraneMaterial, [side * 1.18, -0.07, 0.92], [0.03, side * -0.13, side * -0.16]);
+      for (let finger = 0; finger < 3; finger += 1) {
+        rigBox(wingForearm, `${sideName}-wing-finger-${finger + 1}`, [2.45 - finger * 0.25, 0.1, 0.12], hornMaterial, [side * (1.06 - finger * 0.08), -0.04, 0.35 + finger * 0.74], [0, side * (0.18 + finger * 0.13), side * -0.15]);
+      }
+      for (let spot = 0; spot < 4; spot += 1) {
+        const mark = rigBox(wingRoot, `${sideName}-wing-mark-${spot + 1}`, [0.34 + spot * 0.06, 0.07, 0.34 + spot * 0.06], glowMaterial, [side * (0.68 + spot * 0.45), -0.12, 0.35 + spot * 0.42], [0, 0, Math.PI / 4]);
+        mark.userData.sexMarker = "male";
+        mark.visible = group.userData.dragonSex === "male";
+      }
+    }
+    const maleMarkings = new THREE.Group();
+    maleMarkings.name = `${prefix}-male-wing-markings`;
+    maleMarkings.visible = group.userData.dragonSex === "male";
+    visual.add(maleMarkings);
+
+    for (const [front, z] of [[true, -0.92], [false, 1.12]] as const) {
+      for (const side of [-1, 1]) {
+        const sideName = side < 0 ? "left" : "right";
+        const positionName = `${front ? "front" : "rear"}-${sideName}`;
+        const hip = pivot(visual, `${positionName}-hip`, [side * 0.68, 1.7, z]);
+        hip.userData.phase = (side < 0) !== front ? 0 : Math.PI;
+        parts.legs.push(hip);
+        rigBox(hip, `${positionName}-upper-leg`, [0.52, 0.95, 0.62], bodyMaterial, [0, -0.43, front ? -0.08 : 0.08], [front ? -0.1 : 0.1, 0, side * 0.05]);
+        const knee = pivot(hip, `${positionName}-knee`, [0, -0.82, front ? -0.12 : 0.14]);
+        rigBox(knee, `${positionName}-lower-leg`, [0.4, 0.86, 0.45], accentMaterial, [0, -0.4, 0.02], [front ? 0.08 : -0.08, 0, 0]);
+        const claw = pivot(knee, `${positionName}-claw`, [0, -0.77, -0.08]);
+        rigBox(claw, `${positionName}-foot`, [0.65, 0.24, 0.8], bellyMaterial, [0, -0.04, -0.25]);
+        for (let toe = -1; toe <= 1; toe += 1) rigBox(claw, `${positionName}-talon-${toe + 2}`, [0.12, 0.12, 0.58], hornMaterial, [toe * 0.19, -0.08, -0.76], [0.08, toe * -0.12, 0]);
+      }
+    }
+
+    let tailParent: THREE.Object3D = visual;
+    for (let segment = 1; segment <= DRAGON_MODEL_CONTRACT.tailSegments; segment += 1) {
+      const tail = pivot(tailParent, `tail-${segment}`, segment === 1 ? [0, 1.9, 1.45] : [0, -0.015, 0.92]);
+      const width = 1.42 - segment * 0.15;
+      rigBox(tail, `tail-${segment}`, [Math.max(0.28, width), Math.max(0.3, width * 0.67), 1.18], segment % 2 ? bodyMaterial : accentMaterial, [0, 0, 0.47]);
+      if (segment < 6) rigBox(tail, `tail-${segment}-spine`, [0.13, Math.max(0.18, 0.5 - segment * 0.055), 0.22], accentMaterial, [0, Math.max(0.23, width * 0.44), 0.4]);
+      tailParent = tail;
+    }
+    if (dragonType === "ice") {
+      rigBox(tailParent, "ice-tail-fin-left", [1.65, 0.08, 1.28], membraneMaterial, [-0.68, 0.05, 0.62], [0, 0.48, 0.16]);
+      rigBox(tailParent, "ice-tail-fin-right", [1.65, 0.08, 1.28], membraneMaterial, [0.68, 0.05, 0.62], [0, -0.48, -0.16]);
+    } else if (dragonType === "fire") {
+      for (let flame = 0; flame < 3; flame += 1) rigBox(tailParent, `tail-flame-${flame + 1}`, [0.22 + flame * 0.12, 0.52 - flame * 0.08, 0.38], glowMaterial, [(flame - 1) * 0.18, 0.25 + flame * 0.05, 0.72 + flame * 0.22], [0, 0, (flame - 1) * 0.28]);
+    } else {
+      rigBox(tailParent, "steel-tail-hammer", [1.18, 0.72, 0.9], metalMaterial, [0, 0, 0.75], [0, Math.PI / 4, 0]);
+    }
+
+    const saddle = attachment("saddle");
+    rigBox(saddle, "saddle-seat", [1.42, 0.34, 1.35], leatherMaterial, [0, 2.64, 0.2]);
+    rigBox(saddle, "saddle-pommel", [1.15, 0.48, 0.18], cargoBandMaterial, [0, 2.9, -0.42]);
+    for (const side of [-1, 1]) rigBox(saddle, `${side < 0 ? "left" : "right"}-saddle-strap`, [0.12, 1.15, 1.1], leatherMaterial, [side * 0.78, 2.05, 0.22], [0, 0, side * 0.1]);
+
+    for (const side of [-1, 1]) {
+      const sideName = side < 0 ? "left" : "right";
+      const cargo = attachment(`${sideName}-cargo`);
+      rigBox(cargo, `${sideName}-cargo-chest`, [0.85, 0.82, 1.15], cargoMaterial, [side * 1.19, 1.82, 0.72]);
+      rigBox(cargo, `${sideName}-cargo-lid`, [0.9, 0.16, 1.19], cargoBandMaterial, [side * 1.19, 2.28, 0.72]);
+      rigBox(cargo, `${sideName}-cargo-latch`, [0.13, 0.26, 0.09], metalMaterial, [side * 1.65, 2.02, 0.15]);
+    }
+
+    const headArmor = attachment("head-armor", head);
+    rigBox(headArmor, "head-armor-crown", [1.78, 0.25, 1.05], armorMaterial, [0, 0.53, -0.42]);
+    rigBox(headArmor, "head-armor-brow", [1.82, 0.35, 0.28], metalMaterial, [0, 0.23, -0.94]);
+    const neckArmor = attachment("neck-armor", neckParent);
+    for (let plate = 0; plate < 3; plate += 1) rigBox(neckArmor, `neck-armor-plate-${plate + 1}`, [1.08 - plate * 0.1, 0.2, 0.5], armorMaterial, [0, 0.48 + plate * 0.03, -0.22 - plate * 0.28], [-0.05, 0, 0]);
+    const bodyArmor = attachment("body-armor");
+    rigBox(bodyArmor, "body-armor-main", [2.05, 0.28, 2.72], armorMaterial, [0, 2.64, 0.18]);
+    for (const side of [-1, 1]) rigBox(bodyArmor, `${side < 0 ? "left" : "right"}-body-armor-flank`, [0.25, 1.1, 2.38], metalMaterial, [side * 1.02, 1.92, 0.25], [0, 0, side * 0.08]);
+    const tailArmor = attachment("tail-armor");
+    for (let plate = 0; plate < 4; plate += 1) rigBox(tailArmor, `tail-armor-plate-${plate + 1}`, [1.26 - plate * 0.17, 0.22, 0.82], armorMaterial, [0, 2.48 - plate * 0.06, 1.85 + plate * 0.82], [0.03 * plate, 0, 0]);
+
+    applyDragonPose(group, { timeSeconds: 0.42, mode: "idle", movement: 0, sex: group.userData.dragonSex });
   };
 
   const atlantianNpc = kind.startsWith("atlantian-");
@@ -485,7 +844,9 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     if (hobbit) visual.scale.set(1.07, 0.84, 1.02);
   };
 
-  if (sentientNpc) {
+  if (kind === "fire-dragon" || kind === "ice-dragon" || kind === "steel-dragon") {
+    buildDragon(kind);
+  } else if (sentientNpc) {
     buildSentientNpc();
   } else if (kind === "mossling") {
     add(visual, [0.64, 0.44, 0.56], bodyMaterial, [0, 0.1, 0], "body", "mossling-body");

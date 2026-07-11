@@ -1,3 +1,5 @@
+import type { DragonState } from "./dragons";
+
 /**
  * Browser-only, host-authoritative WebRTC multiplayer transport for Blockwild.
  *
@@ -93,6 +95,8 @@ export type MobSnapshotEntry = {
   lifeStage?: "tiny" | "juvenile" | "adult";
   aquaticOnly?: boolean;
   airProgress?: number;
+  /** Complete authoritative lifecycle state for protocol-v1 dragon peers. */
+  dragonState?: DragonState;
   /** Optional culture provenance keeps aligned settlement creatures authoritative for guests. */
   factionId?: "player" | "hobbits" | "goblins" | "atlantians" | "sugarcourt" | null;
   aligned?: boolean;
@@ -477,6 +481,49 @@ function validateSailboat(value: unknown): value is SailboatSnapshotEntry {
     && value.passengers.every(isId);
 }
 
+function validateDragonState(value: unknown): value is DragonState {
+  if (!isRecord(value) || value.schemaVersion !== 1) return false;
+  if (value.type !== "fire" && value.type !== "ice" && value.type !== "steel") return false;
+  if (value.sex !== "female" && value.sex !== "male") return false;
+  if (value.command !== "follow" && value.command !== "stay" && value.command !== "guard-lair" && value.command !== "wander") return false;
+  const equipment = value.equipment;
+  if (!isRecord(equipment)
+    || typeof equipment.saddle !== "boolean"
+    || !Array.isArray(equipment.chests)
+    || equipment.chests.length !== 2
+    || !equipment.chests.every((attached) => typeof attached === "boolean")
+    || !isRecord(equipment.armor)) return false;
+  const armor = equipment.armor;
+  const armorSlots = ["head", "neck", "body", "tail"] as const;
+  if (!armorSlots.every((slot) => armor[slot] === null || isShortString(armor[slot], 96))) return false;
+  const validHome = value.home === null || (isRecord(value.home)
+    && isShortString(value.home.lairId, 96)
+    && isShortString(value.home.dimension, 96)
+    && isRecord(value.home.position)
+    && isFiniteNumber(value.home.position.x, -COORDINATE_LIMIT, COORDINATE_LIMIT)
+    && isFiniteNumber(value.home.position.y, -4096, 4096)
+    && isFiniteNumber(value.home.position.z, -COORDINATE_LIMIT, COORDINATE_LIMIT)
+    && isFiniteNumber(value.home.guardRadius, 0, 512));
+  return validHome
+    && isShortString(value.dragonId, 96)
+    && isInteger(value.geneticSeed, 0, 0xffff_ffff)
+    && isInteger(value.ageTicks, 0, Number.MAX_SAFE_INTEGER)
+    && isInteger(value.stage, 1, 5)
+    && isFiniteNumber(value.growthScale, 0.01, 8)
+    && isFiniteNumber(value.health, 0, 100_000)
+    && isFiniteNumber(value.maxHealth, 1, 100_000)
+    && typeof value.alive === "boolean"
+    && typeof value.tamed === "boolean"
+    && (value.ownerId === null || isShortString(value.ownerId, 96))
+    && isInteger(value.trust, 0, 3)
+    && typeof value.onShoulder === "boolean"
+    && isInteger(value.scaleReserve, 0, 1_000_000)
+    && isInteger(value.scaleShedTicks, 0, Number.MAX_SAFE_INTEGER)
+    && isInteger(value.breedCooldownTicks, 0, Number.MAX_SAFE_INTEGER)
+    && (value.customName === null || isShortString(value.customName, 48))
+    && value.persistent === true;
+}
+
 function validateMob(value: unknown): value is MobSnapshotEntry {
   return isRecord(value)
     && isInteger(value.id, 0, Number.MAX_SAFE_INTEGER)
@@ -495,6 +542,7 @@ function validateMob(value: unknown): value is MobSnapshotEntry {
     && (value.lifeStage === undefined || value.lifeStage === "tiny" || value.lifeStage === "juvenile" || value.lifeStage === "adult")
     && (value.aquaticOnly === undefined || typeof value.aquaticOnly === "boolean")
     && (value.airProgress === undefined || isFiniteNumber(value.airProgress, 0, 1))
+    && (value.dragonState === undefined || (validateDragonState(value.dragonState) && value.kind === `${value.dragonState.type}-dragon`))
     && (value.factionId === undefined || value.factionId === null
       || ["player", "hobbits", "goblins", "atlantians", "sugarcourt"].includes(value.factionId as string))
     && (value.aligned === undefined || typeof value.aligned === "boolean");

@@ -29,6 +29,9 @@ export type SampleKind =
   | "ridgebackWarmHuff"
   | "shadecrawlerStoneChitter";
 export type SamplePlaybackOptions = { gain?: number; playbackRate?: number; detune?: number; when?: number };
+export type DragonSoundType = "fire" | "ice" | "steel";
+export type DragonSoundEvent = "ambient" | "roar" | "hurt" | "death" | "wing" | "melee" | "breath" | "projectile" | "egg-crack";
+export type SpellSoundSchool = "destruction" | "restoration" | "alteration" | "conjuration" | "utility";
 
 const MUSIC_TRACKS: Record<MusicScene, string | readonly string[]> = {
   day: "/music/blockwild-theme.mp3",
@@ -416,6 +419,91 @@ export class SynthAudio {
     } else if (kind === "splash") this.noiseBurst(0.17, 760, 0.08, true);
     else if (kind === "eat") {
       for (let index = 0; index < 3; index += 1) this.noiseBurst(0.05, 520 + index * 100, 0.05, false, index * 0.055);
+    }
+  }
+
+  /**
+   * Layered procedural dragon audio.  Keeping these cues synthesized makes
+   * every age tier pitch correctly without loading nine large sample banks,
+   * while the three families remain audibly distinct: fire crackles, ice
+   * rings, and steel carries a struck-metal transient under its steam.
+   */
+  playDragon(type: DragonSoundType, event: DragonSoundEvent, stage = 1) {
+    if (!this.context || !this.master || this.settings.muted) return;
+    const age = Math.max(1, Math.min(5, Math.round(stage)));
+    const depth = 1 - (age - 1) * 0.095;
+    const base = (type === "fire" ? 92 : type === "ice" ? 128 : 108) * depth;
+    const weight = 0.58 + age * 0.105;
+    const texture = type === "fire" ? 420 : type === "ice" ? 1380 : 860;
+
+    if (event === "wing") {
+      this.noiseBurst(0.18 + age * 0.025, 210 + age * 24, 0.025 * weight);
+      this.tone(base * 0.72, 0.12, 0.012 * weight, "sine", 0, base * 0.48);
+      return;
+    }
+    if (event === "melee") {
+      this.noiseBurst(0.14, 760, 0.075 * weight, true);
+      this.tone(base * 1.55, 0.13, 0.047 * weight, "sawtooth", 0, base * 0.72);
+      return;
+    }
+    if (event === "breath") {
+      this.noiseBurst(0.62 + age * 0.07, texture, 0.075 * weight, type !== "fire");
+      this.noiseBurst(0.48, type === "steel" ? 2300 : texture * 0.55, 0.038 * weight, true, 0.035);
+      this.tone(base * (type === "ice" ? 2.4 : 0.88), 0.58, 0.031 * weight, type === "ice" ? "triangle" : "sawtooth", 0, base * 0.46);
+      return;
+    }
+    if (event === "projectile") {
+      if (type === "steel") {
+        this.tone(1180, 0.085, 0.065 * weight, "square", 0, 420);
+        this.tone(176, 0.22, 0.045 * weight, "triangle", 0.025, 92);
+      } else {
+        this.noiseBurst(0.24, texture * 1.25, 0.062 * weight, true);
+        this.tone(base * 2.2, 0.21, 0.04 * weight, "sawtooth", 0, base * 0.8);
+      }
+      return;
+    }
+    if (event === "egg-crack") {
+      for (let index = 0; index < 3; index += 1) {
+        this.noiseBurst(0.055, 960 + index * 370, 0.043, true, index * 0.085);
+        if (type === "steel") this.tone(1320 - index * 220, 0.07, 0.024, "triangle", index * 0.085);
+      }
+      return;
+    }
+
+    const duration = event === "death" ? 1.48 : event === "roar" ? 1.05 : event === "ambient" ? 0.64 : 0.32;
+    const gain = (event === "death" || event === "roar" ? 0.078 : event === "hurt" ? 0.052 : 0.036) * weight;
+    this.noiseBurst(duration * 0.88, texture * (event === "hurt" ? 1.25 : 0.64), gain * 0.72, type === "ice");
+    this.tone(
+      base * (event === "hurt" ? 1.42 : 1),
+      duration,
+      gain,
+      type === "ice" ? "triangle" : type === "steel" ? "square" : "sawtooth",
+      0,
+      base * (event === "death" ? 0.27 : event === "roar" ? 0.48 : 0.72),
+    );
+    if (type === "fire") this.noiseBurst(duration * 0.48, 2600, gain * 0.31, true, duration * 0.18);
+    if (type === "ice") this.tone(base * 3.01, duration * 0.44, gain * 0.28, "sine", 0.035, base * 1.65);
+    if (type === "steel") this.tone(base * 4.3, 0.11, gain * 0.56, "triangle", 0.015, base * 1.8);
+  }
+
+  /** Compact, layered casting signatures shared by learned spells in a school. */
+  playSpell(school: SpellSoundSchool) {
+    if (!this.context || !this.master || this.settings.muted) return;
+    if (school === "destruction") {
+      this.noiseBurst(0.31, 1_420, 0.055, true);
+      this.tone(138, 0.28, 0.052, "sawtooth", 0, 76);
+    } else if (school === "restoration") {
+      this.tone(392, 0.3, 0.035, "sine", 0, 587);
+      this.tone(659, 0.2, 0.024, "triangle", 0.08, 784);
+    } else if (school === "alteration") {
+      this.noiseBurst(0.18, 2_800, 0.025, true);
+      this.tone(244, 0.24, 0.041, "triangle", 0, 976);
+    } else if (school === "conjuration") {
+      this.tone(104, 0.32, 0.046, "square", 0, 208);
+      this.tone(1_180, 0.09, 0.032, "triangle", 0.19, 470);
+    } else {
+      this.tone(174, 0.38, 0.03, "sine", 0, 348);
+      this.tone(523, 0.26, 0.022, "triangle", 0.06, 392);
     }
   }
 

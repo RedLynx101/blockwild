@@ -87,6 +87,10 @@ import { createMapKnowledge, type MapMarker } from "./map-system";
 import { PLANTS, createPlantBestiaryState, type PlantCategory } from "./plants";
 import { createQuestBook, type QuestObjective } from "./quests";
 import { createSettlementState, isMayorProfession, type ResidentProfession, type SettlementCandidate } from "./settlements";
+import { DragonPanel } from "./DragonPanel";
+import { DragonMagicPanel, ManaHud, SpellWheelPanel } from "./DragonMagicPanels";
+import { createMagicState } from "./magic";
+import { createSkillState } from "./skills";
 
 type WorkstationOverlay = "apiary" | "orb-rack" | "healing-station" | "sugarworks";
 type CivicAuditMode = "atlantian-dialogue" | "atlantian-trade" | "atlantian-settlement";
@@ -625,6 +629,10 @@ const INITIAL_HUD: ExtendedHudState = {
   potionBuffs: {},
   fastTravelChannel: null,
   rangedWeapon: null,
+  activeDragon: null,
+  magic: createMagicState(),
+  skills: createSkillState(),
+  spellWheelOpen: false,
 };
 
 export function itemIconKind(item: ItemCode) {
@@ -1138,8 +1146,13 @@ export default function VoxelGame() {
         onLockChange: (locked) => {
           if (!locked && startedRef.current && overlayRef.current === null) setOverlay("pause");
         },
-        onOverlayRequest: (kind: OverlayKind) => {
+        onOverlayRequest: (kind: OverlayKind, key?: string) => {
           if (!startedRef.current) return;
+          if (kind === "spell-wheel" && key === "close") {
+            setOverlay(null);
+            engine.activate();
+            return;
+          }
           if (kind === "inventory" || kind === "crafting") setInventoryTab(kind === "inventory" ? "inventory" : "recipes");
           setOverlay(kind as Overlay);
         },
@@ -1255,8 +1268,13 @@ export default function VoxelGame() {
       event.preventDefault();
       event.stopImmediatePropagation();
       if (event.repeat) return;
+      if (current === "spell-wheel") {
+        engine?.closeSpellWheel();
+        setOverlay(null);
+        return;
+      }
       if (current !== null) {
-        if (["inventory", "crafting", "furnace", "chest", "apiary", "orb-rack", "healing-station", "pet"].includes(current)) engine?.closeContainer();
+        if (["inventory", "crafting", "furnace", "chest", "apiary", "orb-rack", "healing-station", "pet", "dragon", "library", "incubator"].includes(current)) engine?.closeContainer();
         if (startedRef.current) {
           if (current === "pause") { setOverlay(null); engine?.activate(); }
           else if (current === "settings" || current === "help" || current === "bestiary" || current === "multiplayer") setOverlay("pause");
@@ -2036,8 +2054,9 @@ export default function VoxelGame() {
             {hud.onlinePlayers > 1 && <span className="online"><kbd>●</kbd><strong>{hud.onlinePlayers} ONLINE</strong></span>}
           </div>
           {hud.mountedBoat && <div className="boat-hud" role="status"><strong>WAYFARER</strong><span><kbd>WASD</kbd> SAIL</span><span><kbd>SPACE</kbd> DISMOUNT</span></div>}
-          {hud.mountedCreature && <div className="boat-hud creature-mount-hud" role="status"><strong>{hud.mountedCreatureName ?? "MOUNT"}</strong><span><kbd>WASD</kbd> RIDE</span><span><kbd>SPACE</kbd> DISMOUNT</span></div>}
+          {hud.mountedCreature && <div className="boat-hud creature-mount-hud" role="status"><strong>{hud.mountedCreatureName ?? "MOUNT"}</strong><span><kbd>WASD</kbd> RIDE</span>{hud.activeDragon ? <><span><kbd>SPACE / SHIFT</kbd> ALTITUDE</span><span><kbd>Z X C</kbd> ATTACK · <kbd>F</kbd> DISMOUNT</span></> : <span><kbd>SPACE</kbd> DISMOUNT</span>}</div>}
           {hud.rangedWeapon && <div className={`ranged-ammo-hud${hud.rangedWeapon.reloading ? " reloading" : ""}`} role="status"><strong>{hud.rangedWeapon.loaded}/{hud.rangedWeapon.magazine}</strong><span>{hud.rangedWeapon.reloading ? "RELOADING" : `${hud.rangedWeapon.spare} BOLTS · R TO RELOAD`}</span></div>}
+          <ManaHud magic={hud.magic} magicSkillLevel={hud.skills.skills.magic.level} />
 
           {hud.debug && (
             <div className="debug-card">
@@ -2281,6 +2300,8 @@ export default function VoxelGame() {
               <PixelButton onClick={() => engineRef.current?.openOverlay("inventory")}>Inventory & Crafting</PixelButton>
               <PixelButton onClick={() => engineRef.current?.openOverlay("map")}>Map <kbd>M</kbd></PixelButton>
               <PixelButton onClick={() => engineRef.current?.openOverlay("quests")}>Quest Journal <kbd>J</kbd></PixelButton>
+              <PixelButton onClick={() => engineRef.current?.openOverlay("magic")}>Spell Journal <kbd>K</kbd></PixelButton>
+              <PixelButton onClick={() => engineRef.current?.openOverlay("skills")}>Skills & Perks <kbd>L</kbd></PixelButton>
               <PixelButton onClick={() => engineRef.current?.openOverlay("bestiary")}>Bestiary</PixelButton>
               <PixelButton onClick={() => openMultiplayer("pause")}>Multiplayer Session</PixelButton>
               <PixelButton onClick={() => engineRef.current?.toggleFullscreen()}>{hud.fullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}</PixelButton>
@@ -2360,6 +2381,58 @@ export default function VoxelGame() {
             ) : (
               <div className="pet-panel-empty"><h2 id="pet-title">No companion selected</h2><p>Move close to a tamed Peelop and crouch-use it to open its commands.</p></div>
             )}
+          </div>
+        </section>
+      )}
+
+      {overlay === "dragon" && hud.activeDragon && (
+        <DragonPanel
+          dragon={hud.activeDragon.state}
+          displayName={hud.activeDragon.name}
+          portrait={<CreaturePortrait kind={`${hud.activeDragon.state.type}-dragon` as MobKind} seen />}
+          onClose={resume}
+          onCommand={(command) => { engineRef.current?.commandActiveDragon(command); }}
+          onToggleShoulder={() => { engineRef.current?.toggleActiveDragonShoulder(); }}
+          onHarvestScales={() => { engineRef.current?.harvestActiveDragonScales(); }}
+          onOpenCargo={() => { engineRef.current?.openActiveDragonCargo(); }}
+        />
+      )}
+
+      {(overlay === "magic" || overlay === "skills") && (
+        <section className="menu-overlay dragon-magic-overlay" aria-label="Dragonheart arcanum">
+          <DragonMagicPanel
+            key={overlay}
+            magic={hud.magic}
+            skills={hud.skills}
+            initialTab={overlay === "skills" ? "skills" : "spells"}
+            onClose={resume}
+            onSelectSpell={(spellId) => { engineRef.current?.selectMagicSpell(spellId); }}
+            onToggleFavorite={(spellId) => { engineRef.current?.toggleMagicFavorite(spellId); }}
+            onUnlockPerk={(perkId) => { engineRef.current?.unlockSkillPerk(perkId); }}
+            onToggleAscendant={(enabled) => { engineRef.current?.toggleAscendantHealthFloor(enabled); }}
+          />
+        </section>
+      )}
+
+      {overlay === "spell-wheel" && (
+        <SpellWheelPanel
+          open
+          magic={hud.magic}
+          onSelectSpell={(spellId) => { engineRef.current?.selectMagicSpell(spellId); }}
+          onClose={() => { engineRef.current?.closeSpellWheel(); setOverlay(null); }}
+        />
+      )}
+
+      {overlay === "incubator" && (
+        <section className="menu-overlay" aria-labelledby="incubator-title">
+          <div className="pixel-panel sleep-panel">
+            <button type="button" className="panel-close" onClick={resume} aria-label="Close incubator guide">×</button>
+            <span className="panel-eyebrow">DRACONIC INCUBATOR · CONTROLLED HATCHING</span>
+            <h2 id="incubator-title">Elemental incubation</h2>
+            <p className="panel-flavor">Place a dragon egg beside this machine. It preserves lineage and sex while converting a completed incubation into a portable spawn egg.</p>
+            <div className="sleep-policy-note"><span>Fire</span><strong>Sustained flame</strong><small>Keep open flame or lava beside the egg.</small></div>
+            <div className="sleep-policy-note"><span>Ice</span><strong>Freezing source water</strong><small>Submerge the egg and ring it with ice or snow.</small></div>
+            <div className="sleep-policy-note"><span>Steel</span><strong>Heated metal + steam</strong><small>Combine water, heat, and riveted metal around the shell.</small></div>
           </div>
         </section>
       )}
@@ -2782,7 +2855,10 @@ export default function VoxelGame() {
               <div><kbd>M</kbd><span><strong>Map</strong>Review explored chunks, known places, wayshrines, and banked journeys.</span></div>
               <div><kbd>J</kbd><span><strong>Quest journal</strong>Follow branching story roads, side work, and pinned objectives.</span></div>
               <div><kbd>R</kbd><span><strong>Reload</strong>Load the selected crossbow from bolts in your pack.</span></div>
-              <div><kbd>Q</kbd><span><strong>Drop item</strong>Toss one from the selected stack.</span></div>
+              <div><kbd>Q</kbd><span><strong>Cast / spell wheel</strong>Tap to cast the selected spell; hold for up to ten favorites.</span></div>
+              <div><kbd>K / L</kbd><span><strong>Arcane journals</strong>Open spells or the character skills and perks tree.</span></div>
+              <div><kbd>G</kbd><span><strong>Drop item</strong>Toss one from the selected stack.</span></div>
+              <div><kbd>Z / X / C</kbd><span><strong>Dragon attacks</strong>Melee, breath, and ranged attacks while riding.</span></div>
               <div><kbd>ESC</kbd><span><strong>Menu</strong>Open or close the current menu. Fullscreen remains a menu button.</span></div>
               <div><kbd>MIDDLE</kbd><span><strong>Pick block</strong>Match the targeted block in Builder mode.</span></div>
               <div><kbd>F3</kbd><span><strong>Debug</strong>Coordinates, depth, chunks, seed, and weather.</span></div>
@@ -2938,6 +3014,9 @@ export default function VoxelGame() {
               [Item.MeadowwingJar, "Meadowwing model"],
               [Item.BloomMonarchJar, "Bloom Monarch model"],
               [BlockId.Torch, "Animated Torch profile"],
+              [Item.FireDragonEgg, "Fire Dragon Egg"],
+              [Item.IceDragonEgg, "Ice Dragon Egg"],
+              [Item.SteelDragonEgg, "Steel Dragon Egg"],
             ] as const).map(([item, label], index) => <figure key={item}><PlayerAvatarPreview variant={index % 2 ? "female" : "male"} heldItem={item} /><figcaption><strong>{label}</strong><small>{ITEMS[item].name} · production scale</small></figcaption></figure>)}
           </div>
         </section>

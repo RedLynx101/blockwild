@@ -223,9 +223,26 @@ export const COMMERCE_CATALOG: Readonly<Record<string, CommerceItem>> = Object.f
   { key: "blueprint-marshmallow-ward", name: "Formula: Marshmallow Ward", category: "blueprint", baseValue: 520, stackLimit: 16, tags: ["sugarcourt"] },
   { key: "unaligned-taffy-hound-orb", name: "Capture Orb: Taffy Hound", category: "creature", baseValue: 590, stackLimit: 1, tags: ["sugarcourt", "unaligned", "taffy-hound"] },
   { key: "unaligned-praline-cat-orb", name: "Capture Orb: Praline Cat", category: "creature", baseValue: 520, stackLimit: 1, tags: ["sugarcourt", "unaligned", "praline-cat"] },
+  { key: "fire-lair-survey", name: "Fire Lair Survey Charter", category: "treasure", baseValue: 760, stackLimit: 8, tags: ["dragon", "survey", "rare"] },
+  { key: "ice-lair-survey", name: "Ice Lair Survey Charter", category: "treasure", baseValue: 760, stackLimit: 8, tags: ["dragon", "survey", "rare"] },
+  { key: "steel-lair-survey", name: "Steel Lair Survey Charter", category: "treasure", baseValue: 820, stackLimit: 8, tags: ["dragon", "survey", "rare"] },
+  { key: "elder-fire-lair-survey", name: "Elder Fire Lair Survey", category: "treasure", baseValue: 1_480, stackLimit: 8, tags: ["dragon", "survey", "stage-5", "very-rare"] },
+  { key: "elder-ice-lair-survey", name: "Elder Ice Lair Survey", category: "treasure", baseValue: 1_480, stackLimit: 8, tags: ["dragon", "survey", "stage-5", "very-rare"] },
+  { key: "elder-steel-lair-survey", name: "Elder Steel Lair Survey", category: "treasure", baseValue: 1_560, stackLimit: 8, tags: ["dragon", "survey", "stage-5", "very-rare"] },
+  { key: "tome-flame-jet", name: "Tome of Flame Jet", category: "treasure", baseValue: 540, stackLimit: 16, tags: ["magic", "tome", "rare"] },
+  { key: "tome-frost-lance", name: "Tome of Frost Lance", category: "treasure", baseValue: 560, stackLimit: 16, tags: ["magic", "tome", "rare"] },
+  { key: "tome-steel-spear", name: "Tome of Steel Spear", category: "treasure", baseValue: 600, stackLimit: 16, tags: ["magic", "tome", "rare"] },
+  { key: "tome-healing-light", name: "Tome of Healing Light", category: "treasure", baseValue: 680, stackLimit: 16, tags: ["magic", "tome", "rare"] },
+  { key: "tome-blinkstep", name: "Tome of Blinkstep", category: "treasure", baseValue: 720, stackLimit: 16, tags: ["magic", "tome", "rare"] },
+  { key: "tome-arcane-ward", name: "Tome of Arcane Ward", category: "treasure", baseValue: 640, stackLimit: 16, tags: ["magic", "tome", "rare"] },
+  { key: "blueprint-dragonbone-arms", name: "Treatise: Dragonbone Arms", category: "blueprint", baseValue: 1_450, stackLimit: 16, tags: ["dragon", "rare"] },
+  { key: "blueprint-dragon-scale-armor", name: "Treatise: Dragon Scale Armor", category: "blueprint", baseValue: 2_100, stackLimit: 16, tags: ["dragon", "rare"] },
+  { key: "blueprint-draconic-incubator", name: "Schematics: Draconic Incubator", category: "blueprint", baseValue: 1_750, stackLimit: 16, tags: ["dragon", "rare"] },
+  { key: "blueprint-dragon-husbandry", name: "Dragon Husbandry Codex", category: "blueprint", baseValue: 1_900, stackLimit: 16, tags: ["dragon", "rare"] },
+  { key: "manaheart-draught", name: "Manaheart Draught", category: "potion", baseValue: 420, stackLimit: 8, tags: ["magic", "dragon"] },
 ] satisfies CommerceItem[]).map((definition) => [definition.key, definition])) as Readonly<Record<string, CommerceItem>>;
 
-export type MerchantOffer = Readonly<MerchantStack & { professions: readonly MerchantProfession[] }>;
+export type MerchantOffer = Readonly<MerchantStack & { professions: readonly MerchantProfession[]; rareChance?: number }>;
 
 export const HOBBIT_MERCHANT_OFFERS: readonly MerchantOffer[] = [
   { itemKey: "apple", count: 18, professions: ["farmer", "general"] },
@@ -238,6 +255,11 @@ export const HOBBIT_MERCHANT_OFFERS: readonly MerchantOffer[] = [
   { itemKey: "blueprint-mead", count: 1, professions: ["brewer"] },
   { itemKey: "blueprint-hobbit-potion", count: 1, professions: ["alchemist"] },
   { itemKey: "hobbit-potion", count: 3, professions: ["alchemist"] },
+  { itemKey: "fire-lair-survey", count: 1, professions: ["general", "mayor"], rareChance: 0.06 },
+  { itemKey: "elder-fire-lair-survey", count: 1, professions: ["mayor"], rareChance: 0.012 },
+  { itemKey: "tome-healing-light", count: 1, professions: ["alchemist"], rareChance: 0.08 },
+  { itemKey: "tome-blinkstep", count: 1, professions: ["general"], rareChance: 0.035 },
+  { itemKey: "blueprint-dragon-husbandry", count: 1, professions: ["mayor", "blacksmith"], rareChance: 0.025 },
 ];
 
 export const GOBLIN_MERCHANT_OFFERS: readonly MerchantOffer[] = [
@@ -249,6 +271,11 @@ export const GOBLIN_MERCHANT_OFFERS: readonly MerchantOffer[] = [
   { itemKey: "goblin-tonic", count: 5, professions: ["alchemist", "general"] },
   { itemKey: "blueprint-goblin-tonic", count: 1, professions: ["alchemist"] },
   { itemKey: "unaligned-warg-orb", count: 1, professions: ["mayor", "general"] },
+  { itemKey: "steel-lair-survey", count: 1, professions: ["general", "mayor"], rareChance: 0.065 },
+  { itemKey: "elder-steel-lair-survey", count: 1, professions: ["mayor"], rareChance: 0.012 },
+  { itemKey: "tome-steel-spear", count: 1, professions: ["alchemist", "blacksmith"], rareChance: 0.08 },
+  { itemKey: "tome-frost-lance", count: 1, professions: ["alchemist"], rareChance: 0.035 },
+  { itemKey: "blueprint-dragonbone-arms", count: 1, professions: ["blacksmith"], rareChance: 0.035 },
 ];
 
 export const ATLANTIAN_MERCHANT_OFFERS: readonly MerchantOffer[] = [
@@ -260,6 +287,11 @@ export const ATLANTIAN_MERCHANT_OFFERS: readonly MerchantOffer[] = [
   { itemKey: "prismatic-pearl", count: 2, professions: ["atlantian-pearlbroker"] },
   { itemKey: "tideglass-trident", count: 3, professions: ["atlantian-coralwright", "atlantian-trident-guard"] },
   { itemKey: "glowmender-salve", count: 6, professions: ["atlantian-glowmender", "atlantian-tidewarden"] },
+  { itemKey: "ice-lair-survey", count: 1, professions: ["atlantian-pearlbroker", "atlantian-tidewarden"], rareChance: 0.07 },
+  { itemKey: "elder-ice-lair-survey", count: 1, professions: ["atlantian-tidewarden"], rareChance: 0.014 },
+  { itemKey: "tome-frost-lance", count: 1, professions: ["atlantian-glowmender"], rareChance: 0.085 },
+  { itemKey: "tome-arcane-ward", count: 1, professions: ["atlantian-pearlbroker"], rareChance: 0.055 },
+  { itemKey: "blueprint-draconic-incubator", count: 1, professions: ["atlantian-coralwright"], rareChance: 0.03 },
 ];
 
 export const SUGARCOURT_MERCHANT_OFFERS: readonly MerchantOffer[] = [
@@ -288,6 +320,15 @@ export const SUGARCOURT_MERCHANT_OFFERS: readonly MerchantOffer[] = [
   { itemKey: "blueprint-sugarcourt-armor", count: 1, professions: ["sugarcourt-candysmith"] },
   { itemKey: "unaligned-taffy-hound-orb", count: 1, professions: ["sugarcourt-kennelkeeper"] },
   { itemKey: "unaligned-praline-cat-orb", count: 1, professions: ["sugarcourt-kennelkeeper"] },
+  { itemKey: "fire-lair-survey", count: 1, professions: ["sugarcourt-sweetbroker"], rareChance: 0.05 },
+  { itemKey: "ice-lair-survey", count: 1, professions: ["sugarcourt-sweetbroker"], rareChance: 0.05 },
+  { itemKey: "steel-lair-survey", count: 1, professions: ["sugarcourt-sweetbroker"], rareChance: 0.04 },
+  { itemKey: "elder-fire-lair-survey", count: 1, professions: ["sugarcourt-crown-confectioner"], rareChance: 0.009 },
+  { itemKey: "elder-ice-lair-survey", count: 1, professions: ["sugarcourt-crown-confectioner"], rareChance: 0.009 },
+  { itemKey: "elder-steel-lair-survey", count: 1, professions: ["sugarcourt-crown-confectioner"], rareChance: 0.009 },
+  { itemKey: "tome-flame-jet", count: 1, professions: ["sugarcourt-sugarboiler"], rareChance: 0.075 },
+  { itemKey: "tome-blinkstep", count: 1, professions: ["sugarcourt-crown-confectioner"], rareChance: 0.045 },
+  { itemKey: "blueprint-dragon-scale-armor", count: 1, professions: ["sugarcourt-candysmith"], rareChance: 0.025 },
 ];
 
 const MERCHANT_OFFERS_BY_FACTION: Readonly<Record<NpcFactionId, readonly MerchantOffer[]>> = {
@@ -297,9 +338,11 @@ const MERCHANT_OFFERS_BY_FACTION: Readonly<Record<NpcFactionId, readonly Merchan
   sugarcourt: SUGARCOURT_MERCHANT_OFFERS,
 };
 
-export function merchantOffersFor(factionId: Exclude<FactionId, "player">, profession: MerchantProfession) {
+export function merchantOffersFor(factionId: Exclude<FactionId, "player">, profession: MerchantProfession, availabilitySeed?: string) {
   const offers = MERCHANT_OFFERS_BY_FACTION[factionId];
-  return offers.filter((offer) => offer.professions.includes(profession)).map(({ itemKey, count }) => ({ itemKey, count }));
+  return offers.filter((offer) => offer.professions.includes(profession)
+    && (offer.rareChance === undefined || availabilitySeed === undefined || hashUnit(`${availabilitySeed}|${offer.itemKey}`) < offer.rareChance))
+    .map(({ itemKey, count }) => ({ itemKey, count }));
 }
 
 function boundedMerchantInventory(stacks: readonly MerchantStack[], customCatalog: Readonly<Record<string, CommerceItem>> = {}) {
@@ -329,7 +372,7 @@ export function createMerchant(
     factionId,
     profession,
     gold: normalizeGold(startingGold),
-    inventory: boundedMerchantInventory(merchantOffersFor(factionId, profession)),
+    inventory: boundedMerchantInventory(merchantOffersFor(factionId, profession, `${factionId}:${id}:${profession}:0`)),
     customCatalog: {},
     restockSeed: `${factionId}:${id}:${profession}`,
     lastRestockDay: 0,
@@ -484,7 +527,7 @@ export function restockMerchant(merchant: MerchantState, worldDay: number, comma
   const day = Math.max(0, Math.floor(worldDay));
   if (authority !== "ok") return { state: merchant, applied: false, reason: authority };
   if (day - merchant.lastRestockDay < 2) return { state: merchant, applied: false, reason: "invalid-amount" };
-  const base = merchantOffersFor(merchant.factionId, merchant.profession);
+  const base = merchantOffersFor(merchant.factionId, merchant.profession, `${merchant.restockSeed}:${day}`);
   const inventory = base.map((stack, index) => ({
     itemKey: stack.itemKey,
     count: Math.max(1, Math.round(stack.count * (0.75 + hashUnit(`${merchant.restockSeed}|${day}|${index}`) * 0.5))),

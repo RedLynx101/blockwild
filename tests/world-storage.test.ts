@@ -11,6 +11,7 @@ import {
   WORLD_OWNERSHIP,
   WorldStorage,
   generationOptionsFromWorldOptions,
+  migrateLegacyWorldSave,
   normalizeWorldOptions,
   requiredSleepers,
 } from "../app/game/world-storage.ts";
@@ -178,6 +179,19 @@ test("a legacy single-world save migrates once into the versioned catalog withou
 
   const reopened = new WorldStorage(storage, { now: () => 3_000, idFactory: () => "another" });
   assert.equal(reopened.listWorlds().length, 1, "migration must be idempotent");
+});
+
+test("generator v9 saves migrate to v10 without moving or dropping player edits", () => {
+  const previous = save("DRAGONWAKE-PREVIEW", "survival", 9);
+  previous.edits = {
+    "0,0": [[17, 3], [16_384, 13]],
+    "-2,7": [[41_219, 221]],
+  };
+
+  const migrated = migrateLegacyWorldSave(previous);
+  assert.ok(migrated);
+  assert.equal(migrated.generatorVersion, GENERATOR_VERSION);
+  assert.deepEqual(migrated.edits, previous.edits, "v9 and v10 share the deep-world index, so authored edits must remain exact");
 });
 
 test("world exports validate on import and use collision-safe local IDs", () => {

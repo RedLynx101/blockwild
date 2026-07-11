@@ -127,7 +127,90 @@ export const HEARTHROADS_MAIN_QUESTS: readonly QuestDefinition[] = Object.freeze
     prerequisites: { allOf: ["main-lanterns-on-the-road"], anyOf: ["main-five-campfires", "main-lanterns-on-the-road"] },
     rewards: { gold: 18, items: [{ itemId: "glass-bottle", count: 3 }], blueprints: [], factionAlignment: { hobbits: 1, goblins: 1 } },
   },
+  {
+    id: "main-rumor-under-stone",
+    questlineId: "hearthroads-main",
+    kind: "main",
+    name: "A Rumor Under Stone",
+    summary: "Follow a survey, a cavern tremor, or your own luck to the threshold of an elder dragon's underground lair.",
+    objectives: [{ id: "discover-dragon-lair", label: "Discover a stage 4 or 5 dragon lair", kind: "custom", eventId: "dragon-lair-discovered", count: 1 }],
+    prerequisites: { allOf: ["main-five-campfires", "main-open-hand"] },
+    rewards: { gold: 80, items: [{ itemId: "dragon-meal", count: 2 }], blueprints: ["draconic-incubator"], factionAlignment: {} },
+  },
+  {
+    id: "main-teeth-of-the-deep",
+    questlineId: "hearthroads-main",
+    kind: "main",
+    name: "Teeth of the Deep",
+    summary: "Survive an elder dragon on its own ground and bring the road proof that these buried powers can be faced.",
+    objectives: [{ id: "slay-elder-dragon", label: "Defeat a dragon of stage 4 or higher", kind: "custom", eventId: "dragon-killed-stage-4-plus", count: 1 }],
+    prerequisites: { allOf: ["main-rumor-under-stone"] },
+    rewards: { gold: 180, items: [{ itemId: "dragon-bone", count: 8 }], blueprints: ["dragonbone-arms"], factionAlignment: {} },
+  },
+  {
+    id: "main-dragonwake-attunement",
+    questlineId: "hearthroads-main",
+    kind: "main",
+    name: "The Dragonwake Accord",
+    summary: "Shape the remains without becoming the thing you defeated. Wearing or wielding your first draconic craft completes the attunement that awakens mana.",
+    objectives: [{ id: "equip-draconic-craft", label: "Equip a dragonbone weapon, tool, or dragon-scale armor piece", kind: "custom", eventId: "draconic-gear-equipped", count: 1 }],
+    prerequisites: { allOf: ["main-teeth-of-the-deep"] },
+    rewards: { gold: 240, items: [{ itemId: "manaheart-draught", count: 1 }, { itemId: "tome-arcane-ward", count: 1 }], blueprints: ["dragon-scale-armor", "dragon-husbandry"], factionAlignment: {} },
+  },
+  {
+    id: "main-the-fifth-shadow",
+    questlineId: "hearthroads-main",
+    kind: "main",
+    name: "The Fifth Shadow",
+    summary: "Face a fully elder stage-five dragon after attunement. This is proof of mastery, not the price of learning magic.",
+    objectives: [{ id: "slay-stage-five-dragon", label: "Defeat a stage 5 dragon", kind: "custom", eventId: "dragon-killed-stage-5", count: 1 }],
+    prerequisites: { allOf: ["main-dragonwake-attunement"] },
+    rewards: { gold: 420, items: [{ itemId: "manaheart-draught", count: 3 }, { itemId: "tome-flame-jet", count: 1 }], blueprints: [], factionAlignment: {} },
+  },
 ] as readonly QuestDefinition[]);
+
+export const DRAGONWAKE_SIDE_QUESTS: readonly QuestDefinition[] = Object.freeze([
+  {
+    id: "dragonwake-living-archive",
+    questlineId: "dragonwake-field-studies",
+    kind: "side",
+    name: "A Living Archive",
+    summary: "The first spell archivists learned by watching the impossible creatures of Blockwild was movement itself.",
+    objectives: [{ id: "capture-rare-creatures", label: "Capture three different rare creatures", kind: "custom", eventId: "rare-creature-species-captured", count: 3 }],
+    rewards: { gold: 95, items: [{ itemId: "tome-blinkstep", count: 1 }], blueprints: [], factionAlignment: {} },
+    abandonable: true,
+    reacceptAfterAbandon: true,
+  },
+  {
+    id: "dragonwake-scale-scholar",
+    questlineId: "dragonwake-field-studies",
+    kind: "side",
+    name: "Scale, Spark, and Script",
+    summary: "Bring an intact elemental scale to a learned merchant so its natural pattern can be translated into a reusable spell tome.",
+    objectives: [{ id: "deliver-dragon-scale", label: "Deliver an elemental dragon scale", kind: "custom", eventId: "dragon-scale-delivered", count: 1 }],
+    giver: { role: "alchemist", failOnDeath: true },
+    failureConditions: [{ kind: "entity-dies", role: "alchemist", reason: "The scholar who commissioned the translation has died." }],
+    rewards: { gold: 120, items: [{ itemId: "tome-healing-light", count: 1 }], blueprints: [], factionAlignment: {} },
+    abandonable: true,
+    reacceptAfterAbandon: true,
+  },
+  {
+    id: "dragonwake-three-temperatures",
+    questlineId: "dragonwake-field-studies",
+    kind: "side",
+    name: "Three Temperatures of Courage",
+    summary: "Record Fire, Ice, and Steel dragon lairs without needing to defeat their guardians.",
+    objectives: [
+      { id: "survey-fire-lair", label: "Record a Fire Dragon lair", kind: "custom", eventId: "fire-dragon-lair-recorded", count: 1 },
+      { id: "survey-ice-lair", label: "Record an Ice Dragon lair", kind: "custom", eventId: "ice-dragon-lair-recorded", count: 1 },
+      { id: "survey-steel-lair", label: "Record a Steel Dragon lair", kind: "custom", eventId: "steel-dragon-lair-recorded", count: 1 },
+    ],
+    prerequisites: { allOf: ["main-rumor-under-stone"] },
+    rewards: { gold: 210, items: [{ itemId: "tome-frost-lance", count: 1 }, { itemId: "tome-steel-spear", count: 1 }], blueprints: [], factionAlignment: {} },
+    abandonable: true,
+    reacceptAfterAbandon: true,
+  },
+]);
 
 export const ATLANTIAN_FACTION_QUESTS: readonly QuestDefinition[] = Object.freeze([
   {
@@ -207,16 +290,26 @@ export const SUGARCOURT_QUESTLINE: QuestlineDefinition = Object.freeze({
   questIds: SUGARCOURT_FACTION_QUESTS.map((quest) => quest.id),
 });
 
+export const DRAGONWAKE_QUESTLINE: QuestlineDefinition = Object.freeze({
+  id: "dragonwake-field-studies",
+  name: "The Dragonwake Field Studies",
+  description: "Optional archive work about rare creatures, elemental lairs, and the repeatable patterns that became Blockwild's first spells.",
+  kind: "side",
+  questIds: DRAGONWAKE_SIDE_QUESTS.map((quest) => quest.id),
+});
+
 export const DEFAULT_QUEST_DEFINITIONS: readonly QuestDefinition[] = Object.freeze([
   ...HEARTHROADS_MAIN_QUESTS,
   ...ATLANTIAN_FACTION_QUESTS,
   ...SUGARCOURT_FACTION_QUESTS,
+  ...DRAGONWAKE_SIDE_QUESTS,
 ]);
 
 export const DEFAULT_QUESTLINES: readonly QuestlineDefinition[] = Object.freeze([
   ...HEARTHROADS_QUESTLINES,
   ATLANTIAN_QUESTLINE,
   SUGARCOURT_QUESTLINE,
+  DRAGONWAKE_QUESTLINE,
 ]);
 
 export function createQuestBook(): QuestBook {
@@ -461,7 +554,9 @@ export function turnInQuest(
   const active = normalized.active.find((entry) => entry.questId === questId);
   if (!definition || !active) return { ok: false, reason: "not-active", book: normalized, inventory } as const;
   if (!reportableObjectivesComplete(definition, active.objectiveProgress)) return { ok: false, reason: "objectives-incomplete", book: normalized, inventory } as const;
-  if (definition.giver && (!active.giverEntityId || active.giverEntityId !== giverEntityId)) {
+  // Procedural resident quests bind to an exact giver. Curated field-study
+  // quests may name a role without being instantiated for one resident.
+  if (definition.giver && active.giverEntityId && active.giverEntityId !== giverEntityId) {
     return { ok: false, reason: "wrong-giver", book: normalized, inventory } as const;
   }
   const requirements = deliveryRequirements(definition);

@@ -103,6 +103,46 @@ export const BLUEPRINTS: readonly BlueprintDefinition[] = Object.freeze([
     recipeIds: ["marshmallow-ward"],
     resaleGold: 145,
   },
+  {
+    id: "dragonbone-arms",
+    name: "Dragonbone Arms Treatise",
+    description: "A rare field treatise for shaping dragon bone into a greatsword, pickaxe, and mirrored axe.",
+    faction: "neutral",
+    recipeIds: ["dragonbone-greatsword", "dragonbone-pickaxe", "dragonbone-axe"],
+    resaleGold: 520,
+  },
+  {
+    id: "dragon-scale-armor",
+    name: "Dragon Scale Armor Treatise",
+    description: "Teaches all twelve Ember, Rime, and Steel scale armor patterns without making the elements interchangeable.",
+    faction: "neutral",
+    recipeIds: [
+      "fire-scale-helm", "fire-scale-plate", "fire-scale-greaves", "fire-scale-boots",
+      "ice-scale-helm", "ice-scale-plate", "ice-scale-greaves", "ice-scale-boots",
+      "steel-scale-helm", "steel-scale-plate", "steel-scale-greaves", "steel-scale-boots",
+    ],
+    resaleGold: 780,
+  },
+  {
+    id: "draconic-incubator",
+    name: "Draconic Incubator Schematics",
+    description: "Teaches a crystal-regulated chamber that safely supplies the distinct heat, freezing, or steam cycle each egg requires.",
+    faction: "neutral",
+    recipeIds: ["draconic-incubator"],
+    resaleGold: 680,
+  },
+  {
+    id: "dragon-husbandry",
+    name: "Dragon Husbandry Codex",
+    description: "Teaches Dragon Meal, flight tack, paired panniers, fitted armor, and same-element breeding catalysts.",
+    faction: "neutral",
+    recipeIds: [
+      "dragon-meal", "dragonflight-saddle", "dragon-pannier",
+      "ember-dragon-armor", "rime-dragon-armor", "steel-dragon-armor",
+      "emberlily-catalyst", "frostlily-catalyst", "ferric-lotus-catalyst",
+    ],
+    resaleGold: 740,
+  },
 ]);
 
 const BLUEPRINT_BY_ID = new Map(BLUEPRINTS.map((definition) => [definition.id, definition]));

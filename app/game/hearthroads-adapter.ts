@@ -54,6 +54,22 @@ export const HEARTHROADS_RESOURCE_ITEMS: Readonly<Record<string, ItemCode>> = Ob
   "fondant-boots": Item.FondantBoots,
   "peppermint-rush": Item.PeppermintRush,
   "marshmallow-ward": Item.MarshmallowWard,
+  "dragon-heart": Item.FireDragonHeart,
+  "fire-dragon-heart": Item.FireDragonHeart,
+  "ice-dragon-heart": Item.IceDragonHeart,
+  "steel-dragon-heart": Item.SteelDragonHeart,
+  "manaheart-draught": Item.ManaheartDraught,
+  "fire-dragon-scale": Item.FireDragonScale,
+  "ice-dragon-scale": Item.IceDragonScale,
+  "steel-dragon-scale": Item.SteelDragonScale,
+  "dragon-bone": Item.DragonBone,
+  "dragon-meal": Item.DragonMeal,
+  "tome-flame-jet": Item.TomeFlameJet,
+  "tome-frost-lance": Item.TomeFrostLance,
+  "tome-steel-spear": Item.TomeSteelSpear,
+  "tome-healing-light": Item.TomeHealingLight,
+  "tome-blinkstep": Item.TomeBlinkstep,
+  "tome-arcane-ward": Item.TomeArcaneWard,
 });
 
 const RESOURCE_BY_ITEM = new Map(Object.entries(HEARTHROADS_RESOURCE_ITEMS).map(([resource, item]) => [item, resource] as const));
@@ -95,6 +111,7 @@ export const POTION_RECIPE_BY_ITEM: Readonly<Partial<Record<ItemCode, string>>> 
   [Item.GlowmenderSalve]: "glowmender-salve",
   [Item.PeppermintRush]: "peppermint-rush",
   [Item.MarshmallowWard]: "marshmallow-ward",
+  [Item.ManaheartDraught]: "manaheart-draught",
 });
 
 export const COMMERCE_ITEM_CODES: Readonly<Record<string, ItemCode>> = Object.freeze({
@@ -161,6 +178,23 @@ export const COMMERCE_ITEM_CODES: Readonly<Record<string, ItemCode>> = Object.fr
   "blueprint-marshmallow-ward": Item.MarshmallowWardBlueprint,
   "unaligned-taffy-hound-orb": Item.CaptureOrb,
   "unaligned-praline-cat-orb": Item.CaptureOrb,
+  "fire-lair-survey": Item.FireLairSurvey,
+  "ice-lair-survey": Item.IceLairSurvey,
+  "steel-lair-survey": Item.SteelLairSurvey,
+  "elder-fire-lair-survey": Item.FireElderLairSurvey,
+  "elder-ice-lair-survey": Item.IceElderLairSurvey,
+  "elder-steel-lair-survey": Item.SteelElderLairSurvey,
+  "tome-flame-jet": Item.TomeFlameJet,
+  "tome-frost-lance": Item.TomeFrostLance,
+  "tome-steel-spear": Item.TomeSteelSpear,
+  "tome-healing-light": Item.TomeHealingLight,
+  "tome-blinkstep": Item.TomeBlinkstep,
+  "tome-arcane-ward": Item.TomeArcaneWard,
+  "blueprint-dragonbone-arms": Item.DragonboneArmsBlueprint,
+  "blueprint-dragon-scale-armor": Item.DragonScaleArmorBlueprint,
+  "blueprint-draconic-incubator": Item.DraconicIncubatorBlueprint,
+  "blueprint-dragon-husbandry": Item.DragonHusbandryBlueprint,
+  "manaheart-draught": Item.ManaheartDraught,
 });
 
 // Filled-orb offer keys are purchase templates, not safe reverse identities:

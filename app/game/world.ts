@@ -1,7 +1,8 @@
 import * as THREE from "three";
-import { BLOCKS, LEAF_BLOCKS, TORCH_BLOCKS, BlockId, blockContainsWater, isWaterloggedFloraBlock, type RenderLayer } from "./data";
+import { BLOCKS, LEAF_BLOCKS, TORCH_BLOCKS, BlockId, archiveShelfBookCount, blockContainsWater, isWaterloggedFloraBlock, type RenderLayer } from "./data";
 import { caveEntranceAt, caveFeatureAt } from "./caves";
 import { DENSE_CUTOUT_LEAF_POLICY, planFullTree, planSubmergedFlora, planSyrupPondsForChunk, syrupPondColumnAt, type TreeForm, type TreePlanBlock } from "./ecology";
+import { dragonLairMarkersForChunk, dragonLairPlacementsForChunk, dragonLairsIntersectingChunk, repairGeneratedTreePlan } from "./dragon-world";
 import { NPC_FACTION_IDS, normalizeEnabledFactions, type NpcFactionId } from "./factions";
 import {
   planBiomeVegetation,
@@ -33,7 +34,7 @@ export const WORLD_HEIGHT = MAX_Y - MIN_Y + 1;
 export const SEA_LEVEL = 32;
 export const SECTION_HEIGHT = 16;
 export const SECTION_COUNT = WORLD_HEIGHT / SECTION_HEIGHT;
-export const GENERATOR_VERSION = 9;
+export const GENERATOR_VERSION = 10;
 
 export type SettlementWorldPlan = Readonly<{
   candidate: SettlementCandidate;
@@ -512,6 +513,7 @@ const LIGHT_BLOCKS = new Set<BlockId>([
   BlockId.StarCoral,
   BlockId.AbyssBloom,
   BlockId.LanternLotus,
+  BlockId.DraconicIncubator,
 ]);
 const ATLAS_GRID = 12;
 const ATLAS_PAD = 0.0008;
@@ -1680,10 +1682,14 @@ export class ChunkWorld {
       if (!onlyAir || current === BlockId.Air || BLOCKS[current]?.replaceable) chunk.blocks[index] = type;
     };
     const clearGeneratedGrowth = (bounds: Readonly<{ minX: number; maxX: number; minZ: number; maxZ: number }>) => {
-      const startX = Math.max(minX, Math.floor(bounds.minX));
-      const endX = Math.min(minX + CHUNK_SIZE - 1, Math.ceil(bounds.maxX));
-      const startZ = Math.max(minZ, Math.floor(bounds.minZ));
-      const endZ = Math.min(minZ + CHUNK_SIZE - 1, Math.ceil(bounds.maxZ));
+      // Tree crowns reach four cells beyond their root. Clearing a padded
+      // envelope removes the whole authored tree instead of shearing its trunk
+      // and leaving an apparently floating outer crown beside a POI.
+      const treePadding = 5;
+      const startX = Math.max(minX, Math.floor(bounds.minX) - treePadding);
+      const endX = Math.min(minX + CHUNK_SIZE - 1, Math.ceil(bounds.maxX) + treePadding);
+      const startZ = Math.max(minZ, Math.floor(bounds.minZ) - treePadding);
+      const endZ = Math.min(minZ + CHUNK_SIZE - 1, Math.ceil(bounds.maxZ) + treePadding);
       if (startX > endX || startZ > endZ) return;
       for (let x = startX; x <= endX; x += 1) for (let z = startZ; z <= endZ; z += 1) {
         const lx = x - minX;
@@ -1761,13 +1767,20 @@ export class ChunkWorld {
                     : trunk === BlockId.CandywoodLog ? BlockId.CandywoodLeaves : BlockId.WildwoodLeaves;
           const height = trunk === BlockId.PineLog ? 6 + Math.floor(hash2(x, z, this.seed) * 3) : 4 + Math.floor(hash2(x, z, this.seed) * 3);
           if (trunk === BlockId.PineLog) {
-            for (let y = 1; y <= height; y += 1) queueTreeBlock({ x, y: column.height + y, z, block: trunk });
+            const pinePlan: TreePlanBlock[] = [];
+            for (let y = 1; y <= height; y += 1) pinePlan.push({ x, y: column.height + y, z, block: trunk });
             for (let dy = -3; dy <= 1; dy += 1) {
               const radius = dy % 2 === 0 ? 2 : 1;
               for (let dx = -radius; dx <= radius; dx += 1) for (let dz = -radius; dz <= radius; dz += 1) if (Math.abs(dx) + Math.abs(dz) <= radius + 1) {
-                queueTreeBlock({ x: x + dx, y: column.height + height + dy, z: z + dz, block: leaves });
+                pinePlan.push({ x: x + dx, y: column.height + height + dy, z: z + dz, block: leaves });
               }
             }
+            for (const planned of repairGeneratedTreePlan({
+              plan: pinePlan,
+              root: { x, y: column.height + 1, z },
+              logBlock: trunk,
+              forbiddenColumns: syrupPondCells,
+            })) queueTreeBlock(planned);
           } else {
             const formRoll = hash2(x, z, this.seed ^ 0x51a6c72d);
             const form: TreeForm = column.biome === BiomeId.SugarplumVale ? (formRoll > 0.91 ? "ancient" : formRoll > 0.36 ? "layered" : "rounded")
@@ -1775,9 +1788,13 @@ export class ChunkWorld {
               : formRoll > 0.975 ? "ancient"
               : column.biome === BiomeId.CloudreedGlen || formRoll > 0.77 ? "windswept"
                 : formRoll > 0.45 ? "layered" : "rounded";
-            for (const planned of planFullTree(`${this.seedText}:${x},${z}`, { x, y: column.height + 1, z }, form, trunk, leaves)) {
-              queueTreeBlock(planned);
-            }
+            const root = { x, y: column.height + 1, z };
+            for (const planned of repairGeneratedTreePlan({
+              plan: planFullTree(`${this.seedText}:${x},${z}`, root, form, trunk, leaves),
+              root,
+              logBlock: trunk,
+              forbiddenColumns: syrupPondCells,
+            })) queueTreeBlock(planned);
           }
         }
       }
@@ -1950,7 +1967,23 @@ export class ChunkWorld {
         }
       }
     }
-    if (this.generationOptions.structures) this.generateSettlementsForChunk(chunk, sample, set, clearGeneratedGrowth);
+    if (this.generationOptions.structures) {
+      this.generateSettlementsForChunk(chunk, sample, set, clearGeneratedGrowth);
+      for (const lair of dragonLairsIntersectingChunk({
+        seed: this.seedText,
+        chunkX: chunk.cx,
+        chunkZ: chunk.cz,
+        chunkSize: CHUNK_SIZE,
+        surfaceYAt: (x, z) => sample(x, z).height,
+      })) {
+        for (const placement of dragonLairPlacementsForChunk(lair, chunk.cx, chunk.cz, CHUNK_SIZE)) {
+          set(placement.x, placement.y, placement.z, placement.block, false);
+        }
+        for (const marker of dragonLairMarkersForChunk(lair, chunk.cx, chunk.cz, CHUNK_SIZE)) {
+          this.structureMarkers.set(`${lair.id}:${marker.type}:${marker.id}`, marker);
+        }
+      }
+    }
   }
 
   private generateSettlementsForChunk(
@@ -2672,6 +2705,54 @@ export class ChunkWorld {
           }
           addTexturedCuboid(buckets.transparent, lx - 0.22, y + 0.29, lz - 0.22, lx + 0.22, y + 0.35, lz + 0.22, 136, 136, 136, [1, 1, 1], 1);
           addTexturedCuboid(buckets.emissive, lx + 0.24, y + 0.31, lz - 0.08, lx + 0.32, y + 0.48, lz + 0.08, 143, 143, 143, [1, 1, 1], 1);
+          continue;
+        }
+        if (definition.shape === "gold-pile") {
+          const environment = shadeAt(lx, y, lz);
+          addTexturedCuboid(bucket, lx - 0.43, y - 0.5, lz - 0.38, lx + 0.43, y - 0.33, lz + 0.38, 41, 41, 41, [1, 1, 1], environment);
+          addTexturedCuboid(bucket, lx - 0.31, y - 0.33, lz - 0.29, lx + 0.29, y - 0.17, lz + 0.31, 41, 41, 41, [1, 1, 1], environment);
+          addTexturedCuboid(bucket, lx - 0.18, y - 0.17, lz - 0.16, lx + 0.21, y - 0.02, lz + 0.18, 41, 41, 41, [1, 1, 1], environment);
+          continue;
+        }
+        if (definition.shape === "dragon-egg") {
+          const environment = definition.layer === "emissive" ? 1 : shadeAt(lx, y, lz);
+          const tile = definition.side;
+          addTexturedCuboid(bucket, lx - 0.27, y - 0.48, lz - 0.27, lx + 0.27, y - 0.3, lz + 0.27, tile, tile, tile, [1, 1, 1], environment);
+          addTexturedCuboid(bucket, lx - 0.35, y - 0.3, lz - 0.35, lx + 0.35, y + 0.18, lz + 0.35, tile, tile, tile, [1, 1, 1], environment);
+          addTexturedCuboid(bucket, lx - 0.24, y + 0.18, lz - 0.24, lx + 0.24, y + 0.42, lz + 0.24, tile, tile, tile, [1, 1, 1], environment);
+          continue;
+        }
+        if (definition.shape === "incubator") {
+          const environment = shadeAt(lx, y, lz);
+          addTexturedCuboid(bucket, lx - 0.48, y - 0.5, lz - 0.48, lx + 0.48, y - 0.31, lz + 0.48, 50, 51, 43, [1, 1, 1], environment);
+          for (const [dx, dz] of [[-0.43, -0.43], [0.31, -0.43], [-0.43, 0.31], [0.31, 0.31]] as Array<[number, number]>) {
+            addTexturedCuboid(bucket, lx + dx, y - 0.31, lz + dz, lx + dx + 0.12, y + 0.37, lz + dz + 0.12, 50, 50, 43, [1, 1, 1], environment);
+          }
+          addTexturedCuboid(buckets.transparent, lx - 0.34, y - 0.27, lz - 0.34, lx + 0.34, y + 0.3, lz + 0.34, 13, 13, 13, [1, 1, 1], 1);
+          addTexturedCuboid(buckets.emissive, lx - 0.16, y - 0.18, lz - 0.16, lx + 0.16, y + 0.15, lz + 0.16, 51, 51, 51, [1, 1, 1], 1);
+          addTexturedCuboid(bucket, lx - 0.43, y + 0.34, lz - 0.43, lx + 0.43, y + 0.47, lz + 0.43, 50, 51, 43, [1, 1, 1], environment);
+          continue;
+        }
+        if (definition.shape === "archive-shelf") {
+          const environment = shadeAt(lx, y, lz);
+          for (const x of [lx - 0.48, lx + 0.36]) addTexturedCuboid(bucket, x, y - 0.5, lz - 0.22, x + 0.12, y + 0.48, lz + 0.22, 127, 127, 11, tint, environment);
+          for (const shelfY of [y - 0.45, y - 0.03, y + 0.39]) addTexturedCuboid(bucket, lx - 0.48, shelfY, lz - 0.24, lx + 0.48, shelfY + 0.1, lz + 0.24, 127, 127, 11, tint, environment);
+          const visibleTomes = archiveShelfBookCount(type) ?? 0;
+          for (let index = 0; index < visibleTomes; index += 1) {
+            const tier = Math.floor(index / 3);
+            const x = lx - 0.34 + (index % 3) * 0.27;
+            const tomeTile = [45, 48, 35][index % 3];
+            const baseY = y - 0.34 + tier * 0.42;
+            addTexturedCuboid(bucket, x, baseY, lz - 0.27, x + 0.17, baseY + 0.29, lz - 0.08, tomeTile, tomeTile, tomeTile, [1, 1, 1], environment);
+          }
+          continue;
+        }
+        if (definition.shape === "tome-display") {
+          const environment = shadeAt(lx, y, lz);
+          addTexturedCuboid(bucket, lx - 0.38, y - 0.5, lz - 0.33, lx + 0.38, y - 0.35, lz + 0.33, 11, 11, 11, tint, environment);
+          addTexturedCuboid(bucket, lx - 0.09, y - 0.35, lz - 0.09, lx + 0.09, y + 0.08, lz + 0.09, 127, 127, 11, tint, environment);
+          addTexturedCuboid(bucket, lx - 0.34, y + 0.08, lz - 0.28, lx + 0.34, y + 0.19, lz + 0.28, 127, 127, 11, tint, environment);
+          addTexturedCuboid(bucket, lx - 0.28, y + 0.19, lz - 0.22, lx + 0.28, y + 0.3, lz + 0.22, 45, 45, 45, [1, 1, 1], environment);
           continue;
         }
         if (definition.shape === "wayshrine") {

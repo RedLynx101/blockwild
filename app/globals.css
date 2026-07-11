@@ -5807,6 +5807,109 @@ input:focus-visible {
   clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
 }
 
+/* Dragonwake materials keep their elemental color while using distinct
+   silhouettes at the actual 28px hotbar size. */
+.item-icon-kind-dragon-egg::before {
+  left: 4px;
+  top: 0;
+  width: 20px;
+  height: 28px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--item-color), #fff 48%) 0 18%, var(--item-color) 19% 66%, color-mix(in srgb, var(--item-color), #111 48%) 67%);
+  clip-path: polygon(50% 0, 72% 9%, 88% 34%, 94% 66%, 78% 90%, 50% 100%, 22% 90%, 6% 66%, 12% 34%, 28% 9%);
+  filter: drop-shadow(2px 2px 0 rgba(0, 0, 0, .62));
+}
+
+.item-icon-kind-dragon-egg::after {
+  left: 10px;
+  top: 7px;
+  width: 8px;
+  height: 15px;
+  background: color-mix(in srgb, var(--item-color), #fff 74%);
+  clip-path: polygon(42% 0, 100% 0, 63% 37%, 100% 37%, 17% 100%, 38% 55%, 0 55%);
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--item-color), #fff 44%));
+}
+
+.item-icon-kind-dragon-scale::before {
+  left: 3px;
+  top: 1px;
+  width: 23px;
+  height: 26px;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--item-color), #fff 42%), var(--item-color) 46%, color-mix(in srgb, var(--item-color), #111 46%));
+  clip-path: polygon(50% 0, 91% 22%, 82% 72%, 50% 100%, 18% 72%, 9% 22%);
+  filter: drop-shadow(2px 2px 0 rgba(0, 0, 0, .58));
+}
+
+.item-icon-kind-dragon-scale::after {
+  left: 12px;
+  top: 5px;
+  width: 3px;
+  height: 18px;
+  background: color-mix(in srgb, var(--item-color), #fff 68%);
+  box-shadow: -5px 5px 0 -1px color-mix(in srgb, var(--item-color), #fff 46%), 5px 5px 0 -1px color-mix(in srgb, var(--item-color), #111 28%);
+  transform: rotate(9deg);
+}
+
+.item-icon-kind-dragon-heart::before {
+  left: 2px;
+  top: 2px;
+  width: 25px;
+  height: 24px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--item-color), #fff 43%), var(--item-color) 38% 70%, color-mix(in srgb, var(--item-color), #241019 58%));
+  clip-path: polygon(50% 98%, 7% 55%, 2% 31%, 12% 12%, 30% 5%, 50% 23%, 70% 5%, 88% 12%, 98% 31%, 93% 55%);
+  filter: drop-shadow(2px 2px 0 rgba(0, 0, 0, .62));
+}
+
+.item-icon-kind-dragon-heart::after {
+  left: 12px;
+  top: 7px;
+  width: 4px;
+  height: 14px;
+  background: color-mix(in srgb, var(--item-color), #fff 70%);
+  clip-path: polygon(0 0, 100% 0, 68% 39%, 100% 39%, 22% 100%, 43% 55%, 0 55%);
+  opacity: .78;
+}
+
+.item-icon-kind-dragon-skull::before {
+  left: 3px;
+  top: 2px;
+  width: 23px;
+  height: 25px;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--item-color), #fff 34%), var(--item-color) 54%, color-mix(in srgb, var(--item-color), #433d38 45%));
+  clip-path: polygon(50% 0, 83% 8%, 100% 35%, 90% 68%, 72% 75%, 72% 96%, 57% 88%, 50% 100%, 43% 88%, 28% 96%, 28% 75%, 10% 68%, 0 35%, 17% 8%);
+  filter: drop-shadow(2px 2px 0 rgba(0, 0, 0, .62));
+}
+
+.item-icon-kind-dragon-skull::after {
+  left: 7px;
+  top: 10px;
+  width: 5px;
+  height: 5px;
+  background: #202321;
+  box-shadow: 10px 0 #202321, 5px 8px 0 -1px #202321;
+  transform: rotate(8deg);
+}
+
+.item-icon-kind-dragon-bone::before {
+  left: 3px;
+  top: 0;
+  width: 22px;
+  height: 28px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--item-color), #fff 34%), var(--item-color) 48%, color-mix(in srgb, var(--item-color), #675f56 38%));
+  clip-path: polygon(18% 0, 40% 0, 50% 13%, 60% 0, 82% 0, 100% 18%, 100% 35%, 68% 50%, 100% 65%, 100% 82%, 82% 100%, 60% 100%, 50% 87%, 40% 100%, 18% 100%, 0 82%, 0 65%, 32% 50%, 0 35%, 0 18%);
+  filter: drop-shadow(2px 2px 0 rgba(0, 0, 0, .58));
+  transform: rotate(42deg) scale(.83);
+}
+
+.item-icon-kind-dragon-bone::after {
+  left: 12px;
+  top: 5px;
+  width: 3px;
+  height: 18px;
+  background: color-mix(in srgb, var(--item-color), #fff 58%);
+  transform: rotate(42deg);
+  opacity: .72;
+}
+
 .item-icon-kind-torch::after {
   animation: torch-icon-flicker .34s steps(2, end) infinite alternate;
   transform-origin: 50% 80%;

@@ -2,6 +2,45 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 0.9.0 — Wyrmweave — 2026-07-11
+
+### Dragons and underground lairs
+
+- Added Fire, Ice, and Steel Dragons as three persistent production creatures. One normalized lifecycle carries sex, genetics, age, five smooth 25-day growth stages, health, home lair, disposition, ownership, commands, equipment, cargo, breeding, renewable scales, and alive state across save/load and distance unloading.
+- Added fully articulated shared rigs with animated eyes, jaw, chest, three neck joints, seven tail joints, two-part wings, jointed legs and claws, breath and projectile origins, sex markers, saddles, paired cargo, and fitted armor. All three use gameplay geometry for their field-guide portraits and inspection sheets.
+- Added distinct autonomous attack profiles. Every type can bite or claw, use a short-range breath, and project a ranged attack; Steel Dragons breathe scalding steam and throw a modeled metal spear. AI chooses an envelope from target distance, altitude, line of sight, provocation, and lair distance.
+- Added sparse deterministic stage-four and stage-five lairs on a 704-block region grid. Elemental dragonstone caverns contain permanent guardians, Gold Blocks and piles, three or four hoard chests, type-aware scales, rare tomes and blueprints, and eggs when the guardian is female.
+- Added rare Fire, Ice, and Steel Lair Survey Charters to merchant stock. Each consumed charter scans deterministic region rings and records the nearest matching elder lair that is not already known, without forcing its chunks to load.
+
+### Eggs, husbandry, flight, and rewards
+
+- Added physical dragon eggs with exact type, sex, genetics, parent, lair, and incubation metadata. Fire eggs need open flame, Ice eggs need freezing water, and Steel eggs need heated metal plus active steam. Natural incubation hatches in place; a blueprint-gated Draconic Incubator instead prepares a stable hatchling egg for deliberate placement.
+- Added defensive hatchling bonding, meat-based healing, one-day Dragon Meal growth, stage-one shoulder carrying, follow/stay/guard/wander orders, and same-type opposite-sex adult breeding with an elemental catalyst and persistent cooldown.
+- Added stage-three flight and riding with a Dragon Saddle. Mounted controls reserve `Z`, `X`, and `C` for melee, breath, and projectile attacks while normal held-item use remains available; `Space` and `Shift` control altitude, and `F` dismounts.
+- Added four fitted armor positions, two visible chest modules, a dragon care interface, and a save-backed scale reserve that produces new scales every three world days. Cargo capacity derives from the number of attached chest modules rather than a separate creature inventory flag.
+- Added stage-, type-, and sex-aware corpse and lair rewards: raw dragon meat, dragon bones, elemental scales and hearts, typed skulls, and possible eggs. Higher stages produce substantially larger stacks. New treatises unlock Dragonbone Greatsword, Pickaxe and Axe recipes, twelve player scale-armor pieces, incubation, tack, dragon armor, breeding catalysts, and Dragon Meal.
+
+### Dragonwake quests and magic
+
+- Extended the Hearthroads main line with **A Rumor Under Stone**, **Teeth of the Deep**, **The Dragonwake Accord**, and **The Fifth Shadow**. The branch moves from elder-lair discovery through a stage-four kill and draconic equipment to mana attunement and an optional stage-five mastery fight.
+- Added three abandonable Dragonwake Field Studies side quests for capturing different rare creatures, delivering an elemental scale to a living scholar, and recording all three lair types. Rewards include gold and reusable spell tomes.
+- Added six initial spells across Destruction, Restoration, Alteration, Conjuration, and Utility: Flame Jet, Frost Lance, Steel Spear, Healing Light, Blinkstep, and Arcane Ward. Each definition carries targeting, mana, cooldown, effect, projectile, cast pose, particle, camera, and layered sound plans.
+- Spell tomes teach durable knowledge without being consumed. Players can discover and learn spells before attunement, keep or sell duplicate tomes, place one on a Tome Display, or store as many as six visible books in an occupancy-rendered Archive Shelf.
+- Completing the Dragonwake Accord attunes the player and enables mana. Tap `Q` to cast the selected favorite or hold it for a radial wheel that grows to ten slots. Mana regenerates, spell cooldowns persist, and each Manaheart Draught permanently adds five capacity.
+
+### Skills and Ascendant foundation
+
+- Added eight save-backed skills: Melee, Ranged, Mining, Crafting, Survival, Husbandry, Exploration, and Magic. Relevant play awards skill and character XP, while next-rank costs rise linearly rather than exponentially.
+- Every skill reaches rank 1000 and contributes exactly one percentage point per rank to its core multiplier, for 11 times the base at rank 1000 before perks and other effects. Character level remains uncapped, and each 25 ranks grants a perk point.
+- Added sixteen prerequisite-aware starter perks spanning all eight trees. The data model supports percent bonuses, flat bonuses, and ability unlocks without embedding future perks in the save format.
+- Magic 1000 makes mana effectively infinite and hides the mana bar. Mastering all eight skills unlocks the opt-in Ascendant foundation, currently a floor that prevents health from falling below ten percent; broader Ascendant switches remain future work.
+
+### World repair, compatibility, and coverage
+
+- Advanced deterministic generation to version 10 for bounded dragon lairs and a final tree-connectivity pass. Authored trunk islands are bridged back to the rooted component, nearby crown pieces attach before leaves are emitted, truly floating leaf islands are pruned, liquid exclusions remain intact, and POIs keep a five-block tree-free margin.
+- Supported generator-v9 Sugarcourt worlds migrate without losing edited blocks. Dragon, egg, archive, tome, magic, skill, and Ascendant fields use bounded normalization and safe defaults, while dragons are explicitly ineligible for ordinary permanent cleanup.
+- Expanded the generated creature catalog from 90 to 93 entries: 86 core creatures plus seven butterflies. Added dedicated dragon lifecycle, model, effects, world, content, magic, skills, and responsive UI suites alongside the existing full release gates.
+
 ## 0.8.0 — Sugarcourt — 2026-07-11
 
 ### Sugarplum Vale and food liquids
