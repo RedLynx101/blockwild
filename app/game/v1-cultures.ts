@@ -234,7 +234,7 @@ export function planV1Settlement(input: Readonly<{
   };
 }
 
-export type GolemType = "copper-scout" | "stone-bulwark" | "aetherforged-sentinel";
+export type GolemType = "copper-scout" | "stone-bulwark" | "aetherforged-sentinel" | "deepgear-courser";
 export type GolemRecipe = Readonly<{
   type: GolemType;
   name: string;
@@ -244,7 +244,7 @@ export type GolemRecipe = Readonly<{
   resources: Readonly<Record<string, number>>;
   health: number;
   damage: number;
-  role: "utility" | "defender" | "guardian";
+  role: "utility" | "defender" | "guardian" | "mount";
 }>;
 
 export const GOLEM_RECIPES: Readonly<Record<GolemType, GolemRecipe>> = Object.freeze({
@@ -259,6 +259,10 @@ export const GOLEM_RECIPES: Readonly<Record<GolemType, GolemRecipe>> = Object.fr
   "aetherforged-sentinel": Object.freeze({
     type: "aetherforged-sentinel", name: "Aetherforged Sentinel", blueprintId: "golem-aetherforged-sentinel", manaCost: 180, seconds: 180,
     resources: { "deepgear-alloy": 18, "gold-ingot": 8, "crystal-shard": 5, "gear-cluster": 8 }, health: 168, damage: 16, role: "guardian",
+  }),
+  "deepgear-courser": Object.freeze({
+    type: "deepgear-courser", name: "Deepgear Courser", blueprintId: "golem-deepgear-courser", manaCost: 110, seconds: 120,
+    resources: { "deepgear-alloy": 14, "copper-ore": 20, "crystal-shard": 3, "gear-cluster": 6 }, health: 58, damage: 6, role: "mount",
   }),
 });
 

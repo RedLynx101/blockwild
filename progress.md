@@ -332,3 +332,8 @@ Release contract: `V1_USER_PROMPT_VERBATIM.md` is the temporary verbatim accepta
 - Reliable `send() === 0` is no longer treated as success: player/container signatures remain dirty, pickups remain retryable, and bounded retry queues cover critical guest block/combat/creature requests plus host player/combat/creature acknowledgements.
 - Character starting allocations now travel in the validated peer identity and are applied only for a genuinely new host-owned player record; reconnects retain their saved skills.
 - Added regression coverage for the pre-peer one-code host UI state, demand container selection beyond the old prefix, dual revision rejection, send-zero dirty semantics, host-owned companion feeding, and host-approved mounting. Native TypeScript, scoped ESLint, and the focused 17-test multiplayer suite pass.
+
+## design-1 integration (2026-07-12)
+
+- Merged the latest pushed `github/design-1` tip (`53cb880`) into v1.2 `main` without checking out, modifying, or deleting the separately active design worktree.
+- Preserved Trailbound's v1.2 item allocations and assigned the Deepgear Courser blueprint/orb new non-colliding ids. Combined v1.2 rabbit and aquarium ecology with the branch's Courser ecotypes, Frostquill coveys, bird/audio polish, dragon redesigns, Dwarven forge commerce, portraits, and regression contracts.

@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { SynthAudio } from "./audio";
+import { SynthAudio, type SampleKind } from "./audio";
 import {
   goldForIngots,
   ingotsAvailableFromWallet,
@@ -54,7 +54,7 @@ import {
   createAtlasBlockGeometry,
   type ChunkEditSave,
 } from "./world";
-import { BUTTERFLY_ORDER, MOB_DEFS, MOB_ORDER, type ButterflyKind, type CoreMobKind, type MobDefinition, type MobKind } from "./mobs";
+import { BUTTERFLY_ORDER, MOB_DEFS, MOB_ORDER, type BirdKind, type ButterflyKind, type CoreMobKind, type MobDefinition, type MobKind } from "./mobs";
 import { createHeldToolSpec } from "./model-specs";
 import { applyDragonPose, applyOceanCreaturePose, createMobVisual, createSentientLodVisual } from "./mob-models";
 import {
@@ -682,7 +682,20 @@ const NEUTRAL_CREATURE_ORB_KINDS = {
   "unaligned-runeowl-orb": "runeowl",
   "unaligned-copper-mole-orb": "copper-mole",
   "copper-scout-golem-orb": "copper-scout-golem",
+  "deepgear-courser-golem-orb": "deepgear-courser-golem",
 } as const satisfies Readonly<Record<string, MobKind>>;
+const CREATURE_SAMPLE_BY_ASSET = {
+  "ridgeback-warm-huff": "ridgebackWarmHuff",
+  "shadecrawler-stone-chitter": "shadecrawlerStoneChitter",
+  "horse-whinny-a": "horseWhinnyA",
+  "horse-whinny-b": "horseWhinnyB",
+  "deepgear-courser-whinny": "deepgearCourserWhinny",
+  "emberjay-squawk": "emberjaySquawk",
+  "bird-chirp": "birdChirp",
+  "canopy-lark-call": "canopyLarkCall",
+  "tidewing-gull-call-a": "tidewingGullCallA",
+  "tidewing-gull-call-b": "tidewingGullCallB",
+} as const satisfies Readonly<Record<string, SampleKind>>;
 
 export type GameSettings = {
   volume: number;
@@ -1864,7 +1877,7 @@ export function apiaryPhaseForWorldTime(worldTime: number): ApiaryPhase {
   return "night";
 }
 
-const HERD_MOB_KINDS = new Set<MobKind>(["ridgeback", "woolhorn", "sunstep-grazer", "wild-horse", "meadow-cow", "mistmane", "taffalo"]);
+const HERD_MOB_KINDS = new Set<MobKind>(["ridgeback", "woolhorn", "sunstep-grazer", "wild-horse", "rimehoof-courser", "sunscar-courser", "mirestride-courser", "starbough-courser", "meadow-cow", "mistmane", "taffalo"]);
 
 export function socialGroupModeForMob(kind: MobKind): SocialGroupMode | null {
   if (HERD_MOB_KINDS.has(kind)) return "herd";
@@ -6484,6 +6497,7 @@ export class VoxelEngine {
       "copper-scout": "copper-scout-golem",
       "stone-bulwark": "stone-bulwark-golem",
       "aetherforged-sentinel": "aetherforged-sentinel",
+      "deepgear-courser": "deepgear-courser-golem",
     };
     const kind = kindByType[result.golemType];
     const definition = MOB_DEFS[kind];
@@ -6506,7 +6520,14 @@ export class VoxelEngine {
       factionId: "player",
       settlementId: null,
       aligned: true,
-      custom: { hiredByPlayerId: this.localPlayerId(), followCommand: "follow", forgedGolemType: result.golemType },
+      custom: {
+        hiredByPlayerId: this.localPlayerId(),
+        followCommand: "follow",
+        forgedGolemType: result.golemType,
+        ...(result.golemType === "deepgear-courser" ? {
+          courserBond: { ...createReedstriderBond(), trust: 8, tamed: true, ownerId: this.localPlayerId() },
+        } : {}),
+      },
     };
     const orb = captureIntoOrb(createEmptyCaptureOrb(`forge-orb-${entityId}`), metadata, Date.now());
     if (!orb) return false;
@@ -8444,11 +8465,9 @@ export class VoxelEngine {
 
   playCreatureEvent(mob: MobEntity, event: CreatureSoundEvent) {
     const sound = creatureSoundCue(mob.kind as CoreMobKind, event);
-    const sample = sound.asset === "ridgeback-warm-huff"
-      ? "ridgebackWarmHuff"
-      : sound.asset === "shadecrawler-stone-chitter"
-        ? "shadecrawlerStoneChitter"
-        : null;
+    const assets = [sound.asset, ...(sound.variants ?? [])];
+    const asset = assets[Math.min(assets.length - 1, Math.floor(Math.random() * assets.length))];
+    const sample = CREATURE_SAMPLE_BY_ASSET[asset as keyof typeof CREATURE_SAMPLE_BY_ASSET] ?? null;
     if (sample) {
       this.audio.playSample(sample, {
         gain: sound.gain,
@@ -13840,7 +13859,8 @@ export class VoxelEngine {
     }
     const wargSaddle = mob.kind === "warg" ? mob.visual.getObjectByName("warg-saddle") : null;
     if (wargSaddle) wargSaddle.visible = Boolean(mob.courserBond?.saddled);
-    const courserSaddle = mob.kind === "wild-horse" ? mob.visual.getObjectByName("wild-horse-saddle") : null;
+    const courserSaddle = creatureMountProfile(mob.kind as CoreMobKind) && mob.courserBond
+      ? mob.visual.getObjectByName(`${mob.kind}-saddle`) : null;
     if (courserSaddle) courserSaddle.visible = Boolean(mob.courserBond?.saddled);
     const reedstriderSaddle = mob.kind === "reedstrider" ? mob.visual.getObjectByName("reedstrider-saddle") : null;
     if (reedstriderSaddle) reedstriderSaddle.visible = Boolean(mob.reedstriderBond?.saddled);
@@ -14909,7 +14929,7 @@ export class VoxelEngine {
     const ground = this.world.surfaceAt(Math.round(mob.group.position.x), Math.round(mob.group.position.z));
     const perch = this.birdPerchNear(mob);
     const playerSpeed = Math.hypot(this.velocity.x, this.velocity.z);
-    mob.birdState = updateBirdBehavior(mob.birdState ?? createBirdBehavior(mob.kind as "emberjay" | "canopy-lark"), {
+    mob.birdState = updateBirdBehavior(mob.birdState ?? createBirdBehavior(mob.kind as BirdKind), {
       dt,
       distanceToHuman: distance,
       humanSpeed: playerSpeed,

@@ -8,7 +8,7 @@ import {
   RATTLEKIN_CLUB_CONTRACT,
   RIDGEBACK_GROUND_LIFT,
 } from "./model-specs";
-import { CORE_MOB_ORDER, MOB_DEFS, type CoreMobKind, type DragonKind, type MobKind } from "./mobs";
+import { CORE_MOB_ORDER, MOB_DEFS, type BirdKind, type CoreMobKind, type DragonKind, type MobKind } from "./mobs";
 import { createArrowVisual } from "./projectiles";
 
 const TAU = Math.PI * 2;
@@ -311,6 +311,153 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     return created;
   };
 
+  /** Builds four deliberately different bird silhouettes on the shared wing rig. */
+  const buildBird = (birdKind: BirdKind) => {
+    const prefix = birdKind;
+    const blackMaterial = material(0x20252a);
+    const charcoalMaterial = material(0x343a3f);
+    const creamMaterial = material(0xf0e7c2);
+    const whiteMaterial = material(0xf6f7ef);
+    const emberMaterial = material(0xe97032);
+    const goldMaterial = material(0xe7b952);
+    const leafMaterial = material(0x6ca374);
+    const paleLeafMaterial = material(0xc5d89a);
+    const tideMaterial = material(0x5e879b);
+    const deepTideMaterial = material(0x29495d);
+    const iceMaterial = material(0xaed5df);
+    const snowMaterial = material(0xe8f1ee);
+    const billMaterial = birdKind === "emberjay" ? goldMaterial
+      : birdKind === "canopy-lark" ? material(0x8a653b)
+        : birdKind === "tidewing-gull" ? material(0xe5a845)
+          : material(0x3b4650);
+
+    const wing = (
+      side: -1 | 1,
+      size: [number, number, number],
+      meshMaterial: THREE.Material,
+      position: [number, number, number],
+      angle: number,
+    ) => {
+      const sideName = side < 0 ? "left" : "right";
+      const node = pivotBox(size, meshMaterial, position, [side * (size[0] * 0.42), 0, size[2] * 0.06], "wings", `${prefix}-${sideName}-wing`);
+      node.rotation.z = side * -angle;
+      node.userData.side = side;
+      node.userData.phase = 0;
+      return node;
+    };
+    const legs = (webbed = false, feathered = false) => {
+      for (const side of [-1, 1] as const) {
+        const sideName = side < 0 ? "left" : "right";
+        const leg = pivotBox([0.055, feathered ? 0.18 : 0.24, 0.055], darkMaterial, [side * 0.11, -0.2, -0.02], [0, -0.1, 0], "legs", `${prefix}-${sideName}-leg`);
+        if (feathered) add(leg, [0.17, 0.16, 0.16], snowMaterial, [0, -0.08, 0], undefined, `${prefix}-${sideName}-snow-boot`);
+        if (webbed) {
+          add(leg, [0.24, 0.035, 0.2], billMaterial, [0, -0.24, -0.07], undefined, `${prefix}-${sideName}-webbed-foot`);
+          for (let toe = -1; toe <= 1; toe += 1) add(leg, [0.035, 0.025, 0.22], billMaterial, [toe * 0.07, -0.245, -0.17], undefined, `${prefix}-${sideName}-toe-${toe + 2}`).rotation.y = toe * -0.18;
+        } else {
+          for (let toe = -1; toe <= 1; toe += 1) add(leg, [0.04, 0.03, 0.2], darkMaterial, [toe * 0.055, feathered ? -0.2 : -0.24, -0.1], undefined, `${prefix}-${sideName}-toe-${toe + 2}`).rotation.y = toe * -0.2;
+        }
+      }
+    };
+
+    if (birdKind === "emberjay") {
+      add(visual, [0.5, 0.5, 0.76], charcoalMaterial, [0, 0.06, 0.05], "body", `${prefix}-tapered-body`);
+      add(visual, [0.4, 0.36, 0.4], emberMaterial, [0, -0.02, -0.31], undefined, `${prefix}-ember-breast`);
+      add(visual, [0.38, 0.12, 0.52], bodyMaterial, [0, 0.33, 0.06], undefined, `${prefix}-back-mantle`);
+      add(visual, [0.42, 0.4, 0.44], bodyMaterial, [0, 0.37, -0.43], "head", `${prefix}-crested-head`);
+      add(visual, [0.44, 0.16, 0.26], blackMaterial, [0, 0.4, -0.66], undefined, `${prefix}-black-eye-mask`);
+      add(visual, [0.18, 0.13, 0.32], billMaterial, [0, 0.29, -0.8], undefined, `${prefix}-wedge-beak`).rotation.x = -0.06;
+      eyePair(0.13, 0.43, -0.81, 0.062, prefix);
+      for (const [index, crest] of [
+        [-0.13, 0.56, -0.36, -0.35], [0, 0.62, -0.33, -0.18], [0.13, 0.57, -0.34, 0.04],
+      ].entries()) {
+        const plume = add(visual, [0.09, 0.34 - index * 0.03, 0.1], index === 1 ? emberMaterial : bodyMaterial, [crest[0], crest[1], crest[2]], undefined, `${prefix}-swept-crest-${index + 1}`);
+        plume.rotation.x = crest[3];
+        plume.rotation.z = (index - 1) * 0.12;
+      }
+      for (const side of [-1, 1] as const) {
+        const sideName = side < 0 ? "left" : "right";
+        const node = wing(side, [0.62, 0.075, 0.7], blackMaterial, [side * 0.18, 0.17, 0.02], 0.24);
+        add(node, [0.44, 0.045, 0.56], bodyMaterial, [side * 0.25, 0.04, 0.03], undefined, `${prefix}-${sideName}-rust-covert`);
+        for (let feather = 0; feather < 3; feather += 1) add(node, [0.18, 0.04, 0.58 - feather * 0.08], feather === 1 ? emberMaterial : charcoalMaterial, [side * (0.42 + feather * 0.14), -0.01, 0.08 + feather * 0.1], undefined, `${prefix}-${sideName}-primary-${feather + 1}`).rotation.y = side * (-0.08 - feather * 0.08);
+      }
+      for (let feather = -2; feather <= 2; feather += 1) {
+        const tail = add(visual, [0.13, 0.07, 0.78 - Math.abs(feather) * 0.08], feather === 0 ? emberMaterial : blackMaterial, [feather * 0.1, 0.02, 0.63], undefined, `${prefix}-long-tail-${feather + 3}`);
+        tail.rotation.y = feather * -0.09;
+      }
+      legs();
+      return;
+    }
+
+    if (birdKind === "canopy-lark") {
+      add(visual, [0.52, 0.46, 0.7], bodyMaterial, [0, 0.04, 0.05], "body", `${prefix}-rounded-body`);
+      add(visual, [0.4, 0.36, 0.4], paleLeafMaterial, [0, -0.01, -0.29], undefined, `${prefix}-golden-breast`);
+      add(visual, [0.38, 0.36, 0.4], accentMaterial, [0, 0.32, -0.42], "head", `${prefix}-songbird-head`);
+      add(visual, [0.34, 0.12, 0.24], creamMaterial, [0, 0.23, -0.62], undefined, `${prefix}-pale-throat`);
+      add(visual, [0.14, 0.1, 0.25], billMaterial, [0, 0.26, -0.75], undefined, `${prefix}-seed-beak`).rotation.x = 0.03;
+      eyePair(0.115, 0.38, -0.71, 0.058, prefix);
+      for (const side of [-1, 1] as const) {
+        const sideName = side < 0 ? "left" : "right";
+        add(visual, [0.18, 0.08, 0.18], leafMaterial, [side * 0.16, 0.52, -0.42], undefined, `${prefix}-${sideName}-crown-tuft`).rotation.z = side * -0.16;
+        const node = wing(side, [0.58, 0.07, 0.66], leafMaterial, [side * 0.18, 0.16, 0.04], 0.22);
+        for (let feather = 0; feather < 4; feather += 1) {
+          const leaf = add(node, [0.2, 0.045, 0.48 - feather * 0.045], feather % 2 ? accentMaterial : paleLeafMaterial, [side * (0.18 + feather * 0.14), 0.03, 0.03 + feather * 0.12], undefined, `${prefix}-${sideName}-leaf-feather-${feather + 1}`);
+          leaf.rotation.y = side * (-0.08 - feather * 0.07);
+        }
+      }
+      for (const side of [-1, 1] as const) {
+        const tail = add(visual, [0.17, 0.065, 0.72], side < 0 ? bodyMaterial : accentMaterial, [side * 0.11, 0.01, 0.61], undefined, `${prefix}-${side < 0 ? "left" : "right"}-forked-tail`);
+        tail.rotation.y = side * -0.16;
+      }
+      add(visual, [0.12, 0.06, 0.5], paleLeafMaterial, [0, 0.03, 0.52], undefined, `${prefix}-tail-center`);
+      legs();
+      return;
+    }
+
+    if (birdKind === "tidewing-gull") {
+      add(visual, [0.58, 0.48, 0.88], whiteMaterial, [0, 0.05, 0.08], "body", `${prefix}-keel-body`);
+      add(visual, [0.46, 0.3, 0.5], whiteMaterial, [0, -0.04, -0.36], undefined, `${prefix}-white-breast`);
+      add(visual, [0.5, 0.14, 0.64], tideMaterial, [0, 0.32, 0.02], undefined, `${prefix}-blue-mantle`);
+      add(visual, [0.44, 0.4, 0.46], whiteMaterial, [0, 0.35, -0.5], "head", `${prefix}-gull-head`);
+      add(visual, [0.44, 0.14, 0.3], deepTideMaterial, [0, 0.51, -0.48], undefined, `${prefix}-tide-cap`);
+      add(visual, [0.2, 0.15, 0.42], billMaterial, [0, 0.25, -0.88], undefined, `${prefix}-hooked-beak`).rotation.x = -0.08;
+      add(visual, [0.12, 0.09, 0.13], material(0xd9673f), [0, 0.18, -1.08], undefined, `${prefix}-beak-tip`);
+      eyePair(0.135, 0.4, -0.79, 0.062, prefix);
+      for (const side of [-1, 1] as const) {
+        const sideName = side < 0 ? "left" : "right";
+        const node = wing(side, [0.94, 0.075, 0.76], tideMaterial, [side * 0.2, 0.18, 0.03], 0.16);
+        add(node, [0.64, 0.045, 0.6], whiteMaterial, [side * 0.34, 0.035, 0.02], undefined, `${prefix}-${sideName}-pale-coverts`);
+        for (let feather = 0; feather < 4; feather += 1) {
+          const primary = add(node, [0.25, 0.045, 0.68 - feather * 0.07], feather < 2 ? deepTideMaterial : charcoalMaterial, [side * (0.54 + feather * 0.18), -0.01, 0.08 + feather * 0.09], undefined, `${prefix}-${sideName}-swept-primary-${feather + 1}`);
+          primary.rotation.y = side * (-0.12 - feather * 0.08);
+        }
+      }
+      for (let feather = -2; feather <= 2; feather += 1) {
+        const tail = add(visual, [0.17, 0.055, 0.6 - Math.abs(feather) * 0.04], feather === 0 ? tideMaterial : whiteMaterial, [feather * 0.1, 0.05, 0.68], undefined, `${prefix}-tail-fan-${feather + 3}`);
+        tail.rotation.y = feather * -0.12;
+      }
+      legs(true);
+      return;
+    }
+
+    add(visual, [0.58, 0.58, 0.7], snowMaterial, [0, 0.05, 0.06], "body", `${prefix}-plump-body`);
+    add(visual, [0.48, 0.4, 0.42], whiteMaterial, [0, -0.01, -0.3], undefined, `${prefix}-downy-breast`);
+    add(visual, [0.4, 0.4, 0.4], snowMaterial, [0, 0.38, -0.42], "head", `${prefix}-round-head`);
+    add(visual, [0.42, 0.11, 0.25], iceMaterial, [0, 0.48, -0.43], undefined, `${prefix}-ice-brow`);
+    add(visual, [0.13, 0.11, 0.22], billMaterial, [0, 0.3, -0.72], undefined, `${prefix}-short-beak`);
+    eyePair(0.12, 0.41, -0.7, 0.06, prefix);
+    for (const side of [-1, 1] as const) {
+      const sideName = side < 0 ? "left" : "right";
+      add(visual, [0.18, 0.07, 0.06], blackMaterial, [side * 0.16, 0.4, -0.64], undefined, `${prefix}-${sideName}-winter-mask`);
+      const node = wing(side, [0.52, 0.09, 0.58], iceMaterial, [side * 0.2, 0.17, 0.06], 0.3);
+      for (let feather = 0; feather < 3; feather += 1) add(node, [0.2, 0.05, 0.42 - feather * 0.05], feather === 1 ? whiteMaterial : snowMaterial, [side * (0.17 + feather * 0.14), 0.04, 0.04 + feather * 0.12], undefined, `${prefix}-${sideName}-snow-feather-${feather + 1}`).rotation.y = side * (-0.05 - feather * 0.09);
+    }
+    for (let feather = -2; feather <= 2; feather += 1) {
+      const tail = add(visual, [0.16, 0.07, 0.48 - Math.abs(feather) * 0.04], feather % 2 ? iceMaterial : whiteMaterial, [feather * 0.09, 0.05, 0.56], undefined, `${prefix}-snow-fan-${feather + 3}`);
+      tail.rotation.y = feather * -0.14;
+    }
+    legs(false, true);
+  };
+
   const buildDragon = (dragonKind: DragonKind) => {
     const dragonType = dragonKind.replace("-dragon", "") as "fire" | "ice" | "steel" | "sea";
     const prefix = dragonKind;
@@ -336,6 +483,11 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     const lavaMaterial = material(0xff7a2e, true, 0.95);
     const emberCoreMaterial = material(0xffe08a, true, 0.97);
     const amberHornMaterial = material(0xd9a355);
+    const steelDarkMaterial = material(0x273238);
+    const steelPlateMaterial = material(0x8b989e);
+    const brassRivetMaterial = material(0xb98b4c);
+    const seaGlassMaterial = material(0x8ff3e4, false, 0.72);
+    const reefMaterial = material(0xd58d72);
 
     group.userData.dragonType = dragonType;
     visual.userData.dragonType = dragonType;
@@ -375,6 +527,220 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       return node;
     };
 
+    if (dragonType === "ice") {
+      // ===== Rimeveil ice dragon: ground-up geometry on the dragon-v1 rig =====
+      // A lean glacial stalker: arched torso under pack-ice plates, a crystal
+      // shard spine, crowned wedge skull with an icicle beard, translucent
+      // aurora wing sails, tall slender legs, and a whip tail ending in a
+      // crystal fan. Every named pivot and attachment of the shared contract
+      // is present so gameplay animation and equipment work unchanged.
+      const glacierMaterial = material(0x2e5570);
+      const crystalMaterial = material(0xd9f3fb, false, 0.72);
+      const rimeMaterial = material(0xf2fafd);
+      const auroraMaterial = material(0x9beedd, false, 0.55);
+
+      const chest = pivot(visual, "breathing-chest", [0, 2.02, -0.15]);
+      rigBox(chest, "chest", [1.5, 1.15, 2.5], bodyMaterial, [0, 0, 0]);
+      rigBox(chest, "belly-keel", [0.95, 0.3, 2.3], glacierMaterial, [0, -0.52, -0.05]);
+      rigBox(chest, "chest-frost-sternum", [0.5, 0.2, 0.08], rimeMaterial, [0, -0.32, -1.24]);
+      for (const side of [-1, 1]) {
+        const sideName = side < 0 ? "left" : "right";
+        for (let rib = 0; rib < 3; rib += 1) {
+          rigBox(chest, `${sideName}-frost-rib-${rib + 1}`, [0.05, 0.62 - rib * 0.08, 0.16], rimeMaterial, [side * 0.76, -0.05 - rib * 0.04, -0.62 + rib * 0.55], [0.14 - rib * 0.05, 0, side * 0.22]);
+        }
+      }
+      parts.body.push(chest);
+      rigBox(visual, "shoulder-hump", [1.66, 0.42, 1.05], accentMaterial, [0, 2.72, -0.68]);
+      rigBox(visual, "shoulder-rime-cap", [1.74, 0.14, 0.85], rimeMaterial, [0, 2.9, -0.66]);
+      rigBox(visual, "pelvis", [1.28, 0.95, 1.45], bodyMaterial, [0, 1.9, 1.35]);
+      rigBox(visual, "pelvis-keel", [0.85, 0.24, 1.2], glacierMaterial, [0, 1.42, 1.32]);
+      for (const side of [-1, 1]) {
+        const sideName = side < 0 ? "left" : "right";
+        rigBox(visual, `${sideName}-haunch-crystal`, [0.2, 0.5, 0.2], crystalMaterial, [side * 0.62, 2.42, 1.28], [0.12, Math.PI / 4, side * 0.3]);
+      }
+      for (let plate = 0; plate < 3; plate += 1) {
+        rigBox(visual, `pack-ice-plate-${plate + 1}`, [1.3 - plate * 0.18, 0.1, 1.05], crystalMaterial, [0, 2.66 - plate * 0.04, 0.15 + plate * 0.72], [-0.06 - plate * 0.03, 0, plate === 1 ? 0.05 : -0.04]);
+      }
+      for (let shard = 0; shard < 5; shard += 1) {
+        const height = 0.55 + Math.sin((shard / 4) * Math.PI) * 0.5;
+        rigBox(visual, `spine-crystal-shard-${shard + 1}`, [0.17, height, 0.17], crystalMaterial, [shard % 2 ? 0.08 : -0.08, 2.78 + height / 2, -0.85 + shard * 0.62], [-0.18 + shard * 0.04, Math.PI / 4, shard % 2 ? 0.1 : -0.1]);
+        rigBox(visual, `spine-shard-rime-${shard + 1}`, [0.2, 0.09, 0.2], rimeMaterial, [shard % 2 ? 0.08 : -0.08, 2.8, -0.85 + shard * 0.62], [0, Math.PI / 4, 0]);
+      }
+
+      let neckParent: THREE.Object3D = visual;
+      for (let segment = 1; segment <= DRAGON_MODEL_CONTRACT.neckSegments; segment += 1) {
+        const neck = pivot(neckParent, `neck-${segment}`, segment === 1 ? [0, 2.42, -1.15] : [0, 0.24, -0.78]);
+        const width = 1.02 - segment * 0.14;
+        rigBox(neck, `neck-${segment}`, [width, 0.82 - segment * 0.07, 1.05], segment % 2 ? bodyMaterial : accentMaterial, [0, 0.05, -0.45]);
+        rigBox(neck, `neck-${segment}-throat`, [width * 0.62, 0.2, 0.9], glacierMaterial, [0, -0.32, -0.46]);
+        rigBox(neck, `neck-${segment}-rime-fringe`, [0.08, 0.3 - segment * 0.04, 0.7], rimeMaterial, [0, 0.5 - segment * 0.04, -0.42], [-0.2, 0, 0]);
+        rigBox(neck, `neck-${segment}-throat-icicle`, [0.07, 0.26 - segment * 0.05, 0.07], crystalMaterial, [segment % 2 ? 0.12 : -0.12, -0.5, -0.5], [0.08, 0, segment % 2 ? -0.12 : 0.12]);
+        if (segment === 1) {
+          for (const side of [-1, 1]) {
+            rigBox(neck, `${side < 0 ? "left" : "right"}-collar-crystal`, [0.15, 0.42, 0.15], crystalMaterial, [side * (width * 0.52), 0.3, -0.2], [-0.3, Math.PI / 4, side * 0.55]);
+          }
+        }
+        neckParent = neck;
+      }
+
+      const head = pivot(neckParent, "head", [0, 0.22, -0.72]);
+      rigBox(head, "head", [1.12, 0.78, 1.0], bodyMaterial, [0, 0, -0.32]);
+      rigBox(head, "brow", [1.2, 0.2, 0.5], rimeMaterial, [0, 0.42, -0.48], [-0.1, 0, 0]);
+      rigBox(head, "snout", [0.7, 0.48, 1.0], glacierMaterial, [0, -0.1, -1.16]);
+      rigBox(head, "snout-rime-tip", [0.52, 0.34, 0.28], rimeMaterial, [0, -0.08, -1.72]);
+      parts.head.push(head);
+      // Species crown: four crystal spires every Rimeveil carries regardless of sex.
+      for (const [dx, dz, tall] of [[-0.3, -0.15, 0.62], [0.3, -0.15, 0.62], [-0.14, 0.22, 0.88], [0.14, 0.22, 0.88]] as const) {
+        rigBox(head, `crown-spire-${dx < 0 ? "l" : "r"}${dz < 0 ? "f" : "b"}`, [0.14, tall, 0.14], crystalMaterial, [dx, 0.5 + tall / 2 - 0.08, dz], [-0.3, Math.PI / 4, dx * 0.5]);
+      }
+      const jaw = pivot(head, "jaw", [0, -0.3, -0.78]);
+      rigBox(jaw, "lower-jaw", [0.62, 0.2, 0.95], glacierMaterial, [0, -0.05, -0.42]);
+      for (const side of [-1, 1]) {
+        for (let tooth = 0; tooth < 3; tooth += 1) {
+          rigBox(jaw, `${side < 0 ? "left" : "right"}-tooth-${tooth + 1}`, [0.07, 0.16, 0.08], rimeMaterial, [side * (0.18 + tooth * 0.06), 0.08, -0.2 - tooth * 0.26], [0.1, 0, side * 0.04]);
+        }
+      }
+      for (let icicle = 0; icicle < 3; icicle += 1) {
+        rigBox(jaw, `beard-icicle-${icicle + 1}`, [0.08, 0.34 - icicle * 0.09, 0.08], crystalMaterial, [(icicle - 1) * 0.16, -0.28, -0.55 + icicle * 0.22], [icicle * 0.06, Math.PI / 4, (icicle - 1) * 0.1]);
+      }
+      const emitter = new THREE.Group();
+      emitter.name = `${prefix}-breath-emitter`;
+      emitter.position.set(0, 0.04, -0.95);
+      emitter.visible = false;
+      jaw.add(emitter);
+      for (let mote = 0; mote < 4; mote += 1) {
+        rigBox(emitter, `frost-mote-${mote + 1}`, [0.1 + mote * 0.045, 0.1 + mote * 0.045, 0.14 + mote * 0.08], glowMaterial, [(mote % 2 ? 1 : -1) * mote * 0.09, (mote - 1.5) * 0.07, -mote * 0.22], [mote * 0.3, Math.PI / 4, mote * 0.42]);
+      }
+      const projectileOrigin = new THREE.Group();
+      projectileOrigin.name = `${prefix}-projectile-origin`;
+      projectileOrigin.position.set(0, 0.08, -1.3);
+      projectileOrigin.visible = false;
+      head.add(projectileOrigin);
+      rigBox(projectileOrigin, "ice-projectile-core", [0.34, 0.34, 0.92], crystalMaterial, [0, 0, -0.5], [0, 0, Math.PI / 4]);
+      rigBox(projectileOrigin, "ice-projectile-tip", [0.2, 0.2, 0.34], glowMaterial, [0, 0, -1.06], [0, 0, Math.PI / 4]);
+      for (let trail = 0; trail < 2; trail += 1) {
+        rigBox(projectileOrigin, `ice-projectile-shard-${trail + 1}`, [0.11, 0.11, 0.3], trail ? glowMaterial : crystalMaterial, [(trail ? 1 : -1) * 0.16, 0.08 - trail * 0.14, 0.12 + trail * 0.2], [0.2, 0, Math.PI / 4]);
+      }
+
+      for (const side of [-1, 1]) {
+        const sideName = side < 0 ? "left" : "right";
+        const eye = pivot(head, `${sideName}-eye`, [side * 0.46, 0.14, -0.76]);
+        rigBox(eye, `${sideName}-eye`, [0.17, 0.15, 0.08], eyeMaterial, [0, 0, -0.02]);
+        rigBox(eye, `${sideName}-eye-glint`, [0.05, 0.05, 0.03], glowMaterial, [side * -0.03, 0.03, -0.06]);
+        const nostril = rigBox(head, `${sideName}-nostril`, [0.1, 0.07, 0.05], darkMaterial, [side * 0.17, 0.02, -1.84]);
+        nostril.userData.breathSource = true;
+      }
+
+      const maleHorns = new THREE.Group();
+      maleHorns.name = `${prefix}-male-horn-rack`;
+      maleHorns.visible = group.userData.dragonSex === "male";
+      head.add(maleHorns);
+      const femaleHorns = new THREE.Group();
+      femaleHorns.name = `${prefix}-female-horn-rack`;
+      femaleHorns.visible = group.userData.dragonSex === "female";
+      head.add(femaleHorns);
+      for (const side of [-1, 1]) {
+        const sideName = side < 0 ? "left" : "right";
+        // Males branch into frost antlers; females raise twin glassy spires.
+        rigBox(maleHorns, `${sideName}-antler-beam`, [0.14, 0.14, 0.85], rimeMaterial, [side * 0.42, 0.42, 0.32], [-0.6, side * 0.35, 0]);
+        rigBox(maleHorns, `${sideName}-antler-tine-1`, [0.1, 0.1, 0.46], crystalMaterial, [side * 0.6, 0.78, 0.62], [-1.15, side * 0.2, side * 0.3]);
+        rigBox(maleHorns, `${sideName}-antler-tine-2`, [0.09, 0.09, 0.4], crystalMaterial, [side * 0.76, 0.6, 0.95], [-0.35, side * 0.62, side * 0.15]);
+        const outer = rigBox(femaleHorns, `${sideName}-spire-horn`, [0.12, 0.16, 1.15], crystalMaterial, [side * 0.36, 0.55, 0.5], [-0.52, side * 0.1, side * -0.06]);
+        rigBox(femaleHorns, `${sideName}-spire-horn-tip`, [0.08, 0.1, 0.5], rimeMaterial, [side * 0.42, 0.95, 1.22], [-0.78, side * 0.08, side * -0.08]);
+        outer.userData.sexMarker = "female";
+      }
+
+      const maleMarkings = new THREE.Group();
+      maleMarkings.name = `${prefix}-male-wing-markings`;
+      maleMarkings.visible = group.userData.dragonSex === "male";
+      visual.add(maleMarkings);
+      for (const side of [-1, 1]) {
+        const sideName = side < 0 ? "left" : "right";
+        const wingRoot = pivot(visual, `${sideName}-wing-root`, [side * 0.66, 2.58, -0.5]);
+        wingRoot.userData.side = side;
+        wingRoot.userData.phase = side < 0 ? 0 : Math.PI;
+        parts.wings.push(wingRoot);
+        rigBox(wingRoot, `${sideName}-wing-upper-bone`, [2.3, 0.18, 0.24], rimeMaterial, [side * 1.05, 0, 0], [0, 0, side * -0.06]);
+        rigBox(wingRoot, `${sideName}-wing-thumb-crystal`, [0.11, 0.11, 0.42], crystalMaterial, [side * 2.05, 0.05, -0.24], [0.42, side * -0.28, Math.PI / 4]);
+        const wingForearm = pivot(wingRoot, `${sideName}-wing-forearm`, [side * 2.15, 0, 0]);
+        rigBox(wingForearm, `${sideName}-wing-forearm-bone`, [2.5, 0.16, 0.22], rimeMaterial, [side * 1.18, 0, 0.15], [0, -side * 0.07, side * -0.14]);
+        rigBox(wingRoot, `${sideName}-inner-wing-membrane`, [2.1, 0.05, 2.5], membraneMaterial, [side * 0.95, -0.06, 0.92], [0.04, side * 0.09, side * -0.09]);
+        rigBox(wingRoot, `${sideName}-inner-aurora-veil`, [1.68, 0.042, 1.9], auroraMaterial, [side * 0.88, -0.13, 1.05], [0.05, side * 0.09, side * -0.09]);
+        rigBox(wingForearm, `${sideName}-outer-wing-membrane`, [2.45, 0.045, 2.0], membraneMaterial, [side * 1.1, -0.06, 0.82], [0.03, side * -0.12, side * -0.14]);
+        rigBox(wingForearm, `${sideName}-outer-aurora-veil`, [1.95, 0.04, 1.5], auroraMaterial, [side * 1.05, -0.12, 0.92], [0.04, side * -0.12, side * -0.14]);
+        for (let finger = 0; finger < 2; finger += 1) {
+          rigBox(wingForearm, `${sideName}-wing-finger-${finger + 1}`, [2.2 - finger * 0.3, 0.08, 0.1], rimeMaterial, [side * (0.98 - finger * 0.08), -0.03, 0.42 + finger * 0.85], [0, side * (0.16 + finger * 0.14), side * -0.13]);
+        }
+        for (let icicle = 0; icicle < 4; icicle += 1) {
+          rigBox(wingForearm, `${sideName}-wing-icicle-${icicle + 1}`, [0.07, 0.24 - (icicle % 2) * 0.07, 0.07], crystalMaterial, [side * (0.35 + icicle * 0.6), -0.16, 1.68 + (icicle % 2) * 0.14], [0.06, Math.PI / 4, side * 0.08]);
+        }
+        for (let sigil = 0; sigil < 3; sigil += 1) {
+          const mark = rigBox(wingRoot, `${sideName}-wing-sigil-${sigil + 1}`, [0.3 + sigil * 0.07, 0.06, 0.3 + sigil * 0.07], glowMaterial, [side * (0.62 + sigil * 0.5), -0.1, 0.4 + sigil * 0.5], [0, Math.PI / 4, 0]);
+          mark.userData.sexMarker = "male";
+          mark.visible = group.userData.dragonSex === "male";
+        }
+      }
+
+      for (const [front, z] of [[true, -0.75], [false, 1.35]] as const) {
+        for (const side of [-1, 1]) {
+          const sideName = side < 0 ? "left" : "right";
+          const positionName = `${front ? "front" : "rear"}-${sideName}`;
+          const hip = pivot(visual, `${positionName}-hip`, [side * 0.6, front ? 1.78 : 1.84, z]);
+          hip.userData.phase = (side < 0) !== front ? 0 : Math.PI;
+          parts.legs.push(hip);
+          rigBox(hip, `${positionName}-upper-leg`, [0.4, 0.92, 0.5], bodyMaterial, [0, -0.42, front ? -0.05 : 0.05], [front ? -0.08 : 0.08, 0, side * 0.04]);
+          const knee = pivot(hip, `${positionName}-knee`, [0, -0.86, front ? -0.08 : 0.1]);
+          rigBox(knee, `${positionName}-lower-leg`, [0.3, 0.85, 0.36], accentMaterial, [0, -0.38, 0], [front ? 0.06 : -0.06, 0, 0]);
+          rigBox(knee, `${positionName}-rime-sock`, [0.36, 0.26, 0.42], rimeMaterial, [0, -0.66, 0]);
+          const claw = pivot(knee, `${positionName}-claw`, [0, -0.81, -0.05]);
+          rigBox(claw, `${positionName}-foot`, [0.5, 0.2, 0.62], glacierMaterial, [0, -0.07, -0.16]);
+          for (let toe = -1; toe <= 1; toe += 1) {
+            rigBox(claw, `${positionName}-crystal-talon-${toe + 2}`, [0.1, 0.1, 0.42], crystalMaterial, [toe * 0.16, -0.1, -0.55], [0.06, toe * -0.1, Math.PI / 4]);
+          }
+          rigBox(claw, `${positionName}-dewclaw`, [0.08, 0.08, 0.26], crystalMaterial, [0, -0.06, 0.22], [-0.18, 0, Math.PI / 4]);
+        }
+      }
+
+      let tailParent: THREE.Object3D = visual;
+      for (let segment = 1; segment <= DRAGON_MODEL_CONTRACT.tailSegments; segment += 1) {
+        const tail = pivot(tailParent, `tail-${segment}`, segment === 1 ? [0, 1.95, 1.38] : [0, -0.03, 0.78]);
+        const width = 1.05 - segment * 0.12;
+        rigBox(tail, `tail-${segment}`, [Math.max(0.2, width), Math.max(0.22, width * 0.68), 1.0], segment % 2 ? bodyMaterial : glacierMaterial, [0, 0, 0.4]);
+        if (segment <= 4) rigBox(tail, `tail-${segment}-rime-blade`, [0.07, Math.max(0.16, 0.4 - segment * 0.05), 0.34], rimeMaterial, [0, Math.max(0.18, width * 0.42), 0.36], [-0.3, 0, 0]);
+        if (segment >= 2 && segment <= 5) rigBox(tail, `tail-${segment}-icicle`, [0.07, 0.26 - segment * 0.03, 0.07], crystalMaterial, [segment % 2 ? 0.1 : -0.1, -Math.max(0.14, width * 0.36), 0.42], [0.1, Math.PI / 4, segment % 2 ? 0.14 : -0.14]);
+        tailParent = tail;
+      }
+      rigBox(tailParent, "ice-tail-fin-left", [1.05, 0.06, 0.85], crystalMaterial, [-0.45, 0.02, 0.55], [0, 0.55, 0.14]);
+      rigBox(tailParent, "ice-tail-fin-right", [1.05, 0.06, 0.85], crystalMaterial, [0.45, 0.02, 0.55], [0, -0.55, -0.14]);
+      rigBox(tailParent, "ice-tail-fin-center", [0.14, 0.62, 0.14], crystalMaterial, [0, 0.28, 0.62], [-0.35, Math.PI / 4, 0]);
+      rigBox(tailParent, "tail-frost-core", [0.16, 0.16, 0.16], glowMaterial, [0, 0.1, 0.6], [0.3, Math.PI / 4, 0.3]);
+
+      const saddle = attachment("saddle");
+      rigBox(saddle, "saddle-seat", [1.25, 0.3, 1.25], leatherMaterial, [0, 2.68, 0.15]);
+      rigBox(saddle, "saddle-pommel", [1.0, 0.42, 0.16], cargoBandMaterial, [0, 2.92, -0.42]);
+      for (const side of [-1, 1]) rigBox(saddle, `${side < 0 ? "left" : "right"}-saddle-strap`, [0.11, 1.05, 1.0], leatherMaterial, [side * 0.68, 2.15, 0.18], [0, 0, side * 0.09]);
+      for (const side of [-1, 1]) {
+        const sideName = side < 0 ? "left" : "right";
+        const cargo = attachment(`${sideName}-cargo`);
+        rigBox(cargo, `${sideName}-cargo-chest`, [0.8, 0.78, 1.1], cargoMaterial, [side * 1.05, 1.85, 0.7]);
+        rigBox(cargo, `${sideName}-cargo-lid`, [0.85, 0.15, 1.14], cargoBandMaterial, [side * 1.05, 2.28, 0.7]);
+        rigBox(cargo, `${sideName}-cargo-latch`, [0.12, 0.24, 0.08], metalMaterial, [side * 1.48, 2.05, 0.16]);
+      }
+      const headArmor = attachment("head-armor", head);
+      rigBox(headArmor, "head-armor-crown", [1.3, 0.22, 0.9], armorMaterial, [0, 0.48, -0.35]);
+      rigBox(headArmor, "head-armor-brow", [1.34, 0.3, 0.24], metalMaterial, [0, 0.2, -0.86]);
+      const neckArmor = attachment("neck-armor", neckParent);
+      for (let plate = 0; plate < 3; plate += 1) rigBox(neckArmor, `neck-armor-plate-${plate + 1}`, [0.85 - plate * 0.08, 0.18, 0.45], armorMaterial, [0, 0.42 + plate * 0.03, -0.2 - plate * 0.26], [-0.05, 0, 0]);
+      const bodyArmor = attachment("body-armor");
+      rigBox(bodyArmor, "body-armor-main", [1.65, 0.25, 2.3], armorMaterial, [0, 2.68, 0.1]);
+      for (const side of [-1, 1]) rigBox(bodyArmor, `${side < 0 ? "left" : "right"}-body-armor-flank`, [0.22, 1.0, 2.0], metalMaterial, [side * 0.82, 2.0, 0.15], [0, 0, side * 0.07]);
+      const tailArmor = attachment("tail-armor");
+      for (let plate = 0; plate < 4; plate += 1) rigBox(tailArmor, `tail-armor-plate-${plate + 1}`, [0.95 - plate * 0.13, 0.2, 0.7], armorMaterial, [0, 2.4 - plate * 0.1, 1.75 + plate * 0.72], [0.04 * plate, 0, 0]);
+
+      applyDragonPose(group, { timeSeconds: 0.42, mode: "idle", movement: 0, sex: group.userData.dragonSex });
+      return;
+    }
+
     const chest = pivot(visual, "breathing-chest", [0, 1.9, -0.05]);
     rigBox(chest, "chest", [1.9, 1.32, 3.05], bodyMaterial, [0, 0, 0]);
     rigBox(chest, "belly-keel", [1.18, 0.35, 2.7], bellyMaterial, [0, -0.58, -0.08]);
@@ -392,6 +758,26 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       }
       rigBox(chest, "furnace-heart-vent", [0.52, 0.42, 0.09], emberCoreMaterial, [0, -0.26, -1.53], [0.08, 0, Math.PI / 4]);
       rigBox(visual, "shoulder-char-plate", [2.24, 0.16, 0.86], charMaterial, [0, 2.66, -0.78]);
+    } else if (dragonType === "steel") {
+      rigBox(chest, "pressure-core-housing", [0.78, 0.62, 0.12], steelDarkMaterial, [0, -0.08, -1.56]);
+      rigBox(chest, "pressure-core", [0.42, 0.42, 0.08], glowMaterial, [0, -0.08, -1.64], [0, 0, Math.PI / 4]);
+      for (const side of [-1, 1]) {
+        const sideName = side < 0 ? "left" : "right";
+        rigBox(chest, `${sideName}-boiler-flank`, [0.08, 0.72, 1.9], steelPlateMaterial, [side * 0.98, 0.02, 0], [0.04, 0, side * 0.08]);
+        for (let rivet = 0; rivet < 3; rivet += 1) rigBox(chest, `${sideName}-boiler-rivet-${rivet + 1}`, [0.1, 0.1, 0.1], brassRivetMaterial, [side * 1.04, 0.28 - rivet * 0.3, -0.62 + rivet * 0.62]);
+        rigBox(visual, `${sideName}-shoulder-exhaust`, [0.18, 0.72, 0.18], steelDarkMaterial, [side * 0.72, 2.82, -0.72], [-0.14, 0, side * 0.08]);
+        rigBox(visual, `${sideName}-exhaust-cap`, [0.28, 0.12, 0.28], brassRivetMaterial, [side * 0.72, 3.18, -0.82]);
+      }
+    } else if (dragonType === "sea") {
+      rigBox(chest, "tideglass-sternum", [0.62, 0.44, 0.09], glowMaterial, [0, -0.2, -1.58], [0, 0, Math.PI / 4]);
+      for (const side of [-1, 1]) {
+        const sideName = side < 0 ? "left" : "right";
+        for (let scale = 0; scale < 4; scale += 1) {
+          rigBox(chest, `${sideName}-lateral-scale-${scale + 1}`, [0.06, 0.3, 0.42], scale % 2 ? seaGlassMaterial : reefMaterial, [side * 0.98, 0.22 - scale * 0.13, -0.82 + scale * 0.54], [0.08, 0, side * (0.12 + scale * 0.02)]);
+        }
+        const shoulderFin = rigBox(visual, `${sideName}-shoulder-fin`, [0.08, 0.72, 0.92], membraneMaterial, [side * 1.0, 2.5, -0.66], [-0.16, side * 0.24, side * 0.14]);
+        shoulderFin.userData.aquaticFin = true;
+      }
     }
 
     for (let ridge = 0; ridge < 7; ridge += 1) {
@@ -428,11 +814,20 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       rigBox(neck, `neck-${segment}-throat`, [width * 0.68, 0.25, 1.06], bellyMaterial, [0, -0.43, -0.52]);
       rigBox(neck, `neck-${segment}-spine`, [0.16, 0.46 - segment * 0.04, 0.28], isFire ? charMaterial : accentMaterial, [0, 0.63 - segment * 0.05, -0.42]);
       if (isFire) rigBox(neck, `neck-${segment}-throat-ember`, [width * 0.3, 0.11, 0.72], lavaMaterial, [0, -0.57, -0.52]);
+      if (dragonType === "steel") {
+        rigBox(neck, `neck-${segment}-riveted-collar`, [width + 0.08, 0.12, 0.28], segment % 2 ? brassRivetMaterial : steelPlateMaterial, [0, 0.28, -0.24]);
+        for (const side of [-1, 1]) rigBox(neck, `neck-${segment}-${side < 0 ? "left" : "right"}-bolt`, [0.09, 0.09, 0.09], brassRivetMaterial, [side * (width * 0.5), 0.3, -0.38]);
+      } else if (dragonType === "sea") {
+        for (const side of [-1, 1]) {
+          const frill = rigBox(neck, `neck-${segment}-${side < 0 ? "left" : "right"}-frill`, [0.06, 0.4 - segment * 0.04, 0.7], seaGlassMaterial, [side * (width * 0.54), 0.22, -0.4], [-0.18, side * 0.28, side * 0.12]);
+          frill.userData.aquaticFin = true;
+        }
+      }
       neckParent = neck;
     }
 
     const head = pivot(neckParent, "head", [0, 0.06, -1.02]);
-    const headWidth = dragonType === "ice" ? 1.76 : dragonType === "steel" ? 1.66 : dragonType === "sea" ? 1.72 : 1.58;
+    const headWidth = dragonType === "steel" ? 1.66 : dragonType === "sea" ? 1.72 : 1.58;
     rigBox(head, "head", [headWidth, 1.12, 1.42], bodyMaterial, [0, 0, -0.46]);
     rigBox(head, "brow", [headWidth * 1.04, 0.28, 0.7], accentMaterial, [0, 0.34, -0.93]);
     rigBox(head, "snout", [headWidth * 0.7, 0.58, 1.15], bellyMaterial, [0, -0.18, -1.28]);
@@ -444,11 +839,34 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
         rigBox(head, `${sideName}-cheek-spike`, [0.15, 0.15, 0.64], charMaterial, [side * (headWidth * 0.52), -0.02, 0.02], [0.12, side * -0.62, 0]);
         rigBox(head, `${sideName}-snout-fang`, [0.09, 0.3, 0.09], amberHornMaterial, [side * (headWidth * 0.28), -0.52, -1.66], [0.06, 0, side * 0.05]);
       }
+    } else if (dragonType === "steel") {
+      rigBox(head, "riveted-brow-visor", [headWidth * 1.08, 0.18, 0.64], steelPlateMaterial, [0, 0.49, -0.87], [-0.08, 0, 0]);
+      rigBox(head, "snout-ram", [0.54, 0.3, 0.52], steelDarkMaterial, [0, -0.12, -1.82]);
+      for (const side of [-1, 1]) {
+        const sideName = side < 0 ? "left" : "right";
+        rigBox(head, `${sideName}-cheek-armor`, [0.16, 0.58, 0.82], steelPlateMaterial, [side * (headWidth * 0.53), -0.08, -0.58], [0.05, side * 0.06, side * 0.08]);
+        rigBox(head, `${sideName}-visor-rivet`, [0.11, 0.11, 0.08], brassRivetMaterial, [side * (headWidth * 0.42), 0.51, -1.1]);
+      }
+    } else if (dragonType === "sea") {
+      rigBox(head, "tideglass-brow-crown", [headWidth * 1.08, 0.14, 0.62], seaGlassMaterial, [0, 0.5, -0.82], [-0.12, 0, 0]);
+      rigBox(head, "reef-snout-band", [headWidth * 0.72, 0.12, 0.32], reefMaterial, [0, -0.02, -1.78]);
+      for (const side of [-1, 1]) {
+        const sideName = side < 0 ? "left" : "right";
+        const whisker = rigBox(head, `${sideName}-current-whisker`, [0.06, 0.06, 1.25], seaGlassMaterial, [side * (headWidth * 0.43), -0.12, -1.5], [0.08, side * 0.4, side * -0.12]);
+        whisker.userData.aquaticFin = true;
+        for (let gill = 0; gill < 3; gill += 1) rigBox(head, `${sideName}-gill-light-${gill + 1}`, [0.05, 0.12, 0.3], glowMaterial, [side * (headWidth * 0.52), 0.12 - gill * 0.16, -0.48 + gill * 0.2], [0, side * 0.08, side * 0.18]);
+      }
     }
 
     const jaw = pivot(head, "jaw", [0, -0.39, -1.1]);
     rigBox(jaw, "lower-jaw", [headWidth * 0.72, 0.28, 1.15], bellyMaterial, [0, -0.08, -0.48]);
     if (isFire) rigBox(jaw, "chin-spike", [0.12, 0.36, 0.12], charMaterial, [0, -0.26, -0.92], [0.55, 0, 0]);
+    if (dragonType === "steel") {
+      rigBox(jaw, "jaw-piston", [0.16, 0.16, 0.88], steelPlateMaterial, [0, -0.24, -0.42]);
+      for (const side of [-1, 1]) rigBox(jaw, `${side < 0 ? "left" : "right"}-jaw-hinge`, [0.24, 0.24, 0.18], brassRivetMaterial, [side * (headWidth * 0.36), 0.02, 0.02], [0, Math.PI / 4, 0]);
+    } else if (dragonType === "sea") {
+      for (const side of [-1, 1]) rigBox(jaw, `${side < 0 ? "left" : "right"}-chin-barbel`, [0.07, 0.48, 0.07], seaGlassMaterial, [side * 0.22, -0.34, -0.55], [0.26, 0, side * 0.14]);
+    }
     for (const side of [-1, 1]) {
       for (let tooth = 0; tooth < 4; tooth += 1) {
         rigBox(jaw, `${side < 0 ? "left" : "right"}-tooth-${tooth + 1}`, [0.09, 0.22, 0.1], hornMaterial, [side * (0.2 + tooth * 0.1), 0.1, -0.2 - tooth * 0.23], [0.12, 0, side * 0.05]);
@@ -510,7 +928,6 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
         rigBox(femaleHorns, `${sideName}-curved-horn-tip`, [0.18, 0.18, 0.62], hornMaterial, [side * 0.86, 0.62, 0.37], [-0.82, side * -0.2, side * -0.18]);
         outer.userData.sexMarker = "female";
       }
-      if (dragonType === "ice") rigBox(head, `${sideName}-ice-crown-horn`, [0.18, 0.48, 0.18], hornMaterial, [side * 0.27, 0.77, -0.42], [0, 0, side * -0.18]);
     }
 
     for (const side of [-1, 1]) {
@@ -526,6 +943,19 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       rigBox(wingForearm, `${sideName}-outer-wing-membrane`, [2.7, 0.05, 2.25], membraneMaterial, [side * 1.18, -0.07, 0.92], [0.03, side * -0.13, side * -0.16]);
       for (let finger = 0; finger < 3; finger += 1) {
         rigBox(wingForearm, `${sideName}-wing-finger-${finger + 1}`, [2.45 - finger * 0.25, 0.1, 0.12], hornMaterial, [side * (1.06 - finger * 0.08), -0.04, 0.35 + finger * 0.74], [0, side * (0.18 + finger * 0.13), side * -0.15]);
+      }
+      if (dragonType === "steel") {
+        rigBox(wingRoot, `${sideName}-wing-gear-hub`, [0.46, 0.46, 0.18], brassRivetMaterial, [side * 0.2, 0.02, 0], [Math.PI / 4, 0, Math.PI / 4]);
+        for (let brace = 0; brace < 3; brace += 1) {
+          rigBox(wingForearm, `${sideName}-wing-panel-brace-${brace + 1}`, [0.1, 0.09, 2.0 - brace * 0.25], brace % 2 ? steelDarkMaterial : steelPlateMaterial, [side * (0.28 + brace * 0.9), -0.02, 0.92 + brace * 0.24], [0, side * (0.15 + brace * 0.08), side * -0.15]);
+          rigBox(wingForearm, `${sideName}-wing-brace-rivet-${brace + 1}`, [0.12, 0.12, 0.12], brassRivetMaterial, [side * (0.3 + brace * 0.9), 0.02, 0.08 + brace * 0.2]);
+        }
+      } else if (dragonType === "sea") {
+        rigBox(wingRoot, `${sideName}-wing-pearl-node`, [0.32, 0.32, 0.12], glowMaterial, [side * 0.24, -0.02, 0], [Math.PI / 4, 0, Math.PI / 4]);
+        for (let ray = 0; ray < 3; ray += 1) {
+          rigBox(wingForearm, `${sideName}-ray-sail-rib-${ray + 1}`, [0.07, 0.07, 2.05 - ray * 0.22], ray % 2 ? seaGlassMaterial : reefMaterial, [side * (0.34 + ray * 0.88), -0.025, 0.88 + ray * 0.28], [0, side * (0.18 + ray * 0.1), side * -0.15]);
+          rigBox(wingRoot, `${sideName}-ray-light-${ray + 1}`, [0.13, 0.08, 0.28], glowMaterial, [side * (0.72 + ray * 0.55), -0.11, 0.5 + ray * 0.52]);
+        }
       }
       if (isFire) {
         // Scorched sails: charred fringe panels trail the membranes with a
@@ -559,6 +989,13 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
         const knee = pivot(hip, `${positionName}-knee`, [0, -0.82, front ? -0.12 : 0.14]);
         rigBox(knee, `${positionName}-lower-leg`, [0.4, 0.86, 0.45], accentMaterial, [0, -0.4, 0.02], [front ? 0.08 : -0.08, 0, 0]);
         if (isFire) rigBox(knee, `${positionName}-knee-ember-crack`, [0.44, 0.1, 0.1], lavaMaterial, [0, -0.14, -0.2]);
+        if (dragonType === "steel") {
+          rigBox(knee, `${positionName}-knee-plate`, [0.48, 0.24, 0.5], steelPlateMaterial, [0, -0.1, -0.08]);
+          rigBox(knee, `${positionName}-piston-rod`, [0.16, 0.62, 0.16], brassRivetMaterial, [0, -0.46, -0.22]);
+        } else if (dragonType === "sea") {
+          const calfFin = rigBox(knee, `${positionName}-calf-fin`, [0.08, 0.52, 0.62], seaGlassMaterial, [side * 0.22, -0.38, 0.16], [-0.12, side * 0.2, side * 0.18]);
+          calfFin.userData.aquaticFin = true;
+        }
         const claw = pivot(knee, `${positionName}-claw`, [0, -0.77, -0.08]);
         rigBox(claw, `${positionName}-foot`, [0.65, 0.24, 0.8], bellyMaterial, [0, -0.04, -0.25]);
         for (let toe = -1; toe <= 1; toe += 1) rigBox(claw, `${positionName}-talon-${toe + 2}`, [0.12, 0.12, 0.58], hornMaterial, [toe * 0.19, -0.08, -0.76], [0.08, toe * -0.12, 0]);
@@ -572,15 +1009,18 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       rigBox(tail, `tail-${segment}`, [Math.max(0.28, width), Math.max(0.3, width * 0.67), 1.18], segment % 2 ? bodyMaterial : accentMaterial, [0, 0, 0.47]);
       if (segment < 6) rigBox(tail, `tail-${segment}-spine`, [0.13, Math.max(0.18, 0.5 - segment * 0.055), 0.22], isFire ? charMaterial : accentMaterial, [0, Math.max(0.23, width * 0.44), 0.4]);
       if (isFire && segment >= 4) rigBox(tail, `tail-${segment}-char-ring`, [Math.max(0.34, width + 0.06), Math.max(0.36, width * 0.67 + 0.06), 0.18], charMaterial, [0, 0, 0.47]);
+      if (dragonType === "steel" && segment <= 5) {
+        rigBox(tail, `tail-${segment}-armor-band`, [Math.max(0.32, width + 0.08), Math.max(0.32, width * 0.7 + 0.08), 0.16], segment % 2 ? steelPlateMaterial : brassRivetMaterial, [0, 0, 0.48]);
+      } else if (dragonType === "sea" && segment >= 2 && segment <= 5) {
+        for (const side of [-1, 1]) rigBox(tail, `tail-${segment}-${side < 0 ? "left" : "right"}-finlet`, [0.5, 0.06, 0.46], seaGlassMaterial, [side * Math.max(0.24, width * 0.46), 0, 0.48], [0, side * 0.4, side * 0.12]);
+        rigBox(tail, `tail-${segment}-lateral-light`, [0.15, 0.12, 0.15], glowMaterial, [0, Math.max(0.18, width * 0.38), 0.5], [0, Math.PI / 4, Math.PI / 4]);
+      }
       tailParent = tail;
     }
     if (dragonType === "sea") {
       rigBox(tailParent, "sea-tail-fin-left", [1.88, 0.08, 1.52], membraneMaterial, [-0.76, 0.04, 0.64], [0, 0.52, 0.18]);
       rigBox(tailParent, "sea-tail-fin-right", [1.88, 0.08, 1.52], membraneMaterial, [0.76, 0.04, 0.64], [0, -0.52, -0.18]);
       for (let fin = 0; fin < 4; fin += 1) rigBox(visual, `sea-dorsal-fin-${fin + 1}`, [0.12, 0.65 + fin * 0.08, 0.55], membraneMaterial, [0, 2.75, -0.95 + fin * 0.68], [-0.12, 0, 0]);
-    } else if (dragonType === "ice") {
-      rigBox(tailParent, "ice-tail-fin-left", [1.65, 0.08, 1.28], membraneMaterial, [-0.68, 0.05, 0.62], [0, 0.48, 0.16]);
-      rigBox(tailParent, "ice-tail-fin-right", [1.65, 0.08, 1.28], membraneMaterial, [0.68, 0.05, 0.62], [0, -0.48, -0.16]);
     } else if (dragonType === "fire") {
       // Inferno tip: a bright core wrapped in leaning lava tongues, with
       // stray ember motes drifting off the burn.
@@ -597,6 +1037,8 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       }
     } else {
       rigBox(tailParent, "steel-tail-hammer", [1.18, 0.72, 0.9], metalMaterial, [0, 0, 0.75], [0, Math.PI / 4, 0]);
+      rigBox(tailParent, "steel-tail-hammer-core", [0.46, 0.46, 0.95], glowMaterial, [0, 0, 0.78], [0, Math.PI / 4, 0]);
+      for (const side of [-1, 1]) rigBox(tailParent, `${side < 0 ? "left" : "right"}-hammer-rivet`, [0.16, 0.16, 0.16], brassRivetMaterial, [side * 0.5, 0.08, 0.78]);
     }
 
     const saddle = attachment("saddle");
@@ -1067,6 +1509,59 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       paw.rotation.z = side * 0.12;
     }
     for (let hair = 0; hair < 5; hair += 1) add(visual, [0.05, 0.28, 0.05], copper, [-0.28 + hair * 0.14, 0.63, -0.15 + (hair % 2) * 0.25], undefined, `copper-mole-guard-hair-${hair + 1}`).rotation.z = (hair - 2) * 0.1;
+  } else if (kind === "deepgear-courser-golem") {
+    const brass = material(0xc08a4d);
+    const darkSteel = material(0x3d484d);
+    const piston = material(0xb8c4c4);
+    const leather = material(0x4a3328);
+    const core = material(0x7df1eb, true, 0.96);
+    add(visual, [0.9, 0.7, 1.36], bodyMaterial, [0, 0.63, 0.12], "body", `${kind}-armored-body`);
+    add(visual, [0.82, 0.54, 0.56], brass, [0, 0.72, -0.48], "body", `${kind}-chest-plate`);
+    add(visual, [0.76, 0.58, 0.58], darkSteel, [0, 0.64, 0.64], "body", `${kind}-rear-housing`);
+    const neck = add(visual, [0.48, 0.94, 0.46], darkSteel, [0, 1.16, -0.62], "body", `${kind}-neck-housing`);
+    neck.rotation.x = -0.38;
+    add(visual, [0.58, 0.46, 0.66], bodyMaterial, [0, 1.63, -1.01], "head", `${kind}-head`);
+    add(visual, [0.42, 0.3, 0.58], brass, [0, 1.52, -1.55], undefined, `${kind}-muzzle-plate`);
+    add(visual, [0.36, 0.16, 0.14], darkSteel, [0, 1.48, -1.91], undefined, `${kind}-intake-grille`);
+    for (const side of [-1, 1]) {
+      const sideName = side < 0 ? "left" : "right";
+      add(visual, [0.045, 0.15, 0.2], darkSteel, [side * 0.31, 1.72, -1.2], undefined, `${kind}-${sideName}-eye-housing`);
+      add(visual, [0.05, 0.08, 0.12], core, [side * 0.338, 1.72, -1.23], undefined, `${kind}-${sideName}-aether-eye`);
+      const antenna = add(visual, [0.12, 0.3, 0.15], brass, [side * 0.21, 1.99, -0.94], "head", `${kind}-${sideName}-antenna-ear`);
+      antenna.rotation.z = side * -0.2;
+      const gear = add(visual, [0.055, 0.42, 0.42], brass, [side * 0.485, 0.72, 0.31], undefined, `${kind}-${sideName}-drive-gear`);
+      gear.rotation.x = Math.PI / 4;
+      add(visual, [0.07, 0.16, 0.16], core, [side * 0.52, 0.72, 0.31], undefined, `${kind}-${sideName}-gear-core`);
+    }
+    add(visual, [0.34, 0.34, 0.08], core, [0, 0.75, -0.595], undefined, `${kind}-aether-flywheel`).rotation.z = Math.PI / 4;
+    for (const [px, pz, phase, name] of [
+      [-0.32, -0.43, 0, "front-left"], [0.32, -0.43, Math.PI, "front-right"],
+      [-0.33, 0.56, Math.PI, "rear-left"], [0.33, 0.56, 0, "rear-right"],
+    ] as Array<[number, number, number, string]>) {
+      const leg = pivotBox([0.25, 0.54, 0.27], darkSteel, [px, 0.5, pz], [0, -0.27, 0], "legs", `${kind}-${name}-upper-piston`);
+      leg.userData.phase = phase;
+      add(leg, [0.13, 0.42, 0.14], piston, [0, -0.69, 0], undefined, `${kind}-${name}-piston-rod`);
+      add(leg, [0.25, 0.2, 0.24], brass, [0, -0.82, 0], undefined, `${kind}-${name}-ankle-housing`);
+      add(leg, [0.3, 0.13, 0.4], darkSteel, [0, -0.985, -0.05], undefined, `${kind}-${name}-traction-hoof`);
+    }
+    for (const [index, y, z] of [[1, 1.88, -0.76], [2, 1.68, -0.58], [3, 1.46, -0.4], [4, 1.24, -0.22]] as Array<[number, number, number]>) {
+      const fin = add(visual, [0.15, 0.3, 0.28], brass, [0, y, z], undefined, `${kind}-mane-vent-${index}`);
+      fin.rotation.x = -0.38;
+      add(visual, [0.06, 0.11, 0.04], core, [0, y + 0.02, z - 0.15], undefined, `${kind}-mane-vent-light-${index}`);
+    }
+    const tail = pivotBox([0.2, 0.2, 0.62], darkSteel, [0, 0.82, 0.82], [0, -0.04, 0.29], "body", `${kind}-tail-boom`);
+    tail.rotation.x = 0.42;
+    add(tail, [0.3, 0.3, 0.32], brass, [0, -0.16, 0.66], undefined, `${kind}-tail-counterweight`);
+    add(tail, [0.14, 0.14, 0.14], core, [0, -0.16, 0.86], undefined, `${kind}-tail-lamp`);
+    const saddle = new THREE.Group();
+    saddle.name = `${kind}-saddle`;
+    saddle.visible = false;
+    visual.add(saddle);
+    add(saddle, [0.84, 0.1, 0.78], leather, [0, 1.02, 0.12], undefined, `${kind}-saddle-blanket`);
+    add(saddle, [0.58, 0.24, 0.54], brass, [0, 1.17, 0.1], undefined, `${kind}-saddle-seat`);
+    add(saddle, [0.09, 0.88, 0.1], leather, [-0.43, 0.62, 0.12], undefined, `${kind}-left-girth`);
+    add(saddle, [0.09, 0.88, 0.1], leather, [0.43, 0.62, 0.12], undefined, `${kind}-right-girth`);
+    visual.userData.saddleAnchor = [0, 1.12, 0.12];
   } else if (kind === "copper-scout-golem" || kind === "stone-bulwark-golem" || kind === "aetherforged-sentinel") {
     const bulwark = kind === "stone-bulwark-golem";
     const sentinel = kind === "aetherforged-sentinel";
@@ -1443,28 +1938,175 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     add(reedSaddle, [0.08, 0.72, 0.08], material(0x3f2c23), [0.31, 0.64, 0.06], undefined, "reedstrider-right-girth");
     visual.userData.saddleAnchor = [0, 1.03, 0.1];
   } else if (kind === "wild-horse") {
-    add(visual, [0.82, 0.78, 1.46], bodyMaterial, [0, 0.54, 0.15], "body", "wild-horse-body");
-    add(visual, [0.34, 0.92, 0.42], accentMaterial, [0, 0.94, -0.52], "body", "wild-horse-neck").rotation.x = -0.25;
-    add(visual, [0.52, 0.52, 0.66], bodyMaterial, [0, 1.27, -0.88], "head", "wild-horse-head");
-    add(visual, [0.4, 0.3, 0.48], accentMaterial, [0, 1.13, -1.35], undefined, "wild-horse-muzzle");
-    eyePair(0.17, 1.35, -1.23, 0.07, "wild-horse");
+    const courserCreamMaterial = material(0xf0d5a0);
+    const courserNoseMaterial = material(0x4a3027);
+    const courserHoofMaterial = material(0x30251f);
+    const courserForestMaterial = material(0x557044);
+    const courserEyeRimMaterial = material(0x211814);
+
+    // Three overlapping masses give the Courser a lifted shoulder, tucked
+    // barrel and rounded hindquarter instead of the old single-box torso.
+    const chest = add(visual, [0.88, 0.78, 0.62], bodyMaterial, [0, 0.62, -0.4], "body", "wild-horse-chest");
+    chest.rotation.x = 0.04;
+    add(visual, [0.82, 0.64, 0.92], bodyMaterial, [0, 0.6, 0.12], "body", "wild-horse-barrel");
+    const rump = add(visual, [0.9, 0.72, 0.7], bodyMaterial, [0, 0.62, 0.61], "body", "wild-horse-rump");
+    rump.rotation.x = -0.08;
+    add(visual, [0.7, 0.16, 0.72], accentMaterial, [0, 0.34, 0.12], undefined, "wild-horse-warm-undercoat");
+
+    const neck = add(visual, [0.5, 0.98, 0.48], bodyMaterial, [0, 1.16, -0.64], "body", "wild-horse-neck");
+    neck.rotation.x = -0.42;
+    const throat = add(visual, [0.32, 0.58, 0.3], accentMaterial, [0, 1.04, -0.8], undefined, "wild-horse-throat");
+    throat.rotation.x = -0.42;
+    add(visual, [0.52, 0.44, 0.7], bodyMaterial, [0, 1.61, -1.02], "head", "wild-horse-head").rotation.x = -0.08;
+    add(visual, [0.54, 0.3, 0.34], bodyMaterial, [0, 1.73, -0.9], "head", "wild-horse-brow");
+    const nasalBridge = add(visual, [0.42, 0.34, 0.46], bodyMaterial, [0, 1.56, -1.52], undefined, "wild-horse-nasal-bridge");
+    nasalBridge.rotation.x = 0.08;
+    const muzzle = add(visual, [0.36, 0.27, 0.36], accentMaterial, [0, 1.46, -1.81], undefined, "wild-horse-muzzle");
+    muzzle.rotation.x = 0.04;
+    add(visual, [0.33, 0.14, 0.13], courserNoseMaterial, [0, 1.43, -2.015], undefined, "wild-horse-soft-nose");
+    add(visual, [0.03, 0.045, 0.025], courserEyeRimMaterial, [-0.085, 1.46, -2.085], undefined, "wild-horse-left-nostril");
+    add(visual, [0.03, 0.045, 0.025], courserEyeRimMaterial, [0.085, 1.46, -2.085], undefined, "wild-horse-right-nostril");
+
+    // A narrow cream blaze breaks up the face and remains legible at portrait
+    // scale. The eyes sit on the sides of the skull like a real horse's eyes.
+    add(visual, [0.13, 0.28, 0.025], courserCreamMaterial, [0, 1.69, -1.377], undefined, "wild-horse-blaze-upper").rotation.z = -0.06;
+    add(visual, [0.095, 0.2, 0.025], courserCreamMaterial, [0.025, 1.52, -1.758], undefined, "wild-horse-blaze-lower").rotation.z = 0.08;
+    add(visual, [0.18, 0.28, 0.16], darkMaterial, [0, 1.94, -1.09], "head", "wild-horse-forelock").rotation.x = 0.28;
     for (const side of [-1, 1]) {
-      const ear = add(visual, [0.14, 0.38, 0.16], darkMaterial, [side * 0.18, 1.68, -0.86], undefined, `wild-horse-${side < 0 ? "left" : "right"}-ear`);
-      ear.rotation.z = side * -0.12;
+      const sideName = side < 0 ? "left" : "right";
+      add(visual, [0.035, 0.145, 0.19], courserEyeRimMaterial, [side * 0.277, 1.71, -1.2], undefined, `wild-horse-${sideName}-eye-rim`);
+      add(visual, [0.04, 0.09, 0.12], eyeMaterial, [side * 0.299, 1.715, -1.22], undefined, `wild-horse-${sideName}-eye`);
+      add(visual, [0.012, 0.025, 0.035], courserCreamMaterial, [side * 0.323, 1.74, -1.255], undefined, `wild-horse-${sideName}-eye-glint`);
+      const ear = add(visual, [0.14, 0.32, 0.15], darkMaterial, [side * 0.2, 1.98, -0.94], "head", `wild-horse-${sideName}-ear`);
+      ear.rotation.x = side * 0.04 - 0.1;
+      ear.rotation.z = side * -0.22;
+      const innerEar = add(visual, [0.06, 0.19, 0.035], accentMaterial, [side * 0.208, 1.985, -1.02], undefined, `wild-horse-${sideName}-inner-ear`);
+      innerEar.rotation.z = side * -0.22;
     }
-    quadrupedLegs(0.28, -0.34, 0.48, 0.35, 0.9, 0.16, darkMaterial, "wild-horse");
-    for (let index = 0; index < 5; index += 1) add(visual, [0.11, 0.34, 0.24], darkMaterial, [0, 1.25 - index * 0.16, -0.42 + index * 0.13], undefined, `wild-horse-mane-${index + 1}`).rotation.x = -0.2;
-    const tail = pivotBox([0.28, 0.32, 0.95], darkMaterial, [0, 0.75, 0.84], [0, -0.12, 0.42], "body", "wild-horse-tail");
-    tail.rotation.x = 0.42;
+
+    // Each animated leg pivot carries a thigh, cannon, cream sock and broad
+    // hoof. This keeps the existing gait contract while adding real joints.
+    for (const [px, pz, phase, name, lowerDrift] of [
+      [-0.31, -0.43, 0, "front-left", -0.03], [0.31, -0.43, Math.PI, "front-right", -0.03],
+      [-0.32, 0.57, Math.PI, "rear-left", 0.05], [0.32, 0.57, 0, "rear-right", 0.05],
+    ] as Array<[number, number, number, string, number]>) {
+      const leg = pivotBox([0.23, 0.53, 0.25], bodyMaterial, [px, 0.5, pz], [0, -0.265, 0], "legs", `wild-horse-${name}-upper-leg`);
+      leg.userData.phase = phase;
+      add(leg, [0.18, 0.42, 0.19], accentMaterial, [0, -0.69, lowerDrift], undefined, `wild-horse-${name}-cannon`);
+      add(leg, [0.185, 0.2, 0.195], courserCreamMaterial, [0, -0.83, lowerDrift], undefined, `wild-horse-${name}-sock`);
+      add(leg, [0.25, 0.13, 0.34], courserHoofMaterial, [0, -0.985, lowerDrift - 0.045], undefined, `wild-horse-${name}-hoof`);
+    }
+
+    // Layered mane plates follow the neck slope; small green ties are the
+    // Courser's restrained Wildwood signature rather than a glowing effect.
+    for (const [index, y, z, height] of [
+      [1, 1.88, -0.78, 0.32], [2, 1.7, -0.62, 0.38], [3, 1.49, -0.46, 0.42],
+      [4, 1.28, -0.3, 0.4], [5, 1.08, -0.14, 0.34],
+    ] as Array<[number, number, number, number]>) {
+      const lock = add(visual, [0.17, height, 0.27], darkMaterial, [0, y, z], undefined, `wild-horse-mane-lock-${index}`);
+      lock.rotation.x = -0.42;
+      if (index === 2 || index === 4) add(visual, [0.19, 0.055, 0.3], courserForestMaterial, [0, y - 0.03, z - 0.015], undefined, `wild-horse-mane-tie-${index}`).rotation.x = -0.42;
+    }
+
+    // Offset flank dapples keep the coat readable as chestnut while avoiding
+    // a flat, unbroken side panel in profile.
+    for (const [index, side, y, z, size] of [
+      [1, -1, 0.78, 0.49, 0.14], [2, -1, 0.6, 0.68, 0.11], [3, 1, 0.74, 0.57, 0.13], [4, 1, 0.56, 0.38, 0.1],
+    ] as Array<[number, number, number, number, number]>) {
+      add(visual, [0.025, size, size * 1.25], accentMaterial, [side * 0.463, y, z], undefined, `wild-horse-flank-dapple-${index}`);
+    }
+
+    const tail = pivotBox([0.24, 0.3, 0.62], darkMaterial, [0, 0.85, 0.86], [0, -0.1, 0.3], "body", "wild-horse-tail");
+    tail.rotation.x = 0.48;
+    add(tail, [0.3, 0.28, 0.5], darkMaterial, [-0.08, -0.18, 0.7], undefined, "wild-horse-tail-left-lock").rotation.z = -0.12;
+    add(tail, [0.3, 0.28, 0.5], darkMaterial, [0.08, -0.18, 0.72], undefined, "wild-horse-tail-right-lock").rotation.z = 0.12;
+    add(tail, [0.34, 0.07, 0.32], courserForestMaterial, [0, -0.12, 0.48], undefined, "wild-horse-tail-tie");
     const horseSaddle = new THREE.Group();
     horseSaddle.name = "wild-horse-saddle";
     horseSaddle.visible = false;
     visual.add(horseSaddle);
-    add(horseSaddle, [0.88, 0.1, 0.82], material(0x60412f), [0, 0.98, 0.13], undefined, "wild-horse-saddle-blanket");
-    add(horseSaddle, [0.58, 0.26, 0.56], material(0x8b613e), [0, 1.12, 0.11], undefined, "wild-horse-saddle-seat");
-    add(horseSaddle, [0.09, 0.86, 0.1], material(0x3c2b23), [-0.43, 0.6, 0.12], undefined, "wild-horse-left-girth");
-    add(horseSaddle, [0.09, 0.86, 0.1], material(0x3c2b23), [0.43, 0.6, 0.12], undefined, "wild-horse-right-girth");
-    visual.userData.saddleAnchor = [0, 1.02, 0.12];
+    add(horseSaddle, [0.88, 0.1, 0.82], courserForestMaterial, [0, 1.01, 0.12], undefined, "wild-horse-saddle-blanket");
+    add(horseSaddle, [0.72, 0.055, 0.7], courserCreamMaterial, [0, 1.075, 0.12], undefined, "wild-horse-saddle-blanket-trim");
+    add(horseSaddle, [0.58, 0.25, 0.56], material(0x765035), [0, 1.19, 0.1], undefined, "wild-horse-saddle-seat");
+    add(horseSaddle, [0.09, 0.88, 0.1], material(0x3c2b23), [-0.43, 0.62, 0.12], undefined, "wild-horse-left-girth");
+    add(horseSaddle, [0.09, 0.88, 0.1], material(0x3c2b23), [0.43, 0.62, 0.12], undefined, "wild-horse-right-girth");
+    visual.userData.saddleAnchor = [0, 1.12, 0.12];
+  } else if (kind === "rimehoof-courser" || kind === "sunscar-courser" || kind === "mirestride-courser" || kind === "starbough-courser") {
+    const rime = kind === "rimehoof-courser";
+    const sun = kind === "sunscar-courser";
+    const mire = kind === "mirestride-courser";
+    const star = kind === "starbough-courser";
+    const trim = material(rime ? 0xf4fbf8 : sun ? 0x513326 : mire ? 0x6f8b54 : 0xa9f3d6);
+    const nose = material(sun ? 0x3b2720 : mire ? 0x344238 : 0x4a3b35);
+    const hoof = material(rime ? 0x657279 : sun ? 0x3e2b24 : mire ? 0x2f4237 : 0x24323a);
+    const signature = material(star ? 0x79cbb0 : rime ? 0xc7ebef : sun ? 0x7d4930 : 0x6f8d54);
+    const starGlow = material(eyeColor, true, 0.88);
+    const bodyWidth = rime || mire ? 0.94 : sun ? 0.78 : 0.82;
+    const bodyHeight = rime ? 0.76 : mire ? 0.68 : sun ? 0.6 : 0.66;
+    const chest = add(visual, [bodyWidth, bodyHeight + 0.06, sun ? 0.58 : 0.64], bodyMaterial, [0, 0.62, -0.4], "body", `${kind}-chest`);
+    chest.rotation.x = mire ? -0.03 : 0.04;
+    add(visual, [bodyWidth - 0.06, bodyHeight, sun ? 0.92 : 1.0], bodyMaterial, [0, 0.6, 0.14], "body", `${kind}-barrel`);
+    add(visual, [bodyWidth, bodyHeight + 0.02, 0.68], bodyMaterial, [0, 0.62, 0.62], "body", `${kind}-rump`).rotation.x = -0.08;
+    const neckY = mire ? 1.09 : 1.17;
+    const neck = add(visual, [rime ? 0.56 : sun ? 0.39 : 0.46, rime ? 0.9 : star ? 1.04 : 0.96, 0.46], bodyMaterial, [0, neckY, -0.64], "body", `${kind}-neck`);
+    neck.rotation.x = mire ? -0.32 : -0.42;
+    add(visual, [sun ? 0.46 : 0.52, 0.42, sun ? 0.75 : 0.68], bodyMaterial, [0, mire ? 1.54 : 1.62, -1.03], "head", `${kind}-head`).rotation.x = sun ? -0.04 : -0.08;
+    add(visual, [sun ? 0.34 : 0.38, 0.28, sun ? 0.54 : 0.48], accentMaterial, [0, mire ? 1.43 : 1.5, -1.52], undefined, `${kind}-muzzle`);
+    add(visual, [sun ? 0.31 : 0.34, 0.14, 0.13], nose, [0, mire ? 1.4 : 1.46, -1.82], undefined, `${kind}-nose`);
+    for (const side of [-1, 1]) {
+      const sideName = side < 0 ? "left" : "right";
+      add(visual, [0.035, 0.14, 0.18], darkMaterial, [side * (sun ? 0.25 : 0.28), mire ? 1.61 : 1.72, -1.2], undefined, `${kind}-${sideName}-eye-rim`);
+      add(visual, [0.04, 0.085, 0.11], eyeMaterial, [side * (sun ? 0.273 : 0.302), mire ? 1.615 : 1.725, -1.22], undefined, `${kind}-${sideName}-eye`);
+      const ear = add(visual, [sun ? 0.13 : 0.15, sun ? 0.36 : 0.32, 0.15], darkMaterial, [side * 0.2, mire ? 1.91 : 1.99, -0.94], "head", `${kind}-${sideName}-ear`);
+      ear.rotation.z = side * (sun ? -0.16 : -0.22);
+      if (star) {
+        const antler = add(visual, [0.08, 0.44, 0.08], trim, [side * 0.15, 2.08, -0.83], undefined, `${kind}-${sideName}-branch-antler`);
+        antler.rotation.z = side * -0.25;
+        add(visual, [0.22, 0.07, 0.08], trim, [side * 0.23, 2.2, -0.83], undefined, `${kind}-${sideName}-antler-tine`).rotation.z = side * -0.28;
+      }
+    }
+    const hoofWidth = mire ? 0.36 : rime ? 0.3 : 0.25;
+    for (const [px, pz, phase, name] of [
+      [-0.32, -0.43, 0, "front-left"], [0.32, -0.43, Math.PI, "front-right"],
+      [-0.33, 0.58, Math.PI, "rear-left"], [0.33, 0.58, 0, "rear-right"],
+    ] as Array<[number, number, number, string]>) {
+      const leg = pivotBox([sun ? 0.19 : 0.23, sun ? 0.58 : 0.53, sun ? 0.2 : 0.24], bodyMaterial, [px, 0.5, pz], [0, sun ? -0.29 : -0.265, 0], "legs", `${kind}-${name}-upper-leg`);
+      leg.userData.phase = phase;
+      add(leg, [sun ? 0.14 : 0.18, sun ? 0.45 : 0.42, sun ? 0.15 : 0.19], accentMaterial, [0, -0.7, mire ? 0.04 : 0], undefined, `${kind}-${name}-cannon`);
+      if (rime) add(leg, [0.27, 0.18, 0.25], trim, [0, -0.84, 0], undefined, `${kind}-${name}-shaggy-fetlock`);
+      if (sun) add(leg, [0.2, 0.12, 0.2], signature, [0, -0.82, 0], undefined, `${kind}-${name}-desert-wrap`);
+      add(leg, [hoofWidth, mire ? 0.12 : 0.13, mire ? 0.46 : 0.35], hoof, [0, mire ? -0.99 : -0.985, mire ? -0.08 : -0.045], undefined, `${kind}-${name}-hoof`);
+    }
+    const maneCount = sun ? 4 : 6;
+    for (let index = 0; index < maneCount; index += 1) {
+      const y = (mire ? 1.75 : 1.9) - index * (mire ? 0.16 : 0.17);
+      const z = -0.76 + index * 0.15;
+      const lock = add(visual, [star ? 0.14 : sun ? 0.13 : 0.19, rime ? 0.38 : mire ? 0.34 : 0.3, mire ? 0.34 : 0.27], star ? signature : index % 2 === 0 ? darkMaterial : signature, [0, y, z], undefined, `${kind}-mane-lock-${index + 1}`);
+      lock.rotation.x = mire ? -0.3 : -0.42;
+    }
+    if (rime) add(visual, [0.68, 0.34, 0.34], trim, [0, 1.27, -0.53], undefined, `${kind}-winter-ruff`).rotation.x = -0.35;
+    if (sun) {
+      for (const side of [-1, 1]) add(visual, [0.035, 0.07, 0.42], signature, [side * 0.245, 1.65, -1.28], undefined, `${kind}-${side < 0 ? "left" : "right"}-sun-stripe`).rotation.x = -0.08;
+    }
+    if (mire) {
+      for (const side of [-1, 1]) add(visual, [0.03, 0.18, 0.58], signature, [side * 0.485, 0.7, 0.35], undefined, `${kind}-${side < 0 ? "left" : "right"}-reed-mark`).rotation.x = 0.2;
+    }
+    if (star) {
+      for (const [index, side, y, z] of [[1, -1, 0.78, 0.48], [2, -1, 0.57, 0.67], [3, 1, 0.72, 0.6], [4, 1, 0.55, 0.4]] as Array<[number, number, number, number]>) {
+        add(visual, [0.028, 0.12, 0.12], starGlow, [side * 0.435, y, z], undefined, `${kind}-star-mark-${index}`).rotation.x = Math.PI / 4;
+      }
+    }
+    const tail = pivotBox([sun ? 0.18 : 0.25, sun ? 0.24 : 0.3, sun ? 0.72 : 0.62], star ? signature : darkMaterial, [0, 0.84, 0.86], [0, -0.1, 0.3], "body", `${kind}-tail`);
+    tail.rotation.x = sun ? 0.35 : 0.48;
+    const saddle = new THREE.Group();
+    saddle.name = `${kind}-saddle`;
+    saddle.visible = false;
+    visual.add(saddle);
+    add(saddle, [bodyWidth - 0.06, 0.1, 0.8], signature, [0, 1.02, 0.12], undefined, `${kind}-saddle-blanket`);
+    add(saddle, [0.56, 0.24, 0.54], material(0x765035), [0, 1.17, 0.1], undefined, `${kind}-saddle-seat`);
+    add(saddle, [0.09, 0.86, 0.1], material(0x3c2b23), [-0.43, 0.62, 0.12], undefined, `${kind}-left-girth`);
+    add(saddle, [0.09, 0.86, 0.1], material(0x3c2b23), [0.43, 0.62, 0.12], undefined, `${kind}-right-girth`);
+    visual.userData.saddleAnchor = [0, 1.12, 0.12];
   } else if (kind === "meadow-cow") {
     add(visual, [1.04, 0.82, 1.48], bodyMaterial, [0, 0.49, 0.14], "body", "meadow-cow-body");
     add(visual, [0.72, 0.66, 0.68], accentMaterial, [0, 0.67, -0.82], "head", "meadow-cow-head");
@@ -1623,35 +2265,8 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       }
     }
     add(visual, [0.36, 0.08, 0.32], material(0xffdf9e), [0, -0.16, -0.14], undefined, "sunwash-crab-pale-apron");
-  } else if (kind === "emberjay" || kind === "canopy-lark" || kind === "tidewing-gull") {
-    const prefix = kind;
-    add(visual, [0.44, 0.4, 0.7], bodyMaterial, [0, 0.04, 0.05], "body", `${prefix}-body`);
-    add(visual, [0.34, 0.34, 0.38], accentMaterial, [0, 0.19, -0.43], "head", `${prefix}-head`);
-    const beakColor = kind === "emberjay" ? 0xe7be58 : kind === "tidewing-gull" ? 0xe5b74e : 0x765b36;
-    add(visual, [0.15, 0.12, 0.28], material(beakColor), [0, 0.13, -0.76], undefined, `${prefix}-beak`).rotation.x = -0.08;
-    eyePair(0.105, 0.25, -0.62, 0.052, prefix);
-    for (const side of [-1, 1]) {
-      const wing = pivotBox([0.5, 0.07, 0.58], darkMaterial, [side * 0.18, 0.11, 0.02], [side * 0.25, 0, 0.02], "wings", `${prefix}-${side < 0 ? "left" : "right"}-wing`);
-      wing.rotation.z = side * -0.28;
-      wing.userData.side = side;
-      // Mirroring comes from side. A PI offset here makes both wings rotate in
-      // the same world direction instead of beating as an opposing pair.
-      wing.userData.phase = 0;
-    }
-    for (const side of [-1, 0, 1]) {
-      const feather = add(visual, [0.16, 0.08, 0.54], side === 0 ? accentMaterial : bodyMaterial, [side * 0.13, 0.03, 0.59], undefined, `${prefix}-tail-${side + 2}`);
-      feather.rotation.y = side * -0.16;
-    }
-    for (const side of [-1, 1]) {
-      add(visual, [0.045, 0.22, 0.045], darkMaterial, [side * 0.1, -0.27, -0.05], "legs", `${prefix}-${side < 0 ? "left" : "right"}-leg`);
-      add(visual, [0.16, 0.035, 0.045], darkMaterial, [side * 0.1, -0.39, -0.1], undefined, `${prefix}-${side < 0 ? "left" : "right"}-foot`);
-    }
-    if (kind === "emberjay") add(visual, [0.14, 0.28, 0.12], accentMaterial, [0, 0.48, -0.35], undefined, "emberjay-crest").rotation.x = -0.24;
-    else if (kind === "tidewing-gull") {
-      add(visual, [0.36, 0.1, 0.38], material(0xf7faf5), [0, 0.06, -0.39], undefined, "tidewing-gull-white-breast");
-      add(visual, [0.36, 0.08, 0.27], material(0x456e83), [0, 0.39, -0.42], undefined, "tidewing-gull-tide-cap");
-      for (const side of [-1, 1]) add(visual, [0.2, 0.045, 0.38], material(0x294456), [side * 0.36, 0.12, 0.08], undefined, `tidewing-gull-${side < 0 ? "left" : "right"}-wingtip`);
-    } else add(visual, [0.3, 0.08, 0.3], material(0xf0e59f), [0, 0.05, -0.37], undefined, "canopy-lark-breast-mark");
+  } else if (kind === "emberjay" || kind === "canopy-lark" || kind === "tidewing-gull" || kind === "frostquill") {
+    buildBird(kind);
   } else if (kind === "warg") {
     add(visual, [1.02, 0.72, 1.58], bodyMaterial, [0, 0.35, 0.12], "body", "warg-body");
     add(visual, [0.62, 0.78, 0.6], accentMaterial, [0, 0.64, -0.58], "body", "warg-ruff");

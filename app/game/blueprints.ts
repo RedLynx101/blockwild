@@ -199,6 +199,14 @@ export const BLUEPRINTS: readonly BlueprintDefinition[] = Object.freeze([
     recipeIds: [],
     resaleGold: 2_650,
   },
+  {
+    id: "golem-deepgear-courser",
+    name: "Deepgear Courser Blueprint",
+    description: "Authorizes a Golem Forge to assemble a piston-legged brass riding construct.",
+    faction: "dwarves",
+    recipeIds: [],
+    resaleGold: 1_860,
+  },
 ]);
 
 const BLUEPRINT_BY_ID = new Map(BLUEPRINTS.map((definition) => [definition.id, definition]));

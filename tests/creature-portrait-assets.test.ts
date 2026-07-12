@@ -26,6 +26,7 @@ const NEWCOMER_KINDS = [
   "sakurakit",
   "sunwash-crab",
   "tidewing-gull",
+  "frostquill",
   "glassfin",
   "lanternjaw",
   "abyss-skater",

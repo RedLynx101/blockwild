@@ -29,7 +29,15 @@ export type SampleKind =
   | "chestOpen"
   | "chestClose"
   | "ridgebackWarmHuff"
-  | "shadecrawlerStoneChitter";
+  | "shadecrawlerStoneChitter"
+  | "horseWhinnyA"
+  | "horseWhinnyB"
+  | "deepgearCourserWhinny"
+  | "emberjaySquawk"
+  | "birdChirp"
+  | "canopyLarkCall"
+  | "tidewingGullCallA"
+  | "tidewingGullCallB";
 export type SamplePlaybackOptions = { gain?: number; playbackRate?: number; detune?: number; when?: number };
 export type DragonSoundType = "fire" | "ice" | "steel" | "sea";
 export type DragonSoundEvent = "ambient" | "roar" | "hurt" | "death" | "wing" | "melee" | "breath" | "projectile" | "egg-crack";
@@ -81,6 +89,14 @@ const SAMPLES: Record<SampleKind, { source: string; gain: number }> = {
   chestClose: { source: "/sfx/chest-close.wav", gain: 0.58 },
   ridgebackWarmHuff: { source: "/sfx/ridgeback-warm-huff.mp3", gain: 0.62 },
   shadecrawlerStoneChitter: { source: "/sfx/shadecrawler-stone-chitter.mp3", gain: 0.52 },
+  horseWhinnyA: { source: "/sfx/horse-whinny-a.wav", gain: 0.74 },
+  horseWhinnyB: { source: "/sfx/horse-whinny-b.wav", gain: 0.78 },
+  deepgearCourserWhinny: { source: "/sfx/deepgear-courser-whinny.wav", gain: 0.72 },
+  emberjaySquawk: { source: "/sfx/emberjay-squawk.wav", gain: 0.76 },
+  birdChirp: { source: "/sfx/bird-chirp.wav", gain: 0.7 },
+  canopyLarkCall: { source: "/sfx/canopy-lark-call.wav", gain: 0.72 },
+  tidewingGullCallA: { source: "/sfx/tidewing-gull-call-a.wav", gain: 0.68 },
+  tidewingGullCallB: { source: "/sfx/tidewing-gull-call-b.wav", gain: 0.72 },
 };
 const MUSIC_FALLBACKS: Partial<Record<MusicScene, string>> = {
   combatA: "/music/blockwild-skyboss.mp3",

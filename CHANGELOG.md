@@ -2,6 +2,15 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## Unreleased - Courser Ecotypes and Creature Redesigns
+
+- Rebuilt the Wildwood Courser with tapered anatomy, jointed legs, readable side-set eyes, a layered mane, and a production-grounded saddle rig.
+- Added four biome-specific tameable mounts: shaggy Rimehoofs in Frostpine, Snowfield, and Snowcap; lean Sunscars in Desert and Badlands; broad-hoofed Mirestrides in Siltfen; and branch-antlered Starboughs in Glimmerwood.
+- Added the Deepgear Courser, a brass-and-steel piston mount sold unaligned by Dwarven Golemsmiths or assembled from its own blueprint in a mana-fed Golem Forge.
+- Added shared natural horse calls across living Coursers and the Mistmane, with a separate metallic steam-whinny for the Deepgear Courser.
+- Brought Steel and Sea Dragons up to the newer Fire and Ice art standard with pressure-engine armor and wing gears for Steel, plus tideglass scales, gills, whiskers, finlets, and ray-sail ribs for Sea.
+- Rebuilt Emberjays, Canopy Larks, and Tidewing Gulls as distinct layered bird rigs; added snow-dwelling Frostquill coveys; and routed lossless species calls through ambient, hurt, feeding, and breeding events.
+
 ## 1.2.0 - Trailbound - 2026-07-12
 
 ### Multiplayer identity and authority

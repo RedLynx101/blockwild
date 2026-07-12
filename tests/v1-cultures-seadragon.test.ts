@@ -193,6 +193,8 @@ test("new cultures have complete commerce, item, spell, quest, and model rosters
   assert.ok(WOOD_ELF_MERCHANT_OFFERS.some((offer) => offer.itemKey === "unaligned-glimmerhart-orb"));
   assert.ok(DWARF_MERCHANT_OFFERS.some((offer) => offer.itemKey === "flintlock-pistol"));
   assert.ok(DWARF_MERCHANT_OFFERS.some((offer) => offer.itemKey === "blueprint-aetherforged-sentinel"));
+  assert.ok(DWARF_MERCHANT_OFFERS.some((offer) => offer.itemKey === "blueprint-deepgear-courser"));
+  assert.ok(DWARF_MERCHANT_OFFERS.some((offer) => offer.itemKey === "deepgear-courser-golem-orb"));
   assert.ok(merchantOffersFor("wood-elves", "wood-elf-bow-warden").some((offer) => offer.itemKey === "glimmerbow"));
   assert.ok(merchantOffersFor("dwarves", "dwarf-powderwright").some((offer) => offer.itemKey === "flintlock-pistol"));
   assert.ok(V1_CULTURE_ITEMS.includes(Item.GolemForgeItem));
@@ -202,6 +204,11 @@ test("new cultures have complete commerce, item, spell, quest, and model rosters
   assert.equal(CULTIVATED_FLOWERS[ORDINARY_FLOWERS.indexOf(BlockId.Moonpetal)], BlockId.GiantMoonpetal);
   assert.equal(ITEMS[Item.SeaDragonEgg].placeBlock, BlockId.SeaDragonEggBlock);
   assert.equal(Item.TideglassDragonArmorModule, 419);
+  assert.equal(Item.DeepgearCourserBlueprint, 432);
+  assert.equal(Item.DeepgearCourserOrb, 433);
+  assert.equal(ITEMS[Item.DeepgearCourserBlueprint].blueprintId, "golem-deepgear-courser");
+  assert.equal(ITEMS[Item.DeepgearCourserOrb].creatureKind, "deepgear-courser-golem");
+  assert.equal(GOLEM_RECIPES["deepgear-courser"].role, "mount");
   assert.equal(ITEMS[Item.TideglassDragonArmorModule].dragonType, "sea");
   assert.equal(ITEMS[Item.TideglassDragonArmorModule].dragonModule, "armor");
   const tideglassArmor = RECIPES.find((recipe) => recipe.id === "tideglass-dragon-armor");

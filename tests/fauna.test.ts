@@ -95,15 +95,15 @@ import {
 } from "../app/game/creature-pathing.ts";
 
 test("expanded ecology catalog includes mounts, livestock, thin fish, pollinators, a pet, guardian, and archer", () => {
-  assert.equal(SURFACE_MOB_ORDER.length, 18);
-  assert.equal(new Set(SURFACE_MOB_ORDER).size, 18);
-  for (const kind of ["thimbledeer", "lanternshell", "puddlehopper", "reedstrider"] as const) {
+  assert.equal(SURFACE_MOB_ORDER.length, 22);
+  assert.equal(new Set(SURFACE_MOB_ORDER).size, 22);
+  for (const kind of ["thimbledeer", "lanternshell", "puddlehopper", "reedstrider", "rimehoof-courser", "sunscar-courser", "mirestride-courser", "starbough-courser"] as const) {
     assert.ok(SURFACE_MOB_ORDER.includes(kind));
     assert.equal(MOB_DEFS[kind].hostile, false);
     assert.ok(MOB_DEFS[kind].discoveryHint);
     assert.ok(MOB_DEFS[kind].utility);
   }
-  assert.equal(BIRD_ORDER.length, 3);
+  assert.deepEqual(BIRD_ORDER, ["emberjay", "canopy-lark", "tidewing-gull", "frostquill"]);
   assert.equal(AQUATIC_MOB_ORDER.length, 8);
   assert.equal(POLLINATOR_ORDER.length, 3);
   assert.deepEqual(fishKindsForHabitat("ocean"), ["shoalfin", "pocket-goldfish", "silverthread", "blue-mackerel", "coralback", "emberribbon", "glassfin", "tidepup", "sunset-sea-slug"]);
@@ -156,8 +156,9 @@ test("expanded ecology catalog includes mounts, livestock, thin fish, pollinator
   assert.equal(MOB_DEFS["reliquary-sentinel"].hostile, true);
   assert.equal(passiveMobKindForBiome(BiomeId.Meadow, 0.01), "thimbledeer");
   assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.3), "lanternshell");
-  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.52), "puddlehopper");
-  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.65), "reedstrider");
+  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.45), "puddlehopper");
+  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.6), "reedstrider");
+  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.68), "mirestride-courser");
   assert.equal(CORE_MOB_ORDER.filter((kind) => MOB_DEFS[kind].sentient).length, SENTIENT_MOB_ORDER.length);
 });
 
@@ -171,6 +172,13 @@ test("v0.5 habitat tables place mammals, pollinators, and fish without ambient q
   assert.equal(passiveMobKindForBiome(BiomeId.River, 0.35), "reed-dragonfly");
   const wildwoodKinds = passiveMobSpawnTableForBiome(BiomeId.Wildwood).map(([kind]) => kind);
   for (const kind of ["wild-horse", "burrowbell", "sakurakit", "meadow-cottontail", "russet-rabbit"] as const) assert.ok(wildwoodKinds.includes(kind));
+  assert.ok(passiveMobSpawnTableForBiome(BiomeId.Frostpine).some(([kind]) => kind === "rimehoof-courser"));
+  assert.ok(passiveMobSpawnTableForBiome(BiomeId.Desert).some(([kind]) => kind === "sunscar-courser"));
+  assert.ok(passiveMobSpawnTableForBiome(BiomeId.Siltfen).some(([kind]) => kind === "mirestride-courser"));
+  assert.ok(passiveMobSpawnTableForBiome(BiomeId.Glimmerwood).some(([kind]) => kind === "starbough-courser"));
+  for (const biome of [BiomeId.Snowfield, BiomeId.Frostpine, BiomeId.SnowcapRange]) {
+    assert.ok(passiveMobSpawnTableForBiome(biome).some(([kind]) => kind === "frostquill"), `${BiomeId[biome]} should spawn Frostquill coveys`);
+  }
 
   for (const biome of Object.values(BiomeId).filter((value): value is BiomeId => typeof value === "number")) {
     const kinds = passiveMobSpawnTableForBiome(biome).map(([kind]) => kind);
@@ -190,6 +198,10 @@ test("v0.5 habitat tables place mammals, pollinators, and fish without ambient q
 test("natural group ranges remain capped and wild hives own exactly one queen", () => {
   assert.equal(naturalGroupSizeForMob("sunstep-grazer", 0), 4);
   assert.equal(naturalGroupSizeForMob("sunstep-grazer", 0.999999), 7);
+  assert.equal(naturalGroupSizeForMob("rimehoof-courser", 0), 3);
+  assert.equal(naturalGroupSizeForMob("starbough-courser", 0.999999), 4);
+  assert.equal(naturalGroupSizeForMob("frostquill", 0), 2);
+  assert.equal(naturalGroupSizeForMob("frostquill", 0.999999), 5);
   assert.equal(naturalGroupSizeForMob("silverthread", 0), 8);
   assert.equal(naturalGroupSizeForMob("silverthread", 0.999999), 12);
   assert.equal(naturalGroupSizeForMob("mistmane", 0.5), 4);
@@ -216,6 +228,22 @@ test("every non-butterfly catalog entry has a detailed production model", () => 
   assert.equal(arrow.children.length, 4);
   const shade = createMobVisual("shadecrawler", -99);
   assert.equal(shade.visual.getObjectByName("shadecrawler-saddle")?.visible, false, "wild portraits hide progression equipment");
+});
+
+test("redesigned birds keep species-specific production anatomy", () => {
+  const requiredParts = {
+    emberjay: ["black-eye-mask", "swept-crest", "rust-covert", "long-tail"],
+    "canopy-lark": ["golden-breast", "crown-tuft", "leaf-feather", "forked-tail"],
+    "tidewing-gull": ["hooked-beak", "swept-primary", "tail-fan", "webbed-foot"],
+    frostquill: ["downy-breast", "winter-mask", "snow-feather", "snow-boot"],
+  } as const;
+  for (const [kind, fragments] of Object.entries(requiredParts)) {
+    const model = createMobVisual(kind as keyof typeof requiredParts, 41);
+    const names: string[] = [];
+    model.group.traverse((object) => { if (object.name) names.push(object.name); });
+    for (const fragment of fragments) assert.ok(names.some((name) => name.includes(fragment)), `${kind} needs ${fragment}`);
+    assert.ok(model.parts.wings.length === 2, `${kind} needs an articulated opposing wing pair`);
+  }
 });
 
 test("blocked Ridgeback steering holds one avoidance decision instead of rotationally twitching", () => {
@@ -447,6 +475,17 @@ test("creature sound events define Ridgeback and companion cues with a generic h
   assert.equal(CREATURE_SOUND_EVENTS.shadecrawler?.tame?.fallback, "craft");
   assert.equal(creatureSoundCue("thimbledeer", "hurt").asset, "creature-generic-hurt");
   assert.equal(creatureSoundCue("thimbledeer", "hurt").fallback, "attack");
+  for (const kind of ["wild-horse", "rimehoof-courser", "sunscar-courser", "mirestride-courser", "starbough-courser", "mistmane"] as const) {
+    const sound = creatureSoundCue(kind, "ambient");
+    assert.equal(sound.asset, "horse-whinny-a");
+    assert.deepEqual(sound.variants, ["horse-whinny-b"]);
+  }
+  assert.equal(creatureSoundCue("deepgear-courser-golem", "ambient").asset, "deepgear-courser-whinny");
+  assert.equal(creatureSoundCue("deepgear-courser-golem", "ambient").variants, undefined);
+  assert.equal(creatureSoundCue("emberjay", "ambient").asset, "emberjay-squawk");
+  assert.equal(creatureSoundCue("canopy-lark", "ambient").asset, "canopy-lark-call");
+  assert.deepEqual(creatureSoundCue("tidewing-gull", "ambient").variants, ["tidewing-gull-call-b"]);
+  assert.equal(creatureSoundCue("frostquill", "ambient").asset, "bird-chirp");
 });
 
 test("connected exhibit blocks cap at 20, grow lower flowers, and store one exact butterfly per block", () => {

@@ -35,6 +35,7 @@ test("Golem Forge renders all plans and clearly explains a locked construction",
   assert.match(html, /Copper Scout/u);
   assert.match(html, /Stone Bulwark/u);
   assert.match(html, /Aetherforged Sentinel/u);
+  assert.match(html, /Deepgear Courser/u);
   assert.match(html, /Blueprint not learned/u);
   assert.match(html, /Begin construction/u);
   assert.match(html, /Begin construction<\/button>/u);

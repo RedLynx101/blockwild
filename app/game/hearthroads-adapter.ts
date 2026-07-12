@@ -87,6 +87,7 @@ export const HEARTHROADS_RESOURCE_ITEMS: Readonly<Record<string, ItemCode>> = Ob
   "sunmetal-ingot": Item.SunmetalIngot,
   "lead-ball": Item.FlintlockBall,
   "copper-scout-golem-orb": Item.CopperScoutOrb,
+  "deepgear-courser-golem-orb": Item.DeepgearCourserOrb,
   "sea-dragon-egg": Item.SeaDragonEgg,
   "sea-dragon-scale": Item.SeaDragonScale,
   "sea-dragon-heart": Item.SeaDragonHeart,
@@ -255,7 +256,9 @@ export const COMMERCE_ITEM_CODES: Readonly<Record<string, ItemCode>> = Object.fr
   "blueprint-copper-scout": Item.CopperScoutBlueprint,
   "blueprint-stone-bulwark": Item.StoneBulwarkBlueprint,
   "blueprint-aetherforged-sentinel": Item.AetherforgedSentinelBlueprint,
+  "blueprint-deepgear-courser": Item.DeepgearCourserBlueprint,
   "copper-scout-golem-orb": Item.CopperScoutOrb,
+  "deepgear-courser-golem-orb": Item.DeepgearCourserOrb,
   "unaligned-copper-mole-orb": Item.CopperMoleOrb,
   "sea-dragon-nest-chart": Item.SeaDragonNestChart,
 });

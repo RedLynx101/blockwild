@@ -543,6 +543,9 @@ export const Item = {
   SunmetalShield: 429,
   GlassAquariumItem: 430,
   HearthFireplaceItem: 431,
+  /** Courser expansion items merged after the v1.2 allocation range. */
+  DeepgearCourserBlueprint: 432,
+  DeepgearCourserOrb: 433,
 } as const;
 
 export type ItemCode = number;
@@ -835,7 +838,7 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.DwarfStool]: block(BlockId.DwarfStool, "Deepgear Stool", 40, 40, 11, 0.9, "#8b6749", "axe", 0, { shape: "stool" }),
   [BlockId.MoonboughChair]: block(BlockId.MoonboughChair, "Moonbough Chair", 110, 109, 110, 0.8, "#647693", "axe", 0, { shape: "chair" }),
   [BlockId.Moonwell]: block(BlockId.Moonwell, "Moonwell", 115, 114, 98, 2, "#7fcfe2", "pickaxe", 1, { layer: "emissive" }),
-  [BlockId.SeaDragonEggBlock]: block(BlockId.SeaDragonEggBlock, "Sea Dragon Egg", 114, 114, 114, 1.25, "#45b9c7", "hand", 0, { shape: "dragon-egg", layer: "emissive" }),
+  [BlockId.SeaDragonEggBlock]: block(BlockId.SeaDragonEggBlock, "Sea Dragon Egg", 148, 148, 148, 1.25, "#45b9c7", "hand", 0, { shape: "dragon-egg", layer: "emissive" }),
   [BlockId.WaygridVaultTerminal]: block(BlockId.WaygridVaultTerminal, "Waygrid Vault Terminal", 51, 40, 35, 2.35, "#72cfd1", "pickaxe", 2, { layer: "emissive" }),
   [BlockId.WaygridCreatureArchive]: block(BlockId.WaygridCreatureArchive, "Waygrid Creature Archive", 95, 94, 35, 2.35, "#91c9f0", "pickaxe", 2, { layer: "emissive" }),
   [BlockId.WaygridCellI]: block(BlockId.WaygridCellI, "Waygrid Memory Cell I", 51, 40, 40, 2.2, "#5baeb2", "pickaxe", 2, { layer: "emissive" }),
@@ -857,9 +860,9 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.RivetedDragonstone]: block(BlockId.RivetedDragonstone, "Riveted Dragonstone", 35, 35, 35, 4.25, "#68747c", "pickaxe", 3),
   [BlockId.GoldBlock]: block(BlockId.GoldBlock, "Gold Block", 41, 41, 41, 3, "#e4bd49", "pickaxe", 2),
   [BlockId.GoldPile]: block(BlockId.GoldPile, "Dragon Gold Pile", 41, 41, 41, 1.15, "#e8c759", "pickaxe", 1, { solid: false, layer: "cutout", shape: "gold-pile" }),
-  [BlockId.FireDragonEggBlock]: block(BlockId.FireDragonEggBlock, "Fire Dragon Egg", 45, 45, 45, 1.5, "#b84b32", "pickaxe", 2, { solid: false, layer: "cutout", shape: "dragon-egg" }),
-  [BlockId.IceDragonEggBlock]: block(BlockId.IceDragonEggBlock, "Ice Dragon Egg", 48, 48, 48, 1.5, "#8bcce5", "pickaxe", 2, { solid: false, layer: "cutout", shape: "dragon-egg" }),
-  [BlockId.SteelDragonEggBlock]: block(BlockId.SteelDragonEggBlock, "Steel Dragon Egg", 35, 35, 35, 1.8, "#7c8992", "pickaxe", 2, { solid: false, layer: "cutout", shape: "dragon-egg" }),
+  [BlockId.FireDragonEggBlock]: block(BlockId.FireDragonEggBlock, "Fire Dragon Egg", 145, 145, 145, 1.5, "#b84b32", "pickaxe", 2, { solid: false, layer: "cutout", shape: "dragon-egg" }),
+  [BlockId.IceDragonEggBlock]: block(BlockId.IceDragonEggBlock, "Ice Dragon Egg", 146, 146, 146, 1.5, "#8bcce5", "pickaxe", 2, { solid: false, layer: "cutout", shape: "dragon-egg" }),
+  [BlockId.SteelDragonEggBlock]: block(BlockId.SteelDragonEggBlock, "Steel Dragon Egg", 147, 147, 147, 1.8, "#7c8992", "pickaxe", 2, { solid: false, layer: "cutout", shape: "dragon-egg" }),
   [BlockId.DraconicIncubator]: block(BlockId.DraconicIncubator, "Draconic Incubator", 51, 50, 43, 4.1, "#745f78", "pickaxe", 3, { shape: "incubator", layer: "emissive" }),
   [BlockId.ArchiveShelf]: block(BlockId.ArchiveShelf, "Archive Shelf", 127, 127, 11, 0.85, "#7b5236", "axe", 0, { solid: false, layer: "cutout", shape: "archive-shelf" }),
   [BlockId.TomeDisplay]: block(BlockId.TomeDisplay, "Tome Display", 12, 11, 11, 0.55, "#946a47", "axe", 0, { solid: false, layer: "cutout", shape: "tome-display" }),
@@ -1266,6 +1269,8 @@ Object.assign(ITEMS, {
   [Item.SeaDragonSkull]: { id: Item.SeaDragonSkull, name: "Sea Dragon Skull", color: "#b5edf0", maxStack: 1, dragonType: "sea", iconKind: "dragon-skull" },
   [Item.SeaDragonNestChart]: { id: Item.SeaDragonNestChart, name: "Chart: Sea Dragon Nest", color: "#4ba9ba", maxStack: 8, useKind: "lair-survey", lairSurvey: { dragonType: "sea", minimumStage: 3 }, iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
   [Item.TideglassDragonArmorModule]: { id: Item.TideglassDragonArmorModule, name: "Tideglass Dragon Armor", color: "#62cfd0", maxStack: 1, useKind: "dragon-module", dragonModule: "armor", dragonType: "sea", iconKind: "armor" },
+  [Item.DeepgearCourserBlueprint]: { id: Item.DeepgearCourserBlueprint, name: "Blueprint: Deepgear Courser", color: "#b8874d", maxStack: 16, useKind: "blueprint", blueprintId: "golem-deepgear-courser", iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
+  [Item.DeepgearCourserOrb]: { id: Item.DeepgearCourserOrb, name: "Capture Orb: Deepgear Courser", color: "#78e6df", maxStack: 1, useKind: "capture-orb", creatureKind: "deepgear-courser-golem", iconKind: "capture-orb", heldModel: "capture-orb", dropModel: "capture-orb" },
   [Item.MoonboughLogItem]: { id: Item.MoonboughLogItem, name: "Moonbough Log", color: "#58677f", maxStack: 64, placeBlock: BlockId.MoonboughLog },
   [Item.MoonboughLeavesItem]: { id: Item.MoonboughLeavesItem, name: "Moonbough Leaves", color: "#4a8c79", maxStack: 64, placeBlock: BlockId.MoonboughLeaves },
   [Item.GlimmerGrassBlock]: { id: Item.GlimmerGrassBlock, name: "Glimmerwood Grass", color: "#315f4d", maxStack: 64, placeBlock: BlockId.GlimmerGrass },
@@ -1532,7 +1537,8 @@ export const V1_CULTURE_ITEMS: readonly ItemCode[] = Object.freeze([
   Item.FlintlockPistol, Item.FlintlockBall, Item.GearCluster, Item.DeepgearAlloy, Item.DeepgearLanternItem,
   Item.GolemForgeItem, Item.PowderworksItem, Item.FlintlockBlueprint, Item.CopperScoutBlueprint,
   Item.StoneBulwarkBlueprint, Item.AetherforgedSentinelBlueprint, Item.CopperScoutOrb, Item.StoneBulwarkOrb,
-  Item.AetherforgedSentinelOrb, Item.CopperMoleOrb, Item.MoonwellItem, Item.TideglassDragonArmorModule,
+  Item.AetherforgedSentinelOrb, Item.CopperMoleOrb, Item.DeepgearCourserBlueprint, Item.DeepgearCourserOrb,
+  Item.MoonwellItem, Item.TideglassDragonArmorModule,
 ]);
 
 export const V1_STORAGE_ITEMS: readonly ItemCode[] = Object.freeze([
