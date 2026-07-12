@@ -138,8 +138,9 @@ export const BLUEPRINTS: readonly BlueprintDefinition[] = Object.freeze([
     faction: "neutral",
     recipeIds: [
       "dragon-meal", "dragonflight-saddle", "dragon-pannier",
-      "ember-dragon-armor", "rime-dragon-armor", "steel-dragon-armor",
-      "emberlily-catalyst", "frostlily-catalyst", "ferric-lotus-catalyst",
+      "ember-dragon-armor", "rime-dragon-armor", "steel-dragon-armor", "tideglass-dragon-armor",
+      "solar-regalia-dragon-armor", "moonmirror-dragon-armor",
+      "emberlily-catalyst", "frostlily-catalyst", "ferric-lotus-catalyst", "sunlily-catalyst", "moonlily-catalyst",
     ],
     resaleGold: 740,
   },

@@ -72,7 +72,7 @@ export type SamplePlaybackOptions = {
   maxDistance?: number;
   rolloffFactor?: number;
 };
-export type DragonSoundType = "fire" | "ice" | "steel" | "sea";
+export type DragonSoundType = "fire" | "ice" | "steel" | "sea" | "gold" | "silver";
 export type DragonSoundEvent = "ambient" | "roar" | "hurt" | "death" | "wing" | "melee" | "breath" | "projectile" | "egg-crack";
 export type SpellSoundSchool = "destruction" | "restoration" | "alteration" | "conjuration" | "utility";
 export type EnvironmentLoop = "rain" | "crickets" | "wind" | "winterWind" | "cave" | "ocean" | "swimming";
@@ -819,9 +819,9 @@ export class SynthAudio {
     if (!this.context || !this.master || this.settings.muted) return;
     const age = Math.max(1, Math.min(5, Math.round(stage)));
     const depth = 1 - (age - 1) * 0.095;
-    const base = (type === "fire" ? 92 : type === "ice" ? 128 : type === "sea" ? 104 : 108) * depth;
+    const base = (type === "fire" ? 92 : type === "ice" ? 128 : type === "sea" ? 104 : type === "gold" ? 116 : type === "silver" ? 136 : 108) * depth;
     const weight = 0.58 + age * 0.105;
-    const texture = type === "fire" ? 420 : type === "ice" ? 1380 : type === "sea" ? 690 : 860;
+    const texture = type === "fire" ? 420 : type === "ice" ? 1380 : type === "sea" ? 690 : type === "gold" ? 1540 : type === "silver" ? 1840 : 860;
     const spatial = position ? { position, refDistance: 3 + age * 0.45, maxDistance: 76 + age * 8, rolloffFactor: 0.92 } : {};
 
     if (event === "wing") {
@@ -842,6 +842,8 @@ export class SynthAudio {
       if (type === "sea") this.noiseBurst(0.44 + age * 0.04, 1180, 0.042 * weight, true, 0.02);
       this.noiseBurst(0.48, type === "steel" ? 2300 : texture * 0.55, 0.038 * weight, true, 0.035);
       this.tone(base * (type === "ice" ? 2.4 : 0.88), 0.58, 0.031 * weight, type === "ice" ? "triangle" : "sawtooth", 0, base * 0.46);
+      if (type === "gold") this.tone(base * 3.25, 0.72, 0.027 * weight, "sine", 0.025, base * 1.62);
+      if (type === "silver") this.tone(base * 4.1, 0.8, 0.025 * weight, "triangle", 0.02, base * 2.05);
       return;
     }
     if (event === "projectile") {
@@ -849,6 +851,11 @@ export class SynthAudio {
       if (type === "steel") {
         this.tone(1180, 0.085, 0.065 * weight, "square", 0, 420);
         this.tone(176, 0.22, 0.045 * weight, "triangle", 0.025, 92);
+      } else if (type === "gold" || type === "silver") {
+        const bright = type === "gold" ? 1568 : 1864;
+        this.tone(bright, 0.3, 0.052 * weight, "sine", 0, bright * 0.5);
+        this.tone(bright * 1.5, 0.18, 0.028 * weight, "triangle", 0.035, bright * 0.75);
+        this.noiseBurst(0.18, texture * 1.4, 0.028 * weight, true);
       } else {
         this.noiseBurst(0.24, texture * 1.25, 0.062 * weight, true);
         this.tone(base * 2.2, 0.21, 0.04 * weight, "sawtooth", 0, base * 0.8);
@@ -859,6 +866,7 @@ export class SynthAudio {
       for (let index = 0; index < 3; index += 1) {
         this.noiseBurst(0.055, 960 + index * 370, 0.043, true, index * 0.085);
         if (type === "steel") this.tone(1320 - index * 220, 0.07, 0.024, "triangle", index * 0.085);
+        if (type === "gold" || type === "silver") this.tone((type === "gold" ? 1760 : 2093) - index * 180, 0.12, 0.022, "sine", index * 0.085);
       }
       return;
     }
@@ -877,6 +885,8 @@ export class SynthAudio {
     if (type === "fire") this.noiseBurst(duration * 0.48, 2600, gain * 0.31, true, duration * 0.18);
     if (type === "ice") this.tone(base * 3.01, duration * 0.44, gain * 0.28, "sine", 0.035, base * 1.65);
     if (type === "steel") this.tone(base * 4.3, 0.11, gain * 0.56, "triangle", 0.015, base * 1.8);
+    if (type === "gold") this.tone(base * 4.5, duration * 0.54, gain * 0.42, "sine", 0.025, base * 2.25);
+    if (type === "silver") this.tone(base * 5.05, duration * 0.62, gain * 0.36, "triangle", 0.035, base * 2.5);
   }
 
   /** Compact, layered casting signatures shared by learned spells in a school. */

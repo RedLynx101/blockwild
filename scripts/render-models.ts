@@ -230,6 +230,8 @@ export function createMobInspectionSpecs(): InspectionModelSpec[] {
     "ice-dragon": -63,
     "steel-dragon": -64,
     "sea-dragon": -65,
+    "gold-dragon": -66,
+    "silver-dragon": -67,
   };
   return CORE_MOB_ORDER.map((kind, index) => {
     const model = createMobVisual(kind, stableDragonPortraitIds[kind as DragonKind] ?? -(index + 1));

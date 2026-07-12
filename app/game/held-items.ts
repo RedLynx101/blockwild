@@ -146,7 +146,9 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
     const shellDeep = shell.clone().multiplyScalar(0.72).getHex();
     const rune = definition.dragonType === "fire" ? 0xffa050
       : definition.dragonType === "ice" ? 0x9ff2ff
-        : definition.dragonType === "sea" ? 0x8ff2df : 0xdfe9ef;
+        : definition.dragonType === "sea" ? 0x8ff2df
+          : definition.dragonType === "gold" ? 0xfff0a0
+            : definition.dragonType === "silver" ? 0xf5fbff : 0xdfe9ef;
     // Alternate tiers rotate 45° so the stack reads as a rounded ovoid rather
     // than a wedding cake; the fifth shell crowns it with a soft point.
     const shellPieces = [
@@ -170,6 +172,51 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
     crackRight.name = "dragon-egg-rune-right";
     const glint = addBox([0.05, 0.05, 0.05], [0.02, 0.45, 0], rune, [0.3, Math.PI / 4, 0.3], true);
     glint.name = "dragon-egg-crown-glint";
+    glint.userData.eggShimmer = true;
+    glint.userData.shimmerPhase = 0.4;
+    if (definition.dragonType === "gold") {
+      // A floating solar corona and individually raised shell plates make this
+      // egg unmistakable even in silhouette; each ray has its own shimmer phase.
+      for (let index = 0; index < 12; index += 1) {
+        const angle = index / 12 * Math.PI * 2;
+        const ray = addBox(
+          [index % 2 ? 0.035 : 0.05, index % 2 ? 0.09 : 0.13, 0.025],
+          [Math.cos(angle) * 0.245, 0.15 + Math.sin(angle) * 0.245, 0.035],
+          index % 3 === 0 ? 0xffffff : rune,
+          [0, 0, angle - Math.PI / 2],
+          true,
+        );
+        ray.name = `gold-dragon-egg-corona-${index + 1}`;
+        ray.userData.eggShimmer = true;
+        ray.userData.shimmerPhase = index * 0.53;
+      }
+      for (const [x, y, rotation] of [[-0.12, 0.02, -0.42], [0.13, 0.08, 0.38], [-0.09, 0.25, 0.5], [0.08, 0.31, -0.46]] as Array<[number, number, number]>) {
+        const plate = addBox([0.11, 0.07, 0.025], [x, y, -0.17], shellHighlight, [0, 0, rotation]);
+        plate.name = "gold-dragon-egg-raised-plate";
+      }
+    } else if (definition.dragonType === "silver") {
+      // An offset crescent hugs the shell, crossed by a thin equatorial orbit.
+      for (let index = 0; index < 10; index += 1) {
+        const angle = -1.28 + index * 0.285;
+        const segment = addBox(
+          [0.04, 0.085, 0.024],
+          [Math.cos(angle) * 0.255 - 0.07, 0.14 + Math.sin(angle) * 0.255, 0.04],
+          index % 3 === 1 ? 0xffffff : rune,
+          [0, 0, angle + Math.PI / 2],
+          true,
+        );
+        segment.name = `silver-dragon-egg-crescent-${index + 1}`;
+        segment.userData.eggShimmer = true;
+        segment.userData.shimmerPhase = 0.7 + index * 0.47;
+      }
+      for (let index = 0; index < 8; index += 1) {
+        const angle = index / 8 * Math.PI * 2;
+        const star = addBox([0.025, 0.025, 0.018], [Math.cos(angle) * 0.17, 0.13 + Math.sin(angle) * 0.095, -0.181], index % 2 ? rune : 0xffffff, [0, 0, Math.PI / 4], true);
+        star.name = `silver-dragon-egg-constellation-${index + 1}`;
+        star.userData.eggShimmer = true;
+        star.userData.shimmerPhase = index * 0.61;
+      }
+    }
     group.scale.setScalar(0.78);
     group.rotation.set(0.06, 0.28, -0.08);
     group.position.set(0, -0.03, -0.06);

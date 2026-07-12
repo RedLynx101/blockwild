@@ -1,6 +1,6 @@
 import * as THREE from "three";
 
-export type DragonElement = "fire" | "ice" | "steel" | "sea";
+export type DragonElement = "fire" | "ice" | "steel" | "sea" | "gold" | "silver";
 export type DragonAttackKind = "melee" | "breath" | "projectile";
 export type DragonAttackStatus = "burning" | "slowed" | "scalded" | "knockback";
 
@@ -39,6 +39,8 @@ const PALETTES: Readonly<Record<DragonElement, readonly [number, number, number]
   ice: [0x75d9ff, 0xc9f5ff, 0x6d88ff],
   steel: [0x8ea8b1, 0xe8f3ef, 0xd18a45],
   sea: [0x45bdc7, 0x9fffe8, 0x437de0],
+  gold: [0xffb31a, 0xffee83, 0xffffff],
+  silver: [0x8fb7e5, 0xe7f4ff, 0xffffff],
 };
 
 function material(color: number, opacity = 0.92) {
@@ -86,7 +88,30 @@ function createProjectileVisual(element: DragonElement, stage: number) {
   const group = new THREE.Group();
   group.name = `${element}-dragon-projectile`;
   const palette = PALETTES[element];
-  if (element === "steel") {
+  if (element === "gold") {
+    const core = cube([0.18, 0.18, 0.42], 0xffffff, 0.96);
+    core.position.z = -0.12;
+    group.add(core);
+    for (let index = 0; index < 12; index += 1) {
+      const angle = index / 12 * Math.PI * 2;
+      const ray = cube([0.1, 0.34 + (index % 2) * 0.16, 0.12], palette[index % palette.length], 0.88);
+      ray.position.set(Math.cos(angle) * 0.42, Math.sin(angle) * 0.42, 0);
+      ray.rotation.z = angle;
+      group.add(ray);
+    }
+  } else if (element === "silver") {
+    for (let index = 0; index < 9; index += 1) {
+      const angle = -1.35 + index * 0.34;
+      const shard = cube([0.12 + index * 0.008, 0.28, 0.18], palette[index % palette.length], 0.86);
+      shard.position.set(Math.cos(angle) * 0.42 - 0.12, Math.sin(angle) * 0.42, -Math.abs(index - 4) * 0.03);
+      shard.rotation.z = angle + Math.PI / 2;
+      group.add(shard);
+    }
+    const star = cube([0.14, 0.14, 0.45], 0xffffff, 0.98);
+    star.position.set(0.22, 0, -0.08);
+    star.rotation.z = Math.PI / 4;
+    group.add(star);
+  } else if (element === "steel") {
     const shaft = cube([0.1 + stage * 0.012, 0.1 + stage * 0.012, 1.45 + stage * 0.16], 0x72848d);
     shaft.position.z = -0.12;
     const head = cube([0.24 + stage * 0.018, 0.24 + stage * 0.018, 0.42], 0xe6ece8);
@@ -149,7 +174,7 @@ export function createDragonAttackEffect(options: CreateDragonAttackEffectOption
   pointVisualAlongDirection(visual, direction);
   const speed = options.attack === "projectile" ? 16 + stage * 2.1 : options.attack === "breath" ? 8.5 + stage * 1.15 : 0;
   const status = options.status ?? (options.attack === "melee" ? "knockback"
-    : options.element === "fire" ? "burning" : options.element === "ice" || options.element === "sea" ? "slowed"
+    : options.element === "fire" || options.element === "gold" ? "burning" : options.element === "ice" || options.element === "sea" || options.element === "silver" ? "slowed"
       : options.attack === "breath" ? "scalded" : "knockback");
   return {
     id: options.id,
@@ -179,7 +204,7 @@ export function stepDragonAttackEffect(effect: DragonAttackEffect, dt: number) {
     effect.visual.rotateZ(step * (effect.element === "steel" ? 2.2 : 4.4));
     effect.velocity.multiplyScalar(Math.exp(-step * 0.7));
   } else if (effect.attack === "projectile") {
-    effect.visual.rotateZ(step * (effect.element === "steel" ? 7.5 : 4.2));
+    effect.visual.rotateZ(step * (effect.element === "gold" || effect.element === "silver" ? 9.5 : effect.element === "steel" ? 7.5 : 4.2));
     if (effect.element !== "steel") effect.visual.scale.setScalar(0.9 + Math.sin(effect.age * 18) * 0.1);
   } else {
     effect.visual.rotateY(step * 9);

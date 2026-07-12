@@ -74,7 +74,7 @@ export const DRAGON_MODEL_CONTRACT = Object.freeze({
 
 /** Applies the same named dragon rig used by gameplay, portraits, and the inspector. */
 export function applyDragonPose(root: THREE.Object3D, input: DragonPoseInput) {
-  const type = root.userData.dragonType as "fire" | "ice" | "steel" | "sea" | undefined;
+  const type = root.userData.dragonType as "fire" | "ice" | "steel" | "sea" | "gold" | "silver" | undefined;
   if (!type) return false;
   const prefix = `${type}-dragon`;
   const time = Number.isFinite(input.timeSeconds) ? input.timeSeconds : 0;
@@ -147,6 +147,12 @@ export function applyDragonPose(root: THREE.Object3D, input: DragonPoseInput) {
   root.traverse((child) => {
     if (child.userData.sexMarker === "male") child.visible = sex === "male";
     else if (child.userData.sexMarker === "female") child.visible = sex === "female";
+    if (child.userData.dragonShimmer) {
+      const phase = Number(child.userData.shimmerPhase ?? 0);
+      const pulse = 0.84 + Math.sin(time * 3.15 + phase) * 0.18;
+      child.scale.setScalar(pulse);
+      if (child.userData.dragonOrbit) child.rotation.y = time * (0.35 + phase * 0.025) + phase;
+    }
   });
 
   if (input.equipment) {
@@ -1380,7 +1386,7 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
   };
 
   const buildDragon = (dragonKind: DragonKind) => {
-    const dragonType = dragonKind.replace("-dragon", "") as "fire" | "ice" | "steel" | "sea";
+    const dragonType = dragonKind.replace("-dragon", "") as "fire" | "ice" | "steel" | "sea" | "gold" | "silver";
     const prefix = dragonKind;
     const palette = dragonType === "fire"
       ? { belly: 0x5e211f, membrane: 0xc8462d, horn: 0x3b2925, glow: 0xffc657, metal: 0xb8793e, armor: 0x6f2525 }
@@ -1388,7 +1394,11 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
         ? { belly: 0x416f8c, membrane: 0x92d5e8, horn: 0xe8f6f4, glow: 0xcaffff, metal: 0x9fc8d2, armor: 0x587f9a }
         : dragonType === "sea"
           ? { belly: 0x1e6576, membrane: 0x5fd6c8, horn: 0xb8f6ec, glow: 0x8affec, metal: 0x66aab3, armor: 0x326c7d }
-          : { belly: 0x343f46, membrane: 0x71838c, horn: 0x232a2f, glow: 0xe4fbff, metal: 0xb8c6ca, armor: 0x46545d };
+          : dragonType === "gold"
+            ? { belly: 0x765018, membrane: 0xd69a20, horn: 0xffdf68, glow: 0xfffac0, metal: 0xf1c44b, armor: 0x9b6819 }
+            : dragonType === "silver"
+              ? { belly: 0x48566a, membrane: 0x819ab8, horn: 0xeaf5ff, glow: 0xffffff, metal: 0xbecfe0, armor: 0x657990 }
+              : { belly: 0x343f46, membrane: 0x71838c, horn: 0x232a2f, glow: 0xe4fbff, metal: 0xb8c6ca, armor: 0x46545d };
     const bellyMaterial = material(palette.belly);
     const membraneMaterial = material(palette.membrane, false, 0.86);
     const hornMaterial = material(palette.horn);
@@ -1409,6 +1419,13 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     const brassRivetMaterial = material(0xb98b4c);
     const seaGlassMaterial = material(0x8ff3e4, false, 0.72);
     const reefMaterial = material(0xd58d72);
+    const goldShadowMaterial = material(0x53350c);
+    const goldPlateMaterial = material(0xd99e21);
+    const sunwhiteMaterial = material(0xfff7b2, true, 0.98);
+    const silverShadowMaterial = material(0x2f3a4b);
+    const silverPlateMaterial = material(0xa9bed3);
+    const moonwhiteMaterial = material(0xf5fbff, true, 0.97);
+    const starlightMaterial = material(0xb9dcff, true, 0.92);
 
     group.userData.dragonType = dragonType;
     visual.userData.dragonType = dragonType;
@@ -1699,6 +1716,45 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
         const shoulderFin = rigBox(visual, `${sideName}-shoulder-fin`, [0.08, 0.72, 0.92], membraneMaterial, [side * 1.0, 2.5, -0.66], [-0.16, side * 0.24, side * 0.14]);
         shoulderFin.userData.aquaticFin = true;
       }
+    } else if (dragonType === "gold") {
+      const core = rigBox(chest, "solar-heart-core", [0.5, 0.5, 0.1], sunwhiteMaterial, [0, -0.16, -1.64], [0, 0, Math.PI / 4]);
+      core.userData.dragonShimmer = true;
+      core.userData.shimmerPhase = 0.2;
+      for (const side of [-1, 1]) {
+        const sideName = side < 0 ? "left" : "right";
+        for (let row = 0; row < 3; row += 1) for (let plate = 0; plate < 4; plate += 1) {
+          const scale = rigBox(chest, `${sideName}-sunscale-${row + 1}-${plate + 1}`, [0.08, 0.28, 0.42], (row + plate) % 3 === 0 ? metalMaterial : goldPlateMaterial,
+            [side * (0.98 + row * 0.025), 0.38 - row * 0.25, -0.92 + plate * 0.58], [0.06, side * (0.08 + row * 0.035), side * ((plate - 1.5) * 0.035)]);
+          if ((row + plate) % 4 === 0) { scale.userData.dragonShimmer = true; scale.userData.shimmerPhase = row * 1.7 + plate * 0.4; }
+        }
+        rigBox(visual, `${sideName}-solar-shoulder-pauldrons`, [0.54, 0.48, 1.28], goldPlateMaterial, [side * 1.04, 2.56, -0.64], [-0.15, side * 0.08, side * 0.28]);
+        for (let ray = 0; ray < 3; ray += 1) rigBox(visual, `${sideName}-shoulder-ray-${ray + 1}`, [0.12, 0.48 + ray * 0.16, 0.14], ray === 1 ? sunwhiteMaterial : hornMaterial, [side * (1.08 + ray * 0.16), 2.83 + ray * 0.1, -0.64 + ray * 0.18], [-0.28, 0, side * (0.25 + ray * 0.12)]);
+      }
+      for (let ring = 0; ring < 8; ring += 1) {
+        const angle = ring / 8 * TAU;
+        const ray = rigBox(chest, `solar-heart-ray-${ring + 1}`, [0.08, 0.24, 0.07], ring % 2 ? glowMaterial : sunwhiteMaterial, [Math.cos(angle) * 0.43, -0.16 + Math.sin(angle) * 0.43, -1.7], [0, 0, angle]);
+        ray.userData.dragonShimmer = true;
+        ray.userData.shimmerPhase = ring * 0.58;
+      }
+    } else if (dragonType === "silver") {
+      const core = rigBox(chest, "lunar-heart-core", [0.38, 0.38, 0.11], moonwhiteMaterial, [0, -0.12, -1.64], [0, 0, Math.PI / 4]);
+      core.userData.dragonShimmer = true;
+      core.userData.shimmerPhase = 1.1;
+      for (const side of [-1, 1]) {
+        const sideName = side < 0 ? "left" : "right";
+        for (let row = 0; row < 4; row += 1) for (let plate = 0; plate < 4; plate += 1) {
+          const scale = rigBox(chest, `${sideName}-mirrorscale-${row + 1}-${plate + 1}`, [0.065, 0.22 + row * 0.018, 0.36], (row + plate) % 2 ? silverPlateMaterial : metalMaterial,
+            [side * (0.97 + row * 0.02), 0.4 - row * 0.2, -0.9 + plate * 0.56], [0.08, side * (0.16 + row * 0.025), side * ((plate - 1.5) * 0.045)]);
+          if ((row * 3 + plate) % 5 === 0) { scale.userData.dragonShimmer = true; scale.userData.shimmerPhase = 0.7 + row + plate * 0.41; }
+        }
+        const crescent = rigBox(visual, `${sideName}-crescent-shoulder`, [0.12, 1.15, 0.82], silverPlateMaterial, [side * 1.03, 2.56, -0.62], [-0.2, side * 0.18, side * 0.22]);
+        crescent.userData.moonCrescent = true;
+      }
+      for (const [x, y, phase] of [[-0.24, 0.16, 0], [0.2, 0.32, 1], [-0.32, -0.12, 2], [0.3, -0.3, 3], [0.04, -0.48, 4]] as Array<[number, number, number]>) {
+        const star = rigBox(chest, `constellation-node-${phase + 1}`, [0.09, 0.09, 0.065], phase % 2 ? moonwhiteMaterial : starlightMaterial, [x, y, -1.71], [0, 0, Math.PI / 4]);
+        star.userData.dragonShimmer = true;
+        star.userData.shimmerPhase = phase * 0.83;
+      }
     }
 
     for (let ridge = 0; ridge < 7; ridge += 1) {
@@ -1712,6 +1768,20 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
         rigBox(visual, `back-spine-${ridge + 1}-lava-seam`, [0.17, 0.11, 0.36], lavaMaterial, [0, 2.67, -1.18 + ridge * 0.47], [-0.32, 0, 0]);
         if (ridge % 2 === 1) {
           rigBox(visual, `back-crest-flame-${ridge}`, [0.11, 0.36, 0.16], glowMaterial, [0, 2.64 + plateHeight, -1.26 + ridge * 0.47], [-0.42, 0, ridge === 3 ? 0.24 : -0.18]);
+        }
+      } else if (dragonType === "gold") {
+        const plateHeight = height * 1.22;
+        rigBox(visual, `back-spine-${ridge + 1}`, [0.34, plateHeight, 0.46], ridge % 2 ? hornMaterial : goldPlateMaterial, [0, 2.57 + plateHeight / 2, -1.18 + ridge * 0.47], [-0.2, 0, ridge % 2 ? Math.PI / 4 : -Math.PI / 4]);
+        const gem = rigBox(visual, `back-sun-gem-${ridge + 1}`, [0.14, 0.14, 0.14], ridge % 2 ? sunwhiteMaterial : glowMaterial, [0, 2.7 + plateHeight, -1.18 + ridge * 0.47], [0, Math.PI / 4, Math.PI / 4]);
+        gem.userData.dragonShimmer = true;
+        gem.userData.shimmerPhase = ridge * 0.77;
+      } else if (dragonType === "silver") {
+        const plateHeight = height * 1.08;
+        rigBox(visual, `back-spine-${ridge + 1}`, [0.15, plateHeight, 0.5], ridge % 2 ? silverPlateMaterial : hornMaterial, [0, 2.6 + plateHeight / 2, -1.18 + ridge * 0.47], [-0.34 + ridge * 0.035, 0, ridge % 2 ? 0.18 : -0.18]);
+        if (ridge % 2 === 0) {
+          const star = rigBox(visual, `back-star-${ridge + 1}`, [0.12, 0.12, 0.12], starlightMaterial, [0, 2.72 + plateHeight, -1.18 + ridge * 0.47], [0, Math.PI / 4, Math.PI / 4]);
+          star.userData.dragonShimmer = true;
+          star.userData.shimmerPhase = ridge * 0.63;
         }
       } else {
         const spine = rigBox(visual, `back-spine-${ridge + 1}`, [0.18, height, 0.28], accentMaterial, [0, 2.62 + height / 2, -1.18 + ridge * 0.47]);
@@ -1743,12 +1813,24 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
           const frill = rigBox(neck, `neck-${segment}-${side < 0 ? "left" : "right"}-frill`, [0.06, 0.4 - segment * 0.04, 0.7], seaGlassMaterial, [side * (width * 0.54), 0.22, -0.4], [-0.18, side * 0.28, side * 0.12]);
           frill.userData.aquaticFin = true;
         }
+      } else if (dragonType === "gold") {
+        rigBox(neck, `neck-${segment}-sun-collar`, [width + 0.12, 0.14, 0.34], segment % 2 ? goldPlateMaterial : metalMaterial, [0, 0.3, -0.28], [0, 0, Math.PI / 4]);
+        for (const side of [-1, 1]) {
+          const jewel = rigBox(neck, `neck-${segment}-${side < 0 ? "left" : "right"}-sun-jewel`, [0.11, 0.11, 0.08], sunwhiteMaterial, [side * (width * 0.5), 0.3, -0.42], [0, Math.PI / 4, Math.PI / 4]);
+          jewel.userData.dragonShimmer = true;
+          jewel.userData.shimmerPhase = segment * 0.8 + side;
+        }
+      } else if (dragonType === "silver") {
+        for (const side of [-1, 1]) {
+          const blade = rigBox(neck, `neck-${segment}-${side < 0 ? "left" : "right"}-moon-blade`, [0.07, 0.5 - segment * 0.04, 0.78], segment % 2 ? silverPlateMaterial : hornMaterial, [side * (width * 0.54), 0.22, -0.4], [-0.25, side * 0.36, side * 0.11]);
+          blade.userData.lunarFrill = true;
+        }
       }
       neckParent = neck;
     }
 
     const head = pivot(neckParent, "head", [0, 0.06, -1.02]);
-    const headWidth = dragonType === "steel" ? 1.66 : dragonType === "sea" ? 1.72 : 1.58;
+    const headWidth = dragonType === "gold" ? 1.82 : dragonType === "silver" ? 1.48 : dragonType === "steel" ? 1.66 : dragonType === "sea" ? 1.72 : 1.58;
     rigBox(head, "head", [headWidth, 1.12, 1.42], bodyMaterial, [0, 0, -0.46]);
     rigBox(head, "brow", [headWidth * 1.04, 0.28, 0.7], accentMaterial, [0, 0.34, -0.93]);
     rigBox(head, "snout", [headWidth * 0.7, 0.58, 1.15], bellyMaterial, [0, -0.18, -1.28]);
@@ -1777,6 +1859,29 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
         whisker.userData.aquaticFin = true;
         for (let gill = 0; gill < 3; gill += 1) rigBox(head, `${sideName}-gill-light-${gill + 1}`, [0.05, 0.12, 0.3], glowMaterial, [side * (headWidth * 0.52), 0.12 - gill * 0.16, -0.48 + gill * 0.2], [0, side * 0.08, side * 0.18]);
       }
+    } else if (dragonType === "gold") {
+      rigBox(head, "solar-brow-mask", [headWidth * 1.12, 0.22, 0.76], goldPlateMaterial, [0, 0.48, -0.86], [-0.08, 0, 0]);
+      rigBox(head, "solar-snout-keel", [0.34, 0.34, 1.02], goldShadowMaterial, [0, -0.02, -1.5], [0.1, 0, 0]);
+      for (let crown = -3; crown <= 3; crown += 1) {
+        const height = 0.42 + (3 - Math.abs(crown)) * 0.14;
+        const ray = rigBox(head, `sun-crown-ray-${crown + 4}`, [0.12, height, 0.14], crown === 0 ? sunwhiteMaterial : hornMaterial, [crown * 0.19, 0.72 + height * 0.35, -0.36 + Math.abs(crown) * 0.06], [-0.26, 0, crown * 0.08]);
+        if (crown === 0) { ray.userData.dragonShimmer = true; ray.userData.shimmerPhase = 2.4; }
+      }
+      for (const side of [-1, 1]) {
+        const sideName = side < 0 ? "left" : "right";
+        rigBox(head, `${sideName}-sun-cheek-fan`, [0.1, 0.75, 0.9], goldPlateMaterial, [side * (headWidth * 0.54), 0.02, -0.42], [0.08, side * 0.28, side * 0.32]);
+        for (let fang = 0; fang < 2; fang += 1) rigBox(head, `${sideName}-royal-fang-${fang + 1}`, [0.11, 0.34 + fang * 0.1, 0.11], hornMaterial, [side * (0.34 + fang * 0.14), -0.5, -1.55 + fang * 0.12], [0.08, 0, side * 0.08]);
+      }
+    } else if (dragonType === "silver") {
+      rigBox(head, "moon-brow-visor", [headWidth * 1.08, 0.16, 0.78], silverPlateMaterial, [0, 0.49, -0.86], [-0.12, 0, 0]);
+      rigBox(head, "mirror-snout-blade", [0.22, 0.24, 1.28], silverShadowMaterial, [0, -0.04, -1.56], [0.12, 0, 0]);
+      for (const side of [-1, 1]) {
+        const sideName = side < 0 ? "left" : "right";
+        rigBox(head, `${sideName}-crescent-cheek`, [0.09, 0.9, 0.76], silverPlateMaterial, [side * (headWidth * 0.52), 0.04, -0.42], [-0.05, side * 0.42, side * 0.28]);
+        const star = rigBox(head, `${sideName}-temple-star`, [0.13, 0.13, 0.07], moonwhiteMaterial, [side * (headWidth * 0.46), 0.26, -0.92], [0, 0, Math.PI / 4]);
+        star.userData.dragonShimmer = true;
+        star.userData.shimmerPhase = side < 0 ? 1.2 : 3.4;
+      }
     }
 
     const jaw = pivot(head, "jaw", [0, -0.39, -1.1]);
@@ -1787,6 +1892,11 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       for (const side of [-1, 1]) rigBox(jaw, `${side < 0 ? "left" : "right"}-jaw-hinge`, [0.24, 0.24, 0.18], brassRivetMaterial, [side * (headWidth * 0.36), 0.02, 0.02], [0, Math.PI / 4, 0]);
     } else if (dragonType === "sea") {
       for (const side of [-1, 1]) rigBox(jaw, `${side < 0 ? "left" : "right"}-chin-barbel`, [0.07, 0.48, 0.07], seaGlassMaterial, [side * 0.22, -0.34, -0.55], [0.26, 0, side * 0.14]);
+    } else if (dragonType === "gold") {
+      rigBox(jaw, "royal-chin-keel", [0.28, 0.58, 0.24], goldPlateMaterial, [0, -0.35, -0.72], [0.42, 0, 0]);
+      for (const side of [-1, 1]) rigBox(jaw, `${side < 0 ? "left" : "right"}-chin-ray`, [0.09, 0.46, 0.09], hornMaterial, [side * 0.25, -0.3, -0.54], [0.35, 0, side * 0.22]);
+    } else if (dragonType === "silver") {
+      for (const side of [-1, 1]) rigBox(jaw, `${side < 0 ? "left" : "right"}-moon-whisker`, [0.055, 0.055, 1.12], hornMaterial, [side * 0.25, -0.24, -0.65], [0.12, side * 0.38, side * -0.14]);
     }
     for (const side of [-1, 1]) {
       for (let tooth = 0; tooth < 4; tooth += 1) {
@@ -1807,7 +1917,20 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     projectileOrigin.position.set(0, 0.14, -1.45);
     projectileOrigin.visible = false;
     head.add(projectileOrigin);
-    if (dragonType === "steel") {
+    if (dragonType === "gold") {
+      const core = rigBox(projectileOrigin, "loaded-solar-disc-core", [0.4, 0.4, 0.26], sunwhiteMaterial, [0, 0, -0.32], [0, Math.PI / 4, Math.PI / 4]);
+      core.userData.dragonShimmer = true;
+      core.userData.shimmerPhase = 0.3;
+      for (let ray = 0; ray < 10; ray += 1) {
+        const angle = ray / 10 * TAU;
+        rigBox(projectileOrigin, `loaded-solar-disc-ray-${ray + 1}`, [0.09, 0.34, 0.09], ray % 2 ? glowMaterial : hornMaterial, [Math.cos(angle) * 0.42, Math.sin(angle) * 0.42, -0.3], [0, 0, angle]);
+      }
+    } else if (dragonType === "silver") {
+      for (let shard = 0; shard < 9; shard += 1) {
+        const angle = -1.35 + shard * 0.34;
+        rigBox(projectileOrigin, `loaded-moon-crescent-${shard + 1}`, [0.08, 0.28, 0.12], shard % 2 ? starlightMaterial : moonwhiteMaterial, [Math.cos(angle) * 0.4 - 0.12, Math.sin(angle) * 0.4, -0.3], [0, 0, angle + Math.PI / 2]);
+      }
+    } else if (dragonType === "steel") {
       rigBox(projectileOrigin, "loaded-metal-spear-shaft", [0.12, 0.12, 2.25], metalMaterial, [0, 0, -1.06]);
       rigBox(projectileOrigin, "loaded-metal-spear-head", [0.38, 0.38, 0.68], glowMaterial, [0, 0, -2.45], [0, Math.PI / 4, 0]);
       for (const side of [-1, 1]) rigBox(projectileOrigin, `${side < 0 ? "left" : "right"}-spear-fin`, [0.34, 0.08, 0.42], accentMaterial, [side * 0.18, 0, -0.22], [0, 0, side * 0.35]);
@@ -1843,6 +1966,15 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
         const outer = rigBox(femaleHorns, `${sideName}-curved-horn-outer`, [0.17, 0.23, 1.32], charMaterial, [side * 0.48, 0.52, 0.44], [-0.42, side * 0.12, side * -0.08]);
         rigBox(femaleHorns, `${sideName}-curved-horn-tip`, [0.12, 0.15, 0.68], amberHornMaterial, [side * 0.56, 0.98, 1.34], [-0.72, side * 0.08, side * -0.1]);
         outer.userData.sexMarker = "female";
+      } else if (dragonType === "gold") {
+        rigBox(maleHorns, `${sideName}-sun-horn-base`, [0.32, 0.32, 0.95], goldShadowMaterial, [side * 0.5, 0.48, 0.24], [-0.48, side * 0.3, 0]);
+        rigBox(maleHorns, `${sideName}-sun-horn-tip`, [0.19, 0.19, 1.02], hornMaterial, [side * 0.78, 0.9, 0.9], [-1.0, side * 0.42, side * 0.08]);
+        for (let tine = 0; tine < 3; tine += 1) rigBox(femaleHorns, `${sideName}-sun-tiara-tine-${tine + 1}`, [0.14, 0.42 + tine * 0.12, 0.14], tine === 2 ? sunwhiteMaterial : hornMaterial, [side * (0.28 + tine * 0.18), 0.62 + tine * 0.12, 0.18 + tine * 0.18], [-0.5, side * (0.15 + tine * 0.1), side * -0.05]);
+      } else if (dragonType === "silver") {
+        rigBox(maleHorns, `${sideName}-crescent-horn-outer`, [0.18, 0.24, 1.24], silverShadowMaterial, [side * 0.5, 0.52, 0.34], [-0.42, side * 0.46, side * 0.12]);
+        rigBox(maleHorns, `${sideName}-crescent-horn-tip`, [0.13, 0.17, 0.82], hornMaterial, [side * 0.86, 0.88, 1.04], [-0.98, side * -0.28, side * -0.12]);
+        rigBox(femaleHorns, `${sideName}-moon-sickle-outer`, [0.14, 0.2, 1.38], silverPlateMaterial, [side * 0.46, 0.54, 0.38], [-0.4, side * 0.24, side * 0.08]);
+        rigBox(femaleHorns, `${sideName}-moon-sickle-tip`, [0.1, 0.14, 0.78], hornMaterial, [side * 0.7, 1.0, 1.22], [-0.9, side * -0.18, side * -0.1]);
       } else {
         rigBox(maleHorns, `${sideName}-straight-horn`, [0.24, 0.24, 1.25], hornMaterial, [side * 0.55, 0.43, 0.18], [-0.55, side * 0.12, side * 0.06]);
         const outer = rigBox(femaleHorns, `${sideName}-curved-horn-outer`, [0.22, 0.22, 0.92], hornMaterial, [side * 0.58, 0.34, 0.08], [-0.5, side * 0.42, side * 0.18]);
@@ -1876,6 +2008,30 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
         for (let ray = 0; ray < 3; ray += 1) {
           rigBox(wingForearm, `${sideName}-ray-sail-rib-${ray + 1}`, [0.07, 0.07, 2.05 - ray * 0.22], ray % 2 ? seaGlassMaterial : reefMaterial, [side * (0.34 + ray * 0.88), -0.025, 0.88 + ray * 0.28], [0, side * (0.18 + ray * 0.1), side * -0.15]);
           rigBox(wingRoot, `${sideName}-ray-light-${ray + 1}`, [0.13, 0.08, 0.28], glowMaterial, [side * (0.72 + ray * 0.55), -0.11, 0.5 + ray * 0.52]);
+        }
+      } else if (dragonType === "gold") {
+        const hub = rigBox(wingRoot, `${sideName}-solar-wing-hub`, [0.5, 0.5, 0.16], sunwhiteMaterial, [side * 0.22, -0.02, 0], [Math.PI / 4, 0, Math.PI / 4]);
+        hub.userData.dragonShimmer = true;
+        hub.userData.shimmerPhase = side < 0 ? 0.4 : 2.2;
+        for (let tier = 0; tier < 4; tier += 1) {
+          rigBox(wingForearm, `${sideName}-gilded-flight-feather-${tier + 1}`, [1.18 - tier * 0.13, 0.08, 1.18 + tier * 0.25], tier % 2 ? hornMaterial : goldPlateMaterial,
+            [side * (0.34 + tier * 0.72), -0.11, 1.72 + tier * 0.28], [0.03, side * (-0.12 + tier * 0.09), side * (-0.2 - tier * 0.035)]);
+          const vein = rigBox(wingForearm, `${sideName}-sunray-vein-${tier + 1}`, [0.12, 0.075, 1.65 - tier * 0.12], tier % 2 ? glowMaterial : sunwhiteMaterial,
+            [side * (0.42 + tier * 0.72), -0.16, 0.82 + tier * 0.35], [0, side * (0.16 + tier * 0.1), side * -0.16]);
+          vein.userData.dragonShimmer = true;
+          vein.userData.shimmerPhase = tier * 0.7 + (side < 0 ? 0 : 2.5);
+        }
+      } else if (dragonType === "silver") {
+        const hub = rigBox(wingRoot, `${sideName}-lunar-wing-hub`, [0.42, 0.42, 0.15], moonwhiteMaterial, [side * 0.22, -0.02, 0], [Math.PI / 4, 0, Math.PI / 4]);
+        hub.userData.dragonShimmer = true;
+        hub.userData.shimmerPhase = side < 0 ? 1.1 : 3.1;
+        for (let panel = 0; panel < 4; panel += 1) {
+          rigBox(wingForearm, `${sideName}-mirror-wing-blade-${panel + 1}`, [0.74 - panel * 0.08, 0.065, 1.42 + panel * 0.22], panel % 2 ? silverPlateMaterial : hornMaterial,
+            [side * (0.4 + panel * 0.75), -0.12, 1.68 + panel * 0.22], [0.02, side * (0.05 + panel * 0.11), side * (-0.21 - panel * 0.04)]);
+          const star = rigBox(wingForearm, `${sideName}-wing-star-${panel + 1}`, [0.16, 0.08, 0.16], panel % 2 ? starlightMaterial : moonwhiteMaterial,
+            [side * (0.56 + panel * 0.7), -0.17, 0.55 + panel * 0.48], [0, 0, Math.PI / 4]);
+          star.userData.dragonShimmer = true;
+          star.userData.shimmerPhase = panel * 0.91 + (side < 0 ? 0.2 : 2.8);
         }
       }
       if (isFire) {
@@ -1916,6 +2072,12 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
         } else if (dragonType === "sea") {
           const calfFin = rigBox(knee, `${positionName}-calf-fin`, [0.08, 0.52, 0.62], seaGlassMaterial, [side * 0.22, -0.38, 0.16], [-0.12, side * 0.2, side * 0.18]);
           calfFin.userData.aquaticFin = true;
+        } else if (dragonType === "gold") {
+          rigBox(knee, `${positionName}-sunscale-greave`, [0.48, 0.48, 0.5], goldPlateMaterial, [0, -0.24, -0.08], [0.08, 0, side * 0.06]);
+          rigBox(knee, `${positionName}-sunspur`, [0.14, 0.52, 0.14], hornMaterial, [side * 0.22, -0.36, 0.22], [-0.32, 0, side * 0.28]);
+        } else if (dragonType === "silver") {
+          rigBox(knee, `${positionName}-mirror-greave`, [0.44, 0.36, 0.48], silverPlateMaterial, [0, -0.2, -0.08], [0.08, 0, side * 0.05]);
+          rigBox(knee, `${positionName}-moonblade-spur`, [0.1, 0.6, 0.18], hornMaterial, [side * 0.22, -0.36, 0.18], [-0.42, 0, side * 0.3]);
         }
         const claw = pivot(knee, `${positionName}-claw`, [0, -0.77, -0.08]);
         rigBox(claw, `${positionName}-foot`, [0.65, 0.24, 0.8], bellyMaterial, [0, -0.04, -0.25]);
@@ -1935,6 +2097,15 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       } else if (dragonType === "sea" && segment >= 2 && segment <= 5) {
         for (const side of [-1, 1]) rigBox(tail, `tail-${segment}-${side < 0 ? "left" : "right"}-finlet`, [0.5, 0.06, 0.46], seaGlassMaterial, [side * Math.max(0.24, width * 0.46), 0, 0.48], [0, side * 0.4, side * 0.12]);
         rigBox(tail, `tail-${segment}-lateral-light`, [0.15, 0.12, 0.15], glowMaterial, [0, Math.max(0.18, width * 0.38), 0.5], [0, Math.PI / 4, Math.PI / 4]);
+      } else if (dragonType === "gold" && segment <= 6) {
+        rigBox(tail, `tail-${segment}-sun-band`, [Math.max(0.32, width + 0.08), Math.max(0.32, width * 0.69 + 0.08), 0.13], segment % 2 ? hornMaterial : goldPlateMaterial, [0, 0, 0.48], [0, 0, Math.PI / 4]);
+        if (segment % 2 === 0) {
+          const gem = rigBox(tail, `tail-${segment}-sun-gem`, [0.11, 0.11, 0.11], sunwhiteMaterial, [0, Math.max(0.2, width * 0.43), 0.49], [0, Math.PI / 4, Math.PI / 4]);
+          gem.userData.dragonShimmer = true;
+          gem.userData.shimmerPhase = segment * 0.66;
+        }
+      } else if (dragonType === "silver" && segment >= 2) {
+        for (const side of [-1, 1]) rigBox(tail, `tail-${segment}-${side < 0 ? "left" : "right"}-mirror-fin`, [0.46, 0.055, 0.52], segment % 2 ? silverPlateMaterial : hornMaterial, [side * Math.max(0.22, width * 0.44), 0.02, 0.48], [0, side * 0.46, side * 0.1]);
       }
       tailParent = tail;
     }
@@ -1956,6 +2127,24 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
         rigBox(tailParent, `tail-ember-mote-${ember + 1}`, [0.09 - ember * 0.015, 0.09 - ember * 0.015, 0.09 - ember * 0.015], glowMaterial,
           [(ember % 2 ? 1 : -1) * (0.16 + ember * 0.09), 0.78 + ember * 0.26, 0.94 + ember * 0.06], [0.3, ember * 0.6, 0.3]);
       }
+    } else if (dragonType === "gold") {
+      const disc = rigBox(tailParent, "solar-tail-disc", [1.36, 1.36, 0.16], goldPlateMaterial, [0, 0.12, 0.74], [0, 0, Math.PI / 4]);
+      disc.userData.tailHalo = true;
+      const core = rigBox(tailParent, "solar-tail-core", [0.58, 0.58, 0.22], sunwhiteMaterial, [0, 0.12, 0.66], [0, Math.PI / 4, Math.PI / 4]);
+      core.userData.dragonShimmer = true;
+      core.userData.shimmerPhase = 1.7;
+      for (let ray = 0; ray < 8; ray += 1) {
+        const angle = ray / 8 * TAU;
+        rigBox(tailParent, `solar-tail-ray-${ray + 1}`, [0.18, 0.72 + (ray % 2) * 0.24, 0.13], ray % 2 ? hornMaterial : glowMaterial, [Math.cos(angle) * 0.72, 0.12 + Math.sin(angle) * 0.72, 0.7], [0, 0, angle]);
+      }
+    } else if (dragonType === "silver") {
+      for (const side of [-1, 1]) {
+        rigBox(tailParent, `${side < 0 ? "left" : "right"}-lunar-tail-blade`, [0.34, 1.72, 0.16], side < 0 ? silverPlateMaterial : hornMaterial, [side * 0.48, 0.28, 0.82], [-0.38, side * 0.28, side * 0.44]);
+        const tip = rigBox(tailParent, `${side < 0 ? "left" : "right"}-lunar-tail-star`, [0.22, 0.22, 0.2], moonwhiteMaterial, [side * 0.8, 0.82, 1.04], [0, Math.PI / 4, Math.PI / 4]);
+        tip.userData.dragonShimmer = true;
+        tip.userData.shimmerPhase = side < 0 ? 0.9 : 3.3;
+      }
+      rigBox(tailParent, "lunar-tail-crescent-bridge", [1.18, 0.18, 0.2], starlightMaterial, [0, -0.14, 0.82], [0, 0, 0.18]);
     } else {
       rigBox(tailParent, "steel-tail-hammer", [1.18, 0.72, 0.9], metalMaterial, [0, 0, 0.75], [0, Math.PI / 4, 0]);
       rigBox(tailParent, "steel-tail-hammer-core", [0.46, 0.46, 0.95], glowMaterial, [0, 0, 0.78], [0, Math.PI / 4, 0]);
@@ -1986,6 +2175,8 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     const tailArmor = attachment("tail-armor");
     for (let plate = 0; plate < 4; plate += 1) rigBox(tailArmor, `tail-armor-plate-${plate + 1}`, [1.26 - plate * 0.17, 0.22, 0.82], armorMaterial, [0, 2.48 - plate * 0.06, 1.85 + plate * 0.82], [0.03 * plate, 0, 0]);
 
+    if (dragonType === "gold") visual.scale.set(1.07, 1.04, 1.03);
+    if (dragonType === "silver") visual.scale.set(0.94, 1.07, 1.1);
     applyDragonPose(group, { timeSeconds: 0.42, mode: "idle", movement: 0, sex: group.userData.dragonSex });
   };
 
@@ -2376,7 +2567,7 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     if (dwarf) visual.scale.set(1.1, 0.88, 1.06);
   };
 
-  if (kind === "fire-dragon" || kind === "ice-dragon" || kind === "steel-dragon" || kind === "sea-dragon") {
+  if (kind === "fire-dragon" || kind === "ice-dragon" || kind === "steel-dragon" || kind === "sea-dragon" || kind === "gold-dragon" || kind === "silver-dragon") {
     buildDragon(kind);
   } else if (sentientNpc) {
     buildSentientNpc();

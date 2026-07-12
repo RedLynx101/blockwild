@@ -200,6 +200,11 @@ export enum BlockId {
   WayfarerCanvas = 192,
   Whisperglass = 193,
   StorybookBrick = 194,
+  /** Mythic metallic dragon materials use the remaining pre-Dragonwake slots. */
+  GildedDragonstone = 195,
+  ArgentDragonstone = 196,
+  GoldDragonEggBlock = 197,
+  SilverDragonEggBlock = 198,
   /** v0.9 Dragonwake lair materials, eggs, treasure and archive stations. */
   CharredDragonstone = 217,
   RimeDragonstone = 218,
@@ -561,6 +566,25 @@ export const Item = {
   WindSilk: 440,
   LivingInk: 441,
   ClockworkSpring: 442,
+  /** Mythic Gold and Silver Dragon lifecycle, equipment and survey items. */
+  GoldDragonEgg: 443,
+  SilverDragonEgg: 444,
+  GoldDragonScale: 445,
+  SilverDragonScale: 446,
+  GoldDragonHeart: 447,
+  SilverDragonHeart: 448,
+  GoldDragonSkull: 449,
+  SilverDragonSkull: 450,
+  GoldDragonArmorModule: 451,
+  SilverDragonArmorModule: 452,
+  GoldBreedingCatalyst: 453,
+  SilverBreedingCatalyst: 454,
+  GoldLairSurvey: 455,
+  SilverLairSurvey: 456,
+  GoldElderLairSurvey: 457,
+  SilverElderLairSurvey: 458,
+  GildedDragonstoneItem: 459,
+  ArgentDragonstoneItem: 460,
 } as const;
 
 export type ItemCode = number;
@@ -636,9 +660,9 @@ export type ItemDefinition = {
   /** Permanent base-mana increase granted by a consumable. */
   manaIncrease?: number;
   /** Element preserved by a placed dragon egg or dragon equipment module. */
-  dragonType?: "fire" | "ice" | "steel" | "sea";
+  dragonType?: "fire" | "ice" | "steel" | "sea" | "gold" | "silver";
   /** Stage threshold encoded by a lair survey charter. */
-  lairSurvey?: Readonly<{ dragonType: "fire" | "ice" | "steel" | "sea"; minimumStage: 3 | 4 | 5 }>;
+  lairSurvey?: Readonly<{ dragonType: "fire" | "ice" | "steel" | "sea" | "gold" | "silver"; minimumStage: 3 | 4 | 5 }>;
   /** Equipment socket used by the dragon management inventory. */
   dragonModule?: "saddle" | "chest" | "armor";
   /** Initial world block produced by planting this item rather than placing it directly. */
@@ -877,6 +901,10 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.WayfarerCanvas]: block(BlockId.WayfarerCanvas, "Wayfarer Canvas", 151, 151, 151, 0.42, "#b58c62", "axe"),
   [BlockId.Whisperglass]: block(BlockId.Whisperglass, "Whisperglass", 152, 152, 152, 1.35, "#67d9cf", "pickaxe", 2, { layer: "emissive" }),
   [BlockId.StorybookBrick]: block(BlockId.StorybookBrick, "Storybook Brick", 153, 153, 153, 1.75, "#765268", "pickaxe", 1),
+  [BlockId.GildedDragonstone]: block(BlockId.GildedDragonstone, "Gilded Dragonstone", 154, 154, 154, 5.2, "#ad7921", "pickaxe", 4, { layer: "emissive" }),
+  [BlockId.ArgentDragonstone]: block(BlockId.ArgentDragonstone, "Argent Dragonstone", 155, 155, 155, 5.2, "#8293aa", "pickaxe", 4, { layer: "emissive" }),
+  [BlockId.GoldDragonEggBlock]: block(BlockId.GoldDragonEggBlock, "Gold Dragon Egg", 156, 156, 156, 2.25, "#f0bd38", "pickaxe", 3, { solid: false, layer: "emissive", shape: "dragon-egg" }),
+  [BlockId.SilverDragonEggBlock]: block(BlockId.SilverDragonEggBlock, "Silver Dragon Egg", 157, 157, 157, 2.25, "#c7d6e8", "pickaxe", 3, { solid: false, layer: "emissive", shape: "dragon-egg" }),
   [BlockId.CharredDragonstone]: block(BlockId.CharredDragonstone, "Charred Dragonstone", 43, 43, 43, 3.8, "#443238", "pickaxe", 3),
   [BlockId.RimeDragonstone]: block(BlockId.RimeDragonstone, "Rime Dragonstone", 41, 41, 41, 3.8, "#9cc7dc", "pickaxe", 3),
   [BlockId.RivetedDragonstone]: block(BlockId.RivetedDragonstone, "Riveted Dragonstone", 35, 35, 35, 4.25, "#68747c", "pickaxe", 3),
@@ -979,6 +1007,7 @@ const technicalBlocks = new Set<BlockId>([
   BlockId.SunCarrotSprout, BlockId.SunCarrotYoung, BlockId.SunCarrotCrop,
   BlockId.BluepodSprout, BlockId.BluepodYoung, BlockId.BluepodCrop,
   BlockId.GlassAquarium, BlockId.HearthFireplace,
+  BlockId.GildedDragonstone, BlockId.ArgentDragonstone, BlockId.GoldDragonEggBlock, BlockId.SilverDragonEggBlock,
   BlockId.CharredDragonstone, BlockId.RimeDragonstone, BlockId.RivetedDragonstone,
   BlockId.GoldBlock, BlockId.GoldPile,
   BlockId.FireDragonEggBlock, BlockId.IceDragonEggBlock, BlockId.SteelDragonEggBlock,
@@ -1193,30 +1222,44 @@ Object.assign(ITEMS, {
   [Item.FireDragonEgg]: { id: Item.FireDragonEgg, name: "Fire Dragon Egg", color: "#c65336", maxStack: 1, useKind: "dragon-egg", placeBlock: BlockId.FireDragonEggBlock, dragonType: "fire", iconKind: "dragon-egg", heldModel: "dragon-egg", dropModel: "dragon-egg" },
   [Item.IceDragonEgg]: { id: Item.IceDragonEgg, name: "Ice Dragon Egg", color: "#9bdcf0", maxStack: 1, useKind: "dragon-egg", placeBlock: BlockId.IceDragonEggBlock, dragonType: "ice", iconKind: "dragon-egg", heldModel: "dragon-egg", dropModel: "dragon-egg" },
   [Item.SteelDragonEgg]: { id: Item.SteelDragonEgg, name: "Steel Dragon Egg", color: "#81909a", maxStack: 1, useKind: "dragon-egg", placeBlock: BlockId.SteelDragonEggBlock, dragonType: "steel", iconKind: "dragon-egg", heldModel: "dragon-egg", dropModel: "dragon-egg" },
+  [Item.GoldDragonEgg]: { id: Item.GoldDragonEgg, name: "Gold Dragon Egg", color: "#f5c64c", maxStack: 1, useKind: "dragon-egg", placeBlock: BlockId.GoldDragonEggBlock, dragonType: "gold", iconKind: "dragon-egg", heldModel: "dragon-egg", dropModel: "dragon-egg" },
+  [Item.SilverDragonEgg]: { id: Item.SilverDragonEgg, name: "Silver Dragon Egg", color: "#d8e5f2", maxStack: 1, useKind: "dragon-egg", placeBlock: BlockId.SilverDragonEggBlock, dragonType: "silver", iconKind: "dragon-egg", heldModel: "dragon-egg", dropModel: "dragon-egg" },
   [Item.DragonMeal]: { id: Item.DragonMeal, name: "Dragon Meal", color: "#b76a52", maxStack: 64, iconKind: "produce" },
   [Item.RawDragonMeat]: { id: Item.RawDragonMeat, name: "Raw Dragon Meat", color: "#a34e49", maxStack: 64, food: 3, iconKind: "produce" },
   [Item.CookedDragonMeat]: { id: Item.CookedDragonMeat, name: "Roasted Dragon Meat", color: "#c8754c", maxStack: 64, food: 10, iconKind: "produce" },
   [Item.FireDragonScale]: { id: Item.FireDragonScale, name: "Fire Dragon Scale", color: "#c7432d", maxStack: 64, iconKind: "dragon-scale" },
   [Item.IceDragonScale]: { id: Item.IceDragonScale, name: "Ice Dragon Scale", color: "#7cc7e5", maxStack: 64, iconKind: "dragon-scale" },
   [Item.SteelDragonScale]: { id: Item.SteelDragonScale, name: "Steel Dragon Scale", color: "#71808a", maxStack: 64, iconKind: "dragon-scale" },
+  [Item.GoldDragonScale]: { id: Item.GoldDragonScale, name: "Gold Dragon Scale", color: "#efb72f", maxStack: 64, dragonType: "gold", iconKind: "dragon-scale" },
+  [Item.SilverDragonScale]: { id: Item.SilverDragonScale, name: "Silver Dragon Scale", color: "#b8cbe0", maxStack: 64, dragonType: "silver", iconKind: "dragon-scale" },
   [Item.DragonBone]: { id: Item.DragonBone, name: "Dragon Bone", color: "#e6ddc7", maxStack: 64, iconKind: "dragon-bone" },
   [Item.FireDragonHeart]: { id: Item.FireDragonHeart, name: "Fire Dragon Heart", color: "#ed5639", maxStack: 16, iconKind: "dragon-heart" },
   [Item.IceDragonHeart]: { id: Item.IceDragonHeart, name: "Ice Dragon Heart", color: "#8ce8f2", maxStack: 16, iconKind: "dragon-heart" },
   [Item.SteelDragonHeart]: { id: Item.SteelDragonHeart, name: "Steel Dragon Heart", color: "#9ba5aa", maxStack: 16, iconKind: "dragon-heart" },
+  [Item.GoldDragonHeart]: { id: Item.GoldDragonHeart, name: "Gold Dragon Heart", color: "#fff0a0", maxStack: 8, dragonType: "gold", iconKind: "dragon-heart" },
+  [Item.SilverDragonHeart]: { id: Item.SilverDragonHeart, name: "Silver Dragon Heart", color: "#d9f2ff", maxStack: 8, dragonType: "silver", iconKind: "dragon-heart" },
   [Item.FireDragonSkull]: { id: Item.FireDragonSkull, name: "Fire Dragon Skull", color: "#d8c7b1", maxStack: 16, iconKind: "dragon-skull" },
   [Item.IceDragonSkull]: { id: Item.IceDragonSkull, name: "Ice Dragon Skull", color: "#d8edf0", maxStack: 16, iconKind: "dragon-skull" },
   [Item.SteelDragonSkull]: { id: Item.SteelDragonSkull, name: "Steel Dragon Skull", color: "#b8bec0", maxStack: 16, iconKind: "dragon-skull" },
+  [Item.GoldDragonSkull]: { id: Item.GoldDragonSkull, name: "Gold Dragon Skull", color: "#f4d67a", maxStack: 1, dragonType: "gold", iconKind: "dragon-skull" },
+  [Item.SilverDragonSkull]: { id: Item.SilverDragonSkull, name: "Silver Dragon Skull", color: "#e4edf5", maxStack: 1, dragonType: "silver", iconKind: "dragon-skull" },
   [Item.DragonSaddle]: { id: Item.DragonSaddle, name: "Dragonflight Saddle", color: "#8b4f38", maxStack: 1, useKind: "dragon-module", dragonModule: "saddle", iconKind: "armor" },
   [Item.DragonChestModule]: { id: Item.DragonChestModule, name: "Dragon Pannier Module", color: "#966438", maxStack: 2, useKind: "dragon-module", dragonModule: "chest", iconKind: "chest" },
   [Item.FireDragonArmorModule]: { id: Item.FireDragonArmorModule, name: "Ember Dragon Armor", color: "#d65c32", maxStack: 1, useKind: "dragon-module", dragonModule: "armor", dragonType: "fire", iconKind: "armor" },
   [Item.IceDragonArmorModule]: { id: Item.IceDragonArmorModule, name: "Rime Dragon Armor", color: "#8bd7ec", maxStack: 1, useKind: "dragon-module", dragonModule: "armor", dragonType: "ice", iconKind: "armor" },
   [Item.SteelDragonArmorModule]: { id: Item.SteelDragonArmorModule, name: "Riveted Dragon Armor", color: "#788791", maxStack: 1, useKind: "dragon-module", dragonModule: "armor", dragonType: "steel", iconKind: "armor" },
+  [Item.GoldDragonArmorModule]: { id: Item.GoldDragonArmorModule, name: "Solar-Regalia Dragon Armor", color: "#e5ab2e", maxStack: 1, useKind: "dragon-module", dragonModule: "armor", dragonType: "gold", iconKind: "armor" },
+  [Item.SilverDragonArmorModule]: { id: Item.SilverDragonArmorModule, name: "Moonmirror Dragon Armor", color: "#aec2d8", maxStack: 1, useKind: "dragon-module", dragonModule: "armor", dragonType: "silver", iconKind: "armor" },
   [Item.FireBreedingCatalyst]: { id: Item.FireBreedingCatalyst, name: "Emberlily Catalyst", color: "#ed7145", maxStack: 16, dragonType: "fire", iconKind: "produce" },
   [Item.IceBreedingCatalyst]: { id: Item.IceBreedingCatalyst, name: "Frostlily Catalyst", color: "#acebf4", maxStack: 16, dragonType: "ice", iconKind: "produce" },
   [Item.SteelBreedingCatalyst]: { id: Item.SteelBreedingCatalyst, name: "Ferric Lotus Catalyst", color: "#a8afb1", maxStack: 16, dragonType: "steel", iconKind: "produce" },
+  [Item.GoldBreedingCatalyst]: { id: Item.GoldBreedingCatalyst, name: "Sunlily Catalyst", color: "#ffd762", maxStack: 16, dragonType: "gold", iconKind: "produce" },
+  [Item.SilverBreedingCatalyst]: { id: Item.SilverBreedingCatalyst, name: "Moonlily Catalyst", color: "#d5e7ff", maxStack: 16, dragonType: "silver", iconKind: "produce" },
   [Item.FireLairSurvey]: { id: Item.FireLairSurvey, name: "Fire Lair Survey Charter", color: "#c96142", maxStack: 8, useKind: "lair-survey", lairSurvey: { dragonType: "fire", minimumStage: 4 }, iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
   [Item.IceLairSurvey]: { id: Item.IceLairSurvey, name: "Ice Lair Survey Charter", color: "#8ed3e8", maxStack: 8, useKind: "lair-survey", lairSurvey: { dragonType: "ice", minimumStage: 4 }, iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
   [Item.SteelLairSurvey]: { id: Item.SteelLairSurvey, name: "Steel Lair Survey Charter", color: "#7a8790", maxStack: 8, useKind: "lair-survey", lairSurvey: { dragonType: "steel", minimumStage: 4 }, iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
+  [Item.GoldLairSurvey]: { id: Item.GoldLairSurvey, name: "Gold Lair Survey Charter", color: "#e8b93f", maxStack: 8, useKind: "lair-survey", lairSurvey: { dragonType: "gold", minimumStage: 4 }, iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
+  [Item.SilverLairSurvey]: { id: Item.SilverLairSurvey, name: "Silver Lair Survey Charter", color: "#bdcee1", maxStack: 8, useKind: "lair-survey", lairSurvey: { dragonType: "silver", minimumStage: 4 }, iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
   [Item.DragonboneGreatsword]: { ...tool(Item.DragonboneGreatsword, "Dragonbone Greatsword", "#e6ddc7", "sword", 5, 1.15, 15, 2400), iconKind: "sword" },
   [Item.DragonbonePickaxe]: { ...tool(Item.DragonbonePickaxe, "Dragonbone Pickaxe", "#d7cfbd", "pickaxe", 5, 9.5, 9, 2600), iconKind: "sword" },
   [Item.DragonboneAxe]: { ...tool(Item.DragonboneAxe, "Dragonbone Axe", "#d7cfbd", "axe", 5, 9, 12, 2500), iconKind: "sword" },
@@ -1254,6 +1297,8 @@ Object.assign(ITEMS, {
   [Item.FireElderLairSurvey]: { id: Item.FireElderLairSurvey, name: "Elder Fire Lair Survey", color: "#b94a34", maxStack: 8, useKind: "lair-survey", lairSurvey: { dragonType: "fire", minimumStage: 5 }, iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
   [Item.IceElderLairSurvey]: { id: Item.IceElderLairSurvey, name: "Elder Ice Lair Survey", color: "#78c5df", maxStack: 8, useKind: "lair-survey", lairSurvey: { dragonType: "ice", minimumStage: 5 }, iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
   [Item.SteelElderLairSurvey]: { id: Item.SteelElderLairSurvey, name: "Elder Steel Lair Survey", color: "#6c7982", maxStack: 8, useKind: "lair-survey", lairSurvey: { dragonType: "steel", minimumStage: 5 }, iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
+  [Item.GoldElderLairSurvey]: { id: Item.GoldElderLairSurvey, name: "Elder Gold Lair Survey", color: "#dba62b", maxStack: 8, useKind: "lair-survey", lairSurvey: { dragonType: "gold", minimumStage: 5 }, iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
+  [Item.SilverElderLairSurvey]: { id: Item.SilverElderLairSurvey, name: "Elder Silver Lair Survey", color: "#a9bfd7", maxStack: 8, useKind: "lair-survey", lairSurvey: { dragonType: "silver", minimumStage: 5 }, iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
   [Item.BoundBook]: { id: Item.BoundBook, name: "Bound Book", color: "#79533c", maxStack: 16, iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
   [Item.Moonpetal]: { id: Item.Moonpetal, name: "Moonpetal", color: "#aaa5ff", maxStack: 64, useKind: "plant", plantBlock: BlockId.Moonpetal, placeBlock: BlockId.Moonpetal, worldTextureBlock: BlockId.Moonpetal },
   [Item.StarfernFrond]: { id: Item.StarfernFrond, name: "Starfern Frond", color: "#68d6ac", maxStack: 64, placeBlock: BlockId.Starfern, worldTextureBlock: BlockId.Starfern },
@@ -1293,6 +1338,8 @@ Object.assign(ITEMS, {
   [Item.TideglassDragonArmorModule]: { id: Item.TideglassDragonArmorModule, name: "Tideglass Dragon Armor", color: "#62cfd0", maxStack: 1, useKind: "dragon-module", dragonModule: "armor", dragonType: "sea", iconKind: "armor" },
   [Item.DeepgearCourserBlueprint]: { id: Item.DeepgearCourserBlueprint, name: "Blueprint: Deepgear Courser", color: "#b8874d", maxStack: 16, useKind: "blueprint", blueprintId: "golem-deepgear-courser", iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
   [Item.DeepgearCourserOrb]: { id: Item.DeepgearCourserOrb, name: "Capture Orb: Deepgear Courser", color: "#78e6df", maxStack: 1, useKind: "capture-orb", creatureKind: "deepgear-courser-golem", iconKind: "capture-orb", heldModel: "capture-orb", dropModel: "capture-orb" },
+  [Item.GildedDragonstoneItem]: { id: Item.GildedDragonstoneItem, name: "Gilded Dragonstone", color: "#ad7921", maxStack: 64, placeBlock: BlockId.GildedDragonstone, worldTextureBlock: BlockId.GildedDragonstone },
+  [Item.ArgentDragonstoneItem]: { id: Item.ArgentDragonstoneItem, name: "Argent Dragonstone", color: "#8293aa", maxStack: 64, placeBlock: BlockId.ArgentDragonstone, worldTextureBlock: BlockId.ArgentDragonstone },
   [Item.MoonboughLogItem]: { id: Item.MoonboughLogItem, name: "Moonbough Log", color: "#58677f", maxStack: 64, placeBlock: BlockId.MoonboughLog },
   [Item.MoonboughLeavesItem]: { id: Item.MoonboughLeavesItem, name: "Moonbough Leaves", color: "#4a8c79", maxStack: 64, placeBlock: BlockId.MoonboughLeaves },
   [Item.GlimmerGrassBlock]: { id: Item.GlimmerGrassBlock, name: "Glimmerwood Grass", color: "#315f4d", maxStack: 64, placeBlock: BlockId.GlimmerGrass },
@@ -1443,6 +1490,10 @@ export const BLOCK_ITEM_ALIASES: Readonly<Partial<Record<BlockId, ItemCode>>> = 
   [BlockId.WayfarerCanvas]: Item.WayfarerCanvasItem,
   [BlockId.Whisperglass]: Item.WhisperglassItem,
   [BlockId.StorybookBrick]: Item.StorybookBrickItem,
+  [BlockId.GildedDragonstone]: Item.GildedDragonstoneItem,
+  [BlockId.ArgentDragonstone]: Item.ArgentDragonstoneItem,
+  [BlockId.GoldDragonEggBlock]: Item.GoldDragonEgg,
+  [BlockId.SilverDragonEggBlock]: Item.SilverDragonEgg,
   [BlockId.CharredDragonstone]: Item.CharredDragonstoneItem,
   [BlockId.RimeDragonstone]: Item.RimeDragonstoneItem,
   [BlockId.RivetedDragonstone]: Item.RivetedDragonstoneItem,
@@ -1563,7 +1614,7 @@ export const CREATIVE_FLORA: readonly ItemCode[] = [
 ];
 
 export const DRAGON_ITEMS: readonly ItemCode[] = Object.freeze([
-  Item.FireDragonEgg, Item.IceDragonEgg, Item.SteelDragonEgg, Item.SeaDragonEgg, Item.DragonMeal,
+  Item.FireDragonEgg, Item.IceDragonEgg, Item.SteelDragonEgg, Item.SeaDragonEgg, Item.GoldDragonEgg, Item.SilverDragonEgg, Item.DragonMeal,
   Item.RawDragonMeat, Item.CookedDragonMeat, Item.FireDragonScale, Item.IceDragonScale,
   Item.SteelDragonScale, Item.DragonBone, Item.FireDragonHeart, Item.IceDragonHeart,
   Item.SteelDragonHeart, Item.FireDragonSkull, Item.IceDragonSkull, Item.SteelDragonSkull,
@@ -1580,6 +1631,10 @@ export const DRAGON_ITEMS: readonly ItemCode[] = Object.freeze([
   Item.DraconicIncubatorBlueprint, Item.DragonHusbandryBlueprint,
   Item.FireElderLairSurvey, Item.IceElderLairSurvey, Item.SteelElderLairSurvey,
   Item.BoundBook, Item.SeaDragonScale, Item.SeaDragonHeart, Item.SeaDragonSkull, Item.SeaDragonNestChart, Item.TideglassDragonArmorModule,
+  Item.GoldDragonScale, Item.SilverDragonScale, Item.GoldDragonHeart, Item.SilverDragonHeart, Item.GoldDragonSkull, Item.SilverDragonSkull,
+  Item.GoldDragonArmorModule, Item.SilverDragonArmorModule, Item.GoldBreedingCatalyst, Item.SilverBreedingCatalyst,
+  Item.GoldLairSurvey, Item.SilverLairSurvey, Item.GoldElderLairSurvey, Item.SilverElderLairSurvey,
+  Item.GildedDragonstoneItem, Item.ArgentDragonstoneItem,
 ]);
 
 export const V1_CULTURE_ITEMS: readonly ItemCode[] = Object.freeze([
@@ -1649,8 +1704,8 @@ const anyFlower: ItemCode[] = ORDINARY_FLOWERS.map(itemForBlock);
 const softNetting: ItemCode[] = [Item.Fiber, Item.Feather];
 /** Furnace-made charcoal is intentionally interchangeable with mined coal in every shaped recipe. */
 export const ANY_COAL: ItemCode[] = [Item.Coal, Item.Charcoal];
-const anyDragonScale: ItemCode[] = [Item.FireDragonScale, Item.IceDragonScale, Item.SteelDragonScale, Item.SeaDragonScale];
-const anyDragonHeart: ItemCode[] = [Item.FireDragonHeart, Item.IceDragonHeart, Item.SteelDragonHeart];
+const anyDragonScale: ItemCode[] = [Item.FireDragonScale, Item.IceDragonScale, Item.SteelDragonScale, Item.SeaDragonScale, Item.GoldDragonScale, Item.SilverDragonScale];
+const anyDragonHeart: ItemCode[] = [Item.FireDragonHeart, Item.IceDragonHeart, Item.SteelDragonHeart, Item.SeaDragonHeart, Item.GoldDragonHeart, Item.SilverDragonHeart];
 
 export const RECIPES: Recipe[] = [
   { id: "planks", name: "Wildwood Planks", width: 1, height: 1, pattern: [anyLog], output: { item: BlockId.Planks, count: 4 }, table: false },
@@ -1696,6 +1751,10 @@ export const RECIPES: Recipe[] = [
   { id: "rime-dragon-armor", name: "Rime Dragon Armor", width: 3, height: 3, pattern: [Item.IceDragonScale, Item.SunmetalIngot, Item.IceDragonScale, Item.IceDragonScale, Item.GoldIngot, Item.IceDragonScale, Item.IceDragonScale, Item.SunmetalIngot, Item.IceDragonScale], output: { item: Item.IceDragonArmorModule, count: 1 }, table: true, blueprint: "dragon-husbandry" },
   { id: "steel-dragon-armor", name: "Riveted Dragon Armor", width: 3, height: 3, pattern: [Item.SteelDragonScale, Item.SunmetalIngot, Item.SteelDragonScale, Item.SteelDragonScale, Item.GoldIngot, Item.SteelDragonScale, Item.SteelDragonScale, Item.SunmetalIngot, Item.SteelDragonScale], output: { item: Item.SteelDragonArmorModule, count: 1 }, table: true, blueprint: "dragon-husbandry" },
   { id: "tideglass-dragon-armor", name: "Tideglass Dragon Armor", width: 3, height: 3, pattern: [Item.SeaDragonScale, Item.LivingCoral, Item.SeaDragonScale, Item.SeaDragonScale, Item.SunmetalIngot, Item.SeaDragonScale, Item.SeaDragonScale, Item.LivingCoral, Item.SeaDragonScale], output: { item: Item.TideglassDragonArmorModule, count: 1 }, table: true, blueprint: "dragon-husbandry" },
+  { id: "solar-regalia-dragon-armor", name: "Solar-Regalia Dragon Armor", width: 3, height: 3, pattern: [Item.GoldDragonScale, Item.SunmetalIngot, Item.GoldDragonScale, Item.GoldDragonScale, Item.GoldBlockItem, Item.GoldDragonScale, Item.GoldDragonScale, Item.SunmetalIngot, Item.GoldDragonScale], output: { item: Item.GoldDragonArmorModule, count: 1 }, table: true, blueprint: "dragon-husbandry" },
+  { id: "moonmirror-dragon-armor", name: "Moonmirror Dragon Armor", width: 3, height: 3, pattern: [Item.SilverDragonScale, Item.CrystalShard, Item.SilverDragonScale, Item.SilverDragonScale, Item.MoonwellItem, Item.SilverDragonScale, Item.SilverDragonScale, Item.CrystalShard, Item.SilverDragonScale], output: { item: Item.SilverDragonArmorModule, count: 1 }, table: true, blueprint: "dragon-husbandry" },
+  { id: "sunlily-catalyst", name: "Sunlily Catalyst", width: 3, height: 3, pattern: [BlockId.Sunpetal, Item.GoldIngot, BlockId.Sunpetal, Item.GoldIngot, Item.GoldDragonScale, Item.GoldIngot, BlockId.Sunpetal, Item.ManaheartDraught, BlockId.Sunpetal], output: { item: Item.GoldBreedingCatalyst, count: 1 }, table: true, blueprint: "dragon-husbandry" },
+  { id: "moonlily-catalyst", name: "Moonlily Catalyst", width: 3, height: 3, pattern: [Item.Moonpetal, Item.CrystalShard, Item.Moonpetal, Item.CrystalShard, Item.SilverDragonScale, Item.CrystalShard, Item.Moonpetal, Item.ManaheartDraught, Item.Moonpetal], output: { item: Item.SilverBreedingCatalyst, count: 1 }, table: true, blueprint: "dragon-husbandry" },
   { id: "emberlily-catalyst", name: "Emberlily Catalyst", width: 3, height: 2, pattern: [Item.FireDragonScale, Item.RoyalJelly, Item.FireDragonScale, Item.DragonMeal, Item.FireDragonHeart, Item.DragonMeal], output: { item: Item.FireBreedingCatalyst, count: 2 }, table: true, blueprint: "dragon-husbandry" },
   { id: "frostlily-catalyst", name: "Frostlily Catalyst", width: 3, height: 2, pattern: [Item.IceDragonScale, Item.RoyalJelly, Item.IceDragonScale, Item.DragonMeal, Item.IceDragonHeart, Item.DragonMeal], output: { item: Item.IceBreedingCatalyst, count: 2 }, table: true, blueprint: "dragon-husbandry" },
   { id: "ferric-lotus-catalyst", name: "Ferric Lotus Catalyst", width: 3, height: 2, pattern: [Item.SteelDragonScale, Item.RoyalJelly, Item.SteelDragonScale, Item.DragonMeal, Item.SteelDragonHeart, Item.DragonMeal], output: { item: Item.SteelBreedingCatalyst, count: 2 }, table: true, blueprint: "dragon-husbandry" },

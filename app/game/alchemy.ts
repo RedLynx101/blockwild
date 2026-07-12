@@ -131,7 +131,7 @@ export const ALCHEMY_RECIPES: readonly AlchemyRecipe[] = Object.freeze([
       {
         item: "dragon-heart",
         count: 1,
-        alternatives: ["fire-dragon-heart", "ice-dragon-heart", "steel-dragon-heart"],
+        alternatives: ["fire-dragon-heart", "ice-dragon-heart", "steel-dragon-heart", "sea-dragon-heart", "gold-dragon-heart", "silver-dragon-heart"],
       },
     ],
     output: { item: "manaheart-draught", count: 1 },

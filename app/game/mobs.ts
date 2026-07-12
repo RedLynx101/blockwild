@@ -68,7 +68,7 @@ export type SeaSlugKind =
   | "voidglass-sea-slug";
 export type AquariumFishKind = "pocket-goldfish" | "sunwheel-angelfish" | "stonewhisker-loach";
 export type AquariumMobKind = SeaSlugKind | AquariumFishKind;
-export type DragonKind = "fire-dragon" | "ice-dragon" | "steel-dragon" | "sea-dragon";
+export type DragonKind = "fire-dragon" | "ice-dragon" | "steel-dragon" | "sea-dragon" | "gold-dragon" | "silver-dragon";
 export type HobbitKind =
   | "hobbit-mayor"
   | "hobbit-farmer"
@@ -216,7 +216,7 @@ export type MobDefinition = {
   /** Skittish grazers approach rather than flee while a player visibly holds a diet item. */
   foodLure?: boolean;
   /** Lifecycle discriminator; detailed stage/sex/equipment state lives in dragons.ts. */
-  dragonType?: "fire" | "ice" | "steel" | "sea";
+  dragonType?: "fire" | "ice" | "steel" | "sea" | "gold" | "silver";
 };
 
 type V1SentientSeed = Readonly<{
@@ -1805,6 +1805,44 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     secretHint: "Sea eggs hatch only while fully submerged beside living coral, unless stabilized in a Draconic Incubator.",
     discoveryHint: "Atlantian Pearlbrokers rarely sell charts to the closest undiscovered deep-sea nest.",
   },
+  "gold-dragon": {
+    kind: "gold-dragon", name: "Gold Dragon", temperament: "Hostile", hostile: true,
+    health: 620, damage: 47, xp: 330, speed: 1.2, chaseSpeed: 5.05, turnRate: 2.72, attackRange: 5.6,
+    footOffset: 0.75, radius: 2.82, height: 3.72, habitat: "Vanishingly rare gilded cathedral-lairs beneath sunlit plateaus and old Wildwood crowns", active: "Daylight and all hours within a guarded lair",
+    behavior: "Claims the upper vault of its cavern like a throne, flashes layered mirror-scales to blind intruders, and casts a spinning solar disc through whole galleries before following with white-gold breath and crushing talons.",
+    lore: "Gold Dragons are not hoarders because they resemble treasure. Their living scales refine trace metals into radiant plates, and an elder's heartbeat can turn a dark cavern briefly into noon.",
+    colors: [0x8f651a, 0xe1b540, 0xfff1a1], family: "dragon", movement: "flying", flying: true, ranged: true, persistent: true,
+    dragonType: "gold", tameable: true, tameItems: [Item.RawDragonMeat, Item.CookedDragonMeat], breedable: true,
+    breedingFoods: [Item.GoldBreedingCatalyst], diet: [Item.RawMeat, Item.CookedMeat, Item.RawDragonMeat, Item.CookedDragonMeat],
+    rideable: true, cargoChestLimit: 2, laysEggs: true,
+    drops: [
+      { item: Item.RawDragonMeat, min: 6, max: 34, chance: 1 }, { item: Item.GoldDragonScale, min: 8, max: 64, chance: 1 },
+      { item: Item.DragonBone, min: 8, max: 54, chance: 1 }, { item: Item.GoldDragonSkull, min: 1, max: 1, chance: 1 },
+      { item: Item.GoldDragonHeart, min: 1, max: 1, chance: 0.74 },
+    ],
+    postTameNotes: "Stage-three Gold Dragons accept saddles and Solar-Regalia armor. Their mounted solar disc reaches farther than common dragon projectiles, while their luminous wingbeats remain visible through darkness.",
+    secretHint: "Gold eggs awaken only on gilded stone beneath direct sunlight, unless stabilized in a Draconic Incubator.",
+    discoveryHint: "Exceptional cartographers may offer a Gold Lair Survey; otherwise search for daylight-bright seams descending beneath isolated plateaus.",
+  },
+  "silver-dragon": {
+    kind: "silver-dragon", name: "Silver Dragon", temperament: "Hostile", hostile: true,
+    health: 600, damage: 45, xp: 320, speed: 1.3, chaseSpeed: 5.35, turnRate: 3.05, attackRange: 5.8,
+    footOffset: 0.75, radius: 2.7, height: 3.62, habitat: "Vanishingly rare argent mirror-caverns below Moon Slate ridges and the deepest Glimmerwood", active: "Moonlit nights and all hours within a guarded lair",
+    behavior: "Hunts in long silent arcs, folds its mirror-wings until it nearly disappears against stone, then releases a crescent projectile that chills everything along its path before striking with a serpentine bite.",
+    lore: "Silver Dragon scales remember every night sky reflected across them. Elders carry whole constellations in their flanks, rearranging the lights when they dream.",
+    colors: [0x49566a, 0xbac8d8, 0xf6fbff], family: "dragon", movement: "flying", flying: true, ranged: true, persistent: true,
+    dragonType: "silver", tameable: true, tameItems: [Item.RawDragonMeat, Item.CookedDragonMeat, Item.RawFish], breedable: true,
+    breedingFoods: [Item.SilverBreedingCatalyst], diet: [Item.RawMeat, Item.CookedMeat, Item.RawFish, Item.RawDragonMeat, Item.CookedDragonMeat],
+    rideable: true, cargoChestLimit: 2, laysEggs: true,
+    drops: [
+      { item: Item.RawDragonMeat, min: 6, max: 34, chance: 1 }, { item: Item.SilverDragonScale, min: 8, max: 64, chance: 1 },
+      { item: Item.DragonBone, min: 8, max: 54, chance: 1 }, { item: Item.SilverDragonSkull, min: 1, max: 1, chance: 1 },
+      { item: Item.SilverDragonHeart, min: 1, max: 1, chance: 0.74 },
+    ],
+    postTameNotes: "Stage-three Silver Dragons accept saddles and Moonmirror armor. Their crescent attack is the fastest dragon projectile and leaves distant targets slowed beneath a cold afterglow.",
+    secretHint: "Silver eggs awaken only on argent stone beneath open moonlight, unless stabilized in a Draconic Incubator.",
+    discoveryHint: "Exceptional cartographers may offer a Silver Lair Survey; otherwise follow cold, star-shaped reflections into deep Moon Slate caverns.",
+  },
   meadowwing: {
     kind: "meadowwing", name: "Meadowwing", temperament: "Gentle", hostile: false,
     health: 1, damage: 0, xp: 0, speed: 1.3, chaseSpeed: 1.8, turnRate: 9, attackRange: 0,
@@ -1898,7 +1936,7 @@ export const AQUARIUM_MOB_ORDER: AquariumMobKind[] = [
   "embercrown-sea-slug", "kelpwarden-sea-slug", "starlight-choir-sea-slug", "voidglass-sea-slug",
   "pocket-goldfish", "sunwheel-angelfish", "stonewhisker-loach",
 ];
-export const DRAGON_ORDER: DragonKind[] = ["fire-dragon", "ice-dragon", "steel-dragon", "sea-dragon"];
+export const DRAGON_ORDER: DragonKind[] = ["fire-dragon", "ice-dragon", "steel-dragon", "sea-dragon", "gold-dragon", "silver-dragon"];
 export const HOBBIT_ORDER: HobbitKind[] = [
   "hobbit-mayor", "hobbit-farmer", "hobbit-miner", "hobbit-merchant", "hobbit-banker", "hobbit-hammer-guard", "hobbit-crossbow-guard",
 ];

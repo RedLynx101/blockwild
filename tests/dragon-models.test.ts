@@ -91,13 +91,15 @@ test("pose hooks articulate jaws, wings, tails, legs, breathing, attacks, sex, a
   assert.equal(named(root, "steel-dragon-saddle").visible, true, "pose-only updates preserve equipped visuals");
 });
 
-test("the four silhouettes carry distinct elemental anatomy in production portraits", () => {
+test("all six silhouettes carry distinct elemental anatomy in production portraits", () => {
   const specs = createMobInspectionSpecs().filter((spec) => DRAGON_ORDER.includes(spec.id as (typeof DRAGON_ORDER)[number]));
   assert.deepEqual(specs.map((spec) => spec.id), DRAGON_ORDER);
   const fire = specs[0];
   const ice = specs[1];
   const steel = specs[2];
   const sea = specs[3];
+  const gold = specs[4];
+  const silver = specs[5];
   assert.ok(fire.boxes.some((box) => box.id.includes("tail-flame")));
   assert.ok(ice.boxes.some((box) => box.id.includes("ice-tail-fin")));
   assert.ok(steel.boxes.filter((box) => box.id.includes("riveted-plate")).length >= 10);
@@ -110,6 +112,14 @@ test("the four silhouettes carry distinct elemental anatomy in production portra
   assert.ok(sea.boxes.some((box) => box.id === "sea-dragon-tideglass-sternum"));
   assert.ok(sea.boxes.some((box) => box.id.includes("current-whisker")));
   assert.ok(sea.boxes.some((box) => box.id.includes("ray-sail-rib")));
+  assert.ok(gold.boxes.some((box) => box.id.includes("solar-heart-core")));
+  assert.ok(gold.boxes.filter((box) => box.id.includes("gilded-flight-feather")).length >= 8);
+  assert.ok(gold.boxes.some((box) => box.id.includes("solar-tail-disc")));
+  assert.ok(gold.boxes.some((box) => box.id.includes("sun-crown-ray")));
+  assert.ok(silver.boxes.some((box) => box.id.includes("lunar-heart-core")));
+  assert.ok(silver.boxes.filter((box) => box.id.includes("mirror-wing-blade")).length >= 8);
+  assert.ok(silver.boxes.some((box) => box.id.includes("lunar-tail-blade")));
+  assert.ok(silver.boxes.some((box) => box.id.includes("crescent-cheek")));
   for (const spec of specs) {
     const portrait = renderModelPortrait(spec);
     assert.match(portrait, /front three-quarter model portrait/u);

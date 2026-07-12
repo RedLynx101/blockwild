@@ -40,11 +40,13 @@ import {
 import { DRAGON_MOB_KINDS as FAUNA_DRAGONS, isDragonMobKind, shouldKeepCreatureLoaded } from "../app/game/fauna.ts";
 import { DRAGON_ORDER, MOB_DEFS } from "../app/game/mobs.ts";
 
-test("the canonical roster exposes four persistent, fully described dragon species", () => {
-  assert.deepEqual(DRAGON_ORDER, ["fire-dragon", "ice-dragon", "steel-dragon", "sea-dragon"]);
+test("the canonical roster exposes six persistent, fully described dragon species", () => {
+  assert.deepEqual(DRAGON_ORDER, ["fire-dragon", "ice-dragon", "steel-dragon", "sea-dragon", "gold-dragon", "silver-dragon"]);
   assert.deepEqual(FAUNA_DRAGONS, DRAGON_ORDER);
   assert.equal(dragonKindForType("steel"), "steel-dragon");
   assert.equal(dragonKindForType("sea"), "sea-dragon");
+  assert.equal(dragonKindForType("gold"), "gold-dragon");
+  assert.equal(dragonTypeForKind("silver-dragon"), "silver");
   assert.equal(dragonTypeForKind("ice-dragon"), "ice");
   assert.equal(dragonTypeForKind("sea-dragon"), "sea");
   assert.equal(dragonTypeForKind("ridgeback"), null);
@@ -157,6 +159,10 @@ test("natural and incubator hatching honor each element's world condition", () =
   assert.deepEqual(dragonEggCondition("fire", { openFlame: true }).met, true);
   assert.deepEqual(dragonEggCondition("ice", { submerged: true, freezing: true }).met, true);
   assert.deepEqual(dragonEggCondition("steel", { heatedMetal: true, steam: true }).met, true);
+  assert.deepEqual(dragonEggCondition("gold", { directSunlight: true, preciousMetal: true }).met, true);
+  assert.deepEqual(dragonEggCondition("silver", { moonlight: true, preciousMetal: true }).met, true);
+  assert.equal(dragonEggCondition("gold", { directSunlight: true }).met, false);
+  assert.equal(dragonEggCondition("silver", { preciousMetal: true }).met, false);
   assert.equal(dragonEggCondition("steel", { heatedMetal: true }).met, false);
 
   const fire = createDragonEgg("fire", { geneticSeed: 12, eggId: "fire-clutch" });

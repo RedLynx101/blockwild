@@ -6,7 +6,7 @@ import { planSeaDragonNest, type SeaDragonNestPlan } from "./v1-cultures";
 export const DRAGON_LAIR_REGION_BLOCKS = 44 * 16;
 export const DRAGON_LAIR_STAGE_FIVE_CHANCE = 0.22;
 
-export type DragonType = "fire" | "ice" | "steel";
+export type DragonType = "fire" | "ice" | "steel" | "gold" | "silver";
 export type DragonSex = "male" | "female";
 export type DragonLairStage = 4 | 5;
 export type DragonSurveyType = DragonType | "sea";
@@ -145,7 +145,9 @@ function hashUnit(seed: string | number, salt: string) {
 
 function dragonTypeFor(seed: string | number, regionX: number, regionZ: number): DragonType {
   const roll = hashUnit(seed, `dragon-type:${regionX},${regionZ}`);
-  return roll < 1 / 3 ? "fire" : roll < 2 / 3 ? "ice" : "steel";
+  // Metallic mythics occupy only seven percent of generated lairs combined.
+  // Their survey charters remain deterministic, but unaided discovery is exceptional.
+  return roll < 0.31 ? "fire" : roll < 0.62 ? "ice" : roll < 0.93 ? "steel" : roll < 0.965 ? "gold" : "silver";
 }
 
 export const DRAGON_LAIR_PALETTES: Readonly<Record<DragonType, Readonly<{
@@ -159,6 +161,8 @@ export const DRAGON_LAIR_PALETTES: Readonly<Record<DragonType, Readonly<{
   fire: { wall: BlockId.CharredDragonstone, eggBlock: BlockId.FireDragonEggBlock, eggItem: Item.FireDragonEgg, heartItem: Item.FireDragonHeart, scaleItem: Item.FireDragonScale, surveyItem: Item.FireLairSurvey },
   ice: { wall: BlockId.RimeDragonstone, eggBlock: BlockId.IceDragonEggBlock, eggItem: Item.IceDragonEgg, heartItem: Item.IceDragonHeart, scaleItem: Item.IceDragonScale, surveyItem: Item.IceLairSurvey },
   steel: { wall: BlockId.RivetedDragonstone, eggBlock: BlockId.SteelDragonEggBlock, eggItem: Item.SteelDragonEgg, heartItem: Item.SteelDragonHeart, scaleItem: Item.SteelDragonScale, surveyItem: Item.SteelLairSurvey },
+  gold: { wall: BlockId.GildedDragonstone, eggBlock: BlockId.GoldDragonEggBlock, eggItem: Item.GoldDragonEgg, heartItem: Item.GoldDragonHeart, scaleItem: Item.GoldDragonScale, surveyItem: Item.GoldLairSurvey },
+  silver: { wall: BlockId.ArgentDragonstone, eggBlock: BlockId.SilverDragonEggBlock, eggItem: Item.SilverDragonEgg, heartItem: Item.SilverDragonHeart, scaleItem: Item.SilverDragonScale, surveyItem: Item.SilverLairSurvey },
 });
 
 export const DRAGON_EGG_HATCH_RULES = Object.freeze({
@@ -166,6 +170,8 @@ export const DRAGON_EGG_HATCH_RULES = Object.freeze({
   ice: Object.freeze({ naturalCondition: "freezing-water", incubationSeconds: 360, description: "Submerge the placed egg in source water ringed by ice for six uninterrupted minutes." }),
   steel: Object.freeze({ naturalCondition: "pressurized-steam", incubationSeconds: 420, description: "Keep the egg between water and a safe heat source so steam cycles across its shell." }),
   sea: Object.freeze({ naturalCondition: "living-coral-current", incubationSeconds: 360, description: "Submerge the placed egg beside living coral for six uninterrupted minutes." }),
+  gold: Object.freeze({ naturalCondition: "gilded-sunlight", incubationSeconds: 600, description: "Rest the egg on gilded stone beneath an open sky for ten uninterrupted daylight minutes." }),
+  silver: Object.freeze({ naturalCondition: "argent-moonlight", incubationSeconds: 600, description: "Rest the egg on argent stone beneath an open sky for ten uninterrupted moonlit minutes." }),
 });
 
 /** Female stage-five lairs may carry extra eggs; males never generate eggs. */
@@ -234,7 +240,12 @@ export function planDragonLairForRegion(input: DragonLairRegionInput): DragonLai
 
   const markers: StructureMarker[] = [];
   const chestCount = stage === 5 ? 4 : 3;
-  const tomeKeys = type === "fire" ? ["tome-flame-jet", "tome-blinkstep"] : type === "ice" ? ["tome-frost-lance", "tome-arcane-ward"] : ["tome-steel-spear", "tome-healing-light"];
+  const tomeKeys = type === "fire" ? ["tome-flame-jet", "tome-blinkstep"]
+    : type === "ice" ? ["tome-frost-lance", "tome-arcane-ward"]
+      : type === "gold" ? ["tome-healing-light", "tome-flame-jet"]
+        : type === "silver" ? ["tome-arcane-ward", "tome-frost-lance"]
+          : ["tome-steel-spear", "tome-healing-light"];
+  const scaleLootKey = `${type}-dragon-scale`;
   for (let index = 0; index < chestCount; index += 1) {
     const angle = (index / chestCount) * Math.PI * 2 + hashUnit(seed, `chest-angle:${regionX},${regionZ}`);
     const position = { x: centerX + Math.round(Math.cos(angle) * (radiusX - 4)), y: floorY, z: centerZ + Math.round(Math.sin(angle) * (radiusZ - 4)) };
@@ -248,7 +259,7 @@ export function planDragonLairForRegion(input: DragonLairRegionInput): DragonLai
       loot: [
         { itemKey: "gold-ingot", count: 5 + Math.floor(hashUnit(seed, `chest-gold:${index}`) * (stage === 5 ? 18 : 10)) },
         { itemKey: "crystal-shard", count: 2 + Math.floor(hashUnit(seed, `chest-crystal:${index}`) * 7) },
-        { itemKey: type === "fire" ? "fire-dragon-scale" : type === "ice" ? "ice-dragon-scale" : "steel-dragon-scale", count: stage === 5 ? 5 : 3 },
+        { itemKey: scaleLootKey, count: stage === 5 ? 5 : 3 },
         ...(rareRoll < 0.2 ? [{ itemKey: tomeKeys[index % tomeKeys.length], count: 1 }] : []),
         ...(rareRoll > 0.92 ? [{ itemKey: index % 2 ? "blueprint-dragonbone-arms" : "blueprint-dragon-scale-armor", count: 1 }] : []),
       ],

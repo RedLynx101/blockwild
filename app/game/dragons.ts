@@ -17,7 +17,7 @@ export const DRAGON_SCALE_SHED_TICKS = DRAGON_TICKS_PER_DAY * 3;
 export const DRAGON_BREED_COOLDOWN_TICKS = DRAGON_TICKS_PER_DAY * 2;
 export const DRAGON_EGG_INCUBATION_TICKS = 7_200;
 
-export type DragonType = "fire" | "ice" | "steel" | "sea";
+export type DragonType = "fire" | "ice" | "steel" | "sea" | "gold" | "silver";
 export type DragonKind = `${DragonType}-dragon`;
 export type DragonStage = 1 | 2 | 3 | 4 | 5;
 export type DragonSex = "female" | "male";
@@ -97,6 +97,9 @@ export type DragonIncubationEnvironment = Readonly<{
   heatedMetal?: boolean;
   steam?: boolean;
   livingCoral?: boolean;
+  directSunlight?: boolean;
+  moonlight?: boolean;
+  preciousMetal?: boolean;
   incubator?: boolean;
 }>;
 
@@ -108,7 +111,7 @@ export type DragonEggStep = Readonly<{
   condition: string;
 }>;
 
-export const DRAGON_TYPES = Object.freeze(["fire", "ice", "steel", "sea"] as const);
+export const DRAGON_TYPES = Object.freeze(["fire", "ice", "steel", "sea", "gold", "silver"] as const);
 export const DRAGON_SEXES = Object.freeze(["female", "male"] as const);
 export const DRAGON_COMMANDS = Object.freeze(["follow", "stay", "guard-lair", "wander"] as const);
 export const DRAGON_ARMOR_SLOTS = Object.freeze(["head", "neck", "body", "tail"] as const);
@@ -199,7 +202,9 @@ export function dragonGrowthScale(ageTicks: number) {
   return anchors[segment] + (anchors[segment + 1] - anchors[segment]) * clampFinite(progress, 0, 1, 0);
 }
 
-const TYPE_HEALTH_MULTIPLIER: Readonly<Record<DragonType, number>> = Object.freeze({ fire: 1, ice: 1.04, steel: 1.14, sea: 1.08 });
+const TYPE_HEALTH_MULTIPLIER: Readonly<Record<DragonType, number>> = Object.freeze({
+  fire: 1, ice: 1.04, steel: 1.14, sea: 1.08, gold: 1.24, silver: 1.2,
+});
 const STAGE_HEALTH = Object.freeze([0, 34, 88, 188, 328, 500] as const);
 
 export function dragonMaxHealth(type: DragonType, stage: DragonStage, ageTicks = 0) {
@@ -541,6 +546,8 @@ export function dragonEggCondition(type: DragonType, environment: DragonIncubati
   if (type === "fire") return { met: environment.openFlame === true, description: "Keep the egg in an open flame" } as const;
   if (type === "ice") return { met: environment.submerged === true && environment.freezing === true, description: "Submerge the egg in freezing water" } as const;
   if (type === "sea") return { met: environment.submerged === true && environment.livingCoral === true, description: "Submerge the egg beside living coral" } as const;
+  if (type === "gold") return { met: environment.directSunlight === true && environment.preciousMetal === true, description: "Rest the egg on gilded stone beneath direct sunlight" } as const;
+  if (type === "silver") return { met: environment.moonlight === true && environment.preciousMetal === true, description: "Rest the egg on argent stone beneath moonlight" } as const;
   return { met: environment.heatedMetal === true && environment.steam === true, description: "Rest the egg on heated metal in active steam" } as const;
 }
 
@@ -589,7 +596,7 @@ export type DragonAttackPlan = Readonly<{
   velocity: number;
   color: number;
   secondaryColor: number;
-  shape: "bite-claw" | "cone-stream" | "fireball" | "ice-shard" | "metal-spear" | "brine-lance";
+  shape: "bite-claw" | "cone-stream" | "fireball" | "ice-shard" | "metal-spear" | "brine-lance" | "solar-disc" | "moon-crescent";
   status: "burning" | "slowed" | "scalded" | "knockback";
   statusSeconds: number;
   sound: string;
@@ -601,11 +608,13 @@ const TYPE_COLORS: Readonly<Record<DragonType, readonly [number, number]>> = Obj
   ice: [0x7fd9ff, 0xe9fbff],
   steel: [0x83939b, 0xd8edf0],
   sea: [0x43b9c6, 0xc5ffff],
+  gold: [0xffb51b, 0xfff4a8],
+  silver: [0x9fb9d8, 0xf8fdff],
 });
 
 export function dragonAttackPlan(type: DragonType, stage: DragonStage, kind: DragonAttackKind): DragonAttackPlan {
   const [color, secondaryColor] = TYPE_COLORS[type];
-  const base = stage * (type === "steel" ? 8.2 : type === "fire" ? 8.6 : type === "sea" ? 8.1 : 8);
+  const base = stage * (type === "gold" ? 9.25 : type === "silver" ? 8.9 : type === "steel" ? 8.2 : type === "fire" ? 8.6 : type === "sea" ? 8.1 : 8);
   if (kind === "melee") {
     return {
       kind, damage: Math.round(base * 1.08), range: 1.8 + stage * 0.72, cooldownSeconds: Math.max(0.58, 1.2 - stage * 0.08), velocity: 0,
@@ -616,16 +625,16 @@ export function dragonAttackPlan(type: DragonType, stage: DragonStage, kind: Dra
   if (kind === "breath") {
     return {
       kind, damage: Math.round(base * 0.68), range: 6 + stage * 2.15, cooldownSeconds: Math.max(3.4, 6.2 - stage * 0.35), velocity: 12 + stage * 1.5,
-      color, secondaryColor, shape: "cone-stream", status: type === "fire" ? "burning" : type === "ice" || type === "sea" ? "slowed" : "scalded",
+      color, secondaryColor, shape: "cone-stream", status: type === "fire" || type === "gold" ? "burning" : type === "ice" || type === "sea" || type === "silver" ? "slowed" : "scalded",
       statusSeconds: 1.5 + stage * 0.55, sound: `${type}-dragon-breath`, particles: type === "steel" ? [0xd8edf0, 0x9fb4bb, 0xffffff] : [color, secondaryColor, 0xffffff],
     };
   }
-  const shape = type === "steel" ? "metal-spear" : type === "ice" ? "ice-shard" : type === "sea" ? "brine-lance" : "fireball";
+  const shape = type === "gold" ? "solar-disc" : type === "silver" ? "moon-crescent" : type === "steel" ? "metal-spear" : type === "ice" ? "ice-shard" : type === "sea" ? "brine-lance" : "fireball";
   return {
-    kind, damage: Math.round(base * (type === "steel" ? 1.25 : type === "sea" ? 1.02 : 0.92)), range: type === "steel" ? 34 + stage * 4 : type === "sea" ? 26 + stage * 3.5 : 18 + stage * 3,
-    cooldownSeconds: type === "steel" ? Math.max(4.6, 7.8 - stage * 0.4) : type === "sea" ? Math.max(3.8, 6.2 - stage * 0.32) : Math.max(3.2, 5.4 - stage * 0.3),
-    velocity: type === "steel" ? 28 + stage * 3 : type === "sea" ? 31 + stage * 2.6 : 18 + stage * 2.4, color, secondaryColor, shape,
-    status: type === "fire" ? "burning" : type === "ice" || type === "sea" ? "slowed" : "knockback", statusSeconds: 1 + stage * 0.35,
+    kind, damage: Math.round(base * (type === "gold" ? 1.32 : type === "silver" ? 1.2 : type === "steel" ? 1.25 : type === "sea" ? 1.02 : 0.92)), range: type === "gold" || type === "silver" ? 38 + stage * 4.2 : type === "steel" ? 34 + stage * 4 : type === "sea" ? 26 + stage * 3.5 : 18 + stage * 3,
+    cooldownSeconds: type === "gold" || type === "silver" ? Math.max(4.8, 8.1 - stage * 0.42) : type === "steel" ? Math.max(4.6, 7.8 - stage * 0.4) : type === "sea" ? Math.max(3.8, 6.2 - stage * 0.32) : Math.max(3.2, 5.4 - stage * 0.3),
+    velocity: type === "gold" ? 34 + stage * 3.2 : type === "silver" ? 38 + stage * 3.4 : type === "steel" ? 28 + stage * 3 : type === "sea" ? 31 + stage * 2.6 : 18 + stage * 2.4, color, secondaryColor, shape,
+    status: type === "fire" || type === "gold" ? "burning" : type === "ice" || type === "sea" || type === "silver" ? "slowed" : "knockback", statusSeconds: 1 + stage * 0.35,
     sound: `${type}-dragon-projectile`, particles: [color, secondaryColor],
   };
 }
@@ -695,9 +704,12 @@ export function chooseDragonAiIntent(state: DragonState, context: DragonAiContex
 export type DragonLootItem =
   | "RawDragonMeat" | "DragonBone"
   | "FireDragonScale" | "IceDragonScale" | "SteelDragonScale" | "SeaDragonScale"
+  | "GoldDragonScale" | "SilverDragonScale"
   | "FireDragonHeart" | "IceDragonHeart" | "SteelDragonHeart" | "SeaDragonHeart"
+  | "GoldDragonHeart" | "SilverDragonHeart"
   | "FireDragonSkull" | "IceDragonSkull" | "SteelDragonSkull" | "SeaDragonSkull"
-  | "FireDragonEgg" | "IceDragonEgg" | "SteelDragonEgg" | "SeaDragonEgg";
+  | "GoldDragonSkull" | "SilverDragonSkull"
+  | "FireDragonEgg" | "IceDragonEgg" | "SteelDragonEgg" | "SeaDragonEgg" | "GoldDragonEgg" | "SilverDragonEgg";
 
 export type DragonLoot = Readonly<{
   item: DragonLootItem;

@@ -258,6 +258,10 @@ export const COMMERCE_CATALOG: Readonly<Record<string, CommerceItem>> = Object.f
   { key: "elder-fire-lair-survey", name: "Elder Fire Lair Survey", category: "treasure", baseValue: 1_480, stackLimit: 8, tags: ["dragon", "survey", "stage-5", "very-rare"] },
   { key: "elder-ice-lair-survey", name: "Elder Ice Lair Survey", category: "treasure", baseValue: 1_480, stackLimit: 8, tags: ["dragon", "survey", "stage-5", "very-rare"] },
   { key: "elder-steel-lair-survey", name: "Elder Steel Lair Survey", category: "treasure", baseValue: 1_560, stackLimit: 8, tags: ["dragon", "survey", "stage-5", "very-rare"] },
+  { key: "gold-lair-survey", name: "Gold Lair Survey Charter", category: "treasure", baseValue: 3_800, stackLimit: 8, tags: ["dragon", "survey", "mythic"] },
+  { key: "silver-lair-survey", name: "Silver Lair Survey Charter", category: "treasure", baseValue: 3_800, stackLimit: 8, tags: ["dragon", "survey", "mythic"] },
+  { key: "elder-gold-lair-survey", name: "Elder Gold Lair Survey", category: "treasure", baseValue: 7_600, stackLimit: 8, tags: ["dragon", "survey", "stage-5", "mythic"] },
+  { key: "elder-silver-lair-survey", name: "Elder Silver Lair Survey", category: "treasure", baseValue: 7_600, stackLimit: 8, tags: ["dragon", "survey", "stage-5", "mythic"] },
   { key: "tome-flame-jet", name: "Tome of Flame Jet", category: "treasure", baseValue: 540, stackLimit: 16, tags: ["magic", "tome", "rare"] },
   { key: "tome-frost-lance", name: "Tome of Frost Lance", category: "treasure", baseValue: 560, stackLimit: 16, tags: ["magic", "tome", "rare"] },
   { key: "tome-steel-spear", name: "Tome of Steel Spear", category: "treasure", baseValue: 600, stackLimit: 16, tags: ["magic", "tome", "rare"] },
@@ -317,6 +321,8 @@ export const HOBBIT_MERCHANT_OFFERS: readonly MerchantOffer[] = [
   { itemKey: "hobbit-potion", count: 3, professions: ["alchemist"] },
   { itemKey: "fire-lair-survey", count: 1, professions: ["general", "mayor"], rareChance: 0.06 },
   { itemKey: "elder-fire-lair-survey", count: 1, professions: ["mayor"], rareChance: 0.012 },
+  { itemKey: "gold-lair-survey", count: 1, professions: ["mayor"], rareChance: 0.003 },
+  { itemKey: "elder-gold-lair-survey", count: 1, professions: ["mayor"], rareChance: 0.0006 },
   { itemKey: "tome-healing-light", count: 1, professions: ["alchemist"], rareChance: 0.08 },
   { itemKey: "tome-blinkstep", count: 1, professions: ["general"], rareChance: 0.035 },
   { itemKey: "blueprint-dragon-husbandry", count: 1, professions: ["mayor", "blacksmith"], rareChance: 0.025 },
@@ -387,6 +393,8 @@ export const SUGARCOURT_MERCHANT_OFFERS: readonly MerchantOffer[] = [
   { itemKey: "elder-fire-lair-survey", count: 1, professions: ["sugarcourt-crown-confectioner"], rareChance: 0.009 },
   { itemKey: "elder-ice-lair-survey", count: 1, professions: ["sugarcourt-crown-confectioner"], rareChance: 0.009 },
   { itemKey: "elder-steel-lair-survey", count: 1, professions: ["sugarcourt-crown-confectioner"], rareChance: 0.009 },
+  { itemKey: "gold-lair-survey", count: 1, professions: ["sugarcourt-crown-confectioner"], rareChance: 0.002 },
+  { itemKey: "silver-lair-survey", count: 1, professions: ["sugarcourt-crown-confectioner"], rareChance: 0.002 },
   { itemKey: "tome-flame-jet", count: 1, professions: ["sugarcourt-sugarboiler"], rareChance: 0.075 },
   { itemKey: "tome-blinkstep", count: 1, professions: ["sugarcourt-crown-confectioner"], rareChance: 0.045 },
   { itemKey: "blueprint-dragon-scale-armor", count: 1, professions: ["sugarcourt-candysmith"], rareChance: 0.025 },
@@ -409,6 +417,8 @@ export const WOOD_ELF_MERCHANT_OFFERS: readonly MerchantOffer[] = [
   { itemKey: "blueprint-verdant-renewal", count: 1, professions: ["wood-elf-potioner"] },
   { itemKey: "unaligned-glimmerhart-orb", count: 1, professions: ["wood-elf-grovekeeper"], rareChance: 0.32 },
   { itemKey: "unaligned-runeowl-orb", count: 1, professions: ["wood-elf-tomekeeper"], rareChance: 0.28 },
+  { itemKey: "silver-lair-survey", count: 1, professions: ["wood-elf-moonbroker", "wood-elf-elderweaver"], rareChance: 0.003 },
+  { itemKey: "elder-silver-lair-survey", count: 1, professions: ["wood-elf-elderweaver"], rareChance: 0.0006 },
 ];
 
 export const DWARF_MERCHANT_OFFERS: readonly MerchantOffer[] = [

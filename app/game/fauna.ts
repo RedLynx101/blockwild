@@ -875,7 +875,7 @@ export const SUGARPLUM_MOB_KINDS = Object.freeze([
 
 /** Dragons are lair-bound POI guardians, never ambient biome spawn-table entries. */
 export const DRAGON_MOB_KINDS = Object.freeze([
-  "fire-dragon", "ice-dragon", "steel-dragon", "sea-dragon",
+  "fire-dragon", "ice-dragon", "steel-dragon", "sea-dragon", "gold-dragon", "silver-dragon",
 ] as const satisfies readonly DragonKind[]);
 
 export function isDragonMobKind(kind: MobKind): kind is DragonKind {

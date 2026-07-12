@@ -556,6 +556,8 @@ const TILE_COLORS = [
   "#8e3324", "#bfe4f0", "#5d676e", "#2f8f96",
   // 149-150: Glimmerwood grass top/side. 151-153: v1.3.5 waypost materials.
   "#315f4d", "#263f38", "#b58c62", "#397f86", "#765268",
+  // 154-157: mythic dragonstone and metallic eggs.
+  "#6f4b17", "#4d5d73", "#d49b1f", "#aabdd2",
 ];
 
 export const MEADOW_GRASS_PALETTE = Object.freeze({
@@ -1333,6 +1335,40 @@ export function createBlockAtlas() {
         pixel(index, 7, 7, egg.core); pixel(index, 8, 9, egg.core); pixel(index, 10, 6, egg.core);
       }
       for (const [x, y] of [[2, 6], [13, 3], [12, 9], [2, 13], [14, 12], [5, 11]] as Array<[number, number]>) pixel(index, x, y, egg.speck, 0.85);
+    }
+    if (index === 154 || index === 155) {
+      const gold = index === 154;
+      const stone = gold
+        ? { base: "#5a3b13", mid: "#8d641e", bright: "#e4b93f", glow: "#fff1a0", dark: "#2f210f" }
+        : { base: "#3e4b5f", mid: "#71849c", bright: "#cbd9e7", glow: "#f5fbff", dark: "#252e3c" };
+      context.fillStyle = stone.base;
+      context.fillRect(ox, oy, tile, tile);
+      for (let y = 0; y < tile; y += 1) for (let x = 0; x < tile; x += 1) {
+        if ((x * 13 + y * 7 + index) % 29 === 0) pixel(index, x, y, stone.mid);
+        if ((x * 5 + y * 17 + index) % 41 === 0) pixel(index, x, y, stone.dark);
+      }
+      const vein = gold
+        ? [[0, 11], [1, 10], [2, 10], [3, 9], [4, 8], [5, 8], [6, 7], [7, 6], [8, 6], [9, 5], [10, 4], [11, 4], [12, 3], [13, 2], [14, 2], [15, 1]]
+        : [[0, 3], [1, 4], [2, 4], [3, 5], [4, 6], [5, 6], [6, 7], [7, 8], [8, 8], [9, 9], [10, 10], [11, 10], [12, 11], [13, 12], [14, 12], [15, 13]];
+      for (const [x, y] of vein) { pixel(index, x, y, stone.bright); if ((x + y) % 4 === 0) pixel(index, x, Math.max(0, y - 1), stone.glow); }
+      for (const [x, y] of [[2, 2], [13, 6], [4, 13], [11, 14], [8, 1]] as Array<[number, number]>) pixel(index, x, y, stone.glow, 0.9);
+    }
+    if (index === 156 || index === 157) {
+      const gold = index === 156;
+      const egg = gold
+        ? { base: "#a66d12", dark: "#5f3b0d", plate: "#e2ac2d", edge: "#ffe47a", core: "#fffbd2" }
+        : { base: "#778aa1", dark: "#3d4a5e", plate: "#b8c9dc", edge: "#e4f1ff", core: "#ffffff" };
+      context.fillStyle = egg.base;
+      context.fillRect(ox, oy, tile, tile);
+      for (let y = 0; y < tile; y += 4) for (let x = (y / 4) % 2 ? 2 : 0; x < tile; x += 4) {
+        pixel(index, x, y, egg.dark); pixel(index, x + 1, y, egg.plate); pixel(index, x, Math.min(15, y + 1), egg.plate);
+      }
+      const rune = gold
+        ? [[8, 1], [8, 2], [7, 3], [9, 3], [6, 4], [10, 4], [5, 5], [11, 5], [8, 6], [8, 7], [7, 8], [9, 8], [6, 9], [10, 9], [8, 10], [8, 11], [8, 12], [8, 13], [8, 14]]
+        : [[11, 2], [9, 2], [8, 3], [7, 4], [6, 5], [5, 7], [5, 9], [6, 11], [7, 12], [8, 13], [10, 14], [12, 13], [10, 12], [9, 11], [8, 9], [8, 7], [9, 5], [10, 4]];
+      for (const [x, y] of rune) pixel(index, x, y, egg.edge);
+      for (const [x, y] of rune.filter((_, i) => i % 4 === 0)) pixel(index, x, y, egg.core);
+      for (const [x, y] of [[2, 3], [13, 4], [3, 12], [12, 10]] as Array<[number, number]>) pixel(index, x, y, egg.core, 0.95);
     }
     // Production biome surfaces are painted last so their authored motifs
     // replace the older generic noise without disturbing unrelated blocks.

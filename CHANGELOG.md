@@ -7,7 +7,8 @@ Named releases summarize player-visible changes and the compatibility work that 
 - Added eight deterministic destinations: the faction-aligned Lantern Piehouse, Switchback Tollcamp, Tideglass Embassy, Sugarwind Teahouse, Moonpost Listening Tree, and Skyshaft Depot, plus Whistlekite Roost and Clockwork Burrow creature landmarks. Each faction waypost has one named persistent merchant-guide, local quest identity, a traveller cache, and a dialogue action that marks the nearest known large settlement of their faction.
 - Added the underground Palimpsest Vault with a reversible entrance, Errata Vestibule, Rewritten Stacks, Last Folio, staged encounters, spell loot, living-archive lighting, and an Inkmaw Curator boss.
 - Added Mossback Kites, tameable Clockwork Marmots, and the hostile Inkmaw Curator with detailed 24-29-part production rigs, portraits, exact ground contact where applicable, distinct behavior, lore, drops, and field-guide entries.
-- Added craftable Wayfarer Canvas, emissive Whisperglass, and Living-Ink-bound Storybook Brick, plus Wind Silk, Living Ink, and Clockwork Springs. Expanded the release-guarded adventure catalogue to 28 POIs, six dungeons, and 164 rendered creatures without changing the version-13 world-generator compatibility boundary.
+- Added craftable Wayfarer Canvas, emissive Whisperglass, and Living-Ink-bound Storybook Brick, plus Wind Silk, Living Ink, and Clockwork Springs. Expanded the release-guarded adventure catalogue to 28 POIs, six dungeons, and 166 rendered creatures without changing the version-13 world-generator compatibility boundary.
+- Merged the latest pushed `design-1` tip (`789bf43`) cleanly. Mythic Gold and Silver Dragons add distinct detailed rigs, five-stage lifecycles, rare lairs, celestial hatch conditions, breath effects, drops, armor modules, breeding catalysts, survey charts, merchant stock, and dedicated Bestiary portraits without colliding with the new waypost item or texture ranges.
 
 ## 1.3.0 - Echoes and Ruins - 2026-07-12
 
@@ -27,7 +28,7 @@ Named releases summarize player-visible changes and the compatibility work that 
 ### Creature design and navigation
 
 - Rebuilt the Wildwood Courser and added Rimehoof, Sunscar, Mirestride, Starbough, and forge-built Deepgear Courser variants; brought Steel and Sea Dragons up to the newer dragon art standard; and rebuilt Emberjays, Canopy Larks, Tidewing Gulls, and Frostquills as distinct layered birds.
-- Merged the latest pushed `design-1` tip (`aaa5fbf`) with its redesigned pets, crabs, mosslings, foxes, harts, deer, longhorns, terrapins, fish, expanded sea-slug family, and core wildlife while preserving the v1.3 adventure and audio work.
+- Merged the prior `design-1` wildlife redesign and its pets, crabs, mosslings, foxes, harts, deer, longhorns, terrapins, fish, expanded sea-slug family, and core wildlife while preserving the v1.3 adventure and audio work.
 - Attached both ears on all four rabbit variants through shared crown-root geometry. Birds now use a fixed-budget three-dimensional look-ahead router, safe-route caching, canopy recovery, and scored perch approaches; ground creatures reuse short proven routes, and size-aware melee reach lets larger attackers connect without standing inside a target.
 
 ### Compatibility and release assets
