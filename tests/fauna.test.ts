@@ -11,6 +11,8 @@ import {
   passiveMobKindForBiome,
   passiveMobSpawnTableForBiome,
   shouldKeepCreatureLoaded,
+  COMPANION_BOND_MOB_KINDS,
+  usesGenericCreatureBond,
   updateBirdBehavior,
   updateStableSteering,
   wildHiveResidentSpawnPlan,
@@ -76,13 +78,15 @@ import {
   HEARTHROADS_WILDLIFE_ORDER,
   HOBBIT_ORDER,
   MOB_DEFS,
+  MOSSLING_VARIANT_ORDER,
   POLLINATOR_ORDER,
   SENTIENT_MOB_ORDER,
   SUGARCOURT_ORDER,
   SURFACE_MOB_ORDER,
+  TIDEGLASS_AQUATIC_ORDER,
   WOOD_ELF_ORDER,
 } from "../app/game/mobs.ts";
-import { createMobVisual, createSkeletonArrowVisual } from "../app/game/mob-models.ts";
+import { applyCompanionPose, applyOceanCreaturePose, applyWildlifePose, createMobVisual, createSkeletonArrowVisual } from "../app/game/mob-models.ts";
 import {
   chooseCreatureRoute,
   createCreatureRouteState,
@@ -95,8 +99,8 @@ import {
 } from "../app/game/creature-pathing.ts";
 
 test("expanded ecology catalog includes mounts, livestock, thin fish, pollinators, a pet, guardian, and archer", () => {
-  assert.equal(SURFACE_MOB_ORDER.length, 22);
-  assert.equal(new Set(SURFACE_MOB_ORDER).size, 22);
+  assert.equal(SURFACE_MOB_ORDER.length, 29);
+  assert.equal(new Set(SURFACE_MOB_ORDER).size, 29);
   for (const kind of ["thimbledeer", "lanternshell", "puddlehopper", "reedstrider", "rimehoof-courser", "sunscar-courser", "mirestride-courser", "starbough-courser"] as const) {
     assert.ok(SURFACE_MOB_ORDER.includes(kind));
     assert.equal(MOB_DEFS[kind].hostile, false);
@@ -106,7 +110,9 @@ test("expanded ecology catalog includes mounts, livestock, thin fish, pollinator
   assert.deepEqual(BIRD_ORDER, ["emberjay", "canopy-lark", "tidewing-gull", "frostquill"]);
   assert.equal(AQUATIC_MOB_ORDER.length, 8);
   assert.equal(POLLINATOR_ORDER.length, 3);
-  assert.deepEqual(fishKindsForHabitat("ocean"), ["shoalfin", "pocket-goldfish", "silverthread", "blue-mackerel", "coralback", "emberribbon", "glassfin", "tidepup", "sunset-sea-slug"]);
+  assert.deepEqual(MOSSLING_VARIANT_ORDER, ["boglantern-mossling", "cindercone-mossling", "moonbloom-mossling"]);
+  assert.ok(TIDEGLASS_AQUATIC_ORDER.includes("reefglide-terrapin"));
+  assert.deepEqual(fishKindsForHabitat("ocean"), ["shoalfin", "pocket-goldfish", "silverthread", "blue-mackerel", "coralback", "tideglass-crab", "reefglide-terrapin", "emberribbon", "glassfin", "tidepup", "sunset-sea-slug"]);
   assert.deepEqual(fishKindsForHabitat("river"), ["brookdart", "reedneedle", "redfin-salmon", "pocket-goldfish"]);
   assert.deepEqual(fishKindsForHabitat("deep-ocean"), [
     "blue-mackerel", "glassfin", "silverthread", "lanternjaw", "shoalfin", "coralback", "deepwater-shark", "abyss-skater", "tidepup", "dreadcoil", "worldshell-leviathan", "aetherbell-leviathan", "pocket-goldfish", "sunset-sea-slug", "moonlace-sea-slug",
@@ -155,11 +161,14 @@ test("expanded ecology catalog includes mounts, livestock, thin fish, pollinator
   assert.equal(MOB_DEFS.skeleton.ranged, true);
   assert.equal(MOB_DEFS["reliquary-sentinel"].hostile, true);
   assert.equal(passiveMobKindForBiome(BiomeId.Meadow, 0.01), "thimbledeer");
-  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.3), "lanternshell");
-  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.45), "puddlehopper");
-  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.6), "reedstrider");
-  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.68), "mirestride-courser");
+  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.3), "puddlehopper");
+  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.45), "reedstrider");
+  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.6), "mirestride-courser");
+  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.68), "pebbletortoise");
   assert.equal(CORE_MOB_ORDER.filter((kind) => MOB_DEFS[kind].sentient).length, SENTIENT_MOB_ORDER.length);
+  assert.equal(usesGenericCreatureBond("rimecoat-hound"), true);
+  assert.equal(usesGenericCreatureBond("bramblewhisk-cat"), true);
+  assert.deepEqual(COMPANION_BOND_MOB_KINDS, ["tidepup", "sakurakit", "taffy-hound", "praline-cat", "rimecoat-hound", "bramblewhisk-cat"]);
 });
 
 test("v0.5 habitat tables place mammals, pollinators, and fish without ambient queen spam", () => {
@@ -171,13 +180,26 @@ test("v0.5 habitat tables place mammals, pollinators, and fish without ambient q
   assert.equal(passiveMobKindForBiome(BiomeId.CloudreedGlen, 0.5), "reed-dragonfly");
   assert.equal(passiveMobKindForBiome(BiomeId.River, 0.35), "reed-dragonfly");
   const wildwoodKinds = passiveMobSpawnTableForBiome(BiomeId.Wildwood).map(([kind]) => kind);
-  for (const kind of ["wild-horse", "burrowbell", "sakurakit", "meadow-cottontail", "russet-rabbit"] as const) assert.ok(wildwoodKinds.includes(kind));
+  for (const kind of ["wild-horse", "bramblewhisk-cat", "burrowbell", "sakurakit", "meadow-cottontail", "russet-rabbit"] as const) assert.ok(wildwoodKinds.includes(kind));
   assert.ok(passiveMobSpawnTableForBiome(BiomeId.Frostpine).some(([kind]) => kind === "rimehoof-courser"));
   assert.ok(passiveMobSpawnTableForBiome(BiomeId.Desert).some(([kind]) => kind === "sunscar-courser"));
   assert.ok(passiveMobSpawnTableForBiome(BiomeId.Siltfen).some(([kind]) => kind === "mirestride-courser"));
   assert.ok(passiveMobSpawnTableForBiome(BiomeId.Glimmerwood).some(([kind]) => kind === "starbough-courser"));
+  for (const [biome, expected] of [
+    [BiomeId.Siltfen, ["boglantern-mossling", "reedcrown-deer"]],
+    [BiomeId.Badlands, ["cindercone-mossling", "emberbrush-fox", "sunbloom-longhorn"]],
+    [BiomeId.Glimmerwood, ["moonbloom-mossling", "moonpetal-fox"]],
+    [BiomeId.SnowcapRange, ["frostlace-hart"]],
+  ] as const) {
+    const kinds = passiveMobSpawnTableForBiome(biome).map(([kind]) => kind);
+    for (const kind of expected) assert.ok(kinds.includes(kind), `${BiomeId[biome]} should spawn ${kind}`);
+  }
   for (const biome of [BiomeId.Snowfield, BiomeId.Frostpine, BiomeId.SnowcapRange]) {
     assert.ok(passiveMobSpawnTableForBiome(biome).some(([kind]) => kind === "frostquill"), `${BiomeId[biome]} should spawn Frostquill coveys`);
+    assert.ok(passiveMobSpawnTableForBiome(biome).some(([kind]) => kind === "rimecoat-hound"), `${BiomeId[biome]} should spawn Rimecoat Hounds`);
+  }
+  for (const biome of [BiomeId.Wildwood, BiomeId.Bloomwood, BiomeId.Birchlight, BiomeId.RainveilJungle]) {
+    assert.ok(passiveMobSpawnTableForBiome(biome).some(([kind]) => kind === "bramblewhisk-cat"), `${BiomeId[biome]} should spawn Bramblewhisk Cats`);
   }
 
   for (const biome of Object.values(BiomeId).filter((value): value is BiomeId => typeof value === "number")) {
@@ -190,6 +212,8 @@ test("v0.5 habitat tables place mammals, pollinators, and fish without ambient q
   assert.deepEqual(fishSpawnTableForHabitat("river").map(([kind]) => kind), ["brookdart", "reedneedle", "redfin-salmon", "pocket-goldfish"]);
   assert.deepEqual(fishSpawnTableForHabitat("underground").map(([kind]) => kind), ["gloomfin", "cavefilament"]);
   assert.equal(new Set(fishSpawnTableForHabitat("ocean").map(([kind]) => kind)).size, 9);
+  assert.equal(fishSpawnTableForHabitat("ocean").some(([kind]) => kind === "tideglass-crab"), true);
+  assert.equal(fishSpawnTableForHabitat("ocean").some(([kind]) => kind === "reefglide-terrapin"), true);
   assert.equal(fishSpawnTableForHabitat("ocean").some(([kind]) => kind === "deepwater-shark"), false);
   assert.equal(fishSpawnTableForHabitat("deep-ocean").some(([kind]) => kind === "deepwater-shark"), true);
   assert.ok(fishSpawnTableForHabitat("deep-ocean").some(([kind, weight]) => kind === "aetherbell-leviathan" && weight <= 0.002));
@@ -202,6 +226,10 @@ test("natural group ranges remain capped and wild hives own exactly one queen", 
   assert.equal(naturalGroupSizeForMob("starbough-courser", 0.999999), 4);
   assert.equal(naturalGroupSizeForMob("frostquill", 0), 2);
   assert.equal(naturalGroupSizeForMob("frostquill", 0.999999), 5);
+  assert.equal(naturalGroupSizeForMob("tideglass-crab", 0), 1);
+  assert.equal(naturalGroupSizeForMob("tideglass-crab", 0.999999), 3);
+  assert.equal(naturalGroupSizeForMob("rimecoat-hound", 0.999999), 3);
+  assert.equal(naturalGroupSizeForMob("bramblewhisk-cat", 0.999999), 2);
   assert.equal(naturalGroupSizeForMob("silverthread", 0), 8);
   assert.equal(naturalGroupSizeForMob("silverthread", 0.999999), 12);
   assert.equal(naturalGroupSizeForMob("mistmane", 0.5), 4);
@@ -243,6 +271,70 @@ test("redesigned birds keep species-specific production anatomy", () => {
     model.group.traverse((object) => { if (object.name) names.push(object.name); });
     for (const fragment of fragments) assert.ok(names.some((name) => name.includes(fragment)), `${kind} needs ${fragment}`);
     assert.ok(model.parts.wings.length === 2, `${kind} needs an articulated opposing wing pair`);
+  }
+});
+
+test("redesigned pets and crab variants preserve articulated runtime motion", () => {
+  for (const kind of ["taffy-hound", "rimecoat-hound", "praline-cat", "bramblewhisk-cat"] as const) {
+    const model = createMobVisual(kind, 52);
+    const tail = model.visual.getObjectByName(`${kind}-tail-root-pivot`)!;
+    const head = model.visual.getObjectByName(`${kind}-head-pivot`)!;
+    const before = { tail: tail.rotation.y, head: head.rotation.y };
+    assert.equal(applyCompanionPose(model.visual, kind, 1.75, 0.8, 1), true);
+    assert.notEqual(tail.rotation.y, before.tail, `${kind} tail should animate`);
+    assert.notEqual(head.rotation.y, before.head, `${kind} head should animate`);
+    assert.equal(model.parts.legs.length, 4, `${kind} should retain a four-leg gait rig`);
+  }
+  for (const kind of ["sunwash-crab", "tideglass-crab"] as const) {
+    const model = createMobVisual(kind, 53);
+    const leg = model.visual.getObjectByName(`${kind}-left-leg-1-pivot`)!;
+    const claw = model.visual.getObjectByName(`${kind}-right-claw-arm-pivot`)!;
+    const before = { leg: leg.rotation.x, claw: claw.rotation.z };
+    applyOceanCreaturePose(model.visual, kind, 2.1, 0.9);
+    assert.notEqual(leg.rotation.x, before.leg, `${kind} legs should scuttle`);
+    assert.notEqual(claw.rotation.z, before.claw, `${kind} claws should articulate`);
+    assert.equal(model.parts.legs.length, 8, `${kind} should retain eight walking-leg pivots`);
+    assert.equal(model.parts.arms.length, 2, `${kind} should retain two claw pivots`);
+  }
+});
+
+test("redesigned wildlife and biome variants keep distinct anatomy, gait rigs, and secondary motion", () => {
+  const groundKinds = [
+    "mossling", "boglantern-mossling", "cindercone-mossling", "moonbloom-mossling",
+    "ridgeback", "woolhorn", "sunstep-grazer", "pebbletortoise", "petalfox", "emberbrush-fox", "moonpetal-fox",
+    "thimbledeer", "frostlace-hart", "reedcrown-deer", "meadow-cow", "sunbloom-longhorn", "mistmane",
+    "burrowbell", "dewback-tapir", "peelop", "warg",
+  ] as const;
+  for (const kind of groundKinds) {
+    const model = createMobVisual(kind, 64);
+    assert.ok(model.parts.legs.length >= 2, `${kind} needs an articulated walking rig`);
+    const animated = applyWildlifePose(model.visual, kind, 2.35, 0.8, 1);
+    assert.equal(animated, true, `${kind} needs its wildlife secondary pose`);
+  }
+  for (const kind of ["deepwater-shark", "tidepup", "reefglide-terrapin"] as const) {
+    const model = createMobVisual(kind, 65);
+    const before = model.visual.getObjectByName(`${kind}-tail-root-pivot`)?.rotation.y ?? 0;
+    assert.equal(applyWildlifePose(model.visual, kind, 1.9, 0.9, 0), true);
+    const after = model.visual.getObjectByName(`${kind}-tail-root-pivot`)?.rotation.y ?? 0;
+    assert.notEqual(after, before, `${kind} needs visible propulsion motion`);
+    assert.ok(model.parts.wings.length >= 2, `${kind} needs paired articulated flippers or fins`);
+  }
+  const anatomy: Readonly<Record<string, readonly string[]>> = {
+    "frostlace-hart": ["ice-tine", "snow-star"],
+    "reedcrown-deer": ["cattail", "marsh-saddle"],
+    "sunbloom-longhorn": ["horn-tip", "sunflower"],
+    "boglantern-mossling": ["fungus-brim", "lantern-cap"],
+    "cindercone-mossling": ["cone-scale", "ember-seed"],
+    "moonbloom-mossling": ["moon-petal", "root-pad"],
+    "reefglide-terrapin": ["flipper", "coral"],
+    "emberbrush-fox": ["tail-fork", "ember-tail-core"],
+    "moonpetal-fox": ["tail-secondary", "tail-eye"],
+  };
+  for (const [kind, fragments] of Object.entries(anatomy)) {
+    const model = createMobVisual(kind as keyof typeof MOB_DEFS, 66);
+    const names: string[] = [];
+    model.group.traverse((object) => { if (object.name) names.push(object.name); });
+    for (const fragment of fragments) assert.ok(names.some((name) => name.includes(fragment)), `${kind} needs ${fragment}`);
   }
 });
 
@@ -486,6 +578,12 @@ test("creature sound events define Ridgeback and companion cues with a generic h
   assert.equal(creatureSoundCue("canopy-lark", "ambient").asset, "canopy-lark-call");
   assert.deepEqual(creatureSoundCue("tidewing-gull", "ambient").variants, ["tidewing-gull-call-b"]);
   assert.equal(creatureSoundCue("frostquill", "ambient").asset, "bird-chirp");
+  assert.deepEqual(creatureSoundCue("praline-cat", "ambient").variants, ["cat-call-b"]);
+  assert.deepEqual(creatureSoundCue("bramblewhisk-cat", "ambient").variants, ["cat-call-b"]);
+  assert.deepEqual(creatureSoundCue("taffy-hound", "ambient").variants, ["hound-call-b"]);
+  assert.deepEqual(creatureSoundCue("rimecoat-hound", "ambient").variants, ["hound-call-b"]);
+  assert.equal(creatureSoundCue("sunwash-crab", "ambient").asset, "crab-chitter");
+  assert.equal(creatureSoundCue("tideglass-crab", "ambient").asset, "crab-chitter");
 });
 
 test("connected exhibit blocks cap at 20, grow lower flowers, and store one exact butterfly per block", () => {

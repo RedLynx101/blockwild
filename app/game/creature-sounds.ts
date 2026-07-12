@@ -72,6 +72,42 @@ export const CREATURE_SOUND_EVENTS: Partial<Record<CoreMobKind, Partial<Record<C
     feed: cue("bird-chirp", "eat", 0.48, 0.08),
     breed: cue("bird-chirp", "mob", 0.6, 0.08),
   },
+  "sunwash-crab": {
+    ambient: cue("crab-chitter", "mob", 0.64, 0.07),
+    hurt: cue("crab-chitter", "attack", 0.76, 0.05),
+  },
+  "tideglass-crab": {
+    ambient: cue("crab-chitter", "mob", 0.58, 0.045),
+    hurt: cue("crab-chitter", "attack", 0.72, 0.035),
+  },
+  "praline-cat": {
+    ambient: cue("cat-call-a", "mob", 0.72, 0.045, ["cat-call-b"]),
+    hurt: cue("cat-call-b", "attack", 0.8, 0.03, ["cat-call-a"]),
+    feed: cue("cat-call-a", "eat", 0.5, 0.06, ["cat-call-b"]),
+    tame: cue("cat-call-b", "craft", 0.7, 0.035, ["cat-call-a"]),
+    breed: cue("cat-call-a", "mob", 0.6, 0.05, ["cat-call-b"]),
+  },
+  "bramblewhisk-cat": {
+    ambient: cue("cat-call-a", "mob", 0.68, 0.06, ["cat-call-b"]),
+    hurt: cue("cat-call-b", "attack", 0.78, 0.04, ["cat-call-a"]),
+    feed: cue("cat-call-a", "eat", 0.48, 0.07, ["cat-call-b"]),
+    tame: cue("cat-call-b", "craft", 0.68, 0.045, ["cat-call-a"]),
+    breed: cue("cat-call-a", "mob", 0.58, 0.06, ["cat-call-b"]),
+  },
+  "taffy-hound": {
+    ambient: cue("hound-call-a", "mob", 0.72, 0.045, ["hound-call-b"]),
+    hurt: cue("hound-call-b", "attack", 0.82, 0.03, ["hound-call-a"]),
+    feed: cue("hound-call-a", "eat", 0.5, 0.055, ["hound-call-b"]),
+    tame: cue("hound-call-b", "craft", 0.72, 0.035, ["hound-call-a"]),
+    breed: cue("hound-call-a", "mob", 0.62, 0.045, ["hound-call-b"]),
+  },
+  "rimecoat-hound": {
+    ambient: cue("hound-call-a", "mob", 0.7, 0.055, ["hound-call-b"]),
+    hurt: cue("hound-call-b", "attack", 0.8, 0.04, ["hound-call-a"]),
+    feed: cue("hound-call-a", "eat", 0.48, 0.065, ["hound-call-b"]),
+    tame: cue("hound-call-b", "craft", 0.7, 0.045, ["hound-call-a"]),
+    breed: cue("hound-call-a", "mob", 0.6, 0.055, ["hound-call-b"]),
+  },
   ridgeback: {
     ambient: cue("ridgeback-warm-huff", "mob", 0.72, 0.06),
     hurt: cue("ridgeback-stone-bellow", "attack", 0.9, 0.05),

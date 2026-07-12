@@ -37,7 +37,12 @@ export type SampleKind =
   | "birdChirp"
   | "canopyLarkCall"
   | "tidewingGullCallA"
-  | "tidewingGullCallB";
+  | "tidewingGullCallB"
+  | "catCallA"
+  | "catCallB"
+  | "houndCallA"
+  | "houndCallB"
+  | "crabChitter";
 export type SamplePlaybackOptions = { gain?: number; playbackRate?: number; detune?: number; when?: number };
 export type DragonSoundType = "fire" | "ice" | "steel" | "sea";
 export type DragonSoundEvent = "ambient" | "roar" | "hurt" | "death" | "wing" | "melee" | "breath" | "projectile" | "egg-crack";
@@ -97,6 +102,11 @@ const SAMPLES: Record<SampleKind, { source: string; gain: number }> = {
   canopyLarkCall: { source: "/sfx/canopy-lark-call.wav", gain: 0.72 },
   tidewingGullCallA: { source: "/sfx/tidewing-gull-call-a.wav", gain: 0.68 },
   tidewingGullCallB: { source: "/sfx/tidewing-gull-call-b.wav", gain: 0.72 },
+  catCallA: { source: "/sfx/cat-call-a.wav", gain: 0.72 },
+  catCallB: { source: "/sfx/cat-call-b.wav", gain: 0.75 },
+  houndCallA: { source: "/sfx/hound-call-a.wav", gain: 0.7 },
+  houndCallB: { source: "/sfx/hound-call-b.wav", gain: 0.73 },
+  crabChitter: { source: "/sfx/crab-chitter.wav", gain: 0.68 },
 };
 const MUSIC_FALLBACKS: Partial<Record<MusicScene, string>> = {
   combatA: "/music/blockwild-skyboss.mp3",

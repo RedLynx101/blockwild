@@ -355,6 +355,8 @@ test("bestiary filters and completion respond to care progress", () => {
   assert.equal(bestiaryKindsForFilter("monsters").includes("copper-scout-golem"), false);
   assert.equal(bestiaryKindsForFilter("surface").includes("copper-scout-golem"), false);
   assert.equal(bestiaryKindsForFilter("companions").includes("peelop"), true);
+  assert.equal(bestiaryKindsForFilter("companions").includes("rimecoat-hound"), true);
+  assert.equal(bestiaryKindsForFilter("companions").includes("bramblewhisk-cat"), true);
   assert.equal(bestiaryEntryCompletion(MOB_DEFS.peelop, { seen: false, kills: 0, captures: 0 }), 0);
   assert.equal(bestiaryEntryCompletion(MOB_DEFS.peelop, { seen: true, kills: 0, captures: 0, tames: 1, breeds: 1, secretUnlocked: true }), 100);
 });

@@ -56,7 +56,7 @@ import {
 } from "./world";
 import { BUTTERFLY_ORDER, MOB_DEFS, MOB_ORDER, type BirdKind, type ButterflyKind, type CoreMobKind, type MobDefinition, type MobKind } from "./mobs";
 import { createHeldToolSpec } from "./model-specs";
-import { applyDragonPose, applyOceanCreaturePose, createMobVisual, createSentientLodVisual } from "./mob-models";
+import { applyCompanionPose, applyDragonPose, applyOceanCreaturePose, applyWildlifePose, createMobVisual, createSentientLodVisual } from "./mob-models";
 import {
   DRAGON_RIDER_CONTROLS,
   attachDragonChest,
@@ -172,6 +172,7 @@ import {
   stepLeviathanGrowth,
   updateBirdBehavior,
   updateStableSteering,
+  usesCompanionBond,
   usesGenericCreatureBond,
   type BirdBehaviorState,
   type AetherbellMorphState,
@@ -695,6 +696,11 @@ const CREATURE_SAMPLE_BY_ASSET = {
   "canopy-lark-call": "canopyLarkCall",
   "tidewing-gull-call-a": "tidewingGullCallA",
   "tidewing-gull-call-b": "tidewingGullCallB",
+  "cat-call-a": "catCallA",
+  "cat-call-b": "catCallB",
+  "hound-call-a": "houndCallA",
+  "hound-call-b": "houndCallB",
+  "crab-chitter": "crabChitter",
 } as const satisfies Readonly<Record<string, SampleKind>>;
 
 export type GameSettings = {
@@ -1770,6 +1776,8 @@ export function aquaticSpawnHeight(kind: MobKind, floorY: number, waterSurfaceY:
   if (!Number.isFinite(floorY) || !Number.isFinite(waterSurfaceY) || waterSurfaceY <= floorY) return null;
   const depth = Math.max(0, waterSurfaceY - floorY - 1);
   const unit = clamp(Number.isFinite(roll) ? roll : 0.5, 0, 1);
+  if (kind === "abyss-skater") return floorY + 0.7;
+  if (kind === "tideglass-crab") return floorY + 0.65;
   if (aquaticSpawnBandForMob(kind) === "floor") return floorY + Math.max(0.58, MOB_DEFS[kind].footOffset);
   if (kind === "worldshell-leviathan") return depth >= 3 ? waterSurfaceY - 0.8 : null;
   if (kind === "aetherbell-leviathan") {
@@ -1877,7 +1885,12 @@ export function apiaryPhaseForWorldTime(worldTime: number): ApiaryPhase {
   return "night";
 }
 
-const HERD_MOB_KINDS = new Set<MobKind>(["ridgeback", "woolhorn", "sunstep-grazer", "wild-horse", "rimehoof-courser", "sunscar-courser", "mirestride-courser", "starbough-courser", "meadow-cow", "mistmane", "taffalo"]);
+const HERD_MOB_KINDS = new Set<MobKind>([
+  "ridgeback", "woolhorn", "sunstep-grazer", "thimbledeer", "frostlace-hart", "reedcrown-deer",
+  "wild-horse", "rimehoof-courser", "sunscar-courser", "mirestride-courser", "starbough-courser",
+  "meadow-cow", "sunbloom-longhorn", "mistmane", "taffalo",
+]);
+const MILKABLE_MOB_KINDS = new Set<MobKind>(["meadow-cow", "sunbloom-longhorn"]);
 
 export function socialGroupModeForMob(kind: MobKind): SocialGroupMode | null {
   if (HERD_MOB_KINDS.has(kind)) return "herd";
@@ -8617,7 +8630,7 @@ export class VoxelEngine {
         ...(mob.apiaryBee ? { apiaryBee: mob.apiaryBee } : {}),
         ...(mob.socialGroupId ? { socialGroupId: mob.socialGroupId } : {}),
         ...(mob.peelopShedding ? { peelopShedding: mob.peelopShedding } : {}),
-        ...(mob.kind === "meadow-cow" && mob.milkCooldown > 0 ? { milkCooldown: mob.milkCooldown } : {}),
+        ...(MILKABLE_MOB_KINDS.has(mob.kind) && mob.milkCooldown > 0 ? { milkCooldown: mob.milkCooldown } : {}),
         ...(mob.followCommand !== "follow" ? { followCommand: mob.followCommand } : {}),
         ...(mob.hiredByPlayerId ? { hiredByPlayerId: mob.hiredByPlayerId } : {}),
         ...(mob.attunedOrbId ? { attunedOrbId: mob.attunedOrbId } : {}),
@@ -8684,7 +8697,7 @@ export class VoxelEngine {
       apiaryBee: metadata.custom.apiaryBee ? metadata.custom.apiaryBee as unknown as ApiaryBee : null,
       socialGroupId: typeof metadata.custom.socialGroupId === "string" ? metadata.custom.socialGroupId : null,
       peelopShedding: metadata.custom.peelopShedding ? metadata.custom.peelopShedding as unknown as PeelopSheddingState : null,
-      milkCooldown: metadata.kind === "meadow-cow" ? Math.max(0, Number(metadata.custom.milkCooldown) || 0) : 0,
+      milkCooldown: MILKABLE_MOB_KINDS.has(metadata.kind) ? Math.max(0, Number(metadata.custom.milkCooldown) || 0) : 0,
       persistentPoiResident: Boolean(metadata.custom.persistentPoiResident),
       enclosed: Boolean(metadata.custom.enclosed),
       followCommand: metadata.custom.followCommand === "hold" ? "hold" : "follow",
@@ -9579,11 +9592,11 @@ export class VoxelEngine {
       this.events.onToast(state.stage === 1 ? "Offer meat patiently to earn the hatchling's trust." : `${dragon.name} guards this territory and its eggs.`);
       return;
     }
-    if (this.targetMob?.kind === "meadow-cow" && heldSlot?.item === Item.Bucket) {
+    if (this.targetMob && MILKABLE_MOB_KINDS.has(this.targetMob.kind) && heldSlot?.item === Item.Bucket) {
       const cloverback = this.targetMob;
       const remaining = Math.max(0, cloverback.milkCooldown ?? 0);
       if (remaining > 0) {
-        this.events.onToast(`This Cloverback needs another ${Math.ceil(remaining)} seconds before it can be milked again.`);
+        this.events.onToast(`This ${MOB_DEFS[cloverback.kind].name} needs another ${Math.ceil(remaining)} seconds before it can be milked again.`);
         this.placeCooldown = 0.22;
         return;
       }
@@ -10047,7 +10060,7 @@ export class VoxelEngine {
         return;
       }
     }
-    if (this.targetMob && (["tidepup", "sakurakit", "taffy-hound", "praline-cat"] as MobKind[]).includes(this.targetMob.kind)) {
+    if (this.targetMob && usesCompanionBond(this.targetMob.kind as CoreMobKind)) {
       const companion = this.targetMob;
       const ownerId = this.localPlayerId();
       companion.courserBond ??= createReedstriderBond();
@@ -13932,7 +13945,7 @@ export class VoxelEngine {
       birdState: definition.family === "bird" ? createBirdBehavior(kind as Parameters<typeof createBirdBehavior>[0], id * 0.71) : null,
       petState, careState, shadeState, reedstriderBond, courserBond, leviathanGrowth, aetherbellMorph, apiaryBee, beeHiveKey: options.beeHiveKey ?? null,
       socialGroupId, peelopShedding,
-      milkCooldown: kind === "meadow-cow" ? clamp(Number(options.milkCooldown) || 0, 0, CLOVERBACK_MILK_COOLDOWN_SECONDS) : 0,
+      milkCooldown: MILKABLE_MOB_KINDS.has(kind) ? clamp(Number(options.milkCooldown) || 0, 0, CLOVERBACK_MILK_COOLDOWN_SECONDS) : 0,
       shadeSaddle: visual.getObjectByName("shadecrawler-saddle") ?? null, visualBaseY, visualMinY,
       persistentPoiResident: options.persistentPoiResident ?? Boolean(definition.persistent),
       poiMarkerId: options.poiMarkerId ?? null,
@@ -14391,6 +14404,8 @@ export class VoxelEngine {
       mob.visual.position.y = mob.visualBaseY + (1 - scaleY) * (mob.visualMinY - mob.visualBaseY);
     } else this.applyMobScale(mob, baseScale * hurtPulse);
     applyOceanCreaturePose(mob.visual, mob.kind as CoreMobKind, mob.age, Math.min(1, moved * 4), mob.aetherbellMorph?.airProgress ?? 0);
+    applyCompanionPose(mob.visual, mob.kind as CoreMobKind, mob.age, Math.min(1, moved * 4), mob.state === "chase" || mob.state === "flee" ? 1 : 0);
+    applyWildlifePose(mob.visual, mob.kind as CoreMobKind, mob.age, Math.min(1, moved * 4), mob.state === "chase" || mob.state === "flee" || mob.state === "windup" ? 1 : 0);
   }
 
   updateBeeMob(mob: MobEntity, dt: number, distance: number, dx: number, dz: number) {
@@ -14558,7 +14573,12 @@ export class VoxelEngine {
     mob.angle = mob.steering.heading;
     const nx = mob.group.position.x + Math.cos(mob.angle) * speed * dt;
     const nz = mob.group.position.z + Math.sin(mob.angle) * speed * dt;
-    const verticalWave = Math.sin(mob.age * 0.9 + mob.id) * 0.18;
+    const seafloorCrawler = mob.kind === "tideglass-crab";
+    if (seafloorCrawler) {
+      const floorY = this.world.surfaceAt(Math.round(nx), Math.round(nz));
+      mob.baseY += (floorY + 0.65 - mob.baseY) * Math.min(1, dt * 6);
+    }
+    const verticalWave = Math.sin(mob.age * 0.9 + mob.id) * (seafloorCrawler ? 0.025 : 0.18);
     const ny = mob.baseY + verticalWave;
     const nextLiquid = this.world.getBlock(Math.floor(nx + 0.5), Math.floor(ny + 0.5), Math.floor(nz + 0.5));
     const water = mob.kind === "syrupfin" ? nextLiquid === BlockId.Syrup : blockContainsWater(nextLiquid);
@@ -14566,7 +14586,7 @@ export class VoxelEngine {
       const before = mob.group.position.clone();
       mob.group.position.set(nx, ny, nz);
       mob.group.rotation.y = -mob.angle - Math.PI / 2;
-      mob.visual.rotation.z = Math.sin(mob.age * 6 + mob.id) * 0.055;
+      mob.visual.rotation.z = seafloorCrawler ? 0 : Math.sin(mob.age * 6 + mob.id) * 0.055;
       this.animateMob(mob, before.distanceTo(mob.group.position));
     } else {
       mob.desiredAngle += Math.PI * (0.7 + (mob.id % 7) * 0.04);
@@ -17825,7 +17845,7 @@ export class VoxelEngine {
         ...(mob.apiaryBee ? { apiaryBee: { ...mob.apiaryBee } } : {}),
         ...(mob.socialGroupId ? { socialGroupId: mob.socialGroupId } : {}),
         ...(mob.peelopShedding ? { peelopShedding: { ...mob.peelopShedding } } : {}),
-        ...(mob.kind === "meadow-cow" && mob.milkCooldown > 0 ? { milkCooldown: mob.milkCooldown } : {}),
+        ...(MILKABLE_MOB_KINDS.has(mob.kind) && mob.milkCooldown > 0 ? { milkCooldown: mob.milkCooldown } : {}),
         ...(mob.factionId ? { factionId: mob.factionId } : {}),
         ...(mob.profession ? { profession: mob.profession } : {}),
         ...(mob.settlementId ? { settlementId: mob.settlementId } : {}),
