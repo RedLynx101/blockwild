@@ -48,6 +48,30 @@ export const CREATURE_SOUND_EVENTS: Partial<Record<CoreMobKind, Partial<Record<C
   "starbough-courser": NATURAL_HORSE_EVENTS,
   mistmane: NATURAL_HORSE_EVENTS,
   "deepgear-courser-golem": DEEPGEAR_HORSE_EVENTS,
+  emberjay: {
+    ambient: cue("emberjay-squawk", "mob", 0.78, 0.055),
+    hurt: cue("emberjay-squawk", "attack", 0.86, 0.035),
+    feed: cue("bird-chirp", "eat", 0.5, 0.08),
+    breed: cue("bird-chirp", "mob", 0.62, 0.07),
+  },
+  "canopy-lark": {
+    ambient: cue("canopy-lark-call", "mob", 0.74, 0.075),
+    hurt: cue("canopy-lark-call", "attack", 0.82, 0.045),
+    feed: cue("bird-chirp", "eat", 0.5, 0.08),
+    breed: cue("bird-chirp", "mob", 0.62, 0.07),
+  },
+  "tidewing-gull": {
+    ambient: cue("tidewing-gull-call-a", "mob", 0.72, 0.045, ["tidewing-gull-call-b"]),
+    hurt: cue("tidewing-gull-call-b", "attack", 0.8, 0.03, ["tidewing-gull-call-a"]),
+    feed: cue("bird-chirp", "eat", 0.46, 0.06),
+    breed: cue("bird-chirp", "mob", 0.58, 0.06),
+  },
+  frostquill: {
+    ambient: cue("bird-chirp", "mob", 0.66, 0.09),
+    hurt: cue("bird-chirp", "attack", 0.76, 0.06),
+    feed: cue("bird-chirp", "eat", 0.48, 0.08),
+    breed: cue("bird-chirp", "mob", 0.6, 0.08),
+  },
   ridgeback: {
     ambient: cue("ridgeback-warm-huff", "mob", 0.72, 0.06),
     hurt: cue("ridgeback-stone-bellow", "attack", 0.9, 0.05),

@@ -25,7 +25,7 @@ export type SurfaceMobKind =
   | "praline-cat"
   | "sprinklebug"
   | "taffalo";
-export type BirdKind = "emberjay" | "canopy-lark" | "tidewing-gull";
+export type BirdKind = "emberjay" | "canopy-lark" | "tidewing-gull" | "frostquill";
 export type AquaticMobKind = "shoalfin" | "coralback" | "brookdart" | "gloomfin" | "silverthread" | "reedneedle" | "emberribbon" | "cavefilament";
 export type PollinatorKind = "honeybee" | "hive-queen" | "reed-dragonfly";
 export type HearthroadsWildlifeKind = "burrowbell" | "dewback-tapir";
@@ -635,6 +635,16 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     colors: [0x4f9b75, 0xd9e7a4, 0x20362c], drops: [{ item: Item.Feather, min: 1, max: 2, chance: 1 }],
     family: "bird", movement: "flying", flying: true, utility: "Frequent perching marks mature trees that are suitable for saplings.",
     sentient: false, breedable: true, breedingFoods: [Item.Berry], diet: [Item.Berry, Item.Wheat],
+  },
+  frostquill: {
+    kind: "frostquill", name: "Frostquill", temperament: "Skittish", hostile: false,
+    health: 4, damage: 0, xp: 2, speed: 1.05, chaseSpeed: 3.9, turnRate: 8.8, attackRange: 0,
+    footOffset: 1.12, radius: 0.29, height: 0.46, habitat: "Frostpine boughs, Snowfields and Snowcap ledges", active: "Day and light snowfall",
+    behavior: "Scratches through powder in small coveys, freezes beneath passing shadows, and erupts into a white wingbeat when startled.",
+    lore: "Its layered winter plumage scatters the blue of deep snow. Climbers follow fresh Frostquill tracks toward sheltered passes.",
+    colors: [0xe8f1ee, 0x8eb6c7, 0x202b3a], drops: [{ item: Item.Feather, min: 1, max: 2, chance: 1 }],
+    family: "bird", movement: "flying", flying: true, breedable: true, breedingFoods: [Item.Wheat], diet: [Item.Wheat, Item.Berry],
+    utility: "Coveys favor sheltered snowy routes and make reliable weather signs.", discoveryHint: "Watch for tiny three-toed tracks crossing fresh snow below conifers.",
   },
   shoalfin: {
     kind: "shoalfin", name: "Silver Shoalfin", temperament: "Skittish", hostile: false,
@@ -1416,7 +1426,7 @@ export const SURFACE_MOB_ORDER: SurfaceMobKind[] = [
   "mirestride-courser", "starbough-courser", "meadow-cow", "mistmane", "sakurakit", "sunwash-crab",
   "taffy-hound", "praline-cat", "sprinklebug", "taffalo",
 ];
-export const BIRD_ORDER: BirdKind[] = ["emberjay", "canopy-lark", "tidewing-gull"];
+export const BIRD_ORDER: BirdKind[] = ["emberjay", "canopy-lark", "tidewing-gull", "frostquill"];
 export const AQUATIC_MOB_ORDER: AquaticMobKind[] = ["shoalfin", "coralback", "brookdart", "gloomfin", "silverthread", "reedneedle", "emberribbon", "cavefilament"];
 export const POLLINATOR_ORDER: PollinatorKind[] = ["honeybee", "hive-queen", "reed-dragonfly"];
 export const HEARTHROADS_WILDLIFE_ORDER: HearthroadsWildlifeKind[] = ["burrowbell", "dewback-tapir"];

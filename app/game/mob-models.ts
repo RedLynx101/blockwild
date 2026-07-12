@@ -8,7 +8,7 @@ import {
   RATTLEKIN_CLUB_CONTRACT,
   RIDGEBACK_GROUND_LIFT,
 } from "./model-specs";
-import { CORE_MOB_ORDER, MOB_DEFS, type CoreMobKind, type DragonKind, type MobKind } from "./mobs";
+import { CORE_MOB_ORDER, MOB_DEFS, type BirdKind, type CoreMobKind, type DragonKind, type MobKind } from "./mobs";
 import { createArrowVisual } from "./projectiles";
 
 const TAU = Math.PI * 2;
@@ -305,6 +305,153 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       const leg = pivotBox([width, length, width], legMaterial, [px, pivotY, pz], [0, -length / 2, 0], "legs", `${prefix}-${name}-leg`);
       leg.userData.phase = phase;
     }
+  };
+
+  /** Builds four deliberately different bird silhouettes on the shared wing rig. */
+  const buildBird = (birdKind: BirdKind) => {
+    const prefix = birdKind;
+    const blackMaterial = material(0x20252a);
+    const charcoalMaterial = material(0x343a3f);
+    const creamMaterial = material(0xf0e7c2);
+    const whiteMaterial = material(0xf6f7ef);
+    const emberMaterial = material(0xe97032);
+    const goldMaterial = material(0xe7b952);
+    const leafMaterial = material(0x6ca374);
+    const paleLeafMaterial = material(0xc5d89a);
+    const tideMaterial = material(0x5e879b);
+    const deepTideMaterial = material(0x29495d);
+    const iceMaterial = material(0xaed5df);
+    const snowMaterial = material(0xe8f1ee);
+    const billMaterial = birdKind === "emberjay" ? goldMaterial
+      : birdKind === "canopy-lark" ? material(0x8a653b)
+        : birdKind === "tidewing-gull" ? material(0xe5a845)
+          : material(0x3b4650);
+
+    const wing = (
+      side: -1 | 1,
+      size: [number, number, number],
+      meshMaterial: THREE.Material,
+      position: [number, number, number],
+      angle: number,
+    ) => {
+      const sideName = side < 0 ? "left" : "right";
+      const node = pivotBox(size, meshMaterial, position, [side * (size[0] * 0.42), 0, size[2] * 0.06], "wings", `${prefix}-${sideName}-wing`);
+      node.rotation.z = side * -angle;
+      node.userData.side = side;
+      node.userData.phase = 0;
+      return node;
+    };
+    const legs = (webbed = false, feathered = false) => {
+      for (const side of [-1, 1] as const) {
+        const sideName = side < 0 ? "left" : "right";
+        const leg = pivotBox([0.055, feathered ? 0.18 : 0.24, 0.055], darkMaterial, [side * 0.11, -0.2, -0.02], [0, -0.1, 0], "legs", `${prefix}-${sideName}-leg`);
+        if (feathered) add(leg, [0.17, 0.16, 0.16], snowMaterial, [0, -0.08, 0], undefined, `${prefix}-${sideName}-snow-boot`);
+        if (webbed) {
+          add(leg, [0.24, 0.035, 0.2], billMaterial, [0, -0.24, -0.07], undefined, `${prefix}-${sideName}-webbed-foot`);
+          for (let toe = -1; toe <= 1; toe += 1) add(leg, [0.035, 0.025, 0.22], billMaterial, [toe * 0.07, -0.245, -0.17], undefined, `${prefix}-${sideName}-toe-${toe + 2}`).rotation.y = toe * -0.18;
+        } else {
+          for (let toe = -1; toe <= 1; toe += 1) add(leg, [0.04, 0.03, 0.2], darkMaterial, [toe * 0.055, feathered ? -0.2 : -0.24, -0.1], undefined, `${prefix}-${sideName}-toe-${toe + 2}`).rotation.y = toe * -0.2;
+        }
+      }
+    };
+
+    if (birdKind === "emberjay") {
+      add(visual, [0.5, 0.5, 0.76], charcoalMaterial, [0, 0.06, 0.05], "body", `${prefix}-tapered-body`);
+      add(visual, [0.4, 0.36, 0.4], emberMaterial, [0, -0.02, -0.31], undefined, `${prefix}-ember-breast`);
+      add(visual, [0.38, 0.12, 0.52], bodyMaterial, [0, 0.33, 0.06], undefined, `${prefix}-back-mantle`);
+      add(visual, [0.42, 0.4, 0.44], bodyMaterial, [0, 0.37, -0.43], "head", `${prefix}-crested-head`);
+      add(visual, [0.44, 0.16, 0.26], blackMaterial, [0, 0.4, -0.66], undefined, `${prefix}-black-eye-mask`);
+      add(visual, [0.18, 0.13, 0.32], billMaterial, [0, 0.29, -0.8], undefined, `${prefix}-wedge-beak`).rotation.x = -0.06;
+      eyePair(0.13, 0.43, -0.81, 0.062, prefix);
+      for (const [index, crest] of [
+        [-0.13, 0.56, -0.36, -0.35], [0, 0.62, -0.33, -0.18], [0.13, 0.57, -0.34, 0.04],
+      ].entries()) {
+        const plume = add(visual, [0.09, 0.34 - index * 0.03, 0.1], index === 1 ? emberMaterial : bodyMaterial, [crest[0], crest[1], crest[2]], undefined, `${prefix}-swept-crest-${index + 1}`);
+        plume.rotation.x = crest[3];
+        plume.rotation.z = (index - 1) * 0.12;
+      }
+      for (const side of [-1, 1] as const) {
+        const sideName = side < 0 ? "left" : "right";
+        const node = wing(side, [0.62, 0.075, 0.7], blackMaterial, [side * 0.18, 0.17, 0.02], 0.24);
+        add(node, [0.44, 0.045, 0.56], bodyMaterial, [side * 0.25, 0.04, 0.03], undefined, `${prefix}-${sideName}-rust-covert`);
+        for (let feather = 0; feather < 3; feather += 1) add(node, [0.18, 0.04, 0.58 - feather * 0.08], feather === 1 ? emberMaterial : charcoalMaterial, [side * (0.42 + feather * 0.14), -0.01, 0.08 + feather * 0.1], undefined, `${prefix}-${sideName}-primary-${feather + 1}`).rotation.y = side * (-0.08 - feather * 0.08);
+      }
+      for (let feather = -2; feather <= 2; feather += 1) {
+        const tail = add(visual, [0.13, 0.07, 0.78 - Math.abs(feather) * 0.08], feather === 0 ? emberMaterial : blackMaterial, [feather * 0.1, 0.02, 0.63], undefined, `${prefix}-long-tail-${feather + 3}`);
+        tail.rotation.y = feather * -0.09;
+      }
+      legs();
+      return;
+    }
+
+    if (birdKind === "canopy-lark") {
+      add(visual, [0.52, 0.46, 0.7], bodyMaterial, [0, 0.04, 0.05], "body", `${prefix}-rounded-body`);
+      add(visual, [0.4, 0.36, 0.4], paleLeafMaterial, [0, -0.01, -0.29], undefined, `${prefix}-golden-breast`);
+      add(visual, [0.38, 0.36, 0.4], accentMaterial, [0, 0.32, -0.42], "head", `${prefix}-songbird-head`);
+      add(visual, [0.34, 0.12, 0.24], creamMaterial, [0, 0.23, -0.62], undefined, `${prefix}-pale-throat`);
+      add(visual, [0.14, 0.1, 0.25], billMaterial, [0, 0.26, -0.75], undefined, `${prefix}-seed-beak`).rotation.x = 0.03;
+      eyePair(0.115, 0.38, -0.71, 0.058, prefix);
+      for (const side of [-1, 1] as const) {
+        const sideName = side < 0 ? "left" : "right";
+        add(visual, [0.18, 0.08, 0.18], leafMaterial, [side * 0.16, 0.52, -0.42], undefined, `${prefix}-${sideName}-crown-tuft`).rotation.z = side * -0.16;
+        const node = wing(side, [0.58, 0.07, 0.66], leafMaterial, [side * 0.18, 0.16, 0.04], 0.22);
+        for (let feather = 0; feather < 4; feather += 1) {
+          const leaf = add(node, [0.2, 0.045, 0.48 - feather * 0.045], feather % 2 ? accentMaterial : paleLeafMaterial, [side * (0.18 + feather * 0.14), 0.03, 0.03 + feather * 0.12], undefined, `${prefix}-${sideName}-leaf-feather-${feather + 1}`);
+          leaf.rotation.y = side * (-0.08 - feather * 0.07);
+        }
+      }
+      for (const side of [-1, 1] as const) {
+        const tail = add(visual, [0.17, 0.065, 0.72], side < 0 ? bodyMaterial : accentMaterial, [side * 0.11, 0.01, 0.61], undefined, `${prefix}-${side < 0 ? "left" : "right"}-forked-tail`);
+        tail.rotation.y = side * -0.16;
+      }
+      add(visual, [0.12, 0.06, 0.5], paleLeafMaterial, [0, 0.03, 0.52], undefined, `${prefix}-tail-center`);
+      legs();
+      return;
+    }
+
+    if (birdKind === "tidewing-gull") {
+      add(visual, [0.58, 0.48, 0.88], whiteMaterial, [0, 0.05, 0.08], "body", `${prefix}-keel-body`);
+      add(visual, [0.46, 0.3, 0.5], whiteMaterial, [0, -0.04, -0.36], undefined, `${prefix}-white-breast`);
+      add(visual, [0.5, 0.14, 0.64], tideMaterial, [0, 0.32, 0.02], undefined, `${prefix}-blue-mantle`);
+      add(visual, [0.44, 0.4, 0.46], whiteMaterial, [0, 0.35, -0.5], "head", `${prefix}-gull-head`);
+      add(visual, [0.44, 0.14, 0.3], deepTideMaterial, [0, 0.51, -0.48], undefined, `${prefix}-tide-cap`);
+      add(visual, [0.2, 0.15, 0.42], billMaterial, [0, 0.25, -0.88], undefined, `${prefix}-hooked-beak`).rotation.x = -0.08;
+      add(visual, [0.12, 0.09, 0.13], material(0xd9673f), [0, 0.18, -1.08], undefined, `${prefix}-beak-tip`);
+      eyePair(0.135, 0.4, -0.79, 0.062, prefix);
+      for (const side of [-1, 1] as const) {
+        const sideName = side < 0 ? "left" : "right";
+        const node = wing(side, [0.94, 0.075, 0.76], tideMaterial, [side * 0.2, 0.18, 0.03], 0.16);
+        add(node, [0.64, 0.045, 0.6], whiteMaterial, [side * 0.34, 0.035, 0.02], undefined, `${prefix}-${sideName}-pale-coverts`);
+        for (let feather = 0; feather < 4; feather += 1) {
+          const primary = add(node, [0.25, 0.045, 0.68 - feather * 0.07], feather < 2 ? deepTideMaterial : charcoalMaterial, [side * (0.54 + feather * 0.18), -0.01, 0.08 + feather * 0.09], undefined, `${prefix}-${sideName}-swept-primary-${feather + 1}`);
+          primary.rotation.y = side * (-0.12 - feather * 0.08);
+        }
+      }
+      for (let feather = -2; feather <= 2; feather += 1) {
+        const tail = add(visual, [0.17, 0.055, 0.6 - Math.abs(feather) * 0.04], feather === 0 ? tideMaterial : whiteMaterial, [feather * 0.1, 0.05, 0.68], undefined, `${prefix}-tail-fan-${feather + 3}`);
+        tail.rotation.y = feather * -0.12;
+      }
+      legs(true);
+      return;
+    }
+
+    add(visual, [0.58, 0.58, 0.7], snowMaterial, [0, 0.05, 0.06], "body", `${prefix}-plump-body`);
+    add(visual, [0.48, 0.4, 0.42], whiteMaterial, [0, -0.01, -0.3], undefined, `${prefix}-downy-breast`);
+    add(visual, [0.4, 0.4, 0.4], snowMaterial, [0, 0.38, -0.42], "head", `${prefix}-round-head`);
+    add(visual, [0.42, 0.11, 0.25], iceMaterial, [0, 0.48, -0.43], undefined, `${prefix}-ice-brow`);
+    add(visual, [0.13, 0.11, 0.22], billMaterial, [0, 0.3, -0.72], undefined, `${prefix}-short-beak`);
+    eyePair(0.12, 0.41, -0.7, 0.06, prefix);
+    for (const side of [-1, 1] as const) {
+      const sideName = side < 0 ? "left" : "right";
+      add(visual, [0.18, 0.07, 0.06], blackMaterial, [side * 0.16, 0.4, -0.64], undefined, `${prefix}-${sideName}-winter-mask`);
+      const node = wing(side, [0.52, 0.09, 0.58], iceMaterial, [side * 0.2, 0.17, 0.06], 0.3);
+      for (let feather = 0; feather < 3; feather += 1) add(node, [0.2, 0.05, 0.42 - feather * 0.05], feather === 1 ? whiteMaterial : snowMaterial, [side * (0.17 + feather * 0.14), 0.04, 0.04 + feather * 0.12], undefined, `${prefix}-${sideName}-snow-feather-${feather + 1}`).rotation.y = side * (-0.05 - feather * 0.09);
+    }
+    for (let feather = -2; feather <= 2; feather += 1) {
+      const tail = add(visual, [0.16, 0.07, 0.48 - Math.abs(feather) * 0.04], feather % 2 ? iceMaterial : whiteMaterial, [feather * 0.09, 0.05, 0.56], undefined, `${prefix}-snow-fan-${feather + 3}`);
+      tail.rotation.y = feather * -0.14;
+    }
+    legs(false, true);
   };
 
   const buildDragon = (dragonKind: DragonKind) => {
@@ -2101,35 +2248,8 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       }
     }
     add(visual, [0.36, 0.08, 0.32], material(0xffdf9e), [0, -0.16, -0.14], undefined, "sunwash-crab-pale-apron");
-  } else if (kind === "emberjay" || kind === "canopy-lark" || kind === "tidewing-gull") {
-    const prefix = kind;
-    add(visual, [0.44, 0.4, 0.7], bodyMaterial, [0, 0.04, 0.05], "body", `${prefix}-body`);
-    add(visual, [0.34, 0.34, 0.38], accentMaterial, [0, 0.19, -0.43], "head", `${prefix}-head`);
-    const beakColor = kind === "emberjay" ? 0xe7be58 : kind === "tidewing-gull" ? 0xe5b74e : 0x765b36;
-    add(visual, [0.15, 0.12, 0.28], material(beakColor), [0, 0.13, -0.76], undefined, `${prefix}-beak`).rotation.x = -0.08;
-    eyePair(0.105, 0.25, -0.62, 0.052, prefix);
-    for (const side of [-1, 1]) {
-      const wing = pivotBox([0.5, 0.07, 0.58], darkMaterial, [side * 0.18, 0.11, 0.02], [side * 0.25, 0, 0.02], "wings", `${prefix}-${side < 0 ? "left" : "right"}-wing`);
-      wing.rotation.z = side * -0.28;
-      wing.userData.side = side;
-      // Mirroring comes from side. A PI offset here makes both wings rotate in
-      // the same world direction instead of beating as an opposing pair.
-      wing.userData.phase = 0;
-    }
-    for (const side of [-1, 0, 1]) {
-      const feather = add(visual, [0.16, 0.08, 0.54], side === 0 ? accentMaterial : bodyMaterial, [side * 0.13, 0.03, 0.59], undefined, `${prefix}-tail-${side + 2}`);
-      feather.rotation.y = side * -0.16;
-    }
-    for (const side of [-1, 1]) {
-      add(visual, [0.045, 0.22, 0.045], darkMaterial, [side * 0.1, -0.27, -0.05], "legs", `${prefix}-${side < 0 ? "left" : "right"}-leg`);
-      add(visual, [0.16, 0.035, 0.045], darkMaterial, [side * 0.1, -0.39, -0.1], undefined, `${prefix}-${side < 0 ? "left" : "right"}-foot`);
-    }
-    if (kind === "emberjay") add(visual, [0.14, 0.28, 0.12], accentMaterial, [0, 0.48, -0.35], undefined, "emberjay-crest").rotation.x = -0.24;
-    else if (kind === "tidewing-gull") {
-      add(visual, [0.36, 0.1, 0.38], material(0xf7faf5), [0, 0.06, -0.39], undefined, "tidewing-gull-white-breast");
-      add(visual, [0.36, 0.08, 0.27], material(0x456e83), [0, 0.39, -0.42], undefined, "tidewing-gull-tide-cap");
-      for (const side of [-1, 1]) add(visual, [0.2, 0.045, 0.38], material(0x294456), [side * 0.36, 0.12, 0.08], undefined, `tidewing-gull-${side < 0 ? "left" : "right"}-wingtip`);
-    } else add(visual, [0.3, 0.08, 0.3], material(0xf0e59f), [0, 0.05, -0.37], undefined, "canopy-lark-breast-mark");
+  } else if (kind === "emberjay" || kind === "canopy-lark" || kind === "tidewing-gull" || kind === "frostquill") {
+    buildBird(kind);
   } else if (kind === "warg") {
     add(visual, [1.02, 0.72, 1.58], bodyMaterial, [0, 0.35, 0.12], "body", "warg-body");
     add(visual, [0.62, 0.78, 0.6], accentMaterial, [0, 0.64, -0.58], "body", "warg-ruff");

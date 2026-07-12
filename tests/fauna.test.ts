@@ -103,7 +103,7 @@ test("expanded ecology catalog includes mounts, livestock, thin fish, pollinator
     assert.ok(MOB_DEFS[kind].discoveryHint);
     assert.ok(MOB_DEFS[kind].utility);
   }
-  assert.equal(BIRD_ORDER.length, 3);
+  assert.deepEqual(BIRD_ORDER, ["emberjay", "canopy-lark", "tidewing-gull", "frostquill"]);
   assert.equal(AQUATIC_MOB_ORDER.length, 8);
   assert.equal(POLLINATOR_ORDER.length, 3);
   assert.deepEqual(fishKindsForHabitat("ocean"), ["shoalfin", "silverthread", "blue-mackerel", "coralback", "emberribbon", "glassfin", "tidepup"]);
@@ -175,6 +175,9 @@ test("v0.5 habitat tables place mammals, pollinators, and fish without ambient q
   assert.ok(passiveMobSpawnTableForBiome(BiomeId.Desert).some(([kind]) => kind === "sunscar-courser"));
   assert.ok(passiveMobSpawnTableForBiome(BiomeId.Siltfen).some(([kind]) => kind === "mirestride-courser"));
   assert.ok(passiveMobSpawnTableForBiome(BiomeId.Glimmerwood).some(([kind]) => kind === "starbough-courser"));
+  for (const biome of [BiomeId.Snowfield, BiomeId.Frostpine, BiomeId.SnowcapRange]) {
+    assert.ok(passiveMobSpawnTableForBiome(biome).some(([kind]) => kind === "frostquill"), `${BiomeId[biome]} should spawn Frostquill coveys`);
+  }
 
   for (const biome of Object.values(BiomeId).filter((value): value is BiomeId => typeof value === "number")) {
     const kinds = passiveMobSpawnTableForBiome(biome).map(([kind]) => kind);
@@ -196,6 +199,8 @@ test("natural group ranges remain capped and wild hives own exactly one queen", 
   assert.equal(naturalGroupSizeForMob("sunstep-grazer", 0.999999), 7);
   assert.equal(naturalGroupSizeForMob("rimehoof-courser", 0), 3);
   assert.equal(naturalGroupSizeForMob("starbough-courser", 0.999999), 4);
+  assert.equal(naturalGroupSizeForMob("frostquill", 0), 2);
+  assert.equal(naturalGroupSizeForMob("frostquill", 0.999999), 5);
   assert.equal(naturalGroupSizeForMob("silverthread", 0), 8);
   assert.equal(naturalGroupSizeForMob("silverthread", 0.999999), 12);
   assert.equal(naturalGroupSizeForMob("mistmane", 0.5), 4);
@@ -222,6 +227,22 @@ test("every non-butterfly catalog entry has a detailed production model", () => 
   assert.equal(arrow.children.length, 4);
   const shade = createMobVisual("shadecrawler", -99);
   assert.equal(shade.visual.getObjectByName("shadecrawler-saddle")?.visible, false, "wild portraits hide progression equipment");
+});
+
+test("redesigned birds keep species-specific production anatomy", () => {
+  const requiredParts = {
+    emberjay: ["black-eye-mask", "swept-crest", "rust-covert", "long-tail"],
+    "canopy-lark": ["golden-breast", "crown-tuft", "leaf-feather", "forked-tail"],
+    "tidewing-gull": ["hooked-beak", "swept-primary", "tail-fan", "webbed-foot"],
+    frostquill: ["downy-breast", "winter-mask", "snow-feather", "snow-boot"],
+  } as const;
+  for (const [kind, fragments] of Object.entries(requiredParts)) {
+    const model = createMobVisual(kind as keyof typeof requiredParts, 41);
+    const names: string[] = [];
+    model.group.traverse((object) => { if (object.name) names.push(object.name); });
+    for (const fragment of fragments) assert.ok(names.some((name) => name.includes(fragment)), `${kind} needs ${fragment}`);
+    assert.ok(model.parts.wings.length === 2, `${kind} needs an articulated opposing wing pair`);
+  }
 });
 
 test("blocked Ridgeback steering holds one avoidance decision instead of rotationally twitching", () => {
@@ -460,6 +481,10 @@ test("creature sound events define Ridgeback and companion cues with a generic h
   }
   assert.equal(creatureSoundCue("deepgear-courser-golem", "ambient").asset, "deepgear-courser-whinny");
   assert.equal(creatureSoundCue("deepgear-courser-golem", "ambient").variants, undefined);
+  assert.equal(creatureSoundCue("emberjay", "ambient").asset, "emberjay-squawk");
+  assert.equal(creatureSoundCue("canopy-lark", "ambient").asset, "canopy-lark-call");
+  assert.deepEqual(creatureSoundCue("tidewing-gull", "ambient").variants, ["tidewing-gull-call-b"]);
+  assert.equal(creatureSoundCue("frostquill", "ambient").asset, "bird-chirp");
 });
 
 test("connected exhibit blocks cap at 20, grow lower flowers, and store one exact butterfly per block", () => {

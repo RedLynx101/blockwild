@@ -39,7 +39,7 @@ import {
   createAtlasBlockGeometry,
   type ChunkEditSave,
 } from "./world";
-import { BUTTERFLY_ORDER, MOB_DEFS, MOB_ORDER, type ButterflyKind, type CoreMobKind, type MobDefinition, type MobKind } from "./mobs";
+import { BUTTERFLY_ORDER, MOB_DEFS, MOB_ORDER, type BirdKind, type ButterflyKind, type CoreMobKind, type MobDefinition, type MobKind } from "./mobs";
 import { createHeldToolSpec } from "./model-specs";
 import { applyDragonPose, applyOceanCreaturePose, createMobVisual, createSentientLodVisual } from "./mob-models";
 import {
@@ -632,6 +632,11 @@ const CREATURE_SAMPLE_BY_ASSET = {
   "horse-whinny-a": "horseWhinnyA",
   "horse-whinny-b": "horseWhinnyB",
   "deepgear-courser-whinny": "deepgearCourserWhinny",
+  "emberjay-squawk": "emberjaySquawk",
+  "bird-chirp": "birdChirp",
+  "canopy-lark-call": "canopyLarkCall",
+  "tidewing-gull-call-a": "tidewingGullCallA",
+  "tidewing-gull-call-b": "tidewingGullCallB",
 } as const satisfies Readonly<Record<string, SampleKind>>;
 
 export type GameSettings = {
@@ -12710,7 +12715,7 @@ export class VoxelEngine {
     const ground = this.world.surfaceAt(Math.round(mob.group.position.x), Math.round(mob.group.position.z));
     const perch = this.birdPerchNear(mob);
     const playerSpeed = Math.hypot(this.velocity.x, this.velocity.z);
-    mob.birdState = updateBirdBehavior(mob.birdState ?? createBirdBehavior(mob.kind as "emberjay" | "canopy-lark"), {
+    mob.birdState = updateBirdBehavior(mob.birdState ?? createBirdBehavior(mob.kind as BirdKind), {
       dt,
       distanceToHuman: distance,
       humanSpeed: playerSpeed,

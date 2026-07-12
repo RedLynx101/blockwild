@@ -40,3 +40,19 @@ test("natural and Deepgear horse calls are lossless PCM WAV assets", () => {
     assert.equal(bytes.subarray(8, 12).toString("ascii"), "WAVE");
   }
 });
+
+test("species bird calls are complete lossless PCM WAV assets", () => {
+  for (const [name, minimumBytes] of [
+    ["emberjay-squawk.wav", 300_000],
+    ["bird-chirp.wav", 300_000],
+    ["canopy-lark-call.wav", 300_000],
+    ["tidewing-gull-call-a.wav", 300_000],
+    ["tidewing-gull-call-b.wav", 400_000],
+  ]) {
+    const path = resolve("public", "sfx", name);
+    assert.ok(statSync(path).size > minimumBytes, `${name} should contain the complete supplied call`);
+    const bytes = readFileSync(path).subarray(0, 12);
+    assert.equal(bytes.subarray(0, 4).toString("ascii"), "RIFF");
+    assert.equal(bytes.subarray(8, 12).toString("ascii"), "WAVE");
+  }
+});

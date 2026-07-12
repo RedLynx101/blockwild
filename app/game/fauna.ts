@@ -87,7 +87,7 @@ export function createBirdBehavior(kind: BirdKind, phase = 0): BirdBehaviorState
   return { kind, mode: "perch", timer: 1.5, perchId: null, altitude: 0.15, wingPhase: phase % TAU };
 }
 
-/** Pure state transition helper shared by both bird variants. */
+/** Pure state transition helper shared by every bird species. */
 export function updateBirdBehavior(state: BirdBehaviorState, stimulus: BirdStimulus): BirdBehaviorState {
   const dt = Math.max(0, Math.min(stimulus.dt, 0.1));
   const random = THREE.MathUtils.clamp(stimulus.random ?? 0.5, 0, 1);
@@ -234,7 +234,7 @@ function weightedMob(entries: readonly WeightedMob[], roll: number) {
   return entries.at(-1)?.[0] ?? "mossling";
 }
 
-const SNOW_PASSIVES: readonly WeightedMob[] = Object.freeze([["woolhorn", 0.54], ["canopy-lark", 0.22], ["rimehoof-courser", 0.14], ["thimbledeer", 0.1]]);
+const SNOW_PASSIVES: readonly WeightedMob[] = Object.freeze([["woolhorn", 0.54], ["frostquill", 0.18], ["canopy-lark", 0.04], ["rimehoof-courser", 0.14], ["thimbledeer", 0.1]]);
 const DESERT_PASSIVES: readonly WeightedMob[] = Object.freeze([["duneclatter", 0.52], ["emberjay", 0.24], ["sunscar-courser", 0.16], ["pebbletortoise", 0.08]]);
 const BEACH_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["sunwash-crab", 0.58], ["tidewing-gull", 0.3], ["pebbletortoise", 0.08], ["reed-dragonfly", 0.04],
@@ -282,8 +282,8 @@ const GLIMMERWOOD_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["thimbledeer", 0.07], ["canopy-lark", 0.05], ["petalfox", 0.05],
 ]);
 const SNOWCAP_PASSIVES: readonly WeightedMob[] = Object.freeze([
-  ["woolhorn", 0.42], ["copper-mole", 0.18], ["rimehoof-courser", 0.13], ["canopy-lark", 0.1],
-  ["thimbledeer", 0.09], ["pebbletortoise", 0.08],
+  ["woolhorn", 0.42], ["copper-mole", 0.18], ["rimehoof-courser", 0.13], ["frostquill", 0.12],
+  ["canopy-lark", 0.02], ["thimbledeer", 0.05], ["pebbletortoise", 0.08],
 ]);
 
 /**
@@ -353,6 +353,7 @@ export const NATURAL_GROUP_RANGES: Readonly<Partial<Record<MobKind, readonly [mi
   "deepwater-shark": [1, 1],
   "sunwash-crab": [2, 5],
   "tidewing-gull": [2, 6],
+  frostquill: [2, 5],
   glassfin: [5, 10],
   lanternjaw: [1, 3],
   "abyss-skater": [1, 2],

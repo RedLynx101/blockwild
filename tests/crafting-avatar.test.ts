@@ -331,6 +331,7 @@ test("v0.5 furniture and capture orbs use production held and drop silhouettes",
 
 test("bestiary filters and completion respond to care progress", () => {
   assert.equal(bestiaryKindsForFilter("birds").includes("emberjay"), true);
+  assert.equal(bestiaryKindsForFilter("birds").includes("frostquill"), true);
   assert.equal(bestiaryKindsForFilter("butterflies").includes("meadowwing"), true);
   assert.equal(bestiaryKindsForFilter("monsters").includes("zombie"), true);
   assert.equal(bestiaryKindsForFilter("golems").includes("copper-scout-golem"), true);

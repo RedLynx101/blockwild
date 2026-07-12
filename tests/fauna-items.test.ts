@@ -14,7 +14,7 @@ import { MOB_DEFS } from "../app/game/mobs.ts";
 import { canBreedPeelops, createPeelopState, feedPeelop, tryTamePeelop } from "../app/game/peelop.ts";
 
 test("birds and fish use their own useful drop families", () => {
-  for (const kind of ["emberjay", "canopy-lark"] as const) {
+  for (const kind of ["emberjay", "canopy-lark", "tidewing-gull", "frostquill"] as const) {
     assert.ok(MOB_DEFS[kind].drops.some((drop) => drop.item === Item.Feather && drop.chance === 1));
     assert.equal(MOB_DEFS[kind].drops.some((drop) => drop.item === Item.Fiber), false);
   }

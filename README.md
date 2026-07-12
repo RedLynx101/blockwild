@@ -209,7 +209,7 @@ React owns the interface and translates player actions into method calls on `Vox
 
 `ChunkWorld` owns deterministic generation, streamed chunk sections, geometry, terrain edits, skylight data, and nearby light indices. Generated terrain is reproducible from the seed, so saves store player-made edits rather than a copy of every generated block.
 
-`mob-models.ts` is the canonical builder for 108 core creatures, including four articulated dragon rigs, 39 sentient residents, and three golem tiers. The game engine instantiates those models directly, while the inspection script extracts their actual posed Three.js geometry for grounding checks and bestiary portraits. Eight butterfly builders complete the 116-entry field guide. `held-items.ts` reuses those builders and centralizes player-held geometry, while conservatories, attuned Capture Orbs, Waygrid archives, racks, healers, eggs, mount cargo, and faction pet sales preserve the same exact creature records.
+`mob-models.ts` is the canonical builder for 114 core creatures, including four articulated dragon rigs, 39 sentient residents, and four golem rigs. The game engine instantiates those models directly, while the inspection script extracts their actual posed Three.js geometry for grounding checks and bestiary portraits. Eight butterfly builders complete the 122-entry field guide. `held-items.ts` reuses those builders and centralizes player-held geometry, while conservatories, attuned Capture Orbs, Waygrid archives, racks, healers, eggs, mount cargo, and faction pet sales preserve the same exact creature records.
 
 The progression modules keep save-normalizable rules away from presentation code. Map transfer and travel validation live in `map-system.ts`; quest transitions in `quests.ts`; surface, aquatic, and Sugarcourt settlement planning in `settlements.ts`; authority-checked gold, trade, banking, and venture mutations in `economy.ts`; potion and distillery batches in `alchemy.ts`; atomic blueprint-gated Sugarworks batches in `candyworks.ts`; and deterministic populations, eggs, growth, morphing, cargo limits, and riding profiles in `fauna.ts`. `dragons.ts` owns dragon state independently of Three.js, `dragon-world.ts` plans lairs and bounded survey scans, `magic.ts` owns tome knowledge and cast plans, and `skills.ts` owns XP and mastery. Their React panels render engine snapshots and dispatch actions but do not become alternate simulation owners.
 
@@ -248,7 +248,7 @@ npm run benchmark:simulation
 
 `npm test` first creates and validates the production artifact, then runs the Node test suite. Core coverage includes deterministic generation, cave and river variance, chunk boundaries and streaming, save migration and failure isolation, world options, meshing, lighting, directional torches, farming and orchards, buckets, fences and leads, beds, one-code multiplayer, inventory and crafting, doors, leaves, machines and storage, creature grounding and collision, pathing and follower recovery, husbandry, apiaries, Capture Orbs, conservatories, mounts, dragon lifecycle and combat, spellcasting, rank-1000 progression, player animation, held models, water and boats, weather, map and quest transitions, blueprints, alchemy, faction authority, trade, banking, settlements, and deployment metadata. `npm run benchmark:simulation` separately profiles liquid settling, structure planning, weather/cloud planning, and radius-16 chunk ordering.
 
-The focused release suites cover all 24 biomes, tree topology and full felling, waterlogged flora, renewable water and nonrenewing food liquids, Sugarcourt production, map/weather plans, exact apiary transfers, attuned-orb faint/recall rules, three quest pins, Waygrid capacity/search/overflow/area crafting, host-authoritative reconnect state, trade atomicity, Wood Elf/Dwarf tiled settlements, Glimmerwood ecology, golem forging and defense, four five-stage dragon families, Sea Dragon nests/charts/incubation, spellcasting, per-skill Ascendant traits, responsive interfaces, and all 116 production-model portraits.
+The focused release suites cover all 24 biomes, tree topology and full felling, waterlogged flora, renewable water and nonrenewing food liquids, Sugarcourt production, map/weather plans, exact apiary transfers, attuned-orb faint/recall rules, three quest pins, Waygrid capacity/search/overflow/area crafting, host-authoritative reconnect state, trade atomicity, Wood Elf/Dwarf tiled settlements, Glimmerwood ecology, golem forging and defense, four five-stage dragon families, Sea Dragon nests/charts/incubation, spellcasting, per-skill Ascendant traits, responsive interfaces, and all 122 production-model portraits.
 
 A focused test can be run without the build wrapper:
 
@@ -264,7 +264,7 @@ npm run models:render -- --out outputs/model-inspection
 
 The command writes isometric, front, and side SVG sheets plus a machine-readable grounding manifest. PNG copies are also written when `sharp` is available.
 
-To render all 116 bestiary entries as individual front-three-quarter portraits and a field-guide sheet:
+To render all 122 bestiary entries as individual front-three-quarter portraits and a field-guide sheet:
 
 ```bash
 npm run models:render -- --creatures --portraits outputs/model-portraits --portrait-only --portrait-png
