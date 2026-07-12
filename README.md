@@ -1,6 +1,6 @@
 # Blockwild
 
-Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 biomes, cave networks, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.4.0 Living Ruins**.
+Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 biomes, cave networks, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.4.1 Wildlife Voices**.
 
 The project is a real game rather than a voxel-rendering demo. You can mine, build, craft, smelt, farm, fight, collect field notes, manage several worlds, and carry those worlds between browsers with export files.
 
@@ -9,6 +9,10 @@ The project is a real game rather than a voxel-rendering demo. You can mine, bui
 ![Blockwild field guide with all 167 rendered creatures](public/creatures/blockwild-creatures.svg)
 
 The integrated creature-design pass expands the Courser family with Rimehoof, Sunscar, Mirestride, and Starbough ecological breeds plus the forge-built Deepgear Courser. It also rebuilds the four dragon families, birds, pets, crabs, mosslings, foxes, harts, deer, longhorns, terrapins, and other core wildlife, while preserving one production-model path for gameplay, Bestiary portraits, and visual audits.
+
+## v1.4.1 Wildlife Voices
+
+Wildlife Voices merges the latest `design-1` sound pass into the complete v1.4 world. Six lossless recordings give rabbits, small companions, Runeowls, and underwater leviathans distinct calls and alternates through the existing spatial audio system, without replacing the broader environment, movement, combat, settlement, and creature soundscape.
 
 ## v1.4 Living Ruins
 

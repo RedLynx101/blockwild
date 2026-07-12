@@ -2,6 +2,13 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.4.1 - Wildlife Voices - 2026-07-12
+
+- Merged the latest pushed `design-1` commit (`f24ae37`) without altering the branch or replacing newer v1.4 systems.
+- Added six complete stereo PCM wildlife recordings for rabbits, small animals, Runeowls, and underwater leviathans.
+- Routed the new calls through the existing spatial creature-audio system: rabbit variants now squeak, mosslings and other small companions share a gentler call, Runeowls alternate two owl recordings, and Worldshell Leviathans vary their underwater growls.
+- Preserved the v1.4 HRTF positioning, environment loops, bounded voice management, and existing creature-specific audio while extending the asset and behavior regression coverage.
+
 ## 1.4.0 - Living Ruins - 2026-07-12
 
 - Rebuilt Skyglass Observatory, Emberwatch Tower, Pilgrim Bathhouse, Clockwork Burrow, and Shattered Colossus with curved, broken, stepped, tapering, or asymmetric forms instead of rectangular massing.
