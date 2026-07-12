@@ -513,6 +513,9 @@ const TILE_COLORS = [
   "#b76532", "#dda32f", "#d95d9a", "#e94f61", "#754838", "#f3a2d0", "#f6e5eb", "#e58fb9",
   // 144: dense woven Hearthkin roof that no longer reuses transparent wheat art.
   "#c7a75d",
+  // 145-148: dedicated dragon egg shells (fire, ice, steel, sea) so eggs no
+  // longer borrow bookshelf tome tiles.
+  "#8e3324", "#bfe4f0", "#5d676e", "#2f8f96",
 ];
 
 export const MEADOW_GRASS_PALETTE = Object.freeze({
@@ -1190,6 +1193,33 @@ export function createBlockAtlas() {
       context.fillRect(ox, oy, 2, tile); context.fillRect(ox + 14, oy, 2, tile);
       context.fillStyle = "#d2a463"; context.fillRect(ox + 3, oy + 3, 10, 10);
       context.fillStyle = "#8b5b31"; context.fillRect(ox + 7, oy + 3, 2, 10);
+    }
+    if (index >= 145 && index <= 148) {
+      // Dragon egg shells: mottled scales with an element-lit hairline crack
+      // (fire/ice/sea) or riveted plating (steel). Deterministic patterns keep
+      // every client's atlas identical.
+      const egg = [
+        { dark: "#6b2118", light: "#a84a31", vein: "#ff9c46", core: "#ffd27a", speck: "#38201b" },
+        { dark: "#93c3d6", light: "#e2f5fb", vein: "#67e0f2", core: "#eafdff", speck: "#ffffff" },
+        { dark: "#454d53", light: "#78848c", vein: "#2f363b", core: "#cfdbe1", speck: "#9aa7ae" },
+        { dark: "#23707a", light: "#43aeb0", vein: "#8ff2df", core: "#e8fbf4", speck: "#b7f0e2" },
+      ][index - 145];
+      context.fillStyle = base;
+      context.fillRect(ox, oy, tile, tile);
+      for (let y = 0; y < tile; y += 1) for (let x = 0; x < tile; x += 1) {
+        if ((x * 5 + y * 7) % 19 === 0) pixel(index, x, y, egg.dark);
+        else if ((x * 11 + y * 3) % 23 === 0) pixel(index, x, y, egg.light);
+      }
+      if (index === 147) {
+        for (const seam of [5, 11]) for (let x = 0; x < tile; x += 1) pixel(index, x, seam, egg.vein);
+        for (let y = 0; y < tile; y += 1) pixel(index, y < 5 ? 8 : y < 11 ? 3 : 12, y, egg.vein);
+        for (const [x, y] of [[8, 5], [3, 5], [13, 5], [3, 11], [12, 11], [8, 2], [12, 14]] as Array<[number, number]>) pixel(index, x, y, egg.core);
+      } else {
+        for (const [x, y] of [[4, 1], [5, 2], [5, 3], [6, 4], [6, 5], [7, 6], [7, 7], [8, 8], [8, 9], [9, 10], [9, 11], [10, 12], [10, 13], [11, 14]] as Array<[number, number]>) pixel(index, x, y, egg.vein);
+        for (const [x, y] of [[8, 8], [9, 7], [10, 6], [11, 6]] as Array<[number, number]>) pixel(index, x, y, egg.vein);
+        pixel(index, 7, 7, egg.core); pixel(index, 8, 9, egg.core); pixel(index, 10, 6, egg.core);
+      }
+      for (const [x, y] of [[2, 6], [13, 3], [12, 9], [2, 13], [14, 12], [5, 11]] as Array<[number, number]>) pixel(index, x, y, egg.speck, 0.85);
     }
   }
   const texture = new THREE.CanvasTexture(canvas);
@@ -3042,9 +3072,12 @@ export class ChunkWorld {
         if (definition.shape === "dragon-egg") {
           const environment = definition.layer === "emissive" ? 1 : shadeAt(lx, y, lz);
           const tile = definition.side;
-          addTexturedCuboid(bucket, lx - 0.27, y - 0.48, lz - 0.27, lx + 0.27, y - 0.3, lz + 0.27, tile, tile, tile, [1, 1, 1], environment);
-          addTexturedCuboid(bucket, lx - 0.35, y - 0.3, lz - 0.35, lx + 0.35, y + 0.18, lz + 0.35, tile, tile, tile, [1, 1, 1], environment);
-          addTexturedCuboid(bucket, lx - 0.24, y + 0.18, lz - 0.24, lx + 0.24, y + 0.42, lz + 0.24, tile, tile, tile, [1, 1, 1], environment);
+          // Five tiers read as a rounded ovoid instead of a stepped crate stack.
+          addTexturedCuboid(bucket, lx - 0.2, y - 0.5, lz - 0.2, lx + 0.2, y - 0.44, lz + 0.2, tile, tile, tile, [1, 1, 1], environment);
+          addTexturedCuboid(bucket, lx - 0.3, y - 0.44, lz - 0.3, lx + 0.3, y - 0.2, lz + 0.3, tile, tile, tile, [1, 1, 1], environment);
+          addTexturedCuboid(bucket, lx - 0.34, y - 0.2, lz - 0.34, lx + 0.34, y + 0.14, lz + 0.34, tile, tile, tile, [1, 1, 1], environment);
+          addTexturedCuboid(bucket, lx - 0.27, y + 0.14, lz - 0.27, lx + 0.27, y + 0.34, lz + 0.27, tile, tile, tile, [1, 1, 1], environment);
+          addTexturedCuboid(bucket, lx - 0.16, y + 0.34, lz - 0.16, lx + 0.16, y + 0.46, lz + 0.16, tile, tile, tile, [1, 1, 1], environment);
           continue;
         }
         if (definition.shape === "incubator") {

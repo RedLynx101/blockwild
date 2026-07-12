@@ -58,21 +58,33 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
     const shell = new THREE.Color(definition.color);
     const shellHighlight = shell.clone().lerp(new THREE.Color(0xffffff), 0.34).getHex();
     const shellShadow = shell.clone().multiplyScalar(0.52).getHex();
-    const rune = definition.dragonType === "fire" ? 0xffd166 : definition.dragonType === "ice" ? 0xe9fbff : 0xffd47a;
+    const shellDeep = shell.clone().multiplyScalar(0.72).getHex();
+    const rune = definition.dragonType === "fire" ? 0xffa050
+      : definition.dragonType === "ice" ? 0x9ff2ff
+        : definition.dragonType === "sea" ? 0x8ff2df : 0xdfe9ef;
+    // Alternate tiers rotate 45° so the stack reads as a rounded ovoid rather
+    // than a wedding cake; the fifth shell crowns it with a soft point.
     const shellPieces = [
-      addBox([0.18, 0.09, 0.18], [0, -0.15, 0], shellShadow),
-      addBox([0.3, 0.12, 0.27], [0, -0.045, 0], definition.color),
-      addBox([0.36, 0.16, 0.32], [0, 0.095, 0], definition.color),
-      addBox([0.31, 0.14, 0.29], [0, 0.245, 0], shellHighlight),
-      addBox([0.19, 0.13, 0.18], [0, 0.38, 0], shellHighlight),
+      addBox([0.2, 0.08, 0.2], [0, -0.16, 0], shellShadow, [0, Math.PI / 4, 0]),
+      addBox([0.29, 0.13, 0.27], [0, -0.06, 0], shellDeep),
+      addBox([0.33, 0.17, 0.31], [0, 0.085, 0], definition.color, [0, Math.PI / 4, 0]),
+      addBox([0.27, 0.15, 0.25], [0, 0.24, 0], definition.color),
+      addBox([0.16, 0.13, 0.15], [0, 0.365, 0], shellHighlight, [0, Math.PI / 4, 0]),
     ];
     shellPieces.forEach((piece, index) => { piece.name = `dragon-egg-shell-${index + 1}`; });
-    const crackStem = addBox([0.026, 0.13, 0.025], [0.015, 0.17, -0.172], rune, [0, 0, 0.38], true);
-    const crackLeft = addBox([0.026, 0.09, 0.025], [-0.035, 0.245, -0.172], rune, [0, 0, -0.62], true);
-    const crackRight = addBox([0.026, 0.085, 0.025], [0.075, 0.105, -0.172], rune, [0, 0, 0.72], true);
+    for (const [sx, sy, sz, dark] of [
+      [-0.11, 0.13, -0.135, false], [0.13, 0.02, -0.125, true], [-0.09, -0.05, -0.13, false], [0.05, 0.3, -0.11, true],
+    ] as Array<[number, number, number, boolean]>) {
+      addBox([0.045, 0.045, 0.02], [sx, sy, sz], dark ? shellShadow : shellHighlight).name = "dragon-egg-speckle";
+    }
+    const crackStem = addBox([0.028, 0.15, 0.025], [0.02, 0.14, -0.168], rune, [0, 0, 0.42], true);
+    const crackLeft = addBox([0.026, 0.1, 0.024], [-0.04, 0.225, -0.165], rune, [0, 0, -0.55], true);
+    const crackRight = addBox([0.026, 0.09, 0.024], [0.085, 0.06, -0.16], rune, [0, 0, 0.78], true);
     crackStem.name = "dragon-egg-rune-stem";
     crackLeft.name = "dragon-egg-rune-left";
     crackRight.name = "dragon-egg-rune-right";
+    const glint = addBox([0.05, 0.05, 0.05], [0.02, 0.45, 0], rune, [0.3, Math.PI / 4, 0.3], true);
+    glint.name = "dragon-egg-crown-glint";
     group.scale.setScalar(0.78);
     group.rotation.set(0.06, 0.28, -0.08);
     group.position.set(0, -0.03, -0.06);
