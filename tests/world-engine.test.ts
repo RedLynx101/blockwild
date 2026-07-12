@@ -23,7 +23,7 @@ import {
   type WorldSave,
 } from "../app/game/engine.ts";
 import { harvestPlant } from "../app/game/farming.ts";
-import { ChunkWorld, BIOME_NAMES, GENERATOR_VERSION, GLASS_OPACITY, MAX_Y, MIN_Y, SECTION_HEIGHT, WORLD_HEIGHT, blockIndex, chunkKey, environmentSkyShade, splitCoordinate } from "../app/game/world.ts";
+import { BAKED_LIGHT_SOURCE_LIMIT, ChunkWorld, BIOME_NAMES, GENERATOR_VERSION, GLASS_OPACITY, MAX_Y, MIN_Y, SECTION_HEIGHT, WORLD_HEIGHT, bakedEnvironmentLightShade, blockIndex, chunkKey, environmentSkyShade, splitCoordinate } from "../app/game/world.ts";
 import { MOB_DEFS, MOB_ORDER } from "../app/game/mobs.ts";
 import { createHeldToolSpec, createRidgebackSpec, createZombieSpec, INSPECTOR_MODEL_SPECS, RIDGEBACK_GROUND_LIFT } from "../app/game/model-specs.ts";
 
@@ -568,6 +568,16 @@ test("partial block shapes preserve the full cube faces beside them", () => {
   world.dispose();
 });
 
+test("placed lights bake an order-of-magnitude larger static pool without washing out daylight", () => {
+  assert.equal(BAKED_LIGHT_SOURCE_LIMIT, 80);
+  const torch = [{ x: 0, y: 2, z: 0, type: BlockId.Torch }];
+  const nearbyCave = bakedEnvironmentLightShade(0.38, 1, 2, 0, torch);
+  const distantCave = bakedEnvironmentLightShade(0.38, 40, 2, 0, torch);
+  assert.ok(nearbyCave > 0.8, "a nearby torch should reveal cave block color even outside the animated light pool");
+  assert.equal(distantCave, 0.38);
+  assert.equal(bakedEnvironmentLightShade(1, 1, 2, 0, torch), 1, "baked lights must not over-brighten daylight");
+});
+
 test("standing double chests close their visual seam", () => {
   const world = new ChunkWorld();
   world.reset("DOUBLE-CHEST-SEAM");
@@ -905,7 +915,7 @@ test("rejected solid placement records its rollback and player chests start empt
 });
 
 test("generator-v3 through v8 fallback saves advance without moving existing voxel edits", () => {
-  for (const generatorVersion of [3, 4, 5, 6, 7, 8, 9, 10]) {
+  for (const generatorVersion of [3, 4, 5, 6, 7, 8, 9, 10, 11]) {
     const previous = {
       version: 2,
       generatorVersion,

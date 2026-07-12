@@ -33,7 +33,92 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
     return mesh;
   };
 
-  if (definition.heldModel === "wildwood-chest") {
+  if (definition.iconKind === "shield") {
+    const sunmetal = /sunmetal/iu.test(definition.name);
+    const face = sunmetal ? 0xc9ad58 : 0x9a6a3b;
+    const rim = sunmetal ? 0xf0d471 : 0x5d4028;
+    addBox([0.58, 0.68, 0.09], [0, 0.06, -0.04], face);
+    addBox([0.64, 0.075, 0.13], [0, 0.37, -0.03], rim);
+    addBox([0.64, 0.075, 0.13], [0, -0.25, -0.03], rim);
+    addBox([0.075, 0.58, 0.13], [-0.285, 0.06, -0.03], rim);
+    addBox([0.075, 0.58, 0.13], [0.285, 0.06, -0.03], rim);
+    addBox([0.12, 0.12, 0.14], [0, 0.06, -0.105], sunmetal ? 0xffe69a : 0xd2a05e, [0, 0, Math.PI / 4], sunmetal);
+    addBox([0.12, 0.42, 0.08], [0, 0.06, 0.06], 0x5a3b27);
+    group.scale.setScalar(0.78);
+    group.rotation.set(0.04, Math.PI / 2, 0.04);
+    group.position.set(0, 0.1, -0.28);
+    group.userData.offhandShield = true;
+  } else if (definition.iconKind === "armor") {
+    const primary = new THREE.Color(definition.color);
+    const dark = primary.clone().multiplyScalar(0.48).getHex();
+    const light = primary.clone().lerp(new THREE.Color(0xffffff), 0.36).getHex();
+    const glow = definition.dragonType === "fire" ? 0xffbd61
+      : definition.dragonType === "ice" ? 0xd9fbff
+        : definition.dragonType === "sea" ? 0x8affec
+          : 0xd8e4e7;
+    if (definition.dragonModule === "armor") {
+      // A compact dragon-barding bundle, not a generic colored inventory
+      // brick. The four palettes now remain distinct at icon and hand scale.
+      const breast = addBox([0.45, 0.34, 0.18], [0, 0.08, 0], primary.getHex(), [0.05, 0, 0]);
+      breast.name = "dragon-armor-breastplate";
+      const crest = addBox([0.16, 0.12, 0.2], [0, 0.31, -0.01], light, [0.12, 0, Math.PI / 4]);
+      crest.name = "dragon-armor-crest";
+      for (const side of [-1, 1]) {
+        const flank = addBox([0.18, 0.3, 0.25], [side * 0.27, 0.04, 0.04], dark, [0, 0, side * -0.16]);
+        flank.name = `dragon-armor-${side < 0 ? "left" : "right"}-flank`;
+      }
+      for (const [index, x] of [-0.14, 0, 0.14].entries()) {
+        const scale = addBox([0.11, 0.075, 0.205], [x, 0.12 - Math.abs(x) * 0.2, -0.125], index === 1 ? glow : light, [0.08, 0, Math.PI / 4], index === 1);
+        scale.name = `dragon-armor-scale-${index + 1}`;
+      }
+      addBox([0.39, 0.075, 0.11], [0, -0.16, 0.09], glow, [0, 0, 0], definition.dragonType !== "steel").name = "dragon-armor-rune";
+      group.scale.setScalar(0.88);
+      group.rotation.set(0.08, 0.24, -0.09);
+    } else if (definition.equipmentSlot === "head") {
+      addBox([0.46, 0.3, 0.42], [0, 0.04, 0], primary.getHex()).name = "held-armor-helm-crown";
+      addBox([0.52, 0.08, 0.46], [0, -0.13, -0.01], dark).name = "held-armor-helm-rim";
+      addBox([0.09, 0.22, 0.45], [-0.23, -0.02, 0], light, [0, 0, -0.08]).name = "held-armor-helm-left-cheek";
+      addBox([0.09, 0.22, 0.45], [0.23, -0.02, 0], light, [0, 0, 0.08]).name = "held-armor-helm-right-cheek";
+      group.scale.setScalar(0.82);
+      group.rotation.set(0.1, 0.25, -0.08);
+    } else if (definition.equipmentSlot === "chest") {
+      addBox([0.5, 0.42, 0.18], [0, 0.04, 0], primary.getHex()).name = "held-armor-cuirass";
+      addBox([0.64, 0.14, 0.22], [0, 0.2, 0.02], light).name = "held-armor-shoulders";
+      addBox([0.42, 0.08, 0.22], [0, -0.19, 0.03], dark).name = "held-armor-waist";
+      group.scale.setScalar(0.82);
+      group.rotation.set(0.08, 0.25, -0.08);
+    } else if (definition.equipmentSlot === "legs") {
+      for (const side of [-1, 1]) addBox([0.2, 0.48, 0.2], [side * 0.14, 0.02, 0], side < 0 ? primary.getHex() : light, [0, 0, side * -0.05]).name = `held-armor-${side < 0 ? "left" : "right"}-greave`;
+      addBox([0.5, 0.1, 0.22], [0, 0.29, 0], dark).name = "held-armor-greave-belt";
+      group.scale.setScalar(0.78);
+      group.rotation.set(0.08, 0.24, -0.08);
+    } else {
+      for (const side of [-1, 1]) addBox([0.26, 0.22, 0.42], [side * 0.16, 0, 0], side < 0 ? primary.getHex() : light, [0, 0, side * -0.05]).name = `held-armor-${side < 0 ? "left" : "right"}-boot`;
+      group.scale.setScalar(0.82);
+      group.rotation.set(0.08, 0.24, -0.08);
+    }
+  } else if (item === BlockId.CraftingTable) {
+    // A miniature of the authored world block: gridded worktop, dark joined
+    // frame and the same warm wildwood side panels instead of a generic cube.
+    addBox([0.5, 0.42, 0.5], [0, 0.04, 0], 0x86532f).name = "crafting-table-side-panel";
+    addBox([0.53, 0.08, 0.53], [0, 0.29, 0], 0xc99a58).name = "crafting-table-worktop";
+    for (const offset of [-0.17, 0, 0.17]) {
+      addBox([0.025, 0.018, 0.5], [offset, 0.34, 0], 0x5d3821).name = `crafting-table-grid-x-${offset}`;
+      addBox([0.5, 0.018, 0.025], [0, 0.34, offset], 0x5d3821).name = `crafting-table-grid-z-${offset}`;
+    }
+    for (const x of [-0.21, 0.21]) for (const z of [-0.21, 0.21]) addBox([0.06, 0.4, 0.06], [x, 0.02, z], 0x56341f).name = `crafting-table-leg-${x}-${z}`;
+    group.scale.setScalar(0.76);
+    group.rotation.set(0.13, 0.27, -0.08);
+  } else if (item === Item.DeepgearLanternItem) {
+    addBox([0.32, 0.07, 0.32], [0, -0.12, 0], 0x69533b);
+    for (const x of [-0.14, 0.14]) for (const z of [-0.14, 0.14]) addBox([0.035, 0.42, 0.035], [x, 0.08, z], 0x9f865b);
+    addBox([0.3, 0.34, 0.3], [0, 0.08, 0], 0xffd77a, [0, 0, 0], true);
+    addBox([0.34, 0.07, 0.34], [0, 0.29, 0], 0x806947);
+    addBox([0.2, 0.05, 0.05], [0, 0.42, 0], 0xbdab7d);
+    group.scale.setScalar(0.82);
+    group.rotation.set(0.08, 0.24, -0.06);
+    group.userData.offhandLight = true;
+  } else if (definition.heldModel === "wildwood-chest") {
     addBox([0.52, 0.34, 0.42], [0, -0.03, 0], 0x9f6833);
     addBox([0.55, 0.14, 0.45], [0, 0.22, 0], 0xb9874e);
     addBox([0.12, 0.18, 0.045], [0, 0.08, -0.235], 0xe0b54e, [0, 0, 0], true);

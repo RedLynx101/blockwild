@@ -18,14 +18,14 @@ import {
   unlockPerk,
 } from "../app/game/skills.ts";
 
-test("all eight extensible skills use the exact one-percent-per-point rule", () => {
-  assert.deepEqual(SKILL_IDS, ["melee", "ranged", "mining", "crafting", "survival", "husbandry", "exploration", "magic"]);
+test("all ten extensible skills use the exact one-percent-per-point rule", () => {
+  assert.deepEqual(SKILL_IDS, ["melee", "ranged", "mining", "crafting", "survival", "husbandry", "exploration", "magic", "bartering", "luck"]);
   assert.equal(skillMultiplier(0), 1);
   assert.equal(skillMultiplier(1), 1.01);
   assert.equal(skillMultiplier(100), 2);
   assert.equal(skillMultiplier(1_000), 11);
   assert.equal(skillMultiplier(50_000), 11);
-  assert.equal(PERKS.length, 16);
+  assert.equal(PERKS.length, 20);
 });
 
 test("skill rank costs grow linearly and practical progress awards milestone perk points", () => {

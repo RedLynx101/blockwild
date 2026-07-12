@@ -53,8 +53,8 @@ function settle(simulator: LiquidSimulator) {
   assert.equal(simulator.pendingCount, 0);
 }
 
-test("Sugarplum Vale remains stable under generator v10 with its own terrain and keyed settlement palette", () => {
-  assert.equal(GENERATOR_VERSION, 11);
+test("Sugarplum Vale remains stable under generator v12 with its own terrain and keyed settlement palette", () => {
+  assert.equal(GENERATOR_VERSION, 12);
   assert.equal(BIOME_NAMES[BiomeId.SugarplumVale], "Sugarplum Vale");
   const world = new ChunkWorld();
   world.reset("CANDY-WORLD", undefined, { structures: false });
@@ -88,6 +88,9 @@ test("syrup ponds are deterministic source pools that meet cleanly across chunk 
       assert.equal(chunk.blocks[blockIndex(lx, column.surfaceY, lz)], BlockId.Syrup);
       assert.equal(chunk.blocks[blockIndex(lx, column.bedY, lz)], BlockId.SugarSoil);
       assert.equal(chunk.heightmap[lx + lz * CHUNK_SIZE], column.bedY);
+      for (let y = column.surfaceY + 1; y <= column.originalSurfaceY + 1; y += 1) {
+        assert.equal(chunk.blocks[blockIndex(lx, y, lz)], BlockId.Air, `flora or terrain floated above syrup at ${column.x},${y},${column.z}`);
+      }
     }
   }
   world.dispose();

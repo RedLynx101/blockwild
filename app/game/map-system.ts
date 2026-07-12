@@ -10,12 +10,18 @@ export const WAYSHRINE_USE_RADIUS = 3.5;
 export const MAP_VIEW_SCHEMA = 1 as const;
 export const MIN_MAP_ZOOM = 1;
 export const MAX_MAP_ZOOM = 12;
+export const ABSOLUTE_MIN_MAP_ZOOM = 0.2;
 export const MAX_MAP_PAN_CHUNKS = 1_048_576;
 
 export type WorldPoint = Readonly<{ x: number; y: number; z: number }>;
 export type ChunkCoordinate = Readonly<{ x: number; z: number }>;
 export type MapBiomeReference = number | string;
-export type MapChunkDiscovery = ChunkCoordinate & Readonly<{ biome?: MapBiomeReference | null }>;
+export type MapSurfaceSample = readonly [string, string, string, string];
+export type MapChunkDiscovery = ChunkCoordinate & Readonly<{
+  biome?: MapBiomeReference | null;
+  /** Four averaged top-block colors: northwest, northeast, southwest, southeast. */
+  surfaceColors?: MapSurfaceSample | null;
+}>;
 export type MapTerrainPalette = Readonly<{
   fill: string;
   stroke: string;
@@ -28,6 +34,7 @@ export type MapViewState = Readonly<{
   panX: number;
   panZ: number;
 }>;
+export type MapZoomLimits = Readonly<{ minimum?: number; maximum?: number }>;
 export type MapViewportBounds = Readonly<{ minX: number; maxX: number; minZ: number; maxZ: number }>;
 export type MapPlayerMarker = Readonly<{
   id: string;
@@ -61,6 +68,8 @@ export type MapKnowledge = Readonly<{
    * horizon. Missing entries are valid legacy data and use the land palette.
    */
   terrainByChunk: Readonly<Record<string, MapBiomeReference>>;
+  /** Optional close-zoom ink; sampled once in a small bounded background budget. */
+  surfaceByChunk: Readonly<Record<string, MapSurfaceSample>>;
   markers: readonly MapMarker[];
   activeBedId: string | null;
   fastTravelCharges: number;
@@ -179,6 +188,35 @@ function normalizeBiomeReference(value: unknown): MapBiomeReference | null {
   return cleaned || null;
 }
 
+function normalizeMapColor(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const short = /^#([0-9a-f]{3})$/iu.exec(value.trim());
+  if (short) return `#${[...short[1]].map((part) => `${part}${part}`).join("")}`.toLowerCase();
+  const full = /^#([0-9a-f]{6})$/iu.exec(value.trim());
+  return full ? `#${full[1].toLowerCase()}` : null;
+}
+
+function normalizeSurfaceSample(value: unknown): MapSurfaceSample | null {
+  if (!Array.isArray(value) || value.length !== 4) return null;
+  const colors = value.map(normalizeMapColor);
+  return colors.every((entry): entry is string => entry !== null)
+    ? [colors[0], colors[1], colors[2], colors[3]]
+    : null;
+}
+
+/** Small RGB average used by the engine's bounded top-block survey sampler. */
+export function averageMapColors(colors: readonly string[], fallback = "#668252") {
+  const parsed = colors.map(normalizeMapColor).filter((entry): entry is string => entry !== null);
+  if (!parsed.length) return normalizeMapColor(fallback) ?? "#668252";
+  const totals = parsed.reduce((sum, color) => ({
+    r: sum.r + Number.parseInt(color.slice(1, 3), 16),
+    g: sum.g + Number.parseInt(color.slice(3, 5), 16),
+    b: sum.b + Number.parseInt(color.slice(5, 7), 16),
+  }), { r: 0, g: 0, b: 0 });
+  const channel = (value: number) => Math.round(value / parsed.length).toString(16).padStart(2, "0");
+  return `#${channel(totals.r)}${channel(totals.g)}${channel(totals.b)}`;
+}
+
 /** Stable map ink for numeric biome ids and future content-pack biome names. */
 export function mapTerrainPalette(biome: MapBiomeReference | null | undefined): MapTerrainPalette {
   if (typeof biome === "number") return BIOME_TERRAIN_PALETTES[biome] ?? DEFAULT_LAND_PALETTE;
@@ -196,40 +234,48 @@ export function createMapViewState(): MapViewState {
 }
 
 /** Old, missing and malformed view state opens at the entire explored map. */
-export function normalizeMapViewState(value: unknown): MapViewState {
+function normalizedZoomLimits(limits: MapZoomLimits = {}) {
+  const minimum = clamp(finite(limits.minimum, MIN_MAP_ZOOM), ABSOLUTE_MIN_MAP_ZOOM, MAX_MAP_ZOOM);
+  const maximum = clamp(finite(limits.maximum, MAX_MAP_ZOOM), minimum, MAX_MAP_ZOOM);
+  return { minimum, maximum };
+}
+
+export function normalizeMapViewState(value: unknown, limits: MapZoomLimits = {}): MapViewState {
   if (!value || typeof value !== "object") return createMapViewState();
   const input = value as Partial<MapViewState>;
+  const resolved = normalizedZoomLimits(limits);
   return {
     schema: MAP_VIEW_SCHEMA,
-    zoom: clamp(finite(input.zoom, 1), MIN_MAP_ZOOM, MAX_MAP_ZOOM),
+    zoom: clamp(finite(input.zoom, 1), resolved.minimum, resolved.maximum),
     panX: clamp(finite(input.panX), -MAX_MAP_PAN_CHUNKS, MAX_MAP_PAN_CHUNKS),
     panZ: clamp(finite(input.panZ), -MAX_MAP_PAN_CHUNKS, MAX_MAP_PAN_CHUNKS),
   };
 }
 
-export function setMapZoom(state: MapViewState, zoom: number): MapViewState {
-  const normalized = normalizeMapViewState(state);
-  const nextZoom = clamp(finite(zoom, normalized.zoom), MIN_MAP_ZOOM, MAX_MAP_ZOOM);
+export function setMapZoom(state: MapViewState, zoom: number, limits: MapZoomLimits = {}): MapViewState {
+  const resolved = normalizedZoomLimits(limits);
+  const normalized = normalizeMapViewState(state, resolved);
+  const nextZoom = clamp(finite(zoom, normalized.zoom), resolved.minimum, resolved.maximum);
   return nextZoom === normalized.zoom ? normalized : { ...normalized, zoom: nextZoom };
 }
 
-export function stepMapZoom(state: MapViewState, direction: 1 | -1): MapViewState {
+export function stepMapZoom(state: MapViewState, direction: 1 | -1, limits: MapZoomLimits = {}): MapViewState {
   const factor = direction > 0 ? 1.35 : 1 / 1.35;
-  return setMapZoom(state, state.zoom * factor);
+  return setMapZoom(state, state.zoom * factor, limits);
 }
 
-export function panMapView(state: MapViewState, deltaX: number, deltaZ: number): MapViewState {
-  const normalized = normalizeMapViewState(state);
+export function panMapView(state: MapViewState, deltaX: number, deltaZ: number, limits: MapZoomLimits = {}): MapViewState {
+  const normalized = normalizeMapViewState(state, limits);
   return normalizeMapViewState({
     ...normalized,
     panX: normalized.panX + finite(deltaX),
     panZ: normalized.panZ + finite(deltaZ),
-  });
+  }, limits);
 }
 
 /** Keeps x and z in chunk space; zoom changes only the visible span. */
-export function mapViewportBounds(base: MapViewportBounds, state: MapViewState): MapViewportBounds {
-  const view = normalizeMapViewState(state);
+export function mapViewportBounds(base: MapViewportBounds, state: MapViewState, limits: MapZoomLimits = {}): MapViewportBounds {
+  const view = normalizeMapViewState(state, limits);
   const baseWidth = Math.max(1, finite(base.maxX) - finite(base.minX));
   const baseHeight = Math.max(1, finite(base.maxZ) - finite(base.minZ));
   const width = baseWidth / view.zoom;
@@ -267,6 +313,7 @@ export function createMapKnowledge(worldId: string, playerId: string): MapKnowle
     revision: 0,
     exploredChunks: [],
     terrainByChunk: {},
+    surfaceByChunk: {},
     markers: [],
     activeBedId: null,
     fastTravelCharges: 0,
@@ -313,6 +360,17 @@ export function normalizeMapKnowledge(value: unknown, fallbackWorldId = "world",
   }
   terrainEntries.sort(([left], [right]) => left.localeCompare(right));
   const terrainByChunk = Object.fromEntries(terrainEntries);
+  const surfaceEntries: Array<readonly [string, MapSurfaceSample]> = [];
+  const rawSurface = input.surfaceByChunk && typeof input.surfaceByChunk === "object" && !Array.isArray(input.surfaceByChunk)
+    ? input.surfaceByChunk
+    : {};
+  for (const [key, rawSample] of Object.entries(rawSurface as Record<string, unknown>)) {
+    if (surfaceEntries.length >= MAX_EXPLORED_CHUNKS || !exploredSet.has(key) || !parseChunkKey(key)) continue;
+    const sample = normalizeSurfaceSample(rawSample);
+    if (sample) surfaceEntries.push([key, sample]);
+  }
+  surfaceEntries.sort(([left], [right]) => left.localeCompare(right));
+  const surfaceByChunk = Object.fromEntries(surfaceEntries);
   const markerById = new Map<string, MapMarker>();
   for (const raw of Array.isArray(input.markers) ? input.markers : []) {
     const marker = normalizeMarker(raw);
@@ -333,6 +391,7 @@ export function normalizeMapKnowledge(value: unknown, fallbackWorldId = "world",
     revision: Math.max(0, integer(input.revision)),
     exploredChunks,
     terrainByChunk,
+    surfaceByChunk,
     markers,
     activeBedId,
     fastTravelCharges: clamp(integer(input.fastTravelCharges), 0, MAX_FAST_TRAVEL_CHARGES),
@@ -350,7 +409,9 @@ export function markChunksRendered(state: MapKnowledge, chunks: readonly MapChun
   const explored = new Set(state.exploredChunks);
   const before = explored.size;
   const terrainByChunk: Record<string, MapBiomeReference> = { ...(state.terrainByChunk ?? {}) };
+  const surfaceByChunk: Record<string, MapSurfaceSample> = { ...(state.surfaceByChunk ?? {}) };
   let terrainChanged = false;
+  let surfaceChanged = false;
   for (const chunk of chunks) {
     const key = chunkKey(chunk);
     if (!explored.has(key) && explored.size >= MAX_EXPLORED_CHUNKS) continue;
@@ -360,12 +421,18 @@ export function markChunksRendered(state: MapKnowledge, chunks: readonly MapChun
       terrainByChunk[key] = biome;
       terrainChanged = true;
     }
+    const surface = normalizeSurfaceSample(chunk.surfaceColors);
+    if (surface && surface.join("|") !== surfaceByChunk[key]?.join("|")) {
+      surfaceByChunk[key] = surface;
+      surfaceChanged = true;
+    }
   }
-  return explored.size === before && !terrainChanged ? state : {
+  return explored.size === before && !terrainChanged && !surfaceChanged ? state : {
     ...state,
     revision: state.revision + 1,
     exploredChunks: [...explored].sort(),
     terrainByChunk,
+    surfaceByChunk,
   };
 }
 
@@ -486,11 +553,14 @@ function mergeTransferredKnowledge(local: MapKnowledge, remote: MapKnowledge): M
   if (local.worldId !== remote.worldId) return local;
   const exploredChunks = [...new Set([...local.exploredChunks, ...remote.exploredChunks])].sort().slice(0, MAX_EXPLORED_CHUNKS);
   const terrainByChunk: Record<string, MapBiomeReference> = {};
+  const surfaceByChunk: Record<string, MapSurfaceSample> = {};
   for (const key of exploredChunks) {
     const localTerrain = local.terrainByChunk?.[key];
     const remoteTerrain = remote.terrainByChunk?.[key];
     const biome = normalizeBiomeReference(localTerrain ?? remoteTerrain);
     if (biome !== null) terrainByChunk[key] = biome;
+    const surface = normalizeSurfaceSample(local.surfaceByChunk?.[key] ?? remote.surfaceByChunk?.[key]);
+    if (surface) surfaceByChunk[key] = surface;
   }
   const markerById = new Map(local.markers.map((marker) => [marker.id, marker]));
   for (const remoteMarker of remote.markers) {
@@ -504,8 +574,10 @@ function mergeTransferredKnowledge(local: MapKnowledge, remote: MapKnowledge): M
     || exploredChunks.some((entry, index) => entry !== local.exploredChunks[index])
     || markers.some((entry, index) => entry !== local.markers[index])
     || Object.keys(terrainByChunk).length !== Object.keys(local.terrainByChunk ?? {}).length
-    || Object.entries(terrainByChunk).some(([key, biome]) => local.terrainByChunk?.[key] !== biome);
-  return changed ? { ...local, revision: local.revision + 1, exploredChunks, terrainByChunk, markers } : local;
+    || Object.entries(terrainByChunk).some(([key, biome]) => local.terrainByChunk?.[key] !== biome)
+    || Object.keys(surfaceByChunk).length !== Object.keys(local.surfaceByChunk ?? {}).length
+    || Object.entries(surfaceByChunk).some(([key, surface]) => surface.join("|") !== local.surfaceByChunk?.[key]?.join("|"));
+  return changed ? { ...local, revision: local.revision + 1, exploredChunks, terrainByChunk, surfaceByChunk, markers } : local;
 }
 
 /**

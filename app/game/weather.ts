@@ -295,6 +295,8 @@ export type CloudFadeState = Readonly<{
   target: number;
 }>;
 
+export type CloudDriftState = Readonly<{ x: number; z: number }>;
+
 export type Vector3Like = Readonly<{ x: number; y: number; z: number }>;
 
 export type RainColumnProbe = Readonly<{
@@ -350,6 +352,88 @@ export function stepCloudFade(currentOpacity: number, weather: WeatherState, del
   const blend = 1 - Math.exp(-Math.max(0, finiteNumber(deltaSeconds)) / Math.max(0.05, finiteNumber(fadeSeconds, 3.5)));
   const nextOpacity = Math.abs(target - opacity) < 0.001 ? target : opacity + (target - opacity) * blend;
   return { opacity: clamp01(nextOpacity), target };
+}
+
+/**
+ * Incremental advection avoids the modulo jump that previously teleported the
+ * whole cloud field every 54 blocks. Field selection accounts for this offset,
+ * so clouds can move continuously for an entire session.
+ */
+export function stepCloudDrift(current: CloudDriftState, weather: Pick<WeatherState, "windAngle" | "windSpeed">, deltaSeconds: number): CloudDriftState {
+  const dt = Math.max(0, Math.min(0.25, finiteNumber(deltaSeconds)));
+  return {
+    x: finiteNumber(current.x) + Math.cos(finiteNumber(weather.windAngle)) * Math.max(0, finiteNumber(weather.windSpeed)) * dt,
+    z: finiteNumber(current.z) + Math.sin(finiteNumber(weather.windAngle)) * Math.max(0, finiteNumber(weather.windSpeed)) * dt,
+  };
+}
+
+export function cloudFieldCell(viewerCoordinate: number, driftCoordinate: number, cellSize = 54) {
+  return Math.floor((finiteNumber(viewerCoordinate) - finiteNumber(driftCoordinate)) / Math.max(1, finiteNumber(cellSize, 54)));
+}
+
+/** Smooths sleep/time jumps around a circular 0..1 day without reversing dawn. */
+export function smoothCyclicDayTime(current: number, target: number, deltaSeconds: number, transitionSeconds = 3.2) {
+  const normalizedCurrent = ((finiteNumber(current) % 1) + 1) % 1;
+  const normalizedTarget = ((finiteNumber(target) % 1) + 1) % 1;
+  let difference = normalizedTarget - normalizedCurrent;
+  if (difference > 0.5) difference -= 1;
+  else if (difference < -0.5) difference += 1;
+  const blend = 1 - Math.exp(-Math.max(0, finiteNumber(deltaSeconds)) / Math.max(0.05, finiteNumber(transitionSeconds, 3.2)));
+  return ((normalizedCurrent + difference * blend) % 1 + 1) % 1;
+}
+
+export type LightningStrikePlan = Readonly<{
+  id: string;
+  x: number;
+  z: number;
+  distanceFromOrigin: number;
+  damageHearts: number;
+}>;
+
+/** Deterministic strike placement; callers provide surface height and own damage authority. */
+export function planLightningStrike(seed: string | number, state: Pick<WeatherState, "cycle" | "elapsedSeconds">, origin: Readonly<{ x: number; z: number }>): LightningStrikePlan {
+  const beat = Math.max(0, Math.floor(finiteNumber(state.elapsedSeconds) * 4));
+  const key = `${state.cycle}:${beat}`;
+  const angle = hashUnit(seed, `lightning:${key}:angle`) * Math.PI * 2;
+  // Area-uniform placement makes a near-direct strike possible but genuinely
+  // rare; most bolts land far enough away to be scenery and thunder.
+  const distance = 0.5 + Math.sqrt(hashUnit(seed, `lightning:${key}:distance`)) * 47.5;
+  return {
+    id: `lightning-${state.cycle}-${beat}`,
+    x: finiteNumber(origin.x) + Math.cos(angle) * distance,
+    z: finiteNumber(origin.z) + Math.sin(angle) * distance,
+    distanceFromOrigin: distance,
+    damageHearts: 2,
+  };
+}
+
+export type SkyLightProbe = Readonly<{
+  daylight: number;
+  moonlight: number;
+  skyVisibility: number;
+  weatherLight: number;
+  underwater: boolean;
+  underground: boolean;
+}>;
+
+/**
+ * Sun and moon light require a real route to the sky. A roofed surface room
+ * keeps a little bounced ambient light, while a cave cannot inherit the bright
+ * daytime hemisphere merely because the global world clock says noon.
+ */
+export function skyLightLevels(probe: SkyLightProbe) {
+  if (probe.underwater) return { hemisphere: 0.05, directional: 0.018 };
+  const daylight = clamp01(probe.daylight);
+  const moonlight = clamp01(probe.moonlight);
+  const visibility = clamp01(probe.skyVisibility);
+  const weatherLight = clamp01(probe.weatherLight);
+  const bouncedExposure = probe.underground
+    ? visibility * visibility
+    : 0.18 + Math.sqrt(visibility) * 0.82;
+  return {
+    hemisphere: (0.012 + (daylight * 0.36 + moonlight * 0.055) * bouncedExposure) * weatherLight,
+    directional: (daylight * 0.78 + moonlight * 0.07) * visibility * weatherLight,
+  };
 }
 
 /**

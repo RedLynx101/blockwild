@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  RENDEZVOUS_RELAY_URLS,
   createRoomCode,
   hostByRoomCode,
   joinByRoomCode,
@@ -10,6 +11,12 @@ import {
   type RendezvousRoom,
   type RendezvousRoomFactory,
 } from "../app/game/invite-rendezvous.ts";
+
+test("invite rendezvous avoids the retired Halifax relay while retaining redundant paths", () => {
+  assert.ok(RENDEZVOUS_RELAY_URLS.length >= 3);
+  assert.equal(RENDEZVOUS_RELAY_URLS.some((url) => url.includes("halifax")), false);
+  assert.equal(new Set(RENDEZVOUS_RELAY_URLS).size, RENDEZVOUS_RELAY_URLS.length);
+});
 
 test("invite room codes are readable, normalized, and validated", () => {
   assert.equal(createRoomCode((target) => {

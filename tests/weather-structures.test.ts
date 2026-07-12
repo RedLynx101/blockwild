@@ -17,10 +17,15 @@ import {
   type StructureKind,
 } from "../app/game/structures.ts";
 import {
+  cloudFieldCell,
   createWeatherState,
   isFullOvercastStorm,
+  planLightningStrike,
   planCloudCluster,
   planCloudField,
+  skyLightLevels,
+  smoothCyclicDayTime,
+  stepCloudDrift,
   stepWeather,
   weatherBiomeFromId,
   weatherOptionsForBiome,
@@ -48,6 +53,36 @@ test("weather is deterministic and constrained by biome", () => {
   const advanced = stepWeather(initial, context, initial.durationSeconds + 1);
   assert.equal(advanced.cycle, 4);
   assert.equal(advanced.elapsedSeconds, 1);
+});
+
+test("cloud drift is continuous, field cells follow advection, and sleep transitions fade around midnight", () => {
+  const weather = { windAngle: 0, windSpeed: 6 };
+  const first = stepCloudDrift({ x: 53.9, z: 0 }, weather, 1 / 60);
+  const second = stepCloudDrift(first, weather, 1 / 60);
+  assert.ok(second.x > first.x && second.x - first.x < 1, "drift must not wrap from +27 to -27");
+  assert.equal(cloudFieldCell(0, 54), -1, "the planned field follows the moving offset instead of letting clouds leave the player");
+  const faded = smoothCyclicDayTime(0.98, 0.02, 0.5);
+  assert.ok(faded > 0.98 || faded < 0.02, "the visual clock should cross midnight along the short arc");
+});
+
+test("lightning placement is deterministic and never implies fire", () => {
+  const state = { cycle: 4, elapsedSeconds: 12.5 };
+  const first = planLightningStrike("storm-seed", state, { x: 10, z: -4 });
+  assert.deepEqual(first, planLightningStrike("storm-seed", state, { x: 10, z: -4 }));
+  assert.ok(first.distanceFromOrigin >= 0.5 && first.distanceFromOrigin <= 48);
+  assert.equal(first.damageHearts, 2);
+  assert.equal("createsFire" in first, false);
+});
+
+test("day and moon light respect sky exposure instead of brightening caves globally", () => {
+  const surfaceNoon = skyLightLevels({ daylight: 1, moonlight: 0, skyVisibility: 1, weatherLight: 1, underwater: false, underground: false });
+  const caveNoon = skyLightLevels({ daylight: 1, moonlight: 0, skyVisibility: 0, weatherLight: 1, underwater: false, underground: true });
+  const clearMoon = skyLightLevels({ daylight: 0, moonlight: 1, skyVisibility: 1, weatherLight: 1, underwater: false, underground: false });
+  const roofedRoom = skyLightLevels({ daylight: 1, moonlight: 0, skyVisibility: 0, weatherLight: 1, underwater: false, underground: false });
+  assert.ok(surfaceNoon.directional > 0.7);
+  assert.ok(caveNoon.hemisphere < 0.02 && caveNoon.directional === 0);
+  assert.ok(clearMoon.directional > 0.05, "a clear moon contributes visible surface light");
+  assert.ok(roofedRoom.hemisphere > caveNoon.hemisphere, "surface rooms retain bounded bounced light without receiving direct sun");
 });
 
 test("weather visuals and cloud clusters are bounded and poofy", () => {

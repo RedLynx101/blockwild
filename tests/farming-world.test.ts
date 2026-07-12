@@ -187,12 +187,21 @@ test("world generation exposes surface mouths, biome stone accents, greater reli
   world.reset("FARM-CAVES-V4", undefined, { structures: false });
   let mouthAir = 0; let accents = 0; let wheat = 0; let flora = 0;
   const heights: number[] = [];
+  const surfacePlants = new Set<BlockId>([
+    BlockId.TallGrass, BlockId.RedFlower, BlockId.BlueFlower, BlockId.WheatCrop, BlockId.Sunpetal, BlockId.MoonOrchid,
+    BlockId.Saltbrush, BlockId.CoastAster, BlockId.RainveilFern, BlockId.LanternLotus, BlockId.SakuraBloom, BlockId.Dreamblossom,
+    BlockId.GumdropBush, BlockId.PeppermintTuft, BlockId.LollipopOrchid, BlockId.MarshmallowShrub,
+    BlockId.MoonriceCrop, BlockId.SunrootCrop, BlockId.CottonCrop, BlockId.SunCarrotCrop, BlockId.BluepodCrop,
+  ]);
   for (let cx = -2; cx <= 2; cx += 1) for (let cz = -2; cz <= 2; cz += 1) {
     const chunk = world.generateChunk(cx, cz);
     for (let x = 0; x < 16; x += 1) for (let z = 0; z < 16; z += 1) {
       const height = chunk.heightmap[x + z * 16];
       heights.push(height);
-      if (chunk.blocks[blockIndex(x, height, z)] === BlockId.Air) mouthAir += 1;
+      if (chunk.blocks[blockIndex(x, height, z)] === BlockId.Air) {
+        mouthAir += 1;
+        assert.equal(surfacePlants.has(chunk.blocks[blockIndex(x, height + 1, z)] as BlockId), false, "surface flora must not float over cave-mouth air");
+      }
       for (let y = MIN_Y + 5; y <= height + 1; y += 1) {
         const block = chunk.blocks[blockIndex(x, y, z)] as BlockId;
         if ([BlockId.Limestone, BlockId.MoonSlate, BlockId.SunbakedClay].includes(block)) accents += 1;

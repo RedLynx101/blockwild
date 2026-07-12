@@ -272,11 +272,11 @@ test("submerged flora stays waterlogged and tree crowns remain dense cutouts", (
 test("new data, recipes, biome content and semantic held models are registered", () => {
   assert.equal(Item.CaptureOrb, Item.CreatureCage, "old saves keep numeric item id 156");
   assert.notEqual(Item.LegacyCaptureOrb, Item.CaptureOrb);
-  assert.equal(ITEMS[Item.CaptureOrb].maxStack, 16, "empty orbs from the two-output recipe can stack");
+  assert.equal(ITEMS[Item.CaptureOrb].maxStack, 16, "empty orbs from the four-output recipe can stack");
   assert.equal(BLOCKS[BlockId.WildBeehive].name, "Wild Beehive");
   assert.notEqual(BlockId.WildBeehive, BlockId.Apiary);
   const orbRecipe = RECIPES.find((recipe) => recipe.id === "creature_cage")!;
-  assert.deepEqual(orbRecipe.output, { item: Item.CaptureOrb, count: 2 });
+  assert.deepEqual(orbRecipe.output, { item: Item.CaptureOrb, count: 4 });
   assert.equal(RECIPES.some((recipe) => recipe.id === "capture_orb"), false);
   assert.deepEqual(RECIPES.find((recipe) => recipe.id === "queen_cell")?.pattern, [Item.WorkerBee, Item.RoyalJelly]);
   assert.equal(ITEMS[BlockId.Chest].iconKind, "chest");

@@ -75,6 +75,10 @@ export function butterflyYawForVelocity(velocity: Pick<THREE.Vector3, "x" | "z">
   return Math.atan2(velocity.x, velocity.z) + Math.PI;
 }
 
+export function butterflyFlowerKey(position: Pick<THREE.Vector3, "x" | "y" | "z">) {
+  return `${Math.round(position.x)},${Math.round(position.y)},${Math.round(position.z)}`;
+}
+
 export function butterflyKindForBiome(biome: BiomeId, roll = Math.random()): ButterflyKind | null {
   if (biome === BiomeId.Glimmerwood) return roll < 0.84 ? "moonveil-wing" : "fen-lantern";
   if (biome === BiomeId.SugarplumVale) return "bonbonwing";
@@ -317,6 +321,13 @@ export class ButterflySystem {
     return type !== undefined && (!BLOCKS[type]?.solid || FLOWERS.has(type));
   }
 
+  private flowerHasLandedVisitor(flower: THREE.Vector3, exceptId: number) {
+    const key = butterflyFlowerKey(flower);
+    return this.entities.some((candidate) => candidate.id !== exceptId
+      && candidate.landed
+      && butterflyFlowerKey(candidate.flower) === key);
+  }
+
   private trySpawn(environment: ButterflyEnvironment) {
     if (environment.daylight < 0.5 || environment.weather === "rain" || this.entities.length >= environment.cap) return;
     const angle = Math.random() * Math.PI * 2;
@@ -390,8 +401,19 @@ export class ButterflySystem {
           butterfly.stateTimer = 0.35;
         }
         if (flowerStillThere && butterfly.group.position.distanceTo(butterfly.target) < 0.16 && environment.daylight > 0.35) {
-          butterfly.landed = true;
-          butterfly.stateTimer = BUTTERFLY_FLIGHT_TUNING.landedSecondsMin + Math.random() * BUTTERFLY_FLIGHT_TUNING.landedSecondsRange;
+          if (this.flowerHasLandedVisitor(butterfly.flower, butterfly.id)) {
+            // A flower is a single landing site. The later arrival immediately
+            // resumes its daytime loop instead of clipping through its neighbor.
+            butterfly.target.set(
+              butterfly.flower.x + (Math.random() - 0.5) * 4,
+              butterfly.flower.y + 1 + Math.random() * 1.8,
+              butterfly.flower.z + (Math.random() - 0.5) * 4,
+            );
+            butterfly.stateTimer = 0.35;
+          } else {
+            butterfly.landed = true;
+            butterfly.stateTimer = BUTTERFLY_FLIGHT_TUNING.landedSecondsMin + Math.random() * BUTTERFLY_FLIGHT_TUNING.landedSecondsRange;
+          }
         }
       }
 

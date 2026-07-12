@@ -84,21 +84,38 @@ import {
 } from "./factions";
 import { commerceKeyForItem, inventoryResourceCounts } from "./hearthroads-adapter";
 import { createMapKnowledge, type MapMarker } from "./map-system";
-import { PLANTS, createPlantBestiaryState, type PlantCategory } from "./plants";
-import { createQuestBook, type QuestObjective } from "./quests";
+import { PLANTS, createPlantBestiaryState, type PlantCategory, type PlantDefinition } from "./plants";
+import { createQuestBook, type QuestObjective, type QuestSource } from "./quests";
 import { createSettlementState, isMayorProfession, type ResidentProfession, type SettlementCandidate } from "./settlements";
 import { DragonPanel } from "./DragonPanel";
 import { DragonMagicPanel, ManaHud, SpellWheelPanel } from "./DragonMagicPanels";
 import { GolemForgePanel } from "./GolemForgePanel";
 import type { GolemType } from "./v1-cultures";
 import { createMagicState } from "./magic";
-import { createSkillState } from "./skills";
+import {
+  createSkillState,
+  explorationMinimumMapZoom,
+  explorationShowsDistantPoiLabels,
+  explorationTracksAtAnyDistance,
+} from "./skills";
+import { NavigationHud, StatusEffectsHud } from "./NavigationHud";
+import { statusEffectViewsFromBuffs } from "./status-effects";
 import { WaygridCreaturePanel, WaygridItemPanel } from "./WaygridPanels";
+import { CharacterStudio } from "./CharacterStudio";
+import { AquariumPanel } from "./AquariumPanel";
+import {
+  CharacterProfileStore,
+  FALLBACK_CHARACTER_CATALOG,
+  FALLBACK_CHARACTER_PROFILE,
+  type CharacterAppearance,
+  type CharacterProfile,
+  type CharacterProfileCatalog,
+} from "./character-profiles";
 
 type WorkstationOverlay = "apiary" | "orb-rack" | "healing-station" | "sugarworks";
 type CivicAuditMode = "atlantian-dialogue" | "atlantian-trade" | "atlantian-settlement";
 type Overlay = "title" | "new" | "pause" | "help" | "settings" | OverlayKind | null;
-export type BestiaryFilter = "all" | "surface" | "birds" | "butterflies" | "fish" | "golems" | "monsters" | "companions";
+export type BestiaryFilter = "all" | "surface" | "humanoids" | "rabbits" | "birds" | "butterflies" | "aquatic" | "sea-slugs" | "golems" | "monsters" | "companions";
 type FieldGuideSection = "creatures" | "plants";
 type PetCommand = NonNullable<HudState["activePet"]>["command"];
 
@@ -115,9 +132,12 @@ const PLANT_FILTERS: ReadonlyArray<["all" | PlantCategory, string]> = [
 const BESTIARY_FILTERS: ReadonlyArray<[BestiaryFilter, string]> = [
   ["all", "All"],
   ["surface", "Surface"],
+  ["humanoids", "Humanoids"],
+  ["rabbits", "Rabbits"],
   ["birds", "Birds"],
   ["butterflies", "Butterflies"],
-  ["fish", "Aquatic"],
+  ["aquatic", "Aquatic"],
+  ["sea-slugs", "Sea Slugs"],
   ["golems", "Golems"],
   ["monsters", "Monsters"],
   ["companions", "Tameable"],
@@ -252,6 +272,7 @@ type HearthroadsEngineApi = {
   pinQuestById?: (questId: string | null) => void;
   abandonQuestById?: (questId: string) => boolean;
   turnInQuestById?: (questId: string) => boolean;
+  trackQuestTurnIn?: (questId: string) => string | null;
   addManualMapMarker?: (name: string) => string;
   removeMapMarker?: (markerId: string) => boolean;
   renameWayshrineMarker?: (markerId: string, name: string) => boolean;
@@ -264,7 +285,7 @@ type HearthroadsEngineApi = {
   buyStockShares?: (symbol: StockSymbol, shares: GoldAmount) => boolean;
   sellStockShares?: (symbol: StockSymbol, shares: GoldAmount) => boolean;
   setSettlementRoleWaypoint?: (profession: ResidentProfession) => boolean;
-  selectSettlementResident?: (residentId: string) => void;
+  selectSettlementResident?: (residentId: string) => string | null;
   shareCartographyMaps?: () => boolean;
   commandActiveFollower?: (command: string) => boolean;
   hireResidentFromMayor?: (residentId: string) => boolean;
@@ -470,6 +491,7 @@ function workstationAuditOrb(kind: MobKind, name: string, health: number, maxHea
 
 export const INITIAL_GAME_SETTINGS: Readonly<GameSettings> = Object.freeze({
   volume: 0.55,
+  musicVolume: 0.72,
   muted: false,
   sensitivity: 0.0022,
   fov: 72,
@@ -477,6 +499,9 @@ export const INITIAL_GAME_SETTINGS: Readonly<GameSettings> = Object.freeze({
   renderDistance: 10,
   simulationDistance: 8,
   showFps: false,
+  showBreakingTexture: true,
+  showBreakProgress: false,
+  showToolEffectiveness: true,
   resourceMode: "auto",
 });
 
@@ -523,7 +548,10 @@ export function resolveTouchControls(mode: TouchControlsMode, capabilities: Inpu
   if (mode === "off") return false;
   if (capabilities.primaryPointer === "touch") return true;
   if (capabilities.primaryPointer === "mouse" || capabilities.primaryPointer === "pen") return false;
-  return capabilities.coarsePrimary || (capabilities.hoverNone && !capabilities.anyFine);
+  // Hybrid laptops often advertise a coarse primary touchscreen even while a
+  // mouse is available. Do not cover their desktop HUD before the player has
+  // actually used touch; pure touch devices still opt in immediately.
+  return !capabilities.anyFine && (capabilities.coarsePrimary || capabilities.hoverNone);
 }
 
 /** Prevent the pointer event that opened a container from landing on a slot. */
@@ -567,12 +595,20 @@ export function clearFirstPersonHeldPresentation(engine: VoxelEngine) {
     engine.heldRoot.remove(child);
   }
   engine.heldRoot.visible = false;
+  for (const child of [...(engine.offhandRoot?.children ?? [])]) {
+    engine.disposeObject(child);
+    engine.offhandRoot?.remove(child);
+  }
+  if (engine.offhandRoot) engine.offhandRoot.visible = false;
   engine.heldItemCode = engine.selectedSlot()?.item ?? -1;
+  if ("offhandItemCode" in engine) engine.offhandItemCode = engine.offhand?.item ?? -1;
 }
 
 export function prepareFirstPersonHeldPresentation(engine: VoxelEngine) {
   engine.heldItemCode = -1;
+  if ("offhandItemCode" in engine) engine.offhandItemCode = -1;
   engine.heldRoot.visible = true;
+  if (engine.offhandRoot) engine.offhandRoot.visible = true;
 }
 
 export function normalizeMultiplayerRoomCode(value: string) {
@@ -605,6 +641,8 @@ const INITIAL_HUD: ExtendedHudState = {
   activeChest: null,
   activeChestTitle: "Wildwood Chest",
   equipment: { head: null, chest: null, legs: null, feet: null },
+  offhand: null,
+  shieldRaised: false,
   armor: 0,
   bestiary: Object.fromEntries(MOB_ORDER.map((kind) => [kind, { seen: false, kills: 0, captures: 0 }])) as HudState["bestiary"],
   selected: 0,
@@ -651,6 +689,7 @@ const INITIAL_HUD: ExtendedHudState = {
   settlements: [],
   activeSettlementId: null,
   activeMerchant: null,
+  activeAquarium: null,
   bankAccount: createBankAccount("preview", "local"),
   stockMarket: createStockMarket("preview", "local", "WILDERNESS"),
   potionBuffs: {},
@@ -759,15 +798,6 @@ function questObjectiveTarget(objective: QuestObjective) {
   return objective.count;
 }
 
-const PLANT_CATEGORY_GLYPH: Readonly<Record<PlantCategory, string>> = {
-  tree: "♠",
-  farm: "≋",
-  bush: "✤",
-  flower: "✿",
-  aquatic: "≈",
-  wild: "⌁",
-};
-
 type BestiaryProgressEntry = HudState["bestiary"][MobKind];
 
 export function bestiaryEntryCompletion(definition: MobDefinition, progress: BestiaryProgressEntry) {
@@ -784,13 +814,18 @@ export function bestiaryKindsForFilter(filter: BestiaryFilter): MobKind[] {
   return MOB_ORDER.filter((kind) => {
     const definition = MOB_DEFS[kind];
     if (filter === "all") return true;
+    if (filter === "humanoids") return definition.family === "sentient" || definition.sentient === true;
+    if (filter === "rabbits") return definition.family === "rabbit";
     if (filter === "birds") return definition.family === "bird";
     if (filter === "butterflies") return definition.family === "butterfly";
-    if (filter === "fish") return definition.family === "fish";
+    if (filter === "aquatic") return definition.aquatic === true || definition.movement === "aquatic" || ["fish", "sea-slug", "leviathan"].includes(definition.family ?? "");
+    if (filter === "sea-slugs") return definition.family === "sea-slug";
     if (filter === "golems") return definition.family === "construct";
     if (filter === "monsters") return definition.family !== "construct" && (definition.hostile || definition.family === "undead");
     if (filter === "companions") return Boolean(definition.tameable || definition.family === "pet");
-    return !definition.hostile && !["bird", "butterfly", "fish", "pet", "construct"].includes(definition.family ?? "surface");
+    return !definition.hostile
+      && definition.sentient !== true
+      && !["sentient", "rabbit", "bird", "butterfly", "fish", "sea-slug", "leviathan", "construct", "undead"].includes(definition.family ?? "surface");
   });
 }
 
@@ -850,6 +885,19 @@ function CreaturePortrait({ kind, seen, mini = false }: { kind: MobKind; seen: b
       {/* Generated local SVGs preserve the exact production-model framing; image optimization would only proxy them. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={creaturePortraitPath(kind)} alt={mini ? "" : seen ? `${definition.name} three-dimensional model` : "Undiscovered creature silhouette"} aria-hidden={mini || undefined} />
+      {!seen && <b aria-hidden="true">?</b>}
+    </span>
+  );
+}
+
+const plantPortraitPath = (plantId: string) => `/plants/${plantId}.svg`;
+
+function PlantPortrait({ plant, seen, mini = false }: { plant: PlantDefinition; seen: boolean; mini?: boolean }) {
+  return (
+    <span className={`plant-render ${mini ? "plant-render-mini" : "plant-render-hero"} ${seen ? "seen" : "unknown"}`} data-plant-id={plant.id}>
+      {/* Generated from the field-guide plant model catalog, including complete tree examples. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={plantPortraitPath(plant.id)} alt={mini ? "" : seen ? `${plant.name} three-dimensional field specimen` : "Undiscovered plant silhouette"} aria-hidden={mini || undefined} />
       {!seen && <b aria-hidden="true">?</b>}
     </span>
   );
@@ -925,8 +973,9 @@ function drawAvatarPreviewFallback(
   width: number,
   height: number,
   variant: PlayerVariant,
-  appearance: PlayerEquipmentAppearance,
+  equipmentAppearance: PlayerEquipmentAppearance,
   heldItem: ItemCode | undefined,
+  characterAppearance?: CharacterAppearance,
 ) {
   context.clearRect(0, 0, width, height);
   const scale = Math.max(1, Math.min(width / 112, height / 180));
@@ -943,16 +992,17 @@ function drawAvatarPreviewFallback(
   context.shadowColor = "rgba(21, 18, 15, .24)";
   context.shadowBlur = 7 * scale;
   context.shadowOffsetY = 4 * scale;
-  fill(variant === "female" ? "#171313" : "#4d3424", -25, 0, 50, variant === "female" ? 28 : 23);
-  fill("#bf815e", -22, 13, 44, 38);
-  fill(appearance.head, -26, 5, 52, 20);
-  fill(appearance.chest ?? (variant === "female" ? "#674f79" : "#557080"), -25, 52, 50, 56);
-  fill("#bf815e", -39, 55, 13, 59);
-  fill("#bf815e", 26, 55, 13, 59);
-  fill(appearance.legs ?? "#3a4652", -22, 108, 20, 51);
-  fill(appearance.legs ?? "#3a4652", 3, 108, 20, 51);
-  fill(appearance.feet ?? "#2f2823", -23, 157, 21, 13);
-  fill(appearance.feet ?? "#2f2823", 3, 157, 21, 13);
+  const colors = characterAppearance?.colors;
+  fill(colors?.hair ?? (variant === "female" ? "#171313" : "#4d3424"), -25, 0, 50, variant === "female" ? 28 : 23);
+  fill(colors?.skin ?? "#bf815e", -22, 13, 44, 38);
+  fill(equipmentAppearance.head, -26, 5, 52, 20);
+  fill(equipmentAppearance.chest ?? colors?.shirt ?? (variant === "female" ? "#674f79" : "#557080"), -25, 52, 50, 56);
+  fill(colors?.skin ?? "#bf815e", -39, 55, 13, 59);
+  fill(colors?.skin ?? "#bf815e", 26, 55, 13, 59);
+  fill(equipmentAppearance.legs ?? colors?.trousers ?? "#3a4652", -22, 108, 20, 51);
+  fill(equipmentAppearance.legs ?? colors?.trousers ?? "#3a4652", 3, 108, 20, 51);
+  fill(equipmentAppearance.feet ?? "#2f2823", -23, 157, 21, 13);
+  fill(equipmentAppearance.feet ?? "#2f2823", 3, 157, 21, 13);
   if (heldItem !== undefined) {
     fill(ITEMS[heldItem]?.color ?? "#9b7c4a", 36, 78, 11, 50);
   }
@@ -961,11 +1011,13 @@ function drawAvatarPreviewFallback(
 
 function PlayerAvatarPreview({
   variant,
+  appearance,
   equipment,
   heldItem,
   compact = false,
 }: {
   variant: PlayerVariant;
+  appearance?: CharacterAppearance;
   equipment?: HudState["equipment"];
   heldItem?: ItemCode;
   compact?: boolean;
@@ -991,14 +1043,15 @@ function PlayerAvatarPreview({
     key.position.set(-3, 5, -4);
     key.castShadow = true;
     scene.add(key);
-    const model = new BlockPlayerModel({ variant, mode: "local", castShadow: true, receiveShadow: true });
-    const appearance: PlayerEquipmentAppearance = {
+    const model = new BlockPlayerModel({ variant, race: appearance?.race, colors: appearance?.colors, mode: "local", castShadow: true, receiveShadow: true });
+    if (appearance) model.setAppearance(appearance);
+    const equipmentAppearance: PlayerEquipmentAppearance = {
       head: head === undefined ? null : ITEMS[head]?.color,
       chest: chest === undefined ? null : ITEMS[chest]?.color,
       legs: legs === undefined ? null : ITEMS[legs]?.color,
       feet: feet === undefined ? null : ITEMS[feet]?.color,
     };
-    model.setEquipmentAppearance(appearance);
+    model.setEquipmentAppearance(equipmentAppearance);
     model.group.rotation.y = -0.32;
     scene.add(model.group);
     const held = createPreviewHeldItem(heldItem);
@@ -1041,10 +1094,10 @@ function PlayerAvatarPreview({
           context.clearRect(0, 0, canvas.width, canvas.height);
           context.drawImage(renderer.domElement, 0, 0, canvas.width, canvas.height);
         } catch {
-          drawAvatarPreviewFallback(context, canvas.width, canvas.height, variant, appearance, heldItem);
+          drawAvatarPreviewFallback(context, canvas.width, canvas.height, variant, equipmentAppearance, heldItem, appearance);
         }
       } else {
-        drawAvatarPreviewFallback(context, canvas.width, canvas.height, variant, appearance, heldItem);
+        drawAvatarPreviewFallback(context, canvas.width, canvas.height, variant, equipmentAppearance, heldItem, appearance);
       }
       animationFrame = requestAnimationFrame(render);
     };
@@ -1059,9 +1112,9 @@ function PlayerAvatarPreview({
       (floor.material as THREE.Material).dispose();
       releaseAvatarPreviewRenderer();
     };
-  }, [variant, head, chest, legs, feet, heldItem, compact]);
+  }, [variant, appearance, head, chest, legs, feet, heldItem, compact]);
 
-  return <canvas ref={canvasRef} className={`player-avatar-preview ${compact ? "compact" : ""}`} aria-label={`${variant === "female" ? "Female" : "Male"} player model preview`} />;
+  return <canvas ref={canvasRef} className={`player-avatar-preview ${compact ? "compact" : ""}`} aria-label={`${variant === "female" ? "Female" : "Male"} ${appearance?.race ?? "wayfarer"} player model preview`} />;
 }
 
 export function recipePreviewGrid(recipe: Recipe): Array<ItemCode | 0> {
@@ -1167,6 +1220,7 @@ export default function VoxelGame() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<VoxelEngine | null>(null);
   const worldStorageRef = useRef<WorldStorage | null>(null);
+  const characterStoreRef = useRef<CharacterProfileStore | null>(null);
   const activeWorldIdRef = useRef<string | null>(null);
   const importWorldInputRef = useRef<HTMLInputElement>(null);
   const startedRef = useRef(false);
@@ -1184,6 +1238,7 @@ export default function VoxelGame() {
   const [toast, setToast] = useState("There is always another horizon. Usually with teeth.");
   const [savedPulse, setSavedPulse] = useState(false);
   const [worlds, setWorlds] = useState<WorldMetadata[]>([]);
+  const [characterCatalog, setCharacterCatalog] = useState<CharacterProfileCatalog>(FALLBACK_CHARACTER_CATALOG);
   const [selectedWorldId, setSelectedWorldId] = useState<string | null>(null);
   const [worldName, setWorldName] = useState("Untamed World");
   const [worldOptions, setWorldOptions] = useState<WorldOptions>(() => ({
@@ -1204,7 +1259,6 @@ export default function VoxelGame() {
   const [recipeQuery, setRecipeQuery] = useState("");
   const [previewRecipeId, setPreviewRecipeId] = useState<string | null>(null);
   const [recipeFeedback, setRecipeFeedback] = useState<RecipePlanResult | null>(null);
-  const [playerVariant, setPlayerVariant] = useState<PlayerVariant>("male");
   const [petNameDraft, setPetNameDraft] = useState("");
   const [selectedBestiary, setSelectedBestiary] = useState<MobKind>("mossling");
   const [bestiaryFilter, setBestiaryFilter] = useState<BestiaryFilter>("all");
@@ -1212,6 +1266,7 @@ export default function VoxelGame() {
   const [selectedPlantId, setSelectedPlantId] = useState(PLANTS[0]?.id ?? "");
   const [plantFilter, setPlantFilter] = useState<"all" | PlantCategory>("all");
   const [selectedMapMarkerId, setSelectedMapMarkerId] = useState<string | null>(null);
+  const [trackedNavigationId, setTrackedNavigationId] = useState<string | null>(null);
   const [selectedAlchemyRecipe, setSelectedAlchemyRecipe] = useState<string | null>(null);
   const [selectedDistilleryRecipe, setSelectedDistilleryRecipe] = useState<string | null>(null);
   const [selectedSugarworksRecipe, setSelectedSugarworksRecipe] = useState<string | null>(null);
@@ -1229,13 +1284,9 @@ export default function VoxelGame() {
   const [heldAuditMode, setHeldAuditMode] = useState(false);
   const [workstationAuditMode, setWorkstationAuditMode] = useState<WorkstationOverlay | null>(null);
   const showTouchControls = resolveTouchControls(uiPreferences.touchControls, inputCapabilities);
-
-  useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem("blockwild-player-variant");
-      if (stored === "female" || stored === "male") setPlayerVariant(stored);
-    } catch { /* Character selection remains available without persistent browser storage. */ }
-  }, []);
+  const activeCharacterProfile = characterCatalog.profiles.find((profile) => profile.id === characterCatalog.selectedProfileId)
+    ?? characterCatalog.profiles[0]
+    ?? FALLBACK_CHARACTER_PROFILE;
 
   useEffect(() => {
     const parameters = new URLSearchParams(window.location.search);
@@ -1287,11 +1338,22 @@ export default function VoxelGame() {
     let browserStorage: Storage | null = null;
     try { browserStorage = window.localStorage; } catch { /* WorldStorage reports browser storage unavailability. */ }
     const storage = new WorldStorage(browserStorage);
+    const characterStore = new CharacterProfileStore(browserStorage);
+    characterStoreRef.current = characterStore;
+    let selectedCharacter = characterStore.selectedProfile;
+    try {
+      const legacySex = browserStorage?.getItem("blockwild-player-variant");
+      if (legacySex === "female" && selectedCharacter.appearance.sex !== "female") {
+        selectedCharacter = characterStore.update(selectedCharacter.id, { appearance: { ...selectedCharacter.appearance, sex: "female" } }) ?? selectedCharacter;
+      }
+    } catch { /* The normalized character catalog remains authoritative. */ }
     worldStorageRef.current = storage;
     const initialWorlds = storage.listWorlds({ sortBy: "lastPlayedAt", direction: "desc" });
     const initialWorld = initialWorlds.find((world) => world.id === storage.activeWorldId) ?? initialWorlds[0];
     window.queueMicrotask(() => {
       refreshWorldCatalog(storage);
+      setCharacterCatalog(characterStore.catalog);
+      setMultiplayerName(selectedCharacter.name);
       if (storage.issues.length) setWorldNotice(storage.issues.map((issue) => issue.message).join(" "));
       if (initialWorld) {
         setSelectedWorldId(initialWorld.id);
@@ -1316,7 +1378,7 @@ export default function VoxelGame() {
             return;
           }
           if (kind === "inventory" || kind === "crafting") setInventoryTab(kind === "inventory" ? "inventory" : "recipes");
-          if (["inventory", "crafting", "furnace", "chest", "apiary", "orb-rack", "healing-station", "waygrid-items", "waygrid-creatures"].includes(kind)) slotInteractionReadyAtRef.current = performance.now() + 180;
+          if (["inventory", "crafting", "furnace", "chest", "apiary", "aquarium", "orb-rack", "healing-station", "waygrid-items", "waygrid-creatures"].includes(kind)) slotInteractionReadyAtRef.current = performance.now() + 180;
           setOverlay(kind as Overlay);
         },
         onDeath: () => undefined,
@@ -1350,6 +1412,8 @@ export default function VoxelGame() {
     // React and the engine share one in-memory catalog so browser-local CRUD,
     // autosaves, and play-time accounting cannot diverge or double-commit.
     engine.worldStorage = storage;
+    (engine as VoxelEngine & { setCharacterProfile?: (profile: CharacterProfile) => void }).setCharacterProfile?.(selectedCharacter);
+    engine.localPlayerModel.setAppearance(selectedCharacter.appearance).setPlayerName(selectedCharacter.name);
     engineRef.current = engine;
     const automationWindow = window as Window & {
       render_game_to_text?: () => string;
@@ -1366,6 +1430,7 @@ export default function VoxelGame() {
       engine.dispose();
       engineRef.current = null;
       worldStorageRef.current = null;
+      characterStoreRef.current = null;
       delete automationWindow.render_game_to_text;
       delete automationWindow.advanceTime;
     };
@@ -1435,7 +1500,7 @@ export default function VoxelGame() {
       const current = overlayRef.current;
       const engine = engineRef.current;
       if (acceptsTextInput(event.target) && event.code !== "Escape") return;
-      if (event.code === "KeyE" && ["inventory", "crafting", "furnace", "chest", "apiary", "orb-rack", "healing-station", "waygrid-items", "waygrid-creatures", "pet"].includes(current ?? "")) {
+      if (event.code === "KeyE" && ["inventory", "crafting", "furnace", "chest", "apiary", "aquarium", "orb-rack", "healing-station", "waygrid-items", "waygrid-creatures", "pet"].includes(current ?? "")) {
         event.preventDefault();
         event.stopImmediatePropagation();
         engine?.closeContainer();
@@ -1453,7 +1518,7 @@ export default function VoxelGame() {
         return;
       }
       if (current !== null) {
-        if (["inventory", "crafting", "furnace", "chest", "apiary", "orb-rack", "healing-station", "waygrid-items", "waygrid-creatures", "pet", "dragon", "library", "incubator"].includes(current)) engine?.closeContainer();
+        if (["inventory", "crafting", "furnace", "chest", "apiary", "aquarium", "orb-rack", "healing-station", "waygrid-items", "waygrid-creatures", "pet", "dragon", "library", "incubator"].includes(current)) engine?.closeContainer();
         if (startedRef.current) {
           if (current === "pause") { setOverlay(null); engine?.activate(); }
           else if (current === "settings" || current === "help" || current === "bestiary" || current === "multiplayer") setOverlay("pause");
@@ -1468,10 +1533,46 @@ export default function VoxelGame() {
     return () => window.removeEventListener("keydown", handleMenuKeys, true);
   }, [setOverlay]);
 
-  const choosePlayerVariant = (variant: PlayerVariant) => {
-    setPlayerVariant(variant);
-    engineRef.current?.setPlayerVariant(variant);
-    try { window.localStorage.setItem("blockwild-player-variant", variant); } catch { /* Session-only selection. */ }
+  const applyCharacterProfile = (profile: CharacterProfile) => {
+    setMultiplayerName(profile.name);
+    const engine = engineRef.current;
+    if (!engine) return;
+    (engine as VoxelEngine & { setCharacterProfile?: (profile: CharacterProfile) => void }).setCharacterProfile?.(profile);
+    engine.setPlayerVariant(profile.appearance.sex);
+    engine.localPlayerModel.setAppearance(profile.appearance).setPlayerName(profile.name);
+  };
+
+  const selectCharacterProfile = (profileId: string) => {
+    const store = characterStoreRef.current;
+    if (!store) return;
+    const profile = store.select(profileId);
+    setCharacterCatalog(store.catalog);
+    applyCharacterProfile(profile);
+  };
+
+  const createCharacterProfile = () => {
+    const store = characterStoreRef.current;
+    if (!store) return;
+    const profile = store.create({ name: `Trailkeeper ${store.catalog.profiles.length + 1}` });
+    if (!profile) { showToast("This browser already holds twelve saved characters."); return; }
+    setCharacterCatalog(store.catalog);
+    applyCharacterProfile(profile);
+  };
+
+  const updateCharacterProfile = (profileId: string, patch: Partial<Pick<CharacterProfile, "name" | "appearance" | "startingSkills">>) => {
+    const store = characterStoreRef.current;
+    if (!store) return;
+    const profile = store.update(profileId, patch);
+    if (!profile) return;
+    setCharacterCatalog(store.catalog);
+    if (profile.id === store.catalog.selectedProfileId) applyCharacterProfile(profile);
+  };
+
+  const removeCharacterProfile = (profileId: string) => {
+    const store = characterStoreRef.current;
+    if (!store?.remove(profileId)) return;
+    setCharacterCatalog(store.catalog);
+    applyCharacterProfile(store.selectedProfile);
   };
 
   const beginNewWorld = () => {
@@ -1487,7 +1588,7 @@ export default function VoxelGame() {
     const engine = engineRef.current;
     if (!engine) return;
     prepareFirstPersonHeldPresentation(engine);
-    engine.setPlayerVariant(playerVariant);
+    applyCharacterProfile(activeCharacterProfile);
     const created = engine.createWorld(seed, mode, worldOptions, worldName);
     const storage = worldStorageRef.current;
     if (created) {
@@ -1517,7 +1618,7 @@ export default function VoxelGame() {
     }
     engine.loadWorld(loaded.value.save, loaded.value.options, worldId);
     prepareFirstPersonHeldPresentation(engine);
-    engine.setPlayerVariant(playerVariant);
+    applyCharacterProfile(activeCharacterProfile);
     activeWorldIdRef.current = worldId;
     setSelectedWorldId(worldId);
     setMode(loaded.value.metadata.mode);
@@ -1721,6 +1822,7 @@ export default function VoxelGame() {
   }, []);
 
   const hostMultiplayer = async () => {
+    applyCharacterProfile(activeCharacterProfile);
     const api = engineRef.current as unknown as MultiplayerEngineApi | null;
     if (!api?.hostMultiplayer) {
       setMultiplayerState((current) => ({ ...current, error: "Hosting is unavailable in this engine build." }));
@@ -1755,6 +1857,7 @@ export default function VoxelGame() {
   };
 
   const createMultiplayerRoom = async () => {
+    applyCharacterProfile(activeCharacterProfile);
     const api = engineRef.current as unknown as MultiplayerEngineApi | null;
     const requestedCode = normalizeMultiplayerRoomCode(multiplayerRoomCode || api?.suggestMultiplayerRoomCode?.() || "");
     if (!requestedCode) {
@@ -1788,7 +1891,7 @@ export default function VoxelGame() {
       setMultiplayerState((current) => ({ ...current, error: "One-code joining is unavailable in this engine build. Use Advanced direct connection below." }));
       return;
     }
-    engineRef.current?.setPlayerVariant(playerVariant);
+    applyCharacterProfile(activeCharacterProfile);
     try {
       const flight = await runMultiplayerAction(() => api.joinMultiplayerRoom!(roomCode, multiplayerName.trim() || "Trailkeeper"));
       if (!flight.started) return;
@@ -1821,7 +1924,7 @@ export default function VoxelGame() {
       setMultiplayerState((current) => ({ ...current, error: "Joining is unavailable in this engine build." }));
       return;
     }
-    engineRef.current?.setPlayerVariant(playerVariant);
+    applyCharacterProfile(activeCharacterProfile);
     try {
       const result = await runMultiplayerAction(() => Promise.resolve(api.joinMultiplayer!(inviteCode, multiplayerName.trim() || "Trailkeeper")));
       if (!result.started) return;
@@ -1955,9 +2058,9 @@ export default function VoxelGame() {
     </button>
   );
 
-  const renderPlayerInventory = () => (
+  const renderPlayerInventory = (showPackActions = false) => (
     <div className="player-inventory-section">
-      <span className="grid-label">INVENTORY</span>
+      <div className="inventory-grid-heading"><span className="grid-label">INVENTORY</span>{showPackActions && <button type="button" className="inventory-utility-button" onClick={() => engineRef.current?.sortPack()}>Sort pack</button>}</div>
       <div className="mc-grid main-inventory-grid">
         {hud.inventory.slice(9, 36).map((slot, offset) => renderSlot(slot, `main-${offset}`, (shift) => slotAction(offset + 9, "left", shift), () => slotAction(offset + 9, "right")))}
       </div>
@@ -2095,50 +2198,56 @@ export default function VoxelGame() {
     const ingredientLabels = preview ? recipeIngredientLabels(preview) : [];
     return (
       <aside className="recipe-book">
-        <div className="recipe-book-title"><span aria-hidden="true">▤</span><strong>RECIPE BOOK</strong><small>{filtered.length}/{RECIPES.length}</small></div>
-        <label className="recipe-search">
-          <span className="sr-only">Search recipes</span>
-          <span aria-hidden="true">⌕</span>
-          <input type="search" value={recipeQuery} placeholder="Search recipes or materials…" onChange={(event) => { setRecipeQuery(event.target.value); setRecipeFeedback(null); }} />
-          {recipeQuery && <button type="button" onClick={() => setRecipeQuery("")} aria-label="Clear recipe search">×</button>}
-        </label>
-        <div className="recipe-plan-preview" aria-live="polite">
-          {preview ? (
-            <>
-              <div className="recipe-preview-copy"><strong>{preview.name}</strong><small>{preview.mirrored ? "Either left or right orientation" : `${preview.width}×${preview.height} shaped recipe`}</small></div>
-              <div className="recipe-preview-row">
-                <div className="recipe-preview-grid" aria-label={`${preview.name} crafting pattern`}>
-                  {previewCells.map((item, index) => <span key={index} className="recipe-preview-slot" title={previewLabels[index] ?? undefined} aria-label={previewLabels[index] ?? "Empty crafting slot"}>{item !== 0 && <ItemIcon item={item} small />}</span>)}
+        <section className="recipe-library" aria-label="Recipe list">
+          <div className="recipe-book-title"><span aria-hidden="true">▤</span><strong>RECIPE BOOK</strong><small>{filtered.length}/{RECIPES.length}</small></div>
+          <label className="recipe-search">
+            <span className="sr-only">Search recipes</span>
+            <span aria-hidden="true">⌕</span>
+            <input type="search" value={recipeQuery} placeholder="Search recipes or materials…" onChange={(event) => { setRecipeQuery(event.target.value); setRecipeFeedback(null); }} />
+            {recipeQuery && <button type="button" onClick={() => setRecipeQuery("")} aria-label="Clear recipe search">×</button>}
+          </label>
+          <div className="recipe-scroll">
+            {filtered.map((recipe) => {
+              const needsTable = recipe.table && !includeTable;
+              return (
+                <button
+                  type="button"
+                  key={recipe.id}
+                  className={`recipe-entry ${preview?.id === recipe.id ? "previewing" : ""} ${needsTable ? "needs-table" : ""}`}
+                  onMouseEnter={() => setPreviewRecipeId(recipe.id)}
+                  onFocus={() => setPreviewRecipeId(recipe.id)}
+                  onClick={() => arrangeRecipe(recipe.id)}
+                  aria-describedby={preview?.id === recipe.id ? "recipe-book-help" : undefined}
+                >
+                  <ItemIcon item={recipe.output.item} small />
+                  <span><strong>{recipe.name}</strong><small>{recipe.output.count > 1 ? `Makes ${recipe.output.count}` : needsTable ? "Needs crafting table" : recipe.table ? "Crafting table" : "Hand craftable"}</small></span>
+                  <b aria-hidden="true">{needsTable ? "▦" : "→"}</b>
+                </button>
+              );
+            })}
+          </div>
+          <p id="recipe-book-help">Hover or focus to inspect. Click to arrange ingredients on the board.</p>
+        </section>
+        <section className="recipe-board" aria-label="Selected recipe pattern">
+          <div className="recipe-board-title"><span>PATTERN BOARD</span><small>Click never crafts directly</small></div>
+          <div className="recipe-plan-preview" aria-live="polite">
+            {preview ? (
+              <>
+                <div className="recipe-preview-copy"><strong>{preview.name}</strong><small>{preview.mirrored ? "Either left or right orientation" : `${preview.width}×${preview.height} shaped recipe`}</small></div>
+                <div className="recipe-preview-row">
+                  <div className="recipe-preview-grid" aria-label={`${preview.name} crafting pattern`}>
+                    {previewCells.map((item, index) => <span key={index} className="recipe-preview-slot" title={previewLabels[index] ?? undefined} aria-label={previewLabels[index] ?? "Empty crafting slot"}>{item !== 0 && <ItemIcon item={item} small />}</span>)}
+                  </div>
+                  <span className="recipe-preview-arrow" aria-hidden="true" />
+                  <span className="recipe-preview-output"><ItemIcon item={preview.output.item} /><b>{preview.output.count}</b></span>
                 </div>
-                <span className="recipe-preview-arrow" aria-hidden="true" />
-                <span className="recipe-preview-output"><ItemIcon item={preview.output.item} /><b>{preview.output.count}</b></span>
-              </div>
-              <div className="recipe-preview-ingredients"><small>NEEDS</small><span>{ingredientLabels.join(" · ")}</span></div>
-            </>
-          ) : <div className="recipe-empty-search"><strong>No matching recipes</strong><small>Try an item or material name.</small></div>}
-        </div>
-        <div className="recipe-scroll">
-          {filtered.map((recipe) => {
-            const needsTable = recipe.table && !includeTable;
-            return (
-              <button
-                type="button"
-                key={recipe.id}
-                className={`recipe-entry ${preview?.id === recipe.id ? "previewing" : ""} ${needsTable ? "needs-table" : ""}`}
-                onMouseEnter={() => setPreviewRecipeId(recipe.id)}
-                onFocus={() => setPreviewRecipeId(recipe.id)}
-                onClick={() => arrangeRecipe(recipe.id)}
-                aria-describedby={preview?.id === recipe.id ? "recipe-book-help" : undefined}
-              >
-                <ItemIcon item={recipe.output.item} small />
-                <span><strong>{recipe.name}</strong><small>{recipe.output.count > 1 ? `Makes ${recipe.output.count}` : needsTable ? "Needs crafting table" : recipe.table ? "Crafting table" : "Hand craftable"}</small></span>
-                <b aria-hidden="true">{needsTable ? "▦" : "→"}</b>
-              </button>
-            );
-          })}
-        </div>
-        {recipeFeedback && <p className={`recipe-feedback ${recipeFeedback.ok ? "success" : "error"}`} role={recipeFeedback.ok ? "status" : "alert"}>{recipeFeedback.message}</p>}
-        <p id="recipe-book-help">Hover or focus to inspect. Click to arrange available ingredients; take the output to craft.</p>
+                <div className="recipe-preview-ingredients"><small>NEEDS</small><span>{ingredientLabels.join(" · ")}</span></div>
+              </>
+            ) : <div className="recipe-empty-search"><strong>No matching recipes</strong><small>Try an item or material name.</small></div>}
+          </div>
+          {recipeFeedback && <p className={`recipe-feedback ${recipeFeedback.ok ? "success" : "error"}`} role={recipeFeedback.ok ? "status" : "alert"}>{recipeFeedback.message}</p>}
+          <p>Available materials move into the matching crafting slots. Take the output yourself to finish crafting.</p>
+        </section>
       </aside>
     );
   };
@@ -2206,6 +2315,18 @@ export default function VoxelGame() {
   const activeCharacterName = hud.activeSentient?.name ?? activeResident?.name ?? hud.targetMob?.name ?? activeFactionCopy.fallbackName;
   const characterPortrait = sentientPortraitPath(activeFactionId, activeProfession);
   const currentPosition = { x: hud.coordinates[0], y: hud.coordinates[1], z: hud.coordinates[2] };
+  const questSource: QuestSource | null = hud.activeSentient?.nearby && hud.activeSentient.residentId
+    ? {
+      entityId: hud.activeSentient.residentId,
+      role: hud.activeSentient.profession,
+      factionId: hud.activeSentient.factionId,
+      isMayor: Boolean(hud.activeSentient.profession && isMayorProfession(hud.activeSentient.profession as ResidentProfession)),
+    }
+    : null;
+  const activeStatusEffects = statusEffectViewsFromBuffs(hud.potionBuffs, Date.now() / 1000);
+  const minimumMapZoom = explorationMinimumMapZoom(hud.skills);
+  const showDistantPoiLabels = explorationShowsDistantPoiLabels(hud.skills);
+  const trackNavigationAtAnyDistance = explorationTracksAtAnyDistance(hud.skills);
   const currentWayshrineId = hud.mapKnowledge.markers.find((marker) => marker.kind === "wayshrine"
     && Math.hypot(marker.position.x - currentPosition.x, marker.position.y - currentPosition.y, marker.position.z - currentPosition.z) <= 3.5)?.id ?? null;
   const fastTravelElapsed = hud.fastTravelChannel
@@ -2249,6 +2370,16 @@ export default function VoxelGame() {
             <span className="depth-readout">{hud.depth}</span>
             <span className={`weather-readout weather-${hud.weatherKind}`}>{hud.weatherKind.replace(/-/g, " ").toUpperCase()}</span>
           </div>
+          <NavigationHud
+            headingRadians={hud.mapHeading}
+            position={currentPosition}
+            markers={hud.mapKnowledge.markers}
+            players={hud.mapPlayers}
+            trackedId={trackedNavigationId}
+            trackAtAnyDistance={trackNavigationAtAnyDistance}
+            onTrack={setTrackedNavigationId}
+          />
+          <StatusEffectsHud effects={activeStatusEffects} />
           <div className="pinned-quest-stack" aria-label={`${pinnedQuestEntries.length} pinned quests`}>
             {pinnedQuestEntries.length ? pinnedQuestEntries.map(({ definition, progress }, index) => (
               <button type="button" key={definition.id} className="objective-card pinned-quest-card" onClick={() => engineRef.current?.openOverlay("quests")} aria-label={`Open pinned quest ${definition.name}`}>
@@ -2291,7 +2422,7 @@ export default function VoxelGame() {
           {settings.showFps && <div className="fps-counter" role="status" aria-label={`${Math.round(hud.averageFps)} frames per second`}>{Math.round(hud.averageFps)} FPS</div>}
 
           <div className="crosshair" aria-hidden="true"><span /><span /></div>
-          {hud.breakProgress > 0 && (
+          {settings.showBreakProgress && hud.breakProgress > 0 && (
             <div className="break-meter" aria-label={`Mining progress ${Math.round(hud.breakProgress * 100)} percent`}><span style={{ width: `${hud.breakProgress * 100}%` }} /></div>
           )}
           {hud.targetMob && (
@@ -2341,7 +2472,7 @@ export default function VoxelGame() {
           <div className="action-pad">
             <button type="button" className="touch-action jump-action" aria-label="Jump or swim" onPointerDown={(event) => { event.preventDefault(); engineRef.current?.jump(); }}>↑</button>
             <button type="button" className="touch-action mine-action" aria-label="Harvest or attack" onPointerDown={(event) => { event.preventDefault(); engineRef.current?.setMining(true); }} onPointerUp={() => engineRef.current?.setMining(false)} onPointerCancel={() => engineRef.current?.setMining(false)}>⚒</button>
-            <button type="button" className="touch-action place-action" aria-label="Use or place" onPointerDown={(event) => { event.preventDefault(); engineRef.current?.useSelected(); }}>▣</button>
+            <button type="button" className="touch-action place-action" aria-label="Use, place, or raise shield" onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); engineRef.current?.setOffhandUse(true); }} onPointerUp={() => engineRef.current?.setOffhandUse(false)} onPointerCancel={() => engineRef.current?.setOffhandUse(false)}>▣</button>
           </div>
           <button type="button" className="mobile-menu-button" aria-label="Pause game" onClick={() => { engineRef.current?.pause(); setOverlay("pause"); }}>Ⅱ</button>
         </div>
@@ -2369,16 +2500,18 @@ export default function VoxelGame() {
                   <PixelButton onClick={() => setOverlay("help")}>How to Play</PixelButton>
                   <PixelButton onClick={() => openSettings("title")}>Settings</PixelButton>
                 </div>
-                <div className="title-character-choice">
-                  <PlayerAvatarPreview variant={playerVariant} compact />
-                  <fieldset>
-                    <legend>PLAYER CHARACTER</legend>
-                    <button type="button" className={playerVariant === "male" ? "active" : ""} aria-pressed={playerVariant === "male"} onClick={() => choosePlayerVariant("male")}><span>MALE</span><small>Trailblazer</small></button>
-                    <button type="button" className={playerVariant === "female" ? "active" : ""} aria-pressed={playerVariant === "female"} onClick={() => choosePlayerVariant("female")}><span>FEMALE</span><small>Trailblazer</small></button>
-                  </fieldset>
-                </div>
                 <p className="browser-ownership-note">{WORLD_OWNERSHIP_NOTICE}</p>
               </div>
+              <CharacterStudio
+                key={activeCharacterProfile.id}
+                catalog={characterCatalog}
+                profile={activeCharacterProfile}
+                preview={<PlayerAvatarPreview variant={activeCharacterProfile.appearance.sex} appearance={activeCharacterProfile.appearance} compact />}
+                onSelect={selectCharacterProfile}
+                onCreate={createCharacterProfile}
+                onRemove={removeCharacterProfile}
+                onPatch={updateCharacterProfile}
+              />
               <aside className="world-catalog-panel" aria-label="Worlds stored in this browser">
                 <header>
                   <div><span className="panel-eyebrow">THIS BROWSER · {worlds.length} {worlds.length === 1 ? "WORLD" : "WORLDS"}</span><strong>World Catalog</strong></div>
@@ -2631,6 +2764,7 @@ export default function VoxelGame() {
             key={overlay}
             magic={hud.magic}
             skills={hud.skills}
+            activeEffects={activeStatusEffects}
             initialTab={overlay === "skills" ? "skills" : "spells"}
             onClose={resume}
             onSelectSpell={(spellId) => { engineRef.current?.selectMagicSpell(spellId); }}
@@ -2666,7 +2800,7 @@ export default function VoxelGame() {
 
       {(overlay === "inventory" || overlay === "crafting") && (
         <section className="menu-overlay inventory-overlay" aria-labelledby="inventory-title" onPointerMove={trackCursor}>
-          <div className="mc-window inventory-window">
+          <div className={`mc-window inventory-window ${inventoryTab === "recipes" ? "recipe-mode" : ""}`}>
             <header className="mc-window-header">
               <div><span className="panel-eyebrow">{overlay === "crafting" ? "CRAFTING TABLE · 3×3" : hud.mode === "builder" ? "BUILDER INVENTORY" : "PACK · 2×2 CRAFTING"}</span><h2 id="inventory-title">{overlay === "crafting" ? "Crafting Table" : "Inventory"}</h2></div>
               <button type="button" className="panel-close" onClick={resume} aria-label="Close inventory">×</button>
@@ -2683,21 +2817,23 @@ export default function VoxelGame() {
                 ))}
               </div>
             ) : (
-              <div className="inventory-workbench-layout">
+              <div className={`inventory-workbench-layout ${inventoryTab === "recipes" ? "recipe-workbench-layout" : ""}`}>
                 {inventoryTab === "recipes" ? renderRecipeBook(overlay === "crafting") : (
                   <div className="player-paper-doll">
-                    <div className="paper-doll-identity"><span>ACTIVE TRAILBLAZER</span><strong>{multiplayerName.trim() || "Trailkeeper"}</strong><small>{hud.playerVariant === "female" ? "Female" : "Male"} character</small></div>
+                    <div className="paper-doll-identity"><span>ACTIVE TRAILBLAZER</span><strong>{activeCharacterProfile.name}</strong><small>{activeCharacterProfile.appearance.sex === "female" ? "Female" : "Male"} {activeCharacterProfile.appearance.race.replace(/-/gu, " ")}</small></div>
                     <div className="paper-doll-stage">
                       <div className="equipment-slots">
                         {renderSlot(hud.equipment.head, "armor-head", (shift) => engineRef.current?.equipmentClick("head", "left", shift), () => engineRef.current?.equipmentClick("head", "right"), "equipment-slot", "Head armor")}
                         {renderSlot(hud.equipment.chest, "armor-chest", (shift) => engineRef.current?.equipmentClick("chest", "left", shift), () => engineRef.current?.equipmentClick("chest", "right"), "equipment-slot", "Chest armor")}
                         {renderSlot(hud.equipment.legs, "armor-legs", (shift) => engineRef.current?.equipmentClick("legs", "left", shift), () => engineRef.current?.equipmentClick("legs", "right"), "equipment-slot", "Leg armor")}
                         {renderSlot(hud.equipment.feet, "armor-feet", (shift) => engineRef.current?.equipmentClick("feet", "left", shift), () => engineRef.current?.equipmentClick("feet", "right"), "equipment-slot", "Boots")}
+                        {renderSlot(hud.offhand, "offhand", (shift) => engineRef.current?.offhandClick("left", shift), () => engineRef.current?.offhandClick("right"), `equipment-slot offhand-slot ${hud.shieldRaised ? "raised" : ""}`, "Offhand shield, torch, or lantern")}
                       </div>
-                      <PlayerAvatarPreview variant={hud.playerVariant} equipment={hud.equipment} heldItem={selectedSlot?.item} />
+                      <PlayerAvatarPreview variant={activeCharacterProfile.appearance.sex} appearance={activeCharacterProfile.appearance} equipment={hud.equipment} heldItem={selectedSlot?.item} />
                     </div>
                     <span className="paper-doll-held"><small>HELD</small>{selectedSlot ? <><ItemIcon item={selectedSlot.item} slot={selectedSlot} small /><b>{selectedName}</b></> : <b>Empty hand</b>}</span>
                     <span className="gold-wallet-slot" aria-label={`${hud.goldWallet.balance} gold in wallet`}><i aria-hidden="true">◆</i><small>GOLD WALLET</small><b>{hud.goldWallet.balance}</b><em>NO STACK LIMIT</em></span>
+                    <div className="gold-wallet-actions" aria-label="Gold Ingot wallet exchange"><button type="button" onClick={() => engineRef.current?.depositGoldIngots("one")}>Deposit 1</button><button type="button" onClick={() => engineRef.current?.depositGoldIngots("all")}>Deposit all</button><button type="button" onClick={() => engineRef.current?.withdrawGoldIngots("one")}>Withdraw 1</button><button type="button" onClick={() => engineRef.current?.withdrawGoldIngots("all")}>Withdraw max</button><small>1 ingot = 10 gold</small></div>
                     <span className="armor-readout">ARMOR {hud.armor}</span>
                     <small>LEVEL {hud.level}</small>
                     <b>{hud.depth}</b>
@@ -2706,7 +2842,7 @@ export default function VoxelGame() {
                 <div className="crafting-and-pack">
                   <div className="craft-title">CRAFTING {overlay === "crafting" ? "3×3" : "2×2"}</div>
                   {renderCraftingArea(overlay === "crafting" ? 3 : 2)}
-                  {renderPlayerInventory()}
+                  {renderPlayerInventory(true)}
                 </div>
               </div>
             )}
@@ -2744,13 +2880,24 @@ export default function VoxelGame() {
             <div className="mc-grid chest-grid">
               {(hud.activeChest ?? blankSlots(27)).map((slot, index) => renderSlot(slot, `chest-${index}`, (shift) => engineRef.current?.machineClick("chest", index, "left", shift), () => engineRef.current?.machineClick("chest", index, "right")))}
             </div>
-            {renderPlayerInventory()}
+            {!hud.activeChestTitle.toLocaleLowerCase().includes("conservatory") && <div className="container-utility-bar" aria-label="Chest inventory actions"><button type="button" onClick={() => engineRef.current?.sortActiveChest()}>Sort chest</button><button type="button" onClick={() => engineRef.current?.stackIntoActiveChest()}>Stack → chest</button><button type="button" onClick={() => engineRef.current?.stackFromActiveChest()}>Stack → pack</button><button type="button" onClick={() => engineRef.current?.takeAllFromActiveChest()}>Take all</button><button type="button" onClick={() => engineRef.current?.pushAllIntoActiveChest()}>Push all</button></div>}
+            {renderPlayerInventory(true)}
           </div>
           {hud.cursor && <div className="held-stack" style={{ left: cursorPosition.x, top: cursorPosition.y }}><SlotContents slot={hud.cursor} /></div>}
         </section>
       )}
 
       {overlay === "apiary" && renderApiaryPanel(hud.activeApiary)}
+      {overlay === "aquarium" && hud.activeAquarium && (
+        <section className="menu-overlay" aria-label="Connected aquarium habitat">
+          <AquariumPanel
+            state={hud.activeAquarium}
+            onInsertSelected={() => { engineRef.current?.aquariumInsertSelectedOrb(); }}
+            onRemoveResident={(residentId) => { engineRef.current?.aquariumRemoveResident(residentId); }}
+            onClose={resume}
+          />
+        </section>
+      )}
       {overlay === "orb-rack" && renderOrbStationPanel("orb-rack", hud.activeOrbRack)}
       {overlay === "healing-station" && renderOrbStationPanel("healing-station", hud.activeHealingStation)}
       {overlay === "waygrid-items" && (
@@ -2807,6 +2954,10 @@ export default function VoxelGame() {
             currentPosition={currentPosition}
             currentHeadingRadians={hud.mapHeading}
             otherPlayers={hud.mapPlayers}
+            minimumZoom={minimumMapZoom}
+            alwaysShowPoiLabels={showDistantPoiLabels}
+            trackedTargetId={trackedNavigationId}
+            onTrackTarget={setTrackedNavigationId}
             selectedMarkerId={selectedMapMarkerId}
             onSelectMarker={setSelectedMapMarkerId}
             onAddManualMarker={(name) => { hearthroadsApi?.addManualMapMarker?.(name); }}
@@ -2834,6 +2985,11 @@ export default function VoxelGame() {
             onPin={(questId) => { hearthroadsApi?.pinQuestById?.(questId); }}
             onAbandon={(questId) => { hearthroadsApi?.abandonQuestById?.(questId); }}
             onTurnIn={(questId) => { hearthroadsApi?.turnInQuestById?.(questId); }}
+            source={questSource}
+            onTrackTurnIn={(questId) => {
+              const markerId = hearthroadsApi?.trackQuestTurnIn?.(questId) ?? null;
+              if (markerId) setTrackedNavigationId(markerId);
+            }}
             onClose={resume}
           />
         </section>
@@ -2960,7 +3116,11 @@ export default function VoxelGame() {
             onSetRoleWaypoint={(profession) => {
               if (!hearthroadsApi?.setSettlementRoleWaypoint?.(profession)) showToast("No living resident currently fills that role.");
             }}
-            onSelectResident={(residentId) => { hearthroadsApi?.selectSettlementResident?.(residentId); }}
+            onSelectResident={(residentId) => {
+              const markerId = hearthroadsApi?.selectSettlementResident?.(residentId) ?? null;
+              if (markerId) setTrackedNavigationId(markerId);
+              else showToast("That resident is not currently available to track.");
+            }}
             onHireResident={isMayorProfession(activeProfession) ? (residentId) => {
               if (!hearthroadsApi?.hireResidentFromMayor?.(residentId)) showToast("That resident is not currently available for hire.");
             } : undefined}
@@ -3042,9 +3202,12 @@ export default function VoxelGame() {
                 <span className="bestiary-index">{plantVisible.length} ENTRIES</span>
               </div>
               <div className="bestiary-layout plant-bestiary-layout">
-                <nav className="bestiary-list plant-bestiary-list" aria-label="Plant list">{plantVisible.map((plant) => { const known = discoveredPlants.has(plant.id); return <button type="button" key={plant.id} className={selectedPlant?.id === plant.id ? "active" : ""} onClick={() => setSelectedPlantId(plant.id)}><span className={`plant-entry-glyph plant-${plant.category}`} aria-hidden="true">{known ? PLANT_CATEGORY_GLYPH[plant.category] : "?"}</span><span className="bestiary-list-copy"><strong>{known ? plant.name : "Unknown Plant"}</strong><small>{known ? `${plant.category} · ${plant.utility}` : `Look around ${plant.habitat.toLowerCase()}.`}</small></span></button>; })}</nav>
+                <nav className="bestiary-list plant-bestiary-list" aria-label="Plant list">{plantVisible.map((plant) => { const known = discoveredPlants.has(plant.id); return <button type="button" key={plant.id} className={selectedPlant?.id === plant.id ? "active" : ""} onClick={() => setSelectedPlantId(plant.id)}><PlantPortrait plant={plant} seen={known} mini /><span className="bestiary-list-copy"><strong>{known ? plant.name : "Unknown Plant"}</strong><small>{known ? `${plant.category} · ${plant.utility}` : `Look around ${plant.habitat.toLowerCase()}.`}</small></span></button>; })}</nav>
                 {selectedPlant ? <article className={`bestiary-detail plant-detail ${selectedPlantDiscovered ? "seen" : "unknown"}`}>
-                  <div className={`plant-hero plant-${selectedPlant.category}`}><span aria-hidden="true">{selectedPlantDiscovered ? PLANT_CATEGORY_GLYPH[selectedPlant.category] : "?"}</span><div><small>{selectedPlant.category.toUpperCase()}</small><strong>{selectedPlantDiscovered ? selectedPlant.name : "Unknown Plant"}</strong></div></div>
+                  <div className={`plant-portrait plant-${selectedPlant.category}`} key={selectedPlant.id}>
+                    <PlantPortrait plant={selectedPlant} seen={selectedPlantDiscovered} />
+                    <div className="plant-portrait-chrome"><span>{selectedPlant.category === "tree" ? "FULL TREE EXAMPLE" : "FIELD SPECIMEN"}</span><strong>{selectedPlantDiscovered ? selectedPlant.name : "Unknown Plant"}</strong></div>
+                  </div>
                   {selectedPlantDiscovered ? <><div className="bestiary-heading"><div><span className="temperament-label temperament-neutral">FLORA</span><h3>{selectedPlant.name}</h3></div><strong>{selectedPlant.category.toUpperCase()}</strong></div><div className="plant-facts"><section><small>HABITAT</small><p>{selectedPlant.habitat}</p></section><section><small>GROWTH</small><p>{selectedPlant.growth}</p></section><section><small>UTILITY</small><p>{selectedPlant.utility}</p></section></div><section className="bestiary-loot plant-drops"><small>HARVEST & DROPS</small>{selectedPlant.drops.map((drop) => <div key={`${selectedPlant.id}-${drop.item}`}><ItemIcon item={drop.item} small /><span><strong>{drop.label}</strong><small>Recorded from this plant family</small></span></div>)}</section></> : <div className="unknown-entry"><span className="panel-eyebrow">UNRECORDED FLORA</span><h3>Where to look</h3><p>Search around {selectedPlant.habitat.toLowerCase()}. Bring it within view to record growth, drops, and practical uses.</p></div>}
                 </article> : null}
               </div>
@@ -3158,6 +3321,7 @@ export default function VoxelGame() {
             <span className="panel-eyebrow">OPTIONS</span>
             <h2 id="settings-title">Settings</h2>
             <label className="setting-row"><span><strong>Master volume</strong><small>{settings.muted ? "Muted" : `${Math.round(settings.volume * 100)}%`}</small></span><input type="range" min="0" max="1" step="0.05" value={settings.volume} onChange={(event) => updateSettings({ volume: Number(event.target.value), muted: false })} /></label>
+            <label className="setting-row"><span><strong>Music volume</strong><small>{settings.muted ? "Muted" : `${Math.round(settings.musicVolume * 100)}%`}</small></span><input type="range" min="0" max="1" step="0.05" value={settings.musicVolume} onChange={(event) => updateSettings({ musicVolume: Number(event.target.value), muted: false })} /></label>
             <label className="setting-row"><span><strong>Look sensitivity</strong><small>{Math.round((settings.sensitivity / 0.005) * 100)}%</small></span><input type="range" min="0.0008" max="0.005" step="0.0001" value={settings.sensitivity} onChange={(event) => updateSettings({ sensitivity: Number(event.target.value) })} /></label>
             <label className="setting-row"><span><strong>Field of view</strong><small>{Math.round(settings.fov)}°</small></span><input type="range" min="55" max="100" step="1" value={settings.fov} onChange={(event) => updateSettings({ fov: Number(event.target.value) })} /></label>
             <label className="setting-row"><span><strong>Render distance</strong><small>{settings.renderDistance} chunks · about {settings.renderDistance * 16} blocks · default 10, maximum 16</small></span><input type="range" min="2" max="16" step="1" value={settings.renderDistance} onChange={(event) => updateSettings({ renderDistance: Number(event.target.value), simulationDistance: Math.min(settings.simulationDistance, Number(event.target.value)) })} /></label>
@@ -3167,6 +3331,9 @@ export default function VoxelGame() {
             <label className="setting-row"><span><strong>Target outline</strong><small>{Math.round(uiPreferences.targetOutlineOpacity * 100)}% opacity</small></span><input type="range" min="0.05" max="1" step="0.05" value={uiPreferences.targetOutlineOpacity} onChange={(event) => updateUiPreferences({ targetOutlineOpacity: Number(event.target.value) })} /></label>
             <div className="toggle-setting"><span><strong>Music, sound effects & ambience</strong><small>Includes the Blockwild day, night, and sea score.</small></span><button type="button" className={settings.muted ? "" : "active"} onClick={() => updateSettings({ muted: !settings.muted })}>{settings.muted ? "OFF" : "ON"}</button></div>
             <div className="toggle-setting"><span><strong>FPS counter</strong><small>Shows a compact live performance readout while playing.</small></span><button type="button" className={settings.showFps ? "active" : ""} onClick={() => updateSettings({ showFps: !settings.showFps })}>{settings.showFps ? "ON" : "OFF"}</button></div>
+            <div className="toggle-setting"><span><strong>Block crack texture</strong><small>Shows the familiar staged crack overlay while breaking full blocks.</small></span><button type="button" className={settings.showBreakingTexture ? "active" : ""} onClick={() => updateSettings({ showBreakingTexture: !settings.showBreakingTexture })}>{settings.showBreakingTexture ? "ON" : "OFF"}</button></div>
+            <div className="toggle-setting"><span><strong>Breaking progress bar</strong><small>Optional numeric-style HUD meter; off by default while the crack texture is active.</small></span><button type="button" className={settings.showBreakProgress ? "active" : ""} onClick={() => updateSettings({ showBreakProgress: !settings.showBreakProgress })}>{settings.showBreakProgress ? "ON" : "OFF"}</button></div>
+            <div className="toggle-setting"><span><strong>Tool effectiveness outline</strong><small>Subtly shifts the target outline green, amber, or red for the held tool.</small></span><button type="button" className={settings.showToolEffectiveness ? "active" : ""} onClick={() => updateSettings({ showToolEffectiveness: !settings.showToolEffectiveness })}>{settings.showToolEffectiveness ? "ON" : "OFF"}</button></div>
             <div className="fullscreen-setting"><PixelButton onClick={() => engineRef.current?.toggleFullscreen()}>{hud.fullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}</PixelButton></div>
             <div className="panel-actions"><PixelButton className="gold-button" onClick={() => setOverlay(settingsReturn)}>Done</PixelButton></div>
           </div>

@@ -30,7 +30,7 @@ import { createWeatherState, planCloudField, weatherVisuals } from "../app/game/
 import { BiomeId, ChunkWorld, GENERATOR_VERSION, planPoiAmenities } from "../app/game/world.ts";
 
 test("shoreline, biome, crop and aquatic ids remain byte-safe and registered", () => {
-  assert.equal(GENERATOR_VERSION, 11);
+  assert.equal(GENERATOR_VERSION, 12);
   for (const block of [BlockId.Saltbrush, BlockId.CoastAster, BlockId.JungleGrass, BlockId.SakuraGrass, BlockId.LumenKelp, BlockId.AbyssBloom, BlockId.SunrootCrop]) {
     assert.ok(block > 99 && block <= 255);
     assert.ok(BLOCKS[block]);
@@ -224,6 +224,14 @@ test("POI amenity overlays add doors, lights and varied furniture", () => {
     const count = ["desert-temple", "forest-temple", "sunbun-grove", "abandoned-apiary"].flatMap((structure) => planPoiAmenities(structure as Parameters<typeof planPoiAmenities>[0], { x: 0, y: 40, z: 0 })).filter((entry) => entry.block === kind).length;
     assert.ok(count > 0, `${BlockId[kind]} should furnish at least one POI`);
   }
+});
+
+test("the Healing Grotto wall torch has an authored stone support", () => {
+  const origin = { x: 20, y: 40, z: -8 };
+  const amenities = planPoiAmenities("waykeeper-healing-grotto", origin);
+  const torch = amenities.find((entry) => entry.block === BlockId.TorchWallNorth)!;
+  assert.ok(torch);
+  assert.ok(amenities.some((entry) => entry.x === torch.x && entry.y === torch.y && entry.z === torch.z + 1 && entry.block === BlockId.MoonSlate));
 });
 
 test("world sampling exposes the new land and trench biomes with variable ocean depth", () => {

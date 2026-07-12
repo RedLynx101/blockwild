@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { BiomeId } from "./world";
-import type { BirdKind, CoreMobKind, DragonKind, MobKind, TideglassAquaticKind } from "./mobs";
+import { MOB_DEFS, type BirdKind, type CoreMobKind, type DragonKind, type MobKind, type TideglassAquaticKind } from "./mobs";
 
 const TAU = Math.PI * 2;
 
@@ -134,12 +134,14 @@ export type WeightedMob = readonly [kind: MobKind, weight: number];
 
 const OCEAN_FISH: readonly WeightedMob[] = Object.freeze([
   ["shoalfin", 0.27],
+  ["pocket-goldfish", 0.08],
   ["silverthread", 0.22],
   ["blue-mackerel", 0.2],
   ["coralback", 0.13],
   ["emberribbon", 0.08],
   ["glassfin", 0.06],
   ["tidepup", 0.04],
+  ["sunset-sea-slug", 0.018],
 ]);
 const DEEP_OCEAN_FISH: readonly WeightedMob[] = Object.freeze([
   ["blue-mackerel", 0.22],
@@ -154,6 +156,9 @@ const DEEP_OCEAN_FISH: readonly WeightedMob[] = Object.freeze([
   ["dreadcoil", 0.008],
   ["worldshell-leviathan", 0.004],
   ["aetherbell-leviathan", 0.002],
+  ["pocket-goldfish", 0.025],
+  ["sunset-sea-slug", 0.018],
+  ["moonlace-sea-slug", 0.012],
 ]);
 const LUMEN_TRENCH_FAUNA: readonly WeightedMob[] = Object.freeze([
   ["glassfin", 0.31],
@@ -165,11 +170,14 @@ const LUMEN_TRENCH_FAUNA: readonly WeightedMob[] = Object.freeze([
   ["dreadcoil", 0.016],
   ["aetherbell-leviathan", 0.007],
   ["worldshell-leviathan", 0.002],
+  ["moonlace-sea-slug", 0.045],
+  ["sunset-sea-slug", 0.012],
 ]);
 const RIVER_FISH: readonly WeightedMob[] = Object.freeze([
-  ["brookdart", 0.4],
-  ["reedneedle", 0.35],
-  ["redfin-salmon", 0.25],
+  ["brookdart", 0.34],
+  ["reedneedle", 0.3],
+  ["redfin-salmon", 0.22],
+  ["pocket-goldfish", 0.14],
 ]);
 const UNDERGROUND_FISH: readonly WeightedMob[] = Object.freeze([
   ["gloomfin", 0.48],
@@ -179,7 +187,7 @@ const SYRUP_POND_FISH: readonly WeightedMob[] = Object.freeze([
   ["syrupfin", 1],
 ]);
 const GLIMMER_POND_FISH: readonly WeightedMob[] = Object.freeze([
-  ["glowfin", 0.82], ["brookdart", 0.18],
+  ["glowfin", 0.68], ["brookdart", 0.16], ["pocket-goldfish", 0.16],
 ]);
 
 /** Small immutable tables let the engine choose habitat fish without scanning all mobs. */
@@ -234,25 +242,26 @@ function weightedMob(entries: readonly WeightedMob[], roll: number) {
   return entries.at(-1)?.[0] ?? "mossling";
 }
 
-const SNOW_PASSIVES: readonly WeightedMob[] = Object.freeze([["woolhorn", 0.68], ["canopy-lark", 0.22], ["thimbledeer", 0.1]]);
+const SNOW_PASSIVES: readonly WeightedMob[] = Object.freeze([["woolhorn", 0.5], ["canopy-lark", 0.17], ["thimbledeer", 0.08], ["frost-hare", 0.25]]);
 const DESERT_PASSIVES: readonly WeightedMob[] = Object.freeze([["duneclatter", 0.68], ["emberjay", 0.24], ["pebbletortoise", 0.08]]);
 const BEACH_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["sunwash-crab", 0.58], ["tidewing-gull", 0.3], ["pebbletortoise", 0.08], ["reed-dragonfly", 0.04],
 ]);
-const SAVANNA_PASSIVES: readonly WeightedMob[] = Object.freeze([["sunstep-grazer", 0.46], ["emberjay", 0.2], ["ridgeback", 0.2], ["reedstrider", 0.14]]);
+const SAVANNA_PASSIVES: readonly WeightedMob[] = Object.freeze([["sunstep-grazer", 0.38], ["emberjay", 0.17], ["ridgeback", 0.17], ["reedstrider", 0.12], ["russet-rabbit", 0.16]]);
 const SILTFEN_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["mossling", 0.19], ["lanternshell", 0.2], ["puddlehopper", 0.17], ["reedstrider", 0.16],
   ["reed-dragonfly", 0.09], ["pebbletortoise", 0.04], ["canopy-lark", 0.03], ["dewback-tapir", 0.12],
 ]);
 const FOREST_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["brambleboar", 0.18], ["mossling", 0.16], ["canopy-lark", 0.13], ["thimbledeer", 0.15],
-  ["petalfox", 0.12], ["wild-horse", 0.06], ["meadow-cow", 0.03], ["dewback-tapir", 0.09], ["burrowbell", 0.05], ["sakurakit", 0.03],
+  ["petalfox", 0.1], ["wild-horse", 0.05], ["meadow-cow", 0.03], ["dewback-tapir", 0.07], ["burrowbell", 0.04], ["sakurakit", 0.03],
+  ["meadow-cottontail", 0.04], ["russet-rabbit", 0.02],
 ]);
 const MUSHROOM_PASSIVES: readonly WeightedMob[] = Object.freeze([["lanternshell", 0.38], ["glowmoth", 0.24], ["puddlehopper", 0.22], ["petalfox", 0.16]]);
 const MEADOW_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["thimbledeer", 0.14], ["petalfox", 0.11], ["puddlehopper", 0.06], ["reedstrider", 0.07],
   ["pebbletortoise", 0.08], ["canopy-lark", 0.08], ["peelop", 0.04], ["ridgeback", 0.1],
-  ["wild-horse", 0.12], ["meadow-cow", 0.12], ["burrowbell", 0.08],
+  ["wild-horse", 0.1], ["meadow-cow", 0.1], ["burrowbell", 0.06], ["meadow-cottontail", 0.18],
 ]);
 const RIVER_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["reedstrider", 0.3], ["reed-dragonfly", 0.22], ["puddlehopper", 0.18], ["lanternshell", 0.12],
@@ -264,7 +273,8 @@ const CLOUDREED_PASSIVES: readonly WeightedMob[] = Object.freeze([
 ]);
 const UPLAND_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["wild-horse", 0.22], ["sunstep-grazer", 0.14], ["pebbletortoise", 0.12], ["petalfox", 0.1],
-  ["thimbledeer", 0.12], ["puddlehopper", 0.04], ["reedstrider", 0.04], ["ridgeback", 0.08], ["burrowbell", 0.14],
+  ["thimbledeer", 0.1], ["puddlehopper", 0.04], ["reedstrider", 0.04], ["ridgeback", 0.07], ["burrowbell", 0.11],
+  ["meadow-cottontail", 0.09], ["russet-rabbit", 0.07],
 ]);
 const RAINVEIL_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["dewback-tapir", 0.2], ["brambleboar", 0.18], ["canopy-lark", 0.16], ["mossling", 0.14],
@@ -275,7 +285,7 @@ const SAKURABLOOM_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["mossling", 0.08], ["wild-horse", 0.05], ["burrowbell", 0.04], ["reed-dragonfly", 0.03],
 ]);
 const SUGARPLUM_PASSIVES: readonly WeightedMob[] = Object.freeze([
-  ["sprinklebug", 0.56], ["taffalo", 0.34], ["reed-dragonfly", 0.06], ["puddlehopper", 0.04],
+  ["sprinklebug", 0.44], ["taffalo", 0.29], ["reed-dragonfly", 0.05], ["puddlehopper", 0.03], ["chocolate-bunny", 0.19],
 ]);
 const GLIMMERWOOD_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["glimmerhart", 0.34], ["runeowl", 0.2], ["mossling", 0.15], ["glowmoth", 0.12],
@@ -371,7 +381,32 @@ export const NATURAL_GROUP_RANGES: Readonly<Partial<Record<MobKind, readonly [mi
   "dewback-tapir": [2, 4],
   warg: [2, 3],
   "reed-dragonfly": [2, 5],
+  "meadow-cottontail": [2, 5],
+  "russet-rabbit": [2, 4],
+  "frost-hare": [1, 3],
+  "chocolate-bunny": [1, 3],
+  "sunset-sea-slug": [1, 2],
+  "moonlace-sea-slug": [1, 2],
+  "pocket-goldfish": [4, 8],
 });
+
+export type FoodLureResponse = "approach" | "flee" | "ignore";
+
+/** Shared, deterministic stimulus contract for rabbits and future skittish grazers. */
+export function foodLureResponseForMob(
+  kind: MobKind,
+  input: Readonly<{ heldItem?: number; distance: number; playerSpeed: number; attacked?: boolean }>,
+): FoodLureResponse {
+  const definition = MOB_DEFS[kind];
+  if (input.attacked) return "flee";
+  if (definition.foodLure && input.heldItem !== undefined && definition.diet?.includes(input.heldItem) && input.distance <= 10) return "approach";
+  if (definition.temperament === "Skittish" && input.distance < 6.5 && input.playerSpeed > 1.75) return "flee";
+  return "ignore";
+}
+
+export function aquaticSpawnBandForMob(kind: MobKind): "floor" | "water-column" {
+  return MOB_DEFS[kind].bottomDweller ? "floor" : "water-column";
+}
 
 /** Bounded group count; unlisted creatures remain solitary. */
 export function naturalGroupSizeForMob(kind: MobKind, roll = Math.random()) {
@@ -734,6 +769,7 @@ export function canRideCreature(context: CreatureRideContext) {
 export const GENERIC_BOND_MOB_KINDS = Object.freeze([
   "wild-horse", "warg", "tidepup", "sakurakit", "taffy-hound", "praline-cat", "taffalo",
   "glimmerhart", "runeowl", "copper-mole",
+  "meadow-cottontail", "russet-rabbit", "frost-hare", "chocolate-bunny",
 ] as const satisfies readonly CoreMobKind[]);
 
 /** One source of truth for the reusable trust/follow/saddle state in the engine and Capture Orbs. */

@@ -1,4 +1,6 @@
 import * as THREE from "three";
+import type { FactionRace } from "./factions";
+import { characterRaceTraits, type CharacterAppearance } from "./character-profiles";
 
 export type PlayerModelMode = "local" | "remote";
 export type PlayerVariant = "male" | "female";
@@ -21,6 +23,10 @@ export type PlayerPoseSnapshot = {
   jump: number;
   headYaw: number;
   headPitch: number;
+  /** Horizontal full-body swim blend, transported independently from locomotion. */
+  swimming?: number;
+  /** Chair/stool leg pose blend; absent legacy snapshots mean standing. */
+  seated?: number;
 };
 
 /** A transport-friendly player state containing only primitives and tuples. */
@@ -39,6 +45,7 @@ export type PlayerColors = {
   shirt: THREE.ColorRepresentation;
   trousers: THREE.ColorRepresentation;
   hair: THREE.ColorRepresentation;
+  accent: THREE.ColorRepresentation;
 };
 
 export type PlayerEquipmentAppearance = Partial<Record<"head" | "chest" | "legs" | "feet", THREE.ColorRepresentation | null>>;
@@ -48,6 +55,7 @@ export type PlayerModelOptions = {
   playerName?: string;
   mode?: PlayerModelMode;
   variant?: PlayerVariant;
+  race?: FactionRace;
   colors?: Partial<PlayerColors>;
   equipment?: PlayerEquipmentAppearance;
   castShadow?: boolean;
@@ -73,6 +81,7 @@ export type PlayerModelMaterials = {
   armorChest: THREE.MeshStandardMaterial;
   armorLegs: THREE.MeshStandardMaterial;
   armorFeet: THREE.MeshStandardMaterial;
+  accent: THREE.MeshStandardMaterial;
 };
 
 export const DEFAULT_PLAYER_COLORS: Readonly<PlayerColors> = Object.freeze({
@@ -80,6 +89,7 @@ export const DEFAULT_PLAYER_COLORS: Readonly<PlayerColors> = Object.freeze({
   shirt: "#3f7fba",
   trousers: "#293554",
   hair: "#5a3826",
+  accent: "#f0c85b",
 });
 
 export const PLAYER_VARIANT_HEIGHT_SCALE: Readonly<Record<PlayerVariant, number>> = Object.freeze({
@@ -92,8 +102,12 @@ export function playerVariantHeightScale(variant: PlayerVariant) {
   return PLAYER_VARIANT_HEIGHT_SCALE[variant === "female" ? "female" : "male"];
 }
 
-export function playerEyeHeightForVariant(variant: PlayerVariant, crouching = false) {
-  return (crouching ? 1.3 : 1.62) * playerVariantHeightScale(variant);
+export function playerModelHeightScale(variant: PlayerVariant, race: FactionRace = "wayfarer") {
+  return playerVariantHeightScale(variant) * characterRaceTraits(race).heightScale;
+}
+
+export function playerEyeHeightForVariant(variant: PlayerVariant, crouching = false, race: FactionRace = "wayfarer") {
+  return (crouching ? 1.3 : 1.62) * playerModelHeightScale(variant, race);
 }
 
 export const DEFAULT_PLAYER_POSE: Readonly<PlayerPoseSnapshot> = Object.freeze({
@@ -105,6 +119,8 @@ export const DEFAULT_PLAYER_POSE: Readonly<PlayerPoseSnapshot> = Object.freeze({
   jump: 0,
   headYaw: 0,
   headPitch: 0,
+  swimming: 0,
+  seated: 0,
 });
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -166,6 +182,8 @@ export function normalizePlayerPose(
     jump: clamp01(finiteOr(pose.jump, base.jump)),
     headYaw: wrapAngle(finiteOr(pose.headYaw, base.headYaw)),
     headPitch: clamp(finiteOr(pose.headPitch, base.headPitch), -MAX_HEAD_PITCH, MAX_HEAD_PITCH),
+    swimming: clamp01(finiteOr(pose.swimming, base.swimming ?? 0)),
+    seated: clamp01(finiteOr(pose.seated, base.seated ?? 0)),
   };
 }
 
@@ -236,6 +254,8 @@ export function interpolatePlayerPose(
     jump: THREE.MathUtils.lerp(from.jump, to.jump, t),
     headYaw: interpolateAngle(from.headYaw, to.headYaw, t),
     headPitch: THREE.MathUtils.lerp(from.headPitch, to.headPitch, t),
+    swimming: THREE.MathUtils.lerp(from.swimming ?? 0, to.swimming ?? 0, t),
+    seated: THREE.MathUtils.lerp(from.seated ?? 0, to.seated ?? 0, t),
   };
 }
 
@@ -288,6 +308,7 @@ export class BlockPlayerModel {
   readonly parts: PlayerModelParts;
   readonly materials: PlayerModelMaterials;
   readonly rightHandSocket = new THREE.Object3D();
+  readonly leftHandSocket = new THREE.Object3D();
   readonly nameAnchor = new THREE.Object3D();
   readonly mode: PlayerModelMode;
   readonly playerId?: string;
@@ -299,12 +320,18 @@ export class BlockPlayerModel {
   private readonly inverseRootMatrix = new THREE.Matrix4();
   private pose: PlayerPoseSnapshot = { ...DEFAULT_PLAYER_POSE };
   private heldItem: THREE.Object3D | null = null;
+  private offhandItem: THREE.Object3D | null = null;
+  private offhandShield = false;
+  private offhandRaised = false;
   private readonly torsoBlock: THREE.Mesh;
   private readonly maleHair = new THREE.Group();
   private readonly femaleHair = new THREE.Group();
+  private readonly woodElfFeatures = new THREE.Group();
+  private readonly goblinFeatures = new THREE.Group();
   private readonly baseHairColor = new THREE.Color(DEFAULT_PLAYER_COLORS.hair);
   private readonly equipmentMeshes: Record<"head" | "chest" | "legs" | "feet", THREE.Mesh[]> = { head: [], chest: [], legs: [], feet: [] };
   private _variant: PlayerVariant;
+  private _race: FactionRace;
   private disposed = false;
   private _playerName = "Player";
 
@@ -314,6 +341,7 @@ export class BlockPlayerModel {
     const colors = { ...DEFAULT_PLAYER_COLORS, ...options.colors };
     this.baseHairColor.set(colors.hair);
     this._variant = options.variant ?? "male";
+    this._race = options.race ?? "wayfarer";
     const materialOptions = { roughness: 0.92, metalness: 0, flatShading: true };
     this.materials = {
       skin: new THREE.MeshStandardMaterial({ ...materialOptions, color: colors.skin }),
@@ -325,6 +353,7 @@ export class BlockPlayerModel {
       armorChest: new THREE.MeshStandardMaterial({ ...materialOptions, color: 0xffffff }),
       armorLegs: new THREE.MeshStandardMaterial({ ...materialOptions, color: 0xffffff }),
       armorFeet: new THREE.MeshStandardMaterial({ ...materialOptions, color: 0xffffff }),
+      accent: new THREE.MeshStandardMaterial({ ...materialOptions, color: colors.accent }),
     };
 
     this.group.name = "block-player";
@@ -347,6 +376,7 @@ export class BlockPlayerModel {
 
     this.torsoBlock = this.createBlock("torso-block", [TORSO_WIDTH, TORSO_HEIGHT, TORSO_DEPTH], [0, TORSO_HEIGHT / 2, 0], this.materials.shirt, options);
     torso.add(this.torsoBlock);
+    torso.add(this.createBlock("clothing-accent", [TORSO_WIDTH + 0.014, 0.085, TORSO_DEPTH + 0.016], [0, TORSO_HEIGHT * 0.44, 0], this.materials.accent, options));
 
     head.position.set(0, TORSO_HEIGHT, 0);
     head.rotation.order = "YXZ";
@@ -354,6 +384,7 @@ export class BlockPlayerModel {
     head.add(this.createBlock("left-eye", [0.075, 0.07, 0.026], [-0.12, 0.3, -HEAD_SIZE / 2 - 0.013], this.materials.details, options));
     head.add(this.createBlock("right-eye", [0.075, 0.07, 0.026], [0.12, 0.3, -HEAD_SIZE / 2 - 0.013], this.materials.details, options));
     this.buildHair(head, options);
+    this.buildRaceFeatures(head, options);
 
     const shoulderX = TORSO_WIDTH / 2 + ARM_WIDTH / 2;
     leftArm.position.set(-shoulderX, SHOULDER_Y, 0);
@@ -374,11 +405,16 @@ export class BlockPlayerModel {
     // nets, jars, and blocks remain readable instead of clipping into the arm.
     this.rightHandSocket.position.set(0, -ARM_LENGTH + 0.08, -0.22);
     rightArm.add(this.rightHandSocket);
+    this.leftHandSocket.name = "left-hand-socket";
+    this.leftHandSocket.userData.socket = "left-hand";
+    this.leftHandSocket.position.set(0, -ARM_LENGTH + 0.08, -0.2);
+    leftArm.add(this.leftHandSocket);
 
     this.nameAnchor.name = "player-name-anchor";
     this.setPlayerName(options.playerName ?? "Player");
     this.blockGeometry.computeBoundingBox();
     this.setVariant(this._variant);
+    this.setRace(this._race);
     this.setEquipmentAppearance(options.equipment ?? {});
     this.applyPose(this.pose);
   }
@@ -389,6 +425,10 @@ export class BlockPlayerModel {
 
   get variant(): PlayerVariant {
     return this._variant;
+  }
+
+  get race(): FactionRace {
+    return this._race;
   }
 
   get isDisposed(): boolean {
@@ -414,17 +454,21 @@ export class BlockPlayerModel {
     if (colors.trousers !== undefined) this.materials.trousers.color.set(colors.trousers);
     if (colors.hair !== undefined) {
       this.baseHairColor.set(colors.hair);
-      if (this._variant === "male") this.materials.hair.color.copy(this.baseHairColor);
+      // Explicit appearance customization overrides the legacy female-black
+      // default; loading only a variant still preserves that old silhouette.
+      this.materials.hair.color.copy(this.baseHairColor);
     }
+    if (colors.accent !== undefined) this.materials.accent.color.set(colors.accent);
     return this;
   }
 
-  getColors(): { skin: number; shirt: number; trousers: number; hair: number } {
+  getColors(): { skin: number; shirt: number; trousers: number; hair: number; accent: number } {
     return {
       skin: this.materials.skin.color.getHex(),
       shirt: this.materials.shirt.color.getHex(),
       trousers: this.materials.trousers.color.getHex(),
       hair: this.materials.hair.color.getHex(),
+      accent: this.materials.accent.color.getHex(),
     };
   }
 
@@ -432,17 +476,39 @@ export class BlockPlayerModel {
     this.assertUsable();
     this._variant = variant === "female" ? "female" : "male";
     this.group.userData.playerVariant = this._variant;
-    const heightScale = playerVariantHeightScale(this._variant);
+    this.applyBodyProportions();
+    return this;
+  }
+
+  setRace(race: FactionRace): this {
+    this.assertUsable();
+    this._race = characterRaceTraits(race).id;
+    this.group.userData.playerRace = this._race;
+    this.woodElfFeatures.visible = this._race === "wood-elf";
+    this.goblinFeatures.visible = this._race === "goblin";
+    this.applyBodyProportions();
+    return this;
+  }
+
+  setAppearance(appearance: CharacterAppearance): this {
+    return this.setVariant(appearance.sex).setRace(appearance.race).setColors(appearance.colors);
+  }
+
+  private applyBodyProportions() {
+    const heightScale = playerModelHeightScale(this._variant, this._race);
     this.group.userData.playerHeightScale = heightScale;
     this.rig.scale.y = heightScale;
     this.maleHair.visible = this._variant === "male";
     this.femaleHair.visible = this._variant === "female";
     this.materials.hair.color.set(this._variant === "female" ? FEMALE_HAIR_COLOR : this.baseHairColor);
-    this.torsoBlock.scale.x = this._variant === "female" ? 0.92 : 1;
-    const shoulderX = (this._variant === "female" ? TORSO_WIDTH * 0.92 : TORSO_WIDTH) / 2 + ARM_WIDTH / 2;
+    const raceWidth = this._race === "dwarf" ? 1.12 : this._race === "hearthkin" || this._race === "confectkin" ? 1.04 : this._race === "goblin" ? 0.95 : this._race === "wood-elf" ? 0.92 : 1;
+    const torsoWidth = (this._variant === "female" ? 0.92 : 1) * raceWidth;
+    this.torsoBlock.scale.x = TORSO_WIDTH * torsoWidth;
+    const accent = this.rig.getObjectByName("clothing-accent");
+    if (accent) accent.scale.x = (TORSO_WIDTH + 0.014) * torsoWidth;
+    const shoulderX = TORSO_WIDTH * torsoWidth / 2 + ARM_WIDTH / 2;
     this.parts.leftArm.position.x = -shoulderX;
     this.parts.rightArm.position.x = shoulderX;
-    return this;
   }
 
   setEquipmentAppearance(equipment: PlayerEquipmentAppearance): this {
@@ -469,6 +535,23 @@ export class BlockPlayerModel {
     if (this.heldItem) this.rightHandSocket.remove(this.heldItem);
     this.heldItem = item;
     if (item) this.rightHandSocket.add(item);
+    return this;
+  }
+
+  /** Offhand geometry is caller-owned, mirroring `setHeldItem`. */
+  setOffhandItem(item: THREE.Object3D | null, shield = false): this {
+    this.assertUsable();
+    if (item === this.offhandItem && shield === this.offhandShield) return this;
+    if (this.offhandItem) this.leftHandSocket.remove(this.offhandItem);
+    this.offhandItem = item;
+    this.offhandShield = Boolean(item && shield);
+    if (item) this.leftHandSocket.add(item);
+    return this;
+  }
+
+  setOffhandRaised(raised: boolean): this {
+    this.assertUsable();
+    this.offhandRaised = this.offhandShield && raised;
     return this;
   }
 
@@ -576,6 +659,8 @@ export class BlockPlayerModel {
     if (this.disposed) return;
     if (this.heldItem) this.rightHandSocket.remove(this.heldItem);
     this.heldItem = null;
+    if (this.offhandItem) this.leftHandSocket.remove(this.offhandItem);
+    this.offhandItem = null;
     this.group.removeFromParent();
     this.group.clear();
     this.blockGeometry.dispose();
@@ -642,6 +727,44 @@ export class BlockPlayerModel {
     head.add(this.maleHair, this.femaleHair);
   }
 
+  private buildRaceFeatures(head: THREE.Group, options: PlayerModelOptions): void {
+    this.woodElfFeatures.name = "wood-elf-features";
+    this.goblinFeatures.name = "goblin-features";
+    const addPointedFeatures = (root: THREE.Group, earReach: number, noseReach: number) => {
+      // Two narrowing, overlapping cuboids read as a deliberate point from
+      // both front and three-quarter cameras. A single long cuboid looked like
+      // a duplicated arm/sideburn at multiplayer distance.
+      for (const side of [-1, 1] as const) {
+        const sideName = side < 0 ? "left" : "right";
+        const base = this.createBlock(
+          `${root.name}-${sideName}-ear-base`,
+          [earReach * 0.7, 0.13, 0.105],
+          [side * (HEAD_SIZE / 2 + earReach * 0.24), 0.3, 0],
+          this.materials.skin,
+          options,
+        );
+        const tip = this.createBlock(
+          `${root.name}-${sideName}-ear-tip`,
+          [earReach * 0.55, 0.08, 0.075],
+          [side * (HEAD_SIZE / 2 + earReach * 0.73), 0.33, 0],
+          this.materials.skin,
+          options,
+        );
+        base.rotation.z = side * -0.24;
+        tip.rotation.z = side * -0.56;
+        root.add(base, tip);
+      }
+      const noseBridge = this.createBlock(`${root.name}-nose-bridge`, [0.1, 0.12, noseReach * 0.7], [0, 0.22, -HEAD_SIZE / 2 - noseReach * 0.22], this.materials.skin, options);
+      const noseTip = this.createBlock(`${root.name}-pointed-nose`, [0.075, 0.075, noseReach * 0.56], [0, 0.19, -HEAD_SIZE / 2 - noseReach * 0.78], this.materials.skin, options);
+      noseBridge.rotation.x = -0.12;
+      noseTip.rotation.x = -0.34;
+      root.add(noseBridge, noseTip);
+    };
+    addPointedFeatures(this.woodElfFeatures, 0.24, 0.16);
+    addPointedFeatures(this.goblinFeatures, 0.2, 0.12);
+    head.add(this.woodElfFeatures, this.goblinFeatures);
+  }
+
   private buildEquipment(options: PlayerModelOptions): void {
     const add = (
       slot: keyof PlayerEquipmentAppearance,
@@ -674,6 +797,8 @@ export class BlockPlayerModel {
     this.pose = nextPose;
     const cycle = nextPose.phase * TWO_PI;
     const crouch = nextPose.crouch;
+    const swimming = nextPose.swimming ?? 0;
+    const seated = nextPose.seated ?? 0;
     const jumpCurve = nextPose.jump * (0.68 + 0.32 * Math.sin(nextPose.phase * Math.PI));
     const legScale = 1 - 0.36 * crouch;
     const hipY = LEG_LENGTH * legScale;
@@ -695,8 +820,26 @@ export class BlockPlayerModel {
     let rightLegAngle = -legSwing + crouch * 0.22 - jumpCurve * 0.2;
     let leftArmAngle = -legSwing * 0.76 + idleSwing + crouch * 0.12 + jumpCurve * 0.72;
     let rightArmAngle = legSwing * 0.76 - idleSwing + crouch * 0.12 + jumpCurve * 0.72;
-    const leftArmRoll = 0;
+    let leftArmRoll = 0;
     let rightArmRoll = 0;
+
+    if (seated > 0) {
+      leftLegAngle = THREE.MathUtils.lerp(leftLegAngle, 1.22, seated);
+      rightLegAngle = THREE.MathUtils.lerp(rightLegAngle, 1.22, seated);
+      leftArmAngle *= 1 - seated * 0.55;
+      rightArmAngle *= 1 - seated * 0.55;
+      bob *= 1 - seated;
+    }
+
+    if (swimming > 0) {
+      const stroke = Math.sin(cycle);
+      torsoLean = THREE.MathUtils.lerp(torsoLean, -1.43, swimming);
+      leftLegAngle = THREE.MathUtils.lerp(leftLegAngle, -1.16 + stroke * 0.18, swimming);
+      rightLegAngle = THREE.MathUtils.lerp(rightLegAngle, -1.16 - stroke * 0.18, swimming);
+      leftArmAngle = THREE.MathUtils.lerp(leftArmAngle, 2.2 + stroke * 0.72, swimming);
+      rightArmAngle = THREE.MathUtils.lerp(rightArmAngle, 2.2 - stroke * 0.72, swimming);
+      bob = 0;
+    }
 
     if (this.heldItem && nextPose.action === "none") {
       // A carried tool belongs in the hand, not inside the torso. This neutral
@@ -711,6 +854,19 @@ export class BlockPlayerModel {
     } else if (nextPose.action === "use") {
       rightArmAngle = 1.35 + Math.sin(nextPose.actionPhase * TWO_PI) * 0.1;
       rightArmRoll = 0.24;
+    }
+
+    if (this.offhandItem && swimming < 0.5) {
+      if (this.offhandShield) {
+        const raise = this.offhandRaised ? 1 : 0;
+        leftArmAngle = THREE.MathUtils.lerp(0.26, 1.5, raise);
+        leftArmRoll = THREE.MathUtils.lerp(-0.16, -0.46, raise);
+      } else {
+        // Torches and lanterns sit slightly forward of the hip so their model
+        // and light source remain visible to other players.
+        leftArmAngle = 1.02 + Math.sin(cycle) * 0.035;
+        leftArmRoll = -0.12;
+      }
     }
 
     leftLegAngle = clamp(leftLegAngle, -1.25, 1.25);
@@ -737,7 +893,11 @@ export class BlockPlayerModel {
     // exact rotated lower extent keeps the animated body grounded at local Y=0.
     const leftFootY = hipY - LEG_LENGTH * legScale * Math.cos(leftLegAngle) - LEG_DEPTH * 0.5 * Math.abs(Math.sin(leftLegAngle));
     const rightFootY = hipY - LEG_LENGTH * legScale * Math.cos(rightLegAngle) - LEG_DEPTH * 0.5 * Math.abs(Math.sin(rightLegAngle));
-    this.rig.position.y = -Math.min(leftFootY, rightFootY);
+    // The rig owns race/sex height as a non-uniform Y scale. Its translation
+    // is not scaled by Three.js, so the foot correction must be scaled here or
+    // short characters penetrate chairs/terrain while tall characters hover.
+    const heightScale = playerModelHeightScale(this._variant, this._race);
+    this.rig.position.y = swimming > 0.01 ? 0.82 * swimming : -Math.min(leftFootY, rightFootY) * heightScale;
     this.nameAnchor.position.set(0, hipY + TORSO_HEIGHT + HEAD_SIZE + 0.24, 0);
   }
 

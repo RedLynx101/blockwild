@@ -37,7 +37,7 @@ export const WORLD_HEIGHT = MAX_Y - MIN_Y + 1;
 export const SEA_LEVEL = 32;
 export const SECTION_HEIGHT = 16;
 export const SECTION_COUNT = WORLD_HEIGHT / SECTION_HEIGHT;
-export const GENERATOR_VERSION = 11;
+export const GENERATOR_VERSION = 12;
 
 export type SettlementWorldPlan = Readonly<{
   candidate: SettlementCandidate;
@@ -147,7 +147,9 @@ export function planPoiAmenities(kind: StructureKind, origin: Readonly<{ x: numb
   ];
   return [
     at(-3, 1, 0, BlockId.WildwoodStool), at(3, 1, 0, BlockId.WildwoodStool),
-    at(0, 1, -3, BlockId.WildwoodTable), at(0, 2, 4, BlockId.TorchWallNorth),
+    at(0, 1, -3, BlockId.WildwoodTable),
+    at(0, 1, 5, BlockId.MoonSlate, "grotto-sconce-support"), at(0, 2, 5, BlockId.MoonSlate, "grotto-sconce-support"),
+    at(0, 2, 4, BlockId.TorchWallNorth, "grotto-sconce"),
   ];
 }
 
@@ -352,6 +354,15 @@ const GENERATED_GROWTH_BLOCK_SET = new Set<BlockId>([
   BlockId.Starfern,
   BlockId.Dreamcap,
   BlockId.Lumenreed,
+  BlockId.CottonSprout,
+  BlockId.CottonYoung,
+  BlockId.CottonCrop,
+  BlockId.SunCarrotSprout,
+  BlockId.SunCarrotYoung,
+  BlockId.SunCarrotCrop,
+  BlockId.BluepodSprout,
+  BlockId.BluepodYoung,
+  BlockId.BluepodCrop,
 ]);
 
 type ColumnSample = {
@@ -569,7 +580,16 @@ const LIGHT_BLOCKS = new Set<BlockId>([
   BlockId.Lumenreed,
   BlockId.AetherConduit,
   BlockId.Moonwell,
+  BlockId.HearthFireplace,
 ]);
+/**
+ * Static voxel-light budget used while baking chunk vertex colors. The small
+ * pool of animated Three.js point lights can then be reserved for the nearest
+ * flickering sources without making every older torch appear inert.
+ */
+export const BAKED_LIGHT_SOURCE_LIMIT = 80;
+export const BAKED_LIGHT_RADIUS = 18;
+export type BakedLightSource = { x: number; y: number; z: number; type: BlockId };
 const ATLAS_GRID = 13;
 const ATLAS_PAD = 0.0008;
 const TILE_UVS = Array.from({ length: ATLAS_GRID * ATLAS_GRID }, (_, tile) => {
@@ -618,6 +638,36 @@ export function environmentSkyShade(cellY: number, skyTopY: number) {
   if (depth <= 1) return 0.78;
   if (depth <= 4) return 0.58;
   return 0.38;
+}
+
+export function bakedEnvironmentLightShade(baseShade: number, x: number, y: number, z: number, sources: readonly BakedLightSource[]) {
+  let shade = baseShade;
+  for (const source of sources) {
+    const radius = source.type === BlockId.DeepgearLantern ? BAKED_LIGHT_RADIUS : TORCH_BLOCKS.includes(source.type) ? 13 : 15;
+    const distance = Math.hypot(source.x + 0.5 - x, source.y + 0.55 - y, source.z + 0.5 - z);
+    if (distance >= radius) continue;
+    const attenuation = 1 - distance / radius;
+    // Preserve a dim cave floor outside the core while allowing a nearby
+    // lantern or torch to reveal the original block color clearly.
+    shade = Math.max(shade, 0.38 + attenuation * attenuation * 0.62);
+    if (shade >= 0.995) return 1;
+  }
+  return clamp(shade, 0.38, 1);
+}
+
+/**
+ * Natural surface plants require a real dry supporting block and an empty
+ * destination. Passing the cave-mouth flag keeps the same rule explicit in
+ * tests even when a sampled terrain height points at carved air.
+ */
+export function canGenerateSurfaceFlora(
+  ground: BlockId | undefined,
+  above: BlockId | undefined,
+  caveMouth = false,
+) {
+  if (caveMouth || ground === undefined || ground === BlockId.Air || above !== BlockId.Air) return false;
+  const groundDefinition = BLOCKS[ground];
+  return Boolean(groundDefinition?.solid && !groundDefinition.liquid && !groundDefinition.waterlogged);
 }
 
 export function seedToInt(seed: string) {
@@ -1910,9 +1960,12 @@ export class ChunkWorld {
       const z = minZ + lz;
       const column = sample(x, z);
       if (column.height <= column.waterline) continue;
-      if (caveEntranceAt(this.seed, x, z, column.height, column.waterline)) continue;
+      const caveMouth = Boolean(caveEntranceAt(this.seed, x, z, column.height, column.waterline));
+      if (caveMouth || syrupPondCells.has(`${x},${z}`)) continue;
       const aboveIndex = blockIndex(lx, column.height + 1, lz);
-      if (chunk.blocks[aboveIndex] !== BlockId.Air) continue;
+      const ground = chunk.blocks[blockIndex(lx, column.height, lz)] as BlockId;
+      const above = chunk.blocks[aboveIndex] as BlockId;
+      if (!canGenerateSurfaceFlora(ground, above, caveMouth)) continue;
       const roll = hash2(x, z, this.seed ^ 0x44444444);
       if (column.biome === BiomeId.Desert && roll > 0.985) {
         const cactusHeight = 2 + Math.floor(hash2(x, z, this.seed ^ 0x55555555) * 3);
@@ -1930,7 +1983,14 @@ export class ChunkWorld {
         if (roll + patch * 0.11 <= density) continue;
         const flowerBias = column.biome === BiomeId.Meadow || column.biome === BiomeId.Bloomwood || column.biome === BiomeId.CloudreedGlen || column.biome === BiomeId.SakurabloomGrove;
         const wheatPatch = hash2(x, z, this.seed ^ 0x7a9d35f1) > 0.986;
-        const plant = column.biome === BiomeId.Glimmerwood && roll > 0.968 ? BlockId.Moonpetal
+        const fieldCropRoll = hash2(x, z, this.seed ^ 0x4d37a1c9);
+        const cottonPatch = [BiomeId.Meadow, BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Bloomwood].includes(column.biome) && fieldCropRoll > 0.972;
+        const carrotPatch = [BiomeId.Meadow, BiomeId.Savanna].includes(column.biome) && fieldCropRoll > 0.977;
+        const bluepodPatch = [BiomeId.Siltfen, BiomeId.RainveilJungle, BiomeId.Birchlight].includes(column.biome) && fieldCropRoll > 0.98;
+        const plant = cottonPatch ? BlockId.CottonCrop
+          : carrotPatch ? BlockId.SunCarrotCrop
+            : bluepodPatch ? BlockId.BluepodCrop
+        : column.biome === BiomeId.Glimmerwood && roll > 0.968 ? BlockId.Moonpetal
           : column.biome === BiomeId.Glimmerwood && roll > 0.925 ? BlockId.Dreamcap
             : column.biome === BiomeId.Glimmerwood ? BlockId.Starfern
         : column.biome === BiomeId.SugarplumVale && roll > 0.976 ? BlockId.LollipopOrchid
@@ -1992,6 +2052,7 @@ export class ChunkWorld {
             set(x - 2, column.height + 1, z, BlockId.WildwoodStool, false);
             set(x + 2, column.height + 1, z - 1, BlockId.WildwoodShelf, false);
             set(x + 2, column.height + 1, z + 2, BlockId.SealedBarrel, false);
+            set(x - 2, column.height + 1, z + 2, BlockId.HearthFireplace, false);
           } else {
             for (let dx = -2; dx <= 2; dx += 1) for (let dz = -2; dz <= 2; dz += 1) if (Math.abs(dx) === 2 || Math.abs(dz) === 2 || (dx === 0 && dz === 0)) set(x + dx, column.height, z + dz, hash2(x + dx, z + dz, this.seed) > 0.25 ? BlockId.StoneBrick : BlockId.Moss, false);
             for (let dy = 1; dy <= 4; dy += 1) set(x, column.height + dy, z, dy === 4 ? BlockId.Glowstone : BlockId.StoneBrick, false);
@@ -2587,7 +2648,8 @@ export class ChunkWorld {
     const key = chunkKey(sx.chunk, sz.chunk);
     const chunk = this.chunks.get(key) ?? this.generateChunk(sx.chunk, sz.chunk);
     const index = blockIndex(sx.local, y, sz.local);
-    const resolvedType = type === BlockId.Air && isWaterloggedFloraBlock(chunk.blocks[index] as BlockId) ? BlockId.Water : type;
+    const previousType = chunk.blocks[index] as BlockId;
+    const resolvedType = type === BlockId.Air && isWaterloggedFloraBlock(previousType) ? BlockId.Water : type;
     this.writeChunkBlock(chunk, index, resolvedType);
     if (record) {
       let edits = this.edits.get(key);
@@ -2595,6 +2657,9 @@ export class ChunkWorld {
       edits.set(index, resolvedType);
     }
     this.refreshEditedBlock(sx.chunk, sz.chunk, sx.local, y, sz.local, immediate);
+    if (LIGHT_BLOCKS.has(previousType) !== LIGHT_BLOCKS.has(resolvedType) || (LIGHT_BLOCKS.has(resolvedType) && previousType !== resolvedType)) {
+      this.refreshLightNeighborhood(x, y, z, immediate);
+    }
     return true;
   }
 
@@ -2626,7 +2691,8 @@ export class ChunkWorld {
       const key = chunkKey(sx.chunk, sz.chunk);
       const chunk = this.chunks.get(key) ?? this.generateChunk(sx.chunk, sz.chunk);
       const index = blockIndex(sx.local, change.y, sz.local);
-      const resolvedType = change.type === BlockId.Air && isWaterloggedFloraBlock(chunk.blocks[index] as BlockId) ? BlockId.Water : change.type;
+      const previousType = chunk.blocks[index] as BlockId;
+      const resolvedType = change.type === BlockId.Air && isWaterloggedFloraBlock(previousType) ? BlockId.Water : change.type;
       this.writeChunkBlock(chunk, index, resolvedType);
       if (record) {
         let edits = this.edits.get(key);
@@ -2641,6 +2707,9 @@ export class ChunkWorld {
       if (sx.local === CHUNK_SIZE - 1) affected.add(`${chunkKey(sx.chunk + 1, sz.chunk)}:${section}`);
       if (sz.local === 0) affected.add(`${chunkKey(sx.chunk, sz.chunk - 1)}:${section}`);
       if (sz.local === CHUNK_SIZE - 1) affected.add(`${chunkKey(sx.chunk, sz.chunk + 1)}:${section}`);
+      if (LIGHT_BLOCKS.has(previousType) !== LIGHT_BLOCKS.has(resolvedType) || (LIGHT_BLOCKS.has(resolvedType) && previousType !== resolvedType)) {
+        this.addLightNeighborhoodTargets(affected, change.x, change.y, change.z);
+      }
     }
     for (const entry of affected) {
       const separator = entry.lastIndexOf(":");
@@ -2676,6 +2745,39 @@ export class ChunkWorld {
       || [BlockId.DoorOpenLower, BlockId.DoorOpenUpper, BlockId.DoorXOpenLower, BlockId.DoorXOpenUpper].includes(type)
       || [BlockId.FenceGateNorthSouthOpen, BlockId.FenceGateEastWestOpen].includes(type)
       || ["cross", "tall-flower", "aquatic", "torch", "bush", "fruit", "table", "stool", "shelf"].includes(BLOCKS[type]?.shape ?? "");
+  }
+
+  addLightNeighborhoodTargets(targets: Set<string>, x: number, y: number, z: number) {
+    const minChunkX = Math.floor((x - BAKED_LIGHT_RADIUS) / CHUNK_SIZE);
+    const maxChunkX = Math.floor((x + BAKED_LIGHT_RADIUS) / CHUNK_SIZE);
+    const minChunkZ = Math.floor((z - BAKED_LIGHT_RADIUS) / CHUNK_SIZE);
+    const maxChunkZ = Math.floor((z + BAKED_LIGHT_RADIUS) / CHUNK_SIZE);
+    const minSection = Math.max(0, sectionForY(Math.max(MIN_Y, y - BAKED_LIGHT_RADIUS)));
+    const maxSection = Math.min(SECTION_COUNT - 1, sectionForY(Math.min(MAX_Y, y + BAKED_LIGHT_RADIUS)));
+    for (let cx = minChunkX; cx <= maxChunkX; cx += 1) for (let cz = minChunkZ; cz <= maxChunkZ; cz += 1) {
+      const key = chunkKey(cx, cz);
+      if (!this.chunks.has(key)) continue;
+      for (let section = minSection; section <= maxSection; section += 1) targets.add(`${key}:${section}`);
+    }
+  }
+
+  refreshLightNeighborhood(x: number, y: number, z: number, immediate: boolean) {
+    const affected = new Set<string>();
+    this.addLightNeighborhoodTargets(affected, x, y, z);
+    const editedChunk = chunkKey(Math.floor(x / CHUNK_SIZE), Math.floor(z / CHUNK_SIZE));
+    const editedSection = sectionForY(y);
+    for (const entry of affected) {
+      const separator = entry.lastIndexOf(":");
+      const key = entry.slice(0, separator);
+      const section = Number(entry.slice(separator + 1));
+      const chunk = this.chunks.get(key);
+      // The directly edited section was already rebuilt by refreshEditedBlock.
+      if (key === editedChunk && section === editedSection) continue;
+      if (immediate && chunk?.group.visible && Math.abs(section - editedSection) <= 1) {
+        this.cancelQueuedMesh(key, section);
+        this.rebuildSection(chunk, section);
+      } else this.queueMesh(key, section, true);
+    }
   }
 
   biomeAt(x: number, z: number) {
@@ -2810,6 +2912,12 @@ export class ChunkWorld {
     const buckets: Record<WorldRenderLayer, GeometryBucket> = { opaque: emptyBucket(), cutout: emptyBucket(), transparent: emptyBucket(), glass: emptyBucket(), emissive: emptyBucket() };
     const startY = MIN_Y + section * SECTION_HEIGHT;
     const endY = Math.min(MAX_Y, startY + SECTION_HEIGHT - 1);
+    const bakedLights = this.lightSourcesNear(
+      chunk.cx * CHUNK_SIZE + CHUNK_SIZE / 2,
+      (startY + endY) / 2,
+      chunk.cz * CHUNK_SIZE + CHUNK_SIZE / 2,
+      BAKED_LIGHT_RADIUS + CHUNK_SIZE,
+    ).slice(0, BAKED_LIGHT_SOURCE_LIMIT);
     const west = this.chunks.get(chunkKey(chunk.cx - 1, chunk.cz));
     const east = this.chunks.get(chunkKey(chunk.cx + 1, chunk.cz));
     const north = this.chunks.get(chunkKey(chunk.cx, chunk.cz - 1));
@@ -2830,7 +2938,13 @@ export class ChunkWorld {
       if (localZ < 0) return north ? north.skyTops[localX + (CHUNK_SIZE - 1) * CHUNK_SIZE] : MIN_Y - 1;
       return south ? south.skyTops[localX] : MIN_Y - 1;
     };
-    const shadeAt = (localX: number, y: number, localZ: number) => environmentSkyShade(y, skyTopAtLocal(localX, localZ));
+    const shadeAt = (localX: number, y: number, localZ: number) => bakedEnvironmentLightShade(
+      environmentSkyShade(y, skyTopAtLocal(localX, localZ)),
+      chunk.cx * CHUNK_SIZE + localX,
+      y,
+      chunk.cz * CHUNK_SIZE + localZ,
+      bakedLights,
+    );
     const addQuad = (
       bucket: GeometryBucket,
       corners: ReadonlyArray<readonly [number, number, number]>,
@@ -2969,6 +3083,48 @@ export class ChunkWorld {
           }
           continue;
         }
+        if (definition.shape === "aquarium") {
+          const environment = shadeAt(lx, y, lz);
+          const same = (dx: number, dy: number, dz: number) => neighborAt(lx + dx, y + dy, lz + dz) === BlockId.GlassAquarium;
+          // One glass skin around the connected component: internal faces are
+          // absent, eliminating the coplanar tearing of stacked tank blocks.
+          for (const face of FACES) {
+            const [dx, dy, dz] = face.direction;
+            if (same(dx, dy, dz)) continue;
+            addQuad(buckets.transparent, face.corners, face.direction, 13, face.shade, [0.86, 1, 1], lx, y, lz, 0, environment);
+          }
+          const waterX0 = same(-1, 0, 0) ? lx - 0.5 : lx - 0.43;
+          const waterX1 = same(1, 0, 0) ? lx + 0.5 : lx + 0.43;
+          const waterY0 = same(0, -1, 0) ? y - 0.5 : y - 0.38;
+          const waterY1 = same(0, 1, 0) ? y + 0.5 : y + 0.43;
+          const waterZ0 = same(0, 0, -1) ? lz - 0.5 : lz - 0.43;
+          const waterZ1 = same(0, 0, 1) ? lz + 0.5 : lz + 0.43;
+          addTexturedCuboid(buckets.transparent, waterX0, waterY0, waterZ0, waterX1, waterY1, waterZ1, 8, 8, 8, [0.72, 0.9, 1], 1);
+          if (!same(0, -1, 0)) {
+            addTexturedCuboid(buckets.opaque, lx - 0.44, y - 0.43, lz - 0.44, lx + 0.44, y - 0.35, lz + 0.44, 47, 47, 47, [0.95, 0.92, 0.84], environment);
+            const decorationRoll = hash2(chunk.cx * CHUNK_SIZE + lx, chunk.cz * CHUNK_SIZE + lz, this.seed ^ 0x6ea125cf);
+            if (decorationRoll > 0.66) {
+              addTexturedCuboid(buckets.opaque, lx - 0.22, y - 0.35, lz + 0.1, lx - 0.05, y - 0.22, lz + 0.27, 35, 35, 35, tint, environment);
+              addTexturedCuboid(buckets.opaque, lx + 0.12, y - 0.35, lz - 0.22, lx + 0.29, y - 0.25, lz - 0.05, 97, 97, 97, tint, environment);
+            }
+          }
+          continue;
+        }
+        if (definition.shape === "fireplace") {
+          const environment = shadeAt(lx, y, lz);
+          // Stone cheeks and mantle frame an inset dark firebox. The animated
+          // light pool treats this block as a source while the emissive flame
+          // remains readable even when the surrounding room is dark.
+          addTexturedCuboid(buckets.opaque, lx - 0.48, y - 0.5, lz - 0.38, lx + 0.48, y - 0.34, lz + 0.38, 12, 12, 3, tint, environment);
+          addTexturedCuboid(buckets.opaque, lx - 0.48, y - 0.34, lz - 0.34, lx - 0.31, y + 0.34, lz + 0.34, 12, 12, 12, tint, environment);
+          addTexturedCuboid(buckets.opaque, lx + 0.31, y - 0.34, lz - 0.34, lx + 0.48, y + 0.34, lz + 0.34, 12, 12, 12, tint, environment);
+          addTexturedCuboid(buckets.opaque, lx - 0.5, y + 0.31, lz - 0.4, lx + 0.5, y + 0.48, lz + 0.4, 12, 12, 12, tint, environment);
+          addTexturedCuboid(buckets.opaque, lx - 0.3, y - 0.31, lz + 0.25, lx + 0.3, y + 0.3, lz + 0.34, 49, 49, 49, [0.64, 0.58, 0.55], environment);
+          for (const offset of [-0.13, 0.13]) addTexturedCuboid(buckets.opaque, lx - 0.24, y - 0.3, lz + offset - 0.04, lx + 0.24, y - 0.2, lz + offset + 0.04, 11, 11, 11, [0.58, 0.42, 0.3], environment);
+          addTexturedCuboid(buckets.emissive, lx - 0.2, y - 0.2, lz - 0.08, lx + 0.2, y + 0.17, lz + 0.16, 39, 39, 39, [1, 0.72, 0.38], 1);
+          addTexturedCuboid(buckets.emissive, lx - 0.08, y + 0.02, lz - 0.04, lx + 0.08, y + 0.29, lz + 0.11, 39, 39, 39, [1, 0.9, 0.55], 1);
+          continue;
+        }
         if (definition.shape === "apiary") {
           const environment = shadeAt(lx, y, lz);
           addTexturedCuboid(bucket, lx - 0.4, y - 0.46, lz - 0.36, lx + 0.4, y + 0.18, lz + 0.36, definition.side, definition.top, definition.bottom, tint, environment);
@@ -2989,7 +3145,13 @@ export class ChunkWorld {
           addTexturedCuboid(bucket, lx - 0.47, y - 0.48, lz - 0.38, lx + 0.47, y - 0.34, lz + 0.38, definition.side, definition.top, definition.bottom, tint, environment);
           for (const x of [lx - 0.4, lx + 0.31]) addTexturedCuboid(bucket, x, y - 0.34, lz - 0.11, x + 0.09, y + 0.42, lz + 0.11, definition.side, definition.top, definition.bottom, tint, environment);
           for (const railY of [y - 0.08, y + 0.25]) addTexturedCuboid(bucket, lx - 0.35, railY - 0.045, lz - 0.09, lx + 0.35, railY + 0.045, lz + 0.09, definition.side, definition.top, definition.bottom, tint, environment);
-          for (const socketX of [lx - 0.27, lx - 0.09, lx + 0.09, lx + 0.27]) addTexturedCuboid(bucket, socketX - 0.055, y + 0.29, lz - 0.13, socketX + 0.055, y + 0.4, lz + 0.13, 95, 95, 94, [0.68, 0.88, 0.86], Math.max(0.82, environment));
+          // Empty cradles are part of the chunk mesh; Capture Orbs themselves
+          // are stateful engine visuals and appear only for occupied slots.
+          for (const socketX of [lx - 0.27, lx - 0.09, lx + 0.09, lx + 0.27]) {
+            addTexturedCuboid(bucket, socketX - 0.065, y + 0.285, lz - 0.09, socketX + 0.065, y + 0.32, lz + 0.09, definition.side, definition.top, definition.bottom, tint, environment);
+            addTexturedCuboid(bucket, socketX - 0.075, y + 0.31, lz - 0.1, socketX - 0.045, y + 0.365, lz + 0.1, definition.side, definition.top, definition.bottom, tint, environment);
+            addTexturedCuboid(bucket, socketX + 0.045, y + 0.31, lz - 0.1, socketX + 0.075, y + 0.365, lz + 0.1, definition.side, definition.top, definition.bottom, tint, environment);
+          }
           continue;
         }
         if (definition.shape === "orb-healer") {

@@ -127,6 +127,8 @@ test("Sugarplum production models are detailed, grounded and expose progression 
   assert.equal(hound.getObjectByName("taffy-hound-faction-collar")?.visible, false);
   assert.equal(cat.getObjectByName("praline-cat-faction-bell")?.visible, false);
   assert.equal(taffalo.getObjectByName("taffalo-saddle")?.visible, false);
+  assert.equal(taffalo.getObjectByName("taffalo-left-marshmallow-ankle")?.parent, taffalo.getObjectByName("taffalo-rear-left-leg-pivot"));
+  assert.equal(taffalo.getObjectByName("taffalo-right-marshmallow-ankle")?.parent, taffalo.getObjectByName("taffalo-rear-right-leg-pivot"));
   assert.deepEqual(taffalo.userData.saddleAnchor, [0, 0.83, 0.08]);
 });
 

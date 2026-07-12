@@ -20,6 +20,9 @@ export type PlantKind =
   | "sunroot"
   | "peppermint"
   | "cocoa"
+  | "field-cotton"
+  | "sun-carrot"
+  | "bluepod-bean"
   | "moonberry"
   | "sunberry"
   | `cultivated-flower-${number}`;
@@ -79,6 +82,27 @@ export const PLANT_GROWTH: Readonly<Record<PlantKind, PlantGrowthProfile>> = Obj
     stages: Object.freeze([BlockId.CocoaSprout, BlockId.CocoaYoung, BlockId.CocoaCrop]),
     minimumLight: 0.48,
     baseStageSeconds: 68,
+    requiresFarmland: true,
+  }),
+  "field-cotton": Object.freeze({
+    kind: "field-cotton",
+    stages: Object.freeze([BlockId.CottonSprout, BlockId.CottonYoung, BlockId.CottonCrop]),
+    minimumLight: 0.46,
+    baseStageSeconds: 66,
+    requiresFarmland: true,
+  }),
+  "sun-carrot": Object.freeze({
+    kind: "sun-carrot",
+    stages: Object.freeze([BlockId.SunCarrotSprout, BlockId.SunCarrotYoung, BlockId.SunCarrotCrop]),
+    minimumLight: 0.5,
+    baseStageSeconds: 52,
+    requiresFarmland: true,
+  }),
+  "bluepod-bean": Object.freeze({
+    kind: "bluepod-bean",
+    stages: Object.freeze([BlockId.BluepodSprout, BlockId.BluepodYoung, BlockId.BluepodCrop]),
+    minimumLight: 0.34,
+    baseStageSeconds: 60,
     requiresFarmland: true,
   }),
   moonberry: Object.freeze({
@@ -507,12 +531,18 @@ export function canTill(soil: BlockId | undefined, above: BlockId | undefined) {
 export type PlantingResult = Readonly<{ block: BlockId; consumes: ItemCode; description: string }>;
 
 export function plantingResult(item: ItemCode, soil: BlockId | undefined, above: BlockId | undefined): PlantingResult | null {
+  const requestedPlant = ITEMS[item]?.plantBlock;
+  const aquaticRequest = (requestedPlant !== undefined && AQUATIC_FLORA_SET.has(requestedPlant)) || AQUATIC_PROPAGULES[item] !== undefined;
+  if (!aquaticRequest && above !== BlockId.Air && (Boolean(BLOCKS[above ?? BlockId.Air]?.liquid) || Boolean(BLOCKS[above ?? BlockId.Air]?.waterlogged))) return null;
   if (above !== BlockId.Air && !BLOCKS[above ?? BlockId.Air]?.replaceable) return null;
   if (item === Item.WheatSeeds && FARM_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.WheatSprout, consumes: item, description: "Wild wheat seeds" };
   if (item === Item.MoonriceSeeds && FARM_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.MoonriceSprout, consumes: item, description: "Moonrice seeds" };
   if (item === Item.SunrootStarts && FARM_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.SunrootSprout, consumes: item, description: "Sunroot starts" };
   if (item === Item.PeppermintSeeds && FARM_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.PeppermintSprout, consumes: item, description: "Peppermint starts" };
   if (item === Item.CocoaSeeds && FARM_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.CocoaSprout, consumes: item, description: "Cocoa puff seeds" };
+  if (item === Item.CottonSeeds && FARM_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.CottonSprout, consumes: item, description: "Field cotton seeds" };
+  if (item === Item.SunCarrotSeeds && FARM_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.SunCarrotSprout, consumes: item, description: "Suncrest carrot seeds" };
+  if (item === Item.BluepodSeeds && FARM_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.BluepodSprout, consumes: item, description: "Bluepod bean seeds" };
   if (item === Item.Berry && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.MoonberryShoot, consumes: item, description: "Moonberry cutting" };
   if (item === Item.Sunberry && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.SunberryShoot, consumes: item, description: "Sunberry cutting" };
   if (item === Item.Apple && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.AppleSapling, consumes: item, description: "Wild apple pip" };
@@ -522,7 +552,6 @@ export function plantingResult(item: ItemCode, soil: BlockId | undefined, above:
   if (item === Item.PeppermintCane && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.PeppermintTuft, consumes: item, description: "Wild peppermint cane" };
   if (item === Item.MarshmallowTuft && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.MarshmallowShrub, consumes: item, description: "Marshmallow shrub cutting" };
   if (item === Item.CandywoodSaplingItem && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.CandywoodSapling, consumes: item, description: "Candywood sapling" };
-  const requestedPlant = ITEMS[item]?.plantBlock;
   if (requestedPlant !== undefined && ORDINARY_FLOWERS.includes(requestedPlant) && FARM_SOILS.has(soil ?? BlockId.Air)) {
     return { block: requestedPlant, consumes: item, description: `Cultivated ${BLOCKS[requestedPlant]?.name ?? "flower"}` };
   }
@@ -637,6 +666,27 @@ export function harvestPlant(block: BlockId, useScythe = false, yieldRoll = 0.5)
     return {
       replacement: useScythe ? BlockId.CocoaSprout : BlockId.Air,
       drops: [{ item: Item.CocoaNib, count: 2 + Math.floor(roll * 3) + (useScythe ? 1 : 0) }, { item: Item.CocoaSeeds, count: 1 + (roll > 0.62 ? 1 : 0) }],
+      replanted: useScythe,
+    };
+  }
+  if (block === BlockId.CottonCrop) {
+    return {
+      replacement: useScythe ? BlockId.CottonSprout : BlockId.Air,
+      drops: [{ item: Item.CottonBoll, count: 2 + Math.floor(roll * 3) + (useScythe ? 1 : 0) }, { item: Item.CottonSeeds, count: 1 + (roll > 0.55 ? 1 : 0) }],
+      replanted: useScythe,
+    };
+  }
+  if (block === BlockId.SunCarrotCrop) {
+    return {
+      replacement: useScythe ? BlockId.SunCarrotSprout : BlockId.Air,
+      drops: [{ item: Item.SunCarrot, count: 2 + Math.floor(roll * 2) + (useScythe ? 1 : 0) }, { item: Item.SunCarrotSeeds, count: 1 + (roll > 0.62 ? 1 : 0) }],
+      replanted: useScythe,
+    };
+  }
+  if (block === BlockId.BluepodCrop) {
+    return {
+      replacement: useScythe ? BlockId.BluepodSprout : BlockId.Air,
+      drops: [{ item: Item.BluepodBeans, count: 2 + Math.floor(roll * 3) + (useScythe ? 1 : 0) }, { item: Item.BluepodSeeds, count: 1 + (roll > 0.58 ? 1 : 0) }],
       replanted: useScythe,
     };
   }

@@ -36,6 +36,8 @@ export type TideglassAquaticKind =
   | "aetherbell-larva"
   | "aetherbell-leviathan";
 export type SugarplumAquaticKind = "syrupfin";
+export type RabbitKind = "meadow-cottontail" | "russet-rabbit" | "frost-hare" | "chocolate-bunny";
+export type AquariumMobKind = "sunset-sea-slug" | "moonlace-sea-slug" | "pocket-goldfish";
 export type DragonKind = "fire-dragon" | "ice-dragon" | "steel-dragon" | "sea-dragon";
 export type HobbitKind =
   | "hobbit-mayor"
@@ -98,6 +100,8 @@ export type CoreMobKind =
   | HearthroadsAquaticKind
   | TideglassAquaticKind
   | SugarplumAquaticKind
+  | RabbitKind
+  | AquariumMobKind
   | DragonKind
   | V1FactionCreatureKind
   | SentientMobKind
@@ -105,7 +109,7 @@ export type CoreMobKind =
 export type MobKind = CoreMobKind | ButterflyKind;
 export type MobTemperament = "Gentle" | "Skittish" | "Defensive" | "Hostile";
 export type MobMovement = "ground" | "flying" | "aquatic" | "amphibious";
-export type MobFamily = "surface" | "bird" | "fish" | "pet" | "mount" | "leviathan" | "dragon" | "pollinator" | "construct" | "undead" | "sentient" | "butterfly";
+export type MobFamily = "surface" | "rabbit" | "bird" | "fish" | "sea-slug" | "pet" | "mount" | "leviathan" | "dragon" | "pollinator" | "construct" | "undead" | "sentient" | "butterfly";
 
 export type MobDrop = {
   item: ItemCode;
@@ -174,6 +178,10 @@ export type MobDefinition = {
   cargoChestLimit?: number;
   /** Restricts an aquatic species to a specific liquid rather than ordinary water. */
   liquidHabitat?: "water" | "syrup";
+  /** Bottom dwellers remain close to the first solid cell beneath their liquid. */
+  bottomDweller?: boolean;
+  /** Skittish grazers approach rather than flee while a player visibly holds a diet item. */
+  foodLure?: boolean;
   /** Lifecycle discriminator; detailed stage/sex/equipment state lives in dragons.ts. */
   dragonType?: "fire" | "ice" | "steel" | "sea";
 };
@@ -355,7 +363,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "Cloud-soft wool hides a stubborn mountain heart. Their tracks are often the safest path through a blizzard.",
     colors: [0xe8e5d8, 0x756c61, 0x20211f],
     drops: [{ item: Item.Wool, min: 1, max: 2, chance: 1 }, { item: Item.RawMeat, min: 1, max: 1, chance: 0.58 }],
-    sentient: false, breedable: true, breedingFoods: [Item.Wheat], diet: [Item.Wheat, Item.Apple],
+    sentient: false, breedable: true, breedingFoods: [Item.Wheat], diet: [Item.Wheat, Item.Apple], foodLure: true,
     discoveryHint: "Follow wool caught on low Frostpine branches.",
   },
   glowmoth: {
@@ -420,7 +428,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "Its fan-shaped ears shade its face and flush copper when rain is coming.",
     colors: [0xd7a44e, 0x7b4a2e, 0x20170f], drops: [{ item: Item.Hide, min: 1, max: 2, chance: 0.54 }, { item: Item.RawMeat, min: 1, max: 2, chance: 0.66 }],
     family: "surface", movement: "ground", utility: "A reliable source of hide in dry country, if a player can catch one.",
-    sentient: false, breedable: true, breedingFoods: [Item.Wheat, Item.Apple], diet: [Item.Wheat, Item.Apple],
+    sentient: false, breedable: true, breedingFoods: [Item.Wheat, Item.Apple], diet: [Item.Wheat, Item.Apple], foodLure: true,
     discoveryHint: "Listen for warning stamps along bright savanna margins.",
   },
   pebbletortoise: {
@@ -511,7 +519,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     drops: [{ item: Item.Feather, min: 1, max: 2, chance: 0.86 }, { item: Item.RawFish, min: 1, max: 1, chance: 0.18 }],
     family: "mount", movement: "ground", persistent: true, utility: "A tame, saddled Reedstrider is a fast amphibious mount and crosses water faster than land.",
     sentient: false, tameable: true, tameItems: [Item.RawFish, Item.CookedFish, Item.GlowScale],
-    breedable: true, breedingFoods: [Item.RawFish], diet: [Item.RawFish, Item.CookedFish, Item.GlowScale, Item.Berry],
+    breedable: true, breedingFoods: [Item.RawFish], diet: [Item.RawFish, Item.CookedFish, Item.GlowScale, Item.Berry], foodLure: true,
     rideable: true, postTameNotes: "Build trust with fish, then fit a Trail Saddle. Its long stride is steady on land and exceptionally quick through shallows.",
     secretHint: "Glow Scales build trust much faster than ordinary fish.",
     discoveryHint: "Follow resonant dawn calls across foggy wetlands.",
@@ -525,7 +533,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     colors: [0x8b5b3d, 0xd6b17b, 0xffe69a], drops: [{ item: Item.Hide, min: 1, max: 3, chance: 0.78 }],
     family: "mount", movement: "ground", persistent: true, utility: "A fast land mount after patient feeding and fitting a Trail Saddle.",
     sentient: false, tameable: true, tameItems: [Item.Apple, Item.Wheat], breedable: true, rideable: true,
-    breedingFoods: [Item.Apple], diet: [Item.Apple, Item.Wheat], captureItem: Item.CaptureOrb,
+    breedingFoods: [Item.Apple], diet: [Item.Apple, Item.Wheat], captureItem: Item.CaptureOrb, foodLure: true,
     postTameNotes: "A saddled Courser carries one rider and prefers clear ground.",
     discoveryHint: "Look for hoofprints along broad meadow edges and old forest roads.",
   },
@@ -537,7 +545,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "Clover patterns bloom across its back in spring, making every herd look like a moving meadow.",
     colors: [0xf0e3c2, 0x6f513b, 0x6e9b51], drops: [{ item: Item.RawMeat, min: 1, max: 3, chance: 1 }, { item: Item.Hide, min: 1, max: 2, chance: 0.72 }],
     family: "surface", movement: "ground", utility: "Can be milked for Meadow Milk and bred with wheat.",
-    sentient: false, breedable: true, breedingFoods: [Item.Wheat], diet: [Item.Wheat, Item.Apple], captureItem: Item.CaptureOrb,
+    sentient: false, breedable: true, breedingFoods: [Item.Wheat], diet: [Item.Wheat, Item.Apple], captureItem: Item.CaptureOrb, foodLure: true,
     discoveryHint: "Listen for soft bells where meadow flowers give way to shade.",
   },
   mistmane: {
@@ -548,7 +556,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "Its wool traps morning mist. Trailkeepers once wrung drinking water from shed curls on dry climbs.",
     colors: [0xb8d6cf, 0x6d8f8a, 0xeaf7e9], drops: [{ item: Item.Fiber, min: 1, max: 3, chance: 0.9 }],
     family: "surface", movement: "ground", utility: "A renewable source of soft fiber in Cloudreed country.",
-    sentient: false, breedable: true, breedingFoods: [Item.Wheat], diet: [Item.Wheat, Item.Berry], captureItem: Item.CaptureOrb,
+    sentient: false, breedable: true, breedingFoods: [Item.Wheat], diet: [Item.Wheat, Item.Berry], captureItem: Item.CaptureOrb, foodLure: true,
     discoveryHint: "Search cool upland reed basins where bells sound in the fog.",
   },
   emberjay: {
@@ -686,6 +694,85 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     postTameNotes: "A trusted Peelop can follow, sit, stay or wander; crouch-use opens its detailed companion commands.",
     secretHint: "Golden Bananas are the quickest path to trust and healthy young.",
     discoveryHint: "Sunny orchard hollows and Peelop picnic groves sometimes shelter a small family.",
+  },
+  "meadow-cottontail": {
+    kind: "meadow-cottontail", name: "Meadow Cottontail", temperament: "Skittish", hostile: false,
+    health: 4, damage: 0, xp: 2, speed: 0.88, chaseSpeed: 3.35, turnRate: 9.2, attackRange: 0,
+    footOffset: 0.82, radius: 0.31, height: 0.56, habitat: "Flower meadows, orchard edges and open Wildwood", active: "Dawn and daylight",
+    behavior: "Nibbles low flowers in family groups, follows a visible Suncrest Carrot, and otherwise escapes in quick zig-zag hops.",
+    lore: "Its white tail is an alarm flag shared by the entire warren.", colors: [0xb99878, 0xf0e4d2, 0x251b18],
+    drops: [{ item: Item.RawMeat, min: 1, max: 1, chance: 0.55 }, { item: Item.Hide, min: 1, max: 1, chance: 0.18 }],
+    family: "rabbit", movement: "ground", sentient: false, tameable: true, tameItems: [Item.SunCarrot], breedable: true,
+    breedingFoods: [Item.SunCarrot], diet: [Item.SunCarrot, Item.BluepodBeans, Item.Wheat], captureItem: Item.CaptureOrb, foodLure: true,
+    postTameNotes: "A trusted cottontail can follow, sit or wander and remains skittish around hostile creatures.",
+    discoveryHint: "Hold a Suncrest Carrot still at the edge of a flower meadow.",
+  },
+  "russet-rabbit": {
+    kind: "russet-rabbit", name: "Russet Rabbit", temperament: "Skittish", hostile: false,
+    health: 5, damage: 0, xp: 2, speed: 0.94, chaseSpeed: 3.55, turnRate: 9.6, attackRange: 0,
+    footOffset: 0.82, radius: 0.32, height: 0.58, habitat: "Savanna shade, Birchlight scrub and upland fields", active: "Morning and late afternoon",
+    behavior: "Freezes against dry brush, then springs for the nearest cover unless tempted by fresh roots.",
+    lore: "Russet coats carry the same broken pattern as late-summer soil.", colors: [0x9c5f38, 0xe0a16d, 0x2d1b14],
+    drops: [{ item: Item.RawMeat, min: 1, max: 1, chance: 0.62 }, { item: Item.Hide, min: 1, max: 1, chance: 0.22 }],
+    family: "rabbit", movement: "ground", sentient: false, tameable: true, tameItems: [Item.SunCarrot, Item.Sunroot], breedable: true,
+    breedingFoods: [Item.SunCarrot], diet: [Item.SunCarrot, Item.Sunroot, Item.Wheat], captureItem: Item.CaptureOrb, foodLure: true,
+    discoveryHint: "Watch the shade line in savanna scrub during the cooler parts of the day.",
+  },
+  "frost-hare": {
+    kind: "frost-hare", name: "Frost Hare", temperament: "Skittish", hostile: false,
+    health: 6, damage: 0, xp: 3, speed: 1.02, chaseSpeed: 3.8, turnRate: 9.4, attackRange: 0,
+    footOffset: 0.82, radius: 0.34, height: 0.67, habitat: "Frostpine clearings, Snowcap foothills and snowfields", active: "Cold daylight",
+    behavior: "Bounds over powder in long pairs of tracks and approaches only when a traveler holds food without sprinting.",
+    lore: "The dark tips of its winter ears are the only parts a snowstorm cannot erase.", colors: [0xe7e6df, 0x8a9097, 0x202329],
+    drops: [{ item: Item.RawMeat, min: 1, max: 1, chance: 0.58 }, { item: Item.Hide, min: 1, max: 1, chance: 0.3 }],
+    family: "rabbit", movement: "ground", sentient: false, tameable: true, tameItems: [Item.SunCarrot, Item.BluepodBeans], breedable: true,
+    breedingFoods: [Item.SunCarrot], diet: [Item.SunCarrot, Item.BluepodBeans, Item.Wheat], captureItem: Item.CaptureOrb, foodLure: true,
+    discoveryHint: "Follow paired tracks across an open Frostpine clearing.",
+  },
+  "chocolate-bunny": {
+    kind: "chocolate-bunny", name: "Cocoa Truffle Bunny", temperament: "Skittish", hostile: false,
+    health: 4, damage: 0, xp: 3, speed: 0.82, chaseSpeed: 3.1, turnRate: 9, attackRange: 0,
+    footOffset: 0.82, radius: 0.31, height: 0.55, habitat: "Sugarplum Vale cocoa gardens and syrup-dry knolls", active: "Clear daylight",
+    behavior: "Hides beneath candy shrubs, follows Cocoa Nibs or carrots, and sheds a wrapped chocolate likeness when defeated.",
+    lore: "Sugarcourt children insist the tiny bow on its neck grows naturally.", colors: [0x704126, 0xd49a62, 0xffe1df],
+    drops: [{ item: Item.ChocolateBunny, min: 1, max: 1, chance: 1 }], family: "rabbit", movement: "ground",
+    sentient: false, tameable: true, tameItems: [Item.CocoaNib, Item.SunCarrot], breedable: true,
+    breedingFoods: [Item.CocoaNib], diet: [Item.CocoaNib, Item.SunCarrot, Item.PeppermintCane], captureItem: Item.CaptureOrb, foodLure: true,
+    postTameNotes: "A trusted Truffle Bunny can follow, sit or wander and never attacks.",
+    discoveryHint: "Search the dry knolls between Cocoa Puffs in the Sugarplum Vale.",
+  },
+  "sunset-sea-slug": {
+    kind: "sunset-sea-slug", name: "Sunset Sea Slug", temperament: "Gentle", hostile: false,
+    health: 3, damage: 0, xp: 2, speed: 0.14, chaseSpeed: 0.22, turnRate: 2.2, attackRange: 0,
+    footOffset: 0.58, radius: 0.23, height: 0.18, habitat: "Warm ocean shelves and coral gardens", active: "All hours underwater",
+    behavior: "Crawls over the seafloor in slow ribbons and folds its sunset frills when startled.",
+    lore: "Every individual carries a slightly different line of dusk along its back.", colors: [0xef7a72, 0xffc36f, 0x522c66], drops: [],
+    family: "sea-slug", movement: "aquatic", aquatic: true, bottomDweller: true, sentient: false, breedable: true,
+    breedingFoods: [Item.LumenKelpFrond], diet: [Item.LumenKelpFrond, Item.LivingCoral], captureItem: Item.CaptureOrb,
+    utility: "A tiny aquarium crawler that reproduces slowly when a tank has a mature pair and free space.",
+    discoveryHint: "Inspect warm coral shelves close to the seafloor.",
+  },
+  "moonlace-sea-slug": {
+    kind: "moonlace-sea-slug", name: "Moonlace Sea Slug", temperament: "Gentle", hostile: false,
+    health: 3, damage: 0, xp: 2, speed: 0.12, chaseSpeed: 0.2, turnRate: 2, attackRange: 0,
+    footOffset: 0.58, radius: 0.22, height: 0.17, habitat: "Lumen Trench floors and moonlit deep reefs", active: "All hours underwater",
+    behavior: "Crawls along mineral seams and pulses its lace-like mantle with a quiet blue glow.",
+    lore: "Atlantian mosaics copy the branching pattern of its mantle, never the other way around.", colors: [0x5965b9, 0xa8e9ee, 0xeaffff], drops: [],
+    family: "sea-slug", movement: "aquatic", aquatic: true, bottomDweller: true, sentient: false, breedable: true,
+    breedingFoods: [Item.AbyssBloomNectar], diet: [Item.AbyssBloomNectar, Item.LumenKelpFrond], captureItem: Item.CaptureOrb,
+    utility: "A bioluminescent aquarium crawler; two mature specimens can slowly fill spare tank cells.",
+    discoveryHint: "Search glowing stone at the bottom of a Lumen Trench.",
+  },
+  "pocket-goldfish": {
+    kind: "pocket-goldfish", name: "Pocket Goldfish", temperament: "Gentle", hostile: false,
+    health: 2, damage: 0, xp: 1, speed: 1.2, chaseSpeed: 1.8, turnRate: 8.5, attackRange: 0,
+    footOffset: 0.5, radius: 0.19, height: 0.16, habitat: "Quiet river pools, Moonwells and planted aquariums", active: "Day underwater",
+    behavior: "Turns in small, unhurried circles and gathers into a bright shoal around submerged plants.",
+    lore: "It was named for size, not because anyone recommends carrying one loose in a pocket.", colors: [0xf19a3e, 0xffd36a, 0x38251d],
+    drops: [{ item: Item.RawFish, min: 1, max: 1, chance: 0.35 }], family: "fish", movement: "aquatic", aquatic: true,
+    sentient: false, breedable: true, breedingFoods: [Item.BluepodBeans], diet: [Item.BluepodBeans, Item.WheatSeeds], captureItem: Item.CaptureOrb,
+    utility: "A one-cell aquarium fish that slowly repopulates below the connected tank cap.",
+    discoveryHint: "Look into calm river bends and luminous Moonwell ponds.",
   },
   "reliquary-sentinel": {
     kind: "reliquary-sentinel", name: "Reliquary Sentinel", temperament: "Hostile", hostile: true,
@@ -1359,6 +1446,8 @@ export const TIDEGLASS_AQUATIC_ORDER: TideglassAquaticKind[] = [
   "glassfin", "lanternjaw", "abyss-skater", "dreadcoil", "tidepup", "worldshell-leviathan", "aetherbell-larva", "aetherbell-leviathan",
 ];
 export const SUGARPLUM_AQUATIC_ORDER: SugarplumAquaticKind[] = ["syrupfin"];
+export const RABBIT_ORDER: RabbitKind[] = ["meadow-cottontail", "russet-rabbit", "frost-hare", "chocolate-bunny"];
+export const AQUARIUM_MOB_ORDER: AquariumMobKind[] = ["sunset-sea-slug", "moonlace-sea-slug", "pocket-goldfish"];
 export const DRAGON_ORDER: DragonKind[] = ["fire-dragon", "ice-dragon", "steel-dragon", "sea-dragon"];
 export const HOBBIT_ORDER: HobbitKind[] = [
   "hobbit-mayor", "hobbit-farmer", "hobbit-miner", "hobbit-merchant", "hobbit-banker", "hobbit-hammer-guard", "hobbit-crossbow-guard",
@@ -1386,6 +1475,8 @@ export const CORE_MOB_ORDER: CoreMobKind[] = [
   ...HEARTHROADS_AQUATIC_ORDER,
   ...TIDEGLASS_AQUATIC_ORDER,
   ...SUGARPLUM_AQUATIC_ORDER,
+  ...RABBIT_ORDER,
+  ...AQUARIUM_MOB_ORDER,
   ...V1_FACTION_CREATURE_ORDER,
   ...DRAGON_ORDER,
   ...SENTIENT_MOB_ORDER,

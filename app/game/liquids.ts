@@ -364,6 +364,8 @@ export type SwimEnvironment = Readonly<{
   shoreLedgeHeight?: number;
   /** Vertical distance from the eyes to the water surface. */
   surfaceGap?: number;
+  /** The first submerged step may retain part of a real fall's momentum. */
+  enteredFromAir?: boolean;
 }>;
 
 export type SwimInput = Readonly<{
@@ -396,6 +398,7 @@ export type SwimRules = Readonly<{
   swimAcceleration: number;
   waterDrag: number;
   shoreExitVelocity: number;
+  entryMomentumRetention?: number;
 }>;
 
 export const DEFAULT_SWIM_RULES: SwimRules = Object.freeze({
@@ -411,9 +414,10 @@ export const DEFAULT_SWIM_RULES: SwimRules = Object.freeze({
   maximumSinkSpeed: 2.3,
   crouchSinkAcceleration: 7.5,
   crouchMaximumSinkSpeed: 4.2,
-  swimAcceleration: 12.5,
+  swimAcceleration: 11.6,
   waterDrag: 2.8,
   shoreExitVelocity: 8.15,
+  entryMomentumRetention: 0.46,
 });
 
 /** Pure player-water step; the caller applies returned velocity and damage. */
@@ -457,7 +461,11 @@ export function stepSwimming(
     velocityY -= rules.passiveSinkAcceleration * dt;
     if (input.crouching && !input.jumpHeld) velocityY -= rules.crouchSinkAcceleration * dt;
     if (input.jumpHeld) velocityY += rules.swimAcceleration * dt;
-    velocityY = Math.max(-(input.crouching ? rules.crouchMaximumSinkSpeed : rules.maximumSinkSpeed), velocityY);
+    const ordinaryMaximumSink = input.crouching ? rules.crouchMaximumSinkSpeed : rules.maximumSinkSpeed;
+    const entryMaximumSink = environment.enteredFromAir && state.velocityY < 0
+      ? Math.max(ordinaryMaximumSink, Math.abs(state.velocityY) * Math.max(0, Math.min(1, rules.entryMomentumRetention ?? 0.46)))
+      : ordinaryMaximumSink;
+    velocityY = Math.max(-entryMaximumSink, velocityY);
 
     const ledgeHeight = environment.shoreLedgeHeight ?? Number.POSITIVE_INFINITY;
     const surfaceGap = environment.surfaceGap ?? Number.POSITIVE_INFINITY;

@@ -435,12 +435,15 @@ function renderTile(spec: ModelSpec, view: ViewName, tileX: number, tileY: numbe
         ? `GROUND Y=${groundY.toFixed(2)} · FLOATING +${groundDelta.toFixed(3)}`
         : `GROUND Y=${groundY.toFixed(2)} · PENETRATION ${groundDelta.toFixed(3)}`;
   const groundStatusColor = spec.groundY === undefined ? "#91a098" : exactGroundContact ? "#8ee6a3" : "#ff837a";
+  const clipId = `model-clip-${spec.id}-${view}-${tileX}-${tileY}`.replace(/[^A-Za-z0-9_-]+/gu, "-");
   const output: string[] = [
     `<g data-model-id="${escapeXml(spec.id)}" data-ground-y="${groundY.toFixed(4)}" data-lowest-y="${lowestY.toFixed(4)}">`,
     `<rect x="${tileX + 7}" y="${tileY + 7}" width="${TILE_WIDTH - 14}" height="${TILE_HEIGHT - 14}" rx="13" fill="#161a1f" stroke="#39424c" stroke-width="2"/>`,
+    `<defs><clipPath id="${clipId}"><rect x="${tileX + 10}" y="${tileY + 84}" width="${TILE_WIDTH - 20}" height="${TILE_HEIGHT - 143}" rx="7"/></clipPath></defs>`,
     `<text x="${tileX + 25}" y="${tileY + 36}" fill="#f3eee0" font-size="20" font-weight="800">${escapeXml(spec.label)}</text>`,
     `<text x="${tileX + 25}" y="${tileY + 57}" fill="#93a0ad" font-size="11" font-weight="700" letter-spacing="1.2">${spec.category.toUpperCase()} · ${view === "iso" ? "ORTHOGRAPHIC ISOMETRIC" : `${view.toUpperCase()} ORTHOGRAPHIC`}</text>`,
     `<text x="${tileX + 25}" y="${tileY + 77}" fill="${groundStatusColor}" font-size="10" font-weight="800" letter-spacing="0.45">${groundStatus}</text>`,
+    `<g clip-path="url(#${clipId})">`,
   ];
 
   const groundTop = [
@@ -507,8 +510,11 @@ function renderTile(spec: ModelSpec, view: ViewName, tileX: number, tileY: numbe
     output.push(`<text x="${point.x + 6}" y="${point.y - 5}" fill="${color}" font-size="11" font-weight="900">${label}</text>`);
   }
   const frontPoint = project(frontEnd);
-  output.push(`<rect x="${frontPoint.x - 7}" y="${frontPoint.y - 22}" width="72" height="18" rx="4" fill="#181714" stroke="#8a7437"/>`);
-  output.push(`<text x="${frontPoint.x - 2}" y="${frontPoint.y - 9}" fill="#ffe07b" font-size="10" font-weight="900">FRONT -Z</text>`);
+  const frontBadgeX = THREE.MathUtils.clamp(frontPoint.x - 7, tileX + 18, tileX + TILE_WIDTH - 90);
+  const frontBadgeY = THREE.MathUtils.clamp(frontPoint.y - 22, tileY + 92, tileY + TILE_HEIGHT - 78);
+  output.push(`<rect x="${frontBadgeX.toFixed(2)}" y="${frontBadgeY.toFixed(2)}" width="72" height="18" rx="4" fill="#181714" stroke="#8a7437"/>`);
+  output.push(`<text x="${(frontBadgeX + 5).toFixed(2)}" y="${(frontBadgeY + 13).toFixed(2)}" fill="#ffe07b" font-size="10" font-weight="900">FRONT -Z</text>`);
+  output.push(`</g>`);
   const partSummary = parts.join(" · ");
   const clippedPartSummary = partSummary.length > 58 ? `${partSummary.slice(0, 57)}…` : partSummary;
   output.push(`<text x="${tileX + 25}" y="${tileY + TILE_HEIGHT - 42}" fill="#aab3bc" font-size="10">${escapeXml(clippedPartSummary)}</text>`);
@@ -619,7 +625,7 @@ function renderPortraitSheet(specs: readonly InspectionModelSpec[], rendered: Re
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
   <rect width="100%" height="100%" fill="#0c100e"/>
-  <text x="28" y="43" fill="#e5bd68" font-family="ui-sans-serif, system-ui, sans-serif" font-size="26" font-weight="900" letter-spacing="1.8">BLOCKWILD FIELD GUIDE</text>
+  <text x="28" y="43" fill="#e5bd68" font-family="ui-sans-serif, system-ui, sans-serif" font-size="26" font-weight="900" letter-spacing="1.8">BLOCKWILD FIELD GUIDE · V1.2</text>
   <text x="28" y="70" fill="#99a79e" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">Production creature models · front three-quarter portraits · ${specs.length} specimens</text>
   ${tiles}
 </svg>`;

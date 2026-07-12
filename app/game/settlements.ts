@@ -14,7 +14,7 @@ import {
   type TownCaptureReceipt,
 } from "./factions.ts";
 import type { GoldAmount, MerchantProfession } from "./economy.ts";
-import { planV1Settlement, type V1TileRole } from "./v1-cultures.ts";
+import { planConnectedSettlementTiles, planV1Settlement, type V1TileRole } from "./v1-cultures.ts";
 
 export type SettlementSize = "hamlet" | "village" | "town";
 export type SettlementPoint = Readonly<{ x: number; z: number; y?: number }>;
@@ -44,9 +44,9 @@ export const SETTLEMENT_SIZE_RULES: Readonly<Record<SettlementSize, Readonly<{
   minimumSpacingChunks: number;
   gateCount: number;
 }>>> = {
-  hamlet: { radiusBlocks: 14, buildingCount: 6, populationTarget: 7, populationHardLimit: 14, minimumSpacingChunks: 24, gateCount: 2 },
-  village: { radiusBlocks: 22, buildingCount: 11, populationTarget: 15, populationHardLimit: 30, minimumSpacingChunks: 32, gateCount: 3 },
-  town: { radiusBlocks: 31, buildingCount: 18, populationTarget: 26, populationHardLimit: 48, minimumSpacingChunks: 42, gateCount: 4 },
+  hamlet: { radiusBlocks: 14, buildingCount: 13, populationTarget: 7, populationHardLimit: 14, minimumSpacingChunks: 24, gateCount: 2 },
+  village: { radiusBlocks: 22, buildingCount: 21, populationTarget: 15, populationHardLimit: 30, minimumSpacingChunks: 32, gateCount: 3 },
+  town: { radiusBlocks: 31, buildingCount: 31, populationTarget: 26, populationHardLimit: 48, minimumSpacingChunks: 42, gateCount: 4 },
 };
 
 export type SettlementCandidate = Readonly<{
@@ -325,14 +325,26 @@ export type SettlementLayoutPlan = Readonly<{
   populationSoftCap: number;
 }>;
 
-function buildingRoles(factionId: Exclude<FactionId, "player">, size: SettlementSize) {
+function expandBuildingRoles(
+  authored: readonly SettlementBuildingRole[],
+  fillers: readonly SettlementBuildingRole[],
+  target: number,
+  seed: string,
+) {
+  const roles = authored.slice(0, target);
+  while (roles.length < target) roles.push(hashPick(fillers, seed, `role-${roles.length}`));
+  return roles;
+}
+
+function buildingRoles(factionId: Exclude<FactionId, "player">, size: SettlementSize, seed: string = factionId) {
+  const target = SETTLEMENT_SIZE_RULES[size].buildingCount;
   if (factionId === "wood-elves") {
     const roles: SettlementBuildingRole[] = [
       "moonbough-hall", "leafwarden-lodge", "glimmer-library", "enclave-market", "living-home", "glow-garden",
       "moonwell", "living-home", "glow-garden", "living-home", "leafwarden-lodge", "enclave-market",
       "living-home", "glimmer-library", "glow-garden", "living-home", "moonwell", "living-home",
     ];
-    return roles.slice(0, SETTLEMENT_SIZE_RULES[size].buildingCount);
+    return expandBuildingRoles(roles, ["living-home", "glow-garden", "living-home", "moonwell", "leafwarden-lodge"], target, seed);
   }
   if (factionId === "dwarves") {
     const roles: SettlementBuildingRole[] = [
@@ -340,7 +352,7 @@ function buildingRoles(factionId: Exclude<FactionId, "player">, size: Settlement
       "powderworks", "stone-home", "blacksmith", "stone-home", "entrance-barracks", "warehouse",
       "stone-home", "golem-forge", "delver-gallery", "gear-market", "stone-home", "powderworks",
     ];
-    return roles.slice(0, SETTLEMENT_SIZE_RULES[size].buildingCount);
+    return expandBuildingRoles(roles, ["stone-home", "delver-gallery", "stone-home", "warehouse", "gear-market"], target, seed);
   }
   if (factionId === "atlantians") {
     const aquatic: SettlementBuildingRole[] = [
@@ -348,7 +360,7 @@ function buildingRoles(factionId: Exclude<FactionId, "player">, size: Settlement
       "glow-clinic", "home", "current-store", "kelp-garden", "guard-grotto", "home",
       "coral-workshop", "pearl-market", "home", "glow-clinic", "current-store", "kelp-garden",
     ];
-    return aquatic.slice(0, SETTLEMENT_SIZE_RULES[size].buildingCount);
+    return expandBuildingRoles(aquatic, ["home", "kelp-garden", "home", "coral-workshop", "current-store", "guard-grotto"], target, seed);
   }
   if (factionId === "sugarcourt") {
     const sugarcourt: SettlementBuildingRole[] = [
@@ -356,14 +368,21 @@ function buildingRoles(factionId: Exclude<FactionId, "player">, size: Settlement
       "sugarworks", "candysmith", "taffy-kennel", "bonbon-home", "gumdrop-garden", "sweet-market",
       "bonbon-home", "brittle-barracks", "sugarworks", "bonbon-home", "gumdrop-garden", "candysmith",
     ];
-    return sugarcourt.slice(0, SETTLEMENT_SIZE_RULES[size].buildingCount);
+    return expandBuildingRoles(sugarcourt, ["bonbon-home", "gumdrop-garden", "bonbon-home", "sweet-market", "taffy-kennel"], target, seed);
   }
   const common: SettlementBuildingRole[] = ["mayor-hall", "guardhouse", "market", "home", "home", "farm"];
   const themed: SettlementBuildingRole[] = factionId === "hobbits"
     ? ["brewery", "bank", "farm", "home", "alchemist", "warehouse"]
     : ["mine-store", "blacksmith", "warg-kennel", "home", "alchemist", "warehouse"];
   const expanded: SettlementBuildingRole[] = [...common, ...themed, "home", "guardhouse", "market", "home", "farm", "warehouse"];
-  return expanded.slice(0, SETTLEMENT_SIZE_RULES[size].buildingCount);
+  return expandBuildingRoles(
+    expanded,
+    factionId === "hobbits"
+      ? ["home", "farm", "home", "brewery", "warehouse", "guardhouse"]
+      : ["home", "mine-store", "home", "warg-kennel", "warehouse", "guardhouse"],
+    target,
+    seed,
+  );
 }
 
 function paletteFor(factionId: Exclude<FactionId, "player">, role: SettlementBuildingRole) {
@@ -436,6 +455,7 @@ function furnitureFor(factionId: Exclude<FactionId, "player">, buildingId: strin
     if (role === "coral-workshop") add("coral-loom", 0, 0);
     if (role === "pearl-market") add("pearl-counter", 0, 0);
     if (role === "glow-clinic") add("glow-basin", 0, 0);
+    if (role === "current-store") { add("pearl-counter", -1, 0); add("kelp-trough", 1, 0); }
     void buildingId;
     return entries;
   }
@@ -643,48 +663,77 @@ export function planSettlementLayout(candidate: SettlementCandidate): Settlement
   const center: SettlementPoint = aquatic
     ? { ...candidate.center, y: candidate.center.y ?? (candidate.floorY ?? (candidate.biome === "lumen-trench" ? -28 : 10)) + 2 }
     : candidate.center;
-  const roles = buildingRoles(candidate.factionId, candidate.size);
-  const buildings: SettlementBuildingPlan[] = [];
-  const paths: SettlementPoint[] = [];
-  roles.forEach((role, index) => {
-    const ring = index === 0 ? 0 : 7 + Math.floor(index / 6) * 8;
-    const angle = index === 0 ? 0 : (index * 2.399963 + hashUnit(candidate.id, `angle-${index}`) * 0.35);
-    const verticalOffset = aquatic && index > 0 ? 2 + (index % 4) * 2 + Math.floor(index / 8) * 2 : 0;
-    const position: SettlementPoint = index === 0 ? center : {
-      x: Math.round(center.x + Math.cos(angle) * ring),
-      z: Math.round(center.z + Math.sin(angle) * ring),
+  const roles = buildingRoles(candidate.factionId, candidate.size, candidate.id);
+  const gridRadius = candidate.size === "hamlet" ? 2 : candidate.size === "village" ? 3 : 4;
+  const tileSize = candidate.factionId === "hobbits" ? 9 : candidate.factionId === "atlantians" ? 11 : 10;
+  const tiles = planConnectedSettlementTiles({ seed: `${candidate.id}|${candidate.worldSeed}`, targetTiles: roles.length, gridRadius });
+  const tilePoints = new Map<string, SettlementPoint>();
+  tiles.forEach((tile, index) => {
+    const verticalOffset = aquatic && index > 0
+      ? 2 + ((Math.abs(tile.gridX) + Math.abs(tile.gridZ) + index) % 4) * 2
+      : 0;
+    tilePoints.set(`${tile.gridX},${tile.gridZ}`, {
+      x: center.x + tile.gridX * tileSize,
+      z: center.z + tile.gridZ * tileSize,
       ...(center.y === undefined ? {} : { y: center.y + verticalOffset }),
-    };
-    const facing = (Math.floor((angle + Math.PI / 4) / (Math.PI / 2)) & 3) as 0 | 1 | 2 | 3;
+    });
+  });
+  const buildings = tiles.map((tile, index): SettlementBuildingPlan => {
+    const role = roles[index];
+    const position = tilePoints.get(`${tile.gridX},${tile.gridZ}`) ?? center;
+    const facing = Math.floor(hashUnit(candidate.id, `facing-${index}`) * 4) as 0 | 1 | 2 | 3;
     const civicHall = role === "mayor-hall" || role === "tide-hall" || role === "sugar-palace";
-    const width = civicHall ? 9 : role === "warehouse" || role === "current-store" || role === "sugarworks" ? 8 : 5 + Math.floor(hashUnit(candidate.id, `width-${index}`) * 3);
-    const depth = civicHall ? 8 : 5 + Math.floor(hashUnit(candidate.id, `depth-${index}`) * 3);
-    const id = `${candidate.id}-building-${index}`;
-    buildings.push({
+    const broadWorkshop = role === "warehouse" || role === "current-store" || role === "sugarworks" || role === "brittle-barracks";
+    const width = civicHall ? 9 : broadWorkshop ? 8 : 5 + Math.floor(hashUnit(candidate.id, `width-${index}`) * 3);
+    const depth = civicHall ? 9 : broadWorkshop ? 7 : 5 + Math.floor(hashUnit(candidate.id, `depth-${index}`) * 3);
+    const id = `${candidate.id}-tile-${index}`;
+    return {
       id,
       role,
       position,
       facing,
       width,
       depth,
-      floors: civicHall || (candidate.size === "town" && index % 5 === 0) ? 2 : 1,
+      floors: civicHall || (candidate.size === "town" && index > 0 && index % 7 === 0) ? 2 : 1,
       materialPalette: paletteFor(candidate.factionId, role),
       furniture: furnitureFor(candidate.factionId, id, role, position, facing),
-    });
-    addLine(paths, center, position, 2);
+    };
   });
 
-  const gateAngles = aquatic ? [] : Array.from({ length: rule.gateCount }, (_, index) => index * Math.PI * 2 / rule.gateCount);
-  const gates: SettlementGatePlan[] = gateAngles.map((angle, index) => ({
-    id: `${candidate.id}-gate-${index}`,
-    position: {
-      x: Math.round(center.x + Math.cos(angle) * rule.radiusBlocks),
-      z: Math.round(center.z + Math.sin(angle) * rule.radiusBlocks),
-    },
-    facing: (Math.round(angle / (Math.PI / 2)) & 3) as 0 | 1 | 2 | 3,
-    patrolRadius: 6,
-  }));
-  for (const gate of gates) addLine(paths, center, gate.position, 2);
+  const paths: SettlementPoint[] = [];
+  for (const tile of tiles) {
+    const from = tilePoints.get(`${tile.gridX},${tile.gridZ}`) ?? center;
+    for (const [direction, dx, dz] of [["east", 1, 0], ["south", 0, 1]] as const) {
+      if (!tile.pathConnections.includes(direction)) continue;
+      const neighbor = tilePoints.get(`${tile.gridX + dx},${tile.gridZ + dz}`);
+      if (neighbor) addLine(paths, from, neighbor, aquatic ? 1 : 2);
+    }
+  }
+
+  const perimeterRadius = (gridRadius + 1) * tileSize;
+  const startGateSide = Math.floor(hashUnit(candidate.id, "gate-side") * 4);
+  const gates: SettlementGatePlan[] = aquatic ? [] : Array.from({ length: rule.gateCount }, (_, index) => {
+    const side = (startGateSide + index) % 4;
+    const slide = Math.round((hashUnit(candidate.id, `gate-slide-${index}`) * 2 - 1) * Math.min(tileSize, perimeterRadius / 3));
+    const position: SettlementPoint = side === 0
+      ? { x: center.x + slide, z: center.z - perimeterRadius }
+      : side === 1
+        ? { x: center.x + perimeterRadius, z: center.z + slide }
+        : side === 2
+          ? { x: center.x + slide, z: center.z + perimeterRadius }
+          : { x: center.x - perimeterRadius, z: center.z + slide };
+    return {
+      id: `${candidate.id}-gate-${index}`,
+      position,
+      facing: side as 0 | 1 | 2 | 3,
+      patrolRadius: 7 + (candidate.size === "town" ? 2 : 0),
+    };
+  });
+  const closestBuildingTo = (point: SettlementPoint) => buildings.reduce((closest, building) => (
+    Math.hypot(building.position.x - point.x, building.position.z - point.z)
+      < Math.hypot(closest.position.x - point.x, closest.position.z - point.z) ? building : closest
+  ), buildings[0]);
+  for (const gate of gates) addLine(paths, closestBuildingTo(gate.position).position, gate.position, 1);
 
   const approachCount = aquatic ? Math.max(3, Math.min(5, rule.gateCount + 1)) : 0;
   const approaches: SettlementApproachPlan[] = Array.from({ length: approachCount }, (_, index) => {
@@ -693,8 +742,8 @@ export function planSettlementLayout(candidate: SettlementCandidate): Settlement
     return {
       id: `${candidate.id}-current-${index}`,
       position: {
-        x: Math.round(center.x + Math.cos(angle) * (rule.radiusBlocks - 2)),
-        z: Math.round(center.z + Math.sin(angle) * (rule.radiusBlocks - 2)),
+        x: Math.round(center.x + Math.cos(angle) * (perimeterRadius - 2)),
+        z: Math.round(center.z + Math.sin(angle) * (perimeterRadius - 2)),
         y: (center.y ?? 0) + yOffset,
       },
       facing: (Math.round(angle / (Math.PI / 2)) & 3) as 0 | 1 | 2 | 3,
@@ -702,25 +751,34 @@ export function planSettlementLayout(candidate: SettlementCandidate): Settlement
       kind: candidate.biome === "lumen-trench" ? "trench-arch" as const : "open-current" as const,
     };
   });
-  for (const approach of approaches) addLine(paths, center, approach.position, 2);
+  for (const approach of approaches) addLine(paths, closestBuildingTo(approach.position).position, approach.position, 1);
 
   const wall: SettlementWallNode[] = [];
-  const circumferenceSteps = Math.min(144, Math.max(40, Math.round(Math.PI * 2 * rule.radiusBlocks / 2)));
-  for (let index = 0; !aquatic && index < circumferenceSteps; index += 1) {
-    const angle = index * Math.PI * 2 / circumferenceSteps;
-    const position = {
-      x: Math.round(center.x + Math.cos(angle) * rule.radiusBlocks),
-      z: Math.round(center.z + Math.sin(angle) * rule.radiusBlocks),
-    };
-    if (gates.some((gate) => Math.hypot(gate.position.x - position.x, gate.position.z - position.z) < 2.5)) continue;
-    wall.push({ position, kind: index % Math.max(10, Math.floor(circumferenceSteps / 8)) === 0 ? "tower" : "wall" });
+  const pushWall = (x: number, z: number) => {
+    if (gates.some((gate) => Math.hypot(gate.position.x - x, gate.position.z - z) <= 1.5)) return;
+    const offset = Math.abs(x - center.x) + Math.abs(z - center.z);
+    const corner = Math.abs(x - center.x) === perimeterRadius && Math.abs(z - center.z) === perimeterRadius;
+    wall.push({
+      position: { x, z, ...(center.y === undefined ? {} : { y: center.y }) },
+      kind: corner || offset % (tileSize * 2) === 0 ? "tower" : "wall",
+    });
+  };
+  if (!aquatic) {
+    for (let offset = -perimeterRadius; offset <= perimeterRadius; offset += 1) {
+      pushWall(center.x + offset, center.z - perimeterRadius);
+      pushWall(center.x + offset, center.z + perimeterRadius);
+    }
+    for (let offset = -perimeterRadius + 1; offset < perimeterRadius; offset += 1) {
+      pushWall(center.x - perimeterRadius, center.z + offset);
+      pushWall(center.x + perimeterRadius, center.z + offset);
+    }
   }
 
-  const uniquePaths = [...new Map(paths.map((point) => [`${point.x},${point.y ?? "s"},${point.z}`, point])).values()].slice(0, 512);
+  const uniquePaths = [...new Map(paths.map((point) => [`${point.x},${point.y ?? "s"},${point.z}`, point])).values()].slice(0, 1_024);
   const lights: SettlementLightPlan[] = aquatic
     ? [
       { position: { ...center, y: (center.y ?? 0) + 14 }, kind: "lumen-spire" as const, monsterSafeRadius: 16 },
-      ...buildings.slice(0, 24).map((building, index) => ({
+      ...buildings.map((building, index) => ({
         position: { ...building.position, y: (building.position.y ?? center.y ?? 0) + 3 },
         kind: index % 3 === 0 ? "glowstone-cluster" as const : "bioluminescent-orb" as const,
         monsterSafeRadius: index % 3 === 0 ? 11 : 9,
@@ -729,11 +787,20 @@ export function planSettlementLayout(candidate: SettlementCandidate): Settlement
     ].slice(0, 32)
     : [
       ...gates.flatMap((gate) => [
-        { position: { x: gate.position.x + 2, z: gate.position.z }, kind: "gate-brazier" as const, monsterSafeRadius: 10 },
-        { position: { x: gate.position.x - 2, z: gate.position.z }, kind: "gate-brazier" as const, monsterSafeRadius: 10 },
+        { position: { x: gate.position.x + (gate.facing % 2 === 0 ? 2 : 0), z: gate.position.z + (gate.facing % 2 === 1 ? 2 : 0) }, kind: "gate-brazier" as const, monsterSafeRadius: 10 },
+        { position: { x: gate.position.x - (gate.facing % 2 === 0 ? 2 : 0), z: gate.position.z - (gate.facing % 2 === 1 ? 2 : 0) }, kind: "gate-brazier" as const, monsterSafeRadius: 10 },
       ]),
-      ...uniquePaths.filter((_, index) => index % 14 === 0).slice(0, 24).map((position) => ({ position, kind: "lantern-post" as const, monsterSafeRadius: 8 })),
-    ];
+      ...buildings.filter((_, index) => index === 0 || index % 2 === 0).map((building, index) => ({
+        position: {
+          x: building.position.x,
+          z: building.position.z - Math.floor(building.depth / 2) - 1,
+          ...(building.position.y === undefined ? {} : { y: building.position.y + 1 }),
+        },
+        kind: index % 3 === 0 ? "window-lantern" as const : "lantern-post" as const,
+        monsterSafeRadius: 9,
+      })),
+      ...uniquePaths.filter((_, index) => index % 18 === 0).map((position) => ({ position, kind: "lantern-post" as const, monsterSafeRadius: 8 })),
+    ].slice(0, 32);
   const furniture = buildings.flatMap((building) => building.furniture);
   const beds = furniture.filter((entry) => entry.kind === "bed").length;
   const doors = furniture.filter((entry) => entry.kind === "door").length;
@@ -752,7 +819,7 @@ export function planSettlementLayout(candidate: SettlementCandidate): Settlement
     center,
     environment,
     topology: aquatic ? "open-underwater" : "walled-surface",
-    radiusBlocks: rule.radiusBlocks,
+    radiusBlocks: perimeterRadius,
     buildings,
     paths: uniquePaths,
     wall,

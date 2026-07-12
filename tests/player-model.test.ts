@@ -31,6 +31,10 @@ test("the block player exposes articulated parts and rests on local Y=0", () => 
   assert.equal(player.playerName, "Aria");
   assert.equal(player.nameAnchor.userData.playerName, "Aria");
   assert.equal(player.group.userData.playerMode, "remote");
+  const torso = player.group.getObjectByName("torso-block") as THREE.Mesh;
+  assert.ok(torso.scale.x < 0.7, `torso width ${torso.scale.x} must not impersonate a second pair of arms`);
+  assert.equal(player.group.getObjectByName("left-sleeve")?.parent, player.parts.leftArm);
+  assert.equal(player.group.getObjectByName("right-sleeve")?.parent, player.parts.rightArm);
 
   const bounds = player.getLocalBounds();
   near(bounds.min.y, 0);
@@ -104,6 +108,41 @@ test("crouching lowers the body while every animated pose remains grounded", () 
   const walkingArm = player.parts.rightArm.rotation.x;
   player.setAnimation("mine", 0.5);
   assert.notEqual(player.parts.rightArm.rotation.x, walkingArm);
+  player.dispose();
+});
+
+test("race features, custom clothing and seated/swimming poses share one articulated rig", () => {
+  const player = new BlockPlayerModel({ race: "wood-elf", variant: "female" });
+  player.setAppearance({
+    sex: "female",
+    race: "wood-elf",
+    colors: { skin: "#dca27f", hair: "#d7c39a", shirt: "#527d60", trousers: "#3e4934", accent: "#8cc9c1" },
+  });
+  assert.equal(player.race, "wood-elf");
+  assert.equal(player.group.getObjectByName("wood-elf-features")?.visible, true);
+  assert.equal(player.group.getObjectByName("goblin-features")?.visible, false);
+  assert.equal(player.materials.accent.color.getHexString(), "8cc9c1");
+  assert.equal(player.materials.hair.color.getHexString(), "d7c39a");
+
+  player.setPose({ seated: 1, crouch: 1 });
+  assert.ok(player.parts.leftLeg.rotation.x > 1, "seated legs project forward instead of hanging through the chair");
+  assert.ok(player.parts.rightLeg.rotation.x > 1);
+
+  player.setPose({ seated: 0, crouch: 0, swimming: 1, locomotion: "run", phase: 0.25 });
+  assert.ok(player.parts.torso.rotation.x < -1.2, "sprint swimming turns the body horizontal");
+  assert.notEqual(player.parts.leftArm.rotation.x, player.parts.rightArm.rotation.x, "swimming arms alternate their stroke");
+  player.dispose();
+});
+
+test("offhand shields use the left socket and raise the left arm independently", () => {
+  const player = new BlockPlayerModel();
+  const shield = new THREE.Group();
+  player.setOffhandItem(shield, true).setOffhandRaised(false).setPose({ locomotion: "idle" });
+  assert.equal(player.leftHandSocket.children[0], shield);
+  const resting = player.parts.leftArm.rotation.x;
+  player.setOffhandRaised(true).setPose({ locomotion: "idle", phase: 0.1 });
+  assert.ok(player.parts.leftArm.rotation.x > resting + 0.8, "raised shield should move the left arm in front of the torso");
+  assert.equal(player.rightHandSocket.children.length, 0, "offhand presentation never duplicates the main hand");
   player.dispose();
 });
 

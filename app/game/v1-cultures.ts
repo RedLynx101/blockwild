@@ -94,11 +94,64 @@ function pick<T>(values: readonly T[], seed: string, salt: string | number) {
   return values[Math.min(values.length - 1, Math.floor(unit(seed, salt) * values.length))];
 }
 
-const CARDINALS = ["north", "east", "south", "west"] as const;
+export const SETTLEMENT_CARDINALS = ["north", "east", "south", "west"] as const;
+export type SettlementCardinal = (typeof SETTLEMENT_CARDINALS)[number];
+export type ConnectedSettlementTile = Readonly<{
+  gridX: number;
+  gridZ: number;
+  pathConnections: readonly SettlementCardinal[];
+}>;
 
-function pathConnections(gridX: number, gridZ: number, occupied: ReadonlySet<string>) {
+/**
+ * Shared deterministic town graph used by every culture adapter. New cells are
+ * only admitted from the frontier of the existing graph, which guarantees a
+ * walkable route back to the civic tile while still producing seed-shaped
+ * branches, loops, and courtyards rather than a fixed radial template.
+ */
+export function planConnectedSettlementTiles(input: Readonly<{
+  seed: string;
+  targetTiles: number;
+  gridRadius: number;
+}>): readonly ConnectedSettlementTile[] {
+  const gridRadius = Math.max(1, Math.min(12, Math.floor(input.gridRadius)));
+  const capacity = (gridRadius * 2 + 1) ** 2;
+  const targetTiles = Math.max(1, Math.min(capacity, Math.floor(input.targetTiles)));
+  const occupied = new Set<string>(["0,0"]);
+  const frontier: Array<readonly [number, number]> = [];
+  const queued = new Set<string>();
+  const enqueue = (gridX: number, gridZ: number) => {
+    const key = `${gridX},${gridZ}`;
+    if (Math.abs(gridX) > gridRadius || Math.abs(gridZ) > gridRadius || occupied.has(key) || queued.has(key)) return;
+    queued.add(key);
+    frontier.push([gridX, gridZ]);
+  };
+  enqueue(1, 0);
+  enqueue(-1, 0);
+  enqueue(0, 1);
+  enqueue(0, -1);
+  let cursor = 0;
+  while (occupied.size < targetTiles && frontier.length > 0 && cursor < capacity * 8) {
+    const index = Math.min(frontier.length - 1, Math.floor(unit(input.seed, `connected-frontier-${cursor}`) * frontier.length));
+    const [gridX, gridZ] = frontier.splice(index, 1)[0];
+    queued.delete(`${gridX},${gridZ}`);
+    cursor += 1;
+    if (occupied.has(`${gridX},${gridZ}`)) continue;
+    occupied.add(`${gridX},${gridZ}`);
+    enqueue(gridX + 1, gridZ);
+    enqueue(gridX - 1, gridZ);
+    enqueue(gridX, gridZ + 1);
+    enqueue(gridX, gridZ - 1);
+  }
+
   const offsets = [[0, -1], [1, 0], [0, 1], [-1, 0]] as const;
-  return CARDINALS.filter((_, index) => occupied.has(`${gridX + offsets[index][0]},${gridZ + offsets[index][1]}`));
+  return [...occupied]
+    .map((key) => key.split(",").map(Number) as [number, number])
+    .sort(([ax, az], [bx, bz]) => (Math.abs(ax) + Math.abs(az)) - (Math.abs(bx) + Math.abs(bz)) || Math.atan2(az, ax) - Math.atan2(bz, bx))
+    .map(([gridX, gridZ]) => ({
+      gridX,
+      gridZ,
+      pathConnections: SETTLEMENT_CARDINALS.filter((_, index) => occupied.has(`${gridX + offsets[index][0]},${gridZ + offsets[index][1]}`)),
+    }));
 }
 
 /**
@@ -117,20 +170,7 @@ export function planV1Settlement(input: Readonly<{
   const targetTiles = input.size === "hamlet" ? 13 : input.size === "village" ? 21 : 31;
   const gridRadius = input.size === "hamlet" ? 2 : input.size === "village" ? 3 : 4;
   const id = `${input.factionId}-${input.regionX.toString(36)}-${input.regionZ.toString(36)}-${hash32(`${input.seed}|${input.factionId}|${input.regionX}|${input.regionZ}`).toString(36)}`;
-  const occupied = new Set<string>(["0,0"]);
-  const frontier: Array<readonly [number, number]> = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-  let cursor = 0;
-  while (occupied.size < targetTiles && frontier.length > 0 && cursor < 512) {
-    const index = Math.min(frontier.length - 1, Math.floor(unit(id, `frontier-${cursor}`) * frontier.length));
-    const [x, z] = frontier.splice(index, 1)[0];
-    cursor += 1;
-    if (Math.abs(x) > gridRadius || Math.abs(z) > gridRadius || occupied.has(`${x},${z}`)) continue;
-    occupied.add(`${x},${z}`);
-    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-      const key = `${x + dx},${z + dz}`;
-      if (Math.abs(x + dx) <= gridRadius && Math.abs(z + dz) <= gridRadius && !occupied.has(key)) frontier.push([x + dx, z + dz]);
-    }
-  }
+  const tileGrid = planConnectedSettlementTiles({ seed: id, targetTiles, gridRadius });
 
   const woodElfRoles: readonly V1TileRole[] = [
     "civic-hall", "guard-post", "library", "market", "garden", "home", "home", "alchemy", "kennel", "garden", "home", "storage",
@@ -138,10 +178,8 @@ export function planV1Settlement(input: Readonly<{
   const dwarfRoles: readonly V1TileRole[] = [
     "civic-hall", "guard-post", "golem-forge", "forge", "market", "home", "mine", "powderworks", "home", "kennel", "storage", "home",
   ];
-  const ordered = [...occupied].map((key) => key.split(",").map(Number) as [number, number])
-    .sort(([ax, az], [bx, bz]) => (Math.abs(ax) + Math.abs(az)) - (Math.abs(bx) + Math.abs(bz)) || Math.atan2(az, ax) - Math.atan2(bz, bx));
   const roles = input.factionId === "wood-elves" ? woodElfRoles : dwarfRoles;
-  const tiles = ordered.map(([gridX, gridZ], index): V1SettlementTile => {
+  const tiles = tileGrid.map(({ gridX, gridZ, pathConnections }, index): V1SettlementTile => {
     const role = index < roles.length ? roles[index] : pick(
       input.factionId === "wood-elves" ? ["home", "garden", "home", "storage"] as const : ["home", "mine", "storage", "forge"] as const,
       id,
@@ -159,7 +197,7 @@ export function planV1Settlement(input: Readonly<{
       depth: civic ? 9 : 5 + Math.floor(unit(id, `depth-${index}`) * 3),
       floors: civic || (input.size === "town" && index % 7 === 0) ? 2 : 1,
       rotation: Math.floor(unit(id, `rotation-${index}`) * 4) as 0 | 1 | 2 | 3,
-      pathConnections: pathConnections(gridX, gridZ, occupied),
+      pathConnections,
     };
   });
 

@@ -23,6 +23,8 @@ const levels: Readonly<Record<SkillId, number>> = {
   husbandry: 126,
   exploration: 301,
   magic: 175,
+  bartering: 118,
+  luck: 74,
 };
 const baseSkills = createSkillState();
 const skills: SkillState = {

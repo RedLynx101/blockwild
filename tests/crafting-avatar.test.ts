@@ -91,6 +91,22 @@ test("axe recipes accept the horizontally mirrored blade", () => {
   assert.notDeepEqual(mirrorRecipePattern(recipe), recipe.pattern);
 });
 
+test("charcoal substitutes for coal in crafting and capture-orb batches yield four", () => {
+  const torchEngine = craftingHarness([{ item: Item.Charcoal, count: 1 }, { item: Item.Stick, count: 1 }], 2);
+  assert.equal(torchEngine.planRecipe("torch").ok, true);
+  assert.equal(torchEngine.findRecipe()?.recipe.id, "torch");
+
+  const orbRecipe = RECIPES.find((candidate) => candidate.id === "creature_cage")!;
+  assert.equal(orbRecipe.output.item, Item.CaptureOrb);
+  assert.equal(orbRecipe.output.count, 4);
+  for (const recipe of RECIPES) {
+    for (const ingredient of recipe.pattern) {
+      if (ingredient === 0 || !Array.isArray(ingredient) || !ingredient.includes(Item.Coal)) continue;
+      assert.equal(ingredient.includes(Item.Charcoal), true, `${recipe.id} accepts charcoal wherever it accepts coal`);
+    }
+  }
+});
+
 test("player variants and equipment alter the production rig", () => {
   const player = new BlockPlayerModel({ variant: "female" });
   assert.equal(player.variant, "female");
@@ -115,7 +131,7 @@ test("player variants and equipment alter the production rig", () => {
 test("SSR and the first browser render share deterministic settings text", () => {
   assert.deepEqual(initialHydrationSettings(), {
     volume: 0.55, muted: false, sensitivity: 0.0022, fov: 72, weather: "clear",
-    renderDistance: 10, simulationDistance: 8, showFps: false, resourceMode: "auto",
+    renderDistance: 10, simulationDistance: 8, showFps: false, showBreakingTexture: true, showBreakProgress: false, showToolEffectiveness: true, musicVolume: 0.72, resourceMode: "auto",
   });
   const serverHtml = renderToString(createElement(VoxelGame));
   const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
@@ -137,7 +153,8 @@ test("SSR and the first browser render share deterministic settings text", () =>
 test("touch controls follow actual input on hybrids and remain available on tablets", () => {
   const hybrid = { coarsePrimary: false, hoverNone: false, anyFine: true, primaryPointer: "unknown" as const };
   assert.equal(resolveTouchControls("auto", hybrid), false);
-  assert.equal(resolveTouchControls("auto", { ...hybrid, coarsePrimary: true, hoverNone: true }), true);
+  assert.equal(resolveTouchControls("auto", { ...hybrid, coarsePrimary: true, hoverNone: true }), false);
+  assert.equal(resolveTouchControls("auto", { ...hybrid, coarsePrimary: true, hoverNone: true, anyFine: false }), true);
   assert.equal(resolveTouchControls("auto", { ...hybrid, primaryPointer: "touch" }), true);
   assert.equal(resolveTouchControls("auto", { ...hybrid, primaryPointer: "mouse" }), false);
   assert.equal(resolveTouchControls("on", { ...hybrid, primaryPointer: "mouse" }), true);
@@ -240,8 +257,8 @@ test("workstation UI normalizes apiary production and exact capture-orb metadata
 });
 
 test("human release identity stays separate from save schemas", () => {
-  assert.equal(GAME_VERSION, "1.0.0");
-  assert.equal(GAME_RELEASE_NAME, "Realms and Recall");
+  assert.equal(GAME_VERSION, "1.2.0");
+  assert.equal(GAME_RELEASE_NAME, "Trailbound");
   assert.equal(normalizeGameVersion("garbage"), "0.1.0");
 });
 
@@ -254,7 +271,7 @@ test("recipe search includes output and ingredient names while previews stay 3×
   assert.equal(cells.length, 9);
   assert.equal(cells[0], Item.Coal);
   assert.equal(cells[3], Item.Stick);
-  assert.deepEqual(recipeIngredientLabels(torch), ["Coal", "Stick"]);
+  assert.deepEqual(recipeIngredientLabels(torch), ["Coal or Charcoal", "Stick"]);
 });
 
 test("hotbar selection sends its lightweight UI signal before the full HUD refresh", () => {

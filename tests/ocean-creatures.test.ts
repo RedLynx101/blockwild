@@ -72,7 +72,10 @@ test("coastal and trench ecology keeps common schools common and leviathans genu
   assert.ok(deepWeight("blue-mackerel") > deepWeight("worldshell-leviathan") * 40);
   assert.ok(deepWeight("aetherbell-leviathan") <= 0.002);
   assert.equal(fishKindForHabitat("deep-ocean", 0.01), "blue-mackerel");
-  assert.equal(fishKindForHabitat("deep-ocean", 0.999999), "aetherbell-leviathan");
+  const deepTotal = deep.reduce((sum, [, weight]) => sum + weight, 0);
+  const aetherbellIndex = deep.findIndex(([kind]) => kind === "aetherbell-leviathan");
+  const aetherbellStart = deep.slice(0, aetherbellIndex).reduce((sum, [, weight]) => sum + weight, 0);
+  assert.equal(fishKindForHabitat("deep-ocean", (aetherbellStart + deepWeight("aetherbell-leviathan") / 2) / deepTotal), "aetherbell-leviathan");
   assert.equal(naturalGroupSizeForMob("glassfin", 0), 5);
   assert.equal(naturalGroupSizeForMob("glassfin", 0.9999), 10);
   assert.equal(naturalGroupSizeForMob("worldshell-leviathan", 0.8), 1);

@@ -118,7 +118,7 @@ test("map panel renders biome colors, zoom controls, headings, and other players
   assert.match(markup, /#4f86a7/);
   assert.match(markup, /#c46fa5/);
   assert.match(markup, /Trailfriend/);
-  assert.match(markup, /rotate\(1\.5707963267948966rad\)/);
+  assert.match(markup, /rotate\(-1\.5707963267948966rad\)/, "clockwise world turns rotate clockwise on the map rather than mirroring");
 });
 
 test("daily cloud plans are deterministic, layered, larger, and density-variable", () => {

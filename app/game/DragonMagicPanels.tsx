@@ -23,12 +23,14 @@ import {
   type SkillId,
   type SkillState,
 } from "./skills";
+import type { StatusEffectView } from "./status-effects";
 
 export type DragonMagicTab = "spells" | "skills";
 
 export type DragonMagicPanelProps = Readonly<{
   magic: MagicState;
   skills: SkillState;
+  activeEffects?: readonly StatusEffectView[];
   initialTab?: DragonMagicTab;
   onClose?: () => void;
   onSelectSpell?: (spellId: SpellId) => void;
@@ -97,6 +99,7 @@ const DRAGON_MAGIC_STYLES = `
 .dragon-magic-skillDetail{overflow:auto;padding:clamp(22px,4vw,44px)}.dragon-magic-skillDetail h3{margin:5px 0;font:700 clamp(30px,4vw,48px)/1 Georgia,serif}.dragon-magic-skillLead{max-width:680px;color:#bfc1b6;line-height:1.6;font-size:13px}.dragon-magic-multiplier{display:inline-flex;gap:10px;align-items:baseline;margin:16px 0 24px;padding:12px 0;border-block:1px solid #56594e;color:#aaa}.dragon-magic-multiplier strong{font:700 25px Georgia,serif;color:var(--skill-accent)}
 .dragon-magic-perkTree{display:grid;gap:2px}.dragon-magic-perk{display:grid;grid-template-columns:1fr auto;gap:8px;padding:15px 0;border-top:1px solid #53564b}.dragon-magic-perk strong{display:block;color:#eee5ce}.dragon-magic-perk p{margin:5px 0 0;color:#aeb1a5;font-size:11px;line-height:1.45}.dragon-magic-perk button{align-self:center}.dragon-magic-perk[data-unlocked="true"] button{border-color:#8b9e79;color:#dcebc9}
 .dragon-magic-ascendant{margin-top:22px;padding:18px;border:1px solid #6b6656;background:#d8aa500a}.dragon-magic-ascendant h4{margin:0 0 5px;font:700 19px Georgia,serif}.dragon-magic-ascendant p{margin:0 0 12px;color:#afb1a6;font-size:11px;line-height:1.5}
+.dragon-magic-effects{margin:18px 0 4px;padding-top:14px;border-top:1px solid #55584d}.dragon-magic-effects>strong{display:block;margin-bottom:8px;color:var(--dm-gold);font-size:10px;letter-spacing:.13em;text-transform:uppercase}.dragon-magic-effects>div{display:grid;grid-template-columns:1fr auto;gap:3px 8px;padding:8px 6px;border-left:2px solid #769b74;background:#ffffff08;margin-bottom:5px}.dragon-magic-effects>div.harmful{border-color:#b8675d}.dragon-magic-effects b{font-size:10px}.dragon-magic-effects small{color:#9fa298;font-size:8px}.dragon-magic-effects p{grid-column:1/-1;margin:0;color:#b8baaf;font-size:9px;line-height:1.35}.dragon-magic-effects-empty{color:#8f9288;font-size:9px;line-height:1.45}
 .dragon-magic-wheelOverlay{position:fixed;z-index:120;inset:0;display:grid;place-items:center;background:radial-gradient(circle,#161b1bc7 0 17%,#090b0be8 60%);backdrop-filter:blur(5px);animation:dragon-magic-fade .14s ease-out}.dragon-magic-wheel{position:relative;width:min(640px,92vmin);aspect-ratio:1;border-radius:50%;border:1px solid #8c8368;background:radial-gradient(circle,#242925 0 22%,#151816ed 23% 52%,#2c302c 52.5% 53%,transparent 53.5%);box-shadow:0 0 0 10px #0005,0 24px 90px #000;animation:dragon-magic-wheel-bloom .2s cubic-bezier(.2,.85,.2,1)}
 .dragon-magic-wheel:before,.dragon-magic-wheel:after{content:"";position:absolute;inset:9%;border:1px dashed #d8aa5044;border-radius:50%;animation:dragon-magic-spin 40s linear infinite}.dragon-magic-wheel:after{inset:27%;animation-direction:reverse;animation-duration:26s}
 .dragon-magic-wheelSlot{--spell-accent:#d8aa50;position:absolute;z-index:2;left:var(--wheel-left);top:var(--wheel-top);width:clamp(78px,16vmin,112px);min-height:64px;transform:translate(-50%,-50%);border:1px solid #666b60;background:#242824f2;color:#d8d9cf;padding:8px;cursor:pointer;transition:transform .12s ease,border-color .12s ease,background .12s ease}.dragon-magic-wheelSlot:hover,.dragon-magic-wheelSlot:focus-visible,.dragon-magic-wheelSlot[data-selected="true"]{transform:translate(-50%,-50%) scale(1.08);border-color:var(--spell-accent);background:#353a34;outline:0}.dragon-magic-wheelSlot b{display:block;color:var(--spell-accent);font-size:18px}.dragon-magic-wheelSlot span{display:block;margin-top:4px;font:600 clamp(9px,1.6vmin,12px)/1.2 Georgia,serif}
@@ -219,7 +222,7 @@ function SpellJournal({
   );
 }
 
-function SkillJournal({ skills, onUnlockPerk, onToggleAscendant }: Pick<DragonMagicPanelProps, "skills" | "onUnlockPerk" | "onToggleAscendant">) {
+function SkillJournal({ skills, activeEffects = [], onUnlockPerk, onToggleAscendant }: Pick<DragonMagicPanelProps, "skills" | "activeEffects" | "onUnlockPerk" | "onToggleAscendant">) {
   const [selectedSkillId, setSelectedSkillId] = useState<SkillId>("magic");
   const definition = SKILLS.find((skill) => skill.id === selectedSkillId) ?? SKILLS[0];
   const progress = skills.skills[selectedSkillId];
@@ -228,6 +231,7 @@ function SkillJournal({ skills, onUnlockPerk, onToggleAscendant }: Pick<DragonMa
   const needed = skillXpForNextRank(progress.level);
   const selectedPerks = PERKS.filter((perk) => perk.skillId === selectedSkillId);
   const masteryCount = SKILLS.filter((skill) => skills.skills[skill.id].level >= MAX_SKILL_LEVEL).length;
+  const enabledTraits = SKILLS.flatMap((skill) => ascendantTraitEnabled(skills, skill.id) ? [ASCENDANT_TRAITS[skill.id]] : []);
   return (
     <div className="dragon-magic-skills">
       <aside className="dragon-magic-skillIndex" aria-label="Character skills">
@@ -242,6 +246,12 @@ function SkillJournal({ skills, onUnlockPerk, onToggleAscendant }: Pick<DragonMa
             </button>
           );
         })}
+        <section className="dragon-magic-effects" aria-label="Passives and active effects">
+          <strong>Passives &amp; Effects</strong>
+          {enabledTraits.map((trait) => <div key={`trait:${trait.skillId}`}><b>{trait.name}</b><small>PASSIVE</small><p>{trait.description}</p></div>)}
+          {activeEffects.map((effect) => <div className={effect.harmful ? "harmful" : ""} key={`effect:${effect.id}`}><b>{effect.name}</b><small>{effect.remainingSeconds === null ? "PASSIVE" : `${Math.max(1, Math.ceil(effect.remainingSeconds))}s`}</small><p>{effect.description}</p></div>)}
+          {!enabledTraits.length && !activeEffects.length ? <p className="dragon-magic-effects-empty">Timed food, potion, spell, poison, fire, equipment, and mastered-trait effects appear here and on the compact world HUD.</p> : null}
+        </section>
       </aside>
       <article className="dragon-magic-skillDetail" style={{ "--skill-accent": definition.accent } as CSSProperties}>
         <span className="dragon-magic-eyebrow">{definition.practice}</span><h3>{`${definition.name} ${progress.level}`}</h3><p className="dragon-magic-skillLead">{definition.description} Each point adds exactly 1% to this skill’s base output; perks remain separate, explicit modifiers.</p>
@@ -264,6 +274,7 @@ function SkillJournal({ skills, onUnlockPerk, onToggleAscendant }: Pick<DragonMa
 export function DragonMagicPanel({
   magic,
   skills,
+  activeEffects,
   initialTab = "spells",
   onClose,
   onSelectSpell,
@@ -283,7 +294,7 @@ export function DragonMagicPanel({
         {onClose ? <button className="dragon-magic-close" type="button" onClick={onClose} aria-label="Close magic journal">×</button> : null}
       </header>
       <nav className="dragon-magic-tabs" role="tablist" aria-label="Character journal sections"><button type="button" role="tab" aria-selected={tab === "spells"} onClick={() => setTab("spells")}>Spells</button><button type="button" role="tab" aria-selected={tab === "skills"} onClick={() => setTab("skills")}>Skills</button></nav>
-      <div className="dragon-magic-body">{tab === "spells" ? <SpellJournal magic={magic} onSelectSpell={onSelectSpell} onToggleFavorite={onToggleFavorite} /> : <SkillJournal skills={skills} onUnlockPerk={onUnlockPerk} onToggleAscendant={onToggleAscendant} />}</div>
+      <div className="dragon-magic-body">{tab === "spells" ? <SpellJournal magic={magic} onSelectSpell={onSelectSpell} onToggleFavorite={onToggleFavorite} /> : <SkillJournal skills={skills} activeEffects={activeEffects} onUnlockPerk={onUnlockPerk} onToggleAscendant={onToggleAscendant} />}</div>
     </section>
   );
 }

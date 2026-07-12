@@ -2,6 +2,33 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.2.0 - Trailbound - 2026-07-12
+
+### Multiplayer identity and authority
+
+- Added durable browser and character profile IDs shared by title-screen and in-world join paths. The host now reconnects the same character record with canonical vitals, inventory, equipment, off-hand, skills, appearance, Capture Orbs, companion state, and session progress.
+- Fixed stale guest trees and dead creatures by pairing host-authoritative removal tombstones with immediate guest fall/death presentation. Shared containers now demand-sync on open, validate both chest and player revisions, and retain dirty state under transport backpressure instead of overwriting a newer pack.
+- Repaired invalid remote combat payloads, guest creature feed/tame/breed/saddle/mount/capture/recall authority, follower ownership, full-tree edit replication, zero-heart joins, and duplicated player limbs. A waiting one-code host now remains visibly identified as the host before the first peer arrives, and the relay list avoids the repeatedly failing Halifax endpoint.
+
+### Characters, navigation, combat, and interface
+
+- Added a title-screen Character Studio with as many as twelve named profiles, seven playable races, two body variants, clothing/skin/hair colors, recent-character memory, faction alignment bonuses, and a twenty-point starting-skill allocation. Atlantian characters breathe underwater and trade land speed for faster swimming.
+- Added sprint-swimming, momentum-aware water entry, bobbing and shore recovery, unified race/equipment poses, seated legs, mirrored wing animation, and a left-hand slot for Wildwood/Sunmetal shields, torches, and Deepgear lanterns.
+- Added a Skyrim-style heading rail with nearby landmarks, players, tracked destinations, and close-range through-wall guidance. Corrected map heading rotation, added biome names on hover, close-zoom surface colors, distant chunk summaries, and Exploration zoom progression.
+- Reworked recipe browsing into independent list and pattern panes, added charcoal/coal recipe equivalence, four-orb crafting output, named ingredient tooltips, inventory/chest sort and transfer actions, wallet ingot conversion, a separate music slider, breaking cracks, optional progress bars, and tool-suitability outlines. Hybrid touchscreen PCs keep the desktop HUD while a fine pointer is available and switch only after actual touch input.
+
+### Ecology, settlements, and world polish
+
+- Added Field Cotton and its string/wool loop, Suncrest Carrots, Bluepod Beans, four breedable rabbit families, two sea slugs, Pocket Goldfish, fireplaces, and connected aquariums with bounded occupancy, exact resident records, plants/pebbles, slow movement, and capped same-species breeding.
+- Expanded every faction's deterministic settlement planner into connected hamlet, village, and town tiers with roads, role-weighted buildings, lights, amenities, gates or culture-appropriate boundaries, resident circulation, seating, and patrol anchors.
+- Added sky-exposure-aware daylight and moonlight, smooth cyclic dawn/dusk transitions, continuous cloud drift, overcast storms, rain ambience, thunder audio, rare non-burning lightning strikes, darker caves, normal nocturnal wildlife, wider and shorter leads, and a tenfold-nearer-priority baked-light budget.
+- Reduced foliage and produce interaction bounds to their visible silhouettes. Capture Orb Racks now show only occupied sockets, while plant and creature journals separate humanoids, rabbits, and sea slugs and render all 123 creatures and all 42 plants from production geometry.
+
+### Compatibility and performance
+
+- Advanced generation to version 12 for the new ecology while preserving edited version-11 worlds through migration. Slowed routine autosaves, bounded aquarium simulation, retained adaptive streaming, and kept menu/model previews on disposable renderer resources.
+- Added focused deterministic coverage for character identities, authority and reconnect paths, settlements, aquariums, shields, inventory convenience, navigation, weather/lightning, block interaction bounds, ecology, production portraits, and plant specimens.
+
 ## 1.1.0 - Shared Wilds - 2026-07-11
 
 - Fixed guest tree felling and large connected-tree edit replication.

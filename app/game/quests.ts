@@ -30,6 +30,18 @@ export type QuestReward = Readonly<{
   factionAlignment: Readonly<Record<string, number>>;
 }>;
 
+export type QuestGiverScope = "individual" | "faction-mayor";
+export type QuestSource = Readonly<{
+  entityId: string;
+  role: string | null;
+  factionId: string | null;
+  isMayor: boolean;
+}>;
+export type QuestTurnInRoute =
+  | Readonly<{ kind: "menu" }>
+  | Readonly<{ kind: "individual"; entityId: string; role: string | null; factionId: string | null }>
+  | Readonly<{ kind: "faction-mayor"; factionId: string }>;
+
 export type QuestDefinition = Readonly<{
   id: string;
   questlineId: string;
@@ -38,7 +50,13 @@ export type QuestDefinition = Readonly<{
   summary: string;
   objectives: readonly QuestObjective[];
   prerequisites?: Readonly<{ allOf?: readonly string[]; anyOf?: readonly string[] }>;
-  giver?: Readonly<{ role?: string | null; factionId?: string | null; failOnDeath?: boolean }> | null;
+  giver?: Readonly<{
+    scope?: QuestGiverScope;
+    entityId?: string | null;
+    role?: string | null;
+    factionId?: string | null;
+    failOnDeath?: boolean;
+  }> | null;
   failureConditions?: readonly QuestFailureCondition[];
   rewards: QuestReward;
   abandonable?: boolean;
@@ -58,6 +76,7 @@ export type ActiveQuest = Readonly<{
   status: QuestProgressStatus;
   acceptedAt: number;
   giverEntityId: string | null;
+  turnInRoute: QuestTurnInRoute;
   objectiveProgress: Readonly<Record<string, number>>;
 }>;
 
@@ -89,6 +108,74 @@ const EMPTY_REWARD: QuestReward = Object.freeze({ gold: 0, items: [], blueprints
 const finite = (value: unknown, fallback = 0) => typeof value === "number" && Number.isFinite(value) ? value : fallback;
 const count = (value: unknown, fallback = 0) => Math.max(0, Math.trunc(finite(value, fallback)));
 const cleanId = (value: unknown) => typeof value === "string" ? value.trim().slice(0, 96) : "";
+
+function cleanNullableId(value: unknown) {
+  const cleaned = cleanId(value);
+  return cleaned || null;
+}
+
+function normalizeTurnInRoute(value: unknown, legacyGiverEntityId: string | null): QuestTurnInRoute {
+  if (value && typeof value === "object") {
+    const route = value as Partial<QuestTurnInRoute> & { entityId?: unknown; role?: unknown; factionId?: unknown };
+    if (route.kind === "individual") {
+      const entityId = cleanId(route.entityId);
+      if (entityId) return { kind: "individual", entityId, role: cleanNullableId(route.role), factionId: cleanNullableId(route.factionId) };
+    }
+    if (route.kind === "faction-mayor") {
+      const factionId = cleanId(route.factionId);
+      if (factionId) return { kind: "faction-mayor", factionId };
+    }
+    if (route.kind === "menu") return { kind: "menu" };
+  }
+  return legacyGiverEntityId
+    ? { kind: "individual", entityId: legacyGiverEntityId, role: null, factionId: null }
+    : { kind: "menu" };
+}
+
+function giverScope(definition: QuestDefinition): QuestGiverScope | "menu" {
+  if (!definition.giver) return "menu";
+  return definition.giver.scope === "faction-mayor" ? "faction-mayor" : "individual";
+}
+
+export function questSourceCanOffer(definition: QuestDefinition, source: QuestSource | null) {
+  const scope = giverScope(definition);
+  if (scope === "menu") return true;
+  if (!source) return false;
+  if (definition.giver?.factionId && definition.giver.factionId !== source.factionId) return false;
+  if (scope === "faction-mayor") return source.isMayor;
+  if (definition.giver?.entityId && definition.giver.entityId !== source.entityId) return false;
+  if (definition.giver?.role && definition.giver.role !== source.role) return false;
+  return Boolean(source.entityId);
+}
+
+function routeForAcceptance(definition: QuestDefinition, source: QuestSource | null, giverEntityId: string | null): QuestTurnInRoute {
+  const scope = giverScope(definition);
+  if (scope === "menu") return { kind: "menu" };
+  if (scope === "faction-mayor") {
+    const factionId = cleanId(definition.giver?.factionId ?? source?.factionId);
+    return factionId ? { kind: "faction-mayor", factionId } : { kind: "menu" };
+  }
+  const entityId = cleanId(source?.entityId ?? giverEntityId ?? definition.giver?.entityId);
+  return entityId ? {
+    kind: "individual",
+    entityId,
+    role: cleanNullableId(source?.role ?? definition.giver?.role),
+    factionId: cleanNullableId(source?.factionId ?? definition.giver?.factionId),
+  } : { kind: "menu" };
+}
+
+export function questTurnInRoute(book: QuestBook, definition: QuestDefinition): QuestTurnInRoute {
+  const active = normalizeQuestBook(book).active.find((entry) => entry.questId === definition.id);
+  return active?.turnInRoute ?? { kind: "menu" };
+}
+
+export function questSourceCanTurnIn(book: QuestBook, definition: QuestDefinition, source: QuestSource | null) {
+  const route = questTurnInRoute(book, definition);
+  if (route.kind === "menu") return true;
+  if (!source) return false;
+  if (route.kind === "individual") return route.entityId === source.entityId;
+  return source.isMayor && source.factionId === route.factionId;
+}
 
 export const HEARTHROADS_MAIN_QUESTS: readonly QuestDefinition[] = Object.freeze([
   {
@@ -215,6 +302,68 @@ export const DRAGONWAKE_SIDE_QUESTS: readonly QuestDefinition[] = Object.freeze(
   },
 ]);
 
+export const HOBBIT_FACTION_QUESTS: readonly QuestDefinition[] = Object.freeze([
+  {
+    id: "hobbit-smoke-on-the-hedgerow",
+    questlineId: "hobbit-hearth-and-hedge",
+    kind: "side",
+    name: "Smoke on the Hedgerow",
+    summary: "Find a Hearthkin freehold where lamps, tilled rows, and low walls make a warm mark against the wild.",
+    objectives: [{ id: "discover-hobbit-town", label: "Discover a Hearthkin settlement", kind: "discover-town", factionId: "hobbits" }],
+    giver: null,
+    rewards: { gold: 24, items: [{ itemId: "apple", count: 4 }], blueprints: [], factionAlignment: { hobbits: 5 } },
+    abandonable: true,
+    reacceptAfterAbandon: true,
+  },
+  {
+    id: "hobbit-long-table-watch",
+    questlineId: "hobbit-hearth-and-hedge",
+    kind: "side",
+    name: "The Long-Table Watch",
+    summary: "Provision the freehold and clear the dead from its roads before the next long-table gathering.",
+    objectives: [
+      { id: "deliver-honeymead", label: "Deliver 8 bottles of Honeymead", kind: "deliver-item", itemId: "honeymead", count: 8 },
+      { id: "defeat-freehold-zombies", label: "Defeat 12 Zombies", kind: "kill", mobKind: "zombie", count: 12 },
+    ],
+    prerequisites: { allOf: ["hobbit-smoke-on-the-hedgerow"] },
+    giver: { scope: "faction-mayor", factionId: "hobbits" },
+    rewards: { gold: 165, items: [{ itemId: "fine-crossbow", count: 1 }, { itemId: "crossbow-bolt", count: 24 }], blueprints: [], factionAlignment: { hobbits: 16 } },
+    abandonable: true,
+    reacceptAfterAbandon: true,
+  },
+] as readonly QuestDefinition[]);
+
+export const GOBLIN_FACTION_QUESTS: readonly QuestDefinition[] = Object.freeze([
+  {
+    id: "goblin-brass-on-the-ridge",
+    questlineId: "goblin-root-and-brass",
+    kind: "side",
+    name: "Brass on the Ridge",
+    summary: "Find a Brassroot clanhold where steep roads and watchful gates divide useful stone from empty danger.",
+    objectives: [{ id: "discover-goblin-town", label: "Discover a Goblin settlement", kind: "discover-town", factionId: "goblins" }],
+    giver: null,
+    rewards: { gold: 24, items: [{ itemId: "fiber", count: 8 }], blueprints: [], factionAlignment: { goblins: 5 } },
+    abandonable: true,
+    reacceptAfterAbandon: true,
+  },
+  {
+    id: "goblin-ridge-under-bone",
+    questlineId: "goblin-root-and-brass",
+    kind: "side",
+    name: "A Ridge Under Bone",
+    summary: "Bring worked metal to the clanhold and break the archers haunting its higher switchbacks.",
+    objectives: [
+      { id: "deliver-sunmetal", label: "Deliver 12 Sunmetal Ingots", kind: "deliver-item", itemId: "sunmetal-ingot", count: 12 },
+      { id: "defeat-ridge-skeletons", label: "Defeat 10 Skeleton Archers", kind: "kill", mobKind: "skeleton", count: 10 },
+    ],
+    prerequisites: { allOf: ["goblin-brass-on-the-ridge"] },
+    giver: { scope: "faction-mayor", factionId: "goblins" },
+    rewards: { gold: 175, items: [{ itemId: "tempered-spear", count: 1 }, { itemId: "goblin-tonic", count: 2 }], blueprints: [], factionAlignment: { goblins: 16 } },
+    abandonable: true,
+    reacceptAfterAbandon: true,
+  },
+] as readonly QuestDefinition[]);
+
 export const ATLANTIAN_FACTION_QUESTS: readonly QuestDefinition[] = Object.freeze([
   {
     id: "atlantian-light-below",
@@ -238,6 +387,7 @@ export const ATLANTIAN_FACTION_QUESTS: readonly QuestDefinition[] = Object.freez
     summary: "Learn what the tidehold values by making a peaceful trade with its people.",
     objectives: [{ id: "trade-with-atlantians", label: "Complete an Atlantian trade", kind: "trade", count: 1, factionId: "atlantians" }],
     prerequisites: { allOf: ["atlantian-light-below"] },
+    giver: { scope: "faction-mayor", factionId: "atlantians" },
     rewards: { gold: 32, items: [{ itemId: "lumen-pearl", count: 1 }], blueprints: [], factionAlignment: { atlantians: 7 } },
     abandonable: true,
     reacceptAfterAbandon: true,
@@ -264,6 +414,7 @@ export const SUGARCOURT_FACTION_QUESTS: readonly QuestDefinition[] = Object.free
     summary: "Learn the Concord's rule of hospitality: a sweet bargain should leave both sides glad they measured twice.",
     objectives: [{ id: "trade-with-sugarcourt", label: "Complete a Sugarcourt trade", kind: "trade", count: 1, factionId: "sugarcourt" }],
     prerequisites: { allOf: ["sugarcourt-beyond-sugarwind"] },
+    giver: { scope: "faction-mayor", factionId: "sugarcourt" },
     rewards: { gold: 32, items: [{ itemId: "syrup-bucket", count: 1 }], blueprints: [], factionAlignment: { sugarcourt: 7 } },
     abandonable: true,
     reacceptAfterAbandon: true,
@@ -378,6 +529,22 @@ export const SUGARCOURT_QUESTLINE: QuestlineDefinition = Object.freeze({
   questIds: SUGARCOURT_FACTION_QUESTS.map((quest) => quest.id),
 });
 
+export const HOBBIT_QUESTLINE: QuestlineDefinition = Object.freeze({
+  id: "hobbit-hearth-and-hedge",
+  name: "Hearth and Hedge",
+  description: "Hearthkin faction work about provisioning a freehold and keeping its roads safe enough for ordinary life.",
+  kind: "side",
+  questIds: HOBBIT_FACTION_QUESTS.map((quest) => quest.id),
+});
+
+export const GOBLIN_QUESTLINE: QuestlineDefinition = Object.freeze({
+  id: "goblin-root-and-brass",
+  name: "Root and Brass",
+  description: "Brassroot faction work about measured materials, defended switchbacks, and hard bargains earned in the field.",
+  kind: "side",
+  questIds: GOBLIN_FACTION_QUESTS.map((quest) => quest.id),
+});
+
 export const DRAGONWAKE_QUESTLINE: QuestlineDefinition = Object.freeze({
   id: "dragonwake-field-studies",
   name: "The Dragonwake Field Studies",
@@ -412,6 +579,8 @@ export const SEA_DRAGON_QUESTLINE: QuestlineDefinition = Object.freeze({
 
 export const DEFAULT_QUEST_DEFINITIONS: readonly QuestDefinition[] = Object.freeze([
   ...HEARTHROADS_MAIN_QUESTS,
+  ...HOBBIT_FACTION_QUESTS,
+  ...GOBLIN_FACTION_QUESTS,
   ...ATLANTIAN_FACTION_QUESTS,
   ...SUGARCOURT_FACTION_QUESTS,
   ...DRAGONWAKE_SIDE_QUESTS,
@@ -422,6 +591,8 @@ export const DEFAULT_QUEST_DEFINITIONS: readonly QuestDefinition[] = Object.free
 
 export const DEFAULT_QUESTLINES: readonly QuestlineDefinition[] = Object.freeze([
   ...HEARTHROADS_QUESTLINES,
+  HOBBIT_QUESTLINE,
+  GOBLIN_QUESTLINE,
   ATLANTIAN_QUESTLINE,
   SUGARCOURT_QUESTLINE,
   DRAGONWAKE_QUESTLINE,
@@ -446,11 +617,13 @@ function normalizeActiveQuest(value: unknown): ActiveQuest | null {
       if (clean) objectiveProgress[clean] = Math.min(1_000_000_000, count(value));
     }
   }
+  const giverEntityId = input.giverEntityId === null ? null : cleanId(input.giverEntityId) || null;
   return {
     questId,
     status: input.status === "ready" ? "ready" : "active",
     acceptedAt: count(input.acceptedAt),
-    giverEntityId: input.giverEntityId === null ? null : cleanId(input.giverEntityId) || null,
+    giverEntityId,
+    turnInRoute: normalizeTurnInRoute(input.turnInRoute, giverEntityId),
     objectiveProgress,
   };
 }
@@ -530,6 +703,7 @@ export function acceptQuest(
   questId: string,
   acceptedAt: number,
   giverEntityId: string | null = null,
+  source: QuestSource | null = null,
 ) {
   const normalized = normalizeQuestBook(book);
   const definition = definitionsById(definitions).get(questId);
@@ -545,7 +719,8 @@ export function acceptQuest(
     questId,
     status,
     acceptedAt: count(acceptedAt),
-    giverEntityId: cleanId(giverEntityId) || null,
+    giverEntityId: giverScope(definition) === "faction-mayor" ? null : cleanId(source?.entityId ?? giverEntityId) || null,
+    turnInRoute: routeForAcceptance(definition, source, giverEntityId),
     objectiveProgress,
   };
   return {
@@ -553,6 +728,25 @@ export function acceptQuest(
     reason: null,
     book: { ...normalized, active: [...normalized.active, active], abandoned: normalized.abandoned.filter((id) => id !== questId) },
   } as const;
+}
+
+/**
+ * Interaction-facing entry point. Individual work is visible/acceptable only
+ * from that resident; faction-wide work may be issued by any mayor of the
+ * matching faction. System/main-story quests remain journal-owned.
+ */
+export function acceptQuestFromSource(
+  book: QuestBook,
+  definitions: readonly QuestDefinition[],
+  questId: string,
+  acceptedAt: number,
+  source: QuestSource | null,
+) {
+  const normalized = normalizeQuestBook(book);
+  const definition = definitionsById(definitions).get(questId);
+  if (!definition) return { ok: false, reason: "unknown-quest", book: normalized } as const;
+  if (!questSourceCanOffer(definition, source)) return { ok: false, reason: "wrong-source", book: normalized } as const;
+  return acceptQuest(normalized, definitions, questId, acceptedAt, source?.entityId ?? null, source);
 }
 
 export function pinQuest(book: QuestBook, questId: string | null) {
@@ -728,6 +922,25 @@ export function turnInQuest(
   } as const;
 }
 
+export function turnInQuestAtSource(
+  book: QuestBook,
+  definitions: readonly QuestDefinition[],
+  questId: string,
+  inventory: Readonly<Record<string, number>>,
+  completedAt: number,
+  source: QuestSource | null,
+) {
+  const normalized = normalizeQuestBook(book);
+  const definition = definitionsById(definitions).get(questId);
+  if (!definition) return { ok: false, reason: "not-active", book: normalized, inventory } as const;
+  if (!questSourceCanTurnIn(normalized, definition, source)) {
+    return { ok: false, reason: "wrong-giver", book: normalized, inventory } as const;
+  }
+  const route = questTurnInRoute(normalized, definition);
+  const giverEntityId = route.kind === "individual" ? route.entityId : source?.entityId ?? null;
+  return turnInQuest(normalized, definitions, questId, inventory, completedAt, giverEntityId);
+}
+
 export function createDeliverySideQuest(input: Readonly<{
   id: string;
   questlineId?: string;
@@ -750,7 +963,7 @@ export function createDeliverySideQuest(input: Readonly<{
     name: input.name.trim().slice(0, 64) || "A Neighborly Delivery",
     summary: input.summary.trim().slice(0, 240),
     objectives: [{ id: `${id}-delivery`, label: `Deliver ${itemCount} ${input.itemId}`, kind: "deliver-item", itemId: cleanId(input.itemId), count: itemCount }],
-    giver: { role: cleanId(input.giverRole), factionId: cleanId(input.giverFactionId), failOnDeath: true },
+    giver: { scope: "individual", role: cleanId(input.giverRole), factionId: cleanId(input.giverFactionId), failOnDeath: true },
     rewards: {
       gold: Math.max(0, count(input.gold)),
       items: input.bonusItems ?? [],

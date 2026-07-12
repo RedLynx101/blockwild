@@ -106,10 +106,10 @@ test("expanded ecology catalog includes mounts, livestock, thin fish, pollinator
   assert.equal(BIRD_ORDER.length, 3);
   assert.equal(AQUATIC_MOB_ORDER.length, 8);
   assert.equal(POLLINATOR_ORDER.length, 3);
-  assert.deepEqual(fishKindsForHabitat("ocean"), ["shoalfin", "silverthread", "blue-mackerel", "coralback", "emberribbon", "glassfin", "tidepup"]);
-  assert.deepEqual(fishKindsForHabitat("river"), ["brookdart", "reedneedle", "redfin-salmon"]);
+  assert.deepEqual(fishKindsForHabitat("ocean"), ["shoalfin", "pocket-goldfish", "silverthread", "blue-mackerel", "coralback", "emberribbon", "glassfin", "tidepup", "sunset-sea-slug"]);
+  assert.deepEqual(fishKindsForHabitat("river"), ["brookdart", "reedneedle", "redfin-salmon", "pocket-goldfish"]);
   assert.deepEqual(fishKindsForHabitat("deep-ocean"), [
-    "blue-mackerel", "glassfin", "silverthread", "lanternjaw", "shoalfin", "coralback", "deepwater-shark", "abyss-skater", "tidepup", "dreadcoil", "worldshell-leviathan", "aetherbell-leviathan",
+    "blue-mackerel", "glassfin", "silverthread", "lanternjaw", "shoalfin", "coralback", "deepwater-shark", "abyss-skater", "tidepup", "dreadcoil", "worldshell-leviathan", "aetherbell-leviathan", "pocket-goldfish", "sunset-sea-slug", "moonlace-sea-slug",
   ]);
   assert.deepEqual(fishKindsForHabitat("underground"), ["gloomfin", "cavefilament"]);
   assert.deepEqual(HEARTHROADS_WILDLIFE_ORDER, ["burrowbell", "dewback-tapir"]);
@@ -162,14 +162,15 @@ test("expanded ecology catalog includes mounts, livestock, thin fish, pollinator
 });
 
 test("v0.5 habitat tables place mammals, pollinators, and fish without ambient queen spam", () => {
-  assert.equal(passiveMobKindForBiome(BiomeId.Meadow, 0.75), "wild-horse");
-  assert.equal(passiveMobKindForBiome(BiomeId.Meadow, 0.9), "meadow-cow");
+  const meadowKinds = passiveMobSpawnTableForBiome(BiomeId.Meadow).map(([kind]) => kind);
+  assert.ok(meadowKinds.includes("wild-horse"));
+  assert.ok(meadowKinds.includes("meadow-cow"));
+  assert.ok(meadowKinds.includes("meadow-cottontail"));
   assert.equal(passiveMobKindForBiome(BiomeId.CloudreedGlen, 0.01), "mistmane");
   assert.equal(passiveMobKindForBiome(BiomeId.CloudreedGlen, 0.5), "reed-dragonfly");
   assert.equal(passiveMobKindForBiome(BiomeId.River, 0.35), "reed-dragonfly");
-  assert.equal(passiveMobKindForBiome(BiomeId.Wildwood, 0.79), "wild-horse");
-  assert.equal(passiveMobKindForBiome(BiomeId.Wildwood, 0.95), "burrowbell");
-  assert.equal(passiveMobKindForBiome(BiomeId.Wildwood, 0.99), "sakurakit");
+  const wildwoodKinds = passiveMobSpawnTableForBiome(BiomeId.Wildwood).map(([kind]) => kind);
+  for (const kind of ["wild-horse", "burrowbell", "sakurakit", "meadow-cottontail", "russet-rabbit"] as const) assert.ok(wildwoodKinds.includes(kind));
 
   for (const biome of Object.values(BiomeId).filter((value): value is BiomeId => typeof value === "number")) {
     const kinds = passiveMobSpawnTableForBiome(biome).map(([kind]) => kind);
@@ -178,12 +179,12 @@ test("v0.5 habitat tables place mammals, pollinators, and fish without ambient q
     assert.ok(passiveMobSpawnTableForBiome(biome).reduce((sum, [, weight]) => sum + weight, 0) > 0);
   }
 
-  assert.deepEqual(fishSpawnTableForHabitat("river").map(([kind]) => kind), ["brookdart", "reedneedle", "redfin-salmon"]);
+  assert.deepEqual(fishSpawnTableForHabitat("river").map(([kind]) => kind), ["brookdart", "reedneedle", "redfin-salmon", "pocket-goldfish"]);
   assert.deepEqual(fishSpawnTableForHabitat("underground").map(([kind]) => kind), ["gloomfin", "cavefilament"]);
-  assert.equal(new Set(fishSpawnTableForHabitat("ocean").map(([kind]) => kind)).size, 7);
+  assert.equal(new Set(fishSpawnTableForHabitat("ocean").map(([kind]) => kind)).size, 9);
   assert.equal(fishSpawnTableForHabitat("ocean").some(([kind]) => kind === "deepwater-shark"), false);
   assert.equal(fishSpawnTableForHabitat("deep-ocean").some(([kind]) => kind === "deepwater-shark"), true);
-  assert.equal(fishSpawnTableForHabitat("deep-ocean").at(-1)?.[0], "aetherbell-leviathan");
+  assert.ok(fishSpawnTableForHabitat("deep-ocean").some(([kind, weight]) => kind === "aetherbell-leviathan" && weight <= 0.002));
 });
 
 test("natural group ranges remain capped and wild hives own exactly one queen", () => {
@@ -519,4 +520,15 @@ test("eligible same-species conservatory residents breed one metadata-exact baby
   assert.equal(plan?.child.baby, true);
   assert.equal(plan?.child.custom.bornInConservatory, true);
   assert.equal(planExhibitBreeding(residents, 2, 8), null, "capacity is a hard breeding limit");
+});
+
+test("dragonfly wing pairs flap as mirrored limbs", () => {
+  const visual = createMobVisual("reed-dragonfly", -120).visual;
+  for (const pair of ["front", "rear"] as const) {
+    const left = visual.getObjectByName(`reed-dragonfly-left-${pair}-wing`)!;
+    const right = visual.getObjectByName(`reed-dragonfly-right-${pair}-wing`)!;
+    assert.equal(left.userData.side, -1);
+    assert.equal(right.userData.side, 1);
+    assert.equal(left.userData.phase, right.userData.phase);
+  }
 });

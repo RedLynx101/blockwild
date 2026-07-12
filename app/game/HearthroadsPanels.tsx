@@ -28,13 +28,19 @@ import {
   type MapViewState,
   type WorldPoint,
 } from "./map-system";
+import { engineYawToMapRotation } from "./navigation";
 import {
   questAvailability,
+  questSourceCanOffer,
+  questSourceCanTurnIn,
+  questTurnInRoute,
   type QuestAvailability,
   type QuestBook,
   type QuestDefinition,
   type QuestKind,
   type QuestObjective,
+  type QuestSource,
+  type QuestTurnInRoute,
 } from "./quests";
 import { hasBlueprint, type BlueprintState } from "./blueprints";
 import {
@@ -409,6 +415,10 @@ export type MapPanelProps = Readonly<{
   otherPlayers?: readonly MapPlayerMarker[];
   viewState?: MapViewState;
   onViewStateChange?: (state: MapViewState) => void;
+  minimumZoom?: number;
+  alwaysShowPoiLabels?: boolean;
+  trackedTargetId?: string | null;
+  onTrackTarget?: (targetId: string | null) => void;
   onClose?: () => void;
 }>;
 
@@ -431,6 +441,10 @@ export function MapPanel({
   otherPlayers = [],
   viewState: controlledViewState,
   onViewStateChange,
+  minimumZoom = 1,
+  alwaysShowPoiLabels = false,
+  trackedTargetId = null,
+  onTrackTarget,
   onClose,
 }: MapPanelProps) {
   const titleId = useId();
@@ -438,6 +452,7 @@ export function MapPanel({
   const renameInputId = useId();
   const [markerName, setMarkerName] = useState("");
   const [renameValue, setRenameValue] = useState("");
+  const [hoveredChunk, setHoveredChunk] = useState<Readonly<{ key: string; biome: string }> | null>(null);
   const [localViewState, setLocalViewState] = useState(createMapViewState);
   const [dragState, setDragState] = useState<Readonly<{
     pointerId: number;
@@ -446,8 +461,9 @@ export function MapPanel({
     view: MapViewState;
   }> | null>(null);
   const baseBounds = useMemo(() => mapBounds(knowledge, currentPosition), [knowledge, currentPosition]);
-  const activeViewState = normalizeMapViewState(controlledViewState ?? localViewState);
-  const bounds = mapViewportBounds(baseBounds, activeViewState);
+  const zoomLimits = { minimum: minimumZoom } as const;
+  const activeViewState = normalizeMapViewState(controlledViewState ?? localViewState, zoomLimits);
+  const bounds = mapViewportBounds(baseBounds, activeViewState, zoomLimits);
   const selected = knowledge.markers.find((marker) => marker.id === selectedMarkerId) ?? null;
   const explored = knowledge.exploredChunks.map(parseChunkKey).filter((entry) => entry !== null);
   const viewWidth = Math.max(1, bounds.maxX - bounds.minX);
@@ -467,7 +483,7 @@ export function MapPanel({
     && currentWayshrineId !== selected.id;
 
   const updateViewState = (next: MapViewState) => {
-    const normalized = normalizeMapViewState(next);
+    const normalized = normalizeMapViewState(next, zoomLimits);
     if (!controlledViewState) setLocalViewState(normalized);
     onViewStateChange?.(normalized);
   };
@@ -485,10 +501,10 @@ export function MapPanel({
     if (!dragState || dragState.pointerId !== event.pointerId) return;
     const rect = event.currentTarget.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return;
-    const initialBounds = mapViewportBounds(baseBounds, dragState.view);
+    const initialBounds = mapViewportBounds(baseBounds, dragState.view, zoomLimits);
     const deltaX = -(event.clientX - dragState.clientX) / rect.width * (initialBounds.maxX - initialBounds.minX);
     const deltaZ = -(event.clientY - dragState.clientY) / rect.height * (initialBounds.maxZ - initialBounds.minZ);
-    updateViewState(panMapView(dragState.view, deltaX, deltaZ));
+    updateViewState(panMapView(dragState.view, deltaX, deltaZ, zoomLimits));
   };
 
   const finishMapDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -498,7 +514,7 @@ export function MapPanel({
 
   const handleMapWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
     event.preventDefault();
-    updateViewState(stepMapZoom(activeViewState, event.deltaY < 0 ? 1 : -1));
+    updateViewState(stepMapZoom(activeViewState, event.deltaY < 0 ? 1 : -1, zoomLimits));
   };
 
   const submitManualMarker = (event: FormEvent<HTMLFormElement>) => {
@@ -546,14 +562,14 @@ export function MapPanel({
             onWheel={handleMapWheel}
           >
             <div className="hearthroads-map-controls" aria-label="Map view controls" onPointerDown={(event) => event.stopPropagation()}>
-              <button type="button" onClick={() => updateViewState(panMapView(activeViewState, 0, -panStepZ))} aria-label="Pan map north">↑</button>
-              <button type="button" onClick={() => updateViewState(panMapView(activeViewState, -panStepX, 0))} aria-label="Pan map west">←</button>
+              <button type="button" onClick={() => updateViewState(panMapView(activeViewState, 0, -panStepZ, zoomLimits))} aria-label="Pan map north">↑</button>
+              <button type="button" onClick={() => updateViewState(panMapView(activeViewState, -panStepX, 0, zoomLimits))} aria-label="Pan map west">←</button>
               <button type="button" onClick={() => updateViewState(createMapViewState())} aria-label="Show the whole explored map">◉</button>
-              <button type="button" onClick={() => updateViewState(panMapView(activeViewState, panStepX, 0))} aria-label="Pan map east">→</button>
-              <button type="button" onClick={() => updateViewState(panMapView(activeViewState, 0, panStepZ))} aria-label="Pan map south">↓</button>
-              <button type="button" onClick={() => updateViewState(stepMapZoom(activeViewState, -1))} disabled={activeViewState.zoom <= 1} aria-label="Zoom map out">−</button>
+              <button type="button" onClick={() => updateViewState(panMapView(activeViewState, panStepX, 0, zoomLimits))} aria-label="Pan map east">→</button>
+              <button type="button" onClick={() => updateViewState(panMapView(activeViewState, 0, panStepZ, zoomLimits))} aria-label="Pan map south">↓</button>
+              <button type="button" onClick={() => updateViewState(stepMapZoom(activeViewState, -1, zoomLimits))} disabled={activeViewState.zoom <= minimumZoom} aria-label="Zoom map out">−</button>
               <output aria-label="Current map zoom">{activeViewState.zoom.toFixed(1)}×</output>
-              <button type="button" onClick={() => updateViewState(stepMapZoom(activeViewState, 1))} disabled={activeViewState.zoom >= 12} aria-label="Zoom map in">+</button>
+              <button type="button" onClick={() => updateViewState(stepMapZoom(activeViewState, 1, zoomLimits))} disabled={activeViewState.zoom >= 12} aria-label="Zoom map in">+</button>
             </div>
             <svg
               className="hearthroads-map-terrain"
@@ -566,19 +582,38 @@ export function MapPanel({
               {explored.map((chunk) => {
                 const key = `${chunk.x},${chunk.z}`;
                 const palette = mapTerrainPalette(knowledge.terrainByChunk?.[key]);
+                const surface = activeViewState.zoom >= 3.4 ? knowledge.surfaceByChunk?.[key] : null;
                 return (
-                  <rect
-                    className={`hearthroads-map-chunk${palette.water ? " water" : " land"}`}
+                  <g
                     key={key}
-                    x={chunk.x - bounds.minX}
-                    y={chunk.z - bounds.minZ}
-                    width="1"
-                    height="1"
-                    fill={palette.fill}
-                    stroke={palette.stroke}
-                    vectorEffect="non-scaling-stroke"
+                    className="hearthroads-map-chunk-group"
+                    onMouseEnter={() => setHoveredChunk({ key, biome: palette.label })}
+                    onMouseLeave={() => setHoveredChunk((current) => current?.key === key ? null : current)}
                     aria-label={`${key}: ${palette.label}`}
-                  />
+                  >
+                    <title>{`${palette.label} · chunk ${key}`}</title>
+                    <rect
+                      className={`hearthroads-map-chunk${palette.water ? " water" : " land"}`}
+                      x={chunk.x - bounds.minX}
+                      y={chunk.z - bounds.minZ}
+                      width="1"
+                      height="1"
+                      fill={palette.fill}
+                      stroke={palette.stroke}
+                      vectorEffect="non-scaling-stroke"
+                    />
+                    {surface?.map((color, index) => (
+                      <rect
+                        className="hearthroads-map-surface-cell"
+                        key={`${key}:surface:${index}`}
+                        x={chunk.x - bounds.minX + index % 2 * 0.5}
+                        y={chunk.z - bounds.minZ + Math.floor(index / 2) * 0.5}
+                        width="0.5"
+                        height="0.5"
+                        fill={color}
+                      />
+                    ))}
+                  </g>
                 );
               })}
             </svg>
@@ -588,11 +623,12 @@ export function MapPanel({
               aria-label="Your current position"
               title="You are here"
             >
-              <i aria-hidden="true" style={{ transform: `rotate(${currentHeadingRadians}rad)` }}>▲</i>
+              <i aria-hidden="true" style={{ transform: `rotate(${engineYawToMapRotation(currentHeadingRadians)}rad)` }}>▲</i>
             </span>
             {otherPlayers.map((player) => (
-              <span
-                className="hearthroads-other-player-pin"
+              <button
+                type="button"
+                className={`hearthroads-other-player-pin${trackedTargetId === `player:${player.id}` ? " tracked" : ""}`}
                 key={player.id}
                 style={{
                   ...mapPointStyle(player.position, bounds),
@@ -600,14 +636,16 @@ export function MapPanel({
                 } as CSSProperties}
                 aria-label={`${player.name} at ${Math.round(player.position.x)}, ${Math.round(player.position.z)}`}
                 title={player.name}
+                onClick={() => onTrackTarget?.(trackedTargetId === `player:${player.id}` ? null : `player:${player.id}`)}
+                onPointerDown={(event) => event.stopPropagation()}
               >
-                <i aria-hidden="true" style={{ transform: `rotate(${player.headingRadians ?? 0}rad)` }}>▲</i>
+                <i aria-hidden="true" style={{ transform: `rotate(${engineYawToMapRotation(player.headingRadians ?? 0)}rad)` }}>▲</i>
                 <small>{player.name}</small>
-              </span>
+              </button>
             ))}
             {knowledge.markers.map((marker) => (
               <button
-                className={`hearthroads-map-pin marker-${marker.kind}${selected?.id === marker.id ? " selected" : ""}`}
+                className={`hearthroads-map-pin marker-${marker.kind}${selected?.id === marker.id ? " selected" : ""}${trackedTargetId === marker.id ? " tracked" : ""}`}
                 key={marker.id}
                 type="button"
                 style={mapPointStyle(marker.position, bounds)}
@@ -618,8 +656,10 @@ export function MapPanel({
                 title={marker.name}
               >
                 <span aria-hidden="true">{markerGlyph(marker)}</span>
+                {(alwaysShowPoiLabels || activeViewState.zoom >= 2.6 || trackedTargetId === marker.id) && marker.kind !== "manual" ? <small>{marker.name}</small> : null}
               </button>
             ))}
+            {hoveredChunk ? <output className="hearthroads-map-hover-label">{hoveredChunk.biome}<small>Chunk {hoveredChunk.key}</small></output> : null}
             {knowledge.exploredChunks.length === 0 ? (
               <p className="hearthroads-map-empty">Step beyond camp and the first lines will find the page.</p>
             ) : null}
@@ -671,6 +711,16 @@ export function MapPanel({
               ) : null}
 
               <div className="hearthroads-travel-actions">
+                {onTrackTarget ? (
+                  <button
+                    className="pixel-button secondary-button"
+                    type="button"
+                    aria-pressed={trackedTargetId === selected.id}
+                    onClick={() => onTrackTarget(trackedTargetId === selected.id ? null : selected.id)}
+                  >
+                    {trackedTargetId === selected.id ? "Stop tracking" : "Track on compass"}
+                  </button>
+                ) : null}
                 <button
                   className="pixel-button gold-button"
                   type="button"
@@ -800,6 +850,8 @@ export type QuestPanelProps = Readonly<{
   onPin: (questId: string | null) => void;
   onAbandon: (questId: string) => void;
   onTurnIn: (questId: string) => void;
+  source?: QuestSource | null;
+  onTrackTurnIn?: (questId: string, route: QuestTurnInRoute) => void;
   onClose?: () => void;
 }>;
 
@@ -814,13 +866,20 @@ export function QuestPanel({
   onPin,
   onAbandon,
   onTurnIn,
+  source = null,
+  onTrackTurnIn,
   onClose,
 }: QuestPanelProps) {
   const titleId = useId();
   const [localTab, setLocalTab] = useState<QuestKind>("main");
   const [localSelectedId, setLocalSelectedId] = useState<string | null>(null);
   const tab = activeTab ?? localTab;
-  const visibleDefinitions = definitions.filter((definition) => definition.kind === tab);
+  const visibleDefinitions = definitions.filter((definition) => {
+    if (definition.kind !== tab) return false;
+    const availability = questAvailability(book, definition);
+    if (["active", "ready", "completed", "failed"].includes(availability)) return true;
+    return questSourceCanOffer(definition, source);
+  });
   const fallbackSelected = visibleDefinitions.find((definition) => book.active.some((active) => active.questId === definition.id))
     ?? visibleDefinitions[0]
     ?? null;
@@ -828,6 +887,8 @@ export function QuestPanel({
   const selected = visibleDefinitions.find((definition) => definition.id === selectedId) ?? fallbackSelected;
   const active = selected ? book.active.find((entry) => entry.questId === selected.id) ?? null : null;
   const availability = selected ? questAvailability(book, selected) : null;
+  const turnInRoute = selected ? questTurnInRoute(book, selected) : null;
+  const canTurnInHere = selected ? questSourceCanTurnIn(book, selected, source) : false;
   const rewards = selected ? rewardSummary(selected) : [];
 
   const selectTab = (nextTab: QuestKind) => {
@@ -902,6 +963,15 @@ export function QuestPanel({
                 <span className={`hearthroads-status-ribbon status-${availability}`}>{statusLabel(availability)}</span>
                 <h3>{selected.name}</h3>
                 <p>{selected.summary}</p>
+                {selected.giver ? (
+                  <small className="hearthroads-quest-source">
+                    {selected.giver.scope === "faction-mayor"
+                      ? `Faction work · offered and rewarded by any ${prettyId(selected.giver.factionId ?? "faction")} mayor`
+                      : active?.giverEntityId
+                        ? `Personal commission · return to the resident who entrusted it to you`
+                        : `Personal commission · speak directly with ${prettyId(selected.giver.role ?? "the quest giver")}`}
+                  </small>
+                ) : null}
               </header>
 
               <section className="hearthroads-objectives" aria-labelledby={`${titleId}-objectives`}>
@@ -950,7 +1020,7 @@ export function QuestPanel({
               </section>
 
               <footer className="hearthroads-quest-actions">
-                {availability === "available" || (availability === "abandoned" && selected.kind === "side") ? (
+                {(availability === "available" || (availability === "abandoned" && selected.kind === "side")) && questSourceCanOffer(selected, source) ? (
                   <button className="pixel-button gold-button" type="button" onClick={() => onAccept(selected.id)}>
                     Accept quest
                   </button>
@@ -966,9 +1036,14 @@ export function QuestPanel({
                     {book.pinnedQuestIds.includes(selected.id) ? "Unpin quest" : book.pinnedQuestIds.length >= 3 ? "Journey board full" : "Pin to journey"}
                   </button>
                 ) : null}
-                {availability === "ready" ? (
+                {availability === "ready" && canTurnInHere ? (
                   <button className="pixel-button gold-button" type="button" onClick={() => onTurnIn(selected.id)}>
-                    {selected.giver ? "Hand in to quest giver" : "Claim reward"}
+                    {turnInRoute?.kind === "faction-mayor" ? "Report to this mayor" : selected.giver ? "Hand in to quest giver" : "Claim reward"}
+                  </button>
+                ) : null}
+                {availability === "ready" && !canTurnInHere && turnInRoute && turnInRoute.kind !== "menu" && onTrackTurnIn ? (
+                  <button className="pixel-button gold-button" type="button" onClick={() => onTrackTurnIn(selected.id, turnInRoute)}>
+                    {turnInRoute.kind === "individual" ? "Track quest giver" : `Track nearest ${prettyId(turnInRoute.factionId)} mayor`}
                   </button>
                 ) : null}
                 {active && selected.kind === "side" && selected.abandonable !== false ? (
@@ -1656,7 +1731,7 @@ export function SettlementPanel({
               <ul className="hearthroads-resident-list">
                 {selectedRole[1].map((resident) => (
                   <li key={resident.id}>
-                    <button type="button" disabled={!onSelectResident} onClick={() => onSelectResident?.(resident.id)}>
+                    <button type="button" disabled={!onSelectResident} onClick={() => onSelectResident?.(resident.id)} title={`Track ${resident.name} on the map and compass`} aria-label={`Track ${resident.name}; direct conversation still requires meeting them in the world`}>
                       {resident.factionId !== "player" ? (
                         <PortraitAsset
                           key={`${resident.id}-${resident.profession}`}
@@ -1667,7 +1742,7 @@ export function SettlementPanel({
                         />
                       ) : <span className="hearthroads-resident-avatar" aria-hidden="true">{resident.name.slice(0, 1)}</span>}
                       <span><strong>{resident.name}</strong><small>{resident.equipment.weapon ? `Carries ${prettyId(resident.equipment.weapon)}` : resident.equipment.tool ? `Uses ${prettyId(resident.equipment.tool)}` : "Unarmed"}</small></span>
-                      <span className="hearthroads-health-readout">{resident.health}/{resident.maxHealth}</span>
+                      <span className="hearthroads-health-readout">TRACK · {resident.health}/{resident.maxHealth}</span>
                     </button>
                     {onHireResident && !resident.hiredByPlayerId && !isMayorProfession(resident.profession) ? <button className="hearthroads-hire-resident" type="button" onClick={() => onHireResident(resident.id)}>Hire · {isWarriorProfession(resident.profession) ? 180 : 110}g</button> : null}
                   </li>

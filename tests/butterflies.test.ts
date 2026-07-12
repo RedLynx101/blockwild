@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
 import { Item } from "../app/game/data.ts";
-import { BUTTERFLY_FLIGHT_TUNING, butterflyCaptureAlongRay, butterflyKindForBiome, butterflyYawForVelocity } from "../app/game/butterflies.ts";
+import { BUTTERFLY_FLIGHT_TUNING, butterflyCaptureAlongRay, butterflyFlowerKey, butterflyKindForBiome, butterflyYawForVelocity } from "../app/game/butterflies.ts";
 import { MOB_DEFS } from "../app/game/mobs.ts";
 import { BiomeId } from "../app/game/world.ts";
 
@@ -30,6 +30,11 @@ test("wild butterflies spend substantially more time flying than perched", () =>
   const averageFlight = BUTTERFLY_FLIGHT_TUNING.flightSecondsMin + BUTTERFLY_FLIGHT_TUNING.flightSecondsRange / 2;
   const averageLanding = BUTTERFLY_FLIGHT_TUNING.landedSecondsMin + BUTTERFLY_FLIGHT_TUNING.landedSecondsRange / 2;
   assert.ok(averageFlight > averageLanding * 1.75);
+});
+
+test("flower occupancy keys reserve one landing spot per flower", () => {
+  assert.equal(butterflyFlowerKey({ x: 2.01, y: 4, z: -3.02 }), butterflyFlowerKey({ x: 2.2, y: 4.1, z: -3.1 }));
+  assert.notEqual(butterflyFlowerKey({ x: 2, y: 4, z: -3 }), butterflyFlowerKey({ x: 3, y: 4, z: -3 }));
 });
 
 test("butterfly antennae face the direction of travel instead of trailing backwards", () => {

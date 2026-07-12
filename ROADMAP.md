@@ -1,18 +1,29 @@
 # Blockwild roadmap
 
-Blockwild v1.0 Realms and Recall adds Wood Elves, Dwarves, Glimmerwood, Snowcap Range, connected culture settlements, golem forging, Sea Dragons, attuned creature recall, searchable expandable item and creature Waygrids, three quest pins, biome-aware maps, and host-authoritative reconnect state. Wyrmweave, Sugarcourt, Tidelight, and Hearthroads remain part of the same deterministic world and progression layer. The systems below are intentionally outside the v1.0 release boundary. This is a direction document, not a schedule.
+Blockwild v1.2 Trailbound adds durable browser character profiles, selectable faction races, connected settlement tiers across all six cultures, sprint-swimming, off-hand shields and lights, aquariums, a world compass, richer local maps, Bartering and Luck, and a stricter host-authoritative reconnect model. Realms and Recall, Wyrmweave, Sugarcourt, Tidelight, and Hearthroads remain part of the same deterministic world and progression layer. The systems below are intentionally outside the v1.2 release boundary. This is a direction document, not a schedule.
 
-## Explicit post-1.0 backlog
+## Explicit post-v1.2 backlog
 
 Realms and Recall adds Wood Elves, Dwarves, Sea Dragons, attuned creature recall, and expandable digital storage. The following ideas from the 1.0 design brief are deliberately recorded rather than partially shipped:
 
 - Human settlements and human firearms beyond the Dwarven flintlock line.
 - Mekanism-style factories, powered drills, broad automation chains, and chunk-loading machines.
 - Creature evolutions, cross-species monster hybrids, and cross-type dragon hybrids. These require explicit inheritance, model, balance, save, and multiplayer rules first.
-- Retrofitting every legacy settlement culture onto the larger connected-tile town planner; new Wood Elf enclaves establish the pattern, while older settlements should migrate only when their authored layouts can remain save-safe.
+- Deeper settlement variation beyond the connected hamlet, village, and town tiers: culture-specific districts, authored civic landmarks, construction history, and save-safe growth after generation.
 - Deeper player-town management, hired parties, faction war, autonomous sieges, and post-capture cultural rebuilding.
 
-These are not hidden 1.0 features and should not be advertised as playable until their complete loops exist.
+These are not hidden v1.2 features and should not be advertised as playable until their complete loops exist.
+
+## Character origins and starting scenarios
+
+Trailbound characters already preserve their name, race, sex, colors, browser identity, and starting skill allocation. A later character release may add optional backstories and explicit starting scenarios without making any one origin mandatory:
+
+- Choose a known settlement, wilderness camp, shipwreck, underground entrance, or faction home as an origin when world generation supports a safe deterministic spawn there.
+- Pair an origin with a bounded starting equipment package, reputation adjustments, quest hooks, and discoverable map knowledge.
+- Preview the concrete tradeoffs before world entry and keep the chosen origin in save and multiplayer metadata.
+- Preserve the current neutral trailhead as the default and never silently move an existing character when an old world migrates.
+
+These options require spawn validation, faction-disabled fallbacks, multiplayer ownership rules, and save-compatible quest starts before they should ship.
 
 ## More dragons and cross-type hybrids
 

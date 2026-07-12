@@ -126,6 +126,17 @@ test("an idle swimmer settles downward while an intentional swim stroke rises", 
   assert.ok(rising.velocityY > 1.5, `jump-held swim velocity was ${rising.velocityY}`);
 });
 
+test("a real fall carries moderated momentum through the water surface", () => {
+  const entered = stepSwimming(
+    { velocityY: -16, oxygenSeconds: 12, drowningAccumulator: 0 },
+    { jumpHeld: false, movingForward: true },
+    { submersion: 0.68, headSubmerged: false, horizontalCollision: false, enteredFromAir: true },
+    1 / 60,
+  );
+  assert.ok(entered.state.velocityY < -3, `entry velocity ${entered.state.velocityY} should not stop at the surface`);
+  assert.ok(entered.state.velocityY > -10, "water must still absorb most of a dangerous fall");
+});
+
 test("crouching produces a deliberate faster dive without changing jump ascent", () => {
   let idle = { velocityY: 0, oxygenSeconds: 12, drowningAccumulator: 0 };
   let crouched = { ...idle };

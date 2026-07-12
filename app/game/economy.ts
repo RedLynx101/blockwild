@@ -6,6 +6,7 @@ import {
   type FactionId,
   type NpcFactionId,
 } from "./factions.ts";
+import { barteringConvergence } from "./skills.ts";
 
 /** Decimal-string ledgers stay exact, JSON-safe, and are not capped at 64. */
 export type GoldAmount = string;
@@ -63,6 +64,18 @@ export function compareGold(a: GoldAmount, b: GoldAmount | number | bigint) {
   const left = parseGold(a);
   const right = parseGold(b);
   return left === right ? 0 : left > right ? 1 : -1;
+}
+
+export const GOLD_INGOT_VALUE = 10;
+
+export function goldValueForIngots(count: number) {
+  return Math.max(0, Math.floor(Number.isFinite(count) ? count : 0)) * GOLD_INGOT_VALUE;
+}
+
+export function withdrawableGoldIngots(balance: GoldAmount | number | bigint, requested = Number.MAX_SAFE_INTEGER) {
+  const available = parseGold(balance) / BigInt(GOLD_INGOT_VALUE);
+  const boundedRequest = BigInt(Math.max(0, Math.floor(Number.isFinite(requested) ? requested : 0)));
+  return Number(available < boundedRequest ? available : boundedRequest);
 }
 
 export function createGoldWallet(authorityId: string, ownerId: string, startingGold: GoldAmount | number | bigint = 0): GoldWalletState {
@@ -186,6 +199,7 @@ export const COMMERCE_CATALOG: Readonly<Record<string, CommerceItem>> = Object.f
   { key: "mead", name: "Hearthgold Mead", category: "drink", baseValue: 24, stackLimit: 16, tags: ["mead"] },
   { key: "raw-iron", name: "Raw Iron", category: "ore", baseValue: 8, stackLimit: 64 },
   { key: "raw-gold", name: "Raw Gold", category: "ore", baseValue: 18, stackLimit: 64 },
+  { key: "gold-ingot", name: "Gold Ingot", category: "ore", baseValue: GOLD_INGOT_VALUE, stackLimit: 64, tags: ["currency"] },
   { key: "plant-fiber", name: "Plant Fiber", category: "material", baseValue: 2, stackLimit: 64 },
   { key: "crossbow", name: "Hearthguard Crossbow", category: "weapon", baseValue: 92, stackLimit: 1, tags: ["hobbit"] },
   { key: "fine-crossbow", name: "Freehold Arbalest", category: "weapon", baseValue: 260, stackLimit: 1, tags: ["hobbit", "tier-2"] },
@@ -218,6 +232,7 @@ export const COMMERCE_CATALOG: Readonly<Record<string, CommerceItem>> = Object.f
   { key: "gumdrop", name: "Wild Gumdrop", category: "food", baseValue: 6, stackLimit: 64, tags: ["sugarcourt", "candy"] },
   { key: "lollipop-petal", name: "Lollipop Orchid Petal", category: "crop", baseValue: 8, stackLimit: 64, tags: ["sugarcourt", "flower"] },
   { key: "marshmallow-tuft", name: "Marshmallow Tuft", category: "food", baseValue: 8, stackLimit: 64, tags: ["sugarcourt", "candy"] },
+  { key: "chocolate-bunny", name: "Chocolate Bunny", category: "food", baseValue: 32, stackLimit: 64, tags: ["sugarcourt", "candy", "rabbit"] },
   { key: "candied-alloy", name: "Tempered Candy Alloy", category: "material", baseValue: 24, stackLimit: 64, tags: ["sugarcourt", "craft"] },
   { key: "boiled-sugarbrick", name: "Boiled Sugarbrick", category: "material", baseValue: 12, stackLimit: 64, tags: ["sugarcourt", "building"] },
   { key: "sugarworks", name: "Sugarworks", category: "misc", baseValue: 118, stackLimit: 16, tags: ["sugarcourt", "station"] },
@@ -486,19 +501,35 @@ function merchantDemandMultiplier(merchant: Pick<MerchantState, "factionId" | "p
 }
 
 export type MerchantTradeDirection = "player-buys" | "player-sells";
+export type TradePricingContext = Readonly<{
+  barteringLevel?: number;
+  factionAlignment?: number;
+  alignmentInfluenceBonusPercent?: number;
+}>;
 
 export function quoteMerchantTrade(
   merchant: Pick<MerchantState, "factionId" | "profession">,
   item: CommerceItem,
   count: number,
   direction: MerchantTradeDirection,
+  pricing: TradePricingContext = {},
 ) {
   const quantity = Math.max(0, Math.min(999, Math.floor(count)));
   if (quantity === 0) return { unitPrice: 0, total: "0" as GoldAmount };
+  if (item.key === "gold-ingot") {
+    return { unitPrice: GOLD_INGOT_VALUE, total: normalizeGold(BigInt(GOLD_INGOT_VALUE) * BigInt(quantity)) };
+  }
   const demand = merchantDemandMultiplier(merchant, item);
-  const unitPrice = direction === "player-buys"
-    ? Math.max(1, Math.ceil(item.baseValue * 1.22 * Math.max(0.9, demand * 0.94)))
-    : Math.max(1, Math.floor(item.baseValue * 0.52 * demand));
+  const buyPrice = Math.max(1, Math.ceil(item.baseValue * 1.22 * Math.max(0.9, demand * 0.94)));
+  const sellPrice = Math.max(1, Math.floor(item.baseValue * 0.52 * demand));
+  const localMarketPrice = Math.max(1, Math.round(item.baseValue * demand));
+  const convergence = barteringConvergence(
+    pricing.barteringLevel ?? 0,
+    pricing.factionAlignment ?? 0,
+    pricing.alignmentInfluenceBonusPercent ?? 0,
+  );
+  const startingPrice = direction === "player-buys" ? buyPrice : sellPrice;
+  const unitPrice = Math.max(1, Math.round(startingPrice + (localMarketPrice - startingPrice) * convergence));
   return { unitPrice, total: normalizeGold(BigInt(unitPrice) * BigInt(quantity)) };
 }
 
@@ -507,6 +538,7 @@ export type AtomicEconomyCommand = Readonly<{
   eventId: string;
   expectedWalletRevision: number;
   expectedCounterpartyRevision: number;
+  pricing?: TradePricingContext;
 }>;
 
 function atomicAuthorityCheck(wallet: GoldWalletState, counterparty: AuthorityStampedState, command: AtomicEconomyCommand): EconomyFailure {
@@ -553,7 +585,7 @@ export function buyFromMerchant(
   }
   const available = merchant.inventory.find((stack) => stack.itemKey === itemKey)?.count ?? 0;
   if (available < quantity) return { wallet, merchant, item: null, applied: false, reason: "merchant-out-of-stock", total: "0" };
-  const { total } = quoteMerchantTrade(merchant, definition, quantity, "player-buys");
+  const { total } = quoteMerchantTrade(merchant, definition, quantity, "player-buys", command.pricing);
   const walletBalance = subtractGold(wallet.balance, total);
   if (walletBalance === null) return { wallet, merchant, item: null, applied: false, reason: "insufficient-gold", total };
   const nextWallet = stampAtomic({ ...wallet, balance: walletBalance }, command);
@@ -581,7 +613,7 @@ export function sellToMerchant(
   if (!COMMERCE_CATALOG[item.key] && !merchant.customCatalog[item.key] && Object.keys(merchant.customCatalog).length >= 64) {
     return { wallet, merchant, item: null, applied: false, reason: "inventory-full", total: "0" };
   }
-  const { total } = quoteMerchantTrade(merchant, item, quantity, "player-sells");
+  const { total } = quoteMerchantTrade(merchant, item, quantity, "player-sells", command.pricing);
   const merchantBalance = subtractGold(merchant.gold, total);
   if (merchantBalance === null) return { wallet, merchant, item: null, applied: false, reason: "merchant-cannot-pay", total };
   const nextWallet = stampAtomic({ ...wallet, balance: addGold(wallet.balance, total) }, command);

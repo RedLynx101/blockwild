@@ -1,12 +1,22 @@
 # Blockwild
 
-Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 biomes, cave networks, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.1.0 Shared Wilds**.
+Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 biomes, cave networks, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.2.0 Trailbound**.
 
 The project is a real game rather than a voxel-rendering demo. You can mine, build, craft, smelt, farm, fight, collect field notes, manage several worlds, and carry those worlds between browsers with export files.
 
 **Play the current hosted build:** [blockwild.noahhicks.chatgpt.site](https://blockwild.noahhicks.chatgpt.site)
 
-![Blockwild field guide with all 116 rendered creatures](public/creatures/blockwild-creatures.svg)
+![Blockwild field guide with all 123 rendered creatures](public/creatures/blockwild-creatures.svg)
+
+## v1.2 Trailbound
+
+Trailbound makes the browser profile—not the route used to join—a player's durable multiplayer identity. Title-screen and in-world joins now resolve the same saved character and host-owned session record, including vitals, inventory, equipment, skills, Capture Orbs, companions, appearance, and reconnect state. Guest tree felling and creature deaths apply the host's authoritative removal immediately, play their fall or death feedback locally, and use revisioned inventory and chest acknowledgements instead of resurrecting stale state.
+
+The rebuilt title flow includes as many as twelve named characters per browser. Each character stores race, sex, clothing, skin and hair colors, a twenty-point starting-skill allocation, and the last selection. Wayfarer, Hearthkin, Goblin, Atlantian, Confectkin, Wood Elf, and Dwarf bodies share one equipment and animation contract in first person, third person, and multiplayer. Atlantian characters breathe underwater, move faster while swimming, and travel more slowly on land. Sprint-swimming pitches the whole character forward and uses a proper arm stroke, while impact momentum carries a falling player below the surface before buoyancy takes over.
+
+Survival polish now includes a left-hand equipment slot, Wildwood and Sunmetal shields, off-hand torches and Deepgear lanterns, readable block-breaking cracks, tool-suitability outlines, quieter periodic saves, sorted and one-click chest transfers, charcoal-compatible recipes, and four Capture Orbs per recipe. The Trail Compass adds heading, tracked players, landmarks, and waypoints above the world; the map keeps high-detail local colors at close zoom and biome summaries farther out. Two new skills cover Bartering and Luck, skill descriptions state their actual effects, and character/faction quest handoffs use the relevant resident rather than a settlement-wide remote menu.
+
+Field Cotton, Suncrest Carrots, and Bluepod Beans expand farming. Four tameable rabbit families, two sea slugs, and Pocket Goldfish join the ecology; connected aquariums provide a bounded pebble-and-plant habitat with one resident per block and slow same-species breeding. Fireplaces, revised tiled settlements, plant-sized interaction bounds, smoother clouds and daylight, sky-gated sun and moon lighting, rain ambience, thunder, lightning, and supported POI lights round out the world pass. The bestiary now separates humanoids, rabbits, and sea slugs, while the Plant Compendium renders all 42 specimens—including complete example trees—from production geometry.
 
 ## v1.0 Realms and Recall
 
@@ -30,7 +40,7 @@ Multiplayer state is explicitly host-owned for every player. Inventories, select
 - **Connected enclosures.** Wildwood fences join neighboring fences, gates, and solid blocks; closed pieces use 1.25-block collision while open gates remain pathable. Braided Leads attach creatures to the player and can be hitched to an enclosure.
 - **Beds and flexible time skipping.** A Wildwood Bed can advance the world from any hour to the next dawn or next dusk, always moving forward. Multiplayer worlds can require any player, a configurable percentage, or every connected player to choose the same destination.
 - **Material progression through draconic craft.** Wood, stone, sunmetal, and star-crystal tools have different mining speeds, damage, harvest requirements, and durability. Trailhide and sunmetal armor reduce incoming damage and wear down in use. The Dragonwake branch adds a 2,400-use Dragonbone Greatsword, 2,600-use Pickaxe, 2,500-use Axe, and complete Fire, Ice, and Steel scale-armor sets behind learned treatises.
-- **Two living field guides.** The filterable creature bestiary tracks discovery, kills, captures, taming, breeding, food, sentience, drops, habitat, activity, behavior, utility, lore, and a dedicated Golem category for 108 core creatures and eight butterfly species. Each of the 116 entries and list icons uses a front-three-quarter portrait rendered from the same model as gameplay, with a completion ring and a hidden post-tame section where relevant. Unknown entries retain a habitat clue instead of becoming blank cards. A separate plant journal covers 39 trees, crops, bushes, flowers, aquatic plants, and wild growths with their habitat, growth rules, drops, and practical use.
+- **Two living field guides.** The filterable creature bestiary tracks discovery, kills, captures, taming, breeding, food, sentience, drops, habitat, activity, behavior, utility, lore, and dedicated Humanoid, Rabbit, Sea Slug, Golem, and habitat categories. Each of the 123 entries and list icons uses a front-three-quarter portrait rendered from the same model as gameplay, with a completion ring and a hidden post-tame section where relevant. Unknown entries retain a habitat clue instead of becoming blank cards. A separate plant journal covers 42 trees, crops, bushes, flowers, aquatic plants, and wild growths with their habitat, growth rules, drops, practical use, and a production render.
 - **Creature keeping.** Waykeeper Capture Orbs preserve health, age, baby state, name, temperament, faction alignment, ownership, pet commands, taming progress, and species-specific state. Friendly and neutral creatures can be moved freely; hostiles must be below half health or at one heart. Tamed, named, POI-resident, and enclosed creatures are protected from normal despawning. Eligible wildlife can be fed, healed, bred, and raised from babies. Shadecrawlers, Reedstriders, Wildwood Coursers, Wargs, Worldshells, Aetherbells, and Taffalo have distinct trust, growth, saddle, cargo, and riding paths; Tidepups, Sakurakits, Taffy Hounds, and Praline Cats cover different companion roles. Aligned borough pets retain their Sugarcourt provenance through capture and release and remain untameable; only unaligned stock can bond with a player. Connected Butterfly Conservatory blocks fuse into clean habitats up to 20 blocks, accept jarred butterflies and eligible small orb-preserved wildlife with exact metadata, add flowers and branches by tier, contain flight to their cells, and permit capped in-habitat breeding.
 - **Persistent dragons.** Fire, Ice, Steel, and Sea Dragons use one migration-safe state contract for age, five growth stages, sex, genetics, health, ownership, home lair, commands, equipment, two cargo modules, carried scales, breeding cooldown, and survival outside the active simulation radius. Wild dragons can unload at distance but are exempt from ordinary cleanup. Sea Dragons use swim-first travel attributes and abyssal nests; hatchlings can bond and perch on a shoulder, while stage-three adults can be saddled and flown. Same-type, opposite-sex breeding yields physical eggs, food heals injuries, Dragon Meal adds a growth day, and renewable scales accumulate every three world days for collection through the dragon care interface.
 - **Apiaries and living pollinators.** Wild hives hold a queen and up to eight workers. Workers seek flowers, gather nectar, and return at dusk; crafted apiaries activate from a Queen Cell or an exact neutral/tamed queen entity, accept and release friendly worker records, grow their own workforce, and store up to 12 Wildflower Honey and 12 Royal Jelly. Breaking a wild hive releases an angry colony. A neutral queen can bond through Royal Jelly, while an agitated queen must first be weakened; workers can be netted and transferred without losing their hive metadata.
@@ -125,12 +135,15 @@ blockwild/
 |  |- chatgpt-auth.ts          Optional Sites identity helper; unused by the game
 |  `- game/
 |     |- VoxelGame.tsx         React shell: menus, HUD, inventory, and overlays
+|     |- CharacterStudio.tsx   Saved characters, races, colors, and starting skills
+|     |- NavigationHud.tsx     Heading rail, tracked targets, and active effects
 |     |- engine.ts             Three.js simulation, physics, combat, and interaction
 |     |- world.ts              Terrain generation, chunks, meshing, and block edits
 |     |- caves.ts              Cave mouths, chambers, chimneys, and strata
 |     |- world-storage.ts      Local catalog, migration, exports, and faction options
 |     |- data.ts               Blocks, items, recipes, loot, fuel, and smelting
 |     |- map-system.ts         Explored chunks, markers, cartography, and fast travel
+|     |- navigation.ts         Compass headings, target projection, and map detail policy
 |     |- quests.ts             Questlines, objectives, failure state, and turn-ins
 |     |- HearthroadsPanels.tsx Map, quest, station, trade, bank, and town interfaces
 |     |- dragons.ts            Pure dragon lifecycle, care, breeding, combat, loot, and saves
@@ -164,12 +177,16 @@ blockwild/
 |     |- shadecrawler.ts       Trust, taming, growth, saddle, and mount progression
 |     |- creature-cage.ts      Exact creature metadata capture/release codec
 |     |- capture-orbs.ts       Attuned orbs, exact recall, four-slot racks, and timed healing
+|     |- aquarium.ts           Connected aquatic habitats, residents, poses, and breeding
 |     |- apiary.ts             Queen/worker lifecycle, nectar, honey, jelly, and hive breaks
 |     |- ecology.ts            Herds, shoals, connected tree forms, and submerged flora
 |     |- butterflies.ts        Butterfly spawning, flight, capture, and release
 |     |- butterfly-exhibit.ts  Connected habitat topology, capacity, flowers, and poses
 |     |- boats.ts              Two-seat Wayfarer model, storage, and water movement
 |     |- liquids.ts            Bounded water, lava, honey, and syrup flow contracts
+|     |- shields.ts            Off-hand blocking arcs, durability, and movement rules
+|     |- status-effects.ts     Timed fire, poison, potion, and passive HUD effects
+|     |- block-hitboxes.ts     Visual-size foliage and produce interaction bounds
 |     |- weather.ts            Biome weather, fair cloud fields, and storm overcast planning
 |     |- structures.ts         Temples, groves, sanctuaries, markers, and loot tables
 |     |- projectiles.ts        Visible swept-collision arrow projectiles
@@ -207,7 +224,7 @@ React owns the interface and translates player actions into method calls on `Vox
 
 `ChunkWorld` owns deterministic generation, streamed chunk sections, geometry, terrain edits, skylight data, and nearby light indices. Generated terrain is reproducible from the seed, so saves store player-made edits rather than a copy of every generated block.
 
-`mob-models.ts` is the canonical builder for 108 core creatures, including four articulated dragon rigs, 39 sentient residents, and three golem tiers. The game engine instantiates those models directly, while the inspection script extracts their actual posed Three.js geometry for grounding checks and bestiary portraits. Eight butterfly builders complete the 116-entry field guide. `held-items.ts` reuses those builders and centralizes player-held geometry, while conservatories, attuned Capture Orbs, Waygrid archives, racks, healers, eggs, mount cargo, and faction pet sales preserve the same exact creature records.
+`mob-models.ts` is the canonical builder for 115 core creatures, including four articulated dragon rigs, 39 sentient residents, three golem tiers, four rabbit families, two sea slugs, and Pocket Goldfish. The game engine instantiates those models directly, while the inspection script extracts their actual posed Three.js geometry for grounding checks and bestiary portraits. Eight butterfly builders complete the 123-entry field guide. `held-items.ts` reuses those builders and centralizes player-held geometry, while aquariums, conservatories, attuned Capture Orbs, Waygrid archives, racks, healers, eggs, mount cargo, and faction pet sales preserve the same exact creature records.
 
 The progression modules keep save-normalizable rules away from presentation code. Map transfer and travel validation live in `map-system.ts`; quest transitions in `quests.ts`; surface, aquatic, and Sugarcourt settlement planning in `settlements.ts`; authority-checked gold, trade, banking, and venture mutations in `economy.ts`; potion and distillery batches in `alchemy.ts`; atomic blueprint-gated Sugarworks batches in `candyworks.ts`; and deterministic populations, eggs, growth, morphing, cargo limits, and riding profiles in `fauna.ts`. `dragons.ts` owns dragon state independently of Three.js, `dragon-world.ts` plans lairs and bounded survey scans, `magic.ts` owns tome knowledge and cast plans, and `skills.ts` owns XP and mastery. Their React panels render engine snapshots and dispatch actions but do not become alternate simulation owners.
 
@@ -246,7 +263,7 @@ npm run benchmark:simulation
 
 `npm test` first creates and validates the production artifact, then runs the Node test suite. Core coverage includes deterministic generation, cave and river variance, chunk boundaries and streaming, save migration and failure isolation, world options, meshing, lighting, directional torches, farming and orchards, buckets, fences and leads, beds, one-code multiplayer, inventory and crafting, doors, leaves, machines and storage, creature grounding and collision, pathing and follower recovery, husbandry, apiaries, Capture Orbs, conservatories, mounts, dragon lifecycle and combat, spellcasting, rank-1000 progression, player animation, held models, water and boats, weather, map and quest transitions, blueprints, alchemy, faction authority, trade, banking, settlements, and deployment metadata. `npm run benchmark:simulation` separately profiles liquid settling, structure planning, weather/cloud planning, and radius-16 chunk ordering.
 
-The focused release suites cover all 24 biomes, tree topology and full felling, waterlogged flora, renewable water and nonrenewing food liquids, Sugarcourt production, map/weather plans, exact apiary transfers, attuned-orb faint/recall rules, three quest pins, Waygrid capacity/search/overflow/area crafting, host-authoritative reconnect state, trade atomicity, Wood Elf/Dwarf tiled settlements, Glimmerwood ecology, golem forging and defense, four five-stage dragon families, Sea Dragon nests/charts/incubation, spellcasting, per-skill Ascendant traits, responsive interfaces, and all 116 production-model portraits.
+The focused release suites cover all 24 biomes, tree topology and full felling, waterlogged flora, renewable water and nonrenewing food liquids, Sugarcourt production, map/weather plans, exact apiary transfers, attuned-orb faint/recall rules, three quest pins, Waygrid capacity/search/overflow/area crafting, host-authoritative reconnect state, trade atomicity, connected culture settlements, aquariums, shields, character profiles, Glimmerwood ecology, golem forging and defense, four five-stage dragon families, Sea Dragon nests/charts/incubation, spellcasting, per-skill Ascendant traits, responsive interfaces, all 123 production-model portraits, and all 42 plant renders.
 
 A focused test can be run without the build wrapper:
 
@@ -262,7 +279,7 @@ npm run models:render -- --out outputs/model-inspection
 
 The command writes isometric, front, and side SVG sheets plus a machine-readable grounding manifest. PNG copies are also written when `sharp` is available.
 
-To render all 116 bestiary entries as individual front-three-quarter portraits and a field-guide sheet:
+To render all 123 bestiary entries as individual front-three-quarter portraits and a field-guide sheet:
 
 ```bash
 npm run models:render -- --creatures --portraits outputs/model-portraits --portrait-only --portrait-png
@@ -272,6 +289,12 @@ The browser-facing SVGs under `public/creatures/` are generated with the same pa
 
 ```bash
 npm run models:render -- --creatures --portraits public/creatures --portrait-only
+```
+
+The plant renderer exports the matching production-specimen sheet:
+
+```bash
+npm run plants:render -- --out public/plants
 ```
 
 Review the contact sheet before committing regenerated portraits. `outputs/` is ignored so temporary inspection artifacts do not enter commits by accident.

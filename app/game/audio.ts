@@ -1,6 +1,6 @@
 import { BLOCKS, BlockId } from "./data";
 
-export type AudioSettings = { volume: number; muted: boolean };
+export type AudioSettings = { volume: number; muted: boolean; musicVolume?: number };
 export type SoundKind = "step" | "mine" | "break" | "place" | "pickup" | "jump" | "fall" | "land" | "hurt" | "ui" | "attack" | "mob" | "craft" | "furnace" | "splash" | "eat";
 export type MusicScene =
   | "day"
@@ -87,17 +87,25 @@ const MUSIC_FALLBACKS: Partial<Record<MusicScene, string>> = {
   combatB: "/music/blockwild-skyboss.mp3",
 };
 
+export function effectiveMusicVolume(settings: AudioSettings) {
+  const music = Number.isFinite(settings.musicVolume) ? Math.max(0, Math.min(1, settings.musicVolume!)) : 0.72;
+  return settings.muted ? 0 : Math.min(0.46, Math.max(0, Math.min(1, settings.volume)) * music * 0.61);
+}
+
 export class SynthAudio {
   context: AudioContext | null = null;
   master: GainNode | null = null;
   ambienceGain: GainNode | null = null;
   ambience: AudioBufferSourceNode | null = null;
+  rainGain: GainNode | null = null;
+  rainAmbience: AudioBufferSourceNode | null = null;
   noise: AudioBuffer | null = null;
   settings: AudioSettings;
   music = new Map<MusicScene, HTMLAudioElement>();
   musicScene: MusicScene = "day";
   musicStarted = false;
   musicPlayPending = new Set<MusicScene>();
+  musicRetryAfter = new Map<MusicScene, number>();
   musicSuspended = false;
   samples = new Map<SampleKind, AudioBuffer>();
   sampleLoads = new Map<SampleKind, Promise<AudioBuffer | null>>();
@@ -159,6 +167,20 @@ export class SynthAudio {
     source.start();
     this.ambience = source;
     this.ambienceGain = gain;
+
+    const rainSource = this.context.createBufferSource();
+    const rainFilter = this.context.createBiquadFilter();
+    const rainGain = this.context.createGain();
+    rainSource.buffer = this.noise;
+    rainSource.loop = true;
+    rainFilter.type = "bandpass";
+    rainFilter.frequency.value = 2_850;
+    rainFilter.Q.value = 0.42;
+    rainGain.gain.value = 0;
+    rainSource.connect(rainFilter).connect(rainGain).connect(this.master);
+    rainSource.start();
+    this.rainAmbience = rainSource;
+    this.rainGain = rainGain;
   }
 
   applyVolume() {
@@ -175,8 +197,9 @@ export class SynthAudio {
   setDepth(depth: number, rainLevel: boolean | number) {
     if (!this.ambienceGain || !this.context) return;
     const rain = typeof rainLevel === "number" ? Math.max(0, Math.min(1, rainLevel)) : rainLevel ? 1 : 0;
-    const target = (depth < 0 ? 0.012 : 0.018) + rain * 0.012;
+    const target = depth < 0 ? 0.012 : 0.018;
     this.ambienceGain.gain.setTargetAtTime(target, this.context.currentTime, 0.4);
+    this.rainGain?.gain.setTargetAtTime(rain * 0.135, this.context.currentTime, rain > 0 ? 0.55 : 1.25);
   }
 
   prepareMusic() {
@@ -211,6 +234,12 @@ export class SynthAudio {
       element.preload = scene === this.musicScene ? "auto" : "metadata";
       element.volume = 0;
       element.setAttribute("playsinline", "true");
+      const scheduleRetry = () => {
+        if (scene !== this.musicScene || this.musicSuspended || !this.musicStarted) return;
+        this.musicRetryAfter.set(scene, Date.now() + 1_500);
+      };
+      element.addEventListener("stalled", scheduleRetry);
+      element.addEventListener("waiting", scheduleRetry);
       this.music.set(scene, element);
     }
   }
@@ -227,8 +256,14 @@ export class SynthAudio {
     const element = this.music.get(scene);
     if (!element || !element.paused) return;
     this.musicPlayPending.add(scene);
-    try { await element.play(); }
-    catch { this.musicStarted = false; }
+    try {
+      await element.play();
+      this.musicRetryAfter.delete(scene);
+    } catch {
+      // A transient network stall must not permanently silence the soundtrack.
+      // Autoplay failures are naturally retried after the next user unlock.
+      this.musicRetryAfter.set(scene, Date.now() + 3_000);
+    }
     finally { this.musicPlayPending.delete(scene); }
   }
 
@@ -240,11 +275,12 @@ export class SynthAudio {
   }
 
   mixMusic(immediate: boolean, dt = 1 / 60) {
-    const base = this.settings.muted ? 0 : Math.min(0.46, this.settings.volume * 0.44);
+    const base = effectiveMusicVolume(this.settings);
     const blend = immediate ? 1 : 1 - Math.exp(-Math.max(0, dt) * 1.55);
     for (const [scene, element] of this.music.entries()) {
       const target = scene === this.musicScene ? base : 0;
-      if (target > 0 && this.musicStarted && element.paused) void this.playMusicScene(scene);
+      const retryReady = Date.now() >= (this.musicRetryAfter.get(scene) ?? 0);
+      if (target > 0 && this.musicStarted && element.paused && retryReady) void this.playMusicScene(scene);
       element.volume += (target - element.volume) * blend;
       if (target === 0 && element.volume < 0.001) {
         element.volume = 0;
@@ -513,11 +549,23 @@ export class SynthAudio {
     }
   }
 
+  /** Procedural storm strike with a close crack and a longer, lower roll. */
+  playThunder(distance = 0) {
+    if (!this.context || !this.master || this.settings.muted) return;
+    const delay = Math.max(0, Math.min(2.4, distance / 170));
+    const weight = Math.max(0.28, 1 - distance / 260);
+    this.noiseBurst(0.16, 2_150, 0.16 * weight, true, delay);
+    this.noiseBurst(1.35, 92, 0.115 * weight, false, delay + 0.07);
+    this.tone(58, 1.12, 0.055 * weight, "sawtooth", delay + 0.08, 31);
+    this.noiseBurst(0.82, 150, 0.054 * weight, false, delay + 0.65);
+  }
+
   dispose() {
     this.disposed = true;
     this.sampleAbort?.abort();
     try {
       this.ambience?.stop();
+      this.rainAmbience?.stop();
       for (const [source, gain] of this.activeSamples) {
         source.onended = null;
         try { source.stop(); } catch { /* The source may already have ended. */ }
@@ -534,6 +582,7 @@ export class SynthAudio {
       }
       this.music.clear();
       this.musicPlayPending.clear();
+      this.musicRetryAfter.clear();
       void this.context?.close();
     } catch {
       // Already closed.

@@ -32,6 +32,18 @@ const APP_ID = "blockwild-multiplayer-v1";
 const INVITE_ACTION = "bwinvite";
 const ANSWER_ACTION = "bwanswer";
 const CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+/**
+ * A small explicitly verified relay set avoids repeatedly reconnecting to a
+ * dead default relay (notably the old Halifax endpoint) while retaining enough
+ * independent Nostr rendezvous paths for home networks and school firewalls.
+ */
+export const RENDEZVOUS_RELAY_URLS = Object.freeze([
+  "wss://nos.lol",
+  "wss://relay.mostr.pub",
+  "wss://relay.nostr.place",
+  "wss://purplerelay.com",
+  "wss://nostr-01.yakihonne.com",
+]);
 
 export function normalizeRoomCode(value: string) {
   const clean = value.toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24);
@@ -63,6 +75,7 @@ export async function defaultRendezvousRoomFactory(role: RendezvousRole, code: s
     appId: APP_ID,
     password: code,
     trickleIce: true,
+    relayConfig: { urls: [...RENDEZVOUS_RELAY_URLS] },
   }, code, {
     handshakeTimeoutMs: 12_000,
     onPeerHandshake: roleHandshake(role),
