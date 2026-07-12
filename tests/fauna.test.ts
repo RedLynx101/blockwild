@@ -453,6 +453,13 @@ test("creature sound events define Ridgeback and companion cues with a generic h
   assert.equal(CREATURE_SOUND_EVENTS.shadecrawler?.tame?.fallback, "craft");
   assert.equal(creatureSoundCue("thimbledeer", "hurt").asset, "creature-generic-hurt");
   assert.equal(creatureSoundCue("thimbledeer", "hurt").fallback, "attack");
+  for (const kind of ["wild-horse", "rimehoof-courser", "sunscar-courser", "mirestride-courser", "starbough-courser", "mistmane"] as const) {
+    const sound = creatureSoundCue(kind, "ambient");
+    assert.equal(sound.asset, "horse-whinny-a");
+    assert.deepEqual(sound.variants, ["horse-whinny-b"]);
+  }
+  assert.equal(creatureSoundCue("deepgear-courser-golem", "ambient").asset, "deepgear-courser-whinny");
+  assert.equal(creatureSoundCue("deepgear-courser-golem", "ambient").variants, undefined);
 });
 
 test("connected exhibit blocks cap at 20, grow lower flowers, and store one exact butterfly per block", () => {

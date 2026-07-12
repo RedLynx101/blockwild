@@ -102,8 +102,14 @@ test("the four silhouettes carry distinct elemental anatomy in production portra
   assert.ok(ice.boxes.some((box) => box.id.includes("ice-tail-fin")));
   assert.ok(steel.boxes.filter((box) => box.id.includes("riveted-plate")).length >= 10);
   assert.ok(steel.boxes.some((box) => box.id === "steel-dragon-steel-tail-hammer"));
+  assert.ok(steel.boxes.some((box) => box.id === "steel-dragon-pressure-core"));
+  assert.ok(steel.boxes.some((box) => box.id.includes("wing-gear-hub")));
+  assert.ok(steel.boxes.some((box) => box.id.includes("jaw-piston")));
   assert.ok(sea.boxes.some((box) => box.id.includes("sea-tail-fin")));
   assert.ok(sea.boxes.filter((box) => box.id.includes("sea-dorsal-fin")).length >= 4);
+  assert.ok(sea.boxes.some((box) => box.id === "sea-dragon-tideglass-sternum"));
+  assert.ok(sea.boxes.some((box) => box.id.includes("current-whisker")));
+  assert.ok(sea.boxes.some((box) => box.id.includes("ray-sail-rib")));
   for (const spec of specs) {
     const portrait = renderModelPortrait(spec);
     assert.match(portrait, /front three-quarter model portrait/u);

@@ -26,3 +26,17 @@ test("Suno combat, settlement, coast, and deep-sea scores are present and comple
     assert.ok(id3 || mpegFrame, `${name} should begin with an MP3 container or frame header`);
   }
 });
+
+test("natural and Deepgear horse calls are lossless PCM WAV assets", () => {
+  for (const [name, minimumBytes] of [
+    ["horse-whinny-a.wav", 300_000],
+    ["horse-whinny-b.wav", 500_000],
+    ["deepgear-courser-whinny.wav", 500_000],
+  ]) {
+    const path = resolve("public", "sfx", name);
+    assert.ok(statSync(path).size > minimumBytes, `${name} should contain the complete supplied call`);
+    const bytes = readFileSync(path).subarray(0, 12);
+    assert.equal(bytes.subarray(0, 4).toString("ascii"), "RIFF");
+    assert.equal(bytes.subarray(8, 12).toString("ascii"), "WAVE");
+  }
+});

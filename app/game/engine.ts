@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { SynthAudio } from "./audio";
+import { SynthAudio, type SampleKind } from "./audio";
 import {
   BLOCKS,
   CREATIVE_BLOCKS,
@@ -626,6 +626,13 @@ const NEUTRAL_CREATURE_ORB_KINDS = {
   "copper-scout-golem-orb": "copper-scout-golem",
   "deepgear-courser-golem-orb": "deepgear-courser-golem",
 } as const satisfies Readonly<Record<string, MobKind>>;
+const CREATURE_SAMPLE_BY_ASSET = {
+  "ridgeback-warm-huff": "ridgebackWarmHuff",
+  "shadecrawler-stone-chitter": "shadecrawlerStoneChitter",
+  "horse-whinny-a": "horseWhinnyA",
+  "horse-whinny-b": "horseWhinnyB",
+  "deepgear-courser-whinny": "deepgearCourserWhinny",
+} as const satisfies Readonly<Record<string, SampleKind>>;
 
 export type GameSettings = {
   volume: number;
@@ -6689,11 +6696,9 @@ export class VoxelEngine {
 
   playCreatureEvent(mob: MobEntity, event: CreatureSoundEvent) {
     const sound = creatureSoundCue(mob.kind as CoreMobKind, event);
-    const sample = sound.asset === "ridgeback-warm-huff"
-      ? "ridgebackWarmHuff"
-      : sound.asset === "shadecrawler-stone-chitter"
-        ? "shadecrawlerStoneChitter"
-        : null;
+    const assets = [sound.asset, ...(sound.variants ?? [])];
+    const asset = assets[Math.min(assets.length - 1, Math.floor(Math.random() * assets.length))];
+    const sample = CREATURE_SAMPLE_BY_ASSET[asset as keyof typeof CREATURE_SAMPLE_BY_ASSET] ?? null;
     if (sample) {
       this.audio.playSample(sample, {
         gain: sound.gain,
