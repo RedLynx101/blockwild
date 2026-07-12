@@ -259,22 +259,22 @@ const SAVANNA_PASSIVES: readonly WeightedMob[] = Object.freeze([
 ]);
 const SILTFEN_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["boglantern-mossling", 0.13], ["lanternshell", 0.15], ["puddlehopper", 0.12], ["reedstrider", 0.12],
-  ["mirestride-courser", 0.09], ["reed-dragonfly", 0.07], ["pebbletortoise", 0.04], ["canopy-lark", 0.03], ["dewback-tapir", 0.1], ["reedcrown-deer", 0.15],
+  ["mirestride-courser", 0.09], ["reed-dragonfly", 0.07], ["lightning-bug", 0.1], ["pebbletortoise", 0.04], ["canopy-lark", 0.03], ["dewback-tapir", 0.1], ["reedcrown-deer", 0.15],
 ]);
 const FOREST_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["brambleboar", 0.15], ["mossling", 0.13], ["canopy-lark", 0.1], ["thimbledeer", 0.12],
   ["petalfox", 0.09], ["wild-horse", 0.05], ["bramblewhisk-cat", 0.07], ["meadow-cow", 0.02], ["dewback-tapir", 0.05], ["burrowbell", 0.04], ["sakurakit", 0.03],
   ["meadow-cottontail", 0.1], ["russet-rabbit", 0.05],
 ]);
-const MUSHROOM_PASSIVES: readonly WeightedMob[] = Object.freeze([["lanternshell", 0.32], ["glowmoth", 0.22], ["puddlehopper", 0.2], ["petalfox", 0.12], ["boglantern-mossling", 0.14]]);
+const MUSHROOM_PASSIVES: readonly WeightedMob[] = Object.freeze([["lanternshell", 0.28], ["glowmoth", 0.2], ["lightning-bug", 0.14], ["puddlehopper", 0.17], ["petalfox", 0.1], ["boglantern-mossling", 0.12]]);
 const MEADOW_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["thimbledeer", 0.14], ["petalfox", 0.11], ["puddlehopper", 0.06], ["reedstrider", 0.07],
   ["pebbletortoise", 0.08], ["canopy-lark", 0.08], ["peelop", 0.04], ["ridgeback", 0.1],
-  ["wild-horse", 0.1], ["meadow-cow", 0.1], ["burrowbell", 0.06], ["meadow-cottontail", 0.18],
+  ["wild-horse", 0.1], ["meadow-cow", 0.1], ["burrowbell", 0.06], ["lightning-bug", 0.08], ["meadow-cottontail", 0.18],
 ]);
 const RIVER_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["reedstrider", 0.26], ["reed-dragonfly", 0.2], ["puddlehopper", 0.16], ["lanternshell", 0.11],
-  ["pebbletortoise", 0.09], ["canopy-lark", 0.07], ["reedcrown-deer", 0.11],
+  ["pebbletortoise", 0.09], ["lightning-bug", 0.08], ["canopy-lark", 0.07], ["reedcrown-deer", 0.11],
 ]);
 const CLOUDREED_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["mistmane", 0.45], ["reed-dragonfly", 0.15], ["reedstrider", 0.12], ["canopy-lark", 0.1],
@@ -287,7 +287,7 @@ const UPLAND_PASSIVES: readonly WeightedMob[] = Object.freeze([
 ]);
 const RAINVEIL_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["dewback-tapir", 0.16], ["brambleboar", 0.12], ["canopy-lark", 0.11], ["boglantern-mossling", 0.11],
-  ["bramblewhisk-cat", 0.1], ["reed-dragonfly", 0.08], ["petalfox", 0.07], ["puddlehopper", 0.04], ["sakurakit", 0.05], ["reedcrown-deer", 0.16],
+  ["bramblewhisk-cat", 0.1], ["reed-dragonfly", 0.08], ["lightning-bug", 0.1], ["petalfox", 0.07], ["puddlehopper", 0.04], ["sakurakit", 0.05], ["reedcrown-deer", 0.16],
 ]);
 const SAKURABLOOM_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["sakurakit", 0.38], ["petalfox", 0.18], ["thimbledeer", 0.14], ["canopy-lark", 0.1],
@@ -297,7 +297,7 @@ const SUGARPLUM_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["sprinklebug", 0.44], ["taffalo", 0.29], ["reed-dragonfly", 0.05], ["puddlehopper", 0.03], ["chocolate-bunny", 0.19],
 ]);
 const GLIMMERWOOD_PASSIVES: readonly WeightedMob[] = Object.freeze([
-  ["glimmerhart", 0.24], ["runeowl", 0.16], ["starbough-courser", 0.11], ["moonbloom-mossling", 0.14], ["glowmoth", 0.1],
+  ["glimmerhart", 0.24], ["runeowl", 0.16], ["starbough-courser", 0.11], ["moonbloom-mossling", 0.14], ["glowmoth", 0.1], ["lightning-bug", 0.14],
   ["canopy-lark", 0.05], ["moonpetal-fox", 0.12], ["thimbledeer", 0.04], ["petalfox", 0.04],
 ]);
 const SNOWCAP_PASSIVES: readonly WeightedMob[] = Object.freeze([
@@ -410,6 +410,7 @@ export const NATURAL_GROUP_RANGES: Readonly<Partial<Record<MobKind, readonly [mi
   "dewback-tapir": [2, 4],
   warg: [2, 3],
   "reed-dragonfly": [2, 5],
+  "lightning-bug": [3, 8],
   "meadow-cottontail": [2, 5],
   "russet-rabbit": [2, 4],
   "frost-hare": [1, 3],

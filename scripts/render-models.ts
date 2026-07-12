@@ -235,6 +235,15 @@ export function createMobInspectionSpecs(): InspectionModelSpec[] {
   };
   return CORE_MOB_ORDER.map((kind, index) => {
     const model = createMobVisual(kind, stableDragonPortraitIds[kind as DragonKind] ?? -(index + 1));
+    const authoredScale = Math.max(0.1, Math.min(2, Number(model.visual.userData.authoredScale) || 1));
+    if (authoredScale !== 1) {
+      model.group.updateMatrixWorld(true);
+      const visualBounds = new THREE.Box3().setFromObject(model.visual);
+      const visualBaseY = model.visual.position.y;
+      const visualMinY = visualBounds.min.y;
+      model.visual.scale.setScalar(authoredScale);
+      model.visual.position.y = visualBaseY + (1 - authoredScale) * (visualMinY - visualBaseY);
+    }
     const airborne = kind === "glowmoth" || MOB_DEFS[kind].flying || MOB_DEFS[kind].aquatic;
     // The old inspector shifted every visual until its lowest vertex touched
     // the ground. That produced attractive sheets while hiding bad runtime

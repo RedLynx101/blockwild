@@ -201,6 +201,7 @@ export enum BlockId {
   ArgentDragonstone = 193,
   GoldDragonEggBlock = 194,
   SilverDragonEggBlock = 195,
+  LightningBugJar = 196,
   /** v0.9 Dragonwake lair materials, eggs, treasure and archive stations. */
   CharredDragonstone = 217,
   RimeDragonstone = 218,
@@ -570,6 +571,8 @@ export const Item = {
   SilverElderLairSurvey: 449,
   GildedDragonstoneItem: 450,
   ArgentDragonstoneItem: 451,
+  Shears: 452,
+  LightningBugJar: 453,
 } as const;
 
 export type ItemCode = number;
@@ -600,7 +603,7 @@ export type BlockDefinition = {
   color: string;
   preferredTool: BlockTool;
   requiredTier: number;
-  shape?: "cube" | "cross" | "tall-flower" | "aquatic" | "torch" | "door" | "chest" | "bed" | "exhibit" | "aquarium" | "fireplace" | "bush" | "fruit" | "fence" | "gate" | "apiary" | "wild-hive" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "incubator" | "archive-shelf" | "tome-display" | "gold-pile" | "dragon-egg" | "chair" | "table" | "stool" | "shelf" | "barrel";
+  shape?: "cube" | "cross" | "tall-flower" | "aquatic" | "torch" | "door" | "chest" | "bed" | "exhibit" | "aquarium" | "fireplace" | "bush" | "fruit" | "fence" | "gate" | "apiary" | "wild-hive" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "incubator" | "archive-shelf" | "tome-display" | "gold-pile" | "dragon-egg" | "lightning-bug-jar" | "chair" | "table" | "stool" | "shelf" | "barrel";
   replaceable?: boolean;
   liquid?: "water" | "lava" | "honey" | "syrup";
   /** The block occupies a water source cell; breaking it restores the water. */
@@ -628,7 +631,7 @@ export type ItemDefinition = {
   armor?: number;
   food?: number;
   fuel?: number;
-  useKind?: "net" | "release-creature" | "boat" | "creature-cage" | "capture-orb" | "magic-relic" | "plant" | "hoe" | "scythe" | "bucket" | "lead" | "shield" | "blueprint" | "potion" | "ranged-weapon" | "spear" | "seed-pouch" | "spell-tome" | "mana-consumable" | "dragon-egg" | "dragon-module" | "lair-survey";
+  useKind?: "net" | "release-creature" | "boat" | "creature-cage" | "capture-orb" | "magic-relic" | "plant" | "hoe" | "scythe" | "shears" | "bucket" | "lead" | "shield" | "blueprint" | "potion" | "ranged-weapon" | "spear" | "seed-pouch" | "spell-tome" | "mana-consumable" | "dragon-egg" | "dragon-module" | "lair-survey";
   /** Off-hand defensive contract; combat resolution lives in shields.ts. */
   shieldKind?: "wildwood-shield" | "sunmetal-shield";
   blueprintId?: string;
@@ -655,8 +658,8 @@ export type ItemDefinition = {
   /** Reuse a world atlas texture for the handheld/icon representation. */
   worldTextureBlock?: BlockId;
   /** Shared semantic model hooks consumed by held-item and dropped-item renderers. */
-  heldModel?: "wildwood-chest" | "apiary" | "capture-orb" | "dragon-egg" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "potion" | "mead" | "blueprint" | "crossbow" | "spear";
-  dropModel?: "wildwood-chest" | "apiary" | "capture-orb" | "dragon-egg" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "potion" | "mead" | "blueprint" | "crossbow" | "spear";
+  heldModel?: "wildwood-chest" | "apiary" | "capture-orb" | "dragon-egg" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "potion" | "mead" | "blueprint" | "crossbow" | "spear" | "shears" | "lightning-bug-jar";
+  dropModel?: "wildwood-chest" | "apiary" | "capture-orb" | "dragon-egg" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "potion" | "mead" | "blueprint" | "crossbow" | "spear" | "shears" | "lightning-bug-jar";
 };
 
 const block = (
@@ -883,6 +886,7 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.ArgentDragonstone]: block(BlockId.ArgentDragonstone, "Argent Dragonstone", 150, 150, 150, 5.2, "#8293aa", "pickaxe", 4, { layer: "emissive" }),
   [BlockId.GoldDragonEggBlock]: block(BlockId.GoldDragonEggBlock, "Gold Dragon Egg", 151, 151, 151, 2.25, "#f0bd38", "pickaxe", 3, { solid: false, layer: "emissive", shape: "dragon-egg" }),
   [BlockId.SilverDragonEggBlock]: block(BlockId.SilverDragonEggBlock, "Silver Dragon Egg", 152, 152, 152, 2.25, "#c7d6e8", "pickaxe", 3, { solid: false, layer: "emissive", shape: "dragon-egg" }),
+  [BlockId.LightningBugJar]: block(BlockId.LightningBugJar, "Lightning Bug Jar", 12, 12, 12, 0.28, "#d8f5c2", "hand", 0, { solid: false, layer: "cutout", shape: "lightning-bug-jar" }),
   [BlockId.CharredDragonstone]: block(BlockId.CharredDragonstone, "Charred Dragonstone", 43, 43, 43, 3.8, "#443238", "pickaxe", 3),
   [BlockId.RimeDragonstone]: block(BlockId.RimeDragonstone, "Rime Dragonstone", 41, 41, 41, 3.8, "#9cc7dc", "pickaxe", 3),
   [BlockId.RivetedDragonstone]: block(BlockId.RivetedDragonstone, "Riveted Dragonstone", 35, 35, 35, 4.25, "#68747c", "pickaxe", 3),
@@ -986,6 +990,7 @@ const technicalBlocks = new Set<BlockId>([
   BlockId.BluepodSprout, BlockId.BluepodYoung, BlockId.BluepodCrop,
   BlockId.GlassAquarium, BlockId.HearthFireplace,
   BlockId.GildedDragonstone, BlockId.ArgentDragonstone, BlockId.GoldDragonEggBlock, BlockId.SilverDragonEggBlock,
+  BlockId.LightningBugJar,
   BlockId.CharredDragonstone, BlockId.RimeDragonstone, BlockId.RivetedDragonstone,
   BlockId.GoldBlock, BlockId.GoldPile,
   BlockId.FireDragonEggBlock, BlockId.IceDragonEggBlock, BlockId.SteelDragonEggBlock,
@@ -1342,6 +1347,8 @@ Object.assign(ITEMS, {
   [Item.SunmetalShield]: { id: Item.SunmetalShield, name: "Sunmetal Shield", color: "#d4b9a7", maxStack: 1, maxDurability: 472, useKind: "shield", shieldKind: "sunmetal-shield", iconKind: "shield" },
   [Item.GlassAquariumItem]: { id: Item.GlassAquariumItem, name: "Connected Glass Aquarium", color: "#8fd8dd", maxStack: 64, placeBlock: BlockId.GlassAquarium, iconKind: "aquarium" },
   [Item.HearthFireplaceItem]: { id: Item.HearthFireplaceItem, name: "Hearth Fireplace", color: "#d36b3c", maxStack: 16, placeBlock: BlockId.HearthFireplace, iconKind: "fireplace" },
+  [Item.Shears]: { id: Item.Shears, name: "Sunmetal Shears", color: "#d4b9a7", maxStack: 1, maxDurability: 256, useKind: "shears", iconKind: "sword", heldModel: "shears", dropModel: "shears" },
+  [Item.LightningBugJar]: { id: Item.LightningBugJar, name: "Lightning Bug Jar", color: "#d7ff62", maxStack: 16, placeBlock: BlockId.LightningBugJar, iconKind: "bottle", heldModel: "lightning-bug-jar", dropModel: "lightning-bug-jar" },
 } satisfies Record<number, ItemDefinition>);
 
 /**
@@ -1442,6 +1449,7 @@ export const BLOCK_ITEM_ALIASES: Readonly<Partial<Record<BlockId, ItemCode>>> = 
   [BlockId.ArgentDragonstone]: Item.ArgentDragonstoneItem,
   [BlockId.GoldDragonEggBlock]: Item.GoldDragonEgg,
   [BlockId.SilverDragonEggBlock]: Item.SilverDragonEgg,
+  [BlockId.LightningBugJar]: Item.LightningBugJar,
   [BlockId.CharredDragonstone]: Item.CharredDragonstoneItem,
   [BlockId.RimeDragonstone]: Item.RimeDragonstoneItem,
   [BlockId.RivetedDragonstone]: Item.RivetedDragonstoneItem,
@@ -1613,7 +1621,7 @@ export const V1_2_HOMESTEAD_ITEMS: readonly ItemCode[] = Object.freeze([
 
 export const CREATIVE_BLOCKS: ItemCode[] = [...new Set<ItemCode>([...DRAGON_ITEMS, ...V1_CULTURE_ITEMS, ...V1_STORAGE_ITEMS, ...V1_2_HOMESTEAD_ITEMS, ...Object.values(BLOCKS)
   .filter((definition) => ITEMS[definition.id] && BLOCK_ITEM_ALIASES[definition.id] === undefined && !definition.replaceable && definition.id !== BlockId.WheatCrop)
-  .map((definition) => definition.id), ...CREATIVE_FLORA, ...Object.values(BLOCK_ITEM_ALIASES).filter((item): item is ItemCode => item !== undefined), Item.WildwoodDoor, Item.WildwoodBed, Item.Sailboat, Item.CaptureOrb, Item.WorldshellEgg, Item.AetherbellEgg, Item.Shellfruit, Item.Reefglass, Item.LivingCoral, Item.LumenPearl, Item.PrismaticPearl, Item.TideglassTrident, Item.GlowmenderSalve, Item.TemperedRootspike, Item.RareSeedPouch, Item.WargFeed, Item.Honeycomb, Item.HoneyJar, Item.RoyalJelly, Item.Beeswax, Item.MilkBottle, Item.CloudglassRelic, Item.QueenCell, Item.WorkerBee, Item.GlassBottle, Item.WaterBottle, Item.HealthPotion, Item.WayfarerPotion, Item.HearthwardTonic, Item.GloamstepElixir, Item.WaterBreathingPotion, Item.Honeymead, Item.HobbitCrossbowBlueprint, Item.FineCrossbowBlueprint, Item.GoblinSpearBlueprint, Item.GloamstepBlueprint, Item.HearthwardBlueprint, Item.MeadBlueprint, Item.HearthguardCrossbow, Item.WayfarerCrossbow, Item.CrossbowBolt, Item.GoblinsmithSpear, Item.Berry, Item.Sunberry, Item.Apple, Item.Banana, Item.Wheat, Item.WheatSeeds, Item.Moonrice, Item.MoonriceSeeds, Item.Sunroot, Item.SunrootStarts, Item.SaltbrushSprig, Item.CoastAsterPetal, Item.LumenKelpFrond, Item.StarCoralShard, Item.AbyssBloomNectar, Item.TidevineFiber, Item.RainveilLog, Item.SakurabloomLog, Item.RainveilSapling, Item.SakurabloomSapling, Item.SakuraBloomItem, Item.DreamblossomItem, Item.RainveilFernItem, Item.LanternLotusItem, Item.WildwoodTableItem, Item.WildwoodStoolItem, Item.WildwoodShelfItem, Item.SealedBarrelItem, Item.RainveilLeavesItem, Item.SakurabloomLeavesItem, Item.RainveilGrassBlock, Item.SakurabloomGrassBlock, Item.StarrootScepter, Item.Feather, Item.RawFish, Item.CookedFish, Item.GlowScale, Item.BreatherCharm, Item.SunwardCompass, Item.WoodHoe, Item.StoneHoe, Item.IronHoe, Item.HarvestScythe, Item.Bucket, Item.WaterBucket, Item.LavaBucket, Item.HoneyBucket, Item.SyrupBucket, Item.Lead, Item.WildwoodFenceGate, Item.Saddle, Item.NocturneHeart, Item.ButterflyNet, Item.MeadowwingJar, Item.AzureSkipperJar, Item.EmbertipJar, Item.FrostveilJar, Item.BloomMonarchJar, Item.FenLanternJar, Item.BonbonwingTreat, Item.SyrupfinFillet, Item.CandiedAlloy, Item.RockcandySaber, Item.PeppermintLance, Item.FondantCrown, Item.FondantCuirass, Item.FondantGreaves, Item.FondantBoots, Item.PeppermintRush, Item.MarshmallowWard, Item.SugarcourtArmsBlueprint, Item.FondantArmorBlueprint, Item.PeppermintRushBlueprint, Item.MarshmallowWardBlueprint, Item.HideHood, Item.HideTunic, Item.HideLeggings, Item.HideBoots, Item.SunmetalHelm, Item.SunmetalPlate, Item.SunmetalGreaves, Item.SunmetalBoots])];
+  .map((definition) => definition.id), ...CREATIVE_FLORA, ...Object.values(BLOCK_ITEM_ALIASES).filter((item): item is ItemCode => item !== undefined), Item.Shears, Item.WildwoodDoor, Item.WildwoodBed, Item.Sailboat, Item.CaptureOrb, Item.WorldshellEgg, Item.AetherbellEgg, Item.Shellfruit, Item.Reefglass, Item.LivingCoral, Item.LumenPearl, Item.PrismaticPearl, Item.TideglassTrident, Item.GlowmenderSalve, Item.TemperedRootspike, Item.RareSeedPouch, Item.WargFeed, Item.Honeycomb, Item.HoneyJar, Item.RoyalJelly, Item.Beeswax, Item.MilkBottle, Item.CloudglassRelic, Item.QueenCell, Item.WorkerBee, Item.GlassBottle, Item.WaterBottle, Item.HealthPotion, Item.WayfarerPotion, Item.HearthwardTonic, Item.GloamstepElixir, Item.WaterBreathingPotion, Item.Honeymead, Item.HobbitCrossbowBlueprint, Item.FineCrossbowBlueprint, Item.GoblinSpearBlueprint, Item.GloamstepBlueprint, Item.HearthwardBlueprint, Item.MeadBlueprint, Item.HearthguardCrossbow, Item.WayfarerCrossbow, Item.CrossbowBolt, Item.GoblinsmithSpear, Item.Berry, Item.Sunberry, Item.Apple, Item.Banana, Item.Wheat, Item.WheatSeeds, Item.Moonrice, Item.MoonriceSeeds, Item.Sunroot, Item.SunrootStarts, Item.SaltbrushSprig, Item.CoastAsterPetal, Item.LumenKelpFrond, Item.StarCoralShard, Item.AbyssBloomNectar, Item.TidevineFiber, Item.RainveilLog, Item.SakurabloomLog, Item.RainveilSapling, Item.SakurabloomSapling, Item.SakuraBloomItem, Item.DreamblossomItem, Item.RainveilFernItem, Item.LanternLotusItem, Item.WildwoodTableItem, Item.WildwoodStoolItem, Item.WildwoodShelfItem, Item.SealedBarrelItem, Item.RainveilLeavesItem, Item.SakurabloomLeavesItem, Item.RainveilGrassBlock, Item.SakurabloomGrassBlock, Item.StarrootScepter, Item.Feather, Item.RawFish, Item.CookedFish, Item.GlowScale, Item.BreatherCharm, Item.SunwardCompass, Item.WoodHoe, Item.StoneHoe, Item.IronHoe, Item.HarvestScythe, Item.Bucket, Item.WaterBucket, Item.LavaBucket, Item.HoneyBucket, Item.SyrupBucket, Item.Lead, Item.WildwoodFenceGate, Item.Saddle, Item.NocturneHeart, Item.ButterflyNet, Item.MeadowwingJar, Item.AzureSkipperJar, Item.EmbertipJar, Item.FrostveilJar, Item.BloomMonarchJar, Item.FenLanternJar, Item.BonbonwingTreat, Item.SyrupfinFillet, Item.CandiedAlloy, Item.RockcandySaber, Item.PeppermintLance, Item.FondantCrown, Item.FondantCuirass, Item.FondantGreaves, Item.FondantBoots, Item.PeppermintRush, Item.MarshmallowWard, Item.SugarcourtArmsBlueprint, Item.FondantArmorBlueprint, Item.PeppermintRushBlueprint, Item.MarshmallowWardBlueprint, Item.HideHood, Item.HideTunic, Item.HideLeggings, Item.HideBoots, Item.SunmetalHelm, Item.SunmetalPlate, Item.SunmetalGreaves, Item.SunmetalBoots])];
 
 export function worldTextureBlockForItem(item: ItemCode): BlockId | undefined {
   const definition = ITEMS[item];
@@ -1669,6 +1677,7 @@ export const RECIPES: Recipe[] = [
   { id: "woven-cloudwool", name: "Woven Cloudwool", width: 2, height: 2, pattern: [Item.String, Item.String, Item.String, Item.String], output: { item: Item.Wool, count: 1 }, table: false },
   { id: "wildwood-shield", name: "Wildwood Shield", width: 3, height: 3, pattern: [BlockId.Planks, Item.Stick, BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks, 0, BlockId.Planks, 0], output: { item: Item.WoodenShield, count: 1 }, table: true },
   { id: "sunmetal-shield", name: "Sunmetal Shield", width: 3, height: 3, pattern: [Item.SunmetalIngot, Item.SunmetalIngot, Item.SunmetalIngot, Item.SunmetalIngot, Item.WoodenShield, Item.SunmetalIngot, 0, Item.SunmetalIngot, 0], output: { item: Item.SunmetalShield, count: 1 }, table: true },
+  { id: "sunmetal-shears", name: "Sunmetal Shears", width: 2, height: 2, pattern: [0, Item.SunmetalIngot, Item.SunmetalIngot, 0], output: { item: Item.Shears, count: 1 }, table: true, mirrored: true },
   { id: "connected-aquarium", name: "Connected Glass Aquariums", width: 3, height: 3, pattern: [BlockId.Glass, BlockId.Glass, BlockId.Glass, BlockId.Glass, Item.Reefglass, BlockId.Glass, BlockId.Glass, BlockId.Gravel, BlockId.Glass], output: { item: Item.GlassAquariumItem, count: 2 }, table: true },
   { id: "hearth-fireplace", name: "Hearth Fireplace", width: 3, height: 3, pattern: [BlockId.StoneBrick, ANY_COAL, BlockId.StoneBrick, BlockId.StoneBrick, BlockId.Furnace, BlockId.StoneBrick, BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone], output: { item: Item.HearthFireplaceItem, count: 1 }, table: true },
   { id: "butterfly_exhibit", name: "Butterfly Conservatory", width: 3, height: 3, pattern: [BlockId.Glass, BlockId.Glass, BlockId.Glass, BlockId.Glass, anyFlower, BlockId.Glass, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: BlockId.ButterflyExhibit, count: 4 }, table: true },

@@ -586,6 +586,7 @@ const LIGHT_BLOCKS = new Set<BlockId>([
   BlockId.AetherConduit,
   BlockId.Moonwell,
   BlockId.HearthFireplace,
+  BlockId.LightningBugJar,
 ]);
 /**
  * Static voxel-light budget used while baking chunk vertex colors. The small
@@ -648,7 +649,7 @@ export function environmentSkyShade(cellY: number, skyTopY: number) {
 export function bakedEnvironmentLightShade(baseShade: number, x: number, y: number, z: number, sources: readonly BakedLightSource[]) {
   let shade = baseShade;
   for (const source of sources) {
-    const radius = source.type === BlockId.DeepgearLantern ? BAKED_LIGHT_RADIUS : TORCH_BLOCKS.includes(source.type) ? 13 : 15;
+    const radius = source.type === BlockId.DeepgearLantern ? BAKED_LIGHT_RADIUS : source.type === BlockId.LightningBugJar ? 10 : TORCH_BLOCKS.includes(source.type) ? 13 : 15;
     const distance = Math.hypot(source.x + 0.5 - x, source.y + 0.55 - y, source.z + 0.5 - z);
     if (distance >= radius) continue;
     const attenuation = 1 - distance / radius;
@@ -3265,6 +3266,17 @@ export class ChunkWorld {
           addTexturedCuboid(bucket, lx - 0.43, y - 0.5, lz - 0.38, lx + 0.43, y - 0.33, lz + 0.38, 41, 41, 41, [1, 1, 1], environment);
           addTexturedCuboid(bucket, lx - 0.31, y - 0.33, lz - 0.29, lx + 0.29, y - 0.17, lz + 0.31, 41, 41, 41, [1, 1, 1], environment);
           addTexturedCuboid(bucket, lx - 0.18, y - 0.17, lz - 0.16, lx + 0.21, y - 0.02, lz + 0.18, 41, 41, 41, [1, 1, 1], environment);
+          continue;
+        }
+        if (definition.shape === "lightning-bug-jar") {
+          const environment = shadeAt(lx, y, lz);
+          addTexturedCuboid(bucket, lx - 0.24, y - 0.5, lz - 0.24, lx + 0.24, y - 0.42, lz + 0.24, 41, 41, 41, [0.72, 0.58, 0.32], environment);
+          addTexturedCuboid(bucket, lx - 0.26, y + 0.08, lz - 0.26, lx + 0.26, y + 0.18, lz + 0.26, 41, 41, 41, [0.78, 0.56, 0.25], environment);
+          for (const x of [lx - 0.235, lx + 0.205]) addTexturedCuboid(buckets.transparent, x, y - 0.42, lz - 0.22, x + 0.03, y + 0.08, lz + 0.22, 12, 12, 12, [0.82, 1, 0.92], 1);
+          for (const z of [lz - 0.235, lz + 0.205]) addTexturedCuboid(buckets.transparent, lx - 0.22, y - 0.42, z, lx + 0.22, y + 0.08, z + 0.03, 12, 12, 12, [0.82, 1, 0.92], 1);
+          addTexturedCuboid(buckets.emissive, lx - 0.07, y - 0.2, lz - 0.04, lx + 0.07, y - 0.05, lz + 0.1, 13, 13, 13, [0.84, 1, 0.32], 1);
+          addTexturedCuboid(buckets.emissive, lx - 0.18, y - 0.14, lz - 0.02, lx - 0.04, y - 0.11, lz + 0.08, 13, 13, 13, [0.72, 0.92, 0.44], 1);
+          addTexturedCuboid(buckets.emissive, lx + 0.04, y - 0.14, lz - 0.02, lx + 0.18, y - 0.11, lz + 0.08, 13, 13, 13, [0.72, 0.92, 0.44], 1);
           continue;
         }
         if (definition.shape === "dragon-egg") {

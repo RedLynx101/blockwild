@@ -34,7 +34,7 @@ export type SurfaceMobKind =
   | "taffalo";
 export type BirdKind = "emberjay" | "canopy-lark" | "tidewing-gull" | "frostquill";
 export type AquaticMobKind = "shoalfin" | "coralback" | "brookdart" | "gloomfin" | "silverthread" | "reedneedle" | "emberribbon" | "cavefilament";
-export type PollinatorKind = "honeybee" | "hive-queen" | "reed-dragonfly";
+export type PollinatorKind = "honeybee" | "hive-queen" | "reed-dragonfly" | "lightning-bug";
 export type HearthroadsWildlifeKind = "burrowbell" | "dewback-tapir";
 export type HearthroadsAquaticKind = "redfin-salmon" | "blue-mackerel" | "deepwater-shark";
 export type TideglassAquaticKind =
@@ -320,7 +320,7 @@ const V1_CREATURE_MOBS: Record<V1FactionCreatureKind, MobDefinition> = {
   "copper-mole": {
     kind: "copper-mole", name: "Copper Mole", temperament: "Gentle", hostile: false,
     health: 15, damage: 2, xp: 5, speed: 0.72, chaseSpeed: 2.25, turnRate: 5, attackRange: 1.1,
-    footOffset: 0.625744, radius: 0.52, height: 0.62, habitat: "Snowcap Range tunnels and Deepgear Holds", active: "All hours underground",
+    footOffset: 0.60047, radius: 0.52, height: 0.62, habitat: "Snowcap Range tunnels and Deepgear Holds", active: "All hours underground",
     behavior: "Sniffs out exposed ore, sleeps beside warm machinery, and digs short harmless furrows when excited.",
     lore: "Its copper-colored guard hairs are keratin, though no Deepgear child accepts that explanation.", colors: [0x7a533d, 0xc17d4f, 0xf3c879],
     drops: [{ item: Item.Flint, min: 1, max: 2, chance: 0.55 }], family: "pet", movement: "ground", persistent: true, sentient: false,
@@ -631,7 +631,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
   lanternshell: {
     kind: "lanternshell", name: "Lanternshell", temperament: "Gentle", hostile: false,
     health: 9, damage: 0, xp: 3, speed: 0.2, chaseSpeed: 0.44, turnRate: 2.2, attackRange: 0,
-    footOffset: 0.77, radius: 0.56, height: 0.74, habitat: "Siltfen roots and luminous mushroom hollows", active: "Rain, dusk and humid nights",
+    footOffset: 0.78, radius: 0.34, height: 0.46, habitat: "Siltfen roots and luminous mushroom hollows", active: "Rain, dusk and humid nights",
     behavior: "Glides over moss, rests beneath broad leaves, and brightens its glassy spiral shell when rain begins.",
     lore: "Fen paths once used sleeping Lanternshells as milestones. They moved slowly enough that the maps were usually right.",
     colors: [0x526845, 0x7fd6a8, 0xf2ffb0],
@@ -643,7 +643,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
   puddlehopper: {
     kind: "puddlehopper", name: "Puddlehopper", temperament: "Skittish", hostile: false,
     health: 4, damage: 0, xp: 2, speed: 0.58, chaseSpeed: 2.55, turnRate: 8.2, attackRange: 0,
-    footOffset: 0.8, radius: 0.38, height: 0.58, habitat: "River reeds, Siltfen pools and rainy meadow hollows", active: "Rain and humid daylight",
+    footOffset: 0.890704, radius: 0.38, height: 0.58, habitat: "River reeds, Siltfen pools and rainy meadow hollows", active: "Rain and humid daylight",
     behavior: "Bounds frequently between reeds, doubles its hop cadence in rain, and launches into faster springing leaps when startled.",
     lore: "Each throat pouch carries a different hollow note. A whole pond sounds like rain falling into clay cups.",
     colors: [0x5e9b69, 0xd5c85b, 0x182a20],
@@ -893,6 +893,16 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     colors: [0x4ab6a0, 0x274958, 0xbdebd9], drops: [],
     family: "pollinator", movement: "flying", flying: true, utility: "A living marker for healthy reeds and insect-rich water.", captureItem: Item.CaptureOrb,
   },
+  "lightning-bug": {
+    kind: "lightning-bug", name: "Lightning Bug", temperament: "Gentle", hostile: false,
+    health: 1, damage: 0, xp: 1, speed: 1.55, chaseSpeed: 3.1, turnRate: 12.5, attackRange: 0,
+    footOffset: 1.05, radius: 0.1, height: 0.11, habitat: "Humid meadows, Siltfen pools and Glimmerwood clearings", active: "Dusk, night and warm rain",
+    behavior: "Drifts between flowers in pulsing groups, blinking brighter when another light flashes nearby.",
+    lore: "Trailkeepers call their irregular lantern code summer lightning: a storm small enough to hold in one hand.",
+    colors: [0x263621, 0xd7ff62, 0xe8f7cc], drops: [],
+    family: "pollinator", movement: "flying", flying: true, utility: "Can be caught in a bottle and carried or placed as a gentle living light.", captureItem: Item.CaptureOrb,
+    discoveryHint: "Search humid meadows and fen water after sunset for blinking green-gold clusters.",
+  },
   peelop: {
     kind: "peelop", name: "Peelop", temperament: "Gentle", hostile: false,
     health: 7, damage: 2, xp: 3, speed: 0.7, chaseSpeed: 2.8, turnRate: 7.8, attackRange: 1.55,
@@ -910,7 +920,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
   "meadow-cottontail": {
     kind: "meadow-cottontail", name: "Meadow Cottontail", temperament: "Skittish", hostile: false,
     health: 4, damage: 0, xp: 2, speed: 0.88, chaseSpeed: 3.35, turnRate: 9.2, attackRange: 0,
-    footOffset: 0.82, radius: 0.31, height: 0.56, habitat: "Flower meadows, orchard edges and open Wildwood", active: "Dawn and daylight",
+    footOffset: 0.83, radius: 0.31, height: 0.56, habitat: "Flower meadows, orchard edges and open Wildwood", active: "Dawn and daylight",
     behavior: "Nibbles low flowers in family groups, follows a visible Suncrest Carrot, and otherwise escapes in quick zig-zag hops.",
     lore: "Its white tail is an alarm flag shared by the entire warren.", colors: [0xb99878, 0xf0e4d2, 0x251b18],
     drops: [{ item: Item.RawMeat, min: 1, max: 1, chance: 0.55 }, { item: Item.Hide, min: 1, max: 1, chance: 0.18 }],
@@ -922,7 +932,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
   "russet-rabbit": {
     kind: "russet-rabbit", name: "Russet Rabbit", temperament: "Skittish", hostile: false,
     health: 5, damage: 0, xp: 2, speed: 0.94, chaseSpeed: 3.55, turnRate: 9.6, attackRange: 0,
-    footOffset: 0.82, radius: 0.32, height: 0.58, habitat: "Savanna shade, Birchlight scrub and upland fields", active: "Morning and late afternoon",
+    footOffset: 0.83, radius: 0.32, height: 0.58, habitat: "Savanna shade, Birchlight scrub and upland fields", active: "Morning and late afternoon",
     behavior: "Freezes against dry brush, then springs for the nearest cover unless tempted by fresh roots.",
     lore: "Russet coats carry the same broken pattern as late-summer soil.", colors: [0x9c5f38, 0xe0a16d, 0x2d1b14],
     drops: [{ item: Item.RawMeat, min: 1, max: 1, chance: 0.62 }, { item: Item.Hide, min: 1, max: 1, chance: 0.22 }],
@@ -933,7 +943,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
   "frost-hare": {
     kind: "frost-hare", name: "Frost Hare", temperament: "Skittish", hostile: false,
     health: 6, damage: 0, xp: 3, speed: 1.02, chaseSpeed: 3.8, turnRate: 9.4, attackRange: 0,
-    footOffset: 0.82, radius: 0.34, height: 0.67, habitat: "Frostpine clearings, Snowcap foothills and snowfields", active: "Cold daylight",
+    footOffset: 0.83, radius: 0.34, height: 0.67, habitat: "Frostpine clearings, Snowcap foothills and snowfields", active: "Cold daylight",
     behavior: "Bounds over powder in long pairs of tracks and approaches only when a traveler holds food without sprinting.",
     lore: "The dark tips of its winter ears are the only parts a snowstorm cannot erase.", colors: [0xe7e6df, 0x8a9097, 0x202329],
     drops: [{ item: Item.RawMeat, min: 1, max: 1, chance: 0.58 }, { item: Item.Hide, min: 1, max: 1, chance: 0.3 }],
@@ -944,7 +954,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
   "chocolate-bunny": {
     kind: "chocolate-bunny", name: "Cocoa Truffle Bunny", temperament: "Skittish", hostile: false,
     health: 4, damage: 0, xp: 3, speed: 0.82, chaseSpeed: 3.1, turnRate: 9, attackRange: 0,
-    footOffset: 0.82, radius: 0.31, height: 0.55, habitat: "Sugarplum Vale cocoa gardens and syrup-dry knolls", active: "Clear daylight",
+    footOffset: 0.83, radius: 0.31, height: 0.55, habitat: "Sugarplum Vale cocoa gardens and syrup-dry knolls", active: "Clear daylight",
     behavior: "Hides beneath candy shrubs, follows Cocoa Nibs or carrots, and sheds a wrapped chocolate likeness when defeated.",
     lore: "Sugarcourt children insist the tiny bow on its neck grows naturally.", colors: [0x704126, 0xd49a62, 0xffe1df],
     drops: [{ item: Item.ChocolateBunny, min: 1, max: 1, chance: 1 }], family: "rabbit", movement: "ground",
@@ -1817,7 +1827,7 @@ export const SURFACE_MOB_ORDER: SurfaceMobKind[] = [
 ];
 export const BIRD_ORDER: BirdKind[] = ["emberjay", "canopy-lark", "tidewing-gull", "frostquill"];
 export const AQUATIC_MOB_ORDER: AquaticMobKind[] = ["shoalfin", "coralback", "brookdart", "gloomfin", "silverthread", "reedneedle", "emberribbon", "cavefilament"];
-export const POLLINATOR_ORDER: PollinatorKind[] = ["honeybee", "hive-queen", "reed-dragonfly"];
+export const POLLINATOR_ORDER: PollinatorKind[] = ["honeybee", "hive-queen", "reed-dragonfly", "lightning-bug"];
 export const HEARTHROADS_WILDLIFE_ORDER: HearthroadsWildlifeKind[] = ["burrowbell", "dewback-tapir"];
 export const HEARTHROADS_AQUATIC_ORDER: HearthroadsAquaticKind[] = ["redfin-salmon", "blue-mackerel", "deepwater-shark"];
 export const TIDEGLASS_AQUATIC_ORDER: TideglassAquaticKind[] = [

@@ -109,7 +109,8 @@ test("expanded ecology catalog includes mounts, livestock, thin fish, pollinator
   }
   assert.deepEqual(BIRD_ORDER, ["emberjay", "canopy-lark", "tidewing-gull", "frostquill"]);
   assert.equal(AQUATIC_MOB_ORDER.length, 8);
-  assert.equal(POLLINATOR_ORDER.length, 3);
+  assert.equal(POLLINATOR_ORDER.length, 4);
+  assert.ok(POLLINATOR_ORDER.includes("lightning-bug"));
   assert.deepEqual(MOSSLING_VARIANT_ORDER, ["boglantern-mossling", "cindercone-mossling", "moonbloom-mossling"]);
   assert.ok(TIDEGLASS_AQUATIC_ORDER.includes("reefglide-terrapin"));
   assert.deepEqual(fishKindsForHabitat("ocean"), [
@@ -168,8 +169,9 @@ test("expanded ecology catalog includes mounts, livestock, thin fish, pollinator
   assert.equal(passiveMobKindForBiome(BiomeId.Meadow, 0.01), "thimbledeer");
   assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.3), "puddlehopper");
   assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.45), "reedstrider");
-  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.6), "mirestride-courser");
-  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.68), "pebbletortoise");
+  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.54), "mirestride-courser");
+  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.68), "lightning-bug");
+  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.72), "pebbletortoise");
   assert.equal(CORE_MOB_ORDER.filter((kind) => MOB_DEFS[kind].sentient).length, SENTIENT_MOB_ORDER.length);
   assert.equal(usesGenericCreatureBond("rimecoat-hound"), true);
   assert.equal(usesGenericCreatureBond("bramblewhisk-cat"), true);

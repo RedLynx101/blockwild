@@ -42,7 +42,12 @@ export type SampleKind =
   | "catCallB"
   | "houndCallA"
   | "houndCallB"
-  | "crabChitter";
+  | "crabChitter"
+  | "puddlehopperCroak"
+  | "copperMoleSniff"
+  | "reedstriderCall"
+  | "dragonAmbientGrowl"
+  | "wargDeepGrowl";
 export type SamplePlaybackOptions = { gain?: number; playbackRate?: number; detune?: number; when?: number };
 export type DragonSoundType = "fire" | "ice" | "steel" | "sea" | "gold" | "silver";
 export type DragonSoundEvent = "ambient" | "roar" | "hurt" | "death" | "wing" | "melee" | "breath" | "projectile" | "egg-crack";
@@ -107,6 +112,11 @@ const SAMPLES: Record<SampleKind, { source: string; gain: number }> = {
   houndCallA: { source: "/sfx/hound-call-a.wav", gain: 0.7 },
   houndCallB: { source: "/sfx/hound-call-b.wav", gain: 0.73 },
   crabChitter: { source: "/sfx/crab-chitter.wav", gain: 0.68 },
+  puddlehopperCroak: { source: "/sfx/puddlehopper-croak.wav", gain: 0.7 },
+  copperMoleSniff: { source: "/sfx/copper-mole-sniff.wav", gain: 0.58 },
+  reedstriderCall: { source: "/sfx/reedstrider-call.wav", gain: 0.7 },
+  dragonAmbientGrowl: { source: "/sfx/dragon-ambient-deep-growl.wav", gain: 0.52 },
+  wargDeepGrowl: { source: "/sfx/warg-deep-growl.wav", gain: 0.62 },
 };
 const MUSIC_FALLBACKS: Partial<Record<MusicScene, string>> = {
   combatA: "/music/blockwild-skyboss.mp3",
@@ -498,6 +508,10 @@ export class SynthAudio {
   playDragon(type: DragonSoundType, event: DragonSoundEvent, stage = 1) {
     if (!this.context || !this.master || this.settings.muted) return;
     const age = Math.max(1, Math.min(5, Math.round(stage)));
+    if (event === "ambient") {
+      this.playSample("dragonAmbientGrowl", { gain: 0.34 + age * 0.055, playbackRate: 1.08 - age * 0.045 });
+      return;
+    }
     const depth = 1 - (age - 1) * 0.095;
     const base = (type === "fire" ? 92 : type === "ice" ? 128 : type === "sea" ? 104 : type === "gold" ? 116 : type === "silver" ? 136 : 108) * depth;
     const weight = 0.58 + age * 0.105;
@@ -546,7 +560,7 @@ export class SynthAudio {
       return;
     }
 
-    const duration = event === "death" ? 1.48 : event === "roar" ? 1.05 : event === "ambient" ? 0.64 : 0.32;
+    const duration = event === "death" ? 1.48 : event === "roar" ? 1.05 : 0.32;
     const gain = (event === "death" || event === "roar" ? 0.078 : event === "hurt" ? 0.052 : 0.036) * weight;
     this.noiseBurst(duration * 0.88, texture * (event === "hurt" ? 1.25 : 0.64), gain * 0.72, type === "ice");
     this.tone(
