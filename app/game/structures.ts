@@ -108,7 +108,8 @@ export type StructureLootTableId =
   | "starless-vault"
   | "brassdeep-vault"
   | "stormglass-vault"
-  | "bloomrot-vault";
+  | "bloomrot-vault"
+  | "palimpsest-vault";
 
 const LOOT_TABLES: Readonly<Record<StructureLootTableId, Readonly<{
   entries: readonly WeightedLootEntry[];
@@ -246,6 +247,18 @@ const LOOT_TABLES: Readonly<Record<StructureLootTableId, Readonly<{
       { itemKey: "tome-healing-light", weight: 20, min: 1, max: 1 },
     ],
     bonuses: [{ itemKey: "dawnthread-saber", chance: 0.05, min: 1, max: 1 }],
+  },
+  "palimpsest-vault": {
+    entries: [
+      { itemKey: "living-ink", weight: 24, min: 3, max: 8 },
+      { itemKey: "storybook-brick", weight: 18, min: 4, max: 12 },
+      { itemKey: "bound-book", weight: 15, min: 1, max: 4 },
+      { itemKey: "shadow-shard", weight: 13, min: 2, max: 6 },
+      { itemKey: "tome-blinkstep", weight: 10, min: 1, max: 1 },
+      { itemKey: "tome-arcane-ward", weight: 10, min: 1, max: 1 },
+      { itemKey: "gold-ingot", weight: 10, min: 2, max: 6 },
+    ],
+    bonuses: [{ itemKey: "briarheart-crook", chance: 0.065, min: 1, max: 1, durability: 6000 }],
   },
 });
 

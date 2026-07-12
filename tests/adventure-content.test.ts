@@ -29,22 +29,22 @@ import { createMobInspectionSpecs, inspectGrounding } from "../scripts/render-mo
 
 const ORIGIN = { x: 8, y: 48, z: 8 } as const;
 
-test("v1.3 exposes exactly twenty varied POIs and five dungeons", () => {
-  assert.equal(ADVENTURE_POI_ARCHETYPES.length, 20);
-  assert.equal(new Set(ADVENTURE_POI_ARCHETYPES.map((entry) => entry.kind)).size, 20);
+test("v1.3.5 exposes exactly twenty-eight varied POIs and six dungeons", () => {
+  assert.equal(ADVENTURE_POI_ARCHETYPES.length, 28);
+  assert.equal(new Set(ADVENTURE_POI_ARCHETYPES.map((entry) => entry.kind)).size, 28);
   assert.deepEqual(
     Object.fromEntries(["tiny", "medium", "large"].map((scale) => [scale, ADVENTURE_POI_ARCHETYPES.filter((entry) => entry.scale === scale).length])),
-    { tiny: 8, medium: 8, large: 4 },
+    { tiny: 8, medium: 14, large: 6 },
   );
-  assert.equal(ADVENTURE_DUNGEON_ARCHETYPES.length, 5);
-  assert.equal(new Set(ADVENTURE_DUNGEON_ARCHETYPES.map((entry) => entry.kind)).size, 5);
-  assert.equal(ADVENTURE_DUNGEON_ARCHETYPES.filter((entry) => entry.underground).length, 3);
+  assert.equal(ADVENTURE_DUNGEON_ARCHETYPES.length, 6);
+  assert.equal(new Set(ADVENTURE_DUNGEON_ARCHETYPES.map((entry) => entry.kind)).size, 6);
+  assert.equal(ADVENTURE_DUNGEON_ARCHETYPES.filter((entry) => entry.underground).length, 4);
   assert.equal(ADVENTURE_DUNGEON_ARCHETYPES.filter((entry) => !entry.underground).length, 2);
-  assert.equal(new Set(ADVENTURE_DUNGEON_ARCHETYPES.map((entry) => entry.materialIdentity)).size, 5);
-  assert.equal(new Set(ADVENTURE_DUNGEON_ARCHETYPES.map((entry) => entry.lightingIdentity)).size, 5);
+  assert.equal(new Set(ADVENTURE_DUNGEON_ARCHETYPES.map((entry) => entry.materialIdentity)).size, 6);
+  assert.equal(new Set(ADVENTURE_DUNGEON_ARCHETYPES.map((entry) => entry.lightingIdentity)).size, 6);
 });
 
-test("all twenty landmark plans are deterministic, bounded and map-discoverable", () => {
+test("all twenty-eight landmark plans are deterministic, bounded and map-discoverable", () => {
   for (const archetype of ADVENTURE_POI_ARCHETYPES) {
     const first = planAdventureStructure(archetype.kind, ORIGIN, "trailbound-adventure");
     const second = planAdventureStructure(archetype.kind, ORIGIN, "trailbound-adventure");
@@ -55,6 +55,50 @@ test("all twenty landmark plans are deterministic, bounded and map-discoverable"
     assert.ok(first.markers.some((marker) => marker.type === "landmark" && marker.tag === `adventure-poi:${archetype.kind}`));
     assert.ok(first.bounds.min.x <= first.origin.x && first.bounds.max.x >= first.origin.x);
   }
+});
+
+test("six faction wayposts expose one aligned merchant-guide plus local quest identity", () => {
+  const expected = new Map([
+    ["lantern-piehouse", "hobbits"],
+    ["switchback-tollcamp", "goblins"],
+    ["tideglass-embassy", "atlantians"],
+    ["sugarwind-teahouse", "sugarcourt"],
+    ["moonpost-listening-tree", "wood-elves"],
+    ["skyshaft-depot", "dwarves"],
+  ]);
+  for (const [kind, faction] of expected) {
+    const plan = planAdventureStructure(kind as AdventureStructureKind, ORIGIN, "waypost-contract");
+    const residents = plan.markers.filter((marker) => marker.type === "spawn" && marker.tags?.includes("outpost-guide"));
+    assert.equal(residents.length, 1, `${kind} needs one stable guide`);
+    const resident = residents[0];
+    assert.equal(resident.type, "spawn");
+    if (resident.type !== "spawn") throw new Error(`${kind} guide marker must be a spawn marker`);
+    assert.ok(resident.tags?.includes("outpost-merchant"));
+    assert.ok(resident.tags?.includes(`faction:${faction}`));
+    assert.ok(resident.tags?.some((tag) => tag.startsWith("resident:waypost-")));
+    assert.ok(resident.tags?.some((tag) => tag.startsWith("profession:")));
+    assert.ok(resident.tags?.some((tag) => tag.startsWith("name:")));
+    assert.ok(plan.markers.some((marker) => marker.type === "chest" && marker.loot.length > 0));
+  }
+});
+
+test("v1.3.5 materials are distinct craftable blocks and the Palimpsest loot resolves", () => {
+  const materials = [
+    [BlockId.WayfarerCanvas, Item.WayfarerCanvasItem],
+    [BlockId.Whisperglass, Item.WhisperglassItem],
+    [BlockId.StorybookBrick, Item.StorybookBrickItem],
+  ] as const;
+  assert.equal(new Set(materials.map(([block]) => BLOCKS[block].side)).size, 3);
+  for (const [block, item] of materials) {
+    assert.equal(ITEMS[item].placeBlock, block);
+    assert.equal(ITEMS[item].worldTextureBlock, block);
+  }
+  const palimpsest = structureLootTable("palimpsest-vault");
+  for (const entry of [...palimpsest.entries, ...palimpsest.bonuses]) assert.notEqual(resolveStructureLootItem(entry.itemKey), null);
+  const plan = planAdventureStructure("palimpsest-vault", ORIGIN, "living-archive");
+  assert.ok(plan.placements.some((placement) => placement.block === BlockId.StorybookBrick));
+  assert.ok(plan.placements.some((placement) => placement.block === BlockId.Whisperglass));
+  assert.ok(plan.markers.some((marker) => marker.type === "spawn" && marker.mobKind === "inkmaw-curator" && marker.tags?.includes("boss")));
 });
 
 test("every dungeon has three-stage progression, multiple encounters, loot and a map heart", () => {
@@ -76,7 +120,7 @@ test("every dungeon has three-stage progression, multiple encounters, loot and a
   }
 });
 
-test("all three underground dungeons provide a reversible one-block spiral stair", () => {
+test("all four underground dungeons provide a reversible one-block spiral stair", () => {
   for (const archetype of ADVENTURE_DUNGEON_ARCHETYPES.filter((entry) => entry.underground)) {
     const plan = planAdventureStructure(archetype.kind, ORIGIN, "stair-audit");
     const steps = plan.placements
@@ -133,7 +177,7 @@ test("all three underground dungeons provide a reversible one-block spiral stair
 });
 
 test("dungeon loot includes usable spell opportunities and resolvable legendary provenance", () => {
-  const dungeonTables = ["rootbound-vault", "starless-vault", "brassdeep-vault", "stormglass-vault", "bloomrot-vault"] as const;
+  const dungeonTables = ["rootbound-vault", "starless-vault", "brassdeep-vault", "stormglass-vault", "bloomrot-vault", "palimpsest-vault"] as const;
   const allKeys = dungeonTables.flatMap((table) => {
     const definition = structureLootTable(table);
     return [...definition.entries, ...definition.bonuses].map((entry) => entry.itemKey);
@@ -249,9 +293,9 @@ test("Vaultwings initialize in airborne route mode and map tags retain specific 
   assert.deepEqual(emberjay, { advance: 0, nextDistance: 2, attacks: false }, "ordinary Emberjays must retain nonhostile bird behavior");
 });
 
-test("six new authored encounter creatures have rich metadata and production rigs", () => {
-  assert.equal(ADVENTURE_MOB_ORDER.length, 6);
-  assert.equal(new Set(ADVENTURE_MOB_ORDER).size, 6);
+test("nine authored encounter creatures have rich metadata and production rigs", () => {
+  assert.equal(ADVENTURE_MOB_ORDER.length, 9);
+  assert.equal(new Set(ADVENTURE_MOB_ORDER).size, 9);
   const inspection = new Map(createMobInspectionSpecs().map((spec) => [spec.id, spec]));
   for (const kind of ADVENTURE_MOB_ORDER) {
     const definition = MOB_DEFS[kind];

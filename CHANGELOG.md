@@ -2,6 +2,13 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.3.5 - Wayposts and Palimpsests - 2026-07-12
+
+- Added eight deterministic destinations: the faction-aligned Lantern Piehouse, Switchback Tollcamp, Tideglass Embassy, Sugarwind Teahouse, Moonpost Listening Tree, and Skyshaft Depot, plus Whistlekite Roost and Clockwork Burrow creature landmarks. Each faction waypost has one named persistent merchant-guide, local quest identity, a traveller cache, and a dialogue action that marks the nearest known large settlement of their faction.
+- Added the underground Palimpsest Vault with a reversible entrance, Errata Vestibule, Rewritten Stacks, Last Folio, staged encounters, spell loot, living-archive lighting, and an Inkmaw Curator boss.
+- Added Mossback Kites, tameable Clockwork Marmots, and the hostile Inkmaw Curator with detailed 24-29-part production rigs, portraits, exact ground contact where applicable, distinct behavior, lore, drops, and field-guide entries.
+- Added craftable Wayfarer Canvas, emissive Whisperglass, and Living-Ink-bound Storybook Brick, plus Wind Silk, Living Ink, and Clockwork Springs. Expanded the release-guarded adventure catalogue to 28 POIs, six dungeons, and 164 rendered creatures without changing the version-13 world-generator compatibility boundary.
+
 ## 1.3.0 - Echoes and Ruins - 2026-07-12
 
 ### Spatial sound and biome atmosphere

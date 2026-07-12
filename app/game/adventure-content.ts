@@ -42,14 +42,23 @@ export type AdventurePoiKind =
   | "shattered-colossus"
   | "wildwood-bridgehouse"
   | "starfall-amphitheater"
-  | "saltwind-lighthouse";
+  | "saltwind-lighthouse"
+  | "lantern-piehouse"
+  | "switchback-tollcamp"
+  | "tideglass-embassy"
+  | "sugarwind-teahouse"
+  | "moonpost-listening-tree"
+  | "skyshaft-depot"
+  | "whistlekite-roost"
+  | "clockwork-burrow";
 
 export type AdventureDungeonKind =
   | "rootbound-labyrinth"
   | "starless-observatory"
   | "brassdeep-foundry"
   | "stormglass-citadel"
-  | "bloomrot-cathedral";
+  | "bloomrot-cathedral"
+  | "palimpsest-vault";
 
 export type AdventureStructureKind = AdventurePoiKind | AdventureDungeonKind;
 export type AdventureStructureScale = "tiny" | "medium" | "large" | "dungeon";
@@ -86,6 +95,14 @@ export const ADVENTURE_POI_ARCHETYPES: readonly AdventureArchetype[] = Object.fr
   { kind: "wildwood-bridgehouse", name: "Wildwood Bridgehouse", scale: "large", biomes: ["forest", "swamp"], summary: "A roofed timber bridge with a keeper's room above its central span.", materialIdentity: "wildwood logs, planks and moss", lightingIdentity: "a lantern rhythm along the rail" },
   { kind: "starfall-amphitheater", name: "Starfall Amphitheater", scale: "large", biomes: ["meadow", "highlands", "glimmerwood"], summary: "A stepped outdoor stage centered on a crystal conductor's plinth.", materialIdentity: "limestone, rune stone and crystal", lightingIdentity: "radial blue-white aisle lights" },
   { kind: "saltwind-lighthouse", name: "Saltwind Lighthouse", scale: "large", biomes: ["coast"], summary: "A stout coastal light with a furnished keeper room and lookout crown.", materialIdentity: "limestone, glass and wildwood", lightingIdentity: "rotating golden beacon silhouette" },
+  { kind: "lantern-piehouse", name: "Lantern Piehouse", scale: "medium", biomes: ["meadow", "forest"], summary: "A travelling Hearthkin baker keeps a warm oven, a gossip bench and directions to the nearest burrow-town.", materialIdentity: "wayfarer canvas, thatch and wildwood", lightingIdentity: "low hearthlight under a patched awning" },
+  { kind: "switchback-tollcamp", name: "Switchback Tollcamp", scale: "medium", biomes: ["badlands", "savanna", "desert"], summary: "A goblin road broker trades salvage beneath a brass semaphore and knows every nearby warren-road.", materialIdentity: "goblin brasswork, sunbaked clay and canvas", lightingIdentity: "green signal lamps" },
+  { kind: "tideglass-embassy", name: "Tideglass Embassy", scale: "medium", biomes: ["coast"], summary: "A half-flooded Atlantian mission hosts surface travellers and points the way to the nearest tidehold.", materialIdentity: "reefglass, limestone and whisperglass", lightingIdentity: "submerged cyan floor runes" },
+  { kind: "sugarwind-teahouse", name: "Sugarwind Teahouse", scale: "medium", biomes: ["sugarplum"], summary: "A candy-road host serves restorative sweets from a hard-sugar pavilion and trades village news.", materialIdentity: "boiled sugarbrick, candywood and striped canvas", lightingIdentity: "rose-gold gumdrop lanterns" },
+  { kind: "moonpost-listening-tree", name: "Moonpost Listening Tree", scale: "medium", biomes: ["glimmerwood", "forest"], summary: "A Wood Elf moonbroker tends a living message tree whose glass leaves remember distant roads.", materialIdentity: "moonbough, whisperglass and storybook brick", lightingIdentity: "violet leaf-lanterns" },
+  { kind: "skyshaft-depot", name: "Skyshaft Depot", scale: "medium", biomes: ["highlands", "snow"], summary: "A Dwarven provisioner operates a compact lifthead stocked for delvers and can chart the nearest hold.", materialIdentity: "deepgear brick, riveted brass and whisperglass", lightingIdentity: "bright amber shaft lanterns" },
+  { kind: "whistlekite-roost", name: "Whistlekite Roost", scale: "large", biomes: ["highlands", "meadow", "savanna"], summary: "Wind harps encircle a raised nesting crag where mossback kites ride the updrafts.", materialIdentity: "moon slate, wildwood and wayfarer canvas", lightingIdentity: "pale wind-beacons" },
+  { kind: "clockwork-burrow", name: "Clockwork Burrow", scale: "large", biomes: ["highlands", "badlands", "snow"], summary: "A marmot colony has repurposed a collapsed survey machine into a warm, ticking den.", materialIdentity: "deepgear brick, brass and storybook brick", lightingIdentity: "small amber portholes" },
 ]);
 
 export const ADVENTURE_DUNGEON_ARCHETYPES: readonly AdventureArchetype[] = Object.freeze([
@@ -94,11 +111,12 @@ export const ADVENTURE_DUNGEON_ARCHETYPES: readonly AdventureArchetype[] = Objec
   { kind: "brassdeep-foundry", name: "Brassdeep Foundry", scale: "dungeon", biomes: ["highlands", "desert", "volcanic"], summary: "A quenched industrial ruin with intake, assembly floor and master-vault.", materialIdentity: "deepgear brick, riveted brass and basalt", lightingIdentity: "amber furnace lines", underground: true },
   { kind: "stormglass-citadel", name: "Stormglass Citadel", scale: "dungeon", biomes: ["highlands", "snow"], summary: "An aboveground fortress climbing from gate court to storm lens crown.", materialIdentity: "snowcap stone, glass and crystal", lightingIdentity: "electric cyan battlements" },
   { kind: "bloomrot-cathedral", name: "Bloomrot Cathedral", scale: "dungeon", biomes: ["forest", "swamp", "meadow"], summary: "A ruined aboveground nave progressing through transept gardens to a sealed altar.", materialIdentity: "moss, rune stone and dark timber", lightingIdentity: "rose-gold altar lamps" },
+  { kind: "palimpsest-vault", name: "Palimpsest Vault", scale: "dungeon", biomes: ["forest", "glimmerwood", "highlands", "mushroom"], summary: "A buried archive rewrites its own corridors around an ink-fed curator and a forbidden final folio.", materialIdentity: "storybook brick, whisperglass and moon slate", lightingIdentity: "living ink glyphs beneath the floor", underground: true },
 ]);
 
-// Compile-time and runtime release guard: the contract says exactly 20 + 5.
-if (ADVENTURE_POI_ARCHETYPES.length !== 20 || ADVENTURE_DUNGEON_ARCHETYPES.length !== 5) {
-  throw new Error("The v1.3 adventure catalogue must contain exactly twenty POIs and five dungeons.");
+// Compile-time and runtime release guard for the expanded 1.3.5 catalogue.
+if (ADVENTURE_POI_ARCHETYPES.length !== 28 || ADVENTURE_DUNGEON_ARCHETYPES.length !== 6) {
+  throw new Error("The v1.3.5 adventure catalogue must contain exactly twenty-eight POIs and six dungeons.");
 }
 
 export type AdventureRoom = Readonly<{
@@ -267,6 +285,137 @@ function planMediumPoi(kind: AdventurePoiKind, origin: WorldPosition, seed: stri
   return b.plan(kind);
 }
 
+const V135_WAYPOST_KINDS = [
+  "lantern-piehouse",
+  "switchback-tollcamp",
+  "tideglass-embassy",
+  "sugarwind-teahouse",
+  "moonpost-listening-tree",
+  "skyshaft-depot",
+] as const satisfies readonly AdventurePoiKind[];
+
+type WaypostKind = (typeof V135_WAYPOST_KINDS)[number];
+
+const WAYPOST_RESIDENTS: Readonly<Record<WaypostKind, Readonly<{
+  mob: string;
+  name: string;
+  profession: string;
+  faction: string;
+}>>> = {
+  "lantern-piehouse": { mob: "hobbit-merchant", name: "Merry Bramblebun", profession: "hobbit-merchant", faction: "hobbits" },
+  "switchback-tollcamp": { mob: "goblin-alchemist", name: "Tikket Brassnose", profession: "goblin-alchemist", faction: "goblins" },
+  "tideglass-embassy": { mob: "atlantian-pearlbroker", name: "Nerissa Foamquill", profession: "atlantian-pearlbroker", faction: "atlantians" },
+  "sugarwind-teahouse": { mob: "sugarcourt-sweetbroker", name: "Praline Wispwhisk", profession: "sugarcourt-sweetbroker", faction: "sugarcourt" },
+  "moonpost-listening-tree": { mob: "wood-elf-moonbroker", name: "Lethren Silverleaf", profession: "wood-elf-moonbroker", faction: "wood-elves" },
+  "skyshaft-depot": { mob: "dwarf-provisioner", name: "Dagna Brightbolt", profession: "dwarf-provisioner", faction: "dwarves" },
+};
+
+function waypostResidentTags(kind: WaypostKind, origin: WorldPosition) {
+  const resident = WAYPOST_RESIDENTS[kind];
+  const suffix = `${origin.x}-${origin.z}`;
+  return [
+    "poi-resident",
+    "aligned:true",
+    "outpost-merchant",
+    "outpost-guide",
+    `settlement:waypost-${kind}-${suffix}`,
+    `resident:waypost-${kind}-${suffix}-keeper`,
+    `name:${resident.name}`,
+    `profession:${resident.profession}`,
+    `faction:${resident.faction}`,
+  ] as const;
+}
+
+function planWaypostPoi(kind: WaypostKind, origin: WorldPosition, seed: string | number) {
+  const b = new AdventurePlanBuilder(origin, seed);
+  const resident = WAYPOST_RESIDENTS[kind];
+  const floor = kind === "switchback-tollcamp" ? BlockId.SunbakedClay
+    : kind === "sugarwind-teahouse" ? BlockId.BoiledSugarbrick
+      : kind === "tideglass-embassy" ? BlockId.Limestone
+        : kind === "skyshaft-depot" ? BlockId.DeepgearBrick : BlockId.Moss;
+  circularFloor(b, 8, floor, `${kind}-grounds`);
+
+  if (kind === "lantern-piehouse") {
+    b.hollow(0, 1, 0, 5, 4, 4, BlockId.WayfarerCanvas, BlockId.Planks, "piehouse");
+    b.fill(-2, 1, -4, 2, 3, -4, BlockId.Air, "piehouse-open-counter");
+    b.fill(-5, 5, -4, 5, 5, 4, BlockId.HobbitThatch, "piehouse-thatch");
+    b.set(-3, 1, 1, BlockId.HearthFireplace, "pie-oven");
+    b.set(2, 1, 1, BlockId.WildwoodTable, "pie-counter");
+    b.set(0, 1, -6, BlockId.WildwoodStool, "gossip-bench");
+    b.set(3, 2, -4, BlockId.DeepgearLantern, "lantern-sign");
+  } else if (kind === "switchback-tollcamp") {
+    b.fill(-6, 1, -1, 6, 1, 1, BlockId.StorybookBrick, "toll-road");
+    b.fill(-5, 1, -4, -1, 4, -1, BlockId.GoblinBrasswork, "toll-booth");
+    b.fill(-4, 2, -3, -2, 3, 0, BlockId.Air, "booth-interior");
+    b.fill(2, 1, 0, 2, 7, 0, BlockId.RivetedBrass, "semaphore-mast");
+    b.fill(2, 6, -3, 2, 6, 3, BlockId.WayfarerCanvas, "semaphore-arm");
+    b.set(2, 7, -3, BlockId.Whisperglass, "green-road-signal");
+    b.set(-3, 1, -2, BlockId.AlchemyStand, "road-tonic-shelf");
+  } else if (kind === "tideglass-embassy") {
+    b.fill(-6, 0, -5, 6, 0, 5, BlockId.StorybookBrick, "embassy-reef-floor");
+    b.fill(-4, 0, -3, 4, 0, 2, BlockId.Water, "embassy-reflecting-pool");
+    for (const x of [-6, 6]) for (const z of [-5, 5]) b.fill(x, 1, z, x, 5, z, BlockId.Limestone, "embassy-column");
+    b.fill(-6, 5, -5, 6, 5, 5, BlockId.Glass, "embassy-canopy");
+    for (const [x, z] of [[-4, -3], [4, -3], [-4, 2], [4, 2]] as const) b.set(x, 0, z, BlockId.Whisperglass, "tide-rune");
+    b.set(0, 1, 4, BlockId.WildwoodTable, "surface-audience-table");
+  } else if (kind === "sugarwind-teahouse") {
+    b.hollow(0, 1, 0, 5, 4, 5, BlockId.BoiledSugarbrick, BlockId.SugarplumGrass, "teahouse");
+    b.fill(-2, 1, -5, 2, 3, -5, BlockId.Air, "teahouse-doorway");
+    for (const [x, z] of [[-4, -4], [4, -4], [-4, 4], [4, 4]] as const) b.fill(x, 5, z, x, 7, z, BlockId.CandywoodLog, "candy-spire");
+    b.fill(-5, 5, -5, 5, 5, 5, BlockId.WayfarerCanvas, "striped-teahouse-roof");
+    b.set(-2, 1, 1, BlockId.Sugarworks, "tea-kettle");
+    b.set(2, 1, 1, BlockId.WildwoodTable, "sweet-counter");
+    b.set(0, 2, -5, BlockId.Whisperglass, "sugarwind-sign");
+  } else if (kind === "moonpost-listening-tree") {
+    b.fill(0, 1, 0, 0, 9, 0, BlockId.MoonboughLog, "listening-trunk");
+    for (const [x, y, z] of [[-5, 7, 0], [5, 7, 0], [0, 8, -5], [0, 8, 5]] as const) {
+      b.fill(Math.min(0, x), y, Math.min(0, z), Math.max(0, x), y, Math.max(0, z), BlockId.MoonboughLog, "message-bough");
+      b.set(x, y, z, BlockId.Whisperglass, "listening-leaf");
+    }
+    b.fill(-4, 1, -4, 4, 1, 4, BlockId.StorybookBrick, "moonpost-ring");
+    b.set(-2, 2, 0, BlockId.TomeDisplay, "message-tome");
+    b.set(2, 2, 0, BlockId.MoonboughChair, "listener-seat");
+  } else {
+    b.hollow(0, 1, 0, 6, 5, 5, BlockId.DeepgearBrick, BlockId.RivetedBrass, "skyshaft-depot");
+    b.fill(-2, 1, -5, 2, 4, -5, BlockId.Air, "depot-gate");
+    b.fill(0, 1, 0, 0, 9, 0, BlockId.Air, "lift-shaft");
+    b.fill(-1, 1, -1, 1, 1, 1, BlockId.Whisperglass, "lift-platform");
+    for (const x of [-6, 6]) { b.fill(x, 1, -5, x, 8, -5, BlockId.RivetedBrass, "depot-pylon"); b.set(x, 8, -5, BlockId.DeepgearLantern, "depot-beacon"); }
+    b.set(-3, 1, 2, BlockId.GearTable, "parts-counter");
+    b.set(3, 1, 2, BlockId.SealedBarrel, "delver-provisions");
+  }
+
+  b.spawn(0, 1, -1, resident.mob, 1, 1.5, `${kind}-keeper`, waypostResidentTags(kind, origin));
+  b.chest(4, 1, 3, "adventure-cache", `${kind}-traveller-cache`, 5);
+  b.landmark(0, 2, 0, `adventure-poi:${kind}`);
+  return b.plan(kind);
+}
+
+function planV135CreaturePoi(kind: "whistlekite-roost" | "clockwork-burrow", origin: WorldPosition, seed: string | number) {
+  const b = new AdventurePlanBuilder(origin, seed);
+  circularFloor(b, 12, kind === "clockwork-burrow" ? BlockId.SnowcapStone : BlockId.Moss, `${kind}-grounds`);
+  if (kind === "whistlekite-roost") {
+    b.fill(-4, 1, -4, 4, 7, 4, BlockId.MoonSlate, "updraft-crag");
+    b.fill(-3, 2, -3, 3, 7, 3, BlockId.Air, "hollow-roost");
+    b.fill(-7, 8, -7, 7, 8, 7, BlockId.WayfarerCanvas, "wind-sail");
+    b.fill(-5, 8, -5, 5, 8, 5, BlockId.Air, "wind-sail-opening");
+    for (const [x, z] of [[-9, 0], [9, 0], [0, -9], [0, 9]] as const) { b.fill(x, 1, z, x, 6, z, BlockId.WildwoodLog, "wind-harp-post"); b.set(x, 7, z, BlockId.Whisperglass, "wind-beacon"); }
+    b.spawn(0, 11, 0, "mossback-kite", 4, 8, "roost-kites", ["poi-resident", "skittish", "adventure-airborne"]);
+    b.chest(0, 2, 0, "adventure-cache", "roost-offerings", 6);
+  } else {
+    b.fill(-9, 1, -6, 9, 5, 6, BlockId.DeepgearBrick, "collapsed-surveyor-hull");
+    b.fill(-8, 2, -5, 8, 4, 5, BlockId.Air, "burrow-chamber");
+    for (const x of [-8, -4, 0, 4, 8]) { b.set(x, 1, -6, BlockId.StorybookBrick, "survey-plate"); b.set(x, 3, 6, BlockId.Whisperglass, "warm-porthole"); }
+    b.fill(-2, 1, 6, 2, 3, 6, BlockId.Air, "burrow-mouth");
+    b.set(-5, 1, 0, BlockId.GearTable, "abandoned-gearbench");
+    b.set(5, 1, 0, BlockId.HearthFireplace, "marmot-warmer");
+    b.spawn(0, 1, 0, "clockwork-marmot", 5, 7, "burrow-colony", ["poi-resident", "gentle"]);
+    b.chest(0, 1, -4, "adventure-cache", "surveyor-toolbox", 6);
+  }
+  b.landmark(0, 2, 0, `adventure-poi:${kind}`);
+  return b.plan(kind);
+}
+
 function planLargePoi(kind: AdventurePoiKind, origin: WorldPosition, seed: string | number) {
   const b = new AdventurePlanBuilder(origin, seed);
   circularFloor(b, 12, kind === "saltwind-lighthouse" ? BlockId.Limestone : BlockId.Moss, `${kind}-grounds`);
@@ -286,6 +435,7 @@ function planLargePoi(kind: AdventurePoiKind, origin: WorldPosition, seed: strin
 function dungeonProfile(kind: AdventureDungeonKind) {
   if (kind === "rootbound-labyrinth") return { shell: BlockId.Moss, floor: BlockId.RuneStone, light: BlockId.Glowstone, table: "rootbound-vault" as const, mobs: ["rootwrithe", "bellroot-matron", "rootwrithe"] as const };
   if (kind === "starless-observatory") return { shell: BlockId.MoonSlate, floor: BlockId.Deepstone, light: BlockId.CrystalBlock, table: "starless-vault" as const, mobs: ["vaultwing", "auric-scarab", "ossuary-keeper"] as const };
+  if (kind === "palimpsest-vault") return { shell: BlockId.StorybookBrick, floor: BlockId.MoonSlate, light: BlockId.Whisperglass, table: "palimpsest-vault" as const, mobs: ["ossuary-keeper", "vaultwing", "inkmaw-curator"] as const };
   return { shell: BlockId.DeepgearBrick, floor: BlockId.RivetedBrass, light: BlockId.DeepgearLantern, table: "brassdeep-vault" as const, mobs: ["cinder-maw", "auric-scarab", "ossuary-keeper"] as const };
 }
 
@@ -302,9 +452,9 @@ function planUndergroundDungeon(kind: AdventureDungeonKind, origin: WorldPositio
     b.set(depth % 2 ? -2 : 2, depth, 12, profile.light, `${kind}-shaft-light`);
   }
   const rooms = [
-    { id: "threshold", name: kind === "rootbound-labyrinth" ? "Root Gate" : kind === "starless-observatory" ? "Lens Vestibule" : "Ore Intake", stage: 1, center: [0, base, 9] as const, radius: [6, 4, 5] as const, objective: "Survive the entrance encounter and find the descending passage." },
-    { id: "crossing", name: kind === "rootbound-labyrinth" ? "Whisper Maze" : kind === "starless-observatory" ? "Constellation Archive" : "Assembly Floor", stage: 2, center: [0, base - 2, 0] as const, radius: [8, 5, 6] as const, objective: "Clear two linked encounter pockets and reach the sealed inner hall." },
-    { id: "vault", name: kind === "rootbound-labyrinth" ? "Heartroot Reliquary" : kind === "starless-observatory" ? "Astrolabe Vault" : "Quenched Master-vault", stage: 3, center: [0, base - 4, -11] as const, radius: [7, 5, 5] as const, objective: "Defeat the guardian and claim the authored vault loot." },
+    { id: "threshold", name: kind === "rootbound-labyrinth" ? "Root Gate" : kind === "starless-observatory" ? "Lens Vestibule" : kind === "palimpsest-vault" ? "Errata Vestibule" : "Ore Intake", stage: 1, center: [0, base, 9] as const, radius: [6, 4, 5] as const, objective: "Survive the entrance encounter and find the descending passage." },
+    { id: "crossing", name: kind === "rootbound-labyrinth" ? "Whisper Maze" : kind === "starless-observatory" ? "Constellation Archive" : kind === "palimpsest-vault" ? "Rewritten Stacks" : "Assembly Floor", stage: 2, center: [0, base - 2, 0] as const, radius: [8, 5, 6] as const, objective: "Clear two linked encounter pockets and reach the sealed inner hall." },
+    { id: "vault", name: kind === "rootbound-labyrinth" ? "Heartroot Reliquary" : kind === "starless-observatory" ? "Astrolabe Vault" : kind === "palimpsest-vault" ? "Last Folio" : "Quenched Master-vault", stage: 3, center: [0, base - 4, -11] as const, radius: [7, 5, 5] as const, objective: "Defeat the guardian and claim the authored vault loot." },
   ];
   for (const room of rooms) {
     const [roomX, roomY, roomZ] = room.center;
@@ -346,7 +496,7 @@ function planUndergroundDungeon(kind: AdventureDungeonKind, origin: WorldPositio
   b.spawn(-2, base, 9, profile.mobs[0], 3, 5, "threshold-encounter", ["dungeon", "stage-1", "hostile"]);
   b.spawn(3, base - 2, 0, profile.mobs[1], 4, 6, "crossing-encounter-a", ["dungeon", "stage-2", "hostile"]);
   b.spawn(-3, base - 2, -2, profile.mobs[0], 2, 5, "crossing-encounter-b", ["dungeon", "stage-2", "hostile"]);
-  b.spawn(0, base - 4, -11, profile.mobs[2], kind === "rootbound-labyrinth" ? 1 : 2, 6, "vault-guardian", ["dungeon", "stage-3", "boss", "hostile"]);
+  b.spawn(0, base - 4, -11, profile.mobs[2], kind === "rootbound-labyrinth" || kind === "palimpsest-vault" ? 1 : 2, 6, "vault-guardian", ["dungeon", "stage-3", "boss", "hostile"]);
   b.chest(4, base - 2, 1, "adventure-cache", "midway-supplies", 5);
   b.chest(0, base - 4, -14, profile.table, "master-vault", 8);
   b.landmark(0, 1, 12, `dungeon:${kind}`);
@@ -391,6 +541,8 @@ export function planAdventureStructure(kind: AdventureStructureKind, origin: Wor
     if (kind === "bloomrot-cathedral") return planBloomrotCathedral(normalized, seed);
     return planUndergroundDungeon(kind as AdventureDungeonKind, normalized, seed);
   }
+  if ((V135_WAYPOST_KINDS as readonly AdventurePoiKind[]).includes(kind as AdventurePoiKind)) return planWaypostPoi(kind as WaypostKind, normalized, seed);
+  if (kind === "whistlekite-roost" || kind === "clockwork-burrow") return planV135CreaturePoi(kind, normalized, seed);
   const scale = ADVENTURE_POI_ARCHETYPES.find((entry) => entry.kind === kind)?.scale;
   if (scale === "tiny") return planTinyPoi(kind as AdventurePoiKind, normalized, seed);
   if (scale === "medium") return planMediumPoi(kind as AdventurePoiKind, normalized, seed);

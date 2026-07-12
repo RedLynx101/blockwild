@@ -634,7 +634,7 @@ function renderPortraitSheet(specs: readonly InspectionModelSpec[], rendered: Re
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
   <rect width="100%" height="100%" fill="#0c100e"/>
-  <text x="28" y="43" fill="#e5bd68" font-family="ui-sans-serif, system-ui, sans-serif" font-size="26" font-weight="900" letter-spacing="1.8">BLOCKWILD FIELD GUIDE · V1.3</text>
+  <text x="28" y="43" fill="#e5bd68" font-family="ui-sans-serif, system-ui, sans-serif" font-size="26" font-weight="900" letter-spacing="1.8">BLOCKWILD FIELD GUIDE · V1.3.5</text>
   <text x="28" y="70" fill="#99a79e" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">Production creature models · front three-quarter portraits · ${specs.length} specimens</text>
   ${tiles}
 </svg>`;

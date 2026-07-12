@@ -120,7 +120,7 @@ export type SentientMobKind = HobbitKind | GoblinKind | AtlantianKind | Sugarcou
 export type FactionKind = "hobbits" | "goblins" | "atlantians" | "sugarcourt" | "wood-elves" | "dwarves";
 export type SentientRole = "mayor" | "chieftain" | "farmer" | "worker" | "miner" | "merchant" | "banker" | "alchemist" | "blacksmith" | "guard";
 export type SpecialMobKind = "peelop" | "reliquary-sentinel" | "skeleton" | "warg";
-export type AdventureMobKind = "auric-scarab" | "rootwrithe" | "bellroot-matron" | "vaultwing" | "cinder-maw" | "ossuary-keeper";
+export type AdventureMobKind = "auric-scarab" | "rootwrithe" | "bellroot-matron" | "vaultwing" | "cinder-maw" | "ossuary-keeper" | "mossback-kite" | "clockwork-marmot" | "inkmaw-curator";
 export type CoreMobKind =
   | LegacyMobKind
   | MosslingVariantKind
@@ -469,6 +469,43 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     drops: [{ item: Item.BoneShard, min: 4, max: 9, chance: 1 }, { item: Item.CrystalShard, min: 2, max: 5, chance: 0.74 }, { item: Item.GoldIngot, min: 1, max: 3, chance: 0.32 }],
     family: "construct", movement: "ground", persistent: true, discoveryHint: "Vault floors bear pairs of square footprints and a dragged key line.",
     utility: "A difficult source of bone, crystal and occasional recovered gold.",
+  },
+  "mossback-kite": {
+    kind: "mossback-kite", name: "Mossback Kite", temperament: "Skittish", hostile: false,
+    health: 10, damage: 1, xp: 7, speed: 1.75, chaseSpeed: 3.8, turnRate: 9.2, attackRange: 1.25,
+    footOffset: 1.55, radius: 0.68, height: 0.78, habitat: "Whistlekite Roosts above meadows, savannas and highland passes", active: "Daylight and strong wind",
+    behavior: "Reads the lee side of trunks before banking, rides broad thermal circles above its roost, and folds its ribbon tail into a brake before landing on a clear stone perch.",
+    lore: "Roost keepers say a Mossback Kite grows one new patch of moss for every road it learns from the air.",
+    colors: [0x4e6c48, 0xc5a65b, 0xd7fff0],
+    drops: [{ item: Item.WindSilk, min: 1, max: 2, chance: 0.72 }, { item: Item.Feather, min: 1, max: 3, chance: 0.86 }],
+    family: "bird", movement: "flying", flying: true, persistent: true, tameable: true, tameItems: [Item.Moonpetal],
+    breedable: true, breedingFoods: [Item.Moonpetal, Item.Berry], diet: [Item.Moonpetal, Item.Berry], captureItem: Item.CaptureOrb,
+    postTameNotes: "A bonded kite scouts in wider circles but returns to a clear perch beside its keeper.",
+    discoveryHint: "Listen for canvas-like wingbeats around high stone nests ringed by wind harps.", utility: "Wind Silk is light, strong and useful in advanced textiles.",
+  },
+  "clockwork-marmot": {
+    kind: "clockwork-marmot", name: "Clockwork Marmot", temperament: "Gentle", hostile: false,
+    health: 14, damage: 2, xp: 8, speed: 0.64, chaseSpeed: 2.3, turnRate: 6.4, attackRange: 1.2,
+    footOffset: 0.57, radius: 0.56, height: 0.88, habitat: "Warm machinery hollows and collapsed survey engines in cold highlands", active: "Morning and late afternoon",
+    behavior: "Lives in ticking colonies, sorts loose fasteners into careful rings, and whistles through its back-pipes when a nearby machine falls out of rhythm.",
+    lore: "No Dwarf admits to inventing them. Every Dwarf admits they keep better time than the depot clocks.",
+    colors: [0x8a6345, 0xc69b56, 0x72e2d7],
+    drops: [{ item: Item.ClockworkSpring, min: 1, max: 2, chance: 0.82 }, { item: Item.GearCluster, min: 1, max: 1, chance: 0.18 }],
+    family: "construct", movement: "ground", persistent: true, tameable: true, tameItems: [Item.GearCluster],
+    breedable: true, breedingFoods: [Item.ClockworkSpring], diet: [Item.GearCluster, Item.ClockworkSpring], captureItem: Item.CaptureOrb, foodLure: true,
+    postTameNotes: "A tuned marmot can be ordered to sit or follow and chirps when ore-bearing machinery is nearby.",
+    discoveryHint: "Follow soft whistles and perfectly sorted bolts to a warm brass porthole.", utility: "Clockwork Springs are useful in compact mechanisms and trade well with Dwarven gearwrights.",
+  },
+  "inkmaw-curator": {
+    kind: "inkmaw-curator", name: "Inkmaw Curator", temperament: "Hostile", hostile: true,
+    health: 92, damage: 11, xp: 46, speed: 0.48, chaseSpeed: 2.1, turnRate: 4.6, attackRange: 2.8,
+    footOffset: 0.721665, radius: 1.1, height: 2.82, habitat: "The Last Folio at the bottom of a Palimpsest Vault", active: "Whenever an archive seal is broken",
+    behavior: "Walks on four ink-tipped quills, shields its book-mask behind orbiting pages, and lashes in broad calligraphic arcs before driving a long nib into distant intruders.",
+    lore: "It was instructed to preserve every true version of the archive. When two histories disagreed, it learned to erase the reader.",
+    colors: [0x2f2146, 0x8d657d, 0x72f0d5],
+    drops: [{ item: Item.LivingInk, min: 3, max: 7, chance: 1 }, { item: Item.BoundBook, min: 1, max: 3, chance: 0.9 }, { item: Item.ShadowShard, min: 2, max: 5, chance: 0.76 }],
+    family: "construct", movement: "ground", persistent: true, discoveryHint: "Rare waypost stories mention a buried archive whose floor glyphs change while nobody watches.",
+    utility: "Its Living Ink is required to craft Storybook Brick and other self-inscribing materials.",
   },
   mossling: {
     kind: "mossling", name: "Mossling", temperament: "Skittish", hostile: false,
@@ -1878,7 +1915,7 @@ export const DWARF_ORDER: DwarfKind[] = ["dwarf-thane", "dwarf-gatewarden", "dwa
 export const V1_FACTION_CREATURE_ORDER: V1FactionCreatureKind[] = ["glimmerhart", "runeowl", "glowfin", "copper-mole", "copper-scout-golem", "stone-bulwark-golem", "aetherforged-sentinel", "deepgear-courser-golem"];
 export const SENTIENT_MOB_ORDER: SentientMobKind[] = [...HOBBIT_ORDER, ...GOBLIN_ORDER, ...ATLANTIAN_ORDER, ...SUGARCOURT_ORDER, ...WOOD_ELF_ORDER, ...DWARF_ORDER];
 export const SPECIAL_MOB_ORDER: SpecialMobKind[] = ["peelop", "reliquary-sentinel", "skeleton", "warg"];
-export const ADVENTURE_MOB_ORDER: AdventureMobKind[] = ["auric-scarab", "rootwrithe", "bellroot-matron", "vaultwing", "cinder-maw", "ossuary-keeper"];
+export const ADVENTURE_MOB_ORDER: AdventureMobKind[] = ["auric-scarab", "rootwrithe", "bellroot-matron", "vaultwing", "cinder-maw", "ossuary-keeper", "mossback-kite", "clockwork-marmot", "inkmaw-curator"];
 export const CORE_MOB_ORDER: CoreMobKind[] = [
   ...LEGACY_MOB_ORDER,
   ...MOSSLING_VARIANT_ORDER,

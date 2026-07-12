@@ -120,8 +120,8 @@ function renderStructureAtlas(plans: readonly AdventureStructurePlan[]) {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
   <rect width="100%" height="100%" fill="#0b100e"/>
-  <text x="28" y="43" fill="#f3ca6a" font-family="ui-sans-serif, system-ui" font-size="28" font-weight="900">BLOCKWILD V1.3 · ADVENTURE BLUEPRINT ATLAS</text>
-  <text x="28" y="71" fill="#9bad9f" font-family="ui-monospace, monospace" font-size="13">20 deterministic landmarks · 5 multi-stage dungeons · red encounter · gold chest · cyan map heart</text>
+  <text x="28" y="43" fill="#f3ca6a" font-family="ui-sans-serif, system-ui" font-size="28" font-weight="900">BLOCKWILD V1.3.5 · ADVENTURE BLUEPRINT ATLAS</text>
+  <text x="28" y="71" fill="#9bad9f" font-family="ui-monospace, monospace" font-size="13">${ADVENTURE_POI_ARCHETYPES.length} deterministic landmarks · ${ADVENTURE_DUNGEON_ARCHETYPES.length} multi-stage dungeons · red encounter · gold chest · cyan map heart</text>
   ${tiles}
 </svg>`;
 }

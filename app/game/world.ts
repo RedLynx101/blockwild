@@ -554,6 +554,8 @@ const TILE_COLORS = [
   // 145-148: dedicated dragon egg shells (fire, ice, steel, sea) so eggs no
   // longer borrow bookshelf tome tiles.
   "#8e3324", "#bfe4f0", "#5d676e", "#2f8f96",
+  // 149-150: Glimmerwood grass top/side. 151-153: v1.3.5 waypost materials.
+  "#315f4d", "#263f38", "#b58c62", "#397f86", "#765268",
 ];
 
 export const MEADOW_GRASS_PALETTE = Object.freeze({
@@ -611,6 +613,7 @@ const LIGHT_BLOCKS = new Set<BlockId>([
   BlockId.AetherConduit,
   BlockId.Moonwell,
   BlockId.HearthFireplace,
+  BlockId.Whisperglass,
 ]);
 /**
  * Static voxel-light budget used while baking chunk vertex colors. The small
@@ -841,6 +844,39 @@ export function createBlockAtlas() {
       for (let y = 0; y < tile; y += 1) for (let x = 0; x < tile; x += 1) {
         const edge = x < 2 || y < 2 || x > 13 || y > 13;
         if (edge || (x + y) % 13 === 0) pixel(index, x, y, edge ? "#b7dfdf" : "#d7f1ed", edge ? 0.78 : 0.34);
+      }
+      continue;
+    }
+    if (index >= 151 && index <= 153) {
+      context.fillStyle = base;
+      context.fillRect(ox, oy, tile, tile);
+      if (index === 151) {
+        for (let y = 0; y < tile; y += 4) {
+          context.fillStyle = y % 8 ? "#8f674d" : "#d0ac78";
+          context.fillRect(ox, oy + y, tile, 1);
+        }
+        for (let x = 1; x < tile; x += 4) for (let y = 1; y < tile; y += 4) pixel(index, x, y, "#efe0b5");
+        for (let x = 2; x < tile; x += 5) pixel(index, x, (x * 3) % 15, "#5d876b");
+      } else if (index === 152) {
+        context.fillStyle = "#183e50";
+        context.fillRect(ox, oy, tile, tile);
+        for (let n = 0; n < 22; n += 1) {
+          const x = (n * 7 + 3) % 16;
+          const y = (n * 11 + 5) % 16;
+          pixel(index, x, y, n % 3 ? "#65e2d0" : "#c3fff1");
+          if (x + 1 < 16 && n % 2 === 0) pixel(index, x + 1, y, "#438d9c");
+        }
+        for (let y = 2; y < 15; y += 4) for (let x = 2; x < 15; x += 5) pixel(index, x, y, "#8ff5df", 0.72);
+      } else {
+        context.fillStyle = "#4d334d";
+        context.fillRect(ox, oy, tile, tile);
+        for (let y = 0; y < 16; y += 5) {
+          context.fillStyle = "#9a6c78";
+          context.fillRect(ox, oy + y, tile, 1);
+          const offset = y % 10 === 0 ? 0 : 4;
+          for (let x = offset; x < 16; x += 8) context.fillRect(ox + x, oy + y, 1, 5);
+        }
+        for (let y = 2; y < 16; y += 5) for (let x = 2; x < 16; x += 6) pixel(index, x, y, "#d3b889");
       }
       continue;
     }

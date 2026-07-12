@@ -1725,6 +1725,9 @@ const STRUCTURE_LOOT_ITEMS: Readonly<Record<string, ItemCode>> = Object.freeze({
   "dawnthread-saber": Item.DawnthreadSaber,
   "deepdelvers-promise": Item.DeepdelversPromise,
   "briarheart-crook": Item.BriarheartCrook,
+  "living-ink": Item.LivingInk,
+  "storybook-brick": Item.StorybookBrickItem,
+  "bound-book": Item.BoundBook,
   "blueprint-dragonbone-arms": Item.DragonboneArmsBlueprint,
   "blueprint-dragon-scale-armor": Item.DragonScaleArmorBlueprint,
 });
@@ -12566,6 +12569,37 @@ export class VoxelEngine {
     return true;
   }
 
+  setNearestFactionTownWaypoint() {
+    const factionId = this.activeSentient?.factionId;
+    if (!factionId || factionId === "player") return null;
+    const candidates = [...this.world.settlementPlans.values()]
+      .map(({ candidate }) => candidate)
+      .filter((candidate) => candidate.factionId === factionId)
+      .sort((left, right) => {
+        const sizeRank = (size: typeof left.size) => size === "town" ? 0 : size === "village" ? 1 : 2;
+        return sizeRank(left.size) - sizeRank(right.size)
+          || Math.hypot(left.center.x - this.position.x, left.center.z - this.position.z) - Math.hypot(right.center.x - this.position.x, right.center.z - this.position.z);
+      });
+    const destination = candidates[0];
+    if (!destination) {
+      this.events.onToast("This guide has not heard from a large faction settlement in the explored region yet.");
+      return null;
+    }
+    const id = `manual:faction-town:${factionId}:${destination.id}`;
+    this.mapKnowledge = placeManualMapMarker(this.mapKnowledge, {
+      id,
+      name: `${FACTIONS[factionId].name} ${destination.size}`,
+      position: { x: destination.center.x, y: destination.center.y ?? this.position.y, z: destination.center.z },
+      playerId: this.localPlayerId(),
+      discoveredAt: Date.now(),
+      icon: "settlement",
+    });
+    this.events.onToast(`${this.activeSentient?.name ?? "The guide"} marks the road to the nearest known ${FACTIONS[factionId].name} ${destination.size}.`);
+    this.saveSoon();
+    this.emitHud(true);
+    return id;
+  }
+
   shareCartographyMaps() {
     if (!this.activeCartographyKey) return false;
     if (!this.multiplayer || !this.multiplayer.getPeers().some((peer) => peer.state === "connected")) {
@@ -14197,6 +14231,15 @@ export class VoxelEngine {
       const factionTag = tagValue("faction:");
       const factionId = isNpcFactionId(factionTag) ? factionTag : null;
       const aligned = marker.tags?.includes("aligned:true") ?? Boolean(factionId);
+      if (residentId && factionId && profession && marker.tags?.includes("outpost-merchant") && !this.merchants.has(residentId)) {
+        this.merchants.set(residentId, createMerchant(
+          this.factionRelations.authorityId,
+          residentId,
+          factionId,
+          merchantProfessionForResident(profession as ResidentProfession),
+          210,
+        ));
+      }
       const dragonStageTag = Number(tagValue("stage:"));
       const dragonSexTag = tagValue("sex:");
       const dragonLairId = tagValue("lair:");

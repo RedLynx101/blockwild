@@ -286,6 +286,7 @@ type HearthroadsEngineApi = {
   buyStockShares?: (symbol: StockSymbol, shares: GoldAmount) => boolean;
   sellStockShares?: (symbol: StockSymbol, shares: GoldAmount) => boolean;
   setSettlementRoleWaypoint?: (profession: ResidentProfession) => boolean;
+  setNearestFactionTownWaypoint?: () => string | null;
   selectSettlementResident?: (residentId: string) => string | null;
   shareCartographyMaps?: () => boolean;
   commandActiveFollower?: (command: string) => boolean;
@@ -3060,6 +3061,7 @@ export default function VoxelGame() {
               ...(activeMerchant ? [{ id: "trade", label: "Trade", description: "Buy from their stock or sell goods from your pack.", badge: `${activeMerchant.gold}g`, tone: "warm" as const }] : []),
               ...(activeProfession === "banker" && activeFactionId === "hobbits" ? [{ id: "bank", label: "Use the freehold bank", description: "Deposit gold, withdraw freely, or review local ventures.", tone: "warm" as const }] : []),
               { id: "quests", label: "Ask about work", description: "Review story roads and any available side work.", tone: "plain" as const },
+              ...(!activeSettlement && hud.activeSentient?.residentId ? [{ id: "directions", label: "Ask for town directions", description: `Mark the road to the nearest known ${FACTIONS[activeFactionId].name} town or village.`, tone: "plain" as const }] : []),
               ...(activeSettlement ? [{ id: "settlement", label: activeFactionCopy.settlementChoice, description: activeFactionCopy.settlementChoiceDescription, tone: "plain" as const }] : []),
               ...(hud.activeSentient?.hired || activeResident?.hiredByPlayerId ? [{ id: "follower", label: "Review follower orders", description: "Rename this hireling or set stance, formation, and follow distance.", tone: "plain" as const }] : []),
               ...(isMayorProfession(activeProfession) && activeSettlement?.ownerFactionId !== "player" ? [{ id: "claim", label: "Threaten a claim", description: "Only possible after every settlement warrior has fallen. This severely harms faction standing.", tone: "warning" as const }] : []),
@@ -3069,6 +3071,10 @@ export default function VoxelGame() {
               else if (choiceId === "bank") setOverlay("bank");
               else if (choiceId === "quests") setOverlay("quests");
               else if (choiceId === "settlement") setOverlay("settlement");
+              else if (choiceId === "directions") {
+                const markerId = hearthroadsApi?.setNearestFactionTownWaypoint?.() ?? null;
+                if (markerId) setTrackedNavigationId(markerId);
+              }
               else if (choiceId === "follower") setOverlay("follower");
               else if (choiceId === "claim") {
                 if (!hearthroadsApi?.claimActiveSettlement?.()) showToast("The mayor will not yield this settlement under the current conditions.");

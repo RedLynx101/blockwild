@@ -241,7 +241,7 @@ export function createAdventureMobVisual(kind: AdventureMobKind, id: number): Ad
     tail.rotation.x = -0.18;
     add(tail, [0.24, 0.24, 0.34], [0, 0.03, 1.05], eye, "cinder-maw-tail-ember");
     for (const [index, z] of [0.1, 0.48, 0.86].entries()) add(visual, [0.16, 0.38, 0.18], [0, 1.22, z], eye, `cinder-maw-ember-vent-${index + 1}`);
-  } else {
+  } else if (kind === "ossuary-keeper") {
     add(visual, [0.88, 1.1, 0.58], [0, 1.24, 0], pale, "ossuary-keeper-rib-vault", "body");
     add(visual, [0.7, 0.48, 0.52], [0, 2.02, -0.04], body, "ossuary-keeper-helm", "head");
     add(visual, [0.5, 0.2, 0.4], [0, 1.78, -0.18], dark, "ossuary-keeper-jaw");
@@ -265,6 +265,79 @@ export function createAdventureMobVisual(kind: AdventureMobKind, id: number): Ad
       }
     }
     for (const [index, x] of [-0.28, 0, 0.28].entries()) add(visual, [0.13, 0.48 + (index === 1 ? 0.18 : 0), 0.18], [x, 2.4 + (index === 1 ? 0.08 : 0), 0], body, `ossuary-keeper-helm-prong-${index + 1}`);
+  } else if (kind === "mossback-kite") {
+    add(visual, [0.72, 0.42, 1.06], [0, 0.58, 0.18], body, "mossback-kite-body", "body");
+    add(visual, [0.52, 0.48, 0.54], [0, 0.68, -0.62], accent, "mossback-kite-head", "head");
+    add(visual, [0.3, 0.18, 0.42], [0, 0.56, -1.02], pale, "mossback-kite-beak");
+    eyes(0.17, 0.77, -0.91, 0.085);
+    for (const side of [-1, 1]) {
+      const sideName = side < 0 ? "left" : "right";
+      const wing = joint(visual, `mossback-kite-${sideName}-wing-pivot`, [side * 0.31, 0.73, -0.02]);
+      wing.userData.side = side;
+      wing.userData.phase = side < 0 ? 0 : Math.PI;
+      parts.wings.push(wing);
+      const spar = add(wing, [1.35, 0.12, 0.2], [side * 0.62, 0, 0], dark, `mossback-kite-${sideName}-wing-spar`);
+      spar.rotation.z = side * -0.12;
+      const foreSail = add(wing, [1.08, 0.06, 0.7], [side * 0.65, -0.05, -0.28], glass, `mossback-kite-${sideName}-fore-sail`);
+      foreSail.rotation.y = side * -0.12;
+      const rearSail = add(wing, [0.92, 0.06, 0.72], [side * 0.55, -0.08, 0.38], accent, `mossback-kite-${sideName}-rear-sail`);
+      rearSail.rotation.y = side * 0.18;
+      for (const offset of [0.24, 0.55, 0.86]) add(wing, [0.16, 0.12, 0.2], [side * offset, 0.08, 0.12], body, `mossback-kite-${sideName}-moss-tuft-${offset}`);
+      const leg = pivotBox([0.12, 0.38, 0.12], [side * 0.18, 0.42, 0.36], [0, -0.18, 0], dark, `mossback-kite-${sideName}-leg`, "legs");
+      add(leg, [0.3, 0.08, 0.32], [0, -0.38, -0.08], pale, `mossback-kite-${sideName}-talon`);
+    }
+    for (let segment = 0; segment < 5; segment += 1) {
+      const ribbon = add(visual, [0.15, 0.08, 0.42], [(segment % 2 ? 1 : -1) * 0.08, 0.52 - segment * 0.025, 0.82 + segment * 0.34], segment % 2 ? accent : pale, `mossback-kite-tail-ribbon-${segment + 1}`, "body");
+      ribbon.rotation.y = (segment % 2 ? 1 : -1) * 0.12;
+    }
+    for (const [index, x] of [-0.18, 0, 0.18].entries()) add(visual, [0.12, 0.38 + index * 0.05, 0.14], [x, 1.02 + index * 0.02, -0.5], body, `mossback-kite-crest-${index + 1}`, "head");
+  } else if (kind === "clockwork-marmot") {
+    add(visual, [0.92, 0.7, 1.18], [0, 0.62, 0.2], body, "clockwork-marmot-body", "body");
+    add(visual, [0.72, 0.64, 0.64], [0, 0.74, -0.68], accent, "clockwork-marmot-head", "head");
+    add(visual, [0.48, 0.3, 0.4], [0, 0.61, -1.12], pale, "clockwork-marmot-muzzle");
+    eyes(0.2, 0.86, -1.02, 0.085);
+    for (const side of [-1, 1]) {
+      const sideName = side < 0 ? "left" : "right";
+      const ear = add(visual, [0.22, 0.28, 0.16], [side * 0.25, 1.16, -0.68], dark, `clockwork-marmot-${sideName}-ear`, "head");
+      ear.rotation.z = side * -0.22;
+      for (const [front, z] of [[true, -0.38], [false, 0.58]] as const) {
+        const leg = pivotBox([0.25, 0.54, 0.28], [side * 0.34, 0.52, z], [0, -0.27, 0], dark, `clockwork-marmot-${front ? "front" : "rear"}-${sideName}-leg`, "legs");
+        leg.userData.phase = (front ? 0 : Math.PI) + (side < 0 ? 0 : Math.PI);
+        add(leg, [0.35, 0.16, 0.42], [0, -0.51, -0.08], pale, `clockwork-marmot-${front ? "front" : "rear"}-${sideName}-paw`);
+      }
+      add(visual, [0.08, 0.52, 0.52], [side * 0.49, 0.72, 0.18], accent, `clockwork-marmot-${sideName}-gear-wheel`, "body").rotation.x = Math.PI / 4;
+    }
+    const tail = pivotBox([0.3, 0.3, 0.72], [0, 0.64, 0.76], [0, 0, 0.34], body, "clockwork-marmot-tail", "body");
+    tail.rotation.x = -0.32;
+    add(tail, [0.36, 0.36, 0.38], [0, 0.06, 0.78], accent, "clockwork-marmot-tail-weight");
+    for (const x of [-0.18, 0.18]) { add(visual, [0.12, 0.58, 0.12], [x, 1.12, 0.3], dark, `clockwork-marmot-whistle-pipe-${x}`); add(visual, [0.22, 0.12, 0.22], [x, 1.42, 0.3], eye, `clockwork-marmot-whistle-cap-${x}`); }
+    add(visual, [0.62, 0.08, 0.12], [0, 0.86, 0.76], pale, "clockwork-marmot-winding-key");
+  } else {
+    add(visual, [1.08, 1.52, 0.82], [0, 1.22, 0.08], body, "inkmaw-curator-robe", "body");
+    add(visual, [0.86, 0.74, 0.22], [0, 2.16, -0.28], accent, "inkmaw-curator-book-mask", "head");
+    add(visual, [0.7, 0.48, 0.2], [0, 1.94, -0.44], dark, "inkmaw-curator-ink-maw", "head");
+    eyes(0.23, 2.27, -0.42, 0.1);
+    for (const [index, x] of [-0.32, -0.1, 0.1, 0.32].entries()) add(visual, [0.09, 0.48 + (index % 2) * 0.16, 0.12], [x, 2.7 + (index % 2) * 0.05, -0.18], eye, `inkmaw-curator-crown-quill-${index + 1}`, "head");
+    for (const [index, [x, z]] of [[-0.46, -0.22], [0.46, -0.22], [-0.46, 0.38], [0.46, 0.38]].entries()) {
+      const leg = pivotBox([0.22, 0.96, 0.24], [x, 0.86, z], [0, -0.48, 0], dark, `inkmaw-curator-quill-leg-${index + 1}`, "legs");
+      leg.userData.phase = index % 2 ? Math.PI : 0;
+      const nib = add(leg, [0.28, 0.24, 0.5], [0, -0.91, -0.12], eye, `inkmaw-curator-quill-nib-${index + 1}`);
+      nib.rotation.x = -0.22;
+    }
+    for (const side of [-1, 1]) {
+      const sideName = side < 0 ? "left" : "right";
+      const arm = pivotBox([0.26, 1.16, 0.28], [side * 0.7, 1.72, 0], [0, -0.58, 0], accent, `inkmaw-curator-${sideName}-arm`, "arms");
+      arm.userData.side = side;
+      arm.userData.phase = side < 0 ? 0 : Math.PI;
+      if (side < 0) {
+        for (const [index, y] of [-0.2, -0.5, -0.8].entries()) { const page = add(arm, [0.72, 0.06, 0.5], [-0.18, y, -0.22], glass, `inkmaw-curator-orbit-page-${index + 1}`); page.rotation.y = side * (0.12 + index * 0.1); }
+      } else {
+        add(arm, [0.15, 0.15, 1.62], [0.08, -0.82, -0.64], dark, "inkmaw-curator-long-quill");
+        add(arm, [0.42, 0.2, 0.62], [0.08, -0.84, -1.55], eye, "inkmaw-curator-long-nib");
+      }
+    }
+    for (const y of [0.86, 1.22, 1.58]) add(visual, [0.72, 0.07, 0.88], [0, y, 0.5], y === 1.22 ? accent : pale, `inkmaw-curator-page-layer-${y}`, "body");
+    add(visual, [0.24, 0.5, 0.14], [0, 1.45, -0.44], eye, "inkmaw-curator-living-glyph", "body");
   }
 
   group.userData.mobId = id;
