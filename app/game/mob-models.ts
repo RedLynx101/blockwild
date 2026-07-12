@@ -326,6 +326,12 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     const leatherMaterial = material(0x5a3829);
     const cargoMaterial = material(0x6f4930);
     const cargoBandMaterial = material(0xc18a4c);
+    // Fire-only redesign materials: charred basalt hide split by molten seams.
+    const isFire = dragonType === "fire";
+    const charMaterial = material(0x2f1d18);
+    const lavaMaterial = material(0xff7a2e, true, 0.95);
+    const emberCoreMaterial = material(0xffe08a, true, 0.97);
+    const amberHornMaterial = material(0xd9a355);
 
     group.userData.dragonType = dragonType;
     visual.userData.dragonType = dragonType;
@@ -371,11 +377,35 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     rigBox(visual, "haunches", [1.72, 1.18, 1.75], bodyMaterial, [0, 1.82, 1.47]);
     rigBox(visual, "shoulder-mantle", [2.16, 0.56, 1.1], accentMaterial, [0, 2.42, -0.78]);
     parts.body.push(chest);
+    if (isFire) {
+      // Cracked-basalt hide: molten seams sit proud of the surface so the box
+      // renderer reads them, and they scale with the breathing chest pivot.
+      for (const side of [-1, 1]) {
+        const sideName = side < 0 ? "left" : "right";
+        rigBox(chest, `${sideName}-chest-magma-crack-1`, [0.06, 0.52, 1.72], lavaMaterial, [side * 0.97, 0.1, -0.22], [0.12, 0, side * 0.14]);
+        rigBox(chest, `${sideName}-chest-magma-crack-2`, [0.06, 0.32, 1.02], lavaMaterial, [side * 0.965, -0.34, 0.58], [-0.16, 0, side * -0.2]);
+        rigBox(visual, `${sideName}-haunch-magma-crack`, [0.06, 0.44, 1.08], lavaMaterial, [side * 0.87, 1.92, 1.44], [0.08, 0, side * -0.18]);
+      }
+      rigBox(chest, "furnace-heart-vent", [0.52, 0.42, 0.09], emberCoreMaterial, [0, -0.26, -1.53], [0.08, 0, Math.PI / 4]);
+      rigBox(visual, "shoulder-char-plate", [2.24, 0.16, 0.86], charMaterial, [0, 2.66, -0.78]);
+    }
 
     for (let ridge = 0; ridge < 7; ridge += 1) {
       const height = 0.42 + Math.sin((ridge / 6) * Math.PI) * 0.42;
-      const spine = rigBox(visual, `back-spine-${ridge + 1}`, [0.18, height, 0.28], accentMaterial, [0, 2.62 + height / 2, -1.18 + ridge * 0.47]);
-      spine.rotation.x = -0.08 + ridge * 0.018;
+      if (isFire) {
+        // Obsidian crest: raked charred plates over molten seams, with open
+        // flame licking through the center of the row.
+        const plateHeight = height * 1.3;
+        const plate = rigBox(visual, `back-spine-${ridge + 1}`, [0.14, plateHeight, 0.42], charMaterial, [0, 2.6 + plateHeight / 2, -1.18 + ridge * 0.47]);
+        plate.rotation.x = -0.36 + ridge * 0.022;
+        rigBox(visual, `back-spine-${ridge + 1}-lava-seam`, [0.17, 0.11, 0.36], lavaMaterial, [0, 2.67, -1.18 + ridge * 0.47], [-0.32, 0, 0]);
+        if (ridge % 2 === 1) {
+          rigBox(visual, `back-crest-flame-${ridge}`, [0.11, 0.36, 0.16], glowMaterial, [0, 2.64 + plateHeight, -1.26 + ridge * 0.47], [-0.42, 0, ridge === 3 ? 0.24 : -0.18]);
+        }
+      } else {
+        const spine = rigBox(visual, `back-spine-${ridge + 1}`, [0.18, height, 0.28], accentMaterial, [0, 2.62 + height / 2, -1.18 + ridge * 0.47]);
+        spine.rotation.x = -0.08 + ridge * 0.018;
+      }
     }
     if (dragonType === "steel") {
       for (let plate = 0; plate < 5; plate += 1) {
@@ -392,7 +422,8 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       const width = 1.38 - segment * 0.14;
       rigBox(neck, `neck-${segment}`, [width, 1.08 - segment * 0.08, 1.24], segment % 2 ? bodyMaterial : accentMaterial, [0, 0, -0.5]);
       rigBox(neck, `neck-${segment}-throat`, [width * 0.68, 0.25, 1.06], bellyMaterial, [0, -0.43, -0.52]);
-      rigBox(neck, `neck-${segment}-spine`, [0.16, 0.46 - segment * 0.04, 0.28], accentMaterial, [0, 0.63 - segment * 0.05, -0.42]);
+      rigBox(neck, `neck-${segment}-spine`, [0.16, 0.46 - segment * 0.04, 0.28], isFire ? charMaterial : accentMaterial, [0, 0.63 - segment * 0.05, -0.42]);
+      if (isFire) rigBox(neck, `neck-${segment}-throat-ember`, [width * 0.3, 0.11, 0.72], lavaMaterial, [0, -0.57, -0.52]);
       neckParent = neck;
     }
 
@@ -402,9 +433,18 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     rigBox(head, "brow", [headWidth * 1.04, 0.28, 0.7], accentMaterial, [0, 0.34, -0.93]);
     rigBox(head, "snout", [headWidth * 0.7, 0.58, 1.15], bellyMaterial, [0, -0.18, -1.28]);
     parts.head.push(head);
+    if (isFire) {
+      rigBox(head, "brow-char-ridge", [headWidth * 1.08, 0.15, 0.52], charMaterial, [0, 0.5, -0.88], [-0.14, 0, 0]);
+      for (const side of [-1, 1]) {
+        const sideName = side < 0 ? "left" : "right";
+        rigBox(head, `${sideName}-cheek-spike`, [0.15, 0.15, 0.64], charMaterial, [side * (headWidth * 0.52), -0.02, 0.02], [0.12, side * -0.62, 0]);
+        rigBox(head, `${sideName}-snout-fang`, [0.09, 0.3, 0.09], amberHornMaterial, [side * (headWidth * 0.28), -0.52, -1.66], [0.06, 0, side * 0.05]);
+      }
+    }
 
     const jaw = pivot(head, "jaw", [0, -0.39, -1.1]);
     rigBox(jaw, "lower-jaw", [headWidth * 0.72, 0.28, 1.15], bellyMaterial, [0, -0.08, -0.48]);
+    if (isFire) rigBox(jaw, "chin-spike", [0.12, 0.36, 0.12], charMaterial, [0, -0.26, -0.92], [0.55, 0, 0]);
     for (const side of [-1, 1]) {
       for (let tooth = 0; tooth < 4; tooth += 1) {
         rigBox(jaw, `${side < 0 ? "left" : "right"}-tooth-${tooth + 1}`, [0.09, 0.22, 0.1], hornMaterial, [side * (0.2 + tooth * 0.1), 0.1, -0.2 - tooth * 0.23], [0.12, 0, side * 0.05]);
@@ -438,7 +478,7 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       const eye = pivot(head, `${sideName}-eye`, [side * (headWidth * 0.3), 0.16, -1.13]);
       rigBox(eye, `${sideName}-eye`, [0.21, 0.18, 0.09], eyeMaterial, [0, 0, -0.02]);
       rigBox(eye, `${sideName}-eye-glint`, [0.055, 0.055, 0.035], glowMaterial, [side * -0.035, 0.035, -0.075]);
-      const nostril = rigBox(head, `${sideName}-nostril`, [0.12, 0.08, 0.055], darkMaterial, [side * (headWidth * 0.19), -0.08, -1.88]);
+      const nostril = rigBox(head, `${sideName}-nostril`, [0.12, 0.08, 0.055], isFire ? lavaMaterial : darkMaterial, [side * (headWidth * 0.19), -0.08, -1.88]);
       nostril.userData.breathSource = true;
     }
 
@@ -452,10 +492,20 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     head.add(femaleHorns);
     for (const side of [-1, 1]) {
       const sideName = side < 0 ? "left" : "right";
-      rigBox(maleHorns, `${sideName}-straight-horn`, [0.24, 0.24, 1.25], hornMaterial, [side * 0.55, 0.43, 0.18], [-0.55, side * 0.12, side * 0.06]);
-      const outer = rigBox(femaleHorns, `${sideName}-curved-horn-outer`, [0.22, 0.22, 0.92], hornMaterial, [side * 0.58, 0.34, 0.08], [-0.5, side * 0.42, side * 0.18]);
-      rigBox(femaleHorns, `${sideName}-curved-horn-tip`, [0.18, 0.18, 0.62], hornMaterial, [side * 0.86, 0.62, 0.37], [-0.82, side * -0.2, side * -0.18]);
-      outer.userData.sexMarker = "female";
+      if (isFire) {
+        // Males wear heavy two-segment demon-curl horns; females long swept
+        // blades. Charred bases fade into polished horn tips.
+        rigBox(maleHorns, `${sideName}-straight-horn`, [0.3, 0.3, 0.92], charMaterial, [side * 0.5, 0.44, 0.28], [-0.35, side * 0.32, 0]);
+        rigBox(maleHorns, `${sideName}-straight-horn-tip`, [0.2, 0.2, 0.86], amberHornMaterial, [side * 0.76, 0.82, 0.86], [-1.05, side * 0.38, side * 0.1]);
+        const outer = rigBox(femaleHorns, `${sideName}-curved-horn-outer`, [0.17, 0.23, 1.32], charMaterial, [side * 0.48, 0.52, 0.44], [-0.42, side * 0.12, side * -0.08]);
+        rigBox(femaleHorns, `${sideName}-curved-horn-tip`, [0.12, 0.15, 0.68], amberHornMaterial, [side * 0.56, 0.98, 1.34], [-0.72, side * 0.08, side * -0.1]);
+        outer.userData.sexMarker = "female";
+      } else {
+        rigBox(maleHorns, `${sideName}-straight-horn`, [0.24, 0.24, 1.25], hornMaterial, [side * 0.55, 0.43, 0.18], [-0.55, side * 0.12, side * 0.06]);
+        const outer = rigBox(femaleHorns, `${sideName}-curved-horn-outer`, [0.22, 0.22, 0.92], hornMaterial, [side * 0.58, 0.34, 0.08], [-0.5, side * 0.42, side * 0.18]);
+        rigBox(femaleHorns, `${sideName}-curved-horn-tip`, [0.18, 0.18, 0.62], hornMaterial, [side * 0.86, 0.62, 0.37], [-0.82, side * -0.2, side * -0.18]);
+        outer.userData.sexMarker = "female";
+      }
       if (dragonType === "ice") rigBox(head, `${sideName}-ice-crown-horn`, [0.18, 0.48, 0.18], hornMaterial, [side * 0.27, 0.77, -0.42], [0, 0, side * -0.18]);
     }
 
@@ -472,6 +522,16 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       rigBox(wingForearm, `${sideName}-outer-wing-membrane`, [2.7, 0.05, 2.25], membraneMaterial, [side * 1.18, -0.07, 0.92], [0.03, side * -0.13, side * -0.16]);
       for (let finger = 0; finger < 3; finger += 1) {
         rigBox(wingForearm, `${sideName}-wing-finger-${finger + 1}`, [2.45 - finger * 0.25, 0.1, 0.12], hornMaterial, [side * (1.06 - finger * 0.08), -0.04, 0.35 + finger * 0.74], [0, side * (0.18 + finger * 0.13), side * -0.15]);
+      }
+      if (isFire) {
+        // Scorched sails: charred fringe panels trail the membranes with a
+        // molten burn line where the fire eats into each sail.
+        for (let notch = 0; notch < 3; notch += 1) {
+          rigBox(wingForearm, `${sideName}-wing-scorch-fringe-${notch + 1}`, [0.82 - notch * 0.16, 0.045, 0.88], charMaterial, [side * (0.4 + notch * 0.82), -0.08, 2.02 + notch * 0.12], [0.03, side * -0.13, side * -0.16]);
+          rigBox(wingForearm, `${sideName}-wing-ember-seam-${notch + 1}`, [0.52 - notch * 0.08, 0.062, 0.12], lavaMaterial, [side * (0.4 + notch * 0.82), -0.06, 1.62 + notch * 0.1], [0.03, side * -0.13, side * -0.16]);
+        }
+        rigBox(wingRoot, `${sideName}-inner-wing-ember-seam`, [1.92, 0.062, 0.13], lavaMaterial, [side * 1.02, -0.07, 2.38], [0.04, side * 0.1, side * -0.1]);
+        rigBox(wingRoot, `${sideName}-wing-thumb-claw`, [0.13, 0.13, 0.52], hornMaterial, [side * 2.28, 0.06, -0.3], [0.4, side * -0.3, 0]);
       }
       for (let spot = 0; spot < 4; spot += 1) {
         const mark = rigBox(wingRoot, `${sideName}-wing-mark-${spot + 1}`, [0.34 + spot * 0.06, 0.07, 0.34 + spot * 0.06], glowMaterial, [side * (0.68 + spot * 0.45), -0.12, 0.35 + spot * 0.42], [0, 0, Math.PI / 4]);
@@ -494,6 +554,7 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
         rigBox(hip, `${positionName}-upper-leg`, [0.52, 0.95, 0.62], bodyMaterial, [0, -0.43, front ? -0.08 : 0.08], [front ? -0.1 : 0.1, 0, side * 0.05]);
         const knee = pivot(hip, `${positionName}-knee`, [0, -0.82, front ? -0.12 : 0.14]);
         rigBox(knee, `${positionName}-lower-leg`, [0.4, 0.86, 0.45], accentMaterial, [0, -0.4, 0.02], [front ? 0.08 : -0.08, 0, 0]);
+        if (isFire) rigBox(knee, `${positionName}-knee-ember-crack`, [0.44, 0.1, 0.1], lavaMaterial, [0, -0.14, -0.2]);
         const claw = pivot(knee, `${positionName}-claw`, [0, -0.77, -0.08]);
         rigBox(claw, `${positionName}-foot`, [0.65, 0.24, 0.8], bellyMaterial, [0, -0.04, -0.25]);
         for (let toe = -1; toe <= 1; toe += 1) rigBox(claw, `${positionName}-talon-${toe + 2}`, [0.12, 0.12, 0.58], hornMaterial, [toe * 0.19, -0.08, -0.76], [0.08, toe * -0.12, 0]);
@@ -505,7 +566,8 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       const tail = pivot(tailParent, `tail-${segment}`, segment === 1 ? [0, 1.9, 1.45] : [0, -0.015, 0.92]);
       const width = 1.42 - segment * 0.15;
       rigBox(tail, `tail-${segment}`, [Math.max(0.28, width), Math.max(0.3, width * 0.67), 1.18], segment % 2 ? bodyMaterial : accentMaterial, [0, 0, 0.47]);
-      if (segment < 6) rigBox(tail, `tail-${segment}-spine`, [0.13, Math.max(0.18, 0.5 - segment * 0.055), 0.22], accentMaterial, [0, Math.max(0.23, width * 0.44), 0.4]);
+      if (segment < 6) rigBox(tail, `tail-${segment}-spine`, [0.13, Math.max(0.18, 0.5 - segment * 0.055), 0.22], isFire ? charMaterial : accentMaterial, [0, Math.max(0.23, width * 0.44), 0.4]);
+      if (isFire && segment >= 4) rigBox(tail, `tail-${segment}-char-ring`, [Math.max(0.34, width + 0.06), Math.max(0.36, width * 0.67 + 0.06), 0.18], charMaterial, [0, 0, 0.47]);
       tailParent = tail;
     }
     if (dragonType === "sea") {
@@ -516,7 +578,19 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       rigBox(tailParent, "ice-tail-fin-left", [1.65, 0.08, 1.28], membraneMaterial, [-0.68, 0.05, 0.62], [0, 0.48, 0.16]);
       rigBox(tailParent, "ice-tail-fin-right", [1.65, 0.08, 1.28], membraneMaterial, [0.68, 0.05, 0.62], [0, -0.48, -0.16]);
     } else if (dragonType === "fire") {
-      for (let flame = 0; flame < 3; flame += 1) rigBox(tailParent, `tail-flame-${flame + 1}`, [0.22 + flame * 0.12, 0.52 - flame * 0.08, 0.38], glowMaterial, [(flame - 1) * 0.18, 0.25 + flame * 0.05, 0.72 + flame * 0.22], [0, 0, (flame - 1) * 0.28]);
+      // Inferno tip: a bright core wrapped in leaning lava tongues, with
+      // stray ember motes drifting off the burn.
+      rigBox(tailParent, "tail-flame-core", [0.3, 0.72, 0.3], emberCoreMaterial, [0, 0.34, 0.88], [0.12, Math.PI / 4, 0]);
+      for (let flame = 0; flame < 4; flame += 1) {
+        const angle = (flame / 4) * TAU + 0.5;
+        rigBox(tailParent, `tail-flame-${flame + 1}`, [0.17, 0.52 - (flame % 2) * 0.14, 0.17], flame % 2 ? glowMaterial : lavaMaterial,
+          [Math.cos(angle) * 0.22, 0.3 + (flame % 2) * 0.14, 0.88 + Math.sin(angle) * 0.22],
+          [Math.sin(angle) * 0.3, flame * 0.55, Math.cos(angle) * 0.3]);
+      }
+      for (let ember = 0; ember < 3; ember += 1) {
+        rigBox(tailParent, `tail-ember-mote-${ember + 1}`, [0.09 - ember * 0.015, 0.09 - ember * 0.015, 0.09 - ember * 0.015], glowMaterial,
+          [(ember % 2 ? 1 : -1) * (0.16 + ember * 0.09), 0.78 + ember * 0.26, 0.94 + ember * 0.06], [0.3, ember * 0.6, 0.3]);
+      }
     } else {
       rigBox(tailParent, "steel-tail-hammer", [1.18, 0.72, 0.9], metalMaterial, [0, 0, 0.75], [0, Math.PI / 4, 0]);
     }
