@@ -3,7 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { bestiaryKindsForFilter } from "../app/game/VoxelGame.tsx";
-import { MOB_DEFS, MOB_ORDER, RABBIT_ORDER, SENTIENT_MOB_ORDER } from "../app/game/mobs.ts";
+import { AQUARIUM_MOB_ORDER, MOB_DEFS, MOB_ORDER, RABBIT_ORDER, SENTIENT_MOB_ORDER } from "../app/game/mobs.ts";
 import { PLANTS } from "../app/game/plants.ts";
 import { renderModelPortrait } from "../scripts/render-models.ts";
 import { createPlantInspectionSpecs } from "../scripts/render-plants.ts";
@@ -19,7 +19,9 @@ test("v1.2 creature filters keep humanoids, rabbits, and sea slugs organized", (
 
   assert.deepEqual(humanoids, SENTIENT_MOB_ORDER);
   assert.deepEqual(rabbits, RABBIT_ORDER);
-  assert.deepEqual(slugs, ["sunset-sea-slug", "moonlace-sea-slug"]);
+  const expectedSlugs = AQUARIUM_MOB_ORDER.filter((kind) => MOB_DEFS[kind].family === "sea-slug");
+  assert.equal(expectedSlugs.length, 14);
+  assert.deepEqual(slugs, expectedSlugs);
   for (const kind of slugs) assert.ok(aquatic.includes(kind), `${kind} should remain visible under Aquatic`);
   assert.equal(surface.some((kind) => MOB_DEFS[kind].sentient || MOB_DEFS[kind].family === "sentient"), false);
   assert.equal(surface.some((kind) => MOB_DEFS[kind].family === "rabbit"), false);

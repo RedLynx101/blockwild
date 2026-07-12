@@ -133,17 +133,12 @@ export type FishHabitat = "ocean" | "deep-ocean" | "lumen-trench" | "river" | "u
 export type WeightedMob = readonly [kind: MobKind, weight: number];
 
 const OCEAN_FISH: readonly WeightedMob[] = Object.freeze([
-  ["shoalfin", 0.21],
-  ["pocket-goldfish", 0.06],
-  ["silverthread", 0.18],
-  ["blue-mackerel", 0.16],
-  ["coralback", 0.1],
-  ["tideglass-crab", 0.09],
-  ["reefglide-terrapin", 0.06],
-  ["emberribbon", 0.06],
-  ["glassfin", 0.05],
-  ["tidepup", 0.04],
-  ["sunset-sea-slug", 0.018],
+  ["shoalfin", 0.19], ["pocket-goldfish", 0.045], ["silverthread", 0.16], ["blue-mackerel", 0.14],
+  ["coralback", 0.09], ["sunwheel-angelfish", 0.075], ["tideglass-crab", 0.075], ["reefglide-terrapin", 0.05],
+  ["emberribbon", 0.05], ["glassfin", 0.045], ["tidepup", 0.035],
+  ["sunset-sea-slug", 0.022], ["blue-dragon-sea-slug", 0.016], ["leafsheep-sea-slug", 0.018],
+  ["sea-bunny-nudibranch", 0.013], ["spanish-dancer-sea-slug", 0.009], ["ringed-phyllidia", 0.012],
+  ["embercrown-sea-slug", 0.008], ["kelpwarden-sea-slug", 0.014],
 ]);
 const DEEP_OCEAN_FISH: readonly WeightedMob[] = Object.freeze([
   ["blue-mackerel", 0.22],
@@ -161,6 +156,11 @@ const DEEP_OCEAN_FISH: readonly WeightedMob[] = Object.freeze([
   ["pocket-goldfish", 0.025],
   ["sunset-sea-slug", 0.018],
   ["moonlace-sea-slug", 0.012],
+  ["crystal-tipped-nudibranch", 0.012],
+  ["hooded-melibe", 0.01],
+  ["sea-angel-slug", 0.009],
+  ["starlight-choir-sea-slug", 0.007],
+  ["voidglass-sea-slug", 0.004],
 ]);
 const LUMEN_TRENCH_FAUNA: readonly WeightedMob[] = Object.freeze([
   ["glassfin", 0.31],
@@ -174,16 +174,17 @@ const LUMEN_TRENCH_FAUNA: readonly WeightedMob[] = Object.freeze([
   ["worldshell-leviathan", 0.002],
   ["moonlace-sea-slug", 0.045],
   ["sunset-sea-slug", 0.012],
+  ["crystal-tipped-nudibranch", 0.036],
+  ["hooded-melibe", 0.018],
+  ["sea-angel-slug", 0.028],
+  ["starlight-choir-sea-slug", 0.032],
+  ["voidglass-sea-slug", 0.024],
 ]);
 const RIVER_FISH: readonly WeightedMob[] = Object.freeze([
-  ["brookdart", 0.34],
-  ["reedneedle", 0.3],
-  ["redfin-salmon", 0.22],
-  ["pocket-goldfish", 0.14],
+  ["brookdart", 0.29], ["reedneedle", 0.26], ["redfin-salmon", 0.2], ["pocket-goldfish", 0.13], ["stonewhisker-loach", 0.12],
 ]);
 const UNDERGROUND_FISH: readonly WeightedMob[] = Object.freeze([
-  ["gloomfin", 0.48],
-  ["cavefilament", 0.52],
+  ["gloomfin", 0.41], ["cavefilament", 0.44], ["stonewhisker-loach", 0.15],
 ]);
 const SYRUP_POND_FISH: readonly WeightedMob[] = Object.freeze([
   ["syrupfin", 1],
@@ -415,7 +416,21 @@ export const NATURAL_GROUP_RANGES: Readonly<Partial<Record<MobKind, readonly [mi
   "chocolate-bunny": [1, 3],
   "sunset-sea-slug": [1, 2],
   "moonlace-sea-slug": [1, 2],
+  "blue-dragon-sea-slug": [1, 3],
+  "leafsheep-sea-slug": [1, 3],
+  "sea-bunny-nudibranch": [1, 2],
+  "spanish-dancer-sea-slug": [1, 1],
+  "crystal-tipped-nudibranch": [1, 2],
+  "ringed-phyllidia": [1, 2],
+  "hooded-melibe": [1, 2],
+  "sea-angel-slug": [2, 4],
+  "embercrown-sea-slug": [1, 2],
+  "kelpwarden-sea-slug": [1, 3],
+  "starlight-choir-sea-slug": [2, 5],
+  "voidglass-sea-slug": [1, 2],
   "pocket-goldfish": [4, 8],
+  "sunwheel-angelfish": [3, 6],
+  "stonewhisker-loach": [2, 5],
 });
 
 export type FoodLureResponse = "approach" | "flee" | "ignore";

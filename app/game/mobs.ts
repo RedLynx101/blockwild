@@ -51,7 +51,23 @@ export type TideglassAquaticKind =
 export type MosslingVariantKind = "boglantern-mossling" | "cindercone-mossling" | "moonbloom-mossling";
 export type SugarplumAquaticKind = "syrupfin";
 export type RabbitKind = "meadow-cottontail" | "russet-rabbit" | "frost-hare" | "chocolate-bunny";
-export type AquariumMobKind = "sunset-sea-slug" | "moonlace-sea-slug" | "pocket-goldfish";
+export type SeaSlugKind =
+  | "sunset-sea-slug"
+  | "moonlace-sea-slug"
+  | "blue-dragon-sea-slug"
+  | "leafsheep-sea-slug"
+  | "sea-bunny-nudibranch"
+  | "spanish-dancer-sea-slug"
+  | "crystal-tipped-nudibranch"
+  | "ringed-phyllidia"
+  | "hooded-melibe"
+  | "sea-angel-slug"
+  | "embercrown-sea-slug"
+  | "kelpwarden-sea-slug"
+  | "starlight-choir-sea-slug"
+  | "voidglass-sea-slug";
+export type AquariumFishKind = "pocket-goldfish" | "sunwheel-angelfish" | "stonewhisker-loach";
+export type AquariumMobKind = SeaSlugKind | AquariumFishKind;
 export type DragonKind = "fire-dragon" | "ice-dragon" | "steel-dragon" | "sea-dragon";
 export type HobbitKind =
   | "hobbit-mayor"
@@ -356,6 +372,32 @@ const V1_CREATURE_MOBS: Record<V1FactionCreatureKind, MobDefinition> = {
     discoveryHint: "Listen for paired piston strokes near a Deepgear Golem Forge.",
   },
 };
+
+type SeaSlugProfile = Readonly<{
+  name: string;
+  habitat: string;
+  behavior: string;
+  lore: string;
+  colors: [number, number, number];
+  food: ItemCode;
+  discoveryHint: string;
+  speed?: number;
+  bottomDweller?: boolean;
+}>;
+
+/** Keeps the large nudibranch collection mechanically consistent while leaving each species' ecology explicit. */
+function seaSlugDefinition(kind: SeaSlugKind, profile: SeaSlugProfile): MobDefinition {
+  return {
+    kind, name: profile.name, temperament: "Gentle", hostile: false,
+    health: 3, damage: 0, xp: 2, speed: profile.speed ?? 0.14, chaseSpeed: (profile.speed ?? 0.14) * 1.6, turnRate: 2.3, attackRange: 0,
+    footOffset: 0.58, radius: 0.24, height: 0.2, habitat: profile.habitat, active: "All hours underwater",
+    behavior: profile.behavior, lore: profile.lore, colors: profile.colors, drops: [],
+    family: "sea-slug", movement: "aquatic", aquatic: true, bottomDweller: profile.bottomDweller ?? true, sentient: false, breedable: true,
+    breedingFoods: [profile.food], diet: [profile.food, Item.LumenKelpFrond], captureItem: Item.CaptureOrb,
+    utility: "A living aquarium jewel that reproduces slowly with a mature partner, suitable food and free tank space.",
+    discoveryHint: profile.discoveryHint,
+  };
+}
 
 export const MOB_DEFS: Record<MobKind, MobDefinition> = {
   ...V1_SENTIENT_MOBS,
@@ -911,28 +953,90 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     postTameNotes: "A trusted Truffle Bunny can follow, sit or wander and never attacks.",
     discoveryHint: "Search the dry knolls between Cocoa Puffs in the Sugarplum Vale.",
   },
-  "sunset-sea-slug": {
-    kind: "sunset-sea-slug", name: "Sunset Sea Slug", temperament: "Gentle", hostile: false,
-    health: 3, damage: 0, xp: 2, speed: 0.14, chaseSpeed: 0.22, turnRate: 2.2, attackRange: 0,
-    footOffset: 0.58, radius: 0.23, height: 0.18, habitat: "Warm ocean shelves and coral gardens", active: "All hours underwater",
-    behavior: "Crawls over the seafloor in slow ribbons and folds its sunset frills when startled.",
-    lore: "Every individual carries a slightly different line of dusk along its back.", colors: [0xef7a72, 0xffc36f, 0x522c66], drops: [],
-    family: "sea-slug", movement: "aquatic", aquatic: true, bottomDweller: true, sentient: false, breedable: true,
-    breedingFoods: [Item.LumenKelpFrond], diet: [Item.LumenKelpFrond, Item.LivingCoral], captureItem: Item.CaptureOrb,
-    utility: "A tiny aquarium crawler that reproduces slowly when a tank has a mature pair and free space.",
-    discoveryHint: "Inspect warm coral shelves close to the seafloor.",
-  },
-  "moonlace-sea-slug": {
-    kind: "moonlace-sea-slug", name: "Moonlace Sea Slug", temperament: "Gentle", hostile: false,
-    health: 3, damage: 0, xp: 2, speed: 0.12, chaseSpeed: 0.2, turnRate: 2, attackRange: 0,
-    footOffset: 0.58, radius: 0.22, height: 0.17, habitat: "Lumen Trench floors and moonlit deep reefs", active: "All hours underwater",
-    behavior: "Crawls along mineral seams and pulses its lace-like mantle with a quiet blue glow.",
-    lore: "Atlantian mosaics copy the branching pattern of its mantle, never the other way around.", colors: [0x5965b9, 0xa8e9ee, 0xeaffff], drops: [],
-    family: "sea-slug", movement: "aquatic", aquatic: true, bottomDweller: true, sentient: false, breedable: true,
-    breedingFoods: [Item.AbyssBloomNectar], diet: [Item.AbyssBloomNectar, Item.LumenKelpFrond], captureItem: Item.CaptureOrb,
-    utility: "A bioluminescent aquarium crawler; two mature specimens can slowly fill spare tank cells.",
-    discoveryHint: "Search glowing stone at the bottom of a Lumen Trench.",
-  },
+  "sunset-sea-slug": seaSlugDefinition("sunset-sea-slug", {
+    name: "Sunset Sea Slug", habitat: "Warm ocean shelves and coral gardens",
+    behavior: "Undulates its broad ruffled mantle over coral and curls the orange edge inward when startled.",
+    lore: "Every individual carries a different horizon of rose, gold and violet along its back.", colors: [0xef6f73, 0xffc65f, 0x4d245f],
+    food: Item.LivingCoral, discoveryHint: "Inspect warm coral shelves close to the seafloor.",
+  }),
+  "moonlace-sea-slug": seaSlugDefinition("moonlace-sea-slug", {
+    name: "Moonlace Sea Slug", habitat: "Lumen Trench floors and moonlit deep reefs",
+    behavior: "Crawls along mineral seams while a crown of branching gills pulses with quiet blue light.",
+    lore: "Atlantian mosaics copy the branching pattern of its mantle, never the other way around.", colors: [0x5965b9, 0xa8e9ee, 0xeaffff],
+    food: Item.AbyssBloomNectar, discoveryHint: "Search glowing stone at the bottom of a Lumen Trench.", speed: 0.12,
+  }),
+  "blue-dragon-sea-slug": seaSlugDefinition("blue-dragon-sea-slug", {
+    name: "Blue Dragon Sea Slug", habitat: "Open-ocean surface currents and tide lines",
+    behavior: "Drifts belly-up beneath the surface, spreading six cobalt cerata fans like a tiny star.",
+    lore: "Stormreaders call it a piece of sky that learned to swim under the sea.", colors: [0x255bb8, 0x8be5ef, 0x102e75],
+    food: Item.LumenKelpFrond, discoveryHint: "Watch the underside of calm ocean surfaces after a strong tide.", speed: 0.2, bottomDweller: false,
+  }),
+  "leafsheep-sea-slug": seaSlugDefinition("leafsheep-sea-slug", {
+    name: "Leafsheep Sea Slug", habitat: "Sunlit kelp nurseries and shallow reef grass",
+    behavior: "Grazes algae with a bright little face while leaf-shaped cerata store stolen sunlight.",
+    lore: "Kelpkeepers swear a content Leafsheep makes nearby fronds lean closer.", colors: [0xf2f0d0, 0x58bd72, 0x173f32],
+    food: Item.LumenKelpFrond, discoveryHint: "Look for moving green leaflets on the brightest kelp fronds.",
+  }),
+  "sea-bunny-nudibranch": seaSlugDefinition("sea-bunny-nudibranch", {
+    name: "Sea Bunny Nudibranch", habitat: "Cool reef rubble and sponge gardens",
+    behavior: "Noses between stones on two long rhinophores and shakes a soft ring of sensory tufts.",
+    lore: "Its resemblance to a rabbit has started arguments in every coastal academy.", colors: [0xf4eee2, 0x2b2c36, 0xf2a8b8],
+    food: Item.LivingCoral, discoveryHint: "Search pale sponge gardens where dark ear-like tufts move against the current.",
+  }),
+  "spanish-dancer-sea-slug": seaSlugDefinition("spanish-dancer-sea-slug", {
+    name: "Spanish Dancer Sea Slug", habitat: "Warm reef walls and sheltered ocean caverns",
+    behavior: "Crawls with its mantle furled, then throws the entire scarlet skirt into waves when swimming.",
+    lore: "Even Atlantian ballroom masters admit the Dancer invented the turn first.", colors: [0xc82f47, 0xff7c52, 0xffd16f],
+    food: Item.LivingCoral, discoveryHint: "Look beneath warm reef overhangs for a folded red mantle.", speed: 0.18,
+  }),
+  "crystal-tipped-nudibranch": seaSlugDefinition("crystal-tipped-nudibranch", {
+    name: "Crystal-Tipped Nudibranch", habitat: "Cold deep reefs and glass-coral gardens",
+    behavior: "Raises a forest of translucent cerata, each tipped with a violet spark that bends with the current.",
+    lore: "The tips are soft tissue, though miners keep trying to appraise them.", colors: [0xd8f5ed, 0x9c7de8, 0x395c72],
+    food: Item.AbyssBloomNectar, discoveryHint: "Search cold glass-coral where tiny violet points sway together.", speed: 0.11,
+  }),
+  "ringed-phyllidia": seaSlugDefinition("ringed-phyllidia", {
+    name: "Sunring Phyllidia", habitat: "Tropical coral flats and tideglass shallows",
+    behavior: "Moves openly across the reef, advertising its bitter skin with blue ridges and golden rings.",
+    lore: "Nothing sensible bites one twice; the rings make sure nothing needs to.", colors: [0x22344a, 0x4bc4dc, 0xffca4f],
+    food: Item.LivingCoral, discoveryHint: "Scan exposed tropical reef rock for bright gold rings.",
+  }),
+  "hooded-melibe": seaSlugDefinition("hooded-melibe", {
+    name: "Hooded Melibe", habitat: "Kelp forests and silty deep-ocean gardens",
+    behavior: "Sweeps a wide translucent oral hood through the water and snaps it shut around drifting food.",
+    lore: "A Melibe hunting in profile resembles a glass lantern trying to swallow the tide.", colors: [0x8ebc9f, 0xd8f0c7, 0x5d6f46],
+    food: Item.LumenKelpFrond, discoveryHint: "Watch for a round transparent hood opening between deep kelp stalks.", speed: 0.13,
+  }),
+  "sea-angel-slug": seaSlugDefinition("sea-angel-slug", {
+    name: "Sea Angel Slug", habitat: "Cold open water above the Lumen Trench",
+    behavior: "Rows through black water on two glassy parapodia and folds into a falling spark while resting.",
+    lore: "It has no halo; the cold blue organs shining through its body were enough for the name.", colors: [0xe9fbff, 0x8dd9ed, 0x36578f],
+    food: Item.AbyssBloomNectar, discoveryHint: "Look above the trench floor for a pair of tiny beating wings.", speed: 0.28, bottomDweller: false,
+  }),
+  "embercrown-sea-slug": seaSlugDefinition("embercrown-sea-slug", {
+    name: "Embercrown Sea Slug", habitat: "Volcanic springs and black-sand reef vents",
+    behavior: "Browses heat-loving growth while ember-red cerata brighten and dim in a ring down its back.",
+    lore: "Its crown is cold to the touch, but few divers trust that fact on first meeting.", colors: [0x2b2931, 0xf05c3c, 0xffc44f],
+    food: Item.LivingCoral, discoveryHint: "Search the cool rim of an underwater vent for a moving ember crown.",
+  }),
+  "kelpwarden-sea-slug": seaSlugDefinition("kelpwarden-sea-slug", {
+    name: "Kelpwarden Sea Slug", habitat: "Ancient kelp roots and Atlantian nursery terraces",
+    behavior: "Carries leaflike dorsal vanes that mimic young kelp and grazes fouling growth from the holdfasts.",
+    lore: "Kelpkeepers leave the oldest specimens undisturbed and call them gardeners, not livestock.", colors: [0x27594b, 0x78bd6a, 0xd3d67a],
+    food: Item.LumenKelpFrond, discoveryHint: "Check old kelp holdfasts for leaves moving without a stalk.",
+  }),
+  "starlight-choir-sea-slug": seaSlugDefinition("starlight-choir-sea-slug", {
+    name: "Starlight Choir Sea Slug", habitat: "Lumen Trench crystal choirs and abyss-bloom fields",
+    behavior: "Pulses rows of luminous cerata in answer to nearby kin until a whole colony becomes a slow song of light.",
+    lore: "No sound is involved, but every observer agrees on where the chorus begins.", colors: [0x312b64, 0x9b8cff, 0xf0e7ff],
+    food: Item.AbyssBloomNectar, discoveryHint: "Wait beside a trench bloom until several violet lights answer one another.", speed: 0.1,
+  }),
+  "voidglass-sea-slug": seaSlugDefinition("voidglass-sea-slug", {
+    name: "Voidglass Sea Slug", habitat: "The darkest Lumen Trench mineral seams",
+    behavior: "Crawls almost invisibly until its transparent mantle refracts a moving constellation of cold points.",
+    lore: "A captured Voidglass appears empty from one angle and full of stars from the next.", colors: [0x15192f, 0x5886aa, 0xbffcff],
+    food: Item.AbyssBloomNectar, discoveryHint: "Search for stars that move against the trench current.", speed: 0.09,
+  }),
   "pocket-goldfish": {
     kind: "pocket-goldfish", name: "Pocket Goldfish", temperament: "Gentle", hostile: false,
     health: 2, damage: 0, xp: 1, speed: 1.2, chaseSpeed: 1.8, turnRate: 8.5, attackRange: 0,
@@ -943,6 +1047,26 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     sentient: false, breedable: true, breedingFoods: [Item.BluepodBeans], diet: [Item.BluepodBeans, Item.WheatSeeds], captureItem: Item.CaptureOrb,
     utility: "A one-cell aquarium fish that slowly repopulates below the connected tank cap.",
     discoveryHint: "Look into calm river bends and luminous Moonwell ponds.",
+  },
+  "sunwheel-angelfish": {
+    kind: "sunwheel-angelfish", name: "Sunwheel Angelfish", temperament: "Skittish", hostile: false,
+    health: 4, damage: 0, xp: 3, speed: 1.1, chaseSpeed: 2.65, turnRate: 8.2, attackRange: 0,
+    footOffset: 0.54, radius: 0.34, height: 0.52, habitat: "Sunlit coral gardens and warm tideglass reefs", active: "Day underwater",
+    behavior: "Turns its tall disk to slip between coral fans and displays long golden pennants when schooling.",
+    lore: "At noon a shoal becomes a wheel of little suns, flashing one after another through the reef.", colors: [0xf3c34d, 0x2f7184, 0xfff0b0],
+    drops: [{ item: Item.RawFish, min: 1, max: 1, chance: 0.7 }], family: "fish", movement: "aquatic", aquatic: true, sentient: false,
+    breedable: true, breedingFoods: [Item.LumenKelpFrond], diet: [Item.LumenKelpFrond, Item.WheatSeeds], captureItem: Item.CaptureOrb,
+    utility: "A tall reef aquarium fish whose pennants make shoal direction easy to read.", discoveryHint: "Watch the brightest coral gardens around noon.",
+  },
+  "stonewhisker-loach": {
+    kind: "stonewhisker-loach", name: "Stonewhisker Loach", temperament: "Gentle", hostile: false,
+    health: 4, damage: 0, xp: 2, speed: 0.78, chaseSpeed: 1.8, turnRate: 6.4, attackRange: 0,
+    footOffset: 0.5, radius: 0.3, height: 0.2, habitat: "River cobbles and flooded cave floors", active: "Dusk and darkness underwater",
+    behavior: "Rests on broad fins, tastes silt with six whiskers and buries everything but its eyes beneath loose gravel.",
+    lore: "Trailkeepers trust a Stonewhisker's clean whiskers as proof that a riverbed has not been poisoned.", colors: [0x6d6959, 0xc4a66a, 0x302f32],
+    drops: [{ item: Item.RawFish, min: 1, max: 1, chance: 0.65 }], family: "fish", movement: "aquatic", aquatic: true, bottomDweller: true, sentient: false,
+    breedable: true, breedingFoods: [Item.BluepodBeans], diet: [Item.BluepodBeans, Item.WheatSeeds], captureItem: Item.CaptureOrb,
+    utility: "A bottom-feeding aquarium fish and living indicator of clean river sediment.", discoveryHint: "Look for whisker tracks between river cobbles at dusk.",
   },
   "reliquary-sentinel": {
     kind: "reliquary-sentinel", name: "Reliquary Sentinel", temperament: "Hostile", hostile: true,
@@ -1663,7 +1787,12 @@ export const TIDEGLASS_AQUATIC_ORDER: TideglassAquaticKind[] = [
 ];
 export const SUGARPLUM_AQUATIC_ORDER: SugarplumAquaticKind[] = ["syrupfin"];
 export const RABBIT_ORDER: RabbitKind[] = ["meadow-cottontail", "russet-rabbit", "frost-hare", "chocolate-bunny"];
-export const AQUARIUM_MOB_ORDER: AquariumMobKind[] = ["sunset-sea-slug", "moonlace-sea-slug", "pocket-goldfish"];
+export const AQUARIUM_MOB_ORDER: AquariumMobKind[] = [
+  "sunset-sea-slug", "moonlace-sea-slug", "blue-dragon-sea-slug", "leafsheep-sea-slug", "sea-bunny-nudibranch",
+  "spanish-dancer-sea-slug", "crystal-tipped-nudibranch", "ringed-phyllidia", "hooded-melibe", "sea-angel-slug",
+  "embercrown-sea-slug", "kelpwarden-sea-slug", "starlight-choir-sea-slug", "voidglass-sea-slug",
+  "pocket-goldfish", "sunwheel-angelfish", "stonewhisker-loach",
+];
 export const DRAGON_ORDER: DragonKind[] = ["fire-dragon", "ice-dragon", "steel-dragon", "sea-dragon"];
 export const HOBBIT_ORDER: HobbitKind[] = [
   "hobbit-mayor", "hobbit-farmer", "hobbit-miner", "hobbit-merchant", "hobbit-banker", "hobbit-hammer-guard", "hobbit-crossbow-guard",

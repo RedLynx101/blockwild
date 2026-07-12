@@ -8,10 +8,30 @@ import {
   RATTLEKIN_CLUB_CONTRACT,
   RIDGEBACK_GROUND_LIFT,
 } from "./model-specs";
-import { CORE_MOB_ORDER, MOB_DEFS, type BirdKind, type CoreMobKind, type DragonKind, type MobKind } from "./mobs";
+import {
+  CORE_MOB_ORDER,
+  MOB_DEFS,
+  type BirdKind,
+  type CoreMobKind,
+  type DragonKind,
+  type MobKind,
+  type SeaSlugKind,
+} from "./mobs";
 import { createArrowVisual } from "./projectiles";
 
 const TAU = Math.PI * 2;
+
+const GENERIC_FISH_KINDS = [
+  "shoalfin", "coralback", "brookdart", "gloomfin", "silverthread", "reedneedle", "emberribbon", "cavefilament",
+  "redfin-salmon", "blue-mackerel", "glassfin", "lanternjaw", "syrupfin", "glowfin", "pocket-goldfish",
+  "sunwheel-angelfish", "stonewhisker-loach",
+] as const satisfies readonly CoreMobKind[];
+
+const SEA_SLUG_KINDS = [
+  "sunset-sea-slug", "moonlace-sea-slug", "blue-dragon-sea-slug", "leafsheep-sea-slug", "sea-bunny-nudibranch",
+  "spanish-dancer-sea-slug", "crystal-tipped-nudibranch", "ringed-phyllidia", "hooded-melibe", "sea-angel-slug",
+  "embercrown-sea-slug", "kelpwarden-sea-slug", "starlight-choir-sea-slug", "voidglass-sea-slug",
+] as const satisfies readonly SeaSlugKind[];
 
 export type MobVisualParts = Record<"legs" | "wings" | "arms" | "head" | "body", THREE.Object3D[]>;
 
@@ -2384,17 +2404,6 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       add(visual, [0.08, 0.22, 0.08], material(0xf2d17a), [side * 0.15, 0.02, -0.02], "legs", `runeowl-${side < 0 ? "left" : "right"}-talon`);
     }
     for (let rune = 0; rune < 3; rune += 1) add(visual, [0.12, 0.05, 0.16], glow, [-0.18 + rune * 0.18, 0.53, -0.49], undefined, `runeowl-rune-${rune + 1}`).rotation.z = rune * 0.4;
-  } else if (kind === "glowfin") {
-    const glow = material(0x77f2dc, true, 0.88);
-    add(visual, [0.52, 0.42, 1.08], bodyMaterial, [0, 0.32, 0], "body", "glowfin-body");
-    add(visual, [0.45, 0.34, 0.42], accentMaterial, [0, 0.34, -0.66], "head", "glowfin-head");
-    eyePair(0.16, 0.4, -0.85, 0.06, "glowfin");
-    for (const side of [-1, 1]) {
-      const tail = pivotBox([0.08, 0.58, 0.66], glow, [0, 0.35, 0.58], [side * 0.16, 0, 0.3], "body", `glowfin-tail-${side < 0 ? "left" : "right"}`);
-      tail.rotation.z = side * 0.42;
-      add(visual, [0.4, 0.06, 0.46], glow, [side * 0.33, 0.25, -0.05], "wings", `glowfin-${side < 0 ? "left" : "right"}-fin`).rotation.z = side * 0.16;
-    }
-    add(visual, [0.08, 0.42, 0.58], glow, [0, 0.66, 0.12], undefined, "glowfin-dorsal-fin");
   } else if (kind === "copper-mole") {
     const copper = material(0xc17d4f);
     add(visual, [0.88, 0.58, 1.18], bodyMaterial, [0, 0.26, 0.1], "body", "copper-mole-body");
@@ -3100,52 +3109,111 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     }
     visual.userData.bellRootName = `${kind}-bell-root`;
     visual.userData.fluidTailPrefix = `${kind}-fluid-tail-`;
-  } else if (kind === "sunset-sea-slug" || kind === "moonlace-sea-slug") {
-    const moonlace = kind === "moonlace-sea-slug";
-    const glow = material(moonlace ? 0xc7ffff : 0xffd07a, moonlace, moonlace ? 0.9 : 1);
-    add(visual, [0.4, 0.14, 0.68], bodyMaterial, [0, -0.04, 0.04], "body", `${kind}-foot`);
-    add(visual, [0.34, 0.18, 0.52], accentMaterial, [0, 0.06, 0.02], "body", `${kind}-mantle`);
-    add(visual, [0.25, 0.15, 0.24], bodyMaterial, [0, 0.02, -0.38], "head", `${kind}-head`);
-    eyePair(0.07, 0.08, -0.51, 0.04, kind);
-    for (const side of [-1, 1]) {
+  } else if ((SEA_SLUG_KINDS as readonly MobKind[]).includes(kind)) {
+    const slugKind = kind as SeaSlugKind;
+    const [baseColor, accentColorValue, signalColor] = MOB_DEFS[slugKind].colors;
+    const base = material(baseColor, slugKind === "voidglass-sea-slug", slugKind === "voidglass-sea-slug" ? 0.5 : 1);
+    const accent = material(accentColorValue, ["moonlace-sea-slug", "crystal-tipped-nudibranch", "sea-angel-slug", "starlight-choir-sea-slug"].includes(slugKind), 0.88);
+    const signal = material(signalColor, ["moonlace-sea-slug", "embercrown-sea-slug", "starlight-choir-sea-slug", "voidglass-sea-slug"].includes(slugKind), 0.86);
+    const wideMantle = slugKind === "sunset-sea-slug" || slugKind === "spanish-dancer-sea-slug";
+    const pelagic = slugKind === "blue-dragon-sea-slug" || slugKind === "sea-angel-slug";
+    const footWidth = wideMantle ? 0.5 : pelagic ? 0.28 : 0.38;
+    const footHeight = slugKind === "sea-angel-slug" ? 0.3 : 0.12;
+    const footLength = wideMantle ? 0.86 : 0.72;
+    add(visual, [footWidth, footHeight, footLength], base, [0, slugKind === "sea-angel-slug" ? 0.08 : -0.04, 0.04], "body", `${kind}-foot`);
+    add(visual, [footWidth * 0.86, 0.16, footLength * 0.72], accent, [0, 0.06, 0.03], "body", `${kind}-mantle`);
+    add(visual, [footWidth * 0.66, 0.15, 0.25], base, [0, 0.02, -footLength * 0.5], "head", `${kind}-head`);
+    eyePair(Math.min(0.09, footWidth * 0.2), 0.075, -footLength * 0.5 - 0.13, 0.038, kind);
+
+    const appendage = (side: -1 | 1, index: number, size: [number, number, number], position: [number, number, number], angle = 0.2) => {
       const sideName = side < 0 ? "left" : "right";
-      for (let frill = 0; frill < 4; frill += 1) {
-        const ribbon = pivotBox(
-          [0.2, 0.035, 0.16], glow,
-          [side * 0.17, 0.14, -0.18 + frill * 0.16], [side * 0.08, 0, 0],
-          "body", `${kind}-${sideName}-mantle-frill-${frill + 1}`,
-        );
-        ribbon.userData.side = side;
-        ribbon.userData.phase = frill * 0.72;
-        ribbon.rotation.z = side * -0.18;
+      const pivot = pivotBox(size, index % 2 ? signal : accent, position, [side * size[0] * 0.42, size[1] * 0.35, 0], "body", `${kind}-${sideName}-mantle-frill-${index}`);
+      pivot.userData.slugAppendage = true;
+      pivot.userData.side = side;
+      pivot.userData.phase = index * 0.67;
+      pivot.rotation.z = side * -angle;
+      return pivot;
+    };
+
+    for (const side of [-1, 1] as const) {
+      const sideName = side < 0 ? "left" : "right";
+      const rhinophore = pivotBox([0.045, 0.045, 0.25], signal, [side * 0.09, 0.12, -footLength * 0.58], [0, 0.05, -0.1], "head", `${kind}-${sideName}-feeler`);
+      rhinophore.userData.slugAppendage = true;
+      rhinophore.userData.side = side;
+      rhinophore.userData.phase = side < 0 ? 0 : Math.PI;
+
+      if (wideMantle) for (let index = 1; index <= 6; index += 1) {
+        appendage(side, index, [0.22 + index * 0.008, 0.035, 0.15], [side * 0.2, 0.11, -0.32 + index * 0.115], 0.12);
       }
-      const feeler = add(visual, [0.035, 0.035, 0.24], glow, [side * 0.08, 0.13, -0.55], undefined, `${kind}-${sideName}-feeler`);
-      feeler.rotation.x = -0.38;
-      feeler.rotation.z = side * 0.16;
+      if (["blue-dragon-sea-slug", "leafsheep-sea-slug", "crystal-tipped-nudibranch", "embercrown-sea-slug", "kelpwarden-sea-slug", "starlight-choir-sea-slug"].includes(slugKind)) {
+        const count = slugKind === "blue-dragon-sea-slug" ? 3 : slugKind === "leafsheep-sea-slug" ? 5 : 6;
+        for (let index = 1; index <= count; index += 1) {
+          const tall = slugKind === "leafsheep-sea-slug" || slugKind === "kelpwarden-sea-slug";
+          appendage(side, index, [tall ? 0.12 : 0.16, tall ? 0.22 : 0.12, 0.09], [side * 0.16, 0.12, -0.28 + index * (0.54 / count)], tall ? 0.32 : 0.5);
+        }
+      }
+      if (slugKind === "sea-angel-slug") appendage(side, 1, [0.38, 0.055, 0.48], [side * 0.15, 0.1, -0.02], 0.25);
+      if (["moonlace-sea-slug", "sea-bunny-nudibranch", "ringed-phyllidia", "hooded-melibe", "voidglass-sea-slug"].includes(slugKind)) {
+        appendage(side, 1, [0.16, 0.08, 0.15], [side * 0.17, 0.12, 0.16], 0.28);
+      }
     }
-    if (moonlace) for (let spot = 0; spot < 4; spot += 1) {
-      add(visual, [0.06, 0.04, 0.08], glow, [(spot % 2 ? 1 : -1) * 0.1, 0.17, -0.12 + spot * 0.13], undefined, `${kind}-luminous-lace-${spot + 1}`);
+
+    if (slugKind === "moonlace-sea-slug" || slugKind === "starlight-choir-sea-slug") {
+      for (let branch = 0; branch < 7; branch += 1) {
+        const angle = branch / 7 * TAU;
+        const gill = pivotBox([0.045, 0.24, 0.045], branch % 2 ? signal : accent, [Math.cos(angle) * 0.11, 0.13, 0.22], [0, 0.1, Math.sin(angle) * 0.04], "body", `${kind}-gill-crown-${branch + 1}`);
+        gill.userData.slugAppendage = true;
+        gill.userData.phase = branch * 0.45;
+        gill.rotation.z = Math.cos(angle) * 0.35;
+        gill.rotation.x = Math.sin(angle) * 0.35;
+      }
+    } else if (slugKind === "sea-bunny-nudibranch") {
+      for (let tuft = 0; tuft < 7; tuft += 1) add(visual, [0.045, 0.14 + (tuft % 2) * 0.05, 0.045], tuft % 2 ? signal : accent, [-0.12 + tuft * 0.04, 0.18, 0.18 + (tuft % 2) * 0.04], undefined, `${kind}-bunny-tuft-${tuft + 1}`).rotation.z = (tuft - 3) * 0.12;
+    } else if (slugKind === "ringed-phyllidia") {
+      for (let ring = 0; ring < 8; ring += 1) {
+        const x = (ring % 2 ? 1 : -1) * (0.07 + (ring % 3) * 0.035);
+        const z = -0.25 + Math.floor(ring / 2) * 0.16;
+        add(visual, [0.11, 0.08, 0.11], signal, [x, 0.17, z], undefined, `${kind}-warning-ring-${ring + 1}`);
+      }
+    } else if (slugKind === "hooded-melibe") {
+      add(visual, [0.5, 0.05, 0.38], material(signalColor, false, 0.55), [0, 0.12, -0.5], undefined, `${kind}-oral-hood`);
+      for (const side of [-1, 1]) add(visual, [0.045, 0.22, 0.36], signal, [side * 0.23, 0.16, -0.5], undefined, `${kind}-${side < 0 ? "left" : "right"}-hood-rim`).rotation.z = side * -0.2;
+    } else if (slugKind === "voidglass-sea-slug") {
+      for (let star = 0; star < 9; star += 1) add(visual, [0.045, 0.045, 0.045], signal, [(star % 3 - 1) * 0.09, 0.16, -0.25 + Math.floor(star / 3) * 0.2], undefined, `${kind}-refracted-star-${star + 1}`);
     }
   } else if (kind === "shoalfin" || kind === "coralback" || kind === "brookdart" || kind === "gloomfin"
     || kind === "silverthread" || kind === "reedneedle" || kind === "emberribbon" || kind === "cavefilament"
-    || kind === "redfin-salmon" || kind === "blue-mackerel" || kind === "glassfin" || kind === "lanternjaw" || kind === "syrupfin" || kind === "pocket-goldfish") {
+    || kind === "redfin-salmon" || kind === "blue-mackerel" || kind === "glassfin" || kind === "lanternjaw" || kind === "syrupfin"
+    || kind === "pocket-goldfish" || kind === "glowfin" || kind === "sunwheel-angelfish" || kind === "stonewhisker-loach") {
     const prefix = kind;
     const thin = kind === "silverthread" || kind === "reedneedle" || kind === "emberribbon" || kind === "cavefilament"
       || kind === "redfin-salmon" || kind === "blue-mackerel" || kind === "glassfin";
+    const disk = kind === "sunwheel-angelfish";
+    const bottomFish = kind === "stonewhisker-loach";
+    const round = kind === "pocket-goldfish" || kind === "syrupfin";
     const large = kind === "coralback" ? 1.28 : kind === "brookdart" ? 0.72 : kind === "gloomfin" ? 0.92
       : kind === "redfin-salmon" ? 1.16 : kind === "blue-mackerel" ? 1.02 : kind === "glassfin" ? 0.98
-      : kind === "lanternjaw" ? 1.18 : kind === "syrupfin" ? 0.9 : kind === "pocket-goldfish" ? 0.46 : thin ? 0.88 : 0.82;
-    const bodyWidth = 0.5 * large * (thin ? 0.5 : 1);
-    const bodyHeight = 0.42 * large * (thin ? 0.48 : 1);
-    const bodyLength = 0.92 * large * (thin ? 1.35 : 1);
-    const headWidth = 0.43 * large * (thin ? 0.52 : 1);
-    const headHeight = 0.38 * large * (thin ? 0.55 : 1);
-    const headLength = 0.42 * large;
-    const headZ = -0.67 * large * (thin ? 1.2 : 0.82);
+      : kind === "lanternjaw" ? 1.18 : kind === "syrupfin" ? 0.9 : kind === "pocket-goldfish" ? 0.62
+        : kind === "glowfin" ? 0.92 : kind === "sunwheel-angelfish" ? 1.04 : kind === "stonewhisker-loach" ? 0.9 : thin ? 0.88 : 0.82;
+    const [bodyWidth, bodyHeight, bodyLength] = ({
+      shoalfin: [0.52, 0.46, 0.78], coralback: [0.72, 0.58, 1.02], brookdart: [0.3, 0.24, 0.92], gloomfin: [0.56, 0.44, 0.76],
+      silverthread: [0.18, 0.16, 1.18], reedneedle: [0.14, 0.12, 1.32], emberribbon: [0.22, 0.18, 1.26], cavefilament: [0.16, 0.15, 1.4],
+      "redfin-salmon": [0.46, 0.38, 1.28], "blue-mackerel": [0.42, 0.34, 1.12], glassfin: [0.34, 0.5, 0.9], lanternjaw: [0.7, 0.5, 0.82],
+      syrupfin: [0.55, 0.56, 0.72], glowfin: [0.48, 0.44, 0.86], "pocket-goldfish": [0.42, 0.4, 0.54],
+      "sunwheel-angelfish": [0.42, 0.9, 0.7], "stonewhisker-loach": [0.7, 0.22, 1.08],
+    } satisfies Record<(typeof GENERIC_FISH_KINDS)[number], [number, number, number]>)[kind];
+    const headWidth = disk ? 0.38 : bottomFish ? 0.64 : bodyWidth * (kind === "lanternjaw" ? 1.04 : kind === "gloomfin" ? 0.98 : 0.84);
+    const headHeight = disk ? 0.54 : bottomFish ? 0.2 : bodyHeight * (kind === "lanternjaw" ? 0.92 : 0.82);
+    const headLength = bottomFish ? 0.38 : round ? 0.31 : kind === "lanternjaw" ? 0.46 : Math.max(0.28, bodyLength * 0.32);
+    const headZ = -(bodyLength / 2 + headLength * 0.38);
     add(visual, [bodyWidth, bodyHeight, bodyLength], bodyMaterial, [0, 0, 0], "body", `${prefix}-body`);
+    add(visual, [bodyWidth * 0.82, bodyHeight * 0.82, bodyLength * 0.34], accentMaterial, [0, 0, -bodyLength * 0.34], "body", `${prefix}-shoulder`);
+    add(visual, [bodyWidth * 0.56, bodyHeight * 0.58, bodyLength * 0.32], darkMaterial, [0, 0, bodyLength * 0.48], "body", `${prefix}-tail-peduncle`);
     add(visual, [headWidth, headHeight, headLength], accentMaterial, [0, 0, headZ], "head", `${prefix}-head`);
-    eyePair(Math.min(headWidth * 0.34, 0.15 * large), headHeight * 0.21, headZ - headLength / 2 - 0.018, 0.055 * large, prefix);
-    const sideFinWidth = 0.36 * large;
+    eyePair(Math.min(headWidth * 0.34, 0.15 * large), headHeight * 0.2, headZ - headLength / 2 - 0.018, 0.06 * large, prefix);
+    add(visual, [headWidth * 0.34, Math.max(0.025, headHeight * 0.08), 0.035], darkMaterial, [0, -headHeight * 0.18, headZ - headLength / 2 - 0.025], undefined, `${prefix}-mouth`);
+    for (const side of [-1, 1]) add(visual, [0.035, headHeight * 0.48, headLength * 0.46], darkMaterial, [side * headWidth * 0.47, 0, headZ + headLength * 0.14], undefined, `${prefix}-${side < 0 ? "left" : "right"}-gill`);
+    const sideFinWidth = (bottomFish ? 0.48 : disk ? 0.3 : 0.36) * large;
     const sideFinCenterX = bodyWidth / 2 + sideFinWidth / 2 - FISH_FIN_ATTACHMENT_OVERLAP * large;
     for (const side of [-1, 1]) {
       const fin = add(visual, [sideFinWidth, 0.055, 0.34 * large], accentMaterial, [side * sideFinCenterX, -0.03, 0.02], "wings", `${prefix}-${side < 0 ? "left" : "right"}-fin`);
@@ -3154,17 +3222,23 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       fin.userData.side = side;
     }
     const tailMaterial = kind === "gloomfin" || kind === "glassfin" || kind === "lanternjaw" ? material(accentColor, true, 0.84) : accentMaterial;
-    const tailLength = 0.46 * large;
-    const tailCenterZ = bodyLength / 2 + tailLength / 2 - FISH_FIN_ATTACHMENT_OVERLAP * large;
+    const tailLength = (round ? 0.62 : disk ? 0.54 : bottomFish ? 0.42 : 0.46) * large;
     for (const side of [-1, 1]) {
-      const tail = add(visual, [0.13 * large, 0.44 * large, tailLength], tailMaterial, [side * 0.08 * large, 0, tailCenterZ], undefined, `${prefix}-tail-${side < 0 ? "left" : "right"}`);
+      const sideName = side < 0 ? "left" : "right";
+      const tail = pivotBox(
+        [(round ? 0.22 : 0.13) * large, (disk ? 0.72 : round ? 0.62 : 0.44) * large, tailLength], tailMaterial,
+        [0, 0, bodyLength / 2 - FISH_FIN_ATTACHMENT_OVERLAP * large], [side * 0.08 * large, 0, tailLength / 2], "body", `${prefix}-tail-${sideName}`,
+      );
       tail.rotation.z = side * 0.22;
+      tail.userData.side = side;
     }
-    const dorsalHeight = 0.34 * large;
+    const dorsalHeight = (disk ? 0.78 : bottomFish ? 0.18 : 0.34) * large;
     const dorsalCenterY = bodyHeight / 2 + dorsalHeight / 2 - FISH_FIN_ATTACHMENT_OVERLAP * large;
-    add(visual, [0.08 * large, dorsalHeight, 0.42 * large], darkMaterial, [0, dorsalCenterY, 0.02], undefined, `${prefix}-dorsal-fin`).rotation.x = 0.12;
+    pivotBox([0.08 * large, dorsalHeight, (disk ? 0.54 : 0.42) * large], darkMaterial, [0, bodyHeight / 2 - FISH_FIN_ATTACHMENT_OVERLAP * large, 0.02], [0, dorsalHeight / 2, 0], "body", `${prefix}-dorsal-fin`).rotation.x = 0.12;
+    add(visual, [0.07 * large, disk ? 0.7 * large : 0.2 * large, 0.36 * large], accentMaterial, [0, -bodyHeight / 2 - (disk ? 0.28 : 0.07) * large, 0.08], undefined, `${prefix}-ventral-fin`);
     if (kind === "coralback") {
       const coralMaterial = material(0xf18e7c);
+      for (let plate = 0; plate < 4; plate += 1) add(visual, [bodyWidth * 0.82, 0.07, 0.2], plate % 2 ? accentMaterial : darkMaterial, [0, bodyHeight * 0.48, -0.32 + plate * 0.22], undefined, `coralback-armor-plate-${plate + 1}`);
       for (const [index, x, z, height] of [[1, -0.17, 0.14, 0.34], [2, 0.12, 0.03, 0.44], [3, 0.2, 0.25, 0.28]] as Array<[number, number, number, number]>) {
         add(visual, [0.12, height, 0.12], coralMaterial, [x, 0.36 + height / 2, z], undefined, `coralback-coral-${index}`);
       }
@@ -3197,6 +3271,45 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     } else if (kind === "pocket-goldfish") {
       add(visual, [bodyWidth * 0.7, bodyHeight * 0.24, bodyLength * 0.66], material(0xffd769), [0, 0.04, 0.02], undefined, "pocket-goldfish-golden-belly");
       add(visual, [0.08 * large, 0.22 * large, 0.22 * large], material(0xfff1b0), [0, dorsalCenterY + 0.01, -0.03], undefined, "pocket-goldfish-crest");
+      for (const side of [-1, 1]) add(visual, [0.18, 0.035, 0.3], material(0xffe6a1, false, 0.76), [side * bodyWidth * 0.58, -0.06, 0.1], undefined, `pocket-goldfish-${side < 0 ? "left" : "right"}-veil-fin`).rotation.y = side * -0.22;
+    } else if (kind === "glowfin") {
+      const glow = material(0x77f2dc, true, 0.84);
+      for (let node = 0; node < 6; node += 1) add(visual, [0.075, 0.075, 0.045], glow, [(node % 2 ? 1 : -1) * bodyWidth * 0.46, 0.08, -0.34 + Math.floor(node / 2) * 0.3], undefined, `glowfin-lumen-node-${node + 1}`);
+      add(visual, [bodyWidth * 0.7, 0.045, bodyLength * 0.7], glow, [0, bodyHeight * 0.45, 0], undefined, "glowfin-lumen-back");
+    } else if (kind === "sunwheel-angelfish") {
+      const sun = material(0xffd65a, true, 0.9);
+      for (let ray = 0; ray < 5; ray += 1) add(visual, [0.05, 0.46 - ray * 0.04, 0.05], ray % 2 ? sun : darkMaterial, [-0.16 + ray * 0.08, 0.1, -0.16 + ray * 0.14], undefined, `sunwheel-angelfish-ray-${ray + 1}`).rotation.x = -0.2;
+      for (const side of [-1, 1]) {
+        const pennant = pivotBox([0.045, 0.64, 0.045], sun, [side * 0.16, -bodyHeight * 0.36, 0.12], [side * 0.04, -0.3, 0.12], "body", `sunwheel-angelfish-${side < 0 ? "left" : "right"}-pennant`);
+        pennant.userData.fishPennant = true;
+        pennant.userData.side = side;
+      }
+    } else if (kind === "stonewhisker-loach") {
+      const whisker = material(0xd9c58e);
+      for (const side of [-1, 1]) for (let whiskerIndex = 0; whiskerIndex < 3; whiskerIndex += 1) {
+        const feeler = pivotBox([0.035, 0.035, 0.34 - whiskerIndex * 0.05], whisker, [side * (0.12 + whiskerIndex * 0.07), -0.02, headZ - headLength * 0.45], [side * 0.05, -0.02 - whiskerIndex * 0.025, -0.15], "head", `stonewhisker-loach-${side < 0 ? "left" : "right"}-barbel-${whiskerIndex + 1}`);
+        feeler.rotation.y = side * (0.18 + whiskerIndex * 0.12);
+        feeler.userData.fishPennant = true;
+        feeler.userData.side = side;
+      }
+      for (let saddle = 0; saddle < 4; saddle += 1) add(visual, [bodyWidth * 0.9, 0.035, 0.11], darkMaterial, [0, bodyHeight * 0.48, -0.3 + saddle * 0.22], undefined, `stonewhisker-loach-saddle-${saddle + 1}`);
+    } else if (kind === "silverthread") {
+      for (let scale = 0; scale < 5; scale += 1) add(visual, [bodyWidth * 1.08, 0.035, 0.14], scale % 2 ? accentMaterial : material(0xf4ffff, true, 0.72), [0, bodyHeight * 0.38, -0.42 + scale * 0.22], undefined, `silverthread-flash-scale-${scale + 1}`);
+    } else if (kind === "reedneedle") {
+      add(visual, [0.06, bodyHeight * 0.82, bodyLength * 0.9], material(0xc2d68a), [0, 0.02, 0], undefined, "reedneedle-current-line");
+      add(visual, [0.06, 0.06, 0.42], darkMaterial, [0, -0.02, headZ - headLength * 0.6], undefined, "reedneedle-beak");
+    } else if (kind === "emberribbon") {
+      const ember = material(0xffa43b, true, 0.82);
+      for (let coal = 0; coal < 6; coal += 1) add(visual, [bodyWidth * 1.12, 0.04, 0.1], coal % 2 ? ember : darkMaterial, [0, bodyHeight * 0.36, -0.48 + coal * 0.19], undefined, `emberribbon-heat-band-${coal + 1}`);
+    } else if (kind === "cavefilament") {
+      const caveGlow = material(0xaaffec, true, 0.7);
+      add(visual, [bodyWidth * 0.35, bodyHeight * 1.08, bodyLength * 0.88], caveGlow, [0, 0, 0.03], undefined, "cavefilament-light-core");
+      for (let node = 0; node < 5; node += 1) add(visual, [0.055, 0.055, 0.055], material(0xdffff8, true), [0, bodyHeight * 0.5, -0.4 + node * 0.22], undefined, `cavefilament-current-node-${node + 1}`);
+    } else if (kind === "brookdart") {
+      add(visual, [bodyWidth * 1.05, 0.04, bodyLength * 0.74], material(0x2e65ac), [0, bodyHeight * 0.18, -0.02], undefined, "brookdart-cleanwater-stripe");
+      add(visual, [0.07, 0.07, 0.24], material(0xf3c95f), [0, -0.03, headZ - headLength * 0.58], undefined, "brookdart-dart-snout");
+    } else if (kind === "shoalfin") {
+      for (let scale = 0; scale < 6; scale += 1) add(visual, [0.11, 0.045, 0.11], scale % 2 ? material(0xe8fff7, true, 0.66) : darkMaterial, [(scale % 2 ? 1 : -1) * bodyWidth * 0.46, 0.06, -0.34 + Math.floor(scale / 2) * 0.3], undefined, `shoalfin-mirror-scale-${scale + 1}`);
     } else {
       add(visual, [0.3 * large, 0.055, 0.5 * large], material(eyeColor), [0, 0.18 * large, 0.02], undefined, `${prefix}-back-stripe`);
     }
@@ -3502,13 +3615,20 @@ export function applyOceanCreaturePose(
       const stalk = visual.getObjectByName(`${kind}-${sideName}-eye-stalk-pivot`);
       if (stalk) stalk.rotation.z = side * Math.sin(time * 1.25 + side) * 0.035;
     }
-  } else if (["shoalfin", "coralback", "brookdart", "gloomfin", "silverthread", "reedneedle", "emberribbon", "cavefilament", "redfin-salmon", "blue-mackerel", "glassfin", "lanternjaw", "syrupfin", "glowfin", "pocket-goldfish"].includes(kind)) {
+  } else if ((GENERIC_FISH_KINDS as readonly CoreMobKind[]).includes(kind)) {
     for (const side of ["left", "right"] as const) {
-      const tail = visual.getObjectByName(`${kind}-tail-${side}`);
+      const tail = visual.getObjectByName(`${kind}-tail-${side}-pivot`) ?? visual.getObjectByName(`${kind}-tail-${side}`);
       if (tail) tail.rotation.y = Math.sin(time * (4.2 + travel * 3) + (side === "left" ? 0 : 0.55)) * (0.15 + travel * 0.16);
+      const fin = visual.getObjectByName(`${kind}-${side}-fin`);
+      if (fin) fin.rotation.y = (side === "left" ? 1 : -1) * (0.16 + Math.sin(time * 2.1 + (side === "left" ? 0 : Math.PI)) * (0.035 + travel * 0.05));
     }
-    const dorsal = visual.getObjectByName(`${kind}-dorsal-fin`);
+    const dorsal = visual.getObjectByName(`${kind}-dorsal-fin-pivot`) ?? visual.getObjectByName(`${kind}-dorsal-fin`);
     if (dorsal) dorsal.rotation.z = Math.sin(time * 2.4) * 0.055;
+    visual.traverse((part) => {
+      if (!part.userData.fishPennant) return;
+      const side = Number(part.userData.side) || 1;
+      part.rotation.x = Math.sin(time * 2.2 + side) * (0.08 + travel * 0.06);
+    });
   } else if (["meadow-cottontail", "russet-rabbit", "frost-hare", "chocolate-bunny"].includes(kind)) {
     const hopWave = Math.max(0, Math.sin(time * 7.4));
     visual.position.y += hopWave * 0.13 * travel;
@@ -3517,14 +3637,16 @@ export function applyOceanCreaturePose(
       const ear = visual.getObjectByName(`${kind}-${side}-ear-pivot`);
       if (ear) ear.rotation.x = -0.05 - hopWave * 0.12 * travel;
     }
-  } else if (kind === "sunset-sea-slug" || kind === "moonlace-sea-slug") {
-    for (const side of ["left", "right"] as const) for (let index = 1; index <= 4; index += 1) {
-      const frill = visual.getObjectByName(`${kind}-${side}-mantle-frill-${index}-pivot`);
-      if (!frill) continue;
-      const sign = side === "left" ? -1 : 1;
-      frill.rotation.z = sign * (-0.18 - Math.sin(time * 1.35 + index * 0.72) * (0.06 + travel * 0.04));
-      frill.rotation.x = Math.cos(time * 0.82 + index * 0.4) * 0.035;
-    }
+  } else if ((SEA_SLUG_KINDS as readonly CoreMobKind[]).includes(kind)) {
+    visual.traverse((part) => {
+      if (!part.userData.slugAppendage) return;
+      const side = Number(part.userData.side) || 1;
+      const phase = Number(part.userData.phase) || 0;
+      part.rotation.z = side * (-0.18 - Math.sin(time * 1.35 + phase) * (0.06 + travel * 0.05));
+      part.rotation.x = Math.cos(time * 0.82 + phase) * (0.035 + travel * 0.025);
+    });
+    const mantle = visual.getObjectByName(`${kind}-mantle`);
+    if (mantle) mantle.scale.z = 1 + Math.sin(time * 1.1) * (0.025 + travel * 0.02);
   } else if (kind === "dreadcoil") {
     for (let index = 0; index < 9; index += 1) {
       const segment = visual.getObjectByName(`dreadcoil-segment-${index + 1}-pivot`);
