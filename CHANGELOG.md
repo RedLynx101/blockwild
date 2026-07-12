@@ -2,6 +2,13 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.4.2 - Shared World Repair - 2026-07-12
+
+- Advanced guest-side tree-fall and creature-remains presentation timers while retaining host authority over voxel removal, mob state, and loot.
+- Made player block placement consume exactly one matching held item in the host-owned player snapshot, with guest upload suppression until the atomic placement response resolves.
+- Sent shift-click inventory changes immediately and queued rapid follow-up chest transfers on top of the accepted shared-container revision instead of losing them to reconciliation.
+- Added focused multiplayer regressions for transient destruction, placement consumption and validation, and in-flight chest transfer queuing.
+
 ## 1.4.1 - Wildlife Voices - 2026-07-12
 
 - Merged the latest pushed `design-1` commit (`f24ae37`) without altering the branch or replacing newer v1.4 systems.

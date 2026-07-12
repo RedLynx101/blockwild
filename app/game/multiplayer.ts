@@ -97,6 +97,8 @@ export type BlockAction = {
   tick: number;
   kind: "break" | "place" | "batch";
   edits: BlockEdit[];
+  /** Item optimistically consumed by a guest for a player-initiated placement. */
+  consumedItem?: number;
   /** Presentation hint; voxel edits remain the authoritative state. */
   effect?: {
     kind: "tree-fell";
@@ -913,6 +915,7 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
         && value.edits.length >= 1
         && value.edits.length <= 2_048
         && value.edits.every(validateBlockEdit)
+        && (value.consumedItem === undefined || isInteger(value.consumedItem, 0, 65_535))
         && (value.effect === undefined || (isRecord(value.effect)
           && value.effect.kind === "tree-fell"
           && isInteger(value.effect.rootX, -COORDINATE_LIMIT, COORDINATE_LIMIT)

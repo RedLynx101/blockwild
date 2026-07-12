@@ -7,6 +7,7 @@ import { commerceItemCode } from "../app/game/hearthroads-adapter.ts";
 import {
   VoxelEngine,
   blockEditIntersectsPlayer,
+  consumeMultiplayerPlacementItem,
   markRendererContextLost,
   normalizeMultiplayerPlayerState,
   restoreRendererContext,
@@ -435,6 +436,58 @@ test("a lost WebGL context pauses rendering state and restores without deleting 
   assert.equal(resizes, 1);
   assert.equal(engine.lightRefreshTimer, 0);
   assert.match(toasts.join(" "), /restor/iu);
+});
+
+test("guest tree-fall and mob-death presentation timers advance without owning simulation", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  const calls: Array<["tree" | "mob", number]> = [];
+  Object.assign(engine, {
+    multiplayer: { role: "guest" },
+    multiplayerReceivedSnapshot: true,
+    updateFallingTrees: (dt: number) => calls.push(["tree", dt]),
+    updateMobRemains: (dt: number) => calls.push(["mob", dt]),
+  });
+
+  engine.updateTransientDestructionPresentation(0.05);
+
+  assert.deepEqual(calls, [["tree", 0.05], ["mob", 0.05]]);
+});
+
+test("host-authoritative guest placement consumes exactly one matching held block", () => {
+  const current = sessionState();
+  current.inventory[0] = { item: BlockId.CraftingTable, count: 2 };
+  const result = consumeMultiplayerPlacementItem(current, BlockId.CraftingTable, [
+    { x: 4, y: 8, z: -2, type: BlockId.CraftingTable },
+  ]);
+  assert.equal(result.valid, true);
+  assert.equal(result.consumed, true);
+  assert.deepEqual(result.state.inventory[0], { item: BlockId.CraftingTable, count: 1 });
+  assert.equal(result.state.revision, current.revision + 1);
+
+  const spoofed = consumeMultiplayerPlacementItem(current, BlockId.CraftingTable, [
+    { x: 4, y: 8, z: -2, type: BlockId.GoldBlock },
+  ]);
+  assert.equal(spoofed.valid, false, "a held crafting table cannot authorize a different placed block");
+  assert.equal(spoofed.state.revision, current.revision);
+});
+
+test("a second guest chest edit queues while the first revision is in flight", () => {
+  const containerId = "4,8,-2";
+  const slots = Array.from({ length: 27 }, () => null) as Array<null | { item: number; count: number }>;
+  const submittedSignature = JSON.stringify(slots);
+  slots[0] = { item: Item.Apple, count: 1 };
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  Object.assign(engine, {
+    multiplayer: { role: "guest", identity: { id: "player_stable_guest_001" } },
+    activeChestKey: containerId,
+    chests: new Map([[containerId, slots]]),
+    multiplayerContainerAwaiting: new Set<string>(),
+    multiplayerPendingContainerMutations: new Set([containerId]),
+    multiplayerQueuedContainerMutations: new Set<string>(),
+    multiplayerContainerSignatures: new Map([[containerId, submittedSignature]]),
+  });
+  (engine as unknown as { syncMultiplayerContainers(): void }).syncMultiplayerContainers();
+  assert.equal(engine.multiplayerQueuedContainerMutations.has(containerId), true);
 });
 
 function tradingEngine() {

@@ -2350,6 +2350,62 @@ export function blockEditIntersectsPlayer(
     && edit.y - 0.5 < player.y + height;
 }
 
+const WILDWOOD_DOOR_PLACEMENT_BLOCKS = new Set<BlockId>([
+  BlockId.DoorClosedLower, BlockId.DoorClosedUpper, BlockId.DoorXClosedLower, BlockId.DoorXClosedUpper,
+]);
+const WROUGHT_IRON_DOOR_PLACEMENT_BLOCKS = new Set<BlockId>([
+  BlockId.WroughtIronDoorClosedLower, BlockId.WroughtIronDoorClosedUpper,
+  BlockId.WroughtIronDoorXClosedLower, BlockId.WroughtIronDoorXClosedUpper,
+]);
+const BED_PLACEMENT_BLOCKS = new Set<BlockId>([
+  BlockId.BedNorthFoot, BlockId.BedNorthHead, BlockId.BedSouthFoot, BlockId.BedSouthHead,
+  BlockId.BedEastFoot, BlockId.BedEastHead, BlockId.BedWestFoot, BlockId.BedWestHead,
+]);
+const FENCE_GATE_PLACEMENT_BLOCKS = new Set<BlockId>([
+  BlockId.FenceGateNorthSouthClosed, BlockId.FenceGateEastWestClosed,
+]);
+
+function itemCanCreatePlacementBlock(item: ItemCode, block: BlockId) {
+  const base = ITEMS[item]?.placeBlock;
+  if (base === undefined) return false;
+  if (base === block) return true;
+  if (base === BlockId.Torch) return isTorchBlock(block);
+  if (base === BlockId.DoorClosedLower) return WILDWOOD_DOOR_PLACEMENT_BLOCKS.has(block);
+  if (base === BlockId.WroughtIronDoorClosedLower) return WROUGHT_IRON_DOOR_PLACEMENT_BLOCKS.has(block);
+  if (base === BlockId.BedNorthFoot) return BED_PLACEMENT_BLOCKS.has(block);
+  if (base === BlockId.FenceGateNorthSouthClosed) return FENCE_GATE_PLACEMENT_BLOCKS.has(block);
+  return false;
+}
+
+/** Host-authoritative inventory cost for an optimistic guest block placement. */
+export function consumeMultiplayerPlacementItem(
+  state: PlayerSessionSnapshot,
+  consumedItem: number | undefined,
+  edits: readonly BlockAction["edits"][number][],
+) {
+  if (consumedItem === undefined) return { valid: true, consumed: false, state };
+  if (!ITEMS[consumedItem as ItemCode]) return { valid: false, consumed: false, state };
+  const item = consumedItem as ItemCode;
+  const placed = edits.filter((edit) => edit.type !== BlockId.Air);
+  if (!placed.length || !placed.every((edit) => itemCanCreatePlacementBlock(item, edit.type as BlockId))) {
+    return { valid: false, consumed: false, state };
+  }
+  const inventory = state.inventory.map(inventorySlotFromNetwork);
+  const selected = inventory[state.selected];
+  if (!selected || selected.item !== item || selected.count <= 0) return { valid: false, consumed: false, state };
+  selected.count -= 1;
+  if (selected.count <= 0) inventory[state.selected] = null;
+  return {
+    valid: true,
+    consumed: true,
+    state: normalizeMultiplayerPlayerState({
+      ...state,
+      inventory: inventory.map(networkItemStack),
+      revision: state.revision + 1,
+    }, state.playerId, state.variant),
+  };
+}
+
 type RendererRecoveryTarget = {
   disposed: boolean;
   webglContextLost: boolean;
@@ -2710,11 +2766,15 @@ export class VoxelEngine {
   /** Containers are demand-synced; a guest must never upload generated placeholder loot. */
   multiplayerContainerAwaiting = new Set<string>();
   multiplayerPendingContainerMutations = new Set<string>();
+  /** A second local chest edit made while the previous revision is in flight. */
+  multiplayerQueuedContainerMutations = new Set<string>();
   multiplayerPeerActiveContainers = new Map<string, string>();
   multiplayerPeerContainerSignatures = new Map<string, string>();
   pendingReliableRequests = new Map<string, PendingReliableRequest>();
   multiplayerCombatCooldowns = new Map<string, number>();
   pendingGuestDropRequests = new Set<number>();
+  /** Suppresses generic pack uploads until the host resolves optimistic placement costs. */
+  pendingGuestPlacementRequests = new Map<string, number>();
   /** Killed mobs stay tombstoned until a host snapshot confirms omission. */
   pendingNetworkMobDeaths = new Set<number>();
   activeCharacterProfile: CharacterProfile | null = null;
@@ -3687,10 +3747,12 @@ export class VoxelEngine {
     this.multiplayerContainerTimer = 0;
     this.multiplayerPlayerStateSignature = "";
     this.pendingGuestDropRequests.clear();
+    this.pendingGuestPlacementRequests.clear();
     this.pendingNetworkMobDeaths.clear();
     this.multiplayerContainerSignatures = new Map([...this.chests.entries()].map(([id, slots]) => [id, JSON.stringify(slots.map(networkItemStack))]));
     this.multiplayerContainerAwaiting.clear();
     this.multiplayerPendingContainerMutations.clear();
+    this.multiplayerQueuedContainerMutations.clear();
     this.multiplayerPeerActiveContainers.clear();
     this.multiplayerPeerContainerSignatures.clear();
     this.pendingReliableRequests.clear();
@@ -3883,6 +3945,8 @@ export class VoxelEngine {
     this.sleepVotes.clear();
     this.multiplayerContainerAwaiting.clear();
     this.multiplayerPendingContainerMutations.clear();
+    this.multiplayerQueuedContainerMutations.clear();
+    this.pendingGuestPlacementRequests.clear();
     this.multiplayerPeerActiveContainers.clear();
     this.multiplayerPeerContainerSignatures.clear();
     this.pendingReliableRequests.clear();
@@ -4373,7 +4437,17 @@ export class VoxelEngine {
       return;
     }
     if (this.multiplayer.role === "guest" && (action.status === "accepted" || action.status === "rejected")) {
-      this.multiplayerPendingContainerMutations.delete(action.containerId);
+      const ownResponse = action.actorId === this.multiplayer.identity.id;
+      const replayQueuedMutation = ownResponse && action.status === "accepted"
+        && this.multiplayerQueuedContainerMutations.delete(action.containerId);
+      if (ownResponse) this.multiplayerPendingContainerMutations.delete(action.containerId);
+      if (ownResponse && action.status === "rejected") this.multiplayerQueuedContainerMutations.delete(action.containerId);
+      const queuedSlots = replayQueuedMutation
+        ? this.chests.get(action.containerId)?.map(cloneSlot)
+        : undefined;
+      const queuedPlayer = replayQueuedMutation
+        ? this.localPlayerSessionSnapshot(this.multiplayerPlayerStateRevision)
+        : null;
       if (action.kind === "close") return;
       const previousActive = this.activeChestKey;
       if (action.kind === "open") {
@@ -4395,6 +4469,19 @@ export class VoxelEngine {
       if (action.actorId === this.multiplayer.identity.id && action.playerState) {
         this.applyLocalPlayerSessionSnapshot(action.playerState);
       }
+      if (queuedSlots && queuedPlayer) {
+        // The accepted response is the new revision base. Replay the newer
+        // local click image on top, then immediately submit it as revision N+1.
+        this.chests.set(action.containerId, queuedSlots);
+        this.inventory = queuedPlayer.inventory.map(inventorySlotFromNetwork);
+        this.cursor = inventorySlotFromNetwork(queuedPlayer.cursor ?? null);
+        this.equipment = Object.fromEntries((Object.keys(queuedPlayer.equipment) as EquipmentSlot[])
+          .map((slot) => [slot, inventorySlotFromNetwork(queuedPlayer.equipment[slot])])) as Record<EquipmentSlot, InventorySlot | null>;
+        this.offhand = inventorySlotFromNetwork(queuedPlayer.offhand ?? null);
+        this.selected = queuedPlayer.selected;
+        this.emitHud(true);
+        this.syncMultiplayerContainers();
+      }
       if (action.reason) this.events.onToast(action.reason);
     }
   }
@@ -4402,6 +4489,14 @@ export class VoxelEngine {
   private syncMultiplayerPlayerState() {
     const session = this.multiplayer;
     if (!session || session.role !== "guest" || !this.multiplayerReceivedSnapshot) return;
+    this.pendingGuestPlacementRequests ??= new Map<string, number>();
+    const now = Date.now();
+    for (const [requestId, expiresAt] of this.pendingGuestPlacementRequests) {
+      if (expiresAt <= now) this.pendingGuestPlacementRequests.delete(requestId);
+    }
+    // Placement inventory is committed by the host with the voxel edit. Do
+    // not race that transaction with the optimistic local stack decrement.
+    if (this.pendingGuestPlacementRequests.size > 0) return;
     // While a shared chest is open, its revisioned transaction owns both pack
     // and container images. A parallel player-state upload could otherwise win
     // the race and make a valid chest request look stale.
@@ -4424,6 +4519,12 @@ export class VoxelEngine {
         this.multiplayerPlayerStateSignature = signature;
       }
     } catch { /* The next sync interval retries after reconnect. */ }
+  }
+
+  private syncInventoryMutationNow() {
+    if (this.multiplayer?.role !== "guest") return;
+    if (this.activeChestKey) this.syncMultiplayerContainers();
+    else this.syncMultiplayerPlayerState();
   }
 
   private syncMultiplayerContainers() {
@@ -4466,8 +4567,17 @@ export class VoxelEngine {
       }
       return;
     }
-    if (!this.activeChestKey || this.multiplayerContainerAwaiting.has(this.activeChestKey)
-      || this.multiplayerPendingContainerMutations.has(this.activeChestKey)) return;
+    if (!this.activeChestKey || this.multiplayerContainerAwaiting.has(this.activeChestKey)) return;
+    if (this.multiplayerPendingContainerMutations.has(this.activeChestKey)) {
+      const slots = this.chests.get(this.activeChestKey);
+      if (slots) {
+        const signature = JSON.stringify(slots.map(networkItemStack));
+        if (signature !== this.multiplayerContainerSignatures.get(this.activeChestKey)) {
+          this.multiplayerQueuedContainerMutations.add(this.activeChestKey);
+        }
+      }
+      return;
+    }
     const entries = [[this.activeChestKey, this.chests.get(this.activeChestKey)] as const];
     for (const [id, slots] of entries) {
       if (!slots || id.startsWith("exhibit:")) continue;
@@ -4924,9 +5034,13 @@ export class VoxelEngine {
     if (!this.multiplayer) return;
     if (this.multiplayer.role === "host" && action.status !== "accepted") {
       const remote = peer.identity ? this.remotePlayers.get(peer.identity.id) : null;
+      const playerState = peer.identity ? this.ensureHostPlayerSession(peer.identity) : null;
+      const placement = playerState && this.mode === "survival"
+        ? consumeMultiplayerPlacementItem(playerState, action.consumedItem, action.edits)
+        : { valid: action.consumedItem === undefined || this.mode === "builder", consumed: false, state: playerState };
       const playerPoses = [this.localNetworkPose(), ...[...this.remotePlayers.values()].map((player) => player.target)]
         .filter((pose): pose is PlayerPose => Boolean(pose));
-      const valid = Boolean(remote) && action.edits.length > 0 && action.edits.length <= 2_048 && action.edits.every((edit) => {
+      const valid = Boolean(remote) && placement.valid && action.edits.length > 0 && action.edits.length <= 2_048 && action.edits.every((edit) => {
         const definition = BLOCKS[edit.type as BlockId];
         const dx = edit.x - remote!.target.x;
         const dy = edit.y - (remote!.target.y + 1);
@@ -4945,7 +5059,6 @@ export class VoxelEngine {
         };
       if (valid) {
         if (action.effect?.kind === "tree-fell") this.animateNetworkTreeFell(action);
-        const playerState = peer.identity ? this.ensureHostPlayerSession(peer.identity) : null;
         const held = playerState ? inventorySlotFromNetwork(playerState.inventory[playerState.selected]) : null;
         if (this.mode === "survival") for (const edit of action.edits) {
           if (edit.type !== BlockId.Air) continue;
@@ -4960,12 +5073,20 @@ export class VoxelEngine {
           this.resolveChest(key);
         }
         this.lightRefreshTimer = 0;
+        if (peer.identity && placement.consumed && placement.state) {
+          this.multiplayerPlayerStates.set(peer.identity.id, placement.state);
+          this.sendAuthoritativePlayerState(peer.identity.id, action.requestId);
+        }
         this.saveSoon();
         this.multiplayer.sendBlockAction(resolved);
-      } else if (peer.identity) this.multiplayer.sendBlockAction(resolved, peer.identity.id);
+      } else if (peer.identity) {
+        this.multiplayer.sendBlockAction(resolved, peer.identity.id);
+        this.sendAuthoritativePlayerState(peer.identity.id, action.requestId);
+      }
       return;
     }
     if (this.multiplayer.role === "guest" && (action.status === "accepted" || action.status === "rejected")) {
+      this.pendingGuestPlacementRequests.delete(action.requestId);
       if (action.status === "accepted" && action.actorId !== this.multiplayer.identity.id && action.effect?.kind === "tree-fell") this.animateNetworkTreeFell(action);
       this.world.setBlocksBatch(action.edits.map((edit) => ({ ...edit, type: edit.type as BlockId })), true, true);
       for (const edit of action.edits) if (edit.type === BlockId.Chest) {
@@ -5057,6 +5178,7 @@ export class VoxelEngine {
     edits: Array<{ x: number; y: number; z: number; type: BlockId }>,
     kind?: BlockAction["kind"],
     effect?: BlockAction["effect"],
+    consumedItem?: ItemCode,
   ) {
     if (!this.multiplayer || !edits.length) return;
     const identity = this.multiplayer.identity;
@@ -5066,10 +5188,12 @@ export class VoxelEngine {
       tick: this.multiplayerTick,
       kind: kind ?? (edits.length > 1 ? "batch" : edits[0].type === BlockId.Air ? "break" : "place"),
       edits,
+      ...(consumedItem !== undefined ? { consumedItem } : {}),
       ...(effect ? { effect } : {}),
       status: this.multiplayer.role === "host" ? "accepted" : "request",
     };
     if (this.multiplayer.role === "guest") {
+      if (consumedItem !== undefined) this.pendingGuestPlacementRequests.set(action.requestId, Date.now() + 4_000);
       this.queueCriticalReliableRequest(`block:${action.requestId}`, () => this.multiplayer?.sendBlockAction(action) ?? 0, 6_000);
       return;
     }
@@ -7068,6 +7192,7 @@ export class VoxelEngine {
       this.shiftMove(index);
       this.audio.play("ui");
       this.emitHud(true);
+      this.syncInventoryMutationNow();
       return;
     }
     const slot = this.inventory[index];
@@ -8021,6 +8146,7 @@ export class VoxelEngine {
       if (leftover < original) this.audio.play("pickup");
       this.saveSoon();
       this.emitHud(true);
+      this.syncInventoryMutationNow();
       return;
     }
     if (machine === "furnace" && index === 2) {
@@ -10952,7 +11078,12 @@ export class VoxelEngine {
       this.events.onToast(occupiedRemote ? "You cannot place a block inside another player." : "You cannot place a block inside yourself.");
       return;
     }
-    this.publishBlockEdits(placedEdits, placedEdits.length > 1 ? "batch" : "place");
+    this.publishBlockEdits(
+      placedEdits,
+      placedEdits.length > 1 ? "batch" : "place",
+      undefined,
+      this.mode === "survival" ? slot.item : undefined,
+    );
     for (const edit of placedEdits) this.notifyLiquidChanged(edit.x, edit.y, edit.z);
     const placedKey = blockKey(x, y, z);
     if (type === BlockId.Chest) {
@@ -16392,6 +16523,17 @@ export class VoxelEngine {
     }
   }
 
+  /**
+   * Falling trunks and creature remains are local presentation objects, not
+   * authoritative simulation state. Guests must advance them too: the host
+   * already owns voxel removal, loot, health and despawn, while these timers
+   * only finish the accepted action's visible fall/burn-away sequence.
+   */
+  updateTransientDestructionPresentation(dt: number) {
+    this.updateFallingTrees(dt);
+    this.updateMobRemains(dt);
+  }
+
   killMob(mob: MobEntity) {
     // Attuned creatures faint instead of producing death loot or being deleted.
     // Their exact state returns to the still-linked orb and must be healed there.
@@ -17853,12 +17995,11 @@ export class VoxelEngine {
       if (!multiplayerGuest) {
         this.updateDrops(dt);
         this.updateSaplings(dt);
-        this.updateFallingTrees(dt);
-        this.updateMobRemains(dt);
         this.updateLiquids(dt);
         this.updateProjectiles(dt);
         this.updateDragonAttackEffects(dt);
       } else this.updateGuestDropPickups(dt);
+      this.updateTransientDestructionPresentation(dt);
     }
     if (this.running && !this.titleMode) this.updateMultiplayer(dt);
     this.updateRain(dt);
