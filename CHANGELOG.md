@@ -2,6 +2,15 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.4.0 - Living Ruins - 2026-07-12
+
+- Rebuilt Skyglass Observatory, Emberwatch Tower, Pilgrim Bathhouse, Clockwork Burrow, and Shattered Colossus with curved, broken, stepped, tapering, or asymmetric forms instead of rectangular massing.
+- Replaced the four repeated underground dungeon shells with deterministic connected graphs of seven to eleven chamfered modules. Every layout retains a reversible entrance-to-vault spine, seeded side rooms, three stable stages, bounded cross-chunk generation, profile-specific decoration, encounters, caches, and master loot.
+- Added craftable Wrought-Iron Doors with real spaces between their bars, a complete open/closed and orientation state family, two-block placement and drops, family-preserving interaction, collision, atlas art, a held model, and authored dungeon thresholds.
+- Made every faction settlement vary its tile count within deterministic hamlet, village, or town bands. Rotated building footprints and doors now honor the semantic layout; civic halls gain chamfered corners; and faction-specific roofs or Dwarven arches replace the generic flat north-facing stamp.
+- Merged the latest pushed `design-1` commit (`f8a0205`) while keeping that branch alive. The integration adds activity- and microhabitat-aware wildlife spawning, independent passive/hostile cadence, staged dragon field notes and milestones, richer discovery hints, Highlands and Volcanic flora, a 46-specimen Plant Compendium, and an executable whole-biome ecology audit.
+- Advanced untouched-world generation to version 14 while migrating version-13 saves without moving player edits. The human-facing version is independently recorded as 1.4.0 in new and resaved worlds.
+
 ## 1.3.8 - Quiet Wayfinding - 2026-07-12
 
 - Refined the Trail Compass to refresh four times faster, removed its duplicate heading readout, and added a softly fading POI name only when a visible landmark is centered. The map's detailed surface rendering is now an explicit toggle at every zoom level, and both ordinary and Exploration-mastery zoom limits extend farther outward.

@@ -59,7 +59,7 @@ test("v1.2 field-guide contact sheets cover the complete stable rosters", async 
   for (const kind of ["meadow-cottontail", "chocolate-bunny", "sunset-sea-slug", "moonlace-sea-slug", "pocket-goldfish"] as const) {
     assert.ok(creatureSheet.includes(MOB_DEFS[kind].name), `${kind} should be on the creature sheet`);
   }
-  assert.match(plantSheet, /BLOCKWILD PLANT COMPENDIUM - V1\.3/u);
+  assert.match(plantSheet, /BLOCKWILD PLANT COMPENDIUM - V1\.4/u);
   assert.match(plantSheet, new RegExp(`${PLANTS.length} plants`, "u"));
   for (const plant of PLANTS) assert.ok(plantSheet.includes(plant.name), `${plant.id} should be on the plant sheet`);
 });

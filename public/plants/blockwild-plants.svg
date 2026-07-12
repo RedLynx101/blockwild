@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1700" height="3020" viewBox="0 0 1700 3020">
   <rect width="100%" height="100%" fill="#0c100e"/>
-  <text x="28" y="43" fill="#e5bd68" font-family="ui-sans-serif, system-ui, sans-serif" font-size="26" font-weight="900" letter-spacing="1.8">BLOCKWILD PLANT COMPENDIUM - V1.2</text>
+  <text x="28" y="43" fill="#e5bd68" font-family="ui-sans-serif, system-ui, sans-serif" font-size="26" font-weight="900" letter-spacing="1.8">BLOCKWILD PLANT COMPENDIUM - V1.4</text>
   <text x="28" y="70" fill="#99a79e" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">Generated field specimens - full tree examples - 46 plants</text>
   <g transform="translate(0 100)">
       <rect x="8" y="8" width="324" height="276" rx="18" fill="#171d1a" stroke="#39473e" stroke-width="2"/>
