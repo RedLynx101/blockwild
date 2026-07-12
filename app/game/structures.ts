@@ -96,7 +96,19 @@ type BonusLootEntry = Readonly<{
   durability?: number;
 }>;
 
-export type StructureLootTableId = "desert-temple" | "forest-temple" | "sunbun-cache" | "butterfly-cache" | "apiary-cache" | "healer-cache";
+export type StructureLootTableId =
+  | "desert-temple"
+  | "forest-temple"
+  | "sunbun-cache"
+  | "butterfly-cache"
+  | "apiary-cache"
+  | "healer-cache"
+  | "adventure-cache"
+  | "rootbound-vault"
+  | "starless-vault"
+  | "brassdeep-vault"
+  | "stormglass-vault"
+  | "bloomrot-vault";
 
 const LOOT_TABLES: Readonly<Record<StructureLootTableId, Readonly<{
   entries: readonly WeightedLootEntry[];
@@ -167,6 +179,73 @@ const LOOT_TABLES: Readonly<Record<StructureLootTableId, Readonly<{
       { itemKey: "moonberry", weight: 14, min: 2, max: 5 },
     ],
     bonuses: [{ itemKey: "cloudglass-reliquary", chance: 0.035, min: 1, max: 1, durability: 1800 }],
+  },
+  "adventure-cache": {
+    entries: [
+      { itemKey: "bread", weight: 20, min: 1, max: 3 },
+      { itemKey: "glow-dust", weight: 16, min: 1, max: 4 },
+      { itemKey: "crystal-shard", weight: 11, min: 1, max: 2 },
+      { itemKey: "gold-ingot", weight: 8, min: 1, max: 2 },
+      { itemKey: "waykeeper-capture-orb", weight: 8, min: 1, max: 1 },
+      { itemKey: "fiber", weight: 20, min: 2, max: 7 },
+      { itemKey: "moonberry", weight: 17, min: 2, max: 5 },
+    ],
+    bonuses: [{ itemKey: "tome-blinkstep", chance: 0.035, min: 1, max: 1 }],
+  },
+  "rootbound-vault": {
+    entries: [
+      { itemKey: "wildwood-planks", weight: 16, min: 6, max: 14 },
+      { itemKey: "crystal-shard", weight: 14, min: 2, max: 5 },
+      { itemKey: "glow-dust", weight: 20, min: 3, max: 8 },
+      { itemKey: "gold-ingot", weight: 14, min: 2, max: 5 },
+      { itemKey: "tome-healing-light", weight: 8, min: 1, max: 1 },
+      { itemKey: "moonberry", weight: 28, min: 3, max: 8 },
+    ],
+    bonuses: [{ itemKey: "dawnthread-saber", chance: 0.075, min: 1, max: 1 }],
+  },
+  "starless-vault": {
+    entries: [
+      { itemKey: "crystal-shard", weight: 24, min: 3, max: 7 },
+      { itemKey: "shadow-shard", weight: 18, min: 2, max: 6 },
+      { itemKey: "glow-dust", weight: 18, min: 3, max: 9 },
+      { itemKey: "gold-ingot", weight: 14, min: 2, max: 5 },
+      { itemKey: "tome-arcane-ward", weight: 13, min: 1, max: 1 },
+      { itemKey: "tome-starlight-snare", weight: 13, min: 1, max: 1 },
+    ],
+    bonuses: [{ itemKey: "briarheart-crook", chance: 0.09, min: 1, max: 1, durability: 6000 }],
+  },
+  "brassdeep-vault": {
+    entries: [
+      { itemKey: "sunmetal-ingot", weight: 24, min: 4, max: 10 },
+      { itemKey: "gold-ingot", weight: 18, min: 3, max: 8 },
+      { itemKey: "gear-cluster", weight: 22, min: 2, max: 7 },
+      { itemKey: "deepgear-alloy", weight: 16, min: 2, max: 5 },
+      { itemKey: "tome-steel-spear", weight: 10, min: 1, max: 1 },
+      { itemKey: "flintlock-ball", weight: 10, min: 8, max: 20 },
+    ],
+    bonuses: [{ itemKey: "deepdelvers-promise", chance: 0.06, min: 1, max: 1 }],
+  },
+  "stormglass-vault": {
+    entries: [
+      { itemKey: "crystal-shard", weight: 25, min: 4, max: 10 },
+      { itemKey: "gold-ingot", weight: 19, min: 3, max: 7 },
+      { itemKey: "glow-dust", weight: 19, min: 4, max: 10 },
+      { itemKey: "tome-blinkstep", weight: 13, min: 1, max: 1 },
+      { itemKey: "tome-frost-lance", weight: 12, min: 1, max: 1 },
+      { itemKey: "wayfarer-potion", weight: 12, min: 1, max: 2 },
+    ],
+    bonuses: [{ itemKey: "briarheart-crook", chance: 0.055, min: 1, max: 1, durability: 6000 }],
+  },
+  "bloomrot-vault": {
+    entries: [
+      { itemKey: "moonberry", weight: 22, min: 4, max: 10 },
+      { itemKey: "royal-jelly", weight: 10, min: 1, max: 2 },
+      { itemKey: "crystal-shard", weight: 14, min: 2, max: 5 },
+      { itemKey: "gold-ingot", weight: 14, min: 2, max: 6 },
+      { itemKey: "tome-verdant-volley", weight: 20, min: 1, max: 1 },
+      { itemKey: "tome-healing-light", weight: 20, min: 1, max: 1 },
+    ],
+    bonuses: [{ itemKey: "dawnthread-saber", chance: 0.05, min: 1, max: 1 }],
   },
 });
 

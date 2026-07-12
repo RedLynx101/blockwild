@@ -80,6 +80,7 @@ import {
   MOB_DEFS,
   MOSSLING_VARIANT_ORDER,
   POLLINATOR_ORDER,
+  RABBIT_ORDER,
   SENTIENT_MOB_ORDER,
   SUGARCOURT_ORDER,
   SURFACE_MOB_ORDER,
@@ -88,8 +89,12 @@ import {
 } from "../app/game/mobs.ts";
 import { applyCompanionPose, applyOceanCreaturePose, applyWildlifePose, createMobVisual, createSkeletonArrowVisual } from "../app/game/mob-models.ts";
 import {
+  chooseBirdFlightRoute,
+  chooseBirdPerch,
   chooseCreatureRoute,
+  createBirdFlightRouteState,
   createCreatureRouteState,
+  creatureMeleeReach,
   creatureCollisionProfile,
   findFollowerTeleportTarget,
   followerTravelSpeed,
@@ -343,6 +348,31 @@ test("redesigned wildlife and biome variants keep distinct anatomy, gait rigs, a
   }
 });
 
+test("every rabbit ear is physically bridged to its crown in production models and portraits", () => {
+  for (const kind of RABBIT_ORDER) {
+    const model = createMobVisual(kind, 73);
+    model.visual.updateMatrixWorld(true);
+    const head = model.visual.getObjectByName(`${kind}-head`);
+    assert.ok(head, `${kind} needs its crown mesh`);
+    for (const side of ["left", "right"] as const) {
+      const pivot = model.visual.getObjectByName(`${kind}-${side}-ear-pivot`);
+      const ear = model.visual.getObjectByName(`${kind}-${side}-ear`);
+      const root = model.visual.getObjectByName(`${kind}-${side}-ear-root`);
+      assert.ok(pivot && ear && root, `${kind} ${side} ear needs a shared articulated root`);
+      const headBounds = new THREE.Box3().setFromObject(head!);
+      const rootBounds = new THREE.Box3().setFromObject(root!);
+      const earBounds = new THREE.Box3().setFromObject(ear!);
+      assert.equal(headBounds.intersectsBox(rootBounds), true, `${kind} ${side} ear root must overlap the crown`);
+      assert.equal(rootBounds.intersectsBox(earBounds), true, `${kind} ${side} ear shaft must overlap its root`);
+      if (kind === "frost-hare") {
+        const tip = model.visual.getObjectByName(`${kind}-${side}-ear-tip`);
+        assert.ok(tip && tip.parent === pivot, `${kind} ${side} dark tip must inherit the ear pose`);
+        assert.equal(new THREE.Box3().setFromObject(tip!).intersectsBox(earBounds), true);
+      }
+    }
+  }
+});
+
 test("blocked Ridgeback steering holds one avoidance decision instead of rotationally twitching", () => {
   let steering = createStableSteering(0);
   const headings: number[] = [];
@@ -471,6 +501,84 @@ test("ground route planning holds a stable side around trunks and avoids hazards
     probe: () => { throw new Error("birds must bypass ground probes"); },
   });
   assert.equal(flying.heading, 0.75);
+});
+
+test("ground route look-ahead caches a proven heading without losing detour hysteresis", () => {
+  let state = createCreatureRouteState(0);
+  let probes = 0;
+  const decisions = [];
+  for (let frame = 0; frame < 12; frame += 1) {
+    const decision = chooseCreatureRoute({
+      state,
+      dt: 1 / 60,
+      desiredHeading: 0,
+      mobId: 91,
+      probe: (heading) => {
+        probes += 1;
+        return Math.abs(heading) < 0.1 ? { walkable: false } : { walkable: true, clearance: 1 };
+      },
+    });
+    state = decision.state;
+    decisions.push(decision.heading);
+  }
+  assert.ok(probes < 12, `short safe-route caching should avoid one voxel probe every frame (got ${probes})`);
+  assert.equal(new Set(decisions.map((heading) => Math.sign(heading))).size, 1);
+});
+
+test("bird flight routing uses bounded stable tree avoidance and climbs when lateral air is closed", () => {
+  let state = createBirdFlightRouteState(0);
+  const headings: number[] = [];
+  let totalProbes = 0;
+  for (let frame = 0; frame < 18; frame += 1) {
+    const decision = chooseBirdFlightRoute({
+      state,
+      dt: 1 / 60,
+      desiredHeading: 0,
+      mobId: 19,
+      flying: true,
+      probe: (heading) => ({
+        clear: Math.abs(heading) >= 0.25,
+        clearance: Math.abs(heading) >= 0.25 ? 1 : 0,
+      }),
+    });
+    assert.ok(decision.probes <= 15, `bird route exceeded fixed probe budget: ${decision.probes}`);
+    totalProbes += decision.probes;
+    state = decision.state;
+    headings.push(decision.heading);
+  }
+  assert.ok(totalProbes < 35, `cached bird routing should not rescan every frame (got ${totalProbes})`);
+  assert.equal(new Set(headings.map((heading) => Math.sign(heading)).filter(Boolean)).size, 1, "tree avoidance must keep one side");
+
+  const climb = chooseBirdFlightRoute({
+    state: createBirdFlightRouteState(0),
+    dt: 1 / 60,
+    desiredHeading: 0,
+    mobId: 20,
+    flying: true,
+    probe: (_heading, altitude) => ({ clear: altitude > 0.5, clearance: altitude > 0.5 ? 1 : 0 }),
+  });
+  assert.ok(climb.altitudeOffset > 1, "a bird should climb over a canopy when every level route is closed");
+});
+
+test("birds choose reachable exposed perches by score rather than scan order", () => {
+  const candidates = [
+    { id: "blocked-near", x: 1, y: 6, z: 0, altitude: 4, clearance: 1, approachClear: false },
+    { id: "tight-near", x: 1.5, y: 6, z: 0, altitude: 4, clearance: 0.25, approachClear: true },
+    { id: "open-far", x: 4, y: 7, z: 1, altitude: 5, clearance: 1, approachClear: true },
+    { id: "open-favorite", x: 4.2, y: 7, z: -1, altitude: 5, clearance: 1, approachClear: true },
+  ] as const;
+  assert.equal(chooseBirdPerch(candidates, { x: 0, z: 0, heading: 0 })?.id, "open-far");
+  assert.equal(chooseBirdPerch(candidates, { x: 0, z: 0, heading: 0 }, "open-favorite")?.id, "open-favorite");
+});
+
+test("species and body scale extend melee reach without requiring creature overlap", () => {
+  const small = creatureMeleeReach({ attackRange: 0.9, radius: 0.24 });
+  const medium = creatureMeleeReach({ attackRange: 0.9, radius: 0.58 });
+  const grown = creatureMeleeReach({ attackRange: 0.9, radius: 0.58 }, 2.4);
+  assert.ok(small > 0.9);
+  assert.ok(medium > small);
+  assert.ok(grown > medium);
+  assert.ok(grown < 2.4, "large reach remains bounded");
 });
 
 test("birds perch, forage, and flee fast approaching or attacking humans", () => {

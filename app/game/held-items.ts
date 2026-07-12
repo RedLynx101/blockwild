@@ -296,6 +296,38 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
     addBox([0.05, 0.42, 0.05], [0, -0.05, 0], 0x4d863f, [0.12, 0, -0.16]);
     addBox([0.26, 0.075, 0.26], [-0.03, 0.19, 0], definition.color, [0.08, 0.15, 0.18]);
     addBox([0.07, 0.09, 0.07], [-0.03, 0.22, -0.01], 0xf2c34d, [0, 0, 0], true);
+  } else if (item === Item.DawnthreadSaber) {
+    addBox([0.105, 0.11, 0.52], [0, 0, -0.09], 0x6b452c).name = "dawnthread-grip";
+    addBox([0.62, 0.1, 0.12], [0, 0, -0.37], 0xe0a94d).name = "dawnthread-sun-guard";
+    addBox([0.18, 0.08, 1.32], [0, 0, -1.0], 0xffd978, [0, 0, Math.PI / 4], true).name = "dawnthread-living-edge";
+    addBox([0.055, 0.055, 1.18], [-0.09, 0.02, -0.98], 0xfff2b2, [0, 0, Math.PI / 4], true).name = "dawnthread-sun-filament";
+    addBox([0.24, 0.12, 0.24], [0, 0, 0.24], 0x8f5d31, [0, Math.PI / 4, 0]).name = "dawnthread-pommel";
+    group.scale.setScalar(0.56);
+    group.rotation.set(-Math.PI / 2, 0.02, -0.12);
+    group.position.set(0, -0.08, -0.24);
+    group.userData.workingAngle = Math.PI / 2;
+  } else if (item === Item.DeepdelversPromise) {
+    addBox([0.105, 0.11, 1.48], [0, 0, -0.3], 0x5a4431).name = "deepdelver-haft";
+    addBox([1.12, 0.14, 0.18], [0, 0, -1.02], 0x506b70, [0, 0, -0.08]).name = "deepdelver-pick-head";
+    addBox([0.34, 0.2, 0.22], [-0.5, 0, -1.04], 0x67d7d0, [0, 0, Math.PI / 4], true).name = "deepdelver-crystal-tooth";
+    addBox([0.26, 0.24, 0.24], [0.47, 0, -0.98], 0x8ea1a1, [0, 0, Math.PI / 4]).name = "deepdelver-hammer-poll";
+    for (const z of [-0.18, -0.45, -0.72]) addBox([0.16, 0.14, 0.06], [0, 0, z], 0x67d7d0, [0, 0, Math.PI / 4], true).name = "deepdelver-oath-rune";
+    group.scale.setScalar(0.55);
+    group.rotation.set(-Math.PI / 2, 0.02, -0.12);
+    group.position.set(0, -0.08, -0.22);
+    group.userData.workingAngle = Math.PI / 2;
+  } else if (item === Item.BriarheartCrook) {
+    addBox([0.12, 0.12, 1.58], [0, 0, -0.3], 0x4e6a36).name = "briarheart-living-shaft";
+    addBox([0.65, 0.11, 0.12], [0.22, 0, -1.06], 0x4e6a36, [0, 0.42, 0]).name = "briarheart-crook-hook";
+    addBox([0.18, 0.18, 0.18], [0.46, 0, -1.26], 0x9ce47b, [0, Math.PI / 4, Math.PI / 4], true).name = "briarheart-focus";
+    for (const [index, z] of [-0.2, -0.5, -0.8].entries()) {
+      const thorn = addBox([0.18, 0.08, 0.2], [index % 2 ? -0.1 : 0.1, 0, z], 0xc4e789, [0, index % 2 ? -0.5 : 0.5, 0]);
+      thorn.name = `briarheart-thorn-${index + 1}`;
+    }
+    group.scale.setScalar(0.56);
+    group.rotation.set(-Math.PI / 2, 0.02, -0.12);
+    group.position.set(0, -0.08, -0.24);
+    group.userData.workingAngle = Math.PI / 2;
   } else if (definition.toolKind) {
     const spec = createHeldToolSpec(definition.toolKind, definition.color, definition.name);
     for (const box of spec.boxes) addBox(

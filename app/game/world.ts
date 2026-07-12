@@ -1,4 +1,14 @@
 import * as THREE from "three";
+import {
+  adventureClearanceBounds,
+  adventureDungeonCandidateForChunk,
+  adventureMarkersForChunk,
+  adventurePlacementsForChunk,
+  adventurePoiCandidateForChunk,
+  planAdventureStructure,
+  type AdventureBiome,
+} from "./adventure-content";
+import { paintBiomeSurfaceAtlasTile } from "./biome-atmosphere";
 import { BLOCKS, LEAF_BLOCKS, TORCH_BLOCKS, BlockId, archiveShelfBookCount, blockContainsWater, isWaterloggedFloraBlock, type RenderLayer } from "./data";
 import { caveEntranceAt, caveFeatureAt } from "./caves";
 import { DENSE_CUTOUT_LEAF_POLICY, planFullTree, planSubmergedFlora, planSyrupPondsForChunk, syrupPondColumnAt, wildPeppermintHeight, type TreeForm, type TreePlanBlock } from "./ecology";
@@ -37,7 +47,7 @@ export const WORLD_HEIGHT = MAX_Y - MIN_Y + 1;
 export const SEA_LEVEL = 32;
 export const SECTION_HEIGHT = 16;
 export const SECTION_COUNT = WORLD_HEIGHT / SECTION_HEIGHT;
-export const GENERATOR_VERSION = 12;
+export const GENERATOR_VERSION = 13;
 
 export type SettlementWorldPlan = Readonly<{
   candidate: SettlementCandidate;
@@ -114,6 +124,23 @@ export const BIOME_NAMES: Record<number, string> = {
   [BiomeId.Glimmerwood]: "Glimmerwood",
   [BiomeId.SnowcapRange]: "Snowcap Range",
 };
+
+function adventureBiomeFromId(biome: BiomeId): AdventureBiome | null {
+  if (biome === BiomeId.Beach) return "coast";
+  if (biome === BiomeId.Meadow || biome === BiomeId.CloudreedGlen) return "meadow";
+  if ([BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Bloomwood, BiomeId.RainveilJungle, BiomeId.SakurabloomGrove].includes(biome)) return "forest";
+  if ([BiomeId.Frostpine, BiomeId.Snowfield, BiomeId.SnowcapRange].includes(biome)) return "snow";
+  if (biome === BiomeId.Desert) return "desert";
+  if (biome === BiomeId.Badlands) return "badlands";
+  if (biome === BiomeId.Savanna) return "savanna";
+  if (biome === BiomeId.Siltfen) return "swamp";
+  if (biome === BiomeId.Highlands) return "highlands";
+  if (biome === BiomeId.Volcanic) return "volcanic";
+  if (biome === BiomeId.MushroomFen) return "mushroom";
+  if (biome === BiomeId.Glimmerwood) return "glimmerwood";
+  if (biome === BiomeId.SugarplumVale) return "sugarplum";
+  return null;
+}
 
 /** Small deterministic amenity pass layered onto the older landmark shells. */
 export function planPoiAmenities(kind: StructureKind, origin: Readonly<{ x: number; y: number; z: number }>): readonly PlannedBlock[] {
@@ -405,13 +432,13 @@ const BIOME_TINT: Record<number, [number, number, number]> = {
   [BiomeId.DeepOcean]: [0.72, 0.83, 0.98],
   [BiomeId.Ocean]: [0.8, 0.9, 1],
   [BiomeId.Beach]: [1.04, 1.01, 0.86],
-  [BiomeId.Meadow]: [0.9, 1, 0.86],
-  [BiomeId.Wildwood]: [0.82, 1, 0.78],
+  [BiomeId.Meadow]: [0.84, 0.98, 0.82],
+  [BiomeId.Wildwood]: [0.74, 0.93, 0.69],
   [BiomeId.Frostpine]: [0.74, 0.92, 0.88],
   [BiomeId.Desert]: [1.1, 0.96, 0.72],
-  [BiomeId.Savanna]: [1.04, 1, 0.73],
-  [BiomeId.Siltfen]: [0.7, 0.82, 0.67],
-  [BiomeId.Snowfield]: [0.94, 1.02, 1.05],
+  [BiomeId.Savanna]: [1.03, 0.96, 0.69],
+  [BiomeId.Siltfen]: [0.64, 0.78, 0.63],
+  [BiomeId.Snowfield]: [0.92, 1.01, 1.08],
   [BiomeId.Badlands]: [1.08, 0.78, 0.65],
   [BiomeId.Birchlight]: [0.95, 1.08, 0.83],
   [BiomeId.Bloomwood]: [1.08, 0.91, 1.02],
@@ -420,11 +447,11 @@ const BIOME_TINT: Record<number, [number, number, number]> = {
   [BiomeId.MushroomFen]: [0.96, 0.78, 0.94],
   [BiomeId.River]: [0.82, 0.94, 0.94],
   [BiomeId.CloudreedGlen]: [0.76, 1.02, 0.91],
-  [BiomeId.RainveilJungle]: [0.68, 1.04, 0.78],
-  [BiomeId.SakurabloomGrove]: [1.08, 0.94, 1.02],
+  [BiomeId.RainveilJungle]: [0.62, 1.01, 0.73],
+  [BiomeId.SakurabloomGrove]: [1.05, 0.9, 1.01],
   [BiomeId.LumenTrench]: [0.62, 0.78, 1.08],
   [BiomeId.SugarplumVale]: [1.08, 0.88, 1.04],
-  [BiomeId.Glimmerwood]: [0.7, 1.04, 0.92],
+  [BiomeId.Glimmerwood]: [0.64, 1.01, 0.9],
   [BiomeId.SnowcapRange]: [0.88, 0.96, 1.03],
 };
 
@@ -1271,6 +1298,9 @@ export function createBlockAtlas() {
       }
       for (const [x, y] of [[2, 6], [13, 3], [12, 9], [2, 13], [14, 12], [5, 11]] as Array<[number, number]>) pixel(index, x, y, egg.speck, 0.85);
     }
+    // Production biome surfaces are painted last so their authored motifs
+    // replace the older generic noise without disturbing unrelated blocks.
+    paintBiomeSurfaceAtlasTile(context, index, ox, oy, tile);
   }
   const texture = new THREE.CanvasTexture(canvas);
   texture.magFilter = THREE.NearestFilter;
@@ -2173,6 +2203,35 @@ export class ChunkWorld {
       }
     }
     if (this.generationOptions.structures) {
+      // V1.3 landmarks and dungeons use their own sparse regional grids so
+      // their exact archetype catalogue remains stable without perturbing old
+      // save seeds. Each chunk examines only the neighboring candidate cells
+      // and applies its own slice, making multi-room plans seam-safe.
+      for (let originCx = chunk.cx - 1; originCx <= chunk.cx + 1; originCx += 1) {
+        for (let originCz = chunk.cz - 1; originCz <= chunk.cz + 1; originCz += 1) {
+          const originX = originCx * CHUNK_SIZE + Math.floor(CHUNK_SIZE / 2);
+          const originZ = originCz * CHUNK_SIZE + Math.floor(CHUNK_SIZE / 2);
+          const originColumn = sample(originX, originZ);
+          const adventureBiome = adventureBiomeFromId(originColumn.biome);
+          const coastFoundation = adventureBiome === "coast" && originColumn.height >= originColumn.waterline;
+          if (!adventureBiome || (!coastFoundation && originColumn.height <= originColumn.waterline + 2)) continue;
+          if (syrupPondColumnAt(this.seedText, originX, originZ, sample, BiomeId.SugarplumVale)) continue;
+          const kinds = [
+            adventurePoiCandidateForChunk({ seed: this.seedText, chunkX: originCx, chunkZ: originCz, biome: adventureBiome }),
+            adventureDungeonCandidateForChunk({ seed: this.seedText, chunkX: originCx, chunkZ: originCz, biome: adventureBiome }),
+          ].filter((kind) => kind !== undefined);
+          for (const kind of kinds) {
+            const plan = planAdventureStructure(kind, { x: originX, y: originColumn.height, z: originZ }, this.seedText);
+            clearGeneratedGrowth(adventureClearanceBounds(plan));
+            for (const placement of adventurePlacementsForChunk(plan, chunk.cx, chunk.cz, CHUNK_SIZE)) {
+              set(placement.x, placement.y, placement.z, placement.block, false);
+            }
+            for (const marker of adventureMarkersForChunk(plan, chunk.cx, chunk.cz, CHUNK_SIZE)) {
+              this.structureMarkers.set(`${plan.id}:${marker.type}:${marker.id}`, marker);
+            }
+          }
+        }
+      }
       this.generateSettlementsForChunk(chunk, sample, set, clearGeneratedGrowth);
       for (const lair of dragonLairsIntersectingChunk({
         seed: this.seedText,

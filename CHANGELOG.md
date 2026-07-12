@@ -2,14 +2,31 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
-## Unreleased - Courser Ecotypes and Creature Redesigns
+## 1.3.0 - Echoes and Ruins - 2026-07-12
 
-- Rebuilt the Wildwood Courser with tapered anatomy, jointed legs, readable side-set eyes, a layered mane, and a production-grounded saddle rig.
-- Added four biome-specific tameable mounts: shaggy Rimehoofs in Frostpine, Snowfield, and Snowcap; lean Sunscars in Desert and Badlands; broad-hoofed Mirestrides in Siltfen; and branch-antlered Starboughs in Glimmerwood.
-- Added the Deepgear Courser, a brass-and-steel piston mount sold unaligned by Dwarven Golemsmiths or assembled from its own blueprint in a mana-fed Golem Forge.
-- Added shared natural horse calls across living Coursers and the Mistmane, with a separate metallic steam-whinny for the Deepgear Courser.
-- Brought Steel and Sea Dragons up to the newer Fire and Ice art standard with pressure-engine armor and wing gears for Steel, plus tideglass scales, gills, whiskers, finlets, and ray-sail ribs for Sea.
-- Rebuilt Emberjays, Canopy Larks, and Tidewing Gulls as distinct layered bird rigs; added snow-dwelling Frostquill coveys; and routed lossless species calls through ambient, hurt, feeding, and breeding events.
+### Spatial sound and biome atmosphere
+
+- Integrated all 18 supplied WAV recordings plus all 13 lossless creature calls from the merged `design-1` history: eight horse/bird calls and five cat/hound/crab calls. Rain, crickets, wind, winter wind, cave wash, ocean wash, and active swimming now lazy-load as environment loops; authored steps, splashes, dragon attacks, wingbeats, magic, achievements, UI taps, hostile grumbles, humanoid idles, and species calls are routed to their matching events.
+- Added bounded HRTF positional playback with listener orientation, distance culling and rolloff, deterministic voice eviction, a 32-voice global ceiling, and a reusable 16-node spatial pool. The environment mixer crossfades by weather, daylight, biome, cover, depth, and movement instead of abruptly switching beds.
+- Repainted nine main biome surfaces—Wildwood, Snowfield, Siltfen, Sunstep Savanna, Flower Meadow, Rainveil Jungle, Sakurabloom, Sugarplum Vale, and Glimmerwood—with deterministic 16-pixel top/edge motifs and matching vertex-tint atmosphere. Every recipe owns unique atlas tiles, including the isolated Glimmerwood pair.
+
+### Echoes, ruins, and heirlooms
+
+- Added exactly 20 sparse deterministic POI archetypes: eight tiny trail details, eight medium encounters, and four large destinations. Added exactly five three-stage dungeons on a separate sparse grid: the underground Rootbound Labyrinth, Starless Observatory, and Brassdeep Foundry, plus the aboveground Stormglass Citadel and Bloomrot Cathedral.
+- Every dungeon carries a distinct material and lighting identity, reversible traversal from its entrance, persistent staged encounters, spell-tome opportunities, a midway cache, boss marker, master vault, and discoverable map heart. Cross-chunk placement remains bounded and deterministic.
+- Added six detailed production creatures with runtime models, portraits, behavior, lore, concrete drops, and dungeon encounters: Auric Scarab, Rootwrithe, Bellroot Matron, Vaultwing, Cinder Maw, and Ossuary Keeper. Vaultwing keeps an explicit airborne pursuit profile; the other five rigs are grounded at exact contact.
+- Added Dawnthread Saber and Deepdelver's Promise with semantic infinite durability, plus the 6,000-use Briarheart Crook. Their dungeon provenance, dedicated held models, loot keys, and situational combat or mining bonuses share the normal inventory and save paths.
+
+### Creature design and navigation
+
+- Rebuilt the Wildwood Courser and added Rimehoof, Sunscar, Mirestride, Starbough, and forge-built Deepgear Courser variants; brought Steel and Sea Dragons up to the newer dragon art standard; and rebuilt Emberjays, Canopy Larks, Tidewing Gulls, and Frostquills as distinct layered birds.
+- Merged the latest pushed `design-1` tip (`aaa5fbf`) with its redesigned pets, crabs, mosslings, foxes, harts, deer, longhorns, terrapins, fish, expanded sea-slug family, and core wildlife while preserving the v1.3 adventure and audio work.
+- Attached both ears on all four rabbit variants through shared crown-root geometry. Birds now use a fixed-budget three-dimensional look-ahead router, safe-route caching, canopy recovery, and scored perch approaches; ground creatures reuse short proven routes, and size-aware melee reach lets larger attackers connect without standing inside a target.
+
+### Compatibility and release assets
+
+- Advanced deterministic generation to version 13 for the authored adventure grids and atmosphere pass. Version-12 worlds migrate while preserving player-authored edits, save metadata, and the independent human-facing game version.
+- Expanded the production creature field guide to 161 runtime-backed portraits. Added dedicated creature-AI, adventure/model, fish/sea-slug, and biome before/after audit renders plus focused regression coverage for exact catalog counts, dungeon traversal, map labels, atlas ownership, positional audio, supplied assets, rabbit attachment, and bounded route probes.
 
 ## 1.2.0 - Trailbound - 2026-07-12
 

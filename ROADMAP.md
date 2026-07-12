@@ -1,8 +1,8 @@
 # Blockwild roadmap
 
-Blockwild v1.2 Trailbound adds durable browser character profiles, selectable faction races, connected settlement tiers across all six cultures, sprint-swimming, off-hand shields and lights, aquariums, a world compass, richer local maps, Bartering and Luck, and a stricter host-authoritative reconnect model. Realms and Recall, Wyrmweave, Sugarcourt, Tidelight, and Hearthroads remain part of the same deterministic world and progression layer. The systems below are intentionally outside the v1.2 release boundary. This is a direction document, not a schedule.
+Blockwild v1.3 Echoes and Ruins adds HRTF spatial/environment audio, twenty new POIs, five staged dungeons, six authored encounter creatures, three legendary heirlooms, fixed-budget bird routing, redesigned wildlife, and nine production biome-surface recipes. Trailbound, Realms and Recall, Wyrmweave, Sugarcourt, Tidelight, and Hearthroads remain part of the same deterministic world and progression layer. The systems below are intentionally outside the v1.3 release boundary. This is a direction document, not a schedule.
 
-## Explicit post-v1.2 backlog
+## Explicit post-v1.3 backlog
 
 Realms and Recall adds Wood Elves, Dwarves, Sea Dragons, attuned creature recall, and expandable digital storage. The following ideas from the 1.0 design brief are deliberately recorded rather than partially shipped:
 
@@ -12,7 +12,7 @@ Realms and Recall adds Wood Elves, Dwarves, Sea Dragons, attuned creature recall
 - Deeper settlement variation beyond the connected hamlet, village, and town tiers: culture-specific districts, authored civic landmarks, construction history, and save-safe growth after generation.
 - Deeper player-town management, hired parties, faction war, autonomous sieges, and post-capture cultural rebuilding.
 
-These are not hidden v1.2 features and should not be advertised as playable until their complete loops exist.
+These are not hidden v1.3 features and should not be advertised as playable until their complete loops exist.
 
 ## Character origins and starting scenarios
 

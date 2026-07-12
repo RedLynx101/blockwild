@@ -42,6 +42,7 @@ import {
   type Recipe,
   type Weather,
 } from "./data";
+import { isInfiniteDurabilityItem, legendaryCombatMultiplier, legendaryMiningMultiplier } from "./legendary-items";
 import {
   BIOME_NAMES,
   CHUNK_SIZE,
@@ -54,7 +55,7 @@ import {
   createAtlasBlockGeometry,
   type ChunkEditSave,
 } from "./world";
-import { BUTTERFLY_ORDER, MOB_DEFS, MOB_ORDER, type BirdKind, type ButterflyKind, type CoreMobKind, type MobDefinition, type MobKind } from "./mobs";
+import { BUTTERFLY_ORDER, MOB_DEFS, MOB_ORDER, type ButterflyKind, type CoreMobKind, type MobDefinition, type MobKind } from "./mobs";
 import { createHeldToolSpec } from "./model-specs";
 import { applyCompanionPose, applyDragonPose, applyOceanCreaturePose, applyWildlifePose, createMobVisual, createSentientLodVisual } from "./mob-models";
 import {
@@ -191,14 +192,18 @@ import {
   type CreatureHusbandryState,
 } from "./creature-care";
 import {
+  chooseBirdFlightRoute,
+  chooseBirdPerch,
   chooseCreatureRoute,
   createCreatureRouteState,
+  creatureMeleeReach,
   creatureCollisionProfile,
   findFollowerTeleportTarget,
   followerTravelSpeed,
   planFollowerFormation,
   separateCreatureCircles,
   shouldTeleportFollower,
+  type BirdPerchCandidate,
   type CreatureRouteProbe,
   type CreatureRouteState,
   type FollowerFormationTarget,
@@ -1710,6 +1715,16 @@ const STRUCTURE_LOOT_ITEMS: Readonly<Record<string, ItemCode>> = Object.freeze({
   "tome-healing-light": Item.TomeHealingLight,
   "tome-blinkstep": Item.TomeBlinkstep,
   "tome-arcane-ward": Item.TomeArcaneWard,
+  "tome-starlight-snare": Item.TomeStarlightSnare,
+  "tome-verdant-volley": Item.TomeVerdantVolley,
+  "shadow-shard": Item.ShadowShard,
+  "gear-cluster": Item.GearCluster,
+  "deepgear-alloy": Item.DeepgearAlloy,
+  "flintlock-ball": Item.FlintlockBall,
+  "wayfarer-potion": Item.WayfarerPotion,
+  "dawnthread-saber": Item.DawnthreadSaber,
+  "deepdelvers-promise": Item.DeepdelversPromise,
+  "briarheart-crook": Item.BriarheartCrook,
   "blueprint-dragonbone-arms": Item.DragonboneArmsBlueprint,
   "blueprint-dragon-scale-armor": Item.DragonScaleArmorBlueprint,
 });
@@ -1739,7 +1754,7 @@ export function migrateSavedWorld(value: unknown): WorldSave | null {
   const parsed = value as WorldSave;
   if (parsed.version !== 2 || typeof parsed.seed !== "string") return null;
   if (parsed.generatorVersion === GENERATOR_VERSION) return parsed;
-  if (parsed.generatorVersion === 3 || parsed.generatorVersion === 4 || parsed.generatorVersion === 5 || parsed.generatorVersion === 6 || parsed.generatorVersion === 7 || parsed.generatorVersion === 8 || parsed.generatorVersion === 9 || parsed.generatorVersion === 10 || parsed.generatorVersion === 11) return { ...parsed, generatorVersion: GENERATOR_VERSION };
+  if (parsed.generatorVersion === 3 || parsed.generatorVersion === 4 || parsed.generatorVersion === 5 || parsed.generatorVersion === 6 || parsed.generatorVersion === 7 || parsed.generatorVersion === 8 || parsed.generatorVersion === 9 || parsed.generatorVersion === 10 || parsed.generatorVersion === 11 || parsed.generatorVersion === 12) return { ...parsed, generatorVersion: GENERATOR_VERSION };
   if (parsed.generatorVersion !== 2) return null;
   const indexOffset = (LEGACY_GENERATOR_MIN_Y - MIN_Y) * 16 * 16;
   const edits: ChunkEditSave = {};
@@ -1801,6 +1816,7 @@ export function structureMobSpawnY(
   x: number,
   z: number,
   markerY: number,
+  markerTags: readonly string[] = [],
 ) {
   const definition = MOB_DEFS[kind];
   if (definition.movement === "aquatic") {
@@ -1813,7 +1829,55 @@ export function structureMobSpawnY(
     }
     return markerY;
   }
+  // Authored airborne encounters already encode a safe interior height. A
+  // surface scan would otherwise snap a Vaultwing from an observatory gallery
+  // onto its roof before its first animation frame.
+  if ((definition.movement === "flying" || definition.flying)
+    && (kind === "vaultwing" || markerTags.includes("dungeon") || markerTags.includes("adventure-airborne"))) return markerY;
+  if (markerTags.includes("dungeon")) {
+    const blockX = Math.round(x);
+    const blockZ = Math.round(z);
+    const authoredFeetY = Math.round(markerY);
+    // Dungeon room markers sit directly above their authored floor. Search
+    // down only; never accept a ceiling/roof above the encounter marker.
+    for (let groundY = authoredFeetY - 1; groundY >= authoredFeetY - 10; groundY -= 1) {
+      const ground = world.getBlock(blockX, groundY, blockZ);
+      const feet = world.getBlock(blockX, groundY + 1, blockZ);
+      const head = world.getBlock(blockX, groundY + 2, blockZ);
+      if (ground !== undefined && BLOCKS[ground]?.solid
+        && (!feet || !BLOCKS[feet]?.solid)
+        && (!head || !BLOCKS[head]?.solid)) return groundY + definition.footOffset;
+    }
+    return markerY;
+  }
   return world.findWalkableY(Math.round(x), Math.round(z), markerY) + definition.footOffset;
+}
+
+export function mapLocationNameFromTag(tag: string) {
+  if (tag.startsWith("adventure-poi:") || tag.startsWith("dungeon:")) {
+    const suffix = tag.slice(tag.indexOf(":") + 1);
+    return suffix.split("-").map((part) => part ? part[0].toUpperCase() + part.slice(1) : part).join(" ");
+  }
+  return tag.split(":")[0].split("-").map((part) => part ? part[0].toUpperCase() + part.slice(1) : part).join(" ");
+}
+
+export function planHostileAirbornePursuit(input: Readonly<{
+  hostile: boolean;
+  aware: boolean;
+  distance: number;
+  chaseSpeed: number;
+  reach: number;
+  cooldownSeconds: number;
+  dt: number;
+}>) {
+  const distance = Math.max(0, Number.isFinite(input.distance) ? input.distance : 0);
+  if (!input.hostile || !input.aware) return { advance: 0, nextDistance: distance, attacks: false } as const;
+  const attacks = distance <= Math.max(0.5, input.reach) && input.cooldownSeconds <= 0;
+  const advance = attacks ? 0 : Math.min(
+    Math.max(0, distance - Math.max(0.5, input.reach) * 0.72),
+    Math.max(0, input.chaseSpeed) * Math.max(0, Math.min(input.dt, 0.1)),
+  );
+  return { advance, nextDistance: Math.max(0, distance - advance), attacks } as const;
 }
 
 export function normalizeCaptureOrbInventorySlot(slot: InventorySlot | null | undefined) {
@@ -2361,6 +2425,7 @@ export class VoxelEngine {
   dawnSkyColor = new THREE.Color();
   weatherSkyColor = new THREE.Color();
   celestialDirection = new THREE.Vector3();
+  audioForward = new THREE.Vector3(0, 0, -1);
   audio: SynthAudio;
   settings: GameSettings;
   resizeObserver: ResizeObserver | null = null;
@@ -5675,7 +5740,7 @@ export class VoxelEngine {
         if (replyPeerId) this.rejectCombatAction(action, replyPeerId, "That creature is no longer in attack range.");
         return;
       }
-      const resolvedDamage = this.dragonDamageAfterArmor(mob, damage);
+      const resolvedDamage = this.dragonDamageAfterArmor(mob, damage * legendaryCombatMultiplier(selected?.item, mob.definition));
       mob.health = Math.max(0, mob.health - resolvedDamage);
       mob.hurtTimer = 0.32;
       mob.fleeTimer = mob.hostile ? 0.45 : 3.2;
@@ -5786,7 +5851,7 @@ export class VoxelEngine {
         const pose = remote.target;
         const playerCenter = new THREE.Vector3(pose.x, pose.y + 0.8, pose.z);
         const mobCenter = mob.group.position.clone().add(new THREE.Vector3(0, mob.definition.height * this.mobBaseScale(mob) * 0.45, 0));
-        const reach = Math.max(1.15, mob.definition.attackRange + mob.definition.radius * this.mobBaseScale(mob));
+        const reach = Math.max(1.15, creatureMeleeReach(mob.definition, this.mobBaseScale(mob)));
         if (mobCenter.distanceToSquared(playerCenter) > reach * reach || !this.hasClearLineOfSight(mobCenter, playerCenter)) continue;
         const current = this.multiplayerPlayerStates.get(playerId);
         if (!current || current.health <= 0) continue;
@@ -6268,13 +6333,13 @@ export class VoxelEngine {
     this.activeChestModel = group;
     this.chestLidPivot = pivot;
     this.chestOpenAmount = 0;
-    this.audio.playSample("chestOpen");
+    this.audio.playSample("chestOpen", { position: group.position, refDistance: 1.5, maxDistance: 30 });
   }
 
   hideChestModel(immediate = false) {
     if (!this.activeChestModel && !(this.activeChestBlocks?.length)) return;
     if (!immediate) {
-      this.audio.playSample("chestClose");
+      this.audio.playSample("chestClose", { ...(this.activeChestModel ? { position: this.activeChestModel.position } : {}), refDistance: 1.5, maxDistance: 30 });
       return;
     }
     if (this.activeChestModel) {
@@ -8471,7 +8536,7 @@ export class VoxelEngine {
     ];
     this.world.setBlocksBatch(edits, true, true);
     this.publishBlockEdits(edits, "batch");
-    this.audio.playSample?.(open ? "chestClose" : "chestOpen", { gain: 0.62, playbackRate: 1.22 });
+    this.audio.playSample?.(open ? "chestClose" : "chestOpen", { gain: 0.62, playbackRate: 1.22, position: [x, lowerY + 0.8, z], refDistance: 1.5, maxDistance: 30 });
     this.placeCooldown = 0.18;
     this.saveSoon();
   }
@@ -8485,7 +8550,18 @@ export class VoxelEngine {
       this.audio.playSample(sample, {
         gain: sound.gain,
         playbackRate: 1 + (Math.random() * 2 - 1) * sound.pitchJitter,
+        position: mob.group.position,
+        refDistance: Math.max(1.5, mob.definition.radius * 1.6),
+        maxDistance: mob.definition.sentient ? 42 : 54,
       });
+      return;
+    }
+    if (event === "ambient" && mob.definition.sentient) {
+      this.audio.playSample("humanoidSigh", { gain: 0.56, playbackRate: 0.96 + Math.random() * 0.08, position: mob.group.position, maxDistance: 34 });
+      return;
+    }
+    if (event === "ambient" && mob.hostile) {
+      this.audio.playSample("scaryGrumble", { gain: 0.72, playbackRate: 0.9 + Math.random() * 0.14, position: mob.group.position, refDistance: 2.4, maxDistance: 58 });
       return;
     }
     this.audio.play(sound.fallback);
@@ -9121,7 +9197,7 @@ export class VoxelEngine {
         const mob = this.spawnMob(kind, new THREE.Vector3(placement.x, grounded + MOB_DEFS[kind].footOffset, placement.z), { dragonState: state, persistentPoiResident: true });
         this.consumeSelectedUnit();
         this.spawnParticles(mob.group.position.x, mob.group.position.y + 0.5, mob.group.position.z, BlockId.CrystalBlock, 14);
-        this.audio.playDragon(hatchling.type, "egg-crack", 1);
+        this.audio.playDragon(hatchling.type, "egg-crack", 1, mob.group.position);
         if (hatchling.type === "sea") this.dispatchQuestEvent({ type: "custom", eventId: "sea-dragon-hatched", at: Date.now() });
         this.events.onToast(`A ${MOB_DEFS[kind].name} hatchling answers the incubated egg.`);
         this.placeCooldown = 0.45;
@@ -9479,7 +9555,7 @@ export class VoxelEngine {
             this.bestiary[dragon.kind].tames = (this.bestiary[dragon.kind].tames ?? 0) + 1;
             this.bestiary[dragon.kind].secretUnlocked = true;
             this.events.onToast(`${dragon.name} accepts the third careful feeding and bonds with you.`);
-            this.audio.playDragon(state.type, "roar", state.stage);
+            this.audio.playDragon(state.type, "roar", state.stage, dragon.group.position);
             if (state.type === "sea") this.dispatchQuestEvent({ type: "custom", eventId: "sea-dragon-tamed", at: Date.now() });
           } else this.events.onToast(`${dragon.name} trust ${state.trust}/3 · patient meat feeds bond a hatchling.`);
         } else if (state.tamed && state.ownerId === ownerId) {
@@ -9523,7 +9599,7 @@ export class VoxelEngine {
         this.gainSkillExperience("husbandry", 44);
         this.bestiary[dragon.kind].breeds = (this.bestiary[dragon.kind].breeds ?? 0) + 1;
         this.events.onToast(`A ${ITEMS[dragonEggItem(result.egg.type)].name} settles between the bonded pair.`);
-        this.audio.playDragon(state.type, "egg-crack", state.stage);
+        this.audio.playDragon(state.type, "egg-crack", state.stage, dragon.group.position);
         this.placeCooldown = 0.45;
         this.saveSoon();
         this.emitHud(true);
@@ -9581,7 +9657,7 @@ export class VoxelEngine {
           this.mountedCreatureId = dragon.id;
           if (this.cameraMode === "first") this.cameraMode = "third-rear";
           this.keys.clear();
-          this.audio.playDragon(state.type, "roar", state.stage);
+          this.audio.playDragon(state.type, "roar", state.stage, dragon.group.position);
           this.events.onToast(`Mounted ${dragon.name} · Space ascends · Shift descends · F dismounts · Z/X/C attack while items remain usable.`);
           this.emitHud(true);
           return;
@@ -10871,13 +10947,14 @@ export class VoxelEngine {
     const item = slot ? ITEMS[slot.item] : null;
     const base = item?.toolKind === definition.preferredTool ? item.miningSpeed ?? 1
       : definition.preferredTool === "hand" ? 1.1 : 0.48;
-    return base * skillMultiplier(this.skillState.skills.mining.level);
+    return base * legendaryMiningMultiplier(slot?.item, block) * skillMultiplier(this.skillState.skills.mining.level);
   }
 
   damageSelectedTool(amount = 1) {
     if (this.mode === "builder") return;
     const slot = this.selectedSlot();
     if (!slot) return;
+    if (isInfiniteDurabilityItem(slot.item)) return;
     const definition = ITEMS[slot.item];
     if (!definition?.maxDurability) return;
     slot.durability = (slot.durability ?? definition.maxDurability) - amount;
@@ -12712,7 +12789,7 @@ export class VoxelEngine {
       if (giver) this.spawnDrop(item, reward.count, giver.group.position.clone().add(new THREE.Vector3(0, 0.5, 0)));
       else this.addItem(item, reward.count);
     }
-    this.audio.play("craft");
+    this.audio.playAchievement?.();
     this.events.onToast(`Quest complete · ${result.reward.gold} gold added to your wallet.`);
     this.saveSoon();
     this.emitHud(true);
@@ -12961,7 +13038,7 @@ export class VoxelEngine {
     if (tag.startsWith("dragon-lair:ice")) return "Ice Dragon Lair";
     if (tag.startsWith("dragon-lair:steel")) return "Steel Dragon Lair";
     if (tag.startsWith("dragon-nest:sea")) return "Sea Dragon Nest";
-    return tag.split(":")[0].split("-").map((part) => part ? part[0].toUpperCase() + part.slice(1) : part).join(" ");
+    return mapLocationNameFromTag(tag);
   }
 
   /** Four small quadrant averages keep close map zoom useful without rasterizing whole chunks. */
@@ -13264,7 +13341,7 @@ export class VoxelEngine {
     mob.baseY = mob.group.position.y;
     mob.group.rotation.y = -mob.angle - Math.PI / 2;
     if (seaMode !== "swim" && seaMode !== "walk" && (moving || vertical !== 0) && mob.dragonWingSoundTimer <= 0) {
-      this.audio.playDragon(state.type, "wing", state.stage);
+      this.audio.playDragon(state.type, "wing", state.stage, mob.group.position);
       mob.dragonWingSoundTimer = Math.max(1.15, 2.8 - state.stage * 0.24);
     }
     this.animateMob(mob, before.distanceTo(mob.group.position));
@@ -13942,7 +14019,7 @@ export class VoxelEngine {
       damage: dragonState ? dragonAttackPlan(dragonState.type, dragonState.stage, "melee").damage : definition.damage, angle, desiredAngle: angle, steering: createStableSteering(angle), route: createCreatureRouteState(angle), wanderTimer: 1 + Math.random() * 4,
       attackCooldown: 0, hurtTimer: 0, age: options.age ?? 0, bob: Math.random() * Math.PI * 2, gait: 0,
       fleeTimer: 0, state: "wander", stateTimer: 0, baseY: position.y, voiceTimer: 2 + Math.random() * 8,
-      birdState: definition.family === "bird" ? createBirdBehavior(kind as Parameters<typeof createBirdBehavior>[0], id * 0.71) : null,
+      birdState: definition.movement === "flying" ? createBirdBehavior(kind as Parameters<typeof createBirdBehavior>[0], id * 0.71) : null,
       petState, careState, shadeState, reedstriderBond, courserBond, leviathanGrowth, aetherbellMorph, apiaryBee, beeHiveKey: options.beeHiveKey ?? null,
       socialGroupId, peelopShedding,
       milkCooldown: MILKABLE_MOB_KINDS.has(kind) ? clamp(Number(options.milkCooldown) || 0, 0, CLOVERBACK_MILK_COOLDOWN_SECONDS) : 0,
@@ -14150,7 +14227,7 @@ export class VoxelEngine {
         const z = marker.position.z + Math.sin(angle) * radius;
         if (butterfly) this.butterflies.release(butterfly, new THREE.Vector3(x, marker.position.y + 0.8 + (index % 3) * 0.35, z));
         else if (kind) {
-          const spawnY = structureMobSpawnY(this.world, kind, x, z, marker.position.y);
+          const spawnY = structureMobSpawnY(this.world, kind, x, z, marker.position.y, marker.tags);
           const dragonState = isDragonKind(kind) ? createDragonState(dragonTypeForKind(kind), {
             dragonId: `${dragonLairId ?? markerKey}:guardian`,
             geneticSeed: Math.imul(Math.round(marker.position.x) ^ Math.round(marker.position.z) ^ index, 0x9e3779b1) >>> 0,
@@ -14374,9 +14451,18 @@ export class VoxelEngine {
       return;
     }
     const seated = mob.visual.userData.seated === true;
+    // These authored rigs use wide hooked feet and articulated insect knees;
+    // the generic biped swing drove their distal pieces through the floor.
+    // Their slower, weightier gait retains the same animation channel while
+    // keeping the planted silhouette stable.
+    const legSwingAmplitude = mob.kind === "auric-scarab" ? 0.34
+      : mob.kind === "rootwrithe" ? 0.18
+        : mob.kind === "bellroot-matron" ? 0.12
+          : mob.kind === "shadecrawler" ? 0.35
+            : 0.58;
     for (const leg of mob.parts.legs) leg.rotation.x = seated
       ? 1.16 + (Number(leg.userData.side) || 1) * 0.025
-      : Math.sin(mob.gait + (Number(leg.userData.phase) || 0)) * (mob.kind === "shadecrawler" ? 0.35 : 0.58);
+      : Math.sin(mob.gait + (Number(leg.userData.phase) || 0)) * legSwingAmplitude;
     if (mob.visual.userData.armedSentient === undefined) {
       let armed = false;
       mob.visual.traverse((object) => {
@@ -14557,7 +14643,7 @@ export class VoxelEngine {
     if (seaHunter) {
       mob.desiredAngle = Math.atan2(dz, dx);
       mob.awarenessTimer = Math.max(mob.awarenessTimer, 2.5);
-      if (distance < mob.definition.attackRange && mob.attackCooldown <= 0) {
+      if (distance < creatureMeleeReach(mob.definition, this.mobBaseScale(mob)) && mob.attackCooldown <= 0) {
         this.damagePlayer(mob.damage, mob.name);
         if (mob.kind === "dreadcoil") this.potionBuffs["venom-poison"] = Math.max(this.potionBuffs["venom-poison"] ?? 0, this.worldSimulationSeconds() + 8);
         mob.attackCooldown = 1.45;
@@ -14708,7 +14794,7 @@ export class VoxelEngine {
     mob.dragonAttackCooldowns[plan.kind] = plan.cooldownSeconds;
     const animationDuration = plan.kind === "breath" ? 0.78 : plan.kind === "projectile" ? 0.48 : 0.34;
     mob.dragonAttackAnimation = { kind: plan.kind, remaining: animationDuration, duration: animationDuration };
-    this.audio.playDragon(state.type, plan.kind, state.stage);
+    this.audio.playDragon(state.type, plan.kind, state.stage, origin);
     const effect = createDragonAttackEffect({
       id: this.nextDragonEffectId++,
       element: state.type,
@@ -14899,7 +14985,7 @@ export class VoxelEngine {
           mob.group.position.set(nx, mob.group.position.y + (targetY - mob.group.position.y) * Math.min(1, dt * 1.4), nz);
           mob.baseY = mob.group.position.y;
           if (mob.dragonWingSoundTimer <= 0 && mob.group.position.distanceToSquared(this.position) < 48 * 48) {
-            this.audio.playDragon(state.type, "wing", state.stage);
+            this.audio.playDragon(state.type, "wing", state.stage, mob.group.position);
             mob.dragonWingSoundTimer = Math.max(1.4, 3.4 - state.stage * 0.25);
           }
         } else {
@@ -14927,56 +15013,253 @@ export class VoxelEngine {
     this.animateMob(mob, before.distanceTo(mob.group.position));
   }
 
-  birdPerchNear(mob: MobEntity) {
-    const originX = Math.round(mob.group.position.x);
-    const originZ = Math.round(mob.group.position.z);
-    for (let radius = 0; radius <= 4; radius += 1) for (let dx = -radius; dx <= radius; dx += 1) for (let dz = -radius; dz <= radius; dz += 1) {
-      if (radius > 0 && Math.max(Math.abs(dx), Math.abs(dz)) !== radius) continue;
-      const x = originX + dx;
-      const z = originZ + dz;
-      const ground = this.world.surfaceAt(x, z);
-      for (let y = ground + 9; y >= ground + 1; y -= 1) {
-        const type = this.world.getBlock(x, y, z);
-        if (!TREE_PERCH_BLOCKS.has(type ?? BlockId.Air) || !this.world.isWalkThrough(this.world.getBlock(x, y + 1, z))) continue;
-        return { id: `tree:${x},${y},${z}`, x, z, altitude: y + 0.56 - ground };
+  birdAirCellClear(x: number, y: number, z: number) {
+    const block = this.world.getBlock(Math.floor(x + 0.5), Math.floor(y + 0.5), Math.floor(z + 0.5));
+    return this.world.isWalkThrough(block);
+  }
+
+  birdFlightProbe(
+    mob: MobEntity,
+    heading: number,
+    altitudeOffset: number,
+    lookahead: number,
+    desiredY: number,
+    landingTarget: BirdPerchCandidate | null,
+  ) {
+    const sideX = -Math.sin(heading) * Math.min(0.3, mob.definition.radius * 0.9);
+    const sideZ = Math.cos(heading) * Math.min(0.3, mob.definition.radius * 0.9);
+    let open = 0;
+    let total = 0;
+    let clear = true;
+    for (const progress of [0.38, 0.7, 1]) {
+      const distance = lookahead * progress;
+      const x = mob.group.position.x + Math.cos(heading) * distance;
+      const z = mob.group.position.z + Math.sin(heading) * distance;
+      const y = THREE.MathUtils.lerp(mob.group.position.y, desiredY + altitudeOffset, progress);
+      // The center ray owns the three swept samples. Wing and body-height
+      // clearance only need checking at the far sample, keeping one candidate
+      // to seven voxel reads rather than fifteen.
+      const offsets: ReadonlyArray<readonly [number, number, number]> = progress < 1
+        ? [[0, 0, 0]]
+        : [[0, 0, 0], [sideX, 0, sideZ], [-sideX, 0, -sideZ], [0, 0.28, 0], [0, -0.28, 0]];
+      for (const [offsetX, offsetY, offsetZ] of offsets) {
+        total += 1;
+        if (this.birdAirCellClear(x + offsetX, y + offsetY, z + offsetZ)) open += 1;
+        else clear = false;
       }
     }
+    const landing = Boolean(landingTarget
+      && Math.hypot(
+        mob.group.position.x + Math.cos(heading) * lookahead - landingTarget.x,
+        mob.group.position.z + Math.sin(heading) * lookahead - landingTarget.z,
+      ) <= 0.85);
+    return { clear, clearance: total > 0 ? open / total : 0, landing };
+  }
+
+  birdPerchNear(mob: MobEntity, previousId: string | null = null): BirdPerchCandidate {
+    const originX = Math.round(mob.group.position.x);
+    const originZ = Math.round(mob.group.position.z);
+    const candidates: BirdPerchCandidate[] = [];
+    const visited = new Set<string>();
+    const parity = Math.abs(mob.id) % 2;
+    const columns: Array<[number, number]> = [[0, 0]];
+    for (let dx = -6 + parity; dx <= 6; dx += 2) for (let dz = -6 + parity; dz <= 6; dz += 2) columns.push([dx, dz]);
+    for (const [dx, dz] of columns) {
+      const x = originX + dx;
+      const z = originZ + dz;
+      const key = `${x},${z}`;
+      if (visited.has(key)) continue;
+      visited.add(key);
+      const terrain = this.world.surfaceAt(x, z);
+      for (let y = terrain + 11; y >= terrain + 1; y -= 1) {
+        const type = this.world.getBlock(x, y, z);
+        if (!TREE_PERCH_BLOCKS.has(type ?? BlockId.Air)) continue;
+        if (!this.birdAirCellClear(x, y + 1, z) || !this.birdAirCellClear(x, y + 2, z)) break;
+        const desiredY = y + mob.definition.footOffset;
+        const midpointX = (mob.group.position.x + x) * 0.5;
+        const midpointZ = (mob.group.position.z + z) * 0.5;
+        const midpointY = (mob.group.position.y + desiredY) * 0.5;
+        const approachClear = this.birdAirCellClear(midpointX, midpointY, midpointZ)
+          && this.birdAirCellClear(midpointX, midpointY + 0.3, midpointZ);
+        let open = 0;
+        for (const [offsetX, offsetZ] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+          if (this.birdAirCellClear(x + offsetX * 0.38, desiredY, z + offsetZ * 0.38)) open += 1;
+        }
+        candidates.push({
+          id: `tree:${x},${y},${z}`,
+          x,
+          y: desiredY,
+          z,
+          altitude: Math.max(0.12, y - terrain),
+          clearance: open / 5,
+          approachClear,
+        });
+        break;
+      }
+      if (candidates.length >= 18) break;
+    }
+    const selected = chooseBirdPerch(candidates, {
+      x: mob.group.position.x,
+      z: mob.group.position.z,
+      heading: mob.angle,
+    }, previousId);
+    if (selected) return selected;
     const ground = this.world.surfaceAt(originX, originZ);
-    return { id: `land:${originX},${ground},${originZ}`, x: originX, z: originZ, altitude: 0.12 };
+    return {
+      id: `land:${originX},${ground},${originZ}`,
+      x: originX,
+      y: ground + mob.definition.footOffset,
+      z: originZ,
+      altitude: 0.12,
+      clearance: 1,
+      approachClear: true,
+    };
+  }
+
+  updateHostileAirborneMob(mob: MobEntity, dt: number, distance: number, dx: number, dz: number) {
+    if (!mob.hostile) return false;
+    if (distance < 28 && mob.sightCheckTimer <= 0) {
+      mob.seesPlayer = this.mobCanSeePlayer(mob);
+      mob.sightCheckTimer = 0.16 + (mob.id % 5) * 0.035;
+      if (mob.seesPlayer) mob.awarenessTimer = Math.max(mob.awarenessTimer, 3.6);
+    }
+    if (mob.awarenessTimer <= 0) return false;
+
+    const target = this.position.clone().add(new THREE.Vector3(0, this.cameraEyeHeight * 0.62, 0));
+    const offset = target.clone().sub(mob.group.position);
+    const distance3d = offset.length();
+    const reach = creatureMeleeReach(mob.definition, this.mobBaseScale(mob)) + 0.25;
+    const pursuit = planHostileAirbornePursuit({
+      hostile: true,
+      aware: true,
+      distance: distance3d,
+      chaseSpeed: mob.definition.chaseSpeed,
+      reach,
+      cooldownSeconds: mob.attackCooldown,
+      dt,
+    });
+    mob.state = "chase";
+    mob.desiredAngle = Math.atan2(dz, dx);
+    const desiredDistance = Math.max(0.35, Math.min(2.4, pursuit.advance + 0.72));
+    const birdState = mob.birdState ?? createBirdBehavior(mob.kind as Parameters<typeof createBirdBehavior>[0]);
+    const route = chooseBirdFlightRoute({
+      state: birdState.flightRoute,
+      dt,
+      desiredHeading: mob.desiredAngle,
+      mobId: mob.id,
+      flying: true,
+      landing: false,
+      probe: (heading, altitudeOffset) => this.birdFlightProbe(mob, heading, altitudeOffset, desiredDistance, target.y, null),
+    });
+    mob.birdState = { ...birdState, mode: "flight", timer: Math.max(0.4, birdState.timer), flightRoute: route.state };
+    mob.steering = updateStableSteering(mob.steering, {
+      dt,
+      turnRate: mob.definition.turnRate,
+      blocked: route.blocked,
+      mobId: mob.id,
+      desiredHeading: route.heading,
+    });
+    mob.angle = mob.steering.heading;
+    const before = mob.group.position.clone();
+    if (!route.blocked && pursuit.advance > 0) {
+      mob.group.position.x += Math.cos(mob.angle) * pursuit.advance;
+      mob.group.position.z += Math.sin(mob.angle) * pursuit.advance;
+    }
+    const verticalStep = Math.max(0.08, mob.definition.chaseSpeed * dt * 0.72);
+    mob.group.position.y += clamp(target.y + route.altitudeOffset - mob.group.position.y, -verticalStep, verticalStep);
+    mob.group.rotation.y = -mob.angle - Math.PI / 2;
+    this.animateMob(mob, before.distanceTo(mob.group.position));
+    const remaining = mob.group.position.distanceTo(target);
+    if (remaining <= reach && mob.attackCooldown <= 0 && mob.seesPlayer && this.hasClearLineOfSight(mob.group.position, target)) {
+      this.damagePlayer(mob.damage, mob.name);
+      mob.attackCooldown = 1.05;
+      mob.hurtTimer = Math.max(mob.hurtTimer, 0.08);
+      this.audio.playSample("scaryGrumble", { gain: 0.66, playbackRate: 1.08, position: mob.group.position, maxDistance: 38 });
+      this.engageCombat();
+    }
+    const flap = Math.sin(performance.now() * 0.029 + mob.id * 0.71);
+    for (const wing of mob.parts.wings) wing.rotation.z = (Number(wing.userData.side) || 1) * (0.42 + flap * 0.74);
+    return true;
   }
 
   updateBirdMob(mob: MobEntity, dt: number, distance: number, dx: number, dz: number) {
+    if (this.updateHostileAirborneMob(mob, dt, distance, dx, dz)) return;
     const ground = this.world.surfaceAt(Math.round(mob.group.position.x), Math.round(mob.group.position.z));
-    const perch = this.birdPerchNear(mob);
+    let birdState = mob.birdState ?? createBirdBehavior(mob.kind as Parameters<typeof createBirdBehavior>[0]);
+    if (!birdState.perchTarget || birdState.perchSearchTimer <= 0) {
+      birdState = {
+        ...birdState,
+        perchTarget: this.birdPerchNear(mob, birdState.perchTarget?.id ?? birdState.perchId),
+        perchSearchTimer: 0.9 + (Math.abs(mob.id) % 5) * 0.16,
+      };
+    }
+    const perch = birdState.perchTarget;
+    const perchDistance = perch
+      ? Math.hypot(perch.x - mob.group.position.x, perch.y - mob.group.position.y, perch.z - mob.group.position.z)
+      : Infinity;
     const playerSpeed = Math.hypot(this.velocity.x, this.velocity.z);
-    mob.birdState = updateBirdBehavior(mob.birdState ?? createBirdBehavior(mob.kind as BirdKind), {
+    birdState = updateBirdBehavior(birdState, {
       dt,
       distanceToHuman: distance,
       humanSpeed: playerSpeed,
       attacked: mob.fleeTimer > 0,
-      perchId: perch.id,
-      perchHeight: perch.altitude,
-      onGround: mob.group.position.y <= ground + 0.8,
+      perchId: perch?.id ?? null,
+      perchHeight: perch?.altitude,
+      perchDistance,
+      onGround: mob.group.position.y <= ground + mob.definition.footOffset + 0.12,
       random: ((mob.id * 17 + Math.floor(mob.age)) % 97) / 96,
     });
-    if (mob.birdState.mode === "flee" || mob.birdState.mode === "takeoff") mob.desiredAngle = Math.atan2(-dz, -dx);
-    else if (mob.birdState.mode === "perch") mob.desiredAngle = Math.atan2(perch.z - mob.group.position.z, perch.x - mob.group.position.x);
+    if (birdState.mode === "flee" || birdState.mode === "takeoff") mob.desiredAngle = Math.atan2(-dz, -dx);
+    else if (birdState.mode === "perch" && perch) mob.desiredAngle = Math.atan2(perch.z - mob.group.position.z, perch.x - mob.group.position.x);
+    else if (birdState.mode === "flight" && birdState.timer <= 0.6 && perch) mob.desiredAngle = Math.atan2(perch.z - mob.group.position.z, perch.x - mob.group.position.x);
     else if (mob.wanderTimer <= 0) {
-      mob.desiredAngle += (Math.random() - 0.5) * 2.4;
-      mob.wanderTimer = 1.8 + Math.random() * 3.2;
+      // A stable ID/age phase keeps flock movement organic without injecting
+      // frame-dependent randomness into avoidance decisions.
+      mob.desiredAngle += Math.sin(mob.id * 1.91 + Math.floor(mob.age * 0.33)) * 1.15;
+      mob.wanderTimer = 1.8 + ((mob.id * 13 + Math.floor(mob.age)) % 17) * 0.19;
     }
-    const flying = !["perch", "forage"].includes(mob.birdState.mode);
-    const speed = (flying ? (mob.birdState.mode === "flee" ? mob.definition.chaseSpeed : mob.definition.speed * 1.8) : mob.definition.speed * 0.22)
+    const flying = !["perch", "forage"].includes(birdState.mode);
+    const landing = birdState.mode === "perch" && Boolean(perch);
+    const speed = (flying ? (birdState.mode === "flee" ? mob.definition.chaseSpeed : mob.definition.speed * 1.8) : mob.definition.speed * 0.22)
       * this.dragonStatusSpeedScale(mob);
-    mob.steering = updateStableSteering(mob.steering, { dt, turnRate: mob.definition.turnRate, blocked: false, mobId: mob.id, desiredHeading: mob.desiredAngle });
+    const lookahead = Math.max(0.72, Math.min(2.6, mob.definition.radius + 0.7, speed * 0.55 + 0.65));
+    const desiredDistance = landing && perch ? Math.min(lookahead, Math.max(0.18, Math.hypot(perch.x - mob.group.position.x, perch.z - mob.group.position.z))) : lookahead;
+    const projectedX = mob.group.position.x + Math.cos(mob.desiredAngle) * desiredDistance;
+    const projectedZ = mob.group.position.z + Math.sin(mob.desiredAngle) * desiredDistance;
+    const projectedGround = this.world.surfaceAt(Math.round(projectedX), Math.round(projectedZ));
+    const desiredY = landing && perch
+      ? perch.y
+      : projectedGround + mob.definition.footOffset + (flying ? birdState.altitude : 0);
+    const route = chooseBirdFlightRoute({
+      state: birdState.flightRoute,
+      dt,
+      desiredHeading: mob.desiredAngle,
+      mobId: mob.id,
+      flying,
+      landing,
+      probe: (heading, altitudeOffset) => this.birdFlightProbe(mob, heading, altitudeOffset, desiredDistance, desiredY, landing ? perch : null),
+    });
+    birdState = { ...birdState, flightRoute: route.state };
+    mob.birdState = birdState;
+    mob.steering = updateStableSteering(mob.steering, {
+      dt,
+      turnRate: mob.definition.turnRate,
+      blocked: false,
+      mobId: mob.id,
+      desiredHeading: route.heading,
+    });
     mob.angle = mob.steering.heading;
-    const nx = mob.group.position.x + Math.cos(mob.angle) * speed * dt;
-    const nz = mob.group.position.z + Math.sin(mob.angle) * speed * dt;
-    const nextGround = this.world.surfaceAt(Math.round(nx), Math.round(nz));
-    const targetY = nextGround + mob.birdState.altitude + 0.52;
     const before = mob.group.position.clone();
-    mob.group.position.x = nx;
-    mob.group.position.z = nz;
+    if (!route.blocked) {
+      mob.group.position.x += Math.cos(mob.angle) * speed * dt;
+      mob.group.position.z += Math.sin(mob.angle) * speed * dt;
+    }
+    const nextGround = this.world.surfaceAt(Math.round(mob.group.position.x), Math.round(mob.group.position.z));
+    const targetY = route.blocked
+      ? Math.max(mob.group.position.y, nextGround + mob.definition.footOffset + 1.1)
+      : landing && perch
+        ? perch.y
+        : nextGround + mob.definition.footOffset + (flying ? birdState.altitude + route.altitudeOffset : 0);
     mob.group.position.y += (targetY - mob.group.position.y) * Math.min(1, dt * (flying ? 5 : 9));
     mob.group.rotation.y = -mob.angle - Math.PI / 2;
     this.animateMob(mob, before.distanceTo(mob.group.position));
@@ -15008,7 +15291,7 @@ export class VoxelEngine {
       : 2.1 + (mob.id % 5) * 0.12;
     mob.state = "recover";
     mob.stateTimer = 0.35;
-    if (mob.kind === "wood-elf-leafwarden") this.audio.playSpell("alteration");
+    if (mob.kind === "wood-elf-leafwarden") this.audio.playSpell("alteration", mob.group.position);
     else this.audio.play("attack");
   }
 
@@ -15034,7 +15317,7 @@ export class VoxelEngine {
       : 1.7 + (mob.id % 4) * 0.12;
     mob.state = "recover";
     mob.stateTimer = 0.3;
-    if (mob.kind === "wood-elf-leafwarden") this.audio.playSpell("alteration");
+    if (mob.kind === "wood-elf-leafwarden") this.audio.playSpell("alteration", mob.group.position);
     else this.audio.play("attack");
   }
 
@@ -15442,7 +15725,7 @@ export class VoxelEngine {
       if (distance < 10 && !this.bestiary[mob.kind].seen) { this.bestiary[mob.kind].seen = true; this.saveSoon(); }
       if (mob.kind === "zombie") {
         if (distance < 24 && mob.voiceTimer <= 0 && this.zombieVoiceCooldown <= 0) {
-          this.audio.playSample(Math.random() < 0.5 ? "zombieMoan1" : "zombieMoan2", { gain: 0.78 + Math.random() * 0.18, playbackRate: 0.94 + Math.random() * 0.1 });
+          this.audio.playSample(Math.random() < 0.5 ? "zombieMoan1" : "zombieMoan2", { gain: 0.78 + Math.random() * 0.18, playbackRate: 0.94 + Math.random() * 0.1, position: mob.group.position, refDistance: 2, maxDistance: 50 });
           mob.voiceTimer = 7 + Math.random() * 9;
           this.zombieVoiceCooldown = 3.2;
         }
@@ -15454,9 +15737,9 @@ export class VoxelEngine {
           mob.hurtTimer = Math.max(mob.hurtTimer, 0.08);
           if (mob.health <= 0) { this.killMob(mob); continue; }
         }
-      } else if (distance < 22 && mob.voiceTimer <= 0 && CREATURE_SOUND_EVENTS[mob.kind as CoreMobKind]?.ambient) {
+      } else if (distance < 22 && mob.voiceTimer <= 0 && (CREATURE_SOUND_EVENTS[mob.kind as CoreMobKind]?.ambient || mob.definition.sentient || mob.hostile)) {
         this.playCreatureEvent(mob, "ambient");
-        mob.voiceTimer = 8 + (mob.id % 7) * 1.4 + Math.random() * 5;
+        mob.voiceTimer = (mob.definition.sentient ? 14 : mob.hostile ? 11 : 8) + (mob.id % 7) * 1.4 + Math.random() * 6;
       }
       if (!protectedCreature && (mob.age > 300 || (mob.hostile && this.daylightAmount() > 0.65 && mob.group.position.y > SEA_LEVEL && distance > 25))) {
         this.removeMob(index);
@@ -15479,7 +15762,7 @@ export class VoxelEngine {
         this.updateAquaticMob(mob, mobDt, distance, dx, dz);
         continue;
       }
-      if (mob.definition.movement === "flying" && mob.definition.family === "bird") {
+      if (mob.definition.movement === "flying") {
         this.updateBirdMob(mob, mobDt, distance, dx, dz);
         continue;
       }
@@ -15550,7 +15833,7 @@ export class VoxelEngine {
             mob.state = "chase";
             mob.desiredAngle = Math.atan2(enemyDz, enemyDx);
             if (mob.definition.ranged && enemyDistance >= 3 && enemyDistance < 16 && mob.attackCooldown <= 0) this.fireMobArrowAt(mob, residentEnemy);
-            else if (enemyDistance < mob.definition.attackRange + 0.35 && mob.attackCooldown <= 0) {
+            else if (enemyDistance < creatureMeleeReach(mob.definition, this.mobBaseScale(mob)) && mob.attackCooldown <= 0) {
               residentEnemy.health -= mob.damage;
               residentEnemy.hurtTimer = 0.3;
               residentEnemy.awarenessTimer = Math.max(residentEnemy.awarenessTimer, 4);
@@ -15596,7 +15879,7 @@ export class VoxelEngine {
             targetHostile: residentEnemy.hostile,
             lineOfSight: true,
             distance: enemyDistance,
-            attackRange: mob.definition.attackRange,
+            attackRange: creatureMeleeReach(mob.definition, this.mobBaseScale(mob)),
             ranged: Boolean(mob.definition.ranged),
             cooldownSeconds: mob.attackCooldown,
           });
@@ -15661,12 +15944,12 @@ export class VoxelEngine {
         if (mob.seesPlayer && distance >= 3.2 && mob.attackCooldown <= 0 && Math.abs(this.position.y - mob.group.position.y) < 5) this.fireSkeletonArrow(mob);
       } else if (mob.state === "windup") {
         if (mob.stateTimer <= 0) {
-          if (distance < mob.definition.attackRange + 0.7 && Math.abs(this.position.y - mob.group.position.y) < 2) {
+          if (distance < creatureMeleeReach(mob.definition, this.mobBaseScale(mob)) + 0.35 && Math.abs(this.position.y - mob.group.position.y) < 2) {
             this.damagePlayer(mob.damage, mob.name);
             if (mob.kind === "shadecrawler") this.potionBuffs["venom-poison"] = Math.max(this.potionBuffs["venom-poison"] ?? 0, this.worldSimulationSeconds() + 7);
             this.velocity.add(new THREE.Vector3(dx, 0.1, dz).normalize().multiplyScalar(mob.kind === "ridgeback" ? 4.4 : 3.2));
             this.engageCombat();
-            if (mob.kind === "zombie") this.audio.playSample(Math.random() < 0.5 ? "zombieMoan1" : "zombieMoan2", { gain: 0.9 });
+            if (mob.kind === "zombie") this.audio.playSample(Math.random() < 0.5 ? "zombieMoan1" : "zombieMoan2", { gain: 0.9, position: mob.group.position, refDistance: 2, maxDistance: 48 });
             else this.audio.play("mob");
           }
           mob.state = "recover"; mob.stateTimer = 0.55; mob.attackCooldown = 1.15;
@@ -15686,7 +15969,7 @@ export class VoxelEngine {
       else if (aggressive && mob.awarenessTimer > 0 && distance < (this.crouching ? 11 : 20)) {
         mob.state = "chase";
         mob.desiredAngle = Math.atan2(dz, dx);
-        if (distance < mob.definition.attackRange && mob.attackCooldown <= 0) { mob.state = "windup"; mob.stateTimer = mob.kind === "rattlekin" ? 0.52 : mob.kind === "zombie" ? 0.44 : 0.34; }
+        if (distance < creatureMeleeReach(mob.definition, this.mobBaseScale(mob)) && mob.attackCooldown <= 0) { mob.state = "windup"; mob.stateTimer = mob.kind === "rattlekin" ? 0.52 : mob.kind === "zombie" ? 0.44 : 0.34; }
       } else if (aggressive && mob.awarenessTimer <= 0 && mob.state === "chase") {
         mob.state = "wander";
         mob.desiredAngle = mob.angle;
@@ -15775,6 +16058,7 @@ export class VoxelEngine {
         heading: mob.route.heading,
         holdSeconds: 0,
         blockedSeconds: mob.route.blockedSeconds + Math.min(0.1, Math.max(0, mobDt)),
+        probeCooldown: 0,
       };
       mob.group.rotation.y = -mob.angle - Math.PI / 2;
       this.animateMob(mob, moved);
@@ -15794,7 +16078,9 @@ export class VoxelEngine {
       else this.audio.play("attack");
       return;
     }
-    const rawDamage = (item?.damage ?? DEFAULT_UNARMED_DAMAGE) * skillMultiplier(this.skillState.skills.melee.level);
+    const rawDamage = (item?.damage ?? DEFAULT_UNARMED_DAMAGE)
+      * legendaryCombatMultiplier(slot?.item, mob.definition)
+      * skillMultiplier(this.skillState.skills.melee.level);
     const damage = this.dragonDamageAfterArmor(mob, rawDamage);
     this.attackCooldown = item?.toolKind === "sword" ? 0.38 : 0.55;
     mob.health -= damage;
@@ -15817,7 +16103,7 @@ export class VoxelEngine {
     else this.audio.play("attack");
     // Every creature hit remains audible even before a custom generated cue is
     // installed; per-species assets can replace this stable fallback hook.
-    if (mob.dragonState) this.audio.playDragon(mob.dragonState.type, "hurt", mob.dragonState.stage);
+    if (mob.dragonState) this.audio.playDragon(mob.dragonState.type, "hurt", mob.dragonState.stage, mob.group.position);
     else this.playCreatureEvent(mob, "hurt");
     if (mob.hostile) this.engageCombat();
     this.spawnParticles(mob.group.position.x, mob.group.position.y, mob.group.position.z, mob.hostile ? BlockId.Obsidian : BlockId.Dirt, 7);
@@ -15944,7 +16230,7 @@ export class VoxelEngine {
           }
         } else this.spawnDrop(item, drop.count, position, undefined, drop.metadata ? { ...drop.metadata } : undefined);
       }
-      this.audio.playDragon(corpseState.type, "death", corpseState.stage);
+      this.audio.playDragon(corpseState.type, "death", corpseState.stage, position);
     } else for (const drop of mob.definition.drops) {
       const adjustedChance = luckAdjustedChance(drop.chance, this.skillState.skills.luck.level, this.skillState.unlockedPerkIds.includes("luck-careful-search") ? 10 : 0);
       if (Math.random() <= adjustedChance) {
@@ -16230,7 +16516,7 @@ export class VoxelEngine {
           this.spawnMob(kind, position, { dragonState: state, persistentPoiResident: true });
           this.removeDrop(index);
           if (position.distanceToSquared(this.position) < 40 * 40) this.events.onToast(`A tiny ${MOB_DEFS[kind].name} breaks free of its shell.`);
-          this.audio.playDragon(hatchling.type, "egg-crack", 1);
+          this.audio.playDragon(hatchling.type, "egg-crack", 1, position);
           if (hatchling.type === "sea") this.dispatchQuestEvent({ type: "custom", eventId: "sea-dragon-hatched", at: Date.now() });
           this.saveSoon();
           this.emitHud(true);
@@ -16239,7 +16525,7 @@ export class VoxelEngine {
         if (stepped.spawnEgg) {
           drop.metadata = { kind: "dragon-spawn-egg", spawnEgg: stepped.spawnEgg as unknown as Record<string, unknown> };
           drop.pickupDelay = 0.35;
-          this.audio.playDragon(dragonEgg.type, "egg-crack", 1);
+          this.audio.playDragon(dragonEgg.type, "egg-crack", 1, drop.mesh.position);
           this.events.onToast(`${ITEMS[drop.item].name} is fully incubated and ready to place.`);
           this.saveSoon();
           continue;
@@ -16686,7 +16972,18 @@ export class VoxelEngine {
     this.stars.position.copy(this.camera.position);
     this.directional.target.position.copy(this.camera.position);
     this.directional.position.copy(this.camera.position).addScaledVector(celestialDirection, 55);
-    this.audio.setDepth(this.position.y, rainAmbienceLevel(weatherFx.precipitation, this.rainOpenFraction));
+    // Constructor-free test harnesses and a few legacy preview fixtures do not
+    // run class field initializers. Keep the listener integration resilient
+    // without allocating a new vector during normal frames.
+    const listenerForward = this.audioForward ?? (this.audioForward = new THREE.Vector3(0, 0, -1));
+    const listenerUp = this.worldUp ?? (this.worldUp = new THREE.Vector3(0, 1, 0));
+    this.camera.getWorldDirection(listenerForward);
+    this.audio.setListenerPose?.(this.camera.position, listenerForward, listenerUp);
+    const openRainFraction = Number.isFinite(this.rainOpenFraction) ? this.rainOpenFraction : this.skyVisibility;
+    const rainSampleLevel = ["drizzle", "rain", "thunder"].includes(this.weatherState.kind)
+      ? rainAmbienceLevel(weatherFx.precipitation, openRainFraction)
+      : 0;
+    this.audio.setDepth(this.position.y, rainSampleLevel);
     const biome = this.world.biomeAt(Math.round(this.position.x), Math.round(this.position.z));
     // A roof suppresses sky visibility, but a normal house should retain its
     // biome/day score. Reserve cave music for players actually below terrain.
@@ -16694,6 +16991,18 @@ export class VoxelEngine {
       && this.position.y < this.world.surfaceAt(Math.round(this.position.x), Math.round(this.position.z)) - 4;
     const atSea = underwater || biome === BiomeId.Ocean || biome === BiomeId.DeepOcean || biome === BiomeId.LumenTrench || biome === BiomeId.Beach;
     const deepAtSea = atSea && (biome === BiomeId.DeepOcean || biome === BiomeId.LumenTrench || this.position.y < SEA_LEVEL - 9);
+    const winterBiome = biome === BiomeId.Frostpine || biome === BiomeId.Snowfield || biome === BiomeId.SnowcapRange;
+    const horizontalSpeed = this.velocity ? Math.hypot(this.velocity.x, this.velocity.z) : 0;
+    this.audio.setEnvironment?.({
+      rain: rainSampleLevel,
+      skyExposure: underwater ? 0 : clamp(this.skyVisibility * 0.78 + openRainFraction * 0.22, 0, 1),
+      night: 1 - daylight,
+      wind: clamp(this.weatherState.windSpeed / 4.2, 0.12, 1),
+      winter: winterBiome || this.weatherState.kind === "snow" ? 1 : 0,
+      cave: caveMusic ? 1 : underground ? 0.52 : 0,
+      ocean: atSea ? underwater ? 1 : 0.78 : 0,
+      swimming: underwater && horizontalSpeed > 0.35 ? clamp(horizontalSpeed / 4, 0.22, 1) : 0,
+    });
     const forestBiome = [BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Bloomwood, BiomeId.RainveilJungle, BiomeId.SakurabloomGrove].includes(biome);
     const skyChallenge = biome === BiomeId.Highlands && this.position.y > 57 && daylight > 0.35;
     const alternateScore = (this.day + biome) % 2 === 0;

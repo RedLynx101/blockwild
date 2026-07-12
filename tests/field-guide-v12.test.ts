@@ -54,12 +54,12 @@ test("tree entries are complete generated trees rather than single block swatche
 test("v1.2 field-guide contact sheets cover the complete stable rosters", async () => {
   const creatureSheet = await readFile(path.join(PUBLIC_ROOT, "creatures", "blockwild-creatures.svg"), "utf8");
   const plantSheet = await readFile(path.join(PUBLIC_ROOT, "plants", "blockwild-plants.svg"), "utf8");
-  assert.match(creatureSheet, /BLOCKWILD FIELD GUIDE · V1\.2/u);
+  assert.match(creatureSheet, /BLOCKWILD FIELD GUIDE · V1\.3/u);
   assert.match(creatureSheet, new RegExp(`${MOB_ORDER.length} specimens`, "u"));
   for (const kind of ["meadow-cottontail", "chocolate-bunny", "sunset-sea-slug", "moonlace-sea-slug", "pocket-goldfish"] as const) {
     assert.ok(creatureSheet.includes(MOB_DEFS[kind].name), `${kind} should be on the creature sheet`);
   }
-  assert.match(plantSheet, /BLOCKWILD PLANT COMPENDIUM - V1\.2/u);
+  assert.match(plantSheet, /BLOCKWILD PLANT COMPENDIUM - V1\.3/u);
   assert.match(plantSheet, new RegExp(`${PLANTS.length} plants`, "u"));
   for (const plant of PLANTS) assert.ok(plantSheet.includes(plant.name), `${plant.id} should be on the plant sheet`);
 });

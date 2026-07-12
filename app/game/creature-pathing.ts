@@ -230,6 +230,8 @@ export type CreatureRouteState = {
   heading: number;
   holdSeconds: number;
   blockedSeconds: number;
+  /** A very short cache window for a route already proven clear by look-ahead. */
+  probeCooldown: number;
 };
 
 export type CreatureRouteInput = {
@@ -252,7 +254,7 @@ export type CreatureRouteDecision = {
 };
 
 export function createCreatureRouteState(heading = 0): CreatureRouteState {
-  return { heading: normalizeAngle(heading), holdSeconds: 0, blockedSeconds: 0 };
+  return { heading: normalizeAngle(heading), holdSeconds: 0, blockedSeconds: 0, probeCooldown: 0 };
 }
 
 function routeIsValid(sample: CreatureRouteProbe, input: CreatureRouteInput) {
@@ -277,22 +279,46 @@ export function chooseCreatureRoute(input: CreatureRouteInput): CreatureRouteDec
       heading: desiredHeading,
       blocked: false,
       probe: null,
-      state: { heading: desiredHeading, holdSeconds: 0, blockedSeconds: 0 },
+      state: { heading: desiredHeading, holdSeconds: 0, blockedSeconds: 0, probeCooldown: 0 },
     };
   }
 
   const heldHeading = normalizeAngle(input.state.heading);
   const remainingHold = Math.max(0, input.state.holdSeconds - dt);
+  const remainingProbeCooldown = Math.max(0, (input.state.probeCooldown ?? 0) - dt);
   if (remainingHold > 0 && Math.abs(normalizeAngle(desiredHeading - heldHeading)) < Math.PI * 0.72) {
+    // The engine's look-ahead is always farther than a mob can travel during
+    // this cache window. Skipping a couple of identical probes substantially
+    // lowers herd cost without allowing a creature to step through a trunk.
+    if (remainingProbeCooldown > 0) {
+      return {
+        heading: heldHeading,
+        blocked: false,
+        probe: null,
+        state: { heading: heldHeading, holdSeconds: remainingHold, blockedSeconds: 0, probeCooldown: remainingProbeCooldown },
+      };
+    }
     const heldProbe = input.probe(heldHeading);
     if (routeIsValid(heldProbe, input) && (heldProbe.crowding ?? 0) < 0.92) {
       return {
         heading: heldHeading,
         blocked: false,
         probe: heldProbe,
-        state: { heading: heldHeading, holdSeconds: remainingHold, blockedSeconds: 0 },
+        state: { heading: heldHeading, holdSeconds: remainingHold, blockedSeconds: 0, probeCooldown: 0.055 },
       };
     }
+  }
+
+  const directSample = input.probe(desiredHeading);
+  if (routeIsValid(directSample, input)
+    && (directSample.crowding ?? 0) < 0.25
+    && (directSample.clearance ?? 1) >= 0.72) {
+    return {
+      heading: desiredHeading,
+      blocked: false,
+      probe: directSample,
+      state: { heading: desiredHeading, holdSeconds: 0.22, blockedSeconds: 0, probeCooldown: 0.055 },
+    };
   }
 
   const preferredSide = ((input.mobId * 31) & 1) === 0 ? -1 : 1;
@@ -303,7 +329,7 @@ export function chooseCreatureRoute(input: CreatureRouteInput): CreatureRouteDec
   let best: { heading: number; offset: number; sample: CreatureRouteProbe; score: number } | null = null;
   for (const offset of offsets) {
     const heading = normalizeAngle(desiredHeading + offset);
-    const sample = input.probe(heading);
+    const sample = Math.abs(offset) < 0.00001 ? directSample : input.probe(heading);
     if (!routeIsValid(sample, input)) continue;
     const crowding = clamp(sample.crowding ?? 0, 0, 1.5);
     const clearance = clamp(sample.clearance ?? 1, 0, 1);
@@ -322,7 +348,7 @@ export function chooseCreatureRoute(input: CreatureRouteInput): CreatureRouteDec
       heading: heldHeading,
       blocked: true,
       probe: null,
-      state: { heading: heldHeading, holdSeconds: 0, blockedSeconds },
+      state: { heading: heldHeading, holdSeconds: 0, blockedSeconds, probeCooldown: 0 },
     };
   }
 
@@ -331,6 +357,208 @@ export function chooseCreatureRoute(input: CreatureRouteInput): CreatureRouteDec
     heading: best.heading,
     blocked: false,
     probe: best.sample,
-    state: { heading: best.heading, holdSeconds, blockedSeconds: 0 },
+    state: { heading: best.heading, holdSeconds, blockedSeconds: 0, probeCooldown: 0.055 },
   };
+}
+
+export type BirdFlightProbe = {
+  clear: boolean;
+  /** Zero is body-tight; one is open air with comfortable wing clearance. */
+  clearance: number;
+  /** True when the route ends on a valid exposed perch. */
+  landing?: boolean;
+};
+
+export type BirdFlightRouteState = {
+  heading: number;
+  altitudeOffset: number;
+  holdSeconds: number;
+  recheckSeconds: number;
+  blockedSeconds: number;
+};
+
+export type BirdFlightRouteInput = {
+  state: BirdFlightRouteState;
+  dt: number;
+  desiredHeading: number;
+  mobId: number;
+  /** True while airborne; grounded birds use the same bounded lateral probes. */
+  flying: boolean;
+  landing?: boolean;
+  probe: (heading: number, altitudeOffset: number) => BirdFlightProbe;
+};
+
+export type BirdFlightRouteDecision = {
+  heading: number;
+  altitudeOffset: number;
+  blocked: boolean;
+  probes: number;
+  state: BirdFlightRouteState;
+};
+
+export function createBirdFlightRouteState(heading = 0): BirdFlightRouteState {
+  return { heading: normalizeAngle(heading), altitudeOffset: 0, holdSeconds: 0, recheckSeconds: 0, blockedSeconds: 0 };
+}
+
+export type BirdPerchCandidate = {
+  id: string;
+  x: number;
+  /** World-space group height that places the bird's feet on the perch. */
+  y: number;
+  z: number;
+  /** Height above the terrain floor at the search origin. */
+  altitude: number;
+  clearance: number;
+  approachClear: boolean;
+};
+
+/** Selects a reachable, exposed perch without relying on scan order. */
+export function chooseBirdPerch(
+  candidates: readonly BirdPerchCandidate[],
+  origin: { x: number; z: number; heading: number },
+  previousId: string | null = null,
+) {
+  let best: { candidate: BirdPerchCandidate; score: number } | null = null;
+  for (const candidate of candidates) {
+    if (!candidate.approachClear || candidate.clearance < 0.5 || candidate.altitude < 0.08) continue;
+    const dx = candidate.x - origin.x;
+    const dz = candidate.z - origin.z;
+    const distance = Math.hypot(dx, dz);
+    if (distance > 8.5) continue;
+    const turn = distance <= 0.001 ? 0 : Math.abs(normalizeAngle(Math.atan2(dz, dx) - origin.heading));
+    const score = distance * 0.34
+      + turn * 0.28
+      + Math.max(0, candidate.altitude - 6.5) * 0.15
+      + (1 - clamp(candidate.clearance, 0, 1)) * 1.4
+      - (candidate.id === previousId ? 0.58 : 0);
+    if (!best || score < best.score - 0.00001 || (Math.abs(score - best.score) < 0.00001 && candidate.id < best.candidate.id)) {
+      best = { candidate, score };
+    }
+  }
+  return best?.candidate ?? null;
+}
+
+/**
+ * Fixed-budget 3D route selection for birds. It tests at most fifteen
+ * heading/altitude pairs, holds one viable detour long enough to clear a tree,
+ * and periodically rechecks instead of probing the voxel world every frame.
+ */
+export function chooseBirdFlightRoute(input: BirdFlightRouteInput): BirdFlightRouteDecision {
+  const dt = clamp(Number.isFinite(input.dt) ? input.dt : 0, 0, 0.1);
+  const desiredHeading = normalizeAngle(input.desiredHeading);
+  const heldHeading = normalizeAngle(input.state.heading);
+  const remainingHold = Math.max(0, input.state.holdSeconds - dt);
+  const remainingRecheck = Math.max(0, input.state.recheckSeconds - dt);
+  let probes = 0;
+  const sample = (heading: number, altitudeOffset: number) => {
+    probes += 1;
+    return input.probe(heading, altitudeOffset);
+  };
+  const stillAimingNearby = Math.abs(normalizeAngle(desiredHeading - heldHeading)) < Math.PI * 0.7;
+
+  if (remainingHold > 0 && stillAimingNearby) {
+    if (remainingRecheck > 0) {
+      return {
+        heading: heldHeading,
+        altitudeOffset: input.state.altitudeOffset,
+        blocked: false,
+        probes,
+        state: { ...input.state, holdSeconds: remainingHold, recheckSeconds: remainingRecheck, blockedSeconds: 0 },
+      };
+    }
+    const heldProbe = sample(heldHeading, input.state.altitudeOffset);
+    if (heldProbe.clear && heldProbe.clearance >= 0.18) {
+      return {
+        heading: heldHeading,
+        altitudeOffset: input.state.altitudeOffset,
+        blocked: false,
+        probes,
+        state: {
+          heading: heldHeading,
+          altitudeOffset: input.state.altitudeOffset,
+          holdSeconds: remainingHold,
+          recheckSeconds: input.flying ? 0.11 : 0.07,
+          blockedSeconds: 0,
+        },
+      };
+    }
+  }
+
+  const directProbe = sample(desiredHeading, 0);
+  if (directProbe.clear && directProbe.clearance >= 0.78) {
+    return {
+      heading: desiredHeading,
+      altitudeOffset: 0,
+      blocked: false,
+      probes,
+      state: {
+        heading: desiredHeading,
+        altitudeOffset: 0,
+        holdSeconds: 0.34,
+        recheckSeconds: input.flying ? 0.12 : 0.08,
+        blockedSeconds: 0,
+      },
+    };
+  }
+
+  const preferredSide = ((Math.abs(input.mobId) * 37) & 1) === 0 ? -1 : 1;
+  const headingOffsets = [0, preferredSide * Math.PI / 5, -preferredSide * Math.PI / 5,
+    preferredSide * Math.PI * 2 / 5, -preferredSide * Math.PI * 2 / 5];
+  // Airborne birds can climb over a canopy or dip back into open air. A bird
+  // committed to landing stays level so it does not orbit above its perch.
+  const altitudeOffsets = input.flying && !input.landing ? [0, 1.25, -0.7] : [0];
+  let best: { heading: number; altitudeOffset: number; score: number } | null = null;
+  candidateSearch: for (const altitudeOffset of altitudeOffsets) for (const headingOffset of headingOffsets) {
+    if (probes >= 15) break candidateSearch;
+    const heading = normalizeAngle(desiredHeading + headingOffset);
+    const route = Math.abs(headingOffset) < 0.00001 && Math.abs(altitudeOffset) < 0.00001
+      ? directProbe
+      : sample(heading, altitudeOffset);
+    if (!route.clear || route.clearance < 0.12) continue;
+    const turnCost = Math.abs(headingOffset) * 1.45;
+    const altitudeCost = altitudeOffset > 0 ? altitudeOffset * 0.32 : Math.abs(altitudeOffset) * 0.5;
+    const clearanceCost = (1 - clamp(route.clearance, 0, 1)) * 2.4;
+    const landingBonus = input.landing && route.landing ? -0.65 : 0;
+    // A tiny deterministic side preference breaks exact ties without any
+    // frame-to-frame randomness.
+    const sideTieBreak = Math.sign(headingOffset) === preferredSide ? -0.0001 : 0;
+    const score = turnCost + altitudeCost + clearanceCost + landingBonus + sideTieBreak;
+    if (!best || score < best.score - 0.00001) best = { heading, altitudeOffset, score };
+  }
+
+  if (!best) {
+    const blockedSeconds = input.state.blockedSeconds + dt;
+    return {
+      heading: heldHeading,
+      altitudeOffset: Math.max(0, input.state.altitudeOffset),
+      blocked: true,
+      probes,
+      state: { heading: heldHeading, altitudeOffset: Math.max(0, input.state.altitudeOffset), holdSeconds: 0, recheckSeconds: 0, blockedSeconds },
+    };
+  }
+  const detouring = Math.abs(normalizeAngle(best.heading - desiredHeading)) > 0.02 || Math.abs(best.altitudeOffset) > 0.02;
+  const holdSeconds = detouring ? 0.72 + (Math.abs(input.mobId) % 4) * 0.07 : 0.2;
+  return {
+    heading: best.heading,
+    altitudeOffset: best.altitudeOffset,
+    blocked: false,
+    probes,
+    state: {
+      heading: best.heading,
+      altitudeOffset: best.altitudeOffset,
+      holdSeconds,
+      recheckSeconds: input.flying ? 0.11 : 0.07,
+      blockedSeconds: 0,
+    },
+  };
+}
+
+/** Body-aware melee reach keeps attackers separated instead of requiring overlap. */
+export function creatureMeleeReach(
+  definition: Pick<MobDefinition, "attackRange" | "radius">,
+  visualScale = 1,
+) {
+  const scale = clamp(Number.isFinite(visualScale) ? visualScale : 1, 0.25, 3.2);
+  const bodyAllowance = clamp(definition.radius * scale * 0.72, 0.18, 1.35);
+  return Math.max(0, definition.attackRange) + bodyAllowance;
 }

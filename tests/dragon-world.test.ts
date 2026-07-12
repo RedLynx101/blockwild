@@ -141,8 +141,8 @@ test("dragon world item contracts stay stable", () => {
   assert.equal(Item.DragonHusbandryBlueprint, 367);
 });
 
-test("generator v10 stamps a candidate lair and its persistent marker into real chunks", () => {
-  assert.equal(GENERATOR_VERSION, 12);
+test("generator v13 stamps a candidate lair and its persistent marker into real chunks", () => {
+  assert.equal(GENERATOR_VERSION, 13);
   const world = new ChunkWorld();
   world.reset("LIVE-DRAGON-LAIR", undefined, { structures: true });
   let candidate = null as ReturnType<typeof dragonLairCandidateForRegion>;

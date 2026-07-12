@@ -546,6 +546,10 @@ export const Item = {
   /** Courser expansion items merged after the v1.2 allocation range. */
   DeepgearCourserBlueprint: 432,
   DeepgearCourserOrb: 433,
+  /** v1.3 authored dungeon heirlooms; ids are permanent save metadata. */
+  DawnthreadSaber: 434,
+  DeepdelversPromise: 435,
+  BriarheartCrook: 436,
 } as const;
 
 export type ItemCode = number;
@@ -600,6 +604,10 @@ export type ItemDefinition = {
   miningSpeed?: number;
   damage?: number;
   maxDurability?: number;
+  /** True heirlooms never consume durability; this survives save/load by item id. */
+  infiniteDurability?: boolean;
+  rarity?: "legendary";
+  legendaryEffect?: string;
   equipmentSlot?: EquipmentSlot;
   armor?: number;
   food?: number;
@@ -820,7 +828,7 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.Sugarworks]: block(BlockId.Sugarworks, "Sugarworks", 143, 143, 135, 1.45, "#ef9fc4", "pickaxe", 1, { shape: "sugarworks", layer: "cutout" }),
   [BlockId.CandywoodSapling]: block(BlockId.CandywoodSapling, "Candywood Sapling", 138, 138, 138, 0.06, "#e57cad", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
   [BlockId.GiantLollipopOrchid]: block(BlockId.GiantLollipopOrchid, "Cultivated Lollipop Orchid", 141, 141, 141, 0.08, "#f4acd7", "hand", 0, { solid: false, layer: "cutout", shape: "tall-flower", replaceable: true, verticalConnectGroup: "cultivated-flower" }),
-  [BlockId.GlimmerGrass]: block(BlockId.GlimmerGrass, "Glimmerwood Grass", 107, 103, 2, 0.62, "#315f4d", "shovel"),
+  [BlockId.GlimmerGrass]: block(BlockId.GlimmerGrass, "Glimmerwood Grass", 149, 150, 2, 0.62, "#315f4d", "shovel"),
   [BlockId.MoonboughLog]: block(BlockId.MoonboughLog, "Moonbough Log", 110, 109, 110, 1.12, "#58677f", "axe"),
   [BlockId.MoonboughLeaves]: block(BlockId.MoonboughLeaves, "Moonbough Leaves", 113, 113, 113, 0.28, "#4a8c79", "hand", 0, { layer: "emissive" }),
   [BlockId.Moonpetal]: block(BlockId.Moonpetal, "Moonpetal", 113, 113, 113, 0.04, "#a8a3ff", "hand", 0, { solid: false, layer: "emissive", shape: "cross", replaceable: true }),
@@ -1295,6 +1303,27 @@ Object.assign(ITEMS, {
   [Item.SunmetalShield]: { id: Item.SunmetalShield, name: "Sunmetal Shield", color: "#d4b9a7", maxStack: 1, maxDurability: 472, useKind: "shield", shieldKind: "sunmetal-shield", iconKind: "shield" },
   [Item.GlassAquariumItem]: { id: Item.GlassAquariumItem, name: "Connected Glass Aquarium", color: "#8fd8dd", maxStack: 64, placeBlock: BlockId.GlassAquarium, iconKind: "aquarium" },
   [Item.HearthFireplaceItem]: { id: Item.HearthFireplaceItem, name: "Hearth Fireplace", color: "#d36b3c", maxStack: 16, placeBlock: BlockId.HearthFireplace, iconKind: "fireplace" },
+  [Item.DawnthreadSaber]: {
+    ...tool(Item.DawnthreadSaber, "Dawnthread Saber", "#ffd978", "sword", 5, 1.15, 16, 9999),
+    infiniteDurability: true,
+    rarity: "legendary",
+    legendaryEffect: "Undead and constructs suffer 35% additional damage.",
+    iconKind: "sword",
+  },
+  [Item.DeepdelversPromise]: {
+    ...tool(Item.DeepdelversPromise, "Deepdelver's Promise", "#67d7d0", "pickaxe", 5, 14, 10, 9999),
+    infiniteDurability: true,
+    rarity: "legendary",
+    legendaryEffect: "Stone, ore, crystal and deepstone mine 50% faster.",
+    iconKind: "relic",
+  },
+  [Item.BriarheartCrook]: {
+    ...tool(Item.BriarheartCrook, "Briarheart Crook", "#9ce47b", "staff", 5, 1, 12, 6000),
+    rarity: "legendary",
+    legendaryEffect: "Hostile creatures suffer 20% additional damage.",
+    useKind: "magic-relic",
+    iconKind: "relic",
+  },
 } satisfies Record<number, ItemDefinition>);
 
 /**

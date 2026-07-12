@@ -194,7 +194,7 @@ test("generator v9 saves migrate to v10 without moving or dropping player edits"
   assert.deepEqual(migrated.edits, previous.edits, "v9 and v10 share the deep-world index, so authored edits must remain exact");
 });
 
-test("generator v11 saves migrate to v12 without moving or dropping authored edits", () => {
+test("generator v11 saves migrate to v13 without moving or dropping authored edits", () => {
   const previous = save("V11-HOMESTEAD-MIGRATION", "survival", 11);
   previous.edits = {
     "0,0": [[17, 3], [16_384, 13], [41_219, 190]],
@@ -202,8 +202,20 @@ test("generator v11 saves migrate to v12 without moving or dropping authored edi
   };
   const migrated = migrateLegacyWorldSave(previous);
   assert.ok(migrated);
-  assert.equal(migrated.generatorVersion, 12);
-  assert.deepEqual(migrated.edits, previous.edits, "v11 and v12 share the same deep-world byte layout");
+  assert.equal(migrated.generatorVersion, 13);
+  assert.deepEqual(migrated.edits, previous.edits, "v11 through v13 share the same deep-world byte layout");
+});
+
+test("generator v12 saves migrate to v13 without moving or dropping authored edits", () => {
+  const previous = save("V12-ECHOES-AND-RUINS-MIGRATION", "survival", 12);
+  previous.edits = {
+    "0,0": [[17, 3], [16_384, 13], [41_219, 190]],
+    "-9,4": [[3_077, 142], [47_004, 175]],
+  };
+  const migrated = migrateLegacyWorldSave(previous);
+  assert.ok(migrated);
+  assert.equal(migrated.generatorVersion, 13);
+  assert.deepEqual(migrated.edits, previous.edits, "v12 authored edits must survive the v1.3 content upgrade exactly");
 });
 
 test("world exports validate on import and use collision-safe local IDs", () => {

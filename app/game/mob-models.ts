@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { createAdventureMobVisual } from "./adventure-models";
 import {
   ATLANTIAN_TRIDENT_CONTRACT,
   createZombieSpec,
@@ -9,8 +10,10 @@ import {
   RIDGEBACK_GROUND_LIFT,
 } from "./model-specs";
 import {
+  ADVENTURE_MOB_ORDER,
   CORE_MOB_ORDER,
   MOB_DEFS,
+  type AdventureMobKind,
   type BirdKind,
   type CoreMobKind,
   type DragonKind,
@@ -252,6 +255,7 @@ export function createSentientLodVisual(kind: MobKind, id: number, bounds: THREE
  */
 export function createMobVisual(kind: MobKind, id: number): MobVisual {
   if (!CORE_MOB_ORDER.includes(kind as CoreMobKind)) throw new Error(`'${kind}' is not a world mob visual.`);
+  if (ADVENTURE_MOB_ORDER.includes(kind as AdventureMobKind)) return createAdventureMobVisual(kind as AdventureMobKind, id);
 
   const group = new THREE.Group();
   const visual = new THREE.Group();
@@ -3367,19 +3371,20 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     for (const side of [-1, 1]) {
       const sideName = side < 0 ? "left" : "right";
       const earLength = frost ? 0.65 : 0.52;
-      const ear = pivotBox([0.14, earLength, 0.14], bodyMaterial, [side * 0.14, 0.38, -0.33], [side * 0.025, earLength / 2, 0], "head", `${kind}-${sideName}-ear`);
+      // The pivot is embedded in the crown instead of hovering above it. A
+      // small root tuft bridges the rotated ear to the head in every pose, so
+      // runtime, portraits and hopping animation all share the same attachment.
+      const ear = pivotBox([0.14, earLength, 0.14], bodyMaterial, [side * 0.14, 0.305, -0.33], [side * 0.025, earLength / 2, 0], "head", `${kind}-${sideName}-ear`);
       ear.rotation.z = side * (frost ? -0.12 : -0.18);
+      add(ear, [0.18, 0.13, 0.16], accentMaterial, [0, 0.015, 0.01], undefined, `${kind}-${sideName}-ear-root`);
       add(ear, [0.065, earLength * 0.58, 0.025], material(chocolate ? 0xe7a8ac : 0xd9a5a0), [side * 0.026, earLength / 2, -0.075], undefined, `${kind}-${sideName}-inner-ear`);
+      if (frost) add(ear, [0.15, 0.16, 0.15], darkMaterial, [side * 0.025, earLength - 0.055, 0], undefined, `${kind}-${sideName}-ear-tip`);
       const rear = pivotBox([0.22, 0.24, 0.32], darkMaterial, [side * 0.2, -0.08, 0.3], [0, -0.1, 0.03], "legs", `${kind}-${sideName}-rear-leg`);
       rear.userData.phase = side < 0 ? 0 : Math.PI;
       const front = pivotBox([0.14, 0.24, 0.2], accentMaterial, [side * 0.16, -0.08, -0.2], [0, -0.12, -0.03], "legs", `${kind}-${sideName}-front-paw`);
       front.userData.phase = side < 0 ? Math.PI : 0;
     }
     add(visual, [0.27, 0.27, 0.27], material(frost ? 0xffffff : chocolate ? 0xc98b60 : 0xf4eee4), [0, 0.08, 0.51], undefined, `${kind}-cottontail`);
-    if (frost) {
-      add(visual, [0.16, 0.12, 0.14], darkMaterial, [-0.14, 0.98, -0.33], undefined, `${kind}-left-ear-tip`);
-      add(visual, [0.16, 0.12, 0.14], darkMaterial, [0.14, 0.98, -0.33], undefined, `${kind}-right-ear-tip`);
-    }
     if (chocolate) {
       const bow = material(0xf5a7b4);
       add(visual, [0.22, 0.12, 0.08], bow, [-0.16, 0.09, -0.63], undefined, `${kind}-left-bow-loop`).rotation.z = -0.38;

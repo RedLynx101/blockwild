@@ -914,8 +914,8 @@ test("rejected solid placement records its rollback and player chests start empt
   assert.ok(chest?.every((slot) => slot === null), "player-crafted chests must not inherit structure loot");
 });
 
-test("generator-v3 through v8 fallback saves advance without moving existing voxel edits", () => {
-  for (const generatorVersion of [3, 4, 5, 6, 7, 8, 9, 10, 11]) {
+test("generator-v3 through v12 fallback saves advance without moving existing voxel edits", () => {
+  for (const generatorVersion of [3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
     const previous = {
       version: 2,
       generatorVersion,

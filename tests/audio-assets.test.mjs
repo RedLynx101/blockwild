@@ -66,3 +66,33 @@ test("cat, hound, and crab calls are complete lossless PCM WAV assets", () => {
     assert.equal(bytes.subarray(8, 12).toString("ascii"), "WAVE");
   }
 });
+
+test("v1.3 spatial, environment, movement, creature, magic, and interface sounds preserve the supplied WAVs", () => {
+  const supplied = [
+    ["ambient-light-rain.wav", 1_500_000],
+    ["ambient-night-crickets.wav", 850_000],
+    ["ambient-wind.wav", 1_870_000],
+    ["step-snow.wav", 380_000],
+    ["step-dirt.wav", 380_000],
+    ["ambient-winter-wind.wav", 2_320_000],
+    ["ambient-cave.wav", 460_000],
+    ["water-splash.wav", 460_000],
+    ["water-swimming.wav", 380_000],
+    ["dragon-attack-a.wav", 380_000],
+    ["dragon-attack-b.wav", 380_000],
+    ["dragon-wing-flap.wav", 380_000],
+    ["magic-attack.wav", 380_000],
+    ["achievement-unlocked.wav", 910_000],
+    ["ui-tap.wav", 380_000],
+    ["ambient-ocean-soft.wav", 610_000],
+    ["creature-scary-grumble.wav", 780_000],
+    ["humanoid-sigh.wav", 380_000],
+  ];
+  for (const [name, minimumBytes] of supplied) {
+    const path = resolve("public", "sfx", name);
+    assert.ok(statSync(path).size > minimumBytes, `${name} should preserve the complete supplied sound`);
+    const bytes = readFileSync(path).subarray(0, 12);
+    assert.equal(bytes.subarray(0, 4).toString("ascii"), "RIFF", `${name} should be a RIFF container`);
+    assert.equal(bytes.subarray(8, 12).toString("ascii"), "WAVE", `${name} should be a WAVE asset`);
+  }
+});

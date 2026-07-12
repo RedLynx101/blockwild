@@ -42,11 +42,114 @@ export type SampleKind =
   | "catCallB"
   | "houndCallA"
   | "houndCallB"
-  | "crabChitter";
-export type SamplePlaybackOptions = { gain?: number; playbackRate?: number; detune?: number; when?: number };
+  | "crabChitter"
+  | "lightRain"
+  | "nightCrickets"
+  | "wind"
+  | "snowStep"
+  | "dirtStep"
+  | "winterWind"
+  | "caveAmbience"
+  | "waterSplash"
+  | "swimming"
+  | "dragonAttackA"
+  | "dragonAttackB"
+  | "dragonWingFlap"
+  | "magicAttack"
+  | "achievement"
+  | "uiTap"
+  | "oceanAmbience"
+  | "scaryGrumble"
+  | "humanoidSigh";
+export type AudioPosition = Readonly<{ x: number; y: number; z: number }> | readonly [number, number, number];
+export type SamplePlaybackOptions = {
+  gain?: number;
+  playbackRate?: number;
+  detune?: number;
+  when?: number;
+  position?: AudioPosition;
+  refDistance?: number;
+  maxDistance?: number;
+  rolloffFactor?: number;
+};
 export type DragonSoundType = "fire" | "ice" | "steel" | "sea";
 export type DragonSoundEvent = "ambient" | "roar" | "hurt" | "death" | "wing" | "melee" | "breath" | "projectile" | "egg-crack";
 export type SpellSoundSchool = "destruction" | "restoration" | "alteration" | "conjuration" | "utility";
+export type EnvironmentLoop = "rain" | "crickets" | "wind" | "winterWind" | "cave" | "ocean" | "swimming";
+export type EnvironmentAudioState = Readonly<{
+  rain: number;
+  skyExposure: number;
+  night: number;
+  wind: number;
+  winter: number;
+  cave: number;
+  ocean: number;
+  swimming: number;
+}>;
+
+export const MAX_ACTIVE_SAMPLE_VOICES = 32;
+export const MAX_POOLED_SPATIAL_VOICES = 16;
+
+function clamp01(value: number) {
+  return Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+}
+
+export function positionTuple(position: AudioPosition): readonly [number, number, number] {
+  return "x" in position
+    ? [Number(position.x) || 0, Number(position.y) || 0, Number(position.z) || 0]
+    : [Number(position[0]) || 0, Number(position[1]) || 0, Number(position[2]) || 0];
+}
+
+/** Mirrors WebAudio's inverse-distance model for deterministic culling/tests. */
+export function spatialAttenuation(distance: number, refDistance = 2, maxDistance = 48, rolloffFactor = 1.15) {
+  const reference = Math.max(0.01, refDistance);
+  const maximum = Math.max(reference, maxDistance);
+  const clampedDistance = Math.min(maximum, Math.max(reference, Number.isFinite(distance) ? distance : maximum));
+  return clamp01(reference / (reference + Math.max(0, rolloffFactor) * (clampedDistance - reference)));
+}
+
+export function environmentLoopMix(state: EnvironmentAudioState): Record<EnvironmentLoop, number> {
+  const rain = clamp01(state.rain);
+  const outdoors = clamp01(state.skyExposure);
+  const night = clamp01(state.night);
+  const wind = clamp01(state.wind);
+  const winter = clamp01(state.winter);
+  const cave = clamp01(state.cave);
+  const ocean = clamp01(state.ocean);
+  const swimming = clamp01(state.swimming);
+  const shelteredSurface = outdoors * (1 - cave) * (1 - ocean * 0.45);
+  return {
+    rain: rain * outdoors,
+    crickets: night * shelteredSurface * (1 - rain * 0.82) * (1 - winter * 0.7),
+    wind: wind * shelteredSurface * (1 - winter),
+    winterWind: wind * winter * shelteredSurface,
+    cave: cave * (1 - ocean * 0.72),
+    ocean: ocean * (1 - cave * 0.55),
+    swimming,
+  };
+}
+
+export function environmentCrossfadeTimeConstant(current: number, target: number) {
+  return target > current ? 0.6 : 1.35;
+}
+
+export type ActiveVoiceScore = Readonly<{ distance: number; startedAt: number; spatial: boolean }>;
+
+/** Prefer retiring an inaudible/far spatial voice before a recent local UI cue. */
+export function spatialVoiceEvictionIndex(voices: readonly ActiveVoiceScore[]) {
+  if (!voices.length) return -1;
+  let selected = 0;
+  let selectedScore = -Infinity;
+  for (let index = 0; index < voices.length; index += 1) {
+    const voice = voices[index];
+    const score = (voice.spatial ? 10_000 + Math.max(0, voice.distance) * 100 : 0) - voice.startedAt * 0.001;
+    if (score > selectedScore) {
+      selected = index;
+      selectedScore = score;
+    }
+  }
+  return selected;
+}
 
 const MUSIC_TRACKS: Record<MusicScene, string | readonly string[]> = {
   day: "/music/blockwild-theme.mp3",
@@ -86,7 +189,7 @@ const MUSIC_TRACKS: Record<MusicScene, string | readonly string[]> = {
   dwarfSettlement: "/music/14_blockwild_deepgear_hearth.mp3",
 };
 
-const SAMPLES: Record<SampleKind, { source: string; gain: number }> = {
+export const SAMPLE_ASSETS: Record<SampleKind, { source: string; gain: number }> = {
   swordSwing: { source: "/sfx/sword-swing-1.wav", gain: 0.72 },
   zombieMoan1: { source: "/sfx/zombie-moan-1.wav", gain: 0.5 },
   zombieMoan2: { source: "/sfx/zombie-moan-2.wav", gain: 0.28 },
@@ -107,6 +210,35 @@ const SAMPLES: Record<SampleKind, { source: string; gain: number }> = {
   houndCallA: { source: "/sfx/hound-call-a.wav", gain: 0.7 },
   houndCallB: { source: "/sfx/hound-call-b.wav", gain: 0.73 },
   crabChitter: { source: "/sfx/crab-chitter.wav", gain: 0.68 },
+  lightRain: { source: "/sfx/ambient-light-rain.wav", gain: 0.42 },
+  nightCrickets: { source: "/sfx/ambient-night-crickets.wav", gain: 0.24 },
+  wind: { source: "/sfx/ambient-wind.wav", gain: 0.17 },
+  snowStep: { source: "/sfx/step-snow.wav", gain: 0.56 },
+  dirtStep: { source: "/sfx/step-dirt.wav", gain: 0.5 },
+  winterWind: { source: "/sfx/ambient-winter-wind.wav", gain: 0.24 },
+  caveAmbience: { source: "/sfx/ambient-cave.wav", gain: 0.2 },
+  waterSplash: { source: "/sfx/water-splash.wav", gain: 0.7 },
+  swimming: { source: "/sfx/water-swimming.wav", gain: 0.24 },
+  dragonAttackA: { source: "/sfx/dragon-attack-a.wav", gain: 0.7 },
+  dragonAttackB: { source: "/sfx/dragon-attack-b.wav", gain: 0.7 },
+  dragonWingFlap: { source: "/sfx/dragon-wing-flap.wav", gain: 0.66 },
+  magicAttack: { source: "/sfx/magic-attack.wav", gain: 0.66 },
+  achievement: { source: "/sfx/achievement-unlocked.wav", gain: 0.7 },
+  uiTap: { source: "/sfx/ui-tap.wav", gain: 0.36 },
+  oceanAmbience: { source: "/sfx/ambient-ocean-soft.wav", gain: 0.2 },
+  scaryGrumble: { source: "/sfx/creature-scary-grumble.wav", gain: 0.64 },
+  humanoidSigh: { source: "/sfx/humanoid-sigh.wav", gain: 0.46 },
+};
+const SAMPLES = SAMPLE_ASSETS;
+
+export const ENVIRONMENT_LOOP_SAMPLES: Record<EnvironmentLoop, SampleKind> = {
+  rain: "lightRain",
+  crickets: "nightCrickets",
+  wind: "wind",
+  winterWind: "winterWind",
+  cave: "caveAmbience",
+  ocean: "oceanAmbience",
+  swimming: "swimming",
 };
 const MUSIC_FALLBACKS: Partial<Record<MusicScene, string>> = {
   combatA: "/music/blockwild-skyboss.mp3",
@@ -117,6 +249,15 @@ export function effectiveMusicVolume(settings: AudioSettings) {
   const music = Number.isFinite(settings.musicVolume) ? Math.max(0, Math.min(1, settings.musicVolume!)) : 0.72;
   return settings.muted ? 0 : Math.min(0.46, Math.max(0, Math.min(1, settings.volume)) * music * 0.61);
 }
+
+type SpatialVoiceNodes = { gain: GainNode; panner: PannerNode };
+type ActiveSampleVoice = {
+  gain: GainNode;
+  panner: PannerNode | null;
+  startedAt: number;
+  distance: number;
+  pooledSpatial: SpatialVoiceNodes | null;
+};
 
 export class SynthAudio {
   context: AudioContext | null = null;
@@ -135,7 +276,23 @@ export class SynthAudio {
   musicSuspended = false;
   samples = new Map<SampleKind, AudioBuffer>();
   sampleLoads = new Map<SampleKind, Promise<AudioBuffer | null>>();
-  activeSamples = new Map<AudioBufferSourceNode, GainNode>();
+  activeSamples = new Map<AudioBufferSourceNode, ActiveSampleVoice>();
+  spatialVoicePool: SpatialVoiceNodes[] = [];
+  environmentSources = new Map<EnvironmentLoop, AudioBufferSourceNode>();
+  environmentGains = new Map<EnvironmentLoop, GainNode>();
+  environmentLoopLoads = new Set<EnvironmentLoop>();
+  environmentTargets: Record<EnvironmentLoop, number> = {
+    rain: 0,
+    crickets: 0,
+    wind: 0,
+    winterWind: 0,
+    cave: 0,
+    ocean: 0,
+    swimming: 0,
+  };
+  listenerPosition: readonly [number, number, number] = [0, 0, 0];
+  listenerForward: readonly [number, number, number] = [0, 0, -1];
+  listenerLastWriteAt = -Infinity;
   sampleAbort: AbortController | null = null;
   disposed = false;
 
@@ -225,7 +382,95 @@ export class SynthAudio {
     const rain = typeof rainLevel === "number" ? Math.max(0, Math.min(1, rainLevel)) : rainLevel ? 1 : 0;
     const target = depth < 0 ? 0.012 : 0.018;
     this.ambienceGain.gain.setTargetAtTime(target, this.context.currentTime, 0.4);
-    this.rainGain?.gain.setTargetAtTime(rain * 0.135, this.context.currentTime, rain > 0 ? 0.55 : 1.25);
+    // The supplied lossless rain bed carries the weather; this filtered-noise
+    // layer only fills the first moment while that buffer decodes.
+    this.rainGain?.gain.setTargetAtTime(rain * 0.026, this.context.currentTime, rain > 0 ? 0.3 : 1.25);
+  }
+
+  setListenerPose(position: AudioPosition, forward: AudioPosition, up: AudioPosition = [0, 1, 0]) {
+    const nextPosition = positionTuple(position);
+    const rawForward = positionTuple(forward);
+    const rawUp = positionTuple(up);
+    const forwardLength = Math.hypot(...rawForward) || 1;
+    const upLength = Math.hypot(...rawUp) || 1;
+    const nextForward = [rawForward[0] / forwardLength, rawForward[1] / forwardLength, rawForward[2] / forwardLength] as const;
+    const previousPosition = this.listenerPosition;
+    const previousForward = this.listenerForward;
+    this.listenerPosition = nextPosition;
+    this.listenerForward = nextForward;
+    const context = this.context;
+    if (!context || context.state === "closed") return;
+    const moved = Math.hypot(
+      nextPosition[0] - previousPosition[0],
+      nextPosition[1] - previousPosition[1],
+      nextPosition[2] - previousPosition[2],
+    );
+    const turnDelta = Math.abs(nextForward[0] - previousForward[0])
+      + Math.abs(nextForward[1] - previousForward[1])
+      + Math.abs(nextForward[2] - previousForward[2]);
+    if (context.currentTime - this.listenerLastWriteAt < 1 / 30 && moved < 0.03 && turnDelta < 0.01) return;
+    this.listenerLastWriteAt = context.currentTime;
+    const listener = context.listener;
+    if (listener.positionX) {
+      listener.positionX.setValueAtTime(nextPosition[0], context.currentTime);
+      listener.positionY.setValueAtTime(nextPosition[1], context.currentTime);
+      listener.positionZ.setValueAtTime(nextPosition[2], context.currentTime);
+      listener.forwardX.setValueAtTime(nextForward[0], context.currentTime);
+      listener.forwardY.setValueAtTime(nextForward[1], context.currentTime);
+      listener.forwardZ.setValueAtTime(nextForward[2], context.currentTime);
+      listener.upX.setValueAtTime(rawUp[0] / upLength, context.currentTime);
+      listener.upY.setValueAtTime(rawUp[1] / upLength, context.currentTime);
+      listener.upZ.setValueAtTime(rawUp[2] / upLength, context.currentTime);
+    } else {
+      listener.setPosition(nextPosition[0], nextPosition[1], nextPosition[2]);
+      listener.setOrientation(
+        nextForward[0], nextForward[1], nextForward[2],
+        rawUp[0] / upLength, rawUp[1] / upLength, rawUp[2] / upLength,
+      );
+    }
+  }
+
+  setEnvironment(state: EnvironmentAudioState) {
+    const context = this.context;
+    this.environmentTargets = environmentLoopMix(state);
+    if (!context || context.state === "closed" || this.disposed) return;
+    for (const loop of Object.keys(ENVIRONMENT_LOOP_SAMPLES) as EnvironmentLoop[]) {
+      const target = this.environmentTargets[loop];
+      if (target > 0.002 && !this.environmentSources.has(loop)) void this.ensureEnvironmentLoop(loop);
+      const gain = this.environmentGains.get(loop);
+      if (!gain) continue;
+      const absoluteTarget = target * SAMPLES[ENVIRONMENT_LOOP_SAMPLES[loop]].gain;
+      gain.gain.setTargetAtTime(
+        absoluteTarget,
+        context.currentTime,
+        environmentCrossfadeTimeConstant(gain.gain.value, absoluteTarget),
+      );
+    }
+  }
+
+  private async ensureEnvironmentLoop(loop: EnvironmentLoop) {
+    if (this.environmentSources.has(loop) || this.environmentLoopLoads.has(loop) || this.disposed) return;
+    this.environmentLoopLoads.add(loop);
+    const sample = ENVIRONMENT_LOOP_SAMPLES[loop];
+    try {
+      const buffer = await this.loadSample(sample);
+      const context = this.context;
+      const master = this.master;
+      if (!buffer || !context || !master || context.state === "closed" || this.disposed || this.environmentSources.has(loop)) return;
+      const source = context.createBufferSource();
+      const gain = context.createGain();
+      source.buffer = buffer;
+      source.loop = true;
+      gain.gain.value = 0;
+      source.connect(gain).connect(master);
+      source.start();
+      this.environmentSources.set(loop, source);
+      this.environmentGains.set(loop, gain);
+      const target = this.environmentTargets[loop] * SAMPLES[sample].gain;
+      gain.gain.setTargetAtTime(target, context.currentTime, environmentCrossfadeTimeConstant(0, target));
+    } finally {
+      this.environmentLoopLoads.delete(loop);
+    }
   }
 
   prepareMusic() {
@@ -327,7 +572,10 @@ export class SynthAudio {
   }
 
   preloadSamples() {
-    for (const kind of Object.keys(SAMPLES) as SampleKind[]) void this.loadSample(kind);
+    const streamingLoops = new Set<SampleKind>(Object.values(ENVIRONMENT_LOOP_SAMPLES));
+    for (const kind of Object.keys(SAMPLES) as SampleKind[]) {
+      if (!streamingLoops.has(kind)) void this.loadSample(kind);
+    }
   }
 
   loadSample(kind: SampleKind): Promise<AudioBuffer | null> {
@@ -362,33 +610,102 @@ export class SynthAudio {
 
   playSample(kind: SampleKind, options: SamplePlaybackOptions = {}) {
     if (this.settings.muted || this.disposed) return;
+    const snapshot: SamplePlaybackOptions = options.position
+      ? { ...options, position: positionTuple(options.position) }
+      : { ...options };
     const buffer = this.samples.get(kind);
     if (buffer) {
-      this.startSample(kind, buffer, options);
+      this.startSample(kind, buffer, snapshot);
       return;
     }
     void this.loadSample(kind).then((loaded) => {
-      if (loaded && !this.disposed) this.startSample(kind, loaded, options);
+      if (loaded && !this.disposed) this.startSample(kind, loaded, snapshot);
     });
+  }
+
+  private acquireSpatialVoice() {
+    const context = this.context;
+    if (!context) return null;
+    return this.spatialVoicePool.pop() ?? { gain: context.createGain(), panner: context.createPanner() };
+  }
+
+  private releaseSampleVoice(source: AudioBufferSourceNode, voice: ActiveSampleVoice) {
+    this.activeSamples.delete(source);
+    try { source.disconnect(); } catch { /* It may already be disconnected. */ }
+    try { voice.gain.disconnect(); } catch { /* It may already be disconnected. */ }
+    if (voice.panner) {
+      try { voice.panner.disconnect(); } catch { /* It may already be disconnected. */ }
+    }
+    if (voice.pooledSpatial && this.spatialVoicePool.length < MAX_POOLED_SPATIAL_VOICES && !this.disposed) {
+      this.spatialVoicePool.push(voice.pooledSpatial);
+    }
+  }
+
+  private stopSampleVoice(source: AudioBufferSourceNode, voice: ActiveSampleVoice) {
+    source.onended = null;
+    try { source.stop(); } catch { /* A one-shot may already have ended. */ }
+    this.releaseSampleVoice(source, voice);
   }
 
   startSample(kind: SampleKind, buffer: AudioBuffer, options: SamplePlaybackOptions) {
     const context = this.context;
     const master = this.master;
     if (!context || !master || context.state === "closed" || this.settings.muted || this.disposed) return;
+    const spatialPosition = options.position ? positionTuple(options.position) : null;
+    const maxDistance = Math.max(options.refDistance ?? 2, options.maxDistance ?? 48);
+    const distance = spatialPosition
+      ? Math.hypot(
+        spatialPosition[0] - this.listenerPosition[0],
+        spatialPosition[1] - this.listenerPosition[1],
+        spatialPosition[2] - this.listenerPosition[2],
+      )
+      : 0;
+    if (spatialPosition && distance > maxDistance) return;
+    if (this.activeSamples.size >= MAX_ACTIVE_SAMPLE_VOICES) {
+      const entries = [...this.activeSamples.entries()];
+      const index = spatialVoiceEvictionIndex(entries.map(([, voice]) => ({
+        distance: voice.distance,
+        startedAt: voice.startedAt,
+        spatial: Boolean(voice.panner),
+      })));
+      const eviction = entries[index];
+      if (eviction) this.stopSampleVoice(eviction[0], eviction[1]);
+    }
     const source = context.createBufferSource();
-    const gain = context.createGain();
+    const spatialVoice = spatialPosition ? this.acquireSpatialVoice() : null;
+    const gain = spatialVoice?.gain ?? context.createGain();
     source.buffer = buffer;
     source.playbackRate.value = Math.max(0.25, Math.min(4, options.playbackRate ?? 1));
     source.detune.value = Math.max(-2400, Math.min(2400, options.detune ?? 0));
     gain.gain.value = SAMPLES[kind].gain * Math.max(0, Math.min(2, options.gain ?? 1));
-    source.connect(gain).connect(master);
-    source.onended = () => {
-      this.activeSamples.delete(source);
-      source.disconnect();
-      gain.disconnect();
+    if (spatialVoice && spatialPosition) {
+      const panner = spatialVoice.panner;
+      panner.panningModel = "HRTF";
+      panner.distanceModel = "inverse";
+      panner.refDistance = Math.max(0.1, options.refDistance ?? 2);
+      panner.maxDistance = maxDistance;
+      panner.rolloffFactor = Math.max(0, Math.min(4, options.rolloffFactor ?? 1.15));
+      panner.coneInnerAngle = 360;
+      panner.coneOuterAngle = 360;
+      if (panner.positionX) {
+        panner.positionX.setValueAtTime(spatialPosition[0], context.currentTime);
+        panner.positionY.setValueAtTime(spatialPosition[1], context.currentTime);
+        panner.positionZ.setValueAtTime(spatialPosition[2], context.currentTime);
+      } else panner.setPosition(spatialPosition[0], spatialPosition[1], spatialPosition[2]);
+      source.connect(gain).connect(panner).connect(master);
+    } else source.connect(gain).connect(master);
+    const voice: ActiveSampleVoice = {
+      gain,
+      panner: spatialVoice?.panner ?? null,
+      startedAt: context.currentTime,
+      distance,
+      pooledSpatial: spatialVoice,
     };
-    this.activeSamples.set(source, gain);
+    source.onended = () => {
+      source.onended = null;
+      this.releaseSampleVoice(source, voice);
+    };
+    this.activeSamples.set(source, voice);
     source.start(context.currentTime + Math.max(0, options.when ?? 0));
   }
 
@@ -434,7 +751,11 @@ export class SynthAudio {
       || material === BlockId.TallGrass || definition?.shape === "cross";
     const base = stoneLike ? 1240 : woodLike ? 680 : 400;
     if (kind === "step") {
-      if (sandLike) {
+      if (material === BlockId.Snow || material === BlockId.SnowyGrass) {
+        this.playSample("snowStep", { gain: 0.78, playbackRate: 0.96 + Math.random() * 0.08 });
+      } else if (material === BlockId.Dirt || material === BlockId.Grass || material === BlockId.MeadowGrass) {
+        this.playSample("dirtStep", { gain: 0.72, playbackRate: 0.95 + Math.random() * 0.1 });
+      } else if (sandLike) {
         this.noiseBurst(0.082, 520, 0.046);
         this.noiseBurst(0.045, 880, 0.022, true, 0.025);
       } else if (softLike) {
@@ -471,7 +792,7 @@ export class SynthAudio {
       this.noiseBurst(0.11, 210, 0.09);
       this.tone(74, 0.08, 0.03, "sine");
     } else if (kind === "hurt") this.tone(150, 0.18, 0.09, "sawtooth", 0, 72);
-    else if (kind === "ui") this.tone(430, 0.035, 0.025, "square");
+    else if (kind === "ui") this.playSample("uiTap", { gain: 0.68, playbackRate: 0.98 + Math.random() * 0.04 });
     else if (kind === "attack") {
       this.noiseBurst(0.11, 920, 0.08, true);
       this.tone(180, 0.09, 0.035, "sawtooth", 0, 95);
@@ -483,37 +804,40 @@ export class SynthAudio {
     } else if (kind === "furnace") {
       this.noiseBurst(0.12, 380, 0.04);
       this.tone(110, 0.08, 0.025, "sine", 0, 74);
-    } else if (kind === "splash") this.noiseBurst(0.17, 760, 0.08, true);
+    } else if (kind === "splash") this.playSample("waterSplash", { gain: 0.84, playbackRate: 0.95 + Math.random() * 0.08 });
     else if (kind === "eat") {
       for (let index = 0; index < 3; index += 1) this.noiseBurst(0.05, 520 + index * 100, 0.05, false, index * 0.055);
     }
   }
 
   /**
-   * Layered procedural dragon audio.  Keeping these cues synthesized makes
-   * every age tier pitch correctly without loading nine large sample banks,
-   * while the three families remain audibly distinct: fire crackles, ice
-   * rings, and steel carries a struck-metal transient under its steam.
+   * Authored attack/wing transients sit over lightweight elemental layers so
+   * every age tier pitch-shifts naturally without a separate sample bank for
+   * every dragon species and stage.
    */
-  playDragon(type: DragonSoundType, event: DragonSoundEvent, stage = 1) {
+  playDragon(type: DragonSoundType, event: DragonSoundEvent, stage = 1, position?: AudioPosition) {
     if (!this.context || !this.master || this.settings.muted) return;
     const age = Math.max(1, Math.min(5, Math.round(stage)));
     const depth = 1 - (age - 1) * 0.095;
     const base = (type === "fire" ? 92 : type === "ice" ? 128 : type === "sea" ? 104 : 108) * depth;
     const weight = 0.58 + age * 0.105;
     const texture = type === "fire" ? 420 : type === "ice" ? 1380 : type === "sea" ? 690 : 860;
+    const spatial = position ? { position, refDistance: 3 + age * 0.45, maxDistance: 76 + age * 8, rolloffFactor: 0.92 } : {};
 
     if (event === "wing") {
+      this.playSample("dragonWingFlap", { ...spatial, gain: 0.46 + age * 0.07, playbackRate: 1.08 - age * 0.055 });
       this.noiseBurst(0.18 + age * 0.025, 210 + age * 24, 0.025 * weight);
       this.tone(base * 0.72, 0.12, 0.012 * weight, "sine", 0, base * 0.48);
       return;
     }
     if (event === "melee") {
+      this.playSample("dragonAttackB", { ...spatial, gain: 0.6 + age * 0.065, playbackRate: 1.06 - age * 0.045 });
       this.noiseBurst(0.14, 760, 0.075 * weight, true);
       this.tone(base * 1.55, 0.13, 0.047 * weight, "sawtooth", 0, base * 0.72);
       return;
     }
     if (event === "breath") {
+      this.playSample("dragonAttackA", { ...spatial, gain: 0.54 + age * 0.07, playbackRate: 1.08 - age * 0.048 });
       this.noiseBurst(0.62 + age * 0.07, texture, 0.075 * weight, type !== "fire");
       if (type === "sea") this.noiseBurst(0.44 + age * 0.04, 1180, 0.042 * weight, true, 0.02);
       this.noiseBurst(0.48, type === "steel" ? 2300 : texture * 0.55, 0.038 * weight, true, 0.035);
@@ -521,6 +845,7 @@ export class SynthAudio {
       return;
     }
     if (event === "projectile") {
+      this.playSample(type === "steel" ? "dragonAttackB" : "dragonAttackA", { ...spatial, gain: 0.55 + age * 0.065, playbackRate: 1.1 - age * 0.05 });
       if (type === "steel") {
         this.tone(1180, 0.085, 0.065 * weight, "square", 0, 420);
         this.tone(176, 0.22, 0.045 * weight, "triangle", 0.025, 92);
@@ -555,8 +880,13 @@ export class SynthAudio {
   }
 
   /** Compact, layered casting signatures shared by learned spells in a school. */
-  playSpell(school: SpellSoundSchool) {
+  playSpell(school: SpellSoundSchool, position?: AudioPosition) {
     if (!this.context || !this.master || this.settings.muted) return;
+    this.playSample("magicAttack", {
+      gain: school === "destruction" ? 0.78 : 0.58,
+      playbackRate: school === "restoration" ? 1.08 : school === "conjuration" ? 0.92 : 1,
+      ...(position ? { position, refDistance: 2.2, maxDistance: 58, rolloffFactor: 1.05 } : {}),
+    });
     if (school === "destruction") {
       this.noiseBurst(0.31, 1_420, 0.055, true);
       this.tone(138, 0.28, 0.052, "sawtooth", 0, 76);
@@ -573,6 +903,10 @@ export class SynthAudio {
       this.tone(174, 0.38, 0.03, "sine", 0, 348);
       this.tone(523, 0.26, 0.022, "triangle", 0.06, 392);
     }
+  }
+
+  playAchievement() {
+    this.playSample("achievement", { gain: 0.82 });
   }
 
   /** Procedural storm strike with a close crack and a longer, lower roll. */
@@ -592,13 +926,23 @@ export class SynthAudio {
     try {
       this.ambience?.stop();
       this.rainAmbience?.stop();
-      for (const [source, gain] of this.activeSamples) {
-        source.onended = null;
-        try { source.stop(); } catch { /* The source may already have ended. */ }
+      for (const [source, voice] of this.activeSamples) this.stopSampleVoice(source, voice);
+      this.activeSamples.clear();
+      for (const source of this.environmentSources.values()) {
+        try { source.stop(); } catch { /* The loop may already have ended. */ }
         try { source.disconnect(); } catch { /* Already disconnected. */ }
+      }
+      for (const gain of this.environmentGains.values()) {
         try { gain.disconnect(); } catch { /* Already disconnected. */ }
       }
-      this.activeSamples.clear();
+      this.environmentSources.clear();
+      this.environmentGains.clear();
+      this.environmentLoopLoads.clear();
+      for (const voice of this.spatialVoicePool) {
+        try { voice.gain.disconnect(); } catch { /* Already disconnected. */ }
+        try { voice.panner.disconnect(); } catch { /* Already disconnected. */ }
+      }
+      this.spatialVoicePool.length = 0;
       this.samples.clear();
       this.sampleLoads.clear();
       for (const element of this.music.values()) {

@@ -53,8 +53,8 @@ function settle(simulator: LiquidSimulator) {
   assert.equal(simulator.pendingCount, 0);
 }
 
-test("Sugarplum Vale remains stable under generator v12 with its own terrain and keyed settlement palette", () => {
-  assert.equal(GENERATOR_VERSION, 12);
+test("Sugarplum Vale remains stable under generator v13 with its own terrain and keyed settlement palette", () => {
+  assert.equal(GENERATOR_VERSION, 13);
   assert.equal(BIOME_NAMES[BiomeId.SugarplumVale], "Sugarplum Vale");
   const world = new ChunkWorld();
   world.reset("CANDY-WORLD", undefined, { structures: false });

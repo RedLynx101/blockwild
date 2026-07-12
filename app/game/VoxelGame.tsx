@@ -38,6 +38,7 @@ import {
 import { BUTTERFLY_ORDER } from "./mobs";
 import type { MobDefinition } from "./mobs";
 import { createAvatarHeldItemModel } from "./held-items";
+import { legendaryContractForItem } from "./legendary-items";
 import { captureOrbFromInventorySlot } from "./capture-orbs";
 import { BlockPlayerModel, type PlayerEquipmentAppearance } from "./player-model";
 import { GAME_RELEASE_NAME, GAME_VERSION, GAME_VERSION_LABEL } from "./version";
@@ -778,7 +779,9 @@ export function itemHoverText(slot: InventorySlot | null, fallback = "Empty slot
   const details = [definition?.name ?? "Item"];
   if (definition?.food) details.push(`Food +${definition.food}`);
   if (definition?.damage) details.push(`${definition.damage} attack damage`);
-  if (slot.durability !== undefined) details.push(`${slot.durability} durability`);
+  const legendary = legendaryContractForItem(slot.item);
+  if (legendary) details.push(`Legendary · ${legendary.infiniteDurability ? "Infinite durability" : `${slot.durability ?? definition?.maxDurability} durability`} · ${legendary.mechanic}`);
+  else if (slot.durability !== undefined) details.push(`${slot.durability} durability`);
   const metadata = itemMetadataSummary(slot).replace(/^\s*·\s*/u, "");
   if (metadata) details.push(metadata);
   return details.join(" · ");
@@ -1205,11 +1208,13 @@ function SlotContents({ slot }: { slot: InventorySlot | null }) {
   const definition = ITEMS[slot.item];
   const maxDurability = definition?.maxDurability;
   const durability = slot.durability ?? maxDurability;
+  const infiniteDurability = definition?.infiniteDurability === true;
   return (
     <>
       <ItemIcon item={slot.item} slot={slot} />
       {slot.count > 1 && <span className="item-count">{slot.count}</span>}
-      {maxDurability && durability !== undefined && (
+      {infiniteDurability && <span className="item-count" aria-label="Infinite durability">∞</span>}
+      {!infiniteDurability && maxDurability && durability !== undefined && (
         <span className="durability-track"><span style={{ width: `${Math.max(0, durability / maxDurability) * 100}%` }} /></span>
       )}
     </>

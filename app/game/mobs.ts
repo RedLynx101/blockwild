@@ -120,6 +120,7 @@ export type SentientMobKind = HobbitKind | GoblinKind | AtlantianKind | Sugarcou
 export type FactionKind = "hobbits" | "goblins" | "atlantians" | "sugarcourt" | "wood-elves" | "dwarves";
 export type SentientRole = "mayor" | "chieftain" | "farmer" | "worker" | "miner" | "merchant" | "banker" | "alchemist" | "blacksmith" | "guard";
 export type SpecialMobKind = "peelop" | "reliquary-sentinel" | "skeleton" | "warg";
+export type AdventureMobKind = "auric-scarab" | "rootwrithe" | "bellroot-matron" | "vaultwing" | "cinder-maw" | "ossuary-keeper";
 export type CoreMobKind =
   | LegacyMobKind
   | MosslingVariantKind
@@ -136,6 +137,7 @@ export type CoreMobKind =
   | DragonKind
   | V1FactionCreatureKind
   | SentientMobKind
+  | AdventureMobKind
   | SpecialMobKind;
 export type MobKind = CoreMobKind | ButterflyKind;
 export type MobTemperament = "Gentle" | "Skittish" | "Defensive" | "Hostile";
@@ -402,6 +404,72 @@ function seaSlugDefinition(kind: SeaSlugKind, profile: SeaSlugProfile): MobDefin
 export const MOB_DEFS: Record<MobKind, MobDefinition> = {
   ...V1_SENTIENT_MOBS,
   ...V1_CREATURE_MOBS,
+  "auric-scarab": {
+    kind: "auric-scarab", name: "Auric Scarab", temperament: "Defensive", hostile: true,
+    health: 16, damage: 3, xp: 8, speed: 0.84, chaseSpeed: 2.65, turnRate: 6.8, attackRange: 1.35,
+    footOffset: 0.499342, radius: 0.48, height: 0.62, habitat: "Buried caravans, brass ruins and starfall rubble", active: "Dusk and underground",
+    behavior: "Fans six plated legs around treasure, flashes its crystal wing-cases as a warning, then shoulder-checks intruders in short committed bursts.",
+    lore: "Each scarab plates itself with the first precious metal it finds. Old prospectors listen for the soft click of a whole fortune walking away.",
+    colors: [0xb98932, 0x4e3422, 0x8ff4e8],
+    drops: [{ item: Item.GoldIngot, min: 1, max: 2, chance: 0.22 }, { item: Item.CrystalShard, min: 1, max: 2, chance: 0.58 }],
+    family: "surface", movement: "ground", persistent: true, discoveryHint: "Search for tiny paired tracks circling old treasure sites.",
+    utility: "Its prismatic carapace is a dependable source of Star Crystal.",
+  },
+  rootwrithe: {
+    kind: "rootwrithe", name: "Rootwrithe", temperament: "Defensive", hostile: true,
+    health: 24, damage: 4, xp: 11, speed: 0.58, chaseSpeed: 2.25, turnRate: 5.4, attackRange: 1.7,
+    footOffset: 0.650795, radius: 0.66, height: 1.38, habitat: "Ancient gardens and the Rootbound Labyrinth", active: "Shade and rain",
+    behavior: "Holds perfectly still as a root bollard until disturbed, then braces on four hooked roots and lashes at the edge of melee range.",
+    lore: "The first labyrinth gardeners did not build doors. They taught the hedges to remember who belonged inside.",
+    colors: [0x4c6339, 0x9bc36d, 0xffcf71],
+    drops: [{ item: Item.Fiber, min: 3, max: 7, chance: 1 }, { item: Item.GlowRoot, min: 1, max: 3, chance: 0.55 }],
+    family: "surface", movement: "ground", persistent: true, discoveryHint: "Look for root posts with two amber eyes in old medicinal gardens.",
+    utility: "Drops unusually long fibers and mature Glowroot knots.",
+  },
+  "bellroot-matron": {
+    kind: "bellroot-matron", name: "Bellroot Matron", temperament: "Defensive", hostile: true,
+    health: 64, damage: 8, xp: 28, speed: 0.38, chaseSpeed: 1.85, turnRate: 3.6, attackRange: 2.15,
+    footOffset: 0.702449, radius: 1.05, height: 2.72, habitat: "Sacred amphitheaters and Bloomrot altar gardens", active: "Rain and moonlight",
+    behavior: "Rings the lantern bell in its crown to rally nearby roots, then sweeps three heavy vine-arms through a broad defensive arc.",
+    lore: "A Matron grows around every promise a grove refuses to forget. Its bell is a seedpod, a warning and a funeral hymn at once.",
+    colors: [0x405c36, 0xb79a58, 0xffe18a],
+    drops: [{ item: Item.Moonpetal, min: 2, max: 5, chance: 1 }, { item: Item.GlowDust, min: 3, max: 8, chance: 0.82 }, { item: Item.RoyalJelly, min: 1, max: 1, chance: 0.12 }],
+    family: "surface", movement: "ground", persistent: true, discoveryHint: "A deep wooden bell note marks guarded old stages and cathedral gardens.",
+    utility: "A rare source of Moonpetals and concentrated Glow Dust.",
+  },
+  vaultwing: {
+    kind: "vaultwing", name: "Vaultwing", temperament: "Hostile", hostile: true,
+    health: 13, damage: 3, xp: 8, speed: 1.5, chaseSpeed: 3.45, turnRate: 8.8, attackRange: 1.65,
+    footOffset: 1.35, radius: 0.52, height: 0.72, habitat: "Observatory domes, lighthouse crowns and sealed galleries", active: "Darkness",
+    behavior: "Uses shallow banking turns and ceiling-clear approach lanes, folds its four-point wings before a dive, and retreats upward after each bite.",
+    lore: "Its translucent ears map rooms by starlight. A whole roost can memorize a corridor without ever touching its walls.",
+    colors: [0x403657, 0x8b72ad, 0xc9fff4],
+    drops: [{ item: Item.Feather, min: 1, max: 2, chance: 0.66 }, { item: Item.ShadowShard, min: 1, max: 2, chance: 0.4 }],
+    family: "surface", movement: "flying", flying: true, persistent: true, discoveryHint: "Watch broken domes for four-point silhouettes crossing the stars.",
+    utility: "Its whisper-light membrane is collected as Bright Feather and Shadow Shard.",
+  },
+  "cinder-maw": {
+    kind: "cinder-maw", name: "Cinder Maw", temperament: "Hostile", hostile: true,
+    health: 30, damage: 6, xp: 14, speed: 0.92, chaseSpeed: 3.35, turnRate: 5.8, attackRange: 1.75,
+    footOffset: 0.68, radius: 0.72, height: 1.18, habitat: "Emberwatch ruins, foundry vents and storm gates", active: "Night and volcanic heat",
+    behavior: "Hunts in staggered pairs, vents sparks through basalt shoulder plates, and snaps from just beyond the victim's reach instead of crowding their feet.",
+    lore: "Foundry keepers once used their heat to restart cold furnaces. The furnaces are cold now; the hounds are not.",
+    colors: [0x442d2a, 0x9b3f2c, 0xffad4f],
+    drops: [{ item: Item.RawMeat, min: 2, max: 4, chance: 1 }, { item: Item.Coal, min: 2, max: 5, chance: 0.78 }, { item: Item.GlowDust, min: 1, max: 3, chance: 0.38 }],
+    family: "surface", movement: "ground", persistent: true, discoveryHint: "Fresh black pawprints around warm ruins still hold tiny sparks.",
+    utility: "A dangerous but reliable source of coal in authored ruins.",
+  },
+  "ossuary-keeper": {
+    kind: "ossuary-keeper", name: "Ossuary Keeper", temperament: "Hostile", hostile: true,
+    health: 48, damage: 8, xp: 24, speed: 0.55, chaseSpeed: 2.2, turnRate: 4.4, attackRange: 2.05,
+    footOffset: 0.52, radius: 0.76, height: 2.24, habitat: "Master-vaults, colossus ruins and observatory crowns", active: "When treasure is approached",
+    behavior: "Raises a layered tomb-shield, advances in measured half-steps and attacks with a long crystal keyblade without overlapping its target.",
+    lore: "No one remembers the keepers' makers. Every one still carries a key, and every key fits a door that no longer exists.",
+    colors: [0xc7bfaa, 0x59636a, 0x74f0df],
+    drops: [{ item: Item.BoneShard, min: 4, max: 9, chance: 1 }, { item: Item.CrystalShard, min: 2, max: 5, chance: 0.74 }, { item: Item.GoldIngot, min: 1, max: 3, chance: 0.32 }],
+    family: "construct", movement: "ground", persistent: true, discoveryHint: "Vault floors bear pairs of square footprints and a dragged key line.",
+    utility: "A difficult source of bone, crystal and occasional recovered gold.",
+  },
   mossling: {
     kind: "mossling", name: "Mossling", temperament: "Skittish", hostile: false,
     health: 5, damage: 0, xp: 2, speed: 0.72, chaseSpeed: 1.9, turnRate: 6, attackRange: 0,
@@ -1810,6 +1878,7 @@ export const DWARF_ORDER: DwarfKind[] = ["dwarf-thane", "dwarf-gatewarden", "dwa
 export const V1_FACTION_CREATURE_ORDER: V1FactionCreatureKind[] = ["glimmerhart", "runeowl", "glowfin", "copper-mole", "copper-scout-golem", "stone-bulwark-golem", "aetherforged-sentinel", "deepgear-courser-golem"];
 export const SENTIENT_MOB_ORDER: SentientMobKind[] = [...HOBBIT_ORDER, ...GOBLIN_ORDER, ...ATLANTIAN_ORDER, ...SUGARCOURT_ORDER, ...WOOD_ELF_ORDER, ...DWARF_ORDER];
 export const SPECIAL_MOB_ORDER: SpecialMobKind[] = ["peelop", "reliquary-sentinel", "skeleton", "warg"];
+export const ADVENTURE_MOB_ORDER: AdventureMobKind[] = ["auric-scarab", "rootwrithe", "bellroot-matron", "vaultwing", "cinder-maw", "ossuary-keeper"];
 export const CORE_MOB_ORDER: CoreMobKind[] = [
   ...LEGACY_MOB_ORDER,
   ...MOSSLING_VARIANT_ORDER,
@@ -1826,6 +1895,7 @@ export const CORE_MOB_ORDER: CoreMobKind[] = [
   ...V1_FACTION_CREATURE_ORDER,
   ...DRAGON_ORDER,
   ...SENTIENT_MOB_ORDER,
+  ...ADVENTURE_MOB_ORDER,
   ...SPECIAL_MOB_ORDER,
 ];
 export const MOB_ORDER: MobKind[] = [...CORE_MOB_ORDER, ...BUTTERFLY_ORDER];

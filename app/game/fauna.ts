@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { BiomeId } from "./world";
-import { MOB_DEFS, type BirdKind, type CoreMobKind, type DragonKind, type MobKind, type TideglassAquaticKind } from "./mobs";
+import { MOB_DEFS, type CoreMobKind, type DragonKind, type MobKind, type TideglassAquaticKind } from "./mobs";
+import { createBirdFlightRouteState, type BirdFlightRouteState, type BirdPerchCandidate } from "./creature-pathing";
 
 const TAU = Math.PI * 2;
 
@@ -63,13 +64,20 @@ export function updateStableSteering(state: StableSteeringState, input: StableSt
 }
 
 export type BirdMode = "forage" | "perch" | "takeoff" | "flight" | "flee";
+// The same fixed-budget flight planner is shared by every authored flying mob.
+// Runtime callers still gate this path on `definition.movement === "flying"`.
+export type AirborneRouteKind = CoreMobKind;
 export type BirdBehaviorState = {
-  kind: BirdKind;
+  kind: AirborneRouteKind;
   mode: BirdMode;
   timer: number;
   perchId: string | null;
   altitude: number;
   wingPhase: number;
+  /** Cached reachable perch; refreshed at a low fixed cadence by the engine. */
+  perchTarget: BirdPerchCandidate | null;
+  perchSearchTimer: number;
+  flightRoute: BirdFlightRouteState;
 };
 
 export type BirdStimulus = {
@@ -79,12 +87,23 @@ export type BirdStimulus = {
   attacked: boolean;
   perchId?: string | null;
   perchHeight?: number;
+  perchDistance?: number;
   onGround: boolean;
   random?: number;
 };
 
-export function createBirdBehavior(kind: BirdKind, phase = 0): BirdBehaviorState {
-  return { kind, mode: "perch", timer: 1.5, perchId: null, altitude: 0.15, wingPhase: phase % TAU };
+export function createBirdBehavior(kind: AirborneRouteKind, phase = 0): BirdBehaviorState {
+  return {
+    kind,
+    mode: kind === "vaultwing" ? "flight" : "perch",
+    timer: kind === "vaultwing" ? 3.4 : 1.5,
+    perchId: null,
+    altitude: 0.15,
+    wingPhase: phase % TAU,
+    perchTarget: null,
+    perchSearchTimer: 0,
+    flightRoute: createBirdFlightRouteState(phase),
+  };
 }
 
 /** Pure state transition helper shared by every bird species. */
@@ -97,6 +116,7 @@ export function updateBirdBehavior(state: BirdBehaviorState, stimulus: BirdStimu
   let timer = Math.max(0, state.timer - dt);
   let perchId = state.perchId;
   let altitude = state.altitude;
+  const perchSearchTimer = Math.max(0, (state.perchSearchTimer ?? 0) - dt);
 
   if (stimulus.attacked || rushed || crowded) {
     mode = state.mode === "perch" || state.mode === "forage" ? "takeoff" : "flee";
@@ -108,9 +128,11 @@ export function updateBirdBehavior(state: BirdBehaviorState, stimulus: BirdStimu
     mode = "flight";
     timer = 2 + random * 2;
   } else if (mode === "flight" && timer <= 0 && stimulus.perchId) {
-    mode = "perch";
-    timer = 2.5 + random * 5;
-    perchId = stimulus.perchId;
+    if ((stimulus.perchDistance ?? Infinity) <= 0.72) {
+      mode = "perch";
+      timer = 2.5 + random * 5;
+      perchId = stimulus.perchId;
+    } else timer = 0.55;
   } else if (mode === "perch" && timer <= 0) {
     mode = random < 0.58 ? "forage" : "flight";
     timer = 1.5 + random * 3;
@@ -120,12 +142,25 @@ export function updateBirdBehavior(state: BirdBehaviorState, stimulus: BirdStimu
     timer = 1.2 + random * 2.2;
   }
 
+  const cruiseAltitude = state.kind === "vaultwing" ? 2.9
+    : state.kind === "tidewing-gull" ? 3.6
+    : state.kind === "frostquill" ? 2.7
+      : state.kind === "emberjay" ? 3.05 : 2.45;
   const targetAltitude = mode === "perch" ? Math.max(0.12, stimulus.perchHeight ?? 0.12)
     : mode === "forage" && stimulus.onGround ? 0.08
-      : mode === "takeoff" ? 2.6 : mode === "flee" ? 4.2 : 2.4;
+      : mode === "takeoff" ? cruiseAltitude + 0.45 : mode === "flee" ? cruiseAltitude + 1.55 : cruiseAltitude;
   altitude += (targetAltitude - altitude) * (1 - Math.exp(-dt * (mode === "takeoff" ? 7 : 3.5)));
   const flapRate = mode === "perch" || mode === "forage" ? 2.5 : mode === "flee" ? 18 : 12;
-  return { ...state, mode, timer, perchId, altitude, wingPhase: (state.wingPhase + dt * flapRate) % TAU };
+  return {
+    ...state,
+    mode,
+    timer,
+    perchId,
+    altitude,
+    perchSearchTimer,
+    flightRoute: state.flightRoute ?? createBirdFlightRouteState(),
+    wingPhase: (state.wingPhase + dt * flapRate) % TAU,
+  };
 }
 
 export type FishHabitat = "ocean" | "deep-ocean" | "lumen-trench" | "river" | "underground" | "syrup-pond" | "glimmer-pond";
