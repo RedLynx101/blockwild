@@ -56,3 +56,13 @@ test("species bird calls are complete lossless PCM WAV assets", () => {
     assert.equal(bytes.subarray(8, 12).toString("ascii"), "WAVE");
   }
 });
+
+test("cat, hound, and crab calls are complete lossless PCM WAV assets", () => {
+  for (const name of ["cat-call-a.wav", "cat-call-b.wav", "hound-call-a.wav", "hound-call-b.wav", "crab-chitter.wav"]) {
+    const path = resolve("public", "sfx", name);
+    assert.ok(statSync(path).size > 300_000, `${name} should contain the complete supplied call`);
+    const bytes = readFileSync(path).subarray(0, 12);
+    assert.equal(bytes.subarray(0, 4).toString("ascii"), "RIFF");
+    assert.equal(bytes.subarray(8, 12).toString("ascii"), "WAVE");
+  }
+});

@@ -454,6 +454,211 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     legs(false, true);
   };
 
+  const companionLegs = (
+    prefix: string,
+    x: number,
+    frontZ: number,
+    rearZ: number,
+    hipY: number,
+    targetFootY: number,
+    upperMaterial: THREE.Material,
+    lowerMaterial: THREE.Material,
+    pawMaterial: THREE.Material,
+    pawSize: [number, number, number],
+    bootMaterial?: THREE.Material,
+  ) => {
+    for (const [px, pz, phase, positionName] of [
+      [-x, frontZ, 0, "front-left"], [x, frontZ, Math.PI, "front-right"],
+      [-x, rearZ, Math.PI, "rear-left"], [x, rearZ, 0, "rear-right"],
+    ] as Array<[number, number, number, string]>) {
+      const leg = pivotBox([0.17, 0.28, 0.18], upperMaterial, [px, hipY, pz], [0, -0.14, 0], "legs", `${prefix}-${positionName}-leg`);
+      leg.userData.phase = phase;
+      add(leg, [0.13, 0.3, 0.14], lowerMaterial, [0, targetFootY - hipY + 0.15, -0.02], undefined, `${prefix}-${positionName}-lower-leg`);
+      add(leg, pawSize, pawMaterial, [0, targetFootY - hipY + pawSize[1] / 2, -0.09], undefined, `${prefix}-${positionName}-paw`);
+      if (bootMaterial) add(leg, [pawSize[0] + 0.05, 0.13, pawSize[2] + 0.04], bootMaterial, [0, targetFootY - hipY + 0.15, -0.055], undefined, `${prefix}-${positionName}-snow-boot`);
+    }
+  };
+
+  const childPivot = (parent: THREE.Object3D, name: string, position: [number, number, number]) => {
+    const node = new THREE.Group();
+    node.name = name;
+    node.position.set(...position);
+    node.userData.mobId = id;
+    parent.add(node);
+    return node;
+  };
+
+  const buildHound = (houndKind: "taffy-hound" | "rimecoat-hound") => {
+    const prefix = houndKind;
+    const rime = houndKind === "rimecoat-hound";
+    const coatLight = material(rime ? 0xe9f2ee : 0xf2c76e);
+    const coatShade = material(rime ? 0x8fa9b2 : 0xb64f86);
+    const muzzleMaterial = material(rime ? 0xdce6e2 : 0xf4d49a);
+    const noseMaterial = material(rime ? 0x26384a : 0x30213c);
+    const innerEarMaterial = material(rime ? 0x9bb6c0 : 0xffb7ce);
+    const pawMaterial = material(rime ? 0x34485a : 0x65304f);
+    const snowWhite = material(0xf7fbfa);
+    const targetFootY = 0.5 - MOB_DEFS[houndKind].footOffset;
+    visual.userData.companionPose = "hound";
+
+    add(visual, [0.72, 0.48, 1.08], bodyMaterial, [0, 0.05, 0.12], "body", `${prefix}-tapered-body`);
+    add(visual, [0.78, 0.56, 0.46], accentMaterial, [0, 0.14, -0.35], undefined, `${prefix}-deep-chest`);
+    add(visual, [0.66, 0.46, 0.46], bodyMaterial, [0, 0.11, 0.48], undefined, `${prefix}-haunches`);
+    add(visual, [0.74, 0.58, 0.34], coatLight, [0, 0.32, -0.48], undefined, `${prefix}-${rime ? "winter" : "pulled-taffy"}-ruff`);
+    if (rime) {
+      for (const side of [-1, 1]) add(visual, [0.12, 0.36, 0.52], coatShade, [side * 0.33, 0.13, 0.02], undefined, `${prefix}-${side < 0 ? "left" : "right"}-shoulder-guard`).rotation.z = side * -0.08;
+      add(visual, [0.56, 0.08, 0.7], coatLight, [0, 0.32, 0.16], undefined, `${prefix}-snow-saddle-mark`);
+    } else {
+      for (let fold = 0; fold < 4; fold += 1) add(visual, [0.76, 0.055, 0.18], fold % 2 ? coatShade : coatLight, [0, 0.27 - fold * 0.11, -0.16 + fold * 0.26], undefined, `${prefix}-taffy-fold-${fold + 1}`).rotation.y = (fold % 2 ? 1 : -1) * 0.08;
+    }
+
+    const head = pivotBox([0.62, 0.54, 0.56], accentMaterial, [0, 0.4, -0.68], [0, 0, 0], "head", `${prefix}-head`);
+    add(head, [0.46, 0.27, 0.42], muzzleMaterial, [0, -0.12, -0.43], undefined, `${prefix}-layered-muzzle`);
+    add(head, [0.38, 0.12, 0.34], muzzleMaterial, [0, -0.28, -0.39], undefined, `${prefix}-lower-jaw`);
+    add(head, [0.11, 0.08, 0.07], noseMaterial, [0, -0.07, -0.67], undefined, `${prefix}-nose`);
+    add(head, [0.16, 0.055, 0.18], material(0xe7869e), [0, -0.34, -0.5], undefined, `${prefix}-tongue`);
+    for (const side of [-1, 1] as const) {
+      const sideName = side < 0 ? "left" : "right";
+      add(head, [0.085, 0.085, 0.04], eyeMaterial, [side * 0.19, 0.1, -0.3], undefined, `${prefix}-${sideName}-eye`);
+      add(head, [0.17, 0.075, 0.08], noseMaterial, [side * 0.18, 0.2, -0.28], undefined, `${prefix}-${sideName}-brow`).rotation.z = side * -0.12;
+      const ear = childPivot(head, `${prefix}-${sideName}-ear-root-pivot`, [side * 0.24, 0.26, -0.02]);
+      ear.userData.side = side;
+      ear.userData.restZ = side * (rime ? -0.18 : -0.4);
+      ear.rotation.z = Number(ear.userData.restZ);
+      add(ear, [rime ? 0.2 : 0.25, rime ? 0.5 : 0.42, 0.2], rime ? coatShade : bodyMaterial, [side * 0.04, 0.2, 0], undefined, `${prefix}-${sideName}-${rime ? "upright" : "folded-candy"}-ear`).rotation.x = rime ? -0.08 : 0.16;
+      add(ear, [0.1, rime ? 0.3 : 0.25, 0.08], innerEarMaterial, [side * 0.04, 0.2, -0.11], undefined, `${prefix}-${sideName}-inner-ear`);
+    }
+
+    companionLegs(prefix, rime ? 0.27 : 0.25, -0.29, 0.38, 0.08, targetFootY, bodyMaterial, coatShade, pawMaterial, [0.23, 0.13, 0.31], rime ? coatLight : undefined);
+
+    const tailRoot = pivotBox([0.17, 0.17, 0.58], rime ? coatShade : noseMaterial, [0, 0.24, 0.62], [0, 0.05, 0.27], "body", `${prefix}-tail-root`);
+    tailRoot.rotation.x = rime ? 0.35 : 0.52;
+    const tailMid = childPivot(tailRoot, `${prefix}-tail-mid-pivot`, [0, 0.08, 0.53]);
+    if (rime) {
+      add(tailMid, [0.34, 0.34, 0.58], coatLight, [0, 0.12, 0.23], undefined, `${prefix}-plume-tail-mid`).rotation.x = 0.28;
+      add(tailMid, [0.28, 0.38, 0.3], snowWhite, [0, 0.38, 0.46], undefined, `${prefix}-plume-tail-tip`).rotation.x = 0.5;
+    } else {
+      add(tailMid, [0.18, 0.46, 0.18], noseMaterial, [0, 0.22, 0.1], undefined, `${prefix}-licorice-tail-curl`).rotation.z = 0.48;
+      add(tailMid, [0.2, 0.2, 0.36], coatLight, [0.02, 0.47, 0.12], undefined, `${prefix}-taffy-tail-tip`).rotation.x = 0.32;
+    }
+
+    if (!rime) {
+      const collar = new THREE.Group();
+      collar.name = "taffy-hound-faction-collar";
+      collar.visible = false;
+      visual.add(collar);
+      add(collar, [0.73, 0.13, 0.42], material(0xf5d667), [0, 0.35, -0.47], undefined, "taffy-hound-sugarcourt-collar-band");
+      add(collar, [0.18, 0.22, 0.08], material(0x84ddbc, true), [0, 0.18, -0.69], undefined, "taffy-hound-sugarcourt-collar-tag");
+    }
+  };
+
+  const buildCat = (catKind: "praline-cat" | "bramblewhisk-cat") => {
+    const prefix = catKind;
+    const bramble = catKind === "bramblewhisk-cat";
+    const chestMaterial = material(bramble ? 0x9eac75 : 0xe0a15e);
+    const muzzleMaterial = material(bramble ? 0xc8aa73 : 0xeab77c);
+    const stripeMaterial = material(bramble ? 0x344a35 : 0x6a3d32);
+    const noseMaterial = material(bramble ? 0x3c4a38 : 0x5a302a);
+    const innerEarMaterial = material(bramble ? 0xb58b72 : 0xd38b76);
+    const targetFootY = 0.5 - MOB_DEFS[catKind].footOffset;
+    visual.userData.companionPose = "cat";
+
+    add(visual, [0.56, 0.38, 1.0], bodyMaterial, [0, -0.01, 0.12], "body", `${prefix}-lithe-body`);
+    add(visual, [0.5, 0.48, 0.42], chestMaterial, [0, 0.08, -0.33], undefined, `${prefix}-tapered-chest`);
+    add(visual, [0.6, 0.46, 0.44], bodyMaterial, [0, 0.08, 0.45], undefined, `${prefix}-rounded-haunches`);
+    if (bramble) {
+      add(visual, [0.62, 0.11, 0.68], chestMaterial, [0, 0.23, 0.08], undefined, `${prefix}-leaf-saddle`);
+      for (let stripe = 0; stripe < 4; stripe += 1) add(visual, [0.08, 0.28, 0.16], stripeMaterial, [(stripe % 2 ? 1 : -1) * 0.27, 0.08, -0.18 + stripe * 0.23], undefined, `${prefix}-bramble-stripe-${stripe + 1}`).rotation.z = (stripe % 2 ? 1 : -1) * 0.16;
+    } else {
+      for (let swirl = 0; swirl < 3; swirl += 1) add(visual, [0.12, 0.08, 0.3], stripeMaterial, [-0.18 + swirl * 0.18, 0.22, -0.04 + swirl * 0.25], undefined, `${prefix}-cocoa-swirl-${swirl + 1}`).rotation.y = -0.28 + swirl * 0.22;
+    }
+
+    const head = pivotBox([0.5, 0.46, 0.5], accentMaterial, [0, 0.3, -0.58], [0, 0, 0], "head", `${prefix}-head`);
+    add(head, [0.2, 0.18, 0.25], muzzleMaterial, [-0.11, -0.1, -0.35], undefined, `${prefix}-left-muzzle-pad`);
+    add(head, [0.2, 0.18, 0.25], muzzleMaterial, [0.11, -0.1, -0.35], undefined, `${prefix}-right-muzzle-pad`);
+    add(head, [0.26, 0.1, 0.22], muzzleMaterial, [0, -0.22, -0.32], undefined, `${prefix}-chin`);
+    add(head, [0.07, 0.06, 0.045], noseMaterial, [0, -0.04, -0.52], undefined, `${prefix}-nose`);
+    for (const side of [-1, 1] as const) {
+      const sideName = side < 0 ? "left" : "right";
+      add(head, [0.075, 0.075, 0.04], eyeMaterial, [side * 0.15, 0.1, -0.27], undefined, `${prefix}-${sideName}-eye`);
+      add(head, [0.13, 0.045, 0.06], stripeMaterial, [side * 0.15, 0.18, -0.25], undefined, `${prefix}-${sideName}-brow`).rotation.z = side * -0.12;
+      const ear = childPivot(head, `${prefix}-${sideName}-ear-root-pivot`, [side * 0.18, 0.24, -0.02]);
+      ear.userData.side = side;
+      ear.userData.restZ = side * (bramble ? -0.28 : -0.18);
+      ear.rotation.z = Number(ear.userData.restZ);
+      add(ear, [0.19, bramble ? 0.4 : 0.34, 0.17], bodyMaterial, [side * 0.02, 0.15, 0], undefined, `${prefix}-${sideName}-pointed-ear`);
+      add(ear, [0.09, bramble ? 0.25 : 0.21, 0.07], innerEarMaterial, [side * 0.02, 0.14, -0.1], undefined, `${prefix}-${sideName}-inner-ear`);
+      if (bramble) add(ear, [0.08, 0.16, 0.08], chestMaterial, [side * 0.04, 0.38, 0], undefined, `${prefix}-${sideName}-ear-tuft`).rotation.z = side * -0.2;
+      for (let whisker = 0; whisker < 3; whisker += 1) {
+        const strand = add(head, [0.38, 0.022, 0.022], bramble ? chestMaterial : stripeMaterial, [side * 0.28, -0.08 + whisker * 0.065, -0.4], undefined, `${prefix}-${sideName}-whisker-${whisker + 1}`);
+        strand.rotation.z = side * (-0.12 + whisker * 0.12);
+      }
+    }
+
+    companionLegs(prefix, bramble ? 0.2 : 0.19, -0.24, 0.31, 0.04, targetFootY, bodyMaterial, stripeMaterial, bramble ? chestMaterial : stripeMaterial, [0.18, 0.11, 0.25], bramble ? chestMaterial : undefined);
+
+    const tailRoot = pivotBox([0.14, 0.14, 0.55], stripeMaterial, [0, 0.15, 0.57], [0, 0.04, 0.25], "body", `${prefix}-tail-root`);
+    tailRoot.rotation.x = bramble ? 0.36 : 0.48;
+    const tailMid = childPivot(tailRoot, `${prefix}-tail-mid-pivot`, [0, 0.06, 0.5]);
+    add(tailMid, [0.15, 0.15, 0.5], bramble ? bodyMaterial : stripeMaterial, [0, 0.08, 0.22], undefined, `${prefix}-tail-mid`).rotation.x = 0.25;
+    const tailTip = childPivot(tailMid, `${prefix}-tail-tip-pivot`, [0, 0.14, 0.43]);
+    add(tailTip, [bramble ? 0.21 : 0.16, bramble ? 0.24 : 0.38, 0.2], bramble ? chestMaterial : stripeMaterial, [0, 0.16, 0.05], undefined, `${prefix}-${bramble ? "leafy" : "licorice"}-tail-tip`).rotation.z = bramble ? -0.18 : -0.3;
+
+    if (!bramble) {
+      const bell = new THREE.Group();
+      bell.name = "praline-cat-faction-bell";
+      bell.visible = false;
+      visual.add(bell);
+      add(bell, [0.54, 0.1, 0.38], material(0xf1c85c), [0, 0.23, -0.39], undefined, "praline-cat-sugarcourt-collar");
+      add(bell, [0.13, 0.16, 0.12], material(0x7ed9b7, true), [0, 0.09, -0.59], undefined, "praline-cat-sugarcourt-bell");
+    }
+  };
+
+  const buildCrab = (crabKind: "sunwash-crab" | "tideglass-crab") => {
+    const prefix = crabKind;
+    const tideglass = crabKind === "tideglass-crab";
+    const shellLight = material(tideglass ? 0x78ddd1 : 0xf4c87a);
+    const shellDark = material(tideglass ? 0x24596e : 0xb85f49);
+    const jointMaterial = material(tideglass ? 0x173e52 : 0x7c4038);
+    const glowMaterial = material(tideglass ? 0xc8fff2 : 0xffdf9e, tideglass);
+    const targetFootY = tideglass ? -0.29 : 0.5 - MOB_DEFS[crabKind].footOffset;
+    visual.userData.crabRig = true;
+
+    add(visual, [0.9, 0.25, 0.68], bodyMaterial, [0, -0.02, 0.03], "body", `${prefix}-carapace`);
+    add(visual, [0.72, 0.13, 0.56], shellLight, [0, 0.16, 0.02], undefined, `${prefix}-${tideglass ? "tideglass-window" : "sunburst-crown"}`);
+    add(visual, [0.54, 0.08, 0.43], shellDark, [0, 0.25, 0.04], undefined, `${prefix}-shell-keystone`);
+    add(visual, [0.44, 0.1, 0.34], glowMaterial, [0, -0.18, -0.12], undefined, `${prefix}-${tideglass ? "luminous" : "pale"}-apron`);
+    for (const side of [-1, 1] as const) {
+      const sideName = side < 0 ? "left" : "right";
+      const stalk = childPivot(visual, `${prefix}-${sideName}-eye-stalk-pivot`, [side * 0.2, 0.19, -0.28]);
+      stalk.userData.side = side;
+      add(stalk, [0.07, 0.2, 0.07], shellDark, [0, 0.08, 0], undefined, `${prefix}-${sideName}-eye-stalk`);
+      add(stalk, [0.11, 0.11, 0.1], eyeMaterial, [0, 0.2, -0.02], undefined, `${prefix}-${sideName}-eye`);
+
+      const clawScale = tideglass && side > 0 ? 1.28 : tideglass ? 0.88 : 1;
+      const clawArm = pivotBox([0.46 * clawScale, 0.1, 0.12], jointMaterial, [side * 0.42, 0.02, -0.22], [side * 0.22 * clawScale, 0, -0.03], "arms", `${prefix}-${sideName}-claw-arm`);
+      clawArm.userData.side = side;
+      clawArm.userData.restZ = side * -0.12;
+      clawArm.rotation.z = Number(clawArm.userData.restZ);
+      add(clawArm, [0.32 * clawScale, 0.23 * clawScale, 0.3], shellLight, [side * 0.48 * clawScale, 0.06, -0.08], undefined, `${prefix}-${sideName}-claw-palm`);
+      for (const jaw of [-1, 1]) add(clawArm, [0.1 * clawScale, 0.12, 0.3], jaw > 0 ? shellLight : shellDark, [side * (0.62 * clawScale), jaw * 0.12, -0.2], undefined, `${prefix}-${sideName}-pincer-${jaw > 0 ? "upper" : "lower"}`).rotation.z = side * jaw * 0.18;
+
+      const legCount = 4;
+      for (let legIndex = 0; legIndex < legCount; legIndex += 1) {
+        const leg = pivotBox([0.42, 0.07, 0.09], jointMaterial, [side * 0.31, -0.1, -0.05 + legIndex * 0.17], [side * 0.2, -0.03, 0], "legs", `${prefix}-${sideName}-leg-${legIndex + 1}`);
+        leg.userData.side = side;
+        leg.userData.phase = legIndex % 2 ? Math.PI : 0;
+        add(leg, [0.08, 0.16, 0.09], shellDark, [side * 0.41, -0.12, 0], undefined, `${prefix}-${sideName}-leg-${legIndex + 1}-joint`);
+        add(leg, [tideglass && legIndex >= 2 ? 0.3 : 0.22, 0.055, tideglass && legIndex >= 2 ? 0.18 : 0.11], tideglass && legIndex >= 2 ? shellLight : jointMaterial, [side * 0.5, targetFootY + 0.0275 + 0.1, 0], undefined, `${prefix}-${sideName}-${tideglass && legIndex >= 2 ? "swim-paddle" : "foot"}-${legIndex + 1}`);
+      }
+    }
+    if (tideglass) {
+      for (let node = 0; node < 3; node += 1) add(visual, [0.11, 0.08, 0.11], glowMaterial, [-0.2 + node * 0.2, 0.29, -0.05 + (node % 2) * 0.16], undefined, `${prefix}-glow-node-${node + 1}`).rotation.y = Math.PI / 4;
+    } else {
+      for (let ray = 0; ray < 5; ray += 1) add(visual, [0.07, 0.05, 0.28], ray % 2 ? shellLight : glowMaterial, [0, 0.28, -0.13 + ray * 0.08], undefined, `${prefix}-sun-ray-${ray + 1}`).rotation.y = -0.65 + ray * 0.32;
+    }
+  };
+
   const buildDragon = (dragonKind: DragonKind) => {
     const dragonType = dragonKind.replace("-dragon", "") as "fire" | "ice" | "steel" | "sea";
     const prefix = dragonKind;
@@ -2134,58 +2339,10 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       const petal = add(tail, [0.25, 0.055, 0.34], material(index % 2 ? 0xffd2df : 0xf08fb4), [(side as number) * 0.17, 0.2 + index * 0.035, 0.35 + index * 0.16], undefined, `sakurakit-tail-petal-${index + 1}`);
       petal.rotation.z = (side as number) * 0.35;
     }
-  } else if (kind === "taffy-hound") {
-    add(visual, [0.76, 0.5, 1.08], bodyMaterial, [0, 0.02, 0.12], "body", "taffy-hound-body");
-    add(visual, [0.66, 0.58, 0.6], accentMaterial, [0, 0.28, -0.58], "head", "taffy-hound-head");
-    add(visual, [0.42, 0.26, 0.36], material(0xf4d49a), [0, 0.14, -0.99], undefined, "taffy-hound-gumdrop-muzzle");
-    eyePair(0.19, 0.36, -0.88, 0.075, "taffy-hound");
-    add(visual, [0.09, 0.07, 0.055], darkMaterial, [0, 0.19, -1.19], undefined, "taffy-hound-licorice-nose");
-    for (const side of [-1, 1]) {
-      const sideName = side < 0 ? "left" : "right";
-      const ear = add(visual, [0.25, 0.43, 0.2], bodyMaterial, [side * 0.25, 0.65, -0.55], undefined, `taffy-hound-${sideName}-hard-candy-ear`);
-      ear.rotation.z = side * -0.3;
-      add(visual, [0.12, 0.28, 0.08], material(0xffb7ce), [side * 0.25, 0.65, -0.65], undefined, `taffy-hound-${sideName}-inner-ear`).rotation.z = side * -0.3;
-    }
-    quadrupedLegs(0.25, -0.26, 0.34, -0.02, 0.39, 0.16, darkMaterial, "taffy-hound");
-    const tail = pivotBox([0.18, 0.18, 0.62], darkMaterial, [0, 0.18, 0.58], [0, 0.1, 0.28], "body", "taffy-hound-licorice-tail");
-    tail.rotation.x = 0.42;
-    add(tail, [0.18, 0.48, 0.18], darkMaterial, [0, 0.33, 0.53], undefined, "taffy-hound-licorice-tail-curl").rotation.z = 0.52;
-    const collar = new THREE.Group();
-    collar.name = "taffy-hound-faction-collar";
-    collar.visible = false;
-    visual.add(collar);
-    add(collar, [0.72, 0.13, 0.48], material(0xf5d667), [0, 0.27, -0.37], undefined, "taffy-hound-sugarcourt-collar-band");
-    add(collar, [0.18, 0.22, 0.08], material(0x84ddbc, true), [0, 0.13, -0.65], undefined, "taffy-hound-sugarcourt-collar-tag");
-  } else if (kind === "praline-cat") {
-    add(visual, [0.58, 0.38, 0.94], bodyMaterial, [0, -0.04, 0.12], "body", "praline-cat-body");
-    add(visual, [0.5, 0.48, 0.48], accentMaterial, [0, 0.22, -0.49], "head", "praline-cat-head");
-    add(visual, [0.3, 0.16, 0.22], material(0xeab77c), [0, 0.11, -0.82], undefined, "praline-cat-muzzle");
-    eyePair(0.15, 0.3, -0.75, 0.07, "praline-cat");
-    add(visual, [0.065, 0.055, 0.04], darkMaterial, [0, 0.16, -0.95], undefined, "praline-cat-nose");
-    for (const side of [-1, 1]) {
-      const sideName = side < 0 ? "left" : "right";
-      const ear = add(visual, [0.2, 0.42, 0.17], bodyMaterial, [side * 0.19, 0.58, -0.48], undefined, `praline-cat-${sideName}-ear`);
-      ear.rotation.z = side * -0.22;
-      for (let whisker = 0; whisker < 2; whisker += 1) {
-        const strand = add(visual, [0.34, 0.025, 0.025], darkMaterial, [side * 0.28, 0.14 + whisker * 0.07, -0.86], undefined, `praline-cat-${sideName}-whisker-${whisker + 1}`);
-        strand.rotation.z = side * (whisker ? 0.12 : -0.08);
-      }
-    }
-    quadrupedLegs(0.19, -0.22, 0.29, -0.06, 0.32, 0.12, darkMaterial, "praline-cat");
-    const tail = new THREE.Group();
-    tail.name = "praline-cat-licorice-tail-pivot";
-    tail.position.set(0, 0.08, 0.53);
-    tail.userData.bodyPart = "body";
-    parts.body.push(tail);
-    visual.add(tail);
-    add(tail, [0.14, 0.14, 0.52], darkMaterial, [0, 0.08, 0.23], undefined, "praline-cat-tail-base").rotation.x = 0.32;
-    add(tail, [0.14, 0.5, 0.14], darkMaterial, [0, 0.38, 0.47], undefined, "praline-cat-tail-tip").rotation.z = -0.28;
-    const bell = new THREE.Group();
-    bell.name = "praline-cat-faction-bell";
-    bell.visible = false;
-    visual.add(bell);
-    add(bell, [0.54, 0.1, 0.4], material(0xf1c85c), [0, 0.18, -0.3], undefined, "praline-cat-sugarcourt-collar");
-    add(bell, [0.13, 0.16, 0.12], material(0x7ed9b7, true), [0, 0.07, -0.54], undefined, "praline-cat-sugarcourt-bell");
+  } else if (kind === "taffy-hound" || kind === "rimecoat-hound") {
+    buildHound(kind);
+  } else if (kind === "praline-cat" || kind === "bramblewhisk-cat") {
+    buildCat(kind);
   } else if (kind === "sprinklebug") {
     add(visual, [0.38, 0.24, 0.5], bodyMaterial, [0, -0.08, 0.05], "body", "sprinklebug-body");
     add(visual, [0.34, 0.2, 0.34], accentMaterial, [0, -0.07, -0.32], "head", "sprinklebug-head");
@@ -2231,23 +2388,8 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     add(saddle, [0.92, 0.2, 0.86], material(0x70483d), [0, 0.83, 0.08], undefined, "taffalo-saddle-seat");
     add(saddle, [1.23, 0.12, 0.2], material(0xd3ad62), [0, 0.71, 0.06], undefined, "taffalo-saddle-girth");
     visual.userData.saddleAnchor = [0, 0.83, 0.08];
-  } else if (kind === "sunwash-crab") {
-    add(visual, [0.82, 0.28, 0.64], bodyMaterial, [0, -0.03, 0.02], "body", "sunwash-crab-shell");
-    add(visual, [0.62, 0.12, 0.5], accentMaterial, [0, 0.15, 0.03], undefined, "sunwash-crab-sunburst-crown");
-    eyePair(0.2, 0.2, -0.3, 0.075, "sunwash-crab");
-    for (const side of [-1, 1]) {
-      const sideName = side < 0 ? "left" : "right";
-      const clawArm = pivotBox([0.48, 0.09, 0.11], darkMaterial, [side * 0.4, 0.02, -0.19], [side * 0.22, 0, -0.05], "arms", `sunwash-crab-${sideName}-claw-arm`);
-      clawArm.rotation.z = side * -0.14;
-      clawArm.userData.side = side;
-      add(clawArm, [0.31, 0.22, 0.3], accentMaterial, [side * 0.48, 0.08, -0.09], undefined, `sunwash-crab-${sideName}-claw`);
-      for (let leg = 0; leg < 3; leg += 1) {
-        const limb = pivotBox([0.46, 0.07, 0.09], darkMaterial, [side * 0.31, -0.12, -0.05 + leg * 0.2], [side * 0.23, -0.08, 0.02], "legs", `sunwash-crab-${sideName}-leg-${leg + 1}`);
-        limb.rotation.z = side * -0.38;
-        limb.userData.phase = leg % 2 ? Math.PI : 0;
-      }
-    }
-    add(visual, [0.36, 0.08, 0.32], material(0xffdf9e), [0, -0.16, -0.14], undefined, "sunwash-crab-pale-apron");
+  } else if (kind === "sunwash-crab" || kind === "tideglass-crab") {
+    buildCrab(kind);
   } else if (kind === "emberjay" || kind === "canopy-lark" || kind === "tidewing-gull" || kind === "frostquill") {
     buildBird(kind);
   } else if (kind === "warg") {
@@ -2708,6 +2850,49 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
   return { group, visual, parts };
 }
 
+export type CompanionPoseKind = "taffy-hound" | "rimecoat-hound" | "praline-cat" | "bramblewhisk-cat";
+
+/** Adds readable head, ear and segmented-tail motion without replacing the shared gait rig. */
+export function applyCompanionPose(
+  visual: THREE.Object3D,
+  kind: CoreMobKind,
+  timeSeconds: number,
+  travelAmount = 0,
+  alertAmount = 0,
+) {
+  if (!["taffy-hound", "rimecoat-hound", "praline-cat", "bramblewhisk-cat"].includes(kind)) return false;
+  const companionKind = kind as CompanionPoseKind;
+  const time = Number.isFinite(timeSeconds) ? timeSeconds : 0;
+  const travel = THREE.MathUtils.clamp(Number.isFinite(travelAmount) ? travelAmount : 0, 0, 1);
+  const alert = THREE.MathUtils.clamp(Number.isFinite(alertAmount) ? alertAmount : 0, 0, 1);
+  const hound = companionKind.endsWith("hound");
+  const head = visual.getObjectByName(`${companionKind}-head-pivot`);
+  if (head) {
+    head.rotation.y = Math.sin(time * (hound ? 1.7 : 1.25)) * (0.045 + alert * 0.06);
+    head.rotation.x = Math.sin(time * 2.1) * 0.025 - alert * 0.055;
+  }
+  for (const sideName of ["left", "right"] as const) {
+    const ear = visual.getObjectByName(`${companionKind}-${sideName}-ear-root-pivot`);
+    if (!ear) continue;
+    const side = sideName === "left" ? -1 : 1;
+    const restZ = Number(ear.userData.restZ) || 0;
+    ear.rotation.z = restZ + side * Math.sin(time * (hound ? 3.1 : 2.4) + side) * (0.025 + alert * 0.045);
+    ear.rotation.x = alert * (hound ? -0.1 : -0.16);
+  }
+  const tailRoot = visual.getObjectByName(`${companionKind}-tail-root-pivot`);
+  const tailMid = visual.getObjectByName(`${companionKind}-tail-mid-pivot`);
+  const tailTip = visual.getObjectByName(`${companionKind}-tail-tip-pivot`);
+  const wagRate = hound ? 4.2 + travel * 5.2 : 1.35 + travel * 2.1;
+  const wag = Math.sin(time * wagRate) * (hound ? 0.14 + travel * 0.28 + alert * 0.12 : 0.08 + travel * 0.12);
+  if (tailRoot) {
+    tailRoot.rotation.x = (companionKind === "taffy-hound" ? 0.52 : companionKind === "rimecoat-hound" ? 0.35 : companionKind === "praline-cat" ? 0.48 : 0.36) + Math.cos(time * 1.8) * 0.025;
+    tailRoot.rotation.y = wag;
+  }
+  if (tailMid) tailMid.rotation.y = wag * (hound ? 0.72 : 1.4);
+  if (tailTip) tailTip.rotation.y = wag * 1.65 + Math.sin(time * 1.9) * 0.08;
+  return true;
+}
+
 /**
  * Fluid secondary motion shared by runtime mobs, bestiary previews and the
  * inspection tool. `airProgress` is 0 in sea form and 1 in sky-sail form.
@@ -2722,7 +2907,22 @@ export function applyOceanCreaturePose(
   const time = Number.isFinite(timeSeconds) ? timeSeconds : 0;
   const travel = THREE.MathUtils.clamp(Number.isFinite(travelAmount) ? travelAmount : 0, 0, 1);
   const morph = THREE.MathUtils.clamp(Number.isFinite(airProgress) ? airProgress : 0, 0, 1);
-  if (["shoalfin", "coralback", "brookdart", "gloomfin", "silverthread", "reedneedle", "emberribbon", "cavefilament", "redfin-salmon", "blue-mackerel", "glassfin", "lanternjaw", "syrupfin", "glowfin"].includes(kind)) {
+  if (kind === "sunwash-crab" || kind === "tideglass-crab") {
+    for (const sideName of ["left", "right"] as const) {
+      const side = sideName === "left" ? -1 : 1;
+      for (let legIndex = 1; legIndex <= 4; legIndex += 1) {
+        const leg = visual.getObjectByName(`${kind}-${sideName}-leg-${legIndex}-pivot`);
+        if (!leg) continue;
+        const phase = legIndex % 2 ? 0 : Math.PI;
+        leg.rotation.x = Math.sin(time * (3.2 + travel * 4.8) + phase) * (0.08 + travel * 0.24);
+        leg.rotation.z = side * (0.12 + Math.cos(time * 2.7 + phase) * (0.025 + travel * 0.09));
+      }
+      const claw = visual.getObjectByName(`${kind}-${sideName}-claw-arm-pivot`);
+      if (claw) claw.rotation.z = (Number(claw.userData.restZ) || 0) + side * Math.sin(time * 1.8 + side) * (0.035 + travel * 0.06);
+      const stalk = visual.getObjectByName(`${kind}-${sideName}-eye-stalk-pivot`);
+      if (stalk) stalk.rotation.z = side * Math.sin(time * 1.25 + side) * 0.035;
+    }
+  } else if (["shoalfin", "coralback", "brookdart", "gloomfin", "silverthread", "reedneedle", "emberribbon", "cavefilament", "redfin-salmon", "blue-mackerel", "glassfin", "lanternjaw", "syrupfin", "glowfin"].includes(kind)) {
     for (const side of ["left", "right"] as const) {
       const tail = visual.getObjectByName(`${kind}-tail-${side}`);
       if (tail) tail.rotation.y = Math.sin(time * (4.2 + travel * 3) + (side === "left" ? 0 : 0.55)) * (0.15 + travel * 0.16);

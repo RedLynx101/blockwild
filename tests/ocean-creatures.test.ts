@@ -36,7 +36,7 @@ import { FISH_FIN_ATTACHMENT_OVERLAP, LEVIATHAN_VISUAL_CONTRACTS } from "../app/
 import { BiomeId } from "../app/game/world.ts";
 
 const SEA_UPDATE_KINDS = [
-  "sunwash-crab", "tidewing-gull", "glassfin", "lanternjaw", "abyss-skater", "dreadcoil", "tidepup",
+  "sunwash-crab", "tideglass-crab", "tidewing-gull", "glassfin", "lanternjaw", "abyss-skater", "dreadcoil", "tidepup",
   "sakurakit", "worldshell-leviathan", "aetherbell-larva", "aetherbell-leviathan",
 ] as const;
 
@@ -48,7 +48,7 @@ test("the ocean update exposes a distinct production roster and six Atlantian ro
     assert.ok(MOB_DEFS[kind].discoveryHint);
   }
   assert.deepEqual(TIDEGLASS_AQUATIC_ORDER, [
-    "glassfin", "lanternjaw", "abyss-skater", "dreadcoil", "tidepup", "worldshell-leviathan", "aetherbell-larva", "aetherbell-leviathan",
+    "tideglass-crab", "glassfin", "lanternjaw", "abyss-skater", "dreadcoil", "tidepup", "worldshell-leviathan", "aetherbell-larva", "aetherbell-leviathan",
   ]);
   assert.equal(ATLANTIAN_ORDER.length, 6);
   for (const kind of ATLANTIAN_ORDER) {
@@ -66,6 +66,7 @@ test("coastal and trench ecology keeps common schools common and leviathans genu
   const deep = fishSpawnTableForHabitat("deep-ocean");
   const trench = fishSpawnTableForHabitat("lumen-trench");
   assert.equal(ocean.some(([kind]) => kind === "tidepup"), true);
+  assert.equal(ocean.some(([kind]) => kind === "tideglass-crab"), true);
   for (const kind of LUMEN_TRENCH_MOB_KINDS) assert.equal(trench.some(([candidate]) => candidate === kind), true);
   const deepWeight = (kind: CoreMobKind) => deep.find(([candidate]) => candidate === kind)?.[1] ?? 0;
   assert.ok(deepWeight("glassfin") > deepWeight("dreadcoil") * 20);

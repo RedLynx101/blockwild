@@ -93,6 +93,7 @@ test("large aquatic creature spawn origins respect the sea floor and reject shal
   assert.ok(bellY >= 9.4 && bellY <= 23.4);
   assert.equal(aquaticSpawnHeight("worldshell-leviathan", 10, 12, 0.5), null);
   assert.equal(aquaticSpawnHeight("worldshell-leviathan", 10, 20, 0.5), 19.2);
+  assert.equal(aquaticSpawnHeight("tideglass-crab", 10, 20, 0.5), 10.65, "Tideglass Crabs should remain on the seafloor");
 });
 
 test("Capture Orbs release aquatic creatures into water instead of grounding them", () => {

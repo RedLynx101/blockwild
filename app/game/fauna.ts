@@ -133,12 +133,13 @@ export type FishHabitat = "ocean" | "deep-ocean" | "lumen-trench" | "river" | "u
 export type WeightedMob = readonly [kind: MobKind, weight: number];
 
 const OCEAN_FISH: readonly WeightedMob[] = Object.freeze([
-  ["shoalfin", 0.27],
-  ["silverthread", 0.22],
-  ["blue-mackerel", 0.2],
-  ["coralback", 0.13],
-  ["emberribbon", 0.08],
-  ["glassfin", 0.06],
+  ["shoalfin", 0.24],
+  ["silverthread", 0.2],
+  ["blue-mackerel", 0.18],
+  ["coralback", 0.12],
+  ["tideglass-crab", 0.1],
+  ["emberribbon", 0.07],
+  ["glassfin", 0.05],
   ["tidepup", 0.04],
 ]);
 const DEEP_OCEAN_FISH: readonly WeightedMob[] = Object.freeze([
@@ -234,7 +235,7 @@ function weightedMob(entries: readonly WeightedMob[], roll: number) {
   return entries.at(-1)?.[0] ?? "mossling";
 }
 
-const SNOW_PASSIVES: readonly WeightedMob[] = Object.freeze([["woolhorn", 0.54], ["frostquill", 0.18], ["canopy-lark", 0.04], ["rimehoof-courser", 0.14], ["thimbledeer", 0.1]]);
+const SNOW_PASSIVES: readonly WeightedMob[] = Object.freeze([["woolhorn", 0.44], ["frostquill", 0.16], ["canopy-lark", 0.03], ["rimehoof-courser", 0.14], ["rimecoat-hound", 0.13], ["thimbledeer", 0.1]]);
 const DESERT_PASSIVES: readonly WeightedMob[] = Object.freeze([["duneclatter", 0.52], ["emberjay", 0.24], ["sunscar-courser", 0.16], ["pebbletortoise", 0.08]]);
 const BEACH_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["sunwash-crab", 0.58], ["tidewing-gull", 0.3], ["pebbletortoise", 0.08], ["reed-dragonfly", 0.04],
@@ -246,7 +247,7 @@ const SILTFEN_PASSIVES: readonly WeightedMob[] = Object.freeze([
 ]);
 const FOREST_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["brambleboar", 0.18], ["mossling", 0.16], ["canopy-lark", 0.13], ["thimbledeer", 0.15],
-  ["petalfox", 0.12], ["wild-horse", 0.06], ["meadow-cow", 0.03], ["dewback-tapir", 0.09], ["burrowbell", 0.05], ["sakurakit", 0.03],
+  ["petalfox", 0.12], ["wild-horse", 0.06], ["bramblewhisk-cat", 0.08], ["meadow-cow", 0.02], ["dewback-tapir", 0.05], ["burrowbell", 0.03], ["sakurakit", 0.02],
 ]);
 const MUSHROOM_PASSIVES: readonly WeightedMob[] = Object.freeze([["lanternshell", 0.38], ["glowmoth", 0.24], ["puddlehopper", 0.22], ["petalfox", 0.16]]);
 const MEADOW_PASSIVES: readonly WeightedMob[] = Object.freeze([
@@ -267,8 +268,8 @@ const UPLAND_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["thimbledeer", 0.12], ["puddlehopper", 0.04], ["reedstrider", 0.04], ["ridgeback", 0.08], ["burrowbell", 0.14],
 ]);
 const RAINVEIL_PASSIVES: readonly WeightedMob[] = Object.freeze([
-  ["dewback-tapir", 0.2], ["brambleboar", 0.18], ["canopy-lark", 0.16], ["mossling", 0.14],
-  ["reed-dragonfly", 0.1], ["petalfox", 0.1], ["puddlehopper", 0.06], ["sakurakit", 0.06],
+  ["dewback-tapir", 0.17], ["brambleboar", 0.15], ["canopy-lark", 0.14], ["mossling", 0.12],
+  ["bramblewhisk-cat", 0.12], ["reed-dragonfly", 0.1], ["petalfox", 0.09], ["puddlehopper", 0.05], ["sakurakit", 0.06],
 ]);
 const SAKURABLOOM_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["sakurakit", 0.38], ["petalfox", 0.18], ["thimbledeer", 0.14], ["canopy-lark", 0.1],
@@ -282,8 +283,8 @@ const GLIMMERWOOD_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["thimbledeer", 0.07], ["canopy-lark", 0.05], ["petalfox", 0.05],
 ]);
 const SNOWCAP_PASSIVES: readonly WeightedMob[] = Object.freeze([
-  ["woolhorn", 0.42], ["copper-mole", 0.18], ["rimehoof-courser", 0.13], ["frostquill", 0.12],
-  ["canopy-lark", 0.02], ["thimbledeer", 0.05], ["pebbletortoise", 0.08],
+  ["woolhorn", 0.36], ["copper-mole", 0.17], ["rimehoof-courser", 0.13], ["frostquill", 0.11],
+  ["rimecoat-hound", 0.1], ["canopy-lark", 0.02], ["thimbledeer", 0.04], ["pebbletortoise", 0.07],
 ]);
 
 /**
@@ -352,6 +353,7 @@ export const NATURAL_GROUP_RANGES: Readonly<Partial<Record<MobKind, readonly [mi
   "blue-mackerel": [6, 11],
   "deepwater-shark": [1, 1],
   "sunwash-crab": [2, 5],
+  "tideglass-crab": [1, 3],
   "tidewing-gull": [2, 6],
   frostquill: [2, 5],
   glassfin: [5, 10],
@@ -365,6 +367,8 @@ export const NATURAL_GROUP_RANGES: Readonly<Partial<Record<MobKind, readonly [mi
   "aetherbell-leviathan": [1, 1],
   "taffy-hound": [1, 3],
   "praline-cat": [1, 3],
+  "rimecoat-hound": [1, 3],
+  "bramblewhisk-cat": [1, 2],
   sprinklebug: [3, 7],
   taffalo: [2, 5],
   syrupfin: [4, 8],
@@ -743,13 +747,21 @@ export function canRideCreature(context: CreatureRideContext) {
 
 export const GENERIC_BOND_MOB_KINDS = Object.freeze([
   "wild-horse", "rimehoof-courser", "sunscar-courser", "mirestride-courser", "starbough-courser", "deepgear-courser-golem",
-  "warg", "tidepup", "sakurakit", "taffy-hound", "praline-cat", "taffalo",
+  "warg", "tidepup", "sakurakit", "taffy-hound", "praline-cat", "rimecoat-hound", "bramblewhisk-cat", "taffalo",
   "glimmerhart", "runeowl", "copper-mole",
+] as const satisfies readonly CoreMobKind[]);
+
+export const COMPANION_BOND_MOB_KINDS = Object.freeze([
+  "tidepup", "sakurakit", "taffy-hound", "praline-cat", "rimecoat-hound", "bramblewhisk-cat",
 ] as const satisfies readonly CoreMobKind[]);
 
 /** One source of truth for the reusable trust/follow/saddle state in the engine and Capture Orbs. */
 export function usesGenericCreatureBond(kind: CoreMobKind): kind is (typeof GENERIC_BOND_MOB_KINDS)[number] {
   return GENERIC_BOND_MOB_KINDS.includes(kind as (typeof GENERIC_BOND_MOB_KINDS)[number]);
+}
+
+export function usesCompanionBond(kind: CoreMobKind): kind is (typeof COMPANION_BOND_MOB_KINDS)[number] {
+  return COMPANION_BOND_MOB_KINDS.includes(kind as (typeof COMPANION_BOND_MOB_KINDS)[number]);
 }
 
 export const SUGARPLUM_MOB_KINDS = Object.freeze([

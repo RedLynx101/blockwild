@@ -41,7 +41,7 @@ import {
 } from "./world";
 import { BUTTERFLY_ORDER, MOB_DEFS, MOB_ORDER, type BirdKind, type ButterflyKind, type CoreMobKind, type MobDefinition, type MobKind } from "./mobs";
 import { createHeldToolSpec } from "./model-specs";
-import { applyDragonPose, applyOceanCreaturePose, createMobVisual, createSentientLodVisual } from "./mob-models";
+import { applyCompanionPose, applyDragonPose, applyOceanCreaturePose, createMobVisual, createSentientLodVisual } from "./mob-models";
 import {
   DRAGON_RIDER_CONTROLS,
   attachDragonChest,
@@ -154,6 +154,7 @@ import {
   stepLeviathanGrowth,
   updateBirdBehavior,
   updateStableSteering,
+  usesCompanionBond,
   usesGenericCreatureBond,
   type BirdBehaviorState,
   type AetherbellMorphState,
@@ -637,6 +638,11 @@ const CREATURE_SAMPLE_BY_ASSET = {
   "canopy-lark-call": "canopyLarkCall",
   "tidewing-gull-call-a": "tidewingGullCallA",
   "tidewing-gull-call-b": "tidewingGullCallB",
+  "cat-call-a": "catCallA",
+  "cat-call-b": "catCallB",
+  "hound-call-a": "houndCallA",
+  "hound-call-b": "houndCallB",
+  "crab-chitter": "crabChitter",
 } as const satisfies Readonly<Record<string, SampleKind>>;
 
 export type GameSettings = {
@@ -1656,6 +1662,7 @@ export function aquaticSpawnHeight(kind: MobKind, floorY: number, waterSurfaceY:
   const depth = Math.max(0, waterSurfaceY - floorY - 1);
   const unit = clamp(Number.isFinite(roll) ? roll : 0.5, 0, 1);
   if (kind === "abyss-skater") return floorY + 0.7;
+  if (kind === "tideglass-crab") return floorY + 0.65;
   if (kind === "worldshell-leviathan") return depth >= 3 ? waterSurfaceY - 0.8 : null;
   if (kind === "aetherbell-leviathan") {
     // The adult's trailing ribbons extend a little over five blocks below its
@@ -8212,7 +8219,7 @@ export class VoxelEngine {
         return;
       }
     }
-    if (this.targetMob && (["tidepup", "sakurakit", "taffy-hound", "praline-cat"] as MobKind[]).includes(this.targetMob.kind)) {
+    if (this.targetMob && usesCompanionBond(this.targetMob.kind as CoreMobKind)) {
       const companion = this.targetMob;
       const ownerId = this.localPlayerId();
       companion.courserBond ??= createReedstriderBond();
@@ -12179,6 +12186,7 @@ export class VoxelEngine {
       mob.visual.position.y = mob.visualBaseY + (1 - scaleY) * (mob.visualMinY - mob.visualBaseY);
     } else this.applyMobScale(mob, baseScale * hurtPulse);
     applyOceanCreaturePose(mob.visual, mob.kind as CoreMobKind, mob.age, Math.min(1, moved * 4), mob.aetherbellMorph?.airProgress ?? 0);
+    applyCompanionPose(mob.visual, mob.kind as CoreMobKind, mob.age, Math.min(1, moved * 4), mob.state === "chase" || mob.state === "flee" ? 1 : 0);
   }
 
   updateBeeMob(mob: MobEntity, dt: number, distance: number, dx: number, dz: number) {
@@ -12344,7 +12352,12 @@ export class VoxelEngine {
     mob.angle = mob.steering.heading;
     const nx = mob.group.position.x + Math.cos(mob.angle) * speed * dt;
     const nz = mob.group.position.z + Math.sin(mob.angle) * speed * dt;
-    const verticalWave = Math.sin(mob.age * 0.9 + mob.id) * 0.18;
+    const seafloorCrawler = mob.kind === "tideglass-crab";
+    if (seafloorCrawler) {
+      const floorY = this.world.surfaceAt(Math.round(nx), Math.round(nz));
+      mob.baseY += (floorY + 0.65 - mob.baseY) * Math.min(1, dt * 6);
+    }
+    const verticalWave = Math.sin(mob.age * 0.9 + mob.id) * (seafloorCrawler ? 0.025 : 0.18);
     const ny = mob.baseY + verticalWave;
     const nextLiquid = this.world.getBlock(Math.floor(nx + 0.5), Math.floor(ny + 0.5), Math.floor(nz + 0.5));
     const water = mob.kind === "syrupfin" ? nextLiquid === BlockId.Syrup : blockContainsWater(nextLiquid);
@@ -12352,7 +12365,7 @@ export class VoxelEngine {
       const before = mob.group.position.clone();
       mob.group.position.set(nx, ny, nz);
       mob.group.rotation.y = -mob.angle - Math.PI / 2;
-      mob.visual.rotation.z = Math.sin(mob.age * 6 + mob.id) * 0.055;
+      mob.visual.rotation.z = seafloorCrawler ? 0 : Math.sin(mob.age * 6 + mob.id) * 0.055;
       this.animateMob(mob, before.distanceTo(mob.group.position));
     } else {
       mob.desiredAngle += Math.PI * (0.7 + (mob.id % 7) * 0.04);

@@ -11,6 +11,7 @@ Named releases summarize player-visible changes and the compatibility work that 
 - Added two shared natural horse calls across the Wild Horse, all living Courser ecotypes and the Mistmane, with a separate metallic steam-whinny used only by the Deepgear Courser.
 - Brought Steel and Sea Dragons up to the newer Fire and Ice art standard with pressure-engine armor, rivets and wing gears for Steel, plus tideglass scales, gills, whiskers, finlets and ray-sail ribs for Sea.
 - Rebuilt Emberjays, Canopy Larks and Tidewing Gulls as distinct layered bird rigs, added snow-dwelling Frostquill coveys, and routed five lossless species and shared bird calls through ambient, hurt, feeding and breeding events.
+- Rebuilt Sunwash Crabs, Taffy Hounds and Praline Cats with articulated layered rigs; added seafloor Tideglass Crabs, snow-ranging Rimecoat Hounds and forest Bramblewhisk Cats; and routed five supplied cat, hound and crab calls through their family events.
 
 ## 1.1.0 - Shared Wilds - 2026-07-11
 
