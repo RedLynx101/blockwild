@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { SynthAudio, type SampleKind } from "./audio";
+import { SynthAudio } from "./audio";
 import {
   goldForIngots,
   ingotsAvailableFromWallet,
@@ -166,7 +166,9 @@ import {
   aquaticSpawnBandForMob,
   fishKindForHabitat,
   foodLureResponseForMob,
+  naturalActivityAllowsSpawn,
   naturalGroupSizeForMob,
+  naturalMicrohabitatAffinity,
   passiveMobKindForBiome,
   shouldKeepCreatureLoaded,
   saddleLeviathan,
@@ -219,7 +221,7 @@ import {
   shadecrawlerScale,
   type ShadecrawlerState,
 } from "./shadecrawler";
-import { CREATURE_SOUND_EVENTS, creatureSoundCue, type CreatureSoundEvent } from "./creature-sounds";
+import { CREATURE_SAMPLE_BY_ASSET, CREATURE_SOUND_EVENTS, creatureSoundCue, type CreatureSoundEvent } from "./creature-sounds";
 import {
   breedPeelops,
   commandPeelop,
@@ -692,28 +694,6 @@ const NEUTRAL_CREATURE_ORB_KINDS = {
   "copper-scout-golem-orb": "copper-scout-golem",
   "deepgear-courser-golem-orb": "deepgear-courser-golem",
 } as const satisfies Readonly<Record<string, MobKind>>;
-const CREATURE_SAMPLE_BY_ASSET = {
-  "ridgeback-warm-huff": "ridgebackWarmHuff",
-  "shadecrawler-stone-chitter": "shadecrawlerStoneChitter",
-  "horse-whinny-a": "horseWhinnyA",
-  "horse-whinny-b": "horseWhinnyB",
-  "deepgear-courser-whinny": "deepgearCourserWhinny",
-  "emberjay-squawk": "emberjaySquawk",
-  "bird-chirp": "birdChirp",
-  "canopy-lark-call": "canopyLarkCall",
-  "tidewing-gull-call-a": "tidewingGullCallA",
-  "tidewing-gull-call-b": "tidewingGullCallB",
-  "cat-call-a": "catCallA",
-  "cat-call-b": "catCallB",
-  "hound-call-a": "houndCallA",
-  "hound-call-b": "houndCallB",
-  "crab-chitter": "crabChitter",
-  "puddlehopper-croak": "puddlehopperCroak",
-  "copper-mole-sniff": "copperMoleSniff",
-  "reedstrider-call": "reedstriderCall",
-  "warg-deep-growl": "wargDeepGrowl",
-} as const satisfies Readonly<Record<string, SampleKind>>;
-
 export type GameSettings = {
   volume: number;
   musicVolume: number;
@@ -821,6 +801,7 @@ export type BestiaryProgress = Record<MobKind, {
   tames?: number;
   breeds?: number;
   secretUnlocked?: boolean;
+  milestones?: Record<string, number>;
 }>;
 export type DragonHudState = Readonly<{
   id: number;
@@ -1302,6 +1283,7 @@ export const HUD_VISUAL_REFRESH_MS = 35;
 // Hearthroads trims the already-reduced night pressure by another 40% while
 // keeping encounters meaningful near genuine darkness.
 export const HOSTILE_SPAWN_ATTEMPT_SCALE = 2.5;
+export const PASSIVE_SPAWN_INTERVAL_SECONDS = Object.freeze([1.8, 3.2] as const);
 export const HOSTILE_CAP_SCALE = 0.42;
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
@@ -1450,7 +1432,7 @@ export function shouldBypassOpenableUse(crouching: boolean, heldPlacesBlock: boo
 
 export function mobPopulationCaps(totalCap: number) {
   const total = Math.max(0, Math.floor(totalCap));
-  const passive = Math.ceil(total * 0.55);
+  const passive = Math.ceil(total * 0.68);
   return { total, passive, hostile: total === 0 ? 0 : Math.max(1, Math.floor((total - passive) * HOSTILE_CAP_SCALE)) };
 }
 
@@ -2397,7 +2379,7 @@ export function restoreRendererContext(target: RendererRecoveryTarget) {
 }
 
 function blankBestiary(): BestiaryProgress {
-  return Object.fromEntries(MOB_ORDER.map((kind) => [kind, { seen: false, kills: 0, captures: 0, tames: 0, breeds: 0, secretUnlocked: false }])) as BestiaryProgress;
+  return Object.fromEntries(MOB_ORDER.map((kind) => [kind, { seen: false, kills: 0, captures: 0, tames: 0, breeds: 0, secretUnlocked: false, milestones: {} }])) as BestiaryProgress;
 }
 
 /** Keyboard gameplay shortcuts must never fire while a player is typing in UI. */
@@ -2681,6 +2663,7 @@ export class VoxelEngine {
   nextMobId = 1;
   nextDropId = 1;
   mobSpawnTimer = 2;
+  passiveMobSpawnTimer = 0.8;
   zombieVoiceCooldown = 0;
   combatMusicTimer = 0;
   combatEncounter = -1;
@@ -3464,7 +3447,10 @@ export class VoxelEngine {
     const savedOffhand = normalizeCaptureOrbInventorySlot(save.offhand ?? null);
     this.offhand = savedOffhand && offhandItemKind(savedOffhand.item) ? savedOffhand : null;
     this.bestiary = blankBestiary();
-    for (const kind of MOB_ORDER) this.bestiary[kind] = { ...this.bestiary[kind], ...(save.bestiary?.[kind] ?? {}) };
+    for (const kind of MOB_ORDER) {
+      const savedProgress = save.bestiary?.[kind];
+      this.bestiary[kind] = { ...this.bestiary[kind], ...savedProgress, milestones: { ...(savedProgress?.milestones ?? {}) } };
+    }
     const authorityId = `world:${save.seed}`;
     const playerId = this.localPlayerId();
     this.mapKnowledge = normalizeMapKnowledge(save.mapKnowledge, authorityId, playerId);
@@ -8589,6 +8575,13 @@ export class VoxelEngine {
     this.audio.play(sound.fallback);
   }
 
+  recordBestiaryMilestone(kind: MobKind, milestone: string, value = 1) {
+    const progress = this.bestiary[kind];
+    const current = progress.milestones?.[milestone] ?? 0;
+    if (current >= value) return;
+    progress.milestones = { ...(progress.milestones ?? {}), [milestone]: Math.max(0, value) };
+  }
+
   applyDragonState(mob: MobEntity, state: DragonState) {
     const next = normalizeDragonState(state);
     mob.dragonState = next;
@@ -8597,6 +8590,7 @@ export class VoxelEngine {
     mob.damage = dragonAttackPlan(next.type, next.stage, "melee").damage;
     mob.hostile = mob.definition.hostile && !next.tamed && (next.stage > 1 || mob.awarenessTimer > 0);
     mob.name = next.customName || mob.definition.name;
+    if (next.tamed && next.stage >= 3) this.recordBestiaryMilestone(mob.kind, "stage-3");
     this.applyMobScale(mob, next.growthScale);
     const visibleFor = (fragment: string, visible: boolean) => mob.visual.traverse((object) => {
       if (object.name.includes(fragment)) object.visible = visible;
@@ -9219,6 +9213,7 @@ export class VoxelEngine {
           ? { ...hatchling, home: { ...hatchling.home, position: { x: placement.x, y: grounded + MOB_DEFS[kind].footOffset, z: placement.z } } }
           : hatchling;
         const mob = this.spawnMob(kind, new THREE.Vector3(placement.x, grounded + MOB_DEFS[kind].footOffset, placement.z), { dragonState: state, persistentPoiResident: true });
+        this.recordBestiaryMilestone(kind, "hatched");
         this.consumeSelectedUnit();
         this.spawnParticles(mob.group.position.x, mob.group.position.y + 0.5, mob.group.position.z, BlockId.CrystalBlock, 14);
         this.audio.playDragon(hatchling.type, "egg-crack", 1, mob.group.position);
@@ -14421,8 +14416,42 @@ export class VoxelEngine {
     return spawned;
   }
 
-  trySpawnMob() {
-    const cap = Math.floor((this.touchMode ? 13 : 22) * this.worldOptions.mobDensity);
+  naturalSpawnMicrohabitatAffinity(kind: MobKind, x: number, y: number, z: number, biome: BiomeId) {
+    let nearWater = false;
+    let nearFlowers = false;
+    let nearLeaves = false;
+    for (let dx = -4; dx <= 4; dx += 2) for (let dz = -4; dz <= 4; dz += 2) for (let dy = -1; dy <= 4; dy += 1) {
+      const type = this.world.getBlock(x + dx, y + dy, z + dz);
+      if (type === undefined) continue;
+      if (blockContainsWater(type)) nearWater = true;
+      const definition = BLOCKS[type];
+      const name = definition?.name.toLocaleLowerCase() ?? "";
+      if (["cross", "tall-flower", "bush", "fruit"].includes(definition?.shape ?? "")
+        || /flower|bloom|orchid|lotus|sunpetal|skybell/u.test(name)) nearFlowers = true;
+      if (name.includes("leaves")) nearLeaves = true;
+    }
+    return naturalMicrohabitatAffinity(kind, {
+      nearWater,
+      nearFlowers,
+      nearLeaves,
+      snowy: [BiomeId.Frostpine, BiomeId.Snowfield, BiomeId.SnowcapRange].includes(biome),
+      arid: [BiomeId.Desert, BiomeId.Badlands, BiomeId.Volcanic].includes(biome),
+    });
+  }
+
+  pickActivePassiveKind(biome: BiomeId, x: number, y: number, z: number, underground: boolean) {
+    const activity = { timeOfDay: this.worldTime, daylight: this.daylightAmount(), weather: this.weatherState.kind, underground };
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const kind = passiveMobKindForBiome(biome, Math.random());
+      if (!naturalActivityAllowsSpawn(kind, activity)) continue;
+      if (Math.random() > this.naturalSpawnMicrohabitatAffinity(kind, x, y, z, biome)) continue;
+      return kind;
+    }
+    return null;
+  }
+
+  trySpawnMob(intent: "passive" | "hostile" = "passive") {
+    const cap = Math.floor((this.touchMode ? 16 : 28) * this.worldOptions.mobDensity);
     const caps = mobPopulationCaps(cap);
     const population = naturalMobPopulation(this.mobs);
     if (caps.total <= 0 || population.total >= caps.total) return;
@@ -14440,11 +14469,12 @@ export class VoxelEngine {
       y = this.world.findWalkableY(x, z, this.position.y);
       const nearbyWaterY = [Math.round(this.position.y), Math.round(this.position.y) - 1, Math.round(this.position.y) + 1]
         .find((candidateY) => blockContainsWater(this.world.getBlock(x, candidateY, z)));
-      if (nearbyWaterY !== undefined && passiveCount < passiveCap && Math.random() < 0.62) {
+      if (intent === "passive" && nearbyWaterY !== undefined && passiveCount < passiveCap) {
         kind = fishKindForHabitat("underground");
         this.spawnNaturalGroup(kind, new THREE.Vector3(x, nearbyWaterY, z), Math.min(passiveCap - passiveCount, caps.total - population.total), true);
         return;
       }
+      if (intent === "passive") return;
       if (this.worldOptions.difficulty === "peaceful") return;
       const feet = this.world.getBlock(x, y + 1, z);
       const head = this.world.getBlock(x, y + 2, z);
@@ -14455,7 +14485,7 @@ export class VoxelEngine {
     } else {
       y = this.world.surfaceAt(x, z);
       const biome = this.world.biomeAt(x, z);
-      if (biome === BiomeId.SugarplumVale && passiveCount < passiveCap) {
+      if (intent === "passive" && biome === BiomeId.SugarplumVale && passiveCount < passiveCap) {
         const syrupY = [y + 2, y + 1, y, y - 1, y - 2, y - 3]
           .find((candidateY) => this.world.getBlock(x, candidateY, z) === BlockId.Syrup);
         if (syrupY !== undefined) {
@@ -14463,12 +14493,18 @@ export class VoxelEngine {
           return;
         }
       }
-      if ([BiomeId.DeepOcean, BiomeId.Ocean, BiomeId.River, BiomeId.LumenTrench].includes(biome) && passiveCount < passiveCap) {
+      if ([BiomeId.DeepOcean, BiomeId.Ocean, BiomeId.River, BiomeId.LumenTrench].includes(biome)) {
         let waterY = SEA_LEVEL;
         while (waterY > y && !blockContainsWater(this.world.getBlock(x, waterY, z))) waterY -= 1;
         if (blockContainsWater(this.world.getBlock(x, waterY, z))) {
           const habitat = biome === BiomeId.River ? "river" : biome === BiomeId.LumenTrench ? "lumen-trench" : biome === BiomeId.DeepOcean ? "deep-ocean" : "ocean";
-          kind = fishKindForHabitat(habitat);
+          let aquaticKind: MobKind | null = null;
+          for (let attempt = 0; attempt < 8; attempt += 1) {
+            const candidate = fishKindForHabitat(habitat);
+            if (MOB_DEFS[candidate].hostile === (intent === "hostile")) { aquaticKind = candidate; break; }
+          }
+          if (!aquaticKind) return;
+          kind = aquaticKind;
           const aquaticY = aquaticSpawnHeight(kind, y, waterY, Math.random());
           if (aquaticY === null) return;
           const aquaticAvailable = MOB_DEFS[kind].hostile
@@ -14481,17 +14517,18 @@ export class VoxelEngine {
       if (this.world.getBlock(x, y, z) === undefined || y <= SEA_LEVEL) return;
       const daylight = this.daylightAmount();
       const hostile = this.worldOptions.difficulty !== "peaceful" && daylight < 0.2 && this.spawnProtection <= 0;
-      const nocturnalGlowmoth = hostile && passiveCount < passiveCap && [BiomeId.MushroomFen, BiomeId.Bloomwood, BiomeId.Siltfen].includes(biome) && Math.random() < 0.3;
-      const normalWildlifeAtNight = hostile && passiveCount < passiveCap && Math.random() < 0.38;
-      if (nocturnalGlowmoth) kind = "glowmoth";
-      else if (hostile && !normalWildlifeAtNight) {
+      if (intent === "hostile") {
+        if (!hostile) return;
         if (hostileCount >= caps.hostile || this.hostileSpawnSuppressedByTorch(x, y + 1, z) || this.hostileSpawnSuppressedBySettlement(x, z) || this.hostileSpawnVisibleToPlayer(x, y, z)) return;
         const roll = Math.random();
         kind = roll < 0.38 ? "zombie" : roll < 0.63 ? "shadecrawler" : roll < 0.82 ? "rattlekin" : "skeleton";
       }
       else {
         if (passiveCount >= passiveCap) return;
-        kind = passiveMobKindForBiome(biome, Math.random());
+        const nocturnalGlowmoth = daylight < 0.24 && [BiomeId.MushroomFen, BiomeId.Bloomwood, BiomeId.Siltfen].includes(biome) && Math.random() < 0.3;
+        const selected = nocturnalGlowmoth ? "glowmoth" : this.pickActivePassiveKind(biome, x, y, z, false);
+        if (!selected) return;
+        kind = selected;
       }
     }
     const available = MOB_DEFS[kind].hostile ? 1 : Math.min(passiveCap - passiveCount, caps.total - population.total);
@@ -15634,11 +15671,18 @@ export class VoxelEngine {
   }
 
   updateMobs(dt: number) {
+    this.passiveMobSpawnTimer -= dt;
+    if (this.passiveMobSpawnTimer <= 0) {
+      const density = Math.max(0.08, this.worldOptions.mobDensity);
+      const [minimum, maximum] = PASSIVE_SPAWN_INTERVAL_SECONDS;
+      this.passiveMobSpawnTimer = (minimum + Math.random() * (maximum - minimum)) / density;
+      this.trySpawnMob("passive");
+    }
     this.mobSpawnTimer -= dt;
     if (this.mobSpawnTimer <= 0) {
       const density = Math.max(0.08, this.worldOptions.mobDensity);
       this.mobSpawnTimer = ((2.2 + Math.random() * 1.8) * HOSTILE_SPAWN_ATTEMPT_SCALE) / density;
-      this.trySpawnMob();
+      this.trySpawnMob("hostile");
     }
     const ownerId = this.localPlayerId();
     this.refreshSocialMotions(dt);
@@ -16679,6 +16723,7 @@ export class VoxelEngine {
             ? { ...hatchling, home: { ...hatchling.home, position: { x: position.x, y: position.y, z: position.z } } }
             : hatchling;
           this.spawnMob(kind, position, { dragonState: state, persistentPoiResident: true });
+          this.recordBestiaryMilestone(kind, "hatched");
           this.removeDrop(index);
           if (position.distanceToSquared(this.position) < 40 * 40) this.events.onToast(`A tiny ${MOB_DEFS[kind].name} breaks free of its shell.`);
           this.audio.playDragon(hatchling.type, "egg-crack", 1, position);

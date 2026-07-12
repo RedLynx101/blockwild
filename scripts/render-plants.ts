@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { BLOCKS, ITEMS, type BlockId } from "../app/game/data.ts";
+import { BLOCKS, BlockId, ITEMS } from "../app/game/data.ts";
 import type { ModelBox, ModelSpec } from "../app/game/model-specs.ts";
 import { PLANTS, type PlantDefinition } from "../app/game/plants.ts";
 import { renderModelPortrait, type InspectionModelSpec } from "./render-models.ts";
@@ -157,6 +157,48 @@ function wildBoxes(plant: PlantDefinition): ModelBox[] {
     box("cactus-arm-right", "stem", [0.4, 0.86, 0.4], [0.62, 1.72, 0], color),
     box("cactus-bridge-right", "stem", [0.7, 0.38, 0.4], [0.36, 1.46, 0], color),
   ];
+  if (plant.id === "mooncap-mushroom") {
+    const cap = colorForBlock(BlockId.MushroomCap, "#9b5878");
+    const gill = "#e7c8d8";
+    return [
+      box("stem-tall", "stem", [0.3, 1.28, 0.3], [-0.42, 0.64, 0.04], "#d8c9b9"),
+      box("cap-tall", "cap", [1.05, 0.3, 0.9], [-0.42, 1.34, 0.04], cap, [0, 0.08, -0.05], true),
+      box("gill-tall", "gill", [0.72, 0.08, 0.62], [-0.42, 1.17, 0.04], gill, [0, 0.08, -0.05], true),
+      box("stem-mid", "stem", [0.25, 0.86, 0.25], [0.46, 0.43, -0.08], "#d8c9b9"),
+      box("cap-mid", "cap", [0.78, 0.26, 0.68], [0.46, 0.93, -0.08], "#b76c9a", [0, -0.14, 0.06], true),
+      box("stem-small", "stem", [0.2, 0.5, 0.2], [0.08, 0.25, 0.52], "#d8c9b9"),
+      box("cap-small", "cap", [0.58, 0.22, 0.52], [0.08, 0.58, 0.52], "#7d486e", [0.04, 0.12, 0], true),
+      box("moon-spot-left", "cap-mark", [0.16, 0.05, 0.18], [-0.68, 1.51, -0.13], "#f1deef", [0, 0.08, -0.05], true),
+      box("moon-spot-right", "cap-mark", [0.13, 0.05, 0.15], [-0.16, 1.5, 0.18], "#f1deef", [0, 0.08, -0.05], true),
+    ];
+  }
+  if (plant.id === "starfern") {
+    const glow = colorForBlock(BlockId.Starfern, "#5fc2a1");
+    const result: ModelBox[] = [box("fern-heart", "heart", [0.34, 0.3, 0.34], [0, 0.18, 0], "#b9f1c9", [0, 0, 0], true)];
+    const fronds = [
+      [-0.72, 0.37, -0.03, -0.78], [0.72, 0.37, 0.03, 0.78],
+      [-0.52, 0.46, -0.52, -0.56], [0.52, 0.46, 0.52, 0.56],
+      [0, 0.55, -0.72, 0], [0, 0.52, 0.66, 0],
+    ] as const;
+    fronds.forEach(([x, y, z, roll], index) => {
+      result.push(box(`frond-${index + 1}`, "frond", [0.26, 1.12, 0.18], [x, y, z], glow, [z * 0.42, 0, roll], true));
+      result.push(box(`star-tip-${index + 1}`, "star-tip", [0.22, 0.22, 0.2], [x * 1.48, y + 0.18, z * 1.48], "#d9fff0", [0, index * 0.3, roll], true));
+    });
+    return result;
+  }
+  if (plant.id === "dreamcap") {
+    const cap = colorForBlock(BlockId.Dreamcap, "#8268d8");
+    return [
+      box("dream-stem", "stem", [0.34, 1.05, 0.34], [0, 0.525, 0], "#c9bbdb"),
+      box("dream-cap-core", "cap", [1.3, 0.34, 1.05], [0, 1.12, 0], cap, [0, 0.08, 0.02], true),
+      box("dream-cap-crown", "cap", [0.88, 0.32, 0.76], [-0.08, 1.37, 0.02], "#9f88ef", [0, 0.08, -0.04], true),
+      box("dream-gills", "gill", [0.88, 0.08, 0.72], [0, 0.93, 0], "#e1d3f2", [0, 0.08, 0.02], true),
+      box("satellite-stem", "stem", [0.2, 0.54, 0.2], [0.62, 0.27, 0.35], "#c9bbdb"),
+      box("satellite-cap", "cap", [0.58, 0.22, 0.5], [0.62, 0.61, 0.35], "#6d56c2", [0.06, -0.12, 0], true),
+      box("dream-spot-a", "cap-mark", [0.15, 0.06, 0.15], [-0.32, 1.56, -0.2], "#f0eaff", [0, 0.08, -0.04], true),
+      box("dream-spot-b", "cap-mark", [0.12, 0.06, 0.12], [0.28, 1.54, 0.14], "#f0eaff", [0, 0.08, -0.04], true),
+    ];
+  }
   const result: ModelBox[] = [];
   [-0.68, -0.32, 0.05, 0.42, 0.72].forEach((x, index) => {
     const height = 0.65 + hashUnit(plant.id, 90 + index) * 1.15;

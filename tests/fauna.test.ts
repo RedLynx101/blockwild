@@ -8,6 +8,8 @@ import {
   fishKindsForHabitat,
   fishSpawnTableForHabitat,
   naturalGroupSizeForMob,
+  naturalActivityAllowsSpawn,
+  naturalMicrohabitatAffinity,
   passiveMobKindForBiome,
   passiveMobSpawnTableForBiome,
   shouldKeepCreatureLoaded,
@@ -43,6 +45,19 @@ import {
   releaseCreature,
   type CreatureMetadata,
 } from "../app/game/creature-cage.ts";
+
+test("bestiary activity prose now gates natural spawning by time and weather", () => {
+  assert.equal(naturalActivityAllowsSpawn("glowmoth", { timeOfDay: 0.5, daylight: 1, weather: "clear", underground: false }), false);
+  assert.equal(naturalActivityAllowsSpawn("glowmoth", { timeOfDay: 0.75, daylight: 0.15, weather: "clear", underground: false }), true);
+  assert.equal(naturalActivityAllowsSpawn("puddlehopper", { timeOfDay: 0.05, daylight: 0, weather: "rain", underground: false }), true);
+});
+
+test("natural spawns prefer described microhabitats without making them exclusive", () => {
+  const dry = naturalMicrohabitatAffinity("puddlehopper", { nearWater: false, nearFlowers: false, nearLeaves: false, snowy: false, arid: false });
+  const wet = naturalMicrohabitatAffinity("puddlehopper", { nearWater: true, nearFlowers: false, nearLeaves: false, snowy: false, arid: false });
+  assert.equal(wet, 1);
+  assert.ok(dry > 0 && dry < wet);
+});
 import {
   buildExhibitTopology,
   createExhibitInventory,
@@ -698,10 +713,10 @@ test("Shadecrawlers require patient Moonberry feeding, a rare catalyst, growth, 
   assert.match(MOB_DEFS.shadecrawler.postTameNotes ?? "", /three times/i);
 });
 
-test("creature sound events define Ridgeback and companion cues with a generic hit fallback", () => {
+test("creature sound events define Ridgeback and thoughtfully shared wildlife cues", () => {
   assert.equal(CREATURE_SOUND_EVENTS.ridgeback?.hurt?.asset, "ridgeback-stone-bellow");
   assert.equal(CREATURE_SOUND_EVENTS.shadecrawler?.tame?.fallback, "craft");
-  assert.equal(creatureSoundCue("thimbledeer", "hurt").asset, "creature-generic-hurt");
+  assert.equal(creatureSoundCue("thimbledeer", "hurt").asset, "horse-whinny-b");
   assert.equal(creatureSoundCue("thimbledeer", "hurt").fallback, "attack");
   for (const kind of ["wild-horse", "rimehoof-courser", "sunscar-courser", "mirestride-courser", "starbough-courser", "mistmane"] as const) {
     const sound = creatureSoundCue(kind, "ambient");

@@ -4063,7 +4063,14 @@ export function applyOceanCreaturePose(
     });
   } else if (["meadow-cottontail", "russet-rabbit", "frost-hare", "chocolate-bunny"].includes(kind)) {
     const hopWave = Math.max(0, Math.sin(time * 7.4));
-    visual.position.y += hopWave * 0.13 * travel;
+    const priorOutputY = Number(visual.userData.rabbitPoseOutputY);
+    const priorBaseY = Number(visual.userData.rabbitPoseBaseY);
+    const baseY = Number.isFinite(priorOutputY) && Number.isFinite(priorBaseY) && Math.abs(visual.position.y - priorOutputY) < 1e-7
+      ? priorBaseY
+      : visual.position.y;
+    visual.position.y = baseY + hopWave * 0.16 * travel;
+    visual.userData.rabbitPoseBaseY = baseY;
+    visual.userData.rabbitPoseOutputY = visual.position.y;
     visual.rotation.x = -Math.sin(time * 7.4 * 2) * 0.055 * travel;
     const body = visual.getObjectByName(`${kind}-body`);
     const head = visual.getObjectByName(`${kind}-head-pivot`);

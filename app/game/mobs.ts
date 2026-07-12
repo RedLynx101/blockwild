@@ -151,6 +151,18 @@ export type MobDrop = {
   chance: number;
 };
 
+export type BestiaryNoteMetric = "seen" | "kills" | "captures" | "tames" | "breeds";
+export type BestiaryNoteRequirement =
+  | Readonly<{ metric: BestiaryNoteMetric; atLeast: number }>
+  | Readonly<{ milestone: string; atLeast?: number }>;
+export type BestiaryFieldNote = Readonly<{
+  id: string;
+  title: string;
+  text: string;
+  hint: string;
+  requires: readonly BestiaryNoteRequirement[];
+}>;
+
 export type MobDefinition = {
   kind: MobKind;
   name: string;
@@ -192,6 +204,8 @@ export type MobDefinition = {
   secretHint?: string;
   /** A useful biome-level clue shown before the creature has been discovered. */
   discoveryHint?: string;
+  /** Append-only staged field notes; new entries require no save-schema change. */
+  fieldNotes?: readonly BestiaryFieldNote[];
   /** Hearthroads faction and profession metadata for sentient NPCs. */
   faction?: FactionKind;
   role?: SentientRole;
@@ -218,6 +232,17 @@ export type MobDefinition = {
   /** Lifecycle discriminator; detailed stage/sex/equipment state lives in dragons.ts. */
   dragonType?: "fire" | "ice" | "steel" | "sea" | "gold" | "silver";
 };
+
+function dragonFieldNotes(name: string, incubation: string, adultTechnique: string): readonly BestiaryFieldNote[] {
+  return Object.freeze([
+    { id: "observed", title: "First Sighting", text: `${name} anatomy, habitat, and temperament have been recorded at close range.`, hint: "Observe one in the world.", requires: [{ metric: "seen", atLeast: 1 }] },
+    { id: "guardian", title: "Guardian Anatomy", text: `A mature ${name} commits differently to melee, breath, and projectile attacks; surviving a guardian reveals the safest openings.`, hint: "Defeat one mature wild guardian.", requires: [{ metric: "kills", atLeast: 1 }] },
+    { id: "incubation", title: "Egg and Incubation", text: incubation, hint: "Hatch one of its eggs.", requires: [{ milestone: "hatched", atLeast: 1 }] },
+    { id: "bond", title: "Hatchling Bond", text: "Three patient feeds establish a hatchling bond. A bonded young dragon can rest on its keeper's shoulder.", hint: "Successfully tame one.", requires: [{ metric: "tames", atLeast: 1 }] },
+    { id: "adult", title: "Adult Riding and Combat", text: adultTechnique, hint: "Raise a bonded dragon to stage three.", requires: [{ milestone: "stage-3", atLeast: 1 }] },
+    { id: "lineage", title: "Lineage Record", text: "A completed breeding record reveals inherited coloration, sex, growth, and combat traits for this draconic lineage.", hint: "Breed this dragon type successfully.", requires: [{ metric: "breeds", atLeast: 1 }] },
+  ]);
+}
 
 type V1SentientSeed = Readonly<{
   kind: WoodElfKind | DwarfKind;
@@ -582,6 +607,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "A lantern with wings. Some ruins are only found by following their silent midnight spirals.",
     colors: [0x6b5030, 0xf4cc55, 0xfff2a8],
     drops: [{ item: Item.GlowDust, min: 1, max: 2, chance: 0.84 }],
+    discoveryHint: "Watch warm lights and Mooncap flowers after sunset for slow golden spirals.",
   },
   shadecrawler: {
     kind: "shadecrawler", name: "Shadecrawler", temperament: "Hostile", hostile: true,
@@ -608,6 +634,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "Mineral-rich water learned to hop. Cave Blobs remember every boot that has ever stepped in their pools.",
     colors: [0x4ca47e, 0x8ee0b8, 0x15362b],
     drops: [{ item: Item.CaveGel, min: 1, max: 2, chance: 1 }],
+    discoveryHint: "Listen for wet springing sounds beside deep underground pools.",
   },
   rattlekin: {
     kind: "rattlekin", name: "Rattlekin", temperament: "Hostile", hostile: true,
@@ -617,6 +644,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "Not bones, but stone remembering the shape of a traveler. The rhythm of its steps is older than the ruins.",
     colors: [0xd8cfb9, 0x807664, 0x2a2520],
     drops: [{ item: Item.BoneShard, min: 1, max: 2, chance: 1 }, { item: Item.Coal, min: 1, max: 1, chance: 0.2 }],
+    discoveryHint: "Follow rhythmic stone clatter through ruins or open badlands after dark.",
   },
   zombie: {
     kind: "zombie", name: "Zombie", temperament: "Hostile", hostile: true,
@@ -627,6 +655,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     colors: [0x5f8f54, 0x3e7470, 0x263c74],
     drops: [{ item: Item.RottenFlesh, min: 1, max: 2, chance: 0.82 }, { item: Item.SunmetalIngot, min: 1, max: 1, chance: 0.025 }],
     family: "undead",
+    discoveryHint: "Search unlit cave mouths or the night surface for slow dragging footsteps.",
   },
   "sunstep-grazer": {
     kind: "sunstep-grazer", name: "Sunstep Grazer", temperament: "Skittish", hostile: false,
@@ -700,6 +729,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "Caravans follow its evening tracks to firm ground and avoid sinking dunes.",
     colors: [0xc96f32, 0x5f3428, 0xffcf63], drops: [{ item: Item.Flint, min: 1, max: 2, chance: 0.7 }, { item: Item.GlowDust, min: 1, max: 1, chance: 0.16 }],
     family: "surface", movement: "ground", utility: "Its wing-case glint points toward nearby sandstone ruins at sunset.",
+    discoveryHint: "Look for clicking tracks that vanish beneath loose desert sand near cactus flats.",
   },
   thimbledeer: {
     kind: "thimbledeer", name: "Thimbledeer", temperament: "Skittish", hostile: false,
@@ -875,6 +905,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     colors: [0xb9432e, 0xe9a141, 0x261b22], drops: [{ item: Item.Feather, min: 1, max: 2, chance: 1 }],
     family: "bird", movement: "flying", flying: true, utility: "Calls when hostile surface creatures are close.",
     sentient: false, breedable: true, breedingFoods: [Item.Wheat], diet: [Item.Wheat, Item.Berry],
+    discoveryHint: "Listen for a sharp ember-bright alarm call in warm trees and cactus country.",
   },
   "canopy-lark": {
     kind: "canopy-lark", name: "Canopy Lark", temperament: "Skittish", hostile: false,
@@ -885,6 +916,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     colors: [0x4f9b75, 0xd9e7a4, 0x20362c], drops: [{ item: Item.Feather, min: 1, max: 2, chance: 1 }],
     family: "bird", movement: "flying", flying: true, utility: "Frequent perching marks mature trees that are suitable for saplings.",
     sentient: false, breedable: true, breedingFoods: [Item.Berry], diet: [Item.Berry, Item.Wheat],
+    discoveryHint: "Pause beneath a mature woodland canopy at morning and listen for a changing local song.",
   },
   frostquill: {
     kind: "frostquill", name: "Frostquill", temperament: "Skittish", hostile: false,
@@ -904,6 +936,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "Sailors read the direction of its silver flash to find currents near shore.",
     colors: [0x78b7c8, 0xd9f4ed, 0x17364a], drops: [{ item: Item.RawFish, min: 1, max: 1, chance: 1 }],
     family: "fish", movement: "aquatic", aquatic: true, utility: "A common food fish and a living sign of safe coastal water.",
+    discoveryHint: "Watch sunlit kelp shelves for a tight flash of turning silver.",
   },
   coralback: {
     kind: "coralback", name: "Coralback", temperament: "Defensive", hostile: false,
@@ -913,6 +946,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "Tiny reef gardens travel on its back, seeding color wherever it rests.",
     colors: [0x387f83, 0xe47f77, 0xffe1a5], drops: [{ item: Item.RawFish, min: 1, max: 2, chance: 1 }, { item: Item.CrystalShard, min: 1, max: 1, chance: 0.08 }],
     family: "fish", movement: "aquatic", aquatic: true, utility: "Slowly encourages decorative coral-like growth on submerged stone.",
+    discoveryHint: "Inspect warm reef stone for a small coral garden that begins to move.",
   },
   brookdart: {
     kind: "brookdart", name: "Brookdart", temperament: "Skittish", hostile: false,
@@ -922,6 +956,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "Its blue stripe is brightest in clean water, making it a trailkeeper's favorite river gauge.",
     colors: [0x4f78bc, 0xa9d7d2, 0xf3c95f], drops: [{ item: Item.RawFish, min: 1, max: 1, chance: 1 }],
     family: "fish", movement: "aquatic", aquatic: true, utility: "Its presence indicates clean river water.",
+    discoveryHint: "Look upstream from clear river stones during morning rain.",
   },
   gloomfin: {
     kind: "gloomfin", name: "Gloomfin", temperament: "Defensive", hostile: false,
@@ -931,6 +966,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "Miners once carried glass bowls of Gloomfins instead of lanterns. The fish objected.",
     colors: [0x27334f, 0x5bd6ca, 0xc8fff2], drops: [{ item: Item.GlowScale, min: 1, max: 2, chance: 1 }, { item: Item.RawFish, min: 1, max: 1, chance: 0.65 }],
     family: "fish", movement: "aquatic", aquatic: true, utility: "A faint mobile light source for underground pools.",
+    discoveryHint: "Search flooded crystal caves for a cold light hovering close to the wall.",
   },
   silverthread: {
     kind: "silverthread", name: "Silverthread", temperament: "Skittish", hostile: false,
@@ -940,6 +976,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "From shore, a turning shoal looks like a silver stitch holding sea to sky.",
     colors: [0xb9e4e8, 0x638fa7, 0xf7ffff], drops: [{ item: Item.RawFish, min: 1, max: 1, chance: 0.72 }],
     family: "fish", movement: "aquatic", aquatic: true, utility: "A quick, delicate food fish.", captureItem: Item.CaptureOrb,
+    discoveryHint: "Scan bright ocean shallows for a thin silver ribbon folding around rocks.",
   },
   reedneedle: {
     kind: "reedneedle", name: "Reedneedle", temperament: "Skittish", hostile: false,
@@ -949,6 +986,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "Anglers used to mistake its shadow for waving grass until the grass swam upstream.",
     colors: [0x698d55, 0xc2d68a, 0x243e35], drops: [{ item: Item.RawFish, min: 1, max: 1, chance: 0.8 }],
     family: "fish", movement: "aquatic", aquatic: true, utility: "Its shoals reveal the main current in broad rivers.", captureItem: Item.CaptureOrb,
+    discoveryHint: "Watch deep reed channels for grasslike shadows swimming into the current.",
   },
   emberribbon: {
     kind: "emberribbon", name: "Emberribbon", temperament: "Skittish", hostile: false,
@@ -958,6 +996,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "Its heat never boils water, but a handful can keep a traveler's fingers warm.",
     colors: [0xe46c45, 0xffc25e, 0x542a2c], drops: [{ item: Item.RawFish, min: 1, max: 1, chance: 0.84 }, { item: Item.GlowScale, min: 1, max: 1, chance: 0.12 }],
     family: "fish", movement: "aquatic", aquatic: true, utility: "A warm-water food fish with a rare luminous scale.", captureItem: Item.CaptureOrb,
+    discoveryHint: "Search warm reefs and submerged vents for red threads slipping through steam-dark cracks.",
   },
   cavefilament: {
     kind: "cavefilament", name: "Cave Filament", temperament: "Gentle", hostile: false,
@@ -967,6 +1006,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "Cave Filaments make invisible aquifers readable, sketching every current in living light.",
     colors: [0x6ed6c8, 0xd9fff4, 0x263c5a], drops: [{ item: Item.GlowScale, min: 1, max: 1, chance: 0.55 }],
     family: "fish", movement: "aquatic", aquatic: true, utility: "Reveals hidden movement in dark underground pools.", captureItem: Item.CaptureOrb,
+    discoveryHint: "Disturb a dark aquifer gently and watch for pale vertical lines beginning to spiral.",
   },
   honeybee: {
     kind: "honeybee", name: "Wild Honeybee", temperament: "Defensive", hostile: false,
@@ -976,6 +1016,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "Each worker carries a map of flowers written in sunlight and scent.",
     colors: [0xe8ad32, 0x35291f, 0xf2e4bd], drops: [{ item: Item.Beeswax, min: 1, max: 1, chance: 0.16 }],
     family: "pollinator", movement: "flying", flying: true, persistent: true, utility: "Pollinates crops and returns nectar to a queen.", captureItem: Item.WorkerBee,
+    discoveryHint: "Follow a worker traveling between meadow flowers and a hanging Wild Hive.",
   },
   "hive-queen": {
     kind: "hive-queen", name: "Hive Queen", temperament: "Defensive", hostile: false,
@@ -988,6 +1029,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     sentient: false, tameable: true, tameItems: [Item.RoyalJelly], diet: [Item.RoyalJelly], captureItem: Item.CaptureOrb,
     postTameNotes: "A trusted queen directs her workers to defend the keeper who fed her Royal Jelly.",
     secretHint: "A net or Capture Orb only catches a queen once she is below half health.",
+    discoveryHint: "Listen for a low wingbeat within an occupied Wild Hive or stocked Apiary.",
   },
   "reed-dragonfly": {
     kind: "reed-dragonfly", name: "Reed Dragonfly", temperament: "Skittish", hostile: false,
@@ -997,6 +1039,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "Its four glass wings briefly show the color of whatever water lies below.",
     colors: [0x4ab6a0, 0x274958, 0xbdebd9], drops: [],
     family: "pollinator", movement: "flying", flying: true, utility: "A living marker for healthy reeds and insect-rich water.", captureItem: Item.CaptureOrb,
+    discoveryHint: "Watch reed tips beside warm, healthy water for four glass wings holding still.",
   },
   "lightning-bug": {
     kind: "lightning-bug", name: "Lightning Bug", temperament: "Gentle", hostile: false,
@@ -1191,6 +1234,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "Two vanished orders carved the same guardian in different stone. Neither admitted learning from the other.",
     colors: [0x8d7a62, 0x4f7555, 0xffd36c], drops: [{ item: Item.CrystalShard, min: 1, max: 2, chance: 0.62 }, { item: Item.GoldIngot, min: 1, max: 1, chance: 0.22 }],
     family: "construct", movement: "ground", utility: "Temple guardian and source of rare crystal or gold salvage.",
+    discoveryHint: "Open a guarded temple reliquary and watch the carved idol rather than the chest.",
   },
   skeleton: {
     kind: "skeleton", name: "Skeleton Archer", temperament: "Hostile", hostile: true,
@@ -1200,6 +1244,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "A patient hunter held together by old cord and an even older grudge.",
     colors: [0xd9d1bb, 0x6e604c, 0x26211d], drops: [{ item: Item.BoneShard, min: 1, max: 3, chance: 1 }, { item: Item.Stick, min: 1, max: 2, chance: 0.4 }],
     family: "undead", movement: "ground", ranged: true, utility: "Ranged night enemy whose arrows provide readable, avoidable pressure.",
+    discoveryHint: "Look along ruined walls and dark cave ledges for the pale curve of a drawn bow.",
   },
   "hobbit-mayor": {
     kind: "hobbit-mayor", name: "Hobbit Hearthwarden", temperament: "Gentle", hostile: false,
@@ -1362,6 +1407,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "Its red fins brighten on the long route home, sketching living arrows through a river.",
     colors: [0x8397a2, 0xc74f45, 0x172932], drops: [{ item: Item.RawFish, min: 1, max: 2, chance: 1 }],
     family: "fish", movement: "aquatic", aquatic: true, utility: "A sturdy river food fish.", captureItem: Item.CaptureOrb,
+    discoveryHint: "Wait below a clear river fall during rain for red fins pressing upstream.",
   },
   "blue-mackerel": {
     kind: "blue-mackerel", name: "Blue Mackerel", temperament: "Skittish", hostile: false,
@@ -1371,6 +1417,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "A turning school flashes blue like rain seen from below the sea.",
     colors: [0x356c94, 0xc7d6ce, 0x152838], drops: [{ item: Item.RawFish, min: 1, max: 1, chance: 1 }],
     family: "fish", movement: "aquatic", aquatic: true, utility: "A common ocean food fish.", captureItem: Item.CaptureOrb,
+    discoveryHint: "Look below open ocean shelves for striped schools rolling beneath passing shadows.",
   },
   "deepwater-shark": {
     kind: "deepwater-shark", name: "Slatefin Shark", temperament: "Hostile", hostile: true,
@@ -1755,6 +1802,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
       { item: Item.FireDragonHeart, min: 1, max: 1, chance: 0.82 },
     ],
     postTameNotes: "A stage-one hatchling bonds after three patient meat feeds and can ride on a shoulder. Stage three unlocks saddling, flight, armor, and two cargo chests. Z, X, and C direct melee, breath, and firebolt attacks while mounted.",
+    fieldNotes: dragonFieldNotes("Fire Dragon", "Keep the egg beside sustained flame for six uninterrupted minutes, or stabilize it in a Draconic Incubator.", "At stage three it accepts a saddle, armor, and two cargo chests; mounted commands direct melee, fire breath, and firebolts."),
     secretHint: "Fire eggs stir only inside a sustained open flame, unless stabilized in a Draconic Incubator.",
     discoveryHint: "Merchants rarely sell a Fire Lair Survey; otherwise seek scorched cave vents and gold fused into stone.",
   },
@@ -1774,6 +1822,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
       { item: Item.IceDragonHeart, min: 1, max: 1, chance: 0.82 },
     ],
     postTameNotes: "A stage-one hatchling bonds after three patient meat feeds and can ride on a shoulder. Stage three unlocks saddling, flight, armor, and two cargo chests. Z, X, and C direct melee, freezing breath, and ice-shard attacks while mounted.",
+    fieldNotes: dragonFieldNotes("Ice Dragon", "Submerge the egg in source water ringed by ice for six uninterrupted minutes, or use a Draconic Incubator.", "At stage three it accepts a saddle, armor, and two cargo chests; mounted commands direct melee, freezing breath, and ice shards."),
     secretHint: "Ice eggs need freezing water around the shell, unless stabilized in a Draconic Incubator.",
     discoveryHint: "Merchants rarely sell an Ice Lair Survey; otherwise follow unnatural rime into deep Frostpine caves.",
   },
@@ -1793,6 +1842,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
       { item: Item.SteelDragonHeart, min: 1, max: 1, chance: 0.82 },
     ],
     postTameNotes: "A stage-one hatchling bonds after three patient meat feeds and can ride on a shoulder. Stage three unlocks saddling, flight, armor, and two cargo chests. Z, X, and C direct melee, steam breath, and the long-range metal spear while mounted.",
+    fieldNotes: dragonFieldNotes("Steel Dragon", "Cycle pressurized steam across the egg for seven uninterrupted minutes, or use a Draconic Incubator.", "At stage three it accepts a saddle, armor, and two cargo chests; mounted commands direct melee, steam breath, and a long-range metal spear."),
     secretHint: "Steel eggs wake where steam washes over heated metal, unless stabilized in a Draconic Incubator.",
     discoveryHint: "Merchants rarely sell a Steel Lair Survey; otherwise listen for hammerlike wingbeats in ore-rich depths.",
   },
@@ -1812,6 +1862,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
       { item: Item.SeaDragonHeart, min: 1, max: 1, chance: 0.82 },
     ],
     postTameNotes: "Stage-three Sea Dragons accept a saddle. They swim fastest, run at a useful pace, and fly more slowly than Fire, Ice, or Steel dragons.",
+    fieldNotes: dragonFieldNotes("Sea Dragon", "Submerge the egg beside living coral in a moving current for six uninterrupted minutes, or use a Draconic Incubator.", "At stage three it accepts a saddle and becomes a fast swimmer, a capable runner, and a slower but useful flier with tidal attacks."),
     secretHint: "Sea eggs hatch only while fully submerged beside living coral, unless stabilized in a Draconic Incubator.",
     discoveryHint: "Atlantian Pearlbrokers rarely sell charts to the closest undiscovered deep-sea nest.",
   },
@@ -1831,6 +1882,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
       { item: Item.GoldDragonHeart, min: 1, max: 1, chance: 0.74 },
     ],
     postTameNotes: "Stage-three Gold Dragons accept saddles and Solar-Regalia armor. Their mounted solar disc reaches farther than common dragon projectiles, while their luminous wingbeats remain visible through darkness.",
+    fieldNotes: dragonFieldNotes("Gold Dragon", "Rest the egg on gilded stone beneath open daylight for ten uninterrupted minutes, or use a Draconic Incubator.", "At stage three it accepts a saddle and Solar-Regalia armor; its far-reaching solar disc and luminous wingbeats reward open-sky combat."),
     secretHint: "Gold eggs awaken only on gilded stone beneath direct sunlight, unless stabilized in a Draconic Incubator.",
     discoveryHint: "Exceptional cartographers may offer a Gold Lair Survey; otherwise search for daylight-bright seams descending beneath isolated plateaus.",
   },
@@ -1850,6 +1902,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
       { item: Item.SilverDragonHeart, min: 1, max: 1, chance: 0.74 },
     ],
     postTameNotes: "Stage-three Silver Dragons accept saddles and Moonmirror armor. Their crescent attack is the fastest dragon projectile and leaves distant targets slowed beneath a cold afterglow.",
+    fieldNotes: dragonFieldNotes("Silver Dragon", "Rest the egg on argent stone beneath open moonlight for ten uninterrupted minutes, or use a Draconic Incubator.", "At stage three it accepts a saddle and Moonmirror armor; its rapid crescent projectile slows distant targets beneath a cold afterglow."),
     secretHint: "Silver eggs awaken only on argent stone beneath open moonlight, unless stabilized in a Draconic Incubator.",
     discoveryHint: "Exceptional cartographers may offer a Silver Lair Survey; otherwise follow cold, star-shaped reflections into deep Moon Slate caverns.",
   },
@@ -1860,6 +1913,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     behavior: "Drifts between Ember Blooms, lands to drink, and rises when a shadow passes overhead.",
     lore: "The first bright wings of spring. Trailkeepers judge the health of a meadow by how many dance above it.",
     colors: [0xf3d451, 0x4b3b25, 0xfff4a8], drops: [], family: "butterfly", movement: "flying", flying: true, captureItem: Item.MeadowwingJar,
+    discoveryHint: "Search clear daylight above Ember Blooms in flower meadows.",
   },
   "azure-skippers": {
     kind: "azure-skippers", name: "Azure Skipper", temperament: "Skittish", hostile: false,
@@ -1868,6 +1922,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     behavior: "Flies in quick blue dashes, shares flowers reluctantly, and rarely rests for long.",
     lore: "A chip of summer sky that refused to stay put.",
     colors: [0x54bce8, 0x244f78, 0xdaf7ff], drops: [], family: "butterfly", movement: "flying", flying: true, captureItem: Item.AzureSkipperJar,
+    discoveryHint: "Watch morning Skybells for tiny blue dashes that rarely settle.",
   },
   embertip: {
     kind: "embertip", name: "Embertip", temperament: "Gentle", hostile: false,
@@ -1876,6 +1931,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     behavior: "Warms its dark wings on stone before circling red flowers in wide loops.",
     lore: "Its wing tips hold sunset long after noon has passed.",
     colors: [0xed743d, 0x3b2722, 0xffc35a], drops: [], family: "butterfly", movement: "flying", flying: true, captureItem: Item.EmbertipJar,
+    discoveryHint: "Check sun-warmed stone beside savanna flowers and badland oases.",
   },
   frostveil: {
     kind: "frostveil", name: "Frostveil", temperament: "Skittish", hostile: false,
@@ -1884,6 +1940,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     behavior: "Glides more than it flaps and folds into the snow whenever the wind rises.",
     lore: "Often mistaken for a loose snowflake until it chooses a flower.",
     colors: [0xd8f2f5, 0x7896af, 0xffffff], drops: [], family: "butterfly", movement: "flying", flying: true, captureItem: Item.FrostveilJar,
+    discoveryHint: "Wait for a still sunny afternoon beside rare flowers on the Frostpine snow line.",
   },
   "bloom-monarch": {
     kind: "bloom-monarch", name: "Bloom Monarch", temperament: "Gentle", hostile: false,
@@ -1892,6 +1949,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     behavior: "Claims a small court of flowers and returns to the same favorite bloom throughout the day.",
     lore: "Bloomwood children insist every Monarch rules exactly seven flowers.",
     colors: [0xe88fc8, 0x713c70, 0xffd5ee], drops: [], family: "butterfly", movement: "flying", flying: true, captureItem: Item.BloomMonarchJar,
+    discoveryHint: "Inspect the sunlit flower canopy of Bloomwood Vale around noon.",
   },
   "fen-lantern": {
     kind: "fen-lantern", name: "Fen Lantern", temperament: "Gentle", hostile: false,
@@ -1900,6 +1958,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     behavior: "Hovers close to flowers and flashes pale green when another tiny creature approaches.",
     lore: "A daytime cousin of the Glowmoth, carrying a softer and more patient light.",
     colors: [0xb6df62, 0x3e6040, 0xf1ffb5], drops: [], family: "butterfly", movement: "flying", flying: true, captureItem: Item.FenLanternJar,
+    discoveryHint: "Search humid sunny clearings in Siltfen or Mooncap Fen for a soft green flash.",
   },
   bonbonwing: {
     kind: "bonbonwing", name: "Bonbonwing", temperament: "Gentle", hostile: false,

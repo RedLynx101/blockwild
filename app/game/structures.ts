@@ -626,6 +626,15 @@ export function structureBiomeFromId(biomeId: number): StructureBiome | undefine
   return undefined;
 }
 
+/** Distinct named structure kinds that can be selected for a biome. */
+export function structureKindsForBiomeId(biomeId: number): readonly StructureKind[] {
+  const biome = structureBiomeFromId(biomeId);
+  if (biome === "desert") return ["desert-temple"];
+  if (biome === "forest") return ["forest-temple", "abandoned-apiary"];
+  if (biome === "meadow") return ["sunbun-grove", "abandoned-apiary", "waykeeper-healing-grotto", "meadow-butterfly-sanctuary"];
+  return [];
+}
+
 const floorDiv = (value: number, divisor: number) => Math.floor(value / divisor);
 
 /** One deterministic candidate per 16x16-chunk region; average density 1/256 chunks. */

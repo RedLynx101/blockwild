@@ -124,8 +124,9 @@ test("every dungeon has three-stage progression, multiple encounters, loot and a
 
 test("underground dungeons use connected seeded tile graphs with variable footprints", () => {
   for (const archetype of ADVENTURE_DUNGEON_ARCHETYPES.filter((entry) => entry.underground)) {
-    const first = planDungeonTiles(archetype.kind, "tile-seed-a");
-    assert.deepEqual(planDungeonTiles(archetype.kind, "tile-seed-a"), first);
+    const kind = archetype.kind as AdventureDungeonKind;
+    const first = planDungeonTiles(kind, "tile-seed-a");
+    assert.deepEqual(planDungeonTiles(kind, "tile-seed-a"), first);
     assert.ok(first.length >= 7 && first.length <= 11);
     const occupied = new Set(first.map((tile) => `${tile.gridX},${tile.gridZ}`));
     const queue = ["0,2"];
@@ -138,7 +139,7 @@ test("underground dungeons use connected seeded tile graphs with variable footpr
       queue.push(`${x+1},${z}`, `${x-1},${z}`, `${x},${z+1}`, `${x},${z-1}`);
     }
     assert.equal(reached.size, first.length);
-    const counts = new Set(["tile-seed-a", "tile-seed-b", "tile-seed-c", "tile-seed-d"].map((seed) => planDungeonTiles(archetype.kind, seed).length));
+    const counts = new Set(["tile-seed-a", "tile-seed-b", "tile-seed-c", "tile-seed-d"].map((seed) => planDungeonTiles(kind, seed).length));
     assert.ok(counts.size > 1, `${archetype.kind} varies its module count across seeds`);
     const plan = planAdventureStructure(archetype.kind, ORIGIN, "tile-seed-a");
     assert.ok(plan.placements.some((placement) => placement.variant?.includes("dungeon-tile")));

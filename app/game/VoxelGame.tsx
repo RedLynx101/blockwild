@@ -36,7 +36,7 @@ import {
   type RecipePlanResult,
 } from "./engine";
 import { BUTTERFLY_ORDER } from "./mobs";
-import type { MobDefinition } from "./mobs";
+import type { BestiaryFieldNote, BestiaryNoteMetric, MobDefinition } from "./mobs";
 import { createAvatarHeldItemModel } from "./held-items";
 import { legendaryContractForItem } from "./legendary-items";
 import { captureOrbFromInventorySlot } from "./capture-orbs";
@@ -85,7 +85,7 @@ import {
 } from "./factions";
 import { commerceKeyForItem, inventoryResourceCounts } from "./hearthroads-adapter";
 import { createMapKnowledge, type MapMarker } from "./map-system";
-import { PLANTS, createPlantBestiaryState, type PlantCategory, type PlantDefinition } from "./plants";
+import { PLANTS, createPlantBestiaryState, nativeBiomesForPlant, type PlantCategory, type PlantDefinition } from "./plants";
 import { createQuestBook, type QuestObjective, type QuestSource } from "./quests";
 import { createSettlementState, isMayorProfession, type ResidentProfession, type SettlementCandidate } from "./settlements";
 import { DragonPanel } from "./DragonPanel";
@@ -804,7 +804,21 @@ function questObjectiveTarget(objective: QuestObjective) {
 
 type BestiaryProgressEntry = HudState["bestiary"][MobKind];
 
+function bestiaryMetricValue(metric: BestiaryNoteMetric, progress: BestiaryProgressEntry) {
+  if (metric === "seen") return progress.seen ? 1 : 0;
+  return progress[metric] ?? 0;
+}
+
+export function bestiaryFieldNoteUnlocked(note: BestiaryFieldNote, progress: BestiaryProgressEntry) {
+  return note.requires.every((requirement) => "metric" in requirement
+    ? bestiaryMetricValue(requirement.metric, progress) >= requirement.atLeast
+    : (progress.milestones?.[requirement.milestone] ?? 0) >= (requirement.atLeast ?? 1));
+}
+
 export function bestiaryEntryCompletion(definition: MobDefinition, progress: BestiaryProgressEntry) {
+  if (definition.fieldNotes?.length) {
+    return Math.round(definition.fieldNotes.filter((note) => bestiaryFieldNoteUnlocked(note, progress)).length / definition.fieldNotes.length * 100);
+  }
   const tasks = [progress.seen];
   if (definition.family === "butterfly") tasks.push((progress.captures ?? 0) > 0);
   else if (definition.hostile) tasks.push(progress.kills > 0);
@@ -2293,6 +2307,9 @@ export default function VoxelGame() {
   const discoveredPlants = new Set(hud.plantBestiary.discovered);
   const discoveredPlantCount = PLANTS.filter((plant) => discoveredPlants.has(plant.id)).length;
   const selectedPlantDiscovered = selectedPlant ? discoveredPlants.has(selectedPlant.id) : false;
+  const selectedPlantNativeBiomes = selectedPlant
+    ? nativeBiomesForPlant(selectedPlant.id).map((biome) => BIOME_NAMES[biome]).join(", ")
+    : "";
   const hearthroadsApi = engineRef.current as unknown as HearthroadsEngineApi | null;
   const resourceInventory = inventoryResourceCounts(hud.inventory);
   const playerCommerceInventory = useMemo(() => {
@@ -3199,10 +3216,10 @@ export default function VoxelGame() {
                   {bestiaryProgress.seen ? <>
                     <div className="bestiary-heading"><div><span className={`temperament-label temperament-${bestiaryDefinition.temperament.toLowerCase()}`}>{bestiaryDefinition.temperament.toUpperCase()}</span><h3>{bestiaryDefinition.name}</h3></div><strong>{bestiaryObservation(bestiaryDefinition, bestiaryProgress).toUpperCase()}</strong></div>
                     <p className="bestiary-lore">{bestiaryDefinition.lore}</p>
-                    <div className="bestiary-facts"><div><small>HABITAT</small><strong>{bestiaryDefinition.habitat}</strong></div><div><small>ACTIVE</small><strong>{bestiaryDefinition.active}</strong></div><div><small>HEALTH</small><strong>{bestiaryDefinition.health} hearts</strong></div><div><small>DANGER</small><strong>{bestiaryDefinition.damage ? `${bestiaryDefinition.damage} damage` : "Harmless"}</strong></div></div>
+                    <div className="bestiary-facts"><div><small>HABITAT</small><strong>{bestiaryDefinition.habitat}</strong></div><div><small>ACTIVE</small><strong>{bestiaryDefinition.active}</strong></div><div><small>FAMILY</small><strong>{bestiaryDefinition.family ?? "surface"}</strong></div><div><small>MOVEMENT</small><strong>{bestiaryDefinition.movement ?? "ground"}</strong></div><div><small>HEALTH</small><strong>{bestiaryDefinition.health} hearts</strong></div><div><small>DANGER</small><strong>{bestiaryDefinition.damage ? `${bestiaryDefinition.damage} damage` : "Harmless"}</strong></div></div>
                     <section className="behavior-note"><small>BEHAVIOR</small><p>{bestiaryDefinition.behavior}</p></section>
                     <section className="bestiary-care" aria-label={`${bestiaryDefinition.name} care information`}><div className="bestiary-care-heading"><small>CREATURE CARE</small><span>Recorded dynamically from known interactions</span></div><div className="bestiary-care-grid"><div><small>TAMEABLE</small><strong>{bestiaryDefinition.tameable ? "Yes" : "No"}</strong>{bestiaryDefinition.tameable && <span>{bestiaryDefinition.tameItems?.length ? bestiaryDefinition.tameItems.map((item) => ITEMS[item]?.name).filter(Boolean).join(", ") : "Method not yet recorded"}</span>}</div><div><small>BREEDABLE</small><strong>{bestiaryDefinition.breedable ? "Yes" : "No"}</strong>{bestiaryDefinition.breedable && <span>{bestiaryDefinition.breedingFoods?.length ? bestiaryDefinition.breedingFoods.map((item) => ITEMS[item]?.name).filter(Boolean).join(", ") : "Breeding food unknown"}</span>}</div><div><small>EATS</small><strong>{bestiaryDefinition.diet?.length ? bestiaryDefinition.diet.map((item) => ITEMS[item]?.name).filter(Boolean).join(", ") : "No feeding response recorded"}</strong></div><div><small>SENTIENT</small><strong>{bestiaryDefinition.sentient ? "Yes" : "No"}</strong><span>{bestiaryDefinition.sentient ? "Can converse, trade, hold roles, and remember faction standing." : "Acts from instinct rather than factional intent."}</span></div></div></section>
-                    {bestiaryDefinition.postTameNotes && <section className={`bestiary-secret ${bestiaryProgress.secretUnlocked || (bestiaryProgress.tames ?? 0) > 0 ? "unlocked" : "locked"}`}><small>COMPANION FIELD NOTES</small>{bestiaryProgress.secretUnlocked || (bestiaryProgress.tames ?? 0) > 0 ? <p>{bestiaryDefinition.postTameNotes}</p> : <p>Locked · {bestiaryDefinition.secretHint ?? `Tame a ${bestiaryDefinition.name} to reveal its deeper care and riding notes.`}</p>}</section>}
+                    {bestiaryDefinition.fieldNotes?.length ? <section className="bestiary-field-notes"><div className="bestiary-care-heading"><small>EXTENDED FIELD NOTES</small><span>{bestiaryDefinition.fieldNotes.filter((note) => bestiaryFieldNoteUnlocked(note, bestiaryProgress)).length}/{bestiaryDefinition.fieldNotes.length} unlocked</span></div>{bestiaryDefinition.fieldNotes.map((note) => { const unlocked = bestiaryFieldNoteUnlocked(note, bestiaryProgress); return <article key={note.id} className={unlocked ? "unlocked" : "locked"}><small>{unlocked ? "RECORDED" : "LOCKED"}</small><strong>{note.title}</strong><p>{unlocked ? note.text : note.hint}</p></article>; })}</section> : bestiaryDefinition.postTameNotes && <section className={`bestiary-secret ${bestiaryProgress.secretUnlocked || (bestiaryProgress.tames ?? 0) > 0 ? "unlocked" : "locked"}`}><small>COMPANION FIELD NOTES</small>{bestiaryProgress.secretUnlocked || (bestiaryProgress.tames ?? 0) > 0 ? <p>{bestiaryDefinition.postTameNotes}</p> : <p>Locked · {bestiaryDefinition.secretHint ?? `Tame a ${bestiaryDefinition.name} to reveal its deeper care and riding notes.`}</p>}</section>}
                     {bestiaryDefinition.family === "butterfly" ? <section className="bestiary-loot butterfly-capture-record"><small>CAPTURE RECORD</small>{bestiaryDefinition.captureItem !== undefined && <div><ItemIcon item={bestiaryDefinition.captureItem} small /><span><strong>{bestiaryProgress.captures ? `${bestiaryProgress.captures} ${bestiaryProgress.captures === 1 ? "specimen" : "specimens"} cataloged` : "No specimen captured yet"}</strong><small>Equip a Butterfly Net and catch one gently to preserve it in a field jar.</small></span></div>}</section> : <section className="bestiary-loot"><small>OBSERVED DROPS</small>{bestiaryDefinition.drops.map((drop) => <div key={drop.item}><ItemIcon item={drop.item} small /><span><strong>{bestiaryProgress.kills ? ITEMS[drop.item]?.name : "Unknown drop"}</strong><small>{bestiaryProgress.kills ? `${drop.min}${drop.max !== drop.min ? `–${drop.max}` : ""} · ${Math.round(drop.chance * 100)}% chance` : "Defeat one to record it"}</small></span></div>)}</section>}
                   </> : <div className="unknown-entry"><span className="panel-eyebrow">NO RELIABLE OBSERVATION</span><h3>Unknown Creature</h3><p>{undiscoveredHabitatHint(bestiaryDefinition)} Bring it within view to reveal its field notes.</p></div>}
                 </article>
@@ -3219,7 +3236,7 @@ export default function VoxelGame() {
                     <PlantPortrait plant={selectedPlant} seen={selectedPlantDiscovered} />
                     <div className="plant-portrait-chrome"><span>{selectedPlant.category === "tree" ? "FULL TREE EXAMPLE" : "FIELD SPECIMEN"}</span><strong>{selectedPlantDiscovered ? selectedPlant.name : "Unknown Plant"}</strong></div>
                   </div>
-                  {selectedPlantDiscovered ? <><div className="bestiary-heading"><div><span className="temperament-label temperament-neutral">FLORA</span><h3>{selectedPlant.name}</h3></div><strong>{selectedPlant.category.toUpperCase()}</strong></div><div className="plant-facts"><section><small>HABITAT</small><p>{selectedPlant.habitat}</p></section><section><small>GROWTH</small><p>{selectedPlant.growth}</p></section><section><small>UTILITY</small><p>{selectedPlant.utility}</p></section></div><section className="bestiary-loot plant-drops"><small>HARVEST & DROPS</small>{selectedPlant.drops.map((drop) => <div key={`${selectedPlant.id}-${drop.item}`}><ItemIcon item={drop.item} small /><span><strong>{drop.label}</strong><small>Recorded from this plant family</small></span></div>)}</section></> : <div className="unknown-entry"><span className="panel-eyebrow">UNRECORDED FLORA</span><h3>Where to look</h3><p>Search around {selectedPlant.habitat.toLowerCase()}. Bring it within view to record growth, drops, and practical uses.</p></div>}
+                  {selectedPlantDiscovered ? <><div className="bestiary-heading"><div><span className="temperament-label temperament-neutral">FLORA</span><h3>{selectedPlant.name}</h3></div><strong>{selectedPlant.category.toUpperCase()}</strong></div><div className="plant-facts"><section><small>HABITAT</small><p>{selectedPlant.habitat}</p></section><section><small>NATIVE BIOMES</small><p>{selectedPlantNativeBiomes || "Cultivated, broad-ranging, or not yet assigned"}</p></section><section><small>GROWTH</small><p>{selectedPlant.growth}</p></section><section><small>UTILITY</small><p>{selectedPlant.utility}</p></section></div><section className="bestiary-loot plant-drops"><small>HARVEST & DROPS</small>{selectedPlant.drops.map((drop) => <div key={`${selectedPlant.id}-${drop.item}`}><ItemIcon item={drop.item} small /><span><strong>{drop.label}</strong><small>Recorded from this plant family</small></span></div>)}</section></> : <div className="unknown-entry"><span className="panel-eyebrow">UNRECORDED FLORA</span><h3>Where to look</h3><p>Search around {selectedPlant.habitat.toLowerCase()}. Bring it within view to record growth, drops, and practical uses.</p></div>}
                 </article> : null}
               </div>
             </>}

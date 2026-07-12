@@ -1,4 +1,5 @@
 import { BlockId, Item, type ItemCode } from "./data";
+import { BiomeId } from "./world";
 
 /** Save-friendly field-guide data for flora. Creature observations live elsewhere. */
 export const PLANT_BESTIARY_SCHEMA = 1 as const;
@@ -59,7 +60,69 @@ export const PLANTS: readonly PlantDefinition[] = Object.freeze([
   { id: "saltbrush", name: "Saltbrush", category: "wild", blocks: [BlockId.Saltbrush], habitat: "Sparse Sunwash Coast patches", growth: "Survives salt spray above the tide line.", utility: "Salty sprigs for food and future coastal alchemy.", drops: [{ item: Item.SaltbrushSprig, label: "Saltbrush sprigs" }] },
   { id: "dune-brush", name: "Dune Brush", category: "wild", blocks: [BlockId.DesertShrub], habitat: "Desert and badlands", growth: "Conserves water beneath loose sand.", utility: "Dry fiber and desert cover.", drops: [{ item: Item.Fiber, label: "Plant fiber" }] },
   { id: "cactus", name: "Cactus", category: "wild", blocks: [BlockId.Cactus], habitat: "Desert", growth: "Slow-growing succulent on dry sand.", utility: "Landmark vegetation and future alchemy stock.", drops: [{ item: BlockId.Cactus, label: "Cactus" }] },
+  { id: "mooncap-mushroom", name: "Mooncap Mushroom", category: "wild", blocks: [BlockId.MushroomCap], habitat: "Mooncap Fen hummocks", growth: "Large caps rise from saturated shaded soil.", utility: "Shelter for tiny fen life and a visible marker of deep humidity.", drops: [{ item: BlockId.MushroomCap, label: "Mushroom caps" }] },
+  { id: "moonpetal", name: "Moonpetal", category: "flower", blocks: [BlockId.Moonpetal, BlockId.GiantMoonpetal], habitat: "Glimmerwood moonwells", growth: "Opens under dim light; tilled soil supports a taller cultivated form.", utility: "Dragon care, silver alchemy and luminous decoration.", drops: [{ item: Item.Moonpetal, label: "Moonpetals" }] },
+  { id: "starfern", name: "Starfern", category: "wild", blocks: [BlockId.Starfern], habitat: "Glimmerwood and high Snowcap shelters", growth: "Spreads slowly over cool enchanted soil.", utility: "Glimmerbow craft, animal forage and low ground light.", drops: [{ item: Item.StarfernFrond, label: "Starfern fronds" }] },
+  { id: "dreamcap", name: "Dreamcap", category: "wild", blocks: [BlockId.Dreamcap], habitat: "Glimmerwood and Snowcap hollows", growth: "Favors cool shade and mana-rich ground.", utility: "Food, creature care and dream-alchemy stock.", drops: [{ item: Item.Dreamcap, label: "Dreamcaps" }] },
 ]);
+
+/**
+ * Native field-guide ranges used by the ecology audit and plant compendium.
+ * An omitted plant is cultivated, broadly distributed, or not yet tied to a
+ * naturally generated biome. These ranges are descriptive and never caps.
+ */
+export const PLANT_NATIVE_BIOMES: Readonly<Record<string, readonly BiomeId[]>> = Object.freeze({
+  wildwood: [BiomeId.Wildwood],
+  frostpine: [BiomeId.Frostpine, BiomeId.Snowfield, BiomeId.SnowcapRange],
+  birchlight: [BiomeId.Birchlight],
+  bloomwood: [BiomeId.Bloomwood],
+  "rainveil-tree": [BiomeId.RainveilJungle],
+  "sakurabloom-tree": [BiomeId.SakurabloomGrove],
+  "candywood-tree": [BiomeId.SugarplumVale],
+  "wild-apple": [BiomeId.Meadow],
+  "wild-wheat": [BiomeId.Meadow],
+  moonrice: [BiomeId.Siltfen],
+  sunroot: [BiomeId.Savanna],
+  "peppermint-cane": [BiomeId.SugarplumVale],
+  "cocoa-puff": [BiomeId.SugarplumVale],
+  "field-cotton": [BiomeId.Meadow, BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Bloomwood],
+  "suncrest-carrot": [BiomeId.Meadow, BiomeId.Savanna],
+  "bluepod-bean": [BiomeId.Siltfen, BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Bloomwood],
+  moonberry: [BiomeId.Frostpine, BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Bloomwood],
+  sunberry: [BiomeId.Savanna],
+  "gumdrop-bush": [BiomeId.SugarplumVale],
+  "marshmallow-shrub": [BiomeId.SugarplumVale],
+  "ember-bloom": [BiomeId.Meadow, BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Bloomwood, BiomeId.Volcanic],
+  skybell: [BiomeId.Meadow, BiomeId.CloudreedGlen],
+  sunpetal: [BiomeId.Meadow],
+  "moon-orchid": [BiomeId.Meadow, BiomeId.Glimmerwood],
+  "river-ribbon": [BiomeId.River],
+  "glow-kelp": [BiomeId.Ocean, BiomeId.DeepOcean, BiomeId.LumenTrench],
+  "reed-bloom": [BiomeId.Beach, BiomeId.River, BiomeId.Siltfen],
+  "lumen-kelp": [BiomeId.DeepOcean, BiomeId.LumenTrench],
+  "star-coral": [BiomeId.Ocean, BiomeId.DeepOcean, BiomeId.LumenTrench],
+  "abyss-bloom": [BiomeId.DeepOcean, BiomeId.LumenTrench],
+  tidevine: [BiomeId.Beach, BiomeId.Ocean, BiomeId.DeepOcean],
+  cloudbell: [BiomeId.Highlands, BiomeId.CloudreedGlen],
+  "coast-aster": [BiomeId.Beach],
+  "sakura-bloom": [BiomeId.SakurabloomGrove],
+  dreamblossom: [BiomeId.SakurabloomGrove],
+  "lantern-lotus": [BiomeId.RainveilJungle],
+  "lollipop-orchid": [BiomeId.SugarplumVale],
+  "wild-peppermint": [BiomeId.SugarplumVale],
+  "rainveil-fern": [BiomeId.RainveilJungle],
+  saltbrush: [BiomeId.Beach],
+  "dune-brush": [BiomeId.Desert, BiomeId.Badlands, BiomeId.Volcanic],
+  cactus: [BiomeId.Desert],
+  "mooncap-mushroom": [BiomeId.MushroomFen],
+  moonpetal: [BiomeId.Glimmerwood],
+  starfern: [BiomeId.Glimmerwood, BiomeId.SnowcapRange],
+  dreamcap: [BiomeId.Glimmerwood, BiomeId.SnowcapRange],
+});
+
+export function nativeBiomesForPlant(plantId: string): readonly BiomeId[] {
+  return PLANT_NATIVE_BIOMES[plantId] ?? [];
+}
 
 const BY_ID = new Map(PLANTS.map((plant) => [plant.id, plant]));
 const BY_BLOCK = new Map(PLANTS.flatMap((plant) => plant.blocks.map((block) => [block, plant] as const)));
