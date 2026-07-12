@@ -518,6 +518,8 @@ export const Item = {
   WaygridCellIIItem: 417,
   WaygridCellIIIItem: 418,
   TideglassDragonArmorModule: 419,
+  DeepgearCourserBlueprint: 420,
+  DeepgearCourserOrb: 421,
 } as const;
 
 export type ItemCode = number;
@@ -1224,6 +1226,8 @@ Object.assign(ITEMS, {
   [Item.SeaDragonSkull]: { id: Item.SeaDragonSkull, name: "Sea Dragon Skull", color: "#b5edf0", maxStack: 1, dragonType: "sea", iconKind: "dragon-skull" },
   [Item.SeaDragonNestChart]: { id: Item.SeaDragonNestChart, name: "Chart: Sea Dragon Nest", color: "#4ba9ba", maxStack: 8, useKind: "lair-survey", lairSurvey: { dragonType: "sea", minimumStage: 3 }, iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
   [Item.TideglassDragonArmorModule]: { id: Item.TideglassDragonArmorModule, name: "Tideglass Dragon Armor", color: "#62cfd0", maxStack: 1, useKind: "dragon-module", dragonModule: "armor", dragonType: "sea", iconKind: "armor" },
+  [Item.DeepgearCourserBlueprint]: { id: Item.DeepgearCourserBlueprint, name: "Blueprint: Deepgear Courser", color: "#b8874d", maxStack: 16, useKind: "blueprint", blueprintId: "golem-deepgear-courser", iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
+  [Item.DeepgearCourserOrb]: { id: Item.DeepgearCourserOrb, name: "Capture Orb: Deepgear Courser", color: "#78e6df", maxStack: 1, useKind: "capture-orb", creatureKind: "deepgear-courser-golem", iconKind: "capture-orb", heldModel: "capture-orb", dropModel: "capture-orb" },
   [Item.MoonboughLogItem]: { id: Item.MoonboughLogItem, name: "Moonbough Log", color: "#58677f", maxStack: 64, placeBlock: BlockId.MoonboughLog },
   [Item.MoonboughLeavesItem]: { id: Item.MoonboughLeavesItem, name: "Moonbough Leaves", color: "#4a8c79", maxStack: 64, placeBlock: BlockId.MoonboughLeaves },
   [Item.GlimmerGrassBlock]: { id: Item.GlimmerGrassBlock, name: "Glimmerwood Grass", color: "#315f4d", maxStack: 64, placeBlock: BlockId.GlimmerGrass },
@@ -1467,7 +1471,8 @@ export const V1_CULTURE_ITEMS: readonly ItemCode[] = Object.freeze([
   Item.FlintlockPistol, Item.FlintlockBall, Item.GearCluster, Item.DeepgearAlloy, Item.DeepgearLanternItem,
   Item.GolemForgeItem, Item.PowderworksItem, Item.FlintlockBlueprint, Item.CopperScoutBlueprint,
   Item.StoneBulwarkBlueprint, Item.AetherforgedSentinelBlueprint, Item.CopperScoutOrb, Item.StoneBulwarkOrb,
-  Item.AetherforgedSentinelOrb, Item.CopperMoleOrb, Item.MoonwellItem, Item.TideglassDragonArmorModule,
+  Item.AetherforgedSentinelOrb, Item.CopperMoleOrb, Item.DeepgearCourserBlueprint, Item.DeepgearCourserOrb,
+  Item.MoonwellItem, Item.TideglassDragonArmorModule,
 ]);
 
 export const V1_STORAGE_ITEMS: readonly ItemCode[] = Object.freeze([

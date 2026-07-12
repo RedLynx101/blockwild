@@ -624,6 +624,7 @@ const NEUTRAL_CREATURE_ORB_KINDS = {
   "unaligned-runeowl-orb": "runeowl",
   "unaligned-copper-mole-orb": "copper-mole",
   "copper-scout-golem-orb": "copper-scout-golem",
+  "deepgear-courser-golem-orb": "deepgear-courser-golem",
 } as const satisfies Readonly<Record<string, MobKind>>;
 
 export type GameSettings = {
@@ -1749,7 +1750,7 @@ export function apiaryPhaseForWorldTime(worldTime: number): ApiaryPhase {
   return "night";
 }
 
-const HERD_MOB_KINDS = new Set<MobKind>(["ridgeback", "woolhorn", "sunstep-grazer", "wild-horse", "meadow-cow", "mistmane", "taffalo"]);
+const HERD_MOB_KINDS = new Set<MobKind>(["ridgeback", "woolhorn", "sunstep-grazer", "wild-horse", "rimehoof-courser", "sunscar-courser", "mirestride-courser", "starbough-courser", "meadow-cow", "mistmane", "taffalo"]);
 
 export function socialGroupModeForMob(kind: MobKind): SocialGroupMode | null {
   if (HERD_MOB_KINDS.has(kind)) return "herd";
@@ -4429,7 +4430,7 @@ export class VoxelEngine {
     const session = this.multiplayer;
     if (!session || session.role !== "host" || this.worldOptions.difficulty === "peaceful") return;
     for (const mob of this.mobs) {
-      if (!mob.hostile || mob.health <= 0 || mob.attackCooldown > 0 || mob.state === "dead") continue;
+      if (!mob.hostile || mob.health <= 0 || mob.attackCooldown > 0) continue;
       for (const [playerId, remote] of this.remotePlayers) {
         const pose = remote.target;
         const playerCenter = new THREE.Vector3(pose.x, pose.y + 0.8, pose.z);
@@ -4928,6 +4929,7 @@ export class VoxelEngine {
       "copper-scout": "copper-scout-golem",
       "stone-bulwark": "stone-bulwark-golem",
       "aetherforged-sentinel": "aetherforged-sentinel",
+      "deepgear-courser": "deepgear-courser-golem",
     };
     const kind = kindByType[result.golemType];
     const definition = MOB_DEFS[kind];
@@ -4950,7 +4952,14 @@ export class VoxelEngine {
       factionId: "player",
       settlementId: null,
       aligned: true,
-      custom: { hiredByPlayerId: this.localPlayerId(), followCommand: "follow", forgedGolemType: result.golemType },
+      custom: {
+        hiredByPlayerId: this.localPlayerId(),
+        followCommand: "follow",
+        forgedGolemType: result.golemType,
+        ...(result.golemType === "deepgear-courser" ? {
+          courserBond: { ...createReedstriderBond(), trust: 8, tamed: true, ownerId: this.localPlayerId() },
+        } : {}),
+      },
     };
     const orb = captureIntoOrb(createEmptyCaptureOrb(`forge-orb-${entityId}`), metadata, Date.now());
     if (!orb) return false;
@@ -11632,7 +11641,8 @@ export class VoxelEngine {
     }
     const wargSaddle = mob.kind === "warg" ? mob.visual.getObjectByName("warg-saddle") : null;
     if (wargSaddle) wargSaddle.visible = Boolean(mob.courserBond?.saddled);
-    const courserSaddle = mob.kind === "wild-horse" ? mob.visual.getObjectByName("wild-horse-saddle") : null;
+    const courserSaddle = creatureMountProfile(mob.kind as CoreMobKind) && mob.courserBond
+      ? mob.visual.getObjectByName(`${mob.kind}-saddle`) : null;
     if (courserSaddle) courserSaddle.visible = Boolean(mob.courserBond?.saddled);
     const reedstriderSaddle = mob.kind === "reedstrider" ? mob.visual.getObjectByName("reedstrider-saddle") : null;
     if (reedstriderSaddle) reedstriderSaddle.visible = Boolean(mob.reedstriderBond?.saddled);

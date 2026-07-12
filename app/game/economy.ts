@@ -280,7 +280,9 @@ export const COMMERCE_CATALOG: Readonly<Record<string, CommerceItem>> = Object.f
   { key: "blueprint-copper-scout", name: "Blueprint: Copper Scout", category: "blueprint", baseValue: 720, stackLimit: 16, tags: ["dwarf", "golem"] },
   { key: "blueprint-stone-bulwark", name: "Blueprint: Stone Bulwark", category: "blueprint", baseValue: 1_280, stackLimit: 16, tags: ["dwarf", "golem"] },
   { key: "blueprint-aetherforged-sentinel", name: "Blueprint: Aetherforged Sentinel", category: "blueprint", baseValue: 2_650, stackLimit: 16, tags: ["dwarf", "golem", "rare"] },
+  { key: "blueprint-deepgear-courser", name: "Blueprint: Deepgear Courser", category: "blueprint", baseValue: 1_860, stackLimit: 16, tags: ["dwarf", "golem", "mount"] },
   { key: "copper-scout-golem-orb", name: "Capture Orb: Copper Scout", category: "creature", baseValue: 980, stackLimit: 1, tags: ["dwarf", "golem", "unaligned"] },
+  { key: "deepgear-courser-golem-orb", name: "Capture Orb: Deepgear Courser", category: "creature", baseValue: 2_400, stackLimit: 1, tags: ["dwarf", "golem", "mount", "unaligned", "rare"] },
   { key: "unaligned-copper-mole-orb", name: "Capture Orb: Copper Mole", category: "creature", baseValue: 580, stackLimit: 1, tags: ["dwarf", "unaligned", "copper-mole"] },
   { key: "sea-dragon-nest-chart", name: "Chart: Sea Dragon Nest", category: "treasure", baseValue: 1_180, stackLimit: 8, tags: ["atlantian", "dragon", "survey", "rare"] },
 ] satisfies CommerceItem[]).map((definition) => [definition.key, definition])) as Readonly<Record<string, CommerceItem>>;
@@ -407,7 +409,9 @@ export const DWARF_MERCHANT_OFFERS: readonly MerchantOffer[] = [
   { itemKey: "blueprint-copper-scout", count: 1, professions: ["dwarf-golemsmith"] },
   { itemKey: "blueprint-stone-bulwark", count: 1, professions: ["dwarf-golemsmith"] },
   { itemKey: "blueprint-aetherforged-sentinel", count: 1, professions: ["dwarf-thane", "dwarf-golemsmith"], rareChance: 0.05 },
+  { itemKey: "blueprint-deepgear-courser", count: 1, professions: ["dwarf-golemsmith"], rareChance: 0.18 },
   { itemKey: "copper-scout-golem-orb", count: 1, professions: ["dwarf-golemsmith"], rareChance: 0.22 },
+  { itemKey: "deepgear-courser-golem-orb", count: 1, professions: ["dwarf-golemsmith"], rareChance: 0.08 },
   { itemKey: "unaligned-copper-mole-orb", count: 1, professions: ["dwarf-provisioner"], rareChance: 0.35 },
 ];
 

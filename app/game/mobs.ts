@@ -13,6 +13,10 @@ export type SurfaceMobKind =
   | "puddlehopper"
   | "reedstrider"
   | "wild-horse"
+  | "rimehoof-courser"
+  | "sunscar-courser"
+  | "mirestride-courser"
+  | "starbough-courser"
   | "meadow-cow"
   | "mistmane"
   | "sakurakit"
@@ -82,7 +86,7 @@ export type DwarfKind =
   | "dwarf-golemsmith"
   | "dwarf-powderwright"
   | "dwarf-provisioner";
-export type GolemKind = "copper-scout-golem" | "stone-bulwark-golem" | "aetherforged-sentinel";
+export type GolemKind = "copper-scout-golem" | "stone-bulwark-golem" | "aetherforged-sentinel" | "deepgear-courser-golem";
 export type V1FactionCreatureKind = "glimmerhart" | "runeowl" | "glowfin" | "copper-mole" | GolemKind;
 export type SentientMobKind = HobbitKind | GoblinKind | AtlantianKind | SugarcourtKind | WoodElfKind | DwarfKind;
 export type FactionKind = "hobbits" | "goblins" | "atlantians" | "sugarcourt" | "wood-elves" | "dwarves";
@@ -319,6 +323,19 @@ const V1_CREATURE_MOBS: Record<V1FactionCreatureKind, MobDefinition> = {
     sentient: false, factionAffinity: "dwarves", tameRequiresUnaligned: true, tameable: false,
     discoveryHint: "Only master Golem Forges can finalize this mana-hungry construct.",
   },
+  "deepgear-courser-golem": {
+    kind: "deepgear-courser-golem", name: "Deepgear Courser", temperament: "Defensive", hostile: false,
+    health: 58, damage: 6, xp: 18, speed: 1.12, chaseSpeed: 4.35, turnRate: 5.1, attackRange: 1.35,
+    footOffset: 1.05, radius: 0.68, height: 1.82, habitat: "Deepgear stables and Golem Forges", active: "While its aether flywheel is charged",
+    behavior: "Carries a rider over steep hold roads, braces on piston legs when threatened, and returns to the nearest forge for repairs.",
+    lore: "Deepgear Coursers were built after ordinary packhorses objected, correctly, to freight lifts and powderworks bells.",
+    colors: [0x9a6a3d, 0x566268, 0x7df1eb], drops: [{ item: Item.GearCluster, min: 2, max: 4, chance: 1 }],
+    family: "construct", movement: "ground", persistent: true, sentient: false, factionAffinity: "dwarves", tameRequiresUnaligned: true,
+    tameable: true, tameItems: [Item.DeepgearAlloy, Item.GearCluster], diet: [Item.DeepgearAlloy, Item.GearCluster], rideable: true,
+    utility: "A durable mechanical land mount assembled at a Golem Forge or purchased unaligned from a Deepgear Golemsmith.",
+    postTameNotes: "Fit a Trail Saddle after attuning its aether key. Deepgear Alloy repairs three hearts.",
+    discoveryHint: "Listen for paired piston strokes near a Deepgear Golem Forge.",
+  },
 };
 
 export const MOB_DEFS: Record<MobKind, MobDefinition> = {
@@ -528,6 +545,54 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     breedingFoods: [Item.Apple], diet: [Item.Apple, Item.Wheat], captureItem: Item.CaptureOrb,
     postTameNotes: "A saddled Courser carries one rider and prefers clear ground.",
     discoveryHint: "Look for hoofprints along broad meadow edges and old forest roads.",
+  },
+  "rimehoof-courser": {
+    kind: "rimehoof-courser", name: "Rimehoof Courser", temperament: "Skittish", hostile: false,
+    health: 17, damage: 2, xp: 7, speed: 0.94, chaseSpeed: 4.15, turnRate: 4.8, attackRange: 1.25,
+    footOffset: 1.05, radius: 0.68, height: 1.72, habitat: "Frostpine taiga, whispering snowfields and Snowcap passes", active: "Day and snowfall",
+    behavior: "Breaks crusted snow with broad hooves, shelters foals behind its shaggy shoulder, and follows wind-scoured ridgelines.",
+    lore: "Ice gathers on its mane without melting, then falls away in silver sheets when the herd begins to run.",
+    colors: [0x9dabb2, 0xe7eee8, 0xa8f5ff], drops: [{ item: Item.Hide, min: 1, max: 3, chance: 0.78 }],
+    family: "mount", movement: "ground", persistent: true, utility: "A sure-footed cold-country mount with strong snowfield speed.",
+    sentient: false, tameable: true, tameItems: [Item.Apple, Item.Wheat], breedable: true, rideable: true,
+    breedingFoods: [Item.Apple], diet: [Item.Apple, Item.Wheat], captureItem: Item.CaptureOrb,
+    postTameNotes: "Its broad hooves keep a steady pace across snow and steep stone.", discoveryHint: "Look for wide blue-gray hoofprints where Frostpine opens into snow.",
+  },
+  "sunscar-courser": {
+    kind: "sunscar-courser", name: "Sunscar Courser", temperament: "Skittish", hostile: false,
+    health: 13, damage: 1, xp: 6, speed: 1.18, chaseSpeed: 4.8, turnRate: 5.8, attackRange: 1.15,
+    footOffset: 1.05, radius: 0.58, height: 1.78, habitat: "Sunglass dunes and Painted Badlands washes", active: "Dawn and late afternoon",
+    behavior: "Travels between shaded cuts, lowers its narrow profile into sandstorms, and sprints in short explosive arcs.",
+    lore: "The dark line beneath each eye is said to be the first road the sun ever burned into the desert.",
+    colors: [0xb96832, 0xe8bd72, 0x241b18], drops: [{ item: Item.Hide, min: 1, max: 2, chance: 0.7 }],
+    family: "mount", movement: "ground", persistent: true, utility: "The fastest Courser on dry open ground, though a poor swimmer.",
+    sentient: false, tameable: true, tameItems: [Item.Sunroot, Item.Wheat], breedable: true, rideable: true,
+    breedingFoods: [Item.Sunroot], diet: [Item.Sunroot, Item.Wheat], captureItem: Item.CaptureOrb,
+    postTameNotes: "It accelerates quickly on open dry ground and dislikes deep water.", discoveryHint: "Search cool badlands washes at dawn for a cropped black mane.",
+  },
+  "mirestride-courser": {
+    kind: "mirestride-courser", name: "Mirestride Courser", temperament: "Defensive", hostile: false,
+    health: 16, damage: 2, xp: 7, speed: 0.82, chaseSpeed: 3.65, turnRate: 5.4, attackRange: 1.25,
+    footOffset: 1.05, radius: 0.7, height: 1.66, habitat: "Siltfen reed islands and flooded forest margins", active: "Overcast day and rain",
+    behavior: "Tests mud before every step, spreads broad hooves over soft silt, and drives marsh predators away from young.",
+    lore: "Reedcutters follow its paths because a Mirestride never commits its full weight to false ground.",
+    colors: [0x516b59, 0x9b8358, 0xd6ef89], drops: [{ item: Item.Hide, min: 1, max: 2, chance: 0.72 }],
+    family: "mount", movement: "ground", persistent: true, utility: "A stable marsh mount with unusually good shallow-water pace.",
+    sentient: false, tameable: true, tameItems: [Item.Berry, Item.Wheat], breedable: true, rideable: true,
+    breedingFoods: [Item.Berry], diet: [Item.Berry, Item.Wheat], captureItem: Item.CaptureOrb,
+    postTameNotes: "Its splayed hooves cross mud and shallows more safely than other Coursers.", discoveryHint: "Watch reed islands during rain for a low moss-colored mane.",
+  },
+  "starbough-courser": {
+    kind: "starbough-courser", name: "Starbough Courser", temperament: "Gentle", hostile: false,
+    health: 15, damage: 2, xp: 8, speed: 1.08, chaseSpeed: 4.45, turnRate: 6.2, attackRange: 1.2,
+    footOffset: 1.05, radius: 0.6, height: 1.86, habitat: "Moonlit Glimmerwood clearings", active: "Dusk and night",
+    behavior: "Moves in quiet pairs, brushes its small branch antlers through Starferns, and freezes when moonwell bells ring.",
+    lore: "Each pale point along its flank appears only after the Courser has found a safe path home in darkness.",
+    colors: [0x344c58, 0x80cbb4, 0xdcfff1], drops: [{ item: Item.StarfernFrond, min: 1, max: 2, chance: 0.45 }],
+    family: "mount", movement: "ground", persistent: true, utility: "A nimble nocturnal mount whose markings remain visible without casting strong light.",
+    sentient: false, tameable: true, tameItems: [Item.Moonpetal, Item.Apple], breedable: true, rideable: true,
+    breedingFoods: [Item.Moonpetal], diet: [Item.Moonpetal, Item.StarfernFrond, Item.Apple], captureItem: Item.CaptureOrb,
+    postTameNotes: "Its pale markings make the rider easier to follow on dark forest paths.", discoveryHint: "Wait beside Starferns after dusk and watch for paired antler lights.",
   },
   "meadow-cow": {
     kind: "meadow-cow", name: "Cloverback", temperament: "Gentle", hostile: false,
@@ -1347,7 +1412,8 @@ export const BUTTERFLY_ORDER: ButterflyKind[] = ["meadowwing", "azure-skippers",
 export const LEGACY_MOB_ORDER: LegacyMobKind[] = ["mossling", "ridgeback", "woolhorn", "glowmoth", "shadecrawler", "caveblob", "rattlekin", "zombie"];
 export const SURFACE_MOB_ORDER: SurfaceMobKind[] = [
   "sunstep-grazer", "pebbletortoise", "brambleboar", "petalfox", "duneclatter",
-  "thimbledeer", "lanternshell", "puddlehopper", "reedstrider", "wild-horse", "meadow-cow", "mistmane", "sakurakit", "sunwash-crab",
+  "thimbledeer", "lanternshell", "puddlehopper", "reedstrider", "wild-horse", "rimehoof-courser", "sunscar-courser",
+  "mirestride-courser", "starbough-courser", "meadow-cow", "mistmane", "sakurakit", "sunwash-crab",
   "taffy-hound", "praline-cat", "sprinklebug", "taffalo",
 ];
 export const BIRD_ORDER: BirdKind[] = ["emberjay", "canopy-lark", "tidewing-gull"];
@@ -1373,7 +1439,7 @@ export const SUGARCOURT_ORDER: SugarcourtKind[] = [
 ];
 export const WOOD_ELF_ORDER: WoodElfKind[] = ["wood-elf-elderweaver", "wood-elf-leafwarden", "wood-elf-bow-warden", "wood-elf-grovekeeper", "wood-elf-tomekeeper", "wood-elf-potioner", "wood-elf-moonbroker"];
 export const DWARF_ORDER: DwarfKind[] = ["dwarf-thane", "dwarf-gatewarden", "dwarf-delver", "dwarf-gearwright", "dwarf-golemsmith", "dwarf-powderwright", "dwarf-provisioner"];
-export const V1_FACTION_CREATURE_ORDER: V1FactionCreatureKind[] = ["glimmerhart", "runeowl", "glowfin", "copper-mole", "copper-scout-golem", "stone-bulwark-golem", "aetherforged-sentinel"];
+export const V1_FACTION_CREATURE_ORDER: V1FactionCreatureKind[] = ["glimmerhart", "runeowl", "glowfin", "copper-mole", "copper-scout-golem", "stone-bulwark-golem", "aetherforged-sentinel", "deepgear-courser-golem"];
 export const SENTIENT_MOB_ORDER: SentientMobKind[] = [...HOBBIT_ORDER, ...GOBLIN_ORDER, ...ATLANTIAN_ORDER, ...SUGARCOURT_ORDER, ...WOOD_ELF_ORDER, ...DWARF_ORDER];
 export const SPECIAL_MOB_ORDER: SpecialMobKind[] = ["peelop", "reliquary-sentinel", "skeleton", "warg"];
 export const CORE_MOB_ORDER: CoreMobKind[] = [

@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { createButterflyVisual } from "../app/game/butterflies.ts";
 import { INSPECTOR_MODEL_SPECS, assertModelSpec, type ModelBox, type ModelSpec } from "../app/game/model-specs.ts";
 import { createMobVisual, createSkeletonArrowVisual } from "../app/game/mob-models.ts";
-import { BUTTERFLY_ORDER, CORE_MOB_ORDER, MOB_DEFS, type ButterflyKind, type CoreMobKind } from "../app/game/mobs.ts";
+import { BUTTERFLY_ORDER, CORE_MOB_ORDER, MOB_DEFS, type ButterflyKind, type CoreMobKind, type DragonKind } from "../app/game/mobs.ts";
 import { BlockPlayerModel, type PlayerAnimation } from "../app/game/player-model.ts";
 
 export type ViewName = "iso" | "front" | "side";
@@ -222,8 +222,17 @@ export function createSkeletonArrowInspectionSpec(): InspectionModelSpec {
 
 /** Captures every canonical non-butterfly production creature model. */
 export function createMobInspectionSpecs(): InspectionModelSpec[] {
+  // Dragon sex is encoded by mob-id parity. Keep the portrait ids stable so
+  // inserting an unrelated creature earlier in CORE_MOB_ORDER cannot silently
+  // flip every public dragon portrait between its male and female geometry.
+  const stableDragonPortraitIds: Readonly<Record<DragonKind, number>> = {
+    "fire-dragon": -62,
+    "ice-dragon": -63,
+    "steel-dragon": -64,
+    "sea-dragon": -65,
+  };
   return CORE_MOB_ORDER.map((kind, index) => {
-    const model = createMobVisual(kind, -(index + 1));
+    const model = createMobVisual(kind, stableDragonPortraitIds[kind as DragonKind] ?? -(index + 1));
     const airborne = kind === "glowmoth" || MOB_DEFS[kind].flying || MOB_DEFS[kind].aquatic;
     // The old inspector shifted every visual until its lowest vertex touched
     // the ground. That produced attractive sheets while hiding bad runtime

@@ -642,7 +642,7 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     }
 
     const head = pivot(neckParent, "head", [0, 0.06, -1.02]);
-    const headWidth = dragonType === "ice" ? 1.76 : dragonType === "steel" ? 1.66 : dragonType === "sea" ? 1.72 : 1.58;
+    const headWidth = dragonType === "steel" ? 1.66 : dragonType === "sea" ? 1.72 : 1.58;
     rigBox(head, "head", [headWidth, 1.12, 1.42], bodyMaterial, [0, 0, -0.46]);
     rigBox(head, "brow", [headWidth * 1.04, 0.28, 0.7], accentMaterial, [0, 0.34, -0.93]);
     rigBox(head, "snout", [headWidth * 0.7, 0.58, 1.15], bellyMaterial, [0, -0.18, -1.28]);
@@ -1263,6 +1263,59 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       paw.rotation.z = side * 0.12;
     }
     for (let hair = 0; hair < 5; hair += 1) add(visual, [0.05, 0.28, 0.05], copper, [-0.28 + hair * 0.14, 0.63, -0.15 + (hair % 2) * 0.25], undefined, `copper-mole-guard-hair-${hair + 1}`).rotation.z = (hair - 2) * 0.1;
+  } else if (kind === "deepgear-courser-golem") {
+    const brass = material(0xc08a4d);
+    const darkSteel = material(0x3d484d);
+    const piston = material(0xb8c4c4);
+    const leather = material(0x4a3328);
+    const core = material(0x7df1eb, true, 0.96);
+    add(visual, [0.9, 0.7, 1.36], bodyMaterial, [0, 0.63, 0.12], "body", `${kind}-armored-body`);
+    add(visual, [0.82, 0.54, 0.56], brass, [0, 0.72, -0.48], "body", `${kind}-chest-plate`);
+    add(visual, [0.76, 0.58, 0.58], darkSteel, [0, 0.64, 0.64], "body", `${kind}-rear-housing`);
+    const neck = add(visual, [0.48, 0.94, 0.46], darkSteel, [0, 1.16, -0.62], "body", `${kind}-neck-housing`);
+    neck.rotation.x = -0.38;
+    add(visual, [0.58, 0.46, 0.66], bodyMaterial, [0, 1.63, -1.01], "head", `${kind}-head`);
+    add(visual, [0.42, 0.3, 0.58], brass, [0, 1.52, -1.55], undefined, `${kind}-muzzle-plate`);
+    add(visual, [0.36, 0.16, 0.14], darkSteel, [0, 1.48, -1.91], undefined, `${kind}-intake-grille`);
+    for (const side of [-1, 1]) {
+      const sideName = side < 0 ? "left" : "right";
+      add(visual, [0.045, 0.15, 0.2], darkSteel, [side * 0.31, 1.72, -1.2], undefined, `${kind}-${sideName}-eye-housing`);
+      add(visual, [0.05, 0.08, 0.12], core, [side * 0.338, 1.72, -1.23], undefined, `${kind}-${sideName}-aether-eye`);
+      const antenna = add(visual, [0.12, 0.3, 0.15], brass, [side * 0.21, 1.99, -0.94], "head", `${kind}-${sideName}-antenna-ear`);
+      antenna.rotation.z = side * -0.2;
+      const gear = add(visual, [0.055, 0.42, 0.42], brass, [side * 0.485, 0.72, 0.31], undefined, `${kind}-${sideName}-drive-gear`);
+      gear.rotation.x = Math.PI / 4;
+      add(visual, [0.07, 0.16, 0.16], core, [side * 0.52, 0.72, 0.31], undefined, `${kind}-${sideName}-gear-core`);
+    }
+    add(visual, [0.34, 0.34, 0.08], core, [0, 0.75, -0.595], undefined, `${kind}-aether-flywheel`).rotation.z = Math.PI / 4;
+    for (const [px, pz, phase, name] of [
+      [-0.32, -0.43, 0, "front-left"], [0.32, -0.43, Math.PI, "front-right"],
+      [-0.33, 0.56, Math.PI, "rear-left"], [0.33, 0.56, 0, "rear-right"],
+    ] as Array<[number, number, number, string]>) {
+      const leg = pivotBox([0.25, 0.54, 0.27], darkSteel, [px, 0.5, pz], [0, -0.27, 0], "legs", `${kind}-${name}-upper-piston`);
+      leg.userData.phase = phase;
+      add(leg, [0.13, 0.42, 0.14], piston, [0, -0.69, 0], undefined, `${kind}-${name}-piston-rod`);
+      add(leg, [0.25, 0.2, 0.24], brass, [0, -0.82, 0], undefined, `${kind}-${name}-ankle-housing`);
+      add(leg, [0.3, 0.13, 0.4], darkSteel, [0, -0.985, -0.05], undefined, `${kind}-${name}-traction-hoof`);
+    }
+    for (const [index, y, z] of [[1, 1.88, -0.76], [2, 1.68, -0.58], [3, 1.46, -0.4], [4, 1.24, -0.22]] as Array<[number, number, number]>) {
+      const fin = add(visual, [0.15, 0.3, 0.28], brass, [0, y, z], undefined, `${kind}-mane-vent-${index}`);
+      fin.rotation.x = -0.38;
+      add(visual, [0.06, 0.11, 0.04], core, [0, y + 0.02, z - 0.15], undefined, `${kind}-mane-vent-light-${index}`);
+    }
+    const tail = pivotBox([0.2, 0.2, 0.62], darkSteel, [0, 0.82, 0.82], [0, -0.04, 0.29], "body", `${kind}-tail-boom`);
+    tail.rotation.x = 0.42;
+    add(tail, [0.3, 0.3, 0.32], brass, [0, -0.16, 0.66], undefined, `${kind}-tail-counterweight`);
+    add(tail, [0.14, 0.14, 0.14], core, [0, -0.16, 0.86], undefined, `${kind}-tail-lamp`);
+    const saddle = new THREE.Group();
+    saddle.name = `${kind}-saddle`;
+    saddle.visible = false;
+    visual.add(saddle);
+    add(saddle, [0.84, 0.1, 0.78], leather, [0, 1.02, 0.12], undefined, `${kind}-saddle-blanket`);
+    add(saddle, [0.58, 0.24, 0.54], brass, [0, 1.17, 0.1], undefined, `${kind}-saddle-seat`);
+    add(saddle, [0.09, 0.88, 0.1], leather, [-0.43, 0.62, 0.12], undefined, `${kind}-left-girth`);
+    add(saddle, [0.09, 0.88, 0.1], leather, [0.43, 0.62, 0.12], undefined, `${kind}-right-girth`);
+    visual.userData.saddleAnchor = [0, 1.12, 0.12];
   } else if (kind === "copper-scout-golem" || kind === "stone-bulwark-golem" || kind === "aetherforged-sentinel") {
     const bulwark = kind === "stone-bulwark-golem";
     const sentinel = kind === "aetherforged-sentinel";
@@ -1639,28 +1692,175 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     add(reedSaddle, [0.08, 0.72, 0.08], material(0x3f2c23), [0.31, 0.64, 0.06], undefined, "reedstrider-right-girth");
     visual.userData.saddleAnchor = [0, 1.03, 0.1];
   } else if (kind === "wild-horse") {
-    add(visual, [0.82, 0.78, 1.46], bodyMaterial, [0, 0.54, 0.15], "body", "wild-horse-body");
-    add(visual, [0.34, 0.92, 0.42], accentMaterial, [0, 0.94, -0.52], "body", "wild-horse-neck").rotation.x = -0.25;
-    add(visual, [0.52, 0.52, 0.66], bodyMaterial, [0, 1.27, -0.88], "head", "wild-horse-head");
-    add(visual, [0.4, 0.3, 0.48], accentMaterial, [0, 1.13, -1.35], undefined, "wild-horse-muzzle");
-    eyePair(0.17, 1.35, -1.23, 0.07, "wild-horse");
+    const courserCreamMaterial = material(0xf0d5a0);
+    const courserNoseMaterial = material(0x4a3027);
+    const courserHoofMaterial = material(0x30251f);
+    const courserForestMaterial = material(0x557044);
+    const courserEyeRimMaterial = material(0x211814);
+
+    // Three overlapping masses give the Courser a lifted shoulder, tucked
+    // barrel and rounded hindquarter instead of the old single-box torso.
+    const chest = add(visual, [0.88, 0.78, 0.62], bodyMaterial, [0, 0.62, -0.4], "body", "wild-horse-chest");
+    chest.rotation.x = 0.04;
+    add(visual, [0.82, 0.64, 0.92], bodyMaterial, [0, 0.6, 0.12], "body", "wild-horse-barrel");
+    const rump = add(visual, [0.9, 0.72, 0.7], bodyMaterial, [0, 0.62, 0.61], "body", "wild-horse-rump");
+    rump.rotation.x = -0.08;
+    add(visual, [0.7, 0.16, 0.72], accentMaterial, [0, 0.34, 0.12], undefined, "wild-horse-warm-undercoat");
+
+    const neck = add(visual, [0.5, 0.98, 0.48], bodyMaterial, [0, 1.16, -0.64], "body", "wild-horse-neck");
+    neck.rotation.x = -0.42;
+    const throat = add(visual, [0.32, 0.58, 0.3], accentMaterial, [0, 1.04, -0.8], undefined, "wild-horse-throat");
+    throat.rotation.x = -0.42;
+    add(visual, [0.52, 0.44, 0.7], bodyMaterial, [0, 1.61, -1.02], "head", "wild-horse-head").rotation.x = -0.08;
+    add(visual, [0.54, 0.3, 0.34], bodyMaterial, [0, 1.73, -0.9], "head", "wild-horse-brow");
+    const nasalBridge = add(visual, [0.42, 0.34, 0.46], bodyMaterial, [0, 1.56, -1.52], undefined, "wild-horse-nasal-bridge");
+    nasalBridge.rotation.x = 0.08;
+    const muzzle = add(visual, [0.36, 0.27, 0.36], accentMaterial, [0, 1.46, -1.81], undefined, "wild-horse-muzzle");
+    muzzle.rotation.x = 0.04;
+    add(visual, [0.33, 0.14, 0.13], courserNoseMaterial, [0, 1.43, -2.015], undefined, "wild-horse-soft-nose");
+    add(visual, [0.03, 0.045, 0.025], courserEyeRimMaterial, [-0.085, 1.46, -2.085], undefined, "wild-horse-left-nostril");
+    add(visual, [0.03, 0.045, 0.025], courserEyeRimMaterial, [0.085, 1.46, -2.085], undefined, "wild-horse-right-nostril");
+
+    // A narrow cream blaze breaks up the face and remains legible at portrait
+    // scale. The eyes sit on the sides of the skull like a real horse's eyes.
+    add(visual, [0.13, 0.28, 0.025], courserCreamMaterial, [0, 1.69, -1.377], undefined, "wild-horse-blaze-upper").rotation.z = -0.06;
+    add(visual, [0.095, 0.2, 0.025], courserCreamMaterial, [0.025, 1.52, -1.758], undefined, "wild-horse-blaze-lower").rotation.z = 0.08;
+    add(visual, [0.18, 0.28, 0.16], darkMaterial, [0, 1.94, -1.09], "head", "wild-horse-forelock").rotation.x = 0.28;
     for (const side of [-1, 1]) {
-      const ear = add(visual, [0.14, 0.38, 0.16], darkMaterial, [side * 0.18, 1.68, -0.86], undefined, `wild-horse-${side < 0 ? "left" : "right"}-ear`);
-      ear.rotation.z = side * -0.12;
+      const sideName = side < 0 ? "left" : "right";
+      add(visual, [0.035, 0.145, 0.19], courserEyeRimMaterial, [side * 0.277, 1.71, -1.2], undefined, `wild-horse-${sideName}-eye-rim`);
+      add(visual, [0.04, 0.09, 0.12], eyeMaterial, [side * 0.299, 1.715, -1.22], undefined, `wild-horse-${sideName}-eye`);
+      add(visual, [0.012, 0.025, 0.035], courserCreamMaterial, [side * 0.323, 1.74, -1.255], undefined, `wild-horse-${sideName}-eye-glint`);
+      const ear = add(visual, [0.14, 0.32, 0.15], darkMaterial, [side * 0.2, 1.98, -0.94], "head", `wild-horse-${sideName}-ear`);
+      ear.rotation.x = side * 0.04 - 0.1;
+      ear.rotation.z = side * -0.22;
+      const innerEar = add(visual, [0.06, 0.19, 0.035], accentMaterial, [side * 0.208, 1.985, -1.02], undefined, `wild-horse-${sideName}-inner-ear`);
+      innerEar.rotation.z = side * -0.22;
     }
-    quadrupedLegs(0.28, -0.34, 0.48, 0.35, 0.9, 0.16, darkMaterial, "wild-horse");
-    for (let index = 0; index < 5; index += 1) add(visual, [0.11, 0.34, 0.24], darkMaterial, [0, 1.25 - index * 0.16, -0.42 + index * 0.13], undefined, `wild-horse-mane-${index + 1}`).rotation.x = -0.2;
-    const tail = pivotBox([0.28, 0.32, 0.95], darkMaterial, [0, 0.75, 0.84], [0, -0.12, 0.42], "body", "wild-horse-tail");
-    tail.rotation.x = 0.42;
+
+    // Each animated leg pivot carries a thigh, cannon, cream sock and broad
+    // hoof. This keeps the existing gait contract while adding real joints.
+    for (const [px, pz, phase, name, lowerDrift] of [
+      [-0.31, -0.43, 0, "front-left", -0.03], [0.31, -0.43, Math.PI, "front-right", -0.03],
+      [-0.32, 0.57, Math.PI, "rear-left", 0.05], [0.32, 0.57, 0, "rear-right", 0.05],
+    ] as Array<[number, number, number, string, number]>) {
+      const leg = pivotBox([0.23, 0.53, 0.25], bodyMaterial, [px, 0.5, pz], [0, -0.265, 0], "legs", `wild-horse-${name}-upper-leg`);
+      leg.userData.phase = phase;
+      add(leg, [0.18, 0.42, 0.19], accentMaterial, [0, -0.69, lowerDrift], undefined, `wild-horse-${name}-cannon`);
+      add(leg, [0.185, 0.2, 0.195], courserCreamMaterial, [0, -0.83, lowerDrift], undefined, `wild-horse-${name}-sock`);
+      add(leg, [0.25, 0.13, 0.34], courserHoofMaterial, [0, -0.985, lowerDrift - 0.045], undefined, `wild-horse-${name}-hoof`);
+    }
+
+    // Layered mane plates follow the neck slope; small green ties are the
+    // Courser's restrained Wildwood signature rather than a glowing effect.
+    for (const [index, y, z, height] of [
+      [1, 1.88, -0.78, 0.32], [2, 1.7, -0.62, 0.38], [3, 1.49, -0.46, 0.42],
+      [4, 1.28, -0.3, 0.4], [5, 1.08, -0.14, 0.34],
+    ] as Array<[number, number, number, number]>) {
+      const lock = add(visual, [0.17, height, 0.27], darkMaterial, [0, y, z], undefined, `wild-horse-mane-lock-${index}`);
+      lock.rotation.x = -0.42;
+      if (index === 2 || index === 4) add(visual, [0.19, 0.055, 0.3], courserForestMaterial, [0, y - 0.03, z - 0.015], undefined, `wild-horse-mane-tie-${index}`).rotation.x = -0.42;
+    }
+
+    // Offset flank dapples keep the coat readable as chestnut while avoiding
+    // a flat, unbroken side panel in profile.
+    for (const [index, side, y, z, size] of [
+      [1, -1, 0.78, 0.49, 0.14], [2, -1, 0.6, 0.68, 0.11], [3, 1, 0.74, 0.57, 0.13], [4, 1, 0.56, 0.38, 0.1],
+    ] as Array<[number, number, number, number, number]>) {
+      add(visual, [0.025, size, size * 1.25], accentMaterial, [side * 0.463, y, z], undefined, `wild-horse-flank-dapple-${index}`);
+    }
+
+    const tail = pivotBox([0.24, 0.3, 0.62], darkMaterial, [0, 0.85, 0.86], [0, -0.1, 0.3], "body", "wild-horse-tail");
+    tail.rotation.x = 0.48;
+    add(tail, [0.3, 0.28, 0.5], darkMaterial, [-0.08, -0.18, 0.7], undefined, "wild-horse-tail-left-lock").rotation.z = -0.12;
+    add(tail, [0.3, 0.28, 0.5], darkMaterial, [0.08, -0.18, 0.72], undefined, "wild-horse-tail-right-lock").rotation.z = 0.12;
+    add(tail, [0.34, 0.07, 0.32], courserForestMaterial, [0, -0.12, 0.48], undefined, "wild-horse-tail-tie");
     const horseSaddle = new THREE.Group();
     horseSaddle.name = "wild-horse-saddle";
     horseSaddle.visible = false;
     visual.add(horseSaddle);
-    add(horseSaddle, [0.88, 0.1, 0.82], material(0x60412f), [0, 0.98, 0.13], undefined, "wild-horse-saddle-blanket");
-    add(horseSaddle, [0.58, 0.26, 0.56], material(0x8b613e), [0, 1.12, 0.11], undefined, "wild-horse-saddle-seat");
-    add(horseSaddle, [0.09, 0.86, 0.1], material(0x3c2b23), [-0.43, 0.6, 0.12], undefined, "wild-horse-left-girth");
-    add(horseSaddle, [0.09, 0.86, 0.1], material(0x3c2b23), [0.43, 0.6, 0.12], undefined, "wild-horse-right-girth");
-    visual.userData.saddleAnchor = [0, 1.02, 0.12];
+    add(horseSaddle, [0.88, 0.1, 0.82], courserForestMaterial, [0, 1.01, 0.12], undefined, "wild-horse-saddle-blanket");
+    add(horseSaddle, [0.72, 0.055, 0.7], courserCreamMaterial, [0, 1.075, 0.12], undefined, "wild-horse-saddle-blanket-trim");
+    add(horseSaddle, [0.58, 0.25, 0.56], material(0x765035), [0, 1.19, 0.1], undefined, "wild-horse-saddle-seat");
+    add(horseSaddle, [0.09, 0.88, 0.1], material(0x3c2b23), [-0.43, 0.62, 0.12], undefined, "wild-horse-left-girth");
+    add(horseSaddle, [0.09, 0.88, 0.1], material(0x3c2b23), [0.43, 0.62, 0.12], undefined, "wild-horse-right-girth");
+    visual.userData.saddleAnchor = [0, 1.12, 0.12];
+  } else if (kind === "rimehoof-courser" || kind === "sunscar-courser" || kind === "mirestride-courser" || kind === "starbough-courser") {
+    const rime = kind === "rimehoof-courser";
+    const sun = kind === "sunscar-courser";
+    const mire = kind === "mirestride-courser";
+    const star = kind === "starbough-courser";
+    const trim = material(rime ? 0xf4fbf8 : sun ? 0x513326 : mire ? 0x6f8b54 : 0xa9f3d6);
+    const nose = material(sun ? 0x3b2720 : mire ? 0x344238 : 0x4a3b35);
+    const hoof = material(rime ? 0x657279 : sun ? 0x3e2b24 : mire ? 0x2f4237 : 0x24323a);
+    const signature = material(star ? 0x79cbb0 : rime ? 0xc7ebef : sun ? 0x7d4930 : 0x6f8d54);
+    const starGlow = material(eyeColor, true, 0.88);
+    const bodyWidth = rime || mire ? 0.94 : sun ? 0.78 : 0.82;
+    const bodyHeight = rime ? 0.76 : mire ? 0.68 : sun ? 0.6 : 0.66;
+    const chest = add(visual, [bodyWidth, bodyHeight + 0.06, sun ? 0.58 : 0.64], bodyMaterial, [0, 0.62, -0.4], "body", `${kind}-chest`);
+    chest.rotation.x = mire ? -0.03 : 0.04;
+    add(visual, [bodyWidth - 0.06, bodyHeight, sun ? 0.92 : 1.0], bodyMaterial, [0, 0.6, 0.14], "body", `${kind}-barrel`);
+    add(visual, [bodyWidth, bodyHeight + 0.02, 0.68], bodyMaterial, [0, 0.62, 0.62], "body", `${kind}-rump`).rotation.x = -0.08;
+    const neckY = mire ? 1.09 : 1.17;
+    const neck = add(visual, [rime ? 0.56 : sun ? 0.39 : 0.46, rime ? 0.9 : star ? 1.04 : 0.96, 0.46], bodyMaterial, [0, neckY, -0.64], "body", `${kind}-neck`);
+    neck.rotation.x = mire ? -0.32 : -0.42;
+    add(visual, [sun ? 0.46 : 0.52, 0.42, sun ? 0.75 : 0.68], bodyMaterial, [0, mire ? 1.54 : 1.62, -1.03], "head", `${kind}-head`).rotation.x = sun ? -0.04 : -0.08;
+    add(visual, [sun ? 0.34 : 0.38, 0.28, sun ? 0.54 : 0.48], accentMaterial, [0, mire ? 1.43 : 1.5, -1.52], undefined, `${kind}-muzzle`);
+    add(visual, [sun ? 0.31 : 0.34, 0.14, 0.13], nose, [0, mire ? 1.4 : 1.46, -1.82], undefined, `${kind}-nose`);
+    for (const side of [-1, 1]) {
+      const sideName = side < 0 ? "left" : "right";
+      add(visual, [0.035, 0.14, 0.18], darkMaterial, [side * (sun ? 0.25 : 0.28), mire ? 1.61 : 1.72, -1.2], undefined, `${kind}-${sideName}-eye-rim`);
+      add(visual, [0.04, 0.085, 0.11], eyeMaterial, [side * (sun ? 0.273 : 0.302), mire ? 1.615 : 1.725, -1.22], undefined, `${kind}-${sideName}-eye`);
+      const ear = add(visual, [sun ? 0.13 : 0.15, sun ? 0.36 : 0.32, 0.15], darkMaterial, [side * 0.2, mire ? 1.91 : 1.99, -0.94], "head", `${kind}-${sideName}-ear`);
+      ear.rotation.z = side * (sun ? -0.16 : -0.22);
+      if (star) {
+        const antler = add(visual, [0.08, 0.44, 0.08], trim, [side * 0.15, 2.08, -0.83], undefined, `${kind}-${sideName}-branch-antler`);
+        antler.rotation.z = side * -0.25;
+        add(visual, [0.22, 0.07, 0.08], trim, [side * 0.23, 2.2, -0.83], undefined, `${kind}-${sideName}-antler-tine`).rotation.z = side * -0.28;
+      }
+    }
+    const hoofWidth = mire ? 0.36 : rime ? 0.3 : 0.25;
+    for (const [px, pz, phase, name] of [
+      [-0.32, -0.43, 0, "front-left"], [0.32, -0.43, Math.PI, "front-right"],
+      [-0.33, 0.58, Math.PI, "rear-left"], [0.33, 0.58, 0, "rear-right"],
+    ] as Array<[number, number, number, string]>) {
+      const leg = pivotBox([sun ? 0.19 : 0.23, sun ? 0.58 : 0.53, sun ? 0.2 : 0.24], bodyMaterial, [px, 0.5, pz], [0, sun ? -0.29 : -0.265, 0], "legs", `${kind}-${name}-upper-leg`);
+      leg.userData.phase = phase;
+      add(leg, [sun ? 0.14 : 0.18, sun ? 0.45 : 0.42, sun ? 0.15 : 0.19], accentMaterial, [0, -0.7, mire ? 0.04 : 0], undefined, `${kind}-${name}-cannon`);
+      if (rime) add(leg, [0.27, 0.18, 0.25], trim, [0, -0.84, 0], undefined, `${kind}-${name}-shaggy-fetlock`);
+      if (sun) add(leg, [0.2, 0.12, 0.2], signature, [0, -0.82, 0], undefined, `${kind}-${name}-desert-wrap`);
+      add(leg, [hoofWidth, mire ? 0.12 : 0.13, mire ? 0.46 : 0.35], hoof, [0, mire ? -0.99 : -0.985, mire ? -0.08 : -0.045], undefined, `${kind}-${name}-hoof`);
+    }
+    const maneCount = sun ? 4 : 6;
+    for (let index = 0; index < maneCount; index += 1) {
+      const y = (mire ? 1.75 : 1.9) - index * (mire ? 0.16 : 0.17);
+      const z = -0.76 + index * 0.15;
+      const lock = add(visual, [star ? 0.14 : sun ? 0.13 : 0.19, rime ? 0.38 : mire ? 0.34 : 0.3, mire ? 0.34 : 0.27], star ? signature : index % 2 === 0 ? darkMaterial : signature, [0, y, z], undefined, `${kind}-mane-lock-${index + 1}`);
+      lock.rotation.x = mire ? -0.3 : -0.42;
+    }
+    if (rime) add(visual, [0.68, 0.34, 0.34], trim, [0, 1.27, -0.53], undefined, `${kind}-winter-ruff`).rotation.x = -0.35;
+    if (sun) {
+      for (const side of [-1, 1]) add(visual, [0.035, 0.07, 0.42], signature, [side * 0.245, 1.65, -1.28], undefined, `${kind}-${side < 0 ? "left" : "right"}-sun-stripe`).rotation.x = -0.08;
+    }
+    if (mire) {
+      for (const side of [-1, 1]) add(visual, [0.03, 0.18, 0.58], signature, [side * 0.485, 0.7, 0.35], undefined, `${kind}-${side < 0 ? "left" : "right"}-reed-mark`).rotation.x = 0.2;
+    }
+    if (star) {
+      for (const [index, side, y, z] of [[1, -1, 0.78, 0.48], [2, -1, 0.57, 0.67], [3, 1, 0.72, 0.6], [4, 1, 0.55, 0.4]] as Array<[number, number, number, number]>) {
+        add(visual, [0.028, 0.12, 0.12], starGlow, [side * 0.435, y, z], undefined, `${kind}-star-mark-${index}`).rotation.x = Math.PI / 4;
+      }
+    }
+    const tail = pivotBox([sun ? 0.18 : 0.25, sun ? 0.24 : 0.3, sun ? 0.72 : 0.62], star ? signature : darkMaterial, [0, 0.84, 0.86], [0, -0.1, 0.3], "body", `${kind}-tail`);
+    tail.rotation.x = sun ? 0.35 : 0.48;
+    const saddle = new THREE.Group();
+    saddle.name = `${kind}-saddle`;
+    saddle.visible = false;
+    visual.add(saddle);
+    add(saddle, [bodyWidth - 0.06, 0.1, 0.8], signature, [0, 1.02, 0.12], undefined, `${kind}-saddle-blanket`);
+    add(saddle, [0.56, 0.24, 0.54], material(0x765035), [0, 1.17, 0.1], undefined, `${kind}-saddle-seat`);
+    add(saddle, [0.09, 0.86, 0.1], material(0x3c2b23), [-0.43, 0.62, 0.12], undefined, `${kind}-left-girth`);
+    add(saddle, [0.09, 0.86, 0.1], material(0x3c2b23), [0.43, 0.62, 0.12], undefined, `${kind}-right-girth`);
+    visual.userData.saddleAnchor = [0, 1.12, 0.12];
   } else if (kind === "meadow-cow") {
     add(visual, [1.04, 0.82, 1.48], bodyMaterial, [0, 0.49, 0.14], "body", "meadow-cow-body");
     add(visual, [0.72, 0.66, 0.68], accentMaterial, [0, 0.67, -0.82], "head", "meadow-cow-head");

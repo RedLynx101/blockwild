@@ -275,3 +275,10 @@ Release contract: `V1_USER_PROMPT_VERBATIM.md` is the temporary verbatim accepta
 - Added host-side hostile-mob melee damage for remote players, including inventory-aware death handling and full-health guest respawn.
 - Bumped the release to v1.1.0 Shared Wilds and updated README/changelog metadata.
 - Verification: 71 focused multiplayer/tree/world tests pass; production Sites build passes.
+
+## Courser visual and ecology expansion (2026-07-12)
+
+- Rebuilt the Wildwood Courser production rig around overlapping chest/barrel/rump masses, a tapered face, side-set eyes, jointed legs, socks and hooves, a layered mane and tail, restrained Wildwood ties, and updated hidden saddle geometry.
+- Added Rimehoof, Sunscar, Mirestride, and Starbough Coursers with distinct proportions and readable biome adaptations rather than palette swaps. Their weighted herds now enter Frostpine/Snowfield/Snowcap, Desert/Badlands, Siltfen, and Glimmerwood respectively.
+- Added the Deepgear Courser as a brass-and-steel piston mount with aether eyes, drive gears, vented mane, traction hooves and tail lamp. Dwarven Golemsmiths can stock its unaligned orb and blueprint; the Golem Forge accepts the learned plan, 14 Deepgear Alloy, 20 Copper Ore, three Crystal Shards, six Gear Clusters, 110 mana, and 120 seconds before returning a player-bound orb.
+- The six-model production audit reports exact ground contact in isometric, front, and side views. Focused ecology, mount, culture-commerce, forge, blueprint, adapter and portrait-contract tests pass 66/66 after the visual revision.

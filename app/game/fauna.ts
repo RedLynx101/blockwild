@@ -234,15 +234,15 @@ function weightedMob(entries: readonly WeightedMob[], roll: number) {
   return entries.at(-1)?.[0] ?? "mossling";
 }
 
-const SNOW_PASSIVES: readonly WeightedMob[] = Object.freeze([["woolhorn", 0.68], ["canopy-lark", 0.22], ["thimbledeer", 0.1]]);
-const DESERT_PASSIVES: readonly WeightedMob[] = Object.freeze([["duneclatter", 0.68], ["emberjay", 0.24], ["pebbletortoise", 0.08]]);
+const SNOW_PASSIVES: readonly WeightedMob[] = Object.freeze([["woolhorn", 0.54], ["canopy-lark", 0.22], ["rimehoof-courser", 0.14], ["thimbledeer", 0.1]]);
+const DESERT_PASSIVES: readonly WeightedMob[] = Object.freeze([["duneclatter", 0.52], ["emberjay", 0.24], ["sunscar-courser", 0.16], ["pebbletortoise", 0.08]]);
 const BEACH_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["sunwash-crab", 0.58], ["tidewing-gull", 0.3], ["pebbletortoise", 0.08], ["reed-dragonfly", 0.04],
 ]);
 const SAVANNA_PASSIVES: readonly WeightedMob[] = Object.freeze([["sunstep-grazer", 0.46], ["emberjay", 0.2], ["ridgeback", 0.2], ["reedstrider", 0.14]]);
 const SILTFEN_PASSIVES: readonly WeightedMob[] = Object.freeze([
-  ["mossling", 0.19], ["lanternshell", 0.2], ["puddlehopper", 0.17], ["reedstrider", 0.16],
-  ["reed-dragonfly", 0.09], ["pebbletortoise", 0.04], ["canopy-lark", 0.03], ["dewback-tapir", 0.12],
+  ["mossling", 0.16], ["lanternshell", 0.18], ["puddlehopper", 0.15], ["reedstrider", 0.15],
+  ["mirestride-courser", 0.1], ["reed-dragonfly", 0.08], ["pebbletortoise", 0.04], ["canopy-lark", 0.03], ["dewback-tapir", 0.11],
 ]);
 const FOREST_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["brambleboar", 0.18], ["mossling", 0.16], ["canopy-lark", 0.13], ["thimbledeer", 0.15],
@@ -278,11 +278,11 @@ const SUGARPLUM_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["sprinklebug", 0.56], ["taffalo", 0.34], ["reed-dragonfly", 0.06], ["puddlehopper", 0.04],
 ]);
 const GLIMMERWOOD_PASSIVES: readonly WeightedMob[] = Object.freeze([
-  ["glimmerhart", 0.34], ["runeowl", 0.2], ["mossling", 0.15], ["glowmoth", 0.12],
-  ["thimbledeer", 0.08], ["canopy-lark", 0.06], ["petalfox", 0.05],
+  ["glimmerhart", 0.28], ["runeowl", 0.18], ["starbough-courser", 0.12], ["mossling", 0.14], ["glowmoth", 0.11],
+  ["thimbledeer", 0.07], ["canopy-lark", 0.05], ["petalfox", 0.05],
 ]);
 const SNOWCAP_PASSIVES: readonly WeightedMob[] = Object.freeze([
-  ["woolhorn", 0.42], ["copper-mole", 0.18], ["wild-horse", 0.13], ["canopy-lark", 0.1],
+  ["woolhorn", 0.42], ["copper-mole", 0.18], ["rimehoof-courser", 0.13], ["canopy-lark", 0.1],
   ["thimbledeer", 0.09], ["pebbletortoise", 0.08],
 ]);
 
@@ -332,6 +332,10 @@ export function passiveMobKindForBiome(biome: BiomeId, roll = Math.random()): Mo
 export const NATURAL_GROUP_RANGES: Readonly<Partial<Record<MobKind, readonly [minimum: number, maximum: number]>>> = Object.freeze({
   "sunstep-grazer": [4, 7],
   "wild-horse": [3, 6],
+  "rimehoof-courser": [3, 5],
+  "sunscar-courser": [2, 5],
+  "mirestride-courser": [2, 4],
+  "starbough-courser": [2, 4],
   "meadow-cow": [4, 7],
   mistmane: [3, 5],
   ridgeback: [2, 4],
@@ -687,7 +691,7 @@ export function stepAetherbellMorph(
   return { schemaVersion: 1, medium, targetMedium, airProgress, phase };
 }
 
-export type RideableCreatureKind = "wild-horse" | "warg" | "reedstrider" | "taffalo" | "worldshell-leviathan" | "aetherbell-leviathan";
+export type RideableCreatureKind = "wild-horse" | "rimehoof-courser" | "sunscar-courser" | "mirestride-courser" | "starbough-courser" | "deepgear-courser-golem" | "warg" | "reedstrider" | "taffalo" | "worldshell-leviathan" | "aetherbell-leviathan";
 export type CreatureMountProfile = Readonly<{
   kind: RideableCreatureKind;
   saddleRequired: true;
@@ -702,6 +706,11 @@ export type CreatureMountProfile = Readonly<{
 
 export const CREATURE_MOUNT_PROFILES: Readonly<Record<RideableCreatureKind, CreatureMountProfile>> = Object.freeze({
   "wild-horse": Object.freeze({ kind: "wild-horse", saddleRequired: true, adultRequired: true, controllable: true, cargoChestLimit: 0, landSpeed: 4.5, waterSpeed: 1.1, airSpeed: 0, alignedCannotTame: false }),
+  "rimehoof-courser": Object.freeze({ kind: "rimehoof-courser", saddleRequired: true, adultRequired: true, controllable: true, cargoChestLimit: 0, landSpeed: 4.2, waterSpeed: 1.05, airSpeed: 0, alignedCannotTame: false }),
+  "sunscar-courser": Object.freeze({ kind: "sunscar-courser", saddleRequired: true, adultRequired: true, controllable: true, cargoChestLimit: 0, landSpeed: 4.85, waterSpeed: 0.72, airSpeed: 0, alignedCannotTame: false }),
+  "mirestride-courser": Object.freeze({ kind: "mirestride-courser", saddleRequired: true, adultRequired: true, controllable: true, cargoChestLimit: 0, landSpeed: 3.75, waterSpeed: 2.25, airSpeed: 0, alignedCannotTame: false }),
+  "starbough-courser": Object.freeze({ kind: "starbough-courser", saddleRequired: true, adultRequired: true, controllable: true, cargoChestLimit: 0, landSpeed: 4.55, waterSpeed: 1.15, airSpeed: 0, alignedCannotTame: false }),
+  "deepgear-courser-golem": Object.freeze({ kind: "deepgear-courser-golem", saddleRequired: true, adultRequired: false, controllable: true, cargoChestLimit: 0, landSpeed: 4.45, waterSpeed: 0.65, airSpeed: 0, alignedCannotTame: false }),
   warg: Object.freeze({ kind: "warg", saddleRequired: true, adultRequired: true, controllable: true, cargoChestLimit: 0, landSpeed: 4.25, waterSpeed: 1.05, airSpeed: 0, alignedCannotTame: true }),
   reedstrider: Object.freeze({ kind: "reedstrider", saddleRequired: true, adultRequired: true, controllable: true, cargoChestLimit: 0, landSpeed: 3.15, waterSpeed: 4.4, airSpeed: 0, alignedCannotTame: false }),
   taffalo: Object.freeze({ kind: "taffalo", saddleRequired: true, adultRequired: true, controllable: true, cargoChestLimit: 0, landSpeed: 4.1, waterSpeed: 0.75, airSpeed: 0, alignedCannotTame: false }),
@@ -732,7 +741,8 @@ export function canRideCreature(context: CreatureRideContext) {
 }
 
 export const GENERIC_BOND_MOB_KINDS = Object.freeze([
-  "wild-horse", "warg", "tidepup", "sakurakit", "taffy-hound", "praline-cat", "taffalo",
+  "wild-horse", "rimehoof-courser", "sunscar-courser", "mirestride-courser", "starbough-courser", "deepgear-courser-golem",
+  "warg", "tidepup", "sakurakit", "taffy-hound", "praline-cat", "taffalo",
   "glimmerhart", "runeowl", "copper-mole",
 ] as const satisfies readonly CoreMobKind[]);
 

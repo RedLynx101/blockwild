@@ -95,9 +95,9 @@ import {
 } from "../app/game/creature-pathing.ts";
 
 test("expanded ecology catalog includes mounts, livestock, thin fish, pollinators, a pet, guardian, and archer", () => {
-  assert.equal(SURFACE_MOB_ORDER.length, 18);
-  assert.equal(new Set(SURFACE_MOB_ORDER).size, 18);
-  for (const kind of ["thimbledeer", "lanternshell", "puddlehopper", "reedstrider"] as const) {
+  assert.equal(SURFACE_MOB_ORDER.length, 22);
+  assert.equal(new Set(SURFACE_MOB_ORDER).size, 22);
+  for (const kind of ["thimbledeer", "lanternshell", "puddlehopper", "reedstrider", "rimehoof-courser", "sunscar-courser", "mirestride-courser", "starbough-courser"] as const) {
     assert.ok(SURFACE_MOB_ORDER.includes(kind));
     assert.equal(MOB_DEFS[kind].hostile, false);
     assert.ok(MOB_DEFS[kind].discoveryHint);
@@ -156,8 +156,9 @@ test("expanded ecology catalog includes mounts, livestock, thin fish, pollinator
   assert.equal(MOB_DEFS["reliquary-sentinel"].hostile, true);
   assert.equal(passiveMobKindForBiome(BiomeId.Meadow, 0.01), "thimbledeer");
   assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.3), "lanternshell");
-  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.52), "puddlehopper");
-  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.65), "reedstrider");
+  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.45), "puddlehopper");
+  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.6), "reedstrider");
+  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.68), "mirestride-courser");
   assert.equal(CORE_MOB_ORDER.filter((kind) => MOB_DEFS[kind].sentient).length, SENTIENT_MOB_ORDER.length);
 });
 
@@ -170,6 +171,10 @@ test("v0.5 habitat tables place mammals, pollinators, and fish without ambient q
   assert.equal(passiveMobKindForBiome(BiomeId.Wildwood, 0.79), "wild-horse");
   assert.equal(passiveMobKindForBiome(BiomeId.Wildwood, 0.95), "burrowbell");
   assert.equal(passiveMobKindForBiome(BiomeId.Wildwood, 0.99), "sakurakit");
+  assert.ok(passiveMobSpawnTableForBiome(BiomeId.Frostpine).some(([kind]) => kind === "rimehoof-courser"));
+  assert.ok(passiveMobSpawnTableForBiome(BiomeId.Desert).some(([kind]) => kind === "sunscar-courser"));
+  assert.ok(passiveMobSpawnTableForBiome(BiomeId.Siltfen).some(([kind]) => kind === "mirestride-courser"));
+  assert.ok(passiveMobSpawnTableForBiome(BiomeId.Glimmerwood).some(([kind]) => kind === "starbough-courser"));
 
   for (const biome of Object.values(BiomeId).filter((value): value is BiomeId => typeof value === "number")) {
     const kinds = passiveMobSpawnTableForBiome(biome).map(([kind]) => kind);
@@ -189,6 +194,8 @@ test("v0.5 habitat tables place mammals, pollinators, and fish without ambient q
 test("natural group ranges remain capped and wild hives own exactly one queen", () => {
   assert.equal(naturalGroupSizeForMob("sunstep-grazer", 0), 4);
   assert.equal(naturalGroupSizeForMob("sunstep-grazer", 0.999999), 7);
+  assert.equal(naturalGroupSizeForMob("rimehoof-courser", 0), 3);
+  assert.equal(naturalGroupSizeForMob("starbough-courser", 0.999999), 4);
   assert.equal(naturalGroupSizeForMob("silverthread", 0), 8);
   assert.equal(naturalGroupSizeForMob("silverthread", 0.999999), 12);
   assert.equal(naturalGroupSizeForMob("mistmane", 0.5), 4);

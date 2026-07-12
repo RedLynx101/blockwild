@@ -202,6 +202,12 @@ test("new production models are readable and expose stable saddle, cargo and mor
   assert.equal(horse.getObjectByName("wild-horse-saddle")?.visible, false);
   assert.equal(reedstrider.getObjectByName("reedstrider-saddle")?.visible, false);
   assert.equal(warg.getObjectByName("warg-saddle")?.visible, false);
+  for (const kind of ["rimehoof-courser", "sunscar-courser", "mirestride-courser", "starbough-courser", "deepgear-courser-golem"] as const) {
+    const courser = createMobVisual(kind, 20).visual;
+    assert.equal(courser.getObjectByName(`${kind}-saddle`)?.visible, false);
+    assert.ok(CREATURE_MOUNT_PROFILES[kind], `${kind} has a live mount profile`);
+    assert.equal(MOB_DEFS[kind].rideable, true);
+  }
 
   const worldshell = createMobVisual("worldshell-leviathan", 4).visual;
   assert.equal(worldshell.getObjectByName("worldshell-leviathan-saddle")?.visible, false);

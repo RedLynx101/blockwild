@@ -2,6 +2,13 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## Unreleased - Courser Ecotypes
+
+- Rebuilt the Wildwood Courser with tapered anatomy, jointed legs, readable side-set eyes, a layered mane and a production-grounded saddle rig.
+- Added four biome-specific tameable mounts: shaggy Rimehoofs in Frostpine, Snowfield and Snowcap; lean Sunscars in Desert and Badlands; broad-hoofed Mirestrides in Siltfen; and branch-antlered Starboughs in Glimmerwood.
+- Added the Deepgear Courser, a brass-and-steel piston mount sold unaligned by Dwarven Golemsmiths or assembled from its own blueprint in a mana-fed Golem Forge.
+- Expanded biome spawn, herd, care, Capture Orb, saddle, mount-speed, Dwarf commerce, blueprint, forge, persistence, field-guide portrait and regression-test contracts for the new Coursers.
+
 ## 1.1.0 - Shared Wilds - 2026-07-11
 
 - Fixed guest tree felling and large connected-tree edit replication.
