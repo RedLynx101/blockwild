@@ -1468,7 +1468,7 @@ export function positionInPlayerViewCone(yaw: number, dx: number, dz: number, ha
 }
 
 const LEVIATHAN_KINDS = new Set<MobKind>(["worldshell-leviathan", "aetherbell-larva", "aetherbell-leviathan"]);
-const DRAGON_KINDS = new Set<MobKind>(["fire-dragon", "ice-dragon", "steel-dragon", "sea-dragon"]);
+const DRAGON_KINDS = new Set<MobKind>(["fire-dragon", "ice-dragon", "steel-dragon", "sea-dragon", "gold-dragon", "silver-dragon"]);
 const ARCHIVE_SHELF_BLOCK_SET = new Set<BlockId>(ARCHIVE_SHELF_BLOCKS);
 const DRACONIC_PLAYER_GEAR = new Set<ItemCode>([
   Item.DragonboneGreatsword, Item.DragonbonePickaxe, Item.DragonboneAxe,
@@ -1476,12 +1476,12 @@ const DRACONIC_PLAYER_GEAR = new Set<ItemCode>([
   Item.IceScaleHelm, Item.IceScalePlate, Item.IceScaleGreaves, Item.IceScaleBoots,
   Item.SteelScaleHelm, Item.SteelScalePlate, Item.SteelScaleGreaves, Item.SteelScaleBoots,
 ]);
-const DRAGON_SCALE_ITEMS = new Set<ItemCode>([Item.FireDragonScale, Item.IceDragonScale, Item.SteelDragonScale, Item.SeaDragonScale]);
+const DRAGON_SCALE_ITEMS = new Set<ItemCode>([Item.FireDragonScale, Item.IceDragonScale, Item.SteelDragonScale, Item.SeaDragonScale, Item.GoldDragonScale, Item.SilverDragonScale]);
 /** Species whose first successful capture advances A Living Archive. */
 const DRAGONWAKE_RARE_CAPTURE_KINDS = new Set<MobKind>([
   "bloom-monarch", "fen-lantern", "mistmane", "sakurakit", "tidepup",
   "worldshell-leviathan", "aetherbell-leviathan", "reliquary-sentinel",
-  "fire-dragon", "ice-dragon", "steel-dragon", "sea-dragon",
+  "fire-dragon", "ice-dragon", "steel-dragon", "sea-dragon", "gold-dragon", "silver-dragon",
 ]);
 
 function isLeviathanKind(kind: MobKind): kind is "worldshell-leviathan" | "aetherbell-larva" | "aetherbell-leviathan" {
@@ -1504,11 +1504,11 @@ function dragonFoodForItem(item: ItemCode): DragonFood | null {
 }
 
 function dragonScaleItem(type: DragonType) {
-  return type === "fire" ? Item.FireDragonScale : type === "ice" ? Item.IceDragonScale : type === "sea" ? Item.SeaDragonScale : Item.SteelDragonScale;
+  return type === "fire" ? Item.FireDragonScale : type === "ice" ? Item.IceDragonScale : type === "sea" ? Item.SeaDragonScale : type === "gold" ? Item.GoldDragonScale : type === "silver" ? Item.SilverDragonScale : Item.SteelDragonScale;
 }
 
 function dragonEggItem(type: DragonType) {
-  return type === "fire" ? Item.FireDragonEgg : type === "ice" ? Item.IceDragonEgg : type === "sea" ? Item.SeaDragonEgg : Item.SteelDragonEgg;
+  return type === "fire" ? Item.FireDragonEgg : type === "ice" ? Item.IceDragonEgg : type === "sea" ? Item.SeaDragonEgg : type === "gold" ? Item.GoldDragonEgg : type === "silver" ? Item.SilverDragonEgg : Item.SteelDragonEgg;
 }
 
 function dragonLootItemCode(item: string): ItemCode | null {
@@ -1519,18 +1519,26 @@ function dragonLootItemCode(item: string): ItemCode | null {
     IceDragonScale: Item.IceDragonScale,
     SteelDragonScale: Item.SteelDragonScale,
     SeaDragonScale: Item.SeaDragonScale,
+    GoldDragonScale: Item.GoldDragonScale,
+    SilverDragonScale: Item.SilverDragonScale,
     FireDragonHeart: Item.FireDragonHeart,
     IceDragonHeart: Item.IceDragonHeart,
     SteelDragonHeart: Item.SteelDragonHeart,
     SeaDragonHeart: Item.SeaDragonHeart,
+    GoldDragonHeart: Item.GoldDragonHeart,
+    SilverDragonHeart: Item.SilverDragonHeart,
     FireDragonSkull: Item.FireDragonSkull,
     IceDragonSkull: Item.IceDragonSkull,
     SteelDragonSkull: Item.SteelDragonSkull,
     SeaDragonSkull: Item.SeaDragonSkull,
+    GoldDragonSkull: Item.GoldDragonSkull,
+    SilverDragonSkull: Item.SilverDragonSkull,
     FireDragonEgg: Item.FireDragonEgg,
     IceDragonEgg: Item.IceDragonEgg,
     SteelDragonEgg: Item.SteelDragonEgg,
     SeaDragonEgg: Item.SeaDragonEgg,
+    GoldDragonEgg: Item.GoldDragonEgg,
+    SilverDragonEgg: Item.SilverDragonEgg,
   };
   return byName[item] ?? null;
 }
@@ -1540,6 +1548,8 @@ function dragonCatalystType(item: ItemCode): DragonType | null {
   if (item === Item.IceBreedingCatalyst) return "ice";
   if (item === Item.SteelBreedingCatalyst) return "steel";
   if (item === Item.StarCoralShard) return "sea";
+  if (item === Item.GoldBreedingCatalyst) return "gold";
+  if (item === Item.SilverBreedingCatalyst) return "silver";
   return null;
 }
 
@@ -1704,6 +1714,8 @@ const STRUCTURE_LOOT_ITEMS: Readonly<Record<string, ItemCode>> = Object.freeze({
   "fire-dragon-scale": Item.FireDragonScale,
   "ice-dragon-scale": Item.IceDragonScale,
   "steel-dragon-scale": Item.SteelDragonScale,
+  "gold-dragon-scale": Item.GoldDragonScale,
+  "silver-dragon-scale": Item.SilverDragonScale,
   "tome-flame-jet": Item.TomeFlameJet,
   "tome-frost-lance": Item.TomeFrostLance,
   "tome-steel-spear": Item.TomeSteelSpear,
@@ -9147,8 +9159,8 @@ export class VoxelEngine {
       this.consumeSelectedUnit();
       this.placeCooldown = 0.3;
       this.heldUse = 1;
-      this.audio.play("place", type === "fire" ? BlockId.Lava : type === "ice" ? BlockId.Ice : type === "sea" ? BlockId.StarCoral : BlockId.RivetedDragonstone);
-      this.events.onToast(`${heldDefinition.name} placed · ${type === "fire" ? "keep it in open flame" : type === "ice" ? "submerge it in freezing water" : type === "sea" ? "keep it submerged in deep, living seawater" : "surround heated metal with active steam"}.`);
+      this.audio.play("place", type === "fire" ? BlockId.Lava : type === "ice" ? BlockId.Ice : type === "sea" ? BlockId.StarCoral : type === "gold" ? BlockId.GildedDragonstone : type === "silver" ? BlockId.ArgentDragonstone : BlockId.RivetedDragonstone);
+      this.events.onToast(`${heldDefinition.name} placed · ${type === "fire" ? "keep it in open flame" : type === "ice" ? "submerge it in freezing water" : type === "sea" ? "keep it submerged in deep, living seawater" : type === "gold" ? "rest it on gilded stone under direct sunlight" : type === "silver" ? "rest it on argent stone under open moonlight" : "surround heated metal with active steam"}.`);
       this.saveSoon();
       this.emitHud(true);
       return;
@@ -13028,7 +13040,7 @@ export class VoxelEngine {
       if (marker.tag.startsWith("dragon-lair:")) {
         const dragonType = marker.tag.split(":")[1];
         this.dispatchQuestEvent({ type: "custom", eventId: "dragon-lair-discovered", at: Date.now() });
-        if (dragonType === "fire" || dragonType === "ice" || dragonType === "steel") this.dispatchQuestEvent({ type: "custom", eventId: `${dragonType}-dragon-lair-recorded`, at: Date.now() });
+        if (dragonType === "fire" || dragonType === "ice" || dragonType === "steel" || dragonType === "gold" || dragonType === "silver") this.dispatchQuestEvent({ type: "custom", eventId: `${dragonType}-dragon-lair-recorded`, at: Date.now() });
         this.events.onToast(`Map updated · ${this.mapLocationName(marker.tag)} discovered below.`);
       }
       if (marker.tag.startsWith("dragon-nest:sea")) {
@@ -16197,6 +16209,12 @@ export class VoxelEngine {
         drop.velocity.x = 0;
         drop.velocity.z = 0;
         drop.mesh.rotation.x = Math.sin(drop.age * 0.72) * 0.028;
+        drop.mesh.traverse((object) => {
+          if (!object.userData.eggShimmer) return;
+          const phase = Number(object.userData.shimmerPhase ?? 0);
+          object.scale.setScalar(0.88 + Math.sin(drop.age * 3.2 + phase) * 0.14);
+          object.rotation.y += dt * (0.45 + phase * 0.04);
+        });
         const x = Math.floor(drop.mesh.position.x + 0.5);
         const y = Math.floor(drop.mesh.position.y + 0.5);
         const z = Math.floor(drop.mesh.position.z + 0.5);
@@ -16206,6 +16224,10 @@ export class VoxelEngine {
         const heated = neighbors.some((block) => block === BlockId.Lava || isTorchBlock(block ?? BlockId.Air));
         const submerged = blockContainsWater(cell);
         const incubator = neighbors.includes(BlockId.DraconicIncubator);
+        const openSky = this.world.getBlock(x, y + 1, z) === BlockId.Air;
+        const preciousMetal = neighbors.some((block) => block === BlockId.GoldBlock || block === BlockId.GildedDragonstone || block === BlockId.ArgentDragonstone || block === BlockId.MoonSlate);
+        const daylight = this.daylightAmount();
+        const celestialClear = !(["overcast", "rain", "thunder", "snow", "sandstorm", "ashfall"] as const).includes(this.weatherState.kind as "overcast" | "rain" | "thunder" | "snow" | "sandstorm" | "ashfall");
         const stepped = stepDragonEgg(
           dragonEgg,
           worldTicksForDragonDelta(dt, this.worldOptions.dayLengthMinutes),
@@ -16216,6 +16238,9 @@ export class VoxelEngine {
             heatedMetal: neighbors.some((block) => block === BlockId.RivetedDragonstone || block === BlockId.GoldBlock),
             steam: heated && (submerged || neighbors.some((block) => blockContainsWater(block))),
             livingCoral: neighbors.includes(BlockId.StarCoral),
+            directSunlight: openSky && daylight > 0.72 && celestialClear,
+            moonlight: openSky && daylight < 0.12 && celestialClear,
+            preciousMetal,
             incubator,
           },
           Math.floor((this.day + this.worldTime) * 24_000),
@@ -17201,6 +17226,14 @@ export class VoxelEngine {
     this.heldRoot.position.set(0.48 + Math.sin(walk) * 0.018, -0.43 + Math.abs(Math.cos(walk)) * 0.018 - this.heldUse * 0.12, -0.84 + this.heldUse * 0.06);
     this.heldRoot.rotation.set(-0.12 + this.heldSwing * 0.78, -0.3 - this.heldSwing * 0.12, -0.06 - this.heldSwing * 0.64);
     if (item === BlockId.Torch) this.animateTorchVisual(this.heldRoot, this.position);
+    const shimmerTime = performance.now() * 0.001;
+    this.heldRoot.traverse((object) => {
+      if (!object.userData.eggShimmer) return;
+      const phase = Number(object.userData.shimmerPhase ?? 0);
+      const pulse = 0.86 + Math.sin(shimmerTime * 3.4 + phase) * 0.16;
+      object.scale.setScalar(pulse);
+      object.rotation.y += dt * (0.7 + phase * 0.05);
+    });
   }
 
   spawnParticles(x: number, y: number, z: number, type: BlockId, count: number) {

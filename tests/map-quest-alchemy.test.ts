@@ -348,14 +348,14 @@ test("alchemy registers water, healing, travel, faction, and Tidebreath formulas
   assert.deepEqual(alchemyRecipe("manaheart-draught")?.inputs, [
     { item: "water-bottle", count: 1 },
     { item: "raw-gold", count: 4 },
-    { item: "dragon-heart", count: 1, alternatives: ["fire-dragon-heart", "ice-dragon-heart", "steel-dragon-heart"] },
+    { item: "dragon-heart", count: 1, alternatives: ["fire-dragon-heart", "ice-dragon-heart", "steel-dragon-heart", "sea-dragon-heart", "gold-dragon-heart", "silver-dragon-heart"] },
   ]);
   assert.deepEqual(alchemyRecipe("manaheart-draught")?.output, { item: "manaheart-draught", count: 1 });
   assert.deepEqual(DISTILLERY_RECIPES.map((recipe) => recipe.id), ["honeymead-batch"]);
 });
 
 test("Manaheart Draught accepts and consumes exactly one heart of any dragon type", () => {
-  for (const heart of ["fire-dragon-heart", "ice-dragon-heart", "steel-dragon-heart"]) {
+  for (const heart of ["fire-dragon-heart", "ice-dragon-heart", "steel-dragon-heart", "sea-dragon-heart", "gold-dragon-heart", "silver-dragon-heart"]) {
     const inventory = { "water-bottle": 1, "raw-gold": 4, [heart]: 1 };
     const started = startAlchemyBatch(createAlchemyStand(), "manaheart-draught", inventory, createBlueprintState());
     assert.equal(started.ok, true, heart);

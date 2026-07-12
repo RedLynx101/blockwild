@@ -20,12 +20,14 @@ import {
 import { planFullTree, type TreeForm, type TreePlanBlock } from "../app/game/ecology";
 import { ChunkWorld, GENERATOR_VERSION } from "../app/game/world";
 
-test("Fire, Ice, and Steel lairs are bounded, deterministic, guarded hoards", () => {
-  const expected = {
+test("all subterranean dragon lairs are bounded, deterministic, guarded hoards", () => {
+  const expected: Readonly<Record<DragonType, Readonly<{ wall: BlockId; egg: BlockId }>>> = {
     fire: { wall: BlockId.CharredDragonstone, egg: BlockId.FireDragonEggBlock },
     ice: { wall: BlockId.RimeDragonstone, egg: BlockId.IceDragonEggBlock },
     steel: { wall: BlockId.RivetedDragonstone, egg: BlockId.SteelDragonEggBlock },
-  } as const;
+    gold: { wall: BlockId.GildedDragonstone, egg: BlockId.GoldDragonEggBlock },
+    silver: { wall: BlockId.ArgentDragonstone, egg: BlockId.SilverDragonEggBlock },
+  };
   for (const type of Object.keys(expected) as DragonType[]) {
     const input = { seed: "DRAGONWAKE-LAIRS", regionX: 8, regionZ: type === "fire" ? 3 : type === "ice" ? 4 : 5, forceType: type, forceStage: 5 as const, forceSex: "female" as const };
     const plan = planDragonLairForRegion(input);

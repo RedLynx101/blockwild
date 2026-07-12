@@ -3459,6 +3459,9 @@ export default function VoxelGame() {
               [Item.FireDragonEgg, "Fire Dragon Egg"],
               [Item.IceDragonEgg, "Ice Dragon Egg"],
               [Item.SteelDragonEgg, "Steel Dragon Egg"],
+              [Item.SeaDragonEgg, "Sea Dragon Egg"],
+              [Item.GoldDragonEgg, "Gold Dragon Egg"],
+              [Item.SilverDragonEgg, "Silver Dragon Egg"],
             ] as const).map(([item, label], index) => <figure key={item}><PlayerAvatarPreview variant={index % 2 ? "female" : "male"} heldItem={item} /><figcaption><strong>{label}</strong><small>{ITEMS[item].name} · production scale</small></figcaption></figure>)}
           </div>
         </section>

@@ -9,11 +9,15 @@ import { COMMERCE_ITEM_CODES, HEARTHROADS_RESOURCE_ITEMS } from "../app/game/hea
 import { createAvatarHeldItemModel } from "../app/game/held-items";
 import { DEFAULT_QUEST_DEFINITIONS } from "../app/game/quests";
 
-test("Dragonwake registers three eggs, hoard blocks, stations, and exact block aliases", () => {
+test("Dragonwake registers all eggs, hoard blocks, stations, and exact block aliases", () => {
   for (const [block, item] of [
     [BlockId.FireDragonEggBlock, Item.FireDragonEgg],
     [BlockId.IceDragonEggBlock, Item.IceDragonEgg],
     [BlockId.SteelDragonEggBlock, Item.SteelDragonEgg],
+    [BlockId.GoldDragonEggBlock, Item.GoldDragonEgg],
+    [BlockId.SilverDragonEggBlock, Item.SilverDragonEgg],
+    [BlockId.GildedDragonstone, Item.GildedDragonstoneItem],
+    [BlockId.ArgentDragonstone, Item.ArgentDragonstoneItem],
     [BlockId.DraconicIncubator, Item.DraconicIncubatorItem],
     [BlockId.ArchiveShelf, Item.ArchiveShelfItem],
     [BlockId.TomeDisplay, Item.TomeDisplayItem],
@@ -62,21 +66,29 @@ test("dragon eggs and trophy materials have readable semantic inventory and worl
     [Item.FireDragonEgg, "dragon-egg"],
     [Item.IceDragonEgg, "dragon-egg"],
     [Item.SteelDragonEgg, "dragon-egg"],
+    [Item.GoldDragonEgg, "dragon-egg"],
+    [Item.SilverDragonEgg, "dragon-egg"],
     [Item.FireDragonScale, "dragon-scale"],
     [Item.IceDragonScale, "dragon-scale"],
     [Item.SteelDragonScale, "dragon-scale"],
+    [Item.GoldDragonScale, "dragon-scale"],
+    [Item.SilverDragonScale, "dragon-scale"],
     [Item.DragonBone, "dragon-bone"],
     [Item.FireDragonHeart, "dragon-heart"],
     [Item.IceDragonHeart, "dragon-heart"],
     [Item.SteelDragonHeart, "dragon-heart"],
+    [Item.GoldDragonHeart, "dragon-heart"],
+    [Item.SilverDragonHeart, "dragon-heart"],
     [Item.FireDragonSkull, "dragon-skull"],
     [Item.IceDragonSkull, "dragon-skull"],
     [Item.SteelDragonSkull, "dragon-skull"],
+    [Item.GoldDragonSkull, "dragon-skull"],
+    [Item.SilverDragonSkull, "dragon-skull"],
   ] as const);
   for (const [item, iconKind] of semanticKinds) assert.equal(ITEMS[item].iconKind, iconKind);
 
   const shellColors = new Set<string>();
-  for (const [item, type] of [[Item.FireDragonEgg, "fire"], [Item.IceDragonEgg, "ice"], [Item.SteelDragonEgg, "steel"]] as const) {
+  for (const [item, type] of [[Item.FireDragonEgg, "fire"], [Item.IceDragonEgg, "ice"], [Item.SteelDragonEgg, "steel"], [Item.GoldDragonEgg, "gold"], [Item.SilverDragonEgg, "silver"]] as const) {
     assert.equal(ITEMS[item].heldModel, "dragon-egg");
     assert.equal(ITEMS[item].dropModel, "dragon-egg");
     const model = createAvatarHeldItemModel(item);
@@ -90,7 +102,7 @@ test("dragon eggs and trophy materials have readable semantic inventory and worl
     assert.ok(shell.material instanceof THREE.MeshLambertMaterial);
     shellColors.add(shell.material.color.getHexString());
   }
-  assert.equal(shellColors.size, 3, "each elemental shell keeps its own color");
+  assert.equal(shellColors.size, 5, "each elemental shell keeps its own color");
 
   const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
   for (const iconKind of new Set(semanticKinds.values())) {
