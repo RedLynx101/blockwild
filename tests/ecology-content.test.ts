@@ -291,7 +291,7 @@ test("new creatures have distinct content and canonical production models", () =
     assert.equal(AQUATIC_MOB_ORDER.includes(kind), true);
     assert.equal(MOB_DEFS[kind].aquatic, true);
   }
-  assert.deepEqual(POLLINATOR_ORDER, ["honeybee", "hive-queen", "reed-dragonfly"]);
+  assert.deepEqual(POLLINATOR_ORDER, ["honeybee", "hive-queen", "reed-dragonfly", "lightning-bug"]);
   assert.equal(MOB_DEFS.reedstrider.tameable, true);
   assert.equal(MOB_DEFS.peelop.damage, 2);
   assert.ok(MOB_DEFS["sunstep-grazer"].radius > 0.6);

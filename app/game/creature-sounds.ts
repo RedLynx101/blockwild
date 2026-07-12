@@ -134,12 +134,20 @@ export const CREATURE_SOUND_EVENTS: Partial<Record<CoreMobKind, Partial<Record<C
     hurt: cue("lanternshell-shell-clack", "attack", 0.58, 0.05),
   },
   puddlehopper: {
-    ambient: cue("puddlehopper-water-plonk", "mob", 0.52, 0.12),
-    hurt: cue("puddlehopper-alarm-croak", "attack", 0.68, 0.09),
+    ambient: cue("puddlehopper-croak", "mob", 0.66, 0.1),
+    hurt: cue("puddlehopper-croak", "attack", 0.76, 0.065),
   },
   reedstrider: {
-    ambient: cue("reedstrider-hollow-call", "mob", 0.62, 0.08),
-    hurt: cue("reedstrider-wing-bark", "attack", 0.7, 0.08),
+    ambient: cue("reedstrider-call", "mob", 0.66, 0.055),
+    hurt: cue("reedstrider-call", "attack", 0.74, 0.04),
+  },
+  "copper-mole": {
+    ambient: cue("copper-mole-sniff", "mob", 0.54, 0.08),
+    hurt: cue("copper-mole-sniff", "attack", 0.64, 0.06),
+  },
+  warg: {
+    ambient: cue("warg-deep-growl", "mob", 0.58, 0.045),
+    hurt: cue("warg-deep-growl", "attack", 0.72, 0.035),
   },
 };
 

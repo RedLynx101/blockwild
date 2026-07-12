@@ -7,7 +7,7 @@ Named releases summarize player-visible changes and the compatibility work that 
 - Refined the Trail Compass to refresh four times faster, removed its duplicate heading readout, and added a softly fading POI name only when a visible landmark is centered. The map's detailed surface rendering is now an explicit toggle at every zoom level, and both ordinary and Exploration-mastery zoom limits extend farther outward.
 - Added connected two-block wild grass with continuous lower and upper art, atomic harvesting from either half, ordinary fiber drops, and natural meadow generation. Darkened block-crack overlays while retaining the optional progress bar and tool-suitability settings.
 - Rebuilt the Thimbledeer's antler crowns as connected root, post, branch, stem, cup, and rim chains, then regenerated its production portrait and field-guide sheet. Standardized Pack and Recipes backgrounds to the same maximum width.
-- Replaced grass footsteps with the supplied softer authored recording and added the supplied wooden impact as the default sampled cue while mining or breaking blocks. The latest pushed `design-1` tip remains `789bf43` and was already contained in the release branch; the design branch remains untouched.
+- Replaced grass footsteps with the supplied softer authored recording and added the supplied wooden impact as the default sampled cue while mining or breaking blocks. Merged the final pushed `design-1` tip (`fbccf1a`) without altering the branch: its detailed wildlife upgrades, Lightning Bug ecology and jar, Sunmetal Shears, held-light improvements, and five new creature calls bring the production field guide to 167 entries.
 
 ## 1.3.5 - Wayposts and Palimpsests - 2026-07-12
 

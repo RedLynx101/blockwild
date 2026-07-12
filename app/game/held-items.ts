@@ -283,6 +283,47 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
     addBox([0.42, 0.44, 0.08], [0, 0.23, 0.15], 0x9f7144);
     group.scale.setScalar(0.72);
     group.rotation.set(0.12, 0.25, -0.08);
+  } else if (definition.heldModel === "shears") {
+    addBox([0.1, 0.48, 0.07], [-0.1, 0.15, 0], 0xd4b9a7, [0, 0, -0.34]).name = "shears-left-blade";
+    addBox([0.1, 0.48, 0.07], [0.1, 0.15, 0], 0xe5d1c2, [0, 0, 0.34]).name = "shears-right-blade";
+    addSphere(0.07, [0, -0.02, -0.01], 0x7d694f).name = "shears-hinge";
+    for (const side of [-1, 1]) {
+      const handle = addBox([0.13, 0.34, 0.1], [side * 0.13, -0.26, 0], 0x6d4933, [0, 0, side * -0.34]);
+      handle.name = `shears-${side < 0 ? "left" : "right"}-handle`;
+      addBox([0.065, 0.22, 0.12], [side * 0.13, -0.27, -0.01], 0x29201c, [0, 0, side * -0.34]).name = `shears-${side < 0 ? "left" : "right"}-grip-opening`;
+    }
+    group.scale.setScalar(0.75);
+    group.rotation.set(0.05, 0.26, -0.1);
+  } else if (definition.heldModel === "lightning-bug-jar") {
+    const glassMaterial = new THREE.MeshLambertMaterial({ color: 0xdff7eb, transparent: true, opacity: 0.27, depthWrite: false, side: THREE.DoubleSide });
+    const addGlass = (size: [number, number, number], position: [number, number, number], name: string) => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), glassMaterial);
+      mesh.position.set(...position);
+      mesh.name = name;
+      group.add(mesh);
+      return mesh;
+    };
+    addBox([0.36, 0.06, 0.36], [0, -0.2, 0], 0x8a724a).name = "lightning-bug-jar-base";
+    addBox([0.38, 0.08, 0.38], [0, 0.28, 0], 0xa67b3d).name = "lightning-bug-jar-lid";
+    for (const x of [-0.17, 0.17]) addGlass([0.035, 0.42, 0.36], [x, 0.03, 0], `lightning-bug-jar-glass-x-${x}`);
+    for (const z of [-0.17, 0.17]) addGlass([0.36, 0.42, 0.035], [0, 0.03, z], `lightning-bug-jar-glass-z-${z}`);
+    const bug = new THREE.Group();
+    bug.name = "lightning-bug-jar-bug";
+    bug.position.set(0, 0.05, -0.04);
+    bug.userData.jarBug = true;
+    bug.userData.baseY = bug.position.y;
+    group.add(bug);
+    addSphere(0.07, [0, 0, 0], 0xd7ff62, true, bug).name = "lightning-bug-jar-glow";
+    addBox([0.05, 0.06, 0.12], [0, 0, -0.08], 0x263621, [0, 0, 0], false, bug).name = "lightning-bug-jar-thorax";
+    for (const side of [-1, 1]) {
+      const wing = addBox([0.12, 0.018, 0.08], [side * 0.07, 0.025, -0.03], 0xe6f6d6, [0, side * -0.16, side * 0.14], false, bug);
+      wing.name = `lightning-bug-jar-${side < 0 ? "left" : "right"}-wing`;
+      wing.userData.jarBugWing = true;
+      wing.userData.side = side;
+    }
+    group.scale.setScalar(0.84);
+    group.rotation.set(0.08, 0.27, -0.08);
+    group.userData.offhandLight = true;
   } else if (definition.heldModel === "bottle" || definition.heldModel === "potion" || definition.heldModel === "mead") {
     const liquid = definition.heldModel === "bottle" && item === Item.GlassBottle ? null : definition.color;
     addBox([0.2, 0.3, 0.16], [0, 0, 0], 0xc7e7e3);

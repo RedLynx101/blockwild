@@ -707,6 +707,10 @@ const CREATURE_SAMPLE_BY_ASSET = {
   "hound-call-a": "houndCallA",
   "hound-call-b": "houndCallB",
   "crab-chitter": "crabChitter",
+  "puddlehopper-croak": "puddlehopperCroak",
+  "copper-mole-sniff": "copperMoleSniff",
+  "reedstrider-call": "reedstriderCall",
+  "warg-deep-growl": "wargDeepGrowl",
 } as const satisfies Readonly<Record<string, SampleKind>>;
 
 export type GameSettings = {
@@ -935,6 +939,7 @@ export type SavedCreature = {
   socialGroupId?: string;
   peelopShedding?: PeelopSheddingState;
   milkCooldown?: number;
+  woolRegrowSeconds?: number;
   factionId?: FactionId | null;
   profession?: string | null;
   settlementId?: string | null;
@@ -1100,6 +1105,7 @@ type MobEntity = {
   socialGroupId: string | null;
   peelopShedding: PeelopSheddingState | null;
   milkCooldown: number;
+  woolRegrowSeconds: number;
   shadeSaddle: THREE.Object3D | null;
   visualBaseY: number;
   visualMinY: number;
@@ -1178,6 +1184,7 @@ type SpawnMobOptions = {
   socialGroupId?: string | null;
   peelopShedding?: PeelopSheddingState | null;
   milkCooldown?: number;
+  woolRegrowSeconds?: number;
   name?: string | null;
   factionId?: FactionId | null;
   profession?: string | null;
@@ -1307,12 +1314,12 @@ export function timedMovementMultiplier(buffs: Readonly<Record<string, number>> 
 }
 
 function environmentLightDistance(type: BlockId) {
-  return isTorchBlock(type) ? 15 : 15;
+  return type === BlockId.LightningBugJar ? 10 : 15;
 }
 
 function isEnvironmentLightBlock(type: BlockId) {
   return isTorchBlock(type) || type === BlockId.Glowstone || type === BlockId.CrystalBlock || type === BlockId.RuneStone
-    || type === BlockId.Dreamblossom || type === BlockId.GiantDreamblossom;
+    || type === BlockId.Dreamblossom || type === BlockId.GiantDreamblossom || type === BlockId.LightningBugJar;
 }
 
 function setEnvironmentLightPosition(target: THREE.Vector3, source: Pick<EnvironmentLightSource, "x" | "y" | "z" | "type">) {
@@ -2243,7 +2250,7 @@ export function offhandItemKind(item: ItemCode | null | undefined): "shield" | "
   if (item === null || item === undefined) return null;
   const definition = ITEMS[item];
   if (definition?.iconKind === "shield") return "shield";
-  if (item === BlockId.Torch || item === Item.DeepgearLanternItem) return "light";
+  if (item === BlockId.Torch || item === Item.DeepgearLanternItem || item === Item.LightningBugJar) return "light";
   return null;
 }
 
@@ -8725,6 +8732,7 @@ export class VoxelEngine {
         ...(mob.socialGroupId ? { socialGroupId: mob.socialGroupId } : {}),
         ...(mob.peelopShedding ? { peelopShedding: mob.peelopShedding } : {}),
         ...(MILKABLE_MOB_KINDS.has(mob.kind) && mob.milkCooldown > 0 ? { milkCooldown: mob.milkCooldown } : {}),
+        ...(mob.kind === "woolhorn" && mob.woolRegrowSeconds > 0 ? { woolRegrowSeconds: mob.woolRegrowSeconds } : {}),
         ...(mob.followCommand !== "follow" ? { followCommand: mob.followCommand } : {}),
         ...(mob.hiredByPlayerId ? { hiredByPlayerId: mob.hiredByPlayerId } : {}),
         ...(mob.attunedOrbId ? { attunedOrbId: mob.attunedOrbId } : {}),
@@ -8792,6 +8800,7 @@ export class VoxelEngine {
       socialGroupId: typeof metadata.custom.socialGroupId === "string" ? metadata.custom.socialGroupId : null,
       peelopShedding: metadata.custom.peelopShedding ? metadata.custom.peelopShedding as unknown as PeelopSheddingState : null,
       milkCooldown: MILKABLE_MOB_KINDS.has(metadata.kind) ? Math.max(0, Number(metadata.custom.milkCooldown) || 0) : 0,
+      woolRegrowSeconds: metadata.kind === "woolhorn" ? Math.max(0, Number(metadata.custom.woolRegrowSeconds) || 0) : 0,
       persistentPoiResident: Boolean(metadata.custom.persistentPoiResident),
       enclosed: Boolean(metadata.custom.enclosed),
       followCommand: metadata.custom.followCommand === "hold" ? "hold" : "follow",
@@ -9686,6 +9695,31 @@ export class VoxelEngine {
       this.events.onToast(state.stage === 1 ? "Offer meat patiently to earn the hatchling's trust." : `${dragon.name} guards this territory and its eggs.`);
       return;
     }
+    if (this.targetMob?.kind === "woolhorn" && heldDefinition?.useKind === "shears") {
+      const woolhorn = this.targetMob;
+      if (woolhorn.woolRegrowSeconds > 0) {
+        this.events.onToast(`This Woolhorn's coat is still growing back (${Math.ceil(woolhorn.woolRegrowSeconds)}s).`);
+        this.placeCooldown = 0.22;
+        return;
+      }
+      const woolCount = 2 + (woolhorn.id % 3);
+      if (this.addItem(Item.Wool, woolCount, undefined, MAIN_THEN_HOTBAR) > 0) {
+        this.events.onToast("Make room in your pack before shearing this Woolhorn.");
+        this.placeCooldown = 0.22;
+        return;
+      }
+      woolhorn.woolRegrowSeconds = 360;
+      this.syncWoolhornCoat(woolhorn);
+      this.damageSelectedTool(1);
+      this.heldUse = 1;
+      this.placeCooldown = 0.4;
+      this.audio.play("pickup");
+      this.events.onToast(`Sheared ${woolCount} Cloudwool. The Woolhorn's lighter summer coat is now visible.`);
+      this.gainSkillExperience("husbandry", 5);
+      this.saveSoon();
+      this.emitHud(true);
+      return;
+    }
     if (this.targetMob && MILKABLE_MOB_KINDS.has(this.targetMob.kind) && heldSlot?.item === Item.Bucket) {
       const cloverback = this.targetMob;
       const remaining = Math.max(0, cloverback.milkCooldown ?? 0);
@@ -10460,6 +10494,29 @@ export class VoxelEngine {
         this.placeCooldown = 0.35;
         this.bestiary["hive-queen"].captures += 1;
         this.events.onToast("The weakened queen is secured as a living Queen Cell, ready for an empty apiary.");
+        this.audio.play("craft");
+        this.saveSoon();
+        this.emitHud(true);
+        return;
+      }
+      if (this.targetMob?.kind === "lightning-bug") {
+        const lightningBug = this.targetMob;
+        if (this.mode === "survival" && this.countItem(Item.GlassBottle) < 1) {
+          this.events.onToast("Carry an Empty Glass Bottle to net a Lightning Bug safely.");
+          this.placeCooldown = 0.22;
+          return;
+        }
+        if (this.addItem(Item.LightningBugJar, 1, undefined, MAIN_THEN_HOTBAR) > 0) {
+          this.events.onToast("Make room in your pack before bottling the Lightning Bug.");
+          return;
+        }
+        if (this.mode === "survival") this.removeItem(Item.GlassBottle, 1);
+        this.removeMob(this.mobs.indexOf(lightningBug));
+        this.damageSelectedTool();
+        this.heldUse = 1;
+        this.placeCooldown = 0.3;
+        this.bestiary["lightning-bug"].captures += 1;
+        this.events.onToast("The Lightning Bug settles into its jar. Hold or place it for a gentle living light.");
         this.audio.play("craft");
         this.saveSoon();
         this.emitHud(true);
@@ -13823,7 +13880,10 @@ export class VoxelEngine {
     if (mob.dragonState) return mob.dragonState.growthScale;
     if (mob.leviathanGrowth) return mob.leviathanGrowth.growthScale;
     if (mob.shadeState) return shadecrawlerScale(mob.shadeState);
-    if (mob.petState?.baby || mob.careState?.baby) return 0.62;
+    if (mob.petState?.baby || mob.careState?.baby) {
+      if (["meadow-cottontail", "russet-rabbit", "frost-hare", "chocolate-bunny"].includes(mob.kind)) return 0.48;
+      return 0.62;
+    }
     return 1;
   }
 
@@ -13986,10 +14046,12 @@ export class VoxelEngine {
   /** Scale around the creature's original foot plane, never around its belly. */
   applyMobScale(mob: MobEntity, scale: number) {
     const safeScale = clamp(scale, mob.leviathanGrowth ? 0.08 : 0.25, 3.2);
-    if (Math.abs(mob.visual.scale.x - safeScale) > 0.0001 || Math.abs(mob.visual.scale.y - safeScale) > 0.0001 || Math.abs(mob.visual.scale.z - safeScale) > 0.0001) {
-      mob.visual.scale.setScalar(safeScale);
+    const authoredScale = clamp(Number(mob.visual.userData.authoredScale) || 1, 0.1, 2);
+    const visualScale = safeScale * authoredScale;
+    if (Math.abs(mob.visual.scale.x - visualScale) > 0.0001 || Math.abs(mob.visual.scale.y - visualScale) > 0.0001 || Math.abs(mob.visual.scale.z - visualScale) > 0.0001) {
+      mob.visual.scale.setScalar(visualScale);
     }
-    const groundedY = mob.visualBaseY + (1 - safeScale) * (mob.visualMinY - mob.visualBaseY);
+    const groundedY = mob.visualBaseY + (1 - visualScale) * (mob.visualMinY - mob.visualBaseY);
     if (Math.abs(mob.visual.position.y - groundedY) > 0.0001) mob.visual.position.y = groundedY;
     if (mob.sentientLod) {
       if (Math.abs(mob.sentientLod.scale.x - safeScale) > 0.0001) mob.sentientLod.scale.setScalar(safeScale);
@@ -14020,6 +14082,14 @@ export class VoxelEngine {
         if (cargo) cargo.visible = index <= mob.leviathanGrowth.chestModules;
       }
     }
+  }
+
+  syncWoolhornCoat(mob: MobEntity) {
+    if (mob.kind !== "woolhorn") return;
+    const coatVisible = mob.woolRegrowSeconds <= 0;
+    mob.visual.traverse((part) => {
+      if (part.userData.woolhornCoat === true) part.visible = coatVisible;
+    });
   }
 
   spawnMob(kind: MobKind, position: THREE.Vector3, options: SpawnMobOptions = {}) {
@@ -14075,6 +14145,7 @@ export class VoxelEngine {
       petState, careState, shadeState, reedstriderBond, courserBond, leviathanGrowth, aetherbellMorph, apiaryBee, beeHiveKey: options.beeHiveKey ?? null,
       socialGroupId, peelopShedding,
       milkCooldown: MILKABLE_MOB_KINDS.has(kind) ? clamp(Number(options.milkCooldown) || 0, 0, CLOVERBACK_MILK_COOLDOWN_SECONDS) : 0,
+      woolRegrowSeconds: kind === "woolhorn" ? clamp(Number(options.woolRegrowSeconds) || 0, 0, 900) : 0,
       shadeSaddle: visual.getObjectByName("shadecrawler-saddle") ?? null, visualBaseY, visualMinY,
       persistentPoiResident: options.persistentPoiResident ?? Boolean(definition.persistent),
       poiMarkerId: options.poiMarkerId ?? null,
@@ -14104,7 +14175,8 @@ export class VoxelEngine {
       dragonStatusTick: 0,
     };
     if (dragonState) this.applyDragonState(mob, dragonState);
-    else this.applyMobScale(mob, leviathanGrowth?.growthScale ?? (shadeState ? shadecrawlerScale(shadeState) : petState?.baby || careState?.baby ? 0.62 : 1));
+    else this.applyMobScale(mob, this.mobBaseScale(mob));
+    this.syncWoolhornCoat(mob);
     this.mobs.push(mob);
     return mob;
   }
@@ -14147,6 +14219,7 @@ export class VoxelEngine {
       socialGroupId: saved.socialGroupId ?? null,
       peelopShedding: saved.peelopShedding ?? null,
       milkCooldown: saved.milkCooldown ?? 0,
+      woolRegrowSeconds: saved.woolRegrowSeconds ?? 0,
       name: saved.residentId ? saved.name ?? null : null,
       factionId: saved.factionId ?? null,
       profession: saved.profession ?? null,
@@ -15697,6 +15770,11 @@ export class VoxelEngine {
         }
       }
       mob.milkCooldown = Math.max(0, mob.milkCooldown - mobDt);
+      if (mob.woolRegrowSeconds > 0) {
+        const previouslySheared = mob.woolRegrowSeconds > 0;
+        mob.woolRegrowSeconds = Math.max(0, mob.woolRegrowSeconds - mobDt);
+        if (previouslySheared && mob.woolRegrowSeconds === 0) this.syncWoolhornCoat(mob);
+      }
       mob.hurtTimer = Math.max(0, mob.hurtTimer - mobDt);
       mob.fleeTimer = Math.max(0, mob.fleeTimer - mobDt);
       mob.wanderTimer -= mobDt;
@@ -15808,6 +15886,10 @@ export class VoxelEngine {
       }
       if (mob.id === this.mountedCreatureId) continue;
       if (mob.dragonState) {
+        if (distance < 34 && mob.voiceTimer <= 0) {
+          this.audio.playDragon(mob.dragonState.type, "ambient", mob.dragonState.stage);
+          mob.voiceTimer = 13 + (mob.id % 9) * 1.35 + Math.random() * 7;
+        }
         this.updateDragonMob(mob, mobDt, distance);
         continue;
       }
@@ -16090,7 +16172,7 @@ export class VoxelEngine {
       });
       mob.angle = mob.steering.heading;
       let blocked = routeBlocked;
-      if (!routeBlocked && mob.kind === "glowmoth") {
+      if (!routeBlocked && (mob.kind === "glowmoth" || mob.kind === "lightning-bug")) {
         const nx = mob.group.position.x + Math.cos(mob.angle) * speed * mobDt;
         const nz = mob.group.position.z + Math.sin(mob.angle) * speed * mobDt;
         const targetY = this.mobMoveTarget(mob, nx, nz);
@@ -16099,7 +16181,8 @@ export class VoxelEngine {
           mob.group.position.z = nz;
           mob.baseY += (targetY - mob.baseY) * Math.min(1, mobDt * 4);
         } else { blocked = true; mob.wanderTimer = Math.max(mob.wanderTimer, 0.35); }
-        mob.group.position.y = mob.baseY + Math.sin(performance.now() * 0.003 + mob.id) * 0.22;
+        const floatAmplitude = mob.kind === "lightning-bug" ? 0.3 : 0.22;
+        mob.group.position.y = mob.baseY + Math.sin(performance.now() * (mob.kind === "lightning-bug" ? 0.0042 : 0.003) + mob.id) * floatAmplitude;
       } else if (!routeBlocked && speed > 0.001) {
         const nx = mob.group.position.x + Math.cos(mob.angle) * speed * mobDt;
         const nz = mob.group.position.z + Math.sin(mob.angle) * speed * mobDt;
@@ -16500,6 +16583,16 @@ export class VoxelEngine {
       drop.mesh.position.z += drop.velocity.z * dt;
       drop.mesh.rotation.y += dt * 2.5;
       drop.mesh.position.y += Math.sin(drop.age * 4) * 0.001;
+      drop.mesh.traverse((object) => {
+        if (object.userData.jarBug) {
+          const baseY = Number(object.userData.baseY) || 0;
+          object.position.y = baseY + Math.sin(drop.age * 2.6 + drop.item) * 0.045;
+          object.rotation.y = Math.sin(drop.age * 1.7) * 0.48;
+        } else if (object.userData.jarBugWing) {
+          const side = Number(object.userData.side) || 1;
+          object.rotation.z = side * (0.14 + Math.sin(drop.age * 18) * 0.25);
+        }
+      });
       const placedEgg = placedLeviathanEggMetadata(drop.metadata);
       if (placedEgg) {
         drop.pickupDelay = Number.POSITIVE_INFINITY;
@@ -16728,10 +16821,11 @@ export class VoxelEngine {
 
   configureEnvironmentLight(light: THREE.PointLight, source: EnvironmentLightCandidate) {
     const crystal = source.type === BlockId.CrystalBlock;
-    light.color.setHex(crystal ? 0x69e8ef : source.type === BlockId.Glowstone ? 0xffd66b : 0xffb45e);
+    const lightningBugJar = source.type === BlockId.LightningBugJar;
+    light.color.setHex(crystal ? 0x69e8ef : lightningBugJar ? 0xcfff63 : source.type === BlockId.Glowstone ? 0xffd66b : 0xffb45e);
     setEnvironmentLightPosition(light.position, source);
     light.distance = environmentLightDistance(source.type);
-    light.userData.targetIntensity = isTorchBlock(source.type) ? 2.15 : crystal ? 1.05 : 1.45;
+    light.userData.targetIntensity = isTorchBlock(source.type) ? 2.15 : lightningBugJar ? 1.25 : crystal ? 1.05 : 1.45;
     light.userData.phase = source.x * 0.73 + source.y * 0.37 + source.z * 0.19;
     light.userData.sourceX = source.x;
     light.userData.sourceY = source.y;
@@ -16853,11 +16947,12 @@ export class VoxelEngine {
       } else light.intensity = base * (1 + Math.sin(timeSeconds * 4 + (Number(light.userData.phase) || 0)) * 0.045);
     }
     const selected = this.selectedSlot();
-    const lightItem = selected?.item === BlockId.Torch || selected?.item === BlockId.Glowstone || selected?.item === BlockId.CrystalBlock
+    const lightItem = selected?.item === BlockId.Torch || selected?.item === BlockId.Glowstone || selected?.item === BlockId.CrystalBlock || selected?.item === Item.LightningBugJar
       ? selected.item
       : offhandItemKind(this.offhand?.item) === "light" ? this.offhand!.item : -1;
     const heldTorch = lightItem === BlockId.Torch;
     const heldLantern = lightItem === Item.DeepgearLanternItem;
+    const heldBugJar = lightItem === Item.LightningBugJar;
     const heldGlow = lightItem === BlockId.Glowstone || lightItem === BlockId.CrystalBlock;
     const lightInOffhand = lightItem >= 0 && selected?.item !== lightItem;
     if (this.cameraMode === "first") {
@@ -16867,10 +16962,10 @@ export class VoxelEngine {
       this.heldLightWorldOffset.set(lightInOffhand ? -0.28 : 0.28, this.crouching ? 0.82 : 1.08, -0.25).applyAxisAngle(this.worldUp, this.yaw);
       this.caveLight.position.copy(this.position).add(this.heldLightWorldOffset);
     }
-    this.caveLight.color.setHex(lightItem === BlockId.CrystalBlock ? 0x69e8ef : heldLantern ? 0xffd77a : 0xffb45e);
+    this.caveLight.color.setHex(lightItem === BlockId.CrystalBlock ? 0x69e8ef : heldBugJar ? 0xcfff63 : heldLantern ? 0xffd77a : 0xffb45e);
     const heldFlicker = torchAnimationSample(timeSeconds, this.position, true);
-    this.caveLight.intensity = heldTorch ? 3.15 * heldFlicker.lightIntensity : heldLantern ? 3.35 : heldGlow ? 2.55 : 0;
-    this.caveLight.distance = heldTorch ? heldFlicker.lightRadius * 3 : heldLantern ? 25 : 20;
+    this.caveLight.intensity = heldTorch ? 3.15 * heldFlicker.lightIntensity : heldLantern ? 3.35 : heldBugJar ? 1.7 * (1 + Math.sin(timeSeconds * 3.2) * 0.08) : heldGlow ? 2.55 : 0;
+    this.caveLight.distance = heldTorch ? heldFlicker.lightRadius * 3 : heldLantern ? 25 : heldBugJar ? 11 : 20;
   }
 
   daylightAmount() {
@@ -17592,6 +17687,18 @@ export class VoxelEngine {
       object.scale.setScalar(pulse);
       object.rotation.y += dt * (0.7 + phase * 0.05);
     });
+    const animateJarBug = (root: THREE.Object3D) => root.traverse((object) => {
+      if (object.userData.jarBug) {
+        const baseY = Number(object.userData.baseY) || 0;
+        object.position.y = baseY + Math.sin(shimmerTime * 2.7) * 0.045;
+        object.rotation.y = Math.sin(shimmerTime * 1.8) * 0.42;
+      } else if (object.userData.jarBugWing) {
+        const side = Number(object.userData.side) || 1;
+        object.rotation.z = side * (0.14 + Math.sin(shimmerTime * 20) * 0.25);
+      }
+    });
+    animateJarBug(this.heldRoot);
+    animateJarBug(this.offhandRoot);
   }
 
   spawnParticles(x: number, y: number, z: number, type: BlockId, count: number) {
@@ -17687,7 +17794,7 @@ export class VoxelEngine {
       this.updateLeads();
       if (!multiplayerGuest) this.updateStructureSpawns(dt);
       this.smallEntityPositions.length = 0;
-      for (const mob of this.mobs) if (mob.kind === "glowmoth") this.smallEntityPositions.push(mob.group.position);
+      for (const mob of this.mobs) if (mob.kind === "glowmoth" || mob.kind === "lightning-bug") this.smallEntityPositions.push(mob.group.position);
       this.butterflies.update(dt, {
         player: this.position,
         daylight: this.daylightAmount(),
@@ -18237,6 +18344,7 @@ export class VoxelEngine {
         ...(mob.socialGroupId ? { socialGroupId: mob.socialGroupId } : {}),
         ...(mob.peelopShedding ? { peelopShedding: { ...mob.peelopShedding } } : {}),
         ...(MILKABLE_MOB_KINDS.has(mob.kind) && mob.milkCooldown > 0 ? { milkCooldown: mob.milkCooldown } : {}),
+        ...(mob.kind === "woolhorn" && mob.woolRegrowSeconds > 0 ? { woolRegrowSeconds: mob.woolRegrowSeconds } : {}),
         ...(mob.factionId ? { factionId: mob.factionId } : {}),
         ...(mob.profession ? { profession: mob.profession } : {}),
         ...(mob.settlementId ? { settlementId: mob.settlementId } : {}),

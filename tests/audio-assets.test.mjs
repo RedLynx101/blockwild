@@ -98,3 +98,19 @@ test("v1.3 spatial, environment, movement, creature, magic, and interface sounds
     assert.equal(bytes.subarray(8, 12).toString("ascii"), "WAVE", `${name} should be a WAVE asset`);
   }
 });
+
+test("new wildlife and passive growl calls are complete lossless PCM WAV assets", () => {
+  for (const [name, minimumBytes] of [
+    ["puddlehopper-croak.wav", 300_000],
+    ["copper-mole-sniff.wav", 300_000],
+    ["reedstrider-call.wav", 300_000],
+    ["dragon-ambient-deep-growl.wav", 400_000],
+    ["warg-deep-growl.wav", 300_000],
+  ]) {
+    const path = resolve("public", "sfx", name);
+    assert.ok(statSync(path).size > minimumBytes, `${name} should contain the complete supplied call`);
+    const bytes = readFileSync(path).subarray(0, 12);
+    assert.equal(bytes.subarray(0, 4).toString("ascii"), "RIFF");
+    assert.equal(bytes.subarray(8, 12).toString("ascii"), "WAVE");
+  }
+});
