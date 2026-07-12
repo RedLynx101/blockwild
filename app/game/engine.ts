@@ -43,6 +43,7 @@ import {
   type Recipe,
   type Weather,
 } from "./data";
+import { doorBlocks, doorIsOpen as isDoorOpenBlock, doorItem, doorLowerY as lowerDoorY, doorPlacementForYaw, doorState, doorUsesXAxis as doorHasXAxis, isDoorBlock } from "./doors";
 import { isInfiniteDurabilityItem, legendaryCombatMultiplier, legendaryMiningMultiplier } from "./legendary-items";
 import {
   BIOME_NAMES,
@@ -1440,7 +1441,7 @@ export function isOpenableBlock(type: BlockId) {
     BlockId.CartographyTable, BlockId.AlchemyStand, BlockId.Wayshrine, BlockId.Distillery, BlockId.HearthChair,
     BlockId.BedNorthFoot, BlockId.BedNorthHead, BlockId.BedSouthFoot, BlockId.BedSouthHead,
     BlockId.BedEastFoot, BlockId.BedEastHead, BlockId.BedWestFoot, BlockId.BedWestHead,
-  ].includes(type);
+  ].includes(type) || isDoorBlock(type);
 }
 
 export function shouldBypassOpenableUse(crouching: boolean, heldPlacesBlock: boolean, target: BlockId) {
@@ -1779,7 +1780,7 @@ export function migrateSavedWorld(value: unknown): WorldSave | null {
   const parsed = value as WorldSave;
   if (parsed.version !== 2 || typeof parsed.seed !== "string") return null;
   if (parsed.generatorVersion === GENERATOR_VERSION) return parsed;
-  if (parsed.generatorVersion === 3 || parsed.generatorVersion === 4 || parsed.generatorVersion === 5 || parsed.generatorVersion === 6 || parsed.generatorVersion === 7 || parsed.generatorVersion === 8 || parsed.generatorVersion === 9 || parsed.generatorVersion === 10 || parsed.generatorVersion === 11 || parsed.generatorVersion === 12) return { ...parsed, generatorVersion: GENERATOR_VERSION };
+  if (parsed.generatorVersion === 3 || parsed.generatorVersion === 4 || parsed.generatorVersion === 5 || parsed.generatorVersion === 6 || parsed.generatorVersion === 7 || parsed.generatorVersion === 8 || parsed.generatorVersion === 9 || parsed.generatorVersion === 10 || parsed.generatorVersion === 11 || parsed.generatorVersion === 12 || parsed.generatorVersion === 13) return { ...parsed, generatorVersion: GENERATOR_VERSION };
   if (parsed.generatorVersion !== 2) return null;
   const indexOffset = (LEGACY_GENERATOR_MIN_Y - MIN_Y) * 16 * 16;
   const edits: ChunkEditSave = {};
@@ -8510,7 +8511,7 @@ export class VoxelEngine {
     if (!this.target) return;
     const blockItem = isTorchBlock(this.target.type) ? BlockId.Torch
       : this.isBed(this.target.type) ? Item.WildwoodBed
-        : this.isDoor(this.target.type) ? Item.WildwoodDoor
+        : this.isDoor(this.target.type) ? doorItem(this.target.type)
           : this.target.type as ItemCode;
     const slotIndex = this.inventory.slice(0, 9).findIndex((slot) => slot?.item === blockItem);
     if (slotIndex >= 0) this.selectSlot(slotIndex);
@@ -8518,10 +8519,7 @@ export class VoxelEngine {
   }
 
   isDoor(type: BlockId) {
-    return [
-      BlockId.DoorClosedLower, BlockId.DoorClosedUpper, BlockId.DoorOpenLower, BlockId.DoorOpenUpper,
-      BlockId.DoorXClosedLower, BlockId.DoorXClosedUpper, BlockId.DoorXOpenLower, BlockId.DoorXOpenUpper,
-    ].includes(type);
+    return isDoorBlock(type);
   }
 
   isBed(type: BlockId) {
@@ -8529,25 +8527,24 @@ export class VoxelEngine {
   }
 
   doorIsOpen(type: BlockId) {
-    return [BlockId.DoorOpenLower, BlockId.DoorOpenUpper, BlockId.DoorXOpenLower, BlockId.DoorXOpenUpper].includes(type);
+    return isDoorOpenBlock(type);
   }
 
   doorUsesXAxis(type: BlockId) {
-    return [BlockId.DoorXClosedLower, BlockId.DoorXClosedUpper, BlockId.DoorXOpenLower, BlockId.DoorXOpenUpper].includes(type);
+    return doorHasXAxis(type);
   }
 
   doorLowerY(type: BlockId, y: number) {
-    return [BlockId.DoorClosedUpper, BlockId.DoorOpenUpper, BlockId.DoorXClosedUpper, BlockId.DoorXOpenUpper].includes(type) ? y - 1 : y;
+    return lowerDoorY(type, y);
   }
 
   toggleDoor(x: number, y: number, z: number, type: BlockId) {
     const lowerY = this.doorLowerY(type, y);
     const open = this.doorIsOpen(type);
     const xAxis = this.doorUsesXAxis(type);
-    const closedLower = xAxis ? BlockId.DoorXClosedLower : BlockId.DoorClosedLower;
-    const closedUpper = xAxis ? BlockId.DoorXClosedUpper : BlockId.DoorClosedUpper;
-    const openLower = xAxis ? BlockId.DoorXOpenLower : BlockId.DoorOpenLower;
-    const openUpper = xAxis ? BlockId.DoorXOpenUpper : BlockId.DoorOpenUpper;
+    const family = doorState(type)?.family ?? "wildwood";
+    const { lower: closedLower, upper: closedUpper } = doorBlocks(family, false, xAxis);
+    const { lower: openLower, upper: openUpper } = doorBlocks(family, true, xAxis);
     const remoteInDoorway = open && [...(this.remotePlayers?.values() ?? [])].some((remote) => this.playerIntersectsDoorCell(new THREE.Vector3(remote.target.x, remote.target.y, remote.target.z), x, lowerY, z, closedLower)
       || this.playerIntersectsDoorCell(new THREE.Vector3(remote.target.x, remote.target.y, remote.target.z), x, lowerY + 1, z, closedUpper));
     if (open && (remoteInDoorway || this.playerIntersectsDoorCell(this.position, x, lowerY, z, closedLower) || this.playerIntersectsDoorCell(this.position, x, lowerY + 1, z, closedUpper))) {
@@ -10931,7 +10928,7 @@ export class VoxelEngine {
         { x: headX, y, z: headZ, type: bed.head },
       ];
       this.world.setBlocksBatch(placedEdits, true, true);
-    } else if (type === BlockId.DoorClosedLower) {
+    } else if (type === BlockId.DoorClosedLower || type === BlockId.WroughtIronDoorClosedLower) {
       const upper = this.world.getBlock(x, y + 1, z);
       replacedUpper = upper;
       const support = this.world.getBlock(x, y - 1, z);
@@ -10939,10 +10936,11 @@ export class VoxelEngine {
         this.events.onToast("A door needs two clear blocks and solid ground.");
         return;
       }
-      const xAxis = Math.abs(Math.sin(this.yaw)) > Math.abs(Math.cos(this.yaw));
+      const family = type === BlockId.WroughtIronDoorClosedLower ? "wrought-iron" : "wildwood";
+      const placedDoor = doorPlacementForYaw(family, this.yaw);
       placedEdits = [
-        { x, y, z, type: xAxis ? BlockId.DoorXClosedLower : BlockId.DoorClosedLower },
-        { x, y: y + 1, z, type: xAxis ? BlockId.DoorXClosedUpper : BlockId.DoorClosedUpper },
+        { x, y, z, type: placedDoor.lower },
+        { x, y: y + 1, z, type: placedDoor.upper },
       ];
       this.world.setBlocksBatch(placedEdits, true, true);
     } else {
@@ -11246,7 +11244,7 @@ export class VoxelEngine {
     if (isEnvironmentLightBlock(type)) this.lightRefreshTimer = 0;
     for (const edit of brokenEdits) this.saplings.delete(blockKey(edit.x, edit.y, edit.z));
     if (isWaterloggedFloraBlock(type) && this.world.getBlock(x, y - 1, z) === type) this.schedulePlantGrowth(x, y - 1, z, type, 1);
-    if (this.isDoor(type) && this.mode === "survival") this.spawnDrop(Item.WildwoodDoor, 1, new THREE.Vector3(x, y, z));
+    if (this.isDoor(type) && this.mode === "survival" && harvested) this.spawnDrop(doorItem(type), 1, new THREE.Vector3(x, y, z));
     if (this.isBed(type) && this.mode === "survival" && harvested) this.spawnDrop(Item.WildwoodBed, 1, new THREE.Vector3(x, y, z));
     if (type === BlockId.Furnace) {
       const furnace = this.furnaces.get(key);
@@ -11908,11 +11906,11 @@ export class VoxelEngine {
     const aboveY = y + 1;
     const above = this.world.getBlock(x, aboveY, z);
     if (above === undefined) return;
-    if ([BlockId.DoorClosedLower, BlockId.DoorOpenLower, BlockId.DoorXClosedLower, BlockId.DoorXOpenLower].includes(above)) {
+    if (isDoorBlock(above) && !doorState(above)?.upper) {
       const edits = [{ x, y: aboveY, z, type: BlockId.Air }, { x, y: aboveY + 1, z, type: BlockId.Air }];
       this.world.setBlocksBatch(edits, true, true);
       this.publishBlockEdits(edits, "batch");
-      if (this.mode === "survival") this.spawnDrop(Item.WildwoodDoor, 1, new THREE.Vector3(x, aboveY, z));
+      if (this.mode === "survival") this.spawnDrop(doorItem(above), 1, new THREE.Vector3(x, aboveY, z));
       return;
     }
     if (this.isBed(above)) {
@@ -17544,6 +17542,10 @@ export class VoxelEngine {
         } else if (item === Item.WildwoodDoor) {
           addBox([0.08, 0.62, 0.38], [0, 0.04, 0], definition.color, [0.08, 0.3, -0.08]);
           addBox([0.09, 0.08, 0.09], [-0.07, 0.02, 0.16], 0xe9c366, [0.08, 0.3, -0.08], true);
+        } else if (item === Item.WroughtIronDoor) {
+          for (const px of [-0.18, -0.09, 0, 0.09, 0.18]) addBox([0.035, 0.66, 0.05], [px, 0.04, 0], 0x263139, [0.08, 0.22, -0.08]);
+          for (const py of [-0.24, 0.3]) addBox([0.42, 0.055, 0.06], [0, py, 0], 0x43515a, [0.08, 0.22, -0.08]);
+          addBox([0.07, 0.09, 0.075], [0.14, 0.02, -0.01], 0x9aa5a9, [0.08, 0.22, -0.08], true);
         } else if (item === Item.WildwoodBed) {
           addBox([0.48, 0.1, 0.3], [0, -0.08, 0], 0x8b5632, [0.1, 0.28, -0.08]);
           addBox([0.45, 0.13, 0.28], [0, 0.03, 0], definition.color, [0.1, 0.28, -0.08]);

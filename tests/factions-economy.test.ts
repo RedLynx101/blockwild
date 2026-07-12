@@ -65,7 +65,7 @@ import {
   updateHirelingOrders,
   type SettlementCandidate,
 } from "../app/game/settlements.ts";
-import { planConnectedSettlementTiles } from "../app/game/v1-cultures.ts";
+import { SETTLEMENT_TILE_COUNT_BANDS, planConnectedSettlementTiles } from "../app/game/v1-cultures.ts";
 import { commerceItemCode, commerceKeyForItem } from "../app/game/hearthroads-adapter.ts";
 
 function authority(eventId: string, expectedRevision: number): AuthorityCommand {
@@ -301,7 +301,8 @@ test("every culture uses a bounded connected tile graph with seeded branches and
       ...(environment === "surface" ? {} : { floorY: environment === "underwater" ? -30 : 38 }),
     };
     const layout = planSettlementLayout(candidate);
-    assert.equal(layout.buildings.length, SETTLEMENT_SIZE_RULES[size].buildingCount, `${factionId} ${size} has the expanded tile count`);
+    const band = SETTLEMENT_TILE_COUNT_BANDS[size];
+    assert.ok(layout.buildings.length >= band.min && layout.buildings.length <= band.max, `${factionId} ${size} uses its seeded size band`);
     assert.equal(new Set(layout.buildings.map((building) => `${building.position.x},${building.position.y ?? "surface"},${building.position.z}`)).size, layout.buildings.length);
     const roadPoints = new Set(layout.paths.map((point) => `${point.x},${point.y ?? "surface"},${point.z}`));
     for (const building of layout.buildings) {
@@ -330,6 +331,11 @@ test("every culture uses a bounded connected tile graph with seeded branches and
 
   const alternate = planConnectedSettlementTiles({ seed: "different-town-topology", targetTiles: 31, gridRadius: 4 });
   assert.notDeepEqual(alternate.map(({ gridX, gridZ }) => [gridX, gridZ]), graph.map(({ gridX, gridZ }) => [gridX, gridZ]), "seed changes the authored branches");
+
+  const seededA = planSettlementLayout({ ...hobbitCandidate, id: "seeded-count-a" });
+  const seededB = planSettlementLayout({ ...hobbitCandidate, id: "seeded-count-b" });
+  assert.deepEqual(planSettlementLayout({ ...hobbitCandidate, id: "seeded-count-a" }), seededA, "a settlement count and graph replay exactly");
+  assert.notEqual(seededA.buildings.length, seededB.buildings.length, "different settlement identities can vary within one size category");
 });
 
 test("resident names, roles, equipment, waypoints, and Warg alignment are deterministic", () => {

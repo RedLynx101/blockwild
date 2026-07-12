@@ -778,6 +778,13 @@ test("door interaction updates both halves with an immediate batch edit", () => 
     { x: 4, y: 9, z: 2, type: BlockId.DoorOpenUpper },
   ]);
   assert.equal(immediate, true);
+
+  writes.length = 0;
+  engine.toggleDoor(6, 11, 3, BlockId.WroughtIronDoorXClosedUpper);
+  assert.deepEqual(writes, [
+    { x: 6, y: 10, z: 3, type: BlockId.WroughtIronDoorXOpenLower },
+    { x: 6, y: 11, z: 3, type: BlockId.WroughtIronDoorXOpenUpper },
+  ], "a wrought leaf preserves its material family and axis while toggling");
 });
 
 test("door collision matches the thin closed slab and the edge-hinged open slab", () => {
@@ -914,8 +921,8 @@ test("rejected solid placement records its rollback and player chests start empt
   assert.ok(chest?.every((slot) => slot === null), "player-crafted chests must not inherit structure loot");
 });
 
-test("generator-v3 through v12 fallback saves advance without moving existing voxel edits", () => {
-  for (const generatorVersion of [3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
+test("generator-v3 through v13 fallback saves advance without moving existing voxel edits", () => {
+  for (const generatorVersion of [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]) {
     const previous = {
       version: 2,
       generatorVersion,
@@ -939,6 +946,11 @@ test("door meshes include textured top, bottom, and narrow side edges", () => {
   const geometry = chunk.sections.get(section)?.cutout?.geometry;
   assert.equal(geometry?.index?.count, 36, "a six-faced thin door slab should emit six textured quads");
   assert.equal(geometry?.getAttribute("position").count, 24);
+
+  world.setBlock(4, y, 4, BlockId.WroughtIronDoorClosedLower, true, false);
+  world.rebuildSection(chunk, section);
+  const wroughtGeometry = chunk.sections.get(section)?.cutout?.geometry;
+  assert.ok((wroughtGeometry?.index?.count ?? 0) > 36, "wrought doors are built from real separated bars rather than a painted solid pane");
   world.dispose();
 });
 

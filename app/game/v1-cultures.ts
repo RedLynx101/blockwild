@@ -102,6 +102,18 @@ export type ConnectedSettlementTile = Readonly<{
   pathConnections: readonly SettlementCardinal[];
 }>;
 
+export const SETTLEMENT_TILE_COUNT_BANDS = Object.freeze({
+  hamlet: Object.freeze({ min: 10, max: 16 }),
+  village: Object.freeze({ min: 17, max: 25 }),
+  town: Object.freeze({ min: 26, max: 36 }),
+});
+
+/** Category gives the scale; the seed gives each settlement its own footprint. */
+export function settlementTileCount(size: keyof typeof SETTLEMENT_TILE_COUNT_BANDS, seed: string) {
+  const band = SETTLEMENT_TILE_COUNT_BANDS[size];
+  return band.min + (hash32(`${seed}|settlement-tile-count`) % (band.max - band.min + 1));
+}
+
 /**
  * Shared deterministic town graph used by every culture adapter. New cells are
  * only admitted from the frontier of the existing graph, which guarantees a
@@ -167,9 +179,9 @@ export function planV1Settlement(input: Readonly<{
   size: "hamlet" | "village" | "town";
 }>): V1SettlementPlan {
   const style: V1SettlementStyle = input.factionId === "wood-elves" ? "tiled-grove" : "subterranean-hold";
-  const targetTiles = input.size === "hamlet" ? 13 : input.size === "village" ? 21 : 31;
   const gridRadius = input.size === "hamlet" ? 2 : input.size === "village" ? 3 : 4;
   const id = `${input.factionId}-${input.regionX.toString(36)}-${input.regionZ.toString(36)}-${hash32(`${input.seed}|${input.factionId}|${input.regionX}|${input.regionZ}`).toString(36)}`;
+  const targetTiles = settlementTileCount(input.size, id);
   const tileGrid = planConnectedSettlementTiles({ seed: id, targetTiles, gridRadius });
 
   const woodElfRoles: readonly V1TileRole[] = [

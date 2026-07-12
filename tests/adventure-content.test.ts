@@ -8,10 +8,12 @@ import {
   adventurePlacementsForChunk,
   adventurePoiCandidateForChunk,
   planAdventureStructure,
+  planDungeonTiles,
   type AdventureDungeonKind,
   type AdventureStructureKind,
 } from "../app/game/adventure-content.ts";
-import { BLOCKS, BlockId, Item, ITEMS } from "../app/game/data.ts";
+import { BLOCKS, RECIPES, BlockId, Item, ITEMS } from "../app/game/data.ts";
+import { DOOR_STATES, doorBlocks, doorItem, doorState, isDoorBlock } from "../app/game/doors.ts";
 import { mapLocationNameFromTag, planHostileAirbornePursuit, resolveStructureLootItem, structureMobSpawnY } from "../app/game/engine.ts";
 import { createBirdBehavior } from "../app/game/fauna.ts";
 import { createAvatarHeldItemModel } from "../app/game/held-items.ts";
@@ -117,6 +119,57 @@ test("every dungeon has three-stage progression, multiple encounters, loot and a
     assert.ok(chests.length >= 2, `${archetype.kind} should contain progression and vault loot`);
     assert.ok(chests.every((marker) => marker.loot.length > 0));
     assert.ok(plan.markers.some((marker) => marker.type === "landmark" && marker.tag === `dungeon:${archetype.kind}`));
+  }
+});
+
+test("underground dungeons use connected seeded tile graphs with variable footprints", () => {
+  for (const archetype of ADVENTURE_DUNGEON_ARCHETYPES.filter((entry) => entry.underground)) {
+    const first = planDungeonTiles(archetype.kind, "tile-seed-a");
+    assert.deepEqual(planDungeonTiles(archetype.kind, "tile-seed-a"), first);
+    assert.ok(first.length >= 7 && first.length <= 11);
+    const occupied = new Set(first.map((tile) => `${tile.gridX},${tile.gridZ}`));
+    const queue = ["0,2"];
+    const reached = new Set<string>();
+    while (queue.length) {
+      const key = queue.shift()!;
+      if (reached.has(key) || !occupied.has(key)) continue;
+      reached.add(key);
+      const [x, z] = key.split(",").map(Number);
+      queue.push(`${x+1},${z}`, `${x-1},${z}`, `${x},${z+1}`, `${x},${z-1}`);
+    }
+    assert.equal(reached.size, first.length);
+    const counts = new Set(["tile-seed-a", "tile-seed-b", "tile-seed-c", "tile-seed-d"].map((seed) => planDungeonTiles(archetype.kind, seed).length));
+    assert.ok(counts.size > 1, `${archetype.kind} varies its module count across seeds`);
+    const plan = planAdventureStructure(archetype.kind, ORIGIN, "tile-seed-a");
+    assert.ok(plan.placements.some((placement) => placement.variant?.includes("dungeon-tile")));
+    assert.ok(plan.bounds.min.x >= ORIGIN.x - 24 && plan.bounds.max.x <= ORIGIN.x + 23);
+    assert.ok(plan.bounds.min.z >= ORIGIN.z - 24 && plan.bounds.max.z <= ORIGIN.z + 23);
+  }
+});
+
+test("wrought-iron dungeon doors are a complete craftable family with paired authored leaves", () => {
+  const wrought = [...DOOR_STATES.entries()].filter(([, state]) => state.family === "wrought-iron");
+  assert.equal(wrought.length, 8);
+  assert.equal(new Set(wrought.map(([block]) => block)).size, 8);
+  for (const [block, state] of wrought) {
+    assert.equal(isDoorBlock(block), true);
+    assert.equal(doorItem(block), Item.WroughtIronDoor);
+    assert.equal(BLOCKS[block].shape, "door");
+    assert.equal(BLOCKS[block].preferredTool, "pickaxe");
+    assert.equal(doorState(block), state);
+  }
+  for (const xAxis of [false, true]) for (const open of [false, true]) {
+    const pair = doorBlocks("wrought-iron", open, xAxis);
+    assert.equal(doorState(pair.lower)?.upper, false);
+    assert.equal(doorState(pair.upper)?.upper, true);
+  }
+  assert.equal(ITEMS[Item.WroughtIronDoor].placeBlock, BlockId.WroughtIronDoorClosedLower);
+  assert.ok(RECIPES.some((recipe) => recipe.id === "wrought-iron-door" && recipe.output.item === Item.WroughtIronDoor));
+  for (const archetype of ADVENTURE_DUNGEON_ARCHETYPES.filter((entry) => entry.underground)) {
+    const plan = planAdventureStructure(archetype.kind, ORIGIN, "barred-threshold");
+    const lowers = plan.placements.filter((placement) => placement.block === BlockId.WroughtIronDoorClosedLower);
+    assert.equal(lowers.length, 1);
+    for (const lower of lowers) assert.ok(plan.placements.some((upper) => upper.x === lower.x && upper.y === lower.y + 1 && upper.z === lower.z && upper.block === BlockId.WroughtIronDoorClosedUpper));
   }
 });
 

@@ -233,6 +233,69 @@ function circularFloor(builder: AdventurePlanBuilder, radius: number, block: Blo
   for (let x = -radius; x <= radius; x += 1) for (let z = -radius; z <= radius; z += 1) if (x * x + z * z <= radius * radius) builder.set(x, 0, z, block, variant);
 }
 
+function ellipseFloor(builder: AdventurePlanBuilder, cy: number, rx: number, rz: number, block: BlockId, variant: string) {
+  for (let x = -rx; x <= rx; x += 1) for (let z = -rz; z <= rz; z += 1) {
+    if ((x * x) / (rx * rx) + (z * z) / (rz * rz) <= 1.08) builder.set(x, cy, z, block, variant);
+  }
+}
+
+function brokenArc(builder: AdventurePlanBuilder, radius: number, minY: number, maxY: number, block: BlockId, variant: string, seed: string | number) {
+  for (let x = -radius; x <= radius; x += 1) for (let z = -radius; z <= radius; z += 1) {
+    const distance = Math.hypot(x, z);
+    if (Math.abs(distance - radius) > 0.7) continue;
+    const height = minY + Math.floor(hashUnit(seed, `${variant}:${x},${z}`) * (maxY - minY + 1));
+    if (hashUnit(seed, `${variant}:gap:${x},${z}`) < 0.16) continue;
+    builder.fill(x, minY, z, x, height, z, block, variant);
+  }
+}
+
+export type DungeonTile = Readonly<{ gridX: number; gridZ: number; stage: 1 | 2 | 3; connections: readonly ("north" | "east" | "south" | "west")[] }>;
+
+/** A compact, seeded dungeon graph whose five-cell spine always connects entrance to vault. */
+export function planDungeonTiles(kind: AdventureDungeonKind, seed: string | number): readonly DungeonTile[] {
+  const occupied = new Set(["0,2", "0,1", "0,0", "0,-1", "0,-2"]);
+  const target = 7 + Math.floor(hashUnit(seed, `${kind}:dungeon-tile-count`) * 5);
+  const directions = [[0, -1], [1, 0], [0, 1], [-1, 0]] as const;
+  let cursor = 0;
+  while (occupied.size < target && cursor < 80) {
+    const frontier: Array<readonly [number, number]> = [];
+    for (const key of occupied) {
+      const [gridX, gridZ] = key.split(",").map(Number);
+      for (const [dx, dz] of directions) {
+        if (dz !== 0) continue; // side chambers stay on their stage's floor; the authored spine owns stairs
+        const nx = gridX + dx;
+        const nz = gridZ + dz;
+        const nextKey = `${nx},${nz}`;
+        if (Math.abs(nx) <= 2 && Math.abs(nz) <= 2 && !occupied.has(nextKey)) frontier.push([nx, nz]);
+      }
+    }
+    const unique = [...new Map(frontier.map((cell) => [`${cell[0]},${cell[1]}`, cell])).values()];
+    if (!unique.length) break;
+    occupied.add(unique[Math.floor(hashUnit(seed, `${kind}:dungeon-frontier:${cursor}`) * unique.length)].join(","));
+    cursor += 1;
+  }
+  const labels = ["north", "east", "south", "west"] as const;
+  return [...occupied].map((key) => key.split(",").map(Number) as [number, number])
+    .sort(([ax, az], [bx, bz]) => bz - az || ax - bx)
+    .map(([gridX, gridZ]) => ({
+      gridX,
+      gridZ,
+      stage: (gridZ >= 1 ? 1 : gridZ === 0 ? 2 : 3) as 1 | 2 | 3,
+      connections: labels.filter((_, index) => occupied.has(`${gridX + directions[index][0]},${gridZ + directions[index][1]}`)),
+    }));
+}
+
+function chamferedDungeonCell(builder: AdventurePlanBuilder, cx: number, cy: number, cz: number, shell: BlockId, floor: BlockId, variant: string) {
+  for (let x = -3; x <= 3; x += 1) for (let z = -3; z <= 3; z += 1) {
+    if (Math.abs(x) === 3 && Math.abs(z) === 3) continue;
+    builder.set(cx + x, cy - 1, cz + z, floor, `${variant}-floor`);
+    builder.set(cx + x, cy + 4 - (Math.abs(x) + Math.abs(z) >= 5 ? 1 : 0), cz + z, shell, `${variant}-vaulted-ceiling`);
+    const edge = Math.abs(x) === 3 || Math.abs(z) === 3;
+    if (edge) for (let y = 0; y < 4; y += 1) builder.set(cx + x, cy + y, cz + z, shell, `${variant}-chamfered-wall`);
+    else builder.fill(cx + x, cy, cz + z, cx + x, cy + 3, cz + z, BlockId.Air, `${variant}-interior`);
+  }
+}
+
 function planTinyPoi(kind: AdventurePoiKind, origin: WorldPosition, seed: string | number) {
   const b = new AdventurePlanBuilder(origin, seed);
   circularFloor(b, 4, ["sunwash-tidepool", "frostbound-bell"].includes(kind) ? BlockId.Limestone : BlockId.Moss, `${kind}-clearing`);
@@ -269,15 +332,40 @@ function planMediumPoi(kind: AdventurePoiKind, origin: WorldPosition, seed: stri
     for (const [x,z] of [[-5,0],[5,0],[0,-5],[0,5]] as const) { b.fill(x,1,z,x,4,z,BlockId.SunbakedClay,"totem"); b.set(x,5,z,BlockId.Glowstone,"ritual-brazier"); }
     b.fill(-2, 1, -2, 2, 1, 2, BlockId.Limestone, "bone-dais"); b.spawn(0, 2, 0, "rattlekin", 3, 5, "rattlekin-circle", ["poi-resident", "hostile"]); b.chest(0, 1, 3, "adventure-cache", "totem-offerings", 5);
   } else if (kind === "skyglass-observatory") {
-    b.hollow(0, 1, 0, 6, 4, 6, BlockId.StoneBrick, BlockId.RuneStone, "observatory"); b.fill(-2, 4, -2, 2, 5, 2, BlockId.Glass, "lens-dome"); b.set(0, 2, 0, BlockId.CrystalBlock, "sky-lens"); b.chest(4, 1, 4, "adventure-cache", "observer-locker", 5); b.spawn(0, 3, 0, "vaultwing", 2, 4, "lens-roost", ["poi-resident", "hostile"]);
+    ellipseFloor(b, 0, 7, 6, BlockId.RuneStone, "observatory-terrace");
+    brokenArc(b, 6, 1, 5, BlockId.StoneBrick, "observatory-broken-arc", seed);
+    for (const [x, z] of [[-4,-3],[4,-3],[-5,2],[5,2]] as const) b.fill(x, 1, z, x, 4, z, BlockId.StoneBrick, "lens-buttress");
+    for (const [x, y, z] of [[-3,4,-2],[-2,5,-3],[0,6,-4],[2,5,-3],[3,4,-2]] as const) b.set(x,y,z,BlockId.Glass,"incomplete-skyglass-dome");
+    b.fill(-3, 1, 1, 3, 1, 4, BlockId.StoneBrick, "stepped-viewing-terrace"); b.fill(-2, 2, 2, 2, 2, 4, BlockId.StoneBrick, "stepped-viewing-terrace");
+    b.fill(0, 1, -1, 0, 4, -1, BlockId.RivetedBrass, "telescope-pivot"); b.fill(0, 4, -4, 0, 4, 1, BlockId.Glass, "skyglass-telescope");
+    b.set(0, 3, -1, BlockId.CrystalBlock, "sky-lens"); b.chest(4, 1, 3, "adventure-cache", "observer-locker", 5); b.spawn(0, 5, 0, "vaultwing", 2, 4, "lens-roost", ["poi-resident", "hostile"]);
   } else if (kind === "overgrown-aqueduct") {
     for (const x of [-6,-2,2,6]) { b.fill(x,1,-2,x,5,2,BlockId.Cobblestone,"aqueduct-pier"); b.fill(x-1,4,-2,x+1,5,2,BlockId.Moss,"mossy-arch"); } b.fill(-7,6,-1,7,6,1,BlockId.Cobblestone,"water-channel"); b.fill(-6,7,0,6,7,0,BlockId.Water,"running-channel"); b.chest(0, 1, 3, "adventure-cache", "aqueduct-cache", 4);
   } else if (kind === "sunken-caravan") {
     for (const offset of [-5,0,5]) { b.fill(offset-2,1,-1,offset+2,2,2,BlockId.Planks,"tilted-wagon"); b.set(offset-2,1,3,BlockId.WildwoodLog,"wagon-wheel"); b.set(offset+2,1,3,BlockId.WildwoodLog,"wagon-wheel"); } b.set(0,3,0,BlockId.DeepgearLantern,"way-lantern"); b.chest(5, 2, 0, "adventure-cache", "caravan-strongbox", 6); b.spawn(-3,1,-2,"auric-scarab",4,6,"caravan-scavengers",["poi-resident","defensive"]);
   } else if (kind === "emberwatch-tower") {
-    b.hollow(0,1,0,4,9,4,BlockId.Basalt,BlockId.RivetedBrass,"emberwatch"); for (const y of [2,5,8]) { b.set(-4,y,0,BlockId.Glowstone,"ember-window"); b.set(4,y,0,BlockId.Glowstone,"ember-window"); } b.chest(0, 8, 0, "adventure-cache", "watch-captain-cache", 6); b.spawn(0,1,0,"cinder-maw",2,4,"tower-hounds",["poi-guardian","hostile"]);
+    for (let y = 0; y <= 9; y += 1) {
+      const radius = y < 3 ? 4 : y < 7 ? 3 : 2;
+      for (let x = -radius; x <= radius; x += 1) for (let z = -radius; z <= radius; z += 1) {
+        if (Math.abs(x) === radius && Math.abs(z) === radius) continue;
+        if (y === 0) b.set(x,y,z,BlockId.RivetedBrass,"emberwatch-floor");
+        else if (Math.abs(x) === radius || Math.abs(z) === radius) b.set(x,y,z,(x+z+y)%4===0?BlockId.RivetedBrass:BlockId.Basalt,"tapered-emberwatch");
+        else b.set(x,y,z,BlockId.Air,"emberwatch-interior");
+      }
+    }
+    for (const y of [3,7]) b.fill(-5,y,-1,5,y,1,BlockId.RivetedBrass,"projecting-watch-balcony");
+    for (const [x,z] of [[-2,-2],[-2,2],[2,-2],[2,2]] as const) b.fill(x,10,z,x,11,z,BlockId.Basalt,"uneven-crown");
+    for (const y of [2,5,8]) { b.set(-3,y,0,BlockId.Glowstone,"ember-window"); b.set(3,y,0,BlockId.Glowstone,"ember-window"); }
+    b.chest(0, 8, 0, "adventure-cache", "watch-captain-cache", 6); b.spawn(0,1,0,"cinder-maw",2,4,"tower-hounds",["poi-guardian","hostile"]);
   } else if (kind === "pilgrim-bathhouse") {
-    b.fill(-6,0,-5,6,0,5,BlockId.Limestone,"bath-floor"); b.fill(-4,0,-3,4,0,3,BlockId.Water,"spring-pool"); for (const x of [-6,6]) for (const z of [-5,5]) b.fill(x,1,z,x,4,z,BlockId.BirchLog,"bath-post"); b.fill(-6,4,-5,6,4,5,BlockId.Glass,"open-roof"); b.fill(-3,4,-2,3,4,2,BlockId.Air,"oculus"); b.set(-5,1,0,BlockId.Glowstone,"spring-light"); b.set(5,1,0,BlockId.Glowstone,"spring-light"); b.chest(0,1,5,"adventure-cache","pilgrim-locker",4);
+    ellipseFloor(b, 0, 7, 6, BlockId.Limestone, "bathhouse-stone-garden");
+    for (let x=-5;x<=1;x+=1) for (let z=-3;z<=3;z+=1) if ((x+2)*(x+2)/10+z*z/8<1) b.set(x,0,z,BlockId.Water,"warm-spring-west");
+    for (let x=0;x<=5;x+=1) for (let z=-2;z<=4;z+=1) if ((x-2)*(x-2)/9+(z-1)*(z-1)/8<1) b.set(x,0,z,BlockId.Water,"warm-spring-east");
+    for (const [x,z,h] of [[-6,-4,5],[5,-4,4],[-6,4,4],[6,4,5],[0,-5,3]] as const) b.fill(x,1,z,x,h,z,BlockId.BirchLog,"asymmetric-pavilion-post");
+    for (let x=-6;x<=6;x+=1) if (Math.abs(x)>2) b.set(x,5,-4,BlockId.Glass,"partial-oculus-roof");
+    for (const [x,z] of [[-4,0],[-1,1],[2,0],[4,2]] as const) b.set(x,1,z,BlockId.Limestone,"spring-stepping-stone");
+    for (const [x,z] of [[-6,1],[6,0],[-4,4],[4,-3]] as const) b.set(x,1,z,BlockId.Lumenreed,"bathhouse-reeds");
+    b.set(-5,0,0,BlockId.Glowstone,"spring-light"); b.set(4,0,1,BlockId.Glowstone,"spring-light"); b.chest(0,1,5,"adventure-cache","pilgrim-locker",4);
   } else {
     for (const x of [-5,-3,-1,1,3,5]) { b.fill(x,1,0,x,5,0,BlockId.MoonboughLog,"harp-frame"); b.fill(x,2,0,x,4,0,BlockId.Glass,"harp-string"); } b.fill(-6,5,0,6,5,0,BlockId.MoonboughLog,"harp-arch"); for (const x of [-5,-1,3]) b.set(x,1,-2,BlockId.Moonpetal,"harp-light"); b.chest(0,1,4,"adventure-cache","harp-listener-cache",5); b.spawn(0,2,0,"vaultwing",2,5,"harp-vaultwings",["poi-resident","skittish"]);
   }
@@ -403,10 +491,17 @@ function planV135CreaturePoi(kind: "whistlekite-roost" | "clockwork-burrow", ori
     b.spawn(0, 11, 0, "mossback-kite", 4, 8, "roost-kites", ["poi-resident", "skittish", "adventure-airborne"]);
     b.chest(0, 2, 0, "adventure-cache", "roost-offerings", 6);
   } else {
-    b.fill(-9, 1, -6, 9, 5, 6, BlockId.DeepgearBrick, "collapsed-surveyor-hull");
-    b.fill(-8, 2, -5, 8, 4, 5, BlockId.Air, "burrow-chamber");
-    for (const x of [-8, -4, 0, 4, 8]) { b.set(x, 1, -6, BlockId.StorybookBrick, "survey-plate"); b.set(x, 3, 6, BlockId.Whisperglass, "warm-porthole"); }
-    b.fill(-2, 1, 6, 2, 3, 6, BlockId.Air, "burrow-mouth");
+    for (let x=-9;x<=9;x+=1) for (let z=-6;z<=6;z+=1) {
+      const ellipse = x*x/81+z*z/36;
+      if (ellipse>1.12) continue;
+      const shell = ellipse>0.72;
+      for (let y=1;y<=4;y+=1) b.set(x,y,z,shell?((x+z)%4===0?BlockId.RivetedBrass:BlockId.DeepgearBrick):BlockId.Air,shell?"elliptical-surveyor-hull":"burrow-chamber");
+      if (shell && hashUnit(seed,`hull-collapse:${x},${z}`)<0.22) b.set(x,4,z,BlockId.Air,"collapsed-hull-gap");
+    }
+    for (const [x,z] of [[-7,-4],[-3,-6],[2,-6],[7,-3],[-8,2],[8,2],[-4,5],[4,5]] as const) b.fill(x,1,z,x,5,z,BlockId.RivetedBrass,"tilted-hull-rib");
+    for (const [x,z] of [[-5,5],[0,6],[5,5]] as const) b.set(x,3,z,BlockId.Whisperglass,"warm-porthole");
+    b.fill(-2,1,5,2,3,7,BlockId.Air,"main-burrow-mouth"); b.fill(-8,1,-2,-5,2,1,BlockId.Air,"side-burrow-mouth");
+    for (const [x,z] of [[-10,-4],[10,-2],[-7,7],[7,7]] as const) { b.set(x,1,z,BlockId.RivetedBrass,"gear-remnant"); b.set(x,2,z,BlockId.StorybookBrick,"buried-survey-plate"); }
     b.set(-5, 1, 0, BlockId.GearTable, "abandoned-gearbench");
     b.set(5, 1, 0, BlockId.HearthFireplace, "marmot-warmer");
     b.spawn(0, 1, 0, "clockwork-marmot", 5, 7, "burrow-colony", ["poi-resident", "gentle"]);
@@ -420,7 +515,20 @@ function planLargePoi(kind: AdventurePoiKind, origin: WorldPosition, seed: strin
   const b = new AdventurePlanBuilder(origin, seed);
   circularFloor(b, 12, kind === "saltwind-lighthouse" ? BlockId.Limestone : BlockId.Moss, `${kind}-grounds`);
   if (kind === "shattered-colossus") {
-    b.fill(-8,1,-3,-2,6,3,BlockId.Deepstone,"colossus-head"); b.fill(-7,2,-4,-6,3,-4,BlockId.CrystalBlock,"eye-core"); b.fill(0,1,-2,10,3,2,BlockId.TempleSandstone,"fallen-arm"); for (const x of [2,5,8]) b.fill(x,4,-2,x,5,2,BlockId.Deepstone,"arm-joint"); b.chest(-4,2,0,"adventure-cache","colossus-memory",7); b.spawn(5,2,0,"ossuary-keeper",2,8,"colossus-keepers",["poi-guardian","hostile"]);
+    for (let x=-8;x<=-2;x+=1) for (let y=1;y<=7;y+=1) for (let z=-4;z<=4;z+=1) {
+      const dx=(x+5)/3.7, dy=(y-4)/3.8, dz=z/4.4;
+      const radius=dx*dx+dy*dy+dz*dz;
+      if (radius<=1.08 && radius>=0.52) b.set(x,y,z,BlockId.Deepstone,"rounded-colossus-skull");
+    }
+    b.fill(-8,2,-4,-6,3,-4,BlockId.CrystalBlock,"exposed-eye-core"); b.fill(-5,1,-2,-3,3,2,BlockId.Air,"broken-jaw-cavity");
+    for (let x=0;x<=10;x+=1) {
+      const width=Math.max(1,3-Math.floor(x/4));
+      b.fill(x,1,-width,x,2+(x%4===0?1:0),width,BlockId.TempleSandstone,"curved-fallen-arm");
+      if (x%3===1) b.set(x,3,width,BlockId.Deepstone,"arm-joint");
+    }
+    for (const [x,z,len] of [[9,-4,4],[10,-2,5],[10,0,5],[9,2,4]] as const) b.fill(x,1,z,x+len,1,z,BlockId.TempleSandstone,"colossus-finger");
+    for (const [x,z] of [[-10,-5],[-9,5],[-1,-5],[4,4],[12,2]] as const) b.set(x,1,z,BlockId.Moss,"rubble-vine");
+    b.chest(-4,2,0,"adventure-cache","colossus-memory",7); b.spawn(5,2,0,"ossuary-keeper",2,8,"colossus-keepers",["poi-guardian","hostile"]);
   } else if (kind === "wildwood-bridgehouse") {
     b.fill(-12,1,-3,12,1,3,BlockId.Planks,"covered-bridge-deck"); for (const x of [-12,-8,-4,0,4,8,12]) { b.fill(x,0,-3,x,5,-3,BlockId.WildwoodLog,"bridge-post"); b.fill(x,0,3,x,5,3,BlockId.WildwoodLog,"bridge-post"); if (x % 8 === 0) { b.set(x,3,-2,BlockId.Torch,"rail-lantern"); b.set(x,3,2,BlockId.Torch,"rail-lantern"); } } b.fill(-12,5,-3,12,5,3,BlockId.WildwoodLeaves,"bridge-roof"); b.hollow(0,2,0,4,3,3,BlockId.Planks,BlockId.Planks,"keeper-room"); b.chest(2,2,1,"adventure-cache","bridge-tollbox",6);
   } else if (kind === "starfall-amphitheater") {
@@ -451,29 +559,43 @@ function planUndergroundDungeon(kind: AdventureDungeonKind, origin: WorldPositio
     b.fill(-1, depth, 11, 1, depth, 13, BlockId.Air, `${kind}-shaft-air`);
     b.set(depth % 2 ? -2 : 2, depth, 12, profile.light, `${kind}-shaft-light`);
   }
-  const rooms = [
-    { id: "threshold", name: kind === "rootbound-labyrinth" ? "Root Gate" : kind === "starless-observatory" ? "Lens Vestibule" : kind === "palimpsest-vault" ? "Errata Vestibule" : "Ore Intake", stage: 1, center: [0, base, 9] as const, radius: [6, 4, 5] as const, objective: "Survive the entrance encounter and find the descending passage." },
-    { id: "crossing", name: kind === "rootbound-labyrinth" ? "Whisper Maze" : kind === "starless-observatory" ? "Constellation Archive" : kind === "palimpsest-vault" ? "Rewritten Stacks" : "Assembly Floor", stage: 2, center: [0, base - 2, 0] as const, radius: [8, 5, 6] as const, objective: "Clear two linked encounter pockets and reach the sealed inner hall." },
-    { id: "vault", name: kind === "rootbound-labyrinth" ? "Heartroot Reliquary" : kind === "starless-observatory" ? "Astrolabe Vault" : kind === "palimpsest-vault" ? "Last Folio" : "Quenched Master-vault", stage: 3, center: [0, base - 4, -11] as const, radius: [7, 5, 5] as const, objective: "Defeat the guardian and claim the authored vault loot." },
-  ];
-  for (const room of rooms) {
-    const [roomX, roomY, roomZ] = room.center;
-    const [roomRadiusX, roomRadiusY, roomRadiusZ] = room.radius;
-    b.hollow(roomX, roomY, roomZ, roomRadiusX, roomRadiusY, roomRadiusZ, profile.shell, profile.floor, `${kind}-${room.id}`);
-    b.room(room.id, room.name, room.stage, room.center, room.radius, room.objective);
+  const dungeonTiles = planDungeonTiles(kind, `${seed}:${origin.x},${origin.z}`);
+  const tileCenter = (tile: DungeonTile) => ({ x: tile.gridX * 7, y: tile.stage === 1 ? base : tile.stage === 2 ? base - 2 : base - 4, z: tile.gridZ * 7 });
+  for (const tile of dungeonTiles) {
+    const center = tileCenter(tile);
+    chamferedDungeonCell(b, center.x, center.y, center.z, profile.shell, profile.floor, `${kind}-dungeon-tile-${tile.gridX},${tile.gridZ}`);
+    if (kind === "rootbound-labyrinth" && tile.gridX !== 0) b.fill(center.x, center.y, center.z, center.x, center.y + 3, center.z, BlockId.WildwoodLog, `${kind}-root-rib`);
+    else if (kind === "starless-observatory" && tile.gridX !== 0) b.set(center.x, center.y + 3, center.z, BlockId.CrystalBlock, `${kind}-constellation-node`);
+    else if (kind === "brassdeep-foundry" && tile.gridX !== 0) b.fill(center.x - 1, center.y, center.z, center.x + 1, center.y, center.z, BlockId.RivetedBrass, `${kind}-assembly-bay`);
+    else if (kind === "palimpsest-vault" && tile.gridX !== 0) for (const offset of [-2, 0, 2]) b.fill(center.x + offset, center.y, center.z - 2, center.x + offset, center.y + 2, center.z + 2, BlockId.ArchiveShelf, `${kind}-stack-aisle`);
   }
-  // Stepped inter-room connections make progression readable and navigable.
-  b.fill(-2, base, 4, 2, base + 2, 7, BlockId.Air, `${kind}-first-passage`);
-  b.fill(-2, base - 2, -7, 2, base, -4, BlockId.Air, `${kind}-vault-passage`);
-  for (const [step, [stairZ, stairGroundY]] of [[7, base - 1], [6, base - 2], [5, base - 3]].entries()) {
-    b.set(0, stairGroundY, stairZ, profile.floor, `${kind}-stage-1-2-tread-${step}`);
-    b.set(0, stairGroundY + 1, stairZ, BlockId.Air, `${kind}-stage-transition-headroom`);
-    b.set(0, stairGroundY + 2, stairZ, BlockId.Air, `${kind}-stage-transition-headroom`);
+  const tileByKey = new Map(dungeonTiles.map((tile) => [`${tile.gridX},${tile.gridZ}`, tile]));
+  for (const tile of dungeonTiles) {
+    const center = tileCenter(tile);
+    for (const [direction, dx, dz] of [["east",1,0],["south",0,1]] as const) {
+      if (!tile.connections.includes(direction)) continue;
+      const neighbor = tileByKey.get(`${tile.gridX + dx},${tile.gridZ + dz}`);
+      if (!neighbor || neighbor.stage !== tile.stage) continue;
+      const next = tileCenter(neighbor);
+      if (dx) b.fill(center.x + 3, center.y, center.z - 1, next.x - 3, center.y + 2, center.z + 1, BlockId.Air, `${kind}-tiled-doorway`);
+      else b.fill(center.x - 1, center.y, center.z + 3, center.x + 1, center.y + 2, next.z - 3, BlockId.Air, `${kind}-tiled-doorway`);
+    }
   }
-  for (const [step, [stairZ, stairGroundY]] of [[-4, base - 3], [-5, base - 4], [-6, base - 5]].entries()) {
-    b.set(0, stairGroundY, stairZ, profile.floor, `${kind}-stage-2-3-tread-${step}`);
-    b.set(0, stairGroundY + 1, stairZ, BlockId.Air, `${kind}-stage-transition-headroom`);
-    b.set(0, stairGroundY + 2, stairZ, BlockId.Air, `${kind}-stage-transition-headroom`);
+  const stageRadius = (stage: 1 | 2 | 3) => {
+    const stageTiles = dungeonTiles.filter((tile) => tile.stage === stage);
+    return Math.max(4, ...stageTiles.map((tile) => Math.abs(tile.gridX * 7) + 3));
+  };
+  b.room("threshold", kind === "rootbound-labyrinth" ? "Root Gate" : kind === "starless-observatory" ? "Lens Vestibule" : kind === "palimpsest-vault" ? "Errata Vestibule" : "Ore Intake", 1, [0, base, 7], [stageRadius(1), 4, 4], "Survive the entrance encounter and find the descending passage.");
+  b.room("crossing", kind === "rootbound-labyrinth" ? "Whisper Maze" : kind === "starless-observatory" ? "Constellation Archive" : kind === "palimpsest-vault" ? "Rewritten Stacks" : "Assembly Floor", 2, [0, base - 2, 0], [stageRadius(2), 4, 4], "Clear the connected side chambers and reach the sealed inner hall.");
+  b.room("vault", kind === "rootbound-labyrinth" ? "Heartroot Reliquary" : kind === "starless-observatory" ? "Astrolabe Vault" : kind === "palimpsest-vault" ? "Last Folio" : "Quenched Master-vault", 3, [0, base - 4, -7], [stageRadius(3), 4, 11], "Defeat the guardian and claim the authored vault loot.");
+  // Two compact one-block stair drops connect the three fixed spine stages.
+  for (const [z, floorY] of [[4, base - 2], [3, base - 3], [-3, base - 4], [-4, base - 5]] as const) {
+    for (let x = -1; x <= 1; x += 1) {
+      b.set(x, floorY + 1, z, BlockId.Air, `${kind}-stage-transition-recut`);
+      b.set(x, floorY, z, profile.floor, `${kind}-stage-transition-tread`);
+      b.set(x, floorY + 2, z, BlockId.Air, `${kind}-stage-transition-headroom`);
+      b.set(x, floorY + 3, z, BlockId.Air, `${kind}-stage-transition-headroom`);
+    }
   }
   // A one-block-rise spiral follows a unique 7x7 perimeter from the surface
   // to the threshold floor. The open 3x3 shaft remains a sightline/lightwell,
@@ -492,11 +614,14 @@ function planUndergroundDungeon(kind: AdventureDungeonKind, origin: WorldPositio
   }
   // The final tread and the threshold chamber share a floor at base - 1.
   b.fill(-3, base, 14, -1, base + 2, 14, BlockId.Air, `${kind}-stair-threshold-door`);
-  for (const [x, y, z] of [[-5,base,9],[5,base,9],[-6,base-2,0],[6,base-2,0],[-5,base-4,-11],[5,base-4,-11]] as const) b.set(x,y,z,profile.light,`${kind}-room-light`);
-  b.spawn(-2, base, 9, profile.mobs[0], 3, 5, "threshold-encounter", ["dungeon", "stage-1", "hostile"]);
+  for (const [x, y, z] of [[-3,base,7],[3,base,7],[-3,base-2,0],[3,base-2,0],[-3,base-4,-7],[3,base-4,-14]] as const) b.set(x,y,z,profile.light,`${kind}-room-light`);
+  // A real barred leaf closes the inner threshold; alpha gaps preserve the view into the next stage.
+  b.set(0, base - 1, 4, BlockId.WroughtIronDoorClosedLower, `${kind}-wrought-threshold-door`);
+  b.set(0, base, 4, BlockId.WroughtIronDoorClosedUpper, `${kind}-wrought-threshold-door`);
+  b.spawn(-2, base, 7, profile.mobs[0], 3, 5, "threshold-encounter", ["dungeon", "stage-1", "hostile"]);
   b.spawn(3, base - 2, 0, profile.mobs[1], 4, 6, "crossing-encounter-a", ["dungeon", "stage-2", "hostile"]);
   b.spawn(-3, base - 2, -2, profile.mobs[0], 2, 5, "crossing-encounter-b", ["dungeon", "stage-2", "hostile"]);
-  b.spawn(0, base - 4, -11, profile.mobs[2], kind === "rootbound-labyrinth" || kind === "palimpsest-vault" ? 1 : 2, 6, "vault-guardian", ["dungeon", "stage-3", "boss", "hostile"]);
+  b.spawn(0, base - 4, -7, profile.mobs[2], kind === "rootbound-labyrinth" || kind === "palimpsest-vault" ? 1 : 2, 6, "vault-guardian", ["dungeon", "stage-3", "boss", "hostile"]);
   b.chest(4, base - 2, 1, "adventure-cache", "midway-supplies", 5);
   b.chest(0, base - 4, -14, profile.table, "master-vault", 8);
   b.landmark(0, 1, 12, `dungeon:${kind}`);

@@ -37,6 +37,7 @@ import {
 } from "../app/game/settlements";
 import {
   GOLEM_RECIPES,
+  SETTLEMENT_TILE_COUNT_BANDS,
   V1_CULTURES,
   V1_FUTURE_ONLY,
   advanceGolemForge,
@@ -86,8 +87,8 @@ test("v1 cultures are selectable, habitat-bound, and planned as connected tiled 
 
   for (const factionId of ["wood-elves", "dwarves"] as const) for (const size of ["hamlet", "village", "town"] as const) {
     const plan = planV1Settlement({ seed: "V1-TILE-CONTRACT", regionX: 7, regionZ: -4, factionId, size });
-    const expectedTiles = size === "hamlet" ? 13 : size === "village" ? 21 : 31;
-    assert.equal(plan.tiles.length, expectedTiles);
+    const band = SETTLEMENT_TILE_COUNT_BANDS[size];
+    assert.ok(plan.tiles.length >= band.min && plan.tiles.length <= band.max);
     assertConnectedTilePlan(plan);
     assert.equal(plan.wallTiles.filter((tile) => tile.gate).length, 1);
     assert.ok(plan.lanternTiles.length >= 4);

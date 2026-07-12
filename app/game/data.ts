@@ -209,6 +209,15 @@ export enum BlockId {
   DoubleTallGrassLower = 199,
   DoubleTallGrassUpper = 200,
   LightningBugJar = 201,
+  /** v1.3.9 dungeon doors use a complete family-state range. */
+  WroughtIronDoorClosedLower = 202,
+  WroughtIronDoorClosedUpper = 203,
+  WroughtIronDoorOpenLower = 204,
+  WroughtIronDoorOpenUpper = 205,
+  WroughtIronDoorXClosedLower = 206,
+  WroughtIronDoorXClosedUpper = 207,
+  WroughtIronDoorXOpenLower = 208,
+  WroughtIronDoorXOpenUpper = 209,
   /** v0.9 Dragonwake lair materials, eggs, treasure and archive stations. */
   CharredDragonstone = 217,
   RimeDragonstone = 218,
@@ -591,6 +600,7 @@ export const Item = {
   ArgentDragonstoneItem: 460,
   Shears: 461,
   LightningBugJar: 462,
+  WroughtIronDoor: 463,
 } as const;
 
 export type ItemCode = number;
@@ -914,6 +924,14 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.DoubleTallGrassLower]: block(BlockId.DoubleTallGrassLower, "Tall Meadow Grass", 158, 158, 158, 0.05, "#5f9e3f", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true, verticalConnectGroup: "double-tall-grass" }),
   [BlockId.DoubleTallGrassUpper]: block(BlockId.DoubleTallGrassUpper, "Tall Meadow Grass", 159, 159, 159, 0.05, "#79b54f", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true, verticalConnectGroup: "double-tall-grass" }),
   [BlockId.LightningBugJar]: block(BlockId.LightningBugJar, "Lightning Bug Jar", 12, 12, 12, 0.28, "#d8f5c2", "hand", 0, { solid: false, layer: "cutout", shape: "lightning-bug-jar" }),
+  [BlockId.WroughtIronDoorClosedLower]: block(BlockId.WroughtIronDoorClosedLower, "Wrought-Iron Door", 160, 160, 160, 2.4, "#384248", "pickaxe", 2, { layer: "cutout", shape: "door" }),
+  [BlockId.WroughtIronDoorClosedUpper]: block(BlockId.WroughtIronDoorClosedUpper, "Wrought-Iron Door", 161, 161, 161, 2.4, "#384248", "pickaxe", 2, { layer: "cutout", shape: "door" }),
+  [BlockId.WroughtIronDoorOpenLower]: block(BlockId.WroughtIronDoorOpenLower, "Open Wrought-Iron Door", 160, 160, 160, 2.4, "#384248", "pickaxe", 2, { solid: false, layer: "cutout", shape: "door" }),
+  [BlockId.WroughtIronDoorOpenUpper]: block(BlockId.WroughtIronDoorOpenUpper, "Open Wrought-Iron Door", 161, 161, 161, 2.4, "#384248", "pickaxe", 2, { solid: false, layer: "cutout", shape: "door" }),
+  [BlockId.WroughtIronDoorXClosedLower]: block(BlockId.WroughtIronDoorXClosedLower, "Wrought-Iron Door", 160, 160, 160, 2.4, "#384248", "pickaxe", 2, { layer: "cutout", shape: "door" }),
+  [BlockId.WroughtIronDoorXClosedUpper]: block(BlockId.WroughtIronDoorXClosedUpper, "Wrought-Iron Door", 161, 161, 161, 2.4, "#384248", "pickaxe", 2, { layer: "cutout", shape: "door" }),
+  [BlockId.WroughtIronDoorXOpenLower]: block(BlockId.WroughtIronDoorXOpenLower, "Open Wrought-Iron Door", 160, 160, 160, 2.4, "#384248", "pickaxe", 2, { solid: false, layer: "cutout", shape: "door" }),
+  [BlockId.WroughtIronDoorXOpenUpper]: block(BlockId.WroughtIronDoorXOpenUpper, "Open Wrought-Iron Door", 161, 161, 161, 2.4, "#384248", "pickaxe", 2, { solid: false, layer: "cutout", shape: "door" }),
   [BlockId.CharredDragonstone]: block(BlockId.CharredDragonstone, "Charred Dragonstone", 43, 43, 43, 3.8, "#443238", "pickaxe", 3),
   [BlockId.RimeDragonstone]: block(BlockId.RimeDragonstone, "Rime Dragonstone", 41, 41, 41, 3.8, "#9cc7dc", "pickaxe", 3),
   [BlockId.RivetedDragonstone]: block(BlockId.RivetedDragonstone, "Riveted Dragonstone", 35, 35, 35, 4.25, "#68747c", "pickaxe", 3),
@@ -1005,6 +1023,8 @@ export const ITEMS: Record<number, ItemDefinition> = {};
 const technicalBlocks = new Set<BlockId>([
   BlockId.DoorClosedLower, BlockId.DoorClosedUpper, BlockId.DoorOpenLower, BlockId.DoorOpenUpper,
   BlockId.DoorXClosedLower, BlockId.DoorXClosedUpper, BlockId.DoorXOpenLower, BlockId.DoorXOpenUpper,
+  BlockId.WroughtIronDoorClosedLower, BlockId.WroughtIronDoorClosedUpper, BlockId.WroughtIronDoorOpenLower, BlockId.WroughtIronDoorOpenUpper,
+  BlockId.WroughtIronDoorXClosedLower, BlockId.WroughtIronDoorXClosedUpper, BlockId.WroughtIronDoorXOpenLower, BlockId.WroughtIronDoorXOpenUpper,
   BlockId.TorchWallNorth, BlockId.TorchWallSouth, BlockId.TorchWallEast, BlockId.TorchWallWest,
   BlockId.MoonberryShoot, BlockId.MoonberryBush, BlockId.MoonberryBushRipe,
   BlockId.SunberryShoot, BlockId.SunberryBush, BlockId.SunberryBushRipe,
@@ -1403,6 +1423,7 @@ Object.assign(ITEMS, {
   [Item.ClockworkSpring]: { id: Item.ClockworkSpring, name: "Clockwork Spring", color: "#d6a44f", maxStack: 64, iconKind: "relic" },
   [Item.Shears]: { id: Item.Shears, name: "Sunmetal Shears", color: "#d4b9a7", maxStack: 1, maxDurability: 256, useKind: "shears", iconKind: "sword", heldModel: "shears", dropModel: "shears" },
   [Item.LightningBugJar]: { id: Item.LightningBugJar, name: "Lightning Bug Jar", color: "#d7ff62", maxStack: 16, placeBlock: BlockId.LightningBugJar, iconKind: "bottle", heldModel: "lightning-bug-jar", dropModel: "lightning-bug-jar" },
+  [Item.WroughtIronDoor]: { id: Item.WroughtIronDoor, name: "Wrought-Iron Door", color: "#465258", maxStack: 64, placeBlock: BlockId.WroughtIronDoorClosedLower, worldTextureBlock: BlockId.WroughtIronDoorClosedLower },
 } satisfies Record<number, ItemDefinition>);
 
 /**
@@ -1411,6 +1432,14 @@ Object.assign(ITEMS, {
  * 103 (Sunmetal Ingot) merely because both enums share a number.
  */
 export const BLOCK_ITEM_ALIASES: Readonly<Partial<Record<BlockId, ItemCode>>> = Object.freeze({
+  [BlockId.WroughtIronDoorClosedLower]: Item.WroughtIronDoor,
+  [BlockId.WroughtIronDoorClosedUpper]: Item.WroughtIronDoor,
+  [BlockId.WroughtIronDoorOpenLower]: Item.WroughtIronDoor,
+  [BlockId.WroughtIronDoorOpenUpper]: Item.WroughtIronDoor,
+  [BlockId.WroughtIronDoorXClosedLower]: Item.WroughtIronDoor,
+  [BlockId.WroughtIronDoorXClosedUpper]: Item.WroughtIronDoor,
+  [BlockId.WroughtIronDoorXOpenLower]: Item.WroughtIronDoor,
+  [BlockId.WroughtIronDoorXOpenUpper]: Item.WroughtIronDoor,
   [BlockId.Moss]: Item.GlowRoot,
   [BlockId.Saltbrush]: Item.SaltbrushSprig,
   [BlockId.CoastAster]: Item.CoastAsterPetal,
@@ -1730,6 +1759,7 @@ export const RECIPES: Recipe[] = [
   { id: "furnace", name: "Furnace", width: 3, height: 3, pattern: [BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone, 0, BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone], output: { item: BlockId.Furnace, count: 1 }, table: true },
   { id: "chest", name: "Wildwood Chest", width: 3, height: 3, pattern: [BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks, 0, BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: BlockId.Chest, count: 1 }, table: true },
   { id: "door", name: "Wildwood Doors", width: 2, height: 3, pattern: [BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: Item.WildwoodDoor, count: 3 }, table: true },
+  { id: "wrought-iron-door", name: "Wrought-Iron Doors", width: 2, height: 3, pattern: [Item.SunmetalIngot, Item.SunmetalIngot, Item.SunmetalIngot, Item.SunmetalIngot, Item.SunmetalIngot, Item.SunmetalIngot], output: { item: Item.WroughtIronDoor, count: 3 }, table: true },
   { id: "bed", name: "Wildwood Bed", width: 3, height: 2, pattern: [Item.Wool, Item.Wool, Item.Wool, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: Item.WildwoodBed, count: 1 }, table: true },
   { id: "cotton-string", name: "Cotton String", width: 1, height: 1, pattern: [Item.CottonBoll], output: { item: Item.String, count: 2 }, table: false },
   { id: "woven-cloudwool", name: "Woven Cloudwool", width: 2, height: 2, pattern: [Item.String, Item.String, Item.String, Item.String], output: { item: Item.Wool, count: 1 }, table: false },

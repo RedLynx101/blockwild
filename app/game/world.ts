@@ -11,6 +11,7 @@ import {
 import { paintBiomeSurfaceAtlasTile } from "./biome-atmosphere";
 import { BLOCKS, LEAF_BLOCKS, TORCH_BLOCKS, BlockId, archiveShelfBookCount, blockContainsWater, isWaterloggedFloraBlock, type RenderLayer } from "./data";
 import { caveEntranceAt, caveFeatureAt } from "./caves";
+import { doorIsOpen, doorState, doorUsesXAxis, isDoorBlock } from "./doors";
 import { DENSE_CUTOUT_LEAF_POLICY, planFullTree, planSubmergedFlora, planSyrupPondsForChunk, syrupPondColumnAt, wildPeppermintHeight, type TreeForm, type TreePlanBlock } from "./ecology";
 import { dragonLairMarkersForChunk, dragonLairPlacementsForChunk, dragonLairsIntersectingChunk, repairGeneratedTreePlan } from "./dragon-world";
 import { NPC_FACTION_IDS, normalizeEnabledFactions, type NpcFactionId } from "./factions";
@@ -47,7 +48,7 @@ export const WORLD_HEIGHT = MAX_Y - MIN_Y + 1;
 export const SEA_LEVEL = 32;
 export const SECTION_HEIGHT = 16;
 export const SECTION_COUNT = WORLD_HEIGHT / SECTION_HEIGHT;
-export const GENERATOR_VERSION = 13;
+export const GENERATOR_VERSION = 14;
 
 export type SettlementWorldPlan = Readonly<{
   candidate: SettlementCandidate;
@@ -562,6 +563,8 @@ const TILE_COLORS = [
   "#6f4b17", "#4d5d73", "#d49b1f", "#aabdd2",
   // 158-159: connected lower and upper halves of tall meadow grass.
   "#5f9e3f", "#79b54f",
+  // 160-161: blue-black wrought iron and its pale hammered fittings.
+  "#303b42", "#87949a",
 ];
 
 export const MEADOW_GRASS_PALETTE = Object.freeze({
@@ -1212,6 +1215,14 @@ export function createBlockAtlas() {
       context.fillRect(ox + 5, oy + 5, 2, 1); context.fillRect(ox + 9, oy + 5, 2, 1);
       context.fillStyle = "#5d371f";
       context.fillRect(ox + 7, oy + 3, 2, 8); context.fillRect(ox + 3, oy + 9, 10, 2);
+    }
+    if (index === 160 || index === 161) {
+      context.fillStyle = index === 160 ? "#263139" : "#718087";
+      context.fillRect(ox, oy, tile, tile);
+      context.fillStyle = index === 160 ? "#43515a" : "#a8b2b5";
+      for (let y = 1; y < tile; y += 4) context.fillRect(ox, oy + y, tile, 1);
+      context.fillStyle = index === 160 ? "#182229" : "#515f66";
+      for (let x = 2; x < tile; x += 5) context.fillRect(ox + x, oy, 1, tile);
     }
     if (index === 62) {
       context.fillStyle = "#6a3d22";
@@ -2596,11 +2607,14 @@ export class ChunkWorld {
       for (const building of layout.buildings) {
         const halfWidth = Math.floor(building.width / 2);
         const halfDepth = Math.floor(building.depth / 2);
+        const rotatedFootprint = building.facing % 2 === 1;
+        const extentX = rotatedFootprint ? halfDepth : halfWidth;
+        const extentZ = rotatedFootprint ? halfWidth : halfDepth;
         const buildingBounds = {
-          minX: building.position.x - halfWidth,
-          maxX: building.position.x + halfWidth,
-          minZ: building.position.z - halfDepth,
-          maxZ: building.position.z + halfDepth,
+          minX: building.position.x - extentX,
+          maxX: building.position.x + extentX,
+          minZ: building.position.z - extentZ,
+          maxZ: building.position.z + extentZ,
         };
         if (buildingBounds.maxX < minX || buildingBounds.minX >= minX + CHUNK_SIZE || buildingBounds.maxZ < minZ || buildingBounds.minZ >= minZ + CHUNK_SIZE) continue;
         const baseY = underwater
@@ -2608,6 +2622,20 @@ export class ChunkWorld {
           : underground ? (building.position.y ?? candidate.floorY ?? centerColumn.height - 18) - 1
           : sample(building.position.x, building.position.z).height;
         const wallHeight = building.floors * 3 + 1;
+        const localCoordinates = (x: number, z: number) => {
+          const dx = x - building.position.x;
+          const dz = z - building.position.z;
+          if (building.facing === 1) return { u: dz, v: -dx };
+          if (building.facing === 2) return { u: -dx, v: -dz };
+          if (building.facing === 3) return { u: -dz, v: dx };
+          return { u: dx, v: dz };
+        };
+        const worldFromLocal = (u: number, v: number) => building.facing === 1
+          ? { x: building.position.x - v, z: building.position.z + u }
+          : building.facing === 2 ? { x: building.position.x - u, z: building.position.z - v }
+            : building.facing === 3 ? { x: building.position.x + v, z: building.position.z - u }
+              : { x: building.position.x + u, z: building.position.z + v };
+        const civic = ["mayor-hall", "tide-hall", "sugar-palace", "moonbough-hall", "deepgear-hall"].includes(building.role);
         if (candidate.factionId === "wood-elves" && building.role === "moonwell") {
           // Moonwells are open living courtyards rather than sealed houses.
           // Their shallow source pond gives Glowfin a real water habitat and
@@ -2644,11 +2672,14 @@ export class ChunkWorld {
         }
         for (let x = buildingBounds.minX; x <= buildingBounds.maxX; x += 1) for (let z = buildingBounds.minZ; z <= buildingBounds.maxZ; z += 1) {
           if (!insideChunk(x, z)) continue;
+          const { u, v } = localCoordinates(x, z);
+          const chamferedCorner = civic && Math.abs(u) === halfWidth && Math.abs(v) === halfDepth;
           if (underwater) {
-            const edgeX = x === buildingBounds.minX || x === buildingBounds.maxX;
-            const edgeZ = z === buildingBounds.minZ || z === buildingBounds.maxZ;
+            const edgeX = Math.abs(u) === halfWidth;
+            const edgeZ = Math.abs(v) === halfDepth;
             const corner = edgeX && edgeZ;
             const arch = edgeX || edgeZ;
+            if (chamferedCorner) continue;
             if (arch) set(x, baseY, z, BlockId.MoonSlate, false);
             if (corner) for (let y = 1; y <= Math.min(4, wallHeight); y += 1) set(x, baseY + y, z, palette.corner, false);
             else if (arch && ((x + z) & 3) === 0) set(x, baseY + 2, z, palette.buildingWall, false);
@@ -2660,34 +2691,47 @@ export class ChunkWorld {
           if (underground) {
             for (let y = baseY; y <= baseY + wallHeight + 2; y += 1) set(x, y, z, BlockId.Air, false);
             set(x, baseY, z, building.role === "deepgear-hall" || building.role === "golem-forge" ? palette.hallFloor : palette.floor, false);
-            const edgeX = x === buildingBounds.minX || x === buildingBounds.maxX;
-            const edgeZ = z === buildingBounds.minZ || z === buildingBounds.maxZ;
+            const edgeX = Math.abs(u) === halfWidth;
+            const edgeZ = Math.abs(v) === halfDepth;
+            if (chamferedCorner) continue;
             if (edgeX || edgeZ) for (let y = 1; y <= wallHeight; y += 1) {
               const corner = edgeX && edgeZ;
               const window = !corner && y === 2 && ((x + z) & 3) === 0;
               set(x, baseY + y, z, window ? BlockId.RivetedBrass : corner ? palette.corner : palette.buildingWall, false);
             }
-            set(x, baseY + wallHeight + 1, z, palette.roof, false);
+            const archRise = Math.max(0, 2 - Math.floor(Math.abs(u) / Math.max(1, halfWidth / 2)));
+            set(x, baseY + wallHeight + 1 + archRise, z, palette.roof, false);
             continue;
           }
           const localHeight = sample(x, z).height;
           for (let y = Math.min(localHeight + 1, baseY); y <= baseY; y += 1) set(x, y, z, palette.corner, false);
           for (let y = baseY + 1; y <= Math.max(baseY + wallHeight + 2, localHeight + 2); y += 1) set(x, y, z, BlockId.Air, false);
           set(x, baseY, z, building.role === "mayor-hall" || building.role === "sugar-palace" || building.role === "moonbough-hall" ? palette.hallFloor : palette.floor, false);
-          const edgeX = x === buildingBounds.minX || x === buildingBounds.maxX;
-          const edgeZ = z === buildingBounds.minZ || z === buildingBounds.maxZ;
+          const edgeX = Math.abs(u) === halfWidth;
+          const edgeZ = Math.abs(v) === halfDepth;
+          if (chamferedCorner) continue;
           if (edgeX || edgeZ) for (let y = 1; y <= wallHeight; y += 1) {
             const corner = edgeX && edgeZ;
             const window = !corner && y % 3 === 2 && ((x + z) & 3) === 0;
             set(x, baseY + y, z, window ? BlockId.Glass : corner ? palette.corner : palette.buildingWall, false);
           }
-          set(x, baseY + wallHeight + 1 + ((Math.abs(x - building.position.x) + Math.abs(z - building.position.z)) % 3 === 0 ? 1 : 0), z, palette.roof, false);
+          const roofRise = candidate.factionId === "hobbits"
+            ? Math.max(0, 2 - Math.floor(Math.abs(v) / Math.max(1, halfDepth / 2)))
+            : candidate.factionId === "sugarcourt"
+              ? Math.max(0, 3 - Math.floor((Math.abs(u) + Math.abs(v)) / Math.max(1, Math.min(halfWidth, halfDepth))))
+              : candidate.factionId === "wood-elves"
+                ? Math.max(0, 2 - Math.floor(Math.hypot(u / Math.max(1, halfWidth), v / Math.max(1, halfDepth)) * 2))
+                : candidate.factionId === "goblins" ? (u + halfWidth) % 3 === 0 ? 2 : 0
+                  : (Math.abs(u) + Math.abs(v)) % 3 === 0 ? 1 : 0;
+          set(x, baseY + wallHeight + 1 + roofRise, z, palette.roof, false);
         }
-        const doorX = building.position.x;
-        const doorZ = buildingBounds.minZ;
+        const door = worldFromLocal(0, -halfDepth);
+        const doorX = door.x;
+        const doorZ = door.z;
         if ((!underwater || underground) && insideChunk(doorX, doorZ)) {
-          set(doorX, baseY + 1, doorZ, BlockId.DoorClosedLower, false);
-          set(doorX, baseY + 2, doorZ, BlockId.DoorClosedUpper, false);
+          const xAxisDoor = building.facing % 2 === 1;
+          set(doorX, baseY + 1, doorZ, xAxisDoor ? BlockId.DoorXClosedLower : BlockId.DoorClosedLower, false);
+          set(doorX, baseY + 2, doorZ, xAxisDoor ? BlockId.DoorXClosedUpper : BlockId.DoorClosedUpper, false);
         }
         for (const furniture of building.furniture) if (insideChunk(furniture.position.x, furniture.position.z)) {
           if (furniture.kind === "door") continue;
@@ -2931,7 +2975,7 @@ export class ChunkWorld {
   isWalkThrough(type: BlockId | undefined) {
     if (type === undefined) return false;
     return type === BlockId.Air
-      || [BlockId.DoorOpenLower, BlockId.DoorOpenUpper, BlockId.DoorXOpenLower, BlockId.DoorXOpenUpper].includes(type)
+      || (isDoorBlock(type) && doorIsOpen(type))
       || [BlockId.FenceGateNorthSouthOpen, BlockId.FenceGateEastWestOpen].includes(type)
       || ["cross", "tall-flower", "aquatic", "torch", "bush", "fruit", "table", "stool", "shelf"].includes(BLOCKS[type]?.shape ?? "");
   }
@@ -3584,9 +3628,21 @@ export class ChunkWorld {
         if (definition.shape === "door") {
           const tile = definition.side;
           const environment = shadeAt(lx, y, lz);
-          const open = [BlockId.DoorOpenLower, BlockId.DoorOpenUpper, BlockId.DoorXOpenLower, BlockId.DoorXOpenUpper].includes(type);
-          const xAxis = [BlockId.DoorXClosedLower, BlockId.DoorXClosedUpper, BlockId.DoorXOpenLower, BlockId.DoorXOpenUpper].includes(type);
+          const open = doorIsOpen(type);
+          const xAxis = doorUsesXAxis(type);
           const planeAlongZ = xAxis !== open;
+          if (doorState(type)?.family === "wrought-iron") {
+            const thinCenterX = planeAlongZ ? lx + (open ? -0.42 : 0) : lx;
+            const thinCenterZ = planeAlongZ ? lz : lz + (open ? -0.42 : 0);
+            const ironCuboid = (along0: number, y0: number, along1: number, y1: number, fitting = false) => {
+              if (planeAlongZ) addTexturedCuboid(bucket, thinCenterX - 0.07, y0, lz + along0, thinCenterX + 0.07, y1, lz + along1, fitting ? 161 : 160, fitting ? 161 : 160, fitting ? 161 : 160, tint, environment);
+              else addTexturedCuboid(bucket, lx + along0, y0, thinCenterZ - 0.07, lx + along1, y1, thinCenterZ + 0.07, fitting ? 161 : 160, fitting ? 161 : 160, fitting ? 161 : 160, tint, environment);
+            };
+            for (const along of [-0.44, -0.22, 0, 0.22, 0.44]) ironCuboid(along - (Math.abs(along) > 0.4 ? 0.045 : 0.025), y - 0.5, along + (Math.abs(along) > 0.4 ? 0.045 : 0.025), y + 0.5);
+            for (const railY of [y - 0.46, y + 0.38]) ironCuboid(-0.48, railY, 0.48, railY + 0.08);
+            ironCuboid(0.27, y - 0.06, 0.43, y + 0.1, true);
+            continue;
+          }
           if (planeAlongZ) {
             const x0 = lx + (open ? -0.5 : -0.08);
             const x1 = lx + (open ? -0.34 : 0.08);

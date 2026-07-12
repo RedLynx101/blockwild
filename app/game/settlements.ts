@@ -14,7 +14,7 @@ import {
   type TownCaptureReceipt,
 } from "./factions.ts";
 import type { GoldAmount, MerchantProfession } from "./economy.ts";
-import { planConnectedSettlementTiles, planV1Settlement, type V1TileRole } from "./v1-cultures.ts";
+import { planConnectedSettlementTiles, planV1Settlement, settlementTileCount, type V1TileRole } from "./v1-cultures.ts";
 
 export type SettlementSize = "hamlet" | "village" | "town";
 export type SettlementPoint = Readonly<{ x: number; z: number; y?: number }>;
@@ -336,8 +336,7 @@ function expandBuildingRoles(
   return roles;
 }
 
-function buildingRoles(factionId: Exclude<FactionId, "player">, size: SettlementSize, seed: string = factionId) {
-  const target = SETTLEMENT_SIZE_RULES[size].buildingCount;
+function buildingRoles(factionId: Exclude<FactionId, "player">, size: SettlementSize, seed: string = factionId, target = settlementTileCount(size, seed)) {
   if (factionId === "wood-elves") {
     const roles: SettlementBuildingRole[] = [
       "moonbough-hall", "leafwarden-lodge", "glimmer-library", "enclave-market", "living-home", "glow-garden",
@@ -663,7 +662,8 @@ export function planSettlementLayout(candidate: SettlementCandidate): Settlement
   const center: SettlementPoint = aquatic
     ? { ...candidate.center, y: candidate.center.y ?? (candidate.floorY ?? (candidate.biome === "lumen-trench" ? -28 : 10)) + 2 }
     : candidate.center;
-  const roles = buildingRoles(candidate.factionId, candidate.size, candidate.id);
+  const targetTiles = settlementTileCount(candidate.size, `${candidate.id}|${candidate.worldSeed}`);
+  const roles = buildingRoles(candidate.factionId, candidate.size, candidate.id, targetTiles);
   const gridRadius = candidate.size === "hamlet" ? 2 : candidate.size === "village" ? 3 : 4;
   const tileSize = candidate.factionId === "hobbits" ? 9 : candidate.factionId === "atlantians" ? 11 : 10;
   const tiles = planConnectedSettlementTiles({ seed: `${candidate.id}|${candidate.worldSeed}`, targetTiles: roles.length, gridRadius });

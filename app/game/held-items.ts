@@ -474,6 +474,13 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
     if (definition.bucketLiquid) addBox([0.23, 0.035, 0.18], [0, 0.17, 0], definition.color, [0, 0, 0], definition.bucketLiquid === "lava");
     group.scale.setScalar(0.72);
     group.rotation.set(0.08, 0.25, -0.12);
+  } else if (item === Item.WroughtIronDoor) {
+    for (const x of [-0.2, -0.1, 0, 0.1, 0.2]) addBox([0.045, 0.72, 0.045], [x, 0.12, 0], 0x303b42);
+    for (const y of [-0.2, 0.38]) addBox([0.48, 0.055, 0.055], [0, y, 0], 0x43515a);
+    const latch = addBox([0.09, 0.1, 0.07], [0.14, 0.06, -0.02], 0x9aa5a9);
+    latch.name = "wrought-door-latch";
+    group.scale.setScalar(0.72);
+    group.rotation.set(0.08, 0.3, -0.08);
   } else if (definition.placeBlock !== undefined) {
     addBox([0.42, 0.42, 0.42], [0, 0.1, 0], definition.color, [0.16, 0.2, 0]);
   } else {
