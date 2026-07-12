@@ -32,7 +32,7 @@ function learn(state = createMagicState(), ...tomeIds: string[]) {
 test("the initial spell codex covers every school, every faction, lairs, loot, and quests", () => {
   assert.deepEqual(new Set(SPELLS.map((spell) => spell.school)), new Set(["destruction", "restoration", "alteration", "conjuration", "utility"]));
   const sources = SPELLS.flatMap<SpellAcquisitionSource>((spell) => spell.sources);
-  assert.deepEqual(new Set(sources.filter((source) => source.kind === "faction").map((source) => source.factionId)), new Set(["hobbits", "goblins", "atlantians", "sugarcourt"]));
+  assert.deepEqual(new Set(sources.filter((source) => source.kind === "faction").map((source) => source.factionId)), new Set(["hobbits", "goblins", "atlantians", "sugarcourt", "wood-elves"]));
   assert.ok(sources.some((source) => source.kind === "loot"));
   assert.ok(sources.some((source) => source.kind === "quest" && source.branch === "main"));
   assert.ok(sources.some((source) => source.kind === "quest" && source.branch === "side"));
@@ -69,6 +69,7 @@ test("reusable tomes teach before attunement but the hard quest alone unlocks ca
   assert.equal(cast.plan.spellId, "flame-jet");
   assert.equal(cast.plan.manaSpent, 16);
   assert.equal(cast.plan.powerMultiplier, 1.75);
+  assert.equal(cast.plan.summonMultiplier, 1.75, "Magic scales conjured creatures and projectiles by the same one-percent-per-rank rule");
   assert.equal(cast.plan.projectile.trail, "embers");
   assert.equal(cast.plan.animation.particleCue, "spiral-embers-to-cone");
   assert.equal(cast.plan.sound.release, "spell.fire.jet");

@@ -1,19 +1,31 @@
 # Blockwild roadmap
 
-Blockwild v0.9 Wyrmweave adds persistent Fire, Ice, and Steel Dragons, five-stage growth, underground lairs, elemental eggs, incubation, husbandry, shoulder companions, flight, rider-directed combat, draconic equipment, the Dragonwake quest branch, reusable spell tomes, mana, six spells, a ten-slot `Q` wheel, Archive Shelves, rank-1000 skills, and the first Ascendant safeguard. Sugarcourt, Tidelight, and Hearthroads remain part of the same deterministic world and progression layer. The systems below are intentionally outside the v0.9 release boundary. This is a direction document, not a schedule.
+Blockwild v1.0 Realms and Recall adds Wood Elves, Dwarves, Glimmerwood, Snowcap Range, connected culture settlements, golem forging, Sea Dragons, attuned creature recall, searchable expandable item and creature Waygrids, three quest pins, biome-aware maps, and host-authoritative reconnect state. Wyrmweave, Sugarcourt, Tidelight, and Hearthroads remain part of the same deterministic world and progression layer. The systems below are intentionally outside the v1.0 release boundary. This is a direction document, not a schedule.
+
+## Explicit post-1.0 backlog
+
+Realms and Recall adds Wood Elves, Dwarves, Sea Dragons, attuned creature recall, and expandable digital storage. The following ideas from the 1.0 design brief are deliberately recorded rather than partially shipped:
+
+- Human settlements and human firearms beyond the Dwarven flintlock line.
+- Mekanism-style factories, powered drills, broad automation chains, and chunk-loading machines.
+- Creature evolutions, cross-species monster hybrids, and cross-type dragon hybrids. These require explicit inheritance, model, balance, save, and multiplayer rules first.
+- Retrofitting every legacy settlement culture onto the larger connected-tile town planner; new Wood Elf enclaves establish the pattern, while older settlements should migrate only when their authored layouts can remain save-safe.
+- Deeper player-town management, hired parties, faction war, autonomous sieges, and post-capture cultural rebuilding.
+
+These are not hidden 1.0 features and should not be advertised as playable until their complete loops exist.
 
 ## More dragons and cross-type hybrids
 
-Wyrmweave establishes one durable lifecycle for three types and stages one through five. Later dragon releases can extend that model without turning each creature into an unrelated boss script:
+Realms and Recall carries one durable lifecycle across Fire, Ice, Steel, and Sea Dragons and stages one through five. Later dragon releases can extend that model without turning each creature into an unrelated boss script:
 
 - Add new dragon families with distinct silhouettes, habitats, lairs, breath rules, husbandry, equipment, and ecological pressure.
 - Add cross-type hybrids only after inheritance rules can preserve type, sex, genetics, attack identity, scale color, egg conditions, and save compatibility without combinatorial one-off code.
 - Consider stage-six elder variants, migration between lairs, richer territorial disputes, and wild breeding under bounded off-screen simulation.
 - Expand rider tactics, aerial enemies, dragon-vs-dragon behavior, and counterplay without making a bonded elder solve every other progression route.
 
-Hybrids are deliberately absent from v0.9. Same-type opposite-sex breeding and elemental catalysts are the shipped boundary.
+Hybrids are deliberately absent from v1.0. Same-type opposite-sex breeding and elemental catalysts are the shipped boundary.
 
-## Magic after Wyrmweave
+## Magic after Realms and Recall
 
 The first release includes attunement, mana, reusable tomes, a journal, favorites, five schools, six spells, cast effects, and Magic-1000 mastery. Later work can add:
 
@@ -33,7 +45,7 @@ The rank curve, perk graph, one-percent-per-rank multipliers, uncapped character
 - Additional Ascendant switches such as resource immunity, altered hunger, flight, damage constraints, or creative-scale world interaction, each independently toggleable.
 - Balance rules that keep ordinary survival readable when only some players in a session are Ascendant.
 
-Wyrmweave does not ship invulnerability, arbitrary world editing, or the full set of godlike toggles.
+Realms and Recall does not ship invulnerability, arbitrary world editing, or the full set of godlike toggles.
 
 ## Full settlement management and player towns
 
@@ -44,7 +56,7 @@ The player faction can already be represented in faction and settlement ownershi
 - Let buildings, paths, storage, workshops, farms, walls, and gates contribute to town function without making ordinary player building invalid.
 - Recover gracefully when a player removes a door, bed, workstation, wall, or role-preferred building.
 
-Wyrmweave still does not include a city-builder overlay, construction queue, town budget, or complete player-governance UI. Future mixed-race player settlements will also need explicit surface, underwater, and culture-specific habitat rules rather than treating Atlantians or Confectkin as generic residents.
+Realms and Recall still does not include a city-builder overlay, construction queue, town budget, or complete player-governance UI. Future mixed-race player settlements will also need explicit surface, underwater, subterranean, and culture-specific habitat rules rather than treating Atlantians, Confectkin, Wood Elves, or Dwarves as generic residents.
 
 ## Raiding parties and hired forces
 
@@ -69,7 +81,7 @@ This needs bounded off-screen simulation and host-authoritative multiplayer mess
 
 ## Fishing and mature aquatic professions
 
-Fish and larger sea creatures in v0.9 are physical entities: they swim, school or patrol a habitat, can be attacked or tamed where appropriate, and belong to river, coast, ocean, underground, deep-ocean, Lumen Trench, or syrup-pond populations. Water plants can be harvested and replanted, Atlantians trade aquatic goods, Syrupfins live only in syrup, and leviathans provide long-range sea and air travel. Rods, lines, bait, hooked-fish behavior, fishing loot tables, boats specialized for fishing, and fishing professions remain deferred.
+Fish and larger sea creatures in v1.0 are physical entities: they swim, school or patrol a habitat, can be attacked or tamed where appropriate, and belong to river, coast, ocean, underground, deep-ocean, Lumen Trench, glimmer-pond, or syrup-pond populations. Water plants can be harvested and replanted, Atlantians trade aquatic goods and Sea Dragon charts, Syrupfins live only in syrup, and leviathans provide long-range sea and air travel. Rods, lines, bait, hooked-fish behavior, fishing loot tables, boats specialized for fishing, and fishing professions remain deferred.
 
 ## Release guardrails
 

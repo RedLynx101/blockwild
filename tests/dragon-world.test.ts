@@ -66,6 +66,7 @@ test("lair sex and age determine egg presence", () => {
   assert.equal(DRAGON_EGG_HATCH_RULES.fire.naturalCondition, "sustained-fire");
   assert.equal(DRAGON_EGG_HATCH_RULES.ice.naturalCondition, "freezing-water");
   assert.equal(DRAGON_EGG_HATCH_RULES.steel.naturalCondition, "pressurized-steam");
+  assert.equal(DRAGON_EGG_HATCH_RULES.sea.naturalCondition, "living-coral-current");
 });
 
 test("chunk slices reconstruct a lair exactly across seams", () => {
@@ -141,7 +142,7 @@ test("dragon world item contracts stay stable", () => {
 });
 
 test("generator v10 stamps a candidate lair and its persistent marker into real chunks", () => {
-  assert.equal(GENERATOR_VERSION, 10);
+  assert.equal(GENERATOR_VERSION, 11);
   const world = new ChunkWorld();
   world.reset("LIVE-DRAGON-LAIR", undefined, { structures: true });
   let candidate = null as ReturnType<typeof dragonLairCandidateForRegion>;

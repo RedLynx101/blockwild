@@ -21,7 +21,7 @@ test("generation options clamp safely and an omitted options object restores exa
     biomeScale: 4,
     resourceAbundance: 1,
     structures: false,
-    enabledFactions: ["hobbits", "goblins", "atlantians", "sugarcourt"],
+    enabledFactions: ["hobbits", "goblins", "atlantians", "sugarcourt", "wood-elves", "dwarves"],
   });
   assert.deepEqual(normalizeWorldGenerationOptions({ enabledFactions: ["sugarcourt", "goblins", "sugarcourt"] }), {
     ...DEFAULT_WORLD_GENERATION_OPTIONS,
@@ -87,7 +87,9 @@ test("biome scale, resource abundance, and structure generation affect only thei
   const untouched = new ChunkWorld();
   structures.reset("WILDERNESS", undefined, { structures: true });
   untouched.reset("WILDERNESS", undefined, { structures: false });
-  assert.notDeepEqual(structures.generateChunk(-2, -3).blocks, untouched.generateChunk(-2, -3).blocks, "disabling structures should omit the deterministic ruin in this fixture chunk");
+  // POIs became intentionally rarer in v1.0. This seed's current authored
+  // healing grotto candidate is deterministic at -8,-1.
+  assert.notDeepEqual(structures.generateChunk(-8, -1).blocks, untouched.generateChunk(-8, -1).blocks, "disabling structures should omit the deterministic POI in this fixture chunk");
   structures.dispose();
   untouched.dispose();
 });

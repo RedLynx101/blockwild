@@ -46,7 +46,7 @@ Save one `WeatherState` in world metadata. Initialize with `createWeatherState({
 
 `structures.ts` emits explicit world-coordinate `BlockId` placements. Every placement uses an existing block definition. `variant` is semantic metadata for later custom atlas art and is safe to ignore initially.
 
-`structureCandidateForChunk` chooses one candidate in each 12×12-chunk region (average density 1/144 chunks) and selects the biome-appropriate plan:
+`structureCandidateForChunk` chooses one candidate in each 16×16-chunk region (average density 1/256 chunks) and selects the biome-appropriate plan:
 
 - Sunglass Desert / Badlands: desert temple and its Dune Warden.
 - Forest families: forest temple and its Rootbound Sentinel.

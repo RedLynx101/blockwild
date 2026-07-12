@@ -19,7 +19,9 @@ export type MusicScene =
   | "emberdeepB"
   | "hobbitSettlement"
   | "goblinSettlement"
-  | "atlantianSettlement";
+  | "atlantianSettlement"
+  | "woodElfSettlement"
+  | "dwarfSettlement";
 export type SampleKind =
   | "swordSwing"
   | "zombieMoan1"
@@ -29,7 +31,7 @@ export type SampleKind =
   | "ridgebackWarmHuff"
   | "shadecrawlerStoneChitter";
 export type SamplePlaybackOptions = { gain?: number; playbackRate?: number; detune?: number; when?: number };
-export type DragonSoundType = "fire" | "ice" | "steel";
+export type DragonSoundType = "fire" | "ice" | "steel" | "sea";
 export type DragonSoundEvent = "ambient" | "roar" | "hurt" | "death" | "wing" | "melee" | "breath" | "projectile" | "egg-crack";
 export type SpellSoundSchool = "destruction" | "restoration" | "alteration" | "conjuration" | "utility";
 
@@ -67,6 +69,8 @@ const MUSIC_TRACKS: Record<MusicScene, string | readonly string[]> = {
     "/music/blockwild-lantern-sea-a.mp3",
     "/music/blockwild-lantern-sea-b.mp3",
   ],
+  woodElfSettlement: "/music/13_blockwild_moonbough_lanterns.mp3",
+  dwarfSettlement: "/music/14_blockwild_deepgear_hearth.mp3",
 };
 
 const SAMPLES: Record<SampleKind, { source: string; gain: number }> = {
@@ -168,9 +172,10 @@ export class SynthAudio {
     this.applyVolume();
   }
 
-  setDepth(depth: number, raining: boolean) {
+  setDepth(depth: number, rainLevel: boolean | number) {
     if (!this.ambienceGain || !this.context) return;
-    const target = (depth < 0 ? 0.012 : 0.018) + (raining ? 0.012 : 0);
+    const rain = typeof rainLevel === "number" ? Math.max(0, Math.min(1, rainLevel)) : rainLevel ? 1 : 0;
+    const target = (depth < 0 ? 0.012 : 0.018) + rain * 0.012;
     this.ambienceGain.gain.setTargetAtTime(target, this.context.currentTime, 0.4);
   }
 
@@ -432,9 +437,9 @@ export class SynthAudio {
     if (!this.context || !this.master || this.settings.muted) return;
     const age = Math.max(1, Math.min(5, Math.round(stage)));
     const depth = 1 - (age - 1) * 0.095;
-    const base = (type === "fire" ? 92 : type === "ice" ? 128 : 108) * depth;
+    const base = (type === "fire" ? 92 : type === "ice" ? 128 : type === "sea" ? 104 : 108) * depth;
     const weight = 0.58 + age * 0.105;
-    const texture = type === "fire" ? 420 : type === "ice" ? 1380 : 860;
+    const texture = type === "fire" ? 420 : type === "ice" ? 1380 : type === "sea" ? 690 : 860;
 
     if (event === "wing") {
       this.noiseBurst(0.18 + age * 0.025, 210 + age * 24, 0.025 * weight);
@@ -448,6 +453,7 @@ export class SynthAudio {
     }
     if (event === "breath") {
       this.noiseBurst(0.62 + age * 0.07, texture, 0.075 * weight, type !== "fire");
+      if (type === "sea") this.noiseBurst(0.44 + age * 0.04, 1180, 0.042 * weight, true, 0.02);
       this.noiseBurst(0.48, type === "steel" ? 2300 : texture * 0.55, 0.038 * weight, true, 0.035);
       this.tone(base * (type === "ice" ? 2.4 : 0.88), 0.58, 0.031 * weight, type === "ice" ? "triangle" : "sawtooth", 0, base * 0.46);
       return;

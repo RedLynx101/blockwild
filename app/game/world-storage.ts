@@ -230,7 +230,7 @@ export function migrateLegacyWorldSave(value: unknown): WorldSave | null {
   const mode = normalizeMode(value.mode);
   if (!seed || !mode || !isRecord(value.player)) return null;
   const generatorVersion = Math.trunc(finite(value.generatorVersion, -1));
-  if (![2, 3, 4, 5, 6, 7, 8, 9, GENERATOR_VERSION].includes(generatorVersion)) return null;
+  if (![2, 3, 4, 5, 6, 7, 8, 9, 10, GENERATOR_VERSION].includes(generatorVersion)) return null;
   const offset = generatorVersion === 2 ? (LEGACY_GENERATOR_MIN_Y - MIN_Y) * 16 * 16 : 0;
   const player = value.player;
   if (![player.x, player.y, player.z].every((coordinate) => typeof coordinate === "number" && Number.isFinite(coordinate))) return null;

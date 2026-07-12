@@ -76,7 +76,7 @@ const atlantianCandidate: SettlementCandidate = {
 };
 
 test("Atlantians are a water-breathing sentient culture while Wayfarers may lead mixed races", () => {
-  assert.deepEqual(FACTION_IDS, ["player", "hobbits", "goblins", "atlantians", "sugarcourt"]);
+  assert.deepEqual(FACTION_IDS, ["player", "hobbits", "goblins", "atlantians", "sugarcourt", "wood-elves", "dwarves"]);
   assert.equal(FACTIONS.atlantians.sentient, true);
   assert.equal(FACTIONS.atlantians.aquaticOnly, true);
   assert.equal(FACTIONS.atlantians.race, "atlantian");

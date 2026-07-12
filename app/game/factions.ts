@@ -6,12 +6,12 @@
  * unbounded command log.
  */
 
-export const FACTION_IDS = ["player", "hobbits", "goblins", "atlantians", "sugarcourt"] as const;
-export const NPC_FACTION_IDS = ["hobbits", "goblins", "atlantians", "sugarcourt"] as const;
+export const FACTION_IDS = ["player", "hobbits", "goblins", "atlantians", "sugarcourt", "wood-elves", "dwarves"] as const;
+export const NPC_FACTION_IDS = ["hobbits", "goblins", "atlantians", "sugarcourt", "wood-elves", "dwarves"] as const;
 
 export type FactionId = (typeof FACTION_IDS)[number];
 export type NpcFactionId = (typeof NPC_FACTION_IDS)[number];
-export type FactionRace = "wayfarer" | "hearthkin" | "goblin" | "atlantian" | "confectkin";
+export type FactionRace = "wayfarer" | "hearthkin" | "goblin" | "atlantian" | "confectkin" | "wood-elf" | "dwarf";
 export type DiplomacyStance = "allied" | "neutral" | "war";
 export type FactionStanding = "revered" | "friendly" | "neutral" | "unwelcome" | "hostile";
 
@@ -26,6 +26,8 @@ export const FACTION_RACE_TRAITS: Readonly<Record<FactionRace, FactionRaceTraits
   goblin: { aquatic: false, waterBreathing: false },
   atlantian: { aquatic: true, waterBreathing: true },
   confectkin: { aquatic: false, waterBreathing: false },
+  "wood-elf": { aquatic: false, waterBreathing: false },
+  dwarf: { aquatic: false, waterBreathing: false },
 };
 
 export type FactionDefinition = Readonly<{
@@ -46,7 +48,7 @@ export const FACTIONS: Readonly<Record<FactionId, FactionDefinition>> = {
     id: "player",
     name: "Wayfarers",
     race: "wayfarer",
-    permittedRaces: ["wayfarer", "hearthkin", "goblin", "atlantian", "confectkin"],
+    permittedRaces: ["wayfarer", "hearthkin", "goblin", "atlantian", "confectkin", "wood-elf", "dwarf"],
     sentient: true,
     aquaticOnly: false,
     waterBreathing: false,
@@ -102,6 +104,30 @@ export const FACTIONS: Readonly<Record<FactionId, FactionDefinition>> = {
     warriorWeapons: ["peppermint-pike", "rockcandy-saber"],
     values: ["precise craft", "generous hospitality", "measured indulgence"],
   },
+  "wood-elves": {
+    id: "wood-elves",
+    name: "Lethari Moonboughs",
+    race: "wood-elf",
+    permittedRaces: ["wood-elf"],
+    sentient: true,
+    aquaticOnly: false,
+    waterBreathing: false,
+    homeBiomes: ["glimmerwood"],
+    warriorWeapons: ["moonbough-staff", "glimmerbow"],
+    values: ["living magic", "patient stewardship", "quiet hospitality"],
+  },
+  dwarves: {
+    id: "dwarves",
+    name: "Deepgear Holds",
+    race: "dwarf",
+    permittedRaces: ["dwarf"],
+    sentient: true,
+    aquaticOnly: false,
+    waterBreathing: false,
+    homeBiomes: ["snowcap-range"],
+    warriorWeapons: ["deepgear-hammer", "flintlock-pistol"],
+    values: ["tested craft", "kept oaths", "useful mechanisms"],
+  },
 };
 
 export function isNpcFactionId(value: unknown): value is NpcFactionId {
@@ -123,12 +149,14 @@ export function raceBreathesWater(race: FactionRace) {
   return FACTION_RACE_TRAITS[race].waterBreathing;
 }
 
-export type FactionEnvironment = "surface" | "underwater";
+export type FactionEnvironment = "surface" | "underwater" | "underground";
 
 /** Players may lead mixed communities; every non-player culture keeps its native habitat. */
 export function factionCanOccupyEnvironment(factionId: FactionId, environment: FactionEnvironment) {
   if (factionId === "player") return true;
-  return factionId === "atlantians" ? environment === "underwater" : environment === "surface";
+  if (factionId === "atlantians") return environment === "underwater";
+  if (factionId === "dwarves") return environment === "underground";
+  return environment === "surface";
 }
 
 export type AuthorityCommand = Readonly<{
@@ -169,12 +197,23 @@ export const FACTION_RELATION_KEYS = [
   "atlantians|hobbits",
   "atlantians|player",
   "atlantians|sugarcourt",
+  "atlantians|wood-elves",
+  "atlantians|dwarves",
   "goblins|hobbits",
   "goblins|player",
   "goblins|sugarcourt",
+  "dwarves|goblins",
+  "goblins|wood-elves",
   "hobbits|player",
   "hobbits|sugarcourt",
+  "dwarves|hobbits",
+  "hobbits|wood-elves",
   "player|sugarcourt",
+  "dwarves|player",
+  "player|wood-elves",
+  "dwarves|sugarcourt",
+  "sugarcourt|wood-elves",
+  "dwarves|wood-elves",
 ] as const;
 
 export type FactionRelationKey = (typeof FACTION_RELATION_KEYS)[number];
@@ -202,7 +241,7 @@ export function createFactionRelations(authorityId: string): FactionRelationsSta
     authorityId,
     revision: 0,
     recentEventIds: [],
-    alignments: { player: 100, hobbits: 0, goblins: 0, atlantians: 0, sugarcourt: 0 },
+    alignments: { player: 100, hobbits: 0, goblins: 0, atlantians: 0, sugarcourt: 0, "wood-elves": 0, dwarves: 0 },
     diplomacy: Object.fromEntries(FACTION_RELATION_KEYS.map((key) => [key, "neutral"] as const)) as Record<FactionRelationKey, DiplomacyStance>,
   };
 }

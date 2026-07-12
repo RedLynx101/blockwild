@@ -1,0 +1,127 @@
+.golem-forge-panel {
+  --forge-ink: #211b16;
+  --forge-paper: #e6d8b1;
+  --forge-brass: #b57a35;
+  --forge-copper: #9b4f34;
+  --forge-aether: #5ed9d4;
+  width: min(1180px, calc(100vw - 32px));
+  max-height: min(820px, calc(100vh - 32px));
+  overflow: hidden;
+  color: var(--forge-ink);
+  border: 4px solid #29241f;
+  box-shadow: 0 0 0 2px #c08c48, 14px 18px 0 rgb(13 11 10 / 45%);
+  background: linear-gradient(135deg, #ece0bd, #c9b47f);
+}
+
+.golem-forge-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 20px 24px;
+  color: #f8edce;
+  border-bottom: 4px solid #201c19;
+  background:
+    linear-gradient(90deg, rgb(255 255 255 / 4%) 1px, transparent 1px) 0 0 / 18px 18px,
+    linear-gradient(#37312b, #25211e);
+}
+
+.golem-forge-header h2 { margin: 3px 0 5px; color: #ffd78b; font: 700 clamp(28px, 4vw, 48px)/1 Georgia, serif; }
+.golem-forge-header p { max-width: 680px; margin: 0; color: #d9ccb0; font-size: 10px; line-height: 1.55; }
+.golem-forge-eyebrow { color: #d8a95b; font-size: 8px; font-weight: 900; letter-spacing: .16em; text-transform: uppercase; }
+.golem-forge-header-status { display: flex; align-items: flex-start; gap: 12px; color: #9ef3e8; font-size: 8px; font-weight: 900; text-transform: uppercase; }
+.golem-forge-header-status button { width: 32px; height: 32px; color: #f7e6bf; border: 2px solid #92744f; background: #1a1816; cursor: pointer; }
+
+.golem-forge-layout { display: grid; grid-template-columns: 248px minmax(360px, 1fr) 280px; min-height: 500px; max-height: calc(min(820px, 100vh - 32px) - 116px); }
+.golem-forge-blueprints,
+.golem-forge-workbench,
+.golem-forge-cradle { min-height: 0; overflow-y: auto; }
+.golem-forge-blueprints { padding: 17px 14px; border-right: 3px solid #5d4e38; background: rgb(82 68 48 / 16%); }
+.golem-forge-blueprints h3 { margin: 0 0 12px; color: #655034; font-size: 9px; letter-spacing: .12em; text-transform: uppercase; }
+.golem-forge-blueprint { width: 100%; display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 9px; align-items: center; margin-bottom: 8px; padding: 10px; color: #30281e; border: 2px solid #89724d; background: #e3d4aa; text-align: left; cursor: pointer; }
+.golem-forge-blueprint.selected { border-color: #7b412d; box-shadow: inset 5px 0 #a75e37; background: #f0d7a4; }
+.golem-forge-blueprint.locked { color: #796e5d; filter: saturate(.5); }
+.golem-forge-blueprint-glyph { display: grid; width: 36px; height: 36px; place-items: center; color: #ffe6aa; border: 2px solid #3c3125; background: linear-gradient(135deg, #b76f3b, #66402f); font: 700 16px Georgia, serif; }
+.golem-forge-blueprint span:last-child { min-width: 0; display: grid; gap: 4px; }
+.golem-forge-blueprint strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+.golem-forge-blueprint small { color: #74664d; font-size: 7px; }
+
+.golem-forge-workbench { padding: clamp(20px, 3vw, 34px); background: linear-gradient(rgb(255 255 255 / 15%), transparent 55%); }
+.golem-forge-selection-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.golem-forge-selection-heading > div > span { color: #796443; font-size: 7px; font-weight: 900; text-transform: uppercase; }
+.golem-forge-selection-heading h3 { margin: 5px 0; font: 700 30px/1.1 Georgia, serif; }
+.golem-forge-workbench > p { color: #625746; font-size: 9px; line-height: 1.6; }
+.golem-forge-plan-stamp { flex: 0 0 auto; padding: 7px 9px; color: #733c30; border: 2px solid #884a39; font-size: 7px; font-weight: 900; text-transform: uppercase; transform: rotate(1.5deg); }
+.golem-forge-plan-stamp.learned { color: #315a4a; border-color: #3d705d; }
+.golem-forge-lock-note { display: grid; grid-template-columns: 38px 1fr; gap: 10px; align-items: center; margin: 16px 0; padding: 11px; color: #6c382d; border: 2px dashed #985744; background: rgb(171 89 55 / 10%); }
+.golem-forge-lock-note > span { display: grid; width: 34px; height: 34px; place-items: center; color: #ffe8bb; background: #78402f; }
+.golem-forge-lock-note div { display: grid; gap: 4px; }
+.golem-forge-lock-note small { font-size: 7px; }
+
+.golem-forge-resource-board { margin: 20px 0 14px; }
+.golem-forge-resource-board h4,
+.golem-forge-output-list h4 { margin: 0 0 9px; color: #6d5737; font-size: 8px; letter-spacing: .1em; text-transform: uppercase; }
+.golem-forge-resource-board ul { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin: 0; padding: 0; list-style: none; }
+.golem-forge-resource-board li { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 7px; align-items: center; padding: 8px; border: 1px solid #9c8864; background: rgb(245 234 199 / 62%); }
+.golem-forge-resource-board li > span { display: grid; height: 27px; place-items: center; color: #f1ddb0; background: #77553d; font-size: 7px; }
+.golem-forge-resource-board li.ready > span { color: #d2fff0; background: #477263; }
+.golem-forge-resource-board li.missing { color: #86493b; border-color: #a56955; }
+.golem-forge-resource-board li div { min-width: 0; display: grid; gap: 3px; }
+.golem-forge-resource-board strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 8px; }
+.golem-forge-resource-board small { color: #776b55; font-size: 7px; }
+
+.golem-forge-mana-bank { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 13px; color: #e8fffa; border: 2px solid #416c68; background: linear-gradient(90deg, #27413e, #384036); box-shadow: inset 0 0 20px rgb(94 217 212 / 12%); }
+.golem-forge-mana-bank > div:first-child { display: grid; gap: 3px; }
+.golem-forge-mana-bank span,
+.golem-forge-mana-bank small { color: #a8c9c2; font-size: 7px; }
+.golem-forge-mana-actions { display: flex; gap: 6px; }
+.golem-forge-mana-actions button { padding: 8px; color: #d7fff7; border: 1px solid #76c7bd; background: #325a55; font-size: 7px; cursor: pointer; }
+.golem-forge-mana-actions button:disabled { opacity: .42; cursor: default; }
+.golem-forge-start { width: 100%; margin-top: 15px; padding: 14px; color: #fff0c3; border: 3px solid #4c2e1f; box-shadow: inset 0 -5px rgb(68 35 22 / 35%); background: linear-gradient(#b76e3b, #84492f); font-size: 10px; font-weight: 900; text-transform: uppercase; cursor: pointer; }
+.golem-forge-start:disabled { color: #8b806c; border-color: #73644d; background: #b9aa84; box-shadow: none; cursor: default; }
+
+.golem-forge-cradle { display: flex; flex-direction: column; gap: 14px; padding: 18px; color: #ece1c5; border-left: 3px solid #5d4e38; background: linear-gradient(#3e3831, #292622); }
+.golem-forge-machine { position: relative; min-height: 210px; overflow: hidden; display: grid; place-items: center; border: 3px solid #8a663e; background: radial-gradient(circle at 50% 58%, rgb(94 217 212 / 25%), transparent 28%), repeating-linear-gradient(90deg, #2e2b27 0 18px, #34302b 18px 20px); }
+.golem-forge-machine > span { position: relative; z-index: 2; display: grid; width: 72px; height: 98px; place-items: center; color: #ffe4a5; border: 5px solid #785039; background: linear-gradient(90deg, #925a3c, #4f4037); font: 700 34px Georgia, serif; }
+.golem-forge-gantry { position: absolute; top: 0; width: 10px; height: 58px; background: #b47b3d; box-shadow: -24px 0 #4c3b2b, 24px 0 #4c3b2b; }
+.golem-forge-core { position: absolute; z-index: 3; width: 18px; height: 18px; border: 3px solid #b8fff5; border-radius: 50%; box-shadow: 0 0 18px var(--forge-aether); background: var(--forge-aether); }
+.golem-forge-machine.working .golem-forge-core { animation: golem-forge-pulse .8s ease-in-out infinite alternate; }
+.golem-forge-machine.working .golem-forge-gantry { animation: golem-forge-hammer 1.2s ease-in-out infinite; }
+.golem-forge-progress-copy { display: grid; gap: 6px; }
+.golem-forge-progress-copy small,
+.golem-forge-progress-copy > span:last-child { color: #baa98b; font-size: 7px; }
+.golem-forge-progress { display: block; height: 12px; overflow: hidden; border: 2px solid #191715; background: #161513; }
+.golem-forge-progress i { display: block; height: 100%; background: linear-gradient(90deg, #b9773d, #64dcd5); }
+.golem-forge-output-list { margin-top: auto; }
+.golem-forge-output-list p { color: #a99d87; font-size: 8px; }
+.golem-forge-output-list button { width: 100%; display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 8px; align-items: center; margin-top: 7px; padding: 8px; color: #f5e7c5; border: 1px solid #a57c46; background: #4b4034; text-align: left; cursor: pointer; }
+.golem-forge-output-list button > span:first-child { display: grid; height: 32px; place-items: center; color: #183b38; background: #76dcd2; }
+.golem-forge-output-list button > span:last-child { min-width: 0; display: grid; gap: 3px; }
+.golem-forge-output-list small { color: #c0af90; font-size: 7px; }
+
+@keyframes golem-forge-pulse { to { transform: scale(1.22); filter: brightness(1.35); } }
+@keyframes golem-forge-hammer { 45% { transform: translateY(18px); } }
+
+@media (max-width: 980px) {
+  .golem-forge-layout { grid-template-columns: 210px minmax(0, 1fr); }
+  .golem-forge-cradle { grid-column: 1 / -1; display: grid; grid-template-columns: 170px 1fr; }
+  .golem-forge-machine { min-height: 150px; grid-row: span 2; }
+  .golem-forge-output-list { margin-top: 0; }
+}
+
+@media (max-width: 680px) {
+  .golem-forge-panel { width: calc(100vw - 16px); max-height: calc(100vh - 16px); }
+  .golem-forge-header { padding: 14px; }
+  .golem-forge-header p { display: none; }
+  .golem-forge-layout { display: block; max-height: calc(100vh - 112px); overflow-y: auto; }
+  .golem-forge-blueprints { overflow: visible; border-right: 0; border-bottom: 3px solid #5d4e38; }
+  .golem-forge-workbench,
+  .golem-forge-cradle { overflow: visible; }
+  .golem-forge-cradle { display: flex; border-top: 3px solid #5d4e38; border-left: 0; }
+  .golem-forge-resource-board ul { grid-template-columns: 1fr; }
+  .golem-forge-mana-bank { align-items: stretch; flex-direction: column; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .golem-forge-machine.working .golem-forge-core,
+  .golem-forge-machine.working .golem-forge-gantry { animation: none; }
+}

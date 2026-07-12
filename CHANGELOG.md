@@ -2,6 +2,56 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.0.0 - Realms and Recall - 2026-07-11
+
+### Glimmerwood and the Wood Elves
+
+- Added the cool, bioluminescent Glimmerwood biome with Moonbough trees, Moonpetals, Starferns, Dreamcaps, Lumenreeds, Glowfin ponds, Moonveil butterflies, Glimmerharts, and Runeowls.
+- Added the Lethari Moonboughs as a selectable sentient faction with seven named professions, connected tiled surface enclaves, living walls, gates, luminous paths, role-aware schedules, aligned settlement creatures, neutral companion-orb stock, finite merchant inventories, faction quests, side jobs, reusable spell tomes, two formulas, and Glimmerbow progression.
+- Added Verdant Volley and Starlight Snare with explicit mana, targeting, projectile, animation, effect, sound, tome, merchant, loot, and quest provenance. Leafwardens use the same three-leaf attack contract as the learnable spell.
+
+### Snowcap Range and the Dwarves
+
+- Added the snowcapped mountain biome and Deepgear Holds: connected subterranean settlement tiles with a guarded surface ramp, civic and industrial depth layers, carved galleries, high-brightness lanterns, brass-and-stone buildings, beds, furniture, shops, a powderworks, and a mana-fed Golem Forge.
+- Added seven rendered Dwarven professions with deterministic names, entrance patrols, held tools and flintlocks, profession stock, quests, side jobs, neutral Copper Mole orbs, and aligned Copper Scout Golems.
+- Added blueprint-gated Copper Scout, Stone Bulwark, and Aetherforged Sentinel construction. A forge validates the learned plan, complete resource bundle, output capacity, and committed mana before beginning a timed job. The three golems have distinct utility, defender, and guardian statistics and their own bestiary group.
+- Added Deepgear Flintlock pistols, lead ammunition, blueprints, lanterns, alloys, gear clusters, furniture, and station blocks. Human settlements, human muskets, drills, broader factory machinery, and chunk loaders remain deferred.
+
+### Sea Dragon and field-guide integration
+
+- Added Sea Dragons to the persistent five-stage dragon lifecycle with sex, genetics, growth, eggs, breeding, husbandry, saddles, armor, two cargo modules, renewable scales, permanent world records, articulated production rigs, brine breath, ranged pressure attacks, and type-aware meat, scales, bones, hearts, skulls, and egg drops.
+- Sea Dragon attributes favor fast swimming, useful shore movement, and slower flight. Rare open-water nests generate on a separate abyssal region grid with moon-slate ridges, luminous reef growth, eggs, a persistent guardian, a map landmark, and elder hoards.
+- Atlantian Pearlbrokers can stock Sea Dragon Nest Charts. Charts scan the same deterministic nest planner as world generation, skip known nests and continental cells, and mark the nearest matching stage without loading the destination chunks.
+- Added two Atlantian-assisted Sea Dragon quests for finding a nest and raising a tidebound hatchling. The production portrait catalog now exports Sea Dragons, both new sentient cultures, their creatures, and all three golems from the exact gameplay rigs.
+
+### Journal, flora, and compatibility
+
+- Quest books now support as many as three simultaneous HUD pins while preserving the legacy single-pin save alias. Static discovery quest **The Light Below** no longer binds acceptance or pinning to a transient Atlantian resident.
+- Added a separate Lumenreed Frond planting item and a four-block aquatic growth cap, so the new waterlogged plant can be harvested, carried, replanted, and grown without displacing water. Moonpetals now cultivate into a distinct tall pollinator-compatible stage on hydrated farmland.
+- Added deterministic tests for connected culture tiles, underground settlement depth, golem forge gates, full merchant/item/spell/quest/model rosters, three-pin migration, Sea Dragon travel attributes, chart scans, and real generated nest markers. Every new ground model passes the production inspector with exact floor contact.
+- Advanced deterministic generation to version 11 for the two new biomes and cultures, Sea Dragon nests, sparser landmark grids, connected wild peppermint, cave-mouth plant exclusion, and the full rooted-tree rewrite. Supported generator-v10 worlds migrate without discarding authored edits or release metadata.
+
+### Attuned recall, apiaries, and Waygrid storage
+
+- Capture Orbs can be attuned to one conscious creature, summon or recall that exact state at any distance, and return a fainted companion automatically in a white sparkle. Fainted orbs cannot deploy or unattune until Healing Stations or passive archive healing restore the creature.
+- Neutral Hive Queens accept Royal Jelly without first becoming hostile. Crafted apiaries accept exact neutral or bonded queen entities, accept and release friendly workers, reject angry or foreign-owned residents, and preserve nectar/home metadata in both directions.
+- Added searchable Waygrid item and creature terminals. Tiered item cells hold 1,000, 10,000, or 100,000 units, report exact utilization, and spill deterministic legal overflow when removed. Creature archives keep exact Capture Orb metadata and heal more slowly than a dedicated station.
+- Crafting now plans atomically across player inventory, digital storage, and nearby owned chests. No source mutates unless the whole ingredient plan succeeds.
+
+### Multiplayer authority and renderer stability
+
+- Made the host authoritative for each player's inventory, selected slot, equipment, variant, vitals, XP, skills, drops, PvP, mob damage/death, shared chests, held lights, and reconnect state. Joining no longer imports a guest's unrelated local-world character, and reconnecting restores the last host-owned state.
+- Guests receive smoothed 5 Hz creature snapshots and complete death animation state. Placement rejects every player body, shared chest actions use revisions, transactions commit item and gold atomically, and ending the host session returns guests to the title screen while leaving the invite code reusable for legitimate reconnects.
+- Replaced per-preview WebGL renderers with one delayed-release shared preview renderer and a Canvas2D fallback. Both the preview and live renderer explicitly dispose and lose their contexts, while world rendering pauses and recovers safely after a genuine context-loss event.
+- Fixed immediate hotbar HUD feedback while moving, the chest-opening pointer race, double-chest seam/lid orientation, door closing through players, cow milking consuming buckets, sentient right-click context menus, and hybrid touchscreen control selection.
+
+### World, interface, trees, and sound
+
+- Added biome-inked map samples, 1x-12x zoom, drag/button panning, player heading, multiplayer markers, blocky layered daily cloud fields, cloud sun/moon occlusion, fade transitions, and rain columns that continue in open space around a roofed player.
+- Rebuilt generated trees around face-connected trunks and fuller owned crowns. Wide roots, larger trunks, orchard fruit, historical malformed branches, and chunk-spanning crowns now belong to one bounded felling result without swallowing neighboring builds.
+- Added a dedicated Golems bestiary filter, production Wood Elf/Dwarf portraits, ingredient names in recipe previews, three independently pinned quest HUD cards, and corrected full-size Wild Apple Remedy and Slatefin Shark icon framing.
+- Added the Suno-generated `13_blockwild_moonbough_lanterns.mp3` and `14_blockwild_deepgear_hearth.mp3` settlement themes, routed respectively to Moonbough Enclaves and Deepgear Holds. Bee and bird wings now flap faster with mirrored left/right rotation, and Leafwardens cast a visible three-leaf helical volley.
+
 ## 0.9.0 — Wyrmweave — 2026-07-11
 
 ### Dragons and underground lairs

@@ -318,6 +318,7 @@ function planDesertTemple(origin: WorldPosition, seed: string | number): Structu
 function planForestTemple(origin: WorldPosition, seed: string | number): StructurePlan {
   const builder = new PlanBuilder(origin);
   builder.fill(-6, 0, -6, 6, 0, 6, BlockId.Cobblestone, "mossy-court");
+  for (let z = 5; z <= 8; z += 1) builder.fill(-1, 0, z, 1, 0, z, z % 2 ? BlockId.StoneBrick : BlockId.Cobblestone, "rootwalk-entry");
   builder.fill(-4, 1, -4, 4, 1, 4, BlockId.Air);
   for (const [x, z] of [[-5, -5], [5, -5], [-5, 5], [5, 5]] as const) {
     builder.fill(x, 1, z, x, 6, z, BlockId.WildwoodLog, "root-pillar");
@@ -325,6 +326,14 @@ function planForestTemple(origin: WorldPosition, seed: string | number): Structu
   }
   builder.fill(-5, 6, -5, 5, 6, 5, BlockId.Planks, "canopy-beam");
   builder.fill(-4, 6, -4, 4, 6, 4, BlockId.Air);
+  // A rooted entry arch gives the otherwise open court a clear front and a
+  // believable surface for its working door and sconces.
+  for (const x of [-2, 2]) builder.fill(x, 1, 5, x, 4, 5, BlockId.WildwoodLog, "root-entry-arch");
+  builder.fill(-2, 4, 5, 2, 4, 5, BlockId.WildwoodLog, "root-entry-arch");
+  builder.fill(-3, 5, 4, 3, 5, 6, BlockId.WildwoodLeaves, "entry-canopy");
+  for (const [x, z, flower] of [[-4, -2, BlockId.BlueFlower], [4, -2, BlockId.RedFlower], [-4, 2, BlockId.RedFlower], [4, 2, BlockId.BlueFlower]] as const) {
+    builder.set(x, 1, z, flower, "court-bloom");
+  }
   builder.fill(-2, 1, -3, 2, 2, -2, BlockId.StoneBrick, "root-altar");
   builder.set(0, 3, -2, BlockId.Glowstone, "verdant-sigil");
   builder.chest(0, 3, -3, "forest-temple", seed, "canopy-reliquary");
@@ -527,14 +536,14 @@ export function structureBiomeFromId(biomeId: number): StructureBiome | undefine
 
 const floorDiv = (value: number, divisor: number) => Math.floor(value / divisor);
 
-/** One deterministic candidate per 12x12-chunk region; average density 1/144 chunks. */
+/** One deterministic candidate per 16x16-chunk region; average density 1/256 chunks. */
 export function structureCandidateForChunk(input: Readonly<{
   seed: string | number;
   chunkX: number;
   chunkZ: number;
   biome: StructureBiome;
 }>): StructureKind | undefined {
-  const regionSize = 12;
+  const regionSize = 16;
   const regionX = floorDiv(input.chunkX, regionSize);
   const regionZ = floorDiv(input.chunkZ, regionSize);
   const localX = Math.floor(hashUnit(input.seed, `structure-region:${regionX},${regionZ}:x`) * regionSize);

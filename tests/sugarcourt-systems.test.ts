@@ -94,8 +94,8 @@ const sugarcourtCandidate: SettlementCandidate = {
 };
 
 test("Sugarcourt is a complete surface faction with canonical world toggles and legacy-safe relations", () => {
-  assert.deepEqual(FACTION_IDS, ["player", "hobbits", "goblins", "atlantians", "sugarcourt"]);
-  assert.deepEqual(NPC_FACTION_IDS, ["hobbits", "goblins", "atlantians", "sugarcourt"]);
+  assert.deepEqual(FACTION_IDS, ["player", "hobbits", "goblins", "atlantians", "sugarcourt", "wood-elves", "dwarves"]);
+  assert.deepEqual(NPC_FACTION_IDS, ["hobbits", "goblins", "atlantians", "sugarcourt", "wood-elves", "dwarves"]);
   assert.deepEqual(normalizeEnabledFactions(undefined), NPC_FACTION_IDS);
   assert.deepEqual(normalizeEnabledFactions([]), []);
   assert.deepEqual(normalizeEnabledFactions(["sugarcourt", "hobbits", "sugarcourt", "unknown"]), ["hobbits", "sugarcourt"]);

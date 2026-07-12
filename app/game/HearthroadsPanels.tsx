@@ -6,16 +6,26 @@ import {
   useState,
   type CSSProperties,
   type FormEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  type WheelEvent as ReactWheelEvent,
 } from "react";
 import {
+  createMapViewState,
+  mapTerrainPalette,
+  mapViewportBounds,
+  normalizeMapViewState,
+  panMapView,
   parseChunkKey,
+  stepMapZoom,
   type CartographySession,
   type FastTravelChannel,
   type FastTravelMode,
   type MapKnowledge,
   type MapMarker,
   type MapMarkerKind,
+  type MapPlayerMarker,
+  type MapViewState,
   type WorldPoint,
 } from "./map-system";
 import {
@@ -198,6 +208,14 @@ export function sentientPortraitPath(factionId: Exclude<FactionId, "player">, pr
     const sugarcourtRole = profession.startsWith("sugarcourt-") ? profession as SugarcourtProfession : "sugarcourt-sweetbroker";
     return SUGARCOURT_ROLE_PRESENTATION[sugarcourtRole]?.portraitUrl ?? SUGARCOURT_ROLE_PRESENTATION["sugarcourt-sweetbroker"].portraitUrl;
   }
+  if (factionId === "wood-elves") {
+    const role = profession.startsWith("wood-elf-") ? profession : "wood-elf-moonbroker";
+    return `/creatures/${role}.svg`;
+  }
+  if (factionId === "dwarves") {
+    const role = profession.startsWith("dwarf-") ? profession : "dwarf-provisioner";
+    return `/creatures/${role}.svg`;
+  }
   const roles = factionId === "hobbits" ? HOBBIT_PORTRAIT_ROLES : GOBLIN_PORTRAIT_ROLES;
   const fallback = factionId === "hobbits" ? "merchant" : "worker";
   return `/creatures/${factionId === "hobbits" ? "hobbit" : "goblin"}-${roles[profession] ?? fallback}.svg`;
@@ -352,9 +370,13 @@ function mapPointStyle(position: Pick<WorldPoint, "x" | "z">, bounds: MapBounds)
   const width = Math.max(1, bounds.maxX - bounds.minX);
   const height = Math.max(1, bounds.maxZ - bounds.minZ);
   return {
-    left: `${clamp((chunkX - bounds.minX) / width, 0, 1) * 100}%`,
-    top: `${clamp((chunkZ - bounds.minZ) / height, 0, 1) * 100}%`,
+    left: `${((chunkX - bounds.minX) / width) * 100}%`,
+    top: `${((chunkZ - bounds.minZ) / height) * 100}%`,
   };
+}
+
+function safeMapMarkerColor(color: string | undefined) {
+  return typeof color === "string" && /^#[0-9a-f]{6}$/iu.test(color) ? color : "#5a78a0";
 }
 
 function channelMessage(channel: FastTravelChannel | null, remainingSeconds: number) {
@@ -383,6 +405,10 @@ export type MapPanelProps = Readonly<{
   currentWayshrineId?: string | null;
   cartographySession?: CartographySession | null;
   onShareCartography?: () => void;
+  currentHeadingRadians?: number;
+  otherPlayers?: readonly MapPlayerMarker[];
+  viewState?: MapViewState;
+  onViewStateChange?: (state: MapViewState) => void;
   onClose?: () => void;
 }>;
 
@@ -401,6 +427,10 @@ export function MapPanel({
   currentWayshrineId = null,
   cartographySession = null,
   onShareCartography,
+  currentHeadingRadians = 0,
+  otherPlayers = [],
+  viewState: controlledViewState,
+  onViewStateChange,
   onClose,
 }: MapPanelProps) {
   const titleId = useId();
@@ -408,11 +438,20 @@ export function MapPanel({
   const renameInputId = useId();
   const [markerName, setMarkerName] = useState("");
   const [renameValue, setRenameValue] = useState("");
-  const bounds = useMemo(() => mapBounds(knowledge, currentPosition), [knowledge, currentPosition]);
+  const [localViewState, setLocalViewState] = useState(createMapViewState);
+  const [dragState, setDragState] = useState<Readonly<{
+    pointerId: number;
+    clientX: number;
+    clientY: number;
+    view: MapViewState;
+  }> | null>(null);
+  const baseBounds = useMemo(() => mapBounds(knowledge, currentPosition), [knowledge, currentPosition]);
+  const activeViewState = normalizeMapViewState(controlledViewState ?? localViewState);
+  const bounds = mapViewportBounds(baseBounds, activeViewState);
   const selected = knowledge.markers.find((marker) => marker.id === selectedMarkerId) ?? null;
   const explored = knowledge.exploredChunks.map(parseChunkKey).filter((entry) => entry !== null);
-  const viewWidth = Math.max(1, bounds.maxX - bounds.minX + 1);
-  const viewHeight = Math.max(1, bounds.maxZ - bounds.minZ + 1);
+  const viewWidth = Math.max(1, bounds.maxX - bounds.minX);
+  const viewHeight = Math.max(1, bounds.maxZ - bounds.minZ);
   const remainingChannelSeconds = fastTravelChannel
     ? fastTravelChannel.durationSeconds - fastTravelElapsedSeconds
     : 0;
@@ -426,6 +465,41 @@ export function MapPanel({
   const destinationIsShrineEligible = selected?.kind === "wayshrine"
     && currentWayshrineId !== null
     && currentWayshrineId !== selected.id;
+
+  const updateViewState = (next: MapViewState) => {
+    const normalized = normalizeMapViewState(next);
+    if (!controlledViewState) setLocalViewState(normalized);
+    onViewStateChange?.(normalized);
+  };
+
+  const panStepX = Math.max(0.5, (bounds.maxX - bounds.minX) * 0.22);
+  const panStepZ = Math.max(0.5, (bounds.maxZ - bounds.minZ) * 0.22);
+
+  const handleMapPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDragState({ pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, view: activeViewState });
+  };
+
+  const handleMapPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!dragState || dragState.pointerId !== event.pointerId) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const initialBounds = mapViewportBounds(baseBounds, dragState.view);
+    const deltaX = -(event.clientX - dragState.clientX) / rect.width * (initialBounds.maxX - initialBounds.minX);
+    const deltaZ = -(event.clientY - dragState.clientY) / rect.height * (initialBounds.maxZ - initialBounds.minZ);
+    updateViewState(panMapView(dragState.view, deltaX, deltaZ));
+  };
+
+  const finishMapDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (dragState?.pointerId === event.pointerId) setDragState(null);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+
+  const handleMapWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    updateViewState(stepMapZoom(activeViewState, event.deltaY < 0 ? 1 : -1));
+  };
 
   const submitManualMarker = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -462,7 +536,25 @@ export function MapPanel({
 
       <div className="hearthroads-map-layout">
         <div className="hearthroads-map-workspace">
-          <div className="hearthroads-map-canvas" aria-label={`Map with ${knowledge.exploredChunks.length} explored chunks`}>
+          <div
+            className={`hearthroads-map-canvas${dragState ? " dragging" : ""}`}
+            aria-label={`Map with ${knowledge.exploredChunks.length} explored chunks at ${activeViewState.zoom.toFixed(1)} times zoom`}
+            onPointerDown={handleMapPointerDown}
+            onPointerMove={handleMapPointerMove}
+            onPointerUp={finishMapDrag}
+            onPointerCancel={finishMapDrag}
+            onWheel={handleMapWheel}
+          >
+            <div className="hearthroads-map-controls" aria-label="Map view controls" onPointerDown={(event) => event.stopPropagation()}>
+              <button type="button" onClick={() => updateViewState(panMapView(activeViewState, 0, -panStepZ))} aria-label="Pan map north">↑</button>
+              <button type="button" onClick={() => updateViewState(panMapView(activeViewState, -panStepX, 0))} aria-label="Pan map west">←</button>
+              <button type="button" onClick={() => updateViewState(createMapViewState())} aria-label="Show the whole explored map">◉</button>
+              <button type="button" onClick={() => updateViewState(panMapView(activeViewState, panStepX, 0))} aria-label="Pan map east">→</button>
+              <button type="button" onClick={() => updateViewState(panMapView(activeViewState, 0, panStepZ))} aria-label="Pan map south">↓</button>
+              <button type="button" onClick={() => updateViewState(stepMapZoom(activeViewState, -1))} disabled={activeViewState.zoom <= 1} aria-label="Zoom map out">−</button>
+              <output aria-label="Current map zoom">{activeViewState.zoom.toFixed(1)}×</output>
+              <button type="button" onClick={() => updateViewState(stepMapZoom(activeViewState, 1))} disabled={activeViewState.zoom >= 12} aria-label="Zoom map in">+</button>
+            </div>
             <svg
               className="hearthroads-map-terrain"
               viewBox={`0 0 ${viewWidth} ${viewHeight}`}
@@ -471,17 +563,24 @@ export function MapPanel({
               aria-label="Explored world chunks"
             >
               <title>Explored world chunks</title>
-              {explored.map((chunk) => (
-                <rect
-                  className="hearthroads-map-chunk"
-                  key={`${chunk.x},${chunk.z}`}
-                  x={chunk.x - bounds.minX}
-                  y={chunk.z - bounds.minZ}
-                  width="1"
-                  height="1"
-                  vectorEffect="non-scaling-stroke"
-                />
-              ))}
+              {explored.map((chunk) => {
+                const key = `${chunk.x},${chunk.z}`;
+                const palette = mapTerrainPalette(knowledge.terrainByChunk?.[key]);
+                return (
+                  <rect
+                    className={`hearthroads-map-chunk${palette.water ? " water" : " land"}`}
+                    key={key}
+                    x={chunk.x - bounds.minX}
+                    y={chunk.z - bounds.minZ}
+                    width="1"
+                    height="1"
+                    fill={palette.fill}
+                    stroke={palette.stroke}
+                    vectorEffect="non-scaling-stroke"
+                    aria-label={`${key}: ${palette.label}`}
+                  />
+                );
+              })}
             </svg>
             <span
               className="hearthroads-player-pin"
@@ -489,8 +588,23 @@ export function MapPanel({
               aria-label="Your current position"
               title="You are here"
             >
-              <i aria-hidden="true">▲</i>
+              <i aria-hidden="true" style={{ transform: `rotate(${currentHeadingRadians}rad)` }}>▲</i>
             </span>
+            {otherPlayers.map((player) => (
+              <span
+                className="hearthroads-other-player-pin"
+                key={player.id}
+                style={{
+                  ...mapPointStyle(player.position, bounds),
+                  "--map-player-color": safeMapMarkerColor(player.color),
+                } as CSSProperties}
+                aria-label={`${player.name} at ${Math.round(player.position.x)}, ${Math.round(player.position.z)}`}
+                title={player.name}
+              >
+                <i aria-hidden="true" style={{ transform: `rotate(${player.headingRadians ?? 0}rad)` }}>▲</i>
+                <small>{player.name}</small>
+              </span>
+            ))}
             {knowledge.markers.map((marker) => (
               <button
                 className={`hearthroads-map-pin marker-${marker.kind}${selected?.id === marker.id ? " selected" : ""}`}
@@ -498,6 +612,7 @@ export function MapPanel({
                 type="button"
                 style={mapPointStyle(marker.position, bounds)}
                 onClick={() => onSelectMarker(marker.id)}
+                onPointerDown={(event) => event.stopPropagation()}
                 aria-label={`${MARKER_META[marker.kind].label}: ${marker.name}`}
                 aria-pressed={selected?.id === marker.id}
                 title={marker.name}
@@ -510,6 +625,8 @@ export function MapPanel({
             ) : null}
           </div>
           <div className="hearthroads-map-legend" aria-label="Map legend">
+            <span><i aria-hidden="true">▲</i>Players and heading</span>
+            <span><i aria-hidden="true">≈</i>Water and sea</span>
             {Object.entries(MARKER_META).map(([kind, entry]) => (
               <span key={kind}><i aria-hidden="true">{entry.icon}</i>{entry.label}</span>
             ))}
@@ -753,7 +870,7 @@ export function QuestPanel({
         <div className="hearthroads-quest-list" role="list" aria-label={`${tab} quests`}>
           {visibleDefinitions.map((definition) => {
             const status = questAvailability(book, definition);
-            const isPinned = book.pinnedQuestId === definition.id;
+            const isPinned = book.pinnedQuestIds.includes(definition.id);
             return (
               <button
                 className={`hearthroads-quest-row status-${status}${selected?.id === definition.id ? " selected" : ""}`}
@@ -842,10 +959,11 @@ export function QuestPanel({
                   <button
                     className="pixel-button secondary-button"
                     type="button"
-                    aria-pressed={book.pinnedQuestId === selected.id}
-                    onClick={() => onPin(book.pinnedQuestId === selected.id ? null : selected.id)}
+                    aria-pressed={book.pinnedQuestIds.includes(selected.id)}
+                    disabled={!book.pinnedQuestIds.includes(selected.id) && book.pinnedQuestIds.length >= 3}
+                    onClick={() => onPin(selected.id)}
                   >
-                    {book.pinnedQuestId === selected.id ? "Unpin quest" : "Pin to journey"}
+                    {book.pinnedQuestIds.includes(selected.id) ? "Unpin quest" : book.pinnedQuestIds.length >= 3 ? "Journey board full" : "Pin to journey"}
                   </button>
                 ) : null}
                 {availability === "ready" ? (
@@ -1539,10 +1657,10 @@ export function SettlementPanel({
                 {selectedRole[1].map((resident) => (
                   <li key={resident.id}>
                     <button type="button" disabled={!onSelectResident} onClick={() => onSelectResident?.(resident.id)}>
-                      {resident.race === "atlantian" || resident.race === "confectkin" ? (
+                      {resident.factionId !== "player" ? (
                         <PortraitAsset
                           key={`${resident.id}-${resident.profession}`}
-                          src={sentientPortraitPath(resident.race === "atlantian" ? "atlantians" : "sugarcourt", resident.profession)}
+                          src={sentientPortraitPath(resident.factionId, resident.profession)}
                           alt=""
                           fallback={rolePresentation(resident.profession).glyph}
                           compact

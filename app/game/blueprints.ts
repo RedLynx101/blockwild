@@ -6,7 +6,7 @@
 export const BLUEPRINT_SCHEMA = 1 as const;
 export const MAX_UNLOCKED_BLUEPRINTS = 512;
 
-export type BlueprintFaction = "hobbits" | "goblins" | "sugarcourt" | "waykeepers" | "neutral";
+export type BlueprintFaction = "hobbits" | "goblins" | "sugarcourt" | "wood-elves" | "dwarves" | "waykeepers" | "neutral";
 
 export type BlueprintDefinition = Readonly<{
   id: string;
@@ -142,6 +142,62 @@ export const BLUEPRINTS: readonly BlueprintDefinition[] = Object.freeze([
       "emberlily-catalyst", "frostlily-catalyst", "ferric-lotus-catalyst",
     ],
     resaleGold: 740,
+  },
+  {
+    id: "glimmerbow",
+    name: "Glimmerbow Pattern",
+    description: "Teaches the living-wood bow and its moonlit string geometry.",
+    faction: "wood-elves",
+    recipeIds: ["glimmerbow"],
+    resaleGold: 780,
+  },
+  {
+    id: "moonstep",
+    name: "Moonstep Elixir Formula",
+    description: "Teaches the Moonbough alchemy used to move lightly through the dark.",
+    faction: "wood-elves",
+    recipeIds: ["moonstep-elixir"],
+    resaleGold: 560,
+  },
+  {
+    id: "verdant-renewal",
+    name: "Verdant Renewal Formula",
+    description: "Teaches a restorative draught of luminous grove plants.",
+    faction: "wood-elves",
+    recipeIds: ["verdant-renewal"],
+    resaleGold: 680,
+  },
+  {
+    id: "flintlock-pistol",
+    name: "Deepgear Flintlock Blueprint",
+    description: "Teaches the compact Deepgear pistol and cast ammunition.",
+    faction: "dwarves",
+    recipeIds: ["flintlock-pistol", "flintlock-balls"],
+    resaleGold: 940,
+  },
+  {
+    id: "golem-copper-scout",
+    name: "Copper Scout Blueprint",
+    description: "Authorizes a Golem Forge to wake a nimble copper scout.",
+    faction: "dwarves",
+    recipeIds: [],
+    resaleGold: 720,
+  },
+  {
+    id: "golem-stone-bulwark",
+    name: "Stone Bulwark Blueprint",
+    description: "Authorizes a Golem Forge to assemble a defensive stone automaton.",
+    faction: "dwarves",
+    recipeIds: [],
+    resaleGold: 1_280,
+  },
+  {
+    id: "golem-aetherforged-sentinel",
+    name: "Aetherforged Sentinel Blueprint",
+    description: "Authorizes the costly mana core and frame of a master sentinel.",
+    faction: "dwarves",
+    recipeIds: [],
+    resaleGold: 2_650,
   },
 ]);
 

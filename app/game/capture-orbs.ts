@@ -16,11 +16,22 @@ export const CREATURE_HEAL_INTERVAL_SECONDS = 10;
 export const CREATURE_PASSIVE_HEAL_INTERVAL_SECONDS = CREATURE_HEAL_INTERVAL_SECONDS * 2;
 export const CREATURE_HEALER_GEL_CAP = 64;
 
+export type CaptureOrbAttunement = Readonly<{
+  ownerId: string;
+  attunedAt: number;
+  activeEntityId: string | null;
+  recalledAt: number;
+  recallCount: number;
+  fainted: boolean;
+}>;
+
 export type CaptureOrb = Readonly<{
   schema: 1;
   orbId: string;
   capturedAt: number;
   creature: CreatureMetadata | null;
+  /** An attuned orb remains linked while its creature is deployed. */
+  attunement?: CaptureOrbAttunement | null;
 }>;
 
 export type OrbRackState = Readonly<{
@@ -41,19 +52,108 @@ export const createEmptyCaptureOrb = (orbId: string): CaptureOrb => ({
   orbId: orbId.trim().slice(0, 80) || "orb",
   capturedAt: 0,
   creature: null,
+  attunement: null,
 });
 
 export function captureIntoOrb(orb: CaptureOrb, creature: CreatureMetadata, capturedAt = Date.now()): CaptureOrb | null {
   if (orb.creature || !canCaptureCreature(creature)) return null;
-  return { ...orb, capturedAt, creature: cloneCreatureMetadata(creature) };
+  return { ...orb, capturedAt, creature: cloneCreatureMetadata(creature), attunement: null };
 }
 
 export function releaseCaptureOrb(orb: CaptureOrb): { orb: CaptureOrb; creature: CreatureMetadata } | null {
   if (!orb.creature) return null;
   return {
-    orb: { ...orb, capturedAt: 0, creature: null },
+    orb: { ...orb, capturedAt: 0, creature: null, attunement: null },
     creature: cloneCreatureMetadata(orb.creature),
   };
+}
+
+const cleanOwnerId = (ownerId: string) => ownerId.trim().slice(0, 160);
+
+export function attuneCaptureOrb(orb: CaptureOrb, ownerId: string, attunedAt = Date.now()): CaptureOrb | null {
+  const owner = cleanOwnerId(ownerId);
+  if (!orb.creature || !owner || orb.attunement?.activeEntityId || orb.creature.health <= 0) return null;
+  if (orb.attunement && orb.attunement.ownerId !== owner) return null;
+  return {
+    ...orb,
+    attunement: {
+      ownerId: owner,
+      attunedAt: Math.max(0, Number.isFinite(attunedAt) ? attunedAt : 0),
+      activeEntityId: null,
+      recalledAt: orb.attunement?.recalledAt ?? 0,
+      recallCount: orb.attunement?.recallCount ?? 0,
+      fainted: false,
+    },
+  };
+}
+
+export function unattuneCaptureOrb(orb: CaptureOrb, ownerId: string): CaptureOrb | null {
+  const attunement = orb.attunement;
+  if (!attunement || attunement.ownerId !== cleanOwnerId(ownerId) || attunement.activeEntityId || attunement.fainted
+    || !orb.creature || orb.creature.health <= 0) return null;
+  return { ...orb, attunement: null };
+}
+
+export type AttunedOrbDeployment = Readonly<{ orb: CaptureOrb; creature: CreatureMetadata }>;
+
+/** Deploys an attuned creature without emptying its linked orb. */
+export function deployAttunedCaptureOrb(orb: CaptureOrb, ownerId: string): AttunedOrbDeployment | null {
+  const attunement = orb.attunement;
+  if (!orb.creature || !attunement || attunement.ownerId !== cleanOwnerId(ownerId) || attunement.activeEntityId
+    || attunement.fainted || orb.creature.health <= 0) return null;
+  const creature = cloneCreatureMetadata(orb.creature);
+  creature.ownerId = ownerId;
+  creature.custom = { ...creature.custom, attunedOrbId: orb.orbId };
+  return {
+    creature,
+    orb: { ...orb, attunement: { ...attunement, activeEntityId: creature.entityId } },
+  };
+}
+
+export type AttunedRecallReason = "manual" | "fainted";
+export type AttunedRecallEffect = Readonly<{
+  tint: "white";
+  sparkleColor: "#f6fbff";
+  particleCount: number;
+  durationSeconds: number;
+}>;
+
+/** Returns the current exact creature state to its orb and describes the shared recall visual. */
+export function recallAttunedCreature(
+  orb: CaptureOrb,
+  creature: CreatureMetadata,
+  ownerId: string,
+  reason: AttunedRecallReason = "manual",
+  recalledAt = Date.now(),
+): Readonly<{ orb: CaptureOrb; effect: AttunedRecallEffect }> | null {
+  const attunement = orb.attunement;
+  if (!attunement || attunement.ownerId !== cleanOwnerId(ownerId) || !attunement.activeEntityId
+    || attunement.activeEntityId !== creature.entityId) return null;
+  const stored = cloneCreatureMetadata(creature);
+  stored.custom = { ...stored.custom, attunedOrbId: orb.orbId };
+  if (reason === "fainted") stored.health = 0;
+  const fainted = reason === "fainted" || stored.health <= 0;
+  return {
+    orb: {
+      ...orb,
+      creature: stored,
+      capturedAt: Math.max(0, Number.isFinite(recalledAt) ? recalledAt : 0),
+      attunement: {
+        ...attunement,
+        activeEntityId: null,
+        recalledAt: Math.max(0, Number.isFinite(recalledAt) ? recalledAt : 0),
+        recallCount: attunement.recallCount + 1,
+        fainted,
+      },
+    },
+    effect: { tint: "white", sparkleColor: "#f6fbff", particleCount: 28, durationSeconds: 0.72 },
+  };
+}
+
+export function refreshAttunedOrbHealth(orb: CaptureOrb): CaptureOrb {
+  if (!orb.creature || !orb.attunement) return orb;
+  const fainted = orb.creature.health <= 0;
+  return fainted === orb.attunement.fainted ? orb : { ...orb, attunement: { ...orb.attunement, fainted } };
 }
 
 export function encodeCaptureOrb(orb: CaptureOrb) {
@@ -67,7 +167,26 @@ export function decodeCaptureOrb(value: string): CaptureOrb | null {
       || typeof parsed.capturedAt !== "number" || !Number.isFinite(parsed.capturedAt) || parsed.capturedAt < 0) return null;
     if (parsed.creature === null) return createEmptyCaptureOrb(parsed.orbId);
     const creature = normalizeCreatureMetadata(parsed.creature);
-    return creature ? { schema: 1, orbId: parsed.orbId, capturedAt: parsed.capturedAt, creature } : null;
+    if (!creature) return null;
+    const rawAttunement = (parsed as Partial<CaptureOrb>).attunement;
+    let attunement: CaptureOrbAttunement | null = null;
+    if (rawAttunement !== undefined && rawAttunement !== null) {
+      if (typeof rawAttunement !== "object" || typeof rawAttunement.ownerId !== "string" || rawAttunement.ownerId.length === 0
+        || rawAttunement.ownerId.length > 160 || typeof rawAttunement.attunedAt !== "number" || !Number.isFinite(rawAttunement.attunedAt)
+        || typeof rawAttunement.recalledAt !== "number" || !Number.isFinite(rawAttunement.recalledAt)
+        || typeof rawAttunement.recallCount !== "number" || !Number.isFinite(rawAttunement.recallCount)
+        || (rawAttunement.activeEntityId !== null && (typeof rawAttunement.activeEntityId !== "string" || rawAttunement.activeEntityId.length > 160))
+        || typeof rawAttunement.fainted !== "boolean") return null;
+      attunement = {
+        ownerId: rawAttunement.ownerId,
+        attunedAt: Math.max(0, rawAttunement.attunedAt),
+        activeEntityId: rawAttunement.activeEntityId,
+        recalledAt: Math.max(0, rawAttunement.recalledAt),
+        recallCount: Math.max(0, Math.floor(rawAttunement.recallCount)),
+        fainted: rawAttunement.fainted || creature.health <= 0,
+      };
+    }
+    return { schema: 1, orbId: parsed.orbId, capturedAt: parsed.capturedAt, creature, attunement };
   } catch {
     return null;
   }
@@ -89,6 +208,10 @@ export function captureOrbInventorySlot(orb: CaptureOrb): InventorySlot {
         baby: creature.baby,
         health: creature.health,
         maxHealth: creature.maxHealth,
+        attuned: Boolean(orb.attunement),
+        attunedOwnerId: orb.attunement?.ownerId,
+        deployed: Boolean(orb.attunement?.activeEntityId),
+        fainted: Boolean(orb.attunement?.fainted || creature.health <= 0),
       } : {}),
     },
   };
@@ -174,7 +297,7 @@ export function stepCreatureHealer(state: CreatureHealerState, deltaSeconds: num
       if (!passiveCycle && !accelerated) continue;
       const creature = cloneCreatureMetadata(orb.creature);
       creature.health = Math.min(creature.maxHealth, creature.health + 1);
-      slots[index] = { ...orb, creature };
+      slots[index] = refreshAttunedOrbHealth({ ...orb, creature });
       if (accelerated) {
         gelUnits -= 1;
         gelUsed += 1;

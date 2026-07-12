@@ -17,7 +17,7 @@ export type RecipeIngredient = Readonly<{
 export type PotionEffect =
   | Readonly<{ kind: "heal"; amount: number }>
   | Readonly<{ kind: "bank-fast-travel"; charges: number }>
-  | Readonly<{ kind: "timed-buff"; buff: "hearthward" | "gloamstep" | "tidebreath" | "peppermint-rush" | "marshmallow-ward"; durationSeconds: number }>;
+  | Readonly<{ kind: "timed-buff"; buff: "hearthward" | "gloamstep" | "tidebreath" | "peppermint-rush" | "marshmallow-ward" | "moonstep"; durationSeconds: number }>;
 
 export type AlchemyRecipe = Readonly<{
   id: string;
@@ -138,6 +138,26 @@ export const ALCHEMY_RECIPES: readonly AlchemyRecipe[] = Object.freeze([
     brewSeconds: 90,
     blueprintId: null,
     effect: null,
+  },
+  {
+    id: "moonstep-elixir",
+    name: "Moonstep Elixir",
+    description: "Moonpetal and Dreamcap lend quiet speed beneath starlight and dense canopy.",
+    inputs: [{ item: "water-bottle", count: 1 }, { item: "moonpetal", count: 2 }, { item: "dreamcap", count: 1 }],
+    output: { item: "moonstep-elixir", count: 1 },
+    brewSeconds: 44,
+    blueprintId: "moonstep",
+    effect: { kind: "timed-buff", buff: "moonstep", durationSeconds: 210 },
+  },
+  {
+    id: "verdant-renewal",
+    name: "Verdant Renewal",
+    description: "Starfern and living Lumenreed knit cuts with a cool, clean pulse.",
+    inputs: [{ item: "water-bottle", count: 1 }, { item: "starfern", count: 2 }, { item: "lumenreed-frond", count: 1 }, { item: "moonpetal", count: 1 }],
+    output: { item: "verdant-renewal", count: 1 },
+    brewSeconds: 52,
+    blueprintId: "verdant-renewal",
+    effect: { kind: "heal", amount: 6 },
   },
 ]);
 

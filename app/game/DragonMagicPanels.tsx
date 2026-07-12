@@ -13,10 +13,11 @@ import {
   type SpellSchool,
 } from "./magic";
 import {
+  ASCENDANT_TRAITS,
   MAX_SKILL_LEVEL,
   PERKS,
   SKILLS,
-  hasAllSkillsMastered,
+  ascendantTraitEnabled,
   skillMultiplier,
   skillXpForNextRank,
   type SkillId,
@@ -33,7 +34,7 @@ export type DragonMagicPanelProps = Readonly<{
   onSelectSpell?: (spellId: SpellId) => void;
   onToggleFavorite?: (spellId: SpellId) => void;
   onUnlockPerk?: (perkId: string) => void;
-  onToggleAscendant?: (enabled: boolean) => void;
+  onToggleAscendant?: (enabled: boolean, skillId: SkillId) => void;
 }>;
 
 export type SpellWheelPanelProps = Readonly<{
@@ -222,9 +223,10 @@ function SkillJournal({ skills, onUnlockPerk, onToggleAscendant }: Pick<DragonMa
   const [selectedSkillId, setSelectedSkillId] = useState<SkillId>("magic");
   const definition = SKILLS.find((skill) => skill.id === selectedSkillId) ?? SKILLS[0];
   const progress = skills.skills[selectedSkillId];
+  const ascendant = ASCENDANT_TRAITS[selectedSkillId];
+  const ascendantEnabled = ascendantTraitEnabled(skills, selectedSkillId);
   const needed = skillXpForNextRank(progress.level);
   const selectedPerks = PERKS.filter((perk) => perk.skillId === selectedSkillId);
-  const mastered = hasAllSkillsMastered(skills);
   const masteryCount = SKILLS.filter((skill) => skills.skills[skill.id].level >= MAX_SKILL_LEVEL).length;
   return (
     <div className="dragon-magic-skills">
@@ -253,7 +255,7 @@ function SkillJournal({ skills, onUnlockPerk, onToggleAscendant }: Pick<DragonMa
             return <section className="dragon-magic-perk" data-unlocked={unlocked} key={perk.id}><div><strong>{perk.name} · Rank {perk.requiredLevel}</strong><p>{perk.description}{perk.prerequisites.length ? ` Requires ${perk.prerequisites.map((id) => PERKS.find((entry) => entry.id === id)?.name ?? id).join(", ")}.` : ""}</p></div><button type="button" disabled={!canUnlock} onClick={() => onUnlockPerk?.(perk.id)}>{unlocked ? "Learned" : `${perk.cost} point${perk.cost === 1 ? "" : "s"}`}</button></section>;
           })}
         </div>
-        <section className="dragon-magic-ascendant"><h4>Ascendant safeguard · {masteryCount}/{SKILLS.length} mastered</h4><p>Master every skill at 1000 to unlock opt-in Ascendant traits. The first safeguard prevents damage from lowering health below 10%; later Ascendant modes can extend this branch.</p><button type="button" disabled={!mastered} onClick={() => onToggleAscendant?.(!skills.ascendantHealthFloorEnabled)}>{skills.ascendantHealthFloorEnabled ? "Disable health floor" : mastered ? "Enable health floor" : "All skills required"}</button></section>
+        <section className="dragon-magic-ascendant"><h4>{ascendant.name} · {masteryCount}/{SKILLS.length} disciplines mastered</h4><p>{ascendant.description} Each discipline unlocks its own Ascendant trait at rank 1000; no unrelated mastery is required.</p><button type="button" disabled={progress.level < MAX_SKILL_LEVEL} onClick={() => onToggleAscendant?.(!ascendantEnabled, selectedSkillId)}>{ascendantEnabled ? `Disable ${ascendant.name}` : progress.level >= MAX_SKILL_LEVEL ? `Enable ${ascendant.name}` : `${definition.name} 1000 required`}</button></section>
       </article>
     </div>
   );

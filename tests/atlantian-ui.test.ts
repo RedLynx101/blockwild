@@ -92,4 +92,8 @@ test("Atlantian trade uses the aquatic market and profession-safe faction routin
   assert.equal(sentientProfession("atlantian-glowmender", "atlantians"), "atlantian-glowmender");
   assert.equal(sentientPortraitPath("hobbits", "atlantian-glowmender"), "/creatures/hobbit-merchant.svg");
   assert.equal(sentientPortraitPath("goblins", "atlantian-glowmender"), "/creatures/goblin-worker.svg");
+  assert.equal(sentientPortraitPath("wood-elves", "wood-elf-leafwarden"), "/creatures/wood-elf-leafwarden.svg");
+  assert.equal(sentientPortraitPath("wood-elves", "general"), "/creatures/wood-elf-moonbroker.svg");
+  assert.equal(sentientPortraitPath("dwarves", "dwarf-golemsmith"), "/creatures/dwarf-golemsmith.svg");
+  assert.equal(sentientPortraitPath("dwarves", "general"), "/creatures/dwarf-provisioner.svg");
 });

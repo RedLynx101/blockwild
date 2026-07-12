@@ -292,8 +292,8 @@ test("named forest POIs clear unauthored trees throughout their padded footprint
 test("legacy cabin and ruin generation reserves the same flora-free clearing", () => {
   const world = new ChunkWorld();
   world.reset("WILDERNESS", undefined, { structures: true });
-  for (let cz = -3; cz <= -2; cz += 1) for (let cx = -3; cx <= -2; cx += 1) world.generateChunk(cx, cz);
-  assert.equal(world.getBlock(-28, 38, -30), BlockId.Chest, "fixture should contain the legacy ruin cache");
+  for (let cz = 2; cz <= 3; cz += 1) world.generateChunk(-9, cz);
+  assert.equal(world.getBlock(-135, 38, 44), BlockId.Chest, "fixture should contain the sparser legacy ruin cache");
   const unauthoredGrowth = new Set<BlockId>([
     ...LEAF_BLOCKS,
     BlockId.Cactus,
@@ -304,7 +304,7 @@ test("legacy cabin and ruin generation reserves the same flora-free clearing", (
     BlockId.Sunpetal,
     BlockId.MoonOrchid,
   ]);
-  for (let z = -38; z <= -26; z += 1) for (let x = -36; x <= -24; x += 1) for (let y = MIN_Y; y <= MAX_Y; y += 1) {
+  for (let z = 36; z <= 48; z += 1) for (let x = -143; x <= -131; x += 1) for (let y = MIN_Y; y <= MAX_Y; y += 1) {
     assert.equal(unauthoredGrowth.has(world.getBlock(x, y, z) ?? BlockId.Air), false, `legacy POI growth remained at ${x},${y},${z}`);
   }
   world.dispose();

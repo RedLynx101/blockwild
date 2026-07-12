@@ -128,7 +128,7 @@ export function updateBirdBehavior(state: BirdBehaviorState, stimulus: BirdStimu
   return { ...state, mode, timer, perchId, altitude, wingPhase: (state.wingPhase + dt * flapRate) % TAU };
 }
 
-export type FishHabitat = "ocean" | "deep-ocean" | "lumen-trench" | "river" | "underground" | "syrup-pond";
+export type FishHabitat = "ocean" | "deep-ocean" | "lumen-trench" | "river" | "underground" | "syrup-pond" | "glimmer-pond";
 
 export type WeightedMob = readonly [kind: MobKind, weight: number];
 
@@ -178,6 +178,9 @@ const UNDERGROUND_FISH: readonly WeightedMob[] = Object.freeze([
 const SYRUP_POND_FISH: readonly WeightedMob[] = Object.freeze([
   ["syrupfin", 1],
 ]);
+const GLIMMER_POND_FISH: readonly WeightedMob[] = Object.freeze([
+  ["glowfin", 0.82], ["brookdart", 0.18],
+]);
 
 /** Small immutable tables let the engine choose habitat fish without scanning all mobs. */
 export function fishSpawnTableForHabitat(habitat: FishHabitat): readonly WeightedMob[] {
@@ -186,6 +189,7 @@ export function fishSpawnTableForHabitat(habitat: FishHabitat): readonly Weighte
   if (habitat === "lumen-trench") return LUMEN_TRENCH_FAUNA;
   if (habitat === "river") return RIVER_FISH;
   if (habitat === "syrup-pond") return SYRUP_POND_FISH;
+  if (habitat === "glimmer-pond") return GLIMMER_POND_FISH;
   return UNDERGROUND_FISH;
 }
 
@@ -273,6 +277,14 @@ const SAKURABLOOM_PASSIVES: readonly WeightedMob[] = Object.freeze([
 const SUGARPLUM_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["sprinklebug", 0.56], ["taffalo", 0.34], ["reed-dragonfly", 0.06], ["puddlehopper", 0.04],
 ]);
+const GLIMMERWOOD_PASSIVES: readonly WeightedMob[] = Object.freeze([
+  ["glimmerhart", 0.34], ["runeowl", 0.2], ["mossling", 0.15], ["glowmoth", 0.12],
+  ["thimbledeer", 0.08], ["canopy-lark", 0.06], ["petalfox", 0.05],
+]);
+const SNOWCAP_PASSIVES: readonly WeightedMob[] = Object.freeze([
+  ["woolhorn", 0.42], ["copper-mole", 0.18], ["wild-horse", 0.13], ["canopy-lark", 0.1],
+  ["thimbledeer", 0.09], ["pebbletortoise", 0.08],
+]);
 
 /**
  * Ambient table for each surface habitat. Hive Queens and worker Honeybees are
@@ -305,6 +317,8 @@ export function passiveMobSpawnTableForBiome(biome: BiomeId): readonly WeightedM
   if (biome === BiomeId.RainveilJungle) return RAINVEIL_PASSIVES;
   if (biome === BiomeId.SakurabloomGrove) return SAKURABLOOM_PASSIVES;
   if (biome === BiomeId.SugarplumVale) return SUGARPLUM_PASSIVES;
+  if (biome === BiomeId.Glimmerwood) return GLIMMERWOOD_PASSIVES;
+  if (biome === BiomeId.SnowcapRange) return SNOWCAP_PASSIVES;
   if (biome === BiomeId.River) return RIVER_PASSIVES;
   if (biome === BiomeId.CloudreedGlen) return CLOUDREED_PASSIVES;
   return UPLAND_PASSIVES;
@@ -349,6 +363,10 @@ export const NATURAL_GROUP_RANGES: Readonly<Partial<Record<MobKind, readonly [mi
   sprinklebug: [3, 7],
   taffalo: [2, 5],
   syrupfin: [4, 8],
+  glowfin: [4, 9],
+  glimmerhart: [2, 4],
+  runeowl: [1, 3],
+  "copper-mole": [1, 3],
   burrowbell: [3, 6],
   "dewback-tapir": [2, 4],
   warg: [2, 3],
@@ -715,6 +733,7 @@ export function canRideCreature(context: CreatureRideContext) {
 
 export const GENERIC_BOND_MOB_KINDS = Object.freeze([
   "wild-horse", "warg", "tidepup", "sakurakit", "taffy-hound", "praline-cat", "taffalo",
+  "glimmerhart", "runeowl", "copper-mole",
 ] as const satisfies readonly CoreMobKind[]);
 
 /** One source of truth for the reusable trust/follow/saddle state in the engine and Capture Orbs. */
@@ -728,7 +747,7 @@ export const SUGARPLUM_MOB_KINDS = Object.freeze([
 
 /** Dragons are lair-bound POI guardians, never ambient biome spawn-table entries. */
 export const DRAGON_MOB_KINDS = Object.freeze([
-  "fire-dragon", "ice-dragon", "steel-dragon",
+  "fire-dragon", "ice-dragon", "steel-dragon", "sea-dragon",
 ] as const satisfies readonly DragonKind[]);
 
 export function isDragonMobKind(kind: MobKind): kind is DragonKind {

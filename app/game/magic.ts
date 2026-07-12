@@ -34,7 +34,7 @@ export type SpellProjectileDescriptor = Readonly<{
   gravity: number;
   homing: number;
   pierce: number;
-  trail: "embers" | "ice-shards" | "metal-sparks" | "sun-motes" | "aether-rings" | "ward-runes";
+  trail: "embers" | "ice-shards" | "metal-sparks" | "sun-motes" | "aether-rings" | "ward-runes" | "verdant-leaves" | "starlight-threads";
 }>;
 
 export type SpellAnimationCue = Readonly<{
@@ -58,7 +58,7 @@ export type SpellSoundCue = Readonly<{
 }>;
 
 export type SpellAcquisitionSource =
-  | Readonly<{ kind: "faction"; factionId: "hobbits" | "goblins" | "atlantians" | "sugarcourt"; detail: string; rarity: "uncommon" | "rare" }>
+  | Readonly<{ kind: "faction"; factionId: "hobbits" | "goblins" | "atlantians" | "sugarcourt" | "wood-elves" | "dwarves"; detail: string; rarity: "uncommon" | "rare" }>
   | Readonly<{ kind: "loot"; table: string; rarity: "rare" | "very-rare" }>
   | Readonly<{ kind: "quest"; questId: string; branch: "main" | "side" }>
   | Readonly<{ kind: "dragon-lair"; dragonType: "fire" | "ice" | "steel"; minimumTier: number }>;
@@ -202,6 +202,47 @@ export const SPELLS = Object.freeze([
       { kind: "quest", questId: MAGIC_ATTUNEMENT_QUEST_ID, branch: "main" },
     ],
   },
+  {
+    id: "verdant-volley",
+    tomeItemId: "tome-verdant-volley",
+    name: "Verdant Volley",
+    school: "destruction",
+    description: "Spiral three luminous leaves around the casting hand and send them edge-first along a narrow spread.",
+    journalNote: "Leafwardens favor measured bursts. The third leaf bends slightly toward a target already struck by the first two.",
+    manaCost: 14,
+    cooldownSeconds: 1.35,
+    targeting: "aimed",
+    effects: [{ kind: "damage", damageType: "piercing", amount: 7, radius: 0.5, status: "slowed" }],
+    projectile: { kind: "bolt", speed: 29, range: 22, radius: 0.24, gravity: 0.02, homing: 0.12, pierce: 1, trail: "verdant-leaves" },
+    animation: { castPose: "two-hand-focus", dominantHand: "both", windupSeconds: 0.28, releaseSeconds: 0.18, recoverySeconds: 0.2, handColor: "#75e6a5", particleCue: "three-leaf-spiral-volley", cameraImpulse: 0.07 },
+    sound: { charge: "spell.verdant.gather", release: "spell.verdant.volley", impact: "spell.verdant.cut", loop: null, volume: 0.7, pitchVariance: 0.08 },
+    sources: [
+      { kind: "faction", factionId: "wood-elves", detail: "Leafwarden instruction or Moonbough Tomekeeper stock", rarity: "uncommon" },
+      { kind: "quest", questId: "wood-elf-leaves-remember", branch: "side" },
+    ],
+  },
+  {
+    id: "starlight-snare",
+    tomeItemId: "tome-starlight-snare",
+    name: "Starlight Snare",
+    school: "alteration",
+    description: "Cast a quiet knot of starlight that slows creatures inside its luminous ring and briefly reveals them through foliage.",
+    journalNote: "The ring is a boundary rather than a prison. Place it where a pursuer intends to step, not where it already stands.",
+    manaCost: 24,
+    cooldownSeconds: 5.2,
+    targeting: "ground",
+    effects: [
+      { kind: "damage", damageType: "frost", amount: 2, radius: 3.2, status: "slowed" },
+      { kind: "reveal", radius: 7, durationSeconds: 8 },
+    ],
+    projectile: { kind: "none", speed: 0, range: 18, radius: 3.2, gravity: 0, homing: 0, pierce: 0, trail: "starlight-threads" },
+    animation: { castPose: "underhand-cast", dominantHand: "left", windupSeconds: 0.36, releaseSeconds: 0.2, recoverySeconds: 0.24, handColor: "#aaa8ff", particleCue: "woven-starlight-ground-ring", cameraImpulse: 0.04 },
+    sound: { charge: "spell.starlight.weave", release: "spell.starlight.snare", impact: "spell.starlight.bind", loop: "spell.starlight.hum", volume: 0.62, pitchVariance: 0.05 },
+    sources: [
+      { kind: "faction", factionId: "wood-elves", detail: "Rare Glimmer Library tome stock", rarity: "rare" },
+      { kind: "loot", table: "glimmerwood-moonwell-cache", rarity: "very-rare" },
+    ],
+  },
 ] as const satisfies readonly SpellDefinitionInput[]);
 
 export type SpellDefinition = (typeof SPELLS)[number];
@@ -261,6 +302,8 @@ export type SpellCastPlan = Readonly<{
   school: SpellSchool;
   targeting: SpellTargeting;
   powerMultiplier: number;
+  /** Applied to summoned creatures, constructs, and conjured projectiles. */
+  summonMultiplier: number;
   manaSpent: number;
   effects: readonly SpellEffectDescriptor[];
   projectile: SpellProjectileDescriptor;
@@ -523,6 +566,7 @@ export function castSpell(state: MagicState, spellId: string, now: number, magic
       school: check.definition.school,
       targeting: check.definition.targeting,
       powerMultiplier: magicPowerMultiplier(magicSkillLevel),
+      summonMultiplier: magicPowerMultiplier(magicSkillLevel),
       manaSpent: check.manaCost,
       effects: check.definition.effects,
       projectile: check.definition.projectile,

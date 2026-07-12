@@ -117,6 +117,15 @@ const LIVING_SOILS = new Set<BlockId>([
   BlockId.Farmland,
   BlockId.HydratedFarmland,
 ]);
+const SAPLING_SOILS = new Set<BlockId>([
+  ...LIVING_SOILS,
+  BlockId.GlimmerGrass,
+  BlockId.CloudreedGrass,
+]);
+
+export function canPlantSaplingOn(soil: BlockId | undefined) {
+  return soil !== undefined && SAPLING_SOILS.has(soil);
+}
 const TILLABLE_SOILS = new Set<BlockId>([
   BlockId.Grass,
   BlockId.Dirt,
@@ -146,6 +155,8 @@ export type DiscoveredRootedTree = Readonly<{
   root: DiscoveredTreeBlock;
   logs: readonly DiscoveredTreeBlock[];
   leaves: readonly DiscoveredTreeBlock[];
+  /** Hanging fruit and future crown ornaments removed with their support. */
+  attachments: readonly DiscoveredTreeBlock[];
 }>;
 
 /** Catalog-driven so future generated log variants join felling without another hardcoded map. */
@@ -176,13 +187,13 @@ export function isRootableTreeSoil(block: BlockId | undefined) {
 export function discoverRootedTree(
   start: BlockPosition,
   readBlock: ReadBlock,
-  maximumLogs = 192,
-  maximumLeaves = 384,
+  maximumLogs = 512,
+  maximumLeaves = 1_024,
 ): DiscoveredRootedTree | null {
   const startType = readBlock(start.x, start.y, start.z);
   if (!isTreeLogBlock(startType)) return null;
-  const logLimit = Math.max(3, Math.min(512, Math.floor(maximumLogs)));
-  const leafLimit = Math.max(0, Math.min(768, Math.floor(maximumLeaves)));
+  const logLimit = Math.max(3, Math.min(768, Math.floor(maximumLogs)));
+  const leafLimit = Math.max(0, Math.min(2_048, Math.floor(maximumLeaves)));
   const keyOf = (x: number, y: number, z: number) => `${x},${y},${z}`;
   const logs = new Map<string, DiscoveredTreeBlock>();
   const logQueue: BlockPosition[] = [start];
@@ -215,71 +226,217 @@ export function discoverRootedTree(
     .sort((left, right) => left.y - right.y || left.x - right.x || left.z - right.z);
   if (!roots.length) return null;
 
-  const ownedLogs = [...logs.values()];
-  const leaves = new Map<string, DiscoveredTreeBlock>();
-  const leafQueue: Array<{ position: BlockPosition; depth: number }> = [];
-  for (const log of ownedLogs) {
-    for (let dx = -1; dx <= 1; dx += 1) for (let dy = -1; dy <= 1; dy += 1) for (let dz = -1; dz <= 1; dz += 1) {
-      if (!dx && !dy && !dz) continue;
-      leafQueue.push({ position: { x: log.x + dx, y: log.y + dy, z: log.z + dz }, depth: 0 });
+  const logNeighbors = (position: DiscoveredTreeBlock) => {
+    const neighbors: DiscoveredTreeBlock[] = [];
+    for (const [dx, dy, dz] of TREE_NEIGHBORS) {
+      const next = logs.get(keyOf(position.x + dx, position.y + dy, position.z + dz));
+      if (next) neighbors.push(next);
     }
-  }
-  while (leafQueue.length && leaves.size < leafLimit) {
-    const { position, depth } = leafQueue.shift()!;
-    const key = keyOf(position.x, position.y, position.z);
-    if (leaves.has(key)) continue;
-    const type = readBlock(position.x, position.y, position.z);
-    if (!isTreeLeafBlock(type)) continue;
-    const ownDistance = ownedLogs.reduce((best, log) => Math.min(best,
-      (position.x - log.x) ** 2 + (position.y - log.y) ** 2 + (position.z - log.z) ** 2), Number.POSITIVE_INFINITY);
-    let foreignDistance = Number.POSITIVE_INFINITY;
-    const radius = Math.min(4, Math.max(2, Math.ceil(Math.sqrt(ownDistance))));
-    for (let dx = -radius; dx <= radius; dx += 1) for (let dy = -radius; dy <= radius; dy += 1) for (let dz = -radius; dz <= radius; dz += 1) {
-      const candidateKey = keyOf(position.x + dx, position.y + dy, position.z + dz);
-      const candidate = readBlock(position.x + dx, position.y + dy, position.z + dz);
-      if (!isTreeLogBlock(candidate) || logs.has(candidateKey)) continue;
-      foreignDistance = Math.min(foreignDistance, dx * dx + dy * dy + dz * dz);
+    // Old saves can still contain the pre-v0.9 diagonal branch step. It is
+    // admitted only beside foliage, while all newly generated wood is strictly
+    // face-connected.
+    for (const stepY of [-1, 1]) for (let dx = -1; dx <= 1; dx += 1) for (let dz = -1; dz <= 1; dz += 1) {
+      if (!dx && !dz) continue;
+      const next = logs.get(keyOf(position.x + dx, position.y + stepY, position.z + dz));
+      if (!next || neighbors.includes(next)) continue;
+      let canopyEvidence = false;
+      for (let ox = -1; ox <= 1 && !canopyEvidence; ox += 1) for (let oy = -1; oy <= 1 && !canopyEvidence; oy += 1) for (let oz = -1; oz <= 1; oz += 1) {
+        if (isTreeLeafBlock(readBlock(next.x + ox, next.y + oy, next.z + oz))) { canopyEvidence = true; break; }
+      }
+      if (canopyEvidence) neighbors.push(next);
     }
-    if (foreignDistance < ownDistance) continue;
-    leaves.set(key, { ...position, type: type! });
-    if (depth >= 4) continue;
-    for (const [dx, dy, dz] of TREE_NEIGHBORS) leafQueue.push({
-      position: { x: position.x + dx, y: position.y + dy, z: position.z + dz },
-      depth: depth + 1,
-    });
+    return neighbors;
+  };
+
+  // Root cells within a natural wide footprint belong to one trunk. Distinct
+  // trees remain separate clusters even when old overlapping branches touch.
+  const unclusteredRoots = new Map(roots.map((root) => [keyOf(root.x, root.y, root.z), root]));
+  const rootClusters: DiscoveredTreeBlock[][] = [];
+  while (unclusteredRoots.size) {
+    const first = unclusteredRoots.values().next().value as DiscoveredTreeBlock;
+    const cluster: DiscoveredTreeBlock[] = [];
+    const queue = [first];
+    unclusteredRoots.delete(keyOf(first.x, first.y, first.z));
+    while (queue.length) {
+      const current = queue.shift()!;
+      cluster.push(current);
+      for (const candidate of [...unclusteredRoots.values()]) {
+        const horizontalDistance = Math.max(Math.abs(candidate.x - current.x), Math.abs(candidate.z - current.z));
+        if (candidate.type !== current.type || horizontalDistance > 1 || Math.abs(candidate.y - current.y) > 2) continue;
+        unclusteredRoots.delete(keyOf(candidate.x, candidate.y, candidate.z));
+        queue.push(candidate);
+      }
+    }
+    rootClusters.push(cluster.sort((left, right) => left.y - right.y || left.x - right.x || left.z - right.z));
   }
-  const selectedRoot = roots[0];
-  const rootKey = keyOf(selectedRoot.x, selectedRoot.y, selectedRoot.z);
-  const parents = new Map<string, string | null>([[rootKey, null]]);
-  const connectedQueue = [selectedRoot];
+  rootClusters.sort((left, right) => keyOf(left[0].x, left[0].y, left[0].z).localeCompare(keyOf(right[0].x, right[0].y, right[0].z)));
+
+  const distancesByCluster = rootClusters.map((cluster) => {
+    const distances = new Map<string, number>();
+    const queue = cluster.map((root) => ({ block: root, distance: 0 }));
+    for (const root of cluster) distances.set(keyOf(root.x, root.y, root.z), 0);
+    while (queue.length) {
+      const { block, distance } = queue.shift()!;
+      for (const next of logNeighbors(block)) {
+        const key = keyOf(next.x, next.y, next.z);
+        if (distances.has(key)) continue;
+        distances.set(key, distance + 1);
+        queue.push({ block: next, distance: distance + 1 });
+      }
+    }
+    return distances;
+  });
+  const ownerFor = (key: string) => {
+    let owner = -1;
+    let best = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < distancesByCluster.length; index += 1) {
+      const distance = distancesByCluster[index].get(key) ?? Number.POSITIVE_INFINITY;
+      if (distance < best) { owner = index; best = distance; }
+    }
+    return owner;
+  };
+  const startKey = keyOf(start.x, start.y, start.z);
+  const selectedClusterIndex = ownerFor(startKey);
+  if (selectedClusterIndex < 0) return null;
+  const selectedRoots = rootClusters[selectedClusterIndex];
+  const ownedCandidates = new Map([...logs].filter(([key]) => ownerFor(key) === selectedClusterIndex));
+
+  // Multi-source parents provide a deterministic route from every natural
+  // branch back to the complete rooted footprint.
+  const parents = new Map<string, string | null>();
+  const connectedQueue: DiscoveredTreeBlock[] = [];
+  for (const root of selectedRoots) {
+    const key = keyOf(root.x, root.y, root.z);
+    parents.set(key, null);
+    connectedQueue.push(root);
+  }
   while (connectedQueue.length) {
     const current = connectedQueue.shift()!;
     const currentKey = keyOf(current.x, current.y, current.z);
-    for (const [dx, dy, dz] of TREE_NEIGHBORS) {
-      const nextKey = keyOf(current.x + dx, current.y + dy, current.z + dz);
-      const next = logs.get(nextKey);
-      if (!next || parents.has(nextKey)) continue;
+    for (const next of logNeighbors(current)) {
+      const nextKey = keyOf(next.x, next.y, next.z);
+      if (!ownedCandidates.has(nextKey) || parents.has(nextKey)) continue;
       parents.set(nextKey, currentKey);
       connectedQueue.push(next);
     }
   }
-  const retained = new Set<string>([rootKey]);
-  for (const log of ownedLogs) {
-    let touchesCanopy = false;
-    for (let dx = -1; dx <= 1 && !touchesCanopy; dx += 1) for (let dy = -1; dy <= 1 && !touchesCanopy; dy += 1) for (let dz = -1; dz <= 1; dz += 1) {
-      if (leaves.has(keyOf(log.x + dx, log.y + dy, log.z + dz))) { touchesCanopy = true; break; }
-    }
-    if (!touchesCanopy) continue;
-    let key: string | null | undefined = keyOf(log.x, log.y, log.z);
+
+  const retained = new Set<string>();
+  const retainPath = (initialKey: string) => {
+    let key: string | null | undefined = initialKey;
     while (key && !retained.has(key)) {
       retained.add(key);
       key = parents.get(key);
     }
+  };
+  for (const root of selectedRoots) {
+    const rootKey = keyOf(root.x, root.y, root.z);
+    retained.add(rootKey);
+    // Wide-trunk buttresses are genuine tree structure even when they taper
+    // out below the crown. Following each rooted vertical run fixes the old
+    // half-felled ancient trees without accepting an unrooted horizontal beam.
+    for (let y = root.y + 1; ; y += 1) {
+      const key = keyOf(root.x, y, root.z);
+      if (!ownedCandidates.has(key)) break;
+      retained.add(key);
+    }
   }
-  const treeLogs = ownedLogs.filter((log) => retained.has(keyOf(log.x, log.y, log.z)));
+  // Legacy v1 previews could author an ancient tree's 3x3 buttress over a
+  // nearby sand/rock biome edge. Those columns remain natural structure even
+  // though only the center is on living soil. Admit a low, same-species,
+  // multi-log root collar when the rooted footprint is already wide or at
+  // least two such tapered columns surround it. A lone horizontal beam (one
+  // log per column) and a lone player-built post remain excluded.
+  const collarColumns = new Map<string, DiscoveredTreeBlock[]>();
+  const rootType = selectedRoots[0].type;
+  for (const log of ownedCandidates.values()) {
+    if (log.type !== rootType) continue;
+    const nearRoot = selectedRoots.some((root) => Math.max(Math.abs(log.x - root.x), Math.abs(log.z - root.z)) <= 1
+      && log.y >= root.y - 2 && log.y <= root.y + 3);
+    if (!nearRoot) continue;
+    const columnKey = `${log.x},${log.z}`;
+    collarColumns.set(columnKey, [...(collarColumns.get(columnKey) ?? []), log]);
+  }
+  const rootedColumns = new Set(selectedRoots.map((root) => `${root.x},${root.z}`));
+  const taperedCollarColumns = [...collarColumns.entries()].filter(([columnKey, column]) => {
+    if (rootedColumns.has(columnKey) || column.length < 2) return false;
+    const ys = [...new Set(column.map((log) => log.y))].sort((left, right) => left - right);
+    return ys.some((y, index) => index > 0 && y === ys[index - 1] + 1);
+  });
+  if (selectedRoots.length > 1 || taperedCollarColumns.length >= 2) {
+    for (const [, column] of taperedCollarColumns) for (const log of column) retainPath(keyOf(log.x, log.y, log.z));
+  }
+  for (const log of ownedCandidates.values()) {
+    let touchesCanopy = false;
+    for (let dx = -1; dx <= 1 && !touchesCanopy; dx += 1) for (let dy = -1; dy <= 1 && !touchesCanopy; dy += 1) for (let dz = -1; dz <= 1; dz += 1) {
+      if (isTreeLeafBlock(readBlock(log.x + dx, log.y + dy, log.z + dz))) { touchesCanopy = true; break; }
+    }
+    if (!touchesCanopy) continue;
+    retainPath(keyOf(log.x, log.y, log.z));
+  }
+  if (!retained.has(startKey)) return null;
+  const treeLogs = [...ownedCandidates.values()].filter((log) => retained.has(keyOf(log.x, log.y, log.z)));
   if (treeLogs.length < 3) return null;
+
+  const foreignLogs = [...logs.values()].filter((log) => ownerFor(keyOf(log.x, log.y, log.z)) !== selectedClusterIndex);
+  const leaves = new Map<string, DiscoveredTreeBlock>();
+  const examinedLeaves = new Set<string>();
+  const leafQueue: BlockPosition[] = [];
+  for (const log of treeLogs) for (let dx = -1; dx <= 1; dx += 1) for (let dy = -1; dy <= 1; dy += 1) for (let dz = -1; dz <= 1; dz += 1) {
+    if (!dx && !dy && !dz) continue;
+    leafQueue.push({ x: log.x + dx, y: log.y + dy, z: log.z + dz });
+  }
+  while (leafQueue.length && leaves.size < leafLimit) {
+    const position = leafQueue.shift()!;
+    const key = keyOf(position.x, position.y, position.z);
+    if (examinedLeaves.has(key)) continue;
+    examinedLeaves.add(key);
+    const type = readBlock(position.x, position.y, position.z);
+    if (!isTreeLeafBlock(type)) continue;
+    const ownDistance = treeLogs.reduce((best, log) => Math.min(best,
+      (position.x - log.x) ** 2 + (position.y - log.y) ** 2 + (position.z - log.z) ** 2), Number.POSITIVE_INFINITY);
+    // All production crowns stay within seven cells of their supporting wood.
+    // This bound prevents a decorative/player-built leaf wall from being swept
+    // into a natural felling operation merely because one corner touches.
+    if (ownDistance > 49) continue;
+    let foreignDistance = foreignLogs.reduce((best, log) => Math.min(best,
+      (position.x - log.x) ** 2 + (position.y - log.y) ** 2 + (position.z - log.z) ** 2), Number.POSITIVE_INFINITY);
+    const radius = Math.min(7, Math.max(2, Math.ceil(Math.sqrt(ownDistance)) + 1));
+    for (let dx = -radius; dx <= radius; dx += 1) for (let dy = -radius; dy <= radius; dy += 1) for (let dz = -radius; dz <= radius; dz += 1) {
+      const candidateKey = keyOf(position.x + dx, position.y + dy, position.z + dz);
+      if (retained.has(candidateKey)) continue;
+      // A deliberately excluded beam can still be part of the selected root's
+      // connected log graph. It must remain standing, but it is not a competing
+      // tree and therefore must not steal the genuine crown around it.
+      if (logs.has(candidateKey) && ownerFor(candidateKey) === selectedClusterIndex) continue;
+      const candidate = readBlock(position.x + dx, position.y + dy, position.z + dz);
+      if (!isTreeLogBlock(candidate)) continue;
+      foreignDistance = Math.min(foreignDistance, dx * dx + dy * dy + dz * dz);
+    }
+    if (foreignDistance < ownDistance) continue;
+    leaves.set(key, { ...position, type: type! });
+    for (const [dx, dy, dz] of TREE_NEIGHBORS) leafQueue.push({ x: position.x + dx, y: position.y + dy, z: position.z + dz });
+  }
+
+  const selectedRoot = [...selectedRoots].sort((left, right) => {
+    const leftRun = treeLogs.filter((log) => log.x === left.x && log.z === left.z && log.y >= left.y).length;
+    const rightRun = treeLogs.filter((log) => log.x === right.x && log.z === right.z && log.y >= right.y).length;
+    return rightRun - leftRun || left.y - right.y || left.x - right.x || left.z - right.z;
+  })[0];
+  const attachments = new Map<string, DiscoveredTreeBlock>();
+  for (const leaf of leaves.values()) {
+    const attachmentY = leaf.y - 1;
+    const type = readBlock(leaf.x, attachmentY, leaf.z);
+    if (type !== BlockId.AppleFruit) continue;
+    attachments.set(keyOf(leaf.x, attachmentY, leaf.z), { x: leaf.x, y: attachmentY, z: leaf.z, type });
+  }
   const stableSort = (left: DiscoveredTreeBlock, right: DiscoveredTreeBlock) => left.y - right.y || left.x - right.x || left.z - right.z;
-  return { root: selectedRoot, logs: treeLogs.sort(stableSort), leaves: [...leaves.values()].sort(stableSort) };
+  return {
+    root: selectedRoot,
+    logs: treeLogs.sort(stableSort),
+    leaves: [...leaves.values()].sort(stableSort),
+    attachments: [...attachments.values()].sort(stableSort),
+  };
 }
 
 export function plantProfileForBlock(block: BlockId): { profile: PlantGrowthProfile; stage: number } | null {
@@ -393,6 +550,7 @@ export const AQUATIC_GROWTH_LIMITS: Readonly<Partial<Record<BlockId, number>>> =
   [BlockId.StarCoral]: 3,
   [BlockId.AbyssBloom]: 2,
   [BlockId.Tidevine]: 5,
+  [BlockId.Lumenreed]: 4,
 });
 
 /** One bounded upward growth step; every occupied cell remains waterlogged. */
@@ -420,6 +578,18 @@ export function planAquaticColumnRemoval(block: BlockId, position: BlockPosition
     const y = position.y + offset;
     if (readBlock(position.x, y, position.z) !== block) break;
     edits.push({ x: position.x, y, z: position.z, type: BlockId.Water });
+  }
+  return edits;
+}
+
+/** Breaking or harvesting a lower wild cane also clears every segment above. */
+export function planPeppermintColumnRemoval(position: BlockPosition, readBlock: ReadBlock) {
+  if (readBlock(position.x, position.y, position.z) !== BlockId.PeppermintTuft) return [] as Array<BlockPosition & { type: BlockId.Air }>;
+  const edits: Array<BlockPosition & { type: BlockId.Air }> = [];
+  for (let offset = 0; offset < 3; offset += 1) {
+    const y = position.y + offset;
+    if (readBlock(position.x, y, position.z) !== BlockId.PeppermintTuft) break;
+    edits.push({ x: position.x, y, z: position.z, type: BlockId.Air });
   }
   return edits;
 }

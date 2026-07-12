@@ -194,7 +194,7 @@ test("breaking a wild hive preserves products, rolls hive materials, and release
   assert.ok(released.every((resident) => resident.apiaryBee?.angry));
 });
 
-test("Cloverback milking converts only one bucket and enforces its saved cooldown", () => {
+test("Cloverback milking preserves the reusable bucket and enforces its saved cooldown", () => {
   const engine = stubMachineEngine();
   const cow = { kind: "meadow-cow", name: "Cloverback", milkCooldown: 0 };
   engine.inventory = Array.from({ length: 36 }, (_, index) => index === 0 ? { item: Item.Bucket, count: 2 } : null);
@@ -207,7 +207,7 @@ test("Cloverback milking converts only one bucket and enforces its saved cooldow
 
   engine.useSelected();
   assert.equal(engine.inventory[0]?.item, Item.Bucket);
-  assert.equal(engine.inventory[0]?.count, 1);
+  assert.equal(engine.inventory[0]?.count, 2, "milking yields a bottled item without consuming its reusable bucket");
   assert.equal(engine.inventory.filter((slot) => slot?.item === Item.MilkBottle).reduce((sum, slot) => sum + (slot?.count ?? 0), 0), 1);
   assert.equal(cow.milkCooldown, CLOVERBACK_MILK_COOLDOWN_SECONDS);
 

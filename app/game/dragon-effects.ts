@@ -1,6 +1,6 @@
 import * as THREE from "three";
 
-export type DragonElement = "fire" | "ice" | "steel";
+export type DragonElement = "fire" | "ice" | "steel" | "sea";
 export type DragonAttackKind = "melee" | "breath" | "projectile";
 export type DragonAttackStatus = "burning" | "slowed" | "scalded" | "knockback";
 
@@ -38,6 +38,7 @@ const PALETTES: Readonly<Record<DragonElement, readonly [number, number, number]
   fire: [0xff4b1f, 0xffa629, 0xffe08a],
   ice: [0x75d9ff, 0xc9f5ff, 0x6d88ff],
   steel: [0x8ea8b1, 0xe8f3ef, 0xd18a45],
+  sea: [0x45bdc7, 0x9fffe8, 0x437de0],
 };
 
 function material(color: number, opacity = 0.92) {
@@ -101,6 +102,14 @@ function createProjectileVisual(element: DragonElement, stage: number) {
       shard.rotation.z = (index - 1.5) * 0.18;
       group.add(shard);
     }
+  } else if (element === "sea") {
+    const length = 0.86 + stage * 0.1;
+    for (let index = 0; index < 5; index += 1) {
+      const current = cube([0.16 + index * 0.025, 0.16 + index * 0.025, length - index * 0.08], palette[index % palette.length], 0.72);
+      current.position.set(Math.sin(index * 2.1) * 0.12, Math.cos(index * 2.1) * 0.12, -index * 0.15);
+      current.rotation.z = index * 0.37;
+      group.add(current);
+    }
   } else {
     const scale = 0.24 + stage * 0.045;
     for (let index = 0; index < 6; index += 1) {
@@ -140,7 +149,7 @@ export function createDragonAttackEffect(options: CreateDragonAttackEffectOption
   pointVisualAlongDirection(visual, direction);
   const speed = options.attack === "projectile" ? 16 + stage * 2.1 : options.attack === "breath" ? 8.5 + stage * 1.15 : 0;
   const status = options.status ?? (options.attack === "melee" ? "knockback"
-    : options.element === "fire" ? "burning" : options.element === "ice" ? "slowed"
+    : options.element === "fire" ? "burning" : options.element === "ice" || options.element === "sea" ? "slowed"
       : options.attack === "breath" ? "scalded" : "knockback");
   return {
     id: options.id,

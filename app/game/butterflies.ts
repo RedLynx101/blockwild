@@ -58,6 +58,7 @@ const BUTTERFLY_BIOMES = new Set<BiomeId>([
   BiomeId.Siltfen, BiomeId.MushroomFen,
   BiomeId.Beach, BiomeId.RainveilJungle, BiomeId.SakurabloomGrove,
   BiomeId.SugarplumVale,
+  BiomeId.Glimmerwood,
 ]);
 
 export const BUTTERFLY_FLIGHT_TUNING = Object.freeze({
@@ -68,7 +69,14 @@ export const BUTTERFLY_FLIGHT_TUNING = Object.freeze({
   landedSecondsRange: 1.25,
 });
 
+/** Butterfly geometry faces local -Z (its antennae point forward), so its
+ * world yaw is the opposite of the common +Z-facing sprite formula. */
+export function butterflyYawForVelocity(velocity: Pick<THREE.Vector3, "x" | "z">) {
+  return Math.atan2(velocity.x, velocity.z) + Math.PI;
+}
+
 export function butterflyKindForBiome(biome: BiomeId, roll = Math.random()): ButterflyKind | null {
+  if (biome === BiomeId.Glimmerwood) return roll < 0.84 ? "moonveil-wing" : "fen-lantern";
   if (biome === BiomeId.SugarplumVale) return "bonbonwing";
   if (biome === BiomeId.SakurabloomGrove) return roll < 0.72 ? "bloom-monarch" : "azure-skippers";
   if (biome === BiomeId.RainveilJungle) return roll < 0.68 ? "fen-lantern" : "meadowwing";
@@ -402,7 +410,7 @@ export class ButterflySystem {
       const flap = butterfly.landed ? 0.16 : Math.sin(butterfly.age * 21 + butterfly.phase) * 0.92;
       butterfly.leftWing.rotation.z = flap;
       butterfly.rightWing.rotation.z = -flap;
-      if (butterfly.velocity.lengthSq() > 0.01) butterfly.group.rotation.y = Math.atan2(butterfly.velocity.x, butterfly.velocity.z);
+      if (butterfly.velocity.lengthSq() > 0.01) butterfly.group.rotation.y = butterflyYawForVelocity(butterfly.velocity);
     }
   }
 

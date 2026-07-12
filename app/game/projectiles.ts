@@ -2,6 +2,11 @@ import * as THREE from "three";
 
 export type ArrowOwner = { kind: "mob" | "player"; id: number | string };
 
+export type ProjectileEffect = Readonly<{
+  kind: "verdant-root";
+  seconds: number;
+}>;
+
 export type ArrowProjectile = {
   id: number;
   owner: ArrowOwner;
@@ -11,6 +16,8 @@ export type ArrowProjectile = {
   age: number;
   maxAge: number;
   visual: THREE.Group;
+  effect?: ProjectileEffect;
+  targetKind?: "player" | "hostile-mob";
 };
 
 export type ArrowStepResult =
@@ -80,6 +87,68 @@ export function createArrowProjectile(
   return projectile;
 }
 
+/**
+ * Leafwardens cast three real leaves in a tight helix. The smaller translucent
+ * leaves remain children of the projectile so the trail is visible without
+ * allocating particles every simulation step.
+ */
+export function createVerdantVolleyProjectile(
+  id: number,
+  owner: ArrowOwner,
+  origin: THREE.Vector3,
+  target: THREE.Vector3,
+  damage = 6,
+  speed = 29,
+  rootSeconds = 0.8,
+): ArrowProjectile {
+  const visual = new THREE.Group();
+  visual.name = "visible-verdant-volley-projectile";
+  const spiral = new THREE.Group();
+  spiral.name = "verdant-volley-spiral";
+  const leafGeometry = new THREE.SphereGeometry(0.12, 6, 4);
+  const leafMaterial = new THREE.MeshLambertMaterial({ color: 0x7bf0a1, emissive: 0x174d2b, emissiveIntensity: 0.8 });
+  for (let index = 0; index < 3; index += 1) {
+    const angle = index / 3 * Math.PI * 2;
+    const leaf = new THREE.Mesh(leafGeometry, leafMaterial);
+    leaf.name = `verdant-volley-leaf-${index + 1}`;
+    leaf.scale.set(1.6, 0.38, 0.72);
+    leaf.position.set(Math.cos(angle) * 0.18, Math.sin(angle) * 0.18, -0.08 - index * 0.025);
+    leaf.rotation.set(angle * 0.18, angle + Math.PI / 4, angle);
+    spiral.add(leaf);
+  }
+  const trailMaterial = new THREE.MeshLambertMaterial({
+    color: 0x9dffc1,
+    emissive: 0x123d24,
+    emissiveIntensity: 0.55,
+    transparent: true,
+    opacity: 0.42,
+    depthWrite: false,
+  });
+  for (let index = 0; index < 4; index += 1) {
+    const trail = new THREE.Mesh(leafGeometry, trailMaterial);
+    trail.name = `verdant-volley-trail-${index + 1}`;
+    trail.scale.set(1.05 - index * 0.12, 0.26, 0.48);
+    trail.position.set(index % 2 === 0 ? 0.08 : -0.08, index % 3 === 0 ? 0.06 : -0.04, 0.22 + index * 0.16);
+    trail.rotation.set(0.2, index * 0.9, index * 0.7);
+    spiral.add(trail);
+  }
+  visual.add(spiral);
+  visual.position.copy(origin);
+  const projectile: ArrowProjectile = {
+    id,
+    owner,
+    position: origin.clone(),
+    velocity: aimArrowVelocity(origin, target, speed),
+    damage,
+    age: 0,
+    maxAge: 4.5,
+    visual,
+    effect: { kind: "verdant-root", seconds: Math.max(0, rootSeconds) },
+  };
+  orientArrowVisual(projectile);
+  return projectile;
+}
+
 /** Swept stepping prevents fast arrows passing through one-block walls. */
 export function stepArrowProjectile(
   projectile: ArrowProjectile,
@@ -109,6 +178,8 @@ export function stepArrowProjectile(
   }
   projectile.visual.position.copy(projectile.position);
   orientArrowVisual(projectile);
+  const verdantSpiral = projectile.visual.getObjectByName("verdant-volley-spiral");
+  if (verdantSpiral) verdantSpiral.rotation.z = projectile.age * 13;
   return { kind: "flying" };
 }
 

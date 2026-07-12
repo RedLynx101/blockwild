@@ -89,13 +89,16 @@ import { createQuestBook, type QuestObjective } from "./quests";
 import { createSettlementState, isMayorProfession, type ResidentProfession, type SettlementCandidate } from "./settlements";
 import { DragonPanel } from "./DragonPanel";
 import { DragonMagicPanel, ManaHud, SpellWheelPanel } from "./DragonMagicPanels";
+import { GolemForgePanel } from "./GolemForgePanel";
+import type { GolemType } from "./v1-cultures";
 import { createMagicState } from "./magic";
 import { createSkillState } from "./skills";
+import { WaygridCreaturePanel, WaygridItemPanel } from "./WaygridPanels";
 
 type WorkstationOverlay = "apiary" | "orb-rack" | "healing-station" | "sugarworks";
 type CivicAuditMode = "atlantian-dialogue" | "atlantian-trade" | "atlantian-settlement";
 type Overlay = "title" | "new" | "pause" | "help" | "settings" | OverlayKind | null;
-export type BestiaryFilter = "all" | "surface" | "birds" | "butterflies" | "fish" | "monsters" | "companions";
+export type BestiaryFilter = "all" | "surface" | "birds" | "butterflies" | "fish" | "golems" | "monsters" | "companions";
 type FieldGuideSection = "creatures" | "plants";
 type PetCommand = NonNullable<HudState["activePet"]>["command"];
 
@@ -115,6 +118,7 @@ const BESTIARY_FILTERS: ReadonlyArray<[BestiaryFilter, string]> = [
   ["birds", "Birds"],
   ["butterflies", "Butterflies"],
   ["fish", "Aquatic"],
+  ["golems", "Golems"],
   ["monsters", "Monsters"],
   ["companions", "Tameable"],
 ];
@@ -149,6 +153,18 @@ const SENTIENT_FACTION_COPY: Readonly<Record<NpcFactionId, Readonly<{
     settlementChoice: "Ask about this borough",
     settlementChoiceDescription: "Find its Crown Confectioner, Candysmiths, kennels, gates, and Sugarworks.",
   },
+  "wood-elves": {
+    fallbackName: "Moonbough Neighbor",
+    greeting: "Walk softly beneath the glimmerleaves, traveler. The grove remembers every kind footfall.",
+    settlementChoice: "Ask about this enclave",
+    settlementChoiceDescription: "Find its Elderweaver, Leafwardens, moonwell, library, and living gardens.",
+  },
+  dwarves: {
+    fallbackName: "Deepgear Neighbor",
+    greeting: "Mind the rail and follow the lanterns. The mountain rewards careful hands.",
+    settlementChoice: "Ask about this hold",
+    settlementChoiceDescription: "Find its Thane, gatewardens, delvers, golem forge, and powderworks.",
+  },
 };
 
 const SETTLEMENT_DISPLAY_NAMES: Readonly<Record<FactionId, string>> = {
@@ -157,12 +173,16 @@ const SETTLEMENT_DISPLAY_NAMES: Readonly<Record<FactionId, string>> = {
   goblins: "Brassroot Clanhold",
   atlantians: "Lumen Tidemoot",
   sugarcourt: "Bonbon Borough",
+  "wood-elves": "Moonbough Enclave",
+  dwarves: "Deepgear Hold",
 };
 
 export function sentientProfession(value: unknown, factionId: NpcFactionId): ResidentProfession {
   if (isResidentProfession(value)) return value;
   return factionId === "atlantians" ? "atlantian-tidewarden"
     : factionId === "sugarcourt" ? "sugarcourt-crown-confectioner"
+      : factionId === "wood-elves" ? "wood-elf-elderweaver"
+        : factionId === "dwarves" ? "dwarf-thane"
       : "general";
 }
 
@@ -354,7 +374,7 @@ export function normalizeApiaryUiState(state?: ApiaryHudState | null): ApiaryUiS
     royalJelly,
     royalJellyMax,
     productionProgress: normalizedProgress(state?.productionProgress ?? fallbackProgress),
-    slots: Array.from({ length: 3 }, (_, index) => state?.slots?.[index] ?? null),
+    slots: Array.from({ length: 11 }, (_, index) => state?.slots?.[index] ?? null),
   };
 }
 
@@ -506,6 +526,11 @@ export function resolveTouchControls(mode: TouchControlsMode, capabilities: Inpu
   return capabilities.coarsePrimary || (capabilities.hoverNone && !capabilities.anyFine);
 }
 
+/** Prevent the pointer event that opened a container from landing on a slot. */
+export function slotInteractionAllowed(readyAt: number, now = performance.now()) {
+  return now >= readyAt;
+}
+
 export type SingleFlightGate = { current: Promise<unknown> | null };
 
 export async function runSingleFlight<T>(gate: SingleFlightGate, operation: () => Promise<T>) {
@@ -591,6 +616,8 @@ const INITIAL_HUD: ExtendedHudState = {
   biome: "Flower Meadow",
   depth: "Surface",
   coordinates: [0, 0, 0],
+  mapHeading: 0,
+  mapPlayers: [],
   debug: false,
   mode: "survival",
   weather: "clear",
@@ -722,6 +749,10 @@ export function acceptsTextInput(target: EventTarget | null) {
   return isEditableKeyboardTarget(target);
 }
 
+export function shouldSuppressGameContextMenu(started: boolean, target: EventTarget | null) {
+  return started && !acceptsTextInput(target);
+}
+
 function questObjectiveTarget(objective: QuestObjective) {
   if (objective.kind === "survive-day") return objective.targetDay;
   if (objective.kind === "discover-town") return 1;
@@ -756,9 +787,10 @@ export function bestiaryKindsForFilter(filter: BestiaryFilter): MobKind[] {
     if (filter === "birds") return definition.family === "bird";
     if (filter === "butterflies") return definition.family === "butterfly";
     if (filter === "fish") return definition.family === "fish";
-    if (filter === "monsters") return definition.hostile || definition.family === "undead" || definition.family === "construct";
+    if (filter === "golems") return definition.family === "construct";
+    if (filter === "monsters") return definition.family !== "construct" && (definition.hostile || definition.family === "undead");
     if (filter === "companions") return Boolean(definition.tameable || definition.family === "pet");
-    return !definition.hostile && !["bird", "butterfly", "fish", "pet"].includes(definition.family ?? "surface");
+    return !definition.hostile && !["bird", "butterfly", "fish", "pet", "construct"].includes(definition.family ?? "surface");
   });
 }
 
@@ -809,6 +841,7 @@ function CreaturePortrait({ kind, seen, mini = false }: { kind: MobKind; seen: b
   return (
     <span
       className={`creature-render ${mini ? "creature-render-mini" : "creature-render-hero"} ${seen ? "seen" : "unknown"}`}
+      data-creature-kind={kind}
       style={{
         "--mob-color": `#${definition.colors[0].toString(16).padStart(6, "0")}`,
         "--mob-accent": `#${definition.colors[1].toString(16).padStart(6, "0")}`,
@@ -835,6 +868,97 @@ function disposePreviewObject(object: THREE.Object3D | null) {
   });
 }
 
+// Character previews used to allocate their own WebGL context. React's development
+// remounts and quick overlay transitions could briefly leave several of those
+// contexts alive, eventually evicting the actual game renderer. All previews now
+// take turns drawing through one off-screen renderer and copy the result into a
+// cheap 2D canvas. The delayed release also makes StrictMode remounts context-free.
+let sharedAvatarPreviewRenderer: THREE.WebGLRenderer | null = null;
+let sharedAvatarPreviewUsers = 0;
+let sharedAvatarPreviewReleaseTimer: ReturnType<typeof setTimeout> | null = null;
+let sharedAvatarPreviewUnavailable = false;
+
+function acquireAvatarPreviewRenderer() {
+  if (sharedAvatarPreviewReleaseTimer !== null) {
+    clearTimeout(sharedAvatarPreviewReleaseTimer);
+    sharedAvatarPreviewReleaseTimer = null;
+  }
+  sharedAvatarPreviewUsers += 1;
+  if (sharedAvatarPreviewRenderer || sharedAvatarPreviewUnavailable) return sharedAvatarPreviewRenderer;
+  try {
+    const surface = document.createElement("canvas");
+    const renderer = new THREE.WebGLRenderer({
+      canvas: surface,
+      alpha: true,
+      antialias: true,
+      powerPreference: "low-power",
+      preserveDrawingBuffer: true,
+    });
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
+    renderer.setClearColor(0x000000, 0);
+    sharedAvatarPreviewRenderer = renderer;
+  } catch (error) {
+    // A 2D avatar below keeps every menu usable even on hardware/browser
+    // configurations where no spare WebGL context can be allocated.
+    sharedAvatarPreviewUnavailable = true;
+    console.warn("Blockwild character preview is using its 2D fallback.", error);
+  }
+  return sharedAvatarPreviewRenderer;
+}
+
+function releaseAvatarPreviewRenderer() {
+  sharedAvatarPreviewUsers = Math.max(0, sharedAvatarPreviewUsers - 1);
+  if (sharedAvatarPreviewUsers > 0 || sharedAvatarPreviewReleaseTimer !== null) return;
+  sharedAvatarPreviewReleaseTimer = setTimeout(() => {
+    sharedAvatarPreviewReleaseTimer = null;
+    if (sharedAvatarPreviewUsers > 0 || !sharedAvatarPreviewRenderer) return;
+    sharedAvatarPreviewRenderer.dispose();
+    sharedAvatarPreviewRenderer.forceContextLoss();
+    sharedAvatarPreviewRenderer = null;
+  }, 750);
+}
+
+function drawAvatarPreviewFallback(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  variant: PlayerVariant,
+  appearance: PlayerEquipmentAppearance,
+  heldItem: ItemCode | undefined,
+) {
+  context.clearRect(0, 0, width, height);
+  const scale = Math.max(1, Math.min(width / 112, height / 180));
+  const centerX = width * 0.5;
+  const top = height * 0.09;
+  const fill = (color: THREE.ColorRepresentation | null | undefined, x: number, y: number, w: number, h: number) => {
+    context.fillStyle = color instanceof THREE.Color
+      ? `#${color.getHexString()}`
+      : typeof color === "number" ? `#${color.toString(16).padStart(6, "0")}` : color ?? "#777";
+    context.fillRect(Math.round(centerX + x * scale), Math.round(top + y * scale), Math.ceil(w * scale), Math.ceil(h * scale));
+  };
+  context.save();
+  context.translate(0.5, 0.5);
+  context.shadowColor = "rgba(21, 18, 15, .24)";
+  context.shadowBlur = 7 * scale;
+  context.shadowOffsetY = 4 * scale;
+  fill(variant === "female" ? "#171313" : "#4d3424", -25, 0, 50, variant === "female" ? 28 : 23);
+  fill("#bf815e", -22, 13, 44, 38);
+  fill(appearance.head, -26, 5, 52, 20);
+  fill(appearance.chest ?? (variant === "female" ? "#674f79" : "#557080"), -25, 52, 50, 56);
+  fill("#bf815e", -39, 55, 13, 59);
+  fill("#bf815e", 26, 55, 13, 59);
+  fill(appearance.legs ?? "#3a4652", -22, 108, 20, 51);
+  fill(appearance.legs ?? "#3a4652", 3, 108, 20, 51);
+  fill(appearance.feet ?? "#2f2823", -23, 157, 21, 13);
+  fill(appearance.feet ?? "#2f2823", 3, 157, 21, 13);
+  if (heldItem !== undefined) {
+    fill(ITEMS[heldItem]?.color ?? "#9b7c4a", 36, 78, 11, 50);
+  }
+  context.restore();
+}
+
 function PlayerAvatarPreview({
   variant,
   equipment,
@@ -855,10 +979,9 @@ function PlayerAvatarPreview({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, powerPreference: "low-power" });
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFShadowMap;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    const renderer = acquireAvatarPreviewRenderer();
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(compact ? 28 : 31, 1, 0.1, 20);
     camera.position.set(compact ? 1.9 : 2.65, compact ? 1.92 : 2.18, compact ? -3.25 : -4.3);
@@ -888,11 +1011,17 @@ function PlayerAvatarPreview({
 
     let previous = performance.now();
     let animationFrame = 0;
+    let width = 120;
+    let height = 150;
+    let pixelRatio = 1;
     const resize = () => {
-      const width = Math.max(120, Math.round(canvas.clientWidth));
-      const height = Math.max(150, Math.round(canvas.clientHeight));
-      renderer.setPixelRatio(Math.min(1.5, window.devicePixelRatio || 1));
-      renderer.setSize(width, height, false);
+      width = Math.max(120, Math.round(canvas.clientWidth));
+      height = Math.max(150, Math.round(canvas.clientHeight));
+      pixelRatio = Math.min(1.5, window.devicePixelRatio || 1);
+      canvas.width = Math.round(width * pixelRatio);
+      canvas.height = Math.round(height * pixelRatio);
+      renderer?.setPixelRatio(pixelRatio);
+      renderer?.setSize(width, height, false);
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
     };
@@ -904,7 +1033,19 @@ function PlayerAvatarPreview({
       previous = now;
       model.update(dt, { locomotion: "idle", headYaw: Math.sin(now * 0.0007) * 0.08 });
       model.group.rotation.y = -0.32 + Math.sin(now * 0.00035) * 0.045;
-      renderer.render(scene, camera);
+      if (renderer && !renderer.getContext().isContextLost()) {
+        try {
+          renderer.setPixelRatio(pixelRatio);
+          renderer.setSize(width, height, false);
+          renderer.render(scene, camera);
+          context.clearRect(0, 0, canvas.width, canvas.height);
+          context.drawImage(renderer.domElement, 0, 0, canvas.width, canvas.height);
+        } catch {
+          drawAvatarPreviewFallback(context, canvas.width, canvas.height, variant, appearance, heldItem);
+        }
+      } else {
+        drawAvatarPreviewFallback(context, canvas.width, canvas.height, variant, appearance, heldItem);
+      }
       animationFrame = requestAnimationFrame(render);
     };
     animationFrame = requestAnimationFrame(render);
@@ -916,7 +1057,7 @@ function PlayerAvatarPreview({
       model.dispose();
       floor.geometry.dispose();
       (floor.material as THREE.Material).dispose();
-      renderer.dispose();
+      releaseAvatarPreviewRenderer();
     };
   }, [variant, head, chest, legs, feet, heldItem, compact]);
 
@@ -930,6 +1071,25 @@ export function recipePreviewGrid(recipe: Recipe): Array<ItemCode | 0> {
     cells[y * 3 + x] = ingredient === 0 ? 0 : Array.isArray(ingredient) ? ingredient[0] : ingredient;
   }
   return cells;
+}
+
+export function recipeIngredientLabels(recipe: Recipe) {
+  return [...new Set(recipe.pattern.flatMap((ingredient) => {
+    if (ingredient === 0) return [];
+    const alternatives = Array.isArray(ingredient) ? ingredient : [ingredient];
+    return [alternatives.map((item) => ITEMS[item]?.name ?? "Unknown item").join(" or ")];
+  }))];
+}
+
+function recipePreviewLabels(recipe: Recipe): Array<string | null> {
+  const labels = Array.from({ length: 9 }, () => null as string | null);
+  for (let y = 0; y < recipe.height; y += 1) for (let x = 0; x < recipe.width; x += 1) {
+    const ingredient = recipe.pattern[y * recipe.width + x];
+    if (ingredient === 0) continue;
+    const alternatives = Array.isArray(ingredient) ? ingredient : [ingredient];
+    labels[y * 3 + x] = alternatives.map((item) => ITEMS[item]?.name ?? "Unknown item").join(" or ");
+  }
+  return labels;
 }
 
 export function recipeMatchesQuery(recipe: Recipe, query: string) {
@@ -1015,6 +1175,7 @@ export default function VoxelGame() {
   const lookPointerRef = useRef<{ id: number; x: number; y: number } | null>(null);
   const activePetDraftIdRef = useRef<number | null>(null);
   const multiplayerFlightRef = useRef<Promise<unknown> | null>(null);
+  const slotInteractionReadyAtRef = useRef(0);
 
   const [overlay, setOverlayState] = useState<Overlay>("title");
   const [started, setStarted] = useState(false);
@@ -1054,6 +1215,7 @@ export default function VoxelGame() {
   const [selectedAlchemyRecipe, setSelectedAlchemyRecipe] = useState<string | null>(null);
   const [selectedDistilleryRecipe, setSelectedDistilleryRecipe] = useState<string | null>(null);
   const [selectedSugarworksRecipe, setSelectedSugarworksRecipe] = useState<string | null>(null);
+  const [selectedGolemType, setSelectedGolemType] = useState<GolemType>("copper-scout");
   const [hirelingNameDraft, setHirelingNameDraft] = useState("");
   const [multiplayerName, setMultiplayerName] = useState("Trailkeeper");
   const [multiplayerRoomCode, setMultiplayerRoomCode] = useState("");
@@ -1154,6 +1316,7 @@ export default function VoxelGame() {
             return;
           }
           if (kind === "inventory" || kind === "crafting") setInventoryTab(kind === "inventory" ? "inventory" : "recipes");
+          if (["inventory", "crafting", "furnace", "chest", "apiary", "orb-rack", "healing-station", "waygrid-items", "waygrid-creatures"].includes(kind)) slotInteractionReadyAtRef.current = performance.now() + 180;
           setOverlay(kind as Overlay);
         },
         onDeath: () => undefined,
@@ -1163,6 +1326,22 @@ export default function VoxelGame() {
           setSavedPulse(true);
           window.setTimeout(() => setSavedPulse(false), 1300);
         },
+        onMultiplayerEnded: (reason) => {
+          window.queueMicrotask(() => {
+            if (engineRef.current !== engine) return;
+            clearFirstPersonHeldPresentation(engine);
+            engine.quitToTitle();
+            engine.previewWorld("WILDERNESS");
+            startedRef.current = false;
+            setStarted(false);
+            activeWorldIdRef.current = null;
+            setMultiplayerState(EMPTY_MULTIPLAYER_STATE);
+            setMultiplayerRoomCode("");
+            setOverlay("title");
+            showToast(reason);
+          });
+        },
+        onRendererState: (lost) => setWebglError(lost),
       }, settings);
     } catch {
       window.queueMicrotask(() => setWebglError(true));
@@ -1256,7 +1435,7 @@ export default function VoxelGame() {
       const current = overlayRef.current;
       const engine = engineRef.current;
       if (acceptsTextInput(event.target) && event.code !== "Escape") return;
-      if (event.code === "KeyE" && ["inventory", "crafting", "furnace", "chest", "apiary", "orb-rack", "healing-station", "pet"].includes(current ?? "")) {
+      if (event.code === "KeyE" && ["inventory", "crafting", "furnace", "chest", "apiary", "orb-rack", "healing-station", "waygrid-items", "waygrid-creatures", "pet"].includes(current ?? "")) {
         event.preventDefault();
         event.stopImmediatePropagation();
         engine?.closeContainer();
@@ -1274,7 +1453,7 @@ export default function VoxelGame() {
         return;
       }
       if (current !== null) {
-        if (["inventory", "crafting", "furnace", "chest", "apiary", "orb-rack", "healing-station", "pet", "dragon", "library", "incubator"].includes(current)) engine?.closeContainer();
+        if (["inventory", "crafting", "furnace", "chest", "apiary", "orb-rack", "healing-station", "waygrid-items", "waygrid-creatures", "pet", "dragon", "library", "incubator"].includes(current)) engine?.closeContainer();
         if (startedRef.current) {
           if (current === "pause") { setOverlay(null); engine?.activate(); }
           else if (current === "settings" || current === "help" || current === "bestiary" || current === "multiplayer") setOverlay("pause");
@@ -1609,6 +1788,7 @@ export default function VoxelGame() {
       setMultiplayerState((current) => ({ ...current, error: "One-code joining is unavailable in this engine build. Use Advanced direct connection below." }));
       return;
     }
+    engineRef.current?.setPlayerVariant(playerVariant);
     try {
       const flight = await runMultiplayerAction(() => api.joinMultiplayerRoom!(roomCode, multiplayerName.trim() || "Trailkeeper"));
       if (!flight.started) return;
@@ -1641,6 +1821,7 @@ export default function VoxelGame() {
       setMultiplayerState((current) => ({ ...current, error: "Joining is unavailable in this engine build." }));
       return;
     }
+    engineRef.current?.setPlayerVariant(playerVariant);
     try {
       const result = await runMultiplayerAction(() => Promise.resolve(api.joinMultiplayer!(inviteCode, multiplayerName.trim() || "Trailkeeper")));
       if (!result.started) return;
@@ -1679,12 +1860,24 @@ export default function VoxelGame() {
       return;
     }
     try {
+      const wasGuest = multiplayerState.role === "guest";
       const result = await runMultiplayerAction(() => Promise.resolve(api.disconnectMultiplayer!()));
       if (!result.started) return;
       setMultiplayerState(EMPTY_MULTIPLAYER_STATE);
       setMultiplayerRoomCode("");
       setMultiplayerInvite("");
       setMultiplayerAnswer("");
+      if (wasGuest && engineRef.current) {
+        clearFirstPersonHeldPresentation(engineRef.current);
+        engineRef.current.quitToTitle();
+        engineRef.current.previewWorld("WILDERNESS");
+        startedRef.current = false;
+        setStarted(false);
+        activeWorldIdRef.current = null;
+        setOverlay("title");
+        showToast("Left the host's world. Your local world catalog was not changed.");
+        return;
+      }
       refreshMultiplayerState();
     } catch (error) {
       setMultiplayerState((current) => ({ ...current, error: formatMultiplayerError(error) }));
@@ -1731,7 +1924,11 @@ export default function VoxelGame() {
   const trackCursor = (event: ReactPointerEvent<HTMLElement>) => setCursorPosition({ x: event.clientX, y: event.clientY });
 
   const slotAction = (index: number, button: "left" | "right", shift = false) => engineRef.current?.inventoryClick(index, button, shift);
-  const slotContext = (event: ReactMouseEvent, action: () => void) => { event.preventDefault(); action(); };
+  const slotContext = (event: ReactMouseEvent, action: () => void) => {
+    event.preventDefault();
+    if (!slotInteractionAllowed(slotInteractionReadyAtRef.current)) return;
+    action();
+  };
 
   const renderSlot = (
     slot: InventorySlot | null,
@@ -1748,6 +1945,7 @@ export default function VoxelGame() {
       title={itemHoverText(slot, label)}
       aria-label={slot ? `${itemHoverText(slot)}, ${slot.count}` : label ?? "Empty slot"}
       onClick={(event) => {
+        if (!slotInteractionAllowed(slotInteractionReadyAtRef.current)) return;
         if (event.detail >= 2) engineRef.current?.collectMatching(slot?.item ?? hud.cursor?.item);
         else onLeft(event.shiftKey);
       }}
@@ -1790,7 +1988,7 @@ export default function VoxelGame() {
               <div className="apiary-queen-copy"><small>QUEEN</small><strong>{apiary.queenName}</strong><span>{apiary.queenPresent ? "The colony is organized and able to produce." : "Add a Queen Cell to wake this apiary."}</span></div>
               <div className="workstation-transfer-slot">
                 {renderSlot(apiary.slots[0], "apiary-queen-slot", (shift) => workstationClick("apiary", 0, "left", shift), () => workstationClick("apiary", 0, "right"), "machine-slot", "Queen cell")}
-                <small>QUEEN CELL</small>
+                <small>QUEEN · ORB / CELL</small>
               </div>
             </section>
 
@@ -1798,6 +1996,16 @@ export default function VoxelGame() {
               <div className="apiary-section-heading"><span><small>WORKER FLIGHT</small><strong>{apiary.workerCount}/{apiary.maxWorkers}</strong></span><em>{apiary.workerCount === apiary.maxWorkers ? "FULL COLONY" : `${apiary.maxWorkers - apiary.workerCount} OPEN`}</em></div>
               <div className="worker-honeycomb" aria-hidden="true">
                 {Array.from({ length: apiary.maxWorkers }, (_, index) => <span key={index} className={index < apiary.workerCount ? "active" : ""}><i /></span>)}
+              </div>
+              <div className="apiary-worker-slots" aria-label="Friendly worker bee transfer slots">
+                {Array.from({ length: apiary.maxWorkers }, (_, index) => renderSlot(
+                  apiary.slots[index + 3] ?? null,
+                  `apiary-worker-${index}`,
+                  (shift) => workstationClick("apiary", index + 3, "left", shift),
+                  () => workstationClick("apiary", index + 3, "right"),
+                  "machine-slot apiary-worker-slot",
+                  `Worker bee ${index + 1}`,
+                ))}
               </div>
               <div className="nectar-return-status"><span className="nectar-drop" aria-hidden="true" /><div><small>NECTAR RETURN</small><strong>{apiary.nectarStatus}</strong></div></div>
             </section>
@@ -1883,6 +2091,8 @@ export default function VoxelGame() {
     const filtered = RECIPES.filter((recipe) => recipeMatchesQuery(recipe, recipeQuery));
     const preview = filtered.find((recipe) => recipe.id === previewRecipeId) ?? filtered[0] ?? null;
     const previewCells = preview ? recipePreviewGrid(preview) : [];
+    const previewLabels = preview ? recipePreviewLabels(preview) : [];
+    const ingredientLabels = preview ? recipeIngredientLabels(preview) : [];
     return (
       <aside className="recipe-book">
         <div className="recipe-book-title"><span aria-hidden="true">▤</span><strong>RECIPE BOOK</strong><small>{filtered.length}/{RECIPES.length}</small></div>
@@ -1898,11 +2108,12 @@ export default function VoxelGame() {
               <div className="recipe-preview-copy"><strong>{preview.name}</strong><small>{preview.mirrored ? "Either left or right orientation" : `${preview.width}×${preview.height} shaped recipe`}</small></div>
               <div className="recipe-preview-row">
                 <div className="recipe-preview-grid" aria-label={`${preview.name} crafting pattern`}>
-                  {previewCells.map((item, index) => <span key={index} className="recipe-preview-slot">{item !== 0 && <ItemIcon item={item} small />}</span>)}
+                  {previewCells.map((item, index) => <span key={index} className="recipe-preview-slot" title={previewLabels[index] ?? undefined} aria-label={previewLabels[index] ?? "Empty crafting slot"}>{item !== 0 && <ItemIcon item={item} small />}</span>)}
                 </div>
                 <span className="recipe-preview-arrow" aria-hidden="true" />
                 <span className="recipe-preview-output"><ItemIcon item={preview.output.item} /><b>{preview.output.count}</b></span>
               </div>
+              <div className="recipe-preview-ingredients"><small>NEEDS</small><span>{ingredientLabels.join(" · ")}</span></div>
             </>
           ) : <div className="recipe-empty-search"><strong>No matching recipes</strong><small>Try an item or material name.</small></div>}
         </div>
@@ -2009,15 +2220,23 @@ export default function VoxelGame() {
   const alchemyState = hud.activeAlchemy ? { ...hud.activeAlchemy, selectedRecipeId: selectedAlchemyRecipe ?? hud.activeAlchemy.selectedRecipeId } : null;
   const distilleryState = hud.activeDistillery ? { ...hud.activeDistillery, selectedRecipeId: selectedDistilleryRecipe ?? hud.activeDistillery.selectedRecipeId } : null;
   const sugarworksState = hud.activeSugarworks ? { ...hud.activeSugarworks, selectedRecipeId: selectedSugarworksRecipe ?? hud.activeSugarworks.selectedRecipeId } : null;
-  const pinnedQuestDefinition = hud.questDefinitions.find((quest) => quest.id === hud.questBook.pinnedQuestId) ?? null;
-  const pinnedQuestProgress = pinnedQuestDefinition
-    ? hud.questBook.active.find((quest) => quest.questId === pinnedQuestDefinition.id) ?? null
-    : null;
+  const pinnedQuestEntries = (hud.questBook.pinnedQuestIds ?? (hud.questBook.pinnedQuestId ? [hud.questBook.pinnedQuestId] : []))
+    .slice(0, 3)
+    .flatMap((questId) => {
+      const definition = hud.questDefinitions.find((quest) => quest.id === questId);
+      if (!definition) return [];
+      return [{ definition, progress: hud.questBook.active.find((quest) => quest.questId === questId) ?? null }];
+    });
   const selectedWorld = worlds.find((world) => world.id === selectedWorldId) ?? null;
   const cameraLabel = hud.cameraMode === "first" ? "FIRST PERSON" : hud.cameraMode === "third-rear" ? "THIRD PERSON · REAR" : "THIRD PERSON · FRONT";
 
   return (
-    <main className={`game-shell ${showTouchControls ? "touch-controls-active" : ""}`}>
+    <main
+      className={`game-shell ${showTouchControls ? "touch-controls-active" : ""}`}
+      onContextMenu={(event) => {
+        if (shouldSuppressGameContextMenu(started, event.target)) event.preventDefault();
+      }}
+    >
       <canvas ref={canvasRef} className="game-canvas" aria-label="Blockwild endless 3D game world" />
       <div className="sky-vignette" aria-hidden="true" />
 
@@ -2030,23 +2249,25 @@ export default function VoxelGame() {
             <span className="depth-readout">{hud.depth}</span>
             <span className={`weather-readout weather-${hud.weatherKind}`}>{hud.weatherKind.replace(/-/g, " ").toUpperCase()}</span>
           </div>
-          {pinnedQuestDefinition ? (
-            <button type="button" className="objective-card pinned-quest-card" onClick={() => engineRef.current?.openOverlay("quests")} aria-label={`Open pinned quest ${pinnedQuestDefinition.name}`}>
-              <span className="objective-kicker">PINNED QUEST · {pinnedQuestDefinition.kind.toUpperCase()}</span>
-              <strong>{pinnedQuestDefinition.name}</strong>
-              <span>{pinnedQuestDefinition.objectives.map((objective) => {
-                const target = questObjectiveTarget(objective);
-                const progress = pinnedQuestProgress?.objectiveProgress[objective.id] ?? 0;
-                return `${progress >= target ? "✓" : "○"} ${objective.label} ${Math.min(progress, target)}/${target}`;
-              }).join(" · ")}</span>
-            </button>
-          ) : (
-            <button type="button" className="objective-card pinned-quest-card unpinned" onClick={() => engineRef.current?.openOverlay("quests")}>
-              <span className="objective-kicker">JOURNAL · J</span>
-              <strong>No quest pinned</strong>
-              <span>Open the journal to choose the road shown here.</span>
-            </button>
-          )}
+          <div className="pinned-quest-stack" aria-label={`${pinnedQuestEntries.length} pinned quests`}>
+            {pinnedQuestEntries.length ? pinnedQuestEntries.map(({ definition, progress }, index) => (
+              <button type="button" key={definition.id} className="objective-card pinned-quest-card" onClick={() => engineRef.current?.openOverlay("quests")} aria-label={`Open pinned quest ${definition.name}`}>
+                <span className="objective-kicker">PIN {index + 1}/3 · {definition.kind.toUpperCase()}</span>
+                <strong>{definition.name}</strong>
+                <span>{definition.objectives.map((objective) => {
+                  const target = questObjectiveTarget(objective);
+                  const current = progress?.objectiveProgress[objective.id] ?? 0;
+                  return `${current >= target ? "✓" : "○"} ${objective.label} ${Math.min(current, target)}/${target}`;
+                }).join(" · ")}</span>
+              </button>
+            )) : (
+              <button type="button" className="objective-card pinned-quest-card unpinned" onClick={() => engineRef.current?.openOverlay("quests")}>
+                <span className="objective-kicker">JOURNAL · J</span>
+                <strong>No quest pinned</strong>
+                <span>Open the journal to choose up to three roads.</span>
+              </button>
+            )}
+          </div>
           <button type="button" className="hud-fullscreen-button" onClick={() => engineRef.current?.toggleFullscreen()} aria-label={hud.fullscreen ? "Exit fullscreen" : "Enter fullscreen"}>{hud.fullscreen ? "⊡" : "□"}</button>
           <div className="stance-hud" aria-label={`Camera ${cameraLabel}; ${hud.crouching ? "crouching" : hud.sprinting ? "sprinting" : "standing"}`}>
             <span><kbd>V</kbd><strong>{cameraLabel}</strong></span>
@@ -2269,7 +2490,13 @@ export default function VoxelGame() {
                         }))}
                       >
                         <span>{faction.name}</span>
-                        <small>{faction.aquaticOnly ? "Aquatic settlements" : factionId === "sugarcourt" ? "Sugarplum Vale boroughs" : "Surface settlements"}</small>
+                        <small>{faction.aquaticOnly
+                          ? "Aquatic settlements"
+                          : factionId === "sugarcourt"
+                            ? "Sugarplum Vale boroughs"
+                            : factionId === "dwarves"
+                              ? "Subterranean mountain holds"
+                              : "Surface settlements"}</small>
                         <b>{enabled ? "SPAWNS" : "DISABLED"}</b>
                       </button>
                     );
@@ -2409,7 +2636,7 @@ export default function VoxelGame() {
             onSelectSpell={(spellId) => { engineRef.current?.selectMagicSpell(spellId); }}
             onToggleFavorite={(spellId) => { engineRef.current?.toggleMagicFavorite(spellId); }}
             onUnlockPerk={(perkId) => { engineRef.current?.unlockSkillPerk(perkId); }}
-            onToggleAscendant={(enabled) => { engineRef.current?.toggleAscendantHealthFloor(enabled); }}
+            onToggleAscendant={(enabled, skillId) => { engineRef.current?.toggleAscendantTrait(skillId, enabled); }}
           />
         </section>
       )}
@@ -2526,12 +2753,60 @@ export default function VoxelGame() {
       {overlay === "apiary" && renderApiaryPanel(hud.activeApiary)}
       {overlay === "orb-rack" && renderOrbStationPanel("orb-rack", hud.activeOrbRack)}
       {overlay === "healing-station" && renderOrbStationPanel("healing-station", hud.activeHealingStation)}
+      {overlay === "waygrid-items" && (
+        <div onPointerMove={trackCursor}>
+          <WaygridItemPanel
+            entries={hud.activeWaygridItems?.entries ?? []}
+            utilization={hud.activeWaygridItems?.utilization ?? { used: 0, capacity: 0, percentage: 0, label: "0/0" }}
+            cellCounts={hud.activeWaygridItems?.cellCounts ?? [0, 0, 0]}
+            onClose={resume}
+            onDepositSelected={() => { engineRef.current?.depositSelectedIntoWaygrid("items"); }}
+            onWithdraw={(signature, count) => { engineRef.current?.withdrawWaygridItem(signature, count); }}
+            inventory={renderPlayerInventory()}
+          />
+          {hud.cursor && <div className="held-stack" style={{ left: cursorPosition.x, top: cursorPosition.y }}><SlotContents slot={hud.cursor} /></div>}
+        </div>
+      )}
+      {overlay === "waygrid-creatures" && (
+        <div onPointerMove={trackCursor}>
+          <WaygridCreaturePanel
+            entries={hud.activeWaygridCreatures?.entries ?? []}
+            utilization={hud.activeWaygridCreatures?.utilization ?? { used: 0, capacity: 0, percentage: 0, label: "0/0" }}
+            cellCounts={hud.activeWaygridCreatures?.cellCounts ?? [0, 0, 0]}
+            healProgress={hud.activeWaygridCreatures?.healProgress ?? 0}
+            onClose={resume}
+            onDepositSelected={() => { engineRef.current?.depositSelectedIntoWaygrid("creatures"); }}
+            onWithdraw={(orbId) => { engineRef.current?.withdrawWaygridCreature(orbId); }}
+            renderPortrait={(kind) => <CreaturePortrait kind={kind as MobKind} seen mini />}
+            inventory={renderPlayerInventory()}
+          />
+          {hud.cursor && <div className="held-stack" style={{ left: cursorPosition.x, top: cursorPosition.y }}><SlotContents slot={hud.cursor} /></div>}
+        </div>
+      )}
+
+      {overlay === "golem-forge" && hud.activeGolemForge && (
+        <section className="menu-overlay golem-forge-overlay" aria-label="Golem Forge">
+          <GolemForgePanel
+            state={hud.activeGolemForge}
+            inventory={hud.golemForgeResources ?? {}}
+            selectedType={selectedGolemType}
+            availablePlayerMana={hud.golemForgeAvailableMana ?? 0}
+            onSelectType={setSelectedGolemType}
+            onChargeMana={(amount) => { engineRef.current?.chargeActiveGolemForge(amount); }}
+            onStart={(type) => { engineRef.current?.startActiveGolemForge(type); }}
+            onClaim={(index) => { engineRef.current?.claimActiveGolemForge(index); }}
+            onClose={resume}
+          />
+        </section>
+      )}
 
       {(overlay === "map" || overlay === "cartography") && (
         <section className="menu-overlay hearthroads-overlay" aria-label="World map">
           <MapPanel
             knowledge={hud.mapKnowledge}
             currentPosition={currentPosition}
+            currentHeadingRadians={hud.mapHeading}
+            otherPlayers={hud.mapPlayers}
             selectedMarkerId={selectedMapMarkerId}
             onSelectMarker={setSelectedMapMarkerId}
             onAddManualMarker={(name) => { hearthroadsApi?.addManualMapMarker?.(name); }}

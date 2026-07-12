@@ -2,6 +2,7 @@ export const QUEST_BOOK_SCHEMA = 1 as const;
 export const MAX_ACTIVE_QUESTS = 128;
 export const MAX_QUEST_HISTORY = 2_048;
 export const MAX_FACTION_ALIGNMENT = 10_000;
+export const MAX_PINNED_QUESTS = 3;
 
 export type QuestKind = "main" | "side";
 export type QuestProgressStatus = "active" | "ready";
@@ -68,6 +69,8 @@ export type QuestBook = Readonly<{
   completed: readonly string[];
   failed: readonly FailedQuest[];
   abandoned: readonly string[];
+  /** Up to three HUD pins. `pinnedQuestId` remains a save/UI compatibility alias for the first pin. */
+  pinnedQuestIds: readonly string[];
   pinnedQuestId: string | null;
   factionAlignment: Readonly<Record<string, number>>;
 }>;
@@ -220,6 +223,9 @@ export const ATLANTIAN_FACTION_QUESTS: readonly QuestDefinition[] = Object.freez
     name: "The Light Below",
     summary: "Find the patient lights of an Atlantian tidehold beneath the open sea.",
     objectives: [{ id: "discover-atlantian-town", label: "Discover an Atlantian settlement", kind: "discover-town", factionId: "atlantians" }],
+    // Static discovery quests are accepted from the journal, never bound to a
+    // transient resident id. This keeps old partially active saves pinnable.
+    giver: null,
     rewards: { gold: 20, items: [{ itemId: "glowmender-salve", count: 1 }], blueprints: [], factionAlignment: { atlantians: 5 } },
     abandonable: true,
     reacceptAfterAbandon: true,
@@ -264,6 +270,88 @@ export const SUGARCOURT_FACTION_QUESTS: readonly QuestDefinition[] = Object.free
   },
 ] as readonly QuestDefinition[]);
 
+export const WOOD_ELF_FACTION_QUESTS: readonly QuestDefinition[] = Object.freeze([
+  {
+    id: "wood-elf-under-living-light", questlineId: "wood-elf-moonbough-oaths", kind: "side", name: "Under Living Light",
+    summary: "Find a Moonbough Enclave where Glimmerwood paths continue to glow after sunset.",
+    objectives: [{ id: "discover-wood-elf-town", label: "Discover a Wood Elf settlement", kind: "discover-town", factionId: "wood-elves" }],
+    giver: null,
+    rewards: { gold: 28, items: [{ itemId: "moonpetal", count: 4 }], blueprints: [], factionAlignment: { "wood-elves": 5 } },
+    abandonable: true, reacceptAfterAbandon: true,
+  },
+  {
+    id: "wood-elf-leaves-remember", questlineId: "wood-elf-moonbough-oaths", kind: "side", name: "The Leaves Remember",
+    summary: "Help a Leafwarden preserve the enclave without cutting down the thing it protects.",
+    objectives: [{ id: "defend-enclave", label: "Defend a Moonbough Enclave", kind: "custom", eventId: "wood-elf-enclave-defended", count: 1 }],
+    prerequisites: { allOf: ["wood-elf-under-living-light"] }, giver: { role: "wood-elf-leafwarden", factionId: "wood-elves", failOnDeath: true },
+    rewards: { gold: 86, items: [{ itemId: "tome-verdant-volley", count: 1 }], blueprints: ["glimmerbow"], factionAlignment: { "wood-elves": 10 } },
+    abandonable: true, reacceptAfterAbandon: true,
+  },
+  {
+    id: "wood-elf-moonwell-constellations", questlineId: "wood-elf-moonbough-oaths", kind: "side", name: "Constellations in the Well",
+    summary: "Bring luminous ingredients to a Potioner so the Moonwell can reflect a clear sky even beneath leaves.",
+    objectives: [
+      { id: "deliver-moonpetals", label: "Deliver 8 Moonpetals", kind: "deliver-item", itemId: "moonpetal", count: 8 },
+      { id: "deliver-starfern", label: "Deliver 6 Starfern Fronds", kind: "deliver-item", itemId: "starfern", count: 6 },
+    ],
+    prerequisites: { allOf: ["wood-elf-under-living-light"] }, giver: { role: "wood-elf-potioner", factionId: "wood-elves", failOnDeath: true },
+    rewards: { gold: 72, items: [{ itemId: "moonstep-elixir", count: 2 }], blueprints: ["moonstep", "verdant-renewal"], factionAlignment: { "wood-elves": 8 } },
+    abandonable: true, reacceptAfterAbandon: true,
+  },
+] as readonly QuestDefinition[]);
+
+export const DWARF_FACTION_QUESTS: readonly QuestDefinition[] = Object.freeze([
+  {
+    id: "dwarf-lantern-in-snow", questlineId: "dwarf-deepgear-oaths", kind: "side", name: "A Lantern in the Snow",
+    summary: "Find a guarded Deepgear entrance and follow its bright lanterns into the mountain.",
+    objectives: [{ id: "discover-dwarf-town", label: "Discover a Dwarven settlement", kind: "discover-town", factionId: "dwarves" }],
+    giver: null,
+    rewards: { gold: 30, items: [{ itemId: "deepgear-lantern", count: 1 }], blueprints: [], factionAlignment: { dwarves: 5 } },
+    abandonable: true, reacceptAfterAbandon: true,
+  },
+  {
+    id: "dwarf-first-spark", questlineId: "dwarf-deepgear-oaths", kind: "side", name: "The First Useful Spark",
+    summary: "Learn a golem's real cost: a proven blueprint, prepared materials, patient assembly, and mana committed at finalization.",
+    objectives: [{ id: "forge-copper-scout", label: "Complete a Copper Scout at a Golem Forge", kind: "custom", eventId: "golem-copper-scout-completed", count: 1 }],
+    prerequisites: { allOf: ["dwarf-lantern-in-snow"] }, giver: { role: "dwarf-golemsmith", factionId: "dwarves", failOnDeath: true },
+    rewards: { gold: 110, items: [{ itemId: "gear-cluster", count: 4 }], blueprints: ["golem-stone-bulwark"], factionAlignment: { dwarves: 11 } },
+    abandonable: true, reacceptAfterAbandon: true,
+  },
+  {
+    id: "dwarf-smoke-and-measure", questlineId: "dwarf-deepgear-oaths", kind: "side", name: "Smoke and Measure",
+    summary: "Prove that a flintlock is a measured tool by learning its plan and striking a hostile creature at range.",
+    objectives: [
+      { id: "unlock-flintlock", label: "Learn the Deepgear Flintlock blueprint", kind: "custom", eventId: "blueprint-flintlock-pistol-unlocked", count: 1 },
+      { id: "flintlock-hit", label: "Hit a hostile creature with a flintlock", kind: "custom", eventId: "flintlock-hostile-hit", count: 1 },
+    ],
+    prerequisites: { allOf: ["dwarf-lantern-in-snow"] }, giver: { role: "dwarf-powderwright", factionId: "dwarves", failOnDeath: true },
+    rewards: { gold: 95, items: [{ itemId: "lead-ball", count: 24 }], blueprints: [], factionAlignment: { dwarves: 8 } },
+    abandonable: true, reacceptAfterAbandon: true,
+  },
+] as readonly QuestDefinition[]);
+
+export const SEA_DRAGON_QUESTS: readonly QuestDefinition[] = Object.freeze([
+  {
+    id: "sea-dragon-pressure-lines", questlineId: "sea-dragon-deep-current", kind: "side", name: "Pressure Lines",
+    summary: "Use an Atlantian chart or your own deep-sea exploration to locate a Sea Dragon nest.",
+    objectives: [{ id: "discover-sea-nest", label: "Discover a Sea Dragon nest", kind: "custom", eventId: "sea-dragon-nest-discovered", count: 1 }],
+    prerequisites: { allOf: ["atlantian-light-below"] }, giver: null,
+    rewards: { gold: 130, items: [{ itemId: "water-breathing-potion", count: 2 }], blueprints: [], factionAlignment: { atlantians: 6 } },
+    abandonable: true, reacceptAfterAbandon: true,
+  },
+  {
+    id: "sea-dragon-tidebound-hatchling", questlineId: "sea-dragon-deep-current", kind: "side", name: "Tidebound Hatchling",
+    summary: "Hatch a Sea Dragon egg beneath water and form a patient bond before it grows large enough to ride.",
+    objectives: [
+      { id: "hatch-sea-dragon", label: "Hatch a Sea Dragon egg", kind: "custom", eventId: "sea-dragon-hatched", count: 1 },
+      { id: "tame-sea-dragon", label: "Tame the Sea Dragon hatchling", kind: "custom", eventId: "sea-dragon-tamed", count: 1 },
+    ],
+    prerequisites: { allOf: ["sea-dragon-pressure-lines", "main-dragonwake-attunement"] },
+    rewards: { gold: 260, items: [{ itemId: "dragon-meal", count: 4 }], blueprints: ["dragon-husbandry"], factionAlignment: { atlantians: 12 } },
+    abandonable: true, reacceptAfterAbandon: true,
+  },
+] as readonly QuestDefinition[]);
+
 export const HEARTHROADS_QUESTLINES: readonly QuestlineDefinition[] = Object.freeze([
   {
     id: "hearthroads-main",
@@ -298,11 +386,38 @@ export const DRAGONWAKE_QUESTLINE: QuestlineDefinition = Object.freeze({
   questIds: DRAGONWAKE_SIDE_QUESTS.map((quest) => quest.id),
 });
 
+export const WOOD_ELF_QUESTLINE: QuestlineDefinition = Object.freeze({
+  id: "wood-elf-moonbough-oaths",
+  name: "Moonbough Oaths",
+  description: "A quiet faction line about living magic, luminous stewardship, and defending an enclave without consuming it.",
+  kind: "side",
+  questIds: WOOD_ELF_FACTION_QUESTS.map((quest) => quest.id),
+});
+
+export const DWARF_QUESTLINE: QuestlineDefinition = Object.freeze({
+  id: "dwarf-deepgear-oaths",
+  name: "Deepgear Oaths",
+  description: "A mountain faction line about safe galleries, measured powder, and mana committed to useful constructs.",
+  kind: "side",
+  questIds: DWARF_FACTION_QUESTS.map((quest) => quest.id),
+});
+
+export const SEA_DRAGON_QUESTLINE: QuestlineDefinition = Object.freeze({
+  id: "sea-dragon-deep-current",
+  name: "The Deep Current",
+  description: "Atlantian-assisted fieldwork around rare Sea Dragon nests, underwater hatching, and tidebound husbandry.",
+  kind: "side",
+  questIds: SEA_DRAGON_QUESTS.map((quest) => quest.id),
+});
+
 export const DEFAULT_QUEST_DEFINITIONS: readonly QuestDefinition[] = Object.freeze([
   ...HEARTHROADS_MAIN_QUESTS,
   ...ATLANTIAN_FACTION_QUESTS,
   ...SUGARCOURT_FACTION_QUESTS,
   ...DRAGONWAKE_SIDE_QUESTS,
+  ...WOOD_ELF_FACTION_QUESTS,
+  ...DWARF_FACTION_QUESTS,
+  ...SEA_DRAGON_QUESTS,
 ]);
 
 export const DEFAULT_QUESTLINES: readonly QuestlineDefinition[] = Object.freeze([
@@ -310,10 +425,13 @@ export const DEFAULT_QUESTLINES: readonly QuestlineDefinition[] = Object.freeze(
   ATLANTIAN_QUESTLINE,
   SUGARCOURT_QUESTLINE,
   DRAGONWAKE_QUESTLINE,
+  WOOD_ELF_QUESTLINE,
+  DWARF_QUESTLINE,
+  SEA_DRAGON_QUESTLINE,
 ]);
 
 export function createQuestBook(): QuestBook {
-  return { schema: QUEST_BOOK_SCHEMA, active: [], completed: [], failed: [], abandoned: [], pinnedQuestId: null, factionAlignment: {} };
+  return { schema: QUEST_BOOK_SCHEMA, active: [], completed: [], failed: [], abandoned: [], pinnedQuestIds: [], pinnedQuestId: null, factionAlignment: {} };
 }
 
 function normalizeActiveQuest(value: unknown): ActiveQuest | null {
@@ -366,8 +484,11 @@ export function normalizeQuestBook(value: unknown): QuestBook {
     }
   }
   const active = [...activeById.values()];
-  const pinnedQuestId = typeof input.pinnedQuestId === "string" && activeById.has(input.pinnedQuestId) ? input.pinnedQuestId : null;
-  return { schema: QUEST_BOOK_SCHEMA, active, completed, failed: [...failedById.values()], abandoned, pinnedQuestId, factionAlignment };
+  const legacyPin = typeof input.pinnedQuestId === "string" ? input.pinnedQuestId : null;
+  const requestedPins = Array.isArray(input.pinnedQuestIds) ? input.pinnedQuestIds : legacyPin ? [legacyPin] : [];
+  const pinnedQuestIds = [...new Set(requestedPins.map(cleanId).filter((questId) => activeById.has(questId)))].slice(0, MAX_PINNED_QUESTS);
+  const pinnedQuestId = pinnedQuestIds[0] ?? null;
+  return { schema: QUEST_BOOK_SCHEMA, active, completed, failed: [...failedById.values()], abandoned, pinnedQuestIds, pinnedQuestId, factionAlignment };
 }
 
 function definitionsById(definitions: readonly QuestDefinition[]) {
@@ -436,8 +557,19 @@ export function acceptQuest(
 
 export function pinQuest(book: QuestBook, questId: string | null) {
   const normalized = normalizeQuestBook(book);
-  if (questId === null) return { ...normalized, pinnedQuestId: null };
-  return normalized.active.some((quest) => quest.questId === questId) ? { ...normalized, pinnedQuestId: questId } : normalized;
+  if (questId === null) return { ...normalized, pinnedQuestIds: [], pinnedQuestId: null };
+  if (!normalized.active.some((quest) => quest.questId === questId) || normalized.pinnedQuestIds.includes(questId) || normalized.pinnedQuestIds.length >= MAX_PINNED_QUESTS) return normalized;
+  const pinnedQuestIds = [...normalized.pinnedQuestIds, questId];
+  return { ...normalized, pinnedQuestIds, pinnedQuestId: pinnedQuestIds[0] ?? null };
+}
+
+export function togglePinnedQuest(book: QuestBook, questId: string) {
+  const normalized = normalizeQuestBook(book);
+  if (normalized.pinnedQuestIds.includes(questId)) {
+    const pinnedQuestIds = normalized.pinnedQuestIds.filter((id) => id !== questId);
+    return { ...normalized, pinnedQuestIds, pinnedQuestId: pinnedQuestIds[0] ?? null };
+  }
+  return pinQuest(normalized, questId);
 }
 
 export function abandonQuest(book: QuestBook, definitions: readonly QuestDefinition[], questId: string) {
@@ -453,7 +585,8 @@ export function abandonQuest(book: QuestBook, definitions: readonly QuestDefinit
       ...normalized,
       active: normalized.active.filter((entry) => entry.questId !== questId),
       abandoned: [...new Set([...normalized.abandoned, questId])].slice(-MAX_QUEST_HISTORY),
-      pinnedQuestId: normalized.pinnedQuestId === questId ? null : normalized.pinnedQuestId,
+      pinnedQuestIds: normalized.pinnedQuestIds.filter((id) => id !== questId),
+      pinnedQuestId: normalized.pinnedQuestIds.filter((id) => id !== questId)[0] ?? null,
     },
   } as const;
 }
@@ -488,7 +621,7 @@ export function applyQuestEvent(book: QuestBook, definitions: readonly QuestDefi
   const byId = definitionsById(definitions);
   const failed: FailedQuest[] = [...normalized.failed];
   const active: ActiveQuest[] = [];
-  let pinnedQuestId = normalized.pinnedQuestId;
+  let pinnedQuestIds = [...normalized.pinnedQuestIds];
   for (const current of normalized.active) {
     const definition = byId.get(current.questId);
     if (!definition) {
@@ -498,7 +631,7 @@ export function applyQuestEvent(book: QuestBook, definitions: readonly QuestDefi
     const reason = failureReason(definition, current, event);
     if (reason) {
       failed.push({ questId: current.questId, failedAt: count(event.at), reason });
-      if (pinnedQuestId === current.questId) pinnedQuestId = null;
+      pinnedQuestIds = pinnedQuestIds.filter((id) => id !== current.questId);
       continue;
     }
     const objectiveProgress = { ...current.objectiveProgress };
@@ -511,17 +644,19 @@ export function applyQuestEvent(book: QuestBook, definitions: readonly QuestDefi
       status: reportableObjectivesComplete(definition, objectiveProgress) ? "ready" : "active",
     });
   }
-  return { ...normalized, active, failed: failed.slice(-MAX_QUEST_HISTORY), pinnedQuestId };
+  return { ...normalized, active, failed: failed.slice(-MAX_QUEST_HISTORY), pinnedQuestIds, pinnedQuestId: pinnedQuestIds[0] ?? null };
 }
 
 export function failQuest(book: QuestBook, questId: string, reason: string, failedAt: number) {
   const normalized = normalizeQuestBook(book);
   if (!normalized.active.some((entry) => entry.questId === questId)) return normalized;
+  const pinnedQuestIds = normalized.pinnedQuestIds.filter((id) => id !== questId);
   return {
     ...normalized,
     active: normalized.active.filter((entry) => entry.questId !== questId),
     failed: [...normalized.failed.filter((entry) => entry.questId !== questId), { questId, failedAt: count(failedAt), reason: reason.slice(0, 160) }].slice(-MAX_QUEST_HISTORY),
-    pinnedQuestId: normalized.pinnedQuestId === questId ? null : normalized.pinnedQuestId,
+    pinnedQuestIds,
+    pinnedQuestId: pinnedQuestIds[0] ?? null,
   };
 }
 
@@ -570,13 +705,15 @@ export function turnInQuest(
     else delete nextInventory[itemId];
   }
   const reward = definition.rewards ?? EMPTY_REWARD;
+  const pinnedQuestIds = normalized.pinnedQuestIds.filter((id) => id !== questId);
   const nextBook: QuestBook = {
     ...normalized,
     active: normalized.active.filter((entry) => entry.questId !== questId),
     completed: [...new Set([...normalized.completed, questId])].slice(-MAX_QUEST_HISTORY),
     failed: normalized.failed.filter((entry) => entry.questId !== questId),
     abandoned: normalized.abandoned.filter((id) => id !== questId),
-    pinnedQuestId: normalized.pinnedQuestId === questId ? null : normalized.pinnedQuestId,
+    pinnedQuestIds,
+    pinnedQuestId: pinnedQuestIds[0] ?? null,
     factionAlignment: applyAlignment(normalized, reward),
   };
   return {

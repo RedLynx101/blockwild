@@ -22,6 +22,7 @@ export const HEARTHROADS_RESOURCE_ITEMS: Readonly<Record<string, ItemCode>> = Ob
   "lumen-kelp-frond": Item.LumenKelpFrond,
   "abyss-bloom-nectar": Item.AbyssBloomNectar,
   "tidebreath-philter": Item.WaterBreathingPotion,
+  "water-breathing-potion": Item.WaterBreathingPotion,
   "glow-kelp": BlockId.GlowKelp,
   "shellfruit": Item.Shellfruit,
   "reefglass": Item.Reefglass,
@@ -70,9 +71,37 @@ export const HEARTHROADS_RESOURCE_ITEMS: Readonly<Record<string, ItemCode>> = Ob
   "tome-healing-light": Item.TomeHealingLight,
   "tome-blinkstep": Item.TomeBlinkstep,
   "tome-arcane-ward": Item.TomeArcaneWard,
+  "rotten-flesh": Item.RottenFlesh,
+  "moonpetal": Item.Moonpetal,
+  "starfern": Item.StarfernFrond,
+  "dreamcap": Item.Dreamcap,
+  "lumenreed-frond": Item.LumenreedFrond,
+  "moonstep-elixir": Item.MoonstepElixir,
+  "verdant-renewal": Item.VerdantRenewal,
+  "gear-cluster": Item.GearCluster,
+  "deepgear-alloy": Item.DeepgearAlloy,
+  "copper-ore": BlockId.CopperOre,
+  "stone-brick": BlockId.StoneBrick,
+  "sunmetal-ingot": Item.SunmetalIngot,
+  "gold-ingot": Item.GoldIngot,
+  "lead-ball": Item.FlintlockBall,
+  "copper-scout-golem-orb": Item.CopperScoutOrb,
+  "sea-dragon-egg": Item.SeaDragonEgg,
+  "sea-dragon-scale": Item.SeaDragonScale,
+  "sea-dragon-heart": Item.SeaDragonHeart,
+  "sea-dragon-skull": Item.SeaDragonSkull,
+  "sea-dragon-nest-chart": Item.SeaDragonNestChart,
+  "tideglass-dragon-armor": Item.TideglassDragonArmorModule,
 });
 
 const RESOURCE_BY_ITEM = new Map(Object.entries(HEARTHROADS_RESOURCE_ITEMS).map(([resource, item]) => [item, resource] as const));
+
+// Several historical/public resource names intentionally decode to the same
+// numeric item. Keep their encoder canonical so saves and station inventories
+// always round-trip to the stable authored id instead of whichever alias was
+// declared last in the lookup table.
+RESOURCE_BY_ITEM.set(Item.WaterBreathingPotion, "tidebreath-philter");
+RESOURCE_BY_ITEM.set(Item.FireDragonHeart, "fire-dragon-heart");
 
 export function resourceItemCode(resourceId: string) {
   return HEARTHROADS_RESOURCE_ITEMS[resourceId] ?? null;
@@ -112,6 +141,8 @@ export const POTION_RECIPE_BY_ITEM: Readonly<Partial<Record<ItemCode, string>>> 
   [Item.PeppermintRush]: "peppermint-rush",
   [Item.MarshmallowWard]: "marshmallow-ward",
   [Item.ManaheartDraught]: "manaheart-draught",
+  [Item.MoonstepElixir]: "moonstep-elixir",
+  [Item.VerdantRenewal]: "verdant-renewal",
 });
 
 export const COMMERCE_ITEM_CODES: Readonly<Record<string, ItemCode>> = Object.freeze({
@@ -195,6 +226,35 @@ export const COMMERCE_ITEM_CODES: Readonly<Record<string, ItemCode>> = Object.fr
   "blueprint-draconic-incubator": Item.DraconicIncubatorBlueprint,
   "blueprint-dragon-husbandry": Item.DragonHusbandryBlueprint,
   "manaheart-draught": Item.ManaheartDraught,
+  "moonbough-staff": Item.MoonboughStaff,
+  glimmerbow: Item.Glimmerbow,
+  "glimmer-arrow": Item.GlimmerArrow,
+  moonpetal: Item.Moonpetal,
+  starfern: Item.StarfernFrond,
+  dreamcap: Item.Dreamcap,
+  "lumenreed-frond": Item.LumenreedFrond,
+  "moonstep-elixir": Item.MoonstepElixir,
+  "verdant-renewal": Item.VerdantRenewal,
+  "tome-verdant-volley": Item.TomeVerdantVolley,
+  "tome-starlight-snare": Item.TomeStarlightSnare,
+  "blueprint-glimmerbow": Item.GlimmerbowBlueprint,
+  "blueprint-moonstep": Item.MoonstepBlueprint,
+  "blueprint-verdant-renewal": Item.VerdantRenewalBlueprint,
+  "unaligned-glimmerhart-orb": Item.GlimmerhartOrb,
+  "unaligned-runeowl-orb": Item.RuneowlOrb,
+  "flintlock-pistol": Item.FlintlockPistol,
+  "lead-ball": Item.FlintlockBall,
+  "deepgear-lantern": Item.DeepgearLanternItem,
+  "gear-cluster": Item.GearCluster,
+  "deepgear-alloy": Item.DeepgearAlloy,
+  "copper-ore": BlockId.CopperOre,
+  "blueprint-flintlock": Item.FlintlockBlueprint,
+  "blueprint-copper-scout": Item.CopperScoutBlueprint,
+  "blueprint-stone-bulwark": Item.StoneBulwarkBlueprint,
+  "blueprint-aetherforged-sentinel": Item.AetherforgedSentinelBlueprint,
+  "copper-scout-golem-orb": Item.CopperScoutOrb,
+  "unaligned-copper-mole-orb": Item.CopperMoleOrb,
+  "sea-dragon-nest-chart": Item.SeaDragonNestChart,
 });
 
 // Filled-orb offer keys are purchase templates, not safe reverse identities:

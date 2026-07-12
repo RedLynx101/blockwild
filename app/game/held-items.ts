@@ -178,6 +178,27 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
     inner.name = "torch-flame-inner";
     outer.userData.torchBase = outer.position.toArray();
     inner.userData.torchBase = inner.position.toArray();
+  } else if (item === Item.Berry) {
+    // Keep remote/third-person Moonberries identical to the first-person
+    // cluster instead of collapsing them into the generic item brick.
+    addBox([0.11, 0.11, 0.11], [-0.07, 0.02, 0], 0x754399, [0.2, 0.1, 0]);
+    addBox([0.11, 0.11, 0.11], [0.06, 0.01, 0.02], 0x955bbb, [-0.1, 0.2, 0]);
+    addBox([0.1, 0.1, 0.1], [0, 0.12, -0.01], 0x854fa8, [0.1, -0.2, 0]);
+    addBox([0.2, 0.035, 0.1], [0, 0.2, 0], 0x568044, [0, 0, 0.28]);
+    group.scale.setScalar(1.05);
+  } else if (item === Item.Apple) {
+    addBox([0.23, 0.22, 0.2], [0, 0.02, 0], 0xc8493e, [0.08, 0.18, 0]);
+    addBox([0.045, 0.15, 0.045], [0, 0.18, 0], 0x6b4226, [0, 0, -0.08]);
+    addBox([0.14, 0.035, 0.08], [0.07, 0.21, 0], 0x5f8d47, [0, 0, 0.32]);
+  } else if (item === Item.Stick) {
+    addBox([0.075, 0.54, 0.075], [0, 0.02, 0], 0x8b5a30, [0.2, 0.1, -0.36]);
+  } else if (item === Item.RottenFlesh) {
+    addBox([0.26, 0.34, 0.14], [0, 0.03, 0], 0x76553f, [0.18, 0.2, -0.08]);
+    addBox([0.19, 0.08, 0.15], [0.04, 0.17, -0.01], 0x98705a, [-0.08, 0.1, 0.22]);
+  } else if ([BlockId.RedFlower, BlockId.BlueFlower, BlockId.Sunpetal, BlockId.MoonOrchid].includes(item as BlockId)) {
+    addBox([0.05, 0.42, 0.05], [0, -0.05, 0], 0x4d863f, [0.12, 0, -0.16]);
+    addBox([0.26, 0.075, 0.26], [-0.03, 0.19, 0], definition.color, [0.08, 0.15, 0.18]);
+    addBox([0.07, 0.09, 0.07], [-0.03, 0.22, -0.01], 0xf2c34d, [0, 0, 0], true);
   } else if (definition.toolKind) {
     const spec = createHeldToolSpec(definition.toolKind, definition.color, definition.name);
     for (const box of spec.boxes) addBox(

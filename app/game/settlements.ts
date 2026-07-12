@@ -14,11 +14,12 @@ import {
   type TownCaptureReceipt,
 } from "./factions.ts";
 import type { GoldAmount, MerchantProfession } from "./economy.ts";
+import { planV1Settlement, type V1TileRole } from "./v1-cultures.ts";
 
 export type SettlementSize = "hamlet" | "village" | "town";
 export type SettlementPoint = Readonly<{ x: number; z: number; y?: number }>;
-export type SettlementEnvironment = "surface" | "underwater";
-export type SettlementTopology = "walled-surface" | "open-underwater";
+export type SettlementEnvironment = "surface" | "underwater" | "underground";
+export type SettlementTopology = "walled-surface" | "open-underwater" | "subterranean-hold";
 export type SettlementBiome =
   | "forest"
   | "wildwood"
@@ -31,7 +32,9 @@ export type SettlementBiome =
   | "rocky-forest"
   | "deep-ocean"
   | "lumen-trench"
-  | "sugarplum-vale";
+  | "sugarplum-vale"
+  | "glimmerwood"
+  | "snowcap-range";
 
 export const SETTLEMENT_SIZE_RULES: Readonly<Record<SettlementSize, Readonly<{
   radiusBlocks: number;
@@ -85,7 +88,9 @@ function hashPick<T>(values: readonly T[], seed: string, salt: string | number) 
 export function settlementId(worldSeed: string, regionX: number, regionZ: number, factionId: Exclude<FactionId, "player">) {
   const prefix = factionId === "hobbits" ? "freehold"
     : factionId === "goblins" ? "clanhold"
-      : factionId === "atlantians" ? "tidehold" : "bonbon-borough";
+      : factionId === "atlantians" ? "tidehold"
+        : factionId === "sugarcourt" ? "bonbon-borough"
+          : factionId === "wood-elves" ? "moonbough-enclave" : "deepgear-hold";
   return `${prefix}-${regionX.toString(36)}-${regionZ.toString(36)}-${hash32(`${worldSeed}|${regionX}|${regionZ}|${factionId}`).toString(36)}`;
 }
 
@@ -112,6 +117,20 @@ export function hasSettlementSpacing(candidate: Pick<SettlementCandidate, "cente
 }
 
 /**
+ * Candidate generation happens independently per region, so spacing conflicts
+ * need a deterministic winner that does not depend on which chunk loaded first.
+ */
+export function settlementWinsSpacingTieBreak(candidate: SettlementCandidate, contenders: readonly SettlementCandidate[]) {
+  const candidateRank = hash32(`${candidate.worldSeed}|settlement-spacing|${candidate.id}`);
+  for (const other of contenders) {
+    if (other.id === candidate.id || hasSettlementSpacing(candidate, [other])) continue;
+    const otherRank = hash32(`${other.worldSeed}|settlement-spacing|${other.id}`);
+    if (otherRank < candidateRank || (otherRank === candidateRank && other.id < candidate.id)) return false;
+  }
+  return true;
+}
+
+/**
  * One bounded candidate per 32x32-chunk region. The density gate keeps towns
  * meaningful, while explicit spacing protects neighboring layout footprints.
  */
@@ -126,14 +145,15 @@ export function planSettlementCandidate(input: Readonly<{
 }>): SettlementCandidate | null {
   const enabledFactions = input.enabledFactions === undefined ? NPC_FACTION_IDS : normalizeEnabledFactions(input.enabledFactions);
   const factionId = chooseFactionForBiome(input.worldSeed, input.regionX, input.regionZ, input.biome, enabledFactions);
-  const density = factionId === "atlantians" ? 0.18 : factionId === "sugarcourt" ? 0.3 : 0.34;
+  const density = factionId === "atlantians" ? 0.18 : factionId === "sugarcourt" ? 0.3 : factionId === "wood-elves" ? 0.19 : factionId === "dwarves" ? 0.16 : 0.34;
   if (!factionId || hashUnit(input.worldSeed, `${input.regionX}|${input.regionZ}|density`) >= density) return null;
   const sizeRoll = hashUnit(input.worldSeed, `${input.regionX}|${input.regionZ}|size`);
   const size: SettlementSize = sizeRoll < 0.58 ? "hamlet" : sizeRoll < 0.9 ? "village" : "town";
   const regionSizeBlocks = 32 * 16;
-  const environment: SettlementEnvironment = factionId === "atlantians" ? "underwater" : "surface";
+  const environment: SettlementEnvironment = factionId === "atlantians" ? "underwater" : factionId === "dwarves" ? "underground" : "surface";
   const floorY = environment === "underwater"
     ? Math.max(-52, Math.min(22, Math.floor(input.floorY ?? (input.biome === "lumen-trench" ? -28 : 10))))
+    : environment === "underground" ? Math.max(-48, Math.min(58, Math.floor(input.floorY ?? 48) - 18))
     : undefined;
   const center: SettlementPoint = {
     x: input.regionX * regionSizeBlocks + 96 + Math.floor(hashUnit(input.worldSeed, `${input.regionX}|${input.regionZ}|x`) * 320),
@@ -183,7 +203,21 @@ export type SettlementBuildingRole =
   | "candysmith"
   | "sweet-market"
   | "taffy-kennel"
-  | "brittle-barracks";
+  | "brittle-barracks"
+  | "moonbough-hall"
+  | "leafwarden-lodge"
+  | "glimmer-library"
+  | "moonwell"
+  | "living-home"
+  | "glow-garden"
+  | "enclave-market"
+  | "deepgear-hall"
+  | "entrance-barracks"
+  | "golem-forge"
+  | "powderworks"
+  | "delver-gallery"
+  | "gear-market"
+  | "stone-home";
 
 export type SettlementFurniture = Readonly<{
   kind:
@@ -205,7 +239,15 @@ export type SettlementFurniture = Readonly<{
     | "sugarworks-kettle"
     | "syrup-vat"
     | "confection-counter"
-    | "pet-bed";
+    | "pet-bed"
+    | "moonwell-basin"
+    | "tome-lectern"
+    | "living-chair"
+    | "golem-cradle"
+    | "mana-conduit"
+    | "powder-bench"
+    | "gear-table"
+    | "bright-lantern";
   position: SettlementPoint;
   facing: 0 | 1 | 2 | 3;
   functional: boolean;
@@ -240,7 +282,7 @@ export type SettlementApproachPlan = Readonly<{
   position: SettlementPoint;
   facing: 0 | 1 | 2 | 3;
   patrolRadius: number;
-  kind: "open-current" | "trench-arch";
+  kind: "open-current" | "trench-arch" | "mountain-entry";
 }>;
 
 export type SettlementLightPlan = Readonly<{
@@ -251,13 +293,15 @@ export type SettlementLightPlan = Readonly<{
     | "gate-brazier"
     | "glowstone-cluster"
     | "bioluminescent-orb"
-    | "lumen-spire";
+    | "lumen-spire"
+    | "glimmer-orb"
+    | "deepgear-lantern";
   monsterSafeRadius: number;
 }>;
 
 export type SettlementVerticalLayer = Readonly<{
   y: number;
-  purpose: "reef-floor" | "dwelling-ring" | "current-lane" | "light-canopy";
+  purpose: "reef-floor" | "dwelling-ring" | "current-lane" | "light-canopy" | "surface-entry" | "civic-cavern" | "forge-depth";
 }>;
 
 export type SettlementLayoutPlan = Readonly<{
@@ -282,6 +326,22 @@ export type SettlementLayoutPlan = Readonly<{
 }>;
 
 function buildingRoles(factionId: Exclude<FactionId, "player">, size: SettlementSize) {
+  if (factionId === "wood-elves") {
+    const roles: SettlementBuildingRole[] = [
+      "moonbough-hall", "leafwarden-lodge", "glimmer-library", "enclave-market", "living-home", "glow-garden",
+      "moonwell", "living-home", "glow-garden", "living-home", "leafwarden-lodge", "enclave-market",
+      "living-home", "glimmer-library", "glow-garden", "living-home", "moonwell", "living-home",
+    ];
+    return roles.slice(0, SETTLEMENT_SIZE_RULES[size].buildingCount);
+  }
+  if (factionId === "dwarves") {
+    const roles: SettlementBuildingRole[] = [
+      "deepgear-hall", "entrance-barracks", "golem-forge", "gear-market", "stone-home", "delver-gallery",
+      "powderworks", "stone-home", "blacksmith", "stone-home", "entrance-barracks", "warehouse",
+      "stone-home", "golem-forge", "delver-gallery", "gear-market", "stone-home", "powderworks",
+    ];
+    return roles.slice(0, SETTLEMENT_SIZE_RULES[size].buildingCount);
+  }
   if (factionId === "atlantians") {
     const aquatic: SettlementBuildingRole[] = [
       "tide-hall", "guard-grotto", "pearl-market", "home", "kelp-garden", "coral-workshop",
@@ -307,6 +367,16 @@ function buildingRoles(factionId: Exclude<FactionId, "player">, size: Settlement
 }
 
 function paletteFor(factionId: Exclude<FactionId, "player">, role: SettlementBuildingRole) {
+  if (factionId === "wood-elves") {
+    if (role === "glimmer-library" || role === "moonwell") return ["moonbough-wood", "moon-glass", "dreamblossom-light"];
+    if (role === "leafwarden-lodge") return ["living-bark", "glimmerstone", "woven-leaf"];
+    return ["moonbough-wood", "living-bark", "woven-leaf"];
+  }
+  if (factionId === "dwarves") {
+    if (role === "golem-forge") return ["deepgear-brick", "riveted-brass", "aether-conduit"];
+    if (role === "powderworks") return ["deepgear-brick", "copper", "sealed-stone"];
+    return ["deepgear-brick", "riveted-brass", "snowcap-stone"];
+  }
   if (factionId === "atlantians") {
     if (role === "tide-hall") return ["reef-stone", "reefglass", "lumen-coral"];
     if (role === "glow-clinic") return ["pale-coral", "reefglass", "glowstone"];
@@ -324,6 +394,34 @@ function paletteFor(factionId: Exclude<FactionId, "player">, role: SettlementBui
 }
 
 function furnitureFor(factionId: Exclude<FactionId, "player">, buildingId: string, role: SettlementBuildingRole, position: SettlementPoint, facing: 0 | 1 | 2 | 3) {
+  if (factionId === "wood-elves") {
+    const entries: SettlementFurniture[] = [{ kind: "door", position: { x: position.x, z: position.z - 2, ...(position.y === undefined ? {} : { y: position.y }) }, facing, functional: true }];
+    const add = (kind: SettlementFurniture["kind"], dx: number, dz: number, dy = 0) => entries.push({
+      kind, position: { x: position.x + dx, z: position.z + dz, ...(position.y === undefined ? {} : { y: position.y + dy }) }, facing, functional: true,
+    });
+    if (["living-home", "moonbough-hall", "leafwarden-lodge"].includes(role)) { add("bed", -1, 1); add("living-chair", 1, 0); }
+    if (role === "glimmer-library") { add("tome-lectern", -1, 1); add("tome-lectern", 1, 1); }
+    if (role === "moonwell") add("moonwell-basin", 0, 0);
+    if (role === "enclave-market") add("merchant-counter", 0, 1);
+    add("table", 0, 0);
+    void buildingId;
+    return entries;
+  }
+  if (factionId === "dwarves") {
+    const entries: SettlementFurniture[] = [{ kind: "door", position: { x: position.x, z: position.z - 2, ...(position.y === undefined ? {} : { y: position.y }) }, facing, functional: true }];
+    const add = (kind: SettlementFurniture["kind"], dx: number, dz: number, dy = 0) => entries.push({
+      kind, position: { x: position.x + dx, z: position.z + dz, ...(position.y === undefined ? {} : { y: position.y + dy }) }, facing, functional: true,
+    });
+    if (["stone-home", "deepgear-hall", "entrance-barracks"].includes(role)) add("bed", -1, 1);
+    if (role === "golem-forge") { add("golem-cradle", 0, 1); add("mana-conduit", 1, 1); }
+    if (role === "powderworks") add("powder-bench", 0, 1);
+    if (role === "gear-market") add("merchant-counter", 0, 1);
+    if (role === "blacksmith") add("forge", 0, 1);
+    add("gear-table", 0, 0);
+    add("bright-lantern", 1, -1, 2);
+    void buildingId;
+    return entries;
+  }
   if (factionId === "atlantians") {
     const entries: SettlementFurniture[] = [];
     const add = (kind: SettlementFurniture["kind"], dx: number, dz: number, dy = 0, functional = true) => entries.push({
@@ -395,8 +493,150 @@ export function calculateAquaticPopulationSoftCap(nests: number, restAlcoves: nu
   return Math.max(2, Math.min(rule.populationHardLimit, restingCapacity));
 }
 
+function v1RoleToBuilding(role: V1TileRole, factionId: "wood-elves" | "dwarves"): SettlementBuildingRole {
+  if (factionId === "wood-elves") {
+    if (role === "civic-hall") return "moonbough-hall";
+    if (role === "guard-post") return "leafwarden-lodge";
+    if (role === "library") return "glimmer-library";
+    if (role === "market") return "enclave-market";
+    if (role === "garden") return "glow-garden";
+    if (role === "alchemy") return "moonwell";
+    return "living-home";
+  }
+  if (role === "civic-hall") return "deepgear-hall";
+  if (role === "guard-post") return "entrance-barracks";
+  if (role === "golem-forge") return "golem-forge";
+  if (role === "powderworks") return "powderworks";
+  if (role === "mine") return "delver-gallery";
+  if (role === "market") return "gear-market";
+  if (role === "forge") return "blacksmith";
+  if (role === "storage") return "warehouse";
+  return "stone-home";
+}
+
+/** Maps the reusable connected-tile planner into the settlement/world contract. */
+function planV1CultureLayout(candidate: SettlementCandidate): SettlementLayoutPlan | null {
+  if (candidate.factionId !== "wood-elves" && candidate.factionId !== "dwarves") return null;
+  const planned = planV1Settlement({
+    seed: candidate.worldSeed,
+    regionX: candidate.regionX,
+    regionZ: candidate.regionZ,
+    factionId: candidate.factionId,
+    size: candidate.size,
+  });
+  const underground = candidate.factionId === "dwarves";
+  const tileSize = planned.tileSize;
+  const surfaceY = underground ? (candidate.floorY ?? ((candidate.center.y ?? 50) - 18)) + 18 : candidate.center.y;
+  const civicY = underground ? candidate.floorY ?? ((surfaceY ?? 50) - 18) : surfaceY;
+  const center: SettlementPoint = {
+    x: candidate.center.x,
+    z: candidate.center.z,
+    ...(civicY === undefined ? {} : { y: civicY }),
+  };
+  const tilePosition = (gridX: number, gridZ: number, yOffset: number): SettlementPoint => ({
+    x: center.x + gridX * tileSize,
+    z: center.z + gridZ * tileSize,
+    ...(underground ? { y: (civicY ?? 0) + Math.min(0, yOffset + 12) } : civicY === undefined ? {} : { y: civicY }),
+  });
+  const buildings = planned.tiles.map((tile): SettlementBuildingPlan => {
+    const position = tilePosition(tile.gridX, tile.gridZ, tile.yOffset);
+    const role = v1RoleToBuilding(tile.role, candidate.factionId as "wood-elves" | "dwarves");
+    return {
+      id: tile.id,
+      role,
+      position,
+      facing: tile.rotation,
+      width: tile.width,
+      depth: tile.depth,
+      floors: tile.floors,
+      materialPalette: paletteFor(candidate.factionId, role),
+      furniture: furnitureFor(candidate.factionId, tile.id, role, position, tile.rotation),
+    };
+  });
+  const byGrid = new Map(planned.tiles.map((tile) => [`${tile.gridX},${tile.gridZ}`, tile]));
+  const paths: SettlementPoint[] = [];
+  for (const tile of planned.tiles) {
+    const from = tilePosition(tile.gridX, tile.gridZ, tile.yOffset);
+    for (const [direction, dx, dz] of [["east", 1, 0], ["south", 0, 1]] as const) {
+      if (!tile.pathConnections.includes(direction)) continue;
+      const neighbor = byGrid.get(`${tile.gridX + dx},${tile.gridZ + dz}`);
+      if (neighbor) addLine(paths, from, tilePosition(neighbor.gridX, neighbor.gridZ, neighbor.yOffset), underground ? 1 : 2);
+    }
+  }
+  const entrance: SettlementPoint = {
+    x: center.x + planned.surfaceEntrance.gridX * tileSize,
+    z: center.z + planned.surfaceEntrance.gridZ * tileSize,
+    ...(surfaceY === undefined ? {} : { y: surfaceY }),
+  };
+  const nearestGuard = buildings.find((building) => building.role === (underground ? "entrance-barracks" : "leafwarden-lodge"))?.position ?? center;
+  addLine(paths, entrance, nearestGuard, 1);
+  const gate: SettlementGatePlan = { id: `${candidate.id}-main-gate`, position: entrance, facing: 0, patrolRadius: underground ? 9 : 7 };
+  const wall: SettlementWallNode[] = [];
+  if (!underground) {
+    // Planner wall coordinates are expressed in settlement tiles, while the
+    // world stamper consumes individual blocks. Expanding each edge here
+    // prevents an 11-block gap between what would otherwise only be posts.
+    const wallRadius = (planned.gridRadius + 1) * tileSize;
+    const gateX = entrance.x;
+    const gateZ = entrance.z;
+    const pushWall = (x: number, z: number) => {
+      if (x === gateX && z === gateZ) return;
+      const alongEdge = Math.abs(x - center.x) + Math.abs(z - center.z);
+      const corner = Math.abs(x - center.x) === wallRadius && Math.abs(z - center.z) === wallRadius;
+      wall.push({
+        position: { x, z, ...(center.y === undefined ? {} : { y: center.y }) },
+        kind: corner || alongEdge % (tileSize * 2) === 0 ? "tower" : "wall",
+      });
+    };
+    for (let offset = -wallRadius; offset <= wallRadius; offset += 1) {
+      pushWall(center.x + offset, center.z - wallRadius);
+      pushWall(center.x + offset, center.z + wallRadius);
+    }
+    for (let offset = -wallRadius + 1; offset < wallRadius; offset += 1) {
+      pushWall(center.x - wallRadius, center.z + offset);
+      pushWall(center.x + wallRadius, center.z + offset);
+    }
+  }
+  const uniquePaths = [...new Map(paths.map((point) => [`${point.x},${point.y ?? "s"},${point.z}`, point])).values()].slice(0, 1_024);
+  const lights: SettlementLightPlan[] = planned.lanternTiles.map((entry) => ({
+    position: tilePosition(entry.gridX, entry.gridZ, entry.yOffset),
+    kind: candidate.factionId === "wood-elves" ? "glimmer-orb" : "deepgear-lantern",
+    monsterSafeRadius: candidate.factionId === "wood-elves" ? 11 : 14,
+  }));
+  if (underground) lights.push({ position: entrance, kind: "deepgear-lantern", monsterSafeRadius: 18 });
+  const furniture = buildings.flatMap((building) => building.furniture);
+  const beds = furniture.filter((entry) => entry.kind === "bed").length;
+  const doors = furniture.filter((entry) => entry.kind === "door").length;
+  return {
+    schema: 1,
+    settlementId: candidate.id,
+    center,
+    environment: underground ? "underground" : "surface",
+    topology: underground ? "subterranean-hold" : "walled-surface",
+    radiusBlocks: (planned.gridRadius + 2) * tileSize,
+    buildings,
+    paths: uniquePaths,
+    wall,
+    gates: [gate],
+    approaches: underground ? [{ id: `${candidate.id}-mountain-entry`, position: entrance, facing: 0, patrolRadius: 10, kind: "mountain-entry" }] : [],
+    lights,
+    verticalLayers: underground ? [
+      { y: surfaceY ?? (civicY ?? 0) + 18, purpose: "surface-entry" },
+      { y: civicY ?? 0, purpose: "civic-cavern" },
+      { y: (civicY ?? 0) - 8, purpose: "forge-depth" },
+    ] : [],
+    beds,
+    doors,
+    nests: 0,
+    restAlcoves: 0,
+    populationSoftCap: Math.max(planned.populationTarget, calculatePopulationSoftCap(beds, doors, candidate.size)),
+  };
+}
+
 /** Emits semantic placements; the world layer remains responsible for blocks. */
 export function planSettlementLayout(candidate: SettlementCandidate): SettlementLayoutPlan {
+  const v1Layout = planV1CultureLayout(candidate);
+  if (v1Layout) return v1Layout;
   const rule = SETTLEMENT_SIZE_RULES[candidate.size];
   const environment: SettlementEnvironment = candidate.environment ?? (candidate.factionId === "atlantians" ? "underwater" : "surface");
   const aquatic = environment === "underwater";
@@ -553,6 +793,20 @@ export const RESIDENT_PROFESSIONS = [
   "sugarcourt-sweetbroker",
   "sugarcourt-kennelkeeper",
   "sugarcourt-brittle-guard",
+  "wood-elf-elderweaver",
+  "wood-elf-leafwarden",
+  "wood-elf-bow-warden",
+  "wood-elf-grovekeeper",
+  "wood-elf-tomekeeper",
+  "wood-elf-potioner",
+  "wood-elf-moonbroker",
+  "dwarf-thane",
+  "dwarf-gatewarden",
+  "dwarf-delver",
+  "dwarf-gearwright",
+  "dwarf-golemsmith",
+  "dwarf-powderwright",
+  "dwarf-provisioner",
 ] as const;
 export type ResidentProfession = (typeof RESIDENT_PROFESSIONS)[number];
 export type ResidentCombatStance = "passive" | "defensive" | "offensive";
@@ -590,8 +844,8 @@ export type SettlementResident = Readonly<{
 
 export type AlignedSettlementCreature = Readonly<{
   id: string;
-  kind: "warg" | "taffy-hound" | "praline-cat";
-  factionId: "goblins" | "sugarcourt";
+  kind: "warg" | "taffy-hound" | "praline-cat" | "glimmerhart" | "runeowl" | "copper-mole" | "copper-scout-golem";
+  factionId: "goblins" | "sugarcourt" | "wood-elves" | "dwarves";
   position: SettlementPoint;
   patrolGateId: string;
   tameable: false;
@@ -628,7 +882,9 @@ export function settlementEnvironmentOf(settlement: Readonly<{
   cultureRace?: FactionRace;
   layout?: Readonly<{ environment?: SettlementEnvironment }>;
 }>): SettlementEnvironment {
+  if (settlement.environment === "underground" || settlement.layout?.environment === "underground") return "underground";
   if (settlement.environment === "underwater" || settlement.layout?.environment === "underwater") return "underwater";
+  if (settlement.cultureRace === "dwarf" || settlement.biome === "snowcap-range") return "underground";
   if (settlement.cultureRace === "atlantian" || settlement.biome === "deep-ocean" || settlement.biome === "lumen-trench") return "underwater";
   return "surface";
 }
@@ -648,7 +904,7 @@ export function normalizeSettlementState(state: SettlementState): SettlementStat
     layout: {
       ...layout,
       environment,
-      topology: layout.topology ?? (environment === "underwater" ? "open-underwater" : "walled-surface"),
+      topology: layout.topology ?? (environment === "underwater" ? "open-underwater" : environment === "underground" ? "subterranean-hold" : "walled-surface"),
       approaches: Array.isArray(layout.approaches) ? layout.approaches : [],
       verticalLayers: Array.isArray(layout.verticalLayers) ? layout.verticalLayers : [],
       nests,
@@ -669,21 +925,29 @@ const ATLANTIAN_GIVEN = ["Aelune", "Caelis", "Ilyra", "Marev", "Neris", "Oruun",
 const ATLANTIAN_TIDES = ["Bluecurrent", "Coralwake", "Glassfin", "Lumenveil", "Pearldeep", "Reefsinger", "Softtide"] as const;
 const CONFECTKIN_GIVEN = ["Bonnie", "Cinna", "Dulce", "Mallow", "Mint", "Nougat", "Poppy", "Praline", "Toffee", "Truffle", "Waffle", "Zest"] as const;
 const CONFECTKIN_FAMILY = ["Brittlebrook", "Candleglass", "Honeyspun", "Peppermere", "Sugarwick", "Taffyfold", "Waferby"] as const;
+const WOOD_ELF_GIVEN = ["Aelith", "Caerwyn", "Elaris", "Faelwen", "Irielle", "Lethan", "Naevra", "Oryn", "Sylra", "Thalen"] as const;
+const WOOD_ELF_HOUSES = ["Brightfern", "Dewbranch", "Glowbough", "Moonpetal", "Silverleaf", "Starglen", "Whisperroot"] as const;
+const DWARF_GIVEN = ["Bori", "Dagna", "Eitri", "Frida", "Garrik", "Hildi", "Kelda", "Orik", "Runa", "Torven"] as const;
+const DWARF_HOUSES = ["Brassvein", "Deepgear", "Emberpin", "Ironclock", "Lanternmantle", "Stonewhistle", "Tunnelforge"] as const;
 
 export function generateResidentName(race: FactionRace, seed: string) {
   if (race === "hearthkin") return `${hashPick(HEARTHKIN_GIVEN, seed, "given")} ${hashPick(HEARTHKIN_FAMILY, seed, "family")}`;
   if (race === "goblin") return `${hashPick(GOBLIN_GIVEN, seed, "given")} ${hashPick(GOBLIN_CLAN, seed, "clan")}`;
   if (race === "atlantian") return `${hashPick(ATLANTIAN_GIVEN, seed, "given")} ${hashPick(ATLANTIAN_TIDES, seed, "tide")}`;
   if (race === "confectkin") return `${hashPick(CONFECTKIN_GIVEN, seed, "given")} ${hashPick(CONFECTKIN_FAMILY, seed, "family")}`;
+  if (race === "wood-elf") return `${hashPick(WOOD_ELF_GIVEN, seed, "given")} ${hashPick(WOOD_ELF_HOUSES, seed, "house")}`;
+  if (race === "dwarf") return `${hashPick(DWARF_GIVEN, seed, "given")} ${hashPick(DWARF_HOUSES, seed, "house")}`;
   return hashPick(WAYFARER_GIVEN, seed, "given");
 }
 
 export function isMayorProfession(profession: ResidentProfession) {
-  return profession === "mayor" || profession === "atlantian-tidewarden" || profession === "sugarcourt-crown-confectioner";
+  return profession === "mayor" || profession === "atlantian-tidewarden" || profession === "sugarcourt-crown-confectioner"
+    || profession === "wood-elf-elderweaver" || profession === "dwarf-thane";
 }
 
 export function isWarriorProfession(profession: ResidentProfession) {
-  return profession === "warrior" || profession === "atlantian-trident-guard" || profession === "sugarcourt-brittle-guard";
+  return profession === "warrior" || profession === "atlantian-trident-guard" || profession === "sugarcourt-brittle-guard"
+    || profession === "wood-elf-leafwarden" || profession === "wood-elf-bow-warden" || profession === "dwarf-gatewarden";
 }
 
 export function isAquaticProfession(profession: ResidentProfession) {
@@ -694,7 +958,31 @@ export function isSugarcourtProfession(profession: ResidentProfession) {
   return profession.startsWith("sugarcourt-");
 }
 
+export function isWoodElfProfession(profession: ResidentProfession) {
+  return profession.startsWith("wood-elf-");
+}
+
+export function isDwarfProfession(profession: ResidentProfession) {
+  return profession.startsWith("dwarf-");
+}
+
 function professionPlan(candidate: SettlementCandidate, count: number) {
+  if (candidate.factionId === "wood-elves") {
+    const professions: ResidentProfession[] = [
+      "wood-elf-elderweaver", "wood-elf-leafwarden", "wood-elf-bow-warden", "wood-elf-grovekeeper",
+      "wood-elf-tomekeeper", "wood-elf-potioner", "wood-elf-moonbroker", "wood-elf-leafwarden",
+      "wood-elf-grovekeeper", "wood-elf-bow-warden", "wood-elf-moonbroker", "wood-elf-grovekeeper",
+    ];
+    return Array.from({ length: count }, (_, index) => professions[index % professions.length]);
+  }
+  if (candidate.factionId === "dwarves") {
+    const professions: ResidentProfession[] = [
+      "dwarf-thane", "dwarf-gatewarden", "dwarf-delver", "dwarf-gearwright", "dwarf-golemsmith",
+      "dwarf-powderwright", "dwarf-provisioner", "dwarf-gatewarden", "dwarf-delver", "dwarf-golemsmith",
+      "dwarf-provisioner", "dwarf-delver",
+    ];
+    return Array.from({ length: count }, (_, index) => professions[index % professions.length]);
+  }
   if (candidate.factionId === "atlantians") {
     const aquatic: ResidentProfession[] = [
       "atlantian-tidewarden",
@@ -733,7 +1021,20 @@ function professionPlan(candidate: SettlementCandidate, count: number) {
 }
 
 function preferredBuilding(layout: SettlementLayoutPlan, profession: ResidentProfession) {
-  const role: SettlementBuildingRole = profession === "atlantian-tidewarden" ? "tide-hall"
+  const role: SettlementBuildingRole = profession === "wood-elf-elderweaver" ? "moonbough-hall"
+    : profession === "wood-elf-leafwarden" || profession === "wood-elf-bow-warden" ? "leafwarden-lodge"
+      : profession === "wood-elf-grovekeeper" ? "glow-garden"
+        : profession === "wood-elf-tomekeeper" ? "glimmer-library"
+          : profession === "wood-elf-potioner" ? "moonwell"
+            : profession === "wood-elf-moonbroker" ? "enclave-market"
+              : profession === "dwarf-thane" ? "deepgear-hall"
+                : profession === "dwarf-gatewarden" ? "entrance-barracks"
+                  : profession === "dwarf-delver" ? "delver-gallery"
+                    : profession === "dwarf-gearwright" ? "blacksmith"
+                      : profession === "dwarf-golemsmith" ? "golem-forge"
+                        : profession === "dwarf-powderwright" ? "powderworks"
+                          : profession === "dwarf-provisioner" ? "gear-market"
+                            : profession === "atlantian-tidewarden" ? "tide-hall"
     : profession === "atlantian-trident-guard" ? "guard-grotto"
       : profession === "atlantian-kelpkeeper" ? "kelp-garden"
         : profession === "atlantian-coralwright" ? "coral-workshop"
@@ -759,6 +1060,21 @@ function preferredBuilding(layout: SettlementLayoutPlan, profession: ResidentPro
 }
 
 function defaultEquipment(factionId: Exclude<FactionId, "player">, profession: ResidentProfession, index: number): ResidentEquipment {
+  if (factionId === "wood-elves") {
+    if (profession === "wood-elf-leafwarden") return { weapon: "moonbough-staff", tool: null };
+    if (profession === "wood-elf-bow-warden") return { weapon: "glimmerbow", tool: null };
+    if (profession === "wood-elf-grovekeeper") return { weapon: null, tool: "moon-sickle" };
+    if (profession === "wood-elf-tomekeeper") return { weapon: "moonbough-staff", tool: "tome" };
+    if (profession === "wood-elf-potioner") return { weapon: null, tool: "glimmer-vial" };
+    return { weapon: null, tool: null };
+  }
+  if (factionId === "dwarves") {
+    if (profession === "dwarf-gatewarden") return { weapon: index % 3 === 0 ? "flintlock-pistol" : "deepgear-hammer", tool: null };
+    if (profession === "dwarf-delver") return { weapon: null, tool: "deepgear-pick" };
+    if (profession === "dwarf-gearwright" || profession === "dwarf-golemsmith") return { weapon: null, tool: "gear-hammer" };
+    if (profession === "dwarf-powderwright") return { weapon: "flintlock-pistol", tool: "powder-flask" };
+    return { weapon: null, tool: null };
+  }
   if (factionId === "atlantians") {
     if (profession === "atlantian-trident-guard") return { weapon: "tideglass-trident", tool: null };
     if (profession === "atlantian-coralwright") return { weapon: null, tool: "coral-chisel" };
@@ -789,6 +1105,29 @@ function alignedCreaturesForFaction(
   layout: SettlementLayoutPlan,
   generation = "founding",
 ): readonly AlignedSettlementCreature[] {
+  if (factionId === "wood-elves") {
+    const guards = layout.gates.slice(0, 2).map((gate, index) => ({
+      id: `${settlementIdValue}-glimmerhart-${generation}-${index}`, kind: "glimmerhart" as const, factionId: "wood-elves" as const,
+      position: gate.position, patrolGateId: gate.id, tameable: false as const,
+    }));
+    const libraries = layout.buildings.filter((building) => building.role === "glimmer-library").slice(0, 2).map((building, index) => ({
+      id: `${settlementIdValue}-runeowl-${generation}-${index}`, kind: "runeowl" as const, factionId: "wood-elves" as const,
+      position: building.position, patrolGateId: building.id, tameable: false as const,
+    }));
+    return [...guards, ...libraries];
+  }
+  if (factionId === "dwarves") {
+    const gate = layout.gates[0] ?? { id: `${settlementIdValue}-entry`, position: layout.center };
+    const golems = Array.from({ length: 2 }, (_, index) => ({
+      id: `${settlementIdValue}-copper-scout-${generation}-${index}`, kind: "copper-scout-golem" as const, factionId: "dwarves" as const,
+      position: { ...gate.position, x: gate.position.x + (index === 0 ? -2 : 2) }, patrolGateId: gate.id, tameable: false as const,
+    }));
+    const kennels = layout.buildings.filter((building) => building.role === "stone-home").slice(0, 2).map((building, index) => ({
+      id: `${settlementIdValue}-copper-mole-${generation}-${index}`, kind: "copper-mole" as const, factionId: "dwarves" as const,
+      position: building.position, patrolGateId: building.id, tameable: false as const,
+    }));
+    return [...golems, ...kennels];
+  }
   if (factionId === "goblins") return layout.gates.slice(0, Math.min(3, layout.gates.length)).map((gate, index) => ({
     id: `${settlementIdValue}-warg-${generation}-${index}`,
     kind: "warg" as const,
@@ -887,7 +1226,15 @@ export type ScheduleAction =
   | "tend-sweets"
   | "boil-sugar"
   | "shape-candy"
-  | "tend-menagerie";
+  | "tend-menagerie"
+  | "weave-leaf-magic"
+  | "tend-glow-garden"
+  | "keep-archive"
+  | "tend-moonwell"
+  | "work-golem-forge"
+  | "maintain-gears"
+  | "prepare-powder"
+  | "delve";
 
 export type ResidentSchedulePlan = Readonly<{
   action: ScheduleAction;
@@ -923,6 +1270,10 @@ export function planResidentSchedule(
     if (resident.profession === "atlantian-tidewarden") return { action: hour >= 17 ? "socialize" : "gather-current", target: approach?.position ?? settlement.layout.center, reason: "tide-moot" };
     return { action: "gather-current", target: approach?.position ?? settlement.layout.center, reason: "aquatic-daily-life" };
   }
+  if (resident.profession === "wood-elf-leafwarden" || resident.profession === "wood-elf-bow-warden") {
+    return { action: "weave-leaf-magic", target: gate?.position ?? settlement.layout.center, reason: "enclave-watch" };
+  }
+  if (resident.profession === "dwarf-gatewarden") return { action: "patrol-gate", target: gate?.position ?? settlement.layout.center, reason: "mountain-entry-watch" };
   if (isWarriorProfession(resident.profession)) return { action: "patrol-gate", target: gate?.position ?? settlement.layout.center, reason: "gate-watch" };
   if (hour >= 21 || hour < 6) return { action: "sleep", target: resident.position, reason: "night" };
   const socialRoll = hashUnit(`${settlement.id}|${resident.id}|${input.worldDay}`, Math.floor(hour));
@@ -935,6 +1286,15 @@ export function planResidentSchedule(
   if (resident.profession === "sugarcourt-candysmith") return { action: "shape-candy", target: resident.position, reason: "candy-tempering" };
   if (resident.profession === "sugarcourt-kennelkeeper") return { action: "tend-menagerie", target: resident.position, reason: "village-companions" };
   if (resident.profession === "sugarcourt-sweetbroker" || resident.profession === "sugarcourt-crown-confectioner") return { action: "trade", target: resident.position, reason: resident.profession };
+  if (resident.profession === "wood-elf-grovekeeper") return { action: "tend-glow-garden", target: resident.position, reason: "living-grove" };
+  if (resident.profession === "wood-elf-tomekeeper") return { action: "keep-archive", target: resident.position, reason: "tome-keeping" };
+  if (resident.profession === "wood-elf-potioner") return { action: "tend-moonwell", target: resident.position, reason: "moonwell-brewing" };
+  if (resident.profession === "wood-elf-moonbroker" || resident.profession === "wood-elf-elderweaver") return { action: "trade", target: resident.position, reason: resident.profession };
+  if (resident.profession === "dwarf-golemsmith") return { action: "work-golem-forge", target: resident.position, reason: "golem-assembly" };
+  if (resident.profession === "dwarf-gearwright") return { action: "maintain-gears", target: resident.position, reason: "hold-maintenance" };
+  if (resident.profession === "dwarf-powderwright") return { action: "prepare-powder", target: resident.position, reason: "sealed-powderworks" };
+  if (resident.profession === "dwarf-delver") return { action: "delve", target: resident.position, reason: "ore-gallery" };
+  if (resident.profession === "dwarf-provisioner" || resident.profession === "dwarf-thane") return { action: "trade", target: resident.position, reason: resident.profession };
   if (["banker", "brewer", "alchemist", "blacksmith", "farmer", "miner"].includes(resident.profession)) return { action: "work", target: resident.position, reason: resident.profession };
   if (resident.profession === "general" || resident.profession === "mayor") return { action: "trade", target: resident.position, reason: resident.profession };
   return { action: "idle", target: settlement.layout.center, reason: "unassigned" };
@@ -967,7 +1327,9 @@ export function electMayorAtEight(
   const elected = [...candidates].sort((a, b) => hash32(`${settlement.id}|${day}|${a.id}`) - hash32(`${settlement.id}|${day}|${b.id}`))[0];
   const mayorProfession: ResidentProfession = settlementEnvironmentOf(settlement) === "underwater" || settlement.cultureRace === "atlantian"
     ? "atlantian-tidewarden"
-    : settlement.cultureRace === "confectkin" ? "sugarcourt-crown-confectioner" : "mayor";
+    : settlement.cultureRace === "confectkin" ? "sugarcourt-crown-confectioner"
+      : settlement.cultureRace === "wood-elf" ? "wood-elf-elderweaver"
+        : settlement.cultureRace === "dwarf" ? "dwarf-thane" : "mayor";
   const residents = settlement.residents.map((resident) => resident.id === elected.id ? { ...resident, profession: mayorProfession } : resident);
   return {
     state: stampAuthority({ ...settlement, residents, lastMayorElectionDay: day }, command),
@@ -994,7 +1356,9 @@ export function growSettlementPopulation(
   const id = `${settlement.id}-born-${day}-${index}`;
   const home = settlement.layout.buildings.find((building) => building.role === "home") ?? settlement.layout.buildings[0];
   const profession: ResidentProfession = race === "atlantian" ? "atlantian-kelpkeeper"
-    : race === "confectkin" ? "sugarcourt-gumdrop-gardener" : "general";
+    : race === "confectkin" ? "sugarcourt-gumdrop-gardener"
+      : race === "wood-elf" ? "wood-elf-grovekeeper"
+        : race === "dwarf" ? "dwarf-delver" : "general";
   const child: SettlementResident = {
     id,
     factionId: settlement.ownerFactionId,
@@ -1237,11 +1601,61 @@ export const SUGARCOURT_SIDE_QUESTS: readonly SideQuestTemplate[] = [
   },
 ];
 
+export const WOOD_ELF_SIDE_QUESTS: readonly SideQuestTemplate[] = [
+  {
+    id: "wood-elf-dimmed-garden", factionId: "wood-elves", title: "The Dimmed Garden",
+    summary: "Restore a moon-garden with Dreamcaps and Moonpetals before its night pollinators abandon the grove.",
+    giverProfessions: ["wood-elf-grovekeeper", "wood-elf-potioner"],
+    criteria: [{ kind: "deliver", target: "dreamcap", count: 5 }, { kind: "deliver", target: "moonpetal", count: 8 }],
+    failureConditions: ["giver-dies", "deadline"], rewards: { gold: 78, alignment: 8, items: [{ itemKey: "moonstep-elixir", count: 2 }], delivery: "giver-drops" }, abandonable: true,
+  },
+  {
+    id: "wood-elf-leaves-at-the-gate", factionId: "wood-elves", title: "Leaves at the Gate",
+    summary: "Drive night creatures from the enclave's living wall and return with proof the paths are clear.",
+    giverProfessions: ["wood-elf-leafwarden", "wood-elf-bow-warden", "wood-elf-elderweaver"],
+    criteria: [{ kind: "defeat", target: "overworld-monster", count: 6 }, { kind: "collect", target: "rotten-flesh", count: 3 }],
+    failureConditions: ["giver-dies"], rewards: { gold: 104, alignment: 10, items: [{ itemKey: "glimmer-arrow", count: 18 }], delivery: "giver-drops" }, abandonable: true,
+  },
+  {
+    id: "wood-elf-ink-of-stars", factionId: "wood-elves", title: "Ink of Stars",
+    summary: "Gather glowing pond and forest reagents for a tomekeeper copying a spell that must not be forgotten.",
+    giverProfessions: ["wood-elf-tomekeeper"],
+    criteria: [{ kind: "deliver", target: "lumenreed-frond", count: 4 }, { kind: "deliver", target: "starfern", count: 6 }],
+    failureConditions: ["giver-dies"], rewards: { gold: 92, alignment: 9, items: [{ itemKey: "tome-verdant-volley", count: 1 }], delivery: "giver-drops" }, abandonable: true,
+  },
+];
+
+export const DWARF_SIDE_QUESTS: readonly SideQuestTemplate[] = [
+  {
+    id: "dwarf-gears-for-the-watch", factionId: "dwarves", title: "Gears for the Watch",
+    summary: "Supply precision gears and copper so the hold's gate automatons can finish their maintenance cycle.",
+    giverProfessions: ["dwarf-golemsmith", "dwarf-gearwright", "dwarf-gatewarden"],
+    criteria: [{ kind: "deliver", target: "gear-cluster", count: 4 }, { kind: "deliver", target: "copper-ore", count: 8 }],
+    failureConditions: ["giver-dies"], rewards: { gold: 118, alignment: 9, items: [{ itemKey: "lead-ball", count: 18 }], delivery: "giver-drops" }, abandonable: true,
+  },
+  {
+    id: "dwarf-breathing-gallery", factionId: "dwarves", title: "A Breathing Gallery",
+    summary: "Clear the lower gallery and bring lantern parts before the delvers reopen its ore seam.",
+    giverProfessions: ["dwarf-delver", "dwarf-thane"],
+    criteria: [{ kind: "defeat", target: "overworld-monster", count: 5 }, { kind: "deliver", target: "deepgear-alloy", count: 4 }],
+    failureConditions: ["giver-dies", "deadline"], rewards: { gold: 136, alignment: 11, items: [{ itemKey: "deepgear-lantern", count: 2 }], delivery: "giver-drops" }, abandonable: true,
+  },
+  {
+    id: "dwarf-first-automaton", factionId: "dwarves", title: "A Mind Made of Metal",
+    summary: "Commit mana and materials at a Golem Forge, then report after claiming your first finished automaton.",
+    giverProfessions: ["dwarf-golemsmith", "dwarf-thane"],
+    criteria: [{ kind: "collect", target: "copper-scout-golem-orb", count: 1 }],
+    failureConditions: ["giver-dies"], rewards: { gold: 165, alignment: 12, items: [{ itemKey: "blueprint-stone-bulwark", count: 1 }], delivery: "giver-drops" }, abandonable: true,
+  },
+];
+
 const SIDE_QUESTS_BY_FACTION: Readonly<Record<NpcFactionId, readonly SideQuestTemplate[]>> = {
   hobbits: HOBBIT_SIDE_QUESTS,
   goblins: GOBLIN_SIDE_QUESTS,
   atlantians: ATLANTIAN_SIDE_QUESTS,
   sugarcourt: SUGARCOURT_SIDE_QUESTS,
+  "wood-elves": WOOD_ELF_SIDE_QUESTS,
+  dwarves: DWARF_SIDE_QUESTS,
 };
 
 export function sideQuestOffersFor(

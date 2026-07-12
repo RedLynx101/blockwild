@@ -40,11 +40,13 @@ import {
 import { DRAGON_MOB_KINDS as FAUNA_DRAGONS, isDragonMobKind, shouldKeepCreatureLoaded } from "../app/game/fauna.ts";
 import { DRAGON_ORDER, MOB_DEFS } from "../app/game/mobs.ts";
 
-test("the canonical roster exposes three persistent, fully described dragon species", () => {
-  assert.deepEqual(DRAGON_ORDER, ["fire-dragon", "ice-dragon", "steel-dragon"]);
+test("the canonical roster exposes four persistent, fully described dragon species", () => {
+  assert.deepEqual(DRAGON_ORDER, ["fire-dragon", "ice-dragon", "steel-dragon", "sea-dragon"]);
   assert.deepEqual(FAUNA_DRAGONS, DRAGON_ORDER);
   assert.equal(dragonKindForType("steel"), "steel-dragon");
+  assert.equal(dragonKindForType("sea"), "sea-dragon");
   assert.equal(dragonTypeForKind("ice-dragon"), "ice");
+  assert.equal(dragonTypeForKind("sea-dragon"), "sea");
   assert.equal(dragonTypeForKind("ridgeback"), null);
   for (const kind of DRAGON_ORDER) {
     const definition = MOB_DEFS[kind];

@@ -1,6 +1,7 @@
 import { BlockId, Item, archiveShelfBlockForBookCount, type ItemCode } from "./data";
 import type { TreePlanBlock } from "./ecology";
 import type { PlannedBlock, StructureMarker, WorldPosition } from "./structures";
+import { planSeaDragonNest, type SeaDragonNestPlan } from "./v1-cultures";
 
 export const DRAGON_LAIR_REGION_BLOCKS = 44 * 16;
 export const DRAGON_LAIR_STAGE_FIVE_CHANCE = 0.22;
@@ -8,6 +9,8 @@ export const DRAGON_LAIR_STAGE_FIVE_CHANCE = 0.22;
 export type DragonType = "fire" | "ice" | "steel";
 export type DragonSex = "male" | "female";
 export type DragonLairStage = 4 | 5;
+export type DragonSurveyType = DragonType | "sea";
+export type DragonSurveyStage = 3 | DragonLairStage;
 
 export type DragonLairPlan = Readonly<{
   id: string;
@@ -23,9 +26,9 @@ export type DragonLairPlan = Readonly<{
 
 export type DragonLairSurvey = Readonly<{
   lairId: string;
-  dragonType: DragonType;
-  minimumStage: DragonLairStage;
-  actualStage: DragonLairStage;
+  dragonType: DragonSurveyType;
+  minimumStage: DragonSurveyStage;
+  actualStage: DragonSurveyStage;
   position: WorldPosition;
   distanceBlocks: number;
   markerName: string;
@@ -38,6 +41,8 @@ export const SPELL_TOME_ITEMS: readonly ItemCode[] = Object.freeze([
   Item.TomeHealingLight,
   Item.TomeBlinkstep,
   Item.TomeArcaneWard,
+  Item.TomeVerdantVolley,
+  Item.TomeStarlightSnare,
 ]);
 export const ARCHIVABLE_BOOK_ITEMS: readonly ItemCode[] = Object.freeze([Item.BoundBook, ...SPELL_TOME_ITEMS]);
 
@@ -160,6 +165,7 @@ export const DRAGON_EGG_HATCH_RULES = Object.freeze({
   fire: Object.freeze({ naturalCondition: "sustained-fire", incubationSeconds: 360, description: "Keep the placed egg beside sustained flame for six uninterrupted minutes." }),
   ice: Object.freeze({ naturalCondition: "freezing-water", incubationSeconds: 360, description: "Submerge the placed egg in source water ringed by ice for six uninterrupted minutes." }),
   steel: Object.freeze({ naturalCondition: "pressurized-steam", incubationSeconds: 420, description: "Keep the egg between water and a safe heat source so steam cycles across its shell." }),
+  sea: Object.freeze({ naturalCondition: "living-coral-current", incubationSeconds: 360, description: "Submerge the placed egg beside living coral for six uninterrupted minutes." }),
 });
 
 /** Female stage-five lairs may carry extra eggs; males never generate eggs. */
@@ -333,16 +339,70 @@ export function dragonLairsIntersectingChunk(input: Readonly<{
 export function surveyNearestUndiscoveredDragonLair(input: Readonly<{
   seed: string | number;
   origin: Readonly<{ x: number; z: number }>;
-  dragonType: DragonType;
-  minimumStage: DragonLairStage;
+  dragonType: DragonSurveyType;
+  minimumStage: DragonSurveyStage;
   discoveredLairIds?: ReadonlySet<string> | readonly string[];
   maxRegionRadius?: number;
   surfaceYAt?: (x: number, z: number) => number;
+  /** Match the world's abyssal biome rule without coupling this pure survey module to ChunkWorld. */
+  isSeaDragonNestBiome?: (x: number, z: number) => boolean;
 }>): DragonLairSurvey | null {
   const known = input.discoveredLairIds instanceof Set ? input.discoveredLairIds : new Set(input.discoveredLairIds ?? []);
   const originRegionX = Math.floor(input.origin.x / DRAGON_LAIR_REGION_BLOCKS);
   const originRegionZ = Math.floor(input.origin.z / DRAGON_LAIR_REGION_BLOCKS);
   const maxRadius = clamp(Math.floor(input.maxRegionRadius ?? 24), 1, 64);
+
+  // Sea dragons nest on a separate, wider abyssal grid. Atlantian charts use
+  // the same deterministic planner as world generation, so the mark always
+  // resolves to a real nest rather than a generic underground dragon cavern.
+  if (input.dragonType === "sea") {
+    const seaRegionBlocks = 48 * 16;
+    const seaOriginRegionX = Math.floor(input.origin.x / seaRegionBlocks);
+    const seaOriginRegionZ = Math.floor(input.origin.z / seaRegionBlocks);
+    let nearest: SeaDragonNestPlan | null = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (let radius = 0; radius <= maxRadius; radius += 1) {
+      for (let dx = -radius; dx <= radius; dx += 1) for (let dz = -radius; dz <= radius; dz += 1) {
+        if (radius > 0 && Math.max(Math.abs(dx), Math.abs(dz)) !== radius) continue;
+        const candidateNest = planSeaDragonNest({
+          seed: String(input.seed), regionX: seaOriginRegionX + dx, regionZ: seaOriginRegionZ + dz,
+          oceanFloorY: -48, biome: "lumen-trench",
+        });
+        if (!candidateNest) continue;
+        if (input.isSeaDragonNestBiome && !input.isSeaDragonNestBiome(candidateNest.center.x, candidateNest.center.z)) continue;
+        const sampledFloor = input.surfaceYAt?.(candidateNest.center.x, candidateNest.center.z) ?? -48;
+        // SEA_LEVEL is 32 in the world generator. Requiring a floor at least
+        // ten blocks below it keeps charts from pointing to a theoretical
+        // abyssal grid cell that happens to land under a continent.
+        if (sampledFloor > 22) continue;
+        const nest = planSeaDragonNest({
+          seed: String(input.seed), regionX: seaOriginRegionX + dx, regionZ: seaOriginRegionZ + dz,
+          oceanFloorY: sampledFloor, biome: "lumen-trench",
+        });
+        if (!nest || nest.guardianStage < input.minimumStage || known.has(nest.id)) continue;
+        const distance = Math.hypot(nest.center.x - input.origin.x, nest.center.z - input.origin.z);
+        if (distance < nearestDistance || (distance === nearestDistance && nest.id < (nearest?.id ?? "~"))) {
+          nearest = nest;
+          nearestDistance = distance;
+        }
+      }
+      if (nearest && radius * seaRegionBlocks > nearestDistance + seaRegionBlocks * 1.5) break;
+    }
+    // TypeScript does not narrow loop-assigned nullable locals reliably after
+    // nested bounded scans; mirror the terrestrial resolver below.
+    const resolvedNest = nearest as SeaDragonNestPlan | null;
+    if (!resolvedNest) return null;
+    return {
+      lairId: resolvedNest.id,
+      dragonType: "sea",
+      minimumStage: input.minimumStage,
+      actualStage: resolvedNest.guardianStage,
+      position: resolvedNest.center,
+      distanceBlocks: Math.round(nearestDistance),
+      markerName: `Sea Dragon Nest · Stage ${resolvedNest.guardianStage}+ chart`,
+    };
+  }
+
   let best: DragonLairCandidate | null = null;
   let bestDistance = Number.POSITIVE_INFINITY;
   for (let radius = 0; radius <= maxRadius; radius += 1) {

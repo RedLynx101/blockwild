@@ -41,8 +41,8 @@ test("the skill tab renders exact scaling, perk branches, and locked Ascendant c
   assert.match(html, /Each point adds exactly 1%/u);
   assert.match(html, /Magic 0/u);
   assert.match(html, /Calm Channel/u);
-  assert.match(html, /Ascendant safeguard/u);
-  assert.match(html, /All skills required/u);
+  assert.match(html, /Infinite Wellspring/u);
+  assert.match(html, /Magic 1000 required/u);
 });
 
 test("the controlled radial wheel grows with favorites and exposes the selected working", () => {
@@ -91,4 +91,20 @@ test("dragon care portraits show the live lifecycle stage as a Roman numeral", (
   assert.match(html, /STEEL.*DRAGON.*STAGE.*5<\/span>/u);
   assert.match(html, /aria-label="Stage 5">V<\/i>/u);
   assert.doesNotMatch(html, /aria-label="Stage 5">III<\/i>/u);
+});
+
+test("Sea Dragon care uses its own brine-and-aether presentation", () => {
+  const dragon = createDragonState("sea", { ageDays: 64, sex: "male", tamed: true, dragonId: "tidewake" });
+  const html = renderToString(createElement(DragonPanel, {
+    dragon,
+    displayName: "Tidewake",
+    onClose: () => undefined,
+    onCommand: () => undefined,
+    onToggleShoulder: () => undefined,
+    onHarvestScales: () => undefined,
+    onOpenCargo: () => undefined,
+  }));
+  assert.match(html, /dragon-care-sea/u);
+  assert.match(html, /SEA.*DRAGON.*STAGE.*3/u);
+  assert.match(html, /--dragon-glow:#69eee5/u);
 });

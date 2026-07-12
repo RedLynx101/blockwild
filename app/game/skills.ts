@@ -1,6 +1,6 @@
 /** Pure, extensible RPG skills and perk progression for Blockwild saves. */
 
-export const SKILLS_SCHEMA = 1 as const;
+export const SKILLS_SCHEMA = 2 as const;
 export const MAX_SKILL_LEVEL = 1_000;
 export const PERK_POINT_INTERVAL = 25;
 export const MAX_PERSISTED_XP = Number.MAX_SAFE_INTEGER;
@@ -18,6 +18,12 @@ export const SKILL_IDS = [
 ] as const;
 
 export type SkillId = (typeof SKILL_IDS)[number];
+
+export type AscendantTraitDefinition = Readonly<{
+  skillId: SkillId;
+  name: string;
+  description: string;
+}>;
 
 export type SkillDefinition = Readonly<{
   id: SkillId;
@@ -37,6 +43,21 @@ export const SKILLS: readonly SkillDefinition[] = Object.freeze([
   { id: "exploration", name: "Exploration", description: "Efficient travel and knowledge of unseen country.", practice: "Render new chunks, discover POIs, and complete difficult journeys.", accent: "#67afad" },
   { id: "magic", name: "Magic", description: "Spell potency, mana recovery, and arcane control.", practice: "Cast useful spells against valid targets or hazards.", accent: "#9d83d8" },
 ] satisfies readonly SkillDefinition[]);
+
+/**
+ * Every discipline has its own level-1000 capstone. Runtime systems can opt in
+ * to the matching flag without making unrelated skills a prerequisite.
+ */
+export const ASCENDANT_TRAITS: Readonly<Record<SkillId, AscendantTraitDefinition>> = Object.freeze({
+  melee: { skillId: "melee", name: "Relentless Hand", description: "Committed melee attacks no longer spend stamina." },
+  ranged: { skillId: "ranged", name: "Deadeye", description: "Ranged weapons settle instantly and reload at their mastered rate." },
+  mining: { skillId: "mining", name: "Stonewake", description: "Correct mining tools no longer lose durability from ordinary blocks." },
+  crafting: { skillId: "crafting", name: "Masterwork Hands", description: "Crafting stations work at their mastered rate without fatigue." },
+  survival: { skillId: "survival", name: "Deathless Ember", description: "Damage cannot lower health below ten percent while enabled." },
+  husbandry: { skillId: "husbandry", name: "Soulherd", description: "Tamed followers and creature summons gain the mastered bond bonus." },
+  exploration: { skillId: "exploration", name: "Horizon Walker", description: "Known roads and wayshrines remain clear at every map scale." },
+  magic: { skillId: "magic", name: "Infinite Wellspring", description: "Mana becomes infinite and the mana bar recedes." },
+});
 
 export type PerkEffect =
   | Readonly<{ kind: "percent-bonus"; stat: string; amount: number }>
@@ -88,6 +109,9 @@ export type SkillState = Readonly<{
   characterXp: number;
   perkPoints: number;
   unlockedPerkIds: readonly string[];
+  /** Per-discipline opt-in capstones. Old saves migrate the health-floor flag to Survival. */
+  ascendantTraits: Readonly<Record<SkillId, boolean>>;
+  /** Legacy mirror retained for save/network compatibility. */
   ascendantHealthFloorEnabled: boolean;
 }>;
 
@@ -132,6 +156,10 @@ function blankSkills(): Record<SkillId, SkillProgress> {
   return Object.fromEntries(SKILL_IDS.map((skillId) => [skillId, { level: 0, xp: 0 }])) as Record<SkillId, SkillProgress>;
 }
 
+function blankAscendantTraits(): Record<SkillId, boolean> {
+  return Object.fromEntries(SKILL_IDS.map((skillId) => [skillId, false])) as Record<SkillId, boolean>;
+}
+
 export function createSkillState(): SkillState {
   return {
     schema: SKILLS_SCHEMA,
@@ -140,6 +168,7 @@ export function createSkillState(): SkillState {
     characterXp: 0,
     perkPoints: 0,
     unlockedPerkIds: [],
+    ascendantTraits: blankAscendantTraits(),
     ascendantHealthFloorEnabled: false,
   };
 }
@@ -175,13 +204,26 @@ export function normalizeSkillState(value: unknown): SkillState {
     characterXp: clamp(finite(input.characterXp), 0, MAX_PERSISTED_XP),
     perkPoints: clamp(whole(input.perkPoints), 0, Number.MAX_SAFE_INTEGER),
     unlockedPerkIds: PERKS.map((perk) => perk.id).filter((id) => unlocked.has(id)),
-    ascendantHealthFloorEnabled: input.ascendantHealthFloorEnabled === true,
+    ascendantTraits: blankAscendantTraits(),
+    ascendantHealthFloorEnabled: false,
   };
+  const requestedTraits = input.ascendantTraits && typeof input.ascendantTraits === "object"
+    ? input.ascendantTraits as Partial<Record<SkillId, unknown>>
+    : {};
+  const ascendantTraits = blankAscendantTraits();
+  for (const skillId of SKILL_IDS) {
+    ascendantTraits[skillId] = skills[skillId].level >= MAX_SKILL_LEVEL && requestedTraits[skillId] === true;
+  }
+  // v1 saves exposed only one all-skills health-floor toggle. It now belongs
+  // solely to Survival and remains enabled when that one discipline is mastered.
+  if (input.ascendantHealthFloorEnabled === true && skills.survival.level >= MAX_SKILL_LEVEL) ascendantTraits.survival = true;
   const nextCharacterXp = characterXpForNextLevel(state.characterLevel);
-  const normalized = { ...state, characterXp: Math.min(state.characterXp, Math.max(0, nextCharacterXp - 1)) };
-  return normalized.ascendantHealthFloorEnabled && !hasAllSkillsMastered(normalized)
-    ? { ...normalized, ascendantHealthFloorEnabled: false }
-    : normalized;
+  return {
+    ...state,
+    characterXp: Math.min(state.characterXp, Math.max(0, nextCharacterXp - 1)),
+    ascendantTraits,
+    ascendantHealthFloorEnabled: ascendantTraits.survival,
+  };
 }
 
 function linearCharacterCost(startLevel: number, levels: number) {
@@ -280,17 +322,39 @@ export function hasAllSkillsMastered(state: SkillState) {
   return SKILL_IDS.every((skillId) => state.skills[skillId].level >= MAX_SKILL_LEVEL);
 }
 
+export function isSkillMastered(state: SkillState, skillId: SkillId) {
+  return state.skills[skillId].level >= MAX_SKILL_LEVEL;
+}
+
+export function ascendantTraitEnabled(state: SkillState, skillId: SkillId) {
+  return isSkillMastered(state, skillId) && state.ascendantTraits?.[skillId] === true;
+}
+
+export function setAscendantTraitEnabled(state: SkillState, skillId: SkillId, enabled: boolean) {
+  if (enabled && !isSkillMastered(state, skillId)) return { state, changed: false, reason: "mastery-required" as const };
+  const current = ascendantTraitEnabled(state, skillId);
+  if (current === enabled) return { state, changed: false, reason: "unchanged" as const };
+  const ascendantTraits = { ...state.ascendantTraits, [skillId]: enabled };
+  return {
+    state: {
+      ...state,
+      ascendantTraits,
+      ascendantHealthFloorEnabled: ascendantTraits.survival === true,
+    },
+    changed: true,
+    reason: enabled ? "enabled" as const : "disabled" as const,
+  };
+}
+
 export function setAscendantHealthFloorEnabled(state: SkillState, enabled: boolean) {
-  if (enabled && !hasAllSkillsMastered(state)) return { state, changed: false, reason: "mastery-required" as const };
-  if (state.ascendantHealthFloorEnabled === enabled) return { state, changed: false, reason: "unchanged" as const };
-  return { state: { ...state, ascendantHealthFloorEnabled: enabled }, changed: true, reason: enabled ? "enabled" as const : "disabled" as const };
+  return setAscendantTraitEnabled(state, "survival", enabled);
 }
 
 /** Apply after damage resolution; it does not heal above the ten-percent safeguard. */
 export function applyAscendantHealthFloor(state: SkillState, incomingHealth: number, maxHealth: number) {
   const safeMax = Math.max(0, finite(maxHealth));
   const candidate = clamp(finite(incomingHealth), 0, safeMax);
-  return state.ascendantHealthFloorEnabled && hasAllSkillsMastered(state)
+  return ascendantTraitEnabled(state, "survival")
     ? Math.max(candidate, safeMax * 0.1)
     : candidate;
 }

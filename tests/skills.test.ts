@@ -7,14 +7,15 @@ import {
   addCharacterXp,
   addSkillXp,
   applyAscendantHealthFloor,
+  ascendantTraitEnabled,
   createSkillState,
   hasAllSkillsMastered,
   normalizeSkillState,
+  setAscendantTraitEnabled,
   setAscendantHealthFloorEnabled,
   skillMultiplier,
   skillXpForNextRank,
   unlockPerk,
-  type SkillState,
 } from "../app/game/skills.ts";
 
 test("all eight extensible skills use the exact one-percent-per-point rule", () => {
@@ -65,20 +66,30 @@ test("character levels are uncapped and huge XP grants use a bounded calculation
   assert.ok(result.state.characterXp >= 0);
 });
 
-test("mastering every skill unlocks the opt-in ten-percent Ascendant health floor", () => {
+test("each mastered skill unlocks its own Ascendant trait independently", () => {
   const blank = createSkillState();
   assert.equal(hasAllSkillsMastered(blank), false);
   assert.equal(setAscendantHealthFloorEnabled(blank, true).reason, "mastery-required");
-  const mastered = {
+  const survivalMastered = {
     ...blank,
-    skills: Object.fromEntries(SKILL_IDS.map((skillId) => [skillId, { level: MAX_SKILL_LEVEL, xp: 0 }])) as SkillState["skills"],
+    skills: { ...blank.skills, survival: { level: MAX_SKILL_LEVEL, xp: 0 } },
   };
-  assert.equal(hasAllSkillsMastered(mastered), true);
-  const enabled = setAscendantHealthFloorEnabled(mastered, true);
+  assert.equal(hasAllSkillsMastered(survivalMastered), false);
+  const enabled = setAscendantHealthFloorEnabled(survivalMastered, true);
   assert.equal(enabled.reason, "enabled");
+  assert.equal(ascendantTraitEnabled(enabled.state, "survival"), true);
   assert.equal(applyAscendantHealthFloor(enabled.state, -20, 80), 8);
   assert.equal(applyAscendantHealthFloor(enabled.state, 36, 80), 36);
-  assert.equal(applyAscendantHealthFloor(mastered, -20, 80), 0);
+  assert.equal(applyAscendantHealthFloor(survivalMastered, -20, 80), 0);
+
+  const magicMastered = {
+    ...blank,
+    skills: { ...blank.skills, magic: { level: MAX_SKILL_LEVEL, xp: 0 } },
+  };
+  const magicEnabled = setAscendantTraitEnabled(magicMastered, "magic", true);
+  assert.equal(magicEnabled.reason, "enabled");
+  assert.equal(ascendantTraitEnabled(magicEnabled.state, "magic"), true);
+  assert.equal(ascendantTraitEnabled(magicEnabled.state, "survival"), false);
 });
 
 test("skill save normalization clamps levels and drops impossible perk or Ascendant state", () => {
@@ -102,4 +113,15 @@ test("skill save normalization clamps levels and drops impossible perk or Ascend
   assert.equal(normalized.perkPoints, 0);
   assert.deepEqual(normalized.unlockedPerkIds, []);
   assert.equal(normalized.ascendantHealthFloorEnabled, false);
+  assert.equal(normalized.ascendantTraits.magic, false, "unrequested mastered traits remain opt-in");
+});
+
+test("legacy health-floor saves migrate to the Survival capstone without all-skill mastery", () => {
+  const normalized = normalizeSkillState({
+    skills: { survival: { level: MAX_SKILL_LEVEL, xp: 0 } },
+    ascendantHealthFloorEnabled: true,
+  });
+  assert.equal(normalized.ascendantTraits.survival, true);
+  assert.equal(normalized.ascendantHealthFloorEnabled, true);
+  assert.equal(applyAscendantHealthFloor(normalized, 0, 50), 5);
 });

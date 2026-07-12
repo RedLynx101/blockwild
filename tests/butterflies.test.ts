@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
 import { Item } from "../app/game/data.ts";
-import { BUTTERFLY_FLIGHT_TUNING, butterflyCaptureAlongRay, butterflyKindForBiome } from "../app/game/butterflies.ts";
+import { BUTTERFLY_FLIGHT_TUNING, butterflyCaptureAlongRay, butterflyKindForBiome, butterflyYawForVelocity } from "../app/game/butterflies.ts";
 import { MOB_DEFS } from "../app/game/mobs.ts";
 import { BiomeId } from "../app/game/world.ts";
 
@@ -30,4 +30,12 @@ test("wild butterflies spend substantially more time flying than perched", () =>
   const averageFlight = BUTTERFLY_FLIGHT_TUNING.flightSecondsMin + BUTTERFLY_FLIGHT_TUNING.flightSecondsRange / 2;
   const averageLanding = BUTTERFLY_FLIGHT_TUNING.landedSecondsMin + BUTTERFLY_FLIGHT_TUNING.landedSecondsRange / 2;
   assert.ok(averageFlight > averageLanding * 1.75);
+});
+
+test("butterfly antennae face the direction of travel instead of trailing backwards", () => {
+  for (const velocity of [new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1, 0, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1)]) {
+    const yaw = butterflyYawForVelocity(velocity);
+    const modelForward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+    assert.ok(modelForward.dot(velocity.clone().normalize()) > 0.999);
+  }
 });

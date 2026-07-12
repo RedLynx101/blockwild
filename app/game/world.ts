@@ -1,9 +1,10 @@
 import * as THREE from "three";
 import { BLOCKS, LEAF_BLOCKS, TORCH_BLOCKS, BlockId, archiveShelfBookCount, blockContainsWater, isWaterloggedFloraBlock, type RenderLayer } from "./data";
 import { caveEntranceAt, caveFeatureAt } from "./caves";
-import { DENSE_CUTOUT_LEAF_POLICY, planFullTree, planSubmergedFlora, planSyrupPondsForChunk, syrupPondColumnAt, type TreeForm, type TreePlanBlock } from "./ecology";
+import { DENSE_CUTOUT_LEAF_POLICY, planFullTree, planSubmergedFlora, planSyrupPondsForChunk, syrupPondColumnAt, wildPeppermintHeight, type TreeForm, type TreePlanBlock } from "./ecology";
 import { dragonLairMarkersForChunk, dragonLairPlacementsForChunk, dragonLairsIntersectingChunk, repairGeneratedTreePlan } from "./dragon-world";
 import { NPC_FACTION_IDS, normalizeEnabledFactions, type NpcFactionId } from "./factions";
+import { isRootableTreeSoil } from "./farming";
 import {
   planBiomeVegetation,
   planStructure,
@@ -21,11 +22,13 @@ import {
   createSettlementState,
   planSettlementCandidate,
   planSettlementLayout,
+  settlementWinsSpacingTieBreak,
   type SettlementBiome,
   type SettlementCandidate,
   type SettlementLayoutPlan,
   type SettlementResident,
 } from "./settlements";
+import { planSeaDragonNest } from "./v1-cultures";
 
 export const CHUNK_SIZE = 16;
 export const MIN_Y = -64;
@@ -34,7 +37,7 @@ export const WORLD_HEIGHT = MAX_Y - MIN_Y + 1;
 export const SEA_LEVEL = 32;
 export const SECTION_HEIGHT = 16;
 export const SECTION_COUNT = WORLD_HEIGHT / SECTION_HEIGHT;
-export const GENERATOR_VERSION = 10;
+export const GENERATOR_VERSION = 11;
 
 export type SettlementWorldPlan = Readonly<{
   candidate: SettlementCandidate;
@@ -81,6 +84,8 @@ export enum BiomeId {
   SakurabloomGrove = 19,
   LumenTrench = 20,
   SugarplumVale = 21,
+  Glimmerwood = 22,
+  SnowcapRange = 23,
 }
 
 export const BIOME_NAMES: Record<number, string> = {
@@ -106,6 +111,8 @@ export const BIOME_NAMES: Record<number, string> = {
   [BiomeId.SakurabloomGrove]: "Sakurabloom Grove",
   [BiomeId.LumenTrench]: "Lumen Trench",
   [BiomeId.SugarplumVale]: "Sugarplum Vale",
+  [BiomeId.Glimmerwood]: "Glimmerwood",
+  [BiomeId.SnowcapRange]: "Snowcap Range",
 };
 
 /** Small deterministic amenity pass layered onto the older landmark shells. */
@@ -123,7 +130,8 @@ export function planPoiAmenities(kind: StructureKind, origin: Readonly<{ x: numb
     at(-2, 1, 1, BlockId.WildwoodTable), at(-3, 1, 1, BlockId.WildwoodStool), at(3, 1, -1, BlockId.SealedBarrel),
   ];
   if (kind === "forest-temple") return [
-    at(-3, 2, -4, BlockId.TorchWallSouth, "temple-sconce"), at(3, 2, -4, BlockId.TorchWallSouth, "temple-sconce"),
+    at(0, 1, 5, BlockId.DoorClosedLower, "temple-door"), at(0, 2, 5, BlockId.DoorClosedUpper, "temple-door"),
+    at(-1, 3, 5, BlockId.TorchWallEast, "temple-sconce"), at(1, 3, 5, BlockId.TorchWallWest, "temple-sconce"),
     at(-2, 1, 2, BlockId.WildwoodTable), at(-3, 1, 2, BlockId.WildwoodStool), at(2, 1, 3, BlockId.WildwoodShelf),
   ];
   if (kind === "sunbun-grove") return [
@@ -154,10 +162,30 @@ function settlementBiomeFromId(biome: BiomeId): SettlementBiome | null {
   if (biome === BiomeId.DeepOcean) return "deep-ocean";
   if (biome === BiomeId.LumenTrench) return "lumen-trench";
   if (biome === BiomeId.SugarplumVale) return "sugarplum-vale";
+  if (biome === BiomeId.Glimmerwood) return "glimmerwood";
+  if (biome === BiomeId.SnowcapRange) return "snowcap-range";
   return null;
 }
 
-function settlementResidentMobKind(resident: SettlementResident, faction: "hobbits" | "goblins" | "atlantians" | "sugarcourt") {
+function settlementResidentMobKind(resident: SettlementResident, faction: "hobbits" | "goblins" | "atlantians" | "sugarcourt" | "wood-elves" | "dwarves") {
+  if (faction === "wood-elves") {
+    if (resident.profession === "wood-elf-elderweaver") return "wood-elf-elderweaver";
+    if (resident.profession === "wood-elf-leafwarden") return "wood-elf-leafwarden";
+    if (resident.profession === "wood-elf-bow-warden") return "wood-elf-bow-warden";
+    if (resident.profession === "wood-elf-grovekeeper") return "wood-elf-grovekeeper";
+    if (resident.profession === "wood-elf-tomekeeper") return "wood-elf-tomekeeper";
+    if (resident.profession === "wood-elf-potioner") return "wood-elf-potioner";
+    return "wood-elf-moonbroker";
+  }
+  if (faction === "dwarves") {
+    if (resident.profession === "dwarf-thane") return "dwarf-thane";
+    if (resident.profession === "dwarf-gatewarden") return "dwarf-gatewarden";
+    if (resident.profession === "dwarf-delver") return "dwarf-delver";
+    if (resident.profession === "dwarf-gearwright") return "dwarf-gearwright";
+    if (resident.profession === "dwarf-golemsmith") return "dwarf-golemsmith";
+    if (resident.profession === "dwarf-powderwright") return "dwarf-powderwright";
+    return "dwarf-provisioner";
+  }
   if (faction === "sugarcourt") {
     if (resident.profession === "sugarcourt-crown-confectioner") return "sugarcourt-crown-confectioner";
     if (resident.profession === "sugarcourt-brittle-guard") return "sugarcourt-brittle-guard";
@@ -219,6 +247,14 @@ export function settlementBlockPalette(factionId: string): SettlementBlockPalett
   if (factionId === "sugarcourt") return Object.freeze({
     path: BlockId.SugarSoil, perimeterWall: BlockId.BoiledSugarbrick, tower: BlockId.CandywoodLog, lightBase: BlockId.CandywoodLog,
     buildingWall: BlockId.BoiledSugarbrick, corner: BlockId.CandywoodLog, roof: BlockId.BoiledSugarbrick, floor: BlockId.CandywoodLog, hallFloor: BlockId.BoiledSugarbrick,
+  });
+  if (factionId === "wood-elves") return Object.freeze({
+    path: BlockId.MoonboughLog, perimeterWall: BlockId.MoonboughLeaves, tower: BlockId.MoonboughLog, lightBase: BlockId.MoonboughLog,
+    buildingWall: BlockId.MoonboughLog, corner: BlockId.MoonboughLog, roof: BlockId.MoonboughLeaves, floor: BlockId.GlimmerGrass, hallFloor: BlockId.Moonwell,
+  });
+  if (factionId === "dwarves") return Object.freeze({
+    path: BlockId.DeepgearBrick, perimeterWall: BlockId.DeepgearBrick, tower: BlockId.RivetedBrass, lightBase: BlockId.RivetedBrass,
+    buildingWall: BlockId.DeepgearBrick, corner: BlockId.RivetedBrass, roof: BlockId.DeepgearBrick, floor: BlockId.DeepgearBrick, hallFloor: BlockId.RivetedBrass,
   });
   return Object.freeze({
     path: BlockId.Gravel, perimeterWall: BlockId.StoneBrick, tower: BlockId.StoneBrick, lightBase: BlockId.StoneBrick,
@@ -282,6 +318,7 @@ const GENERATED_GROWTH_BLOCK_SET = new Set<BlockId>([
   BlockId.CoastAster,
   BlockId.SakuraBloom,
   BlockId.Dreamblossom,
+  BlockId.GiantDreamblossom,
   BlockId.RainveilFern,
   BlockId.LanternLotus,
   BlockId.JungleSapling,
@@ -309,6 +346,12 @@ const GENERATED_GROWTH_BLOCK_SET = new Set<BlockId>([
   BlockId.CocoaSprout,
   BlockId.CocoaYoung,
   BlockId.CocoaCrop,
+  BlockId.MoonboughLog,
+  BlockId.MoonboughLeaves,
+  BlockId.Moonpetal,
+  BlockId.Starfern,
+  BlockId.Dreamcap,
+  BlockId.Lumenreed,
 ]);
 
 type ColumnSample = {
@@ -370,6 +413,8 @@ const BIOME_TINT: Record<number, [number, number, number]> = {
   [BiomeId.SakurabloomGrove]: [1.08, 0.94, 1.02],
   [BiomeId.LumenTrench]: [0.62, 0.78, 1.08],
   [BiomeId.SugarplumVale]: [1.08, 0.88, 1.04],
+  [BiomeId.Glimmerwood]: [0.7, 1.04, 0.92],
+  [BiomeId.SnowcapRange]: [0.88, 0.96, 1.03],
 };
 
 /**
@@ -466,6 +511,8 @@ const TILE_COLORS = [
   // 129-143: Sugarplum terrain, Candywood, liquids, flora, crops and Sugarworks.
   "#8f6ac2", "#8a5ca2", "#76506f", "#9a557c", "#d58bad", "#e88fba", "#ef9ab9",
   "#b76532", "#dda32f", "#d95d9a", "#e94f61", "#754838", "#f3a2d0", "#f6e5eb", "#e58fb9",
+  // 144: dense woven Hearthkin roof that no longer reuses transparent wheat art.
+  "#c7a75d",
 ];
 
 export const MEADOW_GRASS_PALETTE = Object.freeze({
@@ -509,13 +556,21 @@ const LIGHT_BLOCKS = new Set<BlockId>([
   BlockId.RuneStone,
   BlockId.CreatureHealer,
   BlockId.Dreamblossom,
+  BlockId.GiantDreamblossom,
   BlockId.LumenKelp,
   BlockId.StarCoral,
   BlockId.AbyssBloom,
   BlockId.LanternLotus,
   BlockId.DraconicIncubator,
+  BlockId.DeepgearLantern,
+  BlockId.Moonpetal,
+  BlockId.Starfern,
+  BlockId.Dreamcap,
+  BlockId.Lumenreed,
+  BlockId.AetherConduit,
+  BlockId.Moonwell,
 ]);
-const ATLAS_GRID = 12;
+const ATLAS_GRID = 13;
 const ATLAS_PAD = 0.0008;
 const TILE_UVS = Array.from({ length: ATLAS_GRID * ATLAS_GRID }, (_, tile) => {
   const column = tile % ATLAS_GRID;
@@ -523,6 +578,8 @@ const TILE_UVS = Array.from({ length: ATLAS_GRID * ATLAS_GRID }, (_, tile) => {
   return [column / ATLAS_GRID + ATLAS_PAD, 1 - (row + 1) / ATLAS_GRID + ATLAS_PAD, (column + 1) / ATLAS_GRID - ATLAS_PAD, 1 - row / ATLAS_GRID - ATLAS_PAD] as const;
 });
 export const GLASS_OPACITY = 0.42;
+/** Liquid tops sit below the voxel rim; bottoms remain flush with supporting blocks. */
+export const LIQUID_SURFACE_INSET = 0.09;
 
 /** A cube with every face remapped to the same atlas contract used by chunk meshes. */
 export function createAtlasBlockGeometry(type: BlockId, size = 1) {
@@ -869,6 +926,18 @@ export function createBlockAtlas() {
       context.fillStyle = "#f4cf56"; context.fillRect(ox + 4, oy + 5, 8, 6);
       context.fillStyle = "#fff0f5"; context.fillRect(ox + 6, oy + 6, 4, 1);
       context.fillStyle = "#75413f"; context.fillRect(ox + 7, oy + 8, 2, 5);
+    } else if (index === 144) {
+      context.fillStyle = "#c7a75d"; context.fillRect(ox, oy, tile, tile);
+      for (let y = 1; y < tile; y += 4) {
+        context.fillStyle = y % 8 === 1 ? "#8f7139" : "#a98643";
+        context.fillRect(ox, oy + y, tile, 2);
+        for (let x = (y % 8 === 1 ? 1 : 3); x < tile; x += 5) {
+          context.fillStyle = "#e2c77a";
+          context.fillRect(ox + x, oy + Math.max(0, y - 1), 1, 4);
+        }
+      }
+      context.fillStyle = "rgba(255,235,167,.55)";
+      for (let x = 2; x < tile; x += 5) context.fillRect(ox + x, oy, 1, tile);
     }
     if (index === 1 || index === 17 || index === 29 || index === 31 || index === 103 || index === 108) {
       const topColor = index === 17 ? "#e9efed" : index === 29 ? "#586f37" : index === 31 ? "#aaa04f"
@@ -1137,6 +1206,7 @@ export class ChunkWorld {
   edits = new Map<string, Map<number, BlockId>>();
   structureMarkers = new Map<string, StructureMarker>();
   settlementPlans = new Map<string, SettlementWorldPlan>();
+  private settlementCandidateCache = new Map<string, SettlementCandidate | null>();
   generationQueue: Array<{ cx: number; cz: number; distance: number }> = [];
   generationQueued = new Set<string>();
   meshQueue: Array<{ key: string; section: number }> = [];
@@ -1231,6 +1301,7 @@ export class ChunkWorld {
     this.edits.clear();
     this.structureMarkers.clear();
     this.settlementPlans.clear();
+    this.settlementCandidateCache.clear();
     this.hiddenChestVisuals.clear();
     this.seedText = seedText || "WILDERNESS";
     this.seed = seedToInt(this.seedText);
@@ -1496,10 +1567,14 @@ export class ChunkWorld {
     else if (height <= SEA_LEVEL - 2) biome = temperature < 0.15 ? BiomeId.Snowfield : BiomeId.Ocean;
     else if (height <= SEA_LEVEL + 2) biome = BiomeId.Beach;
     else if (variant > 0.86 && mountain > 0.18 && temperature > 0.42) biome = BiomeId.Volcanic;
+    else if ((mountain > 0.52 || height >= 76) && temperature < 0.58) biome = BiomeId.SnowcapRange;
     else if (mountain > 0.36 || height >= 68) biome = temperature < 0.35 || height > 78 ? BiomeId.Snowfield : BiomeId.Highlands;
     else if (temperature < 0.2) biome = BiomeId.Snowfield;
     else if (temperature < 0.36 && moisture >= 0.42) biome = BiomeId.Frostpine;
     else if (height < 68 && temperature >= 0.38 && temperature <= 0.7 && moisture >= 0.33 && moisture <= 0.76 && variant >= 0.7 && variant <= 0.93) biome = BiomeId.SugarplumVale;
+    // Keep Glimmerwood cool enough that warm, very wet Rainveil jungle seeds
+    // retain their established identity and save-compatible tree fixtures.
+    else if (temperature >= 0.32 && temperature <= 0.55 && moisture >= 0.64 && variant >= 0.18 && variant <= 0.43) biome = BiomeId.Glimmerwood;
     else if (temperature > 0.62 && moisture < 0.2 && variant > 0.52) biome = BiomeId.Badlands;
     else if (temperature > 0.64 && moisture < 0.3) biome = BiomeId.Desert;
     else if (temperature > 0.58 && moisture < 0.54) biome = BiomeId.Savanna;
@@ -1655,6 +1730,8 @@ export class ChunkWorld {
     if (biome === BiomeId.Siltfen || biome === BiomeId.MushroomFen) return [BlockId.SwampGrass, BlockId.Mud];
     if (biome === BiomeId.Savanna) return [BlockId.SavannaGrass, BlockId.Dirt];
     if (biome === BiomeId.SugarplumVale) return [BlockId.SugarplumGrass, BlockId.SugarSoil];
+    if (biome === BiomeId.Glimmerwood) return [BlockId.GlimmerGrass, BlockId.Dirt];
+    if (biome === BiomeId.SnowcapRange) return [BlockId.SnowyGrass, BlockId.SnowcapStone];
     if (biome === BiomeId.Snowfield || (height > 72 && temperature < 0.48)) return [BlockId.SnowyGrass, BlockId.Dirt];
     if (biome === BiomeId.Volcanic) return [BlockId.Basalt, BlockId.Basalt];
     if (biome === BiomeId.Highlands) return [height > 76 ? BlockId.Snow : BlockId.Stone, BlockId.Stone];
@@ -1721,7 +1798,10 @@ export class ChunkWorld {
       chunk.heightmap[lx + lz * CHUNK_SIZE] = column.bedY;
     }
 
-    const cellSize = 4;
+    // Tree centers live on a coarse jittered lattice with an eight-block
+    // minimum axis separation. Broad crowns may mingle, but authored wood from
+    // neighboring trees can no longer merge into one accidental trunk entity.
+    const cellSize = 9;
     const plannedTreeLogs: TreePlanBlock[] = [];
     const plannedTreeLeaves: TreePlanBlock[] = [];
     const queueTreeBlock = (placement: TreePlanBlock) => {
@@ -1729,8 +1809,8 @@ export class ChunkWorld {
     };
     for (let cellX = Math.floor((minX - 8) / cellSize); cellX <= Math.floor((minX + CHUNK_SIZE + 8) / cellSize); cellX += 1) {
       for (let cellZ = Math.floor((minZ - 8) / cellSize); cellZ <= Math.floor((minZ + CHUNK_SIZE + 8) / cellSize); cellZ += 1) {
-        const x = cellX * cellSize + Math.floor(hash2(cellX, cellZ, this.seed ^ 0x11111111) * cellSize);
-        const z = cellZ * cellSize + Math.floor(hash2(cellX, cellZ, this.seed ^ 0x22222222) * cellSize);
+        const x = cellX * cellSize + 4 + Math.floor(hash2(cellX, cellZ, this.seed ^ 0x11111111) * 2);
+        const z = cellZ * cellSize + 4 + Math.floor(hash2(cellX, cellZ, this.seed ^ 0x22222222) * 2);
         if (x * x + z * z < 28) continue;
         const column = sample(x, z);
         if (caveEntranceAt(this.seed, x, z, column.height, column.waterline)) continue;
@@ -1750,36 +1830,49 @@ export class ChunkWorld {
           [BiomeId.RainveilJungle]: 0.5,
           [BiomeId.SakurabloomGrove]: 0.36,
           [BiomeId.SugarplumVale]: 0.34,
+          [BiomeId.Glimmerwood]: 0.43,
+          [BiomeId.SnowcapRange]: 0.18,
         };
-        if (roll < (density[column.biome] ?? 0) && column.height > column.waterline + 1) {
+        // The larger cell has 81/16 the area of the legacy lattice. Scale the
+        // chance accordingly so forests remain full even though trunks no
+        // longer spawn close enough to fuse.
+        const treeChance = Math.min(0.98, (density[column.biome] ?? 0) * (cellSize * cellSize / 16));
+        if (roll < treeChance && column.height > column.waterline + 1) {
           const trunk = column.biome === BiomeId.Frostpine || column.biome === BiomeId.Snowfield ? BlockId.PineLog
+            : column.biome === BiomeId.SnowcapRange ? BlockId.PineLog
             : column.biome === BiomeId.Birchlight ? BlockId.BirchLog
               : column.biome === BiomeId.Bloomwood ? BlockId.BloomLog
                 : column.biome === BiomeId.RainveilJungle ? BlockId.JungleLog
                   : column.biome === BiomeId.SakurabloomGrove ? BlockId.SakuraLog
                     : column.biome === BiomeId.SugarplumVale ? BlockId.CandywoodLog
+                      : column.biome === BiomeId.Glimmerwood ? BlockId.MoonboughLog
                       : column.biome === BiomeId.CloudreedGlen ? BlockId.BirchLog : BlockId.WildwoodLog;
           const leaves = trunk === BlockId.PineLog ? BlockId.PineLeaves
             : trunk === BlockId.BirchLog ? BlockId.BirchLeaves
               : trunk === BlockId.BloomLog ? BlockId.BloomLeaves
                 : trunk === BlockId.JungleLog ? BlockId.JungleLeaves
                   : trunk === BlockId.SakuraLog ? BlockId.SakuraLeaves
-                    : trunk === BlockId.CandywoodLog ? BlockId.CandywoodLeaves : BlockId.WildwoodLeaves;
+                  : trunk === BlockId.CandywoodLog ? BlockId.CandywoodLeaves : BlockId.WildwoodLeaves;
+          const resolvedLeaves = trunk === BlockId.MoonboughLog ? BlockId.MoonboughLeaves : leaves;
           const height = trunk === BlockId.PineLog ? 6 + Math.floor(hash2(x, z, this.seed) * 3) : 4 + Math.floor(hash2(x, z, this.seed) * 3);
+          const treeForbiddenColumns = new Set(syrupPondCells);
+          if (column.biome === BiomeId.SugarplumVale) for (let treeX = x - 6; treeX <= x + 6; treeX += 1) for (let treeZ = z - 6; treeZ <= z + 6; treeZ += 1) {
+            if (syrupPondColumnAt(this.seedText, treeX, treeZ, sample, BiomeId.SugarplumVale)) treeForbiddenColumns.add(`${treeX},${treeZ}`);
+          }
           if (trunk === BlockId.PineLog) {
             const pinePlan: TreePlanBlock[] = [];
             for (let y = 1; y <= height; y += 1) pinePlan.push({ x, y: column.height + y, z, block: trunk });
             for (let dy = -3; dy <= 1; dy += 1) {
               const radius = dy % 2 === 0 ? 2 : 1;
               for (let dx = -radius; dx <= radius; dx += 1) for (let dz = -radius; dz <= radius; dz += 1) if (Math.abs(dx) + Math.abs(dz) <= radius + 1) {
-                pinePlan.push({ x: x + dx, y: column.height + height + dy, z: z + dz, block: leaves });
+                pinePlan.push({ x: x + dx, y: column.height + height + dy, z: z + dz, block: resolvedLeaves });
               }
             }
             for (const planned of repairGeneratedTreePlan({
               plan: pinePlan,
               root: { x, y: column.height + 1, z },
               logBlock: trunk,
-              forbiddenColumns: syrupPondCells,
+              forbiddenColumns: treeForbiddenColumns,
             })) queueTreeBlock(planned);
           } else {
             const formRoll = hash2(x, z, this.seed ^ 0x51a6c72d);
@@ -1790,10 +1883,16 @@ export class ChunkWorld {
                 : formRoll > 0.45 ? "layered" : "rounded";
             const root = { x, y: column.height + 1, z };
             for (const planned of repairGeneratedTreePlan({
-              plan: planFullTree(`${this.seedText}:${x},${z}`, root, form, trunk, leaves),
+              plan: planFullTree(`${this.seedText}:${x},${z}`, root, form, trunk, resolvedLeaves, {
+                groundYAt: (treeX, treeZ) => sample(treeX, treeZ).height,
+                canRootAt: (treeX, treeZ) => {
+                  const treeColumn = sample(treeX, treeZ);
+                  return isRootableTreeSoil(this.surfaceBlocks(treeColumn.biome, treeColumn.height, treeColumn.temperature)[0]);
+                },
+              }),
               root,
               logBlock: trunk,
-              forbiddenColumns: syrupPondCells,
+              forbiddenColumns: treeForbiddenColumns,
             })) queueTreeBlock(planned);
           }
         }
@@ -1821,14 +1920,20 @@ export class ChunkWorld {
       } else if (column.biome === BiomeId.Beach) {
         if (roll > 0.986) set(x, column.height + 1, z, BlockId.CoastAster);
         else if (roll > 0.965) set(x, column.height + 1, z, BlockId.Saltbrush);
-      } else if ([BiomeId.Meadow, BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Bloomwood, BiomeId.Savanna, BiomeId.Siltfen, BiomeId.CloudreedGlen, BiomeId.RainveilJungle, BiomeId.SakurabloomGrove, BiomeId.SugarplumVale].includes(column.biome)) {
+      } else if (column.biome === BiomeId.SnowcapRange) {
+        if (roll > 0.992) set(x, column.height + 1, z, BlockId.Dreamcap);
+        else if (roll > 0.978) set(x, column.height + 1, z, BlockId.Starfern);
+      } else if ([BiomeId.Meadow, BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Bloomwood, BiomeId.Savanna, BiomeId.Siltfen, BiomeId.CloudreedGlen, BiomeId.RainveilJungle, BiomeId.SakurabloomGrove, BiomeId.SugarplumVale, BiomeId.Glimmerwood].includes(column.biome)) {
         const patch = 0.72 * valueNoise2(x / 19, z / 19, this.seed ^ 0x35f1a93b) + 0.28 * valueNoise2(x / 6, z / 6, this.seed ^ 0x6c8e9cf5);
         const density = column.biome === BiomeId.Meadow ? 0.72 : column.biome === BiomeId.Bloomwood ? 0.79
           : column.biome === BiomeId.SugarplumVale ? 0.8 : column.biome === BiomeId.Savanna ? 0.9 : 0.84;
         if (roll + patch * 0.11 <= density) continue;
         const flowerBias = column.biome === BiomeId.Meadow || column.biome === BiomeId.Bloomwood || column.biome === BiomeId.CloudreedGlen || column.biome === BiomeId.SakurabloomGrove;
         const wheatPatch = hash2(x, z, this.seed ^ 0x7a9d35f1) > 0.986;
-        const plant = column.biome === BiomeId.SugarplumVale && roll > 0.976 ? BlockId.LollipopOrchid
+        const plant = column.biome === BiomeId.Glimmerwood && roll > 0.968 ? BlockId.Moonpetal
+          : column.biome === BiomeId.Glimmerwood && roll > 0.925 ? BlockId.Dreamcap
+            : column.biome === BiomeId.Glimmerwood ? BlockId.Starfern
+        : column.biome === BiomeId.SugarplumVale && roll > 0.976 ? BlockId.LollipopOrchid
           : column.biome === BiomeId.SugarplumVale && roll > 0.95 ? BlockId.MarshmallowShrub
             : column.biome === BiomeId.SugarplumVale && roll > 0.89 ? BlockId.GumdropBush
               : column.biome === BiomeId.SugarplumVale ? BlockId.PeppermintTuft
@@ -1843,7 +1948,13 @@ export class ChunkWorld {
             : flowerBias && roll > 0.965 ? BlockId.BlueFlower
               : flowerBias && roll > 0.925 ? BlockId.RedFlower
                 : wheatPatch ? BlockId.WheatCrop : BlockId.TallGrass;
-        set(x, column.height + 1, z, plant);
+        if (plant === BlockId.PeppermintTuft) {
+          const caneHeight = wildPeppermintHeight(this.seedText, x, z);
+          for (let dy = 1; dy <= caneHeight; dy += 1) {
+            if (chunk.blocks[blockIndex(lx, column.height + dy, lz)] !== BlockId.Air) break;
+            set(x, column.height + dy, z, plant);
+          }
+        } else set(x, column.height + 1, z, plant);
       } else if (column.biome === BiomeId.MushroomFen && roll > 0.9) {
         set(x, column.height + 1, z, BlockId.MushroomCap);
       }
@@ -1853,7 +1964,9 @@ export class ChunkWorld {
       const regionSize = 96;
       for (let rx = Math.floor((minX - 10) / regionSize); rx <= Math.floor((minX + CHUNK_SIZE + 10) / regionSize); rx += 1) {
         for (let rz = Math.floor((minZ - 10) / regionSize); rz <= Math.floor((minZ + CHUNK_SIZE + 10) / regionSize); rz += 1) {
-          if (hash2(rx, rz, this.seed ^ 0x66666666) < 0.62) continue;
+          // Legacy glowstone/chest ruins and cabins are intentionally sparser
+          // than before; authored landmark POIs retain their own wider grid.
+          if (hash2(rx, rz, this.seed ^ 0x66666666) < 0.72) continue;
           const x = rx * regionSize + 18 + Math.floor(hash2(rx, rz, this.seed ^ 0x77777777) * (regionSize - 36));
           const z = rz * regionSize + 18 + Math.floor(hash2(rx, rz, this.seed ^ 0x88888888) * (regionSize - 36));
           const column = sample(x, z);
@@ -1907,9 +2020,10 @@ export class ChunkWorld {
         const column = sample(placement.x, placement.z);
         const inWaterway = column.height <= column.waterline
           || [BiomeId.DeepOcean, BiomeId.Ocean, BiomeId.River].includes(column.biome);
+        const overCaveMouth = caveEntranceAt(this.seed, placement.x, placement.z, column.height, column.waterline) !== null;
         const inLegacyClearing = legacyClearings.some((bounds) => placement.x >= bounds.minX && placement.x <= bounds.maxX
           && placement.z >= bounds.minZ && placement.z <= bounds.maxZ);
-        if (inWaterway || inLegacyClearing) continue;
+        if (inWaterway || overCaveMouth || inLegacyClearing) continue;
         set(placement.x, placement.y, placement.z, mapVegetationBlock(placement));
       }
     }
@@ -1983,6 +2097,120 @@ export class ChunkWorld {
           this.structureMarkers.set(`${lair.id}:${marker.type}:${marker.id}`, marker);
         }
       }
+      this.generateSeaDragonNestsForChunk(chunk, sample, set);
+    }
+  }
+
+  /**
+   * Sea dragons use rare, open-water nests rather than terrestrial dragon
+   * caverns. The planner is deterministic and shared with Atlantian charts;
+   * this pass only authors the slice that belongs to the current chunk.
+   */
+  private generateSeaDragonNestsForChunk(
+    chunk: Chunk,
+    sample: (x: number, z: number) => ColumnSample,
+    set: (x: number, y: number, z: number, type: BlockId, onlyAir?: boolean) => void,
+  ) {
+    const minX = chunk.cx * CHUNK_SIZE;
+    const minZ = chunk.cz * CHUNK_SIZE;
+    const maxX = minX + CHUNK_SIZE - 1;
+    const maxZ = minZ + CHUNK_SIZE - 1;
+    const regionSize = 48 * CHUNK_SIZE;
+    const reach = 22;
+    const startRegionX = Math.floor((minX - reach) / regionSize);
+    const endRegionX = Math.floor((maxX + reach) / regionSize);
+    const startRegionZ = Math.floor((minZ - reach) / regionSize);
+    const endRegionZ = Math.floor((maxZ + reach) / regionSize);
+    const inside = (x: number, z: number) => x >= minX && x <= maxX && z >= minZ && z <= maxZ;
+
+    for (let regionX = startRegionX; regionX <= endRegionX; regionX += 1) for (let regionZ = startRegionZ; regionZ <= endRegionZ; regionZ += 1) {
+      const probe = planSeaDragonNest({ seed: this.seedText, regionX, regionZ, oceanFloorY: -48, biome: "lumen-trench" });
+      if (!probe) continue;
+      const centerColumn = sample(probe.center.x, probe.center.z);
+      if (![BiomeId.DeepOcean, BiomeId.LumenTrench].includes(centerColumn.biome) || centerColumn.height > centerColumn.waterline - 8) continue;
+      const nest = planSeaDragonNest({
+        seed: this.seedText,
+        regionX,
+        regionZ,
+        oceanFloorY: centerColumn.height,
+        biome: centerColumn.biome === BiomeId.LumenTrench ? "lumen-trench" : "deep-ocean",
+      });
+      if (!nest) continue;
+      if (nest.center.x + nest.radius < minX || nest.center.x - nest.radius > maxX || nest.center.z + nest.radius < minZ || nest.center.z - nest.radius > maxZ) continue;
+
+      for (let x = Math.max(minX, nest.center.x - nest.radius); x <= Math.min(maxX, nest.center.x + nest.radius); x += 1) {
+        for (let z = Math.max(minZ, nest.center.z - nest.radius); z <= Math.min(maxZ, nest.center.z + nest.radius); z += 1) {
+          const dx = x - nest.center.x;
+          const dz = z - nest.center.z;
+          const distance = Math.hypot(dx, dz);
+          if (distance > nest.radius) continue;
+          const localFloor = sample(x, z).height;
+          const innerBowl = distance <= 5.5;
+          const middleRidge = Math.abs(distance - nest.radius * 0.52) < 1.15;
+          const outerRidge = Math.abs(distance - nest.radius * 0.84) < 0.85;
+          const spiral = Math.sin(Math.atan2(dz, dx) * 3 + distance * 0.62) > 0.72;
+          if (innerBowl || middleRidge || outerRidge || spiral && distance < nest.radius * 0.9) {
+            set(x, localFloor + 1, z, BlockId.MoonSlate, false);
+            if (innerBowl && distance < 3.8) set(x, localFloor + 2, z, BlockId.MoonSlate, false);
+          }
+          const ornament = hash2(x, z, this.seed ^ 0x5ea0d6a1);
+          if (!innerBowl && distance < nest.radius * 0.76 && ornament > 0.955) {
+            set(x, localFloor + 2, z, ornament > 0.982 ? BlockId.AbyssBloom : BlockId.StarCoral, false);
+          } else if (outerRidge && ornament > 0.91) {
+            set(x, localFloor + 2, z, BlockId.Glass, false);
+          }
+        }
+      }
+
+      const nestFloorY = centerColumn.height + 2;
+      for (let index = 0; index < nest.eggs; index += 1) {
+        const eggX = nest.center.x + (index * 2 - (nest.eggs - 1));
+        const eggZ = nest.center.z + 1;
+        if (inside(eggX, eggZ)) set(eggX, nestFloorY, eggZ, BlockId.SeaDragonEggBlock, false);
+      }
+
+      const chestX = nest.center.x + Math.min(6, nest.radius - 4);
+      const chestZ = nest.center.z - 2;
+      if (nest.guardianStage >= 4 && inside(chestX, chestZ)) {
+        const chestPosition = { x: chestX, y: sample(chestX, chestZ).height + 2, z: chestZ };
+        set(chestPosition.x, chestPosition.y, chestPosition.z, BlockId.Chest, false);
+        const marker: StructureMarker = {
+          type: "chest",
+          id: `${nest.id}:hoard`,
+          position: chestPosition,
+          lootTable: "desert-temple",
+          loot: [
+            { itemKey: "gold-ingot", count: 6 + nest.guardianStage * 3 },
+            { itemKey: "sea-dragon-scale", count: nest.guardianStage - 2 },
+            { itemKey: "water-breathing-potion", count: 1 },
+          ],
+        };
+        this.structureMarkers.set(`${nest.id}:chest:${marker.id}`, marker);
+      }
+
+      if (inside(nest.center.x, nest.center.z)) {
+        const guardian: StructureMarker = {
+          type: "spawn",
+          id: `${nest.id}:guardian`,
+          position: { x: nest.center.x, y: nestFloorY + 2, z: nest.center.z },
+          mobKind: "sea-dragon",
+          count: 1,
+          radius: 2,
+          persistent: true,
+          tags: [
+            "dragon:sea", `stage:${nest.guardianStage}`, `sex:${nest.guardianSex}`,
+            `lair:${nest.id}`, "permanent:true", "guardian:true", "aquatic:true",
+          ],
+        };
+        const landmark: StructureMarker = {
+          type: "landmark",
+          id: nest.id,
+          position: nest.center,
+          tag: `dragon-nest:sea:stage-${nest.guardianStage}:${nest.guardianSex}`,
+        };
+        this.structureMarkers.set(`${nest.id}:spawn:${guardian.id}`, guardian);
+        this.structureMarkers.set(`${nest.id}:landmark:${landmark.id}`, landmark);
+      }
     }
   }
 
@@ -1995,7 +2223,9 @@ export class ChunkWorld {
     const minX = chunk.cx * CHUNK_SIZE;
     const minZ = chunk.cz * CHUNK_SIZE;
     const regionSize = 32 * CHUNK_SIZE;
-    const reach = SETTLEMENT_SIZE_RULES.town.radiusBlocks + 3;
+    // Tiled v1 settlements can be wider than the legacy town radius. Scan far
+    // enough across region seams to author every connected wall and building.
+    const reach = Math.max(72, SETTLEMENT_SIZE_RULES.town.radiusBlocks + 3);
     const startRegionX = Math.floor((minX - reach) / regionSize);
     const endRegionX = Math.floor((minX + CHUNK_SIZE + reach) / regionSize);
     const startRegionZ = Math.floor((minZ - reach) / regionSize);
@@ -2003,22 +2233,38 @@ export class ChunkWorld {
     const insideChunk = (x: number, z: number) => x >= minX && x < minX + CHUNK_SIZE && z >= minZ && z < minZ + CHUNK_SIZE;
 
     for (let regionX = startRegionX; regionX <= endRegionX; regionX += 1) for (let regionZ = startRegionZ; regionZ <= endRegionZ; regionZ += 1) {
-      const probe = sample(regionX * regionSize + regionSize / 2, regionZ * regionSize + regionSize / 2);
-      const probeBiome = settlementBiomeFromId(probe.biome);
-      if (!probeBiome) continue;
-      const plannedCandidate = planSettlementCandidate({
-        worldSeed: this.seedText,
-        regionX,
-        regionZ,
-        biome: probeBiome,
-        existing: [],
-        floorY: probe.height,
-        enabledFactions: this.generationOptions.enabledFactions,
-      });
+      const candidateForRegion = (candidateRegionX: number, candidateRegionZ: number) => {
+        const cacheKey = `${candidateRegionX},${candidateRegionZ}`;
+        if (this.settlementCandidateCache.has(cacheKey)) return this.settlementCandidateCache.get(cacheKey) ?? null;
+        const probe = sample(candidateRegionX * regionSize + regionSize / 2, candidateRegionZ * regionSize + regionSize / 2);
+        const probeBiome = settlementBiomeFromId(probe.biome);
+        const candidate = probeBiome ? planSettlementCandidate({
+          worldSeed: this.seedText,
+          regionX: candidateRegionX,
+          regionZ: candidateRegionZ,
+          biome: probeBiome,
+          existing: [],
+          floorY: probe.height,
+          enabledFactions: this.generationOptions.enabledFactions,
+        }) : null;
+        this.settlementCandidateCache.set(cacheKey, candidate);
+        return candidate;
+      };
+      const plannedCandidate = candidateForRegion(regionX, regionZ);
       if (!plannedCandidate) continue;
+      const spacingContenders: SettlementCandidate[] = [];
+      // A town's 42-chunk spacing contract can cross one complete 32-chunk
+      // region, so inspect a fixed two-region neighborhood before authoring.
+      for (let dx = -2; dx <= 2; dx += 1) for (let dz = -2; dz <= 2; dz += 1) {
+        if (dx === 0 && dz === 0) continue;
+        const contender = candidateForRegion(regionX + dx, regionZ + dz);
+        if (contender) spacingContenders.push(contender);
+      }
+      if (!settlementWinsSpacingTieBreak(plannedCandidate, spacingContenders)) continue;
       const centerColumn = sample(plannedCandidate.center.x, plannedCandidate.center.z);
       const actualBiome = settlementBiomeFromId(centerColumn.biome);
       const underwater = plannedCandidate.environment === "underwater";
+      const underground = plannedCandidate.environment === "underground";
       if (!actualBiome || actualBiome !== plannedCandidate.biome) continue;
       if (underwater ? centerColumn.height >= centerColumn.waterline - 5 : centerColumn.height <= centerColumn.waterline + 3) continue;
       if (!underwater) {
@@ -2028,7 +2274,7 @@ export class ChunkWorld {
         if (overlapsSyrup) continue;
       }
       const nearbyHeights = [[4, 0], [-4, 0], [0, 4], [0, -4]].map(([dx, dz]) => sample(plannedCandidate.center.x + dx, plannedCandidate.center.z + dz).height);
-      if (nearbyHeights.some((height) => Math.abs(height - centerColumn.height) > (underwater ? 7 : 4))) continue;
+      if (nearbyHeights.some((height) => Math.abs(height - centerColumn.height) > (underwater ? 7 : underground ? 12 : 4))) continue;
 
       // Region-center terrain only selects a deterministic candidate. Aquatic
       // geometry must be authored from the actual settlement-center seabed or
@@ -2037,6 +2283,10 @@ export class ChunkWorld {
         ...plannedCandidate,
         floorY: centerColumn.height,
         center: { ...plannedCandidate.center, y: centerColumn.height + 2 },
+      } : underground ? {
+        ...plannedCandidate,
+        floorY: Math.max(MIN_Y + 10, centerColumn.height - 18),
+        center: { ...plannedCandidate.center, y: Math.max(MIN_Y + 12, centerColumn.height - 16) },
       } : plannedCandidate;
       const plannedLayout = planSettlementLayout(candidate);
       const layout = underwater ? fitUnderwaterSettlementLayout(plannedLayout, sample) : plannedLayout;
@@ -2054,7 +2304,19 @@ export class ChunkWorld {
 
       for (const point of layout.paths) if (insideChunk(point.x, point.z)) {
         const column = sample(point.x, point.z);
-        if (underwater) set(point.x, point.y ?? column.height + 1, point.z, palette.path, false);
+        if (underwater || underground) {
+          const pathY = point.y ?? column.height + 1;
+          set(point.x, pathY, point.z, palette.path, false);
+          if (underground) for (let y = 1; y <= 3; y += 1) {
+            set(point.x, pathY + y, point.z, BlockId.Air, false);
+            if (y <= 2) {
+              set(point.x + 1, pathY + y, point.z, BlockId.Air, false);
+              set(point.x - 1, pathY + y, point.z, BlockId.Air, false);
+              set(point.x, pathY + y, point.z + 1, BlockId.Air, false);
+              set(point.x, pathY + y, point.z - 1, BlockId.Air, false);
+            }
+          }
+        }
         else if (column.height > column.waterline) set(point.x, column.height, point.z, palette.path, false);
       }
 
@@ -2074,6 +2336,7 @@ export class ChunkWorld {
       for (const light of layout.lights) if (insideChunk(light.position.x, light.position.z)) {
         const ground = sample(light.position.x, light.position.z).height;
         if (underwater) set(light.position.x, light.position.y ?? ground + 2, light.position.z, BlockId.Glowstone, false);
+        else if (underground) set(light.position.x, light.position.y ?? (candidate.floorY ?? ground) + 2, light.position.z, BlockId.DeepgearLantern, false);
         else {
           set(light.position.x, ground + 1, light.position.z, palette.lightBase, false);
           set(light.position.x, ground + 2, light.position.z, BlockId.Torch, false);
@@ -2092,8 +2355,43 @@ export class ChunkWorld {
         if (buildingBounds.maxX < minX || buildingBounds.minX >= minX + CHUNK_SIZE || buildingBounds.maxZ < minZ || buildingBounds.minZ >= minZ + CHUNK_SIZE) continue;
         const baseY = underwater
           ? Math.max(sample(building.position.x, building.position.z).height + 1, (building.position.y ?? candidate.floorY ?? centerColumn.height) - 1)
+          : underground ? (building.position.y ?? candidate.floorY ?? centerColumn.height - 18) - 1
           : sample(building.position.x, building.position.z).height;
         const wallHeight = building.floors * 3 + 1;
+        if (candidate.factionId === "wood-elves" && building.role === "moonwell") {
+          // Moonwells are open living courtyards rather than sealed houses.
+          // Their shallow source pond gives Glowfin a real water habitat and
+          // leaves waterlogged Lumenreed available for gathering/replanting.
+          for (let x = building.position.x - 2; x <= building.position.x + 2; x += 1) for (let z = building.position.z - 2; z <= building.position.z + 2; z += 1) {
+            if (!insideChunk(x, z)) continue;
+            for (let y = baseY + 1; y <= baseY + 4; y += 1) set(x, y, z, BlockId.Air, false);
+            const edge = Math.max(Math.abs(x - building.position.x), Math.abs(z - building.position.z)) === 2;
+            if (edge) set(x, baseY, z, BlockId.MoonSlate, false);
+            else {
+              set(x, baseY - 1, z, BlockId.MoonSlate, false);
+              const reed = (Math.abs(x - building.position.x) === 1 && z === building.position.z)
+                || (Math.abs(z - building.position.z) === 1 && x === building.position.x);
+              set(x, baseY, z, reed ? BlockId.Lumenreed : BlockId.Water, false);
+            }
+          }
+          if (insideChunk(building.position.x + 2, building.position.z)) {
+            set(building.position.x + 2, baseY + 1, building.position.z, BlockId.Moonwell, false);
+          }
+          if (insideChunk(building.position.x, building.position.z)) {
+            const glowfinMarker: StructureMarker = {
+              type: "spawn",
+              id: `${building.id}:glowfin-shoal`,
+              position: { x: building.position.x, y: baseY, z: building.position.z },
+              mobKind: "glowfin",
+              count: 2,
+              radius: 1.25,
+              persistent: true,
+              tags: [`settlement:${candidate.id}`, "faction:wood-elves", "habitat:glimmer-pond", "aligned:true"],
+            };
+            this.structureMarkers.set(`${candidate.id}:spawn:${glowfinMarker.id}`, glowfinMarker);
+          }
+          continue;
+        }
         for (let x = buildingBounds.minX; x <= buildingBounds.maxX; x += 1) for (let z = buildingBounds.minZ; z <= buildingBounds.maxZ; z += 1) {
           if (!insideChunk(x, z)) continue;
           if (underwater) {
@@ -2109,10 +2407,23 @@ export class ChunkWorld {
             }
             continue;
           }
+          if (underground) {
+            for (let y = baseY; y <= baseY + wallHeight + 2; y += 1) set(x, y, z, BlockId.Air, false);
+            set(x, baseY, z, building.role === "deepgear-hall" || building.role === "golem-forge" ? palette.hallFloor : palette.floor, false);
+            const edgeX = x === buildingBounds.minX || x === buildingBounds.maxX;
+            const edgeZ = z === buildingBounds.minZ || z === buildingBounds.maxZ;
+            if (edgeX || edgeZ) for (let y = 1; y <= wallHeight; y += 1) {
+              const corner = edgeX && edgeZ;
+              const window = !corner && y === 2 && ((x + z) & 3) === 0;
+              set(x, baseY + y, z, window ? BlockId.RivetedBrass : corner ? palette.corner : palette.buildingWall, false);
+            }
+            set(x, baseY + wallHeight + 1, z, palette.roof, false);
+            continue;
+          }
           const localHeight = sample(x, z).height;
           for (let y = Math.min(localHeight + 1, baseY); y <= baseY; y += 1) set(x, y, z, palette.corner, false);
           for (let y = baseY + 1; y <= Math.max(baseY + wallHeight + 2, localHeight + 2); y += 1) set(x, y, z, BlockId.Air, false);
-          set(x, baseY, z, building.role === "mayor-hall" || building.role === "sugar-palace" ? palette.hallFloor : palette.floor, false);
+          set(x, baseY, z, building.role === "mayor-hall" || building.role === "sugar-palace" || building.role === "moonbough-hall" ? palette.hallFloor : palette.floor, false);
           const edgeX = x === buildingBounds.minX || x === buildingBounds.maxX;
           const edgeZ = z === buildingBounds.minZ || z === buildingBounds.maxZ;
           if (edgeX || edgeZ) for (let y = 1; y <= wallHeight; y += 1) {
@@ -2124,13 +2435,13 @@ export class ChunkWorld {
         }
         const doorX = building.position.x;
         const doorZ = buildingBounds.minZ;
-        if (!underwater && insideChunk(doorX, doorZ)) {
+        if ((!underwater || underground) && insideChunk(doorX, doorZ)) {
           set(doorX, baseY + 1, doorZ, BlockId.DoorClosedLower, false);
           set(doorX, baseY + 2, doorZ, BlockId.DoorClosedUpper, false);
         }
         for (const furniture of building.furniture) if (insideChunk(furniture.position.x, furniture.position.z)) {
           if (furniture.kind === "door") continue;
-          const fy = underwater ? furniture.position.y ?? baseY + 1 : baseY + 1;
+          const fy = underwater || underground ? furniture.position.y ?? baseY + 1 : baseY + 1;
           const furnitureBlock = furniture.kind === "rest-alcove" || furniture.kind === "nest" ? BlockId.HearthChair
             : furniture.kind === "kelp-trough" ? BlockId.LumenKelp
               : furniture.kind === "coral-loom" ? BlockId.CartographyTable
@@ -2139,6 +2450,14 @@ export class ChunkWorld {
                     : furniture.kind === "sugarworks-kettle" || furniture.kind === "syrup-vat" ? BlockId.Sugarworks
                       : furniture.kind === "confection-counter" ? BlockId.WildwoodTable
                         : furniture.kind === "pet-bed" ? BlockId.HearthChair
+                          : furniture.kind === "golem-cradle" ? BlockId.GolemForge
+                            : furniture.kind === "mana-conduit" ? BlockId.AetherConduit
+                              : furniture.kind === "powder-bench" ? BlockId.Powderworks
+                                : furniture.kind === "gear-table" ? BlockId.GearTable
+                                  : furniture.kind === "bright-lantern" ? BlockId.DeepgearLantern
+                                    : furniture.kind === "moonwell-basin" ? BlockId.Moonwell
+                                      : furniture.kind === "tome-lectern" ? BlockId.TomeDisplay
+                                        : furniture.kind === "living-chair" ? BlockId.MoonboughChair
                     : furniture.kind === "bed" ? BlockId.BedNorthFoot
             : furniture.kind === "chair" ? BlockId.HearthChair
               : furniture.kind === "distillery" || furniture.kind === "barrel" ? BlockId.Distillery
@@ -2179,7 +2498,7 @@ export class ChunkWorld {
         const marker: StructureMarker = {
           type: "spawn",
           id: creature.id,
-          position: { x: creature.position.x, y: sample(creature.position.x, creature.position.z).height + 1, z: creature.position.z },
+          position: { x: creature.position.x, y: creature.position.y ?? sample(creature.position.x, creature.position.z).height + 1, z: creature.position.z },
           mobKind: creature.kind,
           count: 1,
           radius: 2.5,
@@ -2559,12 +2878,12 @@ export class ChunkWorld {
     };
 
     const addImplicitWaterCell = (localX: number, y: number, localZ: number, tint: [number, number, number]) => {
-      const waterDrop = -0.045;
+      const surfaceInset = -LIQUID_SURFACE_INSET;
       for (const face of FACES) {
         const [dx, dy, dz] = face.direction;
         if (blockContainsWater(neighborAt(localX + dx, y + dy, localZ + dz))) continue;
         addQuad(buckets.transparent, face.corners, face.direction, BLOCKS[BlockId.Water].side, face.shade, tint,
-          localX, y + waterDrop, localZ, waterDrop ? -0.09 : 0, shadeAt(localX + dx, y + dy, localZ + dz));
+          localX, y, localZ, surfaceInset, shadeAt(localX + dx, y + dy, localZ + dz));
       }
     };
 
@@ -2641,7 +2960,13 @@ export class ChunkWorld {
           } else if (definition.shape === "tall-flower") {
             addFullCross(0.41, y - 0.5, y + 0.12, 0.94);
             addFullCross(0.48, y - 0.08, y + 0.58);
-          } else addFullCross(0.44, y - 0.5, y + 0.5);
+          } else {
+            const connectedBelow = definition.verticalConnectGroup !== undefined
+              && BLOCKS[neighborAt(lx, y - 1, lz)]?.verticalConnectGroup === definition.verticalConnectGroup;
+            const connectedAbove = definition.verticalConnectGroup !== undefined
+              && BLOCKS[neighborAt(lx, y + 1, lz)]?.verticalConnectGroup === definition.verticalConnectGroup;
+            addFullCross(0.44, y - (connectedBelow ? 0.54 : 0.5), y + (connectedAbove ? 0.54 : 0.5));
+          }
           continue;
         }
         if (definition.shape === "apiary") {
@@ -2863,6 +3188,21 @@ export class ChunkWorld {
         }
         if (definition.shape === "chest") {
           const environment = shadeAt(lx, y, lz);
+          const joinsWest = neighborAt(lx - 1, y, lz) === BlockId.Chest;
+          const joinsEast = neighborAt(lx + 1, y, lz) === BlockId.Chest;
+          const joinsNorth = !joinsWest && !joinsEast && neighborAt(lx, y, lz - 1) === BlockId.Chest;
+          const joinsSouth = !joinsWest && !joinsEast && neighborAt(lx, y, lz + 1) === BlockId.Chest;
+          // Close the cosmetic air seam between paired standing chests. The
+          // open runtime model uses the same continuous footprint, so opening
+          // a double chest no longer changes its apparent overall size.
+          const bodyX0 = lx - (joinsWest ? 0.5 : 0.44);
+          const bodyX1 = lx + (joinsEast ? 0.5 : 0.44);
+          const bodyZ0 = lz - (joinsNorth ? 0.5 : 0.44);
+          const bodyZ1 = lz + (joinsSouth ? 0.5 : 0.44);
+          const lidX0 = lx - (joinsWest ? 0.5 : 0.46);
+          const lidX1 = lx + (joinsEast ? 0.5 : 0.46);
+          const lidZ0 = lz - (joinsNorth ? 0.5 : 0.46);
+          const lidZ1 = lz + (joinsSouth ? 0.5 : 0.46);
           const addChestCuboid = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, frontTile = definition.side) => {
             addQuad(bucket, [[x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]], [1, 0, 0], definition.side, 0.82, tint, 0, 0, 0, 0, environment);
             addQuad(bucket, [[x0, y0, z1], [x0, y1, z1], [x0, y1, z0], [x0, y0, z0]], [-1, 0, 0], definition.side, 0.72, tint, 0, 0, 0, 0, environment);
@@ -2871,8 +3211,8 @@ export class ChunkWorld {
             addQuad(bucket, [[x1, y0, z1], [x1, y1, z1], [x0, y1, z1], [x0, y0, z1]], [0, 0, 1], definition.side, 0.9, tint, 0, 0, 0, 0, environment);
             addQuad(bucket, [[x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [x1, y0, z0]], [0, 0, -1], frontTile, 0.82, tint, 0, 0, 0, 0, environment);
           };
-          addChestCuboid(lx - 0.44, y - 0.5, lz - 0.44, lx + 0.44, y + 0.13, lz + 0.44, definition.top);
-          addChestCuboid(lx - 0.46, y + 0.16, lz - 0.46, lx + 0.46, y + 0.37, lz + 0.46, definition.top);
+          addChestCuboid(bodyX0, y - 0.5, bodyZ0, bodyX1, y + 0.13, bodyZ1, definition.top);
+          addChestCuboid(lidX0, y + 0.16, lidZ0, lidX1, y + 0.37, lidZ1, definition.top);
           addChestCuboid(lx - 0.09, y + 0.03, lz - 0.49, lx + 0.09, y + 0.24, lz - 0.425, definition.top);
           continue;
         }
@@ -2944,11 +3284,11 @@ export class ChunkWorld {
             && hash3(chunk.cx * CHUNK_SIZE + lx + dx, y + dy, chunk.cz * CHUNK_SIZE + lz + dz, this.seed ^ 0x37b41cd9) < DENSE_CUTOUT_LEAF_POLICY.renderInternalFaceFraction;
           if (!this.faceVisible(type, neighbor) && !internalLeafFace) continue;
           const tile = dy > 0 ? definition.top : dy < 0 ? definition.bottom : definition.side;
-          const waterDrop = definition.liquid ? -0.045 : 0;
+          const liquidSurfaceInset = definition.liquid ? -LIQUID_SURFACE_INSET : 0;
           const environment = definition.layer === "emissive"
             ? Math.max(0.82, shadeAt(lx + dx, y + dy, lz + dz))
             : shadeAt(lx + dx, y + dy, lz + dz);
-          addQuad(bucket, face.corners, face.direction, tile, face.shade, tint, lx, y + waterDrop, lz, waterDrop ? -0.09 : 0, environment);
+          addQuad(bucket, face.corners, face.direction, tile, face.shade, tint, lx, y, lz, liquidSurfaceInset, environment);
         }
       }
     }

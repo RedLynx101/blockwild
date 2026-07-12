@@ -74,6 +74,7 @@ export type BrokenApiary = Readonly<{
 }>;
 
 export type EmptyApiaryBlock = Readonly<{ schema: 1; attached: true; queen: null }>;
+export type ApiaryBlockState = ApiaryState | EmptyApiaryBlock;
 
 export const createEmptyApiaryBlock = (): EmptyApiaryBlock => ({ schema: 1, attached: true, queen: null });
 
@@ -91,7 +92,15 @@ export function insertQueenCellIntoApiary(
 /** A netted worker becomes the tangible crafting ingredient used for a Queen Cell. */
 export function captureWorkerBeeItem(worker: ApiaryBee): InventorySlot | null {
   if (!worker.alive || worker.role !== "worker") return null;
-  return { item: Item.WorkerBee, count: 1, metadata: { beeId: worker.id, geneticSeed: worker.geneticSeed } };
+  return {
+    item: Item.WorkerBee,
+    count: 1,
+    metadata: {
+      beeId: worker.id,
+      geneticSeed: worker.geneticSeed,
+      apiaryBee: JSON.stringify({ ...worker, home: false, outbound: false, carryingNectar: 0 }),
+    },
+  };
 }
 
 const bee = (id: string, role: BeeRole, geneticSeed: number, day = 0): ApiaryBee => ({
@@ -108,6 +117,131 @@ const bee = (id: string, role: BeeRole, geneticSeed: number, day = 0): ApiaryBee
   tamed: false,
   ownerId: null,
 });
+
+function normalizeApiaryBee(value: unknown, expectedRole?: BeeRole): ApiaryBee | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Partial<ApiaryBee>;
+  if (typeof raw.id !== "string" || raw.id.length === 0 || raw.id.length > 80
+    || (raw.role !== "queen" && raw.role !== "worker") || (expectedRole && raw.role !== expectedRole)
+    || typeof raw.alive !== "boolean" || typeof raw.geneticSeed !== "number" || !Number.isFinite(raw.geneticSeed)
+    || (raw.ownerId !== null && typeof raw.ownerId !== "string")) return null;
+  return {
+    id: raw.id,
+    role: raw.role,
+    alive: raw.alive,
+    home: raw.home === true,
+    outbound: raw.outbound === true,
+    carryingNectar: Math.max(0, Math.min(4, Number(raw.carryingNectar) || 0)),
+    lastReturnDay: Math.max(0, Math.floor(Number(raw.lastReturnDay) || 0)),
+    disconnectedDay: raw.disconnectedDay === null || raw.disconnectedDay === undefined
+      ? null : Math.max(0, Math.floor(Number(raw.disconnectedDay) || 0)),
+    geneticSeed: Math.trunc(raw.geneticSeed) >>> 0,
+    angry: raw.angry === true,
+    tamed: raw.tamed === true,
+    ownerId: typeof raw.ownerId === "string" ? raw.ownerId.slice(0, 160) : null,
+  };
+}
+
+export function workerBeeFromInventorySlot(slot: InventorySlot | null | undefined): ApiaryBee | null {
+  if (!slot || slot.item !== Item.WorkerBee || slot.count <= 0) return null;
+  if (typeof slot.metadata?.apiaryBee === "string") {
+    try { return normalizeApiaryBee(JSON.parse(slot.metadata.apiaryBee), "worker"); }
+    catch { return null; }
+  }
+  const id = typeof slot.metadata?.beeId === "string" ? slot.metadata.beeId : "worker-bee";
+  const seed = Number.isFinite(slot.metadata?.geneticSeed) ? Number(slot.metadata?.geneticSeed) : 1;
+  return bee(id, "worker", seed);
+}
+
+export function apiaryIsFriendly(state: ApiaryState, actorId: string) {
+  return state.queen.alive && !state.queen.angry
+    && (!state.queen.tamed || state.queen.ownerId === null || state.queen.ownerId === actorId);
+}
+
+export type ApiaryBeeTransferReason = "ok" | "wrong-role" | "occupied" | "not-friendly" | "full" | "away" | "workers-present" | "missing";
+
+export function insertApiaryBee(
+  state: ApiaryBlockState,
+  resident: ApiaryBee,
+  actorId: string,
+  worldDay = 0,
+): Readonly<{ state: ApiaryBlockState; inserted: boolean; reason: ApiaryBeeTransferReason }> {
+  const normalized = normalizeApiaryBee(resident);
+  if (!normalized?.alive) return { state, inserted: false, reason: "missing" };
+  if (state.queen === null) {
+    if (normalized.role !== "queen") return { state, inserted: false, reason: "wrong-role" };
+    if (normalized.angry || (normalized.tamed && normalized.ownerId !== null && normalized.ownerId !== actorId)) {
+      return { state, inserted: false, reason: "not-friendly" };
+    }
+    const created = createApiary(normalized.id, [], normalized.geneticSeed, worldDay);
+    return {
+      inserted: true,
+      reason: "ok",
+      state: {
+        ...created,
+        queen: {
+          ...normalized,
+          role: "queen",
+          alive: true,
+          home: true,
+          outbound: false,
+          carryingNectar: 0,
+          lastReturnDay: worldDay,
+          disconnectedDay: null,
+          angry: false,
+        },
+      },
+    };
+  }
+  if (normalized.role !== "worker") return { state, inserted: false, reason: "occupied" };
+  if (!apiaryIsFriendly(state, actorId)) return { state, inserted: false, reason: "not-friendly" };
+  const living = livingApiaryWorkers(state);
+  if (living.some((worker) => worker.id === normalized.id) || state.queen.id === normalized.id) {
+    return { state, inserted: false, reason: "occupied" };
+  }
+  if (living.length >= APIARY_WORKER_CAP) return { state, inserted: false, reason: "full" };
+  const worker: ApiaryBee = {
+    ...normalized,
+    role: "worker",
+    alive: true,
+    home: true,
+    outbound: false,
+    carryingNectar: 0,
+    lastReturnDay: worldDay,
+    disconnectedDay: null,
+    angry: false,
+  };
+  const vacant = state.workers.findIndex((candidate) => !candidate.alive);
+  const workers = vacant >= 0
+    ? state.workers.map((candidate, index) => index === vacant ? worker : candidate)
+    : [...state.workers, worker];
+  return { state: { ...state, workers }, inserted: true, reason: "ok" };
+}
+
+export function extractApiaryBee(
+  state: ApiaryBlockState,
+  beeId: string,
+  actorId: string,
+): Readonly<{ state: ApiaryBlockState; bee: ApiaryBee | null; reason: ApiaryBeeTransferReason }> {
+  if (state.queen === null) return { state, bee: null, reason: "missing" };
+  if (!apiaryIsFriendly(state, actorId)) return { state, bee: null, reason: "not-friendly" };
+  if (state.queen.id === beeId) {
+    if (livingApiaryWorkers(state).length > 0) return { state, bee: null, reason: "workers-present" };
+    return {
+      state: createEmptyApiaryBlock(),
+      bee: { ...state.queen, home: false, outbound: false, carryingNectar: 0 },
+      reason: "ok",
+    };
+  }
+  const worker = state.workers.find((candidate) => candidate.id === beeId && candidate.alive);
+  if (!worker) return { state, bee: null, reason: "missing" };
+  if (!worker.home || worker.outbound) return { state, bee: null, reason: "away" };
+  return {
+    state: { ...state, workers: state.workers.filter((candidate) => candidate.id !== beeId) },
+    bee: { ...worker, home: false, outbound: false, carryingNectar: 0 },
+    reason: "ok",
+  };
+}
 
 /** A valid crafted apiary starts with one queen and any number of workers up to eight. */
 export function createApiary(queenId: string, workerIds: readonly string[] = [], seed = 1, worldDay = 0): ApiaryState {

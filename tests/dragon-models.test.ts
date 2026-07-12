@@ -91,16 +91,19 @@ test("pose hooks articulate jaws, wings, tails, legs, breathing, attacks, sex, a
   assert.equal(named(root, "steel-dragon-saddle").visible, true, "pose-only updates preserve equipped visuals");
 });
 
-test("the three silhouettes carry distinct elemental anatomy in production portraits", () => {
+test("the four silhouettes carry distinct elemental anatomy in production portraits", () => {
   const specs = createMobInspectionSpecs().filter((spec) => DRAGON_ORDER.includes(spec.id as (typeof DRAGON_ORDER)[number]));
   assert.deepEqual(specs.map((spec) => spec.id), DRAGON_ORDER);
   const fire = specs[0];
   const ice = specs[1];
   const steel = specs[2];
+  const sea = specs[3];
   assert.ok(fire.boxes.some((box) => box.id.includes("tail-flame")));
   assert.ok(ice.boxes.some((box) => box.id.includes("ice-tail-fin")));
   assert.ok(steel.boxes.filter((box) => box.id.includes("riveted-plate")).length >= 10);
   assert.ok(steel.boxes.some((box) => box.id === "steel-dragon-steel-tail-hammer"));
+  assert.ok(sea.boxes.some((box) => box.id.includes("sea-tail-fin")));
+  assert.ok(sea.boxes.filter((box) => box.id.includes("sea-dorsal-fin")).length >= 4);
   for (const spec of specs) {
     const portrait = renderModelPortrait(spec);
     assert.match(portrait, /front three-quarter model portrait/u);

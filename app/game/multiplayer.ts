@@ -1,4 +1,5 @@
 import type { DragonState } from "./dragons";
+import type { SkillState } from "./skills";
 
 /**
  * Browser-only, host-authoritative WebRTC multiplayer transport for Blockwild.
@@ -37,6 +38,8 @@ export type PeerIdentity = {
   id: string;
   name: string;
   color: string;
+  /** Optional protocol-v1 appearance preference, carried before the first pose. */
+  variant?: "male" | "female";
 };
 
 export type PlayerPose = {
@@ -98,7 +101,7 @@ export type MobSnapshotEntry = {
   /** Complete authoritative lifecycle state for protocol-v1 dragon peers. */
   dragonState?: DragonState;
   /** Optional culture provenance keeps aligned settlement creatures authoritative for guests. */
-  factionId?: "player" | "hobbits" | "goblins" | "atlantians" | "sugarcourt" | null;
+  factionId?: "player" | "hobbits" | "goblins" | "atlantians" | "sugarcourt" | "wood-elves" | "dwarves" | null;
   aligned?: boolean;
 };
 
@@ -145,7 +148,7 @@ export type SessionWorldOptions = {
   friendlyFire: boolean;
   sleepRule?: "any-player" | "percentage" | "all-players";
   sleepPercentage?: number;
-  enabledFactions?: readonly ("hobbits" | "goblins" | "atlantians" | "sugarcourt")[];
+  enabledFactions?: readonly ("hobbits" | "goblins" | "atlantians" | "sugarcourt" | "wood-elves" | "dwarves")[];
 };
 
 export type InventoryEndpoint = {
@@ -162,6 +165,8 @@ export type InventoryAction = {
   to?: InventoryEndpoint;
   count?: number;
   expectedRevision?: number;
+  /** World-drop collection is resolved by the host rather than the guest. */
+  dropId?: number;
   status?: ActionStatus;
   reason?: string;
 };
@@ -175,13 +180,49 @@ export type ContainerAction = {
   targetSlot?: number;
   count?: number;
   expectedRevision?: number;
+  /** A bounded authoritative slot image used for shared chest transactions. */
+  slots?: ItemStackSnapshot[];
   status?: ActionStatus;
   reason?: string;
 };
 
-export type ItemStackSnapshot = { item: number; count: number; durability?: number } | null;
+export type ItemStackSnapshot = { item: number; count: number; durability?: number; metadata?: Record<string, unknown> } | null;
 export type InventorySnapshot = { revision: number; slots: ItemStackSnapshot[]; selected: number };
 export type ContainerSnapshot = { id: string; kind: "chest" | "double-chest" | "furnace" | "crafting"; revision: number; slots: ItemStackSnapshot[] };
+export type PlayerSessionSnapshot = {
+  playerId: string;
+  revision: number;
+  variant: "male" | "female";
+  inventory: ItemStackSnapshot[];
+  equipment: Record<"head" | "chest" | "legs" | "feet", ItemStackSnapshot>;
+  selected: number;
+  health: number;
+  hunger: number;
+  xp: number;
+  level: number;
+  skills: SkillState;
+};
+
+export type PlayerStateAction = {
+  requestId: string;
+  actorId: string;
+  state: PlayerSessionSnapshot;
+  status?: ActionStatus;
+  reason?: string;
+};
+
+export type CombatAction = {
+  requestId: string;
+  actorId: string;
+  tick: number;
+  targetKind: "mob" | "player";
+  targetId: string;
+  attack: "melee" | "ranged";
+  status?: ActionStatus;
+  reason?: string;
+  resultingHealth?: number;
+  killed?: boolean;
+};
 export type CartographyMapShare = {
   tableKey: string;
   reply: boolean;
@@ -210,6 +251,8 @@ export type WorldSnapshot = {
   worldOptions?: SessionWorldOptions;
   inventory?: InventorySnapshot;
   containers?: ContainerSnapshot[];
+  /** Targeted host-owned state for the peer receiving this snapshot. */
+  playerState?: PlayerSessionSnapshot;
 };
 
 export type MultiplayerPayloadMap = {
@@ -225,6 +268,8 @@ export type MultiplayerPayloadMap = {
   "sleep-vote": SleepVote;
   "inventory-action": InventoryAction;
   "container-action": ContainerAction;
+  "player-state": PlayerStateAction;
+  "combat-action": CombatAction;
   "map-share": CartographyMapShare;
 };
 
@@ -358,10 +403,10 @@ type PeerRecord = {
 };
 
 const MESSAGE_TYPES = new Set<MultiplayerMessageType>([
-  "hello", "heartbeat", "goodbye", "snapshot", "player-pose", "block-action", "mob-snapshot", "drop-snapshot", "time-weather", "sleep-vote", "inventory-action", "container-action", "map-share",
+  "hello", "heartbeat", "goodbye", "snapshot", "player-pose", "block-action", "mob-snapshot", "drop-snapshot", "time-weather", "sleep-vote", "inventory-action", "container-action", "player-state", "combat-action", "map-share",
 ]);
 const CONTROL_TYPES = new Set<MultiplayerMessageType>(["hello", "heartbeat", "goodbye"]);
-const GUEST_OUTBOUND_TYPES = new Set<MultiplayerMessageType>(["hello", "heartbeat", "goodbye", "player-pose", "block-action", "sleep-vote", "inventory-action", "container-action", "map-share"]);
+const GUEST_OUTBOUND_TYPES = new Set<MultiplayerMessageType>(["hello", "heartbeat", "goodbye", "player-pose", "block-action", "sleep-vote", "inventory-action", "container-action", "player-state", "combat-action", "map-share"]);
 
 export class MultiplayerProtocolError extends Error {
   constructor(message: string) {
@@ -401,7 +446,8 @@ export function validatePeerIdentity(value: unknown): value is PeerIdentity {
     && value.name.length <= 24
     && !/[\u0000-\u001f\u007f]/u.test(value.name)
     && typeof value.color === "string"
-    && /^#[0-9a-fA-F]{6}$/u.test(value.color);
+    && /^#[0-9a-fA-F]{6}$/u.test(value.color)
+    && (value.variant === undefined || value.variant === "male" || value.variant === "female");
 }
 
 function validateDescription(value: unknown, type: "offer" | "answer"): value is RTCSessionDescriptionInit {
@@ -483,7 +529,7 @@ function validateSailboat(value: unknown): value is SailboatSnapshotEntry {
 
 function validateDragonState(value: unknown): value is DragonState {
   if (!isRecord(value) || value.schemaVersion !== 1) return false;
-  if (value.type !== "fire" && value.type !== "ice" && value.type !== "steel") return false;
+  if (value.type !== "fire" && value.type !== "ice" && value.type !== "steel" && value.type !== "sea") return false;
   if (value.sex !== "female" && value.sex !== "male") return false;
   if (value.command !== "follow" && value.command !== "stay" && value.command !== "guard-lair" && value.command !== "wander") return false;
   const equipment = value.equipment;
@@ -544,7 +590,7 @@ function validateMob(value: unknown): value is MobSnapshotEntry {
     && (value.airProgress === undefined || isFiniteNumber(value.airProgress, 0, 1))
     && (value.dragonState === undefined || (validateDragonState(value.dragonState) && value.kind === `${value.dragonState.type}-dragon`))
     && (value.factionId === undefined || value.factionId === null
-      || ["player", "hobbits", "goblins", "atlantians", "sugarcourt"].includes(value.factionId as string))
+      || ["player", "hobbits", "goblins", "atlantians", "sugarcourt", "wood-elves", "dwarves"].includes(value.factionId as string))
     && (value.aligned === undefined || typeof value.aligned === "boolean");
 }
 
@@ -589,11 +635,19 @@ function validateStatusFields(value: Record<string, unknown>) {
     && (value.reason === undefined || isShortString(value.reason, 160, true));
 }
 
+function validateBoundedMetadata(value: unknown) {
+  if (value === undefined) return true;
+  if (!isRecord(value)) return false;
+  try { return JSON.stringify(value).length <= 8_192; }
+  catch { return false; }
+}
+
 function validateItemStack(value: unknown): value is ItemStackSnapshot {
   return value === null || (isRecord(value)
     && isInteger(value.item, 0, 65_535)
     && isInteger(value.count, 1, 65_535)
-    && (value.durability === undefined || isInteger(value.durability, 0, 1_000_000)));
+    && (value.durability === undefined || isInteger(value.durability, 0, 1_000_000))
+    && validateBoundedMetadata(value.metadata));
 }
 
 function validateInventorySnapshot(value: unknown): value is InventorySnapshot {
@@ -615,6 +669,46 @@ function validateContainerSnapshot(value: unknown): value is ContainerSnapshot {
     && value.slots.every(validateItemStack);
 }
 
+function validateSkillState(value: unknown): value is SkillState {
+  if (!isRecord(value) || (value.schema !== 1 && value.schema !== 2) || !isRecord(value.skills)) return false;
+  const skills = value.skills;
+  const skillIds = ["melee", "ranged", "mining", "crafting", "survival", "husbandry", "exploration", "magic"];
+  if (!skillIds.every((id) => {
+    const progress = skills[id];
+    return isRecord(progress)
+      && isInteger(progress.level, 0, 1_000)
+      && isFiniteNumber(progress.xp, 0, Number.MAX_SAFE_INTEGER);
+  })) return false;
+  return isInteger(value.characterLevel, 1, Number.MAX_SAFE_INTEGER)
+    && isFiniteNumber(value.characterXp, 0, Number.MAX_SAFE_INTEGER)
+    && isInteger(value.perkPoints, 0, Number.MAX_SAFE_INTEGER)
+    && Array.isArray(value.unlockedPerkIds)
+    && value.unlockedPerkIds.length <= 256
+    && value.unlockedPerkIds.every((id) => isShortString(id, 96))
+    && (value.ascendantTraits === undefined || (isRecord(value.ascendantTraits)
+      && Object.values(value.ascendantTraits).every((enabled) => typeof enabled === "boolean")))
+    && typeof value.ascendantHealthFloorEnabled === "boolean";
+}
+
+function validatePlayerSessionSnapshot(value: unknown): value is PlayerSessionSnapshot {
+  if (!isRecord(value) || !isRecord(value.equipment)) return false;
+  const equipment = value.equipment;
+  const equipmentSlots = ["head", "chest", "legs", "feet"];
+  return isId(value.playerId)
+    && isInteger(value.revision, 0, Number.MAX_SAFE_INTEGER)
+    && (value.variant === "male" || value.variant === "female")
+    && Array.isArray(value.inventory)
+    && value.inventory.length === 36
+    && value.inventory.every(validateItemStack)
+    && equipmentSlots.every((slot) => validateItemStack(equipment[slot]))
+    && isInteger(value.selected, 0, 8)
+    && isFiniteNumber(value.health, 0, 10)
+    && isFiniteNumber(value.hunger, 0, 10)
+    && isFiniteNumber(value.xp, 0, Number.MAX_SAFE_INTEGER)
+    && isInteger(value.level, 0, Number.MAX_SAFE_INTEGER)
+    && validateSkillState(value.skills);
+}
+
 function validateSessionWorldOptions(value: unknown): value is SessionWorldOptions {
   return isRecord(value)
     && ["peaceful", "easy", "normal", "hard"].includes(value.difficulty as string)
@@ -631,9 +725,9 @@ function validateSessionWorldOptions(value: unknown): value is SessionWorldOptio
     && (value.sleepRule === undefined || ["any-player", "percentage", "all-players"].includes(value.sleepRule as string))
     && (value.sleepPercentage === undefined || isFiniteNumber(value.sleepPercentage, 1, 100))
     && (value.enabledFactions === undefined || (Array.isArray(value.enabledFactions)
-      && value.enabledFactions.length <= 4
+      && value.enabledFactions.length <= 6
       && new Set(value.enabledFactions).size === value.enabledFactions.length
-      && value.enabledFactions.every((entry) => ["hobbits", "goblins", "atlantians", "sugarcourt"].includes(entry as string))));
+      && value.enabledFactions.every((entry) => ["hobbits", "goblins", "atlantians", "sugarcourt", "wood-elves", "dwarves"].includes(entry as string))));
 }
 
 export function validatePayload<K extends MultiplayerMessageType>(type: K, value: unknown): value is MultiplayerPayloadMap[K] {
@@ -682,6 +776,7 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
         && (value.to === undefined || validateEndpoint(value.to))
         && (value.count === undefined || isInteger(value.count, 1, 65_535))
         && (value.expectedRevision === undefined || isInteger(value.expectedRevision, 0, Number.MAX_SAFE_INTEGER))
+        && (value.dropId === undefined || isInteger(value.dropId, 0, Number.MAX_SAFE_INTEGER))
         && validateStatusFields(value);
     case "container-action":
       return isId(value.requestId)
@@ -692,6 +787,23 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
         && (value.targetSlot === undefined || isInteger(value.targetSlot, 0, 1023))
         && (value.count === undefined || isInteger(value.count, 1, 65_535))
         && (value.expectedRevision === undefined || isInteger(value.expectedRevision, 0, Number.MAX_SAFE_INTEGER))
+        && (value.slots === undefined || (Array.isArray(value.slots) && value.slots.length <= 128 && value.slots.every(validateItemStack)))
+        && validateStatusFields(value);
+    case "player-state":
+      return isId(value.requestId)
+        && isId(value.actorId)
+        && validatePlayerSessionSnapshot(value.state)
+        && value.state.playerId === value.actorId
+        && validateStatusFields(value);
+    case "combat-action":
+      return isId(value.requestId)
+        && isId(value.actorId)
+        && isInteger(value.tick, 0, Number.MAX_SAFE_INTEGER)
+        && (value.targetKind === "mob" || value.targetKind === "player")
+        && isShortString(value.targetId, 96)
+        && (value.attack === "melee" || value.attack === "ranged")
+        && (value.resultingHealth === undefined || isFiniteNumber(value.resultingHealth, 0, 100_000))
+        && (value.killed === undefined || typeof value.killed === "boolean")
         && validateStatusFields(value);
     case "map-share": {
       if (!isShortString(value.tableKey, 96) || typeof value.reply !== "boolean" || !isRecord(value.map)) return false;
@@ -736,7 +848,8 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
         && validateTimeWeather(value.time)
         && (value.worldOptions === undefined || validateSessionWorldOptions(value.worldOptions))
         && (value.inventory === undefined || validateInventorySnapshot(value.inventory))
-        && (value.containers === undefined || (Array.isArray(value.containers) && value.containers.length <= 32 && value.containers.every(validateContainerSnapshot)));
+        && (value.containers === undefined || (Array.isArray(value.containers) && value.containers.length <= 32 && value.containers.every(validateContainerSnapshot)))
+        && (value.playerState === undefined || validatePlayerSessionSnapshot(value.playerState));
     default:
       return false;
   }
@@ -859,14 +972,14 @@ function defaultRandomId(prefix: string) {
   return `${prefix}_${bytesToBase64Url(bytes)}`;
 }
 
-export function createPeerIdentity(name: string, color: string, idFactory = defaultRandomId): PeerIdentity {
-  const identity = { id: idFactory("player"), name, color };
+export function createPeerIdentity(name: string, color: string, idFactory = defaultRandomId, variant?: "male" | "female"): PeerIdentity {
+  const identity = { id: idFactory("player"), name, color, ...(variant ? { variant } : {}) };
   if (!validatePeerIdentity(identity)) throw new MultiplayerProtocolError("Invalid peer identity");
   return identity;
 }
 
 function copyIdentity(identity: PeerIdentity): PeerIdentity {
-  return { id: identity.id, name: identity.name, color: identity.color };
+  return { id: identity.id, name: identity.name, color: identity.color, ...(identity.variant ? { variant: identity.variant } : {}) };
 }
 
 function defaultPeerConnectionFactory(configuration: RTCConfiguration): PeerConnectionLike {
@@ -1313,6 +1426,8 @@ export class MultiplayerSession {
   sendSleepVote(payload: SleepVote, peerId?: string) { return this.send("sleep-vote", payload, peerId); }
   sendInventoryAction(payload: InventoryAction, peerId?: string) { return this.send("inventory-action", payload, peerId); }
   sendContainerAction(payload: ContainerAction, peerId?: string) { return this.send("container-action", payload, peerId); }
+  sendPlayerState(payload: PlayerStateAction, peerId?: string) { return this.send("player-state", payload, peerId); }
+  sendCombatAction(payload: CombatAction, peerId?: string) { return this.send("combat-action", payload, peerId); }
   sendMapShare(payload: CartographyMapShare, peerId?: string) { return this.send("map-share", payload, peerId); }
 
   private protocolStrike(peer: PeerRecord, message: string) {
@@ -1332,7 +1447,7 @@ export class MultiplayerSession {
     const payload = envelope.payload as unknown;
     if (!isRecord(payload)) return false;
     if (envelope.type === "player-pose") return payload.playerId === peer.identity.id;
-    if (envelope.type === "block-action" || envelope.type === "inventory-action" || envelope.type === "container-action") {
+    if (envelope.type === "block-action" || envelope.type === "inventory-action" || envelope.type === "container-action" || envelope.type === "player-state" || envelope.type === "combat-action") {
       return payload.actorId === peer.identity.id && (payload.status === undefined || payload.status === "request");
     }
     if (envelope.type === "sleep-vote") return payload.actorId === peer.identity.id;
@@ -1372,7 +1487,7 @@ export class MultiplayerSession {
     if (envelope.type === "hello") {
       const hello = envelope.payload as MultiplayerPayloadMap["hello"];
       const expectedRole: MultiplayerRole = this.role === "host" ? "guest" : "host";
-      if (hello.role !== expectedRole || hello.identity.id !== peer.identity.id || hello.identity.name !== peer.identity.name || hello.identity.color.toLowerCase() !== peer.identity.color.toLowerCase()) {
+      if (hello.role !== expectedRole || hello.identity.id !== peer.identity.id || hello.identity.name !== peer.identity.name || hello.identity.color.toLowerCase() !== peer.identity.color.toLowerCase() || hello.identity.variant !== peer.identity.variant) {
         this.protocolStrike(peer, "Peer hello does not match the manual invite identity");
         return;
       }

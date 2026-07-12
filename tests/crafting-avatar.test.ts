@@ -24,9 +24,12 @@ import {
   normalizeApiaryUiState,
   prepareFirstPersonHeldPresentation,
   recipeMatchesQuery,
+  recipeIngredientLabels,
   recipePreviewGrid,
   resolveTouchControls,
   runSingleFlight,
+  shouldSuppressGameContextMenu,
+  slotInteractionAllowed,
   type SingleFlightGate,
 } from "../app/game/VoxelGame.tsx";
 import VoxelGame from "../app/game/VoxelGame.tsx";
@@ -192,7 +195,7 @@ test("workstation UI normalizes apiary production and exact capture-orb metadata
   assert.equal(apiary.honey, 12);
   assert.equal(apiary.royalJelly, 12);
   assert.equal(apiary.productionProgress, 0.68);
-  assert.equal(apiary.slots.length, 3);
+  assert.equal(apiary.slots.length, 11, "queen + eight removable workers + honey and royal-jelly output slots");
 
   const fullHostile: InventorySlot = {
     item: Item.CaptureOrb,
@@ -237,8 +240,8 @@ test("workstation UI normalizes apiary production and exact capture-orb metadata
 });
 
 test("human release identity stays separate from save schemas", () => {
-  assert.equal(GAME_VERSION, "0.9.0");
-  assert.equal(GAME_RELEASE_NAME, "Wyrmweave");
+  assert.equal(GAME_VERSION, "1.0.0");
+  assert.equal(GAME_RELEASE_NAME, "Realms and Recall");
   assert.equal(normalizeGameVersion("garbage"), "0.1.0");
 });
 
@@ -251,6 +254,7 @@ test("recipe search includes output and ingredient names while previews stay 3×
   assert.equal(cells.length, 9);
   assert.equal(cells[0], Item.Coal);
   assert.equal(cells[3], Item.Stick);
+  assert.deepEqual(recipeIngredientLabels(torch), ["Coal", "Stick"]);
 });
 
 test("hotbar selection sends its lightweight UI signal before the full HUD refresh", () => {
@@ -271,6 +275,12 @@ test("hotbar selection sends its lightweight UI signal before the full HUD refre
   engine.selectSlot(3);
   assert.equal(engine.selected, 3);
   assert.deepEqual(calls, ["selected:3", "audio", "hud"]);
+
+  calls.length = 0;
+  engine.keys = new Set(["KeyW"]);
+  engine.selectSlot(6);
+  assert.equal(engine.selected, 6, "hotbar selection remains responsive while forward movement is held");
+  assert.deepEqual(calls, ["selected:6", "audio", "hud"]);
 });
 
 test("text fields suppress gameplay shortcuts", () => {
@@ -278,6 +288,15 @@ test("text fields suppress gameplay shortcuts", () => {
   assert.equal(isEditableKeyboardTarget({ tagName: "TEXTAREA" } as unknown as EventTarget), true);
   assert.equal(isEditableKeyboardTarget({ tagName: "DIV", isContentEditable: true } as unknown as EventTarget), true);
   assert.equal(isEditableKeyboardTarget({ tagName: "CANVAS" } as unknown as EventTarget), false);
+  assert.equal(shouldSuppressGameContextMenu(true, { tagName: "CANVAS" } as unknown as EventTarget), true);
+  assert.equal(shouldSuppressGameContextMenu(true, { tagName: "INPUT" } as unknown as EventTarget), false);
+  assert.equal(shouldSuppressGameContextMenu(false, { tagName: "CANVAS" } as unknown as EventTarget), false);
+});
+
+test("newly opened container slots ignore the opening pointer event", () => {
+  assert.equal(slotInteractionAllowed(1_180, 1_000), false);
+  assert.equal(slotInteractionAllowed(1_180, 1_179), false);
+  assert.equal(slotInteractionAllowed(1_180, 1_180), true);
 });
 
 test("inventory artwork stays semantic at real slot sizes and food hover copy is explicit", () => {
@@ -295,6 +314,7 @@ test("inventory artwork stays semantic at real slot sizes and food hover copy is
   assert.equal(itemIconKind(Item.RoyalJelly), "jelly");
   assert.equal(itemIconKind(Item.QueenCell), "queen-cell");
   assert.equal(itemIconKind(Item.WorkerBee), "bee");
+  assert.equal(itemIconKind(Item.HealthPotion), "potion-health");
   assert.match(itemHoverText({ item: Item.Apple, count: 1 }), /Food \+4/u);
 });
 
@@ -313,6 +333,9 @@ test("bestiary filters and completion respond to care progress", () => {
   assert.equal(bestiaryKindsForFilter("birds").includes("emberjay"), true);
   assert.equal(bestiaryKindsForFilter("butterflies").includes("meadowwing"), true);
   assert.equal(bestiaryKindsForFilter("monsters").includes("zombie"), true);
+  assert.equal(bestiaryKindsForFilter("golems").includes("copper-scout-golem"), true);
+  assert.equal(bestiaryKindsForFilter("monsters").includes("copper-scout-golem"), false);
+  assert.equal(bestiaryKindsForFilter("surface").includes("copper-scout-golem"), false);
   assert.equal(bestiaryKindsForFilter("companions").includes("peelop"), true);
   assert.equal(bestiaryEntryCompletion(MOB_DEFS.peelop, { seen: false, kills: 0, captures: 0 }), 0);
   assert.equal(bestiaryEntryCompletion(MOB_DEFS.peelop, { seen: true, kills: 0, captures: 0, tames: 1, breeds: 1, secretUnlocked: true }), 100);

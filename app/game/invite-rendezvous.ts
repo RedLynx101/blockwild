@@ -123,6 +123,8 @@ const delay = (milliseconds: number) => new Promise<void>((resolve) => setTimeou
 
 export type HostRendezvous = {
   code: string;
+  /** Clears completed offer/answer flights so the same browser can rejoin. */
+  reset(): void;
   close(): Promise<void>;
 };
 
@@ -175,6 +177,11 @@ export async function hostByRoomCode(options: {
   let closeFlight: Promise<void> | null = null;
   return {
     code,
+    reset() {
+      inviteFlights.clear();
+      answerFlights.clear();
+      options.onStatus?.("waiting");
+    },
     async close() {
       closeFlight ??= leaveQuietly(room).finally(() => options.onStatus?.("closed"));
       await closeFlight;

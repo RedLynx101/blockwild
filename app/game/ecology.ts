@@ -285,6 +285,12 @@ export type SubmergedFloraPlacement = Readonly<{
 
 export type AquaticFloraHabitat = "river" | "coast" | "ocean" | "deep-ocean" | "lumen-trench";
 
+/** Wild Sugarplum canes form short, connected 1-3 block stands. */
+export function wildPeppermintHeight(seed: string | number, x: number, z: number): 1 | 2 | 3 {
+  const roll = hashUnit(seed, `wild-peppermint-height:${x},${z}`);
+  return roll < 0.42 ? 1 : roll < 0.82 ? 2 : 3;
+}
+
 const AQUATIC_FLORA_HEIGHT: Readonly<Partial<Record<BlockId, number>>> = Object.freeze({
   [BlockId.RiverRibbon]: 3,
   [BlockId.GlowKelp]: 5,
@@ -341,6 +347,14 @@ export const CLOUDREED_GLEN = Object.freeze({
 
 export type TreeForm = "rounded" | "layered" | "windswept" | "ancient";
 export type TreePlanBlock = Readonly<{ x: number; y: number; z: number; block: BlockId }>;
+export type TreePlanOptions = Readonly<{
+  /** Lets wide buttress roots meet the real terrain instead of hovering beside a slope. */
+  groundYAt?: (x: number, z: number) => number;
+  /** Prevents a wide root foot from being authored onto water, sand, or bare rock. */
+  canRootAt?: (x: number, z: number) => boolean;
+  /** Optional authored override used by landmark trees; ordinary trees derive it from the seed. */
+  crownFullness?: number;
+}>;
 
 const TREE_FACE_NEIGHBORS = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]] as const;
 
@@ -387,6 +401,7 @@ export function planFullTree(
   form: TreeForm,
   log: BlockId,
   leaves: BlockId,
+  options: TreePlanOptions = {},
 ): TreePlanBlock[] {
   const blocks = new Map<string, TreePlanBlock>();
   const set = (x: number, y: number, z: number, block: BlockId) => blocks.set(`${x},${y},${z}`, { x, y, z, block });
@@ -394,23 +409,125 @@ export function planFullTree(
     const key = `${x},${y},${z}`;
     if (blocks.get(key)?.block !== log) blocks.set(key, { x, y, z, block: leaves });
   };
-  const trunkHeight = form === "ancient" ? 8 : form === "layered" ? 7 : 5 + Math.floor(hashUnit(seed, "tree-height") * 2);
-  for (let dy = 0; dy < trunkHeight; dy += 1) set(origin.x, origin.y + dy, origin.z, log);
-  if (form === "windswept") {
-    for (let step = 1; step <= 3; step += 1) {
-      const branchY = origin.y + trunkHeight - 2 + Math.floor(step / 2);
-      set(origin.x + step, branchY, origin.z, log);
-      if (step > 1) set(origin.x + step - 1, branchY, origin.z, log);
+  const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+  const fullness = clamp01(options.crownFullness ?? (0.78 + hashUnit(seed, "tree-fullness") * 0.22));
+  const trunkHeight = form === "ancient"
+    ? 9 + Math.floor(hashUnit(seed, "tree-height") * 3)
+    : form === "layered"
+      ? 7 + Math.floor(hashUnit(seed, "tree-height") * 2)
+      : form === "windswept"
+        ? 6 + Math.floor(hashUnit(seed, "tree-height") * 2)
+        : 5 + Math.floor(hashUnit(seed, "tree-height") * 3);
+  const trunkTop = origin.y + trunkHeight - 1;
+  const cardinals = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
+  const directions = [...cardinals, [1, 1], [-1, 1], [1, -1], [-1, -1]] as const;
+  const setLogColumn = (x: number, z: number, bottomY: number, topY: number) => {
+    for (let y = Math.min(bottomY, topY); y <= Math.max(bottomY, topY); y += 1) set(x, y, z, log);
+  };
+  const setBranch = (start: Readonly<{ x: number; y: number; z: number }>, dx: number, dz: number, length: number, riseEvery = 0) => {
+    const cursor = { ...start };
+    set(cursor.x, cursor.y, cursor.z, log);
+    for (let step = 1; step <= length; step += 1) {
+      cursor.x += dx;
+      cursor.z += dz;
+      set(cursor.x, cursor.y, cursor.z, log);
+      if (riseEvery > 0 && step % riseEvery === 0) {
+        cursor.y += 1;
+        set(cursor.x, cursor.y, cursor.z, log);
+      }
+    }
+    return cursor;
+  };
+  const fillCrownLayer = (centerX: number, y: number, centerZ: number, radiusX: number, radiusZ: number, salt: string, trim = 0) => {
+    const maxX = Math.ceil(radiusX);
+    const maxZ = Math.ceil(radiusZ);
+    for (let dz = -maxZ; dz <= maxZ; dz += 1) for (let dx = -maxX; dx <= maxX; dx += 1) {
+      const normalized = (dx * dx) / Math.max(0.25, radiusX * radiusX) + (dz * dz) / Math.max(0.25, radiusZ * radiusZ);
+      if (normalized > 1.04) continue;
+      // Variation is restricted to the outside ring. The crown core is solid,
+      // so random art direction can never create an isolated leaf island.
+      const edge = normalized > 0.7;
+      const edgeTrim = trim + (1 - fullness) * 0.5;
+      if (edge && hashUnit(seed, `${salt}:${dx},${dz}`) < edgeTrim) continue;
+      setLeaf(centerX + dx, y, centerZ + dz);
+    }
+  };
+
+  setLogColumn(origin.x, origin.z, origin.y, trunkTop);
+  let crownX = origin.x;
+  let crownZ = origin.z;
+
+  if (form === "rounded") {
+    const longBranch = Math.floor(hashUnit(seed, "rounded-long-branch") * cardinals.length);
+    for (const [index, [dx, dz]] of cardinals.entries()) {
+      setBranch({ x: origin.x, y: trunkTop - 2 + (index % 2), z: origin.z }, dx, dz, index === longBranch ? 2 : 1);
+    }
+  } else if (form === "layered") {
+    for (const [dx, dz] of cardinals) {
+      setBranch({ x: origin.x, y: trunkTop - 4, z: origin.z }, dx, dz, 2);
+      setBranch({ x: origin.x, y: trunkTop - 1, z: origin.z }, dx, dz, 1);
+    }
+    // The narrow crown peak is supported by wood rather than a detached leaf
+    // cap, a common source of the old floating pieces.
+    set(origin.x, trunkTop + 1, origin.z, log);
+  } else if (form === "windswept") {
+    const [windX, windZ] = cardinals[Math.floor(hashUnit(seed, "windswept-direction") * cardinals.length)];
+    const tip = setBranch({ x: origin.x, y: trunkTop - 3, z: origin.z }, windX, windZ, 3, 2);
+    crownX = tip.x - windX;
+    crownZ = tip.z - windZ;
+    // A short counterweight makes the silhouette plausible without creating a
+    // second disconnected crown.
+    setBranch({ x: origin.x, y: trunkTop - 2, z: origin.z }, -windX, -windZ, 1);
+  } else {
+    // Ancient trees use terrain-aware, tapered buttresses. Each column meets
+    // soil when terrain data is available and joins the central trunk by y+2.
+    for (const [dx, dz] of cardinals) {
+      if (options.canRootAt && !options.canRootAt(origin.x + dx, origin.z + dz)) continue;
+      const measuredGround = options.groundYAt?.(origin.x + dx, origin.z + dz);
+      const desiredBase = Number.isFinite(measuredGround) ? Math.round(measuredGround!) + 1 : origin.y;
+      if (Math.abs(desiredBase - origin.y) <= 2) setLogColumn(origin.x + dx, origin.z + dz, desiredBase, origin.y + 2);
+    }
+    if (fullness > 0.9) for (const [dx, dz] of directions.slice(4)) {
+      if (options.canRootAt && !options.canRootAt(origin.x + dx, origin.z + dz)) continue;
+      const measuredGround = options.groundYAt?.(origin.x + dx, origin.z + dz);
+      const desiredBase = Number.isFinite(measuredGround) ? Math.round(measuredGround!) + 1 : origin.y;
+      if (Math.abs(desiredBase - origin.y) <= 1) setLogColumn(origin.x + dx, origin.z + dz, desiredBase, origin.y + 1);
+    }
+    for (const [index, [dx, dz]] of cardinals.entries()) {
+      setBranch({ x: origin.x, y: trunkTop - 3 + (index % 2), z: origin.z }, dx, dz, 2 + (hashUnit(seed, `ancient-branch:${index}`) > 0.55 ? 1 : 0), 2);
     }
   }
-  if (form === "ancient") for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) for (let dy = 0; dy < 3; dy += 1) set(origin.x + dx, origin.y + dy, origin.z + dz, log);
-  const centerX = origin.x + (form === "windswept" ? 2 : 0);
-  const centerY = origin.y + trunkHeight;
-  const layers = form === "layered" ? [[-2, 3], [0, 2], [2, 1]] as const : form === "ancient" ? [[-1, 4], [1, 3], [3, 2]] as const : [[-1, 3], [1, 2], [2, 1]] as const;
-  for (const [dy, radius] of layers) for (let dz = -radius; dz <= radius; dz += 1) for (let dx = -radius; dx <= radius; dx += 1) {
-    const edge = Math.abs(dx) === radius && Math.abs(dz) === radius;
-    if (edge && hashUnit(seed, `leaf-edge:${dx},${dy},${dz}`) < 0.45) continue;
-    setLeaf(centerX + dx, centerY + dy, origin.z + dz);
+
+  if (form === "rounded") {
+    fillCrownLayer(crownX, trunkTop - 2, crownZ, 2.8, 2.8, "rounded:-2", 0.04);
+    fillCrownLayer(crownX, trunkTop - 1, crownZ, 3.2, 3.2, "rounded:-1", 0.03);
+    fillCrownLayer(crownX, trunkTop, crownZ, 3.15, 3.15, "rounded:0", 0.02);
+    fillCrownLayer(crownX, trunkTop + 1, crownZ, 2.45, 2.45, "rounded:1", 0.03);
+    fillCrownLayer(crownX, trunkTop + 2, crownZ, 1.35, 1.35, "rounded:2", 0.02);
+  } else if (form === "layered") {
+    fillCrownLayer(crownX, trunkTop - 4, crownZ, 3.7, 3.7, "layered:-4", 0.06);
+    fillCrownLayer(crownX, trunkTop - 3, crownZ, 2.9, 2.9, "layered:-3", 0.05);
+    fillCrownLayer(crownX, trunkTop - 2, crownZ, 1.9, 1.9, "layered:-2", 0.03);
+    fillCrownLayer(crownX, trunkTop - 1, crownZ, 3.05, 3.05, "layered:-1", 0.06);
+    fillCrownLayer(crownX, trunkTop, crownZ, 2.25, 2.25, "layered:0", 0.04);
+    fillCrownLayer(crownX, trunkTop + 1, crownZ, 1.45, 1.45, "layered:1", 0.02);
+    fillCrownLayer(crownX, trunkTop + 2, crownZ, 0.8, 0.8, "layered:2");
+  } else if (form === "windswept") {
+    const stretchedOnX = crownX !== origin.x;
+    const radiusX = stretchedOnX ? 3.8 : 2.5;
+    const radiusZ = stretchedOnX ? 2.5 : 3.8;
+    fillCrownLayer(crownX, trunkTop - 2, crownZ, radiusX, radiusZ, "windswept:-2", 0.08);
+    fillCrownLayer(crownX, trunkTop - 1, crownZ, radiusX, radiusZ, "windswept:-1", 0.06);
+    fillCrownLayer(crownX, trunkTop, crownZ, radiusX - 0.45, radiusZ - 0.45, "windswept:0", 0.04);
+    fillCrownLayer(crownX, trunkTop + 1, crownZ, Math.max(1.6, radiusX - 1.35), Math.max(1.6, radiusZ - 1.35), "windswept:1", 0.03);
+  } else {
+    fillCrownLayer(crownX, trunkTop - 3, crownZ, 4.45, 4.45, "ancient:-3", 0.05);
+    fillCrownLayer(crownX, trunkTop - 2, crownZ, 4.65, 4.65, "ancient:-2", 0.04);
+    fillCrownLayer(crownX, trunkTop - 1, crownZ, 4.4, 4.4, "ancient:-1", 0.03);
+    fillCrownLayer(crownX, trunkTop, crownZ, 4.0, 4.0, "ancient:0", 0.03);
+    fillCrownLayer(crownX, trunkTop + 1, crownZ, 3.55, 3.55, "ancient:1", 0.03);
+    fillCrownLayer(crownX, trunkTop + 2, crownZ, 2.75, 2.75, "ancient:2", 0.02);
+    fillCrownLayer(crownX, trunkTop + 3, crownZ, 1.55, 1.55, "ancient:3", 0.01);
   }
   // Defensive topology repair for future authored forms: bridge any remaining
   // log islands along a deterministic Manhattan path. Leaves never overwrite

@@ -120,7 +120,21 @@ export type MerchantProfession =
   | "sugarcourt-candysmith"
   | "sugarcourt-sweetbroker"
   | "sugarcourt-kennelkeeper"
-  | "sugarcourt-brittle-guard";
+  | "sugarcourt-brittle-guard"
+  | "wood-elf-elderweaver"
+  | "wood-elf-leafwarden"
+  | "wood-elf-bow-warden"
+  | "wood-elf-grovekeeper"
+  | "wood-elf-tomekeeper"
+  | "wood-elf-potioner"
+  | "wood-elf-moonbroker"
+  | "dwarf-thane"
+  | "dwarf-gatewarden"
+  | "dwarf-delver"
+  | "dwarf-gearwright"
+  | "dwarf-golemsmith"
+  | "dwarf-powderwright"
+  | "dwarf-provisioner";
 
 export type CommerceCategory =
   | "food"
@@ -240,6 +254,35 @@ export const COMMERCE_CATALOG: Readonly<Record<string, CommerceItem>> = Object.f
   { key: "blueprint-draconic-incubator", name: "Schematics: Draconic Incubator", category: "blueprint", baseValue: 1_750, stackLimit: 16, tags: ["dragon", "rare"] },
   { key: "blueprint-dragon-husbandry", name: "Dragon Husbandry Codex", category: "blueprint", baseValue: 1_900, stackLimit: 16, tags: ["dragon", "rare"] },
   { key: "manaheart-draught", name: "Manaheart Draught", category: "potion", baseValue: 420, stackLimit: 8, tags: ["magic", "dragon"] },
+  { key: "moonbough-staff", name: "Moonbough Staff", category: "weapon", baseValue: 230, stackLimit: 1, tags: ["wood-elf", "magic"] },
+  { key: "glimmerbow", name: "Glimmerbow", category: "weapon", baseValue: 265, stackLimit: 1, tags: ["wood-elf", "bow"] },
+  { key: "glimmer-arrow", name: "Glimmer Arrow", category: "ammunition", baseValue: 4, stackLimit: 64, tags: ["wood-elf"] },
+  { key: "moonpetal", name: "Moonpetal", category: "crop", baseValue: 11, stackLimit: 64, tags: ["wood-elf", "glowing", "flower"] },
+  { key: "starfern", name: "Starfern Frond", category: "crop", baseValue: 9, stackLimit: 64, tags: ["wood-elf", "glowing"] },
+  { key: "dreamcap", name: "Dreamcap", category: "food", baseValue: 14, stackLimit: 64, tags: ["wood-elf", "glowing", "mushroom"] },
+  { key: "lumenreed-frond", name: "Lumenreed Frond", category: "crop", baseValue: 12, stackLimit: 64, tags: ["wood-elf", "glowing", "aquatic"] },
+  { key: "moonstep-elixir", name: "Moonstep Elixir", category: "potion", baseValue: 96, stackLimit: 8, tags: ["wood-elf", "magic"] },
+  { key: "verdant-renewal", name: "Verdant Renewal", category: "potion", baseValue: 112, stackLimit: 8, tags: ["wood-elf", "magic"] },
+  { key: "tome-verdant-volley", name: "Tome of Verdant Volley", category: "treasure", baseValue: 610, stackLimit: 16, tags: ["wood-elf", "magic", "tome"] },
+  { key: "tome-starlight-snare", name: "Tome of Starlight Snare", category: "treasure", baseValue: 790, stackLimit: 16, tags: ["wood-elf", "magic", "tome", "rare"] },
+  { key: "blueprint-glimmerbow", name: "Pattern: Glimmerbow", category: "blueprint", baseValue: 780, stackLimit: 16, tags: ["wood-elf"] },
+  { key: "blueprint-moonstep", name: "Formula: Moonstep Elixir", category: "blueprint", baseValue: 560, stackLimit: 16, tags: ["wood-elf"] },
+  { key: "blueprint-verdant-renewal", name: "Formula: Verdant Renewal", category: "blueprint", baseValue: 680, stackLimit: 16, tags: ["wood-elf"] },
+  { key: "unaligned-glimmerhart-orb", name: "Capture Orb: Glimmerhart", category: "creature", baseValue: 740, stackLimit: 1, tags: ["wood-elf", "unaligned", "glimmerhart"] },
+  { key: "unaligned-runeowl-orb", name: "Capture Orb: Runeowl", category: "creature", baseValue: 660, stackLimit: 1, tags: ["wood-elf", "unaligned", "runeowl"] },
+  { key: "flintlock-pistol", name: "Deepgear Flintlock", category: "weapon", baseValue: 310, stackLimit: 1, tags: ["dwarf", "firearm"] },
+  { key: "lead-ball", name: "Flintlock Ball", category: "ammunition", baseValue: 5, stackLimit: 64, tags: ["dwarf", "firearm"] },
+  { key: "deepgear-lantern", name: "Deepgear Lantern", category: "misc", baseValue: 58, stackLimit: 16, tags: ["dwarf", "light"] },
+  { key: "gear-cluster", name: "Precision Gear Cluster", category: "material", baseValue: 22, stackLimit: 64, tags: ["dwarf", "golem"] },
+  { key: "deepgear-alloy", name: "Deepgear Alloy", category: "material", baseValue: 38, stackLimit: 64, tags: ["dwarf", "golem"] },
+  { key: "copper-ore", name: "Copper Ore", category: "ore", baseValue: 10, stackLimit: 64, tags: ["dwarf", "golem"] },
+  { key: "blueprint-flintlock", name: "Blueprint: Deepgear Flintlock", category: "blueprint", baseValue: 940, stackLimit: 16, tags: ["dwarf"] },
+  { key: "blueprint-copper-scout", name: "Blueprint: Copper Scout", category: "blueprint", baseValue: 720, stackLimit: 16, tags: ["dwarf", "golem"] },
+  { key: "blueprint-stone-bulwark", name: "Blueprint: Stone Bulwark", category: "blueprint", baseValue: 1_280, stackLimit: 16, tags: ["dwarf", "golem"] },
+  { key: "blueprint-aetherforged-sentinel", name: "Blueprint: Aetherforged Sentinel", category: "blueprint", baseValue: 2_650, stackLimit: 16, tags: ["dwarf", "golem", "rare"] },
+  { key: "copper-scout-golem-orb", name: "Capture Orb: Copper Scout", category: "creature", baseValue: 980, stackLimit: 1, tags: ["dwarf", "golem", "unaligned"] },
+  { key: "unaligned-copper-mole-orb", name: "Capture Orb: Copper Mole", category: "creature", baseValue: 580, stackLimit: 1, tags: ["dwarf", "unaligned", "copper-mole"] },
+  { key: "sea-dragon-nest-chart", name: "Chart: Sea Dragon Nest", category: "treasure", baseValue: 1_180, stackLimit: 8, tags: ["atlantian", "dragon", "survey", "rare"] },
 ] satisfies CommerceItem[]).map((definition) => [definition.key, definition])) as Readonly<Record<string, CommerceItem>>;
 
 export type MerchantOffer = Readonly<MerchantStack & { professions: readonly MerchantProfession[]; rareChance?: number }>;
@@ -292,6 +335,7 @@ export const ATLANTIAN_MERCHANT_OFFERS: readonly MerchantOffer[] = [
   { itemKey: "tome-frost-lance", count: 1, professions: ["atlantian-glowmender"], rareChance: 0.085 },
   { itemKey: "tome-arcane-ward", count: 1, professions: ["atlantian-pearlbroker"], rareChance: 0.055 },
   { itemKey: "blueprint-draconic-incubator", count: 1, professions: ["atlantian-coralwright"], rareChance: 0.03 },
+  { itemKey: "sea-dragon-nest-chart", count: 1, professions: ["atlantian-pearlbroker", "atlantian-tidewarden"], rareChance: 0.055 },
 ];
 
 export const SUGARCOURT_MERCHANT_OFFERS: readonly MerchantOffer[] = [
@@ -331,11 +375,49 @@ export const SUGARCOURT_MERCHANT_OFFERS: readonly MerchantOffer[] = [
   { itemKey: "blueprint-dragon-scale-armor", count: 1, professions: ["sugarcourt-candysmith"], rareChance: 0.025 },
 ];
 
+export const WOOD_ELF_MERCHANT_OFFERS: readonly MerchantOffer[] = [
+  { itemKey: "moonpetal", count: 20, professions: ["wood-elf-grovekeeper", "wood-elf-potioner"] },
+  { itemKey: "starfern", count: 20, professions: ["wood-elf-grovekeeper", "wood-elf-potioner"] },
+  { itemKey: "dreamcap", count: 14, professions: ["wood-elf-grovekeeper", "wood-elf-potioner"] },
+  { itemKey: "lumenreed-frond", count: 16, professions: ["wood-elf-grovekeeper", "wood-elf-potioner"] },
+  { itemKey: "moonbough-staff", count: 3, professions: ["wood-elf-leafwarden", "wood-elf-tomekeeper"] },
+  { itemKey: "glimmerbow", count: 3, professions: ["wood-elf-bow-warden", "wood-elf-moonbroker"] },
+  { itemKey: "glimmer-arrow", count: 48, professions: ["wood-elf-bow-warden", "wood-elf-moonbroker"] },
+  { itemKey: "moonstep-elixir", count: 4, professions: ["wood-elf-potioner"] },
+  { itemKey: "verdant-renewal", count: 4, professions: ["wood-elf-potioner"] },
+  { itemKey: "tome-verdant-volley", count: 1, professions: ["wood-elf-tomekeeper", "wood-elf-elderweaver"], rareChance: 0.18 },
+  { itemKey: "tome-starlight-snare", count: 1, professions: ["wood-elf-tomekeeper"], rareChance: 0.07 },
+  { itemKey: "blueprint-glimmerbow", count: 1, professions: ["wood-elf-bow-warden", "wood-elf-moonbroker"] },
+  { itemKey: "blueprint-moonstep", count: 1, professions: ["wood-elf-potioner"] },
+  { itemKey: "blueprint-verdant-renewal", count: 1, professions: ["wood-elf-potioner"] },
+  { itemKey: "unaligned-glimmerhart-orb", count: 1, professions: ["wood-elf-grovekeeper"], rareChance: 0.32 },
+  { itemKey: "unaligned-runeowl-orb", count: 1, professions: ["wood-elf-tomekeeper"], rareChance: 0.28 },
+];
+
+export const DWARF_MERCHANT_OFFERS: readonly MerchantOffer[] = [
+  { itemKey: "raw-iron", count: 40, professions: ["dwarf-delver", "dwarf-provisioner"] },
+  { itemKey: "raw-gold", count: 16, professions: ["dwarf-delver", "dwarf-provisioner"] },
+  { itemKey: "copper-ore", count: 32, professions: ["dwarf-delver", "dwarf-provisioner"] },
+  { itemKey: "gear-cluster", count: 24, professions: ["dwarf-gearwright", "dwarf-golemsmith"] },
+  { itemKey: "deepgear-alloy", count: 14, professions: ["dwarf-gearwright", "dwarf-golemsmith"] },
+  { itemKey: "deepgear-lantern", count: 8, professions: ["dwarf-gearwright", "dwarf-provisioner"] },
+  { itemKey: "flintlock-pistol", count: 3, professions: ["dwarf-powderwright", "dwarf-gatewarden"] },
+  { itemKey: "lead-ball", count: 64, professions: ["dwarf-powderwright", "dwarf-gatewarden"] },
+  { itemKey: "blueprint-flintlock", count: 1, professions: ["dwarf-powderwright"] },
+  { itemKey: "blueprint-copper-scout", count: 1, professions: ["dwarf-golemsmith"] },
+  { itemKey: "blueprint-stone-bulwark", count: 1, professions: ["dwarf-golemsmith"] },
+  { itemKey: "blueprint-aetherforged-sentinel", count: 1, professions: ["dwarf-thane", "dwarf-golemsmith"], rareChance: 0.05 },
+  { itemKey: "copper-scout-golem-orb", count: 1, professions: ["dwarf-golemsmith"], rareChance: 0.22 },
+  { itemKey: "unaligned-copper-mole-orb", count: 1, professions: ["dwarf-provisioner"], rareChance: 0.35 },
+];
+
 const MERCHANT_OFFERS_BY_FACTION: Readonly<Record<NpcFactionId, readonly MerchantOffer[]>> = {
   hobbits: HOBBIT_MERCHANT_OFFERS,
   goblins: GOBLIN_MERCHANT_OFFERS,
   atlantians: ATLANTIAN_MERCHANT_OFFERS,
   sugarcourt: SUGARCOURT_MERCHANT_OFFERS,
+  "wood-elves": WOOD_ELF_MERCHANT_OFFERS,
+  dwarves: DWARF_MERCHANT_OFFERS,
 };
 
 export function merchantOffersFor(factionId: Exclude<FactionId, "player">, profession: MerchantProfession, availabilitySeed?: string) {

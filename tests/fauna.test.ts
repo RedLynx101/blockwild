@@ -70,6 +70,7 @@ import {
   AQUATIC_MOB_ORDER,
   BIRD_ORDER,
   CORE_MOB_ORDER,
+  DWARF_ORDER,
   GOBLIN_ORDER,
   HEARTHROADS_AQUATIC_ORDER,
   HEARTHROADS_WILDLIFE_ORDER,
@@ -79,6 +80,7 @@ import {
   SENTIENT_MOB_ORDER,
   SUGARCOURT_ORDER,
   SURFACE_MOB_ORDER,
+  WOOD_ELF_ORDER,
 } from "../app/game/mobs.ts";
 import { createMobVisual, createSkeletonArrowVisual } from "../app/game/mob-models.ts";
 import {
@@ -114,8 +116,18 @@ test("expanded ecology catalog includes mounts, livestock, thin fish, pollinator
   assert.deepEqual(HEARTHROADS_AQUATIC_ORDER, ["redfin-salmon", "blue-mackerel", "deepwater-shark"]);
   assert.equal(HOBBIT_ORDER.length, 7);
   assert.equal(GOBLIN_ORDER.length, 5);
-  assert.equal(SENTIENT_MOB_ORDER.length, 25);
+  assert.equal(SENTIENT_MOB_ORDER.length, HOBBIT_ORDER.length + GOBLIN_ORDER.length + 6 + SUGARCOURT_ORDER.length + WOOD_ELF_ORDER.length + DWARF_ORDER.length);
   assert.equal(SUGARCOURT_ORDER.length, 7);
+  assert.equal(WOOD_ELF_ORDER.length, 7);
+  assert.equal(DWARF_ORDER.length, 7);
+  for (const kind of WOOD_ELF_ORDER) {
+    assert.equal(MOB_DEFS[kind].sentient, true);
+    assert.equal(MOB_DEFS[kind].faction, "wood-elves");
+  }
+  for (const kind of DWARF_ORDER) {
+    assert.equal(MOB_DEFS[kind].sentient, true);
+    assert.equal(MOB_DEFS[kind].faction, "dwarves");
+  }
   for (const kind of SUGARCOURT_ORDER) {
     assert.equal(MOB_DEFS[kind].sentient, true);
     assert.equal(MOB_DEFS[kind].faction, "sugarcourt");
@@ -146,7 +158,7 @@ test("expanded ecology catalog includes mounts, livestock, thin fish, pollinator
   assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.3), "lanternshell");
   assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.52), "puddlehopper");
   assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.65), "reedstrider");
-  assert.equal(CORE_MOB_ORDER.filter((kind) => MOB_DEFS[kind].sentient).length, 25);
+  assert.equal(CORE_MOB_ORDER.filter((kind) => MOB_DEFS[kind].sentient).length, SENTIENT_MOB_ORDER.length);
 });
 
 test("v0.5 habitat tables place mammals, pollinators, and fish without ambient queen spam", () => {

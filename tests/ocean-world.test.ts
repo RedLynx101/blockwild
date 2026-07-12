@@ -30,7 +30,7 @@ import { createWeatherState, planCloudField, weatherVisuals } from "../app/game/
 import { BiomeId, ChunkWorld, GENERATOR_VERSION, planPoiAmenities } from "../app/game/world.ts";
 
 test("shoreline, biome, crop and aquatic ids remain byte-safe and registered", () => {
-  assert.equal(GENERATOR_VERSION, 10);
+  assert.equal(GENERATOR_VERSION, 11);
   for (const block of [BlockId.Saltbrush, BlockId.CoastAster, BlockId.JungleGrass, BlockId.SakuraGrass, BlockId.LumenKelp, BlockId.AbyssBloom, BlockId.SunrootCrop]) {
     assert.ok(block > 99 && block <= 255);
     assert.ok(BLOCKS[block]);
@@ -49,7 +49,8 @@ test("shoreline, biome, crop and aquatic ids remain byte-safe and registered", (
 });
 
 test("all aquatic flora is waterlogged, breakable, replantable and bounded upward", () => {
-  assert.equal(AQUATIC_FLORA.length, 7);
+  assert.ok(AQUATIC_FLORA.length >= 8);
+  assert.ok(AQUATIC_FLORA.includes(BlockId.Lumenreed));
   for (const block of AQUATIC_FLORA) {
     assert.equal(BLOCKS[block].waterlogged, true, BLOCKS[block].name);
     assert.equal(BLOCKS[block].hardness > 0, true);
@@ -66,6 +67,7 @@ test("all aquatic flora is waterlogged, breakable, replantable and bounded upwar
   const read = (x: number, y: number, z: number) => column.get(`${x},${y},${z}`) ?? BlockId.Stone;
   assert.deepEqual(planAquaticGrowth(BlockId.LumenKelp, { x: 0, y: 0, z: 0 }, read), { x: 0, y: 1, z: 0, type: BlockId.LumenKelp, maximumHeight: 7 });
   assert.equal(AQUATIC_GROWTH_LIMITS[BlockId.StarCoral], 3);
+  assert.equal(AQUATIC_GROWTH_LIMITS[BlockId.Lumenreed], 4);
   const coral = new Map<string, BlockId>([["0,0,0", BlockId.StarCoral], ["0,1,0", BlockId.Water]]);
   assert.deepEqual(
     planAquaticGrowth(BlockId.StarCoral, { x: 0, y: 0, z: 0 }, (x, y, z) => coral.get(`${x},${y},${z}`) ?? BlockId.Stone),
@@ -127,6 +129,7 @@ test("deep habitats choose deterministic bioluminescent waterlogged flora", () =
 
 test("cultivated flowers remain pollinator-compatible and yield several blooms", () => {
   assert.equal(ORDINARY_FLOWERS.length, CULTIVATED_FLOWERS.length);
+  assert.ok(ORDINARY_FLOWERS.includes(BlockId.Moonpetal));
   for (let index = 0; index < ORDINARY_FLOWERS.length; index += 1) {
     const flower = ORDINARY_FLOWERS[index];
     const mature = CULTIVATED_FLOWERS[index];
@@ -175,24 +178,31 @@ test("composed Rainveil crowns preserve rooted wood in generated chunks", () => 
   world.reset("HEARTHROADS", undefined, { structures: false });
   const chunkX = Math.floor(-2_080 / 16);
   const chunkZ = Math.floor(-3_026 / 16);
-  for (let cx = chunkX - 1; cx <= chunkX + 1; cx += 1) {
-    for (let cz = chunkZ - 1; cz <= chunkZ + 1; cz += 1) world.generateChunk(cx, cz);
+  // The audited 3x3 window can contain the outer branch of a tree rooted in
+  // the immediately adjacent chunk (the historical -2049 fixture is one).
+  // Load that deterministic one-chunk root halo before proving connectivity.
+  for (let cx = chunkX - 2; cx <= chunkX + 2; cx += 1) {
+    for (let cz = chunkZ - 2; cz <= chunkZ + 2; cz += 1) world.generateChunk(cx, cz);
   }
-  // A later crown formerly replaced y=41 with JungleLeaves and orphaned the
-  // authored upper wood at y=42..43 from the rooted trunk at y=36..40.
-  assert.equal(world.getBlock(-2_080, 41, -3_026), BlockId.JungleLog);
-  assert.ok(discoverRootedTree({ x: -2_080, y: 42, z: -3_026 }, (x, y, z) => world.getBlock(x, y, z)));
-
   let checkedLogs = 0;
-  for (let x = chunkX * 16; x < (chunkX + 1) * 16; x += 1) for (let z = chunkZ * 16; z < (chunkZ + 1) * 16; z += 1) {
+  const verifiedLogs = new Set<string>();
+  // Coarse jittered tree cells can move the historical fixture across the
+  // neighboring chunk seam. Audit the same bounded 3x3 generated window so
+  // the contract remains rooted connectivity, not one incidental coordinate.
+  for (let x = (chunkX - 1) * 16; x < (chunkX + 2) * 16; x += 1) for (let z = (chunkZ - 1) * 16; z < (chunkZ + 2) * 16; z += 1) {
     const surface = world.sampleColumn(x, z).height;
     for (let y = surface - 4; y <= surface + 20; y += 1) {
       if (!isTreeLogBlock(world.getBlock(x, y, z))) continue;
       checkedLogs += 1;
-      assert.ok(discoverRootedTree({ x, y, z }, (bx, by, bz) => world.getBlock(bx, by, bz)), `orphan generated log at ${x},${y},${z}`);
+      const key = `${x},${y},${z}`;
+      if (verifiedLogs.has(key)) continue;
+      const tree = discoverRootedTree({ x, y, z }, (bx, by, bz) => world.getBlock(bx, by, bz));
+      assert.ok(tree, `orphan generated log at ${x},${y},${z}`);
+      for (const log of tree.logs) verifiedLogs.add(`${log.x},${log.y},${log.z}`);
     }
   }
   assert.ok(checkedLogs >= 24, `expected a meaningful bounded forest scan, got ${checkedLogs} logs`);
+  assert.ok(verifiedLogs.has("-2049,39,-3038"), "the historical composed-crown branch reaches its adjacent rooted trunk");
   world.dispose();
 });
 

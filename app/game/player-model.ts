@@ -698,7 +698,12 @@ export class BlockPlayerModel {
     const leftArmRoll = 0;
     let rightArmRoll = 0;
 
-    if (nextPose.action === "mine") {
+    if (this.heldItem && nextPose.action === "none") {
+      // A carried tool belongs in the hand, not inside the torso. This neutral
+      // ready pose also gives remote sentient/player rigs a readable aim line.
+      rightArmAngle = 1.28 + Math.sin(cycle) * (nextPose.locomotion === "idle" ? 0.025 : 0.07);
+      rightArmRoll = 0.12;
+    } else if (nextPose.action === "mine") {
       const stroke = 0.5 - 0.5 * Math.cos(nextPose.actionPhase * TWO_PI);
       rightArmAngle = 2.48 - stroke * 2.1;
       rightArmRoll = -0.12;

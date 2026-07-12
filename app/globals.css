@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./game/golem-forge.css";
 
 :root {
   --font-geist-sans: Arial, Helvetica, sans-serif;
@@ -4049,6 +4050,73 @@ input:focus-visible {
   .creature-render-mini img { transition: none; }
 }
 
+/* v1.0 Waygrid: quiet luminous infrastructure, visually distinct from chests. */
+.waygrid-overlay { padding: clamp(8px, 2vw, 24px); background: radial-gradient(circle at 50% 18%, rgba(85, 201, 205, .16), transparent 44%), rgba(5, 12, 14, .82); }
+.waygrid-window { width: min(1120px, 96vw); height: min(860px, 94dvh); margin: auto; display: grid; grid-template-rows: auto auto minmax(180px, 1fr) auto auto; overflow: hidden; border-color: #7fc8c7; background: linear-gradient(145deg, rgba(18, 35, 36, .98), rgba(26, 30, 39, .98)); color: #e8f6e9; box-shadow: 0 0 0 2px #263f43, 0 18px 54px #000b; }
+.waygrid-header { min-height: 78px; display: flex; align-items: center; gap: 16px; padding: 13px 18px; border-bottom: 2px solid #5b8f8e; background: linear-gradient(90deg, #213a3b, #2b3242 72%, #3a3150); }
+.waygrid-header > div:first-child { min-width: 0; flex: 1; }
+.waygrid-header span { color: #8ce4d7; font-size: 8px; letter-spacing: .18em; }
+.waygrid-header h2 { margin: 4px 0 0; font: 700 clamp(25px, 4vw, 39px)/1 Georgia, serif; color: #f4f0d5; text-shadow: 2px 3px 0 #0008; }
+.waygrid-cells { display: flex; gap: 7px; }
+.waygrid-cells span { display: grid; grid-template-columns: 12px auto auto; align-items: center; gap: 4px; min-width: 55px; padding: 6px 7px; border: 1px solid #ffffff2b; background: #0d191c99; color: #b8d8d3; font-size: 8px; letter-spacing: .06em; }
+.waygrid-cells span i { width: 9px; height: 9px; transform: rotate(45deg); background: #5fc3c4; box-shadow: 0 0 8px #5fc3c4; }
+.waygrid-cells span[data-tier="2"] i { background: #88b8ef; box-shadow: 0 0 8px #88b8ef; }
+.waygrid-cells span[data-tier="3"] i { background: #c28dff; box-shadow: 0 0 9px #c28dff; }
+.waygrid-cells b { margin-left: auto; color: #fff1ba; }
+.waygrid-toolbar { display: grid; grid-template-columns: minmax(220px, 1fr) auto; gap: 12px; padding: 12px 16px; border-bottom: 1px solid #6b97916e; background: #122326; }
+.waygrid-toolbar label { display: grid; gap: 4px; color: #a8c8c4; font-size: 8px; letter-spacing: .09em; }
+.waygrid-toolbar input { width: 100%; min-height: 38px; padding: 8px 11px; border: 2px solid #617e7c; outline: 0; background: #081315; color: #f7f3d8; font: 13px monospace; }
+.waygrid-toolbar input:focus { border-color: #92e1d4; box-shadow: 0 0 0 2px #6fd5c63b; }
+.waygrid-toolbar button, .waygrid-item-row button, .waygrid-creature-card > button { padding: 8px 11px; border: 2px solid #729491; background: #304d4b; color: #f8f1cf; font: 700 8px monospace; text-transform: uppercase; cursor: pointer; }
+.waygrid-toolbar button:hover, .waygrid-item-row button:hover, .waygrid-creature-card > button:hover { background: #47706b; }
+.waygrid-item-list, .waygrid-creature-list { min-height: 0; overflow-y: auto; padding: 12px 16px; background-image: linear-gradient(#ffffff08 1px, transparent 1px), linear-gradient(90deg, #ffffff08 1px, transparent 1px); background-size: 24px 24px; }
+.waygrid-item-row { display: grid; grid-template-columns: 44px minmax(130px, 1fr) auto auto; align-items: center; gap: 10px; margin-bottom: 7px; padding: 8px; border: 1px solid #63817d75; background: #102024e8; }
+.waygrid-item-glyph { --item-color: #8fd5d4; width: 38px; height: 38px; display: grid; place-items: center; border: 1px solid #ffffff2c; background: #060e10; }
+.waygrid-item-glyph i { width: 20px; height: 20px; transform: rotate(45deg); background: var(--item-color); box-shadow: inset -4px -4px 0 #0004, 0 0 10px color-mix(in srgb, var(--item-color), transparent 35%); }
+.waygrid-item-row div { display: grid; gap: 3px; }
+.waygrid-item-row strong, .waygrid-creature-copy strong { color: #f5efd2; font: 700 14px Georgia, serif; }
+.waygrid-item-row small, .waygrid-creature-copy small, .waygrid-creature-copy span { color: #9dbdb8; font-size: 8px; letter-spacing: .08em; }
+.waygrid-creature-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); align-content: start; gap: 10px; }
+.waygrid-creature-card { display: grid; grid-template-columns: 72px 1fr; grid-template-areas: "portrait copy" "portrait health" "button button"; gap: 8px 11px; padding: 11px; border: 1px solid #6d8f8b; background: linear-gradient(135deg, #132a2adf, #25273ae8); }
+.waygrid-creature-card[data-fainted="true"] { border-color: #9a718b; filter: saturate(.72); }
+.waygrid-creature-portrait { grid-area: portrait; width: 72px; height: 84px; display: grid; place-items: center; overflow: hidden; border: 1px solid #77a39d; background: radial-gradient(circle, #86ded52e, #071113 70%); }
+.waygrid-creature-portrait .creature-portrait { width: 100%; height: 100%; }
+.waygrid-creature-copy { grid-area: copy; display: grid; align-content: start; gap: 3px; text-transform: capitalize; }
+.waygrid-creature-health { grid-area: health; display: grid; grid-template-columns: 1fr auto; gap: 3px 8px; align-items: center; }
+.waygrid-creature-health > span { height: 7px; border: 1px solid #48605e; background: #071010; }
+.waygrid-creature-health > span i { display: block; height: 100%; background: #70ce94; }
+.waygrid-creature-health b { color: #d7e9db; font-size: 8px; }
+.waygrid-creature-health small { grid-column: 1 / -1; color: #a7c6c0; font-size: 7px; }
+.waygrid-creature-card > button { grid-area: button; }
+.waygrid-empty { min-height: 180px; display: grid; place-items: center; align-content: center; gap: 7px; color: #a8c8c3; text-align: center; }
+.waygrid-empty > span { color: #8ce4d7; font-size: 38px; text-shadow: 0 0 14px #64c9bd; }
+.waygrid-empty strong { color: #f4edcf; font: 700 18px Georgia, serif; }
+.waygrid-empty p { max-width: 420px; margin: 0; font-size: 10px; line-height: 1.6; }
+.waygrid-capacity { padding: 9px 16px 12px; border-top: 1px solid #63817d75; background: #0b1719; }
+.waygrid-capacity button { width: 100%; display: flex; justify-content: space-between; padding: 0 0 7px; border: 0; background: none; color: #dcece5; font: 8px monospace; cursor: pointer; }
+.waygrid-capacity button small { color: #789b96; }
+.waygrid-capacity-track { display: block; height: 10px; border: 1px solid #54726f; background: #050b0c; }
+.waygrid-capacity-track i { display: block; height: 100%; background: linear-gradient(90deg, #51b5ac, #83cfe7 70%, #c28dff); box-shadow: 0 0 12px #63d5c788; transition: width .2s ease; }
+.waygrid-window .player-inventory-section { padding: 10px 16px 13px; border-top: 2px solid #527471; background: #111b20; }
+.apiary-worker-slots { display: grid; grid-template-columns: repeat(8, minmax(36px, 1fr)); gap: 5px; margin-top: 10px; }
+.apiary-worker-slot { width: 100%; min-width: 0; aspect-ratio: 1; border-color: #c49136; background: radial-gradient(circle, #f5ce5b2e, #2f2113 70%); }
+
+@media (max-width: 720px) {
+  .waygrid-window { width: 100vw; height: 100dvh; max-height: 100dvh; border-width: 0; }
+  .waygrid-header { min-height: 66px; padding: 9px; }
+  .waygrid-cells { display: none; }
+  .waygrid-toolbar { grid-template-columns: 1fr; padding: 8px; }
+  .waygrid-toolbar button { min-height: 34px; }
+  .waygrid-item-list, .waygrid-creature-list { padding: 8px; }
+  .waygrid-item-row { grid-template-columns: 38px 1fr auto; }
+  .waygrid-item-row button:first-of-type { display: none; }
+  .apiary-worker-slots { grid-template-columns: repeat(4, 1fr); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .waygrid-capacity-track i { transition: none; }
+}
+
 .multiplayer-room-flow {
   display: grid;
   grid-template-columns: minmax(180px, .8fr) minmax(260px, 1.2fr);
@@ -6810,6 +6878,8 @@ input:focus-visible {
   position: relative;
   min-height: 340px;
   overflow: hidden;
+  touch-action: none;
+  cursor: grab;
   border: 3px solid #655c41;
   background:
     radial-gradient(circle at 55% 38%, rgba(226, 214, 157, .4), transparent 25%),
@@ -6817,11 +6887,48 @@ input:focus-visible {
     #c9bb8d;
   box-shadow: inset 0 0 28px rgba(77, 55, 25, .32);
 }
+.hearthroads-map-canvas.dragging { cursor: grabbing; }
 .hearthroads-map-canvas::after { content: ""; position: absolute; inset: 10px; pointer-events: none; border: 1px dashed rgba(71, 58, 34, .38); }
 .hearthroads-map-terrain { position: absolute; inset: 0; width: 100%; height: 100%; }
-.hearthroads-map-chunk { fill: rgba(89, 117, 67, .42); stroke: rgba(63, 77, 51, .32); stroke-width: .04; }
+.hearthroads-map-chunk { stroke-width: .04; transition: filter .12s ease; }
+.hearthroads-map-chunk.water { filter: saturate(1.08); }
+.hearthroads-map-controls {
+  position: absolute;
+  z-index: 8;
+  top: 17px;
+  left: 17px;
+  display: grid;
+  grid-template-columns: repeat(5, 28px);
+  grid-auto-rows: 27px;
+  gap: 3px;
+  padding: 5px;
+  border: 2px solid #514831;
+  background: rgba(237, 224, 183, .9);
+  box-shadow: 2px 3px 0 rgba(48, 38, 22, .36);
+  cursor: default;
+}
+.hearthroads-map-controls button {
+  min-width: 0;
+  padding: 0;
+  border: 1px solid #695e42;
+  color: #393323;
+  background: #d7c89c;
+  font: 900 14px/1 Georgia, serif;
+}
+.hearthroads-map-controls button:hover:not(:disabled) { color: #fff8dc; background: #5b714b; }
+.hearthroads-map-controls button:nth-of-type(6) { grid-column: 1 / 3; }
+.hearthroads-map-controls output {
+  grid-column: 3 / 4;
+  display: grid;
+  place-items: center;
+  color: #51482f;
+  font-size: 8px;
+  font-weight: 900;
+}
+.hearthroads-map-controls button:nth-of-type(7) { grid-column: 4 / 6; }
 .hearthroads-map-pin,
-.hearthroads-player-pin { position: absolute; z-index: 3; display: grid; place-items: center; transform: translate(-50%, -50%); }
+.hearthroads-player-pin,
+.hearthroads-other-player-pin { position: absolute; z-index: 3; display: grid; place-items: center; transform: translate(-50%, -50%); }
 .hearthroads-map-pin { width: 31px; height: 31px; border: 2px solid #3d3728; border-radius: 50% 50% 50% 8px; color: #fff6d6; background: #5d744e; box-shadow: 2px 3px 0 rgba(45, 38, 25, .45); transform: translate(-50%, -50%) rotate(-45deg); }
 .hearthroads-map-pin span { transform: rotate(45deg); }
 .hearthroads-map-pin.selected { z-index: 5; outline: 3px solid #ffe58d; transform: translate(-50%, -50%) rotate(-45deg) scale(1.12); }
@@ -6829,7 +6936,30 @@ input:focus-visible {
 .hearthroads-map-pin.marker-bed-spawn { background: #76545b; }
 .hearthroads-map-pin.marker-wayshrine { background: #426f72; }
 .hearthroads-player-pin { width: 28px; height: 28px; color: #fff; background: #ba5d3c; border: 2px solid #fff4c4; border-radius: 50%; box-shadow: 0 3px 0 rgba(0, 0, 0, .34); }
-.hearthroads-player-pin i { font-style: normal; font-size: 13px; }
+.hearthroads-player-pin i,
+.hearthroads-other-player-pin i { display: block; font-style: normal; font-size: 13px; transform-origin: 50% 52%; }
+.hearthroads-other-player-pin {
+  width: 25px;
+  height: 25px;
+  color: #fff;
+  background: var(--map-player-color, #5a78a0);
+  border: 2px solid rgba(255, 249, 218, .92);
+  border-radius: 50%;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, .34);
+}
+.hearthroads-other-player-pin small {
+  position: absolute;
+  top: 27px;
+  max-width: 90px;
+  overflow: hidden;
+  padding: 2px 4px;
+  color: #fff9df;
+  background: rgba(36, 35, 27, .76);
+  font-size: 6px;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .hearthroads-map-empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 30px; color: #665d42; font-family: Georgia, serif; font-size: 18px; text-align: center; }
 .hearthroads-map-legend { display: flex; flex-wrap: wrap; gap: 10px 16px; padding: 9px 3px 0; color: #625a43; font-size: 8px; }
 .hearthroads-map-legend span { display: flex; align-items: center; gap: 5px; }
@@ -7143,6 +7273,90 @@ input:focus-visible {
 .pinned-quest-card { color: inherit; font-family: inherit; text-align: left; pointer-events: auto; cursor: pointer; }
 .pinned-quest-card:hover { border-color: rgba(255, 231, 147, .88); background: rgba(24, 31, 24, .86); transform: translateY(-1px); }
 .pinned-quest-card.unpinned { opacity: .7; }
+
+.pinned-quest-stack {
+  position: absolute;
+  top: max(18px, env(safe-area-inset-top));
+  right: max(20px, env(safe-area-inset-right));
+  width: min(310px, calc(100vw - 40px));
+  display: grid;
+  gap: 7px;
+}
+
+.pinned-quest-stack .objective-card {
+  position: relative;
+  top: auto;
+  right: auto;
+  width: 100%;
+}
+
+.pinned-quest-stack .objective-card:nth-child(n + 2) {
+  padding-block: 8px;
+  background: rgba(16, 19, 18, .76);
+}
+
+.recipe-preview-ingredients {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 7px;
+  align-items: start;
+  padding-top: 7px;
+  border-top: 1px solid rgba(80, 73, 54, .24);
+  color: #4c4637;
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.recipe-preview-ingredients small {
+  color: #8a6a2f;
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: .12em;
+}
+
+/* Full-frame bottle silhouettes are authored at the actual 28px inventory
+   size, so remedies remain legible in both inventory and scaled recipe slots. */
+.item-icon-kind-potion::before,
+.item-icon-kind-potion-health::before {
+  left: 4px;
+  top: 5px;
+  width: 22px;
+  height: 23px;
+  border: 3px solid #54483d;
+  border-radius: 4px 4px 8px 8px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, .72) 0 16%, transparent 17% 46%, rgba(255, 255, 255, .2) 47% 55%, transparent 56%),
+    linear-gradient(to top, var(--item-color) 0 72%, color-mix(in srgb, var(--item-color), #fff 50%) 73% 82%, rgba(226, 239, 236, .7) 83%);
+  box-shadow: inset -3px -2px rgba(42, 30, 29, .2), 2px 2px 0 rgba(0, 0, 0, .48);
+}
+
+.item-icon-kind-potion::after,
+.item-icon-kind-potion-health::after {
+  left: 9px;
+  top: 0;
+  width: 12px;
+  height: 8px;
+  border: 2px solid #54483d;
+  background: linear-gradient(#b88b5c 0 38%, #d5ab79 39% 68%, #80603f 69%);
+}
+
+.item-icon-kind-potion-health::before {
+  border-color: #563a35;
+  background:
+    radial-gradient(circle at 53% 66%, #ffe9c5 0 7%, transparent 8%),
+    linear-gradient(145deg, rgba(255, 255, 255, .78) 0 16%, transparent 17% 46%, rgba(255, 255, 255, .22) 47% 55%, transparent 56%),
+    linear-gradient(to top, #c53942 0 72%, #f18d78 73% 82%, rgba(226, 239, 236, .72) 83%);
+}
+
+/* The Slatefin's long silhouette needs breathing room in the compact entry
+   window; the full bestiary portrait keeps its authored framing. */
+.creature-render-mini[data-creature-kind="deepwater-shark"] img { transform: scale(.86); }
+.bestiary-list button:hover .creature-render-mini[data-creature-kind="deepwater-shark"] img,
+.bestiary-list button.active .creature-render-mini[data-creature-kind="deepwater-shark"] img { transform: scale(.92) translateY(-1px); }
+
+@media (max-width: 800px) {
+  .pinned-quest-stack { display: none; }
+}
 .ranged-ammo-hud { position: absolute; right: max(20px, env(safe-area-inset-right)); bottom: 132px; display: grid; justify-items: end; padding: 8px 10px; border-right: 4px solid #dfc46f; color: #f4e8ba; background: rgba(15, 20, 16, .74); text-shadow: 2px 2px #000; }
 .ranged-ammo-hud strong { font-size: 22px; }
 .ranged-ammo-hud span { font-size: 7px; letter-spacing: .08em; }

@@ -8,6 +8,7 @@ import {
   bedCounterpart,
   bedPlacementForYaw,
   bedRespawnCandidates,
+  chestModelLayout,
   combatSceneForEncounter,
   isInstantBreakBlock,
   migrateSavedWorld,
@@ -567,6 +568,22 @@ test("partial block shapes preserve the full cube faces beside them", () => {
   world.dispose();
 });
 
+test("standing double chests close their visual seam", () => {
+  const world = new ChunkWorld();
+  world.reset("DOUBLE-CHEST-SEAM");
+  const chunk = world.generateChunk(0, 0);
+  chunk.blocks.fill(BlockId.Air);
+  chunk.blocks[blockIndex(1, 0, 1)] = BlockId.Chest;
+  chunk.blocks[blockIndex(2, 0, 1)] = BlockId.Chest;
+  const section = Math.floor((0 - MIN_Y) / SECTION_HEIGHT);
+  world.rebuildSection(chunk, section);
+  const positions = chunk.sections.get(section)?.opaque?.geometry.getAttribute("position");
+  const seamVertices = Array.from({ length: positions?.count ?? 0 }, (_, index) => positions?.getX(index) ?? Number.NaN)
+    .filter((x) => Math.abs(x - 1.5) < 1e-6);
+  assert.ok(seamVertices.length > 0, "paired chest bodies and lids meet on the shared block boundary");
+  world.dispose();
+});
+
 test("urgent edits rebuild the visible section immediately and keep the light index current", () => {
   const world = new ChunkWorld();
   world.reset("URGENT-EDIT");
@@ -888,7 +905,7 @@ test("rejected solid placement records its rollback and player chests start empt
 });
 
 test("generator-v3 through v8 fallback saves advance without moving existing voxel edits", () => {
-  for (const generatorVersion of [3, 4, 5, 6, 7, 8]) {
+  for (const generatorVersion of [3, 4, 5, 6, 7, 8, 9, 10]) {
     const previous = {
       version: 2,
       generatorVersion,
@@ -924,6 +941,12 @@ test("the runtime chest lid opens upward around its rear hinge", () => {
   engine.updateChestModel(0.2);
   assert.ok(engine.chestOpenAmount > 0);
   assert.ok(engine.chestLidPivot.rotation.x > 0, "positive X raises the front edge instead of folding through the chest");
+  const eastWest = chestModelLayout([[0, 0, 0], [1, 0, 0]]);
+  const northSouth = chestModelLayout([[0, 0, 0], [0, 0, 1]]);
+  assert.equal(eastWest.width, northSouth.width);
+  assert.equal(eastWest.depth, northSouth.depth, "double chests stay shallow instead of opening a longways lid");
+  assert.equal(eastWest.rotationY, 0);
+  assert.equal(northSouth.rotationY, Math.PI / 2, "a north-south pair rotates so its hinge remains behind the chest");
 });
 
 test("placing a bed reserves two supported cells and writes its oriented halves as one batch", () => {

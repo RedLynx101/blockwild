@@ -1,6 +1,6 @@
 import { Item, type ItemCode } from "./data";
 
-export type ButterflyKind = "meadowwing" | "azure-skippers" | "embertip" | "frostveil" | "bloom-monarch" | "fen-lantern" | "bonbonwing";
+export type ButterflyKind = "meadowwing" | "azure-skippers" | "embertip" | "frostveil" | "bloom-monarch" | "fen-lantern" | "bonbonwing" | "moonveil-wing";
 export type LegacyMobKind = "mossling" | "ridgeback" | "woolhorn" | "glowmoth" | "shadecrawler" | "caveblob" | "rattlekin" | "zombie";
 export type SurfaceMobKind =
   | "sunstep-grazer"
@@ -36,7 +36,7 @@ export type TideglassAquaticKind =
   | "aetherbell-larva"
   | "aetherbell-leviathan";
 export type SugarplumAquaticKind = "syrupfin";
-export type DragonKind = "fire-dragon" | "ice-dragon" | "steel-dragon";
+export type DragonKind = "fire-dragon" | "ice-dragon" | "steel-dragon" | "sea-dragon";
 export type HobbitKind =
   | "hobbit-mayor"
   | "hobbit-farmer"
@@ -66,9 +66,27 @@ export type SugarcourtKind =
   | "sugarcourt-kennelkeeper"
   | "sugarcourt-sugarboiler"
   | "sugarcourt-candysmith";
-export type SentientMobKind = HobbitKind | GoblinKind | AtlantianKind | SugarcourtKind;
-export type FactionKind = "hobbits" | "goblins" | "atlantians" | "sugarcourt";
-export type SentientRole = "mayor" | "chieftain" | "farmer" | "worker" | "miner" | "merchant" | "banker" | "alchemist" | "guard";
+export type WoodElfKind =
+  | "wood-elf-elderweaver"
+  | "wood-elf-leafwarden"
+  | "wood-elf-bow-warden"
+  | "wood-elf-grovekeeper"
+  | "wood-elf-tomekeeper"
+  | "wood-elf-potioner"
+  | "wood-elf-moonbroker";
+export type DwarfKind =
+  | "dwarf-thane"
+  | "dwarf-gatewarden"
+  | "dwarf-delver"
+  | "dwarf-gearwright"
+  | "dwarf-golemsmith"
+  | "dwarf-powderwright"
+  | "dwarf-provisioner";
+export type GolemKind = "copper-scout-golem" | "stone-bulwark-golem" | "aetherforged-sentinel";
+export type V1FactionCreatureKind = "glimmerhart" | "runeowl" | "glowfin" | "copper-mole" | GolemKind;
+export type SentientMobKind = HobbitKind | GoblinKind | AtlantianKind | SugarcourtKind | WoodElfKind | DwarfKind;
+export type FactionKind = "hobbits" | "goblins" | "atlantians" | "sugarcourt" | "wood-elves" | "dwarves";
+export type SentientRole = "mayor" | "chieftain" | "farmer" | "worker" | "miner" | "merchant" | "banker" | "alchemist" | "blacksmith" | "guard";
 export type SpecialMobKind = "peelop" | "reliquary-sentinel" | "skeleton" | "warg";
 export type CoreMobKind =
   | LegacyMobKind
@@ -81,6 +99,7 @@ export type CoreMobKind =
   | TideglassAquaticKind
   | SugarplumAquaticKind
   | DragonKind
+  | V1FactionCreatureKind
   | SentientMobKind
   | SpecialMobKind;
 export type MobKind = CoreMobKind | ButterflyKind;
@@ -147,7 +166,7 @@ export type MobDefinition = {
   tameRequiresUnaligned?: boolean;
   rideable?: boolean;
   /** Cultural identity used before a culture is wired into diplomacy proper. */
-  culture?: "atlantians" | "sugarcourt";
+  culture?: "atlantians" | "sugarcourt" | "wood-elves" | "dwarves";
   /** Save-friendly ecology flags consumed by the ocean lifecycle helpers. */
   laysEggs?: boolean;
   aquaticYoungOnly?: boolean;
@@ -156,10 +175,155 @@ export type MobDefinition = {
   /** Restricts an aquatic species to a specific liquid rather than ordinary water. */
   liquidHabitat?: "water" | "syrup";
   /** Lifecycle discriminator; detailed stage/sex/equipment state lives in dragons.ts. */
-  dragonType?: "fire" | "ice" | "steel";
+  dragonType?: "fire" | "ice" | "steel" | "sea";
+};
+
+type V1SentientSeed = Readonly<{
+  kind: WoodElfKind | DwarfKind;
+  name: string;
+  faction: "wood-elves" | "dwarves";
+  role: SentientRole;
+  profession: string;
+  specialty: string;
+  behavior: string;
+  lore: string;
+  ranged?: boolean;
+  guard?: boolean;
+}>;
+
+function v1Sentient(seed: V1SentientSeed): MobDefinition {
+  const elf = seed.faction === "wood-elves";
+  const guard = seed.guard === true;
+  return {
+    kind: seed.kind,
+    name: seed.name,
+    temperament: "Defensive",
+    hostile: false,
+    health: guard ? (elf ? 22 : 28) : elf ? 15 : 20,
+    damage: guard ? (seed.ranged ? 9 : 7) : seed.ranged ? 5 : 3,
+    xp: guard ? 15 : 9,
+    speed: elf ? 0.84 : 0.64,
+    chaseSpeed: guard ? (elf ? 3.5 : 2.8) : 2.45,
+    turnRate: elf ? 6.5 : 4.8,
+    attackRange: seed.ranged ? (elf ? 22 : 19) : 1.2,
+    footOffset: elf ? 0.88 : 0.72,
+    radius: elf ? 0.42 : 0.5,
+    height: elf ? 1.78 : 1.35,
+    habitat: elf ? "Glimmerwood Moonbough Enclaves" : "Underground Deepgear Holds beneath the Snowcap Range",
+    active: guard ? "All hours" : "Day and shift change",
+    behavior: seed.behavior,
+    lore: seed.lore,
+    colors: elf ? [0x315748, 0x84d5a9, 0xe9fff3] : [0x4c5458, 0xb47c4b, 0xf2d17f],
+    drops: [],
+    family: "sentient",
+    movement: "ground",
+    persistent: true,
+    ranged: seed.ranged,
+    sentient: true,
+    faction: seed.faction,
+    culture: seed.faction,
+    role: seed.role,
+    profession: seed.profession,
+    tradeSpecialty: seed.specialty,
+    discoveryHint: elf ? "Follow the bioluminescent paths of a Moonbough Enclave." : "Follow high-brightness lanterns into a guarded Snowcap tunnel.",
+  };
+}
+
+const V1_SENTIENT_MOBS = Object.fromEntries(([
+  { kind: "wood-elf-elderweaver", name: "Wood Elf Elderweaver", faction: "wood-elves", role: "mayor", profession: "Elderweaver", specialty: "Enclave authority, rare tomes and quests", behavior: "Mediates living-magic oaths and raises a leaf ward when the enclave is threatened.", lore: "An Elderweaver is chosen by consensus and by whether the oldest Moonbough accepts their touch.", ranged: true },
+  { kind: "wood-elf-leafwarden", name: "Wood Elf Leafwarden", faction: "wood-elves", role: "guard", profession: "Leafwarden", specialty: "Moonbough staves and settlement defense", behavior: "Aims a staff with both hands and fires a three-leaf Verdant Volley only after identifying a threat.", lore: "Their leaves are never sharpened until the moment the spell is released.", ranged: true, guard: true },
+  { kind: "wood-elf-bow-warden", name: "Wood Elf Bow-Warden", faction: "wood-elves", role: "guard", profession: "Bow-Warden", specialty: "Glimmerbows, arrows and patterns", behavior: "Raises both arms into a clean Glimmerbow stance and checks the line beyond every target.", lore: "A bow-warden learns the sound of every gate before the range of a bow.", ranged: true, guard: true },
+  { kind: "wood-elf-grovekeeper", name: "Wood Elf Grovekeeper", faction: "wood-elves", role: "farmer", profession: "Grovekeeper", specialty: "Glowing flora and neutral companion orbs", behavior: "Tends luminous plants, Glimmerharts, and moonwell pond edges without extinguishing their light.", lore: "Grovekeepers count successful nights, not harvests." },
+  { kind: "wood-elf-tomekeeper", name: "Wood Elf Tomekeeper", faction: "wood-elves", role: "alchemist", profession: "Tomekeeper", specialty: "Reusable spell tomes and Runeowl orbs", behavior: "Curates reusable tomes and uses Starlight Snare to hold danger away from the shelves.", lore: "Every returned tome is welcomed as though it had traveled alone.", ranged: true },
+  { kind: "wood-elf-potioner", name: "Wood Elf Potioner", faction: "wood-elves", role: "alchemist", profession: "Moonwell Potioner", specialty: "Moonstep, Verdant Renewal and formulas", behavior: "Brews small moonwell batches and records which plants were gathered rather than cut.", lore: "Moonwell glass is washed in starlight before it touches water." },
+  { kind: "wood-elf-moonbroker", name: "Wood Elf Moonbroker", faction: "wood-elves", role: "merchant", profession: "Moonbroker", specialty: "General Glimmerwood goods", behavior: "Trades flora and crafted goods while keeping rare living materials out of careless hands.", lore: "A fair price leaves enough wonder to invite a return journey." },
+  { kind: "dwarf-thane", name: "Deepgear Thane", faction: "dwarves", role: "mayor", profession: "Thane", specialty: "Hold authority and master golem blueprints", behavior: "Keeps the hold's oaths, authorizes master blueprints, and joins the entrance defense if needed.", lore: "A thane's chain carries one gear from every public machine completed during their term." },
+  { kind: "dwarf-gatewarden", name: "Deepgear Gatewarden", faction: "dwarves", role: "guard", profession: "Gatewarden", specialty: "Hold defense, flintlocks and ammunition", behavior: "Guards the surface ramp in pairs, aiming a hammer or flintlock beyond the entrance before firing.", lore: "Gatewardens polish the entrance lantern before their armor.", ranged: true, guard: true },
+  { kind: "dwarf-delver", name: "Deepgear Delver", faction: "dwarves", role: "miner", profession: "Delver", specialty: "Ore, stone and mining supplies", behavior: "Samples stone, braces active galleries, and returns when the brass shift-bell sounds.", lore: "A delver carries chalk in three colors: safe, ask, and absolutely not." },
+  { kind: "dwarf-gearwright", name: "Deepgear Gearwright", faction: "dwarves", role: "worker", profession: "Gearwright", specialty: "Deepgear blocks, lanterns and alloys", behavior: "Maintains lanterns, furniture, and civic machinery with a balanced gear-hammer.", lore: "No gear is too small to receive a maker's stamp." },
+  { kind: "dwarf-golemsmith", name: "Deepgear Golemsmith", faction: "dwarves", role: "worker", profession: "Golemsmith", specialty: "Golem blueprints, ready Copper Scouts and forge work", behavior: "Builds blueprint-gated constructs and commits mana only during final animation.", lore: "Golemsmiths speak to unfinished frames because silence makes careless work feel acceptable." },
+  { kind: "dwarf-powderwright", name: "Deepgear Powderwright", faction: "dwarves", role: "blacksmith", profession: "Powderwright", specialty: "Flintlocks, ammunition and blueprints", behavior: "Mixes sealed charges and demonstrates flintlocks only on the stone range behind the workshop.", lore: "Powderwright eyebrows are a subject one does not raise at dinner.", ranged: true },
+  { kind: "dwarf-provisioner", name: "Deepgear Provisioner", faction: "dwarves", role: "merchant", profession: "Provisioner", specialty: "General hold goods and Copper Mole orbs", behavior: "Restocks ore, food, lantern parts, and neutral companion orbs from shared stores.", lore: "Provisioners estimate a tunnel crew's tea consumption from the sound of their boots." },
+] as const satisfies readonly V1SentientSeed[]).map((seed) => [seed.kind, v1Sentient(seed)])) as Record<WoodElfKind | DwarfKind, MobDefinition>;
+
+const V1_CREATURE_MOBS: Record<V1FactionCreatureKind, MobDefinition> = {
+  glimmerhart: {
+    kind: "glimmerhart", name: "Glimmerhart", temperament: "Defensive", hostile: false,
+    health: 24, damage: 5, xp: 9, speed: 1.25, chaseSpeed: 3.5, turnRate: 5.6, attackRange: 12,
+    footOffset: 1.03, radius: 0.72, height: 1.58, habitat: "Glimmerwood clearings and Moonbough Enclaves", active: "Dusk and night",
+    behavior: "Moves in quiet pairs. When an ally is threatened, its antlers launch a spiraling volley of luminous leaves before it retreats.",
+    lore: "Moonbough songs call each antler tine a promise the forest chose to remember.", colors: [0x3e705f, 0x8bf0c6, 0xe8fff2],
+    drops: [{ item: Item.StarfernFrond, min: 1, max: 2, chance: 0.5 }], family: "pet", movement: "ground", persistent: true, ranged: true,
+    sentient: false, factionAffinity: "wood-elves", tameRequiresUnaligned: true, tameable: true, tameItems: [Item.Moonpetal], breedable: true,
+    breedingFoods: [Item.Moonpetal], diet: [Item.Moonpetal, Item.StarfernFrond],
+    postTameNotes: "A bonded Glimmerhart defends its keeper with Verdant Volley, but stays inside its follower formation.",
+    discoveryHint: "Watch for mint-green antler light between Glimmerwood trunks after sunset.",
+  },
+  runeowl: {
+    kind: "runeowl", name: "Runeowl", temperament: "Skittish", hostile: false,
+    health: 10, damage: 2, xp: 6, speed: 1.7, chaseSpeed: 4.4, turnRate: 8.2, attackRange: 9,
+    footOffset: 1.3, radius: 0.42, height: 0.7, habitat: "Moonbough libraries and Glimmerwood branches", active: "Night",
+    behavior: "Perches near books and rune-carved bark, then releases a soft starlight pulse when danger approaches.",
+    lore: "A Runeowl never tears a page. Tomekeepers consider that sufficient evidence of wisdom.", colors: [0x5a5d88, 0xb5adff, 0xf8f1a8],
+    drops: [{ item: Item.Feather, min: 1, max: 2, chance: 0.68 }], family: "bird", movement: "flying", flying: true, persistent: true,
+    sentient: false, factionAffinity: "wood-elves", tameRequiresUnaligned: true, tameable: true, tameItems: [Item.Dreamcap], breedable: true,
+    breedingFoods: [Item.Dreamcap], diet: [Item.Dreamcap, Item.Berry], discoveryHint: "Listen for three low notes near Glimmerwood libraries after dark.",
+  },
+  glowfin: {
+    kind: "glowfin", name: "Glowfin", temperament: "Gentle", hostile: false,
+    health: 4, damage: 0, xp: 2, speed: 1.38, chaseSpeed: 2.2, turnRate: 8, attackRange: 0,
+    footOffset: 0.55, radius: 0.3, height: 0.28, habitat: "Glimmerwood moonwells and ponds", active: "All hours",
+    behavior: "Forms small rings around Lumenreeds and pulses brighter when another Glowfin joins its shoal.",
+    lore: "Enclaves read their shifting rings as a gentle forecast of tomorrow's rain.", colors: [0x3a8291, 0x77f2dc, 0xeaffff],
+    drops: [{ item: Item.RawFish, min: 1, max: 1, chance: 0.72 }], family: "fish", movement: "aquatic", aquatic: true, sentient: false,
+    discoveryHint: "Look into the luminous ponds of the Glimmerwood.",
+  },
+  "copper-mole": {
+    kind: "copper-mole", name: "Copper Mole", temperament: "Gentle", hostile: false,
+    health: 15, damage: 2, xp: 5, speed: 0.72, chaseSpeed: 2.25, turnRate: 5, attackRange: 1.1,
+    footOffset: 0.625744, radius: 0.52, height: 0.62, habitat: "Snowcap Range tunnels and Deepgear Holds", active: "All hours underground",
+    behavior: "Sniffs out exposed ore, sleeps beside warm machinery, and digs short harmless furrows when excited.",
+    lore: "Its copper-colored guard hairs are keratin, though no Deepgear child accepts that explanation.", colors: [0x7a533d, 0xc17d4f, 0xf3c879],
+    drops: [{ item: Item.Flint, min: 1, max: 2, chance: 0.55 }], family: "pet", movement: "ground", persistent: true, sentient: false,
+    factionAffinity: "dwarves", tameRequiresUnaligned: true, tameable: true, tameItems: [Item.RawGold], breedable: true,
+    breedingFoods: [Item.Wheat], diet: [Item.Wheat, Item.RawGold], postTameNotes: "Chirps when a valuable ore block is exposed nearby.",
+    discoveryHint: "Follow tiny fan-shaped tracks around Snowcap cave mouths.",
+  },
+  "copper-scout-golem": {
+    kind: "copper-scout-golem", name: "Copper Scout Golem", temperament: "Defensive", hostile: false,
+    health: 34, damage: 4, xp: 12, speed: 1.15, chaseSpeed: 3.1, turnRate: 7, attackRange: 1.3,
+    footOffset: 1.08, radius: 0.52, height: 1.05, habitat: "Deepgear entrances and Golem Forges", active: "While its aether key is charged",
+    behavior: "Patrols short circuits, marks hazards with a bright eye-lamp, and returns to its assigned forge when damaged.",
+    lore: "Every scout's first step is witnessed by its golemsmith.", colors: [0xa96943, 0xd09a55, 0x8ff7ed],
+    drops: [{ item: Item.GearCluster, min: 1, max: 2, chance: 0.78 }], family: "construct", movement: "ground", persistent: true,
+    sentient: false, factionAffinity: "dwarves", tameRequiresUnaligned: true, tameable: false,
+    discoveryHint: "Look beside the high-brightness lanterns at a Deepgear entrance.",
+  },
+  "stone-bulwark-golem": {
+    kind: "stone-bulwark-golem", name: "Stone Bulwark Golem", temperament: "Defensive", hostile: false,
+    health: 92, damage: 9, xp: 24, speed: 0.48, chaseSpeed: 1.8, turnRate: 3.2, attackRange: 1.8,
+    footOffset: 1.312, radius: 0.9, height: 1.75, habitat: "Deepgear defensive galleries", active: "While its aether key is charged",
+    behavior: "Locks broad feet against the floor, shields nearby allies, and answers threats with a piston-driven hammer blow.",
+    lore: "Bulwarks have hollow chests so a hold's alarm bell can ring through them.", colors: [0x62696a, 0xaa7f4b, 0x84e6e7],
+    drops: [{ item: Item.GearCluster, min: 2, max: 4, chance: 1 }], family: "construct", movement: "ground", persistent: true,
+    sentient: false, factionAffinity: "dwarves", tameRequiresUnaligned: true, tameable: false,
+    discoveryHint: "Deepgear guards station these constructs inside their first defensive gallery.",
+  },
+  "aetherforged-sentinel": {
+    kind: "aetherforged-sentinel", name: "Aetherforged Sentinel", temperament: "Defensive", hostile: false,
+    health: 168, damage: 16, xp: 48, speed: 0.7, chaseSpeed: 2.25, turnRate: 4.2, attackRange: 8,
+    footOffset: 1.515, radius: 1.05, height: 2.25, habitat: "Master Deepgear Golem Forges", active: "While its mana core remains attuned",
+    behavior: "Alternates crushing strikes with a focused aether pulse and places itself between its keeper and danger.",
+    lore: "A completed Sentinel is a public promise that the hold intends to endure.", colors: [0x48565b, 0xb98c50, 0x76f4ef],
+    drops: [{ item: Item.DeepgearAlloy, min: 3, max: 6, chance: 1 }], family: "construct", movement: "ground", ranged: true, persistent: true,
+    sentient: false, factionAffinity: "dwarves", tameRequiresUnaligned: true, tameable: false,
+    discoveryHint: "Only master Golem Forges can finalize this mana-hungry construct.",
+  },
 };
 
 export const MOB_DEFS: Record<MobKind, MobDefinition> = {
+  ...V1_SENTIENT_MOBS,
+  ...V1_CREATURE_MOBS,
   mossling: {
     kind: "mossling", name: "Mossling", temperament: "Skittish", hostile: false,
     health: 5, damage: 0, xp: 2, speed: 0.72, chaseSpeed: 1.9, turnRate: 6, attackRange: 0,
@@ -1092,6 +1256,25 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     secretHint: "Steel eggs wake where steam washes over heated metal, unless stabilized in a Draconic Incubator.",
     discoveryHint: "Merchants rarely sell a Steel Lair Survey; otherwise listen for hammerlike wingbeats in ore-rich depths.",
   },
+  "sea-dragon": {
+    kind: "sea-dragon", name: "Sea Dragon", temperament: "Hostile", hostile: true,
+    health: 540, damage: 42, xp: 200, speed: 1.26, chaseSpeed: 6.2, turnRate: 2.9, attackRange: 5.2,
+    footOffset: 0.75, radius: 2.7, height: 3.4, habitat: "Rare abyssal nests in deep oceans and Lumen Trenches", active: "All hours near a guarded nest",
+    behavior: "Surges through water far faster than it flies, coils through reef arches, and fires a pressurized brine lance before closing with jaws and finned claws. It walks capably on shore but avoids long inland chases.",
+    lore: "Its scales remember pressure. Older Sea Dragons carry dark bands for every depth they have mastered.",
+    colors: [0x286f83, 0x55c4bf, 0xc9ffff], family: "dragon", movement: "amphibious", aquatic: true, flying: true, ranged: true, persistent: true,
+    dragonType: "sea", tameable: true, tameItems: [Item.RawFish, Item.RawDragonMeat], breedable: true,
+    breedingFoods: [Item.StarCoralShard], diet: [Item.RawFish, Item.CookedFish, Item.RawDragonMeat, Item.CookedDragonMeat],
+    rideable: true, cargoChestLimit: 2, laysEggs: true,
+    drops: [
+      { item: Item.RawDragonMeat, min: 4, max: 30, chance: 1 }, { item: Item.SeaDragonScale, min: 7, max: 60, chance: 1 },
+      { item: Item.DragonBone, min: 6, max: 50, chance: 1 }, { item: Item.SeaDragonSkull, min: 1, max: 1, chance: 1 },
+      { item: Item.SeaDragonHeart, min: 1, max: 1, chance: 0.82 },
+    ],
+    postTameNotes: "Stage-three Sea Dragons accept a saddle. They swim fastest, run at a useful pace, and fly more slowly than Fire, Ice, or Steel dragons.",
+    secretHint: "Sea eggs hatch only while fully submerged beside living coral, unless stabilized in a Draconic Incubator.",
+    discoveryHint: "Atlantian Pearlbrokers rarely sell charts to the closest undiscovered deep-sea nest.",
+  },
   meadowwing: {
     kind: "meadowwing", name: "Meadowwing", temperament: "Gentle", hostile: false,
     health: 1, damage: 0, xp: 0, speed: 1.3, chaseSpeed: 1.8, turnRate: 9, attackRange: 0,
@@ -1149,9 +1332,18 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     colors: [0xf08fbd, 0x51314d, 0xffed79], drops: [], family: "butterfly", movement: "flying", flying: true, captureItem: Item.BonbonwingTreat,
     utility: "A releasable and edible candy butterfly.", discoveryHint: "Search sunlit Lollipop Orchids in the Sugarplum Vale.",
   },
+  "moonveil-wing": {
+    kind: "moonveil-wing", name: "Moonveil Wing", temperament: "Gentle", hostile: false,
+    health: 1, damage: 0, xp: 0, speed: 1.38, chaseSpeed: 2.1, turnRate: 9.6, attackRange: 0,
+    footOffset: 0.12, radius: 0.14, height: 0.19, habitat: "Moonpetals and Starferns in the Glimmerwood", active: "Dusk and moonlit night",
+    behavior: "Drifts between glowing plants and draws a soft crescent with each wingbeat.",
+    lore: "Enclaves leave one Moonpetal unharvested for every Moonveil seen that week.",
+    colors: [0x8d8bf3, 0x3b466e, 0xd9fff1], drops: [], family: "butterfly", movement: "flying", flying: true, captureItem: Item.FenLanternJar,
+    utility: "A luminous Glimmerwood pollinator.", discoveryHint: "Wait beside Moonpetals after sunset in the Glimmerwood.",
+  },
 };
 
-export const BUTTERFLY_ORDER: ButterflyKind[] = ["meadowwing", "azure-skippers", "embertip", "frostveil", "bloom-monarch", "fen-lantern", "bonbonwing"];
+export const BUTTERFLY_ORDER: ButterflyKind[] = ["meadowwing", "azure-skippers", "embertip", "frostveil", "bloom-monarch", "fen-lantern", "bonbonwing", "moonveil-wing"];
 export const LEGACY_MOB_ORDER: LegacyMobKind[] = ["mossling", "ridgeback", "woolhorn", "glowmoth", "shadecrawler", "caveblob", "rattlekin", "zombie"];
 export const SURFACE_MOB_ORDER: SurfaceMobKind[] = [
   "sunstep-grazer", "pebbletortoise", "brambleboar", "petalfox", "duneclatter",
@@ -1167,7 +1359,7 @@ export const TIDEGLASS_AQUATIC_ORDER: TideglassAquaticKind[] = [
   "glassfin", "lanternjaw", "abyss-skater", "dreadcoil", "tidepup", "worldshell-leviathan", "aetherbell-larva", "aetherbell-leviathan",
 ];
 export const SUGARPLUM_AQUATIC_ORDER: SugarplumAquaticKind[] = ["syrupfin"];
-export const DRAGON_ORDER: DragonKind[] = ["fire-dragon", "ice-dragon", "steel-dragon"];
+export const DRAGON_ORDER: DragonKind[] = ["fire-dragon", "ice-dragon", "steel-dragon", "sea-dragon"];
 export const HOBBIT_ORDER: HobbitKind[] = [
   "hobbit-mayor", "hobbit-farmer", "hobbit-miner", "hobbit-merchant", "hobbit-banker", "hobbit-hammer-guard", "hobbit-crossbow-guard",
 ];
@@ -1179,7 +1371,10 @@ export const SUGARCOURT_ORDER: SugarcourtKind[] = [
   "sugarcourt-crown-confectioner", "sugarcourt-gumdrop-gardener", "sugarcourt-sugarboiler", "sugarcourt-candysmith",
   "sugarcourt-sweetbroker", "sugarcourt-kennelkeeper", "sugarcourt-brittle-guard",
 ];
-export const SENTIENT_MOB_ORDER: SentientMobKind[] = [...HOBBIT_ORDER, ...GOBLIN_ORDER, ...ATLANTIAN_ORDER, ...SUGARCOURT_ORDER];
+export const WOOD_ELF_ORDER: WoodElfKind[] = ["wood-elf-elderweaver", "wood-elf-leafwarden", "wood-elf-bow-warden", "wood-elf-grovekeeper", "wood-elf-tomekeeper", "wood-elf-potioner", "wood-elf-moonbroker"];
+export const DWARF_ORDER: DwarfKind[] = ["dwarf-thane", "dwarf-gatewarden", "dwarf-delver", "dwarf-gearwright", "dwarf-golemsmith", "dwarf-powderwright", "dwarf-provisioner"];
+export const V1_FACTION_CREATURE_ORDER: V1FactionCreatureKind[] = ["glimmerhart", "runeowl", "glowfin", "copper-mole", "copper-scout-golem", "stone-bulwark-golem", "aetherforged-sentinel"];
+export const SENTIENT_MOB_ORDER: SentientMobKind[] = [...HOBBIT_ORDER, ...GOBLIN_ORDER, ...ATLANTIAN_ORDER, ...SUGARCOURT_ORDER, ...WOOD_ELF_ORDER, ...DWARF_ORDER];
 export const SPECIAL_MOB_ORDER: SpecialMobKind[] = ["peelop", "reliquary-sentinel", "skeleton", "warg"];
 export const CORE_MOB_ORDER: CoreMobKind[] = [
   ...LEGACY_MOB_ORDER,
@@ -1191,6 +1386,7 @@ export const CORE_MOB_ORDER: CoreMobKind[] = [
   ...HEARTHROADS_AQUATIC_ORDER,
   ...TIDEGLASS_AQUATIC_ORDER,
   ...SUGARPLUM_AQUATIC_ORDER,
+  ...V1_FACTION_CREATURE_ORDER,
   ...DRAGON_ORDER,
   ...SENTIENT_MOB_ORDER,
   ...SPECIAL_MOB_ORDER,
