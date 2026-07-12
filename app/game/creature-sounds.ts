@@ -1,4 +1,5 @@
 import type { CoreMobKind } from "./mobs";
+import type { SampleKind } from "./audio";
 
 export type CreatureSoundEvent = "ambient" | "hurt" | "feed" | "tame" | "breed" | "mount";
 export type CreatureSoundCue = {
@@ -36,11 +37,67 @@ const DEEPGEAR_HORSE_EVENTS = Object.freeze({
   mount: cue("deepgear-courser-whinny", "mob", 0.62, 0.016),
 } satisfies Partial<Record<CreatureSoundEvent, CreatureSoundCue>>);
 
+const GRAZER_EVENTS = Object.freeze({
+  ambient: cue("ridgeback-warm-huff", "mob", 0.58, 0.13),
+  hurt: cue("horse-whinny-b", "attack", 0.68, 0.11),
+  feed: cue("ridgeback-warm-huff", "eat", 0.42, 0.14),
+  breed: cue("horse-whinny-a", "mob", 0.52, 0.12),
+} satisfies Partial<Record<CreatureSoundEvent, CreatureSoundCue>>);
+
+const SMALL_CRITTER_EVENTS = Object.freeze({
+  ambient: cue("bird-chirp", "mob", 0.42, 0.18),
+  hurt: cue("bird-chirp", "attack", 0.52, 0.14),
+  feed: cue("bird-chirp", "eat", 0.36, 0.2),
+  breed: cue("bird-chirp", "mob", 0.4, 0.18),
+} satisfies Partial<Record<CreatureSoundEvent, CreatureSoundCue>>);
+
+const WILDCAT_EVENTS = Object.freeze({
+  ambient: cue("cat-call-a", "mob", 0.58, 0.1, ["cat-call-b"]),
+  hurt: cue("cat-call-b", "attack", 0.7, 0.08, ["cat-call-a"]),
+  feed: cue("cat-call-a", "eat", 0.4, 0.12),
+  breed: cue("cat-call-b", "mob", 0.48, 0.1),
+} satisfies Partial<Record<CreatureSoundEvent, CreatureSoundCue>>);
+
+const DEEP_CREATURE_EVENTS = Object.freeze({
+  ambient: cue("dragon-ambient-deep-growl", "mob", 0.46, 0.12),
+  hurt: cue("dragon-ambient-deep-growl", "attack", 0.6, 0.09),
+} satisfies Partial<Record<CreatureSoundEvent, CreatureSoundCue>>);
+
 /**
  * Event metadata is deliberately independent from the browser audio loader so
  * generated WAV assets can be added without changing creature behavior.
  */
 export const CREATURE_SOUND_EVENTS: Partial<Record<CoreMobKind, Partial<Record<CreatureSoundEvent, CreatureSoundCue>>>> = {
+  mossling: SMALL_CRITTER_EVENTS,
+  "boglantern-mossling": SMALL_CRITTER_EVENTS,
+  "cindercone-mossling": SMALL_CRITTER_EVENTS,
+  "moonbloom-mossling": SMALL_CRITTER_EVENTS,
+  "meadow-cottontail": SMALL_CRITTER_EVENTS,
+  "russet-rabbit": SMALL_CRITTER_EVENTS,
+  "frost-hare": SMALL_CRITTER_EVENTS,
+  "chocolate-bunny": SMALL_CRITTER_EVENTS,
+  burrowbell: SMALL_CRITTER_EVENTS,
+  sakurakit: SMALL_CRITTER_EVENTS,
+  "pebbletortoise": { ambient: cue("crab-chitter", "mob", 0.32, 0.16), hurt: cue("crab-chitter", "attack", 0.46, 0.12) },
+  "reefglide-terrapin": { ambient: cue("crab-chitter", "mob", 0.28, 0.13), hurt: cue("crab-chitter", "attack", 0.44, 0.1) },
+  "sunstep-grazer": GRAZER_EVENTS,
+  "meadow-cow": GRAZER_EVENTS,
+  "sunbloom-longhorn": GRAZER_EVENTS,
+  taffalo: GRAZER_EVENTS,
+  brambleboar: GRAZER_EVENTS,
+  "dewback-tapir": GRAZER_EVENTS,
+  thimbledeer: NATURAL_HORSE_EVENTS,
+  "frostlace-hart": NATURAL_HORSE_EVENTS,
+  "reedcrown-deer": NATURAL_HORSE_EVENTS,
+  glimmerhart: NATURAL_HORSE_EVENTS,
+  petalfox: WILDCAT_EVENTS,
+  "emberbrush-fox": WILDCAT_EVENTS,
+  "moonpetal-fox": WILDCAT_EVENTS,
+  "deepwater-shark": DEEP_CREATURE_EVENTS,
+  dreadcoil: DEEP_CREATURE_EVENTS,
+  "worldshell-leviathan": DEEP_CREATURE_EVENTS,
+  "aetherbell-larva": DEEP_CREATURE_EVENTS,
+  "aetherbell-leviathan": DEEP_CREATURE_EVENTS,
   "wild-horse": NATURAL_HORSE_EVENTS,
   "rimehoof-courser": NATURAL_HORSE_EVENTS,
   "sunscar-courser": NATURAL_HORSE_EVENTS,
@@ -114,8 +171,8 @@ export const CREATURE_SOUND_EVENTS: Partial<Record<CoreMobKind, Partial<Record<C
     breed: cue("ridgeback-herd-rumble", "mob", 0.68, 0.04),
   },
   woolhorn: {
-    ambient: cue("woolhorn-soft-bleat", "mob", 0.64, 0.09),
-    hurt: cue("woolhorn-braced-snort", "attack", 0.78, 0.07),
+    ambient: cue("ridgeback-warm-huff", "mob", 0.56, 0.16),
+    hurt: cue("horse-whinny-b", "attack", 0.66, 0.13),
   },
   shadecrawler: {
     ambient: cue("shadecrawler-stone-chitter", "mob", 0.58, 0.12),
@@ -125,13 +182,13 @@ export const CREATURE_SOUND_EVENTS: Partial<Record<CoreMobKind, Partial<Record<C
     mount: cue("shadecrawler-saddle-rumble", "mob", 0.72, 0.04),
   },
   peelop: {
-    ambient: cue("peelop-content-chirp", "mob", 0.52, 0.12),
-    feed: cue("peelop-happy-nibble", "eat", 0.58, 0.08),
-    breed: cue("peelop-pair-chitter", "mob", 0.62, 0.1),
+    ambient: cue("bird-chirp", "mob", 0.44, 0.18),
+    feed: cue("bird-chirp", "eat", 0.38, 0.2),
+    breed: cue("bird-chirp", "mob", 0.46, 0.17),
   },
   "lanternshell": {
-    ambient: cue("lanternshell-glass-purr", "mob", 0.46, 0.04),
-    hurt: cue("lanternshell-shell-clack", "attack", 0.58, 0.05),
+    ambient: cue("crab-chitter", "mob", 0.3, 0.12),
+    hurt: cue("crab-chitter", "attack", 0.44, 0.1),
   },
   puddlehopper: {
     ambient: cue("puddlehopper-croak", "mob", 0.66, 0.1),
@@ -150,6 +207,36 @@ export const CREATURE_SOUND_EVENTS: Partial<Record<CoreMobKind, Partial<Record<C
     hurt: cue("warg-deep-growl", "attack", 0.72, 0.035),
   },
 };
+
+/** Only mapped stems resolve to loaded audio files; other cues use synth fallbacks. */
+export const CREATURE_SAMPLE_BY_ASSET = Object.freeze({
+  "ridgeback-warm-huff": "ridgebackWarmHuff",
+  "shadecrawler-stone-chitter": "shadecrawlerStoneChitter",
+  "horse-whinny-a": "horseWhinnyA",
+  "horse-whinny-b": "horseWhinnyB",
+  "deepgear-courser-whinny": "deepgearCourserWhinny",
+  "emberjay-squawk": "emberjaySquawk",
+  "bird-chirp": "birdChirp",
+  "canopy-lark-call": "canopyLarkCall",
+  "tidewing-gull-call-a": "tidewingGullCallA",
+  "tidewing-gull-call-b": "tidewingGullCallB",
+  "cat-call-a": "catCallA",
+  "cat-call-b": "catCallB",
+  "hound-call-a": "houndCallA",
+  "hound-call-b": "houndCallB",
+  "crab-chitter": "crabChitter",
+  "puddlehopper-croak": "puddlehopperCroak",
+  "copper-mole-sniff": "copperMoleSniff",
+  "reedstrider-call": "reedstriderCall",
+  "warg-deep-growl": "wargDeepGrowl",
+  "dragon-ambient-deep-growl": "dragonAmbientGrowl",
+} as const satisfies Readonly<Record<string, SampleKind>>);
+
+export function creatureHasCustomSound(kind: CoreMobKind) {
+  const events = CREATURE_SOUND_EVENTS[kind];
+  return Object.values(events ?? {}).some((sound) => [sound.asset, ...(sound.variants ?? [])]
+    .some((asset) => asset in CREATURE_SAMPLE_BY_ASSET));
+}
 
 export function creatureSoundCue(kind: CoreMobKind, event: CreatureSoundEvent): CreatureSoundCue {
   return CREATURE_SOUND_EVENTS[kind]?.[event] ?? cue(`creature-generic-${event}`, event === "hurt" ? "attack" : event === "feed" ? "eat" : "mob", 0.62, 0.1);

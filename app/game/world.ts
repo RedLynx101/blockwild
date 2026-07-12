@@ -153,7 +153,7 @@ export function planPoiAmenities(kind: StructureKind, origin: Readonly<{ x: numb
   ];
 }
 
-function settlementBiomeFromId(biome: BiomeId): SettlementBiome | null {
+export function settlementBiomeFromId(biome: BiomeId): SettlementBiome | null {
   if (biome === BiomeId.Meadow) return "flower-meadow";
   if (biome === BiomeId.Wildwood) return "wildwood";
   if (biome === BiomeId.Birchlight || biome === BiomeId.Bloomwood) return "forest";
@@ -1683,7 +1683,7 @@ export class ChunkWorld {
     else if (height <= SEA_LEVEL - 10) biome = BiomeId.DeepOcean;
     else if (height <= SEA_LEVEL - 2) biome = temperature < 0.15 ? BiomeId.Snowfield : BiomeId.Ocean;
     else if (height <= SEA_LEVEL + 2) biome = BiomeId.Beach;
-    else if (variant > 0.86 && mountain > 0.18 && temperature > 0.42) biome = BiomeId.Volcanic;
+    else if (variant > 0.8 && mountain > 0.12 && temperature > 0.4) biome = BiomeId.Volcanic;
     else if ((mountain > 0.52 || height >= 76) && temperature < 0.58) biome = BiomeId.SnowcapRange;
     else if (mountain > 0.36 || height >= 68) biome = temperature < 0.35 || height > 78 ? BiomeId.Snowfield : BiomeId.Highlands;
     else if (temperature < 0.2) biome = BiomeId.Snowfield;
@@ -1698,7 +1698,7 @@ export class ChunkWorld {
     else if (height >= 42 && height <= 66 && temperature >= 0.3 && temperature <= 0.55 && moisture >= 0.68 && moisture <= 0.92 && variant < 0.58) biome = BiomeId.CloudreedGlen;
     else if (temperature > 0.57 && moisture > 0.72 && variant < 0.78) biome = BiomeId.RainveilJungle;
     else if (temperature >= 0.34 && temperature <= 0.62 && moisture > 0.55 && variant > 0.42 && variant < 0.68) biome = BiomeId.SakurabloomGrove;
-    else if (moisture > 0.78 && height < SEA_LEVEL + 12) biome = variant > 0.82 ? BiomeId.MushroomFen : BiomeId.Siltfen;
+    else if (moisture > 0.74 && height < SEA_LEVEL + 14) biome = variant > 0.74 ? BiomeId.MushroomFen : BiomeId.Siltfen;
     else if (moisture > 0.63 && variant > 0.72) biome = BiomeId.Bloomwood;
     else if (moisture > 0.54 && variant > 0.55) biome = BiomeId.Birchlight;
     else if (moisture > 0.56) biome = BiomeId.Wildwood;
@@ -2040,6 +2040,12 @@ export class ChunkWorld {
       } else if (column.biome === BiomeId.Beach) {
         if (roll > 0.986) set(x, column.height + 1, z, BlockId.CoastAster);
         else if (roll > 0.965) set(x, column.height + 1, z, BlockId.Saltbrush);
+      } else if (column.biome === BiomeId.Volcanic) {
+        if (roll > 0.991) set(x, column.height + 1, z, BlockId.RedFlower);
+        else if (roll > 0.975) set(x, column.height + 1, z, BlockId.DesertShrub);
+      } else if (column.biome === BiomeId.Highlands) {
+        if (roll > 0.988) set(x, column.height + 1, z, BlockId.Cloudbell);
+        else if (roll > 0.965) set(x, column.height + 1, z, BlockId.TallGrass);
       } else if (column.biome === BiomeId.SnowcapRange) {
         if (roll > 0.992) set(x, column.height + 1, z, BlockId.Dreamcap);
         else if (roll > 0.978) set(x, column.height + 1, z, BlockId.Starfern);

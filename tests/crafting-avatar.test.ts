@@ -13,6 +13,7 @@ import { BlockPlayerModel, FEMALE_HAIR_COLOR, playerEyeHeightForVariant } from "
 import { GAME_RELEASE_NAME, GAME_VERSION, normalizeGameVersion } from "../app/game/version.ts";
 import {
   bestiaryEntryCompletion,
+  bestiaryFieldNoteUnlocked,
   bestiaryKindsForFilter,
   captureOrbUiState,
   clearFirstPersonHeldPresentation,
@@ -359,6 +360,10 @@ test("bestiary filters and completion respond to care progress", () => {
   assert.equal(bestiaryKindsForFilter("companions").includes("bramblewhisk-cat"), true);
   assert.equal(bestiaryEntryCompletion(MOB_DEFS.peelop, { seen: false, kills: 0, captures: 0 }), 0);
   assert.equal(bestiaryEntryCompletion(MOB_DEFS.peelop, { seen: true, kills: 0, captures: 0, tames: 1, breeds: 1, secretUnlocked: true }), 100);
+  const dragonNotes = MOB_DEFS["fire-dragon"].fieldNotes ?? [];
+  assert.equal(dragonNotes.length, 6);
+  assert.equal(bestiaryFieldNoteUnlocked(dragonNotes[2], { seen: true, kills: 0, captures: 0, milestones: { hatched: 1 } }), true);
+  assert.equal(bestiaryEntryCompletion(MOB_DEFS["fire-dragon"], { seen: true, kills: 1, captures: 0, tames: 1, breeds: 1, milestones: { hatched: 1, "stage-3": 1 } }), 100);
 });
 
 test("bestiary portraits stay contained above their navigation chrome", () => {

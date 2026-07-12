@@ -242,7 +242,7 @@ test("v0.6 interaction policies keep respawns, instant flora, placement bypass, 
   assert.equal(isInstantBreakBlock(BlockId.Stone), false);
   assert.equal(shouldBypassOpenableUse(true, true, BlockId.Chest), true);
   assert.equal(shouldBypassOpenableUse(false, true, BlockId.Chest), false);
-  assert.deepEqual(mobPopulationCaps(22), { total: 22, passive: 13, hostile: 3 });
+  assert.deepEqual(mobPopulationCaps(22), { total: 22, passive: 15, hostile: 2 });
   assert.equal(positionInPlayerViewCone(0, 0, -10), true);
   assert.equal(positionInPlayerViewCone(0, 0, 10), false);
   assert.equal(DEFAULT_UNARMED_DAMAGE, 1);

@@ -245,28 +245,49 @@ function weightedMob(entries: readonly WeightedMob[], roll: number) {
   return entries.at(-1)?.[0] ?? "mossling";
 }
 
-const SNOW_PASSIVES: readonly WeightedMob[] = Object.freeze([["woolhorn", 0.26], ["frost-hare", 0.13], ["frostquill", 0.1], ["canopy-lark", 0.02], ["rimehoof-courser", 0.1], ["thimbledeer", 0.08], ["rimecoat-hound", 0.11], ["frostlace-hart", 0.2]]);
+const FROSTPINE_PASSIVES: readonly WeightedMob[] = Object.freeze([
+  ["rimecoat-hound", 0.2], ["frostquill", 0.17], ["thimbledeer", 0.16], ["rimehoof-courser", 0.14],
+  ["woolhorn", 0.13], ["frost-hare", 0.09], ["frostlace-hart", 0.07], ["canopy-lark", 0.04],
+]);
+const SNOWFIELD_PASSIVES: readonly WeightedMob[] = Object.freeze([
+  ["woolhorn", 0.28], ["frostlace-hart", 0.2], ["frost-hare", 0.17], ["rimehoof-courser", 0.13],
+  ["frostquill", 0.09], ["rimecoat-hound", 0.07], ["thimbledeer", 0.04], ["canopy-lark", 0.02],
+]);
 const DESERT_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["duneclatter", 0.36], ["emberjay", 0.16], ["sunscar-courser", 0.12], ["pebbletortoise", 0.08],
-  ["emberbrush-fox", 0.12], ["cindercone-mossling", 0.09], ["sunbloom-longhorn", 0.07],
+  ["emberbrush-fox", 0.12], ["cindercone-mossling", 0.09], ["sunbloom-longhorn", 0.05],
+]);
+const BADLANDS_PASSIVES: readonly WeightedMob[] = Object.freeze([
+  ["cindercone-mossling", 0.24], ["emberbrush-fox", 0.2], ["pebbletortoise", 0.16], ["duneclatter", 0.14],
+  ["sunscar-courser", 0.1], ["emberjay", 0.08], ["sunbloom-longhorn", 0.04], ["ridgeback", 0.04],
 ]);
 const BEACH_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["sunwash-crab", 0.58], ["tidewing-gull", 0.3], ["pebbletortoise", 0.08], ["reed-dragonfly", 0.04],
 ]);
 const SAVANNA_PASSIVES: readonly WeightedMob[] = Object.freeze([
-  ["sunstep-grazer", 0.27], ["emberjay", 0.11], ["ridgeback", 0.12], ["reedstrider", 0.08],
+  ["sunstep-grazer", 0.27], ["emberjay", 0.11], ["ridgeback", 0.12], ["reedstrider", 0.05],
   ["russet-rabbit", 0.11], ["sunbloom-longhorn", 0.19], ["emberbrush-fox", 0.12],
 ]);
 const SILTFEN_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["boglantern-mossling", 0.13], ["lanternshell", 0.15], ["puddlehopper", 0.12], ["reedstrider", 0.12],
   ["mirestride-courser", 0.09], ["reed-dragonfly", 0.07], ["lightning-bug", 0.1], ["pebbletortoise", 0.04], ["canopy-lark", 0.03], ["dewback-tapir", 0.1], ["reedcrown-deer", 0.15],
 ]);
-const FOREST_PASSIVES: readonly WeightedMob[] = Object.freeze([
+const WILDWOOD_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["brambleboar", 0.15], ["mossling", 0.13], ["canopy-lark", 0.1], ["thimbledeer", 0.12],
   ["petalfox", 0.09], ["wild-horse", 0.05], ["bramblewhisk-cat", 0.07], ["meadow-cow", 0.02], ["dewback-tapir", 0.05], ["burrowbell", 0.04], ["sakurakit", 0.03],
   ["meadow-cottontail", 0.1], ["russet-rabbit", 0.05],
 ]);
-const MUSHROOM_PASSIVES: readonly WeightedMob[] = Object.freeze([["lanternshell", 0.28], ["glowmoth", 0.2], ["lightning-bug", 0.14], ["puddlehopper", 0.17], ["petalfox", 0.1], ["boglantern-mossling", 0.12]]);
+const BIRCHLIGHT_PASSIVES: readonly WeightedMob[] = Object.freeze([
+  ["thimbledeer", 0.2], ["canopy-lark", 0.16], ["meadow-cottontail", 0.15], ["burrowbell", 0.12],
+  ["wild-horse", 0.1], ["petalfox", 0.08], ["russet-rabbit", 0.07], ["ridgeback", 0.05],
+  ["meadow-cow", 0.03], ["mossling", 0.025], ["bramblewhisk-cat", 0.015],
+]);
+const BLOOMWOOD_PASSIVES: readonly WeightedMob[] = Object.freeze([
+  ["petalfox", 0.18], ["mossling", 0.16], ["canopy-lark", 0.14], ["thimbledeer", 0.12],
+  ["lightning-bug", 0.1], ["sakurakit", 0.08], ["dewback-tapir", 0.07], ["brambleboar", 0.05],
+  ["burrowbell", 0.04], ["meadow-cottontail", 0.035], ["bramblewhisk-cat", 0.025], ["puddlehopper", 0.02],
+]);
+const MUSHROOM_PASSIVES: readonly WeightedMob[] = Object.freeze([["lanternshell", 0.27], ["glowmoth", 0.2], ["lightning-bug", 0.14], ["puddlehopper", 0.17], ["petalfox", 0.1], ["boglantern-mossling", 0.08], ["canopy-lark", 0.04]]);
 const MEADOW_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["thimbledeer", 0.14], ["petalfox", 0.11], ["puddlehopper", 0.06], ["reedstrider", 0.07],
   ["pebbletortoise", 0.08], ["canopy-lark", 0.08], ["peelop", 0.04], ["ridgeback", 0.1],
@@ -274,11 +295,20 @@ const MEADOW_PASSIVES: readonly WeightedMob[] = Object.freeze([
 ]);
 const RIVER_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["reedstrider", 0.26], ["reed-dragonfly", 0.2], ["puddlehopper", 0.16], ["lanternshell", 0.11],
-  ["pebbletortoise", 0.09], ["lightning-bug", 0.08], ["canopy-lark", 0.07], ["reedcrown-deer", 0.11],
+  ["pebbletortoise", 0.09], ["lightning-bug", 0.08], ["canopy-lark", 0.04], ["reedcrown-deer", 0.11],
 ]);
 const CLOUDREED_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["mistmane", 0.45], ["reed-dragonfly", 0.15], ["reedstrider", 0.12], ["canopy-lark", 0.1],
-  ["puddlehopper", 0.1], ["lanternshell", 0.08],
+  ["puddlehopper", 0.1], ["lanternshell", 0.05], ["burrowbell", 0.03],
+]);
+const HIGHLANDS_PASSIVES: readonly WeightedMob[] = Object.freeze([
+  ["mistmane", 0.22], ["woolhorn", 0.17], ["wild-horse", 0.14], ["burrowbell", 0.12],
+  ["ridgeback", 0.1], ["thimbledeer", 0.08], ["pebbletortoise", 0.06], ["petalfox", 0.05],
+  ["canopy-lark", 0.04], ["russet-rabbit", 0.02],
+]);
+const VOLCANIC_PASSIVES: readonly WeightedMob[] = Object.freeze([
+  ["cindercone-mossling", 0.28], ["duneclatter", 0.2], ["emberbrush-fox", 0.16], ["sunscar-courser", 0.12],
+  ["pebbletortoise", 0.09], ["ridgeback", 0.06], ["emberjay", 0.05], ["burrowbell", 0.025], ["puddlehopper", 0.015],
 ]);
 const UPLAND_PASSIVES: readonly WeightedMob[] = Object.freeze([
   ["wild-horse", 0.22], ["sunstep-grazer", 0.14], ["pebbletortoise", 0.12], ["petalfox", 0.1],
@@ -311,12 +341,10 @@ const SNOWCAP_PASSIVES: readonly WeightedMob[] = Object.freeze([
  * preventing queen spam and preserving colony ownership.
  */
 export function passiveMobSpawnTableForBiome(biome: BiomeId): readonly WeightedMob[] {
-  if (biome === BiomeId.Snowfield || biome === BiomeId.Frostpine) {
-    return SNOW_PASSIVES;
-  }
-  if (biome === BiomeId.Desert || biome === BiomeId.Badlands) {
-    return DESERT_PASSIVES;
-  }
+  if (biome === BiomeId.Snowfield) return SNOWFIELD_PASSIVES;
+  if (biome === BiomeId.Frostpine) return FROSTPINE_PASSIVES;
+  if (biome === BiomeId.Desert) return DESERT_PASSIVES;
+  if (biome === BiomeId.Badlands) return BADLANDS_PASSIVES;
   if (biome === BiomeId.Beach) return BEACH_PASSIVES;
   if (biome === BiomeId.Savanna) {
     return SAVANNA_PASSIVES;
@@ -324,9 +352,9 @@ export function passiveMobSpawnTableForBiome(biome: BiomeId): readonly WeightedM
   if (biome === BiomeId.Siltfen) {
     return SILTFEN_PASSIVES;
   }
-  if (biome === BiomeId.Bloomwood || biome === BiomeId.Wildwood || biome === BiomeId.Birchlight) {
-    return FOREST_PASSIVES;
-  }
+  if (biome === BiomeId.Wildwood) return WILDWOOD_PASSIVES;
+  if (biome === BiomeId.Birchlight) return BIRCHLIGHT_PASSIVES;
+  if (biome === BiomeId.Bloomwood) return BLOOMWOOD_PASSIVES;
   if (biome === BiomeId.MushroomFen) {
     return MUSHROOM_PASSIVES;
   }
@@ -340,7 +368,59 @@ export function passiveMobSpawnTableForBiome(biome: BiomeId): readonly WeightedM
   if (biome === BiomeId.SnowcapRange) return SNOWCAP_PASSIVES;
   if (biome === BiomeId.River) return RIVER_PASSIVES;
   if (biome === BiomeId.CloudreedGlen) return CLOUDREED_PASSIVES;
+  if (biome === BiomeId.Highlands) return HIGHLANDS_PASSIVES;
+  if (biome === BiomeId.Volcanic) return VOLCANIC_PASSIVES;
   return UPLAND_PASSIVES;
+}
+
+export type NaturalActivityContext = Readonly<{
+  timeOfDay: number;
+  daylight: number;
+  weather: string;
+  underground: boolean;
+}>;
+
+/** Interprets existing bestiary prose as permissive OR conditions until explicit tags are authored. */
+export function naturalActivityAllowsSpawn(kind: MobKind, context: NaturalActivityContext) {
+  const active = MOB_DEFS[kind].active.toLocaleLowerCase();
+  if (active.includes("all hours")) return true;
+  if (active.includes("underground") && !context.underground) return false;
+  const time = ((context.timeOfDay % 1) + 1) % 1;
+  const wet = ["drizzle", "rain", "thunder"].includes(context.weather);
+  const snowy = context.weather === "snow";
+  const overcast = ["overcast", "drizzle", "rain", "thunder", "snow"].includes(context.weather);
+  const matches: boolean[] = [];
+  if (/dark|night|moonlit/u.test(active)) matches.push(context.daylight < 0.24);
+  if (active.includes("dusk")) matches.push(time >= 0.68 && time < 0.82);
+  if (active.includes("dawn")) matches.push(time >= 0.19 && time < 0.32);
+  if (active.includes("morning")) matches.push(time >= 0.24 && time < 0.46);
+  if (active.includes("afternoon")) matches.push(time >= 0.54 && time < 0.76);
+  if (/day|sunny|sunlit|warm|hot|clear winter/u.test(active)) matches.push(context.daylight > 0.42);
+  if (active.includes("rain")) matches.push(wet);
+  if (/snowfall|snow/u.test(active)) matches.push(snowy);
+  if (active.includes("overcast")) matches.push(overcast);
+  return matches.length === 0 || matches.some(Boolean);
+}
+
+export type NaturalMicrohabitatContext = Readonly<{
+  nearWater: boolean;
+  nearFlowers: boolean;
+  nearLeaves: boolean;
+  snowy: boolean;
+  arid: boolean;
+}>;
+
+/** Soft affinity keeps alternate habitats possible while strongly favoring bestiary-described anchors. */
+export function naturalMicrohabitatAffinity(kind: MobKind, context: NaturalMicrohabitatContext) {
+  const habitat = MOB_DEFS[kind].habitat.toLocaleLowerCase();
+  const requested: boolean[] = [];
+  if (/river|reed|wetland|pool|fen|swamp|shallows|coast|tide/u.test(habitat)) requested.push(context.nearWater);
+  if (/flower|bloom|orchard|garden/u.test(habitat)) requested.push(context.nearFlowers);
+  if (/canop|forest|woodland|jungle|grove|tree/u.test(habitat)) requested.push(context.nearLeaves);
+  if (/snow|frost|rime|taiga/u.test(habitat)) requested.push(context.snowy);
+  if (/desert|dune|badland|cactus|volcanic/u.test(habitat)) requested.push(context.arid);
+  if (!requested.length) return 1;
+  return requested.some(Boolean) ? 1 : 0.32;
 }
 
 /** Shared bounded passive selector for the complete v0.5 surface catalog. */
