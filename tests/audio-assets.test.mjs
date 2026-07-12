@@ -82,3 +82,24 @@ test("new wildlife and passive growl calls are complete lossless PCM WAV assets"
     assert.equal(bytes.subarray(8, 12).toString("ascii"), "WAVE");
   }
 });
+
+test("rabbit, small-animal, owl, and underwater leviathan calls are complete PCM WAV assets", () => {
+  for (const [name, minimumBytes] of [
+    ["rabbit-squeak.wav", 300_000],
+    ["little-animal-squeak.wav", 300_000],
+    ["leviathan-growl-underwater-a.wav", 2_000_000],
+    ["leviathan-growl-underwater-b.wav", 900_000],
+    ["owl-call-a.wav", 2_000_000],
+    ["owl-call-b.wav", 300_000],
+  ]) {
+    const path = resolve("public", "sfx", name);
+    assert.ok(statSync(path).size > minimumBytes, `${name} should contain the complete supplied call`);
+    const bytes = readFileSync(path).subarray(0, 36);
+    assert.equal(bytes.subarray(0, 4).toString("ascii"), "RIFF");
+    assert.equal(bytes.subarray(8, 12).toString("ascii"), "WAVE");
+    assert.equal(bytes.readUInt16LE(20), 1, `${name} should remain PCM`);
+    assert.equal(bytes.readUInt16LE(22), 2, `${name} should remain stereo`);
+    assert.equal(bytes.readUInt32LE(24), 48_000, `${name} should remain 48 kHz`);
+    assert.equal(bytes.readUInt16LE(34), 16, `${name} should remain 16-bit`);
+  }
+});

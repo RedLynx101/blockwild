@@ -47,7 +47,13 @@ export type SampleKind =
   | "copperMoleSniff"
   | "reedstriderCall"
   | "dragonAmbientGrowl"
-  | "wargDeepGrowl";
+  | "wargDeepGrowl"
+  | "rabbitSqueak"
+  | "littleAnimalSqueak"
+  | "leviathanGrowlUnderwaterA"
+  | "leviathanGrowlUnderwaterB"
+  | "owlCallA"
+  | "owlCallB";
 export type SamplePlaybackOptions = { gain?: number; playbackRate?: number; detune?: number; when?: number };
 export type DragonSoundType = "fire" | "ice" | "steel" | "sea" | "gold" | "silver";
 export type DragonSoundEvent = "ambient" | "roar" | "hurt" | "death" | "wing" | "melee" | "breath" | "projectile" | "egg-crack";
@@ -117,6 +123,12 @@ const SAMPLES: Record<SampleKind, { source: string; gain: number }> = {
   reedstriderCall: { source: "/sfx/reedstrider-call.wav", gain: 0.7 },
   dragonAmbientGrowl: { source: "/sfx/dragon-ambient-deep-growl.wav", gain: 0.52 },
   wargDeepGrowl: { source: "/sfx/warg-deep-growl.wav", gain: 0.62 },
+  rabbitSqueak: { source: "/sfx/rabbit-squeak.wav", gain: 0.58 },
+  littleAnimalSqueak: { source: "/sfx/little-animal-squeak.wav", gain: 0.54 },
+  leviathanGrowlUnderwaterA: { source: "/sfx/leviathan-growl-underwater-a.wav", gain: 0.56 },
+  leviathanGrowlUnderwaterB: { source: "/sfx/leviathan-growl-underwater-b.wav", gain: 0.62 },
+  owlCallA: { source: "/sfx/owl-call-a.wav", gain: 0.56 },
+  owlCallB: { source: "/sfx/owl-call-b.wav", gain: 0.62 },
 };
 const MUSIC_FALLBACKS: Partial<Record<MusicScene, string>> = {
   combatA: "/music/blockwild-skyboss.mp3",

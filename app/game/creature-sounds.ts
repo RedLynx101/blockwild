@@ -44,11 +44,18 @@ const GRAZER_EVENTS = Object.freeze({
   breed: cue("horse-whinny-a", "mob", 0.52, 0.12),
 } satisfies Partial<Record<CreatureSoundEvent, CreatureSoundCue>>);
 
-const SMALL_CRITTER_EVENTS = Object.freeze({
-  ambient: cue("bird-chirp", "mob", 0.42, 0.18),
-  hurt: cue("bird-chirp", "attack", 0.52, 0.14),
-  feed: cue("bird-chirp", "eat", 0.36, 0.2),
-  breed: cue("bird-chirp", "mob", 0.4, 0.18),
+const LITTLE_ANIMAL_EVENTS = Object.freeze({
+  ambient: cue("little-animal-squeak", "mob", 0.48, 0.14),
+  hurt: cue("little-animal-squeak", "attack", 0.6, 0.1),
+  feed: cue("little-animal-squeak", "eat", 0.4, 0.16),
+  breed: cue("little-animal-squeak", "mob", 0.46, 0.14),
+} satisfies Partial<Record<CreatureSoundEvent, CreatureSoundCue>>);
+
+const RABBIT_EVENTS = Object.freeze({
+  ambient: cue("rabbit-squeak", "mob", 0.52, 0.12),
+  hurt: cue("rabbit-squeak", "attack", 0.66, 0.08),
+  feed: cue("rabbit-squeak", "eat", 0.42, 0.14),
+  breed: cue("rabbit-squeak", "mob", 0.5, 0.11),
 } satisfies Partial<Record<CreatureSoundEvent, CreatureSoundCue>>);
 
 const WILDCAT_EVENTS = Object.freeze({
@@ -59,8 +66,15 @@ const WILDCAT_EVENTS = Object.freeze({
 } satisfies Partial<Record<CreatureSoundEvent, CreatureSoundCue>>);
 
 const DEEP_CREATURE_EVENTS = Object.freeze({
-  ambient: cue("dragon-ambient-deep-growl", "mob", 0.46, 0.12),
-  hurt: cue("dragon-ambient-deep-growl", "attack", 0.6, 0.09),
+  ambient: cue("leviathan-growl-underwater-a", "mob", 0.44, 0.08, ["leviathan-growl-underwater-b"]),
+  hurt: cue("leviathan-growl-underwater-b", "attack", 0.58, 0.06, ["leviathan-growl-underwater-a"]),
+} satisfies Partial<Record<CreatureSoundEvent, CreatureSoundCue>>);
+
+const OWL_EVENTS = Object.freeze({
+  ambient: cue("owl-call-a", "mob", 0.56, 0.055, ["owl-call-b"]),
+  hurt: cue("owl-call-b", "attack", 0.68, 0.04),
+  feed: cue("owl-call-b", "eat", 0.42, 0.07),
+  breed: cue("owl-call-a", "mob", 0.5, 0.05, ["owl-call-b"]),
 } satisfies Partial<Record<CreatureSoundEvent, CreatureSoundCue>>);
 
 /**
@@ -68,16 +82,18 @@ const DEEP_CREATURE_EVENTS = Object.freeze({
  * generated WAV assets can be added without changing creature behavior.
  */
 export const CREATURE_SOUND_EVENTS: Partial<Record<CoreMobKind, Partial<Record<CreatureSoundEvent, CreatureSoundCue>>>> = {
-  mossling: SMALL_CRITTER_EVENTS,
-  "boglantern-mossling": SMALL_CRITTER_EVENTS,
-  "cindercone-mossling": SMALL_CRITTER_EVENTS,
-  "moonbloom-mossling": SMALL_CRITTER_EVENTS,
-  "meadow-cottontail": SMALL_CRITTER_EVENTS,
-  "russet-rabbit": SMALL_CRITTER_EVENTS,
-  "frost-hare": SMALL_CRITTER_EVENTS,
-  "chocolate-bunny": SMALL_CRITTER_EVENTS,
-  burrowbell: SMALL_CRITTER_EVENTS,
-  sakurakit: SMALL_CRITTER_EVENTS,
+  mossling: LITTLE_ANIMAL_EVENTS,
+  "boglantern-mossling": LITTLE_ANIMAL_EVENTS,
+  "cindercone-mossling": LITTLE_ANIMAL_EVENTS,
+  "moonbloom-mossling": LITTLE_ANIMAL_EVENTS,
+  "meadow-cottontail": RABBIT_EVENTS,
+  "russet-rabbit": RABBIT_EVENTS,
+  "frost-hare": RABBIT_EVENTS,
+  "chocolate-bunny": RABBIT_EVENTS,
+  burrowbell: LITTLE_ANIMAL_EVENTS,
+  sakurakit: LITTLE_ANIMAL_EVENTS,
+  tidepup: LITTLE_ANIMAL_EVENTS,
+  runeowl: OWL_EVENTS,
   "pebbletortoise": { ambient: cue("crab-chitter", "mob", 0.32, 0.16), hurt: cue("crab-chitter", "attack", 0.46, 0.12) },
   "reefglide-terrapin": { ambient: cue("crab-chitter", "mob", 0.28, 0.13), hurt: cue("crab-chitter", "attack", 0.44, 0.1) },
   "sunstep-grazer": GRAZER_EVENTS,
@@ -230,6 +246,12 @@ export const CREATURE_SAMPLE_BY_ASSET = Object.freeze({
   "reedstrider-call": "reedstriderCall",
   "warg-deep-growl": "wargDeepGrowl",
   "dragon-ambient-deep-growl": "dragonAmbientGrowl",
+  "rabbit-squeak": "rabbitSqueak",
+  "little-animal-squeak": "littleAnimalSqueak",
+  "leviathan-growl-underwater-a": "leviathanGrowlUnderwaterA",
+  "leviathan-growl-underwater-b": "leviathanGrowlUnderwaterB",
+  "owl-call-a": "owlCallA",
+  "owl-call-b": "owlCallB",
 } as const satisfies Readonly<Record<string, SampleKind>>);
 
 export function creatureHasCustomSound(kind: CoreMobKind) {

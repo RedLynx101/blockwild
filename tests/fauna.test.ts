@@ -606,6 +606,11 @@ test("creature sound events define Ridgeback and thoughtfully shared wildlife cu
   assert.deepEqual(creatureSoundCue("rimecoat-hound", "ambient").variants, ["hound-call-b"]);
   assert.equal(creatureSoundCue("sunwash-crab", "ambient").asset, "crab-chitter");
   assert.equal(creatureSoundCue("tideglass-crab", "ambient").asset, "crab-chitter");
+  assert.equal(creatureSoundCue("meadow-cottontail", "ambient").asset, "rabbit-squeak");
+  assert.equal(creatureSoundCue("mossling", "ambient").asset, "little-animal-squeak");
+  assert.equal(creatureSoundCue("tidepup", "ambient").asset, "little-animal-squeak");
+  assert.deepEqual(creatureSoundCue("runeowl", "ambient").variants, ["owl-call-b"]);
+  assert.deepEqual(creatureSoundCue("worldshell-leviathan", "ambient").variants, ["leviathan-growl-underwater-b"]);
 });
 
 test("connected exhibit blocks cap at 20, grow lower flowers, and store one exact butterfly per block", () => {
