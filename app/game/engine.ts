@@ -2032,6 +2032,7 @@ export function normalizeMultiplayerPlayerState(
     revision: Math.max(0, Math.trunc(Number(value?.revision) || 0)),
     variant: (variant ?? value?.variant) === "female" ? "female" : "male",
     inventory: inventory.map(networkItemStack),
+    cursor: networkItemStack(inventorySlotFromNetwork(value?.cursor ?? null)),
     equipment: Object.fromEntries((Object.keys(equipment) as EquipmentSlot[]).map((slot) => [slot, networkItemStack(equipment[slot])])) as PlayerSessionSnapshot["equipment"],
     selected: clamp(Math.trunc(Number(value?.selected) || 0), 0, 8),
     health: clamp(Number(value?.health ?? 10), 0, 10),
@@ -3544,6 +3545,7 @@ export class VoxelEngine {
       revision,
       variant: this.playerVariant,
       inventory: this.inventory.map(networkItemStack),
+      cursor: networkItemStack(this.cursor),
       equipment: Object.fromEntries((Object.keys(this.equipment) as EquipmentSlot[])
         .map((slot) => [slot, networkItemStack(this.equipment[slot])])) as PlayerSessionSnapshot["equipment"],
       selected: this.selected,
@@ -3559,6 +3561,7 @@ export class VoxelEngine {
     const normalized = normalizeMultiplayerPlayerState(state, state.playerId, state.variant);
     this.multiplayerPlayerStateRevision = normalized.revision;
     this.inventory = normalized.inventory.map(inventorySlotFromNetwork);
+    this.cursor = inventorySlotFromNetwork(normalized.cursor ?? null);
     this.equipment = Object.fromEntries((Object.keys(normalized.equipment) as EquipmentSlot[])
       .map((slot) => [slot, inventorySlotFromNetwork(normalized.equipment[slot])])) as Record<EquipmentSlot, InventorySlot | null>;
     this.selected = normalized.selected;
@@ -3580,6 +3583,12 @@ export class VoxelEngine {
   }
 
   private networkContainerSnapshots(): ContainerSnapshot[] {
+    // Migrate older saves that still hold adjacent placed chests as two single inventories.
+    for (const id of [...this.chests.keys()]) {
+      if (id.includes("|") || id.startsWith("exhibit:") || id.startsWith("boat:")) continue;
+      const coords = id.split(",").map(Number);
+      if (coords.length === 3 && coords.every(Number.isFinite) && this.world.getBlock(coords[0], coords[1], coords[2]) === BlockId.Chest) this.resolveChest(id);
+    }
     return [...this.chests.entries()].slice(0, 32).map(([id, slots]) => ({
       id,
       kind: id.includes("|") ? "double-chest" : "chest",
@@ -3659,7 +3668,7 @@ export class VoxelEngine {
     this.multiplayerPlayerStates.set(peer.identity.id, next);
     drop.count -= result.added;
     if (drop.count <= 0) this.removeDrop(dropIndex);
-    this.multiplayer.sendInventoryAction({ ...action, count: result.added, status: "accepted" });
+    this.multiplayer.sendInventoryAction({ ...action, count: result.added, status: "accepted" }, peer.identity.id);
     this.sendAuthoritativePlayerState(peer.identity.id, action.requestId);
     this.saveSoon();
   }
@@ -3680,12 +3689,26 @@ export class VoxelEngine {
         }, peer.identity.id);
         return;
       }
+      const currentPlayer = this.ensureHostPlayerSession(peer.identity);
+      const proposedPlayer = action.playerState
+        ? normalizeMultiplayerPlayerState(action.playerState, peer.identity.id, action.playerState.variant)
+        : currentPlayer;
       const revision = currentRevision + 1;
       const slots = action.slots.map(inventorySlotFromNetwork);
       this.chests.set(action.containerId, slots);
+      const committedPlayer = {
+        ...currentPlayer,
+        inventory: proposedPlayer.inventory,
+        cursor: proposedPlayer.cursor,
+        equipment: proposedPlayer.equipment,
+        selected: proposedPlayer.selected,
+        revision: currentPlayer.revision + 1,
+      };
+      this.multiplayerPlayerStates.set(peer.identity.id, committedPlayer);
       this.multiplayerContainerRevisions.set(action.containerId, revision);
       this.multiplayerContainerSignatures.set(action.containerId, JSON.stringify(action.slots));
-      this.multiplayer.sendContainerAction({ ...action, expectedRevision: revision, status: "accepted" });
+      this.multiplayer.sendContainerAction({ ...action, playerState: committedPlayer, expectedRevision: revision, status: "accepted" });
+      this.sendAuthoritativePlayerState(peer.identity.id, action.requestId);
       this.saveSoon();
       this.emitHud(true);
       return;
@@ -3698,6 +3721,9 @@ export class VoxelEngine {
         revision,
         slots: action.slots,
       }]);
+      if (action.status === "accepted" && action.actorId === this.multiplayer.identity.id && action.playerState) {
+        this.applyLocalPlayerSessionSnapshot(action.playerState);
+      }
     }
   }
 
@@ -3741,6 +3767,7 @@ export class VoxelEngine {
         kind: "place",
         expectedRevision: revision,
         slots: networkSlots,
+        ...(session.role === "guest" ? { playerState: this.localPlayerSessionSnapshot(this.multiplayerPlayerStateRevision + 1) ?? undefined } : {}),
         status: session.role === "host" ? "accepted" : "request",
       };
       if (session.role === "host") {
@@ -4057,7 +4084,9 @@ export class VoxelEngine {
       }
       drop.velocity.set(0, 0, 0);
       drop.age = entry.age;
-      drop.pickupDelay = placedLeviathanEggMetadata(drop.metadata) || placedDragonEggMetadata(drop.metadata) ? Number.POSITIVE_INFINITY : 0.5;
+      if (!Number.isFinite(drop.pickupDelay) || placedLeviathanEggMetadata(drop.metadata) || placedDragonEggMetadata(drop.metadata)) {
+        drop.pickupDelay = placedLeviathanEggMetadata(drop.metadata) || placedDragonEggMetadata(drop.metadata) ? Number.POSITIVE_INFINITY : 0.5;
+      }
       this.nextDropId = Math.max(this.nextDropId, entry.id + 1);
     }
   }
@@ -4068,13 +4097,14 @@ export class VoxelEngine {
       const remote = peer.identity ? this.remotePlayers.get(peer.identity.id) : null;
       const playerPoses = [this.localNetworkPose(), ...[...this.remotePlayers.values()].map((player) => player.target)]
         .filter((pose): pose is PlayerPose => Boolean(pose));
-      const valid = Boolean(remote) && action.edits.length > 0 && action.edits.length <= 512 && action.edits.every((edit) => {
+      const valid = Boolean(remote) && action.edits.length > 0 && action.edits.length <= 2_048 && action.edits.every((edit) => {
         const definition = BLOCKS[edit.type as BlockId];
         const dx = edit.x - remote!.target.x;
         const dy = edit.y - (remote!.target.y + 1);
         const dz = edit.z - remote!.target.z;
         const occupiesPlayer = edit.type !== BlockId.Air && playerPoses.some((player) => blockEditIntersectsPlayer(edit, player, PLAYER_HEIGHT * playerVariantHeightScale(player.variant ?? "male")));
-        return Boolean(definition) && edit.y >= MIN_Y && edit.y <= MAX_Y && dx * dx + dy * dy + dz * dz <= 64 && !occupiesPlayer;
+        const reachSquared = action.kind === "batch" ? 32 * 32 : 8 * 8;
+        return Boolean(definition) && edit.y >= MIN_Y && edit.y <= MAX_Y && dx * dx + dy * dy + dz * dz <= reachSquared && !occupiesPlayer;
       });
       const resolved: BlockAction = valid
         ? { ...action, status: "accepted" }
@@ -4094,6 +4124,11 @@ export class VoxelEngine {
           if (this.toolCanHarvest(previous, held)) this.dropBlockLoot(isTorchBlock(previous) ? BlockId.Torch : previous, edit.x, edit.y, edit.z);
         }
         this.world.setBlocksBatch(action.edits.map((edit) => ({ ...edit, type: edit.type as BlockId })), true, true);
+        for (const edit of action.edits) if (edit.type === BlockId.Chest) {
+          const key = blockKey(edit.x, edit.y, edit.z);
+          if (!this.chests.has(key)) this.chests.set(key, Array.from({ length: 27 }, () => null));
+          this.resolveChest(key);
+        }
         this.lightRefreshTimer = 0;
         this.saveSoon();
         this.multiplayer.sendBlockAction(resolved);
@@ -4102,6 +4137,11 @@ export class VoxelEngine {
     }
     if (this.multiplayer.role === "guest" && (action.status === "accepted" || action.status === "rejected")) {
       this.world.setBlocksBatch(action.edits.map((edit) => ({ ...edit, type: edit.type as BlockId })), true, true);
+      for (const edit of action.edits) if (edit.type === BlockId.Chest) {
+        const key = blockKey(edit.x, edit.y, edit.z);
+        if (!this.chests.has(key) && !this.chestStorageKey(key).includes("|")) this.chests.set(key, Array.from({ length: 27 }, () => null));
+        this.resolveChest(key);
+      }
       this.lightRefreshTimer = 0;
       if (action.status === "rejected" && action.reason) this.events.onToast(action.reason);
     }
@@ -4359,6 +4399,20 @@ export class VoxelEngine {
       return;
     }
     if (this.multiplayer.role !== "guest" || action.status !== "accepted") return;
+    if (action.targetKind === "player" && action.targetId === this.multiplayer.identity.id) {
+      this.audio.play("hurt");
+      if (action.killed) {
+        this.position.copy(this.spawn);
+        this.velocity.set(0, 0, 0);
+        this.health = 10;
+        this.hunger = Math.max(this.hunger, 6);
+        this.spawnProtection = 8;
+        this.events.onDeath();
+        this.events.onToast("The wild carried you home.");
+      }
+      this.emitHud(true);
+      return;
+    }
     if (action.targetKind === "mob") {
       const mob = this.mobs.find((candidate) => candidate.id === Number(action.targetId));
       if (!mob) return;
@@ -4368,6 +4422,63 @@ export class VoxelEngine {
         this.spawnMobRemains(mob);
         this.removeMob(this.mobs.indexOf(mob));
       } else this.spawnParticles(mob.group.position.x, mob.group.position.y, mob.group.position.z, mob.hostile ? BlockId.Obsidian : BlockId.Dirt, 7);
+    }
+  }
+
+  private updateRemotePlayerMobDamage() {
+    const session = this.multiplayer;
+    if (!session || session.role !== "host" || this.worldOptions.difficulty === "peaceful") return;
+    for (const mob of this.mobs) {
+      if (!mob.hostile || mob.health <= 0 || mob.attackCooldown > 0 || mob.state === "dead") continue;
+      for (const [playerId, remote] of this.remotePlayers) {
+        const pose = remote.target;
+        const playerCenter = new THREE.Vector3(pose.x, pose.y + 0.8, pose.z);
+        const mobCenter = mob.group.position.clone().add(new THREE.Vector3(0, mob.definition.height * this.mobBaseScale(mob) * 0.45, 0));
+        const reach = Math.max(1.15, mob.definition.attackRange + mob.definition.radius * this.mobBaseScale(mob));
+        if (mobCenter.distanceToSquared(playerCenter) > reach * reach || !this.hasClearLineOfSight(mobCenter, playerCenter)) continue;
+        const current = this.multiplayerPlayerStates.get(playerId);
+        if (!current || current.health <= 0) continue;
+        const difficultyScale = this.worldOptions.difficulty === "hard" ? 1.35 : this.worldOptions.difficulty === "easy" ? 0.75 : 1;
+        const damage = Math.max(0.5, Math.round(mob.damage * difficultyScale * 2) / 2);
+        const remainingHealth = Math.max(0, current.health - damage);
+        const killed = remainingHealth <= 0;
+        let inventory = current.inventory;
+        let equipment = current.equipment;
+        if (killed && !this.worldOptions.keepInventory) {
+          for (const slot of [...current.inventory, ...Object.values(current.equipment)]) {
+            const item = inventorySlotFromNetwork(slot);
+            if (item) this.spawnDrop(item.item, item.count, new THREE.Vector3(pose.x, pose.y + 0.5, pose.z), item.durability, item.metadata);
+          }
+          inventory = blankInventory().map(networkItemStack);
+          equipment = Object.fromEntries((Object.keys(current.equipment) as EquipmentSlot[]).map((slot) => [slot, null])) as PlayerSessionSnapshot["equipment"];
+        }
+        const next = {
+          ...current,
+          inventory,
+          equipment,
+          health: killed ? 10 : remainingHealth,
+          hunger: killed ? Math.max(6, current.hunger) : current.hunger,
+          revision: current.revision + 1,
+        };
+        this.multiplayerPlayerStates.set(playerId, next);
+        const requestId = `mob_hit_${mob.id}_${this.multiplayerTick}`;
+        session.sendCombatAction({
+          requestId,
+          actorId: `mob_${mob.id}`,
+          tick: this.multiplayerTick,
+          targetKind: "player",
+          targetId: playerId,
+          attack: "melee",
+          status: "accepted",
+          resultingHealth: remainingHealth,
+          killed,
+        }, playerId);
+        this.sendAuthoritativePlayerState(playerId, requestId);
+        mob.attackCooldown = 1.2;
+        mob.awarenessTimer = Math.max(mob.awarenessTimer, 3);
+        this.saveSoon();
+        break;
+      }
     }
   }
 
@@ -8821,7 +8932,10 @@ export class VoxelEngine {
     this.publishBlockEdits(placedEdits, placedEdits.length > 1 ? "batch" : "place");
     for (const edit of placedEdits) this.notifyLiquidChanged(edit.x, edit.y, edit.z);
     const placedKey = blockKey(x, y, z);
-    if (type === BlockId.Chest) this.chests.set(placedKey, Array.from({ length: 27 }, () => null));
+    if (type === BlockId.Chest) {
+      this.chests.set(placedKey, Array.from({ length: 27 }, () => null));
+      this.resolveChest(placedKey);
+    }
     if (type === BlockId.Furnace) this.furnaces.set(placedKey, blankFurnace());
     if (type === BlockId.Apiary) this.apiaries.set(placedKey, createEmptyApiaryBlock());
     if (type === BlockId.CaptureOrbRack) this.orbRacks.set(placedKey, createOrbRack());
@@ -8947,7 +9061,8 @@ export class VoxelEngine {
       logDrops: [...logCounts],
       logCount: tree.logs.length,
       leafCount: tree.leaves.length,
-      harvest: this.mode === "survival",
+      // The host owns multiplayer loot. Guests animate the fall without creating phantom drops.
+      harvest: this.mode === "survival" && this.multiplayer?.role !== "guest",
     });
     if (this.persistent) window.clearTimeout(this.saveTimer);
     if (this.mode === "survival") this.damageSelectedTool(Math.max(1, Math.ceil(tree.logs.length / 4)));
@@ -14725,7 +14840,10 @@ export class VoxelEngine {
           }
           this.animateMob(mob, Math.hypot(mob.group.position.x - beforeX, mob.group.position.z - beforeZ));
         }
-      } else this.updateMobs(dt);
+      } else {
+        this.updateMobs(dt);
+        this.updateRemotePlayerMobDamage();
+      }
       this.updateLeads();
       if (!multiplayerGuest) this.updateStructureSpawns(dt);
       this.smallEntityPositions.length = 0;

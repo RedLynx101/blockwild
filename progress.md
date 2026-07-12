@@ -264,3 +264,14 @@ Release contract: `V1_USER_PROMPT_VERBATIM.md` is the temporary verbatim accepta
 - White-canvas acceptance is covered by one delayed-release shared preview renderer, explicit disposal, Canvas2D fallback, and live renderer context-loss pause/restore. A real Chromium session repeatedly traversed title, avatar selection, advanced creation, generated gameplay, map, quests, Bestiary, moving hotbar selection, save, and return-to-title with zero errors or WebGL warnings. The visual pass caught and fixed the last mismatch: Deepgear now reads `Subterranean mountain holds` in the faction selector.
 - Final verification: production build and Sites artifact pass; all 446 release tests pass; native TypeScript and whole-repository ESLint pass; 28 affected UI/culture tests pass after the final copy repair. Benchmark on this machine: four-source liquid settle 28.00 ms, 1,000 structure plans 400.85 ms, weather/cloud plans 904.62 ms, radius-16 chunk ordering 1.58 ms, 64 apiary cycles 169.61 ms, and herd/shoal/tree plans 305.17 ms. Desktop, 390-by-844 creation, gameplay, map, Bestiary, female avatar, culture portraits, Golem Forge, and tree-form visuals were manually reviewed.
 - Suno workspace `29fdaafd-20f2-48d2-868e-2e89d77a783c` produced Moonbough clips `3b127a4a-fc82-48e6-81c1-068ade28ff67` / `c89a09b2-580a-46b7-901f-0e51bdbce18f` and Deepgear clips `baa014b6-e20a-46ca-a6d2-a7dbbb1b8e26` / `24b51a3c-5818-4629-90c3-dcceb04e21c6`. The selected local MP3s are wired to their settlement scenes and validated by the release suite.
+
+## v1.1 Shared Wilds multiplayer hotfix (2026-07-11)
+
+- Raised bounded block-action batches to 2,048 edits and expanded batch reach so complete generated trees replicate instead of being rejected while their local fall animation continues.
+- Stopped guest tree animations from creating non-authoritative phantom drops.
+- Preserved guest pickup cooldowns across frequent host drop snapshots and targeted pickup acknowledgements to the collecting peer.
+- Bundled cursor/player state with shared-container changes so chest and inventory transfers commit atomically on the host.
+- Canonicalized adjacent placed and legacy chest inventories into one 54-slot superchest before replication.
+- Added host-side hostile-mob melee damage for remote players, including inventory-aware death handling and full-health guest respawn.
+- Bumped the release to v1.1.0 Shared Wilds and updated README/changelog metadata.
+- Verification: 71 focused multiplayer/tree/world tests pass; production Sites build passes.

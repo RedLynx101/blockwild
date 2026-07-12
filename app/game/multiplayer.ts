@@ -182,6 +182,8 @@ export type ContainerAction = {
   expectedRevision?: number;
   /** A bounded authoritative slot image used for shared chest transactions. */
   slots?: ItemStackSnapshot[];
+  /** The matching player inventory image makes chest transfers one host-owned transaction. */
+  playerState?: PlayerSessionSnapshot;
   status?: ActionStatus;
   reason?: string;
 };
@@ -194,6 +196,8 @@ export type PlayerSessionSnapshot = {
   revision: number;
   variant: "male" | "female";
   inventory: ItemStackSnapshot[];
+  /** Optional for protocol-v1 compatibility; current clients include the carried cursor stack. */
+  cursor?: ItemStackSnapshot;
   equipment: Record<"head" | "chest" | "legs" | "feet", ItemStackSnapshot>;
   selected: number;
   health: number;
@@ -700,6 +704,7 @@ function validatePlayerSessionSnapshot(value: unknown): value is PlayerSessionSn
     && Array.isArray(value.inventory)
     && value.inventory.length === 36
     && value.inventory.every(validateItemStack)
+    && (value.cursor === undefined || validateItemStack(value.cursor))
     && equipmentSlots.every((slot) => validateItemStack(equipment[slot]))
     && isInteger(value.selected, 0, 8)
     && isFiniteNumber(value.health, 0, 10)
@@ -748,7 +753,7 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
         && (value.kind === "break" || value.kind === "place" || value.kind === "batch")
         && Array.isArray(value.edits)
         && value.edits.length >= 1
-        && value.edits.length <= 256
+        && value.edits.length <= 2_048
         && value.edits.every(validateBlockEdit)
         && validateStatusFields(value);
     case "mob-snapshot":
@@ -788,6 +793,7 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
         && (value.count === undefined || isInteger(value.count, 1, 65_535))
         && (value.expectedRevision === undefined || isInteger(value.expectedRevision, 0, Number.MAX_SAFE_INTEGER))
         && (value.slots === undefined || (Array.isArray(value.slots) && value.slots.length <= 128 && value.slots.every(validateItemStack)))
+        && (value.playerState === undefined || validatePlayerSessionSnapshot(value.playerState))
         && validateStatusFields(value);
     case "player-state":
       return isId(value.requestId)

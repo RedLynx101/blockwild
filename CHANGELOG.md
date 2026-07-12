@@ -2,6 +2,13 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.1.0 - Shared Wilds - 2026-07-11
+
+- Fixed guest tree felling and large connected-tree edit replication.
+- Fixed host-authoritative ground-drop pickup for guests.
+- Made shared chest transfers atomic with player inventory state and canonicalized adjacent chests into one 54-slot superchest.
+- Added host-authoritative hostile-mob damage and full-health guest respawning.
+
 ## 1.0.0 - Realms and Recall - 2026-07-11
 
 ### Glimmerwood and the Wood Elves
