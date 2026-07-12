@@ -36,7 +36,7 @@ import { FISH_FIN_ATTACHMENT_OVERLAP, LEVIATHAN_VISUAL_CONTRACTS } from "../app/
 import { BiomeId } from "../app/game/world.ts";
 
 const SEA_UPDATE_KINDS = [
-  "sunwash-crab", "tideglass-crab", "tidewing-gull", "glassfin", "lanternjaw", "abyss-skater", "dreadcoil", "tidepup",
+  "sunwash-crab", "tideglass-crab", "reefglide-terrapin", "tidewing-gull", "glassfin", "lanternjaw", "abyss-skater", "dreadcoil", "tidepup",
   "sakurakit", "worldshell-leviathan", "aetherbell-larva", "aetherbell-leviathan",
 ] as const;
 
@@ -48,7 +48,7 @@ test("the ocean update exposes a distinct production roster and six Atlantian ro
     assert.ok(MOB_DEFS[kind].discoveryHint);
   }
   assert.deepEqual(TIDEGLASS_AQUATIC_ORDER, [
-    "tideglass-crab", "glassfin", "lanternjaw", "abyss-skater", "dreadcoil", "tidepup", "worldshell-leviathan", "aetherbell-larva", "aetherbell-leviathan",
+    "tideglass-crab", "reefglide-terrapin", "glassfin", "lanternjaw", "abyss-skater", "dreadcoil", "tidepup", "worldshell-leviathan", "aetherbell-larva", "aetherbell-leviathan",
   ]);
   assert.equal(ATLANTIAN_ORDER.length, 6);
   for (const kind of ATLANTIAN_ORDER) {

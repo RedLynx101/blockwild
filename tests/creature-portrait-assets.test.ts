@@ -38,6 +38,15 @@ const NEWCOMER_KINDS = [
   "worldshell-leviathan",
   "aetherbell-larva",
   "aetherbell-leviathan",
+  "frostlace-hart",
+  "reedcrown-deer",
+  "sunbloom-longhorn",
+  "boglantern-mossling",
+  "cindercone-mossling",
+  "moonbloom-mossling",
+  "reefglide-terrapin",
+  "emberbrush-fox",
+  "moonpetal-fox",
   ...ATLANTIAN_ORDER,
 ] as const satisfies readonly CoreMobKind[];
 

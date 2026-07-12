@@ -86,10 +86,10 @@ test("the inspector captures every canonical production mob visual", () => {
     assert.equal(inspectGrounding(spec).contact, spec.id === "glowmoth" || definition.flying || definition.aquatic ? "reference" : "exact");
   }
   const ridgeback = specs.find((spec) => spec.id === "ridgeback")!;
-  const body = ridgeback.boxes.find((box) => box.id === "ridgeback-body")!;
-  const plates = ridgeback.boxes.filter((box) => box.id.startsWith("ridgeback-plate-"));
+  const body = ridgeback.boxes.find((box) => box.id === "ridgeback-barrel")!;
+  const plates = ridgeback.boxes.filter((box) => box.id.startsWith("ridgeback-sunstone-plate-"));
   const bodyTop = body.position[1] + body.size[1] / 2;
-  assert.equal(plates.length, 6);
+  assert.equal(plates.length, 8);
   for (const plate of plates) assert.ok(Math.abs(plate.position[1] - plate.size[1] / 2 - bodyTop) < 1e-7, `${plate.id} floats above the back`);
   const rattlekin = specs.find((spec) => spec.id === "rattlekin")!;
   const clubHandle = rattlekin.boxes.find((box) => box.id === "rattlekin-club-handle")!;

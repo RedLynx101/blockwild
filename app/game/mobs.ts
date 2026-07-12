@@ -7,8 +7,12 @@ export type SurfaceMobKind =
   | "pebbletortoise"
   | "brambleboar"
   | "petalfox"
+  | "emberbrush-fox"
+  | "moonpetal-fox"
   | "duneclatter"
   | "thimbledeer"
+  | "frostlace-hart"
+  | "reedcrown-deer"
   | "lanternshell"
   | "puddlehopper"
   | "reedstrider"
@@ -18,6 +22,7 @@ export type SurfaceMobKind =
   | "mirestride-courser"
   | "starbough-courser"
   | "meadow-cow"
+  | "sunbloom-longhorn"
   | "mistmane"
   | "sakurakit"
   | "sunwash-crab"
@@ -34,6 +39,7 @@ export type HearthroadsWildlifeKind = "burrowbell" | "dewback-tapir";
 export type HearthroadsAquaticKind = "redfin-salmon" | "blue-mackerel" | "deepwater-shark";
 export type TideglassAquaticKind =
   | "tideglass-crab"
+  | "reefglide-terrapin"
   | "glassfin"
   | "lanternjaw"
   | "abyss-skater"
@@ -42,6 +48,7 @@ export type TideglassAquaticKind =
   | "worldshell-leviathan"
   | "aetherbell-larva"
   | "aetherbell-leviathan";
+export type MosslingVariantKind = "boglantern-mossling" | "cindercone-mossling" | "moonbloom-mossling";
 export type SugarplumAquaticKind = "syrupfin";
 export type DragonKind = "fire-dragon" | "ice-dragon" | "steel-dragon" | "sea-dragon";
 export type HobbitKind =
@@ -97,6 +104,7 @@ export type SentientRole = "mayor" | "chieftain" | "farmer" | "worker" | "miner"
 export type SpecialMobKind = "peelop" | "reliquary-sentinel" | "skeleton" | "warg";
 export type CoreMobKind =
   | LegacyMobKind
+  | MosslingVariantKind
   | SurfaceMobKind
   | BirdKind
   | AquaticMobKind
@@ -355,6 +363,39 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     sentient: false, breedable: true, breedingFoods: [Item.Berry], diet: [Item.Berry, Item.Wheat],
     discoveryHint: "Look beneath rain-dark leaves in Bloomwood and Siltfen.",
   },
+  "boglantern-mossling": {
+    kind: "boglantern-mossling", name: "Boglantern Mossling", temperament: "Skittish", hostile: false,
+    health: 6, damage: 0, xp: 3, speed: 0.56, chaseSpeed: 1.72, turnRate: 7.2, attackRange: 0,
+    footOffset: 0.84, radius: 0.4, height: 0.76, habitat: "Siltfen pools, Mushroom Fen hummocks and Rainveil seep gardens", active: "Rain, dusk and humid daylight",
+    behavior: "Wades on splayed roots, freezes until its lantern cap resembles a fen fungus, then splashes into dense reeds.",
+    lore: "Its hollow cap keeps one firefly-bright spore alive through every flood, relighting the hummock when the water falls.",
+    colors: [0x365c49, 0x8fbf63, 0xe8ff8a],
+    drops: [{ item: Item.Fiber, min: 1, max: 2, chance: 0.86 }, { item: Item.GlowDust, min: 1, max: 1, chance: 0.18 }],
+    family: "surface", movement: "ground", sentient: false, breedable: true, breedingFoods: [Item.Berry], diet: [Item.Berry, Item.Wheat],
+    utility: "Its cap glows softly before rain.", discoveryHint: "Look for a low green lantern walking between Siltfen reed roots.",
+  },
+  "cindercone-mossling": {
+    kind: "cindercone-mossling", name: "Cindercone Mossling", temperament: "Skittish", hostile: false,
+    health: 8, damage: 1, xp: 4, speed: 0.48, chaseSpeed: 1.95, turnRate: 6.4, attackRange: 0.7,
+    footOffset: 0.82, radius: 0.38, height: 0.8, habitat: "Painted Badlands washes and the shaded feet of desert mesas", active: "Dawn, dusk and after rain",
+    behavior: "Locks its overlapping cone scales during heat, unroots after rare rain, and scatters ember-red seeds while fleeing.",
+    lore: "A Cindercone can wait a decade for one storm, then cross an entire wash before the ground dries.",
+    colors: [0x594236, 0xc36a3d, 0xffc15b],
+    drops: [{ item: Item.Fiber, min: 1, max: 2, chance: 0.7 }, { item: Item.Coal, min: 1, max: 1, chance: 0.22 }],
+    family: "surface", movement: "ground", sentient: false, breedable: true, breedingFoods: [Item.Sunroot], diet: [Item.Sunroot, Item.Wheat],
+    utility: "Scattered seeds briefly mark recent rain paths through badland washes.", discoveryHint: "Check shaded mesa feet after rain for walking pinecone silhouettes.",
+  },
+  "moonbloom-mossling": {
+    kind: "moonbloom-mossling", name: "Moonbloom Mossling", temperament: "Gentle", hostile: false,
+    health: 5, damage: 0, xp: 4, speed: 0.62, chaseSpeed: 1.78, turnRate: 7.8, attackRange: 0,
+    footOffset: 1, radius: 0.36, height: 1.02, habitat: "Glimmerwood Moonpetal rings and Starfern clearings", active: "Dusk and moonlit night",
+    behavior: "Walks on three fine root stilts, opens its translucent flower crown to moonlight, and folds into a bud when startled.",
+    lore: "Wood-elves say each Moonbloom carries a map of the last clear sky it saw, written in pale veins across its petals.",
+    colors: [0x314d58, 0x8b83d8, 0xd8fff0],
+    drops: [{ item: Item.Fiber, min: 1, max: 2, chance: 0.72 }, { item: Item.GlowDust, min: 1, max: 1, chance: 0.28 }],
+    family: "surface", movement: "ground", sentient: false, breedable: true, breedingFoods: [Item.Moonpetal], diet: [Item.Moonpetal, Item.StarfernFrond],
+    utility: "Its open crown indicates unobstructed moonlight.", discoveryHint: "Wait beside Moonpetals until a closed bud rises onto three roots.",
+  },
   ridgeback: {
     kind: "ridgeback", name: "Ridgeback", temperament: "Defensive", hostile: false,
     health: 10, damage: 2, xp: 3, speed: 0.52, chaseSpeed: 2.8, turnRate: 4.2, attackRange: 1.35,
@@ -476,6 +517,26 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     sentient: false, breedable: true, breedingFoods: [Item.Berry], diet: [Item.Berry, Item.Apple],
     discoveryHint: "Watch for drifting petals that move against the wind.",
   },
+  "emberbrush-fox": {
+    kind: "emberbrush-fox", name: "Emberbrush Fox", temperament: "Skittish", hostile: false,
+    health: 7, damage: 1, xp: 4, speed: 0.94, chaseSpeed: 3.35, turnRate: 8.4, attackRange: 0.72,
+    footOffset: 0.92, radius: 0.38, height: 0.74, habitat: "Sunstep grass, Painted Badlands washes and desert scrub", active: "Dawn and late afternoon",
+    behavior: "Listens for burrowers with enormous heat-shedding ears, vaults high over scrub, and shades its face beneath a split brush tail.",
+    lore: "Its black tail forks frame a red center like banked coals. Caravans take a distant flash as a promise of firm ground.",
+    colors: [0xc45a31, 0xf0ad55, 0x231b1c], drops: [{ item: Item.Fiber, min: 1, max: 1, chance: 0.28 }],
+    family: "surface", movement: "ground", sentient: false, breedable: true, breedingFoods: [Item.Sunroot], diet: [Item.Sunroot, Item.Berry],
+    utility: "Often pauses above burrows and other disturbed ground.", discoveryHint: "Watch shaded badland washes for two tall ears and a forked ember tail.",
+  },
+  "moonpetal-fox": {
+    kind: "moonpetal-fox", name: "Moonpetal Fox", temperament: "Gentle", hostile: false,
+    health: 8, damage: 1, xp: 5, speed: 0.74, chaseSpeed: 2.75, turnRate: 8.8, attackRange: 0.72,
+    footOffset: 0.95, radius: 0.42, height: 0.8, habitat: "Glimmerwood moonwells and luminous fern terraces", active: "Dusk and moonlit night",
+    behavior: "Steps quietly between glowing plants, fans two petal tails when curious, and disappears by folding both tails around its body.",
+    lore: "The pale eyes on its tails are not eyes, but they always seem to face the safest path home.",
+    colors: [0x46536f, 0xa68cda, 0xd9fff2], drops: [{ item: Item.Fiber, min: 1, max: 2, chance: 0.32 }, { item: Item.GlowDust, min: 1, max: 1, chance: 0.12 }],
+    family: "surface", movement: "ground", sentient: false, breedable: true, breedingFoods: [Item.Moonpetal], diet: [Item.Moonpetal, Item.StarfernFrond, Item.Berry],
+    utility: "Its tail eyes turn toward nearby Moonpetals and Starferns.", discoveryHint: "Look for paired crescent tails crossing Glimmerwood moonwell paths.",
+  },
   duneclatter: {
     kind: "duneclatter", name: "Duneclatter", temperament: "Defensive", hostile: false,
     health: 7, damage: 2, xp: 4, speed: 0.58, chaseSpeed: 1.92, turnRate: 6.2, attackRange: 1.05,
@@ -496,6 +557,26 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     family: "surface", movement: "ground", utility: "Occasionally carries a flower seed from one meadow patch to another.",
     sentient: false, breedable: true, breedingFoods: [Item.Apple], diet: [Item.Apple, Item.Berry, Item.Wheat],
     discoveryHint: "Search quiet Birchlight glades at the edge of flower meadows.",
+  },
+  "frostlace-hart": {
+    kind: "frostlace-hart", name: "Frostlace Hart", temperament: "Skittish", hostile: false,
+    health: 11, damage: 1, xp: 5, speed: 0.76, chaseSpeed: 3.2, turnRate: 6.2, attackRange: 0.9,
+    footOffset: 1.25, radius: 0.47, height: 1.46, habitat: "Frostpine openings, Snowfields and high Snowcap passes", active: "Clear winter morning and snowfall",
+    behavior: "Crosses powder on broad split snowshoes, combs ice from low branches with crystal antlers, and bounds downhill when alarmed.",
+    lore: "Every tine begins as frozen breath caught in winter velvet. The rack melts harmlessly when spring reaches the passes.",
+    colors: [0xc5d2d4, 0x7896a3, 0xeaffff], drops: [{ item: Item.Hide, min: 1, max: 2, chance: 0.52 }, { item: Item.CrystalShard, min: 1, max: 1, chance: 0.1 }],
+    family: "surface", movement: "ground", sentient: false, breedable: true, breedingFoods: [Item.Apple], diet: [Item.Apple, Item.Wheat],
+    utility: "Its broad trail marks snow that can support a traveler.", discoveryHint: "Follow paired snowshoe tracks between Frostpine openings.",
+  },
+  "reedcrown-deer": {
+    kind: "reedcrown-deer", name: "Reedcrown Deer", temperament: "Skittish", hostile: false,
+    health: 9, damage: 0, xp: 4, speed: 0.68, chaseSpeed: 2.85, turnRate: 7.3, attackRange: 0,
+    footOffset: 1.15, radius: 0.45, height: 1.34, habitat: "Siltfen reed islands, Rainveil floodplains and slow river margins", active: "Rain, dawn and overcast daylight",
+    behavior: "Places splayed hooves across soft mud, lowers its reed rack beneath branches, and vanishes sideways through watergrass.",
+    lore: "Mud and seed build a living crown around its antlers. A mature herd carries one wetland into the next.",
+    colors: [0x586b4c, 0xa58d58, 0xe6ed9a], drops: [{ item: Item.Hide, min: 1, max: 1, chance: 0.46 }, { item: Item.Fiber, min: 1, max: 2, chance: 0.56 }],
+    family: "surface", movement: "ground", sentient: false, breedable: true, breedingFoods: [Item.Berry], diet: [Item.Berry, Item.Wheat],
+    utility: "Carries reed and marsh-flower seed between floodplains.", discoveryHint: "Search reed islands for splayed tracks that never sink deeply into mud.",
   },
   lanternshell: {
     kind: "lanternshell", name: "Lanternshell", temperament: "Gentle", hostile: false,
@@ -607,6 +688,17 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     family: "surface", movement: "ground", utility: "Can be milked for Meadow Milk and bred with wheat.",
     sentient: false, breedable: true, breedingFoods: [Item.Wheat], diet: [Item.Wheat, Item.Apple], captureItem: Item.CaptureOrb,
     discoveryHint: "Listen for soft bells where meadow flowers give way to shade.",
+  },
+  "sunbloom-longhorn": {
+    kind: "sunbloom-longhorn", name: "Sunbloom Longhorn", temperament: "Gentle", hostile: false,
+    health: 16, damage: 2, xp: 5, speed: 0.43, chaseSpeed: 2.05, turnRate: 3.5, attackRange: 1.35,
+    footOffset: 1, radius: 0.76, height: 1.48, habitat: "Sunstep savanna waterholes and Painted Badlands grass washes", active: "Morning and late afternoon",
+    behavior: "Grazes in heat-spaced herds, turns its broad horns toward predators, and kneels beneath sparse shade at midday.",
+    lore: "Sunflowers root in the dust caught between its shoulders. A herd in bloom can be seen moving across the plain from miles away.",
+    colors: [0xa65f32, 0xe2b85e, 0x312018], drops: [{ item: Item.RawMeat, min: 1, max: 3, chance: 1 }, { item: Item.Hide, min: 1, max: 3, chance: 0.76 }],
+    family: "surface", movement: "ground", utility: "A hardy dry-country milk and hide animal.",
+    sentient: false, breedable: true, breedingFoods: [Item.Wheat], diet: [Item.Wheat, Item.Sunroot], captureItem: Item.CaptureOrb,
+    discoveryHint: "Look for sunflower-yellow backs gathering around savanna waterholes.",
   },
   mistmane: {
     kind: "mistmane", name: "Mistmane", temperament: "Gentle", hostile: false,
@@ -983,6 +1075,16 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     colors: [0x2d8190, 0x78ddd1, 0xc8fff2], drops: [{ item: Item.RawFish, min: 1, max: 1, chance: 0.35 }, { item: Item.GlowScale, min: 1, max: 1, chance: 0.12 }],
     family: "fish", movement: "aquatic", aquatic: true, captureItem: Item.CaptureOrb,
     utility: "A seafloor scavenger whose glow marks shallow reef shelves.", discoveryHint: "Look below kelp shadows for a moving turquoise star on the sand.",
+  },
+  "reefglide-terrapin": {
+    kind: "reefglide-terrapin", name: "Reefglide Terrapin", temperament: "Gentle", hostile: false,
+    health: 16, damage: 0, xp: 5, speed: 0.88, chaseSpeed: 2.2, turnRate: 6.4, attackRange: 0,
+    footOffset: 0, radius: 0.68, height: 0.42, habitat: "Tidelight Shelf lagoons, seagrass beds and warm reef arches", active: "Daylight underwater",
+    behavior: "Rows with long front flippers, grazes seagrass, and wedges its low coral shell beneath reef arches to sleep.",
+    lore: "Each shell garden grows from fragments collected along a decades-long circuit of the coast.",
+    colors: [0x397d75, 0xd48f72, 0xbff8dc], drops: [{ item: Item.RawFish, min: 1, max: 2, chance: 0.46 }, { item: Item.CrystalShard, min: 1, max: 1, chance: 0.08 }],
+    family: "fish", movement: "aquatic", aquatic: true, sentient: false, breedable: true, breedingFoods: [Item.Berry], diet: [Item.Berry, Item.Wheat], captureItem: Item.CaptureOrb,
+    utility: "Its grazing keeps shallow seagrass paths open.", discoveryHint: "Search beneath warm reef arches for a moving coral mosaic.",
   },
   "tidewing-gull": {
     kind: "tidewing-gull", name: "Tidewing Gull", temperament: "Skittish", hostile: false,
@@ -1457,10 +1559,11 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
 
 export const BUTTERFLY_ORDER: ButterflyKind[] = ["meadowwing", "azure-skippers", "embertip", "frostveil", "bloom-monarch", "fen-lantern", "bonbonwing", "moonveil-wing"];
 export const LEGACY_MOB_ORDER: LegacyMobKind[] = ["mossling", "ridgeback", "woolhorn", "glowmoth", "shadecrawler", "caveblob", "rattlekin", "zombie"];
+export const MOSSLING_VARIANT_ORDER: MosslingVariantKind[] = ["boglantern-mossling", "cindercone-mossling", "moonbloom-mossling"];
 export const SURFACE_MOB_ORDER: SurfaceMobKind[] = [
-  "sunstep-grazer", "pebbletortoise", "brambleboar", "petalfox", "duneclatter",
-  "thimbledeer", "lanternshell", "puddlehopper", "reedstrider", "wild-horse", "rimehoof-courser", "sunscar-courser",
-  "mirestride-courser", "starbough-courser", "meadow-cow", "mistmane", "sakurakit", "sunwash-crab",
+  "sunstep-grazer", "pebbletortoise", "brambleboar", "petalfox", "emberbrush-fox", "moonpetal-fox", "duneclatter",
+  "thimbledeer", "frostlace-hart", "reedcrown-deer", "lanternshell", "puddlehopper", "reedstrider", "wild-horse", "rimehoof-courser", "sunscar-courser",
+  "mirestride-courser", "starbough-courser", "meadow-cow", "sunbloom-longhorn", "mistmane", "sakurakit", "sunwash-crab",
   "taffy-hound", "praline-cat", "rimecoat-hound", "bramblewhisk-cat", "sprinklebug", "taffalo",
 ];
 export const BIRD_ORDER: BirdKind[] = ["emberjay", "canopy-lark", "tidewing-gull", "frostquill"];
@@ -1469,7 +1572,7 @@ export const POLLINATOR_ORDER: PollinatorKind[] = ["honeybee", "hive-queen", "re
 export const HEARTHROADS_WILDLIFE_ORDER: HearthroadsWildlifeKind[] = ["burrowbell", "dewback-tapir"];
 export const HEARTHROADS_AQUATIC_ORDER: HearthroadsAquaticKind[] = ["redfin-salmon", "blue-mackerel", "deepwater-shark"];
 export const TIDEGLASS_AQUATIC_ORDER: TideglassAquaticKind[] = [
-  "tideglass-crab", "glassfin", "lanternjaw", "abyss-skater", "dreadcoil", "tidepup", "worldshell-leviathan", "aetherbell-larva", "aetherbell-leviathan",
+  "tideglass-crab", "reefglide-terrapin", "glassfin", "lanternjaw", "abyss-skater", "dreadcoil", "tidepup", "worldshell-leviathan", "aetherbell-larva", "aetherbell-leviathan",
 ];
 export const SUGARPLUM_AQUATIC_ORDER: SugarplumAquaticKind[] = ["syrupfin"];
 export const DRAGON_ORDER: DragonKind[] = ["fire-dragon", "ice-dragon", "steel-dragon", "sea-dragon"];
@@ -1491,6 +1594,7 @@ export const SENTIENT_MOB_ORDER: SentientMobKind[] = [...HOBBIT_ORDER, ...GOBLIN
 export const SPECIAL_MOB_ORDER: SpecialMobKind[] = ["peelop", "reliquary-sentinel", "skeleton", "warg"];
 export const CORE_MOB_ORDER: CoreMobKind[] = [
   ...LEGACY_MOB_ORDER,
+  ...MOSSLING_VARIANT_ORDER,
   ...SURFACE_MOB_ORDER,
   ...BIRD_ORDER,
   ...AQUATIC_MOB_ORDER,

@@ -41,7 +41,7 @@ import {
 } from "./world";
 import { BUTTERFLY_ORDER, MOB_DEFS, MOB_ORDER, type BirdKind, type ButterflyKind, type CoreMobKind, type MobDefinition, type MobKind } from "./mobs";
 import { createHeldToolSpec } from "./model-specs";
-import { applyCompanionPose, applyDragonPose, applyOceanCreaturePose, createMobVisual, createSentientLodVisual } from "./mob-models";
+import { applyCompanionPose, applyDragonPose, applyOceanCreaturePose, applyWildlifePose, createMobVisual, createSentientLodVisual } from "./mob-models";
 import {
   DRAGON_RIDER_CONTROLS,
   attachDragonChest,
@@ -1769,7 +1769,12 @@ export function apiaryPhaseForWorldTime(worldTime: number): ApiaryPhase {
   return "night";
 }
 
-const HERD_MOB_KINDS = new Set<MobKind>(["ridgeback", "woolhorn", "sunstep-grazer", "wild-horse", "rimehoof-courser", "sunscar-courser", "mirestride-courser", "starbough-courser", "meadow-cow", "mistmane", "taffalo"]);
+const HERD_MOB_KINDS = new Set<MobKind>([
+  "ridgeback", "woolhorn", "sunstep-grazer", "thimbledeer", "frostlace-hart", "reedcrown-deer",
+  "wild-horse", "rimehoof-courser", "sunscar-courser", "mirestride-courser", "starbough-courser",
+  "meadow-cow", "sunbloom-longhorn", "mistmane", "taffalo",
+]);
+const MILKABLE_MOB_KINDS = new Set<MobKind>(["meadow-cow", "sunbloom-longhorn"]);
 
 export function socialGroupModeForMob(kind: MobKind): SocialGroupMode | null {
   if (HERD_MOB_KINDS.has(kind)) return "herd";
@@ -6860,7 +6865,7 @@ export class VoxelEngine {
         ...(mob.apiaryBee ? { apiaryBee: mob.apiaryBee } : {}),
         ...(mob.socialGroupId ? { socialGroupId: mob.socialGroupId } : {}),
         ...(mob.peelopShedding ? { peelopShedding: mob.peelopShedding } : {}),
-        ...(mob.kind === "meadow-cow" && mob.milkCooldown > 0 ? { milkCooldown: mob.milkCooldown } : {}),
+        ...(MILKABLE_MOB_KINDS.has(mob.kind) && mob.milkCooldown > 0 ? { milkCooldown: mob.milkCooldown } : {}),
         ...(mob.followCommand !== "follow" ? { followCommand: mob.followCommand } : {}),
         ...(mob.hiredByPlayerId ? { hiredByPlayerId: mob.hiredByPlayerId } : {}),
         ...(mob.attunedOrbId ? { attunedOrbId: mob.attunedOrbId } : {}),
@@ -6927,7 +6932,7 @@ export class VoxelEngine {
       apiaryBee: metadata.custom.apiaryBee ? metadata.custom.apiaryBee as unknown as ApiaryBee : null,
       socialGroupId: typeof metadata.custom.socialGroupId === "string" ? metadata.custom.socialGroupId : null,
       peelopShedding: metadata.custom.peelopShedding ? metadata.custom.peelopShedding as unknown as PeelopSheddingState : null,
-      milkCooldown: metadata.kind === "meadow-cow" ? Math.max(0, Number(metadata.custom.milkCooldown) || 0) : 0,
+      milkCooldown: MILKABLE_MOB_KINDS.has(metadata.kind) ? Math.max(0, Number(metadata.custom.milkCooldown) || 0) : 0,
       persistentPoiResident: Boolean(metadata.custom.persistentPoiResident),
       enclosed: Boolean(metadata.custom.enclosed),
       followCommand: metadata.custom.followCommand === "hold" ? "hold" : "follow",
@@ -7751,11 +7756,11 @@ export class VoxelEngine {
       this.events.onToast(state.stage === 1 ? "Offer meat patiently to earn the hatchling's trust." : `${dragon.name} guards this territory and its eggs.`);
       return;
     }
-    if (this.targetMob?.kind === "meadow-cow" && heldSlot?.item === Item.Bucket) {
+    if (this.targetMob && MILKABLE_MOB_KINDS.has(this.targetMob.kind) && heldSlot?.item === Item.Bucket) {
       const cloverback = this.targetMob;
       const remaining = Math.max(0, cloverback.milkCooldown ?? 0);
       if (remaining > 0) {
-        this.events.onToast(`This Cloverback needs another ${Math.ceil(remaining)} seconds before it can be milked again.`);
+        this.events.onToast(`This ${MOB_DEFS[cloverback.kind].name} needs another ${Math.ceil(remaining)} seconds before it can be milked again.`);
         this.placeCooldown = 0.22;
         return;
       }
@@ -11731,7 +11736,7 @@ export class VoxelEngine {
       birdState: definition.family === "bird" ? createBirdBehavior(kind as Parameters<typeof createBirdBehavior>[0], id * 0.71) : null,
       petState, careState, shadeState, reedstriderBond, courserBond, leviathanGrowth, aetherbellMorph, apiaryBee, beeHiveKey: options.beeHiveKey ?? null,
       socialGroupId, peelopShedding,
-      milkCooldown: kind === "meadow-cow" ? clamp(Number(options.milkCooldown) || 0, 0, CLOVERBACK_MILK_COOLDOWN_SECONDS) : 0,
+      milkCooldown: MILKABLE_MOB_KINDS.has(kind) ? clamp(Number(options.milkCooldown) || 0, 0, CLOVERBACK_MILK_COOLDOWN_SECONDS) : 0,
       shadeSaddle: visual.getObjectByName("shadecrawler-saddle") ?? null, visualBaseY, visualMinY,
       persistentPoiResident: options.persistentPoiResident ?? Boolean(definition.persistent),
       poiMarkerId: options.poiMarkerId ?? null,
@@ -12187,6 +12192,7 @@ export class VoxelEngine {
     } else this.applyMobScale(mob, baseScale * hurtPulse);
     applyOceanCreaturePose(mob.visual, mob.kind as CoreMobKind, mob.age, Math.min(1, moved * 4), mob.aetherbellMorph?.airProgress ?? 0);
     applyCompanionPose(mob.visual, mob.kind as CoreMobKind, mob.age, Math.min(1, moved * 4), mob.state === "chase" || mob.state === "flee" ? 1 : 0);
+    applyWildlifePose(mob.visual, mob.kind as CoreMobKind, mob.age, Math.min(1, moved * 4), mob.state === "chase" || mob.state === "flee" || mob.state === "windup" ? 1 : 0);
   }
 
   updateBeeMob(mob: MobEntity, dt: number, distance: number, dx: number, dz: number) {
@@ -15416,7 +15422,7 @@ export class VoxelEngine {
         ...(mob.apiaryBee ? { apiaryBee: { ...mob.apiaryBee } } : {}),
         ...(mob.socialGroupId ? { socialGroupId: mob.socialGroupId } : {}),
         ...(mob.peelopShedding ? { peelopShedding: { ...mob.peelopShedding } } : {}),
-        ...(mob.kind === "meadow-cow" && mob.milkCooldown > 0 ? { milkCooldown: mob.milkCooldown } : {}),
+        ...(MILKABLE_MOB_KINDS.has(mob.kind) && mob.milkCooldown > 0 ? { milkCooldown: mob.milkCooldown } : {}),
         ...(mob.factionId ? { factionId: mob.factionId } : {}),
         ...(mob.profession ? { profession: mob.profession } : {}),
         ...(mob.settlementId ? { settlementId: mob.settlementId } : {}),
