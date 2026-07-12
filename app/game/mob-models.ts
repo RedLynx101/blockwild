@@ -851,9 +851,18 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       add(visual, [0.62, 0.07, 0.46], material(0x718454), [0, 0.38, 0.12], undefined, `${prefix}-marsh-saddle`).rotation.y = Math.PI / 4;
     } else {
       for (const side of [-1, 1]) {
-        const post = add(head, [0.09, 0.38, 0.09], antler, [side * 0.14, 0.38, 0.02], undefined, `${prefix}-${side < 0 ? "left" : "right"}-antler-post`);
+        const sideName = side < 0 ? "left" : "right";
+        const crown = childPivot(head, `${prefix}-${sideName}-antler-crown`, [side * 0.13, 0.18, 0.02]);
+        add(crown, [0.16, 0.12, 0.16], antler, [0, 0.03, 0], undefined, `${prefix}-${sideName}-antler-root`);
+        const post = add(crown, [0.1, 0.34, 0.1], antler, [0, 0.22, 0], undefined, `${prefix}-${sideName}-antler-post`);
         post.rotation.z = side * -0.08;
-        for (let cap = 0; cap < 2; cap += 1) add(head, [0.2 + cap * 0.03, 0.09, 0.18], antler, [side * (0.14 + cap * 0.09), 0.52 + cap * 0.16, 0.02], undefined, `${prefix}-${side < 0 ? "left" : "right"}-thimble-${cap + 1}`).rotation.y = Math.PI / 4;
+        const branch = add(crown, [0.3, 0.085, 0.1], antler, [side * 0.11, 0.36, 0], undefined, `${prefix}-${sideName}-antler-branch`);
+        branch.rotation.z = side * 0.18;
+        for (const [cap, x, y, scale] of [[1, 0, 0.47, 1], [2, side * 0.25, 0.37, 0.9]] as Array<[number, number, number, number]>) {
+          add(crown, [0.075, 0.14, 0.075], antler, [x, y - 0.05, 0], undefined, `${prefix}-${sideName}-thimble-${cap}-stem`);
+          add(crown, [0.18 * scale, 0.13, 0.16 * scale], antler, [x, y + 0.045, 0], undefined, `${prefix}-${sideName}-thimble-${cap}-cup`).rotation.y = Math.PI / 4;
+          add(crown, [0.22 * scale, 0.045, 0.19 * scale], cream, [x, y + 0.12, 0], undefined, `${prefix}-${sideName}-thimble-${cap}-rim`).rotation.y = Math.PI / 4;
+        }
       }
       for (let seed = 0; seed < 4; seed += 1) add(visual, [0.06, 0.06, 0.06], cream, [(seed % 2 ? 1 : -1) * 0.31, 0.33, -0.16 + seed * 0.22], undefined, `${prefix}-seed-spot-${seed + 1}`).rotation.y = Math.PI / 4;
     }

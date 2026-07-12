@@ -8,9 +8,9 @@ export const FAST_TRAVEL_CHANNEL_SECONDS = 5;
 export const FAST_TRAVEL_STILL_RADIUS = 0.12;
 export const WAYSHRINE_USE_RADIUS = 3.5;
 export const MAP_VIEW_SCHEMA = 1 as const;
-export const MIN_MAP_ZOOM = 1;
+export const MIN_MAP_ZOOM = 0.5;
 export const MAX_MAP_ZOOM = 12;
-export const ABSOLUTE_MIN_MAP_ZOOM = 0.2;
+export const ABSOLUTE_MIN_MAP_ZOOM = 0.1;
 export const MAX_MAP_PAN_CHUNKS = 1_048_576;
 
 export type WorldPoint = Readonly<{ x: number; y: number; z: number }>;
@@ -243,6 +243,7 @@ function normalizedZoomLimits(limits: MapZoomLimits = {}) {
 export function normalizeMapViewState(value: unknown, limits: MapZoomLimits = {}): MapViewState {
   if (!value || typeof value !== "object") return createMapViewState();
   const input = value as Partial<MapViewState>;
+  if (input.schema !== MAP_VIEW_SCHEMA) return createMapViewState();
   const resolved = normalizedZoomLimits(limits);
   return {
     schema: MAP_VIEW_SCHEMA,

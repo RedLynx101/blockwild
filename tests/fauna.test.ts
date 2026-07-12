@@ -348,6 +348,27 @@ test("redesigned wildlife and biome variants keep distinct anatomy, gait rigs, a
   }
 });
 
+test("Thimbledeer antlers form attached crown-to-post-to-cup chains", () => {
+  const model = createMobVisual("thimbledeer", 138);
+  model.visual.updateWorldMatrix(true, true);
+  for (const side of ["left", "right"] as const) {
+    const crown = model.visual.getObjectByName(`thimbledeer-${side}-antler-crown`)!;
+    const root = model.visual.getObjectByName(`thimbledeer-${side}-antler-root`)!;
+    const post = model.visual.getObjectByName(`thimbledeer-${side}-antler-post`)!;
+    const branch = model.visual.getObjectByName(`thimbledeer-${side}-antler-branch`)!;
+    const firstStem = model.visual.getObjectByName(`thimbledeer-${side}-thimble-1-stem`)!;
+    const secondStem = model.visual.getObjectByName(`thimbledeer-${side}-thimble-2-stem`)!;
+    const firstCup = model.visual.getObjectByName(`thimbledeer-${side}-thimble-1-cup`)!;
+    assert.equal(root.parent, crown);
+    assert.equal(post.parent, crown);
+    assert.equal(branch.parent, crown);
+    assert.ok(new THREE.Box3().setFromObject(root).intersectsBox(new THREE.Box3().setFromObject(post)), `${side} root must meet its post`);
+    assert.ok(new THREE.Box3().setFromObject(post).intersectsBox(new THREE.Box3().setFromObject(firstStem)), `${side} post must meet the inner cup stem`);
+    assert.ok(new THREE.Box3().setFromObject(branch).intersectsBox(new THREE.Box3().setFromObject(secondStem)), `${side} branch must meet the outer cup stem`);
+    assert.ok(new THREE.Box3().setFromObject(firstStem).intersectsBox(new THREE.Box3().setFromObject(firstCup)), `${side} cup must sit on its stem`);
+  }
+});
+
 test("every rabbit ear is physically bridged to its crown in production models and portraits", () => {
   for (const kind of RABBIT_ORDER) {
     const model = createMobVisual(kind, 73);

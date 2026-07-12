@@ -48,6 +48,8 @@ export type SampleKind =
   | "wind"
   | "snowStep"
   | "dirtStep"
+  | "grassStep"
+  | "blockHit"
   | "winterWind"
   | "caveAmbience"
   | "waterSplash"
@@ -215,6 +217,8 @@ export const SAMPLE_ASSETS: Record<SampleKind, { source: string; gain: number }>
   wind: { source: "/sfx/ambient-wind.wav", gain: 0.17 },
   snowStep: { source: "/sfx/step-snow.wav", gain: 0.56 },
   dirtStep: { source: "/sfx/step-dirt.wav", gain: 0.5 },
+  grassStep: { source: "/sfx/step-grass-soft.wav", gain: 0.36 },
+  blockHit: { source: "/sfx/block-hit-default.wav", gain: 0.48 },
   winterWind: { source: "/sfx/ambient-winter-wind.wav", gain: 0.24 },
   caveAmbience: { source: "/sfx/ambient-cave.wav", gain: 0.2 },
   waterSplash: { source: "/sfx/water-splash.wav", gain: 0.7 },
@@ -747,13 +751,17 @@ export class SynthAudio {
     const stoneLike = definition?.preferredTool === "pickaxe";
     const woodLike = definition?.preferredTool === "axe";
     const sandLike = material === BlockId.Sand || material === BlockId.RedSand || material === BlockId.SunbakedClay;
+    const grassLike = [BlockId.Grass, BlockId.MeadowGrass, BlockId.SavannaGrass, BlockId.SwampGrass, BlockId.JungleGrass,
+      BlockId.SakuraGrass, BlockId.SugarplumGrass, BlockId.GlimmerGrass, BlockId.CloudreedGrass].includes(material);
     const softLike = material === BlockId.Grass || material === BlockId.Dirt || material === BlockId.MeadowGrass
-      || material === BlockId.TallGrass || definition?.shape === "cross";
+      || material === BlockId.TallGrass || material === BlockId.DoubleTallGrassLower || material === BlockId.DoubleTallGrassUpper || definition?.shape === "cross";
     const base = stoneLike ? 1240 : woodLike ? 680 : 400;
     if (kind === "step") {
       if (material === BlockId.Snow || material === BlockId.SnowyGrass) {
         this.playSample("snowStep", { gain: 0.78, playbackRate: 0.96 + Math.random() * 0.08 });
-      } else if (material === BlockId.Dirt || material === BlockId.Grass || material === BlockId.MeadowGrass) {
+      } else if (grassLike) {
+        this.playSample("grassStep", { gain: 0.55, playbackRate: 0.96 + Math.random() * 0.08 });
+      } else if (material === BlockId.Dirt) {
         this.playSample("dirtStep", { gain: 0.72, playbackRate: 0.95 + Math.random() * 0.1 });
       } else if (sandLike) {
         this.noiseBurst(0.082, 520, 0.046);
@@ -770,9 +778,11 @@ export class SynthAudio {
       }
     }
     else if (kind === "mine") {
+      this.playSample("blockHit", { gain: stoneLike ? 0.44 : woodLike ? 0.62 : 0.52, playbackRate: stoneLike ? 1.15 : woodLike ? 0.96 : 1.04 });
       this.noiseBurst(0.075, base, 0.085, stoneLike);
       this.tone(stoneLike ? 105 : 82, 0.045, 0.025, "sine");
     } else if (kind === "break") {
+      this.playSample("blockHit", { gain: 0.66, playbackRate: stoneLike ? 1.08 : woodLike ? 0.92 : 1 });
       for (let index = 0; index < 4; index += 1) this.noiseBurst(0.07, base * (0.8 + index * 0.12), 0.1, stoneLike, index * 0.026);
       this.tone(95, 0.11, 0.045, "sine", 0, 55);
     } else if (kind === "place") {

@@ -87,6 +87,8 @@ test("v1.3 spatial, environment, movement, creature, magic, and interface sounds
     ["ambient-ocean-soft.wav", 610_000],
     ["creature-scary-grumble.wav", 780_000],
     ["humanoid-sigh.wav", 380_000],
+    ["step-grass-soft.wav", 380_000],
+    ["block-hit-default.wav", 380_000],
   ];
   for (const [name, minimumBytes] of supplied) {
     const path = resolve("public", "sfx", name);

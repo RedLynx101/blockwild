@@ -205,6 +205,9 @@ export enum BlockId {
   ArgentDragonstone = 196,
   GoldDragonEggBlock = 197,
   SilverDragonEggBlock = 198,
+  /** Connected two-block meadow grass introduced in v1.3.8. */
+  DoubleTallGrassLower = 199,
+  DoubleTallGrassUpper = 200,
   /** v0.9 Dragonwake lair materials, eggs, treasure and archive stations. */
   CharredDragonstone = 217,
   RimeDragonstone = 218,
@@ -621,7 +624,7 @@ export type BlockDefinition = {
   /** The block occupies a water source cell; breaking it restores the water. */
   waterlogged?: boolean;
   /** Adjacent stems in this group overlap slightly so stacked flora reads as one plant. */
-  verticalConnectGroup?: "aquatic-flora" | "cultivated-flower" | "wild-peppermint";
+  verticalConnectGroup?: "aquatic-flora" | "cultivated-flower" | "wild-peppermint" | "double-tall-grass";
   /** Partial-height collision used by connected fences and similar blocks. */
   collisionHeight?: number;
   /** Blocks in the same group visually connect across horizontal faces. */
@@ -905,6 +908,8 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.ArgentDragonstone]: block(BlockId.ArgentDragonstone, "Argent Dragonstone", 155, 155, 155, 5.2, "#8293aa", "pickaxe", 4, { layer: "emissive" }),
   [BlockId.GoldDragonEggBlock]: block(BlockId.GoldDragonEggBlock, "Gold Dragon Egg", 156, 156, 156, 2.25, "#f0bd38", "pickaxe", 3, { solid: false, layer: "emissive", shape: "dragon-egg" }),
   [BlockId.SilverDragonEggBlock]: block(BlockId.SilverDragonEggBlock, "Silver Dragon Egg", 157, 157, 157, 2.25, "#c7d6e8", "pickaxe", 3, { solid: false, layer: "emissive", shape: "dragon-egg" }),
+  [BlockId.DoubleTallGrassLower]: block(BlockId.DoubleTallGrassLower, "Tall Meadow Grass", 158, 158, 158, 0.05, "#5f9e3f", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true, verticalConnectGroup: "double-tall-grass" }),
+  [BlockId.DoubleTallGrassUpper]: block(BlockId.DoubleTallGrassUpper, "Tall Meadow Grass", 159, 159, 159, 0.05, "#79b54f", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true, verticalConnectGroup: "double-tall-grass" }),
   [BlockId.CharredDragonstone]: block(BlockId.CharredDragonstone, "Charred Dragonstone", 43, 43, 43, 3.8, "#443238", "pickaxe", 3),
   [BlockId.RimeDragonstone]: block(BlockId.RimeDragonstone, "Rime Dragonstone", 41, 41, 41, 3.8, "#9cc7dc", "pickaxe", 3),
   [BlockId.RivetedDragonstone]: block(BlockId.RivetedDragonstone, "Riveted Dragonstone", 35, 35, 35, 4.25, "#68747c", "pickaxe", 3),

@@ -453,6 +453,7 @@ export function MapPanel({
   const [markerName, setMarkerName] = useState("");
   const [renameValue, setRenameValue] = useState("");
   const [hoveredChunk, setHoveredChunk] = useState<Readonly<{ key: string; biome: string }> | null>(null);
+  const [detailedTerrain, setDetailedTerrain] = useState(true);
   const [localViewState, setLocalViewState] = useState(createMapViewState);
   const [dragState, setDragState] = useState<Readonly<{
     pointerId: number;
@@ -561,6 +562,15 @@ export function MapPanel({
             onPointerCancel={finishMapDrag}
             onWheel={handleMapWheel}
           >
+            <button
+              type="button"
+              className={`hearthroads-map-detail-toggle${detailedTerrain ? " active" : ""}`}
+              aria-pressed={detailedTerrain}
+              onClick={() => setDetailedTerrain((current) => !current)}
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <b>Detailed terrain</b><small>{detailedTerrain ? "ON" : "OFF"}</small>
+            </button>
             <div className="hearthroads-map-controls" aria-label="Map view controls" onPointerDown={(event) => event.stopPropagation()}>
               <button type="button" onClick={() => updateViewState(panMapView(activeViewState, 0, -panStepZ, zoomLimits))} aria-label="Pan map north">↑</button>
               <button type="button" onClick={() => updateViewState(panMapView(activeViewState, -panStepX, 0, zoomLimits))} aria-label="Pan map west">←</button>
@@ -582,7 +592,7 @@ export function MapPanel({
               {explored.map((chunk) => {
                 const key = `${chunk.x},${chunk.z}`;
                 const palette = mapTerrainPalette(knowledge.terrainByChunk?.[key]);
-                const surface = activeViewState.zoom >= 3.4 ? knowledge.surfaceByChunk?.[key] : null;
+                const surface = detailedTerrain ? knowledge.surfaceByChunk?.[key] : null;
                 return (
                   <g
                     key={key}

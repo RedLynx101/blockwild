@@ -328,6 +328,8 @@ const GENERATED_GROWTH_BLOCK_SET = new Set<BlockId>([
   BlockId.Cactus,
   BlockId.MushroomCap,
   BlockId.TallGrass,
+  BlockId.DoubleTallGrassLower,
+  BlockId.DoubleTallGrassUpper,
   BlockId.RedFlower,
   BlockId.BlueFlower,
   BlockId.WheatCrop,
@@ -558,6 +560,8 @@ const TILE_COLORS = [
   "#315f4d", "#263f38", "#b58c62", "#397f86", "#765268",
   // 154-157: mythic dragonstone and metallic eggs.
   "#6f4b17", "#4d5d73", "#d49b1f", "#aabdd2",
+  // 158-159: connected lower and upper halves of tall meadow grass.
+  "#5f9e3f", "#79b54f",
 ];
 
 export const MEADOW_GRASS_PALETTE = Object.freeze({
@@ -836,7 +840,7 @@ export function createBlockAtlas() {
   const logSideTiles = new Set([5, 18, 21, 32, 104, 109, 132]);
   const logTopTiles = new Set([6, 19, 22, 33, 105, 110, 133]);
   const crossTiles = new Set([39, 53, 54, 55, 56, 59, 66, 67, 68, 69, 73, 74, 75, 76, 77, 78, 79, 81, 82, 83,
-    100, 101, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 138, 139, 140, 141, 142]);
+    100, 101, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 138, 139, 140, 141, 142, 158, 159]);
   for (let index = 0; index < grid * grid; index += 1) {
     const base = TILE_COLORS[index] ?? "#777777";
     const ox = (index % grid) * tile;
@@ -966,6 +970,24 @@ export function createBlockAtlas() {
           for (let step = 0; step < height; step += 1) pixel(index, x + Math.round(lean * step / height), 15 - step, step % 2 ? "#7ea04c" : "#a5ad4d");
           if (index === 83) { pixel(index, x - 1, 5, "#c0a848"); pixel(index, x + 1, 6, "#d0ba54"); }
         }
+      } else if (index === 158) {
+        // Every lower blade reaches the tile's top edge at the same x position
+        // where the upper tile begins, avoiding the old floating-half seam.
+        for (const x of [4, 7, 10, 12]) for (let y = 0; y < 16; y += 1) {
+          pixel(index, x, y, (x + y) % 3 ? "#5f9e3f" : "#88bf58");
+          if (y > 5 && (x + y) % 5 === 0) pixel(index, Math.max(0, x - 1), y, "#74ad49");
+        }
+        for (const [x, y] of [[3, 8], [5, 5], [6, 11], [8, 7], [9, 4], [11, 10], [13, 6]] as Array<[number, number]>) pixel(index, x, y, "#74ad49");
+      } else if (index === 159) {
+        for (const [startX, lean, height] of [[4, -2, 14], [7, -1, 12], [10, 1, 15], [12, 2, 11]] as Array<[number, number, number]>) {
+          for (let step = 0; step < height; step += 1) {
+            const y = 15 - step;
+            const x = startX + Math.round(lean * step / Math.max(1, height - 1));
+            pixel(index, x, y, step % 3 ? "#68a846" : "#93c85e");
+            if (step > 4 && step % 3 === 0) pixel(index, Math.max(0, Math.min(15, x + Math.sign(lean || 1))), y + 1, "#7db651");
+          }
+        }
+        for (const [x, y] of [[2, 4], [4, 2], [6, 7], [8, 4], [11, 2], [13, 6], [14, 3]] as Array<[number, number]>) pixel(index, x, y, "#91c85d");
       } else if (index === 53) {
         for (const [x, lean, height] of [[4, -1, 8], [7, 0, 12], [10, 1, 10], [12, 0, 6]] as Array<[number, number, number]>) {
           for (let step = 0; step < height; step += 1) pixel(index, x + Math.round((lean * step) / height), 15 - step, step % 3 ? "#65a844" : "#86bd58");
@@ -2146,6 +2168,11 @@ export class ChunkWorld {
             if (chunk.blocks[blockIndex(lx, column.height + dy, lz)] !== BlockId.Air) break;
             set(x, column.height + dy, z, plant);
           }
+        } else if (plant === BlockId.TallGrass
+          && hash2(x, z, this.seed ^ 0x13813813) > 0.82
+          && chunk.blocks[blockIndex(lx, column.height + 2, lz)] === BlockId.Air) {
+          set(x, column.height + 1, z, BlockId.DoubleTallGrassLower);
+          set(x, column.height + 2, z, BlockId.DoubleTallGrassUpper);
         } else set(x, column.height + 1, z, plant);
       } else if (column.biome === BiomeId.MushroomFen && roll > 0.9) {
         set(x, column.height + 1, z, BlockId.MushroomCap);

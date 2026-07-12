@@ -14,6 +14,7 @@ import {
   toolEffectivenessForIds,
 } from "./breaking-visuals";
 import { plantInteractionBounds, rayDistanceToInteractionBounds } from "./block-hitboxes";
+import { isDoubleTallGrass, planDoubleTallGrassRemoval } from "./tall-grass";
 import { SHIELD_PROFILES, resolveShieldHit, shouldRaiseOffhandShield, type ShieldKind } from "./shields";
 import {
   BLOCKS,
@@ -1288,6 +1289,8 @@ const CRAFT_POSITIONS_2 = [0, 1, 3, 4];
 const MAIN_THEN_HOTBAR = [...Array.from({ length: 27 }, (_, index) => index + 9), ...Array.from({ length: 9 }, (_, index) => index)];
 export const COMBAT_MUSIC_HOLD_SECONDS = 22.5;
 export const DEFAULT_UNARMED_DAMAGE = 1;
+/** Navigation and other motion-sensitive HUD elements render at roughly 29 Hz. */
+export const HUD_VISUAL_REFRESH_MS = 35;
 // Hearthroads trims the already-reduced night pressure by another 40% while
 // keeping encounters meaningful near genuine darkness.
 export const HOSTILE_SPAWN_ATTEMPT_SCALE = 2.5;
@@ -11161,7 +11164,10 @@ export class VoxelEngine {
       const peppermintColumn = type === BlockId.PeppermintTuft
         ? planPeppermintColumnRemoval({ x, y, z }, (bx, by, bz) => this.world.getBlock(bx, by, bz))
         : [];
-      brokenEdits = aquaticColumn.length ? aquaticColumn : peppermintColumn.length ? peppermintColumn : [{ x, y, z, type: isWaterloggedFloraBlock(type) ? BlockId.Water : BlockId.Air }];
+      const tallGrassPair = isDoubleTallGrass(type)
+        ? planDoubleTallGrassRemoval(type, { x, y, z }, (bx, by, bz) => this.world.getBlock(bx, by, bz))
+        : [];
+      brokenEdits = aquaticColumn.length ? aquaticColumn : peppermintColumn.length ? peppermintColumn : tallGrassPair.length ? tallGrassPair : [{ x, y, z, type: isWaterloggedFloraBlock(type) ? BlockId.Water : BlockId.Air }];
       if (brokenEdits.length > 1) this.world.setBlocksBatch(brokenEdits, true, true);
       else this.world.setBlock(x, y, z, brokenEdits[0].type, true, true);
     }
@@ -11313,7 +11319,7 @@ export class VoxelEngine {
         : type === BlockId.SakuraLeaves ? Item.SakurabloomSapling
           : type === BlockId.CandywoodLeaves ? Item.CandywoodSaplingItem : BlockId.WildwoodSapling;
       drops = [...this.randomDrop(Item.Stick, 1, 2, 0.22), ...this.randomDrop(sapling, 1, 1, 0.055), ...this.randomDrop(Item.Apple, 1, 1, 0.06)];
-    } else if (type === BlockId.TallGrass) {
+    } else if (type === BlockId.TallGrass || isDoubleTallGrass(type)) {
       drops = this.randomDrop(Item.Fiber, 1, 1, 0.35);
     } else if (type === BlockId.Gravel) drops = Math.random() < 0.16 ? [[Item.Flint, 1]] : [[BlockId.Gravel, 1]];
     else if (type === BlockId.WheatSprout || type === BlockId.WheatYoung) drops = [[Item.WheatSeeds, 1]];
@@ -17811,7 +17817,7 @@ export class VoxelEngine {
   }
 
   emitHud(force = false, now = performance.now()) {
-    if (!force && now - this.lastHudTime < 140) return;
+    if (!force && now - this.lastHudTime < HUD_VISUAL_REFRESH_MS) return;
     this.lastHudTime = now;
     this.updateCraftResult();
     const totalMinutes = Math.floor((this.worldTime % 1) * 24 * 60);

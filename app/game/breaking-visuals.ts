@@ -30,6 +30,11 @@ export const TOOL_OUTLINE_COLORS: Readonly<Record<ToolEffectiveness, number>> = 
   blocked: 0xc85d5d,
 });
 
+export function breakCrackStroke(stage: number) {
+  const bounded = Math.max(0, Math.min(BREAK_CRACK_STAGES - 1, Math.floor(Number.isFinite(stage) ? stage : 0)));
+  return `rgba(8, 7, 5, ${0.52 + bounded * 0.06})`;
+}
+
 /** Generates a low-cost transparent crack sheet; stage is selected by UV offset. */
 export function createBreakingCrackTexture() {
   if (typeof document === "undefined") return null;
@@ -43,8 +48,8 @@ export function createBreakingCrackTexture() {
   context.lineCap = "square";
   for (let stage = 0; stage < BREAK_CRACK_STAGES; stage += 1) {
     const ox = stage * tile;
-    context.strokeStyle = `rgba(28, 24, 20, ${0.34 + stage * 0.07})`;
-    context.lineWidth = 1.1 + stage * 0.08;
+    context.strokeStyle = breakCrackStroke(stage);
+    context.lineWidth = 1.18 + stage * 0.085;
     const branches = 2 + stage;
     for (let branch = 0; branch < branches; branch += 1) {
       const angle = (branch / branches) * Math.PI * 2 + stage * 0.31;

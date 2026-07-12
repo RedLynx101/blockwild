@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { BlockId, Item, ITEMS, LEAF_BLOCKS, RECIPES, worldTextureBlockForItem } from "../app/game/data.ts";
+import { BLOCKS, BlockId, Item, ITEMS, LEAF_BLOCKS, RECIPES, worldTextureBlockForItem } from "../app/game/data.ts";
 import { caveEntranceAt, caveFeatureAt } from "../app/game/caves.ts";
 import {
   canGrowPlant,
@@ -27,6 +27,7 @@ import {
   type LeadAnchor,
 } from "../app/game/farming.ts";
 import { planLeafParticles, stepLeafParticle, torchAnimationSample } from "../app/game/world-effects.ts";
+import { planDoubleTallGrassRemoval } from "../app/game/tall-grass.ts";
 import { planStructure, structureBiomeFromId, structureCandidateForChunk, structureClearanceBounds } from "../app/game/structures.ts";
 import {
   BiomeId,
@@ -50,6 +51,17 @@ test("berries and wheat plant only on valid soil and advance through explicit st
   assert.equal(nextPlantStage(BlockId.WheatCrop), null);
   assert.equal(canGrowPlant(BlockId.MoonberryBush, BlockId.Dirt, 0.3), true);
   assert.equal(canGrowPlant(BlockId.SunberryBush, BlockId.Dirt, 0.3), false);
+});
+
+test("two-block tall grass uses connected halves and breaks atomically from either half", () => {
+  assert.equal(BLOCKS[BlockId.DoubleTallGrassLower].verticalConnectGroup, "double-tall-grass");
+  assert.equal(BLOCKS[BlockId.DoubleTallGrassUpper].verticalConnectGroup, "double-tall-grass");
+  const lookup = (_x: number, y: number) => y === 8 ? BlockId.DoubleTallGrassLower : y === 9 ? BlockId.DoubleTallGrassUpper : BlockId.Air;
+  const lower = planDoubleTallGrassRemoval(BlockId.DoubleTallGrassLower, { x: 2, y: 8, z: 4 }, lookup);
+  const upper = planDoubleTallGrassRemoval(BlockId.DoubleTallGrassUpper, { x: 2, y: 9, z: 4 }, lookup);
+  assert.deepEqual(lower, upper);
+  assert.deepEqual(lower.map((edit) => edit.y), [8, 9]);
+  assert.ok(lower.every((edit) => edit.type === BlockId.Air));
 });
 
 test("farmland hydration, tilling, and deterministic growth timings are bounded", () => {

@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import {
+  centeredPoiCompassEntry,
   compassDirection,
   compassEntries,
   destinationCue,
@@ -32,12 +33,35 @@ export function NavigationHud({
   const targets = useMemo(() => navigationTargets(markers, players, trackedId), [markers, players, trackedId]);
   const entries = useMemo(() => compassEntries(headingRadians, position, targets, { trackAtAnyDistance }), [headingRadians, position, targets, trackAtAnyDistance]);
   const cue = useMemo(() => destinationCue(headingRadians, position, targets), [headingRadians, position, targets]);
+  const focusedPoi = useMemo(() => centeredPoiCompassEntry(entries), [entries]);
+  const focusedPoiId = focusedPoi?.id ?? null;
+  const focusedPoiLabel = focusedPoi?.label ?? null;
+  const [focusLabel, setFocusLabel] = useState<string | null>(focusedPoi?.label ?? null);
+  const [focusVisible, setFocusVisible] = useState(Boolean(focusedPoi));
   const direction = compassDirection(headingRadians);
+
+  useEffect(() => {
+    let clearTimer = 0;
+    let updateFrame = 0;
+    if (focusedPoiLabel) {
+      updateFrame = window.requestAnimationFrame(() => {
+        setFocusLabel(focusedPoiLabel);
+        setFocusVisible(true);
+      });
+    } else {
+      updateFrame = window.requestAnimationFrame(() => setFocusVisible(false));
+      clearTimer = window.setTimeout(() => setFocusLabel(null), 260);
+    }
+    return () => {
+      if (updateFrame) window.cancelAnimationFrame(updateFrame);
+      if (clearTimer) window.clearTimeout(clearTimer);
+    };
+  }, [focusedPoiId, focusedPoiLabel]);
 
   return (
     <>
       <nav className="world-compass" aria-label={`Facing ${direction}; nearby places and players`}>
-        <div className="world-compass-readout"><strong>{direction}</strong><span>WAYFINDER</span></div>
+        <div className={`world-compass-focus${focusVisible ? " visible" : ""}`} aria-live="polite">{focusLabel ?? ""}</div>
         <div className="world-compass-rail">
           <i className="world-compass-center" aria-hidden="true" />
           {entries.map((entry) => {

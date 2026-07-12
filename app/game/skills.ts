@@ -94,7 +94,7 @@ export const PERKS: readonly PerkDefinition[] = Object.freeze([
   { id: "survival-second-wind", skillId: "survival", name: "Second Wind", description: "Once per day, leaving combat below one-quarter health grants a short recovery pulse.", requiredLevel: 150, cost: 2, prerequisites: ["survival-road-hardened"], effects: [{ kind: "unlock", ability: "daily-second-wind" }] },
   { id: "husbandry-gentle-presence", skillId: "husbandry", name: "Gentle Presence", description: "Neutral creatures become alarmed 10% closer to the player.", requiredLevel: 25, cost: 1, prerequisites: [], effects: [{ kind: "percent-bonus", stat: "neutral-creature-calm-radius", amount: 10 }] },
   { id: "husbandry-herdkeeper", skillId: "husbandry", name: "Herdkeeper", description: "Dynamic follower formations gain one additional wide spacing band.", requiredLevel: 150, cost: 2, prerequisites: ["husbandry-gentle-presence"], effects: [{ kind: "unlock", ability: "wide-follower-formation" }] },
-  { id: "exploration-trail-memory", skillId: "exploration", name: "Trail Memory", description: "The field map can zoom out to twice its normal survey scale.", requiredLevel: 25, cost: 1, prerequisites: [], effects: [{ kind: "unlock", ability: "extended-map-zoom" }] },
+  { id: "exploration-trail-memory", skillId: "exploration", name: "Trail Memory", description: "The field map can zoom out to twice the expanded ordinary survey scale.", requiredLevel: 25, cost: 1, prerequisites: [], effects: [{ kind: "unlock", ability: "extended-map-zoom" }] },
   { id: "exploration-horizon-step", skillId: "exploration", name: "Wayfinder's Sense", description: "Tracked players or places stay on the compass beyond the ordinary nearby survey radius.", requiredLevel: 200, cost: 2, prerequisites: ["exploration-trail-memory"], effects: [{ kind: "unlock", ability: "world-compass-tracking" }] },
   { id: "magic-calm-channel", skillId: "magic", name: "Calm Channel", description: "Taking light damage during a channeled working no longer erases all accumulated cast progress.", requiredLevel: 25, cost: 1, prerequisites: [], effects: [{ kind: "unlock", ability: "partial-channel-retention" }] },
   { id: "magic-spellweaver", skillId: "magic", name: "Spellweaver", description: "Switching wheel favorites cancels less of the current casting recovery.", requiredLevel: 150, cost: 2, prerequisites: ["magic-calm-channel"], effects: [{ kind: "percent-bonus", stat: "spell-switch-recovery", amount: 15 }] },
@@ -338,8 +338,8 @@ export function hasPerkAbility(state: SkillState, ability: string) {
  * world-scale survey without changing chunk coordinates.
  */
 export function explorationMinimumMapZoom(state: SkillState) {
-  if (ascendantTraitEnabled(state, "exploration")) return 0.2;
-  return hasPerkAbility(state, "extended-map-zoom") ? 0.5 : 1;
+  if (ascendantTraitEnabled(state, "exploration")) return 0.1;
+  return hasPerkAbility(state, "extended-map-zoom") ? 0.25 : 0.5;
 }
 
 export function explorationShowsDistantPoiLabels(_state: SkillState) {

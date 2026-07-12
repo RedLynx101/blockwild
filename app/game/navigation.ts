@@ -33,6 +33,15 @@ export type DestinationCue = Readonly<{
   glyph: string;
 }>;
 
+/** The compass names only a natural POI that is almost exactly under its center notch. */
+export function centeredPoiCompassEntry(entries: readonly CompassEntry[], tolerancePercent = 2.5) {
+  const tolerance = clamp(finite(tolerancePercent, 2.5), 0.5, 12);
+  return entries
+    .filter((entry) => entry.kind === "poi" && Math.abs(entry.offsetPercent - 50) <= tolerance)
+    .sort((left, right) => Math.abs(left.offsetPercent - 50) - Math.abs(right.offsetPercent - 50)
+      || (left.distance ?? Infinity) - (right.distance ?? Infinity))[0] ?? null;
+}
+
 const finite = (value: unknown, fallback = 0) => typeof value === "number" && Number.isFinite(value) ? value : fallback;
 const clamp = (value: number, minimum: number, maximum: number) => Math.max(minimum, Math.min(maximum, value));
 

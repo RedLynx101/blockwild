@@ -257,8 +257,8 @@ test("workstation UI normalizes apiary production and exact capture-orb metadata
 });
 
 test("human release identity stays separate from save schemas", () => {
-  assert.equal(GAME_VERSION, "1.3.5");
-  assert.equal(GAME_RELEASE_NAME, "Wayposts and Palimpsests");
+  assert.equal(GAME_VERSION, "1.3.8");
+  assert.equal(GAME_RELEASE_NAME, "Quiet Wayfinding");
   assert.equal(normalizeGameVersion("garbage"), "0.1.0");
 });
 

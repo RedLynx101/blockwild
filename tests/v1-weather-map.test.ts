@@ -8,6 +8,8 @@ import {
   createCartographySession,
   createMapKnowledge,
   createMapViewState,
+  ABSOLUTE_MIN_MAP_ZOOM,
+  MIN_MAP_ZOOM,
   joinCartographySession,
   mapTerrainPalette,
   mapViewportBounds,
@@ -18,6 +20,7 @@ import {
   shareMapsAtCartographyTable,
   stepMapZoom,
 } from "../app/game/map-system.ts";
+import { centeredPoiCompassEntry } from "../app/game/navigation.ts";
 import {
   celestialVisibilityThroughClouds,
   cloudCelestialOcclusion,
@@ -75,6 +78,8 @@ test("cartography shares terrain samples without replacing the local sample", ()
 });
 
 test("map zoom and pan retain the same x/z chunk coordinate system", () => {
+  assert.equal(MIN_MAP_ZOOM, 0.5);
+  assert.equal(ABSOLUTE_MIN_MAP_ZOOM, 0.1);
   assert.deepEqual(normalizeMapViewState({ schema: 99, zoom: -20, panX: Number.NaN, panZ: Infinity }), createMapViewState());
   const base = { minX: -10, maxX: 10, minZ: -20, maxZ: 20 };
   const zoomed = stepMapZoom(createMapViewState(), 1);
@@ -84,6 +89,17 @@ test("map zoom and pan retain the same x/z chunk coordinate system", () => {
   assert.equal(viewport.maxZ - viewport.minZ, 40 / zoomed.zoom);
   assert.equal((viewport.minX + viewport.maxX) / 2, 3);
   assert.equal((viewport.minZ + viewport.maxZ) / 2, -4);
+});
+
+test("the Wayfinder names only a POI aimed beneath the center notch", () => {
+  const focused = centeredPoiCompassEntry([
+    { id: "cardinal:N", label: "N", kind: "cardinal", offsetPercent: 50, distance: null, tracked: false, glyph: "N" },
+    { id: "poi:off", label: "Old Cairn", kind: "poi", offsetPercent: 56, distance: 20, tracked: false, glyph: "◆" },
+    { id: "poi:center", label: "Lantern Piehouse", kind: "poi", offsetPercent: 49.2, distance: 60, tracked: false, glyph: "◆" },
+    { id: "player:friend", label: "Trailfriend", kind: "player", offsetPercent: 50, distance: 8, tracked: false, glyph: "●" },
+  ]);
+  assert.equal(focused?.id, "poi:center");
+  assert.equal(centeredPoiCompassEntry([{ id: "poi:off", label: "Old Cairn", kind: "poi", offsetPercent: 56, distance: 20, tracked: false, glyph: "◆" }]), null);
 });
 
 test("map panel renders biome colors, zoom controls, headings, and other players", () => {
@@ -115,6 +131,8 @@ test("map panel renders biome colors, zoom controls, headings, and other players
   assert.match(markup, /Pan map north/);
   assert.match(markup, /Zoom map in/);
   assert.match(markup, /Current map zoom/);
+  assert.match(markup, /Detailed terrain/);
+  assert.match(markup, /aria-pressed="true"/);
   assert.match(markup, /#4f86a7/);
   assert.match(markup, /#c46fa5/);
   assert.match(markup, /Trailfriend/);
