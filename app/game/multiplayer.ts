@@ -2,6 +2,7 @@ import type { DragonState } from "./dragons";
 import type { CharacterColors, CharacterSkillAllocation } from "./character-profiles";
 import type { FactionRace } from "./factions";
 import type { SkillState } from "./skills";
+import type { GoldWalletState, MerchantState } from "./economy";
 
 /**
  * Browser-only, host-authoritative WebRTC multiplayer transport for Blockwild.
@@ -23,7 +24,7 @@ export const RELIABLE_CHANNEL_LABEL = "blockwild.gameplay.v1" as const;
 export const MOVEMENT_CHANNEL_LABEL = "blockwild.movement.v1" as const;
 
 export const MAX_RELIABLE_MESSAGE_BYTES = 256 * 1024;
-export const MAX_MOVEMENT_MESSAGE_BYTES = 4 * 1024;
+export const MAX_MOVEMENT_MESSAGE_BYTES = 64 * 1024;
 export const MAX_INVITE_CODE_CHARS = 160 * 1024;
 const MAX_SDP_CHARS = 112 * 1024;
 const MAX_RELIABLE_BUFFERED_BYTES = 2 * 1024 * 1024;
@@ -64,6 +65,8 @@ export type PlayerPose = {
   vy: number;
   vz: number;
   grounded: boolean;
+  /** Lightweight hotbar intent rides the unordered pose lane, not reliable inventory state. */
+  selected?: number;
   heldItem?: number;
   /** Optional protocol-v1 appearance hint for metadata-backed Capture Orbs. */
   heldItemFilled?: boolean;
@@ -140,6 +143,12 @@ export type MobSnapshotEntry = {
   command?: string | null;
   name?: string;
   attunedOrbId?: string | null;
+  /** Host-owned lead attachment. Unfenced leads follow this keeper, not the host process. */
+  lead?: {
+    ownerId: string | null;
+    maximumLength: number;
+    fence?: { x: number; y: number; z: number };
+  } | null;
 };
 
 export type MobSnapshot = { tick: number; mobs: MobSnapshotEntry[] };
@@ -240,13 +249,35 @@ export type ContainerAction = {
   slots?: ItemStackSnapshot[];
   /** The matching player inventory image makes chest transfers one host-owned transaction. */
   playerState?: PlayerSessionSnapshot;
+  /** Host-authored furnace clocks travel with its shared three-slot image. */
+  machine?: { progress: number; burn: number; burnMax: number };
   status?: ActionStatus;
   reason?: string;
 };
 
 export type ItemStackSnapshot = { item: number; count: number; durability?: number; metadata?: Record<string, unknown> } | null;
 export type InventorySnapshot = { revision: number; slots: ItemStackSnapshot[]; selected: number };
-export type ContainerSnapshot = { id: string; kind: "chest" | "double-chest" | "furnace" | "crafting"; revision: number; slots: ItemStackSnapshot[] };
+export type ContainerSnapshot = {
+  id: string;
+  kind: "chest" | "double-chest" | "furnace" | "crafting";
+  revision: number;
+  slots: ItemStackSnapshot[];
+  machine?: { progress: number; burn: number; burnMax: number };
+};
+export type SharedFacilityKind = "apiary" | "orb-rack" | "healing-station" | "waygrid-items" | "waygrid-creatures" | "aquarium" | "golem-forge" | "alchemy" | "distillery" | "sugarworks";
+export type FacilityAction = {
+  requestId: string;
+  actorId: string;
+  facilityId: string;
+  facilityKind: SharedFacilityKind;
+  kind: "open" | "close" | "update";
+  expectedRevision?: number;
+  expectedPlayerRevision?: number;
+  state?: Record<string, unknown>;
+  playerState?: PlayerSessionSnapshot;
+  status?: ActionStatus;
+  reason?: string;
+};
 export type PlayerSessionSnapshot = {
   playerId: string;
   revision: number;
@@ -296,7 +327,7 @@ export type CreatureAction = {
   requestId: string;
   actorId: string;
   tick: number;
-  kind: "capture" | "release" | "recall" | "command" | "interact" | "aquarium-sync" | "aquarium-insert" | "aquarium-remove";
+  kind: "capture" | "release" | "recall" | "command" | "interact" | "sentient-open" | "sentient-close" | "trade" | "lead-hitch" | "lead-unhitch" | "aquarium-sync" | "aquarium-insert" | "aquarium-remove" | "dragon-command" | "dragon-shoulder" | "dragon-harvest";
   targetId?: number;
   command?: string;
   name?: string;
@@ -305,7 +336,15 @@ export type CreatureAction = {
   crouching?: boolean;
   /** Host result for mount/dismount interactions; guests never author this field. */
   mounted?: boolean;
-  panel?: "pet" | "follower" | "dragon";
+  panel?: "pet" | "follower" | "dragon" | "sentient";
+  merchantId?: string;
+  tradeDirection?: "player-buys" | "player-sells";
+  itemKey?: string;
+  tradeCount?: number;
+  /** Host-authored economy images; guests only send the trade intent above. */
+  merchantState?: MerchantState;
+  walletState?: GoldWalletState;
+  playerState?: PlayerSessionSnapshot;
   containerKey?: string;
   residentId?: string;
   /** Host-authored bounded tank state returned after an aquarium action. */
@@ -363,6 +402,7 @@ export type MultiplayerPayloadMap = {
   "sleep-vote": SleepVote;
   "inventory-action": InventoryAction;
   "container-action": ContainerAction;
+  "facility-action": FacilityAction;
   "player-state": PlayerStateAction;
   "combat-action": CombatAction;
   "creature-action": CreatureAction;
@@ -499,10 +539,10 @@ type PeerRecord = {
 };
 
 const MESSAGE_TYPES = new Set<MultiplayerMessageType>([
-  "hello", "heartbeat", "goodbye", "snapshot", "player-pose", "block-action", "mob-snapshot", "drop-snapshot", "time-weather", "sleep-vote", "inventory-action", "container-action", "player-state", "combat-action", "creature-action", "map-share",
+  "hello", "heartbeat", "goodbye", "snapshot", "player-pose", "block-action", "mob-snapshot", "drop-snapshot", "time-weather", "sleep-vote", "inventory-action", "container-action", "facility-action", "player-state", "combat-action", "creature-action", "map-share",
 ]);
 const CONTROL_TYPES = new Set<MultiplayerMessageType>(["hello", "heartbeat", "goodbye"]);
-const GUEST_OUTBOUND_TYPES = new Set<MultiplayerMessageType>(["hello", "heartbeat", "goodbye", "player-pose", "block-action", "sleep-vote", "inventory-action", "container-action", "player-state", "combat-action", "creature-action", "map-share"]);
+const GUEST_OUTBOUND_TYPES = new Set<MultiplayerMessageType>(["hello", "heartbeat", "goodbye", "player-pose", "block-action", "sleep-vote", "inventory-action", "container-action", "facility-action", "player-state", "combat-action", "creature-action", "map-share"]);
 
 export class MultiplayerProtocolError extends Error {
   constructor(message: string) {
@@ -612,6 +652,7 @@ function validatePose(value: unknown): value is PlayerPose {
     && isFiniteNumber(value.vy, -256, 256)
     && isFiniteNumber(value.vz, -256, 256)
     && typeof value.grounded === "boolean"
+    && (value.selected === undefined || isInteger(value.selected, 0, 8))
     && (value.heldItem === undefined || isInteger(value.heldItem, 0, 65_535))
     && (value.heldItemFilled === undefined || typeof value.heldItemFilled === "boolean")
     && (value.offhandItem === undefined || isInteger(value.offhandItem, 0, 65_535))
@@ -731,7 +772,14 @@ function validateMob(value: unknown): value is MobSnapshotEntry {
     && (value.ownerId === undefined || value.ownerId === null || isShortString(value.ownerId, 160))
     && (value.command === undefined || value.command === null || isShortString(value.command, 32))
     && (value.name === undefined || isShortString(value.name, 48))
-    && (value.attunedOrbId === undefined || value.attunedOrbId === null || isShortString(value.attunedOrbId, 160));
+    && (value.attunedOrbId === undefined || value.attunedOrbId === null || isShortString(value.attunedOrbId, 160))
+    && (value.lead === undefined || value.lead === null || (isRecord(value.lead)
+      && (value.lead.ownerId === null || isShortString(value.lead.ownerId, 160))
+      && isFiniteNumber(value.lead.maximumLength, 2, 16)
+      && (value.lead.fence === undefined || (isRecord(value.lead.fence)
+        && isFiniteNumber(value.lead.fence.x, -COORDINATE_LIMIT, COORDINATE_LIMIT)
+        && isFiniteNumber(value.lead.fence.y, -4096, 4096)
+        && isFiniteNumber(value.lead.fence.z, -COORDINATE_LIMIT, COORDINATE_LIMIT)))));
 }
 
 function validateDropMetadata(value: unknown) {
@@ -790,6 +838,40 @@ function validateBoundedMetadata(value: unknown) {
   catch { return false; }
 }
 
+function validateMachineState(value: unknown) {
+  return value === undefined || (isRecord(value)
+    && isFiniteNumber(value.progress, 0, 86_400)
+    && isFiniteNumber(value.burn, 0, 86_400)
+    && isFiniteNumber(value.burnMax, 0, 86_400));
+}
+
+function validateWalletState(value: unknown) {
+  return value === undefined || (isRecord(value)
+    && value.schema === 1
+    && isShortString(value.authorityId, 160)
+    && isInteger(value.revision, 0, Number.MAX_SAFE_INTEGER)
+    && Array.isArray(value.recentEventIds)
+    && value.recentEventIds.length <= 64
+    && value.recentEventIds.every((event) => isShortString(event, 192))
+    && isShortString(value.ownerId, 160)
+    && typeof value.balance === "string"
+    && /^\d{1,80}$/u.test(value.balance));
+}
+
+function validateMerchantState(value: unknown) {
+  if (value === undefined) return true;
+  if (!isRecord(value) || value.schema !== 1 || !isShortString(value.id, 160)) return false;
+  try { return JSON.stringify(value).length <= 128 * 1024; }
+  catch { return false; }
+}
+
+function validateFacilityState(value: unknown) {
+  if (value === undefined) return true;
+  if (!isRecord(value)) return false;
+  try { return JSON.stringify(value).length <= 128 * 1024; }
+  catch { return false; }
+}
+
 function validateAquariumStatePayload(value: unknown) {
   if (value === undefined) return true;
   if (!isRecord(value) || value.schema !== 1 || !Array.isArray(value.blockKeys) || !Array.isArray(value.residents)) return false;
@@ -823,7 +905,8 @@ function validateContainerSnapshot(value: unknown): value is ContainerSnapshot {
     && isInteger(value.revision, 0, Number.MAX_SAFE_INTEGER)
     && Array.isArray(value.slots)
     && value.slots.length <= 128
-    && value.slots.every(validateItemStack);
+    && value.slots.every(validateItemStack)
+    && validateMachineState(value.machine);
 }
 
 function validateSkillState(value: unknown): value is SkillState {
@@ -963,6 +1046,18 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
         && (value.expectedRevision === undefined || isInteger(value.expectedRevision, 0, Number.MAX_SAFE_INTEGER))
         && (value.slots === undefined || (Array.isArray(value.slots) && value.slots.length <= 128 && value.slots.every(validateItemStack)))
         && (value.playerState === undefined || validatePlayerSessionSnapshot(value.playerState))
+        && validateMachineState(value.machine)
+        && validateStatusFields(value);
+    case "facility-action":
+      return isId(value.requestId)
+        && isId(value.actorId)
+        && isShortString(value.facilityId, 96)
+        && ["apiary", "orb-rack", "healing-station", "waygrid-items", "waygrid-creatures", "aquarium", "golem-forge", "alchemy", "distillery", "sugarworks"].includes(value.facilityKind as string)
+        && (value.kind === "open" || value.kind === "close" || value.kind === "update")
+        && (value.expectedRevision === undefined || isInteger(value.expectedRevision, 0, Number.MAX_SAFE_INTEGER))
+        && (value.expectedPlayerRevision === undefined || isInteger(value.expectedPlayerRevision, 0, Number.MAX_SAFE_INTEGER))
+        && validateFacilityState(value.state)
+        && (value.playerState === undefined || validatePlayerSessionSnapshot(value.playerState))
         && validateStatusFields(value);
     case "player-state":
       return isId(value.requestId)
@@ -985,14 +1080,23 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
       return isId(value.requestId)
         && isId(value.actorId)
         && isInteger(value.tick, 0, Number.MAX_SAFE_INTEGER)
-        && ["capture", "release", "recall", "command", "interact", "aquarium-sync", "aquarium-insert", "aquarium-remove"].includes(value.kind as string)
+        && ["capture", "release", "recall", "command", "interact", "sentient-open", "sentient-close", "trade", "lead-hitch", "lead-unhitch", "aquarium-sync", "aquarium-insert", "aquarium-remove", "dragon-command", "dragon-shoulder", "dragon-harvest"].includes(value.kind as string)
         && (value.targetId === undefined || isInteger(value.targetId, 0, Number.MAX_SAFE_INTEGER))
         && (value.command === undefined || isShortString(value.command, 32))
+        && (value.kind !== "dragon-command" || ["follow", "stay", "guard-lair", "wander"].includes(value.command as string))
+        && ((value.kind === "dragon-command" || value.kind === "dragon-shoulder" || value.kind === "dragon-harvest") ? value.targetId !== undefined : true)
         && (value.name === undefined || isShortString(value.name, 48))
         && (value.distance === undefined || value.distance === "dynamic" || isFiniteNumber(value.distance, 1.5, 10))
         && (value.crouching === undefined || typeof value.crouching === "boolean")
         && (value.mounted === undefined || typeof value.mounted === "boolean")
-        && (value.panel === undefined || value.panel === "pet" || value.panel === "follower" || value.panel === "dragon")
+        && (value.panel === undefined || value.panel === "pet" || value.panel === "follower" || value.panel === "dragon" || value.panel === "sentient")
+        && (value.merchantId === undefined || isShortString(value.merchantId, 160))
+        && (value.tradeDirection === undefined || value.tradeDirection === "player-buys" || value.tradeDirection === "player-sells")
+        && (value.itemKey === undefined || isShortString(value.itemKey, 128))
+        && (value.tradeCount === undefined || isInteger(value.tradeCount, 1, 64))
+        && validateMerchantState(value.merchantState)
+        && validateWalletState(value.walletState)
+        && (value.playerState === undefined || validatePlayerSessionSnapshot(value.playerState))
         && (value.containerKey === undefined || (typeof value.containerKey === "string" && isShortString(value.containerKey, 96) && /^-?\d+,-?\d+,-?\d+$/u.test(value.containerKey)))
         && (value.residentId === undefined || isShortString(value.residentId, 160))
         && validateAquariumStatePayload(value.aquariumState)
@@ -1614,7 +1718,12 @@ export class MultiplayerSession {
       if (actorId && actorId !== this.identity.id) throw new MultiplayerProtocolError("Guest actions must use the local peer identity");
       if ("status" in payload && payload.status !== undefined && payload.status !== "request") throw new MultiplayerProtocolError("Guests can only send action requests");
     }
-    const kind: MultiplayerChannelKind = type === "player-pose" ? "movement" : "reliable";
+    // High-rate reconstructable world images belong on the unordered,
+    // no-retransmit lane. A stale mob frame must never head-of-line block a
+    // chest, placement, trade, or selected-slot acknowledgement.
+    const kind: MultiplayerChannelKind = type === "player-pose" || type === "mob-snapshot" || type === "drop-snapshot" || type === "time-weather"
+      ? "movement"
+      : "reliable";
     const recipients: PeerRecord[] = [];
     if (this.role === "host") {
       if (peerId) {
@@ -1647,6 +1756,7 @@ export class MultiplayerSession {
   sendSleepVote(payload: SleepVote, peerId?: string) { return this.send("sleep-vote", payload, peerId); }
   sendInventoryAction(payload: InventoryAction, peerId?: string) { return this.send("inventory-action", payload, peerId); }
   sendContainerAction(payload: ContainerAction, peerId?: string) { return this.send("container-action", payload, peerId); }
+  sendFacilityAction(payload: FacilityAction, peerId?: string) { return this.send("facility-action", payload, peerId); }
   sendPlayerState(payload: PlayerStateAction, peerId?: string) { return this.send("player-state", payload, peerId); }
   sendCombatAction(payload: CombatAction, peerId?: string) { return this.send("combat-action", payload, peerId); }
   sendCreatureAction(payload: CreatureAction, peerId?: string) { return this.send("creature-action", payload, peerId); }
@@ -1669,7 +1779,7 @@ export class MultiplayerSession {
     const payload = envelope.payload as unknown;
     if (!isRecord(payload)) return false;
     if (envelope.type === "player-pose") return payload.playerId === peer.identity.id;
-    if (envelope.type === "block-action" || envelope.type === "inventory-action" || envelope.type === "container-action" || envelope.type === "player-state" || envelope.type === "combat-action" || envelope.type === "creature-action") {
+    if (envelope.type === "block-action" || envelope.type === "inventory-action" || envelope.type === "container-action" || envelope.type === "facility-action" || envelope.type === "player-state" || envelope.type === "combat-action" || envelope.type === "creature-action") {
       return payload.actorId === peer.identity.id && (payload.status === undefined || payload.status === "request");
     }
     if (envelope.type === "sleep-vote") return payload.actorId === peer.identity.id;
@@ -1685,7 +1795,9 @@ export class MultiplayerSession {
       this.protocolStrike(peer, error instanceof Error ? error.message : "Invalid multiplayer message");
       return;
     }
-    const expectedKind: MultiplayerChannelKind = envelope.type === "player-pose" ? "movement" : "reliable";
+    const expectedKind: MultiplayerChannelKind = envelope.type === "player-pose" || envelope.type === "mob-snapshot" || envelope.type === "drop-snapshot" || envelope.type === "time-weather"
+      ? "movement"
+      : "reliable";
     if (expectedKind !== kind) { this.protocolStrike(peer, `${envelope.type} arrived on the wrong channel`); return; }
     if (envelope.sessionId !== this.sessionId || envelope.from !== peer.identity?.id) {
       this.protocolStrike(peer, "Message identity or session mismatch");

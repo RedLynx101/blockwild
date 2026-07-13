@@ -2,25 +2,28 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
 import { BlockId } from "../app/game/data.ts";
-import { VoxelEngine, environmentLightPriority, nextAdaptivePixelRatio, type EnvironmentLightSource, type GameSettings } from "../app/game/engine.ts";
+import { ENVIRONMENT_LIGHT_POOL_SIZE, VoxelEngine, environmentLightPriority, nextAdaptivePixelRatio, type EnvironmentLightSource, type GameSettings } from "../app/game/engine.ts";
 import type { ChunkWorld } from "../app/game/world.ts";
 
 const camera = { x: 0, y: 8, z: 0 };
 const forward = { x: 0, y: 0, z: -1 };
 
-test("environment light selection favors illuminated terrain in the view over player proximity", () => {
+test("environment light selection is nearest-first and independent of facing", () => {
   const litTerrainAhead = environmentLightPriority({ x: 0, y: 8, z: -42, type: BlockId.Torch }, camera, forward);
   const nearerButIrrelevantSideLight = environmentLightPriority({ x: 24, y: 8, z: -4, type: BlockId.Torch }, camera, forward);
-  const lightWhollyBehindTheView = environmentLightPriority({ x: 0, y: 8, z: 20, type: BlockId.Torch }, camera, forward);
-  assert.ok(litTerrainAhead < nearerButIrrelevantSideLight);
-  assert.ok(litTerrainAhead < lightWhollyBehindTheView);
+  const nearbyBehind = environmentLightPriority({ x: 0, y: 8, z: 8, type: BlockId.Torch }, camera, forward);
+  const nearbyBehindWhileFacingIt = environmentLightPriority({ x: 0, y: 8, z: 8, type: BlockId.Torch }, camera, { x: 0, y: 0, z: 1 });
+  assert.ok(nearbyBehind < nearerButIrrelevantSideLight);
+  assert.ok(nearerButIrrelevantSideLight < litTerrainAhead);
+  assert.equal(nearbyBehind, nearbyBehindWhileFacingIt);
+  assert.deepEqual(ENVIRONMENT_LIGHT_POOL_SIZE, { desktop: 32, touch: 16 });
 });
 
 test("environment light selection gives an existing world-space assignment hysteresis", () => {
   const source = { x: 7, y: -12, z: -18, type: BlockId.Glowstone };
   const initial = environmentLightPriority(source, camera, forward);
   const retained = environmentLightPriority(source, camera, forward, true);
-  assert.equal(initial - retained, 9);
+  assert.equal(initial - retained, 25);
 });
 
 test("dynamic resolution lowers GPU load without reducing world distance", () => {
@@ -29,7 +32,7 @@ test("dynamic resolution lowers GPU load without reducing world distance", () =>
   assert.equal(nextAdaptivePixelRatio(1.1, 1.5, 12, false), 1.15);
 });
 
-test("the fixed light pool binds to an influence volume ahead instead of the nearest source", () => {
+test("the fixed light pool binds to the nearest source even when it is beside the view", () => {
   const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
   engine.camera = new THREE.PerspectiveCamera(72, 1, 0.1, 120);
   engine.camera.position.set(0, 8, 0);
@@ -53,6 +56,6 @@ test("the fixed light pool binds to an influence volume ahead instead of the nea
 
   engine.refreshEnvironmentLights();
 
-  assert.equal(engine.placedLightPool[0].position.z, -42);
-  assert.equal(engine.placedLightPool[0].userData.sourceZ, -42);
+  assert.equal(engine.placedLightPool[0].position.x, 24);
+  assert.equal(engine.placedLightPool[0].userData.sourceX, 24);
 });

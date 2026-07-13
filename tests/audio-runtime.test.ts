@@ -36,6 +36,10 @@ test("every authored sound has a stable public asset mapping and every environme
   assert.deepEqual(new Set(Object.keys(ENVIRONMENT_LOOP_SAMPLES)), new Set(["rain", "crickets", "wind", "winterWind", "cave", "ocean", "swimming"]));
 });
 
+test("night cricket ambience uses the requested half-volume mix", () => {
+  assert.equal(SAMPLE_ASSETS.nightCrickets.gain, 0.12);
+});
+
 test("inverse spatial rolloff is stable, clamped, and monotonic", () => {
   assert.equal(spatialAttenuation(0, 2, 48, 1.15), 1);
   assert.equal(spatialAttenuation(2, 2, 48, 1.15), 1);

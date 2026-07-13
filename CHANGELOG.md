@@ -2,6 +2,16 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.4.3 - Shared Lanterns - 2026-07-12
+
+- Separated high-frequency player poses, mob/drop snapshots, and time/weather presentation from reliable world and inventory transactions, while retaining host authority and rejecting stale player revisions. Hotbar selection now travels as a lightweight pose field and is excluded from the reliable player-state signature, so wheel-only changes do not upload the pack later.
+- Made host facility state visible to guests across furnaces and creature/facility storage, with validated shared-container mutations, live block and creature checks, watcher refreshes, and player-specific lead and merchant actions. Furnaces validate their real block coordinates before returning shared slots and burn clocks.
+- Routed guest dragon commands, shoulder carrying, and scale harvesting through typed host transactions with live owner/range checks, atomic player inventory changes, and immediate mob refreshes. Generic non-furnace production stations remain host-synchronized and read-only for guests until their distinct operations receive typed validators.
+- Replaced the empty radial spell wheel with a quiet compact state and made releasing `Q` close it reliably. Removed text shadow from merchant buy/sell labels.
+- Made filled Capture Orbs permanent singletons through inventories, containers, pickups, crafting, cursor actions, and digital storage; held and hover labels include the creature's name and species. Rebuilt the Surveyor Table icon.
+- Raised nearby animated light capacity fourfold and baked-source participation more than threefold, selecting lights nearest-first rather than by camera direction. Rebuilt Wild Rune Stone and connected Wild Peppermint art, repaired Bloomrot Cathedral's complete cruciform walls, and halved cricket volume.
+- Added focused regressions for multiplayer traffic and authority, shared facilities, trade/lead identity, orb conservation, Q-release behavior, lighting stability, texture ownership, and dungeon topology.
+
 ## 1.4.2 - Shared World Repair - 2026-07-12
 
 - Advanced guest-side tree-fall and creature-remains presentation timers while retaining host authority over voxel removal, mob state, and loot.

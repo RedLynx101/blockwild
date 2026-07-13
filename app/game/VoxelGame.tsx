@@ -561,6 +561,10 @@ export function slotInteractionAllowed(readyAt: number, now = performance.now())
   return now >= readyAt;
 }
 
+export function shouldCloseSpellWheelOnKeyRelease(code: string, overlay: Overlay) {
+  return code === "KeyQ" && overlay === "spell-wheel";
+}
+
 export type SingleFlightGate = { current: Promise<unknown> | null };
 
 export async function runSingleFlight<T>(gate: SingleFlightGate, operation: () => Promise<T>) {
@@ -777,7 +781,7 @@ export function itemIconKind(item: ItemCode) {
 export function itemHoverText(slot: InventorySlot | null, fallback = "Empty slot") {
   if (!slot) return fallback;
   const definition = ITEMS[slot.item];
-  const details = [definition?.name ?? "Item"];
+  const details = [inventorySlotDisplayName(slot)];
   if (definition?.food) details.push(`Food +${definition.food}`);
   if (definition?.damage) details.push(`${definition.damage} attack damage`);
   const legendary = legendaryContractForItem(slot.item);
@@ -786,6 +790,17 @@ export function itemHoverText(slot: InventorySlot | null, fallback = "Empty slot
   const metadata = itemMetadataSummary(slot).replace(/^\s*·\s*/u, "");
   if (metadata) details.push(metadata);
   return details.join(" · ");
+}
+
+/** The held-item title names the exact resident carried by a filled orb. */
+export function inventorySlotDisplayName(slot: InventorySlot | null, fallback = "Empty Hand") {
+  if (!slot) return fallback;
+  const baseName = ITEMS[slot.item]?.name ?? "Unknown Item";
+  const orb = captureOrbFromInventorySlot(slot);
+  if (!orb?.creature) return baseName;
+  const species = MOB_DEFS[orb.creature.kind]?.name ?? orb.creature.kind.replace(/[-_]/gu, " ");
+  const creatureName = orb.creature.name?.trim();
+  return `${baseName} · ${creatureName && creatureName.toLocaleLowerCase() !== species.toLocaleLowerCase() ? `${creatureName} (${species})` : species}`;
 }
 
 export function acceptsTextInput(target: EventTarget | null) {
@@ -861,6 +876,17 @@ function bestiaryObservation(definition: MobDefinition, progress: BestiaryProgre
 
 function itemMetadataSummary(slot: InventorySlot | null) {
   if (!slot?.metadata) return "";
+  const orb = captureOrbFromInventorySlot(slot);
+  if (orb?.creature) {
+    const creature = orb.creature;
+    const details = [
+      creature.tamed ? "Tamed" : "",
+      creature.baby ? "Baby" : "",
+      `${Math.max(0, creature.health)}/${creature.maxHealth} health`,
+      orb.attunement ? orb.attunement.activeEntityId ? "Deployed" : "Attuned" : "",
+    ].filter(Boolean);
+    return ` · ${details.join(" · ")}`;
+  }
   const metadata = slot.metadata;
   const name = typeof metadata.name === "string" ? metadata.name : typeof metadata.customName === "string" ? metadata.customName : "";
   const species = typeof metadata.species === "string" ? metadata.species : typeof metadata.kind === "string" ? metadata.kind : typeof metadata.mobKind === "string" ? metadata.mobKind : "";
@@ -1302,6 +1328,7 @@ export default function VoxelGame() {
   const [iconAuditMode, setIconAuditMode] = useState(false);
   const [civicAuditMode, setCivicAuditMode] = useState<CivicAuditMode | null>(null);
   const [heldAuditMode, setHeldAuditMode] = useState(false);
+  const [spellWheelAuditMode, setSpellWheelAuditMode] = useState(false);
   const [workstationAuditMode, setWorkstationAuditMode] = useState<WorkstationOverlay | null>(null);
   const showTouchControls = resolveTouchControls(uiPreferences.touchControls, inputCapabilities);
   const activeCharacterProfile = characterCatalog.profiles.find((profile) => profile.id === characterCatalog.selectedProfileId)
@@ -1312,6 +1339,7 @@ export default function VoxelGame() {
     const parameters = new URLSearchParams(window.location.search);
     setIconAuditMode(parameters.get("icon-audit") === "1");
     setHeldAuditMode(parameters.get("held-audit") === "1");
+    setSpellWheelAuditMode(parameters.get("spell-wheel-audit") === "empty");
     const workstationAudit = parameters.get("workstation-audit");
     setWorkstationAuditMode(workstationAudit === "apiary" || workstationAudit === "orb-rack" || workstationAudit === "healing-station" || workstationAudit === "sugarworks" ? workstationAudit : null);
     const civicAudit = parameters.get("civic-audit");
@@ -1549,8 +1577,20 @@ export default function VoxelGame() {
         setOverlay("pause");
       }
     };
+    const handleMenuKeyUp = (event: KeyboardEvent) => {
+      if (!shouldCloseSpellWheelOnKeyRelease(event.code, overlayRef.current)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const engine = engineRef.current;
+      engine?.closeSpellWheel();
+      setOverlay(null);
+    };
     window.addEventListener("keydown", handleMenuKeys, true);
-    return () => window.removeEventListener("keydown", handleMenuKeys, true);
+    window.addEventListener("keyup", handleMenuKeyUp, true);
+    return () => {
+      window.removeEventListener("keydown", handleMenuKeys, true);
+      window.removeEventListener("keyup", handleMenuKeyUp, true);
+    };
   }, [setOverlay]);
 
   const applyCharacterProfile = (profile: CharacterProfile) => {
@@ -2286,7 +2326,7 @@ export default function VoxelGame() {
   };
 
   const selectedSlot = hud.inventory[hud.selected];
-  const selectedName = selectedSlot ? ITEMS[selectedSlot.item]?.name ?? "Unknown Item" : "Empty Hand";
+  const selectedName = inventorySlotDisplayName(selectedSlot);
   const xpNeeded = 12 + hud.level * 6;
   const bestiaryDefinition = MOB_DEFS[selectedBestiary];
   const bestiaryProgress = hud.bestiary[selectedBestiary];
@@ -2798,12 +2838,15 @@ export default function VoxelGame() {
         </section>
       )}
 
-      {overlay === "spell-wheel" && (
+      {(overlay === "spell-wheel" || spellWheelAuditMode) && (
         <SpellWheelPanel
           open
           magic={hud.magic}
           onSelectSpell={(spellId) => { engineRef.current?.selectMagicSpell(spellId); }}
-          onClose={() => { engineRef.current?.closeSpellWheel(); setOverlay(null); }}
+          onClose={() => {
+            if (spellWheelAuditMode) setSpellWheelAuditMode(false);
+            else { engineRef.current?.closeSpellWheel(); setOverlay(null); }
+          }}
         />
       )}
 

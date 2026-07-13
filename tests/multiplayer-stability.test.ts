@@ -9,6 +9,8 @@ import {
   blockEditIntersectsPlayer,
   consumeMultiplayerPlacementItem,
   markRendererContextLost,
+  multiplayerContainerTransactionConservesItems,
+  multiplayerPlayerStateSignature,
   normalizeMultiplayerPlayerState,
   restoreRendererContext,
 } from "../app/game/engine.ts";
@@ -16,7 +18,9 @@ import { createSkillState } from "../app/game/skills.ts";
 import { MOB_DEFS } from "../app/game/mobs.ts";
 import { createPeelopState } from "../app/game/peelop.ts";
 import { createReedstriderBond } from "../app/game/ecology.ts";
-import { createPeerIdentity, validatePayload, validatePeerIdentity, type CreatureAction, type PlayerSessionSnapshot } from "../app/game/multiplayer.ts";
+import { createEmptyApiaryBlock } from "../app/game/apiary.ts";
+import { createDragonState } from "../app/game/dragons.ts";
+import { createPeerIdentity, validatePayload, validatePeerIdentity, type ContainerAction, type CreatureAction, type PlayerSessionSnapshot } from "../app/game/multiplayer.ts";
 
 function sessionState(): PlayerSessionSnapshot {
   const inventory = Array.from({ length: 36 }, () => null) as PlayerSessionSnapshot["inventory"];
@@ -51,6 +55,307 @@ test("host-owned player snapshots preserve variant, metadata inventory, and skil
   assert.deepEqual(normalized.skills, state.skills);
 });
 
+test("shared furnace/facility payloads are bounded and item transactions conserve exact metadata", () => {
+  const before = sessionState();
+  const after = structuredClone(before);
+  after.inventory[0] = null;
+  after.cursor = { ...before.inventory[0]! };
+  after.revision += 1;
+  assert.equal(multiplayerContainerTransactionConservesItems(before, [null, null, null], after, [null, null, null]), true);
+  const duplicated = structuredClone(after);
+  duplicated.inventory[1] = { ...before.inventory[0]! };
+  assert.equal(multiplayerContainerTransactionConservesItems(before, [null, null, null], duplicated, [null, null, null]), false);
+  assert.equal(validatePayload("container-action", {
+    requestId: "furnace_sync_001", actorId: before.playerId, containerId: "furnace:1,2,3", kind: "open",
+    expectedRevision: 2, slots: [null, null, null], machine: { progress: 3.5, burn: 4, burnMax: 8 }, status: "accepted",
+  }), true);
+  assert.equal(validatePayload("facility-action", {
+    requestId: "facility_open_001", actorId: before.playerId, facilityId: "apiary:1,2,3", facilityKind: "apiary",
+    kind: "open", expectedRevision: 0, status: "request",
+  }), true);
+  assert.equal(validatePayload("mob-snapshot", {
+    tick: 1,
+    mobs: [{ id: 3, kind: "peelop", x: 0, y: 1, z: 2, yaw: 0, health: 6, state: "wander", lead: { ownerId: before.playerId, maximumLength: 7 } }],
+  }), true);
+  assert.equal(validatePayload("creature-action", {
+    requestId: "dragon_command_001", actorId: before.playerId, tick: 8, kind: "dragon-command", targetId: 31,
+    command: "guard-lair", status: "request",
+  }), true);
+  assert.equal(validatePayload("creature-action", {
+    requestId: "dragon_command_bad", actorId: before.playerId, tick: 8, kind: "dragon-command", targetId: 31,
+    command: "become-invincible", status: "request",
+  }), false);
+});
+
+test("guest dragon panel actions remain intents until the host responds", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  const player = sessionState();
+  const dragonState = { ...createDragonState("fire", { dragonId: "guest-panel-dragon", tamed: true, ownerId: player.playerId }), scaleReserve: 4 };
+  const dragon = { id: 31, dragonState };
+  const sent: Array<Partial<CreatureAction>> = [];
+  Object.assign(engine, {
+    multiplayer: { role: "guest", identity: { id: player.playerId } },
+    activeDragon: dragon,
+    requestNetworkCreatureAction: (action: Partial<CreatureAction>) => { sent.push(action); return true; },
+  });
+  const before = structuredClone(dragonState);
+  assert.equal(engine.commandActiveDragon("wander"), true);
+  assert.equal(engine.toggleActiveDragonShoulder(), true);
+  assert.equal(engine.harvestActiveDragonScales(), 1);
+  assert.deepEqual(sent, [
+    { kind: "dragon-command", targetId: 31, command: "wander" },
+    { kind: "dragon-shoulder", targetId: 31 },
+    { kind: "dragon-harvest", targetId: 31 },
+  ]);
+  assert.deepEqual(dragon.dragonState, before);
+});
+
+test("host atomically resolves guest dragon panel actions and broadcasts player plus mob authority", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  const player = sessionState();
+  const dragonState = { ...createDragonState("fire", { dragonId: "host-panel-dragon", tamed: true, ownerId: player.playerId }), scaleReserve: 4 };
+  const dragon = { id: 31, name: "Cinder", health: dragonState.health, dragonState, group: { position: new THREE.Vector3(2, 2, 3) } };
+  const responses: CreatureAction[] = [];
+  const mobFrames: unknown[] = [];
+  const peer = { id: player.playerId, name: "Guest", color: "#fff" };
+  Object.assign(engine, {
+    multiplayer: {
+      role: "host", identity: { id: "player_host_001" },
+      sendCreatureAction: (action: CreatureAction) => { responses.push(action); return 1; },
+      sendMobSnapshot: (snapshot: unknown) => { mobFrames.push(snapshot); return 1; },
+      sendPlayerState: () => 1,
+      getPeer: () => ({ identity: peer }),
+    },
+    remotePlayers: new Map([[player.playerId, { target: { x: 1, y: 2, z: 3 } }]]),
+    multiplayerPlayerStates: new Map([[player.playerId, player]]),
+    mobs: [dragon],
+    multiplayerTick: 12,
+    pendingReliableRequests: new Map(),
+    queueCriticalReliableRequest: (_key: string, send: () => number) => { send(); return true; },
+    applyDragonState: (mob: typeof dragon, state: typeof dragonState) => { mob.dragonState = state; },
+    networkMobSnapshotForPeer: () => [{ id: dragon.id }],
+    saveSoon: () => undefined,
+    emitHud: () => undefined,
+  });
+  const api = engine as unknown as { handleRemoteCreatureAction(action: CreatureAction, peer: unknown): void };
+  api.handleRemoteCreatureAction({
+    requestId: "dragon_harvest_001", actorId: player.playerId, tick: 12, kind: "dragon-harvest", targetId: dragon.id, status: "request",
+  }, { identity: peer });
+  const committed = engine.multiplayerPlayerStates.get(player.playerId)!;
+  assert.equal(committed.revision, player.revision + 1);
+  assert.equal(committed.inventory.some((slot) => slot?.item === Item.FireDragonScale && slot.count === 4), true);
+  assert.equal(dragon.dragonState.scaleReserve, 0);
+  assert.equal(responses.some((response) => response.kind === "dragon-harvest" && response.status === "accepted" && response.playerState?.revision === committed.revision), true);
+  assert.equal(mobFrames.length, 1);
+  api.handleRemoteCreatureAction({
+    requestId: "dragon_command_002", actorId: player.playerId, tick: 13, kind: "dragon-command", targetId: dragon.id, command: "wander", status: "request",
+  }, { identity: peer });
+  assert.equal(dragon.dragonState.command, "wander");
+  api.handleRemoteCreatureAction({
+    requestId: "dragon_shoulder_003", actorId: player.playerId, tick: 14, kind: "dragon-shoulder", targetId: dragon.id, status: "request",
+  }, { identity: peer });
+  assert.equal(dragon.dragonState.onShoulder, true);
+  assert.equal(mobFrames.length, 3);
+
+  dragon.dragonState = { ...dragon.dragonState, scaleReserve: 2 };
+  engine.remotePlayers.get(player.playerId)!.target.x = 100;
+  api.handleRemoteCreatureAction({
+    requestId: "dragon_far_004", actorId: player.playerId, tick: 15, kind: "dragon-harvest", targetId: dragon.id, status: "request",
+  }, { identity: peer });
+  assert.equal(responses.at(-1)?.status, "rejected");
+  assert.equal(dragon.dragonState.scaleReserve, 2);
+  engine.remotePlayers.get(player.playerId)!.target.x = 1;
+  dragon.dragonState = { ...dragon.dragonState, ownerId: "player_someone_else" };
+  api.handleRemoteCreatureAction({
+    requestId: "dragon_owner_005", actorId: player.playerId, tick: 16, kind: "dragon-harvest", targetId: dragon.id, status: "request",
+  }, { identity: peer });
+  assert.equal(responses.at(-1)?.status, "rejected");
+  assert.equal(dragon.dragonState.scaleReserve, 2);
+});
+
+test("read-only guest facilities restore their authoritative pack baseline before generic sync resumes", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  const player = sessionState();
+  const sent: unknown[] = [];
+  Object.assign(engine, {
+    multiplayer: { role: "guest", identity: { id: player.playerId }, sendFacilityAction: (action: unknown) => { sent.push(action); return 1; } },
+    multiplayerPlayerStateRevision: player.revision,
+    multiplayerTick: 3,
+    multiplayerFacilityPlayerBaseline: null,
+    multiplayerFacilityRevisions: new Map(),
+    multiplayerPendingFacilityMutations: new Set<string>(),
+    inventory: player.inventory.map((slot) => slot ? structuredClone(slot) : null),
+    cursor: null,
+    equipment: { head: null, chest: null, legs: null, feet: null },
+    offhand: null,
+    selected: player.selected,
+    health: player.health,
+    hunger: player.hunger,
+    xp: player.xp,
+    level: player.level,
+    skillState: player.skills,
+    playerVariant: player.variant,
+    activeNetworkFacilityId: "apiary:1,2,3",
+    localPlayerModel: { setAppearance: () => undefined },
+    emitHud: () => undefined,
+    queueCriticalReliableRequest: (_key: string, send: () => number) => { send(); return true; },
+  });
+  const api = engine as unknown as {
+    requestNetworkFacilitySnapshot(facility: { id: string; kind: "apiary" }): boolean;
+    restoreGuestFacilityPlayerBaseline(): boolean;
+  };
+  assert.equal(api.requestNetworkFacilitySnapshot({ id: "apiary:1,2,3", kind: "apiary" }), true);
+  engine.inventory[0] = { item: Item.FireDragonScale, count: 64 };
+  assert.equal(api.restoreGuestFacilityPlayerBaseline(), true);
+  assert.deepEqual(engine.inventory[0], player.inventory[0]);
+  assert.equal(engine.multiplayerFacilityPlayerBaseline, null);
+  assert.equal(sent.length, 1);
+});
+
+test("generic facility protocol rejects opaque guest-authored machine replacement", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  const player = sessionState();
+  const facilityId = "apiary:1,2,3";
+  const responses: CreatureAction[] = [];
+  Object.assign(engine, {
+    multiplayer: { role: "host", sendFacilityAction: (action: CreatureAction) => { responses.push(action); return 1; } },
+    remotePlayers: new Map([[player.playerId, { target: { x: 1, y: 2, z: 3 } }]]),
+    world: { getBlock: () => BlockId.Apiary },
+    apiaries: new Map([["1,2,3", createEmptyApiaryBlock()]]),
+    multiplayerFacilityRevisions: new Map([[facilityId, 4]]),
+    multiplayerPeerActiveFacilities: new Map<string, string>(),
+    multiplayerPeerFacilitySignatures: new Map<string, string>(),
+    multiplayerPlayerStates: new Map([[player.playerId, player]]),
+    multiplayerPendingFacilityMutations: new Set<string>(),
+    pendingReliableRequests: new Map(),
+    queueCriticalReliableRequest: (_key: string, send: () => number) => { send(); return true; },
+  });
+  const facilityApi = engine as unknown as { handleRemoteFacilityAction(action: unknown, peer: unknown): void };
+  const peer = { identity: { id: player.playerId, name: "Guest", color: "#fff" } };
+  facilityApi.handleRemoteFacilityAction({
+    requestId: "facility_open_001", actorId: player.playerId, facilityId, facilityKind: "apiary", kind: "open", status: "request",
+  }, peer);
+  assert.equal(responses.at(-1)?.status, "accepted");
+  assert.equal(engine.multiplayerPeerActiveFacilities.get(player.playerId), facilityId);
+  (engine as unknown as { handleRemoteFacilityAction(action: unknown, peer: unknown): void }).handleRemoteFacilityAction({
+    requestId: "facility_forgery_001", actorId: player.playerId, facilityId, facilityKind: "apiary", kind: "update",
+    expectedRevision: 4, expectedPlayerRevision: player.revision,
+    state: { schema: 1, attached: true, queen: null, honey: 12 },
+    playerState: { ...player, revision: player.revision + 1 }, status: "request",
+  }, peer);
+  assert.equal(responses.at(-1)?.status, "rejected");
+  assert.equal(engine.apiaries.get("1,2,3")?.queen, null);
+  facilityApi.handleRemoteFacilityAction({
+    requestId: "facility_close_001", actorId: player.playerId, facilityId, facilityKind: "apiary", kind: "close", status: "request",
+  }, peer);
+  assert.equal(engine.multiplayerPeerActiveFacilities.has(player.playerId), false);
+});
+
+test("incremental host acknowledgements cannot snap a guest's locally predicted hotbar selection backward", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  const state = sessionState();
+  Object.assign(engine, {
+    selected: 6,
+    inventory: Array.from({ length: 36 }, () => null), cursor: null,
+    equipment: { head: null, chest: null, legs: null, feet: null }, offhand: null,
+    skillState: createSkillState(), playerVariant: "female", multiplayerPlayerStateRevision: 0,
+    localPlayerModel: { setAppearance: () => undefined }, emitHud: () => undefined,
+    multiplayer: { identity: { id: state.playerId, variant: "female" } },
+  });
+  (engine as unknown as { applyLocalPlayerSessionSnapshot(state: PlayerSessionSnapshot, preserve: boolean): void })
+    .applyLocalPlayerSessionSnapshot({ ...state, selected: 1 }, true);
+  assert.equal(engine.selected, 6);
+});
+
+test("selection-only scrolling stays off the reliable full-player-state lane", () => {
+  const before = sessionState();
+  const after = { ...before, selected: 7 };
+  assert.equal(
+    multiplayerPlayerStateSignature(after),
+    multiplayerPlayerStateSignature(before),
+    "the unordered pose lane owns hotbar intent, so wheel notches must not dirty a full reliable pack image",
+  );
+});
+
+test("guest merchant buttons send a host-authoritative trade intent without mutating local stock", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  const merchant = createMerchant("trade-world", "merchant-guest-test", "hobbits", "farmer", 0);
+  const sent: CreatureAction[] = [];
+  Object.assign(engine, {
+    activeMerchantId: merchant.id,
+    merchants: new Map([[merchant.id, merchant]]),
+    multiplayer: { role: "guest" },
+    requestNetworkCreatureAction: (action: CreatureAction) => { sent.push(action); return true; },
+    skillState: createSkillState(),
+  });
+  assert.equal(engine.tradeWithActiveMerchant("player-buys", "apple", 2), true);
+  assert.deepEqual(sent[0], { kind: "trade", merchantId: merchant.id, tradeDirection: "player-buys", itemKey: "apple", tradeCount: 2 });
+  assert.deepEqual(engine.merchants.get(merchant.id), merchant);
+});
+
+test("host validates a guest keeper before hitching their lead to a real nearby fence", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  const player = sessionState();
+  const sent: CreatureAction[] = [];
+  const mob = { id: 44, name: "Peelop", group: { position: new THREE.Vector3(2, 2, 3) } };
+  Object.assign(engine, {
+    multiplayer: {
+      role: "host",
+      sendCreatureAction: (action: CreatureAction) => { sent.push(action); return 1; },
+      sendMobSnapshot: () => 1,
+    },
+    remotePlayers: new Map([[player.playerId, { target: { x: 1, y: 2, z: 3 } }]]),
+    multiplayerPlayerStates: new Map([[player.playerId, player]]),
+    mobs: [mob],
+    leadAnchors: new Map([[mob.id, { mobId: String(mob.id), ownerId: player.playerId, maximumLength: 7 }]]),
+    world: { getBlock: () => BlockId.WildwoodFence },
+    queueCriticalReliableRequest: (_key: string, send: () => number) => { send(); return true; },
+    networkMobSnapshotForPeer: () => [], saveSoon: () => undefined,
+  });
+  (engine as unknown as { handleRemoteCreatureAction(action: CreatureAction, peer: unknown): void }).handleRemoteCreatureAction({
+    requestId: "lead_hitch_001", actorId: player.playerId, tick: 1, kind: "lead-hitch", targetId: mob.id, x: 3, y: 2, z: 3, status: "request",
+  }, { identity: { id: player.playerId, name: "Guest", color: "#fff" } });
+  assert.deepEqual(engine.leadAnchors.get(mob.id)?.fence, { x: 3, y: 2, z: 3 });
+  assert.equal(sent.at(-1)?.status, "accepted");
+});
+
+test("host merchant trade commits guest wallet, inventory, and shared stock atomically and rechecks range", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  const player = { ...sessionState(), inventory: Array.from({ length: 36 }, () => null) as PlayerSessionSnapshot["inventory"] };
+  const merchant = createMerchant("trade-world", "merchant-host-test", "hobbits", "farmer", 2_000);
+  const stock = merchant.inventory.find((entry) => commerceItemCode(entry.itemKey) !== null)!;
+  const item = commerceItemCode(stock.itemKey)!;
+  const responses: CreatureAction[] = [];
+  const merchantMob = { residentId: merchant.id, health: 10, group: { position: new THREE.Vector3(2, 2, 3) } };
+  const peer = { id: player.playerId, name: "Guest", color: "#fff" };
+  Object.assign(engine, {
+    multiplayer: {
+      role: "host", identity: { id: "player_host_001" },
+      sendCreatureAction: (action: CreatureAction) => { responses.push(action); return 1; },
+      sendPlayerState: () => 1,
+      getPeer: () => ({ identity: peer }),
+    },
+    multiplayerPeerActiveMerchants: new Map([[player.playerId, merchant.id]]),
+    multiplayerPlayerStates: new Map([[player.playerId, player]]),
+    multiplayerPlayerWallets: new Map([[player.playerId, createGoldWallet("trade-world", player.playerId, 10_000)]]),
+    merchants: new Map([[merchant.id, merchant]]), mobs: [merchantMob],
+    remotePlayers: new Map([[player.playerId, { target: { x: 1, y: 2, z: 3 } }]]),
+    factionRelations: { alignments: { hobbits: 0 } },
+    queueCriticalReliableRequest: (_key: string, send: () => number) => { send(); return true; },
+    saveSoon: () => undefined,
+  });
+  const api = engine as unknown as { resolveHostMerchantTrade(action: CreatureAction, peer: unknown, state: PlayerSessionSnapshot): void };
+  api.resolveHostMerchantTrade({ requestId: "trade_buy_001", actorId: player.playerId, tick: 1, kind: "trade", merchantId: merchant.id, tradeDirection: "player-buys", itemKey: stock.itemKey, tradeCount: 1, status: "request" }, peer, player);
+  const bought = engine.multiplayerPlayerStates.get(player.playerId)!;
+  assert.ok(bought.inventory.some((slot) => slot?.item === item));
+  assert.equal(responses.at(-1)?.status, "accepted");
+  api.resolveHostMerchantTrade({ requestId: "trade_sell_001", actorId: player.playerId, tick: 2, kind: "trade", merchantId: merchant.id, tradeDirection: "player-sells", itemKey: stock.itemKey, tradeCount: 1, status: "request" }, peer, bought);
+  assert.equal(engine.multiplayerPlayerStates.get(player.playerId)!.inventory.some((slot) => slot?.item === item), false);
+  engine.remotePlayers.get(player.playerId)!.target.x = 100;
+  api.resolveHostMerchantTrade({ requestId: "trade_far_001", actorId: player.playerId, tick: 3, kind: "trade", merchantId: merchant.id, tradeDirection: "player-buys", itemKey: stock.itemKey, tradeCount: 1, status: "request" }, peer, engine.multiplayerPlayerStates.get(player.playerId)!);
+  assert.equal(responses.at(-1)?.status, "rejected");
+});
+
 test("character profile identities remain stable and valid across both join paths", () => {
   const colors = { skin: "#c98f6b", hair: "#17191d", shirt: "#3f7fba", trousers: "#293554", accent: "#f0c85b" } as const;
   const id = "browser-01abcdef.character-02abcdef";
@@ -83,6 +388,50 @@ test("character profile identities remain stable and valid across both join path
     seated: 0,
     mountedCreatureId: 22,
   }), true);
+});
+
+test("a guest can open only a real nearby shared furnace and receives its slots and clocks", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  const player = sessionState();
+  const key = "1,2,3";
+  const responses: ContainerAction[] = [];
+  let blockAtTarget = BlockId.Furnace;
+  Object.assign(engine, {
+    multiplayer: {
+      role: "host",
+      sendContainerAction: (action: ContainerAction) => { responses.push(action); return 1; },
+    },
+    remotePlayers: new Map([[player.playerId, { target: { x: 1, y: 2, z: 4 } }]]),
+    world: { getBlock: () => blockAtTarget },
+    furnaces: new Map([[key, {
+      input: { item: BlockId.Cobblestone, count: 2 },
+      fuel: { item: Item.Coal, count: 3 },
+      output: null,
+      progress: 1.25,
+      burn: 4.5,
+      burnMax: 8,
+    }]]),
+    chests: new Map(), boats: new Map(), mobs: [],
+    multiplayerContainerRevisions: new Map([[`furnace:${key}`, 6]]),
+    multiplayerPlayerStates: new Map([[player.playerId, player]]),
+    multiplayerPeerActiveContainers: new Map<string, string>(),
+    multiplayerPeerContainerSignatures: new Map<string, string>(),
+    queueCriticalReliableRequest: (_key: string, send: () => number) => { send(); return true; },
+  });
+  const api = engine as unknown as { handleRemoteContainerAction(action: ContainerAction, peer: unknown): void };
+  const peer = { identity: { id: player.playerId, name: "Guest", color: "#fff" } };
+  const request: ContainerAction = {
+    requestId: "furnace_open_001", actorId: player.playerId, containerId: `furnace:${key}`, kind: "open", status: "request",
+  };
+  api.handleRemoteContainerAction(request, peer);
+  assert.equal(responses.at(-1)?.status, "accepted");
+  assert.equal(responses.at(-1)?.containerId, `furnace:${key}`);
+  assert.deepEqual(responses.at(-1)?.slots, [{ item: BlockId.Cobblestone, count: 2 }, { item: Item.Coal, count: 3 }, null]);
+  assert.deepEqual(responses.at(-1)?.machine, { progress: 1.25, burn: 4.5, burnMax: 8 });
+
+  blockAtTarget = BlockId.Stone;
+  api.handleRemoteContainerAction({ ...request, requestId: "furnace_open_spoofed_001" }, peer);
+  assert.equal(responses.at(-1)?.status, "rejected", "a saved furnace record cannot be opened after its world block is gone");
 });
 
 test("host mob damage uses a peer actor id and never the invalid short synthetic mob id", () => {
@@ -211,6 +560,17 @@ test("demand container snapshots select the requested chest beyond the old 32-en
   const snapshots = (engine as unknown as { networkContainerSnapshots(ids: readonly string[]): Array<{ id: string; revision: number }> })
     .networkContainerSnapshots(["boat:container-47"]);
   assert.deepEqual(snapshots.map(({ id, revision }) => ({ id, revision })), [{ id: "boat:container-47", revision: 9 }]);
+});
+
+test("connected conservatory inventories use the same demand-synced shared container image", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  const id = "exhibit:4,8,-2";
+  const slots = [{ item: Item.CaptureOrb, count: 1, metadata: { specimen: "butterfly" } }];
+  Object.assign(engine, { chests: new Map([[id, slots]]), furnaces: new Map(), multiplayerContainerRevisions: new Map([[id, 3]]) });
+  const snapshots = (engine as unknown as { networkContainerSnapshots(ids: string[]): Array<{ id: string; revision: number; slots: unknown[] }> }).networkContainerSnapshots([id]);
+  assert.equal(snapshots[0]?.id, id);
+  assert.equal(snapshots[0]?.revision, 3);
+  assert.equal(snapshots[0]?.slots.length, 1);
 });
 
 test("send-zero leaves player and container signatures dirty for retry", () => {

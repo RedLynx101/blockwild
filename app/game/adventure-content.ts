@@ -649,9 +649,19 @@ function planBloomrotCathedral(origin: WorldPosition, seed: string | number) {
   const kind: AdventureDungeonKind = "bloomrot-cathedral";
   const b = new AdventurePlanBuilder(origin, seed);
   b.fill(-7,0,-14,7,0,14,BlockId.RuneStone,"cathedral-nave-floor"); b.fill(-14,0,-5,14,0,5,BlockId.RuneStone,"cathedral-transept-floor");
-  for (const x of [-7,7]) b.fill(x,1,-14,x,9,14,BlockId.Moss,"cathedral-wall"); for (const z of [-14,14]) b.fill(-7,1,z,7,9,z,BlockId.Moss,"cathedral-wall");
+  // Trace the actual cruciform perimeter instead of boxing the nave and
+  // accidentally sealing it away from two half-walled transept rooms.
+  for (const x of [-7,7]) for (const [minZ,maxZ] of [[-14,-6],[6,14]] as const) b.fill(x,1,minZ,x,9,maxZ,BlockId.Moss,"cathedral-nave-wall");
+  for (const z of [-14,14]) b.fill(-7,1,z,7,9,z,BlockId.Moss,"cathedral-end-wall");
+  for (const x of [-14,14]) b.fill(x,1,-5,x,7,5,BlockId.Moss,"cathedral-transept-end-wall");
+  for (const z of [-5,5]) for (const [minX,maxX] of [[-14,-8],[8,14]] as const) b.fill(minX,1,z,maxX,7,z,BlockId.Moss,"cathedral-transept-wall");
+  // Authored passages are explicit air so terrain or ruin overlap cannot
+  // reseal the public entrance or the nave-to-wing crossings.
+  b.fill(-2,1,14,2,4,14,BlockId.Air,"cathedral-entry");
+  b.fill(-7,1,-4,-7,5,4,BlockId.Air,"cathedral-west-crossing");
+  b.fill(7,1,-4,7,5,4,BlockId.Air,"cathedral-east-crossing");
   for (const z of [-10,-4,2,8]) for (const x of [-6,6]) { b.fill(x,1,z,x,8,z,BlockId.WildwoodLog,"root-column"); b.set(x,6,z,BlockId.Glowstone,"rose-lamp"); }
-  b.fill(-14,1,-5,-7,7,-5,BlockId.Moss,"transept-wall"); b.fill(7,1,5,14,7,5,BlockId.Moss,"transept-wall");
+  for (const [x,z] of [[-14,-5],[-14,5],[14,-5],[14,5],[-7,-14],[7,-14],[-7,14],[7,14]] as const) b.fill(x,1,z,x,10,z,BlockId.WildwoodLog,"cathedral-buttress");
   b.fill(-2,1,-13,2,4,-10,BlockId.RuneStone,"sealed-altar"); b.set(0,5,-11,BlockId.CrystalBlock,"dawn-rose");
   b.room("nave","Overgrown Nave",1,[0,1,8],[7,8,6],"Advance between root columns while the nave pack presses from both aisles."); b.room("transept","Briar Transept",2,[0,1,0],[14,7,5],"Clear both garden wings to expose the altar approach."); b.room("altar","Dawn Rose Altar",3,[0,1,-10],[7,9,4],"Defeat the matron and open the reliquary under the rose.");
   b.spawn(0,1,9,"rootwrithe",4,7,"nave-roots",["dungeon","stage-1","hostile"]); b.spawn(-8,1,0,"cinder-maw",3,6,"west-transept-pack",["dungeon","stage-2","hostile"]); b.spawn(8,1,0,"vaultwing",4,6,"east-transept-roost",["dungeon","stage-2","hostile"]); b.spawn(0,1,-9,"bellroot-matron",1,7,"altar-matron",["dungeon","stage-3","boss","hostile"]);

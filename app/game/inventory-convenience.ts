@@ -1,4 +1,5 @@
-import { ITEMS, type InventorySlot } from "./data";
+import { captureOrbFromInventorySlot, decodeCaptureOrb } from "./capture-orbs";
+import { ITEMS, Item, type InventorySlot } from "./data";
 
 export type InventoryTransferResult = Readonly<{
   source: readonly (InventorySlot | null)[];
@@ -27,15 +28,37 @@ export function inventoryStackSignature(slot: InventorySlot) {
   return `${slot.item}:${slot.durability ?? ""}:${metadataSignature(slot.metadata)}`;
 }
 
-function canMerge(left: InventorySlot, right: InventorySlot) {
-  return inventoryStackSignature(left) === inventoryStackSignature(right) && (ITEMS[left.item]?.maxStack ?? 64) > 1;
+/**
+ * Detects a creature payload even on an invalid legacy count-greater-than-one
+ * slot. `captureOrbFromInventorySlot` deliberately rejects those malformed
+ * stacks, so the direct payload check keeps inventory repair conservative.
+ */
+export function isFilledCaptureOrbSlot(slot: InventorySlot | null | undefined) {
+  if (!slot || (slot.item !== Item.CaptureOrb && slot.item !== Item.LegacyCaptureOrb)) return false;
+  if (captureOrbFromInventorySlot(slot)?.creature) return true;
+  const encoded = slot.metadata?.captureOrb;
+  if (typeof encoded === "string" && decodeCaptureOrb(encoded)?.creature) return true;
+  return typeof slot.metadata?.capturedCreature === "string";
+}
+
+/** Filled Capture Orbs are exact creature records and always stay singletons. */
+export function inventorySlotStackLimit(slot: InventorySlot) {
+  return isFilledCaptureOrbSlot(slot) ? 1 : Math.max(1, ITEMS[slot.item]?.maxStack ?? 64);
+}
+
+export function inventorySlotsCanStack(left: InventorySlot | null | undefined, right: InventorySlot | null | undefined) {
+  return Boolean(left && right
+    && !isFilledCaptureOrbSlot(left)
+    && !isFilledCaptureOrbSlot(right)
+    && inventoryStackSignature(left) === inventoryStackSignature(right)
+    && inventorySlotStackLimit(left) > 1);
 }
 
 function addStack(target: (InventorySlot | null)[], incoming: InventorySlot) {
   let remaining = incoming.count;
-  const limit = Math.max(1, ITEMS[incoming.item]?.maxStack ?? 64);
+  const limit = inventorySlotStackLimit(incoming);
   if (limit > 1) for (const slot of target) {
-    if (!slot || !canMerge(slot, incoming) || slot.count >= limit) continue;
+    if (!slot || !inventorySlotsCanStack(slot, incoming) || slot.count >= limit) continue;
     const moved = Math.min(remaining, limit - slot.count);
     slot.count += moved;
     remaining -= moved;
@@ -86,7 +109,7 @@ export function transferInventoryStacks(
   let moved = 0;
   for (let index = sourceStart; index < sourceEnd; index += 1) {
     const slot = source[index];
-    if (!slot || (options.onlyAlreadyPresent && !acceptedStacks.has(inventoryStackSignature(slot)))) continue;
+    if (!slot || (options.onlyAlreadyPresent && (inventorySlotStackLimit(slot) <= 1 || !acceptedStacks.has(inventoryStackSignature(slot))))) continue;
     const remainder = addStack(target, slot);
     moved += slot.count - remainder;
     source[index] = remainder > 0 ? { ...slot, count: remainder } : null;

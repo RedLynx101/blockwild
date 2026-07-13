@@ -5,7 +5,7 @@ import { caveEntranceAt } from "../app/game/caves.ts";
 import { wildPeppermintHeight } from "../app/game/ecology.ts";
 import { canPlantSaplingOn, planPeppermintColumnRemoval } from "../app/game/farming.ts";
 import { rayDistanceToTorchBounds, torchInteractionBounds } from "../app/game/engine.ts";
-import { planPoiAmenities, ChunkWorld, LIQUID_SURFACE_INSET } from "../app/game/world.ts";
+import { BAKED_LIGHT_SOURCE_LIMIT, planPoiAmenities, ChunkWorld, LIQUID_SURFACE_INSET, WILD_PEPPERMINT_STEM_TILE } from "../app/game/world.ts";
 import { planStructure } from "../app/game/structures.ts";
 import { isSeatBlock, seatAnchorForBlock } from "../app/game/seating.ts";
 
@@ -34,6 +34,13 @@ test("Meadow Grass accepts saplings and wild peppermint columns remain connected
     { x: 2, y: 11, z: 4, type: BlockId.Air },
     { x: 2, y: 12, z: 4, type: BlockId.Air },
   ]);
+  assert.equal(WILD_PEPPERMINT_STEM_TILE, 162, "lower cane segments need a dedicated full-height tile");
+  assert.deepEqual(
+    Object.values(BLOCKS).filter((definition) => [definition.side, definition.top, definition.bottom].includes(WILD_PEPPERMINT_STEM_TILE)).map((definition) => definition.name),
+    [],
+    "the renderer-only stem tile must not overwrite any save-stable block texture",
+  );
+  assert.equal(BAKED_LIGHT_SOURCE_LIMIT, 256, "dense builds should keep broad baked glow beyond the animated pool");
 });
 
 test("Dreamblossoms glow and all aquatic flora share a flush waterlogged stack contract", () => {

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToString } from "react-dom/server";
@@ -60,6 +61,25 @@ test("the controlled radial wheel grows with favorites and exposes the selected 
   assert.match(html, /4 \/ 10 favorites/u);
   assert.match(html, /Release Q/u);
   assert.equal(renderToString(createElement(SpellWheelPanel, { open: false, magic, onSelectSpell: () => undefined, onClose: () => undefined })), "");
+});
+
+test("the empty spell wheel collapses into one quiet hold-to-close prompt", () => {
+  const html = renderToString(createElement(SpellWheelPanel, {
+    open: true,
+    magic: createMagicState(),
+    onSelectSpell: () => undefined,
+    onClose: () => undefined,
+  }));
+  assert.match(html, /data-empty="true"/u);
+  assert.match(html, /No favorite spells/u);
+  assert.match(html, /Release Q to return/u);
+  assert.doesNotMatch(html, /role="menuitemradio"/u);
+  assert.doesNotMatch(html, /class="dragon-magic-wheelCenter"/u);
+});
+
+test("merchant trade labels opt out of the global carved-button text shadow", () => {
+  const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.match(css, /\.hearthroads-trade-counter\s*>\s*\.gold-button\s*\{[^}]*text-shadow:\s*none;/u);
 });
 
 test("the mana HUD is present after attunement and disappears at Magic mastery", () => {

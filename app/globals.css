@@ -1736,6 +1736,37 @@ input:focus-visible {
   transform-origin: center;
 }
 
+/* A readable miniature of the placed Surveyor/Cartography Table: an angled
+   parchment chart, coast ink, compass rose, brass ruler, and splayed legs. */
+.item-icon-kind-cartography::before {
+  left: 2px;
+  top: 2px;
+  width: 26px;
+  height: 19px;
+  border: 2px solid #4b3323;
+  background:
+    radial-gradient(circle at 76% 31%, transparent 0 2px, #9a5c35 2.5px 3.5px, transparent 4px),
+    linear-gradient(29deg, transparent 0 58%, #bd723d 59% 63%, transparent 64%),
+    linear-gradient(145deg, transparent 0 31%, #4e8b78 32% 38%, transparent 39%),
+    linear-gradient(24deg, transparent 0 44%, #5e9db0 45% 52%, transparent 53%),
+    repeating-linear-gradient(0deg, rgba(104, 76, 43, .18) 0 1px, transparent 1px 4px),
+    #e2cf96;
+  box-shadow: inset 2px 2px 0 rgba(255, 248, 197, .72), 2px 3px 0 rgba(0, 0, 0, .55);
+  clip-path: polygon(8% 0, 100% 13%, 89% 100%, 0 82%);
+  transform: rotate(-4deg);
+}
+
+.item-icon-kind-cartography::after {
+  left: 5px;
+  top: 18px;
+  width: 21px;
+  height: 11px;
+  background:
+    linear-gradient(76deg, transparent 0 15%, #5b3b27 16% 29%, transparent 30% 68%, #4b3122 69% 83%, transparent 84%),
+    linear-gradient(90deg, transparent 0 8%, #98704a 9% 91%, transparent 92%) 0 1px / 100% 4px no-repeat;
+  filter: drop-shadow(1px 2px 0 rgba(0, 0, 0, .58));
+}
+
 .item-icon-kind-stick::before {
   inset: -1px 10px -1px 11px;
   background: linear-gradient(90deg, #56331d, #a86d39 38% 68%, #6a4025);
@@ -7616,6 +7647,7 @@ input:focus-visible {
 .hearthroads-trade-counter > label { color: #675d43; font-size: 8px; font-weight: 900; text-transform: uppercase; }
 .hearthroads-trade-total { display: flex; justify-content: space-between; align-items: baseline; padding: 11px; color: #5e4818; background: rgba(220, 182, 76, .2); border: 1px solid #a48842; }
 .hearthroads-trade-warning { color: #7c4035; font-size: 8px; line-height: 1.4; }
+.hearthroads-trade-counter > .gold-button { text-shadow: none; }
 .hearthroads-purse-pair { display: flex; gap: 12px; }
 .hearthroads-purse-pair span { display: grid; gap: 2px; color: #bbc3b4; font-size: 7px; }
 .hearthroads-purse-pair strong { color: #f0cf6b; font-size: 14px; }

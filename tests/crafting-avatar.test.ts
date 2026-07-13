@@ -30,6 +30,7 @@ import {
   resolveTouchControls,
   runSingleFlight,
   shouldSuppressGameContextMenu,
+  shouldCloseSpellWheelOnKeyRelease,
   slotInteractionAllowed,
   type SingleFlightGate,
 } from "../app/game/VoxelGame.tsx";
@@ -258,8 +259,8 @@ test("workstation UI normalizes apiary production and exact capture-orb metadata
 });
 
 test("human release identity stays separate from save schemas", () => {
-  assert.equal(GAME_VERSION, "1.4.2");
-  assert.equal(GAME_RELEASE_NAME, "Shared World Repair");
+  assert.equal(GAME_VERSION, "1.4.3");
+  assert.equal(GAME_RELEASE_NAME, "Shared Lanterns");
   assert.equal(normalizeGameVersion("garbage"), "0.1.0");
 });
 
@@ -315,6 +316,12 @@ test("newly opened container slots ignore the opening pointer event", () => {
   assert.equal(slotInteractionAllowed(1_180, 1_000), false);
   assert.equal(slotInteractionAllowed(1_180, 1_179), false);
   assert.equal(slotInteractionAllowed(1_180, 1_180), true);
+});
+
+test("releasing Q closes only the active spell wheel", () => {
+  assert.equal(shouldCloseSpellWheelOnKeyRelease("KeyQ", "spell-wheel"), true);
+  assert.equal(shouldCloseSpellWheelOnKeyRelease("KeyQ", null), false);
+  assert.equal(shouldCloseSpellWheelOnKeyRelease("Escape", "spell-wheel"), false);
 });
 
 test("inventory artwork stays semantic at real slot sizes and food hover copy is explicit", () => {

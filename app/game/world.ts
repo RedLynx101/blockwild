@@ -630,8 +630,11 @@ const LIGHT_BLOCKS = new Set<BlockId>([
  * pool of animated Three.js point lights can then be reserved for the nearest
  * flickering sources without making every older torch appear inert.
  */
-export const BAKED_LIGHT_SOURCE_LIMIT = 80;
+/** Dense settlements and dungeons keep broad voxel glow beyond the animated pool. */
+export const BAKED_LIGHT_SOURCE_LIMIT = 256;
 export const BAKED_LIGHT_RADIUS = 18;
+/** Lower/middle Wild Peppermint segments use a full-height repeating cane tile. */
+export const WILD_PEPPERMINT_STEM_TILE = 162;
 export type BakedLightSource = { x: number; y: number; z: number; type: BlockId };
 const ATLAS_GRID = 13;
 const ATLAS_PAD = 0.0008;
@@ -1224,6 +1227,13 @@ export function createBlockAtlas() {
       context.fillStyle = index === 160 ? "#182229" : "#515f66";
       for (let x = 2; x < tile; x += 5) context.fillRect(ox + x, oy, 1, tile);
     }
+    if (index === WILD_PEPPERMINT_STEM_TILE) {
+      context.clearRect(ox, oy, tile, tile);
+      for (const x of [5, 8, 11]) for (let y = 0; y < 16; y += 1) {
+        pixel(index, x, y, (y + x) % 4 < 2 ? "#f5eee7" : "#e64d5f");
+        if ((y + x) % 7 === 0 && x > 5) pixel(index, x - 1, y, "#6aa657");
+      }
+    }
     if (index === 62) {
       context.fillStyle = "#6a3d22";
       context.fillRect(ox, oy, 16, 16);
@@ -1281,12 +1291,23 @@ export function createBlockAtlas() {
       context.fillRect(ox + 7, oy + 7, 2, 2);
     }
     if (index === 72) {
-      context.fillStyle = "#405447";
+      // Wild Rune Stone: weathered slate, hairline fractures, a hand-cut
+      // asymmetrical sigil and a restrained luminous mineral seam.
+      context.fillStyle = "#33463d";
       context.fillRect(ox, oy, tile, tile);
-      context.fillStyle = "#79c692";
-      context.fillRect(ox + 3, oy + 3, 2, 10); context.fillRect(ox + 11, oy + 3, 2, 10);
-      context.fillRect(ox + 5, oy + 7, 6, 2); context.fillRect(ox + 7, oy + 5, 2, 6);
-      context.fillStyle = "#b8f4c9";
+      context.fillStyle = "#41594a";
+      for (const [x, y, w, h] of [[0, 2, 6, 1], [9, 1, 7, 1], [2, 12, 9, 1], [12, 9, 4, 1], [1, 6, 1, 4], [10, 3, 1, 3]] as Array<[number, number, number, number]>) context.fillRect(ox + x, oy + y, w, h);
+      context.fillStyle = "#26372f";
+      context.fillRect(ox + 5, oy + 2, 1, 4); context.fillRect(ox + 4, oy + 5, 2, 1);
+      context.fillRect(ox + 11, oy + 10, 1, 4); context.fillRect(ox + 9, oy + 10, 3, 1);
+      context.fillStyle = "#69b884";
+      context.fillRect(ox + 7, oy + 2, 2, 3); context.fillRect(ox + 6, oy + 4, 2, 2);
+      context.fillRect(ox + 5, oy + 6, 2, 5); context.fillRect(ox + 6, oy + 10, 4, 2);
+      context.fillRect(ox + 9, oy + 7, 2, 4); context.fillRect(ox + 10, oy + 5, 2, 3);
+      context.fillStyle = "#a7e3b9";
+      context.fillRect(ox + 7, oy + 4, 1, 2); context.fillRect(ox + 6, oy + 8, 1, 2);
+      context.fillRect(ox + 8, oy + 10, 2, 1); context.fillRect(ox + 10, oy + 7, 1, 2);
+      context.fillStyle = "#d1f5d9";
       context.fillRect(ox + 7, oy + 7, 2, 2);
     }
     if (index === 84) {
@@ -3298,7 +3319,7 @@ export class ChunkWorld {
           continue;
         }
         if (definition.shape === "cross" || definition.shape === "aquatic" || definition.shape === "tall-flower") {
-          const tile = definition.side;
+          let tile = definition.side;
           const environment = definition.layer === "emissive" ? Math.max(0.82, shadeAt(lx, y, lz)) : shadeAt(lx, y, lz);
           const addFullCross = (half: number, y0: number, y1: number, shade = 1) => {
             addQuad(bucket, [[lx - half, y0, lz - half], [lx - half, y1, lz - half], [lx + half, y1, lz + half], [lx + half, y0, lz + half]], [0.7, 0, -0.7], tile, shade, tint, 0, 0, 0, 0, environment);
@@ -3318,6 +3339,7 @@ export class ChunkWorld {
               && BLOCKS[neighborAt(lx, y - 1, lz)]?.verticalConnectGroup === definition.verticalConnectGroup;
             const connectedAbove = definition.verticalConnectGroup !== undefined
               && BLOCKS[neighborAt(lx, y + 1, lz)]?.verticalConnectGroup === definition.verticalConnectGroup;
+            if (type === BlockId.PeppermintTuft && connectedAbove) tile = WILD_PEPPERMINT_STEM_TILE;
             addFullCross(0.44, y - (connectedBelow ? 0.54 : 0.5), y + (connectedAbove ? 0.54 : 0.5));
           }
           continue;

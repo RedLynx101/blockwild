@@ -1,4 +1,5 @@
-import { maxStack, type InventorySlot, type ItemCode } from "./data";
+import { type InventorySlot, type ItemCode } from "./data";
+import { inventorySlotStackLimit, isFilledCaptureOrbSlot } from "./inventory-convenience";
 import {
   decodeCaptureOrb,
   encodeCaptureOrb,
@@ -145,6 +146,10 @@ export function depositDigitalItem(vault: DigitalItemVault, slot: InventorySlot)
 }> {
   const incoming = cloneSlot(slot);
   if (incoming.count <= 0) return { state: vault, accepted: 0, remainder: null };
+  // Creature records belong in the Creature Archive. Keeping them out of the
+  // bulk item vault prevents identical/corrupt filled-orb payloads from ever
+  // being represented as one high-count digital stack.
+  if (isFilledCaptureOrbSlot(incoming)) return { state: vault, accepted: 0, remainder: incoming };
   const available = Math.max(0, digitalItemCapacity(vault) - digitalItemCount(vault));
   const accepted = Math.min(available, incoming.count);
   if (accepted <= 0) return { state: vault, accepted: 0, remainder: incoming };
@@ -189,7 +194,7 @@ export function searchDigitalItems(vault: DigitalItemVault, query: string, itemN
 function splitLegalStacks(slot: InventorySlot): InventorySlot[] {
   const result: InventorySlot[] = [];
   let remaining = Math.max(0, Math.floor(slot.count));
-  const limit = Math.max(1, maxStack(slot.item));
+  const limit = inventorySlotStackLimit(slot);
   while (remaining > 0) {
     const count = Math.min(limit, remaining);
     result.push({ ...cloneSlot(slot), count });

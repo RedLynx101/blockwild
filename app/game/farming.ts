@@ -851,12 +851,15 @@ export function fenceCollisionHeight(block: BlockId) {
 
 export type LeadAnchor = Readonly<{
   mobId: string;
+  /** Keeper for an unfenced lead. Null retains the legacy local-player behavior. */
+  ownerId?: string | null;
   fence?: BlockPosition;
   maximumLength: number;
 }>;
 
 export type SavedLeadAnchor = Readonly<{
   mobId: number;
+  ownerId?: string | null;
   fence?: BlockPosition;
   maximumLength: number;
 }>;
@@ -883,6 +886,7 @@ export function serializeLeadAnchors(leads: ReadonlyMap<number, LeadAnchor>, liv
     saved.push({
       mobId,
       maximumLength,
+      ...(typeof lead.ownerId === "string" && lead.ownerId.trim() ? { ownerId: lead.ownerId.trim().slice(0, 160) } : {}),
       ...(fenceX !== null && fenceY !== null && fenceZ !== null ? { fence: { x: fenceX, y: fenceY, z: fenceZ } } : {}),
     });
   }
@@ -905,6 +909,7 @@ export function restoreLeadAnchors(value: unknown, liveMobIds: ReadonlySet<numbe
     restored.set(mobId!, {
       mobId: String(mobId),
       maximumLength,
+      ...(typeof entry.ownerId === "string" && entry.ownerId.trim() ? { ownerId: entry.ownerId.trim().slice(0, 160) } : {}),
       ...(fenceX !== null && fenceY !== null && fenceZ !== null ? { fence: { x: fenceX, y: fenceY, z: fenceZ } } : {}),
     });
   }

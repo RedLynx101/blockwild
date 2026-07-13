@@ -149,17 +149,17 @@ test("buckets, connected fences, gates, leads, and their recipes expose complete
   assert.equal(canHitchLead(true, BlockId.Stone, [attachedLead]), false);
   assert.equal(canHitchLead(true, BlockId.WildwoodFence, [{ ...attachedLead, fence: { x: 0, y: 1, z: 0 } }]), false);
   const activeLeads = new Map<number, LeadAnchor>([
-    [7, attachedLead],
+    [7, { ...attachedLead, ownerId: "player_guest_01" }],
     [8, { ...attachedLead, mobId: "8", maximumLength: 12, fence: { x: 14, y: 22, z: -6 } }],
     [99, { ...attachedLead, mobId: "99" }],
   ]);
   const savedLeads = serializeLeadAnchors(activeLeads, new Set([7, 8]));
   assert.deepEqual(savedLeads, [
-    { mobId: 7, maximumLength: 9 },
+    { mobId: 7, maximumLength: 9, ownerId: "player_guest_01" },
     { mobId: 8, maximumLength: 12, fence: { x: 14, y: 22, z: -6 } },
   ]);
   assert.deepEqual([...restoreLeadAnchors(savedLeads, new Set([7, 8])).entries()], [
-    [7, { mobId: "7", maximumLength: 9 }],
+    [7, { mobId: "7", maximumLength: 9, ownerId: "player_guest_01" }],
     [8, { mobId: "8", maximumLength: 12, fence: { x: 14, y: 22, z: -6 } }],
   ]);
   assert.equal(restoreLeadAnchors(undefined, new Set([7])).size, 0, "old saves without leads remain valid");

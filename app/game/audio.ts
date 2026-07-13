@@ -224,7 +224,7 @@ export const SAMPLE_ASSETS: Record<SampleKind, { source: string; gain: number }>
   houndCallB: { source: "/sfx/hound-call-b.wav", gain: 0.73 },
   crabChitter: { source: "/sfx/crab-chitter.wav", gain: 0.68 },
   lightRain: { source: "/sfx/ambient-light-rain.wav", gain: 0.42 },
-  nightCrickets: { source: "/sfx/ambient-night-crickets.wav", gain: 0.24 },
+  nightCrickets: { source: "/sfx/ambient-night-crickets.wav", gain: 0.12 },
   wind: { source: "/sfx/ambient-wind.wav", gain: 0.17 },
   snowStep: { source: "/sfx/step-snow.wav", gain: 0.56 },
   dirtStep: { source: "/sfx/step-dirt.wav", gain: 0.5 },

@@ -1,6 +1,6 @@
 # Blockwild
 
-Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 biomes, cave networks, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.4.2 Shared World Repair**.
+Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 biomes, cave networks, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.4.3 Shared Lanterns**.
 
 The project is a real game rather than a voxel-rendering demo. You can mine, build, craft, smelt, farm, fight, collect field notes, manage several worlds, and carry those worlds between browsers with export files.
 
@@ -9,6 +9,10 @@ The project is a real game rather than a voxel-rendering demo. You can mine, bui
 ![Blockwild field guide with all 167 rendered creatures](public/creatures/blockwild-creatures.svg)
 
 The integrated creature-design pass expands the Courser family with Rimehoof, Sunscar, Mirestride, and Starbough ecological breeds plus the forge-built Deepgear Courser. It also rebuilds the four dragon families, birds, pets, crabs, mosslings, foxes, harts, deer, longhorns, terrapins, and other core wildlife, while preserving one production-model path for gameplay, Bestiary portraits, and visual audits.
+
+## v1.4.3 Shared Lanterns
+
+Shared Lanterns separates high-frequency guest presentation traffic from reliable inventory and interaction transactions, reducing scroll and world-update contention without surrendering host authority. Shared furnaces, creature cargo, conservatories, aquarium storage, and other facilities now open from host state; merchant trades, dragon-care actions, and leads carry the acting player's identity; and stale revisions or invalid remote mutations are rejected. Furnaces, ordinary containers, conservatories, aquariums, and creature cargo support validated shared interaction; the remaining heterogeneous production stations expose their host-authored state read-only until each has a typed operation protocol. The release also quiets the empty spell wheel, closes it on Q release, makes filled creature orbs singleton records with descriptive names, expands stable nearby lighting, repairs Bloomrot Cathedral, and polishes peppermint, rune, Surveyor Table, and cricket presentation.
 
 ## v1.4.2 Shared World Repair
 

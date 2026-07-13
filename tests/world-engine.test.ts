@@ -569,7 +569,7 @@ test("partial block shapes preserve the full cube faces beside them", () => {
 });
 
 test("placed lights bake an order-of-magnitude larger static pool without washing out daylight", () => {
-  assert.equal(BAKED_LIGHT_SOURCE_LIMIT, 80);
+  assert.equal(BAKED_LIGHT_SOURCE_LIMIT, 256);
   const torch = [{ x: 0, y: 2, z: 0, type: BlockId.Torch }];
   const nearbyCave = bakedEnvironmentLightShade(0.38, 1, 2, 0, torch);
   const distantCave = bakedEnvironmentLightShade(0.38, 40, 2, 0, torch);

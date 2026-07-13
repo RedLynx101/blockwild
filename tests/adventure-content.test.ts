@@ -122,6 +122,40 @@ test("every dungeon has three-stage progression, multiple encounters, loot and a
   }
 });
 
+test("both surface dungeons have complete authored room perimeters and deliberate openings", () => {
+  const bloomrot = planAdventureStructure("bloomrot-cathedral", ORIGIN, "surface-wall-audit");
+  const bloomrotBlocks = new Map(bloomrot.placements.map((placement) => [`${placement.x - ORIGIN.x},${placement.y - ORIGIN.y},${placement.z - ORIGIN.z}`, placement.block]));
+  for (const y of [2, 4, 7]) {
+    for (let z = -5; z <= 5; z += 1) {
+      const expected = Math.abs(z) === 5 ? BlockId.WildwoodLog : BlockId.Moss;
+      assert.equal(bloomrotBlocks.get(`-14,${y},${z}`), expected, `west transept end missing at ${y},${z}`);
+      assert.equal(bloomrotBlocks.get(`14,${y},${z}`), expected, `east transept end missing at ${y},${z}`);
+    }
+    for (const z of [-5, 5]) for (const [minX, maxX] of [[-14, -8], [8, 14]] as const) for (let x = minX; x <= maxX; x += 1) {
+      const expected = (Math.abs(x) === 14) ? BlockId.WildwoodLog : BlockId.Moss;
+      assert.equal(bloomrotBlocks.get(`${x},${y},${z}`), expected, `transept side missing at ${x},${y},${z}`);
+    }
+    for (const x of [-7, 7]) for (const [minZ, maxZ] of [[-14, -6], [6, 14]] as const) for (let z = minZ; z <= maxZ; z += 1) {
+      const expected = Math.abs(z) === 14 ? BlockId.WildwoodLog : BlockId.Moss;
+      assert.equal(bloomrotBlocks.get(`${x},${y},${z}`), expected, `nave side missing at ${x},${y},${z}`);
+    }
+  }
+  for (const x of [-7, -6, -5, 5, 6, 7]) assert.equal(bloomrotBlocks.get(`${x},3,14`), Math.abs(x) === 7 ? BlockId.WildwoodLog : BlockId.Moss);
+  for (let x = -2; x <= 2; x += 1) assert.equal(bloomrotBlocks.get(`${x},3,14`), BlockId.Air, "the public entry must stay open");
+  assert.equal(bloomrotBlocks.get(`-7,3,0`), BlockId.Air, "the west garden must open into the nave");
+  assert.equal(bloomrotBlocks.get(`7,3,0`), BlockId.Air, "the east garden must open into the nave");
+
+  const stormglass = planAdventureStructure("stormglass-citadel", ORIGIN, "surface-wall-audit");
+  const stormglassBlocks = new Map(stormglass.placements.map((placement) => [`${placement.x - ORIGIN.x},${placement.y - ORIGIN.y},${placement.z - ORIGIN.z}`, placement.block]));
+  for (let edge = -13; edge <= 13; edge += 1) {
+    assert.equal(stormglassBlocks.get(`${edge},3,-13`), BlockId.SnowcapStone);
+    if (Math.abs(edge) > 2) assert.equal(stormglassBlocks.get(`${edge},3,13`), BlockId.SnowcapStone);
+    assert.equal(stormglassBlocks.get(`-13,3,${edge}`), BlockId.SnowcapStone);
+    assert.equal(stormglassBlocks.get(`13,3,${edge}`), BlockId.SnowcapStone);
+  }
+  for (let x = -2; x <= 2; x += 1) assert.equal(stormglassBlocks.get(`${x},3,13`), BlockId.Air, "the gate court opening is intentional");
+});
+
 test("underground dungeons use connected seeded tile graphs with variable footprints", () => {
   for (const archetype of ADVENTURE_DUNGEON_ARCHETYPES.filter((entry) => entry.underground)) {
     const kind = archetype.kind as AdventureDungeonKind;
