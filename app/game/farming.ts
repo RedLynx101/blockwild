@@ -35,6 +35,9 @@ export type PlantGrowthProfile = Readonly<{
   requiresFarmland: boolean;
 }>;
 
+/** Farming, orchard, sapling, and aquatic-flora growth share this world pace. */
+export const PLANT_GROWTH_TIME_MULTIPLIER = 5;
+
 const CULTIVATED_FLOWER_GROWTH: Readonly<Record<`cultivated-flower-${number}`, PlantGrowthProfile>> = Object.fromEntries(
   ORDINARY_FLOWERS.map((flower, index) => {
     const kind = `cultivated-flower-${flower}` as const;
@@ -122,9 +125,9 @@ export const PLANT_GROWTH: Readonly<Record<PlantKind, PlantGrowthProfile>> = Obj
   ...CULTIVATED_FLOWER_GROWTH,
 });
 
-/** Orchard fruit returns in roughly one in-game minute instead of several. */
-export const ORCHARD_REGROWTH_BASE_MS = 45_000;
-export const ORCHARD_REGROWTH_JITTER_MS = 30_000;
+/** Orchard fruit now returns over several minutes rather than every minute. */
+export const ORCHARD_REGROWTH_BASE_MS = 45_000 * PLANT_GROWTH_TIME_MULTIPLIER;
+export const ORCHARD_REGROWTH_JITTER_MS = 30_000 * PLANT_GROWTH_TIME_MULTIPLIER;
 
 const FARM_SOILS = new Set<BlockId>([BlockId.Farmland, BlockId.HydratedFarmland]);
 const LIVING_SOILS = new Set<BlockId>([
@@ -497,7 +500,7 @@ export function growthDelaySeconds(block: BlockId, hydrated: boolean, seed: stri
   if (!found) return null;
   const hydrationFactor = found.profile.requiresFarmland ? (hydrated ? 0.72 : 1.8) : (hydrated ? 0.9 : 1);
   const jitter = 0.82 + farmHash01(seed, position.x, position.y, position.z, cycle) * 0.36;
-  return found.profile.baseStageSeconds * hydrationFactor * jitter;
+  return found.profile.baseStageSeconds * hydrationFactor * jitter * PLANT_GROWTH_TIME_MULTIPLIER;
 }
 
 export function canGrowPlant(block: BlockId, soil: BlockId | undefined, light: number) {

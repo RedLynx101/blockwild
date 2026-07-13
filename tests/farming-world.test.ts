@@ -17,6 +17,7 @@ import {
   nextPlantStage,
   ORCHARD_REGROWTH_BASE_MS,
   ORCHARD_REGROWTH_JITTER_MS,
+  PLANT_GROWTH_TIME_MULTIPLIER,
   planAppleFruitRegrowth,
   planAppleTree,
   plantingResult,
@@ -27,7 +28,7 @@ import {
   type LeadAnchor,
 } from "../app/game/farming.ts";
 import { planLeafParticles, stepLeafParticle, torchAnimationSample } from "../app/game/world-effects.ts";
-import { planDoubleTallGrassRemoval } from "../app/game/tall-grass.ts";
+import { planDoubleTallGrassRemoval, planDoubleTallGrassReplacement } from "../app/game/tall-grass.ts";
 import { planStructure, structureBiomeFromId, structureCandidateForChunk, structureClearanceBounds } from "../app/game/structures.ts";
 import {
   BiomeId,
@@ -62,6 +63,32 @@ test("two-block tall grass uses connected halves and breaks atomically from eith
   assert.deepEqual(lower, upper);
   assert.deepEqual(lower.map((edit) => edit.y), [8, 9]);
   assert.ok(lower.every((edit) => edit.type === BlockId.Air));
+  assert.deepEqual(
+    planDoubleTallGrassReplacement(BlockId.DoubleTallGrassLower, BlockId.MoonOrchid, { x: 2, y: 8, z: 4 }, lookup),
+    [{ x: 2, y: 9, z: 4, type: BlockId.Air }],
+  );
+  assert.deepEqual(
+    planDoubleTallGrassReplacement(BlockId.DoubleTallGrassLower, BlockId.DoubleTallGrassLower, { x: 2, y: 8, z: 4 }, lookup),
+    [],
+  );
+});
+
+test("later meadow flora passes cannot strand upper tall-grass halves", () => {
+  const world = new ChunkWorld();
+  world.reset("WILDERNESS", undefined, { structures: false });
+  const chunk = world.generateChunk(-4, -4);
+  let pairs = 0;
+  for (let x = 0; x < 16; x += 1) for (let z = 0; z < 16; z += 1) for (let y = MIN_Y; y <= MAX_Y; y += 1) {
+    const type = chunk.blocks[blockIndex(x, y, z)] as BlockId;
+    if (type === BlockId.DoubleTallGrassLower) {
+      assert.equal(chunk.blocks[blockIndex(x, y + 1, z)], BlockId.DoubleTallGrassUpper);
+      pairs += 1;
+    } else if (type === BlockId.DoubleTallGrassUpper) {
+      assert.equal(chunk.blocks[blockIndex(x, y - 1, z)], BlockId.DoubleTallGrassLower);
+    }
+  }
+  assert.ok(pairs > 0, "the fixture should retain valid two-block grass specimens");
+  world.dispose();
 });
 
 test("farmland hydration, tilling, and deterministic growth timings are bounded", () => {
@@ -74,11 +101,12 @@ test("farmland hydration, tilling, and deterministic growth timings are bounded"
   const first = growthDelaySeconds(BlockId.WheatSprout, true, "FARM", { x: 3, y: 20, z: -5 }, 2);
   const again = growthDelaySeconds(BlockId.WheatSprout, true, "FARM", { x: 3, y: 20, z: -5 }, 2);
   const dry = growthDelaySeconds(BlockId.WheatSprout, false, "FARM", { x: 3, y: 20, z: -5 }, 2);
+  assert.equal(PLANT_GROWTH_TIME_MULTIPLIER, 5);
   assert.equal(first, again);
   assert.ok((dry ?? 0) > (first ?? 0));
-  assert.ok((growthDelaySeconds(BlockId.MoonberryBush, false, "FARM", { x: 1, y: 2, z: 3 }) ?? Infinity) < 60);
-  assert.ok((growthDelaySeconds(BlockId.SunberryBush, false, "FARM", { x: 1, y: 2, z: 3 }) ?? Infinity) < 53);
-  assert.equal(ORCHARD_REGROWTH_BASE_MS + ORCHARD_REGROWTH_JITTER_MS, 75_000, "orchard fruit returns within a bounded short cycle");
+  assert.ok((growthDelaySeconds(BlockId.MoonberryBush, false, "FARM", { x: 1, y: 2, z: 3 }) ?? Infinity) < 300);
+  assert.ok((growthDelaySeconds(BlockId.SunberryBush, false, "FARM", { x: 1, y: 2, z: 3 }) ?? Infinity) < 265);
+  assert.equal(ORCHARD_REGROWTH_BASE_MS + ORCHARD_REGROWTH_JITTER_MS, 375_000, "orchard fruit uses the shared fivefold world pace");
 });
 
 test("rooted tree discovery follows connected branches and does not require a hardcoded trunk variant", () => {

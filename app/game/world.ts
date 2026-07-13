@@ -41,6 +41,7 @@ import {
   type SettlementResident,
 } from "./settlements";
 import { planSeaDragonNest } from "./v1-cultures";
+import { planDoubleTallGrassReplacement } from "./tall-grass";
 import {
   UndergroundBiomeId,
   CAVE_GRAPH_MAX_RADIUS,
@@ -688,6 +689,11 @@ const TILE_UVS = Array.from({ length: ATLAS_GRID * ATLAS_GRID }, (_, tile) => {
 export const GLASS_OPACITY = 0.42;
 /** Liquid tops sit below the voxel rim; bottoms remain flush with supporting blocks. */
 export const LIQUID_SURFACE_INSET = 0.09;
+
+/** Only the uppermost water cell is lowered; submerged cells remain seamless. */
+export function liquidSurfaceInsetForCell(type: BlockId, above: BlockId | undefined) {
+  return blockContainsWater(type) && !blockContainsWater(above) ? -LIQUID_SURFACE_INSET : 0;
+}
 
 /** A cube with every face remapped to the same atlas contract used by chunk meshes. */
 export function createAtlasBlockGeometry(type: BlockId, size = 1) {
@@ -2686,7 +2692,13 @@ export class ChunkWorld {
       // Generated flora may replace another plant, but never a liquid. This
       // keeps vegetation from plugging rivers or the new syrup/honey cells.
       if (onlyAir && BLOCKS[current]?.liquid) return;
-      if (!onlyAir || current === BlockId.Air || BLOCKS[current]?.replaceable) chunk.blocks[index] = type;
+      if (!onlyAir || current === BlockId.Air || BLOCKS[current]?.replaceable) {
+        for (const edit of planDoubleTallGrassReplacement(current, type, { x, y, z }, (bx, by, bz) => {
+          if (!inside(bx, bz) || by < MIN_Y || by > MAX_Y) return undefined;
+          return chunk.blocks[blockIndex(bx - minX, by, bz - minZ)] as BlockId;
+        })) chunk.blocks[blockIndex(edit.x - minX, edit.y, edit.z - minZ)] = edit.type;
+        chunk.blocks[index] = type;
+      }
     };
     const clearGeneratedGrowth = (bounds: Readonly<{ minX: number; maxX: number; minZ: number; maxZ: number }>) => {
       // Tree crowns reach four cells beyond their root. Clearing a padded
@@ -4049,7 +4061,10 @@ export class ChunkWorld {
     };
 
     const addImplicitWaterCell = (localX: number, y: number, localZ: number, tint: [number, number, number]) => {
-      const surfaceInset = -LIQUID_SURFACE_INSET;
+      const surfaceInset = liquidSurfaceInsetForCell(
+        neighborAt(localX, y, localZ),
+        neighborAt(localX, y + 1, localZ),
+      );
       for (const face of FACES) {
         const [dx, dy, dz] = face.direction;
         if (blockContainsWater(neighborAt(localX + dx, y + dy, localZ + dz))) continue;
@@ -4530,7 +4545,9 @@ export class ChunkWorld {
             && hash3(chunk.cx * CHUNK_SIZE + lx + dx, y + dy, chunk.cz * CHUNK_SIZE + lz + dz, this.seed ^ 0x37b41cd9) < DENSE_CUTOUT_LEAF_POLICY.renderInternalFaceFraction;
           if (!this.faceVisible(type, neighbor) && !internalLeafFace) continue;
           const tile = dy > 0 ? definition.top : dy < 0 ? definition.bottom : definition.side;
-          const liquidSurfaceInset = definition.liquid ? -LIQUID_SURFACE_INSET : 0;
+          const liquidSurfaceInset = definition.liquid
+            ? liquidSurfaceInsetForCell(type, neighborAt(lx, y + 1, lz))
+            : 0;
           const environment = definition.layer === "emissive"
             ? Math.max(0.82, shadeAt(lx + dx, y + dy, lz + dz))
             : shadeAt(lx + dx, y + dy, lz + dz);

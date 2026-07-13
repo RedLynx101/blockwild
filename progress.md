@@ -16,6 +16,13 @@ Original prompt: Rework recipes and the pack GUI/avatar; fix twitchy Ridgebacks;
 - Added secondary motion for alternating Lanternray organs, Prismtail feathers, Ashnose heat noses, Chimewing pendants, Cinder Kite vents, Sailfin sails, and the Veinling heart. Kept the existing Grazer root, Newt gill, flight, tail, and seam animation paths intact.
 - Corrected the World Below showcase so its PNG is rasterized from the same labeled field-guide SVG rather than silently copying the unlabeled raw model sheet. Manually reviewed the labeled second-pass sheet and a 2200-pixel before/after comparison under ignored `output/world-overhaul-second-pass/`.
 
+## Flora pacing and underwater seam repair - 2026-07-13
+
+- Made generated two-block meadow grass atomic across every later decoration pass. Replacing either half with a flower or other authored placement now clears the matching counterpart; the former `WILDERNESS` orphan fixture and a wider generated-region scan retain only complete pairs.
+- Fixed the apparent air lines beside underwater plants by applying the lowered liquid edge only to the actual top water cell. Submerged waterlogged flora and stacked water now meet on the same exact block plane.
+- Applied one shared 5× timing multiplier to crops, berry bushes, cultivated flowers, ordinary and apple saplings, orchard fruit, and vertically growing aquatic flora. Doubled both passive/sprint hunger drain and the hunger cost of natural healing.
+- Focused farming, liquid, meshing, world-engine, schedule, and survival regressions pass. The official browser loop and a purpose-built underwater gallery were reviewed in first and third person; plants, block edges, and the avatar's trouser/leg silhouette are seamless, and the page/console logs are empty. QA artifacts remain ignored under `output/plant-growth-water-qa/`.
+
 ## v1.2 character-profile slice — 2026-07-12
 
 - Added a normalized, browser-persistent multiple-character catalog with one stable browser ID and one stable ID per profile. Profiles retain name, sex, faction race, five customizable appearance colors, recent selection, and a bounded 20-point starting skill allocation.

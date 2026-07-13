@@ -418,6 +418,7 @@ import {
   nextPlantStage,
   ORCHARD_REGROWTH_BASE_MS,
   ORCHARD_REGROWTH_JITTER_MS,
+  PLANT_GROWTH_TIME_MULTIPLIER,
   planAppleFruitRegrowth,
   planAppleTree,
   planAquaticColumnRemoval,
@@ -1318,6 +1319,22 @@ const CRAFT_POSITIONS_2 = [0, 1, 3, 4];
 const MAIN_THEN_HOTBAR = [...Array.from({ length: 27 }, (_, index) => index + 9), ...Array.from({ length: 9 }, (_, index) => index)];
 export const COMBAT_MUSIC_HOLD_SECONDS = 22.5;
 export const DEFAULT_UNARMED_DAMAGE = 1;
+export const FOOD_USAGE_MULTIPLIER = 2;
+
+export function survivalFoodUsagePerSecond(
+  sprinting: boolean,
+  roadHardened = 1,
+  survivalMultiplier = 1,
+) {
+  return (sprinting ? 0.009 : 0.0024)
+    * FOOD_USAGE_MULTIPLIER
+    * Math.max(0, roadHardened)
+    / Math.max(0.01, survivalMultiplier);
+}
+
+export function regenerationFoodUsage(survivalMultiplier = 1) {
+  return 0.35 * FOOD_USAGE_MULTIPLIER / Math.max(0.01, survivalMultiplier);
+}
 /** Navigation and other motion-sensitive HUD elements render at roughly 29 Hz. */
 export const HUD_VISUAL_REFRESH_MS = 35;
 // Hearthroads trims the already-reduced night pressure by another 40% while
@@ -10177,16 +10194,16 @@ export class VoxelEngine {
     this.saplings ??= new Map<string, number>();
     const now = Date.now();
     if (type === BlockId.WildwoodSapling || type === BlockId.JungleSapling || type === BlockId.SakuraSapling || type === BlockId.CandywoodSapling) {
-      this.saplings.set(blockKey(x, y, z), now + 75_000 + Math.random() * 75_000);
+      this.saplings.set(blockKey(x, y, z), now + (75_000 + Math.random() * 75_000) * PLANT_GROWTH_TIME_MULTIPLIER);
       return;
     }
     if (type === BlockId.AppleSapling) {
-      this.saplings.set(blockKey(x, y, z), now + 95_000 + Math.random() * 80_000);
+      this.saplings.set(blockKey(x, y, z), now + (95_000 + Math.random() * 80_000) * PLANT_GROWTH_TIME_MULTIPLIER);
       return;
     }
     if (isWaterloggedFloraBlock(type)) {
       const hash = Math.abs(Math.imul(x ^ Math.imul(y, 31) ^ Math.imul(z, 131) ^ cycle, 0x45d9f3b));
-      this.saplings.set(blockKey(x, y, z), now + 50_000 + (hash % 70_000));
+      this.saplings.set(blockKey(x, y, z), now + (50_000 + (hash % 70_000)) * PLANT_GROWTH_TIME_MULTIPLIER);
       return;
     }
     const soil = this.world.getBlock(x, y - 1, z);
@@ -13504,9 +13521,9 @@ export class VoxelEngine {
       const roadHardened = this.skillState.unlockedPerkIds.includes("survival-road-hardened") ? 0.94 : 1;
       this.hunger = peaceful
         ? Math.min(10, this.hunger + dt * 0.08)
-        : Math.max(0, this.hunger - dt * (this.sprinting ? 0.009 : 0.0024) * roadHardened / survivalMultiplier);
+        : Math.max(0, this.hunger - dt * survivalFoodUsagePerSecond(this.sprinting, roadHardened, survivalMultiplier));
       this.regenTimer += dt;
-      if (this.hunger >= 8 && this.health < 10 && this.regenTimer > (peaceful ? 2.5 : 5) / survivalMultiplier) { this.health += 1; if (!peaceful) this.hunger = Math.max(0, this.hunger - 0.35 / survivalMultiplier); this.regenTimer = 0; }
+      if (this.hunger >= 8 && this.health < 10 && this.regenTimer > (peaceful ? 2.5 : 5) / survivalMultiplier) { this.health += 1; if (!peaceful) this.hunger = Math.max(0, this.hunger - regenerationFoodUsage(survivalMultiplier)); this.regenTimer = 0; }
       if (!peaceful && this.hunger <= 0 && this.regenTimer > 4) { this.damagePlayer(1, "hunger", true); this.regenTimer = 0; }
       if (inLava) {
         this.fluidDamageTimer -= dt;
