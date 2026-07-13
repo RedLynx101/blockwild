@@ -1,4 +1,5 @@
-import { BlockId, Item, type InventorySlot, type ItemCode } from "./data";
+import { BlockId, ITEMS, Item, type InventorySlot, type ItemCode } from "./data";
+import { GOLD_INGOT_VALUE, type CommerceItem } from "./economy";
 
 /** Bridges the pure string-based simulation modules to stable numeric save ids. */
 export const HEARTHROADS_RESOURCE_ITEMS: Readonly<Record<string, ItemCode>> = Object.freeze({
@@ -297,4 +298,24 @@ export function commerceItemCode(itemKey: string) {
 
 export function commerceKeyForItem(item: ItemCode) {
   return COMMERCE_BY_ITEM.get(item) ?? null;
+}
+
+/** Shared player-sale definition keeps UI quotes and authority checks identical. */
+export function playerCommerceItem(item: ItemCode): CommerceItem | null {
+  const definition = ITEMS[item];
+  if (!definition) return null;
+  return {
+    key: commerceKeyForItem(item) ?? `item-${item}`,
+    name: definition.name,
+    category: definition.useKind === "blueprint" ? "blueprint"
+      : definition.useKind === "potion" ? "potion"
+        : definition.food ? "food"
+          : definition.toolKind ? "weapon"
+            : "misc",
+    baseValue: item === Item.GoldIngot
+      ? GOLD_INGOT_VALUE
+      : Math.max(1, Math.round(2 + (definition.damage ?? 0) * 5 + (definition.tier ?? 0) * 4 + (definition.food ?? 0) * 2)),
+    stackLimit: Math.max(1, definition.maxStack),
+    tags: item === Item.Honeymead ? ["mead"] : undefined,
+  };
 }

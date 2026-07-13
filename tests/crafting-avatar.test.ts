@@ -138,6 +138,11 @@ test("SSR and the first browser render share deterministic settings text", () =>
     renderDistance: 10, simulationDistance: 8, showFps: false, showBreakingTexture: true, showBreakProgress: false, showToolEffectiveness: true, musicVolume: 0.72, resourceMode: "auto",
   });
   const serverHtml = renderToString(createElement(VoxelGame));
+  assert.match(serverHtml, /aria-label="Main menu"/u);
+  assert.match(serverHtml, />Worlds<\/strong>/u);
+  assert.match(serverHtml, />Characters<\/strong>/u);
+  assert.doesNotMatch(serverHtml, /aria-labelledby="character-studio-title"/u, "the title screen should not preload the character workspace");
+  assert.doesNotMatch(serverHtml, /aria-label="Worlds stored in this browser"/u, "the title screen should not preload the world catalog");
   const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   Object.defineProperty(globalThis, "window", {
     configurable: true,

@@ -8,6 +8,7 @@ import {
   SettlementPanel,
   TradePanel,
   sentientPortraitPath,
+  tradeQuantityLimit,
 } from "../app/game/HearthroadsPanels.tsx";
 import { createGoldWallet, createMerchant } from "../app/game/economy.ts";
 import { isNpcFactionId } from "../app/game/factions.ts";
@@ -96,4 +97,54 @@ test("Atlantian trade uses the aquatic market and profession-safe faction routin
   assert.equal(sentientPortraitPath("wood-elves", "general"), "/creatures/wood-elf-moonbroker.svg");
   assert.equal(sentientPortraitPath("dwarves", "dwarf-golemsmith"), "/creatures/dwarf-golemsmith.svg");
   assert.equal(sentientPortraitPath("dwarves", "general"), "/creatures/dwarf-provisioner.svg");
+});
+
+test("trade quantity shortcuts respect stock, funds, pack space, and merchant purse", () => {
+  assert.deepEqual(tradeQuantityLimit({
+    direction: "player-buys",
+    available: 80,
+    playerGold: "1000",
+    merchantGold: "1000",
+    unitPrice: 4,
+    purchaseCapacity: 7,
+  }), { maximum: 7, limitedBy: "pack-space" });
+  assert.deepEqual(tradeQuantityLimit({
+    direction: "player-buys",
+    available: 80,
+    playerGold: "38",
+    merchantGold: "1000",
+    unitPrice: 4,
+    purchaseCapacity: 80,
+  }), { maximum: 9, limitedBy: "player-gold" });
+  assert.deepEqual(tradeQuantityLimit({
+    direction: "player-sells",
+    available: 130,
+    playerGold: "0",
+    merchantGold: "45",
+    unitPrice: 2,
+  }), { maximum: 22, limitedBy: "merchant-gold" });
+  assert.deepEqual(tradeQuantityLimit({
+    direction: "player-sells",
+    available: 130,
+    playerGold: "0",
+    merchantGold: "10000",
+    unitPrice: 2,
+  }), { maximum: 130, limitedBy: "player-inventory" });
+});
+
+test("trade panel makes buy-all a review step with a separate confirmation", () => {
+  const merchant = createMerchant("host", "pearl-broker", "atlantians", "atlantian-pearlbroker", 420);
+  const wallet = createGoldWallet("host", "player", 800);
+  const html = renderToString(createElement(TradePanel, {
+    merchant,
+    playerGold: wallet.balance,
+    playerInventory: [],
+    purchaseCapacity: Object.fromEntries(merchant.inventory.map((stack) => [stack.itemKey, 64])),
+    merchantName: "Neri of the Lantern Tide",
+    onTrade: () => undefined,
+  }));
+  assert.match(html, /Buy all/u);
+  assert.match(html.replaceAll(/<!--.*?-->/gu, ""), /Set quantity to \d+ for review/u);
+  assert.match(html, /No trade happens until you confirm/u);
+  assert.match(html, /Confirm purchase ×1/u);
 });

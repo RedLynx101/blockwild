@@ -1201,3 +1201,12 @@ test("player-sells removes the exact quantity before committing payment", () => 
   assert.equal(engine.countItem(Item.Apple), 2);
   assert.ok(BigInt(engine.goldWallet.balance) > goldBefore);
 });
+
+test("player-sells can confirm all matching stacks in one bulk order", () => {
+  const { engine } = tradingEngine();
+  engine.inventory[0] = { item: Item.Apple, count: 64 };
+  engine.inventory[1] = { item: Item.Apple, count: 64 };
+  engine.inventory[2] = { item: Item.Apple, count: 2 };
+  assert.equal(engine.tradeWithActiveMerchant("player-sells", "apple", 130), true);
+  assert.equal(engine.countItem(Item.Apple), 0);
+});

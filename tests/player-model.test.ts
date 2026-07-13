@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
+import { CHARACTER_RACES } from "../app/game/character-profiles.ts";
 import {
   BlockPlayerModel,
   computeThirdPersonCamera,
@@ -131,6 +132,36 @@ test("race features, custom clothing and seated/swimming poses share one articul
   player.setPose({ seated: 0, crouch: 0, swimming: 1, locomotion: "run", phase: 0.25 });
   assert.ok(player.parts.torso.rotation.x < -1.2, "sprint swimming turns the body horizontal");
   assert.notEqual(player.parts.leftArm.rotation.x, player.parts.rightArm.rotation.x, "swimming arms alternate their stroke");
+  player.dispose();
+});
+
+test("every playable race owns one visible and distinct modeled nose", () => {
+  const player = new BlockPlayerModel();
+  const silhouettes = new Set<string>();
+
+  for (const race of CHARACTER_RACES) {
+    player.setRace(race);
+    const root = player.group.getObjectByName(`${race}-features`);
+    assert.ok(root, `${race} needs a dedicated facial feature group`);
+    for (const candidate of CHARACTER_RACES) {
+      assert.equal(player.group.getObjectByName(`${candidate}-features`)?.visible, candidate === race, `${race} must not display ${candidate} features`);
+    }
+    const noseParts: THREE.Object3D[] = [];
+    root.traverse((object) => {
+      if (object.name.includes("nose") || object.name.includes("nostril")) noseParts.push(object);
+    });
+    assert.ok(noseParts.length >= 2, `${race} needs a multi-part nose silhouette`);
+    silhouettes.add(noseParts.map((part) => [
+      part.name.replace(`${race}-features-`, ""),
+      part.position.toArray().map((value) => value.toFixed(3)),
+      part.scale.toArray().map((value) => value.toFixed(3)),
+      part.rotation.x.toFixed(3),
+    ]).join("|"));
+  }
+
+  assert.equal(silhouettes.size, CHARACTER_RACES.length, "race noses must differ in shape rather than color alone");
+  assert.ok(player.group.getObjectByName("dwarf-features-left-nostril"));
+  assert.ok(player.group.getObjectByName("dwarf-features-right-nostril"));
   player.dispose();
 });
 

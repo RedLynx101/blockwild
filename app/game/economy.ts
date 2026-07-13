@@ -11,6 +11,9 @@ import { barteringConvergence } from "./skills.ts";
 /** Decimal-string ledgers stay exact, JSON-safe, and are not capped at 64. */
 export type GoldAmount = string;
 
+/** Covers every copy of one item that can fit in the current 36-slot pack. */
+export const MAX_TRADE_QUANTITY = 4_096;
+
 export type GoldWalletState = AuthorityStampedState & Readonly<{
   schema: 1;
   ownerId: string;
@@ -528,7 +531,7 @@ export function quoteMerchantTrade(
   direction: MerchantTradeDirection,
   pricing: TradePricingContext = {},
 ) {
-  const quantity = Math.max(0, Math.min(999, Math.floor(count)));
+  const quantity = Math.max(0, Math.min(MAX_TRADE_QUANTITY, Math.floor(count)));
   if (quantity === 0) return { unitPrice: 0, total: "0" as GoldAmount };
   if (item.key === "gold-ingot") {
     return { unitPrice: GOLD_INGOT_VALUE, total: normalizeGold(BigInt(GOLD_INGOT_VALUE) * BigInt(quantity)) };

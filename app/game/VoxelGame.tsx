@@ -68,7 +68,6 @@ import {
   createGoldWallet,
   createMerchant,
   createStockMarket,
-  type CommerceItem,
   type GoldAmount,
   type MerchantStack,
   type MerchantTradeDirection,
@@ -83,7 +82,8 @@ import {
   type FactionId,
   type NpcFactionId,
 } from "./factions";
-import { commerceKeyForItem, inventoryResourceCounts } from "./hearthroads-adapter";
+import { commerceItemCode, commerceKeyForItem, inventoryResourceCounts, playerCommerceItem } from "./hearthroads-adapter";
+import { inventorySlotStackLimit, inventorySlotsCanStack } from "./inventory-convenience";
 import { createMapKnowledge, type MapMarker } from "./map-system";
 import { PLANTS, createPlantBestiaryState, nativeBiomesForPlant, type PlantCategory, type PlantDefinition } from "./plants";
 import { createQuestBook, type QuestObjective, type QuestSource } from "./quests";
@@ -116,6 +116,7 @@ import {
 type WorkstationOverlay = "apiary" | "orb-rack" | "healing-station" | "sugarworks";
 type CivicAuditMode = "atlantian-dialogue" | "atlantian-trade" | "atlantian-settlement";
 type Overlay = "title" | "new" | "pause" | "help" | "settings" | OverlayKind | null;
+type TitleMenuView = "main" | "characters" | "worlds";
 export type BestiaryFilter = "all" | "surface" | "humanoids" | "rabbits" | "birds" | "butterflies" | "aquatic" | "sea-slugs" | "golems" | "monsters" | "companions";
 type FieldGuideSection = "creatures" | "plants";
 type PetCommand = NonNullable<HudState["activePet"]>["command"];
@@ -1298,8 +1299,10 @@ export default function VoxelGame() {
   const characterStoreRef = useRef<CharacterProfileStore | null>(null);
   const activeWorldIdRef = useRef<string | null>(null);
   const importWorldInputRef = useRef<HTMLInputElement>(null);
+  const titleContentRef = useRef<HTMLDivElement>(null);
   const startedRef = useRef(false);
   const overlayRef = useRef<Overlay>("title");
+  const titleMenuViewRef = useRef<TitleMenuView>("main");
   const toastTimerRef = useRef<number>(0);
   const lookPointerRef = useRef<{ id: number; x: number; y: number } | null>(null);
   const activePetDraftIdRef = useRef<number | null>(null);
@@ -1307,6 +1310,7 @@ export default function VoxelGame() {
   const slotInteractionReadyAtRef = useRef(0);
 
   const [overlay, setOverlayState] = useState<Overlay>("title");
+  const [titleMenuView, setTitleMenuViewState] = useState<TitleMenuView>("main");
   const [started, setStarted] = useState(false);
   const [hasSave, setHasSave] = useState(false);
   const [hud, setHud] = useState<ExtendedHudState>(INITIAL_HUD);
@@ -1387,7 +1391,22 @@ export default function VoxelGame() {
     }
   }, [overlay, hud.activePet]);
 
+  useEffect(() => {
+    if (overlay !== "title") return;
+    const frame = window.requestAnimationFrame(() => titleContentRef.current?.scrollTo({ top: 0, left: 0, behavior: "auto" }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [overlay, titleMenuView]);
+
+  const setTitleMenuView = useCallback((next: TitleMenuView) => {
+    titleMenuViewRef.current = next;
+    setTitleMenuViewState(next);
+  }, []);
+
   const setOverlay = useCallback((next: Overlay) => {
+    if (next === "title") {
+      titleMenuViewRef.current = "main";
+      setTitleMenuViewState("main");
+    }
     overlayRef.current = next;
     setOverlayState(next);
   }, []);
@@ -1602,6 +1621,7 @@ export default function VoxelGame() {
           else if (current === "settings" || current === "help" || current === "bestiary" || current === "multiplayer") setOverlay("pause");
           else { setOverlay(null); engine?.activate(); }
         } else if (current !== "title") setOverlay("title");
+        else if (titleMenuViewRef.current !== "main") setTitleMenuView("main");
       } else if (startedRef.current) {
         engine?.pause();
         setOverlay("pause");
@@ -1621,7 +1641,7 @@ export default function VoxelGame() {
       window.removeEventListener("keydown", handleMenuKeys, true);
       window.removeEventListener("keyup", handleMenuKeyUp, true);
     };
-  }, [setOverlay]);
+  }, [setOverlay, setTitleMenuView]);
 
   const applyCharacterProfile = (profile: CharacterProfile) => {
     setMultiplayerName(profile.name);
@@ -2399,12 +2419,34 @@ export default function VoxelGame() {
     }
     return [...totals].map(([itemKey, count]) => ({ itemKey, count })) satisfies MerchantStack[];
   }, [hud.inventory]);
-  const playerCommerceCatalog = useMemo(() => Object.fromEntries(Object.values(ITEMS).map((definition) => {
-    const category: CommerceItem["category"] = definition.damage ? "weapon" : definition.food ? "food" : definition.placeBlock !== undefined ? "material" : "misc";
-    return [`item-${definition.id}`, { key: `item-${definition.id}`, name: definition.name, category, baseValue: Math.max(1, Math.round((definition.damage ?? definition.food ?? 1) * 2)), stackLimit: definition.maxStack } satisfies CommerceItem];
+  const playerCommerceCatalog = useMemo(() => Object.fromEntries(Object.values(ITEMS).flatMap((definition) => {
+    const item = playerCommerceItem(definition.id);
+    return item ? [[item.key, item] as const] : [];
   })), []);
   const activeSettlement = hud.settlements.find((settlement) => settlement.id === hud.activeSettlementId) ?? null;
   const activeMerchant = hud.activeMerchant;
+  const playerPurchaseCapacity = useMemo(() => {
+    const capacities: Record<string, number> = {};
+    for (const stock of activeMerchant?.inventory ?? []) {
+      if (stock.itemKey.endsWith("-orb")) {
+        capacities[stock.itemKey] = hud.inventory.filter((slot) => !slot).length;
+        continue;
+      }
+      const item = commerceItemCode(stock.itemKey);
+      if (item === null) {
+        capacities[stock.itemKey] = 0;
+        continue;
+      }
+      const durability = ITEMS[item]?.maxDurability;
+      const incoming: InventorySlot = { item, count: 1, ...(durability !== undefined ? { durability } : {}) };
+      const stackLimit = inventorySlotStackLimit(incoming);
+      capacities[stock.itemKey] = hud.inventory.reduce((capacity, slot) => {
+        if (!slot) return capacity + stackLimit;
+        return inventorySlotsCanStack(slot, incoming) ? capacity + Math.max(0, stackLimit - slot.count) : capacity;
+      }, 0);
+    }
+    return capacities;
+  }, [activeMerchant, hud.inventory]);
   const activeResident = activeSettlement?.residents.find((resident) => resident.id === (hud.activeSentient?.residentId ?? activeMerchant?.id)) ?? null;
   const activeFactionId: NpcFactionId = (isNpcFactionId(hud.activeSentient?.factionId) ? hud.activeSentient.factionId : null)
     ?? (isNpcFactionId(activeMerchant?.factionId) ? activeMerchant.factionId : null)
@@ -2586,34 +2628,47 @@ export default function VoxelGame() {
             <span className="game-version-badge"><b>{GAME_VERSION_LABEL}</b> {GAME_RELEASE_NAME}</span>
             <button type="button" onClick={() => engineRef.current?.toggleFullscreen()} aria-label={hud.fullscreen ? "Exit fullscreen" : "Enter fullscreen"}>{hud.fullscreen ? "EXIT FULLSCREEN" : "FULLSCREEN"}</button>
           </div>
-          <div className="title-content">
+          <div ref={titleContentRef} className={`title-content ${titleMenuView === "main" ? "" : "title-submenu-open"}`}>
             <div className="logo-wrap">
               <h1 id="game-title" className="block-logo">BLOCKWILD</h1>
               <p className="logo-subtitle">ENDLESS HORIZONS · {Object.keys(BIOME_NAMES).length} BIOMES · A VERY DEEP DOWN</p>
               <span className="splash-text">Now actually endless!</span>
             </div>
-            <div className="title-menu-layout">
-              <div className="main-menu-buttons">
-                <PixelButton className="primary-menu-button" disabled={!hasSave || !selectedWorld} onClick={continueWorld}>{selectedWorld ? `Play ${selectedWorld.name}` : "No Local World Selected"}</PixelButton>
-                <PixelButton onClick={beginNewWorld}>Create New World</PixelButton>
-                <PixelButton className="title-join-button" onClick={() => openMultiplayer("title")}>Join with Invite Code</PixelButton>
-                <div className="menu-button-row">
-                  <PixelButton onClick={() => setOverlay("help")}>How to Play</PixelButton>
-                  <PixelButton onClick={() => openSettings("title")}>Settings</PixelButton>
-                </div>
-                <p className="browser-ownership-note">{WORLD_OWNERSHIP_NOTICE}</p>
-              </div>
-              <CharacterStudio
-                key={activeCharacterProfile.id}
-                catalog={characterCatalog}
-                profile={activeCharacterProfile}
-                preview={<PlayerAvatarPreview variant={activeCharacterProfile.appearance.sex} appearance={activeCharacterProfile.appearance} compact />}
-                onSelect={selectCharacterProfile}
-                onCreate={createCharacterProfile}
-                onRemove={removeCharacterProfile}
-                onPatch={updateCharacterProfile}
-              />
-              <aside className="world-catalog-panel" aria-label="Worlds stored in this browser">
+            <div className={`title-menu-layout title-${titleMenuView}-layout`}>
+              {titleMenuView === "main" && <nav className="main-menu-buttons title-main-menu" aria-label="Main menu">
+                <PixelButton className="primary-menu-button title-menu-choice" disabled={!hasSave || !selectedWorld} onClick={continueWorld}>
+                  <strong>Continue</strong><small>{selectedWorld?.name ?? "No local world selected"}</small>
+                </PixelButton>
+                <PixelButton className="title-menu-choice" onClick={beginNewWorld}><strong>Create New World</strong><small>Begin a fresh endless world</small></PixelButton>
+                <PixelButton className="title-menu-choice" onClick={() => setTitleMenuView("worlds")}><strong>Worlds</strong><small>{worlds.length} saved in this browser</small></PixelButton>
+                <PixelButton className="title-menu-choice" onClick={() => setTitleMenuView("characters")}><strong>Characters</strong><small>{activeCharacterProfile.name}</small></PixelButton>
+                <PixelButton className="title-menu-choice title-join-button" onClick={() => openMultiplayer("title")}><strong>Multiplayer</strong><small>Join or host with an invite code</small></PixelButton>
+                <PixelButton className="title-menu-choice" onClick={() => setOverlay("help")}><strong>How to Play</strong></PixelButton>
+                <PixelButton className="title-menu-choice" onClick={() => openSettings("title")}><strong>Settings</strong></PixelButton>
+              </nav>}
+              {titleMenuView === "characters" && <section className="title-submenu title-character-submenu" aria-labelledby="title-characters-heading">
+                <header className="title-submenu-header">
+                  <button type="button" className="title-back-button" onClick={() => setTitleMenuView("main")}><span aria-hidden="true">&larr;</span> Main Menu</button>
+                  <div><span className="panel-eyebrow">IDENTITY WORKSHOP</span><h2 id="title-characters-heading">Characters</h2></div>
+                </header>
+                <CharacterStudio
+                  key={activeCharacterProfile.id}
+                  catalog={characterCatalog}
+                  profile={activeCharacterProfile}
+                  preview={<PlayerAvatarPreview variant={activeCharacterProfile.appearance.sex} appearance={activeCharacterProfile.appearance} compact />}
+                  onSelect={selectCharacterProfile}
+                  onCreate={createCharacterProfile}
+                  onRemove={removeCharacterProfile}
+                  onPatch={updateCharacterProfile}
+                />
+              </section>}
+              {titleMenuView === "worlds" && <section className="title-submenu title-worlds-submenu" aria-labelledby="title-worlds-heading">
+                <header className="title-submenu-header">
+                  <button type="button" className="title-back-button" onClick={() => setTitleMenuView("main")}><span aria-hidden="true">&larr;</span> Main Menu</button>
+                  <div><span className="panel-eyebrow">LOCAL EXPLORATIONS</span><h2 id="title-worlds-heading">Worlds</h2></div>
+                  <button type="button" className="title-new-world-button" onClick={beginNewWorld}>+ New World</button>
+                </header>
+                <aside className="world-catalog-panel" aria-label="Worlds stored in this browser">
                 <header>
                   <div><span className="panel-eyebrow">THIS BROWSER · {worlds.length} {worlds.length === 1 ? "WORLD" : "WORLDS"}</span><strong>World Catalog</strong></div>
                   <button type="button" onClick={() => importWorldInputRef.current?.click()}>IMPORT</button>
@@ -2640,8 +2695,10 @@ export default function VoxelGame() {
                   <button type="button" disabled={!selectedWorld} onClick={exportSelectedWorld}>Export</button>
                   <button type="button" className="danger" disabled={!selectedWorld} onClick={deleteSelectedWorld}>Delete</button>
                 </div>
-                {worldNotice && <p className="world-catalog-notice" role="status">{worldNotice}</p>}
-              </aside>
+                  {worldNotice && <p className="world-catalog-notice" role="status">{worldNotice}</p>}
+                </aside>
+                <p className="browser-ownership-note">{WORLD_OWNERSHIP_NOTICE}</p>
+              </section>}
             </div>
             <div className="title-footer">
               <span>Blockwild {GAME_VERSION} · Endless streamed terrain · original procedural textures · browser-owned persistent worlds</span>
@@ -3191,6 +3248,12 @@ export default function VoxelGame() {
             playerGold={hud.goldWallet.balance}
             playerInventory={playerCommerceInventory}
             catalog={playerCommerceCatalog}
+            purchaseCapacity={playerPurchaseCapacity}
+            pricing={{
+              barteringLevel: hud.skills.skills.bartering.level,
+              factionAlignment: activeFactionAlignment,
+              alignmentInfluenceBonusPercent: hud.skills.unlockedPerkIds.includes("bartering-open-ledger") ? 25 : 0,
+            }}
             merchantName={activeCharacterName}
             onTrade={(itemKey, quantity, direction) => {
               if (!hearthroadsApi?.tradeWithActiveMerchant?.(direction, itemKey, quantity)) showToast("The merchant is still arranging that side of the counter.");
@@ -3528,7 +3591,10 @@ export default function VoxelGame() {
             <TradePanel
               merchant={ATLANTIAN_UI_AUDIT_MERCHANT}
               playerGold={ATLANTIAN_UI_AUDIT_WALLET.balance}
-              playerInventory={[]}
+              playerInventory={[
+                { itemKey: "shellfruit", count: 23 },
+                { itemKey: "raw-gold", count: 6 },
+              ]}
               merchantName="Sela of the Pearl Current"
               onTrade={() => undefined}
               onClose={() => setCivicAuditMode(null)}

@@ -67,6 +67,7 @@ import type { SugarworksRecipe, SugarworksState } from "./candyworks";
 import {
   bankBalanceWholeGold,
   COMMERCE_CATALOG,
+  MAX_TRADE_QUANTITY,
   compareGold,
   quoteMerchantTrade,
   STOCKS,
@@ -79,6 +80,7 @@ import {
   type MerchantStack,
   type MerchantState,
   type MerchantTradeDirection,
+  type TradePricingContext,
   type StockMarketState,
   type StockSymbol,
 } from "./economy";
@@ -1494,8 +1496,64 @@ function fallbackCommerceItem(itemKey: string): CommerceItem {
   return { key: itemKey, name: prettyId(itemKey), category: "misc", baseValue: 1, stackLimit: 64 };
 }
 
-function stackCount(stacks: readonly MerchantStack[], itemKey: string) {
-  return stacks.filter((stack) => stack.itemKey === itemKey).reduce((total, stack) => total + stack.count, 0);
+export type TradeQuantityLimitFactor = "merchant-stock" | "player-inventory" | "player-gold" | "merchant-gold" | "pack-space" | "order-limit";
+
+export type TradeQuantityLimit = Readonly<{
+  maximum: number;
+  limitedBy: TradeQuantityLimitFactor;
+}>;
+
+function affordableTradeUnits(balance: GoldAmount, unitPrice: number) {
+  if (unitPrice <= 0) return 0;
+  try {
+    return Math.min(MAX_TRADE_QUANTITY, Number(BigInt(balance) / BigInt(unitPrice)));
+  } catch {
+    return 0;
+  }
+}
+
+/** Computes the largest quantity that the confirmation can safely submit. */
+export function tradeQuantityLimit({
+  direction,
+  available,
+  playerGold,
+  merchantGold,
+  unitPrice,
+  purchaseCapacity,
+}: Readonly<{
+  direction: MerchantTradeDirection;
+  available: number;
+  playerGold: GoldAmount;
+  merchantGold: GoldAmount;
+  unitPrice: number;
+  purchaseCapacity?: number;
+}>): TradeQuantityLimit {
+  const source = Math.max(0, Math.min(MAX_TRADE_QUANTITY, Math.floor(available)));
+  const candidates: Array<readonly [TradeQuantityLimitFactor, number]> = direction === "player-buys"
+    ? [
+      ["merchant-stock", source],
+      ["player-gold", affordableTradeUnits(playerGold, unitPrice)],
+      ["pack-space", purchaseCapacity === undefined ? MAX_TRADE_QUANTITY : Math.max(0, Math.min(MAX_TRADE_QUANTITY, Math.floor(purchaseCapacity)))],
+      ["order-limit", MAX_TRADE_QUANTITY],
+    ]
+    : [
+      ["player-inventory", source],
+      ["merchant-gold", affordableTradeUnits(merchantGold, unitPrice)],
+      ["order-limit", MAX_TRADE_QUANTITY],
+    ];
+  const maximum = Math.min(...candidates.map(([, count]) => count));
+  return { maximum, limitedBy: candidates.find(([, count]) => count === maximum)?.[0] ?? "order-limit" };
+}
+
+function tradeLimitCopy(factor: TradeQuantityLimitFactor) {
+  switch (factor) {
+    case "merchant-stock": return "merchant stock";
+    case "player-inventory": return "items in your pack";
+    case "player-gold": return "your gold";
+    case "merchant-gold": return "the merchant's purse";
+    case "pack-space": return "free pack space";
+    case "order-limit": return "one order";
+  }
 }
 
 export type TradePanelProps = Readonly<{
@@ -1503,6 +1561,8 @@ export type TradePanelProps = Readonly<{
   playerGold: GoldAmount;
   playerInventory: readonly MerchantStack[];
   catalog?: Readonly<Record<string, CommerceItem>>;
+  purchaseCapacity?: Readonly<Record<string, number>>;
+  pricing?: TradePricingContext;
   direction?: MerchantTradeDirection;
   onDirectionChange?: (direction: MerchantTradeDirection) => void;
   selectedItemKey?: string | null;
@@ -1519,6 +1579,8 @@ export function TradePanel({
   playerGold,
   playerInventory,
   catalog = {},
+  purchaseCapacity = {},
+  pricing = {},
   direction,
   onDirectionChange,
   selectedItemKey,
@@ -1543,36 +1605,55 @@ export function TradePanel({
   }, [sourceStacks]);
   const activeItemKey = selectedItemKey === undefined ? localItemKey : selectedItemKey;
   const selectedStack = uniqueStacks.find((stack) => stack.itemKey === activeItemKey) ?? uniqueStacks[0] ?? null;
-  const itemCatalog = { ...COMMERCE_CATALOG, ...merchant.customCatalog, ...catalog };
+  const itemCatalog = activeDirection === "player-buys"
+    ? { ...COMMERCE_CATALOG, ...merchant.customCatalog }
+    : { ...COMMERCE_CATALOG, ...merchant.customCatalog, ...catalog };
   const selectedItem = selectedStack ? itemCatalog[selectedStack.itemKey] ?? fallbackCommerceItem(selectedStack.itemKey) : null;
-  const activeQuantity = quantity ?? localQuantity;
-  const quote = selectedItem ? quoteMerchantTrade(merchant, selectedItem, activeQuantity, activeDirection) : { unitPrice: 0, total: "0" };
-  const playerHasItems = selectedStack ? stackCount(playerInventory, selectedStack.itemKey) >= activeQuantity : false;
-  const merchantHasItems = selectedStack ? stackCount(merchant.inventory, selectedStack.itemKey) >= activeQuantity : false;
-  const canAfford = activeDirection === "player-buys"
-    ? compareGold(playerGold, quote.total) >= 0 && merchantHasItems
-    : compareGold(merchant.gold, quote.total) >= 0 && playerHasItems;
+  const unitQuote = selectedItem ? quoteMerchantTrade(merchant, selectedItem, 1, activeDirection, pricing) : { unitPrice: 0, total: "0" as GoldAmount };
+  const quantityLimit = selectedStack ? tradeQuantityLimit({
+    direction: activeDirection,
+    available: selectedStack.count,
+    playerGold,
+    merchantGold: merchant.gold,
+    unitPrice: unitQuote.unitPrice,
+    ...(activeDirection === "player-buys" && purchaseCapacity[selectedStack.itemKey] !== undefined
+      ? { purchaseCapacity: purchaseCapacity[selectedStack.itemKey] }
+      : {}),
+  }) : { maximum: 0, limitedBy: activeDirection === "player-buys" ? "merchant-stock" : "player-inventory" } satisfies TradeQuantityLimit;
+  const requestedQuantity = quantity ?? localQuantity;
+  const activeQuantity = quantityLimit.maximum > 0
+    ? Math.min(positiveInteger(requestedQuantity), quantityLimit.maximum)
+    : 1;
+  const quote = selectedItem ? quoteMerchantTrade(merchant, selectedItem, activeQuantity, activeDirection, pricing) : { unitPrice: 0, total: "0" as GoldAmount };
+  const canTrade = Boolean(selectedStack && quantityLimit.maximum > 0 && compareGold(
+    activeDirection === "player-buys" ? playerGold : merchant.gold,
+    quote.total,
+  ) >= 0);
 
   const changeDirection = (next: MerchantTradeDirection) => {
     setLocalDirection(next);
     onDirectionChange?.(next);
     setLocalItemKey(null);
+    setLocalQuantity(1);
+    onQuantityChange?.(1);
   };
 
   const selectItem = (itemKey: string) => {
     setLocalItemKey(itemKey);
     onSelectItem?.(itemKey);
+    setLocalQuantity(1);
+    onQuantityChange?.(1);
   };
 
   const changeQuantity = (next: number) => {
-    const safe = positiveInteger(next);
+    const safe = Math.min(positiveInteger(next), Math.max(1, quantityLimit.maximum));
     setLocalQuantity(safe);
     onQuantityChange?.(safe);
   };
 
   const submitTrade = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (selectedStack && canAfford) onTrade(selectedStack.itemKey, activeQuantity, activeDirection);
+    if (selectedStack && canTrade) onTrade(selectedStack.itemKey, activeQuantity, activeDirection);
   };
 
   return (
@@ -1602,7 +1683,7 @@ export function TradePanel({
         <div className="hearthroads-trade-inventory" role="list" aria-label={activeDirection === "player-buys" ? "Merchant inventory" : "Your sellable inventory"}>
           {uniqueStacks.map((stack) => {
             const item = itemCatalog[stack.itemKey] ?? fallbackCommerceItem(stack.itemKey);
-            const preview = quoteMerchantTrade(merchant, item, 1, activeDirection);
+            const preview = quoteMerchantTrade(merchant, item, 1, activeDirection, pricing);
             return (
               <button
                 className={`hearthroads-trade-row${selectedStack?.itemKey === stack.itemKey ? " selected" : ""}`}
@@ -1630,27 +1711,48 @@ export function TradePanel({
                 <div><dt>Unit price</dt><dd>{quote.unitPrice} gold</dd></div>
                 <div><dt>{activeDirection === "player-buys" ? "In their stock" : "In your pack"}</dt><dd>{selectedStack.count}</dd></div>
               </dl>
-              <label htmlFor={quantityId}>Quantity</label>
-              <input
-                className="pixel-input"
-                id={quantityId}
-                type="number"
-                inputMode="numeric"
-                min={1}
-                max={Math.max(1, selectedStack.count)}
-                value={activeQuantity}
-                onChange={(event) => changeQuantity(Number(event.target.value))}
-              />
-              <div className="hearthroads-trade-total" aria-live="polite">
-                <span>Total</span><strong>{formatCount(quote.total)} gold</strong>
+              <div className="hearthroads-trade-quantity-heading">
+                <label htmlFor={quantityId}>Quantity</label>
+                <small>Maximum {formatCount(quantityLimit.maximum)} · limited by {tradeLimitCopy(quantityLimit.limitedBy)}</small>
               </div>
-              {!canAfford ? (
+              <div className="hearthroads-trade-stepper">
+                <button type="button" onClick={() => changeQuantity(activeQuantity - 5)} disabled={activeQuantity <= 1} aria-label="Decrease quantity by five">−5</button>
+                <button type="button" onClick={() => changeQuantity(activeQuantity - 1)} disabled={activeQuantity <= 1} aria-label="Decrease quantity by one">−</button>
+                <input
+                  className="pixel-input"
+                  id={quantityId}
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={Math.max(1, quantityLimit.maximum)}
+                  value={activeQuantity}
+                  onChange={(event) => changeQuantity(Number(event.target.value))}
+                />
+                <button type="button" onClick={() => changeQuantity(activeQuantity + 1)} disabled={activeQuantity >= quantityLimit.maximum} aria-label="Increase quantity by one">+</button>
+                <button type="button" onClick={() => changeQuantity(activeQuantity + 5)} disabled={activeQuantity >= quantityLimit.maximum} aria-label="Increase quantity by five">+5</button>
+              </div>
+              <button
+                className={`hearthroads-trade-all${activeQuantity === quantityLimit.maximum && quantityLimit.maximum > 0 ? " active" : ""}`}
+                type="button"
+                disabled={quantityLimit.maximum <= 0}
+                aria-pressed={activeQuantity === quantityLimit.maximum && quantityLimit.maximum > 0}
+                onClick={() => changeQuantity(quantityLimit.maximum)}
+              >
+                <strong>{activeDirection === "player-buys" ? "Buy all" : "Sell all"}</strong>
+                <span>Set quantity to {formatCount(quantityLimit.maximum)} for review</span>
+              </button>
+              <div className="hearthroads-trade-total" aria-live="polite">
+                <span><b>Order total</b><small>No trade happens until you confirm.</small></span><strong>{formatCount(quote.total)} gold</strong>
+              </div>
+              {!canTrade ? (
                 <p className="hearthroads-trade-warning">
-                  {activeDirection === "player-buys" ? "You need more gold or the merchant is short on stock." : "The merchant cannot cover that offer or you are short on items."}
+                  {quantityLimit.maximum <= 0
+                    ? `No trade is available: limited by ${tradeLimitCopy(quantityLimit.limitedBy)}.`
+                    : "Adjust the quantity before confirming this order."}
                 </p>
               ) : null}
-              <button className="pixel-button gold-button" type="submit" disabled={!canAfford}>
-                {activeDirection === "player-buys" ? "Buy from merchant" : "Sell to merchant"}
+              <button className="pixel-button gold-button" type="submit" disabled={!canTrade}>
+                {activeDirection === "player-buys" ? `Confirm purchase ×${activeQuantity}` : `Confirm sale ×${activeQuantity}`}
               </button>
             </>
           ) : <p>Choose an item to set it on the counter.</p>}
