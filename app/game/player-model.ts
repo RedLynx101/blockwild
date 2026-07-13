@@ -326,8 +326,15 @@ export class BlockPlayerModel {
   private readonly torsoBlock: THREE.Mesh;
   private readonly maleHair = new THREE.Group();
   private readonly femaleHair = new THREE.Group();
-  private readonly woodElfFeatures = new THREE.Group();
-  private readonly goblinFeatures = new THREE.Group();
+  private readonly raceFeatureGroups: Record<FactionRace, THREE.Group> = {
+    wayfarer: new THREE.Group(),
+    hearthkin: new THREE.Group(),
+    goblin: new THREE.Group(),
+    atlantian: new THREE.Group(),
+    confectkin: new THREE.Group(),
+    "wood-elf": new THREE.Group(),
+    dwarf: new THREE.Group(),
+  };
   private readonly baseHairColor = new THREE.Color(DEFAULT_PLAYER_COLORS.hair);
   private readonly equipmentMeshes: Record<"head" | "chest" | "legs" | "feet", THREE.Mesh[]> = { head: [], chest: [], legs: [], feet: [] };
   private _variant: PlayerVariant;
@@ -484,8 +491,9 @@ export class BlockPlayerModel {
     this.assertUsable();
     this._race = characterRaceTraits(race).id;
     this.group.userData.playerRace = this._race;
-    this.woodElfFeatures.visible = this._race === "wood-elf";
-    this.goblinFeatures.visible = this._race === "goblin";
+    for (const [featureRace, features] of Object.entries(this.raceFeatureGroups)) {
+      features.visible = featureRace === this._race;
+    }
     this.applyBodyProportions();
     return this;
   }
@@ -728,9 +736,9 @@ export class BlockPlayerModel {
   }
 
   private buildRaceFeatures(head: THREE.Group, options: PlayerModelOptions): void {
-    this.woodElfFeatures.name = "wood-elf-features";
-    this.goblinFeatures.name = "goblin-features";
-    const addPointedFeatures = (root: THREE.Group, earReach: number, noseReach: number) => {
+    for (const [race, root] of Object.entries(this.raceFeatureGroups)) root.name = `${race}-features`;
+
+    const addPointedEars = (root: THREE.Group, earReach: number) => {
       // Two narrowing, overlapping cuboids read as a deliberate point from
       // both front and three-quarter cameras. A single long cuboid looked like
       // a duplicated arm/sideburn at multiplayer distance.
@@ -754,15 +762,55 @@ export class BlockPlayerModel {
         tip.rotation.z = side * -0.56;
         root.add(base, tip);
       }
-      const noseBridge = this.createBlock(`${root.name}-nose-bridge`, [0.1, 0.12, noseReach * 0.7], [0, 0.22, -HEAD_SIZE / 2 - noseReach * 0.22], this.materials.skin, options);
-      const noseTip = this.createBlock(`${root.name}-pointed-nose`, [0.075, 0.075, noseReach * 0.56], [0, 0.19, -HEAD_SIZE / 2 - noseReach * 0.78], this.materials.skin, options);
-      noseBridge.rotation.x = -0.12;
-      noseTip.rotation.x = -0.34;
-      root.add(noseBridge, noseTip);
     };
-    addPointedFeatures(this.woodElfFeatures, 0.24, 0.16);
-    addPointedFeatures(this.goblinFeatures, 0.2, 0.12);
-    head.add(this.woodElfFeatures, this.goblinFeatures);
+
+    const addNoseBlock = (
+      root: THREE.Group,
+      name: string,
+      size: Vector3Tuple,
+      position: Vector3Tuple,
+      tilt = 0,
+      detail = false,
+    ) => {
+      const nose = this.createBlock(`${root.name}-${name}`, size, position, detail ? this.materials.details : this.materials.skin, options);
+      nose.rotation.x = tilt;
+      root.add(nose);
+      return nose;
+    };
+
+    const wayfarer = this.raceFeatureGroups.wayfarer;
+    addNoseBlock(wayfarer, "nose-bridge", [0.09, 0.12, 0.055], [0, 0.235, -0.277]);
+    addNoseBlock(wayfarer, "nose-tip", [0.12, 0.085, 0.075], [0, 0.19, -0.315], -0.08);
+
+    const hearthkin = this.raceFeatureGroups.hearthkin;
+    addNoseBlock(hearthkin, "nose-bridge", [0.13, 0.1, 0.06], [0, 0.225, -0.28], 0.06);
+    addNoseBlock(hearthkin, "round-nose", [0.19, 0.12, 0.115], [0, 0.18, -0.335], 0.14);
+
+    const goblin = this.raceFeatureGroups.goblin;
+    addPointedEars(goblin, 0.2);
+    addNoseBlock(goblin, "nose-bridge", [0.1, 0.12, 0.09], [0, 0.225, -0.285], -0.12);
+    addNoseBlock(goblin, "hooked-nose", [0.075, 0.075, 0.1], [0, 0.18, -0.37], -0.42);
+
+    const atlantian = this.raceFeatureGroups.atlantian;
+    addNoseBlock(atlantian, "nose-bridge", [0.14, 0.075, 0.045], [0, 0.235, -0.272], 0.04);
+    addNoseBlock(atlantian, "streamlined-nose", [0.16, 0.06, 0.075], [0, 0.21, -0.31], 0.12);
+
+    const confectkin = this.raceFeatureGroups.confectkin;
+    addNoseBlock(confectkin, "nose-bridge", [0.1, 0.08, 0.055], [0, 0.225, -0.278]);
+    addNoseBlock(confectkin, "button-nose", [0.15, 0.1, 0.105], [0, 0.19, -0.33], 0.08);
+
+    const woodElf = this.raceFeatureGroups["wood-elf"];
+    addPointedEars(woodElf, 0.24);
+    addNoseBlock(woodElf, "nose-bridge", [0.085, 0.13, 0.11], [0, 0.225, -0.295], -0.12);
+    addNoseBlock(woodElf, "pointed-nose", [0.065, 0.07, 0.09], [0, 0.18, -0.385], -0.34);
+
+    const dwarf = this.raceFeatureGroups.dwarf;
+    addNoseBlock(dwarf, "nose-bridge", [0.17, 0.18, 0.1], [0, 0.225, -0.295], -0.04);
+    addNoseBlock(dwarf, "broad-nose", [0.23, 0.14, 0.135], [0, 0.16, -0.365], 0.08);
+    addNoseBlock(dwarf, "left-nostril", [0.035, 0.025, 0.018], [-0.065, 0.135, -0.438], 0, true);
+    addNoseBlock(dwarf, "right-nostril", [0.035, 0.025, 0.018], [0.065, 0.135, -0.438], 0, true);
+
+    head.add(...Object.values(this.raceFeatureGroups));
   }
 
   private buildEquipment(options: PlayerModelOptions): void {

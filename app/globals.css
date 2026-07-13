@@ -4772,13 +4772,142 @@ input:focus-visible {
 /* Browser-owned world catalog, multiplayer handoff, and movement state HUD */
 .title-menu-layout {
   display: grid;
-  grid-template-columns: minmax(250px, 310px) minmax(450px, 530px) minmax(350px, 450px);
-  align-items: start;
-  gap: 18px;
-  width: min(1320px, calc(100vw - 36px));
+  place-items: start center;
+  width: min(820px, calc(100vw - 36px));
 }
 
 .title-menu-layout .main-menu-buttons {
+  width: min(370px, calc(100vw - 36px));
+}
+
+.title-main-menu {
+  gap: 8px;
+}
+
+.title-content:not(.title-submenu-open) .logo-wrap {
+  margin-bottom: clamp(22px, 4vh, 40px);
+}
+
+.title-menu-choice {
+  display: grid;
+  place-items: center;
+  gap: 3px;
+  min-height: 50px;
+  padding-block: 8px;
+}
+
+.title-menu-choice strong {
+  font-size: 13px;
+  letter-spacing: .055em;
+}
+
+.title-menu-choice small {
+  max-width: 100%;
+  overflow: hidden;
+  color: rgba(240, 243, 232, .76);
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-overflow: ellipsis;
+  text-shadow: 1px 1px 0 #222;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.title-menu-choice.primary-menu-button small {
+  color: #fff2b6;
+}
+
+.title-submenu-open {
+  justify-content: flex-start;
+  min-height: 100%;
+  padding-top: 52px;
+  padding-bottom: 70px;
+  overflow-y: auto;
+}
+
+.title-submenu-open .logo-wrap {
+  margin-bottom: 18px;
+}
+
+.title-submenu-open .block-logo {
+  font-size: clamp(48px, 7vw, 82px);
+}
+
+.title-submenu-open .logo-subtitle {
+  margin-top: 14px;
+  font-size: clamp(7px, 1vw, 10px);
+}
+
+.title-submenu-open .splash-text {
+  display: none;
+}
+
+.title-submenu {
+  display: grid;
+  gap: 10px;
+  width: min(780px, calc(100vw - 36px));
+}
+
+.title-submenu-header {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 14px;
+  min-height: 54px;
+  padding: 8px 10px;
+  border: 2px solid rgba(214, 223, 207, .55);
+  border-right-color: rgba(35, 41, 35, .9);
+  border-bottom-color: rgba(35, 41, 35, .9);
+  background: rgba(11, 17, 14, .9);
+  box-shadow: 4px 5px 0 rgba(0, 0, 0, .45);
+  backdrop-filter: blur(7px);
+}
+
+.title-submenu-header > div {
+  display: grid;
+  gap: 3px;
+  text-align: center;
+}
+
+.title-submenu-header h2 {
+  margin: 0;
+  color: #fff;
+  font-size: 18px;
+  letter-spacing: .04em;
+  text-shadow: 2px 2px #111;
+}
+
+.title-back-button,
+.title-new-world-button {
+  justify-self: start;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 2px solid #858d82;
+  border-top-color: #dce2d6;
+  border-left-color: #dce2d6;
+  border-right-color: #282c28;
+  border-bottom-color: #282c28;
+  background: #4d554d;
+  color: #fff4ba;
+  cursor: pointer;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: .07em;
+  text-shadow: 1px 1px #111;
+}
+
+.title-back-button:hover,
+.title-new-world-button:hover {
+  filter: brightness(1.16);
+}
+
+.title-new-world-button {
+  justify-self: end;
+}
+
+.title-character-submenu .character-studio,
+.title-worlds-submenu .world-catalog-panel {
   width: 100%;
 }
 
@@ -5680,7 +5809,7 @@ input:focus-visible {
   }
 
   .title-menu-layout {
-    grid-template-columns: minmax(0, 680px);
+    grid-template-columns: minmax(0, 1fr);
     justify-content: center;
   }
 
@@ -8020,8 +8149,23 @@ input:focus-visible {
 .hearthroads-price-breakdown div { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dotted #a09370; }
 .hearthroads-price-breakdown dt { color: #71664c; }
 .hearthroads-price-breakdown dd { margin: 0; font-weight: 900; }
-.hearthroads-trade-counter > label { color: #675d43; font-size: 8px; font-weight: 900; text-transform: uppercase; }
+.hearthroads-trade-quantity-heading { display: flex; justify-content: space-between; gap: 12px; align-items: end; }
+.hearthroads-trade-quantity-heading label { color: #675d43; font-size: 8px; font-weight: 900; text-transform: uppercase; }
+.hearthroads-trade-quantity-heading small { color: #756b52; font-size: 7px; line-height: 1.35; text-align: right; }
+.hearthroads-trade-stepper { display: grid; grid-template-columns: 44px 36px minmax(72px, 1fr) 36px 44px; gap: 5px; }
+.hearthroads-trade-stepper button { min-height: 38px; padding: 0 4px; border: 1px solid #8e7d59; color: #4b4434; background: rgba(244, 235, 199, .7); font-weight: 900; }
+.hearthroads-trade-stepper button:hover:not(:disabled) { border-color: #536d4e; background: rgba(216, 226, 184, .85); }
+.hearthroads-trade-stepper button:disabled { opacity: .38; }
+.hearthroads-trade-stepper input { min-width: 0; text-align: center; }
+.hearthroads-trade-all { width: 100%; display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 10px 11px; border: 1px solid #8c7640; color: #5c471b; background: rgba(222, 185, 84, .2); text-align: left; }
+.hearthroads-trade-all:hover:not(:disabled),
+.hearthroads-trade-all.active { border-color: #60784f; background: rgba(198, 215, 155, .48); box-shadow: inset 4px 0 #6e8759; }
+.hearthroads-trade-all:disabled { opacity: .5; }
+.hearthroads-trade-all strong { font-size: 9px; text-transform: uppercase; }
+.hearthroads-trade-all span { color: #74684e; font-size: 7px; text-align: right; }
 .hearthroads-trade-total { display: flex; justify-content: space-between; align-items: baseline; padding: 11px; color: #5e4818; background: rgba(220, 182, 76, .2); border: 1px solid #a48842; }
+.hearthroads-trade-total > span { display: grid; gap: 3px; }
+.hearthroads-trade-total small { color: #74684e; font-size: 6px; }
 .hearthroads-trade-warning { color: #7c4035; font-size: 8px; line-height: 1.4; }
 .hearthroads-trade-counter > .gold-button { text-shadow: none; }
 .hearthroads-purse-pair { display: flex; gap: 12px; }

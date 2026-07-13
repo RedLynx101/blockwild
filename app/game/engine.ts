@@ -626,6 +626,7 @@ import {
   commerceKeyForItem,
   consumedResourceDelta,
   inventoryResourceCounts,
+  playerCommerceItem,
   resourceItemCode,
   resourceIdForItem,
 } from "./hearthroads-adapter";
@@ -659,7 +660,7 @@ import {
   type FactionRelationsState,
 } from "./factions";
 import {
-  GOLD_INGOT_VALUE,
+  MAX_TRADE_QUANTITY,
   STOCK_SYMBOLS,
   buyFromMerchant,
   buyStock,
@@ -677,7 +678,6 @@ import {
   stepStockMarket,
   withdrawFromBank,
   type BankAccountState,
-  type CommerceItem,
   type GoldWalletState,
   type MerchantState,
   type StockMarketState,
@@ -8375,7 +8375,7 @@ export class VoxelEngine {
       && merchantMob.group.position.distanceToSquared(new THREE.Vector3(keeperPose.x, keeperPose.y, keeperPose.z)) <= 8 * 8);
     const direction = action.tradeDirection;
     const itemKey = action.itemKey;
-    const quantity = Math.max(1, Math.min(64, Math.floor(action.tradeCount ?? 1)));
+    const quantity = Math.max(1, Math.min(MAX_TRADE_QUANTITY, Math.floor(action.tradeCount ?? 1)));
     if (!session || session.role !== "host" || !merchantId || !merchant || !stillInRange || action.merchantId !== merchantId || !direction || !itemKey) {
       this.multiplayerPeerActiveMerchants.delete(peer.id);
       this.rejectCreatureAction(action, peer.id, "Open this merchant's counter before trading.");
@@ -8437,14 +8437,8 @@ export class VoxelEngine {
       for (const slot of inventory) if (slot?.item === item) remaining -= Math.min(remaining, slot.count);
       if (remaining > 0) { this.rejectCreatureAction(action, peer.id, "You do not have that many to sell."); return; }
       const definition = ITEMS[item];
-      const catalogItem: CommerceItem = {
-        key: commerceKeyForItem(item) ?? `item-${item}`,
-        name: definition.name,
-        category: definition.useKind === "blueprint" ? "blueprint" : definition.useKind === "potion" ? "potion" : definition.food ? "food" : definition.toolKind ? "weapon" : "misc",
-        baseValue: item === Item.GoldIngot ? GOLD_INGOT_VALUE : Math.max(1, Math.round(2 + (definition.damage ?? 0) * 5 + (definition.tier ?? 0) * 4 + (definition.food ?? 0) * 2)),
-        stackLimit: Math.max(1, definition.maxStack),
-        tags: item === Item.Honeymead ? ["mead"] : undefined,
-      };
+      const catalogItem = playerCommerceItem(item);
+      if (!catalogItem) { this.rejectCreatureAction(action, peer.id, "That item cannot be sold here."); return; }
       const result = sellToMerchant(wallet, merchant, catalogItem, quantity, command);
       if (!result.applied) { this.rejectCreatureAction(action, peer.id, result.reason === "merchant-cannot-pay" ? "That merchant cannot cover the offer." : "The trade could not be completed."); return; }
       remaining = quantity;
@@ -14226,7 +14220,7 @@ export class VoxelEngine {
     this.skillState ??= createSkillState();
     const merchantId = this.activeMerchantId;
     const merchant = merchantId ? this.merchants.get(merchantId) : null;
-    const quantity = Math.max(1, Math.min(64, Math.floor(count)));
+    const quantity = Math.max(1, Math.min(MAX_TRADE_QUANTITY, Math.floor(count)));
     const normalizedDirection = direction === "buy" || direction === "player-buys" ? "buy" : "sell";
     if (!merchantId || !merchant) return false;
     if (this.multiplayer?.role === "guest") {
@@ -14236,7 +14230,7 @@ export class VoxelEngine {
         merchantId,
         tradeDirection: normalizedDirection === "buy" ? "player-buys" : "player-sells",
         itemKey,
-        tradeCount: Math.max(1, Math.min(64, Math.floor(count))),
+        tradeCount: Math.max(1, Math.min(MAX_TRADE_QUANTITY, Math.floor(count))),
       });
     }
     const command = {
@@ -14318,21 +14312,8 @@ export class VoxelEngine {
         return false;
       }
       const definition = ITEMS[item];
-      if (!definition) return false;
-      const catalogItem: CommerceItem = {
-        key: commerceKeyForItem(item) ?? `item-${item}`,
-        name: definition.name,
-        category: definition.useKind === "blueprint" ? "blueprint"
-          : definition.useKind === "potion" ? "potion"
-            : definition.food ? "food"
-              : definition.toolKind ? "weapon"
-                : "misc",
-        baseValue: item === Item.GoldIngot
-          ? GOLD_INGOT_VALUE
-          : Math.max(1, Math.round(2 + (definition.damage ?? 0) * 5 + (definition.tier ?? 0) * 4 + (definition.food ?? 0) * 2)),
-        stackLimit: Math.max(1, definition.maxStack),
-        tags: item === Item.Honeymead ? ["mead"] : undefined,
-      };
+      const catalogItem = playerCommerceItem(item);
+      if (!definition || !catalogItem) return false;
       const result = sellToMerchant(this.goldWallet, merchant, catalogItem, quantity, command);
       if (!result.applied) {
         this.events.onToast(result.reason === "merchant-cannot-pay" ? "That merchant's purse is too light for this lot." : "The trade could not be completed.");

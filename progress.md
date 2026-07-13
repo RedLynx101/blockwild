@@ -28,6 +28,21 @@ Original prompt: Rework recipes and the pack GUI/avatar; fix twitchy Ridgebacks;
 - Applied one shared 5× timing multiplier to crops, berry bushes, cultivated flowers, ordinary and apple saplings, orchard fruit, and vertically growing aquatic flora. Doubled both passive/sprint hunger drain and the hunger cost of natural healing.
 - Focused farming, liquid, meshing, world-engine, schedule, and survival regressions pass. The official browser loop and a purpose-built underwater gallery were reviewed in first and third person; plants, block edges, and the avatar's trouser/leg silhouette are seamless, and the page/console logs are empty. QA artifacts remain ignored under `output/plant-growth-water-qa/`.
 
+## Main menu and playable-race faces - 2026-07-13
+
+- Replaced the crowded three-column title workspace with one centered vertical main-menu list. Characters and browser-owned worlds now open as dedicated title submenus with explicit Back controls; Escape returns either submenu to the main list.
+- Kept new-world creation, multiplayer, help, settings, fullscreen, sound, world import/export/rename/duplicate/delete, and the complete Character Studio accessible without loading their full workspaces onto the first screen.
+- Added unique multi-block nose silhouettes for all seven playable races. Dwarves now use a broad bridge, squared tip, and modeled nostrils; Hearthkin and Confectkin use distinct rounded/button shapes; Atlantians use a low streamlined form; Goblins and Wood Elves retain different pointed profiles; Wayfarers use a restrained baseline nose.
+- Focused character, avatar, model-polish, and title SSR checks pass. Desktop and phone menu/submenu captures plus a seven-race close face sheet were manually reviewed under ignored `output/main-menu-redesign/`; final browser QA reported no page or console errors.
+- Final gate: native TypeScript, targeted ESLint, the verified production build, artifact validation, all three pretest suites, and all 615 gameplay/rendering tests pass.
+
+## Merchant quantity and confirmation QoL - 2026-07-13
+
+- Added direct quantity entry plus −5, −1, +1, and +5 controls. Buy All and Sell All are safe presets: they set the largest currently legal quantity, update the exact order total, and never execute until the separate purchase/sale confirmation is pressed.
+- The legal maximum now explains whether stock, player inventory, player gold, merchant purse, free pack space, or the bounded order ceiling is the limiting factor. Selecting another item or changing sides resets the draft to one.
+- Removed the old hidden 64-item transaction clamp. One reviewed order can now preserve a quantity spanning several pack stacks through local and host-authoritative multiplayer paths. The panel also quotes the same Bartering/alignment modifiers used by the engine.
+- Focused economy, adapter, panel, and multiplayer coverage passes 70/70, including a 130-item Sell All transaction; native TypeScript, scoped ESLint, and the verified production build/artifact gate pass. Official desktop captures before and after Buy All, the populated Sell side, and a narrow phone capture were manually reviewed under ignored `output/trade-qol/`; clean-server runs produced no page or console error artifact.
+
 ## v1.2 character-profile slice — 2026-07-12
 
 - Added a normalized, browser-persistent multiple-character catalog with one stable browser ID and one stable ID per profile. Profiles retain name, sex, faction race, five customizable appearance colors, recent selection, and a bounded 20-point starting skill allocation.

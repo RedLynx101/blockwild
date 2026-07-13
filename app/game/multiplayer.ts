@@ -2,7 +2,7 @@ import type { DragonState } from "./dragons";
 import type { CharacterColors, CharacterSkillAllocation } from "./character-profiles";
 import type { FactionRace } from "./factions";
 import type { SkillState } from "./skills";
-import type { BankAccountState, GoldWalletState, MerchantState, StockMarketState } from "./economy";
+import { MAX_TRADE_QUANTITY, type BankAccountState, type GoldWalletState, type MerchantState, type StockMarketState } from "./economy";
 import type { QuestBook, QuestDefinition } from "./quests";
 import type { MapKnowledge } from "./map-system";
 import type { PlantBestiaryState } from "./plants";
@@ -1212,7 +1212,7 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
         && (value.merchantId === undefined || isShortString(value.merchantId, 160))
         && (value.tradeDirection === undefined || value.tradeDirection === "player-buys" || value.tradeDirection === "player-sells")
         && (value.itemKey === undefined || isShortString(value.itemKey, 128))
-        && (value.tradeCount === undefined || isInteger(value.tradeCount, 1, 64))
+        && (value.tradeCount === undefined || isInteger(value.tradeCount, 1, MAX_TRADE_QUANTITY))
         && validateMerchantState(value.merchantState)
         && validateWalletState(value.walletState)
         && (value.playerState === undefined || validatePlayerSessionSnapshot(value.playerState))

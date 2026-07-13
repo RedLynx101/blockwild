@@ -193,6 +193,17 @@ test("merchants use arbitrary buy/sell inventory, finite purses, and profession 
   assert.equal(rejected.reason, "merchant-cannot-pay");
 });
 
+test("bulk trades preserve quantities larger than a single item stack", () => {
+  const merchant = createMerchant("host-a", "bulk-buyer", "hobbits", "general", 10_000);
+  const wallet = createGoldWallet("host-a", "bulk-seller", 0);
+  const applesBefore = merchant.inventory.find((stack) => stack.itemKey === "apple")?.count ?? 0;
+  const apples = sellToMerchant(wallet, merchant, COMMERCE_CATALOG.apple, 130, atomic("sell-apple-crates", 0, 0));
+  assert.equal(apples.applied, true);
+  assert.equal(apples.item?.count, 130);
+  assert.equal(apples.merchant.inventory.find((stack) => stack.itemKey === "apple")?.count, applesBefore + 130);
+  assert.equal(quoteMerchantTrade(merchant, COMMERCE_CATALOG["gold-ingot"], 2_048, "player-buys").total, "20480");
+});
+
 test("merchant restocks are deterministic, bounded, and faction-specific", () => {
   const merchant = createMerchant("host-a", "goblin-smith", "goblins", "blacksmith", 5);
   const first = restockMerchant(merchant, 2, authority("restock", 0));
