@@ -15,6 +15,12 @@ Original prompt: Rework recipes and the pack GUI/avatar; fix twitchy Ridgebacks;
 - Dragonflight Saddle and Pannier now have production hand/drop models with quilted tack, cantle, pommel, sunmetal buckles, girths, bedroll, reinforced bag, and harness clasp. All six barding modules have independent silhouettes and palettes: Ember flame-lamellar, Rime glacier harness, Steel riveted pressure plate, Sea tideglass carapace, Gold solar regalia, and Silver moonmirror weave. Wearable Ember/Rime/Steel armor icons and hand models also carry per-element details rather than color alone.
 - Manually reviewed the 28px inventory / 22px recipe audit in `output/v1-4-5-dragon-assets/browser-client-final/shot-0.png` and the reconstructed-before/live-after model sheets in `output/v1-4-5-dragon-assets/blockwild-models-iso.png` and `blockwild-models-front.png`; all tack and hoard silhouettes remain legible and visibly distinct. Asset verification passes 20/20 focused regressions plus 72/72 with world-engine coverage; native TypeScript, scoped ESLint, and patch-integrity checks are clean.
 
+## World Below creature second pass - 2026-07-13
+
+- Rebuilt the nine signature-creature silhouettes with species-specific anatomy and surface detail instead of shared rectangular wing plans. Added branch-antlers, cephalic lobes, layered feathers, mineral cartilage, overlapping sails, membrane fingers, hollow chimes, thermal vents, and fractured living-ore anatomy while preserving every spawn, behavior, capture, sound, field-guide, and compatibility contract.
+- Added secondary motion for alternating Lanternray organs, Prismtail feathers, Ashnose heat noses, Chimewing pendants, Cinder Kite vents, Sailfin sails, and the Veinling heart. Kept the existing Grazer root, Newt gill, flight, tail, and seam animation paths intact.
+- Corrected the World Below showcase so its PNG is rasterized from the same labeled field-guide SVG rather than silently copying the unlabeled raw model sheet. Manually reviewed the labeled second-pass sheet and a 2200-pixel before/after comparison under ignored `output/world-overhaul-second-pass/`.
+
 ## v1.2 character-profile slice — 2026-07-12
 
 - Added a normalized, browser-persistent multiple-character catalog with one stable browser ID and one stable ID per profile. Profiles retain name, sex, faction race, five customizable appearance colors, recent selection, and a bounded 20-point starting skill allocation.

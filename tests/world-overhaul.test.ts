@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import * as THREE from "three";
+
 import { caveEntranceForCell } from "../app/game/caves.ts";
 import { creatureHasCustomSound } from "../app/game/creature-sounds.ts";
 import { BLOCKS, BlockId, ITEMS, Item, RECIPES, SMELTING, itemForBlock } from "../app/game/data.ts";
@@ -187,6 +189,17 @@ test("six ecological centers exceed minimum biodiversity while ordinary tunnels 
 
 test("all nine signature creatures have authored models, animation contracts, field notes, sounds, and spawn roles", () => {
   assert.equal(UNDERGROUND_MOB_ORDER.length, 9);
+  const secondPassDetails: Readonly<Record<string, readonly string[]>> = {
+    "grotto-grazer": ["split-lip-muzzle", "left-antler-tine-1", "tail-moss-brush"],
+    lanternray: ["left-lantern-organ", "left-cephalic-lobe", "left-tail-streamer"],
+    "prismtail-swift": ["crystal-beak", "left-prismatic-primary-1", "prism-tail-feather-3"],
+    "glassback-newt": ["glass-plate-edge-4", "front-left-webbed-foot", "left-gill-tip-1"],
+    "sailfin-skimmer": ["copper-brow", "sail-panel-4", "left-current-feeler"],
+    "ashnose-bat": ["heat-leaf-nose", "left-wing-finger-1", "left-roost-claw-2"],
+    chimewing: ["crown-vane-2", "left-wing-chime", "tail-chime-2"],
+    "cinder-kite": ["furnace-beak", "left-ember-vein-1", "back-vent-1"],
+    veinling: ["unresolved-heart", "left-face-fracture", "front-left-repair-prong-2"],
+  };
   for (const kind of UNDERGROUND_MOB_ORDER) {
     const definition = MOB_DEFS[kind];
     assert.equal(definition.family, "underground");
@@ -198,6 +211,10 @@ test("all nine signature creatures have authored models, animation contracts, fi
     const visual = createMobVisual(kind, 17);
     assert.equal(visual.visual.userData.wildlifeRig, kind);
     assert.ok(visual.parts.body.length + visual.parts.head.length + visual.parts.wings.length + visual.parts.legs.length > 0);
+    let meshCount = 0;
+    visual.visual.traverse((part) => { if (part instanceof THREE.Mesh) meshCount += 1; });
+    assert.ok(meshCount >= 25, `${definition.name} retains its detailed second-pass silhouette`);
+    for (const detail of secondPassDetails[kind]) assert.ok(visual.visual.getObjectByName(`${kind}-${detail}`), `${definition.name}: ${detail}`);
     assert.doesNotThrow(() => {
       applyWildlifePose(visual.visual, kind, 1.25, 0.7, 0.3);
       applyOceanCreaturePose(visual.visual, kind, 1.25, 0.7, 0.5);
@@ -206,6 +223,32 @@ test("all nine signature creatures have authored models, animation contracts, fi
   assert.equal(MOB_DEFS.lanternray.movement, "flying");
   assert.equal(MOB_DEFS["sailfin-skimmer"].flying, true);
   assert.equal(MOB_DEFS["sailfin-skimmer"].aquatic, true);
+});
+
+test("every second-pass creature silhouette keeps a visible articulated detail", () => {
+  const animatedDetails = [
+    ["grotto-grazer", "grotto-grazer-back-root-1", "rotation-z", "wildlife"],
+    ["lanternray", "lanternray-left-lantern-organ", "scale-x", "ocean"],
+    ["prismtail-swift", "prismtail-swift-prism-tail-feather-3", "rotation-x", "wildlife"],
+    ["glassback-newt", "glassback-newt-left-gill-1", "rotation-x", "wildlife"],
+    ["sailfin-skimmer", "sailfin-skimmer-dorsal-sail-pivot", "rotation-z", "ocean"],
+    ["ashnose-bat", "ashnose-bat-heat-leaf-nose", "scale-x", "wildlife"],
+    ["chimewing", "chimewing-left-wing-chime", "rotation-z", "wildlife"],
+    ["cinder-kite", "cinder-kite-back-vent-1", "scale-x", "wildlife"],
+    ["veinling", "veinling-unresolved-heart", "scale-x", "wildlife"],
+  ] as const;
+  const readChannel = (part: THREE.Object3D, channel: typeof animatedDetails[number][2]) => channel === "scale-x"
+    ? part.scale.x
+    : channel === "rotation-x" ? part.rotation.x : part.rotation.z;
+  for (const [kind, partName, channel, pose] of animatedDetails) {
+    const visual = createMobVisual(kind, 19);
+    const part = visual.visual.getObjectByName(partName);
+    assert.ok(part, `${kind}: ${partName}`);
+    const before = readChannel(part, channel);
+    if (pose === "ocean") applyOceanCreaturePose(visual.visual, kind, 1.25, 0.7, 0.5);
+    else applyWildlifePose(visual.visual, kind, 1.25, 0.7, 0.3);
+    assert.notEqual(readChannel(part, channel), before, `${kind}: ${partName} should animate`);
+  }
 });
 
 test("underground block families, traversal recipes, ore chains, and lifts are complete", () => {

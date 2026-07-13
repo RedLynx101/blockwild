@@ -59,6 +59,18 @@ const CANDY_CREATURE_KINDS = [
   ...SUGARCOURT_ORDER,
 ] as const satisfies readonly CoreMobKind[];
 
+const WORLD_BELOW_CREATURE_KINDS = [
+  "grotto-grazer",
+  "lanternray",
+  "prismtail-swift",
+  "glassback-newt",
+  "sailfin-skimmer",
+  "ashnose-bat",
+  "chimewing",
+  "cinder-kite",
+  "veinling",
+] as const satisfies readonly CoreMobKind[];
+
 function localAssetPath(url: string) {
   assert.match(url, /^\/creatures\/[a-z0-9-]+\.svg$/u);
   const resolved = path.resolve(PUBLIC_ROOT, url.slice(1));
@@ -93,6 +105,21 @@ test("every v0.7 newcomer bestiary URL resolves to its current production render
       deployedSvg,
       renderModelPortrait(spec),
       `${url} is stale; regenerate public portraits with npm run models:render`,
+    );
+  }
+});
+
+test("every World Below creature portrait matches its second-pass production model", async () => {
+  const productionSpecs = new Map(createMobInspectionSpecs().map((spec) => [spec.id, spec]));
+  for (const kind of WORLD_BELOW_CREATURE_KINDS) {
+    const url = `/creatures/${kind}.svg`;
+    const deployedSvg = await readNonemptySvg(url);
+    const spec = productionSpecs.get(kind);
+    assert.ok(spec, `${kind} should remain in the production model catalog`);
+    assert.equal(
+      deployedSvg,
+      renderModelPortrait(spec),
+      `${url} is stale; regenerate the public World Below portraits`,
     );
   }
 });
