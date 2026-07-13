@@ -420,3 +420,15 @@ Original prompt: Have the new Skyrim GUI stuff visually refresh 4x faster. Take 
 - Merged `design-1` commit `f24ae37` through Git ancestry while preserving all newer v1.4 content and leaving the design branch intact. Reconciled its audio registry addition with the current spatial/HRTF playback options.
 - Added and routed six complete wildlife WAVs for rabbit variants, small creatures, Runeowls, and Worldshell Leviathans, with focused asset and creature-cue regression coverage. Release metadata advances to v1.4.1 Wildlife Voices.
 - Final merged validation passes the Sites production build, 565/565 full gameplay tests, 7/7 release pretests, 7/7 complete audio-asset checks, 59/59 focused audio/fauna/release checks, native TypeScript, scoped ESLint, and patch-integrity checks.
+
+## Map performance and projection pass - 2026-07-12
+
+Current request: Optimize the increasingly laggy explored-world map, make detailed terrain show water as blue instead of the ground beneath it, and use one uniform horizontal/vertical scale so map chunks remain square.
+
+- Replaced the per-chunk detailed SVG tree with a retained canvas terrain layer. Terrain redraws only when exploration, view, detail mode, or viewport size changes; hover no longer allocates event handlers for every explored chunk.
+- Added viewport culling, visible marker/player culling, cached explored-set lookups, and a no-clone/no-sort steady-state path for the 720 ms discovery update.
+- Added a shared aspect-correct map projection for terrain, pins, and hover hit-testing. Wide or tall panels now center the map rather than stretching chunk cells.
+- Detailed sampling now gives water precedence whenever any bounded quadrant sample contains water; legacy ocean/river samples are forced to their blue biome ink during canvas rendering.
+- Focused TypeScript, scoped ESLint, and 32/32 map/quest/weather tests pass. A 65,536-chunk benchmark retains the full initial build but makes 5,000 steady 256-chunk discovery batches average 0.0436 ms each while reusing the same state.
+- Official-client startup QA and a dedicated fresh-world browser pass report no console/page errors. Manual review at 1.0x and 1.8x confirms square cells, centered letterboxing, aligned player pins, working zoom, and zero per-chunk terrain DOM nodes; the canvas backing size exactly matches its inner viewport.
+- Final production verification passes the bounded Sites build/artifact, 568/568 gameplay tests, 7/7 release pretests, TypeScript, scoped ESLint, and patch-integrity checks. Ready to commit and push `design-1`.

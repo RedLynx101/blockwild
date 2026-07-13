@@ -1,8 +1,11 @@
 "use client";
 
 import {
+  memo,
+  useEffect,
   useId,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type FormEvent,
@@ -12,11 +15,15 @@ import {
 } from "react";
 import {
   createMapViewState,
+  mapChunkAtViewportPoint,
+  mapChunksInViewport,
   mapTerrainPalette,
   mapViewportBounds,
+  mapViewportProjection,
   normalizeMapViewState,
   panMapView,
   parseChunkKey,
+  projectMapWorldPoint,
   stepMapZoom,
   type CartographySession,
   type FastTravelChannel,
@@ -26,6 +33,7 @@ import {
   type MapMarkerKind,
   type MapPlayerMarker,
   type MapViewState,
+  type MapViewportBounds,
   type WorldPoint,
 } from "./map-system";
 import { engineYawToMapRotation } from "./navigation";
@@ -350,36 +358,107 @@ function markerGlyph(marker: MapMarker) {
   return SEMANTIC_MARKER_ICONS[marker.icon] ?? (marker.icon.length <= 2 ? marker.icon : MARKER_META[marker.kind].icon);
 }
 
-type MapBounds = Readonly<{ minX: number; maxX: number; minZ: number; maxZ: number }>;
+type MapBounds = MapViewportBounds;
+type MapViewportSize = Readonly<{ width: number; height: number }>;
 
-function mapBounds(state: MapKnowledge, currentPosition: WorldPoint): MapBounds {
-  const explored = state.exploredChunks.map(parseChunkKey).filter((entry) => entry !== null);
-  const markerChunks = state.markers.map((marker) => ({
-    x: Math.floor(marker.position.x / 16),
-    z: Math.floor(marker.position.z / 16),
-  }));
-  const current = { x: Math.floor(currentPosition.x / 16), z: Math.floor(currentPosition.z / 16) };
-  const points = [...explored, ...markerChunks, current];
-  const xs = points.map((point) => point.x);
-  const zs = points.map((point) => point.z);
+function mapBounds(state: MapKnowledge, currentChunkX: number, currentChunkZ: number): MapBounds {
+  let minX = currentChunkX;
+  let maxX = currentChunkX;
+  let minZ = currentChunkZ;
+  let maxZ = currentChunkZ;
+  for (const key of state.exploredChunks) {
+    const chunk = parseChunkKey(key);
+    if (!chunk) continue;
+    minX = Math.min(minX, chunk.x);
+    maxX = Math.max(maxX, chunk.x);
+    minZ = Math.min(minZ, chunk.z);
+    maxZ = Math.max(maxZ, chunk.z);
+  }
+  for (const marker of state.markers) {
+    const x = Math.floor(marker.position.x / 16);
+    const z = Math.floor(marker.position.z / 16);
+    minX = Math.min(minX, x);
+    maxX = Math.max(maxX, x);
+    minZ = Math.min(minZ, z);
+    maxZ = Math.max(maxZ, z);
+  }
   return {
-    minX: Math.min(...xs) - 1,
-    maxX: Math.max(...xs) + 1,
-    minZ: Math.min(...zs) - 1,
-    maxZ: Math.max(...zs) + 1,
+    minX: minX - 1,
+    maxX: maxX + 1,
+    minZ: minZ - 1,
+    maxZ: maxZ + 1,
   };
 }
 
-function mapPointStyle(position: Pick<WorldPoint, "x" | "z">, bounds: MapBounds): CSSProperties {
-  const chunkX = position.x / 16;
-  const chunkZ = position.z / 16;
-  const width = Math.max(1, bounds.maxX - bounds.minX);
-  const height = Math.max(1, bounds.maxZ - bounds.minZ);
+function mapPointStyle(
+  position: Pick<WorldPoint, "x" | "z">,
+  bounds: MapBounds,
+  viewport: MapViewportSize,
+): CSSProperties {
+  const point = projectMapWorldPoint(position, bounds, viewport.width, viewport.height);
   return {
-    left: `${((chunkX - bounds.minX) / width) * 100}%`,
-    top: `${((chunkZ - bounds.minZ) / height) * 100}%`,
+    left: `${point.x}px`,
+    top: `${point.y}px`,
   };
 }
+
+type MapTerrainCanvasProps = Readonly<{
+  bounds: MapBounds;
+  detailed: boolean;
+  explored: ReturnType<typeof mapChunksInViewport>;
+  terrainByChunk: MapKnowledge["terrainByChunk"];
+  surfaceByChunk: MapKnowledge["surfaceByChunk"];
+  viewport: MapViewportSize;
+}>;
+
+const MapTerrainCanvas = memo(function MapTerrainCanvas({
+  bounds,
+  detailed,
+  explored,
+  terrainByChunk,
+  surfaceByChunk,
+  viewport,
+}: MapTerrainCanvasProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const width = Math.max(1, Math.round(viewport.width));
+    const height = Math.max(1, Math.round(viewport.height));
+    const pixelRatio = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+    const pixelWidth = Math.max(1, Math.round(width * pixelRatio));
+    const pixelHeight = Math.max(1, Math.round(height * pixelRatio));
+    if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
+    if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    context.clearRect(0, 0, width, height);
+    const projection = mapViewportProjection(bounds, width, height);
+    const cellSize = projection.scale;
+    const halfCell = cellSize / 2;
+    const strokeChunks = cellSize >= 3;
+    for (const chunk of explored) {
+      const palette = mapTerrainPalette(terrainByChunk[chunk.key]);
+      const x = projection.offsetX + (chunk.x - bounds.minX) * cellSize;
+      const y = projection.offsetY + (chunk.z - bounds.minZ) * cellSize;
+      context.fillStyle = palette.fill;
+      context.fillRect(x, y, cellSize + 0.35, cellSize + 0.35);
+      const surface = detailed && !palette.water ? surfaceByChunk[chunk.key] : null;
+      if (surface) for (let index = 0; index < 4; index += 1) {
+        context.fillStyle = surface[index];
+        context.fillRect(x + index % 2 * halfCell, y + Math.floor(index / 2) * halfCell, halfCell + 0.35, halfCell + 0.35);
+      }
+      if (strokeChunks) {
+        context.strokeStyle = palette.stroke;
+        context.lineWidth = Math.min(1, cellSize * 0.04);
+        context.strokeRect(x, y, cellSize, cellSize);
+      }
+    }
+  }, [bounds, detailed, explored, surfaceByChunk, terrainByChunk, viewport]);
+
+  return <canvas ref={canvasRef} className="hearthroads-map-terrain" role="img" aria-label="Explored world chunks" />;
+});
 
 function safeMapMarkerColor(color: string | undefined) {
   return typeof color === "string" && /^#[0-9a-f]{6}$/iu.test(color) ? color : "#5a78a0";
@@ -455,20 +534,65 @@ export function MapPanel({
   const [hoveredChunk, setHoveredChunk] = useState<Readonly<{ key: string; biome: string }> | null>(null);
   const [detailedTerrain, setDetailedTerrain] = useState(true);
   const [localViewState, setLocalViewState] = useState(createMapViewState);
+  const mapCanvasRef = useRef<HTMLDivElement>(null);
+  const [mapViewport, setMapViewport] = useState<MapViewportSize>({ width: 1, height: 1 });
   const [dragState, setDragState] = useState<Readonly<{
     pointerId: number;
     clientX: number;
     clientY: number;
     view: MapViewState;
   }> | null>(null);
-  const baseBounds = useMemo(() => mapBounds(knowledge, currentPosition), [knowledge, currentPosition]);
-  const zoomLimits = { minimum: minimumZoom } as const;
-  const activeViewState = normalizeMapViewState(controlledViewState ?? localViewState, zoomLimits);
-  const bounds = mapViewportBounds(baseBounds, activeViewState, zoomLimits);
-  const selected = knowledge.markers.find((marker) => marker.id === selectedMarkerId) ?? null;
-  const explored = knowledge.exploredChunks.map(parseChunkKey).filter((entry) => entry !== null);
-  const viewWidth = Math.max(1, bounds.maxX - bounds.minX);
-  const viewHeight = Math.max(1, bounds.maxZ - bounds.minZ);
+  useEffect(() => {
+    const element = mapCanvasRef.current;
+    if (!element) return;
+    const updateSize = () => {
+      const width = Math.max(1, Math.round(element.clientWidth));
+      const height = Math.max(1, Math.round(element.clientHeight));
+      setMapViewport((current) => current.width === width && current.height === height ? current : { width, height });
+    };
+    updateSize();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateSize);
+      return () => window.removeEventListener("resize", updateSize);
+    }
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  const currentChunkX = Math.floor(currentPosition.x / 16);
+  const currentChunkZ = Math.floor(currentPosition.z / 16);
+  const baseBounds = useMemo(
+    () => mapBounds(knowledge, currentChunkX, currentChunkZ),
+    [currentChunkX, currentChunkZ, knowledge],
+  );
+  const zoomLimits = useMemo(() => ({ minimum: minimumZoom } as const), [minimumZoom]);
+  const activeViewState = useMemo(
+    () => normalizeMapViewState(controlledViewState ?? localViewState, zoomLimits),
+    [controlledViewState, localViewState, zoomLimits],
+  );
+  const bounds = useMemo(
+    () => mapViewportBounds(baseBounds, activeViewState, zoomLimits),
+    [activeViewState, baseBounds, zoomLimits],
+  );
+  const selected = useMemo(
+    () => knowledge.markers.find((marker) => marker.id === selectedMarkerId) ?? null,
+    [knowledge.markers, selectedMarkerId],
+  );
+  const exploredKeys = useMemo(() => new Set(knowledge.exploredChunks), [knowledge.exploredChunks]);
+  const visibleExplored = useMemo(
+    () => mapChunksInViewport(knowledge.exploredChunks, bounds, 0.05),
+    [bounds, knowledge.exploredChunks],
+  );
+  const visibleMarkers = useMemo(() => knowledge.markers.filter((marker) => {
+    const x = marker.position.x / 16;
+    const z = marker.position.z / 16;
+    return x >= bounds.minX && x <= bounds.maxX && z >= bounds.minZ && z <= bounds.maxZ;
+  }), [bounds, knowledge.markers]);
+  const visibleOtherPlayers = useMemo(() => otherPlayers.filter((player) => {
+    const x = player.position.x / 16;
+    const z = player.position.z / 16;
+    return x >= bounds.minX && x <= bounds.maxX && z >= bounds.minZ && z <= bounds.maxZ;
+  }), [bounds, otherPlayers]);
   const remainingChannelSeconds = fastTravelChannel
     ? fastTravelChannel.durationSeconds - fastTravelElapsedSeconds
     : 0;
@@ -499,12 +623,30 @@ export function MapPanel({
   };
 
   const handleMapPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!dragState || dragState.pointerId !== event.pointerId) return;
     const rect = event.currentTarget.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return;
+    const clientWidth = event.currentTarget.clientWidth;
+    const clientHeight = event.currentTarget.clientHeight;
+    if (clientWidth <= 0 || clientHeight <= 0) return;
+    if (!dragState || dragState.pointerId !== event.pointerId) {
+      const chunk = mapChunkAtViewportPoint(
+        event.clientX - rect.left - event.currentTarget.clientLeft,
+        event.clientY - rect.top - event.currentTarget.clientTop,
+        bounds,
+        clientWidth,
+        clientHeight,
+      );
+      const key = chunk ? `${chunk.x},${chunk.z}` : null;
+      if (!key || !exploredKeys.has(key)) {
+        setHoveredChunk((current) => current === null ? current : null);
+        return;
+      }
+      const biome = mapTerrainPalette(knowledge.terrainByChunk?.[key]).label;
+      setHoveredChunk((current) => current?.key === key && current.biome === biome ? current : { key, biome });
+      return;
+    }
     const initialBounds = mapViewportBounds(baseBounds, dragState.view, zoomLimits);
-    const deltaX = -(event.clientX - dragState.clientX) / rect.width * (initialBounds.maxX - initialBounds.minX);
-    const deltaZ = -(event.clientY - dragState.clientY) / rect.height * (initialBounds.maxZ - initialBounds.minZ);
+    const deltaX = -(event.clientX - dragState.clientX) / clientWidth * (initialBounds.maxX - initialBounds.minX);
+    const deltaZ = -(event.clientY - dragState.clientY) / clientHeight * (initialBounds.maxZ - initialBounds.minZ);
     updateViewState(panMapView(dragState.view, deltaX, deltaZ, zoomLimits));
   };
 
@@ -554,12 +696,14 @@ export function MapPanel({
       <div className="hearthroads-map-layout">
         <div className="hearthroads-map-workspace">
           <div
+            ref={mapCanvasRef}
             className={`hearthroads-map-canvas${dragState ? " dragging" : ""}`}
             aria-label={`Map with ${knowledge.exploredChunks.length} explored chunks at ${activeViewState.zoom.toFixed(1)} times zoom`}
             onPointerDown={handleMapPointerDown}
             onPointerMove={handleMapPointerMove}
             onPointerUp={finishMapDrag}
             onPointerCancel={finishMapDrag}
+            onPointerLeave={() => setHoveredChunk(null)}
             onWheel={handleMapWheel}
           >
             <button
@@ -581,67 +725,29 @@ export function MapPanel({
               <output aria-label="Current map zoom">{activeViewState.zoom.toFixed(1)}×</output>
               <button type="button" onClick={() => updateViewState(stepMapZoom(activeViewState, 1, zoomLimits))} disabled={activeViewState.zoom >= 12} aria-label="Zoom map in">+</button>
             </div>
-            <svg
-              className="hearthroads-map-terrain"
-              viewBox={`0 0 ${viewWidth} ${viewHeight}`}
-              preserveAspectRatio="none"
-              role="img"
-              aria-label="Explored world chunks"
-            >
-              <title>Explored world chunks</title>
-              {explored.map((chunk) => {
-                const key = `${chunk.x},${chunk.z}`;
-                const palette = mapTerrainPalette(knowledge.terrainByChunk?.[key]);
-                const surface = detailedTerrain ? knowledge.surfaceByChunk?.[key] : null;
-                return (
-                  <g
-                    key={key}
-                    className="hearthroads-map-chunk-group"
-                    onMouseEnter={() => setHoveredChunk({ key, biome: palette.label })}
-                    onMouseLeave={() => setHoveredChunk((current) => current?.key === key ? null : current)}
-                    aria-label={`${key}: ${palette.label}`}
-                  >
-                    <title>{`${palette.label} · chunk ${key}`}</title>
-                    <rect
-                      className={`hearthroads-map-chunk${palette.water ? " water" : " land"}`}
-                      x={chunk.x - bounds.minX}
-                      y={chunk.z - bounds.minZ}
-                      width="1"
-                      height="1"
-                      fill={palette.fill}
-                      stroke={palette.stroke}
-                      vectorEffect="non-scaling-stroke"
-                    />
-                    {surface?.map((color, index) => (
-                      <rect
-                        className="hearthroads-map-surface-cell"
-                        key={`${key}:surface:${index}`}
-                        x={chunk.x - bounds.minX + index % 2 * 0.5}
-                        y={chunk.z - bounds.minZ + Math.floor(index / 2) * 0.5}
-                        width="0.5"
-                        height="0.5"
-                        fill={color}
-                      />
-                    ))}
-                  </g>
-                );
-              })}
-            </svg>
+            <MapTerrainCanvas
+              bounds={bounds}
+              detailed={detailedTerrain}
+              explored={visibleExplored}
+              terrainByChunk={knowledge.terrainByChunk}
+              surfaceByChunk={knowledge.surfaceByChunk}
+              viewport={mapViewport}
+            />
             <span
               className="hearthroads-player-pin"
-              style={mapPointStyle(currentPosition, bounds)}
+              style={mapPointStyle(currentPosition, bounds, mapViewport)}
               aria-label="Your current position"
               title="You are here"
             >
               <i aria-hidden="true" style={{ transform: `rotate(${engineYawToMapRotation(currentHeadingRadians)}rad)` }}>▲</i>
             </span>
-            {otherPlayers.map((player) => (
+            {visibleOtherPlayers.map((player) => (
               <button
                 type="button"
                 className={`hearthroads-other-player-pin${trackedTargetId === `player:${player.id}` ? " tracked" : ""}`}
                 key={player.id}
                 style={{
-                  ...mapPointStyle(player.position, bounds),
+                  ...mapPointStyle(player.position, bounds, mapViewport),
                   "--map-player-color": safeMapMarkerColor(player.color),
                 } as CSSProperties}
                 aria-label={`${player.name} at ${Math.round(player.position.x)}, ${Math.round(player.position.z)}`}
@@ -653,12 +759,12 @@ export function MapPanel({
                 <small>{player.name}</small>
               </button>
             ))}
-            {knowledge.markers.map((marker) => (
+            {visibleMarkers.map((marker) => (
               <button
                 className={`hearthroads-map-pin marker-${marker.kind}${selected?.id === marker.id ? " selected" : ""}${trackedTargetId === marker.id ? " tracked" : ""}`}
                 key={marker.id}
                 type="button"
-                style={mapPointStyle(marker.position, bounds)}
+                style={mapPointStyle(marker.position, bounds, mapViewport)}
                 onClick={() => onSelectMarker(marker.id)}
                 onPointerDown={(event) => event.stopPropagation()}
                 aria-label={`${MARKER_META[marker.kind].label}: ${marker.name}`}

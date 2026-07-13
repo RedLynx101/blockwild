@@ -128,6 +128,16 @@ test("render-distance map discovery batches many chunks into one revision", () =
   assert.strictEqual(markChunksRendered(explored, chunks), explored);
 });
 
+test("steady-state map discovery reuses a large explored map without cloning it", () => {
+  const chunks = Array.from({ length: 16_384 }, (_, index) => ({ x: index % 128, z: Math.floor(index / 128), biome: index % 24 }));
+  const explored = markChunksRendered(createMapKnowledge("large-world", "walker"), chunks);
+  const repeated = markChunksRendered(explored, chunks.slice(6_000, 6_256));
+  assert.strictEqual(repeated, explored);
+  assert.strictEqual(repeated.exploredChunks, explored.exploredChunks);
+  assert.strictEqual(repeated.terrainByChunk, explored.terrainByChunk);
+  assert.strictEqual(repeated.surfaceByChunk, explored.surfaceByChunk);
+});
+
 test("map markers distinguish POIs, personal bed spawns, manual notes, and renamable wayshrines", () => {
   let map = createMapKnowledge("hearthroads", "noah");
   map = discoverNaturalPoi(map, markerInput("poi-apiary", "Old Apiary", 32, "noah"));

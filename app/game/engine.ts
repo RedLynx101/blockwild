@@ -522,7 +522,6 @@ import {
 } from "./ecology";
 import {
   advanceFastTravelChannel,
-  averageMapColors,
   bankFastTravelCharges,
   beginFastTravel,
   commitFastTravel,
@@ -530,6 +529,7 @@ import {
   createMapKnowledge,
   discoverNaturalPoi,
   markChunksRendered,
+  mapSurfaceQuadrantColor,
   normalizeMapKnowledge,
   placeManualMapMarker,
   placeWayshrine,
@@ -2564,6 +2564,7 @@ export class VoxelEngine {
   archiveShelves = new Map<string, ArchiveShelfState>();
   tomeDisplays = new Map<string, TomeDisplayState>();
   mapKnowledge: MapKnowledge = createMapKnowledge("world", "local");
+  mapSurfaceSurveyedThisSession = new Set<string>();
   questBook: QuestBook = createQuestBook();
   sideQuestDefinitions: QuestDefinition[] = [];
   blueprints: BlueprintState = createBlueprintState();
@@ -3375,6 +3376,7 @@ export class VoxelEngine {
     const authorityId = `world:${this.world.seedText}`;
     const playerId = this.localPlayerId();
     this.mapKnowledge = createMapKnowledge(authorityId, playerId);
+    this.mapSurfaceSurveyedThisSession.clear();
     this.factionRelations = createFactionRelations(authorityId);
     if (this.activeCharacterProfile) {
       this.factionRelations = applyCharacterStartingAlignment(this.factionRelations, this.activeCharacterProfile.appearance.race);
@@ -3454,6 +3456,7 @@ export class VoxelEngine {
     const authorityId = `world:${save.seed}`;
     const playerId = this.localPlayerId();
     this.mapKnowledge = normalizeMapKnowledge(save.mapKnowledge, authorityId, playerId);
+    this.mapSurfaceSurveyedThisSession.clear();
     this.questBook = normalizeQuestBook(save.questBook);
     this.sideQuestDefinitions = Array.isArray(save.sideQuestDefinitions) ? save.sideQuestDefinitions.slice(0, 128) : [];
     this.blueprints = normalizeBlueprintState(save.blueprints);
@@ -4666,6 +4669,7 @@ export class VoxelEngine {
     this.craftGrid = Array.from({ length: 9 }, () => null);
     this.bestiary = blankBestiary();
     this.mapKnowledge = createMapKnowledge(sessionAuthority, guestPlayerId);
+    this.mapSurfaceSurveyedThisSession.clear();
     this.questBook = createQuestBook();
     this.sideQuestDefinitions = [];
     this.blueprints = createBlueprintState();
@@ -13149,14 +13153,17 @@ export class VoxelEngine {
     for (let quadrantZ = 0; quadrantZ < 2; quadrantZ += 1) {
       for (let quadrantX = 0; quadrantX < 2; quadrantX += 1) {
         const quadrantColors: string[] = [];
+        let containsWater = false;
         for (const sampleZ of [2, 6]) for (const sampleX of [2, 6]) {
           const x = cx * CHUNK_SIZE + quadrantX * (CHUNK_SIZE / 2) + sampleX;
           const z = cz * CHUNK_SIZE + quadrantZ * (CHUNK_SIZE / 2) + sampleZ;
           const y = this.world.surfaceAt(x, z);
           const topBlock = this.world.getBlock(x, y, z);
+          const aboveBlock = this.world.getBlock(x, y + 1, z);
+          containsWater ||= blockContainsWater(topBlock) || blockContainsWater(aboveBlock);
           quadrantColors.push(topBlock === undefined ? "#668252" : BLOCKS[topBlock]?.color ?? "#668252");
         }
-        colors.push(averageMapColors(quadrantColors));
+        colors.push(mapSurfaceQuadrantColor(quadrantColors, containsWater));
       }
     }
     return [colors[0], colors[1], colors[2], colors[3]];
@@ -13170,8 +13177,11 @@ export class VoxelEngine {
     let surfaceSurveyBudget = 6;
     const renderedChunks = [...this.world.chunks.values()].filter((chunk) => chunk.group.visible).map((chunk) => {
       const key = `${chunk.cx},${chunk.cz}`;
-      const shouldSurvey = surfaceSurveyBudget > 0 && !this.mapKnowledge.surfaceByChunk?.[key];
-      if (shouldSurvey) surfaceSurveyBudget -= 1;
+      const shouldSurvey = surfaceSurveyBudget > 0 && !this.mapSurfaceSurveyedThisSession.has(key);
+      if (shouldSurvey) {
+        surfaceSurveyBudget -= 1;
+        this.mapSurfaceSurveyedThisSession.add(key);
+      }
       return {
         x: chunk.cx,
         z: chunk.cz,
