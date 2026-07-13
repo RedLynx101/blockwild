@@ -2,6 +2,17 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.4.4 - Harbor Homecoming - 2026-07-12
+
+- Restored the same host-owned health, hunger, quests, unlocks, respawn point, and bounded personal progression whether a guest joins from the title screen or from a running world.
+- Added validated guest launch, boarding, steering, dismount, and empty-hold packing actions for Wayfarer sailboats, with broader interaction targeting and authoritative inventory consumption.
+- Unified guest pickup handling for placed beds and other eligible blocks so multiplayer placement and removal preserve inventory parity; host teardown now releases chest, furnace, and workstation contents instead of orphaning them.
+- Flushes dirty guest progression before a deliberate disconnect, closing the final five-second reconnect-loss window.
+- Made craftable ingredients inside the recipe board navigate to their own recipe without staging or crafting anything.
+- Replaced undersized generic tome marks with full-frame, colored spell-book icons and a focused visual audit surface.
+- Allowed all sapling families to plant on Meadow Grass and grounded the Saltwind Lighthouse table, chair, and sea chest on its floor.
+- Integrated the latest pushed `design-1` explored-map optimization while preserving that branch.
+
 ## 1.4.3 - Shared Lanterns - 2026-07-12
 
 - Separated high-frequency player poses, mob/drop snapshots, and time/weather presentation from reliable world and inventory transactions, while retaining host authority and rejecting stale player revisions. Hotbar selection now travels as a lightweight pose field and is excluded from the reliable player-state signature, so wheel-only changes do not upload the pack later.

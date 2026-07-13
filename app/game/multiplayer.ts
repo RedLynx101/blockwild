@@ -2,7 +2,12 @@ import type { DragonState } from "./dragons";
 import type { CharacterColors, CharacterSkillAllocation } from "./character-profiles";
 import type { FactionRace } from "./factions";
 import type { SkillState } from "./skills";
-import type { GoldWalletState, MerchantState } from "./economy";
+import type { BankAccountState, GoldWalletState, MerchantState, StockMarketState } from "./economy";
+import type { QuestBook, QuestDefinition } from "./quests";
+import type { MapKnowledge } from "./map-system";
+import type { PlantBestiaryState } from "./plants";
+import type { BlueprintState } from "./blueprints";
+import type { MagicState } from "./magic";
 
 /**
  * Browser-only, host-authoritative WebRTC multiplayer transport for Blockwild.
@@ -87,6 +92,9 @@ export type PlayerPose = {
   equipment?: Partial<Record<"head" | "chest" | "legs" | "feet", number>>;
   boatId?: string;
   boatSeat?: number;
+  /** Ephemeral helm intent. The host integrates the hull only for seat zero. */
+  boatForward?: number;
+  boatTurn?: number;
   /** Host-approved ridden creature; omitted immediately on dismount. */
   mountedCreatureId?: number;
 };
@@ -175,6 +183,7 @@ export type SailboatSnapshotEntry = {
   yaw: number;
   velocity: number;
   passengers: string[];
+  ownerId?: string | null;
 };
 export type NetworkWeatherState = {
   kind: "clear" | "overcast" | "drizzle" | "rain" | "thunder" | "snow" | "sandstorm" | "mist" | "ashfall";
@@ -301,12 +310,65 @@ export type PlayerSessionSnapshot = {
   skills: SkillState;
 };
 
+export type PlayerBestiarySnapshot = Record<string, {
+  seen: boolean;
+  kills: number;
+  captures: number;
+  tames?: number;
+  breeds?: number;
+  secretUnlocked?: boolean;
+  milestones?: Record<string, number>;
+}>;
+
+export type PlayerProgressionSnapshot = {
+  questBook: QuestBook;
+  sideQuestDefinitions: QuestDefinition[];
+  mapKnowledge: MapKnowledge;
+  bestiary: PlayerBestiarySnapshot;
+  plantBestiary: PlantBestiaryState;
+  blueprints: BlueprintState;
+  magicState: MagicState;
+  potionBuffs: Record<string, number>;
+  rangedLoaded: Record<string, number>;
+  bankAccount: BankAccountState;
+  stockMarket: StockMarketState;
+  respawn?: { x: number; y: number; z: number };
+};
+
+export type PlayerProgressAction = {
+  transferId: string;
+  actorId: string;
+  revision: number;
+  chunkIndex?: number;
+  chunkCount?: number;
+  data?: string;
+  status?: ActionStatus;
+  reason?: string;
+};
+
 export type PlayerStateAction = {
   requestId: string;
   actorId: string;
   /** Host revision the guest based its mutation on; prevents stale health/inventory resurrection. */
   expectedRevision?: number;
   state: PlayerSessionSnapshot;
+  status?: ActionStatus;
+  reason?: string;
+};
+
+/** Reliable lifecycle actions; continuous helm input stays on PlayerPose. */
+export type BoatAction = {
+  requestId: string;
+  actorId: string;
+  tick: number;
+  kind: "launch" | "board" | "leave" | "pack";
+  boatId?: string;
+  x?: number;
+  y?: number;
+  z?: number;
+  yaw?: number;
+  boat?: SailboatSnapshotEntry;
+  playerState?: PlayerSessionSnapshot;
   status?: ActionStatus;
   reason?: string;
 };
@@ -404,6 +466,8 @@ export type MultiplayerPayloadMap = {
   "container-action": ContainerAction;
   "facility-action": FacilityAction;
   "player-state": PlayerStateAction;
+  "player-progress": PlayerProgressAction;
+  "boat-action": BoatAction;
   "combat-action": CombatAction;
   "creature-action": CreatureAction;
   "map-share": CartographyMapShare;
@@ -539,10 +603,10 @@ type PeerRecord = {
 };
 
 const MESSAGE_TYPES = new Set<MultiplayerMessageType>([
-  "hello", "heartbeat", "goodbye", "snapshot", "player-pose", "block-action", "mob-snapshot", "drop-snapshot", "time-weather", "sleep-vote", "inventory-action", "container-action", "facility-action", "player-state", "combat-action", "creature-action", "map-share",
+  "hello", "heartbeat", "goodbye", "snapshot", "player-pose", "block-action", "mob-snapshot", "drop-snapshot", "time-weather", "sleep-vote", "inventory-action", "container-action", "facility-action", "player-state", "player-progress", "boat-action", "combat-action", "creature-action", "map-share",
 ]);
 const CONTROL_TYPES = new Set<MultiplayerMessageType>(["hello", "heartbeat", "goodbye"]);
-const GUEST_OUTBOUND_TYPES = new Set<MultiplayerMessageType>(["hello", "heartbeat", "goodbye", "player-pose", "block-action", "sleep-vote", "inventory-action", "container-action", "facility-action", "player-state", "combat-action", "creature-action", "map-share"]);
+const GUEST_OUTBOUND_TYPES = new Set<MultiplayerMessageType>(["hello", "heartbeat", "goodbye", "player-pose", "block-action", "sleep-vote", "inventory-action", "container-action", "facility-action", "player-state", "player-progress", "boat-action", "combat-action", "creature-action", "map-share"]);
 
 export class MultiplayerProtocolError extends Error {
   constructor(message: string) {
@@ -671,6 +735,8 @@ function validatePose(value: unknown): value is PlayerPose {
     && (value.seated === undefined || isFiniteNumber(value.seated, 0, 1))
     && (value.boatId === undefined || isId(value.boatId))
     && (value.boatSeat === undefined || isInteger(value.boatSeat, 0, 1))
+    && (value.boatForward === undefined || isFiniteNumber(value.boatForward, -1, 1))
+    && (value.boatTurn === undefined || isFiniteNumber(value.boatTurn, -1, 1))
     && (value.mountedCreatureId === undefined || isInteger(value.mountedCreatureId, 0, Number.MAX_SAFE_INTEGER))
     && validEquipment;
 }
@@ -698,7 +764,8 @@ function validateSailboat(value: unknown): value is SailboatSnapshotEntry {
     && isFiniteNumber(value.velocity, -32, 32)
     && Array.isArray(value.passengers)
     && value.passengers.length <= 2
-    && value.passengers.every(isId);
+    && value.passengers.every(isId)
+    && (value.ownerId === undefined || value.ownerId === null || isId(value.ownerId));
 }
 
 function validateDragonState(value: unknown): value is DragonState {
@@ -930,6 +997,30 @@ function validateSkillState(value: unknown): value is SkillState {
     && typeof value.ascendantHealthFloorEnabled === "boolean";
 }
 
+export function validatePlayerProgressionSnapshot(value: unknown): value is PlayerProgressionSnapshot {
+  if (!isRecord(value)
+    || !isRecord(value.questBook)
+    || !Array.isArray(value.sideQuestDefinitions)
+    || value.sideQuestDefinitions.length > 128
+    || !isRecord(value.mapKnowledge)
+    || !isRecord(value.bestiary)
+    || !isRecord(value.plantBestiary)
+    || !isRecord(value.blueprints)
+    || !isRecord(value.magicState)
+    || !isRecord(value.potionBuffs)
+    || !isRecord(value.rangedLoaded)
+    || !isRecord(value.bankAccount)
+    || !isRecord(value.stockMarket)
+    || (value.respawn !== undefined && (!isRecord(value.respawn)
+      || !isFiniteNumber(value.respawn.x, -COORDINATE_LIMIT, COORDINATE_LIMIT)
+      || !isFiniteNumber(value.respawn.y, -4096, 4096)
+      || !isFiniteNumber(value.respawn.z, -COORDINATE_LIMIT, COORDINATE_LIMIT)))) return false;
+  // Every nested subsystem is normalized again by the engine. Large maps are
+  // allowed here because the wire format chunks them below the message limit.
+  try { return JSON.stringify(value).length <= 64 * 1024 * 1024; }
+  catch { return false; }
+}
+
 function validatePlayerSessionSnapshot(value: unknown): value is PlayerSessionSnapshot {
   if (!isRecord(value) || !isRecord(value.equipment)) return false;
   const equipment = value.equipment;
@@ -1065,6 +1156,33 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
         && (value.expectedRevision === undefined || isInteger(value.expectedRevision, 0, Number.MAX_SAFE_INTEGER))
         && validatePlayerSessionSnapshot(value.state)
         && value.state.playerId === value.actorId
+        && validateStatusFields(value);
+    case "player-progress": {
+      const hasChunk = value.data !== undefined || value.chunkIndex !== undefined || value.chunkCount !== undefined;
+      return isId(value.transferId)
+        && isId(value.actorId)
+        && isInteger(value.revision, 0, Number.MAX_SAFE_INTEGER)
+        && (value.status !== "request" || hasChunk)
+        && (!hasChunk || (typeof value.data === "string"
+          && value.data.length > 0 && value.data.length <= 180_000
+          && /^[A-Za-z0-9+/=]+$/u.test(value.data)
+          && isInteger(value.chunkIndex, 0, 511)
+          && isInteger(value.chunkCount, 1, 512)
+          && (value.chunkIndex as number) < (value.chunkCount as number)))
+        && validateStatusFields(value);
+    }
+    case "boat-action":
+      return isId(value.requestId)
+        && isId(value.actorId)
+        && isInteger(value.tick, 0, Number.MAX_SAFE_INTEGER)
+        && ["launch", "board", "leave", "pack"].includes(value.kind as string)
+        && (value.boatId === undefined || isId(value.boatId))
+        && (value.x === undefined || isFiniteNumber(value.x, -COORDINATE_LIMIT, COORDINATE_LIMIT))
+        && (value.y === undefined || isFiniteNumber(value.y, -4096, 4096))
+        && (value.z === undefined || isFiniteNumber(value.z, -COORDINATE_LIMIT, COORDINATE_LIMIT))
+        && (value.yaw === undefined || isFiniteNumber(value.yaw, -100_000, 100_000))
+        && (value.boat === undefined || validateSailboat(value.boat))
+        && (value.playerState === undefined || validatePlayerSessionSnapshot(value.playerState))
         && validateStatusFields(value);
     case "combat-action":
       return isId(value.requestId)
@@ -1758,6 +1876,8 @@ export class MultiplayerSession {
   sendContainerAction(payload: ContainerAction, peerId?: string) { return this.send("container-action", payload, peerId); }
   sendFacilityAction(payload: FacilityAction, peerId?: string) { return this.send("facility-action", payload, peerId); }
   sendPlayerState(payload: PlayerStateAction, peerId?: string) { return this.send("player-state", payload, peerId); }
+  sendPlayerProgress(payload: PlayerProgressAction, peerId?: string) { return this.send("player-progress", payload, peerId); }
+  sendBoatAction(payload: BoatAction, peerId?: string) { return this.send("boat-action", payload, peerId); }
   sendCombatAction(payload: CombatAction, peerId?: string) { return this.send("combat-action", payload, peerId); }
   sendCreatureAction(payload: CreatureAction, peerId?: string) { return this.send("creature-action", payload, peerId); }
   sendMapShare(payload: CartographyMapShare, peerId?: string) { return this.send("map-share", payload, peerId); }
@@ -1779,7 +1899,7 @@ export class MultiplayerSession {
     const payload = envelope.payload as unknown;
     if (!isRecord(payload)) return false;
     if (envelope.type === "player-pose") return payload.playerId === peer.identity.id;
-    if (envelope.type === "block-action" || envelope.type === "inventory-action" || envelope.type === "container-action" || envelope.type === "facility-action" || envelope.type === "player-state" || envelope.type === "combat-action" || envelope.type === "creature-action") {
+    if (envelope.type === "block-action" || envelope.type === "inventory-action" || envelope.type === "container-action" || envelope.type === "facility-action" || envelope.type === "player-state" || envelope.type === "player-progress" || envelope.type === "boat-action" || envelope.type === "combat-action" || envelope.type === "creature-action") {
       return payload.actorId === peer.identity.id && (payload.status === undefined || payload.status === "request");
     }
     if (envelope.type === "sleep-vote") return payload.actorId === peer.identity.id;

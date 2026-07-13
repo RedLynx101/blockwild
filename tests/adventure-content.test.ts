@@ -349,6 +349,33 @@ test("coastal adventure candidates stamp real geometry, landmarks and encounter 
   world.dispose();
 });
 
+test("Saltwind Lighthouse keeper furniture rests directly on its authored floor", () => {
+  const origin = { x: 80, y: 42, z: -32 };
+  const plan = planAdventureStructure("saltwind-lighthouse", origin, "saltwind-furniture-audit");
+  const byPosition = new Map(plan.placements.map((placement) => [`${placement.x},${placement.y},${placement.z}`, placement]));
+  const furniture = plan.placements.filter((placement) =>
+    placement.variant === "keeper-table"
+      || placement.variant === "keeper-chair"
+      || placement.variant === "adventure-cache-chest",
+  );
+
+  assert.deepEqual(
+    furniture.map(({ x, y, z, block, variant }) => ({ x, y, z, block, variant })),
+    [
+      { x: origin.x - 4, y: origin.y + 1, z: origin.z + 1, block: BlockId.HearthChair, variant: "keeper-chair" },
+      { x: origin.x - 3, y: origin.y + 1, z: origin.z + 1, block: BlockId.WildwoodTable, variant: "keeper-table" },
+      { x: origin.x + 3, y: origin.y + 1, z: origin.z + 2, block: BlockId.Chest, variant: "adventure-cache-chest" },
+    ],
+  );
+  for (const placement of furniture) {
+    const support = byPosition.get(`${placement.x},${placement.y - 1},${placement.z}`);
+    assert.equal(support?.block, BlockId.TempleSandstone, `${placement.variant} must have a floor immediately below it`);
+    assert.equal(support?.variant, "lighthouse-floor");
+  }
+  const chestMarker = plan.markers.find((marker) => marker.type === "chest" && marker.id === "keeper-sea-chest");
+  assert.deepEqual(chestMarker?.position, { x: origin.x + 3, y: origin.y + 1, z: origin.z + 2 });
+});
+
 test("dungeon spawn grounding stays inside authored rooms and flying markers retain height", () => {
   let surfaceQueries = 0;
   const markerY = -16;

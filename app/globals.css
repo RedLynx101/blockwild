@@ -2914,6 +2914,36 @@ input:focus-visible {
 
 .recipe-preview-slot .item-icon { width: 18px; height: 18px; }
 
+.recipe-ingredient-link {
+  appearance: none;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  transition: background-color 90ms ease-out, border-color 90ms ease-out, transform 90ms ease-out;
+}
+
+.recipe-ingredient-link:hover,
+.recipe-ingredient-link:focus-visible {
+  z-index: 2;
+  border-color: #66502b #f4dea4 #f4dea4 #66502b;
+  outline: 2px solid #be8334;
+  outline-offset: 1px;
+  background: #e0cb8c;
+  transform: translateY(-1px);
+}
+
+.recipe-ingredient-link::after {
+  content: "\2197";
+  position: absolute;
+  right: 1px;
+  bottom: -1px;
+  color: #60431e;
+  font-size: 7px;
+  font-weight: 900;
+  line-height: 1;
+  text-shadow: 1px 1px 0 rgba(255, 242, 184, .75);
+}
+
 .recipe-preview-arrow {
   width: 23px;
   height: 18px;
@@ -4506,6 +4536,11 @@ input:focus-visible {
 .item-audit-small { width: 34px; }
 .item-icon-audit-grid strong { overflow: hidden; color: #edf0eb; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .item-icon-audit-grid small { overflow: hidden; color: #829087; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.tome-icon-audit .item-icon-audit-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+@media (max-width: 760px) {
+  .tome-icon-audit .item-icon-audit-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 
 .held-model-audit {
   position: fixed;
@@ -5799,6 +5834,41 @@ input:focus-visible {
   margin: -3px;
   transform: scale(.785714);
   transform-origin: center;
+}
+
+/* Spell tomes use the full authored slot canvas. The page block deliberately
+   peeks beyond the colored cover so the silhouette remains a book at 22px. */
+.item-icon-kind-tome {
+  background: linear-gradient(145deg, #f2dfae 0 62%, #b79a67 63% 100%) 4px 5px / 23px 22px no-repeat;
+  filter: drop-shadow(2px 2px 0 rgba(31, 20, 15, .7));
+  transform: rotate(-5deg);
+}
+
+.item-icon-kind-tome::before {
+  left: 1px;
+  top: 1px;
+  width: 24px;
+  height: 23px;
+  border: 2px solid #3c251c;
+  background:
+    linear-gradient(90deg, rgba(55, 31, 25, .62) 0 18%, rgba(255, 255, 255, .15) 19% 23%, transparent 24%),
+    linear-gradient(145deg, color-mix(in srgb, var(--item-color), #fff 26%), var(--item-color) 56%, color-mix(in srgb, var(--item-color), #24150f 42%));
+  box-shadow: inset 2px 2px 0 rgba(255, 244, 205, .24), inset -2px -2px 0 rgba(36, 21, 15, .32);
+  clip-path: polygon(5% 0, 96% 5%, 100% 91%, 11% 100%, 0 86%, 0 10%);
+}
+
+.item-icon-kind-tome::after {
+  left: 10px;
+  top: 8px;
+  width: 9px;
+  height: 9px;
+  border: 1px solid rgba(255, 244, 190, .9);
+  background:
+    linear-gradient(45deg, transparent 40%, #fff2a5 41% 57%, transparent 58%),
+    linear-gradient(-45deg, transparent 40%, #fff2a5 41% 57%, transparent 58%),
+    rgba(63, 39, 29, .72);
+  box-shadow: 0 0 0 2px rgba(61, 38, 26, .42), 0 0 5px color-mix(in srgb, var(--item-color), #fff 38%);
+  transform: rotate(45deg);
 }
 
 .hotbar-slot {

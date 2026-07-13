@@ -14,6 +14,7 @@ export type SailboatSave = {
   velocity: number;
   passengers: string[];
   inventory: Array<InventorySlot | null>;
+  ownerId: string | null;
 };
 
 export type SailboatInput = {
@@ -48,7 +49,27 @@ export function normalizeSailboatSave(value: Partial<SailboatSave> | null | unde
     velocity: clamp(finite(value?.velocity), -SAILBOAT_MAX_SPEED * 0.45, SAILBOAT_MAX_SPEED),
     passengers,
     inventory,
+    ownerId: typeof value?.ownerId === "string" && value.ownerId ? value.ownerId.slice(0, 160) : null,
   };
+}
+
+export function sailboatInventoryIsEmpty(inventory: readonly (InventorySlot | null)[]) {
+  return inventory.every((slot) => !slot || slot.count <= 0);
+}
+
+/** Forgiving boarding target: raycast hulls are thin and bob between frames. */
+export function sailboatRayPickDistance(
+  origin: THREE.Vector3,
+  direction: THREE.Vector3,
+  boat: Pick<SailboatSave, "x" | "y" | "z">,
+  reach: number,
+) {
+  const center = new THREE.Vector3(boat.x, boat.y + 0.72, boat.z);
+  const offset = center.sub(origin);
+  const along = offset.dot(direction);
+  if (along < 0 || along > reach) return null;
+  const radialSq = Math.max(0, offset.lengthSq() - along * along);
+  return radialSq <= 1.72 * 1.72 ? along : null;
 }
 
 export function canBoardSailboat(passengers: readonly string[], playerId: string) {

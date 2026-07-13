@@ -714,6 +714,7 @@ export function itemIconKind(item: ItemCode) {
   if (definition?.equipmentSlot) return `armor-${definition.equipmentSlot}`;
   if (definition?.useKind === "hoe") return "hoe";
   if (definition?.useKind === "scythe") return "scythe";
+  if (definition?.useKind === "spell-tome") return "tome";
   switch (item) {
     case BlockId.CraftingTable: return "crafting-table";
     case BlockId.Torch: return "torch";
@@ -910,6 +911,34 @@ function ItemIcon({ item, slot, small = false }: { item: ItemCode; slot?: Invent
       data-world-texture={definition?.worldTextureBlock}
       aria-hidden="true"
     />
+  );
+}
+
+/** A deterministic drill-down target for an ingredient shown on the pattern board. */
+export function recipeForOutputItem(item: ItemCode, recipes: readonly Recipe[] = RECIPES): Recipe | null {
+  return recipes.find((recipe) => recipe.output.item === item) ?? null;
+}
+
+export function RecipePreviewIngredient({ item, label, onNavigate }: {
+  item: ItemCode;
+  label: string;
+  onNavigate: (recipeId: string) => void;
+}) {
+  const target = recipeForOutputItem(item);
+  if (!target) {
+    return <span className="recipe-preview-slot" title={label} aria-label={label}><ItemIcon item={item} small /></span>;
+  }
+  return (
+    <button
+      type="button"
+      className="recipe-preview-slot recipe-ingredient-link"
+      title={`View ${target.name} recipe`}
+      aria-label={`${label}: view ${target.name} recipe`}
+      data-recipe-target={target.id}
+      onClick={() => onNavigate(target.id)}
+    >
+      <ItemIcon item={item} small />
+    </button>
   );
 }
 
@@ -1325,7 +1354,7 @@ export default function VoxelGame() {
   const [multiplayerState, setMultiplayerState] = useState<MultiplayerViewState>(EMPTY_MULTIPLAYER_STATE);
   const [multiplayerBusy, setMultiplayerBusy] = useState(false);
   const [multiplayerReturn, setMultiplayerReturn] = useState<"title" | "pause">("title");
-  const [iconAuditMode, setIconAuditMode] = useState(false);
+  const [iconAuditMode, setIconAuditMode] = useState<"all" | "tomes" | null>(null);
   const [civicAuditMode, setCivicAuditMode] = useState<CivicAuditMode | null>(null);
   const [heldAuditMode, setHeldAuditMode] = useState(false);
   const [spellWheelAuditMode, setSpellWheelAuditMode] = useState(false);
@@ -1337,7 +1366,8 @@ export default function VoxelGame() {
 
   useEffect(() => {
     const parameters = new URLSearchParams(window.location.search);
-    setIconAuditMode(parameters.get("icon-audit") === "1");
+    const iconAudit = parameters.get("icon-audit");
+    setIconAuditMode(iconAudit === "tomes" ? "tomes" : iconAudit === "1" ? "all" : null);
     setHeldAuditMode(parameters.get("held-audit") === "1");
     setSpellWheelAuditMode(parameters.get("spell-wheel-audit") === "empty");
     const workstationAudit = parameters.get("workstation-audit");
@@ -2250,6 +2280,12 @@ export default function VoxelGame() {
     setPreviewRecipeId(recipeId);
   };
 
+  const navigateToIngredientRecipe = (recipeId: string) => {
+    setRecipeQuery("");
+    setRecipeFeedback(null);
+    setPreviewRecipeId(recipeId);
+  };
+
   const renderRecipeBook = (includeTable: boolean) => {
     const filtered = RECIPES.filter((recipe) => recipeMatchesQuery(recipe, recipeQuery));
     const preview = filtered.find((recipe) => recipe.id === previewRecipeId) ?? filtered[0] ?? null;
@@ -2296,7 +2332,9 @@ export default function VoxelGame() {
                 <div className="recipe-preview-copy"><strong>{preview.name}</strong><small>{preview.mirrored ? "Either left or right orientation" : `${preview.width}×${preview.height} shaped recipe`}</small></div>
                 <div className="recipe-preview-row">
                   <div className="recipe-preview-grid" aria-label={`${preview.name} crafting pattern`}>
-                    {previewCells.map((item, index) => <span key={index} className="recipe-preview-slot" title={previewLabels[index] ?? undefined} aria-label={previewLabels[index] ?? "Empty crafting slot"}>{item !== 0 && <ItemIcon item={item} small />}</span>)}
+                    {previewCells.map((item, index) => item === 0
+                      ? <span key={index} className="recipe-preview-slot" aria-label="Empty crafting slot" />
+                      : <RecipePreviewIngredient key={index} item={item} label={previewLabels[index] ?? ITEMS[item]?.name ?? "Unknown item"} onNavigate={navigateToIngredientRecipe} />)}
                   </div>
                   <span className="recipe-preview-arrow" aria-hidden="true" />
                   <span className="recipe-preview-output"><ItemIcon item={preview.output.item} /><b>{preview.output.count}</b></span>
@@ -3509,11 +3547,11 @@ export default function VoxelGame() {
       )}
 
       {iconAuditMode && (
-        <section className="item-icon-audit" aria-label="Inventory item icon size audit">
-          <header><div><span className="panel-eyebrow">UI ART QA · ACTUAL DISPLAY SIZES</span><h2>Inventory Icon Audit</h2></div><button type="button" onClick={() => setIconAuditMode(false)} aria-label="Close icon audit">×</button></header>
+        <section className={`item-icon-audit ${iconAuditMode === "tomes" ? "tome-icon-audit" : ""}`} aria-label="Inventory item icon size audit">
+          <header><div><span className="panel-eyebrow">UI ART QA · ACTUAL DISPLAY SIZES</span><h2>Inventory Icon Audit</h2></div><button type="button" onClick={() => setIconAuditMode(null)} aria-label="Close icon audit">×</button></header>
           <p>Left: 28px inventory and hotbar artwork. Right: the same artwork at its 22px recipe-book size.</p>
           <div className="item-icon-audit-grid">
-            {Object.values(ITEMS).map((definition) => <article key={definition.id}><span className="item-audit-large"><ItemIcon item={definition.id} /></span><span className="item-audit-small"><ItemIcon item={definition.id} small /></span><strong>{definition.name}</strong><small>{itemIconKind(definition.id)}</small></article>)}
+            {Object.values(ITEMS).filter((definition) => iconAuditMode === "all" || definition.useKind === "spell-tome").map((definition) => <article key={definition.id}><span className="item-audit-large"><ItemIcon item={definition.id} /></span><span className="item-audit-small"><ItemIcon item={definition.id} small /></span><strong>{definition.name}</strong><small>{itemIconKind(definition.id)}</small></article>)}
           </div>
         </section>
       )}

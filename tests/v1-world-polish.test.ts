@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { BLOCKS, AQUATIC_FLORA, BlockId } from "../app/game/data.ts";
+import { BLOCKS, AQUATIC_FLORA, BlockId, Item } from "../app/game/data.ts";
 import { caveEntranceAt } from "../app/game/caves.ts";
 import { wildPeppermintHeight } from "../app/game/ecology.ts";
-import { canPlantSaplingOn, planPeppermintColumnRemoval } from "../app/game/farming.ts";
+import { canPlantSaplingOn, plantingResult, planPeppermintColumnRemoval } from "../app/game/farming.ts";
 import { rayDistanceToTorchBounds, torchInteractionBounds } from "../app/game/engine.ts";
 import { BAKED_LIGHT_SOURCE_LIMIT, planPoiAmenities, ChunkWorld, LIQUID_SURFACE_INSET, WILD_PEPPERMINT_STEM_TILE } from "../app/game/world.ts";
 import { planStructure } from "../app/game/structures.ts";
@@ -24,6 +24,7 @@ test("Meadow Grass accepts saplings and wild peppermint columns remain connected
   assert.equal(canPlantSaplingOn(BlockId.MeadowGrass), true);
   assert.equal(canPlantSaplingOn(BlockId.CloudreedGrass), true);
   assert.equal(canPlantSaplingOn(BlockId.Stone), false);
+  assert.equal(plantingResult(Item.CandywoodSaplingItem, BlockId.MeadowGrass, BlockId.Air)?.block, BlockId.CandywoodSapling);
   assert.equal(BLOCKS[BlockId.PeppermintTuft].verticalConnectGroup, "wild-peppermint");
   const heights = new Set<number>();
   for (let x = -24; x <= 24; x += 1) heights.add(wildPeppermintHeight("CANE-COLUMNS", x, x * 3));

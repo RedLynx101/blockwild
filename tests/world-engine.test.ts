@@ -1008,6 +1008,41 @@ test("placing a bed reserves two supported cells and writes its oriented halves 
   assert.equal(engine.inventory[0], null);
 });
 
+test("all ordinary saplings can be placed directly on Meadow Grass", () => {
+  for (const [item, expectedBlock] of [
+    [BlockId.WildwoodSapling, BlockId.WildwoodSapling],
+    [Item.RainveilSapling, BlockId.JungleSapling],
+    [Item.SakurabloomSapling, BlockId.SakuraSapling],
+  ] as const) {
+    const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+    const writes: Array<{ x: number; y: number; z: number; type: BlockId }> = [];
+    engine.world = {
+      getBlock: (_x: number, y: number) => y === 3 ? BlockId.MeadowGrass : BlockId.Air,
+      setBlock: (x: number, y: number, z: number, type: BlockId) => { writes.push({ x, y, z, type }); return true; },
+    } as unknown as VoxelEngine["world"];
+    engine.target = { x: 2, y: 3, z: 6, placeX: 2, placeY: 4, placeZ: 6, type: BlockId.MeadowGrass, distance: 1 };
+    engine.placeCooldown = 0;
+    engine.selected = 0;
+    engine.inventory = Array.from({ length: 36 }, () => null);
+    engine.inventory[0] = { item, count: 1 };
+    engine.mode = "survival";
+    engine.events = { onToast: () => undefined } as unknown as VoxelEngine["events"];
+    engine.publishBlockEdits = () => undefined;
+    engine.notifyLiquidChanged = () => undefined;
+    engine.registerWaygridBlock = () => undefined;
+    engine.schedulePlantGrowth = () => undefined;
+    engine.audio = { play: () => undefined } as unknown as VoxelEngine["audio"];
+    engine.spawnParticles = () => undefined;
+    engine.saveSoon = () => undefined;
+    engine.emitHud = () => undefined;
+
+    engine.placeBlock();
+
+    assert.deepEqual(writes, [{ x: 2, y: 4, z: 6, type: expectedBlock }]);
+    assert.equal(engine.inventory[0], null, `${ITEMS[item].name} should be consumed after planting`);
+  }
+});
+
 test("dropped tools preserve their remaining durability", () => {
   const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
   engine.drops = [];

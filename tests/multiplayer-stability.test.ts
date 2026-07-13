@@ -8,19 +8,25 @@ import {
   VoxelEngine,
   blockEditIntersectsPlayer,
   consumeMultiplayerPlacementItem,
+  decodePlayerProgressionChunks,
+  encodePlayerProgressionChunks,
   markRendererContextLost,
+  multiplayerBreakDropPlan,
   multiplayerContainerTransactionConservesItems,
   multiplayerPlayerStateSignature,
+  normalizeMultiplayerPlayerProgression,
   normalizeMultiplayerPlayerState,
   restoreRendererContext,
 } from "../app/game/engine.ts";
 import { createSkillState } from "../app/game/skills.ts";
+import { createMapKnowledge } from "../app/game/map-system.ts";
+import { createQuestBook, normalizeQuestBook, type QuestDefinition } from "../app/game/quests.ts";
 import { MOB_DEFS } from "../app/game/mobs.ts";
 import { createPeelopState } from "../app/game/peelop.ts";
 import { createReedstriderBond } from "../app/game/ecology.ts";
 import { createEmptyApiaryBlock } from "../app/game/apiary.ts";
 import { createDragonState } from "../app/game/dragons.ts";
-import { createPeerIdentity, validatePayload, validatePeerIdentity, type ContainerAction, type CreatureAction, type PlayerSessionSnapshot } from "../app/game/multiplayer.ts";
+import { createPeerIdentity, validatePayload, validatePeerIdentity, type ContainerAction, type CreatureAction, type PlayerProgressionSnapshot, type PlayerSessionSnapshot } from "../app/game/multiplayer.ts";
 
 function sessionState(): PlayerSessionSnapshot {
   const inventory = Array.from({ length: 36 }, () => null) as PlayerSessionSnapshot["inventory"];
@@ -53,6 +59,280 @@ test("host-owned player snapshots preserve variant, metadata inventory, and skil
   assert.equal(normalized.variant, "female");
   assert.deepEqual(normalized.inventory[0]?.metadata, state.inventory[0]?.metadata);
   assert.deepEqual(normalized.skills, state.skills);
+  assert.equal("progression" in normalized, false, "hot player-state packets must never carry the explored map or journal");
+});
+
+test("large character progression is chunked off the hot state lane and round-trips active side quests", () => {
+  const playerId = "player_stable_guest_001";
+  const sideQuest: QuestDefinition = {
+    id: "side:keeper:active",
+    questlineId: "side:keeper",
+    kind: "side",
+    name: "A Lantern Returned",
+    summary: "Bring the lantern home.",
+    objectives: [{ id: "return-lantern", label: "Return the lantern", kind: "custom", eventId: "lantern-returned", count: 1 }],
+    rewards: { gold: 12, items: [], blueprints: [], factionAlignment: {} },
+    abandonable: true,
+  };
+  const questBook = normalizeQuestBook({
+    ...createQuestBook(),
+    active: [{ questId: sideQuest.id, status: "active", acceptedAt: 4, giverEntityId: "keeper", objectiveProgress: {} }],
+    pinnedQuestIds: [sideQuest.id],
+  });
+  const exploredChunks = Array.from({ length: 65_536 }, (_, index) => `${index % 256},${Math.floor(index / 256)}`);
+  const mapKnowledge = { ...createMapKnowledge("host-world", playerId), revision: 65_536, exploredChunks };
+  const progression = normalizeMultiplayerPlayerProgression({
+    questBook,
+    sideQuestDefinitions: [sideQuest],
+    mapKnowledge,
+    bestiary: {},
+    plantBestiary: { schema: 1, discovered: [] },
+    blueprints: { schema: 1, unlocked: [] },
+    magicState: { schema: 1, attuned: false, mana: 0, maxMana: 0, knownSpellIds: [], favoriteSpellIds: [] },
+    potionBuffs: {},
+    rangedLoaded: {},
+    respawn: { x: 14, y: 72, z: -9 },
+  } as unknown as PlayerProgressionSnapshot, playerId);
+  const chunks = encodePlayerProgressionChunks(progression);
+  assert.ok(chunks.length > 1, "a maximal explored map must use several bounded messages");
+  chunks.forEach((data, chunkIndex) => {
+    assert.ok(data.length <= 180_000);
+    assert.equal(validatePayload("player-progress", {
+      transferId: "progress_transfer_001", actorId: playerId, revision: 8,
+      chunkIndex, chunkCount: chunks.length, data, status: "request",
+    }), true);
+  });
+  const restored = decodePlayerProgressionChunks(chunks, playerId);
+  assert.equal(restored.mapKnowledge.exploredChunks.length, 65_536);
+  assert.equal(restored.questBook.active[0]?.questId, sideQuest.id);
+  assert.equal(restored.sideQuestDefinitions[0]?.id, sideQuest.id);
+  assert.deepEqual(restored.respawn, { x: 14, y: 72, z: -9 });
+  assert.ok(JSON.stringify(sessionState()).length < 256 * 1024);
+});
+
+test("host reassembles and persists a reconnecting guest's quest progression by stable identity", () => {
+  const playerId = sessionState().playerId;
+  const progression = normalizeMultiplayerPlayerProgression({
+    questBook: normalizeQuestBook({ ...createQuestBook(), completed: ["main-first-dawn"] }),
+    sideQuestDefinitions: [], mapKnowledge: createMapKnowledge("host-world", playerId), bestiary: {},
+    plantBestiary: { schema: 1, discovered: [] }, blueprints: { schema: 1, unlocked: [] },
+    magicState: { schema: 1, attuned: false, mana: 0, maxMana: 0, knownSpellIds: [], favoriteSpellIds: [] },
+    potionBuffs: {}, rangedLoaded: {}, respawn: { x: 4, y: 71, z: 8 },
+  } as unknown as PlayerProgressionSnapshot, playerId);
+  const chunks = encodePlayerProgressionChunks(progression, 1_024);
+  const acknowledgements: unknown[] = [];
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine & Record<string, unknown>;
+  Object.assign(engine, {
+    multiplayer: { role: "host", sendPlayerProgress: (action: unknown) => { acknowledgements.push(action); return 1; } },
+    multiplayerPlayerProgressions: new Map(), multiplayerProgressTransfers: new Map(),
+    multiplayerProgressOutgoing: [], saveSoon: () => undefined,
+  });
+  const peer = { identity: { id: playerId, name: "Guest", color: "#8855cc", browserId: "browser-guest" } };
+  chunks.forEach((data, chunkIndex) => {
+    (engine as unknown as { handleRemotePlayerProgress(action: unknown, peer: unknown): void }).handleRemotePlayerProgress({
+      transferId: "quest-rejoin-transfer", actorId: playerId, revision: 1,
+      chunkIndex, chunkCount: chunks.length, data, status: "request",
+    }, peer);
+  });
+  const stored = (engine as unknown as { multiplayerPlayerProgressions: Map<string, { revision: number; state: PlayerProgressionSnapshot }> })
+    .multiplayerPlayerProgressions.get(playerId);
+  assert.equal(stored?.revision, 1);
+  assert.deepEqual(stored?.state.questBook.completed, ["main-first-dawn"]);
+  assert.deepEqual(stored?.state.respawn, { x: 4, y: 71, z: 8 });
+  assert.equal(acknowledgements.length, 1);
+});
+
+test("incomplete progression transfers expire and stay capped per character", () => {
+  const playerId = sessionState().playerId;
+  const now = Date.now();
+  const pending = (id: string, receivedAt: number) => ({
+    actorId: playerId, revision: 1, chunkCount: 2, chunks: ["e30=", null], receivedAt, status: "request" as const,
+  });
+  const transfers = new Map([
+    [`request:${playerId}:expired`, pending("expired", now - 31_000)],
+    [`request:${playerId}:one`, pending("one", now - 20)],
+    [`request:${playerId}:two`, pending("two", now - 10)],
+  ]);
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine & Record<string, unknown>;
+  Object.assign(engine, {
+    multiplayer: { role: "host", sendPlayerProgress: () => 1 },
+    multiplayerPlayerProgressions: new Map(), multiplayerProgressTransfers: transfers,
+    multiplayerProgressOutgoing: [],
+  });
+  const peer = { identity: { id: playerId, name: "Guest", color: "#8855cc" } };
+  (engine as unknown as { handleRemotePlayerProgress(action: unknown, peer: unknown): void }).handleRemotePlayerProgress({
+    transferId: "three", actorId: playerId, revision: 1, chunkIndex: 0, chunkCount: 2, data: "e30=", status: "request",
+  }, peer);
+  assert.equal([...transfers.keys()].some((key) => key.endsWith(":expired")), false);
+  assert.equal([...transfers.values()].filter((transfer) => transfer.actorId === playerId).length, 2);
+});
+
+test("a forced initial title-join image restores vitals before separate progression arrives", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine & Record<string, unknown>;
+  Object.assign(engine, {
+    multiplayerPlayerStateRevision: 41,
+    multiplayerPlayerStateSignature: "old-world",
+    inventory: Array.from({ length: 36 }, () => null), cursor: null,
+    equipment: { head: null, chest: null, legs: null, feet: null }, offhand: null,
+    selected: 0, health: 0, hunger: 0, xp: 0, level: 0, skillState: createSkillState(),
+    playerVariant: "male", multiplayer: null, activeNetworkFacilityId: null,
+    localPlayerModel: { setAppearance: () => undefined }, emitHud: () => undefined,
+  });
+  (engine as unknown as { applyLocalPlayerSessionSnapshot(state: PlayerSessionSnapshot, preserve: boolean, force: boolean): void })
+    .applyLocalPlayerSessionSnapshot({ ...sessionState(), revision: 2, health: 7, hunger: 6 }, false, true);
+  assert.equal(engine.health, 7);
+  assert.equal(engine.hunger, 6);
+  assert.equal((engine as unknown as { multiplayerPlayerStateRevision: number }).multiplayerPlayerStateRevision, 2);
+});
+
+test("guest multi-block breaks yield one canonical pickup from either half", () => {
+  const bed = multiplayerBreakDropPlan([
+    { type: BlockId.BedNorthFoot, x: 1, y: 70, z: 1 },
+    { type: BlockId.BedNorthHead, x: 1, y: 70, z: 0 },
+  ]);
+  assert.deepEqual(bed.map((drop) => drop.item), [Item.WildwoodBed]);
+  const door = multiplayerBreakDropPlan([
+    { type: BlockId.DoorClosedLower, x: 2, y: 70, z: 2 },
+    { type: BlockId.DoorClosedUpper, x: 2, y: 71, z: 2 },
+  ]);
+  assert.deepEqual(door.map((drop) => drop.item), [Item.WildwoodDoor]);
+  const grass = multiplayerBreakDropPlan([
+    { type: BlockId.DoubleTallGrassUpper, x: 3, y: 71, z: 3 },
+    { type: BlockId.DoubleTallGrassLower, x: 3, y: 70, z: 3 },
+  ]);
+  assert.equal(grass.length, 1);
+  assert.equal(multiplayerBreakDropPlan([
+    { type: BlockId.Planks, x: 0, y: 70, z: 0 },
+    { type: BlockId.Cobblestone, x: 1, y: 70, z: 0 },
+  ]).length, 2);
+});
+
+test("host teardown releases guest-broken chest and furnace contents exactly once", () => {
+  const drops: Array<{ item: number; count: number }> = [];
+  const furnaceKey = "1,70,1";
+  const chestKey = "2,70,2";
+  const chest = Array.from({ length: 27 }, () => null) as Array<null | { item: number; count: number }>;
+  chest[0] = { item: Item.Stick, count: 5 };
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  Object.assign(engine, {
+    mode: "survival",
+    furnaces: new Map([[furnaceKey, { input: { item: Item.Apple, count: 2 }, fuel: null, output: null }]]),
+    chests: new Map([[chestKey, chest]]),
+    unregisterWaygridBlock: () => undefined,
+    chestStorageKey: (key: string) => key,
+    generateChestLoot: () => [],
+    spawnDrop: (item: number, count: number) => { drops.push({ item, count }); },
+  });
+  engine.teardownBrokenBlockState(BlockId.Furnace, 1, 70, 1);
+  engine.teardownBrokenBlockState(BlockId.Chest, 2, 70, 2);
+  assert.equal(engine.furnaces.has(furnaceKey), false);
+  assert.equal(engine.chests.has(chestKey), false);
+  assert.deepEqual(drops, [{ item: Item.Apple, count: 2 }, { item: Item.Stick, count: 5 }]);
+});
+
+test("graceful guest disconnect flushes dirty progression before closing transport", () => {
+  const calls: string[] = [];
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  Object.assign(engine, {
+    multiplayer: { role: "guest", dispose: () => calls.push("dispose") },
+    hostRendezvous: null,
+    multiplayerProgressionReceived: true,
+    syncMultiplayerPlayerProgression: () => calls.push("sync"),
+    flushPlayerProgressionTransfers: (limit: number) => calls.push(`flush:${limit}`),
+    removeAllRemotePlayers: () => undefined,
+    sleepVotes: new Map(),
+    multiplayerContainerAwaiting: new Set(),
+    multiplayerPendingContainerMutations: new Set(),
+    multiplayerQueuedContainerMutations: new Set(),
+    pendingGuestPlacementRequests: new Map(),
+    multiplayerPeerActiveContainers: new Map(),
+    multiplayerPeerContainerSignatures: new Map(),
+    multiplayerFacilityPlayerBaseline: null,
+    pendingReliableRequests: new Map(),
+    multiplayerProgressTransfers: new Map(),
+    multiplayerProgressOutgoing: [],
+    multiplayerBoatInputs: new Map(),
+    titleMode: true,
+    disposed: false,
+    emitHud: () => undefined,
+    events: { onToast: () => undefined },
+  });
+  engine.disconnectMultiplayer();
+  assert.deepEqual(calls, ["sync", "flush:512", "dispose"]);
+});
+
+test("boat lifecycle requests are bounded host-authoritative intents", () => {
+  const actorId = sessionState().playerId;
+  assert.equal(validatePayload("boat-action", {
+    requestId: "boat_launch_001", actorId, tick: 5, kind: "launch", x: 1, y: 63.58, z: 2, yaw: 0, status: "request",
+  }), true);
+  assert.equal(validatePayload("boat-action", {
+    requestId: "boat_board_001", actorId, tick: 6, kind: "board", boatId: "wayfarer-1", status: "request",
+  }), true);
+  assert.equal(validatePayload("boat-action", {
+    requestId: "boat_bad_001", actorId, tick: 6, kind: "board", boatId: "wayfarer-1", x: Number.POSITIVE_INFINITY, status: "request",
+  }), false);
+});
+
+test("host simulation integrates fresh seat-zero guest helm input and expires stale controls", () => {
+  const boat = {
+    save: { id: "wayfarer-guest", x: 0, y: 63.58, z: 0, yaw: 0, velocity: 0, passengers: ["guest-driver"], inventory: Array.from({ length: 18 }, () => null), ownerId: "guest-driver" },
+    group: new THREE.Group(),
+  };
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine & Record<string, unknown>;
+  Object.assign(engine, {
+    boats: new Map([[boat.save.id, boat]]),
+    multiplayer: { role: "host", identity: { id: "host-player" } },
+    multiplayerBoatInputs: new Map([["guest-driver", { boatId: boat.save.id, forward: 1, turn: 0.4, updatedAt: performance.now() }]]),
+    keys: new Set<string>(), world: { getBlock: () => BlockId.Water },
+    mountedBoatId: null, position: new THREE.Vector3(), velocity: new THREE.Vector3(), grounded: true,
+  });
+  VoxelEngine.prototype.updateBoats.call(engine, 0.1);
+  assert.ok(boat.save.z < 0, "guest throttle should move the host-owned hull");
+  boat.save.x = 0; boat.save.z = 0; boat.save.velocity = 0;
+  (engine as unknown as { multiplayerBoatInputs: Map<string, { boatId: string; forward: number; turn: number; updatedAt: number }> })
+    .multiplayerBoatInputs.set("guest-driver", { boatId: boat.save.id, forward: 1, turn: 0, updatedAt: performance.now() - 1_000 });
+  VoxelEngine.prototype.updateBoats.call(engine, 0.1);
+  assert.equal(boat.save.z, 0);
+});
+
+test("host lifecycle atomically consumes guest launches, boards, leaves and repacks an empty boat", () => {
+  const current = sessionState();
+  current.inventory[0] = { item: Item.Sailboat, count: 1 };
+  const identity = { id: current.playerId, name: "Guest", color: "#8855cc", variant: "female" as const };
+  const peer = { identity, state: "connected" };
+  const boatResponses: Array<Record<string, unknown>> = [];
+  const session = {
+    role: "host", identity: { id: "host-player" },
+    getPeer: () => peer, getPeers: () => [],
+    sendBoatAction: (action: Record<string, unknown>) => { boatResponses.push(action); return 1; },
+    sendPlayerState: () => 1,
+  };
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine & Record<string, unknown>;
+  Object.assign(engine, {
+    multiplayer: session, multiplayerTick: 8, mode: "survival",
+    multiplayerPlayerStates: new Map([[identity.id, current]]),
+    multiplayerPlayerProgressions: new Map(), multiplayerPlayerWallets: new Map(),
+    remotePlayers: new Map([[identity.id, { target: { playerId: identity.id, x: 0, y: 63.58, z: 1, yaw: 0, pitch: 0, vx: 0, vy: 0, vz: 0, grounded: true } }]]),
+    world: { getBlock: () => BlockId.Water }, boats: new Map(), boatGroup: new THREE.Group(), chests: new Map(),
+    nextBoatId: 1, multiplayerContainerRevisions: new Map(), multiplayerContainerSignatures: new Map(),
+    pendingReliableRequests: new Map(), multiplayerState: { error: "" }, multiplayerBoatInputs: new Map(),
+    targetBoat: null, mountedBoatId: null, saveSoon: () => undefined,
+  });
+  const handle = (action: Record<string, unknown>) => (engine as unknown as { handleRemoteBoatAction(action: unknown, peer: unknown): void })
+    .handleRemoteBoatAction(action, peer);
+  handle({ requestId: "launch-1", actorId: identity.id, tick: 8, kind: "launch", x: 0, y: 63.58, z: 0, yaw: 0, status: "request" });
+  assert.equal(engine.boats.size, 1);
+  assert.equal((engine as unknown as { multiplayerPlayerStates: Map<string, PlayerSessionSnapshot> }).multiplayerPlayerStates.get(identity.id)?.inventory[0], null);
+  const boatId = [...engine.boats.keys()][0];
+  handle({ requestId: "board-1", actorId: identity.id, tick: 9, kind: "board", boatId, status: "request" });
+  assert.deepEqual(engine.boats.get(boatId)?.save.passengers, [identity.id]);
+  handle({ requestId: "leave-1", actorId: identity.id, tick: 10, kind: "leave", boatId, status: "request" });
+  assert.deepEqual(engine.boats.get(boatId)?.save.passengers, []);
+  handle({ requestId: "pack-1", actorId: identity.id, tick: 11, kind: "pack", boatId, status: "request" });
+  assert.equal(engine.boats.size, 0);
+  assert.equal((engine as unknown as { multiplayerPlayerStates: Map<string, PlayerSessionSnapshot> }).multiplayerPlayerStates.get(identity.id)?.inventory[0]?.item, Item.Sailboat);
+  assert.equal(boatResponses.some((response) => response.kind === "pack" && response.status === "accepted"), true);
 });
 
 test("shared furnace/facility payloads are bounded and item transactions conserve exact metadata", () => {
@@ -811,6 +1091,27 @@ test("guest tree-fall and mob-death presentation timers advance without owning s
   engine.updateTransientDestructionPresentation(0.05);
 
   assert.deepEqual(calls, [["tree", 0.05], ["mob", 0.05]]);
+});
+
+test("host-resolved guest felling aggregates harvest at the falling trunk instead of per leaf", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine & Record<string, unknown>;
+  const cells = new Map([
+    ["0,70,0", BlockId.WildwoodLog], ["0,71,0", BlockId.WildwoodLog],
+    ["1,71,0", BlockId.WildwoodLeaves], ["0,72,0", BlockId.AppleFruit],
+  ]);
+  Object.assign(engine, {
+    world: { getBlock: (x: number, y: number, z: number) => cells.get(`${x},${y},${z}`), atlas: null },
+    scene: new THREE.Scene(), fallingTrees: [], audio: { play: () => undefined },
+  });
+  (engine as unknown as { animateNetworkTreeFell(action: unknown, harvest: boolean): void }).animateNetworkTreeFell({
+    requestId: "fell-1", actorId: "guest-driver", tick: 2, kind: "batch", status: "request",
+    edits: [...cells.keys()].map((key) => { const [x, y, z] = key.split(",").map(Number); return { x, y, z, type: BlockId.Air }; }),
+    effect: { kind: "tree-fell", rootX: 0, rootY: 70, rootZ: 0, directionX: 1, directionZ: 0 },
+  }, true);
+  const tree = (engine as unknown as { fallingTrees: Array<{ harvest: boolean; logDrops: Array<[number, number]>; leafCount: number }> }).fallingTrees[0];
+  assert.equal(tree.harvest, true);
+  assert.equal(tree.leafCount, 1);
+  assert.deepEqual(new Map(tree.logDrops), new Map([[BlockId.WildwoodLog, 2], [Item.Apple, 1]]));
 });
 
 test("host-authoritative guest placement consumes exactly one matching held block", () => {

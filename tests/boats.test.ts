@@ -9,6 +9,8 @@ import {
   disposeSailboatVisual,
   integrateSailboat,
   normalizeSailboatSave,
+  sailboatInventoryIsEmpty,
+  sailboatRayPickDistance,
   sailboatSeatOffset,
 } from "../app/game/boats.ts";
 
@@ -28,7 +30,17 @@ test("sailboats preserve two passengers and legal chest metadata", () => {
   assert.deepEqual(normalized.inventory[0], { item: 100, count: 2 });
   assert.equal(normalized.inventory.length, 18);
   assert.equal(canBoardSailboat(normalized.passengers, "c"), false);
+  assert.equal(normalized.ownerId, null);
   assert.deepEqual(boardSailboat(["a"], "b"), ["a", "b"]);
+});
+
+test("empty boats can be packed and forgiving hull targeting makes boarding reliable", () => {
+  assert.equal(sailboatInventoryIsEmpty([null, null]), true);
+  assert.equal(sailboatInventoryIsEmpty([{ item: 1, count: 1 }, null]), false);
+  const origin = new THREE.Vector3(0, 1.4, 4);
+  const direction = new THREE.Vector3(0.18, -0.05, -1).normalize();
+  assert.notEqual(sailboatRayPickDistance(origin, direction, { x: 0, y: 0.6, z: 0 }, 6), null);
+  assert.equal(sailboatRayPickDistance(origin, new THREE.Vector3(1, 0, 0), { x: 0, y: 0.6, z: 0 }, 6), null);
 });
 
 test("sailboat movement remains on supported water and exposes two distinct seats", () => {

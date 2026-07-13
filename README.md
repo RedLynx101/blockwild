@@ -1,6 +1,6 @@
 # Blockwild
 
-Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 biomes, cave networks, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.4.3 Shared Lanterns**.
+Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 biomes, cave networks, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.4.4 Harbor Homecoming**.
 
 The project is a real game rather than a voxel-rendering demo. You can mine, build, craft, smelt, farm, fight, collect field notes, manage several worlds, and carry those worlds between browsers with export files.
 
@@ -9,6 +9,10 @@ The project is a real game rather than a voxel-rendering demo. You can mine, bui
 ![Blockwild field guide with all 167 rendered creatures](public/creatures/blockwild-creatures.svg)
 
 The integrated creature-design pass expands the Courser family with Rimehoof, Sunscar, Mirestride, and Starbough ecological breeds plus the forge-built Deepgear Courser. It also rebuilds the four dragon families, birds, pets, crabs, mosslings, foxes, harts, deer, longhorns, terrapins, and other core wildlife, while preserving one production-model path for gameplay, Bestiary portraits, and visual audits.
+
+## v1.4.4 Harbor Homecoming
+
+Harbor Homecoming makes a multiplayer character arrive as the same person regardless of whether they join from the title screen or from an existing world. Host-owned character state now restores vitals and personal progression on reconnect while keeping large exploration data out of the frequent inventory channel. Guests can launch, reliably board, helm, leave, and pack an empty Wayfarer sailboat through validated host actions; placed beds and other eligible blocks use the same authoritative pickup rules. Crafting recipes now link through craftable ingredients, spell tomes have readable full-frame icons, saplings accept Meadow Grass, Saltwind Lighthouse furniture rests on its floor, and the explored map includes the latest `design-1` performance work.
 
 ## v1.4.3 Shared Lanterns
 

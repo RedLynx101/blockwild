@@ -534,7 +534,17 @@ function planLargePoi(kind: AdventurePoiKind, origin: WorldPosition, seed: strin
   } else if (kind === "starfall-amphitheater") {
     for (let ring = 11; ring >= 5; ring -= 2) for (let x = -ring; x <= ring; x += 1) for (let z = -ring; z <= ring; z += 1) if (Math.abs(Math.hypot(x,z)-ring) < 0.75 && z >= -2) b.set(x,Math.floor((11-ring)/2)+1,z,BlockId.Limestone,"amphitheater-tier"); b.fill(-5,1,-9,5,1,-4,BlockId.RuneStone,"star-stage"); b.fill(0,2,-7,0,5,-7,BlockId.CrystalBlock,"conductor-plinth"); for (const [x,z] of [[-8,0],[8,0],[-6,6],[6,6]] as const) b.set(x,2,z,BlockId.Glowstone,"aisle-star"); b.chest(0,2,-5,"adventure-cache","performer-cache",7); b.spawn(0,2,2,"bellroot-matron",1,8,"amphitheater-matron",["poi-resident","defensive"]);
   } else {
-    b.hollow(0,1,0,6,13,6,BlockId.Limestone,BlockId.TempleSandstone,"lighthouse"); for (const y of [3,6,9]) for (const x of [-6,6]) b.set(x,y,0,BlockId.Glass,"salt-window"); b.fill(-7,13,-7,7,13,7,BlockId.StoneBrick,"beacon-gallery"); for (const x of [-6,6]) for (const z of [-6,6]) b.fill(x,14,z,x,17,z,BlockId.Glass,"beacon-pane"); b.fill(-6,17,-6,6,17,6,BlockId.StoneBrick,"beacon-roof"); b.set(0,15,0,BlockId.Glowstone,"saltwind-beacon"); b.set(-3,2,1,BlockId.WildwoodTable,"keeper-table"); b.set(-4,2,1,BlockId.HearthChair,"keeper-chair"); b.chest(3,2,2,"adventure-cache","keeper-sea-chest",7); b.spawn(0,14,0,"vaultwing",2,5,"beacon-roost",["poi-resident","skittish"]);
+    b.hollow(0, 1, 0, 6, 13, 6, BlockId.Limestone, BlockId.TempleSandstone, "lighthouse");
+    for (const y of [3, 6, 9]) for (const x of [-6, 6]) b.set(x, y, 0, BlockId.Glass, "salt-window");
+    b.fill(-7, 13, -7, 7, 13, 7, BlockId.StoneBrick, "beacon-gallery");
+    for (const x of [-6, 6]) for (const z of [-6, 6]) b.fill(x, 14, z, x, 17, z, BlockId.Glass, "beacon-pane");
+    b.fill(-6, 17, -6, 6, 17, 6, BlockId.StoneBrick, "beacon-roof");
+    b.set(0, 15, 0, BlockId.Glowstone, "saltwind-beacon");
+    // The lighthouse floor is local Y=0, so keeper furnishings occupy Y=1.
+    b.set(-3, 1, 1, BlockId.WildwoodTable, "keeper-table");
+    b.set(-4, 1, 1, BlockId.HearthChair, "keeper-chair");
+    b.chest(3, 1, 2, "adventure-cache", "keeper-sea-chest", 7);
+    b.spawn(0, 14, 0, "vaultwing", 2, 5, "beacon-roost", ["poi-resident", "skittish"]);
   }
   b.landmark(0, 2, 0, `adventure-poi:${kind}`);
   return b.plan(kind);

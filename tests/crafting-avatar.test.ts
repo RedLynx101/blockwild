@@ -26,7 +26,9 @@ import {
   prepareFirstPersonHeldPresentation,
   recipeMatchesQuery,
   recipeIngredientLabels,
+  recipeForOutputItem,
   recipePreviewGrid,
+  RecipePreviewIngredient,
   resolveTouchControls,
   runSingleFlight,
   shouldSuppressGameContextMenu,
@@ -259,8 +261,8 @@ test("workstation UI normalizes apiary production and exact capture-orb metadata
 });
 
 test("human release identity stays separate from save schemas", () => {
-  assert.equal(GAME_VERSION, "1.4.3");
-  assert.equal(GAME_RELEASE_NAME, "Shared Lanterns");
+  assert.equal(GAME_VERSION, "1.4.4");
+  assert.equal(GAME_RELEASE_NAME, "Harbor Homecoming");
   assert.equal(normalizeGameVersion("garbage"), "0.1.0");
 });
 
@@ -274,6 +276,29 @@ test("recipe search includes output and ingredient names while previews stay 3×
   assert.equal(cells[0], Item.Coal);
   assert.equal(cells[3], Item.Stick);
   assert.deepEqual(recipeIngredientLabels(torch), ["Coal or Charcoal", "Stick"]);
+});
+
+test("recipe-board ingredients drill into their own recipes without staging a craft", () => {
+  const stickRecipe = recipeForOutputItem(Item.Stick);
+  assert.equal(stickRecipe?.id, "sticks");
+  assert.equal(recipeForOutputItem(Item.RawMeat), null);
+
+  const linkedMarkup = renderToString(createElement(RecipePreviewIngredient, {
+    item: Item.Stick,
+    label: "Stick",
+    onNavigate: () => undefined,
+  }));
+  assert.match(linkedMarkup, /<button[^>]*type="button"/u);
+  assert.match(linkedMarkup, /data-recipe-target="sticks"/u);
+  assert.match(linkedMarkup, /aria-label="Stick: view Sticks recipe"/u);
+
+  const passiveMarkup = renderToString(createElement(RecipePreviewIngredient, {
+    item: Item.RawMeat,
+    label: "Raw Meat",
+    onNavigate: () => undefined,
+  }));
+  assert.doesNotMatch(passiveMarkup, /<button/u);
+  assert.match(passiveMarkup, /aria-label="Raw Meat"/u);
 });
 
 test("hotbar selection sends its lightweight UI signal before the full HUD refresh", () => {
@@ -340,6 +365,9 @@ test("inventory artwork stays semantic at real slot sizes and food hover copy is
   assert.equal(itemIconKind(Item.QueenCell), "queen-cell");
   assert.equal(itemIconKind(Item.WorkerBee), "bee");
   assert.equal(itemIconKind(Item.HealthPotion), "potion-health");
+  for (const tome of [Item.TomeFlameJet, Item.TomeFrostLance, Item.TomeSteelSpear, Item.TomeHealingLight, Item.TomeBlinkstep, Item.TomeArcaneWard, Item.TomeVerdantVolley, Item.TomeStarlightSnare]) {
+    assert.equal(itemIconKind(tome), "tome");
+  }
   assert.match(itemHoverText({ item: Item.Apple, count: 1 }), /Food \+4/u);
 });
 

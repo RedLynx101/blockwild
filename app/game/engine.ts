@@ -279,6 +279,8 @@ import {
   integrateSailboat,
   leaveSailboat,
   normalizeSailboatSave,
+  sailboatInventoryIsEmpty,
+  sailboatRayPickDistance,
   sailboatSeatOffset,
   type SailboatSave,
 } from "./boats";
@@ -360,6 +362,7 @@ import {
   detectMultiplayerSupport,
   isMultiplayerOperationCancellation,
   type BlockAction,
+  type BoatAction,
   type CartographyMapShare,
   type CombatAction,
   type CreatureAction,
@@ -374,6 +377,8 @@ import {
   type PeerInfo,
   type PlayerPose,
   type PlayerSessionSnapshot,
+  type PlayerProgressionSnapshot,
+  type PlayerProgressAction,
   type PlayerStateAction,
   type WorldSnapshot,
   type SleepTarget,
@@ -1003,6 +1008,8 @@ export type WorldSave = {
   leads?: SavedLeadAnchor[];
   /** Host-owned guest progression, keyed by the guest's stable browser identity. */
   multiplayerPlayers?: Record<string, PlayerSessionSnapshot>;
+  /** Chunk-transferred character journals/maps/magic, kept off hot inventory state. */
+  multiplayerProgressions?: Record<string, PlayerProgressionRecord>;
   /** Host-owned guest wallets persist alongside their stable player profiles. */
   multiplayerWallets?: Record<string, GoldWalletState>;
   savedAt: number;
@@ -1195,6 +1202,16 @@ type PendingReliableRequest = {
   nextAttemptAt: number;
   expiresAt: number;
   send: () => number;
+};
+
+type PlayerProgressionRecord = { revision: number; state: PlayerProgressionSnapshot };
+type PlayerProgressTransfer = {
+  actorId: string;
+  revision: number;
+  chunkCount: number;
+  chunks: Array<string | null>;
+  receivedAt: number;
+  status: "request" | "accepted";
 };
 
 type MobFragment = {
@@ -2274,6 +2291,122 @@ function inventorySlotFromNetwork(slot: ItemStackSnapshot): InventorySlot | null
   return candidate ? { ...candidate, count: Math.min(candidate.count, inventorySlotStackLimit(candidate)) } : null;
 }
 
+export function normalizeMultiplayerPlayerProgression(value: Partial<PlayerProgressionSnapshot> | null | undefined, playerId: string, worldId = "multiplayer-world"): PlayerProgressionSnapshot {
+  const rawProgression = value;
+  const bestiary = blankBestiary();
+  if (rawProgression?.bestiary && typeof rawProgression.bestiary === "object") for (const kind of MOB_ORDER) {
+    const progress = rawProgression.bestiary[kind];
+    if (!progress || typeof progress !== "object") continue;
+    bestiary[kind] = {
+      seen: Boolean(progress.seen),
+      kills: Math.max(0, Math.trunc(Number(progress.kills) || 0)),
+      captures: Math.max(0, Math.trunc(Number(progress.captures) || 0)),
+      ...(progress.tames !== undefined ? { tames: Math.max(0, Math.trunc(Number(progress.tames) || 0)) } : {}),
+      ...(progress.breeds !== undefined ? { breeds: Math.max(0, Math.trunc(Number(progress.breeds) || 0)) } : {}),
+      ...(progress.secretUnlocked !== undefined ? { secretUnlocked: Boolean(progress.secretUnlocked) } : {}),
+      ...(progress.milestones && typeof progress.milestones === "object" ? {
+        milestones: Object.fromEntries(Object.entries(progress.milestones).slice(0, 64).map(([key, count]) => [key.slice(0, 96), Math.max(0, Math.trunc(Number(count) || 0))])),
+      } : {}),
+    };
+  }
+  return {
+    questBook: normalizeQuestBook(rawProgression?.questBook),
+    sideQuestDefinitions: Array.isArray(rawProgression?.sideQuestDefinitions)
+      ? structuredClone(rawProgression.sideQuestDefinitions.slice(0, 128)) : [],
+    mapKnowledge: normalizeMapKnowledge(rawProgression?.mapKnowledge, "multiplayer-world", playerId),
+    bestiary,
+    plantBestiary: normalizePlantBestiaryState(rawProgression?.plantBestiary),
+    blueprints: normalizeBlueprintState(rawProgression?.blueprints),
+    magicState: normalizeMagicState(rawProgression?.magicState),
+    potionBuffs: Object.fromEntries(Object.entries(rawProgression?.potionBuffs ?? {}).slice(0, 128)
+      .flatMap(([key, expires]) => typeof expires === "number" && Number.isFinite(expires) ? [[key.slice(0, 64), Math.max(0, expires)] as const] : [])),
+    rangedLoaded: Object.fromEntries(Object.entries(rawProgression?.rangedLoaded ?? {}).slice(0, 128)
+      .flatMap(([item, loaded]) => /^\d{1,6}$/u.test(item) && typeof loaded === "number" && Number.isFinite(loaded)
+        ? [[item, Math.max(0, Math.min(999, Math.trunc(loaded)))] as const] : [])),
+    bankAccount: rawProgression?.bankAccount?.schema === 1 && rawProgression.bankAccount.ownerId === playerId
+      ? structuredClone(rawProgression.bankAccount) : createBankAccount(worldId, playerId, 0),
+    stockMarket: rawProgression?.stockMarket?.schema === 1 && rawProgression.stockMarket.ownerId === playerId
+      ? structuredClone(rawProgression.stockMarket) : createStockMarket(worldId, playerId, worldId, 0),
+    ...(rawProgression?.respawn && Number.isFinite(rawProgression.respawn.x)
+      && Number.isFinite(rawProgression.respawn.y) && Number.isFinite(rawProgression.respawn.z) ? { respawn: {
+        x: clamp(Number(rawProgression.respawn.x), -30_000_000, 30_000_000),
+        y: clamp(Number(rawProgression.respawn.y), MIN_Y, MAX_Y),
+        z: clamp(Number(rawProgression.respawn.z), -30_000_000, 30_000_000),
+      } } : {}),
+  };
+}
+
+export type MultiplayerBreakDrop = { type: BlockId; x: number; y: number; z: number; item?: ItemCode };
+
+/** Mirrors local logical-structure drops for a host resolving guest edits. */
+export function multiplayerBreakDropPlan(blocks: readonly { type: BlockId; x: number; y: number; z: number }[]) {
+  const drops: MultiplayerBreakDrop[] = [];
+  const structures = new Set<string>();
+  for (const block of blocks) {
+    if (isDoorBlock(block.type)) {
+      const key = `door:${block.x},${lowerDoorY(block.type, block.y)},${block.z}`;
+      if (structures.has(key)) continue;
+      structures.add(key);
+      drops.push({ ...block, y: lowerDoorY(block.type, block.y), item: doorItem(block.type) });
+      continue;
+    }
+    if (isBedBlock(block.type)) {
+      const counterpart = bedCounterpart(block.type, block.x, block.y, block.z);
+      const keys = [`${block.x},${block.y},${block.z}`, counterpart ? `${counterpart.x},${counterpart.y},${counterpart.z}` : ""].sort();
+      const key = `bed:${keys.join("|")}`;
+      if (structures.has(key)) continue;
+      structures.add(key);
+      drops.push({ ...block, item: Item.WildwoodBed });
+      continue;
+    }
+    if (isDoubleTallGrass(block.type)) {
+      const lowerY = block.type === BlockId.DoubleTallGrassUpper ? block.y - 1 : block.y;
+      const key = `tall-grass:${block.x},${lowerY},${block.z}`;
+      if (structures.has(key)) continue;
+      structures.add(key);
+      drops.push(block);
+      continue;
+    }
+    drops.push(block);
+  }
+  return drops;
+}
+
+export const PLAYER_PROGRESS_CHUNK_BYTES = 120 * 1024;
+
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 8_192) {
+    binary += String.fromCharCode(...bytes.subarray(offset, Math.min(bytes.length, offset + 8_192)));
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(encoded: string) {
+  const binary = atob(encoded);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+export function encodePlayerProgressionChunks(value: PlayerProgressionSnapshot, maxChunkBytes = PLAYER_PROGRESS_CHUNK_BYTES) {
+  const bytes = new TextEncoder().encode(JSON.stringify(value));
+  const chunks: string[] = [];
+  const bounded = Math.max(1_024, Math.min(PLAYER_PROGRESS_CHUNK_BYTES, Math.trunc(maxChunkBytes)));
+  for (let offset = 0; offset < bytes.length; offset += bounded) chunks.push(bytesToBase64(bytes.subarray(offset, offset + bounded)));
+  return chunks.length ? chunks : [bytesToBase64(bytes)];
+}
+
+export function decodePlayerProgressionChunks(chunks: readonly string[], playerId: string) {
+  const parts = chunks.map(base64ToBytes);
+  const length = parts.reduce((sum, part) => sum + part.length, 0);
+  const joined = new Uint8Array(length);
+  let offset = 0;
+  for (const part of parts) { joined.set(part, offset); offset += part.length; }
+  const parsed = JSON.parse(new TextDecoder().decode(joined)) as Partial<PlayerProgressionSnapshot>;
+  return normalizeMultiplayerPlayerProgression(parsed, playerId);
+}
+
 export function normalizeMultiplayerPlayerState(
   value: Partial<PlayerSessionSnapshot> | null | undefined,
   playerId: string,
@@ -2742,6 +2875,7 @@ export class VoxelEngine {
   leadAnchors = new Map<number, LeadAnchor>();
   leadLines = new Map<number, THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>>();
   boats = new Map<string, SailboatEntity>();
+  multiplayerBoatInputs = new Map<string, { boatId: string; forward: number; turn: number; updatedAt: number }>();
   mountedBoatId: string | null = null;
   mountedCreatureId: number | null = null;
   mobBounds = new THREE.Box3();
@@ -2802,6 +2936,13 @@ export class VoxelEngine {
   multiplayerSnapshotTimer = 0;
   multiplayerReceivedSnapshot = false;
   multiplayerPlayerStates = new Map<string, PlayerSessionSnapshot>();
+  multiplayerPlayerProgressions = new Map<string, PlayerProgressionRecord>();
+  multiplayerProgressTransfers = new Map<string, PlayerProgressTransfer>();
+  multiplayerProgressOutgoing: Array<{ action: PlayerProgressAction; peerId?: string }> = [];
+  multiplayerProgressionRevision = 0;
+  multiplayerProgressionReceived = false;
+  multiplayerProgressionTimer = 0;
+  multiplayerProgressionSignature = "";
   multiplayerPlayerWallets = new Map<string, GoldWalletState>();
   multiplayerPeerActiveMerchants = new Map<string, string>();
   multiplayerFacilityRevisions = new Map<string, number>();
@@ -3394,8 +3535,12 @@ export class VoxelEngine {
     this.merchants.clear();
     this.persistentMachineLastStep.clear();
     this.multiplayerPlayerStates.clear();
+    this.multiplayerPlayerProgressions.clear();
+    this.multiplayerProgressTransfers.clear();
+    this.multiplayerProgressOutgoing = [];
     this.multiplayerPlayerWallets.clear();
     this.multiplayerPeerActiveMerchants.clear();
+    this.multiplayerBoatInputs.clear();
     this.apiaryFlowerCache.clear();
     this.activatedStructureMarkers.clear();
     this.liquidCells.clear();
@@ -3447,6 +3592,9 @@ export class VoxelEngine {
       this.skillState = applyCharacterStartingSkills(this.skillState, this.activeCharacterProfile.startingSkills);
     }
     this.multiplayerPlayerStates.clear();
+    this.multiplayerPlayerProgressions.clear();
+    this.multiplayerProgressTransfers.clear();
+    this.multiplayerProgressOutgoing = [];
     this.multiplayerPlayerWallets.clear();
     this.multiplayerPeerActiveMerchants.clear();
     this.spellKeyState = createSpellKeyState();
@@ -3585,6 +3733,12 @@ export class VoxelEngine {
       playerId,
       normalizeMultiplayerPlayerState(state, playerId),
     ]));
+    this.multiplayerPlayerProgressions = new Map(Object.entries(save.multiplayerProgressions ?? {}).flatMap(([playerId, record]) => {
+      if (!record || typeof record !== "object") return [];
+      const revision = Math.max(0, Math.trunc(Number(record.revision) || 0));
+      return [[playerId, { revision, state: normalizeMultiplayerPlayerProgression(record.state, playerId) }] as const];
+    }));
+    this.multiplayerProgressTransfers.clear();
     this.multiplayerPlayerWallets = new Map(Object.entries(save.multiplayerWallets ?? {}).flatMap(([playerId, wallet]) => (
       wallet?.schema === 1 && wallet.ownerId === playerId ? [[playerId, wallet] as const] : []
     )));
@@ -3810,7 +3964,18 @@ export class VoxelEngine {
     this.multiplayerSnapshotTimer = 0;
     this.multiplayerPlayerStateTimer = 0;
     this.multiplayerContainerTimer = 0;
+    // Every connection starts a new host revision stream. Without this reset,
+    // joining from the title after a prior session can reject the initial
+    // health, hunger and progression image as stale.
+    this.multiplayerPlayerStateRevision = 0;
     this.multiplayerPlayerStateSignature = "";
+    this.multiplayerProgressionRevision = 0;
+    this.multiplayerProgressionReceived = false;
+    this.multiplayerProgressionTimer = 1;
+    this.multiplayerProgressionSignature = "";
+    this.multiplayerProgressTransfers.clear();
+    this.multiplayerProgressOutgoing = [];
+    this.multiplayerBoatInputs.clear();
     this.pendingGuestDropRequests.clear();
     this.pendingGuestPlacementRequests.clear();
     this.pendingNetworkMobDeaths.clear();
@@ -3995,10 +4160,18 @@ export class VoxelEngine {
   }
 
   disconnectMultiplayer() {
-    const hadSession = Boolean(this.multiplayer);
+    const closingSession = this.multiplayer;
+    const hadSession = Boolean(closingSession);
     if (this.hostRendezvous) void this.hostRendezvous.close().catch(() => undefined);
     this.hostRendezvous = null;
-    this.multiplayer?.dispose("local-disconnect");
+    if (closingSession?.role === "guest" && this.multiplayerProgressionReceived) {
+      // A deliberate Leave must not discard journal/map work made since the
+      // five-second background checkpoint. RTCDataChannel.close drains data
+      // already queued by send(), so enqueue every bounded chunk first.
+      this.syncMultiplayerPlayerProgression();
+      this.flushPlayerProgressionTransfers(512);
+    }
+    closingSession?.dispose("local-disconnect");
     this.multiplayer = null;
     this.removeAllRemotePlayers();
     const support = detectMultiplayerSupport();
@@ -4024,6 +4197,10 @@ export class VoxelEngine {
     this.multiplayerPeerContainerSignatures.clear();
     this.multiplayerFacilityPlayerBaseline = null;
     this.pendingReliableRequests.clear();
+    this.multiplayerProgressTransfers.clear();
+    this.multiplayerProgressOutgoing = [];
+    this.multiplayerProgressionReceived = false;
+    this.multiplayerBoatInputs.clear();
     if (hadSession && !this.titleMode && !this.disposed) this.events.onToast("Multiplayer session closed. The host-device world remains saved locally.");
     if (!this.disposed) this.emitHud(true);
   }
@@ -4073,12 +4250,14 @@ export class VoxelEngine {
     remote.target = { ...pose };
     remote.lastUpdate = performance.now();
     if (this.multiplayer?.role === "host") {
-      for (const boat of this.boats.values()) {
-        const shouldRide = pose.boatId === boat.save.id;
-        const isRiding = boat.save.passengers.includes(pose.playerId);
-        if (shouldRide && !isRiding && boat.save.passengers.length < 2) boat.save.passengers = boardSailboat(boat.save.passengers, pose.playerId);
-        else if (!shouldRide && isRiding) boat.save.passengers = leaveSailboat(boat.save.passengers, pose.playerId);
-      }
+      const helm = pose.boatId ? this.boats.get(pose.boatId) : null;
+      if (helm?.save.passengers[0] === pose.playerId) this.multiplayerBoatInputs.set(pose.playerId, {
+        boatId: helm.save.id,
+        forward: clamp(Number(pose.boatForward) || 0, -1, 1),
+        turn: clamp(Number(pose.boatTurn) || 0, -1, 1),
+        updatedAt: performance.now(),
+      });
+      else this.multiplayerBoatInputs.delete(pose.playerId);
       if (pose.mountedCreatureId !== undefined) {
         const mob = this.mobs.find((candidate) => candidate.id === pose.mountedCreatureId);
         const approved = Boolean(mob && (
@@ -4149,6 +4328,10 @@ export class VoxelEngine {
       equipment: Object.fromEntries((Object.keys(this.equipment) as EquipmentSlot[])
         .flatMap((slot) => this.equipment[slot] ? [[slot, this.equipment[slot]!.item] as const] : [])),
       ...(boat && boatSeat >= 0 ? { boatId: boat.save.id, boatSeat } : {}),
+      ...(boat && boatSeat === 0 ? {
+        boatForward: (this.keys.has("KeyW") ? 1 : 0) - (this.keys.has("KeyS") ? 1 : 0),
+        boatTurn: (this.keys.has("KeyD") ? 1 : 0) - (this.keys.has("KeyA") ? 1 : 0),
+      } : {}),
       ...(this.mountedCreatureId !== null ? { mountedCreatureId: this.mountedCreatureId } : {}),
     };
   }
@@ -4180,8 +4363,8 @@ export class VoxelEngine {
     }, playerId, this.playerVariant);
   }
 
-  private applyLocalPlayerSessionSnapshot(state: PlayerSessionSnapshot, preserveSelected = false) {
-    if (state.revision < this.multiplayerPlayerStateRevision) return;
+  private applyLocalPlayerSessionSnapshot(state: PlayerSessionSnapshot, preserveSelected = false, forceInitial = false) {
+    if (!forceInitial && state.revision < this.multiplayerPlayerStateRevision) return;
     const locallySelected = this.selected;
     const normalized = normalizeMultiplayerPlayerState(state, state.playerId, state.variant);
     this.multiplayerPlayerStateRevision = normalized.revision;
@@ -4208,6 +4391,57 @@ export class VoxelEngine {
     if (this.multiplayer?.role === "guest" && this.activeNetworkFacilityId) {
       this.multiplayerFacilityPlayerBaseline = structuredClone(normalized);
     }
+    this.emitHud(true);
+  }
+
+  private localPlayerProgressionSnapshot(): PlayerProgressionSnapshot {
+    const playerId = this.multiplayer?.identity.id ?? this.localPlayerId();
+    const questBook = normalizeQuestBook(this.questBook);
+    const referencedQuestIds = new Set([
+      ...questBook.active.map((entry) => entry.questId),
+      ...questBook.completed,
+      ...questBook.failed.map((entry) => entry.questId),
+      ...questBook.abandoned,
+    ]);
+    return normalizeMultiplayerPlayerProgression({
+      questBook,
+      // Offers can be regenerated. Retain every definition referenced by the
+      // journal so an active or historical side quest can never lose its copy.
+      sideQuestDefinitions: this.sideQuestDefinitions.filter((definition) => referencedQuestIds.has(definition.id)),
+      mapKnowledge: this.mapKnowledge,
+      bestiary: Object.fromEntries(MOB_ORDER.map((kind) => [kind, {
+        ...this.bestiary[kind], milestones: { ...(this.bestiary[kind].milestones ?? {}) },
+      }])),
+      plantBestiary: this.plantBestiary,
+      blueprints: this.blueprints,
+      magicState: this.magicState,
+      potionBuffs: { ...this.potionBuffs },
+      rangedLoaded: Object.fromEntries(this.rangedLoaded.entries()),
+      bankAccount: this.bankAccount,
+      stockMarket: this.stockMarket,
+      respawn: { x: this.spawn.x, y: this.spawn.y, z: this.spawn.z },
+    }, playerId);
+  }
+
+  private applyLocalPlayerProgression(value: PlayerProgressionSnapshot, playerId: string) {
+    const progression = normalizeMultiplayerPlayerProgression(value, playerId);
+    this.questBook = progression.questBook;
+    this.sideQuestDefinitions = structuredClone(progression.sideQuestDefinitions);
+    this.mapKnowledge = normalizeMapKnowledge(progression.mapKnowledge, `session:${this.world.seedText}`, playerId);
+    const bestiary = blankBestiary();
+    for (const kind of MOB_ORDER) {
+      const progress = progression.bestiary[kind];
+      if (progress) bestiary[kind] = { ...bestiary[kind], ...progress, milestones: { ...(progress.milestones ?? {}) } };
+    }
+    this.bestiary = bestiary;
+    this.plantBestiary = progression.plantBestiary;
+    this.blueprints = progression.blueprints;
+    this.magicState = progression.magicState;
+    this.potionBuffs = { ...progression.potionBuffs };
+    this.rangedLoaded = new Map(Object.entries(progression.rangedLoaded).map(([item, loaded]) => [Number(item), loaded]));
+    this.bankAccount = progression.bankAccount;
+    this.stockMarket = progression.stockMarket;
+    if (progression.respawn) this.spawn.set(progression.respawn.x, progression.respawn.y, progression.respawn.z);
     this.emitHud(true);
   }
 
@@ -4242,6 +4476,24 @@ export class VoxelEngine {
       hunger: current && current.health <= 0 ? Math.max(6, current.hunger) : current?.hunger,
     }, identity.id, identity.sex ?? identity.variant);
     this.multiplayerPlayerStates.set(identity.id, normalized);
+    return normalized;
+  }
+
+  private ensureHostPlayerProgression(identity: NonNullable<PeerInfo["identity"]>) {
+    let current = this.multiplayerPlayerProgressions.get(identity.id);
+    if (!current && identity.browserId) {
+      const legacyKey = [identity.browserId, `player_${identity.browserId}`]
+        .find((key) => key !== identity.id && this.multiplayerPlayerProgressions.has(key));
+      if (legacyKey) {
+        current = this.multiplayerPlayerProgressions.get(legacyKey);
+        this.multiplayerPlayerProgressions.delete(legacyKey);
+      }
+    }
+    const normalized = {
+      revision: Math.max(0, Math.trunc(Number(current?.revision) || 0)),
+      state: normalizeMultiplayerPlayerProgression(current?.state, identity.id),
+    };
+    this.multiplayerPlayerProgressions.set(identity.id, normalized);
     return normalized;
   }
 
@@ -4419,6 +4671,110 @@ export class VoxelEngine {
     if (!state || !this.multiplayer.getPeer(playerId)) return;
     const action: PlayerStateAction = { requestId, actorId: playerId, state, status: "accepted" };
     this.queueCriticalReliableRequest(`host-player-state:${playerId}`, () => this.multiplayer?.sendPlayerState(action, playerId) ?? 0, 10_000);
+  }
+
+  private queuePlayerProgressionTransfer(record: PlayerProgressionRecord, actorId: string, status: "request" | "accepted", peerId?: string) {
+    const chunks = encodePlayerProgressionChunks(record.state);
+    if (chunks.length > 512) throw new Error("Player progression is too large to synchronize safely.");
+    const transferId = `progress_${record.revision.toString(36)}_${Date.now().toString(36)}`;
+    this.multiplayerProgressOutgoing = this.multiplayerProgressOutgoing.filter((entry) => (
+      entry.action.actorId !== actorId || entry.action.status !== status
+    ));
+    chunks.forEach((data, chunkIndex) => this.multiplayerProgressOutgoing.push({
+      action: { transferId, actorId, revision: record.revision, chunkIndex, chunkCount: chunks.length, data, status },
+      ...(peerId ? { peerId } : {}),
+    }));
+  }
+
+  private flushPlayerProgressionTransfers(limit = 2) {
+    const session = this.multiplayer;
+    if (!session || !this.multiplayerProgressOutgoing.length) return;
+    let sent = 0;
+    while (sent < limit && this.multiplayerProgressOutgoing.length) {
+      const next = this.multiplayerProgressOutgoing[0];
+      try {
+        if (session.sendPlayerProgress(next.action, next.peerId) <= 0) break;
+      } catch { break; }
+      this.multiplayerProgressOutgoing.shift();
+      sent += 1;
+    }
+  }
+
+  private sendAuthoritativePlayerProgression(identity: NonNullable<PeerInfo["identity"]>) {
+    const record = this.ensureHostPlayerProgression(identity);
+    this.queuePlayerProgressionTransfer(record, identity.id, "accepted", identity.id);
+  }
+
+  private handleRemotePlayerProgress(action: PlayerProgressAction, peer: PeerInfo) {
+    const session = this.multiplayer;
+    if (!session) return;
+    const now = Date.now();
+    for (const [transferKey, pending] of this.multiplayerProgressTransfers) {
+      if (now - pending.receivedAt > 30_000) this.multiplayerProgressTransfers.delete(transferKey);
+    }
+    if (action.data === undefined || action.chunkIndex === undefined || action.chunkCount === undefined) {
+      if (session.role === "guest" && action.status === "accepted" && action.actorId === session.identity.id) {
+        this.multiplayerProgressionRevision = Math.max(this.multiplayerProgressionRevision, action.revision);
+      }
+      return;
+    }
+    const direction = action.status === "accepted" ? "accepted" : "request";
+    if (session.role === "host" && (direction !== "request" || !peer.identity || action.actorId !== peer.identity.id)) return;
+    if (session.role === "guest" && (direction !== "accepted" || action.actorId !== session.identity.id)) return;
+    const key = `${direction}:${action.actorId}:${action.transferId}`;
+    let transfer = this.multiplayerProgressTransfers.get(key);
+    if (!transfer || transfer.chunkCount !== action.chunkCount || transfer.revision !== action.revision) {
+      const sameActor = [...this.multiplayerProgressTransfers.entries()]
+        .filter(([, pending]) => pending.actorId === action.actorId && pending.status === direction)
+        .sort((left, right) => left[1].receivedAt - right[1].receivedAt);
+      while (sameActor.length >= 2) {
+        const oldest = sameActor.shift();
+        if (oldest) this.multiplayerProgressTransfers.delete(oldest[0]);
+      }
+      transfer = {
+        actorId: action.actorId,
+        revision: action.revision,
+        chunkCount: action.chunkCount,
+        chunks: Array.from({ length: action.chunkCount }, () => null),
+        receivedAt: now,
+        status: direction,
+      };
+      this.multiplayerProgressTransfers.set(key, transfer);
+    }
+    transfer.chunks[action.chunkIndex] = action.data;
+    transfer.receivedAt = now;
+    if (transfer.chunks.some((chunk) => chunk === null)) return;
+    this.multiplayerProgressTransfers.delete(key);
+    let state: PlayerProgressionSnapshot;
+    try { state = decodePlayerProgressionChunks(transfer.chunks as string[], action.actorId); }
+    catch {
+      if (session.role === "host" && peer.identity) this.sendAuthoritativePlayerProgression(peer.identity);
+      return;
+    }
+    if (session.role === "host" && peer.identity) {
+      const current = this.ensureHostPlayerProgression(peer.identity);
+      if (action.revision !== current.revision + 1) {
+        this.sendAuthoritativePlayerProgression(peer.identity);
+        return;
+      }
+      const next = { revision: action.revision, state };
+      this.multiplayerPlayerProgressions.set(peer.identity.id, next);
+      this.saveSoon();
+      const ack: PlayerProgressAction = {
+        transferId: action.transferId,
+        actorId: peer.identity.id,
+        revision: next.revision,
+        status: "accepted",
+      };
+      try { session.sendPlayerProgress(ack, peer.identity.id); } catch { /* next reconnect returns the saved image */ }
+      return;
+    }
+    if (session.role === "guest") {
+      this.multiplayerProgressionRevision = action.revision;
+      this.multiplayerProgressionReceived = true;
+      this.applyLocalPlayerProgression(state, action.actorId);
+      this.multiplayerProgressionSignature = this.localPlayerProgressionSignature();
+    }
   }
 
   private handleRemotePlayerState(action: PlayerStateAction, peer: PeerInfo) {
@@ -4771,6 +5127,41 @@ export class VoxelEngine {
     } catch { /* The next sync interval retries after reconnect. */ }
   }
 
+  private localPlayerProgressionSignature() {
+    const questBook = normalizeQuestBook(this.questBook);
+    const referenced = new Set([
+      ...questBook.active.map((entry) => entry.questId), ...questBook.completed,
+      ...questBook.failed.map((entry) => entry.questId), ...questBook.abandoned,
+    ]);
+    return JSON.stringify({
+      questBook,
+      sideQuestDefinitions: this.sideQuestDefinitions.filter((definition) => referenced.has(definition.id)),
+      // Full map data transfers only after its compact revision changes.
+      mapRevision: this.mapKnowledge.revision,
+      bestiary: this.bestiary,
+      plantBestiary: this.plantBestiary,
+      blueprints: this.blueprints,
+      magicState: this.magicState,
+      potionBuffs: this.potionBuffs,
+      rangedLoaded: [...this.rangedLoaded.entries()],
+      bankAccount: this.bankAccount,
+      stockMarket: this.stockMarket,
+      respawn: [this.spawn.x, this.spawn.y, this.spawn.z],
+    });
+  }
+
+  private syncMultiplayerPlayerProgression() {
+    const session = this.multiplayer;
+    if (!session || session.role !== "guest" || !this.multiplayerReceivedSnapshot || !this.multiplayerProgressionReceived) return;
+    if (this.multiplayerProgressOutgoing.some((entry) => entry.action.status === "request")) return;
+    const signature = this.localPlayerProgressionSignature();
+    if (signature === this.multiplayerProgressionSignature) return;
+    const revision = this.multiplayerProgressionRevision + 1;
+    this.queuePlayerProgressionTransfer({ revision, state: this.localPlayerProgressionSnapshot() }, session.identity.id, "request");
+    this.multiplayerProgressionRevision = revision;
+    this.multiplayerProgressionSignature = signature;
+  }
+
   private requestNetworkFacilitySnapshot(facility: { id: string; kind: SharedFacilityKind }) {
     const session = this.multiplayer;
     if (!session || session.role !== "guest") return false;
@@ -5105,7 +5496,7 @@ export class VoxelEngine {
       mobs: this.networkMobSnapshot(),
       drops: this.networkDropSnapshot(),
       boats: [...this.boats.values()].map(({ save }) => ({
-        id: save.id, x: save.x, y: save.y, z: save.z, yaw: save.yaw, velocity: save.velocity, passengers: [...save.passengers],
+        id: save.id, x: save.x, y: save.y, z: save.z, yaw: save.yaw, velocity: save.velocity, passengers: [...save.passengers], ownerId: save.ownerId,
       })),
       time: { tick: this.multiplayerTick, worldTime: this.worldTime, day: this.day, weather: this.weather, weatherState: { ...this.weatherState } },
       worldOptions: { ...this.worldOptions, enabledFactions: [...this.worldOptions.enabledFactions] },
@@ -5207,7 +5598,7 @@ export class VoxelEngine {
     this.applyNetworkContainerSnapshots(snapshot.containers ?? []);
     if (guestPlayerId) this.applyLocalPlayerSessionSnapshot(snapshot.playerState
       ? normalizeMultiplayerPlayerState(snapshot.playerState, guestPlayerId, this.multiplayer?.identity.variant)
-      : normalizeMultiplayerPlayerState(null, guestPlayerId, this.multiplayer?.identity.variant));
+      : normalizeMultiplayerPlayerState(null, guestPlayerId, this.multiplayer?.identity.variant), false, true);
     for (const pose of snapshot.players) this.upsertRemotePlayer(pose, pose.playerId === hostPeer.identity?.id ? hostPeer : undefined);
     this.multiplayerReceivedSnapshot = true;
     this.events.onToast(`Joined ${hostPeer.identity?.name ?? "the host"}'s world. The host device is authoritative for this session.`);
@@ -5386,7 +5777,7 @@ export class VoxelEngine {
     }
   }
 
-  private animateNetworkTreeFell(action: BlockAction) {
+  private animateNetworkTreeFell(action: BlockAction, harvest = false) {
     const effect = action.effect;
     if (effect?.kind !== "tree-fell") return;
     const blocks = action.edits.flatMap((edit) => {
@@ -5428,16 +5819,25 @@ export class VoxelEngine {
     if (direction.lengthSq() < 0.01) direction.set(Math.sin(effect.rootX * 0.7 + effect.rootZ), 0, Math.cos(effect.rootZ * 0.7 - effect.rootX));
     direction.normalize();
     this.scene.add(group);
+    const logCounts = new Map<ItemCode, number>();
+    for (const log of logs) {
+      const item = itemForBlock(log.type);
+      logCounts.set(item, (logCounts.get(item) ?? 0) + 1);
+    }
+    for (const attachment of attachments) {
+      const item = attachment.type === BlockId.AppleFruit ? Item.Apple : itemForBlock(attachment.type);
+      logCounts.set(item, (logCounts.get(item) ?? 0) + 1);
+    }
     this.fallingTrees.push({
       group,
       root,
       fallAxis: new THREE.Vector3(direction.z, 0, -direction.x).normalize(),
       progress: 0,
       primaryLogType: logs[0].type,
-      logDrops: [],
+      logDrops: [...logCounts],
       logCount: logs.length,
       leafCount: leaves.length,
-      harvest: false,
+      harvest,
     });
     this.audio.play("break", logs[0].type);
   }
@@ -5470,13 +5870,20 @@ export class VoxelEngine {
           reason: "The host rejected an out-of-range, occupied, or invalid block edit.",
         };
       if (valid) {
-        if (action.effect?.kind === "tree-fell") this.animateNetworkTreeFell(action);
+        if (action.effect?.kind === "tree-fell") this.animateNetworkTreeFell(action, this.mode === "survival");
         const held = playerState ? inventorySlotFromNetwork(playerState.inventory[playerState.selected]) : null;
-        if (this.mode === "survival") for (const edit of action.edits) {
-          if (edit.type !== BlockId.Air) continue;
+        const brokenBlocks = action.edits.flatMap((edit) => {
+          if (edit.type !== BlockId.Air) return [];
           const previous = this.world.getBlock(edit.x, edit.y, edit.z);
-          if (previous === undefined || previous === BlockId.Air || Boolean(BLOCKS[previous]?.liquid)) continue;
-          if (this.toolCanHarvest(previous, held)) this.dropBlockLoot(isTorchBlock(previous) ? BlockId.Torch : previous, edit.x, edit.y, edit.z);
+          return previous === undefined || previous === BlockId.Air || Boolean(BLOCKS[previous]?.liquid)
+            ? [] : [{ x: edit.x, y: edit.y, z: edit.z, type: previous }];
+        });
+        for (const block of brokenBlocks) this.teardownBrokenBlockState(block.type, block.x, block.y, block.z);
+        if (this.mode === "survival" && action.effect?.kind !== "tree-fell") for (const drop of multiplayerBreakDropPlan(
+          brokenBlocks.filter((block) => block.type !== BlockId.WildBeehive && this.toolCanHarvest(block.type, held)),
+        )) {
+          if (drop.item !== undefined) this.spawnDrop(drop.item, 1, new THREE.Vector3(drop.x, drop.y, drop.z));
+          else this.dropBlockLoot(isTorchBlock(drop.type) ? BlockId.Torch : drop.type, drop.x, drop.y, drop.z);
         }
         this.world.setBlocksBatch(action.edits.map((edit) => ({ ...edit, type: edit.type as BlockId })), true, true);
         for (const edit of action.edits) if (edit.type === BlockId.Chest) {
@@ -5528,10 +5935,13 @@ export class VoxelEngine {
       if (event.peer.state === "connected" && this.multiplayer?.role === "host" && event.peer.identity) {
         this.ensureHostPlayerSession(event.peer.identity);
         this.sendHostWorldSnapshot(event.peer.identity.id);
+        this.sendAuthoritativePlayerProgression(event.peer.identity);
         this.events.onToast(`${event.peer.identity.name} joined the session.`);
       }
       if (["disconnected", "failed", "closed", "stale"].includes(event.peer.state) && event.peer.identity) {
         this.removeRemotePlayer(event.peer.identity.id);
+        this.multiplayerBoatInputs.delete(event.peer.identity.id);
+        for (const boat of this.boats.values()) boat.save.passengers = leaveSailboat(boat.save.passengers, event.peer.identity.id);
         this.sleepVotes.delete(event.peer.identity.id);
         this.multiplayerPeerActiveContainers.delete(event.peer.identity.id);
         this.multiplayerPeerActiveFacilities.delete(event.peer.identity.id);
@@ -5573,10 +5983,12 @@ export class VoxelEngine {
         if (this.multiplayerReceivedSnapshot) this.applyIncrementalWorldSnapshot(snapshot, event.peer);
         else this.applyInitialWorldSnapshot(snapshot, event.peer);
       } else if (envelope.type === "block-action") this.handleRemoteBlockAction(envelope.payload as BlockAction, event.peer);
+      else if (envelope.type === "boat-action") this.handleRemoteBoatAction(envelope.payload as BoatAction, event.peer);
       else if (envelope.type === "inventory-action") this.handleRemoteInventoryAction(envelope.payload as InventoryAction, event.peer);
       else if (envelope.type === "container-action") this.handleRemoteContainerAction(envelope.payload as ContainerAction, event.peer);
       else if (envelope.type === "facility-action") this.handleRemoteFacilityAction(envelope.payload as FacilityAction, event.peer);
       else if (envelope.type === "player-state") this.handleRemotePlayerState(envelope.payload as PlayerStateAction, event.peer);
+      else if (envelope.type === "player-progress") this.handleRemotePlayerProgress(envelope.payload as PlayerProgressAction, event.peer);
       else if (envelope.type === "combat-action") this.handleRemoteCombatAction(envelope.payload as CombatAction, event.peer);
       else if (envelope.type === "creature-action") this.handleRemoteCreatureAction(envelope.payload as CreatureAction, event.peer);
       else if (envelope.type === "sleep-vote") this.handleRemoteSleepVote(envelope.payload as SleepVote, event.peer);
@@ -5629,8 +6041,10 @@ export class VoxelEngine {
     this.multiplayerWorldTimer -= dt;
     this.multiplayerSnapshotTimer -= dt;
     this.multiplayerPlayerStateTimer -= dt;
+    this.multiplayerProgressionTimer -= dt;
     this.multiplayerContainerTimer -= dt;
     this.retryCriticalReliableRequests();
+    this.flushPlayerProgressionTransfers();
     for (const [playerId, cooldown] of this.multiplayerCombatCooldowns) {
       const next = cooldown - dt;
       if (next <= 0) this.multiplayerCombatCooldowns.delete(playerId);
@@ -5652,7 +6066,7 @@ export class VoxelEngine {
           session.sendDropSnapshot({ tick: this.multiplayerTick, drops: this.networkDropSnapshotForPeer(peer.identity.id) }, peer.identity.id);
           session.sendTimeWeather({
             tick: this.multiplayerTick, worldTime: this.worldTime, day: this.day, weather: this.weather, weatherState: { ...this.weatherState },
-            boats: [...this.boats.values()].map(({ save }) => ({ id: save.id, x: save.x, y: save.y, z: save.z, yaw: save.yaw, velocity: save.velocity, passengers: [...save.passengers] })),
+            boats: [...this.boats.values()].map(({ save }) => ({ id: save.id, x: save.x, y: save.y, z: save.z, yaw: save.yaw, velocity: save.velocity, passengers: [...save.passengers], ownerId: save.ownerId })),
           }, peer.identity.id);
         } catch { /* Reconstructable images are retried on the next 5 Hz frame. */ }
       }
@@ -5660,6 +6074,10 @@ export class VoxelEngine {
     if (session.role === "guest" && this.multiplayerPlayerStateTimer <= 0) {
       this.multiplayerPlayerStateTimer = 0.08;
       this.syncMultiplayerPlayerState();
+    }
+    if (session.role === "guest" && this.multiplayerProgressionTimer <= 0) {
+      this.multiplayerProgressionTimer = 5;
+      this.syncMultiplayerPlayerProgression();
     }
     if (this.multiplayerContainerTimer <= 0) {
       this.multiplayerContainerTimer = 0.08;
@@ -5704,9 +6122,171 @@ export class VoxelEngine {
       boat.save.yaw += Math.atan2(Math.sin(entry.yaw - boat.save.yaw), Math.cos(entry.yaw - boat.save.yaw)) * 0.72;
       boat.save.velocity = entry.velocity;
       boat.save.passengers = [...entry.passengers].slice(0, 2);
+      boat.save.ownerId = entry.ownerId ?? boat.save.ownerId;
       boat.group.position.set(boat.save.x, boat.save.y, boat.save.z);
       boat.group.rotation.y = boat.save.yaw;
     }
+  }
+
+  private applyNetworkBoatEntry(entry: NonNullable<WorldSnapshot["boats"]>[number]) {
+    let boat = this.boats.get(entry.id);
+    if (!boat) boat = this.restoreSailboat({ ...entry, inventory: [] });
+    if (!boat) return;
+    boat.save.x = entry.x;
+    boat.save.y = entry.y;
+    boat.save.z = entry.z;
+    boat.save.yaw = entry.yaw;
+    boat.save.velocity = entry.velocity;
+    boat.save.passengers = [...entry.passengers].slice(0, 2);
+    boat.save.ownerId = entry.ownerId ?? boat.save.ownerId;
+    boat.group.position.set(entry.x, entry.y, entry.z);
+    boat.group.rotation.y = entry.yaw;
+  }
+
+  private removeSailboat(id: string) {
+    const boat = this.boats.get(id);
+    if (!boat) return false;
+    if (this.mountedBoatId === id) this.mountedBoatId = null;
+    if (this.targetBoat?.save.id === id) this.targetBoat = null;
+    this.boatGroup.remove(boat.group);
+    disposeSailboatVisual(boat.group);
+    this.boats.delete(id);
+    this.chests.delete(`boat:${id}`);
+    this.multiplayerContainerRevisions.delete(`boat:${id}`);
+    this.multiplayerContainerSignatures.delete(`boat:${id}`);
+    return true;
+  }
+
+  private sailboatNetworkEntry(boat: SailboatEntity): NonNullable<WorldSnapshot["boats"]>[number] {
+    const { save } = boat;
+    return {
+      id: save.id,
+      x: save.x,
+      y: save.y,
+      z: save.z,
+      yaw: save.yaw,
+      velocity: save.velocity,
+      passengers: [...save.passengers],
+      ownerId: save.ownerId,
+    };
+  }
+
+  private requestBoatAction(input: Omit<BoatAction, "requestId" | "actorId" | "tick" | "status">) {
+    const session = this.multiplayer;
+    if (!session || session.role !== "guest") return false;
+    const action: BoatAction = {
+      ...input,
+      requestId: `boat_${input.kind}_${Date.now().toString(36)}_${(this.multiplayerTick % 46656).toString(36)}`,
+      actorId: session.identity.id,
+      tick: this.multiplayerTick,
+      status: "request",
+    };
+    return this.queueCriticalReliableRequest(`boat:${action.requestId}`, () => this.multiplayer?.sendBoatAction(action) ?? 0, 6_000);
+  }
+
+  private handleRemoteBoatAction(action: BoatAction, peer: PeerInfo) {
+    const session = this.multiplayer;
+    if (!session) return;
+    if (session.role === "guest") {
+      if (action.status === "accepted" && action.actorId !== session.identity.id) {
+        if (action.kind === "pack" && action.boatId) this.removeSailboat(action.boatId);
+        else if (action.boat) this.applyNetworkBoatEntry(action.boat);
+        return;
+      }
+      if ((action.status !== "accepted" && action.status !== "rejected") || action.actorId !== session.identity.id) return;
+      this.pendingReliableRequests.delete(`boat:${action.requestId}`);
+      if (action.playerState) this.applyLocalPlayerSessionSnapshot(action.playerState, true);
+      if (action.status === "accepted") {
+        if (action.kind === "pack" && action.boatId) this.removeSailboat(action.boatId);
+        else if (action.boat) {
+          this.applyNetworkBoatEntry(action.boat);
+          if (action.kind === "board" && action.boat.passengers.includes(session.identity.id)) this.mountedBoatId = action.boat.id;
+          if (action.kind === "leave" && this.mountedBoatId === action.boat.id) {
+            this.mountedBoatId = null;
+            const side = new THREE.Vector3(Math.cos(action.boat.yaw) * 1.45, 0, -Math.sin(action.boat.yaw) * 1.45);
+            this.position.set(action.boat.x + side.x, action.boat.y + 0.2, action.boat.z + side.z);
+          }
+        }
+      }
+      if (action.reason) this.events.onToast(action.reason);
+      this.emitHud(true);
+      return;
+    }
+    if (action.status === "accepted" || !peer.identity) return;
+    const identity = peer.identity;
+    const pose = this.remotePlayers.get(identity.id)?.target;
+    const current = this.ensureHostPlayerSession(identity);
+    const reject = (reason: string) => {
+      const response: BoatAction = { ...action, status: "rejected", reason, playerState: current };
+      this.queueCriticalReliableRequest(`host-boat-reject:${identity.id}:${action.requestId}`, () => session.sendBoatAction(response, identity.id), 6_000);
+    };
+    if (!pose) { reject("Your player position has not reached the host yet."); return; }
+    let boat: SailboatEntity | null = action.boatId ? this.boats.get(action.boatId) ?? null : null;
+    let nextPlayer = current;
+    if (action.kind === "launch") {
+      if (action.x === undefined || action.y === undefined || action.z === undefined || action.yaw === undefined) { reject("The launch point was incomplete."); return; }
+      const point = new THREE.Vector3(action.x, action.y, action.z);
+      const waterY = Math.floor(action.y - 0.08);
+      const validWater = blockContainsWater(this.world.getBlock(Math.floor(action.x + 0.5), waterY, Math.floor(action.z + 0.5)));
+      const held = inventorySlotFromNetwork(current.inventory[current.selected]);
+      if (!validWater || point.distanceToSquared(new THREE.Vector3(pose.x, pose.y, pose.z)) > 8 * 8
+        || [...this.boats.values()].some((candidate) => candidate.group.position.distanceToSquared(point) < 12)) {
+        reject("The host could not find a clear nearby patch of water for that boat."); return;
+      }
+      if (this.mode === "survival" && held?.item !== Item.Sailboat) { reject("Keep the Wayfarer Sailboat selected while launching it."); return; }
+      if (this.mode === "survival") {
+        const inventory = current.inventory.map(inventorySlotFromNetwork);
+        const selected = inventory[current.selected];
+        if (!selected || selected.item !== Item.Sailboat) { reject("The host-owned pack no longer contains that boat."); return; }
+        selected.count -= 1;
+        if (selected.count <= 0) inventory[current.selected] = null;
+        nextPlayer = normalizeMultiplayerPlayerState({ ...current, inventory: inventory.map(networkItemStack), revision: current.revision + 1 }, identity.id, current.variant);
+        this.multiplayerPlayerStates.set(identity.id, nextPlayer);
+      }
+      boat = this.spawnSailboat(point, identity.id, action.yaw);
+    } else {
+      if (!boat) { reject("That boat is no longer in the water."); return; }
+      const distanceSquared = new THREE.Vector3(boat.save.x, boat.save.y, boat.save.z)
+        .distanceToSquared(new THREE.Vector3(pose.x, pose.y, pose.z));
+      if (distanceSquared > 7 * 7) { reject("Move closer to the boat before interacting with it."); return; }
+      if (action.kind === "board") {
+        for (const candidate of this.boats.values()) if (candidate !== boat && candidate.save.passengers.includes(identity.id)) {
+          candidate.save.passengers = leaveSailboat(candidate.save.passengers, identity.id);
+        }
+        const passengers = boardSailboat(boat.save.passengers, identity.id);
+        if (!passengers.includes(identity.id)) { reject("Both Wayfarer seats are occupied."); return; }
+        boat.save.passengers = passengers;
+      } else if (action.kind === "leave") {
+        boat.save.passengers = leaveSailboat(boat.save.passengers, identity.id);
+        this.multiplayerBoatInputs.delete(identity.id);
+      } else {
+        if (boat.save.passengers.length) { reject("Everyone must step off before packing the Wayfarer."); return; }
+        if (!sailboatInventoryIsEmpty(boat.save.inventory)) { reject("Empty the Wayfarer's hold before packing it up."); return; }
+        const packed = addItemToMultiplayerState(current, Item.Sailboat, 1);
+        if (packed.added !== 1) { reject("Make one open pack slot before packing the Wayfarer."); return; }
+        nextPlayer = { ...packed.state, revision: current.revision + 1 };
+        this.multiplayerPlayerStates.set(identity.id, nextPlayer);
+      }
+    }
+    const responseBoat = action.kind === "pack" ? undefined : boat ? this.sailboatNetworkEntry(boat) : undefined;
+    if (action.kind === "pack" && boat) this.removeSailboat(boat.save.id);
+    const response: BoatAction = {
+      ...action,
+      ...(responseBoat ? { boat: responseBoat } : {}),
+      playerState: nextPlayer,
+      status: "accepted",
+      reason: action.kind === "launch" ? "Wayfarer launched."
+        : action.kind === "board" ? "You climb aboard the Wayfarer."
+          : action.kind === "leave" ? "You step off the Wayfarer."
+            : "The empty Wayfarer folds back into your pack.",
+    };
+    this.queueCriticalReliableRequest(`host-boat:${identity.id}:${action.requestId}`, () => session.sendBoatAction(response, identity.id), 6_000);
+    const publicResponse = { ...response, playerState: undefined };
+    for (const other of session.getPeers()) if (other.identity && other.identity.id !== identity.id) {
+      try { session.sendBoatAction(publicResponse, other.identity.id); } catch { /* periodic boat image repairs presentation */ }
+    }
+    this.sendAuthoritativePlayerState(identity.id, action.requestId);
+    this.saveSoon();
   }
 
   private rejectCreatureAction(action: CreatureAction, peerId: string, reason: string) {
@@ -10147,6 +10727,11 @@ export class VoxelEngine {
         return;
       }
       const playerId = this.localPlayerId();
+      if (this.multiplayer?.role === "guest") {
+        this.requestBoatAction({ kind: "board", boatId: boat.save.id });
+        this.placeCooldown = 0.3;
+        return;
+      }
       const passengers = boardSailboat(boat.save.passengers, playerId);
       if (!passengers.includes(playerId)) {
         this.events.onToast("Both Wayfarer seats are occupied.");
@@ -10194,7 +10779,14 @@ export class VoxelEngine {
         this.events.onToast("Give the other boat a little room.");
         return;
       }
-      this.spawnSailboat(water);
+      if (this.multiplayer?.role === "guest") {
+        if (!this.requestBoatAction({ kind: "launch", x: water.x, y: water.y, z: water.z, yaw: this.yaw })) return;
+        this.placeCooldown = 0.45;
+        this.heldUse = 1;
+        this.events.onToast("Asking the host to launch the Wayfarer...");
+        return;
+      }
+      this.spawnSailboat(water, this.localPlayerId(), this.yaw);
       if (this.mode === "survival") {
         heldSlot.count -= 1;
         if (heldSlot.count <= 0) this.inventory[this.selected] = null;
@@ -11771,7 +12363,7 @@ export class VoxelEngine {
     if (requestedType === BlockId.FenceGateNorthSouthClosed) type = fenceGateForYaw(this.yaw);
     if ([BlockId.WildwoodSapling, BlockId.JungleSapling, BlockId.SakuraSapling, BlockId.CandywoodSapling].includes(type)) {
       const soil = this.world.getBlock(x, y - 1, z);
-      if (![BlockId.Grass, BlockId.Dirt, BlockId.SnowyGrass, BlockId.SavannaGrass, BlockId.SwampGrass, BlockId.JungleGrass, BlockId.SakuraGrass, BlockId.SugarplumGrass, BlockId.SugarSoil, BlockId.Farmland, BlockId.HydratedFarmland].includes(soil ?? BlockId.Air)) {
+      if (!canPlantSaplingOn(soil)) {
         this.events.onToast("Saplings need living soil.");
         return;
       }
@@ -12059,9 +12651,109 @@ export class VoxelEngine {
     this.persistentMachineLastStep.delete(key);
   }
 
+  /** Drop and remove the persistent contents owned by one broken block. */
+  teardownBrokenBlockState(type: BlockId, x: number, y: number, z: number) {
+    const key = blockKey(x, y, z);
+    const position = new THREE.Vector3(x, y, z);
+    this.unregisterWaygridBlock(type, key, position);
+    if (type === BlockId.Furnace) {
+      const furnace = this.furnaces.get(key);
+      if (furnace) for (const slot of [furnace.input, furnace.fuel, furnace.output]) if (slot) {
+        this.spawnDrop(slot.item, slot.count, position, slot.durability, slot.metadata);
+      }
+      this.furnaces.delete(key);
+    }
+    if (type === BlockId.Chest) {
+      const storageKey = this.chestStorageKey(key);
+      const chest = this.chests.get(storageKey) ?? this.generateChestLoot(key);
+      if (storageKey.includes("|")) {
+        const blocks = storageKey.split("|");
+        const half = Math.max(0, blocks.indexOf(key));
+        const removed = chest.slice(half * 27, half * 27 + 27);
+        const remaining = chest.slice(half === 0 ? 27 : 0, half === 0 ? 54 : 27);
+        for (const slot of removed) if (slot) this.spawnDrop(slot.item, slot.count, position, slot.durability, slot.metadata);
+        this.chests.delete(storageKey);
+        this.chests.set(blocks[half === 0 ? 1 : 0], remaining);
+      } else {
+        for (const slot of chest) if (slot) this.spawnDrop(slot.item, slot.count, position, slot.durability, slot.metadata);
+        this.chests.delete(storageKey);
+      }
+    }
+    if (type === BlockId.Apiary || type === BlockId.WildBeehive) this.breakApiaryAt(key, type, position);
+    if (type === BlockId.CaptureOrbRack) {
+      const rack = this.orbRacks.get(key);
+      if (this.mode === "survival" && rack) for (const orb of rack.slots) if (orb) {
+        const slot = captureOrbInventorySlot(orb);
+        this.spawnDrop(slot.item, 1, position, slot.durability, slot.metadata);
+      }
+      this.orbRacks.delete(key);
+      this.syncOrbRackVisuals(true);
+    }
+    if (type === BlockId.CreatureHealer) {
+      const station = this.healingStations.get(key);
+      if (this.mode === "survival" && station) {
+        for (const orb of station.slots) if (orb) {
+          const slot = captureOrbInventorySlot(orb);
+          this.spawnDrop(slot.item, 1, position, slot.durability, slot.metadata);
+        }
+        if (station.gelUnits > 0) this.spawnDrop(Item.CaveGel, station.gelUnits, position);
+      }
+      this.healingStations.delete(key);
+      this.persistentMachineLastStep.delete(key);
+    }
+    if (type === BlockId.AlchemyStand) {
+      const station = this.alchemyStands.get(key);
+      const outputItem = station?.output ? resourceItemCode(station.output.item) : null;
+      if (this.mode === "survival" && outputItem !== null && station?.output) this.spawnDrop(outputItem, station.output.count, position);
+      this.alchemyStands.delete(key);
+      this.persistentMachineLastStep.delete(key);
+    }
+    if (type === BlockId.Distillery) {
+      const station = this.distilleries.get(key);
+      const outputItem = station?.output ? resourceItemCode(station.output.item) : null;
+      if (this.mode === "survival" && outputItem !== null && station?.output) this.spawnDrop(outputItem, station.output.count, position);
+      this.distilleries.delete(key);
+      this.persistentMachineLastStep.delete(key);
+    }
+    if (type === BlockId.Sugarworks) {
+      const station = this.sugarworks.get(key);
+      const outputItem = station?.output ? resourceItemCode(station.output.item) : null;
+      if (this.mode === "survival" && outputItem !== null && station?.output) this.spawnDrop(outputItem, station.output.count, position);
+      this.sugarworks.delete(key);
+      this.persistentMachineLastStep.delete(key);
+    }
+    if (type === BlockId.GolemForge) {
+      const forge = this.golemForges.get(key);
+      if (forge?.job) this.events.onToast("The unfinished golem core goes dark as the forge is broken.");
+      this.golemForges.delete(key);
+      this.persistentMachineLastStep.delete(key);
+    }
+    if (ARCHIVE_SHELF_BLOCK_SET.has(type)) {
+      const shelf = this.archiveShelves.get(key) ?? normalizeArchiveShelf({
+        tomes: Array.from({ length: archiveShelfBookCount(type) ?? 0 }, () => Item.BoundBook),
+      });
+      if (this.mode === "survival") for (const tome of shelf.tomes) this.spawnDrop(tome, 1, position);
+      this.archiveShelves.delete(key);
+    }
+    if (type === BlockId.TomeDisplay) {
+      const tome = this.tomeDisplays.get(key)?.tome ?? null;
+      if (this.mode === "survival" && tome !== null) this.spawnDrop(tome, 1, position);
+      this.tomeDisplays.delete(key);
+    }
+    if (type === BlockId.Wayshrine) {
+      const markerId = `wayshrine:${key}`;
+      if (this.mapKnowledge.markers.some((marker) => marker.id === markerId)) this.mapKnowledge = {
+        ...this.mapKnowledge,
+        revision: this.mapKnowledge.revision + 1,
+        markers: this.mapKnowledge.markers.filter((marker) => marker.id !== markerId),
+      };
+    }
+  }
+
   breakTarget() {
     if (!this.target || this.target.type === BlockId.Bedrock || Boolean(BLOCKS[this.target.type]?.liquid)) return;
     const { x, y, z, type } = this.target;
+    const ownsBreakLoot = this.multiplayer?.role !== "guest";
     const exhibitTopology = type === BlockId.ButterflyExhibit ? this.exhibitTopologyAt(x, y, z) : null;
     const aquariumTopology = type === BlockId.GlassAquarium ? this.aquariumTopologyAt(x, y, z) : null;
     const exhibitSlots = exhibitTopology
@@ -12102,7 +12794,7 @@ export class VoxelEngine {
     for (const edit of brokenEdits) this.notifyLiquidChanged(edit.x, edit.y, edit.z);
     this.publishBlockEdits(brokenEdits, brokenEdits.length > 1 ? "batch" : "break");
     if (this.mode === "survival") {
-      if (harvested) {
+      if (harvested && ownsBreakLoot) {
         if (!this.isDoor(type) && !this.isBed(type) && type !== BlockId.WildBeehive) {
           this.dropBlockLoot(isTorchBlock(type) ? BlockId.Torch : type, x, y, z);
           if (isWaterloggedFloraBlock(type)) for (const edit of brokenEdits.slice(1)) this.dropBlockLoot(type, edit.x, edit.y, edit.z);
@@ -12116,8 +12808,8 @@ export class VoxelEngine {
     if (isEnvironmentLightBlock(type)) this.lightRefreshTimer = 0;
     for (const edit of brokenEdits) this.saplings.delete(blockKey(edit.x, edit.y, edit.z));
     if (isWaterloggedFloraBlock(type) && this.world.getBlock(x, y - 1, z) === type) this.schedulePlantGrowth(x, y - 1, z, type, 1);
-    if (this.isDoor(type) && this.mode === "survival" && harvested) this.spawnDrop(doorItem(type), 1, new THREE.Vector3(x, y, z));
-    if (this.isBed(type) && this.mode === "survival" && harvested) this.spawnDrop(Item.WildwoodBed, 1, new THREE.Vector3(x, y, z));
+    if (ownsBreakLoot && this.isDoor(type) && this.mode === "survival" && harvested) this.spawnDrop(doorItem(type), 1, new THREE.Vector3(x, y, z));
+    if (ownsBreakLoot && this.isBed(type) && this.mode === "survival" && harvested) this.spawnDrop(Item.WildwoodBed, 1, new THREE.Vector3(x, y, z));
     if (type === BlockId.Furnace) {
       const furnace = this.furnaces.get(key);
       if (furnace) for (const slot of [furnace.input, furnace.fuel, furnace.output]) if (slot) this.spawnDrop(slot.item, slot.count, new THREE.Vector3(x, y, z), slot.durability, slot.metadata);
@@ -12301,6 +12993,14 @@ export class VoxelEngine {
   }
 
   updateMining(dt: number) {
+    if (this.targetBoat && this.mineHeld) {
+      if (this.packTargetBoat()) {
+        this.mineHeld = false;
+        this.miningProgress = 0;
+        this.attackCooldown = 0.35;
+      }
+      return;
+    }
     if (this.targetEggDrop && this.mineHeld) {
       this.collectPlacedLeviathanEgg(this.targetEggDrop);
       return;
@@ -12782,7 +13482,7 @@ export class VoxelEngine {
       const edits = [{ x, y: aboveY, z, type: BlockId.Air }, { x, y: aboveY + 1, z, type: BlockId.Air }];
       this.world.setBlocksBatch(edits, true, true);
       this.publishBlockEdits(edits, "batch");
-      if (this.mode === "survival") this.spawnDrop(doorItem(above), 1, new THREE.Vector3(x, aboveY, z));
+      if (this.mode === "survival" && this.multiplayer?.role !== "guest") this.spawnDrop(doorItem(above), 1, new THREE.Vector3(x, aboveY, z));
       return;
     }
     if (this.isBed(above)) {
@@ -12791,7 +13491,7 @@ export class VoxelEngine {
       if (partner && this.world.getBlock(partner.x, partner.y, partner.z) === partner.type) edits.push({ x: partner.x, y: partner.y, z: partner.z, type: BlockId.Air });
       this.world.setBlocksBatch(edits, true, true);
       this.publishBlockEdits(edits, "batch");
-      if (this.mode === "survival") this.spawnDrop(Item.WildwoodBed, 1, new THREE.Vector3(x, aboveY, z));
+      if (this.mode === "survival" && this.multiplayer?.role !== "guest") this.spawnDrop(Item.WildwoodBed, 1, new THREE.Vector3(x, aboveY, z));
       return;
     }
     if (above === BlockId.PeppermintTuft) {
@@ -12812,11 +13512,22 @@ export class VoxelEngine {
     this.boatRaycaster.set(origin, direction);
     this.boatRaycaster.far = reach;
     const intersection = this.boatRaycaster.intersectObjects(this.boatGroup.children, true)[0];
-    if (!intersection) return null;
-    let object: THREE.Object3D | null = intersection.object;
-    while (object && typeof object.userData.boatId !== "string") object = object.parent;
-    const boat = object ? this.boats.get(object.userData.boatId as string) : null;
-    return boat ? { boat, distance: intersection.distance } : null;
+    if (intersection) {
+      let object: THREE.Object3D | null = intersection.object;
+      while (object && typeof object.userData.boatId !== "string") object = object.parent;
+      const boat = object ? this.boats.get(object.userData.boatId as string) : null;
+      if (boat) return { boat, distance: intersection.distance };
+    }
+    // A bobbing hull is easy to miss by a few pixels, particularly for a
+    // joining player whose rendered boat trails the host snapshot. Accept a
+    // bounded near-ray volume without expanding physical collision.
+    let nearest: { boat: SailboatEntity; distance: number } | null = null;
+    for (const boat of this.boats.values()) {
+      const distance = sailboatRayPickDistance(origin, direction, boat.save, reach);
+      if (distance === null || (nearest && nearest.distance <= distance)) continue;
+      nearest = { boat, distance };
+    }
+    return nearest;
   }
 
   breakUnsupportedAround(x: number, y: number, z: number) {
@@ -14159,15 +14870,19 @@ export class VoxelEngine {
     return null;
   }
 
-  spawnSailboat(position: THREE.Vector3) {
+  spawnSailboat(position: THREE.Vector3, ownerId: string | null = this.localPlayerId(), yaw = this.yaw) {
     const id = `wayfarer-${Date.now().toString(36)}-${this.nextBoatId++}`;
-    return this.restoreSailboat({ id, x: position.x, y: position.y, z: position.z, yaw: this.yaw, velocity: 0, passengers: [], inventory: [] });
+    return this.restoreSailboat({ id, x: position.x, y: position.y, z: position.z, yaw, velocity: 0, passengers: [], inventory: [], ownerId });
   }
 
   dismountBoat() {
     if (!this.mountedBoatId) return;
     const boat = this.boats.get(this.mountedBoatId);
     const playerId = this.localPlayerId();
+    if (this.multiplayer?.role === "guest" && boat) {
+      this.requestBoatAction({ kind: "leave", boatId: boat.save.id });
+      return;
+    }
     if (boat) {
       boat.save.passengers = leaveSailboat(boat.save.passengers, playerId);
       const side = new THREE.Vector3(Math.cos(boat.save.yaw) * 1.45, 0, -Math.sin(boat.save.yaw) * 1.45);
@@ -14177,6 +14892,35 @@ export class VoxelEngine {
     this.velocity.set(0, 0, 0);
     this.events.onToast("You step off the Wayfarer.");
     this.saveSoon();
+  }
+
+  packTargetBoat() {
+    const boat = this.targetBoat;
+    if (!boat || !this.crouching) return false;
+    if (this.multiplayer?.role === "guest") {
+      if (!this.requestBoatAction({ kind: "pack", boatId: boat.save.id })) return false;
+      this.events.onToast("Asking the host to pack the empty Wayfarer...");
+      return true;
+    }
+    if (boat.save.passengers.length) {
+      this.events.onToast("Everyone must step off before packing the Wayfarer.");
+      return true;
+    }
+    if (!sailboatInventoryIsEmpty(boat.save.inventory)) {
+      this.events.onToast("Empty the Wayfarer's hold before packing it up.");
+      return true;
+    }
+    if (this.mode === "survival" && this.addItem(Item.Sailboat, 1) !== 0) {
+      this.events.onToast("Make one open pack slot before packing the Wayfarer.");
+      return true;
+    }
+    const id = boat.save.id;
+    this.removeSailboat(id);
+    this.audio.play("pickup");
+    this.events.onToast("The empty Wayfarer folds back into your pack.");
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
   }
 
   dismountCreature() {
@@ -14358,15 +15102,26 @@ export class VoxelEngine {
     const playerId = this.localPlayerId();
     for (const boat of this.boats.values()) {
       const localSeat = boat.save.passengers.indexOf(playerId);
-      const canDrive = localSeat === 0 && this.multiplayer?.role !== "guest";
-      if (canDrive) {
-        const forward = (this.keys.has("KeyW") ? 1 : 0) - (this.keys.has("KeyS") ? 1 : 0);
-        const turn = (this.keys.has("KeyD") ? 1 : 0) - (this.keys.has("KeyA") ? 1 : 0);
+      const driverId = boat.save.passengers[0];
+      const localDriver = localSeat === 0 && this.multiplayer?.role !== "guest";
+      const remoteInput = this.multiplayer?.role === "host" && driverId && driverId !== playerId
+        ? this.multiplayerBoatInputs.get(driverId) : null;
+      const freshRemoteInput = remoteInput?.boatId === boat.save.id && performance.now() - remoteInput.updatedAt <= 400
+        ? remoteInput : null;
+      if (localDriver || freshRemoteInput) {
+        const forward = localDriver
+          ? (this.keys.has("KeyW") ? 1 : 0) - (this.keys.has("KeyS") ? 1 : 0)
+          : freshRemoteInput!.forward;
+        const turn = localDriver
+          ? (this.keys.has("KeyD") ? 1 : 0) - (this.keys.has("KeyA") ? 1 : 0)
+          : freshRemoteInput!.turn;
         const next = integrateSailboat(boat.save, { forward, turn }, dt, (x, z) => {
           const y = Math.floor(boat.save.y - 0.05);
           return blockContainsWater(this.world.getBlock(Math.floor(x + 0.5), y, Math.floor(z + 0.5)));
         });
         Object.assign(boat.save, next);
+      } else if (remoteInput && !freshRemoteInput) {
+        this.multiplayerBoatInputs.delete(driverId);
       }
       boat.group.position.set(boat.save.x, boat.save.y + Math.sin(performance.now() * 0.0018 + boat.save.x) * 0.025, boat.save.z);
       boat.group.rotation.set(Math.sin(performance.now() * 0.0013 + boat.save.z) * 0.018, boat.save.yaw, Math.sin(performance.now() * 0.0016 + boat.save.x) * 0.025);
@@ -19248,6 +20003,10 @@ export class VoxelEngine {
       multiplayerPlayers: Object.fromEntries([...this.multiplayerPlayerStates.entries()].map(([playerId, state]) => [
         playerId,
         normalizeMultiplayerPlayerState(state, playerId),
+      ])),
+      multiplayerProgressions: Object.fromEntries([...this.multiplayerPlayerProgressions.entries()].map(([playerId, record]) => [
+        playerId,
+        { revision: record.revision, state: normalizeMultiplayerPlayerProgression(record.state, playerId) },
       ])),
       multiplayerWallets: Object.fromEntries(this.multiplayerPlayerWallets.entries()),
       archiveShelves: Object.fromEntries(this.archiveShelves.entries()),
