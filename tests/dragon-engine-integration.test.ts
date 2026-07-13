@@ -4,7 +4,7 @@ import * as THREE from "three";
 import { BlockId, Item } from "../app/game/data.ts";
 import { disposeDragonAttackEffect } from "../app/game/dragon-effects.ts";
 import { createDragonState, normalizeDragonState, serializeDragonState, type DragonState } from "../app/game/dragons.ts";
-import { VoxelEngine } from "../app/game/engine.ts";
+import { VoxelEngine, placedDragonEggMetadata } from "../app/game/engine.ts";
 import {
   MAGIC_ATTUNEMENT_QUEST_ID,
   attuneMagicFromQuest,
@@ -62,6 +62,26 @@ test("live engine casting spends mana, awards Magic XP, and creates a player-own
   assert.match(engine.dragonEffects[0].visual.name, /fire-dragon-breath/u);
   assert.ok((engine.magicState.cooldownReadyAt["flame-jet"] ?? 0) > 100, "persisted cooldown uses the stable world clock");
   for (const effect of engine.dragonEffects) disposeDragonAttackEffect(effect);
+});
+
+test("placed and portable egg metadata accepts every canonical dragon lineage", () => {
+  for (const type of ["fire", "ice", "steel", "sea", "gold", "silver"] as const) {
+    const egg = {
+      schemaVersion: 1 as const,
+      eggId: `${type}:engine-metadata`,
+      type,
+      sex: "female" as const,
+      geneticSeed: 9,
+      parentIds: [null, null] as const,
+      laidAtTick: 4,
+      incubationTicks: 0,
+      requiredTicks: 7_200,
+      wild: true,
+      lairId: null,
+    };
+    assert.equal(placedDragonEggMetadata({ kind: "placed-dragon-egg", egg })?.type, type);
+    assert.equal(placedDragonEggMetadata({ kind: "dragon-egg", egg }, false)?.type, type);
+  }
 });
 
 test("opening the held-Q wheel preserves its key state through the overlay pause", () => {

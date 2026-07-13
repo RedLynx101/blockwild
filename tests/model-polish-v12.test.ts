@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import * as THREE from "three";
 import { CHARACTER_RACES } from "../app/game/character-profiles.ts";
-import { BlockId, Item } from "../app/game/data.ts";
+import { BlockId, Item, ITEMS } from "../app/game/data.ts";
 import { createAvatarHeldItemModel } from "../app/game/held-items.ts";
 import { createMobVisual } from "../app/game/mob-models.ts";
 import { BlockPlayerModel, type PlayerVariant } from "../app/game/player-model.ts";
@@ -98,7 +98,7 @@ test("Taffalo rear ankle fluff is articulated by its actual rear legs", () => {
   assert.ok(before.distanceTo(after) > 0.25, "rear fluff must travel with the stepping leg instead of floating behind it");
 });
 
-test("crafting table and all four dragon barding modules have semantic hand-scale models", () => {
+test("crafting table and all six dragon barding modules have semantic hand-scale models", () => {
   const table = createAvatarHeldItemModel(BlockId.CraftingTable)!;
   assert.ok(table.getObjectByName("crafting-table-side-panel"));
   assert.ok(table.getObjectByName("crafting-table-worktop"));
@@ -107,17 +107,24 @@ test("crafting table and all four dragon barding modules have semantic hand-scal
   const tableSize = new THREE.Box3().setFromObject(table).getSize(new THREE.Vector3());
   assert.ok(Math.max(tableSize.x, tableSize.y, tableSize.z) < 0.55, "held worktable stays hand-scale");
 
-  const modules = [Item.FireDragonArmorModule, Item.IceDragonArmorModule, Item.SteelDragonArmorModule, Item.TideglassDragonArmorModule];
+  const modules = [
+    [Item.FireDragonArmorModule, "fire-barding-living-flame-crest"],
+    [Item.IceDragonArmorModule, "ice-barding-faceted-breastplate"],
+    [Item.SteelDragonArmorModule, "steel-barding-pressure-dial"],
+    [Item.TideglassDragonArmorModule, "sea-barding-lumen-pearl"],
+    [Item.GoldDragonArmorModule, "gold-barding-sun-disc"],
+    [Item.SilverDragonArmorModule, "silver-barding-crescent-1"],
+  ] as const;
   const palette = new Set<number>();
-  for (const item of modules) {
+  for (const [item, signature] of modules) {
     const model = createAvatarHeldItemModel(item)!;
-    assert.ok(model.getObjectByName("dragon-armor-breastplate"));
-    assert.ok(model.getObjectByName("dragon-armor-crest"));
+    assert.ok(model.getObjectByName(signature));
+    assert.ok(model.getObjectByName(`${ITEMS[item].dragonType}-barding-harness`));
     assert.ok(model.children.length >= 8, `${item} requires a readable layered barding silhouette`);
-    const breast = model.getObjectByName("dragon-armor-breastplate") as THREE.Mesh<THREE.BoxGeometry, THREE.MeshLambertMaterial>;
+    const breast = model.getObjectByName(`${ITEMS[item].dragonType}-barding-harness`) as THREE.Mesh<THREE.BoxGeometry, THREE.MeshLambertMaterial>;
     palette.add(breast.material.color.getHex());
   }
-  assert.equal(palette.size, 4, "Ember, Rime, Riveted and Tideglass barding must remain visually distinct");
+  assert.equal(palette.size, 6, "every dragon barding family keeps a distinct production palette");
 });
 
 test("model audit sheets clip 3D drawing to the tile body without clipping titles", async () => {

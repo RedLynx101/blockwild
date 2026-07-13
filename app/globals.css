@@ -6531,6 +6531,199 @@ input:focus-visible {
   opacity: .72;
 }
 
+/* Dragonwake hoard and tack art. These silhouettes are authored at the real
+   28px pack size and then scaled as one unit for 22px recipe slots. */
+.item-icon-kind-gold-hoard-block::before {
+  left: 2px;
+  top: 2px;
+  width: 24px;
+  height: 24px;
+  border: 1px solid #75460e;
+  background:
+    radial-gradient(circle at 50% 48%, #fff3a5 0 9%, #d59a1d 10% 18%, transparent 19%),
+    repeating-linear-gradient(0deg, #ffe477 0 2px, #dba129 2px 6px, #9b6112 6px 7px),
+    var(--item-color);
+  box-shadow: inset 3px 3px 0 rgba(255, 248, 173, .55), inset -3px -3px 0 rgba(102, 54, 8, .5), 2px 2px 0 rgba(0, 0, 0, .58);
+  clip-path: polygon(9% 0, 92% 4%, 100% 88%, 86% 100%, 3% 94%, 0 12%);
+}
+
+.item-icon-kind-gold-hoard-block::after {
+  left: 5px;
+  top: 5px;
+  width: 5px;
+  height: 5px;
+  background: #e45b70;
+  box-shadow: 14px 2px 0 #5fe0d7, 8px 14px 0 #a77be8, 2px 9px 0 1px rgba(255, 241, 135, .72);
+  transform: rotate(45deg);
+}
+
+.item-icon-kind-gold-pile::before {
+  left: 1px;
+  top: 8px;
+  width: 27px;
+  height: 19px;
+  background:
+    radial-gradient(ellipse at 25% 76%, #ffe883 0 8%, #c98a17 9% 15%, transparent 16%),
+    radial-gradient(ellipse at 47% 66%, #ffe883 0 8%, #d99f24 9% 16%, transparent 17%),
+    radial-gradient(ellipse at 75% 76%, #ffe883 0 7%, #b87313 8% 15%, transparent 16%),
+    repeating-linear-gradient(0deg, #f2c447 0 2px, #a76a13 2px 4px),
+    var(--item-color);
+  clip-path: polygon(7% 79%, 13% 48%, 27% 43%, 31% 21%, 46% 18%, 51% 0, 65% 8%, 69% 32%, 88% 42%, 100% 86%, 82% 100%, 18% 98%);
+  filter: drop-shadow(2px 2px 0 rgba(0, 0, 0, .64));
+}
+
+.item-icon-kind-gold-pile::after {
+  left: 5px;
+  top: 17px;
+  width: 5px;
+  height: 5px;
+  background: #d95770;
+  box-shadow: 13px 2px 0 #5fd8d0, 7px -10px 0 #a77be8, 10px -3px 0 1px #ffdf67;
+  transform: rotate(45deg);
+}
+
+.item-icon-kind-dragon-saddle::before {
+  left: 2px;
+  top: 5px;
+  width: 25px;
+  height: 20px;
+  border: 2px solid #4b2722;
+  background:
+    linear-gradient(90deg, transparent 0 12%, #e1b45a 13% 18%, transparent 19% 81%, #e1b45a 82% 87%, transparent 88%),
+    repeating-linear-gradient(135deg, rgba(255, 205, 139, .2) 0 2px, transparent 2px 5px),
+    linear-gradient(145deg, color-mix(in srgb, var(--item-color), white 24%), var(--item-color) 56%, #3d2523);
+  clip-path: polygon(0 20%, 18% 4%, 36% 14%, 50% 0, 64% 14%, 83% 4%, 100% 20%, 88% 58%, 76% 100%, 56% 76%, 44% 76%, 24% 100%, 12% 58%);
+  filter: drop-shadow(2px 2px 0 rgba(0, 0, 0, .62));
+}
+
+.item-icon-kind-dragon-saddle::after {
+  left: 11px;
+  top: 8px;
+  width: 7px;
+  height: 7px;
+  border: 1px solid #ffe08a;
+  background: #8b4f38;
+  box-shadow: 0 7px 0 -1px #522b27;
+  transform: rotate(45deg);
+}
+
+.item-icon-kind-dragon-pannier::before {
+  left: 3px;
+  top: 3px;
+  width: 23px;
+  height: 23px;
+  border: 2px solid #4f3328;
+  border-radius: 5px 5px 3px 3px;
+  background:
+    linear-gradient(90deg, transparent 0 20%, #5f3827 21% 28%, transparent 29% 71%, #5f3827 72% 79%, transparent 80%),
+    linear-gradient(0deg, #704327 0 36%, color-mix(in srgb, var(--item-color), white 18%) 37% 67%, #5f3827 68% 73%, var(--item-color) 74%);
+  box-shadow: inset 2px 2px 0 rgba(255, 221, 148, .24), 2px 2px 0 rgba(0, 0, 0, .62);
+  clip-path: polygon(8% 0, 91% 0, 100% 15%, 94% 100%, 6% 100%, 0 15%);
+}
+
+.item-icon-kind-dragon-pannier::after {
+  left: 5px;
+  top: 9px;
+  width: 5px;
+  height: 5px;
+  border: 1px solid #ffe08a;
+  background: #a97537;
+  box-shadow: 13px 0 0 -1px #a97537, 13px 0 0 0 #e0b455, 6px 10px 0 1px #567666;
+  transform: rotate(45deg);
+}
+
+.item-icon-kind-dragon-barding-fire::before,
+.item-icon-kind-dragon-barding-ice::before,
+.item-icon-kind-dragon-barding-steel::before,
+.item-icon-kind-dragon-barding-sea::before,
+.item-icon-kind-dragon-barding-gold::before,
+.item-icon-kind-dragon-barding-silver::before {
+  left: 1px;
+  top: 2px;
+  width: 27px;
+  height: 25px;
+  border: 1px solid color-mix(in srgb, var(--item-color), black 48%);
+  background:
+    repeating-linear-gradient(145deg, rgba(255,255,255,.28) 0 2px, transparent 2px 6px),
+    linear-gradient(145deg, color-mix(in srgb, var(--item-color), white 34%), var(--item-color) 53%, color-mix(in srgb, var(--item-color), black 42%));
+  clip-path: polygon(4% 20%, 20% 0, 37% 12%, 50% 2%, 63% 12%, 80% 0, 96% 20%, 84% 45%, 79% 100%, 56% 83%, 44% 83%, 21% 100%, 16% 45%);
+  filter: drop-shadow(2px 2px 0 rgba(0, 0, 0, .62));
+}
+
+.item-icon-kind-dragon-barding-fire::after {
+  left: 9px; top: 5px; width: 11px; height: 18px;
+  background: linear-gradient(#ffcf6a, #f36a36 52%, #4b1c19);
+  clip-path: polygon(52% 0, 72% 30%, 100% 50%, 69% 100%, 41% 75%, 5% 100%, 20% 52%, 0 38%);
+  box-shadow: 0 0 5px #ff9d45;
+}
+
+.item-icon-kind-dragon-barding-ice::after {
+  left: 7px; top: 4px; width: 15px; height: 20px;
+  background: linear-gradient(135deg, #e8fdff, #83d4ea 52%, #35627f);
+  clip-path: polygon(50% 0, 66% 28%, 100% 18%, 78% 50%, 88% 100%, 52% 72%, 20% 100%, 28% 52%, 0 24%, 37% 29%);
+  filter: drop-shadow(0 0 3px #9af4ff);
+}
+
+.item-icon-kind-dragon-barding-steel::after {
+  left: 6px; top: 7px; width: 17px; height: 14px;
+  border: 2px solid #30383d;
+  background:
+    radial-gradient(circle at 18% 22%, #e2a65e 0 1px, transparent 2px),
+    radial-gradient(circle at 82% 22%, #e2a65e 0 1px, transparent 2px),
+    radial-gradient(circle at 18% 78%, #d2dbe0 0 1px, transparent 2px),
+    radial-gradient(circle at 82% 78%, #d2dbe0 0 1px, transparent 2px),
+    linear-gradient(145deg, #b5c0c5, #65727a);
+  clip-path: polygon(9% 0, 91% 0, 100% 20%, 88% 100%, 12% 100%, 0 20%);
+}
+
+.item-icon-kind-dragon-barding-sea::after {
+  left: 5px; top: 5px; width: 19px; height: 19px;
+  background:
+    radial-gradient(circle at 50% 50%, #eafff8 0 12%, #72e2d0 13% 23%, transparent 24%),
+    linear-gradient(135deg, #ff879d 0 12%, transparent 13% 36%, #96f2dc 37% 54%, transparent 55% 78%, #ff879d 79%);
+  clip-path: polygon(50% 0, 65% 30%, 100% 18%, 77% 50%, 100% 80%, 65% 69%, 50% 100%, 35% 69%, 0 82%, 23% 50%, 0 18%, 35% 30%);
+  filter: drop-shadow(0 0 3px #7ae8dc);
+}
+
+.item-icon-kind-dragon-barding-gold::after {
+  left: 7px; top: 6px; width: 15px; height: 15px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fffbd0 0 18%, #e5ab2e 20% 58%, #8c2f32 60% 100%);
+  box-shadow: 0 -5px 0 -3px #fff0a0, 0 5px 0 -3px #fff0a0, 5px 0 0 -3px #fff0a0, -5px 0 0 -3px #fff0a0, 4px 4px 0 -3px #e5ab2e, -4px -4px 0 -3px #e5ab2e;
+}
+
+.item-icon-kind-dragon-barding-silver::after {
+  left: 8px; top: 4px; width: 13px; height: 18px;
+  border: 4px solid #f2f8ff;
+  border-right-color: transparent;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: -2px 0 3px #a7d9ff, 8px 3px 0 -5px #fff, 6px 12px 0 -5px #a7d9ff;
+  transform: rotate(-18deg);
+}
+
+/* Wearable Ember, Rime and Steel scale pieces keep their equipment-slot
+   silhouette while a compact elemental mark differentiates the family. */
+.item-icon[class*="item-icon-kind-dragon-player-"]::before {
+  left: 2px;
+  top: 2px;
+  width: 25px;
+  height: 24px;
+  border: 1px solid color-mix(in srgb, var(--item-color), black 48%);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--item-color), white 34%), var(--item-color) 52%, color-mix(in srgb, var(--item-color), black 38%));
+  filter: drop-shadow(2px 2px 0 rgba(0, 0, 0, .56));
+}
+
+.item-icon:is(.item-icon-kind-dragon-player-fire-head, .item-icon-kind-dragon-player-ice-head, .item-icon-kind-dragon-player-steel-head)::before { clip-path: polygon(18% 0, 82% 0, 100% 22%, 84% 79%, 66% 68%, 61% 100%, 39% 100%, 34% 68%, 16% 79%, 0 22%); }
+.item-icon:is(.item-icon-kind-dragon-player-fire-chest, .item-icon-kind-dragon-player-ice-chest, .item-icon-kind-dragon-player-steel-chest)::before { clip-path: polygon(18% 0, 38% 9%, 62% 9%, 82% 0, 100% 24%, 83% 43%, 78% 100%, 22% 100%, 17% 43%, 0 24%); }
+.item-icon:is(.item-icon-kind-dragon-player-fire-legs, .item-icon-kind-dragon-player-ice-legs, .item-icon-kind-dragon-player-steel-legs)::before { clip-path: polygon(10% 0, 90% 0, 82% 48%, 95% 100%, 58% 100%, 50% 61%, 42% 100%, 5% 100%, 18% 48%); }
+.item-icon:is(.item-icon-kind-dragon-player-fire-feet, .item-icon-kind-dragon-player-ice-feet, .item-icon-kind-dragon-player-steel-feet)::before { clip-path: polygon(7% 18%, 42% 0, 50% 54%, 58% 0, 93% 18%, 100% 92%, 57% 100%, 50% 72%, 43% 100%, 0 92%); }
+
+.item-icon[class*="item-icon-kind-dragon-player-"]::after { left: 10px; top: 8px; width: 9px; height: 12px; }
+.item-icon[class*="item-icon-kind-dragon-player-fire-"]::after { background: linear-gradient(#ffd06f, #e85e35 55%, #52201c); clip-path: polygon(50% 0, 100% 48%, 66% 100%, 48% 72%, 12% 100%, 24% 48%); }
+.item-icon[class*="item-icon-kind-dragon-player-ice-"]::after { background: linear-gradient(135deg, #efffff, #84d8ed 52%, #3c6987); clip-path: polygon(50% 0, 100% 36%, 74% 100%, 50% 72%, 26% 100%, 0 36%); }
+.item-icon[class*="item-icon-kind-dragon-player-steel-"]::after { border: 2px solid #30383d; background: radial-gradient(circle at 25% 25%, #e3aa60 0 1px, transparent 2px), radial-gradient(circle at 75% 75%, #d5dfe3 0 1px, transparent 2px), #859198; transform: rotate(45deg); }
+
 .item-icon-kind-torch::after {
   animation: torch-icon-flicker .34s steps(2, end) infinite alternate;
   transform-origin: 50% 80%;

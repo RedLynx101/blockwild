@@ -9,7 +9,7 @@ import {
   type AdventureBiome,
 } from "./adventure-content";
 import { paintBiomeSurfaceAtlasTile } from "./biome-atmosphere";
-import { BLOCKS, LEAF_BLOCKS, TORCH_BLOCKS, BlockId, archiveShelfBookCount, blockContainsWater, isWaterloggedFloraBlock, type RenderLayer } from "./data";
+import { BLOCKS, DRAGON_HOARD_COIN_TILE, DRAGON_HOARD_GOLD_TILE, DRAGON_HOARD_JEWEL_TILE, LEAF_BLOCKS, TORCH_BLOCKS, BlockId, archiveShelfBookCount, blockContainsWater, isWaterloggedFloraBlock, type RenderLayer } from "./data";
 import { caveEntranceAt, caveFeatureAt } from "./caves";
 import { doorIsOpen, doorState, doorUsesXAxis, isDoorBlock } from "./doors";
 import { DENSE_CUTOUT_LEAF_POLICY, planFullTree, planSubmergedFlora, planSyrupPondsForChunk, syrupPondColumnAt, wildPeppermintHeight, type TreeForm, type TreePlanBlock } from "./ecology";
@@ -39,7 +39,7 @@ import {
   type SettlementLayoutPlan,
   type SettlementResident,
 } from "./settlements";
-import { planSeaDragonNest } from "./v1-cultures";
+import { SEA_DRAGON_NEST_MAX_RADIUS, planSeaDragonNest } from "./v1-cultures";
 
 export const CHUNK_SIZE = 16;
 export const MIN_Y = -64;
@@ -565,6 +565,9 @@ const TILE_COLORS = [
   "#5f9e3f", "#79b54f",
   // 160-161: blue-black wrought iron and its pale hammered fittings.
   "#303b42", "#87949a",
+  // 162: connected peppermint stem. 163-165: Dragonwake hoard ingot,
+  // coin and jewel cells; all are renderer-only contracts.
+  "#777777", "#d5a42f", "#efc747", "#5ed7cf",
 ];
 
 export const MEADOW_GRASS_PALETTE = Object.freeze({
@@ -1232,6 +1235,51 @@ export function createBlockAtlas() {
       for (const x of [5, 8, 11]) for (let y = 0; y < 16; y += 1) {
         pixel(index, x, y, (y + x) % 4 < 2 ? "#f5eee7" : "#e64d5f");
         if ((y + x) % 7 === 0 && x > 5) pixel(index, x - 1, y, "#6aa657");
+      }
+    }
+    if (index === DRAGON_HOARD_GOLD_TILE) {
+      // Hammered, stacked ingots with warm edge highlights. This replaces the
+      // old borrowed Gold Ore texture on crafted blocks and lair wealth.
+      context.fillStyle = "#a96c15";
+      context.fillRect(ox, oy, tile, tile);
+      for (let y = 0; y < tile; y += 4) {
+        const offset = y % 8 === 0 ? 0 : 4;
+        context.fillStyle = "#e1aa2c";
+        context.fillRect(ox, oy + y, tile, 3);
+        context.fillStyle = "#ffe477";
+        for (let x = offset; x < tile; x += 8) context.fillRect(ox + x + 1, oy + y, 5, 1);
+        context.fillStyle = "#7f4e10";
+        for (let x = offset; x < tile; x += 8) context.fillRect(ox + x + 6, oy + y + 1, 1, 2);
+      }
+      for (const [x, y] of [[2, 2], [11, 5], [5, 10], [13, 13]] as Array<[number, number]>) {
+        pixel(index, x, y, "#fff3a5");
+        if (x + 1 < tile) pixel(index, x + 1, y, "#efc44f");
+      }
+    }
+    if (index === DRAGON_HOARD_COIN_TILE) {
+      context.fillStyle = "#9a6418";
+      context.fillRect(ox, oy, tile, tile);
+      for (let y = 1; y < tile; y += 4) for (let x = (y % 8 ? 1 : 4); x < tile; x += 7) {
+        pixel(index, x, y, "#7b4b0d");
+        pixel(index, Math.min(15, x + 1), y, "#d99f24");
+        pixel(index, Math.min(15, x + 2), y, "#ffdf67");
+        if (y + 1 < tile) {
+          pixel(index, x, y + 1, "#b87916");
+          pixel(index, Math.min(15, x + 1), y + 1, "#efbd3e");
+          pixel(index, Math.min(15, x + 2), y + 1, "#9b6111");
+        }
+      }
+      for (const [x, y, color] of [[4, 6, "#d95770"], [12, 3, "#5fd8d0"], [9, 12, "#a77be8"]] as Array<[number, number, string]>) {
+        pixel(index, x, y, color); pixel(index, x + 1, y, shadeColor(color, 36));
+        if (y + 1 < tile) pixel(index, x, y + 1, shadeColor(color, -32));
+      }
+    }
+    if (index === DRAGON_HOARD_JEWEL_TILE) {
+      context.fillStyle = "#173c43";
+      context.fillRect(ox, oy, tile, tile);
+      for (const [x, y, color] of [[3, 3, "#d95770"], [11, 2, "#60e4dc"], [7, 9, "#a77be8"], [13, 12, "#fff1a0"], [2, 13, "#65a8ef"]] as Array<[number, number, string]>) {
+        pixel(index, x, y, shadeColor(color, -42)); pixel(index, x + 1, y - 1, color);
+        pixel(index, x + 2, y, shadeColor(color, 38)); pixel(index, x + 1, y + 1, shadeColor(color, -18));
       }
     }
     if (index === 62) {
@@ -2404,7 +2452,7 @@ export class ChunkWorld {
     const maxX = minX + CHUNK_SIZE - 1;
     const maxZ = minZ + CHUNK_SIZE - 1;
     const regionSize = 48 * CHUNK_SIZE;
-    const reach = 22;
+    const reach = SEA_DRAGON_NEST_MAX_RADIUS;
     const startRegionX = Math.floor((minX - reach) / regionSize);
     const endRegionX = Math.floor((maxX + reach) / regionSize);
     const startRegionZ = Math.floor((minZ - reach) / regionSize);
@@ -2433,13 +2481,13 @@ export class ChunkWorld {
           const distance = Math.hypot(dx, dz);
           if (distance > nest.radius) continue;
           const localFloor = sample(x, z).height;
-          const innerBowl = distance <= 5.5;
+          const innerBowl = distance <= nest.radius * 0.27;
           const middleRidge = Math.abs(distance - nest.radius * 0.52) < 1.15;
           const outerRidge = Math.abs(distance - nest.radius * 0.84) < 0.85;
           const spiral = Math.sin(Math.atan2(dz, dx) * 3 + distance * 0.62) > 0.72;
           if (innerBowl || middleRidge || outerRidge || spiral && distance < nest.radius * 0.9) {
             set(x, localFloor + 1, z, BlockId.MoonSlate, false);
-            if (innerBowl && distance < 3.8) set(x, localFloor + 2, z, BlockId.MoonSlate, false);
+            if (innerBowl && distance < nest.radius * 0.18) set(x, localFloor + 2, z, BlockId.MoonSlate, false);
           }
           const ornament = hash2(x, z, this.seed ^ 0x5ea0d6a1);
           if (!innerBowl && distance < nest.radius * 0.76 && ornament > 0.955) {
@@ -3457,9 +3505,29 @@ export class ChunkWorld {
         }
         if (definition.shape === "gold-pile") {
           const environment = shadeAt(lx, y, lz);
-          addTexturedCuboid(bucket, lx - 0.43, y - 0.5, lz - 0.38, lx + 0.43, y - 0.33, lz + 0.38, 41, 41, 41, [1, 1, 1], environment);
-          addTexturedCuboid(bucket, lx - 0.31, y - 0.33, lz - 0.29, lx + 0.29, y - 0.17, lz + 0.31, 41, 41, 41, [1, 1, 1], environment);
-          addTexturedCuboid(bucket, lx - 0.18, y - 0.17, lz - 0.16, lx + 0.21, y - 0.02, lz + 0.18, 41, 41, 41, [1, 1, 1], environment);
+          // Hoards are authored as loose stacks rather than three rectangular
+          // ore slabs: long ingots establish the silhouette, thin coin towers
+          // break its outline, and three jewel colors punctuate the gold.
+          for (const [index, [x0, z0, x1, z1, level]] of [
+            [-0.43, -0.34, -0.08, -0.12, 0], [-0.04, -0.38, 0.34, -0.16, 0], [0.12, 0.08, 0.43, 0.31, 0],
+            [-0.35, 0.12, -0.02, 0.35, 0], [-0.16, -0.09, 0.2, 0.13, 1], [0.03, -0.27, 0.33, -0.07, 1],
+          ].entries() as IterableIterator<[number, [number, number, number, number, number]]>) {
+            const bottom = y - 0.5 + level * 0.105;
+            addTexturedCuboid(bucket, lx + x0, bottom, lz + z0, lx + x1, bottom + 0.095, lz + z1, DRAGON_HOARD_GOLD_TILE, DRAGON_HOARD_GOLD_TILE, DRAGON_HOARD_GOLD_TILE, index % 2 ? [1, 0.92, 0.62] : [1, 1, 1], environment);
+          }
+          for (const [stack, [dx, dz, count]] of [[-0.29, -0.02, 3], [-0.1, 0.26, 5], [0.3, -0.04, 4], [0.23, 0.29, 2], [-0.38, -0.28, 2]].entries() as IterableIterator<[number, [number, number, number]]>) {
+            for (let coin = 0; coin < count; coin += 1) {
+              const offset = (coin + stack) % 2 ? 0.012 : -0.008;
+              const bottom = y - 0.5 + coin * 0.045;
+              addTexturedCuboid(bucket, lx + dx - 0.075 + offset, bottom, lz + dz - 0.075, lx + dx + 0.075 + offset, bottom + 0.04, lz + dz + 0.075, DRAGON_HOARD_COIN_TILE, DRAGON_HOARD_COIN_TILE, DRAGON_HOARD_GOLD_TILE, [1, 1, 1], environment);
+            }
+          }
+          for (const [index, [dx, dy, dz, tint]] of [
+            [-0.2, -0.22, -0.22, [1, 0.45, 0.56]], [0.07, -0.12, 0.03, [0.48, 1, 0.94]], [0.3, -0.28, 0.2, [0.72, 0.58, 1]],
+          ].entries() as IterableIterator<[number, [number, number, number, [number, number, number]]]>) {
+            addTexturedCuboid(buckets.emissive, lx + dx - 0.055, y + dy - 0.055, lz + dz - 0.055, lx + dx + 0.055, y + dy + 0.055, lz + dz + 0.055, DRAGON_HOARD_JEWEL_TILE, DRAGON_HOARD_JEWEL_TILE, DRAGON_HOARD_JEWEL_TILE, tint, 0.9);
+            if (index === 1) addTexturedCuboid(bucket, lx + dx - 0.09, y + dy - 0.07, lz + dz - 0.09, lx + dx + 0.09, y + dy - 0.045, lz + dz + 0.09, DRAGON_HOARD_GOLD_TILE, DRAGON_HOARD_GOLD_TILE, DRAGON_HOARD_GOLD_TILE, [1, 1, 1], environment);
+          }
           continue;
         }
         if (definition.shape === "lightning-bug-jar") {

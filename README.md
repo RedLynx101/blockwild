@@ -1,6 +1,6 @@
 # Blockwild
 
-Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 biomes, cave networks, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.4.4 Harbor Homecoming**.
+Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 biomes, cave networks, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.4.5 Dragon Renaissance**.
 
 The project is a real game rather than a voxel-rendering demo. You can mine, build, craft, smelt, farm, fight, collect field notes, manage several worlds, and carry those worlds between browsers with export files.
 
@@ -8,7 +8,13 @@ The project is a real game rather than a voxel-rendering demo. You can mine, bui
 
 ![Blockwild field guide with all 167 rendered creatures](public/creatures/blockwild-creatures.svg)
 
-The integrated creature-design pass expands the Courser family with Rimehoof, Sunscar, Mirestride, and Starbough ecological breeds plus the forge-built Deepgear Courser. It also rebuilds the four dragon families, birds, pets, crabs, mosslings, foxes, harts, deer, longhorns, terrapins, and other core wildlife, while preserving one production-model path for gameplay, Bestiary portraits, and visual audits.
+The integrated creature-design pass expands the Courser family with Rimehoof, Sunscar, Mirestride, and Starbough ecological breeds plus the forge-built Deepgear Courser. It also gives all six dragon families production stage forms, rebuilds birds, pets, crabs, mosslings, foxes, harts, deer, longhorns, terrapins, and other core wildlife, and preserves one model path for gameplay, Bestiary portraits, and visual audits.
+
+## v1.4.5 Dragon Renaissance
+
+Dragon Renaissance treats dragons as six related species rather than six palettes. Fire, Steel, Sea, Gold, and Silver adults have been rebuilt around distinct silhouettes, while the existing Ice adult remains intact. Every family now develops through authored cute hatchling and juvenile forms before reaching its adult plan, and the shared rig adds calmer idle life, more convincing wing and tail follow-through, and sharper attack anticipation without accumulating transform drift.
+
+Dragon tack and armor follow each body instead of floating as generic boxes. The related inventory art, scale equipment, panniers, saddle, and layered gold hoards are readable at their actual UI sizes. Lairs are substantially larger, reproductively mature dragons guarantee a preserved egg when defeated, loose eggs survive lava and persist for at least one configured world day, and progressive Bestiary notes teach the whole path from first encounter to incubation, bonding, shoulder carry, riding, breeding, and scale husbandry.
 
 ## v1.4.4 Harbor Homecoming
 

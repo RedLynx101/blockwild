@@ -2,6 +2,15 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.4.5 - Dragon Renaissance - 2026-07-12
+
+- Rebuilt the adult Fire, Steel, Sea, Gold, and Silver Dragon production rigs from their silhouettes outward while preserving the established adult Ice Dragon. Each family now has its own anatomy, wing language, head profile, tail treatment, materials, and fitted field gear rather than sharing a palette-swapped body plan.
+- Added authored stage-one and stage-two forms for every dragon family. Hatchlings use larger expressive features, shorter proportions, reduced crests and wings, and species-specific juvenile details while retaining the same save-compatible lifecycle and stage-one shoulder carry.
+- Expanded the dragon pose system with non-accumulating idle, locomotion, flight, attack, and follow-through motion across the chest, neck, head, jaw, wings, legs, tail, crests, and equipment.
+- Reworked Dragonflight tack, panniers, type-fitted armor modules, dragon-scale equipment icons, and hoard presentation. Dragon Gold Piles now read as layered coins, ingots, gemstones, and scattered wealth in-world and at real inventory sizes.
+- Greatly enlarged generated dragon lairs while keeping their cross-chunk plans deterministic and bounded. Mature stage-three-or-older dragons now leave at least one lineage-preserving egg when defeated; loose dragon eggs survive lava and remain in the world for at least one complete configured day/night cycle.
+- Expanded staged Bestiary field notes from first sight through combat, egg recovery, incubation, hatching, bonding, shoulder carry, feeding, growth, riding, equipment, breeding, and renewable scale care.
+
 ## 1.4.4 - Harbor Homecoming - 2026-07-12
 
 - Restored the same host-owned health, hunger, quests, unlocks, respawn point, and bounded personal progression whether a guest joins from the title screen or from a running world.

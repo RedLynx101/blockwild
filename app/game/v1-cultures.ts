@@ -428,6 +428,8 @@ export type SeaDragonNestPlan = Readonly<{
   questEventId: "sea-dragon-nest-discovered";
 }>;
 
+export const SEA_DRAGON_NEST_MAX_RADIUS = 40;
+
 /** One rare abyssal nest candidate per 48x48-chunk region. */
 export function planSeaDragonNest(input: Readonly<{
   seed: string;
@@ -451,7 +453,10 @@ export function planSeaDragonNest(input: Readonly<{
       y: Math.max(-58, Math.min(10, Math.floor(input.oceanFloorY) + 2)),
       z: input.regionZ * regionSize + 128 + Math.floor(unit(salt, "z") * (regionSize - 256)),
     },
-    radius: 11 + guardianStage * 2,
+    // A sea-dragon home is an abyssal arena rather than a small reef ring.
+    // The 34/37/40-block radii roughly quadruple its former footprint while
+    // remaining far inside the 48-chunk regional spacing contract.
+    radius: 25 + guardianStage * 3,
     guardianStage,
     guardianSex,
     eggs: guardianSex === "female" ? 1 + (unit(salt, "eggs") > 0.72 ? 1 : 0) : 0,

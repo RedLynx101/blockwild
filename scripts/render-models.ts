@@ -4,9 +4,10 @@ import { pathToFileURL } from "node:url";
 import * as THREE from "three";
 import { createButterflyVisual } from "../app/game/butterflies.ts";
 import { INSPECTOR_MODEL_SPECS, assertModelSpec, type ModelBox, type ModelSpec } from "../app/game/model-specs.ts";
-import { createMobVisual, createSkeletonArrowVisual } from "../app/game/mob-models.ts";
-import { BUTTERFLY_ORDER, CORE_MOB_ORDER, MOB_DEFS, type ButterflyKind, type CoreMobKind, type DragonKind } from "../app/game/mobs.ts";
+import { applyDragonPose, createMobVisual, createSkeletonArrowVisual } from "../app/game/mob-models.ts";
+import { BUTTERFLY_ORDER, CORE_MOB_ORDER, DRAGON_ORDER, MOB_DEFS, type ButterflyKind, type CoreMobKind, type DragonKind } from "../app/game/mobs.ts";
 import { BlockPlayerModel, type PlayerAnimation } from "../app/game/player-model.ts";
+import { GAME_VERSION } from "../app/game/version.ts";
 
 export type ViewName = "iso" | "front" | "side";
 type Point2 = { x: number; y: number };
@@ -263,6 +264,30 @@ export function createMobInspectionSpecs(): InspectionModelSpec[] {
       inspection: { source: "MobVisual", mob: kind },
     });
     disposeObject(runtime);
+    return spec;
+  });
+}
+
+/** Readable, normalized inspection captures for one authored dragon life stage. */
+export function createDragonLifeStageInspectionSpecs(stage: 1 | 2 | 3 | 4 | 5): InspectionModelSpec[] {
+  return DRAGON_ORDER.map((kind, index) => {
+    const model = createMobVisual(kind, -14_500 - index);
+    applyDragonPose(model.visual, {
+      timeSeconds: stage <= 2 ? 0.8 : 1.1,
+      stage,
+      mode: stage === 1 ? "idle" : "fly",
+      movement: stage === 1 ? 0 : 0.35,
+      sex: index % 2 === 0 ? "female" : "male",
+    });
+    model.group.updateMatrixWorld(true);
+    const spec = objectToInspectionSpec(model.group, {
+      id: `${kind}-stage-${stage}`,
+      label: `${MOB_DEFS[kind].name} · Stage ${stage}`,
+      category: "mob",
+      front: "-z",
+      inspection: { source: "MobVisual", mob: kind },
+    });
+    disposeObject(model.group);
     return spec;
   });
 }
@@ -645,7 +670,7 @@ function renderPortraitSheet(specs: readonly InspectionModelSpec[], rendered: Re
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
   <rect width="100%" height="100%" fill="#0c100e"/>
-  <text x="28" y="43" fill="#e5bd68" font-family="ui-sans-serif, system-ui, sans-serif" font-size="26" font-weight="900" letter-spacing="1.8">BLOCKWILD FIELD GUIDE · V1.3.5</text>
+  <text x="28" y="43" fill="#e5bd68" font-family="ui-sans-serif, system-ui, sans-serif" font-size="26" font-weight="900" letter-spacing="1.8">BLOCKWILD FIELD GUIDE · V${GAME_VERSION}</text>
   <text x="28" y="70" fill="#99a79e" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">Production creature models · front three-quarter portraits · ${specs.length} specimens</text>
   ${tiles}
 </svg>`;

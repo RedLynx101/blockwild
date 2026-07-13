@@ -16,6 +16,19 @@ export const DRAGON_FULL_GROWTH_DAYS = DRAGON_DAYS_PER_STAGE * DRAGON_STAGE_COUN
 export const DRAGON_SCALE_SHED_TICKS = DRAGON_TICKS_PER_DAY * 3;
 export const DRAGON_BREED_COOLDOWN_TICKS = DRAGON_TICKS_PER_DAY * 2;
 export const DRAGON_EGG_INCUBATION_TICKS = 7_200;
+export const DRAGON_BREEDING_STAGE = 3 as const;
+
+/**
+ * Portable eggs are heirloom drops, not ordinary cleanup fodder. The engine
+ * converts this tick policy through the world's configured day length so an
+ * egg remains recoverable for at least one complete dawn-to-dawn cycle.
+ */
+export const DRAGON_EGG_DROP_POLICY = Object.freeze({
+  fireImmune: true,
+  lavaImmune: true,
+  minimumLifetimeTicks: DRAGON_TICKS_PER_DAY,
+  maximumDeathClutch: 3,
+} as const);
 
 export type DragonType = "fire" | "ice" | "steel" | "sea" | "gold" | "silver";
 export type DragonKind = `${DragonType}-dragon`;
@@ -81,6 +94,11 @@ export type DragonEgg = Readonly<{
   requiredTicks: number;
   wild: boolean;
   lairId: string | null;
+}>;
+
+export type DragonEggDropMetadata = Readonly<{
+  kind: "dragon-egg";
+  egg: DragonEgg;
 }>;
 
 export type DragonSpawnEgg = Readonly<{
@@ -488,8 +506,38 @@ export function canBreedDragons(first: DragonState, second: DragonState) {
     && first.alive && second.alive
     && first.type === second.type
     && first.sex !== second.sex
-    && first.stage >= 3 && second.stage >= 3
+    && first.stage >= DRAGON_BREEDING_STAGE && second.stage >= DRAGON_BREEDING_STAGE
     && first.breedCooldownTicks <= 0 && second.breedCooldownTicks <= 0;
+}
+
+/** Read a portable egg payload without accepting placed/incubating egg state. */
+export function dragonEggFromDropMetadata(value: unknown): DragonEgg | null {
+  if (!value || typeof value !== "object") return null;
+  const metadata = value as Partial<DragonEggDropMetadata>;
+  if (metadata.kind !== "dragon-egg" || !metadata.egg || typeof metadata.egg !== "object") return null;
+  const egg = metadata.egg as Partial<DragonEgg>;
+  if (egg.schemaVersion !== DRAGON_SCHEMA_VERSION
+    || !DRAGON_TYPES.includes(egg.type as DragonType)
+    || !DRAGON_SEXES.includes(egg.sex as DragonSex)
+    || typeof egg.eggId !== "string" || !egg.eggId.trim()
+    || typeof egg.geneticSeed !== "number" || !Number.isFinite(egg.geneticSeed)
+    || typeof egg.laidAtTick !== "number" || !Number.isFinite(egg.laidAtTick)
+    || typeof egg.incubationTicks !== "number" || !Number.isFinite(egg.incubationTicks)
+    || typeof egg.requiredTicks !== "number" || !Number.isFinite(egg.requiredTicks)
+    || !Array.isArray(egg.parentIds) || egg.parentIds.length !== 2
+    || typeof egg.wild !== "boolean"
+    || !(egg.lairId === null || typeof egg.lairId === "string")) return null;
+  return egg as DragonEgg;
+}
+
+export function dragonEggMinimumDropLifetimeSeconds(dayLengthMinutes: number) {
+  const finiteMinutes = Number.isFinite(dayLengthMinutes) ? dayLengthMinutes : 20;
+  return Math.max(60, finiteMinutes * 60) * (DRAGON_EGG_DROP_POLICY.minimumLifetimeTicks / DRAGON_TICKS_PER_DAY);
+}
+
+export function dragonEggDropIsProtected(metadata: unknown, ageSeconds: number, dayLengthMinutes: number) {
+  return dragonEggFromDropMetadata(metadata) !== null
+    && Math.max(0, Number.isFinite(ageSeconds) ? ageSeconds : 0) < dragonEggMinimumDropLifetimeSeconds(dayLengthMinutes);
 }
 
 export function createDragonEgg(
@@ -737,6 +785,33 @@ export function createLairEggClutch(state: DragonState, seed = state.geneticSeed
   }));
 }
 
+/**
+ * Every dragon old enough to breed leaves a bounded, lineage-preserving egg
+ * clutch when defeated. This is separate from eggs already present in female
+ * lairs: a corpse may yield one legacy egg regardless of sex, while only a
+ * stage-five female can yield one or two additional legacy eggs.
+ */
+export function createDragonDeathEggClutch(
+  state: DragonState,
+  deathTick = 0,
+  seed = state.geneticSeed,
+): DragonEgg[] {
+  if (state.stage < DRAGON_BREEDING_STAGE) return [];
+  const count = state.stage === 5 && state.sex === "female"
+    ? 1 + Math.floor(seededRoll(seed, 29) * DRAGON_EGG_DROP_POLICY.maximumDeathClutch)
+    : 1;
+  const boundedCount = Math.min(DRAGON_EGG_DROP_POLICY.maximumDeathClutch, count);
+  const laidAtTick = safeInteger(deathTick);
+  return Array.from({ length: boundedCount }, (_, index) => createDragonEgg(state.type, {
+    eggId: `${state.dragonId}:legacy:${laidAtTick}:${index + 1}`,
+    geneticSeed: mixSeed(seed, state.geneticSeed, laidAtTick, index + 1),
+    parentIds: [state.dragonId, null],
+    laidAtTick,
+    wild: true,
+    lairId: state.home?.lairId ?? null,
+  }));
+}
+
 /** Deterministic corpse/lair loot; large dragons yield materially plentiful stacks. */
 export function rollDragonLoot(state: DragonState, seed = state.geneticSeed): DragonLoot[] {
   const stage = state.stage;
@@ -748,8 +823,12 @@ export function rollDragonLoot(state: DragonState, seed = state.geneticSeed): Dr
     { item: typeLootItem(state.type, "Skull"), count: 1, metadata: { type: state.type, stage, sex: state.sex } },
   ];
   if (stage >= 2) loot.push({ item: typeLootItem(state.type, "Heart"), count: 1 });
-  const clutch = createLairEggClutch(state, seed);
-  if (clutch.length) loot.push({ item: typeLootItem(state.type, "Egg"), count: clutch.length, metadata: { lairId: state.home?.lairId ?? "unknown" } });
+  const clutch = createDragonDeathEggClutch(state, 0, seed);
+  if (clutch.length) loot.push({
+    item: typeLootItem(state.type, "Egg"),
+    count: clutch.length,
+    metadata: { lairId: state.home?.lairId ?? "unknown", parentId: state.dragonId, stage, sex: state.sex },
+  });
   return loot;
 }
 

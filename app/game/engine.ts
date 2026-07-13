@@ -61,8 +61,9 @@ import {
 } from "./world";
 import { BUTTERFLY_ORDER, MOB_DEFS, MOB_ORDER, type ButterflyKind, type CoreMobKind, type MobDefinition, type MobKind } from "./mobs";
 import { createHeldToolSpec } from "./model-specs";
-import { applyCompanionPose, applyDragonPose, applyOceanCreaturePose, applyWildlifePose, createMobVisual, createSentientLodVisual } from "./mob-models";
+import { applyCompanionPose, applyDragonLifeStage, applyDragonPose, applyOceanCreaturePose, applyWildlifePose, createMobVisual, createSentientLodVisual } from "./mob-models";
 import {
+  DRAGON_TYPES,
   DRAGON_RIDER_CONTROLS,
   attachDragonChest,
   bondDragonHatchling,
@@ -71,10 +72,14 @@ import {
   canMountDragon,
   chooseDragonAiIntent,
   chooseDragonAttack,
+  createDragonDeathEggClutch,
   createDragonEgg,
   createDragonState,
   dragonAttackPlan,
   dragonCargoSlots,
+  dragonEggDropIsProtected,
+  dragonEggFromDropMetadata,
+  dragonKindForType,
   equipDragonArmor,
   equipDragonSaddle,
   feedDragon,
@@ -1630,12 +1635,12 @@ function placedLeviathanEggMetadata(metadata: Record<string, unknown> | undefine
   return egg as LeviathanEggMetadata;
 }
 
-function placedDragonEggMetadata(metadata: Record<string, unknown> | undefined, requirePlaced = true): DragonEgg | null {
+export function placedDragonEggMetadata(metadata: Record<string, unknown> | undefined, requirePlaced = true): DragonEgg | null {
   if (!metadata || (requirePlaced ? metadata.kind !== "placed-dragon-egg" : metadata.kind !== "placed-dragon-egg" && metadata.kind !== "dragon-egg")) return null;
   if (!metadata.egg || typeof metadata.egg !== "object") return null;
   const egg = metadata.egg as Partial<DragonEgg>;
   if (egg.schemaVersion !== 1 || typeof egg.eggId !== "string"
-    || (egg.type !== "fire" && egg.type !== "ice" && egg.type !== "steel" && egg.type !== "sea")
+    || !DRAGON_TYPES.includes(egg.type as DragonType)
     || (egg.sex !== "female" && egg.sex !== "male")
     || typeof egg.geneticSeed !== "number" || !Number.isFinite(egg.geneticSeed)
     || typeof egg.incubationTicks !== "number" || !Number.isFinite(egg.incubationTicks)
@@ -6629,6 +6634,10 @@ export class VoxelEngine {
       if (action.status === "accepted" && (action.kind === "dragon-command" || action.kind === "dragon-shoulder" || action.kind === "dragon-harvest")
         && action.actorId === session.identity.id) {
         if (action.playerState) this.applyLocalPlayerSessionSnapshot(action.playerState, true);
+        if (action.kind === "dragon-harvest" && action.targetId !== undefined) {
+          const dragon = this.mobs.find((candidate) => candidate.id === action.targetId);
+          if (dragon) this.recordBestiaryMilestone(dragon.kind, "scale-harvested");
+        }
         if (action.message) this.events.onToast(action.message);
         this.emitHud(true);
         return;
@@ -10030,6 +10039,7 @@ export class VoxelEngine {
     mob.name = next.customName || mob.definition.name;
     if (next.tamed && next.stage >= 3) this.recordBestiaryMilestone(mob.kind, "stage-3");
     this.applyMobScale(mob, next.growthScale);
+    applyDragonLifeStage(mob.visual, next.stage);
     const visibleFor = (fragment: string, visible: boolean) => mob.visual.traverse((object) => {
       if (object.name.includes(fragment)) object.visible = visible;
     });
@@ -10682,6 +10692,7 @@ export class VoxelEngine {
       drop.pickupDelay = Number.POSITIVE_INFINITY;
       drop.velocity.set(0, 0, 0);
       drop.mesh.position.set(placement.x, placement.y - 0.16, placement.z);
+      this.recordBestiaryMilestone(dragonKindForType(type), "egg-recovered");
       this.consumeSelectedUnit();
       this.placeCooldown = 0.3;
       this.heldUse = 1;
@@ -12962,6 +12973,7 @@ export class VoxelEngine {
       if (index >= 0) this.removeDrop(index);
       const leftover = this.addItem(item, 1, undefined, undefined, metadata);
       if (leftover > 0) this.spawnDrop(item, leftover, position, undefined, metadata);
+      else this.recordBestiaryMilestone(dragonKindForType(dragonEgg.type), "egg-recovered");
       this.targetEggDrop = null;
       this.miningProgress = 0;
       this.audio.play("break", BlockId.CrystalBlock);
@@ -13859,6 +13871,7 @@ export class VoxelEngine {
       return 0;
     }
     this.applyDragonState(dragon, { ...result.state, scaleReserve: result.state.scaleReserve + leftover });
+    this.recordBestiaryMilestone(dragon.kind, "scale-harvested");
     this.audio.play("pickup");
     this.events.onToast(`${collected} ${titleCaseDragon(result.state.type)} scale${collected === 1 ? "" : "s"} collected without harming ${dragon.name}.`);
     this.saveSoon();
@@ -16254,6 +16267,7 @@ export class VoxelEngine {
       const attackProgress = attack ? 1 - attack.remaining / Math.max(0.01, attack.duration) : 0;
       applyDragonPose(mob.visual, {
         timeSeconds: mob.age,
+        stage: mob.dragonState.stage,
         mode,
         movement: Math.min(1, moved * 4.5),
         attackProgress,
@@ -18061,22 +18075,17 @@ export class VoxelEngine {
     const position = mob.group.position.clone();
     if (mob.dragonState) {
       const corpseState: DragonState = { ...mob.dragonState, health: 0, alive: false };
-      for (const drop of rollDragonLoot(corpseState, (corpseState.geneticSeed ^ Math.floor(mob.age * 20)) >>> 0)) {
+      const deathTick = Math.floor((this.day + this.worldTime) * 24_000);
+      const deathSeed = (corpseState.geneticSeed ^ Math.floor(mob.age * 20)) >>> 0;
+      const legacyEggs = createDragonDeathEggClutch(corpseState, deathTick, deathSeed);
+      for (const drop of rollDragonLoot(corpseState, deathSeed)) {
         const item = dragonLootItemCode(drop.item);
         if (item === null) continue;
-        if (drop.item.endsWith("DragonEgg")) {
-          for (let eggIndex = 0; eggIndex < drop.count; eggIndex += 1) {
-            const egg = createDragonEgg(corpseState.type, {
-              eggId: `${corpseState.dragonId}:fallen-clutch:${this.day}:${eggIndex}`,
-              geneticSeed: Math.imul(corpseState.geneticSeed ^ eggIndex ^ this.day, 0x85ebca6b) >>> 0,
-              parentIds: [corpseState.dragonId, null],
-              wild: true,
-              lairId: corpseState.home?.lairId ?? null,
-              laidAtTick: Math.floor((this.day + this.worldTime) * 24_000),
-            });
-            this.spawnDrop(item, 1, position, undefined, { kind: "dragon-egg", egg: egg as unknown as Record<string, unknown> });
-          }
-        } else this.spawnDrop(item, drop.count, position, undefined, drop.metadata ? { ...drop.metadata } : undefined);
+        if (!drop.item.endsWith("DragonEgg")) this.spawnDrop(item, drop.count, position, undefined, drop.metadata ? { ...drop.metadata } : undefined);
+      }
+      const eggItem = dragonEggItem(corpseState.type);
+      for (const egg of legacyEggs) {
+        this.spawnDrop(eggItem, 1, position, undefined, { kind: "dragon-egg", egg: egg as unknown as Record<string, unknown> });
       }
       this.audio.playDragon(corpseState.type, "death", corpseState.stage, position);
     } else for (const drop of mob.definition.drops) {
@@ -18104,6 +18113,7 @@ export class VoxelEngine {
     this.addXp(mob.definition.xp);
     this.bestiary[mob.kind].seen = true;
     this.bestiary[mob.kind].kills += 1;
+    if (mob.dragonState?.stage && mob.dragonState.stage >= 3) this.recordBestiaryMilestone(mob.kind, "mature-defeated");
     this.dispatchQuestEvent({ type: "mob-killed", mobKind: mob.kind, at: Date.now() });
     if (mob.dragonState?.stage && mob.dragonState.stage >= 4) this.dispatchQuestEvent({ type: "custom", eventId: "dragon-killed-stage-4-plus", at: Date.now() });
     if (mob.dragonState?.stage === 5) this.dispatchQuestEvent({ type: "custom", eventId: "dragon-killed-stage-5", at: Date.now() });
@@ -18250,7 +18260,14 @@ export class VoxelEngine {
       firstDrop = nearby;
     }
     while (count > 0) {
-      if (this.drops.length >= 120) this.removeDrop(0);
+      if (this.drops.length >= 120) {
+        const removableIndex = this.drops.findIndex((drop) => !dragonEggDropIsProtected(
+          drop.metadata,
+          drop.age,
+          this.worldOptions.dayLengthMinutes,
+        ));
+        if (removableIndex >= 0) this.removeDrop(removableIndex);
+      }
       const amount = Math.min(count, stackLimit);
       let mesh: THREE.Object3D;
       let ownsVisual = false;
@@ -18295,6 +18312,23 @@ export class VoxelEngine {
       drop.mesh.position.z += drop.velocity.z * dt;
       drop.mesh.rotation.y += dt * 2.5;
       drop.mesh.position.y += Math.sin(drop.age * 4) * 0.001;
+      const portableDragonEgg = dragonEggFromDropMetadata(drop.metadata);
+      if (portableDragonEgg) {
+        const eggCellY = Math.floor(drop.mesh.position.y + 0.5);
+        const eggCell = this.world.getBlock(
+          Math.floor(drop.mesh.position.x + 0.5),
+          eggCellY,
+          Math.floor(drop.mesh.position.z + 0.5),
+        );
+        if (eggCell === BlockId.Lava) {
+          // Dragon shells float intact near the lava surface instead of
+          // sinking beneath a non-solid source cell and becoming unrecoverable.
+          drop.mesh.position.y = Math.max(drop.mesh.position.y, eggCellY + 0.32);
+          drop.velocity.y = Math.max(0.28, drop.velocity.y);
+          drop.velocity.x *= 0.9;
+          drop.velocity.z *= 0.9;
+        }
+      }
       drop.mesh.traverse((object) => {
         if (object.userData.jarBug) {
           const baseY = Number(object.userData.baseY) || 0;
@@ -18420,13 +18454,15 @@ export class VoxelEngine {
         const acquired = beforeCount - leftover;
         if (acquired > 0) {
           this.audio.play("pickup");
+          if (portableDragonEgg) this.recordBestiaryMilestone(dragonKindForType(portableDragonEgg.type), "egg-recovered");
           const itemId = resourceIdForItem(drop.item) ?? commerceKeyForItem(drop.item);
           if (itemId) this.dispatchQuestEvent({ type: "item-acquired", itemId, count: acquired, at: Date.now() });
         }
         drop.count = leftover;
         if (drop.count <= 0) { this.removeDrop(index); this.saveSoon(); this.emitHud(true); continue; }
       }
-      if (drop.age > 120 || distance > 85) this.removeDrop(index);
+      const protectedDragonEgg = dragonEggDropIsProtected(drop.metadata, drop.age, this.worldOptions.dayLengthMinutes);
+      if (!protectedDragonEgg && (drop.age > 120 || distance > 85)) this.removeDrop(index);
     }
   }
 

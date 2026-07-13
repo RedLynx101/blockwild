@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import * as THREE from "three";
-import { applyDragonPose, createMobVisual, DRAGON_MODEL_CONTRACT } from "../app/game/mob-models.ts";
+import { applyDragonLifeStage, applyDragonPose, createMobVisual, DRAGON_MODEL_CONTRACT } from "../app/game/mob-models.ts";
 import { DRAGON_ORDER } from "../app/game/mobs.ts";
 import { createMobInspectionSpecs, renderModelPortrait } from "../scripts/render-models.ts";
 
@@ -18,7 +18,12 @@ test("every dragon shares a complete named animation and equipment rig", () => {
     const type = kind.replace("-dragon", "");
     const model = createMobVisual(kind, 300 + index);
     assert.equal(model.group.userData.dragonType, type);
-    assert.equal(model.group.userData.animatedRig, "dragon-v1");
+    assert.equal(model.group.userData.animatedRig, "dragon-v2");
+    assert.equal(model.visual.userData.authoredDragonLifeStages, 3);
+    assert.equal(named(model.group, `${kind}-adult-form`).visible, true);
+    assert.equal(named(model.group, `${kind}-stage-1-form`).visible, false);
+    assert.equal(named(model.group, `${kind}-stage-2-form`).visible, false);
+    assert.equal(named(model.group, `${kind}-stage-1-form`).userData.shoulderCarryCompatible, true);
     assert.equal(model.parts.wings.length, 2);
     assert.equal(model.parts.legs.length, 4);
     assert.equal(model.parts.head.length, 1);
@@ -50,6 +55,78 @@ test("every dragon shares a complete named animation and equipment rig", () => {
   }
 });
 
+test("all six dragons use authored hatchling and fledgling silhouettes before their mature form", () => {
+  for (const [index, kind] of DRAGON_ORDER.entries()) {
+    const model = createMobVisual(kind, 840 + index);
+    const adult = named(model.group, `${kind}-adult-form`);
+    const stageOne = named(model.group, `${kind}-stage-1-form`);
+    const stageTwo = named(model.group, `${kind}-stage-2-form`);
+    assert.equal(applyDragonLifeStage(model.visual, 1), true);
+    assert.equal(adult.visible, false);
+    assert.equal(stageOne.visible, true);
+    assert.equal(stageTwo.visible, false);
+    let stageOneMeshes = 0;
+    stageOne.traverse((object) => { if (object instanceof THREE.Mesh) stageOneMeshes += 1; });
+    assert.ok(stageOneMeshes >= 45, `${kind} hatchling should be an authored model, not a scale-only adult (${stageOneMeshes})`);
+    assert.ok(named(stageOne, `${kind}-hatchling-oversize-head`));
+    assert.ok(named(stageOne, `${kind}-hatchling-left-wide-eye`));
+
+    assert.equal(applyDragonLifeStage(model.visual, 2), true);
+    assert.equal(adult.visible, false);
+    assert.equal(stageOne.visible, false);
+    assert.equal(stageTwo.visible, true);
+    let stageTwoMeshes = 0;
+    stageTwo.traverse((object) => { if (object instanceof THREE.Mesh) stageTwoMeshes += 1; });
+    assert.ok(stageTwoMeshes >= 45, `${kind} fledgling should retain a complete authored model (${stageTwoMeshes})`);
+    assert.notEqual(stageOne.scale, stageTwo.scale, "life-stage forms are independent objects");
+    named(stageTwo, `${kind}-fledgling-adolescent-back-crest-1`);
+    const hatchlingWing = named(stageOne, `${kind}-hatchling-left-wing-arm`) as THREE.Mesh;
+    const fledglingWing = named(stageTwo, `${kind}-fledgling-left-wing-arm`) as THREE.Mesh;
+    hatchlingWing.geometry.computeBoundingBox();
+    fledglingWing.geometry.computeBoundingBox();
+    assert.ok((fledglingWing.geometry.boundingBox?.max.x ?? 0) > (hatchlingWing.geometry.boundingBox?.max.x ?? 0), `${kind} Stage 2 wings must be structurally longer`);
+
+    assert.equal(applyDragonLifeStage(model.visual, 3), true);
+    assert.equal(adult.visible, true);
+    assert.equal(stageOne.visible, false);
+    assert.equal(stageTwo.visible, false);
+  }
+});
+
+test("young forms inherit a distinct elemental motif from every mature species", () => {
+  const signatures = {
+    "fire-dragon": ["hatchling-ember-tuft-2", "hatchling-ember-tail-lantern"],
+    "ice-dragon": ["hatchling-rime-crown-2", "hatchling-snowcap-brow"],
+    "steel-dragon": ["hatchling-rounded-visor", "hatchling-little-hammer-tail"],
+    "sea-dragon": ["hatchling-left-cheek-frill-1", "hatchling-left-tide-tail-fin"],
+    "gold-dragon": ["hatchling-sun-petal-3", "hatchling-sun-button-tail"],
+    "silver-dragon": ["hatchling-left-moon-ear", "hatchling-left-crescent-tail-tip"],
+  } as const;
+  for (const [kind, parts] of Object.entries(signatures)) {
+    const model = createMobVisual(kind as (typeof DRAGON_ORDER)[number], 921);
+    for (const suffix of parts) named(model.group, `${kind}-${suffix}`);
+  }
+});
+
+test("each species has bespoke riding tack, panniers, and armor silhouettes", () => {
+  const tack = {
+    "fire-dragon": ["obsidian-pommel", "ember-ward"],
+    "ice-dragon": ["crystal-saddle-pommel", "rime-saddle-blanket"],
+    "steel-dragon": ["command-pommel", "left-control-lever"],
+    "sea-dragon": ["tideglass-pommel", "left-kelp-rein"],
+    "gold-dragon": ["sun-throne-pommel", "left-sun-wing-rest"],
+    "silver-dragon": ["crescent-pommel", "left-moon-hook"],
+  } as const;
+  for (const [kind, pieces] of Object.entries(tack)) {
+    const model = createMobVisual(kind as (typeof DRAGON_ORDER)[number], 950);
+    applyDragonPose(model.visual, { timeSeconds: 0.7, stage: 5, equipment: { saddle: true, leftChest: true, rightChest: true, armor: { head: true, neck: true, body: true, tail: true } } });
+    for (const piece of pieces) named(model.group, `${kind}-${piece}`);
+    for (const attachment of ["left-cargo", "right-cargo", "head-armor", "neck-armor", "body-armor", "tail-armor"]) {
+      assert.equal(named(model.group, `${kind}-${attachment}`).visible, true);
+    }
+  }
+});
+
 test("pose hooks articulate jaws, wings, tails, legs, breathing, attacks, sex, and equipment", () => {
   const model = createMobVisual("steel-dragon", 9);
   const root = model.group;
@@ -62,6 +139,7 @@ test("pose hooks articulate jaws, wings, tails, legs, breathing, attacks, sex, a
 
   assert.equal(applyDragonPose(root, {
     timeSeconds: 1.25,
+    stage: 5,
     mode: "breath",
     movement: 1,
     attackProgress: 0.55,
@@ -89,6 +167,29 @@ test("pose hooks articulate jaws, wings, tails, legs, breathing, attacks, sex, a
   assert.equal(named(root, "steel-dragon-loaded-metal-spear-head").visible, true);
   assert.equal(named(root, "steel-dragon-male-horn-rack").visible, true);
   assert.equal(named(root, "steel-dragon-saddle").visible, true, "pose-only updates preserve equipped visuals");
+});
+
+test("dragon pose transforms are stable across repeated calls and animate both young stages", () => {
+  const model = createMobVisual("sea-dragon", 944);
+  const root = model.visual;
+  const pose = { timeSeconds: 3.75, stage: 1 as const, mode: "fly" as const, movement: 0.72, attackProgress: 0.38, bank: 0.2, pitch: -0.1 };
+  applyDragonPose(root, pose);
+  const hatchlingWing = named(root, "sea-dragon-hatchling-left-wing-pivot");
+  const hatchlingTail = named(root, "sea-dragon-hatchling-tail-3-pivot");
+  const first = [hatchlingWing.rotation.z, hatchlingTail.rotation.y, hatchlingTail.position.x, hatchlingTail.scale.x];
+  applyDragonPose(root, pose);
+  assert.deepEqual([hatchlingWing.rotation.z, hatchlingTail.rotation.y, hatchlingTail.position.x, hatchlingTail.scale.x], first);
+  assert.equal(named(root, "sea-dragon-stage-1-form").visible, true);
+
+  applyDragonPose(root, { ...pose, stage: 2, timeSeconds: 4.2 });
+  const fledglingWing = named(root, "sea-dragon-fledgling-left-wing-pivot");
+  assert.equal(named(root, "sea-dragon-stage-1-form").visible, false);
+  assert.equal(named(root, "sea-dragon-stage-2-form").visible, true);
+  assert.notEqual(fledglingWing.rotation.z, 0);
+
+  applyDragonPose(root, { ...pose, stage: 5, mode: "melee", timeSeconds: 4.8 });
+  assert.equal(named(root, "sea-dragon-adult-form").visible, true);
+  assert.equal(named(root, "sea-dragon-stage-2-form").visible, false);
 });
 
 test("all six silhouettes carry distinct elemental anatomy in production portraits", () => {

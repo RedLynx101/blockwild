@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { BlockId, Item } from "../app/game/data";
 import {
   DRAGON_EGG_HATCH_RULES,
+  DRAGON_LAIR_MAX_PLACEMENTS,
   dragonLairCandidateForRegion,
   dragonLairMarkersForChunk,
   dragonLairPlacementsForChunk,
@@ -38,7 +39,16 @@ test("all subterranean dragon lairs are bounded, deterministic, guarded hoards",
     assert.equal(resolved.stage, 5);
     assert.equal(resolved.sex, "female");
     assert.ok(resolved.origin.y <= -16);
-    assert.ok(resolved.placements.length < 20_000, "lair planning stays bounded");
+    assert.ok(resolved.placements.length > 20_000, "stage-five lairs are materially larger than the former single cavern");
+    assert.ok(resolved.placements.length < DRAGON_LAIR_MAX_PLACEMENTS, "lair planning stays bounded");
+    assert.ok(resolved.bounds.max.x - resolved.bounds.min.x >= 64);
+    assert.ok(resolved.bounds.max.z - resolved.bounds.min.z >= 56);
+    for (const chamber of ["great-vault", "treasury", "rookery", "entrance"]) {
+      assert.ok(resolved.placements.some((entry) => entry.variant?.includes(chamber)), `${type} lair includes its ${chamber}`);
+    }
+    assert.ok(resolved.placements.every((entry) => entry.x >= resolved.bounds.min.x && entry.x <= resolved.bounds.max.x
+      && entry.y >= resolved.bounds.min.y && entry.y <= resolved.bounds.max.y
+      && entry.z >= resolved.bounds.min.z && entry.z <= resolved.bounds.max.z));
     assert.ok(resolved.placements.some((entry) => entry.block === expected[type].wall));
     assert.ok(resolved.placements.some((entry) => entry.block === BlockId.GoldBlock));
     assert.ok(resolved.placements.some((entry) => entry.block === BlockId.GoldPile));
@@ -51,6 +61,48 @@ test("all subterranean dragon lairs are bounded, deterministic, guarded hoards",
     assert.ok(guardian.tags?.includes("stage:5"));
     assert.ok(guardian.tags?.includes("permanent:true"));
     assert.deepEqual(planDragonLairForRegion({ ...input, regionX: Number(resolved.id.split(":")[2]), regionZ: Number(resolved.id.split(":")[3]) }), resolved);
+  }
+});
+
+test("stage-four and stage-five hoards sit on supported carved treasury floors", () => {
+  const representatives = [
+    { type: "fire", seed: "EMBER-FLOOR" },
+    { type: "steel", seed: "RIVET-FLOOR" },
+    { type: "gold", seed: "AURIC-FLOOR" },
+  ] as const;
+  for (const stage of [4, 5] as const) for (const representative of representatives) {
+    let plan = null;
+    for (let regionX = -12; regionX <= 48 && !plan; regionX += 1) {
+      plan = planDragonLairForRegion({
+        seed: `${representative.seed}-${stage}`,
+        regionX,
+        regionZ: 6,
+        forceType: representative.type,
+        forceStage: stage,
+        forceSex: "female",
+      });
+    }
+    assert.ok(plan, `${representative.type} stage-${stage} treasury should resolve`);
+    const byPosition = new Map(plan.placements.map((placement) => [`${placement.x},${placement.y},${placement.z}`, placement]));
+    const hoard = plan.placements.filter((placement) => placement.block === BlockId.GoldBlock || placement.block === BlockId.GoldPile);
+    const minimumAfterChests = stage === 5 ? 52 : 30;
+    assert.ok(hoard.length >= minimumAfterChests, `${representative.type} stage-${stage} retains its enlarged hoard count`);
+    assert.equal(new Set(hoard.map((placement) => `${placement.x},${placement.y},${placement.z}`)).size, hoard.length);
+    for (const placement of hoard) {
+      const below = byPosition.get(`${placement.x},${placement.y - 1},${placement.z}`);
+      const above = byPosition.get(`${placement.x},${placement.y + 1},${placement.z}`);
+      const upper = byPosition.get(`${placement.x},${placement.y + 2},${placement.z}`);
+      assert.equal(below?.variant, `${representative.type}-treasury-floor-support`, "every pile has an authored solid platform");
+      assert.equal(above?.block, BlockId.Air, "every pile has standing clearance");
+      assert.equal(above?.variant, `${representative.type}-treasury-clearance`);
+      assert.equal(upper?.block, BlockId.Air, "large piles and chests retain upper clearance");
+      assert.equal(upper?.variant, `${representative.type}-treasury-clearance-upper`);
+      const walkableNeighbor = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dz]) => {
+        const neighbor = byPosition.get(`${placement.x + dx},${placement.y},${placement.z + dz}`);
+        return neighbor?.block === BlockId.Air && neighbor.variant === `${representative.type}-treasury-floor`;
+      });
+      assert.equal(walkableNeighbor, true, "each hoard cell opens directly onto the carved treasury floor");
+    }
   }
 });
 
