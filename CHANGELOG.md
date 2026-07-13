@@ -2,6 +2,13 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.5.1 - The World Below - 2026-07-13
+
+- Reworked all nine World Below signature creature models in a second art pass: branched root-antlers and traveling gardens for Grazers; layered fins, light organs and streamers for Lanternrays; genuinely avian prism feathers for Swifts; mineral cartilage, webbed feet and fine gills for Newts; an overlapping mineral-current sail for Skimmers; articulated membrane fingers and roost claws for Ashnose Bats; hollow chime plates for Chimewings; ember-veined thermal wings for Cinder Kites; and a lower, fractured, splayed living-ore silhouette for Veinlings. Species-specific lantern, nose, tail, chime, vent, sail, and heart motion preserves those details in flight and at rest.
+- Kept later biome-decoration passes from replacing only the lower half of two-block meadow grass, and made submerged water and waterlogged-plant faces meet at exact block boundaries instead of inheriting the lowered surface-water edge. Slowed cultivated, orchard, sapling, and aquatic-flora growth schedules to one-fifth speed while doubling survival food expenditure for travel, sprinting, and natural healing.
+- Replaced the crowded three-column title workspace with a centered main menu and dedicated character and world submenus. All seven playable races now use distinct modeled nose silhouettes, including broad Dwarven, rounded Hearthkin and Confectkin, streamlined Atlantian, pointed Goblin and Wood Elf, and restrained Wayfarer profiles.
+- Added direct merchant quantity entry, ±1/±5 controls, safe Buy All and Sell All presets, exact order totals, and explanations for the active stock, purse, inventory, gold, space, or order limit. Every order still requires explicit confirmation, supports multi-stack quantities, and follows the same validated local and host-authoritative multiplayer path.
+
 ## 1.5.0 - The World Below - 2026-07-13
 
 - Added the `world-below-v15` generator for new worlds while retaining generator-v14 and older saves on an unchanged `legacy-v14` profile. The world remains Y -64 through 127 with sea level 32 and stable linear block indexing.
@@ -18,8 +25,6 @@ Named releases summarize player-visible changes and the compatibility work that 
 - Added distinct production rigs, grounded idle/walk/attack animation, regenerated Bestiary portraits, and spatial metal-breath, metallic-bark, and pressure-steam voices sourced from four supplied recordings.
 - Reworked dragon flight and combat around swept-back leg silhouettes, offset attack runs, species-aware distance bands, breakaways, lateral orbits, terrain clearance, and bounded sightline recovery instead of directly hovering above targets.
 - Added the supplied player-damage recording for immediate external hits at a restrained mix. Reduced both the lossless rain bed and its procedural support layer by exactly 15% without changing open-sky exposure or crossfades.
-- Reworked all nine World Below signature creature models in a second art pass: branched root-antlers and traveling gardens for Grazers; layered fins, light organs and streamers for Lanternrays; genuinely avian prism feathers for Swifts; mineral cartilage, webbed feet and fine gills for Newts; an overlapping mineral-current sail for Skimmers; articulated membrane fingers and roost claws for Ashnose Bats; hollow chime plates for Chimewings; ember-veined thermal wings for Cinder Kites; and a lower, fractured, splayed living-ore silhouette for Veinlings. Species-specific lantern, nose, tail, chime, vent, sail and heart motion now preserves those details in flight and at rest.
-- Kept later biome-decoration passes from replacing only the lower half of two-block meadow grass, and made submerged water and waterlogged-plant faces meet at exact block boundaries instead of inheriting the lowered surface-water edge. Slowed every cultivated, orchard, sapling, and aquatic-flora growth schedule to one-fifth speed, while doubling survival food expenditure for travel, sprinting, and natural healing.
 
 ## 1.4.5 - Dragon Renaissance - 2026-07-12
 

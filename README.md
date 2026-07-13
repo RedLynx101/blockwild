@@ -1,6 +1,6 @@
 # Blockwild
 
-Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.5.0 The World Below**.
+Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.5.1 The World Below**.
 
 The project is a real game rather than a voxel-rendering demo. You can mine, build, craft, smelt, farm, fight, collect field notes, manage several worlds, and carry those worlds between browsers with export files.
 
@@ -9,6 +9,12 @@ The project is a real game rather than a voxel-rendering demo. You can mine, bui
 ![Blockwild field guide with all 178 rendered creatures](public/creatures/blockwild-creatures.svg)
 
 The integrated creature-design pass expands the Courser family with Rimehoof, Sunscar, Mirestride, and Starbough ecological breeds plus the forge-built Deepgear Courser. It also gives all six dragon families production stage forms, rebuilds birds, pets, crabs, mosslings, foxes, harts, deer, longhorns, terrapins, and other core wildlife, and preserves one model path for gameplay, Bestiary portraits, and visual audits.
+
+## v1.5.1 The World Below
+
+This polish release integrates the three newest `design-1` commits. The nine World Below signature creatures receive a second authored model pass with distinct anatomy, secondary motion, and regenerated Bestiary portraits. Two-block meadow grass now survives later decoration as an intact pair, submerged water and waterlogged flora meet without false air seams, and one shared schedule slows crops, orchards, saplings, berry bushes, flowers, and aquatic plants to the intended pace. Survival travel, sprinting, and natural healing now consume food at the updated rates.
+
+The title screen is reorganized around a clean centered menu with dedicated character and world submenus, while all seven playable races gain distinct modeled face profiles. Merchant panels add direct quantities, ±1/±5 controls, safe Buy All and Sell All presets, exact limiting-factor explanations, and a separate confirmation step. Large trades are no longer silently capped at one stack, and the same validated quantity contract is used for local and multiplayer transactions.
 
 ## v1.4.5 Dragon Renaissance
 
