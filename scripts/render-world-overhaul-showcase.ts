@@ -1,4 +1,4 @@
-import { copyFile, mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -330,12 +330,8 @@ export async function renderWorldOverhaulShowcase(output = DEFAULT_OUTPUT) {
   const creatureOutput = path.join(output, "creature-lineup");
   const renderedCreatures = await renderModelPortraits({ out: creatureOutput, columns: 3, specs: creatureSpecs, png: true });
   files.push(...renderedCreatures.files);
-  const creatureSheetSvg = path.join(output, "world-below-creatures.svg");
-  await copyFile(renderedCreatures.sheetPath, creatureSheetSvg);
-  files.push(creatureSheetSvg);
-  const sourceCreaturePng = path.join(creatureOutput, "blockwild-creatures.png");
-  const creatureSheetPng = path.join(output, "world-below-creatures.png");
-  try { await copyFile(sourceCreaturePng, creatureSheetPng); files.push(creatureSheetPng); } catch { /* SVG remains the portable source artifact. */ }
+  const creatureSheet = await readFile(renderedCreatures.sheetPath, "utf8");
+  files.push(...await writeSvgAndPng(creatureSheet, path.join(output, "world-below-creatures")));
 
   const audit = buildWorldOverhaulAudit();
   const auditJson = path.join(output, "world-overhaul-audit.json");

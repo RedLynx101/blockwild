@@ -10,6 +10,12 @@ Original prompt: Rework recipes and the pack GUI/avatar; fix twitchy Ridgebacks;
 - Final reproducible audit across WILDERNESS, GLASSWATER, and DEEP-ROADS found all 24 surface biomes on every seed, 100% trusted cave mouths (789/789), a single connected 2,187-node cave component with more than 3,300 loops per seed, 289 great caverns and 10 cathedral caverns, all six cultures represented, and six distinct cave ecologies plus intentionally dark ordinary tunnels.
 - Final verification: production build and all 609 cross-system tests pass; Metallic Dragon 4/4, ecology 3/3, and World Below 10/10 pretest gates pass; TypeScript and repository lint pass; live 1280x720 browser QA generated and traversed a WILDERNESS world, opened the square-cell blue-water map, and recorded no page or console errors. The reviewed comparison pack and machine-readable audit live under ignored `output/world-overhaul/`.
 
+## World Below creature second pass - 2026-07-13
+
+- Rebuilt the nine signature-creature silhouettes with species-specific anatomy and surface detail instead of shared rectangular wing plans. Added branch-antlers, cephalic lobes, layered feathers, mineral cartilage, overlapping sails, membrane fingers, hollow chimes, thermal vents, and fractured living-ore anatomy while preserving every spawn, behavior, capture, sound, field-guide, and compatibility contract.
+- Added secondary motion for alternating Lanternray organs, Prismtail feathers, Ashnose heat noses, Chimewing pendants, Cinder Kite vents, Sailfin sails, and the Veinling heart. Kept the existing Grazer root, Newt gill, flight, tail, and seam animation paths intact.
+- Corrected the World Below showcase so its PNG is rasterized from the same labeled field-guide SVG rather than silently copying the unlabeled raw model sheet. Manually reviewed the labeled second-pass sheet and a 2200-pixel before/after comparison under ignored `output/world-overhaul-second-pass/`.
+
 ## v1.2 character-profile slice — 2026-07-12
 
 - Added a normalized, browser-persistent multiple-character catalog with one stable browser ID and one stable ID per profile. Profiles retain name, sex, faction race, five customizable appearance colors, recent selection, and a bounded 20-point starting skill allocation.
