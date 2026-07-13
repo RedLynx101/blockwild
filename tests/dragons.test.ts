@@ -10,16 +10,21 @@ import {
   chooseDragonAiIntent,
   chooseDragonAttack,
   createDragonEgg,
+  createDragonDeathEggClutch,
   createDragonState,
   createLairEggClutch,
   dragonAttackPlan,
   dragonCargoSlots,
   dragonEggCondition,
+  dragonEggDropIsProtected,
+  dragonEggFromDropMetadata,
+  dragonEggMinimumDropLifetimeSeconds,
   dragonDisposition,
   dragonKindForType,
   dragonTypeForKind,
   dragonPersistenceDecision,
   DRAGON_DAYS_PER_STAGE,
+  DRAGON_EGG_DROP_POLICY,
   DRAGON_FULL_GROWTH_DAYS,
   DRAGON_RIDER_CONTROLS,
   DRAGON_SOUND_PROFILES,
@@ -153,6 +158,49 @@ test("breeding requires same type, opposite sex, stage three, and the matching c
   assert.equal(bred.egg?.lairId, "frost-vault");
   assert.deepEqual(new Set(bred.egg?.parentIds), new Set(["rime", "snow"]));
   assert.ok(bred.parents.every((parent) => parent.breedCooldownTicks > 0));
+});
+
+test("every breed-capable defeated dragon leaves one bounded exact-lineage egg clutch", () => {
+  for (const type of ["fire", "ice", "steel", "sea", "gold", "silver"] as const) {
+    const immature = createDragonState(type, { dragonId: `${type}-young`, ageDays: 49, sex: "male" });
+    assert.deepEqual(createDragonDeathEggClutch(immature, 24_000, 91), []);
+    assert.equal(rollDragonLoot(immature, 91).some((entry) => entry.item.endsWith("DragonEgg")), false);
+
+    const mature = createDragonState(type, {
+      dragonId: `${type}-lineage`,
+      ageDays: 50,
+      sex: "male",
+      home: { lairId: `${type}-vault`, dimension: "overworld", position: { x: 4, y: -30, z: 9 }, guardRadius: 56 },
+    });
+    const eggs = createDragonDeathEggClutch(mature, 48_321, 91);
+    assert.equal(eggs.length, 1, `${type} stage-three lineage guarantee`);
+    assert.equal(eggs[0].type, type);
+    assert.equal(eggs[0].laidAtTick, 48_321);
+    assert.equal(eggs[0].lairId, `${type}-vault`);
+    assert.deepEqual(eggs[0].parentIds, [`${type}-lineage`, null]);
+    assert.equal(new Set(eggs.map((egg) => egg.eggId)).size, eggs.length);
+    const lootEgg = rollDragonLoot(mature, 91).find((entry) => entry.item === `${type[0].toUpperCase()}${type.slice(1)}DragonEgg`);
+    assert.equal(lootEgg?.count, 1);
+    assert.equal(lootEgg?.metadata?.parentId, `${type}-lineage`);
+  }
+
+  const elder = createDragonState("gold", { dragonId: "auric-matriarch", ageDays: 125, sex: "female" });
+  const elderEggs = createDragonDeathEggClutch(elder, 90_000, 0xffff);
+  assert.ok(elderEggs.length >= 1 && elderEggs.length <= DRAGON_EGG_DROP_POLICY.maximumDeathClutch);
+  assert.equal(new Set(elderEggs.map((egg) => egg.eggId)).size, elderEggs.length, "a death clutch never duplicates payload identity");
+});
+
+test("portable dragon eggs are fire/lava immune and protected for one configured world day", () => {
+  const egg = createDragonEgg("silver", { eggId: "moon-lineage", geneticSeed: 71, laidAtTick: 44 });
+  const metadata = { kind: "dragon-egg", egg } as const;
+  assert.equal(DRAGON_EGG_DROP_POLICY.fireImmune, true);
+  assert.equal(DRAGON_EGG_DROP_POLICY.lavaImmune, true);
+  assert.equal(dragonEggMinimumDropLifetimeSeconds(20), 1_200);
+  assert.equal(dragonEggDropIsProtected(metadata, 1_199.99, 20), true);
+  assert.equal(dragonEggDropIsProtected(metadata, 1_200, 20), false);
+  assert.equal(dragonEggDropIsProtected({ kind: "ordinary-drop" }, 0, 20), false);
+  assert.equal(dragonEggFromDropMetadata(metadata)?.type, "silver");
+  assert.equal(dragonEggFromDropMetadata({ kind: "dragon-egg", egg: { ...egg, type: "unknown" } }), null);
 });
 
 test("natural and incubator hatching honor each element's world condition", () => {

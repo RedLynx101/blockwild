@@ -208,6 +208,22 @@ export const BLUEPRINTS: readonly BlueprintDefinition[] = Object.freeze([
     recipeIds: [],
     resaleGold: 1_860,
   },
+  {
+    id: "golem-clockwork-hound",
+    name: "Clockwork Hound Blueprint",
+    description: "Authorizes a Golem Forge to wake a fast spring-hearted guardian construct.",
+    faction: "dwarves",
+    recipeIds: [],
+    resaleGold: 1_450,
+  },
+  {
+    id: "golem-webspinner",
+    name: "Webspinner Blueprint",
+    description: "Authorizes a Golem Forge to assemble an eight-legged pressure-web control construct.",
+    faction: "dwarves",
+    recipeIds: [],
+    resaleGold: 1_950,
+  },
 ]);
 
 const BLUEPRINT_BY_ID = new Map(BLUEPRINTS.map((definition) => [definition.id, definition]));

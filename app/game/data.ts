@@ -689,6 +689,11 @@ export const Item = {
   GuanoItem: 507,
   CaveBridgeItem: 508,
   DeepgearLiftItem: 509,
+  /** v1.5 Deepgear companion constructs; ids are permanent save metadata. */
+  ClockworkHoundBlueprint: 510,
+  WebspinnerBlueprint: 511,
+  ClockworkHoundOrb: 512,
+  WebspinnerOrb: 513,
 } as const;
 
 export type ItemCode = number;
@@ -698,6 +703,11 @@ export type RenderLayer = "opaque" | "cutout" | "transparent" | "emissive" | "no
 export type ToolKind = "pickaxe" | "axe" | "shovel" | "sword" | "crossbow" | "spear" | "bow" | "firearm" | "staff";
 export type BlockTool = "pickaxe" | "axe" | "shovel" | "hand";
 export type EquipmentSlot = "head" | "chest" | "legs" | "feet";
+
+/** Renderer-only atlas cells reserved for the Dragonwake hoard family. */
+export const DRAGON_HOARD_GOLD_TILE = 163;
+export const DRAGON_HOARD_COIN_TILE = 164;
+export const DRAGON_HOARD_JEWEL_TILE = 165;
 
 export type InventorySlot = {
   item: ItemCode;
@@ -774,12 +784,12 @@ export type ItemDefinition = {
   /** Contents rendered in and placed from a bucket. */
   bucketLiquid?: "water" | "lava" | "honey" | "syrup";
   /** Semantic UI hook for non-cube inventory artwork. */
-  iconKind?: "crafting-table" | "chest" | "apiary" | "aquarium" | "fireplace" | "capture-orb" | "orb-rack" | "orb-healer" | "bucket" | "fence-gate" | "lead" | "shield" | "seed" | "produce" | "honeycomb" | "honey" | "jelly" | "wax" | "milk" | "relic" | "dragon-egg" | "dragon-scale" | "dragon-heart" | "dragon-skull" | "dragon-bone" | "queen-cell" | "bee" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "potion" | "potion-health" | "mead" | "blueprint" | "bolt" | "spear" | "crossbow" | "sword" | "armor";
+  iconKind?: "crafting-table" | "chest" | "apiary" | "aquarium" | "fireplace" | "capture-orb" | "orb-rack" | "orb-healer" | "bucket" | "fence-gate" | "lead" | "shield" | "seed" | "produce" | "honeycomb" | "honey" | "jelly" | "wax" | "milk" | "relic" | "dragon-egg" | "dragon-scale" | "dragon-heart" | "dragon-skull" | "dragon-bone" | "dragon-saddle" | "dragon-pannier" | "dragon-barding-fire" | "dragon-barding-ice" | "dragon-barding-steel" | "dragon-barding-sea" | "dragon-barding-gold" | "dragon-barding-silver" | "gold-hoard-block" | "gold-pile" | "queen-cell" | "bee" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "potion" | "potion-health" | "mead" | "blueprint" | "bolt" | "spear" | "crossbow" | "sword" | "armor";
   /** Reuse a world atlas texture for the handheld/icon representation. */
   worldTextureBlock?: BlockId;
   /** Shared semantic model hooks consumed by held-item and dropped-item renderers. */
-  heldModel?: "wildwood-chest" | "apiary" | "capture-orb" | "dragon-egg" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "potion" | "mead" | "blueprint" | "crossbow" | "spear" | "shears" | "lightning-bug-jar";
-  dropModel?: "wildwood-chest" | "apiary" | "capture-orb" | "dragon-egg" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "potion" | "mead" | "blueprint" | "crossbow" | "spear" | "shears" | "lightning-bug-jar";
+  heldModel?: "wildwood-chest" | "apiary" | "capture-orb" | "dragon-egg" | "dragon-saddle" | "dragon-pannier" | "dragon-barding" | "gold-hoard-block" | "gold-pile" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "potion" | "mead" | "blueprint" | "crossbow" | "spear" | "shears" | "lightning-bug-jar";
+  dropModel?: "wildwood-chest" | "apiary" | "capture-orb" | "dragon-egg" | "dragon-saddle" | "dragon-pannier" | "dragon-barding" | "gold-hoard-block" | "gold-pile" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "potion" | "mead" | "blueprint" | "crossbow" | "spear" | "shears" | "lightning-bug-jar";
 };
 
 const block = (
@@ -1023,8 +1033,8 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.CharredDragonstone]: block(BlockId.CharredDragonstone, "Charred Dragonstone", 43, 43, 43, 3.8, "#443238", "pickaxe", 3),
   [BlockId.RimeDragonstone]: block(BlockId.RimeDragonstone, "Rime Dragonstone", 41, 41, 41, 3.8, "#9cc7dc", "pickaxe", 3),
   [BlockId.RivetedDragonstone]: block(BlockId.RivetedDragonstone, "Riveted Dragonstone", 35, 35, 35, 4.25, "#68747c", "pickaxe", 3),
-  [BlockId.GoldBlock]: block(BlockId.GoldBlock, "Gold Block", 41, 41, 41, 3, "#e4bd49", "pickaxe", 2),
-  [BlockId.GoldPile]: block(BlockId.GoldPile, "Dragon Gold Pile", 41, 41, 41, 1.15, "#e8c759", "pickaxe", 1, { solid: false, layer: "cutout", shape: "gold-pile" }),
+  [BlockId.GoldBlock]: block(BlockId.GoldBlock, "Gold Block", DRAGON_HOARD_GOLD_TILE, DRAGON_HOARD_GOLD_TILE, DRAGON_HOARD_GOLD_TILE, 3, "#e4bd49", "pickaxe", 2),
+  [BlockId.GoldPile]: block(BlockId.GoldPile, "Dragon Gold Pile", DRAGON_HOARD_COIN_TILE, DRAGON_HOARD_COIN_TILE, DRAGON_HOARD_GOLD_TILE, 1.15, "#e8c759", "pickaxe", 1, { solid: false, layer: "cutout", shape: "gold-pile" }),
   [BlockId.FireDragonEggBlock]: block(BlockId.FireDragonEggBlock, "Fire Dragon Egg", 145, 145, 145, 1.5, "#b84b32", "pickaxe", 2, { solid: false, layer: "cutout", shape: "dragon-egg" }),
   [BlockId.IceDragonEggBlock]: block(BlockId.IceDragonEggBlock, "Ice Dragon Egg", 146, 146, 146, 1.5, "#8bcce5", "pickaxe", 2, { solid: false, layer: "cutout", shape: "dragon-egg" }),
   [BlockId.SteelDragonEggBlock]: block(BlockId.SteelDragonEggBlock, "Steel Dragon Egg", 147, 147, 147, 1.8, "#7c8992", "pickaxe", 2, { solid: false, layer: "cutout", shape: "dragon-egg" }),
@@ -1402,13 +1412,13 @@ Object.assign(ITEMS, {
   [Item.SteelDragonSkull]: { id: Item.SteelDragonSkull, name: "Steel Dragon Skull", color: "#b8bec0", maxStack: 16, iconKind: "dragon-skull" },
   [Item.GoldDragonSkull]: { id: Item.GoldDragonSkull, name: "Gold Dragon Skull", color: "#f4d67a", maxStack: 1, dragonType: "gold", iconKind: "dragon-skull" },
   [Item.SilverDragonSkull]: { id: Item.SilverDragonSkull, name: "Silver Dragon Skull", color: "#e4edf5", maxStack: 1, dragonType: "silver", iconKind: "dragon-skull" },
-  [Item.DragonSaddle]: { id: Item.DragonSaddle, name: "Dragonflight Saddle", color: "#8b4f38", maxStack: 1, useKind: "dragon-module", dragonModule: "saddle", iconKind: "armor" },
-  [Item.DragonChestModule]: { id: Item.DragonChestModule, name: "Dragon Pannier Module", color: "#966438", maxStack: 2, useKind: "dragon-module", dragonModule: "chest", iconKind: "chest" },
-  [Item.FireDragonArmorModule]: { id: Item.FireDragonArmorModule, name: "Ember Dragon Armor", color: "#d65c32", maxStack: 1, useKind: "dragon-module", dragonModule: "armor", dragonType: "fire", iconKind: "armor" },
-  [Item.IceDragonArmorModule]: { id: Item.IceDragonArmorModule, name: "Rime Dragon Armor", color: "#8bd7ec", maxStack: 1, useKind: "dragon-module", dragonModule: "armor", dragonType: "ice", iconKind: "armor" },
-  [Item.SteelDragonArmorModule]: { id: Item.SteelDragonArmorModule, name: "Riveted Dragon Armor", color: "#788791", maxStack: 1, useKind: "dragon-module", dragonModule: "armor", dragonType: "steel", iconKind: "armor" },
-  [Item.GoldDragonArmorModule]: { id: Item.GoldDragonArmorModule, name: "Solar-Regalia Dragon Armor", color: "#e5ab2e", maxStack: 1, useKind: "dragon-module", dragonModule: "armor", dragonType: "gold", iconKind: "armor" },
-  [Item.SilverDragonArmorModule]: { id: Item.SilverDragonArmorModule, name: "Moonmirror Dragon Armor", color: "#aec2d8", maxStack: 1, useKind: "dragon-module", dragonModule: "armor", dragonType: "silver", iconKind: "armor" },
+  [Item.DragonSaddle]: { id: Item.DragonSaddle, name: "Dragonflight Saddle", color: "#8b4f38", maxStack: 1, useKind: "dragon-module", dragonModule: "saddle", iconKind: "dragon-saddle", heldModel: "dragon-saddle", dropModel: "dragon-saddle" },
+  [Item.DragonChestModule]: { id: Item.DragonChestModule, name: "Dragon Pannier Module", color: "#966438", maxStack: 2, useKind: "dragon-module", dragonModule: "chest", iconKind: "dragon-pannier", heldModel: "dragon-pannier", dropModel: "dragon-pannier" },
+  [Item.FireDragonArmorModule]: { id: Item.FireDragonArmorModule, name: "Ember Dragon Armor", color: "#d65c32", maxStack: 1, useKind: "dragon-module", dragonModule: "armor", dragonType: "fire", iconKind: "dragon-barding-fire", heldModel: "dragon-barding", dropModel: "dragon-barding" },
+  [Item.IceDragonArmorModule]: { id: Item.IceDragonArmorModule, name: "Rime Dragon Armor", color: "#8bd7ec", maxStack: 1, useKind: "dragon-module", dragonModule: "armor", dragonType: "ice", iconKind: "dragon-barding-ice", heldModel: "dragon-barding", dropModel: "dragon-barding" },
+  [Item.SteelDragonArmorModule]: { id: Item.SteelDragonArmorModule, name: "Riveted Dragon Armor", color: "#788791", maxStack: 1, useKind: "dragon-module", dragonModule: "armor", dragonType: "steel", iconKind: "dragon-barding-steel", heldModel: "dragon-barding", dropModel: "dragon-barding" },
+  [Item.GoldDragonArmorModule]: { id: Item.GoldDragonArmorModule, name: "Solar-Regalia Dragon Armor", color: "#e5ab2e", maxStack: 1, useKind: "dragon-module", dragonModule: "armor", dragonType: "gold", iconKind: "dragon-barding-gold", heldModel: "dragon-barding", dropModel: "dragon-barding" },
+  [Item.SilverDragonArmorModule]: { id: Item.SilverDragonArmorModule, name: "Moonmirror Dragon Armor", color: "#aec2d8", maxStack: 1, useKind: "dragon-module", dragonModule: "armor", dragonType: "silver", iconKind: "dragon-barding-silver", heldModel: "dragon-barding", dropModel: "dragon-barding" },
   [Item.FireBreedingCatalyst]: { id: Item.FireBreedingCatalyst, name: "Emberlily Catalyst", color: "#ed7145", maxStack: 16, dragonType: "fire", iconKind: "produce" },
   [Item.IceBreedingCatalyst]: { id: Item.IceBreedingCatalyst, name: "Frostlily Catalyst", color: "#acebf4", maxStack: 16, dragonType: "ice", iconKind: "produce" },
   [Item.SteelBreedingCatalyst]: { id: Item.SteelBreedingCatalyst, name: "Ferric Lotus Catalyst", color: "#a8afb1", maxStack: 16, dragonType: "steel", iconKind: "produce" },
@@ -1422,23 +1432,23 @@ Object.assign(ITEMS, {
   [Item.DragonboneGreatsword]: { ...tool(Item.DragonboneGreatsword, "Dragonbone Greatsword", "#e6ddc7", "sword", 5, 1.15, 15, 2400), iconKind: "sword" },
   [Item.DragonbonePickaxe]: { ...tool(Item.DragonbonePickaxe, "Dragonbone Pickaxe", "#d7cfbd", "pickaxe", 5, 9.5, 9, 2600), iconKind: "sword" },
   [Item.DragonboneAxe]: { ...tool(Item.DragonboneAxe, "Dragonbone Axe", "#d7cfbd", "axe", 5, 9, 12, 2500), iconKind: "sword" },
-  [Item.FireScaleHelm]: { ...armorItem(Item.FireScaleHelm, "Ember Scale Helm", "#c94b30", "head", 5, 1500), iconKind: "armor" },
-  [Item.FireScalePlate]: { ...armorItem(Item.FireScalePlate, "Ember Scale Plate", "#b93e2c", "chest", 9, 2200), iconKind: "armor" },
-  [Item.FireScaleGreaves]: { ...armorItem(Item.FireScaleGreaves, "Ember Scale Greaves", "#a93629", "legs", 7, 2050), iconKind: "armor" },
-  [Item.FireScaleBoots]: { ...armorItem(Item.FireScaleBoots, "Ember Scale Boots", "#9d3027", "feet", 4, 1400), iconKind: "armor" },
-  [Item.IceScaleHelm]: { ...armorItem(Item.IceScaleHelm, "Rime Scale Helm", "#92d8ec", "head", 5, 1500), iconKind: "armor" },
-  [Item.IceScalePlate]: { ...armorItem(Item.IceScalePlate, "Rime Scale Plate", "#7cc7e5", "chest", 9, 2200), iconKind: "armor" },
-  [Item.IceScaleGreaves]: { ...armorItem(Item.IceScaleGreaves, "Rime Scale Greaves", "#6bb6da", "legs", 7, 2050), iconKind: "armor" },
-  [Item.IceScaleBoots]: { ...armorItem(Item.IceScaleBoots, "Rime Scale Boots", "#61a9ce", "feet", 4, 1400), iconKind: "armor" },
-  [Item.SteelScaleHelm]: { ...armorItem(Item.SteelScaleHelm, "Steel Scale Helm", "#87949c", "head", 6, 1750), iconKind: "armor" },
-  [Item.SteelScalePlate]: { ...armorItem(Item.SteelScalePlate, "Steel Scale Plate", "#75828c", "chest", 10, 2500), iconKind: "armor" },
-  [Item.SteelScaleGreaves]: { ...armorItem(Item.SteelScaleGreaves, "Steel Scale Greaves", "#697680", "legs", 8, 2300), iconKind: "armor" },
-  [Item.SteelScaleBoots]: { ...armorItem(Item.SteelScaleBoots, "Steel Scale Boots", "#606c75", "feet", 5, 1600), iconKind: "armor" },
+  [Item.FireScaleHelm]: { ...armorItem(Item.FireScaleHelm, "Ember Scale Helm", "#c94b30", "head", 5, 1500), dragonType: "fire", iconKind: "armor" },
+  [Item.FireScalePlate]: { ...armorItem(Item.FireScalePlate, "Ember Scale Plate", "#b93e2c", "chest", 9, 2200), dragonType: "fire", iconKind: "armor" },
+  [Item.FireScaleGreaves]: { ...armorItem(Item.FireScaleGreaves, "Ember Scale Greaves", "#a93629", "legs", 7, 2050), dragonType: "fire", iconKind: "armor" },
+  [Item.FireScaleBoots]: { ...armorItem(Item.FireScaleBoots, "Ember Scale Boots", "#9d3027", "feet", 4, 1400), dragonType: "fire", iconKind: "armor" },
+  [Item.IceScaleHelm]: { ...armorItem(Item.IceScaleHelm, "Rime Scale Helm", "#92d8ec", "head", 5, 1500), dragonType: "ice", iconKind: "armor" },
+  [Item.IceScalePlate]: { ...armorItem(Item.IceScalePlate, "Rime Scale Plate", "#7cc7e5", "chest", 9, 2200), dragonType: "ice", iconKind: "armor" },
+  [Item.IceScaleGreaves]: { ...armorItem(Item.IceScaleGreaves, "Rime Scale Greaves", "#6bb6da", "legs", 7, 2050), dragonType: "ice", iconKind: "armor" },
+  [Item.IceScaleBoots]: { ...armorItem(Item.IceScaleBoots, "Rime Scale Boots", "#61a9ce", "feet", 4, 1400), dragonType: "ice", iconKind: "armor" },
+  [Item.SteelScaleHelm]: { ...armorItem(Item.SteelScaleHelm, "Steel Scale Helm", "#87949c", "head", 6, 1750), dragonType: "steel", iconKind: "armor" },
+  [Item.SteelScalePlate]: { ...armorItem(Item.SteelScalePlate, "Steel Scale Plate", "#75828c", "chest", 10, 2500), dragonType: "steel", iconKind: "armor" },
+  [Item.SteelScaleGreaves]: { ...armorItem(Item.SteelScaleGreaves, "Steel Scale Greaves", "#697680", "legs", 8, 2300), dragonType: "steel", iconKind: "armor" },
+  [Item.SteelScaleBoots]: { ...armorItem(Item.SteelScaleBoots, "Steel Scale Boots", "#606c75", "feet", 5, 1600), dragonType: "steel", iconKind: "armor" },
   [Item.DraconicIncubatorItem]: { id: Item.DraconicIncubatorItem, name: "Draconic Incubator", color: "#745f78", maxStack: 16, placeBlock: BlockId.DraconicIncubator, iconKind: "alchemy" },
   [Item.ArchiveShelfItem]: { id: Item.ArchiveShelfItem, name: "Archive Shelf", color: "#7b5236", maxStack: 64, placeBlock: BlockId.ArchiveShelf, iconKind: "relic" },
   [Item.TomeDisplayItem]: { id: Item.TomeDisplayItem, name: "Tome Display", color: "#946a47", maxStack: 64, placeBlock: BlockId.TomeDisplay, iconKind: "relic" },
-  [Item.GoldBlockItem]: { id: Item.GoldBlockItem, name: "Gold Block", color: "#e4bd49", maxStack: 64, placeBlock: BlockId.GoldBlock, iconKind: "relic" },
-  [Item.GoldPileItem]: { id: Item.GoldPileItem, name: "Dragon Gold Pile", color: "#e8c759", maxStack: 64, placeBlock: BlockId.GoldPile, iconKind: "relic" },
+  [Item.GoldBlockItem]: { id: Item.GoldBlockItem, name: "Gold Block", color: "#e4bd49", maxStack: 64, placeBlock: BlockId.GoldBlock, iconKind: "gold-hoard-block", heldModel: "gold-hoard-block", dropModel: "gold-hoard-block" },
+  [Item.GoldPileItem]: { id: Item.GoldPileItem, name: "Dragon Gold Pile", color: "#e8c759", maxStack: 64, placeBlock: BlockId.GoldPile, iconKind: "gold-pile", heldModel: "gold-pile", dropModel: "gold-pile" },
   [Item.CharredDragonstoneItem]: { id: Item.CharredDragonstoneItem, name: "Charred Dragonstone", color: "#443238", maxStack: 64, placeBlock: BlockId.CharredDragonstone },
   [Item.RimeDragonstoneItem]: { id: Item.RimeDragonstoneItem, name: "Rime Dragonstone", color: "#9cc7dc", maxStack: 64, placeBlock: BlockId.RimeDragonstone },
   [Item.RivetedDragonstoneItem]: { id: Item.RivetedDragonstoneItem, name: "Riveted Dragonstone", color: "#68747c", maxStack: 64, placeBlock: BlockId.RivetedDragonstone },
@@ -1494,9 +1504,13 @@ Object.assign(ITEMS, {
   [Item.SeaDragonHeart]: { id: Item.SeaDragonHeart, name: "Sea Dragon Heart", color: "#426fc8", maxStack: 8, dragonType: "sea", iconKind: "dragon-heart" },
   [Item.SeaDragonSkull]: { id: Item.SeaDragonSkull, name: "Sea Dragon Skull", color: "#b5edf0", maxStack: 1, dragonType: "sea", iconKind: "dragon-skull" },
   [Item.SeaDragonNestChart]: { id: Item.SeaDragonNestChart, name: "Chart: Sea Dragon Nest", color: "#4ba9ba", maxStack: 8, useKind: "lair-survey", lairSurvey: { dragonType: "sea", minimumStage: 3 }, iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
-  [Item.TideglassDragonArmorModule]: { id: Item.TideglassDragonArmorModule, name: "Tideglass Dragon Armor", color: "#62cfd0", maxStack: 1, useKind: "dragon-module", dragonModule: "armor", dragonType: "sea", iconKind: "armor" },
+  [Item.TideglassDragonArmorModule]: { id: Item.TideglassDragonArmorModule, name: "Tideglass Dragon Armor", color: "#62cfd0", maxStack: 1, useKind: "dragon-module", dragonModule: "armor", dragonType: "sea", iconKind: "dragon-barding-sea", heldModel: "dragon-barding", dropModel: "dragon-barding" },
   [Item.DeepgearCourserBlueprint]: { id: Item.DeepgearCourserBlueprint, name: "Blueprint: Deepgear Courser", color: "#b8874d", maxStack: 16, useKind: "blueprint", blueprintId: "golem-deepgear-courser", iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
   [Item.DeepgearCourserOrb]: { id: Item.DeepgearCourserOrb, name: "Capture Orb: Deepgear Courser", color: "#78e6df", maxStack: 1, useKind: "capture-orb", creatureKind: "deepgear-courser-golem", iconKind: "capture-orb", heldModel: "capture-orb", dropModel: "capture-orb" },
+  [Item.ClockworkHoundBlueprint]: { id: Item.ClockworkHoundBlueprint, name: "Blueprint: Clockwork Hound", color: "#b97843", maxStack: 16, useKind: "blueprint", blueprintId: "golem-clockwork-hound", iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
+  [Item.WebspinnerBlueprint]: { id: Item.WebspinnerBlueprint, name: "Blueprint: Webspinner", color: "#71878a", maxStack: 16, useKind: "blueprint", blueprintId: "golem-webspinner", iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
+  [Item.ClockworkHoundOrb]: { id: Item.ClockworkHoundOrb, name: "Capture Orb: Clockwork Hound", color: "#c07a45", maxStack: 1, useKind: "capture-orb", creatureKind: "clockwork-hound-golem", iconKind: "capture-orb", heldModel: "capture-orb", dropModel: "capture-orb" },
+  [Item.WebspinnerOrb]: { id: Item.WebspinnerOrb, name: "Capture Orb: Webspinner", color: "#7ad8cf", maxStack: 1, useKind: "capture-orb", creatureKind: "webspinner-golem", iconKind: "capture-orb", heldModel: "capture-orb", dropModel: "capture-orb" },
   [Item.GildedDragonstoneItem]: { id: Item.GildedDragonstoneItem, name: "Gilded Dragonstone", color: "#ad7921", maxStack: 64, placeBlock: BlockId.GildedDragonstone, worldTextureBlock: BlockId.GildedDragonstone },
   [Item.ArgentDragonstoneItem]: { id: Item.ArgentDragonstoneItem, name: "Argent Dragonstone", color: "#8293aa", maxStack: 64, placeBlock: BlockId.ArgentDragonstone, worldTextureBlock: BlockId.ArgentDragonstone },
   [Item.MoonboughLogItem]: { id: Item.MoonboughLogItem, name: "Moonbough Log", color: "#58677f", maxStack: 64, placeBlock: BlockId.MoonboughLog },
@@ -1903,6 +1917,7 @@ export const V1_CULTURE_ITEMS: readonly ItemCode[] = Object.freeze([
   Item.GolemForgeItem, Item.PowderworksItem, Item.FlintlockBlueprint, Item.CopperScoutBlueprint,
   Item.StoneBulwarkBlueprint, Item.AetherforgedSentinelBlueprint, Item.CopperScoutOrb, Item.StoneBulwarkOrb,
   Item.AetherforgedSentinelOrb, Item.CopperMoleOrb, Item.DeepgearCourserBlueprint, Item.DeepgearCourserOrb,
+  Item.ClockworkHoundBlueprint, Item.WebspinnerBlueprint, Item.ClockworkHoundOrb, Item.WebspinnerOrb,
   Item.MoonwellItem, Item.TideglassDragonArmorModule,
 ]);
 

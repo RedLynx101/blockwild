@@ -348,6 +348,7 @@ test("Sea Dragon attributes, nest charts, and live world markers share one deter
   const sameA = planSeaDragonNest({ seed: "DEEP-CURRENT", regionX: 10, regionZ: -5, oceanFloorY: -42, biome: "lumen-trench" });
   const sameB = planSeaDragonNest({ seed: "DEEP-CURRENT", regionX: 10, regionZ: -5, oceanFloorY: -42, biome: "lumen-trench" });
   assert.deepEqual(sameA, sameB);
+  assert.ok(!sameA || sameA.radius >= 34, "Sea Dragon nests receive the same large-home pass as underground lairs");
 
   const world = new ChunkWorld();
   world.reset("V1-SEA-DRAGON-LIVE", undefined, { structures: true, enabledFactions: NPC_FACTION_IDS });
@@ -363,6 +364,7 @@ test("Sea Dragon attributes, nest charts, and live world markers share one deter
     });
   }
   assert.ok(nest, "bounded regions contain a valid abyssal nest");
+  assert.ok(nest.radius >= 34 && nest.radius <= 40, "Sea Dragon nests use the enlarged bounded abyssal footprint");
   const chart = useDragonLairSurveyCharter({
     seed: world.seedText,
     origin: { x: nest.center.x + 500, z: nest.center.z + 500 },

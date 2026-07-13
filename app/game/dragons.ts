@@ -16,6 +16,19 @@ export const DRAGON_FULL_GROWTH_DAYS = DRAGON_DAYS_PER_STAGE * DRAGON_STAGE_COUN
 export const DRAGON_SCALE_SHED_TICKS = DRAGON_TICKS_PER_DAY * 3;
 export const DRAGON_BREED_COOLDOWN_TICKS = DRAGON_TICKS_PER_DAY * 2;
 export const DRAGON_EGG_INCUBATION_TICKS = 7_200;
+export const DRAGON_BREEDING_STAGE = 3 as const;
+
+/**
+ * Portable eggs are heirloom drops, not ordinary cleanup fodder. The engine
+ * converts this tick policy through the world's configured day length so an
+ * egg remains recoverable for at least one complete dawn-to-dawn cycle.
+ */
+export const DRAGON_EGG_DROP_POLICY = Object.freeze({
+  fireImmune: true,
+  lavaImmune: true,
+  minimumLifetimeTicks: DRAGON_TICKS_PER_DAY,
+  maximumDeathClutch: 3,
+} as const);
 
 export type DragonType = "fire" | "ice" | "steel" | "sea" | "gold" | "silver";
 export type DragonKind = `${DragonType}-dragon`;
@@ -26,8 +39,25 @@ export type DragonArmorSlot = "head" | "neck" | "body" | "tail";
 export type DragonAttackKind = "melee" | "breath" | "projectile";
 export type DragonAiIntent = "idle" | "return-home" | "guard" | "pursue" | "circle" | "attack" | "flee";
 export type DragonDisposition = "passive" | "defensive" | "hostile";
+export type DragonCombatPhase = "approach" | "attack-run" | "breakaway" | "orbit" | "reposition";
 
 export type DragonPoint = Readonly<{ x: number; y: number; z: number }>;
+
+/**
+ * Ephemeral host-side flight state. It intentionally does not belong to the
+ * persisted DragonState or multiplayer payload: guests interpolate the
+ * authoritative host pose, while a reloaded host can safely begin a new pass.
+ */
+export type DragonCombatManeuverState = Readonly<{
+  phase: DragonCombatPhase;
+  phaseSeconds: number;
+  passIndex: number;
+  passBearing: number;
+  orbitDirection: -1 | 1;
+  targetToken: number | null;
+  attackCommitted: boolean;
+  lastAttack: DragonAttackKind | null;
+}>;
 
 export type DragonHome = Readonly<{
   lairId: string;
@@ -81,6 +111,11 @@ export type DragonEgg = Readonly<{
   requiredTicks: number;
   wild: boolean;
   lairId: string | null;
+}>;
+
+export type DragonEggDropMetadata = Readonly<{
+  kind: "dragon-egg";
+  egg: DragonEgg;
 }>;
 
 export type DragonSpawnEgg = Readonly<{
@@ -488,8 +523,38 @@ export function canBreedDragons(first: DragonState, second: DragonState) {
     && first.alive && second.alive
     && first.type === second.type
     && first.sex !== second.sex
-    && first.stage >= 3 && second.stage >= 3
+    && first.stage >= DRAGON_BREEDING_STAGE && second.stage >= DRAGON_BREEDING_STAGE
     && first.breedCooldownTicks <= 0 && second.breedCooldownTicks <= 0;
+}
+
+/** Read a portable egg payload without accepting placed/incubating egg state. */
+export function dragonEggFromDropMetadata(value: unknown): DragonEgg | null {
+  if (!value || typeof value !== "object") return null;
+  const metadata = value as Partial<DragonEggDropMetadata>;
+  if (metadata.kind !== "dragon-egg" || !metadata.egg || typeof metadata.egg !== "object") return null;
+  const egg = metadata.egg as Partial<DragonEgg>;
+  if (egg.schemaVersion !== DRAGON_SCHEMA_VERSION
+    || !DRAGON_TYPES.includes(egg.type as DragonType)
+    || !DRAGON_SEXES.includes(egg.sex as DragonSex)
+    || typeof egg.eggId !== "string" || !egg.eggId.trim()
+    || typeof egg.geneticSeed !== "number" || !Number.isFinite(egg.geneticSeed)
+    || typeof egg.laidAtTick !== "number" || !Number.isFinite(egg.laidAtTick)
+    || typeof egg.incubationTicks !== "number" || !Number.isFinite(egg.incubationTicks)
+    || typeof egg.requiredTicks !== "number" || !Number.isFinite(egg.requiredTicks)
+    || !Array.isArray(egg.parentIds) || egg.parentIds.length !== 2
+    || typeof egg.wild !== "boolean"
+    || !(egg.lairId === null || typeof egg.lairId === "string")) return null;
+  return egg as DragonEgg;
+}
+
+export function dragonEggMinimumDropLifetimeSeconds(dayLengthMinutes: number) {
+  const finiteMinutes = Number.isFinite(dayLengthMinutes) ? dayLengthMinutes : 20;
+  return Math.max(60, finiteMinutes * 60) * (DRAGON_EGG_DROP_POLICY.minimumLifetimeTicks / DRAGON_TICKS_PER_DAY);
+}
+
+export function dragonEggDropIsProtected(metadata: unknown, ageSeconds: number, dayLengthMinutes: number) {
+  return dragonEggFromDropMetadata(metadata) !== null
+    && Math.max(0, Number.isFinite(ageSeconds) ? ageSeconds : 0) < dragonEggMinimumDropLifetimeSeconds(dayLengthMinutes);
 }
 
 export function createDragonEgg(
@@ -664,6 +729,411 @@ export function chooseDragonAttack(state: DragonState, context: DragonCombatCont
   return null;
 }
 
+export type DragonCombatProfile = Readonly<{
+  style: "cinder-dive" | "frost-control" | "steel-strafe" | "tide-skimming" | "solar-orbit" | "lunar-orbit";
+  entryRadius: number;
+  orbitRadius: number;
+  missDistance: number;
+  breakawayRadius: number;
+  attackAltitude: number;
+  cruiseAltitude: number;
+  orbitSeconds: number;
+  attackRunSeconds: number;
+  speedScale: number;
+  preferredAttacks: readonly [DragonAttackKind, DragonAttackKind, DragonAttackKind];
+}>;
+
+type DragonCombatProfileBase = Omit<DragonCombatProfile, "entryRadius" | "orbitRadius" | "missDistance" | "breakawayRadius"> & Readonly<{
+  entryRadius: number;
+  orbitRadius: number;
+  missDistance: number;
+  breakawayRadius: number;
+}>;
+
+const DRAGON_COMBAT_PROFILE_BASE: Readonly<Record<DragonType, DragonCombatProfileBase>> = Object.freeze({
+  fire: {
+    style: "cinder-dive", entryRadius: 15, orbitRadius: 12, missDistance: 3, breakawayRadius: 19,
+    attackAltitude: 3.4, cruiseAltitude: 7.8, orbitSeconds: 1.8, attackRunSeconds: 2.5, speedScale: 1.14,
+    preferredAttacks: ["breath", "melee", "projectile"],
+  },
+  ice: {
+    style: "frost-control", entryRadius: 18, orbitRadius: 16, missDistance: 5.2, breakawayRadius: 22,
+    attackAltitude: 6.2, cruiseAltitude: 8.8, orbitSeconds: 3.1, attackRunSeconds: 2.8, speedScale: 0.96,
+    preferredAttacks: ["breath", "projectile", "melee"],
+  },
+  steel: {
+    style: "steel-strafe", entryRadius: 25, orbitRadius: 22, missDistance: 6.2, breakawayRadius: 30,
+    attackAltitude: 7.2, cruiseAltitude: 10.2, orbitSeconds: 2.35, attackRunSeconds: 3.1, speedScale: 1.06,
+    preferredAttacks: ["projectile", "breath", "melee"],
+  },
+  sea: {
+    style: "tide-skimming", entryRadius: 13, orbitRadius: 11, missDistance: 3, breakawayRadius: 17,
+    attackAltitude: 2.6, cruiseAltitude: 5.2, orbitSeconds: 1.75, attackRunSeconds: 2.35, speedScale: 1.18,
+    preferredAttacks: ["breath", "projectile", "melee"],
+  },
+  gold: {
+    style: "solar-orbit", entryRadius: 28, orbitRadius: 25, missDistance: 7.2, breakawayRadius: 33,
+    attackAltitude: 9.4, cruiseAltitude: 12.4, orbitSeconds: 3.15, attackRunSeconds: 3.2, speedScale: 1.1,
+    preferredAttacks: ["projectile", "breath", "melee"],
+  },
+  silver: {
+    style: "lunar-orbit", entryRadius: 26, orbitRadius: 23, missDistance: 6.8, breakawayRadius: 31,
+    attackAltitude: 10.2, cruiseAltitude: 12.8, orbitSeconds: 2.8, attackRunSeconds: 3, speedScale: 1.12,
+    preferredAttacks: ["projectile", "breath", "melee"],
+  },
+});
+
+/** Distinct bounded spacing/cadence for each lineage, scaled modestly by age. */
+export function dragonCombatProfile(type: DragonType, stage: DragonStage, swimming = false): DragonCombatProfile {
+  const base = DRAGON_COMBAT_PROFILE_BASE[type];
+  if (stage === 1) {
+    return {
+      ...base,
+      entryRadius: 4.2,
+      orbitRadius: 3.6,
+      missDistance: 1.05,
+      breakawayRadius: 5.4,
+      attackAltitude: 0,
+      cruiseAltitude: 0,
+      orbitSeconds: 1.25,
+      attackRunSeconds: 1.7,
+      speedScale: Math.min(1.08, base.speedScale),
+    };
+  }
+  const scale = 0.72 + stage * 0.1;
+  const aquaticAltitude = type === "sea" && swimming;
+  return {
+    ...base,
+    entryRadius: base.entryRadius * scale,
+    orbitRadius: base.orbitRadius * scale,
+    missDistance: base.missDistance * scale,
+    breakawayRadius: base.breakawayRadius * scale,
+    attackAltitude: aquaticAltitude ? 0.45 : base.attackAltitude + (stage - 3) * 0.28,
+    cruiseAltitude: aquaticAltitude ? 1.15 : base.cruiseAltitude + (stage - 3) * 0.38,
+  };
+}
+
+function dragonCombatUnit(seed: number, salt: number) {
+  let mixed = Math.imul((Math.trunc(seed) | 0) ^ Math.imul((Math.trunc(salt) | 0) + 1, 0x45d9f3b), 0x27d4eb2d);
+  mixed ^= mixed >>> 15;
+  mixed = Math.imul(mixed, 0x85ebca6b);
+  mixed ^= mixed >>> 13;
+  return (mixed >>> 0) / 0x1_0000_0000;
+}
+
+export function createDragonCombatManeuverState(combatSeed = 0): DragonCombatManeuverState {
+  return {
+    phase: "approach",
+    phaseSeconds: 0,
+    passIndex: 0,
+    passBearing: dragonCombatUnit(combatSeed, 3) * Math.PI * 2 - Math.PI,
+    orbitDirection: dragonCombatUnit(combatSeed, 7) < 0.5 ? -1 : 1,
+    targetToken: null,
+    attackCommitted: false,
+    lastAttack: null,
+  };
+}
+
+export type DragonCombatManeuverInput = Readonly<{
+  dragonState: DragonState;
+  maneuver: DragonCombatManeuverState;
+  dt: number;
+  combatSeed: number;
+  targetToken: number;
+  dragonPosition: DragonPoint;
+  targetPosition: DragonPoint;
+  lineOfSight: boolean;
+  swimming?: boolean;
+  meleeReady?: boolean;
+  breathReady?: boolean;
+  projectileReady?: boolean;
+}>;
+
+export type DragonCombatManeuverPlan = Readonly<{
+  maneuver: DragonCombatManeuverState;
+  destination: DragonPoint;
+  attack: DragonAttackPlan | null;
+  style: DragonCombatProfile["style"];
+  speedScale: number;
+  /** Minimum terrain clearance for the current pass. Signature melee runs dip lower than cruise flight. */
+  terrainClearance: number;
+  minimumHorizontalSeparation: number;
+  horizontalSeparation: number;
+}>;
+
+export type DragonAttackFacingPose = Readonly<{
+  visualHeading: number;
+  /** Local rig yaw. The dragon model faces -Z, so this intentionally opposes the remaining world-heading delta. */
+  lookYaw: number;
+}>;
+
+/**
+ * Splits a world-space attack heading between a bounded body turn and the
+ * articulated neck. Keeping this pure makes the model's -Z/group-yaw
+ * convention testable instead of burying a sign-sensitive transform in the
+ * render loop.
+ */
+export function dragonAttackFacingPose(
+  currentHeading: number,
+  attackHeading: number,
+  kind: DragonAttackKind,
+  attackProgress: number,
+): DragonAttackFacingPose {
+  const progress = clampFinite(attackProgress, 0, 1, 0);
+  const acquisition = 0.72 + Math.sin(Math.min(1, progress / 0.72) * Math.PI * 0.5) * 0.28;
+  const recoveryProgress = clampFinite((progress - 0.72) / 0.28, 0, 1, 0);
+  const recovery = 1 - recoveryProgress * recoveryProgress * (3 - 2 * recoveryProgress);
+  // Aim is held through the release/strike window, then reaches exactly zero
+  // before the short animation is cleared, avoiding a terminal body/head snap.
+  const engagement = acquisition * recovery;
+  if (engagement <= Number.EPSILON) return { visualHeading: currentHeading, lookYaw: 0 };
+  const delta = Math.atan2(
+    Math.sin(attackHeading - currentHeading),
+    Math.cos(attackHeading - currentHeading),
+  );
+  const bodyLimit = kind === "melee" ? 0.72 : 0.52;
+  const bodyTurn = clampFinite(delta, -bodyLimit, bodyLimit, 0) * engagement;
+  return {
+    visualHeading: currentHeading + bodyTurn,
+    // A positive local Y rotation turns the rig's -Z muzzle toward a lower
+    // world heading, hence the deliberate inverse of the residual delta.
+    lookYaw: clampFinite(bodyTurn - delta, -0.95, 0.95, 0) * engagement,
+  };
+}
+
+/** Hard safety rail for discrete engine steps around a moving target. */
+export function constrainDragonCombatPosition(
+  candidate: DragonPoint,
+  target: DragonPoint,
+  minimumHorizontalSeparation: number,
+  fallbackBearing = 0,
+): DragonPoint {
+  const minimum = Math.max(0, minimumHorizontalSeparation);
+  const protectedRadius = minimum > 0 ? minimum + 0.01 : 0;
+  const dx = candidate.x - target.x;
+  const dz = candidate.z - target.z;
+  const separation = Math.hypot(dx, dz);
+  if (separation >= protectedRadius || protectedRadius <= 0) return candidate;
+  const bearing = separation > 0.0001 ? Math.atan2(dz, dx) : fallbackBearing;
+  return {
+    x: target.x + Math.cos(bearing) * protectedRadius,
+    y: candidate.y,
+    z: target.z + Math.sin(bearing) * protectedRadius,
+  };
+}
+
+function horizontalDistance(first: DragonPoint, second: DragonPoint) {
+  return Math.hypot(first.x - second.x, first.z - second.z);
+}
+
+function isSignatureMeleePass(state: DragonState, maneuver: DragonCombatManeuverState, swimming: boolean) {
+  if (state.stage < 3) return false;
+  return (state.type === "fire" && maneuver.passIndex % 3 === 2)
+    || (state.type === "sea" && swimming && maneuver.passIndex % 3 === 1);
+}
+
+function combatAttackRunSeconds(
+  state: DragonState,
+  maneuver: DragonCombatManeuverState,
+  profile: DragonCombatProfile,
+  swimming: boolean,
+) {
+  if (!isSignatureMeleePass(state, maneuver, swimming)) return profile.attackRunSeconds;
+  // The close pass must last long enough for a Stage III dragon to traverse
+  // the whole offset lane at its real engine speed and descend into reach.
+  return profile.attackRunSeconds + (state.type === "fire" ? 0.9 : 0.55);
+}
+
+function combatDestination(
+  state: DragonState,
+  maneuver: DragonCombatManeuverState,
+  profile: DragonCombatProfile,
+  target: DragonPoint,
+  swimming: boolean,
+): DragonPoint {
+  const forwardX = Math.cos(maneuver.passBearing);
+  const forwardZ = Math.sin(maneuver.passBearing);
+  const tangentX = -forwardZ * maneuver.orbitDirection;
+  const tangentZ = forwardX * maneuver.orbitDirection;
+  const signatureMelee = isSignatureMeleePass(state, maneuver, swimming);
+  // Ranged passes keep a generous buffer for interpolation. A deliberate
+  // claw/bite pass closes nearer without ever crossing the protected lane.
+  const attackLane = profile.missDistance * (signatureMelee ? 1.08 : 1.27);
+  const clawDive = signatureMelee && profile.style === "cinder-dive";
+  const tideBite = signatureMelee && profile.style === "tide-skimming";
+  const ripple = Math.sin(maneuver.passIndex * 1.73 + maneuver.phaseSeconds * 0.82) * (swimming ? 0.28 : 0.7);
+
+  if (maneuver.phase === "approach") return {
+    x: target.x + forwardX * profile.entryRadius + tangentX * attackLane,
+    y: target.y + profile.cruiseAltitude + ripple,
+    z: target.z + forwardZ * profile.entryRadius + tangentZ * attackLane,
+  };
+  if (maneuver.phase === "attack-run") return {
+    x: target.x - forwardX * profile.entryRadius + tangentX * attackLane,
+    y: target.y + (clawDive ? 0.25 : tideBite ? 0.18 : profile.attackAltitude) + ripple * 0.32,
+    z: target.z - forwardZ * profile.entryRadius + tangentZ * attackLane,
+  };
+  if (maneuver.phase === "breakaway") return {
+    x: target.x - forwardX * profile.breakawayRadius + tangentX * attackLane * 1.45,
+    y: target.y + profile.cruiseAltitude + (swimming ? -0.2 : 1.4) + ripple,
+    z: target.z - forwardZ * profile.breakawayRadius + tangentZ * attackLane * 1.45,
+  };
+
+  const repositioning = maneuver.phase === "reposition";
+  const radius = repositioning ? profile.orbitRadius * 1.22 : profile.orbitRadius;
+  const orbitRate = (repositioning ? 0.62 : 0.48) * maneuver.orbitDirection;
+  const angle = maneuver.passBearing + maneuver.phaseSeconds * orbitRate;
+  return {
+    x: target.x + Math.cos(angle) * radius,
+    y: target.y + profile.cruiseAltitude + (repositioning && !swimming ? 2.2 : 0) + ripple,
+    z: target.z + Math.sin(angle) * radius,
+  };
+}
+
+function attackReady(kind: DragonAttackKind, input: DragonCombatManeuverInput) {
+  if (kind === "melee") return input.meleeReady !== false;
+  if (kind === "breath") return input.breathReady !== false;
+  return input.projectileReady !== false;
+}
+
+function maneuverAttack(
+  input: DragonCombatManeuverInput,
+  maneuver: DragonCombatManeuverState,
+  distance: number,
+  profile: DragonCombatProfile,
+) {
+  if (maneuver.phase !== "attack-run" || maneuver.attackCommitted || !input.lineOfSight) return null;
+  const state = input.dragonState;
+  let order = profile.preferredAttacks;
+  const signatureMelee = isSignatureMeleePass(state, maneuver, Boolean(input.swimming));
+  const attackRunSeconds = combatAttackRunSeconds(state, maneuver, profile, Boolean(input.swimming));
+  const fireClawPass = signatureMelee && state.type === "fire" && input.meleeReady !== false;
+  const seaBitePass = signatureMelee && state.type === "sea" && input.meleeReady !== false;
+  const closeMeleePlan = fireClawPass || seaBitePass ? dragonAttackPlan(state.type, state.stage, "melee") : null;
+  if (fireClawPass) order = ["melee", "breath", "projectile"];
+  else if (state.type === "ice" && maneuver.passIndex % 2 === 1) order = ["projectile", "breath", "melee"];
+  else if (seaBitePass) order = ["melee", "breath", "projectile"];
+
+  for (const kind of order) {
+    if (!attackReady(kind, input) || (kind !== "melee" && state.stage < 2)) continue;
+    const plan = dragonAttackPlan(state.type, state.stage, kind);
+    if (distance > plan.range) continue;
+    if (closeMeleePlan && kind !== "melee" && distance > closeMeleePlan.range
+      && maneuver.phaseSeconds < attackRunSeconds * 0.82) continue;
+    // Fire and Sea dragons commit to closing for their signature stream instead
+    // of throwing a fallback projectile the instant they enter the lane.
+    if (kind === "projectile" && (state.type === "fire" || state.type === "sea")
+      && maneuver.phaseSeconds < profile.attackRunSeconds * 0.56) continue;
+    return plan;
+  }
+  return null;
+}
+
+/**
+ * Deterministic host-authoritative attack-pass planner. Its attack lane always
+ * carries a non-zero lateral miss distance, so an airborne dragon never seeks
+ * the target's exact horizontal coordinate or parks directly overhead.
+ */
+export function planDragonCombatManeuver(input: DragonCombatManeuverInput): DragonCombatManeuverPlan {
+  const dt = clampFinite(input.dt, 0, 0.25, 0);
+  const swimming = Boolean(input.swimming && input.dragonState.type === "sea");
+  const profile = dragonCombatProfile(input.dragonState.type, input.dragonState.stage, swimming);
+  const relativeX = input.dragonPosition.x - input.targetPosition.x;
+  const relativeZ = input.dragonPosition.z - input.targetPosition.z;
+  const currentSeparation = Math.hypot(relativeX, relativeZ);
+  let maneuver = input.maneuver;
+
+  if (maneuver.targetToken !== input.targetToken) {
+    const fallbackBearing = dragonCombatUnit(input.combatSeed, input.targetToken) * Math.PI * 2 - Math.PI;
+    maneuver = {
+      ...createDragonCombatManeuverState(input.combatSeed ^ input.targetToken),
+      passBearing: currentSeparation > 0.1 ? Math.atan2(relativeZ, relativeX) : fallbackBearing,
+      targetToken: input.targetToken,
+    };
+  } else maneuver = { ...maneuver, phaseSeconds: maneuver.phaseSeconds + dt };
+
+  if (!input.lineOfSight && maneuver.phase !== "reposition" && maneuver.phase !== "breakaway") {
+    maneuver = {
+      ...maneuver,
+      phase: "reposition",
+      phaseSeconds: 0,
+      passBearing: currentSeparation > 0.1 ? Math.atan2(relativeZ, relativeX) : maneuver.passBearing,
+      attackCommitted: false,
+    };
+  } else if (maneuver.phase === "reposition"
+    && ((input.lineOfSight && maneuver.phaseSeconds >= 0.45) || maneuver.phaseSeconds >= 4.2)) {
+    maneuver = {
+      ...maneuver,
+      phase: "approach",
+      phaseSeconds: 0,
+      passIndex: maneuver.passIndex + 1,
+      passBearing: currentSeparation > 0.1 ? Math.atan2(relativeZ, relativeX) : maneuver.passBearing,
+      attackCommitted: false,
+    };
+  }
+
+  let destination = combatDestination(input.dragonState, maneuver, profile, input.targetPosition, swimming);
+  const arrivalDistance = horizontalDistance(input.dragonPosition, destination);
+  if (maneuver.phase === "approach" && (arrivalDistance <= Math.max(2.1, profile.missDistance * 0.48) || maneuver.phaseSeconds >= 4.8)) {
+    maneuver = { ...maneuver, phase: "attack-run", phaseSeconds: 0, attackCommitted: false };
+    destination = combatDestination(input.dragonState, maneuver, profile, input.targetPosition, swimming);
+  } else if (maneuver.phase === "attack-run"
+    && ((maneuver.attackCommitted && maneuver.phaseSeconds >= 0.55)
+      || maneuver.phaseSeconds >= combatAttackRunSeconds(input.dragonState, maneuver, profile, swimming))) {
+    maneuver = { ...maneuver, phase: "breakaway", phaseSeconds: 0 };
+    destination = combatDestination(input.dragonState, maneuver, profile, input.targetPosition, swimming);
+  } else if (maneuver.phase === "breakaway"
+    && (maneuver.phaseSeconds >= 2.15 || currentSeparation >= profile.breakawayRadius * 0.88)) {
+    maneuver = {
+      ...maneuver,
+      phase: "orbit",
+      phaseSeconds: 0,
+      passBearing: currentSeparation > 0.1 ? Math.atan2(relativeZ, relativeX) : maneuver.passBearing,
+      attackCommitted: false,
+    };
+    destination = combatDestination(input.dragonState, maneuver, profile, input.targetPosition, swimming);
+  } else if (maneuver.phase === "orbit" && maneuver.phaseSeconds >= profile.orbitSeconds) {
+    maneuver = {
+      ...maneuver,
+      phase: "approach",
+      phaseSeconds: 0,
+      passIndex: maneuver.passIndex + 1,
+      passBearing: currentSeparation > 0.1 ? Math.atan2(relativeZ, relativeX) : maneuver.passBearing,
+      attackCommitted: false,
+    };
+    destination = combatDestination(input.dragonState, maneuver, profile, input.targetPosition, swimming);
+  }
+
+  const distance3d = Math.hypot(relativeX, input.dragonPosition.y - input.targetPosition.y, relativeZ);
+  const attack = maneuverAttack(input, maneuver, distance3d, profile);
+  const phaseSpeed = maneuver.phase === "attack-run" ? 1.28
+    : maneuver.phase === "breakaway" ? 1.16
+      : maneuver.phase === "orbit" ? 0.82
+        : maneuver.phase === "reposition" ? 0.94 : 1;
+  return {
+    maneuver,
+    destination,
+    attack,
+    style: profile.style,
+    speedScale: profile.speedScale * phaseSpeed,
+    terrainClearance: maneuver.phase === "attack-run"
+      && isSignatureMeleePass(input.dragonState, maneuver, swimming)
+      && input.dragonState.type === "fire" ? 1.45 : 4.5,
+    minimumHorizontalSeparation: profile.missDistance,
+    horizontalSeparation: currentSeparation,
+  };
+}
+
+export function commitDragonCombatAttack(maneuver: DragonCombatManeuverState, attack: DragonAttackKind): DragonCombatManeuverState {
+  return {
+    ...maneuver,
+    phase: "attack-run",
+    phaseSeconds: 0,
+    attackCommitted: true,
+    lastAttack: attack,
+  };
+}
+
 export const DRAGON_RIDER_CONTROLS = Object.freeze({ melee: "KeyZ", breath: "KeyX", projectile: "KeyC" } as const);
 
 export function riderDragonAttack(state: DragonState, riderId: string, controlCode: string) {
@@ -737,6 +1207,33 @@ export function createLairEggClutch(state: DragonState, seed = state.geneticSeed
   }));
 }
 
+/**
+ * Every dragon old enough to breed leaves a bounded, lineage-preserving egg
+ * clutch when defeated. This is separate from eggs already present in female
+ * lairs: a corpse may yield one legacy egg regardless of sex, while only a
+ * stage-five female can yield one or two additional legacy eggs.
+ */
+export function createDragonDeathEggClutch(
+  state: DragonState,
+  deathTick = 0,
+  seed = state.geneticSeed,
+): DragonEgg[] {
+  if (state.stage < DRAGON_BREEDING_STAGE) return [];
+  const count = state.stage === 5 && state.sex === "female"
+    ? 1 + Math.floor(seededRoll(seed, 29) * DRAGON_EGG_DROP_POLICY.maximumDeathClutch)
+    : 1;
+  const boundedCount = Math.min(DRAGON_EGG_DROP_POLICY.maximumDeathClutch, count);
+  const laidAtTick = safeInteger(deathTick);
+  return Array.from({ length: boundedCount }, (_, index) => createDragonEgg(state.type, {
+    eggId: `${state.dragonId}:legacy:${laidAtTick}:${index + 1}`,
+    geneticSeed: mixSeed(seed, state.geneticSeed, laidAtTick, index + 1),
+    parentIds: [state.dragonId, null],
+    laidAtTick,
+    wild: true,
+    lairId: state.home?.lairId ?? null,
+  }));
+}
+
 /** Deterministic corpse/lair loot; large dragons yield materially plentiful stacks. */
 export function rollDragonLoot(state: DragonState, seed = state.geneticSeed): DragonLoot[] {
   const stage = state.stage;
@@ -748,8 +1245,12 @@ export function rollDragonLoot(state: DragonState, seed = state.geneticSeed): Dr
     { item: typeLootItem(state.type, "Skull"), count: 1, metadata: { type: state.type, stage, sex: state.sex } },
   ];
   if (stage >= 2) loot.push({ item: typeLootItem(state.type, "Heart"), count: 1 });
-  const clutch = createLairEggClutch(state, seed);
-  if (clutch.length) loot.push({ item: typeLootItem(state.type, "Egg"), count: clutch.length, metadata: { lairId: state.home?.lairId ?? "unknown" } });
+  const clutch = createDragonDeathEggClutch(state, 0, seed);
+  if (clutch.length) loot.push({
+    item: typeLootItem(state.type, "Egg"),
+    count: clutch.length,
+    metadata: { lairId: state.home?.lairId ?? "unknown", parentId: state.dragonId, stage, sex: state.sex },
+  });
   return loot;
 }
 

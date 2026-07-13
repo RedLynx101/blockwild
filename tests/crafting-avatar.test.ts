@@ -266,7 +266,7 @@ test("workstation UI normalizes apiary production and exact capture-orb metadata
 });
 
 test("human release identity stays separate from save schemas", () => {
-  assert.equal(GAME_VERSION, "1.5.0");
+  assert.equal(GAME_VERSION, "1.5.1");
   assert.equal(GAME_RELEASE_NAME, "The World Below");
   assert.equal(normalizeGameVersion("garbage"), "0.1.0");
 });
@@ -401,9 +401,13 @@ test("bestiary filters and completion respond to care progress", () => {
   assert.equal(bestiaryEntryCompletion(MOB_DEFS.peelop, { seen: false, kills: 0, captures: 0 }), 0);
   assert.equal(bestiaryEntryCompletion(MOB_DEFS.peelop, { seen: true, kills: 0, captures: 0, tames: 1, breeds: 1, secretUnlocked: true }), 100);
   const dragonNotes = MOB_DEFS["fire-dragon"].fieldNotes ?? [];
-  assert.equal(dragonNotes.length, 6);
-  assert.equal(bestiaryFieldNoteUnlocked(dragonNotes[2], { seen: true, kills: 0, captures: 0, milestones: { hatched: 1 } }), true);
-  assert.equal(bestiaryEntryCompletion(MOB_DEFS["fire-dragon"], { seen: true, kills: 1, captures: 0, tames: 1, breeds: 1, milestones: { hatched: 1, "stage-3": 1 } }), 100);
+  assert.equal(dragonNotes.length, 8);
+  assert.equal(bestiaryFieldNoteUnlocked(dragonNotes[2], { seen: true, kills: 0, captures: 0, milestones: { "egg-recovered": 1 } }), true);
+  assert.equal(bestiaryFieldNoteUnlocked(dragonNotes[3], { seen: true, kills: 0, captures: 0, milestones: { hatched: 1 } }), true);
+  assert.equal(bestiaryEntryCompletion(MOB_DEFS["fire-dragon"], {
+    seen: true, kills: 1, captures: 0, tames: 1, breeds: 1,
+    milestones: { "mature-defeated": 1, "egg-recovered": 1, hatched: 1, "stage-3": 1, "scale-harvested": 1 },
+  }), 100);
 });
 
 test("bestiary portraits stay contained above their navigation chrome", () => {

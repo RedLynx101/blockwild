@@ -5,6 +5,11 @@ import { planSeaDragonNest, type SeaDragonNestPlan } from "./v1-cultures";
 
 export const DRAGON_LAIR_REGION_BLOCKS = 44 * 16;
 export const DRAGON_LAIR_STAGE_FIVE_CHANCE = 0.22;
+export const DRAGON_LAIR_MAX_HORIZONTAL_RADIUS = 32;
+export const DRAGON_LAIR_MAX_PLACEMENTS = 42_000;
+export const DRAGON_LAIR_PLAN_CACHE_LIMIT = 8;
+
+const dragonLairPlanCache = new Map<string, DragonLairPlan>();
 
 export type DragonType = "fire" | "ice" | "steel" | "gold" | "silver";
 export type DragonSex = "male" | "female";
@@ -195,9 +200,12 @@ export function dragonLairCandidateForRegion(input: DragonLairRegionInput): Drag
   const type = input.forceType ?? dragonTypeFor(seed, regionX, regionZ);
   const stage = input.forceStage ?? (hashUnit(seed, `dragon-lair-stage:${regionX},${regionZ}`) < DRAGON_LAIR_STAGE_FIVE_CHANCE ? 5 : 4);
   const sex = input.forceSex ?? (hashUnit(seed, `dragon-lair-sex:${regionX},${regionZ}`) < 0.5 ? "female" : "male");
-  const radiusX = stage === 5 ? 13 : 10;
-  const radiusY = stage === 5 ? 8 : 6;
-  const radiusZ = stage === 5 ? 12 : 10;
+  // Bounds cover four overlapping chambers rather than one small ellipsoid.
+  // A stage-five great-vault spans roughly 65 by 57 blocks while remaining
+  // well inside the region margin and the bounded planning budget below.
+  const radiusX = stage === 5 ? 32 : 25;
+  const radiusY = stage === 5 ? 12 : 9;
+  const radiusZ = stage === 5 ? 28 : 22;
   const id = `dragon-lair:${type}:${regionX}:${regionZ}`;
   return {
     id, type, stage, sex, regionX, regionZ,
@@ -214,32 +222,104 @@ export function planDragonLairForRegion(input: DragonLairRegionInput): DragonLai
   const candidate = dragonLairCandidateForRegion(input);
   if (!candidate) return null;
   const { seed } = input;
-  const { id, type, stage, sex, regionX, regionZ, radiusX, radiusY, radiusZ } = candidate;
+  const { id, type, stage, sex, regionX, regionZ } = candidate;
   const { x: centerX, y: centerY, z: centerZ } = candidate.origin;
+  const cacheKey = `${seed}|${id}|${stage}|${sex}|${centerX},${centerY},${centerZ}`;
+  const cached = dragonLairPlanCache.get(cacheKey);
+  if (cached) {
+    dragonLairPlanCache.delete(cacheKey);
+    dragonLairPlanCache.set(cacheKey, cached);
+    return cached;
+  }
   const palette = DRAGON_LAIR_PALETTES[type];
   const placements = new Map<string, PlannedBlock>();
   const set = (x: number, y: number, z: number, block: BlockId, variant: string) => placements.set(`${x},${y},${z}`, { x, y, z, block, variant });
 
-  for (let dy = -radiusY; dy <= radiusY; dy += 1) for (let dz = -radiusZ; dz <= radiusZ; dz += 1) for (let dx = -radiusX; dx <= radiusX; dx += 1) {
-    const distance = (dx / radiusX) ** 2 + (dy / radiusY) ** 2 + (dz / radiusZ) ** 2;
-    if (distance > 1) continue;
-    const shellNoise = (hashUnit(seed, `lair-shell:${regionX},${regionZ}:${dx},${dy},${dz}`) - 0.5) * 0.06;
-    if (distance + shellNoise >= 0.7) set(centerX + dx, centerY + dy, centerZ + dz, palette.wall, `${type}-dragonstone`);
-    else set(centerX + dx, centerY + dy, centerZ + dz, BlockId.Air, "dragon-cavern");
+  type LairChamber = Readonly<{
+    name: "great-vault" | "treasury" | "rookery" | "entrance";
+    x: number;
+    y: number;
+    z: number;
+    rx: number;
+    ry: number;
+    rz: number;
+  }>;
+  const mainRadii = stage === 5 ? { x: 20, y: 12, z: 19 } : { x: 16, y: 9, z: 15 };
+  const chambers: readonly LairChamber[] = stage === 5 ? [
+    { name: "great-vault", x: centerX, y: centerY, z: centerZ, rx: 20, ry: 12, rz: 19 },
+    { name: "treasury", x: centerX - 22, y: centerY - 5, z: centerZ, rx: 10, ry: 7, rz: 10 },
+    { name: "rookery", x: centerX, y: centerY - 5, z: centerZ + 18, rx: 11, ry: 7, rz: 10 },
+    { name: "entrance", x: centerX, y: centerY - 6, z: centerZ - 18, rx: 9, ry: 6, rz: 10 },
+  ] : [
+    { name: "great-vault", x: centerX, y: centerY, z: centerZ, rx: 16, ry: 9, rz: 15 },
+    { name: "treasury", x: centerX - 18, y: centerY - 4, z: centerZ, rx: 7, ry: 5, rz: 7 },
+    { name: "rookery", x: centerX, y: centerY - 4, z: centerZ + 15, rx: 8, ry: 5, rz: 7 },
+    { name: "entrance", x: centerX, y: centerY - 4, z: centerZ - 15, rx: 7, ry: 5, rz: 7 },
+  ];
+  const cavernCells = new Map<string, Readonly<{ x: number; y: number; z: number; distance: number; chamber: LairChamber["name"] }>>();
+  for (const chamber of chambers) {
+    for (let dy = -chamber.ry; dy <= chamber.ry; dy += 1) for (let dz = -chamber.rz; dz <= chamber.rz; dz += 1) for (let dx = -chamber.rx; dx <= chamber.rx; dx += 1) {
+      const distance = (dx / chamber.rx) ** 2 + (dy / chamber.ry) ** 2 + (dz / chamber.rz) ** 2;
+      if (distance > 1) continue;
+      const x = chamber.x + dx;
+      const y = chamber.y + dy;
+      const z = chamber.z + dz;
+      const key = `${x},${y},${z}`;
+      const existing = cavernCells.get(key);
+      if (!existing || distance < existing.distance) cavernCells.set(key, { x, y, z, distance, chamber: chamber.name });
+    }
+  }
+  for (const cell of cavernCells.values()) {
+    const shellNoise = (hashUnit(seed, `lair-shell:${regionX},${regionZ}:${cell.x},${cell.y},${cell.z}`) - 0.5) * 0.055;
+    if (cell.distance + shellNoise >= 0.72) set(cell.x, cell.y, cell.z, palette.wall, `${type}-${cell.chamber}-shell`);
+    else set(cell.x, cell.y, cell.z, BlockId.Air, `${type}-${cell.chamber}`);
   }
 
-  const floorY = centerY - radiusY + 2;
-  const treasureCount = stage === 5 ? 30 : 18;
+  const floorY = centerY - mainRadii.y + 2;
+  const treasury = chambers.find((chamber) => chamber.name === "treasury")!;
+  const rookery = chambers.find((chamber) => chamber.name === "rookery")!;
+  const treasuryFloorRadiusX = treasury.rx - 1;
+  const treasuryFloorRadiusZ = treasury.rz - 1;
+  const treasuryFloorCells: Array<{ x: number; z: number; normalizedDistance: number }> = [];
+  for (let dz = -treasuryFloorRadiusZ; dz <= treasuryFloorRadiusZ; dz += 1) for (let dx = -treasuryFloorRadiusX; dx <= treasuryFloorRadiusX; dx += 1) {
+    const normalizedDistance = (dx / treasuryFloorRadiusX) ** 2 + (dz / treasuryFloorRadiusZ) ** 2;
+    if (normalizedDistance > 1) continue;
+    const x = treasury.x + dx;
+    const z = treasury.z + dz;
+    treasuryFloorCells.push({ x, z, normalizedDistance });
+    // The treasury sits low in its ellipsoid, where the natural cross-section
+    // is narrow. Author a real supported platform with standing clearance so
+    // no pile can overwrite shell and become entombed.
+    set(x, floorY - 1, z, palette.wall, `${type}-treasury-floor-support`);
+    set(x, floorY, z, BlockId.Air, `${type}-treasury-floor`);
+    set(x, floorY + 1, z, BlockId.Air, `${type}-treasury-clearance`);
+    set(x, floorY + 2, z, BlockId.Air, `${type}-treasury-clearance-upper`);
+  }
+  const treasureCount = stage === 5 ? 58 : 34;
+  const hoardCells = treasuryFloorCells
+    .filter((cell) => cell.normalizedDistance <= 0.78 && ((cell.x + cell.z) & 1) === 0)
+    .sort((left, right) => hashUnit(seed, `treasure-cell:${regionX},${regionZ}:${left.x},${left.z}`)
+      - hashUnit(seed, `treasure-cell:${regionX},${regionZ}:${right.x},${right.z}`)
+      || left.z - right.z || left.x - right.x);
+  if (hoardCells.length < treasureCount) throw new RangeError(`${id} treasury floor cannot fit ${treasureCount} accessible hoard cells`);
   for (let index = 0; index < treasureCount; index += 1) {
-    const angle = hashUnit(seed, `treasure-angle:${regionX},${regionZ}:${index}`) * Math.PI * 2;
-    const radial = 2 + Math.sqrt(hashUnit(seed, `treasure-radius:${regionX},${regionZ}:${index}`)) * (Math.min(radiusX, radiusZ) - 4);
-    const x = centerX + Math.round(Math.cos(angle) * radial);
-    const z = centerZ + Math.round(Math.sin(angle) * radial);
-    set(x, floorY, z, index < (stage === 5 ? 7 : 4) ? BlockId.GoldBlock : BlockId.GoldPile, index < (stage === 5 ? 7 : 4) ? "dragon-hoard-block" : "dragon-hoard-pile");
+    const { x, z } = hoardCells[index];
+    set(x, floorY, z, index < (stage === 5 ? 14 : 8) ? BlockId.GoldBlock : BlockId.GoldPile, index < (stage === 5 ? 14 : 8) ? `${type}-treasury-ingot-mass` : `${type}-treasury-pile`);
+  }
+
+  // Elemental ribs make the great-vault silhouette species-specific without
+  // introducing unbounded structure passes or unsafe liquids near the hoard.
+  const pillarCount = type === "steel" ? 10 : type === "gold" ? 9 : type === "silver" ? 7 : type === "ice" ? 8 : 6;
+  for (let index = 0; index < pillarCount; index += 1) {
+    const angle = (index / pillarCount) * Math.PI * 2 + hashUnit(seed, `lair-rib-angle:${regionX},${regionZ}`) * 0.4;
+    const x = centerX + Math.round(Math.cos(angle) * (mainRadii.x - 4));
+    const z = centerZ + Math.round(Math.sin(angle) * (mainRadii.z - 4));
+    const height = 2 + ((index + stage) % 4);
+    for (let dy = 0; dy < height; dy += 1) set(x, floorY + dy, z, type === "ice" ? BlockId.Ice : palette.wall, `${type}-vault-rib`);
   }
 
   const markers: StructureMarker[] = [];
-  const chestCount = stage === 5 ? 4 : 3;
+  const chestCount = stage === 5 ? 6 : 4;
   const tomeKeys = type === "fire" ? ["tome-flame-jet", "tome-blinkstep"]
     : type === "ice" ? ["tome-frost-lance", "tome-arcane-ward"]
       : type === "gold" ? ["tome-healing-light", "tome-flame-jet"]
@@ -248,7 +328,7 @@ export function planDragonLairForRegion(input: DragonLairRegionInput): DragonLai
   const scaleLootKey = `${type}-dragon-scale`;
   for (let index = 0; index < chestCount; index += 1) {
     const angle = (index / chestCount) * Math.PI * 2 + hashUnit(seed, `chest-angle:${regionX},${regionZ}`);
-    const position = { x: centerX + Math.round(Math.cos(angle) * (radiusX - 4)), y: floorY, z: centerZ + Math.round(Math.sin(angle) * (radiusZ - 4)) };
+    const position = { x: treasury.x + Math.round(Math.cos(angle) * Math.max(3, treasury.rx - 3)), y: floorY, z: treasury.z + Math.round(Math.sin(angle) * Math.max(3, treasury.rz - 3)) };
     set(position.x, position.y, position.z, BlockId.Chest, "dragon-hoard-chest");
     const rareRoll = hashUnit(seed, `chest-rare:${regionX},${regionZ}:${index}`);
     markers.push({
@@ -270,7 +350,7 @@ export function planDragonLairForRegion(input: DragonLairRegionInput): DragonLai
   const eggPositions: WorldPosition[] = [];
   for (let index = 0; index < eggCount; index += 1) {
     const offsetX = index - Math.floor(eggCount / 2);
-    const position = { x: centerX + offsetX * 2, y: floorY, z: centerZ + radiusZ - 4 };
+    const position = { x: rookery.x + offsetX * 2, y: floorY, z: rookery.z + Math.max(1, rookery.rz - 4) };
     set(position.x, position.y, position.z, palette.eggBlock, `${type}-dragon-egg`);
     eggPositions.push(position);
   }
@@ -292,7 +372,11 @@ export function planDragonLairForRegion(input: DragonLairRegionInput): DragonLai
     tag: `dragon-lair:${type}:stage-${stage}:${sex}`,
   });
 
-  return Object.freeze({
+  if (placements.size > DRAGON_LAIR_MAX_PLACEMENTS) {
+    throw new RangeError(`${id} exceeded the ${DRAGON_LAIR_MAX_PLACEMENTS}-block lair planning budget`);
+  }
+
+  const plan = Object.freeze({
     id,
     type,
     stage,
@@ -303,6 +387,13 @@ export function planDragonLairForRegion(input: DragonLairRegionInput): DragonLai
     markers: Object.freeze(markers),
     eggPositions: Object.freeze(eggPositions),
   });
+  dragonLairPlanCache.set(cacheKey, plan);
+  while (dragonLairPlanCache.size > DRAGON_LAIR_PLAN_CACHE_LIMIT) {
+    const oldestKey = dragonLairPlanCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    dragonLairPlanCache.delete(oldestKey);
+  }
+  return plan;
 }
 
 export function dragonLairPlacementsForChunk(plan: DragonLairPlan, chunkX: number, chunkZ: number, chunkSize = 16) {
@@ -327,7 +418,7 @@ export function dragonLairsIntersectingChunk(input: Readonly<{
   const chunkSize = input.chunkSize ?? 16;
   const minX = input.chunkX * chunkSize;
   const minZ = input.chunkZ * chunkSize;
-  const reach = 14;
+  const reach = DRAGON_LAIR_MAX_HORIZONTAL_RADIUS;
   const regionMinX = Math.floor((minX - reach) / DRAGON_LAIR_REGION_BLOCKS);
   const regionMaxX = Math.floor((minX + chunkSize + reach) / DRAGON_LAIR_REGION_BLOCKS);
   const regionMinZ = Math.floor((minZ - reach) / DRAGON_LAIR_REGION_BLOCKS);

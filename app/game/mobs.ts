@@ -114,7 +114,13 @@ export type DwarfKind =
   | "dwarf-golemsmith"
   | "dwarf-powderwright"
   | "dwarf-provisioner";
-export type GolemKind = "copper-scout-golem" | "stone-bulwark-golem" | "aetherforged-sentinel" | "deepgear-courser-golem";
+export type GolemKind =
+  | "copper-scout-golem"
+  | "stone-bulwark-golem"
+  | "aetherforged-sentinel"
+  | "deepgear-courser-golem"
+  | "clockwork-hound-golem"
+  | "webspinner-golem";
 export type V1FactionCreatureKind = "glimmerhart" | "runeowl" | "glowfin" | "copper-mole" | GolemKind;
 export type SentientMobKind = HobbitKind | GoblinKind | AtlantianKind | SugarcourtKind | WoodElfKind | DwarfKind;
 export type FactionKind = "hobbits" | "goblins" | "atlantians" | "sugarcourt" | "wood-elves" | "dwarves";
@@ -247,11 +253,13 @@ export type MobDefinition = {
 function dragonFieldNotes(name: string, incubation: string, adultTechnique: string): readonly BestiaryFieldNote[] {
   return Object.freeze([
     { id: "observed", title: "First Sighting", text: `${name} anatomy, habitat, and temperament have been recorded at close range.`, hint: "Observe one in the world.", requires: [{ metric: "seen", atLeast: 1 }] },
-    { id: "guardian", title: "Guardian Anatomy", text: `A mature ${name} commits differently to melee, breath, and projectile attacks; surviving a guardian reveals the safest openings.`, hint: "Defeat one mature wild guardian.", requires: [{ metric: "kills", atLeast: 1 }] },
-    { id: "incubation", title: "Egg and Incubation", text: incubation, hint: "Hatch one of its eggs.", requires: [{ milestone: "hatched", atLeast: 1 }] },
-    { id: "bond", title: "Hatchling Bond", text: "Three patient feeds establish a hatchling bond. A bonded young dragon can rest on its keeper's shoulder.", hint: "Successfully tame one.", requires: [{ metric: "tames", atLeast: 1 }] },
-    { id: "adult", title: "Adult Riding and Combat", text: adultTechnique, hint: "Raise a bonded dragon to stage three.", requires: [{ milestone: "stage-3", atLeast: 1 }] },
-    { id: "lineage", title: "Lineage Record", text: "A completed breeding record reveals inherited coloration, sex, growth, and combat traits for this draconic lineage.", hint: "Breed this dragon type successfully.", requires: [{ metric: "breeds", atLeast: 1 }] },
+    { id: "guardian", title: "Defeat and Egg Recovery", text: `A mature ${name} commits differently to melee, breath, and projectile attacks. Every stage-three or older dragon leaves at least one lineage-preserving egg; recover it from the battlefield before beginning incubation.`, hint: "Defeat one breed-capable wild guardian.", requires: [{ milestone: "mature-defeated", atLeast: 1 }] },
+    { id: "incubation", title: "Incubation and Hatching", text: `${incubation} A protected dropped egg survives fire, lava, and at least one full world day before ordinary cleanup can claim it.`, hint: "Recover one of its eggs.", requires: [{ milestone: "egg-recovered", atLeast: 1 }] },
+    { id: "bond", title: "Hatchling Bond and Shoulder", text: "A newly hatched stage-one dragon is defensive but approachable. Three patient feeds establish a bond; interact with the bonded hatchling to settle it on an open shoulder.", hint: "Hatch one of its eggs.", requires: [{ milestone: "hatched", atLeast: 1 }] },
+    { id: "growth", title: "Feeding and Growth", text: "Meat restores vitality. Dragon Meal advances growth by one full day, while natural aging moves through a new stage every twenty-five days. Shoulder carry ends after stage one.", hint: "Bond with one of its hatchlings.", requires: [{ metric: "tames", atLeast: 1 }] },
+    { id: "adult", title: "Adult Tack, Panniers, and Riding", text: `${adultTechnique} Fit the matching four-piece scale harness, a Dragon Saddle, and up to two pannier modules through its creature panel.`, hint: "Raise a bonded dragon to stage three.", requires: [{ milestone: "stage-3", atLeast: 1 }] },
+    { id: "scales", title: "Renewable Scale Harvest", text: "Loose scales accumulate naturally in a bonded dragon's creature inventory. Brushing them free does not injure the dragon; return after several world days for another harvest.", hint: "Collect a naturally shed scale from a bonded dragon.", requires: [{ milestone: "scale-harvested", atLeast: 1 }] },
+    { id: "lineage", title: "Lineage and Breeding", text: "Pair bonded stage-three-or-older dragons of the same type and opposite sex, then offer their matching elemental catalyst. The physical egg preserves its parents, sex, element, and lair lineage.", hint: "Breed this dragon type successfully.", requires: [{ metric: "breeds", atLeast: 1 }] },
   ]);
 }
 
@@ -408,6 +416,32 @@ const V1_CREATURE_MOBS: Record<V1FactionCreatureKind, MobDefinition> = {
     utility: "A durable mechanical land mount assembled at a Golem Forge or purchased unaligned from a Deepgear Golemsmith.",
     postTameNotes: "Fit a Trail Saddle after attuning its aether key. Deepgear Alloy repairs three hearts.",
     discoveryHint: "Listen for paired piston strokes near a Deepgear Golem Forge.",
+  },
+  "clockwork-hound-golem": {
+    kind: "clockwork-hound-golem", name: "Clockwork Hound Golem", temperament: "Defensive", hostile: false,
+    health: 46, damage: 7, xp: 16, speed: 1.38, chaseSpeed: 5.45, turnRate: 8.8, attackRange: 1.42,
+    footOffset: 0.76, radius: 0.56, height: 0.96, habitat: "Deepgear gate kennels and Golem Forges", active: "While its spring-heart carries charge",
+    behavior: "Runs a tight interception arc, bites at exposed joints, and uses its plated shoulder to knock threats away from its keeper.",
+    lore: "The first hounds were made for delvers who missed their dogs underground; modern ones can hear a hostile footstep through two stone walls.",
+    colors: [0x9f6b3c, 0x4c585c, 0x8df5e9], drops: [{ item: Item.GearCluster, min: 1, max: 3, chance: 0.9 }],
+    family: "construct", movement: "ground", persistent: true, sentient: false, factionAffinity: "dwarves", tameRequiresUnaligned: true,
+    tameable: true, tameItems: [Item.GearCluster, Item.DeepgearAlloy], diet: [Item.GearCluster, Item.DeepgearAlloy],
+    utility: "A fast bodyguard that intercepts attackers before returning to formation. Unaligned hounds can be bonded and attuned to a Capture Orb.",
+    postTameNotes: "Set Follow or Hold in its creature panel. Precision Gear Clusters repair its spring-heart; it cannot breed.",
+    discoveryHint: "Listen for a metallic bark beside the gate of a Deepgear Hold.",
+  },
+  "webspinner-golem": {
+    kind: "webspinner-golem", name: "Webspinner Golem", temperament: "Defensive", hostile: false,
+    health: 64, damage: 5, xp: 22, speed: 0.84, chaseSpeed: 3.35, turnRate: 7.4, attackRange: 8,
+    footOffset: 0.64, radius: 0.75, height: 0.76, habitat: "Deepgear defensive galleries and Golem Forges", active: "While its pressure loom is wound",
+    behavior: "Skitters to a measured standoff, vents a binding web of mineral filament and steam, then repositions while its pressure chamber recovers.",
+    lore: "Eight independent leg governors let a Webspinner keep a tunnel covered even when the floor is mostly missing.",
+    colors: [0x556063, 0xb77d45, 0xa4fff0], drops: [{ item: Item.GearCluster, min: 2, max: 4, chance: 1 }],
+    family: "construct", movement: "ground", ranged: true, persistent: true, sentient: false, factionAffinity: "dwarves", tameRequiresUnaligned: true,
+    tameable: true, tameItems: [Item.CrystalShard, Item.DeepgearAlloy], diet: [Item.CrystalShard, Item.DeepgearAlloy],
+    utility: "A ranged control companion that slows hostile creatures with bounded pressure-web bursts while keeping clear of melee.",
+    postTameNotes: "Its pressure loom favors open sight lines. Crystal Shards replenish its filament core; it cannot breed.",
+    discoveryHint: "Search the ceiling braces around a Deepgear defensive gallery for eight brass footprints.",
   },
 };
 
@@ -2158,7 +2192,7 @@ export const SUGARCOURT_ORDER: SugarcourtKind[] = [
 ];
 export const WOOD_ELF_ORDER: WoodElfKind[] = ["wood-elf-elderweaver", "wood-elf-leafwarden", "wood-elf-bow-warden", "wood-elf-grovekeeper", "wood-elf-tomekeeper", "wood-elf-potioner", "wood-elf-moonbroker"];
 export const DWARF_ORDER: DwarfKind[] = ["dwarf-thane", "dwarf-gatewarden", "dwarf-delver", "dwarf-gearwright", "dwarf-golemsmith", "dwarf-powderwright", "dwarf-provisioner"];
-export const V1_FACTION_CREATURE_ORDER: V1FactionCreatureKind[] = ["glimmerhart", "runeowl", "glowfin", "copper-mole", "copper-scout-golem", "stone-bulwark-golem", "aetherforged-sentinel", "deepgear-courser-golem"];
+export const V1_FACTION_CREATURE_ORDER: V1FactionCreatureKind[] = ["glimmerhart", "runeowl", "glowfin", "copper-mole", "copper-scout-golem", "stone-bulwark-golem", "aetherforged-sentinel", "deepgear-courser-golem", "clockwork-hound-golem", "webspinner-golem"];
 export const SENTIENT_MOB_ORDER: SentientMobKind[] = [...HOBBIT_ORDER, ...GOBLIN_ORDER, ...ATLANTIAN_ORDER, ...SUGARCOURT_ORDER, ...WOOD_ELF_ORDER, ...DWARF_ORDER];
 export const SPECIAL_MOB_ORDER: SpecialMobKind[] = ["peelop", "reliquary-sentinel", "skeleton", "warg"];
 export const ADVENTURE_MOB_ORDER: AdventureMobKind[] = ["auric-scarab", "rootwrithe", "bellroot-matron", "vaultwing", "cinder-maw", "ossuary-keeper", "mossback-kite", "clockwork-marmot", "inkmaw-curator"];

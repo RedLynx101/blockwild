@@ -985,6 +985,7 @@ export function canRideCreature(context: CreatureRideContext) {
 
 export const GENERIC_BOND_MOB_KINDS = Object.freeze([
   "wild-horse", "rimehoof-courser", "sunscar-courser", "mirestride-courser", "starbough-courser", "deepgear-courser-golem",
+  "clockwork-hound-golem", "webspinner-golem",
   "warg", "tidepup", "sakurakit", "taffy-hound", "praline-cat", "rimecoat-hound", "bramblewhisk-cat", "taffalo",
   "glimmerhart", "runeowl", "copper-mole",
   "meadow-cottontail", "russet-rabbit", "frost-hare", "chocolate-bunny",

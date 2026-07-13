@@ -40,6 +40,28 @@ test("night cricket ambience uses the requested half-volume mix", () => {
   assert.equal(SAMPLE_ASSETS.nightCrickets.gain, 0.12);
 });
 
+test("rain and direct player damage use their requested quieter authored mixes", () => {
+  assert.equal(SAMPLE_ASSETS.lightRain.gain, 0.357, "rain should be exactly fifteen percent below the previous 0.42 mix");
+  assert.deepEqual(SAMPLE_ASSETS.playerDirectDamage, {
+    source: "/sfx/player-direct-damage.wav",
+    gain: 0.64,
+  });
+});
+
+test("mechanical creature sample keys resolve to balanced semantic one-shots", () => {
+  assert.deepEqual({
+    metalBreath: SAMPLE_ASSETS.dwarvenAutomatonMetalBreath,
+    metallicBark: SAMPLE_ASSETS.clockworkHoundMetallicBark,
+    steamA: SAMPLE_ASSETS.dwarvenAutomatonSteamReleaseA,
+    steamB: SAMPLE_ASSETS.dwarvenAutomatonSteamReleaseB,
+  }, {
+    metalBreath: { source: "/sfx/dwarven-automaton-metal-breath.wav", gain: 0.5 },
+    metallicBark: { source: "/sfx/clockwork-hound-metallic-bark.wav", gain: 0.56 },
+    steamA: { source: "/sfx/dwarven-automaton-steam-release-a.wav", gain: 0.62 },
+    steamB: { source: "/sfx/dwarven-automaton-steam-release-b.wav", gain: 0.64 },
+  });
+});
+
 test("inverse spatial rolloff is stable, clamped, and monotonic", () => {
   assert.equal(spatialAttenuation(0, 2, 48, 1.15), 1);
   assert.equal(spatialAttenuation(2, 2, 48, 1.15), 1);
@@ -143,5 +165,6 @@ test("engine integration updates the listener and routes authored cues through w
     'this.audio.playSample("humanoidSigh"',
     'this.audio.playSample("scaryGrumble"',
     'this.audio.playDragon(state.type, plan.kind, state.stage, origin)',
+    'this.playCreatureEvent(mob, "attack")',
   ]) assert.ok(engine.includes(hook), `engine should retain the ${hook} audio integration`);
 });

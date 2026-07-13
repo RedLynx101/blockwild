@@ -61,8 +61,9 @@ import {
 } from "./world";
 import { BUTTERFLY_ORDER, MOB_DEFS, MOB_ORDER, type ButterflyKind, type CoreMobKind, type MobDefinition, type MobKind } from "./mobs";
 import { createHeldToolSpec } from "./model-specs";
-import { applyCompanionPose, applyDragonPose, applyOceanCreaturePose, applyWildlifePose, createMobVisual, createSentientLodVisual } from "./mob-models";
+import { applyCompanionPose, applyDragonLifeStage, applyDragonPose, applyOceanCreaturePose, applyWildlifePose, createMobVisual, createSentientLodVisual } from "./mob-models";
 import {
+  DRAGON_TYPES,
   DRAGON_RIDER_CONTROLS,
   attachDragonChest,
   bondDragonHatchling,
@@ -70,17 +71,25 @@ import {
   canBreedDragons,
   canMountDragon,
   chooseDragonAiIntent,
-  chooseDragonAttack,
+  commitDragonCombatAttack,
+  constrainDragonCombatPosition,
+  createDragonCombatManeuverState,
+  createDragonDeathEggClutch,
   createDragonEgg,
   createDragonState,
+  dragonAttackFacingPose,
   dragonAttackPlan,
   dragonCargoSlots,
+  dragonEggDropIsProtected,
+  dragonEggFromDropMetadata,
+  dragonKindForType,
   equipDragonArmor,
   equipDragonSaddle,
   feedDragon,
   harvestDragonScales,
   normalizeDragonState,
   placeDragonSpawnEgg,
+  planDragonCombatManeuver,
   riderDragonAttack,
   rollDragonLoot,
   serializeDragonState,
@@ -91,6 +100,7 @@ import {
   type DragonAiIntent,
   type DragonAttackKind,
   type DragonAttackPlan,
+  type DragonCombatManeuverState,
   type DragonCommand,
   type DragonEgg,
   type DragonFood,
@@ -288,6 +298,7 @@ import {
 import {
   createArrowProjectile,
   createVerdantVolleyProjectile,
+  createWebspinnerProjectile,
   disposeArrowVisual,
   stepArrowProjectile,
   type ArrowProjectile,
@@ -622,6 +633,7 @@ import {
 import {
   GOLEM_RECIPES,
   alignedGolemDefenseAction,
+  companionGolemCombatAction,
   advanceGolemForge,
   chargeGolemForge,
   claimForgedGolem,
@@ -706,6 +718,8 @@ const NEUTRAL_CREATURE_ORB_KINDS = {
   "unaligned-copper-mole-orb": "copper-mole",
   "copper-scout-golem-orb": "copper-scout-golem",
   "deepgear-courser-golem-orb": "deepgear-courser-golem",
+  "clockwork-hound-golem-orb": "clockwork-hound-golem",
+  "webspinner-golem-orb": "webspinner-golem",
 } as const satisfies Readonly<Record<string, MobKind>>;
 export type GameSettings = {
   volume: number;
@@ -1129,10 +1143,13 @@ type MobEntity = {
   attunedOrbId: string | null;
   dragonState: DragonState | null;
   dragonIntent: DragonAiIntent;
+  dragonCombatManeuver: DragonCombatManeuverState;
   dragonAttackCooldowns: Record<DragonAttackKind, number>;
   dragonWingSoundTimer: number;
   dragonTickRemainder: number;
   dragonAttackAnimation: { kind: DragonAttackKind; remaining: number; duration: number } | null;
+  dragonAttackFacing: number | null;
+  dragonAttackLookYaw: number;
   dragonBurnSeconds: number;
   dragonSlowSeconds: number;
   dragonScaldSeconds: number;
@@ -1658,12 +1675,12 @@ function placedLeviathanEggMetadata(metadata: Record<string, unknown> | undefine
   return egg as LeviathanEggMetadata;
 }
 
-function placedDragonEggMetadata(metadata: Record<string, unknown> | undefined, requirePlaced = true): DragonEgg | null {
+export function placedDragonEggMetadata(metadata: Record<string, unknown> | undefined, requirePlaced = true): DragonEgg | null {
   if (!metadata || (requirePlaced ? metadata.kind !== "placed-dragon-egg" : metadata.kind !== "placed-dragon-egg" && metadata.kind !== "dragon-egg")) return null;
   if (!metadata.egg || typeof metadata.egg !== "object") return null;
   const egg = metadata.egg as Partial<DragonEgg>;
   if (egg.schemaVersion !== 1 || typeof egg.eggId !== "string"
-    || (egg.type !== "fire" && egg.type !== "ice" && egg.type !== "steel" && egg.type !== "sea")
+    || !DRAGON_TYPES.includes(egg.type as DragonType)
     || (egg.sex !== "female" && egg.sex !== "male")
     || typeof egg.geneticSeed !== "number" || !Number.isFinite(egg.geneticSeed)
     || typeof egg.incubationTicks !== "number" || !Number.isFinite(egg.incubationTicks)
@@ -6713,6 +6730,10 @@ export class VoxelEngine {
       if (action.status === "accepted" && (action.kind === "dragon-command" || action.kind === "dragon-shoulder" || action.kind === "dragon-harvest")
         && action.actorId === session.identity.id) {
         if (action.playerState) this.applyLocalPlayerSessionSnapshot(action.playerState, true);
+        if (action.kind === "dragon-harvest" && action.targetId !== undefined) {
+          const dragon = this.mobs.find((candidate) => candidate.id === action.targetId);
+          if (dragon) this.recordBestiaryMilestone(dragon.kind, "scale-harvested");
+        }
         if (action.message) this.events.onToast(action.message);
         this.emitHud(true);
         return;
@@ -7939,6 +7960,8 @@ export class VoxelEngine {
       "stone-bulwark": "stone-bulwark-golem",
       "aetherforged-sentinel": "aetherforged-sentinel",
       "deepgear-courser": "deepgear-courser-golem",
+      "clockwork-hound": "clockwork-hound-golem",
+      "webspinner": "webspinner-golem",
     };
     const kind = kindByType[result.golemType];
     const definition = MOB_DEFS[kind];
@@ -7965,7 +7988,7 @@ export class VoxelEngine {
         hiredByPlayerId: this.localPlayerId(),
         followCommand: "follow",
         forgedGolemType: result.golemType,
-        ...(result.golemType === "deepgear-courser" ? {
+        ...(usesGenericCreatureBond(kind as CoreMobKind) ? {
           courserBond: { ...createReedstriderBond(), trust: 8, tamed: true, ownerId: this.localPlayerId() },
         } : {}),
       },
@@ -10144,6 +10167,7 @@ export class VoxelEngine {
     mob.name = next.customName || mob.definition.name;
     if (next.tamed && next.stage >= 3) this.recordBestiaryMilestone(mob.kind, "stage-3");
     this.applyMobScale(mob, next.growthScale);
+    applyDragonLifeStage(mob.visual, next.stage);
     const visibleFor = (fragment: string, visible: boolean) => mob.visual.traverse((object) => {
       if (object.name.includes(fragment)) object.visible = visible;
     });
@@ -10796,6 +10820,7 @@ export class VoxelEngine {
       drop.pickupDelay = Number.POSITIVE_INFINITY;
       drop.velocity.set(0, 0, 0);
       drop.mesh.position.set(placement.x, placement.y - 0.16, placement.z);
+      this.recordBestiaryMilestone(dragonKindForType(type), "egg-recovered");
       this.consumeSelectedUnit();
       this.placeCooldown = 0.3;
       this.heldUse = 1;
@@ -13112,6 +13137,7 @@ export class VoxelEngine {
       if (index >= 0) this.removeDrop(index);
       const leftover = this.addItem(item, 1, undefined, undefined, metadata);
       if (leftover > 0) this.spawnDrop(item, leftover, position, undefined, metadata);
+      else this.recordBestiaryMilestone(dragonKindForType(dragonEgg.type), "egg-recovered");
       this.targetEggDrop = null;
       this.miningProgress = 0;
       this.audio.play("break", BlockId.CrystalBlock);
@@ -13442,7 +13468,7 @@ export class VoxelEngine {
       else if (inSyrup) this.velocity.y *= Math.max(0, 1 - 2.1 * dt);
       this.oxygenSeconds = swim.state.oxygenSeconds;
       this.drowningAccumulator = swim.state.drowningAccumulator;
-      if (swim.damage > 0 && this.mode === "survival") this.damagePlayer(swim.damage, "drowning", true);
+      if (swim.damage > 0 && this.mode === "survival") this.damagePlayer(swim.damage, "drowning", true, "ambient");
     } else if (inLava) {
       this.fallVelocity = 0;
       this.fallCuePlayed = false;
@@ -13484,7 +13510,7 @@ export class VoxelEngine {
     this.grounded = this.collidesAt(this.groundProbe);
     if (!wasGrounded && this.grounded && !inLiquid) {
       this.audio.play("land", this.blockUnderfoot());
-      if (this.mode === "survival" && this.fallVelocity < -11.2) this.damagePlayer(Math.min(6, Math.max(1, Math.floor((-this.fallVelocity - 9) / 2))), "the fall", true);
+      if (this.mode === "survival" && this.fallVelocity < -11.2) this.damagePlayer(Math.min(6, Math.max(1, Math.floor((-this.fallVelocity - 9) / 2))), "the fall", true, "ambient");
       this.fallVelocity = 0;
       this.fallCuePlayed = false;
     }
@@ -13518,10 +13544,10 @@ export class VoxelEngine {
         : Math.max(0, this.hunger - dt * survivalFoodUsagePerSecond(this.sprinting, roadHardened, survivalMultiplier));
       this.regenTimer += dt;
       if (this.hunger >= 8 && this.health < 10 && this.regenTimer > (peaceful ? 2.5 : 5) / survivalMultiplier) { this.health += 1; if (!peaceful) this.hunger = Math.max(0, this.hunger - regenerationFoodUsage(survivalMultiplier)); this.regenTimer = 0; }
-      if (!peaceful && this.hunger <= 0 && this.regenTimer > 4) { this.damagePlayer(1, "hunger", true); this.regenTimer = 0; }
+      if (!peaceful && this.hunger <= 0 && this.regenTimer > 4) { this.damagePlayer(1, "hunger", true, "ambient"); this.regenTimer = 0; }
       if (inLava) {
         this.fluidDamageTimer -= dt;
-        if (this.fluidDamageTimer <= 0) { this.damagePlayer(2, "lava"); this.fluidDamageTimer = 0.8; }
+        if (this.fluidDamageTimer <= 0) { this.damagePlayer(2, "lava", false, "ambient"); this.fluidDamageTimer = 0.8; }
       } else this.fluidDamageTimer = 0;
       if (fumaroleSurging) {
         this.fumaroleDamageTimer -= dt;
@@ -13538,14 +13564,14 @@ export class VoxelEngine {
       if ((this.potionBuffs["dragon-burning"] ?? 0) > nowSeconds) {
         this.dragonStatusDamageTimer -= dt;
         if (this.dragonStatusDamageTimer <= 0) {
-          this.damagePlayer(0.5, "dragonfire", true);
+          this.damagePlayer(0.5, "dragonfire", true, "ambient");
           this.dragonStatusDamageTimer = 1;
         }
       } else this.dragonStatusDamageTimer = 0;
       if ((this.potionBuffs["venom-poison"] ?? 0) > nowSeconds) {
         this.poisonStatusDamageTimer -= dt;
         if (this.poisonStatusDamageTimer <= 0) {
-          this.damagePlayer(0.5, "venom", true);
+          this.damagePlayer(0.5, "venom", true, "ambient");
           this.poisonStatusDamageTimer = 1.5;
         }
       } else this.poisonStatusDamageTimer = 0;
@@ -13754,7 +13780,7 @@ export class VoxelEngine {
     }
   }
 
-  damagePlayer(amount: number, source: string, bypassArmor = false) {
+  damagePlayer(amount: number, source: string, bypassArmor = false, feedback: "direct" | "ambient" = "direct") {
     if (this.mode !== "survival" || this.playerInvulnerability > 0 || this.spawnProtection > 0) return;
     const shieldKind = !bypassArmor && this.offhandUseHeld ? shieldKindForItem(this.offhand?.item) : null;
     if (shieldKind && this.offhand) {
@@ -13801,7 +13827,8 @@ export class VoxelEngine {
     this.gainSkillExperience("survival", Math.min(8, 1 + finalAmount * 1.5));
     if (armor > 0 && !bypassArmor) this.damageArmor();
     this.playerInvulnerability = 0.7;
-    this.audio.play("hurt");
+    if (feedback === "direct" && typeof this.audio.playSample === "function") this.audio.playSample("playerDirectDamage", { gain: 0.78 });
+    else this.audio.play("hurt");
     this.events.onToast(`${source[0].toUpperCase()}${source.slice(1)} cost ${finalAmount} ${finalAmount === 1 ? "heart" : "hearts"}.`);
     if (this.health <= 0) this.respawn(true);
   }
@@ -14037,6 +14064,7 @@ export class VoxelEngine {
       return 0;
     }
     this.applyDragonState(dragon, { ...result.state, scaleReserve: result.state.scaleReserve + leftover });
+    this.recordBestiaryMilestone(dragon.kind, "scale-harvested");
     this.audio.play("pickup");
     this.events.onToast(`${collected} ${titleCaseDragon(result.state.type)} scale${collected === 1 ? "" : "s"} collected without harming ${dragon.name}.`);
     this.saveSoon();
@@ -16001,10 +16029,13 @@ export class VoxelEngine {
       attunedOrbId: options.attunedOrbId ?? null,
       dragonState,
       dragonIntent: "idle",
+      dragonCombatManeuver: createDragonCombatManeuverState(id),
       dragonAttackCooldowns: { melee: 0, breath: 0, projectile: 0 },
       dragonWingSoundTimer: 0,
       dragonTickRemainder: 0,
       dragonAttackAnimation: null,
+      dragonAttackFacing: null,
+      dragonAttackLookYaw: 0,
       dragonBurnSeconds: 0,
       dragonSlowSeconds: 0,
       dragonScaldSeconds: 0,
@@ -16483,10 +16514,13 @@ export class VoxelEngine {
       const attackProgress = attack ? 1 - attack.remaining / Math.max(0.01, attack.duration) : 0;
       applyDragonPose(mob.visual, {
         timeSeconds: mob.age,
+        stage: mob.dragonState.stage,
         mode,
+        airborne,
         movement: Math.min(1, moved * 4.5),
         attackProgress,
         pitch: clamp(this.pitch * 0.24, -0.4, 0.4),
+        lookYaw: mob.dragonAttackLookYaw,
         sex: mob.dragonState.sex,
         equipment: {
           saddle: mob.dragonState.equipment.saddle,
@@ -16540,7 +16574,15 @@ export class VoxelEngine {
     } else this.applyMobScale(mob, baseScale * hurtPulse);
     applyOceanCreaturePose(mob.visual, mob.kind as CoreMobKind, mob.age, Math.min(1, moved * 4), mob.aetherbellMorph?.airProgress ?? 0);
     applyCompanionPose(mob.visual, mob.kind as CoreMobKind, mob.age, Math.min(1, moved * 4), mob.state === "chase" || mob.state === "flee" ? 1 : 0);
-    applyWildlifePose(mob.visual, mob.kind as CoreMobKind, mob.age, Math.min(1, moved * 4), mob.state === "chase" || mob.state === "flee" || mob.state === "windup" ? 1 : 0);
+    const companionGolemAttackRecovery = (mob.kind === "clockwork-hound-golem" || mob.kind === "webspinner-golem")
+      && mob.state === "recover" && mob.stateTimer > 0;
+    applyWildlifePose(
+      mob.visual,
+      mob.kind as CoreMobKind,
+      mob.age,
+      Math.min(1, moved * 4),
+      mob.state === "chase" || mob.state === "flee" || mob.state === "windup" || companionGolemAttackRecovery ? 1 : 0,
+    );
   }
 
   updateBeeMob(mob: MobEntity, dt: number, distance: number, dx: number, dz: number) {
@@ -16840,6 +16882,7 @@ export class VoxelEngine {
     const direction = target.clone().sub(origin);
     if (direction.lengthSq() < 0.001) direction.set(Math.cos(mob.angle), 0, Math.sin(mob.angle));
     direction.normalize();
+    mob.dragonAttackFacing = Math.atan2(direction.z, direction.x);
     mob.dragonAttackCooldowns[plan.kind] = plan.cooldownSeconds;
     const animationDuration = plan.kind === "breath" ? 0.78 : plan.kind === "projectile" ? 0.48 : 0.34;
     mob.dragonAttackAnimation = { kind: plan.kind, remaining: animationDuration, duration: animationDuration };
@@ -16936,6 +16979,9 @@ export class VoxelEngine {
   updateDragonMob(mob: MobEntity, dt: number, distance: number) {
     const state = mob.dragonState;
     if (!state) return;
+    // Older in-memory reconstruction harnesses can predate this ephemeral
+    // field; beginning a fresh deterministic pass is always safe.
+    mob.dragonCombatManeuver ??= createDragonCombatManeuverState(mob.id);
     if (state.onShoulder) {
       mob.group.visible = true;
       mob.group.rotation.y = this.yaw + (mob.id % 2 === 0 ? 0.18 : -0.18);
@@ -16958,16 +17004,28 @@ export class VoxelEngine {
     }
     const home = state.home?.position ?? { x: mob.group.position.x, y: mob.baseY, z: mob.group.position.z };
     const distanceFromHome = Math.hypot(mob.group.position.x - home.x, mob.group.position.z - home.z);
-    const wildTargetsPlayer = !owned && mob.hostile && distance < (state.home?.guardRadius ?? 48)
-      && this.worldOptions.difficulty !== "peaceful" && this.mobCanSeePlayer(mob);
+    const wildPlayerInGuard = !owned && mob.hostile && distance < (state.home?.guardRadius ?? 48)
+      && this.worldOptions.difficulty !== "peaceful";
+    const seesPlayerNow = wildPlayerInGuard && this.mobCanSeePlayer(mob);
+    if (seesPlayerNow) {
+      mob.seesPlayer = true;
+      mob.awarenessTimer = Math.max(mob.awarenessTimer, 9);
+    } else mob.seesPlayer = false;
+    // Detection still requires an initial sightline. Once acquired, a short
+    // awareness memory lets the planner orbit for a new angle instead of
+    // forgetting the opponent the instant a trunk or wall clips the ray.
+    const wildTargetsPlayer = wildPlayerInGuard && (seesPlayerNow || mob.awarenessTimer > 0);
     const targetPoint = targetMob
       ? targetMob.group.position.clone().add(new THREE.Vector3(0, targetMob.definition.height * 0.5, 0))
       : wildTargetsPlayer ? this.position.clone().add(new THREE.Vector3(0, this.cameraEyeHeight * 0.55, 0)) : null;
     const targetDistance = targetPoint ? targetPoint.distanceTo(mob.group.position) : null;
+    const targetLineOfSight = targetPoint
+      ? this.hasClearLineOfSight(this.dragonAttackOrigin(mob, "breath"), targetPoint)
+      : false;
     mob.dragonIntent = chooseDragonAiIntent(state, {
       distanceFromHome,
       distanceToTarget: targetDistance,
-      lineOfSight: targetPoint ? this.hasClearLineOfSight(this.dragonAttackOrigin(mob, "breath"), targetPoint) : false,
+      lineOfSight: targetLineOfSight,
       healthRatio: mob.health / Math.max(1, mob.maxHealth),
       defendingEggs: !state.tamed && Boolean(state.home),
       targetThreateningOwner: Boolean(targetMob),
@@ -16987,7 +17045,37 @@ export class VoxelEngine {
       distance = mob.group.position.distanceTo(this.position);
     }
 
-    let desired = targetPoint?.clone() ?? null;
+    const engageTarget = Boolean(targetPoint && (mob.dragonIntent === "attack" || mob.dragonIntent === "circle"
+      || mob.dragonIntent === "pursue" || mob.dragonIntent === "guard"));
+    const seaInWaterForPlan = state.type === "sea" && blockContainsWater(this.world.getBlock(
+      Math.floor(mob.group.position.x + 0.5), Math.floor(mob.group.position.y + 0.5), Math.floor(mob.group.position.z + 0.5),
+    ));
+    const combatPlan = engageTarget && targetPoint ? planDragonCombatManeuver({
+      dragonState: state,
+      maneuver: mob.dragonCombatManeuver,
+      dt,
+      combatSeed: mob.id,
+      targetToken: targetMob?.id ?? -1,
+      dragonPosition: mob.group.position,
+      targetPosition: targetPoint,
+      lineOfSight: targetLineOfSight,
+      swimming: seaInWaterForPlan,
+      meleeReady: mob.dragonAttackCooldowns.melee <= 0,
+      breathReady: mob.dragonAttackCooldowns.breath <= 0,
+      projectileReady: mob.dragonAttackCooldowns.projectile <= 0,
+    }) : null;
+    if (combatPlan) mob.dragonCombatManeuver = combatPlan.maneuver;
+    else if (mob.dragonCombatManeuver.targetToken !== null) mob.dragonCombatManeuver = createDragonCombatManeuverState(mob.id);
+
+    let desired = combatPlan
+      ? new THREE.Vector3(combatPlan.destination.x, combatPlan.destination.y, combatPlan.destination.z)
+      : null;
+    if (!desired && targetPoint && mob.dragonIntent === "flee") {
+      const away = mob.group.position.clone().sub(targetPoint).setY(0);
+      if (away.lengthSq() < 0.001) away.set(Math.cos(mob.id * 1.71), 0, Math.sin(mob.id * 1.71));
+      desired = mob.group.position.clone().addScaledVector(away.normalize(), 12 + state.stage * 2);
+      desired.y = mob.group.position.y + (state.stage >= 3 ? 3.5 : 0);
+    }
     if (!desired && followsOwner && distance > 5.5) {
       const packIndex = this.mobs.filter((candidate) => candidate.id < mob.id && candidate.dragonState?.tamed && candidate.dragonState.ownerId === ownerId && candidate.dragonState.command === "follow").length;
       const trailing = 5.5 + Math.min(9, packIndex * 2.2);
@@ -17014,12 +17102,22 @@ export class VoxelEngine {
       const speed = (seaAttributes
         ? seaDragonSpeedForMode(seaAttributes, shouldSwim ? "swim" : shouldFly ? "fly" : "walk")
         : shouldFly ? (3.8 + state.stage * 1.25) : (mob.dragonIntent === "pursue" ? mob.definition.chaseSpeed : mob.definition.speed))
-        * this.dragonStatusSpeedScale(mob);
+        * this.dragonStatusSpeedScale(mob) * (combatPlan?.speedScale ?? 1);
       const horizontalDistance = Math.hypot(desired.x - mob.group.position.x, desired.z - mob.group.position.z);
       const step = Math.min(horizontalDistance, speed * dt);
       if (horizontalDistance > 0.001) {
-        const nx = mob.group.position.x + (desired.x - mob.group.position.x) / horizontalDistance * step;
-        const nz = mob.group.position.z + (desired.z - mob.group.position.z) / horizontalDistance * step;
+        let nx = mob.group.position.x + (desired.x - mob.group.position.x) / horizontalDistance * step;
+        let nz = mob.group.position.z + (desired.z - mob.group.position.z) / horizontalDistance * step;
+        if (combatPlan && targetPoint) {
+          const constrained = constrainDragonCombatPosition(
+            { x: nx, y: mob.group.position.y, z: nz },
+            targetPoint,
+            combatPlan.minimumHorizontalSeparation,
+            mob.angle,
+          );
+          nx = constrained.x;
+          nz = constrained.z;
+        }
         if (shouldSwim) {
           const desiredWaterY = clamp(desired.y, MIN_Y + 2, SEA_LEVEL - 0.35);
           const nextY = mob.group.position.y + (desiredWaterY - mob.group.position.y) * Math.min(1, dt * 1.8);
@@ -17029,7 +17127,7 @@ export class VoxelEngine {
           }
         } else if (shouldFly) {
           const surface = this.world.surfaceAt(Math.round(nx), Math.round(nz));
-          const combatAltitude = targetPoint ? Math.max(targetPoint.y + 2.2, surface + 4.5) : Math.max(desired.y, surface + 4.5);
+          const combatAltitude = Math.max(desired.y, surface + (combatPlan?.terrainClearance ?? 4.5));
           const targetY = clamp(combatAltitude, MIN_Y + 3, MAX_Y - 10);
           mob.group.position.set(nx, mob.group.position.y + (targetY - mob.group.position.y) * Math.min(1, dt * 1.4), nz);
           mob.baseY = mob.group.position.y;
@@ -17044,21 +17142,23 @@ export class VoxelEngine {
         }
       }
     }
-    mob.group.rotation.y = -mob.angle - Math.PI / 2;
-
-    if (targetPoint && targetDistance !== null) {
-      const lineOfSight = this.hasClearLineOfSight(this.dragonAttackOrigin(mob, "breath"), targetPoint);
-      const plan = chooseDragonAttack(state, {
-        distance: targetDistance,
-        altitudeDelta: targetPoint.y - mob.group.position.y,
-        lineOfSight,
-        airborne: mob.group.position.y > this.world.surfaceAt(Math.round(mob.group.position.x), Math.round(mob.group.position.z)) + 2,
-        meleeReady: mob.dragonAttackCooldowns.melee <= 0,
-        breathReady: mob.dragonAttackCooldowns.breath <= 0,
-        projectileReady: mob.dragonAttackCooldowns.projectile <= 0,
-      });
-      if (plan) this.performDragonAttack(mob, plan, targetPoint, targetMob);
+    if (targetPoint && combatPlan?.attack) {
+      const lineOfSight = this.hasClearLineOfSight(this.dragonAttackOrigin(mob, combatPlan.attack.kind), targetPoint);
+      const currentDistance = targetPoint.distanceTo(mob.group.position);
+      if (lineOfSight && currentDistance <= combatPlan.attack.range * 1.04
+        && this.performDragonAttack(mob, combatPlan.attack, targetPoint, targetMob)) {
+        mob.dragonCombatManeuver = commitDragonCombatAttack(mob.dragonCombatManeuver, combatPlan.attack.kind);
+      }
     }
+    let visualHeading = mob.angle;
+    mob.dragonAttackLookYaw = 0;
+    if (mob.dragonAttackAnimation && mob.dragonAttackFacing !== null) {
+      const progress = 1 - mob.dragonAttackAnimation.remaining / Math.max(0.01, mob.dragonAttackAnimation.duration);
+      const facing = dragonAttackFacingPose(mob.angle, mob.dragonAttackFacing, mob.dragonAttackAnimation.kind, progress);
+      visualHeading = facing.visualHeading;
+      mob.dragonAttackLookYaw = facing.lookYaw;
+    }
+    mob.group.rotation.y = -visualHeading - Math.PI / 2;
     this.animateMob(mob, before.distanceTo(mob.group.position));
   }
 
@@ -17358,7 +17458,9 @@ export class VoxelEngine {
   fireSkeletonArrow(mob: MobEntity) {
     const origin = mob.group.position.clone().add(new THREE.Vector3(0, mob.definition.height * 0.78, 0));
     const target = this.position.clone().add(new THREE.Vector3(0, 1.1, 0));
-    const projectile = mob.kind === "wood-elf-leafwarden"
+    const projectile = mob.kind === "webspinner-golem"
+      ? createWebspinnerProjectile(this.nextProjectileId++, { kind: "mob", id: mob.id }, origin, target, mob.damage, 18, 3.2)
+      : mob.kind === "wood-elf-leafwarden"
       ? createVerdantVolleyProjectile(
         this.nextProjectileId++,
         { kind: "mob", id: mob.id },
@@ -17372,19 +17474,23 @@ export class VoxelEngine {
     projectile.targetKind = "player";
     this.projectileGroup.add(projectile.visual);
     this.projectiles.push(projectile);
-    mob.attackCooldown = mob.kind === "wood-elf-leafwarden"
+    mob.attackCooldown = mob.kind === "webspinner-golem" ? 2.25
+      : mob.kind === "wood-elf-leafwarden"
       ? WOOD_ELF_LEAF_ATTACK.cooldownSeconds
       : 2.1 + (mob.id % 5) * 0.12;
     mob.state = "recover";
     mob.stateTimer = 0.35;
-    if (mob.kind === "wood-elf-leafwarden") this.audio.playSpell("alteration", mob.group.position);
+    if (mob.kind === "webspinner-golem") this.playCreatureEvent(mob, "attack");
+    else if (mob.kind === "wood-elf-leafwarden") this.audio.playSpell("alteration", mob.group.position);
     else this.audio.play("attack");
   }
 
   fireMobArrowAt(mob: MobEntity, targetMob: MobEntity) {
     const origin = mob.group.position.clone().add(new THREE.Vector3(0, mob.definition.height * 0.76, 0));
     const target = targetMob.group.position.clone().add(new THREE.Vector3(0, targetMob.definition.height * 0.55, 0));
-    const projectile = mob.kind === "wood-elf-leafwarden"
+    const projectile = mob.kind === "webspinner-golem"
+      ? createWebspinnerProjectile(this.nextProjectileId++, { kind: "mob", id: mob.id }, origin, target, mob.damage, 18, 3.2)
+      : mob.kind === "wood-elf-leafwarden"
       ? createVerdantVolleyProjectile(
         this.nextProjectileId++,
         { kind: "mob", id: mob.id },
@@ -17398,13 +17504,40 @@ export class VoxelEngine {
     this.projectileGroup.add(projectile.visual);
     projectile.targetKind = "hostile-mob";
     this.projectiles.push(projectile);
-    mob.attackCooldown = mob.kind === "wood-elf-leafwarden"
+    mob.attackCooldown = mob.kind === "webspinner-golem" ? 2.25
+      : mob.kind === "wood-elf-leafwarden"
       ? WOOD_ELF_LEAF_ATTACK.cooldownSeconds
       : 1.7 + (mob.id % 4) * 0.12;
     mob.state = "recover";
     mob.stateTimer = 0.3;
-    if (mob.kind === "wood-elf-leafwarden") this.audio.playSpell("alteration", mob.group.position);
+    if (mob.kind === "webspinner-golem") this.playCreatureEvent(mob, "attack");
+    else if (mob.kind === "wood-elf-leafwarden") this.audio.playSpell("alteration", mob.group.position);
     else this.audio.play("attack");
+  }
+
+  commitClockworkHoundAttack(mob: MobEntity, targetMob: MobEntity, bodyCheck: boolean) {
+    const damage = bodyCheck ? mob.damage * 0.85 : mob.damage;
+    targetMob.health -= this.dragonDamageAfterArmor(targetMob, damage);
+    if (targetMob.dragonState) this.applyDragonState(targetMob, { ...targetMob.dragonState, health: Math.max(0, targetMob.health), alive: targetMob.health > 0 });
+    if (targetMob.petState) targetMob.petState.health = Math.max(0, targetMob.health);
+    targetMob.hurtTimer = 0.34;
+    targetMob.awarenessTimer = Math.max(targetMob.awarenessTimer, 4.5);
+    targetMob.fleeTimer = bodyCheck ? Math.max(targetMob.fleeTimer, 0.32) : targetMob.fleeTimer;
+    targetMob.dragonSlowSeconds = Math.max(targetMob.dragonSlowSeconds, bodyCheck ? 0.34 : 0.16);
+    mob.attackCooldown = bodyCheck ? 0.82 : 0.62;
+    mob.state = "recover";
+    mob.stateTimer = bodyCheck ? 0.22 : 0.16;
+    this.playCreatureEvent(mob, "attack");
+    this.playCreatureEvent(targetMob, "hurt");
+    this.spawnParticles(
+      targetMob.group.position.x,
+      targetMob.group.position.y + targetMob.definition.height * 0.42,
+      targetMob.group.position.z,
+      BlockId.RivetedBrass,
+      bodyCheck ? 9 : 6,
+    );
+    this.engageCombat();
+    return targetMob.health <= 0;
   }
 
   startRangedReload() {
@@ -17520,7 +17653,7 @@ export class VoxelEngine {
         if (projectile.owner.kind === "mob" && result.targetId === "local") {
           const owner = this.mobs.find((mob) => mob.id === projectile.owner.id);
           this.damagePlayer(projectile.damage, owner?.name ?? "ranged attack");
-          if (projectile.effect?.kind === "verdant-root") {
+          if (projectile.effect?.kind === "verdant-root" || projectile.effect?.kind === "webspinner-bind") {
             this.potionBuffs["dragon-slowed"] = Math.max(
               this.potionBuffs["dragon-slowed"] ?? 0,
               this.worldSimulationSeconds() + projectile.effect.seconds,
@@ -17535,7 +17668,7 @@ export class VoxelEngine {
             if (mob.dragonState) this.applyDragonState(mob, { ...mob.dragonState, health: Math.max(0, mob.health), alive: mob.health > 0 });
             if (mob.petState) mob.petState.health = Math.max(0, mob.health);
             mob.hurtTimer = 0.34;
-            if (projectile.effect?.kind === "verdant-root") {
+            if (projectile.effect?.kind === "verdant-root" || projectile.effect?.kind === "webspinner-bind") {
               mob.dragonSlowSeconds = Math.max(mob.dragonSlowSeconds, projectile.effect.seconds);
               mob.attackCooldown = Math.max(mob.attackCooldown, Math.min(0.7, projectile.effect.seconds));
             }
@@ -17547,8 +17680,8 @@ export class VoxelEngine {
               mob.group.position.x,
               mob.group.position.y + mob.definition.height * 0.45,
               mob.group.position.z,
-              projectile.effect?.kind === "verdant-root" ? BlockId.Moonpetal : mob.hostile ? BlockId.Obsidian : BlockId.Dirt,
-              projectile.effect?.kind === "verdant-root" ? 12 : 8,
+              projectile.effect?.kind === "verdant-root" ? BlockId.Moonpetal : projectile.effect?.kind === "webspinner-bind" ? BlockId.RivetedBrass : mob.hostile ? BlockId.Obsidian : BlockId.Dirt,
+              projectile.effect?.kind === "verdant-root" ? 12 : projectile.effect?.kind === "webspinner-bind" ? 10 : 8,
             );
             if (mob.health <= 0) this.killMob(mob);
           }
@@ -17725,7 +17858,11 @@ export class VoxelEngine {
         mob.dragonWingSoundTimer = Math.max(0, mob.dragonWingSoundTimer - mobDt);
         if (mob.dragonAttackAnimation) {
           mob.dragonAttackAnimation.remaining -= mobDt;
-          if (mob.dragonAttackAnimation.remaining <= 0) mob.dragonAttackAnimation = null;
+          if (mob.dragonAttackAnimation.remaining <= 0) {
+            mob.dragonAttackAnimation = null;
+            mob.dragonAttackFacing = null;
+            mob.dragonAttackLookYaw = 0;
+          }
         }
       }
       mob.milkCooldown = Math.max(0, mob.milkCooldown - mobDt);
@@ -17975,28 +18112,63 @@ export class VoxelEngine {
           const enemyDx = residentEnemy.group.position.x - mob.group.position.x;
           const enemyDz = residentEnemy.group.position.z - mob.group.position.z;
           const enemyDistance = Math.hypot(enemyDx, enemyDz);
-          const defenseAction = alignedGolemDefenseAction({
-            aligned: mob.aligned,
-            settlementId: mob.settlementId,
-            targetHostile: residentEnemy.hostile,
-            lineOfSight: true,
-            distance: enemyDistance,
-            attackRange: creatureMeleeReach(mob.definition, this.mobBaseScale(mob)),
-            ranged: Boolean(mob.definition.ranged),
-            cooldownSeconds: mob.attackCooldown,
-          });
-          mob.state = defenseAction === "idle" ? "wander" : "chase";
-          mob.desiredAngle = Math.atan2(enemyDz, enemyDx);
-          if (defenseAction === "ranged") this.fireMobArrowAt(mob, residentEnemy);
-          else if (defenseAction === "melee") {
-            residentEnemy.health -= mob.damage;
-            residentEnemy.hurtTimer = 0.34;
-            residentEnemy.awarenessTimer = Math.max(residentEnemy.awarenessTimer, 4);
-            mob.attackCooldown = 1.05;
-            this.audio.play("attack");
-            this.spawnParticles(residentEnemy.group.position.x, residentEnemy.group.position.y + residentEnemy.definition.height * 0.4, residentEnemy.group.position.z, BlockId.RivetedBrass, 7);
-            if (residentEnemy.health <= 0) companionKills.add(residentEnemy);
+          const meleeReach = creatureMeleeReach(mob.definition, this.mobBaseScale(mob));
+          if (mob.kind === "clockwork-hound-golem" || mob.kind === "webspinner-golem") {
+            const action = companionGolemCombatAction({
+              kind: mob.kind,
+              defending: true,
+              holding: false,
+              targetHostile: residentEnemy.hostile,
+              lineOfSight: true,
+              distance: enemyDistance,
+              meleeReach,
+              cooldownSeconds: mob.attackCooldown,
+            });
+            mob.state = action === "idle" || action === "hold-range" ? "wander" : "chase";
+            mob.desiredAngle = action === "disengage" ? Math.atan2(-enemyDz, -enemyDx) : Math.atan2(enemyDz, enemyDx);
+            if (action === "hold-range") residentHolding = true;
+            else if (action === "control") this.fireMobArrowAt(mob, residentEnemy);
+            else if (action === "bite" || action === "body-check") {
+              if (this.commitClockworkHoundAttack(mob, residentEnemy, action === "body-check")) companionKills.add(residentEnemy);
+            }
+          } else {
+            const defenseAction = alignedGolemDefenseAction({
+              aligned: mob.aligned,
+              settlementId: mob.settlementId,
+              targetHostile: residentEnemy.hostile,
+              lineOfSight: true,
+              distance: enemyDistance,
+              attackRange: meleeReach,
+              ranged: Boolean(mob.definition.ranged),
+              cooldownSeconds: mob.attackCooldown,
+            });
+            mob.state = defenseAction === "idle" ? "wander" : "chase";
+            mob.desiredAngle = Math.atan2(enemyDz, enemyDx);
+            if (defenseAction === "ranged") this.fireMobArrowAt(mob, residentEnemy);
+            else if (defenseAction === "melee") {
+              residentEnemy.health -= mob.damage;
+              residentEnemy.hurtTimer = 0.34;
+              residentEnemy.awarenessTimer = Math.max(residentEnemy.awarenessTimer, 4);
+              mob.attackCooldown = 1.05;
+              this.audio.play("attack");
+              this.spawnParticles(residentEnemy.group.position.x, residentEnemy.group.position.y + residentEnemy.definition.height * 0.4, residentEnemy.group.position.z, BlockId.RivetedBrass, 7);
+              if (residentEnemy.health <= 0) companionKills.add(residentEnemy);
+            }
           }
+        }
+      }
+      let companionGolemTarget: MobEntity | null = null;
+      if (!residentEnemy && (mob.kind === "clockwork-hound-golem" || mob.kind === "webspinner-golem") && bondedToOwner && !petHolding) {
+        let nearestDistanceSquared = (mob.kind === "clockwork-hound-golem" ? 15 : 18) ** 2;
+        const sightOrigin = mob.group.position.clone().add(new THREE.Vector3(0, mob.definition.height * 0.68, 0));
+        for (const candidate of this.mobs) {
+          if (candidate === mob || !candidate.hostile || candidate.health <= 0 || candidate.factionId === mob.factionId) continue;
+          const candidateDistanceSquared = candidate.group.position.distanceToSquared(mob.group.position);
+          if (candidateDistanceSquared >= nearestDistanceSquared) continue;
+          const sightTarget = candidate.group.position.clone().add(new THREE.Vector3(0, candidate.definition.height * 0.5, 0));
+          if (!this.hasClearLineOfSight(sightOrigin, sightTarget)) continue;
+          nearestDistanceSquared = candidateDistanceSquared;
+          companionGolemTarget = candidate;
         }
       }
       let peelopTarget: MobEntity | null = null;
@@ -18017,6 +18189,26 @@ export class VoxelEngine {
       }
       if (residentEnemy || residentTarget || residentHolding) {
         // The schedule above owns this frame's direction and combat action.
+      } else if (companionGolemTarget) {
+        const guardDx = companionGolemTarget.group.position.x - mob.group.position.x;
+        const guardDz = companionGolemTarget.group.position.z - mob.group.position.z;
+        const guardDistance = Math.hypot(guardDx, guardDz);
+        const action = companionGolemCombatAction({
+          kind: mob.kind as "clockwork-hound-golem" | "webspinner-golem",
+          defending: bondedToOwner,
+          holding: petHolding,
+          targetHostile: companionGolemTarget.hostile,
+          lineOfSight: true,
+          distance: guardDistance,
+          meleeReach: creatureMeleeReach(mob.definition, this.mobBaseScale(mob)),
+          cooldownSeconds: mob.attackCooldown,
+        });
+        mob.state = action === "idle" || action === "hold-range" ? "wander" : "chase";
+        mob.desiredAngle = action === "disengage" ? Math.atan2(-guardDz, -guardDx) : Math.atan2(guardDz, guardDx);
+        if (action === "control") this.fireMobArrowAt(mob, companionGolemTarget);
+        else if (action === "bite" || action === "body-check") {
+          if (this.commitClockworkHoundAttack(mob, companionGolemTarget, action === "body-check")) companionKills.add(companionGolemTarget);
+        }
       } else if (peelopTarget) {
         const guardDx = peelopTarget.group.position.x - mob.group.position.x;
         const guardDz = peelopTarget.group.position.z - mob.group.position.z;
@@ -18094,14 +18286,14 @@ export class VoxelEngine {
       if (puddleJump?.jumps) speed = Math.max(speed, puddleJump.forwardVelocity);
       if (mob.kind === "lanternshell" && this.weather === "rain") speed *= 1.55;
       if (mob.state === "windup" || mob.state === "recover") speed *= 0.08;
-      if (followerSlot && !peelopTarget) speed = followerTravelSpeed({
+      if (followerSlot && !peelopTarget && !companionGolemTarget) speed = followerTravelSpeed({
         walkSpeed: mob.definition.speed,
         chaseSpeed: mob.definition.chaseSpeed,
         leaderSpeed: mobLeader ? Math.hypot(mobLeader.vx, mobLeader.vz) : leaderSpeed,
         distanceToSlot: followerDistance,
         arrivalRadius: followerSlot.arrivalRadius,
       });
-      if (residentHolding || petHolding || (followerSettled && !peelopTarget)) speed = 0;
+      if (residentHolding || petHolding || (followerSettled && !peelopTarget && !companionGolemTarget) || (companionGolemTarget && mob.state === "wander")) speed = 0;
       const beforeX = mob.group.position.x;
       const beforeZ = mob.group.position.z;
       const movement = mob.definition.movement ?? (mob.definition.aquatic ? "aquatic" : mob.definition.flying ? "flying" : "ground");
@@ -18110,7 +18302,7 @@ export class VoxelEngine {
       if (movement === "ground" && speed > 0.001) {
         const profile = this.mobCollisionProfile(mob);
         const baseLookahead = Math.max(0.72, (profile.radius || mob.definition.radius * this.mobBaseScale(mob)) + 0.36, speed * 0.42);
-        const lookahead = followerSlot && !peelopTarget ? Math.max(0.3, Math.min(baseLookahead, followerDistance)) : baseLookahead;
+        const lookahead = followerSlot && !peelopTarget && !companionGolemTarget ? Math.max(0.3, Math.min(baseLookahead, followerDistance)) : baseLookahead;
         const route = chooseCreatureRoute({
           state: mob.route,
           dt: mobDt,
@@ -18327,22 +18519,17 @@ export class VoxelEngine {
     const position = mob.group.position.clone();
     if (mob.dragonState) {
       const corpseState: DragonState = { ...mob.dragonState, health: 0, alive: false };
-      for (const drop of rollDragonLoot(corpseState, (corpseState.geneticSeed ^ Math.floor(mob.age * 20)) >>> 0)) {
+      const deathTick = Math.floor((this.day + this.worldTime) * 24_000);
+      const deathSeed = (corpseState.geneticSeed ^ Math.floor(mob.age * 20)) >>> 0;
+      const legacyEggs = createDragonDeathEggClutch(corpseState, deathTick, deathSeed);
+      for (const drop of rollDragonLoot(corpseState, deathSeed)) {
         const item = dragonLootItemCode(drop.item);
         if (item === null) continue;
-        if (drop.item.endsWith("DragonEgg")) {
-          for (let eggIndex = 0; eggIndex < drop.count; eggIndex += 1) {
-            const egg = createDragonEgg(corpseState.type, {
-              eggId: `${corpseState.dragonId}:fallen-clutch:${this.day}:${eggIndex}`,
-              geneticSeed: Math.imul(corpseState.geneticSeed ^ eggIndex ^ this.day, 0x85ebca6b) >>> 0,
-              parentIds: [corpseState.dragonId, null],
-              wild: true,
-              lairId: corpseState.home?.lairId ?? null,
-              laidAtTick: Math.floor((this.day + this.worldTime) * 24_000),
-            });
-            this.spawnDrop(item, 1, position, undefined, { kind: "dragon-egg", egg: egg as unknown as Record<string, unknown> });
-          }
-        } else this.spawnDrop(item, drop.count, position, undefined, drop.metadata ? { ...drop.metadata } : undefined);
+        if (!drop.item.endsWith("DragonEgg")) this.spawnDrop(item, drop.count, position, undefined, drop.metadata ? { ...drop.metadata } : undefined);
+      }
+      const eggItem = dragonEggItem(corpseState.type);
+      for (const egg of legacyEggs) {
+        this.spawnDrop(eggItem, 1, position, undefined, { kind: "dragon-egg", egg: egg as unknown as Record<string, unknown> });
       }
       this.audio.playDragon(corpseState.type, "death", corpseState.stage, position);
     } else for (const drop of mob.definition.drops) {
@@ -18370,6 +18557,7 @@ export class VoxelEngine {
     this.addXp(mob.definition.xp);
     this.bestiary[mob.kind].seen = true;
     this.bestiary[mob.kind].kills += 1;
+    if (mob.dragonState?.stage && mob.dragonState.stage >= 3) this.recordBestiaryMilestone(mob.kind, "mature-defeated");
     this.dispatchQuestEvent({ type: "mob-killed", mobKind: mob.kind, at: Date.now() });
     if (mob.dragonState?.stage && mob.dragonState.stage >= 4) this.dispatchQuestEvent({ type: "custom", eventId: "dragon-killed-stage-4-plus", at: Date.now() });
     if (mob.dragonState?.stage === 5) this.dispatchQuestEvent({ type: "custom", eventId: "dragon-killed-stage-5", at: Date.now() });
@@ -18516,7 +18704,14 @@ export class VoxelEngine {
       firstDrop = nearby;
     }
     while (count > 0) {
-      if (this.drops.length >= 120) this.removeDrop(0);
+      if (this.drops.length >= 120) {
+        const removableIndex = this.drops.findIndex((drop) => !dragonEggDropIsProtected(
+          drop.metadata,
+          drop.age,
+          this.worldOptions.dayLengthMinutes,
+        ));
+        if (removableIndex >= 0) this.removeDrop(removableIndex);
+      }
       const amount = Math.min(count, stackLimit);
       let mesh: THREE.Object3D;
       let ownsVisual = false;
@@ -18561,6 +18756,23 @@ export class VoxelEngine {
       drop.mesh.position.z += drop.velocity.z * dt;
       drop.mesh.rotation.y += dt * 2.5;
       drop.mesh.position.y += Math.sin(drop.age * 4) * 0.001;
+      const portableDragonEgg = dragonEggFromDropMetadata(drop.metadata);
+      if (portableDragonEgg) {
+        const eggCellY = Math.floor(drop.mesh.position.y + 0.5);
+        const eggCell = this.world.getBlock(
+          Math.floor(drop.mesh.position.x + 0.5),
+          eggCellY,
+          Math.floor(drop.mesh.position.z + 0.5),
+        );
+        if (eggCell === BlockId.Lava) {
+          // Dragon shells float intact near the lava surface instead of
+          // sinking beneath a non-solid source cell and becoming unrecoverable.
+          drop.mesh.position.y = Math.max(drop.mesh.position.y, eggCellY + 0.32);
+          drop.velocity.y = Math.max(0.28, drop.velocity.y);
+          drop.velocity.x *= 0.9;
+          drop.velocity.z *= 0.9;
+        }
+      }
       drop.mesh.traverse((object) => {
         if (object.userData.jarBug) {
           const baseY = Number(object.userData.baseY) || 0;
@@ -18686,13 +18898,15 @@ export class VoxelEngine {
         const acquired = beforeCount - leftover;
         if (acquired > 0) {
           this.audio.play("pickup");
+          if (portableDragonEgg) this.recordBestiaryMilestone(dragonKindForType(portableDragonEgg.type), "egg-recovered");
           const itemId = resourceIdForItem(drop.item) ?? commerceKeyForItem(drop.item);
           if (itemId) this.dispatchQuestEvent({ type: "item-acquired", itemId, count: acquired, at: Date.now() });
         }
         drop.count = leftover;
         if (drop.count <= 0) { this.removeDrop(index); this.saveSoon(); this.emitHud(true); continue; }
       }
-      if (drop.age > 120 || distance > 85) this.removeDrop(index);
+      const protectedDragonEgg = dragonEggDropIsProtected(drop.metadata, drop.age, this.worldOptions.dayLengthMinutes);
+      if (!protectedDragonEgg && (drop.age > 120 || distance > 85)) this.removeDrop(index);
     }
   }
 
@@ -19872,7 +20086,7 @@ export class VoxelEngine {
         name: mob.name,
         position: [Number(mob.group.position.x.toFixed(2)), Number(mob.group.position.y.toFixed(2)), Number(mob.group.position.z.toFixed(2))],
         health: Number(mob.health.toFixed(1)),
-        state: mob.dragonState ? `${mob.dragonState.type}-stage-${mob.dragonState.stage}-${mob.dragonState.sex}-${mob.dragonState.tamed ? "bonded" : "wild"}-${mob.dragonIntent}`
+        state: mob.dragonState ? `${mob.dragonState.type}-stage-${mob.dragonState.stage}-${mob.dragonState.sex}-${mob.dragonState.tamed ? "bonded" : "wild"}-${mob.dragonIntent}${mob.dragonCombatManeuver.targetToken !== null ? `-${mob.dragonCombatManeuver.phase}-pass-${mob.dragonCombatManeuver.passIndex}` : ""}`
           : mob.shadeState?.tamed ? `bonded-${Math.round(mob.shadeState.growth * 100)}%-${mob.shadeState.saddled ? "saddled" : "unsaddled"}`
           : mob.petState?.command ?? mob.birdState?.mode ?? mob.state,
       }))

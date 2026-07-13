@@ -913,12 +913,17 @@ export type SettlementResident = Readonly<{
 
 export type AlignedSettlementCreature = Readonly<{
   id: string;
-  kind: "warg" | "taffy-hound" | "praline-cat" | "glimmerhart" | "runeowl" | "copper-mole" | "copper-scout-golem";
+  kind: "warg" | "taffy-hound" | "praline-cat" | "glimmerhart" | "runeowl" | "copper-mole" | "copper-scout-golem" | "clockwork-hound-golem" | "webspinner-golem";
   factionId: "goblins" | "sugarcourt" | "wood-elves" | "dwarves";
   position: SettlementPoint;
   patrolGateId: string;
   tameable: false;
 }>;
+
+/** Wide gallery constructs need a precise clear-cell marker; smaller patrols can fan out naturally. */
+export function alignedCreatureSpawnRadius(kind: AlignedSettlementCreature["kind"]) {
+  return kind === "webspinner-golem" ? 0.35 : 2.5;
+}
 
 export type SettlementOwnershipRecord = Readonly<{
   day: number;
@@ -1195,7 +1200,20 @@ function alignedCreaturesForFaction(
       id: `${settlementIdValue}-copper-mole-${generation}-${index}`, kind: "copper-mole" as const, factionId: "dwarves" as const,
       position: building.position, patrolGateId: building.id, tameable: false as const,
     }));
-    return [...golems, ...kennels];
+    const houndGate = layout.gates.at(-1) ?? gate;
+    const hound = {
+      id: `${settlementIdValue}-clockwork-hound-${generation}`, kind: "clockwork-hound-golem" as const, factionId: "dwarves" as const,
+      position: { ...houndGate.position, z: houndGate.position.z + 2 }, patrolGateId: houndGate.id, tameable: false as const,
+    };
+    const forge = layout.buildings.find((building) => building.role === "golem-forge");
+    const webspinner = forge ? [{
+      id: `${settlementIdValue}-webspinner-${generation}`, kind: "webspinner-golem" as const, factionId: "dwarves" as const,
+      // Keep its broad chassis in the clear west service bay rather than on the
+      // center gear table, north cradle, or conduit. The marker uses a tight
+      // spawn radius so runtime grounding cannot promote that furniture to floor.
+      position: { ...forge.position, x: forge.position.x - 2, z: forge.position.z + 1 }, patrolGateId: forge.id, tameable: false as const,
+    }] : [];
+    return [...golems, hound, ...webspinner, ...kennels];
   }
   if (factionId === "goblins") return layout.gates.slice(0, Math.min(3, layout.gates.length)).map((gate, index) => ({
     id: `${settlementIdValue}-warg-${generation}-${index}`,

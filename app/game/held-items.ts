@@ -4,6 +4,23 @@ import { createButterflyVisual } from "./butterflies";
 import { BUTTERFLY_ORDER, type ButterflyKind } from "./mobs";
 import { createHeldToolSpec } from "./model-specs";
 
+export type DragonEquipmentElement = "fire" | "ice" | "steel" | "sea" | "gold" | "silver";
+
+/** Shared palette contract for inventory, dropped and hand-held dragon tack. */
+export const DRAGON_EQUIPMENT_PALETTES: Readonly<Record<DragonEquipmentElement, Readonly<{
+  primary: number;
+  dark: number;
+  light: number;
+  accent: number;
+}>>> = Object.freeze({
+  fire: Object.freeze({ primary: 0xc43f2b, dark: 0x351b1a, light: 0xf47b3f, accent: 0xffcf6a }),
+  ice: Object.freeze({ primary: 0x83d4ea, dark: 0x355f7b, light: 0xe1fbff, accent: 0x9af4ff }),
+  steel: Object.freeze({ primary: 0x73818a, dark: 0x30383d, light: 0xb5c0c5, accent: 0xe2a65e }),
+  sea: Object.freeze({ primary: 0x43bfc1, dark: 0x164f61, light: 0x96f2dc, accent: 0xff879d }),
+  gold: Object.freeze({ primary: 0xe2ad2e, dark: 0x71371f, light: 0xffe98b, accent: 0xfffbd0 }),
+  silver: Object.freeze({ primary: 0xaec6df, dark: 0x34445f, light: 0xf2f8ff, accent: 0xa7d9ff }),
+});
+
 /** Shared first/third-person, remote-player, dropped-item, and paper-doll model. */
 export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptureOrb?: boolean } = {}) {
   const definition = ITEMS[item];
@@ -32,8 +49,130 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
     parent.add(mesh);
     return mesh;
   };
+  const addCylinder = (
+    radius: number,
+    height: number,
+    position: [number, number, number],
+    color: string | number,
+    rotation: [number, number, number] = [0, 0, 0],
+    emissive = false,
+    parent: THREE.Object3D = group,
+  ) => {
+    const material = emissive ? new THREE.MeshBasicMaterial({ color }) : new THREE.MeshLambertMaterial({ color });
+    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, height, 12), material);
+    mesh.position.set(...position);
+    mesh.rotation.set(...rotation);
+    parent.add(mesh);
+    return mesh;
+  };
 
-  if (definition.iconKind === "shield") {
+  if (definition.heldModel === "dragon-saddle") {
+    addBox([0.58, 0.1, 0.76], [0, -0.08, 0], 0x522b27).name = "dragonflight-saddle-quilted-pad";
+    addBox([0.48, 0.17, 0.62], [0, 0.02, -0.02], 0x8b4f38).name = "dragonflight-saddle-seat";
+    addBox([0.51, 0.31, 0.12], [0, 0.19, 0.27], 0x633128, [-0.26, 0, 0]).name = "dragonflight-saddle-cantle";
+    addBox([0.18, 0.3, 0.14], [0, 0.18, -0.29], 0x6f392d, [0.22, 0, 0]).name = "dragonflight-saddle-pommel";
+    for (const side of [-1, 1]) {
+      addBox([0.16, 0.28, 0.46], [side * 0.34, 0.02, 0.02], 0x3d2523, [0, 0, side * -0.19]).name = `dragonflight-saddle-${side < 0 ? "left" : "right"}-wing`;
+      addBox([0.07, 0.66, 0.08], [side * 0.31, -0.26, 0.08], 0x6f3c2d, [0, 0, side * 0.08]).name = `dragonflight-saddle-${side < 0 ? "left" : "right"}-girth`;
+      addBox([0.11, 0.11, 0.045], [side * 0.31, -0.12, -0.24], 0xe1b45a, [0, 0, Math.PI / 4]).name = `dragonflight-saddle-${side < 0 ? "left" : "right"}-sunmetal-buckle`;
+      for (let plate = 0; plate < 3; plate += 1) addBox(
+        [0.13, 0.08, 0.14],
+        [side * (0.31 + plate * 0.018), 0.1 - plate * 0.1, -0.08 + plate * 0.12],
+        plate === 1 ? 0xbd7650 : 0x9a563b,
+        [0, side * -0.16, side * -0.16],
+      ).name = `dragonflight-saddle-${side < 0 ? "left" : "right"}-scale-${plate + 1}`;
+    }
+    addBox([0.38, 0.055, 0.09], [0, 0.12, -0.33], 0xe1b45a).name = "dragonflight-saddle-breast-rail";
+    addBox([0.1, 0.1, 0.04], [0, 0.13, -0.385], 0xffdf7a, [0, 0, Math.PI / 4], true).name = "dragonflight-saddle-waystar";
+    group.scale.setScalar(0.76);
+    group.rotation.set(0.1, 0.28, -0.08);
+  } else if (definition.heldModel === "dragon-pannier") {
+    addBox([0.55, 0.38, 0.3], [0, -0.03, 0], 0x8c5b34).name = "dragon-pannier-bag";
+    addBox([0.59, 0.18, 0.34], [0, 0.21, -0.015], 0xb77a42, [-0.08, 0, 0]).name = "dragon-pannier-weather-flap";
+    addBox([0.08, 0.43, 0.34], [-0.18, 0.03, -0.005], 0x5f3827).name = "dragon-pannier-left-reinforcement";
+    addBox([0.08, 0.43, 0.34], [0.18, 0.03, -0.005], 0x5f3827).name = "dragon-pannier-right-reinforcement";
+    for (const x of [-0.18, 0.18]) {
+      addBox([0.1, 0.1, 0.04], [x, 0.13, -0.18], 0xe0b455, [0, 0, Math.PI / 4]).name = `dragon-pannier-buckle-${x < 0 ? "left" : "right"}`;
+      addBox([0.06, 0.18, 0.04], [x, 0.02, -0.18], 0x3f2b24).name = `dragon-pannier-latch-${x < 0 ? "left" : "right"}`;
+    }
+    addCylinder(0.11, 0.52, [0, 0.36, 0.02], 0x567666, [0, 0, Math.PI / 2]).name = "dragon-pannier-rolled-bedroll";
+    addBox([0.62, 0.07, 0.12], [0, 0.35, 0.02], 0x5b3829).name = "dragon-pannier-bedroll-strap";
+    addBox([0.78, 0.07, 0.12], [0, -0.23, 0.04], 0x4f3328).name = "dragon-pannier-harness";
+    addBox([0.1, 0.1, 0.05], [0, -0.23, -0.04], 0xf0c767, [0, 0, Math.PI / 4]).name = "dragon-pannier-harness-clasp";
+    group.scale.setScalar(0.76);
+    group.rotation.set(0.1, 0.28, -0.08);
+  } else if (definition.heldModel === "dragon-barding") {
+    const type = definition.dragonType ?? "steel";
+    const palette = DRAGON_EQUIPMENT_PALETTES[type];
+    addBox([0.52, 0.34, 0.17], [0, 0.04, 0.02], palette.dark, [0.05, 0, 0]).name = `${type}-barding-harness`;
+    if (type === "fire") {
+      for (let row = 0; row < 3; row += 1) for (let column = 0; column < 3 - row; column += 1) {
+        const x = (column - (2 - row) / 2) * 0.18;
+        addBox([0.17, 0.13, 0.08], [x, 0.18 - row * 0.13, -0.095], row === 0 ? palette.light : palette.primary, [0.08, 0, Math.PI / 4], row === 0 && column === 1).name = `fire-barding-flame-scale-${row}-${column}`;
+      }
+      for (const side of [-1, 1]) addBox([0.13, 0.42, 0.12], [side * 0.31, 0.17, 0.01], palette.primary, [0, 0, side * -0.42]).name = `fire-barding-${side < 0 ? "left" : "right"}-swept-horn`;
+      addBox([0.08, 0.38, 0.06], [0, 0.34, -0.02], palette.accent, [0, 0, 0.18], true).name = "fire-barding-living-flame-crest";
+    } else if (type === "ice") {
+      addBox([0.42, 0.3, 0.11], [0, 0.08, -0.1], palette.primary, [0, 0, Math.PI / 4]).name = "ice-barding-faceted-breastplate";
+      for (const [index, x] of [-0.2, 0, 0.2].entries()) addBox([0.1, 0.3 + (index === 1 ? 0.12 : 0), 0.08], [x, -0.14, -0.08], index === 1 ? palette.accent : palette.light, [0, 0, x * -1.7], index === 1).name = `ice-barding-icicle-${index + 1}`;
+      for (const side of [-1, 1]) addBox([0.17, 0.42, 0.1], [side * 0.27, 0.22, -0.02], palette.light, [0, 0, side * -0.35]).name = `ice-barding-${side < 0 ? "left" : "right"}-glacier-fin`;
+    } else if (type === "steel") {
+      addBox([0.49, 0.31, 0.11], [0, 0.08, -0.09], palette.primary).name = "steel-barding-riveted-breastplate";
+      addBox([0.2, 0.38, 0.14], [-0.28, 0.08, -0.02], palette.light, [0, 0, -0.12]).name = "steel-barding-left-pauldron";
+      addBox([0.2, 0.38, 0.14], [0.28, 0.08, -0.02], palette.dark, [0, 0, 0.12]).name = "steel-barding-right-pauldron";
+      for (const [index, x] of [-0.18, -0.06, 0.06, 0.18].entries()) {
+        addSphere(0.035, [x, 0.2, -0.17], palette.accent).name = `steel-barding-rivet-top-${index + 1}`;
+        addSphere(0.035, [x, -0.04, -0.17], palette.light).name = `steel-barding-rivet-bottom-${index + 1}`;
+      }
+      addCylinder(0.085, 0.08, [0, 0.08, -0.18], palette.accent, [Math.PI / 2, 0, 0]).name = "steel-barding-pressure-dial";
+    } else if (type === "sea") {
+      addBox([0.43, 0.3, 0.11], [0, 0.07, -0.1], palette.primary, [0, 0, Math.PI / 4]).name = "sea-barding-tideglass-carapace";
+      for (const side of [-1, 1]) {
+        for (let fin = 0; fin < 3; fin += 1) addBox([0.12 + fin * 0.035, 0.25, 0.055], [side * (0.27 + fin * 0.07), 0.17 - fin * 0.1, -0.04], fin === 1 ? palette.light : palette.primary, [0, side * 0.12, side * -0.48]).name = `sea-barding-${side < 0 ? "left" : "right"}-fin-${fin + 1}`;
+      }
+      addSphere(0.085, [0, 0.08, -0.18], palette.light, true).name = "sea-barding-lumen-pearl";
+      for (const side of [-1, 1]) addBox([0.06, 0.28, 0.06], [side * 0.17, 0.3, -0.08], palette.accent, [0, 0, side * -0.32]).name = `sea-barding-${side < 0 ? "left" : "right"}-coral-antler`;
+    } else if (type === "gold") {
+      addBox([0.47, 0.32, 0.12], [0, 0.04, -0.08], 0x8c2f32).name = "gold-barding-crimson-mantle";
+      addCylinder(0.17, 0.07, [0, 0.08, -0.18], palette.primary, [Math.PI / 2, 0, 0]).name = "gold-barding-sun-disc";
+      for (let ray = 0; ray < 12; ray += 1) {
+        const angle = ray / 12 * Math.PI * 2;
+        addBox([0.045, ray % 2 ? 0.13 : 0.18, 0.045], [Math.cos(angle) * 0.25, 0.08 + Math.sin(angle) * 0.25, -0.14], ray % 3 === 0 ? palette.accent : palette.light, [0, 0, angle - Math.PI / 2], ray % 3 === 0).name = `gold-barding-sun-ray-${ray + 1}`;
+      }
+      for (const side of [-1, 1]) addBox([0.18, 0.36, 0.09], [side * 0.29, 0.16, 0], palette.primary, [0, 0, side * -0.28]).name = `gold-barding-${side < 0 ? "left" : "right"}-regalia-wing`;
+    } else {
+      addBox([0.45, 0.3, 0.11], [0, 0.06, -0.1], palette.dark).name = "silver-barding-nightweave-panel";
+      for (let segment = 0; segment < 9; segment += 1) {
+        const angle = -1.25 + segment * 0.31;
+        addBox([0.065, 0.13, 0.055], [Math.cos(angle) * 0.2 - 0.04, 0.07 + Math.sin(angle) * 0.2, -0.17], segment % 3 ? palette.primary : palette.light, [0, 0, angle + Math.PI / 2], segment % 4 === 0).name = `silver-barding-crescent-${segment + 1}`;
+      }
+      for (const [index, point] of ([[-0.22, 0.2], [0.22, 0.24], [-0.18, -0.11], [0.15, -0.08]] as Array<[number, number]>).entries()) addSphere(0.035, [point[0], point[1], -0.17], index % 2 ? palette.accent : palette.light, true).name = `silver-barding-star-${index + 1}`;
+      for (const side of [-1, 1]) addBox([0.12, 0.42, 0.08], [side * 0.29, 0.14, -0.01], palette.primary, [0, 0, side * -0.28]).name = `silver-barding-${side < 0 ? "left" : "right"}-moon-fin`;
+    }
+    addBox([0.6, 0.055, 0.11], [0, -0.15, 0.06], palette.dark).name = `${type}-barding-girth`;
+    group.scale.setScalar(0.83);
+    group.rotation.set(0.08, 0.25, -0.08);
+    group.userData.dragonEquipmentType = type;
+  } else if (definition.heldModel === "gold-hoard-block") {
+    addBox([0.5, 0.5, 0.5], [0, 0.05, 0], 0xb77a18).name = "gold-hoard-block-core";
+    for (const [index, y] of [-0.17, 0.04, 0.25].entries()) addBox([0.53, 0.045, 0.53], [0, y, 0], index === 1 ? 0xffdd66 : 0xe3a82d).name = `gold-hoard-block-band-${index + 1}`;
+    addCylinder(0.15, 0.035, [0, 0.05, -0.27], 0xffe783, [Math.PI / 2, 0, 0]).name = "gold-hoard-block-dragon-seal";
+    addBox([0.16, 0.07, 0.025], [0, 0.05, -0.295], 0x8f5115, [0, 0, -0.18]).name = "gold-hoard-block-seal-wing";
+    addBox([0.06, 0.16, 0.025], [0, 0.05, -0.3], 0x8f5115, [0, 0, 0.24]).name = "gold-hoard-block-seal-neck";
+    for (const [index, x] of [-0.19, 0.19].entries()) addBox([0.08, 0.08, 0.03], [x, 0.26, -0.275], index ? 0x66d7cf : 0xd95d70, [0, 0, Math.PI / 4], true).name = `gold-hoard-block-gem-${index + 1}`;
+    group.scale.setScalar(0.72);
+    group.rotation.set(0.12, 0.3, -0.08);
+  } else if (definition.heldModel === "gold-pile") {
+    const stacks = [[-0.19, -0.15, 3], [0.02, -0.17, 5], [0.21, -0.12, 2], [-0.08, 0.04, 4], [0.17, 0.08, 3]] as const;
+    for (const [stack, [x, z, count]] of stacks.entries()) for (let coin = 0; coin < count; coin += 1) {
+      const piece = addCylinder(0.095, 0.035, [x + ((coin + stack) % 2 ? 0.012 : -0.008), -0.19 + coin * 0.034, z], coin % 3 === 0 ? 0xffdf67 : 0xd99f24);
+      piece.name = `gold-pile-coin-${stack + 1}-${coin + 1}`;
+    }
+    for (const [index, [x, y, z, yaw]] of [[-0.19, -0.01, 0.13, -0.28], [0.13, 0.01, -0.12, 0.34], [0.03, 0.11, 0.05, -0.12]].entries() as IterableIterator<[number, [number, number, number, number]]>) addBox([0.24, 0.08, 0.13], [x, y, z], index === 1 ? 0xffd34c : 0xe7ad2c, [0, yaw, 0]).name = `gold-pile-ingot-${index + 1}`;
+    for (const [index, [x, y, z, color]] of [[-0.25, 0.04, -0.08, 0xd95770], [0.25, 0.02, 0.09, 0x5fd8d0], [0.08, 0.16, -0.08, 0xa77be8]].entries() as IterableIterator<[number, [number, number, number, number]]>) addBox([0.09, 0.09, 0.09], [x, y, z], color, [Math.PI / 4, Math.PI / 4, 0], true).name = `gold-pile-gem-${index + 1}`;
+    group.scale.setScalar(0.92);
+    group.rotation.set(0.07, 0.24, -0.06);
+  } else if (definition.iconKind === "shield") {
     const iron = /iron/iu.test(definition.name);
     const face = iron ? 0xc9ad58 : 0x9a6a3b;
     const rim = iron ? 0xf0d471 : 0x5d4028;
@@ -96,6 +235,16 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
       for (const side of [-1, 1]) addBox([0.26, 0.22, 0.42], [side * 0.16, 0, 0], side < 0 ? primary.getHex() : light, [0, 0, side * -0.05]).name = `held-armor-${side < 0 ? "left" : "right"}-boot`;
       group.scale.setScalar(0.82);
       group.rotation.set(0.08, 0.24, -0.08);
+    }
+    // The three wearable scale families retain their slot silhouette while
+    // carrying a readable element mark in hand and as world loot.
+    if (definition.equipmentSlot && definition.dragonType === "fire") {
+      for (const [index, x] of [-0.14, 0, 0.14].entries()) addBox([0.07, 0.23 + index * 0.035, 0.055], [x, 0.25 + index * 0.02, -0.2], index === 1 ? 0xffcf6a : 0xef6b3d, [0, 0, x * -1.5], index === 1).name = `held-fire-armor-flame-spine-${index + 1}`;
+    } else if (definition.equipmentSlot && definition.dragonType === "ice") {
+      for (const [index, x] of [-0.16, 0, 0.16].entries()) addBox([0.07, 0.2 + (index === 1 ? 0.12 : 0), 0.055], [x, 0.22, -0.2], index === 1 ? 0xe6fdff : 0x9ceeff, [0, 0, x * -1.8], index === 1).name = `held-ice-armor-crystal-spine-${index + 1}`;
+    } else if (definition.equipmentSlot && definition.dragonType === "steel") {
+      for (const [index, x] of [-0.18, -0.06, 0.06, 0.18].entries()) addSphere(0.035, [x, 0.19, -0.22], index % 2 ? 0xd7a15a : 0xc6d0d4).name = `held-steel-armor-rivet-${index + 1}`;
+      addBox([0.36, 0.045, 0.05], [0, 0.03, -0.21], 0x313b40).name = "held-steel-armor-reinforcement";
     }
   } else if (item === BlockId.CraftingTable) {
     // A miniature of the authored world block: gridded worktop, dark joined

@@ -712,6 +712,7 @@ export function itemIconKind(item: ItemCode) {
   const definition = ITEMS[item];
   if (item === Item.StarrootScepter) return "scepter";
   if (definition?.toolKind) return `tool-${definition.toolKind}`;
+  if (definition?.equipmentSlot && definition.dragonType && ["fire", "ice", "steel"].includes(definition.dragonType)) return `dragon-player-${definition.dragonType}-${definition.equipmentSlot}`;
   if (definition?.equipmentSlot) return `armor-${definition.equipmentSlot}`;
   if (definition?.useKind === "hoe") return "hoe";
   if (definition?.useKind === "scythe") return "scythe";
@@ -1292,6 +1293,15 @@ function SlotContents({ slot }: { slot: InventorySlot | null }) {
   );
 }
 
+const DRAGON_ASSET_AUDIT_ITEMS = new Set<ItemCode>([
+  Item.GoldBlockItem, Item.GoldPileItem, Item.DragonSaddle, Item.DragonChestModule,
+  Item.FireDragonArmorModule, Item.IceDragonArmorModule, Item.SteelDragonArmorModule,
+  Item.TideglassDragonArmorModule, Item.GoldDragonArmorModule, Item.SilverDragonArmorModule,
+  Item.FireScaleHelm, Item.FireScalePlate, Item.FireScaleGreaves, Item.FireScaleBoots,
+  Item.IceScaleHelm, Item.IceScalePlate, Item.IceScaleGreaves, Item.IceScaleBoots,
+  Item.SteelScaleHelm, Item.SteelScalePlate, Item.SteelScaleGreaves, Item.SteelScaleBoots,
+]);
+
 export default function VoxelGame() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<VoxelEngine | null>(null);
@@ -1358,7 +1368,7 @@ export default function VoxelGame() {
   const [multiplayerState, setMultiplayerState] = useState<MultiplayerViewState>(EMPTY_MULTIPLAYER_STATE);
   const [multiplayerBusy, setMultiplayerBusy] = useState(false);
   const [multiplayerReturn, setMultiplayerReturn] = useState<"title" | "pause">("title");
-  const [iconAuditMode, setIconAuditMode] = useState<"all" | "tomes" | null>(null);
+  const [iconAuditMode, setIconAuditMode] = useState<"all" | "tomes" | "dragons" | null>(null);
   const [civicAuditMode, setCivicAuditMode] = useState<CivicAuditMode | null>(null);
   const [heldAuditMode, setHeldAuditMode] = useState(false);
   const [spellWheelAuditMode, setSpellWheelAuditMode] = useState(false);
@@ -1371,7 +1381,7 @@ export default function VoxelGame() {
   useEffect(() => {
     const parameters = new URLSearchParams(window.location.search);
     const iconAudit = parameters.get("icon-audit");
-    setIconAuditMode(iconAudit === "tomes" ? "tomes" : iconAudit === "1" ? "all" : null);
+    setIconAuditMode(iconAudit === "tomes" ? "tomes" : iconAudit === "dragons" ? "dragons" : iconAudit === "1" ? "all" : null);
     setHeldAuditMode(parameters.get("held-audit") === "1");
     setSpellWheelAuditMode(parameters.get("spell-wheel-audit") === "empty");
     const workstationAudit = parameters.get("workstation-audit");
@@ -3618,7 +3628,7 @@ export default function VoxelGame() {
           <header><div><span className="panel-eyebrow">UI ART QA · ACTUAL DISPLAY SIZES</span><h2>Inventory Icon Audit</h2></div><button type="button" onClick={() => setIconAuditMode(null)} aria-label="Close icon audit">×</button></header>
           <p>Left: 28px inventory and hotbar artwork. Right: the same artwork at its 22px recipe-book size.</p>
           <div className="item-icon-audit-grid">
-            {Object.values(ITEMS).filter((definition) => iconAuditMode === "all" || definition.useKind === "spell-tome").map((definition) => <article key={definition.id}><span className="item-audit-large"><ItemIcon item={definition.id} /></span><span className="item-audit-small"><ItemIcon item={definition.id} small /></span><strong>{definition.name}</strong><small>{itemIconKind(definition.id)}</small></article>)}
+            {Object.values(ITEMS).filter((definition) => iconAuditMode === "all" || (iconAuditMode === "tomes" ? definition.useKind === "spell-tome" : DRAGON_ASSET_AUDIT_ITEMS.has(definition.id))).map((definition) => <article key={definition.id}><span className="item-audit-large"><ItemIcon item={definition.id} /></span><span className="item-audit-small"><ItemIcon item={definition.id} small /></span><strong>{definition.name}</strong><small>{itemIconKind(definition.id)}</small></article>)}
           </div>
         </section>
       )}

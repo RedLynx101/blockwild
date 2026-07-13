@@ -3,7 +3,7 @@ import * as THREE from "three";
 export type ArrowOwner = { kind: "mob" | "player"; id: number | string };
 
 export type ProjectileEffect = Readonly<{
-  kind: "verdant-root";
+  kind: "verdant-root" | "webspinner-bind";
   seconds: number;
 }>;
 
@@ -149,6 +149,52 @@ export function createVerdantVolleyProjectile(
   return projectile;
 }
 
+/** A compact pressure-web bolt: visible brass hub, pale filament loops and a short steam trail. */
+export function createWebspinnerProjectile(
+  id: number,
+  owner: ArrowOwner,
+  origin: THREE.Vector3,
+  target: THREE.Vector3,
+  damage = 5,
+  speed = 18,
+  bindSeconds = 3.2,
+): ArrowProjectile {
+  const visual = new THREE.Group();
+  visual.name = "visible-webspinner-bind-projectile";
+  const hubMaterial = new THREE.MeshLambertMaterial({ color: 0xb77d45, emissive: 0x4b2915, emissiveIntensity: 0.45 });
+  const threadMaterial = new THREE.MeshLambertMaterial({ color: 0xb7fff4, emissive: 0x25766f, emissiveIntensity: 0.72, transparent: true, opacity: 0.74, depthWrite: false });
+  const steamMaterial = new THREE.MeshLambertMaterial({ color: 0xd8eceb, transparent: true, opacity: 0.28, depthWrite: false });
+  const hub = new THREE.Mesh(new THREE.OctahedronGeometry(0.13, 0), hubMaterial);
+  hub.name = "webspinner-bind-hub";
+  visual.add(hub);
+  for (let index = 0; index < 3; index += 1) {
+    const loop = new THREE.Mesh(new THREE.TorusGeometry(0.2 + index * 0.045, 0.018, 4, 12), threadMaterial);
+    loop.name = `webspinner-filament-${index + 1}`;
+    loop.rotation.set(index * 0.72, index * 1.05, Math.PI / 2 + index * 0.38);
+    visual.add(loop);
+  }
+  for (let index = 0; index < 3; index += 1) {
+    const puff = new THREE.Mesh(new THREE.SphereGeometry(0.12 + index * 0.035, 5, 4), steamMaterial);
+    puff.name = `webspinner-steam-${index + 1}`;
+    puff.position.z = 0.28 + index * 0.18;
+    visual.add(puff);
+  }
+  visual.position.copy(origin);
+  const projectile: ArrowProjectile = {
+    id,
+    owner,
+    position: origin.clone(),
+    velocity: aimArrowVelocity(origin, target, speed),
+    damage,
+    age: 0,
+    maxAge: 3.5,
+    visual,
+    effect: { kind: "webspinner-bind", seconds: Math.max(0, bindSeconds) },
+  };
+  orientArrowVisual(projectile);
+  return projectile;
+}
+
 /** Swept stepping prevents fast arrows passing through one-block walls. */
 export function stepArrowProjectile(
   projectile: ArrowProjectile,
@@ -180,6 +226,14 @@ export function stepArrowProjectile(
   orientArrowVisual(projectile);
   const verdantSpiral = projectile.visual.getObjectByName("verdant-volley-spiral");
   if (verdantSpiral) verdantSpiral.rotation.z = projectile.age * 13;
+  if (projectile.effect?.kind === "webspinner-bind") {
+    const hub = projectile.visual.getObjectByName("webspinner-bind-hub");
+    if (hub) hub.rotation.z = projectile.age * 18;
+    for (let index = 1; index <= 3; index += 1) {
+      const filament = projectile.visual.getObjectByName(`webspinner-filament-${index}`);
+      if (filament) filament.rotation.z += dt * (index % 2 === 0 ? -10 : 10);
+    }
+  }
   return { kind: "flying" };
 }
 
