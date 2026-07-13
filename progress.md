@@ -463,3 +463,14 @@ Original prompt: Have the new Skyrim GUI stuff visually refresh 4x faster. Take 
 - Final local verification passes: all 598 TypeScript gameplay/content tests and all eight rendered-metadata/audio tests; native TypeScript; whole-repository ESLint; `git diff --check`; the production vinext build; and Sites artifact validation. The official web-game client reports v1.4.3 with a valid state and no error artifact.
 - Manual visual QA covers the compact empty spell panel in `output/v1-4-3-spell-wheel-final/shot-0.png`, the real-size Surveyor Table icon card, Wild Rune Stone and connected peppermint audit, and the repaired adventure blueprint atlas. The empty wheel reads as one quiet framed prompt with no radial noise or overlapping copy.
 - The temporary prompt copy has completed its acceptance purpose and is deleted immediately after this record, before the release commit and dual publication, as requested.
+## Map performance and projection pass - 2026-07-12
+
+Current request: Optimize the increasingly laggy explored-world map, make detailed terrain show water as blue instead of the ground beneath it, and use one uniform horizontal/vertical scale so map chunks remain square.
+
+- Replaced the per-chunk detailed SVG tree with a retained canvas terrain layer. Terrain redraws only when exploration, view, detail mode, or viewport size changes; hover no longer allocates event handlers for every explored chunk.
+- Added viewport culling, visible marker/player culling, cached explored-set lookups, and a no-clone/no-sort steady-state path for the 720 ms discovery update.
+- Added a shared aspect-correct map projection for terrain, pins, and hover hit-testing. Wide or tall panels now center the map rather than stretching chunk cells.
+- Detailed sampling now gives water precedence whenever any bounded quadrant sample contains water; legacy ocean/river samples are forced to their blue biome ink during canvas rendering.
+- Focused TypeScript, scoped ESLint, and 32/32 map/quest/weather tests pass. A 65,536-chunk benchmark retains the full initial build but makes 5,000 steady 256-chunk discovery batches average 0.0436 ms each while reusing the same state.
+- Official-client startup QA and a dedicated fresh-world browser pass report no console/page errors. Manual review at 1.0x and 1.8x confirms square cells, centered letterboxing, aligned player pins, working zoom, and zero per-chunk terrain DOM nodes; the canvas backing size exactly matches its inner viewport.
+- Final production verification passes the bounded Sites build/artifact, 568/568 gameplay tests, 7/7 release pretests, TypeScript, scoped ESLint, and patch-integrity checks. Ready to commit and push `design-1`.

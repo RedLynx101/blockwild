@@ -11,8 +11,13 @@ import {
   ABSOLUTE_MIN_MAP_ZOOM,
   MIN_MAP_ZOOM,
   joinCartographySession,
+  mapChunkAtViewportPoint,
+  mapChunksInViewport,
+  mapSurfaceQuadrantColor,
   mapTerrainPalette,
   mapViewportBounds,
+  mapViewportProjection,
+  MAP_WATER_SURFACE_COLOR,
   markChunksRendered,
   normalizeMapKnowledge,
   normalizeMapViewState,
@@ -89,6 +94,23 @@ test("map zoom and pan retain the same x/z chunk coordinate system", () => {
   assert.equal(viewport.maxZ - viewport.minZ, 40 / zoomed.zoom);
   assert.equal((viewport.minX + viewport.maxX) / 2, 3);
   assert.equal((viewport.minZ + viewport.maxZ) / 2, -4);
+
+  const projection = mapViewportProjection({ minX: -10, maxX: 10, minZ: -20, maxZ: 20 }, 800, 400);
+  assert.equal(projection.scale, 10, "both axes share one chunk scale");
+  assert.equal(projection.contentWidth, 200);
+  assert.equal(projection.contentHeight, 400);
+  assert.equal(projection.offsetX, 300, "a narrow map is centered instead of stretched horizontally");
+  assert.deepEqual(mapChunkAtViewportPoint(405, 205, { minX: -10, maxX: 10, minZ: -20, maxZ: 20 }, 800, 400), { x: 0, z: 0 });
+  assert.equal(mapChunkAtViewportPoint(20, 200, { minX: -10, maxX: 10, minZ: -20, maxZ: 20 }, 800, 400), null);
+});
+
+test("detailed map sampling gives water precedence and culls offscreen chunks", () => {
+  assert.equal(mapSurfaceQuadrantColor(["#777777", "#888888", "#999999", "#aaaaaa"], true), MAP_WATER_SURFACE_COLOR);
+  assert.notEqual(mapSurfaceQuadrantColor(["#777777", "#888888", "#999999", "#aaaaaa"], false), MAP_WATER_SURFACE_COLOR);
+  assert.deepEqual(
+    mapChunksInViewport(["-20,0", "0,0", "1,1", "40,40"], { minX: -1, maxX: 3, minZ: -1, maxZ: 3 }).map((chunk) => chunk.key),
+    ["0,0", "1,1"],
+  );
 });
 
 test("the Wayfinder names only a POI aimed beneath the center notch", () => {
@@ -133,10 +155,30 @@ test("map panel renders biome colors, zoom controls, headings, and other players
   assert.match(markup, /Current map zoom/);
   assert.match(markup, /Detailed terrain/);
   assert.match(markup, /aria-pressed="true"/);
-  assert.match(markup, /#4f86a7/);
-  assert.match(markup, /#c46fa5/);
+  assert.match(markup, /<canvas class="hearthroads-map-terrain"/);
+  assert.doesNotMatch(markup, /hearthroads-map-chunk-group/);
+  assert.equal(mapTerrainPalette(1).fill, "#4f86a7");
+  assert.equal(mapTerrainPalette(21).fill, "#c46fa5");
   assert.match(markup, /Trailfriend/);
   assert.match(markup, /rotate\(-1\.5707963267948966rad\)/, "clockwise world turns rotate clockwise on the map rather than mirroring");
+});
+
+test("large explored maps retain one bounded terrain canvas instead of per-chunk DOM", () => {
+  const chunks = Array.from({ length: 16_384 }, (_, index) => ({ x: index % 128, z: Math.floor(index / 128), biome: index % 24 }));
+  const knowledge = markChunksRendered(createMapKnowledge("large-map", "local"), chunks);
+  const markup = renderToStaticMarkup(createElement(MapPanel, {
+    knowledge,
+    currentPosition: { x: 8, y: 40, z: 8 },
+    selectedMarkerId: null,
+    onSelectMarker: () => undefined,
+    onAddManualMarker: () => undefined,
+    onRemoveManualMarker: () => undefined,
+    onRenameMarker: () => undefined,
+    onBeginFastTravel: () => undefined,
+  }));
+  assert.equal((markup.match(/<canvas /gu) ?? []).length, 1);
+  assert.doesNotMatch(markup, /hearthroads-map-chunk-group/);
+  assert.ok(markup.length < 12_000, `large-map markup should stay bounded, received ${markup.length} characters`);
 });
 
 test("daily cloud plans are deterministic, layered, larger, and density-variable", () => {

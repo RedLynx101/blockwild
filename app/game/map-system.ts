@@ -12,6 +12,7 @@ export const MIN_MAP_ZOOM = 0.5;
 export const MAX_MAP_ZOOM = 12;
 export const ABSOLUTE_MIN_MAP_ZOOM = 0.1;
 export const MAX_MAP_PAN_CHUNKS = 1_048_576;
+export const MAP_WATER_SURFACE_COLOR = "#3e83c6";
 
 export type WorldPoint = Readonly<{ x: number; y: number; z: number }>;
 export type ChunkCoordinate = Readonly<{ x: number; z: number }>;
@@ -36,6 +37,13 @@ export type MapViewState = Readonly<{
 }>;
 export type MapZoomLimits = Readonly<{ minimum?: number; maximum?: number }>;
 export type MapViewportBounds = Readonly<{ minX: number; maxX: number; minZ: number; maxZ: number }>;
+export type MapViewportProjection = Readonly<{
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+  contentWidth: number;
+  contentHeight: number;
+}>;
 export type MapPlayerMarker = Readonly<{
   id: string;
   name: string;
@@ -217,6 +225,11 @@ export function averageMapColors(colors: readonly string[], fallback = "#668252"
   return `#${channel(totals.r)}${channel(totals.g)}${channel(totals.b)}`;
 }
 
+/** Water owns a detailed-map cell whenever any bounded sample sees it. */
+export function mapSurfaceQuadrantColor(colors: readonly string[], containsWater: boolean) {
+  return containsWater ? MAP_WATER_SURFACE_COLOR : averageMapColors(colors);
+}
+
 /** Stable map ink for numeric biome ids and future content-pack biome names. */
 export function mapTerrainPalette(biome: MapBiomeReference | null | undefined): MapTerrainPalette {
   if (typeof biome === "number") return BIOME_TERRAIN_PALETTES[biome] ?? DEFAULT_LAND_PALETTE;
@@ -291,6 +304,58 @@ export function mapViewportBounds(base: MapViewportBounds, state: MapViewState, 
   };
 }
 
+/** One shared scale keeps map chunks square regardless of the panel aspect ratio. */
+export function mapViewportProjection(
+  bounds: MapViewportBounds,
+  viewportWidth: number,
+  viewportHeight: number,
+): MapViewportProjection {
+  const width = Math.max(1, finite(viewportWidth, 1));
+  const height = Math.max(1, finite(viewportHeight, 1));
+  const chunkWidth = Math.max(1, finite(bounds.maxX) - finite(bounds.minX));
+  const chunkHeight = Math.max(1, finite(bounds.maxZ) - finite(bounds.minZ));
+  const scale = Math.max(Number.EPSILON, Math.min(width / chunkWidth, height / chunkHeight));
+  const contentWidth = chunkWidth * scale;
+  const contentHeight = chunkHeight * scale;
+  return {
+    scale,
+    contentWidth,
+    contentHeight,
+    offsetX: (width - contentWidth) / 2,
+    offsetY: (height - contentHeight) / 2,
+  };
+}
+
+export function projectMapWorldPoint(
+  position: Pick<WorldPoint, "x" | "z">,
+  bounds: MapViewportBounds,
+  viewportWidth: number,
+  viewportHeight: number,
+) {
+  const projection = mapViewportProjection(bounds, viewportWidth, viewportHeight);
+  return {
+    x: projection.offsetX + (finite(position.x) / MAP_CHUNK_SIZE - bounds.minX) * projection.scale,
+    y: projection.offsetY + (finite(position.z) / MAP_CHUNK_SIZE - bounds.minZ) * projection.scale,
+  };
+}
+
+export function mapChunkAtViewportPoint(
+  pixelX: number,
+  pixelY: number,
+  bounds: MapViewportBounds,
+  viewportWidth: number,
+  viewportHeight: number,
+): ChunkCoordinate | null {
+  const projection = mapViewportProjection(bounds, viewportWidth, viewportHeight);
+  const localX = finite(pixelX) - projection.offsetX;
+  const localY = finite(pixelY) - projection.offsetY;
+  if (localX < 0 || localY < 0 || localX >= projection.contentWidth || localY >= projection.contentHeight) return null;
+  return {
+    x: Math.floor(bounds.minX + localX / projection.scale),
+    z: Math.floor(bounds.minZ + localY / projection.scale),
+  };
+}
+
 export function chunkKey(chunk: ChunkCoordinate) {
   return `${integer(chunk.x)},${integer(chunk.z)}`;
 }
@@ -299,6 +364,23 @@ export function parseChunkKey(key: string): ChunkCoordinate | null {
   const match = /^(-?\d+),(-?\d+)$/u.exec(key);
   if (!match) return null;
   return { x: Number(match[1]), z: Number(match[2]) };
+}
+
+/** Culls the terrain layer before React/canvas work; zoomed views never scan the DOM. */
+export function mapChunksInViewport(
+  exploredChunks: readonly string[],
+  bounds: MapViewportBounds,
+  padding = 0,
+) {
+  const margin = Math.max(0, finite(padding));
+  const result: Array<ChunkCoordinate & Readonly<{ key: string }>> = [];
+  for (const key of exploredChunks) {
+    const chunk = parseChunkKey(key);
+    if (!chunk || chunk.x + 1 < bounds.minX - margin || chunk.x > bounds.maxX + margin
+      || chunk.z + 1 < bounds.minZ - margin || chunk.z > bounds.maxZ + margin) continue;
+    result.push({ ...chunk, key });
+  }
+  return result;
 }
 
 export function chunkAtWorldPosition(position: Pick<WorldPoint, "x" | "z">, chunkSize = MAP_CHUNK_SIZE): ChunkCoordinate {
@@ -404,34 +486,73 @@ export function markChunkRendered(state: MapKnowledge, chunk: MapChunkDiscovery)
   return markChunksRendered(state, [chunk]);
 }
 
-/** Batches a render-distance ring into one normalization and one stable sort. */
+const EXPLORED_CHUNK_SET_CACHE = new WeakMap<readonly string[], ReadonlySet<string>>();
+
+function exploredChunkSet(chunks: readonly string[]) {
+  const cached = EXPLORED_CHUNK_SET_CACHE.get(chunks);
+  if (cached) return cached;
+  const created = new Set(chunks);
+  EXPLORED_CHUNK_SET_CACHE.set(chunks, created);
+  return created;
+}
+
+function surfaceSamplesEqual(left: MapSurfaceSample | undefined, right: MapSurfaceSample | null) {
+  return right === null || (left !== undefined
+    && left[0] === right[0] && left[1] === right[1] && left[2] === right[2] && left[3] === right[3]);
+}
+
+/**
+ * Batches a render-distance ring into one revision. The common steady-state
+ * path performs only cached membership lookups and does not clone or sort the
+ * complete explored map every 720 ms.
+ */
 export function markChunksRendered(state: MapKnowledge, chunks: readonly MapChunkDiscovery[]): MapKnowledge {
   if (!chunks.length) return state;
-  const explored = new Set(state.exploredChunks);
-  const before = explored.size;
-  const terrainByChunk: Record<string, MapBiomeReference> = { ...(state.terrainByChunk ?? {}) };
-  const surfaceByChunk: Record<string, MapSurfaceSample> = { ...(state.surfaceByChunk ?? {}) };
-  let terrainChanged = false;
-  let surfaceChanged = false;
+  const known = exploredChunkSet(state.exploredChunks);
+  const newKeys = new Set<string>();
+  const pending = new Map<string, Readonly<{
+    biome: MapBiomeReference | null;
+    surface: MapSurfaceSample | null;
+  }>>();
+  let projectedSize = known.size;
   for (const chunk of chunks) {
     const key = chunkKey(chunk);
-    if (!explored.has(key) && explored.size >= MAX_EXPLORED_CHUNKS) continue;
-    explored.add(key);
+    const isKnown = known.has(key) || newKeys.has(key);
+    if (!isKnown) {
+      if (projectedSize >= MAX_EXPLORED_CHUNKS) continue;
+      newKeys.add(key);
+      projectedSize += 1;
+    }
     const biome = normalizeBiomeReference(chunk.biome);
-    if (biome !== null && terrainByChunk[key] !== biome) {
-      terrainByChunk[key] = biome;
-      terrainChanged = true;
-    }
     const surface = normalizeSurfaceSample(chunk.surfaceColors);
-    if (surface && surface.join("|") !== surfaceByChunk[key]?.join("|")) {
-      surfaceByChunk[key] = surface;
-      surfaceChanged = true;
-    }
+    const biomeChanged = biome !== null && state.terrainByChunk?.[key] !== biome;
+    const surfaceChanged = !surfaceSamplesEqual(state.surfaceByChunk?.[key], surface);
+    if (!isKnown || biomeChanged || surfaceChanged) pending.set(key, { biome, surface });
   }
-  return explored.size === before && !terrainChanged && !surfaceChanged ? state : {
+  if (!pending.size) return state;
+
+  const terrainChanged = [...pending.entries()].some(([key, entry]) => entry.biome !== null && state.terrainByChunk?.[key] !== entry.biome);
+  const surfaceChanged = [...pending.entries()].some(([key, entry]) => !surfaceSamplesEqual(state.surfaceByChunk?.[key], entry.surface));
+  const terrainByChunk: Readonly<Record<string, MapBiomeReference>> = terrainChanged
+    ? { ...(state.terrainByChunk ?? {}) }
+    : state.terrainByChunk;
+  const surfaceByChunk: Readonly<Record<string, MapSurfaceSample>> = surfaceChanged
+    ? { ...(state.surfaceByChunk ?? {}) }
+    : state.surfaceByChunk;
+  if (terrainChanged) for (const [key, entry] of pending) {
+    if (entry.biome !== null) (terrainByChunk as Record<string, MapBiomeReference>)[key] = entry.biome;
+  }
+  if (surfaceChanged) for (const [key, entry] of pending) {
+    if (entry.surface) (surfaceByChunk as Record<string, MapSurfaceSample>)[key] = entry.surface;
+  }
+  const exploredChunks = newKeys.size
+    ? [...state.exploredChunks, ...newKeys].sort()
+    : state.exploredChunks;
+  if (newKeys.size) EXPLORED_CHUNK_SET_CACHE.set(exploredChunks, new Set([...known, ...newKeys]));
+  return {
     ...state,
     revision: state.revision + 1,
-    exploredChunks: [...explored].sort(),
+    exploredChunks,
     terrainByChunk,
     surfaceByChunk,
   };

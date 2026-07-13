@@ -7381,11 +7381,7 @@ input:focus-visible {
 }
 .hearthroads-map-canvas.dragging { cursor: grabbing; }
 .hearthroads-map-canvas::after { content: ""; position: absolute; inset: 10px; pointer-events: none; border: 1px dashed rgba(71, 58, 34, .38); }
-.hearthroads-map-terrain { position: absolute; inset: 0; width: 100%; height: 100%; }
-.hearthroads-map-chunk { stroke-width: .04; transition: filter .12s ease; }
-.hearthroads-map-chunk.water { filter: saturate(1.08); }
-.hearthroads-map-surface-cell { pointer-events: none; opacity: .96; }
-.hearthroads-map-chunk-group:hover .hearthroads-map-chunk { filter: brightness(1.16) saturate(1.08); }
+.hearthroads-map-terrain { position: absolute; inset: 0; display: block; width: 100%; height: 100%; pointer-events: none; image-rendering: pixelated; }
 .hearthroads-map-controls {
   position: absolute;
   z-index: 8;
