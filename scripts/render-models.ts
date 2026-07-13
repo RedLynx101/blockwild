@@ -604,11 +604,8 @@ function portraitProjection(targetY: number): Projection {
   return { camera, target, right, up, forward };
 }
 
-/** Renders a clean, transparent, front-three-quarter portrait from a model spec. */
-export function renderModelPortrait(spec: ModelSpec) {
-  assertModelSpec(spec);
-  const { bounds, centerY } = modelBounds(spec);
-  const projection = portraitProjection(centerY);
+function renderModelProjectedPortrait(spec: ModelSpec, projection: Projection, description: string) {
+  const { bounds } = modelBounds(spec);
   const faces = modelFaces(spec, projection);
   const rawPoints = spec.boxes.flatMap((modelBox) => boxVertices(modelBox).vertices).map((point) => rawProject(point, projection));
   const minX = Math.min(...rawPoints.map((point) => point.x));
@@ -633,7 +630,7 @@ export function renderModelPortrait(spec: ModelSpec) {
   }).join("");
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${PORTRAIT_WIDTH}" height="${PORTRAIT_HEIGHT}" viewBox="0 0 ${PORTRAIT_WIDTH} ${PORTRAIT_HEIGHT}" role="img" aria-labelledby="portrait-title">
-  <title id="portrait-title">${escapeXml(spec.label)} front three-quarter model portrait</title>
+  <title id="portrait-title">${escapeXml(spec.label)} ${description}</title>
   <defs>
     <filter id="portrait-glow" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="4" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
     <filter id="portrait-shadow" x="-40%" y="-80%" width="180%" height="260%"><feGaussianBlur stdDeviation="8"/></filter>
@@ -643,7 +640,22 @@ ${spec.groundY === undefined ? "" : `  <ellipse cx="${groundCenter.x.toFixed(2)}
 </svg>`;
 }
 
-function renderPortraitSheet(specs: readonly InspectionModelSpec[], rendered: ReadonlyMap<string, string>, requestedColumns = 4) {
+/** Renders a clean, transparent, front-three-quarter portrait from a model spec. */
+export function renderModelPortrait(spec: ModelSpec) {
+  assertModelSpec(spec);
+  const { centerY } = modelBounds(spec);
+  return renderModelProjectedPortrait(spec, portraitProjection(centerY), "front three-quarter model portrait");
+}
+
+/** Renders the clean portrait treatment from a deterministic inspector view. */
+export function renderModelViewPortrait(spec: ModelSpec, view: ViewName) {
+  assertModelSpec(spec);
+  const { centerY } = modelBounds(spec);
+  const description = view === "iso" ? "isometric orthographic model portrait" : `${view} orthographic model portrait`;
+  return renderModelProjectedPortrait(spec, projectionFor(view, centerY), description);
+}
+
+function renderPortraitSheet(specs: readonly InspectionModelSpec[], rendered: ReadonlyMap<string, string>, requestedColumns = 4, viewLabel = "front three-quarter") {
   const columns = Math.min(Math.max(1, requestedColumns), specs.length);
   const tileWidth = 360;
   const tileHeight = 310;
@@ -671,18 +683,18 @@ function renderPortraitSheet(specs: readonly InspectionModelSpec[], rendered: Re
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
   <rect width="100%" height="100%" fill="#0c100e"/>
   <text x="28" y="43" fill="#e5bd68" font-family="ui-sans-serif, system-ui, sans-serif" font-size="26" font-weight="900" letter-spacing="1.8">BLOCKWILD FIELD GUIDE · V${GAME_VERSION}</text>
-  <text x="28" y="70" fill="#99a79e" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">Production creature models · front three-quarter portraits · ${specs.length} specimens</text>
+  <text x="28" y="70" fill="#99a79e" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">Production creature models · ${viewLabel} portraits · ${specs.length} specimens</text>
   ${tiles}
 </svg>`;
 }
 
-export async function renderModelPortraits(options: { out: string; columns?: number; specs: InspectionModelSpec[]; png?: boolean }) {
-  const { out, specs, columns = 4, png = false } = options;
+export async function renderModelPortraits(options: { out: string; columns?: number; specs: InspectionModelSpec[]; png?: boolean; view?: ViewName }) {
+  const { out, specs, columns = 4, png = false, view } = options;
   await mkdir(out, { recursive: true });
   const files: string[] = [];
   const rendered = new Map<string, string>();
   for (const spec of specs) {
-    const svg = renderModelPortrait(spec);
+    const svg = view ? renderModelViewPortrait(spec, view) : renderModelPortrait(spec);
     rendered.set(spec.id, svg);
     const svgPath = path.join(out, `${spec.id}.svg`);
     await writeFile(svgPath, svg, "utf8");
@@ -692,7 +704,8 @@ export async function renderModelPortraits(options: { out: string; columns?: num
       if (await writePng(svg, pngPath)) files.push(pngPath);
     }
   }
-  const sheet = renderPortraitSheet(specs, rendered, columns);
+  const viewLabel = view === "iso" ? "isometric orthographic" : view ? `${view} orthographic` : "front three-quarter";
+  const sheet = renderPortraitSheet(specs, rendered, columns, viewLabel);
   const sheetPath = path.join(out, "blockwild-creatures.svg");
   await writeFile(sheetPath, sheet, "utf8");
   files.push(sheetPath);

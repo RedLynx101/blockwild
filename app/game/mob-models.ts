@@ -55,10 +55,14 @@ export type DragonPoseInput = Readonly<{
   timeSeconds: number;
   stage?: 1 | 2 | 3 | 4 | 5;
   mode?: DragonAnimationMode;
+  /** Keeps aerial attack and hurt overlays on the streamlined flight rig. */
+  airborne?: boolean;
   movement?: number;
   attackProgress?: number;
   bank?: number;
   pitch?: number;
+  /** Bounded local yaw used to keep attacks visually aligned during a strafe. */
+  lookYaw?: number;
   sex?: "female" | "male";
   equipment?: DragonRenderEquipment;
 }>;
@@ -107,8 +111,9 @@ export function applyDragonPose(root: THREE.Object3D, input: DragonPoseInput) {
   const time = Number.isFinite(input.timeSeconds) ? input.timeSeconds : 0;
   const movement = THREE.MathUtils.clamp(input.movement ?? 0, 0, 1);
   const attack = THREE.MathUtils.clamp(input.attackProgress ?? 0, 0, 1);
+  const lookYaw = THREE.MathUtils.clamp(input.lookYaw ?? 0, -0.95, 0.95);
   const mode = input.mode ?? "idle";
-  const airborne = mode === "fly" || mode === "breath" || mode === "projectile";
+  const airborne = input.airborne ?? (mode === "fly" || mode === "breath" || mode === "projectile");
   const object = (suffix: string) => root.getObjectByName(`${prefix}-${suffix}`);
   const stage = input.stage ?? (Number(root.userData.dragonVisualStage) || 5) as 1 | 2 | 3 | 4 | 5;
   applyDragonLifeStage(root, stage);
@@ -116,6 +121,18 @@ export function applyDragonPose(root: THREE.Object3D, input: DragonPoseInput) {
   const attackStrike = Math.sin(THREE.MathUtils.clamp((attack - 0.2) / 0.5, 0, 1) * Math.PI);
   const attackRecovery = THREE.MathUtils.smoothstep(attack, 0.62, 1);
   const speciesTempo = type === "steel" ? 0.82 : type === "sea" ? 1.18 : type === "silver" ? 1.08 : 1;
+  // Airborne quadrupeds read best when the limbs streamline behind the chest
+  // instead of reaching into the direction of travel. The small species bias
+  // preserves character: Steel carries its weight a little lower, while Sea
+  // and Silver make the longest, cleanest sweep. Values are absolute targets,
+  // so repeated pose calls never accumulate rotation drift.
+  const flightTrailBias = type === "steel" ? 0.08
+    : type === "sea" ? -0.1
+      : type === "silver" ? -0.07
+        : type === "gold" ? -0.05
+          : type === "ice" ? -0.03
+            : 0;
+  const flightFlexBias = type === "steel" ? 0.08 : type === "sea" ? -0.05 : type === "silver" ? -0.03 : 0;
   const rest = mode === "sleep" ? 0.28 : 1;
 
   const chest = object("breathing-chest-pivot");
@@ -126,7 +143,8 @@ export function applyDragonPose(root: THREE.Object3D, input: DragonPoseInput) {
   for (let index = 1; index <= DRAGON_MODEL_CONTRACT.neckSegments; index += 1) {
     const neck = object(`neck-${index}-pivot`);
     if (!neck) continue;
-    neck.rotation.y = Math.sin(time * 1.3 * speciesTempo - index * 0.58) * 0.035 * rest + (input.bank ?? 0) * 0.08;
+    neck.rotation.y = Math.sin(time * 1.3 * speciesTempo - index * 0.58) * 0.035 * rest
+      + (input.bank ?? 0) * 0.08 + lookYaw * (0.08 + index * 0.055);
     neck.rotation.x = (input.pitch ?? 0) * (0.12 + index * 0.035)
       + (mode === "breath" || mode === "projectile" ? attackWindup * 0.13 - attackStrike * 0.2 + attackRecovery * 0.07 : 0)
       + (mode === "melee" ? attackWindup * -0.12 + attackStrike * 0.24 : 0);
@@ -137,7 +155,8 @@ export function applyDragonPose(root: THREE.Object3D, input: DragonPoseInput) {
       + (mode === "melee" ? attackWindup * -0.3 + attackStrike * 0.62 - attackRecovery * 0.12 : 0)
       + (mode === "breath" || mode === "projectile" ? attackWindup * 0.16 - attackStrike * 0.18 : 0)
       + (mode === "sleep" ? 0.18 : Math.sin(time * 0.52 * speciesTempo) * 0.015);
-    head.rotation.y = Math.sin(time * 0.65 * speciesTempo) * (mode === "idle" ? 0.055 : mode === "sleep" ? 0.018 : 0);
+    head.rotation.y = Math.sin(time * 0.65 * speciesTempo) * (mode === "idle" ? 0.055 : mode === "sleep" ? 0.018 : 0)
+      + lookYaw * 0.34;
   }
   const jaw = object("jaw-pivot");
   if (jaw) jaw.rotation.x = mode === "breath" || mode === "projectile" ? 0.58 * attackWindup * (1 - attackRecovery * 0.7) : mode === "melee" ? 0.82 * attackStrike : 0.025 + Math.sin(time * 1.1 * speciesTempo) * 0.01 * rest;
@@ -164,8 +183,10 @@ export function applyDragonPose(root: THREE.Object3D, input: DragonPoseInput) {
     if (forearm) forearm.rotation.z = sign * (airborne ? 0.13 + Math.sin(time * 4.2 * speciesTempo + 0.52) * 0.24 : mode === "sleep" ? 0.42 : 0.28);
   }
 
-  // Hatchling/fledgling rigs have compact independent joints. Their motion is
-  // intentionally lower-amplitude on a shoulder and broadens at Stage 2.
+  // Hatchling/fledgling rigs have compact independent joints. Stage I keeps
+  // its low-amplitude shoulder pose, while Stage II has articulated knees and
+  // paws so its flight silhouette can streamline without becoming four stiff
+  // parallel rods.
   const youngForm = stage === 1 ? "hatchling" : stage === 2 ? "fledgling" : null;
   if (youngForm) {
     const youngWingRate = (airborne ? 7.2 : 2.1) * (stage === 1 ? 1.2 : 1) * speciesTempo;
@@ -178,7 +199,7 @@ export function applyDragonPose(root: THREE.Object3D, input: DragonPoseInput) {
       youngChest.rotation.z = mode === "idle" ? Math.sin(time * 0.72) * 0.025 : 0;
     }
     if (youngHead) {
-      youngHead.rotation.y = Math.sin(time * 0.86 * speciesTempo) * (mode === "idle" ? 0.12 : 0.035);
+      youngHead.rotation.y = Math.sin(time * 0.86 * speciesTempo) * (mode === "idle" ? 0.12 : 0.035) + lookYaw * 0.55;
       youngHead.rotation.x = (input.pitch ?? 0) * 0.28 + (mode === "melee" ? attackStrike * 0.5 : 0) + Math.sin(time * 1.35) * 0.018;
     }
     if (youngJaw) youngJaw.rotation.x = mode === "breath" || mode === "projectile" ? attackWindup * 0.54 : mode === "melee" ? attackStrike * 0.7 : 0.035;
@@ -191,7 +212,34 @@ export function applyDragonPose(root: THREE.Object3D, input: DragonPoseInput) {
     }
     for (const [position, phase] of [["front-left", 0], ["front-right", Math.PI], ["rear-left", Math.PI], ["rear-right", 0]] as const) {
       const leg = object(`${youngForm}-${position}-leg-pivot`);
-      if (leg) leg.rotation.x = airborne ? (position.startsWith("front") ? 0.7 : -0.42) : Math.sin(time * 7 + phase) * movement * 0.48;
+      const knee = object(`${youngForm}-${position}-knee-pivot`);
+      const claw = object(`${youngForm}-${position}-claw-pivot`);
+      const front = position.startsWith("front");
+      const sideSign = position.includes("left") ? -1 : 1;
+      const stride = Math.sin(time * 7 + phase) * movement;
+      if (leg) {
+        if (airborne && stage === 2) {
+          const wake = Math.sin(time * 2.15 * speciesTempo + phase + (front ? 0 : 0.7)) * 0.035;
+          leg.rotation.x = (front ? -1.22 : -1.36) + flightTrailBias + wake;
+        } else {
+          // Preserve the original Stage I flight/shoulder behavior and the
+          // original grounded young-dragon stride.
+          leg.rotation.x = airborne ? (front ? 0.7 : -0.42) : stride * 0.48;
+        }
+        leg.rotation.z = airborne && stage === 2 ? sideSign * (front ? 0.3 : 0.22) : 0;
+      }
+      if (knee) {
+        knee.rotation.x = airborne
+          ? (front ? 0.32 : 0.24) + flightFlexBias
+          : Math.max(0, -stride) * 0.62;
+        knee.rotation.z = airborne ? sideSign * -0.12 : 0;
+      }
+      if (claw) {
+        claw.rotation.x = airborne
+          ? (front ? -0.4 : -0.32) - flightFlexBias * 0.4
+          : -Math.max(0, stride) * 0.22;
+        claw.rotation.z = airborne ? sideSign * 0.05 : 0;
+      }
     }
     for (let index = 1; index <= 4; index += 1) {
       const tail = object(`${youngForm}-tail-${index}-pivot`);
@@ -205,9 +253,27 @@ export function applyDragonPose(root: THREE.Object3D, input: DragonPoseInput) {
     const hip = object(`${position}-hip-pivot`);
     const knee = object(`${position}-knee-pivot`);
     const claw = object(`${position}-claw-pivot`);
-    if (hip) hip.rotation.x = airborne ? (position.startsWith("front") ? 0.72 : -0.42) : stride * 0.5;
-    if (knee) knee.rotation.x = airborne ? 0.84 : Math.max(0, -stride) * 0.65;
-    if (claw) claw.rotation.x = airborne ? -0.52 : -Math.max(0, stride) * 0.22;
+    const front = position.startsWith("front");
+    const sideSign = position.includes("left") ? -1 : 1;
+    const wake = Math.sin(time * 1.9 * speciesTempo + sidePhase + (front ? 0 : 0.62)) * 0.04;
+    if (hip) {
+      hip.rotation.x = airborne
+        ? (front ? -1.12 : -1.3) + flightTrailBias + wake
+        : stride * 0.5;
+      hip.rotation.z = airborne ? sideSign * (front ? 0.32 : 0.24) : 0;
+    }
+    if (knee) {
+      knee.rotation.x = airborne
+        ? (front ? 0.3 : 0.22) + flightFlexBias - wake * 0.35
+        : Math.max(0, -stride) * 0.65;
+      knee.rotation.z = airborne ? sideSign * -0.14 : 0;
+    }
+    if (claw) {
+      claw.rotation.x = airborne
+        ? (front ? -0.38 : -0.3) - flightFlexBias * 0.4 + wake * 0.2
+        : -Math.max(0, stride) * 0.22;
+      claw.rotation.z = airborne ? sideSign * 0.06 : 0;
+    }
   }
 
   const emitter = object("breath-emitter");
@@ -1645,9 +1711,23 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
           const sideName = side < 0 ? "left" : "right";
           const positionName = `${front ? "front" : "rear"}-${sideName}`;
           const leg = youngPivot(`${positionName}-leg`, [side * 0.42 * s, 0.82 * s, z * s]);
-          youngBox(leg, `${positionName}-soft-leg`, [0.28 * s, youngShape.legLength * s, 0.32 * s], front ? bodyMaterial : accentMaterial, [0, -youngShape.legLength * 0.46 * s, 0]);
-          youngBox(leg, `${positionName}-paw`, youngShape.paw.map((value) => value * s) as [number, number, number], bellyMaterial, [0, -youngShape.legLength * 0.92 * s, -0.13 * s]);
-          for (const toe of [-1, 1]) youngBox(leg, `${positionName}-toe-${toe < 0 ? "inner" : "outer"}`, [0.08 * s, 0.08 * s, 0.28 * s], hornMaterial, [toe * youngShape.paw[0] * 0.24 * s, -youngShape.legLength * 0.98 * s, -youngShape.paw[2] * 0.72 * s], [0.08, toe * -0.08, 0]);
+          if (hatchling) {
+            // Stage I retains the compact single-joint limb that sits cleanly
+            // on a player's shoulder and matches its established idle pose.
+            youngBox(leg, `${positionName}-soft-leg`, [0.28 * s, youngShape.legLength * s, 0.32 * s], front ? bodyMaterial : accentMaterial, [0, -youngShape.legLength * 0.46 * s, 0]);
+            youngBox(leg, `${positionName}-paw`, youngShape.paw.map((value) => value * s) as [number, number, number], bellyMaterial, [0, -youngShape.legLength * 0.92 * s, -0.13 * s]);
+            for (const toe of [-1, 1]) youngBox(leg, `${positionName}-toe-${toe < 0 ? "inner" : "outer"}`, [0.08 * s, 0.08 * s, 0.28 * s], hornMaterial, [toe * youngShape.paw[0] * 0.24 * s, -youngShape.legLength * 0.98 * s, -youngShape.paw[2] * 0.72 * s], [0.08, toe * -0.08, 0]);
+          } else {
+            const upperLength = youngShape.legLength * 0.52 * s;
+            const lowerLength = youngShape.legLength * 0.42 * s;
+            youngBox(leg, `${positionName}-soft-leg`, [0.3 * s, upperLength, 0.34 * s], front ? bodyMaterial : accentMaterial, [0, -upperLength * 0.46, front ? -0.025 * s : 0.025 * s]);
+            const knee = pivot(leg, `${formName}-${positionName}-knee`, [0, -upperLength * 0.9, front ? -0.04 * s : 0.04 * s]);
+            youngBox(knee, `${positionName}-soft-calf`, [0.24 * s, lowerLength, 0.28 * s], front ? accentMaterial : bodyMaterial, [0, -lowerLength * 0.46, 0]);
+            youngBox(knee, `${positionName}-knee-cap`, [0.34 * s, 0.2 * s, 0.38 * s], accentMaterial, [0, -0.04 * s, front ? -0.04 * s : 0.04 * s]);
+            const claw = pivot(knee, `${formName}-${positionName}-claw`, [0, -lowerLength * 0.9, -0.03 * s]);
+            youngBox(claw, `${positionName}-paw`, youngShape.paw.map((value) => value * s) as [number, number, number], bellyMaterial, [0, -0.05 * s, -0.13 * s]);
+            for (const toe of [-1, 1]) youngBox(claw, `${positionName}-toe-${toe < 0 ? "inner" : "outer"}`, [0.08 * s, 0.08 * s, 0.28 * s], hornMaterial, [toe * youngShape.paw[0] * 0.24 * s, -0.07 * s, -youngShape.paw[2] * 0.72 * s], [0.08, toe * -0.08, 0]);
+          }
         }
       }
 

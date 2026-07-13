@@ -192,6 +192,103 @@ test("dragon pose transforms are stable across repeated calls and animate both y
   assert.equal(named(root, "sea-dragon-stage-2-form").visible, false);
 });
 
+test("Stage II and mature dragons trail articulated limbs backward in flight", () => {
+  for (const [index, kind] of DRAGON_ORDER.entries()) {
+    const model = createMobVisual(kind, 1_240 + index);
+    const root = model.group;
+    const flight = { timeSeconds: 1.37, mode: "fly" as const, movement: 0.82 };
+
+    applyDragonPose(root, { ...flight, stage: 2 });
+    const fledglingFrontLeft = named(root, `${kind}-fledgling-front-left-leg-pivot`);
+    const fledglingFrontRight = named(root, `${kind}-fledgling-front-right-leg-pivot`);
+    const fledglingRear = named(root, `${kind}-fledgling-rear-left-leg-pivot`);
+    const fledglingKnee = named(root, `${kind}-fledgling-front-left-knee-pivot`);
+    const fledglingClaw = named(root, `${kind}-fledgling-front-left-claw-pivot`);
+    assert.ok(fledglingFrontLeft.rotation.x < -1, `${kind} Stage II forelegs trail decisively behind its chest`);
+    assert.ok(fledglingRear.rotation.x < fledglingFrontLeft.rotation.x - 0.08, `${kind} Stage II rear legs make the longer sweep`);
+    assert.ok(fledglingKnee.rotation.x > 0.15, `${kind} Stage II knees visibly flex`);
+    assert.ok(fledglingClaw.rotation.x < -0.28, `${kind} Stage II claws curl into the slipstream`);
+    assert.notEqual(fledglingFrontLeft.rotation.x, fledglingFrontRight.rotation.x, `${kind} Stage II legs avoid a stiff parallel pose`);
+    root.updateMatrixWorld(true);
+    for (const position of ["front-left", "front-right", "rear-left", "rear-right"] as const) {
+      const hip = named(root, `${kind}-fledgling-${position}-leg-pivot`);
+      const paw = named(root, `${kind}-fledgling-${position}-claw-pivot`);
+      const hipWorld = new THREE.Vector3();
+      hip.getWorldPosition(hipWorld);
+      const pawBounds = new THREE.Box3().setFromObject(paw);
+      assert.ok(pawBounds.max.z > hipWorld.z + 0.65, `${kind} Stage II ${position} paw ends materially tailward of its hip`);
+    }
+
+    applyDragonPose(root, { ...flight, stage: 5 });
+    const adultFrontLeft = named(root, `${kind}-front-left-hip-pivot`);
+    const adultFrontRight = named(root, `${kind}-front-right-hip-pivot`);
+    const adultRear = named(root, `${kind}-rear-left-hip-pivot`);
+    const adultKnee = named(root, `${kind}-front-left-knee-pivot`);
+    const adultClaw = named(root, `${kind}-front-left-claw-pivot`);
+    assert.ok(adultFrontLeft.rotation.x < -0.9, `${kind} mature forelegs trail decisively behind its chest`);
+    assert.ok(adultRear.rotation.x < adultFrontLeft.rotation.x - 0.08, `${kind} mature rear legs make the longer sweep`);
+    assert.ok(adultKnee.rotation.x > 0.14, `${kind} mature knees remain bent`);
+    assert.ok(adultClaw.rotation.x < -0.24, `${kind} mature claws remain tucked`);
+    assert.notEqual(adultFrontLeft.rotation.x, adultFrontRight.rotation.x, `${kind} mature legs avoid a stiff parallel pose`);
+    root.updateMatrixWorld(true);
+    for (const position of ["front-left", "front-right", "rear-left", "rear-right"] as const) {
+      const hip = named(root, `${kind}-${position}-hip-pivot`);
+      const paw = named(root, `${kind}-${position}-claw-pivot`);
+      const hipWorld = new THREE.Vector3();
+      hip.getWorldPosition(hipWorld);
+      const pawBounds = new THREE.Box3().setFromObject(paw);
+      assert.ok(pawBounds.max.z > hipWorld.z + 1.1, `${kind} mature ${position} paw ends materially tailward of its hip`);
+    }
+
+    const stable = [adultFrontLeft.rotation.x, adultKnee.rotation.x, adultClaw.rotation.x];
+    applyDragonPose(root, { ...flight, stage: 5 });
+    assert.deepEqual([adultFrontLeft.rotation.x, adultKnee.rotation.x, adultClaw.rotation.x], stable, `${kind} flight articulation cannot accumulate drift`);
+  }
+});
+
+test("the new flight silhouette does not alter Stage I shoulder posture or grounded gaits", () => {
+  const model = createMobVisual("fire-dragon", 1_301);
+  const root = model.group;
+
+  applyDragonPose(root, { timeSeconds: 1.37, stage: 1, mode: "fly", movement: 0.82 });
+  assert.equal(named(root, "fire-dragon-hatchling-front-left-leg-pivot").rotation.x, 0.7, "Stage I keeps its established compact flight/shoulder articulation");
+  assert.equal(named(root, "fire-dragon-hatchling-rear-left-leg-pivot").rotation.x, -0.42);
+
+  applyDragonPose(root, { timeSeconds: 1.37, stage: 2, mode: "idle", movement: 0 });
+  assert.ok(Math.abs(named(root, "fire-dragon-fledgling-front-left-leg-pivot").rotation.x) < 1e-9);
+  assert.ok(Math.abs(named(root, "fire-dragon-fledgling-front-left-knee-pivot").rotation.x) < 1e-9);
+  assert.ok(Math.abs(named(root, "fire-dragon-fledgling-front-left-claw-pivot").rotation.x) < 1e-9);
+
+  applyDragonPose(root, { timeSeconds: 1.37, stage: 5, mode: "idle", movement: 0 });
+  assert.ok(Math.abs(named(root, "fire-dragon-front-left-hip-pivot").rotation.x) < 1e-9);
+  assert.ok(Math.abs(named(root, "fire-dragon-front-left-knee-pivot").rotation.x) < 1e-9);
+  assert.ok(Math.abs(named(root, "fire-dragon-front-left-claw-pivot").rotation.x) < 1e-9);
+});
+
+test("airborne melee and hurt overlays retain the trailing flight silhouette", () => {
+  const model = createMobVisual("fire-dragon", 1_302);
+  const root = model.group;
+
+  for (const mode of ["melee", "hurt"] as const) {
+    applyDragonPose(root, {
+      timeSeconds: 2.1,
+      stage: 5,
+      mode,
+      airborne: true,
+      movement: 0.8,
+      attackProgress: mode === "melee" ? 0.52 : 0,
+    });
+    assert.ok(named(root, "fire-dragon-front-left-hip-pivot").rotation.x < -0.9,
+      `${mode} must not drop an airborne dragon back into its grounded foreleg pose`);
+    assert.ok(named(root, "fire-dragon-rear-left-hip-pivot").rotation.x < -1.08,
+      `${mode} must keep the rear legs swept into the slipstream`);
+  }
+
+  applyDragonPose(root, { timeSeconds: 2.1, stage: 5, mode: "melee", airborne: false, movement: 0.8, attackProgress: 0.52 });
+  assert.ok(named(root, "fire-dragon-front-left-hip-pivot").rotation.x > -0.5,
+    "the explicit airborne channel must not turn a grounded claw attack into a flight pose");
+});
+
 test("all six silhouettes carry distinct elemental anatomy in production portraits", () => {
   const specs = createMobInspectionSpecs().filter((spec) => DRAGON_ORDER.includes(spec.id as (typeof DRAGON_ORDER)[number]));
   assert.deepEqual(specs.map((spec) => spec.id), DRAGON_ORDER);

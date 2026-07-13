@@ -71,10 +71,13 @@ import {
   canBreedDragons,
   canMountDragon,
   chooseDragonAiIntent,
-  chooseDragonAttack,
+  commitDragonCombatAttack,
+  constrainDragonCombatPosition,
+  createDragonCombatManeuverState,
   createDragonDeathEggClutch,
   createDragonEgg,
   createDragonState,
+  dragonAttackFacingPose,
   dragonAttackPlan,
   dragonCargoSlots,
   dragonEggDropIsProtected,
@@ -86,6 +89,7 @@ import {
   harvestDragonScales,
   normalizeDragonState,
   placeDragonSpawnEgg,
+  planDragonCombatManeuver,
   riderDragonAttack,
   rollDragonLoot,
   serializeDragonState,
@@ -96,6 +100,7 @@ import {
   type DragonAiIntent,
   type DragonAttackKind,
   type DragonAttackPlan,
+  type DragonCombatManeuverState,
   type DragonCommand,
   type DragonEgg,
   type DragonFood,
@@ -1127,10 +1132,13 @@ type MobEntity = {
   attunedOrbId: string | null;
   dragonState: DragonState | null;
   dragonIntent: DragonAiIntent;
+  dragonCombatManeuver: DragonCombatManeuverState;
   dragonAttackCooldowns: Record<DragonAttackKind, number>;
   dragonWingSoundTimer: number;
   dragonTickRemainder: number;
   dragonAttackAnimation: { kind: DragonAttackKind; remaining: number; duration: number } | null;
+  dragonAttackFacing: number | null;
+  dragonAttackLookYaw: number;
   dragonBurnSeconds: number;
   dragonSlowSeconds: number;
   dragonScaldSeconds: number;
@@ -15822,10 +15830,13 @@ export class VoxelEngine {
       attunedOrbId: options.attunedOrbId ?? null,
       dragonState,
       dragonIntent: "idle",
+      dragonCombatManeuver: createDragonCombatManeuverState(id),
       dragonAttackCooldowns: { melee: 0, breath: 0, projectile: 0 },
       dragonWingSoundTimer: 0,
       dragonTickRemainder: 0,
       dragonAttackAnimation: null,
+      dragonAttackFacing: null,
+      dragonAttackLookYaw: 0,
       dragonBurnSeconds: 0,
       dragonSlowSeconds: 0,
       dragonScaldSeconds: 0,
@@ -16269,9 +16280,11 @@ export class VoxelEngine {
         timeSeconds: mob.age,
         stage: mob.dragonState.stage,
         mode,
+        airborne,
         movement: Math.min(1, moved * 4.5),
         attackProgress,
         pitch: clamp(this.pitch * 0.24, -0.4, 0.4),
+        lookYaw: mob.dragonAttackLookYaw,
         sex: mob.dragonState.sex,
         equipment: {
           saddle: mob.dragonState.equipment.saddle,
@@ -16625,6 +16638,7 @@ export class VoxelEngine {
     const direction = target.clone().sub(origin);
     if (direction.lengthSq() < 0.001) direction.set(Math.cos(mob.angle), 0, Math.sin(mob.angle));
     direction.normalize();
+    mob.dragonAttackFacing = Math.atan2(direction.z, direction.x);
     mob.dragonAttackCooldowns[plan.kind] = plan.cooldownSeconds;
     const animationDuration = plan.kind === "breath" ? 0.78 : plan.kind === "projectile" ? 0.48 : 0.34;
     mob.dragonAttackAnimation = { kind: plan.kind, remaining: animationDuration, duration: animationDuration };
@@ -16721,6 +16735,9 @@ export class VoxelEngine {
   updateDragonMob(mob: MobEntity, dt: number, distance: number) {
     const state = mob.dragonState;
     if (!state) return;
+    // Older in-memory reconstruction harnesses can predate this ephemeral
+    // field; beginning a fresh deterministic pass is always safe.
+    mob.dragonCombatManeuver ??= createDragonCombatManeuverState(mob.id);
     if (state.onShoulder) {
       mob.group.visible = true;
       mob.group.rotation.y = this.yaw + (mob.id % 2 === 0 ? 0.18 : -0.18);
@@ -16743,16 +16760,28 @@ export class VoxelEngine {
     }
     const home = state.home?.position ?? { x: mob.group.position.x, y: mob.baseY, z: mob.group.position.z };
     const distanceFromHome = Math.hypot(mob.group.position.x - home.x, mob.group.position.z - home.z);
-    const wildTargetsPlayer = !owned && mob.hostile && distance < (state.home?.guardRadius ?? 48)
-      && this.worldOptions.difficulty !== "peaceful" && this.mobCanSeePlayer(mob);
+    const wildPlayerInGuard = !owned && mob.hostile && distance < (state.home?.guardRadius ?? 48)
+      && this.worldOptions.difficulty !== "peaceful";
+    const seesPlayerNow = wildPlayerInGuard && this.mobCanSeePlayer(mob);
+    if (seesPlayerNow) {
+      mob.seesPlayer = true;
+      mob.awarenessTimer = Math.max(mob.awarenessTimer, 9);
+    } else mob.seesPlayer = false;
+    // Detection still requires an initial sightline. Once acquired, a short
+    // awareness memory lets the planner orbit for a new angle instead of
+    // forgetting the opponent the instant a trunk or wall clips the ray.
+    const wildTargetsPlayer = wildPlayerInGuard && (seesPlayerNow || mob.awarenessTimer > 0);
     const targetPoint = targetMob
       ? targetMob.group.position.clone().add(new THREE.Vector3(0, targetMob.definition.height * 0.5, 0))
       : wildTargetsPlayer ? this.position.clone().add(new THREE.Vector3(0, this.cameraEyeHeight * 0.55, 0)) : null;
     const targetDistance = targetPoint ? targetPoint.distanceTo(mob.group.position) : null;
+    const targetLineOfSight = targetPoint
+      ? this.hasClearLineOfSight(this.dragonAttackOrigin(mob, "breath"), targetPoint)
+      : false;
     mob.dragonIntent = chooseDragonAiIntent(state, {
       distanceFromHome,
       distanceToTarget: targetDistance,
-      lineOfSight: targetPoint ? this.hasClearLineOfSight(this.dragonAttackOrigin(mob, "breath"), targetPoint) : false,
+      lineOfSight: targetLineOfSight,
       healthRatio: mob.health / Math.max(1, mob.maxHealth),
       defendingEggs: !state.tamed && Boolean(state.home),
       targetThreateningOwner: Boolean(targetMob),
@@ -16772,7 +16801,37 @@ export class VoxelEngine {
       distance = mob.group.position.distanceTo(this.position);
     }
 
-    let desired = targetPoint?.clone() ?? null;
+    const engageTarget = Boolean(targetPoint && (mob.dragonIntent === "attack" || mob.dragonIntent === "circle"
+      || mob.dragonIntent === "pursue" || mob.dragonIntent === "guard"));
+    const seaInWaterForPlan = state.type === "sea" && blockContainsWater(this.world.getBlock(
+      Math.floor(mob.group.position.x + 0.5), Math.floor(mob.group.position.y + 0.5), Math.floor(mob.group.position.z + 0.5),
+    ));
+    const combatPlan = engageTarget && targetPoint ? planDragonCombatManeuver({
+      dragonState: state,
+      maneuver: mob.dragonCombatManeuver,
+      dt,
+      combatSeed: mob.id,
+      targetToken: targetMob?.id ?? -1,
+      dragonPosition: mob.group.position,
+      targetPosition: targetPoint,
+      lineOfSight: targetLineOfSight,
+      swimming: seaInWaterForPlan,
+      meleeReady: mob.dragonAttackCooldowns.melee <= 0,
+      breathReady: mob.dragonAttackCooldowns.breath <= 0,
+      projectileReady: mob.dragonAttackCooldowns.projectile <= 0,
+    }) : null;
+    if (combatPlan) mob.dragonCombatManeuver = combatPlan.maneuver;
+    else if (mob.dragonCombatManeuver.targetToken !== null) mob.dragonCombatManeuver = createDragonCombatManeuverState(mob.id);
+
+    let desired = combatPlan
+      ? new THREE.Vector3(combatPlan.destination.x, combatPlan.destination.y, combatPlan.destination.z)
+      : null;
+    if (!desired && targetPoint && mob.dragonIntent === "flee") {
+      const away = mob.group.position.clone().sub(targetPoint).setY(0);
+      if (away.lengthSq() < 0.001) away.set(Math.cos(mob.id * 1.71), 0, Math.sin(mob.id * 1.71));
+      desired = mob.group.position.clone().addScaledVector(away.normalize(), 12 + state.stage * 2);
+      desired.y = mob.group.position.y + (state.stage >= 3 ? 3.5 : 0);
+    }
     if (!desired && followsOwner && distance > 5.5) {
       const packIndex = this.mobs.filter((candidate) => candidate.id < mob.id && candidate.dragonState?.tamed && candidate.dragonState.ownerId === ownerId && candidate.dragonState.command === "follow").length;
       const trailing = 5.5 + Math.min(9, packIndex * 2.2);
@@ -16799,12 +16858,22 @@ export class VoxelEngine {
       const speed = (seaAttributes
         ? seaDragonSpeedForMode(seaAttributes, shouldSwim ? "swim" : shouldFly ? "fly" : "walk")
         : shouldFly ? (3.8 + state.stage * 1.25) : (mob.dragonIntent === "pursue" ? mob.definition.chaseSpeed : mob.definition.speed))
-        * this.dragonStatusSpeedScale(mob);
+        * this.dragonStatusSpeedScale(mob) * (combatPlan?.speedScale ?? 1);
       const horizontalDistance = Math.hypot(desired.x - mob.group.position.x, desired.z - mob.group.position.z);
       const step = Math.min(horizontalDistance, speed * dt);
       if (horizontalDistance > 0.001) {
-        const nx = mob.group.position.x + (desired.x - mob.group.position.x) / horizontalDistance * step;
-        const nz = mob.group.position.z + (desired.z - mob.group.position.z) / horizontalDistance * step;
+        let nx = mob.group.position.x + (desired.x - mob.group.position.x) / horizontalDistance * step;
+        let nz = mob.group.position.z + (desired.z - mob.group.position.z) / horizontalDistance * step;
+        if (combatPlan && targetPoint) {
+          const constrained = constrainDragonCombatPosition(
+            { x: nx, y: mob.group.position.y, z: nz },
+            targetPoint,
+            combatPlan.minimumHorizontalSeparation,
+            mob.angle,
+          );
+          nx = constrained.x;
+          nz = constrained.z;
+        }
         if (shouldSwim) {
           const desiredWaterY = clamp(desired.y, MIN_Y + 2, SEA_LEVEL - 0.35);
           const nextY = mob.group.position.y + (desiredWaterY - mob.group.position.y) * Math.min(1, dt * 1.8);
@@ -16814,7 +16883,7 @@ export class VoxelEngine {
           }
         } else if (shouldFly) {
           const surface = this.world.surfaceAt(Math.round(nx), Math.round(nz));
-          const combatAltitude = targetPoint ? Math.max(targetPoint.y + 2.2, surface + 4.5) : Math.max(desired.y, surface + 4.5);
+          const combatAltitude = Math.max(desired.y, surface + (combatPlan?.terrainClearance ?? 4.5));
           const targetY = clamp(combatAltitude, MIN_Y + 3, MAX_Y - 10);
           mob.group.position.set(nx, mob.group.position.y + (targetY - mob.group.position.y) * Math.min(1, dt * 1.4), nz);
           mob.baseY = mob.group.position.y;
@@ -16829,21 +16898,23 @@ export class VoxelEngine {
         }
       }
     }
-    mob.group.rotation.y = -mob.angle - Math.PI / 2;
-
-    if (targetPoint && targetDistance !== null) {
-      const lineOfSight = this.hasClearLineOfSight(this.dragonAttackOrigin(mob, "breath"), targetPoint);
-      const plan = chooseDragonAttack(state, {
-        distance: targetDistance,
-        altitudeDelta: targetPoint.y - mob.group.position.y,
-        lineOfSight,
-        airborne: mob.group.position.y > this.world.surfaceAt(Math.round(mob.group.position.x), Math.round(mob.group.position.z)) + 2,
-        meleeReady: mob.dragonAttackCooldowns.melee <= 0,
-        breathReady: mob.dragonAttackCooldowns.breath <= 0,
-        projectileReady: mob.dragonAttackCooldowns.projectile <= 0,
-      });
-      if (plan) this.performDragonAttack(mob, plan, targetPoint, targetMob);
+    if (targetPoint && combatPlan?.attack) {
+      const lineOfSight = this.hasClearLineOfSight(this.dragonAttackOrigin(mob, combatPlan.attack.kind), targetPoint);
+      const currentDistance = targetPoint.distanceTo(mob.group.position);
+      if (lineOfSight && currentDistance <= combatPlan.attack.range * 1.04
+        && this.performDragonAttack(mob, combatPlan.attack, targetPoint, targetMob)) {
+        mob.dragonCombatManeuver = commitDragonCombatAttack(mob.dragonCombatManeuver, combatPlan.attack.kind);
+      }
     }
+    let visualHeading = mob.angle;
+    mob.dragonAttackLookYaw = 0;
+    if (mob.dragonAttackAnimation && mob.dragonAttackFacing !== null) {
+      const progress = 1 - mob.dragonAttackAnimation.remaining / Math.max(0.01, mob.dragonAttackAnimation.duration);
+      const facing = dragonAttackFacingPose(mob.angle, mob.dragonAttackFacing, mob.dragonAttackAnimation.kind, progress);
+      visualHeading = facing.visualHeading;
+      mob.dragonAttackLookYaw = facing.lookYaw;
+    }
+    mob.group.rotation.y = -visualHeading - Math.PI / 2;
     this.animateMob(mob, before.distanceTo(mob.group.position));
   }
 
@@ -17473,7 +17544,11 @@ export class VoxelEngine {
         mob.dragonWingSoundTimer = Math.max(0, mob.dragonWingSoundTimer - mobDt);
         if (mob.dragonAttackAnimation) {
           mob.dragonAttackAnimation.remaining -= mobDt;
-          if (mob.dragonAttackAnimation.remaining <= 0) mob.dragonAttackAnimation = null;
+          if (mob.dragonAttackAnimation.remaining <= 0) {
+            mob.dragonAttackAnimation = null;
+            mob.dragonAttackFacing = null;
+            mob.dragonAttackLookYaw = 0;
+          }
         }
       }
       mob.milkCooldown = Math.max(0, mob.milkCooldown - mobDt);
@@ -19616,7 +19691,7 @@ export class VoxelEngine {
         name: mob.name,
         position: [Number(mob.group.position.x.toFixed(2)), Number(mob.group.position.y.toFixed(2)), Number(mob.group.position.z.toFixed(2))],
         health: Number(mob.health.toFixed(1)),
-        state: mob.dragonState ? `${mob.dragonState.type}-stage-${mob.dragonState.stage}-${mob.dragonState.sex}-${mob.dragonState.tamed ? "bonded" : "wild"}-${mob.dragonIntent}`
+        state: mob.dragonState ? `${mob.dragonState.type}-stage-${mob.dragonState.stage}-${mob.dragonState.sex}-${mob.dragonState.tamed ? "bonded" : "wild"}-${mob.dragonIntent}${mob.dragonCombatManeuver.targetToken !== null ? `-${mob.dragonCombatManeuver.phase}-pass-${mob.dragonCombatManeuver.passIndex}` : ""}`
           : mob.shadeState?.tamed ? `bonded-${Math.round(mob.shadeState.growth * 100)}%-${mob.shadeState.saddled ? "saddled" : "unsaddled"}`
           : mob.petState?.command ?? mob.birdState?.mode ?? mob.state,
       }))
