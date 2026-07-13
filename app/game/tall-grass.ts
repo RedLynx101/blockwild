@@ -24,3 +24,19 @@ export function planDoubleTallGrassRemoval(
   ];
   return [{ ...position, type: BlockId.Air }];
 }
+
+/**
+ * Clears the other half before a later decoration pass replaces one half with
+ * unrelated flora. Without this, replacing the lower block leaves an upper
+ * cross hovering above the new plant.
+ */
+export function planDoubleTallGrassReplacement(
+  type: BlockId,
+  replacement: BlockId,
+  position: Readonly<{ x: number; y: number; z: number }>,
+  getBlock: TallGrassBlockLookup,
+): TallGrassRemovalEdit[] {
+  if (!isDoubleTallGrass(type) || isDoubleTallGrass(replacement)) return [];
+  return planDoubleTallGrassRemoval(type, position, getBlock)
+    .filter((edit) => edit.x !== position.x || edit.y !== position.y || edit.z !== position.z);
+}

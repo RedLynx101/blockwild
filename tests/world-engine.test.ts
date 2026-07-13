@@ -4,6 +4,7 @@ import * as THREE from "three";
 import { BlockId, ITEMS, Item, RECIPES, type InventorySlot } from "../app/game/data.ts";
 import {
   DEFAULT_UNARMED_DAMAGE,
+  FOOD_USAGE_MULTIPLIER,
   VoxelEngine,
   bedCounterpart,
   bedPlacementForYaw,
@@ -18,12 +19,14 @@ import {
   nextSleepTransition,
   positionInPlayerViewCone,
   restoreChestStorage,
+  regenerationFoodUsage,
   shouldBypassOpenableUse,
+  survivalFoodUsagePerSecond,
   torchBlockForPlacement,
   type WorldSave,
 } from "../app/game/engine.ts";
 import { harvestPlant } from "../app/game/farming.ts";
-import { BAKED_LIGHT_SOURCE_LIMIT, ChunkWorld, BIOME_NAMES, GENERATOR_VERSION, GLASS_OPACITY, MAX_Y, MIN_Y, SECTION_HEIGHT, WORLD_HEIGHT, bakedEnvironmentLightShade, blockIndex, chunkKey, environmentSkyShade, splitCoordinate } from "../app/game/world.ts";
+import { BAKED_LIGHT_SOURCE_LIMIT, ChunkWorld, BIOME_NAMES, GENERATOR_VERSION, GLASS_OPACITY, LIQUID_SURFACE_INSET, MAX_Y, MIN_Y, SECTION_HEIGHT, WORLD_HEIGHT, bakedEnvironmentLightShade, blockIndex, chunkKey, environmentSkyShade, liquidSurfaceInsetForCell, splitCoordinate } from "../app/game/world.ts";
 import { MOB_DEFS, MOB_ORDER } from "../app/game/mobs.ts";
 import { createHeldToolSpec, createRidgebackSpec, createZombieSpec, INSPECTOR_MODEL_SPECS, RIDGEBACK_GROUND_LIFT } from "../app/game/model-specs.ts";
 
@@ -41,6 +44,28 @@ test("chunk coordinates remain correct across negative boundaries", () => {
   for (const [value, expectedChunk, expectedLocal] of cases) {
     assert.deepEqual(splitCoordinate(value), { chunk: expectedChunk, local: expectedLocal });
   }
+});
+
+test("survival food expenditure is doubled for travel and regeneration", () => {
+  assert.equal(FOOD_USAGE_MULTIPLIER, 2);
+  assert.equal(survivalFoodUsagePerSecond(false), 0.0048);
+  assert.equal(survivalFoodUsagePerSecond(true), 0.018);
+  assert.equal(survivalFoodUsagePerSecond(true, 0.5, 2), 0.0045);
+  assert.equal(regenerationFoodUsage(), 0.7);
+  assert.equal(regenerationFoodUsage(2), 0.35);
+});
+
+test("tree and aquatic growth schedules use the same fivefold plant pace", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  engine.saplings = new Map();
+  const now = Date.now();
+  engine.schedulePlantGrowth(3, 40, 5, BlockId.WildwoodSapling);
+  const treeDelay = (engine.saplings.get("3,40,5") ?? 0) - now;
+  assert.ok(treeDelay >= 375_000 && treeDelay <= 750_100, `tree delay was ${treeDelay}ms`);
+
+  engine.schedulePlantGrowth(4, 20, 6, BlockId.GlowKelp);
+  const aquaticDelay = (engine.saplings.get("4,20,6") ?? 0) - now;
+  assert.ok(aquaticDelay >= 250_000 && aquaticDelay <= 600_100, `aquatic delay was ${aquaticDelay}ms`);
 });
 
 test("world generation is deterministic and seed-sensitive", () => {
@@ -565,6 +590,32 @@ test("partial block shapes preserve the full cube faces beside them", () => {
   assert.equal(world.faceVisible(BlockId.Stone, BlockId.DoorClosedLower), true);
   assert.equal(world.faceVisible(BlockId.Stone, BlockId.Stone), false);
   assert.equal((world.materials.glass as THREE.MeshLambertMaterial).opacity, GLASS_OPACITY);
+  world.dispose();
+});
+
+test("submerged waterlogged plants meet stacked water without an air seam", () => {
+  assert.equal(liquidSurfaceInsetForCell(BlockId.GlowKelp, BlockId.Water), 0);
+  assert.equal(liquidSurfaceInsetForCell(BlockId.GlowKelp, BlockId.Air), -LIQUID_SURFACE_INSET);
+
+  const world = new ChunkWorld();
+  world.reset("WATERLOGGED-SEAM");
+  const chunk = world.generateChunk(0, 0);
+  chunk.blocks.fill(BlockId.Air);
+  world.setBlock(2, 0, 2, BlockId.GlowKelp, false, false);
+  world.setBlock(2, 1, 2, BlockId.Water, false, false);
+  const section = Math.floor((0 - MIN_Y) / SECTION_HEIGHT);
+  world.rebuildSection(chunk, section);
+
+  const positions = chunk.sections.get(section)?.transparent?.geometry.getAttribute("position");
+  assert.ok(positions, "the waterlogged plant should emit its implicit water boundary");
+  const boundaryY = Array.from({ length: positions?.count ?? 0 }, (_, index) => ({
+    x: positions?.getX(index) ?? Number.NaN,
+    y: positions?.getY(index) ?? Number.NaN,
+  }))
+    .filter((vertex) => Math.abs(vertex.x - 2.5) < 1e-6)
+    .map((vertex) => vertex.y);
+  assert.equal(boundaryY.some((y) => Math.abs(y - (0.5 - LIQUID_SURFACE_INSET)) < 1e-6), false, "a submerged cell must not stop below the next water block");
+  assert.ok(boundaryY.filter((y) => Math.abs(y - 0.5) < 1e-6).length >= 4, "the lower and upper water faces should meet on the block boundary");
   world.dispose();
 });
 
