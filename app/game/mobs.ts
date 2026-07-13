@@ -114,13 +114,29 @@ export type DwarfKind =
   | "dwarf-golemsmith"
   | "dwarf-powderwright"
   | "dwarf-provisioner";
-export type GolemKind = "copper-scout-golem" | "stone-bulwark-golem" | "aetherforged-sentinel" | "deepgear-courser-golem";
+export type GolemKind =
+  | "copper-scout-golem"
+  | "stone-bulwark-golem"
+  | "aetherforged-sentinel"
+  | "deepgear-courser-golem"
+  | "clockwork-hound-golem"
+  | "webspinner-golem";
 export type V1FactionCreatureKind = "glimmerhart" | "runeowl" | "glowfin" | "copper-mole" | GolemKind;
 export type SentientMobKind = HobbitKind | GoblinKind | AtlantianKind | SugarcourtKind | WoodElfKind | DwarfKind;
 export type FactionKind = "hobbits" | "goblins" | "atlantians" | "sugarcourt" | "wood-elves" | "dwarves";
 export type SentientRole = "mayor" | "chieftain" | "farmer" | "worker" | "miner" | "merchant" | "banker" | "alchemist" | "blacksmith" | "guard";
 export type SpecialMobKind = "peelop" | "reliquary-sentinel" | "skeleton" | "warg";
 export type AdventureMobKind = "auric-scarab" | "rootwrithe" | "bellroot-matron" | "vaultwing" | "cinder-maw" | "ossuary-keeper" | "mossback-kite" | "clockwork-marmot" | "inkmaw-curator";
+export type UndergroundMobKind =
+  | "grotto-grazer"
+  | "lanternray"
+  | "prismtail-swift"
+  | "glassback-newt"
+  | "sailfin-skimmer"
+  | "ashnose-bat"
+  | "chimewing"
+  | "cinder-kite"
+  | "veinling";
 export type CoreMobKind =
   | LegacyMobKind
   | MosslingVariantKind
@@ -137,12 +153,13 @@ export type CoreMobKind =
   | DragonKind
   | V1FactionCreatureKind
   | SentientMobKind
+  | UndergroundMobKind
   | AdventureMobKind
   | SpecialMobKind;
 export type MobKind = CoreMobKind | ButterflyKind;
 export type MobTemperament = "Gentle" | "Skittish" | "Defensive" | "Hostile";
 export type MobMovement = "ground" | "flying" | "aquatic" | "amphibious";
-export type MobFamily = "surface" | "rabbit" | "bird" | "fish" | "sea-slug" | "pet" | "mount" | "leviathan" | "dragon" | "pollinator" | "construct" | "undead" | "sentient" | "butterfly";
+export type MobFamily = "surface" | "underground" | "rabbit" | "bird" | "fish" | "sea-slug" | "pet" | "mount" | "leviathan" | "dragon" | "pollinator" | "construct" | "undead" | "sentient" | "butterfly";
 
 export type MobDrop = {
   item: ItemCode;
@@ -400,6 +417,32 @@ const V1_CREATURE_MOBS: Record<V1FactionCreatureKind, MobDefinition> = {
     postTameNotes: "Fit a Trail Saddle after attuning its aether key. Deepgear Alloy repairs three hearts.",
     discoveryHint: "Listen for paired piston strokes near a Deepgear Golem Forge.",
   },
+  "clockwork-hound-golem": {
+    kind: "clockwork-hound-golem", name: "Clockwork Hound Golem", temperament: "Defensive", hostile: false,
+    health: 46, damage: 7, xp: 16, speed: 1.38, chaseSpeed: 5.45, turnRate: 8.8, attackRange: 1.42,
+    footOffset: 0.76, radius: 0.56, height: 0.96, habitat: "Deepgear gate kennels and Golem Forges", active: "While its spring-heart carries charge",
+    behavior: "Runs a tight interception arc, bites at exposed joints, and uses its plated shoulder to knock threats away from its keeper.",
+    lore: "The first hounds were made for delvers who missed their dogs underground; modern ones can hear a hostile footstep through two stone walls.",
+    colors: [0x9f6b3c, 0x4c585c, 0x8df5e9], drops: [{ item: Item.GearCluster, min: 1, max: 3, chance: 0.9 }],
+    family: "construct", movement: "ground", persistent: true, sentient: false, factionAffinity: "dwarves", tameRequiresUnaligned: true,
+    tameable: true, tameItems: [Item.GearCluster, Item.DeepgearAlloy], diet: [Item.GearCluster, Item.DeepgearAlloy],
+    utility: "A fast bodyguard that intercepts attackers before returning to formation. Unaligned hounds can be bonded and attuned to a Capture Orb.",
+    postTameNotes: "Set Follow or Hold in its creature panel. Precision Gear Clusters repair its spring-heart; it cannot breed.",
+    discoveryHint: "Listen for a metallic bark beside the gate of a Deepgear Hold.",
+  },
+  "webspinner-golem": {
+    kind: "webspinner-golem", name: "Webspinner Golem", temperament: "Defensive", hostile: false,
+    health: 64, damage: 5, xp: 22, speed: 0.84, chaseSpeed: 3.35, turnRate: 7.4, attackRange: 8,
+    footOffset: 0.64, radius: 0.75, height: 0.76, habitat: "Deepgear defensive galleries and Golem Forges", active: "While its pressure loom is wound",
+    behavior: "Skitters to a measured standoff, vents a binding web of mineral filament and steam, then repositions while its pressure chamber recovers.",
+    lore: "Eight independent leg governors let a Webspinner keep a tunnel covered even when the floor is mostly missing.",
+    colors: [0x556063, 0xb77d45, 0xa4fff0], drops: [{ item: Item.GearCluster, min: 2, max: 4, chance: 1 }],
+    family: "construct", movement: "ground", ranged: true, persistent: true, sentient: false, factionAffinity: "dwarves", tameRequiresUnaligned: true,
+    tameable: true, tameItems: [Item.CrystalShard, Item.DeepgearAlloy], diet: [Item.CrystalShard, Item.DeepgearAlloy],
+    utility: "A ranged control companion that slows hostile creatures with bounded pressure-web bursts while keeping clear of melee.",
+    postTameNotes: "Its pressure loom favors open sight lines. Crystal Shards replenish its filament core; it cannot breed.",
+    discoveryHint: "Search the ceiling braces around a Deepgear defensive gallery for eight brass footprints.",
+  },
 };
 
 type SeaSlugProfile = Readonly<{
@@ -431,6 +474,134 @@ function seaSlugDefinition(kind: SeaSlugKind, profile: SeaSlugProfile): MobDefin
 export const MOB_DEFS: Record<MobKind, MobDefinition> = {
   ...V1_SENTIENT_MOBS,
   ...V1_CREATURE_MOBS,
+  "grotto-grazer": {
+    kind: "grotto-grazer", name: "Grotto Grazer", temperament: "Gentle", hostile: false,
+    health: 18, damage: 2, xp: 5, speed: 0.58, chaseSpeed: 2.15, turnRate: 5.6, attackRange: 1.1,
+    footOffset: 0.69, radius: 0.67, height: 1.22, habitat: "Rootweave Grotto clearings and Pillarstone lichen shelves", active: "All hours in dim ecological centers",
+    behavior: "Browses luminous root tips in small family groups, braces its broad feet on steep shelves, and follows old Stone Roads between feeding rooms.",
+    lore: "Delvers once mistook their root-draped backs for walking gardens. The oldest carry seedlings from caverns no map remembers.",
+    colors: [0x4f6d48, 0xa78958, 0xb8f08f], drops: [{ item: Item.Fiber, min: 2, max: 5, chance: 0.9 }, { item: Item.GlowRoot, min: 1, max: 2, chance: 0.35 }],
+    family: "underground", movement: "ground", breedable: true, breedingFoods: [Item.GlowRoot], diet: [Item.GlowRoot, Item.Fiber], captureItem: Item.CaptureOrb,
+    utility: "A renewable source of fiber and occasional Glowroot when carefully bred.", discoveryHint: "Look for paired hoofprints where living roots meet old stone roads.",
+    fieldNotes: [
+      { id: "browse", title: "Root Browsing", text: "Its split lips trim luminous roots without killing the parent knot.", hint: "Observe one feeding.", requires: [{ metric: "seen", atLeast: 1 }] },
+      { id: "herd", title: "Cavern Herd", text: "Family groups rotate between feeding rooms and leave the center fallow before returning.", hint: "Capture two specimens.", requires: [{ metric: "captures", atLeast: 2 }] },
+      { id: "seedback", title: "Seedback", text: "A bred Grazer may carry viable grotto spores between distant ecological centers.", hint: "Record a successful breeding.", requires: [{ metric: "breeds", atLeast: 1 }] },
+    ],
+  },
+  lanternray: {
+    kind: "lanternray", name: "Lanternray", temperament: "Skittish", hostile: false,
+    health: 11, damage: 0, xp: 5, speed: 1.18, chaseSpeed: 3.7, turnRate: 4.2, attackRange: 0,
+    footOffset: 0.36, radius: 0.78, height: 0.32, habitat: "Starbloom Hollows light gardens and broad Glasswater Deeps ceilings", active: "Darkness near ecological light gardens",
+    behavior: "Pulses its paired lantern organs in slow conversation, banks around crystal outcrops, and dives when sudden light breaks the water.",
+    lore: "A school seen from a high ledge resembles a second night sky moving under glass.",
+    colors: [0x315e6c, 0x62d7c9, 0xd8fff4], drops: [{ item: Item.GlowScale, min: 1, max: 2, chance: 0.38 }],
+    family: "underground", movement: "flying", flying: true, breedable: true, breedingFoods: [Item.LumenKelpFrond], diet: [Item.LumenKelpFrond], captureItem: Item.CaptureOrb,
+    utility: "Its shed Glow Scales illuminate aquariums without consuming the animal.", discoveryHint: "Search the ceiling reflection of a large subterranean lake for moving turquoise stars.",
+    fieldNotes: [
+      { id: "signals", title: "Lantern Speech", text: "Paired light organs pulse in alternating patterns that keep a school together in total darkness.", hint: "Watch a school without approaching.", requires: [{ metric: "seen", atLeast: 1 }] },
+      { id: "roost", title: "Inverted Rest", text: "A resting Lanternray grips mineral ceilings and dims until it resembles a wet crystal seam.", hint: "Capture one for close study.", requires: [{ metric: "captures", atLeast: 1 }] },
+    ],
+  },
+  "prismtail-swift": {
+    kind: "prismtail-swift", name: "Prismtail Swift", temperament: "Skittish", hostile: false,
+    health: 8, damage: 0, xp: 5, speed: 1.62, chaseSpeed: 4.2, turnRate: 9.2, attackRange: 0,
+    footOffset: 1.05, radius: 0.34, height: 0.44, habitat: "Crystaldeep Gallery vaults with long uninterrupted flight lanes", active: "During resonant crystal pulses",
+    behavior: "Threads crystal needles at speed and fans a segmented tail to scatter its silhouette into several colored afterimages.",
+    lore: "Miners learned to stop swinging when a Prismtail flock falls silent; the birds hear stressed stone before it breaks.",
+    colors: [0x4e5eaa, 0x8be6df, 0xffd98b], drops: [{ item: Item.Feather, min: 1, max: 2, chance: 0.42 }],
+    family: "underground", movement: "flying", flying: true, breedable: true, breedingFoods: [Item.CrystalShard], diet: [Item.CrystalShard], captureItem: Item.CaptureOrb,
+    utility: "A living warning for unstable Crystaldeep galleries.", discoveryHint: "Wait quietly beside Resonant Crystal until a rainbow tail crosses its reflection.",
+    fieldNotes: [
+      { id: "stress-call", title: "Stress Call", text: "The flock falls silent seconds before a strained crystal face fractures.", hint: "Record a flock in Crystaldeep.", requires: [{ metric: "seen", atLeast: 1 }] },
+      { id: "prism-tail", title: "Prism Tail", text: "Its segmented tail bends cave light into misleading afterimages without producing light itself.", hint: "Capture two specimens.", requires: [{ metric: "captures", atLeast: 2 }] },
+    ],
+  },
+  "glassback-newt": {
+    kind: "glassback-newt", name: "Glassback Newt", temperament: "Gentle", hostile: false,
+    health: 7, damage: 0, xp: 3, speed: 0.38, chaseSpeed: 1.45, turnRate: 5.3, attackRange: 0,
+    footOffset: 0.24, radius: 0.34, height: 0.22, habitat: "Shallow Glasswater shelves, egg-reed beds and dripping limestone margins", active: "All hours near water",
+    behavior: "Walks between flooded and exposed shelves, holds air beneath its translucent dorsal plates, and tends clusters of Egg Reeds.",
+    lore: "Its clear back is not fragile glass but layered mineral cartilage grown from the water it inhabits.",
+    colors: [0x456a66, 0xa3d8c7, 0xe7fff0], drops: [{ item: Item.CaveGel, min: 1, max: 2, chance: 0.32 }],
+    family: "underground", movement: "amphibious", aquatic: true, bottomDweller: true, breedable: true, breedingFoods: [Item.CaveGel], diet: [Item.CaveGel, Item.LumenKelpFrond], captureItem: Item.CaptureOrb,
+    utility: "Keeps placed Egg Reed beds healthy in connected aquariums.", discoveryHint: "Inspect mineral shelves just above Glasswater pools for a moving transparent ridge.",
+    fieldNotes: [
+      { id: "reed-tender", title: "Reed Tender", text: "Adults remove algae from Egg Reeds and drive cavefilaments away from new clutches.", hint: "Observe one beside Egg Reeds.", requires: [{ metric: "seen", atLeast: 1 }] },
+      { id: "mineral-back", title: "Mineral Back", text: "Its clear dorsal plates incorporate the trace minerals of its home pool.", hint: "Breed a healthy pair.", requires: [{ metric: "breeds", atLeast: 1 }] },
+    ],
+  },
+  "sailfin-skimmer": {
+    kind: "sailfin-skimmer", name: "Sailfin Skimmer", temperament: "Skittish", hostile: false,
+    health: 9, damage: 1, xp: 4, speed: 1.36, chaseSpeed: 3.9, turnRate: 7.8, attackRange: 0.8,
+    footOffset: 0.4, radius: 0.48, height: 0.42, habitat: "Glasswater rivers, flooded Stone Roads and mineral-dam spillways", active: "Where cave currents run",
+    behavior: "Raises a broad dorsal sail into the current, vaults low shelves, and skims the water surface in bursts to escape predators.",
+    lore: "Its fin records the chemistry of every pool crossed as a band of color, giving old skimmers the look of living maps.",
+    colors: [0x35677a, 0xe1a95b, 0xa7f7ea], drops: [{ item: Item.RawFish, min: 1, max: 2, chance: 0.75 }],
+    family: "underground", movement: "flying", flying: true, aquatic: true, breedable: true, breedingFoods: [Item.LumenKelpFrond], diet: [Item.LumenKelpFrond], captureItem: Item.CaptureOrb,
+    utility: "Its patterned sail can indicate mineral-rich water routes.", discoveryHint: "Follow a moving cave current until a copper sail breaks the surface.",
+    fieldNotes: [
+      { id: "water-map", title: "Water Map", text: "Each colored band in the sail corresponds to a distinct mineral basin crossed during growth.", hint: "Inspect one from a second pool.", requires: [{ metric: "seen", atLeast: 1 }] },
+      { id: "island-nest", title: "Island Nest", text: "Pairs carry luminous algae onto dry islands, making a low beacon around their eggs.", hint: "Breed a pair.", requires: [{ metric: "breeds", atLeast: 1 }] },
+    ],
+  },
+  "ashnose-bat": {
+    kind: "ashnose-bat", name: "Ashnose Bat", temperament: "Defensive", hostile: false,
+    health: 8, damage: 2, xp: 4, speed: 1.28, chaseSpeed: 3.5, turnRate: 8.6, attackRange: 1.15,
+    footOffset: 0.9, radius: 0.38, height: 0.36, habitat: "Dark ordinary tunnels bordering Pillarstone and Emberdeep", active: "Darkness",
+    behavior: "Dusts its heat-sensitive nose through the air, hangs in small roosts, and mob-dives anything that disturbs a nursery ledge.",
+    lore: "Ashnose colonies redraw their route every night as fumaroles open and close. Their guano is prized because it remembers those minerals.",
+    colors: [0x4c4545, 0x91715d, 0xf0ad65], drops: [{ item: Item.GuanoItem, min: 1, max: 3, chance: 0.72 }],
+    family: "underground", movement: "flying", flying: true, breedable: true, breedingFoods: [Item.CaveGel], diet: [Item.CaveGel], captureItem: Item.CaptureOrb,
+    utility: "Produces mineral-rich guano suitable for future cave agriculture.", discoveryHint: "Watch for warm dust motes leaving an otherwise dark side tunnel.",
+    fieldNotes: [
+      { id: "heat-nose", title: "Heat Nose", text: "A folded membrane above the nostrils detects warm fumarole drafts beyond solid-looking cracks.", hint: "Find an active colony.", requires: [{ metric: "seen", atLeast: 1 }] },
+      { id: "nursery", title: "Nursery Roost", text: "Adults form a defensive screen below nursery ledges instead of abandoning their young.", hint: "Capture a colony member.", requires: [{ metric: "captures", atLeast: 1 }] },
+    ],
+  },
+  chimewing: {
+    kind: "chimewing", name: "Chimewing", temperament: "Gentle", hostile: false,
+    health: 9, damage: 0, xp: 5, speed: 1.05, chaseSpeed: 3.15, turnRate: 7.1, attackRange: 0,
+    footOffset: 0.96, radius: 0.42, height: 0.48, habitat: "Starbloom Hollows and the quiet margins of Crystaldeep Gallery", active: "Sporefall and crystal resonance",
+    behavior: "Strikes hollow mineral vanes on its wings during turns, answering nearby flockmates with soft intervals instead of calls.",
+    lore: "Lost delvers sometimes follow a Chimewing cadence to an ecological center. Sometimes the cadence follows them first.",
+    colors: [0x67558c, 0x88d9c4, 0xffe7a1], drops: [{ item: Item.Feather, min: 1, max: 2, chance: 0.38 }, { item: Item.GlowDust, min: 1, max: 1, chance: 0.18 }],
+    family: "underground", movement: "flying", flying: true, breedable: true, breedingFoods: [Item.GlowDust], diet: [Item.GlowDust, Item.CaveGel], captureItem: Item.CaptureOrb,
+    utility: "Its interval changes near large open rooms, making it a natural cavern finder.", discoveryHint: "Listen for two glassy notes answering each other beyond a Starbloom passage.",
+    fieldNotes: [
+      { id: "interval", title: "Measured Interval", text: "The delay between two wing notes lengthens with the volume of the chamber around it.", hint: "Observe one in flight.", requires: [{ metric: "seen", atLeast: 1 }] },
+      { id: "route-song", title: "Route Song", text: "Flocks repeat a stable sequence when migrating between Starbloom gardens and Crystaldeep roosts.", hint: "Capture two flockmates.", requires: [{ metric: "captures", atLeast: 2 }] },
+    ],
+  },
+  "cinder-kite": {
+    kind: "cinder-kite", name: "Cinder Kite", temperament: "Defensive", hostile: true,
+    health: 22, damage: 5, xp: 12, speed: 1.2, chaseSpeed: 3.65, turnRate: 6.2, attackRange: 1.7,
+    footOffset: 1.14, radius: 0.72, height: 0.54, habitat: "Emberdeep Fumarole thermals above lava pockets and abandoned vent forges", active: "Fumarole surges",
+    behavior: "Rides columns of hot gas without flapping, folds into a hooked dive, and shakes burning mineral dust from its tail when cornered.",
+    lore: "Cinder Kites nest where stone is still deciding whether to melt. Dwarven ventwrights read their circling height as a pressure gauge.",
+    colors: [0x5a342e, 0xd56b3f, 0xffd170], drops: [{ item: Item.SulfurGrowthItem, min: 1, max: 3, chance: 0.68 }, { item: Item.GlowDust, min: 1, max: 2, chance: 0.28 }],
+    family: "underground", movement: "flying", flying: true, captureItem: Item.CaptureOrb,
+    utility: "Its flight height forecasts dangerous fumarole pressure.", discoveryHint: "Find a wide thermal column above orange-cracked stone and look up before crossing.",
+    fieldNotes: [
+      { id: "pressure", title: "Pressure Gauge", text: "A Kite climbs higher and circles tighter as pressure builds beneath its chosen vent.", hint: "Survive an encounter near a vent.", requires: [{ metric: "seen", atLeast: 1 }] },
+      { id: "mineral-nest", title: "Mineral Nest", text: "Its nest is fused from sulfur needles and heat-cracked stone rather than gathered brush.", hint: "Defeat a territorial adult.", requires: [{ metric: "kills", atLeast: 1 }] },
+    ],
+  },
+  veinling: {
+    kind: "veinling", name: "Veinling", temperament: "Defensive", hostile: true,
+    health: 28, damage: 6, xp: 16, speed: 0.52, chaseSpeed: 2.5, turnRate: 4.5, attackRange: 1.45,
+    footOffset: 0.82, radius: 0.56, height: 0.82, habitat: "Rare Living Veins crossing Crystaldeep and forgotten Stone Roads", active: "When nearby ore is disturbed",
+    behavior: "Unfolds from a seam on four jointed limbs, gathers loose metallic flakes into its shell, and settles back into the wall after danger passes.",
+    lore: "No agreement exists on whether a Veinling is born, built, grown or merely noticed. Its behavior supports every theory and proves none.",
+    colors: [0x526963, 0x8fb4a5, 0xd8ffe8], drops: [{ item: Item.VeinmetalFlake, min: 1, max: 3, chance: 0.82 }, { item: Item.LivingNode, min: 1, max: 1, chance: 0.08 }],
+    family: "underground", movement: "ground", captureItem: Item.CaptureOrb,
+    utility: "A renewable but dangerous clue to Veinmetal behavior; its exact nature remains unresolved.", discoveryHint: "Mine near a pulsing seam, then wait for the wall to move on its own.",
+    fieldNotes: [
+      { id: "unfolding", title: "Unfolding", text: "The apparent ore seam keeps the same mass when it unfolds into limbs.", hint: "Witness one at close range.", requires: [{ metric: "seen", atLeast: 1 }] },
+      { id: "response", title: "Disturbance Response", text: "It wakes in response to extraction but does not consistently defend every nearby vein.", hint: "Survive and defeat one.", requires: [{ metric: "kills", atLeast: 1 }] },
+      { id: "unresolved", title: "Nature Unresolved", text: "Biological, magical and mechanical tests all return partial, contradictory results.", hint: "Capture a living specimen.", requires: [{ metric: "captures", atLeast: 1 }] },
+    ],
+  },
   "auric-scarab": {
     kind: "auric-scarab", name: "Auric Scarab", temperament: "Defensive", hostile: true,
     health: 16, damage: 3, xp: 8, speed: 0.84, chaseSpeed: 2.65, turnRate: 6.8, attackRange: 1.35,
@@ -655,7 +826,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     behavior: "Shambles toward living creatures with both arms raised. Direct sunlight slowly burns it away.",
     lore: "A miner who stayed below one night too many. It remembers doors, footsteps, and almost nothing else.",
     colors: [0x5f8f54, 0x3e7470, 0x263c74],
-    drops: [{ item: Item.RottenFlesh, min: 1, max: 2, chance: 0.82 }, { item: Item.SunmetalIngot, min: 1, max: 1, chance: 0.025 }],
+    drops: [{ item: Item.RottenFlesh, min: 1, max: 2, chance: 0.82 }, { item: Item.IronIngot, min: 1, max: 1, chance: 0.025 }],
     family: "undead",
     discoveryHint: "Search unlit cave mouths or the night surface for slow dragging footsteps.",
   },
@@ -2021,10 +2192,11 @@ export const SUGARCOURT_ORDER: SugarcourtKind[] = [
 ];
 export const WOOD_ELF_ORDER: WoodElfKind[] = ["wood-elf-elderweaver", "wood-elf-leafwarden", "wood-elf-bow-warden", "wood-elf-grovekeeper", "wood-elf-tomekeeper", "wood-elf-potioner", "wood-elf-moonbroker"];
 export const DWARF_ORDER: DwarfKind[] = ["dwarf-thane", "dwarf-gatewarden", "dwarf-delver", "dwarf-gearwright", "dwarf-golemsmith", "dwarf-powderwright", "dwarf-provisioner"];
-export const V1_FACTION_CREATURE_ORDER: V1FactionCreatureKind[] = ["glimmerhart", "runeowl", "glowfin", "copper-mole", "copper-scout-golem", "stone-bulwark-golem", "aetherforged-sentinel", "deepgear-courser-golem"];
+export const V1_FACTION_CREATURE_ORDER: V1FactionCreatureKind[] = ["glimmerhart", "runeowl", "glowfin", "copper-mole", "copper-scout-golem", "stone-bulwark-golem", "aetherforged-sentinel", "deepgear-courser-golem", "clockwork-hound-golem", "webspinner-golem"];
 export const SENTIENT_MOB_ORDER: SentientMobKind[] = [...HOBBIT_ORDER, ...GOBLIN_ORDER, ...ATLANTIAN_ORDER, ...SUGARCOURT_ORDER, ...WOOD_ELF_ORDER, ...DWARF_ORDER];
 export const SPECIAL_MOB_ORDER: SpecialMobKind[] = ["peelop", "reliquary-sentinel", "skeleton", "warg"];
 export const ADVENTURE_MOB_ORDER: AdventureMobKind[] = ["auric-scarab", "rootwrithe", "bellroot-matron", "vaultwing", "cinder-maw", "ossuary-keeper", "mossback-kite", "clockwork-marmot", "inkmaw-curator"];
+export const UNDERGROUND_MOB_ORDER: UndergroundMobKind[] = ["grotto-grazer", "lanternray", "prismtail-swift", "glassback-newt", "sailfin-skimmer", "ashnose-bat", "chimewing", "cinder-kite", "veinling"];
 export const CORE_MOB_ORDER: CoreMobKind[] = [
   ...LEGACY_MOB_ORDER,
   ...MOSSLING_VARIANT_ORDER,
@@ -2041,6 +2213,7 @@ export const CORE_MOB_ORDER: CoreMobKind[] = [
   ...V1_FACTION_CREATURE_ORDER,
   ...DRAGON_ORDER,
   ...SENTIENT_MOB_ORDER,
+  ...UNDERGROUND_MOB_ORDER,
   ...ADVENTURE_MOB_ORDER,
   ...SPECIAL_MOB_ORDER,
 ];

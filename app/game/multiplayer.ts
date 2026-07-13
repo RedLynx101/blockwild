@@ -438,6 +438,7 @@ export type WorldSnapshot = {
   tick: number;
   seed: string;
   generatorVersion: number;
+  generatorProfile?: "legacy-v14" | "world-below-v15";
   players: PlayerPose[];
   blockEdits: BlockEdit[];
   mobs: MobSnapshotEntry[];

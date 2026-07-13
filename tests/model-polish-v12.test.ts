@@ -37,7 +37,7 @@ test("every race and sex uses one articulated limb rig with clothing on the tors
 test("player tools, shields and seated legs use one shared forward-facing articulated pose", () => {
   const player = new BlockPlayerModel({ race: "wood-elf", variant: "female" });
   const pickaxe = createAvatarHeldItemModel(Item.IronPickaxe)!;
-  const shield = createAvatarHeldItemModel(Item.SunmetalShield)!;
+  const shield = createAvatarHeldItemModel(Item.IronShield)!;
   player.setHeldItem(pickaxe).setOffhandItem(shield, true).setPose({ locomotion: "idle", seated: 0 });
   assert.equal(pickaxe.parent, player.rightHandSocket);
   assert.equal(shield.parent, player.leftHandSocket);

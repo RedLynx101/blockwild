@@ -73,7 +73,12 @@ export type SampleKind =
   | "leviathanGrowlUnderwaterA"
   | "leviathanGrowlUnderwaterB"
   | "owlCallA"
-  | "owlCallB";
+  | "owlCallB"
+  | "dwarvenAutomatonMetalBreath"
+  | "clockworkHoundMetallicBark"
+  | "dwarvenAutomatonSteamReleaseA"
+  | "dwarvenAutomatonSteamReleaseB"
+  | "playerDirectDamage";
 export type AudioPosition = Readonly<{ x: number; y: number; z: number }> | readonly [number, number, number];
 export type SamplePlaybackOptions = {
   gain?: number;
@@ -223,7 +228,7 @@ export const SAMPLE_ASSETS: Record<SampleKind, { source: string; gain: number }>
   houndCallA: { source: "/sfx/hound-call-a.wav", gain: 0.7 },
   houndCallB: { source: "/sfx/hound-call-b.wav", gain: 0.73 },
   crabChitter: { source: "/sfx/crab-chitter.wav", gain: 0.68 },
-  lightRain: { source: "/sfx/ambient-light-rain.wav", gain: 0.42 },
+  lightRain: { source: "/sfx/ambient-light-rain.wav", gain: 0.357 },
   nightCrickets: { source: "/sfx/ambient-night-crickets.wav", gain: 0.12 },
   wind: { source: "/sfx/ambient-wind.wav", gain: 0.17 },
   snowStep: { source: "/sfx/step-snow.wav", gain: 0.56 },
@@ -254,6 +259,11 @@ export const SAMPLE_ASSETS: Record<SampleKind, { source: string; gain: number }>
   leviathanGrowlUnderwaterB: { source: "/sfx/leviathan-growl-underwater-b.wav", gain: 0.62 },
   owlCallA: { source: "/sfx/owl-call-a.wav", gain: 0.56 },
   owlCallB: { source: "/sfx/owl-call-b.wav", gain: 0.62 },
+  dwarvenAutomatonMetalBreath: { source: "/sfx/dwarven-automaton-metal-breath.wav", gain: 0.5 },
+  clockworkHoundMetallicBark: { source: "/sfx/clockwork-hound-metallic-bark.wav", gain: 0.56 },
+  dwarvenAutomatonSteamReleaseA: { source: "/sfx/dwarven-automaton-steam-release-a.wav", gain: 0.62 },
+  dwarvenAutomatonSteamReleaseB: { source: "/sfx/dwarven-automaton-steam-release-b.wav", gain: 0.64 },
+  playerDirectDamage: { source: "/sfx/player-direct-damage.wav", gain: 0.64 },
 };
 const SAMPLES = SAMPLE_ASSETS;
 
@@ -410,7 +420,7 @@ export class SynthAudio {
     this.ambienceGain.gain.setTargetAtTime(target, this.context.currentTime, 0.4);
     // The supplied lossless rain bed carries the weather; this filtered-noise
     // layer only fills the first moment while that buffer decodes.
-    this.rainGain?.gain.setTargetAtTime(rain * 0.026, this.context.currentTime, rain > 0 ? 0.3 : 1.25);
+    this.rainGain?.gain.setTargetAtTime(rain * 0.0221, this.context.currentTime, rain > 0 ? 0.3 : 1.25);
   }
 
   setListenerPose(position: AudioPosition, forward: AudioPosition, up: AudioPosition = [0, 1, 0]) {

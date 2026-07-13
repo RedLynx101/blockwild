@@ -1,7 +1,7 @@
 /** Human-facing release identity. Save-schema and generator versions are separate. */
-export const GAME_VERSION = "1.4.5" as const;
+export const GAME_VERSION = "1.5.0" as const;
 export const GAME_VERSION_LABEL = `v${GAME_VERSION}` as const;
-export const GAME_RELEASE_NAME = "Dragon Renaissance" as const;
+export const GAME_RELEASE_NAME = "The World Below" as const;
 export const LEGACY_GAME_VERSION = "0.1.0" as const;
 
 export function normalizeGameVersion(value: unknown, fallback: string = LEGACY_GAME_VERSION): string {

@@ -733,9 +733,9 @@ export function itemIconKind(item: ItemCode) {
     case Item.Stick: return "stick";
     case Item.Coal:
     case Item.Charcoal: return "coal";
-    case Item.RawSunmetal:
+    case Item.RawIron:
     case Item.RawGold: return "ore-chunk";
-    case Item.SunmetalIngot:
+    case Item.IronIngot:
     case Item.GoldIngot: return "ingot";
     case Item.CrystalShard: return "crystal";
     case Item.Berry: return "berries";
@@ -2664,9 +2664,10 @@ export default function VoxelGame() {
       {overlay === "new" && (
         <section className="menu-overlay" aria-labelledby="new-world-title">
           <div className="pixel-panel world-setup-panel expanded-setup-panel">
-            <span className="panel-eyebrow">ENDLESS WORLD GENERATOR</span>
+            <span className="panel-eyebrow">THE WORLD BELOW · GENERATOR 15</span>
             <h2 id="new-world-title">Create a New World</h2>
-            <p className="setup-intro">Every seed grows continents, oceans, rivers, mountains, {Object.keys(BIOME_NAMES).length} biomes, cave networks, ruins, settlements, and a worldheart sixty-four blocks below zero.</p>
+            <p className="setup-intro">Every seed grows coherent regions, oceans, rivers, mountain ranges, {Object.keys(BIOME_NAMES).length} surface biomes, connected cave networks, six underground ecologies, ruins, settlements, and a worldheart sixty-four blocks below zero.</p>
+            <p className="generator-profile-note"><strong>NEW WORLDS</strong><span>Generator 15 uses broader biome cores and graph-connected caves. Existing worlds keep their original generator and terrain exactly as saved.</span></p>
             <label className="field-label" htmlFor="world-name">World name</label>
             <input id="world-name" className="pixel-input world-name-input" value={worldName} maxLength={64} onChange={(event) => setWorldName(event.target.value)} />
             <label className="field-label" htmlFor="world-seed">World seed</label>
@@ -2749,7 +2750,7 @@ export default function VoxelGame() {
               </section>
             </details>
             <div className="world-feature-strip">
-              <span><b>∞</b> STREAMED WORLD</span><span><b>{Object.keys(BIOME_NAMES).length}</b> BIOMES</span><span><b>{MOB_ORDER.length}</b> CREATURES</span><span><b>192</b> BLOCKS TALL</span>
+              <span><b>∞</b> STREAMED WORLD</span><span><b>{Object.keys(BIOME_NAMES).length}</b> SURFACE BIOMES</span><span><b>6</b> CAVE ECOLOGIES</span><span><b>{MOB_ORDER.length}</b> CREATURES</span><span><b>192</b> BLOCKS TALL</span>
             </div>
             <p className="browser-ownership-note setup-ownership-note">This world will belong to this browser on this host device. Export it to make a backup or move it.</p>
             <div className="panel-actions">
@@ -3424,7 +3425,7 @@ export default function VoxelGame() {
             <div className="progression-guide">
               <div><b>1</b><strong>Punch a tree</strong><span>Turn one log into four planks in your 2×2 grid.</span></div>
               <div><b>2</b><strong>Craft a table</strong><span>Four planks unlock the 3×3 recipes.</span></div>
-              <div><b>3</b><strong>Make tools</strong><span>Wood → cobble → sunmetal → star crystal.</span></div>
+              <div><b>3</b><strong>Make tools</strong><span>Wood → cobble → iron → star crystal.</span></div>
               <div><b>4</b><strong>Build a furnace</strong><span>Eight cobble. Smelt ore, glass, meat, and charcoal.</span></div>
               <div><b>5</b><strong>Own the night</strong><span>Hostiles drop shards, gel, bone, coal, and XP.</span></div>
               <div><b>6</b><strong>Go below zero</strong><span>Crystal deeps, lava, aquifers, and the worldheart await.</span></div>

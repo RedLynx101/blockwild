@@ -118,7 +118,7 @@ const LOOT_TABLES: Readonly<Record<StructureLootTableId, Readonly<{
   "desert-temple": {
     entries: [
       { itemKey: "gold-ingot", weight: 18, min: 1, max: 4 },
-      { itemKey: "sunmetal-ingot", weight: 22, min: 2, max: 6 },
+      { itemKey: "iron-ingot", weight: 22, min: 2, max: 6 },
       { itemKey: "crystal-shard", weight: 11, min: 1, max: 3 },
       { itemKey: "bone-shard", weight: 20, min: 2, max: 8 },
       { itemKey: "glow-dust", weight: 16, min: 2, max: 5 },
@@ -217,7 +217,7 @@ const LOOT_TABLES: Readonly<Record<StructureLootTableId, Readonly<{
   },
   "brassdeep-vault": {
     entries: [
-      { itemKey: "sunmetal-ingot", weight: 24, min: 4, max: 10 },
+      { itemKey: "iron-ingot", weight: 24, min: 4, max: 10 },
       { itemKey: "gold-ingot", weight: 18, min: 3, max: 8 },
       { itemKey: "gear-cluster", weight: 22, min: 2, max: 7 },
       { itemKey: "deepgear-alloy", weight: 16, min: 2, max: 5 },

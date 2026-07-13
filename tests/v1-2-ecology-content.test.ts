@@ -41,7 +41,7 @@ const CROP_CASES = [
 ] as const;
 
 test("v1.2 homestead crops have stable IDs, complete growth loops and scythe replanting", () => {
-  assert.equal(GENERATOR_VERSION, 14);
+  assert.equal(GENERATOR_VERSION, 15);
   for (const crop of CROP_CASES) {
     assert.equal(plantingResult(crop.seed, BlockId.HydratedFarmland, BlockId.Air)?.block, crop.sprout);
     assert.equal(plantingResult(crop.seed, BlockId.Grass, BlockId.Air), null);
@@ -163,11 +163,11 @@ test("connected aquarium, hearth fireplace and both shields expose complete craf
   assert.equal(BLOCK_ITEM_ALIASES[BlockId.GlassAquarium], Item.GlassAquariumItem);
   assert.equal(BLOCKS[BlockId.HearthFireplace].shape, "fireplace");
   assert.equal(BLOCKS[BlockId.HearthFireplace].layer, "emissive");
-  for (const item of [Item.WoodenShield, Item.SunmetalShield]) {
+  for (const item of [Item.WoodenShield, Item.IronShield]) {
     assert.equal(ITEMS[item].useKind, "shield");
     assert.ok((ITEMS[item].maxDurability ?? 0) > 100);
     assert.ok(CREATIVE_BLOCKS.includes(item));
   }
-  assert.ok((ITEMS[Item.SunmetalShield].maxDurability ?? 0) > (ITEMS[Item.WoodenShield].maxDurability ?? 0));
-  for (const id of ["wildwood-shield", "sunmetal-shield", "connected-aquarium", "hearth-fireplace"]) assert.ok(RECIPES.some((recipe) => recipe.id === id), id);
+  assert.ok((ITEMS[Item.IronShield].maxDurability ?? 0) > (ITEMS[Item.WoodenShield].maxDurability ?? 0));
+  for (const id of ["wildwood-shield", "iron-shield", "connected-aquarium", "hearth-fireplace"]) assert.ok(RECIPES.some((recipe) => recipe.id === id), id);
 });

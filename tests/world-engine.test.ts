@@ -550,8 +550,8 @@ test("partial block shapes preserve the full cube faces beside them", () => {
   world.reset("PARTIAL-FACE");
   const chunk = world.generateChunk(0, 0);
   chunk.blocks.fill(BlockId.Air);
-  chunk.blocks[blockIndex(0, 0, 0)] = BlockId.Stone;
-  chunk.blocks[blockIndex(1, 0, 0)] = BlockId.Chest;
+  world.setBlock(0, 0, 0, BlockId.Stone, false);
+  world.setBlock(1, 0, 0, BlockId.Chest, false);
   const section = Math.floor((0 - MIN_Y) / SECTION_HEIGHT);
   world.rebuildSection(chunk, section);
 
@@ -742,13 +742,13 @@ test("double-chest storage preserves all 54 slots when a world is rehydrated", (
 test("shift-click equips armor and armor reduces damage while losing durability", () => {
   const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
   engine.inventory = Array.from({ length: 36 }, () => null);
-  engine.inventory[0] = { item: Item.SunmetalPlate, count: 1, durability: 100 };
+  engine.inventory[0] = { item: Item.IronPlate, count: 1, durability: 100 };
   engine.equipment = { head: null, chest: null, legs: null, feet: null };
   engine.activeChestKey = null;
   engine.activeFurnaceKey = null;
   engine.saveSoon = () => undefined;
   engine.shiftMove(0);
-  assert.deepEqual(engine.equipment.chest, { item: Item.SunmetalPlate, count: 1, durability: 100 });
+  assert.deepEqual(engine.equipment.chest, { item: Item.IronPlate, count: 1, durability: 100 });
   assert.equal(engine.inventory[0], null);
   assert.equal(engine.armorPoints(), 4);
 
@@ -853,12 +853,12 @@ test("tree felling takes only the rooted vertical trunk and leaves attached buil
 
 test("furnaces complete smelting even when the surrounding game simulation is paused", () => {
   const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
-  engine.furnaces = new Map([["0,0,0", { input: { item: Item.RawSunmetal, count: 1 }, fuel: { item: Item.Coal, count: 1 }, output: null, progress: 0, burn: 0, burnMax: 0 }]]);
+  engine.furnaces = new Map([["0,0,0", { input: { item: Item.RawIron, count: 1 }, fuel: { item: Item.Coal, count: 1 }, output: null, progress: 0, burn: 0, burnMax: 0 }]]);
   engine.audio = { play: () => undefined } as unknown as VoxelEngine["audio"];
   engine.saveSoon = () => undefined;
   engine.paused = true;
   engine.updateFurnaces(8.1);
-  assert.deepEqual(engine.furnaces.get("0,0,0")?.output, { item: Item.SunmetalIngot, count: 1 });
+  assert.deepEqual(engine.furnaces.get("0,0,0")?.output, { item: Item.IronIngot, count: 1 });
   assert.equal(engine.furnaces.get("0,0,0")?.input, null);
 });
 
@@ -922,7 +922,7 @@ test("rejected solid placement records its rollback and player chests start empt
 });
 
 test("generator-v3 through v13 fallback saves advance without moving existing voxel edits", () => {
-  for (const generatorVersion of [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]) {
+  for (const generatorVersion of [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]) {
     const previous = {
       version: 2,
       generatorVersion,

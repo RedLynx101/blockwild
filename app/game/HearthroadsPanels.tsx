@@ -25,6 +25,8 @@ import {
   parseChunkKey,
   projectMapWorldPoint,
   stepMapZoom,
+  undergroundDepthBandForY,
+  undergroundSampleForBand,
   type CartographySession,
   type FastTravelChannel,
   type FastTravelMode,
@@ -34,6 +36,7 @@ import {
   type MapPlayerMarker,
   type MapViewState,
   type MapViewportBounds,
+  type UndergroundDepthBand,
   type WorldPoint,
 } from "./map-system";
 import { engineYawToMapRotation } from "./navigation";
@@ -405,18 +408,34 @@ function mapPointStyle(
 type MapTerrainCanvasProps = Readonly<{
   bounds: MapBounds;
   detailed: boolean;
+  underground: boolean;
+  undergroundDepthBand: UndergroundDepthBand;
   explored: ReturnType<typeof mapChunksInViewport>;
   terrainByChunk: MapKnowledge["terrainByChunk"];
   surfaceByChunk: MapKnowledge["surfaceByChunk"];
+  undergroundByChunk: MapKnowledge["undergroundByChunk"];
   viewport: MapViewportSize;
 }>;
+
+const UNDERGROUND_MAP_INK: Readonly<Record<string, Readonly<{ fill: string; stroke: string }>>> = Object.freeze({
+  "Ordinary Tunnel": { fill: "#151820", stroke: "#292d39" },
+  "Rootweave Grotto": { fill: "#45613f", stroke: "#719267" },
+  "Starbloom Hollows": { fill: "#51406f", stroke: "#8e70b2" },
+  "Glasswater Deeps": { fill: "#295b68", stroke: "#55a0ae" },
+  "Pillarstone Reaches": { fill: "#5c5549", stroke: "#8d816d" },
+  "Crystaldeep Gallery": { fill: "#3f4e79", stroke: "#8098d5" },
+  "Emberdeep Fumaroles": { fill: "#6a382e", stroke: "#b66647" },
+});
 
 const MapTerrainCanvas = memo(function MapTerrainCanvas({
   bounds,
   detailed,
+  underground,
+  undergroundDepthBand,
   explored,
   terrainByChunk,
   surfaceByChunk,
+  undergroundByChunk,
   viewport,
 }: MapTerrainCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -440,22 +459,24 @@ const MapTerrainCanvas = memo(function MapTerrainCanvas({
     const strokeChunks = cellSize >= 3;
     for (const chunk of explored) {
       const palette = mapTerrainPalette(terrainByChunk[chunk.key]);
+      const undergroundSample = undergroundSampleForBand(undergroundByChunk[chunk.key], undergroundDepthBand);
+      const caveInk = undergroundSample ? UNDERGROUND_MAP_INK[undergroundSample.biome] ?? UNDERGROUND_MAP_INK["Ordinary Tunnel"] : null;
       const x = projection.offsetX + (chunk.x - bounds.minX) * cellSize;
       const y = projection.offsetY + (chunk.z - bounds.minZ) * cellSize;
-      context.fillStyle = palette.fill;
+      context.fillStyle = underground ? caveInk?.fill ?? "#090b10" : palette.fill;
       context.fillRect(x, y, cellSize + 0.35, cellSize + 0.35);
-      const surface = detailed && !palette.water ? surfaceByChunk[chunk.key] : null;
+      const surface = !underground && detailed && !palette.water ? surfaceByChunk[chunk.key] : null;
       if (surface) for (let index = 0; index < 4; index += 1) {
         context.fillStyle = surface[index];
         context.fillRect(x + index % 2 * halfCell, y + Math.floor(index / 2) * halfCell, halfCell + 0.35, halfCell + 0.35);
       }
       if (strokeChunks) {
-        context.strokeStyle = palette.stroke;
+        context.strokeStyle = underground ? caveInk?.stroke ?? "#11151d" : palette.stroke;
         context.lineWidth = Math.min(1, cellSize * 0.04);
         context.strokeRect(x, y, cellSize, cellSize);
       }
     }
-  }, [bounds, detailed, explored, surfaceByChunk, terrainByChunk, viewport]);
+  }, [bounds, detailed, explored, surfaceByChunk, terrainByChunk, underground, undergroundByChunk, undergroundDepthBand, viewport]);
 
   return <canvas ref={canvasRef} className="hearthroads-map-terrain" role="img" aria-label="Explored world chunks" />;
 });
@@ -533,6 +554,8 @@ export function MapPanel({
   const [renameValue, setRenameValue] = useState("");
   const [hoveredChunk, setHoveredChunk] = useState<Readonly<{ key: string; biome: string }> | null>(null);
   const [detailedTerrain, setDetailedTerrain] = useState(true);
+  const [undergroundLayer, setUndergroundLayer] = useState(false);
+  const [undergroundDepthBand, setUndergroundDepthBand] = useState<UndergroundDepthBand>(() => undergroundDepthBandForY(currentPosition.y));
   const [localViewState, setLocalViewState] = useState(createMapViewState);
   const mapCanvasRef = useRef<HTMLDivElement>(null);
   const [mapViewport, setMapViewport] = useState<MapViewportSize>({ width: 1, height: 1 });
@@ -586,8 +609,11 @@ export function MapPanel({
   const visibleMarkers = useMemo(() => knowledge.markers.filter((marker) => {
     const x = marker.position.x / 16;
     const z = marker.position.z / 16;
-    return x >= bounds.minX && x <= bounds.maxX && z >= bounds.minZ && z <= bounds.maxZ;
-  }), [bounds, knowledge.markers]);
+    const matchesLayer = undergroundLayer
+      ? undergroundDepthBandForY(marker.position.y) === undergroundDepthBand
+      : marker.position.y >= 24;
+    return matchesLayer && x >= bounds.minX && x <= bounds.maxX && z >= bounds.minZ && z <= bounds.maxZ;
+  }), [bounds, knowledge.markers, undergroundDepthBand, undergroundLayer]);
   const visibleOtherPlayers = useMemo(() => otherPlayers.filter((player) => {
     const x = player.position.x / 16;
     const z = player.position.z / 16;
@@ -640,7 +666,9 @@ export function MapPanel({
         setHoveredChunk((current) => current === null ? current : null);
         return;
       }
-      const biome = mapTerrainPalette(knowledge.terrainByChunk?.[key]).label;
+      const biome = undergroundLayer
+        ? undergroundSampleForBand(knowledge.undergroundByChunk?.[key], undergroundDepthBand)?.biome ?? "Uncharted depths"
+        : mapTerrainPalette(knowledge.terrainByChunk?.[key]).label;
       setHoveredChunk((current) => current?.key === key && current.biome === biome ? current : { key, biome });
       return;
     }
@@ -708,13 +736,32 @@ export function MapPanel({
           >
             <button
               type="button"
-              className={`hearthroads-map-detail-toggle${detailedTerrain ? " active" : ""}`}
+              className={`hearthroads-map-detail-toggle${detailedTerrain && !undergroundLayer ? " active" : ""}`}
               aria-pressed={detailedTerrain}
+              disabled={undergroundLayer}
               onClick={() => setDetailedTerrain((current) => !current)}
               onPointerDown={(event) => event.stopPropagation()}
             >
               <b>Detailed terrain</b><small>{detailedTerrain ? "ON" : "OFF"}</small>
             </button>
+            <button
+              type="button"
+              className={`hearthroads-map-detail-toggle underground${undergroundLayer ? " active" : ""}`}
+              aria-pressed={undergroundLayer}
+              onClick={() => setUndergroundLayer((current) => !current)}
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <b>World below</b><small>{undergroundLayer ? "ON" : "OFF"}</small>
+            </button>
+            {undergroundLayer ? (
+              <div className="hearthroads-map-depth-bands" role="group" aria-label="Underground depth band" onPointerDown={(event) => event.stopPropagation()}>
+                {(["upper", "middle", "deep"] as const).map((band) => (
+                  <button key={band} type="button" className={undergroundDepthBand === band ? "active" : ""} onClick={() => setUndergroundDepthBand(band)}>
+                    {band === "upper" ? "Upper" : band === "middle" ? "Middle" : "Deep"}
+                  </button>
+                ))}
+              </div>
+            ) : null}
             <div className="hearthroads-map-controls" aria-label="Map view controls" onPointerDown={(event) => event.stopPropagation()}>
               <button type="button" onClick={() => updateViewState(panMapView(activeViewState, 0, -panStepZ, zoomLimits))} aria-label="Pan map north">↑</button>
               <button type="button" onClick={() => updateViewState(panMapView(activeViewState, -panStepX, 0, zoomLimits))} aria-label="Pan map west">←</button>
@@ -728,9 +775,12 @@ export function MapPanel({
             <MapTerrainCanvas
               bounds={bounds}
               detailed={detailedTerrain}
+              underground={undergroundLayer}
+              undergroundDepthBand={undergroundDepthBand}
               explored={visibleExplored}
               terrainByChunk={knowledge.terrainByChunk}
               surfaceByChunk={knowledge.surfaceByChunk}
+              undergroundByChunk={knowledge.undergroundByChunk}
               viewport={mapViewport}
             />
             <span

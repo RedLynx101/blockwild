@@ -5,9 +5,9 @@ import test from "node:test";
 import { bestiaryKindsForFilter } from "../app/game/VoxelGame.tsx";
 import { AQUARIUM_MOB_ORDER, MOB_DEFS, MOB_ORDER, RABBIT_ORDER, SENTIENT_MOB_ORDER } from "../app/game/mobs.ts";
 import { PLANTS } from "../app/game/plants.ts";
+import { GAME_VERSION_LABEL } from "../app/game/version.ts";
 import { renderModelPortrait } from "../scripts/render-models.ts";
 import { createPlantInspectionSpecs } from "../scripts/render-plants.ts";
-import { GAME_VERSION } from "../app/game/version.ts";
 
 const PUBLIC_ROOT = path.resolve("public");
 
@@ -55,7 +55,7 @@ test("tree entries are complete generated trees rather than single block swatche
 test("v1.2 field-guide contact sheets cover the complete stable rosters", async () => {
   const creatureSheet = await readFile(path.join(PUBLIC_ROOT, "creatures", "blockwild-creatures.svg"), "utf8");
   const plantSheet = await readFile(path.join(PUBLIC_ROOT, "plants", "blockwild-plants.svg"), "utf8");
-  assert.ok(creatureSheet.includes(`BLOCKWILD FIELD GUIDE · V${GAME_VERSION}`));
+  assert.ok(creatureSheet.includes(`BLOCKWILD FIELD GUIDE · ${GAME_VERSION_LABEL.toUpperCase()}`));
   assert.match(creatureSheet, new RegExp(`${MOB_ORDER.length} specimens`, "u"));
   for (const kind of ["meadow-cottontail", "chocolate-bunny", "sunset-sea-slug", "moonlace-sea-slug", "pocket-goldfish"] as const) {
     assert.ok(creatureSheet.includes(MOB_DEFS[kind].name), `${kind} should be on the creature sheet`);

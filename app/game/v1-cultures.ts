@@ -28,8 +28,8 @@ export const V1_CULTURES = Object.freeze({
     settlementName: "Deepgear Hold",
     values: ["tested craft", "kept oaths", "useful mechanisms"] as const,
     roles: ["thane", "gatewarden", "delver", "gearwright", "golemsmith", "powderwright", "provisioner"] as const,
-    alignedCreatures: ["copper-mole", "copper-scout-golem"] as const,
-    neutralOrbStock: ["unaligned-copper-mole-orb"] as const,
+    alignedCreatures: ["copper-mole", "copper-scout-golem", "clockwork-hound-golem", "webspinner-golem"] as const,
+    neutralOrbStock: ["unaligned-copper-mole-orb", "clockwork-hound-golem-orb", "webspinner-golem-orb"] as const,
   }),
 });
 
@@ -246,7 +246,13 @@ export function planV1Settlement(input: Readonly<{
   };
 }
 
-export type GolemType = "copper-scout" | "stone-bulwark" | "aetherforged-sentinel" | "deepgear-courser";
+export type GolemType =
+  | "copper-scout"
+  | "stone-bulwark"
+  | "aetherforged-sentinel"
+  | "deepgear-courser"
+  | "clockwork-hound"
+  | "webspinner";
 export type GolemRecipe = Readonly<{
   type: GolemType;
   name: string;
@@ -256,7 +262,7 @@ export type GolemRecipe = Readonly<{
   resources: Readonly<Record<string, number>>;
   health: number;
   damage: number;
-  role: "utility" | "defender" | "guardian" | "mount";
+  role: "utility" | "defender" | "guardian" | "mount" | "interceptor" | "controller";
 }>;
 
 export const GOLEM_RECIPES: Readonly<Record<GolemType, GolemRecipe>> = Object.freeze({
@@ -266,7 +272,7 @@ export const GOLEM_RECIPES: Readonly<Record<GolemType, GolemRecipe>> = Object.fr
   }),
   "stone-bulwark": Object.freeze({
     type: "stone-bulwark", name: "Stone Bulwark", blueprintId: "golem-stone-bulwark", manaCost: 80, seconds: 90,
-    resources: { "stone-brick": 24, "sunmetal-ingot": 6, "crystal-shard": 2, "gear-cluster": 4 }, health: 92, damage: 9, role: "defender",
+    resources: { "stone-brick": 24, "iron-ingot": 6, "crystal-shard": 2, "gear-cluster": 4 }, health: 92, damage: 9, role: "defender",
   }),
   "aetherforged-sentinel": Object.freeze({
     type: "aetherforged-sentinel", name: "Aetherforged Sentinel", blueprintId: "golem-aetherforged-sentinel", manaCost: 180, seconds: 180,
@@ -275,6 +281,14 @@ export const GOLEM_RECIPES: Readonly<Record<GolemType, GolemRecipe>> = Object.fr
   "deepgear-courser": Object.freeze({
     type: "deepgear-courser", name: "Deepgear Courser", blueprintId: "golem-deepgear-courser", manaCost: 110, seconds: 120,
     resources: { "deepgear-alloy": 14, "copper-ore": 20, "crystal-shard": 3, "gear-cluster": 6 }, health: 58, damage: 6, role: "mount",
+  }),
+  "clockwork-hound": Object.freeze({
+    type: "clockwork-hound", name: "Clockwork Hound", blueprintId: "golem-clockwork-hound", manaCost: 72, seconds: 82,
+    resources: { "deepgear-alloy": 8, "copper-ore": 18, "crystal-shard": 2, "gear-cluster": 5 }, health: 46, damage: 7, role: "interceptor",
+  }),
+  "webspinner": Object.freeze({
+    type: "webspinner", name: "Webspinner", blueprintId: "golem-webspinner", manaCost: 128, seconds: 135,
+    resources: { "deepgear-alloy": 13, "copper-ore": 14, "crystal-shard": 4, "gear-cluster": 8 }, health: 64, damage: 5, role: "controller",
   }),
 });
 
@@ -500,6 +514,38 @@ export function alignedGolemDefenseAction(input: Readonly<{
   if (input.ranged && input.distance >= 3 && input.distance <= 12) return "ranged";
   if (input.distance <= input.attackRange + 0.35) return "melee";
   return "pursue";
+}
+
+export type CompanionGolemKind = "clockwork-hound-golem" | "webspinner-golem";
+export type CompanionGolemCombatAction = "idle" | "intercept" | "bite" | "body-check" | "hold-range" | "disengage" | "control";
+
+/**
+ * Save-free combat intent shared by player-bound and settlement-bound companion
+ * constructs. Movement and damage stay engine-owned; this keeps the tactical
+ * rules deterministic and independently testable.
+ */
+export function companionGolemCombatAction(input: Readonly<{
+  kind: CompanionGolemKind;
+  defending: boolean;
+  holding: boolean;
+  targetHostile: boolean;
+  lineOfSight: boolean;
+  distance: number;
+  meleeReach: number;
+  cooldownSeconds: number;
+}>): CompanionGolemCombatAction {
+  const limit = input.kind === "clockwork-hound-golem" ? 15 : 18;
+  if (!input.defending || input.holding || !input.targetHostile || !input.lineOfSight || input.distance > limit) return "idle";
+  if (input.kind === "clockwork-hound-golem") {
+    if (input.cooldownSeconds > 0) return "intercept";
+    if (input.distance <= input.meleeReach) return "bite";
+    if (input.distance <= input.meleeReach + 0.8) return "body-check";
+    return "intercept";
+  }
+  if (input.distance < 2.8) return "disengage";
+  if (input.distance > 10.5) return "intercept";
+  if (input.cooldownSeconds > 0) return "hold-range";
+  return "control";
 }
 
 export const V1_FUTURE_ONLY = Object.freeze([

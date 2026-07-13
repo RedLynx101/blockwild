@@ -12,9 +12,9 @@ test("raised shields reduce only frontal damage and spend durability", () => {
   assert.equal(rear.damage, 10);
 });
 
-test("sunmetal blocks more and lasts longer while interaction remains right-click priority", () => {
-  assert.ok(SHIELD_PROFILES["sunmetal-shield"].blockFraction > SHIELD_PROFILES["wildwood-shield"].blockFraction);
-  assert.ok(SHIELD_PROFILES["sunmetal-shield"].maxDurability > SHIELD_PROFILES["wildwood-shield"].maxDurability);
+test("iron blocks more and lasts longer while interaction remains right-click priority", () => {
+  assert.ok(SHIELD_PROFILES["iron-shield"].blockFraction > SHIELD_PROFILES["wildwood-shield"].blockFraction);
+  assert.ok(SHIELD_PROFILES["iron-shield"].maxDurability > SHIELD_PROFILES["wildwood-shield"].maxDurability);
   assert.equal(shouldRaiseOffhandShield({ hasShield: true, primaryInteractionHandled: true, rightHeld: true }), false);
   assert.equal(shouldRaiseOffhandShield({ hasShield: true, primaryInteractionHandled: false, rightHeld: true }), true);
 });

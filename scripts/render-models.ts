@@ -7,7 +7,7 @@ import { INSPECTOR_MODEL_SPECS, assertModelSpec, type ModelBox, type ModelSpec }
 import { applyDragonPose, createMobVisual, createSkeletonArrowVisual } from "../app/game/mob-models.ts";
 import { BUTTERFLY_ORDER, CORE_MOB_ORDER, DRAGON_ORDER, MOB_DEFS, type ButterflyKind, type CoreMobKind, type DragonKind } from "../app/game/mobs.ts";
 import { BlockPlayerModel, type PlayerAnimation } from "../app/game/player-model.ts";
-import { GAME_VERSION } from "../app/game/version.ts";
+import { GAME_VERSION_LABEL } from "../app/game/version.ts";
 
 export type ViewName = "iso" | "front" | "side";
 type Point2 = { x: number; y: number };
@@ -682,7 +682,7 @@ function renderPortraitSheet(specs: readonly InspectionModelSpec[], rendered: Re
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
   <rect width="100%" height="100%" fill="#0c100e"/>
-  <text x="28" y="43" fill="#e5bd68" font-family="ui-sans-serif, system-ui, sans-serif" font-size="26" font-weight="900" letter-spacing="1.8">BLOCKWILD FIELD GUIDE · V${GAME_VERSION}</text>
+  <text x="28" y="43" fill="#e5bd68" font-family="ui-sans-serif, system-ui, sans-serif" font-size="26" font-weight="900" letter-spacing="1.8">BLOCKWILD FIELD GUIDE · ${GAME_VERSION_LABEL.toUpperCase()}</text>
   <text x="28" y="70" fill="#99a79e" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13">Production creature models · ${viewLabel} portraits · ${specs.length} specimens</text>
   ${tiles}
 </svg>`;

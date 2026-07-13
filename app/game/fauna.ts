@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { BiomeId } from "./world";
 import { MOB_DEFS, type CoreMobKind, type DragonKind, type MobKind, type TideglassAquaticKind } from "./mobs";
+import { UndergroundBiomeId } from "./underground";
 import { createBirdFlightRouteState, type BirdFlightRouteState, type BirdPerchCandidate } from "./creature-pathing";
 
 const TAU = Math.PI * 2;
@@ -248,6 +249,50 @@ export function fishKindForHabitat(habitat: FishHabitat, roll = Math.random()): 
   return weightedMob(fishSpawnTableForHabitat(habitat), roll);
 }
 
+const ORDINARY_TUNNEL_FAUNA: readonly WeightedMob[] = Object.freeze([
+  ["ashnose-bat", 0.28], ["copper-mole", 0.16], ["caveblob", 0.16], ["shadecrawler", 0.12],
+  ["rattlekin", 0.08], ["glowmoth", 0.08], ["grotto-grazer", 0.05], ["veinling", 0.015],
+]);
+const ROOTWEAVE_FAUNA: readonly WeightedMob[] = Object.freeze([
+  ["grotto-grazer", 0.28], ["mossling", 0.16], ["boglantern-mossling", 0.12], ["glowmoth", 0.14],
+  ["copper-mole", 0.09], ["glassback-newt", 0.08], ["lightning-bug", 0.06], ["caveblob", 0.04], ["veinling", 0.01],
+]);
+const STARBLOOM_FAUNA: readonly WeightedMob[] = Object.freeze([
+  ["lanternray", 0.18], ["prismtail-swift", 0.17], ["chimewing", 0.16], ["glowmoth", 0.15],
+  ["lightning-bug", 0.1], ["moonbloom-mossling", 0.08], ["vaultwing", 0.055], ["shadecrawler", 0.035], ["veinling", 0.012],
+]);
+const GLASSWATER_FAUNA: readonly WeightedMob[] = Object.freeze([
+  ["glassback-newt", 0.18], ["sailfin-skimmer", 0.17], ["lanternray", 0.13], ["gloomfin", 0.13],
+  ["cavefilament", 0.12], ["stonewhisker-loach", 0.09], ["lanternshell", 0.07], ["glowmoth", 0.04], ["shadecrawler", 0.025],
+]);
+const PILLARSTONE_FAUNA: readonly WeightedMob[] = Object.freeze([
+  ["ashnose-bat", 0.23], ["copper-mole", 0.16], ["grotto-grazer", 0.11], ["auric-scarab", 0.09],
+  ["rattlekin", 0.09], ["caveblob", 0.08], ["shadecrawler", 0.07], ["vaultwing", 0.045], ["veinling", 0.012],
+]);
+const CRYSTALDEEP_FAUNA: readonly WeightedMob[] = Object.freeze([
+  ["chimewing", 0.2], ["prismtail-swift", 0.17], ["auric-scarab", 0.13], ["vaultwing", 0.11],
+  ["glowmoth", 0.09], ["shadecrawler", 0.08], ["veinling", 0.045], ["lanternray", 0.035], ["rattlekin", 0.025],
+]);
+const EMBERDEEP_FAUNA: readonly WeightedMob[] = Object.freeze([
+  ["cinder-kite", 0.21], ["cinder-maw", 0.15], ["cindercone-mossling", 0.13], ["ashnose-bat", 0.12],
+  ["auric-scarab", 0.08], ["caveblob", 0.07], ["shadecrawler", 0.06], ["veinling", 0.025], ["prismtail-swift", 0.02],
+]);
+
+/** Natural food webs for cave space; authored hub residents supplement these pools. */
+export function undergroundMobSpawnTableForBiome(biome: UndergroundBiomeId): readonly WeightedMob[] {
+  if (biome === UndergroundBiomeId.RootweaveGrotto) return ROOTWEAVE_FAUNA;
+  if (biome === UndergroundBiomeId.StarbloomHollows) return STARBLOOM_FAUNA;
+  if (biome === UndergroundBiomeId.GlasswaterDeeps) return GLASSWATER_FAUNA;
+  if (biome === UndergroundBiomeId.PillarstoneReaches) return PILLARSTONE_FAUNA;
+  if (biome === UndergroundBiomeId.CrystaldeepGallery) return CRYSTALDEEP_FAUNA;
+  if (biome === UndergroundBiomeId.EmberdeepFumaroles) return EMBERDEEP_FAUNA;
+  return ORDINARY_TUNNEL_FAUNA;
+}
+
+export function undergroundMobKindForBiome(biome: UndergroundBiomeId, roll = Math.random()): MobKind {
+  return weightedMob(undergroundMobSpawnTableForBiome(biome), roll);
+}
+
 /**
  * Searches only the ledges a creature can actually step onto. A top-down world
  * query sees a tree canopy before the floor beneath it and was the main reason
@@ -464,6 +509,14 @@ export function passiveMobKindForBiome(biome: BiomeId, roll = Math.random()): Mo
 }
 
 export const NATURAL_GROUP_RANGES: Readonly<Partial<Record<MobKind, readonly [minimum: number, maximum: number]>>> = Object.freeze({
+  "grotto-grazer": [2, 5],
+  lanternray: [2, 5],
+  "prismtail-swift": [3, 7],
+  "glassback-newt": [2, 4],
+  "sailfin-skimmer": [2, 5],
+  "ashnose-bat": [3, 8],
+  chimewing: [2, 5],
+  "cinder-kite": [1, 3],
   "sunstep-grazer": [4, 7],
   "wild-horse": [3, 6],
   "rimehoof-courser": [3, 5],
@@ -932,6 +985,7 @@ export function canRideCreature(context: CreatureRideContext) {
 
 export const GENERIC_BOND_MOB_KINDS = Object.freeze([
   "wild-horse", "rimehoof-courser", "sunscar-courser", "mirestride-courser", "starbough-courser", "deepgear-courser-golem",
+  "clockwork-hound-golem", "webspinner-golem",
   "warg", "tidepup", "sakurakit", "taffy-hound", "praline-cat", "rimecoat-hound", "bramblewhisk-cat", "taffalo",
   "glimmerhart", "runeowl", "copper-mole",
   "meadow-cottontail", "russet-rabbit", "frost-hare", "chocolate-bunny",

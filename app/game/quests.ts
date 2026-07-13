@@ -353,7 +353,8 @@ export const GOBLIN_FACTION_QUESTS: readonly QuestDefinition[] = Object.freeze([
     name: "A Ridge Under Bone",
     summary: "Bring worked metal to the clanhold and break the archers haunting its higher switchbacks.",
     objectives: [
-      { id: "deliver-sunmetal", label: "Deliver 12 Sunmetal Ingots", kind: "deliver-item", itemId: "sunmetal-ingot", count: 12 },
+      // Objective id is intentionally stable for pre-overhaul quest-book saves.
+      { id: "deliver-sunmetal", label: "Deliver 12 Iron Ingots", kind: "deliver-item", itemId: "iron-ingot", count: 12 },
       { id: "defeat-ridge-skeletons", label: "Defeat 10 Skeleton Archers", kind: "kill", mobKind: "skeleton", count: 10 },
     ],
     prerequisites: { allOf: ["goblin-brass-on-the-ridge"] },

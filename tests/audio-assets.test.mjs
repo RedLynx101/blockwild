@@ -135,3 +135,61 @@ test("rabbit, small-animal, owl, and underwater leviathan calls are complete PCM
     assert.equal(bytes.readUInt16LE(34), 16, `${name} should remain 16-bit`);
   }
 });
+
+test("mechanical creature cues preserve the supplied PCM masters and safe headroom", () => {
+  const supplied = [
+    ["dwarven-automaton-metal-breath.wav", 460_972, 2.4],
+    ["clockwork-hound-metallic-bark.wav", 384_172, 2],
+    ["dwarven-automaton-steam-release-a.wav", 384_172, 2],
+    ["dwarven-automaton-steam-release-b.wav", 384_172, 2],
+  ];
+  for (const [name, expectedBytes, expectedDuration] of supplied) {
+    const bytes = readFileSync(resolve("public", "sfx", name));
+    assert.equal(bytes.length, expectedBytes, `${name} should preserve the complete supplied file`);
+    assert.equal(bytes.subarray(0, 4).toString("ascii"), "RIFF");
+    assert.equal(bytes.subarray(8, 12).toString("ascii"), "WAVE");
+    assert.equal(bytes.readUInt16LE(20), 1, `${name} should remain PCM`);
+    assert.equal(bytes.readUInt16LE(22), 2, `${name} should remain stereo`);
+    assert.equal(bytes.readUInt32LE(24), 48_000, `${name} should remain 48 kHz`);
+    assert.equal(bytes.readUInt16LE(34), 16, `${name} should remain 16-bit`);
+
+    let offset = 12;
+    let dataOffset = -1;
+    let dataBytes = 0;
+    while (offset + 8 <= bytes.length) {
+      const id = bytes.subarray(offset, offset + 4).toString("ascii");
+      const size = bytes.readUInt32LE(offset + 4);
+      if (id === "data") {
+        dataOffset = offset + 8;
+        dataBytes = size;
+        break;
+      }
+      offset += 8 + size + (size & 1);
+    }
+    assert.ok(dataOffset > 0, `${name} should contain an audio data chunk`);
+    assert.equal(dataBytes / (48_000 * 2 * 2), expectedDuration, `${name} should preserve its authored duration`);
+
+    let peak = 0;
+    let sumSquares = 0;
+    const sampleCount = dataBytes / 2;
+    for (let index = 0; index < sampleCount; index += 1) {
+      const sample = bytes.readInt16LE(dataOffset + index * 2) / 32_768;
+      peak = Math.max(peak, Math.abs(sample));
+      sumSquares += sample * sample;
+    }
+    const rms = Math.sqrt(sumSquares / sampleCount);
+    assert.ok(peak > 0.45 && peak < 0.9, `${name} should remain audible without clipping`);
+    assert.ok(rms > 0.03 && rms < 0.1, `${name} should retain its authored one-shot level`);
+  }
+});
+
+test("the supplied player damage cue remains a complete stereo PCM master", () => {
+  const bytes = readFileSync(resolve("public", "sfx", "player-direct-damage.wav"));
+  assert.equal(bytes.length, 384_172);
+  assert.equal(bytes.subarray(0, 4).toString("ascii"), "RIFF");
+  assert.equal(bytes.subarray(8, 12).toString("ascii"), "WAVE");
+  assert.equal(bytes.readUInt16LE(20), 1);
+  assert.equal(bytes.readUInt16LE(22), 2);
+  assert.equal(bytes.readUInt32LE(24), 48_000);
+  assert.equal(bytes.readUInt16LE(34), 16);
+});

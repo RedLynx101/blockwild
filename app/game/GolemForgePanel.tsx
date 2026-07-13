@@ -83,6 +83,8 @@ const GOLEM_DESCRIPTIONS: Readonly<Record<GolemType, string>> = Object.freeze({
   "stone-bulwark": "A patient stone-and-brass defender built to hold a gate or protect its keeper.",
   "aetherforged-sentinel": "A towering guardian whose aether core projects heavy arcane force.",
   "deepgear-courser": "A piston-legged brass mount built for steep hold roads and long overland journeys.",
+  "clockwork-hound": "A fast spring-hearted guardian that intercepts danger and snaps back into formation.",
+  "webspinner": "An eight-legged control construct that binds threats with pressure-spun filament and steam.",
 });
 
 const GOLEM_GLYPHS: Readonly<Record<GolemType, string>> = Object.freeze({
@@ -90,6 +92,8 @@ const GOLEM_GLYPHS: Readonly<Record<GolemType, string>> = Object.freeze({
   "stone-bulwark": "B",
   "aetherforged-sentinel": "A",
   "deepgear-courser": "D",
+  "clockwork-hound": "H",
+  "webspinner": "W",
 });
 
 export function GolemForgePanel({

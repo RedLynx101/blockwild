@@ -51,7 +51,7 @@ import {
   startGolemForge,
   unlockGolemBlueprint,
 } from "../app/game/v1-cultures";
-import { BiomeId, ChunkWorld } from "../app/game/world";
+import { BiomeId, CHUNK_SIZE, ChunkWorld, selectSettlementSite } from "../app/game/world";
 import { QuestPanel } from "../app/game/HearthroadsPanels.tsx";
 
 function assertConnectedTilePlan(plan: ReturnType<typeof planV1Settlement>) {
@@ -424,9 +424,24 @@ test("Deepgear and Glimmerwood luminous blocks enter the real world light index"
 
 test("Wood Elf Moonwells author a living Glowfin pond instead of a sealed house", () => {
   const world = new ChunkWorld();
-  world.reset("V1-SETTLEMENT-LIVE");
-  world.generateChunk(Math.floor(-16_112 / 16), Math.floor(12_563 / 16));
-  const settlement = [...world.settlementPlans.values()].find((entry) => entry.candidate.factionId === "wood-elves");
+  world.reset("WILDERNESS", undefined, { profile: "world-below-v15" });
+  const candidates: SettlementCandidate[] = [];
+  for (let regionX = -4; regionX <= 4; regionX += 1) for (let regionZ = -4; regionZ <= 4; regionZ += 1) {
+    const candidate = selectSettlementSite({
+      worldSeed: world.seedText,
+      seed: world.seed,
+      regionX,
+      regionZ,
+      enabledFactions: world.generationOptions.enabledFactions,
+      sample: (x, z) => world.sampleColumn(x, z),
+    });
+    if (candidate) candidates.push(candidate);
+  }
+  const accepted = candidates.filter((candidate) => settlementWinsSpacingTieBreak(candidate, candidates));
+  const woodElf = accepted.find((candidate) => candidate.factionId === "wood-elves");
+  assert.ok(woodElf, "generator 15 should allocate a viable Wood Elf settlement in the audit region");
+  world.generateChunk(Math.floor(woodElf.center.x / CHUNK_SIZE), Math.floor(woodElf.center.z / CHUNK_SIZE));
+  const settlement = world.settlementPlans.get(woodElf.id);
   assert.ok(settlement);
   const moonwell = settlement.layout.buildings.find((building) => building.role === "moonwell");
   assert.ok(moonwell);

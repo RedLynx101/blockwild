@@ -95,7 +95,7 @@ export function createV12ModelPolishSpecs(): InspectionModelSpec[] {
       });
       player.setEquipmentAppearance({ head: "#8bd7ec", chest: "#7cc7e5", legs: "#6bb6da", feet: "#61a9ce" });
       player.setHeldItem(createAvatarHeldItemModel(Item.IronSword));
-      player.setOffhandItem(createAvatarHeldItemModel(Item.SunmetalShield), true).setOffhandRaised(true).setPose({ locomotion: "idle" });
+      player.setOffhandItem(createAvatarHeldItemModel(Item.IronShield), true).setOffhandRaised(true).setPose({ locomotion: "idle" });
     }),
     capturePlayer("v12-dwarf-seated", "Dwarf - Seated", (player) => {
       player.setAppearance({

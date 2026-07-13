@@ -1,7 +1,7 @@
 import type { CoreMobKind } from "./mobs";
 import type { SampleKind } from "./audio";
 
-export type CreatureSoundEvent = "ambient" | "hurt" | "feed" | "tame" | "breed" | "mount";
+export type CreatureSoundEvent = "ambient" | "attack" | "hurt" | "feed" | "tame" | "breed" | "mount";
 export type CreatureSoundCue = {
   /** Stable asset stem for generated audio, without an extension. */
   asset: string;
@@ -31,10 +31,31 @@ const NATURAL_HORSE_EVENTS = Object.freeze({
 
 const DEEPGEAR_HORSE_EVENTS = Object.freeze({
   ambient: cue("deepgear-courser-whinny", "mob", 0.74, 0.025),
-  hurt: cue("deepgear-courser-whinny", "attack", 0.82, 0.018),
+  attack: cue("dwarven-automaton-steam-release-a", "attack", 0.7, 0.018),
+  hurt: cue("dwarven-automaton-steam-release-b", "attack", 0.68, 0.018),
   feed: cue("deepgear-courser-whinny", "craft", 0.5, 0.012),
   tame: cue("deepgear-courser-whinny", "craft", 0.78, 0.012),
   mount: cue("deepgear-courser-whinny", "mob", 0.62, 0.016),
+} satisfies Partial<Record<CreatureSoundEvent, CreatureSoundCue>>);
+
+const DWARVEN_AUTOMATON_EVENTS = Object.freeze({
+  ambient: cue("dwarven-automaton-metal-breath", "mob", 0.46, 0.035),
+  attack: cue("dwarven-automaton-steam-release-a", "attack", 0.76, 0.025),
+  hurt: cue("dwarven-automaton-steam-release-b", "attack", 0.68, 0.03),
+} satisfies Partial<Record<CreatureSoundEvent, CreatureSoundCue>>);
+
+const CLOCKWORK_HOUND_EVENTS = Object.freeze({
+  ambient: cue("dwarven-automaton-metal-breath", "mob", 0.42, 0.035),
+  attack: cue("clockwork-hound-metallic-bark", "attack", 0.82, 0.025),
+  hurt: cue("dwarven-automaton-metal-breath", "attack", 0.7, 0.035),
+  feed: cue("dwarven-automaton-metal-breath", "craft", 0.42, 0.045),
+  tame: cue("clockwork-hound-metallic-bark", "craft", 0.58, 0.025),
+} satisfies Partial<Record<CreatureSoundEvent, CreatureSoundCue>>);
+
+const WEBSPINNER_EVENTS = Object.freeze({
+  ambient: cue("dwarven-automaton-steam-release-b", "mob", 0.38, 0.025),
+  attack: cue("dwarven-automaton-steam-release-a", "attack", 0.86, 0.018),
+  hurt: cue("dwarven-automaton-steam-release-b", "attack", 0.64, 0.025),
 } satisfies Partial<Record<CreatureSoundEvent, CreatureSoundCue>>);
 
 const GRAZER_EVENTS = Object.freeze({
@@ -82,6 +103,25 @@ const OWL_EVENTS = Object.freeze({
  * generated WAV assets can be added without changing creature behavior.
  */
 export const CREATURE_SOUND_EVENTS: Partial<Record<CoreMobKind, Partial<Record<CreatureSoundEvent, CreatureSoundCue>>>> = {
+  "grotto-grazer": GRAZER_EVENTS,
+  lanternray: DEEP_CREATURE_EVENTS,
+  "sailfin-skimmer": DEEP_CREATURE_EVENTS,
+  "glassback-newt": LITTLE_ANIMAL_EVENTS,
+  "prismtail-swift": {
+    ambient: cue("bird-chirp", "mob", 0.42, 0.18), hurt: cue("bird-chirp", "attack", 0.56, 0.12),
+  },
+  "ashnose-bat": {
+    ambient: cue("owl-call-b", "mob", 0.34, 0.22), hurt: cue("owl-call-b", "attack", 0.5, 0.16),
+  },
+  chimewing: {
+    ambient: cue("bird-chirp", "mob", 0.38, 0.12), hurt: cue("bird-chirp", "attack", 0.52, 0.09),
+  },
+  "cinder-kite": {
+    ambient: cue("emberjay-squawk", "mob", 0.5, 0.15), hurt: cue("emberjay-squawk", "attack", 0.64, 0.1),
+  },
+  veinling: {
+    ambient: cue("shadecrawler-stone-chitter", "mob", 0.48, 0.08), hurt: cue("shadecrawler-echo-screech", "attack", 0.62, 0.07),
+  },
   mossling: LITTLE_ANIMAL_EVENTS,
   "boglantern-mossling": LITTLE_ANIMAL_EVENTS,
   "cindercone-mossling": LITTLE_ANIMAL_EVENTS,
@@ -121,6 +161,11 @@ export const CREATURE_SOUND_EVENTS: Partial<Record<CoreMobKind, Partial<Record<C
   "starbough-courser": NATURAL_HORSE_EVENTS,
   mistmane: NATURAL_HORSE_EVENTS,
   "deepgear-courser-golem": DEEPGEAR_HORSE_EVENTS,
+  "copper-scout-golem": DWARVEN_AUTOMATON_EVENTS,
+  "stone-bulwark-golem": DWARVEN_AUTOMATON_EVENTS,
+  "aetherforged-sentinel": DWARVEN_AUTOMATON_EVENTS,
+  "clockwork-hound-golem": CLOCKWORK_HOUND_EVENTS,
+  "webspinner-golem": WEBSPINNER_EVENTS,
   emberjay: {
     ambient: cue("emberjay-squawk", "mob", 0.78, 0.055),
     hurt: cue("emberjay-squawk", "attack", 0.86, 0.035),
@@ -252,6 +297,10 @@ export const CREATURE_SAMPLE_BY_ASSET = Object.freeze({
   "leviathan-growl-underwater-b": "leviathanGrowlUnderwaterB",
   "owl-call-a": "owlCallA",
   "owl-call-b": "owlCallB",
+  "dwarven-automaton-metal-breath": "dwarvenAutomatonMetalBreath",
+  "clockwork-hound-metallic-bark": "clockworkHoundMetallicBark",
+  "dwarven-automaton-steam-release-a": "dwarvenAutomatonSteamReleaseA",
+  "dwarven-automaton-steam-release-b": "dwarvenAutomatonSteamReleaseB",
 } as const satisfies Readonly<Record<string, SampleKind>>);
 
 export function creatureHasCustomSound(kind: CoreMobKind) {
@@ -261,5 +310,10 @@ export function creatureHasCustomSound(kind: CoreMobKind) {
 }
 
 export function creatureSoundCue(kind: CoreMobKind, event: CreatureSoundEvent): CreatureSoundCue {
-  return CREATURE_SOUND_EVENTS[kind]?.[event] ?? cue(`creature-generic-${event}`, event === "hurt" ? "attack" : event === "feed" ? "eat" : "mob", 0.62, 0.1);
+  return CREATURE_SOUND_EVENTS[kind]?.[event] ?? cue(
+    `creature-generic-${event}`,
+    event === "hurt" || event === "attack" ? "attack" : event === "feed" ? "eat" : "mob",
+    0.62,
+    0.1,
+  );
 }

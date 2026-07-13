@@ -36,7 +36,7 @@ import {
   feedShadecrawler,
   shadecrawlerScale,
 } from "../app/game/shadecrawler.ts";
-import { CREATURE_SOUND_EVENTS, creatureSoundCue } from "../app/game/creature-sounds.ts";
+import { CREATURE_SAMPLE_BY_ASSET, CREATURE_SOUND_EVENTS, creatureSoundCue } from "../app/game/creature-sounds.ts";
 import {
   canCaptureCreature,
   captureCreature,
@@ -740,6 +740,35 @@ test("creature sound events define Ridgeback and thoughtfully shared wildlife cu
   assert.equal(creatureSoundCue("tidepup", "ambient").asset, "little-animal-squeak");
   assert.deepEqual(creatureSoundCue("runeowl", "ambient").variants, ["owl-call-b"]);
   assert.deepEqual(creatureSoundCue("worldshell-leviathan", "ambient").variants, ["leviathan-growl-underwater-b"]);
+});
+
+test("Deepgear automatons use restrained spatial one-shots and explicit attack cues", () => {
+  assert.deepEqual({
+    metalBreath: CREATURE_SAMPLE_BY_ASSET["dwarven-automaton-metal-breath"],
+    metallicBark: CREATURE_SAMPLE_BY_ASSET["clockwork-hound-metallic-bark"],
+    steamA: CREATURE_SAMPLE_BY_ASSET["dwarven-automaton-steam-release-a"],
+    steamB: CREATURE_SAMPLE_BY_ASSET["dwarven-automaton-steam-release-b"],
+  }, {
+    metalBreath: "dwarvenAutomatonMetalBreath",
+    metallicBark: "clockworkHoundMetallicBark",
+    steamA: "dwarvenAutomatonSteamReleaseA",
+    steamB: "dwarvenAutomatonSteamReleaseB",
+  });
+  assert.equal(creatureSoundCue("clockwork-hound-golem", "ambient").asset, "dwarven-automaton-metal-breath");
+  assert.equal(creatureSoundCue("clockwork-hound-golem", "attack").asset, "clockwork-hound-metallic-bark");
+  assert.equal(creatureSoundCue("clockwork-hound-golem", "hurt").asset, "dwarven-automaton-metal-breath");
+  assert.equal(creatureSoundCue("clockwork-hound-golem", "tame").fallback, "craft");
+  assert.equal(creatureSoundCue("webspinner-golem", "ambient").asset, "dwarven-automaton-steam-release-b");
+  assert.equal(creatureSoundCue("webspinner-golem", "attack").asset, "dwarven-automaton-steam-release-a");
+  assert.ok(creatureSoundCue("webspinner-golem", "ambient").gain < creatureSoundCue("webspinner-golem", "attack").gain);
+  for (const kind of ["copper-scout-golem", "stone-bulwark-golem", "aetherforged-sentinel"] as const) {
+    assert.equal(creatureSoundCue(kind, "ambient").asset, "dwarven-automaton-metal-breath");
+    assert.equal(creatureSoundCue(kind, "attack").asset, "dwarven-automaton-steam-release-a");
+    assert.equal(creatureSoundCue(kind, "hurt").asset, "dwarven-automaton-steam-release-b");
+  }
+  assert.equal(creatureSoundCue("deepgear-courser-golem", "ambient").asset, "deepgear-courser-whinny");
+  assert.equal(creatureSoundCue("deepgear-courser-golem", "attack").asset, "dwarven-automaton-steam-release-a");
+  assert.equal(creatureSoundCue("mossling", "attack").fallback, "attack", "unmapped attack events should keep the combat fallback");
 });
 
 test("connected exhibit blocks cap at 20, grow lower flowers, and store one exact butterfly per block", () => {
