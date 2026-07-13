@@ -10,7 +10,7 @@ import {
 } from "./adventure-content";
 import { paintBiomeSurfaceAtlasTile } from "./biome-atmosphere";
 import { BLOCKS, LEAF_BLOCKS, TORCH_BLOCKS, BlockId, archiveShelfBookCount, blockContainsWater, isWaterloggedFloraBlock, type RenderLayer } from "./data";
-import { caveEntranceAt, caveFeatureAt } from "./caves";
+import { CAVE_ENTRANCE_CELL_SIZE, caveEntranceAt, caveEntranceForCell, caveFeatureAt } from "./caves";
 import { doorIsOpen, doorState, doorUsesXAxis, isDoorBlock } from "./doors";
 import { DENSE_CUTOUT_LEAF_POLICY, planFullTree, planSubmergedFlora, planSyrupPondsForChunk, syrupPondColumnAt, wildPeppermintHeight, type TreeForm, type TreePlanBlock } from "./ecology";
 import { dragonLairMarkersForChunk, dragonLairPlacementsForChunk, dragonLairsIntersectingChunk, repairGeneratedTreePlan } from "./dragon-world";
@@ -24,6 +24,7 @@ import {
   structureClearanceBounds,
   structureMarkersForChunk,
   structurePlacementsForChunk,
+  rollStructureLoot,
   type PlannedBlock,
   type StructureKind,
   type StructureMarker,
@@ -40,6 +41,14 @@ import {
   type SettlementResident,
 } from "./settlements";
 import { planSeaDragonNest } from "./v1-cultures";
+import {
+  UndergroundBiomeId,
+  CAVE_GRAPH_MAX_RADIUS,
+  caveGraphEdgesInBounds,
+  caveGraphNodesInBounds,
+  nearestUpperCaveNode,
+  undergroundBiomeAt as sampleUndergroundBiome,
+} from "./underground";
 
 export const CHUNK_SIZE = 16;
 export const MIN_Y = -64;
@@ -48,7 +57,7 @@ export const WORLD_HEIGHT = MAX_Y - MIN_Y + 1;
 export const SEA_LEVEL = 32;
 export const SECTION_HEIGHT = 16;
 export const SECTION_COUNT = WORLD_HEIGHT / SECTION_HEIGHT;
-export const GENERATOR_VERSION = 14;
+export const GENERATOR_VERSION = 15;
 
 export type SettlementWorldPlan = Readonly<{
   candidate: SettlementCandidate;
@@ -56,6 +65,7 @@ export type SettlementWorldPlan = Readonly<{
 }>;
 
 export type WorldGenerationOptions = {
+  profile: "legacy-v14" | "world-below-v15";
   caveFrequency: number;
   biomeScale: number;
   resourceAbundance: number;
@@ -65,8 +75,10 @@ export type WorldGenerationOptions = {
 };
 
 export const DEFAULT_WORLD_GENERATION_OPTIONS: Readonly<WorldGenerationOptions> = Object.freeze({
+  profile: "world-below-v15",
   caveFrequency: 1,
-  biomeScale: 1,
+  /** v1.4 regions average roughly 35% wider without turning into continent-long monocultures. */
+  biomeScale: 1.35,
   resourceAbundance: 1,
   structures: true,
   enabledFactions: Object.freeze([...NPC_FACTION_IDS]),
@@ -305,7 +317,8 @@ export type Chunk = {
   key: string;
   cx: number;
   cz: number;
-  blocks: Uint8Array;
+  /** Word-sized since The World Below; all pre-overhaul numeric block ids remain stable. */
+  blocks: Uint16Array;
   heightmap: Int16Array;
   biomes: Uint8Array;
   group: THREE.Group;
@@ -395,7 +408,7 @@ const GENERATED_GROWTH_BLOCK_SET = new Set<BlockId>([
   BlockId.BluepodCrop,
 ]);
 
-type ColumnSample = {
+export type ColumnSample = {
   height: number;
   waterline: number;
   biome: BiomeId;
@@ -531,7 +544,7 @@ function fitUnderwaterSettlementLayout(
 
 const TILE_COLORS = [
   "#65a441", "#775338", "#795338", "#7b8181", "#d7c27b", "#735033", "#9d7446", "#3f7d36",
-  "#3d85c8", "#4a4e50", "#a17d67", "#b9864c", "#91786e", "#bde4e2", "#e5c35a", "#303334",
+  "#3d85c8", "#4a4e50", "#737a7b", "#b9864c", "#91786e", "#bde4e2", "#e5c35a", "#303334",
   "#e5ecea", "#8d927f", "#604634", "#8b6846", "#2f6042", "#d0c8ab", "#b8ab8b", "#73a54c",
   "#bd7046", "#8998a0", "#4f913e", "#4f4034", "#5b7339", "#4a5136", "#aaa04f", "#8b793d",
   "#7b4f58", "#a36e78", "#d887ad", "#6b716f", "#a36b3c", "#8d592f", "#686e70", "#f2b94b",
@@ -565,6 +578,22 @@ const TILE_COLORS = [
   "#5f9e3f", "#79b54f",
   // 160-161: blue-black wrought iron and its pale hammered fittings.
   "#303b42", "#87949a",
+  // 162-168: existing reserved atlas slots, including the connected peppermint stem.
+  "#d9ece8", "#777777", "#777777", "#777777", "#777777", "#777777", "#777777",
+  // 169-174: Rootweave Grotto earth, roots, moss and shelves.
+  "#493d2e", "#6c5131", "#7fc66d", "#527d47", "#89673d", "#4f4735",
+  // 175-180: Starbloom Hollows caps, stems, gills, blooms, spores and carpets.
+  "#765cc4", "#b3a5c7", "#86e3d4", "#e7bb62", "#a66de0", "#55a578",
+  // 181-187: Glasswater stone, shale, reeds, algae, pads, eggs and crust.
+  "#526f76", "#638597", "#6ba5a3", "#4fd4c1", "#557d68", "#98a967", "#b3a27d",
+  // 188-190: Pillarstone geology.
+  "#76736e", "#b7a77d", "#8d8876",
+  // 191-195: Crystaldeep stone and crystal growth stages.
+  "#323f50", "#7189e8", "#5d6e9e", "#8ba9ff", "#8996ad",
+  // 196-200: Emberdeep sulfur, vents and mineral terraces.
+  "#93853d", "#d0b943", "#51443c", "#5e4137", "#9d7650",
+  // 201-209: unresolved Veinmetal, traversal pieces, guano, bridge and lift.
+  "#586f68", "#7b9b91", "#67513a", "#9b7446", "#737b7e", "#e2bc56", "#6e644a", "#655143", "#667278",
 ];
 
 export const MEADOW_GRASS_PALETTE = Object.freeze({
@@ -594,6 +623,7 @@ export function normalizeWorldGenerationOptions(value?: Partial<WorldGenerationO
     return Math.round(clamp(resolved, min, max) * 100) / 100;
   };
   return {
+    profile: value?.profile === "legacy-v14" ? "legacy-v14" : "world-below-v15",
     caveFrequency: finiteOption(value?.caveFrequency, DEFAULT_WORLD_GENERATION_OPTIONS.caveFrequency, 0, 3),
     biomeScale: finiteOption(value?.biomeScale, DEFAULT_WORLD_GENERATION_OPTIONS.biomeScale, 0.25, 4),
     resourceAbundance: finiteOption(value?.resourceAbundance, DEFAULT_WORLD_GENERATION_OPTIONS.resourceAbundance, 0.25, 4),
@@ -624,6 +654,18 @@ const LIGHT_BLOCKS = new Set<BlockId>([
   BlockId.HearthFireplace,
   BlockId.Whisperglass,
   BlockId.LightningBugJar,
+  BlockId.LuminousRoot,
+  BlockId.StarbloomCap,
+  BlockId.LuminousGills,
+  BlockId.LanternBloom,
+  BlockId.GlowmossCarpet,
+  BlockId.LuminousAlgae,
+  BlockId.ResonantCrystal,
+  BlockId.CrystalCluster,
+  BlockId.FumaroleVent,
+  BlockId.LivingVein,
+  BlockId.VeinmetalHeart,
+  BlockId.CaveMarker,
 ]);
 /**
  * Static voxel-light budget used while baking chunk vertex colors. The small
@@ -636,7 +678,7 @@ export const BAKED_LIGHT_RADIUS = 18;
 /** Lower/middle Wild Peppermint segments use a full-height repeating cane tile. */
 export const WILD_PEPPERMINT_STEM_TILE = 162;
 export type BakedLightSource = { x: number; y: number; z: number; type: BlockId };
-const ATLAS_GRID = 13;
+const ATLAS_GRID = 16;
 const ATLAS_PAD = 0.0008;
 const TILE_UVS = Array.from({ length: ATLAS_GRID * ATLAS_GRID }, (_, tile) => {
   const column = tile % ATLAS_GRID;
@@ -737,6 +779,131 @@ function hash3(x: number, y: number, z: number, seed: number) {
   return ((n ^ (n >>> 13)) >>> 0) / 4294967295;
 }
 
+export function selectSettlementSite(input: Readonly<{
+  worldSeed: string;
+  seed: number;
+  regionX: number;
+  regionZ: number;
+  enabledFactions: readonly NpcFactionId[];
+  sample: (x: number, z: number) => ColumnSample;
+}>): SettlementCandidate | null {
+  const regionSize = 32 * CHUNK_SIZE;
+  const regionOriginX = input.regionX * regionSize;
+  const regionOriginZ = input.regionZ * regionSize;
+  let best: Readonly<{ candidate: SettlementCandidate; score: number }> | null = null;
+  for (let siteIndex = 0; siteIndex < 16; siteIndex += 1) {
+    const gridX = siteIndex % 4;
+    const gridZ = Math.floor(siteIndex / 4);
+    const jitterX = Math.floor((hash2(input.regionX * 31 + siteIndex, input.regionZ, input.seed ^ 0x51a7e5) - 0.5) * 46);
+    const jitterZ = Math.floor((hash2(input.regionX, input.regionZ * 31 + siteIndex, input.seed ^ 0x7e115e) - 0.5) * 46);
+    const siteX = regionOriginX + 80 + gridX * 112 + jitterX;
+    const siteZ = regionOriginZ + 80 + gridZ * 112 + jitterZ;
+    const probe = input.sample(siteX, siteZ);
+    const probeBiome = settlementBiomeFromId(probe.biome);
+    if (!probeBiome) continue;
+    const planned = planSettlementCandidate({
+      worldSeed: input.worldSeed,
+      regionX: input.regionX,
+      regionZ: input.regionZ,
+      biome: probeBiome,
+      existing: [],
+      floorY: probe.height,
+      enabledFactions: input.enabledFactions,
+      siteSearch: true,
+    });
+    if (!planned) continue;
+    const underwaterSite = planned.environment === "underwater";
+    if (underwaterSite ? probe.height >= probe.waterline - 5 : probe.height <= probe.waterline + 3) continue;
+    const footprintProbe = Math.min(12, SETTLEMENT_SIZE_RULES[planned.size].radiusBlocks);
+    const neighborHeights = [[footprintProbe, 0], [-footprintProbe, 0], [0, footprintProbe], [0, -footprintProbe]]
+      .map(([dx, dz]) => input.sample(siteX + dx, siteZ + dz).height);
+    const relief = Math.max(...neighborHeights.map((height) => Math.abs(height - probe.height)));
+    const reliefLimit = underwaterSite ? 7 : planned.environment === "underground" ? 12 : 5;
+    if (relief > reliefLimit) continue;
+    if (!underwaterSite && syrupPondColumnAt(input.worldSeed, siteX, siteZ, input.sample, BiomeId.SugarplumVale)) continue;
+    const floorY = underwaterSite ? probe.height
+      : planned.environment === "underground" ? Math.max(MIN_Y + 10, probe.height - 18)
+        : undefined;
+    const candidate: SettlementCandidate = {
+      ...planned,
+      center: { x: siteX, z: siteZ, ...(floorY === undefined ? {} : { y: floorY + 2 }) },
+      ...(floorY === undefined ? {} : { floorY }),
+    };
+    const waterAccess = Math.abs(probe.height - probe.waterline) <= 8 ? 1 : 0;
+    const culturePriority = candidate.factionId === "dwarves" || candidate.factionId === "sugarcourt" || candidate.factionId === "wood-elves" ? 9
+      : candidate.factionId === "goblins" ? 5 : candidate.factionId === "atlantians" ? 2 : 0;
+    const score = relief * 12 - waterAccess * 4 - culturePriority + hash2(siteX, siteZ, input.seed ^ 0x510e5e) * 3;
+    if (!best || score < best.score) best = { candidate, score };
+  }
+  if (!best) return null;
+  const regionalChance = best.candidate.factionId === "hobbits" ? 0.06
+    : best.candidate.factionId === "atlantians" ? 0.18
+      : best.candidate.factionId === "goblins" ? 0.58
+        : best.candidate.factionId === "wood-elves" ? 0.82
+          : best.candidate.factionId === "sugarcourt" ? 0.9 : 0.9;
+  return hash2(input.regionX, input.regionZ, input.seed ^ 0x2e1b2138) <= regionalChance ? best.candidate : null;
+}
+
+export type DeepgearMineRoadPoint = Readonly<{ x: number; y: number; z: number }>;
+
+function walkDeepgearGridLine(
+  from: Readonly<{ x: number; z: number }>,
+  to: Readonly<{ x: number; z: number }>,
+) {
+  const points: Array<{ x: number; z: number }> = [{ x: Math.round(from.x), z: Math.round(from.z) }];
+  const targetX = Math.round(to.x);
+  const targetZ = Math.round(to.z);
+  let x = points[0].x;
+  let z = points[0].z;
+  while (x !== targetX || z !== targetZ) {
+    const remainingX = targetX - x;
+    const remainingZ = targetZ - z;
+    if (remainingX !== 0 && (remainingZ === 0 || Math.abs(remainingX) >= Math.abs(remainingZ))) x += Math.sign(remainingX);
+    else z += Math.sign(remainingZ);
+    points.push({ x, z });
+  }
+  return points;
+}
+
+/**
+ * Plans a walkable, deterministic mine road between a hold and its cave hub.
+ * Tall mountain holds receive a triangular switchback so every vertical step
+ * also advances horizontally and no authored stair rises or drops by >1.
+ */
+export function planDeepgearMineRoad(
+  from: DeepgearMineRoadPoint,
+  to: DeepgearMineRoadPoint,
+): readonly DeepgearMineRoadPoint[] {
+  const start = { x: Math.round(from.x), y: Math.round(from.y), z: Math.round(from.z) };
+  const target = { x: Math.round(to.x), y: Math.round(to.y), z: Math.round(to.z) };
+  const dx = target.x - start.x;
+  const dz = target.z - start.z;
+  const baseSteps = Math.abs(dx) + Math.abs(dz);
+  const verticalSteps = Math.abs(target.y - start.y);
+  const requiredSteps = verticalSteps + 8;
+  const detour = baseSteps < requiredSteps ? Math.ceil((requiredSteps - baseSteps) / 2) + 4 : 0;
+  const direction = ((start.x ^ start.z ^ target.x ^ target.z) & 1) === 0 ? 1 : -1;
+  const midpoint = { x: Math.round((start.x + target.x) / 2), z: Math.round((start.z + target.z) / 2) };
+  const waypoint = Math.abs(dx) >= Math.abs(dz)
+    ? { x: midpoint.x, z: midpoint.z + detour * direction }
+    : { x: midpoint.x + detour * direction, z: midpoint.z };
+  const horizontal = detour > 0
+    ? [...walkDeepgearGridLine(start, waypoint), ...walkDeepgearGridLine(waypoint, target).slice(1)]
+    : walkDeepgearGridLine(start, target);
+  const seen = new Set<string>();
+  const unique = horizontal.filter((point) => {
+    const key = `${point.x},${point.z}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  const denominator = Math.max(1, unique.length - 1);
+  return unique.map((point, index) => ({
+    ...point,
+    y: Math.round(lerp(start.y, target.y, index / denominator)),
+  }));
+}
+
 function valueNoise2(x: number, z: number, seed: number) {
   const x0 = Math.floor(x);
   const z0 = Math.floor(z);
@@ -783,6 +950,84 @@ function continentOffset(value: number) {
     if (value <= b) return lerp(ay, by, smoothstep(a, b, value));
   }
   return points[points.length - 1][1];
+}
+
+/**
+ * New-generator land biomes begin as large jittered Voronoi provinces rather
+ * than as narrow intersections of several unrelated noise thresholds. The
+ * 36-slot cycle keeps common families common while guaranteeing that every
+ * uncommon land family recurs across an ordinary expedition-sized region.
+ */
+export const SURFACE_REGION_CELL_SIZE = 420;
+const REGIONAL_LAND_BIOME_CYCLE: readonly BiomeId[] = Object.freeze([
+  BiomeId.Meadow, BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Savanna, BiomeId.Frostpine, BiomeId.Desert,
+  BiomeId.Meadow, BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Savanna, BiomeId.Frostpine, BiomeId.Desert,
+  BiomeId.Meadow, BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Savanna, BiomeId.Frostpine, BiomeId.Desert,
+  BiomeId.Meadow, BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Savanna, BiomeId.Frostpine, BiomeId.Desert,
+  BiomeId.Meadow,
+  BiomeId.RainveilJungle, BiomeId.Siltfen, BiomeId.Bloomwood, BiomeId.SakurabloomGrove,
+  BiomeId.SugarplumVale, BiomeId.Glimmerwood, BiomeId.MushroomFen, BiomeId.CloudreedGlen,
+  BiomeId.Badlands, BiomeId.Highlands, BiomeId.Snowfield,
+]);
+
+export type SurfaceRegionSample = Readonly<{
+  biome: BiomeId;
+  coreBiome: BiomeId;
+  neighborBiome: BiomeId;
+  cellX: number;
+  cellZ: number;
+  boundary: number;
+}>;
+
+function positiveModulo(value: number, divisor: number) {
+  return ((value % divisor) + divisor) % divisor;
+}
+
+function regionalLandBiome(seed: number, cellX: number, cellZ: number) {
+  const phase = Math.floor(hash2(0, 0, seed ^ 0x6a09e667) * REGIONAL_LAND_BIOME_CYCLE.length);
+  const strides = [5, 7, 11, 13] as const;
+  const xStride = strides[seed & 3];
+  const zStride = strides[(seed >>> 3) & 3];
+  return REGIONAL_LAND_BIOME_CYCLE[positiveModulo(cellX * xStride + cellZ * zStride + phase, REGIONAL_LAND_BIOME_CYCLE.length)];
+}
+
+function transitionLandBiome(first: BiomeId, second: BiomeId, temperature: number, moisture: number) {
+  if (first === second) return first;
+  const cold = [BiomeId.Frostpine, BiomeId.Snowfield, BiomeId.Highlands].includes(first)
+    || [BiomeId.Frostpine, BiomeId.Snowfield, BiomeId.Highlands].includes(second);
+  const dry = [BiomeId.Desert, BiomeId.Badlands, BiomeId.Savanna].includes(first)
+    || [BiomeId.Desert, BiomeId.Badlands, BiomeId.Savanna].includes(second);
+  const wet = [BiomeId.Siltfen, BiomeId.MushroomFen, BiomeId.RainveilJungle].includes(first)
+    || [BiomeId.Siltfen, BiomeId.MushroomFen, BiomeId.RainveilJungle].includes(second);
+  if (cold && temperature < 0.48) return BiomeId.Frostpine;
+  if (dry && (temperature > 0.52 || moisture < 0.42)) return BiomeId.Savanna;
+  if (wet && moisture > 0.56) return BiomeId.Wildwood;
+  return moisture > 0.53 ? BiomeId.Birchlight : BiomeId.Meadow;
+}
+
+export function surfaceRegionAt(seed: number, x: number, z: number, temperature = 0.5, moisture = 0.5): SurfaceRegionSample {
+  const baseCellX = Math.floor(x / SURFACE_REGION_CELL_SIZE);
+  const baseCellZ = Math.floor(z / SURFACE_REGION_CELL_SIZE);
+  const candidates: Array<{ cellX: number; cellZ: number; biome: BiomeId; distance: number }> = [];
+  for (let cellX = baseCellX - 1; cellX <= baseCellX + 1; cellX += 1) for (let cellZ = baseCellZ - 1; cellZ <= baseCellZ + 1; cellZ += 1) {
+    const jitterX = (hash2(cellX, cellZ, seed ^ 0xbb67ae85) - 0.5) * SURFACE_REGION_CELL_SIZE * 0.42;
+    const jitterZ = (hash2(cellX, cellZ, seed ^ 0x3c6ef372) - 0.5) * SURFACE_REGION_CELL_SIZE * 0.42;
+    const centerX = (cellX + 0.5) * SURFACE_REGION_CELL_SIZE + jitterX;
+    const centerZ = (cellZ + 0.5) * SURFACE_REGION_CELL_SIZE + jitterZ;
+    candidates.push({ cellX, cellZ, biome: regionalLandBiome(seed, cellX, cellZ), distance: Math.hypot(x - centerX, z - centerZ) });
+  }
+  candidates.sort((left, right) => left.distance - right.distance || left.cellX - right.cellX || left.cellZ - right.cellZ);
+  const first = candidates[0];
+  const second = candidates[1] ?? first;
+  const boundary = clamp(1 - (second.distance - first.distance) / 90, 0, 1);
+  return {
+    biome: boundary > 0 ? transitionLandBiome(first.biome, second.biome, temperature, moisture) : first.biome,
+    coreBiome: first.biome,
+    neighborBiome: second.biome,
+    cellX: first.cellX,
+    cellZ: first.cellZ,
+    boundary,
+  };
 }
 
 export function chunkKey(cx: number, cz: number) {
@@ -847,7 +1092,8 @@ export function createBlockAtlas() {
   const logSideTiles = new Set([5, 18, 21, 32, 104, 109, 132]);
   const logTopTiles = new Set([6, 19, 22, 33, 105, 110, 133]);
   const crossTiles = new Set([39, 53, 54, 55, 56, 59, 66, 67, 68, 69, 73, 74, 75, 76, 77, 78, 79, 81, 82, 83,
-    100, 101, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 138, 139, 140, 141, 142, 158, 159]);
+    100, 101, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 138, 139, 140, 141, 142, 158, 159,
+    173, 177, 178, 179, 180, 183, 184, 185, 186, 194, 197, 203, 204, 205, 206]);
   for (let index = 0; index < grid * grid; index += 1) {
     const base = TILE_COLORS[index] ?? "#777777";
     const ox = (index % grid) * tile;
@@ -935,6 +1181,48 @@ export function createBlockAtlas() {
         for (let y = 9; y < 16; y += 1) pixel(index, 7, y, "#89a96f");
         for (const [x, y] of [[4, 10], [6, 7], [9, 8], [11, 10], [8, 5]] as Array<[number, number]>) {
           pixel(index, x, y, "#f7e8ed"); pixel(index, x + 1, y, "#fff8f8"); pixel(index, x, y + 1, "#e6cdd8");
+        }
+      } else if (index >= 173 && index <= 206) {
+        const palettes: Record<number, readonly [string, string, string]> = {
+          173: ["#6b4f31", "#9b7445", "#bb925c"], 177: ["#6cc8be", "#a7fff0", "#4c8191"],
+          178: ["#c78b38", "#ffe37b", "#fff5b7"], 179: ["#7546aa", "#bd7bea", "#e7b6ff"],
+          180: ["#3f7c5a", "#72c693", "#b0ffd4"], 183: ["#4a7772", "#84bebb", "#bce2d5"],
+          184: ["#319e92", "#68ead2", "#b6fff1"], 185: ["#345d4b", "#6f9b76", "#9ac19a"],
+          186: ["#6c8147", "#b4c879", "#e0dfaa"], 194: ["#536cc6", "#93b1ff", "#d5e2ff"],
+          197: ["#9d8729", "#e4cf4f", "#fff39b"], 203: ["#56422e", "#806647", "#b4986c"],
+          204: ["#71512f", "#a87b46", "#d6ac70"], 205: ["#596164", "#8e999d", "#d0d7d8"],
+          206: ["#9e6d27", "#e7c059", "#fff0a1"],
+        };
+        const [dark, mid, bright] = palettes[index] ?? [shadeColor(base, -28), base, shadeColor(base, 35)];
+        if (index === 203 || index === 205 || index === 206) {
+          for (let y = 6; y < 15; y += 1) pixel(index, 7, y, y % 2 ? dark : mid);
+          for (let x = 4; x <= 11; x += 1) pixel(index, x, 6, x === 4 || x === 11 ? dark : mid);
+          if (index === 206) for (const [x, y] of [[6, 3], [7, 2], [8, 3], [5, 4], [9, 4]] as Array<[number, number]>) pixel(index, x, y, bright);
+        } else if (index === 204) {
+          for (const x of [4, 11]) for (let y = 0; y < 16; y += 1) pixel(index, x, y, y % 3 ? mid : dark);
+          for (let y = 2; y < 16; y += 4) for (let x = 5; x < 11; x += 1) pixel(index, x, y, bright);
+        } else if (index === 185) {
+          for (let y = 6; y <= 11; y += 1) for (let x = 2; x <= 13; x += 1) {
+            const dx = (x - 7.5) / 6; const dy = (y - 8.5) / 3;
+            if (dx * dx + dy * dy <= 1) pixel(index, x, y, (x + y) % 3 ? mid : dark);
+          }
+          pixel(index, 7, 7, bright); pixel(index, 8, 7, bright);
+        } else if (index === 194 || index === 197) {
+          for (const [x, height] of [[3, 7], [6, 12], [9, 9], [12, 6]] as Array<[number, number]>) {
+            for (let step = 0; step < height; step += 1) {
+              const width = Math.max(0, Math.floor((height - step) / 5));
+              for (let dx = -width; dx <= width; dx += 1) pixel(index, x + dx, 15 - step, step % 3 ? mid : bright);
+            }
+          }
+        } else {
+          for (const [x, lean, height] of [[4, -1, 9], [7, 0, 14], [10, 1, 11], [12, 0, 7]] as Array<[number, number, number]>) {
+            for (let step = 0; step < height; step += 1) {
+              const px = x + Math.round(lean * step / height);
+              const py = 15 - step;
+              pixel(index, px, py, step % 3 ? mid : dark);
+              if (step > 3 && step % 4 === 0) pixel(index, Math.max(0, px - 1), py, bright);
+            }
+          }
         }
       } else if (index >= 73 && index <= 78) {
         const young = index === 73 || index === 76;
@@ -1037,6 +1325,47 @@ export function createBlockAtlas() {
     for (let y = 0; y < tile; y += 1) for (let x = 0; x < tile; x += 1) {
       const variation = random() < 0.14 ? -18 : random() > 0.88 ? 15 : 0;
       pixel(index, x, y, shadeColor(base, variation));
+    }
+    if (index >= 169 && index <= 209) {
+      const accent = index === 171 ? "#b7f49b" : index === 175 ? "#c795ff" : index === 181 ? "#77a9ad"
+        : index === 182 ? "#a5d4df" : index === 187 ? "#e4d19b" : index === 188 ? "#a09a8f"
+          : index === 189 ? "#e0c891" : index === 190 ? "#d7c8a0" : index === 192 ? "#a8bcff"
+            : index === 193 ? "#8097d8" : index === 195 ? "#d1e2ee" : index === 198 ? "#f2a14a"
+              : index === 199 ? "#c76d48" : index === 200 ? "#d5a271" : index === 201 ? "#87c2a8"
+                : index === 202 ? "#c8ffe3" : index === 207 ? "#958564" : index === 208 ? "#967458" : index === 209 ? "#b5c1c4" : shadeColor(base, 32);
+      if ([170, 171, 176, 201, 202].includes(index)) {
+        for (let path = 0; path < 3; path += 1) {
+          let x = 2 + path * 5;
+          for (let y = 0; y < tile; y += 1) {
+            x = Math.max(0, Math.min(15, x + ((y * 5 + path * 7) % 9 === 0 ? 1 : (y * 7 + path) % 11 === 0 ? -1 : 0)));
+            pixel(index, x, y, accent);
+            if ((y + path) % 5 === 0 && x + 1 < 16) pixel(index, x + 1, y, shadeColor(accent, -24));
+          }
+        }
+      } else if ([181, 182, 187, 188, 189, 190, 191, 193, 195, 196, 199, 200, 207].includes(index)) {
+        for (let y = 2; y < tile; y += 4) for (let x = (y * 3 + index) % 5; x < tile; x += 6) {
+          pixel(index, x, y, accent, 0.82);
+          if (x + 1 < tile) pixel(index, x + 1, y + (index % 2), shadeColor(accent, -28), 0.65);
+        }
+        if (index === 190) for (const [x, y] of [[3, 4], [10, 8], [6, 13]] as Array<[number, number]>) {
+          pixel(index, x, y, "#e6d7b5"); pixel(index, x + 1, y, "#e6d7b5"); pixel(index, x, y + 1, "#8b806b");
+        }
+      } else if ([175, 192, 198].includes(index)) {
+        for (const [x, y] of [[2, 3], [5, 10], [9, 5], [12, 12], [14, 2]] as Array<[number, number]>) {
+          pixel(index, x, y, accent); if (x + 1 < 16) pixel(index, x + 1, y, "#fff4ce", 0.8);
+        }
+      } else if (index === 208) {
+        context.fillStyle = accent;
+        for (let y = 0; y < tile; y += 4) context.fillRect(ox, oy + y, tile, 1);
+        for (let y = 2; y < tile; y += 4) for (const x of [3, 12]) pixel(index, x, y, "#3e3731");
+      } else if (index === 209) {
+        context.fillStyle = "#3f494e";
+        for (let y = 0; y < tile; y += 5) context.fillRect(ox, oy + y, tile, 1);
+        for (let x = 1; x < tile; x += 5) context.fillRect(ox + x, oy, 1, tile);
+        for (const [x, y] of [[3, 3], [12, 3], [3, 12], [12, 12]] as Array<[number, number]>) {
+          pixel(index, x, y, accent); pixel(index, x + 1, y, "#252c30");
+        }
+      }
     }
     if (index === 129) {
       context.fillStyle = "#8964bc"; context.fillRect(ox, oy, tile, tile);
@@ -1150,7 +1479,7 @@ export function createBlockAtlas() {
       }
     }
     if (oreTiles.has(index)) {
-      const oreColor = index === 9 ? "#25282a" : index === 10 ? "#c08e70" : index === 40 ? "#d27854" : index === 41 ? "#f0c94f" : "#67edf2";
+      const oreColor = index === 9 ? "#25282a" : index === 10 ? "#a85f3f" : index === 40 ? "#d27854" : index === 41 ? "#f0c94f" : "#67edf2";
       for (let i = 0; i < 20; i += 1) pixel(index, Math.floor(random() * tile), Math.floor(random() * tile), oreColor);
     }
     if (index === 8 || index === 44) {
@@ -1745,7 +2074,7 @@ export class ChunkWorld {
   }
 
   sampleColumn(x: number, z: number): ColumnSample {
-    const biomeScale = this.generationOptions.biomeScale;
+    const biomeScale = this.generationOptions.profile === "legacy-v14" ? 1 : this.generationOptions.biomeScale;
     const sampleX = x / biomeScale;
     const sampleZ = z / biomeScale;
     const warpX = sampleX + 34 * fbm2(sampleX, sampleZ, this.seed ^ 0x1f123bb5, 1 / 420, 3);
@@ -1789,6 +2118,95 @@ export class ChunkWorld {
     const sugarplumRelief = smoothstep(0.68, 0.78, variant) * (1 - smoothstep(0.91, 0.98, variant))
       * smoothstep(0.32, 0.46, moisture) * (1 - smoothstep(0.76, 0.9, moisture));
     height += sugarplumRelief * (1.1 + 1.35 * fbm2(warpX + 193, warpZ - 307, this.seed ^ 0x7c15a4f3, 1 / 38, 3)) * (1 - river);
+
+    // Broad rolling landforms keep non-mountain country from collapsing into
+    // a single elevation. Climate-weighted erosion still leaves true flats in
+    // marshes and river plains.
+    const worldBelow = this.generationOptions.profile === "world-below-v15";
+    const macroRoll = fbm2(warpX - 119, warpZ + 287, this.seed ^ 0xd807aa98, 1 / 260, 4);
+    const hillCountry = smoothstep(-0.02, 0.42, continental) * (1 - mountain) * (1 - swampWeight) * (1 - river);
+    if (worldBelow) height += hillCountry * (3.2 * macroRoll + 4.4 * Math.max(0, macroRoll) ** 2);
+
+    const surfaceRegion = worldBelow ? surfaceRegionAt(this.seed, sampleX, sampleZ, temperature, moisture) : null;
+    // Landform follows the selected regional identity. Boundary belts retain
+    // a gentler form so neighboring provinces meet without cliff seams.
+    if (surfaceRegion && height > SEA_LEVEL + 1 && continental > -0.08 && river < 0.5) {
+      const identity = surfaceRegion.biome;
+      const strength = 0.78 - surfaceRegion.boundary * 0.34;
+      const broad = fbm2(warpX + 947, warpZ - 613, this.seed ^ 0x510e527f, 1 / 150, 4);
+      const folded = Math.max(0, 1 - Math.abs(fbm2(warpX - 283, warpZ + 719, this.seed ^ 0x9b05688c, 1 / 105, 4)));
+      if (identity === BiomeId.Meadow) {
+        height = lerp(height, SEA_LEVEL + 8 + broad * 2.2, strength * 0.42);
+      } else if (identity === BiomeId.Siltfen || identity === BiomeId.MushroomFen) {
+        height = lerp(height, SEA_LEVEL + 3.2 + broad * 1.8, strength * 0.8);
+      } else if (identity === BiomeId.Wildwood || identity === BiomeId.Birchlight) {
+        height += strength * (2.3 * broad + 3.1 * folded);
+      } else if (identity === BiomeId.Bloomwood || identity === BiomeId.SakurabloomGrove || identity === BiomeId.Glimmerwood) {
+        height += strength * (3.4 * broad + 4.6 * folded);
+      } else if (identity === BiomeId.SugarplumVale) {
+        height += strength * (2.5 + 4.2 * Math.max(0, broad) ** 2);
+      } else if (identity === BiomeId.Savanna) {
+        const plateau = Math.round((height + broad * 3) / 3) * 3;
+        height = lerp(height, plateau + 2.5 * folded, strength * 0.62);
+      } else if (identity === BiomeId.Desert) {
+        height += strength * (1.8 + 5.2 * folded ** 2 + broad * 1.4);
+      } else if (identity === BiomeId.Badlands) {
+        const mesa = Math.round((Math.max(height, SEA_LEVEL + 9) + folded * 13) / 5) * 5;
+        height = lerp(height, mesa, strength * 0.76);
+      } else if (identity === BiomeId.RainveilJungle) {
+        height += strength * (8 * folded + 7 * broad);
+      } else if (identity === BiomeId.CloudreedGlen) {
+        height += strength * (5 + 8 * folded + broad * 3);
+      } else if (identity === BiomeId.Highlands) {
+        const highlandTarget = SEA_LEVEL + 42 + folded * 38 + broad * 8;
+        height = lerp(height, Math.max(height, highlandTarget), strength * 0.88);
+      } else if (identity === BiomeId.Snowfield || identity === BiomeId.Frostpine) {
+        height += strength * (2.5 * broad + 4 * folded);
+      }
+    }
+
+    // Each 768-sample macrocell owns one deterministic rare-biome reserve.
+    // Cycling the reserve family by hash makes every seed supply an endless,
+    // discoverable sequence instead of relying on narrow threshold luck.
+    const reserveCellSize = 768;
+    const reserveCellX = Math.floor(sampleX / reserveCellSize);
+    const reserveCellZ = Math.floor(sampleZ / reserveCellSize);
+    const reserveCenterX = reserveCellX * reserveCellSize + 128 + hash2(reserveCellX, reserveCellZ, this.seed ^ 0x243f6a88) * (reserveCellSize - 256);
+    const reserveCenterZ = reserveCellZ * reserveCellSize + 128 + hash2(reserveCellX, reserveCellZ, this.seed ^ 0x85a308d3) * (reserveCellSize - 256);
+    const reserveRadius = 82 + hash2(reserveCellX, reserveCellZ, this.seed ^ 0x13198a2e) * 38;
+    const reserveEdgeNoise = fbm2(sampleX, sampleZ, this.seed ^ 0x3707344, 1 / 62, 2) * 13;
+    const reserveDistance = Math.hypot(sampleX - reserveCenterX, sampleZ - reserveCenterZ) + reserveEdgeNoise;
+    const reserveStrength = worldBelow ? 1 - smoothstep(reserveRadius * 0.48, reserveRadius, reserveDistance) : 0;
+    const reserveBiomes = [
+      BiomeId.CloudreedGlen,
+      BiomeId.RainveilJungle,
+      BiomeId.SakurabloomGrove,
+      BiomeId.MushroomFen,
+      BiomeId.SugarplumVale,
+      BiomeId.Glimmerwood,
+      BiomeId.SnowcapRange,
+      BiomeId.Volcanic,
+      BiomeId.LumenTrench,
+    ] as const;
+    const reserveIndex = Math.min(reserveBiomes.length - 1, Math.floor(hash2(reserveCellX, reserveCellZ, this.seed ^ 0xa4093822) * reserveBiomes.length));
+    const reserveBiome = reserveBiomes[reserveIndex];
+    if (reserveStrength > 0) {
+      const reserveRelief = fbm2(sampleX + 913, sampleZ - 271, this.seed ^ 0x299f31d0, 1 / 46, 3);
+      if (reserveBiome === BiomeId.LumenTrench) {
+        height = lerp(height, SEA_LEVEL - 28 - 7 * Math.max(0, reserveRelief), reserveStrength * 0.96);
+      } else if (reserveBiome === BiomeId.SnowcapRange) {
+        const alpineTarget = SEA_LEVEL + 58 + 28 * Math.max(0, 1 - Math.abs(reserveRelief));
+        height = lerp(height, Math.max(height, alpineTarget), reserveStrength * 0.96);
+      } else if (reserveBiome === BiomeId.Volcanic) {
+        const calderaRim = SEA_LEVEL + 28 + 26 * Math.max(0, 1 - Math.abs(reserveRelief)) + reserveRelief * 4;
+        height = lerp(height, Math.max(height, calderaRim), reserveStrength * 0.92);
+      } else if (reserveBiome === BiomeId.MushroomFen) {
+        height = lerp(height, SEA_LEVEL + 3 + reserveRelief * 2, reserveStrength * 0.88);
+      } else {
+        const livingTarget = SEA_LEVEL + 8 + reserveRelief * (reserveBiome === BiomeId.CloudreedGlen ? 6 : 4);
+        height = lerp(height, Math.max(height, livingTarget), reserveStrength * 0.86);
+      }
+    }
     if (river > 0.52) {
       const channelDepth = 3 + Math.floor(smoothstep(0.52, 0.9, river) * 3 + riverBedNoise * 2);
       height = Math.min(height, waterline - channelDepth);
@@ -1802,7 +2220,12 @@ export class ChunkWorld {
     else if (height <= SEA_LEVEL - 23 && trenchField > 0.34) biome = BiomeId.LumenTrench;
     else if (height <= SEA_LEVEL - 10) biome = BiomeId.DeepOcean;
     else if (height <= SEA_LEVEL - 2) biome = temperature < 0.15 ? BiomeId.Snowfield : BiomeId.Ocean;
-    else if (height <= SEA_LEVEL + 2) biome = BiomeId.Beach;
+    else if (height <= (worldBelow ? SEA_LEVEL : SEA_LEVEL + 2)) biome = BiomeId.Beach;
+    else if (worldBelow && surfaceRegion) {
+      if (height >= 96 && temperature < 0.62) biome = BiomeId.SnowcapRange;
+      else if (height >= 76 && ![BiomeId.Badlands, BiomeId.Desert].includes(surfaceRegion.biome)) biome = temperature < 0.42 ? BiomeId.Snowfield : BiomeId.Highlands;
+      else biome = surfaceRegion.biome;
+    }
     else if (variant > 0.8 && mountain > 0.12 && temperature > 0.4) biome = BiomeId.Volcanic;
     else if ((mountain > 0.52 || height >= 76) && temperature < 0.58) biome = BiomeId.SnowcapRange;
     else if (mountain > 0.36 || height >= 68) biome = temperature < 0.35 || height > 78 ? BiomeId.Snowfield : BiomeId.Highlands;
@@ -1822,6 +2245,7 @@ export class ChunkWorld {
     else if (moisture > 0.63 && variant > 0.72) biome = BiomeId.Bloomwood;
     else if (moisture > 0.54 && variant > 0.55) biome = BiomeId.Birchlight;
     else if (moisture > 0.56) biome = BiomeId.Wildwood;
+    if (reserveStrength > 0.62 && river < 0.58) biome = reserveBiome;
     return { height, waterline, biome, temperature, moisture, continental, river, mountain };
   }
 
@@ -1833,7 +2257,7 @@ export class ChunkWorld {
       key,
       cx,
       cz,
-      blocks: new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT),
+      blocks: new Uint16Array(CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT),
       heightmap: new Int16Array(CHUNK_SIZE * CHUNK_SIZE),
       biomes: new Uint8Array(CHUNK_SIZE * CHUNK_SIZE),
       group: new THREE.Group(),
@@ -1906,7 +2330,7 @@ export class ChunkWorld {
               }
             }
 
-            if (type === BlockId.Stone || type === BlockId.Deepstone || type === BlockId.Basalt) {
+            if (this.generationOptions.profile === "world-below-v15" && (type === BlockId.Stone || type === BlockId.Deepstone || type === BlockId.Basalt)) {
               const cellHash = hash3(Math.floor(gx / 2), Math.floor(y / 2), Math.floor(gz / 2), this.seed ^ 0x1234567);
               const detailHash = hash3(gx, y, gz, this.seed ^ 0x89abcdef);
               if (resourceAbundance === 1) {
@@ -1924,6 +2348,13 @@ export class ChunkWorld {
               }
             }
             if (type === BlockId.Stone || type === BlockId.Deepstone || type === BlockId.Basalt) {
+              const veinField = hash3(Math.floor(gx / 3), Math.floor(y / 2), Math.floor(gz / 3), this.seed ^ 0x8f1bbcdc);
+              const veinDetail = hash3(gx, y, gz, this.seed ^ 0x5a17d3e9);
+              if (y < -16 && veinField > 1 - 0.0022 * resourceAbundance) {
+                type = veinDetail > 0.992 ? BlockId.VeinmetalHeart : BlockId.LivingVein;
+              }
+            }
+            if (type === BlockId.Stone || type === BlockId.Deepstone || type === BlockId.Basalt) {
               const accent = hash3(Math.floor(gx / 3), Math.floor(y / 3), Math.floor(gz / 3), this.seed ^ 0x73a2d49b);
               const limestoneBiome = [BiomeId.Desert, BiomeId.Beach, BiomeId.Highlands, BiomeId.Savanna].includes(column.biome);
               const slateBiome = [BiomeId.Frostpine, BiomeId.Snowfield, BiomeId.Bloomwood, BiomeId.MushroomFen].includes(column.biome);
@@ -1938,6 +2369,7 @@ export class ChunkWorld {
       }
     }
 
+    if (this.generationOptions.profile === "world-below-v15") this.carveGraphCaves(chunk, sample);
     this.generateFeatures(chunk, sample);
     const saved = this.edits.get(key);
     if (saved) for (const [index, type] of saved.entries()) chunk.blocks[index] = type;
@@ -1977,6 +2409,267 @@ export class ChunkWorld {
     if (biome === BiomeId.RainveilJungle) return [BlockId.JungleGrass, BlockId.Dirt];
     if (biome === BiomeId.SakurabloomGrove) return [BlockId.SakuraGrass, BlockId.Dirt];
     return [BlockId.Grass, BlockId.Dirt];
+  }
+
+  undergroundBiomeAt(x: number, y: number, z: number) {
+    return sampleUndergroundBiome(this.seed, x, y, z);
+  }
+
+  /**
+   * Deterministic graph-first cave pass. Noise remains as irregular secondary
+   * texture, but every authored mouth is joined to a globally connected hub
+   * lattice before ecological rooms are decorated.
+   */
+  private carveGraphCaves(chunk: Chunk, sample: (x: number, z: number) => ColumnSample) {
+    const frequency = this.generationOptions.caveFrequency;
+    if (frequency <= 0) return;
+    const minX = chunk.cx * CHUNK_SIZE;
+    const minZ = chunk.cz * CHUNK_SIZE;
+    const maxX = minX + CHUNK_SIZE - 1;
+    const maxZ = minZ + CHUNK_SIZE - 1;
+    const volume = CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT;
+    const carveMask = new Uint8Array(volume);
+    const biomeMask = new Uint8Array(volume);
+    const roadMask = new Uint8Array(volume);
+    const liquidLevel = new Int16Array(volume).fill(MIN_Y - 1);
+    const radiusScale = clamp(0.72 + Math.sqrt(frequency) * 0.28, 0.72, 1.35);
+
+    const mark = (x: number, y: number, z: number, biome = UndergroundBiomeId.OrdinaryTunnel, road = false, liquidSurface = MIN_Y - 1, allowSurface = false) => {
+      if (x < minX || x > maxX || z < minZ || z > maxZ || y <= MIN_Y + 4 || y > MAX_Y) return;
+      const column = sample(x, z);
+      if (y > column.height || (!allowSurface && y > column.height - 4)) return;
+      const index = blockIndex(x - minX, y, z - minZ);
+      carveMask[index] = 1;
+      if (biome !== UndergroundBiomeId.OrdinaryTunnel) biomeMask[index] = biome;
+      if (road) roadMask[index] = 1;
+      if (liquidSurface > liquidLevel[index]) liquidLevel[index] = liquidSurface;
+    };
+
+    const sphere = (
+      centerX: number,
+      centerY: number,
+      centerZ: number,
+      radiusX: number,
+      radiusY: number,
+      radiusZ: number,
+      biome = UndergroundBiomeId.OrdinaryTunnel,
+      road = false,
+      liquidSurface = MIN_Y - 1,
+      allowSurface = false,
+    ) => {
+      const startX = Math.max(minX, Math.floor(centerX - radiusX));
+      const endX = Math.min(maxX, Math.ceil(centerX + radiusX));
+      const startZ = Math.max(minZ, Math.floor(centerZ - radiusZ));
+      const endZ = Math.min(maxZ, Math.ceil(centerZ + radiusZ));
+      const startY = Math.max(MIN_Y + 5, Math.floor(centerY - radiusY));
+      const endY = Math.min(MAX_Y, Math.ceil(centerY + radiusY));
+      for (let x = startX; x <= endX; x += 1) for (let z = startZ; z <= endZ; z += 1) for (let y = startY; y <= endY; y += 1) {
+        const distance = ((x - centerX) / radiusX) ** 2 + ((y - centerY) / radiusY) ** 2 + ((z - centerZ) / radiusZ) ** 2;
+        if (distance <= 1) mark(x, y, z, biome, road, liquidSurface, allowSurface);
+      }
+    };
+
+    const tunnel = (
+      from: Readonly<{ x: number; y: number; z: number }>,
+      to: Readonly<{ x: number; y: number; z: number }>,
+      radius: number,
+      road = false,
+      allowSurface = false,
+      biome = UndergroundBiomeId.OrdinaryTunnel,
+      liquidSurfaceAt?: (progress: number, centerY: number) => number,
+    ) => {
+      const distance = Math.hypot(to.x - from.x, to.y - from.y, to.z - from.z);
+      const steps = Math.max(1, Math.ceil(distance / 1.35));
+      for (let step = 0; step <= steps; step += 1) {
+        const progress = step / steps;
+        const wobble = Math.sin(progress * Math.PI * 4 + from.x * 0.031 + from.z * 0.023) * 0.7;
+        sphere(
+          lerp(from.x, to.x, progress) + wobble,
+          lerp(from.y, to.y, progress) + Math.sin(progress * Math.PI * 2) * 0.45,
+          lerp(from.z, to.z, progress) - wobble * 0.65,
+          radius,
+          radius * 0.86,
+          radius,
+          biome,
+          road,
+          liquidSurfaceAt?.(progress, lerp(from.y, to.y, progress)) ?? MIN_Y - 1,
+          allowSurface,
+        );
+      }
+    };
+
+    const expanded = CAVE_GRAPH_MAX_RADIUS + 8;
+    const edges = caveGraphEdgesInBounds(this.seed, minX - expanded, maxX + expanded, minZ - expanded, maxZ + expanded);
+    for (const edge of edges) {
+      const edgeMinX = Math.min(edge.from.x, edge.to.x) - edge.radius - 2;
+      const edgeMaxX = Math.max(edge.from.x, edge.to.x) + edge.radius + 2;
+      const edgeMinZ = Math.min(edge.from.z, edge.to.z) - edge.radius - 2;
+      const edgeMaxZ = Math.max(edge.from.z, edge.to.z) + edge.radius + 2;
+      if (edgeMaxX < minX || edgeMinX > maxX || edgeMaxZ < minZ || edgeMinZ > maxZ) continue;
+      const edgeRadius = edge.radius * radiusScale;
+      const waterBiome = edge.flow === "dry" ? UndergroundBiomeId.OrdinaryTunnel : UndergroundBiomeId.GlasswaterDeeps;
+      const liquidSurfaceAt = edge.flow === "stream"
+        ? (_progress: number, centerY: number) => Math.floor(centerY - edgeRadius * 0.28)
+        : edge.flow === "waterfall"
+          ? (_progress: number, centerY: number) => Math.ceil(centerY + edgeRadius)
+          : undefined;
+      tunnel(edge.from, edge.to, edgeRadius, edge.stoneRoad, false, waterBiome, liquidSurfaceAt);
+    }
+
+    const nodes = caveGraphNodesInBounds(this.seed, minX - expanded, maxX + expanded, minZ - expanded, maxZ + expanded);
+    for (const node of nodes) {
+      const liquid = node.biome === UndergroundBiomeId.GlasswaterDeeps
+        ? Math.floor(node.y - Math.max(1, node.radiusY * 0.22))
+        : node.biome === UndergroundBiomeId.EmberdeepFumaroles && node.y < -34
+          ? Math.floor(node.y - Math.max(3, node.radiusY * 0.56)) : MIN_Y - 1;
+      sphere(node.x, node.y, node.z, node.radiusX * radiusScale, node.radiusY * radiusScale, node.radiusZ * radiusScale, node.biome, false, liquid);
+    }
+
+    // Every eligible surface funnel gets an explicit descending connector.
+    const entranceMinCellX = Math.floor((minX - expanded) / CAVE_ENTRANCE_CELL_SIZE);
+    const entranceMaxCellX = Math.floor((maxX + expanded) / CAVE_ENTRANCE_CELL_SIZE);
+    const entranceMinCellZ = Math.floor((minZ - expanded) / CAVE_ENTRANCE_CELL_SIZE);
+    const entranceMaxCellZ = Math.floor((maxZ + expanded) / CAVE_ENTRANCE_CELL_SIZE);
+    for (let cellX = entranceMinCellX; cellX <= entranceMaxCellX; cellX += 1) for (let cellZ = entranceMinCellZ; cellZ <= entranceMaxCellZ; cellZ += 1) {
+      const entrance = caveEntranceForCell(this.seed, cellX, cellZ);
+      if (!entrance) continue;
+      const column = sample(entrance.centerX, entrance.centerZ);
+      if (column.height <= column.waterline + 3) continue;
+      const target = nearestUpperCaveNode(this.seed, entrance.centerX, entrance.centerZ);
+      tunnel({ x: entrance.centerX, y: column.height - 1, z: entrance.centerZ }, target, 2.15 * radiusScale, false, true);
+    }
+
+    const isFluid = (block: BlockId) => block === BlockId.Water || block === BlockId.Lava;
+    for (let index = 0; index < volume; index += 1) {
+      if (!carveMask[index]) continue;
+      const y = MIN_Y + Math.floor(index / (CHUNK_SIZE * CHUNK_SIZE));
+      const current = chunk.blocks[index] as BlockId;
+      if (current === BlockId.Bedrock) continue;
+      const biome = biomeMask[index] as UndergroundBiomeId;
+      if (liquidLevel[index] >= y) {
+        chunk.blocks[index] = biome === UndergroundBiomeId.EmberdeepFumaroles ? BlockId.Lava : BlockId.Water;
+      } else chunk.blocks[index] = BlockId.Air;
+    }
+
+    const floorBlock = (biome: UndergroundBiomeId, hash: number) => biome === UndergroundBiomeId.RootweaveGrotto
+      ? (hash > 0.46 ? BlockId.RootweaveSoil : BlockId.GrottoMoss)
+      : biome === UndergroundBiomeId.StarbloomHollows ? (hash > 0.58 ? BlockId.GrottoMoss : BlockId.RootweaveSoil)
+        : biome === UndergroundBiomeId.GlasswaterDeeps ? (hash > 0.72 ? BlockId.MineralCrust : BlockId.GlasswaterStone)
+          : biome === UndergroundBiomeId.PillarstoneReaches ? (hash > 0.82 ? BlockId.FossilStone : hash > 0.4 ? BlockId.Flowstone : BlockId.Pillarstone)
+            : biome === UndergroundBiomeId.CrystaldeepGallery ? (hash > 0.82 ? BlockId.BuddingCrystal : BlockId.CrystaldeepStone)
+              : (hash > 0.74 ? BlockId.MineralTerrace : hash > 0.42 ? BlockId.SulfurStone : BlockId.HeatCrackedRock);
+
+    for (let index = 0; index < volume; index += 1) {
+      if (!carveMask[index]) continue;
+      const biome = biomeMask[index] as UndergroundBiomeId;
+      if (biome === UndergroundBiomeId.OrdinaryTunnel && !roadMask[index]) continue;
+      const layer = Math.floor(index / (CHUNK_SIZE * CHUNK_SIZE));
+      const y = MIN_Y + layer;
+      if (y <= MIN_Y + 5 || y >= MAX_Y - 1) continue;
+      const columnIndex = index % (CHUNK_SIZE * CHUNK_SIZE);
+      const lx = columnIndex % CHUNK_SIZE;
+      const lz = Math.floor(columnIndex / CHUNK_SIZE);
+      const x = minX + lx;
+      const z = minZ + lz;
+      const belowIndex = index - CHUNK_SIZE * CHUNK_SIZE;
+      const aboveIndex = index + CHUNK_SIZE * CHUNK_SIZE;
+      const current = chunk.blocks[index] as BlockId;
+      const below = chunk.blocks[belowIndex] as BlockId;
+      const above = chunk.blocks[aboveIndex] as BlockId;
+      const detail = hash3(x, y, z, this.seed ^ 0x4f1bbcdc);
+      const belowSolid = below !== BlockId.Air && !isFluid(below) && BLOCKS[below]?.solid;
+      const aboveSolid = above !== BlockId.Air && !isFluid(above) && BLOCKS[above]?.solid;
+      if (roadMask[index] && belowSolid) {
+        chunk.blocks[belowIndex] = detail > 0.78 ? BlockId.CaveBridge : BlockId.StoneBrick;
+        if (current === BlockId.Air && detail > 0.992) chunk.blocks[index] = BlockId.CaveMarker;
+        continue;
+      }
+      if (biome === UndergroundBiomeId.OrdinaryTunnel) continue;
+      if (belowSolid) {
+        chunk.blocks[belowIndex] = floorBlock(biome, detail);
+        if ((biome === UndergroundBiomeId.CrystaldeepGallery || biome === UndergroundBiomeId.PillarstoneReaches) && detail > 0.993) {
+          chunk.blocks[belowIndex] = detail > 0.9985 ? BlockId.VeinmetalHeart : BlockId.LivingVein;
+        }
+        if (current === BlockId.Air) {
+          if (biome === UndergroundBiomeId.RootweaveGrotto && detail > 0.94) chunk.blocks[index] = BlockId.LivingRoot;
+          else if (biome === UndergroundBiomeId.StarbloomHollows && detail > 0.965 && y + 1 <= MAX_Y && chunk.blocks[aboveIndex] === BlockId.Air) {
+            chunk.blocks[index] = BlockId.StarbloomStem;
+            chunk.blocks[aboveIndex] = BlockId.StarbloomCap;
+          } else if (biome === UndergroundBiomeId.StarbloomHollows && detail > 0.9) chunk.blocks[index] = detail > 0.945 ? BlockId.LanternBloom : BlockId.SporePod;
+          else if (biome === UndergroundBiomeId.CrystaldeepGallery && detail > 0.91) chunk.blocks[index] = BlockId.CrystalCluster;
+          else if (biome === UndergroundBiomeId.EmberdeepFumaroles && detail > 0.94) chunk.blocks[index] = detail > 0.982 ? BlockId.FumaroleVent : BlockId.SulfurGrowth;
+        } else if (current === BlockId.Water && biome === UndergroundBiomeId.GlasswaterDeeps && detail > 0.91) {
+          chunk.blocks[index] = detail > 0.965 ? BlockId.EggReed : detail > 0.935 ? BlockId.LuminousAlgae : BlockId.CaveReed;
+        }
+      }
+      if (aboveSolid) {
+        chunk.blocks[aboveIndex] = floorBlock(biome, 1 - detail);
+        if (current === BlockId.Air) {
+          if (biome === UndergroundBiomeId.RootweaveGrotto && detail < 0.055) chunk.blocks[index] = detail < 0.018 ? BlockId.LuminousRoot : BlockId.HangingRoot;
+          else if (biome === UndergroundBiomeId.StarbloomHollows && detail < 0.05) chunk.blocks[index] = BlockId.LuminousGills;
+        }
+      }
+    }
+
+    for (const node of nodes) {
+      if (node.x < minX || node.x > maxX || node.z < minZ || node.z > maxZ || !node.poi) continue;
+      const lx = node.x - minX;
+      const lz = node.z - minZ;
+      let floorY = Math.floor(node.y);
+      while (floorY > MIN_Y + 5) {
+        const block = chunk.blocks[blockIndex(lx, floorY, lz)] as BlockId;
+        if (block !== BlockId.Air && !isFluid(block) && BLOCKS[block]?.solid) break;
+        floorY -= 1;
+      }
+      const standY = floorY + 1;
+      const setLocal = (dx: number, dy: number, dz: number, block: BlockId) => {
+        const x = node.x + dx; const y = standY + dy; const z = node.z + dz;
+        if (x < minX || x > maxX || z < minZ || z > maxZ || y < MIN_Y || y > MAX_Y) return;
+        chunk.blocks[blockIndex(x - minX, y, z - minZ)] = block;
+      };
+      if (node.poi === "delver-camp") {
+        for (let dx = -2; dx <= 2; dx += 1) for (let dz = -2; dz <= 2; dz += 1) setLocal(dx, -1, dz, BlockId.CaveBridge);
+        setLocal(-1, 0, 0, BlockId.Torch); setLocal(1, 0, 0, BlockId.Chest);
+      } else if (node.poi === "fossil-bed") {
+        for (let dx = -3; dx <= 3; dx += 1) setLocal(dx, -1, (dx * dx + node.cellZ) % 3 - 1, BlockId.FossilStone);
+      } else if (node.poi === "fungal-sanctum") {
+        setLocal(0, 0, 0, BlockId.StarbloomStem); setLocal(0, 1, 0, BlockId.StarbloomCap);
+        for (const [dx, dz] of [[-2, 0], [2, 0], [0, -2], [0, 2]] as const) setLocal(dx, 0, dz, BlockId.LanternBloom);
+      } else if (node.poi === "drowned-ruin") {
+        for (let dx = -2; dx <= 2; dx += 1) for (let dz = -2; dz <= 2; dz += 1) if (Math.abs(dx) === 2 || Math.abs(dz) === 2) setLocal(dx, 0, dz, BlockId.ReflectiveShale);
+        setLocal(0, 0, 0, BlockId.Chest);
+      } else if (node.poi === "rope-bridge") {
+        for (let dx = -5; dx <= 5; dx += 1) setLocal(dx, 0, 0, BlockId.CaveBridge);
+        setLocal(-5, 1, 0, BlockId.RopeAnchor); setLocal(5, 1, 0, BlockId.RopeAnchor);
+      } else if (node.poi === "crystal-shrine") {
+        for (let dy = 0; dy <= 3; dy += 1) setLocal(0, dy, 0, dy === 3 ? BlockId.ResonantCrystal : BlockId.CrystaldeepStone);
+        for (const [dx, dz] of [[-2, 0], [2, 0], [0, -2], [0, 2]] as const) setLocal(dx, 0, dz, BlockId.CrystalCluster);
+      } else if (node.poi === "challenge-vault") {
+        for (let dx = -2; dx <= 2; dx += 1) for (let dz = -2; dz <= 2; dz += 1) if (Math.abs(dx) === 2 || Math.abs(dz) === 2) setLocal(dx, 0, dz, BlockId.StoneBrick);
+        setLocal(0, 0, 0, BlockId.Chest); setLocal(0, 1, -2, BlockId.CaveMarker);
+      } else if (node.poi === "vent-forge") {
+        setLocal(0, 0, 0, BlockId.Furnace); setLocal(-2, 0, 0, BlockId.FumaroleVent); setLocal(2, 0, 0, BlockId.FumaroleVent);
+      } else {
+        for (let dy = 0; dy < 3; dy += 1) setLocal(0, dy, 0, dy === 2 ? BlockId.CaveMarker : BlockId.Pillarstone);
+      }
+
+      const markerPosition = { x: node.x, y: standY + 1, z: node.z };
+      const landmark: StructureMarker = { type: "landmark", id: node.id, position: markerPosition, tag: `underground:${node.poi}:${node.biome}` };
+      this.structureMarkers.set(`${node.id}:landmark`, landmark);
+      if (["delver-camp", "drowned-ruin", "challenge-vault"].includes(node.poi)) {
+        const chestPosition = { x: node.x + (node.poi === "delver-camp" ? 1 : 0), y: standY, z: node.z };
+        const chest: StructureMarker = { type: "chest", id: `${node.id}:cache`, position: chestPosition, lootTable: "adventure-cache", loot: rollStructureLoot("adventure-cache", `${this.seedText}:${node.id}`, node.grand ? 6 : 4) };
+        this.structureMarkers.set(`${node.id}:chest`, chest);
+      }
+      const mobKind = node.biome === UndergroundBiomeId.RootweaveGrotto ? "grotto-grazer"
+        : node.biome === UndergroundBiomeId.StarbloomHollows ? "chimewing"
+          : node.biome === UndergroundBiomeId.GlasswaterDeeps ? (node.grand ? "lanternray" : "glassback-newt")
+            : node.biome === UndergroundBiomeId.PillarstoneReaches ? (node.grand ? "grotto-grazer" : "ashnose-bat")
+              : node.biome === UndergroundBiomeId.CrystaldeepGallery ? (node.grand ? "prismtail-swift" : "veinling")
+                : (node.grand ? "cinder-kite" : "ashnose-bat");
+      const spawn: StructureMarker = { type: "spawn", id: `${node.id}:ecology`, position: markerPosition, mobKind, count: node.grand ? 3 : 2, radius: Math.max(5, Math.floor(node.ecologyRadius)), persistent: true, tags: ["dungeon", `underground-biome:${node.biome}`, `cave-node:${node.id}`, "ecological-center:true"] };
+      this.structureMarkers.set(`${node.id}:spawn`, spawn);
+    }
   }
 
   generateFeatures(chunk: Chunk, sample: (x: number, z: number) => ColumnSample) {
@@ -2513,7 +3206,10 @@ export class ChunkWorld {
     const regionSize = 32 * CHUNK_SIZE;
     // Tiled v1 settlements can be wider than the legacy town radius. Scan far
     // enough across region seams to author every connected wall and building.
-    const reach = Math.max(72, SETTLEMENT_SIZE_RULES.town.radiusBlocks + 3);
+    // Deepgear switchbacks can extend beyond a town wall while descending
+    // from a high mountain shelf to the nearest graph hub. This remains a
+    // fixed bounded neighborhood rather than an unbounded structure scan.
+    const reach = Math.max(144, SETTLEMENT_SIZE_RULES.town.radiusBlocks + 3);
     const startRegionX = Math.floor((minX - reach) / regionSize);
     const endRegionX = Math.floor((minX + CHUNK_SIZE + reach) / regionSize);
     const startRegionZ = Math.floor((minZ - reach) / regionSize);
@@ -2524,22 +3220,56 @@ export class ChunkWorld {
       const candidateForRegion = (candidateRegionX: number, candidateRegionZ: number) => {
         const cacheKey = `${candidateRegionX},${candidateRegionZ}`;
         if (this.settlementCandidateCache.has(cacheKey)) return this.settlementCandidateCache.get(cacheKey) ?? null;
-        const probe = sample(candidateRegionX * regionSize + regionSize / 2, candidateRegionZ * regionSize + regionSize / 2);
-        const probeBiome = settlementBiomeFromId(probe.biome);
-        const candidate = probeBiome ? planSettlementCandidate({
-          worldSeed: this.seedText,
-          regionX: candidateRegionX,
-          regionZ: candidateRegionZ,
-          biome: probeBiome,
-          existing: [],
-          floorY: probe.height,
-          enabledFactions: this.generationOptions.enabledFactions,
-        }) : null;
+        const candidate = this.generationOptions.profile === "world-below-v15"
+          ? selectSettlementSite({
+            worldSeed: this.seedText,
+            seed: this.seed,
+            regionX: candidateRegionX,
+            regionZ: candidateRegionZ,
+            enabledFactions: this.generationOptions.enabledFactions,
+            sample,
+          })
+          : (() => {
+            // Legacy worlds retain their exact region-center settlement
+            // contract. New site search and wayposts must not rewrite their
+            // unexplored towns when an old save crosses a chunk boundary.
+            const probe = sample(candidateRegionX * regionSize + regionSize / 2, candidateRegionZ * regionSize + regionSize / 2);
+            const probeBiome = settlementBiomeFromId(probe.biome);
+            return probeBiome ? planSettlementCandidate({
+              worldSeed: this.seedText,
+              regionX: candidateRegionX,
+              regionZ: candidateRegionZ,
+              biome: probeBiome,
+              existing: [],
+              floorY: probe.height,
+              enabledFactions: this.generationOptions.enabledFactions,
+            }) : null;
+          })();
         this.settlementCandidateCache.set(cacheKey, candidate);
         return candidate;
       };
       const plannedCandidate = candidateForRegion(regionX, regionZ);
-      if (!plannedCandidate) continue;
+      if (!plannedCandidate) {
+        // Regions that cannot support a full culturally valid settlement still
+        // leave a modest inhabited trace instead of silently becoming empty.
+        if (this.generationOptions.profile === "legacy-v14") continue;
+        const waypostX = regionX * regionSize + 190 + Math.floor(hash2(regionX, regionZ, this.seed ^ 0x243f6a88) * 132);
+        const waypostZ = regionZ * regionSize + 190 + Math.floor(hash2(regionX, regionZ, this.seed ^ 0x85a308d3) * 132);
+        const waypostColumn = sample(waypostX, waypostZ);
+        if (waypostColumn.height > waypostColumn.waterline + 3) {
+          const y = waypostColumn.height + 1;
+          for (const [dx, dz] of [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]] as const) set(waypostX + dx, y, waypostZ + dz, BlockId.CaveBridge, false);
+          set(waypostX, y + 1, waypostZ, BlockId.CaveMarker, false);
+          set(waypostX + 1, y + 1, waypostZ + 1, BlockId.Torch, false);
+          if (insideChunk(waypostX, waypostZ)) this.structureMarkers.set(`inhabited-waypost:${regionX}:${regionZ}`, {
+            type: "landmark",
+            id: `inhabited-waypost:${regionX}:${regionZ}`,
+            position: { x: waypostX, y: y + 1, z: waypostZ },
+            tag: `inhabited-waypost:${BIOME_NAMES[waypostColumn.biome]}`,
+          });
+        }
+        continue;
+      }
       const spacingContenders: SettlementCandidate[] = [];
       // A town's 42-chunk spacing contract can cross one complete 32-chunk
       // region, so inspect a fixed two-region neighborhood before authoring.
@@ -2581,6 +3311,73 @@ export class ChunkWorld {
       if (!layout) continue;
       const palette = settlementBlockPalette(candidate.factionId);
       this.settlementPlans.set(candidate.id, { candidate, layout });
+      if (underground && this.generationOptions.profile === "world-below-v15") {
+        // Every Deepgear hold is a real cave-graph anchor. A broad mine road
+        // reaches the nearest upper hub, while paired lift platforms provide a
+        // reliable surface route even before the player owns ropes or a mount.
+        const holdY = candidate.floorY ?? Math.max(MIN_Y + 10, centerColumn.height - 18);
+        const graphTarget = nearestUpperCaveNode(this.seed, candidate.center.x, candidate.center.z);
+        const approachStart = { x: candidate.center.x, y: holdY + 2, z: candidate.center.z };
+        const approachPath = planDeepgearMineRoad(approachStart, graphTarget);
+        // Carve first across the complete local path. A descending stair's
+        // headroom overlaps the previous tread, so placing floors in this same
+        // pass would let later clear operations erase the road behind them.
+        for (const point of approachPath) {
+          const { x: roadX, y: roadY, z: roadZ } = point;
+          for (let dy = 0; dy <= 3; dy += 1) for (let dx = -1; dx <= 1; dx += 1) for (let dz = -1; dz <= 1; dz += 1) {
+            if (Math.abs(dx) + Math.abs(dz) > 1) continue;
+            set(roadX + dx, roadY + dy, roadZ + dz, BlockId.Air, false);
+          }
+        }
+        for (const point of approachPath) set(point.x, point.y - 1, point.z, BlockId.DeepgearBrick, false);
+        const approachColumns = new Set(approachPath.map((point) => `${point.x},${point.z}`));
+        for (let index = 0; index < approachPath.length; index += 18) {
+          const point = approachPath[index];
+          const lampOffset = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+            .find(([dx, dz]) => !approachColumns.has(`${point.x + dx},${point.z + dz}`));
+          if (lampOffset) set(point.x + lampOffset[0], point.y + 1, point.z + lampOffset[1], BlockId.DeepgearLantern, false);
+        }
+
+        const liftX = candidate.center.x + Math.max(7, layout.radiusBlocks - 5);
+        const liftZ = candidate.center.z;
+        const liftBottomY = holdY + 1;
+        const liftTopY = sample(liftX, liftZ).height + 1;
+        if (liftTopY - liftBottomY >= 5) {
+          for (let shaftY = liftBottomY + 1; shaftY < liftTopY; shaftY += 1) {
+            for (let dx = -1; dx <= 1; dx += 1) for (let dz = -1; dz <= 1; dz += 1) set(liftX + dx, shaftY, liftZ + dz, BlockId.Air, false);
+            if ((shaftY - liftBottomY) % 16 === 8) set(liftX + 2, shaftY, liftZ, BlockId.DeepgearLantern, false);
+          }
+          // A mountain hold should announce itself at the surface. The low
+          // gatehouse also keeps the lift mouth readable in snow, broken
+          // highland terrain, and badlands shelves without flattening a broad
+          // piece of the regional landform.
+          for (let dx = -2; dx <= 2; dx += 1) for (let dz = -2; dz <= 2; dz += 1) {
+            // Keep a solid landing ring without capping the 3x3 lift shaft.
+            // The paired platforms need continuous vertical clearance even
+            // when the surface gate lands on a steep mountain shelf.
+            if (Math.max(Math.abs(dx), Math.abs(dz)) === 2) {
+              set(liftX + dx, liftTopY - 1, liftZ + dz, BlockId.DeepgearBrick, false);
+            } else set(liftX + dx, liftTopY - 1, liftZ + dz, BlockId.Air, false);
+          }
+          for (let dy = 1; dy <= 3; dy += 1) {
+            set(liftX - 2, liftTopY + dy, liftZ, BlockId.RivetedBrass, false);
+            set(liftX + 2, liftTopY + dy, liftZ, BlockId.RivetedBrass, false);
+          }
+          for (let dx = -2; dx <= 2; dx += 1) set(liftX + dx, liftTopY + 4, liftZ, BlockId.DeepgearBrick, false);
+          set(liftX - 2, liftTopY + 2, liftZ + 1, BlockId.DeepgearLantern, false);
+          set(liftX + 2, liftTopY + 2, liftZ + 1, BlockId.DeepgearLantern, false);
+          set(liftX, liftBottomY, liftZ, BlockId.DeepgearLift, false);
+          set(liftX, liftTopY, liftZ, BlockId.DeepgearLift, false);
+          set(liftX, liftTopY + 1, liftZ, BlockId.Air, false);
+          set(liftX, liftTopY + 2, liftZ, BlockId.Air, false);
+          if (insideChunk(liftX, liftZ)) this.structureMarkers.set(`${candidate.id}:deepgear-lift`, {
+            type: "landmark",
+            id: `${candidate.id}:deepgear-lift`,
+            position: { x: liftX, y: liftTopY + 1, z: liftZ },
+            tag: `deepgear-lift:${candidate.id}:cave-graph-anchor`,
+          });
+        }
+      }
       const bounds = {
         minX: candidate.center.x - layout.radiusBlocks - 2,
         maxX: candidate.center.x + layout.radiusBlocks + 2,

@@ -75,9 +75,9 @@ test("Lightning Bugs spawn, bottle into a placeable light, and use animated jar 
   assert.ok(bug.getObjectByName("lightning-bug-left-wing-pivot"));
 });
 
-test("Sunmetal Shears and supplied species calls are registered", () => {
+test("Iron Shears and supplied species calls are registered", () => {
   assert.equal(ITEMS[Item.Shears].useKind, "shears");
-  assert.ok(RECIPES.some((recipe) => recipe.id === "sunmetal-shears" && recipe.output.item === Item.Shears));
+  assert.ok(RECIPES.some((recipe) => recipe.id === "iron-shears" && recipe.output.item === Item.Shears));
   assert.ok(createAvatarHeldItemModel(Item.Shears)?.getObjectByName("shears-left-blade"));
   assert.equal(creatureSoundCue("puddlehopper", "ambient").asset, "puddlehopper-croak");
   assert.equal(creatureSoundCue("reedstrider", "ambient").asset, "reedstrider-call");

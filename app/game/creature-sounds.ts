@@ -82,6 +82,25 @@ const OWL_EVENTS = Object.freeze({
  * generated WAV assets can be added without changing creature behavior.
  */
 export const CREATURE_SOUND_EVENTS: Partial<Record<CoreMobKind, Partial<Record<CreatureSoundEvent, CreatureSoundCue>>>> = {
+  "grotto-grazer": GRAZER_EVENTS,
+  lanternray: DEEP_CREATURE_EVENTS,
+  "sailfin-skimmer": DEEP_CREATURE_EVENTS,
+  "glassback-newt": LITTLE_ANIMAL_EVENTS,
+  "prismtail-swift": {
+    ambient: cue("bird-chirp", "mob", 0.42, 0.18), hurt: cue("bird-chirp", "attack", 0.56, 0.12),
+  },
+  "ashnose-bat": {
+    ambient: cue("owl-call-b", "mob", 0.34, 0.22), hurt: cue("owl-call-b", "attack", 0.5, 0.16),
+  },
+  chimewing: {
+    ambient: cue("bird-chirp", "mob", 0.38, 0.12), hurt: cue("bird-chirp", "attack", 0.52, 0.09),
+  },
+  "cinder-kite": {
+    ambient: cue("emberjay-squawk", "mob", 0.5, 0.15), hurt: cue("emberjay-squawk", "attack", 0.64, 0.1),
+  },
+  veinling: {
+    ambient: cue("shadecrawler-stone-chitter", "mob", 0.48, 0.08), hurt: cue("shadecrawler-echo-screech", "attack", 0.62, 0.07),
+  },
   mossling: LITTLE_ANIMAL_EVENTS,
   "boglantern-mossling": LITTLE_ANIMAL_EVENTS,
   "cindercone-mossling": LITTLE_ANIMAL_EVENTS,

@@ -312,7 +312,7 @@ test("named forest POIs clear unauthored trees throughout their padded footprint
 
 test("legacy cabin and ruin generation reserves the same flora-free clearing", () => {
   const world = new ChunkWorld();
-  world.reset("WILDERNESS", undefined, { structures: true });
+  world.reset("WILDERNESS", undefined, { profile: "legacy-v14", structures: true });
   for (let cz = 2; cz <= 3; cz += 1) world.generateChunk(-9, cz);
   assert.equal(world.getBlock(-135, 38, 44), BlockId.Chest, "fixture should contain the sparser legacy ruin cache");
   const unauthoredGrowth = new Set<BlockId>([

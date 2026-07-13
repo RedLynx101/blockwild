@@ -181,21 +181,21 @@ test("digital creature storage searches exact metadata, heals slowly, and spills
 test("area crafting plans atomically across player, digital storage, and nearby chests", () => {
   const success = planAreaCrafting([
     { item: Item.Stick, count: 3 },
-    { item: Item.SunmetalIngot, count: 2 },
+    { item: Item.IronIngot, count: 2 },
   ], [
     { id: "player", kind: "player", slots: [{ item: Item.Stick, count: 1 }] },
-    { id: "vault", kind: "digital", slots: [{ item: Item.Stick, count: 2 }, { item: Item.SunmetalIngot, count: 1 }] },
-    { id: "chest-near", kind: "chest", slots: [{ item: Item.SunmetalIngot, count: 1 }] },
+    { id: "vault", kind: "digital", slots: [{ item: Item.Stick, count: 2 }, { item: Item.IronIngot, count: 1 }] },
+    { id: "chest-near", kind: "chest", slots: [{ item: Item.IronIngot, count: 1 }] },
   ]);
   assert.equal(success.ok, true);
   assert.deepEqual(success.allocations.map((entry) => entry.sourceKind), ["player", "digital", "digital", "chest"]);
 
-  const failed = planAreaCrafting([{ item: Item.SunmetalIngot, count: 3 }], [
-    { id: "vault", kind: "digital", slots: [{ item: Item.SunmetalIngot, count: 2 }] },
+  const failed = planAreaCrafting([{ item: Item.IronIngot, count: 3 }], [
+    { id: "vault", kind: "digital", slots: [{ item: Item.IronIngot, count: 2 }] },
   ]);
   assert.equal(failed.ok, false);
   assert.deepEqual(failed.allocations, []);
-  assert.deepEqual(failed.missing, [{ item: Item.SunmetalIngot, count: 1 }]);
+  assert.deepEqual(failed.missing, [{ item: Item.IronIngot, count: 1 }]);
 });
 
 test("digital network saves normalize cells, reject duplicates, and preserve exact archived metadata", () => {

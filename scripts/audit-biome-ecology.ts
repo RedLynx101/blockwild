@@ -3,6 +3,7 @@ import { pathToFileURL } from "node:url";
 import {
   fishSpawnTableForHabitat,
   passiveMobSpawnTableForBiome,
+  undergroundMobSpawnTableForBiome,
   type FishHabitat,
   type WeightedMob,
 } from "../app/game/fauna";
@@ -11,6 +12,7 @@ import { nativeBiomesForPlant, PLANTS } from "../app/game/plants";
 import { NPC_FACTION_IDS, FACTIONS } from "../app/game/factions";
 import { structureKindsForBiomeId } from "../app/game/structures";
 import { BIOME_NAMES, BiomeId, settlementBiomeFromId } from "../app/game/world";
+import { UNDERGROUND_BIOME_NAMES, UndergroundBiomeId } from "../app/game/underground";
 
 type SpawnSource = Readonly<{ label: string; entries: readonly WeightedMob[] }>;
 type SpeciesAudit = Readonly<{
@@ -34,6 +36,20 @@ type BiomeAudit = Readonly<{
   poiKinds: readonly string[];
   sources: readonly string[];
   floorChecks: Readonly<{ common: boolean; conditional: boolean; rare: boolean }>;
+  species: readonly SpeciesAudit[];
+}>;
+
+export type UndergroundBiomeAudit = Readonly<{
+  id: UndergroundBiomeId;
+  name: string;
+  flora: number;
+  fauna: number;
+  common: number;
+  conditional: number;
+  rare: number;
+  customSound: number;
+  poiCount: number;
+  poiKinds: readonly string[];
   species: readonly SpeciesAudit[];
 }>;
 
@@ -109,6 +125,47 @@ export function buildBiomeEcologyAudit(): BiomeAudit[] {
   });
 }
 
+const UNDERGROUND_FLORA_COUNTS: Readonly<Record<UndergroundBiomeId, number>> = Object.freeze({
+  [UndergroundBiomeId.OrdinaryTunnel]: 0,
+  [UndergroundBiomeId.RootweaveGrotto]: 6,
+  [UndergroundBiomeId.StarbloomHollows]: 6,
+  [UndergroundBiomeId.GlasswaterDeeps]: 7,
+  [UndergroundBiomeId.PillarstoneReaches]: 4,
+  [UndergroundBiomeId.CrystaldeepGallery]: 5,
+  [UndergroundBiomeId.EmberdeepFumaroles]: 6,
+});
+
+const UNDERGROUND_POIS: Readonly<Record<UndergroundBiomeId, readonly string[]>> = Object.freeze({
+  [UndergroundBiomeId.OrdinaryTunnel]: ["waystone", "delver-camp", "abandoned-mine"],
+  [UndergroundBiomeId.RootweaveGrotto]: ["delver-camp", "fungal-sanctum", "waystone", "fossil-bed"],
+  [UndergroundBiomeId.StarbloomHollows]: ["fungal-sanctum", "delver-camp", "challenge-vault", "waystone"],
+  [UndergroundBiomeId.GlasswaterDeeps]: ["drowned-ruin", "rope-bridge", "challenge-vault", "waystone"],
+  [UndergroundBiomeId.PillarstoneReaches]: ["fossil-bed", "rope-bridge", "delver-camp", "challenge-vault"],
+  [UndergroundBiomeId.CrystaldeepGallery]: ["crystal-shrine", "challenge-vault", "waystone", "fossil-bed"],
+  [UndergroundBiomeId.EmberdeepFumaroles]: ["vent-forge", "challenge-vault", "rope-bridge", "waystone"],
+});
+
+export function buildUndergroundEcologyAudit(): UndergroundBiomeAudit[] {
+  return (Object.values(UndergroundBiomeId).filter((value): value is UndergroundBiomeId => typeof value === "number"))
+    .sort((left, right) => left - right)
+    .map((id) => {
+      const species = speciesForSources([{ label: "cave ecology", entries: undergroundMobSpawnTableForBiome(id) }]);
+      return {
+        id,
+        name: UNDERGROUND_BIOME_NAMES[id],
+        flora: UNDERGROUND_FLORA_COUNTS[id],
+        fauna: species.length,
+        common: species.filter((entry) => entry.weight >= 0.1).length,
+        conditional: species.filter((entry) => entry.conditional).length,
+        rare: species.filter((entry) => entry.weight <= 0.05).length,
+        customSound: species.filter((entry) => entry.customSound).length,
+        poiCount: UNDERGROUND_POIS[id].length,
+        poiKinds: UNDERGROUND_POIS[id],
+        species,
+      };
+    });
+}
+
 function sharedSurfacePools() {
   const pools = new Map<string, string[]>();
   for (const biome of BIOMES.filter((id) => ![BiomeId.DeepOcean, BiomeId.Ocean, BiomeId.LumenTrench].includes(id))) {
@@ -121,6 +178,7 @@ function sharedSurfacePools() {
 }
 
 export function formatBiomeEcologyAudit(audit: readonly BiomeAudit[]) {
+  const undergroundAudit = buildUndergroundEcologyAudit();
   const naturalKinds = [...new Set(audit.flatMap((biome) => biome.species.map((entry) => entry.kind)))];
   const silentNaturalKinds = naturalKinds.filter((kind) => !CORE_MOB_ORDER.includes(kind as CoreMobKind)
     || !creatureHasCustomSound(kind as CoreMobKind));
@@ -150,6 +208,21 @@ export function formatBiomeEcologyAudit(audit: readonly BiomeAudit[]) {
     "Biome                    | Flora | POIs | Fauna | Common | Conditional | Rare |  Sound | Floors | Active sources",
     "-------------------------|-------|------|-------|--------|-------------|------|--------|--------|----------------",
     ...rows,
+    "",
+    "THE WORLD BELOW ECOLOGY",
+    "Biome                    | Flora | POIs | Fauna | Common | Conditional | Rare |  Sound | Active source",
+    "-------------------------|-------|------|-------|--------|-------------|------|--------|----------------",
+    ...undergroundAudit.map((biome) => [
+      biome.name.padEnd(24),
+      String(biome.flora).padStart(5),
+      String(biome.poiCount).padStart(4),
+      String(biome.fauna).padStart(5),
+      String(biome.common).padStart(6),
+      String(biome.conditional).padStart(11),
+      String(biome.rare).padStart(4),
+      `${biome.customSound}/${biome.fauna}`.padStart(8),
+      "cave ecology",
+    ].join(" | ")),
     "",
     `Catalog: ${PLANTS.length} flora entries; ${MOB_ORDER.length} creature entries; ${naturalKinds.length} naturally spawned species.`,
     `Bestiary discovery hints: ${MOB_ORDER.length - missingHints.length}/${MOB_ORDER.length}.`,

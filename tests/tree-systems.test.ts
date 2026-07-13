@@ -168,7 +168,10 @@ test("real generated trees remain rooted through chunk seams", () => {
 
 test("HEARTHROADS biome-edge ancient tree neither authors beach roots nor strands its legacy collar", () => {
   const world = new ChunkWorld();
-  world.reset("HEARTHROADS", undefined, { structures: false });
+  // This coordinate records an already-deployed v14 tree/save edge case.
+  // Generator 15 intentionally reallocates its surface biome, so preserve the
+  // historical terrain profile while continuing to audit legacy felling.
+  world.reset("HEARTHROADS", undefined, { profile: "legacy-v14", structures: false });
   for (let cz = -191; cz <= -190; cz += 1) for (let cx = -130; cx <= -129; cx += 1) world.generateChunk(cx, cz);
   const stranded = { x: -2067, y: 35, z: -3038 };
   const root = { x: -2066, y: 36, z: -3037 };

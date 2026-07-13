@@ -19,6 +19,7 @@ import {
   type DragonKind,
   type MobKind,
   type SeaSlugKind,
+  type UndergroundMobKind,
 } from "./mobs";
 import { createArrowVisual } from "./projectiles";
 
@@ -2764,6 +2765,105 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     }
   } else if (["mossling", "boglantern-mossling", "cindercone-mossling", "moonbloom-mossling"].includes(kind)) {
     buildMossling(kind as MosslingKind);
+  } else if (["grotto-grazer", "lanternray", "prismtail-swift", "glassback-newt", "sailfin-skimmer", "ashnose-bat", "chimewing", "cinder-kite", "veinling"].includes(kind)) {
+    const undergroundKind = kind as UndergroundMobKind;
+    const glow = material(eyeColor, true, 0.92);
+    const pale = material(accentColor, false, 0.82);
+    visual.userData.wildlifeRig = undergroundKind;
+    if (undergroundKind === "grotto-grazer") {
+      const root = material(0x5c432c);
+      const moss = material(0x5e8d53);
+      add(visual, [1.12, 0.7, 1.5], bodyMaterial, [0, 0.58, 0.12], "body", `${kind}-barrel-body`);
+      add(visual, [0.82, 0.76, 0.68], accentMaterial, [0, 0.68, -0.67], "body", `${kind}-root-mantle`);
+      const head = pivotBox([0.72, 0.58, 0.72], bodyMaterial, [0, 0.95, -1.0], [0, 0, 0], "head", `${kind}-head`);
+      add(head, [0.5, 0.3, 0.5], root, [0, -0.14, -0.48], undefined, `${kind}-muzzle`);
+      add(head, [0.28, 0.14, 0.12], darkMaterial, [0, -0.12, -0.75], undefined, `${kind}-nose`);
+      for (const side of [-1, 1]) {
+        add(head, [0.07, 0.09, 0.04], glow, [side * 0.22, 0.08, -0.38], undefined, `${kind}-${side < 0 ? "left" : "right"}-eye`);
+        const horn = add(head, [0.1, 0.62, 0.11], root, [side * 0.25, 0.44, -0.02], undefined, `${kind}-${side < 0 ? "left" : "right"}-root-horn`);
+        horn.rotation.z = side * -0.34;
+        add(head, [0.3, 0.12, 0.22], moss, [side * 0.42, 0.42, -0.02], undefined, `${kind}-${side < 0 ? "left" : "right"}-moss-ear`).rotation.z = side * -0.18;
+      }
+      quadrupedLegs(0.35, -0.5, 0.55, 0.47, 0.66, 0.2, root, kind);
+      for (const [index, x, z] of [[1, -0.34, -0.15], [2, 0.32, 0.12], [3, -0.2, 0.48]] as const) {
+        add(visual, [0.42, 0.14, 0.34], moss, [x, 0.96, z], undefined, `${kind}-back-moss-${index}`).rotation.y = Math.PI / 4;
+        add(visual, [0.09, 0.32, 0.09], index === 2 ? glow : root, [x * 0.8, 1.12, z], undefined, `${kind}-back-root-${index}`);
+      }
+    } else if (undergroundKind === "lanternray") {
+      const membrane = material(accentColor, false, 0.68);
+      add(visual, [0.92, 0.22, 1.12], bodyMaterial, [0, 0.05, 0], "body", `${kind}-diamond-body`).rotation.y = Math.PI / 4;
+      add(visual, [0.48, 0.22, 0.55], accentMaterial, [0, 0.08, -0.58], "head", `${kind}-brow`);
+      for (const side of [-1, 1]) {
+        const wing = pivotBox([1.05, 0.055, 1.18], membrane, [side * 0.34, 0.06, 0], [side * 0.48, 0, 0.05], "wings", `${kind}-${side < 0 ? "left" : "right"}-fin`);
+        wing.rotation.z = side * -0.08;
+        add(visual, [0.18, 0.12, 0.22], glow, [side * 0.42, 0.02, -0.36], undefined, `${kind}-${side < 0 ? "left" : "right"}-lantern`);
+      }
+      const tail = pivotBox([0.12, 0.1, 1.4], darkMaterial, [0, 0.04, 0.48], [0, 0, 0.68], "body", `${kind}-tail`);
+      for (let band = 0; band < 4; band += 1) add(tail, [0.16 + band * 0.04, 0.05, 0.12], band % 2 ? glow : accentMaterial, [0, 0, 0.25 + band * 0.28], undefined, `${kind}-tail-band-${band + 1}`);
+      eyePair(0.18, 0.18, -0.88, 0.055, kind);
+    } else if (undergroundKind === "glassback-newt") {
+      const glass = material(0xb7f1db, false, 0.62);
+      add(visual, [0.48, 0.28, 1.16], bodyMaterial, [0, 0.24, 0.08], "body", `${kind}-body`);
+      add(visual, [0.54, 0.34, 0.5], accentMaterial, [0, 0.25, -0.58], "head", `${kind}-head`);
+      eyePair(0.18, 0.34, -0.83, 0.06, kind);
+      for (let plate = 0; plate < 5; plate += 1) add(visual, [0.34 - plate * 0.025, 0.08, 0.22], glass, [0, 0.43, -0.28 + plate * 0.23], undefined, `${kind}-glass-plate-${plate + 1}`).rotation.y = Math.PI / 4;
+      for (const [x, z, phase, name] of [[-0.3, -0.34, 0, "front-left"], [0.3, -0.34, Math.PI, "front-right"], [-0.28, 0.42, Math.PI, "rear-left"], [0.28, 0.42, 0, "rear-right"]] as const) {
+        const leg = pivotBox([0.28, 0.1, 0.34], accentMaterial, [x, 0.2, z], [Math.sign(x) * 0.1, -0.04, 0], "legs", `${kind}-${name}-leg`);
+        leg.userData.phase = phase;
+      }
+      const tail = add(visual, [0.24, 0.2, 0.95], bodyMaterial, [0, 0.22, 0.98], "body", `${kind}-tail`); tail.rotation.x = 0.08;
+      for (const side of [-1, 1]) for (let gill = 0; gill < 3; gill += 1) add(visual, [0.08, 0.22, 0.16], glow, [side * (0.28 + gill * 0.04), 0.28 + gill * 0.04, -0.55 + gill * 0.08], undefined, `${kind}-${side < 0 ? "left" : "right"}-gill-${gill + 1}`).rotation.z = side * -0.5;
+    } else if (undergroundKind === "sailfin-skimmer") {
+      add(visual, [0.5, 0.46, 1.42], bodyMaterial, [0, 0, 0], "body", `${kind}-body`);
+      add(visual, [0.56, 0.42, 0.48], accentMaterial, [0, 0, -0.78], "head", `${kind}-head`);
+      eyePair(0.19, 0.11, -1.04, 0.06, kind);
+      add(visual, [0.055, 0.88, 1.25], pale, [0, 0.58, 0.08], "wings", `${kind}-dorsal-sail`);
+      for (let rib = 0; rib < 5; rib += 1) add(visual, [0.07, 0.62 - Math.abs(2 - rib) * 0.1, 0.06], glow, [0, 0.55, -0.38 + rib * 0.23], undefined, `${kind}-sail-rib-${rib + 1}`);
+      for (const side of [-1, 1]) add(visual, [0.48, 0.06, 0.5], accentMaterial, [side * 0.38, -0.05, -0.08], "wings", `${kind}-${side < 0 ? "left" : "right"}-fin`).rotation.z = side * 0.15;
+      const tail = pivotBox([0.08, 0.72, 0.5], pale, [0, 0, 0.82], [0, 0, 0.28], "body", `${kind}-tail-fin`);
+      tail.rotation.z = 0.08;
+    } else if (["prismtail-swift", "ashnose-bat", "chimewing", "cinder-kite"].includes(undergroundKind)) {
+      const bat = undergroundKind === "ashnose-bat";
+      const kite = undergroundKind === "cinder-kite";
+      const chime = undergroundKind === "chimewing";
+      const scale = kite ? 1.32 : bat ? 0.82 : 0.94;
+      const membrane = material(accentColor, false, bat ? 0.7 : 0.78);
+      add(visual, [0.42 * scale, 0.36 * scale, 0.78 * scale], bodyMaterial, [0, 0, 0.08], "body", `${kind}-body`);
+      add(visual, [0.48 * scale, 0.42 * scale, 0.44 * scale], darkMaterial, [0, 0.08, -0.48 * scale], "head", `${kind}-head`);
+      eyePair(0.15 * scale, 0.15 * scale, -0.72 * scale, 0.065 * scale, kind);
+      for (const side of [-1, 1]) {
+        const sideName = side < 0 ? "left" : "right";
+        const wing = pivotBox([0.9 * scale, 0.055, (kite ? 1.25 : 0.88) * scale], membrane, [side * 0.24 * scale, 0.08, 0.02], [side * 0.42 * scale, 0, 0.05], "wings", `${kind}-${sideName}-wing`);
+        wing.rotation.z = side * (kite ? -0.14 : -0.22);
+        for (let vane = 0; vane < 3; vane += 1) add(wing, [0.06, 0.06, 0.48 * scale], chime ? glow : darkMaterial, [side * (0.12 + vane * 0.22) * scale, 0.02, -0.18 + vane * 0.2], undefined, `${kind}-${sideName}-vane-${vane + 1}`).rotation.y = side * 0.12;
+        if (bat) {
+          add(visual, [0.22, 0.38, 0.14], accentMaterial, [side * 0.18, 0.38, -0.42], undefined, `${kind}-${sideName}-ear`).rotation.z = side * -0.24;
+        }
+      }
+      add(visual, [0.2 * scale, 0.16 * scale, 0.32 * scale], kite ? glow : accentMaterial, [0, -0.02, -0.77 * scale], undefined, `${kind}-nose-or-beak`);
+      const tailLength = kite ? 1.15 : chime ? 0.75 : 0.95;
+      const tail = pivotBox([0.16, 0.12, tailLength], darkMaterial, [0, 0.02, 0.48 * scale], [0, 0, tailLength * 0.48], "body", `${kind}-tail`);
+      for (let fan = -1; fan <= 1; fan += 1) {
+        const feather = add(tail, [0.18, 0.06, 0.42], fan === 0 ? glow : accentMaterial, [fan * 0.16, 0, tailLength * 0.9], undefined, `${kind}-tail-fan-${fan + 2}`);
+        feather.rotation.y = fan * 0.22;
+      }
+    } else {
+      const metal = material(accentColor, false, 0.86);
+      add(visual, [0.86, 0.52, 0.94], bodyMaterial, [0, 0.42, 0], "body", `${kind}-folded-core`);
+      add(visual, [0.6, 0.44, 0.58], metal, [0, 0.55, -0.55], "head", `${kind}-visor`);
+      add(visual, [0.36, 0.13, 0.08], glow, [0, 0.6, -0.86], undefined, `${kind}-seam-eye`);
+      for (const side of [-1, 1]) for (const front of [-1, 1]) {
+        const name = `${front < 0 ? "front" : "rear"}-${side < 0 ? "left" : "right"}`;
+        const leg = pivotBox([0.18, 0.62, 0.2], darkMaterial, [side * 0.36, 0.4, front * 0.34], [side * 0.12, -0.3, front * 0.08], "legs", `${kind}-${name}-leg`);
+        leg.userData.phase = side * front > 0 ? 0 : Math.PI;
+        add(leg, [0.28, 0.12, 0.3], metal, [side * 0.08, -0.66, front * -0.05], undefined, `${kind}-${name}-foot`);
+      }
+      for (let vein = 0; vein < 5; vein += 1) {
+        const stripe = add(visual, [0.07, 0.06, 0.58], glow, [-0.28 + vein * 0.14, 0.7 + (vein % 2) * 0.04, -0.05], undefined, `${kind}-living-seam-${vein + 1}`);
+        stripe.rotation.y = (vein - 2) * 0.08;
+      }
+      for (const side of [-1, 1]) add(visual, [0.28, 0.38, 0.16], metal, [side * 0.5, 0.62, 0.1], undefined, `${kind}-${side < 0 ? "left" : "right"}-ore-plate`).rotation.z = side * -0.28;
+    }
   } else if (kind === "ridgeback") {
     buildRidgeback();
   } else if (kind === "woolhorn") {
@@ -3924,7 +4024,37 @@ export function applyWildlifePose(
   if (secondaryTail) secondaryTail.rotation.y = -wag * 0.9;
   if (tailTip) tailTip.rotation.y = wag * 1.45;
 
-  if (rig === "mossling") {
+  if (["prismtail-swift", "ashnose-bat", "chimewing", "cinder-kite"].includes(rig)) {
+    const flapRate = rig === "ashnose-bat" ? 14 : rig === "cinder-kite" ? 4.8 : 8.5;
+    for (const sideName of ["left", "right"] as const) {
+      const side = sideName === "left" ? -1 : 1;
+      const wing = visual.getObjectByName(`${kind}-${sideName}-wing-pivot`);
+      if (wing) wing.rotation.z = side * (-0.16 + Math.sin(time * (flapRate + travel * 4) + side) * (0.16 + travel * 0.28));
+    }
+    const flightTail = visual.getObjectByName(`${kind}-tail-pivot`);
+    if (flightTail) flightTail.rotation.y = Math.sin(time * 2.1) * (0.08 + travel * 0.12);
+  } else if (rig === "glassback-newt") {
+    const newtTail = visual.getObjectByName("glassback-newt-tail");
+    if (newtTail) newtTail.rotation.y = Math.sin(time * (2.4 + travel * 4.2)) * (0.08 + travel * 0.18);
+    for (const sideName of ["left", "right"] as const) for (let gill = 1; gill <= 3; gill += 1) {
+      const gillPart = visual.getObjectByName(`glassback-newt-${sideName}-gill-${gill}`);
+      if (gillPart) gillPart.rotation.x = Math.sin(time * 2 + gill) * 0.04;
+    }
+  } else if (rig === "grotto-grazer") {
+    const grazerHead = visual.getObjectByName("grotto-grazer-head-pivot");
+    if (grazerHead) grazerHead.rotation.x += Math.max(0, Math.sin(time * 0.7)) * 0.09;
+    for (let root = 1; root <= 3; root += 1) {
+      const sprout = visual.getObjectByName(`grotto-grazer-back-root-${root}`);
+      if (sprout) sprout.rotation.z = Math.sin(time * 1.1 + root) * 0.025;
+    }
+  } else if (rig === "veinling") {
+    for (let vein = 1; vein <= 5; vein += 1) {
+      const seam = visual.getObjectByName(`veinling-living-seam-${vein}`);
+      if (!seam) continue;
+      const pulse = 1 + Math.sin(time * 1.4 + vein * 0.55) * 0.08;
+      seam.scale.set(pulse, pulse, 1);
+    }
+  } else if (rig === "mossling") {
     for (const suffix of ["sprout-stem", "flower-stem", "lantern-stalk"]) {
       const stem = visual.getObjectByName(`${kind}-${suffix}`);
       if (stem) stem.rotation.z += Math.sin(time * 1.15) * (0.018 + travel * 0.025);
@@ -4046,6 +4176,23 @@ export function applyOceanCreaturePose(
       if (claw) claw.rotation.z = (Number(claw.userData.restZ) || 0) + side * Math.sin(time * 1.8 + side) * (0.035 + travel * 0.06);
       const stalk = visual.getObjectByName(`${kind}-${sideName}-eye-stalk-pivot`);
       if (stalk) stalk.rotation.z = side * Math.sin(time * 1.25 + side) * 0.035;
+    }
+  } else if (kind === "lanternray") {
+    for (const sideName of ["left", "right"] as const) {
+      const side = sideName === "left" ? -1 : 1;
+      const fin = visual.getObjectByName(`lanternray-${sideName}-fin-pivot`);
+      if (fin) fin.rotation.z = side * (-0.08 + Math.sin(time * (2.1 + travel * 1.7) + side) * (0.08 + travel * 0.11));
+    }
+    const tail = visual.getObjectByName("lanternray-tail-pivot");
+    if (tail) tail.rotation.y = Math.sin(time * (2.8 + travel * 2.4)) * (0.1 + travel * 0.14);
+  } else if (kind === "sailfin-skimmer") {
+    const tail = visual.getObjectByName("sailfin-skimmer-tail-fin-pivot");
+    if (tail) tail.rotation.y = Math.sin(time * (4.4 + travel * 3.1)) * (0.18 + travel * 0.2);
+    const sail = visual.getObjectByName("sailfin-skimmer-dorsal-sail");
+    if (sail) sail.rotation.z = Math.sin(time * 1.7) * 0.045;
+    for (const sideName of ["left", "right"] as const) {
+      const fin = visual.getObjectByName(`sailfin-skimmer-${sideName}-fin`);
+      if (fin) fin.rotation.y = (sideName === "left" ? 1 : -1) * (0.14 + Math.sin(time * 2.3) * 0.05);
     }
   } else if ((GENERIC_FISH_KINDS as readonly CoreMobKind[]).includes(kind)) {
     for (const side of ["left", "right"] as const) {

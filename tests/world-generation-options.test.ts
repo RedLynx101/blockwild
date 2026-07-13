@@ -17,6 +17,7 @@ test("generation options clamp safely and an omitted options object restores exa
     resourceAbundance: Number.NaN,
     structures: false,
   }), {
+    profile: "world-below-v15",
     caveFrequency: 0,
     biomeScale: 4,
     resourceAbundance: 1,

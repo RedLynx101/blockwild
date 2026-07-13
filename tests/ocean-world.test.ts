@@ -30,7 +30,7 @@ import { createWeatherState, planCloudField, weatherVisuals } from "../app/game/
 import { BiomeId, ChunkWorld, GENERATOR_VERSION, planPoiAmenities } from "../app/game/world.ts";
 
 test("shoreline, biome, crop and aquatic ids remain byte-safe and registered", () => {
-  assert.equal(GENERATOR_VERSION, 14);
+  assert.equal(GENERATOR_VERSION, 15);
   for (const block of [BlockId.Saltbrush, BlockId.CoastAster, BlockId.JungleGrass, BlockId.SakuraGrass, BlockId.LumenKelp, BlockId.AbyssBloom, BlockId.SunrootCrop]) {
     assert.ok(block > 99 && block <= 255);
     assert.ok(BLOCKS[block]);
@@ -175,7 +175,7 @@ test("every authored tree form is face-connected and old diagonal crowns fell co
 
 test("composed Rainveil crowns preserve rooted wood in generated chunks", () => {
   const world = new ChunkWorld();
-  world.reset("HEARTHROADS", undefined, { structures: false });
+  world.reset("HEARTHROADS", undefined, { structures: false, profile: "legacy-v14" });
   const chunkX = Math.floor(-2_080 / 16);
   const chunkZ = Math.floor(-3_026 / 16);
   // The audited 3x3 window can contain the outer branch of a tree rooted in
@@ -252,7 +252,7 @@ test("world sampling exposes the new land and trench biomes with variable ocean 
 
 test("Sunwash Coast emits both new plants sparsely above the tide line", () => {
   const world = new ChunkWorld();
-  world.reset("COAST-V07", undefined, { structures: false });
+  world.reset("COAST-V07", undefined, { structures: false, profile: "legacy-v14" });
   const chunk = world.generateChunk(-20, -20);
   const plants = [...chunk.blocks].filter((block) => block === BlockId.Saltbrush || block === BlockId.CoastAster);
   assert.ok(plants.includes(BlockId.Saltbrush));
@@ -263,7 +263,7 @@ test("Sunwash Coast emits both new plants sparsely above the tide line", () => {
 
 test("world generation materializes an open lit Atlantian settlement below sea level", () => {
   const world = new ChunkWorld();
-  world.reset("ATLANTIS-WORLD", undefined, { structures: true });
+  world.reset("ATLANTIS-WORLD", undefined, { structures: true, profile: "legacy-v14" });
   const x = -12_950;
   const z = -14_995;
   const column = world.sampleColumn(x, z);
@@ -282,7 +282,7 @@ test("world generation materializes an open lit Atlantian settlement below sea l
 
 test("Atlantian towns re-anchor to the actual seabed and fit below local water", () => {
   const world = new ChunkWorld();
-  world.reset("A", undefined, { structures: true });
+  world.reset("A", undefined, { structures: true, profile: "legacy-v14" });
   const regionX = 14;
   const regionZ = -29;
   const center = { x: 7_329, z: -14_684 };

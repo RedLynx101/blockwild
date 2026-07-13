@@ -43,7 +43,7 @@ export const DEFAULT_WORLD_OPTIONS: Readonly<WorldOptions> = Object.freeze({
   mobDensity: 1,
   butterflyDensity: 1,
   caveFrequency: 1,
-  biomeScale: 1,
+  biomeScale: 1.35,
   resourceAbundance: 1,
   structures: true,
   weather: true,
@@ -173,9 +173,13 @@ export function requiredSleepers(options: Pick<WorldOptions, "sleepRule" | "slee
   return Math.max(1, Math.min(players, Math.ceil(players * Math.max(1, Math.min(100, options.sleepPercentage)) / 100)));
 }
 
-export function generationOptionsFromWorldOptions(value?: Partial<WorldOptions> | null): WorldGenerationOptions {
+export function generationOptionsFromWorldOptions(
+  value?: Partial<WorldOptions> | null,
+  profile: WorldGenerationOptions["profile"] = "world-below-v15",
+): WorldGenerationOptions {
   const options = normalizeWorldOptions(value);
   return {
+    profile,
     caveFrequency: options.caveFrequency,
     biomeScale: options.biomeScale,
     resourceAbundance: options.resourceAbundance,
@@ -216,7 +220,11 @@ function sanitizeEdits(value: unknown, offset = 0) {
       if (!Array.isArray(entry) || !Number.isFinite(entry[0]) || !Number.isFinite(entry[1])) continue;
       const index = Math.trunc(entry[0] as number) + offset;
       const type = Math.trunc(entry[1] as number);
-      if (index < 0 || index >= 16 * 16 * WORLD_HEIGHT || type < 0 || type > 255) continue;
+      // The World Below moved chunk storage to Uint16 so authored blocks can
+      // safely use ids above the old byte ceiling. Keep the import boundary
+      // bounded to the same representation instead of silently dropping new
+      // underground blocks from exported worlds.
+      if (index < 0 || index >= 16 * 16 * WORLD_HEIGHT || type < 0 || type > 65_535) continue;
       safeEntries.push([index, type]);
     }
     edits[key] = safeEntries;
@@ -230,7 +238,7 @@ export function migrateLegacyWorldSave(value: unknown): WorldSave | null {
   const mode = normalizeMode(value.mode);
   if (!seed || !mode || !isRecord(value.player)) return null;
   const generatorVersion = Math.trunc(finite(value.generatorVersion, -1));
-  if (![2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, GENERATOR_VERSION].includes(generatorVersion)) return null;
+  if (![2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, GENERATOR_VERSION].includes(generatorVersion)) return null;
   const offset = generatorVersion === 2 ? (LEGACY_GENERATOR_MIN_Y - MIN_Y) * 16 * 16 : 0;
   const player = value.player;
   if (![player.x, player.y, player.z].every((coordinate) => typeof coordinate === "number" && Number.isFinite(coordinate))) return null;
@@ -240,6 +248,9 @@ export function migrateLegacyWorldSave(value: unknown): WorldSave | null {
     ...value,
     version: 2,
     generatorVersion: GENERATOR_VERSION,
+    generatorProfile: value.generatorProfile === "legacy-v14" || generatorVersion < GENERATOR_VERSION
+      ? "legacy-v14"
+      : "world-below-v15",
     lastSavedGameVersion: normalizeGameVersion(value.lastSavedGameVersion),
     seed,
     mode,

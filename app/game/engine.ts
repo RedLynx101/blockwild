@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { SynthAudio } from "./audio";
+import { SynthAudio, type SampleKind } from "./audio";
 import {
   goldForIngots,
   ingotsAvailableFromWallet,
@@ -172,6 +172,7 @@ import {
   naturalGroupSizeForMob,
   naturalMicrohabitatAffinity,
   passiveMobKindForBiome,
+  undergroundMobKindForBiome,
   shouldKeepCreatureLoaded,
   saddleLeviathan,
   stepAetherbellMorph,
@@ -537,6 +538,7 @@ import {
   createCartographySession,
   createMapKnowledge,
   discoverNaturalPoi,
+  markUndergroundChunk,
   markChunksRendered,
   mapSurfaceQuadrantColor,
   normalizeMapKnowledge,
@@ -551,6 +553,7 @@ import {
   type MapKnowledge,
   type MapPlayerMarker,
 } from "./map-system";
+import { UNDERGROUND_BIOME_NAMES, UndergroundBiomeId } from "./underground";
 import {
   DEFAULT_QUEST_DEFINITIONS,
   HEARTHROADS_MAIN_QUESTS,
@@ -947,6 +950,7 @@ export type SavedCreature = {
 export type WorldSave = {
   version: 2;
   generatorVersion: number;
+  generatorProfile?: "legacy-v14" | "world-below-v15";
   lastSavedGameVersion?: string;
   seed: string;
   mode: GameMode;
@@ -960,6 +964,8 @@ export type WorldSave = {
   offhand?: InventorySlot | null;
   bestiary?: Partial<BestiaryProgress>;
   saplings?: Record<string, number>;
+  /** Heart-bound Living Vein repairs queued after generated branches are mined. */
+  veinRegrowth?: Record<string, number>;
   selected: number;
   health: number;
   hunger: number;
@@ -1331,12 +1337,17 @@ export function timedMovementMultiplier(buffs: Readonly<Record<string, number>> 
 }
 
 function environmentLightDistance(type: BlockId) {
+  if ([BlockId.LuminousRoot, BlockId.GlowmossCarpet, BlockId.LuminousAlgae, BlockId.LivingVein].includes(type)) return 8;
+  if ([BlockId.LuminousGills, BlockId.LanternBloom, BlockId.ResonantCrystal, BlockId.CrystalCluster, BlockId.FumaroleVent, BlockId.VeinmetalHeart].includes(type)) return 11;
   return type === BlockId.LightningBugJar ? 10 : 15;
 }
 
 function isEnvironmentLightBlock(type: BlockId) {
   return isTorchBlock(type) || type === BlockId.Glowstone || type === BlockId.CrystalBlock || type === BlockId.RuneStone
-    || type === BlockId.Dreamblossom || type === BlockId.GiantDreamblossom || type === BlockId.LightningBugJar;
+    || type === BlockId.Dreamblossom || type === BlockId.GiantDreamblossom || type === BlockId.LightningBugJar
+    || [BlockId.LuminousRoot, BlockId.StarbloomCap, BlockId.LuminousGills, BlockId.LanternBloom, BlockId.GlowmossCarpet,
+      BlockId.LuminousAlgae, BlockId.ResonantCrystal, BlockId.CrystalCluster, BlockId.FumaroleVent,
+      BlockId.LivingVein, BlockId.VeinmetalHeart, BlockId.CaveMarker].includes(type);
 }
 
 function setEnvironmentLightPosition(target: THREE.Vector3, source: Pick<EnvironmentLightSource, "x" | "y" | "z" | "type">) {
@@ -1703,6 +1714,26 @@ export function isDoubleForwardTap(previousTap: number, currentTap: number, wind
   return Number.isFinite(elapsed) && elapsed >= 45 && elapsed <= windowMilliseconds;
 }
 
+export type UndergroundAmbientCuePlan = Readonly<{ sample: SampleKind; gain: number; playbackRate: number }>;
+
+/** Sparse habitat one-shots sit over the shared quiet cave bed. */
+export function undergroundAmbientCue(biome: UndergroundBiomeId): UndergroundAmbientCuePlan | null {
+  if (biome === UndergroundBiomeId.RootweaveGrotto) return { sample: "copperMoleSniff", gain: 0.18, playbackRate: 0.72 };
+  if (biome === UndergroundBiomeId.StarbloomHollows) return { sample: "owlCallA", gain: 0.16, playbackRate: 1.35 };
+  if (biome === UndergroundBiomeId.GlasswaterDeeps) return { sample: "waterSplash", gain: 0.2, playbackRate: 0.78 };
+  if (biome === UndergroundBiomeId.PillarstoneReaches) return { sample: "shadecrawlerStoneChitter", gain: 0.15, playbackRate: 0.66 };
+  if (biome === UndergroundBiomeId.CrystaldeepGallery) return { sample: "magicAttack", gain: 0.12, playbackRate: 1.52 };
+  if (biome === UndergroundBiomeId.EmberdeepFumaroles) return { sample: "scaryGrumble", gain: 0.14, playbackRate: 1.45 };
+  return null;
+}
+
+/** A long visible/particle wind-up precedes the short damaging steam pulse. */
+export function fumaroleSurgeAt(simulationSeconds: number) {
+  const seconds = Number.isFinite(simulationSeconds) ? simulationSeconds : 0;
+  const phase = ((seconds % 4.8) + 4.8) % 4.8;
+  return { phase, warning: phase >= 3.15, surging: phase < 1.05 } as const;
+}
+
 function blockKey(x: number, y: number, z: number) {
   return `${x},${y},${z}`;
 }
@@ -1712,9 +1743,28 @@ function blockPositionFromKey(key: string) {
   return Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z) ? { x, y, z } : null;
 }
 
+export function deepgearLiftDestinationY(
+  currentY: number,
+  prefer: "up" | "down",
+  getBlock: (y: number) => BlockId | undefined,
+  minimumY = MIN_Y,
+  maximumY = MAX_Y,
+) {
+  const clearStop = (y: number) => getBlock(y) === BlockId.DeepgearLift
+    && !BLOCKS[getBlock(y + 1) ?? BlockId.Bedrock]?.solid
+    && !BLOCKS[getBlock(y + 2) ?? BlockId.Bedrock]?.solid;
+  const search = (direction: 1 | -1) => {
+    for (let y = currentY + direction; y >= minimumY && y <= maximumY; y += direction) if (clearStop(y)) return y;
+    return null;
+  };
+  return prefer === "up" ? search(1) ?? search(-1) : search(-1) ?? search(1);
+}
+
 const STRUCTURE_LOOT_ITEMS: Readonly<Record<string, ItemCode>> = Object.freeze({
   "gold-ingot": Item.GoldIngot,
-  "sunmetal-ingot": Item.SunmetalIngot,
+  "iron-ingot": Item.IronIngot,
+  /** Legacy authored structures continue to resolve without surfacing the retired name. */
+  "sunmetal-ingot": Item.IronIngot,
   "crystal-shard": Item.CrystalShard,
   "bone-shard": Item.BoneShard,
   "glow-dust": Item.GlowDust,
@@ -1788,8 +1838,11 @@ export function migrateSavedWorld(value: unknown): WorldSave | null {
   if (!value || typeof value !== "object") return null;
   const parsed = value as WorldSave;
   if (parsed.version !== 2 || typeof parsed.seed !== "string") return null;
-  if (parsed.generatorVersion === GENERATOR_VERSION) return parsed;
-  if (parsed.generatorVersion === 3 || parsed.generatorVersion === 4 || parsed.generatorVersion === 5 || parsed.generatorVersion === 6 || parsed.generatorVersion === 7 || parsed.generatorVersion === 8 || parsed.generatorVersion === 9 || parsed.generatorVersion === 10 || parsed.generatorVersion === 11 || parsed.generatorVersion === 12 || parsed.generatorVersion === 13) return { ...parsed, generatorVersion: GENERATOR_VERSION };
+  if (parsed.generatorVersion === GENERATOR_VERSION) return {
+    ...parsed,
+    generatorProfile: parsed.generatorProfile === "legacy-v14" ? "legacy-v14" : "world-below-v15",
+  };
+  if (parsed.generatorVersion === 3 || parsed.generatorVersion === 4 || parsed.generatorVersion === 5 || parsed.generatorVersion === 6 || parsed.generatorVersion === 7 || parsed.generatorVersion === 8 || parsed.generatorVersion === 9 || parsed.generatorVersion === 10 || parsed.generatorVersion === 11 || parsed.generatorVersion === 12 || parsed.generatorVersion === 13 || parsed.generatorVersion === 14) return { ...parsed, generatorVersion: GENERATOR_VERSION, generatorProfile: "legacy-v14" };
   if (parsed.generatorVersion !== 2) return null;
   const indexOffset = (LEGACY_GENERATOR_MIN_Y - MIN_Y) * 16 * 16;
   const edits: ChunkEditSave = {};
@@ -1799,7 +1852,7 @@ export function migrateSavedWorld(value: unknown): WorldSave | null {
       .filter((entry): entry is [number, number] => Array.isArray(entry) && Number.isFinite(entry[0]) && Number.isFinite(entry[1]))
       .map(([index, type]) => [Math.trunc(index) + indexOffset, Math.trunc(type)]);
   }
-  return { ...parsed, generatorVersion: GENERATOR_VERSION, edits };
+  return { ...parsed, generatorVersion: GENERATOR_VERSION, generatorProfile: "legacy-v14", edits };
 }
 
 export function restoreChestStorage(saved: Record<string, ChestState> = {}) {
@@ -1987,13 +2040,17 @@ export function apiaryPhaseForWorldTime(worldTime: number): ApiaryPhase {
 const HERD_MOB_KINDS = new Set<MobKind>([
   "ridgeback", "woolhorn", "sunstep-grazer", "thimbledeer", "frostlace-hart", "reedcrown-deer",
   "wild-horse", "rimehoof-courser", "sunscar-courser", "mirestride-courser", "starbough-courser",
-  "meadow-cow", "sunbloom-longhorn", "mistmane", "taffalo",
+  "meadow-cow", "sunbloom-longhorn", "mistmane", "taffalo", "grotto-grazer",
 ]);
+const FLOCK_MOB_KINDS = new Set<MobKind>([
+  "lanternray", "prismtail-swift", "sailfin-skimmer", "ashnose-bat", "chimewing", "cinder-kite",
+]);
+const CEILING_ROOST_MOB_KINDS = new Set<MobKind>(["lanternray", "ashnose-bat"]);
 const MILKABLE_MOB_KINDS = new Set<MobKind>(["meadow-cow", "sunbloom-longhorn"]);
 
 export function socialGroupModeForMob(kind: MobKind): SocialGroupMode | null {
   if (HERD_MOB_KINDS.has(kind)) return "herd";
-  return MOB_DEFS[kind]?.family === "fish" ? "shoal" : null;
+  return MOB_DEFS[kind]?.family === "fish" || FLOCK_MOB_KINDS.has(kind) ? "shoal" : null;
 }
 
 export function feedCourserBond(state: ReedstriderBond, ownerId: string, item: ItemCode): ReedstriderBond {
@@ -2266,7 +2323,7 @@ export function offhandItemKind(item: ItemCode | null | undefined): "shield" | "
 
 function shieldKindForItem(item: ItemCode | null | undefined): ShieldKind | null {
   if (offhandItemKind(item) !== "shield") return null;
-  return ITEMS[item!]?.shieldKind ?? (/sunmetal/iu.test(ITEMS[item!]?.name ?? "") ? "sunmetal-shield" : "wildwood-shield");
+  return ITEMS[item!]?.shieldKind ?? (/iron/iu.test(ITEMS[item!]?.name ?? "") ? "iron-shield" : "wildwood-shield");
 }
 
 function networkItemStack(slot: InventorySlot | null): ItemStackSnapshot {
@@ -2767,6 +2824,8 @@ export class VoxelEngine {
   bestiary = blankBestiary();
   saplings = new Map<string, number>();
   saplingCheckTimer = 0;
+  veinRegrowth = new Map<string, number>();
+  veinRegrowthTimer = 0;
   cursor: InventorySlot | null = null;
   craftGrid: Array<InventorySlot | null> = Array.from({ length: 9 }, () => null);
   craftingSize: 2 | 3 = 2;
@@ -2856,6 +2915,9 @@ export class VoxelEngine {
   attackCooldown = 0;
   playerInvulnerability = 0;
   fluidDamageTimer = 0;
+  fumaroleDamageTimer = 0;
+  fumaroleParticleTimer = 0;
+  undergroundAmbienceTimer = 3;
   regenTimer = 0;
   spawnProtection = 20;
   footstepDistance = 0;
@@ -3612,6 +3674,7 @@ export class VoxelEngine {
     this.rangedReloadItem = null;
     this.rangedReloadTimer = 0;
     this.saplings.clear();
+    this.veinRegrowth.clear();
     this.cursor = null;
     this.craftGrid = Array.from({ length: 9 }, () => null);
     this.furnaces.clear();
@@ -3701,7 +3764,7 @@ export class VoxelEngine {
       .map(([key, cell]) => [key, { ...cell }]));
     this.oxygenSeconds = DEFAULT_SWIM_RULES.maxOxygenSeconds;
     this.drowningAccumulator = 0;
-    this.world.reset(save.seed, save.edits, generationOptionsFromWorldOptions(this.worldOptions));
+    this.world.reset(save.seed, save.edits, generationOptionsFromWorldOptions(this.worldOptions, save.generatorProfile ?? "world-below-v15"));
     this.world.initializeAround(save.player.x, save.player.z);
     this.position.set(save.player.x, save.player.y, save.player.z);
     this.spawn.set(save.spawn?.x ?? 0, save.spawn?.y ?? this.world.surfaceAt(0, 0) + 0.51, save.spawn?.z ?? 0);
@@ -3772,6 +3835,7 @@ export class VoxelEngine {
     this.rangedReloadItem = null;
     this.rangedReloadTimer = 0;
     this.saplings = new Map(Object.entries(save.saplings ?? {}).map(([key, value]) => [key, Number(value) || 0]));
+    this.veinRegrowth = new Map(Object.entries(save.veinRegrowth ?? {}).map(([key, value]) => [key, Number(value) || 0]));
     this.cursor = null;
     this.craftGrid = Array.from({ length: 9 }, () => null);
     const transientItems = [save.cursor, ...(save.craftGrid ?? [])]
@@ -5491,6 +5555,7 @@ export class VoxelEngine {
       tick: this.multiplayerTick,
       seed: this.world.seedText,
       generatorVersion: GENERATOR_VERSION,
+      generatorProfile: this.world.generationOptions.profile,
       players: [local, ...[...this.remotePlayers.values()].map((remote) => remote.target)].filter((pose): pose is PlayerPose => Boolean(pose)),
       blockEdits: this.networkBlockEdits(),
       mobs: this.networkMobSnapshot(),
@@ -5532,7 +5597,9 @@ export class VoxelEngine {
   }
 
   private applyInitialWorldSnapshot(snapshot: WorldSnapshot, hostPeer: PeerInfo) {
-    if (snapshot.generatorVersion !== GENERATOR_VERSION) {
+    const snapshotProfile = snapshot.generatorProfile ?? "world-below-v15";
+    if (snapshot.generatorVersion !== GENERATOR_VERSION
+      || !["legacy-v14", "world-below-v15"].includes(snapshotProfile)) {
       this.multiplayerState.error = "Host and guest use different world-generator versions.";
       return;
     }
@@ -5548,7 +5615,7 @@ export class VoxelEngine {
     this.multiplayerContainerRevisions.clear();
     this.multiplayerContainerSignatures.clear();
     this.multiplayerContainerAwaiting.clear();
-    this.world.reset(snapshot.seed, this.editsFromNetwork(snapshot.blockEdits), generationOptionsFromWorldOptions(this.worldOptions));
+    this.world.reset(snapshot.seed, this.editsFromNetwork(snapshot.blockEdits), generationOptionsFromWorldOptions(this.worldOptions, snapshotProfile));
     const guestPlayerId = this.multiplayer?.identity.id ?? "guest";
     const sessionAuthority = `session:${snapshot.seed}`;
     // A guest enters the host session, never a hybrid of the host terrain and
@@ -9564,7 +9631,7 @@ export class VoxelEngine {
     put(BlockId.Torch, 3, 9);
     put(Item.Bread, 1, 3, 0.82);
     put(Item.Berry, 2, 5, 0.7);
-    put(Item.SunmetalIngot, 1, 3, 0.38);
+    put(Item.IronIngot, 1, 3, 0.38);
     put(Item.GoldIngot, 1, 2, 0.2);
     put(Item.CrystalShard, 1, 2, 0.08);
     put(Item.StonePickaxe, 1, 1, 0.14);
@@ -9758,6 +9825,42 @@ export class VoxelEngine {
       if (this.position.distanceToSquared(new THREE.Vector3(x, y, z)) < 400) this.audio.play("place", log);
     }
     if (processed) this.saveSoon();
+  }
+
+  private nearbyVeinmetalHeart(x: number, y: number, z: number, radius = 5) {
+    for (let dy = -radius; dy <= radius; dy += 1) for (let dx = -radius; dx <= radius; dx += 1) for (let dz = -radius; dz <= radius; dz += 1) {
+      if (dx * dx + dy * dy + dz * dz > radius * radius) continue;
+      if (this.world.getBlock(x + dx, y + dy, z + dz) === BlockId.VeinmetalHeart) return { x: x + dx, y: y + dy, z: z + dz };
+    }
+    return null;
+  }
+
+  /** At most one due branch repairs per pass, only while its original heart survives. */
+  updateVeinmetalRegrowth(dt: number) {
+    this.veinRegrowthTimer -= dt;
+    if (this.veinRegrowthTimer > 0 || !this.veinRegrowth.size) return;
+    this.veinRegrowthTimer = 2;
+    const now = Date.now();
+    for (const [key, due] of this.veinRegrowth) {
+      if (due > now) continue;
+      const [x, y, z] = key.split(",").map(Number);
+      const current = this.world.getBlock(x, y, z);
+      if (current === undefined) { this.veinRegrowth.set(key, now + 30_000); return; }
+      if (current !== BlockId.Air || !this.nearbyVeinmetalHeart(x, y, z)) {
+        this.veinRegrowth.delete(key);
+        return;
+      }
+      if (this.position.distanceToSquared(new THREE.Vector3(x, y, z)) < 20) {
+        this.veinRegrowth.set(key, now + 20_000);
+        return;
+      }
+      this.world.setBlock(x, y, z, BlockId.LivingVein, true, true);
+      this.publishBlockEdits([{ x, y, z, type: BlockId.LivingVein }], "place");
+      this.veinRegrowth.delete(key);
+      this.lightRefreshTimer = 0;
+      this.saveSoon();
+      return;
+    }
   }
 
   selectedSlot() {
@@ -12214,6 +12317,10 @@ export class VoxelEngine {
         this.openOverlay("incubator", key);
         return;
       }
+      if (this.target.type === BlockId.DeepgearLift) {
+        this.useDeepgearLift(this.target.x, this.target.y, this.target.z);
+        return;
+      }
       if (isSeatBlock(this.target.type)) {
         this.toggleSeat(this.target.x, this.target.y, this.target.z, this.target.type);
         return;
@@ -12277,6 +12384,26 @@ export class VoxelEngine {
     this.seatedAt = null;
     this.crouching = false;
     if (announce) this.events.onToast("You stand up.");
+    return true;
+  }
+
+  useDeepgearLift(x: number, y: number, z: number) {
+    const destinationY = deepgearLiftDestinationY(y, this.crouching ? "down" : "up", (scanY) => this.world.getBlock(x, scanY, z));
+    if (destinationY === null) {
+      this.events.onToast("This lift has no clear connected platform. Place another directly above or below it.");
+      this.placeCooldown = 0.2;
+      return false;
+    }
+    this.leaveSeat(false);
+    this.position.set(x, destinationY + 1.05, z);
+    this.lastPosition.copy(this.position);
+    this.velocity.set(0, 0, 0);
+    this.fallVelocity = 0;
+    this.grounded = false;
+    this.heldUse = 1;
+    this.placeCooldown = 0.35;
+    this.audio.play("craft");
+    this.events.onToast(destinationY > y ? "The Deepgear lift climbs toward the surface." : "The Deepgear lift descends into the hold.");
     return true;
   }
 
@@ -12753,6 +12880,7 @@ export class VoxelEngine {
   breakTarget() {
     if (!this.target || this.target.type === BlockId.Bedrock || Boolean(BLOCKS[this.target.type]?.liquid)) return;
     const { x, y, z, type } = this.target;
+    const veinHeart = type === BlockId.LivingVein ? this.nearbyVeinmetalHeart(x, y, z) : null;
     const ownsBreakLoot = this.multiplayer?.role !== "guest";
     const exhibitTopology = type === BlockId.ButterflyExhibit ? this.exhibitTopologyAt(x, y, z) : null;
     const aquariumTopology = type === BlockId.GlassAquarium ? this.aquariumTopologyAt(x, y, z) : null;
@@ -12807,6 +12935,15 @@ export class VoxelEngine {
     this.unregisterWaygridBlock(type, key, new THREE.Vector3(x, y, z));
     if (isEnvironmentLightBlock(type)) this.lightRefreshTimer = 0;
     for (const edit of brokenEdits) this.saplings.delete(blockKey(edit.x, edit.y, edit.z));
+    if (veinHeart) {
+      // Slow, single-cell repair preserves the colony behavior without making
+      // Living Vein an efficient unattended resource farm.
+      this.veinRegrowth.set(key, Date.now() + 8 * 60_000 + Math.random() * 4 * 60_000);
+    }
+    if (ownsBreakLoot && (type === BlockId.VeinmetalHeart || type === BlockId.LivingVein && Math.random() < 0.16)) {
+      const defenderNearby = this.mobs.some((mob) => mob.kind === "veinling" && mob.group.position.distanceToSquared(new THREE.Vector3(x, y, z)) < 18 ** 2);
+      if (!defenderNearby) this.spawnMob("veinling", new THREE.Vector3(x + 0.5, y + MOB_DEFS.veinling.footOffset, z + 0.5));
+    }
     if (isWaterloggedFloraBlock(type) && this.world.getBlock(x, y - 1, z) === type) this.schedulePlantGrowth(x, y - 1, z, type, 1);
     if (ownsBreakLoot && this.isDoor(type) && this.mode === "survival" && harvested) this.spawnDrop(doorItem(type), 1, new THREE.Vector3(x, y, z));
     if (ownsBreakLoot && this.isBed(type) && this.mode === "survival" && harvested) this.spawnDrop(Item.WildwoodBed, 1, new THREE.Vector3(x, y, z));
@@ -12929,10 +13066,12 @@ export class VoxelEngine {
     else if (type === BlockId.Grass || type === BlockId.SnowyGrass || type === BlockId.SavannaGrass || type === BlockId.SwampGrass || type === BlockId.JungleGrass || type === BlockId.SakuraGrass) drops = [[BlockId.Dirt, 1]];
     else if (type === BlockId.Stone || type === BlockId.Deepstone || type === BlockId.Basalt) drops = [[BlockId.Cobblestone, 1]];
     else if (type === BlockId.CoalOre) drops = this.randomDrop(Item.Coal, 1, 2);
-    else if (type === BlockId.IronOre) drops = [[Item.RawSunmetal, 1]];
-    else if (type === BlockId.CopperOre) drops = this.randomDrop(Item.RawSunmetal, 1, 2);
+    else if (type === BlockId.IronOre) drops = [[Item.RawIron, 1]];
+    else if (type === BlockId.CopperOre) drops = this.randomDrop(Item.RawCopper, 1, 2);
     else if (type === BlockId.GoldOre) drops = [[Item.RawGold, 1]];
     else if (type === BlockId.CrystalOre) drops = this.randomDrop(Item.CrystalShard, 1, 2);
+    else if (type === BlockId.LivingVein) drops = this.randomDrop(Item.VeinmetalFlake, 1, 2);
+    else if (type === BlockId.VeinmetalHeart) drops = [[Item.LivingNode, 1], ...this.randomDrop(Item.VeinmetalFlake, 2, 4)];
     else if ([BlockId.WildwoodLeaves, BlockId.PineLeaves, BlockId.BirchLeaves, BlockId.BloomLeaves, BlockId.JungleLeaves, BlockId.SakuraLeaves, BlockId.CandywoodLeaves].includes(type)) {
       const sapling = type === BlockId.JungleLeaves ? Item.RainveilSapling
         : type === BlockId.SakuraLeaves ? Item.SakurabloomSapling
@@ -13219,6 +13358,7 @@ export class VoxelEngine {
     const inSyrup = liquidKind === "syrup";
     const inSwimmableLiquid = inWater || inHoney || inSyrup;
     const inLiquid = liquidKind !== undefined;
+    const onRopeLadder = feetBlock === BlockId.RopeLadder || headBlock === BlockId.RopeLadder;
     const headLiquid = liquidKindForBlock(headBlock);
     this.headSubmerged = headLiquid !== undefined && headLiquid !== "lava";
     const enteredSwimmableLiquid = inSwimmableLiquid && !this.wasInWater;
@@ -13298,6 +13438,14 @@ export class VoxelEngine {
       this.velocity.y -= 5 * dt;
       this.velocity.y *= Math.max(0, 1 - 2.4 * dt);
       if (this.keys.has("Space")) this.velocity.y += 9.5 * dt;
+    } else if (onRopeLadder) {
+      this.fallVelocity = 0;
+      this.fallCuePlayed = false;
+      const climb = this.keys.has("Space") || forwardAmount > 0 ? 3.35 : this.crouching ? -2.25 : 0;
+      this.velocity.y += (climb - this.velocity.y) * Math.min(1, dt * 12);
+      this.velocity.x *= Math.max(0, 1 - dt * 5.5);
+      this.velocity.z *= Math.max(0, 1 - dt * 5.5);
+      this.grounded = false;
     } else {
       const maxOxygen = (this.potionBuffs.tidebreath ?? 0) > this.worldSimulationSeconds()
         ? 300
@@ -13338,6 +13486,18 @@ export class VoxelEngine {
     }
     this.lastPosition.copy(this.position);
 
+    const underfootBlock = this.blockUnderfoot();
+    const onFumarole = underfootBlock === BlockId.FumaroleVent;
+    const fumarolePulse = fumaroleSurgeAt(this.worldSimulationSeconds());
+    const fumaroleSurging = onFumarole && fumarolePulse.surging;
+    if (onFumarole) {
+      this.fumaroleParticleTimer -= dt;
+      if (this.fumaroleParticleTimer <= 0) {
+        this.spawnParticles(this.position.x, this.position.y - 0.1, this.position.z, fumaroleSurging ? BlockId.SulfurGrowth : BlockId.Flowstone, fumaroleSurging ? 7 : fumarolePulse.warning ? 4 : 2);
+        this.fumaroleParticleTimer = fumaroleSurging ? 0.16 : fumarolePulse.warning ? 0.34 : 0.72;
+      }
+    } else this.fumaroleParticleTimer = 0;
+
     if (this.mode === "survival") {
       const peaceful = this.worldOptions.difficulty === "peaceful";
       const survivalMultiplier = skillMultiplier(this.skillState.skills.survival.level);
@@ -13352,6 +13512,13 @@ export class VoxelEngine {
         this.fluidDamageTimer -= dt;
         if (this.fluidDamageTimer <= 0) { this.damagePlayer(2, "lava"); this.fluidDamageTimer = 0.8; }
       } else this.fluidDamageTimer = 0;
+      if (fumaroleSurging) {
+        this.fumaroleDamageTimer -= dt;
+        if (this.fumaroleDamageTimer <= 0) {
+          this.damagePlayer(1, "a fumarole burst", true);
+          this.fumaroleDamageTimer = 0.85;
+        }
+      } else this.fumaroleDamageTimer = 0;
       this.survivalXpTimer += dt;
       if (this.survivalXpTimer >= 30) {
         this.gainSkillExperience("survival", 3);
@@ -14793,11 +14960,38 @@ export class VoxelEngine {
       this.gainSkillExperience("exploration", Math.max(1, explored.exploredChunks.length - exploredBefore) * 0.6);
       changed = true;
     }
+    const playerBlock = this.world.getBlock(
+      Math.floor(this.position.x),
+      Math.floor(this.position.y),
+      Math.floor(this.position.z),
+    );
+    const isEnteredCave = this.skyVisibility < 0.18
+      && !blockContainsWater(playerBlock)
+      && this.position.y < this.world.surfaceAt(this.position.x, this.position.z) - 5;
+    if (isEnteredCave) {
+      const caveBiome = this.world.undergroundBiomeAt(this.position.x, this.position.y, this.position.z);
+      const mapped = markUndergroundChunk(this.mapKnowledge, {
+        x: Math.floor(this.position.x / CHUNK_SIZE),
+        z: Math.floor(this.position.z / CHUNK_SIZE),
+        biome: UNDERGROUND_BIOME_NAMES[caveBiome],
+        elevation: Math.floor(this.position.y),
+      });
+      if (mapped !== this.mapKnowledge) {
+        this.mapKnowledge = mapped;
+        changed = true;
+      }
+    }
     this.syncSettlementPlans();
     for (const [key, marker] of this.world.structureMarkers) {
       if (marker.type !== "landmark") continue;
       const markerChunk = this.world.chunks.get(`${Math.floor(marker.position.x / CHUNK_SIZE)},${Math.floor(marker.position.z / CHUNK_SIZE)}`);
-      if (!markerChunk?.group.visible || this.mapKnowledge.markers.some((entry) => entry.id === key)) continue;
+      const markerIsUnderground = marker.position.y < 24;
+      const nearUndergroundMarker = isEnteredCave
+        && Math.hypot(marker.position.x - this.position.x, marker.position.z - this.position.z) <= 42
+        && Math.abs(marker.position.y - this.position.y) <= 24;
+      if ((!markerIsUnderground && !markerChunk?.group.visible)
+        || (markerIsUnderground && !nearUndergroundMarker)
+        || this.mapKnowledge.markers.some((entry) => entry.id === key)) continue;
       this.mapKnowledge = discoverNaturalPoi(this.mapKnowledge, {
         id: key,
         name: this.mapLocationName(marker.tag),
@@ -16040,7 +16234,7 @@ export class VoxelEngine {
     }
   }
 
-  spawnNaturalGroup(kind: MobKind, center: THREE.Vector3, maximum: number, aquatic = false) {
+  spawnNaturalGroup(kind: MobKind, center: THREE.Vector3, maximum: number, aquatic = false, underground = false) {
     const count = Math.max(0, Math.min(maximum, naturalGroupSizeForMob(kind, Math.random())));
     if (count <= 0) return [] as MobEntity[];
     const mode = socialGroupModeForMob(kind);
@@ -16056,6 +16250,18 @@ export class VoxelEngine {
       if (aquatic) {
         const liquid = this.world.getBlock(Math.floor(x + 0.5), Math.floor(y + 0.5), Math.floor(z + 0.5));
         if (kind === "syrupfin" ? liquid !== BlockId.Syrup : !blockContainsWater(liquid)) continue;
+      } else if (underground) {
+        if (MOB_DEFS[kind].flying) {
+          const body = this.world.getBlock(Math.round(x), Math.round(center.y + 2), Math.round(z));
+          if (!this.world.isWalkThrough(body)) continue;
+          y = center.y + 2 + MOB_DEFS[kind].footOffset;
+        } else {
+          const ground = this.world.findWalkableY(Math.round(x), Math.round(z), center.y);
+          const feet = this.world.getBlock(Math.round(x), ground + 1, Math.round(z));
+          const head = this.world.getBlock(Math.round(x), ground + 2, Math.round(z));
+          if (!this.world.isWalkThrough(feet) || !this.world.isWalkThrough(head)) continue;
+          y = ground + MOB_DEFS[kind].footOffset;
+        }
       } else {
         const ground = this.world.surfaceAt(Math.round(x), Math.round(z));
         const feet = this.world.getBlock(Math.round(x), ground + 1, Math.round(z));
@@ -16120,19 +16326,44 @@ export class VoxelEngine {
       y = this.world.findWalkableY(x, z, this.position.y);
       const nearbyWaterY = [Math.round(this.position.y), Math.round(this.position.y) - 1, Math.round(this.position.y) + 1]
         .find((candidateY) => blockContainsWater(this.world.getBlock(x, candidateY, z)));
-      if (intent === "passive" && nearbyWaterY !== undefined && passiveCount < passiveCap) {
-        kind = fishKindForHabitat("underground");
-        this.spawnNaturalGroup(kind, new THREE.Vector3(x, nearbyWaterY, z), Math.min(passiveCap - passiveCount, caps.total - population.total), true);
+      const caveBiome = this.world.undergroundBiomeAt(x, y, z);
+      let caveKind: MobKind | null = null;
+      for (let attempt = 0; attempt < 14; attempt += 1) {
+        const candidate = undergroundMobKindForBiome(caveBiome, Math.random());
+        const definition = MOB_DEFS[candidate];
+        if (definition.hostile !== (intent === "hostile")) continue;
+        if (intent === "passive" && Boolean(definition.aquatic) !== (nearbyWaterY !== undefined)) continue;
+        if (!naturalActivityAllowsSpawn(candidate, {
+          timeOfDay: this.worldTime,
+          daylight: this.daylightAmount(),
+          weather: this.weatherState.kind,
+          underground: true,
+        })) continue;
+        caveKind = candidate;
+        break;
+      }
+      if (!caveKind) {
+        if (intent === "passive" && nearbyWaterY !== undefined) caveKind = fishKindForHabitat("underground");
+        else return;
+      }
+      kind = caveKind;
+      if (intent === "passive") {
+        if (passiveCount >= passiveCap) return;
+        const aquatic = Boolean(MOB_DEFS[kind].aquatic);
+        this.spawnNaturalGroup(
+          kind,
+          new THREE.Vector3(x, aquatic && nearbyWaterY !== undefined ? nearbyWaterY : y, z),
+          Math.min(passiveCap - passiveCount, caps.total - population.total),
+          aquatic,
+          true,
+        );
         return;
       }
-      if (intent === "passive") return;
       if (this.worldOptions.difficulty === "peaceful") return;
       const feet = this.world.getBlock(x, y + 1, z);
       const head = this.world.getBlock(x, y + 2, z);
       if (Math.abs(y - this.position.y) > 14 || !this.world.isWalkThrough(feet) || !this.world.isWalkThrough(head)) return;
       if (hostileCount >= caps.hostile || this.hostileSpawnSuppressedByTorch(x, y + 1, z) || this.hostileSpawnSuppressedBySettlement(x, z) || this.hostileSpawnVisibleToPlayer(x, y, z)) return;
-      const roll = Math.random();
-      kind = roll < 0.38 ? "zombie" : roll < 0.72 ? "caveblob" : "shadecrawler";
     } else {
       y = this.world.surfaceAt(x, z);
       const biome = this.world.biomeAt(x, z);
@@ -16183,7 +16414,7 @@ export class VoxelEngine {
       }
     }
     const available = MOB_DEFS[kind].hostile ? 1 : Math.min(passiveCap - passiveCount, caps.total - population.total);
-    this.spawnNaturalGroup(kind, new THREE.Vector3(x, y + MOB_DEFS[kind].footOffset, z), available);
+    this.spawnNaturalGroup(kind, new THREE.Vector3(x, y + MOB_DEFS[kind].footOffset, z), available, false, underground);
   }
 
   mobMoveTarget(
@@ -16838,6 +17069,13 @@ export class VoxelEngine {
     return this.world.isWalkThrough(block);
   }
 
+  private birdGroundAt(mob: MobEntity, x: number, z: number) {
+    const surface = this.world.surfaceAt(x, z);
+    return mob.definition.family === "underground" && mob.group.position.y < surface - 4
+      ? this.world.findWalkableY(x, z, mob.group.position.y)
+      : surface;
+  }
+
   birdFlightProbe(
     mob: MobEntity,
     heading: number,
@@ -16883,6 +17121,33 @@ export class VoxelEngine {
     const visited = new Set<string>();
     const parity = Math.abs(mob.id) % 2;
     const columns: Array<[number, number]> = [[0, 0]];
+    if (mob.definition.family === "underground" && mob.group.position.y < this.world.surfaceAt(originX, originZ) - 4) {
+      for (let radius = 0; radius <= 5; radius += 1) for (let dx = -radius; dx <= radius; dx += 2) for (let dz = -radius; dz <= radius; dz += 2) {
+        if (radius > 0 && Math.max(Math.abs(dx), Math.abs(dz)) !== radius) continue;
+        const x = originX + dx;
+        const z = originZ + dz;
+        if (CEILING_ROOST_MOB_KINDS.has(mob.kind)) {
+          for (let ceilingY = Math.ceil(mob.group.position.y) + 2; ceilingY <= Math.ceil(mob.group.position.y) + 12; ceilingY += 1) {
+            const ceiling = this.world.getBlock(x, ceilingY, z);
+            if (ceiling === undefined || !BLOCKS[ceiling]?.solid) continue;
+            if (!this.birdAirCellClear(x, ceilingY - 1, z) || !this.birdAirCellClear(x, ceilingY - 2, z)) break;
+            return {
+              id: `ceiling:${x},${ceilingY},${z}`,
+              x,
+              y: ceilingY - 0.72,
+              z,
+              altitude: 0.12,
+              clearance: 1,
+              approachClear: true,
+            };
+          }
+        }
+        const ground = this.world.findWalkableY(x, z, mob.group.position.y);
+        const y = ground + mob.definition.footOffset;
+        if (!this.birdAirCellClear(x, y, z) || !this.birdAirCellClear(x, y + 1, z)) continue;
+        return { id: `cave:${x},${ground},${z}`, x, y, z, altitude: 0.12, clearance: 1, approachClear: true };
+      }
+    }
     for (let dx = -6 + parity; dx <= 6; dx += 2) for (let dz = -6 + parity; dz <= 6; dz += 2) columns.push([dx, dz]);
     for (const [dx, dz] of columns) {
       const x = originX + dx;
@@ -17004,7 +17269,7 @@ export class VoxelEngine {
 
   updateBirdMob(mob: MobEntity, dt: number, distance: number, dx: number, dz: number) {
     if (this.updateHostileAirborneMob(mob, dt, distance, dx, dz)) return;
-    const ground = this.world.surfaceAt(Math.round(mob.group.position.x), Math.round(mob.group.position.z));
+    const ground = this.birdGroundAt(mob, Math.round(mob.group.position.x), Math.round(mob.group.position.z));
     let birdState = mob.birdState ?? createBirdBehavior(mob.kind as Parameters<typeof createBirdBehavior>[0]);
     if (!birdState.perchTarget || birdState.perchSearchTimer <= 0) {
       birdState = {
@@ -17046,7 +17311,7 @@ export class VoxelEngine {
     const desiredDistance = landing && perch ? Math.min(lookahead, Math.max(0.18, Math.hypot(perch.x - mob.group.position.x, perch.z - mob.group.position.z))) : lookahead;
     const projectedX = mob.group.position.x + Math.cos(mob.desiredAngle) * desiredDistance;
     const projectedZ = mob.group.position.z + Math.sin(mob.desiredAngle) * desiredDistance;
-    const projectedGround = this.world.surfaceAt(Math.round(projectedX), Math.round(projectedZ));
+    const projectedGround = this.birdGroundAt(mob, Math.round(projectedX), Math.round(projectedZ));
     const desiredY = landing && perch
       ? perch.y
       : projectedGround + mob.definition.footOffset + (flying ? birdState.altitude : 0);
@@ -17074,7 +17339,7 @@ export class VoxelEngine {
       mob.group.position.x += Math.cos(mob.angle) * speed * dt;
       mob.group.position.z += Math.sin(mob.angle) * speed * dt;
     }
-    const nextGround = this.world.surfaceAt(Math.round(mob.group.position.x), Math.round(mob.group.position.z));
+    const nextGround = this.birdGroundAt(mob, Math.round(mob.group.position.x), Math.round(mob.group.position.z));
     const targetY = route.blocked
       ? Math.max(mob.group.position.y, nextGround + mob.definition.footOffset + 1.1)
       : landing && perch
@@ -17083,6 +17348,9 @@ export class VoxelEngine {
     mob.group.position.y += (targetY - mob.group.position.y) * Math.min(1, dt * (flying ? 5 : 9));
     mob.group.rotation.y = -mob.angle - Math.PI / 2;
     this.animateMob(mob, before.distanceTo(mob.group.position));
+    const ceilingRoost = birdState.mode === "perch" && perch?.id.startsWith("ceiling:") === true;
+    const roostRotation = ceilingRoost && CEILING_ROOST_MOB_KINDS.has(mob.kind) ? Math.PI : 0;
+    mob.visual.rotation.z += (roostRotation - mob.visual.rotation.z) * Math.min(1, dt * 8);
     // Bird wings own their final pose after the generic animator. Both sides
     // share one phase and mirror by side, producing a true opposing flap.
     const birdFlap = Math.sin(performance.now() * 0.026 + mob.id * 0.71);
@@ -18535,10 +18803,18 @@ export class VoxelEngine {
   configureEnvironmentLight(light: THREE.PointLight, source: EnvironmentLightCandidate) {
     const crystal = source.type === BlockId.CrystalBlock;
     const lightningBugJar = source.type === BlockId.LightningBugJar;
-    light.color.setHex(crystal ? 0x69e8ef : lightningBugJar ? 0xcfff63 : source.type === BlockId.Glowstone ? 0xffd66b : 0xffb45e);
+    const undergroundColor = [BlockId.LuminousRoot, BlockId.GlowmossCarpet].includes(source.type) ? 0x8eea80
+      : [BlockId.StarbloomCap, BlockId.LuminousGills, BlockId.LanternBloom].includes(source.type) ? 0x9b7eea
+        : source.type === BlockId.LuminousAlgae ? 0x54d9c6
+          : [BlockId.ResonantCrystal, BlockId.CrystalCluster].includes(source.type) ? 0x789cff
+            : source.type === BlockId.FumaroleVent ? 0xff884d
+              : [BlockId.LivingVein, BlockId.VeinmetalHeart].includes(source.type) ? 0x8fd1b5
+                : source.type === BlockId.CaveMarker ? 0xf1c461 : null;
+    light.color.setHex(undergroundColor ?? (crystal ? 0x69e8ef : lightningBugJar ? 0xcfff63 : source.type === BlockId.Glowstone ? 0xffd66b : 0xffb45e));
     setEnvironmentLightPosition(light.position, source);
     light.distance = environmentLightDistance(source.type);
-    light.userData.targetIntensity = isTorchBlock(source.type) ? 2.15 : lightningBugJar ? 1.25 : crystal ? 1.05 : 1.45;
+    light.userData.targetIntensity = undergroundColor !== null ? (source.type === BlockId.FumaroleVent ? 1.35 : 0.72)
+      : isTorchBlock(source.type) ? 2.15 : lightningBugJar ? 1.25 : crystal ? 1.05 : 1.45;
     light.userData.phase = source.x * 0.73 + source.y * 0.37 + source.z * 0.19;
     light.userData.sourceX = source.x;
     light.userData.sourceY = source.y;
@@ -18864,6 +19140,23 @@ export class VoxelEngine {
     // biome/day score. Reserve cave music for players actually below terrain.
     const caveMusic = underground
       && this.position.y < this.world.surfaceAt(Math.round(this.position.x), Math.round(this.position.z)) - 4;
+    if (caveMusic && this.running && !this.paused && !this.titleMode) {
+      if (!Number.isFinite(this.undergroundAmbienceTimer)) this.undergroundAmbienceTimer = 3;
+      this.undergroundAmbienceTimer -= dt;
+      if (this.undergroundAmbienceTimer <= 0) {
+        const caveBiome = this.world.undergroundBiomeAt(this.position.x, this.position.y, this.position.z);
+        const cue = undergroundAmbientCue(caveBiome);
+        if (cue) this.audio.playSample(cue.sample, {
+          gain: cue.gain,
+          playbackRate: cue.playbackRate,
+          position: [this.position.x + 6 + Math.sin(this.worldTime * 31) * 7, this.position.y + 2, this.position.z - 5 + Math.cos(this.worldTime * 29) * 8],
+          refDistance: 2,
+          maxDistance: 28,
+        });
+        // Ordinary tunnels intentionally have longer quiet intervals.
+        this.undergroundAmbienceTimer = cue ? 10 + (this.day % 5) * 1.7 : 18;
+      }
+    } else this.undergroundAmbienceTimer = Math.min(Number.isFinite(this.undergroundAmbienceTimer) ? this.undergroundAmbienceTimer : 3, 3);
     const atSea = underwater || biome === BiomeId.Ocean || biome === BiomeId.DeepOcean || biome === BiomeId.LumenTrench || biome === BiomeId.Beach;
     const deepAtSea = atSea && (biome === BiomeId.DeepOcean || biome === BiomeId.LumenTrench || this.position.y < SEA_LEVEL - 9);
     const winterBiome = biome === BiomeId.Frostpine || biome === BiomeId.Snowfield || biome === BiomeId.SnowcapRange;
@@ -19520,6 +19813,7 @@ export class VoxelEngine {
       if (!multiplayerGuest) {
         this.updateDrops(dt);
         this.updateSaplings(dt);
+        this.updateVeinmetalRegrowth(dt);
         this.updateLiquids(dt);
         this.updateProjectiles(dt);
         this.updateDragonAttackEffects(dt);
@@ -19944,6 +20238,7 @@ export class VoxelEngine {
     return {
       version: 2,
       generatorVersion: GENERATOR_VERSION,
+      generatorProfile: this.world.generationOptions.profile,
       lastSavedGameVersion: GAME_VERSION,
       seed: this.world.seedText,
       mode: this.mode,
@@ -19955,6 +20250,7 @@ export class VoxelEngine {
       offhand: normalizeCaptureOrbInventorySlot(this.offhand),
       bestiary: Object.fromEntries(MOB_ORDER.map((kind) => [kind, { ...this.bestiary[kind] }])),
       saplings: Object.fromEntries(this.saplings.entries()),
+      veinRegrowth: Object.fromEntries(this.veinRegrowth.entries()),
       cursor: normalizeCaptureOrbInventorySlot(this.cursor),
       craftGrid: this.craftGrid.map(normalizeCaptureOrbInventorySlot),
       selected: this.selected,

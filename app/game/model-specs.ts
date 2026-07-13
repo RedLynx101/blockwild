@@ -413,7 +413,7 @@ export const INSPECTOR_MODEL_SPECS: readonly ModelSpec[] = [
   createHeldToolSpec("pickaxe", "#858b89", "Stone Pickaxe"),
   createHeldToolSpec("axe", "#858b89", "Stone Axe"),
   createHeldToolSpec("shovel", "#858b89", "Stone Shovel"),
-  createHeldToolSpec("sword", "#d4b9a7", "Sunmetal Sword"),
+  createHeldToolSpec("sword", "#d4b9a7", "Iron Sword"),
   createHeldToolSpec("crossbow", "#9b6a3c", "Hearthguard Crossbow"),
   createHeldToolSpec("spear", "#aa8843", "Goblinsmith Spear"),
   createRidgebackSpec(),

@@ -53,11 +53,11 @@ function settle(simulator: LiquidSimulator) {
   assert.equal(simulator.pendingCount, 0);
 }
 
-test("Sugarplum Vale remains stable under generator v13 with its own terrain and keyed settlement palette", () => {
-  assert.equal(GENERATOR_VERSION, 14);
+test("Sugarplum Vale remains stable in the legacy generator profile with its own terrain and keyed settlement palette", () => {
+  assert.equal(GENERATOR_VERSION, 15);
   assert.equal(BIOME_NAMES[BiomeId.SugarplumVale], "Sugarplum Vale");
   const world = new ChunkWorld();
-  world.reset("CANDY-WORLD", undefined, { structures: false });
+  world.reset("CANDY-WORLD", undefined, { structures: false, profile: "legacy-v14" });
   const fixture = world.sampleColumn(-1214, -158);
   assert.equal(fixture.biome, BiomeId.SugarplumVale);
   assert.deepEqual(world.surfaceBlocks(fixture.biome, fixture.height, fixture.temperature), [BlockId.SugarplumGrass, BlockId.SugarSoil]);
@@ -71,7 +71,7 @@ test("Sugarplum Vale remains stable under generator v13 with its own terrain and
 
 test("syrup ponds are deterministic source pools that meet cleanly across chunk seams", () => {
   const world = new ChunkWorld();
-  world.reset("CANDY-WORLD", undefined, { structures: false });
+  world.reset("CANDY-WORLD", undefined, { structures: false, profile: "legacy-v14" });
   const sample = (x: number, z: number) => world.sampleColumn(x, z);
   const slices = [[-77, -11], [-77, -10], [-76, -11], [-76, -10]].map(([chunkX, chunkZ]) =>
     planSyrupPondsForChunk({ seed: world.seedText, chunkX, chunkZ, chunkSize: CHUNK_SIZE, sample, sugarplumBiome: BiomeId.SugarplumVale })[0]);

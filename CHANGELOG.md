@@ -2,6 +2,19 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.5.0 - The World Below - 2026-07-12
+
+- Added the `world-below-v15` generator for new worlds while retaining generator-v14 and older saves on an unchanged `legacy-v14` profile. The world remains Y -64 through 127 with sea level 32 and stable linear block indexing.
+- Replaced fragmented climate intersections with deterministic regional cores, transition belts, rare-biome reserves, biome-specific terrain modifiers, real shoreline classification, stronger Rainveil and Ember relief, Highlands around Y 65-100, and Snowcap peaks approaching Y 100-120. The default biome scale is 1.35×, but transition, rarity, and local-feature controls remain independent.
+- Rebuilt natural caves around a deterministic three-depth graph. Explicit mouth connectors, looped horizontal and vertical edges, rooms, chambers, great and cathedral caverns, narrow routes, regional aquifers, streams, waterfalls, lakes, and landmark nodes now form one audited navigable system instead of unrelated pits and noise pockets.
+- Added deliberately dark Stone Roads plus Rootweave Grotto, Starbloom Hollows, Glasswater Deeps, Pillarstone Reaches, Crystaldeep Gallery, and Emberdeep Fumaroles. Forty-one new blocks cover six coherent ecology/material families, Living Veins, rope traversal, cave markers, bridges, and Deepgear lifts with held, placed, map, lighting, mining, drop, and crafting paths.
+- Added Grotto Grazers, Lanternrays, Prismtail Swifts, Glassback Newts, Sailfin Skimmers, Ashnose Bats, Chimewings, Cinder Kites, and Veinlings. All nine use production models and animation hooks, habitat-weighted population tables, custom sounds, staged append-only field notes, and family, flock, roost, pond, thermal, or colony behaviors.
+- Replaced every player-facing Sunmetal reference with ordinary Iron while preserving historical numeric IDs and legacy string aliases. Added proper Raw Copper and Copper Ingots, preserved Gold's independent ore chain, and established rare pulsing Living Veins, inert flakes, careful Living Node extraction, bounded regrowth, defensive Veinlings, and deliberately unresolved Veinmetal lore.
+- Added depth-band cave mapping that records only physically entered upper, middle, and deep layers. Added Delver's Rope, anchors, ladders, pitons, bridges, Wayfinder Markers, paired Deepgear lifts, biome ambience, fumarole telegraphs, and generated cave landmarks and rewards.
+- Rebalanced settlement placement around bounded terrain site search before cultural assignment and spacing. All six cultures remain viable on ordinary audit seeds; unsuitable regions can leave inhabited wayposts. Dwarven holds now anchor the cave graph with civic rooms, forges, clear paired shafts, mountain gatehouses, discovery markers, and lit one-block-grade switchback mine roads.
+- Moved chunk voxel fields and edit/network validation to unsigned 16-bit block IDs. Added old-save fixtures spanning inventory, equipment, shield, furnace, chest, quest, merchant, Waygrid, and multiplayer records; preserved legacy terrain fixtures; and added deterministic surface, cave flood-fill, ecology, material, map, Dwarf infrastructure, and generation-time release gates.
+- Expanded the executable ecology tool with seven underground rows and custom-sound/POI coverage, and added a three-seed world audit reporting all 24 surface biomes, elevation and fragmentation, cave topology and aquifers, settlement/culture density, Dwarf infrastructure, ores, memory, and generation timing.
+
 ## 1.4.4 - Harbor Homecoming - 2026-07-12
 
 - Restored the same host-owned health, hunger, quests, unlocks, respawn point, and bounded personal progression whether a guest joins from the title screen or from a running world.
@@ -51,7 +64,7 @@ Named releases summarize player-visible changes and the compatibility work that 
 - Refined the Trail Compass to refresh four times faster, removed its duplicate heading readout, and added a softly fading POI name only when a visible landmark is centered. The map's detailed surface rendering is now an explicit toggle at every zoom level, and both ordinary and Exploration-mastery zoom limits extend farther outward.
 - Added connected two-block wild grass with continuous lower and upper art, atomic harvesting from either half, ordinary fiber drops, and natural meadow generation. Darkened block-crack overlays while retaining the optional progress bar and tool-suitability settings.
 - Rebuilt the Thimbledeer's antler crowns as connected root, post, branch, stem, cup, and rim chains, then regenerated its production portrait and field-guide sheet. Standardized Pack and Recipes backgrounds to the same maximum width.
-- Replaced grass footsteps with the supplied softer authored recording and added the supplied wooden impact as the default sampled cue while mining or breaking blocks. Merged the final pushed `design-1` tip (`fbccf1a`) without altering the branch: its detailed wildlife upgrades, Lightning Bug ecology and jar, Sunmetal Shears, held-light improvements, and five new creature calls bring the production field guide to 167 entries.
+- Replaced grass footsteps with the supplied softer authored recording and added the supplied wooden impact as the default sampled cue while mining or breaking blocks. Merged the final pushed `design-1` tip (`fbccf1a`) without altering the branch: its detailed wildlife upgrades, Lightning Bug ecology and jar, Iron Shears, held-light improvements, and five new creature calls bring the production field guide to 167 entries.
 
 ## 1.3.5 - Wayposts and Palimpsests - 2026-07-12
 
@@ -98,7 +111,7 @@ Named releases summarize player-visible changes and the compatibility work that 
 ### Characters, navigation, combat, and interface
 
 - Added a title-screen Character Studio with as many as twelve named profiles, seven playable races, two body variants, clothing/skin/hair colors, recent-character memory, faction alignment bonuses, and a twenty-point starting-skill allocation. Atlantian characters breathe underwater and trade land speed for faster swimming.
-- Added sprint-swimming, momentum-aware water entry, bobbing and shore recovery, unified race/equipment poses, seated legs, mirrored wing animation, and a left-hand slot for Wildwood/Sunmetal shields, torches, and Deepgear lanterns.
+- Added sprint-swimming, momentum-aware water entry, bobbing and shore recovery, unified race/equipment poses, seated legs, mirrored wing animation, and a left-hand slot for Wildwood/Iron shields, torches, and Deepgear lanterns.
 - Added a Skyrim-style heading rail with nearby landmarks, players, tracked destinations, and close-range through-wall guidance. Corrected map heading rotation, added biome names on hover, close-zoom surface colors, distant chunk summaries, and Exploration zoom progression.
 - Reworked recipe browsing into independent list and pattern panes, added charcoal/coal recipe equivalence, four-orb crafting output, named ingredient tooltips, inventory/chest sort and transfer actions, wallet ingot conversion, a separate music slider, breaking cracks, optional progress bars, and tool-suitability outlines. Hybrid touchscreen PCs keep the desktop HUD while a fine pointer is available and switch only after actual touch input.
 

@@ -58,6 +58,7 @@ test("world faction options migrate legacy saves, preserve explicit wilderness, 
     enabledFactions: ["sugarcourt", "goblins"],
   });
   assert.deepEqual(projected, {
+    profile: "world-below-v15",
     caveFrequency: 2.25,
     biomeScale: 1.5,
     resourceAbundance: 0.75,

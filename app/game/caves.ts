@@ -6,6 +6,16 @@ export type CaveEntranceSample = Readonly<{
   floorY: number;
 }>;
 
+export type CaveEntranceCenter = Readonly<{
+  cellX: number;
+  cellZ: number;
+  centerX: number;
+  centerZ: number;
+  radius: number;
+}>;
+
+export const CAVE_ENTRANCE_CELL_SIZE = 48;
+
 function mix32(value: number) {
   value = Math.imul(value ^ (value >>> 16), 0x45d9f3b);
   value = Math.imul(value ^ (value >>> 16), 0x45d9f3b);
@@ -16,6 +26,15 @@ export function caveHash(seed: number, x: number, y: number, z: number) {
   return mix32(seed ^ Math.imul(x | 0, 374761393) ^ Math.imul(y | 0, 668265263) ^ Math.imul(z | 0, 1103515245)) / 4294967295;
 }
 
+/** Shared center contract used by both surface sampling and graph connectors. */
+export function caveEntranceForCell(seed: number, cellX: number, cellZ: number): CaveEntranceCenter | null {
+  if (caveHash(seed ^ 0x64f31a2d, cellX, 0, cellZ) < 0.28) return null;
+  const centerX = cellX * CAVE_ENTRANCE_CELL_SIZE + 8 + Math.floor(caveHash(seed ^ 0x2f6e2b1, cellX, 1, cellZ) * (CAVE_ENTRANCE_CELL_SIZE - 16));
+  const centerZ = cellZ * CAVE_ENTRANCE_CELL_SIZE + 8 + Math.floor(caveHash(seed ^ 0x735a2d97, cellX, 2, cellZ) * (CAVE_ENTRANCE_CELL_SIZE - 16));
+  const radius = 3 + caveHash(seed ^ 0x1a7c9e31, cellX, 3, cellZ) * 1.8;
+  return { cellX, cellZ, centerX, centerZ, radius };
+}
+
 /**
  * Sparse surface funnels punch through the four-block roof cap used by the
  * noise caves. They are derived from large grid cells, so seams are stable and
@@ -23,13 +42,11 @@ export function caveHash(seed: number, x: number, y: number, z: number) {
  */
 export function caveEntranceAt(seed: number, x: number, z: number, surfaceY: number, waterline: number): CaveEntranceSample | null {
   if (surfaceY <= waterline + 3) return null;
-  const cellSize = 48;
-  const cellX = Math.floor(x / cellSize);
-  const cellZ = Math.floor(z / cellSize);
-  if (caveHash(seed ^ 0x64f31a2d, cellX, 0, cellZ) < 0.28) return null;
-  const centerX = cellX * cellSize + 8 + Math.floor(caveHash(seed ^ 0x2f6e2b1, cellX, 1, cellZ) * (cellSize - 16));
-  const centerZ = cellZ * cellSize + 8 + Math.floor(caveHash(seed ^ 0x735a2d97, cellX, 2, cellZ) * (cellSize - 16));
-  const radius = 3 + caveHash(seed ^ 0x1a7c9e31, cellX, 3, cellZ) * 1.8;
+  const cellX = Math.floor(x / CAVE_ENTRANCE_CELL_SIZE);
+  const cellZ = Math.floor(z / CAVE_ENTRANCE_CELL_SIZE);
+  const center = caveEntranceForCell(seed, cellX, cellZ);
+  if (!center) return null;
+  const { centerX, centerZ, radius } = center;
   const dx = x - centerX;
   const dz = z - centerZ;
   const distance = Math.hypot(dx, dz);

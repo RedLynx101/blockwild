@@ -34,15 +34,15 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
   };
 
   if (definition.iconKind === "shield") {
-    const sunmetal = /sunmetal/iu.test(definition.name);
-    const face = sunmetal ? 0xc9ad58 : 0x9a6a3b;
-    const rim = sunmetal ? 0xf0d471 : 0x5d4028;
+    const iron = /iron/iu.test(definition.name);
+    const face = iron ? 0xc9ad58 : 0x9a6a3b;
+    const rim = iron ? 0xf0d471 : 0x5d4028;
     addBox([0.58, 0.68, 0.09], [0, 0.06, -0.04], face);
     addBox([0.64, 0.075, 0.13], [0, 0.37, -0.03], rim);
     addBox([0.64, 0.075, 0.13], [0, -0.25, -0.03], rim);
     addBox([0.075, 0.58, 0.13], [-0.285, 0.06, -0.03], rim);
     addBox([0.075, 0.58, 0.13], [0.285, 0.06, -0.03], rim);
-    addBox([0.12, 0.12, 0.14], [0, 0.06, -0.105], sunmetal ? 0xffe69a : 0xd2a05e, [0, 0, Math.PI / 4], sunmetal);
+    addBox([0.12, 0.12, 0.14], [0, 0.06, -0.105], iron ? 0xffe69a : 0xd2a05e, [0, 0, Math.PI / 4], iron);
     addBox([0.12, 0.42, 0.08], [0, 0.06, 0.06], 0x5a3b27);
     group.scale.setScalar(0.78);
     group.rotation.set(0.04, Math.PI / 2, 0.04);

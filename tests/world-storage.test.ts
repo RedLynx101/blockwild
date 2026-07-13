@@ -89,6 +89,7 @@ test("advanced world options use safe defaults and bounded numeric controls", ()
     enabledFactions: NPC_FACTION_IDS,
   });
   assert.deepEqual(generationOptionsFromWorldOptions({ caveFrequency: 2, biomeScale: 3, resourceAbundance: 4, structures: false }), {
+    profile: "world-below-v15",
     caveFrequency: 2,
     biomeScale: 3,
     resourceAbundance: 4,

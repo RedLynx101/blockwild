@@ -124,7 +124,7 @@ export const FACTIONS: Readonly<Record<FactionId, FactionDefinition>> = {
     sentient: true,
     aquaticOnly: false,
     waterBreathing: false,
-    homeBiomes: ["snowcap-range"],
+    homeBiomes: ["snowcap-range", "highlands", "badlands", "cloudreed-glen", "rocky-forest"],
     warriorWeapons: ["deepgear-hammer", "flintlock-pistol"],
     values: ["tested craft", "kept oaths", "useful mechanisms"],
   },

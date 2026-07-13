@@ -1,4 +1,4 @@
-export type ShieldKind = "wildwood-shield" | "sunmetal-shield";
+export type ShieldKind = "wildwood-shield" | "iron-shield";
 export type ShieldProfile = Readonly<{
   kind: ShieldKind;
   blockFraction: number;
@@ -10,7 +10,7 @@ export type ShieldProfile = Readonly<{
 
 export const SHIELD_PROFILES: Readonly<Record<ShieldKind, ShieldProfile>> = Object.freeze({
   "wildwood-shield": { kind: "wildwood-shield", blockFraction: 0.68, frontalArcDegrees: 110, durabilityPerDamage: 1.15, movementMultiplier: 0.72, maxDurability: 168 },
-  "sunmetal-shield": { kind: "sunmetal-shield", blockFraction: 0.84, frontalArcDegrees: 125, durabilityPerDamage: 0.82, movementMultiplier: 0.76, maxDurability: 472 },
+  "iron-shield": { kind: "iron-shield", blockFraction: 0.84, frontalArcDegrees: 125, durabilityPerDamage: 0.82, movementMultiplier: 0.76, maxDurability: 472 },
 });
 
 export type ShieldHitInput = Readonly<{

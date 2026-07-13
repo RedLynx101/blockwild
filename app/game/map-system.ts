@@ -18,6 +18,17 @@ export type WorldPoint = Readonly<{ x: number; y: number; z: number }>;
 export type ChunkCoordinate = Readonly<{ x: number; z: number }>;
 export type MapBiomeReference = number | string;
 export type MapSurfaceSample = readonly [string, string, string, string];
+export type UndergroundDepthBand = "upper" | "middle" | "deep";
+export type MapUndergroundBandSample = Readonly<{
+  biome: string;
+  elevation: number;
+}>;
+export type MapUndergroundSample = Readonly<{
+  biome: string;
+  elevation: number;
+  /** New saves retain one explored sample per depth band without revealing adjacent caves. */
+  bands?: Readonly<Partial<Record<UndergroundDepthBand, MapUndergroundBandSample>>>;
+}>;
 export type MapChunkDiscovery = ChunkCoordinate & Readonly<{
   biome?: MapBiomeReference | null;
   /** Four averaged top-block colors: northwest, northeast, southwest, southeast. */
@@ -78,6 +89,8 @@ export type MapKnowledge = Readonly<{
   terrainByChunk: Readonly<Record<string, MapBiomeReference>>;
   /** Optional close-zoom ink; sampled once in a small bounded background budget. */
   surfaceByChunk: Readonly<Record<string, MapSurfaceSample>>;
+  /** Sparse cave-biome knowledge. A chunk appears here only after it is entered underground. */
+  undergroundByChunk: Readonly<Record<string, MapUndergroundSample>>;
   markers: readonly MapMarker[];
   activeBedId: string | null;
   fastTravelCharges: number;
@@ -210,6 +223,36 @@ function normalizeSurfaceSample(value: unknown): MapSurfaceSample | null {
   return colors.every((entry): entry is string => entry !== null)
     ? [colors[0], colors[1], colors[2], colors[3]]
     : null;
+}
+
+export function undergroundDepthBandForY(elevation: number): UndergroundDepthBand {
+  return elevation >= -4 ? "upper" : elevation >= -32 ? "middle" : "deep";
+}
+
+function normalizeUndergroundBandSample(value: unknown): MapUndergroundBandSample | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Partial<MapUndergroundBandSample>;
+  const biome = cleanName(input.biome, "");
+  if (!biome) return null;
+  return { biome, elevation: clamp(integer(input.elevation), -64, 255) };
+}
+
+function normalizeUndergroundSample(value: unknown): MapUndergroundSample | null {
+  const base = normalizeUndergroundBandSample(value);
+  if (!base) return null;
+  const rawBands = (value as Partial<MapUndergroundSample>).bands;
+  if (!rawBands || typeof rawBands !== "object" || Array.isArray(rawBands)) return base;
+  const bands: Partial<Record<UndergroundDepthBand, MapUndergroundBandSample>> = {};
+  for (const band of ["upper", "middle", "deep"] as const) {
+    const sample = normalizeUndergroundBandSample(rawBands[band]);
+    if (sample) bands[band] = sample;
+  }
+  return Object.keys(bands).length ? { ...base, bands } : base;
+}
+
+export function undergroundSampleForBand(sample: MapUndergroundSample | null | undefined, band: UndergroundDepthBand) {
+  if (!sample) return null;
+  return sample.bands?.[band] ?? (undergroundDepthBandForY(sample.elevation) === band ? { biome: sample.biome, elevation: sample.elevation } : null);
 }
 
 /** Small RGB average used by the engine's bounded top-block survey sampler. */
@@ -397,6 +440,7 @@ export function createMapKnowledge(worldId: string, playerId: string): MapKnowle
     exploredChunks: [],
     terrainByChunk: {},
     surfaceByChunk: {},
+    undergroundByChunk: {},
     markers: [],
     activeBedId: null,
     fastTravelCharges: 0,
@@ -454,6 +498,17 @@ export function normalizeMapKnowledge(value: unknown, fallbackWorldId = "world",
   }
   surfaceEntries.sort(([left], [right]) => left.localeCompare(right));
   const surfaceByChunk = Object.fromEntries(surfaceEntries);
+  const undergroundEntries: Array<readonly [string, MapUndergroundSample]> = [];
+  const rawUnderground = input.undergroundByChunk && typeof input.undergroundByChunk === "object" && !Array.isArray(input.undergroundByChunk)
+    ? input.undergroundByChunk
+    : {};
+  for (const [key, rawSample] of Object.entries(rawUnderground as Record<string, unknown>)) {
+    if (undergroundEntries.length >= MAX_EXPLORED_CHUNKS || !exploredSet.has(key) || !parseChunkKey(key)) continue;
+    const sample = normalizeUndergroundSample(rawSample);
+    if (sample) undergroundEntries.push([key, sample]);
+  }
+  undergroundEntries.sort(([left], [right]) => left.localeCompare(right));
+  const undergroundByChunk = Object.fromEntries(undergroundEntries);
   const markerById = new Map<string, MapMarker>();
   for (const raw of Array.isArray(input.markers) ? input.markers : []) {
     const marker = normalizeMarker(raw);
@@ -475,6 +530,7 @@ export function normalizeMapKnowledge(value: unknown, fallbackWorldId = "world",
     exploredChunks,
     terrainByChunk,
     surfaceByChunk,
+    undergroundByChunk,
     markers,
     activeBedId,
     fastTravelCharges: clamp(integer(input.fastTravelCharges), 0, MAX_FAST_TRAVEL_CHARGES),
@@ -565,6 +621,29 @@ export function markWorldPositionRendered(
   biome?: MapBiomeReference | null,
 ) {
   return markChunksRendered(state, [{ ...chunkAtWorldPosition(position, chunkSize), biome }]);
+}
+
+/** Records only the cave layer the player has physically entered. */
+export function markUndergroundChunk(
+  state: MapKnowledge,
+  input: ChunkCoordinate & Readonly<{ biome: string; elevation: number }>,
+): MapKnowledge {
+  const key = chunkKey(input);
+  const sample = normalizeUndergroundSample(input);
+  if (!sample) return state;
+  const withChunk = exploredChunkSet(state.exploredChunks).has(key)
+    ? state
+    : markChunkRendered(state, input);
+  const previous = withChunk.undergroundByChunk?.[key];
+  const band = undergroundDepthBandForY(sample.elevation);
+  const previousBand = undergroundSampleForBand(previous, band);
+  if (previousBand?.biome === sample.biome && previousBand.elevation === sample.elevation) return withChunk;
+  const bands = { ...(previous?.bands ?? {}), [band]: sample };
+  return {
+    ...withChunk,
+    revision: withChunk.revision + 1,
+    undergroundByChunk: { ...(withChunk.undergroundByChunk ?? {}), [key]: { ...sample, bands } },
+  };
 }
 
 function compareMarkerFreshness(left: MapMarker, right: MapMarker) {
@@ -676,6 +755,7 @@ function mergeTransferredKnowledge(local: MapKnowledge, remote: MapKnowledge): M
   const exploredChunks = [...new Set([...local.exploredChunks, ...remote.exploredChunks])].sort().slice(0, MAX_EXPLORED_CHUNKS);
   const terrainByChunk: Record<string, MapBiomeReference> = {};
   const surfaceByChunk: Record<string, MapSurfaceSample> = {};
+  const undergroundByChunk: Record<string, MapUndergroundSample> = {};
   for (const key of exploredChunks) {
     const localTerrain = local.terrainByChunk?.[key];
     const remoteTerrain = remote.terrainByChunk?.[key];
@@ -683,6 +763,17 @@ function mergeTransferredKnowledge(local: MapKnowledge, remote: MapKnowledge): M
     if (biome !== null) terrainByChunk[key] = biome;
     const surface = normalizeSurfaceSample(local.surfaceByChunk?.[key] ?? remote.surfaceByChunk?.[key]);
     if (surface) surfaceByChunk[key] = surface;
+    const localUnderground = normalizeUndergroundSample(local.undergroundByChunk?.[key]);
+    const remoteUnderground = normalizeUndergroundSample(remote.undergroundByChunk?.[key]);
+    const underground = localUnderground ?? remoteUnderground;
+    if (underground) {
+      const bands: Partial<Record<UndergroundDepthBand, MapUndergroundBandSample>> = {};
+      for (const band of ["upper", "middle", "deep"] as const) {
+        const sample = undergroundSampleForBand(localUnderground, band) ?? undergroundSampleForBand(remoteUnderground, band);
+        if (sample) bands[band] = sample;
+      }
+      undergroundByChunk[key] = Object.keys(bands).length ? { ...underground, bands } : underground;
+    }
   }
   const markerById = new Map(local.markers.map((marker) => [marker.id, marker]));
   for (const remoteMarker of remote.markers) {
@@ -698,8 +789,14 @@ function mergeTransferredKnowledge(local: MapKnowledge, remote: MapKnowledge): M
     || Object.keys(terrainByChunk).length !== Object.keys(local.terrainByChunk ?? {}).length
     || Object.entries(terrainByChunk).some(([key, biome]) => local.terrainByChunk?.[key] !== biome)
     || Object.keys(surfaceByChunk).length !== Object.keys(local.surfaceByChunk ?? {}).length
-    || Object.entries(surfaceByChunk).some(([key, surface]) => surface.join("|") !== local.surfaceByChunk?.[key]?.join("|"));
-  return changed ? { ...local, revision: local.revision + 1, exploredChunks, terrainByChunk, surfaceByChunk, markers } : local;
+    || Object.entries(surfaceByChunk).some(([key, surface]) => surface.join("|") !== local.surfaceByChunk?.[key]?.join("|"))
+    || Object.keys(undergroundByChunk).length !== Object.keys(local.undergroundByChunk ?? {}).length
+    || Object.entries(undergroundByChunk).some(([key, sample]) => {
+      const existing = local.undergroundByChunk?.[key];
+      return existing?.biome !== sample.biome || existing.elevation !== sample.elevation
+        || JSON.stringify(existing?.bands ?? {}) !== JSON.stringify(sample.bands ?? {});
+    });
+  return changed ? { ...local, revision: local.revision + 1, exploredChunks, terrainByChunk, surfaceByChunk, undergroundByChunk, markers } : local;
 }
 
 /**

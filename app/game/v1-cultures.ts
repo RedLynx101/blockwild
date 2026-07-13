@@ -266,7 +266,7 @@ export const GOLEM_RECIPES: Readonly<Record<GolemType, GolemRecipe>> = Object.fr
   }),
   "stone-bulwark": Object.freeze({
     type: "stone-bulwark", name: "Stone Bulwark", blueprintId: "golem-stone-bulwark", manaCost: 80, seconds: 90,
-    resources: { "stone-brick": 24, "sunmetal-ingot": 6, "crystal-shard": 2, "gear-cluster": 4 }, health: 92, damage: 9, role: "defender",
+    resources: { "stone-brick": 24, "iron-ingot": 6, "crystal-shard": 2, "gear-cluster": 4 }, health: 92, damage: 9, role: "defender",
   }),
   "aetherforged-sentinel": Object.freeze({
     type: "aetherforged-sentinel", name: "Aetherforged Sentinel", blueprintId: "golem-aetherforged-sentinel", manaCost: 180, seconds: 180,

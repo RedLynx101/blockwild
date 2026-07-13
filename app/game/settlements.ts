@@ -131,8 +131,8 @@ export function settlementWinsSpacingTieBreak(candidate: SettlementCandidate, co
 }
 
 /**
- * One bounded candidate per 32x32-chunk region. The density gate keeps towns
- * meaningful, while explicit spacing protects neighboring layout footprints.
+ * One bounded candidate per 32x32-chunk region. World generation relocates
+ * this regional identity onto the best viable site before spacing is applied.
  */
 export function planSettlementCandidate(input: Readonly<{
   worldSeed: string;
@@ -142,11 +142,13 @@ export function planSettlementCandidate(input: Readonly<{
   existing: readonly ExistingSettlementLocation[];
   floorY?: number;
   enabledFactions?: readonly NpcFactionId[];
+  /** World terrain site search already applies its own regional rarity gate. */
+  siteSearch?: boolean;
 }>): SettlementCandidate | null {
   const enabledFactions = input.enabledFactions === undefined ? NPC_FACTION_IDS : normalizeEnabledFactions(input.enabledFactions);
   const factionId = chooseFactionForBiome(input.worldSeed, input.regionX, input.regionZ, input.biome, enabledFactions);
-  const density = factionId === "atlantians" ? 0.18 : factionId === "sugarcourt" ? 0.3 : factionId === "wood-elves" ? 0.19 : factionId === "dwarves" ? 0.16 : 0.34;
-  if (!factionId || hashUnit(input.worldSeed, `${input.regionX}|${input.regionZ}|density`) >= density) return null;
+  const density = factionId === "atlantians" ? 0.28 : factionId === "sugarcourt" ? 0.4 : factionId === "wood-elves" ? 0.34 : factionId === "dwarves" ? 0.32 : 0.48;
+  if (!factionId || (!input.siteSearch && hashUnit(input.worldSeed, `${input.regionX}|${input.regionZ}|density`) >= density)) return null;
   const sizeRoll = hashUnit(input.worldSeed, `${input.regionX}|${input.regionZ}|size`);
   const size: SettlementSize = sizeRoll < 0.58 ? "hamlet" : sizeRoll < 0.9 ? "village" : "town";
   const regionSizeBlocks = 32 * 16;
