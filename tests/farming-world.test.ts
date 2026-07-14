@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { BLOCKS, BlockId, Item, ITEMS, LEAF_BLOCKS, RECIPES, worldTextureBlockForItem } from "../app/game/data.ts";
-import { caveEntranceAt, caveFeatureAt } from "../app/game/caves.ts";
+import { CAVE_ENTRANCE_REALIZATION_RATE, caveEntranceAt, caveEntranceForCell, caveFeatureAt } from "../app/game/caves.ts";
 import {
   canGrowPlant,
   canHitchLead,
@@ -206,6 +206,14 @@ test("inventory hooks reuse world flora textures and expose liquid-colored bucke
 });
 
 test("cave entrances and room/chimney features stay sparse, deterministic, and varied", () => {
+  let realizedCells = 0;
+  const cellSpan = 100;
+  for (let cellX = 0; cellX < cellSpan; cellX += 1) for (let cellZ = 0; cellZ < cellSpan; cellZ += 1) {
+    if (caveEntranceForCell(12345, cellX, cellZ)) realizedCells += 1;
+  }
+  const realizedRate = realizedCells / (cellSpan * cellSpan);
+  assert.equal(CAVE_ENTRANCE_REALIZATION_RATE, 0.25);
+  assert.ok(realizedRate > 0.23 && realizedRate < 0.27, `expected about 25% of candidate cells, got ${(realizedRate * 100).toFixed(1)}%`);
   let entrances = 0;
   for (let x = -128; x <= 128; x += 1) for (let z = -128; z <= 128; z += 1) if (caveEntranceAt(12345, x, z, 48, 32)) entrances += 1;
   assert.ok(entrances > 40, `expected several walkable mouths, got ${entrances} cells`);

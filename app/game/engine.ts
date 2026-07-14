@@ -179,6 +179,7 @@ import {
   aquaticSpawnBandForMob,
   fishKindForHabitat,
   foodLureResponseForMob,
+  husbandryAgeScale,
   naturalActivityAllowsSpawn,
   naturalGroupSizeForMob,
   naturalMicrohabitatAffinity,
@@ -200,6 +201,7 @@ import {
   type LeviathanSpecies,
   type StableSteeringState,
 } from "./fauna";
+import { scanCraftedFenceEnclosure } from "./creature-enclosure";
 import {
   breedCreatureStates,
   canBreedCreatures,
@@ -958,6 +960,8 @@ export type SavedCreature = {
   health: number;
   age: number;
   naturalSpawned?: boolean;
+  /** Once true, this exact creature remains protected even after its lead is removed. */
+  everLed?: boolean;
   naturalPool?: NaturalPopulationPool | null;
   outOfRangeSeconds?: number;
   persistentPoiResident?: boolean;
@@ -1198,6 +1202,7 @@ type MobEntity = {
   hurtTimer: number;
   age: number;
   naturalSpawned: boolean;
+  everLed: boolean;
   naturalPool: NaturalPopulationPool | null;
   outOfRangeSeconds: number;
   bob: number;
@@ -1290,6 +1295,7 @@ type SpawnMobOptions = {
   health?: number;
   age?: number;
   naturalSpawned?: boolean;
+  everLed?: boolean;
   naturalPool?: NaturalPopulationPool | null;
   outOfRangeSeconds?: number;
   yaw?: number;
@@ -3126,6 +3132,7 @@ export class VoxelEngine {
   };
   leadAnchors = new Map<number, LeadAnchor>();
   leadLines = new Map<number, THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>>();
+  enclosureCache = new Map<string, { enclosed: boolean; checkedAt: number }>();
   boats = new Map<string, SailboatEntity>();
   multiplayerBoatInputs = new Map<string, { boatId: string; forward: number; turn: number; updatedAt: number }>();
   mountedBoatId: string | null = null;
@@ -4109,7 +4116,11 @@ export class VoxelEngine {
     }));
     for (const saved of this.sleepingCreatures) this.nextMobId = Math.max(this.nextMobId, saved.id + 1);
     this.leadAnchors = restoreLeadAnchors(save.leads, new Set(this.mobs.map((mob) => mob.id)));
-    for (const mobId of this.leadAnchors.keys()) this.ensureLeadLine(mobId);
+    for (const mobId of this.leadAnchors.keys()) {
+      const mob = this.mobs.find((candidate) => candidate.id === mobId);
+      if (mob) mob.everLed = true;
+      this.ensureLeadLine(mobId);
+    }
     if (this.collidesAt(this.position) || this.position.y < MIN_Y) this.respawn(false);
     for (const savedDrop of save.drops ?? []) {
       if (!ITEMS[savedDrop.item] || savedDrop.count <= 0) continue;
@@ -6010,6 +6021,7 @@ export class VoxelEngine {
       if (entry.name) mob.name = entry.name;
       mob.attunedOrbId = entry.attunedOrbId ?? null;
       if (entry.lead) {
+        mob.everLed = true;
         this.leadAnchors.set(mob.id, {
           mobId: String(mob.id),
           ownerId: entry.lead.ownerId,
@@ -6355,6 +6367,7 @@ export class VoxelEngine {
     effect?: BlockAction["effect"],
     consumedItem?: ItemCode,
   ) {
+    if (edits.length) this.enclosureCache?.clear();
     if (!this.multiplayer || !edits.length) return;
     const identity = this.multiplayer.identity;
     const action: BlockAction = {
@@ -6704,6 +6717,7 @@ export class VoxelEngine {
         accepted = true;
         message = `${mob.name}'s lead is unclipped.`;
       } else {
+        mob.everLed = true;
         this.leadAnchors.set(mob.id, { mobId: String(mob.id), ownerId: peer.id, maximumLength: 7 });
         this.ensureLeadLine(mob.id);
         consumeHeld();
@@ -10625,6 +10639,7 @@ export class VoxelEngine {
         ...(mob.followCommand !== "follow" ? { followCommand: mob.followCommand } : {}),
         ...(mob.hiredByPlayerId ? { hiredByPlayerId: mob.hiredByPlayerId } : {}),
         ...(mob.attunedOrbId ? { attunedOrbId: mob.attunedOrbId } : {}),
+        ...(mob.everLed ? { everLed: true } : {}),
         persistentPoiResident: mob.persistentPoiResident,
         enclosed: mob.enclosed,
       })) as CreatureMetadata["custom"],
@@ -10691,6 +10706,7 @@ export class VoxelEngine {
       milkCooldown: MILKABLE_MOB_KINDS.has(metadata.kind) ? Math.max(0, Number(metadata.custom.milkCooldown) || 0) : 0,
       woolRegrowSeconds: metadata.kind === "woolhorn" ? Math.max(0, Number(metadata.custom.woolRegrowSeconds) || 0) : 0,
       persistentPoiResident: Boolean(metadata.custom.persistentPoiResident),
+      everLed: Boolean(metadata.custom.everLed),
       enclosed: Boolean(metadata.custom.enclosed),
       followCommand: metadata.custom.followCommand === "hold" ? "hold" : "follow",
       hiredByPlayerId: typeof metadata.custom.hiredByPlayerId === "string" ? metadata.custom.hiredByPlayerId : null,
@@ -11449,6 +11465,7 @@ export class VoxelEngine {
         return;
       }
       this.leadAnchors.set(mob.id, { mobId: String(mob.id), ownerId: this.localPlayerId(), maximumLength: 7 });
+      mob.everLed = true;
       this.consumeSelectedUnit();
       this.ensureLeadLine(mob.id);
       this.placeCooldown = 0.25;
@@ -16048,6 +16065,7 @@ export class VoxelEngine {
       id: mob.id,
       age: mob.age,
       naturalSpawned: mob.naturalSpawned,
+      everLed: mob.everLed,
       naturalPool: mob.naturalPool,
       outOfRangeSeconds: mob.outOfRangeSeconds,
       yaw: mob.angle,
@@ -16070,11 +16088,7 @@ export class VoxelEngine {
     if (mob.dragonState) return mob.dragonState.growthScale;
     if (mob.leviathanGrowth) return mob.leviathanGrowth.growthScale;
     if (mob.shadeState) return shadecrawlerScale(mob.shadeState);
-    if (mob.petState?.baby || mob.careState?.baby) {
-      if (["meadow-cottontail", "russet-rabbit", "frost-hare", "chocolate-bunny"].includes(mob.kind)) return 0.48;
-      return 0.62;
-    }
-    return 1;
+    return husbandryAgeScale(mob.kind, Boolean(mob.petState?.baby || mob.careState?.baby));
   }
 
   mobCollisionProfile(mob: MobEntity) {
@@ -16331,6 +16345,7 @@ export class VoxelEngine {
       damage: dragonState ? dragonAttackPlan(dragonState.type, dragonState.stage, "melee").damage : definition.damage, angle, desiredAngle: angle, steering: createStableSteering(angle), route: createCreatureRouteState(angle), wanderTimer: 1 + Math.random() * 4,
       attackCooldown: 0, hurtTimer: 0, age: options.age ?? 0, bob: Math.random() * Math.PI * 2, gait: 0,
       naturalSpawned: options.naturalSpawned ?? false,
+      everLed: options.everLed ?? false,
       naturalPool: options.naturalPool ?? null,
       outOfRangeSeconds: Math.max(0, options.outOfRangeSeconds ?? 0),
       fleeTimer: 0, state: "wander", stateTimer: 0, baseY: position.y, voiceTimer: 2 + Math.random() * 8,
@@ -16389,6 +16404,7 @@ export class VoxelEngine {
       health: mob.health,
       age: mob.age,
       ...(mob.naturalSpawned ? { naturalSpawned: true } : {}),
+      ...(mob.everLed ? { everLed: true } : {}),
       ...(mob.naturalPool ? { naturalPool: mob.naturalPool } : {}),
       ...(mob.outOfRangeSeconds > 0 ? { outOfRangeSeconds: mob.outOfRangeSeconds } : {}),
       ...(mob.persistentPoiResident ? { persistentPoiResident: true } : {}),
@@ -16462,6 +16478,7 @@ export class VoxelEngine {
       health: Math.max(0.1, Number(migrated.health) || MOB_DEFS[migrated.kind].health),
       age: Math.max(0, Number(migrated.age) || 0),
       naturalSpawned: legacyNatural,
+      everLed: Boolean(migrated.everLed),
       naturalPool: migrated.naturalPool ?? (legacyNatural ? naturalPopulationPoolForDefinition(definition, restoredUnderground) : null),
       outOfRangeSeconds: Math.max(0, Number(migrated.outOfRangeSeconds) || 0),
       yaw: Number(migrated.yaw) || 0,
@@ -16495,17 +16512,28 @@ export class VoxelEngine {
   }
 
   isMobEnclosed(mob: MobEntity) {
+    this.enclosureCache ??= new Map<string, { enclosed: boolean; checkedAt: number }>();
     const x = Math.round(mob.group.position.x);
     const y = Math.floor(mob.group.position.y);
     const z = Math.round(mob.group.position.z);
-    return ([[1, 0], [-1, 0], [0, 1], [0, -1]] as const).every(([dx, dz]) => {
-      for (let distance = 1; distance <= 6; distance += 1) {
-        const feet = this.world.getBlock(x + dx * distance, y, z + dz * distance);
-        const head = this.world.getBlock(x + dx * distance, y + 1, z + dz * distance);
-        if (BLOCKS[feet ?? BlockId.Air]?.solid || BLOCKS[head ?? BlockId.Air]?.solid) return true;
-      }
-      return false;
-    });
+    const now = performance.now();
+    const cacheKey = `${x},${y},${z}`;
+    const cached = this.enclosureCache.get(cacheKey);
+    if (cached && now - cached.checkedAt <= 4_000) return cached.enclosed;
+    const isCraftedBarrier = (cellX: number, cellZ: number) => {
+      const feet = this.world.getBlock(cellX, y, cellZ);
+      const head = this.world.getBlock(cellX, y + 1, cellZ);
+      return [feet, head].some((block) => block === BlockId.WildwoodFence
+        || block === BlockId.FenceGateNorthSouthClosed
+        || block === BlockId.FenceGateEastWestClosed);
+    };
+    const scan = scanCraftedFenceEnclosure({ x, z }, isCraftedBarrier);
+    for (const cell of scan.interior) this.enclosureCache.set(`${cell.x},${y},${cell.z}`, { enclosed: scan.enclosed, checkedAt: now });
+    if (this.enclosureCache.size > 2_048) {
+      for (const [key, entry] of this.enclosureCache) if (now - entry.checkedAt > 4_000) this.enclosureCache.delete(key);
+      while (this.enclosureCache.size > 2_048) this.enclosureCache.delete(this.enclosureCache.keys().next().value!);
+    }
+    return scan.enclosed;
   }
 
   wakeSleepingCreatures(dt: number) {
@@ -16719,7 +16747,7 @@ export class VoxelEngine {
     return Boolean(
       mob.persistentPoiResident || mob.poiMarkerId || mob.residentId || mob.settlementId
       || mob.factionId || mob.aligned || mob.hiredByPlayerId || mob.attunedOrbId || mob.beeHiveKey
-      || enclosureProtectsCreature(mob.naturalSpawned, mob.enclosed) || this.leadAnchors.has(mob.id)
+      || enclosureProtectsCreature(mob.naturalSpawned, mob.enclosed) || mob.everLed || this.leadAnchors.has(mob.id)
       || mob.petState?.tamed || mob.shadeState?.tamed || mob.reedstriderBond?.tamed
       || mob.courserBond?.tamed || mob.leviathanGrowth?.tamed || mob.dragonState?.tamed
       || mob.name !== mob.definition.name,
@@ -18364,6 +18392,7 @@ export class VoxelEngine {
         named: Boolean(mob.petState?.name || mob.name !== mob.definition.name),
         enclosed: enclosureProtectsCreature(mob.naturalSpawned, mob.enclosed),
         leashed: this.leadAnchors.has(mob.id),
+        everLed: mob.everLed,
         persistentPoiResident: mob.persistentPoiResident || Boolean(mob.dragonState),
       });
       const simulationRadius = this.settings.simulationDistance * CHUNK_SIZE + 10;
@@ -19542,6 +19571,7 @@ export class VoxelEngine {
     this.sleepingCreatures = [];
     this.sleepingCreatureWakeTimer = 0;
     this.ecologySectors.clear();
+    this.enclosureCache?.clear();
     this.ecologyDiagnostics = { attempts: 0, successes: 0, lastSuccess: null, rejections: {} };
     while (this.drops.length) this.removeDrop(this.drops.length - 1);
     for (const tree of this.fallingTrees) { this.disposeObject(tree.group); this.scene.remove(tree.group); }

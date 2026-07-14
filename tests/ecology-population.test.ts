@@ -24,8 +24,8 @@ test("ecology exposes six independent weighted population pools", () => {
     "surface-animal", "ambient", "water-animal", "water-ambient", "underground", "monster",
   ]);
   const budgets = naturalPoolBudgets(false, 1);
-  assert.deepEqual(budgets["surface-animal"], { target: 10, ceiling: 14 });
-  assert.deepEqual(budgets.ambient, { target: 8, ceiling: 12 });
+  assert.deepEqual(budgets["surface-animal"], { target: 12, ceiling: 17 });
+  assert.deepEqual(budgets.ambient, { target: 10, ceiling: 14 });
   assert.deepEqual(budgets["water-animal"], { target: 5, ceiling: 7 });
   assert.deepEqual(budgets["water-ambient"], { target: 10, ceiling: 16 });
   assert.deepEqual(budgets.underground, { target: 8, ceiling: 12 });
@@ -71,7 +71,7 @@ test("deficit selection fills biodiversity pools before using their herd ceiling
 
 test("creature lifecycle has no age purge and protects old-base livestock as sleeping records", () => {
   assert.equal(enclosureProtectsCreature(false, true), true);
-  assert.equal(enclosureProtectsCreature(true, true), false);
+  assert.equal(enclosureProtectsCreature(true, true), true);
   assert.deepEqual(creatureRangeAction({ protected: false, distance: 80, simulationRadius: 58, outOfRangeSeconds: 0, elapsedSeconds: 30, following: false }), {
     action: "linger", outOfRangeSeconds: 30,
   });

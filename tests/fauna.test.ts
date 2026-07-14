@@ -7,6 +7,7 @@ import {
   chooseLocalWalkableGround,
   fishKindsForHabitat,
   fishSpawnTableForHabitat,
+  husbandryAgeScale,
   naturalGroupSizeForMob,
   naturalActivityAllowsSpawn,
   naturalMicrohabitatAffinity,
@@ -655,6 +656,10 @@ test("tamed or enclosed creatures are protected from distance and age despawn", 
   assert.equal(shouldKeepCreatureLoaded({ enclosed: true }), true);
   assert.equal(shouldKeepCreatureLoaded({ named: true }), true);
   assert.equal(shouldKeepCreatureLoaded({ leashed: true }), true);
+  assert.equal(shouldKeepCreatureLoaded({ everLed: true }), true);
+  assert.equal(husbandryAgeScale("meadow-cottontail", false), 0.78);
+  assert.equal(husbandryAgeScale("frost-hare", true), 0.38);
+  assert.equal(husbandryAgeScale("thimbledeer", true), 0.62);
 });
 
 test("Peelops tame, heal, rename, obey, persist, and breed with inherited metadata", () => {

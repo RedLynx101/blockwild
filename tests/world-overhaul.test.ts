@@ -24,6 +24,7 @@ import { validatePayload } from "../app/game/multiplayer.ts";
 import {
   CAVE_GRAPH_LAYER_Y,
   UndergroundBiomeId,
+  caveGraphEdgesInBounds,
   caveGraphNodesInBounds,
   nearestUpperCaveNode,
 } from "../app/game/underground.ts";
@@ -36,6 +37,7 @@ import {
   MAX_Y,
   MIN_Y,
   SEA_LEVEL,
+  surfaceRegionAt,
   WORLD_HEIGHT,
   ChunkWorld,
 } from "../app/game/world.ts";
@@ -83,6 +85,26 @@ test("surface audit finds every biome while preserving flats and restoring mount
   assert.ok(metric(BiomeId.SnowcapRange).meanElevation >= 90);
   assert.ok(metric(BiomeId.SnowcapRange).elevationRange[1] >= 100 && metric(BiomeId.SnowcapRange).elevationRange[1] <= MAX_Y);
   assert.ok(metric(BiomeId.Volcanic).meanRelief32 >= 8);
+});
+
+test("regional terrain formulas fade out before neighboring biome cores meet", () => {
+  const world = new ChunkWorld();
+  world.reset("WILDERNESS", undefined, OVERHAUL_PROFILE);
+  let boundarySamples = 0;
+  let maximumStep = 0;
+  for (let z = -720; z <= 720; z += 12) for (let x = -720; x <= 720; x += 4) {
+    const column = world.sampleColumn(x, z);
+    const region = surfaceRegionAt(world.seed, x / 1.35, z / 1.35, column.temperature, column.moisture);
+    if (region.boundary < 0.88 || column.height <= SEA_LEVEL + 2) continue;
+    boundarySamples += 1;
+    maximumStep = Math.max(
+      maximumStep,
+      Math.abs(column.height - world.sampleColumn(x + 1, z).height),
+      Math.abs(column.height - world.sampleColumn(x, z + 1).height),
+    );
+  }
+  assert.ok(boundarySamples > 100, "the fixture should cross several regional boundary belts");
+  assert.ok(maximumStep <= 6, `one-block biome-boundary terrain step reached ${maximumStep} blocks`);
 });
 
 test("cave graph is looped, aquifer-linked, and a real mouth flood-fills to its upper hub", () => {
@@ -144,6 +166,40 @@ test("cave graph is looped, aquifer-linked, and a real mouth flood-fills to its 
     }
   }
   assert.equal(reached, true, "the authored mouth should physically flood-fill into its graph hub");
+});
+
+test("dry graph tunnels seal legacy aquifer fluids behind a rock shell", () => {
+  const world = new ChunkWorld();
+  world.reset("WILDERNESS", undefined, OVERHAUL_PROFILE);
+  const edge = caveGraphEdgesInBounds(world.seed, -384, 384, -384, 384).find((candidate) => {
+    if (candidate.flow !== "dry") return false;
+    const midpointX = (candidate.from.x + candidate.to.x) / 2;
+    const midpointZ = (candidate.from.z + candidate.to.z) / 2;
+    const localX = ((Math.round(midpointX) % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+    const localZ = ((Math.round(midpointZ) % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+    return localX >= 5 && localX <= 10 && localZ >= 5 && localZ <= 10;
+  });
+  assert.ok(edge, "the fixture should contain an interior dry graph edge");
+  const phase = edge.from.x * 0.031 + edge.from.z * 0.023;
+  const center = {
+    x: Math.round((edge.from.x + edge.to.x) / 2 + Math.sin(Math.PI * 2 + phase) * 0.7),
+    y: Math.round((edge.from.y + edge.to.y) / 2),
+    z: Math.round((edge.from.z + edge.to.z) / 2 - Math.sin(Math.PI * 2 + phase) * 0.7 * 0.65),
+  };
+  const centerChunkX = Math.floor(center.x / CHUNK_SIZE);
+  const centerChunkZ = Math.floor(center.z / CHUNK_SIZE);
+  for (let cx = centerChunkX - 1; cx <= centerChunkX + 1; cx += 1) for (let cz = centerChunkZ - 1; cz <= centerChunkZ + 1; cz += 1) world.generateChunk(cx, cz);
+  let checkedAir = 0;
+  for (let x = center.x - 2; x <= center.x + 2; x += 1) for (let y = center.y - 2; y <= center.y + 2; y += 1) for (let z = center.z - 2; z <= center.z + 2; z += 1) {
+    if (world.getBlock(x, y, z) !== BlockId.Air) continue;
+    checkedAir += 1;
+    for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]] as const) {
+      const neighbor = world.getBlock(x + dx, y + dy, z + dz);
+      assert.notEqual(neighbor, BlockId.Water, "dry tunnel air must not directly expose legacy aquifer water");
+      assert.notEqual(neighbor, BlockId.Lava, "dry tunnel air must not directly expose legacy lava pockets");
+    }
+  }
+  assert.ok(checkedAir > 8, "the midpoint should remain a navigable dry tunnel");
 });
 
 test("six ecological centers exceed minimum biodiversity while ordinary tunnels retain light contrast", () => {

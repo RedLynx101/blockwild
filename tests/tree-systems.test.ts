@@ -146,7 +146,10 @@ test("real generated trees remain rooted through chunk seams", () => {
     world.reset(seed, undefined, { structures: false });
     for (let cz = -2; cz <= 2; cz += 1) for (let cx = -2; cx <= 2; cx += 1) world.generateChunk(cx, cz);
     const signatures = new Set<string>();
-    for (let z = -16; z < 32; z += 1) for (let x = -16; x < 32; x += 1) for (let y = MIN_Y + 1; y <= MAX_Y; y += 1) {
+    // Generator 15's softened regional transitions legitimately move the fixed
+    // seed's forest cores. Audit the larger safe interior of the generated
+    // 5x5 halo instead of assuming the center 3x3 remains tree-dense.
+    for (let z = -24; z < 40; z += 1) for (let x = -24; x < 40; x += 1) for (let y = MIN_Y + 1; y <= MAX_Y; y += 1) {
       const type = world.getBlock(x, y, z);
       if (!isTreeLogBlock(type) || !isRootableTreeSoil(world.getBlock(x, y - 1, z))) continue;
       const tree = discoverRootedTree({ x, y, z }, (bx, by, bz) => world.getBlock(bx, by, bz));
