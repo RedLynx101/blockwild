@@ -210,6 +210,25 @@ import {
   type CreatureHusbandryState,
 } from "./creature-care";
 import {
+  ecologySectorKey,
+  ecologySpeciesSpawnChance,
+  creatureRangeAction,
+  enclosureProtectsCreature,
+  globalNaturalCostCeiling,
+  isRareNaturalDefinition,
+  naturalPoolBudgets,
+  naturalPopulationCost,
+  naturalPopulationPoolForDefinition,
+  naturalPopulationSnapshot,
+  naturalSpawnCountCapacity,
+  normalizeEcologySector,
+  recordEcologyKill,
+  selectDeficientNaturalPool,
+  type EcologySectorSave,
+  type NaturalPopulationPool,
+  type NaturalPopulationRecord,
+} from "./ecology-population";
+import {
   chooseBirdFlightRoute,
   chooseBirdPerch,
   chooseCreatureRoute,
@@ -938,6 +957,9 @@ export type SavedCreature = {
   yaw: number;
   health: number;
   age: number;
+  naturalSpawned?: boolean;
+  naturalPool?: NaturalPopulationPool | null;
+  outOfRangeSeconds?: number;
   persistentPoiResident?: boolean;
   poiMarkerId?: string;
   enclosed?: boolean;
@@ -1094,6 +1116,10 @@ export type WorldSave = {
   liquidLevels?: Array<[string, LiquidCell]>;
   weatherState?: WeatherState;
   creatures?: SavedCreature[];
+  /** Protected off-range creatures are records, not invisible live simulations. */
+  sleepingCreatures?: SavedCreature[];
+  /** Sparse 64-block ecology history prevents instant same-species hunting loops. */
+  ecologySectors?: Record<string, EcologySectorSave>;
   activatedStructureMarkers?: string[];
   boats?: SailboatSave[];
   leads?: SavedLeadAnchor[];
@@ -1171,6 +1197,9 @@ type MobEntity = {
   attackCooldown: number;
   hurtTimer: number;
   age: number;
+  naturalSpawned: boolean;
+  naturalPool: NaturalPopulationPool | null;
+  outOfRangeSeconds: number;
   bob: number;
   gait: number;
   fleeTimer: number;
@@ -1260,6 +1289,9 @@ type SpawnMobOptions = {
   id?: number;
   health?: number;
   age?: number;
+  naturalSpawned?: boolean;
+  naturalPool?: NaturalPopulationPool | null;
+  outOfRangeSeconds?: number;
   yaw?: number;
   persistentPoiResident?: boolean;
   poiMarkerId?: string | null;
@@ -3083,6 +3115,15 @@ export class VoxelEngine {
   leafParticleTimer = 0;
   fallingTrees: FallingTree[] = [];
   mobs: MobEntity[] = [];
+  sleepingCreatures: SavedCreature[] = [];
+  sleepingCreatureWakeTimer = 0;
+  ecologySectors = new Map<string, EcologySectorSave>();
+  ecologyDiagnostics = {
+    attempts: 0,
+    successes: 0,
+    lastSuccess: null as null | { kind: MobKind; pool: NaturalPopulationPool; playerId: string; x: number; z: number },
+    rejections: {} as Record<string, number>,
+  };
   leadAnchors = new Map<number, LeadAnchor>();
   leadLines = new Map<number, THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>>();
   boats = new Map<string, SailboatEntity>();
@@ -4057,6 +4098,16 @@ export class VoxelEngine {
     this.persistentMachineTimer = 0;
     for (const savedBoat of save.boats ?? []) this.restoreSailboat(savedBoat);
     for (const savedCreature of piehouseSave.creatures) this.restoreCreature(savedCreature);
+    this.sleepingCreatures = (save.sleepingCreatures ?? [])
+      .filter((saved): saved is SavedCreature => Boolean(saved && saved.kind in MOB_DEFS && Number.isFinite(saved.id)))
+      .map((saved) => ({ ...saved }));
+    const ecologyTick = this.ecologyTick();
+    this.ecologySectors = new Map(Object.entries(save.ecologySectors ?? {}).flatMap(([key, sector]) => {
+      if (!/^-?\d+,-?\d+$/u.test(key) || !sector || typeof sector !== "object") return [];
+      const normalized = normalizeEcologySector(sector, ecologyTick);
+      return Object.keys(normalized.recentKills).length ? [[key, normalized] as const] : [];
+    }));
+    for (const saved of this.sleepingCreatures) this.nextMobId = Math.max(this.nextMobId, saved.id + 1);
     this.leadAnchors = restoreLeadAnchors(save.leads, new Set(this.mobs.map((mob) => mob.id)));
     for (const mobId of this.leadAnchors.keys()) this.ensureLeadLine(mobId);
     if (this.collidesAt(this.position) || this.position.y < MIN_Y) this.respawn(false);
@@ -15996,6 +16047,9 @@ export class VoxelEngine {
     const replacement = this.spawnMob(growth.kind, position, {
       id: mob.id,
       age: mob.age,
+      naturalSpawned: mob.naturalSpawned,
+      naturalPool: mob.naturalPool,
+      outOfRangeSeconds: mob.outOfRangeSeconds,
       yaw: mob.angle,
       name: mob.name,
       health: Math.max(1, MOB_DEFS[growth.kind].health * healthRatio),
@@ -16276,6 +16330,9 @@ export class VoxelEngine {
       maxHealth: dragonState?.maxHealth ?? petState?.maxHealth ?? definition.health * shadeHealthScale,
       damage: dragonState ? dragonAttackPlan(dragonState.type, dragonState.stage, "melee").damage : definition.damage, angle, desiredAngle: angle, steering: createStableSteering(angle), route: createCreatureRouteState(angle), wanderTimer: 1 + Math.random() * 4,
       attackCooldown: 0, hurtTimer: 0, age: options.age ?? 0, bob: Math.random() * Math.PI * 2, gait: 0,
+      naturalSpawned: options.naturalSpawned ?? false,
+      naturalPool: options.naturalPool ?? null,
+      outOfRangeSeconds: Math.max(0, options.outOfRangeSeconds ?? 0),
       fleeTimer: 0, state: "wander", stateTimer: 0, baseY: position.y, voiceTimer: 2 + Math.random() * 8,
       birdState: definition.movement === "flying" ? createBirdBehavior(kind as Parameters<typeof createBirdBehavior>[0], id * 0.71) : null,
       petState, careState, shadeState, reedstriderBond, courserBond, leviathanGrowth, aetherbellMorph, apiaryBee, beeHiveKey: options.beeHiveKey ?? null,
@@ -16320,6 +16377,48 @@ export class VoxelEngine {
     return mob;
   }
 
+  serializeCreature(mob: MobEntity): SavedCreature {
+    return {
+      id: mob.id,
+      kind: mob.kind,
+      ...(mob.name !== mob.definition.name ? { name: mob.name } : {}),
+      x: mob.group.position.x,
+      y: mob.group.position.y,
+      z: mob.group.position.z,
+      yaw: mob.angle,
+      health: mob.health,
+      age: mob.age,
+      ...(mob.naturalSpawned ? { naturalSpawned: true } : {}),
+      ...(mob.naturalPool ? { naturalPool: mob.naturalPool } : {}),
+      ...(mob.outOfRangeSeconds > 0 ? { outOfRangeSeconds: mob.outOfRangeSeconds } : {}),
+      ...(mob.persistentPoiResident ? { persistentPoiResident: true } : {}),
+      ...(mob.poiMarkerId ? { poiMarkerId: mob.poiMarkerId } : {}),
+      ...(mob.enclosed ? { enclosed: true } : {}),
+      ...(mob.petState ? { petState: { ...mob.petState } } : {}),
+      ...(mob.careState ? { careState: { ...mob.careState } } : {}),
+      ...(mob.shadeState ? { shadeState: { ...mob.shadeState } } : {}),
+      ...(mob.reedstriderBond ? { reedstriderBond: { ...mob.reedstriderBond } } : {}),
+      ...(mob.courserBond ? { courserBond: { ...mob.courserBond } } : {}),
+      ...(mob.leviathanGrowth ? { leviathanGrowth: { ...mob.leviathanGrowth } } : {}),
+      ...(mob.aetherbellMorph ? { aetherbellMorph: { ...mob.aetherbellMorph } } : {}),
+      ...(mob.apiaryBee ? { apiaryBee: { ...mob.apiaryBee } } : {}),
+      ...(mob.socialGroupId ? { socialGroupId: mob.socialGroupId } : {}),
+      ...(mob.peelopShedding ? { peelopShedding: { ...mob.peelopShedding } } : {}),
+      ...(MILKABLE_MOB_KINDS.has(mob.kind) && mob.milkCooldown > 0 ? { milkCooldown: mob.milkCooldown } : {}),
+      ...(mob.kind === "woolhorn" && mob.woolRegrowSeconds > 0 ? { woolRegrowSeconds: mob.woolRegrowSeconds } : {}),
+      ...(mob.factionId ? { factionId: mob.factionId } : {}),
+      ...(mob.profession ? { profession: mob.profession } : {}),
+      ...(mob.settlementId ? { settlementId: mob.settlementId } : {}),
+      ...(mob.residentId ? { residentId: mob.residentId } : {}),
+      ...(mob.aligned ? { aligned: true } : {}),
+      ...(mob.hiredByPlayerId ? { hiredByPlayerId: mob.hiredByPlayerId } : {}),
+      ...(mob.followDistance !== "dynamic" ? { followDistance: mob.followDistance } : {}),
+      ...(mob.followCommand !== "follow" ? { followCommand: mob.followCommand } : {}),
+      ...(mob.attunedOrbId ? { attunedOrbId: mob.attunedOrbId } : {}),
+      ...(mob.dragonState ? { dragonState: serializeDragonState({ ...mob.dragonState, health: mob.health }) } : {}),
+    };
+  }
+
   restoreCreature(saved: SavedCreature) {
     if (!(saved.kind in MOB_DEFS) || BUTTERFLY_ORDER.includes(saved.kind as ButterflyKind)) return null;
     const migrated = migrateLanternPiehouseCreature(saved);
@@ -16348,10 +16447,23 @@ export class VoxelEngine {
       const ground = localGround ?? this.world.findWalkableY(x, z, migrated.y);
       position.y = ground + definition.footOffset;
     }
+    const legacyNatural = migrated.naturalSpawned ?? Boolean(
+      !migrated.persistentPoiResident && !migrated.poiMarkerId && !migrated.residentId && !migrated.settlementId
+      && !migrated.factionId && !migrated.aligned && !migrated.hiredByPlayerId && !migrated.attunedOrbId
+      && !migrated.enclosed && !migrated.petState?.tamed && !migrated.shadeState?.tamed
+      && !migrated.reedstriderBond?.tamed && !migrated.courserBond?.tamed && !migrated.leviathanGrowth?.tamed
+      && !migrated.dragonState?.tamed && !migrated.name,
+    );
+    const restoredUnderground = legacyNatural && typeof this.world?.surfaceAt === "function"
+      ? position.y < this.world.surfaceAt(Math.round(position.x), Math.round(position.z)) - 2
+      : false;
     return this.spawnMob(migrated.kind, position, {
       id: migrated.id,
       health: Math.max(0.1, Number(migrated.health) || MOB_DEFS[migrated.kind].health),
       age: Math.max(0, Number(migrated.age) || 0),
+      naturalSpawned: legacyNatural,
+      naturalPool: migrated.naturalPool ?? (legacyNatural ? naturalPopulationPoolForDefinition(definition, restoredUnderground) : null),
+      outOfRangeSeconds: Math.max(0, Number(migrated.outOfRangeSeconds) || 0),
       yaw: Number(migrated.yaw) || 0,
       persistentPoiResident: Boolean(migrated.persistentPoiResident),
       poiMarkerId: migrated.poiMarkerId ?? null,
@@ -16368,7 +16480,7 @@ export class VoxelEngine {
       peelopShedding: migrated.peelopShedding ?? null,
       milkCooldown: migrated.milkCooldown ?? 0,
       woolRegrowSeconds: migrated.woolRegrowSeconds ?? 0,
-      name: migrated.residentId ? migrated.name ?? null : null,
+      name: migrated.name ?? null,
       factionId: migrated.factionId ?? null,
       profession: migrated.profession ?? null,
       settlementId: migrated.settlementId ?? null,
@@ -16394,6 +16506,34 @@ export class VoxelEngine {
       }
       return false;
     });
+  }
+
+  wakeSleepingCreatures(dt: number) {
+    this.sleepingCreatureWakeTimer -= dt;
+    if (this.sleepingCreatureWakeTimer > 0 || !this.sleepingCreatures.length) return;
+    this.sleepingCreatureWakeTimer = 1;
+    const interests = this.simulationInterestPoints();
+    const wakeRadius = this.settings.simulationDistance * CHUNK_SIZE + 34;
+    const wakeRadiusSquared = wakeRadius * wakeRadius;
+    let restored = 0;
+    for (let index = this.sleepingCreatures.length - 1; index >= 0 && restored < 8; index -= 1) {
+      const saved = this.sleepingCreatures[index];
+      const nearby = interests.some((focus) => (saved.x - focus.x) ** 2 + (saved.z - focus.z) ** 2 <= wakeRadiusSquared);
+      if (!nearby) continue;
+      this.world.generateChunk(Math.floor(saved.x / CHUNK_SIZE), Math.floor(saved.z / CHUNK_SIZE));
+      this.sleepingCreatures.splice(index, 1);
+      if (this.restoreCreature({ ...saved, outOfRangeSeconds: 0 })) restored += 1;
+    }
+    if (restored > 0) this.saveSoon();
+  }
+
+  sleepProtectedCreature(mob: MobEntity, index: number) {
+    const saved = this.serializeCreature(mob);
+    const existing = this.sleepingCreatures.findIndex((candidate) => candidate.id === saved.id);
+    if (existing >= 0) this.sleepingCreatures[existing] = saved;
+    else this.sleepingCreatures.push(saved);
+    this.removeMob(index);
+    this.saveSoon();
   }
 
   hostileSpawnSuppressedByTorch(x: number, y: number, z: number, radius = 7) {
@@ -16575,7 +16715,58 @@ export class VoxelEngine {
     return points;
   }
 
-  spawnNaturalGroup(kind: MobKind, center: THREE.Vector3, maximum: number, aquatic = false, underground = false) {
+  creatureIsDomesticOrAuthored(mob: MobEntity) {
+    return Boolean(
+      mob.persistentPoiResident || mob.poiMarkerId || mob.residentId || mob.settlementId
+      || mob.factionId || mob.aligned || mob.hiredByPlayerId || mob.attunedOrbId || mob.beeHiveKey
+      || enclosureProtectsCreature(mob.naturalSpawned, mob.enclosed) || this.leadAnchors.has(mob.id)
+      || mob.petState?.tamed || mob.shadeState?.tamed || mob.reedstriderBond?.tamed
+      || mob.courserBond?.tamed || mob.leviathanGrowth?.tamed || mob.dragonState?.tamed
+      || mob.name !== mob.definition.name,
+    );
+  }
+
+  naturalPopulationRecords(): NaturalPopulationRecord[] {
+    return this.mobs.map((mob) => ({
+      pool: mob.naturalPool,
+      cost: naturalPopulationCost(mob.definition),
+      x: mob.group.position.x,
+      z: mob.group.position.z,
+      eligible: mob.naturalSpawned && !this.creatureIsDomesticOrAuthored(mob)
+        && !isRareNaturalDefinition(mob.definition),
+    }));
+  }
+
+  ecologyTick() {
+    return Math.floor((this.day + this.worldTime) * 24_000);
+  }
+
+  noteEcologyRejection(reason: string) {
+    this.ecologyDiagnostics.rejections[reason] = (this.ecologyDiagnostics.rejections[reason] ?? 0) + 1;
+  }
+
+  naturalSpawnVisibleToPlayer(x: number, y: number, z: number) {
+    const target = new THREE.Vector3(x, y + 0.8, z);
+    return this.simulationInterestPoints().some((player) => {
+      const dx = x - player.x;
+      const dz = z - player.z;
+      if (dx * dx + dz * dz > 48 * 48 || !positionInPlayerViewCone(player.yaw, dx, dz)) return false;
+      return this.hasClearLineOfSight(
+        new THREE.Vector3(player.x, player.y + this.cameraEyeHeight, player.z),
+        target,
+      );
+    });
+  }
+
+  ecologyAllowsSpecies(kind: MobKind, x: number, z: number) {
+    const key = ecologySectorKey(x, z);
+    const tick = this.ecologyTick();
+    const sector = normalizeEcologySector(this.ecologySectors.get(key), tick);
+    if (Object.keys(sector.recentKills).length) this.ecologySectors.set(key, sector);
+    return Math.random() <= ecologySpeciesSpawnChance(sector, kind, tick);
+  }
+
+  spawnNaturalGroup(kind: MobKind, center: THREE.Vector3, maximum: number, pool: NaturalPopulationPool, aquatic = false, underground = false) {
     const count = Math.max(0, Math.min(maximum, naturalGroupSizeForMob(kind, Math.random())));
     if (count <= 0) return [] as MobEntity[];
     const mode = socialGroupModeForMob(kind);
@@ -16609,7 +16800,12 @@ export class VoxelEngine {
         if (!this.world.isWalkThrough(feet)) continue;
         y = ground + MOB_DEFS[kind].footOffset;
       }
-      spawned.push(this.spawnMob(kind, new THREE.Vector3(x, y, z), { socialGroupId: groupId }));
+      spawned.push(this.spawnMob(kind, new THREE.Vector3(x, y, z), {
+        socialGroupId: groupId,
+        naturalSpawned: true,
+        naturalPool: pool,
+        persistentPoiResident: false,
+      }));
     }
     return spawned;
   }
@@ -16637,10 +16833,11 @@ export class VoxelEngine {
     });
   }
 
-  pickActivePassiveKind(biome: BiomeId, x: number, y: number, z: number, underground: boolean) {
+  pickActivePassiveKind(biome: BiomeId, x: number, y: number, z: number, underground: boolean, pool: NaturalPopulationPool) {
     const activity = { timeOfDay: this.worldTime, daylight: this.daylightAmount(), weather: this.weatherState.kind, underground };
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const kind = passiveMobKindForBiome(biome, Math.random());
+      if (naturalPopulationPoolForDefinition(MOB_DEFS[kind], underground) !== pool) continue;
       if (!naturalActivityAllowsSpawn(kind, activity)) continue;
       if (Math.random() > this.naturalSpawnMicrohabitatAffinity(kind, x, y, z, biome)) continue;
       return kind;
@@ -16652,128 +16849,147 @@ export class VoxelEngine {
     const interests = this.simulationInterestPoints();
     const focus = requestedFocus ?? selectSimulationInterest(interests, this.naturalSpawnInterestCursor++);
     if (!focus) return;
-    const baseCap = Math.floor((this.touchMode ? 16 : 28) * this.worldOptions.mobDensity);
-    const cap = multiplayerNaturalMobCap(baseCap, interests.length);
-    const caps = mobPopulationCaps(cap);
-    const population = naturalMobPopulation(this.mobs);
-    if (caps.total <= 0 || population.total >= caps.total) return;
-    const localRadiusSquared = 48 * 48;
-    const localPopulation = naturalMobPopulation(this.mobs.filter((mob) => (
-      (mob.group.position.x - focus.x) ** 2 + (mob.group.position.z - focus.z) ** 2 <= localRadiusSquared
-    )));
-    const localCaps = mobPopulationCaps(Math.max(1, Math.ceil(caps.total / interests.length)));
-    const passiveCap = Math.min(caps.passive, localCaps.passive);
-    const passiveCount = localPopulation.passive;
-    const hostileCap = Math.min(caps.hostile, localCaps.hostile);
-    const hostileCount = localPopulation.hostile;
-    const remainingCapacity = Math.min(caps.total - population.total, localCaps.total - localPopulation.total);
-    if (remainingCapacity <= 0) return;
-    const angle = Math.random() * Math.PI * 2;
-    const radius = 14 + Math.random() * 20;
-    const x = Math.round(focus.x + Math.cos(angle) * radius);
-    const z = Math.round(focus.z + Math.sin(angle) * radius);
-    // The host may not render a distant guest's chunks, but it still owns
-    // their ecology. Generate only the selected spawn chunk on the shared
-    // global clock; the guest independently meshes the same deterministic land.
-    this.world.generateChunk(Math.floor(x / CHUNK_SIZE), Math.floor(z / CHUNK_SIZE));
     const underground = focus.id === this.localPlayerId()
       ? this.skyVisibility < 0.18
       : focus.y < this.world.surfaceAt(Math.round(focus.x), Math.round(focus.z)) - 2;
-    let y: number;
-    let kind: MobKind;
-    if (underground) {
-      y = this.world.findWalkableY(x, z, focus.y);
-      const nearbyWaterY = [Math.round(focus.y), Math.round(focus.y) - 1, Math.round(focus.y) + 1]
-        .find((candidateY) => blockContainsWater(this.world.getBlock(x, candidateY, z)));
-      const caveBiome = this.world.undergroundBiomeAt(x, y, z);
-      let caveKind: MobKind | null = null;
-      for (let attempt = 0; attempt < 14; attempt += 1) {
-        const candidate = undergroundMobKindForBiome(caveBiome, Math.random());
-        const definition = MOB_DEFS[candidate];
-        if (definition.hostile !== (intent === "hostile")) continue;
-        if (intent === "passive" && Boolean(definition.aquatic) !== (nearbyWaterY !== undefined)) continue;
-        if (!naturalActivityAllowsSpawn(candidate, {
-          timeOfDay: this.worldTime,
-          daylight: this.daylightAmount(),
-          weather: this.weatherState.kind,
-          underground: true,
-        })) continue;
-        caveKind = candidate;
-        break;
-      }
-      if (!caveKind) {
-        if (intent === "passive" && nearbyWaterY !== undefined) caveKind = fishKindForHabitat("underground");
-        else return;
-      }
-      kind = caveKind;
-      if (intent === "passive") {
-        if (passiveCount >= passiveCap) return;
-        const aquatic = Boolean(MOB_DEFS[kind].aquatic);
-        this.spawnNaturalGroup(
-          kind,
-          new THREE.Vector3(x, aquatic && nearbyWaterY !== undefined ? nearbyWaterY : y, z),
-          Math.min(passiveCap - passiveCount, remainingCapacity),
-          aquatic,
-          true,
-        );
-        return;
-      }
-      if (this.worldOptions.difficulty === "peaceful") return;
-      const feet = this.world.getBlock(x, y + 1, z);
-      const head = this.world.getBlock(x, y + 2, z);
-      if (Math.abs(y - focus.y) > 14 || !this.world.isWalkThrough(feet) || !this.world.isWalkThrough(head)) return;
-      if (hostileCount >= hostileCap || population.hostile >= caps.hostile || this.hostileSpawnSuppressedByTorch(x, y + 1, z) || this.hostileSpawnSuppressedBySettlement(x, z) || this.hostileSpawnVisibleToPlayer(x, y, z)) return;
-    } else {
-      y = this.world.surfaceAt(x, z);
+    if (intent === "hostile" && this.worldOptions.difficulty === "peaceful") return;
+    const focusBiome = this.world.biomeAt(Math.round(focus.x), Math.round(focus.z));
+    const waterBiome = [BiomeId.DeepOcean, BiomeId.Ocean, BiomeId.River, BiomeId.LumenTrench].includes(focusBiome);
+    const allowedPools: NaturalPopulationPool[] = intent === "hostile" ? ["monster"]
+      : underground ? ["underground"]
+        : waterBiome ? (focusBiome === BiomeId.River
+          ? ["water-ambient", "surface-animal", "ambient"]
+          : ["water-animal", "water-ambient"])
+          : focusBiome === BiomeId.SugarplumVale
+            ? ["surface-animal", "ambient", "water-ambient"]
+            : ["surface-animal", "ambient"];
+    const budgets = naturalPoolBudgets(this.touchMode, this.worldOptions.mobDensity);
+    const records = this.naturalPopulationRecords();
+    const localPopulation = naturalPopulationSnapshot(records, focus, 64);
+    const globalPopulation = naturalPopulationSnapshot(records);
+    const globalCeiling = globalNaturalCostCeiling(this.touchMode, this.worldOptions.mobDensity, interests.length);
+    const pool = selectDeficientNaturalPool(allowedPools, localPopulation, budgets, this.naturalSpawnInterestCursor);
+    if (!pool) { this.noteEcologyRejection("local-target-met"); return; }
+    if (globalPopulation.totalCost >= globalCeiling) { this.noteEcologyRejection("global-ceiling"); return; }
+    this.ecologyDiagnostics.attempts += 1;
+
+    for (let placementAttempt = 0; placementAttempt < 6; placementAttempt += 1) {
+      const angle = Math.random() * Math.PI * 2;
+      const radius = 24 + Math.random() * 32;
+      const x = Math.round(focus.x + Math.cos(angle) * radius);
+      const z = Math.round(focus.z + Math.sin(angle) * radius);
+      this.world.generateChunk(Math.floor(x / CHUNK_SIZE), Math.floor(z / CHUNK_SIZE));
       const biome = this.world.biomeAt(x, z);
-      if (intent === "passive" && biome === BiomeId.SugarplumVale && passiveCount < passiveCap) {
-        const syrupY = [y + 2, y + 1, y, y - 1, y - 2, y - 3]
-          .find((candidateY) => this.world.getBlock(x, candidateY, z) === BlockId.Syrup);
-        if (syrupY !== undefined) {
-          this.spawnNaturalGroup("syrupfin", new THREE.Vector3(x, syrupY, z), Math.min(passiveCap - passiveCount, remainingCapacity), true);
-          return;
+      let y = underground ? this.world.findWalkableY(x, z, focus.y) : this.world.surfaceAt(x, z);
+      let kind: MobKind | null = null;
+      let aquatic = false;
+
+      if (pool === "underground" || (pool === "monster" && underground)) {
+        if (Math.abs(y - focus.y) > 14 || y >= this.world.surfaceAt(x, z) - 2) { this.noteEcologyRejection("cave-topology"); continue; }
+        const waterY = [Math.round(focus.y), Math.round(focus.y) - 1, Math.round(focus.y) + 1]
+          .find((candidateY) => blockContainsWater(this.world.getBlock(x, candidateY, z)));
+        const caveBiome = this.world.undergroundBiomeAt(x, y, z);
+        for (let attempt = 0; attempt < 14; attempt += 1) {
+          const candidate = undergroundMobKindForBiome(caveBiome, Math.random());
+          const definition = MOB_DEFS[candidate];
+          if (definition.hostile !== (intent === "hostile")) continue;
+          if (intent === "passive" && Boolean(definition.aquatic) !== (waterY !== undefined)) continue;
+          if (naturalPopulationPoolForDefinition(definition, true) !== pool) continue;
+          if (!naturalActivityAllowsSpawn(candidate, { timeOfDay: this.worldTime, daylight: this.daylightAmount(), weather: this.weatherState.kind, underground: true })) continue;
+          kind = candidate;
+          break;
         }
-      }
-      if ([BiomeId.DeepOcean, BiomeId.Ocean, BiomeId.River, BiomeId.LumenTrench].includes(biome)) {
-        let waterY = SEA_LEVEL;
-        while (waterY > y && !blockContainsWater(this.world.getBlock(x, waterY, z))) waterY -= 1;
-        if (blockContainsWater(this.world.getBlock(x, waterY, z))) {
-          const habitat = biome === BiomeId.River ? "river" : biome === BiomeId.LumenTrench ? "lumen-trench" : biome === BiomeId.DeepOcean ? "deep-ocean" : "ocean";
-          let aquaticKind: MobKind | null = null;
-          for (let attempt = 0; attempt < 8; attempt += 1) {
+        if (!kind && intent === "passive" && waterY !== undefined) kind = fishKindForHabitat("underground");
+        if (!kind) { this.noteEcologyRejection("no-cave-species"); continue; }
+        aquatic = Boolean(MOB_DEFS[kind].aquatic);
+        if (aquatic && waterY !== undefined) y = waterY;
+        if (!aquatic) {
+          const feet = this.world.getBlock(x, y + 1, z);
+          const head = this.world.getBlock(x, y + 2, z);
+          if (!this.world.isWalkThrough(feet) || !this.world.isWalkThrough(head)) { this.noteEcologyRejection("cave-clearance"); continue; }
+        }
+      } else if (pool === "water-animal" || pool === "water-ambient") {
+        let waterY: number | undefined;
+        let habitat: Parameters<typeof fishKindForHabitat>[0] = biome === BiomeId.River ? "river"
+          : biome === BiomeId.LumenTrench ? "lumen-trench" : biome === BiomeId.DeepOcean ? "deep-ocean" : "ocean";
+        if (biome === BiomeId.SugarplumVale) {
+          waterY = [y + 2, y + 1, y, y - 1, y - 2, y - 3].find((candidateY) => this.world.getBlock(x, candidateY, z) === BlockId.Syrup);
+          habitat = "syrup-pond";
+        } else if ([BiomeId.DeepOcean, BiomeId.Ocean, BiomeId.River, BiomeId.LumenTrench].includes(biome)) {
+          waterY = SEA_LEVEL;
+          while (waterY > y && !blockContainsWater(this.world.getBlock(x, waterY, z))) waterY -= 1;
+          if (!blockContainsWater(this.world.getBlock(x, waterY, z))) waterY = undefined;
+        }
+        if (waterY === undefined) { this.noteEcologyRejection("no-water"); continue; }
+        for (let attempt = 0; attempt < 10; attempt += 1) {
+          const candidate = fishKindForHabitat(habitat);
+          if (MOB_DEFS[candidate].hostile !== (intent === "hostile")) continue;
+          if (naturalPopulationPoolForDefinition(MOB_DEFS[candidate], false) !== pool) continue;
+          kind = candidate;
+          break;
+        }
+        if (!kind) { this.noteEcologyRejection("no-water-species"); continue; }
+        const aquaticY = aquaticSpawnHeight(kind, y, waterY, Math.random());
+        if (aquaticY === null) { this.noteEcologyRejection("water-depth"); continue; }
+        y = aquaticY;
+        aquatic = true;
+      } else if (pool === "monster") {
+        if ([BiomeId.DeepOcean, BiomeId.Ocean, BiomeId.River, BiomeId.LumenTrench].includes(biome)) {
+          let waterY = SEA_LEVEL;
+          while (waterY > y && !blockContainsWater(this.world.getBlock(x, waterY, z))) waterY -= 1;
+          if (!blockContainsWater(this.world.getBlock(x, waterY, z))) { this.noteEcologyRejection("no-hostile-water"); continue; }
+          const habitat: Parameters<typeof fishKindForHabitat>[0] = biome === BiomeId.River ? "river"
+            : biome === BiomeId.LumenTrench ? "lumen-trench" : biome === BiomeId.DeepOcean ? "deep-ocean" : "ocean";
+          for (let attempt = 0; attempt < 12; attempt += 1) {
             const candidate = fishKindForHabitat(habitat);
-            if (MOB_DEFS[candidate].hostile === (intent === "hostile")) { aquaticKind = candidate; break; }
+            if (MOB_DEFS[candidate].hostile && naturalPopulationPoolForDefinition(MOB_DEFS[candidate]) === "monster") {
+              kind = candidate;
+              break;
+            }
           }
-          if (!aquaticKind) return;
-          kind = aquaticKind;
+          if (!kind) { this.noteEcologyRejection("no-hostile-water-species"); continue; }
           const aquaticY = aquaticSpawnHeight(kind, y, waterY, Math.random());
-          if (aquaticY === null) return;
-          const aquaticAvailable = MOB_DEFS[kind].hostile
-            ? Math.min(1, Math.max(0, hostileCap - hostileCount), Math.max(0, caps.hostile - population.hostile), remainingCapacity)
-            : Math.min(passiveCap - passiveCount, remainingCapacity);
-          if (aquaticAvailable > 0) this.spawnNaturalGroup(kind, new THREE.Vector3(x, aquaticY, z), aquaticAvailable, true);
+          if (aquaticY === null) { this.noteEcologyRejection("hostile-water-depth"); continue; }
+          y = aquaticY;
+          aquatic = true;
+        } else {
+          if (this.daylightAmount() >= 0.2 || this.spawnProtection > 0) { this.noteEcologyRejection("daylight"); continue; }
+          if (y <= SEA_LEVEL || this.hostileSpawnSuppressedByTorch(x, y + 1, z) || this.hostileSpawnSuppressedBySettlement(x, z)) {
+            this.noteEcologyRejection("safe-area");
+            continue;
+          }
+          const roll = Math.random();
+          kind = roll < 0.38 ? "zombie" : roll < 0.63 ? "shadecrawler" : roll < 0.82 ? "rattlekin" : "skeleton";
         }
-        return;
+      } else {
+        if (this.world.getBlock(x, y, z) === undefined || y <= SEA_LEVEL) { this.noteEcologyRejection("no-land"); continue; }
+        const nocturnalGlowmoth = pool === "ambient" && this.daylightAmount() < 0.24
+          && [BiomeId.MushroomFen, BiomeId.Bloomwood, BiomeId.Siltfen].includes(biome) && Math.random() < 0.3;
+        kind = nocturnalGlowmoth ? "glowmoth" : this.pickActivePassiveKind(biome, x, y, z, false, pool);
+        if (!kind) { this.noteEcologyRejection("no-land-species"); continue; }
       }
-      if (this.world.getBlock(x, y, z) === undefined || y <= SEA_LEVEL) return;
-      const daylight = this.daylightAmount();
-      const hostile = this.worldOptions.difficulty !== "peaceful" && daylight < 0.2 && this.spawnProtection <= 0;
-      if (intent === "hostile") {
-        if (!hostile) return;
-        if (hostileCount >= hostileCap || population.hostile >= caps.hostile || this.hostileSpawnSuppressedByTorch(x, y + 1, z) || this.hostileSpawnSuppressedBySettlement(x, z) || this.hostileSpawnVisibleToPlayer(x, y, z)) return;
-        const roll = Math.random();
-        kind = roll < 0.38 ? "zombie" : roll < 0.63 ? "shadecrawler" : roll < 0.82 ? "rattlekin" : "skeleton";
-      }
-      else {
-        if (passiveCount >= passiveCap) return;
-        const nocturnalGlowmoth = daylight < 0.24 && [BiomeId.MushroomFen, BiomeId.Bloomwood, BiomeId.Siltfen].includes(biome) && Math.random() < 0.3;
-        const selected = nocturnalGlowmoth ? "glowmoth" : this.pickActivePassiveKind(biome, x, y, z, false);
-        if (!selected) return;
-        kind = selected;
-      }
+
+      if (this.naturalSpawnVisibleToPlayer(x, y, z)) { this.noteEcologyRejection("visible-pop-in"); continue; }
+      if (!this.ecologyAllowsSpecies(kind, x, z)) { this.noteEcologyRejection("hunting-pressure"); continue; }
+      const cost = naturalPopulationCost(MOB_DEFS[kind]);
+      const localRemaining = Math.max(0, budgets[pool].ceiling - localPopulation.byPool[pool].cost);
+      const globalRemaining = Math.max(0, globalCeiling - globalPopulation.totalCost);
+      const maximum = naturalSpawnCountCapacity(Math.min(localRemaining, globalRemaining), cost);
+      if (maximum <= 0) { this.noteEcologyRejection("weighted-capacity"); return; }
+      const spawned = this.spawnNaturalGroup(
+        kind,
+        new THREE.Vector3(x, aquatic ? y : y + MOB_DEFS[kind].footOffset, z),
+        pool === "monster" ? Math.min(1, maximum) : maximum,
+        pool,
+        aquatic,
+        underground,
+      );
+      if (!spawned.length) { this.noteEcologyRejection("group-placement"); continue; }
+      this.ecologyDiagnostics.successes += 1;
+      this.ecologyDiagnostics.lastSuccess = { kind, pool, playerId: focus.id, x, z };
+      return;
     }
-    const available = MOB_DEFS[kind].hostile ? Math.min(1, remainingCapacity) : Math.min(passiveCap - passiveCount, remainingCapacity);
-    this.spawnNaturalGroup(kind, new THREE.Vector3(x, y + MOB_DEFS[kind].footOffset, z), available, false, underground);
+    this.noteEcologyRejection("bounded-retries-exhausted");
   }
 
   mobMoveTarget(
@@ -18051,6 +18267,7 @@ export class VoxelEngine {
   }
 
   updateMobs(dt: number) {
+    this.wakeSleepingCreatures(dt);
     this.passiveMobSpawnTimer -= dt;
     if (this.passiveMobSpawnTimer <= 0) {
       const density = Math.max(0.08, this.worldOptions.mobDensity);
@@ -18145,7 +18362,7 @@ export class VoxelEngine {
       const protectedCreature = shouldKeepCreatureLoaded({
         tamed: mob.dragonState?.tamed || mob.petState?.tamed || mob.shadeState?.tamed || mob.reedstriderBond?.tamed || mob.courserBond?.tamed || mob.leviathanGrowth?.tamed || Boolean(mob.shadeState?.trustFeeds),
         named: Boolean(mob.petState?.name || mob.name !== mob.definition.name),
-        enclosed: mob.enclosed,
+        enclosed: enclosureProtectsCreature(mob.naturalSpawned, mob.enclosed),
         leashed: this.leadAnchors.has(mob.id),
         persistentPoiResident: mob.persistentPoiResident || Boolean(mob.dragonState),
       });
@@ -18157,14 +18374,27 @@ export class VoxelEngine {
         mob.dragonTickRemainder = elapsed - ticks;
         if (ticks > 0) this.applyDragonState(mob, stepDragonState({ ...mob.dragonState, health: mob.health }, { elapsedTicks: ticks }));
       }
-      if (protectedCreature && distance > simulationRadius && !followerSlot && mob.id !== this.mountedCreatureId) {
+      const rangeAction = creatureRangeAction({
+        protected: protectedCreature,
+        distance,
+        simulationRadius,
+        outOfRangeSeconds: mob.outOfRangeSeconds,
+        elapsedSeconds: dt,
+        following: Boolean(followerSlot || mob.id === this.mountedCreatureId || this.leadAnchors.has(mob.id)),
+      });
+      mob.outOfRangeSeconds = rangeAction.outOfRangeSeconds;
+      if (rangeAction.action === "despawn") {
+        this.removeMob(index);
+        continue;
+      }
+      if (rangeAction.action === "sleep") {
+        this.sleepProtectedCreature(mob, index);
+        continue;
+      }
+      if (rangeAction.action === "linger") {
         if (mob.definition.sentient) this.setSentientDetailTier(mob, "sleep");
         else mob.group.visible = false;
         mob.sentientSimulationAccumulator = 0;
-        continue;
-      }
-      if (!protectedCreature && distance > simulationRadius) {
-        this.removeMob(index);
         continue;
       }
 
@@ -18308,7 +18538,7 @@ export class VoxelEngine {
         this.playCreatureEvent(mob, "ambient");
         mob.voiceTimer = (mob.definition.sentient ? 14 : mob.hostile ? 11 : 8) + (mob.id % 7) * 1.4 + Math.random() * 6;
       }
-      if (!protectedCreature && (mob.age > 300 || (mob.hostile && this.daylightAmount() > 0.65 && mob.group.position.y > SEA_LEVEL && distance > 25))) {
+      if (!protectedCreature && mob.hostile && this.daylightAmount() > 0.65 && mob.group.position.y > SEA_LEVEL && distance > 25) {
         this.removeMob(index);
         continue;
       }
@@ -18849,6 +19079,15 @@ export class VoxelEngine {
     // Their exact state returns to the still-linked orb and must be healed there.
     if (mob.attunedOrbId && this.recallAttunedMob(mob, "fainted")) return;
     const position = mob.group.position.clone();
+    if (mob.naturalSpawned && !this.creatureIsDomesticOrAuthored(mob) && !isRareNaturalDefinition(mob.definition)) {
+      const key = ecologySectorKey(position.x, position.z);
+      this.ecologySectors.set(key, recordEcologyKill(
+        this.ecologySectors.get(key),
+        mob.kind,
+        naturalPopulationCost(mob.definition),
+        this.ecologyTick(),
+      ));
+    }
     if (mob.dragonState) {
       const corpseState: DragonState = { ...mob.dragonState, health: 0, alive: false };
       const deathTick = Math.floor((this.day + this.worldTime) * 24_000);
@@ -19300,6 +19539,10 @@ export class VoxelEngine {
     this.seatedAt = null;
     this.butterflies.clear();
     while (this.mobs.length) this.removeMob(this.mobs.length - 1);
+    this.sleepingCreatures = [];
+    this.sleepingCreatureWakeTimer = 0;
+    this.ecologySectors.clear();
+    this.ecologyDiagnostics = { attempts: 0, successes: 0, lastSuccess: null, rejections: {} };
     while (this.drops.length) this.removeDrop(this.drops.length - 1);
     for (const tree of this.fallingTrees) { this.disposeObject(tree.group); this.scene.remove(tree.group); }
     this.fallingTrees = [];
@@ -20442,6 +20685,7 @@ export class VoxelEngine {
         name: mob.name,
         position: [Number(mob.group.position.x.toFixed(2)), Number(mob.group.position.y.toFixed(2)), Number(mob.group.position.z.toFixed(2))],
         health: Number(mob.health.toFixed(1)),
+        ecologyPool: mob.naturalSpawned ? mob.naturalPool : null,
         state: mob.dragonState ? `${mob.dragonState.type}-stage-${mob.dragonState.stage}-${mob.dragonState.sex}-${mob.dragonState.tamed ? "bonded" : "wild"}-${mob.dragonIntent}${mob.dragonCombatManeuver.targetToken !== null ? `-${mob.dragonCombatManeuver.phase}-pass-${mob.dragonCombatManeuver.passIndex}` : ""}`
           : mob.shadeState?.tamed ? `bonded-${Math.round(mob.shadeState.growth * 100)}%-${mob.shadeState.saddled ? "saddled" : "unsaddled"}`
           : mob.petState?.command ?? mob.birdState?.mode ?? mob.state,
@@ -20452,6 +20696,13 @@ export class VoxelEngine {
         return ld - rd;
       })
       .slice(0, 16);
+    const ecologyRecords = this.naturalPopulationRecords();
+    const ecologyLocal = naturalPopulationSnapshot(ecologyRecords, this.position, 64);
+    const ecologyGlobal = naturalPopulationSnapshot(ecologyRecords);
+    const ecologyBudgets = naturalPoolBudgets(this.touchMode, this.worldOptions.mobDensity);
+    const ecologyProtected = this.mobs.filter((mob) => this.creatureIsDomesticOrAuthored(mob)).length;
+    const ecologyRare = this.mobs.filter((mob) => mob.naturalSpawned && isRareNaturalDefinition(mob.definition)
+      && !this.creatureIsDomesticOrAuthored(mob)).length;
     return JSON.stringify({
       coordinateSystem: "World blocks use integer centers; +x east, +y up, +z south. Player y is feet height.",
       version: GAME_VERSION,
@@ -20470,6 +20721,24 @@ export class VoxelEngine {
       nearbyMobs,
       boats: [...this.boats.values()].map((boat) => ({ id: boat.save.id, position: [boat.save.x, boat.save.y, boat.save.z], passengers: boat.save.passengers.length, storageSlots: boat.save.inventory.filter(Boolean).length })),
       exhibits: [...this.chests.entries()].filter(([key]) => key.startsWith("exhibit:")).map(([key, slots]) => ({ key, capacity: slots.length, residents: slots.filter(Boolean).length })),
+      ecology: {
+        radius: 64,
+        local: ecologyLocal,
+        targets: ecologyBudgets,
+        global: {
+          cost: ecologyGlobal.totalCost,
+          count: ecologyGlobal.totalCount,
+          ceiling: globalNaturalCostCeiling(this.touchMode, this.worldOptions.mobDensity, this.simulationInterestPoints().length),
+        },
+        protectedActive: ecologyProtected,
+        rareNaturalActive: ecologyRare,
+        sleepingProtected: this.sleepingCreatures.length,
+        sectorsUnderHuntingPressure: this.ecologySectors.size,
+        attempts: this.ecologyDiagnostics.attempts,
+        successes: this.ecologyDiagnostics.successes,
+        rejections: this.ecologyDiagnostics.rejections,
+        lastSuccess: this.ecologyDiagnostics.lastSuccess,
+      },
       performance: { averageFps: Number(this.averageFps.toFixed(1)), renderDistance: this.settings.renderDistance, simulationDistance: this.settings.simulationDistance, loadedChunks: this.world.loadedCount },
     });
   }
@@ -20904,42 +21173,12 @@ export class VoxelEngine {
       playerVariant: this.playerVariant,
       liquidLevels: [...this.liquidCells.entries()].map(([key, cell]) => [key, { ...cell }]),
       weatherState: { ...this.weatherState },
-      creatures: this.mobs.filter((mob) => !mob.beeHiveKey).map((mob) => ({
-        id: mob.id,
-        kind: mob.kind,
-        ...(mob.name !== mob.definition.name ? { name: mob.name } : {}),
-        x: mob.group.position.x,
-        y: mob.group.position.y,
-        z: mob.group.position.z,
-        yaw: mob.angle,
-        health: mob.health,
-        age: mob.age,
-        ...(mob.persistentPoiResident ? { persistentPoiResident: true } : {}),
-        ...(mob.poiMarkerId ? { poiMarkerId: mob.poiMarkerId } : {}),
-        ...(mob.enclosed ? { enclosed: true } : {}),
-        ...(mob.petState ? { petState: { ...mob.petState } } : {}),
-        ...(mob.careState ? { careState: { ...mob.careState } } : {}),
-        ...(mob.shadeState ? { shadeState: { ...mob.shadeState } } : {}),
-        ...(mob.reedstriderBond ? { reedstriderBond: { ...mob.reedstriderBond } } : {}),
-        ...(mob.courserBond ? { courserBond: { ...mob.courserBond } } : {}),
-        ...(mob.leviathanGrowth ? { leviathanGrowth: { ...mob.leviathanGrowth } } : {}),
-        ...(mob.aetherbellMorph ? { aetherbellMorph: { ...mob.aetherbellMorph } } : {}),
-        ...(mob.apiaryBee ? { apiaryBee: { ...mob.apiaryBee } } : {}),
-        ...(mob.socialGroupId ? { socialGroupId: mob.socialGroupId } : {}),
-        ...(mob.peelopShedding ? { peelopShedding: { ...mob.peelopShedding } } : {}),
-        ...(MILKABLE_MOB_KINDS.has(mob.kind) && mob.milkCooldown > 0 ? { milkCooldown: mob.milkCooldown } : {}),
-        ...(mob.kind === "woolhorn" && mob.woolRegrowSeconds > 0 ? { woolRegrowSeconds: mob.woolRegrowSeconds } : {}),
-        ...(mob.factionId ? { factionId: mob.factionId } : {}),
-        ...(mob.profession ? { profession: mob.profession } : {}),
-        ...(mob.settlementId ? { settlementId: mob.settlementId } : {}),
-        ...(mob.residentId ? { residentId: mob.residentId } : {}),
-        ...(mob.aligned ? { aligned: true } : {}),
-        ...(mob.hiredByPlayerId ? { hiredByPlayerId: mob.hiredByPlayerId } : {}),
-        ...(mob.followDistance !== "dynamic" ? { followDistance: mob.followDistance } : {}),
-        ...(mob.followCommand !== "follow" ? { followCommand: mob.followCommand } : {}),
-        ...(mob.attunedOrbId ? { attunedOrbId: mob.attunedOrbId } : {}),
-        ...(mob.dragonState ? { dragonState: serializeDragonState({ ...mob.dragonState, health: mob.health }) } : {}),
-      })),
+      creatures: this.mobs.filter((mob) => !mob.beeHiveKey).map((mob) => this.serializeCreature(mob)),
+      sleepingCreatures: this.sleepingCreatures.map((saved) => ({ ...saved })),
+      ecologySectors: Object.fromEntries([...this.ecologySectors.entries()].map(([key, sector]) => [
+        key,
+        normalizeEcologySector(sector, this.ecologyTick()),
+      ]).filter(([, sector]) => Object.keys((sector as EcologySectorSave).recentKills).length)),
       activatedStructureMarkers: [...this.activatedStructureMarkers],
       boats: [...this.boats.values()].map(({ save }) => ({
         ...save,
