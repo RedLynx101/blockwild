@@ -7,6 +7,14 @@ export type InventoryTransferResult = Readonly<{
   moved: number;
 }>;
 
+export type InventoryDragButton = "left" | "right";
+
+export type InventoryDragDistribution = Readonly<{
+  cursor: InventorySlot | null;
+  slots: readonly (InventorySlot | null)[];
+  moved: number;
+}>;
+
 export const GOLD_PER_INGOT = 10;
 
 const cloneSlot = (slot: InventorySlot | null | undefined): InventorySlot | null => slot ? {
@@ -52,6 +60,60 @@ export function inventorySlotsCanStack(left: InventorySlot | null | undefined, r
     && !isFilledCaptureOrbSlot(right)
     && inventoryStackSignature(left) === inventoryStackSignature(right)
     && inventorySlotStackLimit(left) > 1);
+}
+
+/**
+ * Minecraft-style carried-stack painting. A right drag leaves one item in each
+ * compatible visited slot. A left drag places the floor-divided share into
+ * each compatible visited slot and leaves the remainder carried, preserving
+ * exact durability and metadata.
+ */
+export function distributeInventoryCursor(
+  cursorSlot: InventorySlot | null | undefined,
+  targetSlots: readonly (InventorySlot | null)[],
+  button: InventoryDragButton,
+): InventoryDragDistribution {
+  const cursor = cloneSlot(cursorSlot);
+  const slots = targetSlots.map(cloneSlot);
+  if (!cursor || cursor.count <= 0 || slots.length === 0) return { cursor, slots, moved: 0 };
+
+  const eligible = slots.flatMap((slot, index) => {
+    if (!slot) return [index];
+    if (!inventorySlotsCanStack(cursor, slot) || slot.count >= inventorySlotStackLimit(slot)) return [];
+    return [index];
+  });
+  if (eligible.length === 0) return { cursor, slots, moved: 0 };
+
+  const placeOne = (index: number) => {
+    const target = slots[index];
+    if (!target) slots[index] = { ...cloneSlot(cursor)!, count: 1 };
+    else target.count += 1;
+    cursor.count -= 1;
+  };
+
+  if (button === "right") {
+    for (const index of eligible) {
+      if (cursor.count <= 0) break;
+      placeOne(index);
+    }
+  } else {
+    // Minecraft's left-drag quota is calculated once from the number of valid
+    // visited slots. Remainders and any quota blocked by stack capacity stay
+    // on the cursor instead of being redistributed into roomier slots.
+    const quota = Math.floor(cursor.count / eligible.length);
+    if (quota > 0) for (const index of eligible) {
+      const target = slots[index];
+      const capacity = inventorySlotStackLimit(target ?? cursor) - (target?.count ?? 0);
+      const moved = Math.min(quota, capacity, cursor.count);
+      if (moved <= 0) continue;
+      if (!target) slots[index] = { ...cloneSlot(cursor)!, count: moved };
+      else target.count += moved;
+      cursor.count -= moved;
+    }
+  }
+
+  const moved = Math.max(0, (cursorSlot?.count ?? 0) - cursor.count);
+  return { cursor: cursor.count > 0 ? cursor : null, slots, moved };
 }
 
 function addStack(target: (InventorySlot | null)[], incoming: InventorySlot) {

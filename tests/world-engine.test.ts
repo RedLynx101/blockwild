@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
-import { BlockId, ITEMS, Item, RECIPES, type InventorySlot } from "../app/game/data.ts";
+import { BLOCKS, TORCH_BLOCKS, BlockId, ITEMS, Item, RECIPES, type InventorySlot } from "../app/game/data.ts";
 import {
   DEFAULT_UNARMED_DAMAGE,
   FOOD_USAGE_MULTIPLIER,
@@ -620,13 +620,67 @@ test("submerged waterlogged plants meet stacked water without an air seam", () =
 });
 
 test("placed lights bake an order-of-magnitude larger static pool without washing out daylight", () => {
-  assert.equal(BAKED_LIGHT_SOURCE_LIMIT, 256);
+  assert.equal(BAKED_LIGHT_SOURCE_LIMIT, 1024);
   const torch = [{ x: 0, y: 2, z: 0, type: BlockId.Torch }];
   const nearbyCave = bakedEnvironmentLightShade(0.38, 1, 2, 0, torch);
   const distantCave = bakedEnvironmentLightShade(0.38, 40, 2, 0, torch);
   assert.ok(nearbyCave > 0.8, "a nearby torch should reveal cave block color even outside the animated light pool");
   assert.equal(distantCave, 0.38);
   assert.equal(bakedEnvironmentLightShade(1, 1, 2, 0, torch), 1, "baked lights must not over-brighten daylight");
+  assert.ok(bakedEnvironmentLightShade(0.38, 8, 2, 0, [{ x: 0, y: 2, z: 0, type: BlockId.Lava }]) > 0.5, "lava should cast useful baked light");
+});
+
+test("every directional torch and a placed lava pool enter the nearest-first light index", () => {
+  const world = new ChunkWorld();
+  world.reset("ALL-PLACED-LIGHTS", undefined, { structures: false });
+  const chunk = world.generateChunk(0, 0);
+  chunk.blocks.fill(BlockId.Air);
+  chunk.lightIndices.clear();
+  const lights = [...TORCH_BLOCKS, BlockId.Lava] as const;
+  lights.forEach((type, index) => world.setBlock(2 + index, 4, 2, type, false, false));
+  const found = world.lightSourcesNear(4, 4, 2, 12).map((source) => source.type);
+  for (const type of lights) assert.ok(found.includes(type), `${BLOCKS[type].name} missing from light index`);
+  world.dispose();
+});
+
+test("dense lava is spatially coalesced while all nearby torches remain indexed", () => {
+  const world = new ChunkWorld();
+  world.reset("BOUNDED-LAVA-LIGHTS", undefined, { structures: false });
+  const chunk = world.generateChunk(0, 0);
+  chunk.blocks.fill(BlockId.Air);
+  chunk.lightIndices.clear();
+  const changes: Array<{ x: number; y: number; z: number; type: BlockId }> = [];
+  for (let y = -19; y < -7; y += 1) for (let z = 0; z < 16; z += 1) for (let x = 0; x < 16; x += 1) {
+    changes.push({ x, y, z, type: BlockId.Lava });
+  }
+  for (let index = 0; index < 12; index += 1) changes.push({ x: index, y: 6, z: 15, type: BlockId.Torch });
+  const startedAt = performance.now();
+  world.setBlocksBatch(changes, false, false);
+  const elapsed = performance.now() - startedAt;
+  const indexed = world.lightSourcesNear(8, -6, 8, 32);
+  const lava = indexed.filter((source) => source.type === BlockId.Lava);
+  const torches = indexed.filter((source) => source.type === BlockId.Torch);
+  assert.ok(lava.length > 0 && lava.length <= 64, `3,072 lava voxels produced ${lava.length} indexed lights`);
+  assert.equal(torches.length, 12, "lava coalescing must never consume independent torch entries");
+  assert.ok(elapsed < 500, `bounded lava indexing took ${elapsed.toFixed(1)}ms`);
+
+  world.setBlocksBatch([{ x: 1, y: -19, z: 1, type: BlockId.Air }], false, false);
+  assert.ok(world.lightSourcesNear(1, -19, 1, 8).some((source) => source.type === BlockId.Lava), "removing the old representative must promote another lava cell member");
+  world.dispose();
+});
+
+test("leaf canopies soften skylight without turning an open forest into a cave", () => {
+  const world = new ChunkWorld();
+  world.reset("CANOPY-SKYLIGHT", undefined, { structures: false });
+  const chunk = world.generateChunk(0, 0);
+  chunk.blocks.fill(BlockId.Air);
+  const samples = [[0, 0], [2, 0], [-2, 0], [0, 2], [0, -2]] as const;
+  for (const [dx, dz] of samples) for (let y = 1; y <= 7; y += 1) world.setBlock(8 + dx, y, 8 + dz, BlockId.WildwoodLeaves, false, false);
+  const canopy = world.skyVisibilityAt(8, 0, 8);
+  assert.ok(canopy >= 0.35 && canopy < 1, `leaf canopy skylight was ${canopy}`);
+  for (const [dx, dz] of samples) world.setBlock(8 + dx, 8, 8 + dz, BlockId.Stone, false, false);
+  assert.equal(world.skyVisibilityAt(8, 0, 8), 0, "solid roofs and caves must still fully block skylight");
+  world.dispose();
 });
 
 test("standing double chests close their visual seam", () => {

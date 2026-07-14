@@ -390,7 +390,7 @@ const WAYPOST_RESIDENTS: Readonly<Record<WaypostKind, Readonly<{
   profession: string;
   faction: string;
 }>>> = {
-  "lantern-piehouse": { mob: "hobbit-merchant", name: "Merry Bramblebun", profession: "hobbit-merchant", faction: "hobbits" },
+  "lantern-piehouse": { mob: "hobbit-merchant", name: "Merry Bramblebun", profession: "brewer", faction: "hobbits" },
   "switchback-tollcamp": { mob: "goblin-alchemist", name: "Tikket Brassnose", profession: "goblin-alchemist", faction: "goblins" },
   "tideglass-embassy": { mob: "atlantian-pearlbroker", name: "Nerissa Foamquill", profession: "atlantian-pearlbroker", faction: "atlantians" },
   "sugarwind-teahouse": { mob: "sugarcourt-sweetbroker", name: "Praline Wispwhisk", profession: "sugarcourt-sweetbroker", faction: "sugarcourt" },
@@ -473,7 +473,15 @@ function planWaypostPoi(kind: WaypostKind, origin: WorldPosition, seed: string |
     b.set(3, 1, 2, BlockId.SealedBarrel, "delver-provisions");
   }
 
-  b.spawn(0, 1, -1, resident.mob, 1, 1.5, `${kind}-keeper`, waypostResidentTags(kind, origin));
+  // Enclosed wayposts use an exact authored interior anchor. A generic surface
+  // scan sees the roof as the highest walkable block and used to place Merry on
+  // top of the Piehouse instead of behind the open counter.
+  const keeperZ = kind === "lantern-piehouse" ? -3 : -1;
+  const keeperRadius = kind === "lantern-piehouse" ? 0 : 1.5;
+  const keeperTags = kind === "lantern-piehouse"
+    ? [...waypostResidentTags(kind, origin), "authored-interior-spawn"]
+    : waypostResidentTags(kind, origin);
+  b.spawn(0, 1, keeperZ, resident.mob, 1, keeperRadius, `${kind}-keeper`, keeperTags);
   b.chest(4, 1, 3, "adventure-cache", `${kind}-traveller-cache`, 5);
   b.landmark(0, 2, 0, `adventure-poi:${kind}`);
   return b.plan(kind);

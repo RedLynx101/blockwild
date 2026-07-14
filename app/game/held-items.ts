@@ -524,6 +524,16 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
     addBox([0.23, 0.22, 0.2], [0, 0.02, 0], 0xc8493e, [0.08, 0.18, 0]);
     addBox([0.045, 0.15, 0.045], [0, 0.18, 0], 0x6b4226, [0, 0, -0.08]);
     addBox([0.14, 0.035, 0.08], [0.07, 0.21, 0], 0x5f8d47, [0, 0, 0.32]);
+  } else if (item === Item.HearthberryApplePie) {
+    // A low, readable wedge keeps the pastry identifiable in first-person,
+    // third-person and dropped-item views without masquerading as a block.
+    addCylinder(0.27, 0.12, [0, 0.02, 0], 0xb66a32, [0, 0, 0]).name = "hearthberry-pie-crust";
+    addCylinder(0.235, 0.07, [0, 0.105, 0], 0x8b3d58, [0, 0, 0]).name = "hearthberry-pie-filling";
+    for (const angle of [-0.55, 0, 0.55]) addBox([0.07, 0.045, 0.5], [Math.sin(angle) * 0.045, 0.155, 0], 0xe0ae64, [0, angle, 0]).name = "hearthberry-pie-lattice";
+    for (const angle of [-0.72, 0.72]) addBox([0.5, 0.045, 0.07], [0, 0.158, Math.sin(angle) * 0.04], 0xf0c978, [0, angle, 0]).name = "hearthberry-pie-cross-lattice";
+    addSphere(0.045, [0.08, 0.19, -0.03], 0x7f4aa0).name = "hearthberry-pie-berry";
+    group.scale.setScalar(0.86);
+    group.rotation.set(0.12, 0.32, -0.08);
   } else if (item === Item.Stick) {
     addBox([0.075, 0.54, 0.075], [0, 0.02, 0], 0x8b5a30, [0.2, 0.1, -0.36]);
   } else if (item === Item.RottenFlesh) {

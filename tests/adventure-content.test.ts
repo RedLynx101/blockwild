@@ -14,9 +14,10 @@ import {
 } from "../app/game/adventure-content.ts";
 import { BLOCKS, RECIPES, BlockId, Item, ITEMS } from "../app/game/data.ts";
 import { DOOR_STATES, doorBlocks, doorItem, doorState, isDoorBlock } from "../app/game/doors.ts";
-import { mapLocationNameFromTag, planHostileAirbornePursuit, resolveStructureLootItem, structureMobSpawnY } from "../app/game/engine.ts";
+import { VoxelEngine, lanternPiehouseKeeperOrigin, mapLocationNameFromTag, migrateLanternPiehouseSaveState, planHostileAirbornePursuit, resolveStructureLootItem, structureMobSpawnY, type SavedCreature } from "../app/game/engine.ts";
 import { createBirdBehavior } from "../app/game/fauna.ts";
 import { createAvatarHeldItemModel } from "../app/game/held-items.ts";
+import { createMerchant } from "../app/game/economy.ts";
 import {
   LEGENDARY_ITEMS,
   isInfiniteDurabilityItem,
@@ -82,6 +83,83 @@ test("six faction wayposts expose one aligned merchant-guide plus local quest id
     assert.ok(resident.tags?.some((tag) => tag.startsWith("name:")));
     assert.ok(plan.markers.some((marker) => marker.type === "chest" && marker.loot.length > 0));
   }
+});
+
+test("Lantern Piehouse keeper is grounded indoors and reliably stocks its signature pie", () => {
+  const plan = planAdventureStructure("lantern-piehouse", ORIGIN, "piehouse-contract");
+  const keeper = plan.markers.find((marker) => marker.type === "spawn" && marker.id === "lantern-piehouse-keeper");
+  assert.ok(keeper && keeper.type === "spawn");
+  if (!keeper || keeper.type !== "spawn") return;
+  assert.deepEqual(keeper.position, { x: ORIGIN.x, y: ORIGIN.y + 1, z: ORIGIN.z - 3 });
+  assert.equal(keeper.radius, 0);
+  assert.ok(keeper.tags?.includes("profession:brewer"));
+  assert.ok(keeper.tags?.includes("authored-interior-spawn"));
+  const blocks = new Map(plan.placements.map((entry) => [`${entry.x},${entry.y},${entry.z}`, entry.block]));
+  const world = { getBlock: (x: number, y: number, z: number) => blocks.get(`${x},${y},${z}`) ?? BlockId.Air, findWalkableY: () => { throw new Error("interior anchor must not scan to roof"); } };
+  assert.equal(structureMobSpawnY(world as never, "hobbit-merchant", keeper.position.x, keeper.position.z, keeper.position.y, keeper.tags), ORIGIN.y + MOB_DEFS["hobbit-merchant"].footOffset);
+  const merchant = createMerchant("host", "waypost-lantern-piehouse", "hobbits", "brewer");
+  assert.ok(merchant.inventory.some((stack) => stack.itemKey === "hearthberry-apple-pie" && stack.count >= 1));
+  assert.deepEqual(RECIPES.find((entry) => entry.id === "hearthberry-apple-pie")?.pattern, [Item.Wheat, Item.Wheat, Item.Wheat, Item.Apple, Item.Berry, Item.HoneyJar]);
+  assert.equal(ITEMS[Item.HearthberryApplePie].food, 8);
+  assert.ok(createAvatarHeldItemModel(Item.HearthberryApplePie)?.getObjectByName("hearthberry-pie-crust"));
+});
+
+test("legacy Lantern Piehouse saves narrowly re-anchor Merry and repair brewer stock", () => {
+  const residentId = "waypost-lantern-piehouse--24-40-keeper";
+  const settlementId = "waypost-lantern-piehouse--24-40";
+  const merry = {
+    id: 42,
+    kind: "hobbit-merchant",
+    name: "Merry Bramblebun",
+    x: -22.8,
+    y: 71.5,
+    z: 41.1,
+    yaw: 0,
+    health: 16,
+    age: 12,
+    persistentPoiResident: true,
+    poiMarkerId: "adventure:lantern-piehouse:-24,40:spawn:lantern-piehouse-keeper",
+    factionId: "hobbits",
+    profession: "hobbit-merchant",
+    settlementId,
+    residentId,
+    aligned: true,
+  } satisfies SavedCreature;
+  assert.deepEqual(lanternPiehouseKeeperOrigin(merry), { x: -24, z: 40 });
+
+  const stale = { ...createMerchant("host", residentId, "hobbits", "general", 317), profession: "hobbit-merchant" as never };
+  const unrelated = createMerchant("host", "waypost-switchback-tollcamp-0-0-keeper", "goblins", "general", 211);
+  const migrated = migrateLanternPiehouseSaveState([merry], { [residentId]: stale, [unrelated.id]: unrelated }, "host");
+  assert.deepEqual({ x: migrated.creatures[0].x, z: migrated.creatures[0].z, profession: migrated.creatures[0].profession }, { x: -24, z: 37, profession: "brewer" });
+  const brewer = migrated.merchants.get(residentId);
+  assert.equal(brewer?.profession, "brewer");
+  assert.equal(brewer?.gold, stale.gold, "migration should preserve player-shaped merchant value state");
+  assert.ok(brewer?.inventory.some((stack) => stack.itemKey === "hearthberry-apple-pie" && stack.count >= 1));
+  assert.equal(migrated.merchants.get(unrelated.id), unrelated, "other merchants must remain byte-for-byte untouched");
+
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  let generatedChunk: readonly [number, number] | null = null;
+  let restoredPosition: { x: number; y: number; z: number } | null = null;
+  let restoredProfession: string | null | undefined;
+  engine.world = {
+    generateChunk: (cx: number, cz: number) => { generatedChunk = [cx, cz]; },
+    sampleColumn: () => ({ height: 48 }),
+    getBlock: (x: number, y: number, z: number) => x === -24 && y === 48 && z === 37 ? BlockId.Moss : BlockId.Air,
+    findWalkableY: () => { throw new Error("migrated Merry must use the authored interior anchor"); },
+  } as never;
+  engine.spawnMob = ((_kind: string, position: { x: number; y: number; z: number }, options: { profession?: string | null }) => {
+    restoredPosition = { x: position.x, y: position.y, z: position.z };
+    restoredProfession = options.profession;
+    return {};
+  }) as never;
+  engine.restoreCreature(merry);
+  assert.deepEqual(generatedChunk, [-2, 2], "a far-away saved Piehouse should load only its anchor chunk for exact grounding");
+  assert.deepEqual(restoredPosition, { x: -24, y: 48 + MOB_DEFS["hobbit-merchant"].footOffset, z: 37 });
+  assert.equal(restoredProfession, "brewer");
+
+  const lookalike = { ...merry, id: 43, poiMarkerId: "adventure:lantern-piehouse:-24,40:spawn:travelling-hobbit" };
+  const untouched = migrateLanternPiehouseSaveState([lookalike], {}, "host");
+  assert.equal(untouched.creatures[0], lookalike, "a similar Hearthkin without the exact authored marker must not migrate");
 });
 
 test("v1.3.5 materials are distinct craftable blocks and the Palimpsest loot resolves", () => {

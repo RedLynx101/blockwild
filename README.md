@@ -1,6 +1,6 @@
 # Blockwild
 
-Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.5.1 The World Below**.
+Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.5.2 The World Below**.
 
 The project is a real game rather than a voxel-rendering demo. You can mine, build, craft, smelt, farm, fight, collect field notes, manage several worlds, and carry those worlds between browsers with export files.
 
@@ -9,6 +9,14 @@ The project is a real game rather than a voxel-rendering demo. You can mine, bui
 ![Blockwild field guide with all 178 rendered creatures](public/creatures/blockwild-creatures.svg)
 
 The integrated creature-design pass expands the Courser family with Rimehoof, Sunscar, Mirestride, and Starbough ecological breeds plus the forge-built Deepgear Courser. It also gives all six dragon families production stage forms, rebuilds birds, pets, crabs, mosslings, foxes, harts, deer, longhorns, terrapins, and other core wildlife, and preserves one model path for gameplay, Bestiary portraits, and visual audits.
+
+## v1.5.2 The World Below
+
+This repair release adds a recoverable Terraria-style trash slot and Minecraft-style carried-stack controls: left click moves a whole stack, right click takes half or places one, left drag places the equal floor share and keeps the remainder carried, and right drag paints one item into each compatible slot. Creature health readouts stop at two useful decimal places, while the Bone Shard icon stays within its real inventory socket.
+
+Multiplayer guests now throw real host-owned drops, consume leads exactly once, recover led ground animals from floating states, Shift-craft the complete legal batch, and break grass or torches without a false wrong-tool warning. Host ecology round-robins its existing spawn clock across connected players, activates nearby POIs, and simulates/culls wildlife relative to the nearest player without multiplying the full population budget per guest.
+
+Forest Temples have complete walls, windows, and an intentional working entrance. POI clearings suppress entire intersecting tree plans rather than leaving crowns behind. Leaf canopies diffuse skylight gradually, every directional torch competes in a larger nearest-first light pool, placed torches are brighter, and lava contributes warm baked and dynamic light without indexing every lava voxel. Wild Rune Stone is weathered fieldstone with sparse shiny green mineral flecks and a restrained green glow. Fresh and already-discovered Lantern Piehouses anchor their keeper behind the counter and reliably sell a new craftable Hearthberry Apple Pie alongside their Hearthkin provisions.
 
 ## v1.5.1 The World Below
 

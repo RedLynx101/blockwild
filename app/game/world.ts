@@ -335,6 +335,17 @@ export type Chunk = {
 };
 
 const LEAF_BLOCK_SET = new Set<BlockId>(LEAF_BLOCKS);
+const GENERATED_TREE_BLOCK_SET = new Set<BlockId>([
+  ...LEAF_BLOCKS,
+  BlockId.WildwoodLog,
+  BlockId.PineLog,
+  BlockId.BirchLog,
+  BlockId.BloomLog,
+  BlockId.JungleLog,
+  BlockId.SakuraLog,
+  BlockId.CandywoodLog,
+  BlockId.MoonboughLog,
+]);
 const GENERATED_GROWTH_BLOCK_SET = new Set<BlockId>([
   BlockId.WildwoodLog,
   BlockId.PineLog,
@@ -636,6 +647,7 @@ export function normalizeWorldGenerationOptions(value?: Partial<WorldGenerationO
 }
 const LIGHT_BLOCKS = new Set<BlockId>([
   ...TORCH_BLOCKS,
+  BlockId.Lava,
   BlockId.Glowstone,
   BlockId.CrystalBlock,
   BlockId.RuneStone,
@@ -670,14 +682,34 @@ const LIGHT_BLOCKS = new Set<BlockId>([
   BlockId.VeinmetalHeart,
   BlockId.CaveMarker,
 ]);
+
+/**
+ * Lava pools are broad luminous surfaces, not thousands of independent point
+ * lights. One representative per small world-aligned cell keeps generation,
+ * edits and queries bounded while still giving every pool local illumination.
+ */
+export const LAVA_LIGHT_CELL_SIZE = Object.freeze({ xz: 4, y: 3 } as const);
+
+function lavaLightCellOrigin(x: number, y: number, z: number) {
+  return {
+    x: Math.floor(x / LAVA_LIGHT_CELL_SIZE.xz) * LAVA_LIGHT_CELL_SIZE.xz,
+    y: MIN_Y + Math.floor((y - MIN_Y) / LAVA_LIGHT_CELL_SIZE.y) * LAVA_LIGHT_CELL_SIZE.y,
+    z: Math.floor(z / LAVA_LIGHT_CELL_SIZE.xz) * LAVA_LIGHT_CELL_SIZE.xz,
+  } as const;
+}
+
+function lavaLightCellKey(x: number, y: number, z: number) {
+  const origin = lavaLightCellOrigin(x, y, z);
+  return `${origin.x},${origin.y},${origin.z}`;
+}
 /**
  * Static voxel-light budget used while baking chunk vertex colors. The small
  * pool of animated Three.js point lights can then be reserved for the nearest
  * flickering sources without making every older torch appear inert.
  */
 /** Dense settlements and dungeons keep broad voxel glow beyond the animated pool. */
-export const BAKED_LIGHT_SOURCE_LIMIT = 256;
-export const BAKED_LIGHT_RADIUS = 18;
+export const BAKED_LIGHT_SOURCE_LIMIT = 1024;
+export const BAKED_LIGHT_RADIUS = 20;
 /** Lower/middle Wild Peppermint segments use a full-height repeating cane tile. */
 export const WILD_PEPPERMINT_STEM_TILE = 162;
 export type BakedLightSource = { x: number; y: number; z: number; type: BlockId };
@@ -739,7 +771,7 @@ export function environmentSkyShade(cellY: number, skyTopY: number) {
 export function bakedEnvironmentLightShade(baseShade: number, x: number, y: number, z: number, sources: readonly BakedLightSource[]) {
   let shade = baseShade;
   for (const source of sources) {
-    const radius = source.type === BlockId.DeepgearLantern ? BAKED_LIGHT_RADIUS : source.type === BlockId.LightningBugJar ? 10 : TORCH_BLOCKS.includes(source.type) ? 13 : 15;
+    const radius = source.type === BlockId.DeepgearLantern ? BAKED_LIGHT_RADIUS : source.type === BlockId.Lava ? 18 : source.type === BlockId.LightningBugJar ? 10 : TORCH_BLOCKS.includes(source.type) ? 16 : 15;
     const distance = Math.hypot(source.x + 0.5 - x, source.y + 0.55 - y, source.z + 0.5 - z);
     if (distance >= radius) continue;
     const attenuation = 1 - distance / radius;
@@ -1673,24 +1705,22 @@ export function createBlockAtlas() {
       context.fillRect(ox + 7, oy + 7, 2, 2);
     }
     if (index === 72) {
-      // Wild Rune Stone: weathered slate, hairline fractures, a hand-cut
-      // asymmetrical sigil and a restrained luminous mineral seam.
-      context.fillStyle = "#33463d";
+      // Wild Rune Stone is old fieldstone first: irregular cool-grey grains,
+      // shallow fractures, and only a sparse dusting of shiny green mineral.
+      // Its light comes from those inclusions rather than a painted rune.
+      context.fillStyle = "#555d58";
       context.fillRect(ox, oy, tile, tile);
-      context.fillStyle = "#41594a";
-      for (const [x, y, w, h] of [[0, 2, 6, 1], [9, 1, 7, 1], [2, 12, 9, 1], [12, 9, 4, 1], [1, 6, 1, 4], [10, 3, 1, 3]] as Array<[number, number, number, number]>) context.fillRect(ox + x, oy + y, w, h);
-      context.fillStyle = "#26372f";
-      context.fillRect(ox + 5, oy + 2, 1, 4); context.fillRect(ox + 4, oy + 5, 2, 1);
-      context.fillRect(ox + 11, oy + 10, 1, 4); context.fillRect(ox + 9, oy + 10, 3, 1);
-      context.fillStyle = "#69b884";
-      context.fillRect(ox + 7, oy + 2, 2, 3); context.fillRect(ox + 6, oy + 4, 2, 2);
-      context.fillRect(ox + 5, oy + 6, 2, 5); context.fillRect(ox + 6, oy + 10, 4, 2);
-      context.fillRect(ox + 9, oy + 7, 2, 4); context.fillRect(ox + 10, oy + 5, 2, 3);
-      context.fillStyle = "#a7e3b9";
-      context.fillRect(ox + 7, oy + 4, 1, 2); context.fillRect(ox + 6, oy + 8, 1, 2);
-      context.fillRect(ox + 8, oy + 10, 2, 1); context.fillRect(ox + 10, oy + 7, 1, 2);
-      context.fillStyle = "#d1f5d9";
-      context.fillRect(ox + 7, oy + 7, 2, 2);
+      context.fillStyle = "#69716b";
+      for (const [x, y] of [[1, 1], [5, 2], [11, 1], [14, 4], [3, 7], [8, 6], [12, 9], [1, 13], [6, 14], [14, 13]] as const) {
+        context.fillRect(ox + x, oy + y, 2, 1);
+      }
+      context.fillStyle = "#3d4641";
+      context.fillRect(ox + 0, oy + 5, 5, 1); context.fillRect(ox + 4, oy + 6, 1, 3);
+      context.fillRect(ox + 9, oy + 11, 5, 1); context.fillRect(ox + 9, oy + 9, 1, 3);
+      context.fillStyle = "#69c685";
+      for (const [x, y] of [[2, 3], [7, 4], [12, 2], [5, 10], [13, 7], [3, 14], [10, 13]] as const) context.fillRect(ox + x, oy + y, 1, 1);
+      context.fillStyle = "#b6f1c4";
+      for (const [x, y] of [[8, 3], [2, 11], [12, 14]] as const) context.fillRect(ox + x, oy + y, 1, 1);
     }
     if (index === 84) {
       context.fillStyle = "#523824";
@@ -2427,6 +2457,7 @@ export class ChunkWorld {
     const saved = this.edits.get(key);
     if (saved) for (const [index, type] of saved.entries()) chunk.blocks[index] = type;
     const sectionVolume = CHUNK_SIZE * CHUNK_SIZE * SECTION_HEIGHT;
+    const indexedLavaCells = new Set<string>();
     for (let section = 0; section < SECTION_COUNT; section += 1) {
       const end = (section + 1) * sectionVolume;
       let occupied = 0;
@@ -2434,7 +2465,17 @@ export class ChunkWorld {
         const type = chunk.blocks[index] as BlockId;
         if (type === BlockId.Air) continue;
         occupied += 1;
-        if (LIGHT_BLOCKS.has(type)) chunk.lightIndices.add(index);
+        if (type === BlockId.Lava) {
+          const layer = Math.floor(index / (CHUNK_SIZE * CHUNK_SIZE));
+          const horizontal = index % (CHUNK_SIZE * CHUNK_SIZE);
+          const localZ = Math.floor(horizontal / CHUNK_SIZE);
+          const localX = horizontal % CHUNK_SIZE;
+          const cell = lavaLightCellKey(chunk.cx * CHUNK_SIZE + localX, MIN_Y + layer, chunk.cz * CHUNK_SIZE + localZ);
+          if (!indexedLavaCells.has(cell)) {
+            indexedLavaCells.add(cell);
+            chunk.lightIndices.add(index);
+          }
+        } else if (LIGHT_BLOCKS.has(type)) chunk.lightIndices.add(index);
         if (LEAF_BLOCK_SET.has(type)) chunk.leafIndices.add(index);
         if (blocksSky(type)) chunk.skyTops[index % (CHUNK_SIZE * CHUNK_SIZE)] = MIN_Y + Math.floor(index / (CHUNK_SIZE * CHUNK_SIZE));
       }
@@ -2730,6 +2771,15 @@ export class ChunkWorld {
     const minZ = chunk.cz * CHUNK_SIZE;
     const inside = (x: number, z: number) => x >= minX && x < minX + CHUNK_SIZE && z >= minZ && z < minZ + CHUNK_SIZE;
     const legacyClearings: Array<Readonly<{ minX: number; maxX: number; minZ: number; maxZ: number }>> = [];
+    const plannedTreeLogs: TreePlanBlock[] = [];
+    const plannedTreeLeaves: TreePlanBlock[] = [];
+    const generatedTreePlans: TreePlanBlock[][] = [];
+    const suppressedTreePlans = new Set<number>();
+    const treeBlockKey = (placement: Pick<TreePlanBlock, "x" | "y" | "z">) => `${placement.x},${placement.y},${placement.z}`;
+    const queueTreePlan = (plan: TreePlanBlock[]) => {
+      generatedTreePlans.push(plan);
+      for (const placement of plan) (LEAF_BLOCK_SET.has(placement.block) ? plannedTreeLeaves : plannedTreeLogs).push(placement);
+    };
     const set = (x: number, y: number, z: number, type: BlockId, onlyAir = true) => {
       if (!inside(x, z) || y < MIN_Y || y > MAX_Y) return;
       const lx = x - minX;
@@ -2748,14 +2798,46 @@ export class ChunkWorld {
       }
     };
     const clearGeneratedGrowth = (bounds: Readonly<{ minX: number; maxX: number; minZ: number; maxZ: number }>) => {
-      // Tree crowns reach four cells beyond their root. Clearing a padded
-      // envelope removes the whole authored tree instead of shearing its trunk
-      // and leaving an apparently floating outer crown beside a POI.
-      const treePadding = 5;
-      const startX = Math.max(minX, Math.floor(bounds.minX) - treePadding);
-      const endX = Math.min(minX + CHUNK_SIZE - 1, Math.ceil(bounds.maxX) + treePadding);
-      const startZ = Math.max(minZ, Math.floor(bounds.minZ) - treePadding);
-      const endZ = Math.min(minZ + CHUNK_SIZE - 1, Math.ceil(bounds.maxZ) + treePadding);
+      // Rectangular padding can always slice a different tree at its outer
+      // edge. Instead, any generated tree touching the requested clearing is
+      // suppressed as one deterministic plan, including its cross-chunk crown.
+      const newlySuppressed: number[] = [];
+      for (let planIndex = 0; planIndex < generatedTreePlans.length; planIndex += 1) {
+        if (suppressedTreePlans.has(planIndex)) continue;
+        const plan = generatedTreePlans[planIndex];
+        if (!plan.some((placement) => placement.x >= bounds.minX && placement.x <= bounds.maxX
+          && placement.z >= bounds.minZ && placement.z <= bounds.maxZ)) continue;
+        suppressedTreePlans.add(planIndex);
+        newlySuppressed.push(planIndex);
+      }
+      const affectedTreeCells = new Set<string>();
+      for (const planIndex of newlySuppressed) for (const placement of generatedTreePlans[planIndex]) {
+        if (inside(placement.x, placement.z)) affectedTreeCells.add(treeBlockKey(placement));
+      }
+      const survivingTreeCells = new Map<string, TreePlanBlock>();
+      if (affectedTreeCells.size) for (let planIndex = 0; planIndex < generatedTreePlans.length; planIndex += 1) {
+        if (suppressedTreePlans.has(planIndex)) continue;
+        for (const placement of generatedTreePlans[planIndex]) {
+          const key = treeBlockKey(placement);
+          if (!affectedTreeCells.has(key)) continue;
+          const existing = survivingTreeCells.get(key);
+          if (!existing || (LEAF_BLOCK_SET.has(existing.block) && !LEAF_BLOCK_SET.has(placement.block))) survivingTreeCells.set(key, placement);
+        }
+      }
+      for (const key of affectedTreeCells) {
+        const [x, y, z] = key.split(",").map(Number);
+        const index = blockIndex(x - minX, y, z - minZ);
+        const current = chunk.blocks[index] as BlockId;
+        // A later authored structure may overlap a clearing processed earlier;
+        // never erase it merely because a natural tree used to own this cell.
+        if (!GENERATED_TREE_BLOCK_SET.has(current)) continue;
+        chunk.blocks[index] = survivingTreeCells.get(key)?.block ?? BlockId.Air;
+      }
+
+      const startX = Math.max(minX, Math.floor(bounds.minX));
+      const endX = Math.min(minX + CHUNK_SIZE - 1, Math.ceil(bounds.maxX));
+      const startZ = Math.max(minZ, Math.floor(bounds.minZ));
+      const endZ = Math.min(minZ + CHUNK_SIZE - 1, Math.ceil(bounds.maxZ));
       if (startX > endX || startZ > endZ) return;
       for (let x = startX; x <= endX; x += 1) for (let z = startZ; z <= endZ; z += 1) {
         const lx = x - minX;
@@ -2791,11 +2873,6 @@ export class ChunkWorld {
     // minimum axis separation. Broad crowns may mingle, but authored wood from
     // neighboring trees can no longer merge into one accidental trunk entity.
     const cellSize = 9;
-    const plannedTreeLogs: TreePlanBlock[] = [];
-    const plannedTreeLeaves: TreePlanBlock[] = [];
-    const queueTreeBlock = (placement: TreePlanBlock) => {
-      (LEAF_BLOCK_SET.has(placement.block) ? plannedTreeLeaves : plannedTreeLogs).push(placement);
-    };
     for (let cellX = Math.floor((minX - 8) / cellSize); cellX <= Math.floor((minX + CHUNK_SIZE + 8) / cellSize); cellX += 1) {
       for (let cellZ = Math.floor((minZ - 8) / cellSize); cellZ <= Math.floor((minZ + CHUNK_SIZE + 8) / cellSize); cellZ += 1) {
         const x = cellX * cellSize + 4 + Math.floor(hash2(cellX, cellZ, this.seed ^ 0x11111111) * 2);
@@ -2857,12 +2934,12 @@ export class ChunkWorld {
                 pinePlan.push({ x: x + dx, y: column.height + height + dy, z: z + dz, block: resolvedLeaves });
               }
             }
-            for (const planned of repairGeneratedTreePlan({
+            queueTreePlan(repairGeneratedTreePlan({
               plan: pinePlan,
               root: { x, y: column.height + 1, z },
               logBlock: trunk,
               forbiddenColumns: treeForbiddenColumns,
-            })) queueTreeBlock(planned);
+            }));
           } else {
             const formRoll = hash2(x, z, this.seed ^ 0x51a6c72d);
             const form: TreeForm = column.biome === BiomeId.SugarplumVale ? (formRoll > 0.91 ? "ancient" : formRoll > 0.36 ? "layered" : "rounded")
@@ -2871,7 +2948,7 @@ export class ChunkWorld {
               : column.biome === BiomeId.CloudreedGlen || formRoll > 0.77 ? "windswept"
                 : formRoll > 0.45 ? "layered" : "rounded";
             const root = { x, y: column.height + 1, z };
-            for (const planned of repairGeneratedTreePlan({
+            queueTreePlan(repairGeneratedTreePlan({
               plan: planFullTree(`${this.seedText}:${x},${z}`, root, form, trunk, resolvedLeaves, {
                 groundYAt: (treeX, treeZ) => sample(treeX, treeZ).height,
                 canRootAt: (treeX, treeZ) => {
@@ -2882,7 +2959,7 @@ export class ChunkWorld {
               root,
               logBlock: trunk,
               forbiddenColumns: treeForbiddenColumns,
-            })) queueTreeBlock(planned);
+            }));
           }
         }
       }
@@ -3725,7 +3802,8 @@ export class ChunkWorld {
     const y = MIN_Y + Math.floor(index / columnArea);
     if (previous === BlockId.Air && type !== BlockId.Air) chunk.sectionBlockCounts[section] += 1;
     else if (previous !== BlockId.Air && type === BlockId.Air) chunk.sectionBlockCounts[section] -= 1;
-    if (LIGHT_BLOCKS.has(type)) chunk.lightIndices.add(index);
+    // Lava is reindexed once per bounded spatial cell after the edit completes.
+    if (LIGHT_BLOCKS.has(type) && type !== BlockId.Lava) chunk.lightIndices.add(index);
     else chunk.lightIndices.delete(index);
     if (LEAF_BLOCK_SET.has(type)) chunk.leafIndices.add(index);
     else chunk.leafIndices.delete(index);
@@ -3750,6 +3828,29 @@ export class ChunkWorld {
     }
   }
 
+  private refreshLavaLightCell(x: number, y: number, z: number) {
+    const origin = lavaLightCellOrigin(x, y, z);
+    const sx = splitCoordinate(origin.x);
+    const sz = splitCoordinate(origin.z);
+    const chunk = this.chunks.get(chunkKey(sx.chunk, sz.chunk));
+    if (!chunk) return;
+    let representative = -1;
+    const maxY = Math.min(MAX_Y, origin.y + LAVA_LIGHT_CELL_SIZE.y - 1);
+    for (let cellY = origin.y; cellY <= maxY; cellY += 1) {
+      for (let cellZ = origin.z; cellZ < origin.z + LAVA_LIGHT_CELL_SIZE.xz; cellZ += 1) {
+        for (let cellX = origin.x; cellX < origin.x + LAVA_LIGHT_CELL_SIZE.xz; cellX += 1) {
+          const localX = cellX - sx.chunk * CHUNK_SIZE;
+          const localZ = cellZ - sz.chunk * CHUNK_SIZE;
+          const index = blockIndex(localX, cellY, localZ);
+          if ((chunk.blocks[index] as BlockId) !== BlockId.Lava) continue;
+          chunk.lightIndices.delete(index);
+          if (representative < 0) representative = index;
+        }
+      }
+    }
+    if (representative >= 0) chunk.lightIndices.add(representative);
+  }
+
   skyTopAt(x: number, z: number) {
     const sx = splitCoordinate(x);
     const sz = splitCoordinate(z);
@@ -3767,6 +3868,7 @@ export class ChunkWorld {
     const previousType = chunk.blocks[index] as BlockId;
     const resolvedType = type === BlockId.Air && isWaterloggedFloraBlock(previousType) ? BlockId.Water : type;
     this.writeChunkBlock(chunk, index, resolvedType);
+    if (previousType === BlockId.Lava || resolvedType === BlockId.Lava) this.refreshLavaLightCell(x, y, z);
     if (record) {
       let edits = this.edits.get(key);
       if (!edits) { edits = new Map(); this.edits.set(key, edits); }
@@ -3800,6 +3902,7 @@ export class ChunkWorld {
 
   setBlocksBatch(changes: Array<{ x: number; y: number; z: number; type: BlockId }>, record = true, immediate = false) {
     const affected = new Set<string>();
+    const affectedLavaCells = new Map<string, { x: number; y: number; z: number }>();
     for (const change of changes) {
       if (change.y < MIN_Y || change.y > MAX_Y) continue;
       const sx = splitCoordinate(change.x);
@@ -3810,6 +3913,9 @@ export class ChunkWorld {
       const previousType = chunk.blocks[index] as BlockId;
       const resolvedType = change.type === BlockId.Air && isWaterloggedFloraBlock(previousType) ? BlockId.Water : change.type;
       this.writeChunkBlock(chunk, index, resolvedType);
+      if (previousType === BlockId.Lava || resolvedType === BlockId.Lava) {
+        affectedLavaCells.set(lavaLightCellKey(change.x, change.y, change.z), change);
+      }
       if (record) {
         let edits = this.edits.get(key);
         if (!edits) { edits = new Map(); this.edits.set(key, edits); }
@@ -3827,6 +3933,7 @@ export class ChunkWorld {
         this.addLightNeighborhoodTargets(affected, change.x, change.y, change.z);
       }
     }
+    for (const change of affectedLavaCells.values()) this.refreshLavaLightCell(change.x, change.y, change.z);
     for (const entry of affected) {
       const separator = entry.lastIndexOf(":");
       const key = entry.slice(0, separator);
@@ -3968,6 +4075,7 @@ export class ChunkWorld {
     let visible = 0;
     for (const [dx, dz] of samples) {
       let transmission = 1;
+      let leafLayers = 0;
       const startY = Math.floor(y);
       if (startY < MIN_Y) transmission = 0;
       else {
@@ -3977,12 +4085,18 @@ export class ChunkWorld {
         if (chunk) {
           let index = blockIndex(sx.local, startY, sz.local);
           for (let scanY = startY; scanY <= MAX_Y; scanY += 1, index += CHUNK_SIZE * CHUNK_SIZE) {
-            const definition = BLOCKS[chunk.blocks[index] as BlockId];
+            const type = chunk.blocks[index] as BlockId;
+            const definition = BLOCKS[type];
             if (!definition?.solid) continue;
-            if (definition.layer === "cutout") transmission *= 0.55;
+            // Minecraft-like skylight diffuses through foliage one level at a
+            // time. Treating every dense leaf voxel as a half-light roof made
+            // ordinary canopies cross the cave threshold after four layers.
+            if (LEAF_BLOCK_SET.has(type)) { leafLayers += 1; continue; }
+            if (definition.layer === "cutout") transmission *= 0.7;
             else { transmission = 0; break; }
             if (transmission < 0.12) break;
           }
+          if (transmission > 0 && leafLayers > 0) transmission *= Math.max(0.35, 1 - leafLayers / 15);
         }
       }
       visible += transmission;

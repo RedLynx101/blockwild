@@ -1945,6 +1945,13 @@ input:focus-visible {
   transform: rotate(38deg);
 }
 
+/* Bone Shards keep their recognizable diagonal shape without clipping a
+   28-50px inventory or recipe socket. */
+.mc-slot .item-icon-kind-bone::before {
+  transform: rotate(38deg) scale(.76);
+  transform-origin: 50% 50%;
+}
+
 .item-icon-kind-glow-dust::before {
   inset: 3px;
   background: radial-gradient(circle, #fff8b0 0 8%, transparent 10%), radial-gradient(circle at 22% 70%, #ffe36c 0 9%, transparent 11%), radial-gradient(circle at 75% 28%, #ffc84c 0 10%, transparent 12%), radial-gradient(circle at 70% 78%, #fff1a0 0 7%, transparent 9%);
@@ -4399,6 +4406,35 @@ input:focus-visible {
   text-align: center;
 }
 
+.inventory-trash-area {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  align-items: center;
+  gap: 8px;
+  width: calc(100% - 20px);
+  min-height: 48px;
+  margin: 0 10px 8px;
+  padding: 5px 7px;
+  border: 1px solid rgba(190, 113, 100, .5);
+  background: linear-gradient(90deg, rgba(77, 37, 33, .5), rgba(0, 0, 0, .22));
+}
+
+.inventory-trash-area > span { display: grid; gap: 3px; min-width: 0; }
+.player-paper-doll .inventory-trash-area small { margin: 0; color: #e29c8e; font-size: 7px; letter-spacing: .12em; }
+.player-paper-doll .inventory-trash-area b { margin: 0; overflow: hidden; color: #d6c4bf; font-size: 6px; text-overflow: ellipsis; white-space: nowrap; }
+.inventory-trash-area .trash-slot { width: 38px; height: 38px; border-color: #70413a #d7a59b #d7a59b #70413a; background: #815b54; }
+.inventory-trash-area .trash-slot:hover { background: #986c62; box-shadow: inset 0 0 0 2px rgba(255, 209, 190, .6); }
+.inventory-trash-area .trash-slot:not(:has(.item-icon))::after { content: "×"; color: #d5a096; font-size: 20px; font-weight: 900; }
+
+/* Keep the complete paper doll, recoverable trash and footer visible at the
+   game's 720p browser target without making the pack window scroll. */
+.inventory-window .player-paper-doll .paper-doll-identity { padding-block: 7px 5px; }
+.inventory-window .player-paper-doll .paper-doll-stage { min-height: 181px; }
+.inventory-window .player-paper-doll .player-avatar-preview { width: 138px; height: 178px; }
+.inventory-window .player-paper-doll .equipment-slot { width: 30px; height: 30px; }
+.inventory-window .player-paper-doll .equipment-slot .item-icon { width: 22px; height: 22px; }
+.inventory-window .player-paper-doll > small { margin-top: 5px; }
+
 .offhand-slot { border-color: #6f8c83 #cbe0d8 #cbe0d8 #6f8c83; }
 .offhand-slot:not(:has(.item-icon))::after { content: "L"; color: #65766f; font-size: 11px; font-weight: 900; }
 .offhand-slot.raised { box-shadow: inset 0 0 0 3px rgba(132, 211, 186, .62), 0 0 8px rgba(132, 211, 186, .42); }
@@ -6262,6 +6298,31 @@ input:focus-visible {
   border-radius: 90% 0 90% 0;
   background: #729c42;
   transform: rotate(-18deg);
+}
+
+.item-icon-kind-pie::before {
+  width: 25px;
+  height: 13px;
+  left: 4px;
+  top: 11px;
+  border: 2px solid #704224;
+  border-radius: 50% 50% 42% 42%;
+  background:
+    repeating-linear-gradient(38deg, transparent 0 4px, #f1ca81 4px 6px, transparent 6px 9px),
+    radial-gradient(circle at 58% 42%, #a65a7a 0 2px, transparent 3px),
+    linear-gradient(#98465f 0 48%, #c47a39 49% 100%);
+  box-shadow: inset 0 -2px #94542c, 0 2px 2px #0006;
+  transform: rotate(-8deg);
+}
+
+.item-icon-kind-pie::after {
+  width: 7px;
+  height: 5px;
+  left: 18px;
+  top: 9px;
+  border-radius: 50%;
+  background: #8750a5;
+  box-shadow: -8px 2px #cb4d47;
 }
 
 .item-icon-kind-seed::before {
