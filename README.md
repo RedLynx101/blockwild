@@ -367,6 +367,13 @@ A focused test can be run without the build wrapper:
 node --import tsx --test tests/world-engine.test.ts
 ```
 
+Ecology audits are deliberately separate from gameplay. The biome view reports flora, fauna, sound coverage, and possible POIs by habitat; the mob view reports every creature's authored sound-event/assets, drop entries and yields, and number of natural surface or underground biome contexts. Both are safe to rerun after extending the Bestiary, and the detailed mob report is written under ignored `output/`.
+
+```bash
+npm run audit:ecology
+npm run audit:mobs
+```
+
 The model inspector reads the production creature and player models. It is useful for checking orientation, silhouettes, and ground contact after changing a creature, player pose, or held tool:
 
 ```bash

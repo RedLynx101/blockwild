@@ -14,8 +14,8 @@ export type NaturalPopulationPool = typeof NATURAL_POPULATION_POOLS[number];
 export type NaturalPoolBudget = Readonly<{ target: number; ceiling: number }>;
 
 const DESKTOP_POOL_BUDGETS: Readonly<Record<NaturalPopulationPool, NaturalPoolBudget>> = Object.freeze({
-  "surface-animal": { target: 10, ceiling: 14 },
-  ambient: { target: 8, ceiling: 12 },
+  "surface-animal": { target: 12, ceiling: 17 },
+  ambient: { target: 10, ceiling: 14 },
   "water-animal": { target: 5, ceiling: 7 },
   "water-ambient": { target: 10, ceiling: 16 },
   underground: { target: 8, ceiling: 12 },
@@ -133,9 +133,9 @@ export function naturalSpawnCountCapacity(costBudget: number, creatureCost: numb
   return Math.max(0, Math.floor((costBudget + 1e-9) / creatureCost));
 }
 
-/** Terrain hollows can resemble a pen; wild creatures need an explicit player relationship before enclosure becomes protection. */
-export function enclosureProtectsCreature(naturalSpawned: boolean, enclosed: boolean) {
-  return enclosed && !naturalSpawned;
+/** Only the crafted-fence flood fill can set enclosed, so wild origin is irrelevant once a real pen contains the creature. */
+export function enclosureProtectsCreature(_naturalSpawned: boolean, enclosed: boolean) {
+  return enclosed;
 }
 
 export type CreatureRangeAction = Readonly<{

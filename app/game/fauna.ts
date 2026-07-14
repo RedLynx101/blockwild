@@ -644,14 +644,29 @@ export type PersistenceContext = {
   enclosed?: boolean;
   captured?: boolean;
   leashed?: boolean;
+  /** Durable marker set the first time this exact creature is successfully led. */
+  everLed?: boolean;
   persistentPoiResident?: boolean;
   /** Wild and tamed dragons persist as unloaded records even outside simulation range. */
   dragon?: boolean;
 };
 
-/** Tamed, named, caged, leashed, POI-bound, enclosed, or draconic creatures never despawn. */
+/** Tamed, named, penned, ever-led, POI-bound, or draconic creatures never despawn. */
 export function shouldKeepCreatureLoaded(context: PersistenceContext) {
-  return Boolean(context.tamed || context.named || context.enclosed || context.captured || context.leashed || context.persistentPoiResident || context.dragon);
+  return Boolean(context.tamed || context.named || context.enclosed || context.captured || context.leashed || context.everLed || context.persistentPoiResident || context.dragon);
+}
+
+export const SMALL_RABBIT_KINDS = Object.freeze([
+  "meadow-cottontail",
+  "russet-rabbit",
+  "frost-hare",
+  "chocolate-bunny",
+] as const);
+
+/** Shared gameplay scale keeps every rabbit compact and their young unmistakably smaller. */
+export function husbandryAgeScale(kind: string, baby: boolean) {
+  if ((SMALL_RABBIT_KINDS as readonly string[]).includes(kind)) return baby ? 0.38 : 0.78;
+  return baby ? 0.62 : 1;
 }
 
 export type LeviathanSpecies = "worldshell-leviathan" | "aetherbell-leviathan";

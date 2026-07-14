@@ -15,6 +15,8 @@ export type CaveEntranceCenter = Readonly<{
 }>;
 
 export const CAVE_ENTRANCE_CELL_SIZE = 48;
+/** Only one quarter of otherwise valid cave-mouth cells open onto the surface. */
+export const CAVE_ENTRANCE_REALIZATION_RATE = 0.25;
 
 function mix32(value: number) {
   value = Math.imul(value ^ (value >>> 16), 0x45d9f3b);
@@ -28,7 +30,7 @@ export function caveHash(seed: number, x: number, y: number, z: number) {
 
 /** Shared center contract used by both surface sampling and graph connectors. */
 export function caveEntranceForCell(seed: number, cellX: number, cellZ: number): CaveEntranceCenter | null {
-  if (caveHash(seed ^ 0x64f31a2d, cellX, 0, cellZ) < 0.28) return null;
+  if (caveHash(seed ^ 0x64f31a2d, cellX, 0, cellZ) >= CAVE_ENTRANCE_REALIZATION_RATE) return null;
   const centerX = cellX * CAVE_ENTRANCE_CELL_SIZE + 8 + Math.floor(caveHash(seed ^ 0x2f6e2b1, cellX, 1, cellZ) * (CAVE_ENTRANCE_CELL_SIZE - 16));
   const centerZ = cellZ * CAVE_ENTRANCE_CELL_SIZE + 8 + Math.floor(caveHash(seed ^ 0x735a2d97, cellX, 2, cellZ) * (CAVE_ENTRANCE_CELL_SIZE - 16));
   const radius = 3 + caveHash(seed ^ 0x1a7c9e31, cellX, 3, cellZ) * 1.8;

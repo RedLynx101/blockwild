@@ -4823,7 +4823,8 @@ export function applyWildlifePose(
   const tail = visual.getObjectByName(`${kind}-tail-root-pivot`);
   const secondaryTail = visual.getObjectByName(`${kind}-tail-secondary-pivot`);
   const tailTip = visual.getObjectByName(`${kind}-tail-tip-pivot`);
-  const wag = Math.sin(time * (1.5 + travel * 3.4)) * (0.06 + travel * 0.14 + alert * 0.06);
+  const tailCadence = wildlifeTailCadence(rig, travel);
+  const wag = Math.sin(time * tailCadence) * (0.06 + travel * 0.14 + alert * 0.06);
   if (tail) tail.rotation.y = wag;
   if (secondaryTail) secondaryTail.rotation.y = -wag * 0.9;
   if (tailTip) tailTip.rotation.y = wag * 1.45;
@@ -5047,6 +5048,14 @@ export function applyWildlifePose(
     }
   }
   return true;
+}
+
+/** Heavy terrestrial tails should read as weight and balance, not a rapid metronome. */
+export function wildlifeTailCadence(rig: string, travelAmount: number) {
+  const travel = THREE.MathUtils.clamp(Number.isFinite(travelAmount) ? travelAmount : 0, 0, 1);
+  if (rig === "fox") return 0.72 + travel * 1.08;
+  if (["warg", "mistmane", "tapir", "ridgeback", "woolhorn", "grazer", "deer", "cow"].includes(rig)) return 0.95 + travel * 1.65;
+  return 1.5 + travel * 3.4;
 }
 
 /**

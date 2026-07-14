@@ -2211,11 +2211,12 @@ export class ChunkWorld {
     if (worldBelow) height += hillCountry * (3.2 * macroRoll + 4.4 * Math.max(0, macroRoll) ** 2);
 
     const surfaceRegion = worldBelow ? surfaceRegionAt(this.seed, sampleX, sampleZ, temperature, moisture) : null;
-    // Landform follows the selected regional identity. Boundary belts retain
-    // a gentler form so neighboring provinces meet without cliff seams.
+    // Landform follows the owning regional core and fades fully to the shared
+    // macro terrain through boundary belts. Surface identity can transition
+    // sooner, but it no longer swaps height formulas at that first threshold.
     if (surfaceRegion && height > SEA_LEVEL + 1 && continental > -0.08 && river < 0.5) {
-      const identity = surfaceRegion.biome;
-      const strength = 0.78 - surfaceRegion.boundary * 0.34;
+      const identity = surfaceRegion.coreBiome;
+      const strength = 0.78 * (1 - smoothstep(0, 0.92, surfaceRegion.boundary));
       const broad = fbm2(warpX + 947, warpZ - 613, this.seed ^ 0x510e527f, 1 / 150, 4);
       const folded = Math.max(0, 1 - Math.abs(fbm2(warpX - 283, warpZ + 719, this.seed ^ 0x9b05688c, 1 / 105, 4)));
       if (identity === BiomeId.Meadow) {
@@ -2634,6 +2635,35 @@ export class ChunkWorld {
     }
 
     const isFluid = (block: BlockId) => block === BlockId.Water || block === BlockId.Lava;
+    // The legacy noise pass can leave aquifer water immediately outside a dry
+    // graph tunnel. Seal a one-block shell before carving so routes travel
+    // through rock rather than becoming impossible air tubes inside water.
+    // Wet graph rooms and stream cells are already in carveMask, so their
+    // authored water remains connected and large underwater caves survive.
+    const dryShellMask = new Uint8Array(volume);
+    for (let index = 0; index < volume; index += 1) {
+      if (!carveMask[index]) continue;
+      const layer = Math.floor(index / (CHUNK_SIZE * CHUNK_SIZE));
+      const y = MIN_Y + layer;
+      if (liquidLevel[index] >= y) continue;
+      const horizontal = index % (CHUNK_SIZE * CHUNK_SIZE);
+      const lx = horizontal % CHUNK_SIZE;
+      const lz = Math.floor(horizontal / CHUNK_SIZE);
+      for (let dx = -1; dx <= 1; dx += 1) for (let dy = -1; dy <= 1; dy += 1) for (let dz = -1; dz <= 1; dz += 1) {
+        if (dx === 0 && dy === 0 && dz === 0) continue;
+        const shellX = lx + dx;
+        const shellY = y + dy;
+        const shellZ = lz + dz;
+        if (shellX < 0 || shellX >= CHUNK_SIZE || shellZ < 0 || shellZ >= CHUNK_SIZE || shellY < MIN_Y || shellY > MAX_Y) continue;
+        const shellIndex = blockIndex(shellX, shellY, shellZ);
+        if (!carveMask[shellIndex]) dryShellMask[shellIndex] = 1;
+      }
+    }
+    for (let index = 0; index < volume; index += 1) {
+      if (!dryShellMask[index] || !isFluid(chunk.blocks[index] as BlockId)) continue;
+      const y = MIN_Y + Math.floor(index / (CHUNK_SIZE * CHUNK_SIZE));
+      chunk.blocks[index] = y < MIN_Y + 18 ? BlockId.Basalt : y < -10 ? BlockId.Deepstone : BlockId.Stone;
+    }
     for (let index = 0; index < volume; index += 1) {
       if (!carveMask[index]) continue;
       const y = MIN_Y + Math.floor(index / (CHUNK_SIZE * CHUNK_SIZE));

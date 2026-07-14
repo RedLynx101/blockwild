@@ -1192,3 +1192,23 @@ test("mob deaths detach semantic body blocks and fully burn them away", () => {
   engine.updateMobRemains(2.4);
   assert.equal(engine.mobRemains.length, 0, "burn-away fragments must have a finite lifetime");
 });
+
+test("ever-led protection survives creature serialization and restoration", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  engine.creatureGroup = new THREE.Group();
+  engine.mobs = [];
+  engine.nextMobId = 1;
+  engine.world = {
+    getBlock: (_x: number, y: number) => y <= 0 ? BlockId.Stone : BlockId.Air,
+    isWalkThrough: (type: BlockId | undefined) => type === BlockId.Air,
+    findWalkableY: () => 0,
+    surfaceAt: () => 0,
+  } as unknown as VoxelEngine["world"];
+  const original = engine.spawnMob("meadow-cow", new THREE.Vector3(2, 1, 3), { naturalSpawned: true, everLed: true });
+  const saved = engine.serializeCreature(original);
+  assert.equal(saved.everLed, true);
+  engine.mobs = [];
+  const restored = engine.restoreCreature(saved);
+  assert.equal(restored?.everLed, true);
+  assert.equal(restored?.naturalSpawned, true);
+});
