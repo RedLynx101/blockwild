@@ -1,6 +1,6 @@
 # Blockwild
 
-Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.5.3 The World Below**.
+Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.5.4 The World Below**.
 
 The project is a real game rather than a voxel-rendering demo. You can mine, build, craft, smelt, farm, fight, collect field notes, manage several worlds, and carry those worlds between browsers with export files.
 
@@ -9,6 +9,12 @@ The project is a real game rather than a voxel-rendering demo. You can mine, bui
 ![Blockwild field guide with all 178 rendered creatures](public/creatures/blockwild-creatures.svg)
 
 The integrated creature-design pass expands the Courser family with Rimehoof, Sunscar, Mirestride, and Starbough ecological breeds plus the forge-built Deepgear Courser. It also gives all six dragon families production stage forms, rebuilds birds, pets, crabs, mosslings, foxes, harts, deer, longhorns, terrapins, and other core wildlife, and preserves one model path for gameplay, Bestiary portraits, and visual audits.
+
+## v1.5.4 The World Below
+
+This polish update integrates the latest pushed `design-1` work. Crafted Wildwood fence pens and closed gates now preserve ordinary enclosed creatures through the ecology sleep system, with bounded cached enclosure scans and persistent lead history. Natural surface-animal and ambient targets are slightly fuller without raising aquatic, underground, or monster budgets; rabbits are smaller and heavier terrestrial tails move with a calmer cadence.
+
+Cave mouths now realize at their intended sparse rate, dry graph tunnels seal stray legacy aquifer water and lava, and authored flooded caverns remain connected. Regional terrain height follows its owning biome core and fades through transition belts, removing abrupt formula changes at biome edges. Selected larger overworld animals have more useful but still bounded hide and meat yields, and a new repeatable mob-ecology audit reports spawn coverage, custom sound coverage, and drop coverage across the complete creature catalog.
 
 ## v1.5.3 The World Below
 

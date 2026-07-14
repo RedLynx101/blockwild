@@ -2,6 +2,13 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.5.4 - The World Below - 2026-07-14
+
+- Added bounded crafted-fence enclosure recognition and persistent lead history so ordinary penned creatures remain protected by the ecology sleep system without treating terrain hollows as pens.
+- Raised only local overworld animal and ambient-life targets, refined rabbit scale and heavy-tail cadence, and expanded sensible hide or meat yields for selected larger wildlife.
+- Reduced cave-mouth realization to the intended sparse rate, sealed dry graph tunnels from stray legacy aquifers, preserved authored flooded cave routes, and smoothed regional terrain height through biome transitions.
+- Added a repeatable 178-creature ecology audit covering natural habitat assignment, resolved custom sound assets, and bounded drop yields.
+
 ## 1.5.3 - The World Below - 2026-07-14
 
 - Rebuilt natural wildlife around six independent local population pools for surface animals, ambient life, large and small aquatic life, underground ecology, and monsters. Each connected player receives a fair nearby ecology target while one sublinear host ceiling bounds total simulation work.
