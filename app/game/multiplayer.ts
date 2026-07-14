@@ -108,6 +108,12 @@ export type BlockAction = {
   tick: number;
   kind: "break" | "place" | "batch";
   edits: BlockEdit[];
+  /**
+   * Guest hotbar intent at the moment of the edit. The host still resolves the
+   * actual item from its authoritative inventory; this only prevents the
+   * unordered pose lane from leaving tool validation one wheel notch old.
+   */
+  selectedSlot?: number;
   /** Item optimistically consumed by a guest for a player-initiated placement. */
   consumedItem?: number;
   /** Presentation hint; voxel edits remain the authoritative state. */
@@ -300,6 +306,8 @@ export type PlayerSessionSnapshot = {
   inventory: ItemStackSnapshot[];
   /** Optional for protocol-v1 compatibility; current clients include the carried cursor stack. */
   cursor?: ItemStackSnapshot;
+  /** Recoverable last-discarded stack; optional for older peers. */
+  trash?: ItemStackSnapshot;
   equipment: Record<"head" | "chest" | "legs" | "feet", ItemStackSnapshot>;
   offhand?: ItemStackSnapshot;
   selected: number;
@@ -1090,6 +1098,7 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
         && value.edits.length >= 1
         && value.edits.length <= 2_048
         && value.edits.every(validateBlockEdit)
+        && (value.selectedSlot === undefined || isInteger(value.selectedSlot, 0, 8))
         && (value.consumedItem === undefined || isInteger(value.consumedItem, 0, 65_535))
         && (value.effect === undefined || (isRecord(value.effect)
           && value.effect.kind === "tree-fell"

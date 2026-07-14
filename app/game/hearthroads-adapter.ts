@@ -173,6 +173,7 @@ export const COMMERCE_ITEM_CODES: Readonly<Record<string, ItemCode>> = Object.fr
   "honey-jar": Item.HoneyJar,
   "royal-jelly": Item.RoyalJelly,
   mead: Item.Honeymead,
+  "hearthberry-apple-pie": Item.HearthberryApplePie,
   "raw-iron": Item.RawIron,
   "raw-sunmetal": Item.RawIron,
   "raw-gold": Item.RawGold,

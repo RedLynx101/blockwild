@@ -41,7 +41,7 @@ test("Meadow Grass accepts saplings and wild peppermint columns remain connected
     [],
     "the renderer-only stem tile must not overwrite any save-stable block texture",
   );
-  assert.equal(BAKED_LIGHT_SOURCE_LIMIT, 256, "dense builds should keep broad baked glow beyond the animated pool");
+  assert.equal(BAKED_LIGHT_SOURCE_LIMIT, 1024, "dense builds should keep broad baked glow beyond the animated pool");
 });
 
 test("Dreamblossoms glow and all aquatic flora share a flush waterlogged stack contract", () => {
@@ -70,6 +70,17 @@ test("forest temple polish includes a rooted entry, working door, sconces, and b
   const amenities = planPoiAmenities("forest-temple", { x: 0, y: 40, z: 0 });
   assert.ok(amenities.some((entry) => entry.block === BlockId.DoorClosedLower));
   assert.ok(amenities.some((entry) => entry.block === BlockId.TorchWallEast));
+  const shell = new Map(plan.placements.map((entry) => [`${entry.x},${entry.y},${entry.z}`, entry.block]));
+  for (const entry of amenities) shell.set(`${entry.x},${entry.y},${entry.z}`, entry.block);
+  for (let edge = -5; edge <= 5; edge += 1) for (let y = 41; y <= 44; y += 1) {
+    for (const [x, z] of [[-5, edge], [5, edge], [edge, -5], [edge, 5]] as const) {
+      assert.ok(shell.has(`${x},${y},${z}`), `temple shell missing at ${x},${y},${z}`);
+      assert.notEqual(shell.get(`${x},${y},${z}`), BlockId.Air, `temple shell gap at ${x},${y},${z}`);
+    }
+  }
+  assert.ok(plan.placements.some((entry) => entry.variant === "temple-wall"));
+  assert.ok(plan.placements.some((entry) => entry.variant === "leaflight-window"));
+  assert.notEqual(BLOCKS[BlockId.RuneStone].layer, "emissive", "Rune Stone should read as natural stone with isolated green flecks");
   assert.equal(BLOCKS[BlockId.HobbitThatch].side, 144, "Hearthkin roofs use their dense woven tile, not transparent wheat");
 });
 

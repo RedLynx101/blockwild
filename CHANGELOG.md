@@ -2,6 +2,16 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.5.2 - The World Below - 2026-07-14
+
+- Added a metadata-preserving recoverable trash slot plus Minecraft-style whole-stack, half-stack, single-item, left-drag distribution, and right-drag painting controls across the pack and crafting grid. Dynamic health text is capped at two useful decimal places and the Bone Shard icon stays inside its inventory socket.
+- Made guest block actions carry reliable selected-slot intent, removed false wrong-tool feedback from valid hand/instant breaks, and made guest Shift-click crafting exhaust the legal recipe batch before sending one committed player-state update.
+- Routed guest item throwing through host authority with exact durability/metadata and synchronized world-drop/player images. Lead attachment consumes exactly once, returns the committed pack state, and led ground animals recover against keeper or fence terrain after an elevated state.
+- Extended host ecology to all connected players through one round-robin spawn clock, bounded local density, square-root population scaling, nearby structure activation, nearest-player simulation/culling, and the existing radius-bounded peer snapshots.
+- Closed Forest Temple walls around intentional windows and a working entrance. POI clearings now remove complete intersecting deterministic tree plans, preventing clipped trunks and floating crowns at clearance boundaries.
+- Reworked leaf skylight as gradual canopy diffusion while preserving opaque roof/cave darkness. Expanded nearest-first light capacity, strengthened directional torch baked/dynamic illumination, and made lava a warm baked and dynamic light source with spatially coalesced pool lighting.
+- Repainted Wild Rune Stone as natural weathered stone with sparse shiny green inclusions and only a restrained mineral glow. Fresh and legacy Lantern Piehouses now anchor their keeper indoors, repair stale brewer stock, and offer a new craftable, edible, tradeable Hearthberry Apple Pie with dedicated inventory and held art.
+
 ## 1.5.1 - The World Below - 2026-07-13
 
 - Reworked all nine World Below signature creature models in a second art pass: branched root-antlers and traveling gardens for Grazers; layered fins, light organs and streamers for Lanternrays; genuinely avian prism feathers for Swifts; mineral cartilage, webbed feet and fine gills for Newts; an overlapping mineral-current sail for Skimmers; articulated membrane fingers and roost claws for Ashnose Bats; hollow chime plates for Chimewings; ember-veined thermal wings for Cinder Kites; and a lower, fractured, splayed living-ore silhouette for Veinlings. Species-specific lantern, nose, tail, chime, vent, sail, and heart motion preserves those details in flight and at rest.

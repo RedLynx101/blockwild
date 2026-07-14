@@ -694,6 +694,8 @@ export const Item = {
   WebspinnerBlueprint: 511,
   ClockworkHoundOrb: 512,
   WebspinnerOrb: 513,
+  /** Hearthkin waypost cookery; appended to preserve every existing save id. */
+  HearthberryApplePie: 514,
 } as const;
 
 export type ItemCode = number;
@@ -784,7 +786,7 @@ export type ItemDefinition = {
   /** Contents rendered in and placed from a bucket. */
   bucketLiquid?: "water" | "lava" | "honey" | "syrup";
   /** Semantic UI hook for non-cube inventory artwork. */
-  iconKind?: "crafting-table" | "chest" | "apiary" | "aquarium" | "fireplace" | "capture-orb" | "orb-rack" | "orb-healer" | "bucket" | "fence-gate" | "lead" | "shield" | "seed" | "produce" | "honeycomb" | "honey" | "jelly" | "wax" | "milk" | "relic" | "dragon-egg" | "dragon-scale" | "dragon-heart" | "dragon-skull" | "dragon-bone" | "dragon-saddle" | "dragon-pannier" | "dragon-barding-fire" | "dragon-barding-ice" | "dragon-barding-steel" | "dragon-barding-sea" | "dragon-barding-gold" | "dragon-barding-silver" | "gold-hoard-block" | "gold-pile" | "queen-cell" | "bee" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "potion" | "potion-health" | "mead" | "blueprint" | "bolt" | "spear" | "crossbow" | "sword" | "armor";
+  iconKind?: "crafting-table" | "chest" | "apiary" | "aquarium" | "fireplace" | "capture-orb" | "orb-rack" | "orb-healer" | "bucket" | "fence-gate" | "lead" | "shield" | "seed" | "produce" | "pie" | "honeycomb" | "honey" | "jelly" | "wax" | "milk" | "relic" | "dragon-egg" | "dragon-scale" | "dragon-heart" | "dragon-skull" | "dragon-bone" | "dragon-saddle" | "dragon-pannier" | "dragon-barding-fire" | "dragon-barding-ice" | "dragon-barding-steel" | "dragon-barding-sea" | "dragon-barding-gold" | "dragon-barding-silver" | "gold-hoard-block" | "gold-pile" | "queen-cell" | "bee" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "potion" | "potion-health" | "mead" | "blueprint" | "bolt" | "spear" | "crossbow" | "sword" | "armor";
   /** Reuse a world atlas texture for the handheld/icon representation. */
   worldTextureBlock?: BlockId;
   /** Shared semantic model hooks consumed by held-item and dropped-item renderers. */
@@ -898,7 +900,7 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.DesertShrub]: block(BlockId.DesertShrub, "Dune Brush", 68, 68, 68, 0.08, "#a58c45", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
   [BlockId.BananaPlant]: block(BlockId.BananaPlant, "Goldenleaf Plant", 69, 69, 69, 0.12, "#e8c542", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
   [BlockId.TempleSandstone]: block(BlockId.TempleSandstone, "Sunglyph Sandstone", 71, 71, 71, 1.7, "#d8b868", "pickaxe", 1),
-  [BlockId.RuneStone]: block(BlockId.RuneStone, "Wild Rune Stone", 72, 72, 72, 2.1, "#58745d", "pickaxe", 2, { layer: "emissive" }),
+  [BlockId.RuneStone]: block(BlockId.RuneStone, "Wild Rune Stone", 72, 72, 72, 2.1, "#59615b", "pickaxe", 2),
   [BlockId.MoonberryShoot]: block(BlockId.MoonberryShoot, "Moonberry Shoot", 73, 73, 73, 0.12, "#526f3f", "hand", 0, { solid: false, layer: "cutout", shape: "bush" }),
   [BlockId.MoonberryBush]: block(BlockId.MoonberryBush, "Moonberry Bush", 74, 74, 74, 0.18, "#47713d", "hand", 0, { solid: false, layer: "cutout", shape: "bush" }),
   [BlockId.MoonberryBushRipe]: block(BlockId.MoonberryBushRipe, "Ripe Moonberry Bush", 75, 75, 75, 0.18, "#67458a", "hand", 0, { solid: false, layer: "cutout", shape: "bush" }),
@@ -1613,6 +1615,7 @@ Object.assign(ITEMS, {
   [Item.GuanoItem]: { id: Item.GuanoItem, name: "Cave Guano", color: "#6e644a", maxStack: 64, placeBlock: BlockId.Guano, worldTextureBlock: BlockId.Guano },
   [Item.CaveBridgeItem]: { id: Item.CaveBridgeItem, name: "Cave Bridge Plank", color: "#655143", maxStack: 64, placeBlock: BlockId.CaveBridge, worldTextureBlock: BlockId.CaveBridge },
   [Item.DeepgearLiftItem]: { id: Item.DeepgearLiftItem, name: "Deepgear Lift Platform", color: "#667278", maxStack: 16, placeBlock: BlockId.DeepgearLift, worldTextureBlock: BlockId.DeepgearLift },
+  [Item.HearthberryApplePie]: { id: Item.HearthberryApplePie, name: "Hearthberry Apple Pie", color: "#cf8c45", maxStack: 16, food: 8, iconKind: "pie" },
 } satisfies Record<number, ItemDefinition>);
 
 /**
@@ -1987,6 +1990,7 @@ export const RECIPES: Recipe[] = [
   { id: "table", name: "Crafting Table", width: 2, height: 2, pattern: [BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: BlockId.CraftingTable, count: 1 }, table: false },
   { id: "torch", name: "Torches", width: 1, height: 2, pattern: [ANY_COAL, Item.Stick], output: { item: BlockId.Torch, count: 4 }, table: false },
   { id: "bread", name: "Field Bread", width: 3, height: 1, pattern: [Item.Wheat, Item.Wheat, Item.Wheat], output: { item: Item.Bread, count: 1 }, table: true },
+  { id: "hearthberry-apple-pie", name: "Hearthberry Apple Pie", width: 3, height: 2, pattern: [Item.Wheat, Item.Wheat, Item.Wheat, Item.Apple, Item.Berry, Item.HoneyJar], output: { item: Item.HearthberryApplePie, count: 1 }, table: true },
   { id: "furnace", name: "Furnace", width: 3, height: 3, pattern: [BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone, 0, BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone], output: { item: BlockId.Furnace, count: 1 }, table: true },
   { id: "chest", name: "Wildwood Chest", width: 3, height: 3, pattern: [BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks, 0, BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: BlockId.Chest, count: 1 }, table: true },
   { id: "door", name: "Wildwood Doors", width: 2, height: 3, pattern: [BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: Item.WildwoodDoor, count: 3 }, table: true },

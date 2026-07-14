@@ -16,7 +16,7 @@ test("environment light selection is nearest-first and independent of facing", (
   assert.ok(nearbyBehind < nearerButIrrelevantSideLight);
   assert.ok(nearerButIrrelevantSideLight < litTerrainAhead);
   assert.equal(nearbyBehind, nearbyBehindWhileFacingIt);
-  assert.deepEqual(ENVIRONMENT_LIGHT_POOL_SIZE, { desktop: 32, touch: 16 });
+  assert.deepEqual(ENVIRONMENT_LIGHT_POOL_SIZE, { desktop: 64, touch: 32 });
 });
 
 test("environment light selection gives an existing world-space assignment hysteresis", () => {
@@ -58,4 +58,22 @@ test("the fixed light pool binds to the nearest source even when it is beside th
 
   assert.equal(engine.placedLightPool[0].position.x, 24);
   assert.equal(engine.placedLightPool[0].userData.sourceX, 24);
+});
+
+test("lava receives a useful bounded warm dynamic light", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  const light = new THREE.PointLight();
+  engine.configureEnvironmentLight(light, { x: 3, y: -20, z: 7, type: BlockId.Lava, distanceSquared: 1, priority: 1, selected: true, assigned: false } as never);
+  assert.equal(light.color.getHex(), 0xff692f);
+  assert.equal(light.distance, 18);
+  assert.equal(light.userData.targetIntensity, 2.05);
+});
+
+test("Wild Rune Stone uses only a restrained green mineral glow", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  const light = new THREE.PointLight();
+  engine.configureEnvironmentLight(light, { x: 2, y: 4, z: 6, type: BlockId.RuneStone, distanceSquared: 1, priority: 1, selected: true, assigned: false } as never);
+  assert.equal(light.color.getHex(), 0x73aa7b);
+  assert.equal(light.distance, 8);
+  assert.equal(light.userData.targetIntensity, 0.48);
 });

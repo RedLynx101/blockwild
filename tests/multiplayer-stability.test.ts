@@ -13,10 +13,14 @@ import {
   markRendererContextLost,
   multiplayerBreakDropPlan,
   multiplayerContainerTransactionConservesItems,
+  multiplayerNaturalMobCap,
   multiplayerPlayerStateSignature,
+  nearestSimulationInterest,
   normalizeMultiplayerPlayerProgression,
   normalizeMultiplayerPlayerState,
   restoreRendererContext,
+  selectSimulationInterest,
+  shouldShowIncorrectToolFeedback,
 } from "../app/game/engine.ts";
 import { createSkillState } from "../app/game/skills.ts";
 import { createMapKnowledge } from "../app/game/map-system.ts";
@@ -26,7 +30,7 @@ import { createPeelopState } from "../app/game/peelop.ts";
 import { createReedstriderBond } from "../app/game/ecology.ts";
 import { createEmptyApiaryBlock } from "../app/game/apiary.ts";
 import { createDragonState } from "../app/game/dragons.ts";
-import { createPeerIdentity, validatePayload, validatePeerIdentity, type ContainerAction, type CreatureAction, type PlayerProgressionSnapshot, type PlayerSessionSnapshot } from "../app/game/multiplayer.ts";
+import { createPeerIdentity, validatePayload, validatePeerIdentity, type ContainerAction, type CreatureAction, type InventoryAction, type PlayerProgressionSnapshot, type PlayerSessionSnapshot } from "../app/game/multiplayer.ts";
 
 function sessionState(): PlayerSessionSnapshot {
   const inventory = Array.from({ length: 36 }, () => null) as PlayerSessionSnapshot["inventory"];
@@ -668,6 +672,162 @@ test("character profile identities remain stable and valid across both join path
     seated: 0,
     mountedCreatureId: 22,
   }), true);
+});
+
+test("reliable block edits carry bounded hotbar intent and valid hand-breaks never warn about tools", () => {
+  const actorId = sessionState().playerId;
+  assert.equal(validatePayload("block-action", {
+    requestId: "break_grass_001", actorId, tick: 9, kind: "break", selectedSlot: 7,
+    edits: [{ x: 1, y: 70, z: 1, type: BlockId.Air }], status: "request",
+  }), true);
+  assert.equal(validatePayload("block-action", {
+    requestId: "break_grass_bad", actorId, tick: 9, kind: "break", selectedSlot: 9,
+    edits: [{ x: 1, y: 70, z: 1, type: BlockId.Air }], status: "request",
+  }), false);
+  assert.equal(shouldShowIncorrectToolFeedback(true), false);
+  assert.equal(shouldShowIncorrectToolFeedback(false), true);
+});
+
+test("guest-thrown items are host-spawned once with exact metadata and a committed pack image", () => {
+  const player = sessionState();
+  const responses: InventoryAction[] = [];
+  const snapshots: unknown[] = [];
+  const spawned: Array<{ item: number; count: number; durability?: number; metadata?: Record<string, unknown> }> = [];
+  const drop = { id: 91, velocity: new THREE.Vector3() };
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  Object.assign(engine, {
+    multiplayer: {
+      role: "host",
+      sendInventoryAction: (action: InventoryAction) => { responses.push(action); return 1; },
+      sendDropSnapshot: (snapshot: unknown) => { snapshots.push(snapshot); return 1; },
+    },
+    remotePlayers: new Map([[player.playerId, { target: { x: 3, y: 70, z: 4, yaw: 0.4, pitch: -0.1 } }]]),
+    multiplayerPlayerStates: new Map([[player.playerId, player]]),
+    ensureHostPlayerSession: () => player,
+    spawnDrop: (item: number, count: number, _position: THREE.Vector3, durability?: number, metadata?: Record<string, unknown>) => {
+      spawned.push({ item, count, durability, metadata });
+      return drop;
+    },
+    sendAuthoritativePlayerState: () => undefined,
+    networkDropSnapshot: () => [{ id: drop.id }],
+    multiplayerTick: 10,
+    saveSoon: () => undefined,
+    events: { onToast: () => undefined },
+  });
+  (engine as unknown as { handleRemoteInventoryAction(action: InventoryAction, peer: unknown): void }).handleRemoteInventoryAction({
+    requestId: "drop_guest_001", actorId: player.playerId, kind: "drop",
+    from: { scope: "hotbar", slot: 0 }, count: 1, status: "request",
+  }, { identity: { id: player.playerId, name: "Guest", color: "#fff" } });
+  assert.deepEqual(spawned, [{ item: Item.Apple, count: 1, durability: undefined, metadata: player.inventory[0]!.metadata }]);
+  assert.ok(drop.velocity.length() > 2.9);
+  assert.equal(engine.multiplayerPlayerStates.get(player.playerId)!.inventory[0], null);
+  assert.equal(responses.at(-1)?.status, "accepted");
+  assert.equal(responses.at(-1)?.dropId, drop.id);
+  assert.equal(snapshots.length, 1);
+});
+
+test("guest lead attachment consumes exactly one host-owned lead and returns the committed state", () => {
+  const player = sessionState();
+  player.inventory[0] = { item: Item.Lead, count: 2 };
+  const mob = { id: 77, name: "Peelop", group: { position: new THREE.Vector3(2, 70, 3) } };
+  const responses: CreatureAction[] = [];
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  Object.assign(engine, {
+    multiplayer: {
+      role: "host",
+      sendCreatureAction: (action: CreatureAction) => { responses.push(action); return 1; },
+      sendMobSnapshot: () => 1,
+    },
+    mode: "survival",
+    mobs: [mob],
+    leadAnchors: new Map(),
+    multiplayerPlayerStates: new Map([[player.playerId, player]]),
+    ensureLeadLine: () => undefined,
+    networkMobSnapshot: () => [],
+    queueCriticalReliableRequest: (_key: string, send: () => number) => { send(); return true; },
+    sendAuthoritativePlayerState: () => undefined,
+    saveSoon: () => undefined,
+  });
+  (engine as unknown as { resolveHostCreatureInteraction(action: CreatureAction, peer: unknown, pose: unknown, state: PlayerSessionSnapshot): void }).resolveHostCreatureInteraction({
+    requestId: "attach_lead_001", actorId: player.playerId, tick: 2, kind: "interact", targetId: mob.id, status: "request",
+  }, { id: player.playerId, name: "Guest", color: "#fff" }, { x: 1, y: 70, z: 3 }, player);
+  const committed = engine.multiplayerPlayerStates.get(player.playerId)!;
+  assert.equal(committed.inventory[0]?.count, 1);
+  assert.equal(engine.leadAnchors.get(mob.id)?.ownerId, player.playerId);
+  assert.equal(responses.at(-1)?.playerState?.inventory[0]?.count, 1);
+});
+
+test("floating ground animals on leads recover against the keeper floor", () => {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(6), 3));
+  const mob = {
+    id: 41,
+    name: "Grazer",
+    group: { position: new THREE.Vector3(8, 8, 0), visible: true },
+    baseY: 8,
+    definition: { movement: "ground", aquatic: false, flying: false, footOffset: 0.5, height: 1.4 },
+  };
+  const references: number[] = [];
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  Object.assign(engine, {
+    multiplayer: { role: "host", identity: { id: "host" } },
+    mobs: [mob],
+    leadAnchors: new Map([[mob.id, { mobId: String(mob.id), ownerId: "guest", maximumLength: 7 }]]),
+    leadLines: new Map(),
+    remotePlayers: new Map([["guest", { target: { x: 0, y: 2, z: 0 } }]]),
+    world: { getBlock: () => undefined },
+    mountedCreatureId: null,
+    mobBaseScale: () => 1,
+    mobMoveTarget: (_mob: unknown, _x: number, _z: number, _scale: number, reference: number) => { references.push(reference); return 1.5; },
+    ensureLeadLine: () => ({ geometry, visible: true }),
+    events: { onToast: () => undefined },
+    saveSoon: () => undefined,
+  });
+  engine.updateLeads();
+  assert.equal(mob.group.position.y, 1.5);
+  assert.equal(mob.baseY, 1.5);
+  assert.equal(references[0], 2);
+});
+
+test("shift crafting exhausts ingredient operations and syncs one complete guest batch", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  let syncs = 0;
+  Object.assign(engine, {
+    multiplayer: { role: "guest" },
+    craftingSize: 2,
+    craftGrid: Array.from({ length: 9 }, () => null),
+    inventory: Array.from({ length: 36 }, () => null),
+    cursor: null,
+    blueprints: undefined,
+    skillState: createSkillState(),
+    gainSkillExperience: () => undefined,
+    audio: { play: () => undefined },
+    events: { onToast: () => undefined },
+    saveSoon: () => undefined,
+    emitHud: () => undefined,
+    syncInventoryMutationNow: () => { syncs += 1; },
+  });
+  engine.craftGrid[0] = { item: BlockId.WildwoodLog, count: 64 };
+  engine.craftOutputClick(true);
+  assert.equal(engine.inventory.reduce((sum, slot) => sum + (slot?.item === BlockId.Planks ? slot.count : 0), 0), 256);
+  assert.equal(engine.craftGrid[0], null);
+  assert.equal(syncs, 1);
+});
+
+test("visiting-player ecology round-robins one shared spawn clock with bounded sublinear caps", () => {
+  const points = [
+    { id: "host", x: 0, y: 70, z: 0, yaw: 0 },
+    { id: "guest-a", x: 160, y: 70, z: 0, yaw: 0 },
+    { id: "guest-b", x: -160, y: 70, z: 0, yaw: 0 },
+  ] as const;
+  assert.equal(selectSimulationInterest(points, 0)?.id, "host");
+  assert.equal(selectSimulationInterest(points, 1)?.id, "guest-a");
+  assert.equal(selectSimulationInterest(points, 2)?.id, "guest-b");
+  assert.equal(selectSimulationInterest(points, 3)?.id, "host");
+  assert.equal(nearestSimulationInterest(points, 155, 2)?.point.id, "guest-a");
+  assert.equal(multiplayerNaturalMobCap(28, 1), 28);
+  assert.equal(multiplayerNaturalMobCap(28, 2), 39);
+  assert.equal(multiplayerNaturalMobCap(28, 4), 56);
 });
 
 test("a guest can open only a real nearby shared furnace and receives its slots and clocks", () => {

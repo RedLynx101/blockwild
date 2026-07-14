@@ -27,6 +27,7 @@ import {
   type GameMode,
   type GameSettings,
   type HudState,
+  type InventoryDragTarget,
   type InventorySlot,
   type ItemCode,
   type MobKind,
@@ -119,6 +120,12 @@ type Overlay = "title" | "new" | "pause" | "help" | "settings" | OverlayKind | n
 type TitleMenuView = "main" | "characters" | "worlds";
 export type BestiaryFilter = "all" | "surface" | "humanoids" | "rabbits" | "birds" | "butterflies" | "aquatic" | "sea-slugs" | "golems" | "monsters" | "companions";
 type FieldGuideSection = "creatures" | "plants";
+type InventoryDragGesture = {
+  pointerId: number;
+  button: "left" | "right";
+  targets: InventoryDragTarget[];
+  keys: Set<string>;
+};
 type PetCommand = NonNullable<HudState["activePet"]>["command"];
 
 const PLANT_FILTERS: ReadonlyArray<["all" | PlantCategory, string]> = [
@@ -632,6 +639,13 @@ const formatWorldDate = (timestamp: number | null) => timestamp
   ? new Date(timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
   : "Never played";
 
+/** Compact combat readout: precise to hundredths without noisy zeroes. */
+export function formatHudHealth(value: number) {
+  if (!Number.isFinite(value)) return "0";
+  const rounded = Math.round(Math.max(0, value) * 100) / 100;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2).replace(/0+$/u, "").replace(/\.$/u, "");
+}
+
 const blankSlots = (count: number) => Array.from({ length: count }, () => null as InventorySlot | null);
 
 const INITIAL_HUD: ExtendedHudState = {
@@ -641,6 +655,7 @@ const INITIAL_HUD: ExtendedHudState = {
   level: 0,
   inventory: blankSlots(36),
   cursor: null,
+  trash: null,
   craftGrid: blankSlots(9),
   craftOutput: null,
   craftingSize: 2,
@@ -885,7 +900,7 @@ function itemMetadataSummary(slot: InventorySlot | null) {
     const details = [
       creature.tamed ? "Tamed" : "",
       creature.baby ? "Baby" : "",
-      `${Math.max(0, creature.health)}/${creature.maxHealth} health`,
+      `${formatHudHealth(creature.health)}/${formatHudHealth(creature.maxHealth)} health`,
       orb.attunement ? orb.attunement.activeEntityId ? "Deployed" : "Attuned" : "",
     ].filter(Boolean);
     return ` · ${details.join(" · ")}`;
@@ -1250,7 +1265,7 @@ function PixelButton({
 
 function StatPips({ kind, value }: { kind: "heart" | "hunger"; value: number }) {
   return (
-    <div className={`stat-pips stat-${kind}`} aria-label={`${kind === "heart" ? "Health" : "Hunger"}: ${Math.ceil(value)} of 10`}>
+    <div className={`stat-pips stat-${kind}`} aria-label={`${kind === "heart" ? "Health" : "Hunger"}: ${kind === "heart" ? formatHudHealth(value) : Math.ceil(value)} of 10`}>
       {Array.from({ length: 10 }, (_, index) => (
         <span key={index} className={index < Math.ceil(value) ? "filled" : "empty"}>{kind === "heart" ? "♥" : "◆"}</span>
       ))}
@@ -1318,6 +1333,8 @@ export default function VoxelGame() {
   const activePetDraftIdRef = useRef<number | null>(null);
   const multiplayerFlightRef = useRef<Promise<unknown> | null>(null);
   const slotInteractionReadyAtRef = useRef(0);
+  const inventoryDragRef = useRef<InventoryDragGesture | null>(null);
+  const suppressSlotClickRef = useRef(false);
 
   const [overlay, setOverlayState] = useState<Overlay>("title");
   const [titleMenuView, setTitleMenuViewState] = useState<TitleMenuView>("main");
@@ -1384,6 +1401,10 @@ export default function VoxelGame() {
     setIconAuditMode(iconAudit === "tomes" ? "tomes" : iconAudit === "dragons" ? "dragons" : iconAudit === "1" ? "all" : null);
     setHeldAuditMode(parameters.get("held-audit") === "1");
     setSpellWheelAuditMode(parameters.get("spell-wheel-audit") === "empty");
+    if (parameters.get("inventory-audit") === "1") {
+      overlayRef.current = "inventory";
+      setOverlayState("inventory");
+    }
     const workstationAudit = parameters.get("workstation-audit");
     setWorkstationAuditMode(workstationAudit === "apiary" || workstationAudit === "orb-rack" || workstationAudit === "healing-station" || workstationAudit === "sugarworks" ? workstationAudit : null);
     const civicAudit = parameters.get("civic-audit");
@@ -2146,9 +2167,41 @@ export default function VoxelGame() {
 
   const trackCursor = (event: ReactPointerEvent<HTMLElement>) => setCursorPosition({ x: event.clientX, y: event.clientY });
 
+  const beginInventoryDrag = (event: ReactPointerEvent<HTMLButtonElement>, target?: InventoryDragTarget) => {
+    if (!target || !hud.cursor || (event.button !== 0 && event.button !== 2)) return;
+    const key = `${target.area}:${target.index}`;
+    inventoryDragRef.current = {
+      pointerId: event.pointerId,
+      button: event.button === 2 ? "right" : "left",
+      targets: [target],
+      keys: new Set([key]),
+    };
+  };
+
+  const visitInventoryDrag = (event: ReactPointerEvent<HTMLButtonElement>, target?: InventoryDragTarget) => {
+    const gesture = inventoryDragRef.current;
+    if (!target || !gesture || gesture.pointerId !== event.pointerId || event.buttons === 0) return;
+    const key = `${target.area}:${target.index}`;
+    if (gesture.keys.has(key)) return;
+    gesture.keys.add(key);
+    gesture.targets.push(target);
+  };
+
+  const finishInventoryDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    const gesture = inventoryDragRef.current;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    inventoryDragRef.current = null;
+    if (gesture.targets.length < 2) return;
+    if (engineRef.current?.distributeCursorAcrossSlots(gesture.targets, gesture.button)) suppressSlotClickRef.current = true;
+  };
+
   const slotAction = (index: number, button: "left" | "right", shift = false) => engineRef.current?.inventoryClick(index, button, shift);
   const slotContext = (event: ReactMouseEvent, action: () => void) => {
     event.preventDefault();
+    if (suppressSlotClickRef.current) {
+      suppressSlotClickRef.current = false;
+      return;
+    }
     if (!slotInteractionAllowed(slotInteractionReadyAtRef.current)) return;
     action();
   };
@@ -2160,6 +2213,7 @@ export default function VoxelGame() {
     onRight: () => void,
     className = "",
     label?: string,
+    dragTarget?: InventoryDragTarget,
   ) => (
     <button
       type="button"
@@ -2167,7 +2221,14 @@ export default function VoxelGame() {
       className={`mc-slot ${className}`}
       title={itemHoverText(slot, label)}
       aria-label={slot ? `${itemHoverText(slot)}, ${slot.count}` : label ?? "Empty slot"}
+      data-inventory-drag-target={dragTarget ? `${dragTarget.area}:${dragTarget.index}` : undefined}
+      onPointerDown={(event) => beginInventoryDrag(event, dragTarget)}
+      onPointerEnter={(event) => visitInventoryDrag(event, dragTarget)}
       onClick={(event) => {
+        if (suppressSlotClickRef.current) {
+          suppressSlotClickRef.current = false;
+          return;
+        }
         if (!slotInteractionAllowed(slotInteractionReadyAtRef.current)) return;
         if (event.detail >= 2) engineRef.current?.collectMatching(slot?.item ?? hud.cursor?.item);
         else onLeft(event.shiftKey);
@@ -2182,10 +2243,10 @@ export default function VoxelGame() {
     <div className="player-inventory-section">
       <div className="inventory-grid-heading"><span className="grid-label">INVENTORY</span>{showPackActions && <button type="button" className="inventory-utility-button" onClick={() => engineRef.current?.sortPack()}>Sort pack</button>}</div>
       <div className="mc-grid main-inventory-grid">
-        {hud.inventory.slice(9, 36).map((slot, offset) => renderSlot(slot, `main-${offset}`, (shift) => slotAction(offset + 9, "left", shift), () => slotAction(offset + 9, "right")))}
+        {hud.inventory.slice(9, 36).map((slot, offset) => renderSlot(slot, `main-${offset}`, (shift) => slotAction(offset + 9, "left", shift), () => slotAction(offset + 9, "right"), "", undefined, { area: "inventory", index: offset + 9 }))}
       </div>
       <div className="mc-grid inventory-hotbar-grid">
-        {hud.inventory.slice(0, 9).map((slot, index) => renderSlot(slot, `inv-hot-${index}`, (shift) => slotAction(index, "left", shift), () => slotAction(index, "right"), hud.selected === index ? "selected" : ""))}
+        {hud.inventory.slice(0, 9).map((slot, index) => renderSlot(slot, `inv-hot-${index}`, (shift) => slotAction(index, "left", shift), () => slotAction(index, "right"), hud.selected === index ? "selected" : "", undefined, { area: "inventory", index }))}
       </div>
     </div>
   );
@@ -2290,7 +2351,7 @@ export default function VoxelGame() {
                     <strong>{specimen.name}</strong>
                     <span>{specimen.occupied ? [specimen.tamed ? "TAMED" : specimen.hostile ? "HOSTILE · SECURED" : "WILD", specimen.baby ? "YOUNG" : "ADULT"].join(" · ") : specimen.hasOrb ? "Ready for a creature" : "Place a capture orb"}</span>
                   </div>
-                  {specimen.occupied && specimen.maxHealth > 0 && <div className="orb-health" aria-label={`${specimen.name} health ${specimen.health} of ${specimen.maxHealth}`}><span><i style={{ width: `${specimen.healthProgress * 100}%` }} /></span><b>{Math.ceil(specimen.health)}/{Math.ceil(specimen.maxHealth)}</b></div>}
+                  {specimen.occupied && specimen.maxHealth > 0 && <div className="orb-health" aria-label={`${specimen.name} health ${formatHudHealth(specimen.health)} of ${formatHudHealth(specimen.maxHealth)}`}><span><i style={{ width: `${specimen.healthProgress * 100}%` }} /></span><b>{formatHudHealth(specimen.health)}/{formatHudHealth(specimen.maxHealth)}</b></div>}
                   {healing && specimen.occupied && <div className={`orb-healing-progress ${specimen.fullyHealed ? "complete" : ""}`} aria-label={specimen.fullyHealed ? `${specimen.name} is fully healed` : `${specimen.name} healing pulse ${pulsePercent}% complete`}><div><small>{specimen.fullyHealed ? specimen.hostile ? "SECURED · FULL HEALTH" : "READY TO RELEASE" : "NEXT HEALING PULSE"}</small><strong>{specimen.fullyHealed ? "100%" : `${pulsePercent}%`}</strong></div><span><i style={{ width: `${pulsePercent}%` }} /></span></div>}
                 </article>
               );
@@ -2385,7 +2446,7 @@ export default function VoxelGame() {
     return (
       <div className="crafting-workspace">
         <div className={`mc-grid craft-grid craft-${size}`}>
-          {positions.map((position) => renderSlot(hud.craftGrid[position], `craft-${position}`, (shift) => engineRef.current?.craftSlotClick(position, "left", shift), () => engineRef.current?.craftSlotClick(position, "right")))}
+          {positions.map((position) => renderSlot(hud.craftGrid[position], `craft-${position}`, (shift) => engineRef.current?.craftSlotClick(position, "left", shift), () => engineRef.current?.craftSlotClick(position, "right"), "", undefined, { area: "craft", index: position }))}
         </div>
         <div className="craft-arrow" aria-hidden="true" />
         {renderSlot(hud.craftOutput, "craft-output", (shift) => engineRef.current?.craftOutputClick(shift), () => undefined, "craft-output-slot", "Crafting output")}
@@ -2582,7 +2643,7 @@ export default function VoxelGame() {
             <div className="mob-target-card">
               <strong>{hud.targetMob.name}</strong>
               <span><i style={{ width: `${Math.max(0, hud.targetMob.health / hud.targetMob.maxHealth) * 100}%` }} /></span>
-              <small>{Math.max(0, hud.targetMob.health)} / {hud.targetMob.maxHealth}</small>
+              <small>{formatHudHealth(hud.targetMob.health)} / {formatHudHealth(hud.targetMob.maxHealth)}</small>
             </div>
           )}
 
@@ -2884,7 +2945,7 @@ export default function VoxelGame() {
                   <div>
                     <h2 id="pet-title">{hud.activePet.name}</h2>
                     <p>{hud.activePet.tamed ? "Your bright little grove scout." : "This Peelop is still deciding whether you are trustworthy."}</p>
-                    <div className="pet-health" aria-label={`${hud.activePet.health} of ${hud.activePet.maxHealth} health`}><span style={{ width: `${Math.max(0, Math.min(100, hud.activePet.health / hud.activePet.maxHealth * 100))}%` }} /><b>{hud.activePet.health}/{hud.activePet.maxHealth}</b></div>
+                    <div className="pet-health" aria-label={`${formatHudHealth(hud.activePet.health)} of ${formatHudHealth(hud.activePet.maxHealth)} health`}><span style={{ width: `${Math.max(0, Math.min(100, hud.activePet.health / hud.activePet.maxHealth * 100))}%` }} /><b>{formatHudHealth(hud.activePet.health)}/{formatHudHealth(hud.activePet.maxHealth)}</b></div>
                   </div>
                 </div>
                 <form className="pet-name-form" onSubmit={(event) => { event.preventDefault(); engineRef.current?.renameActivePet(petNameDraft); }}>
@@ -2971,7 +3032,7 @@ export default function VoxelGame() {
       )}
 
       {(overlay === "inventory" || overlay === "crafting") && (
-        <section className="menu-overlay inventory-overlay" aria-labelledby="inventory-title" onPointerMove={trackCursor}>
+        <section className="menu-overlay inventory-overlay" aria-labelledby="inventory-title" onPointerMove={trackCursor} onPointerUp={finishInventoryDrag} onPointerCancel={finishInventoryDrag}>
           <div className={`mc-window inventory-window ${inventoryTab === "recipes" ? "recipe-mode" : ""}`}>
             <header className="mc-window-header">
               <div><span className="panel-eyebrow">{overlay === "crafting" ? "CRAFTING TABLE · 3×3" : hud.mode === "builder" ? "BUILDER INVENTORY" : "PACK · 2×2 CRAFTING"}</span><h2 id="inventory-title">{overlay === "crafting" ? "Crafting Table" : "Inventory"}</h2></div>
@@ -3006,6 +3067,10 @@ export default function VoxelGame() {
                     <span className="paper-doll-held"><small>HELD</small>{selectedSlot ? <><ItemIcon item={selectedSlot.item} slot={selectedSlot} small /><b>{selectedName}</b></> : <b>Empty hand</b>}</span>
                     <span className="gold-wallet-slot" aria-label={`${hud.goldWallet.balance} gold in wallet`}><i aria-hidden="true">◆</i><small>GOLD WALLET</small><b>{hud.goldWallet.balance}</b><em>NO STACK LIMIT</em></span>
                     <div className="gold-wallet-actions" aria-label="Gold Ingot wallet exchange"><button type="button" onClick={() => engineRef.current?.depositGoldIngots("one")}>Deposit 1</button><button type="button" onClick={() => engineRef.current?.depositGoldIngots("all")}>Deposit all</button><button type="button" onClick={() => engineRef.current?.withdrawGoldIngots("one")}>Withdraw 1</button><button type="button" onClick={() => engineRef.current?.withdrawGoldIngots("all")}>Withdraw max</button><small>1 ingot = 10 gold</small></div>
+                    <div className="inventory-trash-area">
+                      <span><small>TRASH</small><b>Recover until replaced</b></span>
+                      {renderSlot(hud.trash, "trash", () => engineRef.current?.trashClick("left"), () => engineRef.current?.trashClick("right"), "trash-slot", "Recoverable trash slot")}
+                    </div>
                     <span className="armor-readout">ARMOR {hud.armor}</span>
                     <small>LEVEL {hud.level}</small>
                     <b>{hud.depth}</b>
@@ -3018,7 +3083,7 @@ export default function VoxelGame() {
                 </div>
               </div>
             )}
-            <div className="inventory-instructions">Left click moves stacks · Double-click gathers matching items · Right click splits/places one · Shift-click transfers to armor, chests, furnaces, pack or hotbar</div>
+            <div className="inventory-instructions">Left click moves stacks · Hold and drag to share a stack · Right click splits or paints one per slot · Double-click gathers matching items · Shift-click transfers</div>
           </div>
           {hud.cursor && <div className="held-stack" style={{ left: cursorPosition.x, top: cursorPosition.y }}><SlotContents slot={hud.cursor} /></div>}
         </section>
@@ -3371,7 +3436,7 @@ export default function VoxelGame() {
                   {bestiaryProgress.seen ? <>
                     <div className="bestiary-heading"><div><span className={`temperament-label temperament-${bestiaryDefinition.temperament.toLowerCase()}`}>{bestiaryDefinition.temperament.toUpperCase()}</span><h3>{bestiaryDefinition.name}</h3></div><strong>{bestiaryObservation(bestiaryDefinition, bestiaryProgress).toUpperCase()}</strong></div>
                     <p className="bestiary-lore">{bestiaryDefinition.lore}</p>
-                    <div className="bestiary-facts"><div><small>HABITAT</small><strong>{bestiaryDefinition.habitat}</strong></div><div><small>ACTIVE</small><strong>{bestiaryDefinition.active}</strong></div><div><small>FAMILY</small><strong>{bestiaryDefinition.family ?? "surface"}</strong></div><div><small>MOVEMENT</small><strong>{bestiaryDefinition.movement ?? "ground"}</strong></div><div><small>HEALTH</small><strong>{bestiaryDefinition.health} hearts</strong></div><div><small>DANGER</small><strong>{bestiaryDefinition.damage ? `${bestiaryDefinition.damage} damage` : "Harmless"}</strong></div></div>
+                    <div className="bestiary-facts"><div><small>HABITAT</small><strong>{bestiaryDefinition.habitat}</strong></div><div><small>ACTIVE</small><strong>{bestiaryDefinition.active}</strong></div><div><small>FAMILY</small><strong>{bestiaryDefinition.family ?? "surface"}</strong></div><div><small>MOVEMENT</small><strong>{bestiaryDefinition.movement ?? "ground"}</strong></div><div><small>HEALTH</small><strong>{formatHudHealth(bestiaryDefinition.health)} hearts</strong></div><div><small>DANGER</small><strong>{bestiaryDefinition.damage ? `${bestiaryDefinition.damage} damage` : "Harmless"}</strong></div></div>
                     <section className="behavior-note"><small>BEHAVIOR</small><p>{bestiaryDefinition.behavior}</p></section>
                     <section className="bestiary-care" aria-label={`${bestiaryDefinition.name} care information`}><div className="bestiary-care-heading"><small>CREATURE CARE</small><span>Recorded dynamically from known interactions</span></div><div className="bestiary-care-grid"><div><small>TAMEABLE</small><strong>{bestiaryDefinition.tameable ? "Yes" : "No"}</strong>{bestiaryDefinition.tameable && <span>{bestiaryDefinition.tameItems?.length ? bestiaryDefinition.tameItems.map((item) => ITEMS[item]?.name).filter(Boolean).join(", ") : "Method not yet recorded"}</span>}</div><div><small>BREEDABLE</small><strong>{bestiaryDefinition.breedable ? "Yes" : "No"}</strong>{bestiaryDefinition.breedable && <span>{bestiaryDefinition.breedingFoods?.length ? bestiaryDefinition.breedingFoods.map((item) => ITEMS[item]?.name).filter(Boolean).join(", ") : "Breeding food unknown"}</span>}</div><div><small>EATS</small><strong>{bestiaryDefinition.diet?.length ? bestiaryDefinition.diet.map((item) => ITEMS[item]?.name).filter(Boolean).join(", ") : "No feeding response recorded"}</strong></div><div><small>SENTIENT</small><strong>{bestiaryDefinition.sentient ? "Yes" : "No"}</strong><span>{bestiaryDefinition.sentient ? "Can converse, trade, hold roles, and remember faction standing." : "Acts from instinct rather than factional intent."}</span></div></div></section>
                     {bestiaryDefinition.fieldNotes?.length ? <section className="bestiary-field-notes"><div className="bestiary-care-heading"><small>EXTENDED FIELD NOTES</small><span>{bestiaryDefinition.fieldNotes.filter((note) => bestiaryFieldNoteUnlocked(note, bestiaryProgress)).length}/{bestiaryDefinition.fieldNotes.length} unlocked</span></div>{bestiaryDefinition.fieldNotes.map((note) => { const unlocked = bestiaryFieldNoteUnlocked(note, bestiaryProgress); return <article key={note.id} className={unlocked ? "unlocked" : "locked"}><small>{unlocked ? "RECORDED" : "LOCKED"}</small><strong>{note.title}</strong><p>{unlocked ? note.text : note.hint}</p></article>; })}</section> : bestiaryDefinition.postTameNotes && <section className={`bestiary-secret ${bestiaryProgress.secretUnlocked || (bestiaryProgress.tames ?? 0) > 0 ? "unlocked" : "locked"}`}><small>COMPANION FIELD NOTES</small>{bestiaryProgress.secretUnlocked || (bestiaryProgress.tames ?? 0) > 0 ? <p>{bestiaryDefinition.postTameNotes}</p> : <p>Locked · {bestiaryDefinition.secretHint ?? `Tame a ${bestiaryDefinition.name} to reveal its deeper care and riding notes.`}</p>}</section>}

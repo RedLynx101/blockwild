@@ -412,6 +412,26 @@ function planForestTemple(origin: WorldPosition, seed: string | number): Structu
   builder.fill(-6, 0, -6, 6, 0, 6, BlockId.Cobblestone, "mossy-court");
   for (let z = 5; z <= 8; z += 1) builder.fill(-1, 0, z, 1, 0, z, z % 2 ? BlockId.StoneBrick : BlockId.Cobblestone, "rootwalk-entry");
   builder.fill(-4, 1, -4, 4, 1, 4, BlockId.Air);
+  // Close the sanctuary as one readable room rather than four freestanding
+  // corner posts. A stone plinth carries timber-and-root upper courses, while
+  // inset glass keeps the woodland interior bright without leaving wall gaps.
+  for (let edge = -4; edge <= 4; edge += 1) {
+    for (let y = 1; y <= 4; y += 1) {
+      const wallBlock = y === 1 ? BlockId.Cobblestone : BlockId.Planks;
+      builder.set(-5, y, edge, wallBlock, "temple-wall");
+      builder.set(5, y, edge, wallBlock, "temple-wall");
+      builder.set(edge, y, -5, wallBlock, "temple-wall");
+      builder.set(edge, y, 5, wallBlock, "temple-wall");
+    }
+  }
+  for (const [x, z] of [[-5, -2], [-5, 2], [5, -2], [5, 2], [-2, -5], [2, -5]] as const) {
+    builder.set(x, 2, z, BlockId.Glass, "leaflight-window");
+    builder.set(x, 3, z, BlockId.Glass, "leaflight-window");
+  }
+  // The amenity pass installs the working two-block door into this deliberate
+  // opening after the structure shell is mapped to its destination chunk.
+  builder.set(0, 1, 5, BlockId.Air, "temple-doorway");
+  builder.set(0, 2, 5, BlockId.Air, "temple-doorway");
   for (const [x, z] of [[-5, -5], [5, -5], [-5, 5], [5, 5]] as const) {
     builder.fill(x, 1, z, x, 6, z, BlockId.WildwoodLog, "root-pillar");
     builder.fill(x - 1, 6, z - 1, x + 1, 7, z + 1, BlockId.WildwoodLeaves, "temple-canopy");
