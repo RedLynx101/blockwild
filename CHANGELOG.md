@@ -2,6 +2,12 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.5.3 - The World Below - 2026-07-14
+
+- Rebuilt natural wildlife around six independent local population pools for surface animals, ambient life, large and small aquatic life, underground ecology, and monsters. Each connected player receives a fair nearby ecology target while one sublinear host ceiling bounds total simulation work.
+- Added placement retries outside visible pop-in, local biodiversity deficit selection, and a sparse hunting-pressure ledger that temporarily lowers only the defeated species' local recovery chance before decaying over game days.
+- Replaced the absolute wildlife age purge with distance relevance: ordinary off-range wildlife receives a grace period, while named, tamed, enclosed, authored, and rare creatures become lightweight sleeping save records and wake in bounded batches when a player returns.
+
 ## 1.5.2 - The World Below - 2026-07-14
 
 - Added a metadata-preserving recoverable trash slot plus Minecraft-style whole-stack, half-stack, single-item, left-drag distribution, and right-drag painting controls across the pack and crafting grid. Dynamic health text is capped at two useful decimal places and the Bone Shard icon stays inside its inventory socket.
