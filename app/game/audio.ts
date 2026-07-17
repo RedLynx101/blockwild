@@ -151,6 +151,12 @@ export function environmentCrossfadeTimeConstant(current: number, target: number
   return target > current ? 0.6 : 1.35;
 }
 
+export const AUDIO_TARGET_EPSILON = 0.001;
+
+export function audioTargetChanged(previous: number, next: number, epsilon = AUDIO_TARGET_EPSILON) {
+  return !Number.isFinite(previous) || Math.abs(next - previous) >= Math.max(0, epsilon);
+}
+
 export type ActiveVoiceScore = Readonly<{ distance: number; startedAt: number; spatial: boolean }>;
 
 /** Prefer retiring an inaudible/far spatial voice before a recent local UI cue. */
@@ -326,6 +332,17 @@ export class SynthAudio {
     ocean: 0,
     swimming: 0,
   };
+  environmentAppliedTargets: Record<EnvironmentLoop, number> = {
+    rain: 0,
+    crickets: 0,
+    wind: 0,
+    winterWind: 0,
+    cave: 0,
+    ocean: 0,
+    swimming: 0,
+  };
+  depthAmbienceTarget = Number.NaN;
+  depthRainTarget = Number.NaN;
   listenerPosition: readonly [number, number, number] = [0, 0, 0];
   listenerForward: readonly [number, number, number] = [0, 0, -1];
   listenerLastWriteAt = -Infinity;
@@ -417,10 +434,17 @@ export class SynthAudio {
     if (!this.ambienceGain || !this.context) return;
     const rain = typeof rainLevel === "number" ? Math.max(0, Math.min(1, rainLevel)) : rainLevel ? 1 : 0;
     const target = depth < 0 ? 0.012 : 0.018;
-    this.ambienceGain.gain.setTargetAtTime(target, this.context.currentTime, 0.4);
+    if (audioTargetChanged(this.depthAmbienceTarget, target)) {
+      this.depthAmbienceTarget = target;
+      this.ambienceGain.gain.setTargetAtTime(target, this.context.currentTime, 0.4);
+    }
     // The supplied lossless rain bed carries the weather; this filtered-noise
     // layer only fills the first moment while that buffer decodes.
-    this.rainGain?.gain.setTargetAtTime(rain * 0.0221, this.context.currentTime, rain > 0 ? 0.3 : 1.25);
+    const rainTarget = rain * 0.0221;
+    if (this.rainGain && audioTargetChanged(this.depthRainTarget, rainTarget)) {
+      this.depthRainTarget = rainTarget;
+      this.rainGain.gain.setTargetAtTime(rainTarget, this.context.currentTime, rain > 0 ? 0.3 : 1.25);
+    }
   }
 
   setListenerPose(position: AudioPosition, forward: AudioPosition, up: AudioPosition = [0, 1, 0]) {
@@ -475,12 +499,14 @@ export class SynthAudio {
       if (target > 0.002 && !this.environmentSources.has(loop)) void this.ensureEnvironmentLoop(loop);
       const gain = this.environmentGains.get(loop);
       if (!gain) continue;
+      if (!audioTargetChanged(this.environmentAppliedTargets[loop], target)) continue;
       const absoluteTarget = target * SAMPLES[ENVIRONMENT_LOOP_SAMPLES[loop]].gain;
       gain.gain.setTargetAtTime(
         absoluteTarget,
         context.currentTime,
         environmentCrossfadeTimeConstant(gain.gain.value, absoluteTarget),
       );
+      this.environmentAppliedTargets[loop] = target;
     }
   }
 
@@ -504,6 +530,7 @@ export class SynthAudio {
       this.environmentGains.set(loop, gain);
       const target = this.environmentTargets[loop] * SAMPLES[sample].gain;
       gain.gain.setTargetAtTime(target, context.currentTime, environmentCrossfadeTimeConstant(0, target));
+      this.environmentAppliedTargets[loop] = this.environmentTargets[loop];
     } finally {
       this.environmentLoopLoads.delete(loop);
     }
@@ -584,13 +611,18 @@ export class SynthAudio {
   mixMusic(immediate: boolean, dt = 1 / 60) {
     const base = effectiveMusicVolume(this.settings);
     const blend = immediate ? 1 : 1 - Math.exp(-Math.max(0, dt) * 1.55);
+    const now = Date.now();
     for (const [scene, element] of this.music.entries()) {
-      const target = scene === this.musicScene ? base : 0;
-      const retryReady = Date.now() >= (this.musicRetryAfter.get(scene) ?? 0);
+      const active = scene === this.musicScene;
+      if (!active && element.paused && element.volume === 0) continue;
+      const target = active ? base : 0;
+      const retryReady = now >= (this.musicRetryAfter.get(scene) ?? 0);
       if (target > 0 && this.musicStarted && element.paused && retryReady) void this.playMusicScene(scene);
-      element.volume += (target - element.volume) * blend;
-      if (target === 0 && element.volume < 0.001) {
-        element.volume = 0;
+      if (element.volume !== target) {
+        const next = element.volume + (target - element.volume) * blend;
+        element.volume = Math.abs(target - next) < 0.001 ? target : next;
+      }
+      if (target === 0 && element.volume === 0) {
         if (!element.paused) element.pause();
       }
     }

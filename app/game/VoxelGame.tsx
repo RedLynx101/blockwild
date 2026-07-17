@@ -254,6 +254,30 @@ type MultiplayerViewState = {
   error: string | null;
 };
 
+export function multiplayerViewStatesEqual(left: MultiplayerViewState, right: MultiplayerViewState) {
+  if (left.supported !== right.supported
+    || left.status !== right.status
+    || left.role !== right.role
+    || left.inviteCode !== right.inviteCode
+    || left.answerCode !== right.answerCode
+    || left.roomCode !== right.roomCode
+    || left.rendezvousStatus !== right.rendezvousStatus
+    || left.error !== right.error
+    || left.reasons.length !== right.reasons.length
+    || left.peers.length !== right.peers.length) return false;
+  if (left.reasons.some((reason, index) => reason !== right.reasons[index])) return false;
+  return left.peers.every((peer, index) => {
+    const other = right.peers[index];
+    return peer.token === other.token
+      && peer.id === other.id
+      && peer.name === other.name
+      && peer.identity?.id === other.identity?.id
+      && peer.identity?.name === other.identity?.name
+      && peer.state === other.state
+      && peer.latencyMs === other.latencyMs;
+  });
+}
+
 type MultiplayerActionResult = string | { inviteCode?: string; answerCode?: string } | void;
 
 type MultiplayerEngineApi = {
@@ -627,6 +651,54 @@ export function prepareFirstPersonHeldPresentation(engine: VoxelEngine) {
 
 export function normalizeMultiplayerRoomCode(value: string) {
   return value.toLocaleUpperCase().replace(/[^A-Z0-9-]/gu, "").replace(/-{2,}/gu, "-").slice(0, 24);
+}
+
+type HeldStackPositionTarget = {
+  style: Pick<CSSStyleDeclaration, "left" | "top" | "transform">;
+};
+
+export function createHeldStackPositionController(
+  scheduleFrame: (callback: () => void) => number,
+  cancelFrame: (frame: number) => void,
+) {
+  let target: HeldStackPositionTarget | null = null;
+  let scheduledFrame: number | null = null;
+  let x = 0;
+  let y = 0;
+  const apply = () => {
+    scheduledFrame = null;
+    if (!target) return;
+    target.style.left = "0px";
+    target.style.top = "0px";
+    target.style.transform = `translate3d(${x}px, ${y}px, 0) translate(-18px, -18px)`;
+  };
+  const cancelScheduledFrame = () => {
+    if (scheduledFrame === null) return;
+    cancelFrame(scheduledFrame);
+    scheduledFrame = null;
+  };
+  return {
+    attach(next: HeldStackPositionTarget | null) {
+      cancelScheduledFrame();
+      target = next;
+      apply();
+    },
+    seed(nextX: number, nextY: number) {
+      x = nextX;
+      y = nextY;
+    },
+    track(nextX: number, nextY: number, active: boolean) {
+      if (!active) return false;
+      x = nextX;
+      y = nextY;
+      if (target && scheduledFrame === null) scheduledFrame = scheduleFrame(apply);
+      return true;
+    },
+    dispose() {
+      cancelScheduledFrame();
+      target = null;
+    },
+  };
 }
 
 const formatPlayTime = (milliseconds: number) => {
@@ -1006,24 +1078,178 @@ function disposePreviewObject(object: THREE.Object3D | null) {
   });
 }
 
-// Character previews used to allocate their own WebGL context. React's development
-// remounts and quick overlay transitions could briefly leave several of those
-// contexts alive, eventually evicting the actual game renderer. All previews now
-// take turns drawing through one off-screen renderer and copy the result into a
-// cheap 2D canvas. The delayed release also makes StrictMode remounts context-free.
-let sharedAvatarPreviewRenderer: THREE.WebGLRenderer | null = null;
-let sharedAvatarPreviewUsers = 0;
-let sharedAvatarPreviewReleaseTimer: ReturnType<typeof setTimeout> | null = null;
-let sharedAvatarPreviewUnavailable = false;
+const AVATAR_PREVIEW_FRAME_INTERVAL_MS = 1000 / 22;
+const AVATAR_PREVIEW_RENDERER_IDLE_MS = 30_000;
 
-function acquireAvatarPreviewRenderer() {
-  if (sharedAvatarPreviewReleaseTimer !== null) {
-    clearTimeout(sharedAvatarPreviewReleaseTimer);
-    sharedAvatarPreviewReleaseTimer = null;
+type AvatarPreviewFrameTask = {
+  isConnected: () => boolean;
+  render: (now: number) => void;
+  onError?: (error: unknown) => void;
+};
+
+export function createAvatarPreviewFrameScheduler(
+  requestFrame: (callback: (now: number) => void) => number,
+  cancelFrame: (frame: number) => void,
+  frameIntervalMs = AVATAR_PREVIEW_FRAME_INTERVAL_MS,
+) {
+  type Entry = AvatarPreviewFrameTask & { visible: boolean };
+  const entries = new Set<Entry>();
+  let animationFrame: number | null = null;
+  let lastRenderedAt = Number.NEGATIVE_INFINITY;
+
+  const runnableEntries = () => [...entries].filter((entry) => entry.visible && entry.isConnected());
+  const cancelIfIdle = () => {
+    if (animationFrame === null || runnableEntries().length > 0) return;
+    cancelFrame(animationFrame);
+    animationFrame = null;
+  };
+  const schedule = () => {
+    if (animationFrame !== null || runnableEntries().length === 0) return;
+    animationFrame = requestFrame(renderFrame);
+  };
+  function renderFrame(now: number) {
+    animationFrame = null;
+    const runnable = runnableEntries();
+    if (runnable.length === 0) return;
+    if (now - lastRenderedAt >= frameIntervalMs) {
+      lastRenderedAt = now;
+      for (const entry of runnable) {
+        try {
+          entry.render(now);
+        } catch (error) {
+          entry.onError?.(error);
+        }
+      }
+    }
+    schedule();
   }
-  sharedAvatarPreviewUsers += 1;
-  if (sharedAvatarPreviewRenderer || sharedAvatarPreviewUnavailable) return sharedAvatarPreviewRenderer;
+
+  return {
+    register(task: AvatarPreviewFrameTask, initiallyVisible = true) {
+      const entry: Entry = { ...task, visible: initiallyVisible };
+      entries.add(entry);
+      schedule();
+      return {
+        setVisible(visible: boolean) {
+          if (entry.visible === visible) return;
+          entry.visible = visible;
+          if (visible) schedule();
+          else cancelIfIdle();
+        },
+        dispose() {
+          entries.delete(entry);
+          cancelIfIdle();
+        },
+      };
+    },
+  };
+}
+
+type AvatarPreviewVisibilityEntry = Pick<IntersectionObserverEntry, "intersectionRatio" | "isIntersecting" | "target">;
+type AvatarPreviewVisibilityObserver = Pick<IntersectionObserver, "disconnect" | "observe">;
+type AvatarPreviewVisibilityObserverFactory = (
+  callback: (entries: ReadonlyArray<AvatarPreviewVisibilityEntry>) => void,
+) => AvatarPreviewVisibilityObserver | null;
+
+function createBrowserAvatarPreviewVisibilityObserver(
+  callback: (entries: ReadonlyArray<AvatarPreviewVisibilityEntry>) => void,
+): AvatarPreviewVisibilityObserver | null {
+  if (typeof IntersectionObserver === "undefined") return null;
+  return new IntersectionObserver((entries) => callback(entries));
+}
+
+export function observeAvatarPreviewVisibility(
+  element: Element,
+  onVisibilityChange: (visible: boolean) => void,
+  createObserver: AvatarPreviewVisibilityObserverFactory | null = createBrowserAvatarPreviewVisibilityObserver,
+) {
+  let observer: AvatarPreviewVisibilityObserver | null = null;
   try {
+    observer = createObserver?.((entries) => {
+      const entry = entries.find((candidate) => candidate.target === element);
+      if (entry) onVisibilityChange(entry.isIntersecting && entry.intersectionRatio > 0);
+    }) ?? null;
+  } catch {
+    observer = null;
+  }
+  // Unsupported or broken observers should never leave a blank avatar.
+  if (!observer) {
+    onVisibilityChange(true);
+    return () => undefined;
+  }
+  try {
+    observer.observe(element);
+  } catch {
+    observer.disconnect();
+    onVisibilityChange(true);
+    return () => undefined;
+  }
+  return () => observer.disconnect();
+}
+
+type AvatarPreviewRendererResource = {
+  dispose: () => void;
+  forceContextLoss: () => void;
+};
+
+export function createAvatarPreviewRendererPool<Renderer extends AvatarPreviewRendererResource, TimerHandle>({
+  createRenderer,
+  scheduleRelease,
+  cancelRelease,
+  idleMs = AVATAR_PREVIEW_RENDERER_IDLE_MS,
+  onCreateError,
+}: {
+  createRenderer: () => Renderer;
+  scheduleRelease: (callback: () => void, delayMs: number) => TimerHandle;
+  cancelRelease: (timer: TimerHandle) => void;
+  idleMs?: number;
+  onCreateError?: (error: unknown) => void;
+}) {
+  let renderer: Renderer | null = null;
+  let users = 0;
+  let releaseTimer: TimerHandle | null = null;
+  let unavailable = false;
+
+  return {
+    acquire() {
+      if (releaseTimer !== null) {
+        cancelRelease(releaseTimer);
+        releaseTimer = null;
+      }
+      users += 1;
+      if (renderer || unavailable) return renderer;
+      try {
+        renderer = createRenderer();
+      } catch (error) {
+        unavailable = true;
+        onCreateError?.(error);
+      }
+      return renderer;
+    },
+    release() {
+      users = Math.max(0, users - 1);
+      if (users > 0 || releaseTimer !== null || !renderer) return;
+      releaseTimer = scheduleRelease(() => {
+        releaseTimer = null;
+        if (users > 0 || !renderer) return;
+        const releasedRenderer = renderer;
+        renderer = null;
+        releasedRenderer.dispose();
+        releasedRenderer.forceContextLoss();
+      }, idleMs);
+    },
+  };
+}
+
+// Character previews share one off-screen WebGL context and one capped frame
+// scheduler. Each result is copied into a cheap 2D canvas, so inactive overlays
+// add neither a context nor their own animation loop.
+const sharedAvatarPreviewFrameScheduler = createAvatarPreviewFrameScheduler(
+  (callback) => requestAnimationFrame(callback),
+  (frame) => cancelAnimationFrame(frame),
+);
+const sharedAvatarPreviewRendererPool = createAvatarPreviewRendererPool<THREE.WebGLRenderer, ReturnType<typeof setTimeout>>({
+  createRenderer: () => {
     const surface = document.createElement("canvas");
     const renderer = new THREE.WebGLRenderer({
       canvas: surface,
@@ -1036,26 +1262,23 @@ function acquireAvatarPreviewRenderer() {
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.setClearColor(0x000000, 0);
-    sharedAvatarPreviewRenderer = renderer;
-  } catch (error) {
+    return renderer;
+  },
+  scheduleRelease: (callback, delayMs) => setTimeout(callback, delayMs),
+  cancelRelease: (timer) => clearTimeout(timer),
+  onCreateError: (error) => {
     // A 2D avatar below keeps every menu usable even on hardware/browser
     // configurations where no spare WebGL context can be allocated.
-    sharedAvatarPreviewUnavailable = true;
     console.warn("Blockwild character preview is using its 2D fallback.", error);
-  }
-  return sharedAvatarPreviewRenderer;
+  },
+});
+
+function acquireAvatarPreviewRenderer() {
+  return sharedAvatarPreviewRendererPool.acquire();
 }
 
 function releaseAvatarPreviewRenderer() {
-  sharedAvatarPreviewUsers = Math.max(0, sharedAvatarPreviewUsers - 1);
-  if (sharedAvatarPreviewUsers > 0 || sharedAvatarPreviewReleaseTimer !== null) return;
-  sharedAvatarPreviewReleaseTimer = setTimeout(() => {
-    sharedAvatarPreviewReleaseTimer = null;
-    if (sharedAvatarPreviewUsers > 0 || !sharedAvatarPreviewRenderer) return;
-    sharedAvatarPreviewRenderer.dispose();
-    sharedAvatarPreviewRenderer.forceContextLoss();
-    sharedAvatarPreviewRenderer = null;
-  }, 750);
+  sharedAvatarPreviewRendererPool.release();
 }
 
 function drawAvatarPreviewFallback(
@@ -1153,7 +1376,6 @@ function PlayerAvatarPreview({
     scene.add(floor);
 
     let previous = performance.now();
-    let animationFrame = 0;
     let width = 120;
     let height = 150;
     let pixelRatio = 1;
@@ -1168,33 +1390,39 @@ function PlayerAvatarPreview({
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
     };
-    const observer = new ResizeObserver(resize);
-    observer.observe(canvas);
+    const resizeObserver = new ResizeObserver(resize);
+    resizeObserver.observe(canvas);
     resize();
-    const render = (now: number) => {
-      const dt = Math.min(0.05, (now - previous) / 1000);
-      previous = now;
-      model.update(dt, { locomotion: "idle", headYaw: Math.sin(now * 0.0007) * 0.08 });
-      model.group.rotation.y = -0.32 + Math.sin(now * 0.00035) * 0.045;
-      if (renderer && !renderer.getContext().isContextLost()) {
-        try {
-          renderer.setPixelRatio(pixelRatio);
-          renderer.setSize(width, height, false);
-          renderer.render(scene, camera);
-          context.clearRect(0, 0, canvas.width, canvas.height);
-          context.drawImage(renderer.domElement, 0, 0, canvas.width, canvas.height);
-        } catch {
+    const frameRegistration = sharedAvatarPreviewFrameScheduler.register({
+      isConnected: () => canvas.isConnected,
+      render: (now) => {
+        const dt = Math.min(0.05, (now - previous) / 1000);
+        previous = now;
+        model.update(dt, { locomotion: "idle", headYaw: Math.sin(now * 0.0007) * 0.08 });
+        model.group.rotation.y = -0.32 + Math.sin(now * 0.00035) * 0.045;
+        if (renderer && !renderer.getContext().isContextLost()) {
+          try {
+            renderer.setPixelRatio(pixelRatio);
+            renderer.setSize(width, height, false);
+            renderer.render(scene, camera);
+            context.clearRect(0, 0, canvas.width, canvas.height);
+            context.drawImage(renderer.domElement, 0, 0, canvas.width, canvas.height);
+          } catch {
+            drawAvatarPreviewFallback(context, canvas.width, canvas.height, variant, equipmentAppearance, heldItem, appearance);
+          }
+        } else {
           drawAvatarPreviewFallback(context, canvas.width, canvas.height, variant, equipmentAppearance, heldItem, appearance);
         }
-      } else {
+      },
+      onError: () => {
         drawAvatarPreviewFallback(context, canvas.width, canvas.height, variant, equipmentAppearance, heldItem, appearance);
-      }
-      animationFrame = requestAnimationFrame(render);
-    };
-    animationFrame = requestAnimationFrame(render);
+      },
+    }, false);
+    const stopVisibilityObservation = observeAvatarPreviewVisibility(canvas, frameRegistration.setVisible);
     return () => {
-      cancelAnimationFrame(animationFrame);
-      observer.disconnect();
+      stopVisibilityObservation();
+      frameRegistration.dispose();
+      resizeObserver.disconnect();
       model.setHeldItem(null);
       disposePreviewObject(held);
       model.dispose();
@@ -1335,6 +1563,8 @@ export default function VoxelGame() {
   const slotInteractionReadyAtRef = useRef(0);
   const inventoryDragRef = useRef<InventoryDragGesture | null>(null);
   const suppressSlotClickRef = useRef(false);
+  const heldStackElementRef = useRef<HTMLDivElement | null>(null);
+  const heldStackPositionRef = useRef<ReturnType<typeof createHeldStackPositionController> | null>(null);
 
   const [overlay, setOverlayState] = useState<Overlay>("title");
   const [titleMenuView, setTitleMenuViewState] = useState<TitleMenuView>("main");
@@ -1360,7 +1590,6 @@ export default function VoxelGame() {
   const [inputCapabilities, setInputCapabilities] = useState<InputCapabilities>(() => ({ ...INITIAL_INPUT_CAPABILITIES }));
   const [settingsReturn, setSettingsReturn] = useState<"title" | "pause">("title");
   const [webglError, setWebglError] = useState(false);
-  const [cursorPosition, setCursorPosition] = useState({ x: 0, y: 0 });
   const [inventoryTab, setInventoryTab] = useState<"inventory" | "recipes" | "creative">("inventory");
   const [recipeQuery, setRecipeQuery] = useState("");
   const [previewRecipeId, setPreviewRecipeId] = useState<string | null>(null);
@@ -1409,6 +1638,24 @@ export default function VoxelGame() {
     setWorkstationAuditMode(workstationAudit === "apiary" || workstationAudit === "orb-rack" || workstationAudit === "healing-station" || workstationAudit === "sugarworks" ? workstationAudit : null);
     const civicAudit = parameters.get("civic-audit");
     setCivicAuditMode(civicAudit === "atlantian-dialogue" || civicAudit === "atlantian-trade" || civicAudit === "atlantian-settlement" ? civicAudit : null);
+  }, []);
+
+  useEffect(() => {
+    const controller = createHeldStackPositionController(
+      (callback) => window.requestAnimationFrame(callback),
+      (frame) => window.cancelAnimationFrame(frame),
+    );
+    heldStackPositionRef.current = controller;
+    controller.attach(heldStackElementRef.current);
+    return () => {
+      controller.dispose();
+      if (heldStackPositionRef.current === controller) heldStackPositionRef.current = null;
+    };
+  }, []);
+
+  const setHeldStackElement = useCallback((element: HTMLDivElement | null) => {
+    heldStackElementRef.current = element;
+    heldStackPositionRef.current?.attach(element);
   }, []);
 
   useEffect(() => {
@@ -1539,6 +1786,7 @@ export default function VoxelGame() {
     }
     // React and the engine share one in-memory catalog so browser-local CRUD,
     // autosaves, and play-time accounting cannot diverge or double-commit.
+    engine.worldStorage.dispose();
     engine.worldStorage = storage;
     (engine as VoxelEngine & { setCharacterProfile?: (profile: CharacterProfile) => void }).setCharacterProfile?.(selectedCharacter);
     engine.localPlayerModel.setAppearance(selectedCharacter.appearance).setPlayerName(selectedCharacter.name);
@@ -1915,28 +2163,35 @@ export default function VoxelGame() {
   const refreshMultiplayerState = useCallback(() => {
     const api = engineRef.current as unknown as MultiplayerEngineApi | null;
     if (!api?.getMultiplayerState) {
-      setMultiplayerState({
-        ...EMPTY_MULTIPLAYER_STATE,
-        reasons: ["The running engine does not expose the multiplayer session API yet."],
+      setMultiplayerState((current) => {
+        const next = {
+          ...EMPTY_MULTIPLAYER_STATE,
+          reasons: ["The running engine does not expose the multiplayer session API yet."],
+        };
+        return multiplayerViewStatesEqual(current, next) ? current : next;
       });
       return;
     }
     try {
       const state = api.getMultiplayerState();
-      setMultiplayerState((current) => ({
-        supported: state.supported ?? true,
-        reasons: Array.isArray(state.reasons) ? state.reasons : [],
-        status: typeof state.status === "string" ? state.status : "idle",
-        role: state.role === "host" || state.role === "guest" ? state.role : null,
-        peers: Array.isArray(state.peers) ? state.peers : [],
-        inviteCode: typeof state.inviteCode === "string" ? state.inviteCode : current.inviteCode,
-        answerCode: typeof state.answerCode === "string" ? state.answerCode : current.answerCode,
-        roomCode: typeof state.roomCode === "string" ? state.roomCode : current.roomCode,
-        rendezvousStatus: ["opening", "waiting", "retrying", "exchanging", "connected", "closed", "error"].includes(String(state.rendezvousStatus)) ? state.rendezvousStatus as MultiplayerViewState["rendezvousStatus"] : current.rendezvousStatus,
-        error: typeof state.error === "string" ? state.error : null,
-      }));
+      setMultiplayerState((current) => {
+        const next: MultiplayerViewState = {
+          supported: state.supported ?? true,
+          reasons: Array.isArray(state.reasons) ? state.reasons : [],
+          status: typeof state.status === "string" ? state.status : "idle",
+          role: state.role === "host" || state.role === "guest" ? state.role : null,
+          peers: Array.isArray(state.peers) ? state.peers : [],
+          inviteCode: typeof state.inviteCode === "string" ? state.inviteCode : current.inviteCode,
+          answerCode: typeof state.answerCode === "string" ? state.answerCode : current.answerCode,
+          roomCode: typeof state.roomCode === "string" ? state.roomCode : current.roomCode,
+          rendezvousStatus: ["opening", "waiting", "retrying", "exchanging", "connected", "closed", "error"].includes(String(state.rendezvousStatus)) ? state.rendezvousStatus as MultiplayerViewState["rendezvousStatus"] : current.rendezvousStatus,
+          error: typeof state.error === "string" ? state.error : null,
+        };
+        return multiplayerViewStatesEqual(current, next) ? current : next;
+      });
     } catch (error) {
-      setMultiplayerState((current) => ({ ...current, error: error instanceof Error ? error.message : String(error) }));
+      const message = error instanceof Error ? error.message : String(error);
+      setMultiplayerState((current) => current.error === message ? current : { ...current, error: message });
     }
   }, []);
 
@@ -2165,10 +2420,15 @@ export default function VoxelGame() {
     engineRef.current?.setVirtualKey(code, down);
   };
 
-  const trackCursor = (event: ReactPointerEvent<HTMLElement>) => setCursorPosition({ x: event.clientX, y: event.clientY });
+  const trackCursor = (event: ReactPointerEvent<HTMLElement>) => {
+    if (!hud.cursor) return;
+    heldStackPositionRef.current?.track(event.clientX, event.clientY, true);
+  };
 
   const beginInventoryDrag = (event: ReactPointerEvent<HTMLButtonElement>, target?: InventoryDragTarget) => {
+    heldStackPositionRef.current?.seed(event.clientX, event.clientY);
     if (!target || !hud.cursor || (event.button !== 0 && event.button !== 2)) return;
+    heldStackPositionRef.current?.track(event.clientX, event.clientY, true);
     const key = `${target.area}:${target.index}`;
     inventoryDragRef.current = {
       pointerId: event.pointerId,
@@ -2315,7 +2575,7 @@ export default function VoxelGame() {
           {!audit && renderPlayerInventory()}
           {audit && <p className="workstation-audit-note">Production preview · inventory transfer slots use the same left, right, double, and shift-click rules as other containers.</p>}
         </div>
-        {!audit && hud.cursor && <div className="held-stack" style={{ left: cursorPosition.x, top: cursorPosition.y }}><SlotContents slot={hud.cursor} /></div>}
+        {!audit && hud.cursor && <div ref={setHeldStackElement} className="held-stack"><SlotContents slot={hud.cursor} /></div>}
       </section>
     );
   };
@@ -2360,7 +2620,7 @@ export default function VoxelGame() {
           {!audit && renderPlayerInventory()}
           {audit && <p className="workstation-audit-note">Exact creature metadata stays inside each orb. Fully healed hostile specimens remain secured and removable.</p>}
         </div>
-        {!audit && hud.cursor && <div className="held-stack" style={{ left: cursorPosition.x, top: cursorPosition.y }}><SlotContents slot={hud.cursor} /></div>}
+        {!audit && hud.cursor && <div ref={setHeldStackElement} className="held-stack"><SlotContents slot={hud.cursor} /></div>}
       </section>
     );
   };
@@ -3085,7 +3345,7 @@ export default function VoxelGame() {
             )}
             <div className="inventory-instructions">Left click moves stacks · Hold and drag to share a stack · Right click splits or paints one per slot · Double-click gathers matching items · Shift-click transfers</div>
           </div>
-          {hud.cursor && <div className="held-stack" style={{ left: cursorPosition.x, top: cursorPosition.y }}><SlotContents slot={hud.cursor} /></div>}
+          {hud.cursor && <div ref={setHeldStackElement} className="held-stack"><SlotContents slot={hud.cursor} /></div>}
         </section>
       )}
 
@@ -3105,7 +3365,7 @@ export default function VoxelGame() {
             </div>
             {renderPlayerInventory()}
           </div>
-          {hud.cursor && <div className="held-stack" style={{ left: cursorPosition.x, top: cursorPosition.y }}><SlotContents slot={hud.cursor} /></div>}
+          {hud.cursor && <div ref={setHeldStackElement} className="held-stack"><SlotContents slot={hud.cursor} /></div>}
         </section>
       )}
 
@@ -3120,7 +3380,7 @@ export default function VoxelGame() {
             {!hud.activeChestTitle.toLocaleLowerCase().includes("conservatory") && <div className="container-utility-bar" aria-label="Chest inventory actions"><button type="button" onClick={() => engineRef.current?.sortActiveChest()}>Sort chest</button><button type="button" onClick={() => engineRef.current?.stackIntoActiveChest()}>Stack → chest</button><button type="button" onClick={() => engineRef.current?.stackFromActiveChest()}>Stack → pack</button><button type="button" onClick={() => engineRef.current?.takeAllFromActiveChest()}>Take all</button><button type="button" onClick={() => engineRef.current?.pushAllIntoActiveChest()}>Push all</button></div>}
             {renderPlayerInventory(true)}
           </div>
-          {hud.cursor && <div className="held-stack" style={{ left: cursorPosition.x, top: cursorPosition.y }}><SlotContents slot={hud.cursor} /></div>}
+          {hud.cursor && <div ref={setHeldStackElement} className="held-stack"><SlotContents slot={hud.cursor} /></div>}
         </section>
       )}
 
@@ -3148,7 +3408,7 @@ export default function VoxelGame() {
             onWithdraw={(signature, count) => { engineRef.current?.withdrawWaygridItem(signature, count); }}
             inventory={renderPlayerInventory()}
           />
-          {hud.cursor && <div className="held-stack" style={{ left: cursorPosition.x, top: cursorPosition.y }}><SlotContents slot={hud.cursor} /></div>}
+          {hud.cursor && <div ref={setHeldStackElement} className="held-stack"><SlotContents slot={hud.cursor} /></div>}
         </div>
       )}
       {overlay === "waygrid-creatures" && (
@@ -3164,7 +3424,7 @@ export default function VoxelGame() {
             renderPortrait={(kind) => <CreaturePortrait kind={kind as MobKind} seen mini />}
             inventory={renderPlayerInventory()}
           />
-          {hud.cursor && <div className="held-stack" style={{ left: cursorPosition.x, top: cursorPosition.y }}><SlotContents slot={hud.cursor} /></div>}
+          {hud.cursor && <div ref={setHeldStackElement} className="held-stack"><SlotContents slot={hud.cursor} /></div>}
         </div>
       )}
 

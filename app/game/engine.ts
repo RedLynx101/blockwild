@@ -247,6 +247,7 @@ import {
   type CreatureRouteState,
   type FollowerFormationTarget,
 } from "./creature-pathing";
+import { XZSpatialIndex, type XZSpatialEntry } from "./spatial-index";
 import {
   canRideShadecrawler,
   createShadecrawlerState,
@@ -1400,6 +1401,8 @@ type Particle = {
   mesh: THREE.Mesh;
   velocity: THREE.Vector3;
   life: number;
+  baseSize: number;
+  ownsResources: boolean;
 };
 
 type LeafParticleVisual = {
@@ -1462,6 +1465,15 @@ export function regenerationFoodUsage(survivalMultiplier = 1) {
 }
 /** Navigation and other motion-sensitive HUD elements render at roughly 29 Hz. */
 export const HUD_VISUAL_REFRESH_MS = 35;
+/** Open menus animate progress smoothly without rebuilding the full React tree every frame. */
+export const HUD_OVERLAY_REFRESH_MS = 100;
+/**
+ * Dynamic highlights cover a 25-block near-view region. A torch can influence
+ * another 21 blocks beyond that region, so the bounded source query must reach
+ * 46 blocks to avoid a light popping in only after the camera crosses its
+ * influence sphere. This remains constant regardless of render distance.
+ */
+export const ENVIRONMENT_LIGHT_QUERY_RADIUS = 46;
 // Hearthroads trims the already-reduced night pressure by another 40% while
 // keeping encounters meaningful near genuine darkness.
 export const HOSTILE_SPAWN_ATTEMPT_SCALE = 2.5;
@@ -1994,13 +2006,17 @@ export function readSavedWorld(): WorldSave | null {
   if (typeof window === "undefined") return null;
   try {
     const storage = new WorldStorage(window.localStorage);
-    const id = storage.activeWorldId;
-    if (id) {
-      const loaded = storage.loadWorld(id, false);
-      if (loaded.ok) return { ...loaded.value.save, options: loaded.value.options };
+    try {
+      const id = storage.activeWorldId;
+      if (id) {
+        const loaded = storage.loadWorld(id, false);
+        if (loaded.ok) return { ...loaded.value.save, options: loaded.value.options };
+      }
+      const raw = window.localStorage.getItem(SAVE_KEY);
+      return raw ? migrateSavedWorld(JSON.parse(raw)) : null;
+    } finally {
+      storage.dispose();
     }
-    const raw = window.localStorage.getItem(SAVE_KEY);
-    return raw ? migrateSavedWorld(JSON.parse(raw)) : null;
   } catch {
     return null;
   }
@@ -2423,8 +2439,12 @@ export function clearSavedWorld() {
   if (typeof window === "undefined") return;
   try {
     const storage = new WorldStorage(window.localStorage);
-    if (storage.activeWorldId) storage.deleteWorld(storage.activeWorldId);
-    window.localStorage.removeItem(SAVE_KEY);
+    try {
+      if (storage.activeWorldId) storage.deleteWorld(storage.activeWorldId);
+      window.localStorage.removeItem(SAVE_KEY);
+    } finally {
+      storage.dispose();
+    }
   } catch {
     // Storage can be unavailable in private browsing.
   }
@@ -2856,6 +2876,29 @@ function blankBestiary(): BestiaryProgress {
   return Object.fromEntries(MOB_ORDER.map((kind) => [kind, { seen: false, kills: 0, captures: 0, tames: 0, breeds: 0, secretUnlocked: false, milestones: {} }])) as BestiaryProgress;
 }
 
+const mixBestiaryHash = (hash: number, value: number) => Math.imul((hash ^ Math.trunc(value)) >>> 0, 16_777_619) >>> 0;
+
+/** Allocation-free content hash used to reuse an unchanged 178-entry HUD snapshot. */
+export function bestiaryProgressSignature(bestiary: BestiaryProgress) {
+  let hash = 2_166_136_261;
+  for (const kind of MOB_ORDER) {
+    const progress = bestiary[kind];
+    hash = mixBestiaryHash(hash, progress.seen ? 1 : 0);
+    hash = mixBestiaryHash(hash, progress.kills);
+    hash = mixBestiaryHash(hash, progress.captures);
+    hash = mixBestiaryHash(hash, progress.tames ?? 0);
+    hash = mixBestiaryHash(hash, progress.breeds ?? 0);
+    hash = mixBestiaryHash(hash, progress.secretUnlocked ? 1 : 0);
+    const milestones = progress.milestones;
+    if (!milestones) continue;
+    for (const key in milestones) {
+      for (let index = 0; index < key.length; index += 1) hash = mixBestiaryHash(hash, key.charCodeAt(index));
+      hash = mixBestiaryHash(hash, milestones[key] ?? 0);
+    }
+  }
+  return hash >>> 0;
+}
+
 /** Keyboard gameplay shortcuts must never fire while a player is typing in UI. */
 export function isEditableKeyboardTarget(target: EventTarget | null) {
   const element = target as { tagName?: string; isContentEditable?: boolean; getAttribute?: (name: string) => string | null } | null;
@@ -2907,6 +2950,8 @@ export class VoxelEngine {
   dawnSkyColor = new THREE.Color();
   weatherSkyColor = new THREE.Color();
   celestialDirection = new THREE.Vector3();
+  moonDirection = new THREE.Vector3();
+  cloudOcclusionViewer = new THREE.Vector3();
   audioForward = new THREE.Vector3(0, 0, -1);
   audio: SynthAudio;
   settings: GameSettings;
@@ -3008,6 +3053,8 @@ export class VoxelEngine {
   offhand: InventorySlot | null = null;
   offhandUseHeld = false;
   bestiary = blankBestiary();
+  hudBestiarySignature = Number.NaN;
+  hudBestiarySnapshot: BestiaryProgress | null = null;
   saplings = new Map<string, number>();
   saplingCheckTimer = 0;
   veinRegrowth = new Map<string, number>();
@@ -3118,9 +3165,16 @@ export class VoxelEngine {
   autoSaveAccumulator = 0;
   particles: Particle[] = [];
   leafParticles: LeafParticleVisual[] = [];
+  sharedParticleGeometry: THREE.BoxGeometry | null = null;
+  particleMaterials: Map<string, THREE.MeshBasicMaterial> | null = null;
+  sharedLeafGeometry: THREE.PlaneGeometry | null = null;
+  leafMaterials: Map<string, THREE.MeshBasicMaterial> | null = null;
   leafParticleTimer = 0;
   fallingTrees: FallingTree[] = [];
   mobs: MobEntity[] = [];
+  mobSpatialIndex: XZSpatialIndex<MobEntity> | null = null;
+  mobSpatialIndexSource: MobEntity[] | null = null;
+  mobSpatialIndexFrameActive = false;
   sleepingCreatures: SavedCreature[] = [];
   sleepingCreatureWakeTimer = 0;
   ecologySectors = new Map<string, EcologySectorSave>();
@@ -10829,6 +10883,8 @@ export class VoxelEngine {
         mesh,
         velocity: new THREE.Vector3(-Math.cos(angle) * 0.55, 1.15 + Math.random() * 1.6, -Math.sin(angle) * 0.55),
         life: 0.52 + Math.random() * 0.28,
+        baseSize: 1,
+        ownsResources: true,
       });
     }
   }
@@ -13654,11 +13710,12 @@ export class VoxelEngine {
     this.mobRaycaster.set(origin, direction);
     this.mobRaycaster.far = reach;
     const intersections = this.mobRaycaster.intersectObjects(this.creatureGroup.children, true);
+    const mobIndex = this.ensureMobSpatialIndex(false);
     for (const intersection of intersections) {
       let object: THREE.Object3D | null = intersection.object;
       while (object && object.userData.mobId === undefined) object = object.parent;
       const id = object?.userData.mobId as number | undefined;
-      const mob = id === undefined ? null : this.mobs.find((candidate) => candidate.id === id);
+      const mob = id === undefined ? null : mobIndex.get(id)?.value ?? this.mobs?.find((candidate) => candidate.id === id);
       if (mob) return { mob, distance: intersection.distance };
     }
     return null;
@@ -16108,6 +16165,50 @@ export class VoxelEngine {
     };
   }
 
+  mobSpatialEntry(mob: MobEntity, order?: number): XZSpatialEntry<MobEntity> {
+    const profile = this.mobCollisionProfile(mob);
+    return {
+      id: mob.id,
+      value: mob,
+      x: mob.group.position.x,
+      z: mob.group.position.z,
+      radius: profile.solid ? profile.radius : 0,
+      order,
+    };
+  }
+
+  rebuildMobSpatialIndex() {
+    const mobs = this.mobs ?? [];
+    const index = this.mobSpatialIndex ?? new XZSpatialIndex<MobEntity>(8);
+    index.clear();
+    for (let order = 0; order < mobs.length; order += 1) {
+      index.upsert(this.mobSpatialEntry(mobs[order], order));
+    }
+    this.mobSpatialIndex = index;
+    this.mobSpatialIndexSource = mobs;
+    return index;
+  }
+
+  ensureMobSpatialIndex(requireCurrentPositions = true) {
+    const mobs = this.mobs ?? [];
+    const index = this.mobSpatialIndex;
+    if (!index || this.mobSpatialIndexSource !== mobs || index.size !== mobs.length
+      || (requireCurrentPositions && !this.mobSpatialIndexFrameActive)) return this.rebuildMobSpatialIndex();
+    return index;
+  }
+
+  refreshMobSpatialEntry(mob: MobEntity) {
+    const index = this.mobSpatialIndex;
+    if (!index || this.mobSpatialIndexSource !== this.mobs) return;
+    const order = index.get(mob.id)?.order ?? this.mobs.indexOf(mob);
+    index.upsert(this.mobSpatialEntry(mob, order));
+  }
+
+  mobCandidatesWithin(mob: MobEntity, radius: number) {
+    return this.ensureMobSpatialIndex().queryCircle(mob.group.position.x, mob.group.position.z, radius)
+      .map((entry) => entry.value);
+  }
+
   /** Mob group origins vary by model; this converts one back to its common foot plane. */
   mobFootY(mob: MobEntity, groupY = mob.group.position.y) {
     return groupY - mob.definition.footOffset + 0.5;
@@ -16164,7 +16265,8 @@ export class VoxelEngine {
       mob.group.position.x,
       mob.group.position.z,
     );
-    for (const other of this.mobs) {
+    const nearbyMobs = this.ensureMobSpatialIndex().queryOverlappingCircle(x, z, navigationRadius + 1.05);
+    for (const { value: other } of nearbyMobs) {
       if (other.id === mob.id || !other.group.visible) continue;
       const otherProfile = this.mobCollisionProfile(other);
       if (!otherProfile.solid) continue;
@@ -16389,6 +16491,7 @@ export class VoxelEngine {
     else this.applyMobScale(mob, this.mobBaseScale(mob));
     this.syncWoolhornCoat(mob);
     this.mobs.push(mob);
+    this.refreshMobSpatialEntry(mob);
     return mob;
   }
 
@@ -18309,6 +18412,8 @@ export class VoxelEngine {
       this.mobSpawnTimer = ((2.2 + Math.random() * 1.8) * HOSTILE_SPAWN_ATTEMPT_SCALE) / density;
       this.trySpawnMob("hostile");
     }
+    this.rebuildMobSpatialIndex();
+    this.mobSpatialIndexFrameActive = true;
     const ownerId = this.localPlayerId();
     this.refreshSocialMotions(dt);
     const leaderSpeed = Math.hypot(this.velocity.x, this.velocity.z);
@@ -18530,6 +18635,7 @@ export class VoxelEngine {
         mob.maxHealth = Math.round(mob.definition.health * shadecrawlerScale(mob.shadeState));
       }
       this.applyMobScale(mob, this.mobBaseScale(mob));
+      this.refreshMobSpatialEntry(mob);
       if (followerSlot && shouldTeleportFollower({
         distanceToLeader: distance,
         verticalSeparation: this.mobFootY(mob) - referenceY,
@@ -18543,6 +18649,7 @@ export class VoxelEngine {
           mob.desiredAngle = mob.angle;
           mob.steering = createStableSteering(mob.angle);
           mob.route = createCreatureRouteState(mob.angle);
+          this.refreshMobSpatialEntry(mob);
           dx = referenceX - mob.group.position.x;
           dz = referenceZ - mob.group.position.z;
           distance = Math.hypot(dx, dz);
@@ -18578,22 +18685,27 @@ export class VoxelEngine {
           mob.voiceTimer = 13 + (mob.id % 9) * 1.35 + Math.random() * 7;
         }
         this.updateDragonMob(mob, mobDt, distance);
+        this.refreshMobSpatialEntry(mob);
         continue;
       }
       if (mob.kind === "honeybee" || mob.kind === "hive-queen") {
         if (this.updateBeeMob(mob, mobDt, distance, dx, dz)) this.removeMob(index);
+        else this.refreshMobSpatialEntry(mob);
         continue;
       }
       if (mob.leviathanGrowth) {
         this.updateLeviathanMob(mob, mobDt, distance, dx, dz);
+        this.refreshMobSpatialEntry(mob);
         continue;
       }
       if (mob.definition.movement === "aquatic") {
         this.updateAquaticMob(mob, mobDt, distance, dx, dz);
+        this.refreshMobSpatialEntry(mob);
         continue;
       }
       if (mob.definition.movement === "flying") {
         this.updateBirdMob(mob, mobDt, distance, dx, dz);
+        this.refreshMobSpatialEntry(mob);
         continue;
       }
       const foodLureResponse = foodLureResponseForMob(mob.kind, {
@@ -18644,7 +18756,7 @@ export class VoxelEngine {
             });
           }
           let nearestDistance = 18 * 18;
-          for (const candidate of this.mobs) {
+          for (const candidate of this.mobCandidatesWithin(mob, 18)) {
             if (candidate === mob || candidate.health <= 0 || !candidate.hostile || candidate.factionId === mob.factionId) continue;
             const candidateDistance = candidate.group.position.distanceToSquared(mob.group.position);
             if (candidateDistance >= nearestDistance) continue;
@@ -18688,7 +18800,7 @@ export class VoxelEngine {
       }
       if (!residentEnemy && mob.aligned && mob.settlementId && mob.definition.family === "construct" && !mob.hostile) {
         let nearestDistance = 18 * 18;
-        for (const candidate of this.mobs) {
+        for (const candidate of this.mobCandidatesWithin(mob, 18)) {
           if (candidate === mob || candidate.health <= 0 || !candidate.hostile || candidate.factionId === mob.factionId) continue;
           const candidateDistance = candidate.group.position.distanceToSquared(mob.group.position);
           if (candidateDistance >= nearestDistance) continue;
@@ -18752,7 +18864,7 @@ export class VoxelEngine {
       if (!residentEnemy && (mob.kind === "clockwork-hound-golem" || mob.kind === "webspinner-golem") && bondedToOwner && !petHolding) {
         let nearestDistanceSquared = (mob.kind === "clockwork-hound-golem" ? 15 : 18) ** 2;
         const sightOrigin = mob.group.position.clone().add(new THREE.Vector3(0, mob.definition.height * 0.68, 0));
-        for (const candidate of this.mobs) {
+        for (const candidate of this.mobCandidatesWithin(mob, Math.sqrt(nearestDistanceSquared))) {
           if (candidate === mob || !candidate.hostile || candidate.health <= 0 || candidate.factionId === mob.factionId) continue;
           const candidateDistanceSquared = candidate.group.position.distanceToSquared(mob.group.position);
           if (candidateDistanceSquared >= nearestDistanceSquared) continue;
@@ -18768,7 +18880,7 @@ export class VoxelEngine {
         && (mob.hurtTimer > 0 || this.playerInvulnerability > 0 || this.combatMusicTimer > 0)) {
         let nearestDistanceSquared = 64;
         const sightOrigin = mob.group.position.clone().add(new THREE.Vector3(0, mob.definition.height * 0.7, 0));
-        for (const candidate of this.mobs) {
+        for (const candidate of this.mobCandidatesWithin(mob, 8)) {
           if (!candidate.hostile || candidate.health <= 0) continue;
           const candidateDistanceSquared = candidate.group.position.distanceToSquared(mob.group.position);
           if (candidateDistanceSquared > nearestDistanceSquared) continue;
@@ -18948,8 +19060,10 @@ export class VoxelEngine {
       };
       mob.group.rotation.y = -mob.angle - Math.PI / 2;
       this.animateMob(mob, moved);
+      this.refreshMobSpatialEntry(mob);
     }
     for (const defeated of companionKills) if (this.mobs.includes(defeated) && defeated.health <= 0) this.killMob(defeated);
+    this.mobSpatialIndexFrameActive = false;
   }
 
   attackTargetMob() {
@@ -19279,10 +19393,12 @@ export class VoxelEngine {
 
   removeMob(index: number) {
     const mob = this.mobs[index];
+    if (!mob) return;
     if (mob.id === this.mountedCreatureId) this.mountedCreatureId = null;
     this.removeLead(mob.id);
     this.creatureGroup.remove(mob.group);
     this.disposeObject(mob.group);
+    if (this.mobSpatialIndexSource === this.mobs) this.mobSpatialIndex?.delete(mob.id);
     this.mobs.splice(index, 1);
     if (this.targetMob === mob) this.targetMob = null;
   }
@@ -19578,13 +19694,14 @@ export class VoxelEngine {
     this.fallingTrees = [];
     for (const particle of this.particles) {
       this.scene.remove(particle.mesh);
-      particle.mesh.geometry.dispose();
-      (particle.mesh.material as THREE.Material).dispose();
+      if (particle.ownsResources) {
+        particle.mesh.geometry.dispose();
+        (particle.mesh.material as THREE.Material).dispose();
+      }
     }
     this.particles = [];
     for (const particle of this.leafParticles) {
       this.scene.remove(particle.object);
-      this.disposeObject(particle.object);
     }
     this.leafParticles = [];
     this.leafParticleTimer = 0;
@@ -19669,10 +19786,12 @@ export class VoxelEngine {
     this.camera.updateMatrixWorld();
     this.camera.getWorldDirection(this.lightForward);
 
-    // Query the entire rendered environment plus one light radius. Selection is
-    // camera-direction independent so turning away never disables a nearby
-    // torch, fireplace, rune or settlement lantern.
-    const queryRadius = Math.min(this.camera.far, this.settings.renderDistance * 16 + 18);
+    // Static vertex light covers the wider world. Dynamic point lights cannot
+    // affect fragments beyond 21 blocks, so scanning hundreds of rendered
+    // chunks only burns CPU. The margin keeps handoffs invisible while walking;
+    // selection remains camera-direction independent so turning never dims a
+    // nearby torch, fireplace, rune or settlement lantern.
+    const queryRadius = Math.min(this.camera.far, ENVIRONMENT_LIGHT_QUERY_RADIUS);
     const sources = this.world.lightSourcesNear(this.camera.position.x, this.camera.position.y, this.camera.position.z, queryRadius);
     this.environmentLightSelection.length = 0;
     while (this.environmentLightCandidates.length) this.environmentLightCandidateCache.push(this.environmentLightCandidates.pop()!);
@@ -19861,7 +19980,7 @@ export class VoxelEngine {
       );
       mesh.renderOrder = 25;
       this.scene.add(mesh);
-      this.particles.push({ mesh, velocity: new THREE.Vector3(0, 0.2, 0), life: 0.2 + (index % 3) * 0.025 });
+      this.particles.push({ mesh, velocity: new THREE.Vector3(0, 0.2, 0), life: 0.2 + (index % 3) * 0.025, baseSize: 1, ownsResources: true });
     }
     this.spawnParticles(x, ground, z, BlockId.Glowstone, 10);
   }
@@ -19937,19 +20056,20 @@ export class VoxelEngine {
     this.directional.color.set(twilight > 0.22 ? 0xffae7a : daylight > 0.2 ? 0xfff1ce : 0x8da5cf);
     const celestialDistance = 82;
     const celestialDirection = this.celestialDirection.set(Math.cos(angle), Math.sin(angle), -0.24).normalize();
-    const cloudOffset = this.cloudMesh?.position ?? new THREE.Vector3();
+    const cloudOffset = this.cloudMesh?.position;
     // Some deterministic renderer tests and older hydrated sessions predate
     // cloud planning. An absent plan list means a clear cloud layer, not a
     // fatal render-frame exception.
-    const visibleCloudPlans = (this.cloudPlans ?? []).map((plan) => ({
-      ...plan,
-      x: plan.x + cloudOffset.x,
-      y: plan.y + cloudOffset.y,
-      z: plan.z + cloudOffset.z,
-    }));
-    const sunCloudOcclusion = cloudCelestialOcclusion(this.camera.position, celestialDirection, visibleCloudPlans, this.cloudOpacity);
-    const moonDirection = { x: -celestialDirection.x, y: -celestialDirection.y, z: -celestialDirection.z };
-    const moonCloudOcclusion = cloudCelestialOcclusion(this.camera.position, moonDirection, visibleCloudPlans, this.cloudOpacity);
+    // Translating every cloud plan is equivalent to translating the viewer in
+    // the opposite direction. Reuse scratch vectors so day/night contributes
+    // no per-frame plan arrays or direction objects.
+    const cloudOcclusionViewer = this.cloudOcclusionViewer ?? (this.cloudOcclusionViewer = new THREE.Vector3());
+    cloudOcclusionViewer.copy(this.camera.position);
+    if (cloudOffset) cloudOcclusionViewer.sub(cloudOffset);
+    const visibleCloudPlans = this.cloudPlans ?? [];
+    const sunCloudOcclusion = cloudCelestialOcclusion(cloudOcclusionViewer, celestialDirection, visibleCloudPlans, this.cloudOpacity);
+    const moonDirection = (this.moonDirection ?? (this.moonDirection = new THREE.Vector3())).copy(celestialDirection).multiplyScalar(-1);
+    const moonCloudOcclusion = cloudCelestialOcclusion(cloudOcclusionViewer, moonDirection, visibleCloudPlans, this.cloudOpacity);
     const sunVisibility = celestialVisibilityThroughClouds(weatherFx.sunVisibility, sunCloudOcclusion);
     const moonVisibility = celestialVisibilityThroughClouds(weatherFx.celestialVisibility, moonCloudOcclusion);
     this.sun.position.copy(this.camera.position).addScaledVector(celestialDirection, celestialDistance);
@@ -20018,10 +20138,16 @@ export class VoxelEngine {
     const explorationScore = this.day % 3 === 0
       ? "hoppin"
       : alternateScore ? "wildwoodA" : "wildwoodB";
-    const nearbySettlement = [...(this.settlements?.values?.() ?? [])]
-      .map((settlement) => ({ settlement, distance: Math.hypot(settlement.layout.center.x - this.position.x, settlement.layout.center.z - this.position.z) }))
-      .filter(({ distance }) => distance <= 64)
-      .sort((left, right) => left.distance - right.distance)[0]?.settlement ?? null;
+    let nearbySettlement: SettlementState | null = null;
+    let nearbySettlementDistanceSquared = Number.POSITIVE_INFINITY;
+    for (const settlement of this.settlements?.values?.() ?? []) {
+      const dx = settlement.layout.center.x - this.position.x;
+      const dz = settlement.layout.center.z - this.position.z;
+      const distanceSquared = dx * dx + dz * dz;
+      if (distanceSquared > 64 * 64 || distanceSquared >= nearbySettlementDistanceSquared) continue;
+      nearbySettlement = settlement;
+      nearbySettlementDistanceSquared = distanceSquared;
+    }
     const settlementScore = nearbySettlement?.ownerFactionId === "hobbits" ? "hobbitSettlement" as const
       : nearbySettlement?.ownerFactionId === "goblins" ? "goblinSettlement" as const
         : nearbySettlement?.ownerFactionId === "atlantians" ? "atlantianSettlement" as const
@@ -20101,11 +20227,13 @@ export class VoxelEngine {
       particle.mesh.position.addScaledVector(particle.velocity, dt);
       particle.mesh.rotation.x += dt * 5;
       particle.mesh.rotation.y += dt * 4;
-      particle.mesh.scale.setScalar(clamp(particle.life * 2.4, 0, 1));
+      particle.mesh.scale.setScalar(particle.baseSize * clamp(particle.life * 2.4, 0, 1));
       if (particle.life <= 0) {
         this.scene.remove(particle.mesh);
-        particle.mesh.geometry.dispose();
-        (particle.mesh.material as THREE.Material).dispose();
+        if (particle.ownsResources) {
+          particle.mesh.geometry.dispose();
+          (particle.mesh.material as THREE.Material).dispose();
+        }
         this.particles.splice(index, 1);
       }
     }
@@ -20118,10 +20246,15 @@ export class VoxelEngine {
         const planned = planLeafParticles(this.world.seedText, Date.now(), nearbyLeaves, this.camera.position, Math.min(3, capacity));
         for (const state of planned) {
           const object = new THREE.Group();
-          const geometry = new THREE.PlaneGeometry(0.14, 0.09);
-          const material = new THREE.MeshBasicMaterial({ color: state.color, side: THREE.DoubleSide, transparent: true, opacity: 0.82 });
-          const first = new THREE.Mesh(geometry, material);
-          const second = new THREE.Mesh(geometry, material);
+          const materialKey = String(state.color);
+          const resources = this.ensureLeafParticleResources();
+          let material = resources.materials.get(materialKey);
+          if (!material) {
+            material = new THREE.MeshBasicMaterial({ color: state.color, side: THREE.DoubleSide, transparent: true, opacity: 0.82 });
+            resources.materials.set(materialKey, material);
+          }
+          const first = new THREE.Mesh(resources.geometry, material);
+          const second = new THREE.Mesh(resources.geometry, material);
           first.rotation.y = Math.PI / 4;
           second.rotation.y = -Math.PI / 4;
           object.add(first, second);
@@ -20138,7 +20271,6 @@ export class VoxelEngine {
       const next = stepLeafParticle(particle.state, dt, ground);
       if (!next) {
         this.scene.remove(particle.object);
-        this.disposeObject(particle.object);
         this.leafParticles.splice(index, 1);
         continue;
       }
@@ -20547,13 +20679,47 @@ export class VoxelEngine {
 
   spawnParticles(x: number, y: number, z: number, type: BlockId, count: number) {
     const color = BLOCKS[type]?.color ?? "#777777";
+    const materialKey = String(color);
+    const resources = this.ensureBlockParticleResources();
+    let material = resources.materials.get(materialKey);
+    if (!material) {
+      material = new THREE.MeshBasicMaterial({ color });
+      resources.materials.set(materialKey, material);
+    }
     for (let index = 0; index < count; index += 1) {
       const size = 0.07 + Math.random() * 0.09;
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(size, size, size), new THREE.MeshBasicMaterial({ color }));
+      const mesh = new THREE.Mesh(resources.geometry, material);
+      mesh.scale.setScalar(size);
       mesh.position.set(x + (Math.random() - 0.5) * 0.7, y + (Math.random() - 0.5) * 0.7, z + (Math.random() - 0.5) * 0.7);
       this.scene.add(mesh);
-      this.particles.push({ mesh, velocity: new THREE.Vector3((Math.random() - 0.5) * 2.5, 1.4 + Math.random() * 2.1, (Math.random() - 0.5) * 2.5), life: 0.45 + Math.random() * 0.35 });
+      this.particles.push({ mesh, velocity: new THREE.Vector3((Math.random() - 0.5) * 2.5, 1.4 + Math.random() * 2.1, (Math.random() - 0.5) * 2.5), life: 0.45 + Math.random() * 0.35, baseSize: size, ownsResources: false });
     }
+  }
+
+  private ensureBlockParticleResources() {
+    const geometry = this.sharedParticleGeometry ??= new THREE.BoxGeometry(1, 1, 1);
+    const materials = this.particleMaterials ??= new Map<string, THREE.MeshBasicMaterial>();
+    return { geometry, materials };
+  }
+
+  private ensureLeafParticleResources() {
+    const geometry = this.sharedLeafGeometry ??= new THREE.PlaneGeometry(0.14, 0.09);
+    const materials = this.leafMaterials ??= new Map<string, THREE.MeshBasicMaterial>();
+    return { geometry, materials };
+  }
+
+  /** Idempotent so partial/prototype test harnesses and teardown races are safe. */
+  disposePooledParticleResources() {
+    this.sharedParticleGeometry?.dispose();
+    this.sharedParticleGeometry = null;
+    for (const material of this.particleMaterials?.values() ?? []) material.dispose();
+    this.particleMaterials?.clear();
+    this.particleMaterials = null;
+    this.sharedLeafGeometry?.dispose();
+    this.sharedLeafGeometry = null;
+    for (const material of this.leafMaterials?.values() ?? []) material.dispose();
+    this.leafMaterials?.clear();
+    this.leafMaterials = null;
   }
 
   animate = (now: number) => {
@@ -20566,6 +20732,8 @@ export class VoxelEngine {
     this.attackCooldown = Math.max(0, this.attackCooldown - dt);
     this.zombieVoiceCooldown = Math.max(0, this.zombieVoiceCooldown - dt);
     this.combatMusicTimer = Math.max(0, this.combatMusicTimer - dt);
+    const simulationStartedAt = performance.now();
+    let chunkWorkMilliseconds = 0;
 
     if (this.running && !this.titleMode && !this.paused) {
       this.magicState = regenerateMana(this.magicState, dt, this.skillState.skills.magic.level);
@@ -20581,9 +20749,13 @@ export class VoxelEngine {
       const t = now * 0.000045;
       this.camera.position.set(this.spawn.x + Math.sin(t) * 24, this.spawn.y + 13 + Math.sin(t * 1.8) * 1.2, this.spawn.z + Math.cos(t) * 24);
       this.camera.lookAt(this.spawn.x, this.spawn.y + 4, this.spawn.z);
+      const chunkWorkStartedAt = performance.now();
       this.world.update(this.spawn.x, this.spawn.z);
+      chunkWorkMilliseconds = performance.now() - chunkWorkStartedAt;
     } else {
+      const chunkWorkStartedAt = performance.now();
       this.world.update(this.position.x, this.position.z);
+      chunkWorkMilliseconds = performance.now() - chunkWorkStartedAt;
       if (this.running && !this.paused) this.updateBoats(dt);
       if (this.running && !this.paused && (this.locked || this.touchMode)) {
         this.accumulator = Math.min(this.accumulator + dt, PHYSICS_STEP * 4);
@@ -20673,12 +20845,18 @@ export class VoxelEngine {
       this.cloudMesh.position.set(this.cloudDrift.x, 0, this.cloudDrift.z);
     }
     this.refreshCloudField(false, dt);
+    const simulationMilliseconds = Math.max(0, performance.now() - simulationStartedAt - chunkWorkMilliseconds);
     if (!this.webglContextLost) this.renderer.render(this.scene, this.camera);
     this.performanceSampler.record({
       frameMilliseconds: rawDt * 1000,
+      simulationMilliseconds,
+      chunkWorkMilliseconds,
       visibleChunks: this.world.loadedCount,
       simulatedEntities: this.mobs.length + this.butterflies.entities.length,
       triangles: this.renderer.info.render.triangles,
+      drawCalls: this.renderer.info.render.calls,
+      geometries: this.renderer.info.memory.geometries,
+      textures: this.renderer.info.memory.textures,
     });
     this.performanceReportTimer += dt;
     if (this.performanceReportTimer >= 1.5) {
@@ -20798,7 +20976,9 @@ export class VoxelEngine {
   }
 
   emitHud(force = false, now = performance.now()) {
-    if (!force && now - this.lastHudTime < HUD_VISUAL_REFRESH_MS) return;
+    if (!force && this.titleMode) return;
+    const refreshInterval = this.gameplayOverlayOpen ? HUD_OVERLAY_REFRESH_MS : HUD_VISUAL_REFRESH_MS;
+    if (!force && now - this.lastHudTime < refreshInterval) return;
     this.lastHudTime = now;
     this.updateCraftResult();
     const totalMinutes = Math.floor((this.worldTime % 1) * 24 * 60);
@@ -20817,6 +20997,11 @@ export class VoxelEngine {
         reloading: this.rangedReloadItem === selectedSlot.item,
       }
       : null;
+    const bestiarySignature = bestiaryProgressSignature(this.bestiary);
+    if (!this.hudBestiarySnapshot || bestiarySignature !== this.hudBestiarySignature) {
+      this.hudBestiarySignature = bestiarySignature;
+      this.hudBestiarySnapshot = Object.fromEntries(MOB_ORDER.map((kind) => [kind, { ...this.bestiary[kind] }])) as BestiaryProgress;
+    }
     this.events.onHud({
       health: clamp(this.health, 0, 10),
       hunger: clamp(this.hunger, 0, 10),
@@ -20826,7 +21011,7 @@ export class VoxelEngine {
       equipment: Object.fromEntries((Object.keys(this.equipment) as EquipmentSlot[]).map((slot) => [slot, cloneSlot(this.equipment[slot])])) as Record<EquipmentSlot, InventorySlot | null>,
       offhand: cloneSlot(this.offhand),
       shieldRaised: this.offhandUseHeld,
-      bestiary: Object.fromEntries(MOB_ORDER.map((kind) => [kind, { ...this.bestiary[kind] }])) as BestiaryProgress,
+      bestiary: this.hudBestiarySnapshot,
       armor: this.armorPoints(),
       cursor: cloneSlot(this.cursor),
       trash: cloneSlot(this.trash),
@@ -21252,6 +21437,7 @@ export class VoxelEngine {
     this.disposed = true;
     this.unlockFullscreenEscape();
     this.saveNow(false);
+    this.worldStorage.dispose();
     cancelAnimationFrame(this.animationFrame);
     window.clearTimeout(this.saveTimer);
     this.unbindEvents();
@@ -21282,6 +21468,7 @@ export class VoxelEngine {
     this.world.dispose();
     this.sharedDropGeometry.dispose();
     for (const material of this.dropMaterials.values()) material.dispose();
+    this.disposePooledParticleResources();
     this.renderer.dispose();
     // `dispose()` releases Three.js allocations but browsers may retain the
     // context until GC. Explicit loss prevents repeated React mounts/previews

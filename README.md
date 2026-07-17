@@ -1,6 +1,6 @@
 # Blockwild
 
-Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.5.4 The World Below**.
+Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.6.0 Wildframe**.
 
 The project is a real game rather than a voxel-rendering demo. You can mine, build, craft, smelt, farm, fight, collect field notes, manage several worlds, and carry those worlds between browsers with export files.
 
@@ -9,6 +9,14 @@ The project is a real game rather than a voxel-rendering demo. You can mine, bui
 ![Blockwild field guide with all 178 rendered creatures](public/creatures/blockwild-creatures.svg)
 
 The integrated creature-design pass expands the Courser family with Rimehoof, Sunscar, Mirestride, and Starbough ecological breeds plus the forge-built Deepgear Courser. It also gives all six dragon families production stage forms, rebuilds birds, pets, crabs, mosslings, foxes, harts, deer, longhorns, terrapins, and other core wildlife, and preserves one model path for gameplay, Bestiary portraits, and visual audits.
+
+## v1.6.0 Wildframe
+
+Wildframe is an engine-wide performance release that preserves generator-v15 terrain, browser-local saves, multiplayer authority, and the default ten-chunk view. Chunk meshes now pack normals, colors, and UVs at half the former vertex-attribute footprint while retaining full-precision positions. Section lighting reuses a local shade cache, ordinary block and leaf particles share GPU resources, and view distances above twelve chunks use a seam-safe radial streaming window instead of building invisible far-corner chunks. At radius sixteen that trims the visible set from 1,089 to 877 chunks and the retained set from 1,369 to 1,093.
+
+Creature collision, threat search, companion targeting, and other local mob queries now use a deterministic frame-local spatial index instead of repeatedly scanning the entire population. A repeatable 100/200/300-creature benchmark verifies 93.8%/96.8%/97.9% fewer broad-phase candidates while preserving exact distance, vertical overlap, line-of-sight, and source-order semantics. The HUD reuses unchanged Bestiary snapshots, inventory cursor motion bypasses React, avatar previews share one visibility-gated 22 FPS WebGL scheduler, multiplayer polling ignores identical state, environmental audio avoids redundant automation, and autosaves reuse validated document shells without losing cross-tab edits.
+
+Runtime diagnostics now sample simulation time, chunk work, draw calls, triangles, geometries, textures, and visible entities. Run `npm run benchmark:simulation` for the existing deterministic systems workload and `npm run benchmark:spatial` for the scaling broad-phase comparison.
 
 ## v1.5.4 The World Below
 
@@ -286,6 +294,7 @@ blockwild/
 |     |- structures.ts         Temples, groves, sanctuaries, markers, and loot tables
 |     |- projectiles.ts        Visible swept-collision arrow projectiles
 |     |- performance.ts        View-distance policy, sampling, and adaptive budgets
+|     |- spatial-index.ts      Deterministic local broad phase for creature simulation
 |     |- version.ts            Human-visible release identity used by saves and title UI
 |     |- model-specs.ts        Shared box-model specifications and grounding data
 |     |- player-model.ts       Local/remote player model and pose interpolation
@@ -304,6 +313,8 @@ blockwild/
 |  |- render-dragon-magic-audit.ts
 |  |                            Responsive spell/skill interface audit captures
 |  |- benchmark-simulation.ts  Repeatable liquid/POI/weather/chunk CPU benchmark
+|  |- benchmark-spatial-index.ts
+|  |                            Scaling creature broad-phase comparison
 |  |- install-ci.sh            Bounded, locked Sites dependency install
 |  |- build-verified.sh        Bounded Vinext build plus artifact validation
 |  `- validate-artifact.sh     Checks the Worker export and hosting manifest
@@ -361,9 +372,10 @@ For a native PowerShell development loop, `npm ci` followed by `npx vite` can ru
 npm run lint
 npm test
 npm run benchmark:simulation
+npm run benchmark:spatial
 ```
 
-`npm test` first creates and validates the production artifact, then runs the Node test suite. Core coverage includes deterministic generation, cave and river variance, chunk boundaries and streaming, save migration and failure isolation, world options, meshing, lighting, directional torches, farming and orchards, buckets, fences and leads, beds, one-code multiplayer, inventory and crafting, doors, leaves, machines and storage, creature grounding and collision, pathing and follower recovery, husbandry, apiaries, Capture Orbs, conservatories, mounts, dragon lifecycle and combat, spellcasting, rank-1000 progression, player animation, held models, water and boats, weather, map and quest transitions, blueprints, alchemy, faction authority, trade, banking, settlements, and deployment metadata. `npm run benchmark:simulation` separately profiles liquid settling, structure planning, weather/cloud planning, and radius-16 chunk ordering.
+`npm test` first creates and validates the production artifact, then runs the Node test suite. Core coverage includes deterministic generation, cave and river variance, chunk boundaries and streaming, save migration and failure isolation, world options, meshing, lighting, directional torches, farming and orchards, buckets, fences and leads, beds, one-code multiplayer, inventory and crafting, doors, leaves, machines and storage, creature grounding and collision, pathing and follower recovery, husbandry, apiaries, Capture Orbs, conservatories, mounts, dragon lifecycle and combat, spellcasting, rank-1000 progression, player animation, held models, water and boats, weather, map and quest transitions, blueprints, alchemy, faction authority, trade, banking, settlements, and deployment metadata. `npm run benchmark:simulation` profiles deterministic system workloads; `npm run benchmark:spatial` compares exact whole-population and indexed creature broad phases at increasing populations.
 
 The focused release suites cover all 24 biomes, nine atmosphere recipes and atlas ownership, exact 28-POI/6-dungeon catalogs, connected variable dungeon tiles, wrought-door state families, reversible underground traversal, nine adventure-creature rigs, three legendary contracts, HRTF runtime and 54 integrated WAV assets, bounded bird routing, attached rabbit ears, tree topology and full felling, waterlogged flora, renewable water and nonrenewing food liquids, Sugarcourt production, map/weather plans, exact apiary transfers, attuned-orb faint/recall rules, three quest pins, Waygrid capacity/search/overflow/area crafting, host-authoritative reconnect state, trade atomicity, connected variable-sized culture settlements, aquariums, shields, character profiles, Glimmerwood ecology, six golem rigs and their forging/defense contracts, six five-stage dragon families, Sea Dragon nests/charts/incubation, Gold and Silver celestial hatch rites, spellcasting, per-skill Ascendant traits, responsive interfaces, all 178 production-model portraits, and all 46 plant renders.
 

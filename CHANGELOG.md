@@ -2,6 +2,15 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.6.0 - Wildframe - 2026-07-16
+
+- Halved chunk vertex-attribute memory by packing normalized normals, biome/light colors, and UVs while retaining full-precision positions; added section-local shade reuse and shared particle/leaf GPU resources.
+- Added seam-safe radial streaming above twelve chunks. Radius sixteen now keeps 877 visible, 981 generated, and 1,093 retained chunks instead of the former 1,089/1,225/1,369 square windows; ordinary default-distance worlds remain unchanged.
+- Replaced repeated whole-population creature broad phases with a deterministic frame-local spatial index for collision, enemy acquisition, companion response, and raycast lookup. The executable scaling benchmark removes 93.8-97.9% of candidate visits at 100-300 creatures without changing exact filters.
+- Removed high-frequency UI and audio churn through direct frame-coalesced cursor presentation, deduplicated multiplayer view state, a shared visibility-gated avatar renderer, stable Bestiary snapshots, bounded overlay cadence, allocation-free cloud/settlement work, and meaningful-change audio automation.
+- Cached validated world document shells so recurring autosaves avoid reparsing the previous full save, with same-realm revisions and cross-tab invalidation protecting concurrent metadata, options, and catalog changes.
+- Expanded performance diagnostics with simulation, chunk, draw-call, geometry, texture, triangle, chunk, and entity telemetry. Added repeatable spatial scaling coverage and regression gates for streaming boundaries, packed visuals, pooled teardown, light influence margins, storage concurrency, and deterministic ties.
+
 ## 1.5.4 - The World Below - 2026-07-14
 
 - Added bounded crafted-fence enclosure recognition and persistent lead history so ordinary penned creatures remain protected by the ecology sleep system without treating terrain hollows as pens.

@@ -6,7 +6,7 @@ import { renderToString } from "react-dom/server";
 import * as THREE from "three";
 import { createBlueprintState } from "../app/game/blueprints.ts";
 import { BlockId, Item, RECIPES, mirrorRecipePattern } from "../app/game/data.ts";
-import { VoxelEngine, isEditableKeyboardTarget, type InventorySlot } from "../app/game/engine.ts";
+import { VoxelEngine, bestiaryProgressSignature, isEditableKeyboardTarget, type BestiaryProgress, type InventorySlot } from "../app/game/engine.ts";
 import { createAvatarHeldItemModel } from "../app/game/held-items.ts";
 import { MOB_DEFS } from "../app/game/mobs.ts";
 import { BlockPlayerModel, FEMALE_HAIR_COLOR, playerEyeHeightForVariant } from "../app/game/player-model.ts";
@@ -15,6 +15,9 @@ import {
   bestiaryEntryCompletion,
   bestiaryFieldNoteUnlocked,
   bestiaryKindsForFilter,
+  createAvatarPreviewFrameScheduler,
+  createAvatarPreviewRendererPool,
+  createHeldStackPositionController,
   captureOrbUiState,
   clearFirstPersonHeldPresentation,
   healingProgressForOrb,
@@ -22,7 +25,9 @@ import {
   itemHoverText,
   itemIconKind,
   normalizeMultiplayerRoomCode,
+  multiplayerViewStatesEqual,
   normalizeApiaryUiState,
+  observeAvatarPreviewVisibility,
   prepareFirstPersonHeldPresentation,
   recipeMatchesQuery,
   recipeIngredientLabels,
@@ -170,6 +175,175 @@ test("touch controls follow actual input on hybrids and remain available on tabl
   assert.equal(resolveTouchControls("off", { ...hybrid, primaryPointer: "touch" }), false);
 });
 
+test("held inventory stacks coalesce pointer motion without scheduling an inactive cursor", () => {
+  let nextFrame = 1;
+  const pending = new Map<number, () => void>();
+  const controller = createHeldStackPositionController(
+    (callback) => {
+      const frame = nextFrame++;
+      pending.set(frame, callback);
+      return frame;
+    },
+    (frame) => { pending.delete(frame); },
+  );
+  const target = { style: { left: "", top: "", transform: "" } };
+  controller.attach(target);
+  assert.equal(controller.track(90, 110, false), false);
+  assert.equal(pending.size, 0, "ordinary inventory pointer movement must stay off the React/frame path");
+
+  controller.track(12, 24, true);
+  controller.track(36, 48, true);
+  assert.equal(pending.size, 1, "multiple pointer moves should share one animation frame");
+  const frame = [...pending.entries()][0];
+  pending.delete(frame[0]);
+  frame[1]();
+  assert.equal(target.style.left, "0px");
+  assert.equal(target.style.top, "0px");
+  assert.equal(target.style.transform, "translate3d(36px, 48px, 0) translate(-18px, -18px)");
+
+  controller.seed(72, 84);
+  controller.attach(null);
+  controller.attach(target);
+  assert.equal(target.style.transform, "translate3d(72px, 84px, 0) translate(-18px, -18px)", "a newly mounted held stack should start at the initiating pointer");
+  controller.dispose();
+});
+
+test("avatar previews share one capped frame scheduler and skip hidden or disconnected canvases", () => {
+  let nextFrame = 1;
+  const pending = new Map<number, (now: number) => void>();
+  const scheduler = createAvatarPreviewFrameScheduler(
+    (callback) => {
+      const frame = nextFrame++;
+      pending.set(frame, callback);
+      return frame;
+    },
+    (frame) => { pending.delete(frame); },
+    1000 / 22,
+  );
+  const renders: string[] = [];
+  let firstConnected = true;
+  const first = scheduler.register({
+    isConnected: () => firstConnected,
+    render: () => { renders.push("first"); },
+  });
+  const second = scheduler.register({
+    isConnected: () => true,
+    render: () => { renders.push("second"); },
+  }, false);
+  assert.equal(pending.size, 1, "multiple previews must share one pending animation frame");
+
+  const fireFrame = (now: number) => {
+    const frame = pending.entries().next().value as [number, (timestamp: number) => void] | undefined;
+    assert.ok(frame, "a shared frame should be pending");
+    pending.delete(frame[0]);
+    frame[1](now);
+  };
+  fireFrame(0);
+  assert.deepEqual(renders, ["first"]);
+  assert.equal(pending.size, 1);
+  fireFrame(20);
+  assert.deepEqual(renders, ["first"], "the shared loop must remain capped below display refresh rate");
+  fireFrame(50);
+  assert.deepEqual(renders, ["first", "first"]);
+
+  second.setVisible(true);
+  firstConnected = false;
+  fireFrame(100);
+  assert.deepEqual(renders, ["first", "first", "second"], "disconnected previews must not render");
+  second.setVisible(false);
+  assert.equal(pending.size, 0, "the scheduler should sleep when no visible connected preview remains");
+  first.dispose();
+  second.dispose();
+});
+
+test("avatar preview visibility observation is deterministic with a visible fallback", () => {
+  const element = {} as Element;
+  const otherElement = {} as Element;
+  const visibility: boolean[] = [];
+  let observed: Element | null = null;
+  let disconnected = 0;
+  let notify!: (entries: ReadonlyArray<Pick<IntersectionObserverEntry, "intersectionRatio" | "isIntersecting" | "target">>) => void;
+  const stop = observeAvatarPreviewVisibility(element, (visible) => { visibility.push(visible); }, (callback) => {
+    notify = callback;
+    return {
+      observe: (target) => { observed = target; },
+      disconnect: () => { disconnected += 1; },
+    };
+  });
+  assert.equal(observed, element);
+  assert.deepEqual(visibility, [], "an observer-backed preview waits for actual intersection state");
+  notify([{ target: otherElement, isIntersecting: true, intersectionRatio: 1 }]);
+  assert.deepEqual(visibility, []);
+  notify([{ target: element, isIntersecting: false, intersectionRatio: 0 }]);
+  notify([{ target: element, isIntersecting: true, intersectionRatio: 0.5 }]);
+  assert.deepEqual(visibility, [false, true]);
+  stop();
+  assert.equal(disconnected, 1);
+
+  const fallbackVisibility: boolean[] = [];
+  const stopFallback = observeAvatarPreviewVisibility(element, (visible) => { fallbackVisibility.push(visible); }, null);
+  assert.deepEqual(fallbackVisibility, [true], "missing IntersectionObserver support must keep previews usable");
+  stopFallback();
+});
+
+test("avatar preview renderer pool reuses one context across release and reacquire", () => {
+  type FakeRenderer = { id: number; dispose: () => void; forceContextLoss: () => void };
+  let nextRenderer = 1;
+  let nextTimer = 1;
+  let maxLiveContexts = 0;
+  const liveContexts = new Set<number>();
+  const disposed: number[] = [];
+  const contextLosses: number[] = [];
+  const timers = new Map<number, { callback: () => void; delayMs: number }>();
+  const pool = createAvatarPreviewRendererPool<FakeRenderer, number>({
+    createRenderer: () => {
+      const id = nextRenderer++;
+      liveContexts.add(id);
+      maxLiveContexts = Math.max(maxLiveContexts, liveContexts.size);
+      return {
+        id,
+        dispose: () => { disposed.push(id); },
+        forceContextLoss: () => {
+          contextLosses.push(id);
+          liveContexts.delete(id);
+        },
+      };
+    },
+    scheduleRelease: (callback, delayMs) => {
+      const timer = nextTimer++;
+      timers.set(timer, { callback, delayMs });
+      return timer;
+    },
+    cancelRelease: (timer) => { timers.delete(timer); },
+    idleMs: 30_000,
+  });
+
+  const first = pool.acquire();
+  const second = pool.acquire();
+  assert.equal(second, first);
+  assert.equal(nextRenderer, 2, "concurrent previews should create exactly one renderer");
+  pool.release();
+  pool.release();
+  assert.equal(timers.size, 1);
+  assert.equal([...timers.values()][0]?.delayMs, 30_000);
+
+  const reacquired = pool.acquire();
+  assert.equal(reacquired, first, "normal overlay switching should cancel teardown and retain the context");
+  assert.equal(timers.size, 0);
+  pool.release();
+  const expiration = [...timers.entries()][0];
+  assert.ok(expiration);
+  timers.delete(expiration[0]);
+  expiration[1].callback();
+  assert.deepEqual(disposed, [first?.id]);
+  assert.deepEqual(contextLosses, [first?.id]);
+
+  const afterIdle = pool.acquire();
+  assert.notEqual(afterIdle, first);
+  assert.equal(maxLiveContexts, 1, "the pool must never keep two preview WebGL contexts alive");
+  pool.release();
+});
+
 test("multiplayer actions are single-flight and title mode clears first-person held geometry", async () => {
   const gate: SingleFlightGate = { current: null };
   let operationCalls = 0;
@@ -266,8 +440,8 @@ test("workstation UI normalizes apiary production and exact capture-orb metadata
 });
 
 test("human release identity stays separate from save schemas", () => {
-  assert.equal(GAME_VERSION, "1.5.4");
-  assert.equal(GAME_RELEASE_NAME, "The World Below");
+  assert.equal(GAME_VERSION, "1.6.0");
+  assert.equal(GAME_RELEASE_NAME, "Wildframe");
   assert.equal(normalizeGameVersion("garbage"), "0.1.0");
 });
 
@@ -440,4 +614,36 @@ test("field workstations keep four readable orb slots and responsive single-colu
 test("multiplayer room codes remain short and shareable", () => {
   assert.equal(normalizeMultiplayerRoomCode(" wild  trail!! 42 "), "WILDTRAIL42");
   assert.equal(normalizeMultiplayerRoomCode("A".repeat(40)).length, 24);
+});
+
+test("unchanged bestiary HUD snapshots have a stable allocation-free signature", () => {
+  const progress = Object.fromEntries(Object.keys(MOB_DEFS).map((kind) => [kind, {
+    seen: false,
+    kills: 0,
+    captures: 0,
+  }])) as BestiaryProgress;
+  const initial = bestiaryProgressSignature(progress);
+  assert.equal(bestiaryProgressSignature(progress), initial);
+  progress.peelop.seen = true;
+  assert.notEqual(bestiaryProgressSignature(progress), initial);
+  const seen = bestiaryProgressSignature(progress);
+  progress["fire-dragon"].milestones = { hatched: 1 };
+  assert.notEqual(bestiaryProgressSignature(progress), seen);
+});
+
+test("multiplayer polling retains React state when the visible session is unchanged", () => {
+  const state = {
+    supported: true,
+    reasons: [],
+    status: "connected",
+    role: "host" as const,
+    peers: [{ id: "guest", identity: { id: "guest", name: "Trailkeeper" }, state: "connected", latencyMs: 24 }],
+    inviteCode: "WILD-42",
+    answerCode: "",
+    roomCode: "WILD-42",
+    rendezvousStatus: "connected" as const,
+    error: null,
+  };
+  assert.equal(multiplayerViewStatesEqual(state, structuredClone(state)), true);
+  assert.equal(multiplayerViewStatesEqual(state, { ...structuredClone(state), peers: [{ ...state.peers[0], latencyMs: 25 }] }), false);
 });

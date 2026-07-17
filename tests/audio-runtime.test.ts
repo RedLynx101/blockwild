@@ -7,6 +7,7 @@ import {
   MAX_ACTIVE_SAMPLE_VOICES,
   SAMPLE_ASSETS,
   SynthAudio,
+  audioTargetChanged,
   effectiveMusicVolume,
   environmentCrossfadeTimeConstant,
   environmentLoopMix,
@@ -153,6 +154,64 @@ test("environment selection crossfades coherent outdoor, cave, ocean, and winter
   assert.equal(winterCoast.wind, 0);
   assert.ok(winterCoast.winterWind > 0 && winterCoast.ocean > 0 && winterCoast.swimming > 0);
   assert.ok(environmentCrossfadeTimeConstant(0.1, 0.8) < environmentCrossfadeTimeConstant(0.8, 0.1), "ambience should arrive faster than it fades away");
+});
+
+test("steady ambience and depth targets do not reschedule WebAudio automation", () => {
+  const scheduled: Array<{ channel: string; target: number }> = [];
+  const parameter = (channel: string) => ({
+    value: 0,
+    setTargetAtTime(target: number) { scheduled.push({ channel, target }); },
+  }) as unknown as AudioParam;
+  const gain = (channel: string) => ({ gain: parameter(channel) }) as GainNode;
+  const audio = new SynthAudio({ volume: 1, muted: false });
+  audio.context = { currentTime: 3, state: "running" } as AudioContext;
+  audio.ambienceGain = gain("depth");
+  audio.rainGain = gain("rain");
+  audio.environmentGains.set("wind", gain("wind"));
+  audio.environmentSources.set("wind", {} as AudioBufferSourceNode);
+
+  audio.setDepth(12, 0.5);
+  audio.setDepth(12, 0.5);
+  audio.setDepth(12, 0.5005);
+  assert.equal(scheduled.filter(({ channel }) => channel === "depth").length, 1);
+  assert.equal(scheduled.filter(({ channel }) => channel === "rain").length, 1);
+
+  const environment = (wind: number) => ({ rain: 0, skyExposure: 1, night: 0, wind, winter: 0, cave: 0, ocean: 0, swimming: 0 });
+  audio.setEnvironment(environment(0.8));
+  audio.setEnvironment(environment(0.8));
+  audio.setEnvironment(environment(0.8005));
+  audio.setEnvironment(environment(0.9));
+  assert.equal(scheduled.filter(({ channel }) => channel === "wind").length, 2);
+  assert.equal(audioTargetChanged(0.8, 0.8005), false);
+  assert.equal(audioTargetChanged(0.8, 0.9), true);
+});
+
+test("music mixing touches only the active or fading scene", () => {
+  const audio = new SynthAudio({ volume: 1, musicVolume: 1, muted: false });
+  const base = effectiveMusicVolume(audio.settings);
+  const element = (initialVolume: number, initiallyPaused: boolean) => {
+    let volume = initialVolume;
+    let paused = initiallyPaused;
+    let writes = 0;
+    const value = {
+      get volume() { return volume; },
+      set volume(next: number) { writes += 1; volume = next; },
+      get paused() { return paused; },
+      pause() { paused = true; },
+    } as unknown as HTMLAudioElement;
+    return { value, writes: () => writes };
+  };
+  const active = element(base, false);
+  const fading = element(0.2, false);
+  const dormant = element(0, true);
+  audio.music.set("day", active.value);
+  audio.music.set("night", fading.value);
+  audio.music.set("sea", dormant.value);
+
+  audio.mixMusic(false, 0.25);
+  assert.equal(active.writes(), 0, "an active scene already at target should not receive a redundant media write");
+  assert.equal(dormant.writes(), 0, "a silent paused scene should stay outside the mix loop");
+  assert.equal(fading.writes(), 1, "the outgoing scene must continue its fade");
 });
 
 test("engine integration updates the listener and routes authored cues through world events", () => {

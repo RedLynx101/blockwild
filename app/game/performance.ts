@@ -84,6 +84,9 @@ export type PerformanceSample = Readonly<{
   visibleChunks?: number;
   simulatedEntities?: number;
   triangles?: number;
+  drawCalls?: number;
+  geometries?: number;
+  textures?: number;
 }>;
 
 export type PerformanceSummary = Readonly<{
@@ -99,6 +102,9 @@ export type PerformanceSummary = Readonly<{
   peakVisibleChunks: number;
   peakSimulatedEntities: number;
   peakTriangles: number;
+  peakDrawCalls: number;
+  peakGeometries: number;
+  peakTextures: number;
 }>;
 
 const percentile = (sorted: readonly number[], fraction: number) => {
@@ -133,6 +139,9 @@ export class PerformanceSampler {
       visibleChunks: Math.max(0, Math.round(sample.visibleChunks ?? 0)),
       simulatedEntities: Math.max(0, Math.round(sample.simulatedEntities ?? 0)),
       triangles: Math.max(0, Math.round(sample.triangles ?? 0)),
+      drawCalls: Math.max(0, Math.round(sample.drawCalls ?? 0)),
+      geometries: Math.max(0, Math.round(sample.geometries ?? 0)),
+      textures: Math.max(0, Math.round(sample.textures ?? 0)),
     };
     if (this.samples.length < this.capacity) this.samples.push(normalized);
     else {
@@ -162,6 +171,9 @@ export class PerformanceSampler {
       peakVisibleChunks: max((sample) => sample.visibleChunks ?? 0),
       peakSimulatedEntities: max((sample) => sample.simulatedEntities ?? 0),
       peakTriangles: max((sample) => sample.triangles ?? 0),
+      peakDrawCalls: max((sample) => sample.drawCalls ?? 0),
+      peakGeometries: max((sample) => sample.geometries ?? 0),
+      peakTextures: max((sample) => sample.textures ?? 0),
     };
   }
 }

@@ -26,7 +26,7 @@ import {
   type WorldSave,
 } from "../app/game/engine.ts";
 import { harvestPlant } from "../app/game/farming.ts";
-import { BAKED_LIGHT_SOURCE_LIMIT, ChunkWorld, BIOME_NAMES, GENERATOR_VERSION, GLASS_OPACITY, LIQUID_SURFACE_INSET, MAX_Y, MIN_Y, SECTION_HEIGHT, WORLD_HEIGHT, bakedEnvironmentLightShade, blockIndex, chunkKey, environmentSkyShade, liquidSurfaceInsetForCell, splitCoordinate } from "../app/game/world.ts";
+import { BAKED_LIGHT_SOURCE_LIMIT, ChunkWorld, BIOME_NAMES, BiomeId, GENERATOR_VERSION, GLASS_OPACITY, LIQUID_SURFACE_INSET, MAX_Y, MIN_Y, PACKED_VERTEX_COLOR_RANGE, RADIAL_STREAMING_DISTANCE_THRESHOLD, SECTION_HEIGHT, WORLD_HEIGHT, bakedEnvironmentLightShade, blockIndex, chunkAabbRadialDistanceSquared, chunkKey, chunkWithinStreamingRadius, chunksWithinStreamingRadius, environmentSkyShade, liquidSurfaceInsetForCell, splitCoordinate } from "../app/game/world.ts";
 import { MOB_DEFS, MOB_ORDER } from "../app/game/mobs.ts";
 import { createHeldToolSpec, createRidgebackSpec, createZombieSpec, INSPECTOR_MODEL_SPECS, RIDGEBACK_GROUND_LIFT } from "../app/game/model-specs.ts";
 
@@ -443,6 +443,110 @@ test("spawn search finds dry, walkable land across varied seeds", () => {
   engine.world.dispose();
 });
 
+test("high-distance chunk AABB windows have exact counts and preserve cardinal and seam halos", () => {
+  assert.equal(RADIAL_STREAMING_DISTANCE_THRESHOLD, 12);
+  assert.equal(chunksWithinStreamingRadius(10, false), 441, "the default square policy remains unchanged");
+  assert.equal(chunksWithinStreamingRadius(12, false), 625, "distance twelve still uses the legacy square policy");
+  assert.deepEqual([13, 14, 15, 16].map((radius) => chunksWithinStreamingRadius(radius, true)), [593, 673, 777, 877]);
+  assert.deepEqual([13, 14, 15, 16].map((radius) => chunksWithinStreamingRadius(radius + 1, true)), [673, 777, 877, 981], "the generation halo remains one chunk wider");
+  assert.deepEqual([13, 14, 15, 16].map((radius) => chunksWithinStreamingRadius(radius + 2, true)), [777, 877, 981, 1093], "the default retention padding remains two chunks wider");
+
+  assert.equal(chunkAabbRadialDistanceSquared(13, 0), 12.5 ** 2);
+  assert.equal(chunkWithinStreamingRadius(13, 0, 13, true), true, "the complete cardinal radius must remain visible");
+  assert.equal(chunkWithinStreamingRadius(9, 9, 13, true), true, "a diagonal chunk whose AABB reaches the radius remains visible");
+  assert.equal(chunkWithinStreamingRadius(10, 10, 13, true), false, "a diagonal AABB wholly beyond the radius is clipped");
+  assert.equal(chunkWithinStreamingRadius(10, 10, 10, false), true, "the default-distance corner stays square");
+
+  for (const radius of [13, 14, 15, 16]) {
+    for (let offsetX = -radius; offsetX <= radius; offsetX += 1) {
+      for (let offsetZ = -radius; offsetZ <= radius; offsetZ += 1) {
+        if (!chunkWithinStreamingRadius(offsetX, offsetZ, radius, true)) continue;
+        for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          assert.equal(chunkWithinStreamingRadius(offsetX + dx, offsetZ + dz, radius + 1, true), true, `missing ${radius}-chunk seam halo at ${offsetX + dx},${offsetZ + dz}`);
+        }
+      }
+    }
+  }
+});
+
+test("high-distance generation order re-centers deterministically after a teleport", () => {
+  const world = new ChunkWorld();
+  world.reset("RADIAL-QUEUE-TELEPORT", undefined, { structures: false });
+  world.setRenderDistance(13);
+  world.scheduleAround(0, 0, true);
+  assert.equal(world.generationQueue.length, 673);
+  assert.equal(world.generationQueued.size, world.generationQueue.length);
+  assert.deepEqual(world.generationQueue.at(-1), { cx: 0, cz: 0, distance: 0 }, "generation still starts at the player chunk");
+  assert.equal(world.generationQueued.has(chunkKey(14, 0)), true, "the cardinal generation halo is retained");
+  assert.equal(world.generationQueued.has(chunkKey(14, 14)), false, "the guaranteed-clipped halo corner is omitted");
+  const initialOrder = world.generationQueue.map((entry) => ({ cx: entry.cx, cz: entry.cz, distance: entry.distance }));
+
+  const teleportCx = 100;
+  const teleportCz = -100;
+  world.scheduleAround(teleportCx * 16, teleportCz * 16, true);
+  assert.equal(world.generationQueue.length, 673);
+  assert.equal(world.generationQueued.size, world.generationQueue.length);
+  assert.ok(world.generationQueue.every((entry) => chunkWithinStreamingRadius(entry.cx - teleportCx, entry.cz - teleportCz, 14, true)));
+  assert.deepEqual(
+    world.generationQueue.map((entry) => ({ cx: entry.cx - teleportCx, cz: entry.cz - teleportCz, distance: entry.distance })),
+    initialOrder,
+    "relative generation order must not depend on the prior streaming center",
+  );
+  world.dispose();
+});
+
+test("high-distance visibility retains radial edge chunks without meshing clipped diagonals", () => {
+  const legacy = new ChunkWorld();
+  legacy.reset("DEFAULT-SQUARE-CORNER", undefined, { structures: false });
+  legacy.setRenderDistance(10);
+  const legacyCorner = legacy.generateChunk(10, 10);
+  legacy.scheduleAround(0, 0, true);
+  assert.equal(legacyCorner.group.visible, true, "distance ten keeps the established square corner");
+  legacy.dispose();
+
+  const world = new ChunkWorld();
+  world.reset("RADIAL-VISIBILITY", undefined, { structures: false });
+  world.setRenderDistance(13);
+  const cardinalEdge = world.generateChunk(13, 0);
+  const diagonalEdge = world.generateChunk(9, 9);
+  const retainedDiagonal = world.generateChunk(10, 10);
+  const cardinalHalo = world.generateChunk(14, 0);
+  const clippedCornerKey = world.generateChunk(13, 13).key;
+  world.scheduleAround(0, 0, true);
+
+  assert.equal(cardinalEdge.group.visible, true);
+  assert.equal(diagonalEdge.group.visible, true);
+  assert.equal(retainedDiagonal.group.visible, false);
+  assert.equal(cardinalHalo.group.visible, false);
+  assert.equal(world.chunks.has(retainedDiagonal.key), true, "the remesh/retention margin remains available");
+  assert.equal(world.chunks.has(cardinalHalo.key), true, "the generation halo remains resident but hidden");
+  assert.equal(world.chunks.has(clippedCornerKey), false, "a corner beyond even the padded radial window is unloaded");
+  assert.equal([...world.meshQueued].some((entry) => entry.startsWith(`${retainedDiagonal.key}:`) || entry.startsWith(`${cardinalHalo.key}:`)), false, "hidden radial chunks must not consume mesh work");
+  world.dispose();
+});
+
+test("the radial generation halo remeshes its visible cardinal neighbor", () => {
+  const world = new ChunkWorld();
+  world.reset("RADIAL-REMESH-HALO", undefined, { structures: false });
+  world.setRenderDistance(13);
+  const visibleEdge = world.generateChunk(13, 0);
+  world.scheduleAround(0, 0, true);
+  world.generationQueue = [{ cx: 14, cz: 0, distance: 13.5 }];
+  world.generationQueued = new Set([chunkKey(14, 0)]);
+  world.meshQueue = [];
+  world.meshQueueHead = 0;
+  world.meshQueued.clear();
+  world.urgentMeshQueue = [];
+  world.urgentMeshQueueHead = 0;
+  world.urgentMeshQueued.clear();
+
+  const halo = world.processGeneration();
+  assert.equal(halo?.group.visible, false);
+  assert.equal([...world.meshQueued].some((entry) => entry.startsWith(`${visibleEdge.key}:`)), true, "the hidden halo must remesh its visible seam neighbor");
+  assert.equal([...world.meshQueued].some((entry) => entry.startsWith(`${halo?.key}:`)), false, "the hidden halo itself must not be meshed");
+  world.dispose();
+});
+
 test("streaming queues re-center after a long-distance jump", () => {
   const world = new ChunkWorld();
   world.reset("QUEUE-REBASE");
@@ -570,6 +674,101 @@ test("adjacent blocks across a chunk seam do not render hidden faces", () => {
   world.dispose();
 });
 
+test("chunk meshes pack normalized attributes without losing UV or bright biome tint ranges", () => {
+  const world = new ChunkWorld();
+  world.reset("PACKED-CHUNK-ATTRIBUTES", undefined, { structures: false });
+  const chunk = world.generateChunk(0, 0);
+  chunk.blocks.fill(BlockId.Air);
+  chunk.sectionBlockCounts.fill(0);
+  chunk.lightIndices.clear();
+  chunk.skyTops.fill(MIN_Y - 1);
+  chunk.biomes.fill(BiomeId.Desert);
+  world.setBlock(2, 0, 2, BlockId.Stone, false, false);
+  world.setBlock(4, 0, 2, BlockId.TorchWallEast, false, false);
+  const section = Math.floor((0 - MIN_Y) / SECTION_HEIGHT);
+  world.rebuildSection(chunk, section);
+
+  const geometry = chunk.sections.get(section)?.opaque?.geometry;
+  assert.ok(geometry);
+  const position = geometry.getAttribute("position") as THREE.BufferAttribute;
+  const normal = geometry.getAttribute("normal") as THREE.BufferAttribute;
+  const color = geometry.getAttribute("color") as THREE.BufferAttribute;
+  const uv = geometry.getAttribute("uv") as THREE.BufferAttribute;
+  assert.ok(position.array instanceof Float32Array, "positions retain full world-space precision");
+  assert.ok(normal.array instanceof Int8Array);
+  assert.ok(color.array instanceof Uint8Array);
+  assert.ok(uv.array instanceof Uint16Array);
+  assert.equal(normal.normalized, true);
+  assert.equal(color.normalized, true);
+  assert.equal(uv.normalized, true);
+
+  const upwardVertex = Array.from({ length: normal.count }, (_, index) => index).find((index) => normal.getY(index) > 0.99);
+  assert.notEqual(upwardVertex, undefined);
+  assert.ok(Math.abs(normal.getY(upwardVertex!) - 1) < 1e-9, "axis normals survive signed-byte packing exactly");
+  assert.ok(Math.abs(color.getX(upwardVertex!) * PACKED_VERTEX_COLOR_RANGE - 1.1) <= PACKED_VERTEX_COLOR_RANGE / 255, "the overbright desert tint survives byte packing");
+  assert.equal((world.materials.opaque as THREE.MeshLambertMaterial).color.r, PACKED_VERTEX_COLOR_RANGE, "the material restores packed color headroom");
+
+  const spriteNormal = chunk.sections.get(section)?.emissive?.geometry.getAttribute("normal") as THREE.BufferAttribute;
+  assert.ok(spriteNormal.array instanceof Int8Array);
+  const angledVertex = Array.from({ length: spriteNormal.count }, (_, index) => index).find((index) => (
+    Math.abs(spriteNormal.getX(index)) > 0.05 && Math.abs(spriteNormal.getX(index)) < 0.95
+  ));
+  assert.notEqual(angledVertex, undefined);
+  const packedNormalLength = Math.hypot(spriteNormal.getX(angledVertex!), spriteNormal.getY(angledVertex!), spriteNormal.getZ(angledVertex!));
+  assert.ok(Math.abs(packedNormalLength - 1) < 0.01, "angled sprite normals stay unit-length within signed-byte precision");
+
+  const tile = BLOCKS[BlockId.Stone].side;
+  const expectedUvs = [
+    (tile % 16) / 16 + 0.0008,
+    1 - (Math.floor(tile / 16) + 1) / 16 + 0.0008,
+    (tile % 16 + 1) / 16 - 0.0008,
+    1 - Math.floor(tile / 16) / 16 - 0.0008,
+  ];
+  for (let index = 0; index < Math.min(4, uv.count); index += 1) {
+    assert.ok(expectedUvs.some((value) => Math.abs(uv.getX(index) - value) <= 1 / 65535), "packed U remains within one 16-bit quantization step");
+    assert.ok(expectedUvs.some((value) => Math.abs(uv.getY(index) - value) <= 1 / 65535), "packed V remains within one 16-bit quantization step");
+  }
+  world.dispose();
+});
+
+test("section-local shade caching expires on every rebuild", () => {
+  const world = new ChunkWorld();
+  world.reset("SECTION-SHADE-CACHE", undefined, { structures: false });
+  const chunk = world.generateChunk(0, 0);
+  chunk.blocks.fill(BlockId.Air);
+  chunk.sectionBlockCounts.fill(0);
+  chunk.lightIndices.clear();
+  chunk.skyTops.fill(MIN_Y - 1);
+  world.setBlock(3, 0, 3, BlockId.Stone, false, false);
+  world.setBlock(3, 6, 3, BlockId.Stone, false, false);
+  const section = Math.floor((0 - MIN_Y) / SECTION_HEIGHT);
+  const stoneTopRed = () => {
+    world.rebuildSection(chunk, section);
+    const geometry = chunk.sections.get(section)?.opaque?.geometry;
+    assert.ok(geometry);
+    const position = geometry.getAttribute("position") as THREE.BufferAttribute;
+    const normal = geometry.getAttribute("normal") as THREE.BufferAttribute;
+    const color = geometry.getAttribute("color") as THREE.BufferAttribute;
+    const vertex = Array.from({ length: position.count }, (_, index) => index).find((index) => (
+      normal.getY(index) > 0.99
+      && Math.abs(position.getY(index) - 0.5) < 1e-6
+      && position.getX(index) >= 2.5 && position.getX(index) <= 3.5
+      && position.getZ(index) >= 2.5 && position.getZ(index) <= 3.5
+    ));
+    assert.notEqual(vertex, undefined);
+    return color.getX(vertex!);
+  };
+
+  const caveShade = stoneTopRed();
+  world.setBlock(4, 1, 3, BlockId.Torch, false, false);
+  const litShade = stoneTopRed();
+  assert.ok(litShade > caveShade + 0.2, "a newly placed torch must invalidate the prior build's shade values");
+  world.setBlock(4, 1, 3, BlockId.Air, false, false);
+  const restoredShade = stoneTopRed();
+  assert.ok(Math.abs(restoredShade - caveShade) <= 1 / 255, "removing the torch must not reuse the lit build's shade values");
+  world.dispose();
+});
+
 test("partial block shapes preserve the full cube faces beside them", () => {
   const world = new ChunkWorld();
   world.reset("PARTIAL-FACE");
@@ -628,6 +827,27 @@ test("placed lights bake an order-of-magnitude larger static pool without washin
   assert.equal(distantCave, 0.38);
   assert.equal(bakedEnvironmentLightShade(1, 1, 2, 0, torch), 1, "baked lights must not over-brighten daylight");
   assert.ok(bakedEnvironmentLightShade(0.38, 8, 2, 0, [{ x: 0, y: 2, z: 0, type: BlockId.Lava }]) > 0.5, "lava should cast useful baked light");
+
+  const mixedLights = [
+    { x: 3, y: -2, z: 7, type: BlockId.Torch },
+    { x: -4, y: 4, z: 2, type: BlockId.Lava },
+    { x: 30, y: 4, z: 2, type: BlockId.LightningBugJar },
+  ];
+  const legacyReference = (baseShade: number, x: number, y: number, z: number) => {
+    let shade = baseShade;
+    for (const source of mixedLights) {
+      const radius = source.type === BlockId.Lava ? 18 : source.type === BlockId.LightningBugJar ? 10 : 16;
+      const distance = Math.hypot(source.x + 0.5 - x, source.y + 0.55 - y, source.z + 0.5 - z);
+      if (distance >= radius) continue;
+      const attenuation = 1 - distance / radius;
+      shade = Math.max(shade, 0.38 + attenuation * attenuation * 0.62);
+      if (shade >= 0.995) return 1;
+    }
+    return Math.max(0.38, Math.min(1, shade));
+  };
+  for (const [x, y, z] of [[2, 0, 5], [-1, 3, 2], [40, 4, 2], [3.5, -1.45, 7.5]]) {
+    assert.ok(Math.abs(bakedEnvironmentLightShade(0.38, x, y, z, mixedLights) - legacyReference(0.38, x, y, z)) < 1e-12);
+  }
 });
 
 test("every directional torch and a placed lava pool enter the nearest-first light index", () => {

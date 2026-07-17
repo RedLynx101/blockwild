@@ -47,11 +47,21 @@ test("chunk estimates and streaming order are exact", () => {
 
 test("the fixed sampler reports percentiles and adaptive pressure", () => {
   const smooth = new PerformanceSampler(60);
-  for (let index = 0; index < 60; index += 1) smooth.record({ frameMilliseconds: 10, visibleChunks: 441, triangles: 120_000 });
+  for (let index = 0; index < 60; index += 1) smooth.record({
+    frameMilliseconds: 10,
+    visibleChunks: 441,
+    triangles: 120_000,
+    drawCalls: 780,
+    geometries: 640,
+    textures: 38,
+  });
   const smoothSummary = smooth.summary();
   assert.equal(smoothSummary.sampleCount, 60);
   assert.equal(smoothSummary.framesPerSecond, 100);
   assert.equal(smoothSummary.peakVisibleChunks, 441);
+  assert.equal(smoothSummary.peakDrawCalls, 780);
+  assert.equal(smoothSummary.peakGeometries, 640);
+  assert.equal(smoothSummary.peakTextures, 38);
   assert.equal(classifyBudgetPressure(smoothSummary), "headroom");
   assert.ok(recommendFrameWorkBudget(smoothSummary).liquidOperations > DEFAULT_FRAME_WORK_BUDGET.liquidOperations);
 

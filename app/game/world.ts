@@ -446,6 +446,28 @@ type GeometryBucket = {
   indices: number[];
 };
 
+// Biome tints deliberately use a little overbright headroom. Packing colors
+// relative to this range preserves those tints while allowing normalized bytes.
+export const PACKED_VERTEX_COLOR_RANGE = 1.1;
+
+function packSnorm8(values: readonly number[]) {
+  const packed = new Int8Array(values.length);
+  for (let index = 0; index < values.length; index += 1) packed[index] = Math.round(clamp(values[index], -1, 1) * 127);
+  return packed;
+}
+
+function packColorUnorm8(values: readonly number[]) {
+  const packed = new Uint8Array(values.length);
+  for (let index = 0; index < values.length; index += 1) packed[index] = Math.round(clamp(values[index] / PACKED_VERTEX_COLOR_RANGE, 0, 1) * 255);
+  return packed;
+}
+
+function packUnorm16(values: readonly number[]) {
+  const packed = new Uint16Array(values.length);
+  for (let index = 0; index < values.length; index += 1) packed[index] = Math.round(clamp(values[index], 0, 1) * 65535);
+  return packed;
+}
+
 export type ChunkEditSave = Record<string, Array<[number, number]>>;
 
 const FACES: Face[] = [
@@ -772,9 +794,12 @@ export function bakedEnvironmentLightShade(baseShade: number, x: number, y: numb
   let shade = baseShade;
   for (const source of sources) {
     const radius = source.type === BlockId.DeepgearLantern ? BAKED_LIGHT_RADIUS : source.type === BlockId.Lava ? 18 : source.type === BlockId.LightningBugJar ? 10 : TORCH_BLOCKS.includes(source.type) ? 16 : 15;
-    const distance = Math.hypot(source.x + 0.5 - x, source.y + 0.55 - y, source.z + 0.5 - z);
-    if (distance >= radius) continue;
-    const attenuation = 1 - distance / radius;
+    const dx = source.x + 0.5 - x;
+    const dy = source.y + 0.55 - y;
+    const dz = source.z + 0.5 - z;
+    const distanceSquared = dx * dx + dy * dy + dz * dz;
+    if (distanceSquared >= radius * radius) continue;
+    const attenuation = 1 - Math.sqrt(distanceSquared) / radius;
     // Preserve a dim cave floor outside the core while allowing a nearby
     // lantern or torch to reveal the original block color clearly.
     shade = Math.max(shade, 0.38 + attenuation * attenuation * 0.62);
@@ -1072,6 +1097,39 @@ export function surfaceRegionAt(seed: number, x: number, z: number, temperature 
 
 export function chunkKey(cx: number, cz: number) {
   return `${cx},${cz}`;
+}
+
+/** High view distances use a radial window; defaults retain their exact square policy. */
+export const RADIAL_STREAMING_DISTANCE_THRESHOLD = 12;
+
+/** Squared distance, in chunk units, from the player chunk center to a target chunk AABB. */
+export function chunkAabbRadialDistanceSquared(offsetX: number, offsetZ: number) {
+  const nearestX = Math.max(0, Math.abs(offsetX) - 0.5);
+  const nearestZ = Math.max(0, Math.abs(offsetZ) - 0.5);
+  return nearestX * nearestX + nearestZ * nearestZ;
+}
+
+export function chunkWithinStreamingRadius(offsetX: number, offsetZ: number, radius: number, radial: boolean) {
+  if (!radial) return Math.max(Math.abs(offsetX), Math.abs(offsetZ)) <= radius;
+  return chunkAabbRadialDistanceSquared(offsetX, offsetZ) <= radius * radius;
+}
+
+export function chunksWithinStreamingRadius(radius: number, radial: boolean) {
+  const boundedRadius = Math.max(0, Math.floor(radius));
+  if (!radial) return (boundedRadius * 2 + 1) ** 2;
+  let count = 0;
+  for (let offsetX = -boundedRadius; offsetX <= boundedRadius; offsetX += 1) {
+    for (let offsetZ = -boundedRadius; offsetZ <= boundedRadius; offsetZ += 1) {
+      if (chunkWithinStreamingRadius(offsetX, offsetZ, boundedRadius, true)) count += 1;
+    }
+  }
+  return count;
+}
+
+function chunkStreamingSortDistance(offsetX: number, offsetZ: number, radial: boolean) {
+  return radial
+    ? chunkAabbRadialDistanceSquared(offsetX, offsetZ)
+    : Math.max(Math.abs(offsetX), Math.abs(offsetZ));
 }
 
 export function splitCoordinate(value: number) {
@@ -1896,6 +1954,11 @@ export class ChunkWorld {
       glass: new THREE.MeshLambertMaterial({ map: this.atlas, vertexColors: true, transparent: true, opacity: GLASS_OPACITY, depthWrite: false, side: THREE.DoubleSide }),
       emissive: new THREE.MeshLambertMaterial({ map: this.atlas, vertexColors: true, alphaTest: 0.2, side: THREE.DoubleSide, emissive: new THREE.Color(0xffffff), emissiveMap: this.atlas, emissiveIntensity: 0.72 }),
     };
+    // Packed vertex colors are stored as color / 1.1. Restoring that scale on
+    // the shared material keeps the existing overbright biome tint contract.
+    for (const material of Object.values(this.materials)) {
+      if (material instanceof THREE.MeshLambertMaterial) material.color.setScalar(PACKED_VERTEX_COLOR_RANGE);
+    }
   }
 
   /** Redraws only the 16px water tile; the shared atlas then animates every water face in one upload. */
@@ -1995,9 +2058,10 @@ export class ChunkWorld {
     this.playerChunkX = cx;
     this.playerChunkZ = cz;
     const generationRadius = this.renderDistance + 1;
+    const radialStreaming = this.renderDistance > RADIAL_STREAMING_DISTANCE_THRESHOLD;
     this.generationQueue = this.generationQueue
-      .filter((entry) => !this.chunks.has(chunkKey(entry.cx, entry.cz)) && Math.max(Math.abs(entry.cx - cx), Math.abs(entry.cz - cz)) <= generationRadius)
-      .map((entry) => ({ ...entry, distance: Math.max(Math.abs(entry.cx - cx), Math.abs(entry.cz - cz)) }));
+      .filter((entry) => !this.chunks.has(chunkKey(entry.cx, entry.cz)) && chunkWithinStreamingRadius(entry.cx - cx, entry.cz - cz, generationRadius, radialStreaming))
+      .map((entry) => ({ ...entry, distance: chunkStreamingSortDistance(entry.cx - cx, entry.cz - cz, radialStreaming) }));
     this.generationQueued = new Set(this.generationQueue.map((entry) => chunkKey(entry.cx, entry.cz)));
     const activeMeshQueued = this.meshQueued;
     const seenMeshEntries = new Set<string>();
@@ -2006,7 +2070,7 @@ export class ChunkWorld {
       if (!activeMeshQueued.has(queueKey) || seenMeshEntries.has(queueKey)) return false;
       const chunk = this.chunks.get(entry.key);
       if (!chunk) return false;
-      if (Math.max(Math.abs(chunk.cx - cx), Math.abs(chunk.cz - cz)) > this.renderDistance) return false;
+      if (!chunkWithinStreamingRadius(chunk.cx - cx, chunk.cz - cz, this.renderDistance, radialStreaming)) return false;
       seenMeshEntries.add(queueKey);
       return true;
     });
@@ -2014,9 +2078,13 @@ export class ChunkWorld {
     this.meshQueue.sort((a, b) => {
       const chunkA = this.chunks.get(a.key);
       const chunkB = this.chunks.get(b.key);
-      const distanceA = chunkA ? Math.max(Math.abs(chunkA.cx - cx), Math.abs(chunkA.cz - cz)) : Infinity;
-      const distanceB = chunkB ? Math.max(Math.abs(chunkB.cx - cx), Math.abs(chunkB.cz - cz)) : Infinity;
-      return distanceA - distanceB;
+      const distanceA = chunkA ? chunkStreamingSortDistance(chunkA.cx - cx, chunkA.cz - cz, radialStreaming) : Infinity;
+      const distanceB = chunkB ? chunkStreamingSortDistance(chunkB.cx - cx, chunkB.cz - cz, radialStreaming) : Infinity;
+      if (!radialStreaming) return distanceA - distanceB;
+      return distanceA - distanceB
+        || (chunkA?.cx ?? Infinity) - (chunkB?.cx ?? Infinity)
+        || (chunkA?.cz ?? Infinity) - (chunkB?.cz ?? Infinity)
+        || a.section - b.section;
     });
     this.meshQueued = new Set(this.meshQueue.map((entry) => `${entry.key}:${entry.section}`));
     const activeUrgentMeshQueued = this.urgentMeshQueued;
@@ -2026,7 +2094,7 @@ export class ChunkWorld {
       if (!activeUrgentMeshQueued.has(queueKey) || seenUrgentMeshEntries.has(queueKey)) return false;
       const chunk = this.chunks.get(entry.key);
       if (!chunk) return false;
-      if (Math.max(Math.abs(chunk.cx - cx), Math.abs(chunk.cz - cz)) > this.renderDistance) return false;
+      if (!chunkWithinStreamingRadius(chunk.cx - cx, chunk.cz - cz, this.renderDistance, radialStreaming)) return false;
       seenUrgentMeshEntries.add(queueKey);
       return true;
     });
@@ -2034,13 +2102,14 @@ export class ChunkWorld {
     this.urgentMeshQueued = new Set(this.urgentMeshQueue.map((entry) => `${entry.key}:${entry.section}`));
     for (let dx = -generationRadius; dx <= generationRadius; dx += 1) {
       for (let dz = -generationRadius; dz <= generationRadius; dz += 1) {
+        if (!chunkWithinStreamingRadius(dx, dz, generationRadius, radialStreaming)) continue;
         const key = chunkKey(cx + dx, cz + dz);
-        const distance = Math.max(Math.abs(dx), Math.abs(dz));
+        const distance = chunkStreamingSortDistance(dx, dz, radialStreaming);
         const chunk = this.chunks.get(key);
         if (!chunk && !this.generationQueued.has(key)) {
           this.generationQueue.push({ cx: cx + dx, cz: cz + dz, distance });
           this.generationQueued.add(key);
-        } else if (chunk && distance <= this.renderDistance) {
+        } else if (chunk && chunkWithinStreamingRadius(dx, dz, this.renderDistance, radialStreaming)) {
           chunk.group.visible = true;
           for (let section = 0; section < SECTION_COUNT; section += 1) {
             if (chunk.dirty.has(section) || (!chunk.sections.has(section) && chunk.sectionBlockCounts[section] > 0)) this.queueMesh(key, section);
@@ -2048,13 +2117,16 @@ export class ChunkWorld {
         }
       }
     }
-    this.generationQueue.sort((a, b) => b.distance - a.distance);
+    this.generationQueue.sort((a, b) => radialStreaming
+      ? b.distance - a.distance || b.cx - a.cx || b.cz - a.cz
+      : b.distance - a.distance);
 
     const retainRadius = this.renderDistance + this.retentionPadding;
     for (const [key, chunk] of this.chunks.entries()) {
-      const distance = Math.max(Math.abs(chunk.cx - cx), Math.abs(chunk.cz - cz));
-      if (distance > retainRadius) this.unloadChunk(key);
-      else chunk.group.visible = distance <= this.renderDistance;
+      const offsetX = chunk.cx - cx;
+      const offsetZ = chunk.cz - cz;
+      if (!chunkWithinStreamingRadius(offsetX, offsetZ, retainRadius, radialStreaming)) this.unloadChunk(key);
+      else chunk.group.visible = chunkWithinStreamingRadius(offsetX, offsetZ, this.renderDistance, radialStreaming);
     }
   }
 
@@ -2065,9 +2137,11 @@ export class ChunkWorld {
     this.generationQueued.delete(key);
     if (this.chunks.has(key)) return;
     const chunk = this.generateChunk(next.cx, next.cz);
-    const distance = Math.max(Math.abs(next.cx - this.playerChunkX), Math.abs(next.cz - this.playerChunkZ));
-    chunk.group.visible = distance <= this.renderDistance;
-    if (distance <= this.renderDistance) {
+    const offsetX = next.cx - this.playerChunkX;
+    const offsetZ = next.cz - this.playerChunkZ;
+    const radialStreaming = this.renderDistance > RADIAL_STREAMING_DISTANCE_THRESHOLD;
+    chunk.group.visible = chunkWithinStreamingRadius(offsetX, offsetZ, this.renderDistance, radialStreaming);
+    if (chunk.group.visible) {
       for (let section = 0; section < SECTION_COUNT; section += 1) {
         if (chunk.sectionBlockCounts[section] > 0) this.queueMesh(key, section);
       }
@@ -4198,13 +4272,32 @@ export class ChunkWorld {
       if (localZ < 0) return north ? north.skyTops[localX + (CHUNK_SIZE - 1) * CHUNK_SIZE] : MIN_Y - 1;
       return south ? south.skyTops[localX] : MIN_Y - 1;
     };
-    const shadeAt = (localX: number, y: number, localZ: number) => bakedEnvironmentLightShade(
+    const shadeCacheWidth = CHUNK_SIZE + 2;
+    const shadeCacheHeight = SECTION_HEIGHT + 2;
+    // The cache belongs to this synchronous rebuild and its light/sky snapshot;
+    // the next edit-driven rebuild necessarily starts with a fresh allocation.
+    const shadeCache = new Float32Array(shadeCacheWidth * shadeCacheHeight * shadeCacheWidth);
+    const calculateShadeAt = (localX: number, y: number, localZ: number) => bakedEnvironmentLightShade(
       environmentSkyShade(y, skyTopAtLocal(localX, localZ)),
       chunk.cx * CHUNK_SIZE + localX,
       y,
       chunk.cz * CHUNK_SIZE + localZ,
       bakedLights,
     );
+    const shadeAt = (localX: number, y: number, localZ: number) => {
+      const cacheX = localX + 1;
+      const cacheY = y - startY + 1;
+      const cacheZ = localZ + 1;
+      if (cacheX < 0 || cacheX >= shadeCacheWidth || cacheY < 0 || cacheY >= shadeCacheHeight || cacheZ < 0 || cacheZ >= shadeCacheWidth) {
+        return calculateShadeAt(localX, y, localZ);
+      }
+      const cacheIndex = cacheX + shadeCacheWidth * (cacheZ + shadeCacheWidth * cacheY);
+      const cached = shadeCache[cacheIndex];
+      if (cached !== 0) return cached;
+      const shade = calculateShadeAt(localX, y, localZ);
+      shadeCache[cacheIndex] = shade;
+      return shade;
+    };
     const addQuad = (
       bucket: GeometryBucket,
       corners: ReadonlyArray<readonly [number, number, number]>,
@@ -4773,9 +4866,9 @@ export class ChunkWorld {
       if (!bucket.positions.length) continue;
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute("position", new THREE.Float32BufferAttribute(bucket.positions, 3));
-      geometry.setAttribute("normal", new THREE.Float32BufferAttribute(bucket.normals, 3));
-      geometry.setAttribute("color", new THREE.Float32BufferAttribute(bucket.colors, 3));
-      geometry.setAttribute("uv", new THREE.Float32BufferAttribute(bucket.uvs, 2));
+      geometry.setAttribute("normal", new THREE.BufferAttribute(packSnorm8(bucket.normals), 3, true));
+      geometry.setAttribute("color", new THREE.BufferAttribute(packColorUnorm8(bucket.colors), 3, true));
+      geometry.setAttribute("uv", new THREE.BufferAttribute(packUnorm16(bucket.uvs), 2, true));
       geometry.setIndex(bucket.indices);
       const centerY = (startY + endY) / 2;
       geometry.boundingSphere = new THREE.Sphere(

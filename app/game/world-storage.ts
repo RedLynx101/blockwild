@@ -121,7 +121,52 @@ export type WorldExport = {
 export type WorldStorageDependencies = {
   now?: () => number;
   idFactory?: () => string;
+  /** Injectable for storage-event regression tests; defaults to the browser window. */
+  storageEventTarget?: StorageEventTarget | null;
 };
+
+type StorageEventTarget = {
+  addEventListener(type: "storage", listener: (event: StorageEvent) => void): void;
+  removeEventListener(type: "storage", listener: (event: StorageEvent) => void): void;
+};
+
+type StoredWorldShell = Pick<StoredWorld, "version" | "metadata" | "options">;
+type CachedWorldShell = { revision: number; shell: StoredWorldShell };
+type StorageRevisionState = { catalog: number; documents: Map<string, number> };
+
+/**
+ * Storage events are not fired in the tab which performed a localStorage
+ * write. Keep a tiny same-realm revision ledger as the complementary signal
+ * for multiple WorldStorage instances sharing one Storage object.
+ */
+const STORAGE_REVISIONS = new WeakMap<Storage, StorageRevisionState>();
+
+function revisionsFor(storage: Storage | null) {
+  if (!storage) return null;
+  let revisions = STORAGE_REVISIONS.get(storage);
+  if (!revisions) {
+    revisions = { catalog: 0, documents: new Map() };
+    STORAGE_REVISIONS.set(storage, revisions);
+  }
+  return revisions;
+}
+
+function documentRevision(storage: Storage | null, id: string) {
+  return revisionsFor(storage)?.documents.get(id) ?? 0;
+}
+
+function bumpDocumentRevision(storage: Storage, id: string) {
+  const revisions = revisionsFor(storage)!;
+  revisions.documents.set(id, (revisions.documents.get(id) ?? 0) + 1);
+  revisions.catalog += 1;
+  return revisions;
+}
+
+function bumpCatalogRevision(storage: Storage) {
+  const revisions = revisionsFor(storage)!;
+  revisions.catalog += 1;
+  return revisions.catalog;
+}
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -356,8 +401,39 @@ export class WorldStorage {
   private readonly storage: Storage | null;
   private readonly now: () => number;
   private readonly idFactory: () => string;
+  private readonly storageEventTarget: StorageEventTarget | null;
   private catalog: WorldCatalog = emptyCatalog();
   private catalogStored = false;
+  private observedCatalogRevision = 0;
+  private catalogDirty = false;
+  /**
+   * Small, trusted metadata/options snapshots for worlds this runtime has
+   * already loaded or written. Autosaves only need this shell plus the new
+   * save payload; retaining it avoids synchronously reading, parsing, and
+   * migrating the previous (potentially very large) save on every autosave.
+   * Full loads and exports still read and validate browser storage normally.
+   */
+  private readonly trustedDocumentShells = new Map<string, CachedWorldShell>();
+
+  private readonly handleStorageEvent = (event: StorageEvent) => {
+    if (event.storageArea && event.storageArea !== this.storage) return;
+    if (event.key === null) {
+      this.trustedDocumentShells.clear();
+      this.catalogDirty = true;
+      return;
+    }
+    if (event.key === WORLD_CATALOG_KEY) {
+      // Metadata lives in both records. Treat a catalog notification as a
+      // broad invalidation so a cross-tab rename can never be autosaved away.
+      this.trustedDocumentShells.clear();
+      this.catalogDirty = true;
+      return;
+    }
+    if (event.key.startsWith(WORLD_DATA_PREFIX)) {
+      this.trustedDocumentShells.delete(event.key.slice(WORLD_DATA_PREFIX.length));
+      this.catalogDirty = true;
+    }
+  };
 
   constructor(storage?: Storage | null, dependencies: WorldStorageDependencies = {}) {
     this.storage = storage === undefined
@@ -365,8 +441,18 @@ export class WorldStorage {
       : storage;
     this.now = dependencies.now ?? Date.now;
     this.idFactory = dependencies.idFactory ?? defaultId;
+    this.storageEventTarget = dependencies.storageEventTarget === undefined
+      ? this.defaultStorageEventTarget()
+      : dependencies.storageEventTarget;
     this.readCatalog();
+    this.observedCatalogRevision = revisionsFor(this.storage)?.catalog ?? 0;
     this.migrateLegacySave();
+    this.storageEventTarget?.addEventListener("storage", this.handleStorageEvent);
+  }
+
+  dispose() {
+    this.storageEventTarget?.removeEventListener("storage", this.handleStorageEvent);
+    this.trustedDocumentShells.clear();
   }
 
   get ownershipNotice() {
@@ -378,10 +464,12 @@ export class WorldStorage {
   }
 
   get activeWorldId() {
+    this.ensureCatalogCurrent();
     return this.catalog.activeWorldId;
   }
 
   listWorlds(options: WorldListOptions = {}) {
+    this.ensureCatalogCurrent();
     const sortBy = options.sortBy ?? "lastPlayedAt";
     const direction = options.direction ?? "desc";
     const factor = direction === "asc" ? 1 : -1;
@@ -399,6 +487,7 @@ export class WorldStorage {
   }
 
   createWorld(input: CreateWorldInput): WorldStorageResult<WorldMetadata> {
+    this.ensureCatalogCurrent();
     const save = migrateLegacyWorldSave(input.save);
     if (!save) return fail("invalid", "The new world save is incomplete or invalid.");
     const id = this.uniqueId();
@@ -437,7 +526,11 @@ export class WorldStorage {
   }
 
   saveWorld(id: string, input: SaveWorldInput): WorldStorageResult<WorldMetadata> {
-    const loaded = this.readDocument(id);
+    this.ensureCatalogCurrent();
+    const cached = this.trustedDocumentShells.get(id);
+    const shell = cached?.revision === documentRevision(this.storage, id) ? cached.shell : null;
+    if (cached && !shell) this.trustedDocumentShells.delete(id);
+    const loaded = shell ? ok(shell) : this.readDocument(id);
     if (!loaded.ok) return loaded;
     const save = migrateLegacyWorldSave(input.save);
     if (!save) return fail("invalid", "The world save is incomplete or invalid.", this.dataKey(id));
@@ -452,7 +545,7 @@ export class WorldStorage {
       lastSavedGameVersion: normalizeGameVersion(save.lastSavedGameVersion),
     };
     const document: StoredWorld = {
-      ...loaded.value,
+      version: loaded.value.version,
       metadata,
       options: input.options ? normalizeWorldOptions({ ...loaded.value.options, ...input.options }) : loaded.value.options,
       save,
@@ -510,6 +603,7 @@ export class WorldStorage {
   }
 
   deleteWorld(id: string): WorldStorageResult<WorldMetadata> {
+    this.ensureCatalogCurrent();
     const metadata = this.catalog.worlds.find((entry) => entry.id === id);
     if (!metadata) return fail("not-found", "That world does not exist on this device.", this.dataKey(id));
     const remaining = this.catalog.worlds.filter((entry) => entry.id !== id);
@@ -520,6 +614,11 @@ export class WorldStorage {
     });
     const committed = this.commitCatalog(nextCatalog);
     if (!committed.ok) return committed;
+    this.trustedDocumentShells.delete(id);
+    if (this.storage) {
+      const revisions = bumpDocumentRevision(this.storage, id);
+      this.observedCatalogRevision = revisions.catalog;
+    }
     try {
       this.storage?.removeItem(this.dataKey(id));
       return ok({ ...metadata });
@@ -529,6 +628,7 @@ export class WorldStorage {
   }
 
   setActiveWorld(id: string | null): WorldStorageResult<string | null> {
+    this.ensureCatalogCurrent();
     if (id !== null && !this.catalog.worlds.some((entry) => entry.id === id)) {
       return fail("not-found", "That world does not exist on this device.", this.dataKey(id));
     }
@@ -554,6 +654,7 @@ export class WorldStorage {
   }
 
   importWorld(json: string): WorldStorageResult<WorldMetadata> {
+    this.ensureCatalogCurrent();
     let value: unknown;
     try {
       value = JSON.parse(json);
@@ -694,6 +795,7 @@ export class WorldStorage {
   }
 
   private readDocument(id: string): WorldStorageResult<StoredWorld> {
+    this.ensureCatalogCurrent();
     const catalogMetadata = this.catalog.worlds.find((entry) => entry.id === id);
     if (!catalogMetadata) return fail("not-found", "That world does not exist on this device.", this.dataKey(id));
     if (!this.storage) return fail("unavailable", "World storage is unavailable in this browser session.", this.dataKey(id));
@@ -714,12 +816,14 @@ export class WorldStorage {
     if (!isRecord(value) || value.version !== WORLD_CATALOG_VERSION) return fail("unsupported-version", "This world uses an unsupported storage version.", this.dataKey(id));
     const save = migrateLegacyWorldSave(value.save);
     if (!save) return fail("corrupt", "This world's save payload is corrupt or incomplete.", this.dataKey(id));
-    return ok({
+    const document: StoredWorld = {
       version: WORLD_CATALOG_VERSION,
       metadata: { ...catalogMetadata, seed: save.seed, mode: save.mode },
       options: normalizeWorldOptions(value.options as Partial<WorldOptions>),
       save,
-    });
+    };
+    this.rememberDocumentShell(document);
+    return ok(document);
   }
 
   private uniqueId(preferred?: string) {
@@ -755,6 +859,8 @@ export class WorldStorage {
       this.storage.setItem(WORLD_CATALOG_KEY, JSON.stringify(nextCatalog));
       this.catalog = nextCatalog;
       this.catalogStored = true;
+      this.observedCatalogRevision = bumpCatalogRevision(this.storage);
+      this.catalogDirty = false;
       return ok(true);
     } catch (error) {
       return { ok: false, error: classifyStorageError(error, WORLD_CATALOG_KEY) };
@@ -775,6 +881,10 @@ export class WorldStorage {
       this.storage.setItem(WORLD_CATALOG_KEY, serializedCatalog);
       this.catalog = nextCatalog;
       this.catalogStored = true;
+      const revisions = bumpDocumentRevision(this.storage, document.metadata.id);
+      this.observedCatalogRevision = revisions.catalog;
+      this.catalogDirty = false;
+      this.rememberDocumentShell(document, revisions.documents.get(document.metadata.id) ?? 0);
       return ok(true);
     } catch (error) {
       try {
@@ -788,5 +898,35 @@ export class WorldStorage {
       }
       return { ok: false, error: classifyStorageError(error, key) };
     }
+  }
+
+  private rememberDocumentShell(document: StoredWorld, revision = documentRevision(this.storage, document.metadata.id)) {
+    this.trustedDocumentShells.set(document.metadata.id, {
+      revision,
+      shell: {
+        version: document.version,
+        metadata: { ...document.metadata },
+        options: { ...document.options, enabledFactions: [...document.options.enabledFactions] },
+      },
+    });
+  }
+
+  private defaultStorageEventTarget(): StorageEventTarget | null {
+    if (typeof window === "undefined" || !this.storage) return null;
+    try {
+      return this.storage === window.localStorage ? window : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private ensureCatalogCurrent() {
+    const revision = revisionsFor(this.storage)?.catalog ?? 0;
+    if (!this.catalogDirty && revision === this.observedCatalogRevision) return;
+    this.catalog = emptyCatalog();
+    this.catalogStored = false;
+    this.readCatalog();
+    this.observedCatalogRevision = revision;
+    this.catalogDirty = false;
   }
 }

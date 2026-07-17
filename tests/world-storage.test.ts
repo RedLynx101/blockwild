@@ -19,11 +19,15 @@ import {
 class MemoryStorage implements Storage {
   readonly values = new Map<string, string>();
   readonly failingKeys = new Set<string>();
+  readonly getItemCalls = new Map<string, number>();
   failAllWrites = false;
 
   get length() { return this.values.size; }
   clear() { this.values.clear(); }
-  getItem(key: string) { return this.values.get(key) ?? null; }
+  getItem(key: string) {
+    this.getItemCalls.set(key, (this.getItemCalls.get(key) ?? 0) + 1);
+    return this.values.get(key) ?? null;
+  }
   key(index: number) { return [...this.values.keys()][index] ?? null; }
   removeItem(key: string) { this.values.delete(key); }
   setItem(key: string, value: string) {
@@ -31,6 +35,118 @@ class MemoryStorage implements Storage {
     this.values.set(key, String(value));
   }
 }
+
+class MemoryStorageEvents {
+  private readonly listeners = new Set<(event: StorageEvent) => void>();
+
+  addEventListener(_type: "storage", listener: (event: StorageEvent) => void) {
+    this.listeners.add(listener);
+  }
+
+  removeEventListener(_type: "storage", listener: (event: StorageEvent) => void) {
+    this.listeners.delete(listener);
+  }
+
+  dispatch(storage: Storage, key: string | null) {
+    const event = { key, storageArea: storage } as StorageEvent;
+    for (const listener of this.listeners) listener(event);
+  }
+
+  get listenerCount() {
+    return this.listeners.size;
+  }
+}
+
+test("runtime autosaves reuse trusted document metadata instead of reparsing the previous save", () => {
+  const storage = new MemoryStorage();
+  const worlds = new WorldStorage(storage, { now: () => 2_000, idFactory: () => "autosave-cache" });
+  const created = worlds.createWorld({ name: "Autosave Cache", save: save("CACHE-A") });
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+
+  const dataKey = `${WORLD_DATA_PREFIX}${created.value.id}`;
+  storage.getItemCalls.clear();
+  assert.equal(worlds.saveWorld(created.value.id, { save: save("CACHE-B"), playTimeDeltaMs: 50 }).ok, true);
+  assert.equal(storage.getItemCalls.get(dataKey), 1, "the only data read should be the rollback snapshot in the atomic commit");
+
+  const reopened = new WorldStorage(storage, { now: () => 3_000, idFactory: () => "unused" });
+  storage.getItemCalls.clear();
+  assert.equal(reopened.saveWorld(created.value.id, { save: save("CACHE-C") }).ok, true);
+  assert.equal(storage.getItemCalls.get(dataKey), 2, "the first save in a new runtime validates storage before caching its shell");
+  storage.getItemCalls.clear();
+  assert.equal(reopened.saveWorld(created.value.id, { save: save("CACHE-D") }).ok, true);
+  assert.equal(storage.getItemCalls.get(dataKey), 1, "subsequent saves should use the validated shell cache");
+});
+
+test("autosaves refresh stale shells changed by another WorldStorage instance", () => {
+  const storage = new MemoryStorage();
+  let firstNow = 1_000;
+  let secondNow = 2_000;
+  const first = new WorldStorage(storage, { now: () => firstNow, idFactory: () => "shared-cache" });
+  const created = first.createWorld({ name: "Original Name", save: save("SHARED-A") });
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+
+  const second = new WorldStorage(storage, { now: () => secondNow, idFactory: () => "other-world" });
+  assert.equal(second.renameWorld(created.value.id, "Second Runtime Name").ok, true);
+  secondNow += 1;
+  assert.equal(second.updateWorldOptions(created.value.id, { difficulty: "hard", keepInventory: true }).ok, true);
+  const otherWorld = second.createWorld({ name: "Second Runtime World", save: save("SHARED-EXTRA") });
+  assert.equal(otherWorld.ok, true);
+
+  firstNow = 3_000;
+  assert.equal(first.saveWorld(created.value.id, { save: save("SHARED-B") }).ok, true);
+
+  const reopened = new WorldStorage(storage, { now: () => 4_000, idFactory: () => "unused" });
+  assert.equal(reopened.listWorlds().length, 2, "refreshing a stale catalog must preserve worlds created by another runtime");
+  const loaded = reopened.loadWorld(created.value.id, false);
+  assert.equal(loaded.ok, true);
+  if (!loaded.ok) return;
+  assert.equal(loaded.value.metadata.name, "Second Runtime Name", "an autosave must preserve another runtime's rename");
+  assert.equal(loaded.value.options.difficulty, "hard", "an autosave must preserve another runtime's options");
+  assert.equal(loaded.value.options.keepInventory, true);
+  assert.equal(loaded.value.save.seed, "SHARED-B");
+});
+
+test("storage events invalidate cross-tab document shells and unregister on dispose", () => {
+  const storage = new MemoryStorage();
+  const events = new MemoryStorageEvents();
+  const worlds = new WorldStorage(storage, {
+    now: () => 5_000,
+    idFactory: () => "cross-tab-cache",
+    storageEventTarget: events,
+  });
+  const created = worlds.createWorld({ name: "Before Tab Edit", save: save("TAB-A") });
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+  assert.equal(events.listenerCount, 1);
+
+  const dataKey = `${WORLD_DATA_PREFIX}${created.value.id}`;
+  const document = JSON.parse(storage.values.get(dataKey)!);
+  document.metadata.name = "Edited In Another Tab";
+  document.options.difficulty = "hard";
+  storage.values.set(dataKey, JSON.stringify(document));
+
+  const catalog = JSON.parse(storage.values.get(WORLD_CATALOG_KEY)!);
+  const catalogEntry = catalog.worlds.find((entry: { id: string }) => entry.id === created.value.id);
+  catalogEntry.name = "Edited In Another Tab";
+  storage.values.set(WORLD_CATALOG_KEY, JSON.stringify(catalog));
+
+  events.dispatch(storage, dataKey);
+  events.dispatch(storage, WORLD_CATALOG_KEY);
+  assert.equal(worlds.saveWorld(created.value.id, { save: save("TAB-B") }).ok, true);
+
+  const reopened = new WorldStorage(storage, { now: () => 6_000, idFactory: () => "unused" });
+  const loaded = reopened.loadWorld(created.value.id, false);
+  assert.equal(loaded.ok, true);
+  if (!loaded.ok) return;
+  assert.equal(loaded.value.metadata.name, "Edited In Another Tab");
+  assert.equal(loaded.value.options.difficulty, "hard");
+  assert.equal(loaded.value.save.seed, "TAB-B");
+
+  worlds.dispose();
+  assert.equal(events.listenerCount, 0);
+});
 
 function save(seed: string, mode: "survival" | "builder" = "survival", generatorVersion = GENERATOR_VERSION): WorldSave {
   return {
