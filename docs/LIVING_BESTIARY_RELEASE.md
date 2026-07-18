@@ -46,6 +46,7 @@ npm run audit:ecology
 npm run audit:world-overhaul
 npm run benchmark:simulation
 npm run benchmark:spatial
+npm run soak:living-world
 npm test
 ```
 
@@ -57,6 +58,8 @@ The living release audit must report:
 - six valid legendary encounters and four valid summon contracts.
 
 The ecology audit must report all 215 discovery hints, all 46 flora assignments, 24 surface biomes, and seven underground habitats. `npm test` is the final build, rendered HTML/audio, migration, multiplayer, world, UI, and gameplay regression gate.
+
+`npm run soak:living-world` fast-forwards two representative in-game hours across 320 actors and eight player-interest points. It is a deterministic collection-growth gate for spatial queries, threat ledgers, contextual loot, road anchors, and append-only Bestiary research. It complements rather than replaces an actual long browser playtest.
 
 ## Visual artifacts
 

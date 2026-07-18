@@ -23,6 +23,7 @@
     "plants:render": "node --import tsx scripts/render-plants.ts",
     "benchmark:simulation": "node --import tsx scripts/benchmark-simulation.ts",
     "benchmark:spatial": "node --import tsx scripts/benchmark-spatial-index.ts",
+    "soak:living-world": "node --import tsx scripts/soak-living-world.ts",
     "audit:ecology": "node --import tsx scripts/audit-biome-ecology.ts",
     "audit:mobs": "node --import tsx scripts/audit-mob-ecology.ts --write",
     "audit:world-overhaul": "node --import tsx scripts/audit-world-overhaul.ts",
