@@ -8,6 +8,7 @@ import {
   useState,
   type ChangeEvent,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
@@ -39,12 +40,14 @@ import {
 import { BUTTERFLY_ORDER } from "./mobs";
 import type { BestiaryFieldNote, BestiaryNoteMetric, MobDefinition } from "./mobs";
 import { creatureProfile } from "./creature-profiles";
+import { captureKnowledgeForResearch } from "./creature-capture";
 import { CREATURE_MOVES } from "./creature-moves";
 import { statsAtLevel, statBand } from "./creature-stats";
 import { CREATURE_TYPES } from "./creature-types";
 import { normalizeCreatureCareState, type CreatureCareAction } from "./creature-care";
 import type { CreatureProgressionV2 } from "./creature-progression";
 import { MOUNT_PROFILES } from "./creature-mounts";
+import { PRIME_FORM_PROFILES, PRIME_ROUTE_PROFILES, type PrimeEligibleKind } from "./creature-rarity";
 import { creatureEcologyContract, normalizeCreatureWorkState, type CreatureShellModule } from "./creature-ecology";
 import { createAvatarHeldItemModel } from "./held-items";
 import { legendaryContractForItem } from "./legendary-items";
@@ -130,9 +133,23 @@ type Overlay = "title" | "new" | "pause" | "help" | "settings" | OverlayKind | n
 type TitleMenuView = "main" | "characters" | "worlds";
 export type BestiaryFilter = "all" | "surface" | "humanoids" | "rabbits" | "birds" | "butterflies" | "aquatic" | "sea-slugs" | "golems" | "monsters" | "companions";
 type BestiaryQuickFilter = "all" | "discovered" | "captured";
-type BestiarySort = "catalog" | "name" | "observed" | "research" | "rarity";
-type BestiaryPageTab = "overview" | "ecology" | "combat" | "care" | "research" | "specimens";
+export type BestiarySort = "catalog" | "name" | "observed" | "research" | "level" | "rarity";
+type BestiaryPageTab = "overview" | "ecology" | "combat" | "care" | "research" | "specimens" | "variants";
 type FieldGuideSection = "creatures" | "plants";
+export const BESTIARY_FACET_KEYS = ["habitat", "type", "relationship", "movement", "temperament", "research", "rarity", "utility", "guild"] as const;
+export type BestiaryFacetKey = (typeof BESTIARY_FACET_KEYS)[number];
+export type BestiaryFacetSelections = Readonly<Record<BestiaryFacetKey, readonly string[]>>;
+export type BestiaryFacetRecord = Readonly<{
+  id: string;
+  name: string;
+  catalogIndex: number;
+  lastObservedAt: number | null;
+  researchCompletion: number;
+  creatureLevel: number;
+  rarityRank: number;
+  facets: Readonly<Record<BestiaryFacetKey, readonly string[]>>;
+}>;
+type BestiaryFacetChip = Readonly<{ facet: BestiaryFacetKey; value: string; label: string }>;
 type InventoryDragGesture = {
   pointerId: number;
   button: "left" | "right";
@@ -151,19 +168,68 @@ const PLANT_FILTERS: ReadonlyArray<["all" | PlantCategory, string]> = [
   ["wild", "Wild"],
 ];
 
-const BESTIARY_FILTERS: ReadonlyArray<[BestiaryFilter, string]> = [
-  ["all", "All"],
-  ["surface", "Surface"],
-  ["humanoids", "Humanoids"],
-  ["rabbits", "Rabbits"],
-  ["birds", "Birds"],
-  ["butterflies", "Butterflies"],
-  ["aquatic", "Aquatic"],
-  ["sea-slugs", "Sea Slugs"],
-  ["golems", "Golems"],
-  ["monsters", "Monsters"],
-  ["companions", "Tameable"],
-];
+const BESTIARY_FACET_LABELS: Readonly<Record<BestiaryFacetKey, string>> = Object.freeze({
+  habitat: "Habitat",
+  type: "Type",
+  relationship: "Relationship",
+  movement: "Movement",
+  temperament: "Temperament",
+  research: "Research",
+  rarity: "Rarity & form",
+  utility: "Utility role",
+  guild: "Guild relevance",
+});
+
+const BESTIARY_GUILD_LABELS: Readonly<Record<string, string>> = Object.freeze({
+  waykeeper: "Waykeeper Conservancy",
+  tideglass: "Tideglass Menagerie",
+  moonbough: "Moonbough Arcanum",
+  brassroot: "Brassroot Freeblades",
+  deepgear: "Deepgear Delvers' Union",
+  hearthroad: "Hearthroad League",
+  "sugarcourt-makers": "Sugarcourt Makers",
+});
+
+export function createEmptyBestiaryFacetSelections(): BestiaryFacetSelections {
+  return Object.freeze(Object.fromEntries(BESTIARY_FACET_KEYS.map((facet) => [facet, Object.freeze([])])) as unknown as Record<BestiaryFacetKey, readonly string[]>);
+}
+
+export function toggleBestiaryFacetValue(selections: BestiaryFacetSelections, facet: BestiaryFacetKey, value: string): BestiaryFacetSelections {
+  const current = selections[facet];
+  const next = current.includes(value) ? current.filter((candidate) => candidate !== value) : [...current, value];
+  return Object.freeze({ ...selections, [facet]: Object.freeze(next) });
+}
+
+/** OR within a facet, AND between facets. `ignoreFacet` drives contextual counts. */
+export function matchesBestiaryFacets(record: BestiaryFacetRecord, selections: BestiaryFacetSelections, ignoreFacet?: BestiaryFacetKey) {
+  return BESTIARY_FACET_KEYS.every((facet) => facet === ignoreFacet || selections[facet].length === 0
+    || selections[facet].some((value) => record.facets[facet].includes(value)));
+}
+
+export function filterBestiaryFacetRecords(records: readonly BestiaryFacetRecord[], selections: BestiaryFacetSelections) {
+  return records.filter((record) => matchesBestiaryFacets(record, selections));
+}
+
+export function bestiaryFacetOptionCounts(
+  records: readonly BestiaryFacetRecord[],
+  selections: BestiaryFacetSelections,
+  facet: BestiaryFacetKey,
+  options: readonly string[],
+) {
+  const context = records.filter((record) => matchesBestiaryFacets(record, selections, facet));
+  return Object.freeze(Object.fromEntries(options.map((option) => [option, context.filter((record) => record.facets[facet].includes(option)).length])) as Record<string, number>);
+}
+
+export function sortBestiaryFacetRecords(records: readonly BestiaryFacetRecord[], sort: BestiarySort) {
+  return [...records].sort((left, right) => {
+    if (sort === "name") return left.name.localeCompare(right.name) || left.catalogIndex - right.catalogIndex;
+    if (sort === "observed") return (right.lastObservedAt ?? -1) - (left.lastObservedAt ?? -1) || left.catalogIndex - right.catalogIndex;
+    if (sort === "research") return right.researchCompletion - left.researchCompletion || left.catalogIndex - right.catalogIndex;
+    if (sort === "level") return right.creatureLevel - left.creatureLevel || left.catalogIndex - right.catalogIndex;
+    if (sort === "rarity") return right.rarityRank - left.rarityRank || left.catalogIndex - right.catalogIndex;
+    return left.catalogIndex - right.catalogIndex;
+  });
+}
 
 const SENTIENT_FACTION_COPY: Readonly<Record<NpcFactionId, Readonly<{
   fallbackName: string;
@@ -947,6 +1013,13 @@ export function bestiaryEntryCompletion(definition: MobDefinition, progress: Bes
   return Math.round(tasks.filter(Boolean).length / tasks.length * 100);
 }
 
+function bestiaryResearchLevel(progress: HudState["bestiary"][MobKind]) {
+  const completedResearch = Object.values(progress.research ?? {}).filter((node) => node.unlockedAt !== null).length;
+  if (progress.secretUnlocked || completedResearch >= 2) return 3;
+  if (completedResearch > 0 || progress.captures > 0) return 2;
+  return progress.seen ? 1 : 0;
+}
+
 export function bestiaryKindsForFilter(filter: BestiaryFilter): MobKind[] {
   return MOB_ORDER.filter((kind) => {
     const definition = MOB_DEFS[kind];
@@ -964,6 +1037,127 @@ export function bestiaryKindsForFilter(filter: BestiaryFilter): MobKind[] {
       && definition.sentient !== true
       && !["sentient", "rabbit", "bird", "butterfly", "fish", "sea-slug", "leviathan", "construct", "undead"].includes(definition.family ?? "surface");
   });
+}
+
+export type BestiarySpecimenSummary = Readonly<{
+  entityId: string;
+  kind: MobKind;
+  name: string | null;
+  capturedAt: number;
+  progression: CreatureProgressionV2 | null;
+}>;
+
+const SUMMON_KINDS = new Set<MobKind>(["asterjaw", "vellum-warden", "choir-of-one", "glasswake-stag"]);
+const bestiarySlug = (value: string) => value.trim().toLocaleLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-|-$/gu, "");
+const uniqueBestiaryValues = (values: readonly string[]) => Object.freeze([...new Set(values.filter(Boolean))]);
+
+function bestiaryGuildFacets(
+  definition: MobDefinition,
+  naturalTypes: readonly string[],
+  progress: HudState["bestiary"][MobKind],
+  habitats: readonly string[],
+) {
+  const guilds = new Set<string>();
+  for (const link of progress.guildLinks ?? []) {
+    const normalized = bestiarySlug(link);
+    const guildId = Object.keys(GUILDS).find((candidate) => normalized === candidate || normalized.startsWith(`${candidate}-`) || normalized.includes(candidate));
+    if (guildId) guilds.add(guildId);
+  }
+  const faction = `${definition.faction ?? ""} ${definition.factionAffinity ?? ""} ${definition.culture ?? ""}`.toLocaleLowerCase();
+  if (faction.includes("atlantian")) guilds.add("tideglass");
+  if (faction.includes("wood-elf")) guilds.add("moonbough");
+  if (faction.includes("goblin")) guilds.add("brassroot");
+  if (faction.includes("dwarf")) guilds.add("deepgear");
+  if (faction.includes("hobbit")) guilds.add("hearthroad");
+  if (faction.includes("sugarcourt")) guilds.add("sugarcourt-makers");
+  if (habitats.includes("aquatic")) guilds.add("tideglass");
+  if (habitats.includes("underground") || definition.family === "construct") guilds.add("deepgear");
+  if (naturalTypes.some((type) => ["arcane", "dream", "echo", "hush", "mirror"].includes(type)) || SUMMON_KINDS.has(definition.kind)) guilds.add("moonbough");
+  if (naturalTypes.includes("confection")) guilds.add("sugarcourt-makers");
+  if (MOUNT_PROFILES[definition.kind]) guilds.add("hearthroad");
+  if (!definition.sentient && creatureProfile(definition.kind).captureProfile !== "uncapturable") guilds.add("waykeeper");
+  return Object.freeze([...guilds]);
+}
+
+export function bestiaryFacetRecordForKind(
+  kind: MobKind,
+  progress: HudState["bestiary"][MobKind],
+  specimens: readonly BestiarySpecimenSummary[] = [],
+): BestiaryFacetRecord {
+  const definition = MOB_DEFS[kind];
+  const profile = creatureProfile(kind);
+  const habitatText = definition.habitat.toLocaleLowerCase();
+  const habitats: string[] = [];
+  const aquatic = Boolean(definition.aquatic || definition.movement === "aquatic" || definition.movement === "amphibious" || ["fish", "sea-slug", "leviathan"].includes(definition.family ?? ""));
+  const underground = /\b(cave|cavern|grotto|mine|underground|underworld|world below|deepgear|tunnel|burrow|crypt|abyss|subterranean)\b/iu.test(habitatText);
+  if (!aquatic || definition.movement === "amphibious") habitats.push("surface");
+  if (aquatic) habitats.push("aquatic");
+  if (underground) habitats.push("underground");
+  for (const biomeName of Object.values(BIOME_NAMES)) if (habitatText.includes(biomeName.toLocaleLowerCase())) habitats.push(`biome:${bestiarySlug(biomeName)}`);
+
+  const naturalTypes = profile.naturalTypes.map(String);
+  const movement = new Set<string>([definition.movement ?? "ground"]);
+  const mountProfile = MOUNT_PROFILES[kind];
+  for (const capability of mountProfile?.capabilities ?? []) movement.add(capability === "land" ? "ground" : capability === "swim" ? "aquatic" : capability === "fly" ? "flying" : capability);
+  if (movement.has("ground") && movement.has("aquatic")) movement.add("amphibious");
+
+  const relationships = new Set<string>();
+  if (profile.captureProfile !== "uncapturable") relationships.add("capturable");
+  if (progress.captures > 0 || (progress.specimenIds?.length ?? 0) > 0) relationships.add("captured");
+  if (definition.tameable) relationships.add("tameable");
+  if (definition.breedable) relationships.add("breedable");
+  if (mountProfile) relationships.add("mount");
+  if (SUMMON_KINDS.has(kind) || (progress.summonOrigins?.length ?? 0) > 0 || Object.values(progress.forms ?? {}).some((form) => form.category === "summoned")) relationships.add("summon");
+  if (specimens.some((specimen) => ["trusted", "partnered", "kindred"].includes(specimen.progression?.bondTier ?? ""))) relationships.add("bonded");
+
+  const completion = bestiaryEntryCompletion(definition, progress);
+  const research = !progress.seen ? "unknown" : completion >= 100 ? "mastered"
+    : completion > 0 || Object.keys(progress.research ?? {}).length > 0 ? "in-progress" : "observed";
+  const formRecords = Object.values(progress.forms ?? {});
+  const legendary = definition.family === "legendary" || ["dragon", "leviathan"].includes(definition.family ?? "") || profile.captureProfile === "legendary";
+  const summoned = SUMMON_KINDS.has(kind) || (progress.summonOrigins?.length ?? 0) > 0 || formRecords.some((form) => form.category === "summoned");
+  const rarity = new Set<string>();
+  if (!legendary && !summoned) rarity.add("ordinary");
+  if (legendary) rarity.add("legendary");
+  if (summoned) rarity.add("summoned");
+  for (const form of formRecords) {
+    rarity.add(form.category);
+    if (["regional", "seasonal", "story"].includes(form.category)) rarity.add("variant");
+  }
+  const rarityRank = summoned ? 6 : legendary ? 5 : rarity.has("prime") ? 4 : rarity.has("shiny") ? 3 : rarity.has("variant") ? 2 : 1;
+  const creatureLevel = specimens.reduce((highest, specimen) => Math.max(highest, specimen.progression?.level ?? 0), 0);
+
+  return Object.freeze({
+    id: kind,
+    name: definition.name,
+    catalogIndex: MOB_ORDER.indexOf(kind),
+    lastObservedAt: progress.lastObservedAt ?? null,
+    researchCompletion: completion,
+    creatureLevel,
+    rarityRank,
+    facets: Object.freeze({
+      habitat: uniqueBestiaryValues(habitats),
+      type: uniqueBestiaryValues(naturalTypes),
+      relationship: uniqueBestiaryValues([...relationships]),
+      movement: uniqueBestiaryValues([...movement]),
+      temperament: Object.freeze([definition.temperament.toLocaleLowerCase()]),
+      research: Object.freeze([research]),
+      rarity: uniqueBestiaryValues([...rarity]),
+      utility: uniqueBestiaryValues(profile.ecologyRoles),
+      guild: bestiaryGuildFacets(definition, naturalTypes, progress, habitats),
+    }),
+  });
+}
+
+function bestiaryFacetValueLabel(facet: BestiaryFacetKey, value: string) {
+  if (facet === "type") return CREATURE_TYPES[value as keyof typeof CREATURE_TYPES]?.name ?? value;
+  if (facet === "guild") return BESTIARY_GUILD_LABELS[value] ?? value;
+  if (value.startsWith("biome:")) return value.slice(6).replaceAll("-", " ").replace(/\b\w/gu, (letter) => letter.toLocaleUpperCase());
+  return value.replaceAll("-", " ").replace(/\b\w/gu, (letter) => letter.toLocaleUpperCase());
+}
+
+function bestiaryRecordTimestamp(value: number | null) {
+  return value === null ? "Not recorded" : new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
 export function undiscoveredHabitatHint(definition: MobDefinition) {
@@ -1590,6 +1784,9 @@ export default function VoxelGame() {
   const suppressSlotClickRef = useRef(false);
   const heldStackElementRef = useRef<HTMLDivElement | null>(null);
   const heldStackPositionRef = useRef<ReturnType<typeof createHeldStackPositionController> | null>(null);
+  const bestiaryFiltersOpenRef = useRef(false);
+  const bestiaryFilterTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const bestiaryFilterPanelRef = useRef<HTMLElement | null>(null);
 
   const [overlay, setOverlayState] = useState<Overlay>("title");
   const [titleMenuView, setTitleMenuViewState] = useState<TitleMenuView>("main");
@@ -1622,7 +1819,7 @@ export default function VoxelGame() {
   const [recipeFeedback, setRecipeFeedback] = useState<RecipePlanResult | null>(null);
   const [petNameDraft, setPetNameDraft] = useState("");
   const [selectedBestiary, setSelectedBestiary] = useState<MobKind>("mossling");
-  const [bestiaryFilter, setBestiaryFilter] = useState<BestiaryFilter>("all");
+  const [bestiaryFacets, setBestiaryFacets] = useState<BestiaryFacetSelections>(createEmptyBestiaryFacetSelections);
   const [bestiaryQuickFilter, setBestiaryQuickFilter] = useState<BestiaryQuickFilter>("all");
   const [bestiarySearch, setBestiarySearch] = useState("");
   const [bestiarySort, setBestiarySort] = useState<BestiarySort>("catalog");
@@ -1669,6 +1866,52 @@ export default function VoxelGame() {
     if (parameters.get("inventory-audit") === "1") {
       overlayRef.current = "inventory";
       setOverlayState("inventory");
+    }
+    const bestiaryAudit = parameters.get("bestiary-audit");
+    if (["1", "filters", "variants", "research", "care"].includes(bestiaryAudit ?? "")) {
+      window.setTimeout(() => {
+        overlayRef.current = "bestiary";
+        setOverlayState("bestiary");
+        setFieldGuideSection("creatures");
+        setBestiaryFiltersOpen(bestiaryAudit === "filters");
+        if (["variants", "research", "care"].includes(bestiaryAudit ?? "")) {
+          setSelectedBestiary("cragglass-basilisk");
+          setBestiaryPageTab(bestiaryAudit as BestiaryPageTab);
+          const observedAt = Date.UTC(2026, 6, 18, 14, 30);
+          if (bestiaryAudit === "variants") engineRef.current?.primeEncounters.set("prime:cragglass-basilisk:audit", Object.freeze({
+            schema: 1,
+            anchorId: "prime:cragglass-basilisk:audit",
+            kind: "cragglass-basilisk",
+            status: "observed",
+            entityId: 17,
+            firstActivatedAt: observedAt - 7_200_000,
+            lastUpdatedAt: observedAt,
+            completedRouteVerbs: Object.freeze([PRIME_ROUTE_PROFILES["cragglass-basilisk"][0].id]),
+            routeProgress: 1,
+          }));
+          setHud((current) => ({
+            ...current,
+            bestiary: {
+              ...current.bestiary,
+              "cragglass-basilisk": {
+                ...current.bestiary["cragglass-basilisk"],
+                seen: true,
+                captures: 1,
+                tames: 1,
+                firstSeenAt: observedAt - 86_400_000,
+                lastObservedAt: observedAt,
+                firstCapturedAt: observedAt - 3_600_000,
+                research: { "audit-observation": { id: "audit-observation", title: "Field observation", progress: 1, goal: 1, unlockedAt: observedAt } },
+                forms: { "prime:mirror-crown": { id: "prime:mirror-crown", category: "prime", firstRecordedAt: observedAt, sightings: 1 } },
+                specimenIds: ["cragglass-basilisk:audit:17"],
+                summonOrigins: [],
+                guildLinks: ["waykeeper:prime-route"],
+                sections: {},
+              },
+            },
+          }));
+        }
+      }, 250);
     }
     const workstationAudit = parameters.get("workstation-audit");
     setWorkstationAuditMode(workstationAudit === "apiary" || workstationAudit === "orb-rack" || workstationAudit === "healing-station" || workstationAudit === "sugarworks" ? workstationAudit : null);
@@ -1918,6 +2161,41 @@ export default function VoxelGame() {
   }, [uiPreferences.targetOutlineOpacity]);
 
   useEffect(() => {
+    bestiaryFiltersOpenRef.current = bestiaryFiltersOpen;
+    if (!bestiaryFiltersOpen) return;
+    const trigger = bestiaryFilterTriggerRef.current;
+    const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : trigger;
+    const frame = window.requestAnimationFrame(() => {
+      const panel = bestiaryFilterPanelRef.current;
+      (panel?.querySelector<HTMLElement>("[data-bestiary-filter-option]:not(:disabled)")
+        ?? panel?.querySelector<HTMLElement>("button:not(:disabled)"))?.focus();
+    });
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.code !== "Tab") return;
+      const panel = bestiaryFilterPanelRef.current;
+      if (!panel) return;
+      const focusable = [...panel.querySelectorAll<HTMLElement>("button:not(:disabled), summary, select, input, [tabindex]:not([tabindex='-1'])")]
+        .filter((element) => element.offsetParent !== null);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable.at(-1)!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", trapFocus);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", trapFocus);
+      (trigger?.isConnected ? trigger : returnFocus)?.focus();
+    };
+  }, [bestiaryFiltersOpen]);
+
+  useEffect(() => {
     const handleMenuKeys = (event: KeyboardEvent) => {
       const current = overlayRef.current;
       const engine = engineRef.current;
@@ -1934,6 +2212,11 @@ export default function VoxelGame() {
       event.preventDefault();
       event.stopImmediatePropagation();
       if (event.repeat) return;
+      if (current === "bestiary" && bestiaryFiltersOpenRef.current) {
+        bestiaryFiltersOpenRef.current = false;
+        setBestiaryFiltersOpen(false);
+        return;
+      }
       if (current === "spell-wheel") {
         engine?.closeSpellWheel();
         setOverlay(null);
@@ -2779,46 +3062,97 @@ export default function VoxelGame() {
   const campCompareProgression = campCompareOrb?.creature?.custom.progression as unknown as CreatureProgressionV2 | undefined;
   const xpNeeded = 12 + hud.level * 6;
   const bestiarySeen = MOB_ORDER.filter((kind) => hud.bestiary[kind].seen).length;
+  const bestiaryInventorySpecimens: readonly BestiarySpecimenSummary[] = campOrbs.map((orb) => ({
+    entityId: orb.creature!.entityId,
+    kind: orb.creature!.kind,
+    name: orb.creature!.name,
+    capturedAt: orb.capturedAt,
+    progression: (orb.creature!.custom.progression as unknown as CreatureProgressionV2 | undefined) ?? null,
+  }));
+  const bestiaryCatalogRecords = MOB_ORDER.map((kind) => bestiaryFacetRecordForKind(
+    kind,
+    hud.bestiary[kind],
+    bestiaryInventorySpecimens.filter((specimen) => specimen.kind === kind),
+  ));
   const bestiarySearchText = bestiarySearch.trim().toLocaleLowerCase();
-  const bestiaryBaseKinds = MOB_ORDER.filter((kind) => {
+  const bestiaryBaseRecords = bestiaryCatalogRecords.filter((record) => {
+    const kind = record.id as MobKind;
     const definition = MOB_DEFS[kind];
     const progress = hud.bestiary[kind];
     if (bestiaryQuickFilter === "discovered" && !progress.seen) return false;
     if (bestiaryQuickFilter === "captured" && (progress.captures ?? 0) <= 0) return false;
     if (!bestiarySearchText) return true;
     const profile = creatureProfile(kind);
+    const captureKnowledge = captureKnowledgeForResearch(kind, profile.captureProfile, bestiaryResearchLevel(progress));
+    const primeRoute = PRIME_ROUTE_PROFILES[kind as PrimeEligibleKind] ?? [];
     const discoveredText = progress.seen ? [
       definition.name, definition.lore, definition.habitat, definition.behavior, definition.utility ?? "",
       ...profile.naturalTypes.map((type) => CREATURE_TYPES[type].name),
       ...profile.moves.unlocks.map((unlock) => CREATURE_MOVES[unlock.moveId]?.name ?? ""),
+      ...profile.researchClues,
+      captureKnowledge.microHook ?? "",
+      ...captureKnowledge.careClues,
+      ...primeRoute.flatMap((step) => [step.label, step.ecologicalVerb, step.clue]),
       ...definition.drops.map((drop) => ITEMS[drop.item]?.name ?? ""),
+      ...(progress.specimenIds ?? []),
+      ...(progress.summonOrigins ?? []),
+      ...(progress.guildLinks ?? []),
+      ...Object.values(progress.forms ?? {}).map((form) => `${form.category} ${form.id}`),
+      ...Object.values(progress.sections ?? {}).flatMap((records) => records.flatMap((entry) => [entry.title, entry.text, entry.sourceId ?? ""])),
     ] : [definition.name, undiscoveredHabitatHint(definition)];
     return discoveredText.join(" ").toLocaleLowerCase().includes(bestiarySearchText);
   });
-  const bestiaryVisibleKinds: readonly MobKind[] = bestiaryBaseKinds
-    .filter((kind) => bestiaryKindsForFilter(bestiaryFilter).includes(kind))
-    .sort((left, right) => {
-      if (bestiarySort === "name") return MOB_DEFS[left].name.localeCompare(MOB_DEFS[right].name);
-      if (bestiarySort === "observed") return Number(hud.bestiary[right].seen) - Number(hud.bestiary[left].seen) || (hud.bestiary[right].captures ?? 0) - (hud.bestiary[left].captures ?? 0);
-      if (bestiarySort === "research") return bestiaryEntryCompletion(MOB_DEFS[right], hud.bestiary[right]) - bestiaryEntryCompletion(MOB_DEFS[left], hud.bestiary[left]);
-      if (bestiarySort === "rarity") return Number(["dragon", "leviathan"].includes(MOB_DEFS[right].family ?? "")) - Number(["dragon", "leviathan"].includes(MOB_DEFS[left].family ?? ""));
-      return MOB_ORDER.indexOf(left) - MOB_ORDER.indexOf(right);
-    });
+  const bestiaryFacetOptions = Object.fromEntries(BESTIARY_FACET_KEYS.map((facet) => [
+    facet,
+    [...new Set(bestiaryCatalogRecords.flatMap((record) => record.facets[facet]))]
+      .sort((left, right) => bestiaryFacetValueLabel(facet, left).localeCompare(bestiaryFacetValueLabel(facet, right))),
+  ])) as unknown as Record<BestiaryFacetKey, readonly string[]>;
+  const bestiaryFacetCounts = Object.fromEntries(BESTIARY_FACET_KEYS.map((facet) => [
+    facet,
+    bestiaryFacetOptionCounts(bestiaryBaseRecords, bestiaryFacets, facet, bestiaryFacetOptions[facet]),
+  ])) as Record<BestiaryFacetKey, Readonly<Record<string, number>>>;
+  const bestiaryVisibleRecords = sortBestiaryFacetRecords(filterBestiaryFacetRecords(bestiaryBaseRecords, bestiaryFacets), bestiarySort);
+  const bestiaryVisibleKinds: readonly MobKind[] = bestiaryVisibleRecords.map((record) => record.id as MobKind);
   const activeBestiary = bestiaryVisibleKinds.includes(selectedBestiary) ? selectedBestiary : bestiaryVisibleKinds[0] ?? selectedBestiary;
   const bestiaryDefinition = MOB_DEFS[activeBestiary];
   const bestiaryProgress = hud.bestiary[activeBestiary];
   const activeCreatureProfile = creatureProfile(activeBestiary);
-  const activeCreatureStats = statsAtLevel(activeCreatureProfile.stats, 1);
+  const activeCaptureKnowledge = captureKnowledgeForResearch(activeBestiary, activeCreatureProfile.captureProfile, bestiaryResearchLevel(bestiaryProgress));
+  const activePrimeProfile = PRIME_FORM_PROFILES[activeBestiary] ?? null;
+  const activePrimeRoute = PRIME_ROUTE_PROFILES[activeBestiary as PrimeEligibleKind] ?? null;
+  const activePrimeEncounter = [...(engineRef.current?.primeEncounters.values() ?? [])]
+    .filter((encounter) => encounter.kind === activeBestiary)
+    .sort((left, right) => right.lastUpdatedAt - left.lastUpdatedAt)[0] ?? null;
+  const activePrimeCompletedRouteVerbs = new Set(activePrimeEncounter?.completedRouteVerbs ?? []);
+  const activeBestiaryInventorySpecimens = bestiaryInventorySpecimens.filter((specimen) => specimen.kind === activeBestiary);
+  const activeBestiarySpecimenIds = [...new Set([...(bestiaryProgress.specimenIds ?? []), ...activeBestiaryInventorySpecimens.map((specimen) => specimen.entityId)])];
+  const activeBestiaryLevel = activeBestiaryInventorySpecimens.reduce((highest, specimen) => Math.max(highest, specimen.progression?.level ?? 0), 0);
+  const activeCreatureStats = statsAtLevel(activeCreatureProfile.stats, activeBestiaryLevel || 1);
   const bestiaryVisibleIndex = Math.max(0, bestiaryVisibleKinds.indexOf(activeBestiary));
-  const bestiarySelectedFilterCount = Number(bestiaryFilter !== "all");
-  const bestiaryFacetCount = (filter: BestiaryFilter) => bestiaryBaseKinds.filter((kind) => bestiaryKindsForFilter(filter).includes(kind)).length;
+  const bestiarySelectedFilterCount = BESTIARY_FACET_KEYS.reduce((total, facet) => total + bestiaryFacets[facet].length, 0);
+  const bestiarySelectedFacetChips: readonly BestiaryFacetChip[] = BESTIARY_FACET_KEYS.flatMap((facet) => bestiaryFacets[facet].map((value) => ({
+    facet,
+    value,
+    label: `${BESTIARY_FACET_LABELS[facet]}: ${bestiaryFacetValueLabel(facet, value)}`,
+  })));
+  const visibleBestiaryFacetChips = bestiarySelectedFacetChips.slice(0, 4);
+  const hiddenBestiaryFacetChipCount = Math.max(0, bestiarySelectedFacetChips.length - visibleBestiaryFacetChips.length);
   useEffect(() => {
     if (bestiaryVisibleKinds.length && !bestiaryVisibleKinds.includes(selectedBestiary)) setSelectedBestiary(bestiaryVisibleKinds[0]);
   }, [bestiaryVisibleKinds, selectedBestiary]);
-  const setBestiaryCategory = (filter: BestiaryFilter) => {
-    setBestiaryFilter(filter);
-    const kinds = bestiaryKindsForFilter(filter);
-    if (!kinds.includes(selectedBestiary) && kinds[0]) setSelectedBestiary(kinds[0]);
+  const setBestiaryFacet = (facet: BestiaryFacetKey, value: string) => setBestiaryFacets((current) => toggleBestiaryFacetValue(current, facet, value));
+  const clearBestiaryFacets = () => setBestiaryFacets(createEmptyBestiaryFacetSelections());
+  const handleBestiaryFacetNavigation = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+    const panel = bestiaryFilterPanelRef.current;
+    const options = panel ? [...panel.querySelectorAll<HTMLButtonElement>("[data-bestiary-filter-option]:not(:disabled)")] : [];
+    const current = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-bestiary-filter-option]");
+    if (!current || !options.length) return;
+    event.preventDefault();
+    const index = Math.max(0, options.indexOf(current));
+    const next = event.key === "Home" ? 0 : event.key === "End" ? options.length - 1
+      : (index + (["ArrowLeft", "ArrowUp"].includes(event.key) ? -1 : 1) + options.length) % options.length;
+    options[next]?.focus();
   };
   const stepBestiary = (direction: -1 | 1) => {
     if (!bestiaryVisibleKinds.length) return;
@@ -3001,6 +3335,11 @@ export default function VoxelGame() {
               {hud.targetMob.capture && <div className={`capture-readiness ${hud.targetMob.capture.ready ? "ready" : "waiting"}`} role="status" aria-label={`${hud.targetMob.capture.profileName} capture ${hud.targetMob.capture.ready ? "ready" : "not ready"}`}>
                 <b><i aria-hidden="true" />{hud.targetMob.capture.profileName} · {hud.targetMob.capture.ready ? "READY" : "OBSERVE"}</b>
                 <ul>{hud.targetMob.capture.conditions.map((condition, index) => <li className={condition.satisfied ? "satisfied" : "missing"} key={`${condition.id ?? "unknown"}-${index}`}><span aria-hidden="true">{condition.satisfied ? "✓" : condition.learned ? "○" : "?"}</span>{condition.label}</li>)}</ul>
+              </div>}
+              {hud.targetMob.summonContract && <div className={`mob-summon-contract ${hud.targetMob.summonContract.worldpinReady ? "ready" : hud.targetMob.summonContract.echo ? "echo" : "waiting"}`} role="status" aria-label={`${hud.targetMob.summonContract.realm} summon concordance ${hud.targetMob.summonContract.concordance} of ${hud.targetMob.summonContract.required}. ${hud.targetMob.summonContract.echo ? "Echo manifestation cannot be grounded" : hud.targetMob.summonContract.worldpinReady ? `Worldpin ready for ${hud.targetMob.summonContract.anchorWindowSeconds.toFixed(1)} seconds` : "Worldpin anchor window closed"}.`}>
+                <header><span>SUMMON · {hud.targetMob.summonContract.realm.toLocaleUpperCase()}</span><b>{hud.targetMob.summonContract.concordance}/{hud.targetMob.summonContract.required} CONCORDANCE</b></header>
+                <i aria-hidden="true"><b style={{ width: `${Math.min(100, hud.targetMob.summonContract.concordance / Math.max(1, hud.targetMob.summonContract.required) * 100)}%` }} /></i>
+                <p><strong>{hud.targetMob.summonContract.echo ? "ECHO FORM" : hud.targetMob.summonContract.worldpinReady ? `WORLDPIN ${hud.targetMob.summonContract.anchorWindowSeconds.toFixed(1)}s` : "WORLDPIN WINDOW CLOSED"}</strong><span>{hud.targetMob.summonContract.echo ? "Grounding unavailable" : hud.targetMob.summonContract.worldpinReady ? "Anchor now" : "Rebuild concordance and open an anchor"}</span></p>
               </div>}
             </div>
           )}
@@ -3840,15 +4179,15 @@ export default function VoxelGame() {
                 <div className="bestiary-quick-filters" role="group" aria-label="Bestiary view">
                   {([['all', 'All'], ['discovered', 'Discovered'], ['captured', 'Captured']] as const).map(([filter, label]) => <button type="button" aria-pressed={bestiaryQuickFilter === filter} className={bestiaryQuickFilter === filter ? "active" : ""} key={filter} onClick={() => setBestiaryQuickFilter(filter)}>{label}</button>)}
                 </div>
-                <button type="button" className={`bestiary-filter-trigger ${bestiarySelectedFilterCount ? "active" : ""}`} aria-haspopup="dialog" aria-expanded={bestiaryFiltersOpen} onClick={() => setBestiaryFiltersOpen((open) => !open)}>Filters{bestiarySelectedFilterCount > 0 && <small>{bestiarySelectedFilterCount}</small>}</button>
-                <label className="bestiary-sort"><span>Sort</span><select value={bestiarySort} onChange={(event) => setBestiarySort(event.target.value as BestiarySort)}><option value="catalog">Catalog</option><option value="name">Name</option><option value="observed">Recently observed</option><option value="research">Research completion</option><option value="rarity">Rarity</option></select></label>
-                <span className="bestiary-index">{bestiaryVisibleKinds.length ? `ENTRY ${bestiaryVisibleIndex + 1} / ${bestiaryVisibleKinds.length}` : "NO MATCHES"}</span>
-                {bestiaryFiltersOpen && <div className="bestiary-filter-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) setBestiaryFiltersOpen(false); }}><section className="bestiary-filter-panel" role="dialog" aria-modal="true" aria-labelledby="bestiary-filter-title"><header><div><small>REFINE CATALOG</small><h3 id="bestiary-filter-title">Creature filters</h3></div><button type="button" onClick={() => setBestiaryFiltersOpen(false)} aria-label="Close creature filters">×</button></header><fieldset><legend>Habitat & family</legend><div>{BESTIARY_FILTERS.map(([filter, label]) => { const count = bestiaryFacetCount(filter); return <button type="button" aria-pressed={bestiaryFilter === filter} disabled={count === 0} className={bestiaryFilter === filter ? "active" : ""} key={filter} onClick={() => setBestiaryCategory(filter)}><span>{label}</span><small>{count}</small></button>; })}</div></fieldset><footer><button type="button" onClick={() => setBestiaryCategory("all")}>Clear</button><button type="button" className="primary" onClick={() => setBestiaryFiltersOpen(false)}>Show {bestiaryVisibleKinds.length} creatures</button></footer></section></div>}
+                <button ref={bestiaryFilterTriggerRef} type="button" className={`bestiary-filter-trigger ${bestiarySelectedFilterCount ? "active" : ""}`} aria-haspopup="dialog" aria-expanded={bestiaryFiltersOpen} aria-controls="bestiary-filter-panel" onClick={() => setBestiaryFiltersOpen((open) => !open)}>Filters{bestiarySelectedFilterCount > 0 && <small aria-label={`${bestiarySelectedFilterCount} selected filters`}>{bestiarySelectedFilterCount}</small>}</button>
+                <label className="bestiary-sort"><span>Sort</span><select value={bestiarySort} aria-label="Sort Bestiary" onChange={(event) => setBestiarySort(event.target.value as BestiarySort)}><option value="catalog">Catalog</option><option value="name">Name</option><option value="observed">Recently observed</option><option value="research">Research completion</option><option value="level">Creature level</option><option value="rarity">Rarity</option></select></label>
+                <span className="bestiary-index" aria-live="polite">{bestiaryVisibleKinds.length ? `ENTRY ${bestiaryVisibleIndex + 1} / ${bestiaryVisibleKinds.length}` : "NO MATCHES"}</span>
+                {bestiaryFiltersOpen && <div className="bestiary-filter-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) setBestiaryFiltersOpen(false); }}><section ref={bestiaryFilterPanelRef} id="bestiary-filter-panel" className="bestiary-filter-panel" role="dialog" aria-modal="true" aria-labelledby="bestiary-filter-title" aria-describedby="bestiary-filter-help" onKeyDown={handleBestiaryFacetNavigation}><header><div><small>REFINE CATALOG</small><h3 id="bestiary-filter-title">Creature filters</h3><p id="bestiary-filter-help">Select multiple values. Values within one group are combined; groups narrow each other.</p></div><button type="button" onClick={() => setBestiaryFiltersOpen(false)} aria-label="Close creature filters">×</button></header><div className="bestiary-filter-groups">{BESTIARY_FACET_KEYS.map((facet) => <details open key={facet}><summary><span>{BESTIARY_FACET_LABELS[facet]}</span><small>{bestiaryFacets[facet].length ? `${bestiaryFacets[facet].length} selected` : `${bestiaryFacetOptions[facet].length} options`}</small></summary><fieldset><legend className="sr-only">Select {BESTIARY_FACET_LABELS[facet].toLocaleLowerCase()}</legend><div>{bestiaryFacetOptions[facet].map((value) => { const count = bestiaryFacetCounts[facet][value] ?? 0; const selected = bestiaryFacets[facet].includes(value); const type = facet === "type" ? CREATURE_TYPES[value as keyof typeof CREATURE_TYPES] : null; return <button type="button" data-bestiary-filter-option={`${facet}:${value}`} aria-pressed={selected} aria-label={`${bestiaryFacetValueLabel(facet, value)}, ${count} matching creatures${selected ? ", selected" : ""}`} disabled={count === 0 && !selected} className={selected ? "active" : ""} key={value} onClick={() => setBestiaryFacet(facet, value)}><span><i aria-hidden="true">{type?.glyph ?? (selected ? "✓" : "◇")}</i><span>{bestiaryFacetValueLabel(facet, value)}</span></span><small>{count}</small><b aria-hidden="true">{selected ? "✓" : ""}</b></button>; })}</div></fieldset></details>)}</div><footer><button type="button" onClick={clearBestiaryFacets} disabled={bestiarySelectedFilterCount === 0}>Clear all</button><button type="button" className="primary" onClick={() => setBestiaryFiltersOpen(false)}>Show {bestiaryVisibleKinds.length} {bestiaryVisibleKinds.length === 1 ? "creature" : "creatures"}</button></footer></section></div>}
               </div>
-              {bestiaryFilter !== "all" && <div className="bestiary-selected-facets" aria-label="Selected filters"><button type="button" onClick={() => setBestiaryCategory("all")}>{BESTIARY_FILTERS.find(([filter]) => filter === bestiaryFilter)?.[1]} <span aria-hidden="true">×</span><span className="sr-only">Remove filter</span></button></div>}
+              {bestiarySelectedFilterCount > 0 && <div className="bestiary-selected-facets" aria-label="Selected filters">{visibleBestiaryFacetChips.map((chip) => <button type="button" title={`Remove ${chip.label}`} key={`${chip.facet}:${chip.value}`} onClick={() => setBestiaryFacet(chip.facet, chip.value)}><span>{chip.label}</span><b aria-hidden="true">×</b><span className="sr-only">Remove {chip.label}</span></button>)}{hiddenBestiaryFacetChipCount > 0 && <button type="button" className="bestiary-facet-overflow" onClick={() => setBestiaryFiltersOpen(true)} aria-label={`Show ${hiddenBestiaryFacetChipCount} more selected filters`}>+{hiddenBestiaryFacetChipCount} more</button>}<button type="button" className="bestiary-facet-clear" onClick={clearBestiaryFacets}>Clear</button></div>}
               <div className="bestiary-layout">
                 <nav className="bestiary-list" aria-label="Creature list">
-                  {!bestiaryVisibleKinds.length && <div className="bestiary-empty"><strong>No matching creatures</strong><span>Clear a filter or try a broader field note.</span><button type="button" onClick={() => { setBestiarySearch(""); setBestiaryQuickFilter("all"); setBestiaryCategory("all"); }}>Clear search</button></div>}
+                  {!bestiaryVisibleKinds.length && <div className="bestiary-empty"><strong>No matching creatures</strong><span>Clear a filter or try a broader field note.</span><button type="button" onClick={() => { setBestiarySearch(""); setBestiaryQuickFilter("all"); clearBestiaryFacets(); }}>Clear filters</button></div>}
                   {bestiaryVisibleKinds.map((kind) => {
                     const definition = MOB_DEFS[kind];
                     const progress = hud.bestiary[kind];
@@ -3864,15 +4203,34 @@ export default function VoxelGame() {
                   </div>
                   {bestiaryProgress.seen ? <>
                     <div className="bestiary-heading"><div><span className={`temperament-label temperament-${bestiaryDefinition.temperament.toLowerCase()}`}>{bestiaryDefinition.temperament.toUpperCase()}</span><h3>{bestiaryDefinition.name}</h3></div><strong>{bestiaryObservation(bestiaryDefinition, bestiaryProgress).toUpperCase()}</strong></div>
-                    <nav className="bestiary-page-tabs" aria-label={`${bestiaryDefinition.name} record sections`}>{([['overview', 'Overview'], ['ecology', 'Ecology'], ['combat', 'Combat'], ['care', 'Care'], ['research', 'Research'], ['specimens', 'Specimens']] as const).map(([tab, label]) => <button type="button" key={tab} aria-current={bestiaryPageTab === tab ? "page" : undefined} className={bestiaryPageTab === tab ? "active" : ""} onClick={() => setBestiaryPageTab(tab)}>{label}</button>)}</nav>
+                    <nav className="bestiary-page-tabs" aria-label={`${bestiaryDefinition.name} record sections`}>{([['overview', 'Overview'], ['ecology', 'Ecology'], ['combat', 'Combat'], ['care', 'Care'], ['research', 'Research'], ['specimens', 'Specimens'], ['variants', 'Variants']] as const).map(([tab, label]) => <button type="button" key={tab} aria-current={bestiaryPageTab === tab ? "page" : undefined} className={bestiaryPageTab === tab ? "active" : ""} onClick={() => setBestiaryPageTab(tab)}>{label}</button>)}</nav>
                     <p className="bestiary-lore">{bestiaryDefinition.lore}</p>
                     <div className="bestiary-type-strip" aria-label={`Natural types: ${activeCreatureProfile.naturalTypes.map((type) => CREATURE_TYPES[type].name).join(", ")}`}>{activeCreatureProfile.naturalTypes.map((type) => <span key={type} style={{ "--type-color": CREATURE_TYPES[type].color } as CSSProperties}><i aria-hidden="true">{CREATURE_TYPES[type].glyph}</i><strong>{CREATURE_TYPES[type].name}</strong></span>)}</div>
                     <section className="bestiary-ecology-record"><div className="bestiary-record-heading"><small>ECOLOGY</small><strong>{activeCreatureProfile.ecologyRoles.join(" · ")}</strong></div><p>{bestiaryDefinition.behavior}</p><dl><div><dt>Habitat</dt><dd>{bestiaryDefinition.habitat}</dd></div><div><dt>Activity</dt><dd>{bestiaryDefinition.active}</dd></div><div><dt>Movement</dt><dd>{bestiaryDefinition.movement ?? "ground"}</dd></div></dl><ul>{activeCreatureProfile.researchClues.map((clue) => <li key={clue}>{clue}</li>)}</ul></section>
-                    <section className="bestiary-combat-record"><div className="bestiary-record-heading"><small>BASELINE COMBAT PROFILE</small><strong>{activeCreatureProfile.stats.growth} growth · level 1–{activeCreatureProfile.stats.maximumLevel}</strong></div><div className="bestiary-stat-lines">{(Object.entries(activeCreatureStats) as Array<[keyof typeof activeCreatureStats, number]>).map(([stat, value]) => <div key={stat}><span><strong>{stat}</strong><small>{statBand(value)} · {value}</small></span><i><b style={{ width: `${value}%` }} /></i></div>)}</div><div className="bestiary-move-list">{activeCreatureProfile.moves.unlocks.map((unlock) => { const move = CREATURE_MOVES[unlock.moveId]; return move ? <article key={unlock.moveId}><span style={{ "--type-color": CREATURE_TYPES[move.type].color } as CSSProperties}><i aria-hidden="true">{CREATURE_TYPES[move.type].glyph}</i><small>LV {unlock.level}</small></span><div><strong>{move.name}</strong><p>{move.description}</p><small>{move.channel} · {move.shape} · {move.cooldownSeconds.toFixed(1)}s cooldown</small></div></article> : null; })}</div></section>
-                    <section className="bestiary-specimen-record"><div className="bestiary-record-heading"><small>SPECIMEN RECORD</small><strong>{bestiaryProgress.captures > 0 ? `${bestiaryProgress.captures} cataloged` : "No individual recorded"}</strong></div><div><span><small>Capture approach</small><strong>{activeCreatureProfile.captureProfile}</strong><p>Learn ecological prerequisites through observation; ready captures are deterministic.</p></span><span><small>Rare forms</small><strong>Shiny · Prime · regional · story</strong><p>Each identity is tracked separately. Prime and story forms are never reduced to recolors.</p></span><span><small>Lineage history</small><strong>{bestiaryProgress.captures > 0 ? "Capture ledger active" : "Awaiting first specimen"}</strong><p>Names, origins, releases, bonds, aptitude notes, and summon provenance append without replacing earlier history.</p></span></div></section>
+                    <section className="bestiary-combat-record"><div className="bestiary-record-heading"><small>{activeBestiaryLevel ? `LEVEL ${activeBestiaryLevel} SPECIMEN PROFILE` : "BASELINE COMBAT PROFILE"}</small><strong>{activeCreatureProfile.stats.growth} growth · level 1–{activeCreatureProfile.stats.maximumLevel}</strong></div><div className="bestiary-stat-lines">{(Object.entries(activeCreatureStats) as Array<[keyof typeof activeCreatureStats, number]>).map(([stat, value]) => <div key={stat}><span><strong>{stat}</strong><small>{statBand(value)} · {value}</small></span><i><b style={{ width: `${value}%` }} /></i></div>)}</div><div className="bestiary-move-list">{activeCreatureProfile.moves.unlocks.map((unlock) => { const move = CREATURE_MOVES[unlock.moveId]; return move ? <article key={unlock.moveId}><span style={{ "--type-color": CREATURE_TYPES[move.type].color } as CSSProperties}><i aria-hidden="true">{CREATURE_TYPES[move.type].glyph}</i><small>LV {unlock.level}</small></span><div><strong>{move.name}</strong><p>{move.description}</p><small>{move.channel} · {move.shape} · {move.cooldownSeconds.toFixed(1)}s cooldown</small></div></article> : null; })}</div></section>
+                    <section className="bestiary-specimen-record">
+                      <div className="bestiary-record-heading"><small>SPECIMEN LEDGER</small><strong>{activeBestiarySpecimenIds.length} stable {activeBestiarySpecimenIds.length === 1 ? "ID" : "IDs"} · {bestiaryProgress.captures} captures</strong></div>
+                      <dl className="bestiary-history-grid"><div><dt>First observed</dt><dd>{bestiaryRecordTimestamp(bestiaryProgress.firstSeenAt ?? null)}</dd></div><div><dt>Last observed</dt><dd>{bestiaryRecordTimestamp(bestiaryProgress.lastObservedAt ?? null)}</dd></div><div><dt>First captured</dt><dd>{bestiaryRecordTimestamp(bestiaryProgress.firstCapturedAt ?? null)}</dd></div></dl>
+                      <div className="bestiary-specimen-list">{activeBestiarySpecimenIds.length ? activeBestiarySpecimenIds.map((specimenId) => { const specimen = activeBestiaryInventorySpecimens.find((candidate) => candidate.entityId === specimenId); const progression = specimen?.progression; return <article key={specimenId}><header><div><small>SPECIMEN ID</small><strong>{specimenId}</strong></div>{progression && <b>LV {progression.level}</b>}</header><p>{specimen?.name?.trim() || bestiaryDefinition.name}</p><dl><div><dt>Captured</dt><dd>{bestiaryRecordTimestamp(specimen?.capturedAt ? specimen.capturedAt : null)}</dd></div><div><dt>Bond</dt><dd>{progression?.bondTier ?? "Not in current inventory"}</dd></div><div><dt>Form</dt><dd>{progression ? `${progression.shiny ? "shiny " : ""}${progression.rarityForm}` : "Record retained"}</dd></div><div><dt>Method</dt><dd>{progression?.captureHistory.lastMethodId ?? "Not recorded"}</dd></div></dl></article>; }) : <p className="bestiary-record-empty">No stable specimen IDs have been recorded for this species.</p>}</div>
+                    </section>
+                    <section className="bestiary-variants-record">
+                      <div className="bestiary-record-heading"><small>VARIANTS & PROVENANCE</small><strong>{Object.keys(bestiaryProgress.forms ?? {}).length} forms · {(bestiaryProgress.summonOrigins ?? []).length} summon origins</strong></div>
+                      <div className="bestiary-variant-groups">
+                        <section><h4>Recorded forms</h4>{Object.values(bestiaryProgress.forms ?? {}).length ? <div className="bestiary-form-list">{Object.values(bestiaryProgress.forms ?? {}).sort((left, right) => left.firstRecordedAt - right.firstRecordedAt).map((form) => <article key={form.id}><span aria-hidden="true">{form.category === "shiny" ? "✦" : form.category === "prime" ? "◆" : "◇"}</span><div><strong>{form.category}</strong><code>{form.id}</code><small>{form.sightings} {form.sightings === 1 ? "sighting" : "sightings"} · {bestiaryRecordTimestamp(form.firstRecordedAt)}</small></div></article>)}</div> : <p className="bestiary-record-empty">No regional, seasonal, Prime, legendary, summoned, or shiny form is recorded yet.</p>}</section>
+                        <section className="bestiary-prime-route"><h4>Prime field route</h4>{activePrimeProfile && activePrimeRoute ? <><header><div><strong>{activePrimeProfile.name}</strong><p>{activePrimeProfile.clue}</p></div><small>{activePrimeEncounter ? `${activePrimeCompletedRouteVerbs.size}/${activePrimeRoute.length} · ${activePrimeEncounter.status}` : "ROUTE NOT ACTIVATED"}</small></header><ol>{activePrimeRoute.map((step) => { const completed = activePrimeCompletedRouteVerbs.has(step.id); return <li key={step.id} className={completed ? "complete" : undefined}><span aria-hidden="true">{completed ? "✓" : "◇"}</span><div><small>{completed ? "COMPLETED" : step.ecologicalVerb.toLocaleUpperCase()}</small><strong>{step.label}</strong><p>{step.clue}</p></div></li>; })}</ol></> : <p className="bestiary-record-empty">This species has no authored Prime route.</p>}</section>
+                        <section><h4>Summon origins</h4>{(bestiaryProgress.summonOrigins ?? []).length ? <ul>{bestiaryProgress.summonOrigins.map((origin) => <li key={origin}><code>{origin}</code></li>)}</ul> : <p className="bestiary-record-empty">No summon lineage has been recorded.</p>}</section>
+                        <section><h4>Guild links</h4>{(bestiaryProgress.guildLinks ?? []).length ? <ul>{bestiaryProgress.guildLinks.map((link) => { const guildId = Object.keys(GUILDS).find((candidate) => bestiarySlug(link).includes(candidate)); return <li key={link}><strong>{guildId ? BESTIARY_GUILD_LABELS[guildId] : "Field record"}</strong><code>{link}</code></li>; })}</ul> : <p className="bestiary-record-empty">No guild field record is linked.</p>}</section>
+                        <section className="bestiary-append-sections"><h4>Append-only field sections</h4>{Object.keys(bestiaryProgress.sections ?? {}).length ? Object.entries(bestiaryProgress.sections ?? {}).map(([section, records]) => <article key={section}><header><strong>{bestiaryFacetValueLabel("utility", section)}</strong><small>{records.length} {records.length === 1 ? "entry" : "entries"}</small></header>{records.map((record) => <div key={record.id}><strong>{record.title}</strong><p>{record.text}</p><small>{bestiaryRecordTimestamp(record.recordedAt)}{record.sourceId ? ` · source ${record.sourceId}` : ""}</small></div>)}</article>) : <p className="bestiary-record-empty">No extended chapter has been appended to this creature yet.</p>}</section>
+                      </div>
+                    </section>
                     <div className="bestiary-facts"><div><small>HABITAT</small><strong>{bestiaryDefinition.habitat}</strong></div><div><small>ACTIVE</small><strong>{bestiaryDefinition.active}</strong></div><div><small>FAMILY</small><strong>{bestiaryDefinition.family ?? "surface"}</strong></div><div><small>MOVEMENT</small><strong>{bestiaryDefinition.movement ?? "ground"}</strong></div><div><small>HEALTH</small><strong>{formatHudHealth(bestiaryDefinition.health)} hearts</strong></div><div><small>DANGER</small><strong>{bestiaryDefinition.damage ? `${bestiaryDefinition.damage} damage` : "Harmless"}</strong></div>{bestiaryDefinition.sentient !== true && <div className={bestiaryProgress.captures > 0 ? "capture-record caught" : "capture-record"}><small>CAUGHT</small><strong>{bestiaryProgress.captures > 0 ? `Yes · ${bestiaryProgress.captures} recorded` : "Not yet"}</strong></div>}</div>
                     <section className="behavior-note"><small>BEHAVIOR</small><p>{bestiaryDefinition.behavior}</p></section>
-                    <section className="bestiary-care" aria-label={`${bestiaryDefinition.name} care information`}><div className="bestiary-care-heading"><small>CREATURE CARE</small><span>Recorded dynamically from known interactions</span></div><div className="bestiary-care-grid"><div><small>TAMEABLE</small><strong>{bestiaryDefinition.tameable ? "Yes" : "No"}</strong>{bestiaryDefinition.tameable && <span>{bestiaryDefinition.tameItems?.length ? bestiaryDefinition.tameItems.map((item) => ITEMS[item]?.name).filter(Boolean).join(", ") : "Method not yet recorded"}</span>}</div><div><small>BREEDABLE</small><strong>{bestiaryDefinition.breedable ? "Yes" : "No"}</strong>{bestiaryDefinition.breedable && <span>{bestiaryDefinition.breedingFoods?.length ? bestiaryDefinition.breedingFoods.map((item) => ITEMS[item]?.name).filter(Boolean).join(", ") : "Breeding food unknown"}</span>}</div><div><small>EATS</small><strong>{bestiaryDefinition.diet?.length ? bestiaryDefinition.diet.map((item) => ITEMS[item]?.name).filter(Boolean).join(", ") : "No feeding response recorded"}</strong></div><div><small>SENTIENT</small><strong>{bestiaryDefinition.sentient ? "Yes" : "No"}</strong><span>{bestiaryDefinition.sentient ? "Can converse, trade, hold roles, and remember faction standing." : "Acts from instinct rather than factional intent."}</span></div></div></section>
+                    <section className="bestiary-care" aria-label={`${bestiaryDefinition.name} care information`}>
+                      <div className="bestiary-care-heading"><small>CREATURE CARE</small><span>Recorded dynamically from known interactions</span></div>
+                      <div className="bestiary-care-grid"><div><small>TAMEABLE</small><strong>{bestiaryDefinition.tameable ? "Yes" : "No"}</strong>{bestiaryDefinition.tameable && <span>{bestiaryDefinition.tameItems?.length ? bestiaryDefinition.tameItems.map((item) => ITEMS[item]?.name).filter(Boolean).join(", ") : "Method not yet recorded"}</span>}</div><div><small>BREEDABLE</small><strong>{bestiaryDefinition.breedable ? "Yes" : "No"}</strong>{bestiaryDefinition.breedable && <span>{bestiaryDefinition.breedingFoods?.length ? bestiaryDefinition.breedingFoods.map((item) => ITEMS[item]?.name).filter(Boolean).join(", ") : "Breeding food unknown"}</span>}</div><div><small>EATS</small><strong>{bestiaryDefinition.diet?.length ? bestiaryDefinition.diet.map((item) => ITEMS[item]?.name).filter(Boolean).join(", ") : "No feeding response recorded"}</strong></div><div><small>SENTIENT</small><strong>{bestiaryDefinition.sentient ? "Yes" : "No"}</strong><span>{bestiaryDefinition.sentient ? "Can converse, trade, hold roles, and remember faction standing." : "Acts from instinct rather than factional intent."}</span></div></div>
+                      {activeCaptureKnowledge.careClues.length > 0 && <div className="bestiary-authored-care"><small>FIELD-VERIFIED CARE CLUES</small><ul>{activeCaptureKnowledge.careClues.map((clue) => <li key={clue}>{clue}</li>)}</ul></div>}
+                    </section>
+                    {activeCaptureKnowledge.microHook && <section className="bestiary-authored-research"><div className="bestiary-care-heading"><small>CAPTURE RESEARCH</small><span>Revealed through field observation</span></div><p>{activeCaptureKnowledge.microHook}</p><small>{activeCaptureKnowledge.mastered ? "CAPTURE PROFILE MASTERED" : `${activeCaptureKnowledge.learnedConditions.length} condition${activeCaptureKnowledge.learnedConditions.length === 1 ? "" : "s"} documented`}</small></section>}
                     {bestiaryDefinition.fieldNotes?.length ? <section className="bestiary-field-notes"><div className="bestiary-care-heading"><small>EXTENDED FIELD NOTES</small><span>{bestiaryDefinition.fieldNotes.filter((note) => bestiaryFieldNoteUnlocked(note, bestiaryProgress)).length}/{bestiaryDefinition.fieldNotes.length} unlocked</span></div>{bestiaryDefinition.fieldNotes.map((note) => { const unlocked = bestiaryFieldNoteUnlocked(note, bestiaryProgress); return <article key={note.id} className={unlocked ? "unlocked" : "locked"}><small>{unlocked ? "RECORDED" : "LOCKED"}</small><strong>{note.title}</strong><p>{unlocked ? note.text : note.hint}</p></article>; })}</section> : bestiaryDefinition.postTameNotes && <section className={`bestiary-secret ${bestiaryProgress.secretUnlocked || (bestiaryProgress.tames ?? 0) > 0 ? "unlocked" : "locked"}`}><small>COMPANION FIELD NOTES</small>{bestiaryProgress.secretUnlocked || (bestiaryProgress.tames ?? 0) > 0 ? <p>{bestiaryDefinition.postTameNotes}</p> : <p>Locked · {bestiaryDefinition.secretHint ?? `Tame a ${bestiaryDefinition.name} to reveal its deeper care and riding notes.`}</p>}</section>}
                     {bestiaryDefinition.family === "butterfly" ? <section className="bestiary-loot butterfly-capture-record"><small>CAPTURE RECORD</small>{bestiaryDefinition.captureItem !== undefined && <div><ItemIcon item={bestiaryDefinition.captureItem} small /><span><strong>{bestiaryProgress.captures ? `${bestiaryProgress.captures} ${bestiaryProgress.captures === 1 ? "specimen" : "specimens"} cataloged` : "No specimen captured yet"}</strong><small>Equip a Butterfly Net and catch one gently to preserve it in a field jar.</small></span></div>}</section> : <section className="bestiary-loot"><small>OBSERVED DROPS</small>{bestiaryDefinition.drops.map((drop) => <div key={drop.item}><ItemIcon item={drop.item} small /><span><strong>{bestiaryProgress.kills ? ITEMS[drop.item]?.name : "Unknown drop"}</strong><small>{bestiaryProgress.kills ? `${drop.min}${drop.max !== drop.min ? `–${drop.max}` : ""} · ${Math.round(drop.chance * 100)}% chance` : "Defeat one to record it"}</small></span></div>)}</section>}
                   </> : <div className="unknown-entry"><span className="panel-eyebrow">NO RELIABLE OBSERVATION</span><h3>Unknown Creature</h3><p>{undiscoveredHabitatHint(bestiaryDefinition)} Bring it within view to reveal its field notes.</p></div>}
