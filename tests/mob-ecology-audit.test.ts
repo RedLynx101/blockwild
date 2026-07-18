@@ -5,6 +5,7 @@ import { Item } from "../app/game/data.ts";
 import { wildlifeTailCadence } from "../app/game/mob-models.ts";
 import { MOB_DEFS, MOB_ORDER } from "../app/game/mobs.ts";
 import { buildMobEcologyAudit } from "../scripts/audit-mob-ecology.ts";
+import { BIOME_NAMES, BiomeId } from "../app/game/world.ts";
 
 test("mob audit reports sound, drop, and natural biome counts for the entire catalog", () => {
   const rows = buildMobEcologyAudit();
@@ -13,8 +14,25 @@ test("mob audit reports sound, drop, and natural biome counts for the entire cat
   assert.ok(cloverback.soundEventCount > 0);
   assert.ok(cloverback.dropEntryCount >= 2);
   assert.ok(cloverback.biomeCount > 0);
+  assert.ok(cloverback.spawnSources.includes("surface"));
+  assert.equal(cloverback.undergroundBiomeCount, 0);
   const authoredMerchant = rows.find((row) => row.kind === "dwarf-provisioner")!;
   assert.equal(authoredMerchant.biomeCount, 0);
+  assert.deepEqual(authoredMerchant.spawnSources, []);
+});
+
+test("mob audit never reports upland fallback fauna as ocean assignments", () => {
+  const rows = buildMobEcologyAudit();
+  const wildHorse = rows.find((row) => row.kind === "wild-horse")!;
+  assert.ok(wildHorse.surfaceBiomeCount > 0);
+  assert.equal(wildHorse.aquaticBiomeCount, 0);
+  assert.ok(!wildHorse.biomes.includes(BIOME_NAMES[BiomeId.DeepOcean]));
+  assert.ok(!wildHorse.biomes.includes(BIOME_NAMES[BiomeId.Ocean]));
+  assert.ok(!wildHorse.biomes.includes(BIOME_NAMES[BiomeId.LumenTrench]));
+
+  const blueMackerel = rows.find((row) => row.kind === "blue-mackerel")!;
+  assert.ok(blueMackerel.aquaticBiomeCount > 0);
+  assert.ok(blueMackerel.spawnSources.includes("aquatic"));
 });
 
 test("overworld food animals have sensible improved meat and hide yields", () => {

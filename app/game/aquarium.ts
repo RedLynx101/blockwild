@@ -1,6 +1,7 @@
 import { cloneCreatureMetadata, normalizeCreatureMetadata, type CreatureMetadata } from "./creature-cage";
 import { BlockId } from "./data";
 import { MOB_DEFS } from "./mobs";
+import { creatureEcologyContract, summarizeAquariumEcology } from "./creature-ecology";
 
 export const AQUARIUM_MAX_BLOCKS = 20;
 export const AQUARIUM_BREED_SECONDS = 180;
@@ -116,13 +117,15 @@ export function buildAquariumTopology(allBlocks: readonly AquariumBlockPosition[
 }
 
 export function isAquariumCreature(kind: string) {
-  if (kind === "sunset-sea-slug" || kind === "moonlace-sea-slug" || kind === "pocket-goldfish") return true;
   const definition = MOB_DEFS[kind as keyof typeof MOB_DEFS];
-  return Boolean(definition?.aquatic && definition.family === "fish" && definition.radius <= 0.34);
+  if (!definition) return false;
+  const roles = creatureEcologyContract(kind as keyof typeof MOB_DEFS).aquariumRoles;
+  return roles.length > 0 && Boolean(definition.aquatic || definition.family === "sea-slug") && definition.radius <= .5;
 }
 
 export function isAquariumCrawler(kind: string) {
-  return kind === "sunset-sea-slug" || kind === "moonlace-sea-slug";
+  const definition = MOB_DEFS[kind as keyof typeof MOB_DEFS];
+  return Boolean(definition && (definition.family === "sea-slug" || definition.bottomDweller));
 }
 
 export function storeAquariumResident(residents: readonly AquariumResident[], topology: AquariumTopology, metadata: CreatureMetadata, storedAt = Date.now()) {
@@ -263,6 +266,10 @@ export type AquariumBreedingPlan = Readonly<{ parentIds: readonly [string, strin
 
 export function planAquariumBreeding(residents: readonly AquariumResident[], topology: AquariumTopology, elapsedSeconds: number): AquariumBreedingPlan | null {
   if (residents.length >= topology.capacity || Math.floor(elapsedSeconds / AQUARIUM_BREED_SECONDS) < 1) return null;
+  const ecology = summarizeAquariumEcology(residents.map((resident) => resident.metadata.kind));
+  // Breeding remains a slow lineage event and requires a healthy, comfortable
+  // habitat rather than merely two adults sharing storage.
+  if (ecology.health < 55 || ecology.comfort < 55) return null;
   const eligible = residents.filter((resident) => !resident.metadata.baby && resident.metadata.ageTicks >= 24_000);
   const byKind = new Map<string, AquariumResident[]>();
   for (const resident of eligible) {

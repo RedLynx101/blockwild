@@ -38,6 +38,14 @@ import {
 } from "./engine";
 import { BUTTERFLY_ORDER } from "./mobs";
 import type { BestiaryFieldNote, BestiaryNoteMetric, MobDefinition } from "./mobs";
+import { creatureProfile } from "./creature-profiles";
+import { CREATURE_MOVES } from "./creature-moves";
+import { statsAtLevel, statBand } from "./creature-stats";
+import { CREATURE_TYPES } from "./creature-types";
+import { normalizeCreatureCareState, type CreatureCareAction } from "./creature-care";
+import type { CreatureProgressionV2 } from "./creature-progression";
+import { MOUNT_PROFILES } from "./creature-mounts";
+import { creatureEcologyContract, normalizeCreatureWorkState, type CreatureShellModule } from "./creature-ecology";
 import { createAvatarHeldItemModel } from "./held-items";
 import { legendaryContractForItem } from "./legendary-items";
 import { captureOrbFromInventorySlot } from "./capture-orbs";
@@ -105,6 +113,8 @@ import { statusEffectViewsFromBuffs } from "./status-effects";
 import { WaygridCreaturePanel, WaygridItemPanel } from "./WaygridPanels";
 import { CharacterStudio } from "./CharacterStudio";
 import { AquariumPanel } from "./AquariumPanel";
+import { GuildPanel } from "./GuildPanel";
+import { GUILDS, createGuildBook } from "./guilds";
 import {
   CharacterProfileStore,
   FALLBACK_CHARACTER_CATALOG,
@@ -119,6 +129,9 @@ type CivicAuditMode = "atlantian-dialogue" | "atlantian-trade" | "atlantian-sett
 type Overlay = "title" | "new" | "pause" | "help" | "settings" | OverlayKind | null;
 type TitleMenuView = "main" | "characters" | "worlds";
 export type BestiaryFilter = "all" | "surface" | "humanoids" | "rabbits" | "birds" | "butterflies" | "aquatic" | "sea-slugs" | "golems" | "monsters" | "companions";
+type BestiaryQuickFilter = "all" | "discovered" | "captured";
+type BestiarySort = "catalog" | "name" | "observed" | "research" | "rarity";
+type BestiaryPageTab = "overview" | "ecology" | "combat" | "care" | "research" | "specimens";
 type FieldGuideSection = "creatures" | "plants";
 type InventoryDragGesture = {
   pointerId: number;
@@ -793,6 +806,7 @@ const INITIAL_HUD: ExtendedHudState = {
   magic: createMagicState(),
   skills: createSkillState(),
   spellWheelOpen: false,
+  guildBook: createGuildBook(),
 };
 
 export function itemIconKind(item: ItemCode) {
@@ -907,7 +921,7 @@ function questObjectiveTarget(objective: QuestObjective) {
   return objective.count;
 }
 
-type BestiaryProgressEntry = HudState["bestiary"][MobKind];
+type BestiaryProgressEntry = Pick<HudState["bestiary"][MobKind], "seen" | "kills" | "captures"> & Partial<Pick<HudState["bestiary"][MobKind], "tames" | "breeds" | "secretUnlocked" | "milestones">>;
 
 function bestiaryMetricValue(metric: BestiaryNoteMetric, progress: BestiaryProgressEntry) {
   if (metric === "seen") return progress.seen ? 1 : 0;
@@ -1609,6 +1623,12 @@ export default function VoxelGame() {
   const [petNameDraft, setPetNameDraft] = useState("");
   const [selectedBestiary, setSelectedBestiary] = useState<MobKind>("mossling");
   const [bestiaryFilter, setBestiaryFilter] = useState<BestiaryFilter>("all");
+  const [bestiaryQuickFilter, setBestiaryQuickFilter] = useState<BestiaryQuickFilter>("all");
+  const [bestiarySearch, setBestiarySearch] = useState("");
+  const [bestiarySort, setBestiarySort] = useState<BestiarySort>("catalog");
+  const [bestiaryFiltersOpen, setBestiaryFiltersOpen] = useState(false);
+  const [bestiaryPageTab, setBestiaryPageTab] = useState<BestiaryPageTab>("overview");
+  const [campCompareOrbId, setCampCompareOrbId] = useState("");
   const [fieldGuideSection, setFieldGuideSection] = useState<FieldGuideSection>("creatures");
   const [selectedPlantId, setSelectedPlantId] = useState(PLANTS[0]?.id ?? "");
   const [plantFilter, setPlantFilter] = useState<"all" | PlantCategory>("all");
@@ -2742,18 +2762,66 @@ export default function VoxelGame() {
 
   const selectedSlot = hud.inventory[hud.selected];
   const selectedName = inventorySlotDisplayName(selectedSlot);
+  const campOrb = captureOrbFromInventorySlot(selectedSlot);
+  const campCreature = campOrb?.creature ?? null;
+  const campProgression = campCreature?.custom.progression as unknown as CreatureProgressionV2 | undefined;
+  const campCare = normalizeCreatureCareState(campCreature?.custom.creatureCare);
+  const campProfile = campCreature ? creatureProfile(campCreature.kind) : null;
+  const campEquipment = (campCreature?.custom.creatureEquipment as Record<string, ItemCode> | undefined) ?? {};
+  const campEcology = campCreature ? creatureEcologyContract(campCreature.kind) : null;
+  const campWork = campCreature ? normalizeCreatureWorkState(campCreature.kind, campCreature.custom.creatureWork) : null;
+  const campResearch = campCreature ? hud.bestiary[campCreature.kind].research["camp-observation"] : null;
+  const campOrbs = hud.inventory.flatMap((slot) => {
+    const orb = captureOrbFromInventorySlot(slot);
+    return orb?.creature && !orb.attunement?.activeEntityId ? [orb] : [];
+  });
+  const campCompareOrb = campOrbs.find((orb) => orb.orbId === campCompareOrbId && orb.orbId !== campOrb?.orbId) ?? null;
+  const campCompareProgression = campCompareOrb?.creature?.custom.progression as unknown as CreatureProgressionV2 | undefined;
   const xpNeeded = 12 + hud.level * 6;
-  const bestiaryDefinition = MOB_DEFS[selectedBestiary];
-  const bestiaryProgress = hud.bestiary[selectedBestiary];
-  const bestiaryVisibleKinds: readonly MobKind[] = bestiaryKindsForFilter(bestiaryFilter);
   const bestiarySeen = MOB_ORDER.filter((kind) => hud.bestiary[kind].seen).length;
-  const bestiaryVisibleIndex = Math.max(0, bestiaryVisibleKinds.indexOf(selectedBestiary));
+  const bestiarySearchText = bestiarySearch.trim().toLocaleLowerCase();
+  const bestiaryBaseKinds = MOB_ORDER.filter((kind) => {
+    const definition = MOB_DEFS[kind];
+    const progress = hud.bestiary[kind];
+    if (bestiaryQuickFilter === "discovered" && !progress.seen) return false;
+    if (bestiaryQuickFilter === "captured" && (progress.captures ?? 0) <= 0) return false;
+    if (!bestiarySearchText) return true;
+    const profile = creatureProfile(kind);
+    const discoveredText = progress.seen ? [
+      definition.name, definition.lore, definition.habitat, definition.behavior, definition.utility ?? "",
+      ...profile.naturalTypes.map((type) => CREATURE_TYPES[type].name),
+      ...profile.moves.unlocks.map((unlock) => CREATURE_MOVES[unlock.moveId]?.name ?? ""),
+      ...definition.drops.map((drop) => ITEMS[drop.item]?.name ?? ""),
+    ] : [definition.name, undiscoveredHabitatHint(definition)];
+    return discoveredText.join(" ").toLocaleLowerCase().includes(bestiarySearchText);
+  });
+  const bestiaryVisibleKinds: readonly MobKind[] = bestiaryBaseKinds
+    .filter((kind) => bestiaryKindsForFilter(bestiaryFilter).includes(kind))
+    .sort((left, right) => {
+      if (bestiarySort === "name") return MOB_DEFS[left].name.localeCompare(MOB_DEFS[right].name);
+      if (bestiarySort === "observed") return Number(hud.bestiary[right].seen) - Number(hud.bestiary[left].seen) || (hud.bestiary[right].captures ?? 0) - (hud.bestiary[left].captures ?? 0);
+      if (bestiarySort === "research") return bestiaryEntryCompletion(MOB_DEFS[right], hud.bestiary[right]) - bestiaryEntryCompletion(MOB_DEFS[left], hud.bestiary[left]);
+      if (bestiarySort === "rarity") return Number(["dragon", "leviathan"].includes(MOB_DEFS[right].family ?? "")) - Number(["dragon", "leviathan"].includes(MOB_DEFS[left].family ?? ""));
+      return MOB_ORDER.indexOf(left) - MOB_ORDER.indexOf(right);
+    });
+  const activeBestiary = bestiaryVisibleKinds.includes(selectedBestiary) ? selectedBestiary : bestiaryVisibleKinds[0] ?? selectedBestiary;
+  const bestiaryDefinition = MOB_DEFS[activeBestiary];
+  const bestiaryProgress = hud.bestiary[activeBestiary];
+  const activeCreatureProfile = creatureProfile(activeBestiary);
+  const activeCreatureStats = statsAtLevel(activeCreatureProfile.stats, 1);
+  const bestiaryVisibleIndex = Math.max(0, bestiaryVisibleKinds.indexOf(activeBestiary));
+  const bestiarySelectedFilterCount = Number(bestiaryFilter !== "all");
+  const bestiaryFacetCount = (filter: BestiaryFilter) => bestiaryBaseKinds.filter((kind) => bestiaryKindsForFilter(filter).includes(kind)).length;
+  useEffect(() => {
+    if (bestiaryVisibleKinds.length && !bestiaryVisibleKinds.includes(selectedBestiary)) setSelectedBestiary(bestiaryVisibleKinds[0]);
+  }, [bestiaryVisibleKinds, selectedBestiary]);
   const setBestiaryCategory = (filter: BestiaryFilter) => {
     setBestiaryFilter(filter);
     const kinds = bestiaryKindsForFilter(filter);
     if (!kinds.includes(selectedBestiary) && kinds[0]) setSelectedBestiary(kinds[0]);
   };
   const stepBestiary = (direction: -1 | 1) => {
+    if (!bestiaryVisibleKinds.length) return;
     const next = (bestiaryVisibleIndex + direction + bestiaryVisibleKinds.length) % bestiaryVisibleKinds.length;
     setSelectedBestiary(bestiaryVisibleKinds[next]);
   };
@@ -2906,7 +2974,7 @@ export default function VoxelGame() {
             {hud.onlinePlayers > 1 && <span className="online"><kbd>●</kbd><strong>{hud.onlinePlayers} ONLINE</strong></span>}
           </div>
           {hud.mountedBoat && <div className="boat-hud" role="status"><strong>WAYFARER</strong><span><kbd>WASD</kbd> SAIL</span><span><kbd>SPACE</kbd> DISMOUNT</span></div>}
-          {hud.mountedCreature && <div className="boat-hud creature-mount-hud" role="status"><strong>{hud.mountedCreatureName ?? "MOUNT"}</strong><span><kbd>WASD</kbd> RIDE</span>{hud.activeDragon ? <><span><kbd>SPACE / SHIFT</kbd> ALTITUDE</span><span><kbd>Z X C</kbd> ATTACK · <kbd>F</kbd> DISMOUNT</span></> : <span><kbd>SPACE</kbd> DISMOUNT</span>}</div>}
+          {hud.mountedCreature && <div className="boat-hud creature-mount-hud" role="status"><strong>{hud.mountedCreatureName ?? "MOUNT"}</strong><span className="mount-mode-label">{(hud.mountedCreatureMode ?? "land").toUpperCase()} · {hud.mountedCreatureExertion ?? 100}% EXERTION</span><span><kbd>WASD</kbd> STEER · <kbd>SPACE / SHIFT</kbd> {hud.mountedCreatureMode === "land" || hud.mountedCreatureMode === "climb" ? "JUMP / BRAKE" : "ASCEND / DESCEND"}</span><span><kbd>Z X C</kbd> MOVES · <kbd>F</kbd> DISMOUNT</span></div>}
           {hud.rangedWeapon && <div className={`ranged-ammo-hud${hud.rangedWeapon.reloading ? " reloading" : ""}`} role="status"><strong>{hud.rangedWeapon.loaded}/{hud.rangedWeapon.magazine}</strong><span>{hud.rangedWeapon.reloading ? "RELOADING" : `${hud.rangedWeapon.spare} BOLTS · R TO RELOAD`}</span></div>}
           <ManaHud magic={hud.magic} magicSkillLevel={hud.skills.skills.magic.level} />
 
@@ -2930,6 +2998,10 @@ export default function VoxelGame() {
               <strong>{hud.targetMob.name}</strong>
               <span><i style={{ width: `${Math.max(0, hud.targetMob.health / hud.targetMob.maxHealth) * 100}%` }} /></span>
               <small>{formatHudHealth(hud.targetMob.health)} / {formatHudHealth(hud.targetMob.maxHealth)}</small>
+              {hud.targetMob.capture && <div className={`capture-readiness ${hud.targetMob.capture.ready ? "ready" : "waiting"}`} role="status" aria-label={`${hud.targetMob.capture.profileName} capture ${hud.targetMob.capture.ready ? "ready" : "not ready"}`}>
+                <b><i aria-hidden="true" />{hud.targetMob.capture.profileName} · {hud.targetMob.capture.ready ? "READY" : "OBSERVE"}</b>
+                <ul>{hud.targetMob.capture.conditions.map((condition, index) => <li className={condition.satisfied ? "satisfied" : "missing"} key={`${condition.id ?? "unknown"}-${index}`}><span aria-hidden="true">{condition.satisfied ? "✓" : condition.learned ? "○" : "?"}</span>{condition.label}</li>)}</ul>
+              </div>}
             </div>
           )}
 
@@ -3176,9 +3248,11 @@ export default function VoxelGame() {
               <PixelButton onClick={() => engineRef.current?.openOverlay("inventory")}>Inventory & Crafting</PixelButton>
               <PixelButton onClick={() => engineRef.current?.openOverlay("map")}>Map <kbd>M</kbd></PixelButton>
               <PixelButton onClick={() => engineRef.current?.openOverlay("quests")}>Quest Journal <kbd>J</kbd></PixelButton>
+              <PixelButton onClick={() => engineRef.current?.openOverlay("guilds")}>Guilds of Hearthroads</PixelButton>
               <PixelButton onClick={() => engineRef.current?.openOverlay("magic")}>Spell Journal <kbd>K</kbd></PixelButton>
               <PixelButton onClick={() => engineRef.current?.openOverlay("skills")}>Skills & Perks <kbd>L</kbd></PixelButton>
               <PixelButton onClick={() => engineRef.current?.openOverlay("bestiary")}>Bestiary</PixelButton>
+              <PixelButton onClick={() => engineRef.current?.openOverlay("creature-camp")}>Creature Camp</PixelButton>
               <PixelButton onClick={() => openMultiplayer("pause")}>Multiplayer Session</PixelButton>
               <PixelButton onClick={() => engineRef.current?.toggleFullscreen()}>{hud.fullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}</PixelButton>
               <PixelButton onClick={() => openSettings("pause")}>Settings</PixelButton>
@@ -3215,6 +3289,50 @@ export default function VoxelGame() {
               <strong>{engineRef.current?.getSleepStatus().rule ?? "50% of players"}</strong>
               <small>{engineRef.current?.getSleepStatus().required ?? 1} of {engineRef.current?.getSleepStatus().onlinePlayers ?? 1} online player(s) must choose the same destination.</small>
             </div>
+          </div>
+        </section>
+      )}
+
+      {overlay === "creature-camp" && (
+        <section className="menu-overlay creature-camp-overlay" aria-labelledby="creature-camp-title">
+          <div className="pixel-panel creature-camp-panel">
+            <button type="button" className="panel-close" onClick={() => setOverlay("pause")} aria-label="Close Creature Camp">×</button>
+            <span className="panel-eyebrow">WAYKEEPER FIELD KIT · NO EXTRA SIMULATION</span>
+            <h2 id="creature-camp-title">Creature Camp</h2>
+            {!campCreature || !campOrb ? <div className="creature-camp-empty"><span aria-hidden="true">◇</span><h3>Select a filled Capture Orb</h3><p>Choose one stored creature on your hotbar, then return here to compare, care for, train, or archive that exact specimen.</p><PixelButton onClick={() => engineRef.current?.openOverlay("inventory")}>Open Inventory</PixelButton></div> : <>
+              <div className="creature-camp-hero">
+                <CreaturePortrait kind={campCreature.kind} seen />
+                <div><small>{MOB_DEFS[campCreature.kind].family ?? "creature"} · {MOB_DEFS[campCreature.kind].temperament}</small><h3>{campCreature.name?.trim() || MOB_DEFS[campCreature.kind].name}</h3><p>{campProgression ? `Level ${campProgression.level} · ${campProgression.bondTier} bond · ${campProgression.tactic} tactic` : "New specimen · progression record initializing"}</p><div>{campProgression?.shiny && <span>SHINY</span>}{campProgression?.rarityForm && campProgression.rarityForm !== "ordinary" && <span>{campProgression.rarityForm.toUpperCase()}</span>}{campProgression?.aptitudes.map((aptitude) => <span key={aptitude}>{aptitude.replaceAll("-", " ")}</span>)}</div></div>
+                <div className="creature-camp-health"><small>HEALTH</small><strong>{Math.ceil(campCreature.health)} / {Math.ceil(campCreature.maxHealth)}</strong><i><b style={{ width: `${campCreature.health / campCreature.maxHealth * 100}%` }} /></i></div>
+              </div>
+              <div className="creature-camp-columns">
+                <section><div className="creature-camp-heading"><span>CARE</span><small>Meaningful daily limits</small></div><div className="creature-care-meters">{([['exertion', campCare.exertion], ['presentation', campCare.presentation], ['cleanliness', campCare.cleanliness], ['enrichment', campCare.enrichment], ['rested', campCare.rested]] as const).map(([label, value]) => <div key={label}><span><strong>{label}</strong><small>{Math.round(value)}%</small></span><i><b style={{ width: `${value}%` }} /></i></div>)}</div><div className="creature-care-actions">{([['feed', 'Feed'], ['groom', 'Groom'], ['wash', 'Wash'], ['play', 'Play'], ['train', 'Train'], ['rest', 'Rest']] as const).map(([action, label]) => <button type="button" key={action} onClick={() => engineRef.current?.careSelectedCreature(action as CreatureCareAction)}><strong>{label}</strong><small>{action === "train" ? `${Math.max(0, 3 - campCare.dailyTrainingCount)} useful today` : action === "play" ? `${Math.max(0, 2 - campCare.dailyPlayCount)} useful today` : action === "rest" ? "revives at 1 health" : "care action"}</small></button>)}</div></section>
+                <section>
+                  <div className="creature-camp-heading"><span>TACTIC & MOVES</span><small>Real-time companion behavior</small></div>
+                  <div className="creature-tactic-grid">{(['guard', 'support', 'pursue', 'cautious', 'hold'] as const).map((tactic) => <button type="button" className={campProgression?.tactic === tactic ? "active" : ""} onClick={() => engineRef.current?.setSelectedCreatureTactic(tactic)} key={tactic}>{tactic}</button>)}</div>
+                  <div className="creature-camp-moves">{(campProgression?.learnedMoveIds ?? []).map((moveId) => { const move = CREATURE_MOVES[moveId]; const active = campProgression?.activeMoveIds.includes(moveId); return move ? <button type="button" className={active ? "active" : ""} aria-pressed={active} onClick={() => engineRef.current?.toggleSelectedCreatureMove(moveId)} key={moveId}><i style={{ color: CREATURE_TYPES[move.type].color }}>{CREATURE_TYPES[move.type].glyph}</i><span><strong>{move.name}</strong><small>{active ? "AI active" : "learned"} · {move.cooldownSeconds.toFixed(1)}s</small></span></button> : null; })}</div>
+                  {campProfile && <button type="button" className="creature-utility-command" onClick={() => engineRef.current?.setSelectedCreatureFieldUtility(campProfile.moves.fieldUtilityMoveId)}><strong>{CREATURE_MOVES[campProfile.moves.fieldUtilityMoveId]?.name ?? "Field Utility"}</strong><small>{campProgression?.fieldUtilityMoveId === campProfile.moves.fieldUtilityMoveId ? "Equipped field command" : "Set field command"}</small></button>}
+                  {campEcology && campWork && <>
+                    <div className="creature-camp-heading compare-heading"><span>HABITAT WORK</span><small>Capped aggregate cycles, no background mob bubble</small></div>
+                    <div className="creature-work-grid">
+                      <button type="button" className={campWork.assignment === "rest" ? "active" : ""} onClick={() => engineRef.current?.setSelectedCreatureWork("rest")}><strong>Rest</strong><small>sleeping record</small></button>
+                      {campEcology.workRoles.filter((role) => role !== "none" && role !== "mount" && role !== "pack" && role !== "companion").map((role) => <button type="button" className={campWork.assignment === role ? "active" : ""} onClick={() => engineRef.current?.setSelectedCreatureWork(role)} key={role}><strong>{role.replaceAll("-", " ")}</strong><small>{campEcology.workCadenceSeconds}s grouped cycle</small></button>)}
+                    </div>
+                    {(campCreature.kind === "pebbletortoise" || campCreature.kind === "reefglide-terrapin") && <div className="creature-shell-modules"><small>PLANTED SHELL-BED</small>{(["moss", "flower", "fungus", "water-plant"] as CreatureShellModule[]).map((module) => <button type="button" className={campWork.shellModule === module ? "active" : ""} key={module} onClick={() => engineRef.current?.setSelectedTortoiseShellModule(campWork.shellModule === module ? null : module)}>{module.replaceAll("-", " ")}</button>)}</div>}
+                    {campWork.adaptation && <p className="creature-adaptation-note"><strong>Habitat adaptation:</strong> {campWork.adaptation.replaceAll("-", " ")} · reversible through reassignment at a sanctuary.</p>}
+                  </>}
+                  <div className="creature-camp-heading compare-heading"><span>GEAR & RESEARCH</span><small>Fitted items return to your pack</small></div>
+                  <div className="creature-gear-grid">
+                    {campProfile && MOUNT_PROFILES[campCreature.kind] && <button type="button" className={campEquipment.saddle ? "active" : ""} onClick={() => engineRef.current?.toggleSelectedCreatureGear("saddle", MOB_DEFS[campCreature.kind].family === "dragon" ? Item.DragonSaddle : Item.Saddle)}><strong>Saddle</strong><small>{campEquipment.saddle ? ITEMS[campEquipment.saddle]?.name : "fit from pack"}</small></button>}
+                    <button type="button" className={campEquipment.lamp ? "active" : ""} onClick={() => engineRef.current?.toggleSelectedCreatureGear("lamp", Item.DeepgearLanternItem)}><strong>Lamp</strong><small>{campEquipment.lamp ? "Deepgear Lantern fitted" : "fit from pack"}</small></button>
+                    <button type="button" className={campEquipment.charm ? "active" : ""} onClick={() => engineRef.current?.toggleSelectedCreatureGear("charm", Item.BreatherCharm)}><strong>Breather Charm</strong><small>{campEquipment.charm ? "fitted" : "fit from pack"}</small></button>
+                    <button type="button" onClick={() => engineRef.current?.researchSelectedCampCreature()}><strong>Record behavior</strong><small>{campResearch ? `${campResearch.progress}/${campResearch.goal} observations` : "0/3 observations"}</small></button>
+                  </div>
+                  <div className="creature-camp-heading compare-heading"><span>COMPARE</span><small>Visible identity, no IVs</small></div><select value={campCompareOrb?.orbId ?? ""} onChange={(event) => setCampCompareOrbId(event.target.value)}><option value="">Choose another stored specimen</option>{campOrbs.filter((orb) => orb.orbId !== campOrb.orbId).map((orb) => <option key={orb.orbId} value={orb.orbId}>{orb.creature?.name || (orb.creature ? MOB_DEFS[orb.creature.kind].name : "Specimen")}</option>)}</select>{campCompareOrb?.creature && <div className="creature-compare-card"><CreaturePortrait kind={campCompareOrb.creature.kind} seen mini /><span><strong>{campCompareOrb.creature.name || MOB_DEFS[campCompareOrb.creature.kind].name}</strong><small>Level {campCompareProgression?.level ?? 1} · {campCompareProgression?.bondTier ?? "wary"}</small><small>{campCompareProgression?.aptitudes.join(" · ") || "Aptitudes not yet recorded"}</small></span></div>}
+                </section>
+              </div>
+              <div className="panel-actions"><PixelButton className="secondary-button" onClick={() => engineRef.current?.archiveSelectedCampCreature()}>Return to Waygrid Archive</PixelButton><PixelButton className="gold-button" onClick={() => setOverlay("pause")}>Done</PixelButton></div>
+            </>}
           </div>
         </section>
       )}
@@ -3522,6 +3640,17 @@ export default function VoxelGame() {
         </section>
       )}
 
+      {overlay === "guilds" && (
+        <GuildPanel
+          state={hud.guildBook}
+          onClose={resume}
+          onJoin={(guildId) => { engineRef.current?.joinGuild(guildId); }}
+          onStartQuest={(questId) => { engineRef.current?.startGuildQuest(questId); }}
+          onResolveQuest={(questId, outcomeId) => { engineRef.current?.completeGuildQuest(questId, outcomeId); }}
+          onPromote={(guildId) => { engineRef.current?.promoteGuild(guildId); }}
+        />
+      )}
+
       {overlay === "alchemy" && alchemyState && (
         <section className="menu-overlay hearthroads-overlay" aria-label="Alchemy stand">
           <StationPanel
@@ -3580,6 +3709,8 @@ export default function VoxelGame() {
               : `${FACTIONS[activeFactionId].name} remember favors, trades, and harm. Your current standing is ${activeFactionAlignment >= 0 ? "+" : ""}${activeFactionAlignment}.`}
             choices={[
               ...(activeMerchant ? [{ id: "trade", label: "Trade", description: "Buy from their stock or sell goods from your pack.", badge: `${activeMerchant.gold}g`, tone: "warm" as const }] : []),
+              ...(hud.activeSentient?.guildId ? [{ id: "guild", label: "Open the living ledger", description: `Review ${GUILDS[hud.activeSentient.guildId].name}, its ranks, campaign, people, and persistent consequences.`, tone: "warm" as const }] : []),
+              ...(hud.activeSentient?.guildNpcId && hud.activeSentient.recruitable && !hud.activeSentient.hired ? [{ id: "guild-recruit", label: hud.activeSentient.recruitReady ? "Invite into your company" : "Ask about traveling together", description: hud.activeSentient.recruitReady ? "Recruit this named companion under their authored recovery and personal-trust rules." : "Their personal trust opens after chapter six of this guild campaign.", tone: hud.activeSentient.recruitReady ? "warm" as const : "plain" as const }] : []),
               ...(activeProfession === "banker" && activeFactionId === "hobbits" ? [{ id: "bank", label: "Use the freehold bank", description: "Deposit gold, withdraw freely, or review local ventures.", tone: "warm" as const }] : []),
               { id: "quests", label: "Ask about work", description: "Review story roads and any available side work.", tone: "plain" as const },
               ...(!activeSettlement && hud.activeSentient?.residentId ? [{ id: "directions", label: "Ask for town directions", description: `Mark the road to the nearest known ${FACTIONS[activeFactionId].name} town or village.`, tone: "plain" as const }] : []),
@@ -3589,6 +3720,8 @@ export default function VoxelGame() {
             ]}
             onChoose={(choiceId) => {
               if (choiceId === "trade") setOverlay("trade");
+              else if (choiceId === "guild") setOverlay("guilds");
+              else if (choiceId === "guild-recruit" && hud.activeSentient?.guildNpcId) engineRef.current?.recruitGuildNpc(hud.activeSentient.guildNpcId);
               else if (choiceId === "bank") setOverlay("bank");
               else if (choiceId === "quests") setOverlay("quests");
               else if (choiceId === "settlement") setOverlay("settlement");
@@ -3702,14 +3835,20 @@ export default function VoxelGame() {
               <button type="button" role="tab" aria-selected={fieldGuideSection === "plants"} className={fieldGuideSection === "plants" ? "active" : ""} onClick={() => setFieldGuideSection("plants")}><span aria-hidden="true">✿</span><strong>Plants</strong><small>Trees, crops, flowers & water flora</small></button>
             </div>
             {fieldGuideSection === "creatures" ? <>
-              <div className="bestiary-toolbar">
-                <div className="bestiary-filters" role="tablist" aria-label="Bestiary categories">
-                  {BESTIARY_FILTERS.map(([filter, label]) => <button type="button" role="tab" aria-selected={bestiaryFilter === filter} className={bestiaryFilter === filter ? "active" : ""} key={filter} onClick={() => setBestiaryCategory(filter)}>{label}<small>{bestiaryKindsForFilter(filter).length}</small></button>)}
+              <div className="bestiary-toolbar bestiary-facet-toolbar">
+                <label className="bestiary-search"><span className="sr-only">Search Bestiary</span><span aria-hidden="true">⌕</span><input value={bestiarySearch} onChange={(event) => setBestiarySearch(event.target.value)} placeholder="Search creatures, habitats, types, moves…" /></label>
+                <div className="bestiary-quick-filters" role="group" aria-label="Bestiary view">
+                  {([['all', 'All'], ['discovered', 'Discovered'], ['captured', 'Captured']] as const).map(([filter, label]) => <button type="button" aria-pressed={bestiaryQuickFilter === filter} className={bestiaryQuickFilter === filter ? "active" : ""} key={filter} onClick={() => setBestiaryQuickFilter(filter)}>{label}</button>)}
                 </div>
-                <span className="bestiary-index">ENTRY {bestiaryVisibleIndex + 1} / {bestiaryVisibleKinds.length}</span>
+                <button type="button" className={`bestiary-filter-trigger ${bestiarySelectedFilterCount ? "active" : ""}`} aria-haspopup="dialog" aria-expanded={bestiaryFiltersOpen} onClick={() => setBestiaryFiltersOpen((open) => !open)}>Filters{bestiarySelectedFilterCount > 0 && <small>{bestiarySelectedFilterCount}</small>}</button>
+                <label className="bestiary-sort"><span>Sort</span><select value={bestiarySort} onChange={(event) => setBestiarySort(event.target.value as BestiarySort)}><option value="catalog">Catalog</option><option value="name">Name</option><option value="observed">Recently observed</option><option value="research">Research completion</option><option value="rarity">Rarity</option></select></label>
+                <span className="bestiary-index">{bestiaryVisibleKinds.length ? `ENTRY ${bestiaryVisibleIndex + 1} / ${bestiaryVisibleKinds.length}` : "NO MATCHES"}</span>
+                {bestiaryFiltersOpen && <div className="bestiary-filter-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) setBestiaryFiltersOpen(false); }}><section className="bestiary-filter-panel" role="dialog" aria-modal="true" aria-labelledby="bestiary-filter-title"><header><div><small>REFINE CATALOG</small><h3 id="bestiary-filter-title">Creature filters</h3></div><button type="button" onClick={() => setBestiaryFiltersOpen(false)} aria-label="Close creature filters">×</button></header><fieldset><legend>Habitat & family</legend><div>{BESTIARY_FILTERS.map(([filter, label]) => { const count = bestiaryFacetCount(filter); return <button type="button" aria-pressed={bestiaryFilter === filter} disabled={count === 0} className={bestiaryFilter === filter ? "active" : ""} key={filter} onClick={() => setBestiaryCategory(filter)}><span>{label}</span><small>{count}</small></button>; })}</div></fieldset><footer><button type="button" onClick={() => setBestiaryCategory("all")}>Clear</button><button type="button" className="primary" onClick={() => setBestiaryFiltersOpen(false)}>Show {bestiaryVisibleKinds.length} creatures</button></footer></section></div>}
               </div>
+              {bestiaryFilter !== "all" && <div className="bestiary-selected-facets" aria-label="Selected filters"><button type="button" onClick={() => setBestiaryCategory("all")}>{BESTIARY_FILTERS.find(([filter]) => filter === bestiaryFilter)?.[1]} <span aria-hidden="true">×</span><span className="sr-only">Remove filter</span></button></div>}
               <div className="bestiary-layout">
                 <nav className="bestiary-list" aria-label="Creature list">
+                  {!bestiaryVisibleKinds.length && <div className="bestiary-empty"><strong>No matching creatures</strong><span>Clear a filter or try a broader field note.</span><button type="button" onClick={() => { setBestiarySearch(""); setBestiaryQuickFilter("all"); setBestiaryCategory("all"); }}>Clear search</button></div>}
                   {bestiaryVisibleKinds.map((kind) => {
                     const definition = MOB_DEFS[kind];
                     const progress = hud.bestiary[kind];
@@ -3718,14 +3857,19 @@ export default function VoxelGame() {
                     return <button type="button" key={kind} className={selectedBestiary === kind ? "active" : ""} aria-current={selectedBestiary === kind ? "true" : undefined} onClick={() => setSelectedBestiary(kind)}><span className="bestiary-icon-progress" style={{ "--entry-progress": `${completion}%` } as CSSProperties} title={`${completion}% field notes complete`}><CreaturePortrait kind={kind} seen={progress.seen} mini /><i>{completion}</i></span><span className="bestiary-list-copy"><strong>{progress.seen ? definition.name : "Unknown Creature"}</strong><small>{progress.seen ? `${definition.temperament} · ${observation}` : undiscoveredHabitatHint(definition)}</small></span><i className={`temperament-dot temperament-${definition.temperament.toLowerCase()}`} aria-hidden="true" /></button>;
                   })}
                 </nav>
-                <article className={`bestiary-detail ${bestiaryProgress.seen ? "seen" : "unknown"}`}>
+                <article className={`bestiary-detail ${bestiaryProgress.seen ? "seen" : "unknown"}`} data-tab={bestiaryPageTab}>
                   <div className="bestiary-portrait" key={selectedBestiary} style={{ "--mob-color": `#${bestiaryDefinition.colors[0].toString(16).padStart(6, "0")}` } as CSSProperties}>
                     <CreaturePortrait kind={selectedBestiary} seen={bestiaryProgress.seen} />
                     <div className="bestiary-portrait-chrome"><button type="button" onClick={() => stepBestiary(-1)} aria-label="Previous bestiary entry">‹</button><span>{bestiaryProgress.seen ? bestiaryDefinition.habitat.split(",")[0] : "Habitat unknown"}</span><button type="button" onClick={() => stepBestiary(1)} aria-label="Next bestiary entry">›</button></div>
                   </div>
                   {bestiaryProgress.seen ? <>
                     <div className="bestiary-heading"><div><span className={`temperament-label temperament-${bestiaryDefinition.temperament.toLowerCase()}`}>{bestiaryDefinition.temperament.toUpperCase()}</span><h3>{bestiaryDefinition.name}</h3></div><strong>{bestiaryObservation(bestiaryDefinition, bestiaryProgress).toUpperCase()}</strong></div>
+                    <nav className="bestiary-page-tabs" aria-label={`${bestiaryDefinition.name} record sections`}>{([['overview', 'Overview'], ['ecology', 'Ecology'], ['combat', 'Combat'], ['care', 'Care'], ['research', 'Research'], ['specimens', 'Specimens']] as const).map(([tab, label]) => <button type="button" key={tab} aria-current={bestiaryPageTab === tab ? "page" : undefined} className={bestiaryPageTab === tab ? "active" : ""} onClick={() => setBestiaryPageTab(tab)}>{label}</button>)}</nav>
                     <p className="bestiary-lore">{bestiaryDefinition.lore}</p>
+                    <div className="bestiary-type-strip" aria-label={`Natural types: ${activeCreatureProfile.naturalTypes.map((type) => CREATURE_TYPES[type].name).join(", ")}`}>{activeCreatureProfile.naturalTypes.map((type) => <span key={type} style={{ "--type-color": CREATURE_TYPES[type].color } as CSSProperties}><i aria-hidden="true">{CREATURE_TYPES[type].glyph}</i><strong>{CREATURE_TYPES[type].name}</strong></span>)}</div>
+                    <section className="bestiary-ecology-record"><div className="bestiary-record-heading"><small>ECOLOGY</small><strong>{activeCreatureProfile.ecologyRoles.join(" · ")}</strong></div><p>{bestiaryDefinition.behavior}</p><dl><div><dt>Habitat</dt><dd>{bestiaryDefinition.habitat}</dd></div><div><dt>Activity</dt><dd>{bestiaryDefinition.active}</dd></div><div><dt>Movement</dt><dd>{bestiaryDefinition.movement ?? "ground"}</dd></div></dl><ul>{activeCreatureProfile.researchClues.map((clue) => <li key={clue}>{clue}</li>)}</ul></section>
+                    <section className="bestiary-combat-record"><div className="bestiary-record-heading"><small>BASELINE COMBAT PROFILE</small><strong>{activeCreatureProfile.stats.growth} growth · level 1–{activeCreatureProfile.stats.maximumLevel}</strong></div><div className="bestiary-stat-lines">{(Object.entries(activeCreatureStats) as Array<[keyof typeof activeCreatureStats, number]>).map(([stat, value]) => <div key={stat}><span><strong>{stat}</strong><small>{statBand(value)} · {value}</small></span><i><b style={{ width: `${value}%` }} /></i></div>)}</div><div className="bestiary-move-list">{activeCreatureProfile.moves.unlocks.map((unlock) => { const move = CREATURE_MOVES[unlock.moveId]; return move ? <article key={unlock.moveId}><span style={{ "--type-color": CREATURE_TYPES[move.type].color } as CSSProperties}><i aria-hidden="true">{CREATURE_TYPES[move.type].glyph}</i><small>LV {unlock.level}</small></span><div><strong>{move.name}</strong><p>{move.description}</p><small>{move.channel} · {move.shape} · {move.cooldownSeconds.toFixed(1)}s cooldown</small></div></article> : null; })}</div></section>
+                    <section className="bestiary-specimen-record"><div className="bestiary-record-heading"><small>SPECIMEN RECORD</small><strong>{bestiaryProgress.captures > 0 ? `${bestiaryProgress.captures} cataloged` : "No individual recorded"}</strong></div><div><span><small>Capture approach</small><strong>{activeCreatureProfile.captureProfile}</strong><p>Learn ecological prerequisites through observation; ready captures are deterministic.</p></span><span><small>Rare forms</small><strong>Shiny · Prime · regional · story</strong><p>Each identity is tracked separately. Prime and story forms are never reduced to recolors.</p></span><span><small>Lineage history</small><strong>{bestiaryProgress.captures > 0 ? "Capture ledger active" : "Awaiting first specimen"}</strong><p>Names, origins, releases, bonds, aptitude notes, and summon provenance append without replacing earlier history.</p></span></div></section>
                     <div className="bestiary-facts"><div><small>HABITAT</small><strong>{bestiaryDefinition.habitat}</strong></div><div><small>ACTIVE</small><strong>{bestiaryDefinition.active}</strong></div><div><small>FAMILY</small><strong>{bestiaryDefinition.family ?? "surface"}</strong></div><div><small>MOVEMENT</small><strong>{bestiaryDefinition.movement ?? "ground"}</strong></div><div><small>HEALTH</small><strong>{formatHudHealth(bestiaryDefinition.health)} hearts</strong></div><div><small>DANGER</small><strong>{bestiaryDefinition.damage ? `${bestiaryDefinition.damage} damage` : "Harmless"}</strong></div>{bestiaryDefinition.sentient !== true && <div className={bestiaryProgress.captures > 0 ? "capture-record caught" : "capture-record"}><small>CAUGHT</small><strong>{bestiaryProgress.captures > 0 ? `Yes · ${bestiaryProgress.captures} recorded` : "Not yet"}</strong></div>}</div>
                     <section className="behavior-note"><small>BEHAVIOR</small><p>{bestiaryDefinition.behavior}</p></section>
                     <section className="bestiary-care" aria-label={`${bestiaryDefinition.name} care information`}><div className="bestiary-care-heading"><small>CREATURE CARE</small><span>Recorded dynamically from known interactions</span></div><div className="bestiary-care-grid"><div><small>TAMEABLE</small><strong>{bestiaryDefinition.tameable ? "Yes" : "No"}</strong>{bestiaryDefinition.tameable && <span>{bestiaryDefinition.tameItems?.length ? bestiaryDefinition.tameItems.map((item) => ITEMS[item]?.name).filter(Boolean).join(", ") : "Method not yet recorded"}</span>}</div><div><small>BREEDABLE</small><strong>{bestiaryDefinition.breedable ? "Yes" : "No"}</strong>{bestiaryDefinition.breedable && <span>{bestiaryDefinition.breedingFoods?.length ? bestiaryDefinition.breedingFoods.map((item) => ITEMS[item]?.name).filter(Boolean).join(", ") : "Breeding food unknown"}</span>}</div><div><small>EATS</small><strong>{bestiaryDefinition.diet?.length ? bestiaryDefinition.diet.map((item) => ITEMS[item]?.name).filter(Boolean).join(", ") : "No feeding response recorded"}</strong></div><div><small>SENTIENT</small><strong>{bestiaryDefinition.sentient ? "Yes" : "No"}</strong><span>{bestiaryDefinition.sentient ? "Can converse, trade, hold roles, and remember faction standing." : "Acts from instinct rather than factional intent."}</span></div></div></section>

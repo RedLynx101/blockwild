@@ -14,6 +14,7 @@ import {
   type TownCaptureReceipt,
 } from "./factions.ts";
 import type { GoldAmount, MerchantProfession } from "./economy.ts";
+import type { GuildHallState, GuildId } from "./guilds.ts";
 import { planConnectedSettlementTiles, planV1Settlement, settlementTileCount, type V1TileRole } from "./v1-cultures.ts";
 
 export type SettlementSize = "hamlet" | "village" | "town";
@@ -265,6 +266,12 @@ export type SettlementBuildingPlan = Readonly<{
   floors: 1 | 2;
   materialPalette: readonly string[];
   furniture: readonly SettlementFurniture[];
+  guildHall?: Readonly<{
+    placementId: string;
+    guildId: GuildId;
+    state: GuildHallState;
+    variantId: string;
+  }>;
 }>;
 
 export type SettlementWallNode = Readonly<{

@@ -138,7 +138,16 @@ function effectLabel(spell: SpellDefinition) {
     if (effect.kind === "shield") return `${effect.amount} ward for ${effect.durationSeconds}s`;
     if (effect.kind === "teleport") return `${effect.distance} block safe fold`;
     if (effect.kind === "summoned-projectile") return `${effect.summon.replaceAll("-", " ")} conjured`;
-    return `Reveal within ${effect.radius} blocks`;
+    if (effect.kind === "reveal") return `Reveal within ${effect.radius} blocks`;
+    if (effect.kind === "kinmark") return `Read and calm a creature for ${effect.durationSeconds}s`;
+    if (effect.kind === "rescue-thread") return `Recall a companion within ${effect.radius} blocks`;
+    if (effect.kind === "summon") return `Manifest ${effect.creature.replaceAll("-", " ")} for ${effect.durationSeconds}s`;
+    if (effect.kind === "rootbridge") return `Grow a temporary bridge up to ${effect.range} blocks`;
+    if (effect.kind === "stormstep") return `${effect.distance} block storm dash with a delayed echo`;
+    if (effect.kind === "deep-lantern") return `${effect.lightRadius} block living light for ${effect.durationSeconds}s`;
+    if (effect.kind === "ironwake") return `${effect.fragments} orbiting fragments with ${effect.guard} guard`;
+    if (effect.kind === "tidemend") return `${effect.amount} aquatic healing and habitat recovery`;
+    return `${effect.radius} block hearth sanctuary for ${effect.durationSeconds}s`;
   }).join(" · ");
 }
 

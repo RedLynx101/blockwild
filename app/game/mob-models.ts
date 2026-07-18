@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { createAdventureMobVisual } from "./adventure-models";
+import { applyLivingBestiaryPose, createLivingBestiaryMobVisual, LIVING_BESTIARY_VISUAL_KINDS, type LivingBestiaryVisualKind } from "./living-bestiary-models";
 import {
   ATLANTIAN_TRIDENT_CONTRACT,
   createZombieSpec,
@@ -414,6 +415,7 @@ export function createSentientLodVisual(kind: MobKind, id: number, bounds: THREE
 export function createMobVisual(kind: MobKind, id: number): MobVisual {
   if (!CORE_MOB_ORDER.includes(kind as CoreMobKind)) throw new Error(`'${kind}' is not a world mob visual.`);
   if (ADVENTURE_MOB_ORDER.includes(kind as AdventureMobKind)) return createAdventureMobVisual(kind as AdventureMobKind, id);
+  if ((LIVING_BESTIARY_VISUAL_KINDS as readonly MobKind[]).includes(kind)) return createLivingBestiaryMobVisual(kind as LivingBestiaryVisualKind, id);
 
   const group = new THREE.Group();
   const visual = new THREE.Group();
@@ -1381,6 +1383,16 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     shellTiles.forEach(([x, z, size], index) => {
       const tile = add(visual, [size, 0.09, size], index % 2 ? shellLight : accentMaterial, [x, aquatic ? 0.44 : 0.48, z], undefined, `${prefix}-shell-tile-${index + 1}`);
       tile.rotation.y = Math.PI / 4 + index * 0.1;
+    });
+    const bed = add(visual, [0.58, 0.08, 0.48], shellDark, [0, aquatic ? 0.54 : 0.57, 0.08], undefined, `${prefix}-shell-bed`);
+    bed.rotation.y = Math.PI / 4;
+    const modulePalette = { moss: 0x60894f, flower: 0xd98a9e, fungus: 0xb89775, "water-plant": 0x54b5a5 } as const;
+    (Object.entries(modulePalette) as Array<[keyof typeof modulePalette, number]>).forEach(([module, color], index) => {
+      const planting = add(visual, module === "flower" ? [0.12, 0.22, 0.12] : [0.36, 0.12, 0.28], material(color, module === "water-plant", .75), [0, aquatic ? 0.64 : 0.67, 0.08], undefined, `${prefix}-shell-module-${module}`);
+      planting.visible = false;
+      if (module === "flower") planting.rotation.z = 0.16;
+      if (index % 2) planting.rotation.y = Math.PI / 4;
+      planting.userData.creatureShellModule = module;
     });
     if (aquatic) for (let coral = 0; coral < 3; coral += 1) {
       add(visual, [0.1, 0.25 + coral * 0.06, 0.1], coral % 2 ? shellLight : glow, [-0.24 + coral * 0.24, 0.59 + coral * 0.03, 0.08 + (coral % 2) * 0.18], undefined, `${prefix}-coral-${coral + 1}`).rotation.z = (coral - 1) * 0.22;
@@ -5047,6 +5059,7 @@ export function applyWildlifePose(
       if (antler) antler.rotation.y = Math.sin(time * 0.9 + (sideName === "left" ? 0 : Math.PI)) * 0.025;
     }
   }
+  applyLivingBestiaryPose(visual, kind, time, travel, alert);
   return true;
 }
 

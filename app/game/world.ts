@@ -16,6 +16,7 @@ import { DENSE_CUTOUT_LEAF_POLICY, planFullTree, planSubmergedFlora, planSyrupPo
 import { dragonLairMarkersForChunk, dragonLairPlacementsForChunk, dragonLairsIntersectingChunk, repairGeneratedTreePlan } from "./dragon-world";
 import { NPC_FACTION_IDS, normalizeEnabledFactions, type NpcFactionId } from "./factions";
 import { isRootableTreeSoil } from "./farming";
+import { GUILD_NPCS, compatibleGuildIdsForSettlement, planGuildHalls, type GuildHallCandidate, type GuildHallState, type GuildId } from "./guilds";
 import {
   planBiomeVegetation,
   planStructure,
@@ -43,6 +44,8 @@ import {
 } from "./settlements";
 import { SEA_DRAGON_NEST_MAX_RADIUS, planSeaDragonNest } from "./v1-cultures";
 import { planDoubleTallGrassReplacement } from "./tall-grass";
+import { planRegionalRoadGraph, planTerrainFollowingRoad, type RoadEdge, type RoadPoint } from "./surface-roads";
+import { LEGENDARY_SITE_CELL_CHUNKS, planLegendaryEncounterSite, type LegendaryEncounterId } from "./legendary-encounters";
 import {
   UndergroundBiomeId,
   CAVE_GRAPH_MAX_RADIUS,
@@ -140,6 +143,28 @@ export const BIOME_NAMES: Record<number, string> = {
   [BiomeId.SnowcapRange]: "Snowcap Range",
 };
 
+export function guildLodgeGuildsForBiome(biome: BiomeId): readonly GuildId[] {
+  return biome === BiomeId.SugarplumVale
+    ? ["sugarcourt-makers", "hearthroad", "waykeeper"]
+    : [BiomeId.Beach, BiomeId.River].includes(biome)
+      ? ["tideglass", "hearthroad", "waykeeper"]
+      : [BiomeId.Highlands, BiomeId.SnowcapRange, BiomeId.Badlands, BiomeId.Volcanic].includes(biome)
+        ? ["deepgear", "hearthroad", "brassroot"]
+        : [BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Bloomwood, BiomeId.Glimmerwood, BiomeId.RainveilJungle, BiomeId.SakurabloomGrove, BiomeId.MushroomFen].includes(biome)
+          ? ["moonbough", "waykeeper", "hearthroad"]
+          : [BiomeId.Desert, BiomeId.Savanna].includes(biome)
+            ? ["brassroot", "hearthroad", "waykeeper"]
+            : ["waykeeper", "hearthroad", "brassroot"];
+}
+
+/** Pure rarity/culture plan; terrain validation remains in the chunk author. */
+export function planGuildLodgeForRegion(seed: number, regionX: number, regionZ: number, biome: BiomeId) {
+  if (hash2(regionX, regionZ, seed ^ 0x6a09e667) >= .1) return null;
+  const guilds = guildLodgeGuildsForBiome(biome);
+  const index = Math.floor(hash2(regionX, regionZ, seed ^ 0xbb67ae85) * guilds.length) % guilds.length;
+  return Object.freeze({ guildId: guilds[index] });
+}
+
 function adventureBiomeFromId(biome: BiomeId): AdventureBiome | null {
   if (biome === BiomeId.Beach) return "coast";
   if (biome === BiomeId.Meadow || biome === BiomeId.CloudreedGlen) return "meadow";
@@ -209,6 +234,23 @@ export function settlementBiomeFromId(biome: BiomeId): SettlementBiome | null {
   if (biome === BiomeId.Glimmerwood) return "glimmerwood";
   if (biome === BiomeId.SnowcapRange) return "snowcap-range";
   return null;
+}
+
+function legendaryHabitatKey(biome: BiomeId) {
+  if (biome === BiomeId.DeepOcean) return "deep-ocean";
+  if (biome === BiomeId.Ocean) return "ocean";
+  if (biome === BiomeId.LumenTrench) return "lumen-trench";
+  if (biome === BiomeId.Meadow) return "flower-meadow";
+  if (biome === BiomeId.Wildwood) return "wildwood";
+  if (biome === BiomeId.River) return "river";
+  if (biome === BiomeId.Glimmerwood) return "glimmerwood";
+  if (biome === BiomeId.Highlands) return "highlands";
+  if (biome === BiomeId.SnowcapRange) return "snowcap-range";
+  if (biome === BiomeId.Badlands) return "badlands";
+  if (biome === BiomeId.CloudreedGlen) return "cloudreed-glen";
+  if (biome === BiomeId.Savanna) return "savanna";
+  if (biome === BiomeId.SugarplumVale) return "sugarplum-vale";
+  return "other";
 }
 
 function settlementResidentMobKind(resident: SettlementResident, faction: "hobbits" | "goblins" | "atlantians" | "sugarcourt" | "wood-elves" | "dwarves") {
@@ -304,6 +346,59 @@ export function settlementBlockPalette(factionId: string): SettlementBlockPalett
     path: BlockId.Gravel, perimeterWall: BlockId.StoneBrick, tower: BlockId.StoneBrick, lightBase: BlockId.StoneBrick,
     buildingWall: BlockId.Planks, corner: BlockId.WildwoodLog, roof: BlockId.Planks, floor: BlockId.Planks, hallFloor: BlockId.StoneBrick,
   });
+}
+
+/** A restrained accent palette gives each hall an identity without making it
+ * look imported from a different voxel language than its host settlement. */
+export function guildHallBlockPalette(guildId: GuildId, state: GuildHallState): SettlementBlockPalette {
+  const established = state !== "lodge";
+  const charter = state === "charter";
+  if (guildId === "tideglass") return Object.freeze({
+    path: BlockId.StarCoral, perimeterWall: BlockId.MoonSlate, tower: BlockId.Glowstone, lightBase: BlockId.StarCoral,
+    buildingWall: BlockId.Glass, corner: BlockId.MoonSlate, roof: charter ? BlockId.Glowstone : BlockId.StarCoral, floor: BlockId.MoonSlate, hallFloor: BlockId.MoonSlate,
+  });
+  if (guildId === "moonbough") return Object.freeze({
+    path: BlockId.GlimmerGrass, perimeterWall: BlockId.MoonboughLeaves, tower: BlockId.MoonboughLog, lightBase: BlockId.Moonwell,
+    buildingWall: BlockId.MoonboughLog, corner: BlockId.LivingRoot, roof: established ? BlockId.MoonboughLeaves : BlockId.MoonboughLog, floor: BlockId.GlimmerGrass, hallFloor: BlockId.Moonwell,
+  });
+  if (guildId === "brassroot") return Object.freeze({
+    path: BlockId.Gravel, perimeterWall: BlockId.GoblinBrasswork, tower: BlockId.RivetedBrass, lightBase: BlockId.GoblinBrasswork,
+    buildingWall: BlockId.GoblinBrasswork, corner: BlockId.RivetedBrass, roof: charter ? BlockId.RuneStone : BlockId.StoneBrick, floor: BlockId.Planks, hallFloor: BlockId.StoneBrick,
+  });
+  if (guildId === "deepgear") return Object.freeze({
+    path: BlockId.DeepgearBrick, perimeterWall: BlockId.DeepgearBrick, tower: BlockId.RivetedBrass, lightBase: BlockId.RivetedBrass,
+    buildingWall: BlockId.DeepgearBrick, corner: BlockId.RivetedBrass, roof: BlockId.DeepgearBrick, floor: BlockId.DeepgearBrick, hallFloor: BlockId.RivetedBrass,
+  });
+  if (guildId === "sugarcourt-makers") return Object.freeze({
+    path: BlockId.SugarSoil, perimeterWall: BlockId.BoiledSugarbrick, tower: BlockId.CandywoodLog, lightBase: BlockId.CandywoodLog,
+    buildingWall: BlockId.BoiledSugarbrick, corner: BlockId.CandywoodLog, roof: charter ? BlockId.Glowstone : BlockId.CandywoodLeaves, floor: BlockId.CandywoodLog, hallFloor: BlockId.BoiledSugarbrick,
+  });
+  if (guildId === "waykeeper") return Object.freeze({
+    path: BlockId.Gravel, perimeterWall: BlockId.LivingRoot, tower: BlockId.WildwoodLog, lightBase: BlockId.WildwoodFence,
+    buildingWall: BlockId.Planks, corner: BlockId.LivingRoot, roof: established ? BlockId.WildwoodLeaves : BlockId.HobbitThatch, floor: BlockId.Planks, hallFloor: BlockId.MeadowGrass,
+  });
+  return Object.freeze({
+    path: BlockId.Gravel, perimeterWall: BlockId.StoneBrick, tower: BlockId.WildwoodLog, lightBase: BlockId.WildwoodFence,
+    buildingWall: BlockId.Planks, corner: BlockId.WildwoodLog, roof: established ? BlockId.HobbitThatch : BlockId.Planks, floor: BlockId.Planks, hallFloor: BlockId.StoneBrick,
+  });
+}
+
+function guildNpcMobKind(factionId: SettlementCandidate["factionId"], index: number) {
+  if (factionId === "atlantians") return ["atlantian-tidewarden", "atlantian-kelpkeeper", "atlantian-glowmender"][index % 3];
+  if (factionId === "wood-elves") return ["wood-elf-elderweaver", "wood-elf-tomekeeper", "wood-elf-leafwarden"][index % 3];
+  if (factionId === "dwarves") return ["dwarf-thane", "dwarf-delver", "dwarf-gearwright"][index % 3];
+  if (factionId === "goblins") return ["goblin-chieftain", "goblin-worker", "goblin-spear-guard"][index % 3];
+  if (factionId === "sugarcourt") return ["sugarcourt-crown-confectioner", "sugarcourt-sweetbroker", "sugarcourt-candysmith"][index % 3];
+  return ["hobbit-mayor", "hobbit-merchant", "hobbit-hammer-guard"][index % 3];
+}
+
+function legendarySitePalette(encounterId: LegendaryEncounterId) {
+  if (encounterId === "walking-spring") return { floor: BlockId.MeadowGrass, accent: BlockId.LivingRoot, light: BlockId.Glowstone } as const;
+  if (encounterId === "reef-that-swims") return { floor: BlockId.MoonSlate, accent: BlockId.StarCoral, light: BlockId.Glowstone } as const;
+  if (encounterId === "oath-under-stone") return { floor: BlockId.DeepgearBrick, accent: BlockId.RivetedBrass, light: BlockId.DeepgearLantern } as const;
+  if (encounterId === "where-storms-run") return { floor: BlockId.SnowcapStone, accent: BlockId.CrystalBlock, light: BlockId.Glowstone } as const;
+  if (encounterId === "red-banner") return { floor: BlockId.RedSand, accent: BlockId.GoblinBrasswork, light: BlockId.Torch } as const;
+  return { floor: BlockId.BoiledSugarbrick, accent: BlockId.CandywoodLog, light: BlockId.Glowstone } as const;
 }
 
 type WorldRenderLayer = Exclude<RenderLayer, "none"> | "glass";
@@ -981,6 +1076,35 @@ export function planDeepgearMineRoad(
     ...point,
     y: Math.round(lerp(start.y, target.y, index / denominator)),
   }));
+}
+
+/**
+ * Chooses a readable perimeter lift instead of assuming the east wall is the
+ * highest side of an irregular mountain shelf. A compact supported gate tower
+ * is used when every perimeter shelf falls below the minimum lift rise.
+ */
+export function selectDeepgearLiftSite(
+  center: Readonly<{ x: number; z: number }>,
+  radiusBlocks: number,
+  holdY: number,
+  sample: (x: number, z: number) => Readonly<{ height: number }>,
+) {
+  const offset = Math.max(7, radiusBlocks - 5);
+  const offsets = [[offset, 0], [0, offset], [-offset, 0], [0, -offset], [offset, offset], [-offset, offset], [-offset, -offset], [offset, -offset]] as const;
+  const liftBottomY = holdY + 1;
+  const sites = offsets.map(([dx, dz], order) => {
+    const x = center.x + dx, z = center.z + dz;
+    const surfaceY = sample(x, z).height;
+    const neighbors = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([nx, nz]) => sample(x + nx * 2, z + nz * 2).height);
+    const slope = Math.max(...neighbors.map((height) => Math.abs(height - surfaceY)));
+    const rise = surfaceY + 1 - liftBottomY;
+    return { x, z, surfaceY, liftBottomY, liftTopY: Math.max(surfaceY + 1, liftBottomY + 5), rise, slope, order };
+  });
+  sites.sort((left, right) => Number(right.rise >= 5) - Number(left.rise >= 5)
+    || (right.rise - right.slope * 1.75) - (left.rise - left.slope * 1.75)
+    || left.order - right.order);
+  const { order: _order, rise: _rise, slope: _slope, ...selected } = sites[0];
+  return Object.freeze(selected);
 }
 
 function valueNoise2(x: number, z: number, seed: number) {
@@ -1928,6 +2052,9 @@ export class ChunkWorld {
   structureMarkers = new Map<string, StructureMarker>();
   settlementPlans = new Map<string, SettlementWorldPlan>();
   private settlementCandidateCache = new Map<string, SettlementCandidate | null>();
+  private settlementValidatedCandidateCache = new Map<string, SettlementCandidate | null>();
+  private surfaceRoadGraphCache = new Map<string, readonly RoadEdge[]>();
+  private surfaceRoadCache = new Map<string, readonly RoadPoint[]>();
   generationQueue: Array<{ cx: number; cz: number; distance: number }> = [];
   generationQueued = new Set<string>();
   meshQueue: Array<{ key: string; section: number }> = [];
@@ -2028,6 +2155,9 @@ export class ChunkWorld {
     this.structureMarkers.clear();
     this.settlementPlans.clear();
     this.settlementCandidateCache.clear();
+    this.settlementValidatedCandidateCache.clear();
+    this.surfaceRoadGraphCache.clear();
+    this.surfaceRoadCache.clear();
     this.hiddenChestVisuals.clear();
     this.seedText = seedText || "WILDERNESS";
     this.seed = seedToInt(this.seedText);
@@ -3333,6 +3463,87 @@ export class ChunkWorld {
         }
       }
       this.generateSeaDragonNestsForChunk(chunk, sample, set);
+      if (this.generationOptions.profile === "world-below-v15") this.generateLegendaryEncounterSitesForChunk(chunk, sample, set);
+    }
+  }
+
+  private generateLegendaryEncounterSitesForChunk(
+    chunk: Chunk,
+    sample: (x: number, z: number) => ColumnSample,
+    set: (x: number, y: number, z: number, type: BlockId, onlyAir?: boolean) => void,
+  ) {
+    const minX = chunk.cx * CHUNK_SIZE;
+    const minZ = chunk.cz * CHUNK_SIZE;
+    const maxX = minX + CHUNK_SIZE - 1;
+    const maxZ = minZ + CHUNK_SIZE - 1;
+    const cellBlocks = LEGENDARY_SITE_CELL_CHUNKS * CHUNK_SIZE;
+    const reach = 20;
+    const startCellX = Math.floor((minX - reach) / cellBlocks);
+    const endCellX = Math.floor((maxX + reach) / cellBlocks);
+    const startCellZ = Math.floor((minZ - reach) / cellBlocks);
+    const endCellZ = Math.floor((maxZ + reach) / cellBlocks);
+    const inside = (x: number, z: number) => x >= minX && x <= maxX && z >= minZ && z <= maxZ;
+    for (let cellX = startCellX; cellX <= endCellX; cellX += 1) for (let cellZ = startCellZ; cellZ <= endCellZ; cellZ += 1) {
+      const site = planLegendaryEncounterSite({
+        seed: this.seedText,
+        cellX,
+        cellZ,
+        sample: (x, z) => {
+          const column = sample(x, z);
+          return { height: column.height, waterline: column.waterline, habitatKey: legendaryHabitatKey(column.biome) };
+        },
+      });
+      if (!site || site.center.x + site.radius < minX || site.center.x - site.radius > maxX || site.center.z + site.radius < minZ || site.center.z - site.radius > maxZ) continue;
+      const palette = legendarySitePalette(site.encounterId);
+      for (let x = Math.max(minX, site.center.x - site.radius); x <= Math.min(maxX, site.center.x + site.radius); x += 1) {
+        for (let z = Math.max(minZ, site.center.z - site.radius); z <= Math.min(maxZ, site.center.z + site.radius); z += 1) {
+          const distance = Math.hypot(x - site.center.x, z - site.center.z);
+          if (distance > site.radius) continue;
+          if (site.underground) {
+            const dx = (x - site.center.x) / site.radius;
+            const dz = (z - site.center.z) / site.radius;
+            const ceiling = 4 + Math.max(0, Math.floor((1 - dx * dx - dz * dz) * 4));
+            for (let dy = 0; dy <= ceiling; dy += 1) set(x, site.center.y + dy, z, BlockId.Air, false);
+            set(x, site.center.y - 1, z, distance < 4 || Math.abs(distance - site.radius * .72) < .8 ? palette.floor : BlockId.Deepstone, false);
+          } else if (site.aquatic) {
+            const floorY = sample(x, z).height + 1;
+            if (distance < 4 || Math.abs(distance - site.radius * .62) < .8 || (hash2(x, z, this.seed) > .96 && distance < site.radius * .85)) set(x, floorY, z, palette.floor, false);
+            if (Math.abs(distance - site.radius * .62) < .8 && ((x + z) & 3) === 0) set(x, floorY + 1, z, palette.accent, false);
+          } else {
+            const ground = sample(x, z).height;
+            if (distance < 3 || Math.abs(distance - site.radius * .72) < .65) set(x, ground, z, palette.floor, false);
+            if (Math.abs(distance - site.radius * .72) < .65 && ((x + z) & 7) === 0) set(x, ground + 1, z, palette.accent, false);
+          }
+        }
+      }
+      // Clue pylons visually teach the first encounter objective before the
+      // player ever opens the quest page.
+      for (let index = 0; index < site.clueCount; index += 1) {
+        const angle = index * Math.PI * 2 / Math.max(1, site.clueCount) + hash2(cellX, cellZ, this.seed) * Math.PI;
+        const x = Math.round(site.center.x + Math.cos(angle) * site.radius * .74);
+        const z = Math.round(site.center.z + Math.sin(angle) * site.radius * .74);
+        if (!inside(x, z)) continue;
+        const y = site.underground ? site.center.y : site.aquatic ? sample(x, z).height + 1 : sample(x, z).height + 1;
+        set(x, y, z, palette.accent, false);
+        set(x, y + 1, z, palette.light, false);
+        this.structureMarkers.set(`${site.id}:clue:${index}`, {
+          type: "landmark",
+          id: `${site.id}:clue:${index}`,
+          position: { x, y: y + 1, z },
+          tag: `legendary-clue:${site.encounterId}:${site.id}:observe-sign:${index}`,
+        });
+      }
+      if (inside(site.center.x, site.center.z)) {
+        const spawnY = site.underground ? site.center.y : site.center.y + 1;
+        this.structureMarkers.set(`${site.id}:landmark`, {
+          type: "landmark", id: site.id, position: site.center, tag: `legendary-encounter:${site.encounterId}:dormant`,
+        });
+        this.structureMarkers.set(`${site.id}:spawn`, {
+          type: "spawn", id: `${site.id}:guardian`, position: { ...site.center, y: spawnY }, mobKind: site.kind,
+          count: 1, radius: 1, persistent: true,
+          tags: [`legendary-encounter:${site.encounterId}`, `legendary-site:${site.id}`, "permanent:true", "guardian:true", ...(site.aquatic ? ["aquatic:true"] : [])],
+        });
+      }
     }
   }
 
@@ -3449,6 +3660,182 @@ export class ChunkWorld {
     }
   }
 
+  private settlementCandidateForRegion(regionX: number, regionZ: number, sample: (x: number, z: number) => ColumnSample) {
+    const cacheKey = `${regionX},${regionZ}`;
+    if (this.settlementCandidateCache.has(cacheKey)) return this.settlementCandidateCache.get(cacheKey) ?? null;
+    const regionSize = 32 * CHUNK_SIZE;
+    const candidate = this.generationOptions.profile === "world-below-v15"
+      ? selectSettlementSite({
+        worldSeed: this.seedText,
+        seed: this.seed,
+        regionX,
+        regionZ,
+        enabledFactions: this.generationOptions.enabledFactions,
+        sample,
+      })
+      : (() => {
+        const probe = sample(regionX * regionSize + regionSize / 2, regionZ * regionSize + regionSize / 2);
+        const probeBiome = settlementBiomeFromId(probe.biome);
+        return probeBiome ? planSettlementCandidate({
+          worldSeed: this.seedText,
+          regionX,
+          regionZ,
+          biome: probeBiome,
+          existing: [],
+          floorY: probe.height,
+          enabledFactions: this.generationOptions.enabledFactions,
+        }) : null;
+      })();
+    this.settlementCandidateCache.set(cacheKey, candidate);
+    return candidate;
+  }
+
+  private validatedSettlementCandidateForRegion(regionX: number, regionZ: number, sample: (x: number, z: number) => ColumnSample) {
+    const cacheKey = `${regionX},${regionZ}`;
+    if (this.settlementValidatedCandidateCache.has(cacheKey)) return this.settlementValidatedCandidateCache.get(cacheKey) ?? null;
+    const planned = this.settlementCandidateForRegion(regionX, regionZ, sample);
+    if (!planned) {
+      this.settlementValidatedCandidateCache.set(cacheKey, null);
+      return null;
+    }
+    const contenders: SettlementCandidate[] = [];
+    for (let dx = -2; dx <= 2; dx += 1) for (let dz = -2; dz <= 2; dz += 1) {
+      if (dx === 0 && dz === 0) continue;
+      const contender = this.settlementCandidateForRegion(regionX + dx, regionZ + dz, sample);
+      if (contender) contenders.push(contender);
+    }
+    if (!settlementWinsSpacingTieBreak(planned, contenders)) {
+      this.settlementValidatedCandidateCache.set(cacheKey, null);
+      return null;
+    }
+    const centerColumn = sample(planned.center.x, planned.center.z);
+    const actualBiome = settlementBiomeFromId(centerColumn.biome);
+    const underwater = planned.environment === "underwater";
+    const underground = planned.environment === "underground";
+    let valid = Boolean(actualBiome && actualBiome === planned.biome)
+      && !(underwater ? centerColumn.height >= centerColumn.waterline - 5 : centerColumn.height <= centerColumn.waterline + 3);
+    if (valid && !underwater) {
+      const pondProbe = Math.min(12, SETTLEMENT_SIZE_RULES[planned.size].radiusBlocks);
+      valid = ![[0, 0], [pondProbe, 0], [-pondProbe, 0], [0, pondProbe], [0, -pondProbe]]
+        .some(([dx, dz]) => syrupPondColumnAt(this.seedText, planned.center.x + dx, planned.center.z + dz, sample, BiomeId.SugarplumVale));
+    }
+    if (valid) {
+      const nearbyHeights = [[4, 0], [-4, 0], [0, 4], [0, -4]].map(([dx, dz]) => sample(planned.center.x + dx, planned.center.z + dz).height);
+      valid = !nearbyHeights.some((height) => Math.abs(height - centerColumn.height) > (underwater ? 7 : underground ? 12 : 4));
+    }
+    if (!valid) {
+      this.settlementValidatedCandidateCache.set(cacheKey, null);
+      return null;
+    }
+    const accepted: SettlementCandidate = underwater ? {
+      ...planned,
+      floorY: centerColumn.height,
+      center: { ...planned.center, y: centerColumn.height + 2 },
+    } : underground ? {
+      ...planned,
+      floorY: Math.max(MIN_Y + 10, centerColumn.height - 18),
+      center: { ...planned.center, y: Math.max(MIN_Y + 12, centerColumn.height - 16) },
+    } : planned;
+    this.settlementValidatedCandidateCache.set(cacheKey, accepted);
+    return accepted;
+  }
+
+  private generateRegionalRoadsForChunk(
+    chunk: Chunk,
+    sample: (x: number, z: number) => ColumnSample,
+    set: (x: number, y: number, z: number, type: BlockId, onlyAir?: boolean) => void,
+  ) {
+    if (this.generationOptions.profile !== "world-below-v15") return;
+    const minX = chunk.cx * CHUNK_SIZE;
+    const minZ = chunk.cz * CHUNK_SIZE;
+    const maxX = minX + CHUNK_SIZE - 1;
+    const maxZ = minZ + CHUNK_SIZE - 1;
+    const regionSize = 32 * CHUNK_SIZE;
+    const macroRegions = 4;
+    const macroBlocks = regionSize * macroRegions;
+    const routePadding = 144;
+    const startMacroX = Math.floor((minX - routePadding) / macroBlocks);
+    const endMacroX = Math.floor((maxX + routePadding) / macroBlocks);
+    const startMacroZ = Math.floor((minZ - routePadding) / macroBlocks);
+    const endMacroZ = Math.floor((maxZ + routePadding) / macroBlocks);
+    const insideChunk = (x: number, z: number) => x >= minX && x <= maxX && z >= minZ && z <= maxZ;
+
+    for (let macroX = startMacroX; macroX <= endMacroX; macroX += 1) for (let macroZ = startMacroZ; macroZ <= endMacroZ; macroZ += 1) {
+      const graphKey = `roads:${macroX},${macroZ}`;
+      const candidates = new Map<string, SettlementCandidate>();
+      const nodes = [] as Array<{ id: string; x: number; z: number; y: number; factionId: string; settlementSize: SettlementCandidate["size"] }>;
+      for (let dx = 0; dx < macroRegions; dx += 1) for (let dz = 0; dz < macroRegions; dz += 1) {
+        const regionX = macroX * macroRegions + dx;
+        const regionZ = macroZ * macroRegions + dz;
+        const candidate = this.validatedSettlementCandidateForRegion(regionX, regionZ, sample);
+        if (!candidate || candidate.environment === "underwater" || candidate.environment === "underground") continue;
+        const participation = candidate.size === "town" ? .6 : candidate.size === "village" ? .35 : .1;
+        if (hash2(regionX, regionZ, this.seed ^ 0x726f6164) >= participation) continue;
+        candidates.set(candidate.id, candidate);
+        nodes.push({ id: candidate.id, x: candidate.center.x, z: candidate.center.z, y: candidate.center.y ?? candidate.floorY ?? sample(candidate.center.x, candidate.center.z).height, factionId: candidate.factionId, settlementSize: candidate.size });
+      }
+      let graph = this.surfaceRoadGraphCache.get(graphKey);
+      if (!graph) {
+        graph = planRegionalRoadGraph(nodes);
+        this.surfaceRoadGraphCache.set(graphKey, graph);
+      }
+      for (const edge of graph) {
+        const fromCandidate = candidates.get(edge.from.id);
+        const toCandidate = candidates.get(edge.to.id);
+        if (!fromCandidate || !toCandidate) continue;
+        const edgeMinX = Math.min(edge.from.x, edge.to.x) - routePadding;
+        const edgeMaxX = Math.max(edge.from.x, edge.to.x) + routePadding;
+        const edgeMinZ = Math.min(edge.from.z, edge.to.z) - routePadding;
+        const edgeMaxZ = Math.max(edge.from.z, edge.to.z) + routePadding;
+        if (maxX < edgeMinX || minX > edgeMaxX || maxZ < edgeMinZ || minZ > edgeMaxZ) continue;
+        const length = Math.max(1, edge.length);
+        const ux = (edge.to.x - edge.from.x) / length;
+        const uz = (edge.to.z - edge.from.z) / length;
+        const fromInset = SETTLEMENT_SIZE_RULES[fromCandidate.size].radiusBlocks + 3;
+        const toInset = SETTLEMENT_SIZE_RULES[toCandidate.size].radiusBlocks + 3;
+        const from = { ...edge.from, x: Math.round(edge.from.x + ux * fromInset), z: Math.round(edge.from.z + uz * fromInset) };
+        const to = { ...edge.to, x: Math.round(edge.to.x - ux * toInset), z: Math.round(edge.to.z - uz * toInset) };
+        let road = this.surfaceRoadCache.get(edge.id);
+        if (!road) {
+          road = planTerrainFollowingRoad(from, to, (roadX, roadZ) => {
+            const column = sample(roadX, roadZ);
+            const around = [[4, 0], [-4, 0], [0, 4], [0, -4]].map(([ox, oz]) => sample(roadX + ox, roadZ + oz).height);
+            return {
+              height: column.height,
+              waterline: column.waterline,
+              water: column.height <= column.waterline,
+              slopeRisk: Math.max(...around.map((height) => Math.abs(height - column.height))),
+            };
+          });
+          this.surfaceRoadCache.set(edge.id, road);
+        }
+        for (let pointIndex = 0; pointIndex < road.length; pointIndex += 1) {
+          const point = road[pointIndex];
+          if (!insideChunk(point.x, point.z) || point.kind === "ferry") continue;
+          const column = sample(point.x, point.z);
+          const roadBlock = point.kind === "bridge" || point.kind === "causeway" ? BlockId.CaveBridge : BlockId.Gravel;
+          for (let fillY = Math.max(column.height + 1, point.y - 3); fillY < point.y; fillY += 1) set(point.x, fillY, point.z, point.kind === "road" ? BlockId.Cobblestone : BlockId.StoneBrick, false);
+          set(point.x, point.y, point.z, roadBlock, false);
+          for (let clearY = point.y + 1; clearY <= Math.min(point.y + 3, column.height + 4); clearY += 1) set(point.x, clearY, point.z, BlockId.Air, false);
+          const previous = road[Math.max(0, pointIndex - 1)], next = road[Math.min(road.length - 1, pointIndex + 1)];
+          const tangentX = next.x - previous.x, tangentZ = next.z - previous.z;
+          const sideX = Math.abs(tangentZ) >= Math.abs(tangentX) ? Math.sign(tangentZ || 1) : 0;
+          const sideZ = sideX === 0 ? Math.sign(tangentX || 1) : 0;
+          for (const side of [-1, 1] as const) {
+            const shoulderX = point.x + sideX * side, shoulderZ = point.z - sideZ * side;
+            if (!insideChunk(shoulderX, shoulderZ)) continue;
+            const shoulder = sample(shoulderX, shoulderZ);
+            if (Math.abs(shoulder.height - point.y) <= 1 && shoulder.height > shoulder.waterline) set(shoulderX, shoulder.height, shoulderZ, roadBlock, false);
+          }
+          if (pointIndex % 64 === 0) this.structureMarkers.set(`surface-road:${edge.id}:${pointIndex}`, {
+            type: "landmark", id: `surface-road:${edge.id}:${pointIndex}`, position: { x: point.x, y: point.y + 1, z: point.z },
+            tag: `surface-road:${fromCandidate.factionId}:${toCandidate.factionId}:${edge.loop ? "loop" : "spine"}`,
+          });
+        }
+      }
+    }
+  }
+
   private generateSettlementsForChunk(
     chunk: Chunk,
     sample: (x: number, z: number) => ColumnSample,
@@ -3463,12 +3850,14 @@ export class ChunkWorld {
     // Deepgear switchbacks can extend beyond a town wall while descending
     // from a high mountain shelf to the nearest graph hub. This remains a
     // fixed bounded neighborhood rather than an unbounded structure scan.
-    const reach = Math.max(144, SETTLEMENT_SIZE_RULES.town.radiusBlocks + 3);
+    const reach = Math.max(208, SETTLEMENT_SIZE_RULES.town.radiusBlocks + 3);
     const startRegionX = Math.floor((minX - reach) / regionSize);
     const endRegionX = Math.floor((minX + CHUNK_SIZE + reach) / regionSize);
     const startRegionZ = Math.floor((minZ - reach) / regionSize);
     const endRegionZ = Math.floor((minZ + CHUNK_SIZE + reach) / regionSize);
     const insideChunk = (x: number, z: number) => x >= minX && x < minX + CHUNK_SIZE && z >= minZ && z < minZ + CHUNK_SIZE;
+
+    this.generateRegionalRoadsForChunk(chunk, sample, set);
 
     for (let regionX = startRegionX; regionX <= endRegionX; regionX += 1) for (let regionZ = startRegionZ; regionZ <= endRegionZ; regionZ += 1) {
       const candidateForRegion = (candidateRegionX: number, candidateRegionZ: number) => {
@@ -3502,6 +3891,60 @@ export class ChunkWorld {
         this.settlementCandidateCache.set(cacheKey, candidate);
         return candidate;
       };
+      const validatedCandidateForRegion = (candidateRegionX: number, candidateRegionZ: number) => {
+        const cacheKey = `${candidateRegionX},${candidateRegionZ}`;
+        if (this.settlementValidatedCandidateCache.has(cacheKey)) return this.settlementValidatedCandidateCache.get(cacheKey) ?? null;
+        const planned = candidateForRegion(candidateRegionX, candidateRegionZ);
+        if (!planned) {
+          this.settlementValidatedCandidateCache.set(cacheKey, null);
+          return null;
+        }
+        const contenders: SettlementCandidate[] = [];
+        // The town spacing radius can cross a complete 32-chunk cell. Using
+        // the same winner test for roads, halls, and settlement stamping means
+        // none of those systems can point at a town that later disappears.
+        for (let dx = -2; dx <= 2; dx += 1) for (let dz = -2; dz <= 2; dz += 1) {
+          if (dx === 0 && dz === 0) continue;
+          const contender = candidateForRegion(candidateRegionX + dx, candidateRegionZ + dz);
+          if (contender) contenders.push(contender);
+        }
+        if (!settlementWinsSpacingTieBreak(planned, contenders)) {
+          this.settlementValidatedCandidateCache.set(cacheKey, null);
+          return null;
+        }
+        const centerColumn = sample(planned.center.x, planned.center.z);
+        const actualBiome = settlementBiomeFromId(centerColumn.biome);
+        const underwater = planned.environment === "underwater";
+        const underground = planned.environment === "underground";
+        let valid = Boolean(actualBiome && actualBiome === planned.biome)
+          && !(underwater ? centerColumn.height >= centerColumn.waterline - 5 : centerColumn.height <= centerColumn.waterline + 3);
+        if (valid && !underwater) {
+          const pondProbe = Math.min(12, SETTLEMENT_SIZE_RULES[planned.size].radiusBlocks);
+          valid = ![[0, 0], [pondProbe, 0], [-pondProbe, 0], [0, pondProbe], [0, -pondProbe]]
+            .some(([dx, dz]) => syrupPondColumnAt(this.seedText, planned.center.x + dx, planned.center.z + dz, sample, BiomeId.SugarplumVale));
+        }
+        if (valid) {
+          const nearbyHeights = [[4, 0], [-4, 0], [0, 4], [0, -4]].map(([dx, dz]) => sample(planned.center.x + dx, planned.center.z + dz).height);
+          valid = !nearbyHeights.some((height) => Math.abs(height - centerColumn.height) > (underwater ? 7 : underground ? 12 : 4));
+        }
+        if (!valid) {
+          this.settlementValidatedCandidateCache.set(cacheKey, null);
+          return null;
+        }
+        // Aquatic and Deepgear geometry is anchored to the accepted local
+        // seabed/mountain column, not the earlier regional probe.
+        const accepted: SettlementCandidate = underwater ? {
+          ...planned,
+          floorY: centerColumn.height,
+          center: { ...planned.center, y: centerColumn.height + 2 },
+        } : underground ? {
+          ...planned,
+          floorY: Math.max(MIN_Y + 10, centerColumn.height - 18),
+          center: { ...planned.center, y: Math.max(MIN_Y + 12, centerColumn.height - 16) },
+        } : planned;
+        this.settlementValidatedCandidateCache.set(cacheKey, accepted);
+        return accepted;
+      };
       const plannedCandidate = candidateForRegion(regionX, regionZ);
       if (!plannedCandidate) {
         // Regions that cannot support a full culturally valid settlement still
@@ -3512,59 +3955,99 @@ export class ChunkWorld {
         const waypostColumn = sample(waypostX, waypostZ);
         if (waypostColumn.height > waypostColumn.waterline + 3) {
           const y = waypostColumn.height + 1;
-          for (const [dx, dz] of [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]] as const) set(waypostX + dx, y, waypostZ + dz, BlockId.CaveBridge, false);
-          set(waypostX, y + 1, waypostZ, BlockId.CaveMarker, false);
-          set(waypostX + 1, y + 1, waypostZ + 1, BlockId.Torch, false);
-          if (insideChunk(waypostX, waypostZ)) this.structureMarkers.set(`inhabited-waypost:${regionX}:${regionZ}`, {
-            type: "landmark",
-            id: `inhabited-waypost:${regionX}:${regionZ}`,
-            position: { x: waypostX, y: y + 1, z: waypostZ },
-            tag: `inhabited-waypost:${BIOME_NAMES[waypostColumn.biome]}`,
-          });
+          const lodgePlan = planGuildLodgeForRegion(this.seed, regionX, regionZ, waypostColumn.biome);
+          if (lodgePlan) {
+            const guildId = lodgePlan.guildId;
+            const lodge = guildHallBlockPalette(guildId, "lodge");
+            clearGeneratedGrowth({ minX: waypostX - 4, maxX: waypostX + 4, minZ: waypostZ - 4, maxZ: waypostZ + 4 });
+            for (let dz = -3; dz <= 3; dz += 1) for (let dx = -3; dx <= 3; dx += 1) {
+              set(waypostX + dx, y, waypostZ + dz, lodge.hallFloor, false);
+              if (Math.abs(dx) === 3 || Math.abs(dz) === 3) {
+                if (!(dz === -3 && Math.abs(dx) <= 1)) for (let dy = 1; dy <= 3; dy += 1) set(waypostX + dx, y + dy, waypostZ + dz, (Math.abs(dx) === 3 && Math.abs(dz) === 3) ? lodge.corner : lodge.buildingWall, false);
+              }
+              set(waypostX + dx, y + 4, waypostZ + dz, lodge.roof, false);
+            }
+            set(waypostX - 2, y + 1, waypostZ - 4, lodge.corner, false);
+            set(waypostX + 2, y + 1, waypostZ - 4, lodge.corner, false);
+            set(waypostX - 2, y + 2, waypostZ - 4, BlockId.Torch, false);
+            set(waypostX + 2, y + 2, waypostZ - 4, BlockId.Torch, false);
+            set(waypostX + 2, y + 1, waypostZ + 1, BlockId.Chest, false);
+            if (insideChunk(waypostX, waypostZ)) {
+              const id = `guild-lodge:${guildId}:${regionX}:${regionZ}`;
+              this.structureMarkers.set(id, { type: "landmark", id, position: { x: waypostX, y: y + 1, z: waypostZ - 4 }, tag: `guild-lodge:${guildId}:${BIOME_NAMES[waypostColumn.biome]}` });
+              this.structureMarkers.set(`${id}:chest`, { type: "chest", id: `${id}:locker`, position: { x: waypostX + 2, y: y + 1, z: waypostZ + 1 }, lootTable: "adventure-cache", loot: rollStructureLoot("adventure-cache", `${this.seedText}:${id}`, 3) });
+            }
+          } else {
+            for (const [dx, dz] of [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]] as const) set(waypostX + dx, y, waypostZ + dz, BlockId.CaveBridge, false);
+            set(waypostX, y + 1, waypostZ, BlockId.CaveMarker, false);
+            set(waypostX + 1, y + 1, waypostZ + 1, BlockId.Torch, false);
+            if (insideChunk(waypostX, waypostZ)) this.structureMarkers.set(`inhabited-waypost:${regionX}:${regionZ}`, {
+              type: "landmark",
+              id: `inhabited-waypost:${regionX}:${regionZ}`,
+              position: { x: waypostX, y: y + 1, z: waypostZ },
+              tag: `inhabited-waypost:${BIOME_NAMES[waypostColumn.biome]}`,
+            });
+          }
         }
         continue;
       }
-      const spacingContenders: SettlementCandidate[] = [];
-      // A town's 42-chunk spacing contract can cross one complete 32-chunk
-      // region, so inspect a fixed two-region neighborhood before authoring.
-      for (let dx = -2; dx <= 2; dx += 1) for (let dz = -2; dz <= 2; dz += 1) {
-        if (dx === 0 && dz === 0) continue;
-        const contender = candidateForRegion(regionX + dx, regionZ + dz);
-        if (contender) spacingContenders.push(contender);
-      }
-      if (!settlementWinsSpacingTieBreak(plannedCandidate, spacingContenders)) continue;
-      const centerColumn = sample(plannedCandidate.center.x, plannedCandidate.center.z);
-      const actualBiome = settlementBiomeFromId(centerColumn.biome);
-      const underwater = plannedCandidate.environment === "underwater";
-      const underground = plannedCandidate.environment === "underground";
-      if (!actualBiome || actualBiome !== plannedCandidate.biome) continue;
-      if (underwater ? centerColumn.height >= centerColumn.waterline - 5 : centerColumn.height <= centerColumn.waterline + 3) continue;
-      if (!underwater) {
-        const pondProbe = Math.min(12, SETTLEMENT_SIZE_RULES[plannedCandidate.size].radiusBlocks);
-        const overlapsSyrup = [[0, 0], [pondProbe, 0], [-pondProbe, 0], [0, pondProbe], [0, -pondProbe]]
-          .some(([dx, dz]) => syrupPondColumnAt(this.seedText, plannedCandidate.center.x + dx, plannedCandidate.center.z + dz, sample, BiomeId.SugarplumVale));
-        if (overlapsSyrup) continue;
-      }
-      const nearbyHeights = [[4, 0], [-4, 0], [0, 4], [0, -4]].map(([dx, dz]) => sample(plannedCandidate.center.x + dx, plannedCandidate.center.z + dz).height);
-      if (nearbyHeights.some((height) => Math.abs(height - centerColumn.height) > (underwater ? 7 : underground ? 12 : 4))) continue;
+      const candidate = validatedCandidateForRegion(regionX, regionZ);
+      if (!candidate) continue;
+      const centerColumn = sample(candidate.center.x, candidate.center.z);
+      const underwater = candidate.environment === "underwater";
+      const underground = candidate.environment === "underground";
 
-      // Region-center terrain only selects a deterministic candidate. Aquatic
-      // geometry must be authored from the actual settlement-center seabed or
-      // a shallower probe can lift an entire town through the ocean surface.
-      const candidate: SettlementCandidate = underwater ? {
-        ...plannedCandidate,
-        floorY: centerColumn.height,
-        center: { ...plannedCandidate.center, y: centerColumn.height + 2 },
-      } : underground ? {
-        ...plannedCandidate,
-        floorY: Math.max(MIN_Y + 10, centerColumn.height - 18),
-        center: { ...plannedCandidate.center, y: Math.max(MIN_Y + 12, centerColumn.height - 16) },
-      } : plannedCandidate;
-      const plannedLayout = planSettlementLayout(candidate);
+      // Surface roads are authored by the chunk-local regional graph pass
+      // above; Deepgear holds retain their protected switchback/lift network.
+      // Hall placement is resolved from the complete four-by-four regional
+      // settlement cluster, not from chunk load order. Each accepted town can
+      // surrender at most one non-civic parcel, while each guild receives a
+      // deterministic regional quota and culture compatibility check.
+      const hallMacroX = Math.floor(regionX / 4) * 4;
+      const hallMacroZ = Math.floor(regionZ / 4) * 4;
+      const hallRegionId = `settlement-cluster:${Math.floor(regionX / 4)}:${Math.floor(regionZ / 4)}`;
+      const hallCandidates: GuildHallCandidate[] = [];
+      for (let hallDx = 0; hallDx < 4; hallDx += 1) for (let hallDz = 0; hallDz < 4; hallDz += 1) {
+        const accepted = validatedCandidateForRegion(hallMacroX + hallDx, hallMacroZ + hallDz);
+        if (!accepted) continue;
+        hallCandidates.push({
+          settlementId: accepted.id,
+          factionId: accepted.factionId,
+          size: accepted.size,
+          regionId: hallRegionId,
+          civicParcelId: `${accepted.id}:guild-parcel`,
+          compatibleGuildIds: compatibleGuildIdsForSettlement(accepted.factionId, accepted.environment ?? "surface"),
+        });
+      }
+      const hallPlacement = planGuildHalls(this.seedText, hallCandidates).find((entry) => entry.settlementId === candidate.id) ?? null;
+      let plannedLayout = planSettlementLayout(candidate);
+      if (hallPlacement) {
+        const replaceable = plannedLayout.buildings.filter((building) => ![
+          "mayor-hall", "tide-hall", "sugar-palace", "moonbough-hall", "deepgear-hall", "guardhouse", "entrance-barracks",
+        ].includes(building.role));
+        const replacement = replaceable[Math.floor(hash2(candidate.center.x, candidate.center.z, this.seed ^ 0x71a11) * Math.max(1, replaceable.length))] ?? plannedLayout.buildings.at(-1);
+        if (replacement) plannedLayout = {
+          ...plannedLayout,
+          buildings: Object.freeze(plannedLayout.buildings.map((building) => building.id !== replacement.id ? building : Object.freeze({
+            ...building,
+            width: Math.max(7, building.width),
+            depth: Math.max(7, building.depth),
+            materialPalette: Object.freeze([...building.materialPalette, `guild:${hallPlacement.guildId}`, `hall-state:${hallPlacement.state}`]),
+            furniture: Object.freeze([
+              ...building.furniture,
+              { kind: "table" as const, position: building.position, facing: building.facing, functional: true },
+              { kind: "chair" as const, position: { ...building.position, x: building.position.x + 2 }, facing: ((building.facing + 2) & 3) as 0 | 1 | 2 | 3, functional: true },
+              { kind: "chair" as const, position: { ...building.position, x: building.position.x - 2 }, facing: building.facing, functional: true },
+            ]),
+            guildHall: Object.freeze({ placementId: hallPlacement.id, guildId: hallPlacement.guildId, state: hallPlacement.state, variantId: hallPlacement.variantId }),
+          }))),
+        };
+      }
       const layout = underwater ? fitUnderwaterSettlementLayout(plannedLayout, sample) : plannedLayout;
       if (!layout) continue;
       const palette = settlementBlockPalette(candidate.factionId);
       this.settlementPlans.set(candidate.id, { candidate, layout });
+      let deepgearApproachPath: readonly DeepgearMineRoadPoint[] = [];
       if (underground && this.generationOptions.profile === "world-below-v15") {
         // Every Deepgear hold is a real cave-graph anchor. A broad mine road
         // reaches the nearest upper hub, while paired lift platforms provide a
@@ -3573,6 +4056,7 @@ export class ChunkWorld {
         const graphTarget = nearestUpperCaveNode(this.seed, candidate.center.x, candidate.center.z);
         const approachStart = { x: candidate.center.x, y: holdY + 2, z: candidate.center.z };
         const approachPath = planDeepgearMineRoad(approachStart, graphTarget);
+        deepgearApproachPath = approachPath;
         // Carve first across the complete local path. A descending stair's
         // headroom overlaps the previous tread, so placing floors in this same
         // pass would let later clear operations erase the road behind them.
@@ -3592,10 +4076,11 @@ export class ChunkWorld {
           if (lampOffset) set(point.x + lampOffset[0], point.y + 1, point.z + lampOffset[1], BlockId.DeepgearLantern, false);
         }
 
-        const liftX = candidate.center.x + Math.max(7, layout.radiusBlocks - 5);
-        const liftZ = candidate.center.z;
-        const liftBottomY = holdY + 1;
-        const liftTopY = sample(liftX, liftZ).height + 1;
+        const lift = selectDeepgearLiftSite(candidate.center, layout.radiusBlocks, holdY, sample);
+        const liftX = lift.x;
+        const liftZ = lift.z;
+        const liftBottomY = lift.liftBottomY;
+        const liftTopY = lift.liftTopY;
         if (liftTopY - liftBottomY >= 5) {
           for (let shaftY = liftBottomY + 1; shaftY < liftTopY; shaftY += 1) {
             for (let dx = -1; dx <= 1; dx += 1) for (let dz = -1; dz <= 1; dz += 1) set(liftX + dx, shaftY, liftZ + dz, BlockId.Air, false);
@@ -3612,6 +4097,12 @@ export class ChunkWorld {
             if (Math.max(Math.abs(dx), Math.abs(dz)) === 2) {
               set(liftX + dx, liftTopY - 1, liftZ + dz, BlockId.DeepgearBrick, false);
             } else set(liftX + dx, liftTopY - 1, liftZ + dz, BlockId.Air, false);
+          }
+          // A sharp shelf drop becomes a compact supported gate tower rather
+          // than a floating platform. Only the four perimeter piers descend;
+          // the central 3x3 shaft remains clear and surrounding relief stays.
+          for (let supportY = lift.surfaceY + 1; supportY < liftTopY - 1; supportY += 1) for (const [dx, dz] of [[-2, -2], [2, -2], [-2, 2], [2, 2]] as const) {
+            set(liftX + dx, supportY, liftZ + dz, BlockId.DeepgearBrick, false);
           }
           for (let dy = 1; dy <= 3; dy += 1) {
             set(liftX - 2, liftTopY + dy, liftZ, BlockId.RivetedBrass, false);
@@ -3683,6 +4174,7 @@ export class ChunkWorld {
       }
 
       for (const building of layout.buildings) {
+        const buildingPalette = building.guildHall ? guildHallBlockPalette(building.guildHall.guildId, building.guildHall.state) : palette;
         const halfWidth = Math.floor(building.width / 2);
         const halfDepth = Math.floor(building.depth / 2);
         const rotatedFootprint = building.facing % 2 === 1;
@@ -3759,39 +4251,39 @@ export class ChunkWorld {
             const arch = edgeX || edgeZ;
             if (chamferedCorner) continue;
             if (arch) set(x, baseY, z, BlockId.MoonSlate, false);
-            if (corner) for (let y = 1; y <= Math.min(4, wallHeight); y += 1) set(x, baseY + y, z, palette.corner, false);
-            else if (arch && ((x + z) & 3) === 0) set(x, baseY + 2, z, palette.buildingWall, false);
+            if (corner) for (let y = 1; y <= Math.min(4, wallHeight); y += 1) set(x, baseY + y, z, buildingPalette.corner, false);
+            else if (arch && ((x + z) & 3) === 0) set(x, baseY + 2, z, buildingPalette.buildingWall, false);
             if (arch && ((Math.abs(x - building.position.x) + Math.abs(z - building.position.z)) & 1) === 0) {
-              set(x, baseY + Math.min(5, wallHeight), z, palette.roof, false);
+              set(x, baseY + Math.min(5, wallHeight), z, buildingPalette.roof, false);
             }
             continue;
           }
           if (underground) {
             for (let y = baseY; y <= baseY + wallHeight + 2; y += 1) set(x, y, z, BlockId.Air, false);
-            set(x, baseY, z, building.role === "deepgear-hall" || building.role === "golem-forge" ? palette.hallFloor : palette.floor, false);
+            set(x, baseY, z, building.guildHall || building.role === "deepgear-hall" || building.role === "golem-forge" ? buildingPalette.hallFloor : buildingPalette.floor, false);
             const edgeX = Math.abs(u) === halfWidth;
             const edgeZ = Math.abs(v) === halfDepth;
             if (chamferedCorner) continue;
             if (edgeX || edgeZ) for (let y = 1; y <= wallHeight; y += 1) {
               const corner = edgeX && edgeZ;
               const window = !corner && y === 2 && ((x + z) & 3) === 0;
-              set(x, baseY + y, z, window ? BlockId.RivetedBrass : corner ? palette.corner : palette.buildingWall, false);
+              set(x, baseY + y, z, window ? BlockId.RivetedBrass : corner ? buildingPalette.corner : buildingPalette.buildingWall, false);
             }
             const archRise = Math.max(0, 2 - Math.floor(Math.abs(u) / Math.max(1, halfWidth / 2)));
-            set(x, baseY + wallHeight + 1 + archRise, z, palette.roof, false);
+            set(x, baseY + wallHeight + 1 + archRise, z, buildingPalette.roof, false);
             continue;
           }
           const localHeight = sample(x, z).height;
-          for (let y = Math.min(localHeight + 1, baseY); y <= baseY; y += 1) set(x, y, z, palette.corner, false);
+          for (let y = Math.min(localHeight + 1, baseY); y <= baseY; y += 1) set(x, y, z, buildingPalette.corner, false);
           for (let y = baseY + 1; y <= Math.max(baseY + wallHeight + 2, localHeight + 2); y += 1) set(x, y, z, BlockId.Air, false);
-          set(x, baseY, z, building.role === "mayor-hall" || building.role === "sugar-palace" || building.role === "moonbough-hall" ? palette.hallFloor : palette.floor, false);
+          set(x, baseY, z, building.guildHall || building.role === "mayor-hall" || building.role === "sugar-palace" || building.role === "moonbough-hall" ? buildingPalette.hallFloor : buildingPalette.floor, false);
           const edgeX = Math.abs(u) === halfWidth;
           const edgeZ = Math.abs(v) === halfDepth;
           if (chamferedCorner) continue;
           if (edgeX || edgeZ) for (let y = 1; y <= wallHeight; y += 1) {
             const corner = edgeX && edgeZ;
             const window = !corner && y % 3 === 2 && ((x + z) & 3) === 0;
-            set(x, baseY + y, z, window ? BlockId.Glass : corner ? palette.corner : palette.buildingWall, false);
+            set(x, baseY + y, z, window ? BlockId.Glass : corner ? buildingPalette.corner : buildingPalette.buildingWall, false);
           }
           const roofRise = candidate.factionId === "hobbits"
             ? Math.max(0, 2 - Math.floor(Math.abs(v) / Math.max(1, halfDepth / 2)))
@@ -3801,7 +4293,7 @@ export class ChunkWorld {
                 ? Math.max(0, 2 - Math.floor(Math.hypot(u / Math.max(1, halfWidth), v / Math.max(1, halfDepth)) * 2))
                 : candidate.factionId === "goblins" ? (u + halfWidth) % 3 === 0 ? 2 : 0
                   : (Math.abs(u) + Math.abs(v)) % 3 === 0 ? 1 : 0;
-          set(x, baseY + wallHeight + 1 + roofRise, z, palette.roof, false);
+          set(x, baseY + wallHeight + 1 + roofRise, z, buildingPalette.roof, false);
         }
         const door = worldFromLocal(0, -halfDepth);
         const doorX = door.x;
@@ -3840,6 +4332,67 @@ export class ChunkWorld {
           set(furniture.position.x, fy, furniture.position.z, furnitureBlock, false);
           if (furniture.kind === "bed") set(furniture.position.x, fy, furniture.position.z + 1, BlockId.BedNorthHead, false);
         }
+        if (building.guildHall) {
+          const hall = building.guildHall;
+          const front = worldFromLocal(0, -halfDepth - 1);
+          const crestY = baseY + wallHeight + 2;
+          const accent = buildingPalette.corner;
+          // Lodge: a readable paired crest. Established: lit corner standards.
+          // Charter: an extra central spire. Upgrades are additive so old
+          // worlds never require destructive structure rewrites.
+          for (const side of [-1, 1] as const) {
+            const post = worldFromLocal(side * 2, -halfDepth - 1);
+            set(post.x, baseY + 1, post.z, accent, false);
+            set(post.x, baseY + 2, post.z, hall.guildId === "tideglass" ? BlockId.Glowstone : BlockId.Torch, false);
+          }
+          if (hall.state !== "lodge") for (const [u, v] of [[-halfWidth, -halfDepth], [halfWidth, -halfDepth], [-halfWidth, halfDepth], [halfWidth, halfDepth]] as const) {
+            const post = worldFromLocal(u, v);
+            set(post.x, crestY, post.z, accent, false);
+            set(post.x, crestY + 1, post.z, BlockId.Torch, false);
+          }
+          if (hall.state === "charter") {
+            set(building.position.x, crestY + 1, building.position.z, accent, false);
+            set(building.position.x, crestY + 2, building.position.z, BlockId.Glowstone, false);
+          }
+          if (insideChunk(building.position.x, building.position.z)) {
+            this.structureMarkers.set(`${candidate.id}:guild-hall:${hall.placementId}`, {
+              type: "landmark",
+              id: hall.placementId,
+              position: { x: front.x, y: baseY + 1, z: front.z },
+              tag: `guild-hall:${hall.guildId}:${hall.state}:${candidate.id}`,
+            });
+          }
+          const principals = GUILD_NPCS.filter((npc) => npc.guildId === hall.guildId);
+          principals.forEach((npc, index) => {
+            const local = worldFromLocal((index - 1) * 2, index === 1 ? 1 : 0);
+            if (!insideChunk(local.x, local.z)) return;
+            const marker: StructureMarker = {
+              type: "spawn",
+              id: `guild-npc:${npc.id}:${candidate.id}`,
+              position: { x: local.x, y: baseY + 1, z: local.z },
+              mobKind: guildNpcMobKind(candidate.factionId, index),
+              count: 1,
+              radius: .25,
+              persistent: true,
+              tags: [
+                `settlement:${candidate.id}`, `resident:guild-npc:${npc.id}:${candidate.id}`, `name:${npc.name}`,
+                `profession:guild:${hall.guildId}:${npc.id}`, `faction:${candidate.factionId}`, `guild:${hall.guildId}`,
+                `guild-role:${npc.role}`, `schedule:${npc.homeSchedule.join("|")}`, ...(npc.recruitable ? ["recruitable:true"] : []),
+              ],
+            };
+            this.structureMarkers.set(`${candidate.id}:spawn:${marker.id}`, marker);
+          });
+        }
+      }
+
+      // Settlement shells are stamped after the mine road so doors, roofs, or
+      // furniture can otherwise recap a tread. Restore a narrow protected
+      // easement outside the civic center after all buildings are complete;
+      // the wider original cutting remains wherever it was unobstructed.
+      for (const point of deepgearApproachPath) {
+        if (!insideChunk(point.x, point.z) || Math.hypot(point.x - candidate.center.x, point.z - candidate.center.z) < 6) continue;
+        set(point.x, point.y - 1, point.z, BlockId.DeepgearBrick, false);
+        for (let dy = 0; dy <= 3; dy += 1) set(point.x, point.y + dy, point.z, BlockId.Air, false);
       }
 
       if (insideChunk(candidate.center.x, candidate.center.z)) {

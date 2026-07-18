@@ -1,3 +1,5 @@
+import type { CreatureTypeId } from "./creature-types";
+
 /**
  * Save-friendly spell learning, attunement, mana, casting, and Q-key rules.
  *
@@ -24,7 +26,16 @@ export type SpellEffectDescriptor =
   | Readonly<{ kind: "shield"; amount: number; durationSeconds: number }>
   | Readonly<{ kind: "teleport"; distance: number; preserveMomentum: boolean }>
   | Readonly<{ kind: "summoned-projectile"; summon: "steel-spear"; lifetimeSeconds: number }>
-  | Readonly<{ kind: "reveal"; radius: number; durationSeconds: number }>;
+  | Readonly<{ kind: "reveal"; radius: number; durationSeconds: number }>
+  | Readonly<{ kind: "kinmark"; durationSeconds: number; calmSeconds: number }>
+  | Readonly<{ kind: "rescue-thread"; radius: number; fallRescue: boolean }>
+  | Readonly<{ kind: "summon"; creature: "asterjaw" | "vellum-warden" | "choir-of-one" | "glasswake-stag"; durationSeconds: number }>
+  | Readonly<{ kind: "rootbridge"; range: number; durationSeconds: number }>
+  | Readonly<{ kind: "stormstep"; distance: number; echoDelaySeconds: number; damage: number }>
+  | Readonly<{ kind: "deep-lantern"; durationSeconds: number; lightRadius: number }>
+  | Readonly<{ kind: "ironwake"; fragments: number; guard: number }>
+  | Readonly<{ kind: "tidemend"; amount: number; habitatCooldownSeconds: number }>
+  | Readonly<{ kind: "hearthward"; radius: number; durationSeconds: number; restMultiplier: number }>;
 
 export type SpellProjectileDescriptor = Readonly<{
   kind: "none" | "bolt" | "lance" | "spear" | "ray";
@@ -34,7 +45,7 @@ export type SpellProjectileDescriptor = Readonly<{
   gravity: number;
   homing: number;
   pierce: number;
-  trail: "embers" | "ice-shards" | "metal-sparks" | "sun-motes" | "aether-rings" | "ward-runes" | "verdant-leaves" | "starlight-threads";
+  trail: "embers" | "ice-shards" | "metal-sparks" | "sun-motes" | "aether-rings" | "ward-runes" | "verdant-leaves" | "starlight-threads" | "spirit-thread" | "constellation" | "living-ink" | "hush-rings" | "mirror-wake" | "root-filaments" | "storm-arcs" | "lantern-pulses" | "tide-motes" | "hearth-glyphs";
 }>;
 
 export type SpellAnimationCue = Readonly<{
@@ -243,10 +254,193 @@ export const SPELLS = Object.freeze([
       { kind: "loot", table: "glimmerwood-moonwell-cache", rarity: "very-rare" },
     ],
   },
+  {
+    id: "kinmark", tomeItemId: "tome-kinmark", name: "Kinmark", school: "utility",
+    description: "Read a creature through only the field knowledge already earned, while quieting an unalarmed disposition.",
+    journalNote: "The glyph never knows more than its keeper. A patient mark is an observation, not an answer stolen from the animal.",
+    manaCost: 12, cooldownSeconds: 2, targeting: "aimed",
+    effects: [{ kind: "kinmark", durationSeconds: 30, calmSeconds: 6 }],
+    projectile: { kind: "ray", speed: 45, range: 18, radius: .18, gravity: 0, homing: .06, pierce: 0, trail: "spirit-thread" },
+    animation: { castPose: "two-hand-focus", dominantHand: "both", windupSeconds: .25, releaseSeconds: .14, recoverySeconds: .16, handColor: "#b8e8be", particleCue: "species-glyph-ring", cameraImpulse: .02 },
+    sound: { charge: "spell.kinmark.listen", release: "spell.kinmark.trace", impact: "spell.kinmark.read", loop: null, volume: .52, pitchVariance: .05 },
+    sources: [{ kind: "quest", questId: "waykeeper-1-open-hand-empty-orb", branch: "main" }],
+  },
+  {
+    id: "shepherds-thread", tomeItemId: "tome-shepherds-thread", name: "Shepherd's Thread", school: "restoration",
+    description: "Cast a visible pathing tether that guides an allied creature to safe footing and permits one bounded rescue.",
+    journalNote: "A good thread bends around stone. It pulls laterally toward footing and refuses cages, arenas, or another keeper's custody.",
+    manaCost: 26, cooldownSeconds: 12, targeting: "aimed",
+    effects: [{ kind: "rescue-thread", radius: 28, fallRescue: true }],
+    projectile: { kind: "ray", speed: 38, range: 28, radius: .12, gravity: 0, homing: .2, pierce: 0, trail: "spirit-thread" },
+    animation: { castPose: "forward-palm", dominantHand: "right", windupSeconds: .32, releaseSeconds: .18, recoverySeconds: .2, handColor: "#f1dc9b", particleCue: "braided-rescue-filament", cameraImpulse: .025 },
+    sound: { charge: "spell.thread.braid", release: "spell.thread.cast", impact: "spell.thread.catch", loop: "spell.thread.tension", volume: .58, pitchVariance: .04 },
+    sources: [{ kind: "quest", questId: "waykeeper-5-bloodline-without-chains", branch: "main" }],
+  },
+  {
+    id: "call-asterjaw", tomeItemId: "tome-call-asterjaw", name: "Call Asterjaw", school: "conjuration",
+    description: "Call the constellation hound of the Unwalked Meridian to track a mark or guard a destination for seventy-five seconds.",
+    journalNote: "Name a road you mean to walk. The Meridian cares more for intention than distance.",
+    manaCost: 46, cooldownSeconds: 80, targeting: "ground",
+    effects: [{ kind: "summon", creature: "asterjaw", durationSeconds: 75 }],
+    projectile: { kind: "none", speed: 0, range: 10, radius: 1.8, gravity: 0, homing: 0, pierce: 0, trail: "constellation" },
+    animation: { castPose: "underhand-cast", dominantHand: "both", windupSeconds: .7, releaseSeconds: .3, recoverySeconds: .35, handColor: "#8ed7e9", particleCue: "compass-star-road", cameraImpulse: .08 },
+    sound: { charge: "spell.meridian.orient", release: "spell.meridian.open", impact: "spell.meridian.paws", loop: null, volume: .76, pitchVariance: .03 },
+    sources: [{ kind: "quest", questId: "hearthroad-7-where-storms-run", branch: "main" }],
+  },
+  {
+    id: "fold-vellum-warden", tomeItemId: "tome-fold-vellum-warden", name: "Fold the Vellum Warden", school: "conjuration",
+    description: "Fold a living manuscript guardian from the Palimpsest Expanse for ninety seconds.",
+    journalNote: "Leave one margin empty. The Warden needs somewhere to write what the battle repeats.",
+    manaCost: 52, cooldownSeconds: 95, targeting: "ground",
+    effects: [{ kind: "summon", creature: "vellum-warden", durationSeconds: 90 }],
+    projectile: { kind: "none", speed: 0, range: 9, radius: 1.5, gravity: 0, homing: 0, pierce: 0, trail: "living-ink" },
+    animation: { castPose: "two-hand-focus", dominantHand: "both", windupSeconds: .8, releaseSeconds: .32, recoverySeconds: .4, handColor: "#d8c9a5", particleCue: "folded-page-guardian", cameraImpulse: .06 },
+    sound: { charge: "spell.vellum.fold", release: "spell.vellum.turn", impact: "spell.vellum.stand", loop: "spell.vellum.rustle", volume: .64, pitchVariance: .025 },
+    sources: [{ kind: "quest", questId: "moonbough-4-a-page-that-guards-itself", branch: "main" }],
+  },
+  {
+    id: "invoke-choir-of-one", tomeItemId: "tome-invoke-choir-of-one", name: "Invoke the Choir-of-One", school: "conjuration",
+    description: "Permit a silence-being from the Hush Between Bells to alternate quiet and resonant control zones for fifty-five seconds.",
+    journalNote: "Do not shout the invocation. The interval hears declarations before actions and treats loudness as injury.",
+    manaCost: 44, cooldownSeconds: 62, targeting: "ground",
+    effects: [{ kind: "summon", creature: "choir-of-one", durationSeconds: 55 }],
+    projectile: { kind: "none", speed: 0, range: 10, radius: 2, gravity: 0, homing: 0, pierce: 0, trail: "hush-rings" },
+    animation: { castPose: "guard-cross", dominantHand: "both", windupSeconds: .65, releaseSeconds: .22, recoverySeconds: .32, handColor: "#bec6d0", particleCue: "silent-throat-ring", cameraImpulse: .035 },
+    sound: { charge: "spell.hush.inhale", release: "spell.hush.interval", impact: "spell.hush.answer", loop: null, volume: .38, pitchVariance: .01 },
+    sources: [{ kind: "quest", questId: "moonbough-5-between-the-bells", branch: "main" }],
+  },
+  {
+    id: "open-glasswake", tomeItemId: "tome-open-glasswake", name: "Open the Glasswake", school: "conjuration",
+    description: "Call the mirrored stag of the Sea Behind Mirrors for a sixty-five-second mobile ward and rescue path.",
+    journalNote: "Stand beside still water and keep your reflection whole until the second shoreline arrives.",
+    manaCost: 50, cooldownSeconds: 72, targeting: "ground",
+    effects: [{ kind: "summon", creature: "glasswake-stag", durationSeconds: 65 }],
+    projectile: { kind: "none", speed: 0, range: 12, radius: 2, gravity: 0, homing: 0, pierce: 0, trail: "mirror-wake" },
+    animation: { castPose: "underhand-cast", dominantHand: "left", windupSeconds: .72, releaseSeconds: .28, recoverySeconds: .34, handColor: "#a4e0df", particleCue: "sideways-ocean-antlers", cameraImpulse: .055 },
+    sound: { charge: "spell.glasswake.tide", release: "spell.glasswake.open", impact: "spell.glasswake.hoof", loop: "spell.glasswake.surf", volume: .65, pitchVariance: .035 },
+    sources: [{ kind: "quest", questId: "moonbough-6-the-sea-in-the-glass", branch: "main" }],
+  },
+  {
+    id: "rootbridge", tomeItemId: "tome-rootbridge", name: "Rootbridge", school: "alteration",
+    description: "Grow a protected, temporary walkable root span between two valid anchors.",
+    journalNote: "Roots accept stone, not ownership. The span refuses containers, settlements, actors, and unstable liquids.",
+    manaCost: 38, cooldownSeconds: 25, targeting: "ground",
+    effects: [{ kind: "rootbridge", range: 14, durationSeconds: 45 }],
+    projectile: { kind: "ray", speed: 22, range: 14, radius: .5, gravity: 0, homing: 0, pierce: 0, trail: "root-filaments" },
+    animation: { castPose: "underhand-cast", dominantHand: "both", windupSeconds: .48, releaseSeconds: .28, recoverySeconds: .35, handColor: "#78a95d", particleCue: "swept-root-span", cameraImpulse: .06 },
+    sound: { charge: "spell.rootbridge.gather", release: "spell.rootbridge.grow", impact: "spell.rootbridge.settle", loop: "spell.rootbridge.creak", volume: .66, pitchVariance: .06 },
+    sources: [{ kind: "quest", questId: "moonbough-2-branches-of-recommendation", branch: "main" }, { kind: "faction", factionId: "wood-elves", detail: "Moonbough Arcanum archive stock after recommendation", rarity: "rare" }],
+  },
+  {
+    id: "stormstep", tomeItemId: "tome-stormstep", name: "Stormstep", school: "alteration",
+    description: "Burst through valid space and leave a delayed lightning echo at the departure footprint.",
+    journalNote: "This is a step, not a blink. Stone still matters, and the echo remembers where pursuit began.",
+    manaCost: 30, cooldownSeconds: 6, targeting: "ground",
+    effects: [{ kind: "stormstep", distance: 7, echoDelaySeconds: .65, damage: 9 }],
+    projectile: { kind: "none", speed: 0, range: 7, radius: 2.2, gravity: 0, homing: 0, pierce: 0, trail: "storm-arcs" },
+    animation: { castPose: "forward-palm", dominantHand: "right", windupSeconds: .18, releaseSeconds: .12, recoverySeconds: .22, handColor: "#9fd6ff", particleCue: "delayed-footprint-arc", cameraImpulse: .11 },
+    sound: { charge: "spell.stormstep.coil", release: "spell.stormstep.dash", impact: "spell.stormstep.echo", loop: null, volume: .82, pitchVariance: .05 },
+    sources: [{ kind: "loot", table: "stormglass-citadel-archive", rarity: "very-rare" }, { kind: "quest", questId: "hearthroad-7-where-storms-run", branch: "main" }],
+  },
+  {
+    id: "deep-lantern", tomeItemId: "tome-deep-lantern", name: "Deep Lantern", school: "utility",
+    description: "Orbit a modest bioluminescent guide that signals cavern openings, breathable routes, descents, and known magical resonance.",
+    journalNote: "It does not find ore. Let ordinary tunnels remain dark enough for the living centers below to matter.",
+    manaCost: 18, cooldownSeconds: 4, targeting: "self",
+    effects: [{ kind: "deep-lantern", durationSeconds: 75, lightRadius: 5.5 }],
+    projectile: { kind: "none", speed: 0, range: 0, radius: 5.5, gravity: 0, homing: 0, pierce: 0, trail: "lantern-pulses" },
+    animation: { castPose: "two-hand-focus", dominantHand: "left", windupSeconds: .3, releaseSeconds: .18, recoverySeconds: .18, handColor: "#8edbd0", particleCue: "four-signal-orbit", cameraImpulse: .015 },
+    sound: { charge: "spell.lantern.wake", release: "spell.lantern.orbit", impact: "spell.lantern.pulse", loop: "spell.lantern.hum", volume: .46, pitchVariance: .04 },
+    sources: [{ kind: "quest", questId: "deepgear-1-chalk-and-breath", branch: "main" }],
+  },
+  {
+    id: "ironwake", tomeItemId: "tome-ironwake", name: "Ironwake", school: "alteration",
+    description: "Raise bounded loose metal fragments into a rotating ward, then launch what remains on recast.",
+    journalNote: "A protected block is not loose. Feed the wake filings, spent projectiles, drops, or authored arena debris.",
+    manaCost: 34, cooldownSeconds: 9, targeting: "cone",
+    effects: [{ kind: "ironwake", fragments: 6, guard: 18 }],
+    projectile: { kind: "spear", speed: 25, range: 13, radius: .35, gravity: .04, homing: 0, pierce: 1, trail: "metal-sparks" },
+    animation: { castPose: "guard-cross", dominantHand: "both", windupSeconds: .42, releaseSeconds: .22, recoverySeconds: .3, handColor: "#aeb8ba", particleCue: "bounded-fragment-orbit", cameraImpulse: .08 },
+    sound: { charge: "spell.ironwake.collect", release: "spell.ironwake.guard", impact: "spell.ironwake.launch", loop: "spell.ironwake.orbit", volume: .72, pitchVariance: .025 },
+    sources: [{ kind: "quest", questId: "deepgear-3-color-in-the-vein", branch: "main" }],
+  },
+  {
+    id: "tidemend", tomeItemId: "tome-tidemend", name: "Tidemend", school: "restoration",
+    description: "Mend aquatic actors, wash away one mild poison or soot stack, and restore authored coral or aquarium habitat on a long site cooldown.",
+    journalNote: "Water heals what it understands. Coral remembers slowly, so each site accepts only deliberate restoration.",
+    manaCost: 32, cooldownSeconds: 10, targeting: "cone",
+    effects: [{ kind: "tidemend", amount: 7, habitatCooldownSeconds: 300 }],
+    projectile: { kind: "ray", speed: 18, range: 9, radius: 3.4, gravity: 0, homing: .04, pierce: 3, trail: "tide-motes" },
+    animation: { castPose: "forward-palm", dominantHand: "both", windupSeconds: .38, releaseSeconds: .24, recoverySeconds: .24, handColor: "#66d9d2", particleCue: "cleansing-tide-fan", cameraImpulse: .035 },
+    sound: { charge: "spell.tidemend.draw", release: "spell.tidemend.wash", impact: "spell.tidemend.mend", loop: null, volume: .62, pitchVariance: .07 },
+    sources: [{ kind: "quest", questId: "tideglass-2-the-cleaning-station", branch: "main" }],
+  },
+  {
+    id: "hearthward", tomeItemId: "tome-hearthward", name: "Hearthward", school: "restoration",
+    description: "Establish a camp ward beside a real hearth that suppresses ordinary hostile spawns, strengthens rest, and chimes on intrusion.",
+    journalNote: "The ward protects a night, not a story. Dungeons, raids, legends, and consequences still cross its line.",
+    manaCost: 45, cooldownSeconds: 45, targeting: "ground",
+    effects: [{ kind: "hearthward", radius: 14, durationSeconds: 180, restMultiplier: 1.35 }],
+    projectile: { kind: "none", speed: 0, range: 8, radius: 14, gravity: 0, homing: 0, pierce: 0, trail: "hearth-glyphs" },
+    animation: { castPose: "guard-cross", dominantHand: "both", windupSeconds: .6, releaseSeconds: .28, recoverySeconds: .34, handColor: "#efb768", particleCue: "camp-perimeter-glyphs", cameraImpulse: .04 },
+    sound: { charge: "spell.hearthward.kindling", release: "spell.hearthward.raise", impact: "spell.hearthward.chime", loop: "spell.hearthward.hum", volume: .6, pitchVariance: .03 },
+    sources: [{ kind: "quest", questId: "hearthroad-3-a-road-worth-taking", branch: "main" }],
+  },
 ] as const satisfies readonly SpellDefinitionInput[]);
 
 export type SpellDefinition = (typeof SPELLS)[number];
 export type SpellId = SpellDefinition["id"];
+
+/** The twelve additions promised by the Wild Bonds release contract. */
+export const WILD_BONDS_SPELL_IDS = Object.freeze([
+  "kinmark", "shepherds-thread", "call-asterjaw", "fold-vellum-warden",
+  "invoke-choir-of-one", "open-glasswake", "rootbridge", "stormstep",
+  "deep-lantern", "ironwake", "tidemend", "hearthward",
+] as const satisfies readonly SpellId[]);
+
+export type SpellWorldStateV1 = Readonly<{
+  schema: 1;
+  ironwakeWard: Readonly<{ fragments: number; expiresAt: number }> | null;
+  tidemendSites: Readonly<Record<string, number>>;
+}>;
+
+export function normalizeSpellWorldState(value: unknown): SpellWorldStateV1 {
+  const raw = value && typeof value === "object" ? value as Partial<SpellWorldStateV1> : {};
+  const ward = raw.schema === 1 && raw.ironwakeWard && Number.isFinite(raw.ironwakeWard.fragments) && Number.isFinite(raw.ironwakeWard.expiresAt)
+    ? { fragments: Math.max(0, Math.min(6, Math.floor(raw.ironwakeWard.fragments))), expiresAt: Math.max(0, raw.ironwakeWard.expiresAt) } : null;
+  const sites = raw.schema === 1 && raw.tidemendSites && typeof raw.tidemendSites === "object"
+    ? Object.fromEntries(Object.entries(raw.tidemendSites).filter(([key, expires]) => /^-?\d+,-?\d+$/u.test(key) && typeof expires === "number" && Number.isFinite(expires)).slice(-512).map(([key, expires]) => [key, Math.max(0, expires)])) : {};
+  return Object.freeze({ schema: 1, ironwakeWard: ward ? Object.freeze(ward) : null, tidemendSites: Object.freeze(sites) });
+}
+
+export function tidemendSiteKeyAt(x: number, z: number) {
+  return `${Math.floor(x / 16)},${Math.floor(z / 16)}`;
+}
+
+export function consumeIronwakeFragment(ward: Readonly<{ fragments: number; expiresAt: number }> | null, now: number) {
+  if (!ward || ward.expiresAt <= now || ward.fragments <= 0) return Object.freeze({ intercepted: false, ward: null });
+  const fragments = ward.fragments - 1;
+  return Object.freeze({ intercepted: true, ward: fragments > 0 ? Object.freeze({ fragments, expiresAt: ward.expiresAt }) : null });
+}
+
+export function deepLanternGuideSignal(input: Readonly<{ resonant: boolean; openCells: number; safeFloorDepth: number }>) {
+  if (input.resonant) return Object.freeze({ color: "violet" as const, caption: "Deep Lantern pulses violet: a known magical resonance is close." });
+  if (input.safeFloorDepth >= 7) return Object.freeze({ color: "amber" as const, caption: "Deep Lantern pulses amber: the route ahead crosses a dangerous descent." });
+  if (input.openCells >= 72) return Object.freeze({ color: "blue" as const, caption: "Deep Lantern pulses slow blue: a larger cavern opens nearby." });
+  return Object.freeze({ color: "white" as const, caption: "Deep Lantern gives paired white pulses: this route remains breathable." });
+}
+
+/** Every legacy and Wild Bonds spell enters the same universal type language. */
+export const SPELL_TYPE_PROFILES: Readonly<Record<SpellId, readonly CreatureTypeId[]>> = Object.freeze({
+  "flame-jet": ["flame"], "frost-lance": ["frost"], "steel-spear": ["metal"],
+  "healing-light": ["radiant", "spirit"], blinkstep: ["arcane", "sky"], "arcane-ward": ["arcane", "radiant"],
+  "verdant-volley": ["verdant", "sky"], "starlight-snare": ["arcane", "radiant"],
+  kinmark: ["arcane", "spirit"], "shepherds-thread": ["spirit", "radiant"],
+  "call-asterjaw": ["sky", "radiant", "spirit"], "fold-vellum-warden": ["arcane", "dream", "spirit"],
+  "invoke-choir-of-one": ["hush", "echo", "umbral"], "open-glasswake": ["mirror", "tide", "dream"],
+  rootbridge: ["verdant", "stone"], stormstep: ["storm", "sky"], "deep-lantern": ["radiant", "echo"],
+  ironwake: ["metal", "stone"], tidemend: ["tide", "verdant", "radiant"], hearthward: ["radiant", "spirit"],
+});
 
 export type TomeDefinition = Readonly<{
   itemId: string;
