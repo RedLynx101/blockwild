@@ -16,6 +16,32 @@ export const LIVING_BESTIARY_VISUAL_KINDS = Object.freeze([
 
 type Builder = ReturnType<typeof createBuilder>;
 
+type LivingShape = "organic" | "hard" | "gem" | "spike-up" | "spike-forward" | "ring";
+
+function livingShapeFor(name: string): LivingShape {
+  if (/ring|whorl|halo|orbit/u.test(name)) return "ring";
+  if (/beak|tusk|incisor|claw-tip|fang/u.test(name)) return "spike-forward";
+  if (/thorn|crown-shard|spiral-horn|shoulder-briar|ear-tuft|storm-vane|mire-crown|antler|coral-[0-9]|plume/u.test(name)) return "spike-up";
+  if (/spark|mote|star|permitted-note|heart-core|freckle|charge-node|unresolved-heart|shard/u.test(name)) return "gem";
+  if (/harness|seat|blanket|buckle|grip|frame|vellum|unwritten-page|redline|road-marker|broken-banner|foil-scale|fossil-segment|prism-panel|kiln-plate|caramel-plate|coercion|tail-notch|route-line/u.test(name)) return "hard";
+  return "organic";
+}
+
+function livingGeometry(shape: LivingShape) {
+  if (shape === "hard") return new THREE.BoxGeometry(1, 1, 1, 2, 2, 2);
+  if (shape === "gem") return new THREE.OctahedronGeometry(.5, 1);
+  if (shape === "ring") return new THREE.TorusGeometry(.34, .16, 6, 14);
+  if (shape === "spike-up") return new THREE.ConeGeometry(.5, 1, 8, 2);
+  if (shape === "spike-forward") {
+    const geometry = new THREE.ConeGeometry(.5, 1, 8, 2);
+    geometry.rotateX(-Math.PI / 2);
+    return geometry;
+  }
+  // A deliberately modest segment count keeps herd rendering affordable while
+  // replacing the cuboid anatomy with a softly faceted, voxel-adjacent style.
+  return new THREE.SphereGeometry(.5, 10, 6);
+}
+
 function createBuilder(kind: LivingBestiaryVisualKind, id: number) {
   const group = new THREE.Group();
   const visual = new THREE.Group();
@@ -25,41 +51,74 @@ function createBuilder(kind: LivingBestiaryVisualKind, id: number) {
   group.add(visual);
   const parts: MobVisualParts = { legs: [], wings: [], arms: [], head: [], body: [] };
   const [bodyColor, accentColor, eyeColor] = MOB_DEFS[kind].colors;
-  const lambert = (color: THREE.ColorRepresentation, opacity = 1) => new THREE.MeshLambertMaterial({ color, transparent: opacity < 1, opacity });
-  const glow = (color: THREE.ColorRepresentation, opacity = 1) => new THREE.MeshBasicMaterial({ color, transparent: opacity < 1, opacity });
+  const lambert = (color: THREE.ColorRepresentation, opacity = 1) => new THREE.MeshLambertMaterial({
+    color, transparent: opacity < 1, opacity, depthWrite: opacity >= .9,
+  });
+  const glow = (color: THREE.ColorRepresentation, opacity = 1) => new THREE.MeshStandardMaterial({
+    color, emissive: color, emissiveIntensity: .78, roughness: .28,
+    transparent: opacity < 1, opacity, depthWrite: opacity >= .9,
+  });
+  const glassColor = new THREE.Color(eyeColor).lerp(new THREE.Color(0xffffff), .35);
   const mats = {
     body: lambert(bodyColor), accent: lambert(accentColor), eye: glow(eyeColor),
     dark: lambert(new THREE.Color(bodyColor).multiplyScalar(.56)),
     pale: lambert(new THREE.Color(accentColor).lerp(new THREE.Color(0xffffff), .46)),
-    glow: glow(eyeColor), glass: lambert(new THREE.Color(eyeColor).lerp(new THREE.Color(0xffffff), .35), .72),
-    metal: lambert(0x9ca5a4), black: lambert(0x24252a), white: lambert(0xf1eee2),
+    glow: glow(eyeColor),
+    glass: new THREE.MeshPhysicalMaterial({
+      color: glassColor, emissive: glassColor, emissiveIntensity: .12, transparent: true,
+      opacity: .82, transmission: .16, thickness: .2, roughness: .13, metalness: .08,
+      side: THREE.DoubleSide, depthWrite: false,
+    }),
+    membrane: new THREE.MeshPhysicalMaterial({
+      color: glassColor, emissive: glassColor, emissiveIntensity: .06, transparent: true,
+      opacity: .38, transmission: .48, thickness: .035, roughness: .2, metalness: 0,
+      side: THREE.DoubleSide, depthWrite: false,
+    }),
+    metal: new THREE.MeshStandardMaterial({ color: 0xaeb8b7, metalness: .76, roughness: .3 }),
+    black: new THREE.MeshStandardMaterial({ color: 0x24252a, roughness: .82 }),
+    white: new THREE.MeshStandardMaterial({ color: 0xf1eee2, roughness: .52 }),
   };
-  const add = (parent: THREE.Object3D, size: [number, number, number], material: THREE.Material, position: [number, number, number], name: string, part?: keyof MobVisualParts) => {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
+  const add = (parent: THREE.Object3D, size: [number, number, number], material: THREE.Material, position: [number, number, number], name: string, part?: keyof MobVisualParts, shapeOverride?: LivingShape) => {
+    const shape = shapeOverride ?? livingShapeFor(name);
+    const mesh = new THREE.Mesh(livingGeometry(shape), material);
+    mesh.scale.set(...size);
     mesh.position.set(...position);
     mesh.name = `${kind}-${name}`;
     mesh.userData.mobId = id;
+    mesh.userData.livingShape = shape;
+    mesh.castShadow = true;
+    mesh.receiveShadow = /body|foot|leg|shell/u.test(name);
     parent.add(mesh);
     if (part) { mesh.userData.bodyPart = part; parts[part].push(mesh); }
     return mesh;
   };
-  const pivot = (size: [number, number, number], material: THREE.Material, at: [number, number, number], offset: [number, number, number], name: string, part: keyof MobVisualParts) => {
+  const pivot = (size: [number, number, number], material: THREE.Material, at: [number, number, number], offset: [number, number, number], name: string, part: keyof MobVisualParts, shape?: LivingShape) => {
     const node = new THREE.Group();
     node.position.set(...at);
     node.name = `${kind}-${name}-pivot`;
-    const mesh = add(node, size, material, offset, name);
+    const mesh = add(node, size, material, offset, name, undefined, shape);
     mesh.userData.bodyPart = part;
     parts[part].push(node);
     visual.add(node);
     return node;
   };
   const eyes = (x: number, y: number, z: number, size = .07, count = 2) => {
-    if (count === 1) add(visual, [size, size, .035], mats.eye, [0, y, z], "center-eye");
-    else for (const side of [-1, 1]) add(visual, [size, size, .035], mats.eye, [side * x, y, z], `${side < 0 ? "left" : "right"}-eye`);
+    if (count === 1) {
+      add(visual, [size, size, size * .58], mats.eye, [0, y, z], "center-eye");
+      add(visual, [size * .28, size * .28, size * .16], mats.white, [-size * .16, y + size * .18, z - size * .34], "center-eye-highlight");
+    } else for (const side of [-1, 1]) {
+      add(visual, [size, size, size * .58], mats.eye, [side * x, y, z], `${side < 0 ? "left" : "right"}-eye`);
+      add(visual, [size * .28, size * .28, size * .16], mats.white, [side * x - size * .16, y + size * .18, z - size * .34], `${side < 0 ? "left" : "right"}-eye-highlight`);
+    }
   };
   const eyesOn = (parent: THREE.Object3D, x: number, y: number, z: number, size = .07, count = 2) => {
-    if (count === 1) add(parent, [size, size, .035], mats.eye, [0, y, z], "center-eye");
-    else for (const side of [-1, 1]) add(parent, [size, size, .035], mats.eye, [side * x, y, z], `${side < 0 ? "left" : "right"}-eye`);
+    if (count === 1) {
+      add(parent, [size, size, size * .58], mats.eye, [0, y, z], "center-eye");
+      add(parent, [size * .28, size * .28, size * .16], mats.white, [-size * .16, y + size * .18, z - size * .34], "center-eye-highlight");
+    } else for (const side of [-1, 1]) {
+      add(parent, [size, size, size * .58], mats.eye, [side * x, y, z], `${side < 0 ? "left" : "right"}-eye`);
+      add(parent, [size * .28, size * .28, size * .16], mats.white, [side * x - size * .16, y + size * .18, z - size * .34], `${side < 0 ? "left" : "right"}-eye-highlight`);
+    }
   };
   return { kind, group, visual, parts, mats, lambert, glow, add, pivot, eyes, eyesOn };
 }
@@ -70,18 +129,31 @@ function quadruped(builder: Builder, config: Readonly<{
   muzzle?: "snout" | "canine" | "beak" | "none"; ears?: "round" | "point" | "long" | "sail" | "none";
 }>) {
   const { visual, mats, add, pivot, eyesOn, kind } = builder;
-  add(visual, config.body, mats.body, [0, config.bodyY, 0], "body", "body");
-  add(visual, [config.body[0] * .78, config.body[1] * .38, config.body[2] * .72], mats.accent, [0, config.bodyY + config.body[1] * .42, -.02], "mantle");
+  add(visual, [config.body[0] * .9, config.body[1] * .9, config.body[2] * .74], mats.body, [0, config.bodyY, 0], "body", "body");
+  add(visual, [config.body[0] * .94, config.body[1] * .86, config.body[2] * .48], mats.body,
+    [0, config.bodyY + config.body[1] * .015, -config.body[2] * .2], "shoulder-mass", "body");
+  add(visual, [config.body[0], config.body[1] * .92, config.body[2] * .52], mats.body,
+    [0, config.bodyY + config.body[1] * .01, config.body[2] * .2], "haunch-mass", "body");
+  add(visual, [config.body[0] * .72, config.body[1] * .34, config.body[2] * .68], mats.accent, [0, config.bodyY + config.body[1] * .4, -.02], "mantle");
+  add(visual, [config.body[0] * .62, config.body[1] * .38, config.body[2] * .58], mats.pale,
+    [0, config.bodyY - config.body[1] * .35, -config.body[2] * .08], "soft-belly", "body");
+  add(visual, [config.head[0] * .64, config.head[1] * .7, Math.max(.22, Math.abs(config.headZ) * .36)], mats.body,
+    [0, config.headY - config.head[1] * .08, config.headZ + config.head[2] * .45], "neck-ruff", "body");
   const head = pivot(config.head, mats.body, [0, config.headY, config.headZ], [0, 0, 0], "head", "head");
   const muzzleDepth = config.muzzle === "canine" ? config.head[2] * .72 : config.muzzle === "snout" ? config.head[2] * .48 : config.head[2] * .35;
-  if (config.muzzle !== "none") add(head, [config.head[0] * .68, config.head[1] * .45, muzzleDepth], config.muzzle === "beak" ? mats.pale : mats.dark, [0, -config.head[1] * .15, -config.head[2] * .48], "muzzle");
+  if (config.muzzle !== "none") {
+    add(head, [config.head[0] * .68, config.head[1] * .45, muzzleDepth], config.muzzle === "beak" ? mats.pale : mats.dark, [0, -config.head[1] * .15, -config.head[2] * .48], "muzzle");
+    if (config.muzzle !== "beak") add(head, [config.head[0] * .22, config.head[1] * .18, .13], mats.black,
+      [0, -config.head[1] * .12, -config.head[2] * .68], "nose");
+  }
   // Eyes live on the articulated head, so attentive poses never leave the
   // expression floating behind the skull.
   eyesOn(head, config.head[0] * .28, config.head[1] * .12, -config.head[2] * .51, Math.max(.045, config.head[0] * .1));
   if (config.ears !== "none") for (const side of [-1, 1] as const) {
     const long = config.ears === "long" || config.ears === "sail";
     const ear = pivot([long ? .13 : .16, long ? .4 : .24, config.ears === "sail" ? .08 : .12], mats.accent,
-      [side * config.head[0] * .36, config.headY + config.head[1] * .32, config.headZ], [0, (long ? .4 : .24) * .42, 0], `${side < 0 ? "left" : "right"}-ear`, "head");
+      [side * config.head[0] * .36, config.headY + config.head[1] * .32, config.headZ], [0, (long ? .4 : .24) * .42, 0], `${side < 0 ? "left" : "right"}-ear`, "head",
+      config.ears === "point" || config.ears === "sail" ? "spike-up" : "organic");
     ear.rotation.z = side * (config.ears === "point" ? -.16 : .08);
     ear.userData.side = side;
   }
@@ -110,11 +182,13 @@ function bird(builder: Builder, config: Readonly<{ body: [number, number, number
   const { visual, mats, add, pivot, eyesOn } = builder;
   const bodyY = config.longNeck ? .78 : .48;
   add(visual, config.body, mats.body, [0, bodyY, 0], "body", "body");
+  add(visual, [config.body[0] * .84, config.body[1] * .82, config.body[2] * .58], mats.body,
+    [0, bodyY + .02, -config.body[2] * .2], "shoulder-mass", "body");
   add(visual, [config.body[0] * .7, config.body[1] * .5, config.body[2] * .5], mats.pale, [0, bodyY - .08, -config.body[2] * .32], "breast");
   const neckY = config.longNeck ? 1.18 : bodyY + .28;
   if (config.longNeck) add(visual, [.2, .68, .2], mats.pale, [0, .94, -.24], "long-neck", "head");
   const head = pivot([.38, .34, .4], mats.body, [0, neckY, -.4], [0, 0, 0], "head", "head");
-  add(head, [.18, .12, config.beak], mats.accent, [0, -.06, -.22], "beak");
+  add(head, [.18, .12, config.beak], mats.accent, [0, -.06, -.22], "beak", undefined, "spike-forward");
   eyesOn(head, .115, .06, -.205, .055);
   for (const side of [-1, 1] as const) {
     const wing = pivot([config.wingSpan * .54, .08, config.body[2] * .86], mats.accent, [side * config.body[0] * .35, bodyY + .08, .02], [side * config.wingSpan * .22, 0, .06], `${side < 0 ? "left" : "right"}-wing`, "wings");
@@ -124,6 +198,8 @@ function bird(builder: Builder, config: Readonly<{ body: [number, number, number
         [side * config.wingSpan * (.34 + feather * .2), 0, .05 + feather * .12], `wing-primary-${side}-${feather}`);
       primary.rotation.y = side * (-.08 - feather * .07);
     }
+    add(wing, [config.wingSpan * .46, .07, config.body[2] * .46], mats.pale,
+      [side * config.wingSpan * .2, .025, -config.body[2] * .05], `wing-covert-${side}`);
     const leg = pivot([.09, config.legLength, .09], mats.dark, [side * .14, bodyY - config.body[1] * .35, -.02], [0, -config.legLength * .48, 0], `${side < 0 ? "left" : "right"}-leg`, "legs");
     leg.userData.side = side;
     add(leg, [.22, .05, .24], mats.accent, [0, -config.legLength, -.08], `${side < 0 ? "left" : "right"}-foot`);
@@ -138,8 +214,12 @@ function bird(builder: Builder, config: Readonly<{ body: [number, number, number
 function aquatic(builder: Builder, config: Readonly<{ body: [number, number, number]; tail: number; fins?: number; tentacles?: number; shell?: boolean }>) {
   const { visual, mats, add, pivot, eyes, kind } = builder;
   add(visual, config.body, mats.body, [0, .48, 0], "body", "body");
+  add(visual, [config.body[0] * .88, config.body[1] * .8, config.body[2] * .55], mats.body,
+    [0, .48, -config.body[2] * .22], "head-mass", "head");
   add(visual, [config.body[0] * .68, config.body[1] * .24, config.body[2] * .74], mats.accent, [0, .48 + config.body[1] * .38, 0], "dorsal-pattern");
   eyes(config.body[0] * .28, .56, -config.body[2] * .5, Math.max(.045, config.body[0] * .08));
+  for (const side of [-1, 1]) add(visual, [.035, config.body[1] * .24, config.body[2] * .18], mats.pale,
+    [side * config.body[0] * .34, .46, -config.body[2] * .39], `gill-${side}`);
   const fins = config.fins ?? 2;
   for (const side of [-1, 1] as const) for (let fin = 0; fin < fins; fin += 1) {
     const node = pivot([config.body[0] * .58, .055, config.body[2] * .46], mats.accent,
@@ -166,6 +246,9 @@ function aquatic(builder: Builder, config: Readonly<{ body: [number, number, num
 function arthropod(builder: Builder, config: Readonly<{ body: [number, number, number]; legs: number; claws?: boolean; shell?: boolean }>) {
   const { visual, mats, add, pivot, eyes } = builder;
   add(visual, config.body, mats.body, [0, .34, 0], "body", "body");
+  for (let segment = 0; segment < 3; segment += 1) add(visual,
+    [config.body[0] * (1 - segment * .08), config.body[1] * .86, config.body[2] * .34],
+    segment % 2 ? mats.dark : mats.body, [0, .34, -.2 + segment * config.body[2] * .28], `abdomen-segment-${segment}`, "body");
   if (config.shell) add(visual, [config.body[0] * .92, config.body[1] * .5, config.body[2] * .88], mats.accent, [0, .52, .03], "carapace", "body");
   eyes(config.body[0] * .3, .5, -config.body[2] * .5, .055);
   for (const side of [-1, 1] as const) for (let index = 0; index < config.legs; index += 1) {
@@ -183,7 +266,7 @@ function arthropod(builder: Builder, config: Readonly<{ body: [number, number, n
 }
 
 function decorateRegular(builder: Builder) {
-  const { kind, visual, mats, add, pivot, glow } = builder;
+  const { kind, visual, mats, add, pivot } = builder;
   switch (kind) {
     case "thornhide-trufflehog":
       quadruped(builder, { body: [1.08, .66, 1.34], bodyY: .64, head: [.72, .58, .72], headY: .64, headZ: -.86, legLength: .42, legX: .38, frontZ: -.4, rearZ: .44, tail: "short", muzzle: "snout", ears: "round" });
@@ -192,7 +275,7 @@ function decorateRegular(builder: Builder) {
       break;
     case "orchard-glider":
       quadruped(builder, { body: [.58, .34, .76], bodyY: .62, head: [.42, .38, .4], headY: .68, headZ: -.5, legLength: .26, legX: .22, frontZ: -.22, rearZ: .26, tail: "long", muzzle: "snout", ears: "round" });
-      for (const side of [-1, 1] as const) { const membrane = pivot([.72, .035, .9], mats.glass, [side * .2, .66, .04], [side * .32, 0, .04], `${side < 0 ? "left" : "right"}-wing`, "wings"); membrane.userData.side = side; for (let vein = 0; vein < 3; vein += 1) add(membrane, [.035, .045, .66], mats.accent, [side * (.14 + vein * .16), .01, vein * .08], `wing-vein-${side}-${vein}`); }
+      for (const side of [-1, 1] as const) { const membrane = pivot([.72, .035, .9], mats.membrane, [side * .2, .66, .04], [side * .32, 0, .04], `${side < 0 ? "left" : "right"}-wing`, "wings"); membrane.userData.side = side; for (let vein = 0; vein < 3; vein += 1) add(membrane, [.035, .045, .66], mats.accent, [side * (.14 + vein * .16), .01, vein * .08], `wing-vein-${side}-${vein}`); }
       break;
     case "petalmask-tanuki":
       quadruped(builder, { body: [1.04, .72, 1.25], bodyY: .78, head: [.72, .66, .68], headY: .92, headZ: -.82, legLength: .52, legX: .36, frontZ: -.38, rearZ: .4, tail: "brush", muzzle: "canine", ears: "point" });
@@ -215,7 +298,17 @@ function decorateRegular(builder: Builder) {
       break;
     case "glassstep-jerboa":
       quadruped(builder, { body: [.46, .46, .62], bodyY: .52, head: [.42, .4, .4], headY: .72, headZ: -.4, legLength: .68, legX: .18, frontZ: -.16, rearZ: .24, tail: "long", muzzle: "snout", ears: "long" });
+      // Jerboas carry their locomotion in two spring-loaded hind limbs; the
+      // generic front pair is replaced by tiny grasping forepaws.
+      visual.getObjectByName("glassstep-jerboa-front-left-leg-pivot")!.visible = false;
+      visual.getObjectByName("glassstep-jerboa-front-right-leg-pivot")!.visible = false;
+      for (const side of [-1, 1] as const) {
+        const forepaw = pivot([.07, .22, .07], mats.dark, [side * .16, .58, -.26], [0, -.1, -.04], `${side < 0 ? "left" : "right"}-forepaw`, "arms");
+        forepaw.rotation.x = -.42;
+        add(forepaw, [.11, .06, .14], mats.pale, [0, -.2, -.09], `forepaw-pad-${side}`);
+      }
       for (const side of [-1, 1]) add(visual, [.3, .055, .5], mats.glass, [side * .2, .1, .35], `glass-hind-foot-${side}`).rotation.y = side * -.08;
+      add(visual, [.22, .2, .26], mats.pale, [0, .48, 1.02], "tail-brush");
       break;
     case "stormcrest-ibex":
       quadruped(builder, { body: [1.2, .82, 1.5], bodyY: .9, head: [.72, .66, .72], headY: 1.18, headZ: -.94, legLength: .78, legX: .42, frontZ: -.44, rearZ: .48, tail: "short", muzzle: "snout", ears: "point" });
@@ -229,7 +322,7 @@ function decorateRegular(builder: Builder) {
       break;
     case "cloudkite-pika":
       quadruped(builder, { body: [.52, .48, .62], bodyY: .48, head: [.5, .44, .44], headY: .66, headZ: -.4, legLength: .26, legX: .2, frontZ: -.18, rearZ: .2, tail: "short", muzzle: "snout", ears: "sail" });
-      for (const side of [-1, 1]) add(visual, [.18, .36, .035], mats.glass, [side * .18, .98, -.36], `ear-sail-${side}`).rotation.z = side * -.12;
+      for (const side of [-1, 1]) add(visual, [.18, .36, .035], mats.membrane, [side * .18, .98, -.36], `ear-sail-${side}`).rotation.z = side * -.12;
       break;
     case "briarclaw-lynx":
       quadruped(builder, { body: [1.06, .72, 1.35], bodyY: .78, head: [.72, .62, .72], headY: .94, headZ: -.84, legLength: .58, legX: .36, frontZ: -.4, rearZ: .42, tail: "short", muzzle: "canine", ears: "point" });
@@ -243,6 +336,12 @@ function decorateRegular(builder: Builder) {
       break;
     case "cragglass-basilisk":
       quadruped(builder, { body: [1.22, .52, 1.5], bodyY: .5, head: [.74, .52, .74], headY: .6, headZ: -.94, legLength: .32, legX: .46, frontZ: -.5, rearZ: .5, tail: "long", muzzle: "snout", ears: "none" });
+      for (const side of [-1, 1] as const) {
+        const middle = pivot([.19, .32, .18], mats.dark, [side * .47, .31, 0], [0, -.15, 0], `${side < 0 ? "left" : "right"}-middle-leg`, "legs");
+        middle.userData.side = side;
+        middle.userData.phase = side < 0 ? Math.PI : 0;
+        add(middle, [.27, .09, .3], mats.accent, [0, -.31, -.03], `middle-foot-${side}`);
+      }
       for (let crown = -2; crown <= 2; crown += 1) { const shard = add(visual, [.14, .48 - Math.abs(crown) * .06, .16], crown === 0 ? mats.glow : mats.glass, [crown * .15, 1.02 - Math.abs(crown) * .04, -.86], `crown-shard-${crown}`); shard.rotation.z = crown * -.1; }
       for (let side = -1; side <= 1; side += 2) add(visual, [.1, .08, .56], mats.glass, [side * .42, .72, -.12], `reflective-plate-${side}`).rotation.z = side * .26;
       break;
@@ -252,6 +351,10 @@ function decorateRegular(builder: Builder) {
       break;
     case "brinewhisk-otter":
       quadruped(builder, { body: [.86, .5, 1.22], bodyY: .48, head: [.58, .52, .56], headY: .62, headZ: -.76, legLength: .3, legX: .3, frontZ: -.34, rearZ: .36, tail: "flat", muzzle: "snout", ears: "round" });
+      const otterTail = visual.getObjectByName("brinewhisk-otter-tail-root-pivot")!;
+      (visual.getObjectByName("brinewhisk-otter-tail-root") as THREE.Mesh).scale.set(.2, .16, .88);
+      (visual.getObjectByName("brinewhisk-otter-tail-tip") as THREE.Mesh).scale.set(.15, .12, .62);
+      add(otterTail, [.34, .045, .74], mats.glass, [0, 0, .76], "ribbon-tail-fringe", "body");
       for (const side of [-1, 1]) for (let whisker = 0; whisker < 3; whisker += 1) { const w = add(visual, [.025, .025, .52], mats.pale, [side * (.25 + whisker * .025), .58 - whisker * .05, -1.03], `brine-whisker-${side}-${whisker}`); w.rotation.y = side * (.28 + whisker * .09); }
       add(visual, [.24, .18, .12], mats.accent, [.22, .48, -.28], "shell-pocket");
       break;
@@ -266,22 +369,67 @@ function decorateRegular(builder: Builder) {
       break;
     case "inkveil-cuttle":
       aquatic(builder, { body: [.86, .58, .98], tail: .34, tentacles: 8 });
+      visual.getObjectByName("inkveil-cuttle-tail-root-pivot")!.visible = false;
+      for (const child of [...visual.children]) if (/-fin-\d+-pivot$/u.test(child.name)) child.visible = false;
+      add(visual, [.78, .58, .92], mats.body, [0, .62, .12], "domed-mantle", "body");
+      for (const side of [-1, 1] as const) {
+        const skirt = pivot([.52, .055, 1.0], mats.membrane, [side * .38, .56, .08], [side * .18, 0, 0], `${side < 0 ? "left" : "right"}-fin-skirt`, "wings");
+        skirt.userData.side = side;
+      }
+      for (const side of [-1, 1]) {
+        add(visual, [.095, .035, .035], mats.black, [side * .24, .61, -.51], `w-pupil-outer-${side}`);
+        add(visual, [.035, .08, .035], mats.black, [side * .24, .61, -.52], `w-pupil-inner-${side}`);
+      }
       for (let band = 0; band < 4; band += 1) for (let side = -1; side <= 1; side += 2) add(visual, [.1, .06, .22], band % 2 ? mats.glow : mats.pale, [side * .34, .72, -.25 + band * .22], `color-wave-${side}-${band}`);
       break;
     case "prismclaw-mantis-shrimp":
       arthropod(builder, { body: [.76, .34, 1.12], legs: 4, claws: true, shell: true });
+      visual.getObjectByName("prismclaw-mantis-shrimp-left-eye")!.visible = false;
+      visual.getObjectByName("prismclaw-mantis-shrimp-right-eye")!.visible = false;
+      for (const side of [-1, 1] as const) {
+        const stalk = pivot([.08, .34, .08], mats.pale, [side * .24, .5, -.47], [0, .15, -.05], `${side < 0 ? "left" : "right"}-eye-stalk`, "head");
+        stalk.userData.side = side;
+        add(stalk, [.2, .16, .18], mats.eye, [0, .34, -.04], `${side < 0 ? "left" : "right"}-compound-eye`);
+        add(stalk, [.055, .055, .04], mats.black, [side * .035, .36, -.13], `${side < 0 ? "left" : "right"}-eye-pupil`);
+      }
       for (let panel = 0; panel < 5; panel += 1) add(visual, [.62 - panel * .05, .08, .2], panel % 2 ? mats.glass : mats.glow, [0, .56, -.34 + panel * .2], `prism-panel-${panel}`);
       break;
     case "reefmender-shrimp":
       arthropod(builder, { body: [.38, .2, .66], legs: 4, claws: true, shell: true });
+      for (const object of visual.children) if (/body|abdomen-segment|carapace/u.test(object.name) && object instanceof THREE.Mesh) {
+        const material = (Array.isArray(object.material) ? object.material[0] : object.material).clone();
+        material.transparent = true; material.opacity = .58; material.depthWrite = false;
+        object.material = material;
+      }
+      for (let band = 0; band < 4; band += 1) add(visual, [.4 - band * .025, .05, .1], band % 2 ? mats.white : mats.accent,
+        [0, .45, -.2 + band * .17], `cleaner-band-${band}`, "body", "organic");
       for (const side of [-1, 1]) for (let feeler = 0; feeler < 2; feeler += 1) { const antenna = add(visual, [.025, .025, .78], mats.white, [side * (.1 + feeler * .06), .46, -.42], `cleaner-feeler-${side}-${feeler}`); antenna.rotation.y = side * (.16 + feeler * .1); }
       break;
     case "currentweaver-eel":
-      aquatic(builder, { body: [.48, .4, 1.7], tail: .88, fins: 1 });
-      for (let node = 0; node < 8; node += 1) add(visual, [.08, .06, .14], node % 2 ? mats.glow : mats.accent, [0, .68, -.62 + node * .2], `charge-node-${node}`);
+      visual.userData.bodyPlan = "aquatic";
+      visual.userData.aquaticRig = kind;
+      for (let segment = 0; segment < 9; segment += 1) {
+        const taper = 1 - segment * .065;
+        const z = -.62 + segment * .22;
+        const x = Math.sin(segment * .62) * .055;
+        const section = add(visual, [.48 * taper, .4 * taper, .42], segment % 2 ? mats.dark : mats.body,
+          [x, .48, z], `eel-section-${segment}`, "body");
+        section.rotation.y = Math.cos(segment * .62) * .08;
+        add(visual, [.16 * taper, .045, .36], segment % 2 ? mats.glow : mats.accent,
+          [x, .69 - segment * .004, z], `charge-node-${segment}`);
+      }
+      add(visual, [.52, .42, .5], mats.body, [0, .49, -.84], "eel-head", "head");
+      builder.eyes(.15, .56, -1.09, .055);
+      add(visual, [.055, .17, 2.02], mats.membrane, [0, .69, .14], "continuous-dorsal-ribbon", "wings");
+      add(visual, [.05, .12, 1.6], mats.membrane, [0, .3, .24], "continuous-anal-ribbon", "wings");
       break;
     case "shellcarrier-hermit":
       arthropod(builder, { body: [.62, .32, .72], legs: 3, claws: true, shell: true });
+      for (const side of [-1, 1] as const) {
+        const stalk = pivot([.065, .28, .065], mats.body, [side * .18, .45, -.4], [0, .13, -.04], `${side < 0 ? "left" : "right"}-eye-stalk`, "head");
+        stalk.rotation.z = side * -.12;
+        add(stalk, [.13, .11, .1], mats.eye, [0, .27, -.04], `${side < 0 ? "left" : "right"}-stalk-eye`);
+      }
       add(visual, [.76, .44, .64], mats.accent, [-.04, .68, .18], "equippable-shell-base", "body");
       add(visual, [.58, .5, .5], mats.pale, [.06, .9, .2], "equippable-shell-crown", "body");
       add(visual, [.36, .38, .34], mats.body, [.16, 1.1, .2], "equippable-shell-whorl", "body");
@@ -295,6 +443,9 @@ function decorateRegular(builder: Builder) {
       break;
     case "wreckwhistle-porpoise":
       aquatic(builder, { body: [1.12, .72, 1.82], tail: .7, fins: 1 });
+      add(visual, [.82, .58, .68], mats.body, [0, .58, -.9], "melon-forehead", "head");
+      add(visual, [.42, .25, .54], mats.pale, [0, .43, -1.25], "short-rostrum", "head");
+      add(visual, [.12, .035, .12], mats.black, [0, .88, -.66], "blowhole");
       add(visual, [.2, .52, .42], mats.accent, [0, .95, .12], "dorsal-fin", "wings");
       for (let scar = 0; scar < 4; scar += 1) add(visual, [.04, .04, .48], mats.pale, [(-.18 + scar * .12), .76, -.18 + scar * .18], `wake-scar-${scar}`).rotation.y = -.38;
       break;
@@ -308,12 +459,12 @@ function decorateRegular(builder: Builder) {
       break;
     case "voidmantle-ray":
       aquatic(builder, { body: [1.65, .28, 1.26], tail: 1.18, fins: 1 });
-      for (const side of [-1, 1]) { const mantle = add(visual, [1.28, .08, 1.55], mats.glass, [side * .92, .48, .05], `mantle-${side}`, "wings"); mantle.rotation.z = side * -.12; }
+      for (const side of [-1, 1]) { const mantle = add(visual, [1.28, .08, 1.55], mats.membrane, [side * .92, .48, .05], `mantle-${side}`, "wings"); mantle.rotation.z = side * -.12; }
       for (let mote = 0; mote < 8; mote += 1) add(visual, [.055, .04, .08], mats.glow, [((mote % 4) - 1.5) * .42, .54, -.38 + Math.floor(mote / 4) * .56], `lumen-mote-${mote}`);
       break;
     case "fossilback-trilobite":
       arthropod(builder, { body: [.72, .22, .9], legs: 6, shell: true });
-      for (let segment = 0; segment < 7; segment += 1) add(visual, [.62 - Math.abs(segment - 3) * .04, .1, .12], segment % 2 ? mats.accent : mats.pale, [0, .48, -.36 + segment * .12], `fossil-segment-${segment}`);
+      for (let segment = 0; segment < 7; segment += 1) add(visual, [.62 - Math.abs(segment - 3) * .04, .1, .15], segment % 2 ? mats.accent : mats.pale, [0, .48, -.36 + segment * .12], `fossil-segment-${segment}`, undefined, "organic");
       for (const side of [-1, 1]) add(visual, [.16, .08, .72], mats.dark, [side * .3, .5, .03], `lobe-${side}`);
       break;
   }
@@ -327,30 +478,71 @@ function decorateMythic(builder: Builder) {
       const antler = pivot([.18, 1.6, .18], mats.pale, [side * .42, 2.12, -1.82], [side * .25, .72, .1], `${side < 0 ? "left" : "right"}-antler`, "head"); antler.rotation.z = side * -.24;
       for (let branch = 0; branch < 4; branch += 1) { const b = add(antler, [.12, .72, .12], branch % 2 ? mats.glass : mats.pale, [side * (.22 + branch * .12), .3 + branch * .25, .05], `antler-branch-${side}-${branch}`); b.rotation.z = side * (-.4 - branch * .08); add(antler, [.28, .1, .28], branch % 2 ? mats.glow : mats.accent, [side * (.3 + branch * .12), .65 + branch * .25, .04], `antler-flower-${side}-${branch}`); }
     }
-    for (let stream = -2; stream <= 2; stream += 1) add(visual, [.14, .08, 2.35], stream % 2 ? mats.glass : mats.glow, [stream * .32, 2.08, .08], `back-spring-${stream}`);
+    const head = visual.getObjectByName("ilyr-virebloom-head-pivot")!;
+    const trunk = pivot([.42, .44, .92], mats.body, [0, -.16, -.58], [0, -.08, -.38], "spring-trunk", "head");
+    head.add(trunk);
+    add(trunk, [.3, .3, .64], mats.pale, [0, -.08, -.72], "spring-trunk-tip", "head");
+    for (let reed = 0; reed < 7; reed += 1) {
+      const x = ((reed * 5) % 7 - 3) * .26;
+      const z = -.7 + (reed % 4) * .44;
+      const stem = add(visual, [.07, .52 + (reed % 3) * .16, .07], mats.accent, [x, 2.15, z], `watershed-reed-${reed}`);
+      stem.rotation.z = (reed - 3) * .025;
+    }
+    for (const side of [-1, 1]) {
+      add(visual, [.24, .12, .32], mats.dark, [side * .55, 2.28, .38], `resting-watershed-bird-${side}`);
+      add(visual, [.08, .07, .16], mats.pale, [side * .55, 2.29, .13], `resting-bird-beak-${side}`, undefined, "spike-forward");
+    }
+    for (let stream = -2; stream <= 2; stream += 1) add(visual, [.14, .08, 2.35], stream % 2 ? mats.membrane : mats.glow, [stream * .32, 2.08, .08], `back-spring-${stream}`);
   } else if (kind === "thalassene") {
     aquatic(builder, { body: [3.6, 1.28, 4.3], tail: 2.2, fins: 2 });
-    for (let arch = -3; arch <= 3; arch += 1) { add(visual, [.26, 1.05 + (3 - Math.abs(arch)) * .2, .34], arch % 2 ? mats.accent : mats.pale, [arch * .46, 1.48, -.55 + Math.abs(arch) * .18], `reef-arch-${arch}`); add(visual, [.58, .22, .58], arch % 3 ? mats.glow : mats.accent, [arch * .46, 2.04 + (3 - Math.abs(arch)) * .2, -.55 + Math.abs(arch) * .18], `reef-crown-${arch}`); }
+    for (let arch = -3; arch <= 3; arch += 1) { add(visual, [.62, 1.05 + (3 - Math.abs(arch)) * .2, .2], arch % 2 ? mats.accent : mats.pale, [arch * .46, 1.48, -.55 + Math.abs(arch) * .18], `reef-arch-${arch}`, undefined, "ring"); add(visual, [.58, .22, .58], arch % 3 ? mats.glow : mats.accent, [arch * .46, 2.04 + (3 - Math.abs(arch)) * .2, -.55 + Math.abs(arch) * .18], `reef-crown-${arch}`); }
     for (let coral = 0; coral < 14; coral += 1) add(visual, [.14, .46 + coral % 3 * .14, .14], coral % 2 ? mats.glow : mats.pale, [((coral * 17) % 7 - 3) * .44, 1.65, -.9 + (coral % 5) * .42], `living-coral-${coral}`);
+    for (let fish = 0; fish < 5; fish += 1) {
+      const angle = fish / 5 * Math.PI * 2;
+      const swimmer = add(visual, [.24, .1, .34], fish % 2 ? mats.pale : mats.accent,
+        [Math.cos(angle) * 1.6, 1.72 + (fish % 2) * .3, Math.sin(angle) * 1.12], `reef-fish-orbit-${fish}`);
+      swimmer.rotation.y = -angle;
+    }
   } else if (kind === "orichalc") {
-    add(visual, [2.15, 1.5, 2.0], mats.dark, [0, 1.45, 0], "empty-center-frame", "body");
+    // The oath stone is an actual negative-space creature: three counter-rotating
+    // ore hoops frame an unresolved absence instead of faking a void with a dark cube.
+    const equator = add(visual, [2.45, 2.05, .42], mats.dark, [0, 1.45, 0], "empty-center-orbit", "body", "ring");
+    equator.rotation.x = Math.PI / 2;
+    const meridian = add(visual, [2.12, 2.55, .36], mats.metal, [0, 1.45, 0], "oath-meridian-ring", "body", "ring");
+    meridian.rotation.y = Math.PI / 2;
+    const canted = add(visual, [2.28, 2.28, .3], mats.accent, [0, 1.45, 0], "veinmetal-canted-ring", "body", "ring");
+    canted.rotation.set(.62, .34, .18);
     for (let ring = 0; ring < 5; ring += 1) for (let segment = 0; segment < 8; segment += 1) { const angle = segment / 8 * Math.PI * 2 + ring * .16; const piece = add(visual, [.42, .34, .68], segment % 2 ? mats.metal : mats.accent, [Math.cos(angle) * (1.2 + ring * .08), .55 + ring * .48, Math.sin(angle) * (1.0 + ring * .06)], `ore-segment-${ring}-${segment}`, ring < 2 ? "legs" : "body"); piece.rotation.y = -angle; }
     for (let spark = 0; spark < 7; spark += 1) add(visual, [.12, .12, .12], mats.glow, [Math.sin(spark) * .72, 1.2 + spark * .18, Math.cos(spark) * .56], `unresolved-heart-${spark}`);
   } else if (kind === "varkesh-stormmane") {
     bird(builder, { body: [2.05, 1.42, 2.65], wingSpan: 3.4, legLength: 1.02, beak: .84, tail: 1.8 });
     for (let plume = -5; plume <= 5; plume += 1) { const p = add(visual, [.18, .76 - Math.abs(plume) * .035, .16], plume % 2 ? mats.glass : mats.glow, [plume * .18, 1.88 + (5 - Math.abs(plume)) * .08, -.45 + Math.abs(plume) * .06], `stormmane-${plume}`); p.rotation.z = plume * -.05; }
     for (let marker = 0; marker < 5; marker += 1) add(visual, [.18, .62, .12], marker % 2 ? mats.pale : mats.accent, [(marker - 2) * .32, 1.15, .72], `road-marker-${marker}`).rotation.z = (marker - 2) * .11;
+    for (const side of [-1, 1]) for (let talon = 0; talon < 3; talon += 1) {
+      const claw = add(visual, [.1, .1, .46], mats.metal, [side * (.2 + talon * .09), .12, -.38 - talon * .05], `storm-talon-${side}-${talon}`, "legs", "spike-forward");
+      claw.rotation.y = side * (talon - 1) * .14;
+    }
   } else if (kind === "kharza") {
     quadruped(builder, { body: [1.8, 1.08, 2.35], bodyY: 1.12, head: [1.05, .92, 1.12], headY: 1.45, headZ: -1.45, legLength: .92, legX: .62, frontZ: -.68, rearZ: .72, tail: "brush", muzzle: "canine", ears: "point" });
     add(visual, [1.62, .16, 1.32], mats.metal, [0, 1.58, -.06], "coercion-harness", "body");
     for (const side of [-1, 1]) for (let anchor = 0; anchor < 3; anchor += 1) add(visual, [.18, .22, .28], anchor === 1 ? mats.glow : mats.accent, [side * .72, 1.55, -.46 + anchor * .5], `harness-anchor-${side}-${anchor}`);
     for (let banner = -2; banner <= 2; banner += 1) { const strip = add(visual, [.24, .62 + Math.abs(banner) * .12, .08], mats.accent, [banner * .32, 2.1 - Math.abs(banner) * .08, .36], `broken-banner-${banner}`); strip.rotation.z = banner * .08; }
+    for (let scar = 0; scar < 4; scar += 1) {
+      const line = add(visual, [.04, .04, .5 - scar * .05], mats.pale, [-.34 + scar * .2, 1.58 - scar * .06, -1.82], `old-scar-${scar}`, undefined, "hard");
+      line.rotation.z = -.25 + scar * .12;
+    }
   } else if (kind === "sugarwake-sovereign") {
     quadruped(builder, { body: [2.05, 1.25, 2.45], bodyY: 1.28, head: [1.12, 1.0, 1.14], headY: 1.66, headZ: -1.45, legLength: 1.0, legX: .72, frontZ: -.72, rearZ: .76, tail: "long", muzzle: "snout", ears: "sail" });
     add(visual, [.88, .88, .66], mats.glass, [0, 1.45, -.08], "kiln-heart", "body");
     add(visual, [.5, .5, .34], mats.glow, [0, 1.45, -.44], "kiln-heart-core");
     for (const side of [-1, 1]) for (let curl = 0; curl < 5; curl += 1) { const antler = add(visual, [.14, .62, .14], curl % 2 ? mats.pale : mats.glass, [side * (.35 + curl * .14), 2.05 + curl * .18, -1.35 + curl * .08], `sugar-antler-${side}-${curl}`); antler.rotation.z = side * (-.2 - curl * .07); }
     for (let plate = -3; plate <= 3; plate += 1) add(visual, [.28, .1, .72], plate % 2 ? mats.glass : mats.accent, [plate * .25, 1.98 - Math.abs(plate) * .06, -.06], `caramel-plate-${plate}`);
+    const crown = add(visual, [.8, .8, .18], mats.metal, [0, 2.46, -1.35], "sovereign-crown-ring", "head", "ring");
+    crown.rotation.x = Math.PI / 2;
+    for (let point = -2; point <= 2; point += 1) add(visual, [.13, .42 - Math.abs(point) * .04, .13], point === 0 ? mats.glow : mats.glass,
+      [point * .16, 2.68 - Math.abs(point) * .035, -1.35], `crown-point-${point}`);
+    for (let curl = -2; curl <= 2; curl += 1) add(visual, [.22, .42 + Math.abs(curl) * .1, .6], curl % 2 ? mats.accent : mats.pale,
+      [curl * .29, 1.72, .86], `taffy-mane-curl-${curl}`, "body");
   }
 }
 
@@ -358,7 +550,14 @@ function decorateSummon(builder: Builder) {
   const { kind, visual, mats, add, pivot } = builder;
   if (kind === "asterjaw") {
     quadruped(builder, { body: [1.05, .72, 1.68], bodyY: .92, head: [.7, .62, .76], headY: 1.16, headZ: -1.05, legLength: .92, legX: .35, frontZ: -.5, rearZ: .54, tail: "long", muzzle: "canine", ears: "long" });
-    add(visual, [.72, .5, 1.05], mats.glass, [0, .96, .02], "open-ribcage", "body");
+    visual.getObjectByName("asterjaw-body")!.visible = false;
+    visual.getObjectByName("asterjaw-shoulder-mass")!.visible = false;
+    add(visual, [.16, .18, 1.4], mats.metal, [0, 1.22, .12], "astral-spine", "body");
+    for (let rib = -2; rib <= 2; rib += 1) {
+      const hoop = add(visual, [.72 - Math.abs(rib) * .06, .52, .13], rib === 0 ? mats.glow : mats.pale,
+        [0, .96, -.28 + (rib + 2) * .15], `astral-rib-ring-${rib + 2}`, "body", "ring");
+      hoop.rotation.x = Math.PI / 2;
+    }
     for (let rib = 0; rib < 6; rib += 1) for (const side of [-1, 1]) { const star = add(visual, [.1, .1, .1], mats.glow, [side * .34, .86 + (rib % 2) * .14, -.38 + rib * .16], `compass-star-${side}-${rib}`); star.rotation.z = rib * .4; }
     for (let route = 0; route < 5; route += 1) add(visual, [.055, .055, .38], mats.glow, [((route % 3) - 1) * .18, .98 + (route % 2) * .16, -.34 + route * .16], `route-line-${route}`).rotation.y = route * .37;
   } else if (kind === "vellum-warden") {
@@ -368,15 +567,31 @@ function decorateSummon(builder: Builder) {
     add(visual, [.54, .62, .54], mats.glass, [0, 2.08, -.05], "lantern-head", "head");
     add(visual, [.34, .4, .04], mats.glow, [0, 2.08, -.34], "unwritten-page");
     for (let mark = 0; mark < 5; mark += 1) add(visual, [.34, .025, .04], mats.dark, [0, 1.32 + mark * .17, -.42], `living-redline-${mark}`);
+    for (const side of [-1, 1]) {
+      add(visual, [.42, .18, .62], mats.body, [side * .27, .18, .08], `folio-foot-${side}`, "legs", "hard");
+      add(visual, [.34, .06, .48], mats.pale, [side * .27, .3, -.02], `folio-page-edge-${side}`, "legs", "hard");
+    }
+    for (let page = 0; page < 6; page += 1) {
+      const side = page % 2 ? -1 : 1;
+      const leaf = add(visual, [.34 + page % 3 * .05, .035, .5], page % 2 ? mats.pale : mats.body,
+        [side * (.58 + (page % 3) * .13), .72 + page * .2, -.04 + (page % 2) * .18], `floating-page-${page}`, "body", "organic");
+      leaf.rotation.set((page - 2.5) * .045, side * (.18 + page * .04), side * .12);
+    }
   } else if (kind === "choir-of-one") {
-    add(visual, [1.35, 1.18, .9], mats.dark, [0, 1.2, 0], "floating-mantle", "body");
+    const choirCloth = builder.lambert(0x2b2d45, .68);
     add(visual, [.62, .22, .62], mats.metal, [0, 1.58, -.36], "silver-throat-ring", "head");
     add(visual, [.38, .14, .38], mats.glow, [0, 1.58, -.48], "permitted-note");
-    for (let fold = -4; fold <= 4; fold += 1) { const f = add(visual, [.2, .82 + Math.abs(fold) * .09, .18], fold % 2 ? mats.body : mats.black, [fold * .18, .64, .16 + Math.abs(fold) * .04], `mantle-fold-${fold}`, "body"); f.rotation.z = fold * .035; }
-    for (let face = 0; face < 4; face += 1) add(visual, [.22, .28, .035], mats.glass, [(-.36 + face * .24), 1.3 + (face % 2) * .22, -.48], `implied-face-${face}`);
+    for (let fold = -4; fold <= 4; fold += 1) { const f = add(visual, [.24, .94 + Math.abs(fold) * .1, .26], fold % 2 ? choirCloth : mats.dark, [fold * .18, .8, .16 + Math.abs(fold) * .04], `mantle-fold-${fold}`, "body"); f.rotation.z = fold * .045; }
+    const bellShoulder = add(visual, [1.45, 1.12, .22], mats.metal, [0, 1.62, .02], "choir-bell-halo", "body", "ring");
+    bellShoulder.rotation.x = Math.PI / 2;
+    for (let face = 0; face < 4; face += 1) add(visual, [.22, .28, .035], mats.membrane, [(-.36 + face * .24), 1.3 + (face % 2) * .22, -.48], `implied-face-${face}`);
   } else if (kind === "glasswake-stag") {
     quadruped(builder, { body: [1.35, .82, 1.72], bodyY: .95, head: [.7, .64, .72], headY: 1.26, headZ: -1.06, legLength: .82, legX: .44, frontZ: -.5, rearZ: .54, tail: "short", muzzle: "snout", ears: "point" });
-    add(visual, [1.05, .52, 1.2], mats.glass, [0, 1.02, 0], "sideways-ocean", "body");
+    add(visual, [1.05, .52, 1.2], mats.membrane, [0, 1.02, 0], "sideways-ocean", "body");
+    for (const name of ["body", "shoulder-mass", "haunch-mass", "soft-belly", "neck-ruff", "head"] as const) {
+      const mesh = visual.getObjectByName(`glasswake-stag-${name}`) as THREE.Mesh | undefined;
+      if (mesh) mesh.material = mats.membrane;
+    }
     for (let wave = 0; wave < 5; wave += 1) add(visual, [.8 - wave * .08, .04, .12], wave % 2 ? mats.glow : mats.pale, [0, .88 + wave * .11, -.32 + wave * .17], `inner-shoreline-${wave}`);
     for (const side of [-1, 1]) for (let branch = 0; branch < 5; branch += 1) { const antler = add(visual, [.1, .52, .1], branch % 2 ? mats.glass : mats.pale, [side * (.25 + branch * .11), 1.62 + branch * .2, -1.0 + branch * .08], `mirror-antler-${side}-${branch}`); antler.rotation.z = side * (-.18 - branch * .08); }
   }
@@ -423,12 +638,61 @@ function addLivingMountTack(builder: Builder) {
   }
 }
 
+const HIGH_MAGIC_KINDS = new Set<LivingBestiaryVisualKind>([
+  "stormcrest-ibex", "cragglass-basilisk", "stormglass-roclet", "inkveil-cuttle", "currentweaver-eel",
+  "kilnscale-salamander", "voidmantle-ray", "ilyr-virebloom", "thalassene", "orichalc", "varkesh-stormmane",
+  "sugarwake-sovereign", "asterjaw", "vellum-warden", "choir-of-one", "glasswake-stag",
+]);
+
+/** Tags only authored magical details; ordinary anatomy stays physically quiet. */
+function applyLivingArtPolish(builder: Builder) {
+  const { kind, visual } = builder;
+  visual.userData.livingBestiaryArtPass = 2;
+  let specialIndex = 0;
+  visual.traverse((object) => {
+    if (!(object instanceof THREE.Mesh) || !object.name.startsWith(`${kind}-`)) return;
+    const name = object.name.slice(kind.length + 1);
+    const magical = /glow|glass|spark|mote|star|note|heart|shoreline|color-wave|unresolved|prism|mirror|static|charge-node|unwritten-page|implied-face|orbit|ring/u.test(name);
+    const authoredMotion = /floating-page|floating-mantle|mantle-fold|vellum-plate|grave-bell|bell-clapper|broken-banner|mask-petal|ribbon-tail-fringe|back-spring|ore-segment|route-line|inner-shoreline/u.test(name);
+    if (!magical && !authoredMotion) return;
+    const index = specialIndex++;
+    if (/spark|mote|star|note|unresolved-heart|unwritten-page|implied-face|color-wave|floating-mantle|floating-page|mantle-fold|vellum-plate|inner-shoreline/u.test(name)) {
+      object.userData.livingFloatAmplitude = .018 + (index % 4) * .009;
+      object.userData.livingFloatRate = .72 + (index % 3) * .17;
+      object.userData.livingFloatPhase = index * .83;
+    }
+    if (/orbit|ring|unresolved-heart|ore-segment|prism-panel|charge-node|compass-star|route-line|inner-shoreline/u.test(name)) {
+      object.userData.livingSpinRate = (index % 2 ? -1 : 1) * (.08 + (index % 4) * .035);
+    }
+    if (/grave-bell|bell-clapper|broken-banner|mask-petal|ribbon-tail-fringe|back-spring/u.test(name)) {
+      object.userData.livingSwingAmplitude = /grave-bell|bell-clapper/u.test(name) ? .14 : .045;
+      object.userData.livingSwingRate = /broken-banner|back-spring/u.test(name) ? .72 : 1.18;
+      object.userData.livingSwingPhase = index * .51;
+    }
+    if (HIGH_MAGIC_KINDS.has(kind) && /glass|glow|spark|mote|star|note|heart|prism|mirror|shoreline|color-wave|unresolved|ring/u.test(name)) {
+      const material = Array.isArray(object.material) ? object.material[0] : object.material;
+      const polished = material.clone();
+      polished.transparent = true;
+      polished.opacity = Math.min(.9, material.opacity || 1);
+      polished.depthWrite = polished.opacity >= .9;
+      object.material = polished;
+      object.userData.livingShimmerAmplitude = polished.opacity < .7 ? .08 : .045;
+      object.userData.livingRestOpacity = polished.opacity;
+    }
+  });
+}
+
 export function createLivingBestiaryMobVisual(kind: LivingBestiaryVisualKind, id: number): MobVisual {
   const builder = createBuilder(kind, id);
   if ((["ilyr-virebloom", "thalassene", "orichalc", "varkesh-stormmane", "kharza", "sugarwake-sovereign"] as readonly MobKind[]).includes(kind)) decorateMythic(builder);
   else if ((["asterjaw", "vellum-warden", "choir-of-one", "glasswake-stag"] as readonly MobKind[]).includes(kind)) decorateSummon(builder);
   else decorateRegular(builder);
+  applyLivingArtPolish(builder);
   addLivingMountTack(builder);
+  // Rounded feet/pages have true curved bounds; retain the production spawn
+  // contact plane instead of letting those curves clip through terrain.
+  if (kind === "orichalc") builder.visual.position.y += .18759377827660684;
+  if (kind === "vellum-warden") builder.visual.position.y += .19;
   return { group: builder.group, visual: builder.visual, parts: builder.parts };
 }
 
@@ -441,6 +705,10 @@ type LivingPoseCache = Readonly<{
   arthropodLegs: readonly LivingPoseNode[];
   pulses: readonly LivingPoseNode[];
   specials: readonly LivingPoseNode[];
+  floaters: readonly LivingPoseNode[];
+  spinners: readonly LivingPoseNode[];
+  shimmers: readonly LivingPoseNode[];
+  swings: readonly LivingPoseNode[];
 }>;
 
 function livingPoseCache(visual: THREE.Object3D, kind: LivingBestiaryVisualKind): LivingPoseCache {
@@ -452,6 +720,10 @@ function livingPoseCache(visual: THREE.Object3D, kind: LivingBestiaryVisualKind)
   const arthropodLegs: LivingPoseNode[] = [];
   const pulses: LivingPoseNode[] = [];
   const specials: LivingPoseNode[] = [];
+  const floaters: LivingPoseNode[] = [];
+  const spinners: LivingPoseNode[] = [];
+  const shimmers: LivingPoseNode[] = [];
+  const swings: LivingPoseNode[] = [];
   let tail: LivingPoseNode | null = null;
   visual.traverse((raw) => {
     const node = raw as LivingPoseNode;
@@ -462,6 +734,9 @@ function livingPoseCache(visual: THREE.Object3D, kind: LivingBestiaryVisualKind)
     node.userData.livingRestZ ??= node.rotation.z;
     node.userData.livingRestPositionY ??= node.position.y;
     node.userData.livingRestScaleX ??= node.scale.x;
+    node.userData.livingRestScaleY ??= node.scale.y;
+    node.userData.livingRestScaleZ ??= node.scale.z;
+    if (node instanceof THREE.Mesh) node.userData.livingRestOpacity ??= (Array.isArray(node.material) ? node.material[0] : node.material).opacity;
     if (name === `${kind}-tail-root-pivot`) tail = node;
     if (/-fin-\d+-pivot$/u.test(name) || /-mantle-[^/]+$/u.test(name)) fins.push(node);
     if (/-wing-pivot$/u.test(name)) wings.push(node);
@@ -469,8 +744,12 @@ function livingPoseCache(visual: THREE.Object3D, kind: LivingBestiaryVisualKind)
     if (visual.userData.bodyPlan === "arthropod" && /-leg-\d+-pivot$/u.test(name)) arthropodLegs.push(node);
     if (/glow|heart|spark|mote|star|note|shoreline|unwritten-page|color-wave/u.test(name)) pulses.push(node);
     if (/ore-segment|vellum-plate|mantle-fold|implied-face|living-coral|antler-flower/u.test(name)) specials.push(node);
+    if (Number(node.userData.livingFloatAmplitude) > 0) floaters.push(node);
+    if (Number(node.userData.livingSpinRate)) spinners.push(node);
+    if (node instanceof THREE.Mesh && Number(node.userData.livingShimmerAmplitude) > 0) shimmers.push(node);
+    if (Number(node.userData.livingSwingAmplitude) > 0) swings.push(node);
   });
-  const cache = Object.freeze({ tail, fins, wings, tentacles, arthropodLegs, pulses, specials });
+  const cache = Object.freeze({ tail, fins, wings, tentacles, arthropodLegs, pulses, specials, floaters, spinners, shimmers, swings });
   visual.userData.livingBestiaryPoseCache = cache;
   return cache;
 }
@@ -523,15 +802,40 @@ export function applyLivingBestiaryPose(
     leg.rotation.z = rest(leg, "Z") + side * (.1 + Math.cos(time * 2.1 + phase) * (.02 + travel * .055));
   }
   for (const [index, node] of cache.pulses.entries()) {
-    const base = Number(node.userData.livingRestScaleX) || 1;
-    const pulse = base * (1 + Math.sin(time * (1.45 + (index % 3) * .18) + index * .62) * (.055 + alert * .025));
-    node.scale.setScalar(pulse);
+    const factor = 1 + Math.sin(time * (1.45 + (index % 3) * .18) + index * .62) * (.055 + alert * .025);
+    node.scale.set(
+      (Number(node.userData.livingRestScaleX) || 1) * factor,
+      (Number(node.userData.livingRestScaleY) || 1) * factor,
+      (Number(node.userData.livingRestScaleZ) || 1) * factor,
+    );
   }
   for (const [index, node] of cache.specials.entries()) {
     const baseY = Number(node.userData.livingRestPositionY) || 0;
     const wave = Math.sin(time * .78 + index * .47);
     node.position.y = baseY + wave * (livingKind === "orichalc" ? .035 : .018);
     node.rotation.y = rest(node, "Y") + wave * (livingKind === "orichalc" ? .055 : .018);
+  }
+  for (const node of cache.floaters) {
+    const baseY = Number(node.userData.livingRestPositionY) || 0;
+    const amplitude = Number(node.userData.livingFloatAmplitude) || 0;
+    const rate = Number(node.userData.livingFloatRate) || 1;
+    const phase = Number(node.userData.livingFloatPhase) || 0;
+    node.position.y = baseY + Math.sin(time * rate + phase) * amplitude;
+  }
+  for (const node of cache.spinners) {
+    node.rotation.y = rest(node, "Y") + time * (Number(node.userData.livingSpinRate) || 0);
+  }
+  for (const raw of cache.shimmers) {
+    if (!(raw instanceof THREE.Mesh)) continue;
+    const material = Array.isArray(raw.material) ? raw.material[0] : raw.material;
+    const base = Number(raw.userData.livingRestOpacity) || material.opacity;
+    const amplitude = Number(raw.userData.livingShimmerAmplitude) || 0;
+    material.opacity = THREE.MathUtils.clamp(base + Math.sin(time * 1.2 + Number(raw.userData.livingFloatPhase || 0)) * amplitude, .18, 1);
+  }
+  for (const node of cache.swings) {
+    node.rotation.z = rest(node, "Z") + Math.sin(
+      time * (Number(node.userData.livingSwingRate) || 1) + (Number(node.userData.livingSwingPhase) || 0),
+    ) * (Number(node.userData.livingSwingAmplitude) || 0);
   }
   return true;
 }

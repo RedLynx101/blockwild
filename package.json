@@ -28,6 +28,8 @@
     "audit:world-overhaul": "node --import tsx scripts/audit-world-overhaul.ts",
     "audit:living-bestiary": "node --import tsx scripts/audit-living-bestiary-release.ts --write",
     "showcase:world-overhaul": "node --import tsx scripts/render-world-overhaul-showcase.ts",
+    "showcase:living-bestiary": "node --import tsx scripts/render-living-bestiary-showcase.ts",
+    "showcase:living-bestiary:compare": "node --import tsx scripts/compose-living-bestiary-comparison.ts",
     "validate:artifact": "bash scripts/validate-artifact.sh",
     "lint": "bash scripts/sites-env.sh -- eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern output --ignore-pattern outputs --ignore-pattern work",
     "db:generate": "bash scripts/sites-env.sh -- drizzle-kit generate"
