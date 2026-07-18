@@ -18,6 +18,11 @@ function option(flag: string, fallback: string) {
   return path.resolve(index >= 0 && process.argv[index + 1] ? process.argv[index + 1] : fallback);
 }
 
+function textOption(flag: string, fallback: string) {
+  const index = process.argv.indexOf(flag);
+  return index >= 0 && process.argv[index + 1] ? process.argv[index + 1] : fallback;
+}
+
 async function normalizedPanel(source: string) {
   const image = sharp(source);
   const metadata = await image.metadata();
@@ -33,6 +38,9 @@ export async function composeLivingBestiaryComparisons(options: Readonly<{
   before: string;
   after: string;
   out: string;
+  beforeLabel?: string;
+  afterLabel?: string;
+  titleSuffix?: string;
 }>) {
   await mkdir(options.out, { recursive: true });
   const outputs: string[] = [];
@@ -47,9 +55,9 @@ export async function composeLivingBestiaryComparisons(options: Readonly<{
     const labels = Buffer.from([
       `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${HEADER_HEIGHT}">`,
       `<rect width="${width}" height="${HEADER_HEIGHT}" fill="#081318"/>`,
-      `<text x="${OUTER_MARGIN}" y="32" fill="#f3f8f6" font-family="ui-sans-serif,system-ui,sans-serif" font-size="22" font-weight="760">${xml(sheet === "field-roster" ? "Field Roster" : "Legendary Creatures & Bound Summons")} — model redesign comparison</text>`,
-      `<text x="${OUTER_MARGIN}" y="69" fill="#d9a865" font-family="ui-sans-serif,system-ui,sans-serif" font-size="18" font-weight="760" letter-spacing="2">BEFORE · BLOCKOUT</text>`,
-      `<text x="${OUTER_MARGIN + PANEL_WIDTH + GUTTER}" y="69" fill="#83d8a4" font-family="ui-sans-serif,system-ui,sans-serif" font-size="18" font-weight="760" letter-spacing="2">AFTER · PRODUCTION ART</text>`,
+      `<text x="${OUTER_MARGIN}" y="32" fill="#f3f8f6" font-family="ui-sans-serif,system-ui,sans-serif" font-size="22" font-weight="760">${xml(sheet === "field-roster" ? "Field Roster" : "Legendary Creatures & Bound Summons")} — ${xml(options.titleSuffix ?? "model redesign comparison")}</text>`,
+      `<text x="${OUTER_MARGIN}" y="69" fill="#d9a865" font-family="ui-sans-serif,system-ui,sans-serif" font-size="18" font-weight="760" letter-spacing="2">${xml(options.beforeLabel ?? "BEFORE · BLOCKOUT")}</text>`,
+      `<text x="${OUTER_MARGIN + PANEL_WIDTH + GUTTER}" y="69" fill="#83d8a4" font-family="ui-sans-serif,system-ui,sans-serif" font-size="18" font-weight="760" letter-spacing="2">${xml(options.afterLabel ?? "AFTER · PRODUCTION ART")}</text>`,
       `</svg>`,
     ].join(""));
     const destination = path.join(options.out, `${sheet}-before-after.png`);
@@ -70,6 +78,9 @@ async function main() {
     before: option("--before", "output/living-bestiary-showcase/geometry-before"),
     after: option("--after", "output/living-bestiary-showcase/geometry-after"),
     out: option("--out", "output/living-bestiary-showcase/comparison"),
+    beforeLabel: textOption("--before-label", "BEFORE · BLOCKOUT"),
+    afterLabel: textOption("--after-label", "AFTER · PRODUCTION ART"),
+    titleSuffix: textOption("--title-suffix", "model redesign comparison"),
   });
   process.stdout.write(`${JSON.stringify({ status: "rendered", outputs }, null, 2)}\n`);
 }

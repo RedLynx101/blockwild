@@ -82,6 +82,59 @@ test("critical silhouettes have authored anatomy and true supernatural negative 
   }
 });
 
+test("the anatomy pass connects load-bearing limbs, feet, claws, and faces to their rigs", () => {
+  for (const [index, kind] of expansionKinds.entries()) {
+    const model = createMobVisual(kind, 96_000 + index);
+    const visual = model.visual;
+    if (visual.userData.bodyPlan === "quadruped") {
+      const visibleLegs = visual.children.filter((child) => /-(?:front|rear)-(?:left|right)-leg-pivot$/u.test(child.name) && child.visible);
+      assert.ok(visibleLegs.length >= 2, `${kind} needs visible load-bearing legs`);
+      for (const leg of visibleLegs) {
+        const knee = leg.children.find((child) => /-knee-pivot$/u.test(child.name));
+        assert.ok(knee, `${leg.name} needs an attached knee`);
+        const ankle = knee.children.find((child) => /-ankle-pivot$/u.test(child.name));
+        assert.ok(ankle, `${leg.name} needs an attached ankle`);
+        assert.ok(ankle.children.some((child) => /-foot-pivot$/u.test(child.name)), `${leg.name} needs an attached planted foot`);
+      }
+    } else if (visual.userData.bodyPlan === "bird") {
+      for (const side of ["left", "right"] as const) {
+        const leg = visual.getObjectByName(`${kind}-${side}-leg-pivot`)!;
+        const hock = visual.getObjectByName(`${kind}-${side}-hock-pivot`)!;
+        const foot = visual.getObjectByName(`${kind}-${side}-foot-pivot`)!;
+        assert.equal(hock.parent, leg, `${kind} ${side} hock must be parented to its thigh`);
+        assert.equal(foot.parent, hock, `${kind} ${side} foot must be parented to its shank`);
+        assert.ok(foot.children.filter((child) => /talon/u.test(child.name)).length >= 3, `${kind} ${side} toes must originate in the foot`);
+      }
+    } else if (visual.userData.bodyPlan === "arthropod") {
+      const legs = visual.children.filter((child) => /-leg-\d+-pivot$/u.test(child.name));
+      assert.ok(legs.length >= 6, `${kind} needs its complete arthropod gait`);
+      for (const leg of legs) {
+        const knee = leg.children.find((child) => /-knee-pivot$/u.test(child.name));
+        assert.ok(knee?.children.some((child) => /-foot-pivot$/u.test(child.name)), `${leg.name} needs a chained tibia and foot`);
+      }
+    }
+    if (!MOB_DEFS[kind].flying && !MOB_DEFS[kind].aquatic) {
+      model.group.position.y = MOB_DEFS[kind].footOffset - .5;
+      model.group.updateMatrixWorld(true);
+      const terrainDelta = new THREE.Box3().setFromObject(visual).min.y;
+      assert.ok(Math.abs(terrainDelta) < 1e-6, `${kind} articulated feet must preserve its exact terrain contact; delta ${terrainDelta}`);
+    }
+  }
+
+  const badger = createMobVisual("hearthback-badger", 97_001).visual;
+  for (const side of ["left", "right"] as const) for (let claw = 0; claw < 3; claw += 1) {
+    const object = badger.getObjectByName(`hearthback-badger-${side}-dig-claw-${claw}`)!;
+    assert.match(object.parent?.name ?? "", new RegExp(`front-${side}-foot-pivot$`, "u"), "badger digging claws belong to the front paw");
+  }
+
+  const porpoise = createMobVisual("wreckwhistle-porpoise", 97_002).visual;
+  const face = porpoise.getObjectByName("wreckwhistle-porpoise-face-pivot")!;
+  assert.ok(face.getObjectByName("wreckwhistle-porpoise-left-eye"));
+  assert.ok(face.getObjectByName("wreckwhistle-porpoise-right-eye"));
+  assert.ok(face.getObjectByName("wreckwhistle-porpoise-lower-jaw"));
+  assert.ok(face.getObjectByName("wreckwhistle-porpoise-smile-line"));
+});
+
 test("floating, spinning, transparent and shimmering concepts retain nonuniform authored scale", () => {
   for (const kind of ["orichalc", "asterjaw", "vellum-warden", "choir-of-one", "glasswake-stag"] as const) {
     const visual = createMobVisual(kind, 95_000).visual;

@@ -16,7 +16,7 @@ export const LIVING_BESTIARY_VISUAL_KINDS = Object.freeze([
 
 type Builder = ReturnType<typeof createBuilder>;
 
-type LivingShape = "organic" | "hard" | "gem" | "spike-up" | "spike-forward" | "ring";
+type LivingShape = "organic" | "hard" | "gem" | "spike-up" | "spike-forward" | "ring" | "limb-y" | "limb-x" | "limb-z" | "joint";
 
 function livingShapeFor(name: string): LivingShape {
   if (/ring|whorl|halo|orbit/u.test(name)) return "ring";
@@ -31,6 +31,15 @@ function livingGeometry(shape: LivingShape) {
   if (shape === "hard") return new THREE.BoxGeometry(1, 1, 1, 2, 2, 2);
   if (shape === "gem") return new THREE.OctahedronGeometry(.5, 1);
   if (shape === "ring") return new THREE.TorusGeometry(.34, .16, 6, 14);
+  if (shape === "joint") return new THREE.SphereGeometry(.5, 8, 5);
+  if (shape === "limb-y" || shape === "limb-x" || shape === "limb-z") {
+    // Eight-sided tapered bones preserve Blockwild's readable faceting while
+    // giving limbs a clear direction and load path instead of an oval blob.
+    const geometry = new THREE.CylinderGeometry(.38, .5, 1, 8, 2, false);
+    if (shape === "limb-x") geometry.rotateZ(Math.PI / 2);
+    if (shape === "limb-z") geometry.rotateX(Math.PI / 2);
+    return geometry;
+  }
   if (shape === "spike-up") return new THREE.ConeGeometry(.5, 1, 8, 2);
   if (shape === "spike-forward") {
     const geometry = new THREE.ConeGeometry(.5, 1, 8, 2);
@@ -102,6 +111,18 @@ function createBuilder(kind: LivingBestiaryVisualKind, id: number) {
     visual.add(node);
     return node;
   };
+  const joint = (parent: THREE.Object3D, at: [number, number, number], name: string, part?: keyof MobVisualParts) => {
+    const node = new THREE.Group();
+    node.position.set(...at);
+    node.name = `${kind}-${name}-pivot`;
+    node.userData.mobId = id;
+    parent.add(node);
+    if (part) {
+      node.userData.bodyPart = part;
+      parts[part].push(node);
+    }
+    return node;
+  };
   const eyes = (x: number, y: number, z: number, size = .07, count = 2) => {
     if (count === 1) {
       add(visual, [size, size, size * .58], mats.eye, [0, y, z], "center-eye");
@@ -120,7 +141,20 @@ function createBuilder(kind: LivingBestiaryVisualKind, id: number) {
       add(parent, [size * .28, size * .28, size * .16], mats.white, [side * x - size * .16, y + size * .18, z - size * .34], `${side < 0 ? "left" : "right"}-eye-highlight`);
     }
   };
-  return { kind, group, visual, parts, mats, lambert, glow, add, pivot, eyes, eyesOn };
+  return { kind, group, visual, parts, mats, lambert, glow, add, pivot, joint, eyes, eyesOn };
+}
+
+type GroundFootStyle = "paw" | "claw" | "hoof" | "webbed" | "spring";
+
+function groundFootStyle(kind: LivingBestiaryVisualKind): GroundFootStyle {
+  if (["stormcrest-ibex", "ilyr-virebloom", "sugarwake-sovereign", "glasswake-stag"].includes(kind)) return "hoof";
+  if (["brinewhisk-otter", "riverwright-beaver", "kilnscale-salamander"].includes(kind)) return "webbed";
+  if (kind === "glassstep-jerboa") return "spring";
+  if ([
+    "hearthback-badger", "sunfoil-pangolin", "cindercoil-gecko", "briarclaw-lynx", "gravebell-jackal",
+    "cragglass-basilisk", "kharza", "asterjaw",
+  ].includes(kind)) return "claw";
+  return "paw";
 }
 
 function quadruped(builder: Builder, config: Readonly<{
@@ -128,7 +162,7 @@ function quadruped(builder: Builder, config: Readonly<{
   legLength: number; legX: number; frontZ: number; rearZ: number; tail?: "long" | "brush" | "flat" | "short";
   muzzle?: "snout" | "canine" | "beak" | "none"; ears?: "round" | "point" | "long" | "sail" | "none";
 }>) {
-  const { visual, mats, add, pivot, eyesOn, kind } = builder;
+  const { visual, mats, add, pivot, joint, eyesOn, kind } = builder;
   add(visual, [config.body[0] * .9, config.body[1] * .9, config.body[2] * .74], mats.body, [0, config.bodyY, 0], "body", "body");
   add(visual, [config.body[0] * .94, config.body[1] * .86, config.body[2] * .48], mats.body,
     [0, config.bodyY + config.body[1] * .015, -config.body[2] * .2], "shoulder-mass", "body");
@@ -161,11 +195,64 @@ function quadruped(builder: Builder, config: Readonly<{
     [-1, config.frontZ, 0, "front-left"], [1, config.frontZ, Math.PI, "front-right"],
     [-1, config.rearZ, Math.PI, "rear-left"], [1, config.rearZ, 0, "rear-right"],
   ] as const) {
-    const leg = pivot([Math.max(.09, config.legX * .42), config.legLength, Math.max(.09, config.legX * .4)], mats.dark,
-      [side * config.legX, config.bodyY - config.body[1] * .36, z], [0, -config.legLength * .48, 0], `${label}-leg`, "legs");
+    const width = Math.max(.09, config.legX * .42);
+    const depth = Math.max(.09, config.legX * .4);
+    const upperLength = config.legLength * .48;
+    const lowerLength = config.legLength * .52;
+    const rear = label.startsWith("rear");
+    const footStyle = groundFootStyle(kind);
+    const legMaterial = kind === "glasswake-stag" ? mats.glass : kind === "asterjaw" ? mats.glow : mats.dark;
+    const leg = joint(visual, [side * config.legX, config.bodyY - config.body[1] * .36, z], `${label}-leg`, "legs");
     leg.userData.phase = phase;
     leg.userData.side = side;
-    add(leg, [Math.max(.15, config.legX * .58), .1, .24], mats.accent, [0, -config.legLength, -.04], `${label}-foot`);
+    leg.userData.limbRole = "upper";
+    add(leg, [width * 1.34, width * 1.34, depth * 1.34], legMaterial, [0, -.015, 0], `${label}-hip-joint`, undefined, "joint");
+    add(leg, [width * 1.16, upperLength, depth * 1.12], legMaterial, [0, -upperLength * .45, 0], `${label}-upper-leg`, undefined, "limb-y");
+
+    const knee = joint(leg, [0, -upperLength * .9, rear ? .025 : -.018], `${label}-knee`);
+    knee.userData.phase = phase;
+    knee.userData.side = side;
+    knee.userData.livingJointRole = "knee";
+    knee.rotation.x = rear ? -.11 : .07;
+    add(knee, [width * 1.22, width * 1.16, depth * 1.18], kind === "sugarwake-sovereign" ? mats.pale : legMaterial,
+      [0, 0, 0], `${label}-knee-joint`, undefined, "joint");
+    add(knee, [width * .92, lowerLength, depth * .9], legMaterial, [0, -lowerLength * .45, 0], `${label}-lower-leg`, undefined, "limb-y");
+
+    const ankle = joint(knee, [0, -lowerLength * .9, rear ? -.02 : .025], `${label}-ankle`);
+    ankle.userData.phase = phase;
+    ankle.userData.side = side;
+    ankle.userData.livingJointRole = "ankle";
+    ankle.rotation.x = rear ? .08 : -.05;
+    add(ankle, [width * 1.08, width * .96, depth], legMaterial, [0, 0, 0], `${label}-ankle-joint`, undefined, "joint");
+
+    const foot = joint(ankle, [0, -.035, footStyle === "spring" ? .04 : -.035], `${label}-foot`);
+    foot.userData.phase = phase;
+    foot.userData.side = side;
+    foot.userData.livingJointRole = "foot";
+    const footWidth = footStyle === "spring" ? Math.max(.23, width * 2.15) : Math.max(.15, width * 1.65);
+    const footDepth = footStyle === "spring" ? .46 : footStyle === "webbed" ? .32 : .25;
+    const footMaterial = kind === "glasswake-stag" ? mats.glass : footStyle === "hoof" ? mats.dark : mats.accent;
+    add(foot, [footWidth, footStyle === "hoof" ? .14 : .11, footDepth], footMaterial, [0, -.025, -.055], `${label}-foot`, undefined,
+      footStyle === "hoof" ? "hard" : "organic");
+
+    if (footStyle === "hoof") for (const toeSide of [-1, 1] as const) {
+      const hoof = add(foot, [footWidth * .48, .12, footDepth * .62], kind === "sugarwake-sovereign" ? mats.pale : mats.dark,
+        [toeSide * footWidth * .23, -.04, -footDepth * .32], `${label}-split-hoof-${toeSide}`, undefined, "hard");
+      hoof.rotation.y = toeSide * .06;
+    } else {
+      const toeCount = footStyle === "webbed" ? 4 : 3;
+      for (let toe = 0; toe < toeCount; toe += 1) {
+        const spread = toe - (toeCount - 1) / 2;
+        const toeLength = footStyle === "claw" ? .16 : footStyle === "spring" ? .2 : .12;
+        const toeMaterial = footStyle === "claw" ? mats.pale : footMaterial;
+        const toeMesh = add(foot, [Math.max(.035, footWidth * .18), .055, toeLength], toeMaterial,
+          [spread * footWidth * .25, -.045, -footDepth * .47], `${label}-toe-${toe}`, undefined,
+          footStyle === "claw" ? "spike-forward" : "organic");
+        toeMesh.rotation.y = spread * -.08;
+      }
+      if (footStyle === "webbed") add(foot, [footWidth * .82, .025, footDepth * .72], mats.membrane,
+        [0, -.055, -footDepth * .34], `${label}-toe-web`, undefined, "organic");
+    }
   }
   const tailKind = config.tail ?? "long";
   if (tailKind !== "short") {
@@ -179,7 +266,7 @@ function quadruped(builder: Builder, config: Readonly<{
 }
 
 function bird(builder: Builder, config: Readonly<{ body: [number, number, number]; wingSpan: number; legLength: number; beak: number; tail: number; longNeck?: boolean }>) {
-  const { visual, mats, add, pivot, eyesOn } = builder;
+  const { visual, mats, add, pivot, joint, eyesOn, kind } = builder;
   const bodyY = config.longNeck ? .78 : .48;
   add(visual, config.body, mats.body, [0, bodyY, 0], "body", "body");
   add(visual, [config.body[0] * .84, config.body[1] * .82, config.body[2] * .58], mats.body,
@@ -200,9 +287,33 @@ function bird(builder: Builder, config: Readonly<{ body: [number, number, number
     }
     add(wing, [config.wingSpan * .46, .07, config.body[2] * .46], mats.pale,
       [side * config.wingSpan * .2, .025, -config.body[2] * .05], `wing-covert-${side}`);
-    const leg = pivot([.09, config.legLength, .09], mats.dark, [side * .14, bodyY - config.body[1] * .35, -.02], [0, -config.legLength * .48, 0], `${side < 0 ? "left" : "right"}-leg`, "legs");
+    const sideName = side < 0 ? "left" : "right";
+    const upperLength = config.legLength * .44;
+    const lowerLength = config.legLength * .56;
+    const leg = joint(visual, [side * .14, bodyY - config.body[1] * .35, -.02], `${sideName}-leg`, "legs");
     leg.userData.side = side;
-    add(leg, [.22, .05, .24], mats.accent, [0, -config.legLength, -.08], `${side < 0 ? "left" : "right"}-foot`);
+    leg.userData.phase = side < 0 ? 0 : Math.PI;
+    add(leg, [.12, .12, .11], mats.dark, [0, 0, 0], `${sideName}-hip-joint`, undefined, "joint");
+    add(leg, [.09, upperLength, .09], mats.dark, [0, -upperLength * .45, 0], `${sideName}-thigh`, undefined, "limb-y");
+    const hock = joint(leg, [0, -upperLength * .9, .018], `${sideName}-hock`);
+    hock.userData.side = side;
+    hock.userData.phase = side < 0 ? 0 : Math.PI;
+    hock.userData.livingJointRole = "hock";
+    hock.rotation.x = -.09;
+    add(hock, [.115, .1, .11], mats.accent, [0, 0, 0], `${sideName}-hock-joint`, undefined, "joint");
+    add(hock, [.07, lowerLength, .07], mats.dark, [0, -lowerLength * .45, 0], `${sideName}-shank`, undefined, "limb-y");
+    const foot = joint(hock, [0, -lowerLength * .9, -.015], `${sideName}-foot`);
+    foot.userData.side = side;
+    foot.userData.phase = side < 0 ? 0 : Math.PI;
+    foot.userData.livingJointRole = "foot";
+    add(foot, [.14, .075, .16], mats.accent, [0, -.02, -.04], `${sideName}-foot-pad`, undefined, "joint");
+    for (let toe = -1; toe <= 1; toe += 1) {
+      const talon = add(foot, [.042, .04, kind === "varkesh-stormmane" ? .32 : .21], kind === "varkesh-stormmane" ? mats.metal : mats.dark,
+        [toe * .07, -.045, -.13], `${sideName}-talon-${toe + 2}`, undefined, "spike-forward");
+      talon.rotation.y = toe * -.14;
+    }
+    const rearTalon = add(foot, [.04, .04, .16], mats.dark, [0, -.035, .08], `${sideName}-rear-talon`, undefined, "spike-forward");
+    rearTalon.rotation.y = Math.PI;
   }
   for (let index = -2; index <= 2; index += 1) {
     const feather = add(visual, [.12, .06, config.tail * (1 - Math.abs(index) * .08)], index === 0 ? mats.pale : mats.body, [index * .09, bodyY, config.body[2] * .48], `tail-feather-${index + 2}`);
@@ -244,7 +355,7 @@ function aquatic(builder: Builder, config: Readonly<{ body: [number, number, num
 }
 
 function arthropod(builder: Builder, config: Readonly<{ body: [number, number, number]; legs: number; claws?: boolean; shell?: boolean }>) {
-  const { visual, mats, add, pivot, eyes } = builder;
+  const { visual, mats, add, joint, eyes } = builder;
   add(visual, config.body, mats.body, [0, .34, 0], "body", "body");
   for (let segment = 0; segment < 3; segment += 1) add(visual,
     [config.body[0] * (1 - segment * .08), config.body[1] * .86, config.body[2] * .34],
@@ -252,21 +363,54 @@ function arthropod(builder: Builder, config: Readonly<{ body: [number, number, n
   if (config.shell) add(visual, [config.body[0] * .92, config.body[1] * .5, config.body[2] * .88], mats.accent, [0, .52, .03], "carapace", "body");
   eyes(config.body[0] * .3, .5, -config.body[2] * .5, .055);
   for (const side of [-1, 1] as const) for (let index = 0; index < config.legs; index += 1) {
-    const leg = pivot([config.body[0] * .46, .07, .11], index % 2 ? mats.dark : mats.accent,
-      [side * config.body[0] * .34, .32, -.26 + index * (config.body[2] * .5 / Math.max(1, config.legs - 1))], [side * config.body[0] * .25, -.08, 0], `${side < 0 ? "left" : "right"}-leg-${index + 1}`, "legs");
+    const sideName = side < 0 ? "left" : "right";
+    const phase = index % 2 ? Math.PI : 0;
+    const upperLength = config.body[0] * (.3 + index % 2 * .035);
+    const lowerLength = config.body[0] * .27;
+    const legMaterial = index % 2 ? mats.dark : mats.accent;
+    const leg = joint(visual, [side * config.body[0] * .34, .34, -.26 + index * (config.body[2] * .5 / Math.max(1, config.legs - 1))],
+      `${sideName}-leg-${index + 1}`, "legs");
     leg.userData.side = side;
-    leg.userData.phase = index % 2 ? Math.PI : 0;
+    leg.userData.phase = phase;
+    leg.rotation.z = side * .16;
+    add(leg, [.12, .12, .12], legMaterial, [0, 0, 0], `${sideName}-leg-${index + 1}-coxa`, undefined, "joint");
+    add(leg, [upperLength, .075, .11], legMaterial, [side * upperLength * .45, -.025, 0], `${sideName}-leg-${index + 1}-femur`, undefined, "limb-x");
+    const knee = joint(leg, [side * upperLength * .9, -.055, 0], `${sideName}-leg-${index + 1}-knee`);
+    knee.userData.side = side;
+    knee.userData.phase = phase;
+    knee.userData.livingJointRole = "arthropod-knee";
+    knee.rotation.z = side * .38;
+    add(knee, [.105, .1, .105], mats.pale, [0, 0, 0], `${sideName}-leg-${index + 1}-knee-joint`, undefined, "joint");
+    add(knee, [lowerLength, .065, .08], legMaterial, [side * lowerLength * .45, -.055, 0], `${sideName}-leg-${index + 1}-tibia`, undefined, "limb-x");
+    const foot = joint(knee, [side * lowerLength * .88, -.11, 0], `${sideName}-leg-${index + 1}-foot`);
+    foot.userData.side = side;
+    foot.userData.phase = phase;
+    foot.userData.livingJointRole = "arthropod-foot";
+    add(foot, [.16, .045, .16], mats.dark, [side * .05, -.025, -.025], `${sideName}-leg-${index + 1}-foot-pad`, undefined, "organic");
+    const hook = add(foot, [.045, .045, .16], mats.pale, [side * .08, -.035, -.1], `${sideName}-leg-${index + 1}-toe-hook`, undefined, "spike-forward");
+    hook.rotation.y = side * -.18;
   }
   if (config.claws) for (const side of [-1, 1] as const) {
-    const claw = pivot([.22, .16, .42], mats.accent, [side * config.body[0] * .36, .38, -config.body[2] * .48], [side * .08, 0, -.18], `${side < 0 ? "left" : "right"}-claw`, "arms");
+    const sideName = side < 0 ? "left" : "right";
+    const claw = joint(visual, [side * config.body[0] * .3, .4, -config.body[2] * .4], `${sideName}-claw`, "arms");
     claw.userData.side = side;
-    add(claw, [.12, .1, .26], mats.pale, [side * .1, .02, -.32], `claw-tip-${side}`);
+    add(claw, [.12, .11, .34], mats.accent, [side * .04, 0, -.15], `${sideName}-claw-forearm`, undefined, "limb-z");
+    const wrist = joint(claw, [side * .07, 0, -.3], `${sideName}-claw-wrist`);
+    wrist.userData.side = side;
+    wrist.userData.livingJointRole = "claw-wrist";
+    add(wrist, [.26, .16, .24], mats.accent, [side * .04, 0, -.08], `${sideName}-claw-palm`, undefined, "joint");
+    for (const prong of [-1, 1] as const) {
+      const tip = add(wrist, [.095, .095, .31], prong < 0 ? mats.pale : mats.accent,
+        [side * .04 + prong * .085, prong * .055, -.25], `${sideName}-claw-tip-${prong}`, undefined, "spike-forward");
+      tip.rotation.y = prong * .11;
+      tip.rotation.x = prong * -.08;
+    }
   }
   visual.userData.bodyPlan = "arthropod";
 }
 
 function decorateRegular(builder: Builder) {
-  const { kind, visual, mats, add, pivot } = builder;
+  const { kind, visual, mats, add, pivot, joint, eyesOn } = builder;
   switch (kind) {
     case "thornhide-trufflehog":
       quadruped(builder, { body: [1.08, .66, 1.34], bodyY: .64, head: [.72, .58, .72], headY: .64, headZ: -.86, legLength: .42, legX: .38, frontZ: -.4, rearZ: .44, tail: "short", muzzle: "snout", ears: "round" });
@@ -290,7 +434,16 @@ function decorateRegular(builder: Builder) {
     case "hearthback-badger":
       quadruped(builder, { body: [1.12, .64, 1.38], bodyY: .58, head: [.78, .6, .76], headY: .62, headZ: -.86, legLength: .36, legX: .4, frontZ: -.4, rearZ: .42, tail: "short", muzzle: "snout", ears: "round" });
       add(visual, [.28, .12, 1.12], mats.accent, [0, .94, .05], "hearth-stripe");
-      for (const side of [-1, 1]) for (let claw = 0; claw < 3; claw += 1) add(visual, [.055, .06, .3], mats.pale, [side * (.26 + claw * .08), .17, -.64], `dig-claw-${side}-${claw}`);
+      for (const side of [-1, 1] as const) {
+        const sideName = side < 0 ? "left" : "right";
+        const paw = visual.getObjectByName(`hearthback-badger-front-${sideName}-foot-pivot`)!;
+        add(paw, [.32, .14, .28], mats.dark, [0, .015, -.08], `${sideName}-digging-knuckle`, undefined, "joint");
+        for (let claw = 0; claw < 3; claw += 1) {
+          const digClaw = add(paw, [.055, .06, .3 + (claw === 1 ? .05 : 0)], mats.pale,
+            [(claw - 1) * .085, -.045, -.25], `${sideName}-dig-claw-${claw}`, undefined, "spike-forward");
+          digClaw.rotation.y = (claw - 1) * -.09;
+        }
+      }
       break;
     case "sunfoil-pangolin":
       quadruped(builder, { body: [1.05, .68, 1.38], bodyY: .64, head: [.56, .42, .66], headY: .59, headZ: -.86, legLength: .36, legX: .36, frontZ: -.42, rearZ: .42, tail: "long", muzzle: "snout", ears: "none" });
@@ -303,11 +456,21 @@ function decorateRegular(builder: Builder) {
       visual.getObjectByName("glassstep-jerboa-front-left-leg-pivot")!.visible = false;
       visual.getObjectByName("glassstep-jerboa-front-right-leg-pivot")!.visible = false;
       for (const side of [-1, 1] as const) {
-        const forepaw = pivot([.07, .22, .07], mats.dark, [side * .16, .58, -.26], [0, -.1, -.04], `${side < 0 ? "left" : "right"}-forepaw`, "arms");
+        const sideName = side < 0 ? "left" : "right";
+        const forepaw = joint(visual, [side * .16, .58, -.26], `${sideName}-forepaw`, "arms");
         forepaw.rotation.x = -.42;
-        add(forepaw, [.11, .06, .14], mats.pale, [0, -.2, -.09], `forepaw-pad-${side}`);
+        add(forepaw, [.075, .16, .075], mats.dark, [0, -.07, 0], `${sideName}-forearm`, undefined, "limb-y");
+        const wrist = joint(forepaw, [0, -.145, -.018], `${sideName}-forepaw-wrist`);
+        wrist.userData.livingJointRole = "foot";
+        wrist.userData.phase = side < 0 ? 0 : Math.PI;
+        add(wrist, [.13, .07, .16], mats.pale, [0, -.02, -.065], `${sideName}-forepaw-pad`, undefined, "joint");
       }
-      for (const side of [-1, 1]) add(visual, [.3, .055, .5], mats.glass, [side * .2, .1, .35], `glass-hind-foot-${side}`).rotation.y = side * -.08;
+      for (const side of [-1, 1] as const) {
+        const sideName = side < 0 ? "left" : "right";
+        const hindFoot = visual.getObjectByName(`glassstep-jerboa-rear-${sideName}-foot-pivot`)!;
+        const glassSole = add(hindFoot, [.3, .045, .48], mats.glass, [0, -.055, -.08], `${sideName}-glass-hind-sole`, undefined, "organic");
+        glassSole.rotation.y = side * -.08;
+      }
       add(visual, [.22, .2, .26], mats.pale, [0, .48, 1.02], "tail-brush");
       break;
     case "stormcrest-ibex":
@@ -317,7 +480,14 @@ function decorateRegular(builder: Builder) {
       break;
     case "cindercoil-gecko":
       quadruped(builder, { body: [.62, .25, .9], bodyY: .26, head: [.5, .3, .46], headY: .31, headZ: -.58, legLength: .2, legX: .26, frontZ: -.28, rearZ: .3, tail: "long", muzzle: "none", ears: "none" });
-      for (const side of [-1, 1]) for (let toe = 0; toe < 4; toe += 1) add(visual, [.08, .035, .24], mats.pale, [side * (.28 + toe * .025), .04, -.25 + toe * .16], `toe-fan-${side}-${toe}`).rotation.y = side * (toe - 1.5) * .12;
+      for (const position of ["front", "rear"] as const) for (const side of [-1, 1] as const) {
+        const sideName = side < 0 ? "left" : "right";
+        const foot = visual.getObjectByName(`cindercoil-gecko-${position}-${sideName}-foot-pivot`)!;
+        for (let toe = 0; toe < 4; toe += 1) {
+          const fan = add(foot, [.085, .03, .2], mats.pale, [(toe - 1.5) * .055, -.05, -.16], `${position}-${sideName}-toe-fan-${toe}`, undefined, "organic");
+          fan.rotation.y = (toe - 1.5) * -.12;
+        }
+      }
       for (let ember = 0; ember < 7; ember += 1) add(visual, [.06, .04, .08], mats.glow, [((ember % 3) - 1) * .17, .4, -.28 + Math.floor(ember / 3) * .28], `ember-freckle-${ember}`);
       break;
     case "cloudkite-pika":
@@ -337,10 +507,25 @@ function decorateRegular(builder: Builder) {
     case "cragglass-basilisk":
       quadruped(builder, { body: [1.22, .52, 1.5], bodyY: .5, head: [.74, .52, .74], headY: .6, headZ: -.94, legLength: .32, legX: .46, frontZ: -.5, rearZ: .5, tail: "long", muzzle: "snout", ears: "none" });
       for (const side of [-1, 1] as const) {
-        const middle = pivot([.19, .32, .18], mats.dark, [side * .47, .31, 0], [0, -.15, 0], `${side < 0 ? "left" : "right"}-middle-leg`, "legs");
+        const sideName = side < 0 ? "left" : "right";
+        const middle = joint(visual, [side * .47, .31, 0], `${sideName}-middle-leg`, "legs");
         middle.userData.side = side;
         middle.userData.phase = side < 0 ? Math.PI : 0;
-        add(middle, [.27, .09, .3], mats.accent, [0, -.31, -.03], `middle-foot-${side}`);
+        add(middle, [.24, .16, .2], mats.dark, [0, -.015, 0], `${sideName}-middle-hip`, undefined, "joint");
+        add(middle, [.19, .16, .18], mats.dark, [0, -.07, 0], `${sideName}-middle-upper`, undefined, "limb-y");
+        const knee = joint(middle, [0, -.145, -.02], `${sideName}-middle-knee`);
+        knee.userData.side = side;
+        knee.userData.phase = side < 0 ? Math.PI : 0;
+        knee.userData.livingJointRole = "knee";
+        knee.rotation.x = -.1;
+        add(knee, [.2, .16, .18], mats.glass, [0, 0, 0], `${sideName}-middle-knee-joint`, undefined, "joint");
+        add(knee, [.15, .18, .14], mats.dark, [0, -.08, 0], `${sideName}-middle-lower`, undefined, "limb-y");
+        const foot = joint(knee, [0, -.17, -.025], `${sideName}-middle-foot`);
+        foot.userData.livingJointRole = "foot";
+        foot.userData.side = side;
+        add(foot, [.27, .09, .3], mats.accent, [0, -.035, -.06], `${sideName}-middle-foot-pad`, undefined, "organic");
+        for (let toe = -1; toe <= 1; toe += 1) add(foot, [.045, .045, .18], mats.pale,
+          [toe * .07, -.055, -.2], `${sideName}-middle-claw-${toe + 2}`, undefined, "spike-forward");
       }
       for (let crown = -2; crown <= 2; crown += 1) { const shard = add(visual, [.14, .48 - Math.abs(crown) * .06, .16], crown === 0 ? mats.glow : mats.glass, [crown * .15, 1.02 - Math.abs(crown) * .04, -.86], `crown-shard-${crown}`); shard.rotation.z = crown * -.1; }
       for (let side = -1; side <= 1; side += 2) add(visual, [.1, .08, .56], mats.glass, [side * .42, .72, -.12], `reflective-plate-${side}`).rotation.z = side * .26;
@@ -443,9 +628,20 @@ function decorateRegular(builder: Builder) {
       break;
     case "wreckwhistle-porpoise":
       aquatic(builder, { body: [1.12, .72, 1.82], tail: .7, fins: 1 });
-      add(visual, [.82, .58, .68], mats.body, [0, .58, -.9], "melon-forehead", "head");
-      add(visual, [.42, .25, .54], mats.pale, [0, .43, -1.25], "short-rostrum", "head");
-      add(visual, [.12, .035, .12], mats.black, [0, .88, -.66], "blowhole");
+      for (const name of ["left-eye", "right-eye", "left-eye-highlight", "right-eye-highlight"]) {
+        const inheritedEye = visual.getObjectByName(`wreckwhistle-porpoise-${name}`);
+        if (inheritedEye) inheritedEye.visible = false;
+      }
+      const face = joint(visual, [0, .58, -.9], "face", "head");
+      add(face, [.82, .58, .68], mats.body, [0, 0, 0], "melon-forehead", undefined, "organic");
+      add(face, [.46, .25, .58], mats.pale, [0, -.15, -.43], "short-rostrum", undefined, "limb-z");
+      add(face, [.43, .14, .5], mats.dark, [0, -.24, -.42], "lower-jaw", undefined, "limb-z");
+      add(face, [.34, .025, .06], mats.black, [0, -.18, -.72], "smile-line", undefined, "hard");
+      for (const side of [-1, 1] as const) {
+        add(face, [.18, .1, .12], mats.pale, [side * .31, -.09, -.31], `${side < 0 ? "left" : "right"}-cheek`, undefined, "organic");
+      }
+      eyesOn(face, .32, .045, -.35, .082);
+      add(face, [.12, .035, .12], mats.black, [0, .3, .24], "blowhole");
       add(visual, [.2, .52, .42], mats.accent, [0, .95, .12], "dorsal-fin", "wings");
       for (let scar = 0; scar < 4; scar += 1) add(visual, [.04, .04, .48], mats.pale, [(-.18 + scar * .12), .76, -.18 + scar * .18], `wake-scar-${scar}`).rotation.y = -.38;
       break;
@@ -493,6 +689,18 @@ function decorateMythic(builder: Builder) {
       add(visual, [.08, .07, .16], mats.pale, [side * .55, 2.29, .13], `resting-bird-beak-${side}`, undefined, "spike-forward");
     }
     for (let stream = -2; stream <= 2; stream += 1) add(visual, [.14, .08, 2.35], stream % 2 ? mats.membrane : mats.glow, [stream * .32, 2.08, .08], `back-spring-${stream}`);
+    for (const position of ["front", "rear"] as const) for (const side of [-1, 1] as const) {
+      const sideName = side < 0 ? "left" : "right";
+      const ankle = visual.getObjectByName(`ilyr-virebloom-${position}-${sideName}-ankle-pivot`)!;
+      const foot = visual.getObjectByName(`ilyr-virebloom-${position}-${sideName}-foot-pivot`)!;
+      add(ankle, [.17, .58, .17], mats.membrane, [0, -.24, .02], `${position}-${sideName}-falling-spring`, undefined, "limb-y");
+      add(foot, [.5, .035, .48], mats.glass, [0, -.08, -.02], `${position}-${sideName}-spring-pool`, undefined, "organic");
+      for (let ripple = 0; ripple < 2; ripple += 1) {
+        const ring = add(foot, [.42 + ripple * .16, .3 + ripple * .1, .055], ripple ? mats.membrane : mats.glow,
+          [0, -.045 + ripple * .012, -.02], `${position}-${sideName}-spring-ripple-${ripple}`, undefined, "ring");
+        ring.rotation.x = Math.PI / 2;
+      }
+    }
   } else if (kind === "thalassene") {
     aquatic(builder, { body: [3.6, 1.28, 4.3], tail: 2.2, fins: 2 });
     for (let arch = -3; arch <= 3; arch += 1) { add(visual, [.62, 1.05 + (3 - Math.abs(arch)) * .2, .2], arch % 2 ? mats.accent : mats.pale, [arch * .46, 1.48, -.55 + Math.abs(arch) * .18], `reef-arch-${arch}`, undefined, "ring"); add(visual, [.58, .22, .58], arch % 3 ? mats.glow : mats.accent, [arch * .46, 2.04 + (3 - Math.abs(arch)) * .2, -.55 + Math.abs(arch) * .18], `reef-crown-${arch}`); }
@@ -518,9 +726,11 @@ function decorateMythic(builder: Builder) {
     bird(builder, { body: [2.05, 1.42, 2.65], wingSpan: 3.4, legLength: 1.02, beak: .84, tail: 1.8 });
     for (let plume = -5; plume <= 5; plume += 1) { const p = add(visual, [.18, .76 - Math.abs(plume) * .035, .16], plume % 2 ? mats.glass : mats.glow, [plume * .18, 1.88 + (5 - Math.abs(plume)) * .08, -.45 + Math.abs(plume) * .06], `stormmane-${plume}`); p.rotation.z = plume * -.05; }
     for (let marker = 0; marker < 5; marker += 1) add(visual, [.18, .62, .12], marker % 2 ? mats.pale : mats.accent, [(marker - 2) * .32, 1.15, .72], `road-marker-${marker}`).rotation.z = (marker - 2) * .11;
-    for (const side of [-1, 1]) for (let talon = 0; talon < 3; talon += 1) {
-      const claw = add(visual, [.1, .1, .46], mats.metal, [side * (.2 + talon * .09), .12, -.38 - talon * .05], `storm-talon-${side}-${talon}`, "legs", "spike-forward");
-      claw.rotation.y = side * (talon - 1) * .14;
+    for (const side of [-1, 1] as const) {
+      const sideName = side < 0 ? "left" : "right";
+      const foot = visual.getObjectByName(`varkesh-stormmane-${sideName}-foot-pivot`)!;
+      add(foot, [.34, .13, .3], mats.metal, [0, 0, -.05], `${sideName}-storm-talon-brace`, undefined, "joint");
+      add(foot, [.08, .08, .3], mats.glow, [0, -.02, -.2], `${sideName}-lightning-talon`, undefined, "spike-forward");
     }
   } else if (kind === "kharza") {
     quadruped(builder, { body: [1.8, 1.08, 2.35], bodyY: 1.12, head: [1.05, .92, 1.12], headY: 1.45, headZ: -1.45, legLength: .92, legX: .62, frontZ: -.68, rearZ: .72, tail: "brush", muzzle: "canine", ears: "point" });
@@ -530,6 +740,16 @@ function decorateMythic(builder: Builder) {
     for (let scar = 0; scar < 4; scar += 1) {
       const line = add(visual, [.04, .04, .5 - scar * .05], mats.pale, [-.34 + scar * .2, 1.58 - scar * .06, -1.82], `old-scar-${scar}`, undefined, "hard");
       line.rotation.z = -.25 + scar * .12;
+    }
+    add(visual, [.18, 1.18, .18], mats.metal, [0, 2.1, .48], "banner-spine", "body", "limb-y");
+    add(visual, [1.15, .1, .1], mats.metal, [0, 2.55, .48], "banner-crossbar", "body", "limb-x");
+    const kharzaHead = visual.getObjectByName("kharza-head-pivot")!;
+    add(kharzaHead, [.92, .2, .4], mats.dark, [0, .24, -.38], "war-brow", undefined, "hard");
+    add(kharzaHead, [.78, .18, .42], mats.pale, [0, -.34, -.52], "lower-jaw", undefined, "organic");
+    for (const side of [-1, 1]) for (let fang = 0; fang < 2; fang += 1) {
+      const tooth = add(kharzaHead, [.09, .2 - fang * .03, .09], mats.white,
+        [side * (.2 + fang * .12), -.3, -.76], `war-fang-${side}-${fang}`, undefined, "spike-up");
+      tooth.rotation.x = Math.PI;
     }
   } else if (kind === "sugarwake-sovereign") {
     quadruped(builder, { body: [2.05, 1.25, 2.45], bodyY: 1.28, head: [1.12, 1.0, 1.14], headY: 1.66, headZ: -1.45, legLength: 1.0, legX: .72, frontZ: -.72, rearZ: .76, tail: "long", muzzle: "snout", ears: "sail" });
@@ -543,16 +763,45 @@ function decorateMythic(builder: Builder) {
       [point * .16, 2.68 - Math.abs(point) * .035, -1.35], `crown-point-${point}`);
     for (let curl = -2; curl <= 2; curl += 1) add(visual, [.22, .42 + Math.abs(curl) * .1, .6], curl % 2 ? mats.accent : mats.pale,
       [curl * .29, 1.72, .86], `taffy-mane-curl-${curl}`, "body");
+    const frosting = builder.lambert(0xfff2d7);
+    const berry = builder.glow(0xcf315d);
+    add(visual, [1.82, .18, 1.7], frosting, [0, 1.94, .06], "royal-icing-blanket", "body", "organic");
+    for (let drip = -4; drip <= 4; drip += 1) add(visual, [.12, .28 + Math.abs(drip % 3) * .05, .14], frosting,
+      [drip * .2, 1.78 - Math.abs(drip) * .015, -.6 + Math.abs(drip % 2) * 1.12], `icing-drip-${drip}`, "body", "limb-y");
+    for (let wafer = 0; wafer < 8; wafer += 1) {
+      const angle = wafer / 8 * Math.PI * 2;
+      const biscuit = add(visual, [.34, .08, .26], wafer % 2 ? mats.pale : mats.accent,
+        [Math.cos(angle) * .82, 1.82 + Math.sin(angle) * .08, -.02 + Math.sin(angle) * .76], `wafer-scale-${wafer}`, "body", "hard");
+      biscuit.rotation.y = -angle;
+    }
+    const sugarHead = visual.getObjectByName("sugarwake-sovereign-head-pivot")!;
+    add(sugarHead, [.88, .16, .62], frosting, [0, .24, -.12], "fondant-brow", undefined, "organic");
+    add(sugarHead, [.64, .12, .18], berry, [0, -.28, -.62], "berry-jam-smile", undefined, "organic");
+    for (const side of [-1, 1] as const) add(sugarHead, [.18, .18, .18], berry,
+      [side * .38, .25, -.18], `${side < 0 ? "left" : "right"}-candied-cherry`, undefined, "gem");
+    for (const position of ["front", "rear"] as const) for (const side of [-1, 1] as const) {
+      const sideName = side < 0 ? "left" : "right";
+      const knee = visual.getObjectByName(`sugarwake-sovereign-${position}-${sideName}-knee-pivot`)!;
+      const foot = visual.getObjectByName(`sugarwake-sovereign-${position}-${sideName}-foot-pivot`)!;
+      add(knee, [.34, .34, .34], berry, [0, 0, 0], `${position}-${sideName}-gumdrop-knee`, undefined, "gem");
+      add(foot, [.62, .09, .42], frosting, [0, -.07, -.04], `${position}-${sideName}-iced-hoof`, undefined, "organic");
+    }
   }
 }
 
 function decorateSummon(builder: Builder) {
-  const { kind, visual, mats, add, pivot } = builder;
+  const { kind, visual, mats, add, joint } = builder;
   if (kind === "asterjaw") {
     quadruped(builder, { body: [1.05, .72, 1.68], bodyY: .92, head: [.7, .62, .76], headY: 1.16, headZ: -1.05, legLength: .92, legX: .35, frontZ: -.5, rearZ: .54, tail: "long", muzzle: "canine", ears: "long" });
     visual.getObjectByName("asterjaw-body")!.visible = false;
     visual.getObjectByName("asterjaw-shoulder-mass")!.visible = false;
+    visual.getObjectByName("asterjaw-haunch-mass")!.visible = false;
+    visual.getObjectByName("asterjaw-soft-belly")!.visible = false;
+    visual.getObjectByName("asterjaw-mantle")!.visible = false;
+    add(visual, [1.02, .56, 1.5], mats.membrane, [0, .98, .04], "constellation-envelope", "body", "organic");
     add(visual, [.16, .18, 1.4], mats.metal, [0, 1.22, .12], "astral-spine", "body");
+    add(visual, [.92, .13, .18], mats.pale, [0, 1.08, -.48], "astral-scapula", "body", "limb-x");
+    add(visual, [.82, .16, .22], mats.pale, [0, 1.06, .54], "astral-pelvis", "body", "limb-x");
     for (let rib = -2; rib <= 2; rib += 1) {
       const hoop = add(visual, [.72 - Math.abs(rib) * .06, .52, .13], rib === 0 ? mats.glow : mats.pale,
         [0, .96, -.28 + (rib + 2) * .15], `astral-rib-ring-${rib + 2}`, "body", "ring");
@@ -560,10 +809,40 @@ function decorateSummon(builder: Builder) {
     }
     for (let rib = 0; rib < 6; rib += 1) for (const side of [-1, 1]) { const star = add(visual, [.1, .1, .1], mats.glow, [side * .34, .86 + (rib % 2) * .14, -.38 + rib * .16], `compass-star-${side}-${rib}`); star.rotation.z = rib * .4; }
     for (let route = 0; route < 5; route += 1) add(visual, [.055, .055, .38], mats.glow, [((route % 3) - 1) * .18, .98 + (route % 2) * .16, -.34 + route * .16], `route-line-${route}`).rotation.y = route * .37;
+    for (const position of ["front", "rear"] as const) for (const side of [-1, 1] as const) {
+      const sideName = side < 0 ? "left" : "right";
+      const leg = visual.getObjectByName(`asterjaw-${position}-${sideName}-leg-pivot`)!;
+      add(leg, [.2, .2, .2], mats.glow, [0, 0, 0], `${position}-${sideName}-anchor-star`, undefined, "gem");
+      add(leg, [.07, .07, .52], mats.membrane, [0, .06, position === "front" ? .22 : -.22], `${position}-${sideName}-astral-tendon`, undefined, "limb-z");
+    }
+    const asterHead = visual.getObjectByName("asterjaw-head-pivot")!;
+    add(asterHead, [.62, .18, .52], mats.metal, [0, .2, -.28], "star-map-brow", undefined, "hard");
+    add(asterHead, [.58, .14, .5], mats.pale, [0, -.27, -.42], "astral-lower-jaw", undefined, "organic");
+    for (const side of [-1, 1]) add(asterHead, [.1, .25, .1], mats.glow,
+      [side * .23, -.29, -.7], `aster-fang-${side}`, undefined, "spike-up").rotation.x = Math.PI;
   } else if (kind === "vellum-warden") {
     add(visual, [.9, 1.48, .62], mats.pale, [0, 1.02, 0], "folded-torso", "body");
     for (let plate = 0; plate < 7; plate += 1) { const p = add(visual, [1.12 - plate * .07, .08, .72], plate % 2 ? mats.body : mats.pale, [0, .48 + plate * .22, -.02 + plate % 2 * .08], `vellum-plate-${plate}`, "body"); p.rotation.z = (plate % 2 ? 1 : -1) * .06; }
-    for (const side of [-1, 1] as const) { const arm = pivot([.2, 1.15, .24], mats.body, [side * .58, 1.45, 0], [0, -.5, 0], `${side < 0 ? "left" : "right"}-ink-arm`, "arms"); arm.userData.side = side; }
+    for (const side of [-1, 1] as const) {
+      const sideName = side < 0 ? "left" : "right";
+      const arm = joint(visual, [side * .5, 1.48, 0], `${sideName}-ink-arm`, "arms");
+      arm.userData.side = side;
+      add(arm, [.26, .22, .28], mats.body, [0, 0, 0], `${sideName}-paper-shoulder`, undefined, "joint");
+      add(arm, [.18, .52, .22], mats.body, [0, -.23, 0], `${sideName}-upper-ink-arm`, undefined, "limb-y");
+      const elbow = joint(arm, [0, -.47, .015], `${sideName}-ink-elbow`);
+      elbow.userData.side = side;
+      elbow.userData.phase = side < 0 ? 0 : Math.PI;
+      elbow.userData.livingJointRole = "knee";
+      elbow.rotation.x = side * .06;
+      add(elbow, [.22, .2, .24], mats.dark, [0, 0, 0], `${sideName}-ink-elbow-joint`, undefined, "joint");
+      add(elbow, [.15, .56, .2], mats.body, [0, -.25, -.015], `${sideName}-lower-ink-arm`, undefined, "limb-y");
+      const hand = joint(elbow, [0, -.5, -.04], `${sideName}-page-hand`);
+      hand.userData.side = side;
+      hand.userData.livingJointRole = "foot";
+      add(hand, [.3, .08, .38], mats.pale, [side * .04, -.02, -.09], `${sideName}-folio-hand`, undefined, "hard");
+      for (let finger = -1; finger <= 1; finger += 1) add(hand, [.06, .035, .28], mats.pale,
+        [finger * .08, -.05, -.24], `${sideName}-page-finger-${finger + 2}`, undefined, "hard");
+    }
     add(visual, [.54, .62, .54], mats.glass, [0, 2.08, -.05], "lantern-head", "head");
     add(visual, [.34, .4, .04], mats.glow, [0, 2.08, -.34], "unwritten-page");
     for (let mark = 0; mark < 5; mark += 1) add(visual, [.34, .025, .04], mats.dark, [0, 1.32 + mark * .17, -.42], `living-redline-${mark}`);
@@ -594,6 +873,18 @@ function decorateSummon(builder: Builder) {
     }
     for (let wave = 0; wave < 5; wave += 1) add(visual, [.8 - wave * .08, .04, .12], wave % 2 ? mats.glow : mats.pale, [0, .88 + wave * .11, -.32 + wave * .17], `inner-shoreline-${wave}`);
     for (const side of [-1, 1]) for (let branch = 0; branch < 5; branch += 1) { const antler = add(visual, [.1, .52, .1], branch % 2 ? mats.glass : mats.pale, [side * (.25 + branch * .11), 1.62 + branch * .2, -1.0 + branch * .08], `mirror-antler-${side}-${branch}`); antler.rotation.z = side * (-.18 - branch * .08); }
+    for (const position of ["front", "rear"] as const) for (const side of [-1, 1] as const) {
+      const sideName = side < 0 ? "left" : "right";
+      const lower = visual.getObjectByName(`glasswake-stag-${position}-${sideName}-lower-leg`) as THREE.Mesh;
+      lower.material = mats.membrane;
+      add(lower.parent!, [.045, .42, .045], mats.glow, [0, -.18, 0], `${position}-${sideName}-leg-tide`, undefined, "limb-y");
+      const foot = visual.getObjectByName(`glasswake-stag-${position}-${sideName}-foot-pivot`)!;
+      const wakeRing = add(foot, [.42, .32, .045], mats.glow, [0, -.055, -.02], `${position}-${sideName}-wake-ring`, undefined, "ring");
+      wakeRing.rotation.x = Math.PI / 2;
+    }
+    const glassHead = visual.getObjectByName("glasswake-stag-head-pivot")!;
+    add(glassHead, [.54, .12, .38], mats.glass, [0, .18, -.34], "mirror-brow", undefined, "hard");
+    add(glassHead, [.46, .045, .08], mats.glow, [0, -.2, -.62], "shoreline-mouth", undefined, "hard");
   }
 }
 
@@ -647,7 +938,7 @@ const HIGH_MAGIC_KINDS = new Set<LivingBestiaryVisualKind>([
 /** Tags only authored magical details; ordinary anatomy stays physically quiet. */
 function applyLivingArtPolish(builder: Builder) {
   const { kind, visual } = builder;
-  visual.userData.livingBestiaryArtPass = 2;
+  visual.userData.livingBestiaryArtPass = 3;
   let specialIndex = 0;
   visual.traverse((object) => {
     if (!(object instanceof THREE.Mesh) || !object.name.startsWith(`${kind}-`)) return;
@@ -682,17 +973,70 @@ function applyLivingArtPolish(builder: Builder) {
   });
 }
 
+const HEAD_FOLLOW_PATTERNS: Readonly<Partial<Record<LivingBestiaryVisualKind, RegExp>>> = Object.freeze({
+  "thornhide-trufflehog": /root-tusk/u,
+  "petalmask-tanuki": /petal-mask|mask-petal/u,
+  "ironbeak-magpie": /iron-beak/u,
+  "stormcrest-ibex": /spiral-horn|static-spark/u,
+  "cloudkite-pika": /ear-sail/u,
+  "briarclaw-lynx": /ear-tuft/u,
+  "cragglass-basilisk": /crown-shard/u,
+  "brinewhisk-otter": /brine-whisker/u,
+  "riverwright-beaver": /incisor/u,
+  "mirecrown-crane": /mire-crown/u,
+  "ilyr-virebloom": /(?:left|right)-antler-pivot/u,
+  kharza: /old-scar/u,
+  "sugarwake-sovereign": /sugar-antler|sovereign-crown-ring|crown-point/u,
+  "glasswake-stag": /mirror-antler/u,
+});
+
+/** Reparents authored facial details without changing their world-space pose. */
+function attachAuthoredHeadDetails(builder: Builder) {
+  const pattern = HEAD_FOLLOW_PATTERNS[builder.kind];
+  const head = builder.visual.getObjectByName(`${builder.kind}-head-pivot`);
+  if (!pattern || !head) return;
+  builder.visual.updateMatrixWorld(true);
+  for (const child of [...builder.visual.children]) {
+    if (child === head || !pattern.test(child.name.slice(builder.kind.length + 1))) continue;
+    head.attach(child);
+  }
+}
+
+// Authored once from the exact post-polish BufferGeometry bounds. Keeping the
+// values data-driven avoids a Box3 hierarchy walk every time a herd member is
+// instantiated while preserving the runtime footOffset contract.
+const LIVING_ART_FOOT_CORRECTIONS: Readonly<Partial<Record<LivingBestiaryVisualKind, number>>> = Object.freeze({
+  "thornhide-trufflehog": .0302213526,
+  "petalmask-tanuki": .019938498,
+  "hearthback-badger": .0363910654,
+  "sunfoil-pangolin": .0363910654,
+  "glassstep-jerboa": .0042316468,
+  "stormcrest-ibex": .0128241489,
+  "cindercoil-gecko": .0528436328,
+  "cloudkite-pika": .04667392,
+  "briarclaw-lynx": .0137687852,
+  "gravebell-jackal": .0168536416,
+  "cragglass-basilisk": .0555110572,
+  "kilnscale-salamander": .0497289505,
+  "sporeback-gardener": .0302213526,
+  kharza: -.013933539,
+  "sugarwake-sovereign": .0075399449,
+  asterjaw: -.0211929205,
+});
+
 export function createLivingBestiaryMobVisual(kind: LivingBestiaryVisualKind, id: number): MobVisual {
   const builder = createBuilder(kind, id);
   if ((["ilyr-virebloom", "thalassene", "orichalc", "varkesh-stormmane", "kharza", "sugarwake-sovereign"] as readonly MobKind[]).includes(kind)) decorateMythic(builder);
   else if ((["asterjaw", "vellum-warden", "choir-of-one", "glasswake-stag"] as readonly MobKind[]).includes(kind)) decorateSummon(builder);
   else decorateRegular(builder);
+  attachAuthoredHeadDetails(builder);
   applyLivingArtPolish(builder);
   addLivingMountTack(builder);
   // Rounded feet/pages have true curved bounds; retain the production spawn
   // contact plane instead of letting those curves clip through terrain.
   if (kind === "orichalc") builder.visual.position.y += .18759377827660684;
   if (kind === "vellum-warden") builder.visual.position.y += .19;
+  builder.visual.position.y += LIVING_ART_FOOT_CORRECTIONS[kind] ?? 0;
   return { group: builder.group, visual: builder.visual, parts: builder.parts };
 }
 
@@ -702,6 +1046,8 @@ type LivingPoseCache = Readonly<{
   fins: readonly LivingPoseNode[];
   wings: readonly LivingPoseNode[];
   tentacles: readonly LivingPoseNode[];
+  groundLegs: readonly LivingPoseNode[];
+  limbJoints: readonly LivingPoseNode[];
   arthropodLegs: readonly LivingPoseNode[];
   pulses: readonly LivingPoseNode[];
   specials: readonly LivingPoseNode[];
@@ -717,6 +1063,8 @@ function livingPoseCache(visual: THREE.Object3D, kind: LivingBestiaryVisualKind)
   const fins: LivingPoseNode[] = [];
   const wings: LivingPoseNode[] = [];
   const tentacles: LivingPoseNode[] = [];
+  const groundLegs: LivingPoseNode[] = [];
+  const limbJoints: LivingPoseNode[] = [];
   const arthropodLegs: LivingPoseNode[] = [];
   const pulses: LivingPoseNode[] = [];
   const specials: LivingPoseNode[] = [];
@@ -742,6 +1090,8 @@ function livingPoseCache(visual: THREE.Object3D, kind: LivingBestiaryVisualKind)
     if (/-wing-pivot$/u.test(name)) wings.push(node);
     if (/-tentacle-\d+-pivot$/u.test(name)) tentacles.push(node);
     if (visual.userData.bodyPlan === "arthropod" && /-leg-\d+-pivot$/u.test(name)) arthropodLegs.push(node);
+    if (visual.userData.bodyPlan !== "arthropod" && /-(?:front|rear)-(?:left|right)-leg-pivot$|-(?:left|right)-leg-pivot$/u.test(name)) groundLegs.push(node);
+    if (typeof node.userData.livingJointRole === "string") limbJoints.push(node);
     if (/glow|heart|spark|mote|star|note|shoreline|unwritten-page|color-wave/u.test(name)) pulses.push(node);
     if (/ore-segment|vellum-plate|mantle-fold|implied-face|living-coral|antler-flower/u.test(name)) specials.push(node);
     if (Number(node.userData.livingFloatAmplitude) > 0) floaters.push(node);
@@ -749,7 +1099,7 @@ function livingPoseCache(visual: THREE.Object3D, kind: LivingBestiaryVisualKind)
     if (node instanceof THREE.Mesh && Number(node.userData.livingShimmerAmplitude) > 0) shimmers.push(node);
     if (Number(node.userData.livingSwingAmplitude) > 0) swings.push(node);
   });
-  const cache = Object.freeze({ tail, fins, wings, tentacles, arthropodLegs, pulses, specials, floaters, spinners, shimmers, swings });
+  const cache = Object.freeze({ tail, fins, wings, tentacles, groundLegs, limbJoints, arthropodLegs, pulses, specials, floaters, spinners, shimmers, swings });
   visual.userData.livingBestiaryPoseCache = cache;
   return cache;
 }
@@ -794,6 +1144,22 @@ export function applyLivingBestiaryPose(
   for (const [index, arm] of cache.tentacles.entries()) {
     arm.rotation.x = rest(arm, "X") + Math.sin(time * (1.7 + travel * 1.8) + index * .72) * (.08 + travel * .08);
     arm.rotation.y = rest(arm, "Y") + Math.cos(time * 1.15 + index * .55) * .07;
+  }
+  const groundCadence = time * (2.15 + travel * 5.6);
+  for (const leg of cache.groundLegs) {
+    const phase = Number(leg.userData.phase) || 0;
+    leg.rotation.x = rest(leg, "X") + Math.sin(groundCadence + phase) * travel * .2;
+  }
+  for (const joint of cache.limbJoints) {
+    const phase = Number(joint.userData.phase) || 0;
+    const role = String(joint.userData.livingJointRole || "");
+    const stride = Math.sin(groundCadence + phase) * travel;
+    const planted = Math.max(0, Math.sin(groundCadence + phase)) * travel;
+    if (role === "knee" || role === "hock") joint.rotation.x = rest(joint, "X") - stride * .11 + planted * .08;
+    else if (role === "ankle" || role === "foot") joint.rotation.x = rest(joint, "X") + stride * .08 - planted * .045;
+    else if (role === "arthropod-knee") joint.rotation.z = rest(joint, "Z") - sideOf(joint) * stride * .08;
+    else if (role === "arthropod-foot") joint.rotation.x = rest(joint, "X") + stride * .07;
+    else if (role === "claw-wrist") joint.rotation.y = rest(joint, "Y") + sideOf(joint) * alert * .11;
   }
   for (const [index, leg] of cache.arthropodLegs.entries()) {
     const side = sideOf(leg);
