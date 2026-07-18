@@ -2173,6 +2173,36 @@ export class ChunkWorld {
     }
   }
 
+  serializeSurfaceRoadGraph() {
+    return Object.fromEntries([...this.surfaceRoadGraphCache.entries()].map(([region, edges]) => [region, edges.map((edge) => ({
+      ...edge,
+      from: { ...edge.from },
+      to: { ...edge.to },
+    }))]));
+  }
+
+  restoreSurfaceRoadGraph(value: unknown) {
+    if (!value || typeof value !== "object") return;
+    for (const [region, rawEdges] of Object.entries(value as Record<string, unknown>)) {
+      if (!/^roads:-?\d+,-?\d+$/u.test(region) || !Array.isArray(rawEdges)) continue;
+      const edges = rawEdges.flatMap((raw): RoadEdge[] => {
+        if (!raw || typeof raw !== "object") return [];
+        const edge = raw as Partial<RoadEdge>;
+        if (typeof edge.id !== "string" || !edge.from || !edge.to
+          || !Number.isFinite(edge.from.x) || !Number.isFinite(edge.from.z)
+          || !Number.isFinite(edge.to.x) || !Number.isFinite(edge.to.z)) return [];
+        return [Object.freeze({
+          id: edge.id.slice(0, 256),
+          from: Object.freeze({ ...edge.from }),
+          to: Object.freeze({ ...edge.to }),
+          length: Math.max(0, Number(edge.length) || Math.hypot(edge.to.x - edge.from.x, edge.to.z - edge.from.z)),
+          loop: Boolean(edge.loop),
+        })];
+      }).slice(0, 96);
+      if (edges.length) this.surfaceRoadGraphCache.set(region, Object.freeze(edges));
+    }
+  }
+
   initializeAround(x: number, z: number) {
     const cx = Math.floor(x / CHUNK_SIZE);
     const cz = Math.floor(z / CHUNK_SIZE);
@@ -3826,6 +3856,19 @@ export class ChunkWorld {
             if (!insideChunk(shoulderX, shoulderZ)) continue;
             const shoulder = sample(shoulderX, shoulderZ);
             if (Math.abs(shoulder.height - point.y) <= 1 && shoulder.height > shoulder.waterline) set(shoulderX, shoulder.height, shoulderZ, roadBlock, false);
+          }
+          if (previous.kind === "ferry" || next.kind === "ferry") {
+            set(point.x, point.y, point.z, BlockId.Planks, false);
+            for (const side of [-1, 1] as const) {
+              const dockX = point.x + sideX * side;
+              const dockZ = point.z - sideZ * side;
+              if (insideChunk(dockX, dockZ)) set(dockX, point.y, dockZ, BlockId.Planks, false);
+            }
+            const ferryId = `surface-road-ferry:${edge.id}:${pointIndex}`;
+            this.structureMarkers.set(ferryId, {
+              type: "landmark", id: ferryId, position: { x: point.x, y: point.y + 1, z: point.z },
+              tag: `surface-road-ferry:${fromCandidate.factionId}:${toCandidate.factionId}`,
+            });
           }
           if (pointIndex % 64 === 0) this.structureMarkers.set(`surface-road:${edge.id}:${pointIndex}`, {
             type: "landmark", id: `surface-road:${edge.id}:${pointIndex}`, position: { x: point.x, y: point.y + 1, z: point.z },

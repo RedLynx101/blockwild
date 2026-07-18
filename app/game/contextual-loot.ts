@@ -17,7 +17,38 @@ export type LootContext = Readonly<{
 }>;
 export type LootEntry = Readonly<{ item: ItemCode; min: number; max: number; weight: number; rarity: LootRarity; uniqueId?: string; fallbackItem?: ItemCode }>;
 export type LootFamily = Readonly<{ id: LootFamilyId; aliases: readonly string[]; purpose: Readonly<Record<string, readonly LootEntry[]>>; optional: readonly LootEntry[]; signatureItems: readonly ItemCode[]; ownership: LootOwnership }>;
-export type ResolvedLoot = Readonly<{ slots: readonly (InventorySlot | null)[]; familyId: LootFamilyId; guaranteedCount: number; optionalCount: number; uniqueIds: readonly string[]; theft: boolean; valueBand: "survival" | "useful" | "valuable" | "exceptional" }>;
+export type ResolvedLoot = Readonly<{ slots: readonly (InventorySlot | null)[]; familyId: LootFamilyId; guaranteedCount: number; optionalCount: number; uniqueIds: readonly string[]; ownership: LootOwnership; theft: boolean; valueBand: "survival" | "useful" | "valuable" | "exceptional" }>;
+export type LootContainerRecord = Readonly<{
+  generatorVersion: number;
+  familyId: LootFamilyId;
+  ownership: LootOwnership;
+  theft: boolean;
+  theftReported: boolean;
+}>;
+export type ContextualLootWorldState = Readonly<{
+  schema: 1;
+  acquiredUniqueIds: readonly string[];
+  containers: Readonly<Record<string, LootContainerRecord>>;
+}>;
+
+export function normalizeContextualLootWorldState(value: unknown): ContextualLootWorldState {
+  const input = value && typeof value === "object" ? value as Partial<ContextualLootWorldState> : {};
+  const acquiredUniqueIds = Object.freeze([...new Set((input.acquiredUniqueIds ?? [])
+    .filter((id): id is string => typeof id === "string" && id.length > 0 && id.length <= 128))].slice(-512));
+  const containers = Object.fromEntries(Object.entries(input.containers ?? {}).flatMap(([id, record]) => {
+    if (!record || typeof record !== "object" || !(record.familyId in LOOT_FAMILIES)) return [];
+    const ownership: LootOwnership = ["abandoned", "public", "private", "hostile", "quest"].includes(record.ownership)
+      ? record.ownership : LOOT_FAMILIES[record.familyId].ownership;
+    return [[id.slice(0, 192), Object.freeze({
+      generatorVersion: Math.max(1, Math.floor(Number(record.generatorVersion) || 1)),
+      familyId: record.familyId,
+      ownership,
+      theft: Boolean(record.theft),
+      theftReported: Boolean(record.theftReported),
+    })]];
+  }).slice(-4096));
+  return Object.freeze({ schema: 1, acquiredUniqueIds, containers: Object.freeze(containers) });
+}
 
 const e = (item: ItemCode, min = 1, max = min, weight = 1, rarity: LootRarity = "common", uniqueId?: string, fallbackItem?: ItemCode): LootEntry => Object.freeze({ item, min, max, weight, rarity, ...(uniqueId ? { uniqueId } : {}), ...(fallbackItem ? { fallbackItem } : {}) });
 const tools = [e(Item.StonePickaxe), e(Item.IronPickaxe, 1, 1, .35, "rare"), e(Item.Rope, 2, 6), e(Item.PitonItem, 2, 5)];
@@ -51,16 +82,18 @@ function rollStack(entry: LootEntry, random: () => number, acquired: ReadonlySet
 
 export function resolveContextualLoot(context: LootContext): ResolvedLoot {
   const family = familyFor(context); const random = rng(context.seed ^ context.containerId.length * 2654435761); const slots = Array.from({ length: 27 }, () => null as InventorySlot | null); const acquired = context.acquiredUniqueIds ?? new Set<string>(); const uniques: string[] = [];
+  const issued = new Set(acquired);
   const roomEntries = family.purpose[context.roomRole] ?? Object.values(family.purpose)[0] ?? [];
   const guaranteed = [...(context.criticalItems ?? []).map((item) => e(item)), ...(roomEntries.length ? [roomEntries[Math.floor(random() * roomEntries.length)]] : [])];
   const stacks: InventorySlot[] = guaranteed.map((entry) => rollStack(entry, random, acquired));
   const depthBonus = context.depthBand === "abyssal" ? 2 : context.depthBand === "deep" ? 1 : 0; const optionalRolls = Math.min(6, 1 + Math.floor(Math.max(0, context.dangerTier) / 2) + Math.floor(Math.max(0, context.lockTier ?? 0) / 2) + depthBonus);
-  for (let index = 0; index < optionalRolls; index += 1) { const entry = choose(random, family.optional); if (!entry) continue; const rarityGate = entry.rarity === "very-rare" ? .16 : entry.rarity === "rare" ? .42 : entry.rarity === "uncommon" ? .72 : 1; const luck = Math.max(0, Math.min(1000, context.luck ?? 0)); if (random() > Math.min(.92, rarityGate + luck * .00018)) continue; stacks.push(rollStack(entry, random, acquired)); if (entry.uniqueId && !acquired.has(entry.uniqueId)) uniques.push(entry.uniqueId); }
+  for (let index = 0; index < optionalRolls; index += 1) { const entry = choose(random, family.optional); if (!entry) continue; const rarityGate = entry.rarity === "very-rare" ? .16 : entry.rarity === "rare" ? .42 : entry.rarity === "uncommon" ? .72 : 1; const luck = Math.max(0, Math.min(1000, context.luck ?? 0)); if (random() > Math.min(.92, rarityGate + luck * .00018)) continue; stacks.push(rollStack(entry, random, issued)); if (entry.uniqueId && !issued.has(entry.uniqueId)) { uniques.push(entry.uniqueId); issued.add(entry.uniqueId); } }
   // Local material identity without turning every chest into a biome sampler.
   if (context.depthBand === "deep" || context.depthBand === "abyssal") stacks.push({ item: context.depthBand === "abyssal" ? Item.ResonantCrystalItem : Item.RawIron, count: 1 + Math.floor(random() * 2) });
   for (let index = 0; index < stacks.length && index < 27; index += 1) slots[(index * 7 + 3) % 27] = stacks[index];
   const score = context.dangerTier + (context.lockTier ?? 0) + depthBonus * 2; const valueBand = score >= 12 ? "exceptional" : score >= 7 ? "valuable" : score >= 3 ? "useful" : "survival";
-  return Object.freeze({ slots: Object.freeze(slots), familyId: family.id, guaranteedCount: guaranteed.length, optionalCount: Math.max(0, stacks.length - guaranteed.length), uniqueIds: Object.freeze(uniques), theft: (context.ownership ?? family.ownership) === "private", valueBand });
+  const ownership = context.ownership ?? family.ownership;
+  return Object.freeze({ slots: Object.freeze(slots), familyId: family.id, guaranteedCount: guaranteed.length, optionalCount: Math.max(0, stacks.length - guaranteed.length), uniqueIds: Object.freeze(uniques), ownership, theft: ownership === "private", valueBand });
 }
 
 export function lootPoolJaccard(left: LootFamilyId, right: LootFamilyId) { const a = new Set(LOOT_FAMILIES[left].optional.map((entry) => entry.item)); const b = new Set(LOOT_FAMILIES[right].optional.map((entry) => entry.item)); const union = new Set([...a, ...b]); return union.size ? [...a].filter((item) => b.has(item)).length / union.size : 0; }

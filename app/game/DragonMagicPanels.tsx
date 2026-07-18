@@ -4,6 +4,7 @@ import { useId, useMemo, useState, type CSSProperties } from "react";
 import {
   MAX_FAVORITE_SPELLS,
   SPELLS,
+  filterSpellJournalEntries,
   shouldShowManaBar,
   spellWheelSlots,
   type MagicState,
@@ -12,6 +13,7 @@ import {
   type SpellId,
   type SpellSchool,
 } from "./magic";
+import { CREATURE_TYPES, CREATURE_TYPE_IDS, type CreatureTypeId } from "./creature-types";
 import {
   ASCENDANT_TRAITS,
   MAX_SKILL_LEVEL,
@@ -77,7 +79,8 @@ const DRAGON_MAGIC_STYLES = `
 .dragon-magic-body{position:relative;height:calc(100% - 126px);min-height:0}
 .dragon-magic-journal{display:grid;grid-template-columns:340px minmax(0,1fr);height:100%;min-height:0}
 .dragon-magic-index{display:flex;min-height:0;flex-direction:column;border-right:1px solid #5b5d52;background:#202320c9}
-.dragon-magic-tools{display:grid;grid-template-columns:1fr 132px;gap:8px;padding:14px;border-bottom:1px solid #505348}
+.dragon-magic-tools{display:flex;flex-direction:column;gap:8px;padding:14px;border-bottom:1px solid #505348}
+.dragon-magic-facetScroller{display:flex;gap:6px;overflow-x:auto;scrollbar-width:thin;padding-bottom:2px}.dragon-magic-facetScroller select{flex:0 0 126px}
 .dragon-magic-tools input,.dragon-magic-tools select{min-width:0;height:38px;border:1px solid #5e6256;background:#151715;color:#e8e1ce;padding:0 10px;font:inherit;font-size:11px;outline:none}
 .dragon-magic-tools input:focus,.dragon-magic-tools select:focus{border-color:var(--dm-gold)}
 .dragon-magic-list{overflow:auto;padding:6px 0 24px;scrollbar-color:#777965 #1b1d1b}
@@ -158,14 +161,15 @@ function SpellJournal({
 }: Pick<DragonMagicPanelProps, "magic" | "onSelectSpell" | "onToggleFavorite">) {
   const [query, setQuery] = useState("");
   const [school, setSchool] = useState<SpellSchool | "all">("all");
+  const [type, setType] = useState<CreatureTypeId | "all">("all");
+  const [targeting, setTargeting] = useState<SpellDefinition["targeting"] | "all">("all");
+  const [source, setSource] = useState<SpellAcquisitionSource["kind"] | "all">("all");
+  const [knowledge, setKnowledge] = useState<"all" | "learned" | "recorded" | "unknown">("all");
+  const [summon, setSummon] = useState<"all" | "summon" | "non-summon">("all");
   const [previewSpellId, setPreviewSpellId] = useState<SpellId>(magic.selectedSpellId ?? magic.learnedSpellIds[0] ?? SPELLS[0].id);
   const preview = SPELLS.find((spell) => spell.id === previewSpellId) ?? SPELLS[0];
-  const visibleSpells = useMemo(() => SPELLS.filter((spell) => {
-    if (school !== "all" && spell.school !== school) return false;
-    const discovered = Boolean(magic.journal[spell.id] || magic.learnedSpellIds.includes(spell.id));
-    const label = discovered ? `${spell.name} ${spell.school}` : `unknown ${spell.school}`;
-    return label.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
-  }), [magic.journal, magic.learnedSpellIds, query, school]);
+  const visibleSpells = useMemo(() => filterSpellJournalEntries(magic, { query, school, type, targeting, source, learned: knowledge, summon }),
+    [knowledge, magic, query, school, source, summon, targeting, type]);
   const learned = magic.learnedSpellIds.includes(preview.id);
   const discovered = Boolean(magic.journal[preview.id] || learned);
   const favorite = magic.favoriteSpellIds.includes(preview.id);
@@ -175,10 +179,28 @@ function SpellJournal({
       <aside className="dragon-magic-index" aria-label="Spell journal entries">
         <div className="dragon-magic-tools">
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search known spells" aria-label="Search spell journal" />
-          <select value={school} onChange={(event) => setSchool(event.target.value as SpellSchool | "all")} aria-label="Filter spell school">
-            <option value="all">All schools</option>
-            {Object.entries(SCHOOL_PRESENTATION).map(([id, presentation]) => <option key={id} value={id}>{presentation.label}</option>)}
-          </select>
+          <div className="dragon-magic-facetScroller" aria-label="Spell journal filters">
+            <select value={school} onChange={(event) => setSchool(event.target.value as SpellSchool | "all")} aria-label="Filter spell school">
+              <option value="all">All schools</option>
+              {Object.entries(SCHOOL_PRESENTATION).map(([id, presentation]) => <option key={id} value={id}>{presentation.label}</option>)}
+            </select>
+            <select value={type} onChange={(event) => setType(event.target.value as CreatureTypeId | "all")} aria-label="Filter spell type">
+              <option value="all">All types</option>
+              {CREATURE_TYPE_IDS.map((id) => <option key={id} value={id}>{CREATURE_TYPES[id].name}</option>)}
+            </select>
+            <select value={targeting} onChange={(event) => setTargeting(event.target.value as SpellDefinition["targeting"] | "all")} aria-label="Filter spell targeting">
+              <option value="all">All targeting</option><option value="self">Self</option><option value="aimed">Aimed</option><option value="ground">Ground</option><option value="cone">Cone</option>
+            </select>
+            <select value={source} onChange={(event) => setSource(event.target.value as SpellAcquisitionSource["kind"] | "all")} aria-label="Filter spell source">
+              <option value="all">All sources</option><option value="faction">Faction</option><option value="loot">Loot</option><option value="quest">Quest</option><option value="dragon-lair">Dragon lair</option>
+            </select>
+            <select value={knowledge} onChange={(event) => setKnowledge(event.target.value as typeof knowledge)} aria-label="Filter learned state">
+              <option value="all">All knowledge</option><option value="learned">Learned</option><option value="recorded">Recorded</option><option value="unknown">Unknown</option>
+            </select>
+            <select value={summon} onChange={(event) => setSummon(event.target.value as typeof summon)} aria-label="Filter summon status">
+              <option value="all">All spells</option><option value="summon">Summons</option><option value="non-summon">Non-summons</option>
+            </select>
+          </div>
         </div>
         <div className="dragon-magic-list">
           {visibleSpells.map((spell) => {

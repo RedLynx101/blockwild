@@ -482,6 +482,38 @@ export type MagicState = Readonly<{
   cooldownReadyAt: Readonly<Partial<Record<SpellId, number>>>;
 }>;
 
+export type SpellJournalFacets = Readonly<{
+  query: string;
+  school: SpellSchool | "all";
+  type: CreatureTypeId | "all";
+  targeting: SpellTargeting | "all";
+  source: SpellAcquisitionSource["kind"] | "all";
+  learned: "all" | "learned" | "recorded" | "unknown";
+  summon: "all" | "summon" | "non-summon";
+}>;
+
+export function filterSpellJournalEntries(state: MagicState, facets: SpellJournalFacets) {
+  const learnedIds = new Set(state.learnedSpellIds);
+  const query = facets.query.trim().toLocaleLowerCase();
+  return Object.freeze(SPELLS.filter((spell) => {
+    const learned = learnedIds.has(spell.id);
+    const recorded = Boolean(state.journal[spell.id]);
+    const discovered = learned || recorded;
+    const isSummon = spell.effects.some((effect) => effect.kind === "summon");
+    if (facets.school !== "all" && spell.school !== facets.school) return false;
+    if (facets.type !== "all" && !SPELL_TYPE_PROFILES[spell.id].includes(facets.type)) return false;
+    if (facets.targeting !== "all" && spell.targeting !== facets.targeting) return false;
+    if (facets.source !== "all" && !spell.sources.some((source) => source.kind === facets.source)) return false;
+    if (facets.learned === "learned" && !learned) return false;
+    if (facets.learned === "recorded" && (!recorded || learned)) return false;
+    if (facets.learned === "unknown" && discovered) return false;
+    if (facets.summon === "summon" && !isSummon) return false;
+    if (facets.summon === "non-summon" && isSummon) return false;
+    const searchable = discovered ? `${spell.name} ${spell.school} ${spell.targeting} ${SPELL_TYPE_PROFILES[spell.id].join(" ")}` : `unknown ${spell.school}`;
+    return searchable.toLocaleLowerCase().includes(query);
+  }));
+}
+
 export type TomeLearningOutcome = "learned" | "already-known" | "unknown-tome";
 export type TomeLearningResult = Readonly<{
   state: MagicState;

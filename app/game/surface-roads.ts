@@ -3,6 +3,45 @@ export type RoadEdge = Readonly<{ id: string; from: RoadNode; to: RoadNode; leng
 export type RoadSample = Readonly<{ height: number; waterline: number; water: boolean; forbidden?: boolean; slopeRisk?: number }>;
 export type RoadPointKind = "road" | "switchback" | "bridge" | "causeway" | "ferry";
 export type RoadPoint = Readonly<{ x: number; y: number; z: number; kind: RoadPointKind; grade: number }>;
+export type RoadEventKind = "caravan" | "lost-traveler" | "repair" | "creature-crossing" | "toll" | "ambush";
+export type RoadEventState = Readonly<{
+  schema: 1;
+  anchorId: string;
+  kind: RoadEventKind | "quiet";
+  status: "quiet" | "triggered" | "resolved";
+  triggeredDay: number;
+  revision: number;
+}>;
+
+function hashText(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) hash = Math.imul(hash ^ value.charCodeAt(index), 16777619);
+  return hash >>> 0;
+}
+
+/** One compact, deterministic result per authored anchor; quiet anchors are persisted too. */
+export function planRoadEvent(seed: string | number, anchorId: string, day: number, dangerTier: number): RoadEventState {
+  const hash = hashText(`${seed}|${anchorId}|road-event-v1`);
+  const roll = hash / 0x1_0000_0000;
+  const danger = Math.max(0, Math.min(10, dangerTier));
+  const eventChance = .32 + danger * .025;
+  if (roll >= eventChance) return Object.freeze({ schema: 1, anchorId, kind: "quiet", status: "quiet", triggeredDay: Math.max(1, Math.floor(day)), revision: 0 });
+  const events: readonly RoadEventKind[] = danger >= 7
+    ? ["ambush", "repair", "creature-crossing", "lost-traveler", "toll", "caravan"]
+    : ["caravan", "creature-crossing", "lost-traveler", "repair", "toll", "ambush"];
+  const kind = events[(hash >>> 9) % events.length];
+  return Object.freeze({ schema: 1, anchorId, kind, status: "triggered", triggeredDay: Math.max(1, Math.floor(day)), revision: 1 });
+}
+
+export function normalizeRoadEventState(value: unknown, anchorId: string): RoadEventState | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Partial<RoadEventState>;
+  const kind = ["quiet", "caravan", "lost-traveler", "repair", "creature-crossing", "toll", "ambush"].includes(String(raw.kind))
+    ? raw.kind as RoadEventState["kind"] : null;
+  if (!kind) return null;
+  const status = ["quiet", "triggered", "resolved"].includes(String(raw.status)) ? raw.status as RoadEventState["status"] : kind === "quiet" ? "quiet" : "triggered";
+  return Object.freeze({ schema: 1, anchorId, kind, status, triggeredDay: Math.max(1, Math.floor(Number(raw.triggeredDay) || 1)), revision: Math.max(0, Math.floor(Number(raw.revision) || 0)) });
+}
 
 const distance = (left: RoadNode, right: RoadNode) => Math.hypot(left.x - right.x, left.z - right.z);
 const edgeId = (left: RoadNode, right: RoadNode) => [left.id, right.id].sort().join("<->");
