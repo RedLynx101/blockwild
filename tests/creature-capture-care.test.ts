@@ -27,7 +27,6 @@ test("all nine capture profiles are deterministic authored checklists", () => {
   assert.equal(unknown.ready, false);
   assert.equal(unknown.conditions[0]?.label, "Unknown condition");
 });
-
 test("aquatic capture requires both shared medium and a fitted Tide Lens", () => {
   const withoutLens = evaluateCaptureReadiness({ profileId: "aquatic", fittedLens: null, states: { submerged: true }, learnedConditions: ["submerged", "tide-lens"] });
   assert.equal(withoutLens.ready, false);
@@ -76,4 +75,3 @@ test("habitat review and compact appearance expose visible specimen identity", (
   assert.equal(appearance.aptitudeIds.length, 2);
   assert.ok(appearance.sizeScale >= 0.88 && appearance.sizeScale <= 1.12);
 });
-

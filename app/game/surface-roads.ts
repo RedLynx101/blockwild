@@ -101,7 +101,13 @@ export function planTerrainFollowingRoad(from: RoadNode, to: RoadNode, sample: (
   }
   if (!goal) {
     const fallback: RoadPoint[] = []; const count = Math.max(1, Math.ceil(Math.hypot(to.x - from.x, to.z - from.z)));
-    for (let index = 0; index <= count; index += 1) { const t = index / count, x = Math.round(from.x + (to.x - from.x) * t), z = Math.round(from.z + (to.z - from.z) * t), terrain = sample(x, z); fallback.push(Object.freeze({ x, z, y: terrain.water ? terrain.waterline + 1 : terrain.height, kind: terrain.water ? "bridge" : "road", grade: 0 })); }
+    for (let index = 0; index <= count; index += 1) {
+      const t = index / count, x = Math.round(from.x + (to.x - from.x) * t), z = Math.round(from.z + (to.z - from.z) * t), terrain = sample(x, z);
+      // A failed protected-parcel search must fail closed. The earlier straight
+      // fallback could cut directly through the exact structures A* rejected.
+      if (terrain.forbidden) return Object.freeze([]);
+      fallback.push(Object.freeze({ x, z, y: terrain.water ? terrain.waterline + 1 : terrain.height, kind: terrain.water ? "bridge" : "road", grade: 0 }));
+    }
     return Object.freeze(fallback);
   }
   const coarse: SearchNode[] = []; let cursor: SearchNode | undefined | null = goal;

@@ -3,7 +3,20 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { Item } from "../app/game/data";
 import { auditLootFamilies, LOOT_FAMILIES, resolveContextualLoot } from "../app/game/contextual-loot";
-import { GUILDS, GUILD_NPCS, GUILD_QUESTS, compatibleGuildIdsForSettlement, planGuildHalls } from "../app/game/guilds";
+import {
+  GUILDS,
+  GUILD_NPCS,
+  GUILD_QUESTS,
+  applyGuildSemanticEvent,
+  compatibleGuildIdsForSettlement,
+  completeGuildQuest,
+  createGuildBook,
+  inviteToGuild,
+  joinGuild,
+  planGuildHalls,
+  questProgress,
+  startGuildQuest,
+} from "../app/game/guilds";
 import { auditLegendaryEncounterDefinitions } from "../app/game/legendary-encounters";
 import { SUMMON_CONTRACTS } from "../app/game/summon-contracts";
 import { auditRoadPlan, planRegionalRoadGraph, planTerrainFollowingRoad } from "../app/game/surface-roads";
@@ -42,7 +55,7 @@ function auditLoot(simulations = 10_000) {
 }
 
 function auditGuilds() {
-  const candidates = Array.from({ length: 10 }, (_, region) => [
+  const candidates = Array.from({ length: 10 }, () => [
     ["wood-elves", "surface"], ["hobbits", "surface"], ["atlantians", "underwater"],
     ["dwarves", "underground"], ["goblins", "surface"], ["sugarcourt", "surface"],
   ] as const).flatMap((entries, region) => entries.map(([factionId, environment], index) => ({
@@ -55,7 +68,38 @@ function auditGuilds() {
   const occupiedOnce = new Set(halls.map((hall) => hall.settlementId)).size === halls.length;
   const deterministic = JSON.stringify(halls) === JSON.stringify(planGuildHalls("release-halls", [...candidates].reverse()));
   const campaignComplete = Object.values(GUILDS).every((guild) => guild.ranks.length === 6 && guild.questIds.length === 8 && guild.principalNpcIds.length === 3);
-  return { guilds: Object.keys(GUILDS).length, quests: GUILD_QUESTS.length, principalNpcs: GUILD_NPCS.length, recruits: GUILD_NPCS.filter((npc) => npc.recruitable).length, halls: halls.length, counts, occupiedOnce, deterministic, campaignComplete, pass: campaignComplete && occupiedOnce && deterministic && Object.values(counts).every((count) => count > 0) };
+  const campaignFailures: string[] = [];
+  for (const guildId of Object.keys(GUILDS) as Array<keyof typeof GUILDS>) {
+    const inviter = GUILD_NPCS.find((npc) => npc.guildId === guildId);
+    if (!inviter) { campaignFailures.push(`${guildId}: no inviter`); continue; }
+    let book = joinGuild(inviteToGuild(createGuildBook(), guildId, inviter.id), guildId);
+    for (const quest of GUILD_QUESTS.filter((entry) => entry.guildId === guildId)) {
+      book = startGuildQuest(book, quest.id);
+      if (!book.guilds[guildId].activeQuestIds.includes(quest.id)) { campaignFailures.push(`${quest.id}: unreachable start`); break; }
+      for (const objective of quest.objectives) for (let proof = 0; proof < objective.target; proof += 1) {
+        book = applyGuildSemanticEvent(book, {
+          kind: objective.kind,
+          guildId,
+          questId: quest.id,
+          objectiveId: objective.id,
+          targetId: objective.predicate.targetIds[0],
+          demonstrationId: `${quest.id}:${objective.id}:${proof}`,
+          context: {
+            creatureKind: objective.predicate.creatureKinds[0],
+            locationId: objective.predicate.locationIds[0],
+            itemId: objective.predicate.itemIds[0],
+            encounterId: objective.predicate.encounterIds[0],
+            actorId: objective.predicate.actorIds[0],
+          },
+        });
+      }
+      if (!questProgress(book, quest.id)?.complete) { campaignFailures.push(`${quest.id}: objectives cannot complete`); break; }
+      book = completeGuildQuest(book, quest.id, quest.solutionFamilies[0]);
+      if (!book.guilds[guildId].completedQuestIds.includes(quest.id)) { campaignFailures.push(`${quest.id}: outcome cannot resolve`); break; }
+    }
+  }
+  const campaignReachable = campaignFailures.length === 0;
+  return { guilds: Object.keys(GUILDS).length, quests: GUILD_QUESTS.length, principalNpcs: GUILD_NPCS.length, recruits: GUILD_NPCS.filter((npc) => npc.recruitable).length, halls: halls.length, counts, occupiedOnce, deterministic, campaignComplete, campaignReachable, campaignFailures, pass: campaignComplete && campaignReachable && occupiedOnce && deterministic && Object.values(counts).every((count) => count > 0) };
 }
 
 function auditRoads(seedCount = 50) {

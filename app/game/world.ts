@@ -1103,8 +1103,14 @@ export function selectDeepgearLiftSite(
   sites.sort((left, right) => Number(right.rise >= 5) - Number(left.rise >= 5)
     || (right.rise - right.slope * 1.75) - (left.rise - left.slope * 1.75)
     || left.order - right.order);
-  const { order: _order, rise: _rise, slope: _slope, ...selected } = sites[0];
-  return Object.freeze(selected);
+  const selected = sites[0];
+  return Object.freeze({
+    x: selected.x,
+    z: selected.z,
+    surfaceY: selected.surfaceY,
+    liftBottomY: selected.liftBottomY,
+    liftTopY: selected.liftTopY,
+  });
 }
 
 function valueNoise2(x: number, z: number, seed: number) {
@@ -3827,13 +3833,19 @@ export class ChunkWorld {
         const to = { ...edge.to, x: Math.round(edge.to.x - ux * toInset), z: Math.round(edge.to.z - uz * toInset) };
         let road = this.surfaceRoadCache.get(edge.id);
         if (!road) {
+          const protectedSettlements = [...candidates.values()].filter((candidate) => candidate.id !== fromCandidate.id && candidate.id !== toCandidate.id);
           road = planTerrainFollowingRoad(from, to, (roadX, roadZ) => {
             const column = sample(roadX, roadZ);
             const around = [[4, 0], [-4, 0], [0, 4], [0, -4]].map(([ox, oz]) => sample(roadX + ox, roadZ + oz).height);
+            const forbidden = protectedSettlements.some((candidate) => {
+              const radius = SETTLEMENT_SIZE_RULES[candidate.size].radiusBlocks + 8;
+              return (candidate.center.x - roadX) ** 2 + (candidate.center.z - roadZ) ** 2 <= radius * radius;
+            });
             return {
               height: column.height,
               waterline: column.waterline,
               water: column.height <= column.waterline,
+              forbidden,
               slopeRisk: Math.max(...around.map((height) => Math.abs(height - column.height))),
             };
           });

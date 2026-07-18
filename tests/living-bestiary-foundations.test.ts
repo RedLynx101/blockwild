@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   CREATURE_TYPE_IDS, resolveCreatureTypes, resolveTypeEffectiveness, resolveTypedPackets, validateCreatureTypeRegistry,
-  type CreatureTypeSource, type CreatureTypeId,
+  type CreatureTypeSource,
 } from "../app/game/creature-types";
 import { CREATURE_MOVES, defaultMoveSetForTypes, learnedMovesAtLevel, validateCreatureMoveRegistry } from "../app/game/creature-moves";
 import { creatureProfile, validateCreatureProfiles } from "../app/game/creature-profiles";

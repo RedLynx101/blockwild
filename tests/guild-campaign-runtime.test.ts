@@ -3,6 +3,7 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { GuildPanel } from "../app/game/GuildPanel.tsx";
+import { VoxelEngine } from "../app/game/engine.ts";
 import {
   GUILDS,
   GUILD_NPCS,
@@ -151,6 +152,68 @@ test("objective predicates require their authored creature, site, item, actor, o
   assert.equal(invalid, book);
   const completed = completeGuildQuest(book, quest.id, quest.solutionFamilies[0]);
   assert.ok(completed.guilds[quest.guildId].completedQuestIds.includes(quest.id));
+});
+
+test("all 56 chapters are reachable in sequence through exact scoped proof", () => {
+  for (const guildId of Object.keys(GUILDS) as Array<keyof typeof GUILDS>) {
+    const inviter = GUILD_NPCS.find((npc) => npc.guildId === guildId)!;
+    let book = enterGuild(createGuildBook(), guildId, inviter.id);
+    for (const quest of GUILD_QUESTS.filter((entry) => entry.guildId === guildId)) {
+      book = startGuildQuest(book, quest.id);
+      assert.ok(book.guilds[guildId].activeQuestIds.includes(quest.id), `${quest.id} must start after its predecessor`);
+      for (const objective of quest.objectives) for (let proof = 0; proof < objective.target; proof += 1) {
+        book = applyGuildSemanticEvent(book, eventFor(quest, objective, `${quest.id}:${objective.id}:${proof}`));
+      }
+      assert.equal(questProgress(book, quest.id)?.complete, true, `${quest.id} must have a complete semantic route`);
+      book = completeGuildQuest(book, quest.id, quest.solutionFamilies[0]);
+      assert.ok(book.guilds[guildId].completedQuestIds.includes(quest.id), `${quest.id} must resolve and unlock the next chapter`);
+    }
+    assert.equal(book.guilds[guildId].completedQuestIds.length, 8);
+    assert.equal(book.guilds[guildId].membership, "honored");
+  }
+});
+
+test("the final charter choice is visible and the engine records it as the last objective", () => {
+  const guildId = "waykeeper" as const;
+  let book = enterGuild(createGuildBook(), guildId, "odelia-fen");
+  const quests = GUILD_QUESTS.filter((entry) => entry.guildId === guildId);
+  for (const quest of quests.slice(0, 7)) {
+    book = startGuildQuest(book, quest.id);
+    for (const objective of quest.objectives) for (let proof = 0; proof < objective.target; proof += 1) book = applyGuildSemanticEvent(book, eventFor(quest, objective, `${quest.id}:${objective.id}:${proof}`));
+    book = completeGuildQuest(book, quest.id, quest.solutionFamilies[0]);
+  }
+  const charter = quests[7];
+  book = startGuildQuest(book, charter.id);
+  for (const objective of charter.objectives.filter((entry) => entry.kind !== "choiceOutcome")) for (let proof = 0; proof < objective.target; proof += 1) {
+    book = applyGuildSemanticEvent(book, eventFor(charter, objective, `${charter.id}:${objective.id}:${proof}`));
+  }
+  assert.equal(questProgress(book, charter.id)?.complete, false, "the explicit doctrine choice remains outstanding");
+  const markup = renderToStaticMarkup(createElement(GuildPanel, {
+    state: book,
+    onClose: () => undefined,
+    onJoin: () => undefined,
+    onStartQuest: () => undefined,
+    onResolveQuest: () => undefined,
+    onPromote: () => undefined,
+  }));
+  assert.match(markup, /RECORD A CONSEQUENCE/u);
+  assert.match(markup, new RegExp(GUILDS[guildId].doctrines[0], "u"));
+
+  const engine = Object.assign(Object.create(VoxelEngine.prototype), {
+    multiplayer: null,
+    guildBook: book,
+    world: { structureMarkers: new Map() },
+    audio: { play: () => undefined },
+    events: { onToast: () => undefined },
+    saveSoon: () => undefined,
+    emitHud: () => undefined,
+    addItem: () => 0,
+    spawnDrop: () => undefined,
+  }) as VoxelEngine;
+  const doctrine = GUILDS[guildId].doctrines[0];
+  assert.equal(engine.completeGuildQuest(charter.id, doctrine), true);
+  assert.equal((engine as unknown as { guildBook: GuildBookState }).guildBook.guilds[guildId].doctrineChoiceId, doctrine);
+  assert.ok((engine as unknown as { guildBook: GuildBookState }).guildBook.guilds[guildId].completedQuestIds.includes(charter.id));
 });
 
 test("guild panel leaves unmet ledgers read-only and offers an oath only after contact", () => {

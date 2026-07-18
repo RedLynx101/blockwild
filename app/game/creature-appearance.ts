@@ -43,4 +43,3 @@ export function applyAppearanceHue(hex: number, appearance: CreatureAppearance, 
     | ((Math.round(g + (target[1] - g) * amount) & 0xff) << 8)
     | (Math.round(b + (target[2] - b) * amount) & 0xff);
 }
-

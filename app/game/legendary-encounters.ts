@@ -117,6 +117,7 @@ export type LegendaryEncounterState = Readonly<{
   status: "dormant" | "active" | "resolved";
   stageIndex: number;
   objectiveProgress: Readonly<Record<string, number>>;
+  eventProofIds: readonly string[];
   outcome: LegendaryOutcome | null;
   custodyEntityId: string | null;
   uniqueResolutionToken: string | null;
@@ -125,7 +126,7 @@ export type LegendaryEncounterState = Readonly<{
 }>;
 
 export function createLegendaryEncounterState(encounterId: LegendaryEncounterId, siteId: string): LegendaryEncounterState {
-  return Object.freeze({ schema: 1, encounterId, siteId, status: "dormant", stageIndex: 0, objectiveProgress: Object.freeze({}), outcome: null, custodyEntityId: null, uniqueResolutionToken: null, worldChanges: Object.freeze([]), revision: 0 });
+  return Object.freeze({ schema: 1, encounterId, siteId, status: "dormant", stageIndex: 0, objectiveProgress: Object.freeze({}), eventProofIds: Object.freeze([]), outcome: null, custodyEntityId: null, uniqueResolutionToken: null, worldChanges: Object.freeze([]), revision: 0 });
 }
 
 export function normalizeLegendaryEncounterState(value: unknown, encounterId: LegendaryEncounterId, siteId: string): LegendaryEncounterState {
@@ -137,6 +138,7 @@ export function normalizeLegendaryEncounterState(value: unknown, encounterId: Le
     status: raw.status === "active" || raw.status === "resolved" ? raw.status : "dormant",
     stageIndex: Math.max(0, Math.min(definition.stages.length - 1, Math.floor(Number(raw.stageIndex) || 0))),
     objectiveProgress: Object.freeze(Object.fromEntries(Object.entries(raw.objectiveProgress ?? {}).filter(([key]) => key.length <= 160).slice(-64).map(([key, count]) => [key, Math.max(0, Math.floor(Number(count) || 0))]))),
+    eventProofIds: Object.freeze([...(raw.eventProofIds ?? [])].filter((entry): entry is string => typeof entry === "string" && entry.length > 0 && entry.length <= 192).slice(-128)),
     outcome: outcomeValue,
     custodyEntityId: typeof raw.custodyEntityId === "string" ? raw.custodyEntityId.slice(0, 128) : null,
     uniqueResolutionToken: typeof raw.uniqueResolutionToken === "string" ? raw.uniqueResolutionToken.slice(0, 192) : null,
@@ -156,9 +158,12 @@ export function legendaryStageProgress(state: LegendaryEncounterState) {
   return Object.freeze({ definition, stage: current, objectives: Object.freeze(objectives), complete: objectives.every((entry) => entry.current >= entry.target) });
 }
 
-export function applyLegendaryEvent(state: LegendaryEncounterState, event: Readonly<{ kind: LegendaryEventKind; amount?: number }>) {
+export function applyLegendaryEvent(state: LegendaryEncounterState, event: Readonly<{ kind: LegendaryEventKind; siteId: string; sourceId: string; amount?: number }>) {
   if (state.status === "resolved") return state;
+  if (event.siteId !== state.siteId || !event.sourceId || event.sourceId.length > 192) return state;
   const active = activateLegendaryEncounter(state);
+  const proofId = `${event.kind}:${event.sourceId}`;
+  if (active.eventProofIds.includes(proofId)) return active;
   const progress = legendaryStageProgress(active);
   let changed = false;
   const objectiveProgress = { ...active.objectiveProgress };
@@ -168,7 +173,12 @@ export function applyLegendaryEvent(state: LegendaryEncounterState, event: Reado
     changed = true;
   }
   if (!changed) return active;
-  const next = Object.freeze({ ...active, objectiveProgress: Object.freeze(objectiveProgress), revision: active.revision + 1 });
+  const next = Object.freeze({
+    ...active,
+    objectiveProgress: Object.freeze(objectiveProgress),
+    eventProofIds: Object.freeze([...active.eventProofIds, proofId].slice(-128)),
+    revision: active.revision + 1,
+  });
   const completed = legendaryStageProgress(next).complete;
   if (!completed || next.stageIndex >= progress.definition.stages.length - 1) return next;
   return Object.freeze({ ...next, stageIndex: next.stageIndex + 1, revision: next.revision + 1 });

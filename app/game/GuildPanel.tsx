@@ -45,13 +45,15 @@ export function GuildPanel({ state, onClose, onJoin, onStartQuest, onResolveQues
             {met && player.membership !== "member" && player.membership !== "honored" && <p className="guild-missing" role="note">{joinEligibility.reason}</p>}
             {quests.map((quest) => {
               const complete = player.completedQuestIds.includes(quest.id); const active = player.activeQuestIds.includes(quest.id); const progress = active ? questProgress(state, quest.id) : null;
+              const resolutionReady = Boolean(progress && progress.objectives.filter((entry) => entry.kind !== "choiceOutcome").every((entry) => entry.current >= entry.target));
+              const resolutionOptions = quest.number === 8 ? [...new Set([...quest.solutionFamilies, ...guild.doctrines])] : quest.solutionFamilies;
               const previous = quests[quest.number - 2];
               const unlocked = quest.number === 1 || Boolean(previous && player.completedQuestIds.includes(previous.id));
               return <article key={quest.id} className={`${complete ? "complete" : ""} ${active ? "active" : ""}`}>
                 <div className="guild-chapter-number">{String(quest.number).padStart(2, "0")}</div>
                 <div><h4>{quest.name}</h4><p>{quest.summary}</p><small>{progress?.explanation ?? quest.solutionFamilies.join(" / ")}</small><details><summary>Field brief, consequences, and recovery</summary><p>Giver: {quest.giverId} · Recovery contact: {quest.recoveryGiverId}</p><p>Site: {quest.locationIds.join(", ")} · Encounter: {quest.encounterIds.join(", ")}</p><ul>{quest.objectives.map((entry) => <li key={entry.id}><strong>{entry.explanation}</strong><br /><span>Failure: {entry.failureText}</span><br /><span>Recovery: {entry.recoveryText}</span></li>)}</ul><p>{quest.persistentChange}</p></details></div>
-                <div className="guild-chapter-state">{complete ? <b>RECORDED</b> : active && progress?.complete
-                  ? <div className="guild-outcome-row" aria-label={`Resolve ${quest.name}`}><small>RECORD A CONSEQUENCE</small>{quest.solutionFamilies.map((outcome) => <button type="button" key={outcome} onClick={() => onResolveQuest(quest.id, outcome)}>{outcome}</button>)}</div>
+                <div className="guild-chapter-state">{complete ? <b>RECORDED</b> : active && resolutionReady
+                  ? <div className="guild-outcome-row" aria-label={`Resolve ${quest.name}`}><small>RECORD A CONSEQUENCE</small>{resolutionOptions.map((outcome) => <button type="button" key={outcome} onClick={() => onResolveQuest(quest.id, outcome)}>{outcome}</button>)}</div>
                   : active ? <b>IN FIELD</b> : <button type="button" disabled={!["member", "honored"].includes(player.membership) || !unlocked} onClick={() => onStartQuest(quest.id)}>Accept</button>}</div>
               </article>;
             })}

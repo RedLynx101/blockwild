@@ -19,7 +19,6 @@ import {
   createLegendaryEncounterState, legendaryCanManifest, legendaryStageProgress, planLegendaryEncounterSite,
   resolveLegendaryEncounter, transferLegendaryCustody,
 } from "../app/game/legendary-encounters";
-import { MOB_DEFS } from "../app/game/mobs";
 import { auditLootFamilies, LOOT_FAMILIES, resolveContextualLoot } from "../app/game/contextual-loot";
 import { auditRoadPlan, planRegionalRoadGraph, planTerrainFollowingRoad } from "../app/game/surface-roads";
 import { createSummonContractState, groundSummon, manifestSummon, observeSummonRole, SUMMON_CONTRACTS } from "../app/game/summon-contracts";
@@ -258,7 +257,9 @@ test("rare guild lodges stay near ten percent and respect biome culture", () => 
 
 test("summon contracts preserve one stable lineage and prohibit echo duplication", () => {
   for (const kind of Object.keys(SUMMON_CONTRACTS) as Array<keyof typeof SUMMON_CONTRACTS>) {
-    let { state, manifestation } = manifestSummon(createSummonContractState("keeper"), kind, 10);
+    const firstManifestation = manifestSummon(createSummonContractState("keeper"), kind, 10);
+    let state = firstManifestation.state;
+    const manifestation = firstManifestation.manifestation;
     assert.equal(manifestation.echo, false);
     for (let count = 0; count < SUMMON_CONTRACTS[kind].concordanceRequired; count += 1) state = observeSummonRole(state, kind, SUMMON_CONTRACTS[kind].anchorEvent, 20 + count);
     const grounded = groundSummon(state, kind, manifestation.lineageId, `permanent-${kind}`, 24, false);
@@ -272,12 +273,21 @@ test("summon contracts preserve one stable lineage and prohibit echo duplication
 
 test("all six legendary encounters have staged ecology, four outcomes, anti-dup custody, and rare sites", () => {
   assert.deepEqual(auditLegendaryEncounterDefinitions(), { ok: true, issues: [], encounterCount: 6, kindCount: 6 });
+  const scoped = createLegendaryEncounterState("walking-spring", "site-walking-spring");
+  assert.equal(applyLegendaryEvent(scoped, { kind: "observe-sign", amount: 1, siteId: "another-site", sourceId: "clue-1" }), scoped, "another site cannot broadcast progress");
+  const once = applyLegendaryEvent(scoped, { kind: "observe-sign", amount: 1, siteId: scoped.siteId, sourceId: "clue-1" });
+  assert.equal(applyLegendaryEvent(once, { kind: "observe-sign", amount: 1, siteId: scoped.siteId, sourceId: "clue-1" }), once, "one object or route cannot replay proof");
   for (const encounterId of LEGENDARY_ENCOUNTER_ORDER) {
     let state = createLegendaryEncounterState(encounterId, `site-${encounterId}`);
     const definition = LEGENDARY_ENCOUNTERS[encounterId];
     for (let stageIndex = 0; stageIndex < definition.stages.length; stageIndex += 1) {
       const current = legendaryStageProgress(state);
-      for (const entry of current.stage.objectives) state = applyLegendaryEvent(state, { kind: entry.event, amount: entry.target });
+      for (const entry of current.stage.objectives) state = applyLegendaryEvent(state, {
+        kind: entry.event,
+        amount: entry.target,
+        siteId: state.siteId,
+        sourceId: `${current.stage.id}:${entry.id}`,
+      });
     }
     assert.equal(legendaryStageProgress(state).complete, true);
     const resolved = resolveLegendaryEncounter(state, "capture", `legendary-${encounterId}`);

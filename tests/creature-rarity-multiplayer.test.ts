@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
-import { VoxelEngine } from "../app/game/engine";
+import { captureResonanceMatched, VoxelEngine } from "../app/game/engine";
 import { validatePayload, type MobSnapshotEntry } from "../app/game/multiplayer";
 import { migrateCreatureProgression, type CreatureProgressionV2 } from "../app/game/creature-progression";
 
 const phenotype = Object.freeze({ sizeScale: 1.07, hueShift: -.08, markingMask: 11, markingIntensity: .74, accentVariant: 4 });
+
+test("capture resonance uses the same epoch-second clock as replicated combat statuses", () => {
+  const statuses = [{ id: "inspired" as const, stacks: 1, expiresAtSeconds: 112.5, source: null }];
+  assert.equal(captureResonanceMatched(statuses, 100), true);
+  assert.equal(captureResonanceMatched(statuses, 112.5), false);
+  assert.equal(captureResonanceMatched(statuses, Date.now() / 1000), false, "an old session status must not look permanent beside fractional world-day time");
+});
 
 test("rare appearance envelopes validate strictly", () => {
   const entry: MobSnapshotEntry = {
@@ -13,6 +20,7 @@ test("rare appearance envelopes validate strictly", () => {
     specimenId: "prime:petalfox:0:-1:specimen", primeAnchorId: "prime:petalfox:0:-1",
     appearanceRevision: "rare-test-v1",
     appearance: { progressionSeed: 12345, shiny: true, rarityForm: "prime", phenotype: { ...phenotype } },
+    statuses: [{ id: "inspired", stacks: 1, remainingSeconds: 12.5 }],
   };
   assert.equal(validatePayload("mob-snapshot", { tick: 2, mobs: [entry] }), true);
   assert.equal(validatePayload("mob-snapshot", { tick: 2, mobs: [{ ...entry, primeAnchorId: "copied:prime" }] }), false);
@@ -26,9 +34,15 @@ test("a guest reconstructs the host-authored Prime and shiny identity on its fir
     specimenId: "prime:petalfox:0:-1:specimen", primeAnchorId: "prime:petalfox:0:-1",
     appearanceRevision: "rare-test-v1",
     appearance: { progressionSeed: 12345, shiny: true, rarityForm: "prime", phenotype: { ...phenotype } },
+    statuses: [{ id: "inspired", stacks: 1, remainingSeconds: 12.5 }],
   };
   let received: Record<string, unknown> | null = null;
-  const mobs: Array<Record<string, any>> = [];
+  type NetworkHarnessMob = {
+    group: THREE.Group;
+    combatStatuses: Array<{ expiresAtSeconds: number }>;
+    [key: string]: unknown;
+  };
+  const mobs: NetworkHarnessMob[] = [];
   const guest = Object.create(VoxelEngine.prototype) as VoxelEngine;
   Object.assign(guest, {
     mobs, nextMobId: 1, pendingNetworkMobDeaths: new Set(), leadAnchors: new Map(), leadLines: new Map(), worldTime: 0,
@@ -38,7 +52,7 @@ test("a guest reconstructs the host-authored Prime and shiny identity on its fir
         kind: kind as "petalfox", entityId: String(options.specimenId), maximumLevel: 50, defaultMoveIds: [],
         legacy: options.progression as CreatureProgressionV2,
       });
-      const mob: Record<string, any> = {
+      const mob: NetworkHarnessMob = {
         id: Number(options.id), specimenId: options.specimenId, kind, group: new THREE.Group(), visual: new THREE.Group(),
         health: 1, state: "wander", progression, resolvedTypes: { types: [], sources: [], revisionKey: "" },
         combatStatuses: [], activeMove: null, name: "Petalfox", attunedOrbId: null, creatureOwnerId: null,
@@ -55,6 +69,7 @@ test("a guest reconstructs the host-authored Prime and shiny identity on its fir
     mobBaseScale: () => 1,
     removeLead: () => undefined,
     ensureLeadLine: () => undefined,
+    worldSimulationSeconds: () => 100,
   });
 
   (guest as unknown as { applyNetworkMobSnapshot(entries: MobSnapshotEntry[]): void }).applyNetworkMobSnapshot([entry]);
@@ -68,4 +83,5 @@ test("a guest reconstructs the host-authored Prime and shiny identity on its fir
   assert.equal(progression.rarityForm, "prime");
   assert.deepEqual(progression.phenotype, phenotype);
   assert.equal(mobs[0].group.userData.networkAppearanceRevision, entry.appearanceRevision);
+  assert.equal(mobs[0].combatStatuses[0].expiresAtSeconds, 112.5, "guest expiry must stay in the host's epoch-second clock domain");
 });
