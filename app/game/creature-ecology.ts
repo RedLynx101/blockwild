@@ -1,5 +1,6 @@
 import type { HabitatNeedId } from "./creature-care";
 import type { CreatureTypeSource } from "./creature-types";
+import { PRIME_FORM_PROFILES } from "./creature-rarity";
 import {
   AQUARIUM_MOB_ORDER, AQUATIC_MOB_ORDER, BIRD_ORDER, BUTTERFLY_ORDER, DRAGON_ORDER, HEARTHROADS_AQUATIC_ORDER,
   LEGENDARY_CREATURE_ORDER, LIVING_ROSTER_ORDER, MOB_DEFS, MOB_ORDER, MOSSLING_VARIANT_ORDER, POLLINATOR_ORDER,
@@ -245,13 +246,6 @@ const sets = {
   summons: new Set<MobKind>(SUMMONED_CREATURE_ORDER),
 };
 
-const prime: Readonly<Partial<Record<MobKind, string>>> = Object.freeze({
-  petalfox: "The Garden-Tailed Fox", mossling: "Old Patch", puddlehopper: "Cloudbelly",
-  pebbletortoise: "The Walking Islet", "thornhide-trufflehog": "Blackcap Rooter", "briarclaw-lynx": "The White Old Hunter",
-  "glassstep-jerboa": "Moonletter", "cloudkite-pika": "The Safe Descent Colony", "cragglass-basilisk": "The Crown in Reflection",
-  "inkveil-cuttle": "The Observatory Veil", "fossilback-trilobite": "First Stratum",
-});
-
 const explicitWork: Readonly<Partial<Record<MobKind, readonly CreatureWorkRole[]>>> = Object.freeze({
   petalfox: ["forager", "tracker", "garden"], "emberbrush-fox": ["forager", "tracker"], "moonpetal-fox": ["forager", "tracker", "scout"],
   mossling: ["soil", "garden"], "boglantern-mossling": ["soil", "garden", "light"], "cindercone-mossling": ["soil", "compost"], "moonbloom-mossling": ["garden", "light"],
@@ -350,7 +344,7 @@ function buildContract(kind: MobKind): CreatureEcologyContract {
     pollinationRoles: Object.freeze([...(pollinationRoles[kind] ?? [])]),
     perchEligible: sets.birds.has(kind),
     containment: containmentFor(kind),
-    primeForm: prime[kind] ?? null,
+    primeForm: PRIME_FORM_PROFILES[kind]?.name ?? null,
     utilitySignal: definition.utility || definition.discoveryHint || `${definition.name} is best understood through patient field observation.`,
     dropRationale: definition.drops.length ? `Drops are limited to ${definition.drops.map((drop) => drop.item).join(", ")} and reflect anatomy or carried material.` : "No lethal drop is required for this creature's value.",
     juvenileScale: RABBIT_ORDER.includes(kind as never) ? .48 : definition.family === "dragon" ? .42 : definition.radius <= .3 ? .58 : .64,

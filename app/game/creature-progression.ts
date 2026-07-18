@@ -138,8 +138,8 @@ export function aptitudesFromSeed(seed: number): readonly CreatureAptitudeId[] {
 }
 
 export function isShinySeed(seed: number) {
-  // Stable 1/2048 ecology roll. Prime and other authored forms remain separate.
-  return Math.floor(sample(seed, 8) * 2048) === 0;
+  // Stable 1/1024 ecology roll. Prime and other authored forms remain separate.
+  return Math.floor(sample(seed, 8) * 1024) === 0;
 }
 
 export type ProgressionMigrationInput = Readonly<{
