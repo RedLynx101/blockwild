@@ -540,6 +540,20 @@ test("ground route planning holds a stable side around trunks and avoids hazards
     probe: () => { throw new Error("birds must bypass ground probes"); },
   });
   assert.equal(flying.heading, 0.75);
+
+  const swimmer = chooseCreatureRoute({
+    state: createCreatureRouteState(), dt: 0.1, desiredHeading: 0, mobId: 8, allowWater: true,
+    probe: () => ({ walkable: true, water: true, clearance: 1 }),
+  });
+  assert.equal(swimmer.blocked, false, "living ground mobs may choose a safe swimming route");
+
+  const backedOut = chooseCreatureRoute({
+    state: { ...createCreatureRouteState(), blockedSeconds: 0.4 }, dt: 0.1, desiredHeading: 0, mobId: 8,
+    probe: (heading) => Math.abs(Math.abs(heading) - Math.PI) < 0.01
+      ? { walkable: true, clearance: 1 }
+      : { walkable: false, clearance: 0 },
+  });
+  assert.equal(backedOut.blocked, false, "a persistently wedged mob may back away before replanning");
 });
 
 test("ground route look-ahead caches a proven heading without losing detour hysteresis", () => {

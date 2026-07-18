@@ -809,6 +809,20 @@ export function bakedEnvironmentLightShade(baseShade: number, x: number, y: numb
 }
 
 /**
+ * Let an adjacent open shaft lend a bounded amount of skylight into its first
+ * side cell. This keeps cave entrances readable without flooding sealed rooms
+ * or turning deep tunnels into daylight.
+ */
+export function laterallyDiffusedSkyShade(cellY: number, skyTopY: number, adjacentSkyTops: readonly number[]) {
+  let shade = environmentSkyShade(cellY, skyTopY);
+  for (const adjacentSkyTop of adjacentSkyTops) {
+    const adjacent = environmentSkyShade(cellY, adjacentSkyTop);
+    shade = Math.max(shade, 0.38 + (adjacent - 0.38) * 0.72);
+  }
+  return clamp(shade, 0.38, 1);
+}
+
+/**
  * Natural surface plants require a real dry supporting block and an empty
  * destination. Passing the cave-mouth flag keeps the same rule explicit in
  * tests even when a sampled terrain height points at carved air.
@@ -4272,13 +4286,25 @@ export class ChunkWorld {
       if (localZ < 0) return north ? north.skyTops[localX + (CHUNK_SIZE - 1) * CHUNK_SIZE] : MIN_Y - 1;
       return south ? south.skyTops[localX] : MIN_Y - 1;
     };
+    const hasSkyTopAtLocal = (localX: number, localZ: number) => {
+      if (localX >= 0 && localX < CHUNK_SIZE && localZ >= 0 && localZ < CHUNK_SIZE) return true;
+      if (localZ < 0 || localZ >= CHUNK_SIZE) return localX >= 0 && localX < CHUNK_SIZE && Boolean(localZ < 0 ? north : south);
+      if (localX < 0 || localX >= CHUNK_SIZE) return Boolean(localX < 0 ? west : east);
+      return false;
+    };
     const shadeCacheWidth = CHUNK_SIZE + 2;
     const shadeCacheHeight = SECTION_HEIGHT + 2;
     // The cache belongs to this synchronous rebuild and its light/sky snapshot;
     // the next edit-driven rebuild necessarily starts with a fresh allocation.
     const shadeCache = new Float32Array(shadeCacheWidth * shadeCacheHeight * shadeCacheWidth);
     const calculateShadeAt = (localX: number, y: number, localZ: number) => bakedEnvironmentLightShade(
-      environmentSkyShade(y, skyTopAtLocal(localX, localZ)),
+      laterallyDiffusedSkyShade(
+        y,
+        skyTopAtLocal(localX, localZ),
+        ([[localX - 1, localZ], [localX + 1, localZ], [localX, localZ - 1], [localX, localZ + 1]] as const)
+          .filter(([sampleX, sampleZ]) => hasSkyTopAtLocal(sampleX, sampleZ))
+          .map(([sampleX, sampleZ]) => skyTopAtLocal(sampleX, sampleZ)),
+      ),
       chunk.cx * CHUNK_SIZE + localX,
       y,
       chunk.cz * CHUNK_SIZE + localZ,

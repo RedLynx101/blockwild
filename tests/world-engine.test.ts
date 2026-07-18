@@ -26,7 +26,7 @@ import {
   type WorldSave,
 } from "../app/game/engine.ts";
 import { harvestPlant } from "../app/game/farming.ts";
-import { BAKED_LIGHT_SOURCE_LIMIT, ChunkWorld, BIOME_NAMES, BiomeId, GENERATOR_VERSION, GLASS_OPACITY, LIQUID_SURFACE_INSET, MAX_Y, MIN_Y, PACKED_VERTEX_COLOR_RANGE, RADIAL_STREAMING_DISTANCE_THRESHOLD, SECTION_HEIGHT, WORLD_HEIGHT, bakedEnvironmentLightShade, blockIndex, chunkAabbRadialDistanceSquared, chunkKey, chunkWithinStreamingRadius, chunksWithinStreamingRadius, environmentSkyShade, liquidSurfaceInsetForCell, splitCoordinate } from "../app/game/world.ts";
+import { BAKED_LIGHT_SOURCE_LIMIT, ChunkWorld, BIOME_NAMES, BiomeId, GENERATOR_VERSION, GLASS_OPACITY, LIQUID_SURFACE_INSET, MAX_Y, MIN_Y, PACKED_VERTEX_COLOR_RANGE, RADIAL_STREAMING_DISTANCE_THRESHOLD, SECTION_HEIGHT, WORLD_HEIGHT, bakedEnvironmentLightShade, blockIndex, chunkAabbRadialDistanceSquared, chunkKey, chunkWithinStreamingRadius, chunksWithinStreamingRadius, environmentSkyShade, laterallyDiffusedSkyShade, liquidSurfaceInsetForCell, splitCoordinate } from "../app/game/world.ts";
 import { MOB_DEFS, MOB_ORDER } from "../app/game/mobs.ts";
 import { createHeldToolSpec, createRidgebackSpec, createZombieSpec, INSPECTOR_MODEL_SPECS, RIDGEBACK_GROUND_LIFT } from "../app/game/model-specs.ts";
 
@@ -674,6 +674,14 @@ test("adjacent blocks across a chunk seam do not render hidden faces", () => {
   world.dispose();
 });
 
+test("one side step from an open shaft receives bounded lateral skylight", () => {
+  const sealed = environmentSkyShade(3, 12);
+  const edge = laterallyDiffusedSkyShade(3, 12, [2]);
+  assert.ok(edge > sealed + 0.3, "the first side-cave cell should not snap straight to full cave darkness");
+  assert.ok(edge < 0.9, "lateral skylight must remain dimmer than direct open sky");
+  assert.equal(laterallyDiffusedSkyShade(3, 12, [12]), sealed, "a sealed neighboring column contributes no false daylight");
+});
+
 test("chunk meshes pack normalized attributes without losing UV or bright biome tint ranges", () => {
   const world = new ChunkWorld();
   world.reset("PACKED-CHUNK-ATTRIBUTES", undefined, { structures: false });
@@ -740,7 +748,7 @@ test("section-local shade caching expires on every rebuild", () => {
   chunk.lightIndices.clear();
   chunk.skyTops.fill(MIN_Y - 1);
   world.setBlock(3, 0, 3, BlockId.Stone, false, false);
-  world.setBlock(3, 6, 3, BlockId.Stone, false, false);
+  for (let x = 2; x <= 4; x += 1) for (let z = 2; z <= 4; z += 1) world.setBlock(x, 6, z, BlockId.Stone, false, false);
   const section = Math.floor((0 - MIN_Y) / SECTION_HEIGHT);
   const stoneTopRed = () => {
     world.rebuildSection(chunk, section);

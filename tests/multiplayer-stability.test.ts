@@ -726,6 +726,79 @@ test("guest-thrown items are host-spawned once with exact metadata and a committ
   assert.equal(snapshots.length, 1);
 });
 
+test("guest pickup intents bridge bounded pose lag but reject remote collection", () => {
+  const player = sessionState();
+  const responses: InventoryAction[] = [];
+  const makeEngine = (dropX: number) => {
+    const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+    const drop = { id: 44, item: Item.Stick, count: 1, mesh: { position: new THREE.Vector3(dropX, 70.8, 0) } };
+    Object.assign(engine, {
+      multiplayer: {
+        role: "host",
+        sendInventoryAction: (action: InventoryAction) => { responses.push(action); return 1; },
+        sendDropSnapshot: () => 1,
+      },
+      remotePlayers: new Map([[player.playerId, { target: { x: 0, y: 70, z: 0 } }]]),
+      multiplayerPlayerStates: new Map([[player.playerId, structuredClone(player)]]),
+      drops: [drop],
+      ensureHostPlayerSession: () => engine.multiplayerPlayerStates.get(player.playerId),
+      removeDrop: (index: number) => { engine.drops.splice(index, 1); },
+      sendAuthoritativePlayerState: () => undefined,
+      networkDropSnapshot: () => [],
+      multiplayerTick: 20,
+      saveSoon: () => undefined,
+      events: { onToast: () => undefined },
+    });
+    return engine;
+  };
+  const peer = { identity: { id: player.playerId, name: "Guest", color: "#fff" } };
+  const lagged = makeEngine(3);
+  (lagged as unknown as { handleRemoteInventoryAction(action: InventoryAction, peer: unknown): void }).handleRemoteInventoryAction({
+    requestId: "pickup_lagged_001", actorId: player.playerId, kind: "collect", dropId: 44,
+    pickupAt: { x: 3, y: 70.8, z: 0 }, status: "request",
+  }, peer);
+  assert.equal(responses.at(-1)?.status, "accepted");
+  assert.equal(lagged.drops.length, 0);
+
+  const remote = makeEngine(9);
+  (remote as unknown as { handleRemoteInventoryAction(action: InventoryAction, peer: unknown): void }).handleRemoteInventoryAction({
+    requestId: "pickup_remote_001", actorId: player.playerId, kind: "collect", dropId: 44,
+    pickupAt: { x: 9, y: 70.8, z: 0 }, status: "request",
+  }, peer);
+  assert.equal(responses.at(-1)?.status, "rejected");
+  assert.equal(remote.drops.length, 1);
+});
+
+test("furnace clocks replicate without churning the slot transaction revision", () => {
+  const key = "2,70,2";
+  const id = `furnace:${key}`;
+  const furnace = { input: { item: Item.RawIron, count: 1 }, fuel: { item: Item.Coal, count: 1 }, output: null, progress: 1, burn: 5, burnMax: 8 };
+  const deliveries: ContainerAction[] = [];
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  Object.assign(engine, {
+    multiplayer: {
+      role: "host",
+      identity: { id: "host-player" },
+      getPeer: () => ({ identity: { id: "guest-player" } }),
+      sendContainerAction: (action: ContainerAction) => { deliveries.push(action); return 1; },
+    },
+    chests: new Map(), furnaces: new Map([[key, furnace]]), boats: new Map(), mobs: [],
+    multiplayerContainerRevisions: new Map<string, number>(),
+    multiplayerContainerSignatures: new Map<string, string>(),
+    multiplayerPeerActiveContainers: new Map([["guest-player", id]]),
+    multiplayerPeerContainerSignatures: new Map<string, string>(),
+  });
+  const api = engine as unknown as { syncMultiplayerContainers(): void };
+  api.syncMultiplayerContainers();
+  const contentRevision = engine.multiplayerContainerRevisions.get(id);
+  furnace.progress = 2.5;
+  furnace.burn = 3.5;
+  api.syncMultiplayerContainers();
+  assert.equal(engine.multiplayerContainerRevisions.get(id), contentRevision);
+  assert.equal(deliveries.length, 2, "machine clocks should still refresh for the viewer");
+  assert.equal(deliveries.at(-1)?.machine?.progress, 2.5);
+});
+
 test("guest lead attachment consumes exactly one host-owned lead and returns the committed state", () => {
   const player = sessionState();
   player.inventory[0] = { item: Item.Lead, count: 2 };

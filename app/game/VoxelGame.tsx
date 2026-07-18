@@ -1288,6 +1288,7 @@ function drawAvatarPreviewFallback(
   variant: PlayerVariant,
   equipmentAppearance: PlayerEquipmentAppearance,
   heldItem: ItemCode | undefined,
+  offhandItem: ItemCode | undefined,
   characterAppearance?: CharacterAppearance,
 ) {
   context.clearRect(0, 0, width, height);
@@ -1319,6 +1320,10 @@ function drawAvatarPreviewFallback(
   if (heldItem !== undefined) {
     fill(ITEMS[heldItem]?.color ?? "#9b7c4a", 36, 78, 11, 50);
   }
+  if (offhandItem !== undefined) {
+    const shield = ITEMS[offhandItem]?.iconKind === "shield";
+    fill(ITEMS[offhandItem]?.color ?? "#9b7c4a", shield ? -48 : -45, shield ? 64 : 78, shield ? 24 : 11, shield ? 48 : 50);
+  }
   context.restore();
 }
 
@@ -1327,12 +1332,14 @@ function PlayerAvatarPreview({
   appearance,
   equipment,
   heldItem,
+  offhandItem,
   compact = false,
 }: {
   variant: PlayerVariant;
   appearance?: CharacterAppearance;
   equipment?: HudState["equipment"];
   heldItem?: ItemCode;
+  offhandItem?: ItemCode;
   compact?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -1368,7 +1375,9 @@ function PlayerAvatarPreview({
     model.group.rotation.y = -0.32;
     scene.add(model.group);
     const held = createPreviewHeldItem(heldItem);
+    const offhand = createPreviewHeldItem(offhandItem);
     model.setHeldItem(held);
+    model.setOffhandItem(offhand, offhandItem !== undefined && ITEMS[offhandItem]?.iconKind === "shield");
     const floor = new THREE.Mesh(new THREE.CircleGeometry(1.15, 32), new THREE.ShadowMaterial({ opacity: 0.28 }));
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = -0.01;
@@ -1408,14 +1417,14 @@ function PlayerAvatarPreview({
             context.clearRect(0, 0, canvas.width, canvas.height);
             context.drawImage(renderer.domElement, 0, 0, canvas.width, canvas.height);
           } catch {
-            drawAvatarPreviewFallback(context, canvas.width, canvas.height, variant, equipmentAppearance, heldItem, appearance);
+            drawAvatarPreviewFallback(context, canvas.width, canvas.height, variant, equipmentAppearance, heldItem, offhandItem, appearance);
           }
         } else {
-          drawAvatarPreviewFallback(context, canvas.width, canvas.height, variant, equipmentAppearance, heldItem, appearance);
+          drawAvatarPreviewFallback(context, canvas.width, canvas.height, variant, equipmentAppearance, heldItem, offhandItem, appearance);
         }
       },
       onError: () => {
-        drawAvatarPreviewFallback(context, canvas.width, canvas.height, variant, equipmentAppearance, heldItem, appearance);
+        drawAvatarPreviewFallback(context, canvas.width, canvas.height, variant, equipmentAppearance, heldItem, offhandItem, appearance);
       },
     }, false);
     const stopVisibilityObservation = observeAvatarPreviewVisibility(canvas, frameRegistration.setVisible);
@@ -1424,13 +1433,15 @@ function PlayerAvatarPreview({
       frameRegistration.dispose();
       resizeObserver.disconnect();
       model.setHeldItem(null);
+      model.setOffhandItem(null);
       disposePreviewObject(held);
+      disposePreviewObject(offhand);
       model.dispose();
       floor.geometry.dispose();
       (floor.material as THREE.Material).dispose();
       releaseAvatarPreviewRenderer();
     };
-  }, [variant, appearance, head, chest, legs, feet, heldItem, compact]);
+  }, [variant, appearance, head, chest, legs, feet, heldItem, offhandItem, compact]);
 
   return <canvas ref={canvasRef} className={`player-avatar-preview ${compact ? "compact" : ""}`} aria-label={`${variant === "female" ? "Female" : "Male"} ${appearance?.race ?? "wayfarer"} player model preview`} />;
 }
@@ -1591,6 +1602,7 @@ export default function VoxelGame() {
   const [settingsReturn, setSettingsReturn] = useState<"title" | "pause">("title");
   const [webglError, setWebglError] = useState(false);
   const [inventoryTab, setInventoryTab] = useState<"inventory" | "recipes" | "creative">("inventory");
+  const [creativeQuery, setCreativeQuery] = useState("");
   const [recipeQuery, setRecipeQuery] = useState("");
   const [previewRecipeId, setPreviewRecipeId] = useState<string | null>(null);
   const [recipeFeedback, setRecipeFeedback] = useState<RecipePlanResult | null>(null);
@@ -1625,6 +1637,10 @@ export default function VoxelGame() {
     ?? FALLBACK_CHARACTER_PROFILE;
 
   useEffect(() => {
+    if (hud.mode !== "builder" && inventoryTab === "creative") setInventoryTab("inventory");
+  }, [hud.mode, inventoryTab]);
+
+  useEffect(() => {
     const parameters = new URLSearchParams(window.location.search);
     const iconAudit = parameters.get("icon-audit");
     setIconAuditMode(iconAudit === "tomes" ? "tomes" : iconAudit === "dragons" ? "dragons" : iconAudit === "1" ? "all" : null);
@@ -1657,6 +1673,16 @@ export default function VoxelGame() {
     heldStackElementRef.current = element;
     heldStackPositionRef.current?.attach(element);
   }, []);
+
+  const visibleCreativeBlocks = useMemo(() => {
+    const query = creativeQuery.trim().toLocaleLowerCase();
+    if (!query) return CREATIVE_BLOCKS;
+    return CREATIVE_BLOCKS.filter((item) => {
+      const definition = ITEMS[item];
+      return definition?.name.toLocaleLowerCase().includes(query)
+        || String(definition?.id ?? item).toLocaleLowerCase().includes(query);
+    });
+  }, [creativeQuery]);
 
   useEffect(() => {
     if (overlay !== "pet") {
@@ -3304,10 +3330,14 @@ export default function VoxelGame() {
               {hud.mode === "builder" && <button type="button" className={inventoryTab === "creative" ? "active" : ""} onClick={() => setInventoryTab("creative")}>ALL BLOCKS</button>}
             </div>
             {inventoryTab === "creative" && hud.mode === "builder" ? (
-              <div className="creative-catalog">
-                {CREATIVE_BLOCKS.map((item) => (
-                  <button type="button" key={item} className="creative-entry" onClick={() => engineRef.current?.setCreativeItem(item)}><ItemIcon item={item} /><span>{ITEMS[item]?.name}</span></button>
-                ))}
+              <div className="creative-browser">
+                <label className="creative-search"><span>SEARCH ALL BLOCKS</span><input type="search" value={creativeQuery} onChange={(event) => setCreativeQuery(event.target.value)} placeholder="Block or item name" autoComplete="off" /><b>{visibleCreativeBlocks.length}</b></label>
+                <div className="creative-catalog">
+                  {visibleCreativeBlocks.map((item) => (
+                    <button type="button" key={item} className="creative-entry" onClick={() => engineRef.current?.setCreativeItem(item)}><ItemIcon item={item} /><span>{ITEMS[item]?.name}</span></button>
+                  ))}
+                  {!visibleCreativeBlocks.length && <p className="creative-empty">No builder items match “{creativeQuery.trim()}”.</p>}
+                </div>
               </div>
             ) : (
               <div className={`inventory-workbench-layout ${inventoryTab === "recipes" ? "recipe-workbench-layout" : ""}`}>
@@ -3322,7 +3352,7 @@ export default function VoxelGame() {
                         {renderSlot(hud.equipment.feet, "armor-feet", (shift) => engineRef.current?.equipmentClick("feet", "left", shift), () => engineRef.current?.equipmentClick("feet", "right"), "equipment-slot", "Boots")}
                         {renderSlot(hud.offhand, "offhand", (shift) => engineRef.current?.offhandClick("left", shift), () => engineRef.current?.offhandClick("right"), `equipment-slot offhand-slot ${hud.shieldRaised ? "raised" : ""}`, "Offhand shield, torch, or lantern")}
                       </div>
-                      <PlayerAvatarPreview variant={activeCharacterProfile.appearance.sex} appearance={activeCharacterProfile.appearance} equipment={hud.equipment} heldItem={selectedSlot?.item} />
+                      <PlayerAvatarPreview variant={activeCharacterProfile.appearance.sex} appearance={activeCharacterProfile.appearance} equipment={hud.equipment} heldItem={selectedSlot?.item} offhandItem={hud.offhand?.item} />
                     </div>
                     <span className="paper-doll-held"><small>HELD</small>{selectedSlot ? <><ItemIcon item={selectedSlot.item} slot={selectedSlot} small /><b>{selectedName}</b></> : <b>Empty hand</b>}</span>
                     <span className="gold-wallet-slot" aria-label={`${hud.goldWallet.balance} gold in wallet`}><i aria-hidden="true">◆</i><small>GOLD WALLET</small><b>{hud.goldWallet.balance}</b><em>NO STACK LIMIT</em></span>
@@ -3696,7 +3726,7 @@ export default function VoxelGame() {
                   {bestiaryProgress.seen ? <>
                     <div className="bestiary-heading"><div><span className={`temperament-label temperament-${bestiaryDefinition.temperament.toLowerCase()}`}>{bestiaryDefinition.temperament.toUpperCase()}</span><h3>{bestiaryDefinition.name}</h3></div><strong>{bestiaryObservation(bestiaryDefinition, bestiaryProgress).toUpperCase()}</strong></div>
                     <p className="bestiary-lore">{bestiaryDefinition.lore}</p>
-                    <div className="bestiary-facts"><div><small>HABITAT</small><strong>{bestiaryDefinition.habitat}</strong></div><div><small>ACTIVE</small><strong>{bestiaryDefinition.active}</strong></div><div><small>FAMILY</small><strong>{bestiaryDefinition.family ?? "surface"}</strong></div><div><small>MOVEMENT</small><strong>{bestiaryDefinition.movement ?? "ground"}</strong></div><div><small>HEALTH</small><strong>{formatHudHealth(bestiaryDefinition.health)} hearts</strong></div><div><small>DANGER</small><strong>{bestiaryDefinition.damage ? `${bestiaryDefinition.damage} damage` : "Harmless"}</strong></div></div>
+                    <div className="bestiary-facts"><div><small>HABITAT</small><strong>{bestiaryDefinition.habitat}</strong></div><div><small>ACTIVE</small><strong>{bestiaryDefinition.active}</strong></div><div><small>FAMILY</small><strong>{bestiaryDefinition.family ?? "surface"}</strong></div><div><small>MOVEMENT</small><strong>{bestiaryDefinition.movement ?? "ground"}</strong></div><div><small>HEALTH</small><strong>{formatHudHealth(bestiaryDefinition.health)} hearts</strong></div><div><small>DANGER</small><strong>{bestiaryDefinition.damage ? `${bestiaryDefinition.damage} damage` : "Harmless"}</strong></div>{bestiaryDefinition.sentient !== true && <div className={bestiaryProgress.captures > 0 ? "capture-record caught" : "capture-record"}><small>CAUGHT</small><strong>{bestiaryProgress.captures > 0 ? `Yes · ${bestiaryProgress.captures} recorded` : "Not yet"}</strong></div>}</div>
                     <section className="behavior-note"><small>BEHAVIOR</small><p>{bestiaryDefinition.behavior}</p></section>
                     <section className="bestiary-care" aria-label={`${bestiaryDefinition.name} care information`}><div className="bestiary-care-heading"><small>CREATURE CARE</small><span>Recorded dynamically from known interactions</span></div><div className="bestiary-care-grid"><div><small>TAMEABLE</small><strong>{bestiaryDefinition.tameable ? "Yes" : "No"}</strong>{bestiaryDefinition.tameable && <span>{bestiaryDefinition.tameItems?.length ? bestiaryDefinition.tameItems.map((item) => ITEMS[item]?.name).filter(Boolean).join(", ") : "Method not yet recorded"}</span>}</div><div><small>BREEDABLE</small><strong>{bestiaryDefinition.breedable ? "Yes" : "No"}</strong>{bestiaryDefinition.breedable && <span>{bestiaryDefinition.breedingFoods?.length ? bestiaryDefinition.breedingFoods.map((item) => ITEMS[item]?.name).filter(Boolean).join(", ") : "Breeding food unknown"}</span>}</div><div><small>EATS</small><strong>{bestiaryDefinition.diet?.length ? bestiaryDefinition.diet.map((item) => ITEMS[item]?.name).filter(Boolean).join(", ") : "No feeding response recorded"}</strong></div><div><small>SENTIENT</small><strong>{bestiaryDefinition.sentient ? "Yes" : "No"}</strong><span>{bestiaryDefinition.sentient ? "Can converse, trade, hold roles, and remember faction standing." : "Acts from instinct rather than factional intent."}</span></div></div></section>
                     {bestiaryDefinition.fieldNotes?.length ? <section className="bestiary-field-notes"><div className="bestiary-care-heading"><small>EXTENDED FIELD NOTES</small><span>{bestiaryDefinition.fieldNotes.filter((note) => bestiaryFieldNoteUnlocked(note, bestiaryProgress)).length}/{bestiaryDefinition.fieldNotes.length} unlocked</span></div>{bestiaryDefinition.fieldNotes.map((note) => { const unlocked = bestiaryFieldNoteUnlocked(note, bestiaryProgress); return <article key={note.id} className={unlocked ? "unlocked" : "locked"}><small>{unlocked ? "RECORDED" : "LOCKED"}</small><strong>{note.title}</strong><p>{unlocked ? note.text : note.hint}</p></article>; })}</section> : bestiaryDefinition.postTameNotes && <section className={`bestiary-secret ${bestiaryProgress.secretUnlocked || (bestiaryProgress.tames ?? 0) > 0 ? "unlocked" : "locked"}`}><small>COMPANION FIELD NOTES</small>{bestiaryProgress.secretUnlocked || (bestiaryProgress.tames ?? 0) > 0 ? <p>{bestiaryDefinition.postTameNotes}</p> : <p>Locked · {bestiaryDefinition.secretHint ?? `Tame a ${bestiaryDefinition.name} to reveal its deeper care and riding notes.`}</p>}</section>}

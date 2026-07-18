@@ -40,8 +40,8 @@ test("player tools, shields and seated legs use one shared forward-facing articu
   const shield = createAvatarHeldItemModel(Item.IronShield)!;
   player.setHeldItem(pickaxe).setOffhandItem(shield, true).setPose({ locomotion: "idle", seated: 0 });
   assert.equal(pickaxe.parent, player.rightHandSocket);
-  assert.equal(shield.parent, player.leftHandSocket);
-  assert.ok(player.parts.rightArm.rotation.x > 1.15 && player.parts.rightArm.rotation.x < 1.42, "tool hand aims approximately ninety degrees forward");
+  assert.equal(shield.parent, player.leftForearmSocket);
+  assert.ok(player.parts.rightArm.rotation.x > 1.48 && player.parts.rightArm.rotation.x < 1.66, "tool hand aims approximately ninety degrees forward");
   assert.ok(Math.abs(pickaxe.rotation.x + Math.PI / 2) < 0.08, "tool geometry lies forward from the hand rather than down the forearm");
   player.setOffhandRaised(true).setPose({ locomotion: "idle" });
   assert.ok(player.parts.leftArm.rotation.x >= 1.45, "raised shield brings the left forearm in front of the torso");

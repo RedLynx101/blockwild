@@ -343,7 +343,7 @@ export async function renderWorldOverhaulShowcase(output = DEFAULT_OUTPUT) {
   const manifestPath = path.join(output, "showcase-manifest.json");
   await writeFile(manifestPath, `${JSON.stringify({
     schema: 1,
-    release: "1.6.0 · Wildframe",
+    release: "1.6.1 · Shared Footing",
     seed: SHOWCASE_SEED,
     generatedAt: audit.generatedAt,
     files: files.map((file) => path.relative(output, file).replaceAll("\\", "/")),

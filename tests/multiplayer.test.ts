@@ -377,6 +377,7 @@ test("one host maintains independent star links for multiple guests and broadcas
   const snapshot: WorldSnapshot = {
     tick: 6,
     seed: "shared-advanced-world",
+    mode: "survival",
     generatorVersion: 3,
     players: [pose(HOST.id, 6)],
     blockEdits: [],
@@ -400,6 +401,7 @@ test("one host maintains independent star links for multiple guests and broadcas
   assert.equal(host.sendSnapshot(snapshot), 2);
   await flushMessages();
   assert.equal(firstEvents.some((event) => event.type === "message" && event.envelope.type === "snapshot" && (event.envelope.payload as WorldSnapshot).worldOptions?.difficulty === "hard"), true);
+  assert.equal(firstEvents.some((event) => event.type === "message" && event.envelope.type === "snapshot" && (event.envelope.payload as WorldSnapshot).mode === "survival"), true);
 
   const firstPeer = host.getPeers().find((peer) => peer.identity?.id === GUEST_A.id)!;
   assert.equal(host.disconnectPeer(firstPeer.identity!.id, "kick-test"), true);

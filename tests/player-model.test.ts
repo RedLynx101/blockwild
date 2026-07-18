@@ -165,11 +165,12 @@ test("every playable race owns one visible and distinct modeled nose", () => {
   player.dispose();
 });
 
-test("offhand shields use the left socket and raise the left arm independently", () => {
+test("offhand shields strap to the left forearm and raise the left arm independently", () => {
   const player = new BlockPlayerModel();
   const shield = new THREE.Group();
   player.setOffhandItem(shield, true).setOffhandRaised(false).setPose({ locomotion: "idle" });
-  assert.equal(player.leftHandSocket.children[0], shield);
+  assert.equal(player.leftForearmSocket.children[0], shield);
+  assert.equal(player.leftHandSocket.children.length, 0, "a strapped shield must not hover from the hand socket");
   const resting = player.parts.leftArm.rotation.x;
   player.setOffhandRaised(true).setPose({ locomotion: "idle", phase: 0.1 });
   assert.ok(player.parts.leftArm.rotation.x > resting + 0.8, "raised shield should move the left arm in front of the torso");

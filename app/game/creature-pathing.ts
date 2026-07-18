@@ -326,6 +326,14 @@ export function chooseCreatureRoute(input: CreatureRouteInput): CreatureRouteDec
     preferredSide * Math.PI / 4, -preferredSide * Math.PI / 4,
     preferredSide * Math.PI * 3 / 8, -preferredSide * Math.PI * 3 / 8,
     preferredSide * Math.PI / 2, -preferredSide * Math.PI / 2];
+  // Once wedged beside a trunk, bank, or clustered doorway, allow a bounded
+  // back-out arc. This is only sampled after sustained blockage, so ordinary
+  // wandering keeps the cheaper forward fan.
+  if (input.state.blockedSeconds > 0.28) offsets.push(
+    preferredSide * Math.PI * 5 / 8, -preferredSide * Math.PI * 5 / 8,
+    preferredSide * Math.PI * 3 / 4, -preferredSide * Math.PI * 3 / 4,
+    Math.PI,
+  );
   let best: { heading: number; offset: number; sample: CreatureRouteProbe; score: number } | null = null;
   for (const offset of offsets) {
     const heading = normalizeAngle(desiredHeading + offset);

@@ -1,6 +1,6 @@
 # Blockwild
 
-Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.6.0 Wildframe**.
+Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.6.1 Shared Footing**.
 
 The project is a real game rather than a voxel-rendering demo. You can mine, build, craft, smelt, farm, fight, collect field notes, manage several worlds, and carry those worlds between browsers with export files.
 
@@ -9,6 +9,12 @@ The project is a real game rather than a voxel-rendering demo. You can mine, bui
 ![Blockwild field guide with all 178 rendered creatures](public/creatures/blockwild-creatures.svg)
 
 The integrated creature-design pass expands the Courser family with Rimehoof, Sunscar, Mirestride, and Starbough ecological breeds plus the forge-built Deepgear Courser. It also gives all six dragon families production stage forms, rebuilds birds, pets, crabs, mosslings, foxes, harts, deer, longhorns, terrapins, and other core wildlife, and preserves one model path for gameplay, Bestiary portraits, and visual audits.
+
+## v1.6.1 Shared Footing
+
+Shared Footing tightens peer-hosted authority without moving world ownership onto guests. Host snapshots now carry survival/builder mode, so a visitor can never inherit All Blocks from a previous local builder world; the builder catalog itself gains a fast name search. World-drop lifetime and replication are centered on every active player rather than the host alone, while pickup intents add bounded pose-lag compensation, retry safely while an item remains, and use host-authored item age instead of imposing a second guest cooldown.
+
+Furnace contents no longer share an inventory revision with burn and progress clocks, preventing a valid guest transfer from becoming stale mid-flight. Immediate entity images are recipient-specific and ordered, cave-mouth skylight diffuses one cell into a side passage instead of switching instantly to full darkness, and living ground creatures can swim across rivers while persistent trunk/bank blockage unlocks a bounded back-out route. Held torches use a ninety-degree carry, shields strap to the forearm, the pack paper doll renders its offhand, and non-sentient Bestiary entries record whether the species has ever been caught.
 
 ## v1.6.0 Wildframe
 

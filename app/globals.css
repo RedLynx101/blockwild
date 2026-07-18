@@ -3067,6 +3067,39 @@ input:focus-visible {
   line-height: 1.5;
 }
 
+.creative-browser {
+  display: grid;
+  gap: 7px;
+  min-height: 0;
+}
+
+.creative-search {
+  display: grid;
+  grid-template-columns: auto minmax(160px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 3px inset #8a8b85;
+  background: #aeb0aa;
+  color: #3c3e39;
+  font-size: 7px;
+  letter-spacing: .08em;
+}
+
+.creative-search input {
+  min-width: 0;
+  padding: 7px 9px;
+  border: 2px inset #858781;
+  outline: none;
+  background: #e8e8df;
+  color: #282b27;
+  font: inherit;
+  letter-spacing: .02em;
+}
+
+.creative-search input:focus { box-shadow: 0 0 0 2px #efd173; }
+.creative-search b { min-width: 22px; text-align: right; }
+
 .creative-catalog {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -4403,6 +4436,26 @@ input:focus-visible {
   margin: 1px 0 0;
   color: #d7c57e;
   font-size: 6px;
+  text-align: center;
+}
+
+.bestiary-facts .capture-record {
+  border-color: #6b7367;
+  background: rgba(39, 52, 45, .08);
+}
+
+.bestiary-facts .capture-record.caught {
+  border-color: #b48d42;
+  background: rgba(225, 189, 104, .18);
+}
+
+.bestiary-facts .capture-record.caught strong { color: #5d451b; }
+
+.creative-empty {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 24px;
+  color: #555a52;
   text-align: center;
 }
 

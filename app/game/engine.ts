@@ -1405,6 +1405,12 @@ type Particle = {
   ownsResources: boolean;
 };
 
+type PendingGuestDropRequest = {
+  action: InventoryAction;
+  lastSentAt: number;
+  attempts: number;
+};
+
 type LeafParticleVisual = {
   object: THREE.Group;
   state: LeafParticle;
@@ -3282,7 +3288,8 @@ export class VoxelEngine {
   multiplayerPeerContainerSignatures = new Map<string, string>();
   pendingReliableRequests = new Map<string, PendingReliableRequest>();
   multiplayerCombatCooldowns = new Map<string, number>();
-  pendingGuestDropRequests = new Set<number>();
+  pendingGuestDropRequests = new Map<number, PendingGuestDropRequest>();
+  lastNetworkDropSnapshotTick = -1;
   pendingGuestCreatureInventoryRequests = new Map<string, number>();
   /** Suppresses generic pack uploads until the host resolves optimistic placement costs. */
   pendingGuestPlacementRequests = new Map<string, number>();
@@ -4311,6 +4318,7 @@ export class VoxelEngine {
     this.multiplayerProgressOutgoing = [];
     this.multiplayerBoatInputs.clear();
     this.pendingGuestDropRequests.clear();
+    this.lastNetworkDropSnapshotTick = -1;
     this.pendingGuestCreatureInventoryRequests?.clear();
     this.pendingGuestPlacementRequests.clear();
     this.pendingNetworkMobDeaths.clear();
@@ -5143,6 +5151,9 @@ export class VoxelEngine {
         if (action.status === "accepted") {
           const index = this.drops.findIndex((candidate) => candidate.id === action.dropId);
           if (index >= 0) this.removeDrop(index);
+        } else {
+          const drop = this.drops.find((candidate) => candidate.id === action.dropId);
+          if (drop) drop.pickupDelay = Math.max(drop.pickupDelay, 0.65);
         }
       }
       if (action.status === "rejected" && action.reason) this.events.onToast(action.reason);
@@ -5191,8 +5202,7 @@ export class VoxelEngine {
       this.multiplayerPlayerStates.set(peer.identity.id, next);
       this.multiplayer.sendInventoryAction({ ...action, dropId: drop.id, count: 1, status: "accepted" }, peer.identity.id);
       this.sendAuthoritativePlayerState(peer.identity.id, action.requestId);
-      try { this.multiplayer.sendDropSnapshot({ tick: this.multiplayerTick, drops: this.networkDropSnapshot() }); }
-      catch { /* Periodic host images repair a transient drop broadcast failure. */ }
+      this.sendDropSnapshotsToConnectedPeers();
       this.saveSoon();
       return;
     }
@@ -5200,7 +5210,20 @@ export class VoxelEngine {
     const remote = this.remotePlayers.get(peer.identity.id);
     const dropIndex = this.drops.findIndex((candidate) => candidate.id === action.dropId);
     const drop = dropIndex >= 0 ? this.drops[dropIndex] : null;
-    const withinReach = Boolean(remote && drop && remote.target && drop.mesh.position.distanceToSquared(new THREE.Vector3(remote.target.x, remote.target.y + 0.8, remote.target.z)) <= 3.1);
+    const remotePickupPoint = remote?.target
+      ? new THREE.Vector3(remote.target.x, remote.target.y + 0.8, remote.target.z)
+      : null;
+    const claimedPickupPoint = action.pickupAt
+      ? new THREE.Vector3(action.pickupAt.x, action.pickupAt.y, action.pickupAt.z)
+      : null;
+    // The latest 20 Hz pose remains authoritative. A recent client-observed
+    // pickup point may bridge a small movement-lane delay, but only when it is
+    // itself close to that authoritative pose and the drop.
+    const directReach = Boolean(drop && remotePickupPoint && drop.mesh.position.distanceToSquared(remotePickupPoint) <= 2.25 * 2.25);
+    const lagCompensatedReach = Boolean(drop && remotePickupPoint && claimedPickupPoint
+      && claimedPickupPoint.distanceToSquared(remotePickupPoint) <= 4 * 4
+      && drop.mesh.position.distanceToSquared(claimedPickupPoint) <= 1.8 * 1.8);
+    const withinReach = directReach || lagCompensatedReach;
     if (!drop || !withinReach) {
       this.multiplayer.sendInventoryAction({ ...action, status: "rejected", reason: "That drop is no longer within pickup reach." }, peer.identity.id);
       return;
@@ -5217,6 +5240,7 @@ export class VoxelEngine {
     if (drop.count <= 0) this.removeDrop(dropIndex);
     this.multiplayer.sendInventoryAction({ ...action, count: result.added, status: "accepted" }, peer.identity.id);
     this.sendAuthoritativePlayerState(peer.identity.id, action.requestId);
+    this.sendDropSnapshotsToConnectedPeers();
     this.saveSoon();
   }
 
@@ -5344,7 +5368,7 @@ export class VoxelEngine {
           status: "accepted",
         };
         if (this.multiplayer.sendContainerAction(response, peerId) > 0) {
-          this.multiplayerPeerContainerSignatures.set(`${peerId}|${canonicalId}`, `${revision}:${JSON.stringify(response.slots)}`);
+          this.multiplayerPeerContainerSignatures.set(`${peerId}|${canonicalId}`, `${revision}:${JSON.stringify({ slots: response.slots, machine: response.machine })}`);
         }
         return;
       }
@@ -5405,8 +5429,11 @@ export class VoxelEngine {
       };
       this.multiplayerPlayerStates.set(peer.identity.id, committedPlayer);
       this.multiplayerContainerRevisions.set(action.containerId, revision);
-      this.multiplayerContainerSignatures.set(action.containerId, JSON.stringify(action.slots));
       const responseSlots = slots.map(networkItemStack);
+      // Inventory contents own the transaction revision. Furnace clock values
+      // are replicated presentation state and must not make a valid item move
+      // stale while it is crossing the network.
+      this.multiplayerContainerSignatures.set(action.containerId, JSON.stringify(responseSlots));
       for (const [watcherId, watchedContainer] of this.multiplayerPeerActiveContainers) {
         if (watchedContainer !== action.containerId || !this.multiplayer.getPeer(watcherId)) continue;
         const response: ContainerAction = {
@@ -5419,7 +5446,7 @@ export class VoxelEngine {
           status: "accepted",
         };
         if (this.multiplayer.sendContainerAction(response, watcherId) > 0) {
-          this.multiplayerPeerContainerSignatures.set(`${watcherId}|${action.containerId}`, `${revision}:${JSON.stringify(responseSlots)}`);
+          this.multiplayerPeerContainerSignatures.set(`${watcherId}|${action.containerId}`, `${revision}:${JSON.stringify({ slots: responseSlots, machine: response.machine })}`);
         }
       }
       this.sendAuthoritativePlayerState(peerId, action.requestId);
@@ -5702,7 +5729,7 @@ export class VoxelEngine {
       ];
       for (const [id, slots] of sharedContainers) {
         const networkSlots = slots.map(networkItemStack);
-        const signature = JSON.stringify({ slots: networkSlots, machine: this.networkContainerMachine(id) });
+        const signature = JSON.stringify(networkSlots);
         if (signature !== this.multiplayerContainerSignatures.get(id)) {
           this.multiplayerContainerSignatures.set(id, signature);
           this.multiplayerContainerRevisions.set(id, (this.multiplayerContainerRevisions.get(id) ?? 0) + 1);
@@ -5717,7 +5744,8 @@ export class VoxelEngine {
         if (!slots || !session.getPeer(peerId)) continue;
         const revision = this.multiplayerContainerRevisions.get(id) ?? 0;
         const networkSlots = slots.map(networkItemStack);
-        const deliverySignature = `${revision}:${JSON.stringify(networkSlots)}`;
+        const machine = this.networkContainerMachine(id);
+        const deliverySignature = `${revision}:${JSON.stringify({ slots: networkSlots, machine })}`;
         const peerSignatureKey = `${peerId}|${id}`;
         if (this.multiplayerPeerContainerSignatures.get(peerSignatureKey) === deliverySignature) continue;
         const action: ContainerAction = {
@@ -5727,7 +5755,7 @@ export class VoxelEngine {
           kind: "open",
           expectedRevision: revision,
           slots: networkSlots,
-          ...(this.networkContainerMachine(id) ? { machine: this.networkContainerMachine(id) } : {}),
+          ...(machine ? { machine } : {}),
           status: "accepted",
         };
         try {
@@ -5780,18 +5808,34 @@ export class VoxelEngine {
     const session = this.multiplayer;
     if (!session || session.role !== "guest" || !this.multiplayerReceivedSnapshot) return;
     const pickupPoint = this.position.clone().add(new THREE.Vector3(0, 0.8, 0));
+    const now = Date.now();
     for (const drop of this.drops) {
       drop.pickupDelay = Math.max(0, drop.pickupDelay - dt);
-      if (drop.pickupDelay > 0 || drop.mesh.position.distanceToSquared(pickupPoint) >= 1.45 * 1.45 || this.pendingGuestDropRequests.has(drop.id)) continue;
+      if (drop.pickupDelay > 0 || drop.mesh.position.distanceToSquared(pickupPoint) >= 1.7 * 1.7) continue;
+      const pending = this.pendingGuestDropRequests.get(drop.id);
+      if (pending) {
+        if (pending.attempts >= 6 || now - pending.lastSentAt > 4_000) {
+          this.pendingGuestDropRequests.delete(drop.id);
+        } else if (now - pending.lastSentAt >= 420) {
+          try {
+            if (session.sendInventoryAction(pending.action) > 0) {
+              pending.lastSentAt = now;
+              pending.attempts += 1;
+            }
+          } catch { /* The same idempotent pickup intent retries after reconnect. */ }
+        }
+        continue;
+      }
       const request: InventoryAction = {
         requestId: `pickup_${session.identity.id.slice(-8)}_${drop.id.toString(36)}_${this.multiplayerTick.toString(36)}`,
         actorId: session.identity.id,
         kind: "collect",
         dropId: drop.id,
+        pickupAt: { x: pickupPoint.x, y: pickupPoint.y, z: pickupPoint.z },
         status: "request",
       };
       try {
-        if (session.sendInventoryAction(request) > 0) this.pendingGuestDropRequests.add(drop.id);
+        if (session.sendInventoryAction(request) > 0) this.pendingGuestDropRequests.set(drop.id, { action: request, lastSentAt: now, attempts: 1 });
       } catch { /* The drop remains available for a later retry. */ }
     }
   }
@@ -5888,12 +5932,13 @@ export class VoxelEngine {
     return {
       tick: this.multiplayerTick,
       seed: this.world.seedText,
+      mode: this.mode,
       generatorVersion: GENERATOR_VERSION,
       generatorProfile: this.world.generationOptions.profile,
       players: [local, ...[...this.remotePlayers.values()].map((remote) => remote.target)].filter((pose): pose is PlayerPose => Boolean(pose)),
       blockEdits: this.networkBlockEdits(),
-      mobs: this.networkMobSnapshot(),
-      drops: this.networkDropSnapshot(),
+      mobs: peerId ? this.networkMobSnapshotForPeer(peerId) : this.networkMobSnapshot(),
+      drops: peerId ? this.networkDropSnapshotForPeer(peerId) : this.networkDropSnapshot(),
       boats: [...this.boats.values()].map(({ save }) => ({
         id: save.id, x: save.x, y: save.y, z: save.z, yaw: save.yaw, velocity: save.velocity, passengers: [...save.passengers], ownerId: save.ownerId,
       })),
@@ -5912,8 +5957,12 @@ export class VoxelEngine {
 
   private sendHostWorldSnapshot(peerId?: string) {
     if (!this.multiplayer || this.multiplayer.role !== "host") return;
-    try { this.multiplayer.sendSnapshot(this.hostWorldSnapshot(peerId), peerId); }
-    catch (error) { this.multiplayerState.error = error instanceof Error ? error.message : String(error); }
+    try {
+      if (peerId) this.multiplayer.sendSnapshot(this.hostWorldSnapshot(peerId), peerId);
+      else for (const peer of this.multiplayer.getPeers()) {
+        if (peer.state === "connected" && peer.identity) this.multiplayer.sendSnapshot(this.hostWorldSnapshot(peer.identity.id), peer.identity.id);
+      }
+    } catch (error) { this.multiplayerState.error = error instanceof Error ? error.message : String(error); }
   }
 
   private editsFromNetwork(blockEdits: WorldSnapshot["blockEdits"]): ChunkEditSave {
@@ -5938,6 +5987,9 @@ export class VoxelEngine {
       return;
     }
     const hostPose = snapshot.players.find((pose) => pose.playerId === hostPeer.identity?.id) ?? snapshot.players[0];
+    // The host world decides the game mode. A guest must never retain a local
+    // builder catalog when entering somebody else's survival save.
+    this.mode = snapshot.mode === "builder" ? "builder" : "survival";
     this.worldOptions = normalizeWorldOptions(snapshot.worldOptions ?? this.worldOptions);
     this.butterflyDensity = this.worldOptions.butterflyDensity;
     this.clearEntities();
@@ -5995,7 +6047,8 @@ export class VoxelEngine {
     this.persistent = false;
     this.activeWorldId = null;
     this.applyNetworkMobSnapshot(snapshot.mobs);
-    this.applyNetworkDropSnapshot(snapshot.drops);
+    this.lastNetworkDropSnapshotTick = -1;
+    this.applyNetworkDropSnapshot(snapshot.drops, snapshot.tick);
     this.applyNetworkBoatSnapshot(snapshot.boats ?? []);
     this.applyNetworkContainerSnapshots(snapshot.containers ?? []);
     if (guestPlayerId) this.applyLocalPlayerSessionSnapshot(snapshot.playerState
@@ -6008,6 +6061,7 @@ export class VoxelEngine {
 
   private applyIncrementalWorldSnapshot(snapshot: WorldSnapshot, hostPeer: PeerInfo) {
     if (snapshot.generatorVersion !== GENERATOR_VERSION || snapshot.seed !== this.world.seedText) return;
+    this.mode = snapshot.mode === "builder" ? "builder" : "survival";
     this.worldOptions = normalizeWorldOptions(snapshot.worldOptions ?? this.worldOptions);
     this.butterflyDensity = this.worldOptions.butterflyDensity;
     if (snapshot.blockEdits.length) {
@@ -6019,7 +6073,7 @@ export class VoxelEngine {
     this.weather = snapshot.time.weather;
     if (snapshot.time.weatherState) this.weatherState = { ...snapshot.time.weatherState };
     this.applyNetworkMobSnapshot(snapshot.mobs);
-    this.applyNetworkDropSnapshot(snapshot.drops);
+    this.applyNetworkDropSnapshot(snapshot.drops, snapshot.tick);
     this.applyNetworkBoatSnapshot(snapshot.boats ?? []);
     this.applyNetworkContainerSnapshots(snapshot.containers ?? []);
     if (snapshot.playerState && snapshot.playerState.playerId === this.multiplayer?.identity.id) this.applyLocalPlayerSessionSnapshot(snapshot.playerState, true);
@@ -6152,9 +6206,11 @@ export class VoxelEngine {
     }
   }
 
-  private applyNetworkDropSnapshot(entries: WorldSnapshot["drops"]) {
+  private applyNetworkDropSnapshot(entries: WorldSnapshot["drops"], tick = this.multiplayerTick) {
+    if (tick < this.lastNetworkDropSnapshotTick) return;
+    this.lastNetworkDropSnapshotTick = tick;
     const incoming = new Set(entries.map((entry) => entry.id));
-    for (const dropId of this.pendingGuestDropRequests) if (!incoming.has(dropId)) this.pendingGuestDropRequests.delete(dropId);
+    for (const dropId of this.pendingGuestDropRequests.keys()) if (!incoming.has(dropId)) this.pendingGuestDropRequests.delete(dropId);
     for (let index = this.drops.length - 1; index >= 0; index -= 1) if (!incoming.has(this.drops[index].id)) this.removeDrop(index);
     for (const entry of entries) {
       if (!ITEMS[entry.item] || entry.count <= 0) continue;
@@ -6173,9 +6229,8 @@ export class VoxelEngine {
       }
       drop.velocity.set(0, 0, 0);
       drop.age = entry.age;
-      if (!Number.isFinite(drop.pickupDelay) || placedLeviathanEggMetadata(drop.metadata) || placedDragonEggMetadata(drop.metadata)) {
-        drop.pickupDelay = placedLeviathanEggMetadata(drop.metadata) || placedDragonEggMetadata(drop.metadata) ? Number.POSITIVE_INFINITY : 0.5;
-      }
+      if (placedLeviathanEggMetadata(drop.metadata) || placedDragonEggMetadata(drop.metadata)) drop.pickupDelay = Number.POSITIVE_INFINITY;
+      else drop.pickupDelay = Math.min(drop.pickupDelay, Math.max(0, 0.35 - entry.age));
       this.nextDropId = Math.max(this.nextDropId, entry.id + 1);
     }
   }
@@ -6403,7 +6458,10 @@ export class VoxelEngine {
       else if (envelope.type === "sleep-vote") this.handleRemoteSleepVote(envelope.payload as SleepVote, event.peer);
       else if (envelope.type === "map-share") this.handleRemoteMapShare(envelope.payload as CartographyMapShare, event.peer);
       else if (envelope.type === "mob-snapshot" && this.multiplayer?.role === "guest") this.applyNetworkMobSnapshot((envelope.payload as { mobs: WorldSnapshot["mobs"] }).mobs);
-      else if (envelope.type === "drop-snapshot" && this.multiplayer?.role === "guest") this.applyNetworkDropSnapshot((envelope.payload as { drops: WorldSnapshot["drops"] }).drops);
+      else if (envelope.type === "drop-snapshot" && this.multiplayer?.role === "guest") {
+        const snapshot = envelope.payload as { tick: number; drops: WorldSnapshot["drops"] };
+        this.applyNetworkDropSnapshot(snapshot.drops, snapshot.tick);
+      }
       else if (envelope.type === "time-weather" && this.multiplayer?.role === "guest") {
         const time = envelope.payload as WorldSnapshot["time"] & { boats?: NonNullable<WorldSnapshot["boats"]> };
         this.worldTime = time.worldTime;
@@ -7463,10 +7521,13 @@ export class VoxelEngine {
         this.spawnParticles(mob.group.position.x, mob.group.position.y, mob.group.position.z, mob.hostile ? BlockId.Obsidian : BlockId.Dirt, 7);
       }
       if (killed) {
-        try {
-          session.sendMobSnapshot({ tick: this.multiplayerTick, mobs: this.networkMobSnapshot() });
-          session.sendDropSnapshot({ tick: this.multiplayerTick, drops: this.networkDropSnapshot() });
-        } catch { /* Periodic snapshots retry after a transient channel close. */ }
+        for (const connectedPeer of session.getPeers()) {
+          if (connectedPeer.state !== "connected" || !connectedPeer.identity) continue;
+          try {
+            session.sendMobSnapshot({ tick: this.multiplayerTick, mobs: this.networkMobSnapshotForPeer(connectedPeer.identity.id) }, connectedPeer.identity.id);
+          } catch { /* Periodic snapshots retry after a transient channel close. */ }
+        }
+        this.sendDropSnapshotsToConnectedPeers();
       }
       this.saveSoon();
       return;
@@ -8680,6 +8741,25 @@ export class VoxelEngine {
       .filter((drop) => (drop.x - pose.x) ** 2 + (drop.y - pose.y) ** 2 + (drop.z - pose.z) ** 2 <= radiusSquared)
       .sort((left, right) => ((left.x - pose.x) ** 2 + (left.z - pose.z) ** 2) - ((right.x - pose.x) ** 2 + (right.z - pose.z) ** 2))
       .slice(0, 256);
+  }
+
+  /** Publish an actor-centered image to every guest, never a host-centered global prefix. */
+  private sendDropSnapshotsToConnectedPeers() {
+    const session = this.multiplayer;
+    if (!session || session.role !== "host") return;
+    if (typeof session.getPeers !== "function") {
+      // Compatibility for migrated in-memory sessions and focused harnesses;
+      // browser sessions always expose peers and use actor-centered images.
+      try { session.sendDropSnapshot({ tick: this.multiplayerTick, drops: this.networkDropSnapshot() }); } catch { /* no connected transport */ }
+      return;
+    }
+    const peers = session.getPeers();
+    for (const peer of peers) {
+      if (peer.state !== "connected" || !peer.identity) continue;
+      try {
+        session.sendDropSnapshot({ tick: this.multiplayerTick, drops: this.networkDropSnapshotForPeer(peer.identity.id) }, peer.identity.id);
+      } catch { /* The periodic 5 Hz image repairs a transient send failure. */ }
+    }
   }
 
   private resolveHostMerchantTrade(
@@ -16303,7 +16383,8 @@ export class VoxelEngine {
     const centerX = Math.round(x);
     const centerZ = Math.round(z);
     const feetType = this.world.getBlock(centerX, groundY + 1, centerZ);
-    const water = blockContainsWater(feetType);
+    const water = [groundY + 1, groundY, groundY - 1]
+      .some((sampleY) => blockContainsWater(this.world.getBlock(centerX, sampleY, centerZ)));
     const hazard = feetType === BlockId.Lava;
     const dynamic = targetY === null
       ? { blocked: false, crowding: 0 }
@@ -17135,6 +17216,22 @@ export class VoxelEngine {
     const centerX = Math.round(nx);
     const centerZ = Math.round(nz);
     const currentGround = referenceGround;
+    const canSwim = (definition.movement ?? (definition.aquatic ? "aquatic" : definition.flying ? "flying" : "ground")) === "ground"
+      && definition.family !== "construct";
+    if (canSwim) {
+      // Living terrestrial creatures can cross water instead of treating every
+      // river bank as a dead end. Keep them just below the surface so they swim
+      // rather than walk on top of it.
+      for (let y = currentGround + 2; y >= currentGround - 4; y -= 1) {
+        if (!blockContainsWater(this.world.getBlock(centerX, y, centerZ))) continue;
+        let surfaceCell = y;
+        while (surfaceCell < currentGround + 7 && blockContainsWater(this.world.getBlock(centerX, surfaceCell + 1, centerZ))) surfaceCell += 1;
+        const targetY = surfaceCell + definition.footOffset - Math.min(0.42, definition.height * 0.24);
+        if (checkCreatureCollision && this.mobCollisionProfile(mob).solid
+          && this.mobDynamicObstaclesAt(mob, nx, targetY, nz, true).blocked) return null;
+        return targetY;
+      }
+    }
     const effectiveHeight = Math.max(0.52, definition.height * Math.min(3, Math.max(0.62, collisionScale)));
     const clearanceCells = Math.max(1, Math.ceil(effectiveHeight));
     const standableAt = (x: number, z: number, groundY: number) => {
@@ -19014,7 +19111,7 @@ export class VoxelEngine {
           movement,
           maxStepUp: 1,
           maxDrop: mob.kind === "caveblob" || mob.kind === "puddlehopper" ? 2 : 1,
-          allowWater: false,
+          allowWater: mob.definition.family !== "construct",
           probe: (heading) => this.creatureRouteProbe(mob, heading, lookahead),
         });
         mob.route = route.state;
@@ -19468,6 +19565,7 @@ export class VoxelEngine {
   }
 
   updateDrops(dt: number) {
+    const dropInterestPoints = this.simulationInterestPoints();
     for (let index = this.drops.length - 1; index >= 0; index -= 1) {
       const drop = this.drops[index];
       drop.age += dt;
@@ -19616,7 +19714,8 @@ export class VoxelEngine {
         if (stepped.egg) drop.metadata = { kind: "placed-dragon-egg", egg: stepped.egg as unknown as Record<string, unknown> };
         continue;
       }
-      const distance = drop.mesh.position.distanceTo(this.position.clone().add(new THREE.Vector3(0, 0.8, 0)));
+      const localPickupPoint = this.position.clone().add(new THREE.Vector3(0, 0.8, 0));
+      const distance = drop.mesh.position.distanceTo(localPickupPoint);
       if (drop.pickupDelay <= 0 && distance < 1.45) {
         const beforeCount = drop.count;
         const leftover = this.addItem(drop.item, drop.count, drop.durability, undefined, drop.metadata);
@@ -19631,7 +19730,13 @@ export class VoxelEngine {
         if (drop.count <= 0) { this.removeDrop(index); this.saveSoon(); this.emitHud(true); continue; }
       }
       const protectedDragonEgg = dragonEggDropIsProtected(drop.metadata, drop.age, this.worldOptions.dayLengthMinutes);
-      if (!protectedDragonEgg && (drop.age > 120 || distance > 85)) this.removeDrop(index);
+      const nearestActivePlayerDistance = Math.sqrt(dropInterestPoints.reduce((nearestSquared, player) => {
+        const dx = drop.mesh.position.x - player.x;
+        const dy = drop.mesh.position.y - (player.y + 0.8);
+        const dz = drop.mesh.position.z - player.z;
+        return Math.min(nearestSquared, dx * dx + dy * dy + dz * dz);
+      }, Number.POSITIVE_INFINITY));
+      if (!protectedDragonEgg && (drop.age > 120 || nearestActivePlayerDistance > 85)) this.removeDrop(index);
     }
   }
 

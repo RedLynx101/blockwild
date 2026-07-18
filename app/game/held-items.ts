@@ -512,6 +512,8 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
     inner.name = "torch-flame-inner";
     outer.userData.torchBase = outer.position.toArray();
     inner.userData.torchBase = inner.position.toArray();
+    group.userData.workingAngle = Math.PI / 2;
+    group.userData.offhandLight = true;
   } else if (item === Item.Berry) {
     // Keep remote/third-person Moonberries identical to the first-person
     // cluster instead of collapsing them into the generic item brick.

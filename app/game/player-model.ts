@@ -309,6 +309,7 @@ export class BlockPlayerModel {
   readonly materials: PlayerModelMaterials;
   readonly rightHandSocket = new THREE.Object3D();
   readonly leftHandSocket = new THREE.Object3D();
+  readonly leftForearmSocket = new THREE.Object3D();
   readonly nameAnchor = new THREE.Object3D();
   readonly mode: PlayerModelMode;
   readonly playerId?: string;
@@ -416,6 +417,11 @@ export class BlockPlayerModel {
     this.leftHandSocket.userData.socket = "left-hand";
     this.leftHandSocket.position.set(0, -ARM_LENGTH + 0.08, -0.2);
     leftArm.add(this.leftHandSocket);
+    this.leftForearmSocket.name = "left-forearm-socket";
+    this.leftForearmSocket.userData.socket = "left-forearm";
+    // Shields are strapped to the arm instead of balanced above the hand.
+    this.leftForearmSocket.position.set(-0.035, -ARM_LENGTH * 0.53, -ARM_WIDTH * 0.58);
+    leftArm.add(this.leftForearmSocket);
 
     this.nameAnchor.name = "player-name-anchor";
     this.setPlayerName(options.playerName ?? "Player");
@@ -550,10 +556,17 @@ export class BlockPlayerModel {
   setOffhandItem(item: THREE.Object3D | null, shield = false): this {
     this.assertUsable();
     if (item === this.offhandItem && shield === this.offhandShield) return this;
-    if (this.offhandItem) this.leftHandSocket.remove(this.offhandItem);
+    if (this.offhandItem) {
+      this.leftHandSocket.remove(this.offhandItem);
+      this.leftForearmSocket.remove(this.offhandItem);
+    }
     this.offhandItem = item;
     this.offhandShield = Boolean(item && shield);
-    if (item) this.leftHandSocket.add(item);
+    if (item && this.offhandShield) {
+      item.position.set(0, 0, 0);
+      item.rotation.set(0, 0, 0);
+      this.leftForearmSocket.add(item);
+    } else if (item) this.leftHandSocket.add(item);
     return this;
   }
 
@@ -667,7 +680,10 @@ export class BlockPlayerModel {
     if (this.disposed) return;
     if (this.heldItem) this.rightHandSocket.remove(this.heldItem);
     this.heldItem = null;
-    if (this.offhandItem) this.leftHandSocket.remove(this.offhandItem);
+    if (this.offhandItem) {
+      this.leftHandSocket.remove(this.offhandItem);
+      this.leftForearmSocket.remove(this.offhandItem);
+    }
     this.offhandItem = null;
     this.group.removeFromParent();
     this.group.clear();
@@ -892,7 +908,9 @@ export class BlockPlayerModel {
     if (this.heldItem && nextPose.action === "none") {
       // A carried tool belongs in the hand, not inside the torso. This neutral
       // ready pose also gives remote sentient/player rigs a readable aim line.
-      rightArmAngle = 1.28 + Math.sin(cycle) * (nextPose.locomotion === "idle" ? 0.025 : 0.07);
+      const workingAngle = Number(this.heldItem.userData.workingAngle);
+      rightArmAngle = (Number.isFinite(workingAngle) ? workingAngle : 1.28)
+        + Math.sin(cycle) * (nextPose.locomotion === "idle" ? 0.025 : 0.07);
       rightArmRoll = 0.12;
     } else if (nextPose.action === "mine") {
       const stroke = 0.5 - 0.5 * Math.cos(nextPose.actionPhase * TWO_PI);
@@ -912,7 +930,8 @@ export class BlockPlayerModel {
       } else {
         // Torches and lanterns sit slightly forward of the hip so their model
         // and light source remain visible to other players.
-        leftArmAngle = 1.02 + Math.sin(cycle) * 0.035;
+        leftArmAngle = (this.offhandItem.userData.offhandLight === true ? Math.PI / 2 : 1.02)
+          + Math.sin(cycle) * 0.035;
         leftArmRoll = -0.12;
       }
     }

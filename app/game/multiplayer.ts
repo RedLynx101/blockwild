@@ -245,6 +245,12 @@ export type InventoryAction = {
   expectedRevision?: number;
   /** World-drop collection is resolved by the host rather than the guest. */
   dropId?: number;
+  /**
+   * Guest-observed pickup point. The host never trusts this as authority: it
+   * only uses it for bounded lag compensation against the latest accepted
+   * player pose.
+   */
+  pickupAt?: { x: number; y: number; z: number };
   status?: ActionStatus;
   reason?: string;
 };
@@ -445,6 +451,8 @@ export type CartographyMapShare = {
 export type WorldSnapshot = {
   tick: number;
   seed: string;
+  /** Optional for protocol-v1 peers; current hosts always publish it. */
+  mode?: "builder" | "survival";
   generatorVersion: number;
   generatorProfile?: "legacy-v14" | "world-below-v15";
   players: PlayerPose[];
@@ -1135,6 +1143,10 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
         && (value.expectedRevision === undefined || isInteger(value.expectedRevision, 0, Number.MAX_SAFE_INTEGER))
         && (value.expectedPlayerRevision === undefined || isInteger(value.expectedPlayerRevision, 0, Number.MAX_SAFE_INTEGER))
         && (value.dropId === undefined || isInteger(value.dropId, 0, Number.MAX_SAFE_INTEGER))
+        && (value.pickupAt === undefined || (isRecord(value.pickupAt)
+          && isFiniteNumber(value.pickupAt.x, -COORDINATE_LIMIT, COORDINATE_LIMIT)
+          && isFiniteNumber(value.pickupAt.y, -4096, 4096)
+          && isFiniteNumber(value.pickupAt.z, -COORDINATE_LIMIT, COORDINATE_LIMIT)))
         && validateStatusFields(value);
     case "container-action":
       return isId(value.requestId)
@@ -1259,6 +1271,7 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
     case "snapshot":
       return isInteger(value.tick, 0, Number.MAX_SAFE_INTEGER)
         && isShortString(value.seed, 128)
+        && (value.mode === undefined || value.mode === "builder" || value.mode === "survival")
         && isInteger(value.generatorVersion, 1, 1_000_000)
         && Array.isArray(value.players)
         && value.players.length <= 64
