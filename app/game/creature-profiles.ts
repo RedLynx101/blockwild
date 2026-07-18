@@ -1,10 +1,17 @@
-import { authoredMoveSetForKind, defaultMoveSetForTypes, type CreatureMoveSet } from "./creature-moves";
-import { creatureStatProfile, type CreatureStatProfile } from "./creature-stats";
+import { AUTHORED_CREATURE_CAPTURE_SHEETS, type AuthoredCreatureCaptureSheet } from "./creature-capture";
+import { CREATURE_ECOLOGY_CONTRACTS, type CreatureEcologyContract } from "./creature-ecology";
+import { authoredMoveSetForKind, defaultMoveSetForTypes, EXPANSION_CREATURE_MOVE_SHEETS, type AuthoredCreatureMoveSheet, type CreatureMoveSet } from "./creature-moves";
+import { EXPANSION_CREATURE_RARITY_POLICIES, type CreatureRarityPolicy } from "./creature-rarity";
+import { creatureStatProfile, EXPANSION_CREATURE_STAT_SEEDS, type AuthoredCreatureStatSeed, type CreatureStatProfile } from "./creature-stats";
 import { CREATURE_TYPES, resolveCreatureTypes, type CreatureTypeId, type CreatureTypeSource } from "./creature-types";
-import { MOB_DEFS, MOB_ORDER, type MobDefinition, type MobKind } from "./mobs";
+import {
+  LEGENDARY_CREATURE_ORDER, LIVING_ROSTER_ORDER, MOB_DEFS, MOB_ORDER, SUMMONED_CREATURE_ORDER,
+  type LegendaryCreatureKind, type LivingRosterKind, type MobDefinition, type MobKind, type SummonedCreatureKind,
+} from "./mobs";
 
 export type CaptureProfileId = "open" | "gentle" | "pursuit" | "armored" | "territorial" | "aquatic" | "resonant" | "rescue" | "legendary" | "uncapturable";
-export type EcologyRole = "grazer" | "browser" | "predator" | "scavenger" | "pollinator" | "seed-spreader" | "reef-helper" | "filter-feeder" | "burrower" | "sentinel" | "construct" | "citizen" | "mount" | "companion" | "ambient" | "boss";
+export type EcologyRole = "grazer" | "browser" | "predator" | "scavenger" | "pollinator" | "seed-spreader" | "reef-helper" | "filter-feeder" | "burrower" | "sentinel" | "construct" | "citizen" | "mount" | "companion" | "ambient" | "boss" | "scout" | "retriever" | "guardian" | "forager" | "worker" | "restorer" | "healer" | "research";
+export type ExpansionCreatureKind = LivingRosterKind | LegendaryCreatureKind | SummonedCreatureKind;
 
 export type CreatureProfile = Readonly<{
   kind: MobKind;
@@ -12,6 +19,19 @@ export type CreatureProfile = Readonly<{
   stats: CreatureStatProfile;
   moves: CreatureMoveSet;
   captureProfile: CaptureProfileId;
+  ecologyRoles: readonly EcologyRole[];
+  researchClues: readonly string[];
+  authorship: "explicit" | "legacy-family-fallback";
+}>;
+
+export type CreatureContentSheet = Readonly<{
+  stableId: ExpansionCreatureKind;
+  naturalTypes: readonly CreatureTypeId[];
+  stats: AuthoredCreatureStatSeed;
+  moves: AuthoredCreatureMoveSheet;
+  capture: AuthoredCreatureCaptureSheet;
+  ecology: CreatureEcologyContract;
+  rarity: CreatureRarityPolicy;
   ecologyRoles: readonly EcologyRole[];
   researchClues: readonly string[];
 }>;
@@ -48,49 +68,69 @@ const EXACT_TYPES: Readonly<Partial<Record<MobKind, readonly CreatureTypeId[]>>>
   "vellum-warden": ["arcane", "dream", "spirit"], "choir-of-one": ["hush", "echo", "umbral"], "glasswake-stag": ["mirror", "tide", "dream"],
 });
 
+export const EXPANSION_CREATURE_NATURAL_TYPES = Object.freeze({
+  "thornhide-trufflehog": ["wild", "verdant"], "orchard-glider": ["wild", "sky"], "petalmask-tanuki": ["wild", "dream", "verdant"],
+  "ironbeak-magpie": ["sky", "metal", "wild"], "hearthback-badger": ["wild", "stone"], "sunfoil-pangolin": ["wild", "metal", "radiant"],
+  "glassstep-jerboa": ["wild", "stone"], "stormcrest-ibex": ["wild", "stone", "storm"], "cindercoil-gecko": ["wild", "flame", "stone"],
+  "cloudkite-pika": ["wild", "sky", "echo"], "briarclaw-lynx": ["wild", "verdant"], "gravebell-jackal": ["wild", "spirit", "umbral"],
+  "cragglass-basilisk": ["wild", "stone", "arcane"], "stormglass-roclet": ["sky", "storm", "stone"], "brinewhisk-otter": ["wild", "tide"],
+  "riverwright-beaver": ["wild", "tide", "verdant"], "mirecrown-crane": ["sky", "tide", "verdant"], "inkveil-cuttle": ["tide", "umbral", "dream"],
+  "prismclaw-mantis-shrimp": ["tide", "stone", "radiant"], "reefmender-shrimp": ["tide", "verdant", "radiant"], "currentweaver-eel": ["tide"],
+  "shellcarrier-hermit": ["wild", "tide", "stone"], "wreckwhistle-porpoise": ["wild", "tide", "echo"], "kilnscale-salamander": ["wild", "flame", "stone"],
+  "sporeback-gardener": ["verdant", "wild", "venom"], "voidmantle-ray": ["sky", "umbral", "tide"], "fossilback-trilobite": ["stone", "tide", "wild"],
+  "ilyr-virebloom": ["verdant", "tide", "dream", "radiant", "spirit"], thalassene: ["tide", "stone", "verdant", "radiant"],
+  orichalc: ["metal", "stone"], "varkesh-stormmane": ["sky", "storm", "wild"], kharza: ["wild", "umbral", "metal"],
+  "sugarwake-sovereign": ["confection", "arcane", "flame"], asterjaw: ["sky", "radiant", "spirit"],
+  "vellum-warden": ["arcane", "dream", "spirit"], "choir-of-one": ["hush", "echo", "umbral"], "glasswake-stag": ["mirror", "tide", "dream"],
+} as const satisfies Readonly<Record<ExpansionCreatureKind, readonly CreatureTypeId[]>>);
+
+const EXPANSION_ECOLOGY_ROLES = Object.freeze({
+  "thornhide-trufflehog": ["forager", "seed-spreader"], "orchard-glider": ["scout", "seed-spreader"], "petalmask-tanuki": ["scout", "companion"],
+  "ironbeak-magpie": ["retriever", "scout"], "hearthback-badger": ["burrower", "guardian"], "sunfoil-pangolin": ["research", "guardian"],
+  "glassstep-jerboa": ["burrower", "scout"], "stormcrest-ibex": ["mount", "guardian"], "cindercoil-gecko": ["research", "sentinel"],
+  "cloudkite-pika": ["scout", "guardian"], "briarclaw-lynx": ["predator", "guardian"], "gravebell-jackal": ["scavenger", "guardian"],
+  "cragglass-basilisk": ["predator", "research"], "stormglass-roclet": ["mount", "guardian"], "brinewhisk-otter": ["retriever", "companion"],
+  "riverwright-beaver": ["worker", "restorer"], "mirecrown-crane": ["scout", "restorer"], "inkveil-cuttle": ["research", "ambient"],
+  "prismclaw-mantis-shrimp": ["research", "predator"], "reefmender-shrimp": ["reef-helper", "healer"], "currentweaver-eel": ["research", "sentinel"],
+  "shellcarrier-hermit": ["scavenger", "worker"], "wreckwhistle-porpoise": ["mount", "guardian"], "kilnscale-salamander": ["worker", "research"],
+  "sporeback-gardener": ["worker", "restorer"], "voidmantle-ray": ["mount", "scout"], "fossilback-trilobite": ["research", "ambient"],
+  "ilyr-virebloom": ["mount", "restorer", "boss"], thalassene: ["mount", "reef-helper", "boss"], orichalc: ["construct", "research", "boss"],
+  "varkesh-stormmane": ["mount", "guardian", "boss"], kharza: ["mount", "predator", "boss"], "sugarwake-sovereign": ["guardian", "worker", "boss"],
+  asterjaw: ["scout", "guardian"], "vellum-warden": ["guardian", "healer"], "choir-of-one": ["sentinel", "research"], "glasswake-stag": ["mount", "guardian"],
+} as const satisfies Readonly<Record<ExpansionCreatureKind, readonly EcologyRole[]>>);
+
 function typePair(definition: MobDefinition): readonly CreatureTypeId[] {
+  const expansion = EXPANSION_CREATURE_NATURAL_TYPES[definition.kind as ExpansionCreatureKind];
+  if (expansion) return expansion;
   const exact = EXACT_TYPES[definition.kind];
   if (exact) return Object.freeze([...new Set(exact)]);
-  const id = definition.kind;
   if (definition.family === "sentient") {
     if (definition.culture === "atlantians") return Object.freeze(["tide", "neutral"]);
     if (definition.culture === "sugarcourt") return Object.freeze(["confection", "neutral"]);
     if (definition.culture === "wood-elves") return Object.freeze(["verdant", "arcane"]);
     if (definition.culture === "dwarves") return Object.freeze(["stone", "metal"]);
-    if (id.startsWith("goblin")) return Object.freeze(["wild", "metal"]);
     return Object.freeze(["neutral", "wild"]);
   }
   if (definition.family === "construct") return Object.freeze(["metal", "stone"]);
   if (definition.family === "undead") return Object.freeze(["spirit", "umbral"]);
-  if (definition.family === "sea-slug") {
-    if (/ember|sunset/iu.test(id)) return Object.freeze(["tide", "flame"]);
-    if (/void|moon|starlight|crystal/iu.test(id)) return Object.freeze(["tide", "arcane"]);
-    if (/leaf|kelp|sheep/iu.test(id)) return Object.freeze(["tide", "verdant"]);
-    return Object.freeze(["tide", "venom"]);
-  }
+  if (definition.family === "sea-slug") return Object.freeze(["tide", "venom"]);
   if (definition.family === "fish" || definition.aquatic || definition.movement === "aquatic") {
-    if (/gloom|deep|abyss|dread/iu.test(id)) return Object.freeze(["tide", "umbral"]);
-    if (/coral|reef|kelp|reed/iu.test(id)) return Object.freeze(["tide", "verdant"]);
-    if (/glass|silver|prism|aether|lantern|glow/iu.test(id)) return Object.freeze(["tide", "radiant"]);
     return Object.freeze(["tide", "wild"]);
   }
-  if (definition.family === "bird" || definition.flying) return Object.freeze(["sky", /moon|mist|dream/iu.test(id) ? "dream" : "wild"]);
-  if (definition.family === "butterfly") return Object.freeze(["sky", /frost/iu.test(id) ? "frost" : /ember/iu.test(id) ? "flame" : /fen|bloom|meadow/iu.test(id) ? "verdant" : "wild"]);
-  if (definition.family === "pet") return Object.freeze([/taffy|praline/iu.test(id) ? "confection" : "wild", /rime/iu.test(id) ? "frost" : /bramble/iu.test(id) ? "verdant" : "neutral"]);
-  if (/frost|rime|ice/iu.test(id)) return Object.freeze(["wild", "frost"]);
-  if (/ember|cinder|sun/iu.test(id)) return Object.freeze(["wild", "flame"]);
-  if (/moon|mist|dream/iu.test(id)) return Object.freeze(["wild", "dream"]);
-  if (/moss|clover|petal|bramble|reed|dew|burrow/iu.test(id)) return Object.freeze(["wild", "verdant"]);
+  if (definition.family === "bird" || definition.flying) return Object.freeze(["sky", "wild"]);
+  if (definition.family === "butterfly") return Object.freeze(["sky", "wild"]);
+  if (definition.family === "pet") return Object.freeze(["wild", "neutral"]);
   return Object.freeze(["wild", "neutral"]);
 }
 
 function captureProfile(definition: MobDefinition): CaptureProfileId {
+  const authored = AUTHORED_CREATURE_CAPTURE_SHEETS[definition.kind as ExpansionCreatureKind];
+  if (authored) return authored.profileId;
   if (definition.sentient || definition.family === "sentient" || definition.family === "construct" || definition.family === "undead") return "uncapturable";
   if (definition.family === "legendary" || definition.family === "dragon" || definition.family === "leviathan" || definition.health >= 180) return "legendary";
   if (definition.aquatic || definition.family === "fish" || definition.family === "sea-slug") return "aquatic";
-  if (/glow|rune|chime|aether|prism|mist|moon|dream|lantern/iu.test(`${definition.kind} ${definition.behavior}`)) return "resonant";
   if (definition.hostile) return definition.radius >= 0.75 ? "territorial" : "pursuit";
-  if (definition.radius >= 0.8 || /shell|tortoise|ridge|crab/iu.test(definition.kind)) return "armored";
+  if (definition.radius >= 0.8) return "armored";
   if (definition.temperament === "Skittish") return "gentle";
   return "open";
 }
@@ -101,9 +141,9 @@ function ecologyRoles(definition: MobDefinition): readonly EcologyRole[] {
   if (definition.family === "construct") roles.add("construct");
   if (definition.family === "pollinator" || definition.family === "butterfly") roles.add("pollinator");
   if (definition.family === "fish" || definition.family === "sea-slug") roles.add(definition.bottomDweller ? "reef-helper" : "filter-feeder");
-  if (/mole|burrow|rabbit|hare|cottontail/iu.test(definition.kind)) roles.add("burrower");
-  if (definition.hostile) roles.add(/boar|warg|fox|shark|maw|crawler|lynx|jackal/iu.test(definition.kind) ? "predator" : "sentinel");
-  else if (!definition.sentient && definition.family !== "construct") roles.add(/deer|cow|grazer|horse|woolhorn|tapir|tortoise/iu.test(definition.kind) ? "grazer" : "ambient");
+  if (definition.family === "rabbit") roles.add("burrower");
+  if (definition.hostile) roles.add("sentinel");
+  else if (!definition.sentient && definition.family !== "construct") roles.add("ambient");
   if (definition.rideable) roles.add("mount");
   if (definition.tameable) roles.add("companion");
   if (definition.family === "dragon" || definition.family === "leviathan") roles.add("boss");
@@ -117,8 +157,43 @@ function researchClues(definition: MobDefinition): readonly string[] {
   return Object.freeze(clues);
 }
 
+export const EXPANSION_CREATURE_ORDER: readonly ExpansionCreatureKind[] = Object.freeze([
+  ...LIVING_ROSTER_ORDER, ...LEGENDARY_CREATURE_ORDER, ...SUMMONED_CREATURE_ORDER,
+]);
+
+function makeCreatureContentSheet(kind: ExpansionCreatureKind): CreatureContentSheet {
+  const stats = EXPANSION_CREATURE_STAT_SEEDS[kind];
+  const moves = EXPANSION_CREATURE_MOVE_SHEETS[kind];
+  const capture = AUTHORED_CREATURE_CAPTURE_SHEETS[kind];
+  const ecology = CREATURE_ECOLOGY_CONTRACTS[kind];
+  const rarity = EXPANSION_CREATURE_RARITY_POLICIES[kind];
+  const naturalTypes = EXPANSION_CREATURE_NATURAL_TYPES[kind];
+  if (!stats || !moves || !capture || !ecology || !rarity || !naturalTypes) throw new Error(`${kind} has an incomplete authored creature sheet.`);
+  const clues = Object.freeze([capture.microHook, ecology.workBehavior, ...capture.careClues]);
+  return Object.freeze({
+    stableId: kind, naturalTypes, stats, moves, capture, ecology, rarity,
+    ecologyRoles: EXPANSION_ECOLOGY_ROLES[kind], researchClues: clues,
+  });
+}
+
+/** One exhaustive, cross-module completion-sheet registry for the 37-creature expansion. */
+export const CREATURE_CONTENT_SHEETS: Readonly<Record<ExpansionCreatureKind, CreatureContentSheet>> = Object.freeze(
+  Object.fromEntries(EXPANSION_CREATURE_ORDER.map((kind) => [kind, makeCreatureContentSheet(kind)])) as Record<ExpansionCreatureKind, CreatureContentSheet>,
+);
+
 function makeProfile(kind: MobKind): CreatureProfile {
   const definition = MOB_DEFS[kind];
+  const authoredSheet = CREATURE_CONTENT_SHEETS[kind as ExpansionCreatureKind];
+  if (authoredSheet) return Object.freeze({
+    kind, naturalTypes: authoredSheet.naturalTypes,
+    stats: Object.freeze({ kind, ...authoredSheet.stats }),
+    moves: Object.freeze({
+      basicMoveId: authoredSheet.moves.basicMoveId, unlocks: authoredSheet.moves.unlocks,
+      fieldUtilityMoveId: authoredSheet.moves.fieldUtilityMoveId, passiveStanceMoveId: authoredSheet.moves.passiveStanceMoveId,
+    }),
+    captureProfile: authoredSheet.capture.profileId, ecologyRoles: authoredSheet.ecologyRoles,
+    researchClues: authoredSheet.researchClues, authorship: "explicit" as const,
+  });
   const naturalTypes = typePair(definition);
   return Object.freeze({
     kind,
@@ -128,6 +203,7 @@ function makeProfile(kind: MobKind): CreatureProfile {
     captureProfile: captureProfile(definition),
     ecologyRoles: ecologyRoles(definition),
     researchClues: researchClues(definition),
+    authorship: "legacy-family-fallback" as const,
   });
 }
 
@@ -149,6 +225,12 @@ export function validateCreatureProfiles(): readonly string[] {
     if (!profile.captureProfile) errors.push(`${kind}: missing capture profile.`);
     if (!profile.ecologyRoles.length) errors.push(`${kind}: missing ecology role.`);
     if (!profile.researchClues.length) errors.push(`${kind}: missing research clue.`);
+  }
+  for (const kind of EXPANSION_CREATURE_ORDER) {
+    const sheet = CREATURE_CONTENT_SHEETS[kind];
+    if (!sheet || CREATURE_PROFILES[kind].authorship !== "explicit") errors.push(`${kind}: expansion content is not explicit.`);
+    if (sheet?.stableId !== kind || sheet.capture.kind !== kind || sheet.moves.kind !== kind || sheet.rarity.kind !== kind) errors.push(`${kind}: authored sheet IDs drifted.`);
+    if (sheet?.ecology.authorship !== "explicit") errors.push(`${kind}: ecology still uses fallback authorship.`);
   }
   return Object.freeze(errors);
 }

@@ -1,4 +1,4 @@
-import type { MobKind } from "./mobs";
+import type { LegendaryCreatureKind, LivingRosterKind, MobKind, SummonedCreatureKind } from "./mobs";
 import type { CreatureAptitudeId } from "./creature-progression";
 
 export type PrimeVisualMotif =
@@ -18,6 +18,39 @@ export type PrimeFormProfile = Readonly<{
   clue: string;
 }>;
 
+export type PrimeEligibleKind =
+  | "petalfox" | "mossling" | "puddlehopper" | "pebbletortoise"
+  | "thornhide-trufflehog" | "petalmask-tanuki" | "hearthback-badger" | "glassstep-jerboa"
+  | "stormcrest-ibex" | "cloudkite-pika" | "briarclaw-lynx" | "cragglass-basilisk"
+  | "mirecrown-crane" | "inkveil-cuttle" | "fossilback-trilobite";
+
+export type PrimeRouteStep = Readonly<{ id: string; label: string; ecologicalVerb: string; clue: string }>;
+
+const route = (
+  first: readonly [string, string, string, string],
+  second: readonly [string, string, string, string],
+  third: readonly [string, string, string, string],
+): readonly [PrimeRouteStep, PrimeRouteStep, PrimeRouteStep] => Object.freeze([first, second, third].map(([id, label, ecologicalVerb, clue]) => Object.freeze({ id, label, ecologicalVerb, clue }))) as readonly [PrimeRouteStep, PrimeRouteStep, PrimeRouteStep];
+
+/** Prime routes use species-specific ecological actions, not a generic sight/call/study checklist. */
+export const PRIME_ROUTE_PROFILES = Object.freeze({
+  petalfox: route(["restore-spring-bloom", "Restore a spring bloom", "restore", "Repair one damaged bloom patch without harvesting it."], ["follow-seasonal-petals", "Follow seasonal petals", "track", "Keep the full living flower trail intact."], ["offer-den-flower", "Offer the den flower", "offer", "Present the trail's final flower at the den." ]),
+  mossling: route(["link-three-habitats", "Link three habitats", "restore", "Create one compatible edge for each colony form."], ["observe-colony-exchange", "Observe colony exchange", "observe", "Watch each Mossling form pass material to the next."], ["plant-old-patch-spore", "Plant Old Patch's spore", "cultivate", "Prepare a mixed bed for the traveling colony." ]),
+  puddlehopper: route(["map-rain-basin", "Map the rain basin", "survey", "Locate the basin after sustained rain."], ["answer-cloudbelly-croak", "Answer Cloudbelly's croak", "resonate", "Repeat the low three-part rain call."], ["shelter-tadpole-pool", "Shelter the tadpole pool", "protect", "Keep one rain-fed pool intact through the storm." ]),
+  pebbletortoise: route(["catalog-shell-symbionts", "Catalog shell symbionts", "observe", "Identify the three ambient calls carried by the shell."], ["restore-islet-bed", "Restore the shell-bed", "cultivate", "Replace the missing plant family without overfilling it."], ["open-shore-passage", "Open the shore passage", "rescue", "Clear a broad route from water to resting bank." ]),
+  "thornhide-trufflehog": route(["complete-blackcap-ring", "Complete the blackcap ring", "cultivate", "Restore the missing fungal arc without trampling the mycelium."], ["trace-rooter-route", "Trace the Rooter route", "track", "Follow its multi-day signs without digging them up."], ["share-ripe-truffle", "Share a ripe truffle", "offer", "Leave one ripe truffle at the rooted den." ]),
+  "petalmask-tanuki": route(["separate-false-trails", "Separate the false trails", "interpret", "Reject the tracks whose petals face the wrong way."], ["recover-true-mask", "Recover the true mask", "restore", "Return the leaf mask to its moonlit shrine."], ["mirror-ecological-scent", "Mirror the ecological scent", "resonate", "Match the one trail that carries living pollen." ]),
+  "hearthback-badger": route(["clear-emberburrow-exit", "Clear Emberburrow's exit", "rescue", "Open the smoke-low emergency tunnel."], ["brace-warm-chamber", "Brace the warm chamber", "build", "Repair one authored den support without sealing either exit."], ["leave-root-cache", "Leave a root cache", "offer", "Stock the den without entering the sleeping chamber." ]),
+  "glassstep-jerboa": route(["read-moonletter-tracks", "Read the moonletter tracks", "interpret", "Follow glass-bright writing visible only at night."], ["quiet-burrow-mouth", "Quiet the burrow mouth", "protect", "Remove the source of vibration near the den."], ["cross-glassstep-line", "Cross the Glassstep line", "traverse", "Use the same safe landing sequence without breaking crust." ]),
+  "stormcrest-ibex": route(["rebuild-storm-cairn", "Rebuild the storm cairn", "restore", "Replace three thunder-split stones."], ["follow-descent-hooves", "Follow descent hooves", "track", "Trace the path the Prime uses only in storms."], ["catch-separated-kid", "Catch the separated kid", "rescue", "Guide the kid onto the safe ledge without an orb." ]),
+  "cloudkite-pika": route(["tune-descent-chimes", "Tune the descent chimes", "resonate", "Repair the flock's falling-stone phrase."], ["map-updraft-steps", "Map the updraft steps", "survey", "Record the full safe descent route."], ["escort-young-pika", "Escort a young pika", "rescue", "Use the route to return a stranded flockmate." ]),
+  "briarclaw-lynx": route(["survive-first-stalk", "Survive the first stalk", "endure", "Do not attack during the first night phase."], ["reveal-winter-cover", "Reveal winter cover", "track", "Find the bowed branches where ordinary tracks disappear."], ["yield-hunt-corridor", "Yield the hunt corridor", "protect", "Move competing traps out of the Prime's route." ]),
+  "cragglass-basilisk": route(["align-first-reflector", "Align the first reflector", "resonate", "Turn one sunbeam without meeting the gaze."], ["fracture-false-crown", "Fracture the false crown", "interpret", "Identify and break only the decoy crystal."], ["open-reflective-molt", "Open the reflective molt", "reveal", "Return the final beam during the molt window." ]),
+  "mirecrown-crane": route(["restore-court-reeds", "Restore the court reeds", "cultivate", "Replant the missing dawn-lit arc before the flock arrives."], ["walk-outside-circle", "Walk outside the circle", "observe", "Complete the migration court without crossing it."], ["answer-first-reed-call", "Answer the First Reed call", "resonate", "Repeat the closing courtship phrase." ]),
+  "inkveil-cuttle": route(["relight-observatory-lamps", "Relight observatory lamps", "restore", "Restore the dim color sequence without flooding the room."], ["read-emotion-pattern", "Read the emotion pattern", "interpret", "Identify the feeling shown before the body appears."], ["clear-escape-gallery", "Clear the escape gallery", "rescue", "Remove debris from the cuttle's unlit retreat." ]),
+  "fossilback-trilobite": route(["brush-first-stratum", "Brush the First Stratum", "excavate", "Expose sediment without mining the occupied block."], ["record-ancestral-taps", "Record ancestral taps", "resonate", "Repeat the shell's slow historical rhythm."], ["protect-ancient-bed", "Protect the ancient bed", "protect", "Keep the lowest sediment undisturbed for a full cycle." ]),
+} satisfies Readonly<Record<PrimeEligibleKind, readonly [PrimeRouteStep, PrimeRouteStep, PrimeRouteStep]>>);
+
 /** Prime forms are authored ecological encounters, never the shiny palette roll. */
 export const PRIME_FORM_PROFILES: Readonly<Partial<Record<MobKind, PrimeFormProfile>>> = Object.freeze({
   petalfox: { name: "The Garden-Tailed Fox", motif: "living-garden", accent: 0xf0b8ca, sizeScale: 1.08, condition: "bloom", clue: "Three restored bloom patches point toward one seasonal den." },
@@ -36,6 +69,63 @@ export const PRIME_FORM_PROFILES: Readonly<Partial<Record<MobKind, PrimeFormProf
   "inkveil-cuttle": { name: "The Observatory Veil", motif: "observatory-veil", accent: 0x7fb8cb, sizeScale: 1.15, condition: "abyssal-night", clue: "One sunken observatory reflects an emotion before it reflects a body." },
   "fossilback-trilobite": { name: "First Stratum", motif: "first-stratum", accent: 0xc9b28d, sizeScale: 1.18, condition: "ancient-water", clue: "The lowest undisturbed sediment holds tracks older than the ruin above." },
 });
+
+export type ExpansionCreatureKind = LivingRosterKind | LegendaryCreatureKind | SummonedCreatureKind;
+export type CreatureRarityPolicy = Readonly<{
+  kind: ExpansionCreatureKind;
+  shinyEligible: boolean;
+  shinyTreatment: string;
+  primeForm: string | null;
+  specialVariant: string | null;
+  rareAptitudePolicy: string;
+  stableIdentityPolicy: string;
+}>;
+
+const rarity = <K extends ExpansionCreatureKind>(
+  kind: K, shinyEligible: boolean, shinyTreatment: string, primeForm: string | null,
+  specialVariant: string | null, rareAptitudePolicy: string, stableIdentityPolicy: string,
+): CreatureRarityPolicy => Object.freeze({ kind, shinyEligible, shinyTreatment, primeForm, specialVariant, rareAptitudePolicy, stableIdentityPolicy });
+
+/** Shiny, Prime, story, legendary, and summon identity are intentionally separate. */
+export const EXPANSION_CREATURE_RARITY_POLICIES = Object.freeze({
+  "thornhide-trufflehog": rarity("thornhide-trufflehog", true, "Rust-red thorns over a charcoal hide; no particle trail.", "Blackcap Rooter", null, "Prime guarantees Keen-Nosed; shiny remains cosmetic.", "Ecology-cell lineage fixes both ordinary and Prime candidates."),
+  "orchard-glider": rarity("orchard-glider", true, "Autumn-leaf wing membranes with the same body colors.", null, "Nest-lineage membrane markings", "Rare Orchard Memory improves only fruitmark breadth.", "Nest anchor and lineage seed prevent unload rerolls."),
+  "petalmask-tanuki": rarity("petalmask-tanuki", true, "Pale plum mask and silver-edged tail rings.", "The Many-Pathed Mask", null, "Prime guarantees Resonant; false trails grant no stat bonus.", "The true ecological trail is anchored to its moonlit shrine."),
+  "ironbeak-magpie": rarity("ironbeak-magpie", true, "Pale brushed-metal feathers, explicitly without sparkle spam.", null, "Message-tube courier", "Rare Cachewise expands remembered legal caches.", "Rookery lineage fixes metal accent and cache preference."),
+  "hearthback-badger": rarity("hearthback-badger", true, "Ash-gray face bars and copper hearth plates.", "Old Emberburrow", null, "Prime guarantees Strong-Back through its authored den route.", "The burrow POI owns the Prime identity."),
+  "sunfoil-pangolin": rarity("sunfoil-pangolin", true, "Rose-gold foil edges over dark umber scales.", null, null, "Rare Sunwise lengthens warning, not combat output.", "Feeding-mound lineage fixes scale accent."),
+  "glassstep-jerboa": rarity("glassstep-jerboa", true, "Moon-blue ear lining and translucent glass-dark feet.", "Moonletter", null, "Prime guarantees Sure-Footed after its track route.", "Moonlit burrow anchor fixes the candidate."),
+  "stormcrest-ibex": rarity("stormcrest-ibex", true, "White quartz horns with muted violet charge seams.", "Cairn Above Thunder", null, "Prime guarantees Weatherwise; no raw damage bonus.", "Cairn, storm band, and lineage seed fix identity."),
+  "cindercoil-gecko": rarity("cindercoil-gecko", true, "Blue-white toe pads and ember-orange eye rings.", null, "Deep-chilled Cooled Skin", "Rare Heatwise gives earlier pressure warnings.", "Fumarole wall and clutch lineage fix identity."),
+  "cloudkite-pika": rarity("cloudkite-pika", true, "Sunset ear-sails and pearl whisker chimes.", "The Safe Descent Colony", null, "Prime guarantees Weatherwise to the flock anchor.", "Flock route fixes the Prime; individuals keep stable lineage seeds."),
+  "briarclaw-lynx": rarity("briarclaw-lynx", true, "Blackberry rosettes across a dark green mantle.", "The White Old Hunter", "Regional Frost mantle", "Prime guarantees Keen-Scent; the white form has stalking phases.", "Hunt corridor and seasonal band fix the Prime identity."),
+  "gravebell-jackal": rarity("gravebell-jackal", true, "Ivory bell and russet spirit markings.", null, "Purified Radiant story form", "Rare Relicwise distinguishes memorial from curse sooner.", "Relic anchor fixes story form and ordinary lineage fixes shiny."),
+  "cragglass-basilisk": rarity("cragglass-basilisk", true, "Smoky glass crown with sea-green refraction edges.", "The Crown in Reflection", null, "Prime guarantees Resonant after the reflector route.", "Sun-reflector anchor fixes the Prime candidate."),
+  "stormglass-roclet": rarity("stormglass-roclet", true, "Opal glass pinions with restrained rose lightning seams.", null, "Level-30 adult Roc", "Rare Rescuewise increases valid carry mass slightly.", "Aerie lineage persists through Roc maturation."),
+  "brinewhisk-otter": rarity("brinewhisk-otter", true, "Cream mask, red-brown coat, and blue shell preference.", null, null, "Rare Strong Retriever changes legal item mass only.", "Holt family fixes markings and shell preference."),
+  "riverwright-beaver": rarity("riverwright-beaver", true, "Silver bark coat and warm copper tail scales.", null, null, "Rare Lodgewise improves work diagnosis, not block speed.", "Lodge anchor and family seed fix identity."),
+  "mirecrown-crane": rarity("mirecrown-crane", true, "Ink-black crown tips with pale rose flight feathers.", "The First Reed Court", null, "Prime guarantees Resonant after the court ritual.", "Migration court and dawn band fix the Prime."),
+  "inkveil-cuttle": rarity("inkveil-cuttle", true, "Luminous cyan emotion bands on a deep violet mantle.", "The Observatory Veil", null, "Prime guarantees Resonant and a unique color-language note.", "Observatory anchor fixes the Prime; clutch seed fixes shiny."),
+  "prismclaw-mantis-shrimp": rarity("prismclaw-mantis-shrimp", true, "Ultraviolet club bands and pearl carapace margins.", null, null, "Rare Crackwise reveals authored fractures sooner.", "Burrow anchor and clutch lineage fix identity."),
+  "reefmender-shrimp": rarity("reefmender-shrimp", true, "Gold antenna tips and mint cleaning claws.", null, null, "Rare Gillwise adds one compatible client category.", "Cleaning-station lineage prevents tank rerolls."),
+  "currentweaver-eel": rarity("currentweaver-eel", true, "White lateral-line knots against a cobalt body.", null, "Charged Storm form", "Rare Lampwise reports overload earlier.", "Current loop and lineage seed fix shiny; charge never rerolls it."),
+  "shellcarrier-hermit": rarity("shellcarrier-hermit", true, "Lavender legs and pale tidevine knots; shell color is equipment.", null, "Equipped shell forms", "Rare Sure-Fitted reduces shell-swap recovery only.", "Individual identity survives every shell swap."),
+  "wreckwhistle-porpoise": rarity("wreckwhistle-porpoise", true, "Pearl wake scars over a deep slate body.", null, "Pod-rescue harness form", "Rare Deep Diver extends rescue work time.", "Pod lineage and wreck route fix identity."),
+  "kilnscale-salamander": rarity("kilnscale-salamander", true, "White-hot vent seams over blue-black scales.", null, "Cooled Skin Frost form", "Rare Heatwise broadens safe-gradient sensing.", "Fumarole clutch fixes shiny; thermal form is independent."),
+  "sporeback-gardener": rarity("sporeback-gardener", true, "Pale luminous gills beneath a dark inherited cap garden.", null, "Cultivated fungal-family crowns", "Rare Nest-Tender adds one garden compatibility.", "Inherited garden family is stable through capture and work."),
+  "voidmantle-ray": rarity("voidmantle-ray", true, "Star-flecked underside with muted teal fin edges.", null, null, "Rare Deep Diver lengthens safe glide work time.", "Plankton route and lineage seed fix identity."),
+  "fossilback-trilobite": rarity("fossilback-trilobite", true, "Blue-green lobe edges over pale fossil copper.", "First Stratum", null, "Prime guarantees Sure-Footed and unique history notes.", "Ancient-water stratum fixes the Prime candidate."),
+  "ilyr-virebloom": rarity("ilyr-virebloom", false, "Ilyr has one authored identity; optional seasonal blossoms are not shiny rolls.", null, "Dry-spring and restored-spring encounter phases", "Unique legendary aptitudes arise only from resolution.", "One stable identity per eligible restored migration anchor."),
+  thalassene: rarity("thalassene", false, "Reef health changes visible color; it is not a collectible shiny palette.", null, "Bleached, cleaning, and restored reef phases", "Unique sanctuary aptitude follows the resolution.", "One stable identity per protected reef migration anchor."),
+  orichalc: rarity("orichalc", false, "Contradictory Spirit or Arcane observations are states, never shiny rolls.", null, "Dormant, bound, redirected, and awakened states", "No aptitude resolves Veinmetal's nature.", "One stable identity per Deepgear living-seam anchor."),
+  "varkesh-stormmane": rarity("varkesh-stormmane", false, "Storm charge and road-marker plumage are signature identity.", null, "Bond, pact, or protected-aerie resolutions", "Unique Roadwise aptitude follows an earned travel pact.", "One Varkesh identity per highland aerie."),
+  kharza: rarity("kharza", false, "Harness damage and freed scars are story states, not shinies.", null, "Coerced, freed, pact, and captured resolutions", "Unique Packwise aptitude is unlocked only after freedom.", "One Kharza identity per Freeblades finale anchor."),
+  "sugarwake-sovereign": rarity("sugarwake-sovereign", false, "Feast-memory and kiln-heart colors are combat phases.", null, "Guardian, heart-form, and communal-station resolutions", "Unique Makerwise aptitude belongs to stabilized forms.", "One Sovereign identity per eligible masterworks feast."),
+  asterjaw: rarity("asterjaw", false, "Contract constellation pattern is authored and stable, not rerolled.", null, "Temporary and Worldpin-grounded forms", "Grounding unlocks Routewise without a stat roll.", "The summoning contract fixes the specimen seed across every cast."),
+  "vellum-warden": rarity("vellum-warden", false, "Margin notes change with memory; paper color is not a shiny roll.", null, "Temporary and Worldpin-grounded forms", "Grounding unlocks Archivewise through authored work.", "The summoning contract fixes the specimen seed across every cast."),
+  "choir-of-one": rarity("choir-of-one", false, "Permitted faces are encounter tells, never collectible palettes.", null, "Temporary and Worldpin-grounded forms", "Grounding unlocks Resonant through a silence covenant.", "The summoning contract fixes the specimen seed across every cast."),
+  "glasswake-stag": rarity("glasswake-stag", false, "Sea and sky-sail reflections are dynamic forms, not shiny rerolls.", null, "Water-wake, air-wake, and grounded forms", "Grounding unlocks Sure-Footed rescue behavior.", "The summoning contract fixes the specimen seed across every cast."),
+} satisfies Readonly<Record<ExpansionCreatureKind, CreatureRarityPolicy>>);
 
 export type PrimeEncounterContext = Readonly<{
   worldSeed: string;
@@ -121,6 +211,7 @@ export type PrimeEncounterState = Readonly<{
   specimenId?: string;
   custodyId?: string | null;
   completedClues?: readonly string[];
+  completedRouteVerbs?: readonly string[];
   routeProgress?: number;
 }>;
 
@@ -148,19 +239,26 @@ export function transitionPrimeEncounter(state: PrimeEncounterState, status: Pri
 export function advancePrimeEncounterClue(state: PrimeEncounterState, clueId: string, now: number): PrimeEncounterState {
   const clue = clueId.trim().toLocaleLowerCase().replace(/[^a-z0-9-]+/gu, "-").slice(0, 64);
   if (!clue) return state;
+  const routeSteps = PRIME_ROUTE_PROFILES[state.kind as PrimeEligibleKind];
+  if (!routeSteps) return state;
+  const legacyIndex = (["field-sighting", "distinctive-call", "kinmark-study"] as const).indexOf(clue as never);
+  const routeVerb = legacyIndex >= 0 ? routeSteps[legacyIndex]?.id : routeSteps.find((step) => step.id === clue)?.id;
+  if (!routeVerb) return state;
+  const completedRouteVerbs = [...new Set([...(state.completedRouteVerbs ?? []), routeVerb])].slice(0, PRIME_ROUTE_REQUIRED_CLUES);
+  if (completedRouteVerbs.length === (state.completedRouteVerbs?.length ?? 0)) return state;
   const completed = [...new Set([...(state.completedClues ?? []), clue])].slice(0, PRIME_ROUTE_REQUIRED_CLUES);
-  if (completed.length === (state.completedClues?.length ?? 0)) return state;
   return Object.freeze({
     ...state,
     status: state.status === "active" ? "observed" : state.status,
     completedClues: Object.freeze(completed),
-    routeProgress: completed.length,
+    completedRouteVerbs: Object.freeze(completedRouteVerbs),
+    routeProgress: completedRouteVerbs.length,
     lastUpdatedAt: Math.max(state.lastUpdatedAt, now),
   });
 }
 
 export function primeEncounterRouteComplete(state: PrimeEncounterState | null | undefined) {
-  return (state?.routeProgress ?? state?.completedClues?.length ?? 0) >= PRIME_ROUTE_REQUIRED_CLUES;
+  return (state?.routeProgress ?? state?.completedRouteVerbs?.length ?? state?.completedClues?.length ?? 0) >= PRIME_ROUTE_REQUIRED_CLUES;
 }
 
 export function transferPrimeEncounterCustody(
@@ -214,6 +312,15 @@ export function normalizePrimeEncounterStates(value: unknown) {
         return normalized ? [normalized] : [];
       }))].slice(0, PRIME_ROUTE_REQUIRED_CLUES)
       : [];
+    const profileRoute = PRIME_ROUTE_PROFILES[raw.kind as PrimeEligibleKind] ?? [];
+    const allowedRouteVerbs = new Set(profileRoute.map((step) => step.id));
+    const routeVerbs = Array.isArray(raw.completedRouteVerbs)
+      ? [...new Set(raw.completedRouteVerbs.filter((verb): verb is string => typeof verb === "string" && allowedRouteVerbs.has(verb)))].slice(0, PRIME_ROUTE_REQUIRED_CLUES)
+      : clues.flatMap((clue) => {
+        const legacyIndex = (["field-sighting", "distinctive-call", "kinmark-study"] as const).indexOf(clue as never);
+        const translated = legacyIndex >= 0 ? profileRoute[legacyIndex]?.id : allowedRouteVerbs.has(clue) ? clue : null;
+        return translated ? [translated] : [];
+      });
     const firstActivatedAt = Math.max(0, Number(raw.firstActivatedAt) || 0);
     const lastUpdatedAt = Math.max(firstActivatedAt, Number(raw.lastUpdatedAt) || 0);
     const specimenId = typeof raw.specimenId === "string" ? raw.specimenId.trim().slice(0, 160) : "";
@@ -224,7 +331,8 @@ export function normalizePrimeEncounterStates(value: unknown) {
       firstActivatedAt, lastUpdatedAt,
       ...(specimenId ? { specimenId } : {}),
       ...(custodyId !== undefined ? { custodyId } : {}),
-      ...(clues.length ? { completedClues: Object.freeze(clues), routeProgress: clues.length } : {}),
+      ...(clues.length ? { completedClues: Object.freeze(clues) } : {}),
+      ...(routeVerbs.length ? { completedRouteVerbs: Object.freeze(routeVerbs), routeProgress: routeVerbs.length } : {}),
     }));
   }
   return states;

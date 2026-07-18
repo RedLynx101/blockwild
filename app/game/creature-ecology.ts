@@ -5,7 +5,7 @@ import {
   AQUARIUM_MOB_ORDER, AQUATIC_MOB_ORDER, BIRD_ORDER, BUTTERFLY_ORDER, DRAGON_ORDER, HEARTHROADS_AQUATIC_ORDER,
   LEGENDARY_CREATURE_ORDER, LIVING_ROSTER_ORDER, MOB_DEFS, MOB_ORDER, MOSSLING_VARIANT_ORDER, POLLINATOR_ORDER,
   RABBIT_ORDER, SENTIENT_MOB_ORDER, SUMMONED_CREATURE_ORDER, TIDEGLASS_AQUATIC_ORDER, UNDERGROUND_MOB_ORDER,
-  V1_FACTION_CREATURE_ORDER, type MobKind,
+  V1_FACTION_CREATURE_ORDER, type LegendaryCreatureKind, type LivingRosterKind, type MobKind, type SummonedCreatureKind,
 } from "./mobs";
 
 export type CreatureWorkRole =
@@ -233,7 +233,79 @@ export type CreatureEcologyContract = Readonly<{
   utilitySignal: string;
   dropRationale: string;
   juvenileScale: number;
+  authorship: "explicit" | "legacy-family-fallback";
+  ecologicalVerb: string;
+  workBehavior: string;
+  releaseOutcome: string;
 }>;
+
+export type ExpansionCreatureKind = LivingRosterKind | LegendaryCreatureKind | SummonedCreatureKind;
+type AuthoredEcologySeed = Readonly<{
+  workRoles: readonly CreatureWorkRole[];
+  careNeeds: readonly HabitatNeedId[];
+  workCadenceSeconds: number;
+  aggregateKey: string;
+  aquariumRoles: readonly AquariumRole[];
+  pollinationRoles: readonly PollinationRole[];
+  perchEligible: boolean;
+  containment: ContainmentMode;
+  ecologicalVerb: string;
+  workBehavior: string;
+  releaseOutcome: string;
+  juvenileScale: number;
+}>;
+
+const ecologySeed = (
+  workRoles: readonly CreatureWorkRole[], careNeeds: readonly HabitatNeedId[], workCadenceSeconds: number,
+  aggregateKey: string, containment: ContainmentMode, ecologicalVerb: string, workBehavior: string,
+  releaseOutcome: string, aquariumRoles: readonly AquariumRole[] = [], pollinationRoles: readonly PollinationRole[] = [],
+  perchEligible = false, juvenileScale = .64,
+): AuthoredEcologySeed => Object.freeze({
+  workRoles: Object.freeze([...workRoles]), careNeeds: Object.freeze([...careNeeds]), workCadenceSeconds, aggregateKey,
+  aquariumRoles: Object.freeze([...aquariumRoles]), pollinationRoles: Object.freeze([...pollinationRoles]), perchEligible,
+  containment, ecologicalVerb, workBehavior, releaseOutcome, juvenileScale,
+});
+
+/** Explicit jobs and ecological outcomes for every expansion creature. */
+export const EXPANSION_CREATURE_ECOLOGY_SEEDS = Object.freeze({
+  "thornhide-trufflehog": ecologySeed(["forager", "soil"], ["shelter", "substrate", "companion"], 30, "fungal-ring:rooting", "ordinary", "root", "Snuffles ripe fungi and aerates only assigned intact fungal beds.", "Replants a truffle-spore patch in compatible woodland.", [], [], false, .58),
+  "orchard-glider": ecologySeed(["scout", "forager"], ["perch", "shelter", "companion"], 8, "orchard:seed-route", "ordinary", "glide", "Carries one viable seed between an assigned fruit tree and prepared bed.", "Seeds one young orchard edge and returns to its nest lineage.", [], [], false, .52),
+  "petalmask-tanuki": ecologySeed(["tracker", "scout"], ["shelter", "substrate", "companion"], 12, "woodland:scent-trail", "ordinary", "misdirect", "Compares real ecological scent with harmless decoy trails around a bounded patrol.", "Draws predators away from one restored den without changing spawns.", [], [], false, .58),
+  "ironbeak-magpie": ecologySeed(["retriever", "scout"], ["perch", "shelter", "companion"], 8, "rookery:legal-cache", "ordinary", "cache", "Retrieves only marked loose items and delivers message tubes between approved perches.", "Returns one non-unique cached object to a wild rookery.", [], [], true, .5),
+  "hearthback-badger": ecologySeed(["forager", "sentinel"], ["shelter", "substrate"], 24, "burrow:warm-chamber", "ordinary", "excavate", "Maintains authored burrow entrances and turns assigned root litter into den bedding.", "Opens a reusable den starter for local burrowing fauna.", [], [], false, .6),
+  "sunfoil-pangolin": ecologySeed(["mineral-sense", "sentinel"], ["temperature", "substrate", "shelter"], 18, "mound:sunfoil", "ordinary", "uncurl", "Reads insect-mound health and opens only designated brittle crusts.", "Reactivates one dormant mound used by small desert fauna.", [], [], false, .52),
+  "glassstep-jerboa": ecologySeed(["scout", "mineral-sense"], ["substrate", "shelter"], 8, "desert:burrow-script", "ordinary", "spring", "Maps safe crust crossings and signals occupied burrows through foot vibrations.", "Seeds sparse grass along a safe moonlit route.", [], [], false, .45),
+  "stormcrest-ibex": ecologySeed(["mount", "rescue", "weather"], ["shelter", "temperature", "companion"], 10, "highland:storm-cairn", "ordinary", "descend", "Tests cliff landings, carries a bonded rider, and braces beneath falling allies.", "Reopens one abstract highland migration descent.", [], [], false, .62),
+  "cindercoil-gecko": ecologySeed(["weather", "construct-work"], ["temperature", "shelter", "substrate"], 12, "fumarole:wall-sensor", "ordinary", "cling", "Clings to an assigned wall and reports dangerous changes in its heat gradient.", "Occupies a safe fumarole wall as an early-pressure warning.", [], [], false, .44),
+  "cloudkite-pika": ecologySeed(["weather", "rescue"], ["perch", "shelter", "companion"], 8, "highland:descent-chime", "ordinary", "whistle", "Translates wind and falling-stone changes into learned route whistles.", "Adds one safe descent cue to a highland flock route.", [], [], false, .46),
+  "briarclaw-lynx": ecologySeed(["tracker", "sentinel"], ["shelter", "substrate"], 10, "forest:stalk-corridor", "ordinary", "stalk", "Tracks only perceptible threats through real cover within a bounded patrol.", "Temporarily suppresses excess small predators in a healthy forest cell.", [], [], false, .58),
+  "gravebell-jackal": ecologySeed(["tracker", "sentinel"], ["shelter", "substrate"], 10, "relic:grave-scent", "ordinary", "revere", "Distinguishes memorial, undead, and curse signals around one assigned reliquary.", "Guards one undisturbed memorial through a world-day band.", [], [], false, .58),
+  "cragglass-basilisk": ecologySeed(["sentinel", "mineral-sense"], ["temperature", "substrate", "shelter"], 14, "glassland:reflector", "research-cell", "refract", "Inspects authored fractures and keeps its gaze behind matte barriers in care.", "Stabilizes one brittle glassland outcrop.", [], [], false, .55),
+  "stormglass-roclet": ecologySeed(["mount", "rescue", "weather"], ["perch", "shelter", "companion"], 8, "aerie:rescue-flight", "ordinary", "swoop", "Practices bounded rescue carries and matures through completed flight training.", "Returns to strengthen its regional rescue flock.", [], [], true, .48),
+  "brinewhisk-otter": ecologySeed(["retriever", "rescue"], ["water", "shelter", "companion"], 10, "river:holt-retrieval", "ordinary", "retrieve", "Fetches loose light items, clears littered shallows, and tows one swimmer.", "Clears one littered shallow before rejoining its holt.", [], [], false, .52),
+  "riverwright-beaver": ecologySeed(["construct-work", "garden"], ["water", "shelter", "substrate", "companion"], 30, "wetland:lodge-repair", "ordinary", "mend", "Moves assigned loose logs and repairs only authored lodge segments.", "Repairs one wetland lodge anchor and improves shelter.", [], [], false, .56),
+  "mirecrown-crane": ecologySeed(["aquarium", "scout"], ["water", "perch", "shelter"], 30, "wetland:reed-court", "ordinary", "court", "Reads pond clarity and tends one dawn courtship circle without stacking scans.", "Seeds reeds along one degraded wetland edge.", [], ["wetland", "day-broad"], true, .5),
+  "inkveil-cuttle": ecologySeed(["aquarium", "scout"], ["water", "substrate", "shelter"], 60, "aquarium:color-language", "aquarium", "signal", "Uses color language for aquarium comfort and marks cover-rich escape routes.", "Adds one camouflage and cleaning role to a healthy reef.", ["display", "low-light"], [], false, .48),
+  "prismclaw-mantis-shrimp": ecologySeed(["aquarium", "mineral-sense"], ["water", "substrate", "shelter"], 60, "aquarium:crack-station", "aquarium", "test", "Finds authored cracks and maintains one reinforced strike station.", "Opens one clogged reef crevice for cleaner fauna.", ["indicator", "mineral-stabilizer"], [], false, .45),
+  "reefmender-shrimp": ecologySeed(["aquarium"], ["water", "companion", "shelter"], 60, "aquarium:cleaning-station", "aquarium", "clean", "Runs one cleaning station and tends compatible coral during aquarium cycles.", "Establishes a bounded wild cleaning station.", ["cleaner", "glass-cleaner"], [], false, .42),
+  "currentweaver-eel": ecologySeed(["aquarium", "light"], ["water", "shelter", "substrate"], 60, "aquarium:current-loop", "aquarium", "conduct", "Links one approved lamp, reports overload, and discharges only into the safe loop.", "Restores a dim lamp-link clue along an underwater route.", ["indicator", "low-light"], [], false, .5),
+  "shellcarrier-hermit": ecologySeed(["aquarium", "pack"], ["water", "substrate", "shelter"], 60, "aquarium:shell-satchel", "aquarium", "exchange", "Cleans substrate, compares empty shells, and carries one valid small object.", "Leaves its prior shell as habitat for smaller shore fauna.", ["salvager", "cleaner"], [], false, .44),
+  "wreckwhistle-porpoise": ecologySeed(["mount", "rescue", "scout"], ["water", "companion", "shelter"], 10, "ocean:pod-rescue", "ordinary", "escort", "Maps wrecks, lifts trapped swimmers, and escorts one boat through a known route.", "Guides its pod around one dangerous wreck route.", [], [], false, .58),
+  "kilnscale-salamander": ecologySeed(["construct-work", "weather"], ["temperature", "substrate", "shelter"], 20, "fumarole:heat-gradient", "ordinary", "vent", "Maintains a safe camp heat gradient and assists one assigned kiln cycle.", "Maintains a safe heat clue at a cave ecology center.", [], [], false, .48),
+  "sporeback-gardener": ecologySeed(["garden", "compost"], ["substrate", "shelter", "companion"], 30, "grotto:fungal-cycle", "ordinary", "cultivate", "Converts assigned exhausted growth to compost and tends prepared mushroom beds.", "Restarts one dormant fungal patch and leaves viable compost for the next succession.", [], [], false, .56),
+  "voidmantle-ray": ecologySeed(["mount", "scout"], ["shelter", "water", "companion"], 10, "cavern:plankton-glide", "ordinary", "sail", "Follows luminous plankton, marks open cavern volume, and glides only on descending lanes.", "Rejoins a restored cavern plankton migration.", [], [], false, .5),
+  "fossilback-trilobite": ecologySeed(["aquarium", "mineral-sense"], ["water", "substrate", "shelter"], 60, "aquarium:ancient-stratum", "aquarium", "excavate", "Reads layered sediment and marks ancient strata without exposing exact loot.", "Settles in one suitable ancient-water stratum.", ["indicator", "salvager"], [], false, .4),
+  "ilyr-virebloom": ecologySeed(["sanctuary", "mount", "garden"], ["water", "shelter", "companion"], 30, "legendary:walking-spring", "legendary-world", "restore", "Restores authored ecological anchors and carries a sanctuary route through shallow water.", "Restores the chosen watershed migration.", [], [], false, .42),
+  thalassene: ecologySeed(["sanctuary", "mount", "aquarium"], ["water", "companion"], 60, "legendary:swimming-reef", "legendary-world", "migrate", "Carries bounded reef residents and resolves bleaching through authored cleaning sites.", "Reestablishes the protected reef migration.", ["comfort", "display"], [], false, .36),
+  orichalc: ecologySeed(["sanctuary", "construct-work"], ["substrate", "shelter"], 30, "legendary:living-seam", "legendary-world", "interpret", "Maintains or redirects one living seam while preserving its unresolved nature.", "Returns dormant or redirects the seam according to the oath.", [], [], false, .4),
+  "varkesh-stormmane": ecologySeed(["mount", "weather", "rescue"], ["perch", "shelter", "companion"], 8, "legendary:storm-road", "legendary-world", "guide", "Connects rebuilt highland beacons and carries travelers through major storms.", "Maintains the storm road or protects the aerie.", [], [], false, .4),
+  kharza: ecologySeed(["mount", "tracker", "sentinel"], ["shelter", "companion", "substrate"], 10, "legendary:free-pack", "legendary-world", "liberate", "Tracks coercion chemistry and guards a free pack range after the harness is destroyed.", "Forms a free territorial pack that deters coercive camps.", [], [], false, .44),
+  "sugarwake-sovereign": ecologySeed(["sanctuary", "construct-work", "herd-support"], ["temperature", "shelter", "companion"], 30, "legendary:festival-guardian", "legendary-world", "stabilize", "Cools syrup floods and supports communal masterwork cycles in its chosen final form.", "Persists as the chosen communal guardian or crafting legacy.", [], [], false, .4),
+  asterjaw: ecologySeed(["tracker", "rescue", "scout"], ["shelter", "companion"], 8, "summon:meridian-route", "summon-contract", "navigate", "Tracks intended roads, crosses one bounded obstacle, and returns along Homeward Arc.", "Returns to its contract realm along the same stable route.", [], [], false, .5),
+  "vellum-warden": ecologySeed(["sentinel", "construct-work"], ["shelter", "substrate"], 8, "summon:archive-margin", "summon-contract", "annotate", "Guards allies, records one repeated threat, and clears one removable debuff.", "Returns with its contract memory and borrowed-clause record intact.", [], [], false, .5),
+  "choir-of-one": ecologySeed(["sentinel", "scout"], ["shelter", "companion"], 8, "summon:hush-measure", "summon-contract", "silence", "Maintains one bounded Hush zone and interrupts one long hostile windup.", "Returns through the final silent measure without rerolling identity.", [], [], false, .48),
+  "glasswake-stag": ecologySeed(["mount", "rescue", "scout"], ["water", "shelter", "companion"], 8, "summon:second-shore", "summon-contract", "reflect", "Bends ordinary projectiles and creates one short rescue path through air or water.", "Returns along its stable second shore with the summoning contract's specimen identity intact.", [], [], false, .5),
+} satisfies Readonly<Record<ExpansionCreatureKind, AuthoredEcologySeed>>);
 
 const sets = {
   aquarium: new Set<MobKind>(AQUARIUM_MOB_ORDER),
@@ -332,6 +404,16 @@ function rolesFor(kind: MobKind): readonly CreatureWorkRole[] {
 
 function buildContract(kind: MobKind): CreatureEcologyContract {
   const definition = MOB_DEFS[kind];
+  const authored = EXPANSION_CREATURE_ECOLOGY_SEEDS[kind as ExpansionCreatureKind];
+  if (authored) return Object.freeze({
+    kind, ...authored,
+    primeForm: PRIME_FORM_PROFILES[kind]?.name ?? null,
+    utilitySignal: authored.workBehavior,
+    dropRationale: definition.drops.length
+      ? `Drops are limited to ${definition.drops.map((drop) => drop.item).join(", ")} and reflect anatomy or carried material.`
+      : "No lethal drop is required for this creature's value.",
+    authorship: "explicit" as const,
+  });
   const workRoles = rolesFor(kind);
   const first = workRoles[0] ?? "none";
   return Object.freeze({
@@ -348,6 +430,10 @@ function buildContract(kind: MobKind): CreatureEcologyContract {
     utilitySignal: definition.utility || definition.discoveryHint || `${definition.name} is best understood through patient field observation.`,
     dropRationale: definition.drops.length ? `Drops are limited to ${definition.drops.map((drop) => drop.item).join(", ")} and reflect anatomy or carried material.` : "No lethal drop is required for this creature's value.",
     juvenileScale: RABBIT_ORDER.includes(kind as never) ? .48 : definition.family === "dragon" ? .42 : definition.radius <= .3 ? .58 : .64,
+    authorship: "legacy-family-fallback" as const,
+    ecologicalVerb: first,
+    workBehavior: definition.utility || definition.behavior,
+    releaseOutcome: `Returns ${definition.name} to a compatible habitat without rerolling its specimen identity.`,
   });
 }
 
@@ -423,6 +509,10 @@ export function validateCreatureEcologyContracts() {
     if (contract?.containment === "aquarium" && !contract.aquariumRoles.length && !sets.aquarium.has(kind)) errors.push(`${kind} has no aquarium role.`);
     if (sets.sentients.has(kind) && contract?.containment !== "sentient") errors.push(`${kind} may not enter creature containment.`);
     if (sets.summons.has(kind) && contract?.containment !== "summon-contract") errors.push(`${kind} must use summon contracts.`);
+  }
+  for (const kind of [...LIVING_ROSTER_ORDER, ...LEGENDARY_CREATURE_ORDER, ...SUMMONED_CREATURE_ORDER]) {
+    const contract = CREATURE_ECOLOGY_CONTRACTS[kind];
+    if (contract.authorship !== "explicit" || !contract.ecologicalVerb || !contract.workBehavior || !contract.releaseOutcome) errors.push(`${kind} lacks an explicit expansion ecology sheet.`);
   }
   for (const kind of [...AQUARIUM_MOB_ORDER, ...AQUATIC_MOB_ORDER]) if (!CREATURE_ECOLOGY_CONTRACTS[kind].aquariumRoles.length) errors.push(`${kind} lacks a functional aquarium role.`);
   for (const kind of [...BIRD_ORDER, "runeowl" as const]) if (!CREATURE_ECOLOGY_CONTRACTS[kind].perchEligible) errors.push(`${kind} cannot use a Field Perch.`);
