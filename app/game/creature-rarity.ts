@@ -180,23 +180,50 @@ export function transferPrimeEncounterCustody(
   });
 }
 
+export function transferPrimeCustodyReference(
+  state: PrimeEncounterState,
+  specimenId: string,
+  fromCustodyId: string,
+  toCustodyId: string,
+  now: number,
+) {
+  if (state.status !== "captured" || state.specimenId && state.specimenId !== specimenId
+    || state.custodyId && state.custodyId !== fromCustodyId || !toCustodyId.trim()) return state;
+  return Object.freeze({
+    ...state,
+    specimenId,
+    custodyId: toCustodyId.trim().slice(0, 192),
+    lastUpdatedAt: Math.max(state.lastUpdatedAt, now),
+  });
+}
+
 export function normalizePrimeEncounterStates(value: unknown) {
   const states = new Map<string, PrimeEncounterState>();
   if (!value || typeof value !== "object") return states;
   for (const [anchorId, candidate] of Object.entries(value as Record<string, unknown>).slice(0, 512)) {
-    if (!candidate || typeof candidate !== "object" || !anchorId.startsWith("prime:")) continue;
+    const anchor = /^prime:([a-z0-9-]+):(-?\d+):(-?\d+)$/u.exec(anchorId);
+    if (!candidate || typeof candidate !== "object" || !anchor) continue;
     const raw = candidate as Partial<PrimeEncounterState>;
     if (raw.schema !== 1 || typeof raw.kind !== "string" || !PRIME_FORM_PROFILES[raw.kind as MobKind]
+      || anchor[1] !== raw.kind
       || !["active", "observed", "captured", "released", "defeated"].includes(String(raw.status))) continue;
     const clues = Array.isArray(raw.completedClues)
-      ? [...new Set(raw.completedClues.filter((clue): clue is string => typeof clue === "string" && clue.length > 0 && clue.length <= 64))].slice(0, PRIME_ROUTE_REQUIRED_CLUES)
+      ? [...new Set(raw.completedClues.flatMap((clue) => {
+        if (typeof clue !== "string") return [];
+        const normalized = clue.trim().toLocaleLowerCase().replace(/[^a-z0-9-]+/gu, "-").slice(0, 64);
+        return normalized ? [normalized] : [];
+      }))].slice(0, PRIME_ROUTE_REQUIRED_CLUES)
       : [];
+    const firstActivatedAt = Math.max(0, Number(raw.firstActivatedAt) || 0);
+    const lastUpdatedAt = Math.max(firstActivatedAt, Number(raw.lastUpdatedAt) || 0);
+    const specimenId = typeof raw.specimenId === "string" ? raw.specimenId.trim().slice(0, 160) : "";
+    const custodyId = typeof raw.custodyId === "string" ? raw.custodyId.trim().slice(0, 192) : raw.custodyId === null ? null : undefined;
     states.set(anchorId, Object.freeze({
       schema: 1, anchorId, kind: raw.kind as MobKind, status: raw.status as PrimeEncounterStatus,
-      entityId: Number.isFinite(raw.entityId) ? Math.max(1, Math.floor(Number(raw.entityId))) : null,
-      firstActivatedAt: Math.max(0, Number(raw.firstActivatedAt) || 0), lastUpdatedAt: Math.max(0, Number(raw.lastUpdatedAt) || 0),
-      ...(typeof raw.specimenId === "string" && raw.specimenId.length <= 160 ? { specimenId: raw.specimenId } : {}),
-      ...(raw.custodyId === null || typeof raw.custodyId === "string" && raw.custodyId.length <= 192 ? { custodyId: raw.custodyId } : {}),
+      entityId: Number.isFinite(raw.entityId) && Number(raw.entityId) > 0 ? Math.floor(Number(raw.entityId)) : null,
+      firstActivatedAt, lastUpdatedAt,
+      ...(specimenId ? { specimenId } : {}),
+      ...(custodyId !== undefined ? { custodyId } : {}),
       ...(clues.length ? { completedClues: Object.freeze(clues), routeProgress: clues.length } : {}),
     }));
   }

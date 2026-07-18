@@ -6,10 +6,10 @@ import {
 } from "../app/game/creature-types";
 import { CREATURE_MOVES, defaultMoveSetForTypes, learnedMovesAtLevel, validateCreatureMoveRegistry } from "../app/game/creature-moves";
 import { creatureProfile, validateCreatureProfiles } from "../app/game/creature-profiles";
-import { migrateCreatureProgression, validateProgression } from "../app/game/creature-progression";
+import { migrateCreatureProgression, offspringProgressionLegacy, validateProgression } from "../app/game/creature-progression";
 import { LEGENDARY_CREATURE_ORDER, LIVING_ROSTER_ORDER, MOB_ORDER, SUMMONED_CREATURE_ORDER } from "../app/game/mobs";
 import { effectFromMove, resolveCombatEffect, updateThreatLedger, type CombatActor, type CombatActorKind } from "../app/game/combat-resolver";
-import { appendBestiaryRecord, normalizeLivingBestiaryEntry, recordSpeciesCapture } from "../app/game/living-bestiary";
+import { appendBestiaryRecord, normalizeLivingBestiaryEntry, recordBestiaryAppearanceForms, recordSpeciesCapture } from "../app/game/living-bestiary";
 import { explicitPassiveMobSpawnTableForBiome, fishSpawnTableForHabitat, undergroundMobSpawnTableForBiome, type FishHabitat } from "../app/game/fauna";
 import { BiomeId } from "../app/game/world";
 import { UndergroundBiomeId } from "../app/game/underground";
@@ -97,6 +97,48 @@ test("v2 migration is deterministic, bounded, and contains no individual stat ro
   assert.ok(first.level >= 1 && first.level <= first.maximumLevel);
   assert.equal("individualStats" in first, false);
   assert.deepEqual(validateProgression(first), []);
+});
+
+test("shiny and Prime discoveries remain independent and idempotent before capture", () => {
+  const now = 1_726_400_000_000;
+  const first = recordBestiaryAppearanceForms(normalizeLivingBestiaryEntry(), {
+    shiny: true, markingMask: 7, accentVariant: 4, primeMotif: "living-garden",
+  }, now);
+  assert.equal(first.added, true);
+  assert.deepEqual(Object.keys(first.entry.forms).sort(), ["prime:living-garden", "shiny:7:4"]);
+  assert.equal(first.entry.forms["prime:living-garden"].sightings, 1);
+  const repeated = recordBestiaryAppearanceForms(first.entry, {
+    shiny: true, markingMask: 7, accentVariant: 4, primeMotif: "living-garden",
+  }, now + 10_000);
+  assert.equal(repeated.added, false);
+  assert.deepEqual(repeated.entry, first.entry);
+  const captured = recordSpeciesCapture(repeated.entry, now + 20_000, "prime-petalfox-001");
+  assert.equal(captured.captures, 1);
+  assert.deepEqual(captured.specimenIds, ["prime-petalfox-001"]);
+});
+
+test("offspring inherit visible phenotype and rare shiny identity without inheriting Prime status or hidden stats", () => {
+  const profile = creatureProfile("petalfox");
+  const parent = (id: string, shiny: boolean, hueShift: number) => migrateCreatureProgression({
+    kind: "petalfox", entityId: id, maximumLevel: profile.stats.maximumLevel, defaultMoveIds: [],
+    legacy: { shiny, rarityForm: "prime", phenotype: { sizeScale: shiny ? 1.08 : .96, hueShift, markingMask: shiny ? 7 : 2, markingIntensity: shiny ? .8 : .42, accentVariant: shiny ? 4 : 1 } },
+  });
+  const shinyLeft = parent("left-shiny", true, .1);
+  const shinyRight = parent("right-shiny", true, -.04);
+  const ordinary = parent("right-ordinary", false, -.04);
+  const first = offspringProgressionLegacy("petalfox", "child-stable", 771, shinyLeft, ordinary);
+  assert.deepEqual(first, offspringProgressionLegacy("petalfox", "child-stable", 771, shinyLeft, ordinary));
+  assert.equal(first.rarityForm, "ordinary", "Prime is an authored ecological form, never a breeding inheritance flag");
+  assert.equal("individualStats" in first, false);
+  assert.ok((first.phenotype?.hueShift ?? 1) > -.04 && (first.phenotype?.hueShift ?? -1) < .1);
+
+  const counts = { two: 0, one: 0, none: 0 };
+  for (let index = 0; index < 8_192; index += 1) {
+    if (offspringProgressionLegacy("petalfox", `two-${index}`, index, shinyLeft, shinyRight).shiny) counts.two += 1;
+    if (offspringProgressionLegacy("petalfox", `one-${index}`, index, shinyLeft, ordinary).shiny) counts.one += 1;
+    if (offspringProgressionLegacy("petalfox", `none-${index}`, index, ordinary, ordinary).shiny) counts.none += 1;
+  }
+  assert.ok(counts.two > counts.one && counts.one > counts.none, `expected bounded parental influence, received ${JSON.stringify(counts)}`);
 });
 
 const baseActor = (kind: CombatActorKind, id: string, overrides: Partial<CombatActor["profile"]> = {}): CombatActor => ({

@@ -142,6 +142,40 @@ export function isShinySeed(seed: number) {
   return Math.floor(sample(seed, 8) * 1024) === 0;
 }
 
+/** Visible, bounded inheritance only: no hidden IV-like combat values are introduced. */
+export function offspringProgressionLegacy(
+  kind: MobKind,
+  specimenId: string,
+  geneticSeed: number,
+  left: CreatureProgressionV2,
+  right: CreatureProgressionV2,
+): LegacyCreatureProgression {
+  const seed = stableCreatureSeed(kind, specimenId, geneticSeed, 0);
+  const baseline = phenotypeFromSeed(seed);
+  const chooseLeft = (seed & 1) === 0;
+  const markingParent = chooseLeft ? left.phenotype : right.phenotype;
+  const inheritedPhenotype: CreaturePhenotype = Object.freeze({
+    sizeScale: Number(Math.max(.88, Math.min(1.12, (left.phenotype.sizeScale + right.phenotype.sizeScale + baseline.sizeScale) / 3)).toFixed(3)),
+    hueShift: Number(Math.max(-.14, Math.min(.14, (left.phenotype.hueShift + right.phenotype.hueShift) * .42 + baseline.hueShift * .16)).toFixed(3)),
+    markingMask: markingParent.markingMask,
+    markingIntensity: Number(Math.max(0, Math.min(1, (left.phenotype.markingIntensity + right.phenotype.markingIntensity + baseline.markingIntensity) / 3)).toFixed(3)),
+    accentVariant: chooseLeft ? left.phenotype.accentVariant : right.phenotype.accentVariant,
+  });
+  const shinyParents = Number(left.shiny) + Number(right.shiny);
+  const inheritedShiny = seed % 1024 < (shinyParents === 2 ? 32 : shinyParents === 1 ? 8 : 1);
+  const aptitudes = [...new Set([
+    left.aptitudes[seed % Math.max(1, left.aptitudes.length)],
+    right.aptitudes[(seed >>> 4) % Math.max(1, right.aptitudes.length)],
+    ...aptitudesFromSeed(seed),
+  ].filter((aptitude): aptitude is CreatureAptitudeId => Boolean(aptitude)))].slice(0, 2);
+  return Object.freeze({
+    rarityForm: "ordinary",
+    shiny: inheritedShiny,
+    phenotype: inheritedPhenotype,
+    aptitudes: Object.freeze(aptitudes),
+  });
+}
+
 export type ProgressionMigrationInput = Readonly<{
   kind: MobKind;
   entityId: number | string;

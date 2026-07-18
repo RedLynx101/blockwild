@@ -66,7 +66,7 @@ import { creatureProfile } from "./creature-profiles";
 import { captureKnowledgeForResearch, evaluateCaptureReadiness, type CaptureReadiness } from "./creature-capture";
 import { CREATURE_MOVES, learnedMovesAtLevel } from "./creature-moves";
 import { creatureMaximumHealth, creatureOutputMultiplier, statsAtLevel } from "./creature-stats";
-import { aptitudesFromSeed, isShinySeed, migrateCreatureProgression, phenotypeFromSeed, recordCreatureCaptureHistory, recordCreatureReleaseHistory, stableCreatureSeed, type CreatureProgressionV2 } from "./creature-progression";
+import { aptitudesFromSeed, isShinySeed, migrateCreatureProgression, offspringProgressionLegacy, phenotypeFromSeed, recordCreatureCaptureHistory, recordCreatureReleaseHistory, stableCreatureSeed, type CreatureProgressionV2, type LegacyCreatureProgression } from "./creature-progression";
 import { creatureAppearance } from "./creature-appearance";
 import { applyCreatureRarityVisual, triggerCreatureInspectionShimmer, updateCreatureRarityVisual } from "./creature-rarity-visuals";
 import {
@@ -78,6 +78,7 @@ import {
   primeAptitudeForMotif,
   primeEncounterRouteComplete,
   transferPrimeEncounterCustody,
+  transferPrimeCustodyReference,
   transitionPrimeEncounter,
   type PrimeEncounterState,
 } from "./creature-rarity";
@@ -113,7 +114,7 @@ import {
   stepMoveCooldowns,
   type ActiveCreatureMove,
 } from "./creature-combat-ai";
-import { advanceBestiaryResearch, createLivingBestiary, normalizeLivingBestiaryEntry, observeBestiaryEntry, recordBestiaryForm, recordSpeciesCapture, type LivingBestiaryEntryV2 } from "./living-bestiary";
+import { advanceBestiaryResearch, createLivingBestiary, normalizeLivingBestiaryEntry, observeBestiaryEntry, recordBestiaryAppearanceForms, recordSpeciesCapture, type LivingBestiaryEntryV2 } from "./living-bestiary";
 import { createHeldToolSpec } from "./model-specs";
 import { applyCompanionPose, applyDragonLifeStage, applyDragonPose, applyOceanCreaturePose, applyWildlifePose, createMobVisual, createSentientLodVisual } from "./mob-models";
 import {
@@ -1519,7 +1520,7 @@ type SpawnMobOptions = {
   followCommand?: "follow" | "hold";
   attunedOrbId?: string | null;
   dragonState?: DragonState | null;
-  progression?: CreatureProgressionV2 | null;
+  progression?: CreatureProgressionV2 | LegacyCreatureProgression | null;
   typeSources?: readonly CreatureTypeSource[];
   combatStatuses?: readonly ActiveCombatStatus[];
   mountExertion?: MountExertionState | null;
@@ -5146,6 +5147,31 @@ export class VoxelEngine {
     return normalized;
   }
 
+  private recordHostCreatureCaptureForPlayer(identity: NonNullable<PeerInfo["identity"]>, mob: MobEntity, now: number) {
+    const current = this.ensureHostPlayerProgression(identity);
+    const existing = normalizeLivingBestiaryEntry(current.state.bestiary[mob.kind]);
+    const forms = recordBestiaryAppearanceForms(existing, {
+      shiny: mob.progression.shiny,
+      markingMask: mob.progression.phenotype.markingMask,
+      accentVariant: mob.progression.phenotype.accentVariant,
+      primeMotif: mob.primeAnchorId && mob.progression.rarityForm === "prime"
+        ? PRIME_FORM_PROFILES[mob.kind]?.motif ?? "unknown"
+        : null,
+    }, now);
+    const firstSpeciesCapture = forms.entry.captures === 0;
+    const entry = recordSpeciesCapture(forms.entry, now, mob.specimenId);
+    const next: PlayerProgressionRecord = {
+      revision: current.revision + 1,
+      state: normalizeMultiplayerPlayerProgression({
+        ...current.state,
+        bestiary: { ...current.state.bestiary, [mob.kind]: entry },
+      }, identity.id),
+    };
+    this.multiplayerPlayerProgressions.set(identity.id, next);
+    this.sendAuthoritativePlayerProgression(identity);
+    return firstSpeciesCapture;
+  }
+
   private ensureHostPlayerWallet(identity: NonNullable<PeerInfo["identity"]>) {
     const current = this.multiplayerPlayerWallets.get(identity.id);
     if (current?.schema === 1 && current.ownerId === identity.id) return current;
@@ -6189,10 +6215,21 @@ export class VoxelEngine {
       typeRevision: mob.resolvedTypes?.revisionKey ?? `natural:${creatureProfile(mob.kind).naturalTypes.join("+")}`,
       statuses: (mob.combatStatuses ?? []).slice(0, 12).map((status) => ({ id: status.id, stacks: status.stacks, remainingSeconds: Math.max(0, status.expiresAtSeconds - this.worldSimulationSeconds()) })),
       activeMove: mob.activeMove ? { moveId: mob.activeMove.moveId, phase: mob.activeMove.phase, remainingSeconds: mob.activeMove.remaining } : null,
+      specimenId: mob.specimenId,
+      primeAnchorId: mob.primeAnchorId,
+      ...(mob.progression ? {
+        appearanceRevision: `${mob.progression.progressionSeed}:${mob.progression.shiny ? 1 : 0}:${mob.progression.rarityForm}:${mob.progression.phenotype.sizeScale}:${mob.progression.phenotype.hueShift}:${mob.progression.phenotype.markingMask}:${mob.progression.phenotype.markingIntensity}:${mob.progression.phenotype.accentVariant}:${mob.primeAnchorId ?? ""}`,
+        appearance: {
+          progressionSeed: mob.progression.progressionSeed,
+          shiny: mob.progression.shiny,
+          rarityForm: mob.progression.rarityForm,
+          phenotype: { ...mob.progression.phenotype },
+        },
+      } : {}),
       scale: this.mobBaseScale(mob),
       tamed: Boolean(mob.creatureTamed || mob.dragonState?.tamed || mob.petState?.tamed || mob.shadeState?.tamed || mob.reedstriderBond?.tamed || mob.courserBond?.tamed || mob.leviathanGrowth?.tamed || mob.apiaryBee?.tamed),
       saddled: Boolean(mob.creatureEquipment.saddle || mob.dragonState?.equipment.saddle || mob.shadeState?.saddled || mob.reedstriderBond?.saddled || mob.courserBond?.saddled || mob.leviathanGrowth?.saddled),
-      bondTier: mob.progression.bondTier,
+      bondTier: mob.progression?.bondTier,
       baby: Boolean(mob.dragonState?.stage === 1 || mob.petState?.baby || mob.careState?.baby || (mob.leviathanGrowth && mob.leviathanGrowth.stage !== "adult")),
       ...(mob.dragonState ? { dragonState: serializeDragonState({ ...mob.dragonState, health: mob.health }) } : {}),
       ...(mob.leviathanGrowth ? {
@@ -6413,12 +6450,26 @@ export class VoxelEngine {
       if (this.pendingNetworkMobDeaths.has(entry.id)) continue;
       if (!(entry.kind in MOB_DEFS) || BUTTERFLY_ORDER.includes(entry.kind as ButterflyKind)) continue;
       let mob = this.mobs.find((candidate) => candidate.id === entry.id);
+      if (mob && entry.appearanceRevision && mob.group.userData.networkAppearanceRevision !== entry.appearanceRevision) {
+        this.removeMob(this.mobs.indexOf(mob));
+        mob = undefined;
+      }
       if (!mob || mob.kind !== entry.kind) {
         if (mob) this.removeMob(this.mobs.indexOf(mob));
         const dragonState = isDragonKind(entry.kind as MobKind) && entry.dragonState
           ? normalizeDragonState(entry.dragonState)
           : null;
         mob = this.spawnMob(entry.kind as MobKind, new THREE.Vector3(entry.x, entry.y, entry.z), {
+          id: entry.id,
+          specimenId: entry.specimenId ?? null,
+          primeAnchorId: entry.primeAnchorId ?? null,
+          name: entry.name ?? null,
+          progression: entry.appearance ? {
+            level: entry.level ?? 1,
+            shiny: entry.appearance.shiny,
+            rarityForm: entry.appearance.rarityForm,
+            phenotype: entry.appearance.phenotype,
+          } : null,
           factionId: entry.factionId ?? null,
           aligned: Boolean(entry.aligned),
           dragonState,
@@ -6426,6 +6477,7 @@ export class VoxelEngine {
           creatureTamed: Boolean(entry.tamed),
           creatureEquipment: entry.saddled ? { saddle: Item.Saddle } : null,
         });
+        mob.group.userData.networkAppearanceRevision = entry.appearanceRevision ?? "legacy";
         mob.id = entry.id;
         mob.group.userData.mobId = entry.id;
         mob.group.traverse((object) => { if (object.userData.mobId !== undefined) object.userData.mobId = entry.id; });
@@ -6448,7 +6500,7 @@ export class VoxelEngine {
       if (entry.level && entry.level !== mob.progression.level) {
         const profile = creatureProfile(mob.kind);
         mob.progression = migrateCreatureProgression({
-          kind: mob.kind, entityId: mob.id, maximumLevel: profile.stats.maximumLevel,
+          kind: mob.kind, entityId: mob.specimenId, maximumLevel: profile.stats.maximumLevel,
           defaultMoveIds: learnedMovesAtLevel(profile.moves, entry.level),
           legacy: { ...mob.progression, level: entry.level },
         });
@@ -7157,13 +7209,15 @@ export class VoxelEngine {
           && (!bonded || candidate.courserBond?.tamed && candidate.courserBond.ownerId === peer.id)
           && canBreedCreatures(mob.kind, fed.state, candidate.kind, candidate.careState));
         const family = partner?.careState ? breedCreatureStates(mob.kind, fed.state, partner.kind, partner.careState, {
-          leftId: String(mob.id), rightId: String(partner.id), bornDay: this.day, temperament: mob.definition.temperament,
+          leftId: mob.specimenId, rightId: partner.specimenId, bornDay: this.day, temperament: mob.definition.temperament,
         }) : null;
         if (family && partner) {
           mob.careState = family.left;
           partner.careState = family.right;
+          const identity = this.offspringIdentity(mob.kind, family.child.geneticSeed, mob, partner);
           this.spawnMob(mob.kind, mob.group.position.clone().add(new THREE.Vector3(0.58, 0, 0.42)), {
             careState: family.child,
+            ...identity,
             ...(bonded ? { courserBond: { ...createReedstriderBond(), tamed: true, ownerId: peer.id, trust: 8 } } : {}),
           });
           message = `A young ${mob.definition.name} joins the pair.`;
@@ -7674,6 +7728,10 @@ export class VoxelEngine {
           this.rejectCreatureAction(action, peer.identity.id, "That connected aquarium is full or already contains this creature.");
           return;
         }
+        if (!this.transferStoredPrimeCustody(orb.creature, `orb:${orb.orbId}`, `aquarium:${orb.creature.entityId}`)) {
+          this.rejectCreatureAction(action, peer.identity.id, "That Prime specimen is already held by another valid custody record.");
+          return;
+        }
         state = { ...state, residents };
         inventory[current.selected] = captureOrbInventorySlot(released.orb);
       } else if (action.kind === "aquarium-remove") {
@@ -7702,6 +7760,10 @@ export class VoxelEngine {
           emptySlot.count -= 1;
           inventory[freeIndex] = captureOrbInventorySlot(filled);
         } else inventory[emptyIndex] = captureOrbInventorySlot(filled);
+        if (!this.transferStoredPrimeCustody(taken.resident.metadata, `aquarium:${taken.resident.metadata.entityId}`, `orb:${filled.orbId}`)) {
+          this.rejectCreatureAction(action, peer.identity.id, "That Prime specimen's custody record does not match this aquarium.");
+          return;
+        }
         state = { ...state, residents: taken.residents };
       }
       this.aquariums.set(key, state);
@@ -7798,10 +7860,10 @@ export class VoxelEngine {
         held.count -= 1;
         inventory[emptyIndex] = filled;
       }
+      const capturedAt = Date.now();
       this.resolveLegendaryCapture(mob, `orb:${captured.orbId}`);
-      this.observeCreatureRarity(mob);
       this.transferPrimeCustody(mob, "captured", `orb:${captured.orbId}`);
-      recordSpeciesCapture(this.bestiary[mob.kind], Date.now(), mob.specimenId);
+      this.recordHostCreatureCaptureForPlayer(peer.identity, mob, capturedAt);
       this.dispatchGuildEvent("captureCreature", 1, `capture:${mob.kind}`);
       this.spawnRecallSparkles(mob, 22);
       this.removeMob(this.mobs.indexOf(mob));
@@ -8390,6 +8452,10 @@ export class VoxelEngine {
       this.events.onToast(state.residents.length >= topology.capacity ? "This connected aquarium is full." : "That creature is already in this aquarium.");
       return false;
     }
+    if (!this.transferStoredPrimeCustody(orb.creature, `orb:${orb.orbId}`, `aquarium:${orb.creature.entityId}`)) {
+      this.events.onToast("That Prime specimen is already held by another valid custody record.");
+      return false;
+    }
     this.aquariums.set(key, { ...state, residents });
     this.inventory[this.selected] = captureOrbInventorySlot(released.orb);
     this.events.onToast(`${MOB_DEFS[released.creature.kind].name} settles into the aquarium.`);
@@ -8418,6 +8484,10 @@ export class VoxelEngine {
         this.events.onToast("Only perch-trained birds can rest here.");
         return false;
       }
+      if (!this.transferStoredPrimeCustody(orb.creature, `orb:${orb.orbId}`, `perch:${orb.creature.entityId}`)) {
+        this.events.onToast("That Prime specimen is already held by another valid custody record.");
+        return false;
+      }
       this.fieldPerches.set(key, next);
       this.inventory[this.selected] = captureOrbInventorySlot(released.orb);
       this.events.onToast(`${MOB_DEFS[released.creature.kind].name} folds into a sleeping perch record. Use again to assign scouting.`);
@@ -8428,6 +8498,7 @@ export class VoxelEngine {
       const taken = takeBirdFromFieldPerch(state);
       const filled = taken ? captureIntoOrb(orb, taken.metadata, Date.now()) : null;
       if (!taken || !filled) return false;
+      if (!this.transferStoredPrimeCustody(taken.metadata, `perch:${taken.metadata.entityId}`, `orb:${filled.orbId}`)) return false;
       this.inventory[this.selected] = captureOrbInventorySlot(filled);
       this.fieldPerches.set(key, taken.state);
       this.events.onToast(`${MOB_DEFS[taken.metadata.kind].name} returns to its Capture Orb.`);
@@ -8449,17 +8520,19 @@ export class VoxelEngine {
       if (!orb || orb.creature || orb.attunement) continue;
       const filled = captureIntoOrb(orb, metadata, Date.now());
       if (!filled) continue;
+      if (!this.transferStoredPrimeCustody(metadata, `perch:${metadata.entityId}`, `orb:${filled.orbId}`)) return false;
       this.inventory[index] = captureOrbInventorySlot(filled);
       return true;
     }
     const filled = captureIntoOrb(createEmptyCaptureOrb(`perch-rescue-${metadata.entityId}-${Date.now().toString(36)}`), metadata, Date.now());
     if (filled) {
+      if (!this.transferStoredPrimeCustody(metadata, `perch:${metadata.entityId}`, `orb:${filled.orbId}`)) return false;
       const slot = captureOrbInventorySlot(filled);
       if (this.addItem(slot.item, 1, slot.durability, undefined, slot.metadata) === 0) return true;
       this.spawnDrop(slot.item, 1, fallback, slot.durability, slot.metadata);
       return true;
     }
-    return Boolean(this.spawnCreatureMetadata(metadata, fallback));
+    return Boolean(this.spawnCreatureMetadata(metadata, fallback, `perch:${metadata.entityId}`, true));
   }
 
   aquariumRemoveResident(residentId: string) {
@@ -8498,18 +8571,20 @@ export class VoxelEngine {
       if (!orb || orb.creature || orb.attunement) continue;
       const filled = captureIntoOrb(orb, resident.metadata, Date.now());
       if (!filled) continue;
+      if (!this.transferStoredPrimeCustody(resident.metadata, `aquarium:${resident.metadata.entityId}`, `orb:${filled.orbId}`)) return false;
       this.inventory[index] = captureOrbInventorySlot(filled);
       return true;
     }
     if (!allowEmergencyOrb) return false;
     const filled = captureIntoOrb(createEmptyCaptureOrb(`aquarium-rescue-${resident.id}-${Date.now().toString(36)}`), resident.metadata, Date.now());
     if (filled) {
+      if (!this.transferStoredPrimeCustody(resident.metadata, `aquarium:${resident.metadata.entityId}`, `orb:${filled.orbId}`)) return false;
       const slot = captureOrbInventorySlot(filled);
       const leftover = this.addItem(slot.item, 1, slot.durability, undefined, slot.metadata);
       if (leftover > 0) this.spawnDrop(slot.item, 1, fallback, slot.durability, slot.metadata);
       return true;
     }
-    return Boolean(this.spawnCreatureMetadata(resident.metadata, fallback));
+    return Boolean(this.spawnCreatureMetadata(resident.metadata, fallback, `aquarium:${resident.metadata.entityId}`, true));
   }
 
   chestStorageKey(block: string) {
@@ -11657,23 +11732,16 @@ export class VoxelEngine {
 
   private observeCreatureRarity(mob: MobEntity) {
     let changed = this.advancePrimeClue(mob, "field-sighting");
-    const entry = this.bestiary[mob.kind];
-    if (mob.progression.shiny) {
-      const formId = `shiny:${mob.progression.phenotype.markingMask}:${mob.progression.phenotype.accentVariant}`;
-      if (!entry.forms[formId]) {
-        this.bestiary[mob.kind] = recordBestiaryForm(entry, { id: formId, category: "shiny", firstRecordedAt: Date.now() });
-        changed = true;
-      }
-    }
-    if (mob.primeAnchorId && mob.progression.rarityForm === "prime") {
-      const motif = PRIME_FORM_PROFILES[mob.kind]?.motif ?? "unknown";
-      const formId = `prime:${motif}`;
-      const currentEntry = this.bestiary[mob.kind];
-      if (!currentEntry.forms[formId]) {
-        this.bestiary[mob.kind] = recordBestiaryForm(currentEntry, { id: formId, category: "prime", firstRecordedAt: Date.now() });
-        changed = true;
-      }
-    }
+    const forms = recordBestiaryAppearanceForms(this.bestiary[mob.kind], {
+      shiny: mob.progression.shiny,
+      markingMask: mob.progression.phenotype.markingMask,
+      accentVariant: mob.progression.phenotype.accentVariant,
+      primeMotif: mob.primeAnchorId && mob.progression.rarityForm === "prime"
+        ? PRIME_FORM_PROFILES[mob.kind]?.motif ?? "unknown"
+        : null,
+    }, Date.now());
+    this.bestiary[mob.kind] = forms.entry;
+    changed ||= forms.added;
     if (changed) { this.saveSoon(); this.emitHud(true); }
     return changed;
   }
@@ -11686,6 +11754,17 @@ export class VoxelEngine {
     if (next === current && (current.status !== status || current.specimenId && current.specimenId !== mob.specimenId
       || status === "released" && current.custodyId && current.custodyId !== custodyId)) return false;
     this.primeEncounters.set(mob.primeAnchorId, next);
+    return true;
+  }
+
+  private transferStoredPrimeCustody(metadata: CreatureMetadata, fromCustodyId: string, toCustodyId: string) {
+    const anchorId = typeof metadata.custom.primeAnchorId === "string" ? metadata.custom.primeAnchorId : null;
+    if (!anchorId) return true;
+    const current = this.primeEncounters.get(anchorId);
+    if (!current) return false;
+    const next = transferPrimeCustodyReference(current, metadata.entityId, fromCustodyId, toCustodyId, Date.now());
+    if (next === current && current.custodyId !== toCustodyId) return false;
+    this.primeEncounters.set(anchorId, next);
     return true;
   }
 
@@ -13039,13 +13118,15 @@ export class VoxelEngine {
                 && candidate.group.position.distanceToSquared(taffalo.group.position) < 36
                 && canBreedCreatures("taffalo", fed.state, "taffalo", candidate.careState));
               const family = partner?.careState ? breedCreatureStates("taffalo", fed.state, "taffalo", partner.careState, {
-                leftId: String(taffalo.id), rightId: String(partner.id), bornDay: this.day, temperament: taffalo.definition.temperament,
+                leftId: taffalo.specimenId, rightId: partner.specimenId, bornDay: this.day, temperament: taffalo.definition.temperament,
               }) : null;
               if (family && partner) {
                 taffalo.careState = family.left;
                 partner.careState = family.right;
+                const identity = this.offspringIdentity("taffalo", family.child.geneticSeed, taffalo, partner);
                 this.spawnMob("taffalo", taffalo.group.position.clone().add(new THREE.Vector3(0.8, 0, 0.45)), {
                   careState: family.child,
+                  ...identity,
                   courserBond: { ...createReedstriderBond(), tamed: true, ownerId, trust: 8 },
                 });
                 this.bestiary.taffalo.breeds = (this.bestiary.taffalo.breeds ?? 0) + 1;
@@ -13446,13 +13527,15 @@ export class VoxelEngine {
                 && candidate.group.position.distanceToSquared(companion.group.position) < 25
                 && canBreedCreatures(companion.kind, fed.state, candidate.kind, candidate.careState));
               const family = partner?.careState ? breedCreatureStates(companion.kind, fed.state, partner.kind, partner.careState, {
-                leftId: String(companion.id), rightId: String(partner.id), bornDay: this.day, temperament: companion.definition.temperament,
+                leftId: companion.specimenId, rightId: partner.specimenId, bornDay: this.day, temperament: companion.definition.temperament,
               }) : null;
               if (family && partner) {
                 companion.careState = family.left;
                 partner.careState = family.right;
+                const identity = this.offspringIdentity(companion.kind, family.child.geneticSeed, companion, partner);
                 this.spawnMob(companion.kind, companion.group.position.clone().add(new THREE.Vector3(0.55, 0, 0.38)), {
                   careState: family.child,
+                  ...identity,
                   courserBond: { ...createReedstriderBond(), tamed: true, ownerId, trust: 8 },
                 });
                 this.bestiary[companion.kind].breeds = (this.bestiary[companion.kind].breeds ?? 0) + 1;
@@ -13502,7 +13585,7 @@ export class VoxelEngine {
               && candidate.group.position.distanceToSquared(leviathan.group.position) < 64
               && canBreedCreatures(leviathan.kind, fed.state, candidate.kind, candidate.careState));
             const family = partner?.careState ? breedCreatureStates(leviathan.kind, fed.state, partner.kind, partner.careState, {
-              leftId: String(leviathan.id), rightId: String(partner.id), bornDay: this.day, temperament: leviathan.definition.temperament,
+              leftId: leviathan.specimenId, rightId: partner.specimenId, bornDay: this.day, temperament: leviathan.definition.temperament,
             }) : null;
             const worldTick = Math.floor((this.day + this.worldTime) * LEVIATHAN_LIFECYCLE_CONTRACT.ticksPerDay);
             const egg = partner?.leviathanGrowth ? layLeviathanEggFromParents(growth, partner.leviathanGrowth, worldTick) : null;
@@ -13603,13 +13686,14 @@ export class VoxelEngine {
           const partnerState = partner?.careState;
           const family = partner && partnerState
             ? breedCreatureStates(mob.kind, fed.state, partner.kind, partnerState, {
-              leftId: String(mob.id), rightId: String(partner.id), bornDay: this.day, temperament: mob.definition.temperament,
+              leftId: mob.specimenId, rightId: partner.specimenId, bornDay: this.day, temperament: mob.definition.temperament,
             })
             : null;
           if (family && partner) {
             mob.careState = family.left;
             partner.careState = family.right;
-            const child = this.spawnMob(mob.kind, mob.group.position.clone().add(new THREE.Vector3(0.58, 0, 0.42)), { careState: family.child });
+            const identity = this.offspringIdentity(mob.kind, family.child.geneticSeed, mob, partner);
+            const child = this.spawnMob(mob.kind, mob.group.position.clone().add(new THREE.Vector3(0.58, 0, 0.42)), { careState: family.child, ...identity });
             const childGroundY = this.mobMoveTarget(child, child.group.position.x, child.group.position.z);
             if (childGroundY !== null) child.group.position.y = childGroundY;
             child.baseY = child.group.position.y;
@@ -16247,7 +16331,7 @@ export class VoxelEngine {
             rarityForm: "summoned",
             phenotype: phenotypeFromSeed(contract.manifestation.phenotypeSeed),
             shiny: isShinySeed(contract.manifestation.phenotypeSeed),
-          } as CreatureProgressionV2,
+          },
         });
         this.temporarySummons.set(summon.id, {
           expiresAt: this.worldSimulationSeconds() + effect.durationSeconds,
@@ -17529,37 +17613,38 @@ export class VoxelEngine {
   private boardCreatureMount(mob: MobEntity, riderId: string) {
     const profile = MOUNT_PROFILES[mob.kind];
     if (!profile) return -1;
-    for (const [mountId, seats] of this.creatureMountSeats) {
+    const registry = this.creatureMountSeats ?? (this.creatureMountSeats = new Map<number, string[]>());
+    for (const [mountId, seats] of registry) {
       const existing = seats.indexOf(riderId);
       if (existing < 0 || mountId === mob.id) continue;
       seats[existing] = "";
     }
-    const seats = this.creatureMountSeats.get(mob.id) ?? [];
+    const seats = registry.get(mob.id) ?? [];
     const existing = seats.indexOf(riderId);
     if (existing >= 0) return existing;
     let seat = seats.findIndex((occupant, index) => index < profile.seats && !occupant);
     if (seat < 0) seat = seats.length < profile.seats ? seats.length : -1;
     if (seat < 0) return -1;
     seats[seat] = riderId;
-    this.creatureMountSeats.set(mob.id, seats.slice(0, profile.seats));
+    registry.set(mob.id, seats.slice(0, profile.seats));
     return seat;
   }
 
   private creaturePassengerSeatAvailable(mob: MobEntity, riderId: string) {
     const profile = MOUNT_PROFILES[mob.kind];
-    const seats = this.creatureMountSeats.get(mob.id) ?? [];
+    const seats = this.creatureMountSeats?.get(mob.id) ?? [];
     return Boolean(profile && profile.seats > 1 && seats[0] && seats[0] !== riderId
       && !mob.hostile && (seats.includes(riderId) || seats.slice(1, profile.seats).some((occupant) => !occupant) || seats.length < profile.seats));
   }
 
   private leaveCreatureMount(mobId: number, riderId: string) {
-    const seats = this.creatureMountSeats.get(mobId);
+    const seats = this.creatureMountSeats?.get(mobId);
     if (!seats) return;
     const seat = seats.indexOf(riderId);
     if (seat >= 0) seats[seat] = "";
     while (seats.length && !seats.at(-1)) seats.pop();
-    if (seats.some(Boolean)) this.creatureMountSeats.set(mobId, seats);
-    else this.creatureMountSeats.delete(mobId);
+    if (seats.some(Boolean)) this.creatureMountSeats?.set(mobId, seats);
+    else this.creatureMountSeats?.delete(mobId);
   }
 
   private creatureSeatPosition(mob: MobEntity, seat: number) {
@@ -18583,6 +18668,15 @@ export class VoxelEngine {
       if (typeof tagged === "string") part.visible = tagged === module;
       if (part.userData.creatureSaddle === true) part.visible = saddled;
     });
+  }
+
+  private offspringIdentity(kind: MobKind, geneticSeed: number, left: MobEntity, right: MobEntity) {
+    const lineageSeed = stableCreatureSeed(kind, `${left.specimenId}|${right.specimenId}`, geneticSeed, this.day);
+    const specimenId = `lineage:${kind}:${lineageSeed.toString(36)}:${(geneticSeed >>> 0).toString(36)}`;
+    return {
+      specimenId,
+      progression: offspringProgressionLegacy(kind, specimenId, geneticSeed, left.progression, right.progression),
+    } as const;
   }
 
   spawnMob(kind: MobKind, position: THREE.Vector3, options: SpawnMobOptions = {}) {

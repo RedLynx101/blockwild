@@ -105,6 +105,42 @@ export function recordBestiaryForm(entry: LivingBestiaryEntryV2, form: Omit<Best
   });
 }
 
+export type BestiaryAppearanceObservation = Readonly<{
+  shiny: boolean;
+  markingMask: number;
+  accentVariant: number;
+  primeMotif?: string | null;
+}>;
+
+/**
+ * Records independent visual forms without treating every observation frame as
+ * another sighting. Callers can use `added` to drive one-shot UI feedback.
+ */
+export function recordBestiaryAppearanceForms(
+  entry: LivingBestiaryEntryV2,
+  appearance: BestiaryAppearanceObservation,
+  now: number,
+): { entry: LivingBestiaryEntryV2; added: boolean } {
+  let next = entry;
+  let added = false;
+  if (appearance.shiny) {
+    const formId = `shiny:${Math.max(0, Math.trunc(appearance.markingMask))}:${Math.max(0, Math.trunc(appearance.accentVariant))}`;
+    if (!next.forms[formId]) {
+      next = recordBestiaryForm(next, { id: formId, category: "shiny", firstRecordedAt: now });
+      added = true;
+    }
+  }
+  const motif = appearance.primeMotif?.trim();
+  if (motif) {
+    const formId = `prime:${motif.slice(0, 96)}`;
+    if (!next.forms[formId]) {
+      next = recordBestiaryForm(next, { id: formId, category: "prime", firstRecordedAt: now });
+      added = true;
+    }
+  }
+  return { entry: next, added };
+}
+
 export function observeBestiaryEntry(entry: LivingBestiaryEntryV2, now: number) {
   entry.seen = true;
   entry.firstSeenAt ??= now;

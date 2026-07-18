@@ -147,6 +147,16 @@ export type MobSnapshotEntry = {
   typeRevision?: string;
   statuses?: Array<{ id: string; stacks: number; remainingSeconds: number }>;
   activeMove?: { moveId: string; phase: "windup" | "active" | "recovery"; remainingSeconds: number } | null;
+  /** Stable specimen and compact host-authored appearance keep rare forms identical for every peer. */
+  specimenId?: string;
+  primeAnchorId?: string | null;
+  appearanceRevision?: string;
+  appearance?: {
+    progressionSeed: number;
+    shiny: boolean;
+    rarityForm: "ordinary" | "prime" | "regional" | "seasonal" | "story" | "legendary" | "summoned";
+    phenotype: { sizeScale: number; hueShift: number; markingMask: number; markingIntensity: number; accentVariant: number };
+  };
   /** Optional appearance/bond hints; old clients safely ignore them. */
   scale?: number;
   tamed?: boolean;
@@ -854,6 +864,20 @@ function validateMob(value: unknown): value is MobSnapshotEntry {
       && isShortString(value.activeMove.moveId, 64)
       && ["windup", "active", "recovery"].includes(value.activeMove.phase as string)
       && isFiniteNumber(value.activeMove.remainingSeconds, 0, 30)))
+    && (value.specimenId === undefined || isShortString(value.specimenId, 160))
+    && (value.primeAnchorId === undefined || value.primeAnchorId === null
+      || (typeof value.primeAnchorId === "string" && isShortString(value.primeAnchorId, 160) && value.primeAnchorId.startsWith(`prime:${value.kind}:`)))
+    && (value.appearanceRevision === undefined || isShortString(value.appearanceRevision, 256))
+    && (value.appearance === undefined || (isRecord(value.appearance)
+      && isInteger(value.appearance.progressionSeed, 0, 0xffff_ffff)
+      && typeof value.appearance.shiny === "boolean"
+      && ["ordinary", "prime", "regional", "seasonal", "story", "legendary", "summoned"].includes(value.appearance.rarityForm as string)
+      && isRecord(value.appearance.phenotype)
+      && isFiniteNumber(value.appearance.phenotype.sizeScale, .5, 2)
+      && isFiniteNumber(value.appearance.phenotype.hueShift, -.5, .5)
+      && isInteger(value.appearance.phenotype.markingMask, 0, 15)
+      && isFiniteNumber(value.appearance.phenotype.markingIntensity, 0, 1)
+      && isInteger(value.appearance.phenotype.accentVariant, 0, 15)))
     && (value.scale === undefined || isFiniteNumber(value.scale, 0.01, 8))
     && (value.tamed === undefined || typeof value.tamed === "boolean")
     && (value.saddled === undefined || typeof value.saddled === "boolean")

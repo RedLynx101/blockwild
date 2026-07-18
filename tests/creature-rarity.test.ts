@@ -9,6 +9,7 @@ import {
   planPrimeEncounter,
   primeEncounterRouteComplete,
   transferPrimeEncounterCustody,
+  transferPrimeCustodyReference,
   transitionPrimeEncounter,
   type PrimeEncounterContext,
   type PrimeEncounterPlan,
@@ -154,6 +155,7 @@ test("Prime encounter saves normalize defensively and preserve only bounded auth
     },
     "prime:petalfox:bad-schema": { schema: 2, kind: "petalfox", status: "active" },
     "prime:petalfox:bad-status": { schema: 1, kind: "petalfox", status: "respawning" },
+    "prime:petalfox:9:9": { schema: 1, kind: "mossling", status: "active" },
     "prime:ordinary:0:0": { schema: 1, kind: "cow", status: "active" },
     "not-prime": { schema: 1, kind: "petalfox", status: "active" },
   };
@@ -174,9 +176,9 @@ test("Prime encounter saves normalize defensively and preserve only bounded auth
     anchorId: "prime:mossling:1:1",
     kind: "mossling",
     status: "captured",
-    entityId: 1,
+    entityId: null,
     firstActivatedAt: 20,
-    lastUpdatedAt: 0,
+    lastUpdatedAt: 20,
   });
   assert.equal(Object.isFrozen(states.get("prime:petalfox:0:0")), true);
   assert.equal(normalizePrimeEncounterStates(null).size, 0);
@@ -240,6 +242,11 @@ test("Prime field routes require distinct verbs and custody rejects a duplicated
   assert.equal(released.status, "released");
   assert.equal(released.entityId, 44);
   assert.equal(released.custodyId, null);
+
+  const aquarium = transferPrimeCustodyReference(captured, "specimen:garden-tail", "orb:keeper-a", "aquarium:specimen:garden-tail", 170);
+  assert.equal(aquarium.custodyId, "aquarium:specimen:garden-tail");
+  assert.equal(transferPrimeCustodyReference(aquarium, "specimen:garden-tail", "orb:copied-payload", "perch:copy", 180), aquarium,
+    "a stale container transaction cannot move current Prime custody");
 });
 
 test("rare visuals stay local far from origin, preserve authored proportions, and update from a cached part list", () => {
