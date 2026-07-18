@@ -10,7 +10,7 @@ import { migrateCreatureProgression, recordCreatureCaptureHistory, recordCreatur
 import { createFieldPerchState, placeBirdOnFieldPerch, recordFieldPerchSignal, setFieldPerchAssignment, takeBirdFromFieldPerch } from "../app/game/field-perch";
 import {
   GUILDS, GUILD_NPCS, GUILD_QUESTS, GUILD_QUEST_REWARD_ITEMS, applyGuildSemanticEvent, compatibleGuildIdsForSettlement, createGuildBook,
-  guildNpcScheduleAt, guildQuestRewardItems, joinGuild, planGuildHalls, questProgress, startGuildQuest,
+  discoverGuildHall, guildNpcScheduleAt, guildQuestRewardItems, joinGuild, planGuildHalls, questProgress, startGuildQuest,
 } from "../app/game/guilds";
 import { SPELLS, WILD_BONDS_SPELL_IDS, consumeIronwakeFragment, deepLanternGuideSignal, normalizeSpellWorldState, tidemendSiteKeyAt } from "../app/game/magic";
 import { validatePayload, type PlayerPose } from "../app/game/multiplayer";
@@ -128,12 +128,18 @@ test("guild framework ships seven complete campaigns, cast schedules, semantic p
   assert.match(guildNpcScheduleAt(GUILD_NPCS[0], 7), /^dawn:/u);
   assert.match(guildNpcScheduleAt(GUILD_NPCS[0], 14), /^day:/u);
 
-  let book = joinGuild(createGuildBook(), "waykeeper");
+  let book = joinGuild(discoverGuildHall(createGuildBook(), "waykeeper", "guild-hall:test:waykeeper"), "waykeeper");
   const questId = GUILDS.waykeeper.questIds[0];
   book = startGuildQuest(book, questId);
   const tideglassBefore = book.guilds.tideglass;
-  book = applyGuildSemanticEvent(book, { kind: "observeCreature", demonstrationId: "gentle-observation" });
-  assert.equal(questProgress(book, questId)?.objectives[0].current, 1);
+  const quest = GUILD_QUESTS.find((entry) => entry.id === questId)!;
+  const observation = quest.objectives.find((entry) => entry.kind === "observeCreature")!;
+  book = applyGuildSemanticEvent(book, {
+    kind: "observeCreature", guildId: "waykeeper", questId, objectiveId: observation.id,
+    targetId: observation.predicate.targetIds[0], demonstrationId: "gentle-observation", amount: observation.target,
+    context: { creatureKind: observation.predicate.creatureKinds[0], locationId: observation.predicate.locationIds[0] },
+  });
+  assert.equal(questProgress(book, questId)?.objectives[0].current, observation.target);
   assert.equal(book.guilds.tideglass, tideglassBefore, "unrelated guild state should retain identity");
 
   const candidates = [

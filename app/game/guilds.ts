@@ -9,15 +9,38 @@ export type GuildDoctrine = "stewardship" | "intervention" | "public-service" | 
 export type GuildObjectiveKind = "observeCreature" | "captureCreature" | "releaseCreature" | "trainMove" | "meetHabitatNeed" | "escortActor" | "defendArea" | "repairStructure" | "surveyLocation" | "mineSafely" | "groundSummon" | "travelRoad" | "resolveEncounter" | "choiceOutcome" | "craftUnderConstraint" | "negotiate";
 
 export type GuildRankDefinition = Readonly<{ id: string; name: string; standing: number; demonstrationCount: number; questNumber: number }>;
-export type GuildQuestObjective = Readonly<{ id: string; kind: GuildObjectiveKind; target: number; explanation: string }>;
+export type GuildObjectiveContextKey = "creatureKind" | "locationId" | "itemId" | "encounterId" | "actorId";
+export type GuildObjectivePredicate = Readonly<{
+  /** A semantic event must opt into one authored target instead of broadcasting by verb. */
+  targetIds: readonly string[];
+  creatureKinds: readonly string[];
+  locationIds: readonly string[];
+  itemIds: readonly string[];
+  encounterIds: readonly string[];
+  actorIds: readonly string[];
+  requiredContext: readonly GuildObjectiveContextKey[];
+}>;
+export type GuildQuestObjective = Readonly<{
+  id: string;
+  kind: GuildObjectiveKind;
+  target: number;
+  explanation: string;
+  blockedText: string;
+  failureText: string;
+  recoveryText: string;
+  predicate: GuildObjectivePredicate;
+}>;
 export type GuildQuestDefinition = Readonly<{
   id: string; guildId: GuildId; number: number; name: string; summary: string;
-  objectives: readonly GuildQuestObjective[]; solutionFamilies: readonly string[]; recovery: string; persistentChange: string;
+  giverId: string; recoveryGiverId: string; locationIds: readonly string[]; creatureKinds: readonly string[];
+  itemIds: readonly string[]; encounterIds: readonly string[]; actorIds: readonly string[];
+  objectives: readonly GuildQuestObjective[]; solutionFamilies: readonly string[]; failure: string; recovery: string; persistentChange: string;
 }>;
 export type GuildNpcDefinition = Readonly<{
   id: string; guildId: GuildId; name: string; role: string; philosophy: string; recruitable: boolean;
   homeSchedule: readonly string[]; combatRole: string; utility: string; weakness: string; companion: string | null;
-  personalQuest: string | null; contextLines: readonly string[];
+  personalQuest: string | null; personalConcern: string; recruitCondition: string | null; recoveryProtocol: string;
+  contextLines: readonly string[];
 }>;
 export type GuildDefinition = Readonly<{
   id: GuildId; factionId: FactionId | "player"; name: string; purpose: string; ranks: readonly GuildRankDefinition[];
@@ -28,11 +51,81 @@ export type GuildDefinition = Readonly<{
 const rank = (guild: GuildId, names: readonly string[]): readonly GuildRankDefinition[] => Object.freeze(names.map((name, index) => Object.freeze({
   id: `${guild}-rank-${index + 1}`, name, standing: [0, 10, 25, 45, 70, 90][index], demonstrationCount: [0, 1, 2, 3, 4, 5][index], questNumber: [1, 2, 3, 5, 7, 8][index],
 })));
-const objective = (kind: GuildObjectiveKind, explanation: string, target = 1): GuildQuestObjective => Object.freeze({ id: `${kind}:${explanation.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 36)}`, kind, target, explanation });
+type GuildQuestRuntimeSeed = Readonly<{
+  giverId: string; recoveryGiverId: string; locationId: string; creatureKind: string; itemId: string; encounterId: string;
+  failure: string; recovery: string;
+}>;
+const semanticTargetId = (questId: string, kind: GuildObjectiveKind, index: number) => `${questId}:${index + 1}:${kind}`;
+const objectiveContextKeys = (kind: GuildObjectiveKind): readonly GuildObjectiveContextKey[] => {
+  if (["observeCreature", "captureCreature", "releaseCreature", "trainMove", "meetHabitatNeed"].includes(kind)) return Object.freeze(["creatureKind", "locationId"]);
+  if (kind === "escortActor") return Object.freeze(["actorId", "locationId"]);
+  if (["defendArea", "repairStructure", "surveyLocation", "mineSafely", "travelRoad"].includes(kind)) return Object.freeze(["locationId"]);
+  if (["groundSummon", "resolveEncounter", "choiceOutcome"].includes(kind)) return Object.freeze(["encounterId"]);
+  if (kind === "craftUnderConstraint") return Object.freeze(["itemId", "locationId"]);
+  return Object.freeze(["actorId", "locationId"]);
+};
+const objectiveVerb = (kind: GuildObjectiveKind, runtime: GuildQuestRuntimeSeed) => {
+  if (kind === "observeCreature") return `Observe ${runtime.creatureKind} at ${runtime.locationId}.`;
+  if (kind === "captureCreature") return `Secure ${runtime.creatureKind} at ${runtime.locationId} under the chapter's welfare conditions.`;
+  if (kind === "releaseCreature") return `Release ${runtime.creatureKind} into the matching habitat at ${runtime.locationId}.`;
+  if (kind === "trainMove") return `Train ${runtime.creatureKind} during the authored exercise at ${runtime.locationId}.`;
+  if (kind === "meetHabitatNeed") return `Meet the habitat needs of ${runtime.creatureKind} at ${runtime.locationId}.`;
+  if (kind === "escortActor") return `Escort ${runtime.giverId} through ${runtime.locationId}.`;
+  if (kind === "defendArea") return `Defend ${runtime.locationId} during ${runtime.encounterId}.`;
+  if (kind === "repairStructure") return `Repair the authored structure at ${runtime.locationId} with ${runtime.itemId}.`;
+  if (kind === "surveyLocation") return `Verify the field evidence at ${runtime.locationId}.`;
+  if (kind === "mineSafely") return `Perform the safe-delving proof at ${runtime.locationId}.`;
+  if (kind === "groundSummon") return `Resolve the grounded manifestation in ${runtime.encounterId}.`;
+  if (kind === "travelRoad") return `Travel the chapter route through ${runtime.locationId}.`;
+  if (kind === "resolveEncounter") return `Resolve ${runtime.encounterId} by an authored solution family.`;
+  if (kind === "choiceOutcome") return `Record a stable consequence for ${runtime.encounterId}.`;
+  if (kind === "craftUnderConstraint") return `Use ${runtime.itemId} under the field constraint at ${runtime.locationId}.`;
+  return `Reach an agreement with ${runtime.giverId} at ${runtime.locationId}.`;
+};
+const objectiveTargetOverrides: Readonly<Record<string, number>> = Object.freeze({
+  "waykeeper:1:observeCreature": 3,
+  "moonbough:2:resolveEncounter": 3,
+  "brassroot:2:resolveEncounter": 3,
+  "deepgear:3:surveyLocation": 4,
+  "hearthroad:2:surveyLocation": 3,
+  "sugarcourt-makers:1:craftUnderConstraint": 3,
+  "sugarcourt-makers:6:negotiate": 7,
+});
+const objective = (questId: string, guildId: GuildId, questNumber: number, index: number, kind: GuildObjectiveKind, runtime: GuildQuestRuntimeSeed): GuildQuestObjective => {
+  const explanation = objectiveVerb(kind, runtime);
+  return Object.freeze({
+    id: `${index + 1}-${kind}`,
+    kind,
+    target: objectiveTargetOverrides[`${guildId}:${questNumber}:${kind}`] ?? 1,
+    explanation,
+    blockedText: `No matching proof yet: ${explanation}`,
+    failureText: runtime.failure,
+    recoveryText: runtime.recovery,
+    predicate: Object.freeze({
+      targetIds: Object.freeze([semanticTargetId(questId, kind, index)]),
+      creatureKinds: Object.freeze([runtime.creatureKind]),
+      locationIds: Object.freeze([runtime.locationId]),
+      itemIds: Object.freeze([runtime.itemId]),
+      encounterIds: Object.freeze([runtime.encounterId]),
+      actorIds: Object.freeze([runtime.giverId, runtime.recoveryGiverId]),
+      requiredContext: objectiveContextKeys(kind),
+    }),
+  });
+};
 const quest = (guildId: GuildId, number: number, name: string, summary: string, kinds: readonly GuildObjectiveKind[], solutions: readonly string[], persistentChange: string): GuildQuestDefinition => Object.freeze({
-  id: `${guildId}-${number}-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`, guildId, number, name, summary,
-  objectives: Object.freeze(kinds.map((kind, index) => objective(kind, `${name}: ${["first field proof", "system demonstration", "authored resolution"][index] ?? "resolution"}`))),
-  solutionFamilies: Object.freeze([...solutions]), recovery: "Named anchors retreat or become incapacitated; lost tools can be reacquired and escaped encounters return after a bounded cooldown.", persistentChange,
+  ...(() => {
+    const id = `${guildId}-${number}-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+    const runtime = GUILD_QUEST_RUNTIME[`${guildId}:${number}`];
+    return {
+      id, guildId, number, name, summary,
+      giverId: runtime.giverId, recoveryGiverId: runtime.recoveryGiverId,
+      locationIds: Object.freeze([runtime.locationId]), creatureKinds: Object.freeze([runtime.creatureKind]),
+      itemIds: Object.freeze([runtime.itemId]), encounterIds: Object.freeze([runtime.encounterId]),
+      actorIds: Object.freeze([runtime.giverId, runtime.recoveryGiverId]),
+      objectives: Object.freeze(kinds.map((kind, index) => objective(id, guildId, number, index, kind, runtime))),
+      solutionFamilies: Object.freeze([...solutions]), failure: runtime.failure, recovery: runtime.recovery, persistentChange,
+    };
+  })(),
 });
 
 const CAMPAIGN_ROWS: Readonly<Record<GuildId, readonly [string, string, readonly GuildObjectiveKind[], readonly string[], string][]>> = Object.freeze({
@@ -108,6 +201,86 @@ const CAMPAIGN_ROWS: Readonly<Record<GuildId, readonly [string, string, readonly
   ],
 });
 
+const runtime = (
+  giverId: string,
+  recoveryGiverId: string,
+  locationId: string,
+  creatureKind: string,
+  itemId: string,
+  encounterId: string,
+  failure: string,
+  recovery: string,
+): GuildQuestRuntimeSeed => Object.freeze({ giverId, recoveryGiverId, locationId, creatureKind, itemId, encounterId, failure, recovery });
+
+/**
+ * Compact authored campaign staging. These IDs are deliberately gameplay-facing:
+ * engines can route a proof from an exact encounter without parsing UI prose.
+ */
+const GUILD_QUEST_RUNTIME: Readonly<Record<string, GuildQuestRuntimeSeed>> = Object.freeze({
+  "waykeeper:1": runtime("odelia-fen", "pella-reedshoe", "fen-teaching-meadow", "common-surface-creature", "gentle-lens", "unstirred-field-study", "Startling, injuring, or releasing the specimen outside its home biome invalidates that proof.", "Pella reopens the meadow at dawn and Garrick replaces one lost Gentle Lens."),
+  "waykeeper:2": runtime("pella-reedshoe", "garrick-coil", "waykeeper-west-sanctuary", "enclosure-resident", "habitat-repair-kit", "sanctuary-restoration", "A decorative pen without shelter, food, space, and social fit remains incomplete.", "Garrick returns reclaimed habitat parts; the west sanctuary can be inspected and repaired again."),
+  "waykeeper:3": runtime("odelia-fen", "garrick-coil", "reedshoe-pasture", "suspected-predator", "fence-trace-sample", "livestock-loss-inquiry", "Destroying the evidence forces the guild to treat the cause as unresolved.", "Garrick reconstructs the ledger from witness notes and marks replacement evidence sites."),
+  "waykeeper:4": runtime("garrick-coil", "odelia-fen", "poacher-wagon-route", "captive-menagerie-creature", "confiscated-calibrator", "stolen-menagerie-raid", "A wagon that escapes carries its captives away and closes that camp instance.", "Odelia's scouts locate the wagon again after one dawn; Garrick replaces the entry tool."),
+  "waykeeper:5": runtime("pella-reedshoe", "odelia-fen", "juvenile-care-yard", "adopted-juvenile", "training-whistle", "juvenile-training-trial", "Unsafe confinement or abandoning the juvenile pauses training without erasing its bond.", "Odelia shelters the juvenile and Pella restarts the recall exercise when its welfare is restored."),
+  "waykeeper:6": runtime("pella-reedshoe", "garrick-coil", "virebloom-migration-corridor", "ilyr-virebloom", "migration-field-notebook", "prime-signs-trail", "Following a false sign resets only the current clue chain, not earlier field notes.", "Pella annotates the last verified sign and Garrick reissues a weatherproof notebook."),
+  "waykeeper:7": runtime("odelia-fen", "pella-reedshoe", "walking-spring-route", "ilyr-virebloom", "sanctuary-seal", "walking-spring-encounter", "A forced kill suspends conservation rewards and an escaped Ilyr ends the current attempt.", "Pella begins restitution for a lethal result; otherwise Ilyr returns to its echo route after the habitat cools."),
+  "waykeeper:8": runtime("odelia-fen", "pella-reedshoe", "waykeeper-charter-hall", "ilyr-ecological-echo", "living-roads-charter", "living-roads-charter-council", "Leaving the council postpones the charter but does not choose a doctrine by default.", "Odelia reconvenes the named principals at the charter table at the next dusk."),
+
+  "tideglass:1": runtime("neris-nine-lights", "sela-wakequiet", "tideglass-teaching-reef", "small-aquatic-creature", "tide-lens", "breathing-lesson-dive", "Running out of air or beaching the specimen ends the dive proof.", "Sela recovers the marker line and Neris offers another Tide Lens at the teaching raft."),
+  "tideglass:2": runtime("oru-kelpbraid", "neris-nine-lights", "reefmender-cleaning-station", "reefmender-shrimp", "coral-transplant", "cleaning-station-surge", "Losing every transplant disperses the colony from this station.", "Oru cultivates replacement coral and the shrimp return on the next calm tide."),
+  "tideglass:3": runtime("neris-nine-lights", "oru-kelpbraid", "lumen-lanternshell-nursery", "lanternshell", "sealed-water-sample", "lumen-losses-inquiry", "Removing Lanternshells before identifying the seed-specific cause destroys the clean comparison.", "Oru restores a control pool and Neris marks a second evidence route for the same cause."),
+  "tideglass:4": runtime("sela-wakequiet", "oru-kelpbraid", "ghostnet-wreck", "net-trapped-creature", "reef-cutter", "ghostnet-clearance", "Cutting load-bearing wreck lines can collapse the route or exhaust the player's air window.", "Sela resets the safety line and Oru replaces a lost cutter from recovered net metal."),
+  "tideglass:5": runtime("oru-kelpbraid", "sela-wakequiet", "currentweaver-maze", "currentweaver-eel", "channel-marker", "currentweaver-passage-parley", "Attacking before reading the current closes negotiation for that tide.", "Sela charts an alternate entry and the eel leader returns after the next current change."),
+  "tideglass:6": runtime("sela-wakequiet", "neris-nine-lights", "wakequiet-sealed-wreck", "currentweaver-eel", "wreck-relic", "wrecksong-memory", "Losing the relic or leaving Sela downed seals the memory chamber.", "Neris retrieves the relic to the raft and Sela names a dry fallback entrance after recovery."),
+  "tideglass:7": runtime("neris-nine-lights", "oru-kelpbraid", "thalassene-migration-reef", "thalassene", "parasite-lance", "reef-that-swims", "Damaging Thalassene before removing the rigs makes capture unfair and breaks the current attempt.", "Oru regrows parasite tools; Thalassene returns on its migration circuit after a bounded cooldown."),
+  "tideglass:8": runtime("neris-nine-lights", "sela-wakequiet", "tideglass-charter-raft", "thalassene-reef-echo", "open-current-charter", "open-current-council", "Abandoning the vote leaves licenses unchanged and records no implicit choice.", "Neris relights the nine council lamps and Sela recalls the principals at dusk."),
+
+  "moonbough:1": runtime("saelith-veyr", "fenna-glassleaf", "three-laws-court", "runeowl-familiar", "three-laws-focus", "proof-of-three-laws", "Repeating raw damage cannot substitute for utility and a nonviolent restraint proof.", "Fenna resets the practice wards and replaces a cracked focus without changing completed schools."),
+  "moonbough:2": runtime("saelith-veyr", "fenna-glassleaf", "three-branch-halls", "runeowl-familiar", "scholar-folio", "branches-of-recommendation", "Failing one scholar's field task closes only that branch for the day.", "Fenna records completed recommendations and offers another task from the missing scholar."),
+  "moonbough:3": runtime("fenna-glassleaf", "saelith-veyr", "abandoned-summoning-ring", "stranded-manifestation", "contract-shard", "summon-that-stayed", "Killing the manifestation is a recorded institutional failure rather than silent success.", "Saelith begins a restitution hearing; a dispersed manifestation reforms once its contract shard is repaired."),
+  "moonbough:4": runtime("fenna-glassleaf", "saelith-veyr", "palimpsest-chamber", "vellum-warden", "living-margin", "guarded-page-anomaly", "Repeating the same action rewrites the room and ejects the reader.", "Fenna preserves learned margin rules and Saelith reopens the chamber in its initial stanza."),
+  "moonbough:5": runtime("orren-third-bell", "saelith-veyr", "hush-cloister", "choir-of-one", "resonance-bell", "between-the-bells", "Repeated loud casting overwhelms Orren and collapses the negotiated silence.", "Saelith wards Orren's recovery room; the Choir returns when a quieter counter-pattern is prepared."),
+  "moonbough:6": runtime("orren-third-bell", "fenna-glassleaf", "glasswake-reflection-pool", "glasswake-stag", "mirror-shard", "sea-in-the-glass", "Breaking the still surface strands the rescue route for the current moon phase.", "Fenna restores the pool from a clean shard and Orren retains every completed rescue marker."),
+  "moonbough:7": runtime("saelith-veyr", "orren-third-bell", "confluence-settlement", "runeowl-familiar", "ward-anchor", "confluence-crisis", "A failed ward can scar one district, but evacuation keeps the campaign recoverable.", "Orren establishes a quiet triage ward and Saelith restages unresolved anchors, preserving rescued residents."),
+  "moonbough:8": runtime("saelith-veyr", "fenna-glassleaf", "first-bough-archive", "vellum-warden", "margin-charter", "first-bough-council", "Walking away records no doctrine and unlocks no ritual service.", "Fenna bookmarks the debate and Saelith reconvenes the archive council at nightfall."),
+
+  "brassroot:1": runtime("korga-bent-spear", "bram-coalgrin", "brassroot-sparring-yard", "toll-road-warg", "chalk-baton", "measured-blow-circuit", "Ignoring surrender or striking a friendly invalidates the current circuit.", "Bram resets the chalk targets and Korga restarts only the failed drill."),
+  "brassroot:2": runtime("korga-bent-spear", "nix-three-receipts", "five-contract-road", "road-warg", "honest-contract-ledger", "three-honest-contracts", "Repeating one job family cannot satisfy three distinct public services.", "Nix preserves distinct receipts and posts a replacement from an unfinished family."),
+  "brassroot:3": runtime("nix-three-receipts", "korga-bent-spear", "green-company-camp", "abandoned-pack-warg", "abandoned-client-receipt", "company-in-green", "Destroying the receipts removes the evidence route and makes the rival more violent.", "Nix reconstructs one receipt from client copies; Korga schedules a public contest as the fallback."),
+  "brassroot:4": runtime("bram-coalgrin", "nix-three-receipts", "splitstone-caravan-road", "toll-road-warg", "wheel-brace", "wheels-under-fire", "Losing every passenger ends the run even if cargo survives; cargo and lives score separately.", "Nix rebuilds the manifest and Bram forms a smaller replacement convoy after dawn."),
+  "brassroot:5": runtime("korga-bent-spear", "nix-three-receipts", "red-ledger-court", "road-warg", "disputed-contract", "ink-before-blood", "Destroying the contract hides its legal harm and closes the rewrite option.", "Nix produces the signed duplicate; Korga records restitution if the harmful clause was fulfilled."),
+  "brassroot:6": runtime("bram-coalgrin", "korga-bent-spear", "splitstone-holdfast", "toll-road-warg", "barricade-kit", "holdfast-siege", "If the command post falls, defenders retreat and Splitstone keeps visible damage.", "Korga recalls survivors and Bram reopens one damaged entrance for a staged counter-defense."),
+  "brassroot:7": runtime("korga-bent-spear", "bram-coalgrin", "kharza-highland-trail", "kharza-red-banner-warg", "harness-cutter", "red-banner-warg", "Defeating Kharza before breaking the harness records a lethal outcome and closes capture.", "Bram tracks Kharza after a retreat; Nix replaces the cutter, while a lethal result opens named restitution."),
+  "brassroot:8": runtime("korga-bent-spear", "nix-three-receipts", "red-ledger-hall", "toll-road-warg", "red-ledger-charter", "last-clause-council", "No unsigned draft can silently become the guild's doctrine.", "Nix keeps the last agreed clauses and Korga reconvenes the signatories at dusk."),
+
+  "deepgear:1": runtime("edda-rivetbraid", "hessa-deepnote", "deepgear-teaching-adit", "pipet-copper-mole", "brace-kit", "chalk-and-breath", "Mining past an unread hazard or losing the retreat route invalidates safe-delving proof.", "Hessa replaces a brace kit and Edda reopens the adit from the last safe chalk mark."),
+  "deepgear:2": runtime("hessa-deepnote", "edda-rivetbraid", "broken-shift-mine", "pipet-copper-mole", "support-brace", "shift-below-collapse", "Reckless mining creates a secondary collapse and moves survivors to an emergency pocket.", "Hessa marks the miners' new air pocket and Edda supplies replacement braces from the union cache."),
+  "deepgear:3": runtime("tovin-chalkmark", "edda-rivetbraid", "four-vein-gallery", "orichalc-living-seam", "sealed-sample-case", "color-in-the-vein", "Declaring Veinmetal's nature or contaminating samples invalidates the comparative survey.", "Tovin relabels surviving samples as unresolved and Edda authorizes replacement collection sites."),
+  "deepgear:4": runtime("edda-rivetbraid", "tovin-chalkmark", "quota-office-and-shaft", "pipet-copper-mole", "quota-ledger", "fair-measure-dispute", "Sabotage or an unsafe shift can injure workers and closes easy negotiation.", "Tovin preserves testimony and Edda offers a restitution shift with explicit safety limits."),
+  "deepgear:5": runtime("hessa-deepnote", "edda-rivetbraid", "road-under-stone", "pipet-copper-mole", "delicate-machine-crate", "machine-haul", "Dropping the machine or collapsing the route returns it damaged to the start depot.", "Hessa repairs the crate overnight; every completed road brace remains in place."),
+  "deepgear:6": runtime("tovin-chalkmark", "hessa-deepnote", "listening-seam", "orichalc-living-seam", "resonance-recorder", "listening-seam-study", "Forcing a conclusion or striking the seam corrupts the current observation interval.", "Tovin restores the neutral wording and Hessa recalibrates the recorder at the last quiet station."),
+  "deepgear:7": runtime("edda-rivetbraid", "hessa-deepnote", "orichalc-vault", "orichalc-living-seam", "resonance-breaker", "oath-under-orichalc", "Raw combat destabilizes supports; a collapse ends the encounter before custody is decided.", "Hessa restores authored support groups and Orichalc returns after the resonance settles."),
+  "deepgear:8": runtime("edda-rivetbraid", "tovin-chalkmark", "union-charter-hall", "orichalc-living-seam", "union-charter", "union-charter-council", "An interrupted vote changes no mine schedule or public work.", "Tovin preserves testimony and Edda recalls the shift delegates after the next bell."),
+
+  "hearthroad:1": runtime("mara-bramblemap", "rowan-mileglass", "first-waystone-circuit", "rowan-petalfox", "signpost-kit", "first-waystone-survey", "A sign at an unsafe or unverified junction does not complete the route.", "Rowan preserves surveyed sites and Mara replaces the signpost kit at the wayhouse."),
+  "hearthroad:2": runtime("rowan-mileglass", "mara-bramblemap", "seed-outdated-map-route", "rowan-petalfox", "outdated-field-map", "margins-map-correction", "Guessing an error without visiting its seed-derived site marks that correction unverified.", "Mara restores the original map layer and Rowan retains every field-verified correction."),
+  "hearthroad:3": runtime("mara-bramblemap", "pip-underbridge", "floodplain-road-crossing", "elder-burrowbell", "roadwright-kit", "road-worth-taking", "A crossing inappropriate to the terrain washes out or blocks local travel.", "Pip salvages road materials and Mara reopens the bounded segment from its last stable anchor."),
+  "hearthroad:4": runtime("pip-underbridge", "rowan-mileglass", "long-mile-escort-route", "rowan-petalfox", "traveler-camp-pack", "company-for-the-mile", "Outpacing the traveler or teleporting away breaks the escort without harming them.", "Pip shelters the traveler at the last wayhouse and Rowan marks a shorter restart leg."),
+  "hearthroad:5": runtime("mara-bramblemap", "rowan-mileglass", "old-legend-dungeon", "rowan-petalfox", "expedition-folio", "below-the-legend", "A boss victory without accounting for stranded people cannot satisfy the expedition.", "Mara recalls surviving members; Rowan preserves completed ecology and history notes for the next descent."),
+  "hearthroad:6": runtime("rowan-mileglass", "pip-underbridge", "missing-expedition-camp-trail", "rowan-petalfox", "signal-flare", "missing-expedition", "Destroying camps or contradictory notes closes some explanations of the expedition's fate.", "Pip recovers duplicate notes from wayhouses and Rowan starts from the last confirmed camp."),
+  "hearthroad:7": runtime("mara-bramblemap", "rowan-mileglass", "stormmane-highlands", "varkesh-stormmane", "waypost-repair-kit", "where-storms-run", "Entering the finale before repairing wayposts leaves no safe retreat and forces Varkesh away.", "Rowan restores the last repaired waypost; Varkesh returns with the next authored storm front."),
+  "hearthroad:8": runtime("mara-bramblemap", "pip-underbridge", "common-map-hall", "roclet-lineage", "common-map-charter", "common-map-council", "Closing the map records no route doctrine and preserves existing traffic weights.", "Pip keeps the hall open and Mara reconvenes route delegates over the next evening meal."),
+
+  "sugarcourt-makers:1": runtime("dame-caramel-voss", "taff-ribbons", "three-temper-worksites", "knot-taffy-hound", "tempering-kit", "matter-of-temper", "Repeating the workshop recipe cannot replace field and timed-repair constraints.", "Taff returns the workpiece and Dame resets only the failed constraint station."),
+  "sugarcourt-makers:2": runtime("prill-snapcandy", "dame-caramel-voss", "ingredient-marsh", "living-ingredient-creature", "substitution-ledger", "ingredient-with-eyes", "Taking the harmful component damages the local population and closes the clean-source proof.", "Dame opens a restitution recipe and Prill marks a renewable source or tested substitute."),
+  "sugarcourt-makers:3": runtime("taff-ribbons", "dame-caramel-voss", "mobile-kitchen-route", "knot-taffy-hound", "field-kitchen-crate", "kitchen-on-wheels", "Losing the kitchen ends meal service and lowers event morale for that attempt.", "Taff recovers the axle and Dame issues a smaller pantry; fed residents remain helped."),
+  "sugarcourt-makers:4": runtime("prill-snapcandy", "taff-ribbons", "counterfeit-workshop", "knot-taffy-hound", "marked-counterfeit-crumb", "counterfeit-crumb-inquiry", "Accusing merchants without evidence scatters the workshop and harms innocent trade.", "Taff finds another marked delivery while Prill preserves verified shop testimony."),
+  "sugarcourt-makers:5": runtime("prill-snapcandy", "dame-caramel-voss", "living-batter-care-kitchen", "living-confection", "habitat-serving-tray", "what-batter-wanted", "Forcing a purpose or confinement records distress and pauses the choice.", "Dame shelters the confection without assigning it; Prill restarts observation once it is calm."),
+  "sugarcourt-makers:6": runtime("taff-ribbons", "dame-caramel-voss", "seven-roads-feast", "knot-taffy-hound", "faction-feast-crates", "feast-of-seven-roads", "A missing faction changes optional scenes but never makes the feast impossible.", "Taff preserves delivered crates and Dame posts a substitute route for each missing guest."),
+  "sugarcourt-makers:7": runtime("dame-caramel-voss", "taff-ribbons", "sovereign-feast-hall", "sugarwake-sovereign", "sovereign-tempering-ladle", "sovereign-wakes-hungry", "Poor craft or uncontrolled damage advances a hostile phase and can end the feast attempt.", "Taff rebuilds the communal table; the Sovereign wakes again after its kiln-heart cools."),
+  "sugarcourt-makers:8": runtime("dame-caramel-voss", "prill-snapcandy", "shared-table-charter-hall", "sugarwake-sovereign", "shared-table-charter", "shared-table-council", "An unsigned recipe charter changes neither services nor contract risk.", "Prill preserves tested clauses and Dame reconvenes the makers after the ovens cool."),
+});
+
 export const GUILD_QUESTS: readonly GuildQuestDefinition[] = Object.freeze((Object.keys(CAMPAIGN_ROWS) as GuildId[]).flatMap((guildId) => CAMPAIGN_ROWS[guildId].map((row, index) => quest(guildId, index + 1, ...row))));
 
 const questAt = (guildId: GuildId, number: number) => GUILD_QUESTS.find((entry) => entry.guildId === guildId && entry.number === number)?.id ?? "";
@@ -127,10 +300,66 @@ export const GUILD_QUEST_REWARD_ITEMS: Readonly<Record<string, readonly ItemCode
 });
 export function guildQuestRewardItems(questId: string): readonly ItemCode[] { return GUILD_QUEST_REWARD_ITEMS[questId] ?? Object.freeze([]); }
 
+type GuildNpcLife = Readonly<{
+  schedule: readonly [string, string, string, string];
+  personalConcern: string;
+  recoveryProtocol: string;
+  hallLine: string;
+  fieldLine: string;
+  crisisLine: string;
+}>;
+const npcLife = (
+  schedule: readonly [string, string, string, string],
+  personalConcern: string,
+  recoveryProtocol: string,
+  hallLine: string,
+  fieldLine: string,
+  crisisLine: string,
+): GuildNpcLife => Object.freeze({ schedule: Object.freeze([...schedule]) as unknown as GuildNpcLife["schedule"], personalConcern, recoveryProtocol, hallLine, fieldLine, crisisLine });
+
+const GUILD_NPC_LIVES: Readonly<Record<string, GuildNpcLife>> = Object.freeze({
+  "odelia-fen": npcLife(["dawn: inspects sanctuary releases", "day: walks the teaching meadow", "dusk: hears welfare cases", "night: writes corridor orders"], "Keep the Conservancy from mistaking possession for care.", "Retreats to the west sanctuary; Pella assumes field command until Odelia recovers.", "An empty orb can be a successful day.", "Read the animal before you read your tools.", "Get the creatures clear; then we argue about blame."),
+  "garrick-coil": npcLife(["dawn: calibrates capture lenses", "day: repairs instruments at the public bench", "dusk: compares field notes to readings", "night: tests quiet mechanisms"], "Build instruments that admit when animal behavior disproves them.", "Locks down unstable gear and returns at dawn with a documented replacement.", "A number is evidence, not permission.", "If the reading and the tracks disagree, follow the tracks.", "Name the failed mechanism before touching it again."),
+  "pella-reedshoe": npcLife(["dawn: listens beside Button's burrow", "day: surveys migration signs", "dusk: sketches shelter plans", "night: shelters at the field blind"], "Learn why Button's warning call has become faint.", "Button rings for Odelia, who shelters Pella until the next field window.", "Button found three details I missed, which is rude and useful.", "Small tracks are still a whole decision.", "Shelter first. Heroics after everyone can breathe."),
+  "neris-nine-lights": npcLife(["dawn: trims nine observation lamps", "day: catalogs the teaching reef", "dusk: names only verified sightings", "night: descends with the blue lamps"], "Make deep-water research visible without turning it into spectacle.", "Extinguishes eight lamps and follows the ninth to the research raft.", "A name earned before a sighting is only a rumor.", "Dark water is not empty water.", "Keep one lamp for the route home."),
+  "oru-kelpbraid": npcLife(["dawn: feeds the Reefmender colony", "day: repairs coral stations", "dusk: scrubs tools the shrimp rearranged", "night: checks nursery currents"], "Prove habitat repair can outlast one guild expedition.", "The Reefmenders tow Oru to the nursery pocket; Neris covers the next tide.", "The reef is a relationship, not masonry.", "Current carried the damage here; current can carry repair too.", "Defend the cleaners, not the scenery."),
+  "sela-wakequiet": npcLife(["dawn: checks safety lines from shore", "day: retrieves submerged losses", "dusk: maps sealed wreck exits", "night: rests beside her Currentweaver"], "Return to the wreck she survived and choose what its relic should become.", "Her eel pulls her to the nearest marked air bell; Neris holds her recovered gear.", "A closed hatch is a question I answer slowly.", "Follow my current if the wreck starts talking.", "Drops can be replaced. People cannot."),
+  "saelith-veyr": npcLife(["dawn: audits interrupted rituals", "day: teaches at the Three Laws court", "dusk: hears concealed-risk reports", "night: seals unstable archive wings"], "Keep the Arcanum accountable without making caution a private monopoly.", "Withdraws through the nearest ward and delegates containment to Fenna in writing.", "Ignorance can be repaired. Concealment has victims.", "A spell's consequence begins where its glow ends.", "Evacuate first; the archive can lose an argument."),
+  "fenna-glassleaf": npcLife(["dawn: reviews summon clauses", "day: interviews manifested parties", "dusk: feeds the Runeowl and revises contracts", "night: observes the Palimpsest chamber"], "Write concordances that treat summoned beings as parties, not ammunition.", "Her Runeowl carries the contract shard to Saelith and maintains a holding ward.", "A signature from only one world is not consent.", "The margin changed because we repeated ourselves.", "Containment is time for negotiation, not a verdict."),
+  "orren-third-bell": npcLife(["dawn: practices one quiet ward", "day: guides Hush crossings", "dusk: rests between measured bells", "night: records tolerable resonance"], "Revisit the failed ritual without letting the Choir define his recovery.", "Falls back to the quiet cloister; Fenna uses written signals until his hearing settles.", "One bell. Then space.", "Silence can shelter you or erase you. Check which.", "Stop casting. Listen for the people still moving."),
+  "korga-bent-spear": npcLife(["dawn: inspects surrender chalk", "day: arbitrates public contracts", "dusk: drills measured force", "night: annotates the Red Ledger"], "Ensure contract wording can never hide who bears its consequences.", "Retires behind the surrender line; Bram commands the withdrawal and Nix records it.", "A legal order can still be a rotten one.", "Know who profits if this road stays dangerous.", "Hold the line only while it protects someone."),
+  "nix-three-receipts": npcLife(["dawn: balances the repair purse", "day: prices contracts in public", "dusk: audits damage claims", "night: files three signed copies"], "Make every material and human cost visible before ink becomes blood.", "Locks the ledger in the iron drawer; Korga names a bonded clerk for urgent work.", "If it has no line item, someone is hiding the cost.", "This wheel broke before the ambush. I have the receipt.", "Count survivors before cargo."),
+  "bram-coalgrin": npcLife(["dawn: runs Toll beside the caravan gate", "day: escorts exposed road legs", "dusk: practices rescue pulls", "night: sleeps in the border stable"], "Find the traveler whose toll Bram accepted but never delivered.", "Toll drags Bram behind cover and returns him to Korga's border lodge.", "Toll says the plan needs fewer speeches.", "Road's too quiet on the left. Toll agrees.", "I pull people out; you decide what deserves chasing."),
+  "edda-rivetbraid": npcLife(["dawn: reads the overnight brace log", "day: inspects active shifts", "dusk: hears safety refusals", "night: marks tomorrow's retreat routes"], "Make preventable collapse a governance failure, not a miner's private bad luck.", "Seals the unsafe shift and names Hessa acting rescue lead until cleared.", "A deadline cannot hold a ceiling up.", "Chalk the retreat before you praise the vein.", "Nobody mines while somebody is missing."),
+  "tovin-chalkmark": npcLife(["dawn: listens to cold rock", "day: surveys the four-vein gallery", "dusk: labels unresolved samples", "night: compares resonance intervals"], "Preserve uncertainty around Veinmetal until evidence earns a conclusion.", "Leaves the recorder in place and retreats to the last quiet chalk station.", "Unresolved is a result, not an embarrassment.", "That rhythm changed after our third step.", "Do not let urgency become a theory."),
+  "hessa-deepnote": npcLife(["dawn: checks Pipet's collapse marks", "day: braces rescue routes", "dusk: repairs cover plates", "night: sleeps beside the union cache"], "Learn why Pipet hears a second collapse that instruments miss.", "Pipet leads her to a union air pocket; Edda dispatches the named replacement crew.", "The way out belongs in every plan.", "Pipet heard the roof before the gauge did.", "Cover up. Then move on my chalk."),
+  "mara-bramblemap": npcLife(["dawn: updates road-event notes", "day: walks one disputed route", "dusk: debriefs expeditions over supper", "night: redraws the Common Map"], "Keep the shared map useful to travelers whose journeys differ from hers.", "Returns to the nearest marked meal-stop; Rowan inherits the expedition folio.", "A map should remember what went wrong.", "The shortcut costs more daylight than it saves.", "Mark the missing. A boss can wait."),
+  "pip-underbridge": npcLife(["dawn: listens to the old Burrowbell", "day: tends wayhouse beds", "dusk: counts late travelers", "night: watches the storm gate"], "Keep wayhouses dependable for people who arrive slowly or injured.", "The Burrowbell calls Rowan; Pip waits safely in the storm cellar.", "Slow arrivals still deserve a hot place.", "Bell says weather. My knees say bridge.", "Beds first, stories second."),
+  "rowan-mileglass": npcLife(["dawn: checks yesterday's ink", "day: draws while walking", "dusk: compares Petalfox scent marks", "night: copies maps at the wayhouse"], "Fill the blank mile where a failed expedition disappeared from every map.", "The Petalfox follows Rowan's scent back to Pip; the unfinished map remains pinned.", "I drew that turn before noticing we took it.", "The fox says the ink trail is lying.", "I marked three exits. Please use one."),
+  "dame-caramel-voss": npcLife(["dawn: tests oven temper by sound", "day: inspects traveling provisions", "dusk: hears maker failures", "night: writes durable recipes"], "Keep beauty subordinate to safe, useful craft without killing experimentation.", "Closes the hot line, delegates service to Taff, and reopens only after a temper audit.", "Pretty is allowed after useful.", "If it cannot survive the road, it is tableware.", "Feed the shelter before the centerpiece."),
+  "prill-snapcandy": npcLife(["dawn: labels yesterday's accidents", "day: tests substitutions", "dusk: traces counterfeit batches", "night: observes living batter"], "Learn when an experiment has become a creature with its own needs.", "Triggers the labeled shutdown sequence; Dame contains the bench and preserves notes.", "The label goes on before the spark.", "This crumb remembers a different oven.", "Good news: I know which mistake this is."),
+  "taff-ribbons": npcLife(["dawn: packs road meals with Knot", "day: runs deliveries between factions", "dusk: repairs the kitchen axle", "night: feeds late arrivals"], "Untangle the recipe obligation that keeps Knot working after exhaustion.", "Knot pulls Taff and the delivery satchel to the mobile kitchen; Dame assigns a relief courier.", "Food late is sometimes food lost.", "Knot smelled the washed-out crossing first.", "I can bring tools or supper. Choose quickly."),
+});
+
 const npc = (guildId: GuildId, id: string, name: string, role: string, philosophy: string, recruitable: boolean, combatRole: string, utility: string, weakness: string, companion: string | null, personalQuest: string | null): GuildNpcDefinition => Object.freeze({
-  id, guildId, name, role, philosophy, recruitable, combatRole, utility, weakness, companion, personalQuest,
-  homeSchedule: Object.freeze(["dawn: hall preparation", "day: field or public service", "dusk: hall debrief", "night: home or watch"]),
-  contextLines: Object.freeze([`At the hall, ${name} comments on unfinished guild work.`, `${name} notices the current road and weather.`, `${name} reacts to low health without overriding player control.`, `${name} acknowledges humane captures and named legendary outcomes.`, `${name} has specific remarks for settlements, major biomes, dungeons, and two fellow recruits.`]),
+  ...(() => {
+    const life = GUILD_NPC_LIVES[id];
+    return {
+      id, guildId, name, role, philosophy, recruitable, combatRole, utility, weakness, companion, personalQuest,
+      personalConcern: life.personalConcern,
+      recruitCondition: recruitable ? `Complete chapter 6 (${questAt(guildId, 6)}) and speak at this NPC's home hall.` : null,
+      recoveryProtocol: life.recoveryProtocol,
+      homeSchedule: life.schedule,
+      contextLines: Object.freeze([
+        `Hall — ${life.hallLine}`,
+        `Road or biome — ${life.fieldLine}`,
+        `Bad weather — ${life.fieldLine}`,
+        `Low health — ${life.crisisLine}`,
+        `Creature capture — ${life.hallLine}`,
+        `Dungeon or named encounter — ${life.crisisLine}`,
+      ]),
+    };
+  })(),
 });
 
 export const GUILD_NPCS: readonly GuildNpcDefinition[] = Object.freeze([
@@ -193,40 +422,117 @@ export function normalizeGuildBook(value: unknown): GuildBookState {
   return Object.freeze({ schema: 1, guilds: Object.freeze(guilds), worldQuestOutcomes: Object.freeze({ ...(raw.worldQuestOutcomes ?? {}) }), revision: Math.max(0, Math.floor(Number(raw.revision) || 0)) });
 }
 
-export type GuildSemanticEvent = Readonly<{ kind: GuildObjectiveKind; amount?: number; demonstrationId?: string; outcomeId?: string }>;
-export function applyGuildSemanticEvent(book: GuildBookState, event: GuildSemanticEvent) {
-  let changed = false; const guilds = { ...book.guilds };
-  for (const id of Object.keys(GUILDS) as GuildId[]) {
-    const state = guilds[id]; if (!state.activeQuestIds.length) continue;
-    let guildChanged = false;
-    const progress = { ...state.objectiveProgress }; const demonstrations = new Set(state.completedDemonstrationIds);
-    for (const questId of state.activeQuestIds) for (const entry of GUILD_QUESTS.find((quest) => quest.id === questId)?.objectives ?? []) if (entry.kind === event.kind) {
-      progress[`${questId}:${entry.id}`] = Math.min(entry.target, (progress[`${questId}:${entry.id}`] ?? 0) + Math.max(0, event.amount ?? 1)); guildChanged = true;
-    }
-    if (event.demonstrationId && !demonstrations.has(event.demonstrationId)) { demonstrations.add(event.demonstrationId); guildChanged = true; }
-    if (guildChanged) changed = true;
-    guilds[id] = guildChanged ? Object.freeze({ ...state, objectiveProgress: Object.freeze(progress), completedDemonstrationIds: Object.freeze([...demonstrations]) }) : state;
+export type GuildSemanticEventContext = Readonly<{
+  creatureKind?: string;
+  locationId?: string;
+  itemId?: string;
+  encounterId?: string;
+  actorId?: string;
+}>;
+export type GuildSemanticEvent = Readonly<{
+  kind: GuildObjectiveKind;
+  /** Required routing. Legacy kind-only broadcasts intentionally earn no proof. */
+  guildId?: GuildId;
+  questId?: string;
+  objectiveId?: string;
+  targetId?: string;
+  context?: GuildSemanticEventContext;
+  amount?: number;
+  demonstrationId?: string;
+  outcomeId?: string;
+}>;
+const predicateContextValues: Readonly<Record<GuildObjectiveContextKey, keyof GuildSemanticEventContext>> = Object.freeze({
+  creatureKind: "creatureKind",
+  locationId: "locationId",
+  itemId: "itemId",
+  encounterId: "encounterId",
+  actorId: "actorId",
+});
+function semanticEventMatchesObjective(event: GuildSemanticEvent, objective: GuildQuestObjective) {
+  if (!event.targetId || !objective.predicate.targetIds.includes(event.targetId)) return false;
+  if (event.objectiveId && event.objectiveId !== objective.id) return false;
+  const context = event.context ?? {};
+  for (const key of objective.predicate.requiredContext) {
+    const value = context[predicateContextValues[key]];
+    if (!value || !objective.predicate[`${key}s` as "creatureKinds" | "locationIds" | "itemIds" | "encounterIds" | "actorIds"].includes(value)) return false;
   }
-  return changed ? Object.freeze({ ...book, guilds: Object.freeze(guilds), revision: book.revision + 1 }) : book;
+  return true;
+}
+export function applyGuildSemanticEvent(book: GuildBookState, event: GuildSemanticEvent) {
+  if (!event.guildId || !event.questId || !event.demonstrationId) return book;
+  const quest = GUILD_QUESTS.find((entry) => entry.id === event.questId && entry.guildId === event.guildId);
+  if (!quest) return book;
+  const state = book.guilds[event.guildId];
+  if (!state.activeQuestIds.includes(quest.id)) return book;
+  const progress = { ...state.objectiveProgress };
+  const demonstrations = new Set(state.completedDemonstrationIds);
+  let changed = false;
+  for (const entry of quest.objectives) {
+    if (entry.kind !== event.kind || !semanticEventMatchesObjective(event, entry)) continue;
+    const scopedProofId = `${event.guildId}:${quest.id}:${entry.id}:${event.demonstrationId}`;
+    if (demonstrations.has(scopedProofId)) continue;
+    const requestedAmount = event.amount ?? 1;
+    const amount = Math.max(0, Math.min(64, Number.isFinite(requestedAmount) ? requestedAmount : 0));
+    if (amount <= 0) continue;
+    const key = `${quest.id}:${entry.id}`;
+    const nextValue = Math.min(entry.target, (progress[key] ?? 0) + amount);
+    if (nextValue === (progress[key] ?? 0)) continue;
+    progress[key] = nextValue;
+    demonstrations.add(scopedProofId);
+    changed = true;
+  }
+  if (!changed) return book;
+  const next = Object.freeze({ ...state, objectiveProgress: Object.freeze(progress), completedDemonstrationIds: Object.freeze([...demonstrations].slice(-128)) });
+  return Object.freeze({ ...book, guilds: Object.freeze({ ...book.guilds, [event.guildId]: next }), revision: book.revision + 1 });
 }
 
 export function questProgress(book: GuildBookState, questId: string) {
   const quest = GUILD_QUESTS.find((entry) => entry.id === questId); if (!quest) return null;
   const state = book.guilds[quest.guildId]; const objectives = quest.objectives.map((entry) => ({ ...entry, current: Math.min(entry.target, state.objectiveProgress[`${questId}:${entry.id}`] ?? 0) }));
   const complete = objectives.every((entry) => entry.current >= entry.target);
-  return Object.freeze({ quest, objectives: Object.freeze(objectives), complete, explanation: complete ? "All authored demonstrations are complete; return for the named resolution." : objectives.filter((entry) => entry.current < entry.target).map((entry) => `${entry.explanation} (${entry.current}/${entry.target})`).join("; ") });
+  return Object.freeze({ quest, objectives: Object.freeze(objectives), complete, explanation: complete ? "All authored demonstrations are complete; return for the named resolution." : objectives.filter((entry) => entry.current < entry.target).map((entry) => `${entry.blockedText} (${entry.current}/${entry.target}) Recovery: ${entry.recoveryText}`).join("; ") });
 }
 
 export function promotionEligibility(book: GuildBookState, guildId: GuildId) {
   const state = book.guilds[guildId]; const definition = GUILDS[guildId]; const currentIndex = Math.max(-1, definition.ranks.findIndex((rank) => rank.id === state.rankId)); const next = definition.ranks[currentIndex + 1] ?? null;
   if (!next) return Object.freeze({ eligible: false, next: null, missing: Object.freeze(["Maximum rank reached."]) });
-  const missing: string[] = []; if (state.standing < next.standing) missing.push(`${next.standing - state.standing} standing`); if (state.completedDemonstrationIds.length < next.demonstrationCount) missing.push(`${next.demonstrationCount - state.completedDemonstrationIds.length} relevant demonstration(s)`); if (state.completedQuestIds.length < next.questNumber) missing.push(`campaign quest ${next.questNumber}`);
+  const missing: string[] = []; if (!["member", "honored"].includes(state.membership)) missing.push("guild oath"); if (state.standing < next.standing) missing.push(`${next.standing - state.standing} standing`); if (state.completedDemonstrationIds.length < next.demonstrationCount) missing.push(`${next.demonstrationCount - state.completedDemonstrationIds.length} relevant demonstration(s)`); if (state.completedQuestIds.length < next.questNumber) missing.push(`campaign quest ${next.questNumber}`);
   return Object.freeze({ eligible: missing.length === 0, next, missing: Object.freeze(missing) });
+}
+
+export function discoverGuildHall(book: GuildBookState, guildId: GuildId, hallId: string) {
+  const normalizedHallId = hallId.trim().slice(0, 128);
+  const state = book.guilds[guildId];
+  if (!normalizedHallId || state.hallDiscoveryIds.includes(normalizedHallId)) return book;
+  const next = Object.freeze({ ...state, hallDiscoveryIds: Object.freeze([...state.hallDiscoveryIds, normalizedHallId].slice(-64)) });
+  return Object.freeze({ ...book, guilds: Object.freeze({ ...book.guilds, [guildId]: next }), revision: book.revision + 1 });
+}
+
+export function inviteToGuild(book: GuildBookState, guildId: GuildId, inviterNpcId: string) {
+  const state = book.guilds[guildId];
+  const inviter = GUILD_NPCS.find((entry) => entry.id === inviterNpcId && entry.guildId === guildId);
+  if (!inviter || state.membership !== "unknown") return book;
+  const next = Object.freeze({
+    ...state,
+    membership: "invited" as const,
+    serviceFlags: Object.freeze([...new Set([...state.serviceFlags, `invited-by:${inviterNpcId}`])]),
+  });
+  return Object.freeze({ ...book, guilds: Object.freeze({ ...book.guilds, [guildId]: next }), revision: book.revision + 1 });
+}
+
+export function guildJoinEligibility(book: GuildBookState, guildId: GuildId) {
+  const state = book.guilds[guildId];
+  if (state.membership === "member" || state.membership === "honored") return Object.freeze({ eligible: false, reason: "Already sworn." });
+  if (state.membership === "suspended") return Object.freeze({ eligible: false, reason: "Resolve restitution before renewing the oath." });
+  if (state.membership === "invited") return Object.freeze({ eligible: true, reason: "A named guild principal invited you to take the oath." });
+  if (state.hallDiscoveryIds.length > 0) return Object.freeze({ eligible: true, reason: "You discovered a guild hall and may ask its principals for the oath." });
+  return Object.freeze({ eligible: false, reason: `Discover ${GUILDS[guildId].standaloneHall} or earn a principal's invitation.` });
 }
 
 export function joinGuild(book: GuildBookState, guildId: GuildId) {
   const state = book.guilds[guildId];
   if (state.membership === "member" || state.membership === "honored") return book;
+  if (!guildJoinEligibility(book, guildId).eligible) return book;
   const next = Object.freeze({ ...state, membership: "member" as const, rankId: GUILDS[guildId].ranks[0].id, standing: Math.max(0, state.standing) });
   return Object.freeze({ ...book, guilds: Object.freeze({ ...book.guilds, [guildId]: next }), revision: book.revision + 1 });
 }
@@ -244,6 +550,7 @@ export function startGuildQuest(book: GuildBookState, questId: string) {
 export function completeGuildQuest(book: GuildBookState, questId: string, outcomeId: string) {
   const progress = questProgress(book, questId); if (!progress?.complete) return book;
   const quest = progress.quest; const state = book.guilds[quest.guildId];
+  if (!state.activeQuestIds.includes(questId)) return book;
   const allowedOutcomes = quest.number === 8 ? [...quest.solutionFamilies, ...GUILDS[quest.guildId].doctrines] : [...quest.solutionFamilies];
   if (!allowedOutcomes.includes(outcomeId)) return book;
   const repeatedFamily = state.completedQuestIds.filter((id) => id.split("-").slice(0, 2).join("-") === questId.split("-").slice(0, 2).join("-")).length;
