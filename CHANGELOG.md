@@ -2,6 +2,17 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.7.0 - Wild Bonds & Hearthroads - 2026-07-18
+
+- Expanded the production Bestiary from 178 to 215 creatures with 27 regular species, six regional legendaries, and four stable-lineage summoned beings. All 37 additions have explicit ecology, capture and care hooks, stats, level-and-bond move paths, rare-form rules, sound palettes, specimen history, and append-only research.
+- Rebuilt the 37 expansion models in a full art pass totaling 1,298 meshes and 58,988 visible triangles, including layered silhouettes, curved topology, secondary motion, transparency, emissive details, negative space, and authored floating or rotating parts where the concept requires them. Regenerated every portrait and both before/after production sheets from the live rigs.
+- Added a universal 21-type chart and one host-authoritative real-time resolver for every player, creature, summon, construct, resident, boss, projectile, spell, status, mounted, and PvP pairing. Mounts now use swept body-volume traversal and creature-specific move kits, while telegraph, active, recovery, cooldown, relationship, threat, and status state share one bounded contract.
+- Reworked the Bestiary around composable multi-select facets, searchable specimens, research/care/Prime-route depth, append-only notes, summon origins, narrow-screen and 200%-zoom layouts, keyboard focus, and Escape behavior without allowing filters to run off-screen.
+- Added seven faction-connected guilds, 21 principal NPCs, seven recruitable companions, 56 authored campaign chapters, six ranks, separate standing, doctrines, deterministic halls and rare lodges, recovery paths, schedules, dialogue, and exact objective proof. Membership requires discovering a hall or receiving a named invitation, and shared verbs cannot cross-credit unrelated chapters.
+- Added sparse terrain-following saved road graphs, ferry landings, and persistent bounded event anchors. Contextual loot now resolves through structure, room, biome/depth, faction, danger, history, and ownership, preserving old inventories and host-only rolls while preventing duplicate unique issuance and recording private-container consequences.
+- Expanded magic to 20 reusable spells and four realm-specific summons. Stable contracts prevent appearance and reward rerolls; concordance and a timed Worldpin act can ground one free persistent being without granting ownership, while temporary echoes cannot drop, breed, capture, or duplicate XP.
+- Preserved v1/v2 Bestiary data, legacy cages and Capture Orbs, current worlds, generator-v15 terrain, ecology/spatial-index performance contracts, multiplayer host authority, and Dwarven mountain infrastructure. Added deterministic audits covering 10,000 containers, 50 road seeds, 50 Dwarven seeds, all guild campaigns, all legendaries, all summons, 24 surface biomes, and seven underground habitats.
+
 ## 1.6.0 - Wildframe - 2026-07-16
 
 - Halved chunk vertex-attribute memory by packing normalized normals, biome/light colors, and UVs while retaining full-precision positions; added section-local shade reuse and shared particle/leaf GPU resources.

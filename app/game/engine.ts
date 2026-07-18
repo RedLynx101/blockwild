@@ -3137,7 +3137,7 @@ const mixBestiaryText = (hash: number, value: string) => {
   return mixed;
 };
 
-/** Allocation-free content hash used to reuse an unchanged 178-entry HUD snapshot. */
+/** Allocation-free content hash used to reuse an unchanged 215-entry HUD snapshot. */
 export function bestiaryProgressSignature(bestiary: BestiaryProgress) {
   let hash = 2_166_136_261;
   for (const kind of MOB_ORDER) {
