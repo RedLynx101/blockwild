@@ -3101,6 +3101,10 @@ export class ChunkWorld {
         const ravineTop = column.height - 5;
         const ravineBottom = Math.max(MIN_Y + 5, column.height - 38);
         const waterTable = -4 + Math.floor(7 * fbm2(gx, gz, this.seed ^ 0x7ed55d16, 1 / 170, 2));
+        // Aquifer identity is column-stable. A 3D wetness sample used to flip
+        // between water and air from one vertical voxel to the next, producing
+        // suspended ribbons and holes inside otherwise flooded cave pockets.
+        const aquiferWet = valueNoise2(gx / 64, gz / 64, this.seed ^ 0x94d049bd) > 0.28;
         const caveEntrance = caveFrequency > 0 ? caveEntranceAt(this.seed, gx, gz, column.height, column.waterline) : null;
         for (let y = MIN_Y; y <= Math.max(column.height, column.waterline); y += 1) {
           let type = BlockId.Air;
@@ -3131,7 +3135,7 @@ export class ChunkWorld {
               const feature = caveFeatureAt(this.seed, gx, y, gz, column.height, caveFrequency);
               if (cheese || spaghetti || deepCavern || ravine || feature.chamber || feature.chimney || surfaceMouth) {
                 if (y <= MIN_Y + 7) type = BlockId.Lava;
-                else if (y <= waterTable && valueNoise3(gx / 64, y / 58, gz / 64, this.seed ^ 0x94d049bd) > 0.28) type = BlockId.Water;
+                else if (y <= waterTable && aquiferWet) type = BlockId.Water;
                 else type = BlockId.Air;
               }
             }
@@ -3249,10 +3253,22 @@ export class ChunkWorld {
     const carveMask = new Uint8Array(volume);
     const biomeMask = new Uint8Array(volume);
     const roadMask = new Uint8Array(volume);
+    const streamMask = new Uint8Array(volume);
+    const basinMask = new Uint8Array(volume);
     const liquidLevel = new Int16Array(volume).fill(MIN_Y - 1);
     const radiusScale = clamp(0.72 + Math.sqrt(frequency) * 0.28, 0.72, 1.35);
 
-    const mark = (x: number, y: number, z: number, biome = UndergroundBiomeId.OrdinaryTunnel, road = false, liquidSurface = MIN_Y - 1, allowSurface = false) => {
+    const mark = (
+      x: number,
+      y: number,
+      z: number,
+      biome = UndergroundBiomeId.OrdinaryTunnel,
+      road = false,
+      liquidSurface = MIN_Y - 1,
+      allowSurface = false,
+      settleStream = false,
+      settleBasin = false,
+    ) => {
       if (x < minX || x > maxX || z < minZ || z > maxZ || y <= MIN_Y + 4 || y > MAX_Y) return;
       const column = sample(x, z);
       if (y > column.height || (!allowSurface && y > column.height - 4)) return;
@@ -3260,7 +3276,10 @@ export class ChunkWorld {
       carveMask[index] = 1;
       if (biome !== UndergroundBiomeId.OrdinaryTunnel) biomeMask[index] = biome;
       if (road) roadMask[index] = 1;
-      if (liquidSurface > liquidLevel[index]) liquidLevel[index] = liquidSurface;
+      if (settleStream) streamMask[index] = 1;
+      if (settleBasin) {
+        if (y <= liquidSurface) basinMask[index] = biome === UndergroundBiomeId.EmberdeepFumaroles ? 2 : 1;
+      } else if (liquidSurface > liquidLevel[index]) liquidLevel[index] = liquidSurface;
     };
 
     const sphere = (
@@ -3274,6 +3293,8 @@ export class ChunkWorld {
       road = false,
       liquidSurface = MIN_Y - 1,
       allowSurface = false,
+      settleStream = false,
+      settleBasin = false,
     ) => {
       const startX = Math.max(minX, Math.floor(centerX - radiusX));
       const endX = Math.min(maxX, Math.ceil(centerX + radiusX));
@@ -3283,7 +3304,7 @@ export class ChunkWorld {
       const endY = Math.min(MAX_Y, Math.ceil(centerY + radiusY));
       for (let x = startX; x <= endX; x += 1) for (let z = startZ; z <= endZ; z += 1) for (let y = startY; y <= endY; y += 1) {
         const distance = ((x - centerX) / radiusX) ** 2 + ((y - centerY) / radiusY) ** 2 + ((z - centerZ) / radiusZ) ** 2;
-        if (distance <= 1) mark(x, y, z, biome, road, liquidSurface, allowSurface);
+        if (distance <= 1) mark(x, y, z, biome, road, liquidSurface, allowSurface, settleStream, settleBasin);
       }
     };
 
@@ -3295,6 +3316,7 @@ export class ChunkWorld {
       allowSurface = false,
       biome = UndergroundBiomeId.OrdinaryTunnel,
       liquidSurfaceAt?: (progress: number, centerY: number) => number,
+      settleStream = false,
     ) => {
       const distance = Math.hypot(to.x - from.x, to.y - from.y, to.z - from.z);
       const steps = Math.max(1, Math.ceil(distance / 1.35));
@@ -3312,6 +3334,8 @@ export class ChunkWorld {
           road,
           liquidSurfaceAt?.(progress, lerp(from.y, to.y, progress)) ?? MIN_Y - 1,
           allowSurface,
+          settleStream,
+          false,
         );
       }
     };
@@ -3326,12 +3350,10 @@ export class ChunkWorld {
       if (edgeMaxX < minX || edgeMinX > maxX || edgeMaxZ < minZ || edgeMinZ > maxZ) continue;
       const edgeRadius = edge.radius * radiusScale;
       const waterBiome = edge.flow === "dry" ? UndergroundBiomeId.OrdinaryTunnel : UndergroundBiomeId.GlasswaterDeeps;
-      const liquidSurfaceAt = edge.flow === "stream"
-        ? (_progress: number, centerY: number) => Math.floor(centerY - edgeRadius * 0.28)
-        : edge.flow === "waterfall"
+      const liquidSurfaceAt = edge.flow === "waterfall"
           ? (_progress: number, centerY: number) => Math.ceil(centerY + edgeRadius)
           : undefined;
-      tunnel(edge.from, edge.to, edgeRadius, edge.stoneRoad, false, waterBiome, liquidSurfaceAt);
+      tunnel(edge.from, edge.to, edgeRadius, edge.stoneRoad, false, waterBiome, liquidSurfaceAt, edge.flow === "stream");
     }
 
     const nodes = caveGraphNodesInBounds(this.seed, minX - expanded, maxX + expanded, minZ - expanded, maxZ + expanded);
@@ -3340,7 +3362,20 @@ export class ChunkWorld {
         ? Math.floor(node.y - Math.max(1, node.radiusY * 0.22))
         : node.biome === UndergroundBiomeId.EmberdeepFumaroles && node.y < -34
           ? Math.floor(node.y - Math.max(3, node.radiusY * 0.56)) : MIN_Y - 1;
-      sphere(node.x, node.y, node.z, node.radiusX * radiusScale, node.radiusY * radiusScale, node.radiusZ * radiusScale, node.biome, false, liquid);
+      sphere(
+        node.x,
+        node.y,
+        node.z,
+        node.radiusX * radiusScale,
+        node.radiusY * radiusScale,
+        node.radiusZ * radiusScale,
+        node.biome,
+        false,
+        liquid,
+        false,
+        false,
+        liquid > MIN_Y - 1,
+      );
     }
 
     // Every eligible surface funnel gets an explicit descending connector.
@@ -3396,6 +3431,68 @@ export class ChunkWorld {
       if (liquidLevel[index] >= y) {
         chunk.blocks[index] = biome === UndergroundBiomeId.EmberdeepFumaroles ? BlockId.Lava : BlockId.Water;
       } else chunk.blocks[index] = BlockId.Air;
+    }
+
+    // Ecological pools retain their authored volume but obey gravity within
+    // the final union of graph rooms and older noise caves. Pack each vertical
+    // basin run from the first supported cell upward, so overlapping caverns
+    // deepen a pool instead of leaving its original ellipsoid floating.
+    for (let lz = 0; lz < CHUNK_SIZE; lz += 1) for (let lx = 0; lx < CHUNK_SIZE; lx += 1) {
+      let y = MIN_Y + 5;
+      while (y <= MAX_Y) {
+        const basinType = basinMask[blockIndex(lx, y, lz)];
+        if (!basinType) {
+          y += 1;
+          continue;
+        }
+
+        const runBottom = y;
+        while (y <= MAX_Y && basinMask[blockIndex(lx, y, lz)] === basinType) y += 1;
+        let remainingDepth = y - runBottom;
+        let settledY = runBottom;
+        while (settledY > MIN_Y + 5 && chunk.blocks[blockIndex(lx, settledY - 1, lz)] === BlockId.Air) settledY -= 1;
+
+        while (remainingDepth > 0 && settledY <= MAX_Y) {
+          const index = blockIndex(lx, settledY, lz);
+          const current = chunk.blocks[index] as BlockId;
+          if (current === BlockId.Air) {
+            chunk.blocks[index] = basinType === 2 ? BlockId.Lava : BlockId.Water;
+            remainingDepth -= 1;
+          } else if (!isFluid(current)) break;
+          settledY += 1;
+        }
+      }
+    }
+
+    // Horizontal cave streams are authored as tunnel volumes, then settled
+    // independently in each column. Painting them at the tunnel center made a
+    // suspended sheet whenever an edge crossed a cathedral-sized chamber.
+    // Following the contiguous open column keeps the water on the local cave
+    // floor even when the graph route intersects an older noise cavern. A solid
+    // voxel or an existing basin stops the descent. Waterfalls and ecological
+    // node basins remain volume-authored through liquidLevel.
+    for (let lz = 0; lz < CHUNK_SIZE; lz += 1) for (let lx = 0; lx < CHUNK_SIZE; lx += 1) {
+      let y = MIN_Y + 5;
+      while (y <= MAX_Y) {
+        let index = blockIndex(lx, y, lz);
+        if (!streamMask[index]) {
+          y += 1;
+          continue;
+        }
+
+        const runBottom = y;
+        while (y <= MAX_Y && streamMask[blockIndex(lx, y, lz)]) y += 1;
+
+        let settledY = runBottom;
+        while (settledY > MIN_Y + 5) {
+          const belowIndex = blockIndex(lx, settledY - 1, lz);
+          if (!carveMask[belowIndex] && chunk.blocks[belowIndex] !== BlockId.Air) break;
+          settledY -= 1;
+        }
+        index = blockIndex(lx, settledY, lz);
+        const biome = biomeMask[index] as UndergroundBiomeId;
+        chunk.blocks[index] = biome === UndergroundBiomeId.EmberdeepFumaroles ? BlockId.Lava : BlockId.Water;
+      }
     }
 
     const floorBlock = (biome: UndergroundBiomeId, hash: number) => biome === UndergroundBiomeId.RootweaveGrotto

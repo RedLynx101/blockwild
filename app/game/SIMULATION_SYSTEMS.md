@@ -40,7 +40,7 @@ New worlds use the `world-below-v15` profile while existing saves retain the gen
 
 Surface terrain is selected in two stages. A coarse deterministic region allocator establishes biome cores, transition belts, and rare-biome reserves; biome-specific height functions then supply local relief. Biome scale changes core size without quietly changing rarity, transition width, or local feature frequency. This is why surface generation should always be audited as both total area and land-only area rather than judged from a single spawn.
 
-Caves are graph-first. Each coarse underground region creates upper, middle, and deep nodes, then connects them with a spanning backbone, loops, vertical routes, rooms, and explicit surface-mouth edges. Carvers consume that graph before ecological decoration. Underground-biome decorators may replace only already-carved air or supported cave surfaces; they must never create a second disconnected cave system. Ordinary Stone Roads remain dark, while bounded ecological centers own most glow sources. Regional aquifers, streams, waterfalls, great caverns, cathedral caverns, and landmark nodes are features of the same graph.
+Caves are graph-first. Each coarse underground region creates upper, middle, and deep nodes, then connects them with a spanning backbone, loops, vertical routes, rooms, and explicit surface-mouth edges. Carvers consume that graph before ecological decoration. Underground-biome decorators may replace only already-carved air or supported cave surfaces; they must never create a second disconnected cave system. Ordinary Stone Roads remain dark, while bounded ecological centers own most glow sources. Regional aquifers, streams, waterfalls, great caverns, cathedral caverns, and landmark nodes are features of the same graph. Aquifer wetness is column-stable below its regional water table. Horizontal streams settle as shallow floor channels after every overlapping cave volume is carved, and ecological water or lava basins preserve their authored volume while packing upward from the final supported floor. Only explicitly vertical waterfall edges may remain unsupported in open air.
 
 Generation stays bounded by coarse-cell lookups and local placement budgets. Lighting pools are capped, decoration does not scan arbitrary neighboring chunks, and settlement site search stops after a fixed candidate set. Deepgear mine roads use a deterministic one-block-grade switchback plan and a fixed 144-block settlement reach. Dwarven generation must retain a mountain-valid gatehouse, an unobstructed paired lift, cave-graph anchoring, civic and forge layers, a discovery marker, and a walkable lit road.
 
@@ -51,6 +51,14 @@ Use these release gates after changing terrain, caves, underground ecology, sett
 - `npm run audit:ecology` reports flora, fauna, custom-sound, and possible-POI counts for every surface and underground habitat.
 
 The exact nature of Veinmetal is intentionally not an engine invariant. Its observable behavior—rare pulsing Living Veins, careful extraction, inert flakes, bounded regrowth, and Veinling defense—is stable; later lore may describe it as biological, magical, mechanical, or some combination without requiring a migration.
+
+## Creature contacts and impact safety
+
+Ground-creature movement, lead tension, overlap correction, and combat recoil must all enter the same terrain-aware movement path. Never translate a ground mob group directly after an attack or rope constraint: the impulse is stored as a bounded horizontal velocity, advanced in short substeps, and stopped when the creature's scaled circular body and vertical span would intersect a solid block. A staggered low-frequency recovery probe relocates a legacy or externally displaced ground mob to the nearest valid supported position within 2.5 blocks.
+
+Physical mass is a compact gameplay value derived from the authored small/medium/large class, radius, and height. Pair separation is divided by inverse mass, so rabbits yield substantially more than Ridgebacks while both remain responsive. Player-to-mob contact uses the same split; hard collision remains limited to medium and large ground creatures, but small animals are gently displaced rather than overlapped. The per-frame mob-pair solver uses the existing spatial index and a 256-overlap budget.
+
+Successful direct hits play the central player-damage cue and apply a capped horizontal recoil plus a small upward response. Creature moves, projectiles, dragons, local melee, and multiplayer-authoritative strikes must call the shared impact helpers so sound, size scaling, mount exemptions, and velocity caps cannot drift between combat systems. Use `?mob-collision-audit=1` for the deterministic browser impact lane.
 
 ## Weather and clouds
 

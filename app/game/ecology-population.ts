@@ -5,6 +5,7 @@ export const NATURAL_POPULATION_POOLS = [
   "ambient",
   "water-animal",
   "water-ambient",
+  "cave-water",
   "underground",
   "monster",
 ] as const;
@@ -18,6 +19,7 @@ const DESKTOP_POOL_BUDGETS: Readonly<Record<NaturalPopulationPool, NaturalPoolBu
   ambient: { target: 10, ceiling: 14 },
   "water-animal": { target: 5, ceiling: 7 },
   "water-ambient": { target: 10, ceiling: 16 },
+  "cave-water": { target: 4, ceiling: 6 },
   underground: { target: 8, ceiling: 12 },
   monster: { target: 7, ceiling: 11 },
 });
@@ -51,8 +53,9 @@ export function isRareNaturalDefinition(definition: MobDefinition) {
 export function naturalPopulationPoolForDefinition(definition: MobDefinition, underground = false): NaturalPopulationPool | null {
   if (isRareNaturalDefinition(definition)) return null;
   if (definition.hostile) return "monster";
-  if (underground || definition.family === "underground") return "underground";
   const aquatic = definition.aquatic || definition.movement === "aquatic";
+  if (underground && (aquatic || definition.family === "fish" || definition.family === "sea-slug")) return "cave-water";
+  if (underground || definition.family === "underground") return "underground";
   if (aquatic || definition.family === "fish" || definition.family === "sea-slug") {
     return definition.radius >= 0.42 && definition.family !== "sea-slug" ? "water-animal" : "water-ambient";
   }

@@ -59,6 +59,35 @@ test("every expansion creature uses a detailed canonical production model with d
   }
 });
 
+test("Living Bestiary birds and winged mythics keep left and right strokes synchronized", () => {
+  const wingedKinds = [
+    "orchard-glider",
+    "ironbeak-magpie",
+    "stormglass-roclet",
+    "mirecrown-crane",
+    "varkesh-stormmane",
+    "cinderwing-pyrausta",
+    "anemoi-gryphon",
+  ] as const;
+  for (const kind of wingedKinds) {
+    const model = createMobVisual(kind, 91_000);
+    applyWildlifePose(model.visual, kind, 1.37, .82, .25);
+    const wingPairs = new Map<string, { left?: THREE.Object3D; right?: THREE.Object3D }>();
+    for (const wing of model.parts.wings.filter((candidate) => /-(?:left|right)-wing-pivot$/u.test(candidate.name))) {
+      const pairName = wing.name.replace(/(^|-)(?:left|right)(?=-|$)/u, "$1paired");
+      const pair = wingPairs.get(pairName) ?? {};
+      if (wing.name.includes("-left-")) pair.left = wing;
+      else pair.right = wing;
+      wingPairs.set(pairName, pair);
+    }
+    assert.ok(wingPairs.size >= 1, `${kind} needs at least one authored wing pair`);
+    for (const pair of wingPairs.values()) {
+      assert.ok(pair.left && pair.right, `${kind} needs both sides of every wing pair`);
+      assert.ok(Math.abs(pair.left.rotation.z + pair.right.rotation.z) < 1e-10, `${kind} wing mates must share one stroke clock`);
+    }
+  }
+});
+
 test("the unified expansion roster uses true cuboid runtime geometry with four deliberate exceptions", () => {
   assert.deepEqual([...FACETED_STORYBOOK_EXCEPTION_KINDS], ["thalassene", "orichalc", "vellum-warden", "choir-of-one"]);
   assert.equal(CUBIC_STORYBOOK_VISUAL_KINDS.length, expansionKinds.length - FACETED_STORYBOOK_EXCEPTION_KINDS.length);

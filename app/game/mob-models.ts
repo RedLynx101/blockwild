@@ -3428,6 +3428,8 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     for (const side of [-1, 1]) {
       const wing = pivotBox([0.54, 0.12, 0.95], glow, [side * 0.36, 0.57, 0.05], [side * 0.25, 0, 0], "wings", `runeowl-${side < 0 ? "left" : "right"}-wing`);
       wing.rotation.z = side * 0.18;
+      wing.userData.side = side;
+      wing.userData.phase = 0;
       add(visual, [0.08, 0.22, 0.08], material(0xf2d17a), [side * 0.15, 0.02, -0.02], "legs", `runeowl-${side < 0 ? "left" : "right"}-talon`);
     }
     for (let rune = 0; rune < 3; rune += 1) add(visual, [0.12, 0.05, 0.16], glow, [-0.18 + rune * 0.18, 0.53, -0.49], undefined, `runeowl-rune-${rune + 1}`).rotation.z = rune * 0.4;
@@ -3621,6 +3623,8 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
         const sideName = side < 0 ? "left" : "right";
         const wing = pivotBox([0.84, 0.055, 1.12], membrane, [side * 0.24, 0.06, 0], [side * 0.38, 0, 0.03], "wings", `${kind}-${sideName}-fin`);
         wing.rotation.z = side * -0.08;
+        wing.userData.side = side;
+        wing.userData.phase = 0;
         const wingTip = add(wing, [0.56, 0.045, 0.82], deepMembrane, [side * 0.72, -0.015, 0.12], undefined, `${kind}-${sideName}-swept-fin-tip`);
         wingTip.rotation.y = side * -0.22;
         add(wing, [0.08, 0.07, 1.04], pale, [side * 0.16, 0.03, 0.02], undefined, `${kind}-${sideName}-leading-ray`).rotation.y = side * -0.12;
@@ -3648,6 +3652,8 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
         const sideName = side < 0 ? "left" : "right";
         const wing = pivotBox([0.72, 0.055, 0.42], violet, [side * 0.17, 0.08, -0.05], [side * 0.34, 0, -0.05], "wings", `${kind}-${sideName}-wing`);
         wing.rotation.z = side * -0.22;
+        wing.userData.side = side;
+        wing.userData.phase = 0;
         for (let feather = 0; feather < 4; feather += 1) {
           const featherMaterial = [prismBlue, pale, prismRose, glow][feather];
           const primary = add(wing, [0.48 - feather * 0.045, 0.045, 0.18], featherMaterial, [side * (0.52 + feather * 0.19), -0.015, 0.05 + feather * 0.14], undefined, `${kind}-${sideName}-prismatic-primary-${feather + 1}`);
@@ -3709,6 +3715,8 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
         add(visual, [0.08, 0.08, 0.46], copper, [side * 0.24, 0.05, -0.82], undefined, `${kind}-${sideName}-cheek-current-line`).rotation.y = side * -0.18;
         const fin = pivotBox([0.54, 0.055, 0.52], accentMaterial, [side * 0.18, -0.05, -0.1], [side * 0.29, 0, 0], "wings", `${kind}-${sideName}-fin`);
         fin.rotation.z = side * 0.15;
+        fin.userData.side = side;
+        fin.userData.phase = 0;
         const pennant = add(fin, [0.44, 0.045, 0.3], sailGlass, [side * 0.45, 0, 0.2], undefined, `${kind}-${sideName}-fin-pennant`);
         pennant.rotation.y = side * -0.24;
       }
@@ -3739,6 +3747,8 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
         const sideName = side < 0 ? "left" : "right";
         const wing = pivotBox([0.64, 0.05, 0.58], membrane, [side * 0.16, 0.08, 0.02], [side * 0.3, 0, -0.04], "wings", `${kind}-${sideName}-wing`);
         wing.rotation.z = side * -0.22;
+        wing.userData.side = side;
+        wing.userData.phase = 0;
         const forearm = add(wing, [0.76, 0.065, 0.07], darkMaterial, [side * 0.48, 0.03, -0.18], undefined, `${kind}-${sideName}-wing-forearm`);
         forearm.rotation.y = side * -0.24;
         for (let finger = 0; finger < 3; finger += 1) {
@@ -3770,6 +3780,8 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
         const sideName = side < 0 ? "left" : "right";
         const wing = pivotBox([0.62, 0.055, 0.54], amethyst, [side * 0.17, 0.08, 0.02], [side * 0.3, 0, -0.03], "wings", `${kind}-${sideName}-wing`);
         wing.rotation.z = side * -0.18;
+        wing.userData.side = side;
+        wing.userData.phase = 0;
         for (let vane = 0; vane < 4; vane += 1) {
           const plate = add(wing, [0.42 - vane * 0.035, 0.055, 0.22], vane % 2 ? crystal : pale, [side * (0.42 + vane * 0.17), 0, -0.1 + vane * 0.17], undefined, `${kind}-${sideName}-hollow-vane-${vane + 1}`);
           plate.rotation.y = side * (-0.14 - vane * 0.07);
@@ -3800,6 +3812,8 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
         horn.rotation.z = side * -0.32;
         const wing = pivotBox([0.92, 0.065, 0.9], membrane, [side * 0.23, 0.1, 0.02], [side * 0.44, 0, 0.08], "wings", `${kind}-${sideName}-wing`);
         wing.rotation.z = side * -0.14;
+        wing.userData.side = side;
+        wing.userData.phase = 0;
         for (let primary = 0; primary < 3; primary += 1) {
           const slab = add(wing, [0.7 - primary * 0.08, 0.055, 0.26], primary === 1 ? accentMaterial : coal, [side * (0.58 + primary * 0.25), -0.01, -0.2 + primary * 0.3], undefined, `${kind}-${sideName}-vent-primary-${primary + 1}`);
           slab.rotation.y = side * (-0.16 - primary * 0.09);
@@ -5020,10 +5034,13 @@ export function applyWildlifePose(
 
   if (["prismtail-swift", "ashnose-bat", "chimewing", "cinder-kite"].includes(rig)) {
     const flapRate = rig === "ashnose-bat" ? 14 : rig === "cinder-kite" ? 4.8 : 8.5;
+    // A single stroke clock drives both sides. Their Z rotations must be
+    // mirrored, not phase-shifted, or one wing rises while its mate falls.
+    const wingStroke = -0.16 + Math.sin(time * (flapRate + travel * 4)) * (0.16 + travel * 0.28);
     for (const sideName of ["left", "right"] as const) {
       const side = sideName === "left" ? -1 : 1;
       const wing = visual.getObjectByName(`${kind}-${sideName}-wing-pivot`);
-      if (wing) wing.rotation.z = side * (-0.16 + Math.sin(time * (flapRate + travel * 4) + side) * (0.16 + travel * 0.28));
+      if (wing) wing.rotation.z = side * wingStroke;
     }
     const flightTail = visual.getObjectByName(`${kind}-tail-pivot`);
     if (flightTail) flightTail.rotation.y = Math.sin(time * 2.1) * (0.08 + travel * 0.12);
@@ -5202,7 +5219,7 @@ export function applyWildlifePose(
     for (const sideName of ["left", "right"] as const) {
       const side = sideName === "left" ? -1 : 1;
       const wing = visual.getObjectByName(`reedstrider-${sideName}-wing-pivot`);
-      if (wing) wing.rotation.z = side * (-0.12 - alert * 0.18) + Math.sin(time * 1.9 + side) * (0.025 + travel * 0.04);
+      if (wing) wing.rotation.z = side * (-0.12 - alert * 0.18 + Math.sin(time * 1.9) * (0.025 + travel * 0.04));
     }
   } else if (rig === "lanternshell") {
     for (let spiral = 1; spiral <= 3; spiral += 1) {
@@ -5223,7 +5240,7 @@ export function applyWildlifePose(
     for (const sideName of ["left", "right"] as const) {
       const side = sideName === "left" ? -1 : 1;
       const wing = visual.getObjectByName(`lightning-bug-${sideName}-wing-pivot`);
-      if (wing) wing.rotation.z = side * (0.15 + Math.sin(time * 24 + side) * 0.48);
+      if (wing) wing.rotation.z = side * (0.15 + Math.sin(time * 24) * 0.48);
     }
     const lantern = visual.getObjectByName("lightning-bug-lantern");
     if (lantern) lantern.scale.setScalar(1 + Math.sin(time * 3.4) * 0.15);

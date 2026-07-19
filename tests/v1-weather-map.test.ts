@@ -24,6 +24,7 @@ import {
   normalizeMapKnowledge,
   normalizeMapViewState,
   panMapView,
+  placeWayshrine,
   shareMapsAtCartographyTable,
   stepMapZoom,
 } from "../app/game/map-system.ts";
@@ -206,6 +207,34 @@ test("map panel renders biome colors, zoom controls, headings, and other players
   assert.equal(mapTerrainPalette(21).fill, "#c46fa5");
   assert.match(markup, /Trailfriend/);
   assert.match(markup, /rotate\(-1\.5707963267948966rad\)/, "clockwise world turns rotate clockwise on the map rather than mirroring");
+});
+
+test("wayshrines use the authored waystone rune instead of a shared text glyph", () => {
+  let knowledge = markChunksRendered(createMapKnowledge("waystone-icon", "local"), [
+    { x: 0, z: 0, biome: 3 },
+    { x: 1, z: 0, biome: 3 },
+  ]);
+  knowledge = placeWayshrine(knowledge, {
+    id: "wayshrine:test",
+    name: "Test Waystone",
+    position: { x: 16, y: 40, z: 8 },
+    playerId: "local",
+    discoveredAt: 1,
+    icon: "wayshrine",
+  });
+  const markup = renderToStaticMarkup(createElement(MapPanel, {
+    knowledge,
+    currentPosition: { x: 8, y: 40, z: 8 },
+    selectedMarkerId: "wayshrine:test",
+    onSelectMarker: () => undefined,
+    onAddManualMarker: () => undefined,
+    onRemoveManualMarker: () => undefined,
+    onRenameMarker: () => undefined,
+    onBeginFastTravel: () => undefined,
+  }));
+  assert.equal((markup.match(/data-map-icon="waystone"/gu) ?? []).length, 3, "map pin, legend, and inspector should share the authored sigil");
+  assert.doesNotMatch(markup, /♜/u);
+  assert.match(markup, /Crossroads|Test Waystone/u);
 });
 
 test("the optional minimap renders a bounded north-up canvas and tracked target", () => {

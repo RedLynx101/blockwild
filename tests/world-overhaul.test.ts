@@ -202,6 +202,42 @@ test("dry graph tunnels seal legacy aquifer fluids behind a rock shell", () => {
   assert.ok(checkedAir > 8, "the midpoint should remain a navigable dry tunnel");
 });
 
+test("underground rivers and ecological pools settle onto cavern floors", () => {
+  const world = new ChunkWorld();
+  world.reset("WILDERNESS", undefined, OVERHAUL_PROFILE);
+
+  // This deterministic chunk contains the lower edge of a vast Glasswater
+  // basin intersecting a deeper cathedral cavern. It formerly produced a
+  // broad diagonal lake sheet with open air directly beneath it.
+  world.generateChunk(-57, -26);
+  let waterCells = 0;
+  let unsupportedWater = 0;
+  for (let x = -912; x <= -897; x += 1) for (let z = -416; z <= -401; z += 1) {
+    for (let y = MIN_Y + 6; y <= 16; y += 1) {
+      if (world.getBlock(x, y, z) !== BlockId.Water) continue;
+      waterCells += 1;
+      if (world.getBlock(x, y - 1, z) === BlockId.Air) unsupportedWater += 1;
+    }
+  }
+  assert.ok(waterCells > 3_000, "the Glasswater basin should remain a substantial underwater habitat");
+  assert.equal(unsupportedWater, 0, "the basin must pack downward instead of floating through the cathedral");
+
+  // Emberdeep uses the same grounded-basin path while retaining lava rather
+  // than being silently converted to water.
+  world.generateChunk(-51, -22);
+  let lavaCells = 0;
+  let unsupportedLava = 0;
+  for (let x = -816; x <= -801; x += 1) for (let z = -352; z <= -337; z += 1) {
+    for (let y = MIN_Y + 6; y <= 16; y += 1) {
+      if (world.getBlock(x, y, z) !== BlockId.Lava) continue;
+      lavaCells += 1;
+      if (world.getBlock(x, y - 1, z) === BlockId.Air) unsupportedLava += 1;
+    }
+  }
+  assert.ok(lavaCells > 1_000, "the Emberdeep fixture should retain its lava basin");
+  assert.equal(unsupportedLava, 0, "lava basins must settle onto supported cave floors");
+});
+
 test("six ecological centers exceed minimum biodiversity while ordinary tunnels retain light contrast", () => {
   const ecology = buildUndergroundEcologyAudit();
   assert.equal(ecology.length, 7);

@@ -19,15 +19,16 @@ import {
 } from "../app/game/ecology-population.ts";
 import { MOB_DEFS } from "../app/game/mobs.ts";
 
-test("ecology exposes six independent weighted population pools", () => {
+test("ecology exposes seven independent weighted population pools", () => {
   assert.deepEqual(NATURAL_POPULATION_POOLS, [
-    "surface-animal", "ambient", "water-animal", "water-ambient", "underground", "monster",
+    "surface-animal", "ambient", "water-animal", "water-ambient", "cave-water", "underground", "monster",
   ]);
   const budgets = naturalPoolBudgets(false, 1);
   assert.deepEqual(budgets["surface-animal"], { target: 12, ceiling: 17 });
   assert.deepEqual(budgets.ambient, { target: 10, ceiling: 14 });
   assert.deepEqual(budgets["water-animal"], { target: 5, ceiling: 7 });
   assert.deepEqual(budgets["water-ambient"], { target: 10, ceiling: 16 });
+  assert.deepEqual(budgets["cave-water"], { target: 4, ceiling: 6 });
   assert.deepEqual(budgets.underground, { target: 8, ceiling: 12 });
   assert.deepEqual(budgets.monster, { target: 7, ceiling: 11 });
   assert.ok(globalNaturalCostCeiling(false, 1, 2) > globalNaturalCostCeiling(false, 1, 1));
@@ -38,6 +39,7 @@ test("species classification separates land, air, water, caves, monsters, and ra
   assert.equal(naturalPopulationPoolForDefinition(MOB_DEFS.thimbledeer), "surface-animal");
   assert.equal(naturalPopulationPoolForDefinition(MOB_DEFS.emberjay), "ambient");
   assert.equal(naturalPopulationPoolForDefinition(MOB_DEFS.shoalfin), "water-ambient");
+  assert.equal(naturalPopulationPoolForDefinition(MOB_DEFS.gloomfin, true), "cave-water");
   assert.equal(naturalPopulationPoolForDefinition(MOB_DEFS.thimbledeer, true), "underground");
   assert.equal(naturalPopulationPoolForDefinition(MOB_DEFS.zombie), "monster");
   assert.equal(naturalPopulationPoolForDefinition(MOB_DEFS["worldshell-leviathan"]), null);

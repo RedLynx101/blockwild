@@ -349,7 +349,7 @@ const MARKER_META: Readonly<Record<MapMarkerKind, Readonly<{ icon: string; label
   "natural-poi": { icon: "◆", label: "Discovered place" },
   manual: { icon: "✦", label: "Personal marker" },
   "bed-spawn": { icon: "⌂", label: "Bed spawn" },
-  wayshrine: { icon: "♜", label: "Wayshrine" },
+  wayshrine: { icon: "ᛉ", label: "Wayshrine" },
 };
 
 const SEMANTIC_MARKER_ICONS: Readonly<Record<string, string>> = {
@@ -357,12 +357,31 @@ const SEMANTIC_MARKER_ICONS: Readonly<Record<string, string>> = {
   town: "⌂",
   pin: "✦",
   bed: "⌂",
-  wayshrine: "♜",
+  wayshrine: "ᛉ",
 };
 
 function markerGlyph(marker: MapMarker) {
   if (!marker.icon) return MARKER_META[marker.kind].icon;
   return SEMANTIC_MARKER_ICONS[marker.icon] ?? (marker.icon.length <= 2 ? marker.icon : MARKER_META[marker.kind].icon);
+}
+
+function WaystoneMapIcon() {
+  return (
+    <svg className="waystone-map-icon" data-map-icon="waystone" viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <path className="waystone-map-icon__stone" d="M8 3.5h8l1.8 3.2-1.2 11H7.4l-1.2-11L8 3.5Z" />
+      <path className="waystone-map-icon__facet" d="m8.3 6.7 2-1.2h3.8l1.6 1.2-.8 8.4H9.1l-.8-8.4Z" />
+      <path className="waystone-map-icon__rune" d="M12 7v8.2m0-5.7-2.4 2.2M12 12l2.5 2.1" />
+      <path className="waystone-map-icon__base" d="M5 17.5h14v2H5Zm2 2h10V22H7Z" />
+    </svg>
+  );
+}
+
+function markerVisual(marker: MapMarker) {
+  return marker.kind === "wayshrine" || marker.icon === "wayshrine" ? <WaystoneMapIcon /> : markerGlyph(marker);
+}
+
+function markerKindVisual(kind: MapMarkerKind, fallback: string) {
+  return kind === "wayshrine" ? <WaystoneMapIcon /> : fallback;
 }
 
 type MapBounds = MapViewportBounds;
@@ -839,7 +858,7 @@ export function MapPanel({
                 aria-pressed={selected?.id === marker.id}
                 title={marker.name}
               >
-                <span aria-hidden="true">{markerGlyph(marker)}</span>
+                <span aria-hidden="true">{markerVisual(marker)}</span>
                 {(alwaysShowPoiLabels || activeViewState.zoom >= 2.6 || trackedTargetId === marker.id) && marker.kind !== "manual" ? <small>{marker.name}</small> : null}
               </button>
             ))}
@@ -852,7 +871,7 @@ export function MapPanel({
             <span><i aria-hidden="true">▲</i>Players and heading</span>
             <span><i aria-hidden="true">≈</i>Water and sea</span>
             {Object.entries(MARKER_META).map(([kind, entry]) => (
-              <span key={kind}><i aria-hidden="true">{entry.icon}</i>{entry.label}</span>
+              <span key={kind}><i aria-hidden="true">{markerKindVisual(kind as MapMarkerKind, entry.icon)}</i>{entry.label}</span>
             ))}
           </div>
         </div>
@@ -862,7 +881,7 @@ export function MapPanel({
             <>
               <div className="hearthroads-location-heading">
                 <span className={`hearthroads-location-sigil marker-${selected.kind}`} aria-hidden="true">
-                  {markerGlyph(selected)}
+                  {markerVisual(selected)}
                 </span>
                 <div>
                   <small>{MARKER_META[selected.kind].label}</small>

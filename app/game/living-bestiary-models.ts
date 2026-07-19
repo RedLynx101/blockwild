@@ -688,7 +688,12 @@ function decorateRegular(builder: Builder) {
       break;
     case "voidmantle-ray":
       aquatic(builder, { body: [1.65, .28, 1.26], tail: 1.18, fins: 1 });
-      for (const side of [-1, 1]) { const mantle = add(visual, [1.28, .08, 1.55], mats.membrane, [side * .92, .48, .05], `mantle-${side}`, "wings"); mantle.rotation.z = side * -.12; }
+      for (const side of [-1, 1]) {
+        const mantle = add(visual, [1.28, .08, 1.55], mats.membrane, [side * .92, .48, .05], `mantle-${side}`, "wings");
+        mantle.rotation.z = side * -.12;
+        mantle.userData.side = side;
+        mantle.userData.phase = 0;
+      }
       for (let mote = 0; mote < 8; mote += 1) add(visual, [.055, .04, .08], mats.glow, [((mote % 4) - 1.5) * .42, .54, -.38 + Math.floor(mote / 4) * .56], `lumen-mote-${mote}`);
       break;
     case "fossilback-trilobite":
@@ -1374,6 +1379,7 @@ type LivingPoseCache = Readonly<{
   tail: LivingPoseNode | null;
   fins: readonly LivingPoseNode[];
   wings: readonly LivingPoseNode[];
+  wingPairPhases: ReadonlyMap<LivingPoseNode, number>;
   tentacles: readonly LivingPoseNode[];
   groundLegs: readonly LivingPoseNode[];
   limbJoints: readonly LivingPoseNode[];
@@ -1428,7 +1434,14 @@ function livingPoseCache(visual: THREE.Object3D, kind: LivingBestiaryVisualKind)
     if (node instanceof THREE.Mesh && Number(node.userData.livingShimmerAmplitude) > 0) shimmers.push(node);
     if (Number(node.userData.livingSwingAmplitude) > 0) swings.push(node);
   });
-  const cache = Object.freeze({ tail, fins, wings, tentacles, groundLegs, limbJoints, arthropodLegs, pulses, specials, floaters, spinners, shimmers, swings });
+  const pairPhaseByName = new Map<string, number>();
+  const wingPairPhases = new Map<LivingPoseNode, number>();
+  for (const wing of wings) {
+    const pairName = wing.name.replace(/(^|-)(?:left|right)(?=-|$)/u, "$1paired");
+    if (!pairPhaseByName.has(pairName)) pairPhaseByName.set(pairName, pairPhaseByName.size * .35);
+    wingPairPhases.set(wing, pairPhaseByName.get(pairName) ?? 0);
+  }
+  const cache = Object.freeze({ tail, fins, wings, wingPairPhases, tentacles, groundLegs, limbJoints, arthropodLegs, pulses, specials, floaters, spinners, shimmers, swings });
   visual.userData.livingBestiaryPoseCache = cache;
   return cache;
 }
@@ -1464,11 +1477,11 @@ export function applyLivingBestiaryPose(
     const side = sideOf(fin);
     fin.rotation.z = rest(fin, "Z") + side * (-.08 + Math.sin(time * (2.15 + travel * 2.1) + index * .42) * (.07 + travel * .11));
   }
-  for (const [index, wing] of cache.wings.entries()) {
+  for (const wing of cache.wings) {
     const side = sideOf(wing);
     const soaring = livingKind === "stormglass-roclet" || livingKind === "mirecrown-crane";
     const rate = soaring ? 3.2 + travel * 5 : 8 + travel * 5;
-    wing.rotation.z = rest(wing, "Z") + side * (-.12 + Math.sin(time * rate + index * .35) * (.12 + travel * .3 + alert * .08));
+    wing.rotation.z = rest(wing, "Z") + side * (-.12 + Math.sin(time * rate + (cache.wingPairPhases.get(wing) ?? 0)) * (.12 + travel * .3 + alert * .08));
   }
   for (const [index, arm] of cache.tentacles.entries()) {
     arm.rotation.x = rest(arm, "X") + Math.sin(time * (1.7 + travel * 1.8) + index * .72) * (.08 + travel * .08);

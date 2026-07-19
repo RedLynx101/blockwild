@@ -2110,18 +2110,28 @@ export default function VoxelGame() {
     };
     const auditParameters = new URLSearchParams(window.location.search);
     const mapNavigationAudit = auditParameters.get("map-audit") === "1";
+    const waystoneIconAudit = auditParameters.get("waystone-icon-audit") === "1";
     const chestAudit = auditParameters.get("chest-audit") === "open";
-    const placementAudit = auditParameters.get("placement-audit") === "1" || mapNavigationAudit || chestAudit;
+    const caveLiquidAudit = auditParameters.get("cave-liquid-audit") === "1";
+    const creatureCollisionAudit = auditParameters.get("mob-collision-audit") === "1";
+    const placementAudit = auditParameters.get("placement-audit") === "1" || mapNavigationAudit || waystoneIconAudit || chestAudit || caveLiquidAudit || creatureCollisionAudit;
     if (placementAudit) {
-      engine.createWorld(mapNavigationAudit ? "MAP-NAVIGATION-AUDIT" : "DIRECTIONAL-PLACEMENT-AUDIT", "builder", { structures: false, weather: false, mobDensity: 0, butterflyDensity: 0 }, mapNavigationAudit ? "Map Navigation Audit" : "Directional Placement Audit");
-      const auditMarkerId = mapNavigationAudit ? engine.primeMapNavigationAudit(auditParameters.get("far-track") === "1") : null;
-      const auditChestKey = !mapNavigationAudit ? engine.primeDirectionalPlacementAudit() : null;
+      engine.createWorld(
+        caveLiquidAudit ? "WILDERNESS" : creatureCollisionAudit ? "MOB-COLLISION-AUDIT" : mapNavigationAudit || waystoneIconAudit ? "MAP-NAVIGATION-AUDIT" : "DIRECTIONAL-PLACEMENT-AUDIT",
+        "builder",
+        { structures: false, weather: false, mobDensity: 0, butterflyDensity: 0 },
+        caveLiquidAudit ? "Cave Liquid Audit" : creatureCollisionAudit ? "Creature Collision Audit" : mapNavigationAudit || waystoneIconAudit ? "Map Navigation Audit" : "Directional Placement Audit",
+      );
+      const auditMarkerId = mapNavigationAudit || waystoneIconAudit ? engine.primeMapNavigationAudit(auditParameters.get("far-track") === "1", waystoneIconAudit) : null;
+      const auditChestKey = !mapNavigationAudit && !waystoneIconAudit && !caveLiquidAudit && !creatureCollisionAudit ? engine.primeDirectionalPlacementAudit() : null;
+      if (caveLiquidAudit) engine.primeCaveLiquidAudit();
+      if (creatureCollisionAudit) engine.primeCreatureCollisionAudit();
       if (chestAudit && auditChestKey) engine.primeOpenChestAudit(auditChestKey);
       startedRef.current = true;
-      overlayRef.current = mapNavigationAudit ? "map" : null;
+      overlayRef.current = mapNavigationAudit || waystoneIconAudit ? "map" : null;
       window.queueMicrotask(() => {
         setStarted(true);
-        setOverlayState(mapNavigationAudit ? "map" : null);
+        setOverlayState(mapNavigationAudit || waystoneIconAudit ? "map" : null);
         if (auditMarkerId) {
           setSelectedMapMarkerId(auditMarkerId);
           setTrackedNavigationId(auditMarkerId);
