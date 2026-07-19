@@ -14,7 +14,9 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from "react";
 import {
+  constrainMapViewState,
   createMapViewState,
+  fastTravelChargeCost,
   mapChunkAtViewportPoint,
   mapChunksInViewport,
   mapTerrainPalette,
@@ -521,6 +523,8 @@ export type MapPanelProps = Readonly<{
   alwaysShowPoiLabels?: boolean;
   trackedTargetId?: string | null;
   onTrackTarget?: (targetId: string | null) => void;
+  minimapEnabled?: boolean;
+  onMinimapEnabledChange?: (enabled: boolean) => void;
   onClose?: () => void;
 }>;
 
@@ -547,6 +551,8 @@ export function MapPanel({
   alwaysShowPoiLabels = false,
   trackedTargetId = null,
   onTrackTarget,
+  minimapEnabled = false,
+  onMinimapEnabledChange,
   onClose,
 }: MapPanelProps) {
   const titleId = useId();
@@ -592,8 +598,8 @@ export function MapPanel({
   );
   const zoomLimits = useMemo(() => ({ minimum: minimumZoom } as const), [minimumZoom]);
   const activeViewState = useMemo(
-    () => normalizeMapViewState(controlledViewState ?? localViewState, zoomLimits),
-    [controlledViewState, localViewState, zoomLimits],
+    () => constrainMapViewState(baseBounds, controlledViewState ?? localViewState, zoomLimits),
+    [baseBounds, controlledViewState, localViewState, zoomLimits],
   );
   const bounds = useMemo(
     () => mapViewportBounds(baseBounds, activeViewState, zoomLimits),
@@ -630,13 +636,14 @@ export function MapPanel({
       : clamp(fastTravelElapsedSeconds / fastTravelChannel.durationSeconds, 0, 1)
     : 0;
   const isChanneling = fastTravelChannel?.status === "channeling";
-  const destinationIsChargeEligible = selected !== null && selected.kind !== "manual";
+  const destinationIsChargeEligible = selected !== null;
+  const destinationChargeCost = selected ? fastTravelChargeCost(selected) : 1;
   const destinationIsShrineEligible = selected?.kind === "wayshrine"
     && currentWayshrineId !== null
     && currentWayshrineId !== selected.id;
 
   const updateViewState = (next: MapViewState) => {
-    const normalized = normalizeMapViewState(next, zoomLimits);
+    const normalized = constrainMapViewState(baseBounds, normalizeMapViewState(next, zoomLimits), zoomLimits);
     if (!controlledViewState) setLocalViewState(normalized);
     onViewStateChange?.(normalized);
   };
@@ -754,6 +761,15 @@ export function MapPanel({
               onPointerDown={(event) => event.stopPropagation()}
             >
               <b>World below</b><small>{undergroundLayer ? "ON" : "OFF"}</small>
+            </button>
+            <button
+              type="button"
+              className={`hearthroads-map-detail-toggle minimap${minimapEnabled ? " active" : ""}`}
+              aria-pressed={minimapEnabled}
+              onClick={() => onMinimapEnabledChange?.(!minimapEnabled)}
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <b>HUD minimap</b><small>{minimapEnabled ? "ON" : "OFF"}</small>
             </button>
             {undergroundLayer ? (
               <div className="hearthroads-map-depth-bands" role="group" aria-label="Underground depth band" onPointerDown={(event) => event.stopPropagation()}>
@@ -892,10 +908,10 @@ export function MapPanel({
                 <button
                   className="pixel-button gold-button"
                   type="button"
-                  disabled={!destinationIsChargeEligible || knowledge.fastTravelCharges < 1 || Boolean(isChanneling)}
+                  disabled={!destinationIsChargeEligible || knowledge.fastTravelCharges < destinationChargeCost || Boolean(isChanneling)}
                   onClick={() => onBeginFastTravel(selected, "map-charge")}
                 >
-                  Travel · 1 charge
+                  Travel · {destinationChargeCost} {destinationChargeCost === 1 ? "charge" : "charges"}
                 </button>
                 {destinationIsShrineEligible ? (
                   <button

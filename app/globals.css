@@ -389,7 +389,7 @@ input:focus-visible {
   overflow: hidden;
   border-block: 1px solid rgba(231, 215, 163, .48);
   background: linear-gradient(90deg, transparent, rgba(12, 17, 16, .68) 14% 86%, transparent);
-  mask-image: linear-gradient(90deg, transparent, #000 14% 86%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 3% 97%, transparent);
 }
 
 .world-compass-center {
@@ -429,6 +429,11 @@ input:focus-visible {
   transition: color .18s ease, filter .18s ease, opacity .18s ease;
 }
 .world-compass-target b { display: block; font-size: 13px; line-height: 1; }
+.world-compass-target > i { position: absolute; top: 2px; font: 900 17px/1 Georgia, serif; }
+.world-compass-target.edge-left > i { right: 18px; }
+.world-compass-target.edge-right > i { left: 18px; }
+.world-compass-target.edge-left small { left: 0; transform: none; }
+.world-compass-target.edge-right small { right: 0; left: auto; transform: none; }
 .world-compass-target small { position: absolute; top: 23px; left: 50%; width: max-content; max-width: 150px; transform: translateX(-50%); overflow: hidden; color: #ffe49a; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
 .world-compass-target:hover,
 .world-compass-target.tracked { color: #ffe07c; filter: drop-shadow(0 0 5px rgba(255, 215, 103, .8)); }
@@ -454,6 +459,32 @@ input:focus-visible {
 .world-destination-cue > b { grid-row: 1 / 3; font-size: 14px; }
 .world-destination-cue strong { max-width: 180px; overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .world-destination-cue small { grid-column: 3; color: #ded7c0; font-size: 7px; }
+
+.world-minimap {
+  position: absolute;
+  top: max(104px, calc(env(safe-area-inset-top) + 86px));
+  left: max(20px, env(safe-area-inset-left));
+  width: 176px;
+  height: 176px;
+  overflow: hidden;
+  border: 3px solid rgba(238, 225, 173, .82);
+  border-right-color: rgba(35, 30, 22, .92);
+  border-bottom-color: rgba(35, 30, 22, .92);
+  background: #17201c;
+  box-shadow: 4px 5px 0 rgba(0, 0, 0, .36), inset 0 0 18px rgba(4, 8, 6, .7);
+  pointer-events: none;
+}
+.world-minimap::after { content: ""; position: absolute; inset: 7px; border: 1px dashed rgba(255, 239, 181, .36); box-shadow: inset 0 0 18px rgba(5, 9, 7, .42); }
+.world-minimap canvas { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; }
+.world-minimap > strong { position: absolute; right: 7px; bottom: 5px; padding: 2px 4px; color: #ead79b; background: rgba(12, 17, 15, .72); font-size: 6px; letter-spacing: .12em; }
+.world-minimap-north { position: absolute; z-index: 3; top: 5px; left: 50%; transform: translateX(-50%); color: #fff1b4; font: 900 10px Georgia, serif; text-shadow: 0 2px 2px #000; }
+.world-minimap-player { position: absolute; z-index: 5; color: #fff4bf; font-size: 14px; filter: drop-shadow(0 0 2px #000) drop-shadow(0 0 4px #d45d43); transform-origin: center; }
+.world-minimap-target { position: absolute; z-index: 4; display: grid; justify-items: center; transform: translate(-50%, -50%); color: #ffe277; filter: drop-shadow(0 1px 2px #000); }
+.world-minimap-target b { font-size: 13px; line-height: 1; }
+.world-minimap-target small { padding: 1px 3px; color: #fff4c7; background: rgba(16, 20, 17, .78); font-size: 6px; line-height: 1; white-space: nowrap; }
+.world-minimap-target.outside { animation: minimap-edge-pulse 1.1s ease-in-out infinite alternate; }
+@keyframes minimap-edge-pulse { to { filter: drop-shadow(0 0 7px #ffe277); } }
+.game-hud.minimap-enabled .status-effects-hud { left: max(214px, calc(env(safe-area-inset-left) + 214px)); }
 
 .status-effects-hud {
   position: absolute;
@@ -2134,6 +2165,79 @@ input:focus-visible {
   background: linear-gradient(135deg, #d7ffff, var(--item-color) 44%, #238c9c);
   clip-path: polygon(48% 0, 92% 25%, 76% 76%, 49% 100%, 14% 72%, 3% 27%);
   filter: drop-shadow(0 0 4px color-mix(in srgb, var(--item-color), transparent 28%)) drop-shadow(2px 2px 0 rgba(0, 0, 0, 0.54));
+}
+
+/* Star Crystals use an asymmetric three-prism cluster with hard pixel facets.
+   It remains readable at the 22px recipe size and matches the fused block. */
+.item-icon-kind-star-crystal::before {
+  left: 8px;
+  top: 0;
+  width: 13px;
+  height: 27px;
+  background:
+    linear-gradient(112deg, transparent 0 18%, rgba(255,255,255,.9) 19% 27%, transparent 28%),
+    linear-gradient(145deg, #ecffff 0 16%, #85fbf0 17% 45%, #35becd 46% 72%, #176b81 73%);
+  clip-path: polygon(48% 0, 89% 20%, 78% 66%, 50% 100%, 15% 72%, 2% 28%);
+  filter: drop-shadow(0 0 5px rgba(101, 241, 239, .82)) drop-shadow(2px 2px 0 rgba(0,0,0,.6));
+}
+
+.item-icon-kind-star-crystal::after {
+  left: 2px;
+  top: 10px;
+  width: 9px;
+  height: 16px;
+  background: linear-gradient(145deg, #d9ffff 0 18%, #4ed6db 19% 65%, #17657a 66%);
+  clip-path: polygon(48% 0, 92% 28%, 78% 75%, 48% 100%, 8% 72%, 0 32%);
+  box-shadow: 15px 3px 0 -1px #4ed6db;
+  filter: drop-shadow(0 0 3px rgba(101, 241, 239, .75)) drop-shadow(2px 2px 0 rgba(0,0,0,.52));
+  transform: rotate(-14deg);
+}
+
+.item-icon-kind-star-crystal-block::before {
+  left: 2px;
+  top: 4px;
+  width: 25px;
+  height: 22px;
+  background:
+    linear-gradient(145deg, rgba(239,255,255,.9) 0 7%, transparent 8%),
+    repeating-linear-gradient(125deg, transparent 0 5px, rgba(130,255,247,.42) 6px 7px),
+    linear-gradient(145deg, #5fe5e3 0 28%, #23899b 29% 68%, #123f53 69%);
+  clip-path: polygon(50% 0, 100% 24%, 100% 77%, 50% 100%, 0 77%, 0 24%);
+  filter: drop-shadow(0 0 4px rgba(91,233,231,.75)) drop-shadow(2px 2px 0 rgba(0,0,0,.58));
+}
+
+.item-icon-kind-star-crystal-block::after {
+  left: 8px;
+  top: 5px;
+  width: 13px;
+  height: 13px;
+  background: radial-gradient(circle, #fff 0 9%, #c8ffff 10% 20%, #72eee8 21% 35%, transparent 36%);
+  clip-path: polygon(43% 0, 58% 0, 63% 35%, 100% 42%, 100% 58%, 64% 63%, 58% 100%, 42% 100%, 36% 64%, 0 58%, 0 42%, 35% 36%);
+  filter: drop-shadow(0 0 3px #a8ffff);
+}
+
+/* The edible pearl is framed by a ribbed warm shell and a clipped sea-frond,
+   distinguishing Shellfruit from terrestrial produce at a glance. */
+.item-icon-kind-shellfruit::before {
+  left: 2px;
+  top: 8px;
+  width: 26px;
+  height: 19px;
+  background:
+    repeating-linear-gradient(104deg, transparent 0 3px, rgba(100,43,38,.28) 4px 5px),
+    linear-gradient(145deg, #f5d9b2 0 14%, #df9b70 15% 56%, #a95f50 57% 82%, #70443e 83%);
+  clip-path: polygon(0 42%, 12% 17%, 29% 31%, 48% 0, 67% 31%, 86% 17%, 100% 43%, 92% 82%, 67% 100%, 28% 100%, 7% 80%);
+  filter: drop-shadow(2px 2px 0 rgba(0,0,0,.58));
+}
+
+.item-icon-kind-shellfruit::after {
+  left: 10px;
+  top: 12px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 28%, #fff 0 10%, #fff1b7 12% 46%, #e8b967 48% 74%, #9e694c 76%);
+  box-shadow: -5px -11px 0 -3px #64a88b, 5px -10px 0 -3px #83c6a0, 0 0 5px rgba(255,221,139,.52);
 }
 
 .item-icon-kind-hide::before {
@@ -8828,7 +8932,10 @@ input:focus-visible {
 .hearthroads-map-detail-toggle.underground { top: 56px; background: rgba(31, 34, 43, .94); border-color: #71658d; color: #d7ccec; }
 .hearthroads-map-detail-toggle.underground small { color: #9e90bc; }
 .hearthroads-map-detail-toggle.underground.active { border-color: #9b82c1; background: rgba(54, 45, 70, .96); color: #f0e8ff; box-shadow: inset 3px 0 #8f71b4; }
-.hearthroads-map-depth-bands { position: absolute; z-index: 10; top: 100px; right: 12px; display: flex; gap: 3px; padding: 3px; border: 2px solid #514766; background: rgba(18, 20, 28, .94); }
+.hearthroads-map-detail-toggle.minimap { top: 100px; background: rgba(31, 49, 42, .94); border-color: #5f806f; color: #dcecdf; }
+.hearthroads-map-detail-toggle.minimap small { color: #93b8a3; }
+.hearthroads-map-detail-toggle.minimap.active { border-color: #8ec49d; background: rgba(45, 76, 60, .96); color: #f1fff3; box-shadow: inset 3px 0 #75aa84; }
+.hearthroads-map-depth-bands { position: absolute; z-index: 10; top: 144px; right: 12px; display: flex; gap: 3px; padding: 3px; border: 2px solid #514766; background: rgba(18, 20, 28, .94); }
 .hearthroads-map-depth-bands button { min-height: 24px; padding: 4px 6px; border: 1px solid #655a78; background: #2a2d38; color: #aca2c2; cursor: pointer; font: 700 6px var(--font-pixel, monospace); text-transform: uppercase; }
 .hearthroads-map-depth-bands button.active { border-color: #a48bc9; background: #55426e; color: #fff4ff; box-shadow: inset 0 -2px #8165a4; }
 .hearthroads-map-controls button {

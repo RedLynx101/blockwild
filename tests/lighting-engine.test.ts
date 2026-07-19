@@ -47,7 +47,7 @@ test("the fixed light pool binds to the nearest source even when it is beside th
     requestedRadius = radius;
     return sources;
   } } as unknown as ChunkWorld;
-  engine.settings = { volume: 0, musicVolume: 0.72, muted: true, sensitivity: 0.002, fov: 72, weather: "clear", renderDistance: 5, simulationDistance: 5, showFps: false, showBreakingTexture: true, showBreakProgress: false, showToolEffectiveness: true, resourceMode: "auto" } satisfies GameSettings;
+  engine.settings = { volume: 0, musicVolume: 0.72, muted: true, sensitivity: 0.002, fov: 72, weather: "clear", renderDistance: 5, simulationDistance: 5, showFps: false, showMinimap: false, showBreakingTexture: true, showBreakProgress: false, showToolEffectiveness: true, resourceMode: "auto" } satisfies GameSettings;
   engine.placedLightPool = [new THREE.PointLight()];
   engine.environmentLightCandidates = [];
   engine.environmentLightCandidateCache = [];

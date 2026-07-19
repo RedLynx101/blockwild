@@ -186,7 +186,7 @@ test("persistent healing stations restore bounded clocks and heal stored exact m
   const restored = restoreHealingStationStorage({
     "2,3,4": { ...createCreatureHealer([wounded], 1), healClock: 999, healCycles: 0 },
   }).get("2,3,4")!;
-  assert.ok(restored.healClock <= 10);
+  assert.ok(restored.healClock <= 20);
 
   const engine = stubMachineEngine();
   engine.apiaries = new Map();
@@ -198,8 +198,9 @@ test("persistent healing stations restore bounded clocks and heal stored exact m
   engine.spawnParticles = () => undefined;
   engine.updatePersistentMachines(0.1);
   const healed = engine.healingStations.get("2,3,4")!;
-  assert.equal(healed.slots[0]?.creature?.health, 3);
+  assert.equal(healed.slots[0]?.creature?.health, 5);
   assert.equal(healed.gelUnits, 0);
+  assert.equal(healed.gelFuelSeconds, 580, "unused active Gel pauses as soon as the specimen is healthy");
 });
 
 test("breaking a wild hive preserves products, rolls hive materials, and releases every angry resident", () => {

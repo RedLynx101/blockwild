@@ -26,6 +26,7 @@ import {
   type WorldSave,
 } from "../app/game/engine.ts";
 import { harvestPlant } from "../app/game/farming.ts";
+import { CHEST_VISUAL, chestLatchCenters } from "../app/game/chest-model.ts";
 import { ChunkWorld, BIOME_NAMES, BiomeId, GENERATOR_VERSION, GLASS_OPACITY, LIQUID_SURFACE_INSET, MAX_Y, MIN_Y, PACKED_VERTEX_COLOR_RANGE, RADIAL_STREAMING_DISTANCE_THRESHOLD, SECTION_HEIGHT, WORLD_HEIGHT, blockIndex, chunkAabbRadialDistanceSquared, chunkKey, chunkWithinStreamingRadius, chunksWithinStreamingRadius, liquidSurfaceInsetForCell, splitCoordinate } from "../app/game/world.ts";
 import { MOB_DEFS, MOB_ORDER } from "../app/game/mobs.ts";
 import { createHeldToolSpec, createRidgebackSpec, createZombieSpec, INSPECTOR_MODEL_SPECS, RIDGEBACK_GROUND_LIFT } from "../app/game/model-specs.ts";
@@ -58,6 +59,7 @@ test("survival food expenditure is doubled for travel and regeneration", () => {
 test("tree and aquatic growth schedules use the same fivefold plant pace", () => {
   const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
   engine.saplings = new Map();
+  engine.world = { getBlock: () => BlockId.Sand, seedText: "SHELLFRUIT-SCHEDULE" } as unknown as VoxelEngine["world"];
   const now = Date.now();
   engine.schedulePlantGrowth(3, 40, 5, BlockId.WildwoodSapling);
   const treeDelay = (engine.saplings.get("3,40,5") ?? 0) - now;
@@ -66,6 +68,10 @@ test("tree and aquatic growth schedules use the same fivefold plant pace", () =>
   engine.schedulePlantGrowth(4, 20, 6, BlockId.GlowKelp);
   const aquaticDelay = (engine.saplings.get("4,20,6") ?? 0) - now;
   assert.ok(aquaticDelay >= 250_000 && aquaticDelay <= 600_100, `aquatic delay was ${aquaticDelay}ms`);
+
+  engine.schedulePlantGrowth(5, 18, 7, BlockId.ShellfruitSprout);
+  const shellfruitDelay = (engine.saplings.get("5,18,7") ?? 0) - now;
+  assert.ok(shellfruitDelay >= 289_000 && shellfruitDelay <= 417_000, `Shellfruit stage delay was ${shellfruitDelay}ms`);
 });
 
 test("world generation is deterministic and seed-sensitive", () => {
@@ -1304,6 +1310,10 @@ test("the runtime chest lid opens upward around its rear hinge", () => {
   assert.equal(eastWest.depth, northSouth.depth, "double chests stay shallow instead of opening a longways lid");
   assert.equal(eastWest.rotationY, 0);
   assert.equal(northSouth.rotationY, Math.PI / 2, "a north-south pair rotates so its hinge remains behind the chest");
+  assert.equal(eastWest.depth, CHEST_VISUAL.bodyDepth);
+  assert.equal(eastWest.lidDepth, CHEST_VISUAL.lidDepth);
+  assert.deepEqual(chestLatchCenters(false), [0]);
+  assert.deepEqual(chestLatchCenters(true), [-0.5, 0.5], "closed and articulated double chests both retain one latch per block");
 });
 
 test("placing a bed reserves two supported cells and writes its oriented halves as one batch", () => {

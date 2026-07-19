@@ -23,6 +23,7 @@ export type PlantKind =
   | "field-cotton"
   | "sun-carrot"
   | "bluepod-bean"
+  | "shellfruit"
   | "moonberry"
   | "sunberry"
   | `cultivated-flower-${number}`;
@@ -33,6 +34,8 @@ export type PlantGrowthProfile = Readonly<{
   minimumLight: number;
   baseStageSeconds: number;
   requiresFarmland: boolean;
+  /** Aquatic crops root in mineral seabeds while remaining waterlogged. */
+  substrate?: "aquatic";
 }>;
 
 /** Farming, orchard, sapling, and aquatic-flora growth share this world pace. */
@@ -107,6 +110,14 @@ export const PLANT_GROWTH: Readonly<Record<PlantKind, PlantGrowthProfile>> = Obj
     minimumLight: 0.34,
     baseStageSeconds: 60,
     requiresFarmland: true,
+  }),
+  shellfruit: Object.freeze({
+    kind: "shellfruit",
+    stages: Object.freeze([BlockId.ShellfruitSprout, BlockId.ShellfruitYoung, BlockId.ShellfruitCrop]),
+    minimumLight: 0.12,
+    baseStageSeconds: 82,
+    requiresFarmland: false,
+    substrate: "aquatic",
   }),
   moonberry: Object.freeze({
     kind: "moonberry",
@@ -498,7 +509,8 @@ export function farmHash01(seed: string | number, x: number, y: number, z: numbe
 export function growthDelaySeconds(block: BlockId, hydrated: boolean, seed: string | number, position: BlockPosition, cycle = 0) {
   const found = plantProfileForBlock(block);
   if (!found) return null;
-  const hydrationFactor = found.profile.requiresFarmland ? (hydrated ? 0.72 : 1.8) : (hydrated ? 0.9 : 1);
+  const hydrationFactor = found.profile.substrate === "aquatic" ? 0.86
+    : found.profile.requiresFarmland ? (hydrated ? 0.72 : 1.8) : (hydrated ? 0.9 : 1);
   const jitter = 0.82 + farmHash01(seed, position.x, position.y, position.z, cycle) * 0.36;
   return found.profile.baseStageSeconds * hydrationFactor * jitter * PLANT_GROWTH_TIME_MULTIPLIER;
 }
@@ -506,6 +518,7 @@ export function growthDelaySeconds(block: BlockId, hydrated: boolean, seed: stri
 export function canGrowPlant(block: BlockId, soil: BlockId | undefined, light: number) {
   const found = plantProfileForBlock(block);
   if (!found || light < found.profile.minimumLight) return false;
+  if (found.profile.substrate === "aquatic") return AQUATIC_SOILS.has(soil ?? BlockId.Air) && Boolean(BLOCKS[block]?.waterlogged);
   return found.profile.requiresFarmland ? FARM_SOILS.has(soil ?? BlockId.Air) : LIVING_SOILS.has(soil ?? BlockId.Air);
 }
 
@@ -535,7 +548,7 @@ export type PlantingResult = Readonly<{ block: BlockId; consumes: ItemCode; desc
 
 export function plantingResult(item: ItemCode, soil: BlockId | undefined, above: BlockId | undefined): PlantingResult | null {
   const requestedPlant = ITEMS[item]?.plantBlock;
-  const aquaticRequest = (requestedPlant !== undefined && AQUATIC_FLORA_SET.has(requestedPlant)) || AQUATIC_PROPAGULES[item] !== undefined;
+  const aquaticRequest = item === Item.Shellfruit || (requestedPlant !== undefined && AQUATIC_FLORA_SET.has(requestedPlant)) || AQUATIC_PROPAGULES[item] !== undefined;
   if (!aquaticRequest && above !== BlockId.Air && (Boolean(BLOCKS[above ?? BlockId.Air]?.liquid) || Boolean(BLOCKS[above ?? BlockId.Air]?.waterlogged))) return null;
   if (above !== BlockId.Air && !BLOCKS[above ?? BlockId.Air]?.replaceable) return null;
   if (item === Item.WheatSeeds && FARM_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.WheatSprout, consumes: item, description: "Wild wheat seeds" };
@@ -546,6 +559,7 @@ export function plantingResult(item: ItemCode, soil: BlockId | undefined, above:
   if (item === Item.CottonSeeds && FARM_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.CottonSprout, consumes: item, description: "Field cotton seeds" };
   if (item === Item.SunCarrotSeeds && FARM_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.SunCarrotSprout, consumes: item, description: "Suncrest carrot seeds" };
   if (item === Item.BluepodSeeds && FARM_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.BluepodSprout, consumes: item, description: "Bluepod bean seeds" };
+  if (item === Item.Shellfruit && AQUATIC_SOILS.has(soil ?? BlockId.Air) && above === BlockId.Water) return { block: BlockId.ShellfruitSprout, consumes: item, description: "Shellfruit seed-shell" };
   if (item === Item.Berry && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.MoonberryShoot, consumes: item, description: "Moonberry cutting" };
   if (item === Item.Sunberry && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.SunberryShoot, consumes: item, description: "Sunberry cutting" };
   if (item === Item.Apple && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.AppleSapling, consumes: item, description: "Wild apple pip" };
@@ -692,6 +706,13 @@ export function harvestPlant(block: BlockId, useScythe = false, yieldRoll = 0.5)
       replacement: useScythe ? BlockId.BluepodSprout : BlockId.Air,
       drops: [{ item: Item.BluepodBeans, count: 2 + Math.floor(roll * 3) + (useScythe ? 1 : 0) }, { item: Item.BluepodSeeds, count: 1 + (roll > 0.58 ? 1 : 0) }],
       replanted: useScythe,
+    };
+  }
+  if (block === BlockId.ShellfruitCrop) {
+    return {
+      replacement: BlockId.ShellfruitYoung,
+      drops: [{ item: Item.Shellfruit, count: 2 + Math.floor(roll * 3) + (useScythe ? 1 : 0) }],
+      replanted: true,
     };
   }
   if (block === BlockId.MoonberryBushRipe) {

@@ -8,6 +8,7 @@ import { rayDistanceToTorchBounds, torchInteractionBounds } from "../app/game/en
 import { planPoiAmenities, ChunkWorld, LIQUID_SURFACE_INSET, WILD_PEPPERMINT_STEM_TILE } from "../app/game/world.ts";
 import { planStructure } from "../app/game/structures.ts";
 import { isSeatBlock, seatAnchorForBlock } from "../app/game/seating.ts";
+import { BLOCK_FACING_EAST } from "../app/game/block-facing.ts";
 
 test("chairs and stools resolve stable floor-level sitting anchors", () => {
   for (const block of [BlockId.WildwoodStool, BlockId.DwarfStool, BlockId.HearthChair, BlockId.MoonboughChair]) {
@@ -18,6 +19,9 @@ test("chairs and stools resolve stable floor-level sitting anchors", () => {
   }
   assert.equal(seatAnchorForBlock(BlockId.Stone, 0, 0, 0), null);
   assert.equal(seatAnchorForBlock(BlockId.HearthChair, 0, 1, 0)?.yaw, 0);
+  const eastChair = seatAnchorForBlock(BlockId.HearthChair, 4, 20, -3, BLOCK_FACING_EAST)!;
+  assert.ok(eastChair.x > 4 && Math.abs(eastChair.z + 3) < 1e-6, "chair sit offsets rotate with their placed facing");
+  assert.equal(eastChair.yaw, -Math.PI / 2);
 });
 
 test("Meadow Grass accepts saplings and wild peppermint columns remain connected", () => {

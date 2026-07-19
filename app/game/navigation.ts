@@ -22,6 +22,7 @@ export type CompassEntry = Readonly<{
   distance: number | null;
   tracked: boolean;
   glyph: string;
+  edge?: "left" | "right" | null;
 }>;
 
 export type DestinationCue = Readonly<{
@@ -140,22 +141,25 @@ export function compassEntries(
       distance: null,
       tracked: false,
       glyph: cardinal.label,
+      edge: null,
     });
   }
   for (const target of targets) {
     const distance = horizontalNavigationDistance(origin, target.position);
     if (!target.tracked && distance > radius) continue;
-    if (target.tracked && options.trackAtAnyDistance !== true && distance > radius * 4) continue;
     const delta = signedCompassDelta(compassBearingToPoint(origin, target.position), currentBearing);
-    if (Math.abs(delta) > halfField) continue;
+    const outsideField = Math.abs(delta) > halfField;
+    if (outsideField && !target.tracked) continue;
+    const edge = outsideField ? delta < 0 ? "left" as const : "right" as const : null;
     entries.push({
       id: target.id,
       label: target.name,
       kind: target.kind,
-      offsetPercent: 50 + delta / halfField * 50,
+      offsetPercent: edge === "left" ? 6 : edge === "right" ? 94 : 50 + delta / halfField * 50,
       distance,
       tracked: target.tracked,
       glyph: target.glyph,
+      edge,
     });
   }
   return entries.sort((left, right) => Number(left.kind !== "cardinal") - Number(right.kind !== "cardinal") || left.offsetPercent - right.offsetPercent);

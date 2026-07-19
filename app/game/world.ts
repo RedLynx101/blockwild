@@ -32,6 +32,14 @@ import {
   MOONBERRY_CRATE_TOP_TILE,
   RIVETED_BRASS_TILE,
   ROOTWEAVE_SOIL_SIDE_TILE,
+  SHELLFRUIT_CRATE_SIDE_TILE,
+  SHELLFRUIT_CRATE_TOP_TILE,
+  SHELLFRUIT_CROP_TILE,
+  SHELLFRUIT_SPROUT_TILE,
+  SHELLFRUIT_YOUNG_TILE,
+  STAR_CRYSTAL_BLOCK_BOTTOM_TILE,
+  STAR_CRYSTAL_BLOCK_SIDE_TILE,
+  STAR_CRYSTAL_BLOCK_TOP_TILE,
   SUNBERRY_CRATE_SIDE_TILE,
   SUNBERRY_CRATE_TOP_TILE,
   BlockId,
@@ -42,6 +50,7 @@ import {
   type RenderLayer,
 } from "./data";
 import { CAVE_ENTRANCE_CELL_SIZE, caveEntranceAt, caveEntranceForCell, caveFeatureAt } from "./caves";
+import { CHEST_VISUAL } from "./chest-model";
 import { doorIsOpen, doorState, doorUsesXAxis, isDoorBlock } from "./doors";
 import { DENSE_CUTOUT_LEAF_POLICY, planFullTree, planSubmergedFlora, planSyrupPondsForChunk, syrupPondColumnAt, wildPeppermintHeight, type TreeForm, type TreePlanBlock } from "./ecology";
 import { dragonLairMarkersForChunk, dragonLairPlacementsForChunk, dragonLairsIntersectingChunk, repairGeneratedTreePlan } from "./dragon-world";
@@ -86,6 +95,14 @@ import {
   undergroundBiomeAt as sampleUndergroundBiome,
 } from "./underground";
 import { LightChannel, MAX_LIGHT_LEVEL, VoxelLightEngine, lightChannel, perceivedBlockLight } from "./lighting";
+import {
+  BLOCK_FACING_NORTH,
+  blockFacingRight,
+  isDirectionallyPlacedBlock,
+  normalizeBlockFacing,
+  rotateBlockOffset,
+  type BlockFacing,
+} from "./block-facing";
 
 export const CHUNK_SIZE = 16;
 export const MIN_Y = -64;
@@ -2164,7 +2181,7 @@ export function createBlockAtlas() {
     }
     for (const [x, y] of [[6, 4], [10, 7], [5, 10]] as Array<[number, number]>) pixel(index, x, y, "#5f843e");
   };
-  const crateSide = (index: number, fruit: string, highlight: string, glyph: "berry" | "apple" | "pear") => {
+  const crateSide = (index: number, fruit: string, highlight: string, glyph: "berry" | "apple" | "pear" | "shellfruit") => {
     fillTile(index, "#9a673c");
     for (const y of [0, 5, 10, 15]) {
       context.fillStyle = y % 10 === 0 ? "#5a3924" : "#c0874a";
@@ -2179,6 +2196,10 @@ export function createBlockAtlas() {
     context.fillRect((index % grid) * tile + 4, Math.floor(index / grid) * tile + 5, 8, 6);
     if (glyph === "berry") {
       for (const [x, y] of [[6, 8], [8, 7], [9, 9]] as Array<[number, number]>) { pixel(index, x, y, fruit); pixel(index, x + 1, y, highlight); }
+    } else if (glyph === "shellfruit") {
+      for (const [x, y] of [[6, 7], [7, 6], [8, 6], [9, 7], [5, 8], [6, 9], [7, 9], [8, 9], [9, 9], [10, 8]] as Array<[number, number]>) pixel(index, x, y, fruit);
+      for (const [x, y] of [[7, 7], [8, 7], [7, 8], [8, 8]] as Array<[number, number]>) pixel(index, x, y, highlight);
+      pixel(index, 6, 6, "#f2d7ae"); pixel(index, 9, 6, "#f2d7ae");
     } else {
       for (const [x, y] of glyph === "apple" ? [[7, 7], [8, 7], [7, 8], [8, 8], [7, 9], [8, 9]] : [[7, 7], [8, 7], [6, 8], [7, 8], [8, 8], [9, 8], [7, 9], [8, 9]] as Array<[number, number]>) pixel(index, x, y, fruit);
       pixel(index, 8, 6, "#5d7f3d"); pixel(index, 9, 6, highlight);
@@ -2217,8 +2238,64 @@ export function createBlockAtlas() {
   crateSide(APPLE_CRATE_SIDE_TILE, "#b83f36", "#ef8064", "apple");
   crateTop(FROSTPEAR_CRATE_TOP_TILE, "#8bc4c7", "#d7fbef");
   crateSide(FROSTPEAR_CRATE_SIDE_TILE, "#8bc4c7", "#d7fbef", "pear");
-
   const clearTile = (index: number) => context.clearRect((index % grid) * tile, Math.floor(index / grid) * tile, tile, tile);
+
+  // A Star Crystal block reads as nine fused celestial prisms rather than a
+  // cyan recolor: the top carries the starburst, the sides show locked veins,
+  // and the quieter underside provides a grounded shadow face.
+  fillTile(STAR_CRYSTAL_BLOCK_TOP_TILE, "#123946");
+  for (let ring = 0; ring < 7; ring += 1) {
+    const color = ring < 2 ? "#efffff" : ring < 4 ? "#8df5ee" : "#3cb8c8";
+    for (const [x, y] of [[7 - ring, 7], [8 + ring, 8], [7, 7 - ring], [8, 8 + ring]] as Array<[number, number]>) {
+      if (x >= 0 && x < tile && y >= 0 && y < tile) pixel(STAR_CRYSTAL_BLOCK_TOP_TILE, x, y, color);
+    }
+    if (ring < 5) for (const [x, y] of [[7 - ring, 7 - ring], [8 + ring, 7 - ring], [7 - ring, 8 + ring], [8 + ring, 8 + ring]] as Array<[number, number]>) {
+      if (x >= 0 && x < tile && y >= 0 && y < tile) pixel(STAR_CRYSTAL_BLOCK_TOP_TILE, x, y, ring < 2 ? "#ffffff" : "#59d9df");
+    }
+  }
+  for (const [x, y, color] of [[2, 3, "#87fff3"], [12, 2, "#54c7d5"], [3, 12, "#2f9aa9"], [13, 11, "#9cfff8"], [11, 14, "#357f9a"]] as Array<[number, number, string]>) {
+    pixel(STAR_CRYSTAL_BLOCK_TOP_TILE, x, y, color); pixel(STAR_CRYSTAL_BLOCK_TOP_TILE, Math.min(15, x + 1), y, "#1e697d");
+  }
+  fillTile(STAR_CRYSTAL_BLOCK_SIDE_TILE, "#164553");
+  for (let x = 0; x < tile; x += 1) {
+    const crest = 3 + Math.abs(7 - x) % 5;
+    for (let y = crest; y < tile; y += 1) {
+      const seam = x % 5 === 0 || y === crest;
+      pixel(STAR_CRYSTAL_BLOCK_SIDE_TILE, x, y, seam ? "#2a8395" : (x + y) % 7 === 0 ? "#68dce1" : "#1b5968");
+    }
+  }
+  for (const [x, height] of [[2, 8], [6, 12], [10, 10], [13, 6]] as Array<[number, number]>) {
+    for (let y = 15; y >= 15 - height; y -= 1) pixel(STAR_CRYSTAL_BLOCK_SIDE_TILE, x + ((15 - y) % 5 === 0 ? 1 : 0), y, y < 7 ? "#d8ffff" : "#6ce8e7");
+  }
+  fillTile(STAR_CRYSTAL_BLOCK_BOTTOM_TILE, "#0d303c");
+  for (let x = 1; x < tile; x += 3) for (let y = 1; y < tile; y += 3) {
+    pixel(STAR_CRYSTAL_BLOCK_BOTTOM_TILE, x, y, (x + y) % 2 ? "#23687a" : "#318c99");
+    if ((x * 3 + y) % 5 === 0) pixel(STAR_CRYSTAL_BLOCK_BOTTOM_TILE, Math.min(15, x + 1), y, "#75dadd");
+  }
+
+  // Shellfruit grows as a low seafloor rosette. Each stage adds fronds and
+  // then opens warm scalloped shells around a pale edible pearl.
+  const paintShellfruitStage = (index: number, stage: 0 | 1 | 2) => {
+    clearTile(index);
+    const fronds = stage === 0 ? [[7, 8, -1], [9, 9, 1]] : [[4, 7, -1], [7, 5, -1], [10, 6, 1], [12, 8, 1]];
+    for (const [baseX, topY, lean] of fronds as Array<[number, number, number]>) {
+      for (let y = 15; y >= topY; y -= 1) pixel(index, baseX + Math.round((15 - y) / 4) * lean, y, (y + baseX) % 3 ? "#4b977c" : "#82c4a1");
+    }
+    const shells = stage === 0 ? [[8, 12]] : stage === 1 ? [[6, 11], [10, 10]] : [[4, 11], [8, 9], [12, 11]];
+    for (const [cx, cy] of shells as Array<[number, number]>) {
+      for (const [dx, dy] of [[-2, 1], [-1, 0], [0, -1], [1, 0], [2, 1], [-1, 1], [0, 1], [1, 1], [-1, 2], [0, 2], [1, 2]] as Array<[number, number]>) {
+        pixel(index, cx + dx, cy + dy, dy === -1 ? "#f3d8b3" : dx < 0 ? "#bd795d" : "#df9d70");
+      }
+      if (stage === 2) { pixel(index, cx, cy, "#fff4c7"); pixel(index, cx + 1, cy, "#ffd57e"); }
+    }
+    for (let x = 2; x < 15; x += 4) pixel(index, x, 15, "#6f7f72");
+  };
+  paintShellfruitStage(SHELLFRUIT_SPROUT_TILE, 0);
+  paintShellfruitStage(SHELLFRUIT_YOUNG_TILE, 1);
+  paintShellfruitStage(SHELLFRUIT_CROP_TILE, 2);
+  crateTop(SHELLFRUIT_CRATE_TOP_TILE, "#c9835f", "#fff0bb");
+  crateSide(SHELLFRUIT_CRATE_SIDE_TILE, "#c9835f", "#fff0bb", "shellfruit");
+
   clearTile(FROSTPEAR_SAPLING_TILE);
   for (let y = 5; y < 16; y += 1) pixel(FROSTPEAR_SAPLING_TILE, 7, y, y % 3 ? "#755138" : "#9b7248");
   for (const [x, y] of [[5, 5], [9, 4], [4, 8], [10, 8], [6, 11], [9, 12]] as Array<[number, number]>) {
@@ -2293,6 +2370,8 @@ export class ChunkWorld {
    * seams that appeared through the animated lid and body.
    */
   hiddenChestVisuals = new Set<string>();
+  /** Sparse metadata: only player-placed asymmetric blocks with non-default facing need entries. */
+  blockFacings = new Map<string, BlockFacing>();
   private waterAnimationFrame = -1;
 
   constructor() {
@@ -2370,7 +2449,12 @@ export class ChunkWorld {
     this.meshWorkPerFrame = clamp(Math.round(chunkMeshSections), 1, 8);
   }
 
-  reset(seedText: string, savedEdits?: ChunkEditSave, generationOptions?: Partial<WorldGenerationOptions>) {
+  reset(
+    seedText: string,
+    savedEdits?: ChunkEditSave,
+    generationOptions?: Partial<WorldGenerationOptions>,
+    savedFacings?: Readonly<Record<string, number>>,
+  ) {
     this.disposeChunks();
     this.generationQueue = [];
     this.generationQueued.clear();
@@ -2391,6 +2475,7 @@ export class ChunkWorld {
     this.surfaceRoadGraphCache.clear();
     this.surfaceRoadCache.clear();
     this.hiddenChestVisuals.clear();
+    this.blockFacings.clear();
     this.seedText = seedText || "WILDERNESS";
     this.seed = seedToInt(this.seedText);
     this.generationOptions = normalizeWorldGenerationOptions(generationOptions);
@@ -2403,6 +2488,34 @@ export class ChunkWorld {
         this.edits.set(key, map);
       }
     }
+    if (savedFacings) {
+      for (const [key, rawFacing] of Object.entries(savedFacings).slice(0, 65_536)) {
+        if (!/^-?\d+,-?\d+,-?\d+$/u.test(key)) continue;
+        const facing = normalizeBlockFacing(rawFacing);
+        if (facing !== BLOCK_FACING_NORTH) this.blockFacings.set(key, facing);
+      }
+    }
+  }
+
+  blockFacingAt(x: number, y: number, z: number): BlockFacing {
+    return this.blockFacings.get(`${Math.trunc(x)},${Math.trunc(y)},${Math.trunc(z)}`) ?? BLOCK_FACING_NORTH;
+  }
+
+  setBlockFacing(x: number, y: number, z: number, facing: BlockFacing, immediate = false) {
+    const key = `${Math.trunc(x)},${Math.trunc(y)},${Math.trunc(z)}`;
+    const normalized = normalizeBlockFacing(facing);
+    const previous = this.blockFacings.get(key) ?? BLOCK_FACING_NORTH;
+    if (previous === normalized) return false;
+    if (normalized === BLOCK_FACING_NORTH) this.blockFacings.delete(key);
+    else this.blockFacings.set(key, normalized);
+    const sx = splitCoordinate(x);
+    const sz = splitCoordinate(z);
+    this.refreshEditedBlock(sx.chunk, sz.chunk, sx.local, y, sz.local, immediate);
+    return true;
+  }
+
+  serializeBlockFacings() {
+    return Object.fromEntries(this.blockFacings.entries());
   }
 
   serializeSurfaceRoadGraph() {
@@ -5000,6 +5113,7 @@ export class ChunkWorld {
     const index = blockIndex(sx.local, y, sz.local);
     const previousType = chunk.blocks[index] as BlockId;
     const resolvedType = type === BlockId.Air && isWaterloggedFloraBlock(previousType) ? BlockId.Water : type;
+    if (!isDirectionallyPlacedBlock(resolvedType)) this.blockFacings.delete(`${x},${y},${z}`);
     this.writeChunkBlock(chunk, index, resolvedType);
     this.lightEngine.updateBlock({ x, y, z, previous: previousType, next: resolvedType });
     if (previousType === BlockId.Lava || resolvedType === BlockId.Lava) this.refreshLavaLightCell(x, y, z);
@@ -5046,6 +5160,7 @@ export class ChunkWorld {
       const index = blockIndex(sx.local, change.y, sz.local);
       const previousType = chunk.blocks[index] as BlockId;
       const resolvedType = change.type === BlockId.Air && isWaterloggedFloraBlock(previousType) ? BlockId.Water : change.type;
+      if (!isDirectionallyPlacedBlock(resolvedType)) this.blockFacings.delete(`${change.x},${change.y},${change.z}`);
       this.writeChunkBlock(chunk, index, resolvedType);
       if (previousType !== resolvedType) {
         const lightChange = { x: change.x, y: change.y, z: change.z, previous: previousType, next: resolvedType };
@@ -5105,7 +5220,7 @@ export class ChunkWorld {
     return type === BlockId.Air
       || (isDoorBlock(type) && doorIsOpen(type))
       || [BlockId.FenceGateNorthSouthOpen, BlockId.FenceGateEastWestOpen].includes(type)
-      || ["cross", "tall-flower", "aquatic", "torch", "bush", "fruit", "table", "stool", "shelf"].includes(BLOCKS[type]?.shape ?? "");
+      || ["cross", "tall-flower", "aquatic", "torch", "bush", "fruit", "stool"].includes(BLOCKS[type]?.shape ?? "");
   }
 
   biomeAt(x: number, z: number) {
@@ -5383,6 +5498,41 @@ export class ChunkWorld {
       addQuad(bucket, [[x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [x1, y0, z0]], [0, 0, -1], sideTile, 0.76, tint, 0, 0, 0, 0, environment);
     };
 
+    const addFacingCuboid = (
+      bucket: GeometryBucket,
+      centerX: number,
+      centerZ: number,
+      facing: BlockFacing,
+      x0: number,
+      y0: number,
+      z0: number,
+      x1: number,
+      y1: number,
+      z1: number,
+      sideTile: number,
+      topTile = sideTile,
+      bottomTile = sideTile,
+      cuboidTint: [number, number, number] = [1, 1, 1],
+      environment = 1,
+    ) => {
+      const corner0 = rotateBlockOffset(x0 - centerX, z0 - centerZ, facing);
+      const corner1 = rotateBlockOffset(x1 - centerX, z1 - centerZ, facing);
+      addTexturedCuboid(
+        bucket,
+        centerX + Math.min(corner0.x, corner1.x),
+        y0,
+        centerZ + Math.min(corner0.z, corner1.z),
+        centerX + Math.max(corner0.x, corner1.x),
+        y1,
+        centerZ + Math.max(corner0.z, corner1.z),
+        sideTile,
+        topTile,
+        bottomTile,
+        cuboidTint,
+        environment,
+      );
+    };
+
     const addImplicitWaterCell = (localX: number, y: number, localZ: number, tint: [number, number, number]) => {
       const surfaceInset = liquidSurfaceInsetForCell(
         neighborAt(localX, y, localZ),
@@ -5404,6 +5554,9 @@ export class ChunkWorld {
         if (type === BlockId.Chest && this.hiddenChestVisuals.has(`${chunk.cx * CHUNK_SIZE + lx},${y},${chunk.cz * CHUNK_SIZE + lz}`)) continue;
         const definition = BLOCKS[type];
         if (!definition || definition.layer === "none") continue;
+        const worldX = chunk.cx * CHUNK_SIZE + lx;
+        const worldZ = chunk.cz * CHUNK_SIZE + lz;
+        const facing = isDirectionallyPlacedBlock(type) ? this.blockFacingAt(worldX, y, worldZ) : BLOCK_FACING_NORTH;
         activeEmissiveStrength = definition.emissiveStrength ?? 0;
         activeAmbientOcclusion = definition.solid
           && (!definition.shape || definition.shape === "cube")
@@ -5551,95 +5704,107 @@ export class ChunkWorld {
           // Stone cheeks and mantle frame an inset dark firebox. The animated
           // light pool treats this block as a source while the emissive flame
           // remains readable even when the surrounding room is dark.
-          addTexturedCuboid(buckets.opaque, lx - 0.48, y - 0.5, lz - 0.38, lx + 0.48, y - 0.34, lz + 0.38, 12, 12, 3, tint, environment);
-          addTexturedCuboid(buckets.opaque, lx - 0.48, y - 0.34, lz - 0.34, lx - 0.31, y + 0.34, lz + 0.34, 12, 12, 12, tint, environment);
-          addTexturedCuboid(buckets.opaque, lx + 0.31, y - 0.34, lz - 0.34, lx + 0.48, y + 0.34, lz + 0.34, 12, 12, 12, tint, environment);
-          addTexturedCuboid(buckets.opaque, lx - 0.5, y + 0.31, lz - 0.4, lx + 0.5, y + 0.48, lz + 0.4, 12, 12, 12, tint, environment);
-          addTexturedCuboid(buckets.opaque, lx - 0.3, y - 0.31, lz + 0.25, lx + 0.3, y + 0.3, lz + 0.34, 49, 49, 49, [0.64, 0.58, 0.55], environment);
-          for (const offset of [-0.13, 0.13]) addTexturedCuboid(buckets.opaque, lx - 0.24, y - 0.3, lz + offset - 0.04, lx + 0.24, y - 0.2, lz + offset + 0.04, 11, 11, 11, [0.58, 0.42, 0.3], environment);
-          addTexturedCuboid(buckets.emissive, lx - 0.2, y - 0.2, lz - 0.08, lx + 0.2, y + 0.17, lz + 0.16, 39, 39, 39, [1, 0.72, 0.38], 1);
-          addTexturedCuboid(buckets.emissive, lx - 0.08, y + 0.02, lz - 0.04, lx + 0.08, y + 0.29, lz + 0.11, 39, 39, 39, [1, 0.9, 0.55], 1);
+          addFacingCuboid(buckets.opaque, lx, lz, facing, lx - 0.48, y - 0.5, lz - 0.38, lx + 0.48, y - 0.34, lz + 0.38, 12, 12, 3, tint, environment);
+          addFacingCuboid(buckets.opaque, lx, lz, facing, lx - 0.48, y - 0.34, lz - 0.34, lx - 0.31, y + 0.34, lz + 0.34, 12, 12, 12, tint, environment);
+          addFacingCuboid(buckets.opaque, lx, lz, facing, lx + 0.31, y - 0.34, lz - 0.34, lx + 0.48, y + 0.34, lz + 0.34, 12, 12, 12, tint, environment);
+          addFacingCuboid(buckets.opaque, lx, lz, facing, lx - 0.5, y + 0.31, lz - 0.4, lx + 0.5, y + 0.48, lz + 0.4, 12, 12, 12, tint, environment);
+          addFacingCuboid(buckets.opaque, lx, lz, facing, lx - 0.3, y - 0.31, lz + 0.25, lx + 0.3, y + 0.3, lz + 0.34, 49, 49, 49, [0.64, 0.58, 0.55], environment);
+          for (const offset of [-0.13, 0.13]) addFacingCuboid(buckets.opaque, lx, lz, facing, lx - 0.24, y - 0.3, lz + offset - 0.04, lx + 0.24, y - 0.2, lz + offset + 0.04, 11, 11, 11, [0.58, 0.42, 0.3], environment);
+          addFacingCuboid(buckets.emissive, lx, lz, facing, lx - 0.2, y - 0.2, lz - 0.08, lx + 0.2, y + 0.17, lz + 0.16, 39, 39, 39, [1, 0.72, 0.38], 1);
+          addFacingCuboid(buckets.emissive, lx, lz, facing, lx - 0.08, y + 0.02, lz - 0.04, lx + 0.08, y + 0.29, lz + 0.11, 39, 39, 39, [1, 0.9, 0.55], 1);
           continue;
         }
         if (definition.shape === "apiary") {
           const environment = shadeAt(lx, y, lz);
-          addTexturedCuboid(bucket, lx - 0.4, y - 0.46, lz - 0.36, lx + 0.4, y + 0.18, lz + 0.36, definition.side, definition.top, definition.bottom, tint, environment);
-          addTexturedCuboid(bucket, lx - 0.46, y + 0.18, lz - 0.42, lx + 0.46, y + 0.36, lz + 0.42, definition.top, definition.top, definition.side, tint, environment);
-          addTexturedCuboid(bucket, lx - 0.13, y - 0.06, lz - 0.405, lx + 0.13, y + 0.13, lz - 0.355, 92, 92, 92, [1, 1, 1], environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.4, y - 0.46, lz - 0.36, lx + 0.4, y + 0.18, lz + 0.36, definition.side, definition.top, definition.bottom, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.46, y + 0.18, lz - 0.42, lx + 0.46, y + 0.36, lz + 0.42, definition.top, definition.top, definition.side, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.13, y - 0.06, lz - 0.405, lx + 0.13, y + 0.13, lz - 0.355, 92, 92, 92, [1, 1, 1], environment);
           continue;
         }
         if (definition.shape === "wild-hive") {
           const environment = shadeAt(lx, y, lz);
-          addTexturedCuboid(bucket, lx - 0.35, y - 0.46, lz - 0.35, lx + 0.35, y - 0.17, lz + 0.35, definition.side, definition.top, definition.bottom, tint, environment);
-          addTexturedCuboid(bucket, lx - 0.45, y - 0.17, lz - 0.42, lx + 0.45, y + 0.16, lz + 0.42, definition.side, definition.top, definition.bottom, tint, environment);
-          addTexturedCuboid(bucket, lx - 0.33, y + 0.16, lz - 0.32, lx + 0.33, y + 0.42, lz + 0.32, definition.side, definition.top, definition.bottom, tint, environment);
-          addTexturedCuboid(bucket, lx - 0.11, y - 0.03, lz - 0.455, lx + 0.11, y + 0.13, lz - 0.405, 94, 94, 94, [0.55, 0.48, 0.4], environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.35, y - 0.46, lz - 0.35, lx + 0.35, y - 0.17, lz + 0.35, definition.side, definition.top, definition.bottom, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.45, y - 0.17, lz - 0.42, lx + 0.45, y + 0.16, lz + 0.42, definition.side, definition.top, definition.bottom, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.33, y + 0.16, lz - 0.32, lx + 0.33, y + 0.42, lz + 0.32, definition.side, definition.top, definition.bottom, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.11, y - 0.03, lz - 0.455, lx + 0.11, y + 0.13, lz - 0.405, 94, 94, 94, [0.55, 0.48, 0.4], environment);
           continue;
         }
         if (definition.shape === "orb-rack") {
           const environment = shadeAt(lx, y, lz);
-          addTexturedCuboid(bucket, lx - 0.47, y - 0.48, lz - 0.38, lx + 0.47, y - 0.34, lz + 0.38, definition.side, definition.top, definition.bottom, tint, environment);
-          for (const x of [lx - 0.4, lx + 0.31]) addTexturedCuboid(bucket, x, y - 0.34, lz - 0.11, x + 0.09, y + 0.42, lz + 0.11, definition.side, definition.top, definition.bottom, tint, environment);
-          for (const railY of [y - 0.17, y + 0.18]) addTexturedCuboid(bucket, lx - 0.38, railY - 0.045, lz - 0.13, lx + 0.38, railY + 0.045, lz + 0.13, definition.side, definition.top, definition.bottom, tint, environment);
-          addTexturedCuboid(bucket, lx - 0.43, y + 0.38, lz - 0.14, lx + 0.43, y + 0.46, lz + 0.14, definition.side, definition.top, definition.bottom, tint, environment);
+          const right = blockFacingRight(facing);
+          const sameRack = (dx: number, dy: number, dz: number) => neighborAt(lx + dx, y + dy, lz + dz) === BlockId.CaptureOrbRack
+            && this.blockFacingAt(worldX + dx, y + dy, worldZ + dz) === facing;
+          const joinsLeft = sameRack(-right.x, 0, -right.z);
+          const joinsRight = sameRack(right.x, 0, right.z);
+          const joinsBelow = sameRack(0, -1, 0);
+          const joinsAbove = sameRack(0, 1, 0);
+          const spanX0 = lx - (joinsLeft ? 0.5 : 0.43);
+          const spanX1 = lx + (joinsRight ? 0.5 : 0.43);
+          if (!joinsBelow) addFacingCuboid(bucket, lx, lz, facing, spanX0, y - 0.48, lz - 0.38, spanX1, y - 0.34, lz + 0.38, definition.side, definition.top, definition.bottom, tint, environment);
+          const postBottom = joinsBelow ? y - 0.5 : y - 0.34;
+          const postTop = joinsAbove ? y + 0.5 : y + 0.42;
+          if (!joinsLeft) addFacingCuboid(bucket, lx, lz, facing, lx - 0.43, postBottom, lz - 0.11, lx - 0.34, postTop, lz + 0.11, definition.side, definition.top, definition.bottom, tint, environment);
+          if (!joinsRight) addFacingCuboid(bucket, lx, lz, facing, lx + 0.34, postBottom, lz - 0.11, lx + 0.43, postTop, lz + 0.11, definition.side, definition.top, definition.bottom, tint, environment);
+          for (const railY of [y - 0.17, y + 0.18]) addFacingCuboid(bucket, lx, lz, facing, spanX0, railY - 0.045, lz - 0.13, spanX1, railY + 0.045, lz + 0.13, definition.side, definition.top, definition.bottom, tint, environment);
+          if (!joinsAbove) addFacingCuboid(bucket, lx, lz, facing, spanX0, y + 0.38, lz - 0.14, spanX1, y + 0.46, lz + 0.14, definition.side, definition.top, definition.bottom, tint, environment);
           // Empty cradles are part of the chunk mesh; Capture Orbs themselves
           // are stateful engine visuals and appear only for occupied slots.
           for (const socketY of [y - 0.1, y + 0.25]) for (const socketX of [lx - 0.27, lx - 0.09, lx + 0.09, lx + 0.27]) {
-            addTexturedCuboid(bucket, socketX - 0.065, socketY - 0.025, lz - 0.11, socketX + 0.065, socketY + 0.01, lz + 0.11, definition.side, definition.top, definition.bottom, tint, environment);
-            addTexturedCuboid(bucket, socketX - 0.075, socketY, lz - 0.12, socketX - 0.045, socketY + 0.055, lz + 0.12, definition.side, definition.top, definition.bottom, tint, environment);
-            addTexturedCuboid(bucket, socketX + 0.045, socketY, lz - 0.12, socketX + 0.075, socketY + 0.055, lz + 0.12, definition.side, definition.top, definition.bottom, tint, environment);
+            addFacingCuboid(bucket, lx, lz, facing, socketX - 0.065, socketY - 0.025, lz - 0.11, socketX + 0.065, socketY + 0.01, lz + 0.11, definition.side, definition.top, definition.bottom, tint, environment);
+            addFacingCuboid(bucket, lx, lz, facing, socketX - 0.075, socketY, lz - 0.12, socketX - 0.045, socketY + 0.055, lz + 0.12, definition.side, definition.top, definition.bottom, tint, environment);
+            addFacingCuboid(bucket, lx, lz, facing, socketX + 0.045, socketY, lz - 0.12, socketX + 0.075, socketY + 0.055, lz + 0.12, definition.side, definition.top, definition.bottom, tint, environment);
           }
           continue;
         }
         if (definition.shape === "orb-healer") {
           const environment = shadeAt(lx, y, lz);
-          addTexturedCuboid(bucket, lx - 0.48, y - 0.48, lz - 0.48, lx + 0.48, y - 0.3, lz + 0.48, definition.side, definition.top, definition.bottom, tint, environment);
-          addTexturedCuboid(bucket, lx - 0.42, y - 0.3, lz - 0.42, lx + 0.42, y + 0.06, lz + 0.42, definition.side, definition.top, definition.bottom, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.48, y - 0.48, lz - 0.48, lx + 0.48, y - 0.3, lz + 0.48, definition.side, definition.top, definition.bottom, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.42, y - 0.3, lz - 0.42, lx + 0.42, y + 0.06, lz + 0.42, definition.side, definition.top, definition.bottom, tint, environment);
           // A low basin floor and four raised rim pieces make the top visibly
           // concave while leaving the four dynamic orb sockets unobstructed.
-          addTexturedCuboid(bucket, lx - 0.34, y + 0.06, lz - 0.32, lx + 0.34, y + 0.1, lz + 0.32, definition.side, definition.top, definition.bottom, [0.76, 0.9, 0.86], environment);
-          addTexturedCuboid(bucket, lx - 0.46, y + 0.06, lz - 0.46, lx + 0.46, y + 0.2, lz - 0.34, definition.side, definition.top, definition.bottom, tint, environment);
-          addTexturedCuboid(bucket, lx - 0.46, y + 0.06, lz + 0.34, lx + 0.46, y + 0.2, lz + 0.46, definition.side, definition.top, definition.bottom, tint, environment);
-          addTexturedCuboid(bucket, lx - 0.46, y + 0.06, lz - 0.34, lx - 0.34, y + 0.2, lz + 0.34, definition.side, definition.top, definition.bottom, tint, environment);
-          addTexturedCuboid(bucket, lx + 0.34, y + 0.06, lz - 0.34, lx + 0.46, y + 0.2, lz + 0.34, definition.side, definition.top, definition.bottom, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.34, y + 0.06, lz - 0.32, lx + 0.34, y + 0.1, lz + 0.32, definition.side, definition.top, definition.bottom, [0.76, 0.9, 0.86], environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.46, y + 0.06, lz - 0.46, lx + 0.46, y + 0.2, lz - 0.34, definition.side, definition.top, definition.bottom, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.46, y + 0.06, lz + 0.34, lx + 0.46, y + 0.2, lz + 0.46, definition.side, definition.top, definition.bottom, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.46, y + 0.06, lz - 0.34, lx - 0.34, y + 0.2, lz + 0.34, definition.side, definition.top, definition.bottom, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx + 0.34, y + 0.06, lz - 0.34, lx + 0.46, y + 0.2, lz + 0.34, definition.side, definition.top, definition.bottom, tint, environment);
           for (const [dx, dz] of [[-0.23, -0.22], [0.23, -0.22], [-0.23, 0.22], [0.23, 0.22]] as Array<[number, number]>) {
-            addTexturedCuboid(bucket, lx + dx - 0.08, y + 0.085, lz + dz - 0.08, lx + dx + 0.08, y + 0.12, lz + dz + 0.08, definition.side, definition.top, definition.bottom, [0.58, 0.76, 0.71], environment);
+            addFacingCuboid(bucket, lx, lz, facing, lx + dx - 0.08, y + 0.085, lz + dz - 0.08, lx + dx + 0.08, y + 0.12, lz + dz + 0.08, definition.side, definition.top, definition.bottom, [0.58, 0.76, 0.71], environment);
           }
           // Static frame for the state-driven Cave Gel reservoir.
-          addTexturedCuboid(bucket, lx - 0.3, y - 0.27, lz - 0.485, lx + 0.3, y - 0.21, lz - 0.43, definition.side, definition.top, definition.bottom, tint, environment);
-          addTexturedCuboid(bucket, lx - 0.3, y - 0.05, lz - 0.485, lx + 0.3, y + 0.01, lz - 0.43, definition.side, definition.top, definition.bottom, tint, environment);
-          addTexturedCuboid(bucket, lx - 0.3, y - 0.21, lz - 0.485, lx - 0.25, y - 0.05, lz - 0.43, definition.side, definition.top, definition.bottom, tint, environment);
-          addTexturedCuboid(bucket, lx + 0.25, y - 0.21, lz - 0.485, lx + 0.3, y - 0.05, lz - 0.43, definition.side, definition.top, definition.bottom, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.3, y - 0.27, lz - 0.485, lx + 0.3, y - 0.21, lz - 0.43, definition.side, definition.top, definition.bottom, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.3, y - 0.05, lz - 0.485, lx + 0.3, y + 0.01, lz - 0.43, definition.side, definition.top, definition.bottom, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.3, y - 0.21, lz - 0.485, lx - 0.25, y - 0.05, lz - 0.43, definition.side, definition.top, definition.bottom, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx + 0.25, y - 0.21, lz - 0.485, lx + 0.3, y - 0.05, lz - 0.43, definition.side, definition.top, definition.bottom, tint, environment);
           continue;
         }
         if (definition.shape === "cartography") {
           const environment = shadeAt(lx, y, lz);
-          addTexturedCuboid(bucket, lx - 0.5, y + 0.21, lz - 0.5, lx + 0.5, y + 0.45, lz + 0.5, definition.side, definition.top, definition.bottom, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.5, y + 0.21, lz - 0.5, lx + 0.5, y + 0.45, lz + 0.5, definition.side, definition.top, definition.bottom, tint, environment);
           for (const [dx, dz] of [[-0.42, -0.42], [0.28, -0.42], [-0.42, 0.28], [0.28, 0.28]] as Array<[number, number]>) {
-            addTexturedCuboid(bucket, lx + dx, y - 0.5, lz + dz, lx + dx + 0.14, y + 0.22, lz + dz + 0.14, definition.side, definition.top, definition.bottom, tint, environment);
+            addFacingCuboid(bucket, lx, lz, facing, lx + dx, y - 0.5, lz + dz, lx + dx + 0.14, y + 0.22, lz + dz + 0.14, definition.side, definition.top, definition.bottom, tint, environment);
           }
           continue;
         }
         if (definition.shape === "alchemy") {
           const environment = shadeAt(lx, y, lz);
-          addTexturedCuboid(bucket, lx - 0.42, y - 0.5, lz - 0.42, lx + 0.42, y - 0.36, lz + 0.42, 98, 98, 3, tint, environment);
-          addTexturedCuboid(bucket, lx - 0.09, y - 0.36, lz - 0.09, lx + 0.09, y + 0.33, lz + 0.09, 98, 98, 98, tint, environment);
-          addTexturedCuboid(bucket, lx - 0.38, y + 0.18, lz - 0.08, lx + 0.38, y + 0.3, lz + 0.08, 98, 98, 98, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.42, y - 0.5, lz - 0.42, lx + 0.42, y - 0.36, lz + 0.42, 98, 98, 3, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.09, y - 0.36, lz - 0.09, lx + 0.09, y + 0.33, lz + 0.09, 98, 98, 98, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.38, y + 0.18, lz - 0.08, lx + 0.38, y + 0.3, lz + 0.08, 98, 98, 98, tint, environment);
           for (const x of [lx - 0.29, lx, lx + 0.29]) {
-            addTexturedCuboid(buckets.emissive, x - 0.09, y - 0.1, lz - 0.11, x + 0.09, y + 0.17, lz + 0.11, 98, 98, 98, [1, 1, 1], 1);
+            addFacingCuboid(buckets.emissive, lx, lz, facing, x - 0.09, y - 0.1, lz - 0.11, x + 0.09, y + 0.17, lz + 0.11, 98, 98, 98, [1, 1, 1], 1);
           }
           continue;
         }
         if (definition.shape === "sugarworks") {
           const environment = shadeAt(lx, y, lz);
-          addTexturedCuboid(bucket, lx - 0.47, y - 0.5, lz - 0.43, lx + 0.47, y - 0.35, lz + 0.43, 143, 143, 135, tint, environment);
-          addTexturedCuboid(bucket, lx - 0.4, y - 0.35, lz - 0.36, lx + 0.4, y + 0.18, lz + 0.36, 143, 143, 135, tint, environment);
-          addTexturedCuboid(bucket, lx - 0.34, y + 0.18, lz - 0.31, lx + 0.34, y + 0.31, lz + 0.31, 143, 143, 143, [1, 1, 1], environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.47, y - 0.5, lz - 0.43, lx + 0.47, y - 0.35, lz + 0.43, 143, 143, 135, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.4, y - 0.35, lz - 0.36, lx + 0.4, y + 0.18, lz + 0.36, 143, 143, 135, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.34, y + 0.18, lz - 0.31, lx + 0.34, y + 0.31, lz + 0.31, 143, 143, 143, [1, 1, 1], environment);
           for (const x of [lx - 0.24, lx + 0.13]) {
-            addTexturedCuboid(bucket, x, y - 0.09, lz - 0.5, x + 0.11, y + 0.39, lz - 0.35, 143, 143, 143, [1, 1, 1], environment);
+            addFacingCuboid(bucket, lx, lz, facing, x, y - 0.09, lz - 0.5, x + 0.11, y + 0.39, lz - 0.35, 143, 143, 143, [1, 1, 1], environment);
           }
-          addTexturedCuboid(buckets.transparent, lx - 0.22, y + 0.29, lz - 0.22, lx + 0.22, y + 0.35, lz + 0.22, 136, 136, 136, [1, 1, 1], 1);
-          addTexturedCuboid(buckets.emissive, lx + 0.24, y + 0.31, lz - 0.08, lx + 0.32, y + 0.48, lz + 0.08, 143, 143, 143, [1, 1, 1], 1);
+          addFacingCuboid(buckets.transparent, lx, lz, facing, lx - 0.22, y + 0.29, lz - 0.22, lx + 0.22, y + 0.35, lz + 0.22, 136, 136, 136, [1, 1, 1], 1);
+          addFacingCuboid(buckets.emissive, lx, lz, facing, lx + 0.24, y + 0.31, lz - 0.08, lx + 0.32, y + 0.48, lz + 0.08, 143, 143, 143, [1, 1, 1], 1);
           continue;
         }
         if (definition.shape === "gold-pile") {
@@ -5693,59 +5858,59 @@ export class ChunkWorld {
         }
         if (definition.shape === "incubator") {
           const environment = shadeAt(lx, y, lz);
-          addTexturedCuboid(bucket, lx - 0.48, y - 0.5, lz - 0.48, lx + 0.48, y - 0.31, lz + 0.48, 50, 51, 43, [1, 1, 1], environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.48, y - 0.5, lz - 0.48, lx + 0.48, y - 0.31, lz + 0.48, 50, 51, 43, [1, 1, 1], environment);
           for (const [dx, dz] of [[-0.43, -0.43], [0.31, -0.43], [-0.43, 0.31], [0.31, 0.31]] as Array<[number, number]>) {
-            addTexturedCuboid(bucket, lx + dx, y - 0.31, lz + dz, lx + dx + 0.12, y + 0.37, lz + dz + 0.12, 50, 50, 43, [1, 1, 1], environment);
+            addFacingCuboid(bucket, lx, lz, facing, lx + dx, y - 0.31, lz + dz, lx + dx + 0.12, y + 0.37, lz + dz + 0.12, 50, 50, 43, [1, 1, 1], environment);
           }
-          addTexturedCuboid(buckets.transparent, lx - 0.34, y - 0.27, lz - 0.34, lx + 0.34, y + 0.3, lz + 0.34, 13, 13, 13, [1, 1, 1], 1);
-          addTexturedCuboid(buckets.emissive, lx - 0.16, y - 0.18, lz - 0.16, lx + 0.16, y + 0.15, lz + 0.16, 51, 51, 51, [1, 1, 1], 1);
-          addTexturedCuboid(bucket, lx - 0.43, y + 0.34, lz - 0.43, lx + 0.43, y + 0.47, lz + 0.43, 50, 51, 43, [1, 1, 1], environment);
+          addFacingCuboid(buckets.transparent, lx, lz, facing, lx - 0.34, y - 0.27, lz - 0.34, lx + 0.34, y + 0.3, lz + 0.34, 13, 13, 13, [1, 1, 1], 1);
+          addFacingCuboid(buckets.emissive, lx, lz, facing, lx - 0.16, y - 0.18, lz - 0.16, lx + 0.16, y + 0.15, lz + 0.16, 51, 51, 51, [1, 1, 1], 1);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.43, y + 0.34, lz - 0.43, lx + 0.43, y + 0.47, lz + 0.43, 50, 51, 43, [1, 1, 1], environment);
           continue;
         }
         if (definition.shape === "archive-shelf") {
           const environment = shadeAt(lx, y, lz);
-          for (const x of [lx - 0.48, lx + 0.36]) addTexturedCuboid(bucket, x, y - 0.5, lz - 0.22, x + 0.12, y + 0.48, lz + 0.22, 127, 127, 11, tint, environment);
-          for (const shelfY of [y - 0.45, y - 0.03, y + 0.39]) addTexturedCuboid(bucket, lx - 0.48, shelfY, lz - 0.24, lx + 0.48, shelfY + 0.1, lz + 0.24, 127, 127, 11, tint, environment);
+          for (const x of [lx - 0.48, lx + 0.36]) addFacingCuboid(bucket, lx, lz, facing, x, y - 0.5, lz - 0.22, x + 0.12, y + 0.48, lz + 0.22, 127, 127, 11, tint, environment);
+          for (const shelfY of [y - 0.45, y - 0.03, y + 0.39]) addFacingCuboid(bucket, lx, lz, facing, lx - 0.48, shelfY, lz - 0.24, lx + 0.48, shelfY + 0.1, lz + 0.24, 127, 127, 11, tint, environment);
           const visibleTomes = archiveShelfBookCount(type) ?? 0;
           for (let index = 0; index < visibleTomes; index += 1) {
             const tier = Math.floor(index / 3);
             const x = lx - 0.34 + (index % 3) * 0.27;
             const tomeTile = [45, 48, 35][index % 3];
             const baseY = y - 0.34 + tier * 0.42;
-            addTexturedCuboid(bucket, x, baseY, lz - 0.27, x + 0.17, baseY + 0.29, lz - 0.08, tomeTile, tomeTile, tomeTile, [1, 1, 1], environment);
+            addFacingCuboid(bucket, lx, lz, facing, x, baseY, lz - 0.27, x + 0.17, baseY + 0.29, lz - 0.08, tomeTile, tomeTile, tomeTile, [1, 1, 1], environment);
           }
           continue;
         }
         if (definition.shape === "tome-display") {
           const environment = shadeAt(lx, y, lz);
-          addTexturedCuboid(bucket, lx - 0.38, y - 0.5, lz - 0.33, lx + 0.38, y - 0.35, lz + 0.33, 11, 11, 11, tint, environment);
-          addTexturedCuboid(bucket, lx - 0.09, y - 0.35, lz - 0.09, lx + 0.09, y + 0.08, lz + 0.09, 127, 127, 11, tint, environment);
-          addTexturedCuboid(bucket, lx - 0.34, y + 0.08, lz - 0.28, lx + 0.34, y + 0.19, lz + 0.28, 127, 127, 11, tint, environment);
-          addTexturedCuboid(bucket, lx - 0.28, y + 0.19, lz - 0.22, lx + 0.28, y + 0.3, lz + 0.22, 45, 45, 45, [1, 1, 1], environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.38, y - 0.5, lz - 0.33, lx + 0.38, y - 0.35, lz + 0.33, 11, 11, 11, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.09, y - 0.35, lz - 0.09, lx + 0.09, y + 0.08, lz + 0.09, 127, 127, 11, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.34, y + 0.08, lz - 0.28, lx + 0.34, y + 0.19, lz + 0.28, 127, 127, 11, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.28, y + 0.19, lz - 0.22, lx + 0.28, y + 0.3, lz + 0.22, 45, 45, 45, [1, 1, 1], environment);
           continue;
         }
         if (definition.shape === "wayshrine") {
           const environment = shadeAt(lx, y, lz);
-          addTexturedCuboid(buckets.opaque, lx - 0.46, y - 0.5, lz - 0.46, lx + 0.46, y - 0.28, lz + 0.46, 97, 97, 3, [0.82, 0.9, 0.88], environment);
-          addTexturedCuboid(buckets.opaque, lx - 0.27, y - 0.28, lz - 0.22, lx + 0.27, y + 0.34, lz + 0.22, 99, 99, 99, [0.72, 0.82, 0.8], environment);
-          addTexturedCuboid(buckets.emissive, lx - 0.12, y - 0.04, lz - 0.235, lx + 0.12, y + 0.22, lz - 0.205, 99, 99, 99, [1, 1, 1], 1);
-          addTexturedCuboid(buckets.opaque, lx - 0.36, y + 0.34, lz - 0.3, lx + 0.36, y + 0.48, lz + 0.3, 97, 99, 97, [0.86, 0.92, 0.9], environment);
+          addFacingCuboid(buckets.opaque, lx, lz, facing, lx - 0.46, y - 0.5, lz - 0.46, lx + 0.46, y - 0.28, lz + 0.46, 97, 97, 3, [0.82, 0.9, 0.88], environment);
+          addFacingCuboid(buckets.opaque, lx, lz, facing, lx - 0.27, y - 0.28, lz - 0.22, lx + 0.27, y + 0.34, lz + 0.22, 99, 99, 99, [0.72, 0.82, 0.8], environment);
+          addFacingCuboid(buckets.emissive, lx, lz, facing, lx - 0.12, y - 0.04, lz - 0.235, lx + 0.12, y + 0.22, lz - 0.205, 99, 99, 99, [1, 1, 1], 1);
+          addFacingCuboid(buckets.opaque, lx, lz, facing, lx - 0.36, y + 0.34, lz - 0.3, lx + 0.36, y + 0.48, lz + 0.3, 97, 99, 97, [0.86, 0.92, 0.9], environment);
           continue;
         }
         if (definition.shape === "distillery") {
           const environment = shadeAt(lx, y, lz);
-          addTexturedCuboid(bucket, lx - 0.42, y - 0.48, lz - 0.4, lx + 0.42, y + 0.3, lz + 0.4, 91, 92, 11, tint, environment);
-          for (const ringY of [y - 0.28, y + 0.12]) addTexturedCuboid(bucket, lx - 0.45, ringY, lz - 0.43, lx + 0.45, ringY + 0.08, lz + 0.43, 97, 97, 97, [0.86, 0.74, 0.5], environment);
-          addTexturedCuboid(bucket, lx - 0.07, y - 0.03, lz - 0.5, lx + 0.07, y + 0.12, lz - 0.39, 97, 97, 97, [0.9, 0.75, 0.45], environment);
-          addTexturedCuboid(bucket, lx - 0.13, y + 0.3, lz - 0.13, lx + 0.13, y + 0.49, lz + 0.13, 91, 92, 11, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.42, y - 0.48, lz - 0.4, lx + 0.42, y + 0.3, lz + 0.4, 91, 92, 11, tint, environment);
+          for (const ringY of [y - 0.28, y + 0.12]) addFacingCuboid(bucket, lx, lz, facing, lx - 0.45, ringY, lz - 0.43, lx + 0.45, ringY + 0.08, lz + 0.43, 97, 97, 97, [0.86, 0.74, 0.5], environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.07, y - 0.03, lz - 0.5, lx + 0.07, y + 0.12, lz - 0.39, 97, 97, 97, [0.9, 0.75, 0.45], environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.13, y + 0.3, lz - 0.13, lx + 0.13, y + 0.49, lz + 0.13, 91, 92, 11, tint, environment);
           continue;
         }
         if (["table", "stool", "shelf", "barrel"].includes(definition.shape ?? "")) {
           const environment = shadeAt(lx, y, lz);
           if (definition.shape === "table") {
-            addTexturedCuboid(bucket, lx - 0.48, y + 0.22, lz - 0.42, lx + 0.48, y + 0.42, lz + 0.42, definition.side, definition.top, definition.bottom, tint, environment);
+            addFacingCuboid(bucket, lx, lz, facing, lx - 0.48, y + 0.22, lz - 0.42, lx + 0.48, y + 0.42, lz + 0.42, definition.side, definition.top, definition.bottom, tint, environment);
             for (const [dx, dz] of [[-0.4, -0.34], [0.28, -0.34], [-0.4, 0.22], [0.28, 0.22]] as Array<[number, number]>) {
-              addTexturedCuboid(bucket, lx + dx, y - 0.5, lz + dz, lx + dx + 0.12, y + 0.23, lz + dz + 0.12, definition.side, definition.top, definition.bottom, tint, environment);
+              addFacingCuboid(bucket, lx, lz, facing, lx + dx, y - 0.5, lz + dz, lx + dx + 0.12, y + 0.23, lz + dz + 0.12, definition.side, definition.top, definition.bottom, tint, environment);
             }
           } else if (definition.shape === "stool") {
             addTexturedCuboid(bucket, lx - 0.34, y - 0.03, lz - 0.34, lx + 0.34, y + 0.14, lz + 0.34, definition.side, definition.top, definition.bottom, tint, environment);
@@ -5753,8 +5918,8 @@ export class ChunkWorld {
               addTexturedCuboid(bucket, lx + dx, y - 0.5, lz + dz, lx + dx + 0.1, y - 0.02, lz + dz + 0.1, definition.side, definition.top, definition.bottom, tint, environment);
             }
           } else if (definition.shape === "shelf") {
-            for (const x of [lx - 0.47, lx + 0.35]) addTexturedCuboid(bucket, x, y - 0.5, lz - 0.18, x + 0.12, y + 0.48, lz + 0.18, definition.side, definition.top, definition.bottom, tint, environment);
-            for (const shelfY of [y - 0.42, y - 0.02, y + 0.38]) addTexturedCuboid(bucket, lx - 0.47, shelfY, lz - 0.2, lx + 0.47, shelfY + 0.1, lz + 0.2, definition.side, definition.top, definition.bottom, tint, environment);
+            for (const x of [lx - 0.47, lx + 0.35]) addFacingCuboid(bucket, lx, lz, facing, x, y - 0.5, lz - 0.18, x + 0.12, y + 0.48, lz + 0.18, definition.side, definition.top, definition.bottom, tint, environment);
+            for (const shelfY of [y - 0.42, y - 0.02, y + 0.38]) addFacingCuboid(bucket, lx, lz, facing, lx - 0.47, shelfY, lz - 0.2, lx + 0.47, shelfY + 0.1, lz + 0.2, definition.side, definition.top, definition.bottom, tint, environment);
           } else {
             addTexturedCuboid(bucket, lx - 0.4, y - 0.48, lz - 0.4, lx + 0.4, y + 0.46, lz + 0.4, definition.side, definition.top, definition.bottom, tint, environment);
             for (const ringY of [y - 0.32, y + 0.26]) addTexturedCuboid(bucket, lx - 0.44, ringY, lz - 0.44, lx + 0.44, ringY + 0.08, lz + 0.44, 97, 97, 97, [0.82, 0.75, 0.6], environment);
@@ -5763,11 +5928,11 @@ export class ChunkWorld {
         }
         if (definition.shape === "chair") {
           const environment = shadeAt(lx, y, lz);
-          addTexturedCuboid(bucket, lx - 0.37, y - 0.08, lz - 0.34, lx + 0.37, y + 0.08, lz + 0.34, 11, 11, 11, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.37, y - 0.08, lz - 0.34, lx + 0.37, y + 0.08, lz + 0.34, 11, 11, 11, tint, environment);
           for (const [dx, dz] of [[-0.32, -0.29], [0.22, -0.29], [-0.32, 0.19], [0.22, 0.19]] as Array<[number, number]>) {
-            addTexturedCuboid(bucket, lx + dx, y - 0.5, lz + dz, lx + dx + 0.1, y - 0.07, lz + dz + 0.1, 11, 11, 11, tint, environment);
+            addFacingCuboid(bucket, lx, lz, facing, lx + dx, y - 0.5, lz + dz, lx + dx + 0.1, y - 0.07, lz + dz + 0.1, 11, 11, 11, tint, environment);
           }
-          addTexturedCuboid(bucket, lx - 0.37, y + 0.08, lz + 0.24, lx + 0.37, y + 0.48, lz + 0.36, 11, 11, 11, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.37, y + 0.08, lz + 0.24, lx + 0.37, y + 0.48, lz + 0.36, 11, 11, 11, tint, environment);
           continue;
         }
         if (definition.shape === "fence" || definition.shape === "gate") {
@@ -5832,32 +5997,21 @@ export class ChunkWorld {
         }
         if (definition.shape === "chest") {
           const environment = shadeAt(lx, y, lz);
-          const joinsWest = neighborAt(lx - 1, y, lz) === BlockId.Chest;
-          const joinsEast = neighborAt(lx + 1, y, lz) === BlockId.Chest;
-          const joinsNorth = !joinsWest && !joinsEast && neighborAt(lx, y, lz - 1) === BlockId.Chest;
-          const joinsSouth = !joinsWest && !joinsEast && neighborAt(lx, y, lz + 1) === BlockId.Chest;
+          const right = blockFacingRight(facing);
+          const sameFacingChest = (dx: number, dz: number) => neighborAt(lx + dx, y, lz + dz) === BlockId.Chest
+            && this.blockFacingAt(worldX + dx, y, worldZ + dz) === facing;
+          const joinsLeft = sameFacingChest(-right.x, -right.z);
+          const joinsRight = sameFacingChest(right.x, right.z);
           // Close the cosmetic air seam between paired standing chests. The
           // open runtime model uses the same continuous footprint, so opening
           // a double chest no longer changes its apparent overall size.
-          const bodyX0 = lx - (joinsWest ? 0.5 : 0.44);
-          const bodyX1 = lx + (joinsEast ? 0.5 : 0.44);
-          const bodyZ0 = lz - (joinsNorth ? 0.5 : 0.44);
-          const bodyZ1 = lz + (joinsSouth ? 0.5 : 0.44);
-          const lidX0 = lx - (joinsWest ? 0.5 : 0.46);
-          const lidX1 = lx + (joinsEast ? 0.5 : 0.46);
-          const lidZ0 = lz - (joinsNorth ? 0.5 : 0.46);
-          const lidZ1 = lz + (joinsSouth ? 0.5 : 0.46);
-          const addChestCuboid = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, frontTile = definition.side) => {
-            addQuad(bucket, [[x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]], [1, 0, 0], definition.side, 0.82, tint, 0, 0, 0, 0, environment);
-            addQuad(bucket, [[x0, y0, z1], [x0, y1, z1], [x0, y1, z0], [x0, y0, z0]], [-1, 0, 0], definition.side, 0.72, tint, 0, 0, 0, 0, environment);
-            addQuad(bucket, [[x0, y1, z0], [x0, y1, z1], [x1, y1, z1], [x1, y1, z0]], [0, 1, 0], definition.top, 1, tint, 0, 0, 0, 0, environment);
-            addQuad(bucket, [[x0, y0, z1], [x0, y0, z0], [x1, y0, z0], [x1, y0, z1]], [0, -1, 0], definition.bottom, 0.55, tint, 0, 0, 0, 0, environment);
-            addQuad(bucket, [[x1, y0, z1], [x1, y1, z1], [x0, y1, z1], [x0, y0, z1]], [0, 0, 1], definition.side, 0.9, tint, 0, 0, 0, 0, environment);
-            addQuad(bucket, [[x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [x1, y0, z0]], [0, 0, -1], frontTile, 0.82, tint, 0, 0, 0, 0, environment);
-          };
-          addChestCuboid(bodyX0, y - 0.5, bodyZ0, bodyX1, y + 0.13, bodyZ1, definition.top);
-          addChestCuboid(lidX0, y + 0.16, lidZ0, lidX1, y + 0.37, lidZ1, definition.top);
-          addChestCuboid(lx - 0.09, y + 0.03, lz - 0.49, lx + 0.09, y + 0.24, lz - 0.425, definition.top);
+          const bodyX0 = lx - (joinsLeft ? 0.5 : 0.44);
+          const bodyX1 = lx + (joinsRight ? 0.5 : 0.44);
+          const lidX0 = lx - (joinsLeft ? 0.5 : 0.46);
+          const lidX1 = lx + (joinsRight ? 0.5 : 0.46);
+          addFacingCuboid(bucket, lx, lz, facing, bodyX0, y + CHEST_VISUAL.bodyBottom, lz - CHEST_VISUAL.bodyDepth / 2, bodyX1, y + CHEST_VISUAL.bodyTop, lz + CHEST_VISUAL.bodyDepth / 2, definition.side, definition.top, definition.bottom, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lidX0, y + CHEST_VISUAL.lidBottom, lz - CHEST_VISUAL.lidDepth / 2, lidX1, y + CHEST_VISUAL.lidTop, lz + CHEST_VISUAL.lidDepth / 2, definition.side, definition.top, definition.bottom, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - CHEST_VISUAL.latchWidth / 2, y + CHEST_VISUAL.latchBottom, lz + CHEST_VISUAL.latchCenterZ - CHEST_VISUAL.latchDepth / 2, lx + CHEST_VISUAL.latchWidth / 2, y + CHEST_VISUAL.latchTop, lz + CHEST_VISUAL.latchCenterZ + CHEST_VISUAL.latchDepth / 2, DRAGON_HOARD_GOLD_TILE, DRAGON_HOARD_GOLD_TILE, DRAGON_HOARD_GOLD_TILE, tint, environment);
           continue;
         }
         if (definition.shape === "door") {
@@ -5929,6 +6083,15 @@ export class ChunkWorld {
             const boardZ1 = dz > 0 ? lz + 0.49 : dz < 0 ? lz - 0.39 : lz + 0.46;
             addCuboid(boardX0, y - 0.5, boardZ0, boardX1, y + 0.31, boardZ1, 62, 62, 11);
           }
+          continue;
+        }
+        if (type === BlockId.Furnace) {
+          const environment = shadeAt(lx, y, lz);
+          // Furnace masonry is neutral on three sides; one shallow face plate
+          // carries the authored furnace-front atlas tile and rotates with the
+          // builder's placement facing.
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.5, y - 0.5, lz - 0.5, lx + 0.5, y + 0.5, lz + 0.5, definition.bottom, definition.top, definition.bottom, tint, environment);
+          addFacingCuboid(bucket, lx, lz, facing, lx - 0.43, y - 0.4, lz - 0.506, lx + 0.43, y + 0.4, lz - 0.499, definition.side, definition.side, definition.side, tint, environment);
           continue;
         }
         for (const face of FACES) {

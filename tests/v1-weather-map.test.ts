@@ -4,7 +4,9 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { MapPanel } from "../app/game/HearthroadsPanels.tsx";
+import { MinimapHud, NavigationHud } from "../app/game/NavigationHud.tsx";
 import {
+  constrainMapViewState,
   createCartographySession,
   createMapKnowledge,
   createMapViewState,
@@ -25,7 +27,7 @@ import {
   shareMapsAtCartographyTable,
   stepMapZoom,
 } from "../app/game/map-system.ts";
-import { centeredPoiCompassEntry } from "../app/game/navigation.ts";
+import { centeredPoiCompassEntry, compassEntries, navigationTargets } from "../app/game/navigation.ts";
 import {
   celestialVisibilityThroughClouds,
   cloudCelestialOcclusion,
@@ -104,6 +106,15 @@ test("map zoom and pan retain the same x/z chunk coordinate system", () => {
   assert.equal(mapChunkAtViewportPoint(20, 200, { minX: -10, maxX: 10, minZ: -20, maxZ: 20 }, 800, 400), null);
 });
 
+test("map panning is clamped so known terrain cannot be dragged out of the canvas", () => {
+  const base = { minX: -10, maxX: 10, minZ: -8, maxZ: 8 };
+  assert.deepEqual(constrainMapViewState(base, panMapView(createMapViewState(), 500, -500)), createMapViewState());
+  const close = constrainMapViewState(base, panMapView({ ...createMapViewState(), zoom: 4 }, 500, -500));
+  assert.equal(close.panX, 7.5);
+  assert.equal(close.panZ, -6);
+  assert.deepEqual(mapViewportBounds(base, close), { minX: 5, maxX: 10, minZ: -8, maxZ: -4 });
+});
+
 test("detailed map sampling gives water precedence and culls offscreen chunks", () => {
   assert.equal(mapSurfaceQuadrantColor(["#777777", "#888888", "#999999", "#aaaaaa"], true), MAP_WATER_SURFACE_COLOR);
   assert.notEqual(mapSurfaceQuadrantColor(["#777777", "#888888", "#999999", "#aaaaaa"], false), MAP_WATER_SURFACE_COLOR);
@@ -122,6 +133,37 @@ test("the Wayfinder names only a POI aimed beneath the center notch", () => {
   ]);
   assert.equal(focused?.id, "poi:center");
   assert.equal(centeredPoiCompassEntry([{ id: "poi:off", label: "Old Cairn", kind: "poi", offsetPercent: 56, distance: 20, tracked: false, glyph: "◆" }]), null);
+});
+
+test("a tracked destination remains on the HUD at any distance and clamps behind the player to an edge", () => {
+  const markers = [{
+    id: "manual:far-camp",
+    kind: "manual" as const,
+    name: "Far Camp",
+    position: { x: 0, y: 30, z: 8_000 },
+    discoveredAt: 1,
+    updatedAt: 1,
+    discoveredBy: "player",
+    ownerId: "player",
+    icon: "pin",
+  }];
+  const entries = compassEntries(0, { x: 0, y: 30, z: 0 }, navigationTargets(markers, [], "manual:far-camp"));
+  const tracked = entries.find((entry) => entry.id === "manual:far-camp");
+  assert.ok(tracked);
+  assert.equal(tracked.distance, 8_000);
+  assert.ok(tracked.edge === "left" || tracked.edge === "right");
+  assert.ok(tracked.offsetPercent <= 6 || tracked.offsetPercent >= 94);
+  const markup = renderToStaticMarkup(createElement(NavigationHud, {
+    headingRadians: 0,
+    position: { x: 0, y: 30, z: 0 },
+    markers,
+    players: [],
+    trackedId: "manual:far-camp",
+    onTrack: () => undefined,
+  }));
+  assert.match(markup, /Far Camp/);
+  assert.match(markup, /edge-(left|right)/u);
+  assert.match(markup, /Far Camp[\s\S]*8,?000m/u);
 });
 
 test("map panel renders biome colors, zoom controls, headings, and other players", () => {
@@ -148,12 +190,15 @@ test("map panel renders biome colors, zoom controls, headings, and other players
       onRemoveManualMarker: () => undefined,
       onRenameMarker: () => undefined,
       onBeginFastTravel: () => undefined,
+      minimapEnabled: true,
+      onMinimapEnabledChange: () => undefined,
     }),
   );
   assert.match(markup, /Pan map north/);
   assert.match(markup, /Zoom map in/);
   assert.match(markup, /Current map zoom/);
   assert.match(markup, /Detailed terrain/);
+  assert.match(markup, /HUD minimap/);
   assert.match(markup, /aria-pressed="true"/);
   assert.match(markup, /<canvas class="hearthroads-map-terrain"/);
   assert.doesNotMatch(markup, /hearthroads-map-chunk-group/);
@@ -161,6 +206,24 @@ test("map panel renders biome colors, zoom controls, headings, and other players
   assert.equal(mapTerrainPalette(21).fill, "#c46fa5");
   assert.match(markup, /Trailfriend/);
   assert.match(markup, /rotate\(-1\.5707963267948966rad\)/, "clockwise world turns rotate clockwise on the map rather than mirroring");
+});
+
+test("the optional minimap renders a bounded north-up canvas and tracked target", () => {
+  const knowledge = markChunksRendered(createMapKnowledge("minimap", "local"), [
+    { x: 0, z: 0, biome: 3 },
+    { x: 1, z: 0, biome: 1 },
+  ]);
+  const markup = renderToStaticMarkup(createElement(MinimapHud, {
+    knowledge,
+    headingRadians: Math.PI / 2,
+    position: { x: 8, y: 40, z: 8 },
+    players: [],
+    trackedId: null,
+  }));
+  assert.match(markup, /class="world-minimap"/u);
+  assert.match(markup, /<canvas/u);
+  assert.match(markup, />N<\/span>/u);
+  assert.match(markup, /LOCAL MAP/u);
 });
 
 test("large explored maps retain one bounded terrain canvas instead of per-chunk DOM", () => {

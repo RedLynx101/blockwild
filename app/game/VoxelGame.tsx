@@ -111,7 +111,7 @@ import {
   explorationShowsDistantPoiLabels,
   explorationTracksAtAnyDistance,
 } from "./skills";
-import { NavigationHud, StatusEffectsHud } from "./NavigationHud";
+import { MinimapHud, NavigationHud, StatusEffectsHud } from "./NavigationHud";
 import { statusEffectViewsFromBuffs } from "./status-effects";
 import { WaygridCreaturePanel, WaygridItemPanel } from "./WaygridPanels";
 import { CharacterStudio } from "./CharacterStudio";
@@ -446,6 +446,9 @@ export type OrbRackHudState = {
 
 export type HealingStationHudState = OrbRackHudState & {
   gelUnits?: number;
+  gelFuelSeconds?: number;
+  gelFuelMaxSeconds?: number;
+  fuelActive?: boolean;
   healClock?: number;
   healIntervalSeconds?: number;
   healingProgress?: readonly number[];
@@ -563,7 +566,7 @@ export function healingProgressForOrb(slot: InventorySlot | null | undefined, st
   if (specimen.fullyHealed) return 1;
   const explicit = state?.healingProgress?.[index];
   if (explicit !== undefined) return normalizedProgress(explicit);
-  return normalizedProgress(finiteNumber(state?.healClock) / Math.max(1, finiteNumber(state?.healIntervalSeconds, 10)));
+  return normalizedProgress(finiteNumber(state?.healClock) / Math.max(1, finiteNumber(state?.healIntervalSeconds, 20)));
 }
 
 function workstationAuditOrb(kind: MobKind, name: string, health: number, maxHealth: number): InventorySlot {
@@ -613,6 +616,7 @@ export const INITIAL_GAME_SETTINGS: Readonly<GameSettings> = Object.freeze({
   renderDistance: 10,
   simulationDistance: 8,
   showFps: false,
+  showMinimap: false,
   showBreakingTexture: true,
   showBreakProgress: false,
   showToolEffectiveness: true,
@@ -889,6 +893,7 @@ export function itemIconKind(item: ItemCode) {
   if (definition?.useKind === "spell-tome") return "tome";
   switch (item) {
     case BlockId.CraftingTable: return "crafting-table";
+    case BlockId.CrystalBlock: return "star-crystal-block";
     case BlockId.Torch: return "torch";
     case BlockId.RedFlower: return "world-flora-red";
     case BlockId.BlueFlower: return "world-flora-blue";
@@ -908,7 +913,7 @@ export function itemIconKind(item: ItemCode) {
     case Item.RawGold: return "ore-chunk";
     case Item.IronIngot:
     case Item.GoldIngot: return "ingot";
-    case Item.CrystalShard: return "crystal";
+    case Item.CrystalShard: return "star-crystal";
     case Item.Berry: return "berries";
     case Item.Apple: return "apple";
     case Item.Bread: return "bread";
@@ -929,6 +934,7 @@ export function itemIconKind(item: ItemCode) {
     case Item.Sailboat: return "sailboat";
     case Item.CreatureCage: return "capture-orb";
     case Item.Banana: return "banana";
+    case Item.Shellfruit: return "shellfruit";
     case Item.Feather: return "feather";
     case Item.RawFish: return "fish-raw";
     case Item.CookedFish: return "fish-cooked";
@@ -957,7 +963,7 @@ export function itemHoverText(slot: InventorySlot | null, fallback = "Empty slot
   const details = [inventorySlotDisplayName(slot)];
   if (definition?.food) details.push(`Food +${definition.food}`);
   if (definition?.damage) details.push(`${definition.damage} attack damage`);
-  if (slot.item === Item.CaveGel) details.push("Optional Healing Station fuel: each unit powers one extra 1-health pulse; also used in alchemy");
+  if (slot.item === Item.CaveGel) details.push("Healing Station fuel: one unit powers 10× healing hits for 10 active minutes; the timer pauses while idle; also used in alchemy");
   const legendary = legendaryContractForItem(slot.item);
   if (legendary) details.push(`Legendary · ${legendary.infiniteDurability ? "Infinite durability" : `${slot.durability ?? definition?.maxDurability} durability`} · ${legendary.mechanic}`);
   else if (slot.durability !== undefined) details.push(`${slot.durability} durability`);
@@ -1768,6 +1774,14 @@ const DRAGON_ASSET_AUDIT_ITEMS = new Set<ItemCode>([
   Item.SteelScaleHelm, Item.SteelScalePlate, Item.SteelScaleGreaves, Item.SteelScaleBoots,
 ]);
 
+const RESOURCE_ASSET_AUDIT_ITEMS = new Set<ItemCode>([
+  Item.CrystalShard,
+  BlockId.CrystalBlock,
+  Item.Shellfruit,
+  BlockId.ShellfruitCrate,
+  Item.DeepgearLanternItem,
+]);
+
 export default function VoxelGame() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<VoxelEngine | null>(null);
@@ -1848,7 +1862,7 @@ export default function VoxelGame() {
   const [multiplayerState, setMultiplayerState] = useState<MultiplayerViewState>(EMPTY_MULTIPLAYER_STATE);
   const [multiplayerBusy, setMultiplayerBusy] = useState(false);
   const [multiplayerReturn, setMultiplayerReturn] = useState<"title" | "pause">("title");
-  const [iconAuditMode, setIconAuditMode] = useState<"all" | "tomes" | "dragons" | null>(null);
+  const [iconAuditMode, setIconAuditMode] = useState<"all" | "tomes" | "dragons" | "resources" | null>(null);
   const [civicAuditMode, setCivicAuditMode] = useState<CivicAuditMode | null>(null);
   const [heldAuditMode, setHeldAuditMode] = useState(false);
   const [spellWheelAuditMode, setSpellWheelAuditMode] = useState(false);
@@ -1865,7 +1879,7 @@ export default function VoxelGame() {
   useEffect(() => {
     const parameters = new URLSearchParams(window.location.search);
     const iconAudit = parameters.get("icon-audit");
-    setIconAuditMode(iconAudit === "tomes" ? "tomes" : iconAudit === "dragons" ? "dragons" : iconAudit === "1" ? "all" : null);
+    setIconAuditMode(iconAudit === "tomes" ? "tomes" : iconAudit === "dragons" ? "dragons" : iconAudit === "resources" ? "resources" : iconAudit === "1" ? "all" : null);
     setHeldAuditMode(parameters.get("held-audit") === "1");
     setSpellWheelAuditMode(parameters.get("spell-wheel-audit") === "empty");
     if (parameters.get("inventory-audit") === "1") {
@@ -2094,7 +2108,26 @@ export default function VoxelGame() {
       engine.advanceSimulation(milliseconds);
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
     };
-    if (initialWorld) engine.previewWorld(initialWorld.seed);
+    const auditParameters = new URLSearchParams(window.location.search);
+    const mapNavigationAudit = auditParameters.get("map-audit") === "1";
+    const chestAudit = auditParameters.get("chest-audit") === "open";
+    const placementAudit = auditParameters.get("placement-audit") === "1" || mapNavigationAudit || chestAudit;
+    if (placementAudit) {
+      engine.createWorld(mapNavigationAudit ? "MAP-NAVIGATION-AUDIT" : "DIRECTIONAL-PLACEMENT-AUDIT", "builder", { structures: false, weather: false, mobDensity: 0, butterflyDensity: 0 }, mapNavigationAudit ? "Map Navigation Audit" : "Directional Placement Audit");
+      const auditMarkerId = mapNavigationAudit ? engine.primeMapNavigationAudit(auditParameters.get("far-track") === "1") : null;
+      const auditChestKey = !mapNavigationAudit ? engine.primeDirectionalPlacementAudit() : null;
+      if (chestAudit && auditChestKey) engine.primeOpenChestAudit(auditChestKey);
+      startedRef.current = true;
+      overlayRef.current = mapNavigationAudit ? "map" : null;
+      window.queueMicrotask(() => {
+        setStarted(true);
+        setOverlayState(mapNavigationAudit ? "map" : null);
+        if (auditMarkerId) {
+          setSelectedMapMarkerId(auditMarkerId);
+          setTrackedNavigationId(auditMarkerId);
+        }
+      });
+    } else if (initialWorld) engine.previewWorld(initialWorld.seed);
     return () => {
       window.clearTimeout(toastTimerRef.current);
       engine.dispose();
@@ -2919,13 +2952,19 @@ export default function VoxelGame() {
     const healer = healing ? source as HealingStationHudState | null | undefined : null;
     const slots = Array.from({ length: healing ? 4 : 8 }, (_, index) => source?.slots?.[index] ?? null);
     const gelUnits = boundedInteger(healer?.gelUnits, 0, 64);
+    const gelFuelSeconds = Math.max(0, finiteNumber(healer?.gelFuelSeconds));
+    const gelFuelMaxSeconds = Math.max(1, finiteNumber(healer?.gelFuelMaxSeconds, 600));
+    const fuelActive = healer?.fuelActive === true && gelFuelSeconds > 0;
+    const fuelMinutes = Math.floor(gelFuelSeconds / 60);
+    const fuelSeconds = Math.floor(gelFuelSeconds % 60);
+    const activeFuelLabel = `${fuelMinutes}:${String(fuelSeconds).padStart(2, "0")}`;
     const title = healing ? "Healing Station" : "Capture Orb Rack";
     const titleId = healing ? "healing-station-title" : "orb-rack-title";
     return (
       <section className={`menu-overlay inventory-overlay workstation-overlay orb-station-overlay ${healing ? "healing-station-overlay" : "orb-rack-overlay"} ${audit ? "workstation-audit-overlay" : ""}`} aria-labelledby={titleId} onPointerMove={trackCursor}>
         <div className={`mc-window workstation-window orb-station-window ${healing ? "healing-station-window" : "orb-rack-window"}`}>
           <header className="mc-window-header workstation-header">
-            <div><span className="panel-eyebrow">{healing ? `RESTORATIVE FIELD LAB · ${gelUnits}/64 CAVE GEL` : "WAYKEEPER DISPLAY · EIGHT PRESERVED SPECIMENS"}</span><h2 id={titleId}>{title}</h2></div>
+            <div><span className="panel-eyebrow">{healing ? `RESTORATIVE FIELD LAB · ${gelUnits}/64 GEL BUFFER${fuelActive ? ` · ${activeFuelLabel} ACTIVE` : ""}` : "WAYKEEPER DISPLAY · EIGHT PRESERVED SPECIMENS"}</span><h2 id={titleId}>{title}</h2></div>
             {!audit && <button type="button" className="panel-close" onClick={resume} aria-label={`Close ${title.toLocaleLowerCase()}`}>×</button>}
           </header>
           {healing && <div className="healing-gel-status" aria-label={`${gelUnits} of 64 Cave Gel units`}>
@@ -2940,8 +2979,8 @@ export default function VoxelGame() {
               <ItemIcon item={Item.CaveGel} small />
               {gelUnits > 0 && <span className="item-count">{gelUnits}</span>}
             </button>
-            <span className="healing-gel-meter" aria-hidden="true"><i style={{ width: `${gelUnits / 64 * 100}%` }} /></span>
-            <div><small>CAVE GEL INPUT · OPTIONAL</small><strong>{gelUnits ? `${gelUnits} accelerated pulses stored` : "Healing still works without fuel"}</strong><p>Orbs recover 1 health every 20 seconds for free. Each Cave Gel powers one extra 1-health pulse for one wounded orb between those free pulses.</p></div>
+            <span className="healing-gel-meter" aria-hidden="true"><i style={{ width: `${fuelActive ? gelFuelSeconds / gelFuelMaxSeconds * 100 : gelUnits / 64 * 100}%` }} /></span>
+            <div><small>CAVE GEL BUFFER · OPTIONAL</small><strong>{fuelActive ? `10× field active · ${activeFuelLabel} remaining` : gelUnits ? `${gelUnits} full ten-minute charges buffered` : "Free healing remains available"}</strong><p>Every wounded orb receives the normal healing hit once per 20 seconds. Cave Gel makes each hit restore 10 health for 10 minutes of active healing; time pauses whenever no stored creature needs healing.</p></div>
           </div>}
           <div className="orb-specimen-grid">
             {slots.map((slot, index) => {
@@ -3292,7 +3331,7 @@ export default function VoxelGame() {
       <div className="sky-vignette" aria-hidden="true" />
 
       {started && overlay === null && (
-        <div className="game-hud" aria-live="polite">
+        <div className={`game-hud${settings.showMinimap ? " minimap-enabled" : ""}`} aria-live="polite">
           <div className="world-readout expanded-readout">
             <strong>DAY {hud.day}</strong>
             <span>{hud.clock}</span>
@@ -3309,6 +3348,15 @@ export default function VoxelGame() {
             trackAtAnyDistance={trackNavigationAtAnyDistance}
             onTrack={setTrackedNavigationId}
           />
+          {settings.showMinimap ? (
+            <MinimapHud
+              knowledge={hud.mapKnowledge}
+              headingRadians={hud.mapHeading}
+              position={currentPosition}
+              players={hud.mapPlayers}
+              trackedId={trackedNavigationId}
+            />
+          ) : null}
           <StatusEffectsHud effects={activeStatusEffects} />
           <div className="pinned-quest-stack" aria-label={`${pinnedQuestEntries.length} pinned quests`}>
             {pinnedQuestEntries.length ? pinnedQuestEntries.map(({ definition, progress }, index) => (
@@ -3973,6 +4021,8 @@ export default function VoxelGame() {
             alwaysShowPoiLabels={showDistantPoiLabels}
             trackedTargetId={trackedNavigationId}
             onTrackTarget={setTrackedNavigationId}
+            minimapEnabled={settings.showMinimap}
+            onMinimapEnabledChange={(enabled) => updateSettings({ showMinimap: enabled })}
             selectedMarkerId={selectedMapMarkerId}
             onSelectMarker={setSelectedMapMarkerId}
             onAddManualMarker={(name) => { hearthroadsApi?.addManualMapMarker?.(name); }}
@@ -4404,6 +4454,7 @@ export default function VoxelGame() {
             <label className="setting-row"><span><strong>Target outline</strong><small>{Math.round(uiPreferences.targetOutlineOpacity * 100)}% opacity</small></span><input type="range" min="0.05" max="1" step="0.05" value={uiPreferences.targetOutlineOpacity} onChange={(event) => updateUiPreferences({ targetOutlineOpacity: Number(event.target.value) })} /></label>
             <div className="toggle-setting"><span><strong>Music, sound effects & ambience</strong><small>Includes the Blockwild day, night, and sea score.</small></span><button type="button" className={settings.muted ? "" : "active"} onClick={() => updateSettings({ muted: !settings.muted })}>{settings.muted ? "OFF" : "ON"}</button></div>
             <div className="toggle-setting"><span><strong>FPS counter</strong><small>Shows a compact live performance readout while playing.</small></span><button type="button" className={settings.showFps ? "active" : ""} onClick={() => updateSettings({ showFps: !settings.showFps })}>{settings.showFps ? "ON" : "OFF"}</button></div>
+            <div className="toggle-setting"><span><strong>HUD minimap</strong><small>Shows a north-up local terrain chart in the upper-left while playing. Disabled by default.</small></span><button type="button" className={settings.showMinimap ? "active" : ""} onClick={() => updateSettings({ showMinimap: !settings.showMinimap })}>{settings.showMinimap ? "ON" : "OFF"}</button></div>
             <div className="toggle-setting"><span><strong>Block crack texture</strong><small>Shows the familiar staged crack overlay while breaking full blocks.</small></span><button type="button" className={settings.showBreakingTexture ? "active" : ""} onClick={() => updateSettings({ showBreakingTexture: !settings.showBreakingTexture })}>{settings.showBreakingTexture ? "ON" : "OFF"}</button></div>
             <div className="toggle-setting"><span><strong>Breaking progress bar</strong><small>Optional numeric-style HUD meter; off by default while the crack texture is active.</small></span><button type="button" className={settings.showBreakProgress ? "active" : ""} onClick={() => updateSettings({ showBreakProgress: !settings.showBreakProgress })}>{settings.showBreakProgress ? "ON" : "OFF"}</button></div>
             <div className="toggle-setting"><span><strong>Tool effectiveness outline</strong><small>Subtly shifts the target outline green, amber, or red for the held tool.</small></span><button type="button" className={settings.showToolEffectiveness ? "active" : ""} onClick={() => updateSettings({ showToolEffectiveness: !settings.showToolEffectiveness })}>{settings.showToolEffectiveness ? "ON" : "OFF"}</button></div>
@@ -4442,6 +4493,10 @@ export default function VoxelGame() {
       {workstationAuditMode === "healing-station" && renderOrbStationPanel("healing-station", {
         gelUnits: 37,
         healClock: 6.4,
+        healIntervalSeconds: 20,
+        gelFuelSeconds: 372,
+        gelFuelMaxSeconds: 600,
+        fuelActive: true,
         slots: [
           workstationAuditOrb("shadecrawler", "Nightglass", MOB_DEFS.shadecrawler.health, MOB_DEFS.shadecrawler.health),
           workstationAuditOrb("ridgeback", "Bracken", 6, MOB_DEFS.ridgeback.health),
@@ -4522,7 +4577,10 @@ export default function VoxelGame() {
           <header><div><span className="panel-eyebrow">UI ART QA · ACTUAL DISPLAY SIZES</span><h2>Inventory Icon Audit</h2></div><button type="button" onClick={() => setIconAuditMode(null)} aria-label="Close icon audit">×</button></header>
           <p>Left: 28px inventory and hotbar artwork. Right: the same artwork at its 22px recipe-book size.</p>
           <div className="item-icon-audit-grid">
-            {Object.values(ITEMS).filter((definition) => iconAuditMode === "all" || (iconAuditMode === "tomes" ? definition.useKind === "spell-tome" : DRAGON_ASSET_AUDIT_ITEMS.has(definition.id))).map((definition) => <article key={definition.id}><span className="item-audit-large"><ItemIcon item={definition.id} /></span><span className="item-audit-small"><ItemIcon item={definition.id} small /></span><strong>{definition.name}</strong><small>{itemIconKind(definition.id)}</small></article>)}
+            {Object.values(ITEMS).filter((definition) => iconAuditMode === "all"
+              || (iconAuditMode === "tomes" ? definition.useKind === "spell-tome"
+                : iconAuditMode === "resources" ? RESOURCE_ASSET_AUDIT_ITEMS.has(definition.id)
+                  : DRAGON_ASSET_AUDIT_ITEMS.has(definition.id))).map((definition) => <article key={definition.id}><span className="item-audit-large"><ItemIcon item={definition.id} /></span><span className="item-audit-small"><ItemIcon item={definition.id} small /></span><strong>{definition.name}</strong><small>{itemIconKind(definition.id)}</small></article>)}
           </div>
         </section>
       )}

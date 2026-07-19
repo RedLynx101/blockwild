@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { BlockId } from "../app/game/data";
-import { PLANTS, createPlantBestiaryState, discoverPlantBlock, normalizePlantBestiaryState, plantForBlock } from "../app/game/plants";
+import { PLANTS, createPlantBestiaryState, discoverPlantBlock, nativeBiomesForPlant, normalizePlantBestiaryState, plantForBlock } from "../app/game/plants";
+import { BiomeId } from "../app/game/world";
 
 test("plant field guide is separate, categorized, and block-addressable", () => {
   assert.ok(PLANTS.length >= 15);
   assert.equal(plantForBlock(BlockId.AppleFruit)?.id, "wild-apple");
   assert.equal(plantForBlock(BlockId.GlowKelp)?.category, "aquatic");
+  assert.equal(plantForBlock(BlockId.ShellfruitCrop)?.id, "shellfruit");
+  assert.deepEqual(nativeBiomesForPlant("shellfruit"), [BiomeId.Ocean, BiomeId.DeepOcean, BiomeId.LumenTrench]);
 });
 
 test("plant discoveries normalize and deduplicate safely", () => {

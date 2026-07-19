@@ -102,7 +102,7 @@ export type PlayerPose = {
   mountedCreatureSeat?: number;
 };
 
-export type BlockEdit = { x: number; y: number; z: number; type: number };
+export type BlockEdit = { x: number; y: number; z: number; type: number; facing?: 0 | 1 | 2 | 3 };
 export type ActionStatus = "request" | "accepted" | "rejected";
 
 export type BlockAction = {
@@ -764,7 +764,8 @@ function validateBlockEdit(value: unknown): value is BlockEdit {
     && isInteger(value.x, -COORDINATE_LIMIT, COORDINATE_LIMIT)
     && isInteger(value.y, -4096, 4096)
     && isInteger(value.z, -COORDINATE_LIMIT, COORDINATE_LIMIT)
-    && isInteger(value.type, 0, 65_535);
+    && isInteger(value.type, 0, 65_535)
+    && (value.facing === undefined || isInteger(value.facing, 0, 3));
 }
 
 function validatePose(value: unknown): value is PlayerPose {

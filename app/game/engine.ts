@@ -17,6 +17,19 @@ import {
   toolEffectivenessForIds,
 } from "./breaking-visuals";
 import { plantInteractionBounds, rayDistanceToInteractionBounds } from "./block-hitboxes";
+import {
+  BLOCK_FACING_EAST,
+  BLOCK_FACING_SOUTH,
+  BLOCK_FACING_WEST,
+  blockFacingForYaw,
+  blockFacingRight,
+  blockFacingYaw,
+  isDirectionallyPlacedBlock,
+  normalizeBlockFacing,
+  rotateBlockOffset,
+  type BlockFacing,
+} from "./block-facing";
+import { CHEST_VISUAL, chestLatchCenters } from "./chest-model";
 import { isDoubleTallGrass, planDoubleTallGrassRemoval } from "./tall-grass";
 import { SHIELD_PROFILES, resolveShieldHit, shouldRaiseOffhandShield, type ShieldKind } from "./shields";
 import {
@@ -547,6 +560,7 @@ import {
   isMultiplayerOperationCancellation,
   parseMultiplayerLatencyRange,
   type BlockAction,
+  type BlockEdit,
   type BoatAction,
   type CartographyMapShare,
   type CombatAction,
@@ -662,6 +676,7 @@ import {
   CAPTURE_ORB_RACK_SIZE,
   CREATURE_HEAL_INTERVAL_SECONDS,
   CREATURE_HEALER_GEL_CAP,
+  CREATURE_HEALER_GEL_SECONDS,
   CREATURE_HEALER_SIZE,
   captureIntoOrb,
   captureOrbFromInventorySlot,
@@ -912,6 +927,7 @@ export type GameSettings = {
   renderDistance: number;
   simulationDistance: number;
   showFps: boolean;
+  showMinimap: boolean;
   showBreakingTexture: boolean;
   showBreakProgress: boolean;
   showToolEffectiveness: boolean;
@@ -934,12 +950,12 @@ export function chestModelLayout(positions: ReadonlyArray<readonly [number, numb
   const pairAlongX = large && positions.every((position) => position[2] === positions[0][2]);
   // The local chest model is always wider left-to-right. Z-adjacent pairs are
   // rotated as a unit so their lid never becomes a long front-to-back flap.
-  return {
-    large,
-    width: large ? 1.88 : 0.88,
-    depth: 0.88,
-    lidWidth: large ? 1.92 : 0.92,
-    lidDepth: 0.92,
+    return {
+      large,
+      width: large ? 1.88 : 0.88,
+      depth: CHEST_VISUAL.bodyDepth,
+      lidWidth: large ? 1.92 : 0.92,
+      lidDepth: CHEST_VISUAL.lidDepth,
     rotationY: large && !pairAlongX ? Math.PI / 2 : 0,
   } as const;
 }
@@ -965,6 +981,9 @@ export type ApiaryHudState = {
 export type OrbRackHudState = { slots: Array<InventorySlot | null> };
 export type HealingStationHudState = OrbRackHudState & {
   gelUnits: number;
+  gelFuelSeconds: number;
+  gelFuelMaxSeconds: number;
+  fuelActive: boolean;
   healClock: number;
   healIntervalSeconds: number;
   healingProgress: number[];
@@ -1259,6 +1278,8 @@ export type WorldSave = {
   seed: string;
   mode: GameMode;
   edits: ChunkEditSave;
+  /** Sparse cardinal metadata for asymmetric player-placed blocks. */
+  blockFacings?: Record<string, BlockFacing>;
   player: { x: number; y: number; z: number; yaw: number; pitch: number };
   spawn: { x: number; y: number; z: number };
   inventory: Array<InventorySlot | null>;
@@ -2623,7 +2644,7 @@ export function restoreOrbRackStorage(saved: Record<string, OrbRackState> = {}) 
 
 export function restoreHealingStationStorage(saved: Record<string, CreatureHealerState> = {}) {
   return new Map(Object.entries(saved).map(([key, state]) => {
-    const base = createCreatureHealer((state?.slots ?? []).map(cloneCaptureOrb), state?.gelUnits ?? 0);
+    const base = createCreatureHealer((state?.slots ?? []).map(cloneCaptureOrb), state?.gelUnits ?? 0, state?.gelFuelSeconds ?? 0);
     return [key, {
       ...base,
       healClock: clamp(Number(state?.healClock) || 0, 0, CREATURE_HEAL_INTERVAL_SECONDS),
@@ -2718,6 +2739,9 @@ export function healingStationHudState(state: CreatureHealerState): HealingStati
   return {
     slots: state.slots.map((orb) => orb ? captureOrbInventorySlot(orb) : null),
     gelUnits: status.gelUnits,
+    gelFuelSeconds: status.gelFuelSeconds,
+    gelFuelMaxSeconds: CREATURE_HEALER_GEL_SECONDS,
+    fuelActive: status.fuelActive,
     healClock: state.healClock,
     healIntervalSeconds: CREATURE_HEAL_INTERVAL_SECONDS,
     healingProgress: state.slots.map((orb) => !orb?.creature || orb.creature.health >= orb.creature.maxHealth
@@ -2794,6 +2818,7 @@ export function readSettings(): GameSettings {
     fov: 72,
     weather: "clear",
     showFps: false,
+    showMinimap: false,
     showBreakingTexture: true,
     showBreakProgress: false,
     showToolEffectiveness: true,
@@ -2816,6 +2841,7 @@ export function readSettings(): GameSettings {
       fov: clamp(Number(parsed.fov ?? fallback.fov), 55, 100),
       weather: parsed.weather === "rain" ? "rain" : "clear",
       showFps: Boolean(parsed.showFps ?? fallback.showFps),
+      showMinimap: Boolean(parsed.showMinimap ?? fallback.showMinimap),
       showBreakingTexture: Boolean(parsed.showBreakingTexture ?? fallback.showBreakingTexture),
       showBreakProgress: Boolean(parsed.showBreakProgress ?? fallback.showBreakProgress),
       showToolEffectiveness: Boolean(parsed.showToolEffectiveness ?? fallback.showToolEffectiveness),
@@ -4427,6 +4453,115 @@ export class VoxelEngine {
     return created.ok ? created.value : null;
   }
 
+  /** Deterministic in-engine gallery used by browser visual regression checks. */
+  primeDirectionalPlacementAudit() {
+    this.world.setRenderDistance(5);
+    this.clearEntities();
+    this.inventory = blankInventory();
+    this.selected = 0;
+    const centerX = Math.round(this.position.x);
+    const centerZ = Math.round(this.position.z);
+    const groundY = Math.round(this.position.y - 0.51);
+    const edits: BlockEdit[] = [];
+    for (let x = centerX - 10; x <= centerX + 10; x += 1) for (let z = centerZ - 13; z <= centerZ + 6; z += 1) {
+      edits.push({ x, y: groundY, z, type: BlockId.StoneBrick });
+      for (let y = groundY + 1; y <= groundY + 12; y += 1) edits.push({ x, y, z, type: BlockId.Air });
+    }
+    this.world.setBlocksBatch(edits, true, true);
+
+    const frontZ = centerZ - 5;
+    const place = (dx: number, dy: number, dz: number, type: BlockId, facing: BlockFacing) => {
+      const x = centerX + dx;
+      const y = groundY + 1 + dy;
+      const z = frontZ + dz;
+      this.world.setBlock(x, y, z, type, true, true);
+      this.world.setBlockFacing(x, y, z, facing, true);
+      return `${x},${y},${z}`;
+    };
+
+    // A seamless 2 x 2 rack wall exercises both lateral and vertical joins.
+    for (const [dx, dy] of [[-5, 0], [-4, 0], [-5, 1], [-4, 1]] as const) {
+      this.orbRacks.set(place(dx, dy, 0, BlockId.CaptureOrbRack, BLOCK_FACING_SOUTH), createOrbRack());
+    }
+    const healerKey = place(-1, 0, 0, BlockId.CreatureHealer, BLOCK_FACING_SOUTH);
+    this.healingStations.set(healerKey, createCreatureHealer([], 3, CREATURE_HEALER_GEL_SECONDS / 2));
+    place(2, 0, 0, BlockId.WildwoodTable, BLOCK_FACING_SOUTH);
+    place(5, 0, 0, BlockId.WildwoodShelf, BLOCK_FACING_SOUTH);
+
+    place(-5, 0, -3, BlockId.Chest, BLOCK_FACING_SOUTH);
+    place(-4, 0, -3, BlockId.Chest, BLOCK_FACING_SOUTH);
+    place(-1, 0, -3, BlockId.Furnace, BLOCK_FACING_SOUTH);
+    place(2, 0, -3, BlockId.HearthFireplace, BLOCK_FACING_SOUTH);
+    place(5, 0, -3, BlockId.ArchiveShelf, BLOCK_FACING_SOUTH);
+
+    // Side-facing specimens make the four-way rotation legible in one frame.
+    const auditChestBlock = place(-5, 0, 2, BlockId.Chest, BLOCK_FACING_EAST);
+    place(-2, 0, 2, BlockId.Furnace, BLOCK_FACING_WEST);
+    place(2, 0, 2, BlockId.WildwoodShelf, BLOCK_FACING_EAST);
+    place(5, 0, 2, BlockId.HearthChair, BLOCK_FACING_WEST);
+
+    this.position.set(centerX, groundY + 0.51, centerZ + 3.2);
+    this.spawn.copy(this.position);
+    this.yaw = 0;
+    this.pitch = -0.12;
+    this.worldTime = 0.28;
+    this.visualWorldTime = this.worldTime;
+    this.syncOrbRackVisuals(true);
+    this.emitHud(true);
+    return this.resolveChest(auditChestBlock);
+  }
+
+  /** Opens the deterministic gallery chest without requiring pointer-lock interaction. */
+  primeOpenChestAudit(chestKey: string) {
+    this.activeChestKey = chestKey;
+    this.showChestModel(chestKey);
+    this.chestOpenAmount = 1;
+    if (this.chestLidPivot) this.chestLidPivot.rotation.x = 1.08;
+    this.emitHud(true);
+  }
+
+  /** Deterministic explored chart used to exercise map panning, travel, tracking, and the HUD minimap. */
+  primeMapNavigationAudit(farDestination = false) {
+    const playerId = this.localPlayerId();
+    const centerChunkX = Math.floor(this.position.x / CHUNK_SIZE);
+    const centerChunkZ = Math.floor(this.position.z / CHUNK_SIZE);
+    const discoveries = [];
+    for (let dz = -7; dz <= 7; dz += 1) for (let dx = -10; dx <= 10; dx += 1) {
+      const water = dx >= 6 || (dx >= 4 && Math.abs(dz) >= 5);
+      const biome = water ? BiomeId.Ocean : dx <= -7 ? BiomeId.Wildwood : dz <= -5 ? BiomeId.Snowfield : BiomeId.Meadow;
+      discoveries.push({
+        x: centerChunkX + dx,
+        z: centerChunkZ + dz,
+        biome,
+        surfaceColors: water ? ["#3e83c6", "#3e83c6", "#3e83c6", "#3e83c6"] as const
+          : biome === BiomeId.Wildwood ? ["#315e3c", "#3f7046", "#426f43", "#2f5d38"] as const
+            : biome === BiomeId.Snowfield ? ["#d4ded8", "#c8d6d1", "#dde6e2", "#bdccc7"] as const
+              : ["#668d52", "#72955b", "#5d8249", "#789b61"] as const,
+      });
+    }
+    this.mapKnowledge = markChunksRendered(createMapKnowledge(`world:${this.world.seedText}`, playerId), discoveries);
+    this.mapKnowledge = discoverNaturalPoi(this.mapKnowledge, {
+      id: "audit:forest-watch",
+      name: "Forest Watch",
+      position: { x: this.position.x - 96, y: this.position.y, z: this.position.z - 48 },
+      playerId,
+      discoveredAt: Date.now() - 2_000,
+      icon: "poi",
+    });
+    const manualId = "manual:audit:far-camp";
+    this.mapKnowledge = placeManualMapMarker(this.mapKnowledge, {
+      id: manualId,
+      name: "Far Camp",
+      position: { x: this.position.x + (farDestination ? 8_000 : 128), y: this.position.y, z: this.position.z + 80 },
+      playerId,
+      discoveredAt: Date.now() - 1_000,
+      icon: "pin",
+    });
+    this.mapKnowledge = bankFastTravelCharges(this.mapKnowledge, 4);
+    this.emitHud(true);
+    return manualId;
+  }
+
   loadWorld(save: WorldSave, options: Partial<WorldOptions> = save.options ?? {}, worldId: string | null = this.worldStorage.activeWorldId) {
     this.persistent = true;
     this.running = true;
@@ -4448,7 +4583,7 @@ export class VoxelEngine {
       .map(([key, cell]) => [key, { ...cell }]));
     this.oxygenSeconds = DEFAULT_SWIM_RULES.maxOxygenSeconds;
     this.drowningAccumulator = 0;
-    this.world.reset(save.seed, save.edits, generationOptionsFromWorldOptions(this.worldOptions, save.generatorProfile ?? "world-below-v15"));
+    this.world.reset(save.seed, save.edits, generationOptionsFromWorldOptions(this.worldOptions, save.generatorProfile ?? "world-below-v15"), save.blockFacings);
     this.world.restoreSurfaceRoadGraph(save.surfaceRoadGraph);
     this.world.initializeAround(save.player.x, save.player.z);
     this.position.set(save.player.x, save.player.y, save.player.z);
@@ -6596,18 +6731,23 @@ export class VoxelEngine {
   }
 
   private networkBlockEdits(limit = 5200) {
-    const edits: Array<{ x: number; y: number; z: number; type: number }> = [];
+    const edits: BlockEdit[] = [];
     for (const [key, entries] of Object.entries(this.world.serializeEdits())) {
       const [cx, cz] = key.split(",").map(Number);
       if (!Number.isFinite(cx) || !Number.isFinite(cz)) continue;
       for (const [index, type] of entries) {
         const layer = Math.floor(index / (CHUNK_SIZE * CHUNK_SIZE));
         const horizontal = index % (CHUNK_SIZE * CHUNK_SIZE);
+        const x = cx * CHUNK_SIZE + horizontal % CHUNK_SIZE;
+        const y = MIN_Y + layer;
+        const z = cz * CHUNK_SIZE + Math.floor(horizontal / CHUNK_SIZE);
+        const facing = this.worldBlockFacing(x, y, z);
         edits.push({
-          x: cx * CHUNK_SIZE + horizontal % CHUNK_SIZE,
-          y: MIN_Y + layer,
-          z: cz * CHUNK_SIZE + Math.floor(horizontal / CHUNK_SIZE),
+          x,
+          y,
+          z,
           type,
+          ...(facing === 0 ? {} : { facing }),
         });
       }
     }
@@ -6761,6 +6901,20 @@ export class VoxelEngine {
     return edits;
   }
 
+  private facingsFromNetwork(blockEdits: WorldSnapshot["blockEdits"]) {
+    return Object.fromEntries(blockEdits.flatMap((edit) => edit.facing === undefined
+      ? [] : [[blockKey(edit.x, edit.y, edit.z), normalizeBlockFacing(edit.facing)] as const]));
+  }
+
+  private applyBlockEditFacings(blockEdits: readonly BlockEdit[], immediate = false) {
+    const setter = this.world?.setBlockFacing;
+    if (typeof setter !== "function") return;
+    for (const edit of blockEdits) {
+      if (!isDirectionallyPlacedBlock(edit.type as BlockId)) continue;
+      setter.call(this.world, edit.x, edit.y, edit.z, normalizeBlockFacing(edit.facing), immediate);
+    }
+  }
+
   private applyInitialWorldSnapshot(snapshot: WorldSnapshot, hostPeer: PeerInfo) {
     const snapshotProfile = snapshot.generatorProfile ?? "world-below-v15";
     if (snapshot.generatorVersion !== GENERATOR_VERSION
@@ -6783,7 +6937,12 @@ export class VoxelEngine {
     this.multiplayerContainerRevisions.clear();
     this.multiplayerContainerSignatures.clear();
     this.multiplayerContainerAwaiting.clear();
-    this.world.reset(snapshot.seed, this.editsFromNetwork(snapshot.blockEdits), generationOptionsFromWorldOptions(this.worldOptions, snapshotProfile));
+    this.world.reset(
+      snapshot.seed,
+      this.editsFromNetwork(snapshot.blockEdits),
+      generationOptionsFromWorldOptions(this.worldOptions, snapshotProfile),
+      this.facingsFromNetwork(snapshot.blockEdits),
+    );
     const guestPlayerId = this.multiplayer?.identity.id ?? "guest";
     const sessionAuthority = `session:${snapshot.seed}`;
     // A guest enters the host session, never a hybrid of the host terrain and
@@ -6857,6 +7016,7 @@ export class VoxelEngine {
     this.butterflyDensity = this.worldOptions.butterflyDensity;
     if (snapshot.blockEdits.length) {
       this.world.setBlocksBatch(snapshot.blockEdits.map((edit) => ({ ...edit, type: edit.type as BlockId })), true, false);
+      this.applyBlockEditFacings(snapshot.blockEdits, false);
       this.lightRefreshTimer = 0;
     }
     this.worldTime = snapshot.time.worldTime;
@@ -7216,7 +7376,11 @@ export class VoxelEngine {
         ? { ...action, status: "accepted" }
         : {
           ...action,
-          edits: action.edits.map((edit) => ({ ...edit, type: this.world.getBlock(edit.x, edit.y, edit.z) ?? BlockId.Air })),
+          edits: action.edits.map((edit) => {
+            const type = this.world.getBlock(edit.x, edit.y, edit.z) ?? BlockId.Air;
+            const facing = this.worldBlockFacing(edit.x, edit.y, edit.z);
+            return { ...edit, type, ...(isDirectionallyPlacedBlock(type) ? { facing } : {}) };
+          }),
           status: "rejected",
           reason: "The host rejected an out-of-range, occupied, or invalid block edit.",
         };
@@ -7237,6 +7401,7 @@ export class VoxelEngine {
           else this.dropBlockLoot(isTorchBlock(drop.type) ? BlockId.Torch : drop.type, drop.x, drop.y, drop.z);
         }
         this.world.setBlocksBatch(action.edits.map((edit) => ({ ...edit, type: edit.type as BlockId })), true, true);
+        this.applyBlockEditFacings(action.edits, true);
         this.publishDestructionTombstones(action.edits
           .filter((edit) => edit.type === BlockId.Air)
           .map((edit) => ({ kind: "block" as const, cause: "broken" as const, block: { x: edit.x, y: edit.y, z: edit.z } })));
@@ -7262,6 +7427,7 @@ export class VoxelEngine {
       this.pendingGuestPlacementRequests.delete(action.requestId);
       if (action.status === "accepted" && action.actorId !== this.multiplayer.identity.id && action.effect?.kind === "tree-fell") this.animateNetworkTreeFell(action);
       this.world.setBlocksBatch(action.edits.map((edit) => ({ ...edit, type: edit.type as BlockId })), true, true);
+      this.applyBlockEditFacings(action.edits, true);
       for (const edit of action.edits) if (edit.type === BlockId.Chest) {
         const key = blockKey(edit.x, edit.y, edit.z);
         if (!this.chests.has(key) && !this.chestStorageKey(key).includes("|")) this.chests.set(key, Array.from({ length: 27 }, () => null));
@@ -9163,13 +9329,25 @@ export class VoxelEngine {
     return block;
   }
 
+  worldBlockFacing(x: number, y: number, z: number): BlockFacing {
+    const resolver = this.world?.blockFacingAt;
+    return typeof resolver === "function" ? normalizeBlockFacing(resolver.call(this.world, x, y, z)) : 0;
+  }
+
   resolveChest(block: string) {
     const existing = this.chestStorageKey(block);
     if (existing.includes("|")) return existing;
     const [x, y, z] = block.split(",").map(Number);
-    const neighbor = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+    const facing = this.worldBlockFacing(x, y, z);
+    const right = blockFacingRight(facing);
+    const neighbor = [[right.x, right.z], [-right.x, -right.z]]
       .map(([dx, dz]) => blockKey(x + dx, y, z + dz))
-      .find((candidate) => this.world.getBlock(...candidate.split(",").map(Number) as [number, number, number]) === BlockId.Chest && !this.chestStorageKey(candidate).includes("|"));
+      .find((candidate) => {
+        const [candidateX, candidateY, candidateZ] = candidate.split(",").map(Number) as [number, number, number];
+        return this.world.getBlock(candidateX, candidateY, candidateZ) === BlockId.Chest
+          && this.worldBlockFacing(candidateX, candidateY, candidateZ) === facing
+          && !this.chestStorageKey(candidate).includes("|");
+      });
     if (!neighbor) {
       if (!this.chests.has(block)) this.chests.set(block, this.generateChestLoot(block));
       return block;
@@ -9199,21 +9377,29 @@ export class VoxelEngine {
     const lidDepth = layout.lidDepth;
     const group = new THREE.Group();
     group.position.set(x, y, z);
-    group.rotation.y = layout.rotationY;
+    const facing = this.worldBlockFacing(positions[0][0], positions[0][1], positions[0][2]);
+    const right = blockFacingRight(facing);
+    const pairMatchesFacing = positions.length < 2 || Math.abs((positions[1][0] - positions[0][0]) * right.z - (positions[1][2] - positions[0][2]) * right.x) < 0.001;
+    group.rotation.y = pairMatchesFacing ? blockFacingYaw(facing) : layout.rotationY;
     const wood = new THREE.MeshLambertMaterial({ map: this.world.atlas, color: 0xffffff });
     const base = new THREE.Mesh(createAtlasBlockGeometry(BlockId.Chest), wood);
-    base.scale.set(bodyWidth, 0.63, bodyDepth);
-    base.position.y = -0.185;
+    base.scale.set(bodyWidth, CHEST_VISUAL.bodyTop - CHEST_VISUAL.bodyBottom, bodyDepth);
+    base.position.y = (CHEST_VISUAL.bodyBottom + CHEST_VISUAL.bodyTop) / 2;
     group.add(base);
-    const latch = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.22, 0.07), new THREE.MeshLambertMaterial({ color: 0xe0b54e }));
-    latch.position.set(0, 0.135, -bodyDepth / 2 - 0.045);
-    group.add(latch);
+    const latchMaterial = new THREE.MeshLambertMaterial({ map: this.world.atlas, color: 0xffffff });
+    for (const centerX of chestLatchCenters(layout.large)) {
+      const latch = new THREE.Mesh(createAtlasBlockGeometry(BlockId.GoldBlock), latchMaterial);
+      latch.scale.set(CHEST_VISUAL.latchWidth, CHEST_VISUAL.latchTop - CHEST_VISUAL.latchBottom, CHEST_VISUAL.latchDepth);
+      latch.position.set(centerX, (CHEST_VISUAL.latchBottom + CHEST_VISUAL.latchTop) / 2, CHEST_VISUAL.latchCenterZ);
+      latch.name = "wildwood-chest-latch";
+      group.add(latch);
+    }
     const pivot = new THREE.Group();
-    pivot.position.set(0, 0.16, lidDepth / 2);
+    pivot.position.set(0, CHEST_VISUAL.lidBottom, lidDepth / 2);
     const lidMaterial = new THREE.MeshLambertMaterial({ map: this.world.atlas, color: 0xffffff });
     const lid = new THREE.Mesh(createAtlasBlockGeometry(BlockId.Chest), lidMaterial);
-    lid.scale.set(lidWidth, 0.21, lidDepth);
-    lid.position.set(0, 0.105, -lidDepth / 2);
+    lid.scale.set(lidWidth, CHEST_VISUAL.lidTop - CHEST_VISUAL.lidBottom, lidDepth);
+    lid.position.set(0, (CHEST_VISUAL.lidTop - CHEST_VISUAL.lidBottom) / 2, -lidDepth / 2);
     pivot.add(lid);
     group.add(pivot);
     this.scene.add(group);
@@ -11956,15 +12142,6 @@ export class VoxelEngine {
         this.saplings.set(key, now + ORCHARD_REGROWTH_BASE_MS + Math.random() * ORCHARD_REGROWTH_JITTER_MS);
         continue;
       }
-      if (isWaterloggedFloraBlock(current)) {
-        const growth = planAquaticGrowth(current, { x, y, z }, (bx, by, bz) => this.world.getBlock(bx, by, bz));
-        this.saplings.delete(key);
-        if (!growth) continue;
-        this.world.setBlock(growth.x, growth.y, growth.z, growth.type, true, true);
-        this.publishBlockEdits([{ x: growth.x, y: growth.y, z: growth.z, type: growth.type }], "place");
-        this.schedulePlantGrowth(growth.x, growth.y, growth.z, growth.type, growth.y - y + 1);
-        continue;
-      }
       const plant = plantProfileForBlock(current);
       if (plant) {
         const soil = this.world.getBlock(x, y - 1, z);
@@ -11985,6 +12162,15 @@ export class VoxelEngine {
         this.world.setBlock(x, y, z, next, true, true);
         this.publishBlockEdits([{ x, y, z, type: next }], "place");
         this.schedulePlantGrowth(x, y, z, next, plant.stage + 1);
+        continue;
+      }
+      if (isWaterloggedFloraBlock(current)) {
+        const growth = planAquaticGrowth(current, { x, y, z }, (bx, by, bz) => this.world.getBlock(bx, by, bz));
+        this.saplings.delete(key);
+        if (!growth) continue;
+        this.world.setBlock(growth.x, growth.y, growth.z, growth.type, true, true);
+        this.publishBlockEdits([{ x: growth.x, y: growth.y, z: growth.z, type: growth.type }], "place");
+        this.schedulePlantGrowth(growth.x, growth.y, growth.z, growth.type, growth.y - y + 1);
         continue;
       }
       if (![BlockId.WildwoodSapling, BlockId.JungleSapling, BlockId.SakuraSapling, BlockId.CandywoodSapling].includes(current)) { this.saplings.delete(key); continue; }
@@ -12162,6 +12348,7 @@ export class VoxelEngine {
     const now = Date.now();
     const maximum = Math.min(8, entries.length);
     let meaningfulChange = false;
+    let hudChange = false;
     for (let offset = 0; offset < maximum; offset += 1) {
       const entry = entries[(this.persistentMachineCursor + offset) % entries.length];
       const previous = this.persistentMachineLastStep.get(entry.key) ?? now;
@@ -12197,6 +12384,9 @@ export class VoxelEngine {
         if (!station) continue;
         const result = stepCreatureHealer(station, elapsed);
         this.healingStations.set(entry.key, result.state);
+        if (result.gelUsed > 0) meaningfulChange = true;
+        if (this.activeHealingStationKey === entry.key
+          && (result.state.gelFuelSeconds !== station.gelFuelSeconds || result.state.healClock !== station.healClock)) hudChange = true;
         if (result.healed > 0) {
           meaningfulChange = true;
           const [x, y, z] = entry.key.split(",").map(Number);
@@ -12235,7 +12425,7 @@ export class VoxelEngine {
     if (meaningfulChange) {
       this.saveSoon();
       this.emitHud(true);
-    }
+    } else if (hudChange) this.emitHud(true);
   }
 
   pickTarget() {
@@ -12392,15 +12582,19 @@ export class VoxelEngine {
       this.saplings.set(blockKey(x, y, z), now + (95_000 + Math.random() * 80_000) * PLANT_GROWTH_TIME_MULTIPLIER);
       return;
     }
+    const soil = this.world.getBlock(x, y - 1, z);
+    const delay = growthDelaySeconds(type, soil === BlockId.HydratedFarmland, this.world.seedText, { x, y, z }, cycle);
+    if (delay !== null) {
+      if (nextPlantStage(type) !== null) this.saplings.set(blockKey(x, y, z), now + delay * 1000);
+      else this.saplings.delete(blockKey(x, y, z));
+      return;
+    }
     if (isWaterloggedFloraBlock(type)) {
       const hash = Math.abs(Math.imul(x ^ Math.imul(y, 31) ^ Math.imul(z, 131) ^ cycle, 0x45d9f3b));
       this.saplings.set(blockKey(x, y, z), now + (50_000 + (hash % 70_000)) * PLANT_GROWTH_TIME_MULTIPLIER);
       return;
     }
-    const soil = this.world.getBlock(x, y - 1, z);
-    const delay = growthDelaySeconds(type, soil === BlockId.HydratedFarmland, this.world.seedText, { x, y, z }, cycle);
-    if (delay !== null && nextPlantStage(type) !== null) this.saplings.set(blockKey(x, y, z), now + delay * 1000);
-    else this.saplings.delete(blockKey(x, y, z));
+    this.saplings.delete(blockKey(x, y, z));
   }
 
   applyHarvest(x: number, y: number, z: number, type: BlockId, useScythe: boolean) {
@@ -15070,7 +15264,7 @@ export class VoxelEngine {
   }
 
   toggleSeat(x: number, y: number, z: number, block: BlockId) {
-    const anchor = seatAnchorForBlock(block, x, y, z);
+    const anchor = seatAnchorForBlock(block, x, y, z, this.worldBlockFacing(x, y, z));
     if (!anchor) return false;
     if (this.seatedAt?.x === anchor.x && this.seatedAt.y === anchor.y && this.seatedAt.z === anchor.z) {
       this.leaveSeat(true);
@@ -15107,7 +15301,7 @@ export class VoxelEngine {
     let replacedUpper: BlockId | undefined;
     let replacedPartner: BlockId | undefined;
     let type = requestedType;
-    let placedEdits: Array<{ x: number; y: number; z: number; type: BlockId }>;
+    let placedEdits: Array<{ x: number; y: number; z: number; type: BlockId; facing?: BlockFacing }>;
     if (current === undefined || (!BLOCKS[current]?.replaceable && current !== BlockId.Air)) return;
     if (requestedType === BlockId.ButterflyExhibit) {
       const connectedBlocks = new Set<string>();
@@ -15192,8 +15386,10 @@ export class VoxelEngine {
       ];
       this.world.setBlocksBatch(placedEdits, true, true);
     } else {
-      placedEdits = [{ x, y, z, type }];
+      const facing = isDirectionallyPlacedBlock(type) ? blockFacingForYaw(this.yaw) : undefined;
+      placedEdits = [{ x, y, z, type, ...(facing === undefined ? {} : { facing }) }];
       this.world.setBlock(x, y, z, type, true, true);
+      if (facing !== undefined) this.world.setBlockFacing?.(x, y, z, facing, true);
     }
     const occupiedRemote = BLOCKS[type].solid && placedEdits.some((edit) => [...(this.remotePlayers?.values() ?? [])].some((remote) => blockEditIntersectsPlayer(edit, remote.target, PLAYER_HEIGHT * playerVariantHeightScale(remote.target.variant ?? "male"))));
     if (BLOCKS[type].solid && (this.collidesAt(this.position) || occupiedRemote)) {
@@ -16331,12 +16527,36 @@ export class VoxelEngine {
       }
       const definition = BLOCKS[type];
       if (definition?.solid) {
+        if (["table", "shelf", "archive-shelf", "fireplace"].includes(definition.shape ?? "")) {
+          if (this.playerIntersectsFurnitureCell(position, x, y, z, type, height)) return true;
+          continue;
+        }
         const bottom = y - 0.5;
         const top = bottom + (definition.collisionHeight ?? 1);
         if (position.y + height > bottom && position.y < top) return true;
       }
     }
     return false;
+  }
+
+  playerIntersectsFurnitureCell(position: THREE.Vector3, x: number, y: number, z: number, type: BlockId, height = this.currentPlayerHeight()) {
+    const shape = BLOCKS[type]?.shape;
+    const bounds = shape === "table" ? { x0: -0.48, x1: 0.48, y1: 0.42, z0: -0.42, z1: 0.42 }
+      : shape === "fireplace" ? { x0: -0.5, x1: 0.5, y1: 0.48, z0: -0.4, z1: 0.4 }
+        : shape === "archive-shelf" ? { x0: -0.48, x1: 0.48, y1: 0.5, z0: -0.24, z1: 0.24 }
+          : shape === "shelf" ? { x0: -0.47, x1: 0.47, y1: 0.5, z0: -0.2, z1: 0.2 }
+            : null;
+    if (!bounds) return true;
+    const facing = this.worldBlockFacing(x, y, z);
+    const corner0 = rotateBlockOffset(bounds.x0, bounds.z0, facing);
+    const corner1 = rotateBlockOffset(bounds.x1, bounds.z1, facing);
+    const blockMinX = x + Math.min(corner0.x, corner1.x);
+    const blockMaxX = x + Math.max(corner0.x, corner1.x);
+    const blockMinZ = z + Math.min(corner0.z, corner1.z);
+    const blockMaxZ = z + Math.max(corner0.z, corner1.z);
+    return position.x + PLAYER_RADIUS > blockMinX && position.x - PLAYER_RADIUS < blockMaxX
+      && position.y + height > y - 0.5 && position.y < y + bounds.y1
+      && position.z + PLAYER_RADIUS > blockMinZ && position.z - PLAYER_RADIUS < blockMaxZ;
   }
 
   playerIntersectsDoorCell(position: THREE.Vector3, x: number, y: number, z: number, type: BlockId, height = this.currentPlayerHeight()) {
@@ -18345,8 +18565,8 @@ export class VoxelEngine {
   requestFastTravel(markerId: string) {
     if (this.fastTravelChannel?.status === "channeling") return false;
     const destination = this.mapKnowledge.markers.find((marker) => marker.id === markerId);
-    if (!destination || destination.kind === "manual") {
-      this.events.onToast("Manual pins are waypoints only; travel needs a known POI, bed, or wayshrine.");
+    if (!destination) {
+      this.events.onToast("That map destination is no longer available.");
       return false;
     }
     const originShrine = this.mapKnowledge.markers.find((marker) => marker.kind === "wayshrine"
@@ -18360,7 +18580,9 @@ export class VoxelEngine {
     }, this.position, this.worldSimulationSeconds(), this.damageRevision);
     if (!begun.ok) {
       this.events.onToast(begun.reason === "no-banked-travel"
-        ? "Brew and drink a Wayskip Draught to bank a map journey. Wayshrine-to-wayshrine travel is free."
+        ? destination.kind === "manual"
+          ? "Custom destinations cost two banked journeys. Brew and drink another Wayskip Draught."
+          : "Brew and drink a Wayskip Draught to bank a map journey. Wayshrine-to-wayshrine travel is free."
         : "That destination is not available from here.");
       return false;
     }
@@ -18399,7 +18621,7 @@ export class VoxelEngine {
     this.position.set(x, ground + 0.51, z);
     this.velocity.set(0, 0, 0);
     this.world.scheduleAround(x, z, true);
-    this.events.onToast(`Arrived · ${committed.chargeSpent ? "one banked journey spent" : "wayshrine network"}.`);
+    this.events.onToast(`Arrived · ${committed.chargeSpent ? `${committed.chargeSpent} banked ${committed.chargeSpent === 1 ? "journey" : "journeys"} spent` : "wayshrine network"}.`);
     this.spawnParticles(x, ground + 1, z, BlockId.CrystalBlock, 18);
     this.audio.play("craft");
     this.saveSoon();
@@ -19564,6 +19786,7 @@ export class VoxelEngine {
     group.name = `${machine}-contents:${key}`;
     if (!position) return group;
     group.position.set(position.x, position.y, position.z);
+    group.rotation.y = blockFacingYaw(this.worldBlockFacing(position.x, position.y, position.z));
     const offsets = machine === "orb-rack"
       ? [
         [-0.27, -0.055, 0], [-0.09, -0.055, 0], [0.09, -0.055, 0], [0.27, -0.055, 0],
@@ -19580,9 +19803,10 @@ export class VoxelEngine {
       group.add(orbVisual);
     });
     if (machine === "healing-station") {
-      const gelUnits = (state as CreatureHealerState).gelUnits;
-      if (gelUnits > 0) {
-        const fillRatio = gelUnits / CREATURE_HEALER_GEL_CAP;
+      const healer = state as CreatureHealerState;
+      const gelEquivalent = healer.gelUnits + healer.gelFuelSeconds / CREATURE_HEALER_GEL_SECONDS;
+      if (gelEquivalent > 0) {
+        const fillRatio = Math.min(1, gelEquivalent / CREATURE_HEALER_GEL_CAP);
         const gel = new THREE.Mesh(
           new THREE.BoxGeometry(0.48, Math.max(0.025, 0.14 * fillRatio), 0.025),
           new THREE.MeshBasicMaterial({ color: 0x70c99d, transparent: true, opacity: 0.62 + fillRatio * 0.25 }),
@@ -19590,6 +19814,15 @@ export class VoxelEngine {
         gel.name = "healing-station-cave-gel-reservoir";
         gel.position.set(0, -0.19 + 0.07 * fillRatio, -0.475);
         group.add(gel);
+      }
+      if (healer.gelFuelSeconds > 0) {
+        const activeFuel = new THREE.Mesh(
+          new THREE.BoxGeometry(0.16, 0.045, 0.018),
+          new THREE.MeshBasicMaterial({ color: 0xa8ffe0, transparent: true, opacity: 0.9 }),
+        );
+        activeFuel.name = "healing-station-active-fuel";
+        activeFuel.position.set(0, -0.12, -0.493);
+        group.add(activeFuel);
       }
     }
     return group;
@@ -19611,7 +19844,8 @@ export class VoxelEngine {
       const position = blockPositionFromKey(key);
       if (!position || this.world.getBlock(position.x, position.y, position.z) !== block) continue;
       live.add(key);
-      const occupancySignature = `${machine}|${orbRackOccupancySignature(state)}|gel:${machine === "healing-station" ? state.gelUnits : 0}`;
+      const healerState = machine === "healing-station" ? state as CreatureHealerState : null;
+      const occupancySignature = `${machine}|facing:${this.worldBlockFacing(position.x, position.y, position.z)}|${orbRackOccupancySignature(state)}|gel:${healerState ? `${healerState.gelUnits}:${healerState.gelFuelSeconds > 0 ? 1 : 0}` : 0}`;
       const previous = this.orbRackVisuals.get(key);
       if (previous?.occupancySignature === occupancySignature) continue;
       if (previous) {
@@ -25783,6 +26017,7 @@ export class VoxelEngine {
       seed: this.world.seedText,
       mode: this.mode,
       edits: this.world.serializeEdits(),
+      blockFacings: this.world.serializeBlockFacings?.() ?? {},
       player: { x: this.position.x, y: this.position.y, z: this.position.z, yaw: this.yaw, pitch: this.pitch },
       spawn: { x: this.spawn.x, y: this.spawn.y, z: this.spawn.z },
       inventory: this.inventory.map(normalizeCaptureOrbInventorySlot),

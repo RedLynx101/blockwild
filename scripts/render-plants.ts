@@ -140,6 +140,24 @@ function flowerBoxes(plant: PlantDefinition): ModelBox[] {
 function aquaticBoxes(plant: PlantDefinition): ModelBox[] {
   const frond = colorForPlant(plant, "#4ca38d");
   const luminous = /glow|lumen|star|abyss/i.test(plant.id);
+  if (plant.id === "shellfruit") {
+    const result: ModelBox[] = [
+      box("bed", "waterbed", [2.5, 0.24, 1.9], [0, 0.12, 0], WATER_STONE),
+      box("root-mat", "roots", [1.9, 0.14, 1.25], [0, 0.28, 0], "#3d7464"),
+    ];
+    const colonies = [[-0.68, -0.22, -0.16], [0, 0.18, 0.12], [0.7, -0.18, -0.1]] as const;
+    colonies.forEach(([x, z, yaw], index) => {
+      result.push(
+        box(`shell-lower-${index + 1}`, "shell", [0.7, 0.18, 0.62], [x, 0.43, z], index === 1 ? "#e1a06f" : "#bd795d", [0, yaw, 0]),
+        box(`shell-back-${index + 1}`, "shell", [0.68, 0.12, 0.58], [x, 0.68, z + 0.15], "#f1d2aa", [-0.58, yaw, 0]),
+        box(`pearl-${index + 1}`, "fruit", [0.24, 0.24, 0.24], [x, 0.61, z - 0.12], index === 1 ? "#fff2ba" : "#e9bd75"),
+      );
+    });
+    for (const [x, z, lean] of [[-0.95, 0.38, -0.2], [-0.35, 0.62, 0.16], [0.42, 0.58, -0.12], [1, 0.34, 0.2]] as const) {
+      result.push(box(`frond-${result.length}`, "frond", [0.15, 1.1, 0.22], [x, 0.78, z], "#6eae8d", [0, 0, lean]));
+    }
+    return result;
+  }
   const result: ModelBox[] = [
     box("bed", "waterbed", [2.35, 0.26, 1.75], [0, 0.13, 0], WATER_STONE),
     box("pebble-left", "pebble", [0.5, 0.32, 0.42], [-0.68, 0.33, 0.25], "#84908b", [0, 0.16, 0.08]),
