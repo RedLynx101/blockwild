@@ -33,10 +33,10 @@ import {
   ROOTWEAVE_SOIL_SIDE_TILE,
   SUNBERRY_CRATE_SIDE_TILE,
   SUNBERRY_CRATE_TOP_TILE,
-  TORCH_BLOCKS,
   BlockId,
   archiveShelfBookCount,
   blockContainsWater,
+  blockEmitsLight,
   isWaterloggedFloraBlock,
   type RenderLayer,
 } from "./data";
@@ -84,6 +84,7 @@ import {
   nearestUpperCaveNode,
   undergroundBiomeAt as sampleUndergroundBiome,
 } from "./underground";
+import { LightChannel, MAX_LIGHT_LEVEL, VoxelLightEngine, lightChannel, perceivedBlockLight } from "./lighting";
 
 export const CHUNK_SIZE = 16;
 export const MIN_Y = -64;
@@ -454,6 +455,9 @@ export type Chunk = {
   sectionBlockCounts: Uint16Array;
   /** Highest full opaque cube in each column, maintained independently from terrain height. */
   skyTops: Int16Array;
+  /** Packed four-bit skylight/red/green/blue values, derived from block state. */
+  light: Uint16Array;
+  lightInitialized: boolean;
   lightIndices: Set<number>;
   /** Sparse foliage index used by the constant-cost ambient leaf emitter. */
   leafIndices: Set<number>;
@@ -571,6 +575,9 @@ type GeometryBucket = {
   positions: number[];
   normals: number[];
   colors: number[];
+  lights: number[];
+  emissions: number[];
+  occlusions: number[];
   uvs: number[];
   indices: number[];
 };
@@ -595,6 +602,100 @@ function packUnorm16(values: readonly number[]) {
   const packed = new Uint16Array(values.length);
   for (let index = 0; index < values.length; index += 1) packed[index] = Math.round(clamp(values[index], 0, 1) * 65535);
   return packed;
+}
+
+function packLightUnorm8(values: readonly number[]) {
+  const packed = new Uint8Array(values.length);
+  for (let index = 0; index < values.length; index += 1) packed[index] = Math.round(clamp(values[index] / MAX_LIGHT_LEVEL, 0, 1) * 255);
+  return packed;
+}
+
+function packScalarUnorm8(values: readonly number[]) {
+  const packed = new Uint8Array(values.length);
+  for (let index = 0; index < values.length; index += 1) packed[index] = Math.round(clamp(values[index], 0, 1) * 255);
+  return packed;
+}
+
+export type VoxelLightingEnvironment = Readonly<{
+  skyColor: THREE.ColorRepresentation;
+  skyIntensity: number;
+  sunColor: THREE.ColorRepresentation;
+  sunDirection: THREE.Vector3;
+  sunIntensity: number;
+  blockIntensity?: number;
+  minimumAmbient?: number;
+}>;
+
+type VoxelLightingUniforms = {
+  voxelSkyColor: { value: THREE.Color };
+  voxelSkyIntensity: { value: number };
+  voxelSunColor: { value: THREE.Color };
+  voxelSunDirection: { value: THREE.Vector3 };
+  voxelSunIntensity: { value: number };
+  voxelBlockIntensity: { value: number };
+  voxelMinimumAmbient: { value: number };
+};
+
+function createVoxelWorldMaterial(
+  atlas: THREE.Texture,
+  uniforms: VoxelLightingUniforms,
+  options: Readonly<{ alphaTest?: number; transparent?: boolean; opacity?: number; depthWrite?: boolean; side?: THREE.Side }> = {},
+) {
+  const material = new THREE.MeshBasicMaterial({
+    map: atlas,
+    vertexColors: true,
+    alphaTest: options.alphaTest ?? 0,
+    transparent: options.transparent ?? false,
+    opacity: options.opacity ?? 1,
+    depthWrite: options.depthWrite ?? true,
+    side: options.side ?? THREE.FrontSide,
+    fog: true,
+  });
+  material.userData.voxelLightingUniforms = uniforms;
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", `#include <common>
+attribute vec4 voxelLight;
+attribute float voxelEmission;
+attribute float voxelOcclusion;
+varying vec4 vVoxelLight;
+varying float vVoxelEmission;
+varying float vVoxelOcclusion;
+varying vec3 vVoxelNormal;`)
+      .replace("#include <begin_vertex>", `#include <begin_vertex>
+vVoxelLight = voxelLight;
+vVoxelEmission = voxelEmission;
+vVoxelOcclusion = voxelOcclusion;
+vVoxelNormal = normalize(normal);`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", `#include <common>
+uniform vec3 voxelSkyColor;
+uniform float voxelSkyIntensity;
+uniform vec3 voxelSunColor;
+uniform vec3 voxelSunDirection;
+uniform float voxelSunIntensity;
+uniform float voxelBlockIntensity;
+uniform float voxelMinimumAmbient;
+varying vec4 vVoxelLight;
+varying float vVoxelEmission;
+varying float vVoxelOcclusion;
+varying vec3 vVoxelNormal;`)
+      .replace("#include <opaque_fragment>", `
+float voxelSky = pow(clamp(vVoxelLight.x, 0.0, 1.0), 1.22);
+vec3 voxelBlock = pow(clamp(vVoxelLight.yzw, 0.0, 1.0), vec3(1.32));
+float voxelSunFacing = max(dot(normalize(vVoxelNormal), normalize(voxelSunDirection)), 0.0);
+vec3 voxelIllumination = vec3(voxelMinimumAmbient)
+  + voxelSkyColor * voxelSky * voxelSkyIntensity
+  + voxelSunColor * voxelSunFacing * voxelSky * voxelSunIntensity
+  + voxelBlock * voxelBlockIntensity;
+voxelIllumination *= vVoxelOcclusion;
+outgoingLight *= voxelIllumination;
+outgoingLight += diffuseColor.rgb * vVoxelEmission;
+#include <opaque_fragment>`);
+  };
+  material.customProgramCacheKey = () => "blockwild-voxel-light-v2";
+  return material;
 }
 
 export type ChunkEditSave = Record<string, Array<[number, number]>>;
@@ -798,44 +899,6 @@ export function normalizeWorldGenerationOptions(value?: Partial<WorldGenerationO
     enabledFactions: normalizeEnabledFactions(value?.enabledFactions),
   };
 }
-const LIGHT_BLOCKS = new Set<BlockId>([
-  ...TORCH_BLOCKS,
-  BlockId.Lava,
-  BlockId.Glowstone,
-  BlockId.CrystalBlock,
-  BlockId.RuneStone,
-  BlockId.CreatureHealer,
-  BlockId.Dreamblossom,
-  BlockId.GiantDreamblossom,
-  BlockId.LumenKelp,
-  BlockId.StarCoral,
-  BlockId.AbyssBloom,
-  BlockId.LanternLotus,
-  BlockId.DraconicIncubator,
-  BlockId.DeepgearLantern,
-  BlockId.Moonpetal,
-  BlockId.Starfern,
-  BlockId.Dreamcap,
-  BlockId.Lumenreed,
-  BlockId.AetherConduit,
-  BlockId.Moonwell,
-  BlockId.HearthFireplace,
-  BlockId.Whisperglass,
-  BlockId.LightningBugJar,
-  BlockId.LuminousRoot,
-  BlockId.StarbloomCap,
-  BlockId.LuminousGills,
-  BlockId.LanternBloom,
-  BlockId.GlowmossCarpet,
-  BlockId.LuminousAlgae,
-  BlockId.ResonantCrystal,
-  BlockId.CrystalCluster,
-  BlockId.FumaroleVent,
-  BlockId.LivingVein,
-  BlockId.VeinmetalHeart,
-  BlockId.CaveMarker,
-]);
-
 /**
  * Lava pools are broad luminous surfaces, not thousands of independent point
  * lights. One representative per small world-aligned cell keeps generation,
@@ -855,17 +918,8 @@ function lavaLightCellKey(x: number, y: number, z: number) {
   const origin = lavaLightCellOrigin(x, y, z);
   return `${origin.x},${origin.y},${origin.z}`;
 }
-/**
- * Static voxel-light budget used while baking chunk vertex colors. The small
- * pool of animated Three.js point lights can then be reserved for the nearest
- * flickering sources without making every older torch appear inert.
- */
-/** Dense settlements and dungeons keep broad voxel glow beyond the animated pool. */
-export const BAKED_LIGHT_SOURCE_LIMIT = 1024;
-export const BAKED_LIGHT_RADIUS = 20;
 /** Lower/middle Wild Peppermint segments use a full-height repeating cane tile. */
 export const WILD_PEPPERMINT_STEM_TILE = 162;
-export type BakedLightSource = { x: number; y: number; z: number; type: BlockId };
 const ATLAS_GRID = 16;
 const ATLAS_PAD = 0.0008;
 const TILE_UVS = Array.from({ length: ATLAS_GRID * ATLAS_GRID }, (_, tile) => {
@@ -906,51 +960,6 @@ function blocksSky(type: BlockId) {
   const definition = BLOCKS[type];
   const fullCube = !definition?.shape || definition.shape === "cube";
   return Boolean(definition?.solid && fullCube && definition.layer !== "transparent" && definition.layer !== "cutout");
-}
-
-/**
- * A cheap baked skylight approximation used by chunk vertex colors. Sunlit
- * surfaces stay bright even when the player is under a roof, while deep cave
- * faces retain enough albedo for a nearby point light to reveal them.
- */
-export function environmentSkyShade(cellY: number, skyTopY: number) {
-  const depth = skyTopY - cellY;
-  if (depth < 0) return 1;
-  if (depth <= 1) return 0.78;
-  if (depth <= 4) return 0.58;
-  return 0.38;
-}
-
-export function bakedEnvironmentLightShade(baseShade: number, x: number, y: number, z: number, sources: readonly BakedLightSource[]) {
-  let shade = baseShade;
-  for (const source of sources) {
-    const radius = source.type === BlockId.DeepgearLantern ? BAKED_LIGHT_RADIUS : source.type === BlockId.Lava ? 18 : source.type === BlockId.LightningBugJar ? 10 : TORCH_BLOCKS.includes(source.type) ? 16 : 15;
-    const dx = source.x + 0.5 - x;
-    const dy = source.y + 0.55 - y;
-    const dz = source.z + 0.5 - z;
-    const distanceSquared = dx * dx + dy * dy + dz * dz;
-    if (distanceSquared >= radius * radius) continue;
-    const attenuation = 1 - Math.sqrt(distanceSquared) / radius;
-    // Preserve a dim cave floor outside the core while allowing a nearby
-    // lantern or torch to reveal the original block color clearly.
-    shade = Math.max(shade, 0.38 + attenuation * attenuation * 0.62);
-    if (shade >= 0.995) return 1;
-  }
-  return clamp(shade, 0.38, 1);
-}
-
-/**
- * Let an adjacent open shaft lend a bounded amount of skylight into its first
- * side cell. This keeps cave entrances readable without flooding sealed rooms
- * or turning deep tunnels into daylight.
- */
-export function laterallyDiffusedSkyShade(cellY: number, skyTopY: number, adjacentSkyTops: readonly number[]) {
-  let shade = environmentSkyShade(cellY, skyTopY);
-  for (const adjacentSkyTop of adjacentSkyTops) {
-    const adjacent = environmentSkyShade(cellY, adjacentSkyTop);
-    shade = Math.max(shade, 0.38 + (adjacent - 0.38) * 0.72);
-  }
-  return clamp(shade, 0.38, 1);
 }
 
 /**
@@ -1326,7 +1335,7 @@ function sectionForY(y: number) {
 }
 
 function emptyBucket(): GeometryBucket {
-  return { positions: [], normals: [], colors: [], uvs: [], indices: [] };
+  return { positions: [], normals: [], colors: [], lights: [], emissions: [], occlusions: [], uvs: [], indices: [] };
 }
 
 function hexToRgb(hex: string): [number, number, number] {
@@ -2251,6 +2260,9 @@ export class ChunkWorld {
   urgentMeshQueue: Array<{ key: string; section: number }> = [];
   urgentMeshQueueHead = 0;
   urgentMeshQueued = new Set<string>();
+  lightSectionQueue: Array<{ key: string; section: number }> = [];
+  lightSectionQueueHead = 0;
+  lightSectionQueued = new Set<string>();
   seedText = "WILDERNESS";
   seed = seedToInt(this.seedText);
   renderDistance = 10;
@@ -2263,6 +2275,17 @@ export class ChunkWorld {
   frame = 0;
   atlas: THREE.Texture;
   materials: Record<WorldRenderLayer, THREE.Material>;
+  lightEngine: VoxelLightEngine;
+  private readonly lightingUniforms: VoxelLightingUniforms = {
+    voxelSkyColor: { value: new THREE.Color(0xb9ddff) },
+    voxelSkyIntensity: { value: 0.82 },
+    voxelSunColor: { value: new THREE.Color(0xfff1ce) },
+    voxelSunDirection: { value: new THREE.Vector3(0.45, 0.8, 0.32).normalize() },
+    voxelSunIntensity: { value: 0.28 },
+    voxelBlockIntensity: { value: 1.35 },
+    voxelMinimumAmbient: { value: 0.028 },
+  };
+  private readonly surfaceLightSample: [number, number, number, number] = [0, 0, 0, 0];
   /**
    * Open chests are drawn by the engine as articulated models. Keeping their
    * static chunk geometry out of the same frame avoids the dark z-fighting
@@ -2277,17 +2300,34 @@ export class ChunkWorld {
       : createBlockAtlas();
     this.atlas.needsUpdate = true;
     this.materials = {
-      opaque: new THREE.MeshLambertMaterial({ map: this.atlas, vertexColors: true }),
-      cutout: new THREE.MeshLambertMaterial({ map: this.atlas, vertexColors: true, alphaTest: 0.32, side: THREE.DoubleSide }),
-      transparent: new THREE.MeshLambertMaterial({ map: this.atlas, vertexColors: true, transparent: true, opacity: 0.76, depthWrite: false, side: THREE.DoubleSide }),
-      glass: new THREE.MeshLambertMaterial({ map: this.atlas, vertexColors: true, transparent: true, opacity: GLASS_OPACITY, depthWrite: false, side: THREE.DoubleSide }),
-      emissive: new THREE.MeshLambertMaterial({ map: this.atlas, vertexColors: true, alphaTest: 0.2, side: THREE.DoubleSide, emissive: new THREE.Color(0xffffff), emissiveMap: this.atlas, emissiveIntensity: 0.72 }),
+      opaque: createVoxelWorldMaterial(this.atlas, this.lightingUniforms),
+      cutout: createVoxelWorldMaterial(this.atlas, this.lightingUniforms, { alphaTest: 0.32, side: THREE.DoubleSide }),
+      transparent: createVoxelWorldMaterial(this.atlas, this.lightingUniforms, { transparent: true, opacity: 0.76, depthWrite: false, side: THREE.DoubleSide }),
+      glass: createVoxelWorldMaterial(this.atlas, this.lightingUniforms, { transparent: true, opacity: GLASS_OPACITY, depthWrite: false, side: THREE.DoubleSide }),
+      emissive: createVoxelWorldMaterial(this.atlas, this.lightingUniforms, { alphaTest: 0.2, side: THREE.DoubleSide }),
     };
     // Packed vertex colors are stored as color / 1.1. Restoring that scale on
     // the shared material keeps the existing overbright biome tint contract.
-    for (const material of Object.values(this.materials)) {
-      if (material instanceof THREE.MeshLambertMaterial) material.color.setScalar(PACKED_VERTEX_COLOR_RANGE);
-    }
+    for (const material of Object.values(this.materials)) if (material instanceof THREE.MeshBasicMaterial) material.color.setScalar(PACKED_VERTEX_COLOR_RANGE);
+    this.lightEngine = new VoxelLightEngine({
+      chunkSize: CHUNK_SIZE,
+      minY: MIN_Y,
+      maxY: MAX_Y,
+      sectionHeight: SECTION_HEIGHT,
+      getChunk: (cx, cz) => this.chunks.get(chunkKey(cx, cz)),
+      getDefinition: (type) => BLOCKS[type],
+      markLightDirty: (x, y, z) => this.queueLightSectionAt(x, y, z),
+    });
+  }
+
+  setLightingEnvironment(environment: VoxelLightingEnvironment) {
+    this.lightingUniforms.voxelSkyColor.value.set(environment.skyColor);
+    this.lightingUniforms.voxelSkyIntensity.value = Math.max(0, environment.skyIntensity);
+    this.lightingUniforms.voxelSunColor.value.set(environment.sunColor);
+    this.lightingUniforms.voxelSunDirection.value.copy(environment.sunDirection).normalize();
+    this.lightingUniforms.voxelSunIntensity.value = Math.max(0, environment.sunIntensity);
+    this.lightingUniforms.voxelBlockIntensity.value = Math.max(0, environment.blockIntensity ?? 1.35);
+    this.lightingUniforms.voxelMinimumAmbient.value = Math.max(0, environment.minimumAmbient ?? 0.028);
   }
 
   /** Redraws only the 16px water tile; the shared atlas then animates every water face in one upload. */
@@ -2339,6 +2379,9 @@ export class ChunkWorld {
     this.urgentMeshQueue = [];
     this.urgentMeshQueueHead = 0;
     this.urgentMeshQueued.clear();
+    this.lightSectionQueue = [];
+    this.lightSectionQueueHead = 0;
+    this.lightSectionQueued.clear();
     this.edits.clear();
     this.structureMarkers.clear();
     this.settlementPlans.clear();
@@ -2410,6 +2453,7 @@ export class ChunkWorld {
     const cz = Math.floor(z / CHUNK_SIZE);
     if (cx !== this.playerChunkX || cz !== this.playerChunkZ || this.frame % 180 === 0) this.scheduleAround(x, z);
     for (let index = 0; index < this.generationWorkPerFrame; index += 1) this.processGeneration();
+    for (let index = 0; index < this.meshWorkPerFrame * 2; index += 1) this.processLightSection();
     for (let index = 0; index < this.meshWorkPerFrame; index += 1) this.processMesh();
   }
 
@@ -2527,6 +2571,132 @@ export class ChunkWorld {
       this.rebuildSection(chunk, next.section);
       return;
     }
+  }
+
+  private queueLightSection(key: string, section: number) {
+    if (section < 0 || section >= SECTION_COUNT || !this.chunks.has(key)) return;
+    const queueKey = `${key}:${section}`;
+    if (this.lightSectionQueued.has(queueKey)) return;
+    this.lightSectionQueued.add(queueKey);
+    this.lightSectionQueue.push({ key, section });
+  }
+
+  private queueLightSectionAt(x: number, y: number, z: number) {
+    for (const [dx, dy, dz] of [[0, 0, 0], [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]] as const) {
+      const sx = splitCoordinate(x + dx);
+      const sz = splitCoordinate(z + dz);
+      this.queueLightSection(chunkKey(sx.chunk, sz.chunk), sectionForY(y + dy));
+    }
+  }
+
+  private takeQueuedLightSection() {
+    while (this.lightSectionQueueHead < this.lightSectionQueue.length) {
+      const next = this.lightSectionQueue[this.lightSectionQueueHead];
+      this.lightSectionQueueHead += 1;
+      if (!this.lightSectionQueued.delete(`${next.key}:${next.section}`)) continue;
+      if (this.lightSectionQueueHead >= 256 && this.lightSectionQueueHead * 2 >= this.lightSectionQueue.length) {
+        this.lightSectionQueue = this.lightSectionQueue.slice(this.lightSectionQueueHead);
+        this.lightSectionQueueHead = 0;
+      }
+      return next;
+    }
+    this.lightSectionQueue = [];
+    this.lightSectionQueueHead = 0;
+    return undefined;
+  }
+
+  processLightSection() {
+    while (true) {
+      const next = this.takeQueuedLightSection();
+      if (!next) return;
+      const chunk = this.chunks.get(next.key);
+      if (!chunk || !chunk.group.visible || !chunk.sections.has(next.section)) continue;
+      this.updateSectionLighting(chunk, next.section);
+      return;
+    }
+  }
+
+  private surfaceLightAt(worldX: number, worldY: number, worldZ: number, normalX: number, normalY: number, normalZ: number): [number, number, number, number] {
+    const axis = Math.abs(normalX) >= Math.abs(normalY) && Math.abs(normalX) >= Math.abs(normalZ) ? 0
+      : Math.abs(normalY) >= Math.abs(normalZ) ? 1 : 2;
+    const axisCoordinate = axis === 0 ? worldX : axis === 1 ? worldY : worldZ;
+    const axisNormal = axis === 0 ? normalX : axis === 1 ? normalY : normalZ;
+    const fixed = Math.round(axisCoordinate + Math.sign(axisNormal || 1) * 0.51);
+    const coordinateA = axis === 0 ? worldY : worldX;
+    const coordinateB = axis === 2 ? worldY : worldZ;
+    const minimumA = Math.floor(coordinateA);
+    const maximumA = Math.ceil(coordinateA);
+    const minimumB = Math.floor(coordinateB);
+    const maximumB = Math.ceil(coordinateB);
+    let totalSky = 0; let totalRed = 0; let totalGreen = 0; let totalBlue = 0;
+    let maximumSky = 0; let maximumRed = 0; let maximumGreen = 0; let maximumBlue = 0;
+    for (let sampleIndex = 0; sampleIndex < 4; sampleIndex += 1) {
+      const a = sampleIndex & 1 ? maximumA : minimumA;
+      const b = sampleIndex & 2 ? maximumB : minimumB;
+      const sampleX = axis === 0 ? fixed : a;
+      const sampleY = axis === 1 ? fixed : axis === 0 ? a : b;
+      const sampleZ = axis === 2 ? fixed : b;
+      const packed = this.lightEngine.getPacked(sampleX, sampleY, sampleZ);
+      const sky = lightChannel(packed, LightChannel.Sky);
+      const red = lightChannel(packed, LightChannel.Red);
+      const green = lightChannel(packed, LightChannel.Green);
+      const blue = lightChannel(packed, LightChannel.Blue);
+      totalSky += sky; totalRed += red; totalGreen += green; totalBlue += blue;
+      maximumSky = Math.max(maximumSky, sky);
+      maximumRed = Math.max(maximumRed, red);
+      maximumGreen = Math.max(maximumGreen, green);
+      maximumBlue = Math.max(maximumBlue, blue);
+    }
+    const output = this.surfaceLightSample;
+    const hasDirectSample = maximumSky > 0 || maximumRed > 0 || maximumGreen > 0 || maximumBlue > 0;
+    if (!hasDirectSample) {
+      const centerX = Math.round(worldX);
+      const centerY = Math.round(worldY);
+      const centerZ = Math.round(worldZ);
+      for (let direction = 0; direction < 6; direction += 1) {
+        const dx = direction === 0 ? 1 : direction === 1 ? -1 : 0;
+        const dy = direction === 2 ? 1 : direction === 3 ? -1 : 0;
+        const dz = direction === 4 ? 1 : direction === 5 ? -1 : 0;
+        const packed = this.lightEngine.getPacked(centerX + dx, centerY + dy, centerZ + dz);
+        maximumSky = Math.max(maximumSky, lightChannel(packed, LightChannel.Sky));
+        maximumRed = Math.max(maximumRed, lightChannel(packed, LightChannel.Red));
+        maximumGreen = Math.max(maximumGreen, lightChannel(packed, LightChannel.Green));
+        maximumBlue = Math.max(maximumBlue, lightChannel(packed, LightChannel.Blue));
+      }
+      output[0] = maximumSky; output[1] = maximumRed; output[2] = maximumGreen; output[3] = maximumBlue;
+      return output;
+    }
+    output[0] = totalSky * 0.18 + maximumSky * 0.28;
+    output[1] = totalRed * 0.18 + maximumRed * 0.28;
+    output[2] = totalGreen * 0.18 + maximumGreen * 0.28;
+    output[3] = totalBlue * 0.18 + maximumBlue * 0.28;
+    return output;
+  }
+
+  private updateSectionLighting(chunk: Chunk, section: number) {
+    const meshes = chunk.sections.get(section);
+    if (!meshes) return;
+    for (const mesh of Object.values(meshes)) {
+      if (!mesh) continue;
+      const position = mesh.geometry.getAttribute("position");
+      const normal = mesh.geometry.getAttribute("normal");
+      if (!position || !normal) continue;
+      const lights = new Uint8Array(position.count * 4);
+      for (let index = 0; index < position.count; index += 1) {
+        const sampled = this.surfaceLightAt(
+          chunk.cx * CHUNK_SIZE + position.getX(index),
+          position.getY(index),
+          chunk.cz * CHUNK_SIZE + position.getZ(index),
+          normal.getX(index), normal.getY(index), normal.getZ(index),
+        );
+        for (let channel = 0; channel < 4; channel += 1) lights[index * 4 + channel] = Math.round(clamp(sampled[channel] / MAX_LIGHT_LEVEL, 0, 1) * 255);
+      }
+      mesh.geometry.setAttribute("voxelLight", new THREE.BufferAttribute(lights, 4, true));
+    }
+  }
+
+  flushLightSections(maximum = 64) {
+    for (let index = 0; index < maximum && this.lightSectionQueued.size > 0; index += 1) this.processLightSection();
   }
 
   takeQueuedMesh(urgent: boolean) {
@@ -2785,6 +2955,8 @@ export class ChunkWorld {
       dirty: new Set(),
       sectionBlockCounts: new Uint16Array(SECTION_COUNT),
       skyTops: new Int16Array(CHUNK_SIZE * CHUNK_SIZE).fill(MIN_Y - 1),
+      light: new Uint16Array(CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT),
+      lightInitialized: false,
       lightIndices: new Set(),
       leafIndices: new Set(),
     };
@@ -2912,13 +3084,14 @@ export class ChunkWorld {
             indexedLavaCells.add(cell);
             chunk.lightIndices.add(index);
           }
-        } else if (LIGHT_BLOCKS.has(type)) chunk.lightIndices.add(index);
+        } else if (blockEmitsLight(type)) chunk.lightIndices.add(index);
         if (LEAF_BLOCK_SET.has(type)) chunk.leafIndices.add(index);
         if (blocksSky(type)) chunk.skyTops[index % (CHUNK_SIZE * CHUNK_SIZE)] = MIN_Y + Math.floor(index / (CHUNK_SIZE * CHUNK_SIZE));
       }
       chunk.sectionBlockCounts[section] = occupied;
     }
     this.chunks.set(key, chunk);
+    this.lightEngine.initializeChunk(chunk);
     return chunk;
   }
 
@@ -4730,7 +4903,7 @@ export class ChunkWorld {
     if (previous === BlockId.Air && type !== BlockId.Air) chunk.sectionBlockCounts[section] += 1;
     else if (previous !== BlockId.Air && type === BlockId.Air) chunk.sectionBlockCounts[section] -= 1;
     // Lava is reindexed once per bounded spatial cell after the edit completes.
-    if (LIGHT_BLOCKS.has(type) && type !== BlockId.Lava) chunk.lightIndices.add(index);
+    if (blockEmitsLight(type) && type !== BlockId.Lava) chunk.lightIndices.add(index);
     else chunk.lightIndices.delete(index);
     if (LEAF_BLOCK_SET.has(type)) chunk.leafIndices.add(index);
     else chunk.leafIndices.delete(index);
@@ -4747,12 +4920,8 @@ export class ChunkWorld {
       }
       chunk.skyTops[column] = nextTop;
     }
-    if (chunk.skyTops[column] !== previousSkyTop) {
-      // The edited block itself is still rebuilt synchronously by the caller.
-      // Lower sections update through the normal bounded mesh queue so a roof
-      // can darken an entire column without creating a one-frame hitch.
-      for (let affectedSection = 0; affectedSection <= section; affectedSection += 1) this.queueMesh(chunk.key, affectedSection);
-    }
+    // Propagated skylight updates mesh light attributes without rebuilding
+    // unchanged positions, UVs, normals, or indices in lower sections.
   }
 
   private refreshLavaLightCell(x: number, y: number, z: number) {
@@ -4795,6 +4964,7 @@ export class ChunkWorld {
     const previousType = chunk.blocks[index] as BlockId;
     const resolvedType = type === BlockId.Air && isWaterloggedFloraBlock(previousType) ? BlockId.Water : type;
     this.writeChunkBlock(chunk, index, resolvedType);
+    this.lightEngine.updateBlock({ x, y, z, previous: previousType, next: resolvedType });
     if (previousType === BlockId.Lava || resolvedType === BlockId.Lava) this.refreshLavaLightCell(x, y, z);
     if (record) {
       let edits = this.edits.get(key);
@@ -4802,9 +4972,7 @@ export class ChunkWorld {
       edits.set(index, resolvedType);
     }
     this.refreshEditedBlock(sx.chunk, sz.chunk, sx.local, y, sz.local, immediate);
-    if (LIGHT_BLOCKS.has(previousType) !== LIGHT_BLOCKS.has(resolvedType) || (LIGHT_BLOCKS.has(resolvedType) && previousType !== resolvedType)) {
-      this.refreshLightNeighborhood(x, y, z, immediate);
-    }
+    if (immediate) this.flushLightSections();
     return true;
   }
 
@@ -4830,6 +4998,8 @@ export class ChunkWorld {
   setBlocksBatch(changes: Array<{ x: number; y: number; z: number; type: BlockId }>, record = true, immediate = false) {
     const affected = new Set<string>();
     const affectedLavaCells = new Map<string, { x: number; y: number; z: number }>();
+    const lightChanges: Array<{ x: number; y: number; z: number; previous: BlockId; next: BlockId }> = [];
+    const batchRelight = changes.length > 12;
     for (const change of changes) {
       if (change.y < MIN_Y || change.y > MAX_Y) continue;
       const sx = splitCoordinate(change.x);
@@ -4840,6 +5010,11 @@ export class ChunkWorld {
       const previousType = chunk.blocks[index] as BlockId;
       const resolvedType = change.type === BlockId.Air && isWaterloggedFloraBlock(previousType) ? BlockId.Water : change.type;
       this.writeChunkBlock(chunk, index, resolvedType);
+      if (previousType !== resolvedType) {
+        const lightChange = { x: change.x, y: change.y, z: change.z, previous: previousType, next: resolvedType };
+        if (batchRelight) lightChanges.push(lightChange);
+        else this.lightEngine.updateBlock(lightChange);
+      }
       if (previousType === BlockId.Lava || resolvedType === BlockId.Lava) {
         affectedLavaCells.set(lavaLightCellKey(change.x, change.y, change.z), change);
       }
@@ -4856,10 +5031,8 @@ export class ChunkWorld {
       if (sx.local === CHUNK_SIZE - 1) affected.add(`${chunkKey(sx.chunk + 1, sz.chunk)}:${section}`);
       if (sz.local === 0) affected.add(`${chunkKey(sx.chunk, sz.chunk - 1)}:${section}`);
       if (sz.local === CHUNK_SIZE - 1) affected.add(`${chunkKey(sx.chunk, sz.chunk + 1)}:${section}`);
-      if (LIGHT_BLOCKS.has(previousType) !== LIGHT_BLOCKS.has(resolvedType) || (LIGHT_BLOCKS.has(resolvedType) && previousType !== resolvedType)) {
-        this.addLightNeighborhoodTargets(affected, change.x, change.y, change.z);
-      }
     }
+    if (lightChanges.length > 0) this.lightEngine.rebuildAround(lightChanges);
     for (const change of affectedLavaCells.values()) this.refreshLavaLightCell(change.x, change.y, change.z);
     for (const entry of affected) {
       const separator = entry.lastIndexOf(":");
@@ -4870,6 +5043,7 @@ export class ChunkWorld {
       if (immediate && chunk?.group.visible) { this.cancelQueuedMesh(key, section); this.rebuildSection(chunk, section); }
       else this.queueMesh(key, section, true);
     }
+    if (immediate) this.flushLightSections();
   }
 
   refreshEditedBlock(cx: number, cz: number, localX: number, y: number, localZ: number, immediate: boolean) {
@@ -4895,39 +5069,6 @@ export class ChunkWorld {
       || (isDoorBlock(type) && doorIsOpen(type))
       || [BlockId.FenceGateNorthSouthOpen, BlockId.FenceGateEastWestOpen].includes(type)
       || ["cross", "tall-flower", "aquatic", "torch", "bush", "fruit", "table", "stool", "shelf"].includes(BLOCKS[type]?.shape ?? "");
-  }
-
-  addLightNeighborhoodTargets(targets: Set<string>, x: number, y: number, z: number) {
-    const minChunkX = Math.floor((x - BAKED_LIGHT_RADIUS) / CHUNK_SIZE);
-    const maxChunkX = Math.floor((x + BAKED_LIGHT_RADIUS) / CHUNK_SIZE);
-    const minChunkZ = Math.floor((z - BAKED_LIGHT_RADIUS) / CHUNK_SIZE);
-    const maxChunkZ = Math.floor((z + BAKED_LIGHT_RADIUS) / CHUNK_SIZE);
-    const minSection = Math.max(0, sectionForY(Math.max(MIN_Y, y - BAKED_LIGHT_RADIUS)));
-    const maxSection = Math.min(SECTION_COUNT - 1, sectionForY(Math.min(MAX_Y, y + BAKED_LIGHT_RADIUS)));
-    for (let cx = minChunkX; cx <= maxChunkX; cx += 1) for (let cz = minChunkZ; cz <= maxChunkZ; cz += 1) {
-      const key = chunkKey(cx, cz);
-      if (!this.chunks.has(key)) continue;
-      for (let section = minSection; section <= maxSection; section += 1) targets.add(`${key}:${section}`);
-    }
-  }
-
-  refreshLightNeighborhood(x: number, y: number, z: number, immediate: boolean) {
-    const affected = new Set<string>();
-    this.addLightNeighborhoodTargets(affected, x, y, z);
-    const editedChunk = chunkKey(Math.floor(x / CHUNK_SIZE), Math.floor(z / CHUNK_SIZE));
-    const editedSection = sectionForY(y);
-    for (const entry of affected) {
-      const separator = entry.lastIndexOf(":");
-      const key = entry.slice(0, separator);
-      const section = Number(entry.slice(separator + 1));
-      const chunk = this.chunks.get(key);
-      // The directly edited section was already rebuilt by refreshEditedBlock.
-      if (key === editedChunk && section === editedSection) continue;
-      if (immediate && chunk?.group.visible && Math.abs(section - editedSection) <= 1) {
-        this.cancelQueuedMesh(key, section);
-        this.rebuildSection(chunk, section);
-      } else this.queueMesh(key, section, true);
-    }
   }
 
   biomeAt(x: number, z: number) {
@@ -4998,37 +5139,50 @@ export class ChunkWorld {
   }
 
   skyVisibilityAt(x: number, y: number, z: number) {
-    const samples: Array<[number, number]> = [[0, 0], [2, 0], [-2, 0], [0, 2], [0, -2]];
-    let visible = 0;
-    for (const [dx, dz] of samples) {
-      let transmission = 1;
-      let leafLayers = 0;
-      const startY = Math.floor(y);
-      if (startY < MIN_Y) transmission = 0;
-      else {
-        const sx = splitCoordinate(Math.floor(x + dx));
-        const sz = splitCoordinate(Math.floor(z + dz));
-        const chunk = this.chunks.get(chunkKey(sx.chunk, sz.chunk));
-        if (chunk) {
-          let index = blockIndex(sx.local, startY, sz.local);
-          for (let scanY = startY; scanY <= MAX_Y; scanY += 1, index += CHUNK_SIZE * CHUNK_SIZE) {
-            const type = chunk.blocks[index] as BlockId;
-            const definition = BLOCKS[type];
-            if (!definition?.solid) continue;
-            // Minecraft-like skylight diffuses through foliage one level at a
-            // time. Treating every dense leaf voxel as a half-light roof made
-            // ordinary canopies cross the cave threshold after four layers.
-            if (LEAF_BLOCK_SET.has(type)) { leafLayers += 1; continue; }
-            if (definition.layer === "cutout") transmission *= 0.7;
-            else { transmission = 0; break; }
-            if (transmission < 0.12) break;
-          }
-          if (transmission > 0 && leafLayers > 0) transmission *= Math.max(0.35, 1 - leafLayers / 15);
-        }
-      }
-      visible += transmission;
+    const sampleY = Math.floor(y);
+    const sampleX = Math.floor(x + 0.5);
+    const sampleZ = Math.floor(z + 0.5);
+    let sky = 0;
+    let samples = 0;
+    for (const [dx, dz, weight] of [[0, 0, 2], [1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1]] as const) {
+      const packed = this.lightEngine.getPacked(sampleX + dx, sampleY, sampleZ + dz);
+      sky += lightChannel(packed, LightChannel.Sky) * weight;
+      samples += weight;
     }
-    return visible / samples.length;
+    return samples > 0 ? clamp(sky / (samples * MAX_LIGHT_LEVEL), 0, 1) : 0;
+  }
+
+  /** Continuous cave presentation input: roofs matter, but depth prevents an ordinary house from becoming a cave. */
+  subterraneanBlendAt(x: number, y: number, z: number) {
+    const visibility = this.skyVisibilityAt(x, y, z);
+    const depth = this.surfaceAt(Math.floor(x), Math.floor(z)) - y;
+    const skyOcclusion = 1 - smoothstep(0.08, 0.68, visibility);
+    const depthWeight = 0.16 + smoothstep(0.5, 8, depth) * 0.84;
+    return clamp(skyOcclusion * depthWeight, 0, 1);
+  }
+
+  lightAt(x: number, y: number, z: number) {
+    return this.lightEngine.getLevels(Math.floor(x), Math.floor(y), Math.floor(z));
+  }
+
+  /** Authoritative gameplay brightness. Block light remains effective at night and underground. */
+  gameplayLightAt(x: number, y: number, z: number, daylight = 1) {
+    const packed = this.lightEngine.getPacked(Math.floor(x), Math.floor(y), Math.floor(z));
+    return Math.max(
+      perceivedBlockLight(packed),
+      lightChannel(packed, LightChannel.Sky) * clamp(daylight, 0, 1),
+    );
+  }
+
+  lightingProbeAt(x: number, y: number, z: number) {
+    const levels = this.lightAt(x, y, z);
+    return {
+      ...levels,
+      skyVisibility: this.skyVisibilityAt(x, y, z),
+      subterraneanBlend: this.subterraneanBlendAt(x, y, z),
+      queuedSections: this.lightSectionQueued.size,
+      derivedBytes: this.chunks.size * CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT * Uint16Array.BYTES_PER_ELEMENT,
+    };
   }
 
   findWalkableY(x: number, z: number, aroundY = MAX_Y) {
@@ -5069,12 +5223,6 @@ export class ChunkWorld {
     const buckets: Record<WorldRenderLayer, GeometryBucket> = { opaque: emptyBucket(), cutout: emptyBucket(), transparent: emptyBucket(), glass: emptyBucket(), emissive: emptyBucket() };
     const startY = MIN_Y + section * SECTION_HEIGHT;
     const endY = Math.min(MAX_Y, startY + SECTION_HEIGHT - 1);
-    const bakedLights = this.lightSourcesNear(
-      chunk.cx * CHUNK_SIZE + CHUNK_SIZE / 2,
-      (startY + endY) / 2,
-      chunk.cz * CHUNK_SIZE + CHUNK_SIZE / 2,
-      BAKED_LIGHT_RADIUS + CHUNK_SIZE,
-    ).slice(0, BAKED_LIGHT_SOURCE_LIMIT);
     const west = this.chunks.get(chunkKey(chunk.cx - 1, chunk.cz));
     const east = this.chunks.get(chunkKey(chunk.cx + 1, chunk.cz));
     const north = this.chunks.get(chunkKey(chunk.cx, chunk.cz - 1));
@@ -5088,51 +5236,55 @@ export class ChunkWorld {
       if (localZ < 0) return north ? north.blocks[blockIndex(localX, y, CHUNK_SIZE - 1)] as BlockId : BlockId.Air;
       return south ? south.blocks[blockIndex(localX, y, 0)] as BlockId : BlockId.Air;
     };
-    const skyTopAtLocal = (localX: number, localZ: number) => {
-      if (localX >= 0 && localX < CHUNK_SIZE && localZ >= 0 && localZ < CHUNK_SIZE) return chunk.skyTops[localX + localZ * CHUNK_SIZE];
-      if (localX < 0) return west ? west.skyTops[CHUNK_SIZE - 1 + localZ * CHUNK_SIZE] : MIN_Y - 1;
-      if (localX >= CHUNK_SIZE) return east ? east.skyTops[localZ * CHUNK_SIZE] : MIN_Y - 1;
-      if (localZ < 0) return north ? north.skyTops[localX + (CHUNK_SIZE - 1) * CHUNK_SIZE] : MIN_Y - 1;
-      return south ? south.skyTops[localX] : MIN_Y - 1;
-    };
-    const hasSkyTopAtLocal = (localX: number, localZ: number) => {
-      if (localX >= 0 && localX < CHUNK_SIZE && localZ >= 0 && localZ < CHUNK_SIZE) return true;
-      if (localZ < 0 || localZ >= CHUNK_SIZE) return localX >= 0 && localX < CHUNK_SIZE && Boolean(localZ < 0 ? north : south);
-      if (localX < 0 || localX >= CHUNK_SIZE) return Boolean(localX < 0 ? west : east);
-      return false;
-    };
-    const shadeCacheWidth = CHUNK_SIZE + 2;
-    const shadeCacheHeight = SECTION_HEIGHT + 2;
-    // The cache belongs to this synchronous rebuild and its light/sky snapshot;
-    // the next edit-driven rebuild necessarily starts with a fresh allocation.
-    const shadeCache = new Float32Array(shadeCacheWidth * shadeCacheHeight * shadeCacheWidth);
-    const calculateShadeAt = (localX: number, y: number, localZ: number) => bakedEnvironmentLightShade(
-      laterallyDiffusedSkyShade(
-        y,
-        skyTopAtLocal(localX, localZ),
-        ([[localX - 1, localZ], [localX + 1, localZ], [localX, localZ - 1], [localX, localZ + 1]] as const)
-          .filter(([sampleX, sampleZ]) => hasSkyTopAtLocal(sampleX, sampleZ))
-          .map(([sampleX, sampleZ]) => skyTopAtLocal(sampleX, sampleZ)),
-      ),
-      chunk.cx * CHUNK_SIZE + localX,
-      y,
-      chunk.cz * CHUNK_SIZE + localZ,
-      bakedLights,
-    );
-    const shadeAt = (localX: number, y: number, localZ: number) => {
+    const occlusionCacheWidth = CHUNK_SIZE + 2;
+    const occlusionCache = new Uint8Array(occlusionCacheWidth * occlusionCacheWidth * (SECTION_HEIGHT + 2));
+    const lightOccludesAt = (localX: number, y: number, localZ: number) => {
       const cacheX = localX + 1;
       const cacheY = y - startY + 1;
       const cacheZ = localZ + 1;
-      if (cacheX < 0 || cacheX >= shadeCacheWidth || cacheY < 0 || cacheY >= shadeCacheHeight || cacheZ < 0 || cacheZ >= shadeCacheWidth) {
-        return calculateShadeAt(localX, y, localZ);
+      if (cacheX < 0 || cacheX >= occlusionCacheWidth || cacheY < 0 || cacheY >= SECTION_HEIGHT + 2 || cacheZ < 0 || cacheZ >= occlusionCacheWidth) {
+        return (BLOCKS[neighborAt(localX, y, localZ)]?.lightDampening ?? 0) >= MAX_LIGHT_LEVEL;
       }
-      const cacheIndex = cacheX + shadeCacheWidth * (cacheZ + shadeCacheWidth * cacheY);
-      const cached = shadeCache[cacheIndex];
-      if (cached !== 0) return cached;
-      const shade = calculateShadeAt(localX, y, localZ);
-      shadeCache[cacheIndex] = shade;
-      return shade;
+      const index = cacheX + occlusionCacheWidth * (cacheZ + occlusionCacheWidth * cacheY);
+      const cached = occlusionCache[index];
+      if (cached !== 0) return cached === 2;
+      const occludes = (BLOCKS[neighborAt(localX, y, localZ)]?.lightDampening ?? 0) >= MAX_LIGHT_LEVEL;
+      occlusionCache[index] = occludes ? 2 : 1;
+      return occludes;
     };
+    const surfaceOcclusionAt = (localX: number, localY: number, localZ: number, normalX: number, normalY: number, normalZ: number) => {
+      const axis = Math.abs(normalX) >= Math.abs(normalY) && Math.abs(normalX) >= Math.abs(normalZ) ? 0
+        : Math.abs(normalY) >= Math.abs(normalZ) ? 1 : 2;
+      const insideX = Math.round(localX - normalX * 0.51);
+      const insideY = Math.round(localY - normalY * 0.51);
+      const insideZ = Math.round(localZ - normalZ * 0.51);
+      const outwardX = insideX + (axis === 0 ? Math.sign(normalX || 1) : 0);
+      const outwardY = insideY + (axis === 1 ? Math.sign(normalY || 1) : 0);
+      const outwardZ = insideZ + (axis === 2 ? Math.sign(normalZ || 1) : 0);
+      const coordinateA = axis === 0 ? localY : localX;
+      const coordinateB = axis === 2 ? localY : localZ;
+      const centerA = axis === 0 ? insideY : insideX;
+      const centerB = axis === 2 ? insideY : insideZ;
+      const signA = coordinateA >= centerA ? 1 : -1;
+      const signB = coordinateB >= centerB ? 1 : -1;
+      const ax = axis === 0 ? 0 : signA; const ay = axis === 0 ? signA : 0;
+      const by = axis === 2 ? signB : 0; const bz = axis === 2 ? 0 : signB;
+      const sideA = lightOccludesAt(outwardX + ax, outwardY + ay, outwardZ);
+      const sideB = lightOccludesAt(outwardX, outwardY + by, outwardZ + bz);
+      const corner = lightOccludesAt(outwardX + ax, outwardY + ay + by, outwardZ + bz);
+      return 1 - (sideA ? 0.15 : 0) - (sideB ? 0.15 : 0) - (corner && !(sideA && sideB) ? 0.12 : 0);
+    };
+    // Shape builders historically accepted a baked environment multiplier.
+    // Real illumination now arrives through the packed voxelLight attribute,
+    // so this compatibility value is deliberately constant and allocation-free.
+    const shadeAt = (localX: number, y: number, localZ: number) => {
+      void localX;
+      void y;
+      void localZ;
+      return 1;
+    };
+    let activeEmissiveStrength = 0;
+    let activeAmbientOcclusion = false;
     const addQuad = (
       bucket: GeometryBucket,
       corners: ReadonlyArray<readonly [number, number, number]>,
@@ -5144,13 +5296,28 @@ export class ChunkWorld {
       offsetY = 0,
       offsetZ = 0,
       topOffset = 0,
-      environment = 1,
+      _environment = 1,
     ) => {
+      void _environment;
       const base = bucket.positions.length / 3;
       for (const corner of corners) {
-        bucket.positions.push(corner[0] + offsetX, corner[1] + offsetY + (corner[1] > 0 ? topOffset : 0), corner[2] + offsetZ);
+        const localX = corner[0] + offsetX;
+        const localY = corner[1] + offsetY + (corner[1] > 0 ? topOffset : 0);
+        const localZ = corner[2] + offsetZ;
+        bucket.positions.push(localX, localY, localZ);
         bucket.normals.push(normal[0], normal[1], normal[2]);
-        bucket.colors.push(shade * environment * tint[0], shade * environment * tint[1], shade * environment * tint[2]);
+        bucket.colors.push(shade * tint[0], shade * tint[1], shade * tint[2]);
+        const light = this.surfaceLightAt(
+          chunk.cx * CHUNK_SIZE + localX,
+          localY,
+          chunk.cz * CHUNK_SIZE + localZ,
+          normal[0], normal[1], normal[2],
+        );
+        bucket.lights.push(light[0], light[1], light[2], light[3]);
+        bucket.emissions.push(activeEmissiveStrength);
+        bucket.occlusions.push(activeAmbientOcclusion
+          ? surfaceOcclusionAt(localX, localY, localZ, normal[0], normal[1], normal[2])
+          : 1);
       }
       const [u0, v0, u1, v1] = TILE_UVS[tile];
       bucket.uvs.push(u0, v0, u0, v1, u1, v1, u1, v0);
@@ -5200,6 +5367,11 @@ export class ChunkWorld {
         if (type === BlockId.Chest && this.hiddenChestVisuals.has(`${chunk.cx * CHUNK_SIZE + lx},${y},${chunk.cz * CHUNK_SIZE + lz}`)) continue;
         const definition = BLOCKS[type];
         if (!definition || definition.layer === "none") continue;
+        activeEmissiveStrength = definition.emissiveStrength ?? 0;
+        activeAmbientOcclusion = definition.solid
+          && (!definition.shape || definition.shape === "cube")
+          && definition.layer !== "transparent"
+          && definition.layer !== "cutout";
         if (definition.waterlogged) addImplicitWaterCell(lx, y, lz, tint);
         const bucket = buckets[type === BlockId.Glass ? "glass" : definition.layer as Exclude<RenderLayer, "none">];
         if (definition.shape === "torch") {
@@ -5738,6 +5910,9 @@ export class ChunkWorld {
       geometry.setAttribute("position", new THREE.Float32BufferAttribute(bucket.positions, 3));
       geometry.setAttribute("normal", new THREE.BufferAttribute(packSnorm8(bucket.normals), 3, true));
       geometry.setAttribute("color", new THREE.BufferAttribute(packColorUnorm8(bucket.colors), 3, true));
+      geometry.setAttribute("voxelLight", new THREE.BufferAttribute(packLightUnorm8(bucket.lights), 4, true));
+      geometry.setAttribute("voxelEmission", new THREE.BufferAttribute(packScalarUnorm8(bucket.emissions), 1, true));
+      geometry.setAttribute("voxelOcclusion", new THREE.BufferAttribute(packScalarUnorm8(bucket.occlusions), 1, true));
       geometry.setAttribute("uv", new THREE.BufferAttribute(packUnorm16(bucket.uvs), 2, true));
       geometry.setIndex(bucket.indices);
       const centerY = (startY + endY) / 2;

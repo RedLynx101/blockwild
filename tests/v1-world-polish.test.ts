@@ -5,7 +5,7 @@ import { caveEntranceAt } from "../app/game/caves.ts";
 import { wildPeppermintHeight } from "../app/game/ecology.ts";
 import { canPlantSaplingOn, plantingResult, planPeppermintColumnRemoval } from "../app/game/farming.ts";
 import { rayDistanceToTorchBounds, torchInteractionBounds } from "../app/game/engine.ts";
-import { BAKED_LIGHT_SOURCE_LIMIT, planPoiAmenities, ChunkWorld, LIQUID_SURFACE_INSET, WILD_PEPPERMINT_STEM_TILE } from "../app/game/world.ts";
+import { planPoiAmenities, ChunkWorld, LIQUID_SURFACE_INSET, WILD_PEPPERMINT_STEM_TILE } from "../app/game/world.ts";
 import { planStructure } from "../app/game/structures.ts";
 import { isSeatBlock, seatAnchorForBlock } from "../app/game/seating.ts";
 
@@ -41,7 +41,7 @@ test("Meadow Grass accepts saplings and wild peppermint columns remain connected
     [],
     "the renderer-only stem tile must not overwrite any save-stable block texture",
   );
-  assert.equal(BAKED_LIGHT_SOURCE_LIMIT, 1024, "dense builds should keep broad baked glow beyond the animated pool");
+  assert.equal(BLOCKS[BlockId.LightningBugJar].lightEmission, 10, "jar light belongs to the authoritative voxel-light registry");
 });
 
 test("Dreamblossoms glow and aquatic flora use flush species-specific stack contracts", () => {

@@ -1052,6 +1052,16 @@ export type HudState = {
   mapHeading: number;
   mapPlayers: readonly MapPlayerMarker[];
   debug: boolean;
+  lighting: {
+    sky: number;
+    red: number;
+    green: number;
+    blue: number;
+    skyVisibility: number;
+    subterraneanBlend: number;
+    queuedSections: number;
+    derivedBytes: number;
+  };
   mode: GameMode;
   weather: Weather;
   loadedChunks: number;
@@ -1688,12 +1698,11 @@ type EnvironmentLightCandidate = EnvironmentLightSource & {
 const compareEnvironmentLightCandidates = (a: EnvironmentLightCandidate, b: EnvironmentLightCandidate) => a.priority - b.priority;
 
 /**
- * Point lights are reserved for animated/local highlights; chunk vertex colors
- * provide the broad static glow. The pool is nearest-first and independent of
- * camera facing; a larger budget keeps dense player builds visibly alive while
- * the baked-light pass guarantees useful illumination beyond these highlights.
+ * Point lights are reserved for animated/local highlights; chunk light attributes
+ * provide all authoritative static illumination. The deliberately small pool
+ * is nearest-first and exists only for animated specular/accent response.
  */
-export const ENVIRONMENT_LIGHT_POOL_SIZE = Object.freeze({ desktop: 64, touch: 32 } as const);
+export const ENVIRONMENT_LIGHT_POOL_SIZE = Object.freeze({ desktop: 16, touch: 8 } as const);
 
 const PLAYER_HEIGHT = 1.8;
 const CROUCH_HEIGHT = 1.48;
@@ -1732,10 +1741,11 @@ export const HUD_OVERLAY_REFRESH_MS = 100;
 /**
  * Dynamic highlights cover a 25-block near-view region. A torch can influence
  * another 21 blocks beyond that region, so the bounded source query must reach
- * 46 blocks to avoid a light popping in only after the camera crosses its
- * influence sphere. This remains constant regardless of render distance.
+ * The query includes the maximum accent radius plus an approach margin so a
+ * source is assigned before the camera crosses its influence sphere. This
+ * remains constant regardless of render distance.
  */
-export const ENVIRONMENT_LIGHT_QUERY_RADIUS = 46;
+export const ENVIRONMENT_LIGHT_QUERY_RADIUS = 30;
 // Hearthroads trims the already-reduced night pressure by another 40% while
 // keeping encounters meaningful near genuine darkness.
 export const HOSTILE_SPAWN_ATTEMPT_SCALE = 2.5;
@@ -3281,6 +3291,9 @@ export class VoxelEngine {
   lightRefreshTimer = 0;
   skyVisibility = 1;
   skyVisibilityTarget = 1;
+  subterraneanBlend = 0;
+  subterraneanBlendTarget = 0;
+  cavePresentationActive = false;
   skyColor = new THREE.Color();
   daylightSkyColor = new THREE.Color("#78b9ed");
   nightSkyColor = new THREE.Color("#020611");
@@ -11902,7 +11915,8 @@ export class VoxelEngine {
         }
         const next = nextPlantStage(current);
         if (next === null) { this.saplings.delete(key); continue; }
-        if (!canGrowPlant(current, hydratedSoil, this.daylightAmount())) {
+        const localGrowthLight = this.world.gameplayLightAt(x, y + 1, z, this.daylightAmount()) / 15;
+        if (!canGrowPlant(current, hydratedSoil, localGrowthLight)) {
           this.saplings.set(key, now + 25_000);
           continue;
         }
@@ -20215,17 +20229,6 @@ export class VoxelEngine {
     this.saveSoon();
   }
 
-  hostileSpawnSuppressedByTorch(x: number, y: number, z: number, radius = 7) {
-    const verticalRadius = 4;
-    for (let dx = -radius; dx <= radius; dx += 1) for (let dz = -radius; dz <= radius; dz += 1) {
-      if (dx * dx + dz * dz > radius * radius) continue;
-      for (let dy = -verticalRadius; dy <= verticalRadius; dy += 1) {
-        if (isTorchBlock(this.world.getBlock(x + dx, y + dy, z + dz) ?? BlockId.Air)) return true;
-      }
-    }
-    return false;
-  }
-
   hostileSpawnSuppressedBySettlement(x: number, z: number) {
     return [...this.settlements.values()].some((settlement) => {
       const safeRadius = settlement.size === "hamlet" ? 34 : settlement.size === "village" ? 46 : 58;
@@ -20646,8 +20649,9 @@ export class VoxelEngine {
           y = aquaticY;
           aquatic = true;
         } else {
-          if (this.daylightAmount() >= 0.2 || this.spawnProtection > 0) { this.noteEcologyRejection("daylight"); continue; }
-          if (y <= SEA_LEVEL || this.hostileSpawnSuppressedByTorch(x, y + 1, z) || this.hostileSpawnSuppressedBySettlement(x, z) || this.isInsideHearthward(x, z)) {
+          const spawnLight = this.world.gameplayLightAt(x, y + 1, z, this.daylightAmount());
+          if (this.spawnProtection > 0 || spawnLight > 7) { this.noteEcologyRejection("light"); continue; }
+          if (y <= SEA_LEVEL || this.hostileSpawnSuppressedBySettlement(x, z) || this.isInsideHearthward(x, z)) {
             this.noteEcologyRejection("safe-area");
             continue;
           }
@@ -24148,9 +24152,14 @@ export class VoxelEngine {
     if (this.lightRefreshTimer <= 0) {
       this.lightRefreshTimer = 0.18;
       this.skyVisibilityTarget = this.world.skyVisibilityAt(this.camera.position.x, this.camera.position.y, this.camera.position.z);
+      this.subterraneanBlendTarget = this.world.subterraneanBlendAt(this.camera.position.x, this.camera.position.y, this.camera.position.z);
       this.refreshEnvironmentLights();
     }
     this.skyVisibility += (this.skyVisibilityTarget - this.skyVisibility) * (1 - Math.exp(-dt * 5));
+    this.subterraneanBlend += (this.subterraneanBlendTarget - this.subterraneanBlend) * (1 - Math.exp(-dt * 3.2));
+    if (this.cavePresentationActive) {
+      if (this.subterraneanBlend < 0.34) this.cavePresentationActive = false;
+    } else if (this.subterraneanBlend > 0.62) this.cavePresentationActive = true;
     const timeSeconds = performance.now() / 1000;
     for (const light of this.placedLightPool) {
       const target = Number(light.userData.targetIntensity) || 0;
@@ -24307,7 +24316,11 @@ export class VoxelEngine {
     const sky = this.skyColor.copy(this.nightSkyColor).lerp(this.daylightSkyColor, daylight).lerp(this.dawnSkyColor, twilight * 0.52);
     const headBlock = this.world.getBlock(Math.floor(this.camera.position.x + 0.5), Math.floor(this.camera.position.y + 0.5), Math.floor(this.camera.position.z + 0.5));
     const underwater = blockContainsWater(headBlock);
-    const underground = this.skyVisibility < 0.18 && !underwater;
+    const subterranean = underwater ? 0 : clamp(
+      Number.isFinite(this.subterraneanBlend) ? this.subterraneanBlend : 1 - this.skyVisibility,
+      0,
+      1,
+    );
     if (underwater) sky.set("#1d5d82");
     else if (this.weatherState.kind === "sandstorm") sky.lerp(this.weatherSkyColor.set("#b88a55"), weatherFx.fogDensity * 0.62);
     else if (this.weatherState.kind === "ashfall") sky.lerp(this.weatherSkyColor.set("#493f43"), weatherFx.skyDarkening * 0.8);
@@ -24318,6 +24331,7 @@ export class VoxelEngine {
       sky.lerp(this.weatherSkyColor.set(stormSky), 0.94);
     }
     else sky.lerp(this.nightSkyColor, weatherFx.skyDarkening * 0.42);
+    if (!underwater && subterranean > 0) sky.lerp(this.weatherSkyColor.set("#101722"), subterranean * 0.72);
     this.updateLightning(weatherFx, dt);
     if (this.lightningFlash > 0.01) sky.lerp(this.weatherSkyColor.set("#dcecff"), Math.min(0.58, this.lightningFlash * 0.58));
     this.scene.background = sky;
@@ -24325,13 +24339,15 @@ export class VoxelEngine {
       this.scene.fog.color.copy(sky);
       const view = this.settings.renderDistance * 16;
       const weatherVisibility = 1 - weatherFx.fogDensity * 0.72;
-      this.scene.fog.near = underwater ? 3 : underground ? 10 : view * 0.54 * weatherVisibility;
-      this.scene.fog.far = underwater ? 24 : underground ? Math.max(30, view * 0.7) : Math.max(28, view * 1.05 * weatherVisibility);
+      const outdoorNear = view * 0.54 * weatherVisibility;
+      const outdoorFar = Math.max(28, view * 1.05 * weatherVisibility);
+      this.scene.fog.near = underwater ? 3 : THREE.MathUtils.lerp(outdoorNear, 10, subterranean);
+      this.scene.fog.far = underwater ? 24 : THREE.MathUtils.lerp(outdoorFar, Math.max(30, view * 0.7), subterranean);
     }
     // Sun and moon are global, but their direct and ambient contribution is
     // gated by actual sky exposure. Local point lights remain independent.
     const weatherLight = weatherFx.fullOvercast ? 0.42 : 1 - weatherFx.skyDarkening * 0.62;
-    const skyLight = skyLightLevels({ daylight, moonlight, skyVisibility: this.skyVisibility, weatherLight, underwater, underground });
+    const skyLight = skyLightLevels({ daylight, moonlight, skyVisibility: this.skyVisibility, weatherLight, underwater, subterraneanBlend: subterranean });
     this.hemisphere.intensity = skyLight.hemisphere + this.lightningFlash * 0.12;
     this.directional.intensity = skyLight.directional + this.lightningFlash * 2.4;
     this.directional.color.set(twilight > 0.22 ? 0xffae7a : daylight > 0.2 ? 0xfff1ce : 0x8da5cf);
@@ -24357,14 +24373,26 @@ export class VoxelEngine {
     this.moon.position.copy(this.camera.position).addScaledVector(celestialDirection, -celestialDistance);
     this.sun.lookAt(this.camera.position);
     this.moon.lookAt(this.camera.position);
-    this.sun.visible = !underground && sunVisibility > 0.045 && sunHeight > -0.18;
-    this.moon.visible = !underground && moonVisibility > 0.045 && sunHeight < 0.22;
-    (this.stars.material as THREE.PointsMaterial).opacity = underground
-      ? 0
-      : clamp((1 - daylight) * 1.05 * weatherFx.celestialVisibility, 0, 0.95);
+    const openSkyPresentation = 1 - subterranean;
+    const sunOpacity = sunVisibility * openSkyPresentation;
+    const moonOpacity = moonVisibility * openSkyPresentation;
+    (this.sun.material as THREE.MeshBasicMaterial).opacity = sunOpacity;
+    (this.moon.material as THREE.MeshBasicMaterial).opacity = moonOpacity;
+    this.sun.visible = sunOpacity > 0.01 && sunHeight > -0.18;
+    this.moon.visible = moonOpacity > 0.01 && sunHeight < 0.22;
+    (this.stars.material as THREE.PointsMaterial).opacity = clamp((1 - daylight) * 1.05 * weatherFx.celestialVisibility * openSkyPresentation, 0, 0.95);
     this.stars.position.copy(this.camera.position);
     this.directional.target.position.copy(this.camera.position);
     this.directional.position.copy(this.camera.position).addScaledVector(celestialDirection, 55);
+    this.world.setLightingEnvironment?.({
+      skyColor: sky,
+      skyIntensity: skyLight.hemisphere * 2.25,
+      sunColor: this.directional.color,
+      sunDirection: celestialDirection,
+      sunIntensity: skyLight.directional * 0.42 + this.lightningFlash * 0.5,
+      blockIntensity: 1.35,
+      minimumAmbient: underwater ? 0.035 : 0.026,
+    });
     // Constructor-free test harnesses and a few legacy preview fixtures do not
     // run class field initializers. Keep the listener integration resilient
     // without allocating a new vector during normal frames.
@@ -24380,7 +24408,7 @@ export class VoxelEngine {
     const biome = this.world.biomeAt(Math.round(this.position.x), Math.round(this.position.z));
     // A roof suppresses sky visibility, but a normal house should retain its
     // biome/day score. Reserve cave music for players actually below terrain.
-    const caveMusic = underground
+    const caveMusic = this.cavePresentationActive
       && this.position.y < this.world.surfaceAt(Math.round(this.position.x), Math.round(this.position.z)) - 4;
     if (caveMusic && this.running && !this.paused && !this.titleMode) {
       if (!Number.isFinite(this.undergroundAmbienceTimer)) this.undergroundAmbienceTimer = 3;
@@ -24409,7 +24437,7 @@ export class VoxelEngine {
       night: 1 - daylight,
       wind: clamp(this.weatherState.windSpeed / 4.2, 0.12, 1),
       winter: winterBiome || this.weatherState.kind === "snow" ? 1 : 0,
-      cave: caveMusic ? 1 : underground ? 0.52 : 0,
+      cave: caveMusic ? Math.max(0.72, subterranean) : subterranean * 0.52,
       ocean: atSea ? underwater ? 1 : 0.78 : 0,
       swimming: underwater && horizontalSpeed > 0.35 ? clamp(horizontalSpeed / 4, 0.22, 1) : 0,
     });
@@ -25283,6 +25311,7 @@ export class VoxelEngine {
       this.hudBestiarySignature = bestiarySignature;
       this.hudBestiarySnapshot = Object.fromEntries(MOB_ORDER.map((kind) => [kind, { ...this.bestiary[kind] }])) as BestiaryProgress;
     }
+    const lighting = this.world.lightingProbeAt(this.position.x, this.position.y + 1, this.position.z);
     this.events.onHud({
       health: clamp(this.health, 0, 10),
       hunger: clamp(this.hunger, 0, 10),
@@ -25352,6 +25381,7 @@ export class VoxelEngine {
         color: remote.target.variant === "female" ? "#d86e9a" : ["#5d8fc6", "#a874d0", "#5eaa81", "#d18b4c"][index % 4],
       })),
       debug: this.debug,
+      lighting,
       mode: this.mode,
       weather: this.weather,
       loadedChunks: this.world.loadedCount,

@@ -26,7 +26,7 @@ import {
   type WorldSave,
 } from "../app/game/engine.ts";
 import { harvestPlant } from "../app/game/farming.ts";
-import { BAKED_LIGHT_SOURCE_LIMIT, ChunkWorld, BIOME_NAMES, BiomeId, GENERATOR_VERSION, GLASS_OPACITY, LIQUID_SURFACE_INSET, MAX_Y, MIN_Y, PACKED_VERTEX_COLOR_RANGE, RADIAL_STREAMING_DISTANCE_THRESHOLD, SECTION_HEIGHT, WORLD_HEIGHT, bakedEnvironmentLightShade, blockIndex, chunkAabbRadialDistanceSquared, chunkKey, chunkWithinStreamingRadius, chunksWithinStreamingRadius, environmentSkyShade, laterallyDiffusedSkyShade, liquidSurfaceInsetForCell, splitCoordinate } from "../app/game/world.ts";
+import { ChunkWorld, BIOME_NAMES, BiomeId, GENERATOR_VERSION, GLASS_OPACITY, LIQUID_SURFACE_INSET, MAX_Y, MIN_Y, PACKED_VERTEX_COLOR_RANGE, RADIAL_STREAMING_DISTANCE_THRESHOLD, SECTION_HEIGHT, WORLD_HEIGHT, blockIndex, chunkAabbRadialDistanceSquared, chunkKey, chunkWithinStreamingRadius, chunksWithinStreamingRadius, liquidSurfaceInsetForCell, splitCoordinate } from "../app/game/world.ts";
 import { MOB_DEFS, MOB_ORDER } from "../app/game/mobs.ts";
 import { createHeldToolSpec, createRidgebackSpec, createZombieSpec, INSPECTOR_MODEL_SPECS, RIDGEBACK_GROUND_LIFT } from "../app/game/model-specs.ts";
 
@@ -636,9 +636,6 @@ test("section occupancy and nearby-light indices stay incremental as blocks chan
 });
 
 test("world-space skylight stays attached to exposed and roofed columns", () => {
-  assert.equal(environmentSkyShade(12, 4), 1, "an exposed face should keep full daylight even if the player is elsewhere");
-  assert.equal(environmentSkyShade(3, 12), 0.38, "a face deep below an opaque roof should remain dark");
-
   const world = new ChunkWorld();
   world.reset("SKYLIGHT-COLUMNS");
   const chunk = world.generateChunk(0, 0);
@@ -646,10 +643,13 @@ test("world-space skylight stays attached to exposed and roofed columns", () => 
   const z = 4;
   const originalTop = world.skyTopAt(x, z)!;
   const roofY = Math.min(MAX_Y, originalTop + 8);
+  const exposedSky = world.lightAt(x, roofY - 1, z).sky;
   world.setBlock(x, roofY, z, BlockId.Stone, false, false);
   assert.equal(world.skyTopAt(x, z), roofY, "a placed roof must darken the column beneath it");
+  assert.ok(world.lightAt(x, roofY - 1, z).sky < exposedSky, "an opaque roof must reduce authoritative skylight");
   world.setBlock(x, roofY, z, BlockId.Air, false, false);
   assert.equal(world.skyTopAt(x, z), originalTop, "breaking the roof must restore the exposed column immediately");
+  assert.equal(world.lightAt(x, roofY - 1, z).sky, exposedSky, "breaking the roof restores skylight without a mesh rebuild");
   assert.equal(chunk.skyTops[x + z * 16], originalTop);
   world.dispose();
 });
@@ -672,14 +672,6 @@ test("adjacent blocks across a chunk seam do not render hidden faces", () => {
   }, 0);
   assert.equal(vertexCount, 40, "two touching cubes should expose exactly ten quads");
   world.dispose();
-});
-
-test("one side step from an open shaft receives bounded lateral skylight", () => {
-  const sealed = environmentSkyShade(3, 12);
-  const edge = laterallyDiffusedSkyShade(3, 12, [2]);
-  assert.ok(edge > sealed + 0.3, "the first side-cave cell should not snap straight to full cave darkness");
-  assert.ok(edge < 0.9, "lateral skylight must remain dimmer than direct open sky");
-  assert.equal(laterallyDiffusedSkyShade(3, 12, [12]), sealed, "a sealed neighboring column contributes no false daylight");
 });
 
 test("chunk meshes pack normalized attributes without losing UV or bright biome tint ranges", () => {
@@ -714,7 +706,13 @@ test("chunk meshes pack normalized attributes without losing UV or bright biome 
   assert.notEqual(upwardVertex, undefined);
   assert.ok(Math.abs(normal.getY(upwardVertex!) - 1) < 1e-9, "axis normals survive signed-byte packing exactly");
   assert.ok(Math.abs(color.getX(upwardVertex!) * PACKED_VERTEX_COLOR_RANGE - 1.1) <= PACKED_VERTEX_COLOR_RANGE / 255, "the overbright desert tint survives byte packing");
-  assert.equal((world.materials.opaque as THREE.MeshLambertMaterial).color.r, PACKED_VERTEX_COLOR_RANGE, "the material restores packed color headroom");
+  assert.equal((world.materials.opaque as THREE.MeshBasicMaterial).color.r, PACKED_VERTEX_COLOR_RANGE, "the voxel material restores packed color headroom");
+  const voxelLight = geometry.getAttribute("voxelLight") as THREE.BufferAttribute;
+  const voxelEmission = geometry.getAttribute("voxelEmission") as THREE.BufferAttribute;
+  const voxelOcclusion = geometry.getAttribute("voxelOcclusion") as THREE.BufferAttribute;
+  assert.ok(voxelLight.array instanceof Uint8Array && voxelLight.normalized);
+  assert.ok(voxelEmission.array instanceof Uint8Array && voxelEmission.normalized);
+  assert.ok(voxelOcclusion.array instanceof Uint8Array && voxelOcclusion.normalized);
 
   const spriteNormal = chunk.sections.get(section)?.emissive?.geometry.getAttribute("normal") as THREE.BufferAttribute;
   assert.ok(spriteNormal.array instanceof Int8Array);
@@ -739,7 +737,7 @@ test("chunk meshes pack normalized attributes without losing UV or bright biome 
   world.dispose();
 });
 
-test("section-local shade caching expires on every rebuild", () => {
+test("light-only edits update the packed vertex attribute without rebuilding geometry", () => {
   const world = new ChunkWorld();
   world.reset("SECTION-SHADE-CACHE", undefined, { structures: false });
   const chunk = world.generateChunk(0, 0);
@@ -747,33 +745,58 @@ test("section-local shade caching expires on every rebuild", () => {
   chunk.sectionBlockCounts.fill(0);
   chunk.lightIndices.clear();
   chunk.skyTops.fill(MIN_Y - 1);
-  world.setBlock(3, 0, 3, BlockId.Stone, false, false);
-  for (let x = 2; x <= 4; x += 1) for (let z = 2; z <= 4; z += 1) world.setBlock(x, 6, z, BlockId.Stone, false, false);
-  const section = Math.floor((0 - MIN_Y) / SECTION_HEIGHT);
+  world.lightEngine.initializeChunk(chunk);
+  world.setBlock(3, 15, 3, BlockId.Stone, false, false);
+  const section = Math.floor((15 - MIN_Y) / SECTION_HEIGHT);
+  world.rebuildSection(chunk, section);
+  const geometry = chunk.sections.get(section)?.opaque?.geometry;
+  assert.ok(geometry);
+  const originalGeometry = geometry;
   const stoneTopRed = () => {
-    world.rebuildSection(chunk, section);
-    const geometry = chunk.sections.get(section)?.opaque?.geometry;
     assert.ok(geometry);
     const position = geometry.getAttribute("position") as THREE.BufferAttribute;
     const normal = geometry.getAttribute("normal") as THREE.BufferAttribute;
-    const color = geometry.getAttribute("color") as THREE.BufferAttribute;
+    const light = geometry.getAttribute("voxelLight") as THREE.BufferAttribute;
     const vertex = Array.from({ length: position.count }, (_, index) => index).find((index) => (
       normal.getY(index) > 0.99
-      && Math.abs(position.getY(index) - 0.5) < 1e-6
+      && Math.abs(position.getY(index) - 15.5) < 1e-6
       && position.getX(index) >= 2.5 && position.getX(index) <= 3.5
       && position.getZ(index) >= 2.5 && position.getZ(index) <= 3.5
     ));
     assert.notEqual(vertex, undefined);
-    return color.getX(vertex!);
+    return Math.max(light.getY(vertex!), light.getZ(vertex!), light.getW(vertex!));
   };
 
   const caveShade = stoneTopRed();
-  world.setBlock(4, 1, 3, BlockId.Torch, false, false);
+  world.setBlock(4, 17, 3, BlockId.Torch, false, true);
   const litShade = stoneTopRed();
-  assert.ok(litShade > caveShade + 0.2, "a newly placed torch must invalidate the prior build's shade values");
-  world.setBlock(4, 1, 3, BlockId.Air, false, false);
+  assert.ok(litShade > caveShade + 0.2, "a newly placed torch must update the vertex light buffer");
+  assert.equal(chunk.sections.get(section)?.opaque?.geometry, originalGeometry, "unaffected block geometry is retained");
+  world.setBlock(4, 17, 3, BlockId.Air, false, true);
   const restoredShade = stoneTopRed();
-  assert.ok(Math.abs(restoredShade - caveShade) <= 1 / 255, "removing the torch must not reuse the lit build's shade values");
+  assert.ok(Math.abs(restoredShade - caveShade) <= 1 / 255, "removing the torch clears the vertex light buffer");
+  world.dispose();
+});
+
+test("voxel corner occlusion is a separate bounded shading attribute", () => {
+  const world = new ChunkWorld();
+  world.reset("VOXEL-CORNER-OCCLUSION", undefined, { structures: false });
+  const chunk = world.generateChunk(0, 0);
+  chunk.blocks.fill(BlockId.Air);
+  chunk.sectionBlockCounts.fill(0);
+  world.lightEngine.initializeChunk(chunk);
+  world.setBlocksBatch([
+    { x: 3, y: 0, z: 3, type: BlockId.Stone },
+    { x: 4, y: 1, z: 3, type: BlockId.Stone },
+    { x: 3, y: 1, z: 4, type: BlockId.Stone },
+  ], false, false);
+  const section = Math.floor((0 - MIN_Y) / SECTION_HEIGHT);
+  world.rebuildSection(chunk, section);
+  const occlusion = chunk.sections.get(section)?.opaque?.geometry.getAttribute("voxelOcclusion") as THREE.BufferAttribute;
+  assert.ok(occlusion);
+  const values = Array.from({ length: occlusion.count }, (_, index) => occlusion.getX(index));
+  assert.ok(Math.min(...values) < 0.9, "a tight solid corner should receive ambient occlusion");
+  assert.ok(Math.min(...values) >= 0.57 && Math.max(...values) <= 1, "AO stays bounded and cannot blacken texture color");
   world.dispose();
 });
 
@@ -782,6 +805,7 @@ test("partial block shapes preserve the full cube faces beside them", () => {
   world.reset("PARTIAL-FACE");
   const chunk = world.generateChunk(0, 0);
   chunk.blocks.fill(BlockId.Air);
+  world.lightEngine.initializeChunk(chunk);
   world.setBlock(0, 0, 0, BlockId.Stone, false);
   world.setBlock(1, 0, 0, BlockId.Chest, false);
   const section = Math.floor((0 - MIN_Y) / SECTION_HEIGHT);
@@ -826,36 +850,11 @@ test("submerged waterlogged plants meet stacked water without an air seam", () =
   world.dispose();
 });
 
-test("placed lights bake an order-of-magnitude larger static pool without washing out daylight", () => {
-  assert.equal(BAKED_LIGHT_SOURCE_LIMIT, 1024);
-  const torch = [{ x: 0, y: 2, z: 0, type: BlockId.Torch }];
-  const nearbyCave = bakedEnvironmentLightShade(0.38, 1, 2, 0, torch);
-  const distantCave = bakedEnvironmentLightShade(0.38, 40, 2, 0, torch);
-  assert.ok(nearbyCave > 0.8, "a nearby torch should reveal cave block color even outside the animated light pool");
-  assert.equal(distantCave, 0.38);
-  assert.equal(bakedEnvironmentLightShade(1, 1, 2, 0, torch), 1, "baked lights must not over-brighten daylight");
-  assert.ok(bakedEnvironmentLightShade(0.38, 8, 2, 0, [{ x: 0, y: 2, z: 0, type: BlockId.Lava }]) > 0.5, "lava should cast useful baked light");
-
-  const mixedLights = [
-    { x: 3, y: -2, z: 7, type: BlockId.Torch },
-    { x: -4, y: 4, z: 2, type: BlockId.Lava },
-    { x: 30, y: 4, z: 2, type: BlockId.LightningBugJar },
-  ];
-  const legacyReference = (baseShade: number, x: number, y: number, z: number) => {
-    let shade = baseShade;
-    for (const source of mixedLights) {
-      const radius = source.type === BlockId.Lava ? 18 : source.type === BlockId.LightningBugJar ? 10 : 16;
-      const distance = Math.hypot(source.x + 0.5 - x, source.y + 0.55 - y, source.z + 0.5 - z);
-      if (distance >= radius) continue;
-      const attenuation = 1 - distance / radius;
-      shade = Math.max(shade, 0.38 + attenuation * attenuation * 0.62);
-      if (shade >= 0.995) return 1;
-    }
-    return Math.max(0.38, Math.min(1, shade));
-  };
-  for (const [x, y, z] of [[2, 0, 5], [-1, 3, 2], [40, 4, 2], [3.5, -1.45, 7.5]]) {
-    assert.ok(Math.abs(bakedEnvironmentLightShade(0.38, x, y, z, mixedLights) - legacyReference(0.38, x, y, z)) < 1e-12);
-  }
+test("placed lights use data-driven colored voxel emission", () => {
+  assert.equal(BLOCKS[BlockId.Torch].lightEmission, 14);
+  assert.deepEqual(BLOCKS[BlockId.Torch].lightColor, [1, 0.58, 0.24]);
+  assert.ok((BLOCKS[BlockId.Lava].lightEmission ?? 0) >= 14);
+  assert.ok((BLOCKS[BlockId.Dreamblossom].emissiveStrength ?? 0) > 0);
 });
 
 test("every directional torch and a placed lava pool enter the nearest-first light index", () => {
@@ -906,8 +905,11 @@ test("leaf canopies soften skylight without turning an open forest into a cave",
   for (const [dx, dz] of samples) for (let y = 1; y <= 7; y += 1) world.setBlock(8 + dx, y, 8 + dz, BlockId.WildwoodLeaves, false, false);
   const canopy = world.skyVisibilityAt(8, 0, 8);
   assert.ok(canopy >= 0.35 && canopy < 1, `leaf canopy skylight was ${canopy}`);
-  for (const [dx, dz] of samples) world.setBlock(8 + dx, 8, 8 + dz, BlockId.Stone, false, false);
-  assert.equal(world.skyVisibilityAt(8, 0, 8), 0, "solid roofs and caves must still fully block skylight");
+  const roof = Array.from({ length: 16 * 16 }, (_, index) => ({ x: index % 16, y: 8, z: Math.floor(index / 16), type: BlockId.Stone }));
+  const roofStart = performance.now();
+  world.setBlocksBatch(roof, false, false);
+  assert.ok(performance.now() - roofStart < 750, "a large lighting edit should use one bounded halo relight");
+  assert.equal(world.skyVisibilityAt(8, 0, 8), 0, "a complete solid roof must block skylight");
   world.dispose();
 });
 

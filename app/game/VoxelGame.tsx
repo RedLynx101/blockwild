@@ -831,6 +831,7 @@ const INITIAL_HUD: ExtendedHudState = {
   mapHeading: 0,
   mapPlayers: [],
   debug: false,
+  lighting: { sky: 15, red: 0, green: 0, blue: 0, skyVisibility: 1, subterraneanBlend: 0, queuedSections: 0, derivedBytes: 0 },
   mode: "survival",
   weather: "clear",
   loadedChunks: 9,
@@ -3330,6 +3331,8 @@ export default function VoxelGame() {
               {hud.mode.toUpperCase()} · {hud.weatherKind.toUpperCase()} · {hud.depth.toUpperCase()}<br />
               Seed: {currentWorldSeed}<br />
               Chunks: {hud.loadedChunks} loaded · {hud.queuedChunks} queued · simulation {hud.simulationDistance}<br />
+              Light: S{hud.lighting.sky} / R{hud.lighting.red} G{hud.lighting.green} B{hud.lighting.blue} / cave {Math.round(hud.lighting.subterraneanBlend * 100)}%<br />
+              Light work: {hud.lighting.queuedSections} sections / {(hud.lighting.derivedBytes / 1048576).toFixed(1)} MB derived<br />
               Performance: {hud.averageFps.toFixed(0)} FPS
             </div>
           )}

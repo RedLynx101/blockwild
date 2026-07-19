@@ -16,7 +16,7 @@ test("environment light selection is nearest-first and independent of facing", (
   assert.ok(nearbyBehind < nearerButIrrelevantSideLight);
   assert.ok(nearerButIrrelevantSideLight < litTerrainAhead);
   assert.equal(nearbyBehind, nearbyBehindWhileFacingIt);
-  assert.deepEqual(ENVIRONMENT_LIGHT_POOL_SIZE, { desktop: 64, touch: 32 });
+  assert.deepEqual(ENVIRONMENT_LIGHT_POOL_SIZE, { desktop: 16, touch: 8 });
 });
 
 test("environment light selection gives an existing world-space assignment hysteresis", () => {
@@ -91,7 +91,7 @@ test("bounded light query includes the full influence margin and excludes source
 
   engine.refreshEnvironmentLights();
 
-  assert.equal(requestedRadius, 46);
+  assert.equal(requestedRadius, 30);
   assert.ok(engine.placedLightPool.some((light) => light.userData.sourceX === inside.x));
   assert.ok(engine.placedLightPool.every((light) => light.userData.sourceX !== outside.x));
 });
