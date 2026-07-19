@@ -298,7 +298,7 @@ test("Glowmender Salve heals intentionally instead of inheriting Gloamstep's buf
 
   engine.useSelected();
   assert.equal(engine.health, 9);
-  assert.equal(engine.inventory[0], null);
+  assert.deepEqual(engine.inventory[0], { item: Item.GlassBottle, count: 1 });
   assert.deepEqual(engine.potionBuffs, {});
 });
 

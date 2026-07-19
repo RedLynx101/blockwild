@@ -1,6 +1,6 @@
 # Blockwild
 
-Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.8.2 Hearthcraft & Honey**.
+Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.8.3 Bottles & Bundles**.
 
 The project is a real game rather than a voxel-rendering demo. You can mine, build, craft, smelt, farm, fight, collect field notes, manage several worlds, and carry those worlds between browsers with export files.
 
@@ -9,6 +9,14 @@ The project is a real game rather than a voxel-rendering demo. You can mine, bui
 ![Blockwild field guide with all 215 rendered creatures](public/creatures/blockwild-creatures.svg)
 
 The integrated creature-design pass expands the Courser family with Rimehoof, Sunscar, Mirestride, and Starbough ecological breeds plus the forge-built Deepgear Courser. It also gives all six dragon families production stage forms, rebuilds birds, pets, crabs, mosslings, foxes, harts, deer, longhorns, terrapins, and other core wildlife, and preserves one model path for gameplay, Bestiary portraits, and visual audits.
+
+## v1.8.3 Bottles & Bundles
+
+Ordinary Capture Orbs now shed their temporary identity metadata when their creature leaves, returning to the canonical empty shell so they stack with newly crafted orbs. Fitted empty orbs keep their lens metadata and remain distinct, preserving deliberate upgrades.
+
+Every consumed potion returns an Empty Glass Bottle. Bottles can be filled directly from a natural water source without removing the source, and an Alchemy Stand recognizes source water within a five-block radius as its water catalyst. Dedicated full-slot artwork makes empty bottles, water bottles, and the Alchemy Stand readable at both pack and hotbar sizes.
+
+Moonberry, Sunberry, apple, and Frostpear crates now trade at ten times the ordinary sale value of one matching fruit. Because each crate packs nine fruit, the compact processed form earns a small, explicit storage-and-handling premium.
 
 ## v1.8.2 Hearthcraft & Honey
 

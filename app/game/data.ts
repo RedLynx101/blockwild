@@ -858,7 +858,7 @@ export type ItemDefinition = {
   /** Contents rendered in and placed from a bucket. */
   bucketLiquid?: "water" | "lava" | "honey" | "syrup";
   /** Semantic UI hook for non-cube inventory artwork. */
-  iconKind?: "crafting-table" | "chest" | "apiary" | "aquarium" | "fireplace" | "capture-orb" | "orb-rack" | "orb-healer" | "morph-loom" | "bucket" | "fence-gate" | "lead" | "shield" | "seed" | "produce" | "produce-crate" | "giant-mushroom" | "pie" | "honeycomb" | "honey" | "jelly" | "wax" | "milk" | "relic" | "dragon-egg" | "dragon-scale" | "dragon-heart" | "dragon-skull" | "dragon-bone" | "dragon-saddle" | "dragon-pannier" | "dragon-barding-fire" | "dragon-barding-ice" | "dragon-barding-steel" | "dragon-barding-sea" | "dragon-barding-gold" | "dragon-barding-silver" | "gold-hoard-block" | "gold-pile" | "queen-cell" | "bee" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "potion" | "potion-health" | "mead" | "blueprint" | "bolt" | "spear" | "crossbow" | "sword" | "armor";
+  iconKind?: "crafting-table" | "chest" | "apiary" | "aquarium" | "fireplace" | "capture-orb" | "orb-rack" | "orb-healer" | "morph-loom" | "bucket" | "fence-gate" | "lead" | "shield" | "seed" | "produce" | "produce-crate" | "giant-mushroom" | "pie" | "honeycomb" | "honey" | "jelly" | "wax" | "milk" | "relic" | "dragon-egg" | "dragon-scale" | "dragon-heart" | "dragon-skull" | "dragon-bone" | "dragon-saddle" | "dragon-pannier" | "dragon-barding-fire" | "dragon-barding-ice" | "dragon-barding-steel" | "dragon-barding-sea" | "dragon-barding-gold" | "dragon-barding-silver" | "gold-hoard-block" | "gold-pile" | "queen-cell" | "bee" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "bottle-empty" | "bottle-water" | "potion" | "potion-health" | "mead" | "blueprint" | "bolt" | "spear" | "crossbow" | "sword" | "armor";
   /** Reuse a world atlas texture for the handheld/icon representation. */
   worldTextureBlock?: BlockId;
   /** Shared semantic model hooks consumed by held-item and dropped-item renderers. */
@@ -1466,8 +1466,8 @@ Object.assign(ITEMS, {
   [Item.CloudglassRelic]: { id: Item.CloudglassRelic, name: "Cloudglass Reliquary", color: "#9edfe7", maxStack: 1, maxDurability: 1800, useKind: "magic-relic", iconKind: "relic" },
   [Item.QueenCell]: { id: Item.QueenCell, name: "Queen Cell", color: "#f4cf55", maxStack: 16, iconKind: "queen-cell" },
   [Item.WorkerBee]: { id: Item.WorkerBee, name: "Apiary Worker Bee", color: "#e8ad32", maxStack: 16, iconKind: "bee" },
-  [Item.GlassBottle]: { id: Item.GlassBottle, name: "Empty Glass Bottle", color: "#c7e7e3", maxStack: 16, iconKind: "bottle", heldModel: "bottle", dropModel: "bottle" },
-  [Item.WaterBottle]: { id: Item.WaterBottle, name: "Water Bottle", color: "#63b6df", maxStack: 16, iconKind: "bottle", heldModel: "bottle", dropModel: "bottle" },
+  [Item.GlassBottle]: { id: Item.GlassBottle, name: "Empty Glass Bottle", color: "#c7e7e3", maxStack: 16, iconKind: "bottle-empty", heldModel: "bottle", dropModel: "bottle" },
+  [Item.WaterBottle]: { id: Item.WaterBottle, name: "Water Bottle", color: "#63b6df", maxStack: 16, iconKind: "bottle-water", heldModel: "bottle", dropModel: "bottle" },
   [Item.HealthPotion]: { id: Item.HealthPotion, name: "Wild Apple Remedy", color: "#d75756", maxStack: 8, useKind: "potion", potionId: "health", iconKind: "potion-health", heldModel: "potion", dropModel: "potion" },
   [Item.WayfarerPotion]: { id: Item.WayfarerPotion, name: "Wayskip Draught", color: "#68d5cd", maxStack: 8, useKind: "potion", potionId: "fast-travel", iconKind: "potion", heldModel: "potion", dropModel: "potion" },
   [Item.HearthwardTonic]: { id: Item.HearthwardTonic, name: "Hearthward Tonic", color: "#efad54", maxStack: 8, useKind: "potion", potionId: "hearthward", iconKind: "potion", heldModel: "potion", dropModel: "potion" },

@@ -207,6 +207,31 @@ const finite = (value: unknown, fallback = 0) => typeof value === "number" && Nu
 const clamp = (value: number, minimum: number, maximum: number) => Math.max(minimum, Math.min(maximum, value));
 const cleanResourceId = (value: unknown) => typeof value === "string" ? value.trim().slice(0, 96) : "";
 
+export type AlchemyStationPosition = Readonly<{ x: number; y: number; z: number }>;
+
+/**
+ * Bounded spherical catalyst scan shared by the runtime and deterministic
+ * tests. The callback owns the world's source/flow distinction, so a flowing
+ * cell can never accidentally satisfy the alchemy contract.
+ */
+export function hasAlchemyWaterSourceWithin(
+  origin: AlchemyStationPosition,
+  radius: number,
+  isWaterSourceAt: (x: number, y: number, z: number) => boolean,
+) {
+  const boundedRadius = clamp(Math.floor(finite(radius)), 0, 16);
+  const radiusSquared = boundedRadius * boundedRadius;
+  for (let dy = -boundedRadius; dy <= boundedRadius; dy += 1) {
+    for (let dz = -boundedRadius; dz <= boundedRadius; dz += 1) {
+      for (let dx = -boundedRadius; dx <= boundedRadius; dx += 1) {
+        if (dx * dx + dy * dy + dz * dz > radiusSquared) continue;
+        if (isWaterSourceAt(origin.x + dx, origin.y + dy, origin.z + dz)) return true;
+      }
+    }
+  }
+  return false;
+}
+
 export function normalizeResourceInventory(value: unknown): ResourceInventory {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const normalized: Record<string, number> = {};

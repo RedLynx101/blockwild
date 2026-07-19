@@ -440,8 +440,8 @@ test("workstation UI normalizes apiary production and exact capture-orb metadata
 });
 
 test("human release identity stays separate from save schemas", () => {
-  assert.equal(GAME_VERSION, "1.8.2");
-  assert.equal(GAME_RELEASE_NAME, "Hearthcraft & Honey");
+  assert.equal(GAME_VERSION, "1.8.3");
+  assert.equal(GAME_RELEASE_NAME, "Bottles & Bundles");
   assert.equal(normalizeGameVersion("garbage"), "0.1.0");
 });
 
@@ -544,6 +544,9 @@ test("inventory artwork stays semantic at real slot sizes and food hover copy is
   assert.equal(itemIconKind(Item.QueenCell), "queen-cell");
   assert.equal(itemIconKind(Item.WorkerBee), "bee");
   assert.equal(itemIconKind(Item.HealthPotion), "potion-health");
+  assert.equal(itemIconKind(Item.GlassBottle), "bottle-empty");
+  assert.equal(itemIconKind(Item.WaterBottle), "bottle-water");
+  assert.equal(itemIconKind(BlockId.AlchemyStand), "alchemy");
   for (const tome of [Item.TomeFlameJet, Item.TomeFrostLance, Item.TomeSteelSpear, Item.TomeHealingLight, Item.TomeBlinkstep, Item.TomeArcaneWard, Item.TomeVerdantVolley, Item.TomeStarlightSnare]) {
     assert.equal(itemIconKind(tome), "tome");
   }

@@ -23,12 +23,14 @@ import {
   planFrostpearFruitRegrowth,
   planFrostpearTree,
   plantingResult,
+  resolveBottleFillAction,
   resolveBucketAction,
   restoreLeadAnchors,
   serializeLeadAnchors,
   toggleFenceGate,
   type LeadAnchor,
 } from "../app/game/farming.ts";
+
 import { planLeafParticles, stepLeafParticle, torchAnimationSample } from "../app/game/world-effects.ts";
 import { planDoubleTallGrassRemoval, planDoubleTallGrassReplacement } from "../app/game/tall-grass.ts";
 import { planStructure, structureBiomeFromId, structureCandidateForChunk, structureClearanceBounds } from "../app/game/structures.ts";
@@ -42,6 +44,16 @@ import {
   blockIndex,
   splitCoordinate,
 } from "../app/game/world.ts";
+
+test("glass bottles fill from water sources without consuming the source", () => {
+  assert.deepEqual(resolveBottleFillAction(Item.GlassBottle, BlockId.Water, true), {
+    kind: "fill-water-bottle",
+    removeTarget: false,
+    resultItem: Item.WaterBottle,
+  });
+  assert.equal(resolveBottleFillAction(Item.GlassBottle, BlockId.Water, false), null);
+  assert.equal(resolveBottleFillAction(Item.GlassBottle, BlockId.Lava, true), null);
+});
 
 test("berries and wheat plant only on valid soil and advance through explicit stages", () => {
   assert.equal(plantingResult(Item.Berry, BlockId.MeadowGrass, BlockId.Air)?.block, BlockId.MoonberryShoot);

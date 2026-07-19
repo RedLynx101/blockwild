@@ -209,7 +209,7 @@ test("breaking an orchard support leaf clears and drops its hanging apple", () =
   assert.deepEqual(harvestPlant(BlockId.AppleFruit), { replacement: BlockId.Air, drops: [{ item: Item.Apple, count: 1 }], replanted: false });
 });
 
-test("bucket inventory swaps preserve stacked empties and return an empty after pouring", () => {
+test("reusable containers preserve stacked inputs and return their empty shells", () => {
   const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
   const runtime = engine as unknown as {
     mode: "survival";
@@ -233,6 +233,16 @@ test("bucket inventory swaps preserve stacked empties and return an empty after 
   engine.replaceSelectedUnit(Item.WaterBucket);
   assert.deepEqual(runtime.inventory[0], { item: Item.Bucket, count: 1 });
   assert.equal(filledAdded, 1);
+
+  let bottlesReturned = 0;
+  runtime.inventory[0] = { item: Item.HealthPotion, count: 3 };
+  runtime.addItem = (item, count) => {
+    if (item === Item.GlassBottle) bottlesReturned += count;
+    return 0;
+  };
+  engine.replaceSelectedUnit(Item.GlassBottle);
+  assert.deepEqual(runtime.inventory[0], { item: Item.HealthPotion, count: 2 });
+  assert.equal(bottlesReturned, 1);
 });
 
 test("bed orientation, counterpart lookup, recipe, and dawn/dusk transitions stay deterministic", () => {

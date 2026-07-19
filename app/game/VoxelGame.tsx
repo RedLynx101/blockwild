@@ -889,6 +889,7 @@ const INITIAL_HUD: ExtendedHudState = {
   blueprints: createBlueprintState(),
   plantBestiary: createPlantBestiaryState(),
   activeAlchemy: null,
+  activeAlchemyHasWaterSource: false,
   activeDistillery: null,
   activeSugarworks: null,
   goldWallet: createGoldWallet("preview", "local"),
@@ -1881,7 +1882,7 @@ export default function VoxelGame() {
   const [multiplayerState, setMultiplayerState] = useState<MultiplayerViewState>(EMPTY_MULTIPLAYER_STATE);
   const [multiplayerBusy, setMultiplayerBusy] = useState(false);
   const [multiplayerReturn, setMultiplayerReturn] = useState<"title" | "pause">("title");
-  const [iconAuditMode, setIconAuditMode] = useState<"all" | "tomes" | "dragons" | null>(null);
+  const [iconAuditMode, setIconAuditMode] = useState<"all" | "tomes" | "dragons" | "alchemy" | null>(null);
   const [civicAuditMode, setCivicAuditMode] = useState<CivicAuditMode | null>(null);
   const [heldAuditMode, setHeldAuditMode] = useState(false);
   const [spellWheelAuditMode, setSpellWheelAuditMode] = useState(false);
@@ -1916,7 +1917,10 @@ export default function VoxelGame() {
   useEffect(() => {
     const parameters = new URLSearchParams(window.location.search);
     const iconAudit = parameters.get("icon-audit");
-    setIconAuditMode(iconAudit === "tomes" ? "tomes" : iconAudit === "dragons" ? "dragons" : iconAudit === "1" ? "all" : null);
+    setIconAuditMode(iconAudit === "tomes" ? "tomes"
+      : iconAudit === "dragons" ? "dragons"
+        : iconAudit === "alchemy" ? "alchemy"
+          : iconAudit === "1" ? "all" : null);
     setHeldAuditMode(parameters.get("held-audit") === "1");
     setSpellWheelAuditMode(parameters.get("spell-wheel-audit") === "empty");
     if (parameters.get("inventory-audit") === "1") {
@@ -3288,7 +3292,10 @@ export default function VoxelGame() {
     ? nativeBiomesForPlant(selectedPlant.id).map((biome) => BIOME_NAMES[biome]).join(", ")
     : "";
   const hearthroadsApi = engineRef.current as unknown as HearthroadsEngineApi | null;
-  const resourceInventory = inventoryResourceCounts(hud.inventory);
+  const resourceInventory = inventoryResourceCounts(
+    hud.inventory,
+    hud.activeAlchemyHasWaterSource ? { "water-source": 1 } : {},
+  );
   const playerCommerceInventory = useMemo(() => {
     const totals = new Map<string, number>();
     for (const slot of hud.inventory) {
@@ -4672,7 +4679,10 @@ export default function VoxelGame() {
           <header><div><span className="panel-eyebrow">UI ART QA · ACTUAL DISPLAY SIZES</span><h2>Inventory Icon Audit</h2></div><button type="button" onClick={() => setIconAuditMode(null)} aria-label="Close icon audit">×</button></header>
           <p>Left: 28px inventory and hotbar artwork. Right: the same artwork at its 22px recipe-book size.</p>
           <div className="item-icon-audit-grid">
-            {Object.values(ITEMS).filter((definition) => iconAuditMode === "all" || (iconAuditMode === "tomes" ? definition.useKind === "spell-tome" : DRAGON_ASSET_AUDIT_ITEMS.has(definition.id))).map((definition) => <article key={definition.id}><span className="item-audit-large"><ItemIcon item={definition.id} /></span><span className="item-audit-small"><ItemIcon item={definition.id} small /></span><strong>{definition.name}</strong><small>{itemIconKind(definition.id)}</small></article>)}
+            {Object.values(ITEMS).filter((definition) => iconAuditMode === "all"
+              || (iconAuditMode === "tomes" ? definition.useKind === "spell-tome"
+                : iconAuditMode === "alchemy" ? [Item.GlassBottle, Item.WaterBottle, BlockId.AlchemyStand].includes(definition.id)
+                  : DRAGON_ASSET_AUDIT_ITEMS.has(definition.id))).map((definition) => <article key={definition.id}><span className="item-audit-large"><ItemIcon item={definition.id} /></span><span className="item-audit-small"><ItemIcon item={definition.id} small /></span><strong>{definition.name}</strong><small>{itemIconKind(definition.id)}</small></article>)}
           </div>
         </section>
       )}

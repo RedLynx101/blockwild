@@ -2,6 +2,14 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.8.3 - Bottles & Bundles - 2026-07-19
+
+- Collapsed released ordinary Capture Orbs back to metadata-free shells so they stack with crafted empties, while preserving intentional lens upgrades as distinct singleton orbs.
+- Returned an Empty Glass Bottle after every potion use and added non-destructive direct filling from source water.
+- Expanded Alchemy Stand water detection to a five-block radius and exposed that catalyst to the workstation UI as well as the authoritative batch-start check.
+- Added full-slot empty-bottle, water-bottle, and Alchemy Stand artwork sized for the real inventory and hotbar presentations.
+- Valued Moonberry, Sunberry, apple, and Frostpear crates at ten times their underlying fruit's ordinary sale value, giving the nine-item packing recipe a modest processing premium.
+
 ## 1.8.1 - Hearthlands hotfix - 2026-07-19
 
 - Corrected main- and offhand torches to rise upright from the fist at the end of the forward working arm, and restored the preferred 180-degree first-person presentation without coupling the camera and avatar transforms.

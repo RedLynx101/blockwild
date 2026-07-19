@@ -611,6 +611,7 @@ import {
   planPeppermintColumnRemoval,
   plantProfileForBlock,
   plantingResult,
+  resolveBottleFillAction,
   resolveBucketAction,
   restoreLeadAnchors,
   serializeLeadAnchors,
@@ -779,6 +780,7 @@ import {
   collectDistilleryOutput,
   createAlchemyStand,
   createDistillery,
+  hasAlchemyWaterSourceWithin,
   normalizeAlchemyStand,
   normalizeDistillery,
   startAlchemyBatch,
@@ -1118,6 +1120,7 @@ export type HudState = {
   blueprints: BlueprintState;
   plantBestiary: PlantBestiaryState;
   activeAlchemy: AlchemyStandState | null;
+  activeAlchemyHasWaterSource: boolean;
   activeDistillery: DistilleryState | null;
   activeSugarworks: SugarworksState | null;
   goldWallet: GoldWalletState;
@@ -9505,8 +9508,14 @@ export class VoxelEngine {
 
   private stationHasWaterSource(key: string) {
     const [x, y, z] = key.split(",").map(Number);
-    return ([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]] as const)
-      .some(([dx, dy, dz]) => blockContainsWater(this.world.getBlock(x + dx, y + dy, z + dz)));
+    if (![x, y, z].every(Number.isFinite)) return false;
+    return hasAlchemyWaterSourceWithin({ x, y, z }, 5, (sourceX, sourceY, sourceZ) => {
+      const block = this.world.getBlock(sourceX, sourceY, sourceZ);
+      if (!blockContainsWater(block)) return false;
+      // Generated water and waterlogged flora are implicit sources. Explicit
+      // flow cells retain their tracked source bit and must not count.
+      return this.liquidCells.get(blockKey(sourceX, sourceY, sourceZ))?.source !== false;
+    });
   }
 
   private consumeResourceDelta(consumed: Readonly<Record<string, number>>) {
@@ -13623,7 +13632,7 @@ export class VoxelEngine {
         this.potionBuffs[effect.buff] ?? 0,
         this.worldSimulationSeconds() + effect.durationSeconds,
       );
-      this.consumeSelectedUnit();
+      this.replaceSelectedUnit(Item.GlassBottle);
       this.heldUse = 1;
       this.placeCooldown = 0.42;
       this.audio.play("eat");
@@ -15087,6 +15096,20 @@ export class VoxelEngine {
     }
     if (this.target) {
       const key = blockKey(this.target.x, this.target.y, this.target.z);
+      if (heldSlot?.item === Item.GlassBottle) {
+        const trackedTargetLiquid = this.liquidCells.get(key);
+        const bottle = resolveBottleFillAction(heldSlot.item, this.target.type, trackedTargetLiquid?.source ?? true);
+        if (bottle) {
+          this.replaceSelectedUnit(bottle.resultItem);
+          this.placeCooldown = 0.2;
+          this.heldUse = 1;
+          this.audio.play("splash");
+          this.events.onToast("Filled a Water Bottle without disturbing the source.");
+          this.saveSoon();
+          this.emitHud(true);
+          return;
+        }
+      }
       if (shouldBypassOpenableUse(this.crouching, heldDefinition?.placeBlock !== undefined, this.target.type)) {
         this.placeBlock();
         return;
@@ -16235,8 +16258,10 @@ export class VoxelEngine {
       ? this.camera.position
       : this.cameraCollisionOrigin.set(this.position.x, this.position.y + this.cameraEyeHeight, this.position.z);
     // Normal interaction rays pass through liquid so underwater blocks remain
-    // usable. An empty bucket deliberately stops on the first liquid cell.
-    const blockHit = this.castVoxel(interactionOrigin, direction, 6, this.selectedSlot()?.item === Item.Bucket);
+    // usable. Empty buckets and glass bottles deliberately stop on the first
+    // liquid cell so their non-destructive source interactions stay precise.
+    const selectedItem = this.selectedSlot()?.item;
+    const blockHit = this.castVoxel(interactionOrigin, direction, 6, selectedItem === Item.Bucket || selectedItem === Item.GlassBottle);
     const mobHit = this.castMob(interactionOrigin, direction, 5);
     const playerHit = this.castRemotePlayer(interactionOrigin, direction, 5);
     const boatHit = this.castBoat(interactionOrigin, direction, 6);
@@ -26187,6 +26212,7 @@ export class VoxelEngine {
       blueprints: this.blueprints,
       plantBestiary: this.plantBestiary,
       activeAlchemy: this.activeAlchemyKey ? this.alchemyStands.get(this.activeAlchemyKey) ?? null : null,
+      activeAlchemyHasWaterSource: Boolean(this.activeAlchemyKey && this.stationHasWaterSource(this.activeAlchemyKey)),
       activeDistillery: this.activeDistilleryKey ? this.distilleries.get(this.activeDistilleryKey) ?? null : null,
       activeSugarworks: this.activeSugarworksKey ? this.sugarworks.get(this.activeSugarworksKey) ?? null : null,
       goldWallet: this.goldWallet,

@@ -836,6 +836,23 @@ export type BucketAction = Readonly<{
   resultItem: ItemCode;
 }>;
 
+export type BottleFillAction = Readonly<{
+  kind: "fill-water-bottle";
+  removeTarget: false;
+  resultItem: typeof Item.WaterBottle;
+}>;
+
+/** Glass bottles sample a source without consuming or perturbing the liquid. */
+export function resolveBottleFillAction(
+  item: ItemCode,
+  target: BlockId | undefined,
+  targetIsSource = true,
+): BottleFillAction | null {
+  return item === Item.GlassBottle && targetIsSource && target === BlockId.Water
+    ? { kind: "fill-water-bottle", removeTarget: false, resultItem: Item.WaterBottle }
+    : null;
+}
+
 export function resolveBucketAction(
   item: ItemCode,
   target: BlockId | undefined,

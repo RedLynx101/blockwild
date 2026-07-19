@@ -3,9 +3,11 @@ import test from "node:test";
 import { CAPTURE_PROFILES, captureKnowledgeForResearch, evaluateCaptureReadiness } from "../app/game/creature-capture";
 import { applyCreatureCareAction, createCreatureCareState, reviewCreatureHabitat } from "../app/game/creature-care";
 import { creatureAppearance } from "../app/game/creature-appearance";
-import { captureIntoOrb, createEmptyCaptureOrb, decodeCaptureOrb, encodeCaptureOrb, fitCaptureOrbLens, releaseCaptureOrb } from "../app/game/capture-orbs";
+import { captureIntoOrb, captureOrbInventorySlot, createEmptyCaptureOrb, decodeCaptureOrb, encodeCaptureOrb, fitCaptureOrbLens, releaseCaptureOrb } from "../app/game/capture-orbs";
 import { migrateCreatureProgression } from "../app/game/creature-progression";
 import type { CreatureMetadata } from "../app/game/creature-cage";
+import { Item } from "../app/game/data";
+import { inventorySlotsCanStack } from "../app/game/inventory-convenience";
 
 const progression = migrateCreatureProgression({
   kind: "petalfox", entityId: "specimen-fern", geneticSeed: 8192, maximumLevel: 50,
@@ -50,6 +52,14 @@ test("Capture Orb lenses and exact specimen progression survive encode, capture,
   const released = releaseCaptureOrb(decodeCaptureOrb(encodeCaptureOrb(occupied))!)!;
   assert.deepEqual(released.creature.custom.progression, progression);
   assert.equal(released.orb.lens, "gentle");
+});
+
+test("a released ordinary Capture Orb collapses to the metadata-free stackable shell", () => {
+  const occupied = captureIntoOrb(createEmptyCaptureOrb("orb-stack-return"), metadata, 42)!;
+  const released = releaseCaptureOrb(occupied)!;
+  const slot = captureOrbInventorySlot(released.orb);
+  assert.deepEqual(slot, { item: Item.CaptureOrb, count: 1 });
+  assert.equal(inventorySlotsCanStack(slot, { item: Item.CaptureOrb, count: 12 }), true);
 });
 
 test("Creature Camp care is bounded, purposeful, and preserves Healing Station value", () => {

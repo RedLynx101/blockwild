@@ -9,6 +9,7 @@ import {
   collectDistilleryOutput,
   createAlchemyStand,
   createDistillery,
+  hasAlchemyWaterSourceWithin,
   normalizeAlchemyStand,
   normalizeDistillery,
   selectAlchemyRecipe,
@@ -18,6 +19,7 @@ import {
   stepAlchemyStand,
   stepDistillery,
 } from "../app/game/alchemy.ts";
+
 import {
   BLUEPRINTS,
   blueprintCraftingLock,
@@ -65,6 +67,14 @@ import {
   turnInQuest,
   type QuestDefinition,
 } from "../app/game/quests.ts";
+
+test("alchemy water catalysts scan a bounded five-block sphere", () => {
+  const source = { x: 8, y: 12, z: -3 };
+  const probe = (x: number, y: number, z: number) => x === source.x && y === source.y && z === source.z;
+  assert.equal(hasAlchemyWaterSourceWithin({ x: 3, y: 12, z: -3 }, 5, probe), true, "a source exactly five blocks away is valid");
+  assert.equal(hasAlchemyWaterSourceWithin({ x: 2, y: 12, z: -3 }, 5, probe), false, "a source beyond five blocks is not valid");
+  assert.equal(hasAlchemyWaterSourceWithin({ x: 4, y: 9, z: -3 }, 5, probe), true, "vertical and horizontal offsets use real radius distance");
+});
 
 const point = (x: number, y = 30, z = 0) => ({ x, y, z });
 const markerInput = (id: string, name: string, x: number, playerId: string, discoveredAt = 10) => ({

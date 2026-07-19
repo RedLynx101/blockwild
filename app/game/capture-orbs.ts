@@ -209,6 +209,11 @@ export function decodeCaptureOrb(value: string): CaptureOrb | null {
 
 export function captureOrbInventorySlot(orb: CaptureOrb): InventorySlot {
   const creature = orb.creature;
+  // A plain empty shell has no identity-bearing state. Collapse it back to the
+  // canonical crafted item so released/migrated orbs can rejoin ordinary
+  // stacks. Fitted lenses remain authored upgrades and therefore retain their
+  // exact singleton metadata until the lens is deliberately removed.
+  if (!creature && !orb.lens && !orb.attunement) return { item: Item.CaptureOrb, count: 1 };
   return {
     item: Item.CaptureOrb,
     count: 1,

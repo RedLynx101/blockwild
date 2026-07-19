@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Item } from "../app/game/data";
-import { consumedResourceDelta, inventoryResourceCounts, resourceIdForItem, resourceItemCode } from "../app/game/hearthroads-adapter";
+import { BlockId, Item } from "../app/game/data";
+import { consumedResourceDelta, inventoryResourceCounts, playerCommerceItem, resourceIdForItem, resourceItemCode } from "../app/game/hearthroads-adapter";
 
 test("Hearthroads resource ids round-trip stable item codes", () => {
   assert.equal(resourceItemCode("apple"), Item.Apple);
@@ -31,4 +31,16 @@ test("each numeric dragon heart keeps a typed station resource identity", () => 
   assert.equal(resourceItemCode("fire-dragon-heart"), Item.FireDragonHeart);
   assert.equal(resourceItemCode("ice-dragon-heart"), Item.IceDragonHeart);
   assert.equal(resourceItemCode("steel-dragon-heart"), Item.SteelDragonHeart);
+});
+
+test("produce crates sell at ten underlying item base values", () => {
+  const pairs = [
+    [BlockId.MoonberryCrate, Item.Berry],
+    [BlockId.SunberryCrate, Item.Sunberry],
+    [BlockId.AppleCrate, Item.Apple],
+    [BlockId.FrostpearCrate, Item.Frostpear],
+  ] as const;
+  for (const [crate, produce] of pairs) {
+    assert.equal(playerCommerceItem(crate)?.baseValue, (playerCommerceItem(produce)?.baseValue ?? 0) * 10);
+  }
 });

@@ -9475,6 +9475,64 @@ input:focus-visible {
 
 /* Full-frame bottle silhouettes are authored at the actual 28px inventory
    size, so remedies remain legible in both inventory and scaled recipe slots. */
+.item-icon-kind-bottle-empty::before,
+.item-icon-kind-bottle-water::before {
+  left: 5px;
+  top: 1px;
+  width: 20px;
+  height: 27px;
+  border: 3px solid #405355;
+  border-radius: 4px 4px 8px 8px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, .92) 0 14%, transparent 15% 47%, rgba(255, 255, 255, .38) 48% 56%, transparent 57%),
+    linear-gradient(105deg, rgba(166, 218, 220, .26), rgba(231, 250, 247, .68) 51%, rgba(116, 171, 176, .3));
+  box-shadow: inset -3px -2px 0 rgba(42, 71, 73, .2), 2px 2px 0 rgba(0, 0, 0, .5);
+  clip-path: polygon(29% 0, 71% 0, 71% 23%, 94% 38%, 100% 91%, 84% 100%, 16% 100%, 0 91%, 6% 38%, 29% 23%);
+}
+
+.item-icon-kind-bottle-empty::after,
+.item-icon-kind-bottle-water::after {
+  left: 10px;
+  top: 1px;
+  width: 10px;
+  height: 5px;
+  border: 2px solid #405355;
+  background: linear-gradient(90deg, #d8f2ed, #86b6b7 55%, #edfdf8);
+  box-shadow: 1px 1px 0 rgba(0, 0, 0, .42);
+}
+
+.item-icon-kind-bottle-water::before {
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, .9) 0 14%, transparent 15% 47%, rgba(255, 255, 255, .34) 48% 56%, transparent 57%),
+    linear-gradient(to top, #3c8ec9 0 52%, #75d5e3 53% 61%, rgba(214, 245, 242, .68) 62%);
+}
+
+/* Miniature of the placed stand: stone feet, brass bridge, twin glass bulbs,
+   and the star-crystal focus all occupy the full inventory frame. */
+.item-icon-kind-alchemy::before {
+  left: 1px;
+  top: 5px;
+  width: 28px;
+  height: 22px;
+  background:
+    radial-gradient(circle at 27% 38%, #d7f3e6 0 2px, #62b991 3px 6px, #314d43 7px 8px, transparent 9px),
+    radial-gradient(circle at 73% 42%, #f4dcff 0 2px, #a36bc1 3px 6px, #50355e 7px 8px, transparent 9px),
+    linear-gradient(90deg, transparent 0 10%, #b78c46 11% 89%, transparent 90%) 0 8px / 100% 4px no-repeat,
+    linear-gradient(90deg, #4c4a55 0 18%, transparent 19% 81%, #4c4a55 82%) 0 9px / 100% 13px no-repeat;
+  filter: drop-shadow(2px 2px 0 rgba(0, 0, 0, .56));
+}
+
+.item-icon-kind-alchemy::after {
+  left: 10px;
+  top: 0;
+  width: 10px;
+  height: 10px;
+  border: 2px solid #3f5960;
+  background: linear-gradient(135deg, #f2ffff, #69e7ef 48%, #6683c5 52%, #382e58);
+  box-shadow: 0 0 0 2px #b38a4b, 0 0 7px rgba(105, 231, 239, .76);
+  transform: rotate(45deg);
+}
+
 .item-icon-kind-potion::before,
 .item-icon-kind-potion-health::before {
   left: 4px;

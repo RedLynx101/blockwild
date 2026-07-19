@@ -320,10 +320,25 @@ export function commerceKeyForItem(item: ItemCode) {
   return COMMERCE_BY_ITEM.get(item) ?? null;
 }
 
+const CRATE_CONTENT_ITEM = new Map<ItemCode, ItemCode>([
+  [BlockId.MoonberryCrate, Item.Berry],
+  [BlockId.SunberryCrate, Item.Sunberry],
+  [BlockId.AppleCrate, Item.Apple],
+  [BlockId.FrostpearCrate, Item.Frostpear],
+]);
+
+function ordinaryPlayerCommerceBaseValue(item: ItemCode) {
+  const definition = ITEMS[item];
+  return item === Item.GoldIngot
+    ? GOLD_INGOT_VALUE
+    : Math.max(1, Math.round(2 + (definition?.damage ?? 0) * 5 + (definition?.tier ?? 0) * 4 + (definition?.food ?? 0) * 2));
+}
+
 /** Shared player-sale definition keeps UI quotes and authority checks identical. */
 export function playerCommerceItem(item: ItemCode): CommerceItem | null {
   const definition = ITEMS[item];
   if (!definition) return null;
+  const packedItem = CRATE_CONTENT_ITEM.get(item);
   return {
     key: commerceKeyForItem(item) ?? `item-${item}`,
     name: definition.name,
@@ -332,9 +347,9 @@ export function playerCommerceItem(item: ItemCode): CommerceItem | null {
         : definition.food ? "food"
           : definition.toolKind ? "weapon"
             : "misc",
-    baseValue: item === Item.GoldIngot
-      ? GOLD_INGOT_VALUE
-      : Math.max(1, Math.round(2 + (definition.damage ?? 0) * 5 + (definition.tier ?? 0) * 4 + (definition.food ?? 0) * 2)),
+    // A crate costs nine items to craft but trades at ten underlying item
+    // values, giving compact storage a modest, explicit processing premium.
+    baseValue: packedItem === undefined ? ordinaryPlayerCommerceBaseValue(item) : ordinaryPlayerCommerceBaseValue(packedItem) * 10,
     stackLimit: Math.max(1, definition.maxStack),
     tags: item === Item.Honeymead ? ["mead"] : undefined,
   };
