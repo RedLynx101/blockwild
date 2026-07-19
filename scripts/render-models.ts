@@ -4,8 +4,9 @@ import { pathToFileURL } from "node:url";
 import * as THREE from "three";
 import { createButterflyVisual } from "../app/game/butterflies.ts";
 import { INSPECTOR_MODEL_SPECS, assertModelSpec, type ModelBox, type ModelSpec } from "../app/game/model-specs.ts";
-import { applyDragonPose, createMobVisual, createSkeletonArrowVisual } from "../app/game/mob-models.ts";
+import { applyDragonPose, applyDragonVariant, createMobVisual, createSkeletonArrowVisual } from "../app/game/mob-models.ts";
 import { BUTTERFLY_ORDER, CORE_MOB_ORDER, DRAGON_ORDER, MOB_DEFS, type ButterflyKind, type CoreMobKind, type DragonKind } from "../app/game/mobs.ts";
+import { DRAGON_TYPES, DRAGON_VARIANTS } from "../app/game/dragons.ts";
 import { BlockPlayerModel, type PlayerAnimation } from "../app/game/player-model.ts";
 import { GAME_VERSION_LABEL } from "../app/game/version.ts";
 
@@ -290,6 +291,27 @@ export function createDragonLifeStageInspectionSpecs(stage: 1 | 2 | 3 | 4 | 5): 
     disposeObject(model.group);
     return spec;
   });
+}
+
+/** Captures the twenty-four reviewed adult silhouettes from the actual runtime switchable rigs. */
+export function createDragonVariantInspectionSpecs(): InspectionModelSpec[] {
+  return DRAGON_TYPES.flatMap((type, typeIndex) => DRAGON_VARIANTS[type].map((variant, variantIndex) => {
+    const kind = `${type}-dragon` as DragonKind;
+    const model = createMobVisual(kind, -24_000 - typeIndex * 10 - variantIndex);
+    applyDragonPose(model.visual, { timeSeconds: 1.1 + variantIndex * .13, stage: 5, mode: "idle", movement: .18, airborne: false, sex: variantIndex % 2 ? "male" : "female" });
+    if (!applyDragonVariant(model.visual, variant)) throw new Error(`Runtime dragon rig rejected ${variant}.`);
+    const label = variant.split("-").map((word) => word[0]?.toUpperCase() + word.slice(1)).join(" ");
+    model.group.updateMatrixWorld(true);
+    const spec = objectToInspectionSpec(model.group, {
+      id: `${type}-dragon-${variant}`,
+      label: `${MOB_DEFS[kind].name} · ${label}`,
+      category: "mob",
+      front: "-z",
+      inspection: { source: "MobVisual", mob: kind },
+    });
+    disposeObject(model.group);
+    return spec;
+  }));
 }
 
 export function buildInspectionSpecs(): InspectionModelSpec[] {

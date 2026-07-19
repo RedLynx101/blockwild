@@ -11,8 +11,10 @@ import { CORE_MOB_ORDER, MOB_DEFS, MOB_ORDER, type CoreMobKind, type MobKind } f
 import { nativeBiomesForPlant, PLANTS } from "../app/game/plants";
 import { NPC_FACTION_IDS, FACTIONS } from "../app/game/factions";
 import { structureKindsForBiomeId } from "../app/game/structures";
-import { BIOME_NAMES, BiomeId, settlementBiomeFromId } from "../app/game/world";
+import { BIOME_NAMES, BiomeId, adventureBiomeFromId, settlementBiomeFromId } from "../app/game/world";
 import { UNDERGROUND_BIOME_NAMES, UndergroundBiomeId } from "../app/game/underground";
+import { ADVENTURE_DUNGEON_ARCHETYPES, ADVENTURE_POI_ARCHETYPES } from "../app/game/adventure-content";
+import { MYTHIC_FRONTIER_SITES, MYTHIC_FRONTIER_SITE_ORDER, type MythicFrontierSiteId } from "../app/game/mythic-frontiers";
 
 type SpawnSource = Readonly<{ label: string; entries: readonly WeightedMob[] }>;
 type SpeciesAudit = Readonly<{
@@ -34,6 +36,10 @@ type BiomeAudit = Readonly<{
   customSound: number;
   poiCount: number;
   poiKinds: readonly string[];
+  proposedPoiCount: number;
+  implementedPoiCount: number;
+  signatureCreatureCount: number;
+  signatureCreatures: readonly MobKind[];
   sources: readonly string[];
   floorChecks: Readonly<{ common: boolean; conditional: boolean; rare: boolean }>;
   species: readonly SpeciesAudit[];
@@ -50,6 +56,10 @@ export type UndergroundBiomeAudit = Readonly<{
   customSound: number;
   poiCount: number;
   poiKinds: readonly string[];
+  proposedPoiCount: number;
+  implementedPoiCount: number;
+  signatureCreatureCount: number;
+  signatureCreatures: readonly MobKind[];
   species: readonly SpeciesAudit[];
 }>;
 
@@ -101,8 +111,14 @@ export function buildBiomeEcologyAudit(): BiomeAudit[] {
     const conditional = species.filter((entry) => entry.conditional).length;
     const rare = species.filter((entry) => entry.weight <= 0.05).length;
     const settlementBiome = settlementBiomeFromId(id);
+    const adventureBiome = adventureBiomeFromId(id);
+    const adventureKinds = adventureBiome ? [...ADVENTURE_POI_ARCHETYPES, ...ADVENTURE_DUNGEON_ARCHETYPES]
+      .filter((entry) => entry.biomes.includes(adventureBiome)).map((entry) => entry.kind) : [];
+    const mythicDefinitions = adventureBiome ? MYTHIC_FRONTIER_SITE_ORDER.map((siteId) => MYTHIC_FRONTIER_SITES[siteId])
+      .filter((entry) => entry.biomes.includes(adventureBiome)) : [];
     const poiKinds = [
       ...structureKindsForBiomeId(id),
+      ...adventureKinds,
       ...(settlementBiome ? NPC_FACTION_IDS.filter((faction) => FACTIONS[faction].homeBiomes.includes(settlementBiome)).map((faction) => `${faction}-settlement`) : []),
       "subterranean-dragon-lair",
       ...([BiomeId.DeepOcean, BiomeId.LumenTrench].includes(id) ? ["sea-dragon-nest"] : []),
@@ -118,6 +134,10 @@ export function buildBiomeEcologyAudit(): BiomeAudit[] {
       customSound: species.filter((entry) => entry.customSound).length,
       poiCount: new Set(poiKinds).size,
       poiKinds: [...new Set(poiKinds)],
+      proposedPoiCount: mythicDefinitions.length,
+      implementedPoiCount: mythicDefinitions.filter((entry) => adventureKinds.includes(entry.structureKind as never)).length,
+      signatureCreatureCount: new Set(mythicDefinitions.map((entry) => entry.creature)).size,
+      signatureCreatures: [...new Set(mythicDefinitions.map((entry) => entry.creature))],
       sources: sources.map((source) => source.label),
       floorChecks: { common: common >= 2, conditional: conditional >= 2, rare: rare >= 1 },
       species,
@@ -145,11 +165,24 @@ const UNDERGROUND_POIS: Readonly<Record<UndergroundBiomeId, readonly string[]>> 
   [UndergroundBiomeId.EmberdeepFumaroles]: ["vent-forge", "challenge-vault", "rope-bridge", "waystone"],
 });
 
+const UNDERGROUND_MYTHIC_SITES: Readonly<Record<UndergroundBiomeId, readonly MythicFrontierSiteId[]>> = Object.freeze({
+  [UndergroundBiomeId.OrdinaryTunnel]: [],
+  [UndergroundBiomeId.RootweaveGrotto]: ["root-crown-menagerie", "lanternroot-cistern"],
+  [UndergroundBiomeId.StarbloomHollows]: ["hollow-moon-menagerie"],
+  [UndergroundBiomeId.GlasswaterDeeps]: ["lanternroot-cistern"],
+  [UndergroundBiomeId.PillarstoneReaches]: ["fossil-orchard"],
+  [UndergroundBiomeId.CrystaldeepGallery]: ["fossil-orchard", "gorgon-quarry"],
+  [UndergroundBiomeId.EmberdeepFumaroles]: ["emberglass-hatchery", "ashen-library-salamander-kings"],
+});
+
 export function buildUndergroundEcologyAudit(): UndergroundBiomeAudit[] {
   return (Object.values(UndergroundBiomeId).filter((value): value is UndergroundBiomeId => typeof value === "number"))
     .sort((left, right) => left - right)
     .map((id) => {
       const species = speciesForSources([{ label: "cave ecology", entries: undergroundMobSpawnTableForBiome(id) }]);
+      const mythicSites = UNDERGROUND_MYTHIC_SITES[id];
+      const poiKinds = [...UNDERGROUND_POIS[id], ...mythicSites.map((siteId) => MYTHIC_FRONTIER_SITES[siteId].structureKind)];
+      const signatureCreatures = [...new Set(mythicSites.map((siteId) => MYTHIC_FRONTIER_SITES[siteId].creature))];
       return {
         id,
         name: UNDERGROUND_BIOME_NAMES[id],
@@ -159,8 +192,12 @@ export function buildUndergroundEcologyAudit(): UndergroundBiomeAudit[] {
         conditional: species.filter((entry) => entry.conditional).length,
         rare: species.filter((entry) => entry.weight <= 0.05).length,
         customSound: species.filter((entry) => entry.customSound).length,
-        poiCount: UNDERGROUND_POIS[id].length,
-        poiKinds: UNDERGROUND_POIS[id],
+        poiCount: new Set(poiKinds).size,
+        poiKinds,
+        proposedPoiCount: mythicSites.length,
+        implementedPoiCount: mythicSites.length,
+        signatureCreatureCount: signatureCreatures.length,
+        signatureCreatures,
         species,
       };
     });
@@ -190,6 +227,8 @@ export function formatBiomeEcologyAudit(audit: readonly BiomeAudit[]) {
       biome.name.padEnd(24),
       String(biome.flora).padStart(5),
       String(biome.poiCount).padStart(4),
+      `${biome.implementedPoiCount}/${biome.proposedPoiCount}`.padStart(7),
+      String(biome.signatureCreatureCount).padStart(4),
       String(biome.fauna).padStart(5),
       String(biome.common).padStart(6),
       String(biome.conditional).padStart(11),
@@ -205,17 +244,19 @@ export function formatBiomeEcologyAudit(audit: readonly BiomeAudit[]) {
     "Heuristics: common weight >= 0.10; rare weight <= 0.05; conditional = ACTIVE is not 'All hours'.",
     "Floors are minimum checks, not biodiversity caps. C/T/R uppercase means the floor is met.",
     "",
-    "Biome                    | Flora | POIs | Fauna | Common | Conditional | Rare |  Sound | Floors | Active sources",
-    "-------------------------|-------|------|-------|--------|-------------|------|--------|--------|----------------",
+    "Biome                    | Flora | POIs | Mth P/I | Sig. | Fauna | Common | Conditional | Rare |  Sound | Floors | Active sources",
+    "-------------------------|-------|------|---------|------|-------|--------|-------------|------|--------|--------|----------------",
     ...rows,
     "",
     "THE WORLD BELOW ECOLOGY",
-    "Biome                    | Flora | POIs | Fauna | Common | Conditional | Rare |  Sound | Active source",
-    "-------------------------|-------|------|-------|--------|-------------|------|--------|----------------",
+    "Biome                    | Flora | POIs | Mth P/I | Sig. | Fauna | Common | Conditional | Rare |  Sound | Active source",
+    "-------------------------|-------|------|---------|------|-------|--------|-------------|------|--------|----------------",
     ...undergroundAudit.map((biome) => [
       biome.name.padEnd(24),
       String(biome.flora).padStart(5),
       String(biome.poiCount).padStart(4),
+      `${biome.implementedPoiCount}/${biome.proposedPoiCount}`.padStart(7),
+      String(biome.signatureCreatureCount).padStart(4),
       String(biome.fauna).padStart(5),
       String(biome.common).padStart(6),
       String(biome.conditional).padStart(11),
@@ -228,12 +269,18 @@ export function formatBiomeEcologyAudit(audit: readonly BiomeAudit[]) {
     `Bestiary discovery hints: ${MOB_ORDER.length - missingHints.length}/${MOB_ORDER.length}.`,
     `Native flora assignments: ${PLANTS.length - unassignedPlants.length}/${PLANTS.length}.`,
     `Natural fauna with at least one resolved custom sound: ${naturalKinds.length - silentNaturalKinds.length}/${naturalKinds.length}.`,
+    `Mythic Frontiers proposal implementation: ${audit.reduce((sum, biome) => sum + biome.implementedPoiCount, 0)}/${audit.reduce((sum, biome) => sum + biome.proposedPoiCount, 0)} eligible surface-biome assignments; signature counts are shown per habitat.`,
     `Natural fauna without a resolved custom sound (${silentNaturalKinds.length}): ${silentNaturalKinds.map((kind) => MOB_DEFS[kind].name).join(", ") || "none"}.`,
     `Missing discovery hints (${missingHints.length}): ${missingHints.map((kind) => MOB_DEFS[kind].name).join(", ") || "none"}.`,
     `Unassigned flora (${unassignedPlants.length}): ${unassignedPlants.map((plant) => plant.name).join(", ") || "none"}.`,
     "",
     "Shared surface fauna pools:",
     ...sharedSurfacePools().map((names) => `- ${names.join(" = ")}`),
+    "",
+    "Mythic signature creatures by surface biome:",
+    ...audit.filter((biome) => biome.signatureCreatures.length).map((biome) => `- ${biome.name}: ${biome.signatureCreatures.map((kind) => MOB_DEFS[kind].name).join(", ")}`),
+    "Mythic signature creatures by underground habitat:",
+    ...undergroundAudit.filter((biome) => biome.signatureCreatures.length).map((biome) => `- ${biome.name}: ${biome.signatureCreatures.map((kind) => MOB_DEFS[kind].name).join(", ")}`),
   ].join("\n");
 }
 

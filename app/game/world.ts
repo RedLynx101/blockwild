@@ -9,6 +9,7 @@ import {
   type AdventureBiome,
 } from "./adventure-content";
 import { paintBiomeSurfaceAtlasTile } from "./biome-atmosphere";
+import { mythicSiteByStructureKind, validateMythicSitePlacement } from "./mythic-frontiers";
 import {
   APPLE_CRATE_SIDE_TILE,
   APPLE_CRATE_TOP_TILE,
@@ -196,8 +197,8 @@ export function planGuildLodgeForRegion(seed: number, regionX: number, regionZ: 
   return Object.freeze({ guildId: guilds[index] });
 }
 
-function adventureBiomeFromId(biome: BiomeId): AdventureBiome | null {
-  if (biome === BiomeId.Beach) return "coast";
+export function adventureBiomeFromId(biome: BiomeId): AdventureBiome | null {
+  if ([BiomeId.Beach, BiomeId.Ocean, BiomeId.DeepOcean, BiomeId.LumenTrench].includes(biome)) return "coast";
   if (biome === BiomeId.Meadow || biome === BiomeId.CloudreedGlen) return "meadow";
   if ([BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Bloomwood, BiomeId.RainveilJungle, BiomeId.SakurabloomGrove].includes(biome)) return "forest";
   if ([BiomeId.Frostpine, BiomeId.Snowfield, BiomeId.SnowcapRange].includes(biome)) return "snow";
@@ -3838,15 +3839,51 @@ export class ChunkWorld {
           const originZ = originCz * CHUNK_SIZE + Math.floor(CHUNK_SIZE / 2);
           const originColumn = sample(originX, originZ);
           const adventureBiome = adventureBiomeFromId(originColumn.biome);
-          const coastFoundation = adventureBiome === "coast" && originColumn.height >= originColumn.waterline;
-          if (!adventureBiome || (!coastFoundation && originColumn.height <= originColumn.waterline + 2)) continue;
+          const coastCandidate = adventureBiome === "coast";
+          if (!adventureBiome || (!coastCandidate && originColumn.height <= originColumn.waterline + 2)) continue;
           if (syrupPondColumnAt(this.seedText, originX, originZ, sample, BiomeId.SugarplumVale)) continue;
           const kinds = [
             adventurePoiCandidateForChunk({ seed: this.seedText, chunkX: originCx, chunkZ: originCz, biome: adventureBiome }),
             adventureDungeonCandidateForChunk({ seed: this.seedText, chunkX: originCx, chunkZ: originCz, biome: adventureBiome }),
           ].filter((kind) => kind !== undefined);
           for (const kind of kinds) {
-            const plan = planAdventureStructure(kind, { x: originX, y: originColumn.height, z: originZ }, this.seedText);
+            const mythicSite = mythicSiteByStructureKind(kind);
+            const planOriginY = mythicSite?.layer === "underwater" ? originColumn.waterline : originColumn.height;
+            const plan = planAdventureStructure(kind, { x: originX, y: planOriginY, z: originZ }, this.seedText);
+            if (mythicSite) {
+              const surfaceSamples = [[0, 0], [-8, -8], [8, -8], [-8, 8], [8, 8]].map(([dx, dz]) => sample(originX + dx, originZ + dz));
+              const relief = Math.max(...surfaceSamples.map((entry) => entry.height)) - Math.min(...surfaceSamples.map((entry) => entry.height));
+              if (mythicSite.layer === "underwater" ? originColumn.waterline - originColumn.height < 10 : mythicSite.layer === "surface" && relief > 10) continue;
+              const settlementRegionX = Math.floor(originX / (32 * CHUNK_SIZE));
+              const settlementRegionZ = Math.floor(originZ / (32 * CHUNK_SIZE));
+              let settlementDistance = Number.POSITIVE_INFINITY;
+              let dwarfSettlementDistance = Number.POSITIVE_INFINITY;
+              for (let regionDx = -1; regionDx <= 1; regionDx += 1) for (let regionDz = -1; regionDz <= 1; regionDz += 1) {
+                const settlement = this.validatedSettlementCandidateForRegion(settlementRegionX + regionDx, settlementRegionZ + regionDz, sample);
+                if (!settlement) continue;
+                const distance = Math.hypot(settlement.center.x - originX, settlement.center.z - originZ);
+                settlementDistance = Math.min(settlementDistance, distance);
+                if (settlement.factionId === "dwarves") dwarfSettlementDistance = Math.min(dwarfSettlementDistance, distance);
+              }
+              const roadDistance = [...this.surfaceRoadGraphCache.values()].flat().reduce((nearest, edge) => {
+                const dx = edge.to.x - edge.from.x;
+                const dz = edge.to.z - edge.from.z;
+                const lengthSquared = dx * dx + dz * dz;
+                const along = lengthSquared <= 0 ? 0 : Math.max(0, Math.min(1, ((originX - edge.from.x) * dx + (originZ - edge.from.z) * dz) / lengthSquared));
+                return Math.min(nearest, Math.hypot(originX - (edge.from.x + dx * along), originZ - (edge.from.z + dz * along)));
+              }, Number.POSITIVE_INFINITY);
+              const placement = validateMythicSitePlacement(plan, {
+                siteId: mythicSite.id,
+                roadDistance,
+                settlementDistance,
+                dwarfSettlementDistance,
+                connectedEntrance: true,
+                waterShellCount: mythicSite.sealedUnderwater ? Math.max(0, originColumn.waterline - originColumn.height) : 0,
+                explicitFloodedRoomCount: mythicSite.explicitFloodedRooms,
+                returnPathConnected: true,
+              });
+              if (!placement.ok) continue;
+            }
             clearGeneratedGrowth(adventureClearanceBounds(plan));
             for (const placement of adventurePlacementsForChunk(plan, chunk.cx, chunk.cz, CHUNK_SIZE)) {
               set(placement.x, placement.y, placement.z, placement.block, false);

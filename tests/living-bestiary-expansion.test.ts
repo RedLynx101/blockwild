@@ -271,8 +271,8 @@ test("summon contracts preserve one stable lineage and prohibit echo duplication
   }
 });
 
-test("all six legendary encounters have staged ecology, four outcomes, anti-dup custody, and rare sites", () => {
-  assert.deepEqual(auditLegendaryEncounterDefinitions(), { ok: true, issues: [], encounterCount: 6, kindCount: 6 });
+test("all twenty-one legendary encounters have staged ecology, four outcomes, anti-dup custody, and rare sites", () => {
+  assert.deepEqual(auditLegendaryEncounterDefinitions(), { ok: true, issues: [], encounterCount: 21, kindCount: 21 });
   const scoped = createLegendaryEncounterState("walking-spring", "site-walking-spring");
   assert.equal(applyLegendaryEvent(scoped, { kind: "observe-sign", amount: 1, siteId: "another-site", sourceId: "clue-1" }), scoped, "another site cannot broadcast progress");
   const once = applyLegendaryEvent(scoped, { kind: "observe-sign", amount: 1, siteId: scoped.siteId, sourceId: "clue-1" });

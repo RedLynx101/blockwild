@@ -306,6 +306,14 @@ export enum BlockId {
   FrostpearSapling = 539,
   FrostpearLeaves = 540,
   FrostpearFruit = 541,
+  /** Mythic Frontiers architectural materials; appended to preserve every save-stable legacy id. */
+  NacreTidework = 542,
+  WindwornAlabaster = 543,
+  FossilrootCalcite = 544,
+  EmberglassArchive = 545,
+  Mirrorpeat = 546,
+  Reedglass = 547,
+  MoonfeltMycelium = 548,
 }
 
 export const Item = {
@@ -732,6 +740,30 @@ export const Item = {
   DeepgearStoolItem: 534,
   /** Frostpine orchard fruit; all new ids remain append-only save metadata. */
   Frostpear: 542,
+  /** Mythic Frontiers masonry; explicit aliases avoid block/item id overlap. */
+  NacreTideworkItem: 543,
+  WindwornAlabasterItem: 544,
+  FossilrootCalciteItem: 545,
+  EmberglassArchiveItem: 546,
+  MirrorpeatItem: 547,
+  ReedglassItem: 548,
+  MoonfeltMyceliumItem: 549,
+  /** Mythic Frontiers signature rewards; append-only because chests persist. */
+  BellkeeperTack: 550,
+  CloudwhaleMigrationMap: 551,
+  StillwaterFeintChime: 552,
+  EmberglassNetUpgrade: 553,
+  DeepPressureFlask: 554,
+  BehemothHaulingHarness: 555,
+  BriarcrownAntidoteKit: 556,
+  AcousticSurveyCoil: 557,
+  TailGripRetrievalCharm: 558,
+  TideclockCompass: 559,
+  NineWindStandard: 560,
+  MercifulMirrorShield: 561,
+  PearlCourtRegalia: 562,
+  HeatScriptLens: 563,
+  RememberedPathSpore: 564,
 } as const;
 
 export type ItemCode = number;
@@ -1194,6 +1226,13 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.FrostpearSapling]: block(BlockId.FrostpearSapling, "Frostpear Sapling", FROSTPEAR_SAPLING_TILE, FROSTPEAR_SAPLING_TILE, FROSTPEAR_SAPLING_TILE, 0.08, "#739873", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
   [BlockId.FrostpearLeaves]: block(BlockId.FrostpearLeaves, "Frostpear Leaves", FROSTPEAR_LEAVES_TILE, FROSTPEAR_LEAVES_TILE, FROSTPEAR_LEAVES_TILE, 0.3, "#4d776d", "hand", 0, { layer: "cutout" }),
   [BlockId.FrostpearFruit]: block(BlockId.FrostpearFruit, "Ripe Frostpear", FROSTPEAR_FRUIT_TILE, FROSTPEAR_FRUIT_TILE, FROSTPEAR_FRUIT_TILE, 0.05, "#a8d6d8", "hand", 0, { solid: false, layer: "cutout", shape: "fruit" }),
+  [BlockId.NacreTidework]: block(BlockId.NacreTidework, "Nacre Tidework", 152, 152, 86, 2.15, "#c7e2dc", "pickaxe", 2),
+  [BlockId.WindwornAlabaster]: block(BlockId.WindwornAlabaster, "Windworn Alabaster", 86, 86, 86, 1.85, "#d8d2bd", "pickaxe", 1),
+  [BlockId.FossilrootCalcite]: block(BlockId.FossilrootCalcite, "Fossilroot Calcite", 190, 190, 190, 2.05, "#a99c78", "pickaxe", 2),
+  [BlockId.EmberglassArchive]: block(BlockId.EmberglassArchive, "Emberglass Archive Brick", 153, 153, 49, 2.35, "#a9573e", "pickaxe", 2),
+  [BlockId.Mirrorpeat]: block(BlockId.Mirrorpeat, "Mirrorpeat", 27, 27, 27, .7, "#443e46", "shovel"),
+  [BlockId.Reedglass]: block(BlockId.Reedglass, "Reedglass", 182, 182, 182, 1.5, "#729d91", "pickaxe", 1, { layer: "transparent" }),
+  [BlockId.MoonfeltMycelium]: block(BlockId.MoonfeltMycelium, "Moonfelt Mycelium", 180, 180, 180, .55, "#75658d", "shovel"),
 };
 
 const configureBlockLight = (type: BlockId, lightEmission: number, lightColor: readonly [number, number, number], emissiveStrength = 0.72) => {
@@ -1796,6 +1835,28 @@ Object.assign(ITEMS, {
   [Item.IronFilings]: { id: Item.IronFilings, name: "Iron Filings", color: "#aeb8ba", maxStack: 64 },
   [Item.DeepgearStoolItem]: { id: Item.DeepgearStoolItem, name: "Deepgear Stool", color: "#9a7448", maxStack: 64, placeBlock: BlockId.DwarfStool, iconKind: "chair", heldModel: "chair", dropModel: "chair" },
   [Item.Frostpear]: { id: Item.Frostpear, name: "Frostpear", color: "#a8d6d8", maxStack: 64, food: 4, useKind: "plant", plantBlock: BlockId.FrostpearSapling, iconKind: "produce" },
+  [Item.NacreTideworkItem]: { id: Item.NacreTideworkItem, name: "Nacre Tidework", color: "#c7e2dc", maxStack: 64, placeBlock: BlockId.NacreTidework, worldTextureBlock: BlockId.NacreTidework },
+  [Item.WindwornAlabasterItem]: { id: Item.WindwornAlabasterItem, name: "Windworn Alabaster", color: "#d8d2bd", maxStack: 64, placeBlock: BlockId.WindwornAlabaster, worldTextureBlock: BlockId.WindwornAlabaster },
+  [Item.FossilrootCalciteItem]: { id: Item.FossilrootCalciteItem, name: "Fossilroot Calcite", color: "#a99c78", maxStack: 64, placeBlock: BlockId.FossilrootCalcite, worldTextureBlock: BlockId.FossilrootCalcite },
+  [Item.EmberglassArchiveItem]: { id: Item.EmberglassArchiveItem, name: "Emberglass Archive Brick", color: "#a9573e", maxStack: 64, placeBlock: BlockId.EmberglassArchive, worldTextureBlock: BlockId.EmberglassArchive },
+  [Item.MirrorpeatItem]: { id: Item.MirrorpeatItem, name: "Mirrorpeat", color: "#443e46", maxStack: 64, placeBlock: BlockId.Mirrorpeat, worldTextureBlock: BlockId.Mirrorpeat },
+  [Item.ReedglassItem]: { id: Item.ReedglassItem, name: "Reedglass", color: "#729d91", maxStack: 64, placeBlock: BlockId.Reedglass, worldTextureBlock: BlockId.Reedglass },
+  [Item.MoonfeltMyceliumItem]: { id: Item.MoonfeltMyceliumItem, name: "Moonfelt Mycelium", color: "#75658d", maxStack: 64, placeBlock: BlockId.MoonfeltMycelium, worldTextureBlock: BlockId.MoonfeltMycelium },
+  [Item.BellkeeperTack]: { id: Item.BellkeeperTack, name: "Bellkeeper Tack", color: "#d5b45e", maxStack: 1, rarity: "legendary", legendaryEffect: "Quietly marks safe road approaches while mounted on a trusted Bellstep Qilin.", iconKind: "relic" },
+  [Item.CloudwhaleMigrationMap]: { id: Item.CloudwhaleMigrationMap, name: "Cloudwhale Migration Map", color: "#b9d8d4", maxStack: 1, rarity: "legendary", legendaryEffect: "Reveals one distant highland landmark after a protected graveyard circuit.", iconKind: "blueprint" },
+  [Item.StillwaterFeintChime]: { id: Item.StillwaterFeintChime, name: "Stillwater Feint Chime", color: "#78b9a8", maxStack: 1, rarity: "legendary", legendaryEffect: "Identifies the true rescue wake during a Mirrorfen pursuit.", iconKind: "relic" },
+  [Item.EmberglassNetUpgrade]: { id: Item.EmberglassNetUpgrade, name: "Emberglass Net Upgrade", color: "#dc7845", maxStack: 1, rarity: "legendary", legendaryEffect: "Protects a creature net during one authored heat-rescue interaction.", iconKind: "relic" },
+  [Item.DeepPressureFlask]: { id: Item.DeepPressureFlask, name: "Deep-Pressure Flask", color: "#9ce8df", maxStack: 1, rarity: "legendary", legendaryEffect: "Extends one moonwell pressure pocket without carving water into air tunnels.", iconKind: "bottle" },
+  [Item.BehemothHaulingHarness]: { id: Item.BehemothHaulingHarness, name: "Behemoth Hauling Harness", color: "#d7c58b", maxStack: 1, rarity: "legendary", legendaryEffect: "Lets a trusted Behemoth brace marked avalanche barriers and haul heavy cargo.", iconKind: "relic" },
+  [Item.BriarcrownAntidoteKit]: { id: Item.BriarcrownAntidoteKit, name: "Briarcrown Antidote Kit", color: "#85aa62", maxStack: 4, rarity: "legendary", legendaryEffect: "Cures the measured venom used in the Root-Crown challenge.", iconKind: "bottle" },
+  [Item.AcousticSurveyCoil]: { id: Item.AcousticSurveyCoil, name: "Acoustic Survey Coil", color: "#b7a670", maxStack: 1, rarity: "legendary", legendaryEffect: "Translates Ammonarch resonance into bounded unstable-stone survey marks.", iconKind: "relic" },
+  [Item.TailGripRetrievalCharm]: { id: Item.TailGripRetrievalCharm, name: "Tail-Grip Retrieval Charm", color: "#d8c77d", maxStack: 1, rarity: "legendary", legendaryEffect: "Calls a trusted Ahuizotl to retrieve one reachable dropped object or swimmer.", iconKind: "relic" },
+  [Item.TideclockCompass]: { id: Item.TideclockCompass, name: "Tideclock Compass", color: "#77c9c7", maxStack: 1, rarity: "legendary", legendaryEffect: "Reads authored salvage windows without revealing arbitrary treasure through walls.", iconKind: "relic" },
+  [Item.NineWindStandard]: { id: Item.NineWindStandard, name: "Nine-Wind Standard", color: "#d4c07e", maxStack: 1, rarity: "legendary", legendaryEffect: "Deploys a bounded wind-direction marker for mounted flight routes.", iconKind: "relic" },
+  [Item.MercifulMirrorShield]: { id: Item.MercifulMirrorShield, name: "Merciful Mirror Shield", color: "#aebfc1", maxStack: 1, rarity: "legendary", legendaryEffect: "Reverses one staged petrification flash when deliberately aimed.", iconKind: "relic" },
+  [Item.PearlCourtRegalia]: { id: Item.PearlCourtRegalia, name: "Pearl Court Regalia", color: "#e6d8ae", maxStack: 1, rarity: "legendary", legendaryEffect: "Signals peaceful audience status inside Namarra's restored court.", iconKind: "relic" },
+  [Item.HeatScriptLens]: { id: Item.HeatScriptLens, name: "Heat-Script Lens", color: "#e18b55", maxStack: 1, rarity: "legendary", legendaryEffect: "Reveals one thermal archive layer without igniting its shelf.", iconKind: "relic" },
+  [Item.RememberedPathSpore]: { id: Item.RememberedPathSpore, name: "Remembered Path Spore", color: "#c8b4e6", maxStack: 4, rarity: "legendary", legendaryEffect: "Briefly highlights the player's own recent route near a restored memory pond.", iconKind: "relic" },
 } satisfies Record<number, ItemDefinition>);
 
 /**
@@ -1804,6 +1865,13 @@ Object.assign(ITEMS, {
  * 103 (Iron Ingot) merely because both enums share a number.
  */
 export const BLOCK_ITEM_ALIASES: Readonly<Partial<Record<BlockId, ItemCode>>> = Object.freeze({
+  [BlockId.NacreTidework]: Item.NacreTideworkItem,
+  [BlockId.WindwornAlabaster]: Item.WindwornAlabasterItem,
+  [BlockId.FossilrootCalcite]: Item.FossilrootCalciteItem,
+  [BlockId.EmberglassArchive]: Item.EmberglassArchiveItem,
+  [BlockId.Mirrorpeat]: Item.MirrorpeatItem,
+  [BlockId.Reedglass]: Item.ReedglassItem,
+  [BlockId.MoonfeltMycelium]: Item.MoonfeltMyceliumItem,
   [BlockId.FieldPerch]: Item.FieldPerchItem,
   [BlockId.WroughtIronDoorClosedLower]: Item.WroughtIronDoor,
   [BlockId.WroughtIronDoorClosedUpper]: Item.WroughtIronDoor,
@@ -2216,6 +2284,13 @@ export const RECIPES: Recipe[] = [
   { id: "wayfarer-canvas", name: "Wayfarer Canvas", width: 2, height: 2, pattern: [Item.String, Item.Wool, Item.Wool, Item.String], output: { item: Item.WayfarerCanvasItem, count: 4 }, table: false },
   { id: "whisperglass", name: "Whisperglass", width: 3, height: 3, pattern: [BlockId.Glass, Item.GlowDust, BlockId.Glass, Item.CrystalShard, BlockId.Glass, Item.CrystalShard, BlockId.Glass, Item.GlowDust, BlockId.Glass], output: { item: Item.WhisperglassItem, count: 4 }, table: true },
   { id: "storybook-brick", name: "Storybook Bricks", width: 2, height: 2, pattern: [BlockId.StoneBrick, Item.LivingInk, Item.Fiber, BlockId.StoneBrick], output: { item: Item.StorybookBrickItem, count: 4 }, table: true },
+  { id: "nacre-tidework", name: "Nacre Tidework", width: 2, height: 2, pattern: [Item.Reefglass, Item.LumenPearl, BlockId.Limestone, Item.Reefglass], output: { item: Item.NacreTideworkItem, count: 4 }, table: true },
+  { id: "windworn-alabaster", name: "Windworn Alabaster", width: 2, height: 2, pattern: [BlockId.Limestone, BlockId.Sand, BlockId.Limestone, BlockId.Sand], output: { item: Item.WindwornAlabasterItem, count: 4 }, table: true },
+  { id: "fossilroot-calcite", name: "Fossilroot Calcite", width: 2, height: 2, pattern: [Item.FossilStoneItem, Item.LivingRootItem, Item.FlowstoneItem, Item.FossilStoneItem], output: { item: Item.FossilrootCalciteItem, count: 4 }, table: true },
+  { id: "emberglass-archive", name: "Emberglass Archive Bricks", width: 2, height: 2, pattern: [Item.HeatCrackedRockItem, Item.GlowDust, BlockId.Glass, Item.SulfurStoneItem], output: { item: Item.EmberglassArchiveItem, count: 4 }, table: true },
+  { id: "mirrorpeat", name: "Mirrorpeat", width: 2, height: 2, pattern: [BlockId.Dirt, Item.ReflectiveShaleItem, Item.MudShelfItem, BlockId.Dirt], output: { item: Item.MirrorpeatItem, count: 4 }, table: true },
+  { id: "reedglass", name: "Reedglass", width: 2, height: 2, pattern: [BlockId.Glass, Item.CaveReedItem, Item.CaveReedItem, BlockId.Glass], output: { item: Item.ReedglassItem, count: 4 }, table: true },
+  { id: "moonfelt-mycelium", name: "Moonfelt Mycelium", width: 2, height: 2, pattern: [Item.GrottoMossItem, Item.Dreamcap, Item.GlowDust, Item.GrottoMossItem], output: { item: Item.MoonfeltMyceliumItem, count: 4 }, table: true },
   { id: "butterfly_exhibit", name: "Butterfly Conservatory", width: 3, height: 3, pattern: [BlockId.Glass, BlockId.Glass, BlockId.Glass, BlockId.Glass, anyFlower, BlockId.Glass, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: BlockId.ButterflyExhibit, count: 4 }, table: true },
   { id: "sailboat", name: "Wayfarer Sailboat", width: 3, height: 3, pattern: [0, Item.Wool, 0, BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks, 0, BlockId.Planks], output: { item: Item.Sailboat, count: 1 }, table: true },
   { id: "creature_cage", name: "Waykeeper Capture Orbs", width: 3, height: 3, pattern: [Item.IronIngot, Item.Stick, Item.IronIngot, Item.Stick, 0, Item.Stick, Item.IronIngot, Item.Stick, Item.IronIngot], output: { item: Item.CaptureOrb, count: 4 }, table: true },

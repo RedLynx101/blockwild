@@ -97,7 +97,7 @@ test("save normalization is finite, migration-safe, and preserves a partial hatc
     ownerId: " player one ",
     equipment: { saddle: true, chests: [true, "wrong"], armor: { head: "ice helm", body: 4 } },
   });
-  assert.equal(malformed.schemaVersion, 1);
+  assert.equal(malformed.schemaVersion, 2);
   assert.equal(malformed.dragonId, "Frost-Friend");
   assert.equal(malformed.stage, 1);
   assert.equal(malformed.health, malformed.maxHealth);

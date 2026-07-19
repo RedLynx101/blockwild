@@ -23,6 +23,7 @@ import {
   type UndergroundMobKind,
 } from "./mobs";
 import { createArrowVisual } from "./projectiles";
+import { DRAGON_VARIANTS, dragonVariantForSeed, isDragonVariantForType, type DragonType, type DragonVariantId } from "./dragons";
 
 const TAU = Math.PI * 2;
 /** Counteracts the rotated repair-prong bounds so the Veinling's contact plane is exactly local Y=0. */
@@ -83,6 +84,50 @@ export const DRAGON_MODEL_CONTRACT = Object.freeze({
   shoulderCarryStage: 1 as const,
 });
 
+type DragonVariantSilhouette = Readonly<{
+  body: readonly [number, number, number];
+  head: number;
+  neck: number;
+  wing: readonly [number, number];
+  leg: number;
+  stance: number;
+  tail: number;
+  motif: "crest" | "coil" | "crown" | "kite" | "plume" | "fang" | "manta" | "reef" | "gear" | "anvil" | "razor" | "roc" | "idol" | "hart" | "moth" | "crescent";
+}>;
+
+/**
+ * The reviewed adult alternatives are body plans, not palette swaps. These
+ * bounded transforms preserve the production rig and all equipment sockets
+ * while changing mass, stance, wing loading, head proportions, and tail
+ * cadence enough for each lineage to read at field-guide distance.
+ */
+export const DRAGON_VARIANT_SILHOUETTES: Readonly<Record<DragonVariantId, DragonVariantSilhouette>> = Object.freeze({
+  furnacecrest: { body: [1.18, 1.12, .96], head: 1.12, neck: .9, wing: [.92, .92], leg: 1.05, stance: 1.12, tail: .92, motif: "crest" },
+  cindercoil: { body: [.82, .92, 1.2], head: .92, neck: 1.22, wing: [1.08, .9], leg: .86, stance: .82, tail: 1.34, motif: "coil" },
+  crownflare: { body: [1.12, 1.02, 1.04], head: 1.18, neck: .96, wing: [.58, .72], leg: 1.12, stance: 1.08, tail: 1.02, motif: "crown" },
+  emberkite: { body: [.76, .88, .92], head: .82, neck: 1.12, wing: [1.34, 1.18], leg: .92, stance: .78, tail: 1.12, motif: "kite" },
+  glacierhorn: { body: [1.12, 1.08, 1.02], head: 1.1, neck: .94, wing: [.94, .9], leg: 1.12, stance: 1.12, tail: .96, motif: "crest" },
+  rimeplume: { body: [.86, .92, .96], head: .9, neck: 1.08, wing: [1.2, 1.12], leg: 1.04, stance: .86, tail: 1.08, motif: "plume" },
+  hoarfang: { body: [1.16, 1.04, .9], head: 1.2, neck: .86, wing: [.82, .78], leg: 1.02, stance: 1.16, tail: .86, motif: "fang" },
+  prismcoil: { body: [.78, .88, 1.18], head: .9, neck: 1.24, wing: [1.1, .94], leg: .84, stance: .8, tail: 1.34, motif: "coil" },
+  rivetback: { body: [1.14, 1.08, 1.04], head: 1.08, neck: .94, wing: [.92, .86], leg: 1.08, stance: 1.14, tail: 1.0, motif: "gear" },
+  gearwing: { body: [.94, .96, .94], head: .94, neck: 1.0, wing: [1.26, 1.08], leg: .94, stance: .96, tail: .94, motif: "gear" },
+  anvilback: { body: [1.3, 1.16, .92], head: 1.22, neck: .82, wing: [.68, .7], leg: 1.18, stance: 1.24, tail: .86, motif: "anvil" },
+  razorfan: { body: [.82, .9, 1.04], head: .86, neck: 1.12, wing: [1.22, .86], leg: .92, stance: .84, tail: 1.18, motif: "razor" },
+  tidemane: { body: [1.02, 1.06, 1.02], head: 1.1, neck: .98, wing: [.92, 1.12], leg: 1.02, stance: 1.0, tail: 1.08, motif: "crest" },
+  mantaroyal: { body: [1.18, .76, 1.04], head: .92, neck: .9, wing: [1.42, 1.34], leg: .96, stance: 1.08, tail: .92, motif: "manta" },
+  ribboncoil: { body: [.72, .8, 1.24], head: .82, neck: 1.28, wing: [1.12, 1.0], leg: .74, stance: .76, tail: 1.42, motif: "coil" },
+  reefcrown: { body: [1.16, 1.08, .96], head: 1.18, neck: .9, wing: [.86, 1.02], leg: 1.04, stance: 1.14, tail: .94, motif: "reef" },
+  sunmane: { body: [1.1, 1.04, 1.0], head: 1.12, neck: .96, wing: [1.02, 1.0], leg: 1.06, stance: 1.08, tail: 1.0, motif: "crest" },
+  "auric-roc": { body: [.84, .94, .9], head: .82, neck: 1.1, wing: [1.38, 1.24], leg: 1.04, stance: .84, tail: .86, motif: "roc" },
+  "treasury-coil": { body: [.8, .9, 1.2], head: .94, neck: 1.24, wing: [.94, .86], leg: .8, stance: .82, tail: 1.38, motif: "coil" },
+  idolback: { body: [1.26, 1.14, .94], head: 1.2, neck: .84, wing: [.72, .72], leg: 1.14, stance: 1.2, tail: .9, motif: "idol" },
+  moonhart: { body: [1.02, 1.04, 1.04], head: 1.08, neck: 1.06, wing: [.92, .94], leg: 1.12, stance: .96, tail: 1.08, motif: "hart" },
+  "argent-moth": { body: [.78, .86, .9], head: .82, neck: 1.08, wing: [1.42, 1.3], leg: .84, stance: .78, tail: .88, motif: "moth" },
+  mirrorcoil: { body: [.74, .84, 1.22], head: .86, neck: 1.28, wing: [1.06, .9], leg: .78, stance: .78, tail: 1.4, motif: "coil" },
+  "crescent-wyvern": { body: [.84, .94, 1.02], head: .9, neck: 1.12, wing: [1.3, 1.08], leg: .88, stance: .84, tail: 1.2, motif: "crescent" },
+});
+
 /**
  * Selects one authored dragon silhouette without rebuilding its Three.js tree.
  * Stages 3-5 deliberately share the mature form and continue to grow smoothly;
@@ -107,6 +152,31 @@ export function applyDragonLifeStage(root: THREE.Object3D, stage: 1 | 2 | 3 | 4 
   return Boolean(adult && hatchling && fledgling);
 }
 
+export function applyDragonVariant(root: THREE.Object3D, requested: DragonVariantId) {
+  const type = root.userData.dragonType as DragonType | undefined;
+  if (!type) return false;
+  const variant = isDragonVariantForType(type, requested) ? requested : dragonVariantForSeed(type, Number(root.userData.mobId) || 0);
+  const prefix = `${type}-dragon`;
+  const adult = root.getObjectByName(`${prefix}-adult-form`);
+  if (!adult) return false;
+  const selected = adult.children.find((child) => child.userData.dragonVariant === variant);
+  if (!selected) return false;
+  for (const child of adult.children) child.visible = child === selected;
+  // Named-rig lookup is a long-standing public contract used by animation,
+  // equipment, portraits, and debugging tools. Put the live clone first so a
+  // root-level getObjectByName always resolves the visible anatomy rather than
+  // an inactive sibling carrying the same stable joint names.
+  const selectedIndex = adult.children.indexOf(selected);
+  if (selectedIndex > 0) {
+    adult.children.splice(selectedIndex, 1);
+    adult.children.unshift(selected);
+  }
+  root.userData.dragonVariant = variant;
+  const visual = root.getObjectByName(`${prefix}-visual`);
+  if (visual) visual.userData.dragonVariant = variant;
+  return true;
+}
+
 /** Applies the same named dragon rig used by gameplay, portraits, and the inspector. */
 export function applyDragonPose(root: THREE.Object3D, input: DragonPoseInput) {
   const type = root.userData.dragonType as "fire" | "ice" | "steel" | "sea" | "gold" | "silver" | undefined;
@@ -118,9 +188,11 @@ export function applyDragonPose(root: THREE.Object3D, input: DragonPoseInput) {
   const lookYaw = THREE.MathUtils.clamp(input.lookYaw ?? 0, -0.95, 0.95);
   const mode = input.mode ?? "idle";
   const airborne = input.airborne ?? (mode === "fly" || mode === "breath" || mode === "projectile");
-  const object = (suffix: string) => root.getObjectByName(`${prefix}-${suffix}`);
   const stage = input.stage ?? (Number(root.userData.dragonVisualStage) || 5) as 1 | 2 | 3 | 4 | 5;
   applyDragonLifeStage(root, stage);
+  const adult = root.getObjectByName(`${prefix}-adult-form`);
+  const activeAdult = stage >= 3 ? adult?.children.find((child) => child.visible) : null;
+  const object = (suffix: string) => (activeAdult ?? root).getObjectByName(`${prefix}-${suffix}`);
   const attackWindup = THREE.MathUtils.smoothstep(attack, 0, 0.28);
   const attackStrike = Math.sin(THREE.MathUtils.clamp((attack - 0.2) / 0.5, 0, 1) * Math.PI);
   const attackRecovery = THREE.MathUtils.smoothstep(attack, 0.62, 1);
@@ -320,8 +392,23 @@ export function applyDragonPose(root: THREE.Object3D, input: DragonPoseInput) {
       "tail-armor": equipment.armor?.tail === true,
     };
     for (const [suffix, visible] of Object.entries(visibility)) {
-      const attachment = object(suffix);
-      if (attachment) attachment.visible = visible;
+      // Adult variants are complete rig clones so their silhouettes can differ
+      // without sharing mutable bones. Keep equipment state synchronized across
+      // every clone: only the selected form is rendered, and changing variants
+      // can never reveal stale tack or armor.
+      let updatedAdultAttachment = false;
+      if (stage >= 3 && adult) {
+        for (const form of adult.children) {
+          const attachment = form.getObjectByName(`${prefix}-${suffix}`);
+          if (!attachment) continue;
+          attachment.visible = visible;
+          updatedAdultAttachment = true;
+        }
+      }
+      if (!updatedAdultAttachment) {
+        const attachment = object(suffix);
+        if (attachment) attachment.visible = visible;
+      }
     }
   }
   return true;
@@ -1874,6 +1961,68 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       return node;
     };
 
+    const artDirectAdultVariant = (form: THREE.Group, variant: DragonVariantId) => {
+      const profile = DRAGON_VARIANT_SILHOUETTES[variant];
+      form.name = `${prefix}-adult-${variant}-form`;
+      form.userData.dragonVariant = variant;
+      form.userData.variantMotif = profile.motif;
+      form.traverse((object) => {
+        const local = object.name.startsWith(`${prefix}-`) ? object.name.slice(prefix.length + 1) : object.name;
+        if (/head-pivot$/u.test(local)) object.scale.multiplyScalar(profile.head);
+        if (/neck-\d+-pivot$/u.test(local)) {
+          object.position.z *= profile.neck;
+          object.scale.z *= profile.neck;
+        }
+        if (/wing-root-pivot$/u.test(local)) {
+          object.position.x *= profile.stance;
+          object.scale.x *= profile.wing[0];
+          object.scale.z *= profile.wing[1];
+        }
+        if (/(?:front|rear)-(?:left|right)-hip-pivot$/u.test(local)) {
+          object.position.x *= profile.stance;
+          object.scale.y *= profile.leg;
+        }
+        if (/tail-1-pivot$/u.test(local)) object.scale.z *= profile.tail;
+        if (object instanceof THREE.Mesh) {
+          if (/chest$|haunch|pelvis|waist|shoulder-mantle|shoulder-hump/u.test(local)) {
+            object.scale.x *= profile.body[0];
+            object.scale.y *= profile.body[1];
+            object.scale.z *= profile.body[2];
+          }
+          if (/snout|muzzle|brow/u.test(local)) object.scale.x *= Math.sqrt(profile.head);
+          if (/wing-membrane|wing-sail|aurora-veil|flight-feather|mirror-wing-blade/u.test(local)) object.scale.z *= profile.wing[1];
+          if (/upper-leg|lower-leg/u.test(local)) object.scale.y *= profile.leg;
+        }
+      });
+
+      // Lineage signatures remain cuboid and attach to the adult form so they
+      // inherit world scale while never interfering with rig lookup.
+      const signature = (suffix: string, size: [number, number, number], position: [number, number, number], rotation: [number, number, number] = [0, 0, 0], mat: THREE.Material = accentMaterial) =>
+        rigBox(form, `${variant}-signature-${suffix}`, size, mat, position, rotation);
+      if (profile.motif === "coil") {
+        for (let index = 0; index < 7; index += 1) signature(`ribbon-keel-${index + 1}`, [.12, .46 + Math.sin(index / 6 * Math.PI) * .48, .38], [0, 2.7, -1.15 + index * .52], [-.28, 0, index % 2 ? .12 : -.12], index % 2 ? glowMaterial : accentMaterial);
+      } else if (profile.motif === "crest" || profile.motif === "plume") {
+        for (let index = 0; index < 6; index += 1) signature(`mane-${index + 1}`, [.18 + (profile.motif === "plume" ? .16 : 0), .62 + Math.sin(index / 5 * Math.PI) * .62, .34], [(index % 2 ? 1 : -1) * .08, 2.85, -1.2 + index * .58], [-.26, 0, index % 2 ? .16 : -.16], index % 2 ? hornMaterial : glowMaterial);
+      } else if (profile.motif === "crown" || profile.motif === "reef" || profile.motif === "idol") {
+        for (let index = -2; index <= 2; index += 1) signature(`crown-${index + 3}`, [.16 + (profile.motif === "idol" ? .12 : 0), .7 + (2 - Math.abs(index)) * .24, .18], [index * .28, 3.42 + (2 - Math.abs(index)) * .08, -3.68], [-.24, 0, index * .18], index === 0 ? glowMaterial : profile.motif === "reef" ? reefMaterial : hornMaterial);
+      } else if (profile.motif === "manta") {
+        for (const side of [-1, 1]) for (let ray = 0; ray < 4; ray += 1) signature(`${side < 0 ? "left" : "right"}-royal-ray-${ray + 1}`, [1.25 + ray * .3, .06, 1.15 + ray * .24], [side * (1.35 + ray * .64), 2.44, -.1 + ray * .42], [.02, side * (.12 + ray * .08), side * -.1], ray % 2 ? seaGlassMaterial : membraneMaterial);
+      } else if (profile.motif === "gear" || profile.motif === "anvil" || profile.motif === "razor") {
+        for (let index = 0; index < 6; index += 1) signature(`back-plate-${index + 1}`, [profile.motif === "anvil" ? .72 : .22, .38 + index % 3 * .16, .46], [0, 2.9 + index % 2 * .08, -1.08 + index * .58], [-.22, 0, index % 2 ? .18 : -.18], index % 2 ? steelPlateMaterial : brassRivetMaterial);
+      } else if (profile.motif === "kite" || profile.motif === "roc") {
+        for (const side of [-1, 1]) for (let feather = 0; feather < 5; feather += 1) signature(`${side < 0 ? "left" : "right"}-flight-banner-${feather + 1}`, [.3, .08, 1.4 + feather * .2], [side * (2.0 + feather * .52), 2.24, .55 + feather * .22], [.08, side * (.12 + feather * .04), side * -.06], feather % 2 ? hornMaterial : glowMaterial);
+      } else if (profile.motif === "hart") {
+        for (const side of [-1, 1]) for (let tine = 0; tine < 4; tine += 1) signature(`${side < 0 ? "left" : "right"}-moon-antler-${tine + 1}`, [.13, .62 + tine * .18, .15], [side * (.42 + tine * .2), 3.54 + tine * .12, -3.32 + tine * .16], [-.4, side * .12, side * (.25 + tine * .08)], tine % 2 ? moonwhiteMaterial : silverPlateMaterial);
+      } else if (profile.motif === "moth") {
+        for (const side of [-1, 1]) {
+          signature(`${side < 0 ? "left" : "right"}-feeler`, [.1, .86, .12], [side * .36, 3.58, -3.62], [-.46, side * .12, side * .28], moonwhiteMaterial);
+          for (let spot = 0; spot < 4; spot += 1) signature(`${side < 0 ? "left" : "right"}-moth-eye-${spot + 1}`, [.28 + spot * .06, .07, .28 + spot * .06], [side * (1.5 + spot * .72), 2.28, .35 + spot * .48], [0, 0, Math.PI / 4], spot % 2 ? starlightMaterial : moonwhiteMaterial);
+        }
+      } else if (profile.motif === "fang" || profile.motif === "crescent") {
+        for (const side of [-1, 1]) for (let blade = 0; blade < 3; blade += 1) signature(`${side < 0 ? "left" : "right"}-blade-${blade + 1}`, [.14, .62 + blade * .22, .18], [side * (.48 + blade * .25), 3.44 + blade * .18, -3.52 + blade * .2], [-.38, side * .12, side * (.28 + blade * .1)], blade === 2 ? glowMaterial : hornMaterial);
+      }
+    };
+
     /** Builds the compact, big-eyed silhouette used only during Stages 1-2. */
     const buildYoungDragonForm = (stage: 1 | 2) => {
       const formName = stage === 1 ? "hatchling" : "fledgling";
@@ -2033,14 +2182,24 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       const adult = new THREE.Group();
       adult.name = `${prefix}-adult-form`;
       adult.userData.dragonFormStage = "adult";
-      for (const child of adultChildren) adult.add(child);
+      const template = new THREE.Group();
+      for (const child of adultChildren) template.add(child);
+      const variants = DRAGON_VARIANTS[dragonType];
+      for (const [index, variant] of variants.entries()) {
+        const form = (index === 0 ? template : template.clone(true)) as THREE.Group;
+        artDirectAdultVariant(form, variant);
+        form.visible = false;
+        adult.add(form);
+      }
       visual.add(adult);
       buildYoungDragonForm(1);
       buildYoungDragonForm(2);
       group.userData.animatedRig = "dragon-v2";
       visual.userData.animatedRig = "dragon-v2";
       visual.userData.authoredDragonLifeStages = 3;
+      visual.userData.authoredAdultVariants = variants.length;
       applyDragonLifeStage(group, 5);
+      applyDragonVariant(group, dragonVariantForSeed(dragonType, id));
     };
 
     if (dragonType === "ice") {

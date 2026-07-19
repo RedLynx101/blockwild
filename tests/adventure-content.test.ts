@@ -26,35 +26,37 @@ import {
 } from "../app/game/legendary-items.ts";
 import { createMobVisual } from "../app/game/mob-models.ts";
 import { ADVENTURE_MOB_ORDER, MOB_DEFS } from "../app/game/mobs.ts";
+import { mythicSiteByStructureKind } from "../app/game/mythic-frontiers.ts";
 import { structureLootTable } from "../app/game/structures.ts";
 import { BiomeId, ChunkWorld } from "../app/game/world.ts";
 import { createMobInspectionSpecs, inspectGrounding } from "../scripts/render-models.ts";
 
 const ORIGIN = { x: 8, y: 48, z: 8 } as const;
 
-test("v1.3.5 exposes exactly twenty-eight varied POIs and six dungeons", () => {
-  assert.equal(ADVENTURE_POI_ARCHETYPES.length, 28);
-  assert.equal(new Set(ADVENTURE_POI_ARCHETYPES.map((entry) => entry.kind)).size, 28);
+test("Mythic Frontiers exposes thirty-eight varied POIs and eleven dungeons", () => {
+  assert.equal(ADVENTURE_POI_ARCHETYPES.length, 38);
+  assert.equal(new Set(ADVENTURE_POI_ARCHETYPES.map((entry) => entry.kind)).size, 38);
   assert.deepEqual(
     Object.fromEntries(["tiny", "medium", "large"].map((scale) => [scale, ADVENTURE_POI_ARCHETYPES.filter((entry) => entry.scale === scale).length])),
-    { tiny: 8, medium: 14, large: 6 },
+    { tiny: 8, medium: 14, large: 16 },
   );
-  assert.equal(ADVENTURE_DUNGEON_ARCHETYPES.length, 6);
-  assert.equal(new Set(ADVENTURE_DUNGEON_ARCHETYPES.map((entry) => entry.kind)).size, 6);
-  assert.equal(ADVENTURE_DUNGEON_ARCHETYPES.filter((entry) => entry.underground).length, 4);
-  assert.equal(ADVENTURE_DUNGEON_ARCHETYPES.filter((entry) => !entry.underground).length, 2);
-  assert.equal(new Set(ADVENTURE_DUNGEON_ARCHETYPES.map((entry) => entry.materialIdentity)).size, 6);
-  assert.equal(new Set(ADVENTURE_DUNGEON_ARCHETYPES.map((entry) => entry.lightingIdentity)).size, 6);
+  assert.equal(ADVENTURE_DUNGEON_ARCHETYPES.length, 11);
+  assert.equal(new Set(ADVENTURE_DUNGEON_ARCHETYPES.map((entry) => entry.kind)).size, 11);
+  assert.equal(ADVENTURE_DUNGEON_ARCHETYPES.filter((entry) => entry.underground).length, 7);
+  assert.equal(ADVENTURE_DUNGEON_ARCHETYPES.filter((entry) => !entry.underground).length, 4);
+  assert.equal(new Set(ADVENTURE_DUNGEON_ARCHETYPES.map((entry) => entry.materialIdentity)).size, 11);
+  assert.equal(new Set(ADVENTURE_DUNGEON_ARCHETYPES.map((entry) => entry.lightingIdentity)).size, 11);
 });
 
-test("all twenty-eight landmark plans are deterministic, bounded and map-discoverable", () => {
+test("all thirty-eight landmark plans are deterministic, bounded and map-discoverable", () => {
   for (const archetype of ADVENTURE_POI_ARCHETYPES) {
     const first = planAdventureStructure(archetype.kind, ORIGIN, "trailbound-adventure");
     const second = planAdventureStructure(archetype.kind, ORIGIN, "trailbound-adventure");
     assert.deepEqual(first, second, `${archetype.kind} must be deterministic`);
     assert.ok(first.placements.length >= 8, `${archetype.kind} needs authored geometry`);
     assert.ok(first.placements.length < 9_000, `${archetype.kind} must remain bounded`);
-    assert.equal(first.rooms.length, 0);
+    const mythicSite = mythicSiteByStructureKind(archetype.kind);
+    assert.equal(first.rooms.length, mythicSite?.minimumRooms ?? 0);
     assert.ok(first.markers.some((marker) => marker.type === "landmark" && marker.tag === `adventure-poi:${archetype.kind}`));
     assert.ok(first.bounds.min.x <= first.origin.x && first.bounds.max.x >= first.origin.x);
   }
@@ -181,16 +183,18 @@ test("v1.3.5 materials are distinct craftable blocks and the Palimpsest loot res
   assert.ok(plan.markers.some((marker) => marker.type === "spawn" && marker.mobKind === "inkmaw-curator" && marker.tags?.includes("boss")));
 });
 
-test("every dungeon has three-stage progression, multiple encounters, loot and a map heart", () => {
+test("every dungeon has authored progression, multiple encounters, loot and a map heart", () => {
   for (const archetype of ADVENTURE_DUNGEON_ARCHETYPES) {
     const plan = planAdventureStructure(archetype.kind, ORIGIN, "dungeon-audit");
     const spawns = plan.markers.filter((marker) => marker.type === "spawn");
     const chests = plan.markers.filter((marker) => marker.type === "chest");
     assert.ok(plan.placements.length >= 220, `${archetype.kind} needs substantial multi-room geometry`);
     assert.ok(plan.placements.length < 18_000, `${archetype.kind} must remain bounded`);
-    assert.equal(plan.rooms.length, 3);
-    assert.deepEqual(plan.rooms.map((room) => room.stage), [1, 2, 3]);
-    assert.equal(new Set(plan.rooms.map((room) => room.id)).size, 3);
+    const mythicSite = mythicSiteByStructureKind(archetype.kind);
+    const expectedRooms = mythicSite?.minimumRooms ?? 3;
+    assert.equal(plan.rooms.length, expectedRooms);
+    assert.deepEqual(plan.rooms.map((room) => room.stage), Array.from({ length: expectedRooms }, (_, index) => index + 1));
+    assert.equal(new Set(plan.rooms.map((room) => room.id)).size, expectedRooms);
     assert.ok(plan.rooms.every((room) => room.objective.length >= 35));
     assert.ok(spawns.length >= 4, `${archetype.kind} should contain multiple encounter markers`);
     assert.ok(spawns.some((marker) => marker.tags?.includes("boss")));
@@ -234,8 +238,9 @@ test("both surface dungeons have complete authored room perimeters and deliberat
   for (let x = -2; x <= 2; x += 1) assert.equal(stormglassBlocks.get(`${x},3,13`), BlockId.Air, "the gate court opening is intentional");
 });
 
-test("underground dungeons use connected seeded tile graphs with variable footprints", () => {
-  for (const archetype of ADVENTURE_DUNGEON_ARCHETYPES.filter((entry) => entry.underground)) {
+test("the four modular underground dungeons use connected seeded tile graphs with variable footprints", () => {
+  const modularKinds = new Set<AdventureStructureKind>(["rootbound-labyrinth", "starless-observatory", "brassdeep-foundry", "palimpsest-vault"]);
+  for (const archetype of ADVENTURE_DUNGEON_ARCHETYPES.filter((entry) => modularKinds.has(entry.kind))) {
     const kind = archetype.kind as AdventureDungeonKind;
     const first = planDungeonTiles(kind, "tile-seed-a");
     assert.deepEqual(planDungeonTiles(kind, "tile-seed-a"), first);
@@ -286,7 +291,7 @@ test("wrought-iron dungeon doors are a complete craftable family with paired aut
   }
 });
 
-test("all four underground dungeons provide a reversible one-block spiral stair", () => {
+test("all seven underground dungeons provide a reversible one-block spiral stair", () => {
   for (const archetype of ADVENTURE_DUNGEON_ARCHETYPES.filter((entry) => entry.underground)) {
     const plan = planAdventureStructure(archetype.kind, ORIGIN, "stair-audit");
     const steps = plan.placements
@@ -337,7 +342,16 @@ test("all four underground dungeons provide a reversible one-block spiral stair"
       const centerX = Math.round((room.bounds.min.x + room.bounds.max.x) / 2);
       const centerZ = Math.round((room.bounds.min.z + room.bounds.max.z) / 2);
       const target = `${centerX},${room.bounds.min.y},${centerZ}`;
-      assert.ok(visited.has(target), `${archetype.kind} stage ${room.stage} is not reversibly reachable from the surface`);
+      if (blockMap.get(`${centerX},${room.bounds.min.y + 1},${centerZ}`) === BlockId.Water) {
+        const reachesPond = [...visited].some((key) => {
+          const [x, y, z] = key.split(",").map(Number);
+          if (x < room.bounds.min.x - 1 || x > room.bounds.max.x + 1 || z < room.bounds.min.z - 1 || z > room.bounds.max.z + 1) return false;
+          return ([[1,0],[-1,0],[0,1],[0,-1]] as const).some(([dx, dz]) => blockMap.get(`${x + dx},${y + 1},${z + dz}`) === BlockId.Water);
+        });
+        assert.ok(reachesPond, `${archetype.kind} stage ${room.stage} pond is not reachable from the dry return path`);
+      } else {
+        assert.ok(visited.has(target), `${archetype.kind} stage ${room.stage} is not reversibly reachable from the surface`);
+      }
     }
   }
 });

@@ -17,8 +17,8 @@ import { LEGENDARY_CREATURE_ORDER, LIVING_ROSTER_ORDER, SUMMONED_CREATURE_ORDER 
 const EXPECTED_ORDER = [...LIVING_ROSTER_ORDER, ...LEGENDARY_CREATURE_ORDER, ...SUMMONED_CREATURE_ORDER];
 const sorted = (values: readonly string[]) => [...values].sort();
 
-test("the 37-creature expansion is exhaustive across every authored content layer", () => {
-  assert.equal(EXPECTED_ORDER.length, 37);
+test("the creature expansion is exhaustive across every authored content layer", () => {
+  assert.equal(EXPECTED_ORDER.length, 52);
   assert.deepEqual(EXPANSION_CREATURE_ORDER, EXPECTED_ORDER);
   for (const registry of [
     CREATURE_CONTENT_SHEETS,
@@ -93,9 +93,9 @@ test("capture, care, work, release, and rarity hooks are species-authored and no
     workBehaviors.add(ecology.workBehavior);
     releaseOutcomes.add(ecology.releaseOutcome);
   }
-  assert.equal(hooks.size, 37);
-  assert.equal(workBehaviors.size, 37);
-  assert.equal(releaseOutcomes.size, 37);
+  assert.equal(hooks.size, EXPECTED_ORDER.length);
+  assert.equal(workBehaviors.size, EXPECTED_ORDER.length);
+  assert.equal(releaseOutcomes.size, EXPECTED_ORDER.length);
   for (const kind of LIVING_ROSTER_ORDER) assert.notEqual(AUTHORED_CREATURE_CAPTURE_SHEETS[kind].profileId, "legendary");
   for (const kind of LEGENDARY_CREATURE_ORDER) assert.equal(AUTHORED_CREATURE_CAPTURE_SHEETS[kind].profileId, "legendary");
   for (const kind of SUMMONED_CREATURE_ORDER) assert.equal(AUTHORED_CREATURE_CAPTURE_SHEETS[kind].profileId, "uncapturable");

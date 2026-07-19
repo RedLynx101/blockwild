@@ -117,9 +117,9 @@ import {
 } from "./creature-combat-ai";
 import { advanceBestiaryResearch, appendBestiaryRecord, createLivingBestiary, normalizeLivingBestiaryEntry, observeBestiaryEntry, recordBestiaryAppearanceForms, recordSpeciesCapture, type LivingBestiaryEntryV2 } from "./living-bestiary";
 import { createHeldToolSpec } from "./model-specs";
-import { applyCompanionPose, applyDragonLifeStage, applyDragonPose, applyOceanCreaturePose, applyWildlifePose, createMobVisual, createSentientLodVisual } from "./mob-models";
+import { applyCompanionPose, applyDragonLifeStage, applyDragonPose, applyDragonVariant, applyOceanCreaturePose, applyWildlifePose, createMobVisual, createSentientLodVisual } from "./mob-models";
 import {
-  DRAGON_TYPES,
+  DRAGON_SCHEMA_VERSION,
   DRAGON_RIDER_CONTROLS,
   attachDragonChest,
   bondDragonHatchling,
@@ -422,12 +422,14 @@ import {
 } from "./guilds";
 import {
   LEGENDARY_ENCOUNTERS,
+  advanceLegendarySiteRecovery,
   activateLegendaryEncounter,
   applyLegendaryEvent,
   createLegendaryEncounterState,
   legendaryCanManifest,
   legendaryStageProgress,
   normalizeLegendaryEncounterState,
+  recordLegendarySiteVisit,
   resolveLegendaryEncounter,
   transferLegendaryCustody,
   type LegendaryEncounterId,
@@ -435,6 +437,13 @@ import {
   type LegendaryEncounterState,
   type LegendaryOutcome,
 } from "./legendary-encounters";
+import {
+  createMythicShedState,
+  isMythicFrontierCreature,
+  stepMythicShed,
+  type MythicShedState,
+} from "./mythic-creatures";
+import { mythicRecoveryPolicyForSite, mythicSiteByEncounterId } from "./mythic-frontiers";
 import {
   CONTEXTUAL_LOOT_GENERATOR_VERSION,
   normalizeContextualLootWorldState,
@@ -1147,6 +1156,7 @@ export type SavedCreature = {
   apiaryBee?: ApiaryBee;
   socialGroupId?: string;
   peelopShedding?: PeelopSheddingState;
+  mythicShed?: MythicShedState;
   milkCooldown?: number;
   woolRegrowSeconds?: number;
   factionId?: FactionId | null;
@@ -1421,6 +1431,7 @@ type MobEntity = {
   beeHiveKey: string | null;
   socialGroupId: string | null;
   peelopShedding: PeelopSheddingState | null;
+  mythicShed: MythicShedState | null;
   milkCooldown: number;
   woolRegrowSeconds: number;
   shadeSaddle: THREE.Object3D | null;
@@ -1549,6 +1560,7 @@ type SpawnMobOptions = {
   beeHiveKey?: string | null;
   socialGroupId?: string | null;
   peelopShedding?: PeelopSheddingState | null;
+  mythicShed?: MythicShedState | null;
   milkCooldown?: number;
   woolRegrowSeconds?: number;
   name?: string | null;
@@ -2100,22 +2112,16 @@ function placedLeviathanEggMetadata(metadata: Record<string, unknown> | undefine
 export function placedDragonEggMetadata(metadata: Record<string, unknown> | undefined, requirePlaced = true): DragonEgg | null {
   if (!metadata || (requirePlaced ? metadata.kind !== "placed-dragon-egg" : metadata.kind !== "placed-dragon-egg" && metadata.kind !== "dragon-egg")) return null;
   if (!metadata.egg || typeof metadata.egg !== "object") return null;
-  const egg = metadata.egg as Partial<DragonEgg>;
-  if (egg.schemaVersion !== 1 || typeof egg.eggId !== "string"
-    || !DRAGON_TYPES.includes(egg.type as DragonType)
-    || (egg.sex !== "female" && egg.sex !== "male")
-    || typeof egg.geneticSeed !== "number" || !Number.isFinite(egg.geneticSeed)
-    || typeof egg.incubationTicks !== "number" || !Number.isFinite(egg.incubationTicks)
-    || typeof egg.requiredTicks !== "number" || !Number.isFinite(egg.requiredTicks)) return null;
-  return egg as DragonEgg;
+  return dragonEggFromDropMetadata({ kind: "dragon-egg", egg: metadata.egg });
 }
 
 function dragonSpawnEggMetadata(metadata: Record<string, unknown> | undefined): DragonSpawnEgg | null {
   if (metadata?.kind !== "dragon-spawn-egg" || !metadata.spawnEgg || typeof metadata.spawnEgg !== "object") return null;
   const value = metadata.spawnEgg as Partial<DragonSpawnEgg>;
-  if (value.schemaVersion !== 1 || value.kind !== "ready-dragon-spawn-egg" || typeof value.preparedAtTick !== "number" || !value.egg) return null;
+  const schemaVersion = (value as { schemaVersion?: number }).schemaVersion;
+  if ((schemaVersion !== 1 && schemaVersion !== DRAGON_SCHEMA_VERSION) || value.kind !== "ready-dragon-spawn-egg" || typeof value.preparedAtTick !== "number" || !value.egg) return null;
   const egg = placedDragonEggMetadata({ kind: "dragon-egg", egg: value.egg as unknown as Record<string, unknown> }, false);
-  return egg ? { schemaVersion: 1, kind: "ready-dragon-spawn-egg", preparedAtTick: value.preparedAtTick, egg } : null;
+  return egg ? { schemaVersion: DRAGON_SCHEMA_VERSION, kind: "ready-dragon-spawn-egg", preparedAtTick: value.preparedAtTick, egg } : null;
 }
 
 export function nextPeelopBananaShedSeconds(id: number, cycle: number) {
@@ -2280,6 +2286,28 @@ const STRUCTURE_LOOT_ITEMS: Readonly<Record<string, ItemCode>> = Object.freeze({
   "bound-book": Item.BoundBook,
   "blueprint-dragonbone-arms": Item.DragonboneArmsBlueprint,
   "blueprint-dragon-scale-armor": Item.DragonScaleArmorBlueprint,
+  "water-breathing-potion": Item.WaterBreathingPotion,
+  "nacre-tidework": Item.NacreTideworkItem,
+  "windworn-alabaster": Item.WindwornAlabasterItem,
+  "fossilroot-calcite": Item.FossilrootCalciteItem,
+  "emberglass-archive": Item.EmberglassArchiveItem,
+  mirrorpeat: Item.MirrorpeatItem,
+  "moonfelt-mycelium": Item.MoonfeltMyceliumItem,
+  "mythic-bellkeeper-tack": Item.BellkeeperTack,
+  "mythic-cloudwhale-map": Item.CloudwhaleMigrationMap,
+  "mythic-stillwater-chime": Item.StillwaterFeintChime,
+  "mythic-emberglass-net": Item.EmberglassNetUpgrade,
+  "mythic-pressure-flask": Item.DeepPressureFlask,
+  "mythic-behemoth-harness": Item.BehemothHaulingHarness,
+  "mythic-briarcrown-kit": Item.BriarcrownAntidoteKit,
+  "mythic-acoustic-coil": Item.AcousticSurveyCoil,
+  "mythic-tailgrip-charm": Item.TailGripRetrievalCharm,
+  "mythic-tideclock-compass": Item.TideclockCompass,
+  "mythic-nine-wind-standard": Item.NineWindStandard,
+  "mythic-merciful-mirror": Item.MercifulMirrorShield,
+  "mythic-pearl-regalia": Item.PearlCourtRegalia,
+  "mythic-heat-script-lens": Item.HeatScriptLens,
+  "mythic-remembered-path": Item.RememberedPathSpore,
 });
 
 export function resolveStructureLootItem(itemKey: string): ItemCode | null {
@@ -12278,6 +12306,7 @@ export class VoxelEngine {
     if (next.tamed && next.stage >= 3) this.recordBestiaryMilestone(mob.kind, "stage-3");
     this.applyMobScale(mob, next.growthScale);
     applyDragonLifeStage(mob.visual, next.stage);
+    applyDragonVariant(mob.visual, next.variant);
     const visibleFor = (fragment: string, visible: boolean) => mob.visual.traverse((object) => {
       if (object.name.includes(fragment)) object.visible = visible;
     });
@@ -12408,6 +12437,7 @@ export class VoxelEngine {
         ...(mob.apiaryBee ? { apiaryBee: mob.apiaryBee } : {}),
         ...(mob.socialGroupId ? { socialGroupId: mob.socialGroupId } : {}),
         ...(mob.peelopShedding ? { peelopShedding: mob.peelopShedding } : {}),
+        ...(mob.mythicShed ? { mythicShed: mob.mythicShed } : {}),
         ...(MILKABLE_MOB_KINDS.has(mob.kind) && mob.milkCooldown > 0 ? { milkCooldown: mob.milkCooldown } : {}),
         ...(mob.kind === "woolhorn" && mob.woolRegrowSeconds > 0 ? { woolRegrowSeconds: mob.woolRegrowSeconds } : {}),
         ...(mob.followCommand !== "follow" ? { followCommand: mob.followCommand } : {}),
@@ -12437,9 +12467,11 @@ export class VoxelEngine {
     if (!mob.legendaryEncounterId || !mob.legendarySiteId) return false;
     const current = this.legendaryEncounters.get(mob.legendarySiteId)
       ?? createLegendaryEncounterState(mob.legendaryEncounterId, mob.legendarySiteId);
+    const mythicSite = mythicSiteByEncounterId(mob.legendaryEncounterId);
+    const recoveryPolicy = mythicSite ? mythicRecoveryPolicyForSite(mythicSite.id) : undefined;
     const next = current.status === "resolved" && current.outcome === "capture" && current.custodyEntityId
       ? transferLegendaryCustody(current, current.custodyEntityId, custodyEntityId)
-      : resolveLegendaryEncounter(current, "capture", custodyEntityId);
+      : resolveLegendaryEncounter(current, "capture", custodyEntityId, this.day, recoveryPolicy);
     if (next === current) return false;
     this.legendaryEncounters.set(mob.legendarySiteId, next);
     this.events.onToast(`${mob.name}'s legendary capture is now the only living custody reference for this world.`);
@@ -12487,7 +12519,8 @@ export class VoxelEngine {
   private resolveLegendaryOutcome(mob: MobEntity, outcome: Exclude<LegendaryOutcome, "capture">) {
     if (!mob.legendarySiteId || !mob.legendaryEncounterId || this.multiplayer?.role === "guest") return false;
     const current = this.legendaryEncounters.get(mob.legendarySiteId) ?? createLegendaryEncounterState(mob.legendaryEncounterId, mob.legendarySiteId);
-    const next = resolveLegendaryEncounter(current, outcome);
+    const mythicSite = mythicSiteByEncounterId(mob.legendaryEncounterId);
+    const next = resolveLegendaryEncounter(current, outcome, null, this.day, mythicSite ? mythicRecoveryPolicyForSite(mythicSite.id) : undefined);
     if (next === current) return false;
     this.legendaryEncounters.set(mob.legendarySiteId, next);
     this.dispatchGuildEvent("choiceOutcome", 1, `legendary-outcome:${mob.legendaryEncounterId}:${outcome}`, { encounterId: mob.legendaryEncounterId });
@@ -12729,6 +12762,7 @@ export class VoxelEngine {
       apiaryBee: metadata.custom.apiaryBee ? metadata.custom.apiaryBee as unknown as ApiaryBee : null,
       socialGroupId: typeof metadata.custom.socialGroupId === "string" ? metadata.custom.socialGroupId : null,
       peelopShedding: metadata.custom.peelopShedding ? metadata.custom.peelopShedding as unknown as PeelopSheddingState : null,
+      mythicShed: metadata.custom.mythicShed ? metadata.custom.mythicShed as unknown as MythicShedState : null,
       milkCooldown: MILKABLE_MOB_KINDS.has(metadata.kind) ? Math.max(0, Number(metadata.custom.milkCooldown) || 0) : 0,
       woolRegrowSeconds: metadata.kind === "woolhorn" ? Math.max(0, Number(metadata.custom.woolRegrowSeconds) || 0) : 0,
       persistentPoiResident: Boolean(metadata.custom.persistentPoiResident),
@@ -19936,6 +19970,9 @@ export class VoxelEngine {
     const peelopShedding = kind === "peelop"
       ? { ...(options.peelopShedding ?? createPeelopSheddingState(petState?.geneticSeed ?? id)) }
       : null;
+    const mythicShed = isMythicFrontierCreature(kind)
+      ? { ...(options.mythicShed ?? createMythicShedState(kind, specimenId)) }
+      : null;
     const shadeHealthScale = shadeState ? shadecrawlerScale(shadeState) : 1;
     const ordinaryMaximumHealth = creatureMaximumHealth(definition, profile.stats, progression.level) * shadeHealthScale;
     const mob: MobEntity = {
@@ -19952,7 +19989,7 @@ export class VoxelEngine {
       fleeTimer: 0, state: "wander", stateTimer: 0, baseY: position.y, voiceTimer: 2 + Math.random() * 8,
       birdState: definition.movement === "flying" ? createBirdBehavior(kind as Parameters<typeof createBirdBehavior>[0], id * 0.71) : null,
       petState, careState, shadeState, reedstriderBond, courserBond, leviathanGrowth, aetherbellMorph, apiaryBee, beeHiveKey: options.beeHiveKey ?? null,
-      socialGroupId, peelopShedding,
+      socialGroupId, peelopShedding, mythicShed,
       milkCooldown: MILKABLE_MOB_KINDS.has(kind) ? clamp(Number(options.milkCooldown) || 0, 0, CLOVERBACK_MILK_COOLDOWN_SECONDS) : 0,
       woolRegrowSeconds: kind === "woolhorn" ? clamp(Number(options.woolRegrowSeconds) || 0, 0, 900) : 0,
       shadeSaddle: visual.getObjectByName("shadecrawler-saddle") ?? null, visualBaseY, visualMinY,
@@ -20061,6 +20098,7 @@ export class VoxelEngine {
       ...(mob.apiaryBee ? { apiaryBee: { ...mob.apiaryBee } } : {}),
       ...(mob.socialGroupId ? { socialGroupId: mob.socialGroupId } : {}),
       ...(mob.peelopShedding ? { peelopShedding: { ...mob.peelopShedding } } : {}),
+      ...(mob.mythicShed ? { mythicShed: { ...mob.mythicShed } } : {}),
       ...(MILKABLE_MOB_KINDS.has(mob.kind) && mob.milkCooldown > 0 ? { milkCooldown: mob.milkCooldown } : {}),
       ...(mob.kind === "woolhorn" && mob.woolRegrowSeconds > 0 ? { woolRegrowSeconds: mob.woolRegrowSeconds } : {}),
       ...(mob.factionId ? { factionId: mob.factionId } : {}),
@@ -20150,6 +20188,7 @@ export class VoxelEngine {
       apiaryBee: migrated.apiaryBee ?? null,
       socialGroupId: migrated.socialGroupId ?? null,
       peelopShedding: migrated.peelopShedding ?? null,
+      mythicShed: migrated.mythicShed ?? null,
       milkCooldown: migrated.milkCooldown ?? 0,
       woolRegrowSeconds: migrated.woolRegrowSeconds ?? 0,
       name: migrated.name ?? null,
@@ -20312,8 +20351,12 @@ export class VoxelEngine {
       const legendaryEncounterId = legendaryTag && legendaryTag in LEGENDARY_ENCOUNTERS ? legendaryTag as LegendaryEncounterId : null;
       const legendarySiteId = legendaryEncounterId ? tagValue("legendary-site:") ?? markerKey : null;
       if (legendaryEncounterId && legendarySiteId) {
-        const previous = this.legendaryEncounters.get(legendarySiteId)
+        let previous = this.legendaryEncounters.get(legendarySiteId)
           ?? createLegendaryEncounterState(legendaryEncounterId, legendarySiteId);
+        const mythicSite = mythicSiteByEncounterId(legendaryEncounterId);
+        if (mythicSite) previous = advanceLegendarySiteRecovery(previous, this.day, mythicRecoveryPolicyForSite(mythicSite.id));
+        previous = recordLegendarySiteVisit(previous, this.day);
+        this.legendaryEncounters.set(legendarySiteId, previous);
         if (!legendaryCanManifest(previous)) {
           this.activatedStructureMarkers.add(markerKey);
           continue;
@@ -22777,6 +22820,17 @@ export class VoxelEngine {
             if (mob.group.position.distanceToSquared(this.position) < 64) this.audio.play("pickup");
             this.saveSoon();
           }
+        }
+      }
+      if (mob.mythicShed && isMythicFrontierCreature(mob.kind) && this.multiplayer?.role !== "guest") {
+        const encounter = mob.legendarySiteId ? this.legendaryEncounters.get(mob.legendarySiteId) : null;
+        const peacefulSiteResolved = encounter?.status === "resolved" && encounter.outcome !== "defeat";
+        const shedding = stepMythicShed(mob.kind, mob.mythicShed, Math.floor(mob.age * 20), peacefulSiteResolved, mob.health / Math.max(1, mob.maxHealth));
+        mob.mythicShed = shedding.state;
+        if (shedding.drop) {
+          this.spawnDrop(shedding.drop.item, shedding.drop.count, mob.group.position.clone());
+          if (mob.group.position.distanceToSquared(this.position) < 100) this.audio.play("pickup");
+          this.saveSoon();
         }
       }
       if (mob.careState) mob.careState = tickCreatureHusbandry(mob.careState, mobDt * 20);

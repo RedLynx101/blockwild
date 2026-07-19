@@ -212,6 +212,33 @@ function defineExpansionMoveSheet<K extends ExpansionCreatureKind>(kind: K, draf
   });
 }
 
+type MythicFrontierMoveSeed = Readonly<{
+  types: readonly [CreatureTypeId, CreatureTypeId, CreatureTypeId, CreatureTypeId];
+  moves: readonly [
+    readonly [name: string, level: number],
+    readonly [name: string, level: number],
+    readonly [name: string, level: number],
+    readonly [name: string, level: number, bondTier?: "trusted" | "partnered" | "kindred"]
+  ];
+  mounted?: boolean;
+}>;
+
+function defineMythicFrontierMoveSheet<K extends ExpansionCreatureKind>(kind: K, seed: MythicFrontierMoveSeed) {
+  const localId = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-|-$/gu, "");
+  const ids = seed.moves.map(([name]) => localId(name)) as [string, string, string, string];
+  const [basicName, stanceName, utilityName, signatureName] = seed.moves.map(([name]) => name);
+  return defineExpansionMoveSheet(kind, {
+    basic: ids[0], passiveStance: ids[1], fieldUtility: ids[2],
+    unlocks: seed.moves.map(([name, level, bondTier]) => [localId(name), level, bondTier] as const),
+    moves: [
+      authored({ id: ids[0], name: basicName, description: `${basicName} is the creature's readable close-range contest action, committed only after its full body tell.`, type: seed.types[0], channel: "physical", target: "hostile", shape: "contact", range: 2.4, radius: 1.1, verticalTolerance: 2.4, timing: [.48, .18, .58, 1.25], power: .92, exertionCost: 0, aiTags: ["basic"], telegraph: `The ${basicName.toLowerCase()} posture travels from the rear anchor through the head before impact.`, mountedUse: seed.mounted ?? false }),
+      authored({ id: ids[1], name: stanceName, description: `${stanceName} establishes the encounter's defensive or supportive posture without altering terrain.`, type: seed.types[1], channel: "stance", target: "area", shape: "circle", range: 0, radius: 3.6, verticalTolerance: 4, timing: [.72, 2.2, .5, 9], power: 0, exertionCost: 10, aiTags: ["defense", "support"], telegraph: `The silhouette settles into ${stanceName.toLowerCase()} and its authored focus lights in sequence.`, appliesStatus: "guarded", statusDurationSeconds: 6, mountedUse: seed.mounted ?? false }),
+      authored({ id: ids[2], name: utilityName, description: `${utilityName} reads and changes only the authored encounter marker or bounded field target selected by the player.`, type: seed.types[2], channel: "field", target: "point", shape: "line", range: 8, radius: 2.2, verticalTolerance: 5, timing: [.9, 1.4, .45, 10.5], power: 0, exertionCost: 12, aiTags: ["field-utility", "support", "control"], telegraph: `A site-colored route identifies every valid target for ${utilityName.toLowerCase()} before it resolves.`, mountedUse: seed.mounted ?? false }),
+      authored({ id: ids[3], name: signatureName, description: `${signatureName} is the earned signature action; it resolves the creature's site fantasy while preserving nonlethal and covenant outcomes.`, type: seed.types[3], channel: "traversal", target: "point", shape: "dash", range: 10, radius: 2.5, verticalTolerance: 7, timing: [1.1, .72, .85, 14], power: .78, exertionCost: 20, aiTags: ["signature", "mobility", "support"], telegraph: `Four distinct pulses complete before ${signatureName.toLowerCase()} commits to its validated route.`, mountedUse: seed.mounted ?? false }),
+    ],
+  });
+}
+
 /**
  * Completion-sheet move kits for every expansion creature. Every description,
  * type, target, shape, timing, status, and unlock is chosen directly; none is
@@ -550,6 +577,21 @@ export const EXPANSION_CREATURE_MOVE_SHEETS = Object.freeze({
       authored({ id: "tempering-song", name: "Tempering Song", description: "Alternates cooling and feast-memory phrases to stabilize the living masterworks without erasing them.", type: "arcane", channel: "healing", target: "area", shape: "circle", range: 0, radius: 6, verticalTolerance: 5, timing: [1.2, 2.8, .7, 16], power: 0, exertionCost: 20, aiTags: ["signature", "field-utility", "support"], telegraph: "Kiln, dream, and caramel colors answer in a fixed three-phrase sequence.", appliesStatus: "inspired", statusDurationSeconds: 9 }),
     ],
   }),
+  "bellstep-qilin": defineMythicFrontierMoveSheet("bellstep-qilin", { types: ["radiant", "echo", "wild", "radiant"], moves: [["Bellstep", 1], ["Patient Circuit", 8], ["Roadward Chime", 20], ["Concordant Gallop", 36, "partnered"]], mounted: true }),
+  "aerolith-baleen": defineMythicFrontierMoveSheet("aerolith-baleen", { types: ["sky", "spirit", "stone", "spirit"], moves: [["Baleen Sweep", 1], ["Lift Basin", 10], ["Graveyard Turn", 24], ["Carry the Fallen", 40, "kindred"]], mounted: true }),
+  "mireglass-kelpie": defineMythicFrontierMoveSheet("mireglass-kelpie", { types: ["tide", "mirror", "umbral", "mirror"], moves: [["Fen Kick", 1], ["False Wake", 7], ["Mirror Canter", 19], ["Drown the Reflection", 35]], mounted: true }),
+  "cinderwing-pyrausta": defineMythicFrontierMoveSheet("cinderwing-pyrausta", { types: ["flame", "arcane", "sky", "flame"], moves: [["Cinder Dust", 1], ["Heat Cradle", 9], ["Glasswing Shear", 21], ["Hatchery Vigil", 38, "partnered"]] }),
+  "nacre-gatewyrm": defineMythicFrontierMoveSheet("nacre-gatewyrm", { types: ["tide", "arcane", "tide", "arcane"], moves: [["Gate Ram", 1], ["Nacre Fold", 10], ["Moonwell Pocket", 24], ["Threshold Current", 40, "kindred"]], mounted: true }),
+  "frostcauldron-behemoth": defineMythicFrontierMoveSheet("frostcauldron-behemoth", { types: ["frost", "stone", "wild", "frost"], moves: [["Snowplow", 1], ["Kettle Guard", 8], ["Avalanche Brace", 22], ["Warm the Caravan", 38, "partnered"]], mounted: true }),
+  "briarcrown-manticore": defineMythicFrontierMoveSheet("briarcrown-manticore", { types: ["wild", "verdant", "venom", "wild"], moves: [["Crown Pounce", 1], ["Briar Fan", 8], ["Venom Measure", 20], ["Menagerie Roar", 36, "kindred"]], mounted: true }),
+  ammonarch: defineMythicFrontierMoveSheet("ammonarch", { types: ["stone", "tide", "arcane", "stone"], moves: [["Mantle Shove", 1], ["Spiral Bastion", 9], ["Stone Song", 23], ["Orchard Resonance", 40, "partnered"]] }),
+  "handtail-ahuizotl": defineMythicFrontierMoveSheet("handtail-ahuizotl", { types: ["tide", "wild", "spirit", "spirit"], moves: [["Channel Bite", 1], ["Backwash Fetch", 6], ["Keepsake Scent", 18], ["Rescue Hand", 34, "trusted"]] }),
+  "tideclock-cetus": defineMythicFrontierMoveSheet("tideclock-cetus", { types: ["tide", "spirit", "metal", "tide"], moves: [["Long Current", 1], ["Sounding Roll", 10], ["Wreck Sense", 22], ["Abyssal Slipstream", 40, "partnered"]], mounted: true }),
+  "anemoi-gryphon": defineMythicFrontierMoveSheet("anemoi-gryphon", { types: ["sky", "storm", "wild", "sky"], moves: [["Crown Talon", 1], ["Crosswind Mantle", 10], ["Ninefold Draft", 24], ["Palace Circuit", 40, "kindred"]], mounted: true }),
+  "sable-gorgon": defineMythicFrontierMoveSheet("sable-gorgon", { types: ["stone", "venom", "mirror", "mirror"], moves: [["Quarry Rush", 1], ["Sable Glance", 8], ["Cocoon Wall", 21], ["Merciful Reversal", 38, "partnered"]] }),
+  "namarra-makara": defineMythicFrontierMoveSheet("namarra-makara", { types: ["tide", "radiant", "spirit", "spirit"], moves: [["Court Roll", 1], ["Regalia Current", 10], ["Pearl Audience", 24], ["Namarra's Decree", 40, "kindred"]], mounted: true }),
+  "ashen-salamander-king": defineMythicFrontierMoveSheet("ashen-salamander-king", { types: ["flame", "arcane", "draconic", "flame"], moves: [["Kiln Lash", 1], ["Royal Temper", 9], ["Memory Heat", 22], ["Crown Foundry", 40, "partnered"]] }),
+  "mycelial-oneirophant": defineMythicFrontierMoveSheet("mycelial-oneirophant", { types: ["dream", "verdant", "spirit", "dream"], moves: [["Dream Tread", 1], ["Remembered Path", 8], ["Habitat Echo", 22], ["Kindred Menagerie", 40, "kindred"]], mounted: true }),
   asterjaw: defineExpansionMoveSheet("asterjaw", {
     basic: "starbite", fieldUtility: "meridian-scent", passiveStance: "homeward-arc",
     unlocks: [["starbite", 1], ["meridian-scent", 5], ["roadless-leap", 18], ["homeward-arc", 28, "partnered"]],

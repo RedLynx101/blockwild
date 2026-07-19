@@ -8,7 +8,8 @@
  * an immortal NaN dragon.
  */
 
-export const DRAGON_SCHEMA_VERSION = 1 as const;
+export const DRAGON_SCHEMA_VERSION = 2 as const;
+export const LEGACY_DRAGON_SCHEMA_VERSION = 1 as const;
 export const DRAGON_TICKS_PER_DAY = 24_000;
 export const DRAGON_DAYS_PER_STAGE = 25;
 export const DRAGON_STAGE_COUNT = 5;
@@ -32,6 +33,13 @@ export const DRAGON_EGG_DROP_POLICY = Object.freeze({
 
 export type DragonType = "fire" | "ice" | "steel" | "sea" | "gold" | "silver";
 export type DragonKind = `${DragonType}-dragon`;
+export type DragonVariantId =
+  | "furnacecrest" | "cindercoil" | "crownflare" | "emberkite"
+  | "glacierhorn" | "rimeplume" | "hoarfang" | "prismcoil"
+  | "rivetback" | "gearwing" | "anvilback" | "razorfan"
+  | "tidemane" | "mantaroyal" | "ribboncoil" | "reefcrown"
+  | "sunmane" | "auric-roc" | "treasury-coil" | "idolback"
+  | "moonhart" | "argent-moth" | "mirrorcoil" | "crescent-wyvern";
 export type DragonStage = 1 | 2 | 3 | 4 | 5;
 export type DragonSex = "female" | "male";
 export type DragonCommand = "follow" | "stay" | "guard-lair" | "wander";
@@ -76,6 +84,8 @@ export type DragonState = Readonly<{
   schemaVersion: typeof DRAGON_SCHEMA_VERSION;
   dragonId: string;
   type: DragonType;
+  /** Stable adult body plan; young stages retain the shared species silhouette. */
+  variant: DragonVariantId;
   sex: DragonSex;
   geneticSeed: number;
   ageTicks: number;
@@ -103,6 +113,7 @@ export type DragonEgg = Readonly<{
   schemaVersion: typeof DRAGON_SCHEMA_VERSION;
   eggId: string;
   type: DragonType;
+  variant: DragonVariantId;
   sex: DragonSex;
   geneticSeed: number;
   parentIds: readonly [string | null, string | null];
@@ -147,6 +158,14 @@ export type DragonEggStep = Readonly<{
 }>;
 
 export const DRAGON_TYPES = Object.freeze(["fire", "ice", "steel", "sea", "gold", "silver"] as const);
+export const DRAGON_VARIANTS: Readonly<Record<DragonType, readonly DragonVariantId[]>> = Object.freeze({
+  fire: Object.freeze(["furnacecrest", "cindercoil", "crownflare", "emberkite"] as const),
+  ice: Object.freeze(["glacierhorn", "rimeplume", "hoarfang", "prismcoil"] as const),
+  steel: Object.freeze(["rivetback", "gearwing", "anvilback", "razorfan"] as const),
+  sea: Object.freeze(["tidemane", "mantaroyal", "ribboncoil", "reefcrown"] as const),
+  gold: Object.freeze(["sunmane", "auric-roc", "treasury-coil", "idolback"] as const),
+  silver: Object.freeze(["moonhart", "argent-moth", "mirrorcoil", "crescent-wyvern"] as const),
+});
 export const DRAGON_SEXES = Object.freeze(["female", "male"] as const);
 export const DRAGON_COMMANDS = Object.freeze(["follow", "stay", "guard-lair", "wander"] as const);
 export const DRAGON_ARMOR_SLOTS = Object.freeze(["head", "neck", "body", "tail"] as const);
@@ -173,6 +192,20 @@ function safeName(value: unknown) {
 
 function isDragonType(value: unknown): value is DragonType {
   return typeof value === "string" && DRAGON_TYPES.includes(value as DragonType);
+}
+
+export function dragonVariantForSeed(type: DragonType, geneticSeed: number): DragonVariantId {
+  const variants = DRAGON_VARIANTS[type];
+  const mixed = (Math.imul((safeInteger(geneticSeed, 0, 0xffff_ffff) >>> 0) ^ 0x9e3779b9, 0x85ebca6b) ^ (type.length * 0xc2b2ae35)) >>> 0;
+  return variants[mixed % variants.length];
+}
+
+export function isDragonVariantForType(type: DragonType, value: unknown): value is DragonVariantId {
+  return typeof value === "string" && DRAGON_VARIANTS[type].includes(value as DragonVariantId);
+}
+
+export function normalizeDragonVariant(type: DragonType, value: unknown, geneticSeed: number): DragonVariantId {
+  return isDragonVariantForType(type, value) ? value : dragonVariantForSeed(type, geneticSeed);
 }
 
 function isDragonSex(value: unknown): value is DragonSex {
@@ -269,6 +302,7 @@ export function createDragonState(
     dragonId?: string;
     sex?: DragonSex;
     geneticSeed?: number;
+    variant?: DragonVariantId;
     ageDays?: number;
     health?: number;
     tamed?: boolean;
@@ -287,6 +321,7 @@ export function createDragonState(
     schemaVersion: DRAGON_SCHEMA_VERSION,
     dragonId: safeIdentifier(options.dragonId ?? `${safeType}:${seed}`, `${safeType}:dragon`),
     type: safeType,
+    variant: normalizeDragonVariant(safeType, options.variant, seed),
     sex: options.sex ?? ((seed & 1) === 0 ? "female" : "male"),
     geneticSeed: seed,
     ageTicks,
@@ -327,6 +362,7 @@ export function normalizeDragonState(value: unknown): DragonState {
     schemaVersion: DRAGON_SCHEMA_VERSION,
     dragonId,
     type,
+    variant: normalizeDragonVariant(type, input.variant, geneticSeed),
     sex: isDragonSex(input.sex) ? input.sex : ((geneticSeed & 1) === 0 ? "female" : "male"),
     geneticSeed,
     ageTicks,
@@ -533,7 +569,7 @@ export function dragonEggFromDropMetadata(value: unknown): DragonEgg | null {
   const metadata = value as Partial<DragonEggDropMetadata>;
   if (metadata.kind !== "dragon-egg" || !metadata.egg || typeof metadata.egg !== "object") return null;
   const egg = metadata.egg as Partial<DragonEgg>;
-  if (egg.schemaVersion !== DRAGON_SCHEMA_VERSION
+  if (egg.schemaVersion !== DRAGON_SCHEMA_VERSION && egg.schemaVersion !== LEGACY_DRAGON_SCHEMA_VERSION
     || !DRAGON_TYPES.includes(egg.type as DragonType)
     || !DRAGON_SEXES.includes(egg.sex as DragonSex)
     || typeof egg.eggId !== "string" || !egg.eggId.trim()
@@ -544,7 +580,14 @@ export function dragonEggFromDropMetadata(value: unknown): DragonEgg | null {
     || !Array.isArray(egg.parentIds) || egg.parentIds.length !== 2
     || typeof egg.wild !== "boolean"
     || !(egg.lairId === null || typeof egg.lairId === "string")) return null;
-  return egg as DragonEgg;
+  const type = egg.type as DragonType;
+  const geneticSeed = safeInteger(Number(egg.geneticSeed), 0, 0xffff_ffff) >>> 0;
+  return {
+    ...(egg as Omit<DragonEgg, "schemaVersion" | "variant" | "geneticSeed">),
+    schemaVersion: DRAGON_SCHEMA_VERSION,
+    geneticSeed,
+    variant: normalizeDragonVariant(type, egg.variant, geneticSeed),
+  };
 }
 
 export function dragonEggMinimumDropLifetimeSeconds(dayLengthMinutes: number) {
@@ -562,6 +605,7 @@ export function createDragonEgg(
   options: Readonly<{
     eggId?: string;
     geneticSeed?: number;
+    variant?: DragonVariantId;
     sex?: DragonSex;
     parentIds?: readonly [string | null, string | null];
     laidAtTick?: number;
@@ -575,6 +619,7 @@ export function createDragonEgg(
     schemaVersion: DRAGON_SCHEMA_VERSION,
     eggId: safeIdentifier(options.eggId ?? `${type}:egg:${laidAtTick}:${geneticSeed}`, `${type}:egg`),
     type,
+    variant: normalizeDragonVariant(type, options.variant, geneticSeed),
     sex: options.sex ?? ((geneticSeed & 1) === 0 ? "female" : "male"),
     geneticSeed,
     parentIds: [
@@ -598,6 +643,12 @@ export function breedDragons(first: DragonState, second: DragonState, nowTick: n
   const egg = createDragonEgg(first.type, {
     eggId: `${first.type}:egg:${ordered[0].dragonId}:${ordered[1].dragonId}:${tick}`,
     geneticSeed: seed,
+    // Most clutches visibly inherit one parent's body plan. A one-in-sixteen
+    // recombination roll selects from the full species quartet so every
+    // reviewed alternative remains obtainable without mutation currencies.
+    variant: (seed & 15) === 0
+      ? dragonVariantForSeed(first.type, seed ^ 0xa5a5a5a5)
+      : ((seed & 1) === 0 ? first.variant : second.variant),
     parentIds: [ordered[0].dragonId, ordered[1].dragonId],
     laidAtTick: tick,
     lairId: female.home?.lairId ?? null,
@@ -620,6 +671,7 @@ function hatchDragon(egg: DragonEgg): DragonState {
   return createDragonState(egg.type, {
     dragonId: `${egg.eggId}:hatchling`,
     geneticSeed: egg.geneticSeed,
+    variant: egg.variant,
     sex: egg.sex,
     ageDays: 0,
     home: egg.lairId ? { lairId: egg.lairId, dimension: "overworld", position: { x: 0, y: 0, z: 0 }, guardRadius: 32 } : null,

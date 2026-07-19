@@ -11,6 +11,9 @@ export const LIVING_BESTIARY_VISUAL_KINDS = Object.freeze([
   "prismclaw-mantis-shrimp", "reefmender-shrimp", "currentweaver-eel", "shellcarrier-hermit", "wreckwhistle-porpoise",
   "kilnscale-salamander", "sporeback-gardener", "voidmantle-ray", "fossilback-trilobite",
   "ilyr-virebloom", "thalassene", "orichalc", "varkesh-stormmane", "kharza", "sugarwake-sovereign",
+  "bellstep-qilin", "aerolith-baleen", "mireglass-kelpie", "cinderwing-pyrausta", "nacre-gatewyrm",
+  "frostcauldron-behemoth", "briarcrown-manticore", "ammonarch", "handtail-ahuizotl", "tideclock-cetus",
+  "anemoi-gryphon", "sable-gorgon", "namarra-makara", "ashen-salamander-king", "mycelial-oneirophant",
   "asterjaw", "vellum-warden", "choir-of-one", "glasswake-stag",
 ] as const satisfies readonly LivingBestiaryVisualKind[]);
 
@@ -177,12 +180,12 @@ function createBuilder(kind: LivingBestiaryVisualKind, id: number) {
 type GroundFootStyle = "paw" | "claw" | "hoof" | "webbed" | "spring";
 
 function groundFootStyle(kind: LivingBestiaryVisualKind): GroundFootStyle {
-  if (["stormcrest-ibex", "ilyr-virebloom", "sugarwake-sovereign", "glasswake-stag"].includes(kind)) return "hoof";
-  if (["brinewhisk-otter", "riverwright-beaver", "kilnscale-salamander"].includes(kind)) return "webbed";
+  if (["stormcrest-ibex", "ilyr-virebloom", "sugarwake-sovereign", "glasswake-stag", "bellstep-qilin", "mireglass-kelpie", "frostcauldron-behemoth", "sable-gorgon"].includes(kind)) return "hoof";
+  if (["brinewhisk-otter", "riverwright-beaver", "kilnscale-salamander", "handtail-ahuizotl", "namarra-makara", "ashen-salamander-king"].includes(kind)) return "webbed";
   if (kind === "glassstep-jerboa") return "spring";
   if ([
     "hearthback-badger", "sunfoil-pangolin", "cindercoil-gecko", "briarclaw-lynx", "gravebell-jackal",
-    "cragglass-basilisk", "kharza", "asterjaw",
+    "cragglass-basilisk", "kharza", "asterjaw", "briarcrown-manticore", "mycelial-oneirophant",
   ].includes(kind)) return "claw";
   return "paw";
 }
@@ -819,6 +822,262 @@ function decorateMythic(builder: Builder) {
   }
 }
 
+function addFrontierWingPair(builder: Builder, y: number, z: number, span: number, depth: number, prefix: string) {
+  const { visual, mats, add, joint } = builder;
+  for (const side of [-1, 1] as const) {
+    const sideName = side < 0 ? "left" : "right";
+    const wing = joint(visual, [side * .56, y, z], `${prefix}-${sideName}-wing`, "wings");
+    wing.userData.side = side;
+    add(wing, [span * .3, .16, depth * .52], mats.accent, [side * span * .14, 0, 0], `${prefix}-${sideName}-wing-shoulder`);
+    for (let feather = 0; feather < 6; feather += 1) {
+      const length = span * (.46 - feather * .035);
+      const primary = add(wing, [length, .08, depth * (.82 - feather * .065)], feather % 2 ? mats.pale : mats.glass,
+        [side * (span * .3 + feather * .065), -.03 - feather * .025, .05 + feather * .11], `${prefix}-${sideName}-primary-${feather}`);
+      primary.rotation.y = side * (.04 + feather * .035);
+      primary.rotation.z = side * (-.06 - feather * .025);
+    }
+  }
+}
+
+function decorateFrontierMythic(builder: Builder) {
+  const { kind, visual, mats, add, joint } = builder;
+  if (kind === "bellstep-qilin") {
+    quadruped(builder, { body: [1.55, .92, 2.05], bodyY: 1.02, head: [.86, .76, .84], headY: 1.32, headZ: -1.24, legLength: .86, legX: .52, frontZ: -.62, rearZ: .64, tail: "long", muzzle: "snout", ears: "point" });
+    for (let row = 0; row < 4; row += 1) for (let column = -3; column <= 3; column += 1) {
+      const plate = add(visual, [.2, .1, .34], (row + column) % 2 ? mats.glass : mats.accent,
+        [column * .18, 1.48 - Math.abs(column) * .025, -.72 + row * .44], `road-scale-${row}-${column}`);
+      plate.rotation.x = -.12;
+    }
+    const head = visual.getObjectByName("bellstep-qilin-head-pivot")!;
+    for (const side of [-1, 1] as const) for (let branch = 0; branch < 5; branch += 1) {
+      const antler = add(head, [.11, .42 - branch * .025, .11], branch % 2 ? mats.pale : mats.glow,
+        [side * (.2 + branch * .09), .38 + branch * .17, -.05 + branch * .08], `bell-antler-${side}-${branch}`);
+      antler.rotation.z = side * (-.14 - branch * .08);
+    }
+    for (let bell = -3; bell <= 3; bell += 1) {
+      add(visual, [.16, .2, .16], bell === 0 ? mats.glow : mats.metal, [bell * .2, 1.62 - Math.abs(bell) * .045, -.05], `quiet-bell-${bell}`);
+      add(visual, [.055, .09, .055], mats.pale, [bell * .2, 1.49 - Math.abs(bell) * .045, -.05], `bell-clapper-${bell}`);
+    }
+    for (let tuft = 0; tuft < 8; tuft += 1) add(visual, [.16, .38, .28], tuft % 2 ? mats.pale : mats.accent,
+      [((tuft % 2) * 2 - 1) * .16, 1.45 - tuft * .035, -.78 + tuft * .2], `processional-mane-${tuft}`);
+  } else if (kind === "aerolith-baleen") {
+    aquatic(builder, { body: [3.3, 1.45, 4.4], tail: 2.2, fins: 3 });
+    for (let row = 0; row < 6; row += 1) for (let column = -3; column <= 3; column += 1) {
+      const plate = add(visual, [.38, .12, .48], (row + column) % 2 ? mats.pale : mats.glass,
+        [column * .39, 1.1 - Math.abs(column) * .035, -1.42 + row * .58], `aerolith-back-plate-${row}-${column}`);
+      plate.rotation.x = -.08 + row * .015;
+    }
+    for (let rib = -8; rib <= 8; rib += 1) add(visual, [.11, .68 - Math.abs(rib) * .018, .12], rib % 3 ? mats.pale : mats.glow,
+      [rib * .13, .32, -2.18], `baleen-filter-${rib}`);
+    for (let stone = 0; stone < 12; stone += 1) {
+      const angle = stone / 12 * Math.PI * 2;
+      const rock = add(visual, [.22 + stone % 3 * .05, .18 + stone % 2 * .06, .28], stone % 2 ? mats.glow : mats.pale,
+        [Math.cos(angle) * 1.75, 1.05 + (stone % 3) * .16, Math.sin(angle) * 1.7], `floating-aerolith-${stone}`);
+      rock.rotation.y = angle;
+    }
+    for (const side of [-1, 1]) for (let ray = 0; ray < 4; ray += 1) add(visual, [.08, .05, 1.35 - ray * .16], mats.glow,
+      [side * (1.38 + ray * .16), .46, -.4 + ray * .38], `wind-fin-ray-${side}-${ray}`).rotation.y = side * -.18;
+  } else if (kind === "mireglass-kelpie") {
+    quadruped(builder, { body: [1.45, .88, 2.15], bodyY: 1.0, head: [.82, .74, .9], headY: 1.3, headZ: -1.3, legLength: .85, legX: .5, frontZ: -.64, rearZ: .67, tail: "long", muzzle: "snout", ears: "point" });
+    for (let reed = 0; reed < 12; reed += 1) {
+      const stem = add(visual, [.08, .42 + (reed % 4) * .08, .09], reed % 3 ? mats.accent : mats.glow,
+        [((reed % 3) - 1) * .14, 1.5 + (reed % 2) * .06, -.94 + Math.floor(reed / 3) * .42], `fen-reed-mane-${reed}`);
+      stem.rotation.z = ((reed % 3) - 1) * .06;
+    }
+    for (let row = 0; row < 4; row += 1) for (let side = -3; side <= 3; side += 1) add(visual, [.22, .08, .3], mats.glass,
+      [side * .18, 1.34 - Math.abs(side) * .025, -.58 + row * .42], `mirror-hide-${row}-${side}`);
+    for (const position of ["front", "rear"] as const) for (const side of ["left", "right"] as const) {
+      const foot = visual.getObjectByName(`mireglass-kelpie-${position}-${side}-foot-pivot`)!;
+      const ring = add(foot, [.48, .34, .045], mats.glow, [0, -.06, -.02], `${position}-${side}-false-wake`, undefined, "ring");
+      ring.rotation.x = Math.PI / 2;
+    }
+  } else if (kind === "cinderwing-pyrausta") {
+    bird(builder, { body: [1.3, .96, 1.65], wingSpan: 2.8, legLength: .56, beak: .3, tail: .9 });
+    for (const side of [-1, 1] as const) for (let row = 0; row < 4; row += 1) for (let panel = 0; panel < 4; panel += 1) {
+      const tile = add(visual, [.5 - row * .045, .045, .58 - panel * .055], (row + panel) % 2 ? mats.glass : mats.glow,
+        [side * (.72 + row * .42), .76 - row * .055, -.4 + panel * .37], `emberglass-wing-panel-${side}-${row}-${panel}`);
+      tile.rotation.y = side * (.08 + row * .025);
+    }
+    for (let segment = 0; segment < 12; segment += 1) add(visual, [.46 - segment * .015, .28, .24], segment % 2 ? mats.dark : mats.accent,
+      [0, .58, .55 + segment * .18], `kiln-abdomen-${segment}`);
+    const head = visual.getObjectByName("cinderwing-pyrausta-head-pivot")!;
+    for (const side of [-1, 1]) for (let segment = 0; segment < 5; segment += 1) {
+      const feeler = add(head, [.055, .3, .055], segment % 2 ? mats.pale : mats.glow,
+        [side * (.1 + segment * .07), .22 + segment * .22, -.05 + segment * .03], `heat-antenna-${side}-${segment}`);
+      feeler.rotation.z = side * (-.1 - segment * .08);
+    }
+    for (let mote = 0; mote < 10; mote += 1) add(visual, [.07, .07, .07], mats.glow,
+      [((mote * 5) % 7 - 3) * .3, 1.2 + (mote % 4) * .16, -.6 + (mote % 5) * .46], `cinder-dust-mote-${mote}`);
+  } else if (kind === "nacre-gatewyrm") {
+    aquatic(builder, { body: [2.45, 1.15, 4.2], tail: 2.6, fins: 3 });
+    for (let row = 0; row < 7; row += 1) for (let column = -2; column <= 2; column += 1) add(visual, [.4, .12, .43], (row + column) % 2 ? mats.pale : mats.glass,
+      [column * .42, 1.02 - Math.abs(column) * .04, -1.45 + row * .52], `nacre-scale-${row}-${column}`);
+    for (let arch = -8; arch <= 8; arch += 1) {
+      const rib = add(visual, [.1, .72 - Math.abs(arch) * .02, .12], arch % 2 ? mats.metal : mats.glow,
+        [arch * .13, .62, -.72 + Math.abs(arch) * .04], `moon-gate-rib-${arch}`);
+      rib.rotation.z = arch * -.025;
+    }
+    for (const side of [-1, 1]) for (let whisker = 0; whisker < 4; whisker += 1) {
+      const node = add(visual, [.07, .07, .82 - whisker * .08], whisker % 2 ? mats.pale : mats.glow,
+        [side * (.55 + whisker * .16), .66 + whisker * .08, -2.12], `threshold-whisker-${side}-${whisker}`);
+      node.rotation.y = side * (-.22 - whisker * .08);
+    }
+    for (let moon = 0; moon < 8; moon += 1) add(visual, [.12, .12, .12], mats.glow,
+      [((moon % 4) - 1.5) * .34, .92 + (moon % 2) * .18, -.96 + Math.floor(moon / 4) * 1.52], `moonwell-node-${moon}`);
+  } else if (kind === "frostcauldron-behemoth") {
+    quadruped(builder, { body: [2.35, 1.55, 3.0], bodyY: 1.48, head: [1.35, 1.15, 1.25], headY: 1.82, headZ: -1.82, legLength: 1.12, legX: .82, frontZ: -.9, rearZ: .94, tail: "short", muzzle: "snout", ears: "round" });
+    for (let row = 0; row < 5; row += 1) for (let tuft = -3; tuft <= 3; tuft += 1) add(visual, [.4, .32, .46], (row + tuft) % 3 ? mats.pale : mats.glass,
+      [tuft * .34, 2.03 - Math.abs(tuft) * .04, -1.02 + row * .53], `snow-mantle-${row}-${tuft}`);
+    const head = visual.getObjectByName("frostcauldron-behemoth-head-pivot")!;
+    for (const side of [-1, 1]) for (let segment = 0; segment < 5; segment += 1) {
+      const horn = add(head, [.16, .42, .18], segment % 2 ? mats.pale : mats.glass,
+        [side * (.38 + segment * .13), .35 + segment * .12, -.03 + segment * .11], `kettle-horn-${side}-${segment}`);
+      horn.rotation.z = side * (-.42 - segment * .08);
+    }
+    for (let plate = -3; plate <= 3; plate += 1) add(visual, [.42, .16, .62], plate % 2 ? mats.metal : mats.dark,
+      [plate * .38, 2.42 - Math.abs(plate) * .06, .16], `cauldron-back-plate-${plate}`);
+    for (let vent = -2; vent <= 2; vent += 1) add(visual, [.12, .4, .12], mats.glow,
+      [vent * .42, 2.62 - Math.abs(vent) * .04, .18], `warm-steam-vent-${vent}`);
+  } else if (kind === "briarcrown-manticore") {
+    quadruped(builder, { body: [1.75, 1.0, 2.35], bodyY: 1.12, head: [1.0, .86, .98], headY: 1.42, headZ: -1.42, legLength: .94, legX: .61, frontZ: -.7, rearZ: .74, tail: "long", muzzle: "canine", ears: "point" });
+    addFrontierWingPair(builder, 1.48, .05, 2.35, 1.35, "briar");
+    for (let arc = 0; arc < 4; arc += 1) for (let thorn = -3; thorn <= 3; thorn += 1) {
+      const spike = add(visual, [.11, .38 + arc * .06, .11], (arc + thorn) % 2 ? mats.accent : mats.pale,
+        [thorn * .2, 1.62 + (3 - Math.abs(thorn)) * .07, -.96 + arc * .34], `briar-mane-${arc}-${thorn}`);
+      spike.rotation.z = thorn * -.06;
+    }
+    const head = visual.getObjectByName("briarcrown-manticore-head-pivot")!;
+    for (let point = -3; point <= 3; point += 1) add(head, [.13, .42 - Math.abs(point) * .045, .13], point === 0 ? mats.glow : mats.pale,
+      [point * .15, .48 - Math.abs(point) * .025, -.08], `root-crown-point-${point}`);
+    const tail = visual.getObjectByName("briarcrown-manticore-tail-tip-pivot")!;
+    for (let segment = 0; segment < 6; segment += 1) add(tail, [.18, .15, .28], segment % 2 ? mats.dark : mats.accent,
+      [0, .04 + segment * .035, .42 + segment * .21], `venom-tail-segment-${segment}`);
+    add(tail, [.28, .28, .58], mats.glow, [0, .28, 1.7], "measured-venom-sting", undefined, "spike-forward");
+  } else if (kind === "ammonarch") {
+    arthropod(builder, { body: [2.15, .72, 2.3], legs: 4, shell: true });
+    for (let ring = 0; ring < 5; ring += 1) for (let segment = 0; segment < 8; segment += 1) {
+      const angle = segment / 8 * Math.PI * 2 + ring * .12;
+      const fossil = add(visual, [.28 + ring * .025, .12, .36], (ring + segment) % 2 ? mats.pale : mats.glass,
+        [Math.cos(angle) * (.25 + ring * .22), .82 + Math.sin(angle) * (.2 + ring * .16), .18], `spiral-fossil-${ring}-${segment}`);
+      fossil.rotation.z = -angle;
+    }
+    for (let lobe = -5; lobe <= 5; lobe += 1) add(visual, [.16, .22, .5 - Math.abs(lobe) * .025], lobe % 2 ? mats.accent : mats.glow,
+      [lobe * .17, .52, -1.25], `mantle-lobe-${lobe}`);
+    for (let note = 0; note < 8; note += 1) add(visual, [.08, .08, .08], mats.glow,
+      [((note % 4) - 1.5) * .42, 1.12 + Math.floor(note / 4) * .22, -.2], `stone-song-note-${note}`);
+  } else if (kind === "handtail-ahuizotl") {
+    quadruped(builder, { body: [1.45, .8, 2.05], bodyY: .82, head: [.82, .68, .82], headY: 1.0, headZ: -1.25, legLength: .7, legX: .5, frontZ: -.62, rearZ: .64, tail: "long", muzzle: "canine", ears: "round" });
+    for (let root = 0; root < 5; root += 1) for (let knot = -2; knot <= 2; knot += 1) add(visual, [.16, .26 + root * .035, .24], (root + knot) % 2 ? mats.glass : mats.accent,
+      [knot * .24, 1.2 - Math.abs(knot) * .035, -.72 + root * .38], `lanternroot-knot-${root}-${knot}`);
+    const tail = visual.getObjectByName("handtail-ahuizotl-tail-tip-pivot")!;
+    add(tail, [.52, .18, .46], mats.pale, [0, 0, .62], "tail-hand-palm");
+    for (let finger = -2; finger <= 2; finger += 1) {
+      const digit = add(tail, [.09, .08, .42 - Math.abs(finger) * .045], finger === 0 ? mats.glow : mats.pale,
+        [finger * .12, 0, .98], `tail-hand-finger-${finger + 3}`);
+      digit.rotation.y = finger * -.09;
+    }
+    for (let lamp = 0; lamp < 8; lamp += 1) add(visual, [.11, .11, .11], mats.glow,
+      [((lamp % 4) - 1.5) * .28, 1.42 + (lamp % 2) * .15, -.5 + Math.floor(lamp / 4) * .78], `cistern-lantern-${lamp}`);
+  } else if (kind === "tideclock-cetus") {
+    aquatic(builder, { body: [3.5, 1.35, 4.8], tail: 2.5, fins: 2 });
+    for (let row = 0; row < 6; row += 1) for (let rib = -3; rib <= 3; rib += 1) add(visual, [.26, .12, .44], (row + rib) % 3 ? mats.metal : mats.glow,
+      [rib * .39, 1.02 - Math.abs(rib) * .035, -1.48 + row * .6], `tideclock-rib-${row}-${rib}`);
+    for (let gear = 0; gear < 16; gear += 1) {
+      const angle = gear / 8 * Math.PI * 2;
+      const wheel = add(visual, [.2 + gear % 3 * .04, .2 + gear % 3 * .04, .07], gear % 2 ? mats.glow : mats.pale,
+        [Math.cos(angle) * 1.35, .75 + Math.floor(gear / 8) * .34, -.55 + Math.sin(angle) * 1.2], `current-gear-ring-${gear}`, undefined, "ring");
+      wheel.rotation.x = Math.PI / 2;
+    }
+    for (let tooth = -7; tooth <= 7; tooth += 1) add(visual, [.09, .48 - Math.abs(tooth) * .012, .1], mats.pale,
+      [tooth * .14, .36, -2.42], `sounding-baleen-${tooth}`);
+  } else if (kind === "anemoi-gryphon") {
+    quadruped(builder, { body: [1.75, 1.0, 2.3], bodyY: 1.1, head: [.88, .78, .92], headY: 1.5, headZ: -1.38, legLength: .92, legX: .6, frontZ: -.68, rearZ: .72, tail: "long", muzzle: "beak", ears: "point" });
+    addFrontierWingPair(builder, 1.48, .08, 2.75, 1.5, "anemoi");
+    for (let row = 0; row < 4; row += 1) for (let feather = -3; feather <= 3; feather += 1) add(visual, [.2, .12, .42], (row + feather) % 2 ? mats.pale : mats.glass,
+      [feather * .22, 1.5 - Math.abs(feather) * .025, -.62 + row * .43], `wind-mantle-${row}-${feather}`);
+    const head = visual.getObjectByName("anemoi-gryphon-head-pivot")!;
+    for (let plume = -4; plume <= 4; plume += 1) {
+      const crown = add(head, [.11, .46 - Math.abs(plume) * .035, .11], plume === 0 ? mats.glow : mats.pale,
+        [plume * .13, .42 - Math.abs(plume) * .025, .03], `nine-wind-plume-${plume}`);
+      crown.rotation.z = plume * -.055;
+    }
+    for (let draft = 0; draft < 9; draft += 1) add(visual, [.09, .09, .09], mats.glow,
+      [((draft % 3) - 1) * .34, 1.82 + Math.floor(draft / 3) * .18, -.28 + (draft % 3) * .3], `ninefold-draft-${draft}`);
+  } else if (kind === "sable-gorgon") {
+    quadruped(builder, { body: [2.05, 1.3, 2.55], bodyY: 1.25, head: [1.3, 1.0, 1.16], headY: 1.58, headZ: -1.55, legLength: 1.0, legX: .72, frontZ: -.76, rearZ: .8, tail: "short", muzzle: "snout", ears: "none" });
+    const head = visual.getObjectByName("sable-gorgon-head-pivot")!;
+    for (const side of [-1, 1]) for (let segment = 0; segment < 6; segment += 1) {
+      const horn = add(head, [.17, .42, .17], segment % 2 ? mats.glass : mats.pale,
+        [side * (.38 + segment * .14), .38 + segment * .12, -.02 + segment * .1], `quarry-horn-${side}-${segment}`);
+      horn.rotation.z = side * (-.36 - segment * .07);
+    }
+    for (let snake = 0; snake < 8; snake += 1) for (let segment = 0; segment < 4; segment += 1) {
+      const angle = snake / 8 * Math.PI * 2;
+      const coil = add(head, [.12, .16, .24], segment === 3 ? mats.glow : segment % 2 ? mats.accent : mats.dark,
+        [Math.cos(angle) * (.44 + segment * .1), .2 + segment * .18, Math.sin(angle) * .25], `living-snake-${snake}-${segment}`);
+      coil.rotation.z = -angle;
+    }
+    for (let row = 0; row < 3; row += 1) for (let plate = -4; plate <= 4; plate += 1) add(visual, [.24, .14, .38], (row + plate) % 2 ? mats.dark : mats.glass,
+      [plate * .22, 1.72 - Math.abs(plate) * .025, -.62 + row * .62], `sable-quarry-plate-${row}-${plate}`);
+  } else if (kind === "namarra-makara") {
+    quadruped(builder, { body: [2.0, 1.18, 2.8], bodyY: 1.05, head: [1.15, .92, 1.2], headY: 1.38, headZ: -1.68, legLength: .82, legX: .7, frontZ: -.82, rearZ: .86, tail: "long", muzzle: "snout", ears: "sail" });
+    const head = visual.getObjectByName("namarra-makara-head-pivot")!;
+    let trunkParent = head;
+    for (let segment = 0; segment < 7; segment += 1) {
+      const trunk = joint(trunkParent, [0, segment ? -.22 : -.24, segment ? -.2 : -.58], `court-trunk-joint-${segment}`);
+      add(trunk, [.3 - segment * .02, .24, .38], segment % 2 ? mats.pale : mats.body, [0, -.08, -.16], `court-trunk-${segment}`);
+      trunk.rotation.x = .08 + segment * .035;
+      trunkParent = trunk;
+    }
+    for (let row = 0; row < 4; row += 1) for (let jewel = -3; jewel <= 3; jewel += 1) add(visual, [.22, .12, .32], (row + jewel) % 3 ? mats.glass : mats.glow,
+      [jewel * .24, 1.52 - Math.abs(jewel) * .025, -.72 + row * .5], `pearl-regalia-${row}-${jewel}`);
+    for (const side of [-1, 1]) for (let fin = 0; fin < 6; fin += 1) {
+      const veil = add(visual, [.08, .42 - fin * .025, .55], fin % 2 ? mats.membrane : mats.pale,
+        [side * (1.0 + fin * .05), 1.0 + fin * .09, -.75 + fin * .48], `court-fin-${side}-${fin}`);
+      veil.rotation.z = side * -.18;
+    }
+    for (let pearl = 0; pearl < 8; pearl += 1) add(visual, [.12, .12, .12], mats.glow,
+      [((pearl % 4) - 1.5) * .34, 1.78, -.64 + Math.floor(pearl / 4) * 1.3], `audience-pearl-${pearl}`);
+  } else if (kind === "ashen-salamander-king") {
+    quadruped(builder, { body: [1.85, .68, 2.7], bodyY: .64, head: [1.05, .68, 1.05], headY: .72, headZ: -1.6, legLength: .48, legX: .68, frontZ: -.8, rearZ: .84, tail: "long", muzzle: "none", ears: "none" });
+    for (let row = 0; row < 4; row += 1) for (let plate = -4; plate <= 4; plate += 1) add(visual, [.25, .12, .4], (row + plate) % 3 ? mats.dark : mats.glow,
+      [plate * .2, .96 - Math.abs(plate) * .02, -.88 + row * .58], `emberglass-kiln-plate-${row}-${plate}`);
+    const head = visual.getObjectByName("ashen-salamander-king-head-pivot")!;
+    for (let point = -4; point <= 4; point += 1) add(head, [.13, .48 - Math.abs(point) * .04, .13], point === 0 ? mats.glow : mats.metal,
+      [point * .14, .4 - Math.abs(point) * .02, -.05], `salamander-crown-${point}`);
+    for (let tablet = 0; tablet < 10; tablet += 1) add(visual, [.24, .06, .34], tablet % 2 ? mats.pale : mats.glass,
+      [((tablet % 5) - 2) * .31, 1.18 + Math.floor(tablet / 5) * .18, -.38], `heat-reveal-tablet-${tablet}`);
+    for (let vent = -3; vent <= 3; vent += 1) add(visual, [.1, .32, .1], mats.glow,
+      [vent * .24, 1.18 - Math.abs(vent) * .02, .68], `royal-heat-vent-${vent}`);
+  } else if (kind === "mycelial-oneirophant") {
+    quadruped(builder, { body: [2.5, 1.58, 3.0], bodyY: 1.45, head: [1.5, 1.28, 1.25], headY: 1.72, headZ: -1.8, legLength: 1.15, legX: .88, frontZ: -.9, rearZ: .94, tail: "short", muzzle: "none", ears: "sail" });
+    const head = visual.getObjectByName("mycelial-oneirophant-head-pivot")!;
+    let trunkParent = head;
+    for (let segment = 0; segment < 8; segment += 1) {
+      const trunk = joint(trunkParent, [0, segment ? -.24 : -.28, segment ? -.12 : -.58], `dream-trunk-joint-${segment}`);
+      add(trunk, [.34 - segment * .022, .26, .32], segment % 2 ? mats.pale : mats.body, [0, -.1, -.12], `dream-trunk-${segment}`);
+      trunk.rotation.x = .06 + segment * .025;
+      trunkParent = trunk;
+    }
+    for (const side of [-1, 1]) for (let tusk = 0; tusk < 3; tusk += 1) {
+      const tooth = add(head, [.13 - tusk * .015, .16, .48], tusk % 2 ? mats.glass : mats.pale,
+        [side * (.34 + tusk * .08), -.28 - tusk * .08, -.62 - tusk * .28], `memory-tusk-${side}-${tusk}`, undefined, "spike-forward");
+      tooth.rotation.y = side * -.13;
+    }
+    for (let row = 0; row < 4; row += 1) for (let fan = -3; fan <= 3; fan += 1) {
+      const cap = add(visual, [.32 + row * .035, .12, .42], (row + fan) % 2 ? mats.glass : mats.glow,
+        [fan * .34, 2.18 + row * .17 - Math.abs(fan) * .035, -.82 + row * .62], `active-memory-fan-${row}-${fan}`);
+      cap.rotation.x = -.18;
+    }
+    for (let pond = 0; pond < 10; pond += 1) {
+      const angle = pond / 10 * Math.PI * 2;
+      const tile = add(visual, [.24, .06, .32], pond % 2 ? mats.membrane : mats.glow,
+        [Math.cos(angle) * .92, 2.03, .28 + Math.sin(angle) * .72], `moonfelt-pond-rim-${pond}`);
+      tile.rotation.y = -angle;
+    }
+  }
+}
+
 function decorateSummon(builder: Builder) {
   const { kind, visual, mats, add, joint } = builder;
   if (kind === "asterjaw") {
@@ -929,6 +1188,17 @@ const LIVING_MOUNT_TACK: Readonly<Partial<Record<LivingBestiaryVisualKind, Reado
   thalassene: { y: 1.4, z: .12, width: 1.65, depth: 1.7, seats: 2, color: 0x3f7772 },
   "varkesh-stormmane": { y: 1.62, z: .12, width: 1.22, depth: 1.35, seats: 2, color: 0x465c78 },
   kharza: { y: 1.74, z: .08, width: 1.22, depth: 1.24, seats: 1, color: 0x7a3c35 },
+  "bellstep-qilin": { y: 1.55, z: .08, width: 1.08, depth: 1.14, seats: 1, color: 0x71634c },
+  "aerolith-baleen": { y: 1.25, z: .12, width: 1.72, depth: 1.65, seats: 2, color: 0x657a83 },
+  "mireglass-kelpie": { y: 1.5, z: .05, width: 1.04, depth: 1.1, seats: 1, color: 0x4d7065 },
+  "cinderwing-pyrausta": { y: 1.08, z: .04, width: .72, depth: .72, seats: 1, color: 0x7c4b35 },
+  "nacre-gatewyrm": { y: 1.05, z: .06, width: 1.34, depth: 1.5, seats: 2, color: 0x66818b },
+  "frostcauldron-behemoth": { y: 2.22, z: .08, width: 1.65, depth: 1.7, seats: 2, color: 0x59656b },
+  "briarcrown-manticore": { y: 1.68, z: .08, width: 1.18, depth: 1.2, seats: 1, color: 0x5f5144 },
+  "tideclock-cetus": { y: 1.2, z: .1, width: 1.75, depth: 1.72, seats: 2, color: 0x4f6770 },
+  "anemoi-gryphon": { y: 1.72, z: .08, width: 1.2, depth: 1.3, seats: 2, color: 0x596b78 },
+  "namarra-makara": { y: 1.68, z: .08, width: 1.36, depth: 1.42, seats: 2, color: 0x5d6678 },
+  "mycelial-oneirophant": { y: 2.32, z: .12, width: 1.72, depth: 1.8, seats: 2, color: 0x66596f },
 });
 
 function addLivingMountTack(builder: Builder) {
@@ -963,6 +1233,9 @@ const HIGH_MAGIC_KINDS = new Set<LivingBestiaryVisualKind>([
   "stormcrest-ibex", "cragglass-basilisk", "stormglass-roclet", "inkveil-cuttle", "currentweaver-eel",
   "kilnscale-salamander", "voidmantle-ray", "ilyr-virebloom", "thalassene", "orichalc", "varkesh-stormmane",
   "sugarwake-sovereign", "asterjaw", "vellum-warden", "choir-of-one", "glasswake-stag",
+  "bellstep-qilin", "aerolith-baleen", "mireglass-kelpie", "cinderwing-pyrausta", "nacre-gatewyrm",
+  "frostcauldron-behemoth", "briarcrown-manticore", "ammonarch", "handtail-ahuizotl", "tideclock-cetus",
+  "anemoi-gryphon", "sable-gorgon", "namarra-makara", "ashen-salamander-king", "mycelial-oneirophant",
 ]);
 
 /** Tags only authored magical details; ordinary anatomy stays physically quiet. */
@@ -1018,6 +1291,14 @@ const HEAD_FOLLOW_PATTERNS: Readonly<Partial<Record<LivingBestiaryVisualKind, Re
   kharza: /old-scar/u,
   "sugarwake-sovereign": /sugar-antler|sovereign-crown-ring|crown-point/u,
   "glasswake-stag": /mirror-antler/u,
+  "bellstep-qilin": /bell-antler|quiet-bell|bell-clapper/u,
+  "frostcauldron-behemoth": /kettle-horn/u,
+  "briarcrown-manticore": /root-crown-point/u,
+  "cinderwing-pyrausta": /heat-antenna/u,
+  "sable-gorgon": /quarry-horn|living-snake/u,
+  "namarra-makara": /court-trunk/u,
+  "ashen-salamander-king": /salamander-crown/u,
+  "mycelial-oneirophant": /dream-trunk|memory-tusk/u,
 });
 
 /** Reparents authored facial details without changing their world-space pose. */
@@ -1054,11 +1335,27 @@ const LIVING_ART_FOOT_CORRECTIONS: Readonly<Partial<Record<LivingBestiaryVisualK
   "sugarwake-sovereign": .0078482425,
   asterjaw: -.02100941,
   "glasswake-stag": .0039169901,
+  "bellstep-qilin": .0258277803,
+  "aerolith-baleen": .4244626123,
+  "mireglass-kelpie": .2224500828,
+  "cinderwing-pyrausta": .4462353108,
+  "nacre-gatewyrm": .2192062433,
+  "frostcauldron-behemoth": .2751844715,
+  "briarcrown-manticore": .0721168486,
+  ammonarch: .1803795068,
+  "handtail-ahuizotl": .2206627126,
+  "tideclock-cetus": .4084290867,
+  "anemoi-gryphon": .2120983357,
+  "sable-gorgon": .4467730584,
+  "namarra-makara": .257932029,
+  "ashen-salamander-king": .1787435669,
+  "mycelial-oneirophant": .4353501184,
 });
 
 export function createLivingBestiaryMobVisual(kind: LivingBestiaryVisualKind, id: number): MobVisual {
   const builder = createBuilder(kind, id);
   if ((["ilyr-virebloom", "thalassene", "orichalc", "varkesh-stormmane", "kharza", "sugarwake-sovereign"] as readonly MobKind[]).includes(kind)) decorateMythic(builder);
+  else if ((["bellstep-qilin", "aerolith-baleen", "mireglass-kelpie", "cinderwing-pyrausta", "nacre-gatewyrm", "frostcauldron-behemoth", "briarcrown-manticore", "ammonarch", "handtail-ahuizotl", "tideclock-cetus", "anemoi-gryphon", "sable-gorgon", "namarra-makara", "ashen-salamander-king", "mycelial-oneirophant"] as readonly MobKind[]).includes(kind)) decorateFrontierMythic(builder);
   else if ((["asterjaw", "vellum-warden", "choir-of-one", "glasswake-stag"] as readonly MobKind[]).includes(kind)) decorateSummon(builder);
   else decorateRegular(builder);
   attachAuthoredHeadDetails(builder);

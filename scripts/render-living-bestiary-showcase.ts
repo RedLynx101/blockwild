@@ -50,7 +50,7 @@ export type ShowcaseCamera = Readonly<{
   target: THREE.Vector3;
 }>;
 
-type SheetOptions = Readonly<{
+export type SheetOptions = Readonly<{
   kinds: readonly LivingBestiaryVisualKind[];
   phase: ShowcasePhase;
   background?: ShowcaseBackground;
@@ -78,6 +78,9 @@ export type ShowcaseOutput = Readonly<{
 
 const LEGENDARY_KINDS = new Set<LivingBestiaryVisualKind>([
   "ilyr-virebloom", "thalassene", "orichalc", "varkesh-stormmane", "kharza", "sugarwake-sovereign",
+  "bellstep-qilin", "aerolith-baleen", "mireglass-kelpie", "cinderwing-pyrausta", "nacre-gatewyrm",
+  "frostcauldron-behemoth", "briarcrown-manticore", "ammonarch", "handtail-ahuizotl", "tideclock-cetus",
+  "anemoi-gryphon", "sable-gorgon", "namarra-makara", "ashen-salamander-king", "mycelial-oneirophant",
 ]);
 const SUMMON_KINDS = new Set<LivingBestiaryVisualKind>(["asterjaw", "vellum-warden", "choir-of-one", "glasswake-stag"]);
 const DEFAULT_CAMERA_POSITION = new THREE.Vector3(5.4, 3.7, -7.2);
