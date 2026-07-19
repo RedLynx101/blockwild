@@ -27,7 +27,7 @@ test("capture-orb rack visual signature tracks only actual slot occupancy and ex
   const filled = captureIntoOrb(createEmptyCaptureOrb("filled-rack-orb"), goldfish)!;
   const blankSignature = orbRackOccupancySignature(createOrbRack());
   const occupiedSignature = orbRackOccupancySignature(createOrbRack([empty, null, filled]));
-  assert.equal(blankSignature, "empty|empty|empty|empty");
-  assert.match(occupiedSignature, /^orb:empty-rack-orb\|empty\|filled:pocket-goldfish:filled-rack-orb\|empty$/);
+  assert.equal(blankSignature, "empty|empty|empty|empty|empty|empty|empty|empty");
+  assert.match(occupiedSignature, /^orb:empty-rack-orb\|empty\|filled:pocket-goldfish:filled-rack-orb(?:\|empty){5}$/);
   assert.notEqual(blankSignature, occupiedSignature);
 });

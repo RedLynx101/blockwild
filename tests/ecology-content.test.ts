@@ -208,11 +208,11 @@ test("imported creature containers reject unknown species and malformed faction 
   assert.equal(decodeCaptureOrb(JSON.stringify({ ...encoded, creature: { ...encoded.creature, health: 99, maxHealth: 12 } })), null);
 });
 
-test("four-slot racks and healers expose UI state; healing is passive with optional gel acceleration", () => {
+test("eight-slot racks and four-slot healers expose UI state; healing is passive with optional gel acceleration", () => {
   const captured = captureIntoOrb(createEmptyCaptureOrb("orb-a"), creature, 123)!;
   const rack = createOrbRack([captured]);
-  assert.equal(rack.slots.length, 4);
-  assert.deepEqual(orbRackContainerStatus(rack), { kind: "orb-rack", capacity: 4, occupied: 1, slots: rack.slots });
+  assert.equal(rack.slots.length, 8);
+  assert.deepEqual(orbRackContainerStatus(rack), { kind: "orb-rack", capacity: 8, occupied: 1, slots: rack.slots });
 
   const passiveStart = createCreatureHealer([captured]);
   const halfway = stepCreatureHealer(passiveStart, 10);
@@ -308,6 +308,9 @@ test("utility model contracts and butterfly antenna dimensions are inspection-re
   }
   assert.equal(modelSpecForItemModel("wildwood-chest").id, "wildwood-chest");
   assert.equal(modelSpecForItemModel("capture-orb").id, "waykeeper-capture-orb");
+  assert.equal(createOrbRackSpec().boxes.filter((entry) => entry.part === "socket").length, 8);
+  assert.equal(createHealingStationSpec().boxes.filter((entry) => entry.part === "socket").length, 4);
+  assert.equal(createHealingStationSpec().boxes.filter((entry) => entry.part === "rim").length, 4);
   assert.equal(BUTTERFLY_ANTENNA_CONTRACT.count, 2);
   assert.ok(BUTTERFLY_ANTENNA_CONTRACT.length > 0.1);
 });

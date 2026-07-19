@@ -344,34 +344,70 @@ export function createCaptureOrbSpec(): ModelSpec {
   });
 }
 
+function captureOrbDisplayBoxes(
+  prefix: string,
+  position: ModelVector3,
+  scale: number,
+  coreColor: ModelColor,
+): ModelBox[] {
+  const at = (x: number, y: number, z: number): ModelVector3 => [
+    position[0] + x * scale,
+    position[1] + y * scale,
+    position[2] + z * scale,
+  ];
+  const sized = (x: number, y: number, z: number): ModelVector3 => [x * scale, y * scale, z * scale];
+  return [
+    box(`${prefix}-core`, "orb-core", sized(0.38, 0.38, 0.38), at(0, 0, 0), coreColor, [0, Math.PI / 4, 0], { emissive: true }),
+    box(`${prefix}-front`, "orb-core", sized(0.28, 0.28, 0.08), at(0, 0, -0.235), "#c8fff5", [0, 0, Math.PI / 4], { emissive: true }),
+    box(`${prefix}-band-x`, "orb-frame", sized(0.58, 0.08, 0.1), at(0, 0, 0), "#57402f"),
+    box(`${prefix}-band-y`, "orb-frame", sized(0.08, 0.58, 0.1), at(0, 0, 0), "#57402f"),
+    box(`${prefix}-band-z`, "orb-frame", sized(0.1, 0.08, 0.58), at(0, 0, 0), "#8f6b3c"),
+    box(`${prefix}-top-cap`, "orb-frame", sized(0.18, 0.12, 0.18), at(0, 0.3, 0), "#d6b45b"),
+    box(`${prefix}-rune`, "orb-rune", sized(0.11, 0.11, 0.03), at(0, 0, -0.29), "#fff1a2", [0, 0, Math.PI / 4], { emissive: true }),
+  ];
+}
+
 export function createOrbRackSpec(): ModelSpec {
   const boxes: ModelBox[] = [
-    box("rack-base", "base", [1.18, 0.18, 0.48], [0, 0.12, 0], "#6f492b", ZERO_ROTATION, { label: "Four-orb rack" }),
-    box("rack-back", "frame", [1.18, 0.48, 0.12], [0, 0.39, 0.18], "#8e5b32"),
+    box("rack-base", "base", [1.18, 0.16, 0.52], [0, 0.08, 0], "#513521", ZERO_ROTATION, { label: "Eight-orb rack" }),
+    box("rack-left-post", "frame", [0.12, 0.92, 0.16], [-0.52, 0.53, 0.16], "#6f492b"),
+    box("rack-right-post", "frame", [0.12, 0.92, 0.16], [0.52, 0.53, 0.16], "#6f492b"),
+    box("rack-back", "frame", [1.04, 0.76, 0.09], [0, 0.55, 0.22], "#3f2b20"),
+    box("rack-lower-shelf", "shelf", [1.06, 0.09, 0.38], [0, 0.3, 0.02], "#8e5b32"),
+    box("rack-upper-shelf", "shelf", [1.06, 0.09, 0.38], [0, 0.68, 0.02], "#8e5b32"),
+    box("rack-crown", "frame", [1.14, 0.12, 0.2], [0, 1.0, 0.16], "#6f492b"),
   ];
-  for (let slot = 0; slot < 4; slot += 1) {
-    const x = -0.42 + slot * 0.28;
-    boxes.push(
-      box(`rack-socket-${slot + 1}`, "socket", [0.2, 0.08, 0.22], [x, 0.25, -0.08], "#3e3029"),
-      box(`rack-orb-${slot + 1}`, "orb", [0.15, 0.15, 0.15], [x, 0.4, -0.08], slot % 2 ? "#71d6d2" : "#9eeae1", [0, Math.PI / 4, 0], { emissive: true }),
-    );
+  for (let slot = 0; slot < 8; slot += 1) {
+    const column = slot % 4;
+    const row = Math.floor(slot / 4);
+    const x = -0.405 + column * 0.27;
+    const y = row === 0 ? 0.43 : 0.81;
+    boxes.push(box(`rack-socket-${slot + 1}`, "socket", [0.2, 0.07, 0.24], [x, y - 0.13, -0.05], "#261f1b"));
+    boxes.push(...captureOrbDisplayBoxes(`rack-orb-${slot + 1}`, [x, y, -0.07], 0.36, slot % 2 ? "#71d6d2" : "#9eeae1"));
   }
-  return assertModelSpec({ id: "capture-orb-rack", label: "Four-Orb Rack", category: "utility", front: "-z", boxes });
+  return assertModelSpec({ id: "capture-orb-rack", label: "Eight-Orb Rack", category: "utility", front: "-z", groundY: 0, groundContactBoxIds: ["rack-base"], boxes });
 }
 
 export function createHealingStationSpec(): ModelSpec {
   const boxes: ModelBox[] = [
-    box("healer-base", "base", [1.25, 0.2, 1.0], [0, 0.12, 0], "#4b5551", ZERO_ROTATION, { label: "Healing station" }),
-    box("healer-core", "core", [0.3, 0.72, 0.3], [0, 0.56, 0.12], "#65cfc7", [0, Math.PI / 4, 0], { emissive: true }),
-    box("healer-canopy", "frame", [1.12, 0.12, 0.88], [0, 1.0, 0], "#88aa9d"),
+    box("healer-base", "base", [1.2, 0.2, 1.0], [0, 0.1, 0], "#3f4b49", ZERO_ROTATION, { label: "Healing station" }),
+    box("healer-body", "body", [1.06, 0.34, 0.86], [0, 0.32, 0], "#536360"),
+    box("healer-basin-floor", "basin", [0.84, 0.08, 0.7], [0, 0.52, 0], "#315b59", ZERO_ROTATION, { label: "Recessed orb basin" }),
+    box("healer-rim-front", "rim", [1.08, 0.16, 0.14], [0, 0.63, -0.43], "#8aa8a0"),
+    box("healer-rim-back", "rim", [1.08, 0.16, 0.14], [0, 0.63, 0.43], "#8aa8a0"),
+    box("healer-rim-left", "rim", [0.14, 0.16, 0.72], [-0.47, 0.63, 0], "#78958e"),
+    box("healer-rim-right", "rim", [0.14, 0.16, 0.72], [0.47, 0.63, 0], "#78958e"),
+    box("healer-gel-window", "gel-reservoir", [0.5, 0.18, 0.05], [0, 0.3, -0.455], "#70c99d", ZERO_ROTATION, { label: "Cave Gel reservoir", emissive: true }),
+    box("healer-gel-frame-top", "gel-frame", [0.58, 0.05, 0.08], [0, 0.41, -0.465], "#273c3b"),
+    box("healer-gel-frame-bottom", "gel-frame", [0.58, 0.05, 0.08], [0, 0.19, -0.465], "#273c3b"),
   ];
-  for (const [slot, x, z] of [[1, -0.38, -0.25], [2, 0.38, -0.25], [3, -0.38, 0.32], [4, 0.38, 0.32]] as const) {
+  for (const [slot, x, z] of [[1, -0.25, -0.2], [2, 0.25, -0.2], [3, -0.25, 0.2], [4, 0.25, 0.2]] as const) {
     boxes.push(
-      box(`healer-pedestal-${slot}`, "pedestal", [0.24, 0.3, 0.24], [x, 0.31, z], "#65706c"),
-      box(`healer-orb-glow-${slot}`, "orb", [0.17, 0.17, 0.17], [x, 0.55, z], "#9af0dc", [0, Math.PI / 4, 0], { emissive: true }),
+      box(`healer-socket-${slot}`, "socket", [0.22, 0.07, 0.22], [x, 0.57, z], "#263b3a"),
+      ...captureOrbDisplayBoxes(`healer-orb-${slot}`, [x, 0.72, z], 0.4, slot % 2 ? "#8de2d5" : "#b3f2df"),
     );
   }
-  return assertModelSpec({ id: "creature-healing-station", label: "Four-Slot Creature Healer", category: "utility", front: "-z", boxes });
+  return assertModelSpec({ id: "creature-healing-station", label: "Four-Orb Healing Station", category: "utility", front: "-z", groundY: 0, groundContactBoxIds: ["healer-base"], boxes });
 }
 
 export type ItemModelKey = "wildwood-chest" | "apiary" | "capture-orb" | "orb-rack" | "orb-healer";

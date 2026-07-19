@@ -7379,7 +7379,7 @@ input:focus-visible {
   border: 1px solid #314447;
   border-radius: 50%;
   background: #78d8d2;
-  box-shadow: 8px 0 0 -1px #78d8d2, 0 10px 0 -1px #78d8d2, 8px 10px 0 -1px #78d8d2, 0 0 4px #8cf0e8;
+  box-shadow: 6px 0 0 -1px #78d8d2, 12px 0 0 -1px #78d8d2, 18px 0 0 -1px #78d8d2, 0 9px 0 -1px #78d8d2, 6px 9px 0 -1px #78d8d2, 12px 9px 0 -1px #78d8d2, 18px 9px 0 -1px #78d8d2, 0 0 4px #8cf0e8;
 }
 
 .item-icon-kind-orb-healer::before {
@@ -7942,6 +7942,34 @@ input:focus-visible {
   text-align: center;
 }
 
+.bestiary-caught-marker {
+  position: absolute;
+  z-index: 4;
+  left: -2px;
+  bottom: 0;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #5b685f;
+  border-radius: 50%;
+  color: #748078;
+  background: #171c19;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .45);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1;
+}
+
+.bestiary-caught-marker.caught {
+  color: #f1f8df;
+  background: #477651;
+  border-color: #a9d17b;
+  box-shadow: 0 0 9px rgba(142, 210, 116, .42), 0 2px 6px rgba(0, 0, 0, .45);
+}
+
+.bestiary-caught-marker.uncaught { border-style: dashed; }
+
 .bestiary-portrait .creature-render-hero img {
   flex: 0 1 560px;
   width: min(100%, 560px);
@@ -8021,6 +8049,7 @@ input:focus-visible {
   .bestiary-field-notes { grid-template-columns: 1fr; }
   .bestiary-icon-progress .creature-render { width: 46px; height: 46px; }
   .bestiary-icon-progress > i { display: none; }
+  .bestiary-caught-marker { width: 18px; height: 18px; font-size: 10px; }
   .bestiary-care-grid { grid-template-columns: 1fr; }
   .bestiary-care-heading span { display: none; }
 }
@@ -8464,6 +8493,12 @@ input:focus-visible {
   gap: 9px;
   padding: 0 10px 6px;
 }
+.orb-rack-window .orb-specimen-card {
+  min-height: 232px;
+  grid-template-rows: 82px auto 28px;
+}
+.orb-rack-window .orb-specimen-portrait { height: 82px; }
+.orb-rack-window .orb-specimen-portrait .creature-render-mini { width: 100px; height: 78px; }
 .orb-specimen-card {
   position: relative;
   min-width: 0;
@@ -8545,7 +8580,7 @@ input:focus-visible {
 
 .healing-gel-status {
   display: grid;
-  grid-template-columns: minmax(140px, .65fr) 1fr;
+  grid-template-columns: 42px minmax(140px, .65fr) minmax(220px, 1fr);
   gap: 12px;
   align-items: center;
   margin: 0 10px 13px;
@@ -8553,9 +8588,25 @@ input:focus-visible {
   border: 1px solid rgba(50, 87, 74, .5);
   background: rgba(190, 225, 193, .32);
 }
-.healing-gel-status > span i { background: linear-gradient(90deg, #397867, #78bd79, #b8da84); }
+.healing-gel-slot {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  padding: 4px;
+  cursor: pointer;
+}
+.healing-gel-slot .item-icon { width: 30px; height: 30px; }
+.healing-gel-slot .item-count { right: 1px; bottom: 0; color: #efffe7; text-shadow: 1px 1px #15352d; }
+.healing-gel-meter {
+  height: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(64, 54, 35, .62);
+  background: rgba(87, 73, 43, .18);
+}
+.healing-gel-status > .healing-gel-meter i { display: block; height: 100%; background: linear-gradient(90deg, #397867, #78bd79, #b8da84); transition: width .3s ease; }
 .healing-gel-status > div { display: grid; gap: 3px; }
 .healing-gel-status strong { color: #3d5744; font-size: 9px; }
+.healing-gel-status p { margin: 2px 0 0; color: #5b6b5c; font-size: 8px; line-height: 1.45; }
 .healing-station-window .orb-specimen-card { min-height: 322px; grid-template-rows: 96px auto 28px 56px; }
 .orb-healing-progress { align-self: end; display: grid; gap: 6px; padding-top: 8px; border-top: 1px solid rgba(74, 87, 57, .22); }
 .orb-healing-progress > div { display: flex; justify-content: space-between; gap: 5px; }
@@ -8602,7 +8653,8 @@ input:focus-visible {
   .apiary-resource + .apiary-resource { border-top: 1px solid rgba(69, 56, 31, .42); border-left: 0; }
   .orb-specimen-grid { grid-template-columns: 1fr; }
   .orb-specimen-card { min-height: 250px; }
-  .healing-gel-status { grid-template-columns: 1fr; }
+  .healing-gel-status { grid-template-columns: 42px minmax(0, 1fr); }
+  .healing-gel-status > div { grid-column: 1 / -1; }
 }
 
 /* Hearthroads v0.6: shared parchment-and-hearth treatment for map, journal,

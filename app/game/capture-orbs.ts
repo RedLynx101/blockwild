@@ -9,7 +9,7 @@ import {
 } from "./creature-cage";
 import type { CaptureLensId } from "./creature-capture";
 
-export const CAPTURE_ORB_RACK_SIZE = 4;
+export const CAPTURE_ORB_RACK_SIZE = 8;
 export const CREATURE_HEALER_SIZE = 4;
 export const ORB_RACK_CONTAINER_KIND = "orb-rack" as const;
 export const HEALING_STATION_CONTAINER_KIND = "healing-station" as const;
@@ -291,7 +291,8 @@ export function setHealerOrb(state: CreatureHealerState, index: number, orb: Cap
 
 /**
  * Every deposited creature heals passively once per twenty seconds. Cave Gel
- * optionally adds an accelerated heal on the intervening ten-second cycles.
+ * is optional fuel: one unit per wounded creature adds a one-health pulse on
+ * each intervening ten-second cycle, doubling the station's pulse frequency.
  */
 export function stepCreatureHealer(state: CreatureHealerState, deltaSeconds: number): { state: CreatureHealerState; healed: number; gelUsed: number } {
   const dt = Math.max(0, Math.min(3600, deltaSeconds));

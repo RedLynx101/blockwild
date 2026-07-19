@@ -102,6 +102,8 @@ test("Bestiary UI keeps facets, authored field depth, zoom safeguards, and expli
     "FIELD-VERIFIED CARE CLUES",
     "CAPTURE RESEARCH",
     "Prime field route",
+    "bestiary-caught-marker",
+    "has not been caught",
     "activePrimeCompletedRouteVerbs",
     "WORLDPIN WINDOW CLOSED",
     "ECHO FORM",
@@ -113,6 +115,7 @@ test("Bestiary UI keeps facets, authored field depth, zoom safeguards, and expli
     ":focus-visible",
     "overflow: hidden",
     ".bestiary-prime-route",
+    ".bestiary-caught-marker.caught",
     "@media (prefers-reduced-motion: reduce)",
   ]) assert.ok(css.includes(marker), marker);
 });

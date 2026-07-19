@@ -957,6 +957,7 @@ export function itemHoverText(slot: InventorySlot | null, fallback = "Empty slot
   const details = [inventorySlotDisplayName(slot)];
   if (definition?.food) details.push(`Food +${definition.food}`);
   if (definition?.damage) details.push(`${definition.damage} attack damage`);
+  if (slot.item === Item.CaveGel) details.push("Optional Healing Station fuel: each unit powers one extra 1-health pulse; also used in alchemy");
   const legendary = legendaryContractForItem(slot.item);
   if (legendary) details.push(`Legendary · ${legendary.infiniteDurability ? "Infinite durability" : `${slot.durability ?? definition?.maxDurability} durability`} · ${legendary.mechanic}`);
   else if (slot.durability !== undefined) details.push(`${slot.durability} durability`);
@@ -2916,7 +2917,7 @@ export default function VoxelGame() {
   const renderOrbStationPanel = (machine: "orb-rack" | "healing-station", source: OrbRackHudState | HealingStationHudState | null | undefined, audit = false) => {
     const healing = machine === "healing-station";
     const healer = healing ? source as HealingStationHudState | null | undefined : null;
-    const slots = Array.from({ length: 4 }, (_, index) => source?.slots?.[index] ?? null);
+    const slots = Array.from({ length: healing ? 4 : 8 }, (_, index) => source?.slots?.[index] ?? null);
     const gelUnits = boundedInteger(healer?.gelUnits, 0, 64);
     const title = healing ? "Healing Station" : "Capture Orb Rack";
     const titleId = healing ? "healing-station-title" : "orb-rack-title";
@@ -2924,10 +2925,24 @@ export default function VoxelGame() {
       <section className={`menu-overlay inventory-overlay workstation-overlay orb-station-overlay ${healing ? "healing-station-overlay" : "orb-rack-overlay"} ${audit ? "workstation-audit-overlay" : ""}`} aria-labelledby={titleId} onPointerMove={trackCursor}>
         <div className={`mc-window workstation-window orb-station-window ${healing ? "healing-station-window" : "orb-rack-window"}`}>
           <header className="mc-window-header workstation-header">
-            <div><span className="panel-eyebrow">{healing ? `RESTORATIVE FIELD LAB · ${gelUnits}/64 CAVE GEL` : "WAYKEEPER DISPLAY · FOUR PRESERVED SPECIMENS"}</span><h2 id={titleId}>{title}</h2></div>
+            <div><span className="panel-eyebrow">{healing ? `RESTORATIVE FIELD LAB · ${gelUnits}/64 CAVE GEL` : "WAYKEEPER DISPLAY · EIGHT PRESERVED SPECIMENS"}</span><h2 id={titleId}>{title}</h2></div>
             {!audit && <button type="button" className="panel-close" onClick={resume} aria-label={`Close ${title.toLocaleLowerCase()}`}>×</button>}
           </header>
-          {healing && <div className="healing-gel-status" aria-label={`${gelUnits} of 64 Cave Gel units`}><span><i style={{ width: `${gelUnits / 64 * 100}%` }} /></span><div><small>RESTORATIVE RESERVE</small><strong>{gelUnits ? `${gelUnits} Cave Gel ready` : "Add Cave Gel to begin healing"}</strong></div></div>}
+          {healing && <div className="healing-gel-status" aria-label={`${gelUnits} of 64 Cave Gel units`}>
+            <button
+              type="button"
+              className="healing-gel-slot mc-slot"
+              aria-label={`${gelUnits} Cave Gel in Healing Station. Click with Cave Gel to load it; click without a held item to withdraw it.`}
+              title="Load Cave Gel here. Left-click an occupied reserve to take the stack, right-click to take one, or shift-click to move it to your pack."
+              onClick={(event) => workstationClick("healing-station", -1, "left", event.shiftKey)}
+              onContextMenu={(event) => { event.preventDefault(); workstationClick("healing-station", -1, "right", event.shiftKey); }}
+            >
+              <ItemIcon item={Item.CaveGel} small />
+              {gelUnits > 0 && <span className="item-count">{gelUnits}</span>}
+            </button>
+            <span className="healing-gel-meter" aria-hidden="true"><i style={{ width: `${gelUnits / 64 * 100}%` }} /></span>
+            <div><small>CAVE GEL INPUT · OPTIONAL</small><strong>{gelUnits ? `${gelUnits} accelerated pulses stored` : "Healing still works without fuel"}</strong><p>Orbs recover 1 health every 20 seconds for free. Each Cave Gel powers one extra 1-health pulse for one wounded orb between those free pulses.</p></div>
+          </div>}
           <div className="orb-specimen-grid">
             {slots.map((slot, index) => {
               const specimen = captureOrbUiState(slot);
@@ -4209,7 +4224,8 @@ export default function VoxelGame() {
                     const progress = hud.bestiary[kind];
                     const observation = bestiaryObservation(definition, progress);
                     const completion = bestiaryEntryCompletion(definition, progress);
-                    return <button type="button" key={kind} className={selectedBestiary === kind ? "active" : ""} aria-current={selectedBestiary === kind ? "true" : undefined} onClick={() => setSelectedBestiary(kind)}><span className="bestiary-icon-progress" style={{ "--entry-progress": `${completion}%` } as CSSProperties} title={`${completion}% field notes complete`}><CreaturePortrait kind={kind} seen={progress.seen} mini /><i>{completion}</i></span><span className="bestiary-list-copy"><strong>{progress.seen ? definition.name : "Unknown Creature"}</strong><small>{progress.seen ? `${definition.temperament} · ${observation}` : undiscoveredHabitatHint(definition)}</small></span><i className={`temperament-dot temperament-${definition.temperament.toLowerCase()}`} aria-hidden="true" /></button>;
+                    const captured = progress.captures > 0;
+                    return <button type="button" key={kind} className={selectedBestiary === kind ? "active" : ""} aria-current={selectedBestiary === kind ? "true" : undefined} onClick={() => setSelectedBestiary(kind)}><span className="bestiary-icon-progress" style={{ "--entry-progress": `${completion}%` } as CSSProperties} title={`${completion}% field notes complete`}><CreaturePortrait kind={kind} seen={progress.seen} mini /><i>{completion}</i>{definition.sentient !== true && <b className={`bestiary-caught-marker ${captured ? "caught" : "uncaught"}`} aria-label={captured ? `${definition.name} has been caught` : `${definition.name} has not been caught`} title={captured ? `Caught · ${progress.captures} recorded` : "Not caught yet"}>{captured ? "✓" : "○"}</b>}</span><span className="bestiary-list-copy"><strong>{progress.seen ? definition.name : "Unknown Creature"}</strong><small>{progress.seen ? `${definition.temperament} · ${observation}` : undiscoveredHabitatHint(definition)}</small></span><i className={`temperament-dot temperament-${definition.temperament.toLowerCase()}`} aria-hidden="true" /></button>;
                   })}
                 </nav>
                 <article className={`bestiary-detail ${bestiaryProgress.seen ? "seen" : "unknown"}`} data-tab={bestiaryPageTab}>
@@ -4416,6 +4432,10 @@ export default function VoxelGame() {
           workstationAuditOrb("peelop", "Pip", MOB_DEFS.peelop.health, MOB_DEFS.peelop.health),
           workstationAuditOrb("emberjay", "Cinder", 3, MOB_DEFS.emberjay.health),
           { item: Item.CaptureOrb, count: 1, metadata: { captureOrb: JSON.stringify({ schema: 1, orbId: "audit-empty", capturedAt: 0, creature: null }) } },
+          null,
+          workstationAuditOrb("petalfox", "Clover", MOB_DEFS.petalfox.health, MOB_DEFS.petalfox.health),
+          workstationAuditOrb("puddlehopper", "Pipkin", 2, MOB_DEFS.puddlehopper.health),
+          null,
           null,
         ],
       }, true)}

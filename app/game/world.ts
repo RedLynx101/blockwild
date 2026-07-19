@@ -5580,24 +5580,36 @@ export class ChunkWorld {
           const environment = shadeAt(lx, y, lz);
           addTexturedCuboid(bucket, lx - 0.47, y - 0.48, lz - 0.38, lx + 0.47, y - 0.34, lz + 0.38, definition.side, definition.top, definition.bottom, tint, environment);
           for (const x of [lx - 0.4, lx + 0.31]) addTexturedCuboid(bucket, x, y - 0.34, lz - 0.11, x + 0.09, y + 0.42, lz + 0.11, definition.side, definition.top, definition.bottom, tint, environment);
-          for (const railY of [y - 0.08, y + 0.25]) addTexturedCuboid(bucket, lx - 0.35, railY - 0.045, lz - 0.09, lx + 0.35, railY + 0.045, lz + 0.09, definition.side, definition.top, definition.bottom, tint, environment);
+          for (const railY of [y - 0.17, y + 0.18]) addTexturedCuboid(bucket, lx - 0.38, railY - 0.045, lz - 0.13, lx + 0.38, railY + 0.045, lz + 0.13, definition.side, definition.top, definition.bottom, tint, environment);
+          addTexturedCuboid(bucket, lx - 0.43, y + 0.38, lz - 0.14, lx + 0.43, y + 0.46, lz + 0.14, definition.side, definition.top, definition.bottom, tint, environment);
           // Empty cradles are part of the chunk mesh; Capture Orbs themselves
           // are stateful engine visuals and appear only for occupied slots.
-          for (const socketX of [lx - 0.27, lx - 0.09, lx + 0.09, lx + 0.27]) {
-            addTexturedCuboid(bucket, socketX - 0.065, y + 0.285, lz - 0.09, socketX + 0.065, y + 0.32, lz + 0.09, definition.side, definition.top, definition.bottom, tint, environment);
-            addTexturedCuboid(bucket, socketX - 0.075, y + 0.31, lz - 0.1, socketX - 0.045, y + 0.365, lz + 0.1, definition.side, definition.top, definition.bottom, tint, environment);
-            addTexturedCuboid(bucket, socketX + 0.045, y + 0.31, lz - 0.1, socketX + 0.075, y + 0.365, lz + 0.1, definition.side, definition.top, definition.bottom, tint, environment);
+          for (const socketY of [y - 0.1, y + 0.25]) for (const socketX of [lx - 0.27, lx - 0.09, lx + 0.09, lx + 0.27]) {
+            addTexturedCuboid(bucket, socketX - 0.065, socketY - 0.025, lz - 0.11, socketX + 0.065, socketY + 0.01, lz + 0.11, definition.side, definition.top, definition.bottom, tint, environment);
+            addTexturedCuboid(bucket, socketX - 0.075, socketY, lz - 0.12, socketX - 0.045, socketY + 0.055, lz + 0.12, definition.side, definition.top, definition.bottom, tint, environment);
+            addTexturedCuboid(bucket, socketX + 0.045, socketY, lz - 0.12, socketX + 0.075, socketY + 0.055, lz + 0.12, definition.side, definition.top, definition.bottom, tint, environment);
           }
           continue;
         }
         if (definition.shape === "orb-healer") {
           const environment = shadeAt(lx, y, lz);
           addTexturedCuboid(bucket, lx - 0.48, y - 0.48, lz - 0.48, lx + 0.48, y - 0.3, lz + 0.48, definition.side, definition.top, definition.bottom, tint, environment);
-          for (const [dx, dz] of [[-0.4, -0.4], [0.31, -0.4], [-0.4, 0.31], [0.31, 0.31]] as Array<[number, number]>) {
-            addTexturedCuboid(bucket, lx + dx, y - 0.3, lz + dz, lx + dx + 0.09, y + 0.36, lz + dz + 0.09, definition.side, definition.top, definition.bottom, tint, environment);
+          addTexturedCuboid(bucket, lx - 0.42, y - 0.3, lz - 0.42, lx + 0.42, y + 0.06, lz + 0.42, definition.side, definition.top, definition.bottom, tint, environment);
+          // A low basin floor and four raised rim pieces make the top visibly
+          // concave while leaving the four dynamic orb sockets unobstructed.
+          addTexturedCuboid(bucket, lx - 0.34, y + 0.06, lz - 0.32, lx + 0.34, y + 0.1, lz + 0.32, definition.side, definition.top, definition.bottom, [0.76, 0.9, 0.86], environment);
+          addTexturedCuboid(bucket, lx - 0.46, y + 0.06, lz - 0.46, lx + 0.46, y + 0.2, lz - 0.34, definition.side, definition.top, definition.bottom, tint, environment);
+          addTexturedCuboid(bucket, lx - 0.46, y + 0.06, lz + 0.34, lx + 0.46, y + 0.2, lz + 0.46, definition.side, definition.top, definition.bottom, tint, environment);
+          addTexturedCuboid(bucket, lx - 0.46, y + 0.06, lz - 0.34, lx - 0.34, y + 0.2, lz + 0.34, definition.side, definition.top, definition.bottom, tint, environment);
+          addTexturedCuboid(bucket, lx + 0.34, y + 0.06, lz - 0.34, lx + 0.46, y + 0.2, lz + 0.34, definition.side, definition.top, definition.bottom, tint, environment);
+          for (const [dx, dz] of [[-0.23, -0.22], [0.23, -0.22], [-0.23, 0.22], [0.23, 0.22]] as Array<[number, number]>) {
+            addTexturedCuboid(bucket, lx + dx - 0.08, y + 0.085, lz + dz - 0.08, lx + dx + 0.08, y + 0.12, lz + dz + 0.08, definition.side, definition.top, definition.bottom, [0.58, 0.76, 0.71], environment);
           }
-          addTexturedCuboid(buckets.emissive, lx - 0.28, y - 0.25, lz - 0.28, lx + 0.28, y + 0.28, lz + 0.28, 95, 95, 95, [1, 1, 1], 1);
-          addTexturedCuboid(bucket, lx - 0.42, y + 0.3, lz - 0.42, lx + 0.42, y + 0.42, lz + 0.42, definition.side, definition.top, definition.bottom, tint, environment);
+          // Static frame for the state-driven Cave Gel reservoir.
+          addTexturedCuboid(bucket, lx - 0.3, y - 0.27, lz - 0.485, lx + 0.3, y - 0.21, lz - 0.43, definition.side, definition.top, definition.bottom, tint, environment);
+          addTexturedCuboid(bucket, lx - 0.3, y - 0.05, lz - 0.485, lx + 0.3, y + 0.01, lz - 0.43, definition.side, definition.top, definition.bottom, tint, environment);
+          addTexturedCuboid(bucket, lx - 0.3, y - 0.21, lz - 0.485, lx - 0.25, y - 0.05, lz - 0.43, definition.side, definition.top, definition.bottom, tint, environment);
+          addTexturedCuboid(bucket, lx + 0.25, y - 0.21, lz - 0.485, lx + 0.3, y - 0.05, lz - 0.43, definition.side, definition.top, definition.bottom, tint, environment);
           continue;
         }
         if (definition.shape === "cartography") {

@@ -662,6 +662,7 @@ import {
   CAPTURE_ORB_RACK_SIZE,
   CREATURE_HEAL_INTERVAL_SECONDS,
   CREATURE_HEALER_GEL_CAP,
+  CREATURE_HEALER_SIZE,
   captureIntoOrb,
   captureOrbFromInventorySlot,
   captureOrbInventorySlot,
@@ -10726,6 +10727,7 @@ export class VoxelEngine {
         slot.count -= moved;
         if (slot.count <= 0) this.inventory[index] = null;
         this.audio.play("craft");
+        this.syncOrbRackVisuals(true);
         this.saveSoon();
         this.emitHud(true);
         return;
@@ -10744,6 +10746,7 @@ export class VoxelEngine {
         const target = station?.slots.findIndex((entry) => !entry) ?? -1;
         if (!station || target < 0) { this.events.onToast("The Healing Station is full."); return; }
         this.healingStations.set(this.activeHealingStationKey!, setHealerOrb(station, target, orb));
+        this.syncOrbRackVisuals(true);
       }
       slot.count -= 1;
       if (slot.count <= 0) this.inventory[index] = null;
@@ -11423,23 +11426,45 @@ export class VoxelEngine {
   }
 
   orbStationMachineClick(machine: "orb-rack" | "healing-station", index: number, button: "left" | "right", shift: boolean) {
-    if (index < 0 || index >= CAPTURE_ORB_RACK_SIZE) return;
     const key = machine === "orb-rack" ? this.activeOrbRackKey : this.activeHealingStationKey;
     if (!key) return;
     const rack = machine === "orb-rack" ? this.orbRacks.get(key) : this.healingStations.get(key);
     if (!rack) return;
-    if (machine === "healing-station" && this.cursor?.item === Item.CaveGel) {
+
+    // The healer's gel tank is an explicit pseudo-slot at -1. It behaves like
+    // a normal reversible inventory slot instead of hiding fuel insertion on
+    // top of the four unrelated orb cards.
+    if (machine === "healing-station" && index === -1) {
       const healer = rack as CreatureHealerState;
-      const moved = Math.min(button === "right" ? 1 : this.cursor.count, CREATURE_HEALER_GEL_CAP - healer.gelUnits);
-      if (moved <= 0) return;
-      this.healingStations.set(key, { ...healer, gelUnits: healer.gelUnits + moved });
-      this.cursor.count -= moved;
-      if (this.cursor.count <= 0) this.cursor = null;
-      this.audio.play("craft");
+      let moved = 0;
+      if (this.cursor?.item === Item.CaveGel) {
+        moved = Math.min(button === "right" ? 1 : this.cursor.count, CREATURE_HEALER_GEL_CAP - healer.gelUnits);
+        if (moved <= 0) { this.events.onToast("The healing station's Cave Gel reserve is full."); return; }
+        this.cursor.count -= moved;
+        if (this.cursor.count <= 0) this.cursor = null;
+        this.healingStations.set(key, { ...healer, gelUnits: healer.gelUnits + moved });
+        this.audio.play("craft");
+      } else if (this.cursor) {
+        this.events.onToast("This reservoir accepts Cave Gel. The four numbered sockets accept Capture Orbs.");
+        return;
+      } else if (healer.gelUnits > 0) {
+        if (shift) {
+          moved = healer.gelUnits - this.addItem(Item.CaveGel, healer.gelUnits, undefined, MAIN_THEN_HOTBAR);
+        } else {
+          moved = button === "right" ? 1 : Math.min(healer.gelUnits, maxStack(Item.CaveGel));
+          this.cursor = { item: Item.CaveGel, count: moved };
+        }
+        if (moved <= 0) { this.events.onToast("Make room in your pack before withdrawing Cave Gel."); return; }
+        this.healingStations.set(key, { ...healer, gelUnits: healer.gelUnits - moved });
+        this.audio.play("pickup");
+      } else return;
+      this.syncOrbRackVisuals(true);
       this.saveSoon();
       this.emitHud(true);
       return;
     }
+    const capacity = machine === "orb-rack" ? CAPTURE_ORB_RACK_SIZE : CREATURE_HEALER_SIZE;
+    if (index < 0 || index >= capacity) return;
     const existing = rack.slots[index] ?? null;
     if (shift && existing) {
       const slot = captureOrbInventorySlot(existing);
@@ -11448,14 +11473,20 @@ export class VoxelEngine {
         this.orbRacks.set(key, setRackOrb(rack as OrbRackState, index, null));
         this.syncOrbRackVisuals(true);
       }
-      else this.healingStations.set(key, setHealerOrb(rack as CreatureHealerState, index, null));
+      else {
+        this.healingStations.set(key, setHealerOrb(rack as CreatureHealerState, index, null));
+        this.syncOrbRackVisuals(true);
+      }
     } else if (!this.cursor && existing) {
       this.cursor = captureOrbInventorySlot(existing);
       if (machine === "orb-rack") {
         this.orbRacks.set(key, setRackOrb(rack as OrbRackState, index, null));
         this.syncOrbRackVisuals(true);
       }
-      else this.healingStations.set(key, setHealerOrb(rack as CreatureHealerState, index, null));
+      else {
+        this.healingStations.set(key, setHealerOrb(rack as CreatureHealerState, index, null));
+        this.syncOrbRackVisuals(true);
+      }
     } else if (this.cursor) {
       const incoming = captureOrbUnitFromInventorySlot(this.cursor);
       if (!incoming) { this.events.onToast("This slot accepts one Waykeeper Capture Orb."); return; }
@@ -11473,7 +11504,10 @@ export class VoxelEngine {
         this.orbRacks.set(key, setRackOrb(rack as OrbRackState, index, incoming));
         this.syncOrbRackVisuals(true);
       }
-      else this.healingStations.set(key, setHealerOrb(rack as CreatureHealerState, index, incoming));
+      else {
+        this.healingStations.set(key, setHealerOrb(rack as CreatureHealerState, index, incoming));
+        this.syncOrbRackVisuals(true);
+      }
     } else return;
     this.audio.play("ui");
     this.saveSoon();
@@ -15187,7 +15221,10 @@ export class VoxelEngine {
     if (type === BlockId.Apiary) this.apiaries.set(placedKey, createEmptyApiaryBlock());
     if (type === BlockId.CaptureOrbRack) this.orbRacks.set(placedKey, createOrbRack());
     if (type === BlockId.CaptureOrbRack) this.syncOrbRackVisuals(true);
-    if (type === BlockId.CreatureHealer) this.healingStations.set(placedKey, createCreatureHealer());
+    if (type === BlockId.CreatureHealer) {
+      this.healingStations.set(placedKey, createCreatureHealer());
+      this.syncOrbRackVisuals(true);
+    }
     if (type === BlockId.FieldPerch) this.fieldPerches.set(placedKey, createFieldPerchState());
     if (type === BlockId.AlchemyStand) this.alchemyStands.set(placedKey, createAlchemyStand());
     if (type === BlockId.Distillery) this.distilleries.set(placedKey, createDistillery());
@@ -15462,6 +15499,7 @@ export class VoxelEngine {
       }
       this.healingStations.delete(key);
       this.persistentMachineLastStep.delete(key);
+      this.syncOrbRackVisuals(true);
     }
     if (type === BlockId.FieldPerch) {
       const state = this.fieldPerches.get(key);
@@ -15630,6 +15668,7 @@ export class VoxelEngine {
       }
       this.healingStations.delete(key);
       this.persistentMachineLastStep.delete(key);
+      this.syncOrbRackVisuals(true);
     }
     if (type === BlockId.FieldPerch) {
       const state = this.fieldPerches.get(key);
@@ -19488,54 +19527,98 @@ export class VoxelEngine {
     }
   }
 
-  createOrbRackVisual(key: string, state: OrbRackState) {
+  createCaptureOrbDisplayVisual(orb: CaptureOrb, index: number) {
+    const color = orb.creature ? MOB_DEFS[orb.creature.kind].colors[0] : 0x9bded9;
+    const group = new THREE.Group();
+    group.name = `capture-orb-display-${index}`;
+    const shell = new THREE.Mesh(
+      new THREE.DodecahedronGeometry(0.07, 0),
+      new THREE.MeshLambertMaterial({ color, emissive: orb.creature ? new THREE.Color(color).multiplyScalar(0.14) : new THREE.Color(0x132e30) }),
+    );
+    shell.name = `capture-orb-shell-${index}`;
+    group.add(shell);
+    for (const [name, rotation] of [
+      ["equator", [Math.PI / 2, 0, 0]],
+      ["meridian", [0, Math.PI / 2, 0]],
+    ] as const) {
+      const band = new THREE.Mesh(new THREE.TorusGeometry(0.071, 0.009, 4, 12), new THREE.MeshLambertMaterial({ color: 0x574d52 }));
+      band.name = `capture-orb-${name}-${index}`;
+      band.rotation.set(rotation[0], rotation[1], rotation[2]);
+      group.add(band);
+    }
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.025, 0.04), new THREE.MeshLambertMaterial({ color: 0xd6b45b }));
+    cap.name = `capture-orb-cap-${index}`;
+    cap.position.y = 0.078;
+    group.add(cap);
+    const rune = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.028, 0.012), new THREE.MeshBasicMaterial({ color: orb.creature ? 0xf6fff4 : 0xc8fff5 }));
+    rune.name = `capture-orb-rune-${index}`;
+    rune.position.z = -0.072;
+    rune.rotation.z = Math.PI / 4;
+    group.add(rune);
+    return group;
+  }
+
+  createOrbStationVisual(key: string, state: OrbRackState | CreatureHealerState, machine: "orb-rack" | "healing-station") {
     const position = blockPositionFromKey(key);
     const group = new THREE.Group();
-    group.name = `orb-rack-contents:${key}`;
+    group.name = `${machine}-contents:${key}`;
     if (!position) return group;
     group.position.set(position.x, position.y, position.z);
-    const offsets = [-0.27, -0.09, 0.09, 0.27];
+    const offsets = machine === "orb-rack"
+      ? [
+        [-0.27, -0.055, 0], [-0.09, -0.055, 0], [0.09, -0.055, 0], [0.27, -0.055, 0],
+        [-0.27, 0.295, 0], [-0.09, 0.295, 0], [0.09, 0.295, 0], [0.27, 0.295, 0],
+      ] as const
+      : [
+        [-0.23, 0.22, -0.22], [0.23, 0.22, -0.22], [-0.23, 0.22, 0.22], [0.23, 0.22, 0.22],
+      ] as const;
     state.slots.forEach((orb, index) => {
       if (!orb || index >= offsets.length) return;
-      const color = orb.creature ? MOB_DEFS[orb.creature.kind].colors[0] : 0x9bded9;
-      const shell = new THREE.Mesh(
-        new THREE.DodecahedronGeometry(0.07, 0),
-        new THREE.MeshLambertMaterial({ color, emissive: orb.creature ? new THREE.Color(color).multiplyScalar(0.14) : new THREE.Color(0x132e30) }),
-      );
-      shell.name = `rack-orb-${index}`;
-      shell.position.set(offsets[index], 0.405, 0);
-      const band = new THREE.Mesh(new THREE.TorusGeometry(0.071, 0.011, 4, 12), new THREE.MeshLambertMaterial({ color: 0x574d52 }));
-      band.rotation.x = Math.PI / 2;
-      shell.add(band);
-      if (orb.creature) {
-        const core = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.035, 0.075), new THREE.MeshBasicMaterial({ color: 0xf6fff4 }));
-        shell.add(core);
-      }
-      group.add(shell);
+      const orbVisual = this.createCaptureOrbDisplayVisual(orb, index);
+      const offset = offsets[index];
+      orbVisual.position.set(offset[0], offset[1], offset[2]);
+      group.add(orbVisual);
     });
+    if (machine === "healing-station") {
+      const gelUnits = (state as CreatureHealerState).gelUnits;
+      if (gelUnits > 0) {
+        const fillRatio = gelUnits / CREATURE_HEALER_GEL_CAP;
+        const gel = new THREE.Mesh(
+          new THREE.BoxGeometry(0.48, Math.max(0.025, 0.14 * fillRatio), 0.025),
+          new THREE.MeshBasicMaterial({ color: 0x70c99d, transparent: true, opacity: 0.62 + fillRatio * 0.25 }),
+        );
+        gel.name = "healing-station-cave-gel-reservoir";
+        gel.position.set(0, -0.19 + 0.07 * fillRatio, -0.475);
+        group.add(gel);
+      }
+    }
     return group;
   }
 
   syncOrbRackVisuals(force = false, dt = 0) {
     // Focused machine tests and save-repair paths can invoke rack mutations on
     // a prototype-only engine before the world/scene registries exist.
-    if (!this.world || !this.exhibitGroup || !this.orbRacks || !this.orbRackVisuals) return;
+    if (!this.world || !this.exhibitGroup || !this.orbRacks || !this.healingStations || !this.orbRackVisuals) return;
     this.orbRackVisualTimer -= dt;
     if (!force && this.orbRackVisualTimer > 0) return;
     this.orbRackVisualTimer = 0.45;
     const live = new Set<string>();
-    for (const [key, state] of this.orbRacks) {
+    const stations = [
+      ...[...this.orbRacks.entries()].map(([key, state]) => ({ key, state, machine: "orb-rack" as const, block: BlockId.CaptureOrbRack })),
+      ...[...this.healingStations.entries()].map(([key, state]) => ({ key, state, machine: "healing-station" as const, block: BlockId.CreatureHealer })),
+    ];
+    for (const { key, state, machine, block } of stations) {
       const position = blockPositionFromKey(key);
-      if (!position || this.world.getBlock(position.x, position.y, position.z) !== BlockId.CaptureOrbRack) continue;
+      if (!position || this.world.getBlock(position.x, position.y, position.z) !== block) continue;
       live.add(key);
-      const occupancySignature = orbRackOccupancySignature(state);
+      const occupancySignature = `${machine}|${orbRackOccupancySignature(state)}|gel:${machine === "healing-station" ? state.gelUnits : 0}`;
       const previous = this.orbRackVisuals.get(key);
       if (previous?.occupancySignature === occupancySignature) continue;
       if (previous) {
         this.exhibitGroup.remove(previous.group);
         this.disposeObject(previous.group);
       }
-      const group = this.createOrbRackVisual(key, state);
+      const group = this.createOrbStationVisual(key, state, machine);
       this.exhibitGroup.add(group);
       this.orbRackVisuals.set(key, { group, occupancySignature });
     }
