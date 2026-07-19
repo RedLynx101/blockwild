@@ -175,6 +175,8 @@ export type MobSnapshotEntry = {
   /** Bond metadata required for remote keepers to see and address their companions. */
   ownerId?: string | null;
   command?: string | null;
+  followDistance?: number | "dynamic";
+  stance?: "passive" | "defensive" | "offensive";
   name?: string;
   attunedOrbId?: string | null;
   /** Host-owned lead attachment. Unfenced leads follow this keeper, not the host process. */

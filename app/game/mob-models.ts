@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { createAdventureMobVisual } from "./adventure-models";
+import { applyAdventureMobPose, createAdventureMobVisual } from "./adventure-models";
 import { applyLivingBestiaryPose, createLivingBestiaryMobVisual, LIVING_BESTIARY_VISUAL_KINDS, type LivingBestiaryVisualKind } from "./living-bestiary-models";
 import {
   ATLANTIAN_TRIDENT_CONTRACT,
@@ -4807,8 +4807,10 @@ export function applyCompanionPose(
   const tailRoot = visual.getObjectByName(`${companionKind}-tail-root-pivot`);
   const tailMid = visual.getObjectByName(`${companionKind}-tail-mid-pivot`);
   const tailTip = visual.getObjectByName(`${companionKind}-tail-tip-pivot`);
-  const wagRate = hound ? 4.2 + travel * 5.2 : 1.35 + travel * 2.1;
-  const wag = Math.sin(time * wagRate) * (hound ? 0.14 + travel * 0.28 + alert * 0.12 : 0.08 + travel * 0.12);
+  // Hounds keep their cheerful resting wag, but walking adds weight rather
+  // than turning the tail into a high-frequency metronome.
+  const wagRate = hound ? 4.2 + travel * 1.15 : 1.35 + travel * 2.1;
+  const wag = Math.sin(time * wagRate) * (hound ? 0.14 + travel * 0.18 + alert * 0.1 : 0.08 + travel * 0.12);
   if (tailRoot) {
     tailRoot.rotation.x = (companionKind === "taffy-hound" ? 0.52 : companionKind === "rimecoat-hound" ? 0.35 : companionKind === "praline-cat" ? 0.48 : 0.36) + Math.cos(time * 1.8) * 0.025;
     tailRoot.rotation.y = wag;
@@ -4827,10 +4829,14 @@ export function applyWildlifePose(
   alertAmount = 0,
 ) {
   const rig = String(visual.userData.wildlifeRig ?? "");
-  if (!rig) return false;
   const time = Number.isFinite(timeSeconds) ? timeSeconds : 0;
   const travel = THREE.MathUtils.clamp(Number.isFinite(travelAmount) ? travelAmount : 0, 0, 1);
   const alert = THREE.MathUtils.clamp(Number.isFinite(alertAmount) ? alertAmount : 0, 0, 1);
+  // Living Bestiary models carry their own cached rig instead of a legacy
+  // `wildlifeRig` tag. Previously this early-return skipped every authored
+  // quadruped gait, including the Trufflehog's four articulated legs.
+  if (!rig) return applyAdventureMobPose(visual, kind, time, travel, alert)
+    || applyLivingBestiaryPose(visual, kind, time, travel, alert);
   const head = visual.getObjectByName(`${kind}-head-pivot`);
   if (head) {
     head.rotation.y = Math.sin(time * 1.35) * (0.035 + alert * 0.07);
@@ -5014,8 +5020,10 @@ export function applyWildlifePose(
       if (flipper) flipper.rotation.x = Math.sin(time * (2.4 + travel * 2.8) + (position === "front" ? 0 : Math.PI)) * (0.12 + travel * 0.2) * side;
     }
   } else if (rig === "puddlehopper") {
-    const phase = time * (3.8 + travel * 3.6);
-    const hop = Math.max(0, Math.sin(phase));
+    // A hop has a planted half-cycle and eased compression. This preserves
+    // the frog's lively character without spamming every leg each frame.
+    const phase = time * (1.55 + travel * 2.15);
+    const hop = travel > 0.04 ? Math.pow(Math.max(0, Math.sin(phase)), 1.7) : 0;
     const body = visual.getObjectByName("puddlehopper-body");
     if (body) body.scale.set(1 + hop * 0.08, 1 - hop * 0.14, 1 + hop * 0.06);
     const throat = visual.getObjectByName("puddlehopper-throat-pouch");

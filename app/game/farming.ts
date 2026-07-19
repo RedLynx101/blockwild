@@ -549,6 +549,7 @@ export function plantingResult(item: ItemCode, soil: BlockId | undefined, above:
   if (item === Item.Berry && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.MoonberryShoot, consumes: item, description: "Moonberry cutting" };
   if (item === Item.Sunberry && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.SunberryShoot, consumes: item, description: "Sunberry cutting" };
   if (item === Item.Apple && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.AppleSapling, consumes: item, description: "Wild apple pip" };
+  if (item === Item.Frostpear && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.FrostpearSapling, consumes: item, description: "Frostpear seed" };
   if (item === Item.SaltbrushSprig && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.Saltbrush, consumes: item, description: "Saltbrush cutting" };
   if (item === Item.CoastAsterPetal && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.CoastAster, consumes: item, description: "Coast aster seedhead" };
   if (item === Item.Gumdrop && LIVING_SOILS.has(soil ?? BlockId.Air)) return { block: BlockId.GumdropBush, consumes: item, description: "Gumdrop cutting" };
@@ -708,6 +709,7 @@ export function harvestPlant(block: BlockId, useScythe = false, yieldRoll = 0.5)
     };
   }
   if (block === BlockId.AppleFruit) return { replacement: BlockId.Air, drops: [{ item: Item.Apple, count: 1 }], replanted: false };
+  if (block === BlockId.FrostpearFruit) return { replacement: BlockId.Air, drops: [{ item: Item.Frostpear, count: 1 }], replanted: false };
   const cultivatedIndex = CULTIVATED_FLOWERS.indexOf(block);
   if (cultivatedIndex >= 0) {
     const flower = ORDINARY_FLOWERS[cultivatedIndex];
@@ -737,11 +739,26 @@ export type PlannedFarmBlock = Readonly<{ x: number; y: number; z: number; type:
  * block below lower canopy leaves, so players can harvest it without damaging
  * the tree. The same seed/origin always produces the same plan.
  */
-export function planAppleTree(origin: BlockPosition, seed: string | number): readonly PlannedFarmBlock[] {
-  const height = 5 + Math.floor(farmHash01(seed, origin.x, origin.y, origin.z) * 2);
+type FruitTreePalette = Readonly<{
+  log: BlockId;
+  leaves: BlockId;
+  fruit: BlockId;
+  heightBase: number;
+  seedSalt: number;
+}>;
+
+const APPLE_TREE: FruitTreePalette = Object.freeze({
+  log: BlockId.WildwoodLog, leaves: BlockId.AppleLeaves, fruit: BlockId.AppleFruit, heightBase: 5, seedSalt: 0,
+});
+const FROSTPEAR_TREE: FruitTreePalette = Object.freeze({
+  log: BlockId.PineLog, leaves: BlockId.FrostpearLeaves, fruit: BlockId.FrostpearFruit, heightBase: 6, seedSalt: 0x6f3a,
+});
+
+function planFruitTree(origin: BlockPosition, seed: string | number, palette: FruitTreePalette): readonly PlannedFarmBlock[] {
+  const height = palette.heightBase + Math.floor(farmHash01(seed, origin.x, origin.y, origin.z, palette.seedSalt) * 2);
   const blocks = new Map<string, PlannedFarmBlock>();
   const put = (x: number, y: number, z: number, type: BlockId) => blocks.set(`${x},${y},${z}`, { x, y, z, type });
-  for (let dy = 0; dy < height; dy += 1) put(origin.x, origin.y + dy, origin.z, BlockId.WildwoodLog);
+  for (let dy = 0; dy < height; dy += 1) put(origin.x, origin.y + dy, origin.z, palette.log);
 
   const canopyY = origin.y + height - 1;
   for (let dy = -1; dy <= 2; dy += 1) {
@@ -751,7 +768,7 @@ export function planAppleTree(origin: BlockPosition, seed: string | number): rea
         const edge = Math.abs(dx) + Math.abs(dz) + Math.max(0, dy);
         if (edge > 4 || (dx === 0 && dz === 0 && dy <= 0)) continue;
         if (edge === 4 && farmHash01(seed, origin.x + dx, canopyY + dy, origin.z + dz, 3) < 0.34) continue;
-        put(origin.x + dx, canopyY + dy, origin.z + dz, BlockId.AppleLeaves);
+        put(origin.x + dx, canopyY + dy, origin.z + dz, palette.leaves);
       }
     }
   }
@@ -762,13 +779,22 @@ export function planAppleTree(origin: BlockPosition, seed: string | number): rea
     const x = origin.x + dx;
     const y = canopyY - 2;
     const z = origin.z + dz;
-    if (blocks.get(`${x},${y + 1},${z}`)?.type === BlockId.AppleLeaves && !blocks.has(`${x},${y},${z}`)) fruitCandidates.push({ x, y, z });
+    if (blocks.get(`${x},${y + 1},${z}`)?.type === palette.leaves && !blocks.has(`${x},${y},${z}`)) fruitCandidates.push({ x, y, z });
   }
   fruitCandidates
     .sort((a, b) => farmHash01(seed, a.x, a.y, a.z, 9) - farmHash01(seed, b.x, b.y, b.z, 9))
     .slice(0, 2 + Math.floor(farmHash01(seed, origin.x, origin.y, origin.z, 10) * 3))
-    .forEach(({ x, y, z }) => put(x, y, z, BlockId.AppleFruit));
+    .forEach(({ x, y, z }) => put(x, y, z, palette.fruit));
   return [...blocks.values()];
+}
+
+export function planAppleTree(origin: BlockPosition, seed: string | number): readonly PlannedFarmBlock[] {
+  return planFruitTree(origin, seed, APPLE_TREE);
+}
+
+/** A taller, blue-green orchard tree authored for Frostpine clearings. */
+export function planFrostpearTree(origin: BlockPosition, seed: string | number): readonly PlannedFarmBlock[] {
+  return planFruitTree(origin, seed, FROSTPEAR_TREE);
 }
 
 /** Selects a bounded set of empty hanging-fruit positions for periodic regrowth. */
@@ -784,6 +810,22 @@ export function planAppleFruitRegrowth(
     .filter((block) => block.type === BlockId.AppleFruit)
     .filter((block) => readBlock(block.x, block.y, block.z) === BlockId.Air && readBlock(block.x, block.y + 1, block.z) === BlockId.AppleLeaves)
     .sort((a, b) => farmHash01(seed, a.x, a.y, a.z, cycle) - farmHash01(seed, b.x, b.y, b.z, cycle));
+  return candidates.slice(0, Math.max(0, Math.min(maximum, 4)));
+}
+
+/** Selects deterministic hanging Frostpear positions without disturbing its winter canopy. */
+export function planFrostpearFruitRegrowth(
+  origin: BlockPosition,
+  seed: string | number,
+  cycle: number,
+  readBlock: ReadBlock,
+  maximum = 3,
+) {
+  const tree = planFrostpearTree(origin, seed);
+  const candidates = tree
+    .filter((block) => block.type === BlockId.FrostpearFruit)
+    .filter((block) => readBlock(block.x, block.y, block.z) === BlockId.Air && readBlock(block.x, block.y + 1, block.z) === BlockId.FrostpearLeaves)
+    .sort((a, b) => farmHash01(seed, a.x, a.y, a.z, cycle + FROSTPEAR_TREE.seedSalt) - farmHash01(seed, b.x, b.y, b.z, cycle + FROSTPEAR_TREE.seedSalt));
   return candidates.slice(0, Math.max(0, Math.min(maximum, 4)));
 }
 

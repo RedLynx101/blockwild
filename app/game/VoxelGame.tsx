@@ -848,6 +848,7 @@ const INITIAL_HUD: ExtendedHudState = {
   simulationDistance: 8,
   weatherKind: "clear",
   activePet: null,
+  activeCampOrbId: null,
   mountedBoat: false,
   mountedCreature: false,
   mapKnowledge: createMapKnowledge("preview", "local"),
@@ -1827,6 +1828,7 @@ export default function VoxelGame() {
   const [bestiaryFiltersOpen, setBestiaryFiltersOpen] = useState(false);
   const [bestiaryPageTab, setBestiaryPageTab] = useState<BestiaryPageTab>("overview");
   const [campCompareOrbId, setCampCompareOrbId] = useState("");
+  const [campNameDraft, setCampNameDraft] = useState("");
   const [fieldGuideSection, setFieldGuideSection] = useState<FieldGuideSection>("creatures");
   const [selectedPlantId, setSelectedPlantId] = useState(PLANTS[0]?.id ?? "");
   const [plantFilter, setPlantFilter] = useState<"all" | PlantCategory>("all");
@@ -1979,10 +1981,10 @@ export default function VoxelGame() {
     setOverlayState(next);
   }, []);
 
-  const showToast = useCallback((message: string) => {
+  const showToast = useCallback((message: string, durationMs = 4300) => {
     setToast(message);
     window.clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = window.setTimeout(() => setToast(""), 4300);
+    toastTimerRef.current = window.setTimeout(() => setToast(""), durationMs);
   }, []);
 
   const refreshWorldCatalog = useCallback((storage = worldStorageRef.current) => {
@@ -2323,7 +2325,7 @@ export default function VoxelGame() {
     setStarted(true);
     setOverlay(null);
     engine.activate();
-    showToast("WASD move · Space jump/swim · Shift crouch · Ctrl sprint · V camera · Left harvest/attack · Right use/build · E inventory · Esc menu");
+    showToast("WASD move · Space jump/swim · Shift crouch · Ctrl sprint · V camera · Left harvest/attack · Right use/build · E inventory · Esc menu", 8500);
   };
 
   const playWorld = (worldId: string) => {
@@ -3046,8 +3048,17 @@ export default function VoxelGame() {
 
   const selectedSlot = hud.inventory[hud.selected];
   const selectedName = inventorySlotDisplayName(selectedSlot);
-  const campOrb = captureOrbFromInventorySlot(selectedSlot);
+  const campOrbs = hud.inventory.flatMap((slot) => {
+    const orb = captureOrbFromInventorySlot(slot);
+    return orb?.creature && !orb.attunement?.activeEntityId ? [orb] : [];
+  });
+  const campOrb = campOrbs.find((orb) => orb.orbId === hud.activeCampOrbId)
+    ?? captureOrbFromInventorySlot(selectedSlot)
+    ?? campOrbs[0]
+    ?? null;
   const campCreature = campOrb?.creature ?? null;
+  const campCreatureKind = campCreature?.kind;
+  const campCreatureName = campCreature?.name;
   const campProgression = campCreature?.custom.progression as unknown as CreatureProgressionV2 | undefined;
   const campCare = normalizeCreatureCareState(campCreature?.custom.creatureCare);
   const campProfile = campCreature ? creatureProfile(campCreature.kind) : null;
@@ -3055,12 +3066,12 @@ export default function VoxelGame() {
   const campEcology = campCreature ? creatureEcologyContract(campCreature.kind) : null;
   const campWork = campCreature ? normalizeCreatureWorkState(campCreature.kind, campCreature.custom.creatureWork) : null;
   const campResearch = campCreature ? hud.bestiary[campCreature.kind].research["camp-observation"] : null;
-  const campOrbs = hud.inventory.flatMap((slot) => {
-    const orb = captureOrbFromInventorySlot(slot);
-    return orb?.creature && !orb.attunement?.activeEntityId ? [orb] : [];
-  });
   const campCompareOrb = campOrbs.find((orb) => orb.orbId === campCompareOrbId && orb.orbId !== campOrb?.orbId) ?? null;
   const campCompareProgression = campCompareOrb?.creature?.custom.progression as unknown as CreatureProgressionV2 | undefined;
+  useEffect(() => {
+    setCampNameDraft(campCreatureName?.trim() || (campCreatureKind ? MOB_DEFS[campCreatureKind].name : ""));
+    setCampCompareOrbId((current) => current === campOrb?.orbId ? "" : current);
+  }, [campCreatureKind, campCreatureName, campOrb?.orbId]);
   const xpNeeded = 12 + hud.level * 6;
   const bestiarySeen = MOB_ORDER.filter((kind) => hud.bestiary[kind].seen).length;
   const bestiaryInventorySpecimens: readonly BestiarySpecimenSummary[] = campOrbs.map((orb) => ({
@@ -3480,10 +3491,10 @@ export default function VoxelGame() {
       {overlay === "new" && (
         <section className="menu-overlay" aria-labelledby="new-world-title">
           <div className="pixel-panel world-setup-panel expanded-setup-panel">
-            <span className="panel-eyebrow">THE WORLD BELOW · GENERATOR 15</span>
+            <span className="panel-eyebrow">THE WORLD BELOW · GENERATOR 16</span>
             <h2 id="new-world-title">Create a New World</h2>
             <p className="setup-intro">Every seed grows coherent regions, oceans, rivers, mountain ranges, {Object.keys(BIOME_NAMES).length} surface biomes, connected cave networks, six underground ecologies, ruins, settlements, and a worldheart sixty-four blocks below zero.</p>
-            <p className="generator-profile-note"><strong>NEW WORLDS</strong><span>Generator 15 uses broader biome cores and graph-connected caves. Existing worlds keep their original generator and terrain exactly as saved.</span></p>
+            <p className="generator-profile-note"><strong>NEW WORLDS</strong><span>Generator 16 adds living Frostpine understory and Frostpear orchards while preserving the broad biome cores and graph-connected caves. Existing worlds keep their original terrain exactly as saved.</span></p>
             <label className="field-label" htmlFor="world-name">World name</label>
             <input id="world-name" className="pixel-input world-name-input" value={worldName} maxLength={64} onChange={(event) => setWorldName(event.target.value)} />
             <label className="field-label" htmlFor="world-seed">World seed</label>
@@ -3639,10 +3650,11 @@ export default function VoxelGame() {
             <button type="button" className="panel-close" onClick={() => setOverlay("pause")} aria-label="Close Creature Camp">×</button>
             <span className="panel-eyebrow">WAYKEEPER FIELD KIT · NO EXTRA SIMULATION</span>
             <h2 id="creature-camp-title">Creature Camp</h2>
-            {!campCreature || !campOrb ? <div className="creature-camp-empty"><span aria-hidden="true">◇</span><h3>Select a filled Capture Orb</h3><p>Choose one stored creature on your hotbar, then return here to compare, care for, train, or archive that exact specimen.</p><PixelButton onClick={() => engineRef.current?.openOverlay("inventory")}>Open Inventory</PixelButton></div> : <>
+            {campOrbs.length > 0 && <label className="creature-camp-specimen-select"><span>Working specimen</span><select value={campOrb?.orbId ?? ""} onChange={(event) => engineRef.current?.selectCampCreatureOrb(event.target.value)}>{campOrbs.map((orb) => <option key={orb.orbId} value={orb.orbId}>{orb.creature?.name?.trim() || (orb.creature ? MOB_DEFS[orb.creature.kind].name : "Stored creature")}</option>)}</select><small>Camp actions stay bound to this orb even when your hotbar changes.</small></label>}
+            {!campCreature || !campOrb ? <div className="creature-camp-empty"><span aria-hidden="true">◇</span><h3>No stored creature available</h3><p>Place a filled Capture Orb anywhere in your pack, then return here to care for that exact specimen.</p><PixelButton onClick={() => engineRef.current?.openOverlay("inventory")}>Open Inventory</PixelButton></div> : <>
               <div className="creature-camp-hero">
                 <CreaturePortrait kind={campCreature.kind} seen />
-                <div><small>{MOB_DEFS[campCreature.kind].family ?? "creature"} · {MOB_DEFS[campCreature.kind].temperament}</small><h3>{campCreature.name?.trim() || MOB_DEFS[campCreature.kind].name}</h3><p>{campProgression ? `Level ${campProgression.level} · ${campProgression.bondTier} bond · ${campProgression.tactic} tactic` : "New specimen · progression record initializing"}</p><div>{campProgression?.shiny && <span>SHINY</span>}{campProgression?.rarityForm && campProgression.rarityForm !== "ordinary" && <span>{campProgression.rarityForm.toUpperCase()}</span>}{campProgression?.aptitudes.map((aptitude) => <span key={aptitude}>{aptitude.replaceAll("-", " ")}</span>)}</div></div>
+                <div><small>{MOB_DEFS[campCreature.kind].family ?? "creature"} · {MOB_DEFS[campCreature.kind].temperament}</small><h3>{campCreature.name?.trim() || MOB_DEFS[campCreature.kind].name}</h3><p>{campProgression ? `Level ${campProgression.level} · ${campProgression.bondTier} bond · ${campProgression.tactic} tactic` : "New specimen · progression record initializing"}</p><div>{campProgression?.shiny && <span>SHINY</span>}{campProgression?.rarityForm && campProgression.rarityForm !== "ordinary" && <span>{campProgression.rarityForm.toUpperCase()}</span>}{campProgression?.aptitudes.map((aptitude) => <span key={aptitude}>{aptitude.replaceAll("-", " ")}</span>)}</div><form className="creature-camp-name" onSubmit={(event) => { event.preventDefault(); engineRef.current?.renameSelectedCampCreature(campNameDraft); }}><label htmlFor="camp-creature-name">Recorded name</label><input id="camp-creature-name" value={campNameDraft} maxLength={32} onChange={(event) => setCampNameDraft(event.target.value)} /><button type="submit" disabled={!campNameDraft.trim()}>Save</button></form></div>
                 <div className="creature-camp-health"><small>HEALTH</small><strong>{Math.ceil(campCreature.health)} / {Math.ceil(campCreature.maxHealth)}</strong><i><b style={{ width: `${campCreature.health / campCreature.maxHealth * 100}%` }} /></i></div>
               </div>
               <div className="creature-camp-columns">
@@ -4151,9 +4163,9 @@ export default function VoxelGame() {
             <header className="hearthroads-panel-header mc-window-header"><div><span className="panel-eyebrow">HIRED COMPANION · YOUR FACTION</span><h2 id="follower-orders-title">Follower Orders</h2><p>{activeCharacterName} will use equipped weapons and keep formation on the road.</p></div><button className="panel-close" type="button" onClick={resume}>×</button></header>
             <div className="hearthroads-follower-orders">
               <form className="hearthroads-hireling-name" onSubmit={(event) => { event.preventDefault(); if (hearthroadsApi?.renameActiveHireling?.(hirelingNameDraft)) setHirelingNameDraft(""); }}><label htmlFor="hireling-name">Companion name</label><input id="hireling-name" className="pixel-input" value={hirelingNameDraft} onChange={(event) => setHirelingNameDraft(event.target.value)} placeholder={activeCharacterName} maxLength={28} /><button className="pixel-button secondary-button" type="submit" disabled={!hirelingNameDraft.trim()}>Rename</button></form>
-              <section><span>Combat stance</span>{["passive", "defensive", "offensive"].map((command) => <button type="button" key={command} onClick={() => hearthroadsApi?.commandActiveFollower?.(`stance:${command}`)}><strong>{command.toUpperCase()}</strong><small>{command === "passive" ? "Avoid danger" : command === "defensive" ? "Protect the group" : "Engage nearby threats"}</small></button>)}</section>
-              <section><span>Follow distance</span>{["dynamic", "2", "4", "6"].map((distance) => <button type="button" key={distance} onClick={() => hearthroadsApi?.commandActiveFollower?.(`distance:${distance}`)}><strong>{distance === "dynamic" ? "DYNAMIC" : `${distance} BLOCKS`}</strong><small>{distance === "dynamic" ? "Spreads as the party grows" : "Keep this much room"}</small></button>)}</section>
-              <section><span>Movement</span><button type="button" onClick={() => hearthroadsApi?.commandActiveFollower?.("follow")}><strong>FOLLOW</strong><small>Match your travel speed</small></button><button type="button" onClick={() => hearthroadsApi?.commandActiveFollower?.("hold")}><strong>HOLD HERE</strong><small>Guard the current position</small></button></section>
+              <section><label htmlFor="follower-stance">Combat stance</label><select id="follower-stance" value={hud.activeSentient?.stance ?? activeResident?.orders.stance ?? "defensive"} onChange={(event) => hearthroadsApi?.commandActiveFollower?.(`stance:${event.target.value}`)}><option value="passive">Passive · avoid danger</option><option value="defensive">Defensive · protect the group</option><option value="offensive">Offensive · engage threats</option></select><small>Selected: {(hud.activeSentient?.stance ?? activeResident?.orders.stance ?? "defensive").toUpperCase()}</small></section>
+              <section><label htmlFor="follower-distance">Follow distance</label><select id="follower-distance" value={String(hud.activeSentient?.followDistance ?? activeResident?.orders.followDistance ?? "dynamic")} onChange={(event) => hearthroadsApi?.commandActiveFollower?.(`distance:${event.target.value}`)}><option value="dynamic">Dynamic · party formation</option><option value="2">Close · 2 blocks</option><option value="4">Near · 4 blocks</option><option value="6">Wide · 6 blocks</option></select><small>Selected: {String(hud.activeSentient?.followDistance ?? activeResident?.orders.followDistance ?? "dynamic").toUpperCase()}</small></section>
+              <section><label htmlFor="follower-movement">Movement</label><select id="follower-movement" value={hud.activeSentient?.followCommand ?? (activeResident?.orders.follow ? "follow" : "hold")} onChange={(event) => hearthroadsApi?.commandActiveFollower?.(event.target.value)}><option value="follow">Follow · match your speed</option><option value="hold">Hold · guard this position</option></select><small>Selected: {(hud.activeSentient?.followCommand ?? (activeResident?.orders.follow ? "follow" : "hold")).toUpperCase()}</small></section>
             </div>
           </div>
         </section>

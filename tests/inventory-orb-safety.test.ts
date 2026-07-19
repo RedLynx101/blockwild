@@ -3,6 +3,7 @@ import test from "node:test";
 import { captureIntoOrb, captureOrbInventorySlot, createEmptyCaptureOrb } from "../app/game/capture-orbs.ts";
 import type { CreatureMetadata } from "../app/game/creature-cage.ts";
 import { BlockId, Item, type InventorySlot } from "../app/game/data.ts";
+import { createDigitalCreatureArchive } from "../app/game/digital-storage.ts";
 import { VoxelEngine, captureOrbUnitFromInventorySlot } from "../app/game/engine.ts";
 import {
   inventorySlotStackLimit,
@@ -93,4 +94,29 @@ test("held and hover labels show both a creature's name and species", () => {
 
 test("the Surveyor/Cartography Table routes to its dedicated illustrated icon", () => {
   assert.equal(itemIconKind(BlockId.CartographyTable), "cartography");
+});
+
+test("Creature Camp selection is orb-stable and renaming preserves every other stored specimen", () => {
+  const mallow = filledOrb("orb-mallow", "Mallow");
+  const clover = filledOrb("orb-clover", "Clover");
+  const engine = clickHarness([mallow, clover], null);
+  engine.activeCampOrbId = null;
+  engine.mobs = [];
+  engine.chests = new Map();
+  engine.boats = new Map();
+  engine.orbRacks = new Map();
+  engine.healingStations = new Map();
+  engine.digitalCreatureArchive = createDigitalCreatureArchive();
+  engine.trash = null;
+  engine.craftGrid = Array.from({ length: 9 }, () => null);
+  engine.equipment = { head: null, chest: null, legs: null, feet: null };
+  engine.events = { onToast: () => undefined } as unknown as VoxelEngine["events"];
+  engine.syncOrbRackVisuals = () => undefined;
+
+  assert.equal(engine.selectCampCreatureOrb("orb-clover"), true);
+  engine.selected = 0;
+  assert.equal(engine.renameSelectedCampCreature("Clover Bell"), true);
+  assert.match(inventorySlotDisplayName(engine.inventory[0]), /Mallow \(Peelop\)$/u);
+  assert.match(inventorySlotDisplayName(engine.inventory[1]), /Clover Bell \(Peelop\)$/u);
+  assert.equal(engine.activeCampOrbId, "orb-clover");
 });

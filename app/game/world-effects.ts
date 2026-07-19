@@ -17,6 +17,7 @@ export const LEAF_PARTICLE_COLORS: Readonly<Partial<Record<BlockId, string>>> = 
   [BlockId.BirchLeaves]: "#8bb557",
   [BlockId.BloomLeaves]: "#da8fb4",
   [BlockId.AppleLeaves]: "#5b9845",
+  [BlockId.FrostpearLeaves]: "#5b887d",
 });
 
 /**

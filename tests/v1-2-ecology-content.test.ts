@@ -41,7 +41,7 @@ const CROP_CASES = [
 ] as const;
 
 test("v1.2 homestead crops have stable IDs, complete growth loops and scythe replanting", () => {
-  assert.equal(GENERATOR_VERSION, 15);
+  assert.equal(GENERATOR_VERSION, 16);
   for (const crop of CROP_CASES) {
     assert.equal(plantingResult(crop.seed, BlockId.HydratedFarmland, BlockId.Air)?.block, crop.sprout);
     assert.equal(plantingResult(crop.seed, BlockId.Grass, BlockId.Air), null);

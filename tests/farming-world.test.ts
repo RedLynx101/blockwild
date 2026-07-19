@@ -20,6 +20,8 @@ import {
   PLANT_GROWTH_TIME_MULTIPLIER,
   planAppleFruitRegrowth,
   planAppleTree,
+  planFrostpearFruitRegrowth,
+  planFrostpearTree,
   plantingResult,
   resolveBucketAction,
   restoreLeadAnchors,
@@ -45,6 +47,7 @@ test("berries and wheat plant only on valid soil and advance through explicit st
   assert.equal(plantingResult(Item.Berry, BlockId.MeadowGrass, BlockId.Air)?.block, BlockId.MoonberryShoot);
   assert.equal(plantingResult(Item.Sunberry, BlockId.Dirt, BlockId.Air)?.block, BlockId.SunberryShoot);
   assert.equal(plantingResult(Item.Apple, BlockId.Grass, BlockId.Air)?.block, BlockId.AppleSapling);
+  assert.equal(plantingResult(Item.Frostpear, BlockId.Grass, BlockId.Air)?.block, BlockId.FrostpearSapling);
   assert.equal(plantingResult(Item.WheatSeeds, BlockId.Grass, BlockId.Air), null);
   assert.equal(plantingResult(Item.WheatSeeds, BlockId.HydratedFarmland, BlockId.Air)?.block, BlockId.WheatSprout);
   assert.equal(nextPlantStage(BlockId.WheatSprout), BlockId.WheatYoung);
@@ -158,6 +161,60 @@ test("apple-tree plans are deterministic, attractive canopies with separately ha
   for (const apple of fruit) occupied.set(`${apple.x},${apple.y},${apple.z}`, BlockId.Air);
   const regrowth = planAppleFruitRegrowth(origin, "ORCHARD", 5, (x, y, z) => occupied.get(`${x},${y},${z}`) ?? BlockId.Air, 2);
   assert.equal(regrowth.length, 2);
+});
+
+test("Frostpears form a complete cold-climate orchard and reversible nine-fruit crate family", () => {
+  const origin = { x: -12, y: 44, z: 9 };
+  const plan = planFrostpearTree(origin, "FROSTPEAR-ORCHARD");
+  assert.deepEqual(plan, planFrostpearTree(origin, "FROSTPEAR-ORCHARD"));
+  assert.ok(plan.filter((entry) => entry.type === BlockId.PineLog).length >= 6);
+  assert.ok(plan.filter((entry) => entry.type === BlockId.FrostpearLeaves).length >= 30);
+  const fruit = plan.filter((entry) => entry.type === BlockId.FrostpearFruit);
+  assert.ok(fruit.length >= 2 && fruit.length <= 4);
+  assert.deepEqual(harvestPlant(BlockId.FrostpearFruit), { replacement: BlockId.Air, drops: [{ item: Item.Frostpear, count: 1 }], replanted: false });
+  const occupied = new Map(plan.map((entry) => [`${entry.x},${entry.y},${entry.z}`, entry.type]));
+  for (const pear of fruit) occupied.set(`${pear.x},${pear.y},${pear.z}`, BlockId.Air);
+  assert.equal(planFrostpearFruitRegrowth(origin, "FROSTPEAR-ORCHARD", 3, (x, y, z) => occupied.get(`${x},${y},${z}`) ?? BlockId.Air, 2).length, 2);
+
+  const crateContracts = [
+    ["moonberry-crate", Item.Berry, BlockId.MoonberryCrate],
+    ["sunberry-crate", Item.Sunberry, BlockId.SunberryCrate],
+    ["apple-crate", Item.Apple, BlockId.AppleCrate],
+    ["frostpear-crate", Item.Frostpear, BlockId.FrostpearCrate],
+  ] as const;
+  for (const [id, item, crate] of crateContracts) {
+    const packed = RECIPES.find((recipe) => recipe.id === id)!;
+    const unpacked = RECIPES.find((recipe) => recipe.id === `${id}-open`)!;
+    assert.deepEqual(packed.pattern, Array(9).fill(item));
+    assert.deepEqual(packed.output, { item: crate, count: 1 });
+    assert.deepEqual(unpacked.output, { item, count: 9 });
+    assert.equal(ITEMS[crate].iconKind, "produce-crate");
+  }
+  assert.equal(ITEMS[BlockId.MushroomCap].iconKind, "giant-mushroom");
+});
+
+test("stacking aquatic flora connects only to its own species and keeps a distinct silhouette profile", () => {
+  const species = [
+    BlockId.RiverRibbon,
+    BlockId.ReedBloom,
+    BlockId.LumenKelp,
+    BlockId.StarCoral,
+    BlockId.AbyssBloom,
+    BlockId.Tidevine,
+    BlockId.CaveReed,
+    BlockId.LuminousAlgae,
+  ];
+  const groups = new Set<string>();
+  const profiles = new Set<string>();
+  for (const block of species) {
+    const definition = BLOCKS[block];
+    assert.ok(definition.verticalConnectGroup, `${definition.name} needs a species-specific vertical connection group`);
+    assert.ok(definition.aquaticProfile, `${definition.name} needs an authored aquatic silhouette`);
+    groups.add(definition.verticalConnectGroup!);
+    profiles.add(definition.aquaticProfile!);
+  }
+  assert.equal(groups.size, species.length, "unrelated sea plants must never visually fuse into one stem");
+  assert.ok(profiles.size >= 5, "aquatic plants need visibly different context-driven silhouettes");
 });
 
 test("buckets, connected fences, gates, leads, and their recipes expose complete deterministic contracts", () => {

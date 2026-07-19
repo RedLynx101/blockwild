@@ -512,7 +512,13 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
     inner.name = "torch-flame-inner";
     outer.userData.torchBase = outer.position.toArray();
     inner.userData.torchBase = inner.position.toArray();
+    // The arm rotates from hanging (-Y) to player-forward (-Z). Turning the
+    // torch around its local X axis keeps its shaft continuing out from the
+    // fist instead of doubling back through the forearm.
+    group.rotation.x = Math.PI;
+    group.position.set(0, -0.03, 0);
     group.userData.workingAngle = Math.PI / 2;
+    group.userData.gripPose = "forward-90";
     group.userData.offhandLight = true;
   } else if (item === Item.Berry) {
     // Keep remote/third-person Moonberries identical to the first-person
@@ -526,6 +532,12 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
     addBox([0.23, 0.22, 0.2], [0, 0.02, 0], 0xc8493e, [0.08, 0.18, 0]);
     addBox([0.045, 0.15, 0.045], [0, 0.18, 0], 0x6b4226, [0, 0, -0.08]);
     addBox([0.14, 0.035, 0.08], [0.07, 0.21, 0], 0x5f8d47, [0, 0, 0.32]);
+  } else if (item === Item.Frostpear) {
+    addBox([0.2, 0.25, 0.18], [0, -0.01, 0], 0x91c7ca, [0.04, 0.14, 0]);
+    addBox([0.14, 0.12, 0.14], [0, 0.16, 0], 0xbfe5dc, [0.04, 0.14, 0]);
+    addBox([0.04, 0.14, 0.04], [0, 0.27, 0], 0x6b4c32, [0, 0, -0.08]);
+    addBox([0.13, 0.035, 0.08], [0.07, 0.3, 0], 0x688e63, [0, 0, 0.28]);
+    group.scale.setScalar(0.95);
   } else if (item === Item.HearthberryApplePie) {
     // A low, readable wedge keeps the pastry identifiable in first-person,
     // third-person and dropped-item views without masquerading as a block.

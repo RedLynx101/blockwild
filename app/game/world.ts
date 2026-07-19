@@ -9,13 +9,43 @@ import {
   type AdventureBiome,
 } from "./adventure-content";
 import { paintBiomeSurfaceAtlasTile } from "./biome-atmosphere";
-import { BLOCKS, DEEPGEAR_BRICK_TILE, DEEPGEAR_LANTERN_TILE, DRAGON_HOARD_COIN_TILE, DRAGON_HOARD_GOLD_TILE, DRAGON_HOARD_JEWEL_TILE, LEAF_BLOCKS, RIVETED_BRASS_TILE, ROOTWEAVE_SOIL_SIDE_TILE, TORCH_BLOCKS, BlockId, archiveShelfBookCount, blockContainsWater, isWaterloggedFloraBlock, type RenderLayer } from "./data";
+import {
+  APPLE_CRATE_SIDE_TILE,
+  APPLE_CRATE_TOP_TILE,
+  BLOCKS,
+  DEEPGEAR_BRICK_TILE,
+  DEEPGEAR_LANTERN_TILE,
+  DRAGON_HOARD_COIN_TILE,
+  DRAGON_HOARD_GOLD_TILE,
+  DRAGON_HOARD_JEWEL_TILE,
+  FROSTPEAR_CRATE_SIDE_TILE,
+  FROSTPEAR_CRATE_TOP_TILE,
+  FROSTPEAR_FRUIT_TILE,
+  FROSTPEAR_LEAVES_TILE,
+  FROSTPEAR_SAPLING_TILE,
+  GIANT_MUSHROOM_GILLS_TILE,
+  GIANT_MUSHROOM_SIDE_TILE,
+  GIANT_MUSHROOM_TOP_TILE,
+  LEAF_BLOCKS,
+  MOONBERRY_CRATE_SIDE_TILE,
+  MOONBERRY_CRATE_TOP_TILE,
+  RIVETED_BRASS_TILE,
+  ROOTWEAVE_SOIL_SIDE_TILE,
+  SUNBERRY_CRATE_SIDE_TILE,
+  SUNBERRY_CRATE_TOP_TILE,
+  TORCH_BLOCKS,
+  BlockId,
+  archiveShelfBookCount,
+  blockContainsWater,
+  isWaterloggedFloraBlock,
+  type RenderLayer,
+} from "./data";
 import { CAVE_ENTRANCE_CELL_SIZE, caveEntranceAt, caveEntranceForCell, caveFeatureAt } from "./caves";
 import { doorIsOpen, doorState, doorUsesXAxis, isDoorBlock } from "./doors";
 import { DENSE_CUTOUT_LEAF_POLICY, planFullTree, planSubmergedFlora, planSyrupPondsForChunk, syrupPondColumnAt, wildPeppermintHeight, type TreeForm, type TreePlanBlock } from "./ecology";
 import { dragonLairMarkersForChunk, dragonLairPlacementsForChunk, dragonLairsIntersectingChunk, repairGeneratedTreePlan } from "./dragon-world";
 import { NPC_FACTION_IDS, normalizeEnabledFactions, type NpcFactionId } from "./factions";
-import { isRootableTreeSoil } from "./farming";
+import { isRootableTreeSoil, planFrostpearTree } from "./farming";
 import { GUILD_NPCS, compatibleGuildIdsForSettlement, planGuildHalls, type GuildHallCandidate, type GuildHallState, type GuildId } from "./guilds";
 import {
   planBiomeVegetation,
@@ -62,7 +92,7 @@ export const WORLD_HEIGHT = MAX_Y - MIN_Y + 1;
 export const SEA_LEVEL = 32;
 export const SECTION_HEIGHT = 16;
 export const SECTION_COUNT = WORLD_HEIGHT / SECTION_HEIGHT;
-export const GENERATOR_VERSION = 15;
+export const GENERATOR_VERSION = 16;
 
 export type SettlementWorldPlan = Readonly<{
   candidate: SettlementCandidate;
@@ -440,6 +470,7 @@ const GENERATED_TREE_BLOCK_SET = new Set<BlockId>([
   BlockId.SakuraLog,
   BlockId.CandywoodLog,
   BlockId.MoonboughLog,
+  BlockId.FrostpearLeaves,
 ]);
 const GENERATED_GROWTH_BLOCK_SET = new Set<BlockId>([
   BlockId.WildwoodLog,
@@ -514,6 +545,9 @@ const GENERATED_GROWTH_BLOCK_SET = new Set<BlockId>([
   BlockId.BluepodSprout,
   BlockId.BluepodYoung,
   BlockId.BluepodCrop,
+  BlockId.FrostpearSapling,
+  BlockId.FrostpearLeaves,
+  BlockId.FrostpearFruit,
 ]);
 
 export type ColumnSample = {
@@ -2098,6 +2132,99 @@ export function createBlockAtlas() {
     // replace the older generic noise without disturbing unrelated blocks.
     paintBiomeSurfaceAtlasTile(context, index, ox, oy, tile);
   }
+
+  const fillTile = (index: number, color: string) => {
+    const ox = (index % grid) * tile;
+    const oy = Math.floor(index / grid) * tile;
+    context.globalAlpha = 1;
+    context.fillStyle = color;
+    context.fillRect(ox, oy, tile, tile);
+  };
+  const crateTop = (index: number, fruit: string, highlight: string) => {
+    fillTile(index, "#8a5b35");
+    for (let offset = 0; offset < 3; offset += 1) {
+      context.fillStyle = offset === 1 ? "#c18a50" : "#5a3a25";
+      context.fillRect((index % grid) * tile + offset, Math.floor(index / grid) * tile + offset, tile - offset * 2, offset === 1 ? 1 : 1);
+      context.fillRect((index % grid) * tile + offset, Math.floor(index / grid) * tile + tile - 1 - offset, tile - offset * 2, 1);
+      context.fillRect((index % grid) * tile + offset, Math.floor(index / grid) * tile + offset, 1, tile - offset * 2);
+      context.fillRect((index % grid) * tile + tile - 1 - offset, Math.floor(index / grid) * tile + offset, 1, tile - offset * 2);
+    }
+    for (const [x, y] of [[5, 5], [9, 5], [7, 8], [11, 9], [4, 11]] as Array<[number, number]>) {
+      pixel(index, x, y, fruit); pixel(index, x + 1, y, highlight); pixel(index, x, y + 1, fruit);
+    }
+    for (const [x, y] of [[6, 4], [10, 7], [5, 10]] as Array<[number, number]>) pixel(index, x, y, "#5f843e");
+  };
+  const crateSide = (index: number, fruit: string, highlight: string, glyph: "berry" | "apple" | "pear") => {
+    fillTile(index, "#9a673c");
+    for (const y of [0, 5, 10, 15]) {
+      context.fillStyle = y % 10 === 0 ? "#5a3924" : "#c0874a";
+      context.fillRect((index % grid) * tile, Math.floor(index / grid) * tile + y, tile, 1);
+    }
+    for (const x of [1, 14]) {
+      context.fillStyle = "#62412b";
+      context.fillRect((index % grid) * tile + x, Math.floor(index / grid) * tile, 2, tile);
+      for (const y of [2, 12]) pixel(index, x, y, "#d1a15c");
+    }
+    context.fillStyle = "#e2c98d";
+    context.fillRect((index % grid) * tile + 4, Math.floor(index / grid) * tile + 5, 8, 6);
+    if (glyph === "berry") {
+      for (const [x, y] of [[6, 8], [8, 7], [9, 9]] as Array<[number, number]>) { pixel(index, x, y, fruit); pixel(index, x + 1, y, highlight); }
+    } else {
+      for (const [x, y] of glyph === "apple" ? [[7, 7], [8, 7], [7, 8], [8, 8], [7, 9], [8, 9]] : [[7, 7], [8, 7], [6, 8], [7, 8], [8, 8], [9, 8], [7, 9], [8, 9]] as Array<[number, number]>) pixel(index, x, y, fruit);
+      pixel(index, 8, 6, "#5d7f3d"); pixel(index, 9, 6, highlight);
+    }
+  };
+
+  // Giant Mooncaps now have a radial spotted crown, scalloped side and pale
+  // gills instead of borrowing the old generic magenta cube texture.
+  fillTile(GIANT_MUSHROOM_TOP_TILE, "#7f2943");
+  for (let ring = 0; ring < 7; ring += 1) {
+    const inset = ring;
+    context.strokeStyle = ring % 2 ? "#b84a62" : "#96334d";
+    context.strokeRect((GIANT_MUSHROOM_TOP_TILE % grid) * tile + inset, Math.floor(GIANT_MUSHROOM_TOP_TILE / grid) * tile + inset, tile - inset * 2, tile - inset * 2);
+  }
+  for (const [x, y, size] of [[3, 3, 2], [11, 4, 2], [6, 8, 2], [12, 11, 1], [3, 12, 2]] as Array<[number, number, number]>) {
+    for (let dx = 0; dx < size; dx += 1) for (let dy = 0; dy < size; dy += 1) pixel(GIANT_MUSHROOM_TOP_TILE, x + dx, y + dy, "#efcf9b");
+  }
+  fillTile(GIANT_MUSHROOM_SIDE_TILE, "#8f3049");
+  for (let x = 0; x < tile; x += 1) {
+    const scallop = 10 + Math.floor(Math.sin(x * Math.PI / 4) * 2);
+    for (let y = scallop; y < tile; y += 1) pixel(GIANT_MUSHROOM_SIDE_TILE, x, y, y === scallop ? "#e2b781" : "#674039");
+    if (x % 4 === 1) for (let y = 2; y < scallop - 1; y += 1) pixel(GIANT_MUSHROOM_SIDE_TILE, x, y, y % 3 ? "#a94459" : "#c06070");
+  }
+  fillTile(GIANT_MUSHROOM_GILLS_TILE, "#ead8b3");
+  for (let x = 0; x < tile; x += 1) for (let y = 0; y < tile; y += 1) {
+    const dx = x - 7.5; const dy = y - 7.5; const angle = Math.atan2(dy, dx);
+    if (Math.floor((angle + Math.PI) * 8 / Math.PI) % 2 === 0) pixel(GIANT_MUSHROOM_GILLS_TILE, x, y, "#c99c82");
+  }
+  for (let x = 5; x <= 10; x += 1) for (let y = 5; y <= 10; y += 1) pixel(GIANT_MUSHROOM_GILLS_TILE, x, y, "#8a5c50");
+
+  crateTop(MOONBERRY_CRATE_TOP_TILE, "#704395", "#b887d5");
+  crateSide(MOONBERRY_CRATE_SIDE_TILE, "#704395", "#b887d5", "berry");
+  crateTop(SUNBERRY_CRATE_TOP_TILE, "#d47d2e", "#ffd46b");
+  crateSide(SUNBERRY_CRATE_SIDE_TILE, "#d47d2e", "#ffd46b", "berry");
+  crateTop(APPLE_CRATE_TOP_TILE, "#b83f36", "#ef8064");
+  crateSide(APPLE_CRATE_SIDE_TILE, "#b83f36", "#ef8064", "apple");
+  crateTop(FROSTPEAR_CRATE_TOP_TILE, "#8bc4c7", "#d7fbef");
+  crateSide(FROSTPEAR_CRATE_SIDE_TILE, "#8bc4c7", "#d7fbef", "pear");
+
+  const clearTile = (index: number) => context.clearRect((index % grid) * tile, Math.floor(index / grid) * tile, tile, tile);
+  clearTile(FROSTPEAR_SAPLING_TILE);
+  for (let y = 5; y < 16; y += 1) pixel(FROSTPEAR_SAPLING_TILE, 7, y, y % 3 ? "#755138" : "#9b7248");
+  for (const [x, y] of [[5, 5], [9, 4], [4, 8], [10, 8], [6, 11], [9, 12]] as Array<[number, number]>) {
+    for (const [dx, dy] of [[0, 0], [1, 0], [0, 1]] as Array<[number, number]>) pixel(FROSTPEAR_SAPLING_TILE, x + dx, y + dy, dy ? "#47766b" : "#6c9d86");
+  }
+  clearTile(FROSTPEAR_LEAVES_TILE);
+  for (let x = 0; x < tile; x += 1) for (let y = 0; y < tile; y += 1) {
+    if ((x * 5 + y * 7) % 19 < 2) continue;
+    pixel(FROSTPEAR_LEAVES_TILE, x, y, (x + y) % 5 === 0 ? "#7ba495" : (x * 3 + y) % 4 === 0 ? "#355f59" : "#4b786b");
+  }
+  clearTile(FROSTPEAR_FRUIT_TILE);
+  for (let x = 5; x <= 10; x += 1) for (let y = 5; y <= 12; y += 1) {
+    const width = y < 8 ? 2 : y < 11 ? 3 : 2;
+    if (Math.abs(x - 7.5) <= width) pixel(FROSTPEAR_FRUIT_TILE, x, y, x < 7 ? "#76aeb4" : x > 9 ? "#c9eee7" : "#9bd0cf");
+  }
+  pixel(FROSTPEAR_FRUIT_TILE, 8, 3, "#6a4b32"); pixel(FROSTPEAR_FRUIT_TILE, 8, 4, "#6a4b32"); pixel(FROSTPEAR_FRUIT_TILE, 9, 3, "#6f9258");
   const texture = new THREE.CanvasTexture(canvas);
   texture.magFilter = THREE.NearestFilter;
   texture.minFilter = THREE.NearestFilter;
@@ -3264,7 +3391,19 @@ export class ChunkWorld {
           if (column.biome === BiomeId.SugarplumVale) for (let treeX = x - 6; treeX <= x + 6; treeX += 1) for (let treeZ = z - 6; treeZ <= z + 6; treeZ += 1) {
             if (syrupPondColumnAt(this.seedText, treeX, treeZ, sample, BiomeId.SugarplumVale)) treeForbiddenColumns.add(`${treeX},${treeZ}`);
           }
-          if (trunk === BlockId.PineLog) {
+          const frostpearTree = column.biome === BiomeId.Frostpine
+            && hash2(x, z, this.seed ^ 0x6f12a4b9) > 0.8;
+          if (frostpearTree) {
+            const root = { x, y: column.height + 1, z };
+            const frostpearPlan = planFrostpearTree(root, `${this.seedText}:frostpear:${x},${z}`)
+              .map((placement) => ({ x: placement.x, y: placement.y, z: placement.z, block: placement.type }));
+            queueTreePlan(repairGeneratedTreePlan({
+              plan: frostpearPlan,
+              root,
+              logBlock: BlockId.PineLog,
+              forbiddenColumns: treeForbiddenColumns,
+            }));
+          } else if (trunk === BlockId.PineLog) {
             const pinePlan: TreePlanBlock[] = [];
             for (let y = 1; y <= height; y += 1) pinePlan.push({ x, y: column.height + y, z, block: trunk });
             for (let dy = -3; dy <= 1; dy += 1) {
@@ -3337,6 +3476,13 @@ export class ChunkWorld {
       } else if (column.biome === BiomeId.SnowcapRange) {
         if (roll > 0.992) set(x, column.height + 1, z, BlockId.Dreamcap);
         else if (roll > 0.978) set(x, column.height + 1, z, BlockId.Starfern);
+      } else if (column.biome === BiomeId.Frostpine) {
+        // Frostpine should feel alive beneath the conifers: sparse edible
+        // color, hardy fern structure and a readable snowy grass floor.
+        if (roll > 0.992) set(x, column.height + 1, z, BlockId.MoonberryBushRipe);
+        else if (roll > 0.982) set(x, column.height + 1, z, BlockId.SunberryBushRipe);
+        else if (roll > 0.955) set(x, column.height + 1, z, BlockId.Starfern);
+        else if (roll > 0.88) set(x, column.height + 1, z, BlockId.TallGrass);
       } else if ([BiomeId.Meadow, BiomeId.Wildwood, BiomeId.Birchlight, BiomeId.Bloomwood, BiomeId.Savanna, BiomeId.Siltfen, BiomeId.CloudreedGlen, BiomeId.RainveilJungle, BiomeId.SakurabloomGrove, BiomeId.SugarplumVale, BiomeId.Glimmerwood].includes(column.biome)) {
         const patch = 0.72 * valueNoise2(x / 19, z / 19, this.seed ^ 0x35f1a93b) + 0.28 * valueNoise2(x / 6, z / 6, this.seed ^ 0x6c8e9cf5);
         const density = column.biome === BiomeId.Meadow ? 0.72 : column.biome === BiomeId.Bloomwood ? 0.79
@@ -5106,16 +5252,51 @@ export class ChunkWorld {
         if (definition.shape === "cross" || definition.shape === "aquatic" || definition.shape === "tall-flower") {
           let tile = definition.side;
           const environment = definition.layer === "emissive" ? Math.max(0.82, shadeAt(lx, y, lz)) : shadeAt(lx, y, lz);
-          const addFullCross = (half: number, y0: number, y1: number, shade = 1) => {
-            addQuad(bucket, [[lx - half, y0, lz - half], [lx - half, y1, lz - half], [lx + half, y1, lz + half], [lx + half, y0, lz + half]], [0.7, 0, -0.7], tile, shade, tint, 0, 0, 0, 0, environment);
-            addQuad(bucket, [[lx + half, y0, lz - half], [lx + half, y1, lz - half], [lx - half, y1, lz + half], [lx - half, y0, lz + half]], [-0.7, 0, -0.7], tile, shade * 0.92, tint, 0, 0, 0, 0, environment);
-            addQuad(bucket, [[lx - half, y0, lz], [lx - half, y1, lz], [lx + half, y1, lz], [lx + half, y0, lz]], [0, 0, -1], tile, shade * 0.96, tint, 0, 0, 0, 0, environment);
-            addQuad(bucket, [[lx, y0, lz - half], [lx, y1, lz - half], [lx, y1, lz + half], [lx, y0, lz + half]], [-1, 0, 0], tile, shade * 0.9, tint, 0, 0, 0, 0, environment);
+          const addFullCross = (half: number, y0: number, y1: number, shade = 1, offsetX = 0, offsetZ = 0) => {
+            const cx = lx + offsetX;
+            const cz = lz + offsetZ;
+            addQuad(bucket, [[cx - half, y0, cz - half], [cx - half, y1, cz - half], [cx + half, y1, cz + half], [cx + half, y0, cz + half]], [0.7, 0, -0.7], tile, shade, tint, 0, 0, 0, 0, environment);
+            addQuad(bucket, [[cx + half, y0, cz - half], [cx + half, y1, cz - half], [cx - half, y1, cz + half], [cx - half, y0, cz + half]], [-0.7, 0, -0.7], tile, shade * 0.92, tint, 0, 0, 0, 0, environment);
+            addQuad(bucket, [[cx - half, y0, cz], [cx - half, y1, cz], [cx + half, y1, cz], [cx + half, y0, cz]], [0, 0, -1], tile, shade * 0.96, tint, 0, 0, 0, 0, environment);
+            addQuad(bucket, [[cx, y0, cz - half], [cx, y1, cz - half], [cx, y1, cz + half], [cx, y0, cz + half]], [-1, 0, 0], tile, shade * 0.9, tint, 0, 0, 0, 0, environment);
           };
           if (definition.shape === "aquatic") {
-            const connectedBelow = BLOCKS[neighborAt(lx, y - 1, lz)]?.verticalConnectGroup === definition.verticalConnectGroup;
-            const connectedAbove = BLOCKS[neighborAt(lx, y + 1, lz)]?.verticalConnectGroup === definition.verticalConnectGroup;
-            addFullCross(0.47, y - (connectedBelow ? 0.57 : 0.5), y + (connectedAbove ? 0.57 : 0.5));
+            // A connection is species-specific. Adjacent kelp can overlap into
+            // one stem, but a ribbon plant can no longer fuse into coral or a
+            // cave reed merely because all three happen to be waterlogged.
+            const connectedBelow = definition.verticalConnectGroup !== undefined
+              && BLOCKS[neighborAt(lx, y - 1, lz)]?.verticalConnectGroup === definition.verticalConnectGroup;
+            const connectedAbove = definition.verticalConnectGroup !== undefined
+              && BLOCKS[neighborAt(lx, y + 1, lz)]?.verticalConnectGroup === definition.verticalConnectGroup;
+            const profile = definition.aquaticProfile ?? "reed";
+            const overlap = profile === "kelp" || profile === "ribbon" || profile === "vine" ? 0.64 : profile === "reed" ? 0.59 : 0.56;
+            const y0 = y - (connectedBelow ? overlap : 0.5);
+            const y1 = y + (connectedAbove ? overlap : 0.5);
+            const worldX = chunk.cx * CHUNK_SIZE + lx;
+            const worldZ = chunk.cz * CHUNK_SIZE + lz;
+            const lean = (hash2(worldX, worldZ, this.seed ^ (type * 7919)) - 0.5) * 0.15;
+            if (profile === "ribbon") {
+              addFullCross(0.38, y0, y1, 0.96, lean, -lean * 0.45);
+              addFullCross(0.2, y0 + 0.08, y1 - 0.04, 0.82, -lean * 0.55, lean * 0.8);
+            } else if (profile === "kelp") {
+              addFullCross(0.46, y0, y1, 1, lean * 0.35, lean);
+              addFullCross(0.25, y0 + 0.12, y1, 0.86, -lean, lean * 0.25);
+            } else if (profile === "coral") {
+              addFullCross(0.44, y0, y1 - 0.08, 1);
+              addFullCross(0.26, y0 + 0.1, y1, 0.9, lean, -lean);
+            } else if (profile === "bloom") {
+              addFullCross(0.37, y0, y1 - 0.12, 0.94, lean * 0.4, 0);
+              addFullCross(0.48, Math.max(y0, y1 - 0.46), y1, 1.04, -lean * 0.25, lean * 0.25);
+            } else if (profile === "vine") {
+              addFullCross(0.32, y0, y1, 0.95, lean, lean * 0.4);
+              addFullCross(0.16, y0 + 0.04, y1 - 0.03, 0.8, -lean * 0.7, -lean);
+            } else if (profile === "algae") {
+              addFullCross(0.45, y0, y1 - 0.14, 0.9);
+              addFullCross(0.29, y0 + 0.18, y1, 1.02, lean, -lean);
+            } else {
+              addFullCross(0.28, y0, y1, 0.96, lean * 0.3, 0);
+              addFullCross(0.14, y0 + 0.06, y1 - 0.03, 0.84, -lean * 0.5, lean);
+            }
           } else if (definition.shape === "tall-flower") {
             addFullCross(0.41, y - 0.5, y + 0.12, 0.94);
             addFullCross(0.48, y - 0.08, y + 0.58);

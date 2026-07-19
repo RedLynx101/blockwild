@@ -1,6 +1,6 @@
 # Blockwild
 
-Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.7.0 Wild Bonds & Hearthroads**.
+Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.7.1 Frostpine Fieldcraft**.
 
 The project is a real game rather than a voxel-rendering demo. You can mine, build, craft, smelt, farm, fight, collect field notes, manage several worlds, and carry those worlds between browsers with export files.
 
@@ -9,6 +9,16 @@ The project is a real game rather than a voxel-rendering demo. You can mine, bui
 ![Blockwild field guide with all 215 rendered creatures](public/creatures/blockwild-creatures.svg)
 
 The integrated creature-design pass expands the Courser family with Rimehoof, Sunscar, Mirestride, and Starbough ecological breeds plus the forge-built Deepgear Courser. It also gives all six dragon families production stage forms, rebuilds birds, pets, crabs, mosslings, foxes, harts, deer, longhorns, terrapins, and other core wildlife, and preserves one model path for gameplay, Bestiary portraits, and visual audits.
+
+## v1.7.1 Frostpine Fieldcraft
+
+Frostpine Fieldcraft fills the taiga floor with sparse grass, Starfern, Moonberry and Sunberry forage, and a naturally spawning Frostpear orchard tree whose hanging fruit can be harvested, replanted, and regrown. Moonberries, Sunberries, apples, and Frostpears each pack nine-to-one into reversible, product-painted storage crates. The Giant Mooncap now has authored spotted cap, scalloped side, and gilled underside atlas art plus a dedicated inventory silhouette.
+
+Stacked water plants now connect only to their own species and use distinct ribbon, reed, kelp, coral, bloom, vine, algae, and cave-growth profiles instead of merging into one shared column. Generator v16 applies the taiga and orchard distribution only to untouched terrain while keeping edited worlds and save identifiers intact.
+
+Creature presentation and handling are safer and calmer. Creature Camp owns an explicit, stable specimen selector; all care, gear, research, rename, and archive actions remain bound to that exact orb even when the hotbar changes. Renames propagate to deployed companions and Capture Orb labels. Puddlehopper settles between hops, Rimecoat Hound travel tails use a slower weight-appropriate cadence, Trufflehog and other Living Bestiary quadrupeds receive their gait rigs, and the 88-part Clockwork Marmot gains articulated gears, piston legs, a pressure gauge, whistle stack, winding key, and exact ground contact.
+
+Player torches use the shared ninety-degree forward tool pose. The opening control reminder remains visible for 8.5 seconds, V/Shift hints no longer cover three pinned quests, and Follower Orders uses value-preserving dropdowns with explicit selected summaries and unshadowed rename text. The release passes the 215-creature/293-block strict visual-theme audit.
 
 ## v1.7.0 Wild Bonds & Hearthroads
 

@@ -2,6 +2,16 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.7.1 - Frostpine Fieldcraft - 2026-07-19
+
+- Added sparse Frostpine Taiga undergrowth, two harvestable berry species, and naturally generated Frostpear trees with plantable fruit, authored leaves, hanging harvest blocks, and deterministic regrowth.
+- Added reversible nine-fruit Moonberry, Sunberry, apple, and Frostpear crates with product-specific atlas faces and inventory art; rebuilt Giant Mooncap top, side, gills, and icon art.
+- Split stacked aquatic flora into species-specific connection groups and authored ribbon, reed, kelp, coral, bloom, vine, algae, and cave-water silhouettes with contextual lean and overlap.
+- Reworked Creature Camp around a stable explicit specimen selector, corrected archive-slot removal, and propagated creature renames across deployed entities and Capture Orb metadata, including authoritative multiplayer Peelop inventory updates.
+- Calmed Puddlehopper and hound secondary motion, restored Living Bestiary walking rigs such as Trufflehog, and expanded Clockwork Marmot to an 88-part grounded mechanism with animated gears, pistons, gauge, core, tail, whistle stack, and winding key.
+- Moved the held torch into the shared ninety-degree tool pose, extended the opening control reminder to 8.5 seconds, separated V/Shift controls from pinned quests, and rebuilt Follower Orders as stateful dropdowns with multiplayer order replication.
+- Advanced untouched terrain to generator v16 and expanded the strict adopted-theme release audit to 215 creatures and 293 blocks without invalidating edited terrain or existing saves.
+
 ## 1.7.0 - Wild Bonds & Hearthroads - 2026-07-18
 
 - Expanded the production Bestiary from 178 to 215 creatures with 27 regular species, six regional legendaries, and four stable-lineage summoned beings. All 37 additions have explicit ecology, capture and care hooks, stats, level-and-bond move paths, rare-form rules, sound palettes, specimen history, and append-only research.

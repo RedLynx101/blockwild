@@ -46,7 +46,9 @@ function hashUnit(value: string, salt = 0) {
 }
 
 function treeBoxes(plant: PlantDefinition): ModelBox[] {
-  const trunk = colorForBlock(blockMatching(plant, /log|wood/i), BARK);
+  const trunk = plant.id === "frostpear-tree"
+    ? colorForBlock(BlockId.PineLog, BARK)
+    : colorForBlock(blockMatching(plant, /log|wood/i), BARK);
   const leaves = colorForBlock(blockMatching(plant, /leaves/i), colorForPlant(plant, "#58824d"));
   const height = 3.65 + hashUnit(plant.id, 17) * 0.85;
   const width = plant.id === "rainveil-tree" ? 0.76 : plant.id === "candywood-tree" ? 0.66 : 0.56;
@@ -73,10 +75,12 @@ function treeBoxes(plant: PlantDefinition): ModelBox[] {
     box("crown-back", "leaves", [1.75, 1.22, 1.35], [-0.08, crownY - 0.03, broad * 0.48], leaves),
     box("crown-top", "leaves", [1.8, 1.2, 1.8], [0, crownY + 0.78, 0], leaves),
   );
-  if (["bloomwood", "sakurabloom-tree", "wild-apple"].includes(plant.id)) {
-    const fruit = plant.id === "wild-apple" ? "#c84a3f" : plant.id === "sakurabloom-tree" ? "#ffd0dd" : "#ef9eb8";
-    [[-0.74, crownY - 0.52, -0.82], [0.82, crownY - 0.35, -0.62], [0.18, crownY + 0.1, -1.25]].forEach(([x, y, z], index) => {
-      result.push(box(`fruit-${index + 1}`, "fruit", [0.26, 0.3, 0.26], [x, y, z], fruit));
+  if (["bloomwood", "sakurabloom-tree", "wild-apple", "frostpear-tree"].includes(plant.id)) {
+    const fruit = plant.id === "wild-apple" ? "#c84a3f"
+      : plant.id === "frostpear-tree" ? colorForBlock(BlockId.FrostpearFruit, "#a8d6d8")
+        : plant.id === "sakurabloom-tree" ? "#ffd0dd" : "#ef9eb8";
+    [[-0.74, crownY - 0.96, -0.82], [0.82, crownY - 0.89, -0.62], [0.18, crownY - 0.84, -1.25]].forEach(([x, y, z], index) => {
+      result.push(box(`fruit-${index + 1}`, "fruit", [0.3, 0.34, 0.3], [x, y, z], fruit));
     });
   }
   return result;

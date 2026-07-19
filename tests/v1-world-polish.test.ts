@@ -44,14 +44,18 @@ test("Meadow Grass accepts saplings and wild peppermint columns remain connected
   assert.equal(BAKED_LIGHT_SOURCE_LIMIT, 1024, "dense builds should keep broad baked glow beyond the animated pool");
 });
 
-test("Dreamblossoms glow and all aquatic flora share a flush waterlogged stack contract", () => {
+test("Dreamblossoms glow and aquatic flora use flush species-specific stack contracts", () => {
   assert.equal(BLOCKS[BlockId.Dreamblossom].layer, "emissive");
   assert.equal(BLOCKS[BlockId.GiantDreamblossom].layer, "emissive");
   assert.equal(LIQUID_SURFACE_INSET, 0.09);
+  const connectionGroups = new Set<string>();
   for (const block of AQUATIC_FLORA) {
     assert.equal(BLOCKS[block].waterlogged, true, BLOCKS[block].name);
-    assert.equal(BLOCKS[block].verticalConnectGroup, "aquatic-flora", BLOCKS[block].name);
+    assert.ok(BLOCKS[block].verticalConnectGroup, BLOCKS[block].name);
+    assert.ok(BLOCKS[block].aquaticProfile, BLOCKS[block].name);
+    connectionGroups.add(BLOCKS[block].verticalConnectGroup!);
   }
+  assert.equal(connectionGroups.size, AQUATIC_FLORA.length, "different aquatic species must not visually fuse into one column");
 });
 
 test("torch targeting follows the narrow floor and directional wall silhouettes", () => {

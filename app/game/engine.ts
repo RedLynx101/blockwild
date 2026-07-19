@@ -602,6 +602,8 @@ import {
   PLANT_GROWTH_TIME_MULTIPLIER,
   planAppleFruitRegrowth,
   planAppleTree,
+  planFrostpearFruitRegrowth,
+  planFrostpearTree,
   planAquaticColumnRemoval,
   planAquaticGrowth,
   planPeppermintColumnRemoval,
@@ -1085,7 +1087,8 @@ export type HudState = {
   settlements: readonly SettlementState[];
   activeSettlementId: string | null;
   activeMerchant: MerchantState | null;
-  activeSentient?: { id: number; residentId: string | null; name: string; profession: string | null; factionId: FactionId | null; hired: boolean; followDistance: FollowDistanceSetting; nearby: boolean; guildNpcId: string | null; guildId: GuildId | null; recruitable: boolean; recruitReady: boolean } | null;
+  activeSentient?: { id: number; residentId: string | null; name: string; profession: string | null; factionId: FactionId | null; hired: boolean; stance: "passive" | "defensive" | "offensive"; followDistance: FollowDistanceSetting; followCommand: "follow" | "hold"; nearby: boolean; guildNpcId: string | null; guildId: GuildId | null; recruitable: boolean; recruitReady: boolean } | null;
+  activeCampOrbId: string | null;
   bankAccount: BankAccountState;
   stockMarket: StockMarketState;
   potionBuffs: Readonly<Record<string, number>>;
@@ -2301,6 +2304,11 @@ export function migrateSavedWorld(value: unknown): WorldSave | null {
     ...parsed,
     generatorProfile: parsed.generatorProfile === "legacy-v14" ? "legacy-v14" : "world-below-v15",
   };
+  if (parsed.generatorVersion === 15) return {
+    ...parsed,
+    generatorVersion: GENERATOR_VERSION,
+    generatorProfile: parsed.generatorProfile === "legacy-v14" ? "legacy-v14" : "world-below-v15",
+  };
   if (parsed.generatorVersion === 3 || parsed.generatorVersion === 4 || parsed.generatorVersion === 5 || parsed.generatorVersion === 6 || parsed.generatorVersion === 7 || parsed.generatorVersion === 8 || parsed.generatorVersion === 9 || parsed.generatorVersion === 10 || parsed.generatorVersion === 11 || parsed.generatorVersion === 12 || parsed.generatorVersion === 13 || parsed.generatorVersion === 14) return { ...parsed, generatorVersion: GENERATOR_VERSION, generatorProfile: "legacy-v14" };
   if (parsed.generatorVersion !== 2) return null;
   const indexOffset = (LEGACY_GENERATOR_MIN_Y - MIN_Y) * 16 * 16;
@@ -3451,6 +3459,7 @@ export class VoxelEngine {
   activeCartographyKey: string | null = null;
   activeSettlementId: string | null = null;
   activeSentient: MobEntity | null = null;
+  activeCampOrbId: string | null = null;
   activeMerchantId: string | null = null;
   fastTravelChannel: FastTravelChannel | null = null;
   damageRevision = 0;
@@ -6576,7 +6585,10 @@ export class VoxelEngine {
     // invoke snapshotting before newer field initializers have run.
     this.leadAnchors ??= new Map<number, LeadAnchor>();
     this.leadLines ??= new Map<number, THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>>();
-    return this.mobs.map((mob) => ({
+    return this.mobs.map((mob) => {
+      const settlement = mob.settlementId ? this.settlements.get(mob.settlementId) : null;
+      const resident = mob.residentId ? settlement?.residents.find((entry) => entry.id === mob.residentId) : null;
+      return ({
       id: mob.id,
       kind: mob.kind,
       x: mob.group.position.x,
@@ -6619,6 +6631,8 @@ export class VoxelEngine {
         ?? mob.reedstriderBond?.ownerId ?? mob.courserBond?.ownerId ?? mob.leviathanGrowth?.ownerId
         ?? mob.apiaryBee?.ownerId ?? mob.hiredByPlayerId ?? null,
       command: mob.dragonState?.command ?? mob.petState?.command ?? mob.followCommand ?? null,
+      followDistance: mob.followDistance,
+      ...(resident?.orders.stance ? { stance: resident.orders.stance } : {}),
       // Network snapshots are also used by focused simulation harnesses and
       // migrations that may not have retained the runtime definition object.
       // The registry is the canonical fallback; never let an optional display
@@ -6630,7 +6644,8 @@ export class VoxelEngine {
         maximumLength: this.leadAnchors.get(mob.id)!.maximumLength,
         ...(this.leadAnchors.get(mob.id)?.fence ? { fence: { ...this.leadAnchors.get(mob.id)!.fence! } } : {}),
       } : null,
-    }));
+      });
+    });
   }
 
   private networkDropSnapshot() {
@@ -6930,6 +6945,9 @@ export class VoxelEngine {
         applied: entry.activeMove.phase !== "active",
       } : null;
       if (entry.name) mob.name = entry.name;
+      if (entry.command === "follow" || entry.command === "hold") mob.followCommand = entry.command;
+      if (entry.followDistance !== undefined) mob.followDistance = normalizeFollowDistance(entry.followDistance);
+      if (entry.stance) mob.group.userData.residentStance = entry.stance;
       mob.attunedOrbId = entry.attunedOrbId ?? null;
       mob.creatureOwnerId = entry.ownerId ?? null;
       mob.creatureTamed = Boolean(entry.tamed);
@@ -7109,7 +7127,8 @@ export class VoxelEngine {
       logCounts.set(item, (logCounts.get(item) ?? 0) + 1);
     }
     for (const attachment of attachments) {
-      const item = attachment.type === BlockId.AppleFruit ? Item.Apple : itemForBlock(attachment.type);
+      const item = attachment.type === BlockId.AppleFruit ? Item.Apple
+        : attachment.type === BlockId.FrostpearFruit ? Item.Frostpear : itemForBlock(attachment.type);
       logCounts.set(item, (logCounts.get(item) ?? 0) + 1);
     }
     this.fallingTrees.push({
@@ -8245,12 +8264,51 @@ export class VoxelEngine {
       }
       if (action.distance !== undefined) mob.followDistance = normalizeFollowDistance(action.distance);
       if (action.command === "follow" || action.command === "hold") mob.followCommand = action.command;
+      if (mob.settlementId && mob.residentId && mob.hiredByPlayerId) {
+        const settlement = this.settlements.get(mob.settlementId);
+        const resident = settlement?.residents.find((entry) => entry.id === mob.residentId);
+        if (settlement && resident) {
+          const stance = action.command?.startsWith("stance:") ? action.command.slice(7) as "passive" | "defensive" | "offensive" : undefined;
+          const orders = action.command === "follow" ? { follow: true, holdPosition: null }
+            : action.command === "hold" ? { follow: false, holdPosition: { x: mob.group.position.x, z: mob.group.position.z } }
+              : stance && ["passive", "defensive", "offensive"].includes(stance) ? { stance }
+                : action.distance !== undefined ? { followDistance: mob.followDistance } : {};
+          const result = updateHirelingOrders(settlement, resident.id, orders, {}, {
+            authorityId: settlement.authorityId,
+            expectedRevision: settlement.revision,
+            eventId: `guest-hireling-order:${resident.id}:${action.requestId}`,
+          });
+          if (result.applied) {
+            this.settlements.set(settlement.id, result.state);
+            if (stance) mob.group.userData.residentStance = stance;
+          }
+        }
+      }
       if (mob.petState && action.command && ["follow", "sit", "stay", "wander"].includes(action.command)) {
         mob.petState = commandPeelop(mob.petState, peer.identity.id, action.command as PeelopCommand);
       }
       if (mob.petState && action.name) {
         mob.petState = renamePeelop(mob.petState, action.name);
         mob.name = mob.petState.name || mob.definition.name;
+        if (mob.attunedOrbId) {
+          const inventory = current.inventory.map(inventorySlotFromNetwork);
+          let renamed = false;
+          for (let index = 0; index < inventory.length; index += 1) {
+            const orb = captureOrbFromInventorySlot(inventory[index]);
+            if (!orb?.creature || orb.orbId !== mob.attunedOrbId) continue;
+            inventory[index] = captureOrbInventorySlot({ ...orb, creature: { ...orb.creature, name: mob.name } });
+            renamed = true;
+          }
+          if (renamed) {
+            const next = normalizeMultiplayerPlayerState({
+              ...current,
+              inventory: inventory.map(networkItemStack),
+              revision: current.revision + 1,
+            }, peer.identity.id, current.variant);
+            this.multiplayerPlayerStates.set(peer.identity.id, next);
+            this.sendAuthoritativePlayerState(peer.identity.id, action.requestId);
+          }
+        }
       }
       this.queueCriticalReliableRequest(`host-creature-command:${peer.identity.id}:${action.requestId}`, () => session.sendCreatureAction({ ...action, status: "accepted" }, peer.identity!.id), 6_000);
       try { this.sendMobSnapshotsToConnectedPeers(); }
@@ -9548,7 +9606,12 @@ export class VoxelEngine {
     if (kind !== "distillery") this.activeDistilleryKey = null;
     if (kind !== "sugarworks") this.activeSugarworksKey = null;
     if (kind !== "cartography") this.activeCartographyKey = null;
-    if (kind === "inventory") {
+    if (kind === "creature-camp") {
+      const current = this.selectedCampCreatureEntry();
+      if (!current) this.activeCampOrbId = null;
+      this.activeFurnaceKey = null;
+      this.activeChestKey = null;
+    } else if (kind === "inventory") {
       this.craftingSize = 2;
       this.activeFurnaceKey = null;
       this.activeChestKey = null;
@@ -10042,12 +10105,61 @@ export class VoxelEngine {
     return false;
   }
 
-  careSelectedCreature(action: CreatureCareAction) {
-    const slot = this.selectedSlot();
+  private selectedCampCreatureEntry(preferCurrentHotbar = true) {
+    const validEntryAt = (index: number) => {
+      const slot = this.inventory[index] ?? null;
+      const orb = captureOrbFromInventorySlot(slot);
+      return slot && orb?.creature && !orb.attunement?.activeEntityId ? { index, slot, orb } : null;
+    };
+    const rememberedIndex = this.activeCampOrbId
+      ? this.inventory.findIndex((slot) => captureOrbFromInventorySlot(slot)?.orbId === this.activeCampOrbId)
+      : -1;
+    const remembered = rememberedIndex >= 0 ? validEntryAt(rememberedIndex) : null;
+    const selected = preferCurrentHotbar ? validEntryAt(this.selected) : null;
+    if (selected) {
+      this.activeCampOrbId = selected.orb.orbId;
+      return selected;
+    }
+    if (remembered) return remembered;
+    const fallbackIndex = this.inventory.findIndex((slot) => {
+      const orb = captureOrbFromInventorySlot(slot);
+      return Boolean(orb?.creature && !orb.attunement?.activeEntityId);
+    });
+    const entry = fallbackIndex >= 0 ? validEntryAt(fallbackIndex) : null;
+    this.activeCampOrbId = entry?.orb.orbId ?? null;
+    return entry;
+  }
+
+  selectCampCreatureOrb(orbId: string) {
+    const index = this.inventory.findIndex((slot) => captureOrbFromInventorySlot(slot)?.orbId === orbId);
+    const slot = index >= 0 ? this.inventory[index] : null;
     const orb = captureOrbFromInventorySlot(slot);
+    if (!orb?.creature || orb.attunement?.activeEntityId) return false;
+    this.activeCampOrbId = orb.orbId;
+    this.emitHud(true);
+    return true;
+  }
+
+  renameSelectedCampCreature(name: string) {
+    const entry = this.selectedCampCreatureEntry(false);
+    const cleanName = name.trim().slice(0, 32);
+    if (!entry?.orb.creature || !cleanName) return false;
+    const creature = { ...entry.orb.creature, name: cleanName };
+    this.replaceCaptureOrbEverywhere(entry.orb.orbId, { ...entry.orb, creature });
+    const deployed = this.mobs.find((mob) => mob.attunedOrbId === entry.orb.orbId || mob.specimenId === creature.entityId);
+    if (deployed) deployed.name = cleanName;
+    this.events.onToast(`${cleanName}'s name is now recorded everywhere this creature appears.`);
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  careSelectedCreature(action: CreatureCareAction) {
+    const entry = this.selectedCampCreatureEntry(false);
+    const orb = entry?.orb;
     const creature = orb?.creature;
-    if (!slot || !orb || !creature || orb.attunement?.activeEntityId) {
-      this.events.onToast("Select one stored creature's Capture Orb before using the Creature Camp.");
+    if (!entry || !orb || !creature || orb.attunement?.activeEntityId) {
+      this.events.onToast("Choose one stored creature in the Creature Camp selector first.");
       return false;
     }
     const profile = creatureProfile(creature.kind);
@@ -10100,7 +10212,7 @@ export class VoxelEngine {
 
   setSelectedCreatureTactic(tactic: CreatureProgressionV2["tactic"]) {
     if (!["guard", "support", "pursue", "cautious", "hold"].includes(tactic)) return false;
-    const orb = captureOrbFromInventorySlot(this.selectedSlot());
+    const orb = this.selectedCampCreatureEntry(false)?.orb;
     if (!orb?.creature || orb.attunement?.activeEntityId) return false;
     const profile = creatureProfile(orb.creature.kind);
     const progression = migrateCreatureProgression({
@@ -10117,7 +10229,7 @@ export class VoxelEngine {
   }
 
   toggleSelectedCreatureMove(moveId: string) {
-    const orb = captureOrbFromInventorySlot(this.selectedSlot());
+    const orb = this.selectedCampCreatureEntry(false)?.orb;
     if (!orb?.creature || orb.attunement?.activeEntityId) return false;
     const profile = creatureProfile(orb.creature.kind);
     const progression = migrateCreatureProgression({
@@ -10153,7 +10265,7 @@ export class VoxelEngine {
   }
 
   setSelectedCreatureFieldUtility(moveId: string) {
-    const orb = captureOrbFromInventorySlot(this.selectedSlot());
+    const orb = this.selectedCampCreatureEntry(false)?.orb;
     if (!orb?.creature || orb.attunement?.activeEntityId) return false;
     const profile = creatureProfile(orb.creature.kind);
     if (moveId !== profile.moves.fieldUtilityMoveId || !CREATURE_MOVES[moveId]) return false;
@@ -10173,7 +10285,7 @@ export class VoxelEngine {
   }
 
   setSelectedCreatureWork(assignment: CreatureWorkAssignment) {
-    const orb = captureOrbFromInventorySlot(this.selectedSlot());
+    const orb = this.selectedCampCreatureEntry(false)?.orb;
     if (!orb?.creature || orb.attunement?.activeEntityId) return false;
     const current = normalizeCreatureWorkState(orb.creature.kind, orb.creature.custom.creatureWork);
     const next = assignCreatureWork(orb.creature.kind, current, assignment, null);
@@ -10194,7 +10306,7 @@ export class VoxelEngine {
   }
 
   setSelectedTortoiseShellModule(module: CreatureShellModule | null) {
-    const orb = captureOrbFromInventorySlot(this.selectedSlot());
+    const orb = this.selectedCampCreatureEntry(false)?.orb;
     if (!orb?.creature || orb.attunement?.activeEntityId) return false;
     const current = normalizeCreatureWorkState(orb.creature.kind, orb.creature.custom.creatureWork);
     const next = fitCreatureShellModule(orb.creature.kind, current, module);
@@ -10210,7 +10322,7 @@ export class VoxelEngine {
   }
 
   researchSelectedCampCreature() {
-    const orb = captureOrbFromInventorySlot(this.selectedSlot());
+    const orb = this.selectedCampCreatureEntry(false)?.orb;
     if (!orb?.creature || orb.attunement?.activeEntityId) return false;
     const priorDay = Number(orb.creature.custom.campResearchDay ?? -1);
     if (priorDay === this.day) {
@@ -10238,7 +10350,7 @@ export class VoxelEngine {
   }
 
   toggleSelectedCreatureGear(slotId: "saddle" | "lamp" | "charm", item: ItemCode) {
-    const orb = captureOrbFromInventorySlot(this.selectedSlot());
+    const orb = this.selectedCampCreatureEntry(false)?.orb;
     if (!orb?.creature || orb.attunement?.activeEntityId) return false;
     const allowed = slotId === "saddle" ? [Item.Saddle, Item.DragonSaddle]
       : slotId === "lamp" ? [Item.DeepgearLanternItem]
@@ -10279,9 +10391,9 @@ export class VoxelEngine {
   }
 
   archiveSelectedCampCreature() {
-    const slot = this.selectedSlot();
-    const orb = captureOrbFromInventorySlot(slot);
-    if (!slot || !orb?.creature) return false;
+    const entry = this.selectedCampCreatureEntry(false);
+    const orb = entry?.orb;
+    if (!entry || !orb?.creature) return false;
     const result = depositCreatureOrb(this.digitalCreatureArchive, orb);
     if (!result.accepted) {
       this.events.onToast(result.reason === "full" ? "The Waygrid Creature Archive has no free cell capacity."
@@ -10289,7 +10401,9 @@ export class VoxelEngine {
       return false;
     }
     this.digitalCreatureArchive = result.state;
-    this.inventory[this.selected] = null;
+    this.inventory[entry.index] = null;
+    this.activeCampOrbId = null;
+    this.selectedCampCreatureEntry(false);
     this.events.onToast(`${orb.creature.name ?? MOB_DEFS[orb.creature.kind].name} returned safely to the Waygrid archive.`);
     this.saveSoon();
     this.emitHud(true);
@@ -11719,16 +11833,20 @@ export class VoxelEngine {
       const current = this.world.getBlock(x, y, z);
       if (current === undefined) { this.saplings.set(key, now + 30_000); continue; }
       processed += 1;
-      if (current === BlockId.AppleSapling) {
+      if (current === BlockId.AppleSapling || current === BlockId.FrostpearSapling) {
+        const frostpear = current === BlockId.FrostpearSapling;
+        const fruitItem = frostpear ? Item.Frostpear : Item.Apple;
         const soil = this.world.getBlock(x, y - 1, z);
         if (![BlockId.Grass, BlockId.Dirt, BlockId.MeadowGrass, BlockId.SnowyGrass, BlockId.SavannaGrass, BlockId.SwampGrass, BlockId.Farmland, BlockId.HydratedFarmland].includes(soil ?? BlockId.Air)) {
           this.world.setBlock(x, y, z, BlockId.Air, true, true);
           this.publishBlockEdits([{ x, y, z, type: BlockId.Air }], "break");
           this.saplings.delete(key);
-          if (this.mode === "survival") this.spawnDrop(Item.Apple, 1, new THREE.Vector3(x, y, z));
+          if (this.mode === "survival") this.spawnDrop(fruitItem, 1, new THREE.Vector3(x, y, z));
           continue;
         }
-        const plan = planAppleTree({ x, y, z }, this.world.seedText);
+        const plan = frostpear
+          ? planFrostpearTree({ x, y, z }, this.world.seedText)
+          : planAppleTree({ x, y, z }, this.world.seedText);
         const clear = plan.every((block) => {
           const occupied = this.world.getBlock(block.x, block.y, block.z);
           return occupied !== undefined && (block.x === x && block.y === y && block.z === z
@@ -11739,16 +11857,22 @@ export class VoxelEngine {
         this.world.setBlocksBatch(changes, true, true);
         this.publishBlockEdits(changes, "batch");
         this.saplings.set(key, now + ORCHARD_REGROWTH_BASE_MS + Math.random() * ORCHARD_REGROWTH_JITTER_MS);
-        if (this.position.distanceToSquared(new THREE.Vector3(x, y, z)) < 400) this.audio.play("place", BlockId.WildwoodLog);
+        if (this.position.distanceToSquared(new THREE.Vector3(x, y, z)) < 400) this.audio.play("place", frostpear ? BlockId.PineLog : BlockId.WildwoodLog);
         continue;
       }
-      if (current === BlockId.WildwoodLog) {
+      if (current === BlockId.WildwoodLog || current === BlockId.PineLog) {
         let appleCanopy = false;
+        let frostpearCanopy = false;
         for (let dx = -3; dx <= 3 && !appleCanopy; dx += 1) for (let dy = 2; dy <= 8 && !appleCanopy; dy += 1) for (let dz = -3; dz <= 3; dz += 1) {
           if (this.world.getBlock(x + dx, y + dy, z + dz) === BlockId.AppleLeaves) { appleCanopy = true; break; }
         }
-        if (!appleCanopy) { this.saplings.delete(key); continue; }
-        const fruit = planAppleFruitRegrowth({ x, y, z }, this.world.seedText, Math.floor(now / 60_000), (bx, by, bz) => this.world.getBlock(bx, by, bz), 2);
+        for (let dx = -3; dx <= 3 && !frostpearCanopy; dx += 1) for (let dy = 2; dy <= 9 && !frostpearCanopy; dy += 1) for (let dz = -3; dz <= 3; dz += 1) {
+          if (this.world.getBlock(x + dx, y + dy, z + dz) === BlockId.FrostpearLeaves) { frostpearCanopy = true; break; }
+        }
+        if (!appleCanopy && !frostpearCanopy) { this.saplings.delete(key); continue; }
+        const fruit = frostpearCanopy
+          ? planFrostpearFruitRegrowth({ x, y, z }, this.world.seedText, Math.floor(now / 60_000), (bx, by, bz) => this.world.getBlock(bx, by, bz), 2)
+          : planAppleFruitRegrowth({ x, y, z }, this.world.seedText, Math.floor(now / 60_000), (bx, by, bz) => this.world.getBlock(bx, by, bz), 2);
         if (fruit.length) {
           const changes = [...fruit];
           this.world.setBlocksBatch(changes, true, true);
@@ -12187,7 +12311,7 @@ export class VoxelEngine {
       this.saplings.set(blockKey(x, y, z), now + (75_000 + Math.random() * 75_000) * PLANT_GROWTH_TIME_MULTIPLIER);
       return;
     }
-    if (type === BlockId.AppleSapling) {
+    if (type === BlockId.AppleSapling || type === BlockId.FrostpearSapling) {
       this.saplings.set(blockKey(x, y, z), now + (95_000 + Math.random() * 80_000) * PLANT_GROWTH_TIME_MULTIPLIER);
       return;
     }
@@ -15142,7 +15266,8 @@ export class VoxelEngine {
       logCounts.set(item, (logCounts.get(item) ?? 0) + 1);
     }
     for (const attachment of tree.attachments) {
-      const item = attachment.type === BlockId.AppleFruit ? Item.Apple : itemForBlock(attachment.type);
+      const item = attachment.type === BlockId.AppleFruit ? Item.Apple
+        : attachment.type === BlockId.FrostpearFruit ? Item.Frostpear : itemForBlock(attachment.type);
       logCounts.set(item, (logCounts.get(item) ?? 0) + 1);
     }
     this.fallingTrees.push({
@@ -15570,6 +15695,8 @@ export class VoxelEngine {
     else if (type === BlockId.SunberryShoot || type === BlockId.SunberryBush || type === BlockId.SunberryBushRipe) drops = [[Item.Sunberry, 1]];
     else if (type === BlockId.AppleSapling || type === BlockId.AppleFruit) drops = [[Item.Apple, 1]];
     else if (type === BlockId.AppleLeaves) drops = [...this.randomDrop(Item.Stick, 1, 2, 0.2), ...this.randomDrop(Item.Apple, 1, 1, 0.08)];
+    else if (type === BlockId.FrostpearSapling || type === BlockId.FrostpearFruit) drops = [[Item.Frostpear, 1]];
+    else if (type === BlockId.FrostpearLeaves) drops = [...this.randomDrop(Item.Stick, 1, 2, 0.2), ...this.randomDrop(Item.Frostpear, 1, 1, 0.085)];
     else if (BLOCKS[type]) drops = [[itemForBlock(type), 1]];
     for (const [item, count] of drops) this.spawnDrop(item, count, new THREE.Vector3(x, y, z));
   }
@@ -16204,10 +16331,11 @@ export class VoxelEngine {
     // Orchard fruit hangs from the leaf directly above it. Removing that leaf
     // must use the ordinary block-drop path instead of leaving a floating apple.
     const fruitY = y - 1;
-    if (this.world.getBlock(x, fruitY, z) === BlockId.AppleFruit) {
+    const hangingFruit = this.world.getBlock(x, fruitY, z);
+    if (hangingFruit === BlockId.AppleFruit || hangingFruit === BlockId.FrostpearFruit) {
       this.world.setBlock(x, fruitY, z, BlockId.Air, true, true);
       this.publishBlockEdits([{ x, y: fruitY, z, type: BlockId.Air }], "break");
-      if (this.mode === "survival") this.dropBlockLoot(BlockId.AppleFruit, x, fruitY, z);
+      if (this.mode === "survival") this.dropBlockLoot(hangingFruit, x, fruitY, z);
     }
     const wallTorches: Array<{ x: number; y: number; z: number; type: BlockId }> = [
       { x: x + 1, y, z, type: BlockId.TorchWallEast },
@@ -16361,6 +16489,13 @@ export class VoxelEngine {
     if (this.multiplayer?.role === "guest") return this.requestNetworkCreatureAction({ kind: "command", targetId: pet.id, name });
     pet.petState = renamePeelop(pet.petState, name);
     pet.name = pet.petState.name || pet.definition.name;
+    if (pet.attunedOrbId) {
+      const orb = this.findCaptureOrbEverywhere(pet.attunedOrbId);
+      if (orb?.creature) this.replaceCaptureOrbEverywhere(orb.orbId, {
+        ...orb,
+        creature: { ...orb.creature, name: pet.name },
+      });
+    }
     this.events.onToast(`${pet.name} will answer to that name.`);
     this.saveSoon();
     this.emitHud(true);
@@ -17851,7 +17986,7 @@ export class VoxelEngine {
     if (this.multiplayer?.role === "guest") return this.requestNetworkCreatureAction({
       kind: "command",
       targetId: mob.id,
-      ...(typeof command === "string" && (command === "follow" || command === "hold") ? { command } : {}),
+      ...(typeof command === "string" ? { command } : {}),
       ...(distance !== null ? { distance: normalizeFollowDistance(distance) } : {}),
     });
     if (distance !== null) mob.followDistance = normalizeFollowDistance(distance);
@@ -25273,6 +25408,8 @@ export class VoxelEngine {
       activeMerchant: this.activeMerchantId ? this.merchants.get(this.activeMerchantId) ?? null : null,
       activeSentient: this.activeSentient ? (() => {
         const guildNpc = this.guildNpcForMob(this.activeSentient!);
+        const settlement = this.activeSentient!.settlementId ? this.settlements.get(this.activeSentient!.settlementId) : null;
+        const resident = this.activeSentient!.residentId ? settlement?.residents.find((entry) => entry.id === this.activeSentient!.residentId) : null;
         return {
         id: this.activeSentient.id,
         residentId: this.activeSentient.residentId,
@@ -25280,7 +25417,9 @@ export class VoxelEngine {
         profession: this.activeSentient.profession,
         factionId: this.activeSentient.factionId,
         hired: Boolean(this.activeSentient.hiredByPlayerId),
+        stance: resident?.orders.stance ?? (this.activeSentient.group.userData.residentStance as "passive" | "defensive" | "offensive" | undefined) ?? "defensive",
         followDistance: this.activeSentient.followDistance,
+        followCommand: this.activeSentient.followCommand,
         nearby: this.activeSentient.health > 0 && this.activeSentient.group.position.distanceToSquared(this.position) <= 36,
         guildNpcId: guildNpc?.id ?? null,
         guildId: guildNpc?.guildId ?? null,
@@ -25288,6 +25427,7 @@ export class VoxelEngine {
         recruitReady: guildNpc ? this.guildRecruitReady(guildNpc) : false,
       };
       })() : null,
+      activeCampOrbId: this.activeCampOrbId,
       bankAccount: this.bankAccount,
       stockMarket: this.stockMarket,
       potionBuffs: { ...this.potionBuffs },

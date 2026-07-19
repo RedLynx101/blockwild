@@ -292,26 +292,74 @@ export function createAdventureMobVisual(kind: AdventureMobKind, id: number): Ad
     }
     for (const [index, x] of [-0.18, 0, 0.18].entries()) add(visual, [0.12, 0.38 + index * 0.05, 0.14], [x, 1.02 + index * 0.02, -0.5], body, `mossback-kite-crest-${index + 1}`, "head");
   } else if (kind === "clockwork-marmot") {
-    add(visual, [0.92, 0.7, 1.18], [0, 0.62, 0.2], body, "clockwork-marmot-body", "body");
-    add(visual, [0.72, 0.64, 0.64], [0, 0.74, -0.68], accent, "clockwork-marmot-head", "head");
-    add(visual, [0.48, 0.3, 0.4], [0, 0.61, -1.12], pale, "clockwork-marmot-muzzle");
-    eyes(0.2, 0.86, -1.02, 0.085);
+    // Grounded storybook clockwork: a compact copper boiler under layered
+    // plates, readable mechanisms, an expressive articulated head and sturdy
+    // piston feet. It remains unmistakably the original whistle-marmot.
+    add(visual, [0.94, 0.68, 1.2], [0, 0.62, 0.2], body, "clockwork-marmot-boiler-body", "body");
+    add(visual, [0.78, 0.14, 1.02], [0, 0.91, 0.17], accent, "clockwork-marmot-dorsal-brass-plate", "body");
+    add(visual, [0.62, 0.12, 0.88], [0, 0.34, 0.14], dark, "clockwork-marmot-underpan", "body");
+    add(visual, [0.5, 0.08, 0.58], [0, 0.65, -0.42], pale, "clockwork-marmot-chest-bib", "body");
+    const core = add(visual, [0.22, 0.24, 0.07], [0, 0.66, -0.73], eye, "clockwork-marmot-aether-core");
+    core.userData.clockworkPulse = true;
+    const head = joint(visual, "clockwork-marmot-head-pivot", [0, 0.76, -0.7]);
+    parts.head.push(head);
+    add(head, [0.72, 0.64, 0.64], [0, 0, 0], accent, "clockwork-marmot-head");
+    add(head, [0.5, 0.3, 0.42], [0, -0.13, -0.42], pale, "clockwork-marmot-muzzle");
+    add(head, [0.18, 0.12, 0.09], [0, -0.1, -0.66], dark, "clockwork-marmot-nose");
+    for (const side of [-1, 1]) {
+      add(head, [0.09, 0.09, 0.05], [side * 0.2, 0.12, -0.34], eye, `clockwork-marmot-${side < 0 ? "left" : "right"}-eye`);
+      const brow = add(head, [0.25, 0.08, 0.1], [side * 0.2, 0.24, -0.34], dark, `clockwork-marmot-${side < 0 ? "left" : "right"}-brow`);
+      brow.rotation.z = side * -0.12;
+      for (let whisker = 0; whisker < 3; whisker += 1) {
+        const wire = add(head, [0.36, 0.025, 0.025], [side * (0.28 + whisker * 0.025), -0.08 - whisker * 0.06, -0.58], pale, `clockwork-marmot-${side < 0 ? "left" : "right"}-whisker-${whisker + 1}`);
+        wire.rotation.z = side * (0.12 + whisker * 0.08);
+      }
+    }
     for (const side of [-1, 1]) {
       const sideName = side < 0 ? "left" : "right";
-      const ear = add(visual, [0.22, 0.28, 0.16], [side * 0.25, 1.16, -0.68], dark, `clockwork-marmot-${sideName}-ear`, "head");
+      const ear = add(head, [0.22, 0.28, 0.16], [side * 0.25, 0.4, 0], dark, `clockwork-marmot-${sideName}-ear`, "head");
       ear.rotation.z = side * -0.22;
       for (const [front, z] of [[true, -0.38], [false, 0.58]] as const) {
         const leg = pivotBox([0.25, 0.54, 0.28], [side * 0.34, 0.52, z], [0, -0.27, 0], dark, `clockwork-marmot-${front ? "front" : "rear"}-${sideName}-leg`, "legs");
         leg.userData.phase = (front ? 0 : Math.PI) + (side < 0 ? 0 : Math.PI);
+        add(leg, [0.31, 0.13, 0.32], [0, -0.25, 0], accent, `clockwork-marmot-${front ? "front" : "rear"}-${sideName}-knee-cap`);
+        add(leg, [0.08, 0.36, 0.08], [side * -0.09, -0.3, 0.04], pale, `clockwork-marmot-${front ? "front" : "rear"}-${sideName}-piston-rod`);
         add(leg, [0.35, 0.16, 0.42], [0, -0.51, -0.08], pale, `clockwork-marmot-${front ? "front" : "rear"}-${sideName}-paw`);
+        for (const toe of [-1, 0, 1]) add(leg, [0.09, 0.08, 0.2], [toe * 0.1, -0.56, -0.29], accent, `clockwork-marmot-${front ? "front" : "rear"}-${sideName}-toe-${toe + 2}`);
       }
-      add(visual, [0.08, 0.52, 0.52], [side * 0.49, 0.72, 0.18], accent, `clockwork-marmot-${sideName}-gear-wheel`, "body").rotation.x = Math.PI / 4;
+      const gear = joint(visual, `clockwork-marmot-${sideName}-gear-pivot`, [side * 0.5, 0.72, 0.18]);
+      gear.userData.side = side;
+      add(gear, [0.09, 0.5, 0.5], [0, 0, 0], accent, `clockwork-marmot-${sideName}-gear-wheel`, "body");
+      add(gear, [0.13, 0.18, 0.18], [0, 0, 0], pale, `clockwork-marmot-${sideName}-gear-hub`);
+      for (let tooth = 0; tooth < 8; tooth += 1) {
+        const angle = tooth * Math.PI / 4;
+        const gearTooth = add(gear, [0.11, 0.12, 0.16], [0, Math.cos(angle) * 0.29, Math.sin(angle) * 0.29], dark, `clockwork-marmot-${sideName}-gear-tooth-${tooth + 1}`);
+        gearTooth.rotation.x = angle;
+      }
+      for (const [index, zBand] of [-0.16, 0.18, 0.5].entries()) {
+        add(visual, [0.04, 0.06, 0.22], [side * 0.49, 0.84 - index * 0.12, zBand], pale, `clockwork-marmot-${sideName}-rivet-rail-${index + 1}`);
+      }
     }
     const tail = pivotBox([0.3, 0.3, 0.72], [0, 0.64, 0.76], [0, 0, 0.34], body, "clockwork-marmot-tail", "body");
     tail.rotation.x = -0.32;
-    add(tail, [0.36, 0.36, 0.38], [0, 0.06, 0.78], accent, "clockwork-marmot-tail-weight");
-    for (const x of [-0.18, 0.18]) { add(visual, [0.12, 0.58, 0.12], [x, 1.12, 0.3], dark, `clockwork-marmot-whistle-pipe-${x}`); add(visual, [0.22, 0.12, 0.22], [x, 1.42, 0.3], eye, `clockwork-marmot-whistle-cap-${x}`); }
-    add(visual, [0.62, 0.08, 0.12], [0, 0.86, 0.76], pale, "clockwork-marmot-winding-key");
+    const tailTip = joint(tail, "clockwork-marmot-tail-tip-pivot", [0, 0, 0.68]);
+    add(tailTip, [0.27, 0.27, 0.48], [0, 0, 0.2], accent, "clockwork-marmot-tail-segment");
+    add(tailTip, [0.38, 0.38, 0.32], [0, 0.06, 0.52], pale, "clockwork-marmot-tail-counterweight");
+    for (const x of [-0.18, 0.18]) {
+      add(visual, [0.12, 0.58, 0.12], [x, 1.12, 0.3], dark, `clockwork-marmot-whistle-pipe-${x}`);
+      add(visual, [0.22, 0.12, 0.22], [x, 1.42, 0.3], eye, `clockwork-marmot-whistle-cap-${x}`);
+      add(visual, [0.08, 0.08, 0.42], [x * 1.45, 0.93, 0.42], pale, `clockwork-marmot-${x < 0 ? "left" : "right"}-steam-feed`);
+    }
+    const gauge = add(visual, [0.34, 0.34, 0.08], [0, 1.0, -0.02], pale, "clockwork-marmot-pressure-gauge");
+    add(visual, [0.04, 0.23, 0.04], [0.03, 1.0, -0.075], dark, "clockwork-marmot-pressure-needle").rotation.z = -0.46;
+    const key = joint(visual, "clockwork-marmot-winding-key-pivot", [0, 0.86, 0.78]);
+    add(key, [0.62, 0.08, 0.12], [0, 0, 0], pale, "clockwork-marmot-winding-key");
+    add(key, [0.1, 0.34, 0.1], [-0.27, 0, 0], dark, "clockwork-marmot-winding-key-left-grip");
+    add(key, [0.1, 0.34, 0.1], [0.27, 0, 0], dark, "clockwork-marmot-winding-key-right-grip");
+    gauge.userData.clockworkGauge = true;
+    // The inspector and world renderer share this exact root. Correct the
+    // authored toe overlap so the machine plants on, rather than through, Y=0.
+    visual.position.y += 0.01;
   } else {
     add(visual, [1.08, 1.52, 0.82], [0, 1.22, 0.08], body, "inkmaw-curator-robe", "body");
     add(visual, [0.86, 0.74, 0.22], [0, 2.16, -0.28], accent, "inkmaw-curator-book-mask", "head");
@@ -343,4 +391,40 @@ export function createAdventureMobVisual(kind: AdventureMobKind, id: number): Ad
   group.userData.mobId = id;
   group.userData.adventureMob = true;
   return { group, visual, parts };
+}
+
+/** Secondary mechanical motion shared by runtime, portraits and visual audits. */
+export function applyAdventureMobPose(
+  visual: THREE.Object3D,
+  kind: string,
+  timeSeconds: number,
+  travelAmount = 0,
+  alertAmount = 0,
+) {
+  if (kind !== "clockwork-marmot") return false;
+  const time = Number.isFinite(timeSeconds) ? timeSeconds : 0;
+  const travel = THREE.MathUtils.clamp(Number.isFinite(travelAmount) ? travelAmount : 0, 0, 1);
+  const alert = THREE.MathUtils.clamp(Number.isFinite(alertAmount) ? alertAmount : 0, 0, 1);
+  const cadence = time * (1.35 + travel * 4.2);
+  const head = visual.getObjectByName("clockwork-marmot-head-pivot");
+  if (head) {
+    head.rotation.y = Math.sin(time * 1.05) * (0.045 + alert * 0.08);
+    head.rotation.x = Math.sin(time * 1.7) * 0.02 - alert * 0.05;
+  }
+  for (const sideName of ["left", "right"] as const) {
+    const side = sideName === "left" ? -1 : 1;
+    const gear = visual.getObjectByName(`clockwork-marmot-${sideName}-gear-pivot`);
+    if (gear) gear.rotation.x = cadence * side * 0.55;
+  }
+  const tail = visual.getObjectByName("clockwork-marmot-tail-pivot");
+  if (tail) tail.rotation.y = Math.sin(time * (1.7 + travel * 1.3)) * (0.05 + travel * 0.11);
+  const tailTip = visual.getObjectByName("clockwork-marmot-tail-tip-pivot");
+  if (tailTip) tailTip.rotation.y = -Math.sin(time * (1.7 + travel * 1.3) + 0.35) * (0.07 + travel * 0.12);
+  const key = visual.getObjectByName("clockwork-marmot-winding-key-pivot");
+  if (key) key.rotation.z = time * 0.7 + travel * Math.sin(cadence) * 0.18;
+  const core = visual.getObjectByName("clockwork-marmot-aether-core");
+  if (core) core.scale.setScalar(1 + Math.sin(time * 3.4) * 0.08 + alert * 0.06);
+  const needle = visual.getObjectByName("clockwork-marmot-pressure-needle");
+  if (needle) needle.rotation.z = -0.46 + Math.sin(time * 2.2 + travel * 2.5) * (0.12 + travel * 0.22);
+  return true;
 }

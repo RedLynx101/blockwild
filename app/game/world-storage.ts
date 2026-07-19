@@ -283,7 +283,7 @@ export function migrateLegacyWorldSave(value: unknown): WorldSave | null {
   const mode = normalizeMode(value.mode);
   if (!seed || !mode || !isRecord(value.player)) return null;
   const generatorVersion = Math.trunc(finite(value.generatorVersion, -1));
-  if (![2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, GENERATOR_VERSION].includes(generatorVersion)) return null;
+  if (![2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, GENERATOR_VERSION].includes(generatorVersion)) return null;
   const offset = generatorVersion === 2 ? (LEGACY_GENERATOR_MIN_Y - MIN_Y) * 16 * 16 : 0;
   const player = value.player;
   if (![player.x, player.y, player.z].every((coordinate) => typeof coordinate === "number" && Number.isFinite(coordinate))) return null;
@@ -293,7 +293,7 @@ export function migrateLegacyWorldSave(value: unknown): WorldSave | null {
     ...value,
     version: 2,
     generatorVersion: GENERATOR_VERSION,
-    generatorProfile: value.generatorProfile === "legacy-v14" || generatorVersion < GENERATOR_VERSION
+    generatorProfile: value.generatorProfile === "legacy-v14" || generatorVersion < 15
       ? "legacy-v14"
       : "world-below-v15",
     lastSavedGameVersion: normalizeGameVersion(value.lastSavedGameVersion),

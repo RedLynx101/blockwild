@@ -50,6 +50,17 @@ test("player tools, shields and seated legs use one shared forward-facing articu
   player.dispose();
 });
 
+test("the player torch uses the same ninety-degree working pose as forward tools", () => {
+  const player = new BlockPlayerModel();
+  const torch = createAvatarHeldItemModel(BlockId.Torch)!;
+  player.setHeldItem(torch).setPose({ locomotion: "idle" });
+  assert.equal(torch.userData.gripPose, "forward-90");
+  assert.ok(Math.abs(Number(torch.userData.workingAngle) - Math.PI / 2) < 1e-8);
+  assert.ok(player.parts.rightArm.rotation.x > 1.48 && player.parts.rightArm.rotation.x < 1.66);
+  assert.ok(Math.abs(torch.rotation.x - Math.PI) < 1e-8, "the torch shaft should continue outward from the forward hand instead of hanging down");
+  player.dispose();
+});
+
 test("wood elf player and resident models have visibly staged pointed features", () => {
   const player = new BlockPlayerModel({ race: "wood-elf" });
   for (const side of ["left", "right"] as const) {

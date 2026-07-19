@@ -298,6 +298,14 @@ export enum BlockId {
   Guano = 294,
   CaveBridge = 295,
   DeepgearLift = 296,
+  /** v1.7.1 orchard storage and Frostpine forage; appended beyond every legacy item id. */
+  MoonberryCrate = 535,
+  SunberryCrate = 536,
+  AppleCrate = 537,
+  FrostpearCrate = 538,
+  FrostpearSapling = 539,
+  FrostpearLeaves = 540,
+  FrostpearFruit = 541,
 }
 
 export const Item = {
@@ -722,6 +730,8 @@ export const Item = {
   IronFilings: 533,
   /** Placeable Deepgear seating; appended for save stability. */
   DeepgearStoolItem: 534,
+  /** Frostpine orchard fruit; all new ids remain append-only save metadata. */
+  Frostpear: 542,
 } as const;
 
 export type ItemCode = number;
@@ -741,6 +751,21 @@ export const DEEPGEAR_BRICK_TILE = 210;
 export const RIVETED_BRASS_TILE = 211;
 export const ROOTWEAVE_SOIL_SIDE_TILE = 212;
 export const DEEPGEAR_LANTERN_TILE = 213;
+/** v1.7.1 authored orchard-storage and giant-mushroom atlas cells. */
+export const GIANT_MUSHROOM_TOP_TILE = 214;
+export const GIANT_MUSHROOM_SIDE_TILE = 215;
+export const GIANT_MUSHROOM_GILLS_TILE = 216;
+export const MOONBERRY_CRATE_TOP_TILE = 217;
+export const MOONBERRY_CRATE_SIDE_TILE = 218;
+export const SUNBERRY_CRATE_TOP_TILE = 219;
+export const SUNBERRY_CRATE_SIDE_TILE = 220;
+export const APPLE_CRATE_TOP_TILE = 221;
+export const APPLE_CRATE_SIDE_TILE = 222;
+export const FROSTPEAR_CRATE_TOP_TILE = 223;
+export const FROSTPEAR_CRATE_SIDE_TILE = 224;
+export const FROSTPEAR_SAPLING_TILE = 225;
+export const FROSTPEAR_LEAVES_TILE = 226;
+export const FROSTPEAR_FRUIT_TILE = 227;
 
 export type InventorySlot = {
   item: ItemCode;
@@ -768,7 +793,9 @@ export type BlockDefinition = {
   /** The block occupies a water source cell; breaking it restores the water. */
   waterlogged?: boolean;
   /** Adjacent stems in this group overlap slightly so stacked flora reads as one plant. */
-  verticalConnectGroup?: "aquatic-flora" | "cultivated-flower" | "wild-peppermint" | "double-tall-grass" | "cave-root" | "cave-reed" | "rope-ladder";
+  verticalConnectGroup?: "lumen-kelp" | "star-coral" | "abyss-bloom" | "tidevine" | "lumenreed" | "river-ribbon" | "glow-kelp" | "reed-bloom" | "cave-reed" | "luminous-algae" | "egg-reed" | "cultivated-flower" | "wild-peppermint" | "double-tall-grass" | "cave-root" | "rope-ladder";
+  /** Silhouette contract used by the connected aquatic-flora mesh. */
+  aquaticProfile?: "ribbon" | "kelp" | "reed" | "coral" | "bloom" | "vine" | "algae";
   /** Partial-height collision used by connected fences and similar blocks. */
   collisionHeight?: number;
   /** Blocks in the same group visually connect across horizontal faces. */
@@ -818,7 +845,7 @@ export type ItemDefinition = {
   /** Contents rendered in and placed from a bucket. */
   bucketLiquid?: "water" | "lava" | "honey" | "syrup";
   /** Semantic UI hook for non-cube inventory artwork. */
-  iconKind?: "crafting-table" | "chest" | "apiary" | "aquarium" | "fireplace" | "capture-orb" | "orb-rack" | "orb-healer" | "bucket" | "fence-gate" | "lead" | "shield" | "seed" | "produce" | "pie" | "honeycomb" | "honey" | "jelly" | "wax" | "milk" | "relic" | "dragon-egg" | "dragon-scale" | "dragon-heart" | "dragon-skull" | "dragon-bone" | "dragon-saddle" | "dragon-pannier" | "dragon-barding-fire" | "dragon-barding-ice" | "dragon-barding-steel" | "dragon-barding-sea" | "dragon-barding-gold" | "dragon-barding-silver" | "gold-hoard-block" | "gold-pile" | "queen-cell" | "bee" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "potion" | "potion-health" | "mead" | "blueprint" | "bolt" | "spear" | "crossbow" | "sword" | "armor";
+  iconKind?: "crafting-table" | "chest" | "apiary" | "aquarium" | "fireplace" | "capture-orb" | "orb-rack" | "orb-healer" | "bucket" | "fence-gate" | "lead" | "shield" | "seed" | "produce" | "produce-crate" | "giant-mushroom" | "pie" | "honeycomb" | "honey" | "jelly" | "wax" | "milk" | "relic" | "dragon-egg" | "dragon-scale" | "dragon-heart" | "dragon-skull" | "dragon-bone" | "dragon-saddle" | "dragon-pannier" | "dragon-barding-fire" | "dragon-barding-ice" | "dragon-barding-steel" | "dragon-barding-sea" | "dragon-barding-gold" | "dragon-barding-silver" | "gold-hoard-block" | "gold-pile" | "queen-cell" | "bee" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "potion" | "potion-health" | "mead" | "blueprint" | "bolt" | "spear" | "crossbow" | "sword" | "armor";
   /** Reuse a world atlas texture for the handheld/icon representation. */
   worldTextureBlock?: BlockId;
   /** Shared semantic model hooks consumed by held-item and dropped-item renderers. */
@@ -891,7 +918,7 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.CrystalOre]: block(BlockId.CrystalOre, "Star Crystal Ore", 42, 42, 42, 3.1, "#64d6df", "pickaxe", 3),
   [BlockId.Deepstone]: block(BlockId.Deepstone, "Deepstone", 43, 43, 43, 2.15, "#3e454a", "pickaxe", 2),
   [BlockId.Lava]: block(BlockId.Lava, "Lava", 44, 44, 44, 0, "#ed642f", "hand", 0, { solid: false, layer: "transparent", replaceable: true, liquid: "lava" }),
-  [BlockId.MushroomCap]: block(BlockId.MushroomCap, "Giant Mushroom", 45, 45, 45, 0.55, "#a94e62", "axe"),
+  [BlockId.MushroomCap]: block(BlockId.MushroomCap, "Giant Mooncap", GIANT_MUSHROOM_TOP_TILE, GIANT_MUSHROOM_SIDE_TILE, GIANT_MUSHROOM_GILLS_TILE, 0.55, "#a94e62", "axe"),
   [BlockId.Moss]: block(BlockId.Moss, "Cave Moss", 46, 46, 46, 0.35, "#4b8245", "shovel"),
   [BlockId.Gravel]: block(BlockId.Gravel, "Gravel", 47, 47, 47, 0.6, "#85817c", "shovel"),
   [BlockId.Ice]: block(BlockId.Ice, "Ice", 48, 48, 48, 0.45, "#8fd0e2", "pickaxe", 0, { layer: "transparent" }),
@@ -963,10 +990,10 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.SakuraLeaves]: block(BlockId.SakuraLeaves, "Sakurabloom Leaves", 111, 111, 111, 0.28, "#ec9fc5", "hand", 0, { layer: "cutout" }),
   [BlockId.SakuraBloom]: block(BlockId.SakuraBloom, "Sakura Bloom", 112, 112, 112, 0.04, "#f3a7cd", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
   [BlockId.Dreamblossom]: block(BlockId.Dreamblossom, "Dreamblossom", 113, 113, 113, 0.05, "#ae8de8", "hand", 0, { solid: false, layer: "emissive", shape: "cross", replaceable: true }),
-  [BlockId.LumenKelp]: block(BlockId.LumenKelp, "Lumen Kelp", 114, 114, 114, 0.04, "#63f0c8", "hand", 0, { solid: false, layer: "emissive", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "aquatic-flora" }),
-  [BlockId.StarCoral]: block(BlockId.StarCoral, "Star Coral", 115, 115, 115, 0.08, "#ef798f", "hand", 0, { solid: false, layer: "emissive", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "aquatic-flora" }),
-  [BlockId.AbyssBloom]: block(BlockId.AbyssBloom, "Abyss Bloom", 116, 116, 116, 0.05, "#8f8cff", "hand", 0, { solid: false, layer: "emissive", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "aquatic-flora" }),
-  [BlockId.Tidevine]: block(BlockId.Tidevine, "Tidevine", 117, 117, 117, 0.04, "#4db8a1", "hand", 0, { solid: false, layer: "cutout", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "aquatic-flora" }),
+  [BlockId.LumenKelp]: block(BlockId.LumenKelp, "Lumen Kelp", 114, 114, 114, 0.04, "#63f0c8", "hand", 0, { solid: false, layer: "emissive", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "lumen-kelp", aquaticProfile: "kelp" }),
+  [BlockId.StarCoral]: block(BlockId.StarCoral, "Star Coral", 115, 115, 115, 0.08, "#ef798f", "hand", 0, { solid: false, layer: "emissive", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "star-coral", aquaticProfile: "coral" }),
+  [BlockId.AbyssBloom]: block(BlockId.AbyssBloom, "Abyss Bloom", 116, 116, 116, 0.05, "#8f8cff", "hand", 0, { solid: false, layer: "emissive", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "abyss-bloom", aquaticProfile: "bloom" }),
+  [BlockId.Tidevine]: block(BlockId.Tidevine, "Tidevine", 117, 117, 117, 0.04, "#4db8a1", "hand", 0, { solid: false, layer: "cutout", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "tidevine", aquaticProfile: "vine" }),
   [BlockId.MoonriceSprout]: block(BlockId.MoonriceSprout, "Moonrice Sprout", 118, 118, 118, 0.04, "#77a879", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
   [BlockId.MoonriceYoung]: block(BlockId.MoonriceYoung, "Young Moonrice", 119, 119, 119, 0.05, "#8ebd93", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
   [BlockId.MoonriceCrop]: block(BlockId.MoonriceCrop, "Ripe Moonrice", 120, 120, 120, 0.07, "#c9d8b1", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
@@ -1017,7 +1044,7 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.Moonpetal]: block(BlockId.Moonpetal, "Moonpetal", 113, 113, 113, 0.04, "#a8a3ff", "hand", 0, { solid: false, layer: "emissive", shape: "cross", replaceable: true }),
   [BlockId.Starfern]: block(BlockId.Starfern, "Starfern", 132, 132, 132, 0.04, "#68d6ac", "hand", 0, { solid: false, layer: "emissive", shape: "cross", replaceable: true }),
   [BlockId.Dreamcap]: block(BlockId.Dreamcap, "Dreamcap", 45, 45, 45, 0.05, "#9f7cff", "hand", 0, { solid: false, layer: "emissive", shape: "cross", replaceable: true }),
-  [BlockId.Lumenreed]: block(BlockId.Lumenreed, "Lumenreed", 114, 114, 114, 0.04, "#5ce4d0", "hand", 0, { solid: false, layer: "emissive", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "aquatic-flora" }),
+  [BlockId.Lumenreed]: block(BlockId.Lumenreed, "Lumenreed", 114, 114, 114, 0.04, "#5ce4d0", "hand", 0, { solid: false, layer: "emissive", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "lumenreed", aquaticProfile: "reed" }),
   [BlockId.SnowcapStone]: block(BlockId.SnowcapStone, "Snowcap Stone", 86, 86, 86, 2.2, "#87929a", "pickaxe", 2),
   [BlockId.DeepgearBrick]: block(BlockId.DeepgearBrick, "Deepgear Brick", DEEPGEAR_BRICK_TILE, DEEPGEAR_BRICK_TILE, DEEPGEAR_BRICK_TILE, 2.4, "#545e62", "pickaxe", 2),
   [BlockId.RivetedBrass]: block(BlockId.RivetedBrass, "Riveted Brass", RIVETED_BRASS_TILE, RIVETED_BRASS_TILE, RIVETED_BRASS_TILE, 2.7, "#a77943", "pickaxe", 2),
@@ -1085,9 +1112,9 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.Apiary]: block(BlockId.Apiary, "Wildwood Apiary", 92, 91, 11, 1.15, "#bd7b32", "axe", 0, { shape: "apiary" }),
   [BlockId.CaptureOrbRack]: block(BlockId.CaptureOrbRack, "Capture Orb Rack", 94, 94, 11, 0.85, "#795031", "axe", 0, { shape: "orb-rack" }),
   [BlockId.CreatureHealer]: block(BlockId.CreatureHealer, "Creature Healer", 95, 94, 11, 1.4, "#67d8d4", "pickaxe", 2, { shape: "orb-healer" }),
-  [BlockId.RiverRibbon]: block(BlockId.RiverRibbon, "River Ribbon", 53, 53, 53, 0.04, "#3f8c68", "hand", 0, { solid: false, layer: "cutout", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "aquatic-flora" }),
-  [BlockId.GlowKelp]: block(BlockId.GlowKelp, "Glow Kelp", 67, 67, 67, 0.04, "#58d7b0", "hand", 0, { solid: false, layer: "emissive", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "aquatic-flora" }),
-  [BlockId.ReedBloom]: block(BlockId.ReedBloom, "Reed Bloom", 66, 66, 66, 0.05, "#d8a84d", "hand", 0, { solid: false, layer: "cutout", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "aquatic-flora" }),
+  [BlockId.RiverRibbon]: block(BlockId.RiverRibbon, "River Ribbon", 53, 53, 53, 0.04, "#3f8c68", "hand", 0, { solid: false, layer: "cutout", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "river-ribbon", aquaticProfile: "ribbon" }),
+  [BlockId.GlowKelp]: block(BlockId.GlowKelp, "Glow Kelp", 67, 67, 67, 0.04, "#58d7b0", "hand", 0, { solid: false, layer: "emissive", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "glow-kelp", aquaticProfile: "kelp" }),
+  [BlockId.ReedBloom]: block(BlockId.ReedBloom, "Reed Bloom", 66, 66, 66, 0.05, "#d8a84d", "hand", 0, { solid: false, layer: "cutout", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "reed-bloom", aquaticProfile: "bloom" }),
   [BlockId.CloudreedGrass]: block(BlockId.CloudreedGrass, "Cloudreed Turf", 64, 65, 2, 0.62, "#4f8b6c", "shovel"),
   [BlockId.Cloudbell]: block(BlockId.Cloudbell, "Cloudbell", 67, 67, 67, 0.05, "#96cfe0", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
   [BlockId.WildBeehive]: block(BlockId.WildBeehive, "Wild Beehive", 93, 93, 11, 0.9, "#d09a3f", "axe", 0, { shape: "wild-hive" }),
@@ -1112,10 +1139,10 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.GlowmossCarpet]: block(BlockId.GlowmossCarpet, "Glowmoss Carpet", 180, 180, 180, 0.08, "#55a578", "hand", 0, { solid: false, layer: "emissive", shape: "cross", replaceable: true }),
   [BlockId.GlasswaterStone]: block(BlockId.GlasswaterStone, "Glasswater Stone", 181, 181, 181, 1.75, "#526f76", "pickaxe", 1),
   [BlockId.ReflectiveShale]: block(BlockId.ReflectiveShale, "Reflective Shale", 182, 182, 182, 1.9, "#638597", "pickaxe", 1, { layer: "transparent" }),
-  [BlockId.CaveReed]: block(BlockId.CaveReed, "Glasswater Reed", 183, 183, 183, 0.06, "#6ba5a3", "hand", 0, { solid: false, layer: "cutout", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "cave-reed" }),
-  [BlockId.LuminousAlgae]: block(BlockId.LuminousAlgae, "Luminous Algae", 184, 184, 184, 0.04, "#4fd4c1", "hand", 0, { solid: false, layer: "emissive", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "cave-reed" }),
+  [BlockId.CaveReed]: block(BlockId.CaveReed, "Glasswater Reed", 183, 183, 183, 0.06, "#6ba5a3", "hand", 0, { solid: false, layer: "cutout", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "cave-reed", aquaticProfile: "reed" }),
+  [BlockId.LuminousAlgae]: block(BlockId.LuminousAlgae, "Luminous Algae", 184, 184, 184, 0.04, "#4fd4c1", "hand", 0, { solid: false, layer: "emissive", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "luminous-algae", aquaticProfile: "algae" }),
   [BlockId.FloatingCavePad]: block(BlockId.FloatingCavePad, "Floating Cave Pad", 185, 185, 185, 0.04, "#557d68", "hand", 0, { solid: false, layer: "cutout", shape: "aquatic", replaceable: true, waterlogged: true }),
-  [BlockId.EggReed]: block(BlockId.EggReed, "Egg Reed", 186, 186, 186, 0.06, "#98a967", "hand", 0, { solid: false, layer: "cutout", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "cave-reed" }),
+  [BlockId.EggReed]: block(BlockId.EggReed, "Egg Reed", 186, 186, 186, 0.06, "#98a967", "hand", 0, { solid: false, layer: "cutout", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "egg-reed", aquaticProfile: "bloom" }),
   [BlockId.MineralCrust]: block(BlockId.MineralCrust, "Mineral Crust", 187, 187, 187, 0.95, "#b3a27d", "pickaxe", 1),
   [BlockId.Pillarstone]: block(BlockId.Pillarstone, "Pillarstone", 188, 188, 188, 2.2, "#76736e", "pickaxe", 2),
   [BlockId.Flowstone]: block(BlockId.Flowstone, "Flowstone", 189, 189, 189, 1.5, "#b7a77d", "pickaxe", 1),
@@ -1139,6 +1166,13 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.Guano]: block(BlockId.Guano, "Cave Guano", 207, 207, 207, 0.28, "#6e644a", "shovel"),
   [BlockId.CaveBridge]: block(BlockId.CaveBridge, "Cave Bridge Plank", 208, 208, 208, 0.82, "#655143", "axe"),
   [BlockId.DeepgearLift]: block(BlockId.DeepgearLift, "Deepgear Lift Platform", 209, 209, 209, 3.2, "#667278", "pickaxe", 2),
+  [BlockId.MoonberryCrate]: block(BlockId.MoonberryCrate, "Moonberry Crate", MOONBERRY_CRATE_TOP_TILE, MOONBERRY_CRATE_SIDE_TILE, 11, 0.8, "#76508f", "axe"),
+  [BlockId.SunberryCrate]: block(BlockId.SunberryCrate, "Sunberry Crate", SUNBERRY_CRATE_TOP_TILE, SUNBERRY_CRATE_SIDE_TILE, 11, 0.8, "#c98639", "axe"),
+  [BlockId.AppleCrate]: block(BlockId.AppleCrate, "Wild Apple Crate", APPLE_CRATE_TOP_TILE, APPLE_CRATE_SIDE_TILE, 11, 0.8, "#a94b3e", "axe"),
+  [BlockId.FrostpearCrate]: block(BlockId.FrostpearCrate, "Frostpear Crate", FROSTPEAR_CRATE_TOP_TILE, FROSTPEAR_CRATE_SIDE_TILE, 11, 0.8, "#91b8c0", "axe"),
+  [BlockId.FrostpearSapling]: block(BlockId.FrostpearSapling, "Frostpear Sapling", FROSTPEAR_SAPLING_TILE, FROSTPEAR_SAPLING_TILE, FROSTPEAR_SAPLING_TILE, 0.08, "#739873", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
+  [BlockId.FrostpearLeaves]: block(BlockId.FrostpearLeaves, "Frostpear Leaves", FROSTPEAR_LEAVES_TILE, FROSTPEAR_LEAVES_TILE, FROSTPEAR_LEAVES_TILE, 0.3, "#4d776d", "hand", 0, { layer: "cutout" }),
+  [BlockId.FrostpearFruit]: block(BlockId.FrostpearFruit, "Ripe Frostpear", FROSTPEAR_FRUIT_TILE, FROSTPEAR_FRUIT_TILE, FROSTPEAR_FRUIT_TILE, 0.05, "#a8d6d8", "hand", 0, { solid: false, layer: "cutout", shape: "fruit" }),
 };
 
 export const TORCH_BLOCKS: readonly BlockId[] = [
@@ -1203,6 +1237,7 @@ const technicalBlocks = new Set<BlockId>([
   BlockId.MoonberryShoot, BlockId.MoonberryBush, BlockId.MoonberryBushRipe,
   BlockId.SunberryShoot, BlockId.SunberryBush, BlockId.SunberryBushRipe,
   BlockId.AppleSapling, BlockId.AppleLeaves, BlockId.AppleFruit,
+  BlockId.FrostpearSapling, BlockId.FrostpearLeaves, BlockId.FrostpearFruit,
   BlockId.WheatSprout, BlockId.WheatYoung, BlockId.HydratedFarmland,
   BlockId.PeppermintSprout, BlockId.PeppermintYoung, BlockId.PeppermintCrop,
   BlockId.CocoaSprout, BlockId.CocoaYoung, BlockId.CocoaCrop,
@@ -1244,6 +1279,11 @@ for (const definition of Object.values(BLOCKS)) {
     ...(definition.id === BlockId.Sugarworks ? { iconKind: "sugarworks" as const, heldModel: "sugarworks" as const, dropModel: "sugarworks" as const } : {}),
     ...(definition.id === BlockId.HearthChair ? { iconKind: "chair" as const, heldModel: "chair" as const, dropModel: "chair" as const } : {}),
   };
+}
+
+ITEMS[BlockId.MushroomCap] = { ...ITEMS[BlockId.MushroomCap], iconKind: "giant-mushroom" };
+for (const crate of [BlockId.MoonberryCrate, BlockId.SunberryCrate, BlockId.AppleCrate, BlockId.FrostpearCrate] as const) {
+  ITEMS[crate] = { ...ITEMS[crate], iconKind: "produce-crate" };
 }
 
 Object.assign(ITEMS, {
@@ -1669,6 +1709,7 @@ Object.assign(ITEMS, {
   [Item.TomeHearthward]: { id: Item.TomeHearthward, name: "Tome of Hearthward", color: "#efb768", maxStack: 16, useKind: "spell-tome", spellId: "hearthward", iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
   [Item.IronFilings]: { id: Item.IronFilings, name: "Iron Filings", color: "#aeb8ba", maxStack: 64 },
   [Item.DeepgearStoolItem]: { id: Item.DeepgearStoolItem, name: "Deepgear Stool", color: "#9a7448", maxStack: 64, placeBlock: BlockId.DwarfStool, iconKind: "chair", heldModel: "chair", dropModel: "chair" },
+  [Item.Frostpear]: { id: Item.Frostpear, name: "Frostpear", color: "#a8d6d8", maxStack: 64, food: 4, useKind: "plant", plantBlock: BlockId.FrostpearSapling, iconKind: "produce" },
 } satisfies Record<number, ItemDefinition>);
 
 /**
@@ -1921,7 +1962,7 @@ for (const aquatic of AQUATIC_FLORA) if (BLOCK_ITEM_ALIASES[aquatic] === undefin
 }
 
 export const LOG_ITEMS: ItemCode[] = [BlockId.WildwoodLog, BlockId.PineLog, BlockId.BirchLog, BlockId.BloomLog, Item.RainveilLog, Item.SakurabloomLog, Item.CandywoodLogItem, Item.MoonboughLogItem];
-export const LEAF_BLOCKS: BlockId[] = [BlockId.WildwoodLeaves, BlockId.PineLeaves, BlockId.BirchLeaves, BlockId.BloomLeaves, BlockId.AppleLeaves, BlockId.JungleLeaves, BlockId.SakuraLeaves, BlockId.CandywoodLeaves, BlockId.MoonboughLeaves];
+export const LEAF_BLOCKS: BlockId[] = [BlockId.WildwoodLeaves, BlockId.PineLeaves, BlockId.BirchLeaves, BlockId.BloomLeaves, BlockId.AppleLeaves, BlockId.FrostpearLeaves, BlockId.JungleLeaves, BlockId.SakuraLeaves, BlockId.CandywoodLeaves, BlockId.MoonboughLeaves];
 /** Replaceable flora is excluded from the broad block filter, but builders still need it in the pack. */
 export const CREATIVE_FLORA: readonly ItemCode[] = [
   BlockId.TallGrass,
@@ -1941,6 +1982,7 @@ export const CREATIVE_FLORA: readonly ItemCode[] = [
   Item.LollipopPetal,
   Item.MarshmallowTuft,
   Item.CandywoodSaplingItem,
+  Item.Frostpear,
 ];
 
 export const DRAGON_ITEMS: readonly ItemCode[] = Object.freeze([
@@ -2049,6 +2091,14 @@ const anyDragonScale: ItemCode[] = [Item.FireDragonScale, Item.IceDragonScale, I
 const anyDragonHeart: ItemCode[] = [Item.FireDragonHeart, Item.IceDragonHeart, Item.SteelDragonHeart, Item.SeaDragonHeart, Item.GoldDragonHeart, Item.SilverDragonHeart];
 
 export const RECIPES: Recipe[] = [
+  { id: "moonberry-crate", name: "Moonberry Crate", width: 3, height: 3, pattern: Array<ItemCode>(9).fill(Item.Berry), output: { item: BlockId.MoonberryCrate, count: 1 }, table: true },
+  { id: "moonberry-crate-open", name: "Moonberries", width: 1, height: 1, pattern: [BlockId.MoonberryCrate], output: { item: Item.Berry, count: 9 }, table: false },
+  { id: "sunberry-crate", name: "Sunberry Crate", width: 3, height: 3, pattern: Array<ItemCode>(9).fill(Item.Sunberry), output: { item: BlockId.SunberryCrate, count: 1 }, table: true },
+  { id: "sunberry-crate-open", name: "Sunberries", width: 1, height: 1, pattern: [BlockId.SunberryCrate], output: { item: Item.Sunberry, count: 9 }, table: false },
+  { id: "apple-crate", name: "Wild Apple Crate", width: 3, height: 3, pattern: Array<ItemCode>(9).fill(Item.Apple), output: { item: BlockId.AppleCrate, count: 1 }, table: true },
+  { id: "apple-crate-open", name: "Wild Apples", width: 1, height: 1, pattern: [BlockId.AppleCrate], output: { item: Item.Apple, count: 9 }, table: false },
+  { id: "frostpear-crate", name: "Frostpear Crate", width: 3, height: 3, pattern: Array<ItemCode>(9).fill(Item.Frostpear), output: { item: BlockId.FrostpearCrate, count: 1 }, table: true },
+  { id: "frostpear-crate-open", name: "Frostpears", width: 1, height: 1, pattern: [BlockId.FrostpearCrate], output: { item: Item.Frostpear, count: 9 }, table: false },
   { id: "planks", name: "Wildwood Planks", width: 1, height: 1, pattern: [anyLog], output: { item: BlockId.Planks, count: 4 }, table: false },
   { id: "sticks", name: "Sticks", width: 1, height: 2, pattern: [BlockId.Planks, BlockId.Planks], output: { item: Item.Stick, count: 4 }, table: false },
   { id: "field-perch", name: "Field Perches", width: 3, height: 2, pattern: [Item.Stick, BlockId.Planks, Item.Stick, 0, Item.Stick, 0], output: { item: Item.FieldPerchItem, count: 2 }, table: false, mirrored: true },

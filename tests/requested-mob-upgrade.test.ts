@@ -56,6 +56,35 @@ test("requested wildlife redesigns expose their authored details and articulated
   ] as const) assert.ok(createMobVisual(kind, -806).visual.getObjectByName(detail), `${kind} is missing ${detail}`);
 });
 
+test("Puddlehopper settles between hops while Trufflehog and Clockwork Marmot use readable travel rigs", () => {
+  const frog = createMobVisual("puddlehopper", -820).visual;
+  const frogLeg = frog.getObjectByName("puddlehopper-left-rear-leg-pivot")!;
+  applyWildlifePose(frog, "puddlehopper", 0.1, 1, 0);
+  const early = frogLeg.rotation.x;
+  applyWildlifePose(frog, "puddlehopper", 0.2, 1, 0);
+  const settledDelta = Math.abs(frogLeg.rotation.x - early);
+  assert.ok(settledDelta < 0.35, `resting Puddlehopper legs should not vibrate between frames (${settledDelta})`);
+
+  const trufflehogModel = createMobVisual("thornhide-trufflehog", -821);
+  const trufflehog = trufflehogModel.visual;
+  const truffleLeg = trufflehogModel.parts.legs[0];
+  assert.ok(truffleLeg, "Thornhide Trufflehog needs an articulated leg rig");
+  applyWildlifePose(trufflehog, "thornhide-trufflehog", 0.15, 0.85, 0);
+  const before = truffleLeg.rotation.x;
+  applyWildlifePose(trufflehog, "thornhide-trufflehog", 0.85, 0.85, 0);
+  assert.notEqual(truffleLeg.rotation.x, before, "Living Bestiary quadrupeds must receive their authored walking pose");
+
+  const marmot = createMobVisual("clockwork-marmot", -822).visual;
+  for (const part of ["boiler-body", "pressure-gauge", "winding-key-pivot", "left-gear-pivot", "right-gear-pivot", "tail-tip-pivot"]) {
+    assert.ok(marmot.getObjectByName(`clockwork-marmot-${part}`), `Clockwork Marmot is missing ${part}`);
+  }
+  const gear = marmot.getObjectByName("clockwork-marmot-left-gear-pivot")!;
+  applyWildlifePose(marmot, "clockwork-marmot", 0.1, 0.8, 0);
+  const gearBefore = gear.rotation.x;
+  applyWildlifePose(marmot, "clockwork-marmot", 0.9, 0.8, 0);
+  assert.notEqual(gear.rotation.x, gearBefore, "Clockwork Marmot gears should turn during travel");
+});
+
 test("Lightning Bugs spawn, bottle into a placeable light, and use animated jar models", () => {
   assert.ok(POLLINATOR_ORDER.includes("lightning-bug"));
   assert.ok(passiveMobSpawnTableForBiome(BiomeId.Siltfen).some(([kind]) => kind === "lightning-bug"));
