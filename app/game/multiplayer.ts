@@ -341,7 +341,7 @@ export type ContainerSnapshot = {
   slots: ItemStackSnapshot[];
   machine?: { progress: number; burn: number; burnMax: number };
 };
-export type SharedFacilityKind = "apiary" | "orb-rack" | "healing-station" | "waygrid-items" | "waygrid-creatures" | "aquarium" | "golem-forge" | "alchemy" | "distillery" | "sugarworks";
+export type SharedFacilityKind = "apiary" | "morph-loom" | "orb-rack" | "healing-station" | "waygrid-items" | "waygrid-creatures" | "aquarium" | "golem-forge" | "alchemy" | "distillery" | "sugarworks";
 export type FacilityAction = {
   requestId: string;
   actorId: string;
@@ -1311,7 +1311,7 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
       return isId(value.requestId)
         && isId(value.actorId)
         && isShortString(value.facilityId, 96)
-        && ["apiary", "orb-rack", "healing-station", "waygrid-items", "waygrid-creatures", "aquarium", "golem-forge", "alchemy", "distillery", "sugarworks"].includes(value.facilityKind as string)
+        && ["apiary", "morph-loom", "orb-rack", "healing-station", "waygrid-items", "waygrid-creatures", "aquarium", "golem-forge", "alchemy", "distillery", "sugarworks"].includes(value.facilityKind as string)
         && (value.kind === "open" || value.kind === "close" || value.kind === "update")
         && (value.expectedRevision === undefined || isInteger(value.expectedRevision, 0, Number.MAX_SAFE_INTEGER))
         && (value.expectedPlayerRevision === undefined || isInteger(value.expectedPlayerRevision, 0, Number.MAX_SAFE_INTEGER))

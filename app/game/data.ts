@@ -306,6 +306,8 @@ export enum BlockId {
   FrostpearSapling = 539,
   FrostpearLeaves = 540,
   FrostpearFruit = 541,
+  /** v1.8.2 reusable Capture Orb transformation workstation. */
+  ChrysalisLoom = 544,
 }
 
 export const Item = {
@@ -734,6 +736,7 @@ export const Item = {
   Frostpear: 542,
   /** Hearthlands route folio; append-only save metadata. */
   HearthroadsGazetteer: 543,
+  ChrysalisLoomItem: 545,
 } as const;
 
 export type ItemCode = number;
@@ -789,7 +792,7 @@ export type BlockDefinition = {
   color: string;
   preferredTool: BlockTool;
   requiredTier: number;
-  shape?: "cube" | "cross" | "tall-flower" | "aquatic" | "torch" | "door" | "chest" | "bed" | "exhibit" | "aquarium" | "fireplace" | "bush" | "fruit" | "fence" | "gate" | "apiary" | "wild-hive" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "incubator" | "archive-shelf" | "tome-display" | "gold-pile" | "dragon-egg" | "lightning-bug-jar" | "chair" | "table" | "stool" | "shelf" | "barrel";
+  shape?: "cube" | "cross" | "tall-flower" | "aquatic" | "torch" | "door" | "chest" | "bed" | "exhibit" | "aquarium" | "fireplace" | "bush" | "fruit" | "fence" | "gate" | "apiary" | "wild-hive" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "morph-loom" | "incubator" | "archive-shelf" | "tome-display" | "gold-pile" | "dragon-egg" | "lightning-bug-jar" | "chair" | "table" | "stool" | "shelf" | "barrel";
   replaceable?: boolean;
   liquid?: "water" | "lava" | "honey" | "syrup";
   /** The block occupies a water source cell; breaking it restores the water. */
@@ -855,7 +858,7 @@ export type ItemDefinition = {
   /** Contents rendered in and placed from a bucket. */
   bucketLiquid?: "water" | "lava" | "honey" | "syrup";
   /** Semantic UI hook for non-cube inventory artwork. */
-  iconKind?: "crafting-table" | "chest" | "apiary" | "aquarium" | "fireplace" | "capture-orb" | "orb-rack" | "orb-healer" | "bucket" | "fence-gate" | "lead" | "shield" | "seed" | "produce" | "produce-crate" | "giant-mushroom" | "pie" | "honeycomb" | "honey" | "jelly" | "wax" | "milk" | "relic" | "dragon-egg" | "dragon-scale" | "dragon-heart" | "dragon-skull" | "dragon-bone" | "dragon-saddle" | "dragon-pannier" | "dragon-barding-fire" | "dragon-barding-ice" | "dragon-barding-steel" | "dragon-barding-sea" | "dragon-barding-gold" | "dragon-barding-silver" | "gold-hoard-block" | "gold-pile" | "queen-cell" | "bee" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "potion" | "potion-health" | "mead" | "blueprint" | "bolt" | "spear" | "crossbow" | "sword" | "armor";
+  iconKind?: "crafting-table" | "chest" | "apiary" | "aquarium" | "fireplace" | "capture-orb" | "orb-rack" | "orb-healer" | "morph-loom" | "bucket" | "fence-gate" | "lead" | "shield" | "seed" | "produce" | "produce-crate" | "giant-mushroom" | "pie" | "honeycomb" | "honey" | "jelly" | "wax" | "milk" | "relic" | "dragon-egg" | "dragon-scale" | "dragon-heart" | "dragon-skull" | "dragon-bone" | "dragon-saddle" | "dragon-pannier" | "dragon-barding-fire" | "dragon-barding-ice" | "dragon-barding-steel" | "dragon-barding-sea" | "dragon-barding-gold" | "dragon-barding-silver" | "gold-hoard-block" | "gold-pile" | "queen-cell" | "bee" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "potion" | "potion-health" | "mead" | "blueprint" | "bolt" | "spear" | "crossbow" | "sword" | "armor";
   /** Reuse a world atlas texture for the handheld/icon representation. */
   worldTextureBlock?: BlockId;
   /** Shared semantic model hooks consumed by held-item and dropped-item renderers. */
@@ -1126,6 +1129,7 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.DraconicIncubator]: block(BlockId.DraconicIncubator, "Draconic Incubator", 51, 50, 43, 4.1, "#745f78", "pickaxe", 3, { shape: "incubator", layer: "emissive" }),
   [BlockId.ArchiveShelf]: block(BlockId.ArchiveShelf, "Archive Shelf", 127, 127, 11, 0.85, "#7b5236", "axe", 0, { solid: false, layer: "cutout", shape: "archive-shelf" }),
   [BlockId.TomeDisplay]: block(BlockId.TomeDisplay, "Tome Display", 12, 11, 11, 0.55, "#946a47", "axe", 0, { solid: false, layer: "cutout", shape: "tome-display" }),
+  [BlockId.ChrysalisLoom]: block(BlockId.ChrysalisLoom, "Waykeeper Chrysalis Loom", DEEPGEAR_BRICK_TILE, RIVETED_BRASS_TILE, 11, 2.25, "#776b66", "pickaxe", 2, { solid: false, layer: "cutout", shape: "morph-loom" }),
   [BlockId.ArchiveShelfOne]: block(BlockId.ArchiveShelfOne, "Archive Shelf · 1 Tome", 127, 127, 11, 0.85, "#7b5236", "axe", 0, { solid: false, layer: "cutout", shape: "archive-shelf" }),
   [BlockId.ArchiveShelfTwo]: block(BlockId.ArchiveShelfTwo, "Archive Shelf · 2 Tomes", 127, 127, 11, 0.85, "#7b5236", "axe", 0, { solid: false, layer: "cutout", shape: "archive-shelf" }),
   [BlockId.ArchiveShelfThree]: block(BlockId.ArchiveShelfThree, "Archive Shelf · 3 Tomes", 127, 127, 11, 0.85, "#7b5236", "axe", 0, { solid: false, layer: "cutout", shape: "archive-shelf" }),
@@ -1700,6 +1704,7 @@ Object.assign(ITEMS, {
   [Item.IronShield]: { id: Item.IronShield, name: "Iron Shield", color: "#aeb6b7", maxStack: 1, maxDurability: 472, useKind: "shield", shieldKind: "iron-shield", iconKind: "shield" },
   [Item.GlassAquariumItem]: { id: Item.GlassAquariumItem, name: "Connected Glass Aquarium", color: "#8fd8dd", maxStack: 64, placeBlock: BlockId.GlassAquarium, iconKind: "aquarium" },
   [Item.HearthFireplaceItem]: { id: Item.HearthFireplaceItem, name: "Hearth Fireplace", color: "#d36b3c", maxStack: 16, placeBlock: BlockId.HearthFireplace, iconKind: "fireplace" },
+  [Item.ChrysalisLoomItem]: { id: Item.ChrysalisLoomItem, name: "Waykeeper Chrysalis Loom", color: "#79cfc8", maxStack: 16, placeBlock: BlockId.ChrysalisLoom, iconKind: "morph-loom" },
   [Item.DawnthreadSaber]: {
     ...tool(Item.DawnthreadSaber, "Dawnthread Saber", "#ffd978", "sword", 5, 1.15, 16, 9999),
     infiniteDurability: true,
@@ -1924,6 +1929,7 @@ export const BLOCK_ITEM_ALIASES: Readonly<Partial<Record<BlockId, ItemCode>>> = 
   [BlockId.DwarfStool]: Item.DeepgearStoolItem,
   [BlockId.ArchiveShelf]: Item.ArchiveShelfItem,
   [BlockId.TomeDisplay]: Item.TomeDisplayItem,
+  [BlockId.ChrysalisLoom]: Item.ChrysalisLoomItem,
   [BlockId.ArchiveShelfOne]: Item.ArchiveShelfItem,
   [BlockId.ArchiveShelfTwo]: Item.ArchiveShelfItem,
   [BlockId.ArchiveShelfThree]: Item.ArchiveShelfItem,
@@ -2229,6 +2235,7 @@ export const RECIPES: Recipe[] = [
   { id: "capture_orb_rack", name: "Capture Orb Rack", width: 3, height: 2, pattern: [Item.Stick, Item.CrystalShard, Item.Stick, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: BlockId.CaptureOrbRack, count: 1 }, table: true },
   { id: "creature_healer", name: "Creature Healer", width: 3, height: 3, pattern: [BlockId.Glass, Item.GlowDust, BlockId.Glass, Item.CaveGel, Item.CrystalShard, Item.CaveGel, Item.IronIngot, BlockId.Planks, Item.IronIngot], output: { item: BlockId.CreatureHealer, count: 1 }, table: true },
   { id: "wildwood_apiary", name: "Wildwood Apiary", width: 3, height: 3, pattern: [BlockId.Planks, BlockId.Planks, BlockId.Planks, Item.Fiber, Item.Honeycomb, Item.Fiber, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: BlockId.Apiary, count: 1 }, table: true },
+  { id: "chrysalis-loom", name: "Waykeeper Chrysalis Loom", width: 3, height: 3, pattern: [Item.RivetedBrassItem, BlockId.Glass, Item.RivetedBrassItem, Item.GearCluster, Item.CrystalShard, Item.GearCluster, BlockId.Planks, Item.Honeycomb, BlockId.Planks], output: { item: Item.ChrysalisLoomItem, count: 1 }, table: true },
   { id: "cartography_table", name: "Cartography Table", width: 3, height: 3, pattern: [Item.Feather, BlockId.Glass, Item.Feather, BlockId.Planks, BlockId.Planks, BlockId.Planks, Item.Stick, 0, Item.Stick], output: { item: BlockId.CartographyTable, count: 1 }, table: true },
   { id: "alchemy_stand", name: "Alchemy Stand", width: 3, height: 3, pattern: [Item.GlassBottle, Item.CaveGel, Item.GlassBottle, 0, Item.CrystalShard, 0, BlockId.StoneBrick, BlockId.StoneBrick, BlockId.StoneBrick], output: { item: BlockId.AlchemyStand, count: 1 }, table: true },
   { id: "wayshrine", name: "Waystone Shrine", width: 3, height: 3, pattern: [Item.CrystalShard, Item.GlowDust, Item.CrystalShard, BlockId.StoneBrick, BlockId.RuneStone, BlockId.StoneBrick, BlockId.StoneBrick, BlockId.StoneBrick, BlockId.StoneBrick], output: { item: BlockId.Wayshrine, count: 1 }, table: true },
@@ -2282,7 +2289,6 @@ export const RECIPES: Recipe[] = [
   { id: "wayfarer-crossbow", name: "Wayfarer Crossbow", width: 3, height: 3, pattern: [Item.CrystalShard, Item.IronIngot, Item.CrystalShard, Item.Fiber, Item.HearthguardCrossbow, Item.Fiber, 0, Item.Stick, 0], output: { item: Item.WayfarerCrossbow, count: 1 }, table: true, blueprint: "hobbit-wayfarer-crossbow" },
   { id: "crossbow-bolts", name: "Crossbow Bolts", width: 1, height: 3, pattern: [Item.IronIngot, Item.Stick, Item.Feather], output: { item: Item.CrossbowBolt, count: 8 }, table: true, blueprint: "hobbit-crossbow" },
   { id: "goblinsmith-spear", name: "Goblinsmith Spear", width: 1, height: 3, pattern: [Item.IronIngot, Item.Stick, Item.Stick], output: { item: Item.GoblinsmithSpear, count: 1 }, table: true, blueprint: "goblin-spear" },
-  { id: "queen_cell", name: "Queen Cell", width: 2, height: 1, pattern: [Item.WorkerBee, Item.RoyalJelly], output: { item: Item.QueenCell, count: 1 }, table: true },
   { id: "tideglass_charm", name: "Tideglass Charm", width: 3, height: 1, pattern: [Item.GlowScale, Item.Fiber, Item.GlowScale], output: { item: Item.BreatherCharm, count: 1 }, table: true },
   { id: "butterfly_net", name: "Butterfly Net", width: 3, height: 3, pattern: [softNetting, softNetting, softNetting, softNetting, 0, Item.Stick, 0, Item.Stick, 0], output: { item: Item.ButterflyNet, count: 1 }, table: true },
   { id: "banana_harvest", name: "Golden Bananas", width: 1, height: 1, pattern: [BlockId.BananaPlant], output: { item: Item.Banana, count: 2 }, table: false },

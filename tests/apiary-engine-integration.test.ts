@@ -98,7 +98,7 @@ test("orb stations split crafted count-two output one unit at a time with unique
   assert.equal(engine.orbRacks.get(key)?.slots[0]?.orbId, occupied?.orbId);
 });
 
-test("a filled Hive Queen orb stocks an empty apiary and returns the same empty orb", () => {
+test("a filled Hive Queen orb stocks an apiary and can be pulled back out unchanged", () => {
   const engine = stubMachineEngine();
   const key = "4,20,8";
   const bee: ApiaryBee = {
@@ -129,6 +129,8 @@ test("a filled Hive Queen orb stocks an empty apiary and returns the same empty 
   engine.persistentMachineLastStep = new Map();
   engine.world = { seed: 123, seedText: "QUEEN", getBlock: () => BlockId.Apiary } as never;
   engine.day = 7;
+  engine.mobs = [];
+  engine.syncApiaryWorkerMobs = () => undefined;
 
   engine.machineClick("apiary", 0, "left");
   const state = engine.apiaries.get(key);
@@ -138,9 +140,27 @@ test("a filled Hive Queen orb stocks an empty apiary and returns the same empty 
   assert.equal(state.queen.tamed, true);
   assert.equal(state.queen.ownerId, "local");
   assert.equal(state.queen.home, true);
+  assert.equal(engine.cursor, null, "the exact filled orb lives in the queen chamber while active");
+  const stored = state.queenOrb ? captureOrbFromInventorySlot(state.queenOrb) : null;
+  assert.equal(stored?.orbId, "orb-aurelia");
+  assert.equal(stored?.creature?.kind, "hive-queen");
+
+  engine.machineClick("apiary", 0, "left");
   const returned = captureOrbFromInventorySlot(engine.cursor);
   assert.equal(returned?.orbId, "orb-aurelia");
-  assert.equal(returned?.creature, null);
+  assert.equal(returned?.creature?.kind, "hive-queen");
+  assert.equal(engine.apiaries.get(key)?.queen, null, "pulling the queen disables rather than destroys the colony");
+
+  engine.machineClick("apiary", 0, "left");
+  engine.mode = "survival";
+  engine.apiaryFlowerCache = new Map();
+  const drops: InventorySlot[] = [];
+  engine.spawnDrop = ((item: InventorySlot["item"], count: number, _position: THREE.Vector3, durability?: number, slotMetadata?: Record<string, unknown>) => {
+    drops.push({ item, count, ...(durability !== undefined ? { durability } : {}), ...(slotMetadata ? { metadata: slotMetadata } : {}) });
+  }) as never;
+  engine.breakApiaryAt(key, BlockId.Apiary, new THREE.Vector3(4, 20, 8));
+  const recoveredQueen = drops.map((slot) => captureOrbFromInventorySlot(slot)).find((candidate) => candidate?.orbId === "orb-aurelia");
+  assert.equal(recoveredQueen?.creature?.name, "Aurelia", "breaking a crafted apiary returns its exact installed queen orb");
 });
 
 test("persistent healing stations restore bounded clocks and heal stored exact metadata", () => {

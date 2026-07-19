@@ -213,10 +213,12 @@ import {
 import {
   insertArchiveTome,
   isArchiveBookItem,
+  isSpellTomeItem,
   normalizeArchiveShelf,
   normalizeTomeDisplay,
   removeArchiveTome,
   setDisplayedTome,
+  tomeDisplayPalette,
   useDragonLairSurveyCharter as revealDragonLairFromCharter,
   type ArchiveShelfState,
   type TomeDisplayState,
@@ -641,6 +643,8 @@ import {
   extractApiaryBee,
   livingApiaryWorkers,
   planWorkerForaging,
+  setApiaryQueenDisplay,
+  setApiaryQueenOrb,
   stepApiary,
   tameHiveQueen,
   workerBeeFromInventorySlot,
@@ -676,6 +680,19 @@ import {
   type CreatureHealerState,
   type OrbRackState,
 } from "./capture-orbs";
+import {
+  addOrbMorphResource,
+  cancelOrbMorph,
+  createOrbMorphLoom,
+  normalizeOrbMorphLoom,
+  orbMorphInputSlot,
+  orbMorphOutputSlot,
+  removeOrbMorphResource,
+  setOrbMorphInput,
+  startOrbMorph,
+  stepOrbMorph,
+  type OrbMorphLoomState,
+} from "./orb-morphing";
 import {
   addDigitalCreatureCell,
   addDigitalItemCell,
@@ -950,10 +967,18 @@ export type ApiaryHudState = {
   royalJelly: number;
   royalJellyMax: number;
   productionProgress: number;
+  workerGrowthProgress: number;
+  queenDisplayEnabled: boolean;
+  queenDisplayAvailable: boolean;
   honeyClock: number;
   honeyCycleSeconds: number;
   slots: Array<InventorySlot | null>;
 };
+export type OrbMorphLoomHudState = OrbMorphLoomState & Readonly<{
+  inputSlot: InventorySlot | null;
+  outputSlot: InventorySlot | null;
+  progress: number;
+}>;
 export type OrbRackHudState = { slots: Array<InventorySlot | null> };
 export type HealingStationHudState = OrbRackHudState & {
   gelUnits: number;
@@ -1023,6 +1048,7 @@ export type HudState = {
   activeChest: ChestState | null;
   activeChestTitle: string;
   activeApiary?: ApiaryHudState | null;
+  activeMorphLoom?: OrbMorphLoomHudState | null;
   activeOrbRack?: OrbRackHudState | null;
   activeHealingStation?: HealingStationHudState | null;
   activeWaygridItems?: WaygridItemHudState | null;
@@ -1277,6 +1303,7 @@ export type WorldSave = {
   roadEvents?: Record<string, RoadEventState>;
   surfaceRoadGraph?: Record<string, readonly RoadEdge[]>;
   apiaries?: Record<string, ApiaryBlockState>;
+  morphLooms?: Record<string, OrbMorphLoomState>;
   orbRacks?: Record<string, OrbRackState>;
   healingStations?: Record<string, CreatureHealerState>;
   aquariums?: Record<string, AquariumState>;
@@ -1335,7 +1362,7 @@ export type WorldSave = {
   savedAt: number;
 };
 
-export type OverlayKind = "inventory" | "crafting" | "furnace" | "chest" | "apiary" | "orb-rack" | "healing-station" | "waygrid-items" | "waygrid-creatures" | "aquarium" | "golem-forge" | "bestiary" | "creature-camp" | "multiplayer" | "sleep" | "pet" | "dragon" | "magic" | "skills" | "spell-wheel" | "library" | "incubator" | "map" | "quests" | "guilds" | "cartography" | "alchemy" | "distillery" | "sugarworks" | "sentient" | "trade" | "bank" | "settlement" | "follower";
+export type OverlayKind = "inventory" | "crafting" | "furnace" | "chest" | "apiary" | "morph-loom" | "orb-rack" | "healing-station" | "waygrid-items" | "waygrid-creatures" | "aquarium" | "golem-forge" | "bestiary" | "creature-camp" | "multiplayer" | "sleep" | "pet" | "dragon" | "magic" | "skills" | "spell-wheel" | "library" | "incubator" | "map" | "quests" | "guilds" | "cartography" | "alchemy" | "distillery" | "sugarworks" | "sentient" | "trade" | "bank" | "settlement" | "follower";
 export type CameraMode = "first" | "third-rear" | "third-front";
 
 export type MultiplayerUiState = {
@@ -1522,6 +1549,10 @@ type OrbRackVisual = {
   group: THREE.Group;
   occupancySignature: string;
 };
+
+type TomeFurnitureVisual = { group: THREE.Group; signature: string };
+type FireplaceFlameVisual = { group: THREE.Group };
+type MorphLoomFurnitureVisual = { group: THREE.Group; signature: string };
 
 type SpawnMobOptions = {
   id?: number;
@@ -1784,7 +1815,7 @@ export function timedMovementMultiplier(buffs: Readonly<Record<string, number>> 
 function environmentLightDistance(type: BlockId) {
   if ([BlockId.LuminousRoot, BlockId.GlowmossCarpet, BlockId.LuminousAlgae, BlockId.LivingVein].includes(type)) return 8;
   if ([BlockId.LuminousGills, BlockId.LanternBloom, BlockId.ResonantCrystal, BlockId.CrystalCluster, BlockId.FumaroleVent, BlockId.VeinmetalHeart].includes(type)) return 11;
-  return type === BlockId.Lava ? 18 : type === BlockId.RuneStone ? 8 : type === BlockId.LightningBugJar ? 10 : isTorchBlock(type) ? 21 : 15;
+  return type === BlockId.Lava ? 18 : type === BlockId.Furnace ? 8 : type === BlockId.RuneStone ? 8 : type === BlockId.LightningBugJar ? 10 : isTorchBlock(type) ? 21 : 15;
 }
 
 function isEnvironmentLightBlock(type: BlockId) {
@@ -2591,9 +2622,12 @@ export function isStockedApiary(state: ApiaryBlockState): state is ApiaryState {
 }
 
 function cloneApiaryBlockState(value: ApiaryBlockState): ApiaryBlockState {
-  if (!value || value.schema !== 1 || value.queen === null) return createEmptyApiaryBlock();
-  const clone = JSON.parse(JSON.stringify(value)) as ApiaryState;
-  return {
+  if (!value || value.schema !== 1) return createEmptyApiaryBlock();
+  const clone = JSON.parse(JSON.stringify(value)) as ApiaryBlockState;
+  const queenOrb = clone.queen !== null && clone.queenOrb && captureOrbFromInventorySlot(clone.queenOrb)?.creature?.kind === "hive-queen"
+    ? cloneSlot(clone.queenOrb)
+    : null;
+  const common = {
     ...clone,
     workers: Array.isArray(clone.workers) ? clone.workers.slice(0, APIARY_WORKER_CAP) : [],
     nectar: clamp(Number(clone.nectar) || 0, 0, APIARY_NECTAR_CAP),
@@ -2604,6 +2638,10 @@ function cloneApiaryBlockState(value: ApiaryBlockState): ApiaryBlockState {
     workerGrowthClock: Math.max(0, Number(clone.workerGrowthClock) || 0),
     nextWorkerSerial: Math.max(0, Math.floor(Number(clone.nextWorkerSerial) || 0)),
   };
+  if (clone.queen === null) {
+    return { ...common, queen: null, queenOrb: null, queenDisplayEnabled: false };
+  }
+  return { ...common, queen: clone.queen, queenOrb, queenDisplayEnabled: clone.queenDisplayEnabled === true };
 }
 
 export function restoreApiaryStorage(saved: Record<string, ApiaryBlockState> = {}) {
@@ -2630,23 +2668,32 @@ export function restoreHealingStationStorage(saved: Record<string, CreatureHeale
 }
 
 export function apiaryHudState(state: ApiaryBlockState): ApiaryHudState {
+  const dormantWorkers = Array.isArray(state.workers) ? state.workers.filter((worker) => worker.alive) : [];
   if (!isStockedApiary(state)) return {
     queen: null,
     queenPresent: false,
     queenName: "No Queen",
-    workers: [],
-    workerCount: 0,
+    workers: dormantWorkers,
+    workerCount: dormantWorkers.length,
     maxWorkers: APIARY_WORKER_CAP,
-    nectar: 0,
-    nectarStatus: "Awaiting a queen",
-    honey: 0,
+    nectar: state.nectar,
+    nectarStatus: dormantWorkers.length ? "Queen removed · colony safely dormant" : "Awaiting a queen",
+    honey: state.honey,
     honeyMax: APIARY_HONEY_CAP,
-    royalJelly: 0,
+    royalJelly: state.royalJelly,
     royalJellyMax: APIARY_JELLY_CAP,
     productionProgress: 0,
-    honeyClock: 0,
+    workerGrowthProgress: 0,
+    queenDisplayEnabled: false,
+    queenDisplayAvailable: false,
+    honeyClock: state.honeyClock,
     honeyCycleSeconds: APIARY_HONEY_CYCLE_SECONDS,
-    slots: Array.from({ length: 11 }, () => null),
+    slots: [
+      null,
+      state.honey > 0 ? { item: Item.HoneyJar, count: state.honey } : null,
+      state.royalJelly > 0 ? { item: Item.RoyalJelly, count: state.royalJelly } : null,
+      ...Array.from({ length: APIARY_WORKER_CAP }, (_, index) => dormantWorkers[index] ? captureWorkerBeeItem(dormantWorkers[index]) : null),
+    ],
   };
   const status = apiaryContainerStatus(state);
   const workers = livingApiaryWorkers(state);
@@ -2666,14 +2713,29 @@ export function apiaryHudState(state: ApiaryBlockState): ApiaryHudState {
     royalJelly: status.jelly,
     royalJellyMax: status.jellyCapacity,
     productionProgress: status.honeyProgress,
+    workerGrowthProgress: status.workerProgress,
+    queenDisplayEnabled: state.queenDisplayEnabled,
+    queenDisplayAvailable: true,
     honeyClock: state.honeyClock,
     honeyCycleSeconds: APIARY_HONEY_CYCLE_SECONDS,
     slots: [
-      apiaryBeeCaptureSlot(state.queen),
+      cloneSlot(state.queenOrb) ?? apiaryBeeCaptureSlot(state.queen),
       status.honey > 0 ? { item: Item.HoneyJar, count: status.honey } : null,
       status.jelly > 0 ? { item: Item.RoyalJelly, count: status.jelly } : null,
       ...Array.from({ length: APIARY_WORKER_CAP }, (_, index) => workers[index] ? captureWorkerBeeItem(workers[index]) : null),
     ],
+  };
+}
+
+export function orbMorphLoomHudState(value: unknown): OrbMorphLoomHudState {
+  const state = normalizeOrbMorphLoom(value);
+  return {
+    ...state,
+    inputSlot: orbMorphInputSlot(state),
+    outputSlot: orbMorphOutputSlot(state),
+    progress: state.activeJob
+      ? clamp(state.activeJob.progressSeconds / Math.max(1, state.activeJob.durationSeconds), 0, 1)
+      : state.outputOrb ? 1 : 0,
   };
 }
 
@@ -3315,6 +3377,9 @@ export class VoxelEngine {
   lightSourcePosition = new THREE.Vector3();
   heldLightOffset = new THREE.Vector3(0.34, -0.24, -0.62);
   heldLightWorldOffset = new THREE.Vector3();
+  machineLightPosition = new THREE.Vector3();
+  machineLightOffset = new THREE.Vector3(0, 0.05, -0.42);
+  machineLightColor = new THREE.Color(0xff9a50);
   lightRefreshTimer = 0;
   skyVisibility = 1;
   skyVisibilityTarget = 1;
@@ -3447,6 +3512,7 @@ export class VoxelEngine {
   /** Shared slot container currently watched over multiplayer (chest or furnace). */
   activeNetworkContainerId: string | null = null;
   activeApiaryKey: string | null = null;
+  activeMorphLoomKey: string | null = null;
   activeOrbRackKey: string | null = null;
   activeHealingStationKey: string | null = null;
   activeWaygridItemKey: string | null = null;
@@ -3460,6 +3526,7 @@ export class VoxelEngine {
   contextualLootContainers = new Map<string, LootContainerRecord>();
   roadEvents = new Map<string, RoadEventState>();
   apiaries = new Map<string, ApiaryBlockState>();
+  morphLooms = new Map<string, OrbMorphLoomState>();
   orbRacks = new Map<string, OrbRackState>();
   healingStations = new Map<string, CreatureHealerState>();
   digitalItemVault: DigitalItemVault = createDigitalItemVault();
@@ -3592,6 +3659,10 @@ export class VoxelEngine {
   aquariumVisualTimer = 0;
   orbRackVisuals = new Map<string, OrbRackVisual>();
   orbRackVisualTimer = 0;
+  tomeFurnitureVisuals = new Map<string, TomeFurnitureVisual>();
+  fireplaceFlameVisuals = new Map<string, FireplaceFlameVisual>();
+  morphLoomFurnitureVisuals = new Map<string, MorphLoomFurnitureVisual>();
+  furnitureVisualTimer = 0;
   projectiles: ArrowProjectile[] = [];
   nextProjectileId = 1;
   dragonEffects: DragonAttackEffect[] = [];
@@ -4254,6 +4325,7 @@ export class VoxelEngine {
     this.lightningFlash = 0;
     this.clearEntities();
     this.apiaries.clear();
+    this.morphLooms.clear();
     this.orbRacks.clear();
     this.healingStations.clear();
     this.aquariums.clear();
@@ -4369,6 +4441,7 @@ export class VoxelEngine {
     this.contextualLootContainers.clear();
     this.roadEvents.clear();
     this.apiaries.clear();
+    this.morphLooms.clear();
     this.orbRacks.clear();
     this.healingStations.clear();
     this.aquariums.clear();
@@ -4606,6 +4679,7 @@ export class VoxelEngine {
       return normalized ? [[anchorId, normalized] as const] : [];
     }));
     this.apiaries = restoreApiaryStorage(save.apiaries ?? {});
+    this.morphLooms = new Map(Object.entries(save.morphLooms ?? {}).map(([key, value]) => [key, normalizeOrbMorphLoom(value)]));
     this.orbRacks = restoreOrbRackStorage(save.orbRacks ?? {});
     this.healingStations = restoreHealingStationStorage(save.healingStations ?? {});
     this.aquariums = normalizeAquariumStorage(save.aquariums ?? {});
@@ -4627,6 +4701,7 @@ export class VoxelEngine {
     this.archiveShelves = new Map(Object.entries(save.archiveShelves ?? {}).map(([key, value]) => [key, normalizeArchiveShelf(value)]));
     this.tomeDisplays = new Map(Object.entries(save.tomeDisplays ?? {}).map(([key, value]) => [key, normalizeTomeDisplay(value)]));
     this.activeAlchemyKey = null;
+    this.activeMorphLoomKey = null;
     this.activeDistilleryKey = null;
     this.activeSugarworksKey = null;
     this.activeCartographyKey = null;
@@ -4641,6 +4716,7 @@ export class VoxelEngine {
     const restoredAt = Number.isFinite(save.savedAt) ? Math.min(Date.now(), save.savedAt) : Date.now();
     for (const key of [
       ...this.apiaries.keys(),
+      ...this.morphLooms.keys(),
       ...this.healingStations.keys(),
       ...this.golemForges.keys(),
       ...this.alchemyStands.keys(),
@@ -4681,6 +4757,7 @@ export class VoxelEngine {
     this.spawnProtection = 8;
     this.syncAquariumVisuals(true);
     this.syncOrbRackVisuals(true);
+    this.syncFurnitureVisuals(true);
     this.emitHud(true);
   }
 
@@ -5502,7 +5579,7 @@ export class VoxelEngine {
     if (separator <= 0) return null;
     const kind = id.slice(0, separator) as SharedFacilityKind;
     const key = id.slice(separator + 1);
-    return ["apiary", "orb-rack", "healing-station", "waygrid-items", "waygrid-creatures", "aquarium", "golem-forge", "alchemy", "distillery", "sugarworks"].includes(kind) && key
+    return ["apiary", "morph-loom", "orb-rack", "healing-station", "waygrid-items", "waygrid-creatures", "aquarium", "golem-forge", "alchemy", "distillery", "sugarworks"].includes(kind) && key
       ? { kind, key }
       : null;
   }
@@ -5514,6 +5591,7 @@ export class VoxelEngine {
     if (kind === "apiary") return block === BlockId.Apiary || block === BlockId.WildBeehive;
     const expected: Partial<Record<SharedFacilityKind, BlockId>> = {
       "orb-rack": BlockId.CaptureOrbRack,
+      "morph-loom": BlockId.ChrysalisLoom,
       "healing-station": BlockId.CreatureHealer,
       "waygrid-items": BlockId.WaygridVaultTerminal,
       "waygrid-creatures": BlockId.WaygridCreatureArchive,
@@ -5529,6 +5607,7 @@ export class VoxelEngine {
   private sharedFacilityState(kind: SharedFacilityKind, key: string, initialize = false): Record<string, unknown> | null {
     if (initialize) {
       if (kind === "apiary" && !this.apiaries.has(key)) this.apiaries.set(key, createEmptyApiaryBlock());
+      if (kind === "morph-loom" && !this.morphLooms.has(key)) this.morphLooms.set(key, createOrbMorphLoom());
       if (kind === "orb-rack" && !this.orbRacks.has(key)) this.orbRacks.set(key, createOrbRack());
       if (kind === "healing-station" && !this.healingStations.has(key)) this.healingStations.set(key, createCreatureHealer());
       if (kind === "aquarium" && !this.aquariums.has(key)) return null;
@@ -5538,6 +5617,7 @@ export class VoxelEngine {
       if (kind === "sugarworks" && !this.sugarworks.has(key)) this.sugarworks.set(key, createSugarworks());
     }
     const state: unknown = kind === "apiary" ? this.apiaries.get(key)
+      : kind === "morph-loom" ? this.morphLooms.get(key)
       : kind === "orb-rack" ? this.orbRacks.get(key)
         : kind === "healing-station" ? this.healingStations.get(key)
           : kind === "waygrid-items" ? this.digitalItemVault
@@ -5552,6 +5632,7 @@ export class VoxelEngine {
 
   private applySharedFacilityState(kind: SharedFacilityKind, key: string, state: Record<string, unknown>) {
     if (kind === "apiary") this.apiaries.set(key, restoreApiaryStorage({ [key]: state as ApiaryBlockState }).get(key) ?? createEmptyApiaryBlock());
+    else if (kind === "morph-loom") this.morphLooms.set(key, normalizeOrbMorphLoom(state));
     else if (kind === "orb-rack") this.orbRacks.set(key, restoreOrbRackStorage({ [key]: state as OrbRackState }).get(key) ?? createOrbRack());
     else if (kind === "healing-station") this.healingStations.set(key, restoreHealingStationStorage({ [key]: state as CreatureHealerState }).get(key) ?? createCreatureHealer());
     else if (kind === "waygrid-items") this.digitalItemVault = normalizeDigitalItemVault(state);
@@ -5567,7 +5648,8 @@ export class VoxelEngine {
 
   private activeSharedFacility(): { id: string; kind: SharedFacilityKind; key: string } | null {
     const pair: [SharedFacilityKind, string | null] = this.activeApiaryKey ? ["apiary", this.activeApiaryKey]
-      : this.activeOrbRackKey ? ["orb-rack", this.activeOrbRackKey]
+      : this.activeMorphLoomKey ? ["morph-loom", this.activeMorphLoomKey]
+        : this.activeOrbRackKey ? ["orb-rack", this.activeOrbRackKey]
         : this.activeHealingStationKey ? ["healing-station", this.activeHealingStationKey]
           : this.activeWaygridItemKey ? ["waygrid-items", this.activeWaygridItemKey]
             : this.activeWaygridCreatureKey ? ["waygrid-creatures", this.activeWaygridCreatureKey]
@@ -9673,6 +9755,7 @@ export class VoxelEngine {
   openOverlay(kind: OverlayKind, key?: string) {
     if (kind !== "chest" && kind !== "furnace") this.activeNetworkContainerId = null;
     if (kind !== "apiary") this.activeApiaryKey = null;
+    if (kind !== "morph-loom") this.activeMorphLoomKey = null;
     if (kind !== "orb-rack") this.activeOrbRackKey = null;
     if (kind !== "healing-station") this.activeHealingStationKey = null;
     if (kind !== "waygrid-items") this.activeWaygridItemKey = null;
@@ -9729,6 +9812,12 @@ export class VoxelEngine {
       this.activeFurnaceKey = null;
       this.activeChestKey = null;
       this.ensureApiaryState(key);
+    } else if (kind === "morph-loom" && key) {
+      this.activeMorphLoomKey = key;
+      this.activeFurnaceKey = null;
+      this.activeChestKey = null;
+      if (!this.morphLooms.has(key)) this.morphLooms.set(key, createOrbMorphLoom());
+      this.persistentMachineLastStep.set(key, Date.now());
     } else if (kind === "orb-rack" && key) {
       this.activeOrbRackKey = key;
       this.activeFurnaceKey = null;
@@ -9860,6 +9949,7 @@ export class VoxelEngine {
     this.activeNetworkContainerId = null;
     this.activeNetworkFacilityId = null;
     this.activeApiaryKey = null;
+    this.activeMorphLoomKey = null;
     this.activeOrbRackKey = null;
     this.activeHealingStationKey = null;
     this.activeWaygridItemKey = null;
@@ -11268,6 +11358,7 @@ export class VoxelEngine {
     const seed = (this.world.seed ^ Math.imul(x | 0, 374761393) ^ Math.imul(y | 0, 668265263) ^ Math.imul(z | 0, 1103515245)) >>> 0;
     const orb = slot.count === 1 ? captureOrbFromInventorySlot(slot) : null;
     if (orb?.creature?.kind === "hive-queen") {
+      const storedOrb = cloneSlot(slot);
       const released = releaseCaptureOrb(orb);
       if (!released) return false;
       const metadata = released.creature;
@@ -11293,14 +11384,12 @@ export class VoxelEngine {
         tamed: preserved?.tamed ?? metadata.tamed,
         ownerId: preserved?.ownerId ?? metadata.ownerId ?? null,
       };
-      this.apiaries.set(key, { ...base, queen });
-      const empty = captureOrbInventorySlot(released.orb);
-      slot.item = empty.item;
-      slot.count = 1;
-      slot.metadata = empty.metadata;
-      delete slot.durability;
+      const inserted = insertApiaryBee(state, queen, this.localPlayerId(), this.day);
+      if (!inserted.inserted || !isStockedApiary(inserted.state) || !storedOrb) return false;
+      this.apiaries.set(key, setApiaryQueenOrb(inserted.state, storedOrb));
+      slot.count = 0;
       this.persistentMachineLastStep.set(key, Date.now());
-      this.events.onToast(`${metadata.name ?? "The Hive Queen"} settles into the apiary; the Capture Orb returns empty.`);
+      this.events.onToast(`${metadata.name ?? "The Hive Queen"} settles into the apiary in her Capture Orb. Production is active; queen flight remains hidden.`);
       return true;
     }
     if (slot.item !== Item.QueenCell) return false;
@@ -11334,15 +11423,23 @@ export class VoxelEngine {
         return;
       }
       if (!isStockedApiary(state)) return;
-      const extracted = extractApiaryBee(state, state.queen.id, this.localPlayerId());
-      if (!extracted.bee) {
-        this.events.onToast(extracted.reason === "workers-present"
-          ? "Move the worker bees out before lifting their queen."
-          : "Only a neutral or bonded friendly queen can leave this apiary.");
+      const [x, y, z] = key.split(",").map(Number);
+      if (this.world.getBlock(x, y, z) === BlockId.WildBeehive) {
+        this.events.onToast("Wild queens live outside the hive. Weaken and capture her with an empty Capture Orb first.");
         return;
       }
-      const queenSlot = apiaryBeeCaptureSlot(extracted.bee);
+      const queenSlot = cloneSlot(state.queenOrb) ?? apiaryBeeCaptureSlot(state.queen);
       if (!queenSlot) return;
+      if (shift && this.inventoryCapacity(queenSlot.item, queenSlot.durability, queenSlot.metadata) < 1) {
+        this.events.onToast("Make one pack slot for the queen's Capture Orb.");
+        return;
+      }
+      if (!shift && this.cursor) return;
+      const extracted = extractApiaryBee(state, state.queen.id, this.localPlayerId());
+      if (!extracted.bee) {
+        this.events.onToast("Only a neutral or bonded friendly queen can leave this apiary.");
+        return;
+      }
       if (shift) {
         if (this.addItem(queenSlot.item, 1, queenSlot.durability, MAIN_THEN_HOTBAR, queenSlot.metadata) > 0) {
           this.events.onToast("Make one pack slot for the queen's Capture Orb.");
@@ -11350,8 +11447,9 @@ export class VoxelEngine {
         }
       } else this.cursor = queenSlot;
       this.apiaries.set(key, extracted.state);
+      this.syncApiaryWorkerMobs(key, extracted.state, apiaryPhaseForWorldTime(this.worldTime));
       this.audio.play("pickup");
-      this.events.onToast("The exact Hive Queen returned to her Capture Orb.");
+      this.events.onToast("The exact Hive Queen orb is back in your hands. Workers and stores remain safe, but the apiary is dormant.");
       this.saveSoon();
       this.emitHud(true);
       return;
@@ -11410,6 +11508,126 @@ export class VoxelEngine {
     this.audio.play("pickup");
     this.saveSoon();
     this.emitHud(true);
+  }
+
+  private commitMorphLoomState(key: string, state: OrbMorphLoomState, sound: "ui" | "pickup" | "craft" = "ui") {
+    this.morphLooms.set(key, normalizeOrbMorphLoom(state));
+    this.persistentMachineLastStep.set(key, Date.now());
+    this.audio.play(sound);
+    this.saveSoon();
+    this.emitHud(true);
+  }
+
+  morphLoomMachineClick(index: number, button: "left" | "right", shift: boolean) {
+    const key = this.activeMorphLoomKey;
+    if (!key || index < 0 || index > 3) return;
+    if (this.multiplayer?.role === "guest") {
+      this.events.onToast("The world host operates this shared Chrysalis Loom.");
+      return;
+    }
+    const state = normalizeOrbMorphLoom(this.morphLooms.get(key));
+    if (state.activeJob) {
+      this.events.onToast("The chrysalis is sealed while a morph is in progress. Cancel it first to recover every input.");
+      return;
+    }
+    if (index === 0) {
+      if (this.cursor) {
+        const next = setOrbMorphInput(state, { ...this.cursor, count: 1 });
+        if (!next) {
+          this.events.onToast("The cradle accepts one undeployed Capture Orb holding a worker Honeybee.");
+          return;
+        }
+        this.cursor.count -= 1;
+        if (this.cursor.count <= 0) this.cursor = null;
+        this.commitMorphLoomState(key, next, "craft");
+        return;
+      }
+      const slot = orbMorphInputSlot(state);
+      if (!slot) return;
+      if (shift) {
+        if (this.addItem(slot.item, 1, slot.durability, MAIN_THEN_HOTBAR, slot.metadata) > 0) {
+          this.events.onToast("Make one pack slot for the worker's Capture Orb.");
+          return;
+        }
+      } else this.cursor = slot;
+      this.commitMorphLoomState(key, { ...state, inputOrb: null }, "pickup");
+      return;
+    }
+    if (index === 3) {
+      const slot = orbMorphOutputSlot(state);
+      if (!slot) return;
+      if (shift) {
+        if (this.addItem(slot.item, 1, slot.durability, MAIN_THEN_HOTBAR, slot.metadata) > 0) {
+          this.events.onToast("Make one pack slot for the crowned queen's Capture Orb.");
+          return;
+        }
+      } else {
+        if (this.cursor) return;
+        this.cursor = slot;
+      }
+      this.commitMorphLoomState(key, { ...state, outputOrb: null }, "pickup");
+      return;
+    }
+    const item = index === 1 ? Item.RoyalJelly : Item.CrystalShard;
+    const available = index === 1 ? state.royalJelly : state.starCrystals;
+    if (this.cursor) {
+      if (this.cursor.item !== item) {
+        this.events.onToast(index === 1 ? "This vial takes Royal Jelly." : "This focus takes Star Crystals.");
+        return;
+      }
+      const requested = shift || button === "left" ? this.cursor.count : 1;
+      const added = addOrbMorphResource(state, item, requested);
+      if (added.moved <= 0) return;
+      this.cursor.count -= added.moved;
+      if (this.cursor.count <= 0) this.cursor = null;
+      this.commitMorphLoomState(key, added.state, "craft");
+      return;
+    }
+    if (available <= 0) return;
+    const requested = shift ? available : button === "right" ? Math.ceil(available / 2) : available;
+    const moved = removeOrbMorphResource(state, item, requested);
+    if (moved.moved <= 0) return;
+    const resourceSlot: InventorySlot = { item, count: moved.moved };
+    if (shift) {
+      const leftover = this.addItem(item, resourceSlot.count, undefined, MAIN_THEN_HOTBAR);
+      if (leftover > 0) {
+        const returned = addOrbMorphResource(moved.state, item, leftover);
+        this.commitMorphLoomState(key, returned.state);
+        return;
+      }
+    } else this.cursor = resourceSlot;
+    this.commitMorphLoomState(key, moved.state, "pickup");
+  }
+
+  startActiveOrbMorph() {
+    const key = this.activeMorphLoomKey;
+    if (!key || this.multiplayer?.role === "guest") return false;
+    const result = startOrbMorph(this.morphLooms.get(key) ?? createOrbMorphLoom(), Date.now());
+    if (!result.started) {
+      const messages: Record<string, string> = {
+        busy: "The chrysalis is already turning.",
+        "output-occupied": "Collect the crowned queen orb before starting another morph.",
+        "missing-orb": "Place a worker Honeybee inside a filled Capture Orb.",
+        "wrong-creature": "Only a worker Honeybee can follow this first morph pattern.",
+        deployed: "Recall the attuned bee into its orb before morphing it.",
+        "missing-resources": "This morph needs one Royal Jelly and one Star Crystal.",
+      };
+      this.events.onToast(messages[result.reason] ?? "The morph cannot begin yet.");
+      return false;
+    }
+    this.commitMorphLoomState(key, result.state, "craft");
+    this.events.onToast("The Chrysalis Loom begins a careful forty-two-second crowning cycle.");
+    return true;
+  }
+
+  cancelActiveOrbMorph() {
+    const key = this.activeMorphLoomKey;
+    if (!key || this.multiplayer?.role === "guest") return false;
+    const result = cancelOrbMorph(this.morphLooms.get(key) ?? createOrbMorphLoom());
+    if (!result.cancelled) return false;
+    this.commitMorphLoomState(key, result.state, "ui");
+    this.events.onToast("Morph cancelled. The worker orb, Royal Jelly, and Star Crystal remain untouched.");
+    return true;
   }
 
   offhandClick(button: "left" | "right", shift = false) {
@@ -11593,8 +11811,9 @@ export class VoxelEngine {
     return true;
   }
 
-  machineClick(machine: "furnace" | "chest" | "apiary" | "orb-rack" | "healing-station", index: number, button: "left" | "right", shift = false) {
+  machineClick(machine: "furnace" | "chest" | "apiary" | "morph-loom" | "orb-rack" | "healing-station", index: number, button: "left" | "right", shift = false) {
     if (machine === "apiary") { this.apiaryMachineClick(index, button, shift); return; }
+    if (machine === "morph-loom") { this.morphLoomMachineClick(index, button, shift); return; }
     if (machine === "orb-rack" || machine === "healing-station") { this.orbStationMachineClick(machine, index, button, shift); return; }
     let slots: Array<InventorySlot | null>;
     if (machine === "furnace") {
@@ -12090,29 +12309,33 @@ export class VoxelEngine {
     return flowers;
   }
 
-  syncApiaryWorkerMobs(key: string, state: ApiaryState, phase: ApiaryPhase) {
+  syncApiaryWorkerMobs(key: string, state: ApiaryBlockState, phase: ApiaryPhase) {
     const [x, y, z] = key.split(",").map(Number);
     const withinSimulation = (x - this.position.x) ** 2 + (z - this.position.z) ** 2
       <= (this.settings.simulationDistance * CHUNK_SIZE) ** 2;
-    const livingIds = new Set(livingApiaryWorkers(state).map((worker) => worker.id));
+    const workers = state.workers.filter((worker) => worker.alive);
+    const livingIds = new Set(workers.map((worker) => worker.id));
+    const wildHive = this.world.getBlock(x, y, z) === BlockId.WildBeehive;
+    const queen = state.queen;
+    const showQueen = queen !== null && (wildHive || state.queenDisplayEnabled);
     for (let index = this.mobs.length - 1; index >= 0; index -= 1) {
       const mob = this.mobs[index];
       if (mob.beeHiveKey !== key) continue;
       const belongs = mob.kind === "hive-queen"
-        ? state.queen.alive && mob.apiaryBee?.id === state.queen.id
+        ? showQueen && queen?.alive === true && mob.apiaryBee?.id === queen.id
         : livingIds.has(mob.apiaryBee?.id ?? "");
       if (!belongs || !withinSimulation) this.removeMob(index);
     }
-    if (withinSimulation && state.queen.alive
-      && !this.mobs.some((mob) => mob.beeHiveKey === key && mob.kind === "hive-queen" && mob.apiaryBee?.id === state.queen.id)) {
+    if (withinSimulation && showQueen && queen?.alive
+      && !this.mobs.some((mob) => mob.beeHiveKey === key && mob.kind === "hive-queen" && mob.apiaryBee?.id === queen.id)) {
       this.spawnMob("hive-queen", new THREE.Vector3(x, y + 0.86, z), {
-        apiaryBee: { ...state.queen, home: true, outbound: false },
+        apiaryBee: { ...queen, home: true, outbound: false },
         beeHiveKey: key,
         persistentPoiResident: true,
       });
     }
     if (phase !== "day" || !withinSimulation) return;
-    const visualWorkers = livingApiaryWorkers(state).slice(0, 3);
+    const visualWorkers = workers.slice(0, 3);
     for (let index = 0; index < visualWorkers.length; index += 1) {
       const worker = visualWorkers[index];
       if (this.mobs.some((mob) => mob.beeHiveKey === key && mob.apiaryBee?.id === worker.id)) continue;
@@ -12127,6 +12350,7 @@ export class VoxelEngine {
 
   updatePersistentMachines(dt: number) {
     this.apiaries ??= new Map();
+    this.morphLooms ??= new Map();
     this.healingStations ??= new Map();
     this.alchemyStands ??= new Map();
     this.distilleries ??= new Map();
@@ -12154,6 +12378,7 @@ export class VoxelEngine {
     this.persistentMachineTimer = 1;
     const entries = [
       ...[...this.apiaries.keys()].map((key) => ({ kind: "apiary" as const, key })),
+      ...[...this.morphLooms.keys()].map((key) => ({ kind: "morph-loom" as const, key })),
       ...[...this.healingStations.keys()].map((key) => ({ kind: "healer" as const, key })),
       ...[...this.alchemyStands.keys()].map((key) => ({ kind: "alchemy" as const, key })),
       ...[...this.distilleries.keys()].map((key) => ({ kind: "distillery" as const, key })),
@@ -12192,6 +12417,20 @@ export class VoxelEngine {
           meaningfulChange = true;
           if (block !== undefined && (x - this.position.x) ** 2 + (z - this.position.z) ** 2 < 256) {
             this.spawnParticles(x, y + 0.45, z, BlockId.Glowstone, 3);
+          }
+        }
+      } else if (entry.kind === "morph-loom") {
+        const station = this.morphLooms.get(entry.key);
+        if (!station) continue;
+        const result = stepOrbMorph(station, elapsed * skillMultiplier(this.skillState.skills.crafting.level));
+        this.morphLooms.set(entry.key, result.state);
+        if (result.completed) {
+          meaningfulChange = true;
+          const [x, y, z] = entry.key.split(",").map(Number);
+          if ((x - this.position.x) ** 2 + (z - this.position.z) ** 2 < 24 * 24) {
+            this.spawnParticles(x, y + 0.8, z, BlockId.CrystalBlock, 12);
+            this.audio.play("craft");
+            this.events.onToast("The chrysalis opens: a Hive Queen waits safely inside her original Capture Orb.");
           }
         }
       } else if (entry.kind === "healer") {
@@ -13706,6 +13945,17 @@ export class VoxelEngine {
         this.events.onToast("Make one empty pack slot before splitting a filled orb from this stack.");
         return;
       }
+      if (mob.kind === "hive-queen" && mob.beeHiveKey) {
+        const hive = this.apiaries.get(mob.beeHiveKey);
+        if (hive?.queen && (!mob.apiaryBee?.id || hive.queen.id === mob.apiaryBee.id)) {
+          this.apiaries.set(mob.beeHiveKey, {
+            ...hive,
+            queen: null,
+            queenOrb: null,
+            queenDisplayEnabled: false,
+          });
+        }
+      }
       this.resolveLegendaryCapture(mob, `orb:${captured.orbId}`);
       this.observeCreatureRarity(mob);
       this.transferPrimeCustody(mob, "captured", `orb:${captured.orbId}`);
@@ -14935,7 +15185,7 @@ export class VoxelEngine {
       if (ARCHIVE_SHELF_BLOCK_SET.has(this.target.type)) {
         const fallbackCount = archiveShelfBookCount(this.target.type) ?? 0;
         const current = this.archiveShelves.get(key) ?? normalizeArchiveShelf({ tomes: Array.from({ length: fallbackCount }, () => Item.BoundBook) });
-        if (heldSlot && isArchiveBookItem(heldSlot.item)) {
+        if (heldSlot && isSpellTomeItem(heldSlot.item)) {
           const inserted = insertArchiveTome(current, heldSlot.item);
           if (!inserted.inserted) {
             this.events.onToast("This archive shelf already displays six books.");
@@ -14986,6 +15236,7 @@ export class VoxelEngine {
           }
           this.tomeDisplays.set(key, displayed.state);
           this.consumeSelectedUnit();
+          this.syncFurnitureVisuals(true);
           this.events.onToast(`${ITEMS[heldSlot.item]?.name ?? "Book"} opened on the display. Crouch-use with an empty hand to retrieve it.`);
           this.audio.play("place", BlockId.Planks);
           this.placeCooldown = 0.22;
@@ -14998,6 +15249,7 @@ export class VoxelEngine {
           this.tomeDisplays.set(key, cleared.state);
           const leftover = this.addItem(current.tome, 1);
           if (leftover) this.spawnDrop(current.tome, leftover, new THREE.Vector3(this.target.x, this.target.y + 0.5, this.target.z));
+          this.syncFurnitureVisuals(true);
           this.audio.play("pickup");
           this.events.onToast(`${ITEMS[current.tome].name} lifted from the display.`);
           this.placeCooldown = 0.22;
@@ -15005,7 +15257,7 @@ export class VoxelEngine {
           this.emitHud(true);
           return;
         }
-        this.events.onToast(current.tome === null ? "Use a Bound Book or reusable spell tome to place it on this display." : `${ITEMS[current.tome].name} is displayed here.`);
+        this.events.onToast(current.tome === null ? "Use a reusable spell tome to open it on this display." : `${ITEMS[current.tome].name} is displayed here.`);
         this.placeCooldown = 0.2;
         return;
       }
@@ -15072,6 +15324,7 @@ export class VoxelEngine {
       if (this.target.type === BlockId.Furnace) { this.openOverlay("furnace", key); return; }
       if (this.target.type === BlockId.Chest) { this.openOverlay("chest", key); return; }
       if (this.target.type === BlockId.Apiary || this.target.type === BlockId.WildBeehive) { this.openOverlay("apiary", key); return; }
+      if (this.target.type === BlockId.ChrysalisLoom) { this.openOverlay("morph-loom", key); return; }
       if (this.target.type === BlockId.CaptureOrbRack) { this.openOverlay("orb-rack", key); return; }
       if (this.target.type === BlockId.CreatureHealer) { this.openOverlay("healing-station", key); return; }
       if (this.target.type === BlockId.GlassAquarium) { this.openAquarium(this.target.x, this.target.y, this.target.z); return; }
@@ -15295,6 +15548,7 @@ export class VoxelEngine {
     }
     if (type === BlockId.Furnace) this.furnaces.set(placedKey, blankFurnace());
     if (type === BlockId.Apiary) this.apiaries.set(placedKey, createEmptyApiaryBlock());
+    if (type === BlockId.ChrysalisLoom) this.morphLooms.set(placedKey, createOrbMorphLoom());
     if (type === BlockId.CaptureOrbRack) this.orbRacks.set(placedKey, createOrbRack());
     if (type === BlockId.CaptureOrbRack) this.syncOrbRackVisuals(true);
     if (type === BlockId.CreatureHealer) this.healingStations.set(placedKey, createCreatureHealer());
@@ -15506,7 +15760,7 @@ export class VoxelEngine {
 
   breakApiaryAt(key: string, type: BlockId, position: THREE.Vector3) {
     const state = this.apiaries.get(key) ?? (type === BlockId.WildBeehive ? createWildApiary(`${this.world.seedText}:${key}`, this.day) : createEmptyApiaryBlock());
-    if (isStockedApiary(state)) {
+    if (type === BlockId.WildBeehive && isStockedApiary(state)) {
       const broken = breakApiary(state);
       if (this.mode === "survival") {
         for (const slot of broken.drops) this.spawnDrop(slot.item, slot.count, position, slot.durability, slot.metadata);
@@ -15517,9 +15771,33 @@ export class VoxelEngine {
         }
       }
       this.releaseApiaryResidents(key, broken.released, position);
+    } else if (type === BlockId.Apiary) {
+      const workers = state.workers.filter((worker) => worker.alive).map((worker) => ({ ...worker, angry: true, home: false, outbound: false }));
+      if (this.mode === "survival") {
+        if (state.honey > 0) this.spawnDrop(Item.HoneyJar, state.honey, position);
+        if (state.royalJelly > 0) this.spawnDrop(Item.RoyalJelly, state.royalJelly, position);
+        if (state.queen) {
+          const queenSlot = cloneSlot(state.queenOrb) ?? apiaryBeeCaptureSlot(state.queen);
+          if (queenSlot) this.spawnDrop(queenSlot.item, queenSlot.count, position, queenSlot.durability, queenSlot.metadata);
+        }
+      }
+      this.releaseApiaryResidents(key, { queen: null, workers, storedNectar: state.nectar }, position);
     }
     this.apiaries.delete(key);
     this.apiaryFlowerCache.delete(key);
+    this.persistentMachineLastStep.delete(key);
+  }
+
+  breakMorphLoomAt(key: string, position: THREE.Vector3) {
+    const state = this.morphLooms.get(key);
+    if (this.mode === "survival" && state) {
+      for (const slot of [orbMorphInputSlot(state), orbMorphOutputSlot(state)]) {
+        if (slot) this.spawnDrop(slot.item, slot.count, position, slot.durability, slot.metadata);
+      }
+      if (state.royalJelly > 0) this.spawnDrop(Item.RoyalJelly, state.royalJelly, position);
+      if (state.starCrystals > 0) this.spawnDrop(Item.CrystalShard, state.starCrystals, position);
+    }
+    this.morphLooms.delete(key);
     this.persistentMachineLastStep.delete(key);
   }
 
@@ -15552,6 +15830,7 @@ export class VoxelEngine {
       }
     }
     if (type === BlockId.Apiary || type === BlockId.WildBeehive) this.breakApiaryAt(key, type, position);
+    if (type === BlockId.ChrysalisLoom) this.breakMorphLoomAt(key, position);
     if (type === BlockId.CaptureOrbRack) {
       const rack = this.orbRacks.get(key);
       if (this.mode === "survival" && rack) for (const orb of rack.slots) if (orb) {
@@ -15720,6 +15999,7 @@ export class VoxelEngine {
       }
     }
     if (type === BlockId.Apiary || type === BlockId.WildBeehive) this.breakApiaryAt(key, type, new THREE.Vector3(x, y, z));
+    if (type === BlockId.ChrysalisLoom) this.breakMorphLoomAt(key, new THREE.Vector3(x, y, z));
     if (type === BlockId.CaptureOrbRack) {
       const rack = this.orbRacks.get(key);
       if (this.mode === "survival" && rack) for (const orb of rack.slots) if (orb) {
@@ -18524,6 +18804,29 @@ export class VoxelEngine {
     if (learnedSettlement) this.saveSoon();
   }
 
+  toggleApiaryQueenDisplay() {
+    const key = this.activeApiaryKey;
+    if (!key) return false;
+    const [x, y, z] = key.split(",").map(Number);
+    if (this.world.getBlock(x, y, z) !== BlockId.Apiary) {
+      this.events.onToast("Wild queens are free-flying creatures, not an apiary display.");
+      return false;
+    }
+    const state = this.ensureApiaryState(key);
+    if (!isStockedApiary(state)) {
+      this.events.onToast("Add a Hive Queen orb before enabling queen flight.");
+      return false;
+    }
+    const next = setApiaryQueenDisplay(state, !state.queenDisplayEnabled);
+    this.apiaries.set(key, next);
+    this.syncApiaryWorkerMobs(key, next, apiaryPhaseForWorldTime(this.worldTime));
+    this.audio.play("ui");
+    this.events.onToast(next.queenDisplayEnabled ? "Queen flight enabled above this apiary." : "Queen flight hidden; production continues inside.");
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
   private triggerNearbyRoadEvent() {
     if (this.multiplayer?.role === "guest") return false;
     const candidates = [...this.world.structureMarkers.entries()]
@@ -19679,6 +19982,217 @@ export class VoxelEngine {
       this.exhibitGroup.remove(visual.group);
       this.disposeObject(visual.group);
       this.orbRackVisuals.delete(key);
+    }
+  }
+
+  createTomeFurnitureVisual(key: string, state: TomeDisplayState) {
+    const group = new THREE.Group();
+    group.name = `tome-display-contents:${key}`;
+    const position = blockPositionFromKey(key);
+    if (!position || state.tome === null) return group;
+    group.position.set(position.x, position.y, position.z);
+    const palette = tomeDisplayPalette(state.tome);
+    const coverMaterial = new THREE.MeshLambertMaterial({ color: palette.cover });
+    const spineMaterial = new THREE.MeshLambertMaterial({ color: palette.spine });
+    const pageMaterial = new THREE.MeshLambertMaterial({ color: palette.page });
+    const runeMaterial = new THREE.MeshBasicMaterial({ color: palette.rune, transparent: true, opacity: 0.86 });
+    const makeLeaf = (side: -1 | 1) => {
+      const leaf = new THREE.Group();
+      const cover = new THREE.Mesh(new THREE.BoxGeometry(0.29, 0.035, 0.39), coverMaterial);
+      const pages = new THREE.Mesh(new THREE.BoxGeometry(0.265, 0.055, 0.355), pageMaterial);
+      const rune = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.012, 0.07), runeMaterial);
+      cover.position.y = 0;
+      pages.position.y = 0.04;
+      rune.position.set(side * 0.045, 0.075, 0);
+      rune.rotation.y = Math.PI / 4;
+      rune.name = "tome-school-rune";
+      rune.userData.phase = side * 0.7;
+      leaf.add(cover, pages, rune);
+      for (let line = 0; line < 3; line += 1) {
+        const script = new THREE.Mesh(new THREE.BoxGeometry(0.12 - line * 0.012, 0.009, 0.012), runeMaterial);
+        script.name = "tome-page-script";
+        script.position.set(side * 0.015, 0.073, 0.09 + line * 0.034);
+        script.material = runeMaterial;
+        leaf.add(script);
+      }
+      for (const z of [-0.145, 0.145]) {
+        const clasp = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.025, 0.045), spineMaterial);
+        clasp.position.set(side * 0.105, 0.064, z);
+        clasp.rotation.y = Math.PI / 4;
+        leaf.add(clasp);
+      }
+      leaf.position.x = side * 0.145;
+      leaf.rotation.z = side * -0.08;
+      return leaf;
+    };
+    const left = makeLeaf(-1);
+    const right = makeLeaf(1);
+    const spine = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.075, 0.4), spineMaterial);
+    spine.position.y = -0.006;
+    const focusStone = new THREE.Mesh(new THREE.OctahedronGeometry(0.045, 0), runeMaterial);
+    focusStone.name = "tome-school-focus";
+    focusStone.position.set(0, 0.105, -0.12);
+    group.add(left, right, spine, focusStone);
+    group.position.y += 0.34;
+    group.rotation.x = -0.12;
+    return group;
+  }
+
+  createFireplaceFlameVisual(key: string) {
+    const group = new THREE.Group();
+    group.name = `fireplace-flame:${key}`;
+    const position = blockPositionFromKey(key);
+    if (!position) return group;
+    group.position.set(position.x, position.y, position.z);
+    const colors = [0xff6b2e, 0xffa23e, 0xffe27a];
+    const plans = [
+      { x: -0.15, y: -0.035, z: -0.04, sx: 0.23, sy: 0.42, sz: 0.19, phase: 0.1 },
+      { x: 0.14, y: -0.06, z: 0.04, sx: 0.22, sy: 0.35, sz: 0.18, phase: 1.7 },
+      { x: 0, y: 0.03, z: 0, sx: 0.17, sy: 0.48, sz: 0.15, phase: 3.2 },
+    ];
+    plans.forEach((plan, index) => {
+      const flame = new THREE.Mesh(new THREE.BoxGeometry(plan.sx, plan.sy, plan.sz), new THREE.MeshBasicMaterial({ color: colors[index] }));
+      flame.name = "fireplace-flame-tongue";
+      flame.position.set(plan.x, plan.y, plan.z);
+      flame.userData.base = [plan.x, plan.y, plan.z] as [number, number, number];
+      flame.userData.phase = plan.phase;
+      group.add(flame);
+    });
+    return group;
+  }
+
+  createMorphLoomFurnitureVisual(key: string, state: OrbMorphLoomState) {
+    const group = new THREE.Group();
+    group.name = `morph-loom-contents:${key}`;
+    const position = blockPositionFromKey(key);
+    if (!position) return group;
+    group.position.set(position.x, position.y, position.z);
+    group.userData.active = Boolean(state.activeJob);
+    group.userData.complete = Boolean(state.outputOrb);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.24, 0.018, 4, 16), new THREE.MeshBasicMaterial({ color: state.outputOrb ? 0xf4d76c : 0x75d8cc, transparent: true, opacity: state.activeJob ? 0.78 : 0.34 }));
+    ring.name = "morph-loom-ring";
+    ring.position.y = 0.03;
+    ring.rotation.x = Math.PI / 2;
+    group.add(ring);
+    const orbPresent = state.inputOrb || state.outputOrb;
+    if (orbPresent) {
+      const orb = new THREE.Mesh(new THREE.SphereGeometry(0.115, 8, 6), new THREE.MeshLambertMaterial({ color: state.outputOrb ? 0xdcae3b : 0x4ea9a4, emissive: state.outputOrb ? 0x5d410b : 0x123e3b, emissiveIntensity: 0.35 }));
+      orb.name = "morph-loom-orb";
+      orb.position.y = 0.03;
+      const band = new THREE.Mesh(new THREE.TorusGeometry(0.118, 0.018, 4, 12), new THREE.MeshLambertMaterial({ color: 0xe7d4a0 }));
+      band.rotation.x = Math.PI / 2;
+      orb.add(band);
+      group.add(orb);
+    }
+    for (let index = 0; index < 4; index += 1) {
+      const mote = new THREE.Mesh(new THREE.OctahedronGeometry(0.028, 0), new THREE.MeshBasicMaterial({ color: index % 2 ? 0xf0da70 : 0x79e4d8, transparent: true, opacity: state.activeJob ? 0.9 : 0.18 }));
+      mote.name = "morph-loom-mote";
+      mote.userData.index = index;
+      group.add(mote);
+    }
+    return group;
+  }
+
+  syncFurnitureVisuals(force = false, dt = 0) {
+    if (!this.world || !this.exhibitGroup || !this.tomeFurnitureVisuals || !this.fireplaceFlameVisuals || !this.morphLoomFurnitureVisuals) return;
+    this.furnitureVisualTimer -= dt;
+    const refresh = force || this.furnitureVisualTimer <= 0;
+    if (refresh) {
+      this.furnitureVisualTimer = 0.38;
+      const liveTomes = new Set<string>();
+      for (const [key, state] of this.tomeDisplays) {
+        const position = blockPositionFromKey(key);
+        if (!position || state.tome === null || this.world.getBlock(position.x, position.y, position.z) !== BlockId.TomeDisplay) continue;
+        liveTomes.add(key);
+        const palette = tomeDisplayPalette(state.tome);
+        const signature = `${state.tome}:${palette.school}:${palette.cover}`;
+        const previous = this.tomeFurnitureVisuals.get(key);
+        if (previous?.signature === signature) continue;
+        if (previous) { this.exhibitGroup.remove(previous.group); this.disposeObject(previous.group); }
+        const group = this.createTomeFurnitureVisual(key, state);
+        this.exhibitGroup.add(group);
+        this.tomeFurnitureVisuals.set(key, { group, signature });
+      }
+      for (const [key, visual] of this.tomeFurnitureVisuals) if (!liveTomes.has(key)) {
+        this.exhibitGroup.remove(visual.group);
+        this.disposeObject(visual.group);
+        this.tomeFurnitureVisuals.delete(key);
+      }
+
+      const liveFires = new Set<string>();
+      if (typeof this.world.lightSourcesNear === "function") {
+        for (const source of this.world.lightSourcesNear(this.position.x, this.position.y, this.position.z, 80)) {
+          if (source.type !== BlockId.HearthFireplace) continue;
+          const key = blockKey(source.x, source.y, source.z);
+          liveFires.add(key);
+          if (this.fireplaceFlameVisuals.has(key)) continue;
+          const group = this.createFireplaceFlameVisual(key);
+          this.exhibitGroup.add(group);
+          this.fireplaceFlameVisuals.set(key, { group });
+        }
+      }
+      for (const [key, visual] of this.fireplaceFlameVisuals) if (!liveFires.has(key)) {
+        this.exhibitGroup.remove(visual.group);
+        this.disposeObject(visual.group);
+        this.fireplaceFlameVisuals.delete(key);
+      }
+
+      const liveLooms = new Set<string>();
+      for (const [key, state] of this.morphLooms) {
+        const position = blockPositionFromKey(key);
+        if (!position || this.world.getBlock(position.x, position.y, position.z) !== BlockId.ChrysalisLoom) continue;
+        liveLooms.add(key);
+        const signature = `${state.inputOrb?.orbId ?? "-"}:${state.outputOrb?.orbId ?? "-"}:${state.activeJob ? "active" : "idle"}`;
+        const previous = this.morphLoomFurnitureVisuals.get(key);
+        if (previous?.signature === signature) continue;
+        if (previous) { this.exhibitGroup.remove(previous.group); this.disposeObject(previous.group); }
+        const group = this.createMorphLoomFurnitureVisual(key, state);
+        this.exhibitGroup.add(group);
+        this.morphLoomFurnitureVisuals.set(key, { group, signature });
+      }
+      for (const [key, visual] of this.morphLoomFurnitureVisuals) if (!liveLooms.has(key)) {
+        this.exhibitGroup.remove(visual.group);
+        this.disposeObject(visual.group);
+        this.morphLoomFurnitureVisuals.delete(key);
+      }
+    }
+
+    const time = performance.now() / 1000;
+    for (const visual of this.tomeFurnitureVisuals.values()) for (const rune of visual.group.children.flatMap((child) => child.children)) {
+      if (rune.name !== "tome-school-rune") continue;
+      const pulse = 0.88 + Math.sin(time * 2.1 + Number(rune.userData.phase ?? 0)) * 0.12;
+      rune.scale.setScalar(pulse);
+    }
+    for (const [key, visual] of this.fireplaceFlameVisuals) {
+      const position = blockPositionFromKey(key) ?? { x: 0, y: 0, z: 0 };
+      const sample = torchAnimationSample(time, position, true);
+      for (const flame of visual.group.children) {
+        if (flame.name !== "fireplace-flame-tongue") continue;
+        const base = flame.userData.base as [number, number, number];
+        const phase = Number(flame.userData.phase ?? 0);
+        flame.position.set(base[0] + sample.flameOffsetX * 1.45 + Math.sin(time * 4.7 + phase) * 0.012,
+          base[1] + sample.flameOffsetY * 1.35,
+          base[2] + sample.flameOffsetZ * 1.2);
+        flame.scale.set(1 + Math.sin(time * 5.1 + phase) * 0.12, sample.flameScale * 1.18, 1 + Math.cos(time * 4.4 + phase) * 0.08);
+      }
+    }
+    for (const visual of this.morphLoomFurnitureVisuals.values()) {
+      const active = visual.group.userData.active === true;
+      const ring = visual.group.getObjectByName("morph-loom-ring");
+      if (ring) {
+        ring.rotation.z += dt * (active ? 2.2 : 0.22);
+        ring.rotation.x = Math.PI / 2 + Math.sin(time * 1.9) * (active ? 0.18 : 0.04);
+      }
+      const orb = visual.group.getObjectByName("morph-loom-orb");
+      if (orb) {
+        orb.position.y = 0.03 + Math.sin(time * (active ? 3.2 : 1.35)) * (active ? 0.055 : 0.018);
+        orb.rotation.y += dt * (active ? 1.8 : 0.32);
+      }
+      for (const mote of visual.group.children.filter((child) => child.name === "morph-loom-mote")) {
+        const index = Number(mote.userData.index ?? 0);
+        const angle = time * (active ? 2.4 : 0.45) + index * Math.PI / 2;
+        mote.position.set(Math.cos(angle) * 0.21, 0.03 + Math.sin(time * 2 + index) * 0.08, Math.sin(angle) * 0.21);
+      }
     }
   }
 
@@ -24186,6 +24700,21 @@ export class VoxelEngine {
       this.disposeObject(visual.group);
     }
     this.orbRackVisuals.clear();
+    for (const visual of this.tomeFurnitureVisuals.values()) {
+      this.exhibitGroup.remove(visual.group);
+      this.disposeObject(visual.group);
+    }
+    this.tomeFurnitureVisuals.clear();
+    for (const visual of this.fireplaceFlameVisuals.values()) {
+      this.exhibitGroup.remove(visual.group);
+      this.disposeObject(visual.group);
+    }
+    this.fireplaceFlameVisuals.clear();
+    for (const visual of this.morphLoomFurnitureVisuals.values()) {
+      this.exhibitGroup.remove(visual.group);
+      this.disposeObject(visual.group);
+    }
+    this.morphLoomFurnitureVisuals.clear();
     for (const projectile of this.projectiles) {
       this.projectileGroup.remove(projectile.visual);
       disposeArrowVisual(projectile.visual);
@@ -24225,7 +24754,7 @@ export class VoxelEngine {
     setEnvironmentLightPosition(light.position, source);
     light.distance = environmentLightDistance(source.type);
     light.userData.targetIntensity = undergroundColor !== null ? (source.type === BlockId.FumaroleVent ? 1.35 : 0.72)
-      : lava ? 2.05 : isTorchBlock(source.type) ? 2.6 : runeStone ? 0.48 : lightningBugJar ? 1.25 : crystal ? 1.05 : 1.45;
+      : lava ? 2.05 : source.type === BlockId.Furnace ? 0.72 : isTorchBlock(source.type) ? 2.6 : runeStone ? 0.48 : lightningBugJar ? 1.25 : crystal ? 1.05 : 1.45;
     light.userData.phase = source.x * 0.73 + source.y * 0.37 + source.z * 0.19;
     light.userData.sourceX = source.x;
     light.userData.sourceY = source.y;
@@ -24262,6 +24791,28 @@ export class VoxelEngine {
       candidate.selected = false;
       candidate.assigned = false;
       this.environmentLightCandidates.push(candidate);
+    }
+    if (this.furnaces) {
+      for (const [key, furnace] of this.furnaces) {
+        if (furnace.burn <= 0) continue;
+        const position = blockPositionFromKey(key);
+        if (!position) continue;
+        const dx = position.x - this.camera.position.x;
+        const dy = position.y - this.camera.position.y;
+        const dz = position.z - this.camera.position.z;
+        const distanceSquared = dx * dx + dy * dy + dz * dz;
+        if (distanceSquared > queryRadius * queryRadius) continue;
+        const candidate = this.environmentLightCandidateCache.pop() ?? { x: 0, y: 0, z: 0, type: BlockId.Furnace, distanceSquared: 0, priority: 0, selected: false, assigned: false };
+        candidate.x = position.x;
+        candidate.y = position.y;
+        candidate.z = position.z;
+        candidate.type = BlockId.Furnace;
+        candidate.distanceSquared = distanceSquared;
+        candidate.priority = environmentLightPriority(candidate, this.camera.position, this.lightForward, this.environmentLightWasAssigned(candidate)) + 5;
+        candidate.selected = false;
+        candidate.assigned = false;
+        this.environmentLightCandidates.push(candidate);
+      }
     }
     this.environmentLightCandidates.sort(compareEnvironmentLightCandidates);
 
@@ -24376,6 +24927,28 @@ export class VoxelEngine {
       color: this.caveLight.color,
       intensity: this.caveLight.intensity > 0 ? clamp(this.caveLight.intensity * 0.42, 0, 1.5) : 0,
       radius: heldTorch ? heldFlicker.lightRadius * 1.8 : heldLantern ? 15 : heldBugJar ? 9 : heldGlow ? 12 : deepLantern ? 10 : 0,
+    });
+    let activeFurnace: Readonly<{ x: number; y: number; z: number }> | null = null;
+    let activeFurnaceDistance = Number.POSITIVE_INFINITY;
+    if (this.furnaces) {
+      for (const [key, furnace] of this.furnaces) {
+        if (furnace.burn <= 0) continue;
+        const position = blockPositionFromKey(key);
+        if (!position) continue;
+        const dx = position.x - this.camera.position.x;
+        const dy = position.y - this.camera.position.y;
+        const dz = position.z - this.camera.position.z;
+        const distance = dx * dx + dy * dy + dz * dz;
+        if (distance >= activeFurnaceDistance || distance > 18 * 18) continue;
+        activeFurnace = position;
+        activeFurnaceDistance = distance;
+      }
+    }
+    this.world.setMachineLight({
+      position: activeFurnace ? this.machineLightPosition.set(activeFurnace.x, activeFurnace.y, activeFurnace.z).add(this.machineLightOffset) : this.camera.position,
+      color: this.machineLightColor,
+      intensity: activeFurnace ? 0.42 : 0,
+      radius: activeFurnace ? 7.5 : 0,
     });
   }
 
@@ -25331,6 +25904,7 @@ export class VoxelEngine {
     this.syncExhibitVisuals(false, dt);
     this.syncAquariumVisuals(false, dt);
     this.syncOrbRackVisuals(false, dt);
+    this.syncFurnitureVisuals(false, dt);
     this.updateParticles(dt);
     this.cloudDrift = stepCloudDrift(this.cloudDrift, this.weatherState, dt);
     if (this.cloudMesh) {
@@ -25515,6 +26089,7 @@ export class VoxelEngine {
       activeChest: this.activeChestKey ? (this.chests.get(this.activeChestKey) ?? []).map(cloneSlot) : null,
       activeChestTitle: this.activeChestTitle,
       activeApiary: this.activeApiaryKey ? apiaryHudState(this.apiaries.get(this.activeApiaryKey) ?? createEmptyApiaryBlock()) : null,
+      activeMorphLoom: this.activeMorphLoomKey ? orbMorphLoomHudState(this.morphLooms.get(this.activeMorphLoomKey)) : null,
       activeOrbRack: this.activeOrbRackKey ? orbRackHudState(this.orbRacks.get(this.activeOrbRackKey) ?? createOrbRack()) : null,
       activeHealingStation: this.activeHealingStationKey ? healingStationHudState(this.healingStations.get(this.activeHealingStationKey) ?? createCreatureHealer()) : null,
       activeWaygridItems: this.activeWaygridItemKey ? waygridItemHudState(this.digitalItemVault) : null,
@@ -25864,6 +26439,7 @@ export class VoxelEngine {
       roadEvents: Object.fromEntries([...this.roadEvents.entries()].slice(-4096)),
       surfaceRoadGraph: this.world.serializeSurfaceRoadGraph(),
       apiaries: Object.fromEntries([...this.apiaries.entries()].map(([key, value]) => [key, cloneApiaryBlockState(value)])),
+      morphLooms: Object.fromEntries([...this.morphLooms.entries()].map(([key, value]) => [key, normalizeOrbMorphLoom(value)])),
       orbRacks: Object.fromEntries([...this.orbRacks.entries()].map(([key, value]) => [key, createOrbRack(value.slots.map(cloneCaptureOrb))])),
       healingStations: Object.fromEntries([...this.healingStations.entries()].map(([key, value]) => [key, {
         ...value,

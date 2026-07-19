@@ -490,7 +490,7 @@ Structures should expose:
 3. `CREATURE_VISUAL_EXCEPTIONS` stores a specific silhouette reason for every approved non-cubic Living Bestiary exception. The strict audit fails an undocumented exception or a non-box mesh in the 33-creature cubic roster.
 4. The block audit reports visual family, top/side/bottom cells, render layer, shape, solidity, hardness, tool, drop/acquisition route, and natural/structure/recipe evidence for every registered block.
 5. `scripts/render-block-style-review.ts` invokes the real `createBlockAtlas()` painter through a deterministic pixel canvas and emits the exact production atlas plus 17 material-family cards with face and 3 x 3 repeat checks.
-6. `tests/visual-theme.test.ts` binds the adopted theme, reference portraits, exception registry, complete 215-creature and 293-block audit totals, movement/contact fixes, dedicated material tiles, and renderer canvas behavior into the standard release pretest.
+6. `tests/visual-theme.test.ts` binds the adopted theme, reference portraits, exception registry, complete 215-creature and 294-block audit totals, movement/contact fixes, dedicated material tiles, and renderer canvas behavior into the standard release pretest.
 7. Review artifacts remain ignored under `output/`; canonical portraits, implementation code, templates, tests, and this standard remain tracked.
 
 ## 29. Adoption and continuing rollout

@@ -658,6 +658,7 @@ export type VoxelHeldLight = Readonly<{
   intensity: number;
   radius: number;
 }>;
+export type VoxelMachineLight = VoxelHeldLight;
 
 type VoxelLightingUniforms = {
   voxelSkyColor: { value: THREE.Color };
@@ -671,6 +672,10 @@ type VoxelLightingUniforms = {
   voxelHeldLightColor: { value: THREE.Color };
   voxelHeldLightIntensity: { value: number };
   voxelHeldLightRadius: { value: number };
+  voxelMachineLightPosition: { value: THREE.Vector3 };
+  voxelMachineLightColor: { value: THREE.Color };
+  voxelMachineLightIntensity: { value: number };
+  voxelMachineLightRadius: { value: number };
 };
 
 function createVoxelWorldMaterial(
@@ -720,6 +725,10 @@ uniform vec3 voxelHeldLightPosition;
 uniform vec3 voxelHeldLightColor;
 uniform float voxelHeldLightIntensity;
 uniform float voxelHeldLightRadius;
+uniform vec3 voxelMachineLightPosition;
+uniform vec3 voxelMachineLightColor;
+uniform float voxelMachineLightIntensity;
+uniform float voxelMachineLightRadius;
 varying vec4 vVoxelLight;
 varying float vVoxelEmission;
 varying float vVoxelOcclusion;
@@ -742,12 +751,21 @@ float voxelHeldFacing = voxelHeldDistance > 0.0001
   ? max(dot(normalize(vVoxelNormal), voxelHeldDelta / voxelHeldDistance), 0.0)
   : 1.0;
 voxelIllumination += voxelHeldLightColor * voxelHeldLightIntensity * voxelHeldAttenuation * (0.16 + voxelHeldFacing * 0.84);
+vec3 voxelMachineDelta = voxelMachineLightPosition - vVoxelWorldPosition;
+float voxelMachineDistance = length(voxelMachineDelta);
+float voxelMachineAttenuation = voxelMachineLightRadius > 0.0
+  ? pow(clamp(1.0 - voxelMachineDistance / voxelMachineLightRadius, 0.0, 1.0), 1.7)
+  : 0.0;
+float voxelMachineFacing = voxelMachineDistance > 0.0001
+  ? max(dot(normalize(vVoxelNormal), voxelMachineDelta / voxelMachineDistance), 0.0)
+  : 1.0;
+voxelIllumination += voxelMachineLightColor * voxelMachineLightIntensity * voxelMachineAttenuation * (0.2 + voxelMachineFacing * 0.8);
 voxelIllumination *= vVoxelOcclusion;
 outgoingLight *= voxelIllumination;
 outgoingLight += diffuseColor.rgb * vVoxelEmission;
 #include <opaque_fragment>`);
   };
-  material.customProgramCacheKey = () => "blockwild-voxel-light-v3-held";
+  material.customProgramCacheKey = () => "blockwild-voxel-light-v4-machine";
   return material;
 }
 
@@ -2358,6 +2376,10 @@ export class ChunkWorld {
     voxelHeldLightColor: { value: new THREE.Color(0xffb45e) },
     voxelHeldLightIntensity: { value: 0 },
     voxelHeldLightRadius: { value: 0 },
+    voxelMachineLightPosition: { value: new THREE.Vector3() },
+    voxelMachineLightColor: { value: new THREE.Color(0xffa45a) },
+    voxelMachineLightIntensity: { value: 0 },
+    voxelMachineLightRadius: { value: 0 },
   };
   private readonly surfaceLightSample: [number, number, number, number] = [0, 0, 0, 0];
   /**
@@ -4240,6 +4262,13 @@ export class ChunkWorld {
     this.lightingUniforms.voxelHeldLightRadius.value = Math.max(0, light.radius);
   }
 
+  setMachineLight(light: VoxelMachineLight) {
+    this.lightingUniforms.voxelMachineLightPosition.value.copy(light.position);
+    this.lightingUniforms.voxelMachineLightColor.value.copy(light.color);
+    this.lightingUniforms.voxelMachineLightIntensity.value = Math.max(0, light.intensity);
+    this.lightingUniforms.voxelMachineLightRadius.value = Math.max(0, light.radius);
+  }
+
   private settlementTerrainSampler(sample: (x: number, z: number) => ColumnSample = (x, z) => this.sampleColumn(x, z)): SettlementTerrainSampler {
     return (x, z) => {
       const column = sample(x, z);
@@ -5691,17 +5720,16 @@ export class ChunkWorld {
         }
         if (definition.shape === "fireplace") {
           const environment = shadeAt(lx, y, lz);
-          // Stone cheeks and mantle frame an inset dark firebox. The animated
-          // light pool treats this block as a source while the emissive flame
-          // remains readable even when the surrounding room is dark.
+          // Stone cheeks and mantle frame a properly recessed firebox. Flame
+          // geometry is stateful in the engine so it can use the same living
+          // motion as a torch at a larger hearth scale.
           addTexturedCuboid(buckets.opaque, lx - 0.48, y - 0.5, lz - 0.38, lx + 0.48, y - 0.34, lz + 0.38, 12, 12, 3, tint, environment);
           addTexturedCuboid(buckets.opaque, lx - 0.48, y - 0.34, lz - 0.34, lx - 0.31, y + 0.34, lz + 0.34, 12, 12, 12, tint, environment);
           addTexturedCuboid(buckets.opaque, lx + 0.31, y - 0.34, lz - 0.34, lx + 0.48, y + 0.34, lz + 0.34, 12, 12, 12, tint, environment);
           addTexturedCuboid(buckets.opaque, lx - 0.5, y + 0.31, lz - 0.4, lx + 0.5, y + 0.48, lz + 0.4, 12, 12, 12, tint, environment);
-          addTexturedCuboid(buckets.opaque, lx - 0.3, y - 0.31, lz + 0.25, lx + 0.3, y + 0.3, lz + 0.34, 49, 49, 49, [0.64, 0.58, 0.55], environment);
-          for (const offset of [-0.13, 0.13]) addTexturedCuboid(buckets.opaque, lx - 0.24, y - 0.3, lz + offset - 0.04, lx + 0.24, y - 0.2, lz + offset + 0.04, 11, 11, 11, [0.58, 0.42, 0.3], environment);
-          addTexturedCuboid(buckets.emissive, lx - 0.2, y - 0.2, lz - 0.08, lx + 0.2, y + 0.17, lz + 0.16, 39, 39, 39, [1, 0.72, 0.38], 1);
-          addTexturedCuboid(buckets.emissive, lx - 0.08, y + 0.02, lz - 0.04, lx + 0.08, y + 0.29, lz + 0.11, 39, 39, 39, [1, 0.9, 0.55], 1);
+          addTexturedCuboid(buckets.opaque, lx - 0.3, y - 0.31, lz + 0.245, lx + 0.3, y + 0.3, lz + 0.35, 49, 49, 49, [0.48, 0.43, 0.4], environment);
+          for (const barX of [-0.25, -0.08, 0.09, 0.26]) addTexturedCuboid(buckets.opaque, lx + barX - 0.025, y - 0.3, lz - 0.23, lx + barX + 0.025, y - 0.17, lz + 0.24, 97, 97, 97, [0.52, 0.49, 0.45], environment);
+          for (const [offset, lift] of [[-0.1, 0], [0.1, 0.025]] as const) addTexturedCuboid(buckets.opaque, lx - 0.27, y - 0.25 + lift, lz + offset - 0.05, lx + 0.27, y - 0.15 + lift, lz + offset + 0.05, 11, 11, 11, [0.5, 0.32, 0.22], environment);
           continue;
         }
         if (definition.shape === "apiary") {
@@ -5771,6 +5799,22 @@ export class ChunkWorld {
           }
           addTexturedCuboid(buckets.transparent, lx - 0.22, y + 0.29, lz - 0.22, lx + 0.22, y + 0.35, lz + 0.22, 136, 136, 136, [1, 1, 1], 1);
           addTexturedCuboid(buckets.emissive, lx + 0.24, y + 0.31, lz - 0.08, lx + 0.32, y + 0.48, lz + 0.08, 143, 143, 143, [1, 1, 1], 1);
+          continue;
+        }
+        if (definition.shape === "morph-loom") {
+          const environment = shadeAt(lx, y, lz);
+          // Grounded three-layer machine language: load-bearing Deepgear base,
+          // exposed brass mechanism, then a restrained star-crystal focus.
+          addTexturedCuboid(buckets.opaque, lx - 0.47, y - 0.5, lz - 0.43, lx + 0.47, y - 0.33, lz + 0.43, DEEPGEAR_BRICK_TILE, DEEPGEAR_BRICK_TILE, DEEPGEAR_BRICK_TILE, [0.82, 0.8, 0.78], environment);
+          addTexturedCuboid(buckets.opaque, lx - 0.37, y - 0.33, lz - 0.32, lx + 0.37, y - 0.21, lz + 0.32, 127, 127, 11, [0.84, 0.76, 0.64], environment);
+          for (const x of [lx - 0.38, lx + 0.28]) {
+            addTexturedCuboid(buckets.opaque, x, y - 0.27, lz - 0.14, x + 0.1, y + 0.35, lz + 0.14, RIVETED_BRASS_TILE, RIVETED_BRASS_TILE, DEEPGEAR_BRICK_TILE, [0.9, 0.82, 0.65], environment);
+          }
+          addTexturedCuboid(buckets.opaque, lx - 0.34, y + 0.27, lz - 0.12, lx + 0.34, y + 0.38, lz + 0.12, RIVETED_BRASS_TILE, RIVETED_BRASS_TILE, DEEPGEAR_BRICK_TILE, [0.92, 0.84, 0.66], environment);
+          addTexturedCuboid(buckets.opaque, lx - 0.18, y - 0.19, lz - 0.18, lx + 0.18, y - 0.13, lz + 0.18, RIVETED_BRASS_TILE, RIVETED_BRASS_TILE, DEEPGEAR_BRICK_TILE, [0.88, 0.78, 0.58], environment);
+          for (const x of [lx - 0.21, lx + 0.15]) addTexturedCuboid(buckets.opaque, x, y - 0.13, lz - 0.19, x + 0.06, y + 0.05, lz + 0.19, RIVETED_BRASS_TILE, RIVETED_BRASS_TILE, DEEPGEAR_BRICK_TILE, [0.88, 0.78, 0.58], environment);
+          addTexturedCuboid(buckets.transparent, lx - 0.26, y - 0.08, lz - 0.23, lx + 0.26, y + 0.27, lz + 0.23, 13, 13, 13, [0.7, 0.92, 0.9], 1);
+          addTexturedCuboid(buckets.emissive, lx - 0.055, y + 0.34, lz - 0.055, lx + 0.055, y + 0.48, lz + 0.055, 51, 51, 51, [0.7, 1, 0.98], 1);
           continue;
         }
         if (definition.shape === "gold-pile") {
@@ -5849,10 +5893,14 @@ export class ChunkWorld {
         }
         if (definition.shape === "tome-display") {
           const environment = shadeAt(lx, y, lz);
-          addTexturedCuboid(bucket, lx - 0.38, y - 0.5, lz - 0.33, lx + 0.38, y - 0.35, lz + 0.33, 11, 11, 11, tint, environment);
-          addTexturedCuboid(bucket, lx - 0.09, y - 0.35, lz - 0.09, lx + 0.09, y + 0.08, lz + 0.09, 127, 127, 11, tint, environment);
-          addTexturedCuboid(bucket, lx - 0.34, y + 0.08, lz - 0.28, lx + 0.34, y + 0.19, lz + 0.28, 127, 127, 11, tint, environment);
-          addTexturedCuboid(bucket, lx - 0.28, y + 0.19, lz - 0.22, lx + 0.28, y + 0.3, lz + 0.22, 45, 45, 45, [1, 1, 1], environment);
+          // Carved lectern only. A spell-school-colored open tome is supplied
+          // by the stateful display layer and therefore never appears empty.
+          addTexturedCuboid(bucket, lx - 0.4, y - 0.5, lz - 0.35, lx + 0.4, y - 0.37, lz + 0.35, 11, 11, 11, tint, environment);
+          addTexturedCuboid(bucket, lx - 0.3, y - 0.37, lz - 0.25, lx + 0.3, y - 0.3, lz + 0.25, 127, 127, 11, tint, environment);
+          addTexturedCuboid(bucket, lx - 0.1, y - 0.3, lz - 0.1, lx + 0.1, y + 0.08, lz + 0.1, 127, 127, 11, tint, environment);
+          addTexturedCuboid(bucket, lx - 0.35, y + 0.06, lz - 0.26, lx + 0.35, y + 0.16, lz + 0.26, 127, 127, 11, tint, environment);
+          addTexturedCuboid(bucket, lx - 0.37, y + 0.14, lz + 0.2, lx + 0.37, y + 0.23, lz + 0.29, 127, 127, 11, tint, environment);
+          for (const finialX of [lx - 0.34, lx + 0.29]) addTexturedCuboid(bucket, finialX, y + 0.21, lz + 0.2, finialX + 0.05, y + 0.31, lz + 0.27, DRAGON_HOARD_GOLD_TILE, DRAGON_HOARD_GOLD_TILE, DRAGON_HOARD_GOLD_TILE, [0.9, 0.82, 0.58], environment);
           continue;
         }
         if (definition.shape === "wayshrine") {

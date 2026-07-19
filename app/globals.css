@@ -7531,6 +7531,30 @@ input:focus-visible {
   background: #8ef1e7;
 }
 
+.item-icon-kind-morph-loom::before {
+  left: 2px;
+  top: 7px;
+  width: 26px;
+  height: 21px;
+  border: 3px solid #3e4548;
+  background:
+    linear-gradient(90deg, #9b7944 0 12%, transparent 13% 87%, #9b7944 88%),
+    linear-gradient(#657176 0 24%, #302f32 25% 100%);
+  box-shadow: inset 0 -5px 0 #22272a, 2px 3px 0 rgba(0, 0, 0, .58);
+  clip-path: polygon(8% 0, 92% 0, 100% 14%, 100% 100%, 0 100%, 0 14%);
+}
+
+.item-icon-kind-morph-loom::after {
+  left: 8px;
+  top: 8px;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #9b7944;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff6bf 0 13%, #7de0d4 14% 35%, #315d60 36% 62%, #1f272a 63%);
+  box-shadow: 0 0 7px rgba(105, 232, 216, .7);
+}
+
 .item-icon-kind-honey::before {
   left: 5px;
   top: 5px;
@@ -8385,12 +8409,12 @@ input:focus-visible {
 }
 
 .apiary-queen {
-  min-height: 178px;
+  min-height: 152px;
   display: grid;
   grid-template-columns: 92px minmax(0, 1fr) 54px;
   gap: 12px;
   align-items: center;
-  padding: 18px 14px;
+  padding: 13px 14px;
   overflow: hidden;
 }
 
@@ -8453,7 +8477,7 @@ input:focus-visible {
 }
 .apiary-queen.vacant .apiary-bee-portrait { opacity: .24; }
 
-.apiary-queen-copy { display: grid; gap: 6px; }
+.apiary-queen-copy { display: grid; gap: 5px; padding-bottom: 30px; }
 .apiary-queen-copy small,
 .apiary-section-heading small,
 .nectar-return-status small,
@@ -8475,7 +8499,7 @@ input:focus-visible {
 .apiary-output-slot,
 .orb-transfer-slot { width: 44px; height: 44px; }
 
-.apiary-colony { min-height: 178px; padding: 14px; }
+.apiary-colony { min-height: 152px; padding: 11px 13px; }
 .apiary-section-heading,
 .apiary-production > div {
   display: flex;
@@ -8493,7 +8517,7 @@ input:focus-visible {
   display: grid;
   grid-template-columns: repeat(8, minmax(26px, 1fr));
   gap: 5px;
-  margin: 14px 0 12px;
+  margin: 8px 0 7px;
 }
 .worker-honeycomb > span {
   aspect-ratio: 1;
@@ -8516,7 +8540,7 @@ input:focus-visible {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding-top: 10px;
+  padding-top: 7px;
   border-top: 1px solid rgba(96, 77, 37, .26);
 }
 .nectar-return-status > div { display: grid; gap: 3px; }
@@ -8542,8 +8566,8 @@ input:focus-visible {
   grid-template-columns: 45px minmax(0, 1fr) 48px;
   align-items: center;
   gap: 10px;
-  min-height: 88px;
-  padding: 11px 14px;
+  min-height: 70px;
+  padding: 8px 14px;
 }
 .apiary-resource + .apiary-resource { border-left: 1px solid rgba(69, 56, 31, .42); }
 .apiary-resource > div:nth-child(2) { display: grid; gap: 4px; }
@@ -8562,7 +8586,7 @@ input:focus-visible {
 .apiary-jar span { position: absolute; right: 2px; bottom: 2px; left: 2px; background: #e6ad2b; transition: height .35s ease; }
 .jelly-resource .apiary-jar span { background: #eac36a; box-shadow: inset 0 6px 0 #fff0b4; }
 
-.apiary-production { grid-column: 1 / -1; padding: 12px 14px; }
+.apiary-production { grid-column: 1 / -1; padding: 9px 14px; }
 .apiary-production strong { color: #3b3525; font-size: 10px; }
 .apiary-progress-track,
 .healing-gel-status > span,
@@ -8585,6 +8609,100 @@ input:focus-visible {
   background: linear-gradient(90deg, #b67d24, #efc54f 72%, #fff0a0);
   transition: width .3s ease;
 }
+
+.apiary-flight-toggle {
+  position: absolute;
+  z-index: 2;
+  right: 76px;
+  bottom: 11px;
+  display: grid;
+  grid-template-columns: 16px auto;
+  gap: 1px 6px;
+  align-items: center;
+  min-width: 142px;
+  padding: 5px 8px;
+  border: 1px solid #7c6b40;
+  background: rgba(223, 207, 148, .84);
+  color: #4d462f;
+  cursor: pointer;
+  text-align: left;
+}
+.apiary-flight-toggle > span { grid-row: 1 / 3; color: #75693f; font-size: 15px; }
+.apiary-flight-toggle strong { font-size: 8px; }
+.apiary-flight-toggle small { color: #786c4d; font-size: 6px; letter-spacing: .07em; }
+.apiary-flight-toggle.active { border-color: #9d7c25; background: #ead782; box-shadow: inset 3px 0 0 #c99824; }
+.apiary-growth-line { margin-top: 7px; padding-top: 6px; border-top: 1px solid rgba(92, 72, 35, .22); }
+.apiary-progress-track.worker-growth { margin-top: 5px; height: 6px; }
+.apiary-progress-track.worker-growth i { background: linear-gradient(90deg, #816b31, #c9b65b, #eff1ad); }
+
+/* Waykeeper Chrysalis Loom: grounded craft bench, readable living pattern,
+   and restrained storybook motion rather than a generic sci-fi console. */
+.morph-loom-window { width: min(1010px, calc(100vw - 32px)); }
+.morph-loom-workspace {
+  display: grid;
+  grid-template-columns: minmax(210px, .78fr) minmax(350px, 1.35fr);
+  grid-template-areas: "story chamber" "resources controls";
+  gap: 10px;
+  padding: 0 10px 4px;
+}
+.morph-loom-story,
+.morph-loom-chamber,
+.morph-loom-resources,
+.morph-loom-controls {
+  position: relative;
+  border: 1px solid rgba(57, 65, 50, .52);
+  background: rgba(238, 232, 190, .56);
+  box-shadow: inset 0 0 0 1px rgba(255, 254, 225, .54);
+}
+.morph-loom-story { grid-area: story; display: grid; align-content: center; gap: 7px; min-height: 168px; padding: 16px; }
+.morph-loom-story::before { content: ""; position: absolute; inset: 9px; border: 1px solid rgba(75, 94, 68, .16); pointer-events: none; }
+.morph-loom-story > * { position: relative; }
+.morph-loom-story small,
+.morph-loom-resources small,
+.morph-loom-controls small,
+.morph-loom-chamber small { color: #66704e; font-size: 7px; letter-spacing: .13em; }
+.morph-loom-story h3 { margin: 0; color: #3b4030; font-family: Georgia, serif; font-size: 20px; }
+.morph-loom-story p { margin: 0; color: #68634d; font-size: 8px; line-height: 1.6; }
+.morph-loom-cost-note { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+.morph-loom-cost-note span { padding: 4px 6px; border: 1px solid rgba(73, 86, 59, .26); background: rgba(152, 168, 112, .17); color: #586047; font-size: 6px; letter-spacing: .06em; }
+.morph-loom-chamber { grid-area: chamber; min-height: 168px; display: grid; grid-template-columns: 82px 1fr 82px; align-items: center; gap: 10px; overflow: hidden; padding: 17px 20px; background: radial-gradient(circle at 50% 48%, rgba(100, 211, 202, .18), transparent 33%), rgba(220, 223, 188, .63); }
+.morph-loom-chamber::before { content: ""; position: absolute; inset: 17px 29%; border: 2px solid rgba(80, 121, 112, .26); border-radius: 48% 52% 45% 55%; background: linear-gradient(90deg, rgba(180, 230, 218, .18), rgba(244, 236, 167, .28), rgba(180, 230, 218, .18)); box-shadow: inset 0 0 24px rgba(75, 127, 116, .16); }
+.morph-loom-chamber > * { position: relative; z-index: 1; }
+.morph-loom-orb-input,
+.morph-loom-orb-output { display: grid; justify-items: center; gap: 6px; }
+.morph-orb-slot { width: 54px !important; height: 54px !important; border-color: #56847d !important; background-color: rgba(180, 215, 200, .76) !important; }
+.morph-orb-slot.output { border-color: #9d792e !important; box-shadow: 0 0 0 2px rgba(229, 200, 91, .18); }
+.morph-loom-transit { min-height: 92px; display: flex; align-items: center; justify-content: space-around; }
+.morph-loom-transit i { width: 6px; height: 6px; border-radius: 50%; background: #6cc9bd; box-shadow: 0 0 9px #78e9da; opacity: .35; }
+.morph-loom-transit strong { color: #a88d3d; font-size: 25px; filter: drop-shadow(0 0 7px rgba(229, 212, 104, .6)); }
+.morph-loom-ring { position: absolute; inset: 12px 25%; border: 1px solid rgba(60, 110, 103, .28); border-radius: 50%; }
+.morph-loom-ring i,
+.morph-loom-ring b,
+.morph-loom-ring span { position: absolute; width: 7px; height: 7px; border: 1px solid #698b72; background: #d8ce72; transform: rotate(45deg); }
+.morph-loom-ring i { top: -4px; left: 50%; }.morph-loom-ring b { right: 8%; bottom: 16%; }.morph-loom-ring span { bottom: 16%; left: 8%; }
+.morph-loom-chamber.active .morph-loom-ring { animation: morph-loom-turn 3.4s linear infinite; }
+.morph-loom-chamber.active .morph-loom-transit i { animation: morph-loom-pulse 1.15s ease-in-out infinite; }
+.morph-loom-chamber.active .morph-loom-transit i:nth-child(2) { animation-delay: .22s; }.morph-loom-chamber.active .morph-loom-transit i:nth-child(3) { animation-delay: .44s; }
+.morph-loom-chamber.complete { background-color: rgba(231, 225, 166, .7); }
+.morph-loom-resources { grid-area: resources; display: grid; grid-template-columns: 1fr 1fr; overflow: hidden; }
+.morph-loom-resources > div { display: grid; grid-template-columns: 34px minmax(0, 1fr) 44px; align-items: center; gap: 8px; min-height: 78px; padding: 8px 10px; }
+.morph-loom-resources > div + div { border-left: 1px solid rgba(59, 70, 50, .35); }
+.morph-loom-resources > div > div { display: grid; gap: 3px; }
+.morph-loom-resources strong { color: #3f4632; font-size: 10px; }
+.morph-loom-resources span { color: #716c50; font-size: 7px; }
+.morph-resource-swatch { display: grid; width: 29px; height: 34px; place-items: center; border: 2px solid #716541; background: #f2d873; color: #705628 !important; }
+.morph-resource-swatch.crystal { clip-path: polygon(50% 0, 83% 27%, 69% 100%, 31% 100%, 17% 27%); border: 0; background: #69ced0; color: #efffff !important; }
+.morph-loom-controls { grid-area: controls; display: grid; align-content: center; gap: 7px; min-height: 78px; padding: 9px 12px; }
+.morph-loom-controls > div:first-child { display: flex; justify-content: space-between; gap: 10px; align-items: end; }
+.morph-loom-controls > div:first-child span { display: grid; gap: 3px; }
+.morph-loom-controls strong { color: #3f4432; font-size: 9px; }
+.morph-loom-controls em { color: #77704f; font-size: 7px; font-style: normal; }
+.morph-progress { display: block; height: 8px; overflow: hidden; border: 1px solid #53675c; background: rgba(62, 92, 82, .18); }
+.morph-progress i { display: block; height: 100%; background: linear-gradient(90deg, #4e8e85, #6fd3c7 65%, #ece881); transition: width .3s ease; }
+.morph-loom-actions { display: flex; gap: 6px; }
+.morph-loom-actions .pixel-button { min-height: 31px; padding: 5px 12px; font-size: 7px; }
+@keyframes morph-loom-turn { to { transform: rotate(360deg); } }
+@keyframes morph-loom-pulse { 0%, 100% { opacity: .25; transform: scale(.75); } 50% { opacity: 1; transform: scale(1.35); } }
 
 .orb-station-window { width: min(1040px, calc(100vw - 32px)); }
 .orb-specimen-grid {
@@ -8718,6 +8836,7 @@ input:focus-visible {
   .apiary-workspace { grid-template-columns: 1fr; padding: 0 4px 4px; }
   .apiary-yield,
   .apiary-production { grid-column: 1; }
+  .morph-loom-workspace { grid-template-columns: 1fr; grid-template-areas: "story" "chamber" "resources" "controls"; padding: 0 4px 4px; }
   .orb-specimen-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0 4px 6px; }
 }
 
@@ -8726,12 +8845,16 @@ input:focus-visible {
   .apiary-queen { grid-template-columns: 72px minmax(0, 1fr); min-height: 154px; padding: 12px; }
   .apiary-bee-portrait { width: 68px; transform: scale(.82); transform-origin: left center; }
   .apiary-queen .workstation-transfer-slot { grid-column: 1 / -1; grid-template-columns: 44px auto; align-items: center; justify-content: center; }
+  .apiary-flight-toggle { position: static; grid-column: 1 / -1; width: 100%; }
   .worker-honeycomb { grid-template-columns: repeat(4, 1fr); }
   .apiary-yield { grid-template-columns: 1fr; }
   .apiary-resource + .apiary-resource { border-top: 1px solid rgba(69, 56, 31, .42); border-left: 0; }
   .orb-specimen-grid { grid-template-columns: 1fr; }
   .orb-specimen-card { min-height: 250px; }
   .healing-gel-status { grid-template-columns: 1fr; }
+  .morph-loom-chamber { grid-template-columns: 66px 1fr 66px; padding: 12px 8px; }
+  .morph-loom-resources { grid-template-columns: 1fr; }
+  .morph-loom-resources > div + div { border-top: 1px solid rgba(59, 70, 50, .35); border-left: 0; }
 }
 
 /* Hearthroads v0.6: shared parchment-and-hearth treatment for map, journal,

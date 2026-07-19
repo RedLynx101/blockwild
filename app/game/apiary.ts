@@ -29,6 +29,10 @@ export type ApiaryState = Readonly<{
   schema: 1;
   attached: boolean;
   queen: ApiaryBee;
+  /** Exact filled Capture Orb stored by a crafted apiary; wild hives use null. */
+  queenOrb: InventorySlot | null;
+  /** Player-facing queen flight is an opt-in display, not a production switch. */
+  queenDisplayEnabled: boolean;
   workers: readonly ApiaryBee[];
   nectar: number;
   honey: number;
@@ -37,6 +41,12 @@ export type ApiaryState = Readonly<{
   jellyClock: number;
   workerGrowthClock: number;
   nextWorkerSerial: number;
+}>;
+
+export type DormantApiaryState = Readonly<Omit<ApiaryState, "queen"> & {
+  queen: null;
+  queenOrb: null;
+  queenDisplayEnabled: false;
 }>;
 
 export type ApiaryPhase = "day" | "dusk" | "night";
@@ -73,10 +83,24 @@ export type BrokenApiary = Readonly<{
   released: DetachedApiary;
 }>;
 
-export type EmptyApiaryBlock = Readonly<{ schema: 1; attached: true; queen: null }>;
-export type ApiaryBlockState = ApiaryState | EmptyApiaryBlock;
+export type EmptyApiaryBlock = DormantApiaryState;
+export type ApiaryBlockState = ApiaryState | DormantApiaryState;
 
-export const createEmptyApiaryBlock = (): EmptyApiaryBlock => ({ schema: 1, attached: true, queen: null });
+export const createEmptyApiaryBlock = (): EmptyApiaryBlock => ({
+  schema: 1,
+  attached: true,
+  queen: null,
+  queenOrb: null,
+  queenDisplayEnabled: false,
+  workers: [],
+  nectar: 0,
+  honey: 0,
+  royalJelly: 0,
+  honeyClock: 0,
+  jellyClock: 0,
+  workerGrowthClock: 0,
+  nextWorkerSerial: 0,
+});
 
 /** Explicit Queen Cell insertion path for a freshly placed crafted apiary. */
 export function insertQueenCellIntoApiary(
@@ -178,8 +202,11 @@ export function insertApiaryBee(
       inserted: true,
       reason: "ok",
       state: {
-        ...created,
+        ...state,
+        queenOrb: null,
+        queenDisplayEnabled: false,
         queen: {
+          ...created.queen,
           ...normalized,
           role: "queen",
           alive: true,
@@ -226,9 +253,13 @@ export function extractApiaryBee(
   if (state.queen === null) return { state, bee: null, reason: "missing" };
   if (!apiaryIsFriendly(state, actorId)) return { state, bee: null, reason: "not-friendly" };
   if (state.queen.id === beeId) {
-    if (livingApiaryWorkers(state).length > 0) return { state, bee: null, reason: "workers-present" };
     return {
-      state: createEmptyApiaryBlock(),
+      state: {
+        ...state,
+        queen: null,
+        queenOrb: null,
+        queenDisplayEnabled: false,
+      },
       bee: { ...state.queen, home: false, outbound: false, carryingNectar: 0 },
       reason: "ok",
     };
@@ -251,6 +282,8 @@ export function createApiary(queenId: string, workerIds: readonly string[] = [],
     schema: 1,
     attached: true,
     queen: bee(queenId, "queen", seed ^ 0x9e3779b9, worldDay),
+    queenOrb: null,
+    queenDisplayEnabled: false,
     workers: workerIds.map((id, index) => bee(id, "worker", seed + index * 977, worldDay)),
     nectar: 0,
     honey: 0,
@@ -279,8 +312,19 @@ const hashUnit = (seed: string | number, salt: string | number) => {
 /** Deterministic natural hive population, including genuinely queen-only hives. */
 export function createWildApiary(seed: string | number, worldDay = 0) {
   const count = Math.floor(hashUnit(seed, "wild-apiary-workers") * (APIARY_WORKER_CAP + 1));
-  return createApiary(`wild-queen-${seed}`, Array.from({ length: count }, (_, index) => `wild-worker-${seed}-${index}`),
-    Math.floor(hashUnit(seed, "wild-apiary-genetics") * 0xffffffff), worldDay);
+  return {
+    ...createApiary(`wild-queen-${seed}`, Array.from({ length: count }, (_, index) => `wild-worker-${seed}-${index}`),
+      Math.floor(hashUnit(seed, "wild-apiary-genetics") * 0xffffffff), worldDay),
+    queenDisplayEnabled: true,
+  };
+}
+
+export function setApiaryQueenOrb(state: ApiaryState, queenOrb: InventorySlot | null): ApiaryState {
+  return { ...state, queenOrb, queenDisplayEnabled: false };
+}
+
+export function setApiaryQueenDisplay(state: ApiaryState, enabled: boolean): ApiaryState {
+  return { ...state, queenDisplayEnabled: Boolean(enabled) };
 }
 
 export function livingApiaryWorkers(state: ApiaryState) {

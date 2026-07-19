@@ -238,5 +238,7 @@ test("archive shelves store six reusable tomes and drive their visible block occ
   assert.equal(displayed.state.tome, Item.TomeArcaneWard);
   const cleared = setDisplayedTome(displayed.state, null);
   assert.equal(cleared.replaced, Item.TomeArcaneWard);
-  assert.equal(setDisplayedTome(cleared.state, Item.BoundBook).state.tome, Item.BoundBook);
+  const plainBook = setDisplayedTome(cleared.state, Item.BoundBook);
+  assert.equal(plainBook.applied, false);
+  assert.equal(plainBook.state.tome, null);
 });

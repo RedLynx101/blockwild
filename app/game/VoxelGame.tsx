@@ -28,6 +28,7 @@ import {
   type GameMode,
   type GameSettings,
   type HudState,
+  type OrbMorphLoomHudState,
   type InventoryDragTarget,
   type InventorySlot,
   type ItemCode,
@@ -127,7 +128,7 @@ import {
   type CharacterProfileCatalog,
 } from "./character-profiles";
 
-type WorkstationOverlay = "apiary" | "orb-rack" | "healing-station" | "sugarworks";
+type WorkstationOverlay = "apiary" | "morph-loom" | "orb-rack" | "healing-station" | "sugarworks";
 type CivicAuditMode = "atlantian-dialogue" | "atlantian-trade" | "atlantian-settlement";
 type Overlay = "title" | "new" | "pause" | "help" | "settings" | OverlayKind | null;
 type TitleMenuView = "main" | "characters" | "worlds";
@@ -373,6 +374,9 @@ type MultiplayerEngineApi = {
 
 type WorkstationEngineApi = {
   machineClick?: (machine: WorkstationOverlay, index: number, button: "left" | "right", shift?: boolean) => void;
+  toggleApiaryQueenDisplay?: () => boolean;
+  startActiveOrbMorph?: () => boolean;
+  cancelActiveOrbMorph?: () => boolean;
 };
 
 /**
@@ -435,6 +439,9 @@ export type ApiaryHudState = {
   royalJelly?: number;
   royalJellyMax?: number;
   productionProgress?: number;
+  workerGrowthProgress?: number;
+  queenDisplayEnabled?: boolean;
+  queenDisplayAvailable?: boolean;
   honeyClock?: number;
   honeyCycleSeconds?: number;
   slots?: readonly (InventorySlot | null)[];
@@ -468,6 +475,9 @@ export type ApiaryUiState = {
   royalJelly: number;
   royalJellyMax: number;
   productionProgress: number;
+  workerGrowthProgress: number;
+  queenDisplayEnabled: boolean;
+  queenDisplayAvailable: boolean;
   slots: Array<InventorySlot | null>;
 };
 
@@ -509,6 +519,9 @@ export function normalizeApiaryUiState(state?: ApiaryHudState | null): ApiaryUiS
     royalJelly,
     royalJellyMax,
     productionProgress: normalizedProgress(state?.productionProgress ?? fallbackProgress),
+    workerGrowthProgress: normalizedProgress(state?.workerGrowthProgress),
+    queenDisplayEnabled: state?.queenDisplayEnabled === true,
+    queenDisplayAvailable: state?.queenDisplayAvailable === true,
     slots: Array.from({ length: 11 }, (_, index) => state?.slots?.[index] ?? null),
   };
 }
@@ -600,6 +613,24 @@ function workstationAuditOrb(kind: MobKind, name: string, health: number, maxHea
         },
       }),
     },
+  };
+}
+
+function workstationAuditMorphLoom(): OrbMorphLoomHudState {
+  const inputSlot = workstationAuditOrb("honeybee", "Marigold Worker", MOB_DEFS.honeybee.health, MOB_DEFS.honeybee.health);
+  const inputOrb = captureOrbFromInventorySlot(inputSlot)!;
+  return {
+    schema: 1,
+    selectedRecipeId: "worker-to-hive-queen",
+    inputOrb,
+    outputOrb: null,
+    royalJelly: 3,
+    starCrystals: 2,
+    activeJob: { recipeId: "worker-to-hive-queen", progressSeconds: 19, durationSeconds: 42, startedAt: 1 },
+    completedMorphs: 4,
+    inputSlot,
+    outputSlot: null,
+    progress: 19 / 42,
   };
 }
 
@@ -1939,7 +1970,7 @@ export default function VoxelGame() {
       }, 250);
     }
     const workstationAudit = parameters.get("workstation-audit");
-    setWorkstationAuditMode(workstationAudit === "apiary" || workstationAudit === "orb-rack" || workstationAudit === "healing-station" || workstationAudit === "sugarworks" ? workstationAudit : null);
+    setWorkstationAuditMode(workstationAudit === "apiary" || workstationAudit === "morph-loom" || workstationAudit === "orb-rack" || workstationAudit === "healing-station" || workstationAudit === "sugarworks" ? workstationAudit : null);
     const civicAudit = parameters.get("civic-audit");
     setCivicAuditMode(civicAudit === "atlantian-dialogue" || civicAudit === "atlantian-trade" || civicAudit === "atlantian-settlement" ? civicAudit : null);
   }, []);
@@ -2067,7 +2098,7 @@ export default function VoxelGame() {
             return;
           }
           if (kind === "inventory" || kind === "crafting") setInventoryTab(kind === "inventory" ? "inventory" : "recipes");
-          if (["inventory", "crafting", "furnace", "chest", "apiary", "aquarium", "orb-rack", "healing-station", "waygrid-items", "waygrid-creatures"].includes(kind)) slotInteractionReadyAtRef.current = performance.now() + 180;
+          if (["inventory", "crafting", "furnace", "chest", "apiary", "morph-loom", "aquarium", "orb-rack", "healing-station", "waygrid-items", "waygrid-creatures"].includes(kind)) slotInteractionReadyAtRef.current = performance.now() + 180;
           setOverlay(kind as Overlay);
         },
         onDeath: () => undefined,
@@ -2885,11 +2916,12 @@ export default function VoxelGame() {
           <div className="apiary-workspace">
             <section className={`apiary-queen ${apiary.queenPresent ? "resident" : "vacant"}`} aria-label={apiary.queenPresent ? `${apiary.queenName} is present` : "No queen present"}>
               <div className="apiary-bee-portrait" aria-hidden="true"><i /><b /><span>♛</span></div>
-              <div className="apiary-queen-copy"><small>QUEEN</small><strong>{apiary.queenName}</strong><span>{apiary.queenPresent ? "The colony is organized and able to produce." : "Add a Queen Cell to wake this apiary."}</span></div>
+              <div className="apiary-queen-copy"><small>QUEEN</small><strong>{apiary.queenName}</strong><span>{apiary.queenPresent ? "The colony is organized. Her exact orb can leave without losing workers or stores." : "Place a captured neutral or bonded Hive Queen here to wake the colony."}</span></div>
               <div className="workstation-transfer-slot">
-                {renderSlot(apiary.slots[0], "apiary-queen-slot", (shift) => workstationClick("apiary", 0, "left", shift), () => workstationClick("apiary", 0, "right"), "machine-slot", "Queen cell")}
-                <small>QUEEN · ORB / CELL</small>
+                {renderSlot(apiary.slots[0], "apiary-queen-slot", (shift) => workstationClick("apiary", 0, "left", shift), () => workstationClick("apiary", 0, "right"), "machine-slot", "Hive Queen capture orb")}
+                <small>QUEEN CAPTURE ORB</small>
               </div>
+              {apiary.queenDisplayAvailable && <button type="button" className={`apiary-flight-toggle ${apiary.queenDisplayEnabled ? "active" : ""}`} aria-pressed={apiary.queenDisplayEnabled} onClick={() => (engineRef.current as unknown as WorkstationEngineApi | null)?.toggleApiaryQueenDisplay?.()}><span aria-hidden="true">{apiary.queenDisplayEnabled ? "◉" : "○"}</span><strong>Queen flight</strong><small>{apiary.queenDisplayEnabled ? "Visible above hive" : "Hidden by default"}</small></button>}
             </section>
 
             <section className="apiary-colony" aria-label={`${apiary.workerCount} of ${apiary.maxWorkers} worker bees`}>
@@ -2924,12 +2956,64 @@ export default function VoxelGame() {
             </section>
 
             <section className="apiary-production" aria-label={`Production ${productionPercent}% complete`}>
-              <div><span><small>NEXT HARVEST</small><strong>{apiary.queenPresent && apiary.workerCount ? `${productionPercent}% complete` : "Colony paused"}</strong></span><em>{apiary.workerCount ? "FLOWER-LED · EVENT DRIVEN" : "ADD WORKERS"}</em></div>
+              <div><span><small>NEXT HARVEST</small><strong>{apiary.queenPresent ? `${productionPercent}% complete` : "Colony dormant"}</strong></span><em>{apiary.workerCount ? "FLOWER-LED · EVENT DRIVEN" : apiary.queenPresent ? "QUEEN STARTING A COLONY" : "ADD A QUEEN"}</em></div>
               <span className="apiary-progress-track"><i style={{ width: `${productionPercent}%` }} /></span>
+              <div className="apiary-growth-line"><span><small>NEXT WORKER</small><strong>{apiary.workerCount >= apiary.maxWorkers ? "Colony at capacity" : apiary.queenPresent ? `${Math.round(apiary.workerGrowthProgress * 100)}% incubated` : "Waiting for queen"}</strong></span><em>{apiary.workerCount >= apiary.maxWorkers ? "8 WORKERS" : "QUEEN-LED GROWTH"}</em></div>
+              <span className="apiary-progress-track worker-growth"><i style={{ width: `${apiary.workerGrowthProgress * 100}%` }} /></span>
             </section>
           </div>
           {!audit && renderPlayerInventory()}
           {audit && <p className="workstation-audit-note">Production preview · inventory transfer slots use the same left, right, double, and shift-click rules as other containers.</p>}
+        </div>
+        {!audit && hud.cursor && <div ref={setHeldStackElement} className="held-stack"><SlotContents slot={hud.cursor} /></div>}
+      </section>
+    );
+  };
+
+  const renderMorphLoomPanel = (source: OrbMorphLoomHudState | null | undefined, audit = false) => {
+    if (!source) return null;
+    const progressPercent = Math.round(normalizedProgress(source.progress) * 100);
+    const active = Boolean(source.activeJob);
+    const ready = Boolean(source.inputOrb?.creature?.kind === "honeybee" && source.royalJelly >= 1 && source.starCrystals >= 1 && !source.outputOrb);
+    const api = engineRef.current as unknown as WorkstationEngineApi | null;
+    return (
+      <section className={`menu-overlay inventory-overlay workstation-overlay morph-loom-overlay ${audit ? "workstation-audit-overlay" : ""}`} aria-labelledby="morph-loom-title" onPointerMove={trackCursor}>
+        <div className="mc-window workstation-window morph-loom-window">
+          <header className="mc-window-header workstation-header">
+            <div><span className="panel-eyebrow">WAYKEEPER CHRYSALIS LOOM · LIVING PATTERNWORK</span><h2 id="morph-loom-title">Crown a Hive Queen</h2></div>
+            {!audit && <button type="button" className="panel-close" onClick={resume} aria-label="Close Chrysalis Loom">×</button>}
+          </header>
+          <div className="morph-loom-workspace">
+            <section className="morph-loom-story">
+              <small>PATTERN 01 · APIARY KIN</small>
+              <h3>Worker → Hive Queen</h3>
+              <p>The loom changes the creature held inside one exact Capture Orb. Its bond, owner, name, and orb identity remain intact.</p>
+              <div className="morph-loom-cost-note"><span>42 seconds</span><span>Scales by morph complexity</span><span>Safe to cancel</span></div>
+            </section>
+            <section className={`morph-loom-chamber ${active ? "active" : source.outputOrb ? "complete" : ready ? "ready" : "idle"}`} aria-label={`Morph chamber ${active ? `${progressPercent}% complete` : source.outputOrb ? "complete" : ready ? "ready" : "idle"}`}>
+              <div className="morph-loom-ring" aria-hidden="true"><i /><b /><span /></div>
+              <div className="morph-loom-orb-input">
+                {renderSlot(source.inputSlot, "morph-loom-input", (shift) => workstationClick("morph-loom", 0, "left", shift), () => workstationClick("morph-loom", 0, "right"), "machine-slot morph-orb-slot", "Worker Honeybee Capture Orb")}
+                <small>WORKER ORB</small>
+              </div>
+              <div className="morph-loom-transit" aria-hidden="true"><i /><i /><i /><strong>✦</strong></div>
+              <div className="morph-loom-orb-output">
+                {renderSlot(source.outputSlot, "morph-loom-output", (shift) => workstationClick("morph-loom", 3, "left", shift), () => workstationClick("morph-loom", 3, "right"), "machine-slot morph-orb-slot output", "Crowned Hive Queen Capture Orb")}
+                <small>QUEEN ORB</small>
+              </div>
+            </section>
+            <section className="morph-loom-resources" aria-label="Morph resources">
+              <div><span className="morph-resource-swatch jelly" aria-hidden="true">◆</span><div><small>COLONY INSTINCT</small><strong>Royal Jelly</strong><span>{source.royalJelly}/64 stored · 1 required</span></div>{renderSlot(source.royalJelly ? { item: Item.RoyalJelly, count: source.royalJelly } : null, "morph-jelly", (shift) => workstationClick("morph-loom", 1, "left", shift), () => workstationClick("morph-loom", 1, "right"), "machine-slot", "Royal Jelly catalyst")}</div>
+              <div><span className="morph-resource-swatch crystal" aria-hidden="true">✦</span><div><small>PATTERN ANCHOR</small><strong>Star Crystal</strong><span>{source.starCrystals}/64 stored · 1 required</span></div>{renderSlot(source.starCrystals ? { item: Item.CrystalShard, count: source.starCrystals } : null, "morph-crystal", (shift) => workstationClick("morph-loom", 2, "left", shift), () => workstationClick("morph-loom", 2, "right"), "machine-slot", "Star Crystal focus")}</div>
+            </section>
+            <section className="morph-loom-controls">
+              <div><span><small>{active ? "CHRYSALIS TURNING" : source.outputOrb ? "PATTERN COMPLETE" : "PATTERN READINESS"}</small><strong>{active ? `${progressPercent}% · ${Math.max(0, Math.ceil((source.activeJob?.durationSeconds ?? 0) - (source.activeJob?.progressSeconds ?? 0)))}s remaining` : source.outputOrb ? "Collect the crowned queen orb" : ready ? "All inputs are ready" : "Add the worker orb and both catalysts"}</strong></span><em>{source.completedMorphs} completed</em></div>
+              <span className="morph-progress"><i style={{ width: `${progressPercent}%` }} /></span>
+              <div className="morph-loom-actions"><PixelButton className="gold-button" disabled={audit || active || !ready} onClick={() => api?.startActiveOrbMorph?.()}>Begin morph</PixelButton><PixelButton className="secondary-button" disabled={audit || !active} onClick={() => api?.cancelActiveOrbMorph?.()}>Cancel safely</PixelButton></div>
+            </section>
+          </div>
+          {!audit && renderPlayerInventory()}
+          {audit && <p className="workstation-audit-note">A grounded glass cradle, a clearly readable transformation, and reversible inputs keep the machine legible before spectacle.</p>}
         </div>
         {!audit && hud.cursor && <div ref={setHeldStackElement} className="held-stack"><SlotContents slot={hud.cursor} /></div>}
       </section>
@@ -3969,6 +4053,7 @@ export default function VoxelGame() {
       )}
 
       {overlay === "apiary" && renderApiaryPanel(hud.activeApiary)}
+      {overlay === "morph-loom" && renderMorphLoomPanel(hud.activeMorphLoom)}
       {overlay === "aquarium" && hud.activeAquarium && (
         <section className="menu-overlay" aria-label="Connected aquarium habitat">
           <AquariumPanel
@@ -4484,14 +4569,18 @@ export default function VoxelGame() {
 
       {workstationAuditMode === "apiary" && renderApiaryPanel({
         queen: { alive: true, home: true, name: "Queen Marigold" },
-        workers: Array.from({ length: 8 }, (_, index) => ({ alive: true, home: index > 4 })),
+        workers: Array.from({ length: 5 }, (_, index) => ({ alive: true, home: index > 2 })),
         nectar: 28,
         nectarStatus: "3 foraging · nectar return at dusk",
         honey: 9,
         royalJelly: 4,
         productionProgress: 0.68,
-        slots: [{ item: Item.QueenCell, count: 1 }, { item: Item.HoneyJar, count: 9 }, { item: Item.RoyalJelly, count: 4 }],
+        workerGrowthProgress: 0.44,
+        queenDisplayEnabled: false,
+        queenDisplayAvailable: true,
+        slots: [workstationAuditOrb("hive-queen", "Queen Marigold", MOB_DEFS["hive-queen"].health, MOB_DEFS["hive-queen"].health), { item: Item.HoneyJar, count: 9 }, { item: Item.RoyalJelly, count: 4 }],
       }, true)}
+      {workstationAuditMode === "morph-loom" && renderMorphLoomPanel(workstationAuditMorphLoom(), true)}
       {workstationAuditMode === "orb-rack" && renderOrbStationPanel("orb-rack", {
         slots: [
           workstationAuditOrb("peelop", "Pip", MOB_DEFS.peelop.health, MOB_DEFS.peelop.health),

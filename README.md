@@ -1,6 +1,6 @@
 # Blockwild
 
-Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.8.1 Hearthlands & Frontiers**.
+Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.8.2 Hearthcraft & Honey**.
 
 The project is a real game rather than a voxel-rendering demo. You can mine, build, craft, smelt, farm, fight, collect field notes, manage several worlds, and carry those worlds between browsers with export files.
 
@@ -9,6 +9,14 @@ The project is a real game rather than a voxel-rendering demo. You can mine, bui
 ![Blockwild field guide with all 215 rendered creatures](public/creatures/blockwild-creatures.svg)
 
 The integrated creature-design pass expands the Courser family with Rimehoof, Sunscar, Mirestride, and Starbough ecological breeds plus the forge-built Deepgear Courser. It also gives all six dragon families production stage forms, rebuilds birds, pets, crabs, mosslings, foxes, harts, deer, longhorns, terrapins, and other core wildlife, and preserves one model path for gameplay, Bestiary portraits, and visual audits.
+
+## v1.8.2 Hearthcraft & Honey
+
+Crafted apiaries now hold the queen's exact Capture Orb instead of consuming it. Removing that orb safely leaves the colony dormant, while an installed queen gradually produces workers and keeps making honey even before the first worker matures. A compact 1080p apiary panel exposes colony state, worker growth, storage, queen recovery, and an optional above-hive queen display that is off by default. Breaking a crafted apiary returns its queen orb and stored products; wild hives retain their loose, capturable queen behavior.
+
+The Waykeeper Chrysalis Loom replaces instant queen crafting with a reusable transformation workstation. It accepts a worker Honeybee in a Capture Orb plus royal jelly and star crystal, visibly works over time, scales its resource and duration contract for future transformations, and can be cancelled without consuming the orb or reagents. Completion preserves the orb identity, creature name, bond, and owner while changing the bee into a Hive Queen.
+
+Tome displays now remain empty until a spell tome is installed and color their open-book presentation by spell school, with a deterministic neutral fallback for future schools. Lit furnaces add restrained local light, and fireplaces use a deeper stone firebox with animated multi-tongue hearth flames derived from the torch animation system.
 
 ## v1.8.1 Hearthlands hotfix
 

@@ -1,4 +1,5 @@
-import { BlockId, Item, archiveShelfBlockForBookCount, type ItemCode } from "./data";
+import { ITEMS, BlockId, Item, archiveShelfBlockForBookCount, type ItemCode } from "./data";
+import { SPELLS, type SpellSchool } from "./magic";
 import type { TreePlanBlock } from "./ecology";
 import type { PlannedBlock, StructureMarker, WorldPosition } from "./structures";
 import { planSeaDragonNest, type SeaDragonNestPlan } from "./v1-cultures";
@@ -39,16 +40,10 @@ export type DragonLairSurvey = Readonly<{
   markerName: string;
 }>;
 
-export const SPELL_TOME_ITEMS: readonly ItemCode[] = Object.freeze([
-  Item.TomeFlameJet,
-  Item.TomeFrostLance,
-  Item.TomeSteelSpear,
-  Item.TomeHealingLight,
-  Item.TomeBlinkstep,
-  Item.TomeArcaneWard,
-  Item.TomeVerdantVolley,
-  Item.TomeStarlightSnare,
-]);
+export const SPELL_TOME_ITEMS: readonly ItemCode[] = Object.freeze(Object.values(ITEMS)
+  .filter((definition) => definition.useKind === "spell-tome" && typeof definition.spellId === "string")
+  .map((definition) => definition.id)
+  .filter((item, index, values) => values.indexOf(item) === index));
 export const ARCHIVABLE_BOOK_ITEMS: readonly ItemCode[] = Object.freeze([Item.BoundBook, ...SPELL_TOME_ITEMS]);
 
 export type ArchiveShelfState = Readonly<{ schema: 1; tomes: readonly ItemCode[] }>;
@@ -88,13 +83,45 @@ export function removeArchiveTome(state: ArchiveShelfState, slot = -1) {
 
 export function normalizeTomeDisplay(value: unknown): TomeDisplayState {
   const tome = value && typeof value === "object" ? (value as Partial<TomeDisplayState>).tome : null;
-  return { schema: 1, tome: typeof tome === "number" && isArchiveBookItem(tome) ? tome : null };
+  return { schema: 1, tome: typeof tome === "number" && isSpellTomeItem(tome) ? tome : null };
 }
 
 export function setDisplayedTome(state: TomeDisplayState, tome: ItemCode | null) {
   const normalized = normalizeTomeDisplay(state);
-  if (tome !== null && !isArchiveBookItem(tome)) return { state: normalized, replaced: null, applied: false };
+  if (tome !== null && !isSpellTomeItem(tome)) return { state: normalized, replaced: null, applied: false };
   return { state: { schema: 1 as const, tome }, replaced: normalized.tome, applied: true };
+}
+
+export type TomeDisplaySchool = SpellSchool | "unknown";
+export type TomeDisplayPalette = Readonly<{
+  school: TomeDisplaySchool;
+  cover: string;
+  spine: string;
+  rune: string;
+  page: string;
+}>;
+
+const TOME_DISPLAY_PALETTES: Readonly<Record<TomeDisplaySchool, Omit<TomeDisplayPalette, "school">>> = Object.freeze({
+  destruction: { cover: "#8e362d", spine: "#54201e", rune: "#ff9a4f", page: "#f4dfbf" },
+  restoration: { cover: "#c49a3e", spine: "#715127", rune: "#fff0a0", page: "#fff3d0" },
+  alteration: { cover: "#327b78", spine: "#214b52", rune: "#8df3df", page: "#e0efe9" },
+  conjuration: { cover: "#624a87", spine: "#382c58", rune: "#c9b4ff", page: "#eee5f5" },
+  utility: { cover: "#477154", spine: "#294633", rune: "#a8e58d", page: "#e7eed6" },
+  unknown: { cover: "#6f657a", spine: "#403849", rune: "#d8c7e9", page: "#ece5d8" },
+});
+
+/** Future-safe school lookup for content packs and later spell-system additions. */
+export function tomeDisplayPaletteForSchool(value: string | null | undefined): TomeDisplayPalette {
+  const school: TomeDisplaySchool = value && Object.prototype.hasOwnProperty.call(TOME_DISPLAY_PALETTES, value)
+    ? value as TomeDisplaySchool
+    : "unknown";
+  return { school, ...TOME_DISPLAY_PALETTES[school] };
+}
+
+/** Future-safe visual lookup: unknown spell schools remain readable instead of disappearing. */
+export function tomeDisplayPalette(tome: ItemCode | null | undefined): TomeDisplayPalette {
+  const spellId = tome === null || tome === undefined ? null : ITEMS[tome]?.spellId;
+  return tomeDisplayPaletteForSchool(SPELLS.find((spell) => spell.id === spellId)?.school);
 }
 
 export type DragonLairRegionInput = Readonly<{
