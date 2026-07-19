@@ -720,6 +720,8 @@ export const Item = {
   TomeHearthward: 532,
   /** Sacrificial loose metal used by Ironwake; appended for save stability. */
   IronFilings: 533,
+  /** Placeable Deepgear seating; appended for save stability. */
+  DeepgearStoolItem: 534,
 } as const;
 
 export type ItemCode = number;
@@ -734,6 +736,11 @@ export type EquipmentSlot = "head" | "chest" | "legs" | "feet";
 export const DRAGON_HOARD_GOLD_TILE = 163;
 export const DRAGON_HOARD_COIN_TILE = 164;
 export const DRAGON_HOARD_JEWEL_TILE = 165;
+/** Dedicated grounded-storybook material cells; never borrow ore textures. */
+export const DEEPGEAR_BRICK_TILE = 210;
+export const RIVETED_BRASS_TILE = 211;
+export const ROOTWEAVE_SOIL_SIDE_TILE = 212;
+export const DEEPGEAR_LANTERN_TILE = 213;
 
 export type InventorySlot = {
   item: ItemCode;
@@ -985,7 +992,7 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.JungleSapling]: block(BlockId.JungleSapling, "Rainveil Sapling", 124, 124, 124, 0.06, "#3c995a", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
   [BlockId.SakuraSapling]: block(BlockId.SakuraSapling, "Sakurabloom Sapling", 112, 112, 112, 0.06, "#df91b9", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
   [BlockId.SugarplumGrass]: block(BlockId.SugarplumGrass, "Sugarplum Grass", 129, 130, 131, 0.64, "#a56fd0", "shovel"),
-  [BlockId.SugarSoil]: block(BlockId.SugarSoil, "Sugar Soil", 131, 131, 131, 0.56, "#78536f", "shovel"),
+  [BlockId.SugarSoil]: block(BlockId.SugarSoil, "Sugar Soil", 131, 130, 131, 0.56, "#78536f", "shovel"),
   [BlockId.CandywoodLog]: block(BlockId.CandywoodLog, "Candywood Log", 133, 132, 133, 1.06, "#9f5b82", "axe"),
   [BlockId.CandywoodLeaves]: block(BlockId.CandywoodLeaves, "Candywood Leaves", 134, 134, 134, 0.28, "#e990bb", "hand", 0, { layer: "cutout" }),
   [BlockId.BoiledSugarbrick]: block(BlockId.BoiledSugarbrick, "Boiled Sugarbrick", 135, 135, 135, 2.05, "#f19bba", "pickaxe", 2),
@@ -1012,14 +1019,14 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.Dreamcap]: block(BlockId.Dreamcap, "Dreamcap", 45, 45, 45, 0.05, "#9f7cff", "hand", 0, { solid: false, layer: "emissive", shape: "cross", replaceable: true }),
   [BlockId.Lumenreed]: block(BlockId.Lumenreed, "Lumenreed", 114, 114, 114, 0.04, "#5ce4d0", "hand", 0, { solid: false, layer: "emissive", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "aquatic-flora" }),
   [BlockId.SnowcapStone]: block(BlockId.SnowcapStone, "Snowcap Stone", 86, 86, 86, 2.2, "#87929a", "pickaxe", 2),
-  [BlockId.DeepgearBrick]: block(BlockId.DeepgearBrick, "Deepgear Brick", 12, 12, 12, 2.4, "#545e62", "pickaxe", 2),
-  [BlockId.RivetedBrass]: block(BlockId.RivetedBrass, "Riveted Brass", 40, 40, 40, 2.7, "#a77943", "pickaxe", 2),
-  [BlockId.DeepgearLantern]: block(BlockId.DeepgearLantern, "Deepgear Lantern", 14, 14, 14, 0.8, "#ffd77a", "pickaxe", 0, { layer: "emissive" }),
-  [BlockId.GolemForge]: block(BlockId.GolemForge, "Golem Forge", 40, 12, 3, 3.1, "#88745d", "pickaxe", 2),
-  [BlockId.Powderworks]: block(BlockId.Powderworks, "Powderworks", 49, 40, 3, 2.6, "#725f50", "pickaxe", 2),
-  [BlockId.GearTable]: block(BlockId.GearTable, "Gearwright Table", 36, 40, 11, 1.35, "#906943", "axe", 0, { shape: "table" }),
-  [BlockId.AetherConduit]: block(BlockId.AetherConduit, "Aether Conduit", 51, 40, 3, 3, "#7adce5", "pickaxe", 3, { layer: "emissive" }),
-  [BlockId.DwarfStool]: block(BlockId.DwarfStool, "Deepgear Stool", 40, 40, 11, 0.9, "#8b6749", "axe", 0, { shape: "stool" }),
+  [BlockId.DeepgearBrick]: block(BlockId.DeepgearBrick, "Deepgear Brick", DEEPGEAR_BRICK_TILE, DEEPGEAR_BRICK_TILE, DEEPGEAR_BRICK_TILE, 2.4, "#545e62", "pickaxe", 2),
+  [BlockId.RivetedBrass]: block(BlockId.RivetedBrass, "Riveted Brass", RIVETED_BRASS_TILE, RIVETED_BRASS_TILE, RIVETED_BRASS_TILE, 2.7, "#a77943", "pickaxe", 2),
+  [BlockId.DeepgearLantern]: block(BlockId.DeepgearLantern, "Deepgear Lantern", DEEPGEAR_LANTERN_TILE, DEEPGEAR_LANTERN_TILE, DEEPGEAR_BRICK_TILE, 0.8, "#ffd77a", "pickaxe", 0, { layer: "emissive" }),
+  [BlockId.GolemForge]: block(BlockId.GolemForge, "Golem Forge", RIVETED_BRASS_TILE, DEEPGEAR_BRICK_TILE, 3, 3.1, "#88745d", "pickaxe", 2),
+  [BlockId.Powderworks]: block(BlockId.Powderworks, "Powderworks", 49, RIVETED_BRASS_TILE, DEEPGEAR_BRICK_TILE, 2.6, "#725f50", "pickaxe", 2),
+  [BlockId.GearTable]: block(BlockId.GearTable, "Gearwright Table", 36, RIVETED_BRASS_TILE, 11, 1.35, "#906943", "axe", 0, { shape: "table" }),
+  [BlockId.AetherConduit]: block(BlockId.AetherConduit, "Aether Conduit", 51, RIVETED_BRASS_TILE, DEEPGEAR_BRICK_TILE, 3, "#7adce5", "pickaxe", 3, { layer: "emissive" }),
+  [BlockId.DwarfStool]: block(BlockId.DwarfStool, "Deepgear Stool", RIVETED_BRASS_TILE, RIVETED_BRASS_TILE, 11, 0.9, "#8b6749", "axe", 0, { shape: "stool" }),
   [BlockId.MoonboughChair]: block(BlockId.MoonboughChair, "Moonbough Chair", 110, 109, 110, 0.8, "#647693", "axe", 0, { shape: "chair" }),
   [BlockId.Moonwell]: block(BlockId.Moonwell, "Moonwell", 115, 114, 98, 2, "#7fcfe2", "pickaxe", 1, { layer: "emissive" }),
   [BlockId.SeaDragonEggBlock]: block(BlockId.SeaDragonEggBlock, "Sea Dragon Egg", 148, 148, 148, 1.25, "#45b9c7", "hand", 0, { shape: "dragon-egg", layer: "emissive" }),
@@ -1091,7 +1098,7 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.HearthChair]: block(BlockId.HearthChair, "Hearth Chair", 11, 11, 11, 0.55, "#9f7144", "axe", 0, { shape: "chair", solid: false, layer: "cutout" }),
   [BlockId.HobbitThatch]: block(BlockId.HobbitThatch, "Hearthkin Thatch", 144, 144, 11, 0.48, "#c7a75d", "axe"),
   [BlockId.GoblinBrasswork]: block(BlockId.GoblinBrasswork, "Brassroot Masonry", 97, 97, 3, 1.85, "#7a6844", "pickaxe", 1),
-  [BlockId.RootweaveSoil]: block(BlockId.RootweaveSoil, "Rootweave Soil", 169, 169, 169, 0.55, "#493d2e", "shovel"),
+  [BlockId.RootweaveSoil]: block(BlockId.RootweaveSoil, "Rootweave Soil", 169, ROOTWEAVE_SOIL_SIDE_TILE, 169, 0.55, "#493d2e", "shovel"),
   [BlockId.LivingRoot]: block(BlockId.LivingRoot, "Living Root", 170, 170, 170, 0.72, "#6c5131", "axe", 0, { layer: "cutout", verticalConnectGroup: "cave-root" }),
   [BlockId.LuminousRoot]: block(BlockId.LuminousRoot, "Luminous Root", 171, 171, 171, 0.62, "#7fc66d", "axe", 0, { layer: "emissive", verticalConnectGroup: "cave-root" }),
   [BlockId.GrottoMoss]: block(BlockId.GrottoMoss, "Grotto Moss", 172, 172, 172, 0.22, "#527d47", "shovel", 0, { replaceable: true }),
@@ -1661,6 +1668,7 @@ Object.assign(ITEMS, {
   [Item.TomeTidemend]: { id: Item.TomeTidemend, name: "Tome of Tidemend", color: "#66d9d2", maxStack: 16, useKind: "spell-tome", spellId: "tidemend", iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
   [Item.TomeHearthward]: { id: Item.TomeHearthward, name: "Tome of Hearthward", color: "#efb768", maxStack: 16, useKind: "spell-tome", spellId: "hearthward", iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
   [Item.IronFilings]: { id: Item.IronFilings, name: "Iron Filings", color: "#aeb8ba", maxStack: 64 },
+  [Item.DeepgearStoolItem]: { id: Item.DeepgearStoolItem, name: "Deepgear Stool", color: "#9a7448", maxStack: 64, placeBlock: BlockId.DwarfStool, iconKind: "chair", heldModel: "chair", dropModel: "chair" },
 } satisfies Record<number, ItemDefinition>);
 
 /**
@@ -1783,6 +1791,7 @@ export const BLOCK_ITEM_ALIASES: Readonly<Partial<Record<BlockId, ItemCode>>> = 
   [BlockId.IceDragonEggBlock]: Item.IceDragonEgg,
   [BlockId.SteelDragonEggBlock]: Item.SteelDragonEgg,
   [BlockId.DraconicIncubator]: Item.DraconicIncubatorItem,
+  [BlockId.DwarfStool]: Item.DeepgearStoolItem,
   [BlockId.ArchiveShelf]: Item.ArchiveShelfItem,
   [BlockId.TomeDisplay]: Item.TomeDisplayItem,
   [BlockId.ArchiveShelfOne]: Item.ArchiveShelfItem,
@@ -2176,6 +2185,7 @@ export const RECIPES: Recipe[] = [
   { id: "glimmerbow", name: "Glimmerbow", width: 3, height: 3, pattern: [Item.StarfernFrond, Item.MoonboughLogItem, Item.Fiber, Item.MoonboughLogItem, 0, Item.Fiber, Item.StarfernFrond, Item.MoonboughLogItem, Item.Fiber], output: { item: Item.Glimmerbow, count: 1 }, table: true, blueprint: "glimmerbow" },
   { id: "glimmer-arrows", name: "Glimmer Arrows", width: 1, height: 3, pattern: [Item.Moonpetal, Item.Stick, Item.Feather], output: { item: Item.GlimmerArrow, count: 8 }, table: true, blueprint: "glimmerbow" },
   { id: "deepgear-lantern", name: "Deepgear Lantern", width: 3, height: 3, pattern: [Item.RivetedBrassItem, BlockId.Glass, Item.RivetedBrassItem, BlockId.Glass, Item.GlowDust, BlockId.Glass, Item.RivetedBrassItem, Item.IronIngot, Item.RivetedBrassItem], output: { item: Item.DeepgearLanternItem, count: 1 }, table: true },
+  { id: "deepgear-stool", name: "Deepgear Stool", width: 3, height: 2, pattern: [Item.RivetedBrassItem, Item.DeepgearAlloy, Item.RivetedBrassItem, 0, Item.RivetedBrassItem, 0], output: { item: Item.DeepgearStoolItem, count: 1 }, table: true, mirrored: true },
   { id: "gear-cluster", name: "Precision Gear Cluster", width: 3, height: 3, pattern: [0, Item.IronIngot, 0, Item.IronIngot, BlockId.CopperOre, Item.IronIngot, 0, Item.IronIngot, 0], output: { item: Item.GearCluster, count: 2 }, table: true },
   { id: "deepgear-alloy", name: "Deepgear Alloy", width: 3, height: 2, pattern: [Item.IronIngot, BlockId.CopperOre, Item.IronIngot, Item.RawGold, Item.GearCluster, Item.RawGold], output: { item: Item.DeepgearAlloy, count: 3 }, table: true },
   { id: "golem-forge", name: "Golem Forge", width: 3, height: 3, pattern: [Item.DeepgearAlloy, Item.GearCluster, Item.DeepgearAlloy, Item.RivetedBrassItem, Item.CrystalShard, Item.RivetedBrassItem, Item.DeepgearBrickItem, BlockId.Furnace, Item.DeepgearBrickItem], output: { item: Item.GolemForgeItem, count: 1 }, table: true },

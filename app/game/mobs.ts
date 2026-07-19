@@ -1156,6 +1156,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "A lantern with wings. Some ruins are only found by following their silent midnight spirals.",
     colors: [0x6b5030, 0xf4cc55, 0xfff2a8],
     drops: [{ item: Item.GlowDust, min: 1, max: 2, chance: 0.84 }],
+    family: "pollinator", movement: "flying", flying: true,
     discoveryHint: "Watch warm lights and Mooncap flowers after sunset for slow golden spirals.",
   },
   shadecrawler: {

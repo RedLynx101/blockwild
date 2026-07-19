@@ -9,7 +9,7 @@ import {
   type AdventureBiome,
 } from "./adventure-content";
 import { paintBiomeSurfaceAtlasTile } from "./biome-atmosphere";
-import { BLOCKS, DRAGON_HOARD_COIN_TILE, DRAGON_HOARD_GOLD_TILE, DRAGON_HOARD_JEWEL_TILE, LEAF_BLOCKS, TORCH_BLOCKS, BlockId, archiveShelfBookCount, blockContainsWater, isWaterloggedFloraBlock, type RenderLayer } from "./data";
+import { BLOCKS, DEEPGEAR_BRICK_TILE, DEEPGEAR_LANTERN_TILE, DRAGON_HOARD_COIN_TILE, DRAGON_HOARD_GOLD_TILE, DRAGON_HOARD_JEWEL_TILE, LEAF_BLOCKS, RIVETED_BRASS_TILE, ROOTWEAVE_SOIL_SIDE_TILE, TORCH_BLOCKS, BlockId, archiveShelfBookCount, blockContainsWater, isWaterloggedFloraBlock, type RenderLayer } from "./data";
 import { CAVE_ENTRANCE_CELL_SIZE, caveEntranceAt, caveEntranceForCell, caveFeatureAt } from "./caves";
 import { doorIsOpen, doorState, doorUsesXAxis, isDoorBlock } from "./doors";
 import { DENSE_CUTOUT_LEAF_POLICY, planFullTree, planSubmergedFlora, planSyrupPondsForChunk, syrupPondColumnAt, wildPeppermintHeight, type TreeForm, type TreePlanBlock } from "./ecology";
@@ -725,6 +725,8 @@ const TILE_COLORS = [
   "#93853d", "#d0b943", "#51443c", "#5e4137", "#9d7650",
   // 201-209: unresolved Veinmetal, traversal pieces, guano, bridge and lift.
   "#586f68", "#7b9b91", "#67513a", "#9b7446", "#737b7e", "#e2bc56", "#6e644a", "#655143", "#667278",
+  // 210-213: Deepgear masonry/brass, Rootweave soil side, and framed lantern.
+  "#515c62", "#a77943", "#493d2e", "#d6a84d",
 ];
 
 export const MEADOW_GRASS_PALETTE = Object.freeze({
@@ -1608,6 +1610,59 @@ export function createBlockAtlas() {
           pixel(index, x, y, accent); pixel(index, x + 1, y, "#252c30");
         }
       }
+    }
+    if (index === DEEPGEAR_BRICK_TILE) {
+      context.fillStyle = "#505a60";
+      context.fillRect(ox, oy, tile, tile);
+      for (let course = 0; course < 4; course += 1) {
+        const y = course * 4;
+        const offset = course % 2 ? 4 : 0;
+        context.fillStyle = "#2f393f";
+        context.fillRect(ox, oy + y, tile, 1);
+        for (let x = offset; x < tile; x += 8) context.fillRect(ox + x, oy + y, 1, 4);
+        context.fillStyle = "#778188";
+        context.fillRect(ox + 1, oy + y + 1, tile - 2, 1);
+      }
+      for (const [x, y] of [[2, 2], [13, 6], [5, 10], [10, 14]] as const) pixel(index, x, y, "#9ba4a8");
+    }
+    if (index === RIVETED_BRASS_TILE) {
+      context.fillStyle = "#946837";
+      context.fillRect(ox, oy, tile, tile);
+      context.fillStyle = "#5b3d24";
+      for (let y = 0; y < tile; y += 8) context.fillRect(ox, oy + y, tile, 1);
+      for (let x = 0; x < tile; x += 8) context.fillRect(ox + x, oy, 1, tile);
+      context.fillStyle = "#c7924d";
+      for (let y = 1; y < tile; y += 8) for (let x = 1; x < tile; x += 8) context.fillRect(ox + x, oy + y, 6, 1);
+      for (const [x, y] of [[2, 2], [13, 2], [2, 13], [13, 13]] as const) {
+        pixel(index, x, y, "#ead085");
+        pixel(index, Math.max(0, x - 1), y, "#4d3927");
+      }
+      for (const [x, y] of [[5, 6], [11, 10]] as const) pixel(index, x, y, "#4f8776", .75);
+    }
+    if (index === ROOTWEAVE_SOIL_SIDE_TILE) {
+      context.fillStyle = "#493d2e";
+      context.fillRect(ox, oy, tile, tile);
+      for (let y = 3; y < tile; y += 4) {
+        context.fillStyle = y % 8 === 3 ? "#62503a" : "#352f27";
+        context.fillRect(ox, oy + y, tile, 1);
+      }
+      for (const [x, length] of [[2, 7], [6, 11], [10, 6], [13, 9]] as const) {
+        for (let y = 0; y < length; y += 1) pixel(index, x + (y > 5 && (x + y) % 4 === 0 ? 1 : 0), y, y % 3 ? "#725536" : "#9a7446");
+      }
+    }
+    if (index === DEEPGEAR_LANTERN_TILE) {
+      context.fillStyle = "#273239";
+      context.fillRect(ox, oy, tile, tile);
+      context.fillStyle = "#8a673b";
+      context.fillRect(ox + 1, oy + 1, 14, 2); context.fillRect(ox + 1, oy + 13, 14, 2);
+      context.fillRect(ox + 1, oy + 1, 2, 14); context.fillRect(ox + 13, oy + 1, 2, 14);
+      context.fillStyle = "#5a7480";
+      context.fillRect(ox + 4, oy + 4, 8, 8);
+      context.fillStyle = "#e0ad4b";
+      context.fillRect(ox + 5, oy + 5, 6, 6);
+      context.fillStyle = "#fff0a4";
+      context.fillRect(ox + 6, oy + 5, 2, 5); context.fillRect(ox + 8, oy + 6, 2, 2);
+      for (const [x, y] of [[2, 2], [13, 2], [2, 13], [13, 13]] as const) pixel(index, x, y, "#d8c38d");
     }
     if (index === 129) {
       context.fillStyle = "#8964bc"; context.fillRect(ox, oy, tile, tile);

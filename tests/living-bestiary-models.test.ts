@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
 import { applyWildlifePose, createMobVisual } from "../app/game/mob-models";
+import { CUBIC_STORYBOOK_VISUAL_KINDS, FACETED_STORYBOOK_EXCEPTION_KINDS } from "../app/game/living-bestiary-models";
 import { LEGENDARY_CREATURE_ORDER, LIVING_ROSTER_ORDER, MOB_DEFS, SUMMONED_CREATURE_ORDER } from "../app/game/mobs";
 import { creatureHasCustomSound } from "../app/game/creature-sounds";
 
 const expansionKinds = [...LIVING_ROSTER_ORDER, ...LEGENDARY_CREATURE_ORDER, ...SUMMONED_CREATURE_ORDER] as const;
+const cubicStorybookKinds = new Set<string>(CUBIC_STORYBOOK_VISUAL_KINDS);
 
 function poseVector(root: THREE.Object3D) {
   const output: number[] = [];
@@ -30,9 +32,15 @@ test("every expansion creature uses a detailed canonical production model with d
       if (object.userData.livingShape && object.userData.livingShape !== "hard") organicCount += 1;
     });
     assert.ok(meshCount >= 12, `${kind} needs a production-detail silhouette`);
-    assert.ok(organicCount >= 8, `${kind} needs rounded, tapered, or faceted anatomy beyond cuboid blockout geometry`);
+    if (cubicStorybookKinds.has(kind)) {
+      assert.equal(organicCount, 0, `${kind} must use its approved high-detail cubic runtime language throughout`);
+      assert.equal(model.visual.userData.modelStyle, "high-detail-cubic");
+    } else {
+      assert.ok(organicCount >= 8, `${kind} needs rounded, tapered, or faceted anatomy beyond cuboid blockout geometry`);
+      assert.equal(model.visual.userData.modelStyle, "faceted-storybook");
+    }
     const primaryBody = model.visual.getObjectByName(`${kind}-body`) as THREE.Mesh | undefined;
-    if (primaryBody) assert.equal(primaryBody.userData.livingShape, "organic", `${kind} primary body cannot remain a box`);
+    if (primaryBody) assert.equal(primaryBody.userData.livingShape, cubicStorybookKinds.has(kind) ? "hard" : "organic");
     const rootY = model.visual.position.y;
     applyWildlifePose(model.visual, kind, .2, .7, .4);
     const first = poseVector(model.visual);
@@ -48,6 +56,29 @@ test("every expansion creature uses a detailed canonical production model with d
       head.traverse((object) => { if (/-eye$/u.test(object.name)) eyes.push(object); });
       assert.ok(eyes.length >= 2, `${kind} articulated eyes must follow its head`);
     }
+  }
+});
+
+test("the unified expansion roster uses true cuboid runtime geometry with four deliberate exceptions", () => {
+  assert.deepEqual([...FACETED_STORYBOOK_EXCEPTION_KINDS], ["thalassene", "orichalc", "vellum-warden", "choir-of-one"]);
+  assert.equal(CUBIC_STORYBOOK_VISUAL_KINDS.length, expansionKinds.length - FACETED_STORYBOOK_EXCEPTION_KINDS.length);
+  assert.deepEqual(new Set([...CUBIC_STORYBOOK_VISUAL_KINDS, ...FACETED_STORYBOOK_EXCEPTION_KINDS]), new Set(expansionKinds));
+  for (const [index, kind] of CUBIC_STORYBOOK_VISUAL_KINDS.entries()) {
+    const visual = createMobVisual(kind, 89_000 + index).visual;
+    let meshes = 0;
+    visual.traverse((object) => {
+      if (!(object instanceof THREE.Mesh) || !object.visible) return;
+      meshes += 1;
+      assert.equal(object.geometry.type, "BoxGeometry", `${object.name} must be cuboid production geometry`);
+      assert.equal(object.userData.livingShape, "hard", `${object.name} must identify its resolved cubic shape`);
+      assert.equal(typeof object.userData.authoredShape, "string", `${object.name} must retain its semantic source shape`);
+    });
+    assert.ok(meshes >= 12, `${kind} must remain a detailed model rather than a low-detail blockout`);
+  }
+  for (const [index, kind] of FACETED_STORYBOOK_EXCEPTION_KINDS.entries()) {
+    const visual = createMobVisual(kind, 89_500 + index).visual;
+    assert.equal(visual.userData.modelStyle, "faceted-storybook");
+    assert.ok(visual.getObjectByName(`${kind}-body`)?.userData.livingShape !== "hard" || kind === "orichalc");
   }
 });
 

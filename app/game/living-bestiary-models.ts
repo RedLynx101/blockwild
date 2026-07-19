@@ -14,6 +14,32 @@ export const LIVING_BESTIARY_VISUAL_KINDS = Object.freeze([
   "asterjaw", "vellum-warden", "choir-of-one", "glasswake-stag",
 ] as const satisfies readonly LivingBestiaryVisualKind[]);
 
+/**
+ * These four silhouettes depend on continuous reef growth, real negative
+ * space, paper layering, or a hanging sound-body. They intentionally keep the
+ * faceted primitive language while the rest of the expansion uses cuboids.
+ */
+export const FACETED_STORYBOOK_EXCEPTION_KINDS = Object.freeze([
+  "thalassene",
+  "orichalc",
+  "vellum-warden",
+  "choir-of-one",
+] as const satisfies readonly LivingBestiaryVisualKind[]);
+
+const FACETED_STORYBOOK_EXCEPTION_KIND_SET = new Set<LivingBestiaryVisualKind>(FACETED_STORYBOOK_EXCEPTION_KINDS);
+
+/**
+ * Creatures whose production geometry deliberately follows Blockwild's
+ * high-detail cubic field-guide language. Their complete authored hierarchy is
+ * retained; only the visible primitive is resolved to a cuboid, so the world
+ * model matches the portrait instead of merely receiving a blocky illustration.
+ */
+export const CUBIC_STORYBOOK_VISUAL_KINDS = Object.freeze(
+  LIVING_BESTIARY_VISUAL_KINDS.filter((kind) => !FACETED_STORYBOOK_EXCEPTION_KIND_SET.has(kind)),
+);
+
+const CUBIC_STORYBOOK_VISUAL_KIND_SET = new Set<LivingBestiaryVisualKind>(CUBIC_STORYBOOK_VISUAL_KINDS);
+
 type Builder = ReturnType<typeof createBuilder>;
 
 type LivingShape = "organic" | "hard" | "gem" | "spike-up" | "spike-forward" | "ring" | "limb-y" | "limb-x" | "limb-z" | "joint";
@@ -57,6 +83,8 @@ function createBuilder(kind: LivingBestiaryVisualKind, id: number) {
   group.name = `${kind}-root`;
   visual.name = `${kind}-visual`;
   visual.userData.wildlifeRig = kind;
+  const cubicStorybook = CUBIC_STORYBOOK_VISUAL_KIND_SET.has(kind);
+  visual.userData.modelStyle = cubicStorybook ? "high-detail-cubic" : "faceted-storybook";
   group.add(visual);
   const parts: MobVisualParts = { legs: [], wings: [], arms: [], head: [], body: [] };
   const [bodyColor, accentColor, eyeColor] = MOB_DEFS[kind].colors;
@@ -88,13 +116,15 @@ function createBuilder(kind: LivingBestiaryVisualKind, id: number) {
     white: new THREE.MeshStandardMaterial({ color: 0xf1eee2, roughness: .52 }),
   };
   const add = (parent: THREE.Object3D, size: [number, number, number], material: THREE.Material, position: [number, number, number], name: string, part?: keyof MobVisualParts, shapeOverride?: LivingShape) => {
-    const shape = shapeOverride ?? livingShapeFor(name);
-    const mesh = new THREE.Mesh(livingGeometry(shape), material);
+    const authoredShape = shapeOverride ?? livingShapeFor(name);
+    const resolvedShape: LivingShape = cubicStorybook ? "hard" : authoredShape;
+    const mesh = new THREE.Mesh(cubicStorybook ? new THREE.BoxGeometry(1, 1, 1) : livingGeometry(authoredShape), material);
     mesh.scale.set(...size);
     mesh.position.set(...position);
     mesh.name = `${kind}-${name}`;
     mesh.userData.mobId = id;
-    mesh.userData.livingShape = shape;
+    mesh.userData.livingShape = resolvedShape;
+    mesh.userData.authoredShape = authoredShape;
     mesh.castShadow = true;
     mesh.receiveShadow = /body|foot|leg|shell/u.test(name);
     parent.add(mesh);
@@ -1006,22 +1036,24 @@ function attachAuthoredHeadDetails(builder: Builder) {
 // values data-driven avoids a Box3 hierarchy walk every time a herd member is
 // instantiated while preserving the runtime footOffset contract.
 const LIVING_ART_FOOT_CORRECTIONS: Readonly<Partial<Record<LivingBestiaryVisualKind, number>>> = Object.freeze({
-  "thornhide-trufflehog": .0302213526,
-  "petalmask-tanuki": .019938498,
-  "hearthback-badger": .0363910654,
-  "sunfoil-pangolin": .0363910654,
-  "glassstep-jerboa": .0042316468,
+  "thornhide-trufflehog": .0304048631,
+  "petalmask-tanuki": .0201220084,
+  "hearthback-badger": .0365745758,
+  "sunfoil-pangolin": .0365745758,
+  "glassstep-jerboa": .0045693061,
   "stormcrest-ibex": .0128241489,
-  "cindercoil-gecko": .0528436328,
-  "cloudkite-pika": .04667392,
-  "briarclaw-lynx": .0137687852,
-  "gravebell-jackal": .0168536416,
+  "cindercoil-gecko": .0530271432,
+  "cloudkite-pika": .0468574304,
+  "briarclaw-lynx": .0139522957,
+  "gravebell-jackal": .0170371521,
   "cragglass-basilisk": .0555110572,
-  "kilnscale-salamander": .0497289505,
-  "sporeback-gardener": .0302213526,
-  kharza: -.013933539,
-  "sugarwake-sovereign": .0075399449,
-  asterjaw: -.0211929205,
+  "kilnscale-salamander": .0499638439,
+  "sporeback-gardener": .0304048631,
+  "ilyr-virebloom": .0072129217,
+  kharza: -.0137514966,
+  "sugarwake-sovereign": .0078482425,
+  asterjaw: -.02100941,
+  "glasswake-stag": .0039169901,
 });
 
 export function createLivingBestiaryMobVisual(kind: LivingBestiaryVisualKind, id: number): MobVisual {
@@ -1032,8 +1064,8 @@ export function createLivingBestiaryMobVisual(kind: LivingBestiaryVisualKind, id
   attachAuthoredHeadDetails(builder);
   applyLivingArtPolish(builder);
   addLivingMountTack(builder);
-  // Rounded feet/pages have true curved bounds; retain the production spawn
-  // contact plane instead of letting those curves clip through terrain.
+  // Curved and cubic authored feet/pages have different exact bounds; retain
+  // the production spawn contact plane instead of allowing either to clip.
   if (kind === "orichalc") builder.visual.position.y += .18759377827660684;
   if (kind === "vellum-warden") builder.visual.position.y += .19;
   builder.visual.position.y += LIVING_ART_FOOT_CORRECTIONS[kind] ?? 0;

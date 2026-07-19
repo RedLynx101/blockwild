@@ -3368,13 +3368,25 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     add(visual, [0.92 * scale, 0.9 * scale, 0.62 * scale], metal, [0, 0.68 * scale, 0], "body", `${kind}-body`);
     add(visual, [0.62 * scale, 0.48 * scale, 0.52 * scale], brass, [0, 1.34 * scale, -0.04 * scale], "head", `${kind}-head`);
     add(visual, [0.34 * scale, 0.17 * scale, 0.06 * scale], core, [0, 1.4 * scale, -0.31 * scale], undefined, `${kind}-eye-lamp`);
+    add(visual, [0.46 * scale, 0.09 * scale, 0.08 * scale], metal, [0, 1.55 * scale, -0.31 * scale], undefined, `${kind}-brow-visor`);
+    add(visual, [0.38 * scale, 0.12 * scale, 0.11 * scale], metal, [0, 1.18 * scale, -0.3 * scale], undefined, `${kind}-lower-jaw-plate`);
+    for (const side of [-1, 1]) add(visual, [0.12 * scale, 0.28 * scale, 0.09 * scale], metal, [side * 0.28 * scale, 1.34 * scale, -0.27 * scale], undefined, `${kind}-${side < 0 ? "left" : "right"}-cheek-guard`);
     add(visual, [0.34 * scale, 0.34 * scale, 0.1 * scale], core, [0, 0.75 * scale, -0.37 * scale], undefined, `${kind}-mana-core`).rotation.z = Math.PI / 4;
+    add(visual, [0.58 * scale, 0.42 * scale, 0.18 * scale], metal, [0, 0.82 * scale, 0.41 * scale], undefined, `${kind}-back-service-housing`);
+    add(visual, [0.4 * scale, 0.08 * scale, 0.05 * scale], brass, [0, 0.82 * scale, 0.51 * scale], undefined, `${kind}-back-service-seam`);
     for (const side of [-1, 1]) {
+      const sideName = side < 0 ? "left" : "right";
       const leg = pivotBox([0.3 * scale, 0.8 * scale, 0.34 * scale], metal, [side * 0.3 * scale, 0.38 * scale, 0], [0, -0.4 * scale, 0], "legs", `${kind}-${side < 0 ? "left" : "right"}-leg`);
       leg.userData.phase = side < 0 ? 0 : Math.PI;
-      add(leg, [0.48 * scale, 0.2 * scale, 0.58 * scale], brass, [0, -0.86 * scale, -0.08 * scale], undefined, `${kind}-${side < 0 ? "left" : "right"}-foot`);
+      add(leg, [0.4 * scale, 0.18 * scale, 0.4 * scale], brass, [0, -0.43 * scale, -0.03 * scale], undefined, `${kind}-${sideName}-knee-joint`);
+      add(leg, [0.25 * scale, 0.34 * scale, 0.28 * scale], metal, [0, -0.65 * scale, -0.02 * scale], undefined, `${kind}-${sideName}-lower-leg`);
+      add(leg, [0.36 * scale, 0.12 * scale, 0.38 * scale], brass, [0, -0.8 * scale, -0.05 * scale], undefined, `${kind}-${sideName}-ankle-cuff`);
+      add(leg, [0.48 * scale, 0.2 * scale, 0.58 * scale], brass, [0, -0.86 * scale, -0.08 * scale], undefined, `${kind}-${sideName}-foot`);
       const arm = pivotBox([0.26 * scale, (bulwark ? 0.95 : 0.75) * scale, 0.3 * scale], metal, [side * 0.64 * scale, 0.95 * scale, 0], [0, -0.36 * scale, 0], "arms", `${kind}-${side < 0 ? "left" : "right"}-arm`);
       arm.userData.phase = side < 0 ? 0 : Math.PI;
+      add(arm, [0.34 * scale, 0.18 * scale, 0.34 * scale], brass, [0, -0.42 * scale, 0], undefined, `${kind}-${sideName}-elbow-joint`);
+      add(arm, [0.23 * scale, 0.3 * scale, 0.27 * scale], metal, [0, -0.58 * scale, 0], undefined, `${kind}-${sideName}-forearm`);
+      add(arm, [0.38 * scale, 0.26 * scale, 0.42 * scale], brass, [0, -0.76 * scale, -0.04 * scale], undefined, `${kind}-${sideName}-hand-clamp`);
     }
     if (kind === "copper-scout-golem") {
       add(visual, [0.1, 0.52, 0.1], brass, [0, 1.78, 0], undefined, `${kind}-signal-mast`);

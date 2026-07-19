@@ -45,6 +45,11 @@ type TileGeometry = Readonly<{
   stats: GeometryStats;
 }>;
 
+export type ShowcaseCamera = Readonly<{
+  position: THREE.Vector3;
+  target: THREE.Vector3;
+}>;
+
 type SheetOptions = Readonly<{
   kinds: readonly LivingBestiaryVisualKind[];
   phase: ShowcasePhase;
@@ -52,6 +57,7 @@ type SheetOptions = Readonly<{
   columns?: number;
   tileWidth?: number;
   tileHeight?: number;
+  camera?: ShowcaseCamera;
   title: string;
   subtitle: string;
   modelModule?: LivingModelModule;
@@ -297,7 +303,7 @@ export function buildLivingBestiarySheet(options: SheetOptions) {
   const rows = Math.ceil(options.kinds.length / columns);
   const width = columns * tileWidth;
   const height = headerHeight + rows * tileHeight + 18;
-  const camera = makeCameraFrame();
+  const camera = makeCameraFrame(options.camera?.position, options.camera?.target);
   const tiles = options.kinds.map((kind) => createTileGeometry(kind, camera, options.modelModule));
   const background = options.background ?? "dark";
   const phaseLabel = options.phase.toUpperCase();
