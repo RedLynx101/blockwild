@@ -6,7 +6,10 @@ import { Item, ITEMS } from "../app/game/data.ts";
 import { COMMERCE_CATALOG } from "../app/game/economy.ts";
 import { commerceItemCode } from "../app/game/hearthroads-adapter.ts";
 import {
+  DEFAULT_SETTLEMENT_ORIGIN_SEARCH_RADIUS,
+  MAX_SETTLEMENT_ORIGIN_SEARCH_RADIUS,
   SettlementIndex,
+  normalizeSettlementOriginSearchRadius,
   normalizeSettlementPlacementOptions,
   normalizeWorldOriginPreference,
   querySettlementProvince,
@@ -105,6 +108,37 @@ test("every enabled culture has a deterministic off-map origin in a compatible h
     assert.ok(result, `${factionId} should receive a deterministic compatible origin`);
     assert.equal(result.candidate.factionId, factionId);
   }
+});
+
+test("a remotely previewed Wood Elf origin remains resolvable at world creation", () => {
+  const options = {
+    ...heartlands,
+    enabledFactions: ["wood-elves" as const],
+    origin: { mode: "culture-settlement" as const, factionId: "wood-elves" as const, minimumSize: "village" as const },
+  };
+  const world = new ChunkWorld();
+  world.reset("WOOD-ELF-REMOTE-1", undefined, {
+    ...options,
+    profile: "world-below-v15",
+    caveFrequency: 1,
+    biomeScale: 1.35,
+    resourceAbundance: 1,
+  });
+
+  assert.equal(
+    world.resolveSettlementOrigin(options.origin, false, DEFAULT_SETTLEMENT_ORIGIN_SEARCH_RADIUS),
+    null,
+    "the default chart radius intentionally cannot see this remote enclave",
+  );
+  const previewed = world.resolveSettlementOrigin(options.origin, false, MAX_SETTLEMENT_ORIGIN_SEARCH_RADIUS);
+  assert.ok(previewed, "the expanded chart should find the selected Wood Elf origin");
+  assert.equal(previewed.candidate.factionId, "wood-elves");
+  assert.ok(previewed.distanceBlocks > 10_000);
+  assert.deepEqual(
+    world.resolveSettlementOrigin(options.origin, false, normalizeSettlementOriginSearchRadius(64)),
+    previewed,
+    "world creation must reuse the same bounded radius that produced the preview",
+  );
 });
 
 test("legacy worlds keep a queryable scattered guide index", () => {

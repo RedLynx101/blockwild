@@ -612,6 +612,10 @@ import {
   type WorldOptions,
 } from "./world-storage";
 import {
+  DEFAULT_SETTLEMENT_ORIGIN_SEARCH_RADIUS,
+  normalizeSettlementOriginSearchRadius,
+} from "./settlement-index";
+import {
   canGrowPlant,
   canHitchLead,
   canPlantSaplingOn,
@@ -4655,7 +4659,13 @@ export class VoxelEngine {
     this.emitHud(true);
   }
 
-  createWorld(seed: string, mode: GameMode, options: Partial<WorldOptions> = {}, name = "New World") {
+  createWorld(
+    seed: string,
+    mode: GameMode,
+    options: Partial<WorldOptions> = {},
+    name = "New World",
+    originSearchRadius = DEFAULT_SETTLEMENT_ORIGIN_SEARCH_RADIUS,
+  ) {
     this.persistent = true;
     this.running = true;
     this.paused = false;
@@ -4772,7 +4782,11 @@ export class VoxelEngine {
     const openingQuest = acceptQuest(this.questBook, HEARTHROADS_MAIN_QUESTS, "main-first-dawn", Date.now());
     if (openingQuest.ok) this.questBook = pinQuest(openingQuest.book, "main-first-dawn");
     const raceTraits = characterRaceTraits(this.activeCharacterProfile?.appearance.race ?? "wayfarer");
-    const settlementOrigin = this.world.resolveSettlementOrigin(this.worldOptions.origin, raceTraits.waterBreathing);
+    const settlementOrigin = this.world.resolveSettlementOrigin(
+      this.worldOptions.origin,
+      raceTraits.waterBreathing,
+      normalizeSettlementOriginSearchRadius(originSearchRadius),
+    );
     const spawn = settlementOrigin?.position ?? this.findSpawn();
     this.startingSettlementId = settlementOrigin?.candidate.id ?? null;
     this.world.initializeAround(spawn.x, spawn.z);
@@ -27126,7 +27140,14 @@ export class VoxelEngine {
         variant: this.playerVariant, camera: this.cameraMode, sprinting: this.sprinting, crouching: this.crouching,
         mountedBoatId: this.mountedBoatId, mountedCreatureId: this.mountedCreatureId,
       },
-      world: { seed: this.world.seedText, day: this.day, time: Number(this.worldTime.toFixed(4)), biome: BIOME_NAMES[this.world.biomeAt(Math.round(this.position.x), Math.round(this.position.z))], weather: this.weatherState.kind },
+      world: {
+        seed: this.world.seedText,
+        day: this.day,
+        time: Number(this.worldTime.toFixed(4)),
+        biome: BIOME_NAMES[this.world.biomeAt(Math.round(this.position.x), Math.round(this.position.z))],
+        weather: this.weatherState.kind,
+        startingSettlementId: this.startingSettlementId,
+      },
       target: this.target ? { type: "block", name: BLOCKS[this.target.type].name, position: [this.target.x, this.target.y, this.target.z] }
         : this.targetMob ? { type: "mob", id: this.targetMob.id, name: this.targetMob.name }
           : this.targetBoat ? { type: "boat", id: this.targetBoat.save.id } : null,

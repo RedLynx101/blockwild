@@ -102,6 +102,10 @@ import { createMapKnowledge, type MapMarker } from "./map-system";
 import { PLANTS, createPlantBestiaryState, nativeBiomesForPlant, type PlantCategory, type PlantDefinition } from "./plants";
 import { createQuestBook, type QuestObjective, type QuestSource } from "./quests";
 import { createSettlementState, isMayorProfession, type ResidentProfession, type SettlementCandidate } from "./settlements";
+import {
+  DEFAULT_SETTLEMENT_ORIGIN_SEARCH_RADIUS,
+  MAX_SETTLEMENT_ORIGIN_SEARCH_RADIUS,
+} from "./settlement-index";
 import { DragonPanel } from "./DragonPanel";
 import { DragonMagicPanel, ManaHud, SpellWheelPanel } from "./DragonMagicPanels";
 import { GolemForgePanel } from "./GolemForgePanel";
@@ -1861,7 +1865,7 @@ export default function VoxelGame() {
   }));
   const [originPreview, setOriginPreview] = useState<ReturnType<VoxelEngine["previewWorldOrigin"]>>(null);
   const [originPreviewPending, setOriginPreviewPending] = useState(false);
-  const [originSearchRadius, setOriginSearchRadius] = useState(18);
+  const [originSearchRadius, setOriginSearchRadius] = useState(DEFAULT_SETTLEMENT_ORIGIN_SEARCH_RADIUS);
   const [worldNotice, setWorldNotice] = useState("");
   const [seed, setSeed] = useState("WILDERNESS");
   const [currentWorldSeed, setCurrentWorldSeed] = useState("WILDERNESS");
@@ -2177,16 +2181,25 @@ export default function VoxelGame() {
     const chestAudit = auditParameters.get("chest-audit") === "open";
     const caveLiquidAudit = auditParameters.get("cave-liquid-audit") === "1";
     const creatureCollisionAudit = auditParameters.get("mob-collision-audit") === "1";
-    const placementAudit = auditParameters.get("placement-audit") === "1" || mapNavigationAudit || waystoneIconAudit || chestAudit || caveLiquidAudit || creatureCollisionAudit;
+    const settlementOriginAudit = auditParameters.get("origin-audit") === "wood-elf-remote";
+    const placementAudit = auditParameters.get("placement-audit") === "1" || mapNavigationAudit || waystoneIconAudit || chestAudit || caveLiquidAudit || creatureCollisionAudit || settlementOriginAudit;
     if (placementAudit) {
       engine.createWorld(
-        caveLiquidAudit ? "WILDERNESS" : creatureCollisionAudit ? "MOB-COLLISION-AUDIT" : mapNavigationAudit || waystoneIconAudit ? "MAP-NAVIGATION-AUDIT" : "DIRECTIONAL-PLACEMENT-AUDIT",
+        settlementOriginAudit ? "WOOD-ELF-REMOTE-1" : caveLiquidAudit ? "WILDERNESS" : creatureCollisionAudit ? "MOB-COLLISION-AUDIT" : mapNavigationAudit || waystoneIconAudit ? "MAP-NAVIGATION-AUDIT" : "DIRECTIONAL-PLACEMENT-AUDIT",
         "builder",
-        { structures: false, weather: false, mobDensity: 0, butterflyDensity: 0 },
-        caveLiquidAudit ? "Cave Liquid Audit" : creatureCollisionAudit ? "Creature Collision Audit" : mapNavigationAudit || waystoneIconAudit ? "Map Navigation Audit" : "Directional Placement Audit",
+        settlementOriginAudit ? {
+          ...DEFAULT_WORLD_OPTIONS,
+          enabledFactions: ["wood-elves"],
+          origin: { mode: "culture-settlement", factionId: "wood-elves", minimumSize: "village" },
+          weather: false,
+          mobDensity: 0,
+          butterflyDensity: 0,
+        } : { structures: false, weather: false, mobDensity: 0, butterflyDensity: 0 },
+        settlementOriginAudit ? "Remote Wood Elf Origin Audit" : caveLiquidAudit ? "Cave Liquid Audit" : creatureCollisionAudit ? "Creature Collision Audit" : mapNavigationAudit || waystoneIconAudit ? "Map Navigation Audit" : "Directional Placement Audit",
+        settlementOriginAudit ? MAX_SETTLEMENT_ORIGIN_SEARCH_RADIUS : DEFAULT_SETTLEMENT_ORIGIN_SEARCH_RADIUS,
       );
       const auditMarkerId = mapNavigationAudit || waystoneIconAudit ? engine.primeMapNavigationAudit(auditParameters.get("far-track") === "1", waystoneIconAudit) : null;
-      const auditChestKey = !mapNavigationAudit && !waystoneIconAudit && !caveLiquidAudit && !creatureCollisionAudit ? engine.primeDirectionalPlacementAudit() : null;
+      const auditChestKey = !mapNavigationAudit && !waystoneIconAudit && !caveLiquidAudit && !creatureCollisionAudit && !settlementOriginAudit ? engine.primeDirectionalPlacementAudit() : null;
       if (caveLiquidAudit) engine.primeCaveLiquidAudit();
       if (creatureCollisionAudit) engine.primeCreatureCollisionAudit();
       if (chestAudit && auditChestKey) engine.primeOpenChestAudit(auditChestKey);
@@ -2409,7 +2422,7 @@ export default function VoxelGame() {
     if (engine) setSeed(engine.randomSeed());
     setWorldName(`Untamed World ${worlds.length + 1}`);
     setWorldOptions({ ...DEFAULT_WORLD_OPTIONS, enabledFactions: [...DEFAULT_WORLD_OPTIONS.enabledFactions] });
-    setOriginSearchRadius(18);
+    setOriginSearchRadius(DEFAULT_SETTLEMENT_ORIGIN_SEARCH_RADIUS);
     setOriginPreview(null);
     setWorldNotice("");
     setOverlay("new");
@@ -2420,7 +2433,7 @@ export default function VoxelGame() {
     if (!engine) return;
     prepareFirstPersonHeldPresentation(engine);
     applyCharacterProfile(activeCharacterProfile);
-    const created = engine.createWorld(seed, mode, worldOptions, worldName);
+    const created = engine.createWorld(seed, mode, worldOptions, worldName, originSearchRadius);
     const storage = worldStorageRef.current;
     if (created) {
       activeWorldIdRef.current = created.id;
@@ -3828,7 +3841,7 @@ export default function VoxelGame() {
                 {worldOptions.origin.mode !== "wilderness" && worldOptions.structures && worldOptions.settlementDensity > 0 ? <output className={`origin-preview ${originPreview ? "resolved" : originPreviewPending ? "pending" : "missing"}`} aria-live="polite">
                   {originPreviewPending ? <><strong>Reading the regional charts…</strong><span>The seed-derived settlement index is resolving a safe public arrival.</span></>
                     : originPreview ? <><strong>{FACTIONS[originPreview.candidate.factionId].name} {originPreview.candidate.size}</strong><span>{originPreview.candidate.biome.replaceAll("-", " ")} · {originPreview.anchorKind.replaceAll("-", " ")} · {Math.round(originPreview.distanceBlocks)} blocks from world center</span></>
-                      : <><strong>No valid starting settlement found nearby.</strong><span>Keep the culture exact: search farther, randomize the seed, or return to wild country.</span><button type="button" onClick={() => setOriginSearchRadius((current) => Math.min(64, current + 12))}>Search farther</button></>}
+                      : <><strong>No valid starting settlement found nearby.</strong><span>Keep the culture exact: search farther, randomize the seed, or return to wild country.</span><button type="button" onClick={() => setOriginSearchRadius((current) => Math.min(MAX_SETTLEMENT_ORIGIN_SEARCH_RADIUS, current + 12))}>Search farther</button></>}
                 </output> : null}
               </section>
             </details>

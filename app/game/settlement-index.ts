@@ -14,6 +14,8 @@ import { planRegionalRoadGraph, type RoadNode } from "./surface-roads.ts";
 export const SETTLEMENT_REGION_BLOCKS = 32 * 16;
 export const SETTLEMENT_PROVINCE_REGIONS = 8;
 export const SETTLEMENT_PROVINCE_BLOCKS = SETTLEMENT_REGION_BLOCKS * SETTLEMENT_PROVINCE_REGIONS;
+export const DEFAULT_SETTLEMENT_ORIGIN_SEARCH_RADIUS = 18;
+export const MAX_SETTLEMENT_ORIGIN_SEARCH_RADIUS = 64;
 
 export type SettlementPattern = "legacy-scattered-v1" | "heartlands-v2";
 export type SettlementClustering = "even" | "regional" | "strong";
@@ -95,6 +97,14 @@ type RegionIntent = Readonly<{
 
 const clamp = (value: number, minimum: number, maximum: number) => Math.max(minimum, Math.min(maximum, value));
 const floorDiv = (value: number, divisor: number) => Math.floor(value / divisor);
+
+export function normalizeSettlementOriginSearchRadius(value: unknown) {
+  return Math.floor(clamp(
+    typeof value === "number" && Number.isFinite(value) ? value : DEFAULT_SETTLEMENT_ORIGIN_SEARCH_RADIUS,
+    0,
+    MAX_SETTLEMENT_ORIGIN_SEARCH_RADIUS,
+  ));
+}
 
 function hash32(value: string) {
   let hash = 2166136261;

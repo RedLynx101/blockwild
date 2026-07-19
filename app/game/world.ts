@@ -88,7 +88,9 @@ import {
   type SettlementResident,
 } from "./settlements";
 import {
+  DEFAULT_SETTLEMENT_ORIGIN_SEARCH_RADIUS,
   SettlementIndex,
+  normalizeSettlementOriginSearchRadius,
   normalizeSettlementPlacementOptions,
   normalizeWorldOriginPreference,
   type LargeTownFrequency,
@@ -4680,7 +4682,7 @@ export class ChunkWorld {
     return this.settlementIndex.roadNeighbors(this.seedText, this.generationOptions, settlementId, this.settlementTerrainSampler());
   }
 
-  resolveSettlementOrigin(preference: WorldOriginPreference, breathesWater = false, maxRegionRadius = 18) {
+  resolveSettlementOrigin(preference: WorldOriginPreference, breathesWater = false, maxRegionRadius = DEFAULT_SETTLEMENT_ORIGIN_SEARCH_RADIUS) {
     if (preference.mode === "wilderness" || !this.generationOptions.structures || this.generationOptions.settlementDensity <= 0) return null;
     const sizes: SettlementCandidate["size"][] = preference.mode === "culture-settlement"
       ? preference.minimumSize === "town" ? ["town"] : preference.minimumSize === "village" ? ["village", "town"] : ["hamlet", "village", "town"]
@@ -4689,7 +4691,7 @@ export class ChunkWorld {
       origin: { x: 0, z: 0 },
       ...(preference.mode === "culture-settlement" ? { factionIds: [preference.factionId] } : {}),
       sizes,
-      maxRegionRadius,
+      maxRegionRadius: normalizeSettlementOriginSearchRadius(maxRegionRadius),
     });
     if (!result) return null;
     const layout = planSettlementLayout(result.candidate);
