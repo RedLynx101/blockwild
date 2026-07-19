@@ -1806,6 +1806,9 @@ export default function VoxelGame() {
     ...DEFAULT_WORLD_OPTIONS,
     enabledFactions: [...DEFAULT_WORLD_OPTIONS.enabledFactions],
   }));
+  const [originPreview, setOriginPreview] = useState<ReturnType<VoxelEngine["previewWorldOrigin"]>>(null);
+  const [originPreviewPending, setOriginPreviewPending] = useState(false);
+  const [originSearchRadius, setOriginSearchRadius] = useState(18);
   const [worldNotice, setWorldNotice] = useState("");
   const [seed, setSeed] = useState("WILDERNESS");
   const [currentWorldSeed, setCurrentWorldSeed] = useState("WILDERNESS");
@@ -1856,6 +1859,24 @@ export default function VoxelGame() {
   const activeCharacterProfile = characterCatalog.profiles.find((profile) => profile.id === characterCatalog.selectedProfileId)
     ?? characterCatalog.profiles[0]
     ?? FALLBACK_CHARACTER_PROFILE;
+
+  useEffect(() => {
+    if (overlay !== "new" || worldOptions.origin.mode === "wilderness" || !worldOptions.structures || worldOptions.settlementDensity <= 0) {
+      setOriginPreview(null);
+      setOriginPreviewPending(false);
+      return;
+    }
+    setOriginPreviewPending(true);
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      const preview = engineRef.current?.previewWorldOrigin(seed, worldOptions, originSearchRadius) ?? null;
+      if (!cancelled) {
+        setOriginPreview(preview);
+        setOriginPreviewPending(false);
+      }
+    }, 180);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [activeCharacterProfile.id, originSearchRadius, overlay, seed, worldOptions]);
 
   useEffect(() => {
     if (hud.mode !== "builder" && inventoryTab === "creative") setInventoryTab("inventory");
@@ -2302,6 +2323,8 @@ export default function VoxelGame() {
     if (engine) setSeed(engine.randomSeed());
     setWorldName(`Untamed World ${worlds.length + 1}`);
     setWorldOptions({ ...DEFAULT_WORLD_OPTIONS, enabledFactions: [...DEFAULT_WORLD_OPTIONS.enabledFactions] });
+    setOriginSearchRadius(18);
+    setOriginPreview(null);
     setWorldNotice("");
     setOverlay("new");
   };
@@ -3494,10 +3517,10 @@ export default function VoxelGame() {
       {overlay === "new" && (
         <section className="menu-overlay" aria-labelledby="new-world-title">
           <div className="pixel-panel world-setup-panel expanded-setup-panel">
-            <span className="panel-eyebrow">THE WORLD BELOW · GENERATOR 16</span>
+            <span className="panel-eyebrow">THE WORLD BELOW · GENERATOR 17</span>
             <h2 id="new-world-title">Create a New World</h2>
             <p className="setup-intro">Every seed grows coherent regions, oceans, rivers, mountain ranges, {Object.keys(BIOME_NAMES).length} surface biomes, connected cave networks, six underground ecologies, ruins, settlements, and a worldheart sixty-four blocks below zero.</p>
-            <p className="generator-profile-note"><strong>NEW WORLDS</strong><span>Generator 16 adds living Frostpine understory and Frostpear orchards while preserving the broad biome cores and graph-connected caves. Existing worlds keep their original terrain exactly as saved.</span></p>
+            <p className="generator-profile-note"><strong>NEW WORLDS</strong><span>Generator 17 groups cultures into Hearthlands and quieter frontiers, links communities with tiered roads, and supports safe settlement origins. Existing worlds keep their original scattered-settlement pattern exactly as saved.</span></p>
             <label className="field-label" htmlFor="world-name">World name</label>
             <input id="world-name" className="pixel-input world-name-input" value={worldName} maxLength={64} onChange={(event) => setWorldName(event.target.value)} />
             <label className="field-label" htmlFor="world-seed">World seed</label>
@@ -3518,6 +3541,42 @@ export default function VoxelGame() {
             </fieldset>
             <details className="advanced-world-options">
               <summary><span>Advanced world options</span><small>Difficulty, ecology, cultures, terrain, and inventory rules</small></summary>
+              <section className="settlement-pattern-options" aria-labelledby="settlement-pattern-title">
+                <div className="faction-spawn-heading">
+                  <div><h3 id="settlement-pattern-title">Settlement pattern</h3><p>Choose the broad rhythm of civilization. Presets keep wilderness contrast while changing how towns, satellites, and roads gather.</p></div>
+                </div>
+                <div className="settlement-preset-grid">
+                  {([
+                    { id: "frontier", title: "Open Frontier", description: "Rare, widely separated communities and long wilderness journeys." },
+                    { id: "heartlands", title: "Heartlands & Frontiers", description: "Regional town clusters connected by roads, separated by broad wild country." },
+                    { id: "settled", title: "Settled Roads", description: "More communities, shorter wilderness gaps, and stronger road networks." },
+                    { id: "wilderness", title: "Wilderness", description: "No generated faction settlements or inter-settlement roads." },
+                  ] as const).map((preset) => {
+                    const active = preset.id === "frontier" ? worldOptions.settlementPattern === "legacy-scattered-v1" && worldOptions.settlementDensity > 0
+                      : preset.id === "wilderness" ? worldOptions.settlementDensity === 0
+                        : preset.id === "settled" ? worldOptions.settlementPattern === "heartlands-v2" && worldOptions.settlementDensity > 1.2
+                          : worldOptions.settlementPattern === "heartlands-v2" && worldOptions.settlementDensity > 0 && worldOptions.settlementDensity <= 1.2;
+                    return <button type="button" key={preset.id} className={active ? "active" : ""} aria-pressed={active} onClick={() => setWorldOptions((current) => preset.id === "frontier"
+                      ? { ...current, settlementPattern: "legacy-scattered-v1", settlementDensity: 0.72, settlementClustering: "even", roadCoverage: "local", largeTownFrequency: "rare" }
+                      : preset.id === "settled"
+                        ? { ...current, settlementPattern: "heartlands-v2", settlementDensity: 1.45, settlementClustering: "regional", roadCoverage: "dense", largeTownFrequency: "frequent" }
+                        : preset.id === "wilderness"
+                          ? { ...current, settlementPattern: "heartlands-v2", settlementDensity: 0, roadCoverage: "none", origin: { mode: "wilderness" } }
+                          : { ...current, settlementPattern: "heartlands-v2", settlementDensity: 1, settlementClustering: "regional", roadCoverage: "regional", largeTownFrequency: "balanced" })}>
+                      <strong>{preset.title}</strong><span>{preset.description}</span>{preset.id === "heartlands" ? <b>DEFAULT</b> : null}
+                    </button>;
+                  })}
+                </div>
+                <details className="settlement-fine-tuning">
+                  <summary>Fine tuning</summary>
+                  <div className="advanced-option-grid">
+                    <label><span>Settlement density <b>{worldOptions.settlementDensity.toFixed(2)}×</b></span><input type="range" min="0" max="2" step="0.05" value={worldOptions.settlementDensity} onChange={(event) => setWorldOptions((current) => ({ ...current, settlementDensity: Number(event.target.value) }))} /></label>
+                    <label><span>Clustering</span><select value={worldOptions.settlementClustering} onChange={(event) => setWorldOptions((current) => ({ ...current, settlementClustering: event.target.value as WorldOptions["settlementClustering"] }))}><option value="even">Even</option><option value="regional">Regional</option><option value="strong">Strong</option></select></label>
+                    <label><span>Road coverage</span><select value={worldOptions.roadCoverage} onChange={(event) => setWorldOptions((current) => ({ ...current, roadCoverage: event.target.value as WorldOptions["roadCoverage"] }))}><option value="none">None</option><option value="local">Local</option><option value="regional">Regional</option><option value="dense">Dense</option></select></label>
+                    <label><span>Large towns</span><select value={worldOptions.largeTownFrequency} onChange={(event) => setWorldOptions((current) => ({ ...current, largeTownFrequency: event.target.value as WorldOptions["largeTownFrequency"] }))}><option value="rare">Rare</option><option value="balanced">Balanced</option><option value="frequent">Frequent</option></select></label>
+                  </div>
+                </details>
+              </section>
               <div className="advanced-option-grid">
                 <label><span>Difficulty <b>{worldOptions.difficulty.toUpperCase()}</b></span><select value={worldOptions.difficulty} onChange={(event) => setWorldOptions((current) => ({ ...current, difficulty: event.target.value as WorldOptions["difficulty"] }))}><option value="peaceful">Peaceful</option><option value="easy">Easy</option><option value="normal">Normal</option><option value="hard">Hard</option></select></label>
                 <label><span>Day length <b>{worldOptions.dayLengthMinutes} min</b></span><input type="range" min="5" max="120" step="5" value={worldOptions.dayLengthMinutes} onChange={(event) => setWorldOptions((current) => ({ ...current, dayLengthMinutes: Number(event.target.value) }))} /></label>
@@ -3534,7 +3593,7 @@ export default function VoxelGame() {
                   ["structures", "Structures"],
                   ["keepInventory", "Keep inventory"],
                   ["friendlyFire", "Friendly fire"],
-                ] as const).map(([key, label]) => <button type="button" key={key} className={worldOptions[key] ? "active" : ""} onClick={() => setWorldOptions((current) => ({ ...current, [key]: !current[key] }))}><span>{label}</span><b>{worldOptions[key] ? "ON" : "OFF"}</b></button>)}
+                ] as const).map(([key, label]) => <button type="button" key={key} className={worldOptions[key] ? "active" : ""} onClick={() => setWorldOptions((current) => ({ ...current, [key]: !current[key], ...(key === "structures" && current.structures ? { origin: { mode: "wilderness" as const } } : {}) }))}><span>{label}</span><b>{worldOptions[key] ? "ON" : "OFF"}</b></button>)}
               </div>
               <section className="faction-spawn-options" aria-labelledby="faction-spawn-title">
                 <div className="faction-spawn-heading">
@@ -3544,7 +3603,7 @@ export default function VoxelGame() {
                   </div>
                   <div className="faction-spawn-actions">
                     <button type="button" onClick={() => setWorldOptions((current) => ({ ...current, enabledFactions: [...NPC_FACTION_IDS] }))}>All</button>
-                    <button type="button" onClick={() => setWorldOptions((current) => ({ ...current, enabledFactions: [] }))}>None</button>
+                    <button type="button" onClick={() => setWorldOptions((current) => ({ ...current, enabledFactions: [], origin: { mode: "wilderness" } }))}>None</button>
                   </div>
                 </div>
                 <div className="faction-spawn-grid">
@@ -3557,12 +3616,17 @@ export default function VoxelGame() {
                         key={factionId}
                         className={`${enabled ? "active" : ""} faction-spawn-${factionId}`}
                         aria-pressed={enabled}
-                        onClick={() => setWorldOptions((current) => ({
-                          ...current,
-                          enabledFactions: enabled
+                        onClick={() => setWorldOptions((current) => {
+                          const enabledFactions = enabled
                             ? current.enabledFactions.filter((candidate) => candidate !== factionId)
-                            : NPC_FACTION_IDS.filter((candidate) => current.enabledFactions.includes(candidate) || candidate === factionId),
-                        }))}
+                            : NPC_FACTION_IDS.filter((candidate) => current.enabledFactions.includes(candidate) || candidate === factionId);
+                          return {
+                            ...current,
+                            enabledFactions,
+                            origin: current.origin.mode === "culture-settlement" && !enabledFactions.includes(current.origin.factionId)
+                              ? { mode: "wilderness" } : current.origin,
+                          };
+                        })}
                       >
                         <span>{faction.name}</span>
                         <small>{faction.aquaticOnly
@@ -3578,6 +3642,23 @@ export default function VoxelGame() {
                   })}
                 </div>
               </section>
+              <section className={`world-origin-options${!worldOptions.structures || worldOptions.settlementDensity <= 0 ? " disabled" : ""}`} aria-labelledby="world-origin-title">
+                <div className="faction-spawn-heading"><div><h3 id="world-origin-title">Origin</h3><p>Begin in wild country or arrive at a public settlement approach. Village starts change context, not starting wealth or ownership.</p></div></div>
+                <div className="origin-mode-grid">
+                  <button type="button" className={worldOptions.origin.mode === "wilderness" ? "active" : ""} onClick={() => setWorldOptions((current) => ({ ...current, origin: { mode: "wilderness" } }))}><strong>Wild country</strong><span>Use the familiar safe-biome spawn search.</span></button>
+                  <button type="button" disabled={!worldOptions.structures || worldOptions.settlementDensity <= 0} className={worldOptions.origin.mode === "near-any-settlement" ? "active" : ""} onClick={() => setWorldOptions((current) => ({ ...current, origin: { mode: "near-any-settlement" } }))}><strong>Near any community</strong><span>Arrive beside the nearest valid enabled settlement.</span></button>
+                  <button type="button" disabled={!worldOptions.structures || worldOptions.settlementDensity <= 0 || !worldOptions.enabledFactions.length} className={worldOptions.origin.mode === "culture-settlement" ? "active" : ""} onClick={() => setWorldOptions((current) => ({ ...current, origin: { mode: "culture-settlement", factionId: current.enabledFactions[0] ?? "hobbits", minimumSize: "village" } }))}><strong>Chosen culture</strong><span>Resolve a settlement of one enabled culture and minimum size.</span></button>
+                </div>
+                {worldOptions.origin.mode === "culture-settlement" ? <div className="origin-culture-controls">
+                  <label><span>Culture</span><select value={worldOptions.origin.factionId} onChange={(event) => setWorldOptions((current) => ({ ...current, origin: { mode: "culture-settlement", factionId: event.target.value as NpcFactionId, minimumSize: current.origin.mode === "culture-settlement" ? current.origin.minimumSize : "village" } }))}>{worldOptions.enabledFactions.map((factionId) => <option key={factionId} value={factionId}>{FACTIONS[factionId].name}</option>)}</select></label>
+                  <label><span>Minimum size</span><select value={worldOptions.origin.minimumSize} onChange={(event) => setWorldOptions((current) => ({ ...current, origin: { mode: "culture-settlement", factionId: current.origin.mode === "culture-settlement" ? current.origin.factionId : current.enabledFactions[0] ?? "hobbits", minimumSize: event.target.value as "hamlet" | "village" | "town" } }))}><option value="hamlet">Hamlet</option><option value="village">Village</option><option value="town">Town</option></select></label>
+                </div> : null}
+                {worldOptions.origin.mode !== "wilderness" && worldOptions.structures && worldOptions.settlementDensity > 0 ? <output className={`origin-preview ${originPreview ? "resolved" : originPreviewPending ? "pending" : "missing"}`} aria-live="polite">
+                  {originPreviewPending ? <><strong>Reading the regional charts…</strong><span>The seed-derived settlement index is resolving a safe public arrival.</span></>
+                    : originPreview ? <><strong>{FACTIONS[originPreview.candidate.factionId].name} {originPreview.candidate.size}</strong><span>{originPreview.candidate.biome.replaceAll("-", " ")} · {originPreview.anchorKind.replaceAll("-", " ")} · {Math.round(originPreview.distanceBlocks)} blocks from world center</span></>
+                      : <><strong>No valid starting settlement found nearby.</strong><span>Keep the culture exact: search farther, randomize the seed, or return to wild country.</span><button type="button" onClick={() => setOriginSearchRadius((current) => Math.min(64, current + 12))}>Search farther</button></>}
+                </output> : null}
+              </section>
             </details>
             <div className="world-feature-strip">
               <span><b>∞</b> STREAMED WORLD</span><span><b>{Object.keys(BIOME_NAMES).length}</b> SURFACE BIOMES</span><span><b>6</b> CAVE ECOLOGIES</span><span><b>{MOB_ORDER.length}</b> CREATURES</span><span><b>192</b> BLOCKS TALL</span>
@@ -3585,7 +3666,7 @@ export default function VoxelGame() {
             <p className="browser-ownership-note setup-ownership-note">This world will belong to this browser on this host device. Export it to make a backup or move it.</p>
             <div className="panel-actions">
               <PixelButton className="secondary-button" onClick={() => setOverlay("title")}>Cancel</PixelButton>
-              <PixelButton className="gold-button" onClick={createWorld}>Generate World</PixelButton>
+              <PixelButton className="gold-button" disabled={worldOptions.origin.mode !== "wilderness" && (originPreviewPending || !originPreview)} onClick={createWorld}>Generate World</PixelButton>
             </div>
           </div>
         </section>

@@ -196,7 +196,7 @@ test("dragon world item contracts stay stable", () => {
 });
 
 test("generator v13 stamps a candidate lair and its persistent marker into real chunks", () => {
-  assert.equal(GENERATOR_VERSION, 16);
+  assert.equal(GENERATOR_VERSION, 17);
   const world = new ChunkWorld();
   world.reset("LIVE-DRAGON-LAIR", undefined, { structures: true });
   let candidate = null as ReturnType<typeof dragonLairCandidateForRegion>;

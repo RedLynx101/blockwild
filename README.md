@@ -1,6 +1,6 @@
 # Blockwild
 
-Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.7.1 Frostpine Fieldcraft**.
+Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.8.0 Hearthlands & Frontiers**.
 
 The project is a real game rather than a voxel-rendering demo. You can mine, build, craft, smelt, farm, fight, collect field notes, manage several worlds, and carry those worlds between browsers with export files.
 
@@ -9,6 +9,12 @@ The project is a real game rather than a voxel-rendering demo. You can mine, bui
 ![Blockwild field guide with all 215 rendered creatures](public/creatures/blockwild-creatures.svg)
 
 The integrated creature-design pass expands the Courser family with Rimehoof, Sunscar, Mirestride, and Starbough ecological breeds plus the forge-built Deepgear Courser. It also gives all six dragon families production stage forms, rebuilds birds, pets, crabs, mosslings, foxes, harts, deer, longhorns, terrapins, and other core wildlife, and preserves one model path for gameplay, Bestiary portraits, and visual audits.
+
+## v1.8.0 Hearthlands & Frontiers
+
+New worlds now arrange civilization as deterministic provinces: populated heartlands and crossroads contain a parent town with nearby hamlets or villages, while broad frontier and wild provinces preserve long stretches of open exploration. Local lanes feed regional roads and cross-province great roads; culturally themed surfaces, readable wayposts, and occasional road encounters make those routes useful rather than decorative. A single pure settlement index drives generation, road planning, origin selection, guide directions, route folios, and map discovery without generating distant chunks.
+
+Advanced world creation exposes settlement pattern, density, cultural clustering, road coverage, large-town frequency, enabled cultures, and a safe starting origin. Players can begin in the wilderness, near any community, or at the public approach to a chosen culture and minimum settlement size; the screen previews the exact deterministic destination before creation. Existing worlds are pinned to the legacy scattered pattern so upgrading never relocates established communities. Faction guides can now chart the nearest same-culture town even beyond loaded chunks, road signs add their destination to the map, and Hearthroads Route Folios reveal a small cluster of connected communities without revealing surrounding terrain.
 
 ## v1.7.1 Frostpine Fieldcraft
 

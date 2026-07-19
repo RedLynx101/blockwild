@@ -424,7 +424,7 @@ test("Deepgear and Glimmerwood luminous blocks enter the real world light index"
 
 test("Wood Elf Moonwells author a living Glowfin pond instead of a sealed house", () => {
   const world = new ChunkWorld();
-  world.reset("WILDERNESS", undefined, { profile: "world-below-v15" });
+  world.reset("WILDERNESS", undefined, { profile: "world-below-v15", settlementPattern: "legacy-scattered-v1" });
   const candidates: SettlementCandidate[] = [];
   for (let regionX = -4; regionX <= 4; regionX += 1) for (let regionZ = -4; regionZ <= 4; regionZ += 1) {
     const candidate = selectSettlementSite({

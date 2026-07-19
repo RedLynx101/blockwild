@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { WorldSave } from "../app/game/engine.ts";
-import { GENERATOR_VERSION } from "../app/game/world.ts";
-import { NPC_FACTION_IDS } from "../app/game/factions.ts";
+import { DEFAULT_WORLD_GENERATION_OPTIONS, GENERATOR_VERSION } from "../app/game/world.ts";
 import {
   DEFAULT_WORLD_OPTIONS,
   LEGACY_WORLD_KEY,
@@ -189,6 +188,7 @@ test("advanced world options use safe defaults and bounded numeric controls", ()
     sleepRule: "percentage",
     sleepPercentage: 50,
   }), {
+    ...DEFAULT_WORLD_OPTIONS,
     difficulty: "hard",
     dayLengthMinutes: 120,
     mobDensity: 0,
@@ -202,15 +202,13 @@ test("advanced world options use safe defaults and bounded numeric controls", ()
     friendlyFire: true,
     sleepRule: "percentage",
     sleepPercentage: 50,
-    enabledFactions: NPC_FACTION_IDS,
   });
   assert.deepEqual(generationOptionsFromWorldOptions({ caveFrequency: 2, biomeScale: 3, resourceAbundance: 4, structures: false }), {
-    profile: "world-below-v15",
+    ...DEFAULT_WORLD_GENERATION_OPTIONS,
     caveFrequency: 2,
     biomeScale: 3,
     resourceAbundance: 4,
     structures: false,
-    enabledFactions: NPC_FACTION_IDS,
   });
   assert.equal(requiredSleepers({ sleepRule: "any-player", sleepPercentage: 50 }, 8), 1);
   assert.equal(requiredSleepers({ sleepRule: "percentage", sleepPercentage: 50 }, 5), 3);
@@ -291,7 +289,7 @@ test("a legacy single-world save migrates once into the versioned catalog withou
   if (!loaded.ok) return;
   assert.equal(loaded.value.save.generatorVersion, GENERATOR_VERSION);
   assert.deepEqual(loaded.value.save.edits["0,0"], [[16_384, 13]], "legacy y coordinates should retain their deeper-world position");
-  assert.deepEqual(loaded.value.options, DEFAULT_WORLD_OPTIONS);
+  assert.deepEqual(loaded.value.options, { ...DEFAULT_WORLD_OPTIONS, settlementPattern: "legacy-scattered-v1" });
   assert.equal(storage.getItem(LEGACY_WORLD_KEY), null, "legacy data is removed only after catalog and payload writes succeed");
 
   const reopened = new WorldStorage(storage, { now: () => 3_000, idFactory: () => "another" });

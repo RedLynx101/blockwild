@@ -732,6 +732,8 @@ export const Item = {
   DeepgearStoolItem: 534,
   /** Frostpine orchard fruit; all new ids remain append-only save metadata. */
   Frostpear: 542,
+  /** Hearthlands route folio; append-only save metadata. */
+  HearthroadsGazetteer: 543,
 } as const;
 
 export type ItemCode = number;
@@ -829,7 +831,7 @@ export type ItemDefinition = {
   armor?: number;
   food?: number;
   fuel?: number;
-  useKind?: "net" | "release-creature" | "boat" | "creature-cage" | "capture-orb" | "magic-relic" | "plant" | "hoe" | "scythe" | "shears" | "bucket" | "lead" | "shield" | "blueprint" | "potion" | "ranged-weapon" | "spear" | "seed-pouch" | "spell-tome" | "mana-consumable" | "dragon-egg" | "dragon-module" | "lair-survey";
+  useKind?: "net" | "release-creature" | "boat" | "creature-cage" | "capture-orb" | "magic-relic" | "plant" | "hoe" | "scythe" | "shears" | "bucket" | "lead" | "shield" | "blueprint" | "potion" | "ranged-weapon" | "spear" | "seed-pouch" | "spell-tome" | "mana-consumable" | "dragon-egg" | "dragon-module" | "lair-survey" | "settlement-chart";
   captureLens?: "gentle" | "gloam" | "tide" | "resonance";
   /** Off-hand defensive contract; combat resolution lives in shields.ts. */
   shieldKind?: "wildwood-shield" | "iron-shield";
@@ -1796,6 +1798,7 @@ Object.assign(ITEMS, {
   [Item.IronFilings]: { id: Item.IronFilings, name: "Iron Filings", color: "#aeb8ba", maxStack: 64 },
   [Item.DeepgearStoolItem]: { id: Item.DeepgearStoolItem, name: "Deepgear Stool", color: "#9a7448", maxStack: 64, placeBlock: BlockId.DwarfStool, iconKind: "chair", heldModel: "chair", dropModel: "chair" },
   [Item.Frostpear]: { id: Item.Frostpear, name: "Frostpear", color: "#a8d6d8", maxStack: 64, food: 4, useKind: "plant", plantBlock: BlockId.FrostpearSapling, iconKind: "produce" },
+  [Item.HearthroadsGazetteer]: { id: Item.HearthroadsGazetteer, name: "Hearthroads Route Folio", color: "#d8bd82", maxStack: 8, useKind: "settlement-chart", iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
 } satisfies Record<number, ItemDefinition>);
 
 /**

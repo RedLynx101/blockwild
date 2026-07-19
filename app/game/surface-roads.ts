@@ -1,5 +1,6 @@
 export type RoadNode = Readonly<{ id: string; x: number; z: number; y?: number; factionId?: string; settlementSize?: "hamlet" | "village" | "town" | "capital" }>;
-export type RoadEdge = Readonly<{ id: string; from: RoadNode; to: RoadNode; length: number; loop: boolean }>;
+export type RoadTier = "local" | "regional" | "trunk";
+export type RoadEdge = Readonly<{ id: string; from: RoadNode; to: RoadNode; length: number; loop: boolean; tier?: RoadTier; ownerProvinceId?: string }>;
 export type RoadSample = Readonly<{ height: number; waterline: number; water: boolean; forbidden?: boolean; slopeRisk?: number }>;
 export type RoadPointKind = "road" | "switchback" | "bridge" | "causeway" | "ferry";
 export type RoadPoint = Readonly<{ x: number; y: number; z: number; kind: RoadPointKind; grade: number }>;

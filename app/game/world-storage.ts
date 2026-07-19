@@ -2,6 +2,14 @@ import type { GameMode } from "./data";
 import type { WorldSave } from "./engine";
 import { NPC_FACTION_IDS, normalizeEnabledFactions, type NpcFactionId } from "./factions";
 import { GENERATOR_VERSION, MIN_Y, WORLD_HEIGHT, type WorldGenerationOptions } from "./world";
+import {
+  normalizeWorldOriginPreference,
+  type LargeTownFrequency,
+  type RoadCoverage,
+  type SettlementClustering,
+  type SettlementPattern,
+  type WorldOriginPreference,
+} from "./settlement-index";
 import { LEGACY_GAME_VERSION, normalizeGameVersion } from "./version";
 
 export const WORLD_CATALOG_VERSION = 1;
@@ -35,6 +43,12 @@ export type WorldOptions = {
   sleepPercentage: number;
   /** Cultures allowed to generate settlements and their aligned residents. */
   enabledFactions: readonly NpcFactionId[];
+  settlementPattern: SettlementPattern;
+  settlementDensity: number;
+  settlementClustering: SettlementClustering;
+  roadCoverage: RoadCoverage;
+  largeTownFrequency: LargeTownFrequency;
+  origin: WorldOriginPreference;
 };
 
 export const DEFAULT_WORLD_OPTIONS: Readonly<WorldOptions> = Object.freeze({
@@ -52,6 +66,12 @@ export const DEFAULT_WORLD_OPTIONS: Readonly<WorldOptions> = Object.freeze({
   sleepRule: "percentage",
   sleepPercentage: 50,
   enabledFactions: Object.freeze([...NPC_FACTION_IDS]),
+  settlementPattern: "heartlands-v2",
+  settlementDensity: 1,
+  settlementClustering: "regional",
+  roadCoverage: "regional",
+  largeTownFrequency: "balanced",
+  origin: Object.freeze({ mode: "wilderness" }),
 });
 
 export type WorldMetadata = {
@@ -193,6 +213,10 @@ export function normalizeWorldOptions(value?: Partial<WorldOptions> | null): Wor
   const sleepRule = ["any-player", "percentage", "all-players"].includes(String(input.sleepRule))
     ? input.sleepRule as SleepRule
     : DEFAULT_WORLD_OPTIONS.sleepRule;
+  const enabledFactions = normalizeEnabledFactions(input.enabledFactions);
+  const structures = normalizeBoolean(input.structures, DEFAULT_WORLD_OPTIONS.structures);
+  const settlementPattern: SettlementPattern = input.settlementPattern === "legacy-scattered-v1" ? "legacy-scattered-v1" : "heartlands-v2";
+  const settlementDensity = normalizeNumber(input.settlementDensity, DEFAULT_WORLD_OPTIONS.settlementDensity, 0, 2);
   return {
     difficulty,
     dayLengthMinutes: normalizeNumber(input.dayLengthMinutes, DEFAULT_WORLD_OPTIONS.dayLengthMinutes, 5, 120, 1),
@@ -201,13 +225,19 @@ export function normalizeWorldOptions(value?: Partial<WorldOptions> | null): Wor
     caveFrequency: normalizeNumber(input.caveFrequency, DEFAULT_WORLD_OPTIONS.caveFrequency, 0, 3),
     biomeScale: normalizeNumber(input.biomeScale, DEFAULT_WORLD_OPTIONS.biomeScale, 0.25, 4),
     resourceAbundance: normalizeNumber(input.resourceAbundance, DEFAULT_WORLD_OPTIONS.resourceAbundance, 0.25, 4),
-    structures: normalizeBoolean(input.structures, DEFAULT_WORLD_OPTIONS.structures),
+    structures,
     weather: normalizeBoolean(input.weather, DEFAULT_WORLD_OPTIONS.weather),
     keepInventory: normalizeBoolean(input.keepInventory, DEFAULT_WORLD_OPTIONS.keepInventory),
     friendlyFire: normalizeBoolean(input.friendlyFire, DEFAULT_WORLD_OPTIONS.friendlyFire),
     sleepRule,
     sleepPercentage: normalizeNumber(input.sleepPercentage, DEFAULT_WORLD_OPTIONS.sleepPercentage, 1, 100, 0),
-    enabledFactions: normalizeEnabledFactions(input.enabledFactions),
+    enabledFactions,
+    settlementPattern,
+    settlementDensity,
+    settlementClustering: input.settlementClustering === "even" || input.settlementClustering === "strong" ? input.settlementClustering : "regional",
+    roadCoverage: input.roadCoverage === "none" || input.roadCoverage === "local" || input.roadCoverage === "dense" ? input.roadCoverage : "regional",
+    largeTownFrequency: input.largeTownFrequency === "rare" || input.largeTownFrequency === "frequent" ? input.largeTownFrequency : "balanced",
+    origin: structures && settlementDensity > 0 ? normalizeWorldOriginPreference(input.origin, enabledFactions) : Object.freeze({ mode: "wilderness" }),
   };
 }
 
@@ -230,6 +260,12 @@ export function generationOptionsFromWorldOptions(
     resourceAbundance: options.resourceAbundance,
     structures: options.structures,
     enabledFactions: options.enabledFactions,
+    settlementPattern: options.settlementPattern,
+    settlementDensity: options.settlementDensity,
+    settlementClustering: options.settlementClustering,
+    roadCoverage: options.roadCoverage,
+    largeTownFrequency: options.largeTownFrequency,
+    origin: options.origin,
   };
 }
 
@@ -283,7 +319,7 @@ export function migrateLegacyWorldSave(value: unknown): WorldSave | null {
   const mode = normalizeMode(value.mode);
   if (!seed || !mode || !isRecord(value.player)) return null;
   const generatorVersion = Math.trunc(finite(value.generatorVersion, -1));
-  if (![2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, GENERATOR_VERSION].includes(generatorVersion)) return null;
+  if (![2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, GENERATOR_VERSION].includes(generatorVersion)) return null;
   const offset = generatorVersion === 2 ? (LEGACY_GENERATOR_MIN_Y - MIN_Y) * 16 * 16 : 0;
   const player = value.player;
   if (![player.x, player.y, player.z].every((coordinate) => typeof coordinate === "number" && Number.isFinite(coordinate))) return null;
@@ -297,6 +333,9 @@ export function migrateLegacyWorldSave(value: unknown): WorldSave | null {
       ? "legacy-v14"
       : "world-below-v15",
     lastSavedGameVersion: normalizeGameVersion(value.lastSavedGameVersion),
+    options: generatorVersion < 17
+      ? { ...(isRecord(value.options) ? value.options : {}), settlementPattern: "legacy-scattered-v1" }
+      : value.options,
     seed,
     mode,
     playerVariant: value.playerVariant === "female" ? "female" : "male",
@@ -780,7 +819,7 @@ export class WorldStorage {
       playTimeMs: 0,
       lastSavedGameVersion: normalizeGameVersion(save.lastSavedGameVersion),
     };
-    const document: StoredWorld = { version: WORLD_CATALOG_VERSION, metadata, options: normalizeWorldOptions(), save };
+    const document: StoredWorld = { version: WORLD_CATALOG_VERSION, metadata, options: normalizeWorldOptions({ settlementPattern: "legacy-scattered-v1" }), save };
     const nextCatalog = this.copyCatalog({ activeWorldId: id, legacyMigrated: true, worlds: [...this.catalog.worlds, metadata] });
     const committed = this.commitDocument(document, nextCatalog);
     if (!committed.ok) {
@@ -814,12 +853,16 @@ export class WorldStorage {
       return fail("corrupt", "This world's local data is corrupt. Other worlds were left untouched.", this.dataKey(id));
     }
     if (!isRecord(value) || value.version !== WORLD_CATALOG_VERSION) return fail("unsupported-version", "This world uses an unsupported storage version.", this.dataKey(id));
+    const sourceSave = isRecord(value.save) ? value.save : {};
+    const sourceGeneratorVersion = Math.trunc(finite(sourceSave.generatorVersion, -1));
     const save = migrateLegacyWorldSave(value.save);
     if (!save) return fail("corrupt", "This world's save payload is corrupt or incomplete.", this.dataKey(id));
     const document: StoredWorld = {
       version: WORLD_CATALOG_VERSION,
       metadata: { ...catalogMetadata, seed: save.seed, mode: save.mode },
-      options: normalizeWorldOptions(value.options as Partial<WorldOptions>),
+      options: normalizeWorldOptions(sourceGeneratorVersion > 0 && sourceGeneratorVersion < 17
+        ? { ...(isRecord(value.options) ? value.options : {}), settlementPattern: "legacy-scattered-v1" }
+        : value.options as Partial<WorldOptions>),
       save,
     };
     this.rememberDocumentShell(document);

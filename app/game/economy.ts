@@ -312,11 +312,13 @@ export const COMMERCE_CATALOG: Readonly<Record<string, CommerceItem>> = Object.f
   { key: "webspinner-golem-orb", name: "Capture Orb: Webspinner", category: "creature", baseValue: 2_750, stackLimit: 1, tags: ["dwarf", "golem", "controller", "unaligned", "rare"] },
   { key: "unaligned-copper-mole-orb", name: "Capture Orb: Copper Mole", category: "creature", baseValue: 580, stackLimit: 1, tags: ["dwarf", "unaligned", "copper-mole"] },
   { key: "sea-dragon-nest-chart", name: "Chart: Sea Dragon Nest", category: "treasure", baseValue: 1_180, stackLimit: 8, tags: ["atlantian", "dragon", "survey", "rare"] },
+  { key: "hearthroads-route-folio", name: "Hearthroads Route Folio", category: "treasure", baseValue: 145, stackLimit: 8, tags: ["map", "settlement", "survey"] },
 ] satisfies CommerceItem[]).map((definition) => [definition.key, definition])) as Readonly<Record<string, CommerceItem>>;
 
 export type MerchantOffer = Readonly<MerchantStack & { professions: readonly MerchantProfession[]; rareChance?: number }>;
 
 export const HOBBIT_MERCHANT_OFFERS: readonly MerchantOffer[] = [
+  { itemKey: "hearthroads-route-folio", count: 1, professions: ["general", "mayor"], rareChance: 0.36 },
   { itemKey: "apple", count: 18, professions: ["farmer", "general"] },
   { itemKey: "honey-jar", count: 8, professions: ["brewer", "general"] },
   { itemKey: "mead", count: 12, professions: ["brewer", "general"] },
@@ -338,6 +340,7 @@ export const HOBBIT_MERCHANT_OFFERS: readonly MerchantOffer[] = [
 ];
 
 export const GOBLIN_MERCHANT_OFFERS: readonly MerchantOffer[] = [
+  { itemKey: "hearthroads-route-folio", count: 1, professions: ["general", "mayor"], rareChance: 0.32 },
   { itemKey: "raw-iron", count: 32, professions: ["miner", "general", "blacksmith"] },
   { itemKey: "raw-gold", count: 10, professions: ["miner", "general"] },
   { itemKey: "goblin-spear", count: 4, professions: ["blacksmith", "warrior"] },
@@ -354,6 +357,7 @@ export const GOBLIN_MERCHANT_OFFERS: readonly MerchantOffer[] = [
 ];
 
 export const ATLANTIAN_MERCHANT_OFFERS: readonly MerchantOffer[] = [
+  { itemKey: "hearthroads-route-folio", count: 1, professions: ["general", "mayor"], rareChance: 0.34 },
   { itemKey: "glow-kelp", count: 28, professions: ["atlantian-kelpkeeper", "atlantian-tidewarden"] },
   { itemKey: "shellfruit", count: 18, professions: ["atlantian-kelpkeeper", "atlantian-pearlbroker"] },
   { itemKey: "reefglass", count: 20, professions: ["atlantian-coralwright", "atlantian-pearlbroker"] },
@@ -371,6 +375,7 @@ export const ATLANTIAN_MERCHANT_OFFERS: readonly MerchantOffer[] = [
 ];
 
 export const SUGARCOURT_MERCHANT_OFFERS: readonly MerchantOffer[] = [
+  { itemKey: "hearthroads-route-folio", count: 1, professions: ["general", "mayor"], rareChance: 0.34 },
   { itemKey: "peppermint-starts", count: 18, professions: ["sugarcourt-gumdrop-gardener"] },
   { itemKey: "peppermint-cane", count: 24, professions: ["sugarcourt-gumdrop-gardener", "sugarcourt-sugarboiler"] },
   { itemKey: "cocoa-seeds", count: 14, professions: ["sugarcourt-gumdrop-gardener"] },
@@ -410,6 +415,7 @@ export const SUGARCOURT_MERCHANT_OFFERS: readonly MerchantOffer[] = [
 ];
 
 export const WOOD_ELF_MERCHANT_OFFERS: readonly MerchantOffer[] = [
+  { itemKey: "hearthroads-route-folio", count: 1, professions: ["general", "mayor"], rareChance: 0.3 },
   { itemKey: "moonpetal", count: 20, professions: ["wood-elf-grovekeeper", "wood-elf-potioner"] },
   { itemKey: "starfern", count: 20, professions: ["wood-elf-grovekeeper", "wood-elf-potioner"] },
   { itemKey: "dreamcap", count: 14, professions: ["wood-elf-grovekeeper", "wood-elf-potioner"] },
@@ -431,6 +437,7 @@ export const WOOD_ELF_MERCHANT_OFFERS: readonly MerchantOffer[] = [
 ];
 
 export const DWARF_MERCHANT_OFFERS: readonly MerchantOffer[] = [
+  { itemKey: "hearthroads-route-folio", count: 1, professions: ["general", "mayor"], rareChance: 0.38 },
   { itemKey: "raw-iron", count: 40, professions: ["dwarf-delver", "dwarf-provisioner"] },
   { itemKey: "raw-gold", count: 16, professions: ["dwarf-delver", "dwarf-provisioner"] },
   { itemKey: "copper-ore", count: 32, professions: ["dwarf-delver", "dwarf-provisioner"] },

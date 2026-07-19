@@ -263,21 +263,32 @@ const DWARF_MOUNTAIN_BIOMES = new Set(["snowcap-range", "highlands", "badlands",
  */
 export function dwarfHoldAudit(world: ChunkWorld) {
   const regionRadius = 8;
-  const candidates: NonNullable<ReturnType<typeof selectSettlementSite>>[] = [];
-  for (let regionX = -regionRadius; regionX <= regionRadius; regionX += 1) for (let regionZ = -regionRadius; regionZ <= regionRadius; regionZ += 1) {
-    const candidate = selectSettlementSite({
-      worldSeed: world.seedText,
-      seed: world.seed,
-      regionX,
-      regionZ,
-      enabledFactions: world.generationOptions.enabledFactions,
-      sample: (x, z) => world.sampleColumn(x, z),
-    });
-    if (candidate) candidates.push(candidate);
+  const legacyCandidates: NonNullable<ReturnType<typeof selectSettlementSite>>[] = [];
+  if (world.generationOptions.settlementPattern === "legacy-scattered-v1") {
+    for (let regionX = -regionRadius; regionX <= regionRadius; regionX += 1) for (let regionZ = -regionRadius; regionZ <= regionRadius; regionZ += 1) {
+      const candidate = selectSettlementSite({
+        worldSeed: world.seedText,
+        seed: world.seed,
+        regionX,
+        regionZ,
+        enabledFactions: world.generationOptions.enabledFactions,
+        sample: (x, z) => world.sampleColumn(x, z),
+      });
+      if (candidate) legacyCandidates.push(candidate);
+    }
   }
-  const accepted = candidates.filter((candidate) => settlementWinsSpacingTieBreak(candidate, candidates));
-  const dwarfCandidates = candidates.filter((candidate) => candidate.factionId === "dwarves");
-  const dwarfAccepted = accepted.filter((candidate) => candidate.factionId === "dwarves");
+  const dwarfCandidates = world.generationOptions.settlementPattern === "legacy-scattered-v1"
+    ? legacyCandidates.filter((candidate) => candidate.factionId === "dwarves")
+    : world.queryNearestSettlements({
+      origin: { x: 0, z: 0 },
+      factionIds: ["dwarves"],
+      environments: ["underground"],
+      maxRegionRadius: 48,
+      limit: 24,
+    }).map((result) => result.candidate);
+  const dwarfAccepted = world.generationOptions.settlementPattern === "legacy-scattered-v1"
+    ? dwarfCandidates.filter((candidate) => settlementWinsSpacingTieBreak(candidate, legacyCandidates))
+    : dwarfCandidates;
   let verified: SettlementWorldPlan | undefined;
   for (const candidate of dwarfAccepted) {
     world.generateChunk(Math.floor(candidate.center.x / CHUNK_SIZE), Math.floor(candidate.center.z / CHUNK_SIZE));

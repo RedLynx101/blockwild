@@ -64,6 +64,12 @@ test("world faction options migrate legacy saves, preserve explicit wilderness, 
     resourceAbundance: 0.75,
     structures: false,
     enabledFactions: ["goblins", "sugarcourt"],
+    settlementPattern: "heartlands-v2",
+    settlementDensity: 1,
+    settlementClustering: "regional",
+    roadCoverage: "regional",
+    largeTownFrequency: "balanced",
+    origin: { mode: "wilderness" },
   });
   assert.deepEqual(normalizeWorldGenerationOptions(projected), projected);
   assert.deepEqual(generationOptionsFromWorldOptions({ enabledFactions: [] }).enabledFactions, []);

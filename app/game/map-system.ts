@@ -62,7 +62,8 @@ export type MapPlayerMarker = Readonly<{
   headingRadians?: number;
   color?: string;
 }>;
-export type MapMarkerKind = "natural-poi" | "manual" | "bed-spawn" | "wayshrine";
+export type MapMarkerKind = "natural-poi" | "manual" | "bed-spawn" | "wayshrine" | "settlement";
+export type SettlementKnowledge = "rumored" | "charted" | "visited";
 
 export type MapMarker = Readonly<{
   id: string;
@@ -74,6 +75,9 @@ export type MapMarker = Readonly<{
   discoveredBy: string;
   ownerId: string | null;
   icon: string | null;
+  settlementKnowledge?: SettlementKnowledge;
+  factionId?: string;
+  settlementSize?: "hamlet" | "village" | "town";
 }>;
 
 export type MapKnowledge = Readonly<{
@@ -103,6 +107,9 @@ export type MarkerInput = Readonly<{
   playerId: string;
   discoveredAt: number;
   icon?: string | null;
+  settlementKnowledge?: SettlementKnowledge;
+  factionId?: string;
+  settlementSize?: "hamlet" | "village" | "town";
 }>;
 
 export type CartographySession = Readonly<{
@@ -450,7 +457,7 @@ export function createMapKnowledge(worldId: string, playerId: string): MapKnowle
 function normalizeMarker(value: unknown): MapMarker | null {
   if (!value || typeof value !== "object") return null;
   const input = value as Partial<MapMarker>;
-  if (!(input.kind === "natural-poi" || input.kind === "manual" || input.kind === "bed-spawn" || input.kind === "wayshrine")) return null;
+  if (!(input.kind === "natural-poi" || input.kind === "manual" || input.kind === "bed-spawn" || input.kind === "wayshrine" || input.kind === "settlement")) return null;
   const id = cleanId(input.id, "");
   if (!id) return null;
   return {
@@ -463,6 +470,11 @@ function normalizeMarker(value: unknown): MapMarker | null {
     discoveredBy: cleanId(input.discoveredBy, "unknown"),
     ownerId: input.ownerId === null ? null : cleanId(input.ownerId, "unknown"),
     icon: typeof input.icon === "string" ? input.icon.slice(0, 48) : null,
+    ...(input.kind === "settlement" ? {
+      settlementKnowledge: input.settlementKnowledge === "visited" || input.settlementKnowledge === "charted" ? input.settlementKnowledge : "rumored",
+      ...(typeof input.factionId === "string" ? { factionId: input.factionId.slice(0, 48) } : {}),
+      ...(input.settlementSize === "hamlet" || input.settlementSize === "village" || input.settlementSize === "town" ? { settlementSize: input.settlementSize } : {}),
+    } : {}),
   };
 }
 
@@ -675,6 +687,11 @@ function markerFromInput(kind: MapMarkerKind, input: MarkerInput, ownerId: strin
     discoveredBy: cleanId(input.playerId, "player"),
     ownerId,
     icon: typeof input.icon === "string" ? input.icon.slice(0, 48) : null,
+    ...(kind === "settlement" ? {
+      settlementKnowledge: input.settlementKnowledge === "visited" || input.settlementKnowledge === "charted" ? input.settlementKnowledge : "rumored",
+      ...(typeof input.factionId === "string" ? { factionId: input.factionId.slice(0, 48) } : {}),
+      ...(input.settlementSize ? { settlementSize: input.settlementSize } : {}),
+    } : {}),
   };
 }
 
@@ -684,6 +701,14 @@ export function discoverNaturalPoi(state: MapKnowledge, input: MarkerInput) {
 
 export function placeManualMapMarker(state: MapKnowledge, input: MarkerInput) {
   return upsertMarker(state, markerFromInput("manual", input, cleanId(input.playerId, state.playerId)));
+}
+
+export function discoverSettlement(state: MapKnowledge, input: MarkerInput & Readonly<{ settlementKnowledge: SettlementKnowledge }>) {
+  const existing = state.markers.find((marker) => marker.id === input.id && marker.kind === "settlement");
+  const rank = (knowledge: SettlementKnowledge | undefined) => knowledge === "visited" ? 3 : knowledge === "charted" ? 2 : 1;
+  const settlementKnowledge = rank(existing?.settlementKnowledge) > rank(input.settlementKnowledge)
+    ? existing!.settlementKnowledge! : input.settlementKnowledge;
+  return upsertMarker(state, markerFromInput("settlement", { ...input, settlementKnowledge }, null));
 }
 
 export function placeWayshrine(state: MapKnowledge, input: MarkerInput) {
@@ -826,6 +851,7 @@ export function fastTravelDestination(state: MapKnowledge, markerId: string) {
   const marker = state.markers.find((entry) => entry.id === markerId);
   if (!marker) return null;
   if (marker.kind === "manual") return null;
+  if (marker.kind === "settlement" && marker.settlementKnowledge !== "visited") return null;
   if (marker.kind === "bed-spawn" && marker.id !== state.activeBedId) return null;
   return marker;
 }

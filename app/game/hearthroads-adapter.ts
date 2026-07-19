@@ -303,6 +303,7 @@ export const COMMERCE_ITEM_CODES: Readonly<Record<string, ItemCode>> = Object.fr
   "webspinner-golem-orb": Item.WebspinnerOrb,
   "unaligned-copper-mole-orb": Item.CopperMoleOrb,
   "sea-dragon-nest-chart": Item.SeaDragonNestChart,
+  "hearthroads-route-folio": Item.HearthroadsGazetteer,
 });
 
 // Filled-orb offer keys are purchase templates, not safe reverse identities:

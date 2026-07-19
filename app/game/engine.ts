@@ -721,6 +721,7 @@ import {
   createCartographySession,
   createMapKnowledge,
   discoverNaturalPoi,
+  discoverSettlement,
   markUndergroundChunk,
   markChunksRendered,
   mapSurfaceQuadrantColor,
@@ -871,6 +872,7 @@ import {
   updateHirelingOrders,
   type FollowDistanceSetting,
   type ResidentProfession,
+  type SettlementSize,
   type SettlementState,
 } from "./settlements";
 
@@ -1250,6 +1252,7 @@ export type WorldSave = {
   edits: ChunkEditSave;
   player: { x: number; y: number; z: number; yaw: number; pitch: number };
   spawn: { x: number; y: number; z: number };
+  startingSettlementId?: string | null;
   inventory: Array<InventorySlot | null>;
   cursor?: InventorySlot | null;
   trash?: InventorySlot | null;
@@ -2314,12 +2317,19 @@ export function migrateSavedWorld(value: unknown): WorldSave | null {
     ...parsed,
     generatorProfile: parsed.generatorProfile === "legacy-v14" ? "legacy-v14" : "world-below-v15",
   };
+  if (parsed.generatorVersion === 16) return {
+    ...parsed,
+    generatorVersion: GENERATOR_VERSION,
+    generatorProfile: parsed.generatorProfile === "legacy-v14" ? "legacy-v14" : "world-below-v15",
+    options: { ...parsed.options, settlementPattern: "legacy-scattered-v1" },
+  };
   if (parsed.generatorVersion === 15) return {
     ...parsed,
     generatorVersion: GENERATOR_VERSION,
     generatorProfile: parsed.generatorProfile === "legacy-v14" ? "legacy-v14" : "world-below-v15",
+    options: { ...parsed.options, settlementPattern: "legacy-scattered-v1" },
   };
-  if (parsed.generatorVersion === 3 || parsed.generatorVersion === 4 || parsed.generatorVersion === 5 || parsed.generatorVersion === 6 || parsed.generatorVersion === 7 || parsed.generatorVersion === 8 || parsed.generatorVersion === 9 || parsed.generatorVersion === 10 || parsed.generatorVersion === 11 || parsed.generatorVersion === 12 || parsed.generatorVersion === 13 || parsed.generatorVersion === 14) return { ...parsed, generatorVersion: GENERATOR_VERSION, generatorProfile: "legacy-v14" };
+  if (parsed.generatorVersion === 3 || parsed.generatorVersion === 4 || parsed.generatorVersion === 5 || parsed.generatorVersion === 6 || parsed.generatorVersion === 7 || parsed.generatorVersion === 8 || parsed.generatorVersion === 9 || parsed.generatorVersion === 10 || parsed.generatorVersion === 11 || parsed.generatorVersion === 12 || parsed.generatorVersion === 13 || parsed.generatorVersion === 14) return { ...parsed, generatorVersion: GENERATOR_VERSION, generatorProfile: "legacy-v14", options: { ...parsed.options, settlementPattern: "legacy-scattered-v1" } };
   if (parsed.generatorVersion !== 2) return null;
   const indexOffset = (LEGACY_GENERATOR_MIN_Y - MIN_Y) * 16 * 16;
   const edits: ChunkEditSave = {};
@@ -2329,7 +2339,7 @@ export function migrateSavedWorld(value: unknown): WorldSave | null {
       .filter((entry): entry is [number, number] => Array.isArray(entry) && Number.isFinite(entry[0]) && Number.isFinite(entry[1]))
       .map(([index, type]) => [Math.trunc(index) + indexOffset, Math.trunc(type)]);
   }
-  return { ...parsed, generatorVersion: GENERATOR_VERSION, generatorProfile: "legacy-v14", edits };
+  return { ...parsed, generatorVersion: GENERATOR_VERSION, generatorProfile: "legacy-v14", options: { ...parsed.options, settlementPattern: "legacy-scattered-v1" }, edits };
 }
 
 export function restoreChestStorage(saved: Record<string, ChestState> = {}) {
@@ -3260,6 +3270,7 @@ export class VoxelEngine {
   scene = new THREE.Scene();
   camera: THREE.PerspectiveCamera;
   world = new ChunkWorld();
+  private originPreviewWorld: ChunkWorld | null = null;
   butterflies: ButterflySystem;
   ambienceGroup = new THREE.Group();
   creatureGroup = new THREE.Group();
@@ -3318,6 +3329,7 @@ export class VoxelEngine {
   worldStorage = new WorldStorage();
   activeWorldId: string | null = null;
   worldOptions: WorldOptions = normalizeWorldOptions();
+  startingSettlementId: string | null = null;
   worldSessionStartedAt = Date.now();
   liquidCells = new Map<string, LiquidCell>();
   liquidSimulator: LiquidSimulator;
@@ -4265,6 +4277,7 @@ export class VoxelEngine {
     this.world.setRenderDistance(this.titleMode ? Math.min(this.settings.renderDistance, this.touchMode ? 4 : 6) : this.settings.renderDistance);
     this.localPlayerModel.setVariant(this.playerVariant);
     this.worldOptions = normalizeWorldOptions(options);
+    this.startingSettlementId = null;
     this.butterflyDensity = this.worldOptions.butterflyDensity;
     if (!this.worldOptions.weather) this.weather = "clear";
     this.activeWorldId = null;
@@ -4370,15 +4383,31 @@ export class VoxelEngine {
     this.stockMarket = createStockMarket(authorityId, playerId, this.world.seedText, this.day);
     const openingQuest = acceptQuest(this.questBook, HEARTHROADS_MAIN_QUESTS, "main-first-dawn", Date.now());
     if (openingQuest.ok) this.questBook = pinQuest(openingQuest.book, "main-first-dawn");
-    const spawn = this.findSpawn();
+    const raceTraits = characterRaceTraits(this.activeCharacterProfile?.appearance.race ?? "wayfarer");
+    const settlementOrigin = this.world.resolveSettlementOrigin(this.worldOptions.origin, raceTraits.waterBreathing);
+    const spawn = settlementOrigin?.position ?? this.findSpawn();
+    this.startingSettlementId = settlementOrigin?.candidate.id ?? null;
     this.world.initializeAround(spawn.x, spawn.z);
-    const y = this.world.surfaceAt(spawn.x, spawn.z) + 0.51;
+    const y = settlementOrigin?.position.y ?? this.world.surfaceAt(spawn.x, spawn.z) + 0.51;
     this.spawn.set(spawn.x, y, spawn.z);
     this.position.copy(this.spawn);
     this.resetDynamicWeather();
-    for (let dx = -1; dx <= 1; dx += 1) for (let dz = -1; dz <= 1; dz += 1) {
-      for (let clearY = Math.floor(y + 0.5); clearY <= Math.floor(y + 2.5); clearY += 1) this.world.setBlock(spawn.x + dx, clearY, spawn.z + dz, BlockId.Air);
+    if (!(settlementOrigin?.candidate.environment === "underwater" && raceTraits.waterBreathing)) {
+      for (let dx = -1; dx <= 1; dx += 1) for (let dz = -1; dz <= 1; dz += 1) {
+        for (let clearY = Math.floor(y + 0.5); clearY <= Math.floor(y + 2.5); clearY += 1) this.world.setBlock(spawn.x + dx, clearY, spawn.z + dz, BlockId.Air);
+      }
     }
+    if (settlementOrigin) this.mapKnowledge = discoverSettlement(this.mapKnowledge, {
+      id: `settlement:${settlementOrigin.candidate.id}`,
+      name: `${FACTIONS[settlementOrigin.candidate.factionId].name} ${settlementOrigin.candidate.size}`,
+      position: { x: settlementOrigin.candidate.center.x, y: settlementOrigin.candidate.center.y ?? y, z: settlementOrigin.candidate.center.z },
+      playerId,
+      discoveredAt: Date.now(),
+      icon: "settlement",
+      settlementKnowledge: "visited",
+      factionId: settlementOrigin.candidate.factionId,
+      settlementSize: settlementOrigin.candidate.size,
+    });
     if (mode === "survival") {
       this.inventory[0] = { item: Item.Berry, count: 3 };
     } else {
@@ -4398,6 +4427,15 @@ export class VoxelEngine {
     return created.ok ? created.value : null;
   }
 
+  previewWorldOrigin(seed: string, options: Partial<WorldOptions>, maxRegionRadius = 18) {
+    const normalized = normalizeWorldOptions(options);
+    if (normalized.origin.mode === "wilderness" || !normalized.structures || normalized.settlementDensity <= 0) return null;
+    this.originPreviewWorld ??= new ChunkWorld();
+    this.originPreviewWorld.reset(seed.trim() || "WILDERNESS", undefined, generationOptionsFromWorldOptions(normalized));
+    const traits = characterRaceTraits(this.activeCharacterProfile?.appearance.race ?? "wayfarer");
+    return this.originPreviewWorld.resolveSettlementOrigin(normalized.origin, traits.waterBreathing, maxRegionRadius);
+  }
+
   loadWorld(save: WorldSave, options: Partial<WorldOptions> = save.options ?? {}, worldId: string | null = this.worldStorage.activeWorldId) {
     this.persistent = true;
     this.running = true;
@@ -4408,6 +4446,7 @@ export class VoxelEngine {
     this.world.setRenderDistance(this.settings.renderDistance);
     this.localPlayerModel.setVariant(this.playerVariant);
     this.worldOptions = normalizeWorldOptions(options);
+    this.startingSettlementId = typeof save.startingSettlementId === "string" ? save.startingSettlementId : null;
     this.butterflyDensity = this.worldOptions.butterflyDensity;
     this.activeWorldId = worldId;
     this.worldSessionStartedAt = Date.now();
@@ -13104,6 +13143,45 @@ export class VoxelEngine {
       this.emitHud(true);
       return;
     }
+    if (heldSlot && heldDefinition?.useKind === "settlement-chart") {
+      const knownSettlementIds = new Set(this.mapKnowledge.markers
+        .filter((marker) => marker.kind === "settlement")
+        .map((marker) => marker.id.replace(/^settlement:/u, "")));
+      const routes = this.world.queryNearestSettlements({
+        origin: { x: this.position.x, z: this.position.z },
+        excludeIds: knownSettlementIds,
+        maxRegionRadius: 48,
+        limit: 4,
+      });
+      if (!routes.length) {
+        this.events.onToast("Every community in this folio's regional reach is already on your map, so it remains unused.");
+        this.placeCooldown = 0.3;
+        return;
+      }
+      for (const route of routes) {
+        const destination = route.candidate;
+        this.mapKnowledge = discoverSettlement(this.mapKnowledge, {
+          id: `settlement:${destination.id}`,
+          name: `${FACTIONS[destination.factionId].name} ${destination.size}`,
+          position: { x: destination.center.x, y: this.position.y, z: destination.center.z },
+          playerId: this.localPlayerId(),
+          discoveredAt: Date.now(),
+          icon: "settlement",
+          settlementKnowledge: "charted",
+          factionId: destination.factionId,
+          settlementSize: destination.size,
+        });
+      }
+      this.consumeSelectedUnit();
+      this.placeCooldown = 0.45;
+      this.heldUse = 1;
+      this.audio.play("craft");
+      this.gainSkillExperience("exploration", 12 + routes.length * 3);
+      this.events.onToast(`The folio charts ${routes.length} connected ${routes.length === 1 ? "community" : "communities"}. Their terrain remains unexplored.`);
+      this.saveSoon();
+      this.emitHud(true);
+      return;
+    }
     if (heldSlot && heldDefinition?.useKind === "lair-survey" && heldDefinition.lairSurvey) {
       const survey = revealDragonLairFromCharter({
         seed: this.world.seedText,
@@ -14903,6 +14981,47 @@ export class VoxelEngine {
           return;
         }
         this.events.onToast(current.tome === null ? "Use a Bound Book or reusable spell tome to place it on this display." : `${ITEMS[current.tome].name} is displayed here.`);
+        this.placeCooldown = 0.2;
+        return;
+      }
+      if (this.target.type === BlockId.CaveMarker) {
+        const sign = [...this.world.structureMarkers.values()].find((marker) => marker.type === "landmark"
+          && marker.tag.startsWith("surface-road-sign:")
+          && Math.abs(marker.position.x - this.target!.x) <= 1
+          && Math.abs(marker.position.y - this.target!.y) <= 1
+          && Math.abs(marker.position.z - this.target!.z) <= 1);
+        const signTag = sign?.type === "landmark" ? sign.tag : null;
+        if (signTag) {
+          const [, tier, settlementId, rawFactionId, rawSize, rawX, rawZ, rawDistance] = signTag.split(":");
+          const size = (["hamlet", "village", "town"] as const).includes(rawSize as SettlementSize) ? rawSize as SettlementSize : "village";
+          const factionId = isNpcFactionId(rawFactionId) ? rawFactionId : null;
+          const destinationX = Number(rawX);
+          const destinationZ = Number(rawZ);
+          const distance = Number(rawDistance);
+          if (factionId && settlementId && Number.isFinite(destinationX) && Number.isFinite(destinationZ)) {
+            const markerId = `settlement:${settlementId}`;
+            this.mapKnowledge = discoverSettlement(this.mapKnowledge, {
+              id: markerId,
+              name: `${FACTIONS[factionId].name} ${size}`,
+              position: { x: destinationX, y: this.position.y, z: destinationZ },
+              playerId: this.localPlayerId(),
+              discoveredAt: Date.now(),
+              icon: "settlement",
+              settlementKnowledge: "charted",
+              factionId,
+              settlementSize: size,
+            });
+            const dx = destinationX - this.position.x;
+            const dz = destinationZ - this.position.z;
+            const cardinal = Math.abs(dx) > Math.abs(dz) ? (dx >= 0 ? "east" : "west") : (dz >= 0 ? "south" : "north");
+            this.events.onToast(`${tier === "trunk" ? "Great road" : tier === "regional" ? "Regional road" : "Local road"} · ${FACTIONS[factionId].name} ${size}, about ${Math.max(100, Math.round((Number.isFinite(distance) ? distance : Math.hypot(dx, dz)) / 100) * 100)} blocks ${cardinal}. Added to your map.`);
+            this.saveSoon();
+            this.emitHud(true);
+            this.placeCooldown = 0.2;
+            return;
+          }
+        }
+        this.events.onToast("A blank wayfinder post. Place your own marker here to remember the route.");
         this.placeCooldown = 0.2;
         return;
       }
@@ -17946,29 +18065,34 @@ export class VoxelEngine {
   setNearestFactionTownWaypoint() {
     const factionId = this.activeSentient?.factionId;
     if (!factionId || factionId === "player") return null;
-    const candidates = [...this.world.settlementPlans.values()]
-      .map(({ candidate }) => candidate)
-      .filter((candidate) => candidate.factionId === factionId)
-      .sort((left, right) => {
-        const sizeRank = (size: typeof left.size) => size === "town" ? 0 : size === "village" ? 1 : 2;
-        return sizeRank(left.size) - sizeRank(right.size)
-          || Math.hypot(left.center.x - this.position.x, left.center.z - this.position.z) - Math.hypot(right.center.x - this.position.x, right.center.z - this.position.z);
-      });
-    const destination = candidates[0];
-    if (!destination) {
-      this.events.onToast("This guide has not heard from a large faction settlement in the explored region yet.");
+    const indexed = this.world.queryNearestSettlement({
+      origin: { x: this.position.x, z: this.position.z },
+      factionIds: [factionId],
+      sizes: ["town", "village"],
+      maxRegionRadius: 48,
+    });
+    if (!indexed) {
+      this.events.onToast("This guide knows no reachable faction settlement within the regional charts.");
       return null;
     }
-    const id = `manual:faction-town:${factionId}:${destination.id}`;
-    this.mapKnowledge = placeManualMapMarker(this.mapKnowledge, {
+    const destination = indexed.candidate;
+    const id = `settlement:${destination.id}`;
+    this.mapKnowledge = discoverSettlement(this.mapKnowledge, {
       id,
       name: `${FACTIONS[factionId].name} ${destination.size}`,
       position: { x: destination.center.x, y: destination.center.y ?? this.position.y, z: destination.center.z },
       playerId: this.localPlayerId(),
       discoveredAt: Date.now(),
       icon: "settlement",
+      settlementKnowledge: "charted",
+      factionId,
+      settlementSize: destination.size,
     });
-    this.events.onToast(`${this.activeSentient?.name ?? "The guide"} marks the road to the nearest known ${FACTIONS[factionId].name} ${destination.size}.`);
+    const dx = destination.center.x - this.position.x;
+    const dz = destination.center.z - this.position.z;
+    const cardinal = Math.abs(dx) > Math.abs(dz) ? (dx >= 0 ? "east" : "west") : (dz >= 0 ? "south" : "north");
+    const distance = Math.max(100, Math.round(indexed.distanceBlocks / 100) * 100);
+    this.events.onToast(`${this.activeSentient?.name ?? "The guide"} charts the nearest ${FACTIONS[factionId].name} ${destination.size}, about ${distance} blocks ${cardinal}.`);
     this.saveSoon();
     this.emitHud(true);
     return id;
@@ -18334,6 +18458,7 @@ export class VoxelEngine {
   }
 
   private syncSettlementPlans() {
+    let learnedSettlement = false;
     for (const { candidate, layout } of this.world.settlementPlans.values()) {
       let settlement = this.settlements.get(candidate.id);
       if (!settlement) {
@@ -18352,14 +18477,33 @@ export class VoxelEngine {
           resident.profession === "banker" ? 500 : 240,
         ));
       }
+      if (Math.hypot(candidate.center.x - this.position.x, candidate.center.z - this.position.z) <= layout.radiusBlocks + 18) {
+        const markerId = `settlement:${candidate.id}`;
+        const previous = this.mapKnowledge.markers.find((marker) => marker.id === markerId && marker.kind === "settlement");
+        if (previous?.settlementKnowledge !== "visited") {
+          this.mapKnowledge = discoverSettlement(this.mapKnowledge, {
+            id: markerId,
+            name: `${FACTIONS[candidate.factionId].name} ${candidate.size}`,
+            position: { x: candidate.center.x, y: candidate.center.y ?? this.position.y, z: candidate.center.z },
+            playerId: this.localPlayerId(),
+            discoveredAt: Date.now(),
+            icon: "settlement",
+            settlementKnowledge: "visited",
+            factionId: candidate.factionId,
+            settlementSize: candidate.size,
+          });
+          learnedSettlement = true;
+        }
+      }
     }
+    if (learnedSettlement) this.saveSoon();
   }
 
   private triggerNearbyRoadEvent() {
     if (this.multiplayer?.role === "guest") return false;
     const candidates = [...this.world.structureMarkers.entries()]
       .filter(([, marker]) => marker.type === "landmark"
-        && (marker.tag.startsWith("surface-road:") || marker.tag.startsWith("surface-road-ferry:"))
+        && (marker.tag.startsWith("surface-road:") || marker.tag.startsWith("surface-road-ferry:") || marker.tag.startsWith("surface-road-sign:"))
         && Math.hypot(marker.position.x - this.position.x, marker.position.z - this.position.z) <= 26)
       .sort((left, right) => left[1].position.x - right[1].position.x || left[0].localeCompare(right[0]));
     for (const [anchorId, marker] of candidates) {
@@ -25648,6 +25792,7 @@ export class VoxelEngine {
       edits: this.world.serializeEdits(),
       player: { x: this.position.x, y: this.position.y, z: this.position.z, yaw: this.yaw, pitch: this.pitch },
       spawn: { x: this.spawn.x, y: this.spawn.y, z: this.spawn.z },
+      startingSettlementId: this.startingSettlementId,
       inventory: this.inventory.map(normalizeCaptureOrbInventorySlot),
       equipment: Object.fromEntries((Object.keys(this.equipment) as EquipmentSlot[]).map((slot) => [slot, normalizeCaptureOrbInventorySlot(this.equipment[slot])])),
       offhand: normalizeCaptureOrbInventorySlot(this.offhand),

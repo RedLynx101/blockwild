@@ -86,7 +86,7 @@ export function horizontalNavigationDistance(origin: Pick<WorldPoint, "x" | "z">
 }
 
 function markerTarget(marker: MapMarker, trackedId: string | null): NavigationTarget {
-  const kind: NavigationTargetKind = marker.kind === "natural-poi" ? "poi"
+  const kind: NavigationTargetKind = marker.kind === "natural-poi" || marker.kind === "settlement" ? "poi"
     : marker.kind === "bed-spawn" ? "bed"
       : marker.kind === "wayshrine" ? "wayshrine"
         : "manual";

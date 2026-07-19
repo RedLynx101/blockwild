@@ -17,12 +17,11 @@ test("generation options clamp safely and an omitted options object restores exa
     resourceAbundance: Number.NaN,
     structures: false,
   }), {
-    profile: "world-below-v15",
+    ...DEFAULT_WORLD_GENERATION_OPTIONS,
     caveFrequency: 0,
     biomeScale: 4,
     resourceAbundance: 1,
     structures: false,
-    enabledFactions: ["hobbits", "goblins", "atlantians", "sugarcourt", "wood-elves", "dwarves"],
   });
   assert.deepEqual(normalizeWorldGenerationOptions({ enabledFactions: ["sugarcourt", "goblins", "sugarcourt"] }), {
     ...DEFAULT_WORLD_GENERATION_OPTIONS,

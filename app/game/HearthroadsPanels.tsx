@@ -348,6 +348,7 @@ const MARKER_META: Readonly<Record<MapMarkerKind, Readonly<{ icon: string; label
   manual: { icon: "✦", label: "Personal marker" },
   "bed-spawn": { icon: "⌂", label: "Bed spawn" },
   wayshrine: { icon: "♜", label: "Wayshrine" },
+  settlement: { icon: "⌂", label: "Settlement knowledge" },
 };
 
 const SEMANTIC_MARKER_ICONS: Readonly<Record<string, string>> = {
@@ -356,6 +357,7 @@ const SEMANTIC_MARKER_ICONS: Readonly<Record<string, string>> = {
   pin: "✦",
   bed: "⌂",
   wayshrine: "♜",
+  settlement: "⌂",
 };
 
 function markerGlyph(marker: MapMarker) {
@@ -630,7 +632,8 @@ export function MapPanel({
       : clamp(fastTravelElapsedSeconds / fastTravelChannel.durationSeconds, 0, 1)
     : 0;
   const isChanneling = fastTravelChannel?.status === "channeling";
-  const destinationIsChargeEligible = selected !== null && selected.kind !== "manual";
+  const destinationIsChargeEligible = selected !== null && selected.kind !== "manual"
+    && !(selected.kind === "settlement" && selected.settlementKnowledge !== "visited");
   const destinationIsShrineEligible = selected?.kind === "wayshrine"
     && currentWayshrineId !== null
     && currentWayshrineId !== selected.id;
@@ -851,6 +854,7 @@ export function MapPanel({
                 <div>
                   <small>{MARKER_META[selected.kind].label}</small>
                   <h3>{selected.name}</h3>
+                  {selected.kind === "settlement" ? <p>{selected.settlementKnowledge === "visited" ? "Visited settlement" : selected.settlementKnowledge === "charted" ? "Charted gate · terrain still unknown" : "Rumored settlement · position may be approximate"}</p> : null}
                 </div>
               </div>
               <dl className="hearthroads-location-facts">

@@ -54,7 +54,7 @@ function settle(simulator: LiquidSimulator) {
 }
 
 test("Sugarplum Vale remains stable in the legacy generator profile with its own terrain and keyed settlement palette", () => {
-  assert.equal(GENERATOR_VERSION, 16);
+  assert.equal(GENERATOR_VERSION, 17);
   assert.equal(BIOME_NAMES[BiomeId.SugarplumVale], "Sugarplum Vale");
   const world = new ChunkWorld();
   world.reset("CANDY-WORLD", undefined, { structures: false, profile: "legacy-v14" });

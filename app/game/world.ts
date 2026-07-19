@@ -72,6 +72,20 @@ import {
   type SettlementLayoutPlan,
   type SettlementResident,
 } from "./settlements";
+import {
+  SettlementIndex,
+  normalizeSettlementPlacementOptions,
+  normalizeWorldOriginPreference,
+  type LargeTownFrequency,
+  type RoadCoverage,
+  type SettlementClustering,
+  type SettlementIndexResult,
+  type SettlementPattern,
+  type SettlementQuery,
+  type SettlementRoadConnection,
+  type SettlementTerrainSampler,
+  type WorldOriginPreference,
+} from "./settlement-index";
 import { SEA_DRAGON_NEST_MAX_RADIUS, planSeaDragonNest } from "./v1-cultures";
 import { planDoubleTallGrassReplacement } from "./tall-grass";
 import { planRegionalRoadGraph, planTerrainFollowingRoad, type RoadEdge, type RoadPoint } from "./surface-roads";
@@ -93,7 +107,7 @@ export const WORLD_HEIGHT = MAX_Y - MIN_Y + 1;
 export const SEA_LEVEL = 32;
 export const SECTION_HEIGHT = 16;
 export const SECTION_COUNT = WORLD_HEIGHT / SECTION_HEIGHT;
-export const GENERATOR_VERSION = 16;
+export const GENERATOR_VERSION = 17;
 
 export type SettlementWorldPlan = Readonly<{
   candidate: SettlementCandidate;
@@ -108,6 +122,12 @@ export type WorldGenerationOptions = {
   structures: boolean;
   /** Empty means a wilderness world; biome generation is never faction-gated. */
   enabledFactions: readonly NpcFactionId[];
+  settlementPattern: SettlementPattern;
+  settlementDensity: number;
+  settlementClustering: SettlementClustering;
+  roadCoverage: RoadCoverage;
+  largeTownFrequency: LargeTownFrequency;
+  origin: WorldOriginPreference;
 };
 
 export const DEFAULT_WORLD_GENERATION_OPTIONS: Readonly<WorldGenerationOptions> = Object.freeze({
@@ -118,6 +138,12 @@ export const DEFAULT_WORLD_GENERATION_OPTIONS: Readonly<WorldGenerationOptions> 
   resourceAbundance: 1,
   structures: true,
   enabledFactions: Object.freeze([...NPC_FACTION_IDS]),
+  settlementPattern: "heartlands-v2",
+  settlementDensity: 1,
+  settlementClustering: "regional",
+  roadCoverage: "regional",
+  largeTownFrequency: "balanced",
+  origin: Object.freeze({ mode: "wilderness" }),
 });
 
 export enum BiomeId {
@@ -890,13 +916,29 @@ export function normalizeWorldGenerationOptions(value?: Partial<WorldGenerationO
     const resolved = typeof candidate === "number" && Number.isFinite(candidate) ? candidate : fallback;
     return Math.round(clamp(resolved, min, max) * 100) / 100;
   };
+  const enabledFactions = normalizeEnabledFactions(value?.enabledFactions);
+  const settlement = normalizeSettlementPlacementOptions({
+    settlementPattern: value?.settlementPattern ?? (value?.profile === "legacy-v14" ? "legacy-scattered-v1" : undefined),
+    settlementDensity: value?.settlementDensity,
+    settlementClustering: value?.settlementClustering,
+    roadCoverage: value?.roadCoverage,
+    largeTownFrequency: value?.largeTownFrequency,
+    structures: typeof value?.structures === "boolean" ? value.structures : DEFAULT_WORLD_GENERATION_OPTIONS.structures,
+    enabledFactions,
+  });
   return {
     profile: value?.profile === "legacy-v14" ? "legacy-v14" : "world-below-v15",
     caveFrequency: finiteOption(value?.caveFrequency, DEFAULT_WORLD_GENERATION_OPTIONS.caveFrequency, 0, 3),
     biomeScale: finiteOption(value?.biomeScale, DEFAULT_WORLD_GENERATION_OPTIONS.biomeScale, 0.25, 4),
     resourceAbundance: finiteOption(value?.resourceAbundance, DEFAULT_WORLD_GENERATION_OPTIONS.resourceAbundance, 0.25, 4),
-    structures: typeof value?.structures === "boolean" ? value.structures : DEFAULT_WORLD_GENERATION_OPTIONS.structures,
-    enabledFactions: normalizeEnabledFactions(value?.enabledFactions),
+    structures: settlement.structures,
+    enabledFactions,
+    settlementPattern: settlement.settlementPattern,
+    settlementDensity: settlement.settlementDensity,
+    settlementClustering: settlement.settlementClustering,
+    roadCoverage: settlement.roadCoverage,
+    largeTownFrequency: settlement.largeTownFrequency,
+    origin: normalizeWorldOriginPreference(value?.origin, enabledFactions),
   };
 }
 /**
@@ -2248,6 +2290,7 @@ export class ChunkWorld {
   edits = new Map<string, Map<number, BlockId>>();
   structureMarkers = new Map<string, StructureMarker>();
   settlementPlans = new Map<string, SettlementWorldPlan>();
+  private readonly settlementIndex = new SettlementIndex();
   private settlementCandidateCache = new Map<string, SettlementCandidate | null>();
   private settlementValidatedCandidateCache = new Map<string, SettlementCandidate | null>();
   private surfaceRoadGraphCache = new Map<string, readonly RoadEdge[]>();
@@ -2389,6 +2432,7 @@ export class ChunkWorld {
     this.settlementValidatedCandidateCache.clear();
     this.surfaceRoadGraphCache.clear();
     this.surfaceRoadCache.clear();
+    this.settlementIndex.clear();
     this.hiddenChestVisuals.clear();
     this.seedText = seedText || "WILDERNESS";
     this.seed = seedToInt(this.seedText);
@@ -2415,7 +2459,7 @@ export class ChunkWorld {
   restoreSurfaceRoadGraph(value: unknown) {
     if (!value || typeof value !== "object") return;
     for (const [region, rawEdges] of Object.entries(value as Record<string, unknown>)) {
-      if (!/^roads:-?\d+,-?\d+$/u.test(region) || !Array.isArray(rawEdges)) continue;
+      if (!/^(?:roads|heartroads):-?\d+,-?\d+$/u.test(region) || !Array.isArray(rawEdges)) continue;
       const edges = rawEdges.flatMap((raw): RoadEdge[] => {
         if (!raw || typeof raw !== "object") return [];
         const edge = raw as Partial<RoadEdge>;
@@ -2428,6 +2472,8 @@ export class ChunkWorld {
           to: Object.freeze({ ...edge.to }),
           length: Math.max(0, Number(edge.length) || Math.hypot(edge.to.x - edge.from.x, edge.to.z - edge.from.z)),
           loop: Boolean(edge.loop),
+          ...(edge.tier === "local" || edge.tier === "regional" || edge.tier === "trunk" ? { tier: edge.tier } : {}),
+          ...(typeof edge.ownerProvinceId === "string" ? { ownerProvinceId: edge.ownerProvinceId.slice(0, 128) } : {}),
         })];
       }).slice(0, 96);
       if (edges.length) this.surfaceRoadGraphCache.set(region, Object.freeze(edges));
@@ -4071,6 +4117,9 @@ export class ChunkWorld {
   }
 
   private settlementCandidateForRegion(regionX: number, regionZ: number, sample: (x: number, z: number) => ColumnSample) {
+    if (this.generationOptions.settlementPattern === "heartlands-v2") {
+      return this.settlementIndex.candidateForRegion(this.seedText, this.generationOptions, regionX, regionZ, this.settlementTerrainSampler(sample));
+    }
     const cacheKey = `${regionX},${regionZ}`;
     if (this.settlementCandidateCache.has(cacheKey)) return this.settlementCandidateCache.get(cacheKey) ?? null;
     const regionSize = 32 * CHUNK_SIZE;
@@ -4101,6 +4150,9 @@ export class ChunkWorld {
   }
 
   private validatedSettlementCandidateForRegion(regionX: number, regionZ: number, sample: (x: number, z: number) => ColumnSample) {
+    if (this.generationOptions.settlementPattern === "heartlands-v2") {
+      return this.settlementIndex.candidateForRegion(this.seedText, this.generationOptions, regionX, regionZ, this.settlementTerrainSampler(sample));
+    }
     const cacheKey = `${regionX},${regionZ}`;
     if (this.settlementValidatedCandidateCache.has(cacheKey)) return this.settlementValidatedCandidateCache.get(cacheKey) ?? null;
     const planned = this.settlementCandidateForRegion(regionX, regionZ, sample);
@@ -4150,12 +4202,176 @@ export class ChunkWorld {
     return accepted;
   }
 
+  private settlementTerrainSampler(sample: (x: number, z: number) => ColumnSample = (x, z) => this.sampleColumn(x, z)): SettlementTerrainSampler {
+    return (x, z) => {
+      const column = sample(x, z);
+      const biome = settlementBiomeFromId(column.biome);
+      return {
+        height: column.height,
+        waterline: column.waterline,
+        biome,
+        forbidden: biome !== "deep-ocean" && biome !== "lumen-trench"
+          ? Boolean(syrupPondColumnAt(this.seedText, x, z, sample, BiomeId.SugarplumVale))
+          : false,
+      };
+    };
+  }
+
+  queryNearestSettlement(query: SettlementQuery): SettlementIndexResult | null {
+    return this.settlementIndex.queryNearest(this.seedText, this.generationOptions, query, this.settlementTerrainSampler());
+  }
+
+  queryNearestSettlements(query: SettlementQuery): readonly SettlementIndexResult[] {
+    return this.settlementIndex.queryNearestMany(this.seedText, this.generationOptions, query, this.settlementTerrainSampler());
+  }
+
+  settlementRoadNeighbors(settlementId: string): readonly SettlementRoadConnection[] {
+    return this.settlementIndex.roadNeighbors(this.seedText, this.generationOptions, settlementId, this.settlementTerrainSampler());
+  }
+
+  resolveSettlementOrigin(preference: WorldOriginPreference, breathesWater = false, maxRegionRadius = 18) {
+    if (preference.mode === "wilderness" || !this.generationOptions.structures || this.generationOptions.settlementDensity <= 0) return null;
+    const sizes: SettlementCandidate["size"][] = preference.mode === "culture-settlement"
+      ? preference.minimumSize === "town" ? ["town"] : preference.minimumSize === "village" ? ["village", "town"] : ["hamlet", "village", "town"]
+      : ["hamlet", "village", "town"];
+    const result = this.queryNearestSettlement({
+      origin: { x: 0, z: 0 },
+      ...(preference.mode === "culture-settlement" ? { factionIds: [preference.factionId] } : {}),
+      sizes,
+      maxRegionRadius,
+    });
+    if (!result) return null;
+    const layout = planSettlementLayout(result.candidate);
+    const publicAnchor = layout.gates[0]?.position ?? layout.approaches[0]?.position ?? layout.center;
+    const environment = result.candidate.environment ?? "surface";
+    const column = this.sampleColumn(Math.round(publicAnchor.x), Math.round(publicAnchor.z));
+    const offset = layout.gates[0]
+      ? ([[0, -4], [4, 0], [0, 4], [-4, 0]] as const)[layout.gates[0].facing]
+      : [0, 0] as const;
+    const x = Math.round(publicAnchor.x + offset[0]);
+    const z = Math.round(publicAnchor.z + offset[1]);
+    const y = environment === "underwater" && breathesWater
+      ? Math.max((result.candidate.floorY ?? column.height) + 2, publicAnchor.y ?? column.height + 2)
+      : environment === "underwater"
+        ? column.waterline + 1.51
+        : environment === "underground"
+          ? column.height + 1.51
+          : column.height + 1.51;
+    return Object.freeze({ ...result, position: Object.freeze({ x, y, z }), anchorKind: environment === "underground" ? "surface-entry" : environment === "underwater" && !breathesWater ? "reef-air-arrival" : "public-approach" as const });
+  }
+
+  private generateHeartlandRoadsForChunk(
+    chunk: Chunk,
+    sample: (x: number, z: number) => ColumnSample,
+    set: (x: number, y: number, z: number, type: BlockId, onlyAir?: boolean) => void,
+  ) {
+    if (this.generationOptions.roadCoverage === "none") return;
+    const minX = chunk.cx * CHUNK_SIZE;
+    const minZ = chunk.cz * CHUNK_SIZE;
+    const maxX = minX + CHUNK_SIZE - 1;
+    const maxZ = minZ + CHUNK_SIZE - 1;
+    const provinceBlocks = 8 * 32 * CHUNK_SIZE;
+    const provinceX = Math.floor(minX / provinceBlocks);
+    const provinceZ = Math.floor(minZ / provinceBlocks);
+    const insideChunk = (x: number, z: number) => x >= minX && x <= maxX && z >= minZ && z <= maxZ;
+    const connections = new Map<string, SettlementRoadConnection>();
+    const terrainSampler = this.settlementTerrainSampler(sample);
+    // One-province halo is sufficient because every cross-boundary edge is
+    // owned by one of its endpoint provinces. It also lets a long trunk road
+    // rasterize through the neighboring province without order dependence.
+    for (let dx = -1; dx <= 1; dx += 1) for (let dz = -1; dz <= 1; dz += 1) {
+      const ownerX = provinceX + dx;
+      const ownerZ = provinceZ + dz;
+      const graphKey = `heartroads:${ownerX},${ownerZ}`;
+      const planned = this.settlementIndex.roadConnectionsForProvince(this.seedText, this.generationOptions, ownerX, ownerZ, terrainSampler);
+      if (!this.surfaceRoadGraphCache.has(graphKey)) this.surfaceRoadGraphCache.set(graphKey, Object.freeze(planned.map((edge) => ({
+        id: edge.id,
+        from: { id: edge.from.id, x: edge.from.center.x, z: edge.from.center.z, y: edge.from.center.y, factionId: edge.from.factionId, settlementSize: edge.from.size },
+        to: { id: edge.to.id, x: edge.to.center.x, z: edge.to.center.z, y: edge.to.center.y, factionId: edge.to.factionId, settlementSize: edge.to.size },
+        length: edge.length,
+        loop: edge.loop,
+        tier: edge.tier,
+        ownerProvinceId: edge.ownerProvinceId,
+      }))));
+      for (const edge of planned) connections.set(edge.id, edge);
+    }
+    for (const edge of connections.values()) {
+      const routePadding = edge.tier === "trunk" ? 196 : 144;
+      const edgeMinX = Math.min(edge.from.center.x, edge.to.center.x) - routePadding;
+      const edgeMaxX = Math.max(edge.from.center.x, edge.to.center.x) + routePadding;
+      const edgeMinZ = Math.min(edge.from.center.z, edge.to.center.z) - routePadding;
+      const edgeMaxZ = Math.max(edge.from.center.z, edge.to.center.z) + routePadding;
+      if (maxX < edgeMinX || minX > edgeMaxX || maxZ < edgeMinZ || minZ > edgeMaxZ) continue;
+      const length = Math.max(1, edge.length);
+      const ux = (edge.to.center.x - edge.from.center.x) / length;
+      const uz = (edge.to.center.z - edge.from.center.z) / length;
+      const fromInset = SETTLEMENT_SIZE_RULES[edge.from.size].radiusBlocks + 3;
+      const toInset = SETTLEMENT_SIZE_RULES[edge.to.size].radiusBlocks + 3;
+      const from = { id: edge.from.id, x: Math.round(edge.from.center.x + ux * fromInset), z: Math.round(edge.from.center.z + uz * fromInset), factionId: edge.from.factionId, settlementSize: edge.from.size };
+      const to = { id: edge.to.id, x: Math.round(edge.to.center.x - ux * toInset), z: Math.round(edge.to.center.z - uz * toInset), factionId: edge.to.factionId, settlementSize: edge.to.size };
+      let road = this.surfaceRoadCache.get(edge.id);
+      if (!road) {
+        road = planTerrainFollowingRoad(from, to, (roadX, roadZ) => {
+          const column = sample(roadX, roadZ);
+          const around = [[4, 0], [-4, 0], [0, 4], [0, -4]].map(([ox, oz]) => sample(roadX + ox, roadZ + oz).height);
+          return {
+            height: column.height,
+            waterline: column.waterline,
+            water: column.height <= column.waterline,
+            slopeRisk: Math.max(...around.map((height) => Math.abs(height - column.height))),
+          };
+        }, edge.tier === "trunk" ? 6 : 4);
+        this.surfaceRoadCache.set(edge.id, road);
+      }
+      const halfWidth = edge.tier === "trunk" ? 2 : edge.tier === "regional" ? 1 : 0;
+      for (let pointIndex = 0; pointIndex < road.length; pointIndex += 1) {
+        const point = road[pointIndex];
+        if (!insideChunk(point.x, point.z) || point.kind === "ferry") continue;
+        const column = sample(point.x, point.z);
+        const roadBlock = point.kind === "bridge" || point.kind === "causeway" ? BlockId.CaveBridge
+          : edge.from.factionId === "sugarcourt" ? BlockId.BoiledSugarbrick
+            : edge.from.factionId === "wood-elves" ? BlockId.RootweaveSoil : BlockId.Gravel;
+        const previous = road[Math.max(0, pointIndex - 1)];
+        const next = road[Math.min(road.length - 1, pointIndex + 1)];
+        const tangentX = next.x - previous.x;
+        const tangentZ = next.z - previous.z;
+        const sideX = Math.abs(tangentZ) >= Math.abs(tangentX) ? Math.sign(tangentZ || 1) : 0;
+        const sideZ = sideX === 0 ? Math.sign(tangentX || 1) : 0;
+        for (let width = -halfWidth; width <= halfWidth; width += 1) {
+          const roadX = point.x + sideX * width;
+          const roadZ = point.z - sideZ * width;
+          if (!insideChunk(roadX, roadZ)) continue;
+          const roadColumn = sample(roadX, roadZ);
+          for (let fillY = Math.max(roadColumn.height + 1, point.y - 3); fillY < point.y; fillY += 1) set(roadX, fillY, roadZ, BlockId.Cobblestone, false);
+          set(roadX, point.y, roadZ, roadBlock, false);
+          for (let clearY = point.y + 1; clearY <= Math.min(point.y + 3, roadColumn.height + 4); clearY += 1) set(roadX, clearY, roadZ, BlockId.Air, false);
+        }
+        const signInterval = edge.tier === "trunk" ? 96 : edge.tier === "regional" ? 128 : 192;
+        if (pointIndex === 0 || pointIndex === road.length - 1 || pointIndex % signInterval === 0) {
+          const toward = pointIndex < road.length / 2 ? edge.to : edge.from;
+          const signX = point.x + sideX * (halfWidth + 1);
+          const signZ = point.z - sideZ * (halfWidth + 1);
+          if (insideChunk(signX, signZ) && column.height > column.waterline) set(signX, point.y + 1, signZ, BlockId.CaveMarker, true);
+          const markerId = `surface-road-sign:${edge.id}:${pointIndex}`;
+          this.structureMarkers.set(markerId, {
+            type: "landmark", id: markerId, position: { x: signX, y: point.y + 1, z: signZ },
+            tag: `surface-road-sign:${edge.tier}:${toward.id}:${toward.factionId}:${toward.size}:${Math.round(toward.center.x)}:${Math.round(toward.center.z)}:${Math.round(Math.hypot(toward.center.x - point.x, toward.center.z - point.z))}`,
+          });
+        }
+      }
+    }
+  }
+
   private generateRegionalRoadsForChunk(
     chunk: Chunk,
     sample: (x: number, z: number) => ColumnSample,
     set: (x: number, y: number, z: number, type: BlockId, onlyAir?: boolean) => void,
   ) {
     if (this.generationOptions.profile !== "world-below-v15") return;
+    if (this.generationOptions.settlementPattern === "heartlands-v2") {
+      this.generateHeartlandRoadsForChunk(chunk, sample, set);
+      return;
+    }
     const minX = chunk.cx * CHUNK_SIZE;
     const minZ = chunk.cz * CHUNK_SIZE;
     const maxX = minX + CHUNK_SIZE - 1;
@@ -4289,96 +4505,18 @@ export class ChunkWorld {
     this.generateRegionalRoadsForChunk(chunk, sample, set);
 
     for (let regionX = startRegionX; regionX <= endRegionX; regionX += 1) for (let regionZ = startRegionZ; regionZ <= endRegionZ; regionZ += 1) {
-      const candidateForRegion = (candidateRegionX: number, candidateRegionZ: number) => {
-        const cacheKey = `${candidateRegionX},${candidateRegionZ}`;
-        if (this.settlementCandidateCache.has(cacheKey)) return this.settlementCandidateCache.get(cacheKey) ?? null;
-        const candidate = this.generationOptions.profile === "world-below-v15"
-          ? selectSettlementSite({
-            worldSeed: this.seedText,
-            seed: this.seed,
-            regionX: candidateRegionX,
-            regionZ: candidateRegionZ,
-            enabledFactions: this.generationOptions.enabledFactions,
-            sample,
-          })
-          : (() => {
-            // Legacy worlds retain their exact region-center settlement
-            // contract. New site search and wayposts must not rewrite their
-            // unexplored towns when an old save crosses a chunk boundary.
-            const probe = sample(candidateRegionX * regionSize + regionSize / 2, candidateRegionZ * regionSize + regionSize / 2);
-            const probeBiome = settlementBiomeFromId(probe.biome);
-            return probeBiome ? planSettlementCandidate({
-              worldSeed: this.seedText,
-              regionX: candidateRegionX,
-              regionZ: candidateRegionZ,
-              biome: probeBiome,
-              existing: [],
-              floorY: probe.height,
-              enabledFactions: this.generationOptions.enabledFactions,
-            }) : null;
-          })();
-        this.settlementCandidateCache.set(cacheKey, candidate);
-        return candidate;
-      };
-      const validatedCandidateForRegion = (candidateRegionX: number, candidateRegionZ: number) => {
-        const cacheKey = `${candidateRegionX},${candidateRegionZ}`;
-        if (this.settlementValidatedCandidateCache.has(cacheKey)) return this.settlementValidatedCandidateCache.get(cacheKey) ?? null;
-        const planned = candidateForRegion(candidateRegionX, candidateRegionZ);
-        if (!planned) {
-          this.settlementValidatedCandidateCache.set(cacheKey, null);
-          return null;
-        }
-        const contenders: SettlementCandidate[] = [];
-        // The town spacing radius can cross a complete 32-chunk cell. Using
-        // the same winner test for roads, halls, and settlement stamping means
-        // none of those systems can point at a town that later disappears.
-        for (let dx = -2; dx <= 2; dx += 1) for (let dz = -2; dz <= 2; dz += 1) {
-          if (dx === 0 && dz === 0) continue;
-          const contender = candidateForRegion(candidateRegionX + dx, candidateRegionZ + dz);
-          if (contender) contenders.push(contender);
-        }
-        if (!settlementWinsSpacingTieBreak(planned, contenders)) {
-          this.settlementValidatedCandidateCache.set(cacheKey, null);
-          return null;
-        }
-        const centerColumn = sample(planned.center.x, planned.center.z);
-        const actualBiome = settlementBiomeFromId(centerColumn.biome);
-        const underwater = planned.environment === "underwater";
-        const underground = planned.environment === "underground";
-        let valid = Boolean(actualBiome && actualBiome === planned.biome)
-          && !(underwater ? centerColumn.height >= centerColumn.waterline - 5 : centerColumn.height <= centerColumn.waterline + 3);
-        if (valid && !underwater) {
-          const pondProbe = Math.min(12, SETTLEMENT_SIZE_RULES[planned.size].radiusBlocks);
-          valid = ![[0, 0], [pondProbe, 0], [-pondProbe, 0], [0, pondProbe], [0, -pondProbe]]
-            .some(([dx, dz]) => syrupPondColumnAt(this.seedText, planned.center.x + dx, planned.center.z + dz, sample, BiomeId.SugarplumVale));
-        }
-        if (valid) {
-          const nearbyHeights = [[4, 0], [-4, 0], [0, 4], [0, -4]].map(([dx, dz]) => sample(planned.center.x + dx, planned.center.z + dz).height);
-          valid = !nearbyHeights.some((height) => Math.abs(height - centerColumn.height) > (underwater ? 7 : underground ? 12 : 4));
-        }
-        if (!valid) {
-          this.settlementValidatedCandidateCache.set(cacheKey, null);
-          return null;
-        }
-        // Aquatic and Deepgear geometry is anchored to the accepted local
-        // seabed/mountain column, not the earlier regional probe.
-        const accepted: SettlementCandidate = underwater ? {
-          ...planned,
-          floorY: centerColumn.height,
-          center: { ...planned.center, y: centerColumn.height + 2 },
-        } : underground ? {
-          ...planned,
-          floorY: Math.max(MIN_Y + 10, centerColumn.height - 18),
-          center: { ...planned.center, y: Math.max(MIN_Y + 12, centerColumn.height - 16) },
-        } : planned;
-        this.settlementValidatedCandidateCache.set(cacheKey, accepted);
-        return accepted;
-      };
+      const candidateForRegion = (candidateRegionX: number, candidateRegionZ: number) => this.settlementCandidateForRegion(candidateRegionX, candidateRegionZ, sample);
+      const validatedCandidateForRegion = (candidateRegionX: number, candidateRegionZ: number) => this.validatedSettlementCandidateForRegion(candidateRegionX, candidateRegionZ, sample);
       const plannedCandidate = candidateForRegion(regionX, regionZ);
       if (!plannedCandidate) {
         // Regions that cannot support a full culturally valid settlement still
         // leave a modest inhabited trace instead of silently becoming empty.
         if (this.generationOptions.profile === "legacy-v14") continue;
+        // Heartlands deliberately preserve broad wild bands. Their wayposts
+        // are sparse route discoveries, not one fallback structure per empty
+        // settlement region as in the legacy scattered profile.
+        if (this.generationOptions.settlementPattern === "heartlands-v2"
+          && hash2(regionX, regionZ, this.seed ^ 0x77617970) > 0.012 * this.generationOptions.settlementDensity) continue;
         const waypostX = regionX * regionSize + 190 + Math.floor(hash2(regionX, regionZ, this.seed ^ 0x243f6a88) * 132);
         const waypostZ = regionZ * regionSize + 190 + Math.floor(hash2(regionX, regionZ, this.seed ^ 0x85a308d3) * 132);
         const waypostColumn = sample(waypostX, waypostZ);

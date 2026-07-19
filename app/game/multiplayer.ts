@@ -266,6 +266,12 @@ export type SessionWorldOptions = {
   sleepRule?: "any-player" | "percentage" | "all-players";
   sleepPercentage?: number;
   enabledFactions?: readonly ("hobbits" | "goblins" | "atlantians" | "sugarcourt" | "wood-elves" | "dwarves")[];
+  settlementPattern?: "legacy-scattered-v1" | "heartlands-v2";
+  settlementDensity?: number;
+  settlementClustering?: "even" | "regional" | "strong";
+  roadCoverage?: "none" | "local" | "regional" | "dense";
+  largeTownFrequency?: "rare" | "balanced" | "frequent";
+  origin?: { mode: "wilderness" } | { mode: "near-any-settlement" } | { mode: "culture-settlement"; factionId: "hobbits" | "goblins" | "atlantians" | "sugarcourt" | "wood-elves" | "dwarves"; minimumSize: "hamlet" | "village" | "town" };
 };
 
 export type InventoryEndpoint = {
@@ -1210,7 +1216,13 @@ function validateSessionWorldOptions(value: unknown): value is SessionWorldOptio
     && (value.enabledFactions === undefined || (Array.isArray(value.enabledFactions)
       && value.enabledFactions.length <= 6
       && new Set(value.enabledFactions).size === value.enabledFactions.length
-      && value.enabledFactions.every((entry) => ["hobbits", "goblins", "atlantians", "sugarcourt", "wood-elves", "dwarves"].includes(entry as string))));
+      && value.enabledFactions.every((entry) => ["hobbits", "goblins", "atlantians", "sugarcourt", "wood-elves", "dwarves"].includes(entry as string))))
+    && (value.settlementPattern === undefined || value.settlementPattern === "legacy-scattered-v1" || value.settlementPattern === "heartlands-v2")
+    && (value.settlementDensity === undefined || isFiniteNumber(value.settlementDensity, 0, 2))
+    && (value.settlementClustering === undefined || ["even", "regional", "strong"].includes(value.settlementClustering as string))
+    && (value.roadCoverage === undefined || ["none", "local", "regional", "dense"].includes(value.roadCoverage as string))
+    && (value.largeTownFrequency === undefined || ["rare", "balanced", "frequent"].includes(value.largeTownFrequency as string))
+    && (value.origin === undefined || (isRecord(value.origin) && ["wilderness", "near-any-settlement", "culture-settlement"].includes(value.origin.mode as string)));
 }
 
 export function validatePayload<K extends MultiplayerMessageType>(type: K, value: unknown): value is MultiplayerPayloadMap[K] {
@@ -1395,7 +1407,8 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
         && map.markers.every((entry) => isRecord(entry)
           && isShortString(entry.id, 128)
           && isShortString(entry.name, 160)
-          && ["natural-poi", "manual", "wayshrine", "bed-spawn"].includes(entry.kind as string)
+          && ["natural-poi", "manual", "wayshrine", "bed-spawn", "settlement"].includes(entry.kind as string)
+          && (entry.kind !== "settlement" || ["rumored", "charted", "visited"].includes(entry.settlementKnowledge as string))
           && isRecord(entry.position)
           && isFiniteNumber(entry.position.x, -COORDINATE_LIMIT, COORDINATE_LIMIT)
           && isFiniteNumber(entry.position.y, -COORDINATE_LIMIT, COORDINATE_LIMIT)
