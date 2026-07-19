@@ -58,9 +58,64 @@ import {
   BiomeId,
   ChunkWorld,
   createAtlasBlockGeometry,
+  guildHallBlockPalette,
   type ChunkEditSave,
 } from "./world";
-import { BUTTERFLY_ORDER, MOB_DEFS, MOB_ORDER, type ButterflyKind, type CoreMobKind, type MobDefinition, type MobKind } from "./mobs";
+import { BUTTERFLY_ORDER, MOB_DEFS, MOB_ORDER, type ButterflyKind, type CoreMobKind, type MobDefinition, type MobKind, type SummonedCreatureKind } from "./mobs";
+import { creatureProfile } from "./creature-profiles";
+import { captureKnowledgeForResearch, evaluateCaptureReadiness, type CaptureReadiness } from "./creature-capture";
+import { CREATURE_MOVES, CREATURE_REACTIONS, learnedMovesAtLevel } from "./creature-moves";
+import { creatureMaximumHealth, creatureOutputMultiplier, statsAtLevel } from "./creature-stats";
+import { aptitudesFromSeed, isShinySeed, migrateCreatureProgression, offspringProgressionLegacy, phenotypeFromSeed, recordCreatureCaptureHistory, recordCreatureReleaseHistory, stableCreatureSeed, type CreatureProgressionV2, type LegacyCreatureProgression } from "./creature-progression";
+import { creatureAppearance } from "./creature-appearance";
+import { applyCreatureRarityVisual, triggerCreatureInspectionShimmer, updateCreatureRarityVisual } from "./creature-rarity-visuals";
+import {
+  PRIME_FORM_PROFILES,
+  advancePrimeEncounterClue,
+  createPrimeEncounterState,
+  normalizePrimeEncounterStates,
+  planPrimeEncounter,
+  primeAptitudeForMotif,
+  primeEncounterRouteComplete,
+  transferPrimeEncounterCustody,
+  transferPrimeCustodyReference,
+  transitionPrimeEncounter,
+  type PrimeEncounterState,
+} from "./creature-rarity";
+import { applyCreatureCareAction, normalizeCreatureCareState, type CreatureCareAction } from "./creature-care";
+import {
+  MOUNT_PROFILES,
+  createMountExertion,
+  evaluateMountEligibility,
+  exertionSpeedScale,
+  selectMountMode,
+  stepMountExertion,
+  validateMountTransition,
+  type MountExertionState,
+  type MountMode,
+} from "./creature-mounts";
+import { CREATURE_TYPES, CREATURE_TYPE_IDS, resolveCreatureTypes, type CreatureTypeId, type CreatureTypeSource, type ResolvedCreatureTypes } from "./creature-types";
+import {
+  effectFromMove,
+  resolveCombatEffect,
+  updateThreatLedger,
+  type ActiveCombatStatus,
+  type CombatActor,
+  type CombatActorRef,
+  type CombatEffect,
+  type CombatEvent,
+  type ThreatEntry,
+} from "./combat-resolver";
+import {
+  beginCreatureMove,
+  chooseThreatTarget as chooseCombatThreatTarget,
+  chooseCreatureMove,
+  markCreatureMoveApplied,
+  stepCreatureMove,
+  stepMoveCooldowns,
+  type ActiveCreatureMove,
+} from "./creature-combat-ai";
+import { advanceBestiaryResearch, appendBestiaryRecord, createLivingBestiary, normalizeLivingBestiaryEntry, observeBestiaryEntry, recordBestiaryAppearanceForms, recordSpeciesCapture, type LivingBestiaryEntryV2 } from "./living-bestiary";
 import { createHeldToolSpec } from "./model-specs";
 import { applyCompanionPose, applyDragonLifeStage, applyDragonPose, applyOceanCreaturePose, applyWildlifePose, createMobVisual, createSentientLodVisual } from "./mob-models";
 import {
@@ -120,11 +175,14 @@ import {
 import {
   MAGIC_ATTUNEMENT_QUEST_ID,
   SPELLS,
+  SPELL_TYPE_PROFILES,
   advanceSpellKey,
   attuneMagicFromQuest,
   castSelectedSpell,
+  consumeIronwakeFragment,
   createMagicState,
   createSpellKeyState,
+  deepLanternGuideSignal,
   increaseManaCapacity,
   learnSpellFromTome,
   normalizeMagicState,
@@ -132,6 +190,7 @@ import {
   regenerateMana,
   releaseSpellKey,
   selectSpell,
+  tidemendSiteKeyAt,
   toggleFavoriteSpell,
   type MagicState,
   type SpellId,
@@ -208,6 +267,7 @@ import {
   createCreatureHusbandryState,
   feedCreatureForHusbandry,
   normalizeCreatureHusbandryState,
+  recordCreatureProduction,
   tickCreatureHusbandry,
   type CreatureHusbandryState,
 } from "./creature-care";
@@ -305,6 +365,84 @@ import {
   type AquariumState,
   type AquariumTopology,
 } from "./aquarium";
+import {
+  aggregateCreatureWorkers,
+  assignCreatureWork,
+  createCreatureWorkState,
+  creatureEcologyContract,
+  ecologicalTypeSources,
+  fitCreatureShellModule,
+  normalizeCreatureWorkState,
+  resolveCreatureWorkCycle,
+  summarizeAquariumEcology,
+  type AquariumEcologySummary,
+  type CreatureShellModule,
+  type CreatureWorkAssignment,
+  type CreatureWorkState,
+} from "./creature-ecology";
+import {
+  createFieldPerchState,
+  normalizeFieldPerchStorage,
+  placeBirdOnFieldPerch,
+  setFieldPerchAssignment,
+  takeBirdFromFieldPerch,
+  type FieldPerchState,
+} from "./field-perch";
+import {
+  SUMMON_CONTRACTS,
+  createSummonContractState,
+  groundSummon,
+  manifestSummon,
+  normalizeSummonContractState,
+  observeSummonRole,
+  recordGroundedSummonLifeEvent,
+  type SummonContractState,
+} from "./summon-contracts";
+import {
+  applyGuildSemanticEvent,
+  completeGuildQuest as completeGuildQuestState,
+  createGuildBook,
+  discoverGuildHall,
+  GUILDS,
+  GUILD_NPCS,
+  GUILD_QUESTS,
+  guildHallStateForBook,
+  guildQuestRewardItems,
+  inviteToGuild,
+  joinGuild,
+  normalizeGuildBook,
+  promoteGuild,
+  questProgress,
+  recordGuildServiceFlag,
+  startGuildQuest,
+  type GuildBookState,
+  type GuildId,
+  type GuildObjectiveKind,
+  type GuildSemanticEventContext,
+} from "./guilds";
+import {
+  LEGENDARY_ENCOUNTERS,
+  activateLegendaryEncounter,
+  applyLegendaryEvent,
+  createLegendaryEncounterState,
+  legendaryCanManifest,
+  legendaryStageProgress,
+  normalizeLegendaryEncounterState,
+  resolveLegendaryEncounter,
+  transferLegendaryCustody,
+  type LegendaryEncounterId,
+  type LegendaryEventKind,
+  type LegendaryEncounterState,
+  type LegendaryOutcome,
+} from "./legendary-encounters";
+import {
+  CONTEXTUAL_LOOT_GENERATOR_VERSION,
+  normalizeContextualLootWorldState,
+  resolveContextualLoot,
+  type ContextualLootWorldState,
+  type LootContainerRecord,
+} from "./contextual-loot";
+import { normalizeRoadEventState, planRoadEvent, type RoadEdge, type RoadEventState } from "./surface-roads";
 import { createAvatarHeldItemModel } from "./held-items";
 import {
   boardSailboat,
@@ -566,7 +704,6 @@ import {
   peelopDefenseAction,
   planSocialGroupMotion,
   puddlehopperJumpPlan,
-  reedstriderRideSpeed,
   saddleReedstrider,
   stepPeelopShedding,
   type PeelopSheddingState,
@@ -852,16 +989,9 @@ export type AquariumHudState = Readonly<{
     tamed: boolean;
     crawler: boolean;
   }>[];
+  ecology: AquariumEcologySummary;
 }>;
-export type BestiaryProgress = Record<MobKind, {
-  seen: boolean;
-  kills: number;
-  captures: number;
-  tames?: number;
-  breeds?: number;
-  secretUnlocked?: boolean;
-  milestones?: Record<string, number>;
-}>;
+export type BestiaryProgress = Record<MobKind, LivingBestiaryEntryV2>;
 export type DragonHudState = Readonly<{
   id: number;
   name: string;
@@ -904,7 +1034,13 @@ export type HudState = {
   bestiary: BestiaryProgress;
   selected: number;
   targetName: string | null;
-  targetMob: { name: string; health: number; maxHealth: number } | null;
+  targetMob: {
+    name: string;
+    health: number;
+    maxHealth: number;
+    capture: CaptureReadiness | null;
+    summonContract?: { realm: string; concordance: number; required: number; anchorWindowSeconds: number; echo: boolean; worldpinReady: boolean };
+  } | null;
   breakProgress: number;
   day: number;
   clock: string;
@@ -934,6 +1070,8 @@ export type HudState = {
   mountedBoat: boolean;
   mountedCreature?: boolean;
   mountedCreatureName?: string | null;
+  mountedCreatureMode?: MountMode | null;
+  mountedCreatureExertion?: number;
   mapKnowledge: MapKnowledge;
   questBook: QuestBook;
   questDefinitions: readonly QuestDefinition[];
@@ -947,7 +1085,7 @@ export type HudState = {
   settlements: readonly SettlementState[];
   activeSettlementId: string | null;
   activeMerchant: MerchantState | null;
-  activeSentient?: { id: number; residentId: string | null; name: string; profession: string | null; factionId: FactionId | null; hired: boolean; followDistance: FollowDistanceSetting; nearby: boolean } | null;
+  activeSentient?: { id: number; residentId: string | null; name: string; profession: string | null; factionId: FactionId | null; hired: boolean; followDistance: FollowDistanceSetting; nearby: boolean; guildNpcId: string | null; guildId: GuildId | null; recruitable: boolean; recruitReady: boolean } | null;
   bankAccount: BankAccountState;
   stockMarket: StockMarketState;
   potionBuffs: Readonly<Record<string, number>>;
@@ -957,10 +1095,13 @@ export type HudState = {
   magic: MagicState;
   skills: SkillState;
   spellWheelOpen: boolean;
+  guildBook: GuildBookState;
 };
 
 export type SavedCreature = {
   id: number;
+  /** Stable across capture, release, growth replacement, sleep, and reconnect. */
+  specimenId?: string;
   kind: MobKind;
   name?: string;
   x: number;
@@ -976,6 +1117,12 @@ export type SavedCreature = {
   outOfRangeSeconds?: number;
   persistentPoiResident?: boolean;
   poiMarkerId?: string;
+  legendaryEncounterId?: LegendaryEncounterId;
+  legendarySiteId?: string;
+  /** Stable ecological anchor for an authored Prime specimen. */
+  primeAnchorId?: string;
+  groundedSummonLineageId?: string;
+  groundedSummonEntityId?: string;
   enclosed?: boolean;
   petState?: PeelopState;
   careState?: CreatureHusbandryState;
@@ -1000,6 +1147,19 @@ export type SavedCreature = {
   dragonState?: DragonState;
   /** Stable link back to an attuned Capture Orb while this creature is deployed. */
   attunedOrbId?: string | null;
+  /** Versioned, deterministic creature growth and specimen identity. */
+  progression?: CreatureProgressionV2;
+  /** Host-authored form, equipment, environment, status, and move type sources. */
+  typeSources?: readonly CreatureTypeSource[];
+  /** Persisted meaningful statuses; transient threat remains runtime-only. */
+  combatStatuses?: readonly ActiveCombatStatus[];
+  mountExertion?: MountExertionState;
+  mountMode?: MountMode | null;
+  mountVerticalVelocity?: number;
+  creatureWork?: CreatureWorkState;
+  creatureEquipment?: Record<string, ItemCode>;
+  creatureOwnerId?: string | null;
+  creatureTamed?: boolean;
 };
 
 const LANTERN_PIEHOUSE_KEEPER_MARKER = /^adventure:lantern-piehouse:(-?\d+),(-?\d+):spawn:lantern-piehouse-keeper$/;
@@ -1097,10 +1257,18 @@ export type WorldSave = {
   weather: Weather;
   furnaces: Record<string, FurnaceState>;
   chests: Record<string, ChestState>;
+  contextualLoot?: ContextualLootWorldState;
+  roadEvents?: Record<string, RoadEventState>;
+  surfaceRoadGraph?: Record<string, readonly RoadEdge[]>;
   apiaries?: Record<string, ApiaryBlockState>;
   orbRacks?: Record<string, OrbRackState>;
   healingStations?: Record<string, CreatureHealerState>;
   aquariums?: Record<string, AquariumState>;
+  fieldPerches?: Record<string, FieldPerchState>;
+  summonContracts?: SummonContractState;
+  guildBook?: GuildBookState;
+  legendaryEncounters?: Record<string, LegendaryEncounterState>;
+  primeEncounters?: Record<string, PrimeEncounterState>;
   digitalItemVault?: DigitalItemVault;
   digitalCreatureArchive?: DigitalCreatureArchive;
   golemForges?: Record<string, GolemForgeState>;
@@ -1121,6 +1289,11 @@ export type WorldSave = {
   potionBuffs?: Record<string, number>;
   rangedLoaded?: Record<string, number>;
   magicState?: MagicState;
+  spellWorldState?: {
+    schema: 1;
+    ironwakeWard?: { fragments: number; expiresAt: number } | null;
+    tidemendSites?: Record<string, number>;
+  };
   skillState?: SkillState;
   archiveShelves?: Record<string, ArchiveShelfState>;
   tomeDisplays?: Record<string, TomeDisplayState>;
@@ -1146,7 +1319,7 @@ export type WorldSave = {
   savedAt: number;
 };
 
-export type OverlayKind = "inventory" | "crafting" | "furnace" | "chest" | "apiary" | "orb-rack" | "healing-station" | "waygrid-items" | "waygrid-creatures" | "aquarium" | "golem-forge" | "bestiary" | "multiplayer" | "sleep" | "pet" | "dragon" | "magic" | "skills" | "spell-wheel" | "library" | "incubator" | "map" | "quests" | "cartography" | "alchemy" | "distillery" | "sugarworks" | "sentient" | "trade" | "bank" | "settlement" | "follower";
+export type OverlayKind = "inventory" | "crafting" | "furnace" | "chest" | "apiary" | "orb-rack" | "healing-station" | "waygrid-items" | "waygrid-creatures" | "aquarium" | "golem-forge" | "bestiary" | "creature-camp" | "multiplayer" | "sleep" | "pet" | "dragon" | "magic" | "skills" | "spell-wheel" | "library" | "incubator" | "map" | "quests" | "guilds" | "cartography" | "alchemy" | "distillery" | "sugarworks" | "sentient" | "trade" | "bank" | "settlement" | "follower";
 export type CameraMode = "first" | "third-rear" | "third-front";
 
 export type MultiplayerUiState = {
@@ -1190,6 +1363,7 @@ type VoxelHit = {
 
 type MobEntity = {
   id: number;
+  specimenId: string;
   kind: MobKind;
   name: string;
   hostile: boolean;
@@ -1241,6 +1415,11 @@ type MobEntity = {
   visualMinY: number;
   persistentPoiResident: boolean;
   poiMarkerId: string | null;
+  legendaryEncounterId: LegendaryEncounterId | null;
+  legendarySiteId: string | null;
+  primeAnchorId: string | null;
+  groundedSummonLineageId: string | null;
+  groundedSummonEntityId: string | null;
   enclosed: boolean;
   enclosureTimer: number;
   sightCheckTimer: number;
@@ -1268,6 +1447,20 @@ type MobEntity = {
   dragonSlowSeconds: number;
   dragonScaldSeconds: number;
   dragonStatusTick: number;
+  progression: CreatureProgressionV2;
+  typeSources: readonly CreatureTypeSource[];
+  resolvedTypes: ResolvedCreatureTypes;
+  combatStatuses: readonly ActiveCombatStatus[];
+  threatLedger: readonly ThreatEntry[];
+  moveCooldowns: Record<string, number>;
+  activeMove: ActiveCreatureMove | null;
+  mountExertion: MountExertionState | null;
+  mountMode: MountMode | null;
+  mountVerticalVelocity: number;
+  creatureWork: CreatureWorkState;
+  creatureEquipment: Record<string, ItemCode>;
+  creatureOwnerId: string | null;
+  creatureTamed: boolean;
   networkTarget?: THREE.Vector3;
   networkYaw?: number;
   networkVelocity?: THREE.Vector3;
@@ -1278,6 +1471,20 @@ type MobEntity = {
 type SailboatEntity = {
   save: SailboatSave;
   group: THREE.Group;
+};
+
+type ActiveSpellField = {
+  kind: "hearthward" | "deep-lantern" | "storm-echo" | "kinmark" | "rescue-thread";
+  x: number;
+  y: number;
+  z: number;
+  radius: number;
+  expiresAt: number;
+  damage?: number;
+  mobId?: number;
+  startedAt?: number;
+  interrupted?: boolean;
+  visual?: THREE.Object3D;
 };
 
 type ExhibitVisual = {
@@ -1302,6 +1509,7 @@ type OrbRackVisual = {
 
 type SpawnMobOptions = {
   id?: number;
+  specimenId?: string | null;
   health?: number;
   age?: number;
   naturalSpawned?: boolean;
@@ -1311,6 +1519,11 @@ type SpawnMobOptions = {
   yaw?: number;
   persistentPoiResident?: boolean;
   poiMarkerId?: string | null;
+  legendaryEncounterId?: LegendaryEncounterId | null;
+  legendarySiteId?: string | null;
+  primeAnchorId?: string | null;
+  groundedSummonLineageId?: string | null;
+  groundedSummonEntityId?: string | null;
   enclosed?: boolean;
   petState?: PeelopState | null;
   careState?: CreatureHusbandryState | null;
@@ -1336,6 +1549,16 @@ type SpawnMobOptions = {
   followCommand?: "follow" | "hold";
   attunedOrbId?: string | null;
   dragonState?: DragonState | null;
+  progression?: CreatureProgressionV2 | LegacyCreatureProgression | null;
+  typeSources?: readonly CreatureTypeSource[];
+  combatStatuses?: readonly ActiveCombatStatus[];
+  mountExertion?: MountExertionState | null;
+  mountMode?: MountMode | null;
+  mountVerticalVelocity?: number;
+  creatureWork?: CreatureWorkState | null;
+  creatureEquipment?: Record<string, ItemCode> | null;
+  creatureOwnerId?: string | null;
+  creatureTamed?: boolean;
 };
 
 type PendingReliableRequest = {
@@ -1475,6 +1698,7 @@ const PLAYER_RADIUS = 0.3;
 const PHYSICS_STEP = 1 / 60;
 const INVENTORY_SIZE = 36;
 const TREE_PERCH_BLOCKS = new Set<BlockId>([
+  BlockId.FieldPerch,
   BlockId.WildwoodLog, BlockId.PineLog, BlockId.BirchLog, BlockId.BloomLog,
   BlockId.WildwoodLeaves, BlockId.PineLeaves, BlockId.BirchLeaves, BlockId.BloomLeaves,
 ]);
@@ -2018,6 +2242,18 @@ const STRUCTURE_LOOT_ITEMS: Readonly<Record<string, ItemCode>> = Object.freeze({
   "tome-arcane-ward": Item.TomeArcaneWard,
   "tome-starlight-snare": Item.TomeStarlightSnare,
   "tome-verdant-volley": Item.TomeVerdantVolley,
+  "tome-kinmark": Item.TomeKinmark,
+  "tome-shepherds-thread": Item.TomeShepherdsThread,
+  "tome-call-asterjaw": Item.TomeCallAsterjaw,
+  "tome-fold-vellum-warden": Item.TomeFoldVellumWarden,
+  "tome-invoke-choir-of-one": Item.TomeInvokeChoirOfOne,
+  "tome-open-glasswake": Item.TomeOpenGlasswake,
+  "tome-rootbridge": Item.TomeRootbridge,
+  "tome-stormstep": Item.TomeStormstep,
+  "tome-deep-lantern": Item.TomeDeepLantern,
+  "tome-ironwake": Item.TomeIronwake,
+  "tome-tidemend": Item.TomeTidemend,
+  "tome-hearthward": Item.TomeHearthward,
   "shadow-shard": Item.ShadowShard,
   "gear-cluster": Item.GearCluster,
   "deepgear-alloy": Item.DeepgearAlloy,
@@ -2096,6 +2332,11 @@ export function worldTicksForDelta(elapsedSeconds: number, dayLengthMinutes: num
   if (!Number.isFinite(elapsedSeconds) || elapsedSeconds <= 0) return 0;
   const daySeconds = Math.max(60, (Number.isFinite(dayLengthMinutes) ? dayLengthMinutes : 20) * 60);
   return elapsedSeconds * LEVIATHAN_LIFECYCLE_CONTRACT.ticksPerDay / daySeconds;
+}
+
+export function captureResonanceMatched(statuses: readonly ActiveCombatStatus[] | null | undefined, nowSeconds: number) {
+  return (statuses ?? []).some((status) => ["inspired", "hushed", "dazzled"].includes(status.id)
+    && status.expiresAtSeconds > nowSeconds);
 }
 
 export function aquaticSpawnHeight(kind: MobKind, floorY: number, waterSurfaceY: number, roll = 0.5) {
@@ -2177,6 +2418,11 @@ export function structureMobSpawnY(
 }
 
 export function mapLocationNameFromTag(tag: string) {
+  if (tag.startsWith("guild-hall:") || tag.startsWith("guild-lodge:")) {
+    const [, guildId] = tag.split(":");
+    const guildName = GUILDS[guildId as GuildId]?.name ?? guildId.split("-").map((part) => part ? part[0].toUpperCase() + part.slice(1) : part).join(" ");
+    return `${guildName} ${tag.startsWith("guild-lodge:") ? "Field Lodge" : "Hall"}`;
+  }
   if (tag.startsWith("adventure-poi:") || tag.startsWith("dungeon:")) {
     const suffix = tag.slice(tag.indexOf(":") + 1);
     return suffix.split("-").map((part) => part ? part[0].toUpperCase() + part.slice(1) : part).join(" ");
@@ -2262,7 +2508,9 @@ export function captureOrbUnitFromInventorySlot(slot: InventorySlot | null | und
   // Plain crafted orbs do not carry identity metadata until first use. Mint it
   // at that boundary so two orbs split from the same stack never share an id.
   looseCaptureOrbSerial += 1;
-  return createEmptyCaptureOrb(`orb-loose-${Date.now().toString(36)}-${looseCaptureOrbSerial.toString(36)}-${slot.item}-${slot.count}`);
+  const empty = createEmptyCaptureOrb(`orb-loose-${Date.now().toString(36)}-${looseCaptureOrbSerial.toString(36)}-${slot.item}-${slot.count}`);
+  const lens = ITEMS[slot.item]?.captureLens ?? null;
+  return lens ? { ...empty, lens } : empty;
 }
 
 export function apiaryPhaseForWorldTime(worldTime: number): ApiaryPhase {
@@ -2593,7 +2841,7 @@ export function normalizeMultiplayerPlayerProgression(value: Partial<PlayerProgr
   if (rawProgression?.bestiary && typeof rawProgression.bestiary === "object") for (const kind of MOB_ORDER) {
     const progress = rawProgression.bestiary[kind];
     if (!progress || typeof progress !== "object") continue;
-    bestiary[kind] = {
+    bestiary[kind] = normalizeLivingBestiaryEntry({ ...progress,
       seen: Boolean(progress.seen),
       kills: Math.max(0, Math.trunc(Number(progress.kills) || 0)),
       captures: Math.max(0, Math.trunc(Number(progress.captures) || 0)),
@@ -2603,7 +2851,7 @@ export function normalizeMultiplayerPlayerProgression(value: Partial<PlayerProgr
       ...(progress.milestones && typeof progress.milestones === "object" ? {
         milestones: Object.fromEntries(Object.entries(progress.milestones).slice(0, 64).map(([key, count]) => [key.slice(0, 96), Math.max(0, Math.trunc(Number(count) || 0))])),
       } : {}),
-    };
+    });
   }
   return {
     questBook: normalizeQuestBook(rawProgression?.questBook),
@@ -2908,27 +3156,49 @@ export function restoreRendererContext(target: RendererRecoveryTarget) {
 }
 
 function blankBestiary(): BestiaryProgress {
-  return Object.fromEntries(MOB_ORDER.map((kind) => [kind, { seen: false, kills: 0, captures: 0, tames: 0, breeds: 0, secretUnlocked: false, milestones: {} }])) as BestiaryProgress;
+  return createLivingBestiary();
 }
 
 const mixBestiaryHash = (hash: number, value: number) => Math.imul((hash ^ Math.trunc(value)) >>> 0, 16_777_619) >>> 0;
+const mixBestiaryText = (hash: number, value: string) => {
+  let mixed = hash;
+  for (let index = 0; index < value.length; index += 1) mixed = mixBestiaryHash(mixed, value.charCodeAt(index));
+  return mixed;
+};
 
-/** Allocation-free content hash used to reuse an unchanged 178-entry HUD snapshot. */
+/** Allocation-free content hash used to reuse an unchanged 215-entry HUD snapshot. */
 export function bestiaryProgressSignature(bestiary: BestiaryProgress) {
   let hash = 2_166_136_261;
   for (const kind of MOB_ORDER) {
     const progress = bestiary[kind];
+    hash = mixBestiaryHash(hash, progress.schemaVersion ?? 1);
     hash = mixBestiaryHash(hash, progress.seen ? 1 : 0);
     hash = mixBestiaryHash(hash, progress.kills);
     hash = mixBestiaryHash(hash, progress.captures);
     hash = mixBestiaryHash(hash, progress.tames ?? 0);
     hash = mixBestiaryHash(hash, progress.breeds ?? 0);
     hash = mixBestiaryHash(hash, progress.secretUnlocked ? 1 : 0);
-    const milestones = progress.milestones;
-    if (!milestones) continue;
+    const milestones = progress.milestones ?? {};
     for (const key in milestones) {
-      for (let index = 0; index < key.length; index += 1) hash = mixBestiaryHash(hash, key.charCodeAt(index));
+      hash = mixBestiaryText(hash, key);
       hash = mixBestiaryHash(hash, milestones[key] ?? 0);
+    }
+    hash = mixBestiaryHash(hash, progress.firstSeenAt ?? 0);
+    hash = mixBestiaryHash(hash, progress.lastObservedAt ?? 0);
+    hash = mixBestiaryHash(hash, progress.firstCapturedAt ?? 0);
+    for (const [key, node] of Object.entries(progress.research ?? {})) {
+      hash = mixBestiaryText(hash, key);
+      hash = mixBestiaryHash(hash, node.progress);
+      hash = mixBestiaryHash(hash, node.goal);
+    }
+    for (const [key, form] of Object.entries(progress.forms ?? {})) {
+      hash = mixBestiaryText(hash, key);
+      hash = mixBestiaryHash(hash, form.sightings);
+    }
+    for (const value of [...(progress.specimenIds ?? []), ...(progress.summonOrigins ?? []), ...(progress.guildLinks ?? [])]) hash = mixBestiaryText(hash, value);
+    for (const [section, records] of Object.entries(progress.sections ?? {})) {
+      hash = mixBestiaryText(hash, section);
+      hash = mixBestiaryHash(hash, records.length);
     }
   }
   return hash >>> 0;
@@ -3136,12 +3406,21 @@ export class VoxelEngine {
   activeChestTitle = "Chest";
   furnaces = new Map<string, FurnaceState>();
   chests = new Map<string, ChestState>();
+  acquiredLootUniqueIds = new Set<string>();
+  contextualLootContainers = new Map<string, LootContainerRecord>();
+  roadEvents = new Map<string, RoadEventState>();
   apiaries = new Map<string, ApiaryBlockState>();
   orbRacks = new Map<string, OrbRackState>();
   healingStations = new Map<string, CreatureHealerState>();
   digitalItemVault: DigitalItemVault = createDigitalItemVault();
   digitalCreatureArchive: DigitalCreatureArchive = createDigitalCreatureArchive();
   aquariums = new Map<string, AquariumState>();
+  fieldPerches = new Map<string, FieldPerchState>();
+  summonContractState: SummonContractState = createSummonContractState("local");
+  guildBook: GuildBookState = createGuildBook();
+  legendaryEncounters = new Map<string, LegendaryEncounterState>();
+  primeEncounters = new Map<string, PrimeEncounterState>();
+  legendaryResolutionConfirm = new Map<string, { outcome: "covenant" | "release"; until: number }>();
   golemForges = new Map<string, GolemForgeState>();
   alchemyStands = new Map<string, AlchemyStandState>();
   distilleries = new Map<string, DistilleryState>();
@@ -3191,6 +3470,7 @@ export class VoxelEngine {
   apiaryFlowerCache = new Map<string, Array<{ x: number; y: number; z: number }>>();
   socialMotionTimer = 0;
   socialMotions = new Map<number, SocialGroupMotion>();
+  creatureWorkTimer = 1;
   debug = false;
   fullscreen = false;
   target: VoxelHit | null = null;
@@ -3250,6 +3530,8 @@ export class VoxelEngine {
   multiplayerBoatInputs = new Map<string, { boatId: string; forward: number; turn: number; updatedAt: number }>();
   mountedBoatId: string | null = null;
   mountedCreatureId: number | null = null;
+  mountedCreatureSeat: number | null = null;
+  creatureMountSeats = new Map<number, string[]>();
   mobBounds = new THREE.Box3();
   nextBoatId = 1;
   boatRaycaster = new THREE.Raycaster();
@@ -3262,6 +3544,19 @@ export class VoxelEngine {
   projectiles: ArrowProjectile[] = [];
   nextProjectileId = 1;
   dragonEffects: DragonAttackEffect[] = [];
+  temporarySummons = new Map<number, {
+    expiresAt: number; spellId: SpellId; lineageId: string; echo: boolean; roleEvents: number;
+    trialOriginX: number; trialOriginZ: number; lastTrialAt: number; quietStartedAt: number; rescueArmed: boolean;
+  }>();
+  activeSpellFields: ActiveSpellField[] = [];
+  playerCombatStatuses: readonly ActiveCombatStatus[] = [];
+  ironwakeWard: { fragments: number; expiresAt: number } | null = null;
+  tidemendSites = new Map<string, number>();
+  deepLanternNextPulseAt = 0;
+  temporarySpellBlocks = new Map<string, { x: number; y: number; z: number; original: BlockId; expiresAt: number }>();
+  stormstepAirUsed = false;
+  stormstepDashSeconds = 0;
+  stormstepDashVelocity = new THREE.Vector3();
   nextDragonEffectId = 1;
   activatedStructureMarkers = new Set<string>();
   structureActivationTimer = 0;
@@ -3669,7 +3964,7 @@ export class VoxelEngine {
     // React owns keys while any menu is open. This explicit flag also covers
     // multiplayer, where opening a menu intentionally does not pause the host.
     if (this.titleMode || this.paused || this.gameplayOverlayOpen) return;
-    if (["KeyW", "KeyA", "KeyS", "KeyD", "Space", "ShiftLeft", "ShiftRight", "ControlLeft", "ControlRight", "KeyQ", "KeyZ", "KeyX", "KeyC"].includes(event.code)) event.preventDefault();
+    if (["KeyW", "KeyA", "KeyS", "KeyD", "Space", "ShiftLeft", "ShiftRight", "ControlLeft", "ControlRight", "KeyF", "KeyQ", "KeyZ", "KeyX", "KeyC"].includes(event.code)) event.preventDefault();
     if (event.code === "KeyE" && !event.repeat) {
       this.openOverlay("inventory");
       return;
@@ -3708,7 +4003,11 @@ export class VoxelEngine {
       }
       return;
     }
-    if (event.code === "KeyF" && !event.repeat && mountedDragon) {
+    if (this.mountedCreatureId !== null && !event.repeat && ["KeyZ", "KeyX", "KeyC"].includes(event.code)) {
+      const mounted = this.mobs.find((mob) => mob.id === this.mountedCreatureId) ?? null;
+      if (mounted && this.triggerMountedCreatureMove(mounted, event.code as "KeyZ" | "KeyX" | "KeyC")) return;
+    }
+    if (event.code === "KeyF" && !event.repeat && this.mountedCreatureId !== null) {
       this.dismountCreature();
       return;
     }
@@ -3734,11 +4033,6 @@ export class VoxelEngine {
     if (event.code === "Space" && !event.repeat && this.mountedBoatId) {
       event.preventDefault();
       this.dismountBoat();
-      return;
-    }
-    if (event.code === "Space" && !event.repeat && this.mountedCreatureId !== null && !mountedDragon) {
-      event.preventDefault();
-      this.dismountCreature();
       return;
     }
     this.keys.add(event.code);
@@ -3904,6 +4198,10 @@ export class VoxelEngine {
     this.orbRacks.clear();
     this.healingStations.clear();
     this.aquariums.clear();
+    this.fieldPerches.clear();
+    this.legendaryEncounters.clear();
+    this.primeEncounters.clear();
+    this.legendaryResolutionConfirm.clear();
     this.digitalItemVault = createDigitalItemVault();
     this.digitalCreatureArchive = createDigitalCreatureArchive();
     this.golemForges.clear();
@@ -3968,6 +4266,14 @@ export class VoxelEngine {
     this.bestiary = blankBestiary();
     this.plantBestiary = createPlantBestiaryState();
     this.magicState = createMagicState();
+    this.ironwakeWard = null;
+    this.tidemendSites.clear();
+    this.clearTemporaryMagicState();
+    this.summonContractState = createSummonContractState(this.localPlayerId());
+    this.guildBook = createGuildBook();
+    this.legendaryEncounters.clear();
+    this.primeEncounters.clear();
+    this.legendaryResolutionConfirm.clear();
     this.skillState = createSkillState();
     if (this.activeCharacterProfile) {
       this.skillState = applyCharacterStartingSkills(this.skillState, this.activeCharacterProfile.startingSkills);
@@ -3999,10 +4305,17 @@ export class VoxelEngine {
     this.craftGrid = Array.from({ length: 9 }, () => null);
     this.furnaces.clear();
     this.chests.clear();
+    this.acquiredLootUniqueIds.clear();
+    this.contextualLootContainers.clear();
+    this.roadEvents.clear();
     this.apiaries.clear();
     this.orbRacks.clear();
     this.healingStations.clear();
     this.aquariums.clear();
+    this.fieldPerches.clear();
+    this.legendaryEncounters.clear();
+    this.primeEncounters.clear();
+    this.legendaryResolutionConfirm.clear();
     this.digitalItemVault = createDigitalItemVault();
     this.digitalCreatureArchive = createDigitalCreatureArchive();
     this.golemForges.clear();
@@ -4085,6 +4398,7 @@ export class VoxelEngine {
     this.oxygenSeconds = DEFAULT_SWIM_RULES.maxOxygenSeconds;
     this.drowningAccumulator = 0;
     this.world.reset(save.seed, save.edits, generationOptionsFromWorldOptions(this.worldOptions, save.generatorProfile ?? "world-below-v15"));
+    this.world.restoreSurfaceRoadGraph(save.surfaceRoadGraph);
     this.world.initializeAround(save.player.x, save.player.z);
     this.position.set(save.player.x, save.player.y, save.player.z);
     this.spawn.set(save.spawn?.x ?? 0, save.spawn?.y ?? this.world.surfaceAt(0, 0) + 0.51, save.spawn?.z ?? 0);
@@ -4100,7 +4414,7 @@ export class VoxelEngine {
     this.bestiary = blankBestiary();
     for (const kind of MOB_ORDER) {
       const savedProgress = save.bestiary?.[kind];
-      this.bestiary[kind] = { ...this.bestiary[kind], ...savedProgress, milestones: { ...(savedProgress?.milestones ?? {}) } };
+      this.bestiary[kind] = normalizeLivingBestiaryEntry(savedProgress);
     }
     const authorityId = `world:${save.seed}`;
     const playerId = this.localPlayerId();
@@ -4111,6 +4425,15 @@ export class VoxelEngine {
     this.blueprints = normalizeBlueprintState(save.blueprints);
     this.plantBestiary = normalizePlantBestiaryState(save.plantBestiary);
     this.magicState = normalizeMagicState(save.magicState);
+    const rawSpellWorld = save.spellWorldState;
+    this.ironwakeWard = rawSpellWorld?.schema === 1 && rawSpellWorld.ironwakeWard
+      && Number.isFinite(rawSpellWorld.ironwakeWard.fragments) && Number.isFinite(rawSpellWorld.ironwakeWard.expiresAt)
+      ? { fragments: clamp(Math.floor(rawSpellWorld.ironwakeWard.fragments), 0, 6), expiresAt: Math.max(0, rawSpellWorld.ironwakeWard.expiresAt) }
+      : null;
+    this.tidemendSites = new Map(rawSpellWorld?.schema === 1 ? Object.entries(rawSpellWorld.tidemendSites ?? {})
+      .filter(([key, value]) => /^-?\d+,-?\d+$/u.test(key) && typeof value === "number" && Number.isFinite(value))
+      .slice(0, 512).map(([key, value]) => [key, Math.max(0, value)]) : []);
+    this.clearTemporaryMagicState();
     this.skillState = normalizeSkillState(save.skillState);
     this.multiplayerPlayerStates = new Map(Object.entries(save.multiplayerPlayers ?? {}).map(([playerId, state]) => [
       playerId,
@@ -4189,10 +4512,26 @@ export class VoxelEngine {
       output: normalizeCaptureOrbInventorySlot(value.output),
     }]));
     this.chests = restoreChestStorage(save.chests ?? {});
+    const contextualLoot = normalizeContextualLootWorldState(save.contextualLoot);
+    this.acquiredLootUniqueIds = new Set(contextualLoot.acquiredUniqueIds);
+    this.contextualLootContainers = new Map(Object.entries(contextualLoot.containers));
+    this.roadEvents = new Map(Object.entries(save.roadEvents ?? {}).flatMap(([anchorId, value]) => {
+      const normalized = normalizeRoadEventState(value, anchorId);
+      return normalized ? [[anchorId, normalized] as const] : [];
+    }));
     this.apiaries = restoreApiaryStorage(save.apiaries ?? {});
     this.orbRacks = restoreOrbRackStorage(save.orbRacks ?? {});
     this.healingStations = restoreHealingStationStorage(save.healingStations ?? {});
     this.aquariums = normalizeAquariumStorage(save.aquariums ?? {});
+    this.fieldPerches = normalizeFieldPerchStorage(save.fieldPerches ?? {});
+    this.summonContractState = normalizeSummonContractState(save.summonContracts, this.localPlayerId());
+    this.guildBook = normalizeGuildBook(save.guildBook);
+    this.legendaryEncounters = new Map(Object.entries(save.legendaryEncounters ?? {}).flatMap(([siteId, value]) => {
+      const encounterId = value?.encounterId;
+      if (!(encounterId in LEGENDARY_ENCOUNTERS)) return [];
+      return [[siteId, normalizeLegendaryEncounterState(value, encounterId as LegendaryEncounterId, siteId)] as const];
+    }));
+    this.primeEncounters = normalizePrimeEncounterStates(save.primeEncounters);
     this.digitalItemVault = normalizeDigitalItemVault(save.digitalItemVault);
     this.digitalCreatureArchive = normalizeDigitalCreatureArchive(save.digitalCreatureArchive);
     this.golemForges = new Map(Object.entries(save.golemForges ?? {}).map(([key, value]) => [key, normalizeGolemForgeState(value)]));
@@ -4704,16 +5043,24 @@ export class VoxelEngine {
             baby: mob.leviathanGrowth.stage !== "adult",
             aligned: mob.aligned,
           }))
+          || this.unifiedMountEligibility(mob, pose.playerId)?.allowed
+          || this.creatureMountSeats.get(mob.id)?.includes(pose.playerId)
         ));
         if (mob && approved) {
-          this.mobBounds.setFromObject(mob.visual);
-          const riderOffset = Math.max(0.7, this.mobBounds.max.y - mob.group.position.y + 0.1);
-          mob.group.position.set(pose.x, pose.y - riderOffset, pose.z);
-          mob.baseY = mob.group.position.y;
-          mob.angle = -pose.yaw - Math.PI / 2;
-          mob.desiredAngle = mob.angle;
-        }
-      }
+          const seat = this.boardCreatureMount(mob, pose.playerId);
+          if (seat === 0) {
+            this.mobBounds.setFromObject(mob.visual);
+            const riderOffset = Math.max(0.7, this.mobBounds.max.y - mob.group.position.y + 0.1);
+            mob.group.position.set(pose.x, pose.y - riderOffset, pose.z);
+            mob.baseY = mob.group.position.y;
+            mob.angle = -pose.yaw - Math.PI / 2;
+            mob.desiredAngle = mob.angle;
+          } else if (seat > 0) {
+            const passenger = this.creatureSeatPosition(mob, seat);
+            remote.target = { ...remote.target, x: passenger.x, y: passenger.y, z: passenger.z, vx: 0, vy: 0, vz: 0, seated: 1 };
+          }
+        } else for (const [mountId] of this.creatureMountSeats) this.leaveCreatureMount(mountId, pose.playerId);
+      } else for (const [mountId] of this.creatureMountSeats) this.leaveCreatureMount(mountId, pose.playerId);
     }
   }
 
@@ -4763,6 +5110,7 @@ export class VoxelEngine {
         boatTurn: (this.keys.has("KeyD") ? 1 : 0) - (this.keys.has("KeyA") ? 1 : 0),
       } : {}),
       ...(this.mountedCreatureId !== null ? { mountedCreatureId: this.mountedCreatureId } : {}),
+      ...(this.mountedCreatureId !== null && this.mountedCreatureSeat !== null ? { mountedCreatureSeat: this.mountedCreatureSeat } : {}),
     };
   }
 
@@ -4863,7 +5211,7 @@ export class VoxelEngine {
     const bestiary = blankBestiary();
     for (const kind of MOB_ORDER) {
       const progress = progression.bestiary[kind];
-      if (progress) bestiary[kind] = { ...bestiary[kind], ...progress, milestones: { ...(progress.milestones ?? {}) } };
+      if (progress) bestiary[kind] = normalizeLivingBestiaryEntry(progress);
     }
     this.bestiary = bestiary;
     this.plantBestiary = progression.plantBestiary;
@@ -4927,6 +5275,31 @@ export class VoxelEngine {
     };
     this.multiplayerPlayerProgressions.set(identity.id, normalized);
     return normalized;
+  }
+
+  private recordHostCreatureCaptureForPlayer(identity: NonNullable<PeerInfo["identity"]>, mob: MobEntity, now: number) {
+    const current = this.ensureHostPlayerProgression(identity);
+    const existing = normalizeLivingBestiaryEntry(current.state.bestiary[mob.kind]);
+    const forms = recordBestiaryAppearanceForms(existing, {
+      shiny: mob.progression.shiny,
+      markingMask: mob.progression.phenotype.markingMask,
+      accentVariant: mob.progression.phenotype.accentVariant,
+      primeMotif: mob.primeAnchorId && mob.progression.rarityForm === "prime"
+        ? PRIME_FORM_PROFILES[mob.kind]?.motif ?? "unknown"
+        : null,
+    }, now);
+    const firstSpeciesCapture = forms.entry.captures === 0;
+    const entry = recordSpeciesCapture(forms.entry, now, mob.specimenId);
+    const next: PlayerProgressionRecord = {
+      revision: current.revision + 1,
+      state: normalizeMultiplayerPlayerProgression({
+        ...current.state,
+        bestiary: { ...current.state.bestiary, [mob.kind]: entry },
+      }, identity.id),
+    };
+    this.multiplayerPlayerProgressions.set(identity.id, next);
+    this.sendAuthoritativePlayerProgression(identity);
+    return firstSpeciesCapture;
   }
 
   private ensureHostPlayerWallet(identity: NonNullable<PeerInfo["identity"]>) {
@@ -6212,9 +6585,26 @@ export class VoxelEngine {
       yaw: mob.group.rotation.y,
       health: mob.health,
       state: mob.state,
+      level: mob.progression?.level ?? 1,
+      currentTypes: [...(mob.resolvedTypes?.types ?? creatureProfile(mob.kind).naturalTypes)],
+      typeRevision: mob.resolvedTypes?.revisionKey ?? `natural:${creatureProfile(mob.kind).naturalTypes.join("+")}`,
+      statuses: (mob.combatStatuses ?? []).slice(0, 12).map((status) => ({ id: status.id, stacks: status.stacks, remainingSeconds: Math.max(0, status.expiresAtSeconds - this.worldSimulationSeconds()) })),
+      activeMove: mob.activeMove ? { moveId: mob.activeMove.moveId, phase: mob.activeMove.phase, remainingSeconds: mob.activeMove.remaining } : null,
+      specimenId: mob.specimenId,
+      primeAnchorId: mob.primeAnchorId,
+      ...(mob.progression ? {
+        appearanceRevision: `${mob.progression.progressionSeed}:${mob.progression.shiny ? 1 : 0}:${mob.progression.rarityForm}:${mob.progression.phenotype.sizeScale}:${mob.progression.phenotype.hueShift}:${mob.progression.phenotype.markingMask}:${mob.progression.phenotype.markingIntensity}:${mob.progression.phenotype.accentVariant}:${mob.primeAnchorId ?? ""}`,
+        appearance: {
+          progressionSeed: mob.progression.progressionSeed,
+          shiny: mob.progression.shiny,
+          rarityForm: mob.progression.rarityForm,
+          phenotype: { ...mob.progression.phenotype },
+        },
+      } : {}),
       scale: this.mobBaseScale(mob),
-      tamed: Boolean(mob.dragonState?.tamed || mob.petState?.tamed || mob.shadeState?.tamed || mob.reedstriderBond?.tamed || mob.courserBond?.tamed || mob.leviathanGrowth?.tamed || mob.apiaryBee?.tamed),
-      saddled: Boolean(mob.dragonState?.equipment.saddle || mob.shadeState?.saddled || mob.reedstriderBond?.saddled || mob.courserBond?.saddled || mob.leviathanGrowth?.saddled),
+      tamed: Boolean(mob.creatureTamed || mob.dragonState?.tamed || mob.petState?.tamed || mob.shadeState?.tamed || mob.reedstriderBond?.tamed || mob.courserBond?.tamed || mob.leviathanGrowth?.tamed || mob.apiaryBee?.tamed),
+      saddled: Boolean(mob.creatureEquipment?.saddle || mob.dragonState?.equipment.saddle || mob.shadeState?.saddled || mob.reedstriderBond?.saddled || mob.courserBond?.saddled || mob.leviathanGrowth?.saddled),
+      bondTier: mob.progression?.bondTier,
       baby: Boolean(mob.dragonState?.stage === 1 || mob.petState?.baby || mob.careState?.baby || (mob.leviathanGrowth && mob.leviathanGrowth.stage !== "adult")),
       ...(mob.dragonState ? { dragonState: serializeDragonState({ ...mob.dragonState, health: mob.health }) } : {}),
       ...(mob.leviathanGrowth ? {
@@ -6225,7 +6615,7 @@ export class VoxelEngine {
       ...(mob.aetherbellMorph ? { airProgress: mob.aetherbellMorph.airProgress } : {}),
       factionId: mob.factionId,
       aligned: mob.aligned,
-      ownerId: mob.dragonState?.ownerId ?? mob.petState?.ownerId ?? mob.shadeState?.ownerId
+      ownerId: mob.creatureOwnerId ?? mob.dragonState?.ownerId ?? mob.petState?.ownerId ?? mob.shadeState?.ownerId
         ?? mob.reedstriderBond?.ownerId ?? mob.courserBond?.ownerId ?? mob.leviathanGrowth?.ownerId
         ?? mob.apiaryBee?.ownerId ?? mob.hiredByPlayerId ?? null,
       command: mob.dragonState?.command ?? mob.petState?.command ?? mob.followCommand ?? null,
@@ -6285,6 +6675,7 @@ export class VoxelEngine {
       containers: this.multiplayerPeerActiveContainers.get(peerId)
         ? this.networkContainerSnapshots([this.multiplayerPeerActiveContainers.get(peerId)!])
         : [],
+      guildBook: this.guildBook,
       ...(identity ? { playerState: this.ensureHostPlayerSession(identity) } : {}),
     };
   }
@@ -6350,6 +6741,10 @@ export class VoxelEngine {
     this.sideQuestDefinitions = [];
     this.blueprints = createBlueprintState();
     this.magicState = createMagicState();
+    this.summonContractState = createSummonContractState(this.localPlayerId());
+    this.guildBook = createGuildBook();
+    this.legendaryEncounters.clear();
+    this.primeEncounters.clear();
     this.goldWallet = createGoldWallet(sessionAuthority, guestPlayerId, 0);
     this.bankAccount = createBankAccount(sessionAuthority, guestPlayerId, snapshot.time.day);
     this.stockMarket = createStockMarket(sessionAuthority, guestPlayerId, snapshot.seed, snapshot.time.day);
@@ -6389,6 +6784,7 @@ export class VoxelEngine {
     this.applyDestructionTombstones({ tick: snapshot.tick, tombstones: snapshot.tombstones });
     this.applyNetworkBoatSnapshot(snapshot.boats ?? []);
     this.applyNetworkContainerSnapshots(snapshot.containers ?? []);
+    this.guildBook = normalizeGuildBook(snapshot.guildBook);
     if (guestPlayerId) this.applyLocalPlayerSessionSnapshot(snapshot.playerState
       ? normalizeMultiplayerPlayerState(snapshot.playerState, guestPlayerId, this.multiplayer?.identity.variant)
       : normalizeMultiplayerPlayerState(null, guestPlayerId, this.multiplayer?.identity.variant), false, true);
@@ -6415,6 +6811,7 @@ export class VoxelEngine {
     this.applyDestructionTombstones({ tick: snapshot.tick, tombstones: snapshot.tombstones });
     this.applyNetworkBoatSnapshot(snapshot.boats ?? []);
     this.applyNetworkContainerSnapshots(snapshot.containers ?? []);
+    if (snapshot.guildBook) this.guildBook = normalizeGuildBook(snapshot.guildBook);
     if (snapshot.playerState && snapshot.playerState.playerId === this.multiplayer?.identity.id) this.applyLocalPlayerSessionSnapshot(snapshot.playerState, true);
     for (const pose of snapshot.players) this.upsertRemotePlayer(pose, pose.playerId === hostPeer.identity?.id ? hostPeer : undefined);
   }
@@ -6456,16 +6853,34 @@ export class VoxelEngine {
       if (this.pendingNetworkMobDeaths.has(entry.id)) continue;
       if (!(entry.kind in MOB_DEFS) || BUTTERFLY_ORDER.includes(entry.kind as ButterflyKind)) continue;
       let mob = this.mobs.find((candidate) => candidate.id === entry.id);
+      if (mob && entry.appearanceRevision && mob.group.userData.networkAppearanceRevision !== entry.appearanceRevision) {
+        this.removeMob(this.mobs.indexOf(mob));
+        mob = undefined;
+      }
       if (!mob || mob.kind !== entry.kind) {
         if (mob) this.removeMob(this.mobs.indexOf(mob));
         const dragonState = isDragonKind(entry.kind as MobKind) && entry.dragonState
           ? normalizeDragonState(entry.dragonState)
           : null;
         mob = this.spawnMob(entry.kind as MobKind, new THREE.Vector3(entry.x, entry.y, entry.z), {
+          id: entry.id,
+          specimenId: entry.specimenId ?? null,
+          primeAnchorId: entry.primeAnchorId ?? null,
+          name: entry.name ?? null,
+          progression: entry.appearance ? {
+            level: entry.level ?? 1,
+            shiny: entry.appearance.shiny,
+            rarityForm: entry.appearance.rarityForm,
+            phenotype: entry.appearance.phenotype,
+          } : null,
           factionId: entry.factionId ?? null,
           aligned: Boolean(entry.aligned),
           dragonState,
+          creatureOwnerId: entry.ownerId ?? null,
+          creatureTamed: Boolean(entry.tamed),
+          creatureEquipment: entry.saddled ? { saddle: Item.Saddle } : null,
         });
+        mob.group.userData.networkAppearanceRevision = entry.appearanceRevision ?? "legacy";
         mob.id = entry.id;
         mob.group.userData.mobId = entry.id;
         mob.group.traverse((object) => { if (object.userData.mobId !== undefined) object.userData.mobId = entry.id; });
@@ -6485,8 +6900,42 @@ export class VoxelEngine {
       mob.networkSnapshotAge = 0;
       mob.networkYaw = entry.yaw;
       mob.health = entry.health;
+      if (entry.level && entry.level !== mob.progression.level) {
+        const profile = creatureProfile(mob.kind);
+        mob.progression = migrateCreatureProgression({
+          kind: mob.kind, entityId: mob.specimenId, maximumLevel: profile.stats.maximumLevel,
+          defaultMoveIds: learnedMovesAtLevel(profile.moves, entry.level),
+          legacy: { ...mob.progression, level: entry.level },
+        });
+      }
+      if (entry.bondTier && entry.bondTier !== mob.progression.bondTier) {
+        const bondPoints = entry.bondTier === "kindred" ? 600 : entry.bondTier === "partnered" ? 330
+          : entry.bondTier === "trusted" ? 150 : entry.bondTier === "familiar" ? 45 : 0;
+        mob.progression = { ...mob.progression, bondPoints, bondTier: entry.bondTier };
+      }
+      if (entry.currentTypes?.length) mob.resolvedTypes = {
+        types: entry.currentTypes.filter((type): type is CreatureTypeId => CREATURE_TYPE_IDS.includes(type as CreatureTypeId)),
+        sources: mob.resolvedTypes.sources,
+        revisionKey: entry.typeRevision ?? entry.currentTypes.join("|"),
+      };
+      if (entry.statuses) mob.combatStatuses = Object.freeze(entry.statuses.map((status) => ({
+        id: status.id as ActiveCombatStatus["id"], stacks: status.stacks,
+        expiresAtSeconds: this.worldSimulationSeconds() + status.remainingSeconds, source: null,
+      })));
+      mob.activeMove = entry.activeMove ? {
+        moveId: entry.activeMove.moveId,
+        phase: entry.activeMove.phase,
+        remaining: entry.activeMove.remainingSeconds,
+        target: mob.activeMove?.target ?? { kind: "creature", id: mob.id },
+        applied: entry.activeMove.phase !== "active",
+      } : null;
       if (entry.name) mob.name = entry.name;
       mob.attunedOrbId = entry.attunedOrbId ?? null;
+      mob.creatureOwnerId = entry.ownerId ?? null;
+      mob.creatureTamed = Boolean(entry.tamed);
+      mob.creatureEquipment ??= {};
+      if (entry.saddled) mob.creatureEquipment.saddle ??= Item.Saddle;
+      else if (!mob.dragonState?.equipment.saddle && !mob.shadeState?.saddled && !mob.reedstriderBond?.saddled && !mob.courserBond?.saddled && !mob.leviathanGrowth?.saddled) delete mob.creatureEquipment.saddle;
       if (entry.lead) {
         mob.everLed = true;
         this.leadAnchors.set(mob.id, {
@@ -7186,6 +7635,7 @@ export class VoxelEngine {
     let skills = current.skills;
     let accepted = false;
     let mounted = false;
+    let mountSeat: number | undefined;
     let panel: CreatureAction["panel"];
     let message = "The creature does not respond to that interaction.";
     const consumeHeld = () => {
@@ -7205,12 +7655,16 @@ export class VoxelEngine {
           && candidate.group.position.distanceToSquared(mob.group.position) < 25
           && (!bonded || candidate.courserBond?.tamed && candidate.courserBond.ownerId === peer.id)
           && canBreedCreatures(mob.kind, fed.state, candidate.kind, candidate.careState));
-        const family = partner?.careState ? breedCreatureStates(mob.kind, fed.state, partner.kind, partner.careState) : null;
+        const family = partner?.careState ? breedCreatureStates(mob.kind, fed.state, partner.kind, partner.careState, {
+          leftId: mob.specimenId, rightId: partner.specimenId, bornDay: this.day, temperament: mob.definition.temperament,
+        }) : null;
         if (family && partner) {
           mob.careState = family.left;
           partner.careState = family.right;
+          const identity = this.offspringIdentity(mob.kind, family.child.geneticSeed, mob, partner);
           this.spawnMob(mob.kind, mob.group.position.clone().add(new THREE.Vector3(0.58, 0, 0.42)), {
             careState: family.child,
+            ...identity,
             ...(bonded ? { courserBond: { ...createReedstriderBond(), tamed: true, ownerId: peer.id, trust: 8 } } : {}),
           });
           message = `A young ${mob.definition.name} joins the pair.`;
@@ -7238,6 +7692,10 @@ export class VoxelEngine {
         accepted = true;
         message = `${mob.name} is now on a braided lead.`;
       }
+    } else if (!held && !action.crouching && this.creaturePassengerSeatAvailable(mob, peer.id)) {
+      mounted = true;
+      accepted = true;
+      message = `You take ${mob.name}'s passenger seat; the lead rider controls movement.`;
     } else if (mob.kind === "meadow-cow" && held?.item === Item.Bucket) {
       if (mob.milkCooldown > 0) message = `This Cloverback needs another ${Math.ceil(mob.milkCooldown)} seconds before it can be milked.`;
       else {
@@ -7245,6 +7703,7 @@ export class VoxelEngine {
         if (result.added > 0) {
           inventory.splice(0, inventory.length, ...result.state.inventory.map(inventorySlotFromNetwork));
           mob.milkCooldown = CLOVERBACK_MILK_COOLDOWN_SECONDS;
+          if (mob.careState) mob.careState = recordCreatureProduction(mob.careState, "milk", 1, this.day);
           accepted = true;
           message = "Collected cool Meadow Milk. The bucket stays in your hand.";
         } else message = "Make one open pack slot before milking this Cloverback.";
@@ -7445,6 +7904,16 @@ export class VoxelEngine {
       } else if (!held && bond.tamed && bond.ownerId === peer.id && action.crouching) {
         panel = "follower"; accepted = true; message = `${mob.name}'s companion commands are ready.`;
       }
+    } else if (!held && !action.crouching && MOUNT_PROFILES[mob.kind]) {
+      const eligibility = this.unifiedMountEligibility(mob, peer.id);
+      if (eligibility?.allowed || this.creaturePassengerSeatAvailable(mob, peer.id)) {
+        mounted = true;
+        accepted = true;
+        message = `Mounted ${mob.name}.`;
+      } else message = eligibility?.reason === "not-owned" ? `${mob.name} has not formed a keeper bond with you.`
+        : eligibility?.reason === "not-bonded" ? `${mob.name} needs a stronger bond before carrying a rider.`
+          : eligibility?.reason === "too-young" ? `${mob.name} is not yet ready to carry a rider.`
+            : eligibility?.reason === "needs-saddle" ? `${mob.name} needs its authored saddle or harness.` : message;
     } else if (held && mob.careState && feedCareAndMaybeBreed(false)) {
       consumeHeld(); accepted = true;
     }
@@ -7453,6 +7922,15 @@ export class VoxelEngine {
       this.rejectCreatureAction(action, peer.id, message);
       return;
     }
+    if (mounted) {
+      const assignedSeat = this.boardCreatureMount(mob, peer.id);
+      if (assignedSeat < 0) {
+        this.rejectCreatureAction(action, peer.id, `Every fitted seat on ${mob.name} is occupied.`);
+        return;
+      }
+      mountSeat = assignedSeat;
+      if (assignedSeat > 0) message = `You take ${mob.name}'s passenger seat; the lead rider controls movement.`;
+    }
     const next = normalizeMultiplayerPlayerState({
       ...current,
       inventory: inventory.map(networkItemStack),
@@ -7460,7 +7938,7 @@ export class VoxelEngine {
       revision: current.revision + 1,
     }, peer.id, current.variant);
     this.multiplayerPlayerStates.set(peer.id, next);
-    const response: CreatureAction = { ...action, status: "accepted", mounted, ...(panel ? { panel } : {}), message, playerState: next };
+    const response: CreatureAction = { ...action, status: "accepted", mounted, ...(mountSeat !== undefined ? { mountSeat } : {}), ...(panel ? { panel } : {}), message, playerState: next };
     this.queueCriticalReliableRequest(`host-creature-response:${peer.id}:${action.requestId}`, () => session.sendCreatureAction(response, peer.id), 6_000);
     try { this.sendMobSnapshotsToConnectedPeers(); }
     catch { /* The 5 Hz authoritative image remains the fallback. */ }
@@ -7493,6 +7971,7 @@ export class VoxelEngine {
         if (action.message) this.events.onToast(action.message);
         if (mob && action.mounted) {
           this.mountedCreatureId = mob.id;
+          this.mountedCreatureSeat = action.mountSeat ?? 0;
           if (this.cameraMode === "first") this.cameraMode = "third-rear";
           this.keys.clear();
         }
@@ -7696,6 +8175,10 @@ export class VoxelEngine {
           this.rejectCreatureAction(action, peer.identity.id, "That connected aquarium is full or already contains this creature.");
           return;
         }
+        if (!this.transferStoredPrimeCustody(orb.creature, `orb:${orb.orbId}`, `aquarium:${orb.creature.entityId}`)) {
+          this.rejectCreatureAction(action, peer.identity.id, "That Prime specimen is already held by another valid custody record.");
+          return;
+        }
         state = { ...state, residents };
         inventory[current.selected] = captureOrbInventorySlot(released.orb);
       } else if (action.kind === "aquarium-remove") {
@@ -7724,6 +8207,10 @@ export class VoxelEngine {
           emptySlot.count -= 1;
           inventory[freeIndex] = captureOrbInventorySlot(filled);
         } else inventory[emptyIndex] = captureOrbInventorySlot(filled);
+        if (!this.transferStoredPrimeCustody(taken.resident.metadata, `aquarium:${taken.resident.metadata.entityId}`, `orb:${filled.orbId}`)) {
+          this.rejectCreatureAction(action, peer.identity.id, "That Prime specimen's custody record does not match this aquarium.");
+          return;
+        }
         state = { ...state, residents: taken.residents };
       }
       this.aquariums.set(key, state);
@@ -7749,7 +8236,7 @@ export class VoxelEngine {
     }
     if (action.kind === "command") {
       const mob = action.targetId === undefined ? null : this.mobs.find((candidate) => candidate.id === action.targetId);
-      const owner = mob?.dragonState?.ownerId ?? mob?.petState?.ownerId ?? mob?.shadeState?.ownerId
+      const owner = mob?.creatureOwnerId ?? mob?.dragonState?.ownerId ?? mob?.petState?.ownerId ?? mob?.shadeState?.ownerId
         ?? mob?.reedstriderBond?.ownerId ?? mob?.courserBond?.ownerId ?? mob?.leviathanGrowth?.ownerId
         ?? mob?.apiaryBee?.ownerId ?? mob?.hiredByPlayerId ?? null;
       if (!mob || owner !== peer.identity.id || !pose || mob.group.position.distanceToSquared(new THREE.Vector3(pose.x, pose.y, pose.z)) > 24 * 24) {
@@ -7785,12 +8272,26 @@ export class VoxelEngine {
         this.rejectCreatureAction(action, peer.identity.id, "That creature is no longer within Capture Orb range.");
         return;
       }
+      if (this.temporarySummons?.has(mob.id)) {
+        this.rejectCreatureAction(action, peer.identity.id, "Temporary manifestations and echoes cannot enter Capture Orbs; the host must commit a valid Worldpin grounding first.");
+        return;
+      }
       if (mob.aligned && mob.factionId && mob.factionId !== "player") {
         this.rejectCreatureAction(action, peer.identity.id, "Faction-aligned creatures cannot be captured.");
         return;
       }
+      const readiness = this.captureReadinessForMob(mob, orb, new THREE.Vector3(pose.x, pose.y, pose.z));
+      if (!readiness.ready) {
+        this.rejectCreatureAction(action, peer.identity.id, this.captureReadinessMessage(readiness));
+        return;
+      }
+      const priorProgression = mob.progression;
+      mob.progression = recordCreatureCaptureHistory(mob.progression, {
+        capturedAt: Date.now(), captorId: peer.identity.id, methodId: "capture-orb",
+      });
       const captured = captureIntoOrb(orb, this.creatureMetadataForMob(mob));
       if (!captured) {
+        mob.progression = priorProgression;
         this.rejectCreatureAction(action, peer.identity.id, "That creature is still fighting too strongly to capture.");
         return;
       }
@@ -7799,12 +8300,18 @@ export class VoxelEngine {
       else {
         const emptyIndex = inventory.findIndex((slot) => !slot);
         if (emptyIndex < 0) {
+          mob.progression = priorProgression;
           this.rejectCreatureAction(action, peer.identity.id, "Make one empty pack slot before splitting a filled orb from this stack.");
           return;
         }
         held.count -= 1;
         inventory[emptyIndex] = filled;
       }
+      const capturedAt = Date.now();
+      this.resolveLegendaryCapture(mob, `orb:${captured.orbId}`);
+      this.transferPrimeCustody(mob, "captured", `orb:${captured.orbId}`);
+      this.recordHostCreatureCaptureForPlayer(peer.identity, mob, capturedAt);
+      this.dispatchGuildEvent("captureCreature", 1, `capture:${mob.specimenId ?? mob.id}`, { creatureKind: mob.kind });
       this.spawnRecallSparkles(mob, 22);
       this.removeMob(this.mobs.indexOf(mob));
     } else if (action.kind === "recall") {
@@ -7839,12 +8346,14 @@ export class VoxelEngine {
           this.rejectCreatureAction(action, peer.identity.id, "That attuned companion cannot be summoned right now.");
           return;
         }
-        const mob = this.spawnCreatureMetadata(deployment.creature, releasePosition);
+        const mob = this.spawnCreatureMetadata(deployment.creature, releasePosition, `orb:${orb.orbId}`);
         if (!mob) {
           this.rejectCreatureAction(action, peer.identity.id, "That companion needs a safer nearby habitat.");
           return;
         }
         mob.attunedOrbId = orb.orbId;
+        mob.creatureOwnerId = peer.identity.id;
+        mob.creatureTamed = ["trusted", "partnered", "kindred"].includes(mob.progression.bondTier);
         inventory[current.selected] = captureOrbInventorySlot({
           ...deployment.orb,
           attunement: deployment.orb.attunement ? { ...deployment.orb.attunement, activeEntityId: String(mob.id) } : null,
@@ -7852,7 +8361,12 @@ export class VoxelEngine {
         targetId = mob.id;
       } else {
         const released = releaseCaptureOrb(orb);
-        const mob = released ? this.spawnCreatureMetadata(released.creature, releasePosition) : null;
+        const savedProgression = released?.creature.custom.progression as unknown as CreatureProgressionV2 | undefined;
+        const releasedCreature = released && savedProgression ? {
+          ...released.creature,
+          custom: JSON.parse(JSON.stringify({ ...released.creature.custom, progression: recordCreatureReleaseHistory(savedProgression) })) as CreatureMetadata["custom"],
+        } : released?.creature;
+        const mob = releasedCreature ? this.spawnCreatureMetadata(releasedCreature, releasePosition, `orb:${orb.orbId}`, true) : null;
         if (!released || !mob) {
           this.rejectCreatureAction(action, peer.identity.id, "That creature needs a safer nearby habitat.");
           return;
@@ -7900,8 +8414,13 @@ export class VoxelEngine {
         if (replyPeerId) this.rejectCombatAction(action, replyPeerId, "That creature is no longer in attack range.");
         return;
       }
-      const resolvedDamage = this.dragonDamageAfterArmor(mob, damage * legendaryCombatMultiplier(selected?.item, mob.definition));
-      mob.health = Math.max(0, mob.health - resolvedDamage);
+      const requestedDamage = this.dragonDamageAfterArmor(mob, damage * legendaryCombatMultiplier(selected?.item, mob.definition));
+      const beforeHealth = mob.health;
+      this.applyCombatDamageToMob(mob, requestedDamage, { kind: "player", id: action.actorId }, {
+        effectId: action.attack === "ranged" ? "player-ranged" : "player-melee",
+        attackType: definition?.toolKind === "sword" ? "metal" : "neutral",
+      });
+      const resolvedDamage = beforeHealth - mob.health;
       mob.hurtTimer = 0.32;
       mob.fleeTimer = mob.hostile ? 0.45 : 3.2;
       mob.awarenessTimer = Math.max(mob.awarenessTimer, 4.5);
@@ -7946,17 +8465,40 @@ export class VoxelEngine {
       if (replyPeerId) this.rejectCombatAction(action, replyPeerId, "That player is no longer in attack range.");
       return;
     }
+    const targetState = action.targetId === session.identity.id ? null : this.multiplayerPlayerStates.get(action.targetId) ?? null;
+    if (action.targetId !== session.identity.id && !targetState) {
+      if (replyPeerId) this.rejectCombatAction(action, replyPeerId, "That player's host-owned state is unavailable.");
+      return;
+    }
+    const attackerActor = this.playerCombatActor(action.actorId, actorState);
+    const defenderActor = this.playerCombatActor(action.targetId, targetState);
+    const nowSeconds = this.worldSimulationSeconds();
+    const effect: CombatEffect = {
+      id: action.attack === "ranged" ? "player-ranged" : "player-melee",
+      name: action.attack === "ranged" ? "Ranged strike" : "Melee strike",
+      intent: "damage",
+      baseAmount: damage,
+      channel: "physical",
+      packets: [{ type: definition?.toolKind === "sword" ? "metal" : "neutral", share: 1 }],
+    };
+    const event = resolveCombatEffect(attackerActor, defenderActor, effect, {
+      isHost: true,
+      nowSeconds,
+      eventToken: `pvp:${action.requestId}`,
+      friendlyFire: "on",
+      pvpEnabled: true,
+    });
+    if (!event.legal) {
+      if (replyPeerId) this.rejectCombatAction(action, replyPeerId, event.deniedReason ?? "That attack is not legal.");
+      return;
+    }
     let resultingHealth = 0;
     if (action.targetId === session.identity.id) {
-      this.damagePlayer(damage, "another player");
+      this.applyCombatEventToLocalPlayer(event, "Another player's strike");
       resultingHealth = this.health;
     } else {
-      const targetState = this.multiplayerPlayerStates.get(action.targetId);
-      if (!targetState) {
-        if (replyPeerId) this.rejectCombatAction(action, replyPeerId, "That player's host-owned state is unavailable.");
-        return;
-      }
-      const next = { ...targetState, health: Math.max(0, targetState.health - damage), revision: targetState.revision + 1 };
+      const healthMutation = event.mutations.find((mutation) => mutation.kind === "health" && mutation.actor.kind === "player" && mutation.actor.id === action.targetId);
+      const next = { ...targetState!, health: healthMutation?.kind === "health" ? healthMutation.resultingHealth : targetState!.health, revision: targetState!.revision + 1 };
       resultingHealth = next.health;
       this.multiplayerPlayerStates.set(action.targetId, next);
       this.sendAuthoritativePlayerState(action.targetId, action.requestId);
@@ -8348,6 +8890,7 @@ export class VoxelEngine {
         tamed: resident.metadata.tamed,
         crawler: isAquariumCrawler(resident.metadata.kind),
       })),
+      ecology: summarizeAquariumEcology(state.residents.map((resident) => resident.metadata.kind)),
     };
   }
 
@@ -8379,6 +8922,10 @@ export class VoxelEngine {
       this.events.onToast(state.residents.length >= topology.capacity ? "This connected aquarium is full." : "That creature is already in this aquarium.");
       return false;
     }
+    if (!this.transferStoredPrimeCustody(orb.creature, `orb:${orb.orbId}`, `aquarium:${orb.creature.entityId}`)) {
+      this.events.onToast("That Prime specimen is already held by another valid custody record.");
+      return false;
+    }
     this.aquariums.set(key, { ...state, residents });
     this.inventory[this.selected] = captureOrbInventorySlot(released.orb);
     this.events.onToast(`${MOB_DEFS[released.creature.kind].name} settles into the aquarium.`);
@@ -8386,6 +8933,76 @@ export class VoxelEngine {
     this.saveSoon();
     this.emitHud(true);
     return true;
+  }
+
+  useFieldPerch(key: string) {
+    const state = this.fieldPerches.get(key) ?? createFieldPerchState();
+    const held = this.selectedSlot();
+    const orb = captureOrbFromInventorySlot(held);
+    if (!state.resident) {
+      if (!held || !orb?.creature) {
+        this.events.onToast("Place a filled bird Capture Orb on this perch.");
+        return false;
+      }
+      if (orb.attunement) {
+        this.events.onToast("Unattune that Capture Orb before assigning its bird to a perch.");
+        return false;
+      }
+      const next = placeBirdOnFieldPerch(state, orb.creature);
+      const released = next ? releaseCaptureOrb(orb) : null;
+      if (!next || !released) {
+        this.events.onToast("Only perch-trained birds can rest here.");
+        return false;
+      }
+      if (!this.transferStoredPrimeCustody(orb.creature, `orb:${orb.orbId}`, `perch:${orb.creature.entityId}`)) {
+        this.events.onToast("That Prime specimen is already held by another valid custody record.");
+        return false;
+      }
+      this.fieldPerches.set(key, next);
+      this.inventory[this.selected] = captureOrbInventorySlot(released.orb);
+      this.events.onToast(`${MOB_DEFS[released.creature.kind].name} folds into a sleeping perch record. Use again to assign scouting.`);
+      this.saveSoon(); this.emitHud(true);
+      return true;
+    }
+    if (orb && !orb.creature && !orb.attunement) {
+      const taken = takeBirdFromFieldPerch(state);
+      const filled = taken ? captureIntoOrb(orb, taken.metadata, Date.now()) : null;
+      if (!taken || !filled) return false;
+      if (!this.transferStoredPrimeCustody(taken.metadata, `perch:${taken.metadata.entityId}`, `orb:${filled.orbId}`)) return false;
+      this.inventory[this.selected] = captureOrbInventorySlot(filled);
+      this.fieldPerches.set(key, taken.state);
+      this.events.onToast(`${MOB_DEFS[taken.metadata.kind].name} returns to its Capture Orb.`);
+      this.saveSoon(); this.emitHud(true);
+      return true;
+    }
+    const assignment = state.assignment === "sleep" ? "scout" : "sleep";
+    const next = setFieldPerchAssignment(state, assignment);
+    this.fieldPerches.set(key, next);
+    const report = next.lastSignal ? ` Last report: ${next.lastSignal.label}.` : "";
+    this.events.onToast(assignment === "scout" ? `${MOB_DEFS[state.resident.kind].name} is assigned to low-overhead scouting.${report}` : `${MOB_DEFS[state.resident.kind].name} settles back into its sleeping record.`);
+    this.saveSoon(); this.emitHud(true);
+    return true;
+  }
+
+  returnFieldPerchResident(metadata: CreatureMetadata, fallback: THREE.Vector3) {
+    for (let index = 0; index < this.inventory.length; index += 1) {
+      const orb = captureOrbFromInventorySlot(this.inventory[index]);
+      if (!orb || orb.creature || orb.attunement) continue;
+      const filled = captureIntoOrb(orb, metadata, Date.now());
+      if (!filled) continue;
+      if (!this.transferStoredPrimeCustody(metadata, `perch:${metadata.entityId}`, `orb:${filled.orbId}`)) return false;
+      this.inventory[index] = captureOrbInventorySlot(filled);
+      return true;
+    }
+    const filled = captureIntoOrb(createEmptyCaptureOrb(`perch-rescue-${metadata.entityId}-${Date.now().toString(36)}`), metadata, Date.now());
+    if (filled) {
+      if (!this.transferStoredPrimeCustody(metadata, `perch:${metadata.entityId}`, `orb:${filled.orbId}`)) return false;
+      const slot = captureOrbInventorySlot(filled);
+      if (this.addItem(slot.item, 1, slot.durability, undefined, slot.metadata) === 0) return true;
+      this.spawnDrop(slot.item, 1, fallback, slot.durability, slot.metadata);
+      return true;
+    }
+    return Boolean(this.spawnCreatureMetadata(metadata, fallback, `perch:${metadata.entityId}`, true));
   }
 
   aquariumRemoveResident(residentId: string) {
@@ -8424,18 +9041,20 @@ export class VoxelEngine {
       if (!orb || orb.creature || orb.attunement) continue;
       const filled = captureIntoOrb(orb, resident.metadata, Date.now());
       if (!filled) continue;
+      if (!this.transferStoredPrimeCustody(resident.metadata, `aquarium:${resident.metadata.entityId}`, `orb:${filled.orbId}`)) return false;
       this.inventory[index] = captureOrbInventorySlot(filled);
       return true;
     }
     if (!allowEmergencyOrb) return false;
     const filled = captureIntoOrb(createEmptyCaptureOrb(`aquarium-rescue-${resident.id}-${Date.now().toString(36)}`), resident.metadata, Date.now());
     if (filled) {
+      if (!this.transferStoredPrimeCustody(resident.metadata, `aquarium:${resident.metadata.entityId}`, `orb:${filled.orbId}`)) return false;
       const slot = captureOrbInventorySlot(filled);
       const leftover = this.addItem(slot.item, 1, slot.durability, undefined, slot.metadata);
       if (leftover > 0) this.spawnDrop(slot.item, 1, fallback, slot.durability, slot.metadata);
       return true;
     }
-    return Boolean(this.spawnCreatureMetadata(resident.metadata, fallback));
+    return Boolean(this.spawnCreatureMetadata(resident.metadata, fallback, `aquarium:${resident.metadata.entityId}`, true));
   }
 
   chestStorageKey(block: string) {
@@ -8571,7 +9190,9 @@ export class VoxelEngine {
     this.day = transition.day;
     this.sleepVotes.clear();
     this.audio.play("ui");
-    this.events.onToast(target === "morning" ? `You wake at dawn on day ${this.day}.` : `You rest until dusk on day ${this.day}.`);
+    const wardedRest = this.isInsideHearthward(this.position.x, this.position.z);
+    if (wardedRest) this.health = Math.min(10, this.health + 3.5);
+    this.events.onToast(`${target === "morning" ? `You wake at dawn on day ${this.day}.` : `You rest until dusk on day ${this.day}.`}${wardedRest ? " The Hearthward returns warmth and steadies your recovery." : ""}`);
     this.saveSoon();
     this.emitHud(true);
     if (this.multiplayer?.role === "host") {
@@ -9023,7 +9644,7 @@ export class VoxelEngine {
       this.activeCartographyKey = key;
       this.activeFurnaceKey = null;
       this.activeChestKey = null;
-    } else if (["bestiary", "sleep", "pet", "dragon", "magic", "skills", "spell-wheel", "library", "incubator", "map", "quests", "sentient", "trade", "bank", "settlement", "follower"].includes(kind)) {
+    } else if (["bestiary", "sleep", "pet", "dragon", "magic", "skills", "spell-wheel", "library", "incubator", "map", "quests", "guilds", "sentient", "trade", "bank", "settlement", "follower"].includes(kind)) {
       this.activeFurnaceKey = null;
       this.activeChestKey = null;
     }
@@ -9421,6 +10042,260 @@ export class VoxelEngine {
     return false;
   }
 
+  careSelectedCreature(action: CreatureCareAction) {
+    const slot = this.selectedSlot();
+    const orb = captureOrbFromInventorySlot(slot);
+    const creature = orb?.creature;
+    if (!slot || !orb || !creature || orb.attunement?.activeEntityId) {
+      this.events.onToast("Select one stored creature's Capture Orb before using the Creature Camp.");
+      return false;
+    }
+    const profile = creatureProfile(creature.kind);
+    const legacyProgression = creature.custom.progression as unknown as CreatureProgressionV2 | undefined;
+    const progression = migrateCreatureProgression({
+      kind: creature.kind, entityId: creature.entityId, geneticSeed: creature.geneticSeed, age: creature.ageTicks,
+      maximumLevel: profile.stats.maximumLevel, defaultMoveIds: learnedMovesAtLevel(profile.moves, legacyProgression?.level ?? 1),
+      legacy: legacyProgression,
+    });
+    let preferredFood: ItemCode | null = null;
+    if (action === "feed") {
+      preferredFood = [...(MOB_DEFS[creature.kind].diet ?? []), ...(MOB_DEFS[creature.kind].tameItems ?? [])]
+        .find((item) => this.mode === "builder" || this.countItem(item) > 0) ?? null;
+      if (preferredFood === null) {
+        this.events.onToast(`${creature.name ?? MOB_DEFS[creature.kind].name} needs one of its recorded foods in your pack.`);
+        return false;
+      }
+    }
+    const renewableMaterial = creature.kind === "woolhorn" ? "wool" as const
+      : MOB_DEFS[creature.kind].family === "bird" ? "feather" as const : null;
+    const result = applyCreatureCareAction({
+      metadata: creature, progression, state: normalizeCreatureCareState(creature.custom.creatureCare), action,
+      worldDay: this.day, preferredFood: preferredFood !== null, renewableMaterial,
+    });
+    if (!result.accepted) {
+      this.events.onToast(result.message);
+      return false;
+    }
+    if (preferredFood !== null && this.mode === "survival") this.removeItem(preferredFood, 1);
+    const washable = new Set(["burning", "soaked", "poisoned"]);
+    const combatStatuses = action === "wash" && Array.isArray(creature.custom.combatStatuses)
+      ? creature.custom.combatStatuses.filter((status) => !(status && typeof status === "object" && washable.has(String((status as { id?: unknown }).id))))
+      : creature.custom.combatStatuses;
+    const updatedCreature: CreatureMetadata = {
+      ...creature,
+      health: result.health,
+      custom: JSON.parse(JSON.stringify({ ...creature.custom, progression: result.progression, creatureCare: result.state, combatStatuses })) as CreatureMetadata["custom"],
+    };
+    const updatedOrb: CaptureOrb = { ...orb, creature: updatedCreature };
+    this.replaceCaptureOrbEverywhere(orb.orbId, updatedOrb);
+    if (result.renewableYield === "wool") this.addItem(Item.Wool, 1);
+    else if (result.renewableYield === "feather") this.addItem(Item.Feather, 1);
+    this.events.onToast(result.message);
+    this.dispatchGuildEvent("meetHabitatNeed", 1, `care:${orb.orbId}:${action}`, { creatureKind: creature.kind });
+    this.audio.play("craft");
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  setSelectedCreatureTactic(tactic: CreatureProgressionV2["tactic"]) {
+    if (!["guard", "support", "pursue", "cautious", "hold"].includes(tactic)) return false;
+    const orb = captureOrbFromInventorySlot(this.selectedSlot());
+    if (!orb?.creature || orb.attunement?.activeEntityId) return false;
+    const profile = creatureProfile(orb.creature.kind);
+    const progression = migrateCreatureProgression({
+      kind: orb.creature.kind, entityId: orb.creature.entityId, geneticSeed: orb.creature.geneticSeed, age: orb.creature.ageTicks,
+      maximumLevel: profile.stats.maximumLevel, defaultMoveIds: learnedMovesAtLevel(profile.moves, 1),
+      legacy: orb.creature.custom.progression as unknown as CreatureProgressionV2 | undefined,
+    });
+    const creature: CreatureMetadata = { ...orb.creature, custom: JSON.parse(JSON.stringify({ ...orb.creature.custom, progression: { ...progression, tactic } })) as CreatureMetadata["custom"] };
+    this.replaceCaptureOrbEverywhere(orb.orbId, { ...orb, creature });
+    this.events.onToast(`${creature.name ?? MOB_DEFS[creature.kind].name} will use the ${tactic} tactic.`);
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  toggleSelectedCreatureMove(moveId: string) {
+    const orb = captureOrbFromInventorySlot(this.selectedSlot());
+    if (!orb?.creature || orb.attunement?.activeEntityId) return false;
+    const profile = creatureProfile(orb.creature.kind);
+    const progression = migrateCreatureProgression({
+      kind: orb.creature.kind, entityId: orb.creature.entityId, geneticSeed: orb.creature.geneticSeed, age: orb.creature.ageTicks,
+      maximumLevel: profile.stats.maximumLevel, defaultMoveIds: learnedMovesAtLevel(profile.moves, 1),
+      legacy: orb.creature.custom.progression as unknown as CreatureProgressionV2 | undefined,
+    });
+    if (!progression.learnedMoveIds.includes(moveId) || !CREATURE_MOVES[moveId]) return false;
+    const active = [...progression.activeMoveIds];
+    const index = active.indexOf(moveId);
+    if (index >= 0) {
+      if (moveId === profile.moves.basicMoveId) {
+        this.events.onToast("A creature's basic action must remain active.");
+        return false;
+      }
+      active.splice(index, 1);
+    } else {
+      if (active.length >= 4) {
+        this.events.onToast("Choose at most four AI-active moves.");
+        return false;
+      }
+      active.push(moveId);
+    }
+    const creature: CreatureMetadata = { ...orb.creature, custom: JSON.parse(JSON.stringify({
+      ...orb.creature.custom, progression: { ...progression, activeMoveIds: active },
+    })) as CreatureMetadata["custom"] };
+    this.replaceCaptureOrbEverywhere(orb.orbId, { ...orb, creature });
+    this.events.onToast(`${CREATURE_MOVES[moveId].name} ${index >= 0 ? "removed from" : "added to"} the active behavior set.`);
+    if (index < 0) this.dispatchGuildEvent("trainMove", 1, `move:${orb.orbId}:${moveId}`, { creatureKind: orb.creature.kind });
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  setSelectedCreatureFieldUtility(moveId: string) {
+    const orb = captureOrbFromInventorySlot(this.selectedSlot());
+    if (!orb?.creature || orb.attunement?.activeEntityId) return false;
+    const profile = creatureProfile(orb.creature.kind);
+    if (moveId !== profile.moves.fieldUtilityMoveId || !CREATURE_MOVES[moveId]) return false;
+    const progression = migrateCreatureProgression({
+      kind: orb.creature.kind, entityId: orb.creature.entityId, geneticSeed: orb.creature.geneticSeed, age: orb.creature.ageTicks,
+      maximumLevel: profile.stats.maximumLevel, defaultMoveIds: learnedMovesAtLevel(profile.moves, 1),
+      legacy: orb.creature.custom.progression as unknown as CreatureProgressionV2 | undefined,
+    });
+    const creature: CreatureMetadata = { ...orb.creature, custom: JSON.parse(JSON.stringify({
+      ...orb.creature.custom, progression: { ...progression, fieldUtilityMoveId: moveId },
+    })) as CreatureMetadata["custom"] };
+    this.replaceCaptureOrbEverywhere(orb.orbId, { ...orb, creature });
+    this.events.onToast(`${CREATURE_MOVES[moveId].name} is now the field utility command.`);
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  setSelectedCreatureWork(assignment: CreatureWorkAssignment) {
+    const orb = captureOrbFromInventorySlot(this.selectedSlot());
+    if (!orb?.creature || orb.attunement?.activeEntityId) return false;
+    const current = normalizeCreatureWorkState(orb.creature.kind, orb.creature.custom.creatureWork);
+    const next = assignCreatureWork(orb.creature.kind, current, assignment, null);
+    if (!next) {
+      this.events.onToast(`${MOB_DEFS[orb.creature.kind].name} cannot perform that habitat role.`);
+      return false;
+    }
+    const creature: CreatureMetadata = { ...orb.creature, custom: JSON.parse(JSON.stringify({
+      ...orb.creature.custom, creatureWork: next,
+    })) as CreatureMetadata["custom"] };
+    this.replaceCaptureOrbEverywhere(orb.orbId, { ...orb, creature });
+    this.events.onToast(assignment === "rest"
+      ? `${creature.name ?? MOB_DEFS[creature.kind].name} will rest outside active habitat work.`
+      : `${creature.name ?? MOB_DEFS[creature.kind].name} is assigned to ${assignment.replaceAll("-", " ")} work when deployed or housed.`);
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  setSelectedTortoiseShellModule(module: CreatureShellModule | null) {
+    const orb = captureOrbFromInventorySlot(this.selectedSlot());
+    if (!orb?.creature || orb.attunement?.activeEntityId) return false;
+    const current = normalizeCreatureWorkState(orb.creature.kind, orb.creature.custom.creatureWork);
+    const next = fitCreatureShellModule(orb.creature.kind, current, module);
+    if (!next) return false;
+    const creature: CreatureMetadata = { ...orb.creature, custom: JSON.parse(JSON.stringify({
+      ...orb.creature.custom, creatureWork: next,
+    })) as CreatureMetadata["custom"] };
+    this.replaceCaptureOrbEverywhere(orb.orbId, { ...orb, creature });
+    this.events.onToast(module ? `${module.replaceAll("-", " ")} planted in the resting shell-bed.` : "The shell-bed is cleared and ready for a new planting.");
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  researchSelectedCampCreature() {
+    const orb = captureOrbFromInventorySlot(this.selectedSlot());
+    if (!orb?.creature || orb.attunement?.activeEntityId) return false;
+    const priorDay = Number(orb.creature.custom.campResearchDay ?? -1);
+    if (priorDay === this.day) {
+      this.events.onToast("Today's calm camp observation is already recorded for this specimen.");
+      return false;
+    }
+    const care = normalizeCreatureCareState(orb.creature.custom.creatureCare);
+    if (care.presentation < 35 || care.enrichment < 35) {
+      this.events.onToast("Groom or play with the creature before making a useful close observation.");
+      return false;
+    }
+    const kind = orb.creature.kind;
+    this.bestiary[kind] = advanceBestiaryResearch(this.bestiary[kind], {
+      id: "camp-observation", title: "Calm Camp Observation", goal: 3,
+    }, 1, this.worldSimulationSeconds());
+    const creature: CreatureMetadata = { ...orb.creature, custom: JSON.parse(JSON.stringify({
+      ...orb.creature.custom, campResearchDay: this.day,
+    })) as CreatureMetadata["custom"] };
+    this.replaceCaptureOrbEverywhere(orb.orbId, { ...orb, creature });
+    this.events.onToast("You record a careful behavior note in the Living Bestiary.");
+    this.dispatchGuildEvent("observeCreature", 1, `camp-observation:${orb.orbId}:${this.day}`, { creatureKind: kind });
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  toggleSelectedCreatureGear(slotId: "saddle" | "lamp" | "charm", item: ItemCode) {
+    const orb = captureOrbFromInventorySlot(this.selectedSlot());
+    if (!orb?.creature || orb.attunement?.activeEntityId) return false;
+    const allowed = slotId === "saddle" ? [Item.Saddle, Item.DragonSaddle]
+      : slotId === "lamp" ? [Item.DeepgearLanternItem]
+        : [Item.BreatherCharm];
+    if (!new Set<ItemCode>(allowed as ItemCode[]).has(item)) return false;
+    if (slotId === "saddle" && !MOUNT_PROFILES[orb.creature.kind]) {
+      this.events.onToast("This creature is not anatomically suited to a saddle.");
+      return false;
+    }
+    const equipment = { ...((orb.creature.custom.creatureEquipment as Record<string, ItemCode> | undefined) ?? {}) };
+    const existing = equipment[slotId];
+    if (existing === item) {
+      if (this.addItem(existing, 1) !== 0) {
+        this.events.onToast("Make room in your pack before removing that gear.");
+        return false;
+      }
+      delete equipment[slotId];
+    } else {
+      if (this.mode === "survival" && !this.removeItem(item, 1)) {
+        this.events.onToast(`You need ${ITEMS[item]?.name ?? "that gear"} in your pack.`);
+        return false;
+      }
+      if (existing && this.addItem(existing, 1) !== 0) {
+        if (this.mode === "survival") this.addItem(item, 1);
+        this.events.onToast("Make room for the currently fitted gear first.");
+        return false;
+      }
+      equipment[slotId] = item;
+    }
+    const creature: CreatureMetadata = { ...orb.creature, custom: JSON.parse(JSON.stringify({
+      ...orb.creature.custom, creatureEquipment: equipment,
+    })) as CreatureMetadata["custom"] };
+    this.replaceCaptureOrbEverywhere(orb.orbId, { ...orb, creature });
+    this.events.onToast(existing === item ? `${ITEMS[item]?.name ?? "Gear"} removed.` : `${ITEMS[item]?.name ?? "Gear"} fitted safely.`);
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  archiveSelectedCampCreature() {
+    const slot = this.selectedSlot();
+    const orb = captureOrbFromInventorySlot(slot);
+    if (!slot || !orb?.creature) return false;
+    const result = depositCreatureOrb(this.digitalCreatureArchive, orb);
+    if (!result.accepted) {
+      this.events.onToast(result.reason === "full" ? "The Waygrid Creature Archive has no free cell capacity."
+        : result.reason === "deployed" ? "Recall this companion before archiving it." : "That creature cannot be archived from this orb.");
+      return false;
+    }
+    this.digitalCreatureArchive = result.state;
+    this.inventory[this.selected] = null;
+    this.events.onToast(`${orb.creature.name ?? MOB_DEFS[orb.creature.kind].name} returned safely to the Waygrid archive.`);
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
   sameStack(a: InventorySlot | null, b: InventorySlot | null) {
     return inventorySlotsCanStack(a, b);
   }
@@ -9487,7 +10362,12 @@ export class VoxelEngine {
     if (!(this.multiplayer?.role === "guest" && this.activeNetworkContainerId)) sources.push(this.craftGrid);
     if (this.activeChestKey) {
       const chest = this.chests.get(this.activeChestKey);
-      if (chest) sources.push(chest);
+      if (chest) {
+        if (chest.some((candidate) => candidate && candidate.item === item && candidate.durability === durability)) {
+          this.noteContextualLootWithdrawal(this.activeChestKey);
+        }
+        sources.push(chest);
+      }
     }
     if (this.activeFurnaceKey) {
       const furnace = this.furnaces.get(this.activeFurnaceKey);
@@ -9815,6 +10695,7 @@ export class VoxelEngine {
     if (!chest || this.activeChestKey?.startsWith("exhibit:")) return false;
     const orderedPack = [...this.inventory.slice(9), ...this.inventory.slice(0, 9)];
     const result = transferInventoryStacks(chest, orderedPack, { onlyAlreadyPresent: true });
+    if (result.moved > 0) this.noteContextualLootWithdrawal();
     this.chests.set(this.activeChestKey!, result.source as ChestState);
     this.inventory = [...result.target.slice(27), ...result.target.slice(0, 27)] as Array<InventorySlot | null>;
     this.finishInventoryConvenience(result.moved ? `${result.moved} matching item${result.moved === 1 ? "" : "s"} stacked into the pack.` : "Nothing in the chest matches your pack yet.", result.moved, { op: "stack", direction: "container-to-player" });
@@ -9826,6 +10707,7 @@ export class VoxelEngine {
     if (!chest || this.activeChestKey?.startsWith("exhibit:")) return false;
     const orderedPack = [...this.inventory.slice(9), ...this.inventory.slice(0, 9)];
     const result = transferInventoryStacks(chest, orderedPack);
+    if (result.moved > 0) this.noteContextualLootWithdrawal();
     this.chests.set(this.activeChestKey!, result.source as ChestState);
     this.inventory = [...result.target.slice(27), ...result.target.slice(0, 27)] as Array<InventorySlot | null>;
     this.finishInventoryConvenience(result.moved ? `Took ${result.moved} item${result.moved === 1 ? "" : "s"}.` : "The chest is empty or your pack is full.", result.moved, { op: "transfer-all", direction: "container-to-player" });
@@ -10026,6 +10908,7 @@ export class VoxelEngine {
       }
       if (crafted > 0) {
         this.gainSkillExperience("crafting", 2 + crafted * 1.5);
+        this.dispatchGuildEvent("craftUnderConstraint", 1, `craft:${match.recipe.id}:${Math.floor(this.position?.x ?? 0)},${Math.floor(this.position?.z ?? 0)}`, { itemId: String(output.item) });
         this.audio.play("craft");
         this.events.onToast(`Crafted ${itemName(output.item)} ×${crafted}`);
       }
@@ -10042,6 +10925,7 @@ export class VoxelEngine {
     else this.cursor.count += output.count;
     this.consumeCraftMatch(match);
     this.gainSkillExperience("crafting", 3 + output.count);
+    this.dispatchGuildEvent("craftUnderConstraint", 1, `craft:${match.recipe.id}:${Math.floor(this.position?.x ?? 0)},${Math.floor(this.position?.z ?? 0)}`, { itemId: String(output.item) });
     this.updateCraftResult();
     this.audio.play("craft");
     this.saveSoon();
@@ -10543,6 +11427,9 @@ export class VoxelEngine {
       return;
     }
     const slot = slots[index];
+    if (machine === "chest" && slot && (shift || !this.cursor || !inventorySlotsCanStack(this.cursor, slot))) {
+      this.noteContextualLootWithdrawal();
+    }
     if (machine === "chest" && this.activeChestKey?.startsWith("exhibit:")) {
       if (shift && slot) {
         const leftover = this.addItem(slot.item, slot.count, slot.durability, MAIN_THEN_HOTBAR, slot.metadata);
@@ -10656,6 +11543,29 @@ export class VoxelEngine {
     if (containerOperation) this.queueGuestContainerOperation(containerOperation);
   }
 
+  private rememberGeneratedContextualLoot(key: string, resolved: ReturnType<typeof resolveContextualLoot>) {
+    for (const uniqueId of resolved.uniqueIds) this.acquiredLootUniqueIds.add(uniqueId);
+    this.contextualLootContainers.set(key, Object.freeze({
+      generatorVersion: CONTEXTUAL_LOOT_GENERATOR_VERSION,
+      familyId: resolved.familyId,
+      ownership: resolved.ownership,
+      theft: resolved.theft,
+      theftReported: false,
+    }));
+  }
+
+  private noteContextualLootWithdrawal(key = this.activeChestKey) {
+    // A few lightweight inventory harnesses intentionally construct the
+    // engine from its prototype without running the full world constructor.
+    // Contextual ownership is additive, so absence of its ledger must leave
+    // ordinary chest transfers functional.
+    if (!key || !this.contextualLootContainers) return;
+    const record = this.contextualLootContainers.get(key);
+    if (!record?.theft || record.theftReported) return;
+    this.contextualLootContainers.set(key, Object.freeze({ ...record, theftReported: true }));
+    this.events.onToast("This container is privately owned. Taking its contents is recorded as theft by nearby witnesses.");
+  }
+
   generateChestLoot(key: string): ChestState {
     const slots = Array.from({ length: 27 }, () => null as InventorySlot | null);
     const [x, y, z] = key.split(",").map(Number);
@@ -10670,36 +11580,69 @@ export class VoxelEngine {
           ...(loot.durability !== undefined ? { durability: loot.durability } : ITEMS[item]?.maxDurability ? { durability: ITEMS[item].maxDurability } : {}),
         };
       });
+      // Legacy/test structure adapters can expose authored marker loot without
+      // carrying the complete procedural-world sampling surface. Those exact
+      // stacks are already valid; contextual enrichment is additive only.
+      if (typeof this.world.biomeAt !== "function" || typeof this.world.surfaceAt !== "function" || !this.skillState?.skills?.luck) return slots;
+      // Preserve authored/quest-critical stacks, then use any open cells for
+      // the contextual family. Existing opened chests remain save-stable,
+      // while newly discovered structures stop sharing one generic cache.
+      const markerText = `${structureMarker.id}:${structureMarker.lootTable}`;
+      const roomRole = /vault|reliquary|strongbox|captain-cache/u.test(markerText) ? "reward"
+        : /prospector|survey|toolbox/u.test(markerText) ? "survey"
+          : /garden|formulary|witch/u.test(markerText) ? "ingredients"
+            : /rattlekin|totem|ossuary|armory/u.test(markerText) ? "armory"
+              : /observer|sky|lens|stormglass/u.test(markerText) ? "signal"
+                : /aqueduct|cistern|bath/u.test(markerText) ? "machinery"
+                  : /wreck|caravan|cargo|sea-chest/u.test(markerText) ? "cargo"
+                    : /toll|bridge|road/u.test(markerText) ? "repair"
+                      : /harp|listener|story/u.test(markerText) ? "stories"
+                        : /guild-lodge|guild-hall/u.test(markerText) ? "public" : "supplies";
+      const contextual = resolveContextualLoot({
+        generatorVersion: CONTEXTUAL_LOOT_GENERATOR_VERSION,
+        containerId: key,
+        archetype: "chest",
+        structureKind: markerText,
+        roomRole,
+        biomeId: this.world.biomeAt(x, z),
+        depthBand: this.world.surfaceAt(x, z) - y > 70 ? "abyssal" : this.world.surfaceAt(x, z) - y > 32 ? "deep" : this.world.surfaceAt(x, z) - y > 8 ? "shallow" : "surface",
+        dangerTier: Math.max(0, Math.min(10, Math.floor((this.world.surfaceAt(x, z) - y) / 12))),
+        ...(markerText.includes("guild-") ? { ownership: "private" as const } : {}),
+        lockTier: markerText.includes("vault") ? 4 : 0,
+        progressionTags: [],
+        acquiredUniqueIds: this.acquiredLootUniqueIds,
+        seed: (this.world.seed ^ Math.imul(x || 0, 374761393) ^ Math.imul(y || 0, 1103515245) ^ Math.imul(z || 0, 668265263)) >>> 0,
+        luck: this.skillState.skills.luck.level + (this.skillState.unlockedPerkIds.includes("luck-careful-search") ? 10 : 0),
+      });
+      this.rememberGeneratedContextualLoot(key, contextual);
+      const contextualStacks = contextual.slots.filter((slot): slot is InventorySlot => Boolean(slot));
+      for (const stack of contextualStacks) {
+        const empty = slots.findIndex((slot) => slot === null);
+        if (empty < 0) break;
+        slots[empty] = { ...stack };
+      }
       return slots;
     }
-    let state = (this.world.seed ^ Math.imul(x || 0, 374761393) ^ Math.imul(y || 0, 1103515245) ^ Math.imul(z || 0, 668265263)) >>> 0;
-    const random = () => {
-      state += 0x6d2b79f5;
-      let value = state;
-      value = Math.imul(value ^ (value >>> 15), value | 1);
-      value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
-      return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
-    };
-    const put = (item: ItemCode, min: number, max: number, chance = 1) => {
-      const adjustedChance = luckAdjustedChance(chance, this.skillState.skills.luck.level, this.skillState.unlockedPerkIds.includes("luck-careful-search") ? 10 : 0);
-      if (random() > adjustedChance) return;
-      if (chance < 1) this.gainSkillExperience("luck", Math.max(0.25, (1 - chance) * 1.5));
-      const empty = slots.map((slot, index) => slot ? -1 : index).filter((index) => index >= 0);
-      if (!empty.length) return;
-      slots[empty[Math.floor(random() * empty.length)]] = { item, count: min + Math.floor(random() * (max - min + 1)), ...(ITEMS[item]?.maxDurability ? { durability: ITEMS[item].maxDurability } : {}) };
-    };
-    put(Item.Coal, 2, 7);
-    put(BlockId.Torch, 3, 9);
-    put(Item.Bread, 1, 3, 0.82);
-    put(Item.Berry, 2, 5, 0.7);
-    put(Item.IronIngot, 1, 3, 0.38);
-    put(Item.GoldIngot, 1, 2, 0.2);
-    put(Item.CrystalShard, 1, 2, 0.08);
-    put(Item.StonePickaxe, 1, 1, 0.14);
-    put(Item.IronSword, 1, 1, 0.045);
-    put(Item.GlowDust, 1, 4, 0.28);
-    put(Item.Wheat, 2, 6, 0.5);
-    return slots;
+    const surface = this.world.surfaceAt(x, z);
+    const depth = surface - y;
+    const resolved = resolveContextualLoot({
+      generatorVersion: CONTEXTUAL_LOOT_GENERATOR_VERSION,
+      containerId: key,
+      archetype: "chest",
+      structureKind: "wilderness-cache",
+      roomRole: "supplies",
+      biomeId: this.world.biomeAt(x, z),
+      depthBand: depth > 70 ? "abyssal" : depth > 32 ? "deep" : depth > 8 ? "shallow" : "surface",
+      dangerTier: Math.max(0, Math.min(10, Math.floor(depth / 12))),
+      ownership: "abandoned",
+      lockTier: 0,
+      progressionTags: [],
+      acquiredUniqueIds: this.acquiredLootUniqueIds,
+      seed: (this.world.seed ^ Math.imul(x || 0, 374761393) ^ Math.imul(y || 0, 1103515245) ^ Math.imul(z || 0, 668265263)) >>> 0,
+      luck: this.skillState.skills.luck.level + (this.skillState.unlockedPerkIds.includes("luck-careful-search") ? 10 : 0),
+    });
+    this.rememberGeneratedContextualLoot(key, resolved);
+    return [...resolved.slots];
   }
 
   fuelValue(item: ItemCode) {
@@ -11157,9 +12100,11 @@ export class VoxelEngine {
     const asset = assets[Math.min(assets.length - 1, Math.floor(Math.random() * assets.length))];
     const sample = CREATURE_SAMPLE_BY_ASSET[asset as keyof typeof CREATURE_SAMPLE_BY_ASSET] ?? null;
     if (sample) {
+      const primeMotif = mob.primeAnchorId ? PRIME_FORM_PROFILES[mob.kind]?.motif ?? "" : "";
+      const primePitch = primeMotif ? ((stableCreatureSeed(mob.kind, primeMotif) % 9) - 4) * .025 : 0;
       this.audio.playSample(sample, {
-        gain: sound.gain,
-        playbackRate: 1 + (Math.random() * 2 - 1) * sound.pitchJitter,
+        gain: sound.gain * (primeMotif ? 1.12 : 1),
+        playbackRate: 1 + primePitch + (Math.random() * 2 - 1) * sound.pitchJitter,
         position: mob.group.position,
         refDistance: Math.max(1.5, mob.definition.radius * 1.6),
         maxDistance: mob.definition.sentient ? 42 : 54,
@@ -11291,7 +12236,7 @@ export class VoxelEngine {
   creatureMetadataForMob(mob: MobEntity): CreatureMetadata {
     return {
       schema: 1,
-      entityId: String(mob.id),
+      entityId: mob.specimenId,
       kind: mob.kind,
       health: mob.health,
       maxHealth: mob.maxHealth,
@@ -11299,8 +12244,8 @@ export class VoxelEngine {
       baby: Boolean(mob.dragonState?.stage === 1 || mob.petState?.baby || mob.careState?.baby),
       temperament: mob.definition.temperament,
       hostile: mob.hostile,
-      tamed: Boolean(mob.dragonState?.tamed || mob.petState?.tamed || mob.shadeState?.tamed || mob.reedstriderBond?.tamed || mob.courserBond?.tamed || mob.leviathanGrowth?.tamed || mob.apiaryBee?.tamed || mob.hiredByPlayerId),
-      ownerId: mob.dragonState?.ownerId ?? mob.petState?.ownerId ?? mob.shadeState?.ownerId ?? mob.reedstriderBond?.ownerId ?? mob.courserBond?.ownerId ?? mob.leviathanGrowth?.ownerId ?? mob.apiaryBee?.ownerId ?? mob.hiredByPlayerId ?? null,
+      tamed: Boolean(mob.creatureTamed || mob.dragonState?.tamed || mob.petState?.tamed || mob.shadeState?.tamed || mob.reedstriderBond?.tamed || mob.courserBond?.tamed || mob.leviathanGrowth?.tamed || mob.apiaryBee?.tamed || mob.hiredByPlayerId),
+      ownerId: mob.creatureOwnerId ?? mob.dragonState?.ownerId ?? mob.petState?.ownerId ?? mob.shadeState?.ownerId ?? mob.reedstriderBond?.ownerId ?? mob.courserBond?.ownerId ?? mob.leviathanGrowth?.ownerId ?? mob.apiaryBee?.ownerId ?? mob.hiredByPlayerId ?? null,
       name: mob.petState?.name ?? (mob.name !== mob.definition.name ? mob.name : null),
       geneticSeed: mob.petState?.geneticSeed ?? mob.apiaryBee?.geneticSeed ?? ((mob.id * 2654435761) >>> 0),
       command: mob.petState?.command ?? null,
@@ -11330,11 +12275,253 @@ export class VoxelEngine {
         ...(mob.followCommand !== "follow" ? { followCommand: mob.followCommand } : {}),
         ...(mob.hiredByPlayerId ? { hiredByPlayerId: mob.hiredByPlayerId } : {}),
         ...(mob.attunedOrbId ? { attunedOrbId: mob.attunedOrbId } : {}),
+        ...(mob.legendaryEncounterId ? { legendaryEncounterId: mob.legendaryEncounterId } : {}),
+        ...(mob.legendarySiteId ? { legendarySiteId: mob.legendarySiteId } : {}),
+        ...(mob.primeAnchorId ? { primeAnchorId: mob.primeAnchorId } : {}),
+        ...(mob.groundedSummonLineageId ? { groundedSummonLineageId: mob.groundedSummonLineageId } : {}),
+        ...(mob.groundedSummonEntityId ? { groundedSummonEntityId: mob.groundedSummonEntityId } : {}),
+        ...(mob.mountExertion ? { mountExertion: mob.mountExertion, mountMode: mob.mountMode, mountVerticalVelocity: mob.mountVerticalVelocity } : {}),
+        creatureWork: mob.creatureWork,
+        ...(Object.keys(mob.creatureEquipment ?? {}).length ? { creatureEquipment: mob.creatureEquipment } : {}),
+        ...(mob.creatureOwnerId ? { creatureOwnerId: mob.creatureOwnerId } : {}),
+        ...(mob.creatureTamed ? { creatureTamed: true } : {}),
+        progression: mob.progression,
+        typeSources: mob.typeSources,
+        combatStatuses: mob.combatStatuses,
         ...(mob.everLed ? { everLed: true } : {}),
         persistentPoiResident: mob.persistentPoiResident,
         enclosed: mob.enclosed,
       })) as CreatureMetadata["custom"],
     };
+  }
+
+  private resolveLegendaryCapture(mob: MobEntity, custodyEntityId = `creature:${mob.id}`) {
+    if (!mob.legendaryEncounterId || !mob.legendarySiteId) return false;
+    const current = this.legendaryEncounters.get(mob.legendarySiteId)
+      ?? createLegendaryEncounterState(mob.legendaryEncounterId, mob.legendarySiteId);
+    const next = current.status === "resolved" && current.outcome === "capture" && current.custodyEntityId
+      ? transferLegendaryCustody(current, current.custodyEntityId, custodyEntityId)
+      : resolveLegendaryEncounter(current, "capture", custodyEntityId);
+    if (next === current) return false;
+    this.legendaryEncounters.set(mob.legendarySiteId, next);
+    this.events.onToast(`${mob.name}'s legendary capture is now the only living custody reference for this world.`);
+    return true;
+  }
+
+  private applyLegendaryEventToState(siteId: string, encounterId: LegendaryEncounterId, kind: LegendaryEventKind, amount = 1, sourceId = `${kind}:${Math.floor(this.worldSimulationSeconds())}`) {
+    if (this.multiplayer?.role === "guest") return false;
+    const encounters = this.legendaryEncounters ?? (this.legendaryEncounters = new Map<string, LegendaryEncounterState>());
+    const current = encounters.get(siteId) ?? createLegendaryEncounterState(encounterId, siteId);
+    const before = legendaryStageProgress(current);
+    const next = applyLegendaryEvent(current, { kind, amount, siteId, sourceId });
+    if (next === current || next.revision === current.revision) return false;
+    encounters.set(siteId, next);
+    const after = legendaryStageProgress(next);
+    const guildKind: GuildObjectiveKind = kind === "observe-sign" ? "surveyLocation"
+      : kind === "restore-habitat" || kind === "calm-creature" ? "meetHabitatNeed"
+        : kind === "repair-anchor" ? "repairStructure"
+          : kind === "travel-route" ? "travelRoad"
+            : kind === "offer-crafted-item" ? "craftUnderConstraint" : "resolveEncounter";
+    this.dispatchGuildEvent(guildKind, 1, `legendary:${encounterId}:${kind}`, { encounterId });
+    if (next.stageIndex > current.stageIndex) this.events.onToast(`${after.definition.title} · ${after.stage.name} begins.`);
+    else {
+      const advanced = after.objectives.find((objective) => objective.event === kind);
+      if (advanced) this.events.onToast(`${before.definition.title} · ${advanced.description} (${advanced.current}/${advanced.target})`);
+    }
+    this.saveSoon(); this.emitHud(true);
+    return true;
+  }
+
+  private applyLegendaryEventForMob(mob: MobEntity, kind: LegendaryEventKind, amount = 1, sourceId = `mob:${mob.id}:${kind}:${Math.floor(this.worldSimulationSeconds())}`) {
+    return mob.legendarySiteId && mob.legendaryEncounterId
+      ? this.applyLegendaryEventToState(mob.legendarySiteId, mob.legendaryEncounterId, kind, amount, sourceId)
+      : false;
+  }
+
+  private applyLegendaryEventNear(position: Readonly<{ x: number; z: number }>, kind: LegendaryEventKind, amount = 1, radius = 24, sourceId = `world:${Math.floor(position.x)},${Math.floor(position.z)}:${kind}`) {
+    const mob = (this.mobs ?? []).filter((candidate) => candidate.legendaryEncounterId && candidate.legendarySiteId
+      && (candidate.group.position.x - position.x) ** 2 + (candidate.group.position.z - position.z) ** 2 <= radius * radius)
+      .sort((left, right) => ((left.group.position.x - position.x) ** 2 + (left.group.position.z - position.z) ** 2)
+        - ((right.group.position.x - position.x) ** 2 + (right.group.position.z - position.z) ** 2) || left.id - right.id)[0];
+    return mob ? this.applyLegendaryEventForMob(mob, kind, amount, sourceId) : false;
+  }
+
+  private resolveLegendaryOutcome(mob: MobEntity, outcome: Exclude<LegendaryOutcome, "capture">) {
+    if (!mob.legendarySiteId || !mob.legendaryEncounterId || this.multiplayer?.role === "guest") return false;
+    const current = this.legendaryEncounters.get(mob.legendarySiteId) ?? createLegendaryEncounterState(mob.legendaryEncounterId, mob.legendarySiteId);
+    const next = resolveLegendaryEncounter(current, outcome);
+    if (next === current) return false;
+    this.legendaryEncounters.set(mob.legendarySiteId, next);
+    this.dispatchGuildEvent("choiceOutcome", 1, `legendary-outcome:${mob.legendaryEncounterId}:${outcome}`, { encounterId: mob.legendaryEncounterId });
+    this.events.onToast(`${LEGENDARY_ENCOUNTERS[mob.legendaryEncounterId].title} · ${LEGENDARY_ENCOUNTERS[mob.legendaryEncounterId].outcomes[outcome]}`);
+    if (outcome === "covenant") {
+      mob.persistentPoiResident = true;
+      mob.hostile = false;
+      mob.aligned = true;
+      mob.factionId = "player";
+      mob.followCommand = "hold";
+    } else if (outcome === "release") {
+      const index = this.mobs.indexOf(mob);
+      if (index >= 0) this.removeMob(index);
+    }
+    this.saveSoon(); this.emitHud(true);
+    return true;
+  }
+
+  private advancePrimeClue(mob: MobEntity, clueId: "field-sighting" | "distinctive-call" | "kinmark-study") {
+    if (!mob.primeAnchorId || this.multiplayer?.role === "guest") return false;
+    const current = this.primeEncounters.get(mob.primeAnchorId);
+    if (!current || ["captured", "defeated"].includes(current.status)) return false;
+    const next = advancePrimeEncounterClue(current, clueId, Date.now());
+    if (next === current) return false;
+    this.primeEncounters.set(mob.primeAnchorId, next);
+    const profile = PRIME_FORM_PROFILES[mob.kind];
+    this.events.onToast(`${profile?.name ?? mob.name} field route ${next.routeProgress ?? 0}/3 · ${profile?.clue ?? "Its ecological signs now point more clearly."}`);
+    this.saveSoon();
+    return true;
+  }
+
+  private updatePrimeAmbientBehavior(mob: MobEntity) {
+    if (!mob.primeAnchorId || mob.group.position.distanceToSquared(this.position) > 26 * 26) return;
+    const motif = PRIME_FORM_PROFILES[mob.kind]?.motif;
+    if (!motif) return;
+    const cadence = 7 + mob.id % 5;
+    const cycle = Math.floor(mob.age / cadence);
+    if (mob.group.userData.primeAmbientCycle === cycle) return;
+    mob.group.userData.primeAmbientCycle = cycle;
+    const particle = motif === "storm-belly" || motif === "storm-cairn" ? BlockId.Glowstone
+      : motif === "living-garden" || motif === "reed-court" ? BlockId.RedFlower
+        : motif === "triform-colony" || motif === "fungal-crown" ? BlockId.MushroomCap
+          : motif === "winter-mantle" ? BlockId.Snow
+            : motif === "walking-islet" || motif === "first-stratum" ? BlockId.Moss
+              : motif === "observatory-veil" ? BlockId.LuminousAlgae
+                : motif === "mirror-crown" || motif === "glass-script" ? BlockId.CrystalBlock
+                  : BlockId.ResonantCrystal;
+    const count = motif === "storm-belly" && ["drizzle", "rain", "thunder"].includes(this.weatherState.kind) ? 7 : 3;
+    this.spawnParticles(mob.group.position.x, mob.group.position.y + mob.definition.height * this.mobBaseScale(mob) * .62, mob.group.position.z, particle, count);
+  }
+
+  private observeCreatureRarity(mob: MobEntity) {
+    let changed = this.advancePrimeClue(mob, "field-sighting");
+    const forms = recordBestiaryAppearanceForms(this.bestiary[mob.kind], {
+      shiny: mob.progression.shiny,
+      markingMask: mob.progression.phenotype.markingMask,
+      accentVariant: mob.progression.phenotype.accentVariant,
+      primeMotif: mob.primeAnchorId && mob.progression.rarityForm === "prime"
+        ? PRIME_FORM_PROFILES[mob.kind]?.motif ?? "unknown"
+        : null,
+    }, Date.now());
+    this.bestiary[mob.kind] = forms.entry;
+    changed ||= forms.added;
+    if (changed) { this.saveSoon(); this.emitHud(true); }
+    return changed;
+  }
+
+  private transferPrimeCustody(mob: MobEntity, status: "captured" | "released", custodyId: string | null) {
+    if (!mob.primeAnchorId || this.multiplayer?.role === "guest") return true;
+    const current = this.primeEncounters.get(mob.primeAnchorId);
+    if (!current) return false;
+    const next = transferPrimeEncounterCustody(current, status, mob.specimenId, custodyId, status === "released" ? mob.id : null, Date.now());
+    if (next === current && (current.status !== status || current.specimenId && current.specimenId !== mob.specimenId
+      || status === "released" && current.custodyId && current.custodyId !== custodyId)) return false;
+    this.primeEncounters.set(mob.primeAnchorId, next);
+    return true;
+  }
+
+  private transferStoredPrimeCustody(metadata: CreatureMetadata, fromCustodyId: string, toCustodyId: string) {
+    const anchorId = typeof metadata.custom.primeAnchorId === "string" ? metadata.custom.primeAnchorId : null;
+    if (!anchorId) return true;
+    const current = this.primeEncounters.get(anchorId);
+    if (!current) return false;
+    const next = transferPrimeCustodyReference(current, metadata.entityId, fromCustodyId, toCustodyId, Date.now());
+    if (next === current && current.custodyId !== toCustodyId) return false;
+    this.primeEncounters.set(anchorId, next);
+    return true;
+  }
+
+  private captureReadinessForMob(mob: MobEntity, orb: CaptureOrb, keeperPosition: THREE.Vector3 = this.position): CaptureReadiness {
+    const profile = creatureProfile(mob.kind);
+    const keeper = keeperPosition ?? this.position ?? mob.group.position;
+    // Capture is a migration boundary: old worlds and long-sleeping entities
+    // can reach the orb before every v2 field has been materialized.
+    mob.specimenId ||= `legacy:${mob.kind}:${mob.id}`;
+    mob.progression ??= migrateCreatureProgression({
+      kind: mob.kind,
+      entityId: mob.specimenId,
+      maximumLevel: profile.stats.maximumLevel,
+      defaultMoveIds: learnedMovesAtLevel(profile.moves, 1),
+    });
+    mob.combatStatuses ??= Object.freeze([]);
+    mob.creatureEquipment ??= {};
+    const entry = normalizeLivingBestiaryEntry(this.bestiary?.[mob.kind]);
+    if (this.bestiary) this.bestiary[mob.kind] = entry;
+    const completedResearch = Object.values(entry.research).filter((node) => node.unlockedAt !== null).length;
+    const researchLevel = entry.secretUnlocked || completedResearch >= 2 ? 3 : completedResearch > 0 || entry.captures > 0 ? 2 : entry.seen ? 1 : 0;
+    const knowledge = captureKnowledgeForResearch(mob.kind, profile.captureProfile, researchLevel);
+    const getBlock = typeof this.world?.getBlock === "function" ? this.world.getBlock.bind(this.world) : null;
+    const keeperSubmerged = Boolean(getBlock && blockContainsWater(getBlock(
+      Math.floor(keeper.x + 0.5), Math.floor(keeper.y + 0.5), Math.floor(keeper.z + 0.5),
+    )));
+    const creatureSubmerged = Boolean(getBlock && blockContainsWater(getBlock(
+      Math.floor(mob.group.position.x + 0.5), Math.floor(mob.group.position.y + 0.5), Math.floor(mob.group.position.z + 0.5),
+    )));
+    const bonded = Boolean(mob.dragonState?.tamed || mob.petState?.tamed || mob.shadeState?.tamed || mob.reedstriderBond?.tamed
+      || mob.courserBond?.tamed || mob.leviathanGrowth?.tamed || mob.apiaryBee?.tamed || mob.hiredByPlayerId);
+    const subdued = mob.health <= 1 || mob.health < mob.maxHealth * 0.5;
+    const nowSeconds = this.worldSimulationSeconds();
+    const resonanceMatched = captureResonanceMatched(mob.combatStatuses, nowSeconds);
+    const encounterState = mob.legendarySiteId ? this.legendaryEncounters?.get(mob.legendarySiteId) ?? null : null;
+    const encounterProgress = encounterState ? legendaryStageProgress(encounterState) : null;
+    const encounterComplete = mob.progression.rarityForm !== "legendary" ? bonded
+      : Boolean(encounterState && encounterProgress?.complete
+        && encounterState.stageIndex === encounterProgress.definition.stages.length - 1
+        && encounterState.status === "active");
+    const ordinaryReadiness = evaluateCaptureReadiness({
+      profileId: profile.captureProfile,
+      fittedLens: orb.lens ?? null,
+      learnedConditions: knowledge.learnedConditions,
+      states: {
+        "safe-approach": !mob.hostile && (mob.awarenessTimer ?? 0) <= 0.05,
+        calm: (mob.awarenessTimer ?? 0) <= 0.05 && (mob.fleeTimer ?? 0) <= 0.05,
+        fed: bonded,
+        unaware: !mob.seesPlayer && (mob.awarenessTimer ?? 0) <= 0.05,
+        tired: (mob.attackCooldown ?? 0) > 0.35 && (mob.fleeTimer ?? 0) <= 0.2,
+        intercepted: mob.group.position.distanceToSquared(keeper) <= 6.5 * 6.5 && (mob.fleeTimer ?? 0) <= 0.2,
+        vulnerable: (mob.hurtTimer ?? 0) > 0 || subdued,
+        "objective-resolved": !mob.hostile || bonded,
+        subdued,
+        submerged: keeperSubmerged && creatureSubmerged,
+        "resonance-matched": resonanceMatched,
+        rescued: mob.progression.captureHistory.lastMethodId === "rescue",
+        "anchor-window": mob.followCommand === "hold" || bonded,
+        "encounter-complete": encounterComplete,
+        "legendary-consent": bonded || encounterComplete,
+      },
+    });
+    if (!mob.primeAnchorId || mob.progression.rarityForm !== "prime") return ordinaryReadiness;
+    const primeState = this.primeEncounters?.get(mob.primeAnchorId);
+    const routeReady = primeEncounterRouteComplete(primeState);
+    const routeCondition = Object.freeze({
+      id: null,
+      label: routeReady ? "Prime field route complete" : "Prime field route incomplete",
+      hint: routeReady ? "Its three ecological signs have been documented." : "Observe the specimen, hear its distinctive call, and complete an uninterrupted Kinmark study.",
+      satisfied: routeReady,
+      learned: Boolean(primeState?.routeProgress),
+    });
+    return Object.freeze({
+      ...ordinaryReadiness,
+      ready: ordinaryReadiness.ready && routeReady,
+      summary: routeReady ? ordinaryReadiness.summary : "Prime specimens require a completed three-step field route; damage cannot bypass it.",
+      conditions: Object.freeze([...ordinaryReadiness.conditions, routeCondition]),
+    });
+  }
+
+  private captureReadinessMessage(readiness: CaptureReadiness) {
+    if (!readiness.capturable) return readiness.summary;
+    const known = readiness.conditions.filter((condition) => condition.learned && !condition.satisfied).map((condition) => condition.label);
+    const unknown = readiness.conditions.filter((condition) => !condition.learned && !condition.satisfied).length;
+    return known.length || unknown ? `${readiness.profileName} capture needs ${[...known, ...(unknown ? [`${unknown} unknown condition${unknown === 1 ? "" : "s"}`] : [])].join(", ")}.`
+      : `${readiness.profileName} capture is ready.`;
   }
 
   creatureReleasePosition(metadata: CreatureMetadata, requested: THREE.Vector3) {
@@ -11378,11 +12565,21 @@ export class VoxelEngine {
     return new THREE.Vector3(requested.x, ground + definition.footOffset, requested.z);
   }
 
-  spawnCreatureMetadata(metadata: CreatureMetadata, releasePosition: THREE.Vector3) {
+  spawnCreatureMetadata(metadata: CreatureMetadata, releasePosition: THREE.Vector3, primeCustodyId: string | null = null, releasePrime = false) {
+    const primeAnchorId = typeof metadata.custom.primeAnchorId === "string" && metadata.custom.primeAnchorId.startsWith("prime:")
+      ? metadata.custom.primeAnchorId : null;
+    if (primeAnchorId) {
+      const state = this.primeEncounters.get(primeAnchorId);
+      const duplicateLoaded = this.mobs.some((candidate) => candidate.specimenId === metadata.entityId)
+        || this.sleepingCreatures.some((candidate) => candidate.specimenId === metadata.entityId);
+      if (duplicateLoaded || state?.specimenId && state.specimenId !== metadata.entityId
+        || state?.status === "captured" && state.custodyId && state.custodyId !== primeCustodyId) return null;
+    }
     const resolvedPosition = this.creatureReleasePosition(metadata, releasePosition);
     if (!resolvedPosition) return null;
     const mob = this.spawnMob(metadata.kind, resolvedPosition, {
       health: metadata.health,
+      specimenId: metadata.entityId,
       age: metadata.ageTicks / 20,
       petState: metadata.kind === "peelop" && metadata.custom.petState ? metadata.custom.petState as unknown as PeelopState : null,
       careState: metadata.custom.careState ? metadata.custom.careState as unknown as CreatureHusbandryState : null,
@@ -11402,14 +12599,42 @@ export class VoxelEngine {
       followCommand: metadata.custom.followCommand === "hold" ? "hold" : "follow",
       hiredByPlayerId: typeof metadata.custom.hiredByPlayerId === "string" ? metadata.custom.hiredByPlayerId : null,
       attunedOrbId: typeof metadata.custom.attunedOrbId === "string" ? metadata.custom.attunedOrbId : null,
+      legendaryEncounterId: typeof metadata.custom.legendaryEncounterId === "string" && metadata.custom.legendaryEncounterId in LEGENDARY_ENCOUNTERS
+        ? metadata.custom.legendaryEncounterId as LegendaryEncounterId : null,
+      legendarySiteId: typeof metadata.custom.legendarySiteId === "string" ? metadata.custom.legendarySiteId : null,
+      primeAnchorId: typeof metadata.custom.primeAnchorId === "string" && metadata.custom.primeAnchorId.startsWith("prime:")
+        ? metadata.custom.primeAnchorId : null,
+      groundedSummonLineageId: typeof metadata.custom.groundedSummonLineageId === "string" ? metadata.custom.groundedSummonLineageId : null,
+      groundedSummonEntityId: typeof metadata.custom.groundedSummonEntityId === "string" ? metadata.custom.groundedSummonEntityId : null,
       dragonState: isDragonKind(metadata.kind) && metadata.custom.dragonState ? metadata.custom.dragonState as unknown as DragonState : null,
       factionId: metadata.factionId ?? null,
       settlementId: metadata.settlementId ?? null,
       aligned: Boolean(metadata.aligned),
+      progression: metadata.custom.progression ? metadata.custom.progression as unknown as CreatureProgressionV2 : null,
+      typeSources: Array.isArray(metadata.custom.typeSources) ? metadata.custom.typeSources as unknown as readonly CreatureTypeSource[] : [],
+      combatStatuses: Array.isArray(metadata.custom.combatStatuses) ? metadata.custom.combatStatuses as unknown as readonly ActiveCombatStatus[] : [],
+      mountExertion: metadata.custom.mountExertion ? metadata.custom.mountExertion as unknown as MountExertionState : null,
+      mountMode: typeof metadata.custom.mountMode === "string" ? metadata.custom.mountMode as MountMode : null,
+      mountVerticalVelocity: Number(metadata.custom.mountVerticalVelocity) || 0,
+      creatureWork: metadata.custom.creatureWork ? metadata.custom.creatureWork as unknown as CreatureWorkState : null,
+      creatureEquipment: metadata.custom.creatureEquipment && typeof metadata.custom.creatureEquipment === "object"
+        ? metadata.custom.creatureEquipment as unknown as Record<string, ItemCode> : null,
+      creatureOwnerId: typeof metadata.custom.creatureOwnerId === "string" ? metadata.custom.creatureOwnerId : metadata.ownerId,
+      creatureTamed: metadata.custom.creatureTamed === true || metadata.tamed,
     });
     mob.group.position.copy(resolvedPosition);
     mob.baseY = resolvedPosition.y;
     mob.name = metadata.name || mob.name;
+    if (releasePrime && !this.transferPrimeCustody(mob, "released", primeCustodyId)) {
+      this.removeMob(this.mobs.indexOf(mob));
+      return null;
+    }
+    if (mob.legendaryEncounterId && mob.legendarySiteId) {
+      const state = this.legendaryEncounters.get(mob.legendarySiteId);
+      if (state?.outcome === "capture" && state.custodyEntityId) {
+        this.legendaryEncounters.set(mob.legendarySiteId, transferLegendaryCustody(state, state.custodyEntityId, `creature:${mob.id}`));
+      }
+    }
     if (mob.leviathanGrowth?.chestModules) {
       this.chests.set(
         `leviathan:${mob.id}:cargo`,
@@ -11658,8 +12883,48 @@ export class VoxelEngine {
     if (this.placeCooldown > 0) return;
     const heldSlot = this.selectedSlot();
     const heldDefinition = heldSlot ? ITEMS[heldSlot.item] : null;
+    if (this.targetMob?.legendaryEncounterId && this.targetMob.legendarySiteId) {
+      const legendary = this.targetMob;
+      const legendarySiteId = legendary.legendarySiteId!;
+      const legendaryEncounterId = legendary.legendaryEncounterId!;
+      const state = this.legendaryEncounters.get(legendarySiteId)
+        ?? createLegendaryEncounterState(legendaryEncounterId, legendarySiteId);
+      const progress = legendaryStageProgress(state);
+      const finalReady = state.status === "active" && state.stageIndex === progress.definition.stages.length - 1 && progress.complete;
+      if (heldSlot && (heldDefinition?.food ?? 0) >= 3 && this.applyLegendaryEventForMob(legendary, "offer-crafted-item")) {
+        if (this.mode === "survival") this.consumeSelectedUnit();
+        this.audio.play("eat"); this.placeCooldown = .35;
+        return;
+      }
+      const requestedOutcome = heldSlot?.item === Item.BoundBook ? "covenant" as const
+        : !heldSlot && this.crouching ? "release" as const : null;
+      if (requestedOutcome) {
+        if (!finalReady) {
+          this.events.onToast(`${progress.definition.title} has not completed its final ecological and fair-contest conditions.`);
+          return;
+        }
+        const now = this.worldSimulationSeconds();
+        const armed = this.legendaryResolutionConfirm.get(legendarySiteId);
+        if (armed?.outcome !== requestedOutcome || armed.until < now) {
+          this.legendaryResolutionConfirm.set(legendarySiteId, { outcome: requestedOutcome, until: now + 6 });
+          this.events.onToast(requestedOutcome === "covenant"
+            ? "Use the Bound Book again within six seconds to sign a world-persistent covenant. The book will remain as the record."
+            : "Crouch-use with an empty hand again within six seconds to release this unique being and preserve its world echo.");
+          return;
+        }
+        this.legendaryResolutionConfirm.delete(legendarySiteId);
+        if (this.resolveLegendaryOutcome(legendary, requestedOutcome)) return;
+      } else if (!heldSlot && finalReady) {
+        this.events.onToast("Final terms are ready: use a Capture Orb, use a Bound Book for covenant, crouch-use empty-handed to release, or continue the fair fight.");
+        return;
+      }
+    }
     if (!heldSlot && this.targetMob && this.leadAnchors.has(this.targetMob.id)) {
       const mob = this.targetMob;
+      if (this.temporarySummons?.has(mob.id)) {
+        this.events.onToast("Temporary manifestations and echoes cannot be captured, bred, looted, or used to duplicate a contract. Ground one through a valid Worldpin window first.");
+        return;
+      }
       if (this.multiplayer?.role === "guest") {
         this.requestNetworkCreatureAction({ kind: "lead-unhitch", targetId: mob.id });
         this.placeCooldown = 0.2;
@@ -11935,6 +13200,16 @@ export class VoxelEngine {
       this.activeSentient = resident;
       this.activeSettlementId = resident.settlementId;
       this.activeMerchantId = resident.residentId && this.merchants.has(resident.residentId) ? resident.residentId : null;
+      const guildNpc = this.guildNpcForMob(resident);
+      if (guildNpc) {
+        const invited = inviteToGuild(this.guildBook, guildNpc.guildId, guildNpc.id);
+        if (invited !== this.guildBook) {
+          this.guildBook = invited;
+          this.events.onToast(`${guildNpc.name} invites you to take the ${GUILDS[guildNpc.guildId].name} oath.`);
+          this.saveSoon();
+        }
+        this.dispatchGuildEvent("negotiate", 1, `parley:${guildNpc.id}:${this.day}`, { actorId: guildNpc.id });
+      }
       this.ensureSideQuestOffers(resident);
       this.dispatchQuestEvent({ type: "entity-interacted", entityId: resident.residentId ?? String(resident.id), role: resident.profession, at: Date.now() });
       this.openOverlay("sentient", resident.residentId ?? String(resident.id));
@@ -11968,6 +13243,55 @@ export class VoxelEngine {
       this.events.onToast("Wayfarer launched. Right-click to board; crouch-right-click opens its hold.");
       this.saveSoon();
       this.emitHud(true);
+      return;
+    }
+    if (heldSlot?.item === Item.Worldpin && this.targetMob) {
+      const manifestation = this.temporarySummons.get(this.targetMob.id);
+      if (!manifestation || !(this.targetMob.kind in SUMMON_CONTRACTS)) {
+        this.events.onToast("A Worldpin can only be used during a stable summon contract's visible anchor window.");
+        return;
+      }
+      if (this.multiplayer?.role === "guest") {
+        this.events.onToast("The host must commit Worldpin grounding so the permanent lineage cannot duplicate.");
+        return;
+      }
+      const permanentEntityId = `grounded:${this.localPlayerId()}:${this.targetMob.kind}:${this.targetMob.id}`;
+      const grounded = groundSummon(this.summonContractState, this.targetMob.kind as SummonedCreatureKind, manifestation.lineageId, permanentEntityId, this.worldSimulationSeconds(), manifestation.echo);
+      if (!grounded.ok) {
+        const reason = grounded.reason === "existing-grounded-individual" ? "This contract already has a grounded individual; the present being is an ungroundable echo."
+          : grounded.reason === "concordance-incomplete" ? "Concordance is not yet strong enough. Let the summon perform its true role."
+            : grounded.reason === "anchor-window-closed" ? "The authored anchor window is not open." : "The summon lineage does not match this contract.";
+        this.events.onToast(reason);
+        return;
+      }
+      this.summonContractState = grounded.state;
+      this.temporarySummons.delete(this.targetMob.id);
+      this.targetMob.persistentPoiResident = true;
+      this.targetMob.hiredByPlayerId = null;
+      this.targetMob.aligned = false;
+      this.targetMob.attunedOrbId = null;
+      this.targetMob.group.userData.temporarySummonEcho = false;
+      this.targetMob.group.userData.groundedSummon = true;
+      this.targetMob.group.userData.summonLineageId = manifestation.lineageId;
+      this.targetMob.groundedSummonLineageId = manifestation.lineageId;
+      this.targetMob.groundedSummonEntityId = permanentEntityId;
+      if (this.mode === "survival") {
+        heldSlot.count -= 1;
+        if (heldSlot.count <= 0) this.inventory[this.selected] = null;
+      }
+      this.bestiary[this.targetMob.kind].seen = true;
+      this.recordBestiaryMilestone(this.targetMob.kind, "worldpinned");
+      this.bestiary[this.targetMob.kind] = appendBestiaryRecord(this.bestiary[this.targetMob.kind], "grounded-summon", {
+        id: `grounded:${manifestation.lineageId}`,
+        title: "Remembered by the world",
+        text: `${SUMMON_CONTRACTS[this.targetMob.kind as SummonedCreatureKind].groundedDisposition} The permanent lineage remains singular across storage, capture, and recasting.`,
+        recordedAt: Date.now(),
+        sourceId: permanentEntityId,
+      });
+      this.dispatchGuildEvent("groundSummon", 1, `worldpin:${manifestation.lineageId}`, { encounterId: this.targetMob.kind });
+      this.events.onToast(`${this.targetMob.name} is now remembered by this world. It remains free, governed by its own temperament and capture profile.`);
+      this.audio.play("craft"); this.heldUse = 1; this.placeCooldown = .6;
+      this.saveSoon(); this.emitHud(true);
       return;
     }
     if (heldSlot && (heldSlot.item === Item.CaptureOrb || heldSlot.item === Item.LegacyCaptureOrb || heldDefinition?.useKind === "capture-orb")) {
@@ -12055,12 +13379,14 @@ export class VoxelEngine {
           const releasePosition = this.target
             ? new THREE.Vector3(this.target.placeX, this.target.placeY + MOB_DEFS[deployment.creature.kind].footOffset, this.target.placeZ)
             : this.position.clone().add(direction.setY(0).normalize().multiplyScalar(1.8));
-          const mob = this.spawnCreatureMetadata(deployment.creature, releasePosition);
+          const mob = this.spawnCreatureMetadata(deployment.creature, releasePosition, `orb:${orb.orbId}`);
           if (!mob) {
             this.events.onToast(`${MOB_DEFS[deployment.creature.kind].name} needs a nearby habitat deep enough to be summoned safely.`);
             return;
           }
           mob.attunedOrbId = orb.orbId;
+          mob.creatureOwnerId = ownerId;
+          mob.creatureTamed = ["trusted", "partnered", "kindred"].includes(mob.progression.bondTier);
           const deployedOrb: CaptureOrb = {
             ...deployment.orb,
             attunement: deployment.orb.attunement ? { ...deployment.orb.attunement, activeEntityId: String(mob.id) } : null,
@@ -12080,12 +13406,18 @@ export class VoxelEngine {
         const releasePosition = this.target
           ? new THREE.Vector3(this.target.placeX, this.target.placeY + MOB_DEFS[released.creature.kind].footOffset, this.target.placeZ)
           : this.position.clone().add(direction.setY(0).normalize().multiplyScalar(1.8));
-        const mob = this.spawnCreatureMetadata(released.creature, releasePosition);
+        const releasedProgression = released.creature.custom.progression as unknown as CreatureProgressionV2 | undefined;
+        const releasedCreature = releasedProgression ? {
+          ...released.creature,
+          custom: JSON.parse(JSON.stringify({ ...released.creature.custom, progression: recordCreatureReleaseHistory(releasedProgression) })) as CreatureMetadata["custom"],
+        } : released.creature;
+        const mob = this.spawnCreatureMetadata(releasedCreature, releasePosition, `orb:${orb.orbId}`, true);
         if (!mob) {
           this.events.onToast(`${MOB_DEFS[released.creature.kind].name} needs a nearby water column deep enough to be released safely.`);
           return;
         }
         this.inventory[this.selected] = captureOrbInventorySlot(released.orb);
+        this.dispatchGuildEvent("releaseCreature", 1, `release:${released.orb.orbId}`, { creatureKind: released.creature.kind });
         this.heldItemCode = -1;
         this.spawnParticles(mob.group.position.x, mob.group.position.y + mob.definition.height * 0.45, mob.group.position.z, BlockId.CrystalBlock, 12);
         this.placeCooldown = 0.35;
@@ -12096,10 +13428,14 @@ export class VoxelEngine {
         return;
       }
       if (!this.targetMob) {
-        this.events.onToast("Aim the empty Capture Orb at a creature. Hostiles must be below half health or at one heart.");
+        this.events.onToast("Aim the empty Capture Orb at a creature. Its learned ecological checklist will show when capture is ready.");
         return;
       }
       const mob = this.targetMob;
+      if (this.temporarySummons?.has(mob.id)) {
+        this.events.onToast("Temporary manifestations and contract echoes cannot enter Capture Orbs. Earn concordance and ground the original with a Worldpin first.");
+        return;
+      }
       if (mob.aligned && mob.factionId && mob.factionId !== "player") {
         this.events.onToast(`${mob.name} is bonded to ${FACTIONS[mob.factionId]?.name ?? "its settlement"}; faction-aligned creatures cannot be captured.`);
         return;
@@ -12108,19 +13444,33 @@ export class VoxelEngine {
         this.events.onToast("The Hive Queen is too strong for the orb. Weaken her below half health first.");
         return;
       }
+      const readiness = this.captureReadinessForMob(mob, orb);
+      if (!readiness.ready) {
+        this.events.onToast(this.captureReadinessMessage(readiness));
+        return;
+      }
+      const priorProgression = mob.progression;
+      mob.progression = recordCreatureCaptureHistory(mob.progression, {
+        capturedAt: Date.now(), captorId: this.localPlayerId(), methodId: "capture-orb",
+      });
       const metadata = this.creatureMetadataForMob(mob);
       const captured = captureIntoOrb(orb, metadata);
       if (!captured) {
+        mob.progression = priorProgression;
         this.events.onToast(`${mob.name} is fighting too strongly to capture.`);
         return;
       }
       if (!this.storeFilledCaptureOrb(heldSlot, captured)) {
+        mob.progression = priorProgression;
         this.events.onToast("Make one empty pack slot before splitting a filled orb from this stack.");
         return;
       }
+      this.resolveLegendaryCapture(mob, `orb:${captured.orbId}`);
+      this.observeCreatureRarity(mob);
+      this.transferPrimeCustody(mob, "captured", `orb:${captured.orbId}`);
       const firstSpeciesCapture = this.bestiary[mob.kind].captures === 0;
-      this.bestiary[mob.kind].seen = true;
-      this.bestiary[mob.kind].captures += 1;
+      recordSpeciesCapture(this.bestiary[mob.kind], Date.now(), mob.specimenId);
+      this.dispatchGuildEvent("captureCreature", 1, `capture:${mob.specimenId ?? mob.id}`, { creatureKind: mob.kind });
       if (firstSpeciesCapture && DRAGONWAKE_RARE_CAPTURE_KINDS.has(mob.kind)) {
         this.dispatchQuestEvent({ type: "custom", eventId: "rare-creature-species-captured", at: Date.now() });
       }
@@ -12167,6 +13517,43 @@ export class VoxelEngine {
       this.saveSoon();
       this.emitHud(true);
       return;
+    }
+    if (!heldSlot && this.targetMob?.kind === "burrowbell" && this.crouching) {
+      const bell = this.targetMob;
+      if ((bell.creatureOwnerId ?? bell.progression.captureHistory.firstCaptorId) !== this.localPlayerId()) {
+        this.events.onToast("Only the Burrowbell's keeper can set its perimeter anchor.");
+        return;
+      }
+      const home = { x: bell.group.position.x, y: bell.group.position.y, z: bell.group.position.z };
+      const assigned = assignCreatureWork(bell.kind, bell.creatureWork, "sentinel", home);
+      if (assigned) bell.creatureWork = assigned;
+      bell.followCommand = "hold";
+      this.events.onToast("Burrowbell perimeter anchored. Its three warning cadences distinguish hostiles, unknown arrivals, and returning allies.");
+      this.playCreatureEvent(bell, "ambient");
+      this.placeCooldown = .3;
+      this.saveSoon();
+      return;
+    }
+    if (!heldSlot && this.targetMob && !this.crouching && MOUNT_PROFILES[this.targetMob.kind]) {
+      const mount = this.targetMob;
+      const eligibility = this.unifiedMountEligibility(mount, this.localPlayerId());
+      const passenger = this.creaturePassengerSeatAvailable(mount, this.localPlayerId());
+      if (eligibility?.allowed || passenger) {
+        if (!this.beginLocalCreatureRide(mount)) return;
+        this.placeCooldown = .3;
+        this.events.onToast(passenger
+          ? `Seated behind ${mount.name}'s lead rider; movement remains driver-authoritative.`
+          : `Mounted ${mount.name} · ${MOUNT_PROFILES[mount.kind].capabilities.join(" / ")} travel ready.`);
+        this.saveSoon();
+        return;
+      }
+      // Existing species-specific taming branches still need to receive food,
+      // tack, and immature interactions; an empty-hand ride attempt can finish
+      // here with the shared, explicit reason.
+      if (mount.creatureTamed || mount.creatureOwnerId) {
+        this.events.onToast(this.mountEligibilityMessage(mount));
+        return;
+      }
     }
     if (this.targetMob?.dragonState) {
       const dragon = this.targetMob;
@@ -12304,9 +13691,7 @@ export class VoxelEngine {
           return;
         }
         if (canMountDragon(state, ownerId)) {
-          this.mountedCreatureId = dragon.id;
-          if (this.cameraMode === "first") this.cameraMode = "third-rear";
-          this.keys.clear();
+          if (!this.beginLocalCreatureRide(dragon)) return;
           this.audio.playDragon(state.type, "roar", state.stage, dragon.group.position);
           this.events.onToast(`Mounted ${dragon.name} · Space ascends · Shift descends · F dismounts · Z/X/C attack while items remain usable.`);
           this.emitHud(true);
@@ -12332,6 +13717,7 @@ export class VoxelEngine {
         return;
       }
       woolhorn.woolRegrowSeconds = 360;
+      if (woolhorn.careState) woolhorn.careState = recordCreatureProduction(woolhorn.careState, "fleece", woolCount, this.day);
       this.syncWoolhornCoat(woolhorn);
       this.damageSelectedTool(1);
       this.heldUse = 1;
@@ -12357,6 +13743,7 @@ export class VoxelEngine {
         return;
       }
       cloverback.milkCooldown = CLOVERBACK_MILK_COOLDOWN_SECONDS;
+      if (cloverback.careState) cloverback.careState = recordCreatureProduction(cloverback.careState, "milk", 1, this.day);
       this.heldUse = 1;
       this.placeCooldown = 0.38;
       this.audio.play("pickup");
@@ -12432,12 +13819,16 @@ export class VoxelEngine {
                 && candidate.courserBond?.tamed && candidate.courserBond.ownerId === ownerId && candidate.careState
                 && candidate.group.position.distanceToSquared(taffalo.group.position) < 36
                 && canBreedCreatures("taffalo", fed.state, "taffalo", candidate.careState));
-              const family = partner?.careState ? breedCreatureStates("taffalo", fed.state, "taffalo", partner.careState) : null;
+              const family = partner?.careState ? breedCreatureStates("taffalo", fed.state, "taffalo", partner.careState, {
+                leftId: taffalo.specimenId, rightId: partner.specimenId, bornDay: this.day, temperament: taffalo.definition.temperament,
+              }) : null;
               if (family && partner) {
                 taffalo.careState = family.left;
                 partner.careState = family.right;
+                const identity = this.offspringIdentity("taffalo", family.child.geneticSeed, taffalo, partner);
                 this.spawnMob("taffalo", taffalo.group.position.clone().add(new THREE.Vector3(0.8, 0, 0.45)), {
                   careState: family.child,
+                  ...identity,
                   courserBond: { ...createReedstriderBond(), tamed: true, ownerId, trust: 8 },
                 });
                 this.bestiary.taffalo.breeds = (this.bestiary.taffalo.breeds ?? 0) + 1;
@@ -12478,10 +13869,8 @@ export class VoxelEngine {
         baby: Boolean(taffalo.careState?.baby),
         aligned: taffalo.aligned,
       })) {
-        this.mountedCreatureId = taffalo.id;
-        if (this.cameraMode === "first") this.cameraMode = "third-rear";
-        this.keys.clear();
-        this.events.onToast("Mounted Taffalo · steady on land · Space dismounts · V changes view.");
+        if (!this.beginLocalCreatureRide(taffalo)) return;
+        this.events.onToast("Mounted Taffalo · Space jumps · Shift brakes · F dismounts · V changes view.");
         this.placeCooldown = 0.35;
         this.emitHud(true);
         return;
@@ -12519,10 +13908,8 @@ export class VoxelEngine {
         return;
       }
       if (canRideReedstrider(courser.courserBond, ownerId)) {
-        this.mountedCreatureId = courser.id;
-        if (this.cameraMode === "first") this.cameraMode = "third-rear";
-        this.keys.clear();
-        this.events.onToast("Mounted Wildwood Courser · sprint on open land · Space dismounts · V changes view.");
+        if (!this.beginLocalCreatureRide(courser)) return;
+        this.events.onToast("Mounted Wildwood Courser · Space jumps · Shift brakes · F dismounts · V changes view.");
         this.placeCooldown = 0.35;
         this.emitHud(true);
         return;
@@ -12566,9 +13953,7 @@ export class VoxelEngine {
         return;
       }
       if (canRideReedstrider(warg.courserBond, ownerId)) {
-        this.mountedCreatureId = warg.id;
-        if (this.cameraMode === "first") this.cameraMode = "third-rear";
-        this.keys.clear();
+        if (!this.beginLocalCreatureRide(warg)) return;
         this.events.onToast("Mounted Road Warg - attacks and crossbows remain usable from the saddle.");
         this.placeCooldown = 0.35;
         this.emitHud(true);
@@ -12633,10 +14018,8 @@ export class VoxelEngine {
         baby: Boolean(companion.careState?.baby),
         aligned: companion.aligned,
       })) {
-        this.mountedCreatureId = companion.id;
-        if (this.cameraMode === "first") this.cameraMode = "third-rear";
-        this.keys.clear();
-        this.events.onToast(`Mounted ${companion.name} - Space dismounts - V changes view.`);
+        if (!this.beginLocalCreatureRide(companion)) return;
+        this.events.onToast(`Mounted ${companion.name} · Space jumps · Shift brakes · F dismounts · V changes view.`);
         this.placeCooldown = 0.35;
         this.emitHud(true);
         return;
@@ -12681,10 +14064,8 @@ export class VoxelEngine {
         return;
       }
       if (canRideReedstrider(reedstrider.reedstriderBond, ownerId)) {
-        this.mountedCreatureId = reedstrider.id;
-        if (this.cameraMode === "first") this.cameraMode = "third-rear";
-        this.keys.clear();
-        this.events.onToast("Mounted Reedstrider · faster through water · Space dismounts · V changes view.");
+        if (!this.beginLocalCreatureRide(reedstrider)) return;
+        this.events.onToast("Mounted Reedstrider · Space/Shift control depth · F dismounts · V changes view.");
         this.placeCooldown = 0.35;
         this.emitHud(true);
         return;
@@ -12750,10 +14131,8 @@ export class VoxelEngine {
         return;
       }
       if (canRideShadecrawler(shade.shadeState, ownerId)) {
-        this.mountedCreatureId = shade.id;
-        if (this.cameraMode === "first") this.cameraMode = "third-rear";
-        this.keys.clear();
-        this.events.onToast("Mounted Shadecrawler · WASD ride · Space dismount · V changes view.");
+        if (!this.beginLocalCreatureRide(shade)) return;
+        this.events.onToast("Mounted Shadecrawler · Space jumps · Shift brakes · F dismounts · V changes view.");
         this.playCreatureEvent(shade, "mount");
         this.placeCooldown = 0.35;
         this.emitHud(true);
@@ -12849,12 +14228,16 @@ export class VoxelEngine {
                 && candidate.courserBond?.tamed && candidate.courserBond.ownerId === ownerId && candidate.careState
                 && candidate.group.position.distanceToSquared(companion.group.position) < 25
                 && canBreedCreatures(companion.kind, fed.state, candidate.kind, candidate.careState));
-              const family = partner?.careState ? breedCreatureStates(companion.kind, fed.state, partner.kind, partner.careState) : null;
+              const family = partner?.careState ? breedCreatureStates(companion.kind, fed.state, partner.kind, partner.careState, {
+                leftId: companion.specimenId, rightId: partner.specimenId, bornDay: this.day, temperament: companion.definition.temperament,
+              }) : null;
               if (family && partner) {
                 companion.careState = family.left;
                 partner.careState = family.right;
+                const identity = this.offspringIdentity(companion.kind, family.child.geneticSeed, companion, partner);
                 this.spawnMob(companion.kind, companion.group.position.clone().add(new THREE.Vector3(0.55, 0, 0.38)), {
                   careState: family.child,
+                  ...identity,
                   courserBond: { ...createReedstriderBond(), tamed: true, ownerId, trust: 8 },
                 });
                 this.bestiary[companion.kind].breeds = (this.bestiary[companion.kind].breeds ?? 0) + 1;
@@ -12903,7 +14286,9 @@ export class VoxelEngine {
               && candidate.leviathanGrowth.stage === "adult" && candidate.leviathanGrowth.tamed && candidate.leviathanGrowth.ownerId === ownerId && candidate.careState
               && candidate.group.position.distanceToSquared(leviathan.group.position) < 64
               && canBreedCreatures(leviathan.kind, fed.state, candidate.kind, candidate.careState));
-            const family = partner?.careState ? breedCreatureStates(leviathan.kind, fed.state, partner.kind, partner.careState) : null;
+            const family = partner?.careState ? breedCreatureStates(leviathan.kind, fed.state, partner.kind, partner.careState, {
+              leftId: leviathan.specimenId, rightId: partner.specimenId, bornDay: this.day, temperament: leviathan.definition.temperament,
+            }) : null;
             const worldTick = Math.floor((this.day + this.worldTime) * LEVIATHAN_LIFECYCLE_CONTRACT.ticksPerDay);
             const egg = partner?.leviathanGrowth ? layLeviathanEggFromParents(growth, partner.leviathanGrowth, worldTick) : null;
             if (family && partner && egg) {
@@ -12978,10 +14363,8 @@ export class VoxelEngine {
         return;
       }
       if (canRideCreature({ kind: leviathan.kind as CoreMobKind, tamed: growth.tamed, ownerId: growth.ownerId, riderId: ownerId, saddled: growth.saddled, baby: growth.stage !== "adult", aligned: leviathan.aligned })) {
-        this.mountedCreatureId = leviathan.id;
-        if (this.cameraMode === "first") this.cameraMode = "third-rear";
-        this.keys.clear();
-        this.events.onToast(`Mounted ${leviathan.name} · steer with WASD · Space dismounts · V changes view.`);
+        if (!this.beginLocalCreatureRide(leviathan)) return;
+        this.events.onToast(`Mounted ${leviathan.name} · Space/Shift control depth or altitude · F dismounts · V changes view.`);
         this.placeCooldown = 0.35;
         this.emitHud(true);
         return;
@@ -13004,12 +14387,15 @@ export class VoxelEngine {
             && canBreedCreatures(mob.kind, fed.state, candidate.kind, candidate.careState));
           const partnerState = partner?.careState;
           const family = partner && partnerState
-            ? breedCreatureStates(mob.kind, fed.state, partner.kind, partnerState)
+            ? breedCreatureStates(mob.kind, fed.state, partner.kind, partnerState, {
+              leftId: mob.specimenId, rightId: partner.specimenId, bornDay: this.day, temperament: mob.definition.temperament,
+            })
             : null;
           if (family && partner) {
             mob.careState = family.left;
             partner.careState = family.right;
-            const child = this.spawnMob(mob.kind, mob.group.position.clone().add(new THREE.Vector3(0.58, 0, 0.42)), { careState: family.child });
+            const identity = this.offspringIdentity(mob.kind, family.child.geneticSeed, mob, partner);
+            const child = this.spawnMob(mob.kind, mob.group.position.clone().add(new THREE.Vector3(0.58, 0, 0.42)), { careState: family.child, ...identity });
             const childGroundY = this.mobMoveTarget(child, child.group.position.x, child.group.position.z);
             if (childGroundY !== null) child.group.position.y = childGroundY;
             child.baseY = child.group.position.y;
@@ -13407,6 +14793,7 @@ export class VoxelEngine {
       if (this.target.type === BlockId.CaptureOrbRack) { this.openOverlay("orb-rack", key); return; }
       if (this.target.type === BlockId.CreatureHealer) { this.openOverlay("healing-station", key); return; }
       if (this.target.type === BlockId.GlassAquarium) { this.openAquarium(this.target.x, this.target.y, this.target.z); return; }
+      if (this.target.type === BlockId.FieldPerch) { this.useFieldPerch(key); return; }
       if (this.target.type === BlockId.WaygridVaultTerminal) { this.openOverlay("waygrid-items", key); return; }
       if (this.target.type === BlockId.WaygridCreatureArchive) { this.openOverlay("waygrid-creatures", key); return; }
       if (this.target.type === BlockId.GolemForge) { this.openOverlay("golem-forge", key); return; }
@@ -13629,6 +15016,7 @@ export class VoxelEngine {
     if (type === BlockId.CaptureOrbRack) this.orbRacks.set(placedKey, createOrbRack());
     if (type === BlockId.CaptureOrbRack) this.syncOrbRackVisuals(true);
     if (type === BlockId.CreatureHealer) this.healingStations.set(placedKey, createCreatureHealer());
+    if (type === BlockId.FieldPerch) this.fieldPerches.set(placedKey, createFieldPerchState());
     if (type === BlockId.AlchemyStand) this.alchemyStands.set(placedKey, createAlchemyStand());
     if (type === BlockId.Distillery) this.distilleries.set(placedKey, createDistillery());
     if (type === BlockId.Sugarworks) this.sugarworks.set(placedKey, createSugarworks());
@@ -13662,6 +15050,11 @@ export class VoxelEngine {
     this.heldUse = 1;
     this.audio.play("place", type);
     this.spawnParticles(x, y, z, type, 5);
+    if ([BlockId.Planks, BlockId.Cobblestone, BlockId.StoneBrick, BlockId.DeepgearBrick, BlockId.CaveBridge, BlockId.WildwoodFence, BlockId.FenceGateNorthSouthClosed, BlockId.FenceGateEastWestClosed, BlockId.Torch].includes(requestedType)) {
+      this.dispatchGuildEvent("repairStructure", 1, `build:${requestedType}:${x},${y},${z}`, { itemId: String(slot.item) });
+      this.applyLegendaryEventNear({ x, z }, "repair-anchor");
+    }
+    if (ITEMS[slot.item]?.useKind === "plant") this.applyLegendaryEventNear({ x, z }, "restore-habitat");
     this.saveSoon();
     this.emitHud(true);
   }
@@ -13897,6 +15290,11 @@ export class VoxelEngine {
       this.healingStations.delete(key);
       this.persistentMachineLastStep.delete(key);
     }
+    if (type === BlockId.FieldPerch) {
+      const state = this.fieldPerches.get(key);
+      if (state?.resident && this.mode === "survival") this.returnFieldPerchResident(state.resident, position);
+      this.fieldPerches.delete(key);
+    }
     if (type === BlockId.AlchemyStand) {
       const station = this.alchemyStands.get(key);
       const outputItem = station?.output ? resourceItemCode(station.output.item) : null;
@@ -14060,6 +15458,11 @@ export class VoxelEngine {
       this.healingStations.delete(key);
       this.persistentMachineLastStep.delete(key);
     }
+    if (type === BlockId.FieldPerch) {
+      const state = this.fieldPerches.get(key);
+      if (state?.resident && this.mode === "survival") this.returnFieldPerchResident(state.resident, new THREE.Vector3(x, y, z));
+      this.fieldPerches.delete(key);
+    }
     if (type === BlockId.AlchemyStand) {
       const station = this.alchemyStands.get(key);
       const outputItem = station?.output ? resourceItemCode(station.output.item) : null;
@@ -14113,7 +15516,20 @@ export class VoxelEngine {
     }
     this.audio.play("break", type);
     this.spawnParticles(x, y, z, type, 13);
-    if (harvested && BLOCKS[type]?.preferredTool === "pickaxe") this.gainSkillExperience("mining", 2 + (BLOCKS[type]?.requiredTier ?? 0) * 2);
+    if ([BlockId.LivingRoot, BlockId.LuminousRoot, BlockId.LivingVein, BlockId.VeinmetalHeart].includes(type)) {
+      this.applyLegendaryEventNear({ x, z }, "remove-hazard");
+    }
+    if ([
+      BlockId.WildwoodFence, BlockId.FenceGateNorthSouthClosed, BlockId.FenceGateEastWestClosed,
+      BlockId.WroughtIronDoorClosedLower, BlockId.WroughtIronDoorClosedUpper,
+      BlockId.WroughtIronDoorXClosedLower, BlockId.WroughtIronDoorXClosedUpper,
+    ].includes(type)) this.applyLegendaryEventNear({ x, z }, "break-restraint");
+    if (harvested && BLOCKS[type]?.preferredTool === "pickaxe") {
+      this.gainSkillExperience("mining", 2 + (BLOCKS[type]?.requiredTier ?? 0) * 2);
+      if ([BlockId.CoalOre, BlockId.IronOre, BlockId.CopperOre, BlockId.GoldOre, BlockId.CrystalOre, BlockId.LivingVein].includes(type)) {
+        this.dispatchGuildEvent("mineSafely", 1, `ore:${type}:${x},${y},${z}`, { itemId: String(type) });
+      }
+    }
     this.miningProgress = 0;
     this.target = null;
     this.saveSoon();
@@ -14266,7 +15682,14 @@ export class VoxelEngine {
     this.targetEggDrop = entityVisible && !this.targetBoat && eggHit && eggHit.distance <= (mobHit?.distance ?? Infinity) ? eggHit.drop : null;
     this.targetRemotePlayerId = entityVisible && !this.targetBoat && !this.targetEggDrop && playerHit && playerHit.distance <= (mobHit?.distance ?? Infinity) ? playerHit.playerId : null;
     this.targetMob = entityVisible && !this.targetBoat && !this.targetEggDrop && !this.targetRemotePlayerId && mobHit ? mobHit.mob : null;
-    if (this.targetMob && !this.bestiary[this.targetMob.kind].seen) { this.bestiary[this.targetMob.kind].seen = true; this.saveSoon(); }
+    if (this.targetMob && !this.bestiary[this.targetMob.kind].seen) {
+      observeBestiaryEntry(this.bestiary[this.targetMob.kind], Date.now());
+      this.dispatchGuildEvent("observeCreature", 1, `observe:${this.targetMob.specimenId ?? this.targetMob.id}`, { creatureKind: this.targetMob.kind });
+      this.saveSoon();
+    }
+    if (this.targetMob) {
+      if (this.observeCreatureRarity(this.targetMob)) triggerCreatureInspectionShimmer(this.targetMob.visual, this.targetMob.age);
+    }
     this.target = this.targetMob || this.targetRemotePlayerId || this.targetBoat || this.targetEggDrop ? null : blockHit;
     if (this.target) {
       const discoveredPlants = discoverPlantBlock(this.plantBestiary, this.target.type);
@@ -14429,6 +15852,7 @@ export class VoxelEngine {
     const inSyrup = liquidKind === "syrup";
     const inSwimmableLiquid = inWater || inHoney || inSyrup;
     const inLiquid = liquidKind !== undefined;
+    if (this.grounded || inLiquid) this.stormstepAirUsed = false;
     const onRopeLadder = feetBlock === BlockId.RopeLadder || headBlock === BlockId.RopeLadder;
     const headLiquid = liquidKindForBlock(headBlock);
     this.headSubmerged = headLiquid !== undefined && headLiquid !== "lava";
@@ -14466,6 +15890,11 @@ export class VoxelEngine {
       this.velocity.x *= Math.max(0, 1 - drag * dt);
       this.velocity.z *= Math.max(0, 1 - drag * dt);
     }
+    if (this.stormstepDashSeconds > 0) {
+      this.velocity.x = this.stormstepDashVelocity.x;
+      this.velocity.z = this.stormstepDashVelocity.z;
+      this.stormstepDashSeconds = Math.max(0, this.stormstepDashSeconds - dt);
+    }
 
     if (inSwimmableLiquid) {
       this.fallVelocity = 0;
@@ -14478,7 +15907,9 @@ export class VoxelEngine {
       const horizontalCollision = Boolean(BLOCKS[bankType ?? BlockId.Air]?.solid) && !BLOCKS[bankHead ?? BlockId.Bedrock]?.solid;
       const tidebreathActive = inWater && (this.potionBuffs.tidebreath ?? 0) > this.worldSimulationSeconds();
       const hasBreatherCharm = this.countItem(Item.BreatherCharm) > 0;
-      if (inWater && raceTraits.waterBreathing) this.oxygenSeconds = DEFAULT_SWIM_RULES.maxOxygenSeconds;
+      const activeMount = this.mountedCreatureId === null ? null : this.mobs.find((mob) => mob.id === this.mountedCreatureId) ?? null;
+      const mountBreathing = inWater && activeMount && ["water", "air-and-water"].includes(MOUNT_PROFILES[activeMount.kind]?.riderBreathing ?? "none");
+      if (inWater && (raceTraits.waterBreathing || mountBreathing)) this.oxygenSeconds = DEFAULT_SWIM_RULES.maxOxygenSeconds;
       const swim = stepSwimming(
         { velocityY: this.velocity.y, oxygenSeconds: this.oxygenSeconds, drowningAccumulator: this.drowningAccumulator },
         { jumpHeld: this.keys.has("Space"), movingForward: forwardAmount > 0, crouching: this.crouching },
@@ -14491,7 +15922,7 @@ export class VoxelEngine {
           enteredFromAir: enteredSwimmableLiquid,
         },
         dt,
-        raceTraits.waterBreathing && inWater
+        (raceTraits.waterBreathing || mountBreathing) && inWater
           ? { ...DEFAULT_SWIM_RULES, oxygenDrainPerSecond: 0 }
           : tidebreathActive
           ? { ...DEFAULT_SWIM_RULES, maxOxygenSeconds: 300, oxygenDrainPerSecond: 0 }
@@ -14816,12 +16247,14 @@ export class VoxelEngine {
 
   damagePlayer(amount: number, source: string, bypassArmor = false, feedback: "direct" | "ambient" = "direct") {
     if (this.mode !== "survival" || this.playerInvulnerability > 0 || this.spawnProtection > 0) return;
+    this.mobs ??= [];
+    const sourceName = source.toLocaleLowerCase();
+    const attackerMob = this.mobs
+      .filter((mob) => sourceName.includes(mob.name.toLocaleLowerCase()))
+      .sort((left, right) => left.group.position.distanceToSquared(this.position) - right.group.position.distanceToSquared(this.position))[0] ?? null;
     const shieldKind = !bypassArmor && this.offhandUseHeld ? shieldKindForItem(this.offhand?.item) : null;
     if (shieldKind && this.offhand) {
-      const sourceName = source.toLocaleLowerCase();
-      const attacker = this.mobs
-        .filter((mob) => sourceName.includes(mob.name.toLocaleLowerCase()))
-        .sort((left, right) => left.group.position.distanceToSquared(this.position) - right.group.position.distanceToSquared(this.position))[0]
+      const attacker = attackerMob
         ?? (sourceName.includes("player") ? [...this.remotePlayers.values()]
           .sort((left, right) => left.model.group.position.distanceToSquared(this.position) - right.model.group.position.distanceToSquared(this.position))[0]?.model : null);
       if (attacker) {
@@ -14854,8 +16287,32 @@ export class VoxelEngine {
     const difficulty = this.worldOptions?.difficulty ?? DEFAULT_WORLD_OPTIONS.difficulty;
     const difficultyScale = difficulty === "hard" ? 1.35 : difficulty === "easy" ? 0.75 : difficulty === "peaceful" ? 0.6 : 1;
     const wardReduction = (this.potionBuffs?.["marshmallow-ward"] ?? 0) > this.worldSimulationSeconds() ? 0.72
-      : (this.potionBuffs?.["arcane-ward"] ?? 0) > this.worldSimulationSeconds() ? 0.58 : 1;
-    const finalAmount = Math.max(0.5, Math.round(amount * difficultyScale * (1 - reduction) * wardReduction * 2) / 2);
+      : (this.potionBuffs?.["arcane-ward"] ?? 0) > this.worldSimulationSeconds() ? 0.58
+        : (this.potionBuffs?.["ironwake-guard"] ?? 0) > this.worldSimulationSeconds() ? 0.82 : 1;
+    const armoredAmount = Math.max(0.5, Math.round(amount * difficultyScale * (1 - reduction) * wardReduction * 2) / 2);
+    const inferredAttackType: CreatureTypeId = sourceName.includes("lava") || sourceName.includes("fire") ? "flame"
+      : sourceName.includes("venom") ? "venom"
+        : sourceName.includes("lightning") ? "storm"
+          : sourceName.includes("drown") ? "tide" : "neutral";
+    const attacker = attackerMob ? this.combatActorForMob(attackerMob) : {
+      ref: { kind: sourceName.includes("player") ? "player" as const : "environment" as const, id: source },
+      profile: {
+        level: 1,
+        stats: { vitality: 1, power: 30, focus: 30, guard: 1, ward: 1, agility: 1 },
+        currentTypes: [],
+        factionId: null, ownerId: null, partyId: null, temperament: "Hostile" as const,
+        statuses: [], currentHealth: 1, maximumHealth: 1,
+      },
+    };
+    const event = resolveCombatEffect(attacker, this.playerCombatActor(), {
+      id: `player-damage:${source}`, name: source, intent: "damage", baseAmount: armoredAmount,
+      channel: attackerMob ? (bypassArmor ? "control" : "physical") : "traversal",
+      packets: [{ type: attacker.profile.currentTypes[0] ?? inferredAttackType, share: 1 }],
+    }, {
+      isHost: true, nowSeconds: this.worldSimulationSeconds(), eventToken: `player-damage:${Math.floor(this.worldSimulationSeconds() * 60)}`,
+      friendlyFire: "off", pvpEnabled: false,
+    });
+    const finalAmount = event.resolvedAmount;
     this.health = applyAscendantHealthFloor(this.skillState ?? createSkillState(), this.health - finalAmount, 10);
     this.damageRevision += 1;
     this.gainSkillExperience("survival", Math.min(8, 1 + finalAmount * 1.5));
@@ -14987,6 +16444,328 @@ export class VoxelEngine {
     return result.changed;
   }
 
+  joinGuild(guildId: GuildId) {
+    if (this.multiplayer?.role === "guest") { this.events.onToast("The host records guild membership for this expedition."); return false; }
+    const next = joinGuild(this.guildBook, guildId);
+    if (next === this.guildBook) return false;
+    this.guildBook = next; this.audio.play("craft"); this.events.onToast("Guild oath recorded. Standing and faction alignment remain separate.");
+    this.saveSoon(); this.emitHud(true); return true;
+  }
+
+  startGuildQuest(questId: string) {
+    if (this.multiplayer?.role === "guest") { this.events.onToast("The host records guild campaign state for this expedition."); return false; }
+    const next = startGuildQuest(this.guildBook, questId);
+    if (next === this.guildBook) { this.events.onToast("Finish the preceding authored chapter or join this guild first."); return false; }
+    this.guildBook = next;
+    this.ensureActiveGuildQuestSites();
+    const quest = GUILD_QUESTS.find((entry) => entry.id === questId);
+    this.audio.play("ui");
+    this.events.onToast(quest
+      ? `${quest.name} accepted. Its named field site is now marked; only matching demonstrations there advance the chapter.`
+      : "Guild chapter accepted. Objectives listen to gameplay events rather than polling the world.");
+    this.saveSoon(); this.emitHud(true); return true;
+  }
+
+  promoteGuild(guildId: GuildId) {
+    if (this.multiplayer?.role === "guest") { this.events.onToast("The host records guild promotions for this expedition."); return false; }
+    const next = promoteGuild(this.guildBook, guildId);
+    if (next === this.guildBook) { this.events.onToast("Promotion still needs standing, the rank chapter, and demonstrated play."); return false; }
+    this.guildBook = next;
+    this.applyLoadedGuildHallUpgrades(guildId);
+    this.audio.play("craft"); this.events.onToast("Promotion recorded. Loaded halls gain their corresponding service wing and crest.");
+    this.saveSoon(); this.emitHud(true); return true;
+  }
+
+  private guildNpcForMob(mob: MobEntity) {
+    if (!mob.profession?.startsWith("guild:")) return null;
+    const [, guildId, npcId] = mob.profession.split(":");
+    return GUILD_NPCS.find((entry) => entry.guildId === guildId && entry.id === npcId) ?? null;
+  }
+
+  private guildRecruitReady(npc: (typeof GUILD_NPCS)[number]) {
+    const gate = GUILD_QUESTS.find((quest) => quest.guildId === npc.guildId && quest.number === 6);
+    return npc.recruitable && Boolean(gate && this.guildBook.guilds[npc.guildId].completedQuestIds.includes(gate.id));
+  }
+
+  recruitGuildNpc(npcId: string) {
+    if (this.multiplayer?.role === "guest") { this.events.onToast("The host records persistent recruit custody for this expedition."); return false; }
+    const mob = this.activeSentient;
+    const npc = mob ? this.guildNpcForMob(mob) : null;
+    if (!mob || !npc || npc.id !== npcId || !npc.recruitable) return false;
+    if (!this.guildRecruitReady(npc)) {
+      this.events.onToast(`${npc.name}'s personal trust becomes available after chapter six of ${GUILDS[npc.guildId].name}.`);
+      return false;
+    }
+    if (mob.hiredByPlayerId === this.localPlayerId()) return true;
+    mob.hiredByPlayerId = this.localPlayerId();
+    mob.followCommand = "follow";
+    mob.followDistance = "dynamic";
+    mob.group.userData.guildEscortOriginX = mob.group.position.x;
+    mob.group.userData.guildEscortOriginZ = mob.group.position.z;
+    this.guildBook = recordGuildServiceFlag(this.guildBook, npc.guildId, `recruit:${npc.id}`);
+    const companionKinds: Readonly<Record<string, Readonly<{ kind: MobKind; name: string }>>> = Object.freeze({
+      "pella-reedshoe": { kind: "burrowbell", name: "Button" },
+      "sela-wakequiet": { kind: "currentweaver-eel", name: "Wakecoil" },
+      "bram-coalgrin": { kind: "warg", name: "Toll" },
+      "hessa-deepnote": { kind: "copper-mole", name: "Pipet" },
+      "rowan-mileglass": { kind: "petalfox", name: "Blankmile" },
+      "taff-ribbons": { kind: "taffy-hound", name: "Knot" },
+    });
+    const companion = companionKinds[npc.id];
+    const companionResidentId = `guild-companion:${npc.id}`;
+    if (companion && !this.mobs.some((candidate) => candidate.residentId === companionResidentId && candidate.health > 0)) {
+      const definition = MOB_DEFS[companion.kind];
+      let x = mob.group.position.x + Math.cos(mob.angle + Math.PI / 2) * 1.7;
+      let z = mob.group.position.z + Math.sin(mob.angle + Math.PI / 2) * 1.7;
+      let y = definition.aquatic ? mob.group.position.y : this.world.surfaceAt(Math.round(x), Math.round(z)) + definition.footOffset;
+      if (definition.aquatic) {
+        outer: for (let radius = 0; radius <= 6; radius += 1) for (let dz = -radius; dz <= radius; dz += 1) for (let dx = -radius; dx <= radius; dx += 1) {
+          const candidateX = Math.round(mob.group.position.x) + dx, candidateZ = Math.round(mob.group.position.z) + dz;
+          for (let dy = -3; dy <= 3; dy += 1) {
+            const candidateY = Math.round(mob.group.position.y) + dy;
+            if (!blockContainsWater(this.world.getBlock(candidateX, candidateY, candidateZ))) continue;
+            x = candidateX; y = candidateY + definition.footOffset; z = candidateZ; break outer;
+          }
+        }
+      }
+      this.spawnMob(companion.kind, new THREE.Vector3(x, y, z), {
+        name: companion.name, residentId: companionResidentId, persistentPoiResident: true,
+        aligned: true, factionId: "player", hiredByPlayerId: this.localPlayerId(),
+        creatureTamed: true, creatureOwnerId: this.localPlayerId(),
+        progression: { bondPoints: 90 } as CreatureProgressionV2,
+      });
+    }
+    this.audio.play("craft");
+    this.events.onToast(`${npc.name} joins your company${companion ? ` with ${companion.name}` : ""}. Their schedule, weaknesses, and recovery rules remain active.`);
+    this.saveSoon(); this.emitHud(true); return true;
+  }
+
+  private applyGuildHallUpgrade(markerKey: string, marker: StructureMarker) {
+    if (this.multiplayer?.role === "guest" || marker.type !== "landmark" || !marker.tag.startsWith("guild-hall:")) return;
+    const [, guildIdRaw, markerState, settlementId] = marker.tag.split(":");
+    if (!(guildIdRaw in GUILDS)) return;
+    const guildId = guildIdRaw as GuildId;
+    const state = guildHallStateForBook(this.guildBook, guildId);
+    if (state === markerState) return;
+    const palette = guildHallBlockPalette(guildId, state);
+    const { x, y, z } = marker.position;
+    const placeIfOpen = (px: number, py: number, pz: number, block: BlockId) => {
+      const current = this.world.getBlock(px, py, pz);
+      if (current === BlockId.Air || current === BlockId.Torch || current === BlockId.Glowstone) this.world.setBlock(px, py, pz, block, false, true);
+    };
+    if (state === "established" || state === "charter") for (const side of [-1, 1]) {
+      placeIfOpen(x + side * 2, y, z, palette.corner);
+      placeIfOpen(x + side * 2, y + 1, z, palette.corner);
+      placeIfOpen(x + side * 2, y + 2, z, guildId === "tideglass" ? BlockId.Glowstone : BlockId.Torch);
+    }
+    if (state === "charter") {
+      for (let dx = -2; dx <= 2; dx += 1) placeIfOpen(x + dx, y + 3, z, palette.corner);
+      placeIfOpen(x, y + 4, z, BlockId.Glowstone);
+    }
+    this.world.structureMarkers.set(markerKey, { ...marker, tag: `guild-hall:${guildId}:${state}:${settlementId ?? marker.id}` });
+  }
+
+  private applyLoadedGuildHallUpgrades(guildId?: GuildId) {
+    for (const [key, marker] of this.world.structureMarkers) {
+      if (marker.type !== "landmark") continue;
+      if (guildId && !marker.tag.startsWith(`guild-hall:${guildId}:`)) continue;
+      this.applyGuildHallUpgrade(key, marker);
+    }
+  }
+
+  /**
+   * Active chapters receive one deterministic, lightweight field marker beside
+   * their loaded hall. The marker is reconstructed from saved quest state, so it
+   * never needs a second mutable world-save format and cannot duplicate on load.
+   */
+  private guildQuestCreatureKind(quest: (typeof GUILD_QUESTS)[number]): MobKind {
+    const authored = quest.creatureKinds[0];
+    if (authored && authored in MOB_DEFS) return authored as MobKind;
+    const defaults: Readonly<Record<GuildId, MobKind>> = Object.freeze({
+      waykeeper: "petalfox",
+      tideglass: "lanternshell",
+      moonbough: "runeowl",
+      brassroot: "warg",
+      deepgear: "copper-mole",
+      hearthroad: "burrowbell",
+      "sugarcourt-makers": "taffy-hound",
+    });
+    return defaults[quest.guildId];
+  }
+
+  private ensureActiveGuildQuestSites() {
+    if (!this.world?.structureMarkers || !this.guildBook) return;
+    for (const guildId of Object.keys(GUILDS) as GuildId[]) {
+      const activeQuestIds = this.guildBook.guilds[guildId].activeQuestIds;
+      if (activeQuestIds.length === 0) continue;
+      const hallMarkers = [...this.world.structureMarkers.entries()]
+        .filter(([, marker]) => marker.type === "landmark"
+          && (marker.tag.startsWith(`guild-hall:${guildId}:`) || marker.tag.startsWith(`guild-lodge:${guildId}:`)))
+        .sort(([left], [right]) => left.localeCompare(right));
+      const hall = hallMarkers[0]?.[1];
+      if (!hall || hall.type !== "landmark") continue;
+      for (const questId of activeQuestIds) {
+        const quest = GUILD_QUESTS.find((entry) => entry.id === questId && entry.guildId === guildId);
+        if (!quest) continue;
+        const markerKey = `guild-quest-site:${quest.id}`;
+        if (this.world.structureMarkers.has(markerKey)) continue;
+        const guildIndex = (Object.keys(GUILDS) as GuildId[]).indexOf(guildId);
+        const angle = ((quest.number * 2.399963 + guildIndex * 0.71) % (Math.PI * 2));
+        const distance = 14 + (quest.number % 3) * 4;
+        const x = Math.round(hall.position.x + Math.cos(angle) * distance);
+        const z = Math.round(hall.position.z + Math.sin(angle) * distance);
+        const y = this.world.surfaceAt(x, z) + 1;
+        this.world.structureMarkers.set(markerKey, {
+          type: "landmark",
+          id: markerKey,
+          position: { x, y, z },
+          tag: `guild-quest:${quest.id}:${quest.locationIds[0] ?? quest.id}`,
+        });
+        const spawnKey = `${markerKey}:encounter`;
+        this.world.structureMarkers.set(spawnKey, {
+          type: "spawn",
+          id: spawnKey,
+          position: { x: x + 4, y: this.world.surfaceAt(x + 4, z) + MOB_DEFS[this.guildQuestCreatureKind(quest)].footOffset, z },
+          mobKind: this.guildQuestCreatureKind(quest),
+          count: 1,
+          radius: 3,
+          persistent: false,
+          tags: Object.freeze(["guild-quest", quest.id, quest.encounterIds[0] ?? quest.id]),
+        });
+      }
+    }
+  }
+
+  private clearGuildQuestSite(questId: string) {
+    this.world.structureMarkers.delete(`guild-quest-site:${questId}`);
+    this.world.structureMarkers.delete(`guild-quest-site:${questId}:encounter`);
+  }
+
+  private recordGuildHallDiscovery(markerKey: string, marker: StructureMarker) {
+    if (this.multiplayer?.role === "guest" || marker.type !== "landmark") return false;
+    if (!marker.tag.startsWith("guild-hall:") && !marker.tag.startsWith("guild-lodge:")) return false;
+    const guildIdRaw = marker.tag.split(":")[1];
+    if (!guildIdRaw || !(guildIdRaw in GUILDS)) return false;
+    const guildId = guildIdRaw as GuildId;
+    const next = discoverGuildHall(this.guildBook, guildId, markerKey);
+    if (next === this.guildBook) return false;
+    this.guildBook = next;
+    this.events.onToast(`${GUILDS[guildId].name} discovered. Its oath and chapter ledger are now available.`);
+    this.saveSoon();
+    return true;
+  }
+
+  completeGuildQuest(questId: string, outcomeId: string) {
+    if (this.multiplayer?.role === "guest") { this.events.onToast("The host must record a persistent guild outcome."); return false; }
+    const quest = GUILD_QUESTS.find((entry) => entry.id === questId);
+    if (!quest) return false;
+    const allowedOutcomes = quest.number === 8 ? [...quest.solutionFamilies, ...GUILDS[quest.guildId].doctrines] : [...quest.solutionFamilies];
+    if (!allowedOutcomes.includes(outcomeId)) { this.events.onToast("That consequence is not authored for this chapter."); return false; }
+    let prepared = this.guildBook;
+    const progress = questProgress(prepared, questId);
+    const choice = quest.objectives.find((entry) => entry.kind === "choiceOutcome");
+    const nonChoiceComplete = Boolean(progress?.objectives.filter((entry) => entry.kind !== "choiceOutcome").every((entry) => entry.current >= entry.target));
+    if (choice && nonChoiceComplete && (progress?.objectives.find((entry) => entry.id === choice.id)?.current ?? 0) < choice.target) {
+      prepared = applyGuildSemanticEvent(prepared, {
+        kind: "choiceOutcome",
+        guildId: quest.guildId,
+        questId: quest.id,
+        objectiveId: choice.id,
+        targetId: choice.predicate.targetIds[0],
+        context: { encounterId: choice.predicate.encounterIds[0] },
+        amount: choice.target,
+        outcomeId,
+        demonstrationId: `choice:${quest.id}:${outcomeId}`,
+      });
+    }
+    const next = completeGuildQuestState(prepared, questId, outcomeId);
+    if (next === prepared) { this.events.onToast("Finish every demonstrated objective and choose one of this chapter's authored resolutions."); return false; }
+    this.guildBook = next;
+    this.clearGuildQuestSite(questId);
+    const rewardItems = guildQuestRewardItems(questId);
+    for (const item of rewardItems) {
+      const leftover = this.addItem(item, 1, undefined, MAIN_THEN_HOTBAR);
+      if (leftover > 0) this.spawnDrop(item, leftover, this.position.clone().add(new THREE.Vector3(0, .45, 0)));
+    }
+    this.audio.play("craft");
+    const rewardText = rewardItems.length ? ` ${rewardItems.map((item) => ITEMS[item].name).join(" and ")} awarded.` : "";
+    this.events.onToast(`Guild chapter recorded through “${outcomeId}.” Its consequence now persists in the living ledger.${rewardText}`);
+    this.saveSoon(); this.emitHud(true); return true;
+  }
+
+  /**
+   * Routes one concrete world action to the closest matching active chapter.
+   * Guild data still performs the final exact guild/quest/objective/target and
+   * required-context validation. This prevents a generic action from crediting
+   * every guild that happens to share the same verb.
+   */
+  private dispatchGuildEvent(
+    kind: GuildObjectiveKind,
+    amount = 1,
+    demonstrationId: string = kind,
+    observedContext: GuildSemanticEventContext = {},
+  ) {
+    if (this.multiplayer?.role === "guest") return false;
+    if (!this.world?.structureMarkers || !this.position) return false;
+    const current = this.guildBook ?? (this.guildBook = createGuildBook());
+    this.ensureActiveGuildQuestSites();
+    const candidates = (Object.keys(GUILDS) as GuildId[]).flatMap((guildId) => current.guilds[guildId].activeQuestIds.flatMap((questId) => {
+      const quest = GUILD_QUESTS.find((entry) => entry.id === questId && entry.guildId === guildId);
+      const site = this.world.structureMarkers.get(`guild-quest-site:${questId}`);
+      if (!quest || site?.type !== "landmark") return [];
+      const distance = Math.hypot(site.position.x - this.position.x, site.position.z - this.position.z, site.position.y - this.position.y);
+      if (distance > 30) return [];
+      return quest.objectives.filter((objective) => objective.kind === kind).map((objective) => ({ guildId, quest, objective, distance }));
+    })).sort((left, right) => left.distance - right.distance || left.quest.id.localeCompare(right.quest.id));
+    const candidate = candidates[0];
+    if (!candidate) return false;
+    const context: {
+      creatureKind?: string;
+      locationId?: string;
+      itemId?: string;
+      encounterId?: string;
+      actorId?: string;
+    } = { ...observedContext };
+    for (const required of candidate.objective.predicate.requiredContext) {
+      if (required === "locationId") {
+        // The loaded marker and the player's measured distance are the observed
+        // location proof; callers cannot name a remote site into completion.
+        context.locationId = candidate.quest.locationIds[0];
+      } else if (required === "encounterId") {
+        // Each active site owns one authored encounter marker and spawned actor.
+        context.encounterId = candidate.quest.encounterIds[0];
+      } else if (required === "creatureKind") {
+        if (!observedContext.creatureKind) return false;
+        const expected = candidate.objective.predicate.creatureKinds[0];
+        const concreteExpected = expected && expected in MOB_DEFS ? expected : this.guildQuestCreatureKind(candidate.quest);
+        if (observedContext.creatureKind !== concreteExpected) return false;
+        context.creatureKind = expected;
+      } else if (required === "itemId") {
+        // A concrete crafted/placed/consumed item is mandatory even where the
+        // guild records it under a human-readable semantic evidence key.
+        if (!observedContext.itemId) return false;
+        context.itemId = candidate.objective.predicate.itemIds[0];
+      } else if (required === "actorId") {
+        if (!observedContext.actorId || !candidate.objective.predicate.actorIds.includes(observedContext.actorId)) return false;
+        context.actorId = observedContext.actorId;
+      }
+    }
+    const next = applyGuildSemanticEvent(current, {
+      kind,
+      guildId: candidate.guildId,
+      questId: candidate.quest.id,
+      objectiveId: candidate.objective.id,
+      targetId: candidate.objective.predicate.targetIds[0],
+      context,
+      amount,
+      demonstrationId,
+    });
+    if (next === current) return false;
+    this.guildBook = next;
+    this.saveSoon(); this.emitHud(true);
+    return true;
+  }
+
   closeSpellWheel() {
     this.spellWheelOpen = false;
     this.spellKeyState = createSpellKeyState();
@@ -14994,8 +16773,437 @@ export class VoxelEngine {
     this.activate();
   }
 
+  private removeSpellFieldVisual(field: ActiveSpellField) {
+    if (!field.visual) return;
+    field.visual.removeFromParent();
+    this.disposeObject(field.visual);
+    field.visual = undefined;
+  }
+
+  private clearTemporaryMagicVisuals() {
+    for (const field of this.activeSpellFields) this.removeSpellFieldVisual(field);
+  }
+
+  private clearTemporaryMagicState() {
+    this.clearTemporaryMagicVisuals();
+    for (const block of this.temporarySpellBlocks.values()) {
+      if (this.world.getBlock(block.x, block.y, block.z) === BlockId.LivingRoot) this.world.setBlock(block.x, block.y, block.z, block.original, false, true);
+    }
+    this.activeSpellFields = [];
+    this.temporarySpellBlocks.clear();
+    this.stormstepDashSeconds = 0;
+    this.stormstepAirUsed = false;
+  }
+
+  private createKinmarkVisual(mob: MobEntity) {
+    const root = new THREE.Group();
+    root.name = `kinmark-${mob.id}`;
+    const types = mob.resolvedTypes.types.length ? mob.resolvedTypes.types : (["neutral"] as const);
+    const radius = Math.max(0.42, mob.definition.radius * 1.16);
+    types.forEach((type, index) => {
+      const material = new THREE.MeshBasicMaterial({ color: CREATURE_TYPES[type].color, transparent: true, opacity: 0.72, depthWrite: false });
+      const arc = Math.PI * 2 / types.length * 0.82;
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.025, 4, 10, arc), material);
+      ring.rotation.x = Math.PI / 2;
+      ring.rotation.z = index * Math.PI * 2 / types.length;
+      root.add(ring);
+      const glyph = new THREE.Mesh(new THREE.OctahedronGeometry(0.055 + Math.min(0.05, mob.definition.radius * 0.035)), material.clone());
+      const angle = (index + 0.45) * Math.PI * 2 / types.length;
+      glyph.position.set(Math.cos(angle) * radius, 0.04, Math.sin(angle) * radius);
+      glyph.rotation.y = angle;
+      root.add(glyph);
+    });
+    root.position.y = Math.max(0.08, mob.definition.footOffset * 0.2);
+    mob.group.add(root);
+    return root;
+  }
+
+  private beginKinmark(mob: MobEntity, durationSeconds: number, calmSeconds: number) {
+    for (const field of this.activeSpellFields.filter((candidate) => candidate.kind === "kinmark" && candidate.mobId === mob.id)) {
+      this.removeSpellFieldVisual(field);
+      this.activeSpellFields.splice(this.activeSpellFields.indexOf(field), 1);
+    }
+    const now = this.worldSimulationSeconds();
+    const entry = observeBestiaryEntry(this.bestiary[mob.kind], Date.now());
+    const knownTypes = mob.resolvedTypes.types.map((type) => CREATURE_TYPES[type].name).join(" / ");
+    const highCoordination = this.skillState.skills.husbandry.level >= 250 && this.skillState.skills.magic.level >= 250;
+    const sources = highCoordination
+      ? mob.resolvedTypes.sources.filter((source) => source.sourceKind !== "natural").map((source) => `${CREATURE_TYPES[source.type].name} from ${source.label}`).join("; ")
+      : "";
+    const witnessedMoves = creatureProfile(mob.kind).moves.unlocks
+      .filter((unlock) => entry.milestones[`move-witnessed:${unlock.moveId}`])
+      .map((unlock) => CREATURE_MOVES[unlock.moveId]?.name).filter(Boolean).join(", ");
+    const disposition = mob.hostile ? "hostile" : mob.definition.temperament.toLocaleLowerCase();
+    const captureClue = mob.legendaryEncounterId && !entry.secretUnlocked
+      ? "Its legendary resolution remains deliberately unread."
+      : mob.definition.discoveryHint ?? "Patient fieldwork may reveal a capture condition.";
+    this.events.onToast(`${mob.name}: ${knownTypes || "unresolved affinity"}; ${disposition}.${sources ? ` ${sources}.` : ""}${witnessedMoves ? ` Witnessed moves: ${witnessedMoves}.` : ""} ${captureClue}`);
+    const calmEligible = !mob.hostile && mob.awarenessTimer <= 0.5 && ["Gentle", "Skittish"].includes(mob.definition.temperament);
+    if (calmEligible) mob.awarenessTimer = Math.max(0, mob.awarenessTimer - calmSeconds);
+    const visual = this.createKinmarkVisual(mob);
+    this.activeSpellFields.push({
+      kind: "kinmark", x: mob.group.position.x, y: mob.group.position.y, z: mob.group.position.z,
+      radius: Math.max(0.5, mob.definition.radius), startedAt: now, expiresAt: now + durationSeconds,
+      mobId: mob.id, interrupted: !calmEligible, visual,
+    });
+    this.applyLegendaryEventForMob(mob, "calm-creature");
+  }
+
+  private alliedCreatureForRescueThread() {
+    const localPlayerId = this.localPlayerId();
+    const candidates = [this.targetMob, this.activePet, this.activeDragon].filter((mob): mob is MobEntity => Boolean(mob));
+    return candidates.find((mob) => !mob.hostile && (
+      mob.creatureOwnerId === localPlayerId || mob.hiredByPlayerId === localPlayerId || mob.factionId === "player" || mob.aligned
+      || mob.petState?.ownerId === localPlayerId || mob.dragonState?.ownerId === localPlayerId
+    )) ?? null;
+  }
+
+  private castRescueThread(radius: number) {
+    const companion = this.alliedCreatureForRescueThread();
+    if (!companion) { this.events.onToast("Shepherd's Thread needs your aimed bonded companion, mount, or allied rescue target."); return false; }
+    const distance = companion.group.position.distanceTo(this.position);
+    if (distance > radius || companion.legendaryEncounterId || companion.enclosed) {
+      this.events.onToast("The thread refuses distant custody, cages, and legendary arenas.");
+      return false;
+    }
+    const inCombat = ["chase", "windup"].includes(companion.state) || companion.awarenessTimer > 1
+      || this.mobs.some((mob) => mob.hostile && mob.health > 0 && mob.group.position.distanceToSquared(companion.group.position) <= 10 * 10);
+    if (inCombat) { this.events.onToast("The thread cannot recall a companion while combat still has hold of it."); return false; }
+    const atX = Math.round(companion.group.position.x), atY = Math.round(companion.group.position.y), atZ = Math.round(companion.group.position.z);
+    const submerged = !companion.definition.aquatic && blockContainsWater(this.world.getBlock(atX, atY, atZ));
+    const surfaceY = this.world.surfaceAt(atX, atZ) + companion.definition.footOffset;
+    const falling = !companion.definition.flying && companion.group.position.y > surfaceY + 3.5;
+    const stuck = companion.route.blockedSeconds >= 2.75 || distance >= 20;
+    const slot = planFollowerFormation({ x: this.position.x, z: this.position.z, heading: this.followerHeading }, [{ id: companion.id, radius: companion.definition.radius }])[0];
+    const safe = this.safeFollowerTeleportTarget(companion, slot);
+    if ((stuck || submerged || falling) && safe) {
+      companion.group.position.set(safe.x, safe.y, safe.z);
+      companion.route.blockedSeconds = 0;
+      this.events.onToast(submerged || falling ? "The braided thread performs its one safe lateral rescue toward footing." : "A genuinely stuck companion is recalled to a validated safe endpoint.");
+    } else {
+      companion.followCommand = "follow";
+      companion.route.holdSeconds = 0;
+      this.events.onToast("The thread found a legal short route and guides the companion without teleporting it.");
+    }
+    const material = new THREE.LineBasicMaterial({ color: 0xf1dc9b, transparent: true, opacity: 0.68, depthWrite: false });
+    const geometry = new THREE.BufferGeometry().setFromPoints([
+      this.position.clone().add(new THREE.Vector3(0, 0.85, 0)),
+      companion.group.position.clone().add(new THREE.Vector3(0, companion.definition.height * 0.45, 0)),
+    ]);
+    const visual = new THREE.Line(geometry, material);
+    visual.name = `shepherd-thread-${companion.id}`;
+    this.scene.add(visual);
+    const now = this.worldSimulationSeconds();
+    this.activeSpellFields.push({ kind: "rescue-thread", x: this.position.x, y: this.position.y, z: this.position.z, radius, expiresAt: now + 4, mobId: companion.id, visual });
+    return true;
+  }
+
+  private safeSummonManifestationPosition(kind: SummonedCreatureKind, direction: THREE.Vector3) {
+    const definition = MOB_DEFS[kind];
+    const heading = Math.atan2(direction.z, direction.x);
+    const attempts: Array<{ distance: number; turn: number }> = [];
+    for (const distance of [2.4, 3.2, 1.6, 4]) for (const turn of [0, .52, -.52, 1.04, -1.04, Math.PI]) attempts.push({ distance, turn });
+    const radius = Math.max(.28, definition.radius);
+    const height = Math.max(.55, definition.height);
+    const clearVolume = (x: number, y: number, z: number, requireWater: boolean) => {
+      for (const [dx, dz] of [[0, 0], [radius * .72, 0], [-radius * .72, 0], [0, radius * .72], [0, -radius * .72]] as const) {
+        for (const dy of [.15, height * .52, Math.max(.3, height - .12)]) {
+          const block = this.world.getBlock(Math.floor(x + dx + .5), Math.floor(y + dy), Math.floor(z + dz + .5));
+          if (requireWater ? !blockContainsWater(block) : BLOCKS[block ?? BlockId.Air]?.solid) return false;
+        }
+      }
+      return !this.mobs.some((mob) => mob.health > 0 && Math.abs(mob.group.position.y - y) < Math.max(height, mob.definition.height)
+        && Math.hypot(mob.group.position.x - x, mob.group.position.z - z) < radius + mob.definition.radius + .2);
+    };
+    for (const attempt of attempts) {
+      const angle = heading + attempt.turn;
+      const x = this.position.x + Math.cos(angle) * attempt.distance;
+      const z = this.position.z + Math.sin(angle) * attempt.distance;
+      if (definition.aquatic) {
+        const startY = Math.min(MAX_Y - height - 1, Math.round(this.position.y + 4));
+        for (let y = startY; y >= Math.max(MIN_Y + 1, Math.round(this.position.y - 7)); y -= 1) {
+          if (clearVolume(x, y, z, true)) return new THREE.Vector3(x, y, z);
+        }
+        continue;
+      }
+      const surface = this.world.findWalkableY(Math.round(x), Math.round(z), this.position.y);
+      const y = definition.flying ? Math.max(surface + definition.footOffset + 1.2, this.position.y + .35) : surface + definition.footOffset;
+      if (Number.isFinite(y) && y >= MIN_Y && y + height < MAX_Y && clearVolume(x, y, z, false)) return new THREE.Vector3(x, y, z);
+    }
+    return null;
+  }
+
+  private castRootbridge(direction: THREE.Vector3, range: number, durationSeconds: number) {
+    const target = this.target;
+    if (!target || target.distance > range || !BLOCKS[target.type]?.solid || blockContainsWater(target.type)) return 0;
+    const startX = Math.round(this.position.x);
+    const startY = Math.round(this.position.y - 0.51);
+    const startZ = Math.round(this.position.z);
+    const startBlock = this.world.getBlock(startX, startY, startZ) ?? BlockId.Air;
+    if (!BLOCKS[startBlock]?.solid || blockContainsWater(startBlock)) return 0;
+    const dx = target.x - startX;
+    const dy = target.y - startY;
+    const dz = target.z - startZ;
+    const horizontalDistance = Math.hypot(dx, dz);
+    if (horizontalDistance < 2 || Math.hypot(dx, dy, dz) > range + 0.25) return 0;
+    const steps = Math.max(2, Math.ceil(horizontalDistance));
+    const sideX = -dz / horizontalDistance;
+    const sideZ = dx / horizontalDistance;
+    const expiresAt = this.worldSimulationSeconds() + durationSeconds;
+    const candidates = new Map<string, { x: number; y: number; z: number; original: BlockId }>();
+    const addCandidate = (x: number, y: number, z: number) => {
+      const key = `${x},${y},${z}`;
+      if (this.temporarySpellBlocks.has(key) || candidates.has(key)) return false;
+      const current = this.world.getBlock(x, y, z) ?? BlockId.Air;
+      if (current !== BlockId.Air) return false;
+      candidates.set(key, { x, y, z, original: current });
+      return true;
+    };
+    for (let step = 1; step < steps; step += 1) {
+      const t = step / steps;
+      const x = Math.round(startX + dx * t);
+      const y = Math.round(startY + dy * t);
+      const z = Math.round(startZ + dz * t);
+      if (this.mobs.some((mob) => mob.health > 0 && Math.abs(mob.group.position.y - y) < 1.6
+        && Math.hypot(mob.group.position.x - x, mob.group.position.z - z) < mob.definition.radius + 0.7)) return 0;
+      if ([...this.remotePlayers.values()].some((remote) => Math.abs(remote.model.group.position.y - y) < 1.8
+        && Math.hypot(remote.model.group.position.x - x, remote.model.group.position.z - z) < 1.1)) return 0;
+      if ([...this.world.structureMarkers.values()].some((marker) => Math.abs(marker.position.y - y) < 7
+        && Math.hypot(marker.position.x - x, marker.position.z - z) < 6)) return 0;
+      if (!addCandidate(x, y, z)) return 0;
+      let dangerousDrop = true;
+      for (let drop = 1; drop <= 3; drop += 1) {
+        const below = this.world.getBlock(x, y - drop, z) ?? BlockId.Air;
+        if (BLOCKS[below]?.solid || blockContainsWater(below)) { dangerousDrop = false; break; }
+      }
+      if (!dangerousDrop) continue;
+      for (const side of [-1, 1]) {
+        const railX = Math.round(x + sideX * side);
+        const railZ = Math.round(z + sideZ * side);
+        if (!addCandidate(railX, y + 1, railZ)) return 0;
+      }
+    }
+    if (candidates.size < 1) return 0;
+    let placed = 0;
+    for (const [key, candidate] of candidates) {
+      if (!this.world.setBlock(candidate.x, candidate.y, candidate.z, BlockId.LivingRoot, false, true)) continue;
+      this.temporarySpellBlocks.set(key, { ...candidate, expiresAt });
+      placed += 1;
+    }
+    return placed;
+  }
+
+  private deepLanternSignal() {
+    const px = Math.round(this.position.x), py = Math.round(this.position.y + .35), pz = Math.round(this.position.z);
+    let openCells = 0;
+    let resonant = false;
+    for (let dz = -4; dz <= 4; dz += 2) for (let dx = -4; dx <= 4; dx += 2) for (let dy = -1; dy <= 2; dy += 1) {
+      const block = this.world.getBlock(px + dx, py + dy, pz + dz) ?? BlockId.Air;
+      if (!BLOCKS[block]?.solid && !blockContainsWater(block)) openCells += 1;
+      if ([BlockId.ResonantCrystal, BlockId.CrystalCluster, BlockId.LivingVein, BlockId.VeinmetalHeart].includes(block)) resonant = true;
+    }
+    let safeFloorDepth = 0;
+    while (safeFloorDepth < 9) {
+      const block = this.world.getBlock(px, py - safeFloorDepth - 1, pz) ?? BlockId.Air;
+      if (BLOCKS[block]?.solid) break;
+      safeFloorDepth += 1;
+    }
+    return deepLanternGuideSignal({ resonant, openCells, safeFloorDepth });
+  }
+
+  private collectIronwakeFragments(maximum: number) {
+    const eligible = new Set<ItemCode>([Item.IronFilings, Item.RawIron, Item.IronIngot, Item.RawCopper, Item.CopperIngot, Item.CrossbowBolt, Item.GearCluster]);
+    let fragments = 0;
+    const nearby = this.drops.map((drop, index) => ({ drop, index, distance: drop.mesh.position.distanceToSquared(this.position) }))
+      .filter(({ drop, distance }) => eligible.has(drop.item) && distance <= 8 * 8)
+      .sort((left, right) => left.distance - right.distance || left.drop.id - right.drop.id);
+    for (const { drop } of nearby) {
+      while (drop.count > 0 && fragments < maximum) { drop.count -= 1; fragments += 1; }
+      this.spawnParticles(drop.mesh.position.x, drop.mesh.position.y, drop.mesh.position.z, BlockId.IronOre, 3);
+      if (drop.count <= 0) {
+        const index = this.drops.indexOf(drop);
+        if (index >= 0) this.removeDrop(index);
+      }
+      if (fragments >= maximum) break;
+    }
+    return fragments;
+  }
+
+  private launchIronwake(direction: THREE.Vector3, fragments: number, powerMultiplier: number) {
+    const effect = createDragonAttackEffect({
+      id: this.nextDragonEffectId++, element: "steel", attack: "breath", stage: Math.max(1, Math.min(5, fragments)),
+      origin: this.camera.position.clone().addScaledVector(direction, .4), direction, ownerMobId: -1,
+      damage: (3 + fragments * 1.45) * powerMultiplier, status: "scalded", statusSeconds: 1.8,
+    });
+    effect.radius = 1.1 + fragments * .18;
+    effect.lifetime = .42;
+    effect.visual.userData.combatTypes = ["metal", "stone"];
+    this.scene.add(effect.visual);
+    this.dragonEffects.push(effect);
+    this.spawnParticles(this.position.x, this.position.y + .8, this.position.z, BlockId.IronOre, 4 + fragments * 2);
+  }
+
+  private tidemendSiteKey() {
+    return tidemendSiteKeyAt(this.position.x, this.position.z);
+  }
+
+  private restoreTidemendHabitat(now: number) {
+    let restored = 0;
+    for (const [key, state] of this.aquariums) {
+      const near = state.blockKeys.some((blockKey) => {
+        const [x, , z] = blockKey.split(",").map(Number);
+        return (x - this.position.x) ** 2 + (z - this.position.z) ** 2 <= 12 * 12;
+      });
+      if (!near) continue;
+      this.aquariums.set(key, {
+        ...state,
+        residents: state.residents.map((resident) => ({ ...resident, metadata: {
+          ...resident.metadata,
+          health: Math.min(resident.metadata.maxHealth, resident.metadata.health + Math.max(1, Math.ceil(resident.metadata.maxHealth * .25))),
+          custom: { ...(resident.metadata.custom ?? {}), tidemendedAt: now },
+        } })),
+      });
+      restored += 1;
+    }
+    this.applyLegendaryEventNear(this.position, "restore-habitat");
+    this.spawnParticles(this.position.x, this.position.y + .35, this.position.z, BlockId.StarCoral, 12 + restored * 4);
+    return restored;
+  }
+
+  private updateTemporaryMagic() {
+    const now = this.worldSimulationSeconds();
+    if (this.ironwakeWard && this.ironwakeWard.expiresAt <= now) {
+      this.ironwakeWard = null;
+      delete this.potionBuffs["ironwake-guard"];
+    }
+    for (const [mobId, record] of [...this.temporarySummons]) {
+      const mob = this.mobs.find((candidate) => candidate.id === mobId);
+      if (mob && record.roleEvents < 3 && !record.echo) {
+        const definition = SUMMON_CONTRACTS[mob.kind as SummonedCreatureKind];
+        if (definition?.anchorEvent === "destination-reached") {
+          const journey = Math.hypot(this.position.x - record.trialOriginX, this.position.z - record.trialOriginZ);
+          const reunited = mob.group.position.distanceToSquared(this.position) <= 5 * 5;
+          if (journey >= 14 && reunited) {
+            this.observeTemporarySummonTrial(mob, "destination-reached", now);
+            record.trialOriginX = this.position.x; record.trialOriginZ = this.position.z;
+          }
+        } else if (definition?.anchorEvent === "full-quiet-measure") {
+          const nearbyThreat = this.mobs.some((candidate) => candidate.id !== mob.id && candidate.hostile && candidate.health > 0
+            && candidate.group.position.distanceToSquared(mob.group.position) <= 12 * 12);
+          const quiet = !nearbyThreat && this.attackCooldown <= 0 && this.velocity.lengthSq() < .16
+            && mob.group.position.distanceToSquared(this.position) <= 7 * 7;
+          if (!quiet) record.quietStartedAt = now;
+          else if (now - record.quietStartedAt >= 5) {
+            this.observeTemporarySummonTrial(mob, "full-quiet-measure", now);
+            record.quietStartedAt = now;
+          }
+        } else if (definition?.anchorEvent === "still-water-rescue") {
+          const submerged = blockContainsWater(this.world.getBlock(
+            Math.floor(this.position.x + .5), Math.floor(this.position.y + .5), Math.floor(this.position.z + .5),
+          ));
+          if (!submerged || this.health >= 8) record.rescueArmed = true;
+          if (record.rescueArmed && submerged && this.health <= 6
+            && mob.group.position.distanceToSquared(this.position) <= 7 * 7) {
+            this.health = Math.min(10, this.health + 1.5);
+            record.rescueArmed = false;
+            this.observeTemporarySummonTrial(mob, "still-water-rescue", now);
+            this.events.onToast("Glasswake draws you into its still-water wake and restores your breath and footing.");
+          }
+        }
+      }
+      if (record.expiresAt > now) continue;
+      const index = this.mobs.findIndex((mob) => mob.id === mobId);
+      if (index >= 0) this.removeMob(index);
+      this.temporarySummons.delete(mobId);
+    }
+    for (const [key, block] of [...this.temporarySpellBlocks]) {
+      if (block.expiresAt > now) continue;
+      if (this.world.getBlock(block.x, block.y, block.z) === BlockId.LivingRoot) this.world.setBlock(block.x, block.y, block.z, block.original, false, true);
+      this.temporarySpellBlocks.delete(key);
+    }
+    const remaining: typeof this.activeSpellFields = [];
+    for (const field of this.activeSpellFields) {
+      if (field.kind === "kinmark") {
+        const mob = this.mobs.find((candidate) => candidate.id === field.mobId && candidate.health > 0);
+        if (!mob) { this.removeSpellFieldVisual(field); continue; }
+        field.x = mob.group.position.x; field.y = mob.group.position.y; field.z = mob.group.position.z;
+        if (mob.hostile || mob.awarenessTimer > 1 || !["Gentle", "Skittish"].includes(mob.definition.temperament)) field.interrupted = true;
+        if (!field.interrupted && !mob.hostile) mob.awarenessTimer = Math.max(0, mob.awarenessTimer - 0.08);
+        if (field.expiresAt <= now) {
+          if (!field.interrupted && now - (field.startedAt ?? now) >= 29.5) {
+            this.bestiary[mob.kind] = advanceBestiaryResearch(this.bestiary[mob.kind], {
+              id: "observe-disposition", title: "Uninterrupted Disposition Study", goal: 3,
+            }, 1, Date.now());
+            this.dispatchGuildEvent("observeCreature", 1, `kinmark:${mob.specimenId ?? mob.id}`, { creatureKind: mob.kind });
+            this.advancePrimeClue(mob, "kinmark-study");
+            this.events.onToast(`${mob.name}'s uninterrupted Kinmark advances its disposition study.`);
+          }
+          this.removeSpellFieldVisual(field);
+          continue;
+        }
+      } else if (field.kind === "rescue-thread") {
+        const mob = this.mobs.find((candidate) => candidate.id === field.mobId && candidate.health > 0);
+        const line = field.visual instanceof THREE.Line ? field.visual : null;
+        if (!mob || !line) { this.removeSpellFieldVisual(field); continue; }
+        line.geometry.setFromPoints([
+          this.position.clone().add(new THREE.Vector3(0, 0.85, 0)),
+          mob.group.position.clone().add(new THREE.Vector3(0, mob.definition.height * 0.45, 0)),
+        ]);
+      }
+      if (field.kind === "deep-lantern" && field.expiresAt > now) {
+        field.x = this.position.x; field.y = this.position.y + 1; field.z = this.position.z;
+        if (now >= this.deepLanternNextPulseAt) {
+          const signal = this.deepLanternSignal();
+          this.deepLanternNextPulseAt = now + 8;
+          this.events.onToast(signal.caption);
+          this.spawnParticles(this.position.x, this.position.y + 1.15, this.position.z, signal.color === "violet" ? BlockId.ResonantCrystal : signal.color === "amber" ? BlockId.Glowstone : signal.color === "blue" ? BlockId.LuminousAlgae : BlockId.CrystalBlock, 4);
+        }
+      }
+      if (field.expiresAt > now) { remaining.push(field); continue; }
+      if (field.kind === "storm-echo") {
+        const effect = createDragonAttackEffect({
+          id: this.nextDragonEffectId++, element: "steel", attack: "breath", stage: 2,
+          origin: new THREE.Vector3(field.x, field.y, field.z), direction: new THREE.Vector3(0, 1, 0), ownerMobId: -1,
+          damage: field.damage ?? 9, status: "scalded", statusSeconds: 2,
+        });
+        effect.radius = field.radius;
+        effect.lifetime = .3;
+        effect.visual.userData.combatTypes = ["storm", "sky"];
+        this.scene.add(effect.visual); this.dragonEffects.push(effect);
+      }
+      this.removeSpellFieldVisual(field);
+    }
+    this.activeSpellFields = remaining;
+  }
+
+  private observeTemporarySummonTrial(mob: MobEntity, event: import("./summon-contracts").SummonRoleEvent, now = this.worldSimulationSeconds()) {
+    const record = this.temporarySummons.get(mob.id);
+    const definition = SUMMON_CONTRACTS[mob.kind as SummonedCreatureKind];
+    if (!record || record.echo || !definition || definition.anchorEvent !== event || record.roleEvents >= definition.concordanceRequired
+      || now - record.lastTrialAt < .75) return false;
+    this.summonContractState = observeSummonRole(this.summonContractState, definition.kind, event, now);
+    record.roleEvents += 1; record.lastTrialAt = now;
+    const concordance = this.summonContractState.records[definition.kind]?.concordance ?? 0;
+    const remaining = Math.max(0, definition.concordanceRequired - concordance);
+    this.events.onToast(remaining
+      ? `${mob.name} fulfills its contract: ${event.replaceAll("-", " ")} (${concordance}/${definition.concordanceRequired} concordance).`
+      : `${mob.name}'s earned Worldpin anchor window is open for 12 seconds.`);
+    this.saveSoon(); this.emitHud(true);
+    return true;
+  }
+
+  private isInsideHearthward(x: number, z: number) {
+    const now = this.worldSimulationSeconds();
+    return this.activeSpellFields.some((field) => field.kind === "hearthward" && field.expiresAt > now
+      && (field.x - x) ** 2 + (field.z - z) ** 2 <= field.radius ** 2);
+  }
+
   castSelectedMagicSpell() {
     const magicLevel = this.skillState.skills.magic.level;
+    if (this.magicState.selectedSpellId === "stormstep" && !this.grounded && this.stormstepAirUsed) {
+      this.events.onToast("Stormstep can be used only once in the air before you find ground or water again.");
+      return false;
+    }
     // Cooldown timestamps persist in saves, so use a stable clock domain that
     // does not reset when the page is reloaded.
     const result = castSelectedSpell(this.magicState, this.worldSimulationSeconds(), magicLevel);
@@ -15022,6 +17230,118 @@ export class VoxelEngine {
         }
       } else if (effect.kind === "reveal") {
         for (const mob of this.mobs) if (mob.group.position.distanceToSquared(this.position) <= effect.radius * effect.radius) this.bestiary[mob.kind].seen = true;
+      } else if (effect.kind === "kinmark") {
+        if (this.targetMob) this.beginKinmark(this.targetMob, effect.durationSeconds, effect.calmSeconds);
+        else this.events.onToast("Kinmark needs an aimed creature within its field ray.");
+      } else if (effect.kind === "rescue-thread") {
+        this.castRescueThread(effect.radius);
+      } else if (effect.kind === "summon") {
+        const contract = manifestSummon(this.summonContractState, effect.creature, this.worldSimulationSeconds());
+        this.summonContractState = contract.state;
+        const manifestationPosition = this.safeSummonManifestationPosition(effect.creature, direction);
+        if (!manifestationPosition) {
+          this.events.onToast("The contract found no clear, ecologically valid manifestation volume nearby.");
+          continue;
+        }
+        const summon = this.spawnMob(effect.creature, manifestationPosition, {
+          hiredByPlayerId: this.localPlayerId(), aligned: true, persistentPoiResident: false,
+          specimenId: `summon:${contract.manifestation.lineageId}`,
+          progression: {
+            level: Math.max(1, Math.min(50, 1 + Math.floor(magicLevel / 20))),
+            rarityForm: "summoned",
+            phenotype: phenotypeFromSeed(contract.manifestation.phenotypeSeed),
+            shiny: isShinySeed(contract.manifestation.phenotypeSeed),
+          },
+        });
+        this.temporarySummons.set(summon.id, {
+          expiresAt: this.worldSimulationSeconds() + effect.durationSeconds,
+          spellId: result.plan.spellId,
+          lineageId: contract.manifestation.lineageId,
+          echo: contract.manifestation.echo,
+          roleEvents: 0,
+          trialOriginX: this.position.x,
+          trialOriginZ: this.position.z,
+          lastTrialAt: -Infinity,
+          quietStartedAt: this.worldSimulationSeconds(),
+          rescueArmed: true,
+        });
+        summon.group.userData.summonLineageId = contract.manifestation.lineageId;
+        summon.group.userData.temporarySummonEcho = contract.manifestation.echo;
+        const definition = SUMMON_CONTRACTS[effect.creature];
+        const currentEntry = this.bestiary[effect.creature];
+        this.bestiary[effect.creature] = appendBestiaryRecord(normalizeLivingBestiaryEntry({
+          ...currentEntry,
+          seen: true,
+          summonOrigins: [...currentEntry.summonOrigins, definition.realm],
+        }), "summon-origins", {
+          id: `origin:${effect.creature}:${definition.realm}`,
+          title: definition.realm,
+          text: `${definition.realm}. Contract role: ${definition.anchorEvent.replaceAll("-", " ")}. Grounding habitat: ${definition.habitat}.`,
+          recordedAt: Date.now(),
+          sourceId: definition.spellId,
+        });
+        this.activePet = summon;
+      } else if (effect.kind === "rootbridge") {
+        const count = this.castRootbridge(direction, effect.range, effect.durationSeconds);
+        if (!count) this.events.onToast("Rootbridge found no safe replaceable span along that line.");
+        else this.applyLegendaryEventNear(this.position, "repair-anchor");
+      } else if (effect.kind === "stormstep") {
+        const departure = this.position.clone();
+        const horizontal = new THREE.Vector3(direction.x, 0, direction.z);
+        if (horizontal.lengthSq() < .001) horizontal.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
+        horizontal.normalize();
+        const dashSeconds = .2;
+        this.stormstepDashSeconds = dashSeconds;
+        this.stormstepDashVelocity.copy(horizontal).multiplyScalar(effect.distance / dashSeconds);
+        if (!this.grounded) this.stormstepAirUsed = true;
+        this.spawnParticles(departure.x, departure.y + .15, departure.z, BlockId.ResonantCrystal, 10);
+        this.activeSpellFields.push({ kind: "storm-echo", x: departure.x, y: departure.y, z: departure.z, radius: 2.4, damage: effect.damage * result.plan.powerMultiplier, expiresAt: this.worldSimulationSeconds() + effect.echoDelaySeconds });
+      } else if (effect.kind === "deep-lantern") {
+        const expiresAt = this.worldSimulationSeconds() + effect.durationSeconds;
+        this.potionBuffs["deep-lantern"] = expiresAt;
+        this.activeSpellFields = this.activeSpellFields.filter((field) => field.kind !== "deep-lantern");
+        this.activeSpellFields.push({ kind: "deep-lantern", x: this.position.x, y: this.position.y, z: this.position.z, radius: effect.lightRadius, expiresAt });
+        this.deepLanternNextPulseAt = 0;
+      } else if (effect.kind === "ironwake") {
+        const now = this.worldSimulationSeconds();
+        if (this.ironwakeWard && this.ironwakeWard.expiresAt > now && this.ironwakeWard.fragments > 0) {
+          this.launchIronwake(direction, this.ironwakeWard.fragments, result.plan.powerMultiplier);
+          this.events.onToast(`Ironwake releases ${this.ironwakeWard.fragments} physical fragments in a short Metal cone.`);
+          this.ironwakeWard = null;
+          delete this.potionBuffs["ironwake-guard"];
+        } else {
+          const fragments = this.collectIronwakeFragments(effect.fragments);
+          if (fragments <= 0) this.events.onToast("Ironwake found no loose filings, bolts, or eligible metal fragments. It never pulls ore or construction from the world.");
+          else {
+            this.ironwakeWard = { fragments, expiresAt: now + 24 };
+            this.potionBuffs["ironwake-guard"] = now + 24;
+            this.events.onToast(`${fragments} Ironwake fragments orbit as a physical projectile ward; cast again after cooldown to launch them.`);
+          }
+        }
+      } else if (effect.kind === "tidemend") {
+        this.health = Math.min(10, this.health + effect.amount * .5 * result.plan.powerMultiplier);
+        for (const mob of this.mobs) if (mob.definition.aquatic && !mob.hostile && mob.group.position.distanceToSquared(this.position) < 10 * 10) {
+          mob.health = Math.min(mob.maxHealth, mob.health + effect.amount * result.plan.powerMultiplier);
+          mob.combatStatuses = Object.freeze(mob.combatStatuses.filter((status) => status.id !== "burning" && status.id !== "poisoned"));
+          this.applyLegendaryEventForMob(mob, "restore-habitat");
+        }
+        const now = this.worldSimulationSeconds();
+        const siteKey = this.tidemendSiteKey();
+        const nextAllowed = this.tidemendSites.get(siteKey) ?? 0;
+        if (now >= nextAllowed) {
+          const tanks = this.restoreTidemendHabitat(now);
+          this.tidemendSites.set(siteKey, now + effect.habitatCooldownSeconds);
+          this.events.onToast(tanks ? `Tidemend restores ${tanks} nearby aquarium habitat${tanks === 1 ? "" : "s"}.` : "Tidemend records a restorative tide through this authored habitat site.");
+        } else this.events.onToast(`This habitat remembers Tidemend; its world restoration returns in ${Math.ceil(nextAllowed - now)} seconds.`);
+      } else if (effect.kind === "hearthward") {
+        let hearthNearby = false;
+        const px = Math.round(this.position.x), py = Math.round(this.position.y), pz = Math.round(this.position.z);
+        for (let dx = -5; dx <= 5 && !hearthNearby; dx += 1) for (let dz = -5; dz <= 5 && !hearthNearby; dz += 1) for (let dy = -2; dy <= 2; dy += 1) {
+          const block = this.world.getBlock(px + dx, py + dy, pz + dz);
+          if (block !== undefined && [BlockId.HearthFireplace, BlockId.Torch, BlockId.Wayshrine].includes(block)) { hearthNearby = true; break; }
+        }
+        if (hearthNearby) this.activeSpellFields.push({ kind: "hearthward", x: this.position.x, y: this.position.y, z: this.position.z, radius: effect.radius, expiresAt: this.worldSimulationSeconds() + effect.durationSeconds });
+        else this.events.onToast("Hearthward needs a fireplace, lit camp torch, or guild waypost nearby.");
       }
     }
     if (damageEffect) {
@@ -15042,6 +17362,7 @@ export class VoxelEngine {
         statusSeconds: 2.5,
       });
       visual.radius = Math.max(visual.radius, damageEffect.radius);
+      visual.visual.userData.combatTypes = SPELL_TYPE_PROFILES[result.plan.spellId];
       visual.lifetime = result.plan.projectile.range > 0 && visual.velocity.length() > 0
         ? Math.min(4, result.plan.projectile.range / visual.velocity.length())
         : visual.lifetime;
@@ -15187,6 +17508,14 @@ export class VoxelEngine {
     if (next !== this.questBook) {
       this.questBook = next;
       this.saveSoon();
+    }
+    if (event.type === "mob-killed") {
+      this.dispatchGuildEvent("resolveEncounter", 1, `combat:${event.mobKind}:${Math.floor(this.worldSimulationSeconds())}`, { creatureKind: event.mobKind });
+      this.dispatchGuildEvent("defendArea", 1, `defense:${event.mobKind}:${Math.floor(this.worldSimulationSeconds())}`, { creatureKind: event.mobKind });
+    } else if (event.type === "town-discovered") {
+      this.dispatchGuildEvent("surveyLocation", 1, `survey:${event.townId}`);
+    } else if (event.type === "trade-completed") {
+      this.dispatchGuildEvent("negotiate", 1, `trade:${event.factionId}`);
     }
   }
 
@@ -15877,6 +18206,52 @@ export class VoxelEngine {
     }
   }
 
+  private triggerNearbyRoadEvent() {
+    if (this.multiplayer?.role === "guest") return false;
+    const candidates = [...this.world.structureMarkers.entries()]
+      .filter(([, marker]) => marker.type === "landmark"
+        && (marker.tag.startsWith("surface-road:") || marker.tag.startsWith("surface-road-ferry:"))
+        && Math.hypot(marker.position.x - this.position.x, marker.position.z - this.position.z) <= 26)
+      .sort((left, right) => left[1].position.x - right[1].position.x || left[0].localeCompare(right[0]));
+    for (const [anchorId, marker] of candidates) {
+      if (this.roadEvents.has(anchorId)) continue;
+      const nearbyThreats = this.mobs.filter((mob) => mob.hostile && mob.health > 0
+        && mob.group.position.distanceToSquared(new THREE.Vector3(marker.position.x, marker.position.y, marker.position.z)) <= 34 * 34).length;
+      const event = planRoadEvent(this.world.seedText, anchorId, this.day, 2 + nearbyThreats * 2);
+      this.roadEvents.set(anchorId, event);
+      if (event.kind === "quiet") return false;
+      const x = Math.round(marker.position.x + 3);
+      const z = Math.round(marker.position.z + 3);
+      const spawn = (kind: MobKind, name: string, hostile = false, factionId: FactionId | null = null, profession: string | null = null) => {
+        const y = this.world.findWalkableY(x, z, marker.position.y) + MOB_DEFS[kind].footOffset;
+        const mob = this.spawnMob(kind, new THREE.Vector3(x, y, z), {
+          name, factionId, profession, residentId: `road-event:${anchorId}`, persistentPoiResident: false,
+        });
+        mob.hostile = hostile;
+        mob.group.userData.roadEventId = anchorId;
+        return mob;
+      };
+      if (event.kind === "ambush") spawn("warg", "Roadside Prowler", true);
+      else if (event.kind === "creature-crossing") {
+        spawn("thimbledeer", "Crossing Thimbledeer");
+        spawn("thimbledeer", "Crossing Fawn");
+      } else if (event.kind === "caravan") spawn("taffalo", "Hearthroad Pack Taffalo");
+      else if (event.kind === "lost-traveler") spawn("hobbit-merchant", "Lost Wayfarer", false, "hobbits", "general");
+      else if (event.kind === "toll") spawn("goblin-worker", "Road Tollkeeper", false, "goblins", "general");
+      const caption = event.kind === "ambush" ? "Movement breaks from the verge: a road ambush has found this crossing."
+        : event.kind === "creature-crossing" ? "A small herd crosses the road; slowing down keeps the route calm."
+          : event.kind === "caravan" ? "A pack caravan pauses at the waymark before continuing its route."
+            : event.kind === "lost-traveler" ? "A lost traveler waits beside the waymark for bearings."
+              : event.kind === "toll" ? "A local tollkeeper has set up at this crossing."
+                : "A washed-out road shoulder needs stone and timber before caravans can pass cleanly.";
+      this.events.onToast(caption);
+      this.dispatchGuildEvent("travelRoad", 1, `road-event:${anchorId}:${event.kind}`);
+      this.saveSoon();
+      return true;
+    }
+    return false;
+  }
+
   private updateHearthroadsSimulation(dt: number) {
     const nowSeconds = this.worldSimulationSeconds();
     for (const [buff, expiresAt] of Object.entries(this.potionBuffs)) if (expiresAt <= nowSeconds) delete this.potionBuffs[buff];
@@ -15884,6 +18259,7 @@ export class VoxelEngine {
     if (this.settlementTimer > 0) return;
     this.settlementTimer = 2;
     this.syncSettlementPlans();
+    this.triggerNearbyRoadEvent();
     const authorityId = this.factionRelations.authorityId;
     if (this.bankAccount.lastInterestDay < this.day) {
       const result = compoundBankInterest(this.bankAccount, this.day, {
@@ -15958,6 +18334,12 @@ export class VoxelEngine {
   }
 
   private mapLocationName(tag: string) {
+    if (tag.startsWith("guild-quest:")) {
+      const questId = tag.split(":")[1];
+      return GUILD_QUESTS.find((entry) => entry.id === questId)?.name ?? "Guild Field Site";
+    }
+    if (tag.startsWith("surface-road-ferry:")) return "Hearthroad Ferry Landing";
+    if (tag.startsWith("surface-road:")) return "Hearthroad Waymark";
     if (tag.startsWith("settlement:hobbits")) return "Hearthkin Freehold";
     if (tag.startsWith("settlement:goblins")) return "Brassroot Clanhold";
     if (tag.startsWith("settlement:atlantians")) return "Lumen Tidemoot";
@@ -16042,8 +18424,10 @@ export class VoxelEngine {
       }
     }
     this.syncSettlementPlans();
+    this.ensureActiveGuildQuestSites();
     for (const [key, marker] of this.world.structureMarkers) {
       if (marker.type !== "landmark") continue;
+      if (marker.tag.startsWith("guild-hall:")) this.applyGuildHallUpgrade(key, marker);
       const markerChunk = this.world.chunks.get(`${Math.floor(marker.position.x / CHUNK_SIZE)},${Math.floor(marker.position.z / CHUNK_SIZE)}`);
       const markerIsUnderground = marker.position.y < 24;
       const nearUndergroundMarker = isEnteredCave
@@ -16060,10 +18444,36 @@ export class VoxelEngine {
         discoveredAt: Date.now(),
         icon: marker.tag.startsWith("settlement:") ? "town" : "poi",
       });
+      if (marker.tag.startsWith("guild-hall:") || marker.tag.startsWith("guild-lodge:")) {
+        changed = this.recordGuildHallDiscovery(key, marker) || changed;
+      }
+      if (marker.tag.startsWith("guild-quest:")) {
+        const questId = marker.tag.split(":")[1];
+        const quest = GUILD_QUESTS.find((entry) => entry.id === questId);
+        if (quest) {
+          const surveyObjective = quest.objectives.find((entry) => entry.kind === "surveyLocation");
+          const travelObjective = quest.objectives.find((entry) => entry.kind === "travelRoad");
+          if (surveyObjective) this.dispatchGuildEvent("surveyLocation", 1, `survey:${marker.id}`, { locationId: quest.locationIds[0] });
+          if (travelObjective) this.dispatchGuildEvent("travelRoad", 1, `route:${marker.id}`, { locationId: quest.locationIds[0] });
+        }
+        this.events.onToast(`Guild route updated - ${this.mapLocationName(marker.tag)}.`);
+      }
       if (marker.tag.startsWith("settlement:")) {
         const factionId = marker.tag.split(":")[1] ?? "neutral";
         this.dispatchQuestEvent({ type: "town-discovered", townId: marker.id, factionId, at: Date.now() });
         this.events.onToast(`Map updated · ${this.mapLocationName(marker.tag)} discovered.`);
+      }
+      if (marker.tag.startsWith("surface-road:")) {
+        this.dispatchGuildEvent("travelRoad", 1, `road:${marker.id}`);
+        this.applyLegendaryEventNear(this.position, "travel-route", 1, 48, `road:${marker.id}`);
+      }
+      if (marker.tag.startsWith("legendary-clue:")) {
+        const parts = marker.tag.split(":");
+        const encounterId = parts[1] as LegendaryEncounterId;
+        const siteId = parts.slice(2, -2).join(":");
+        if (encounterId in LEGENDARY_ENCOUNTERS && siteId.startsWith("legendary-site:")) {
+          this.applyLegendaryEventToState(siteId, encounterId, "observe-sign", 1, `clue:${key}`);
+        }
       }
       if (marker.tag.startsWith("dragon-lair:")) {
         const dragonType = marker.tag.split(":")[1];
@@ -16177,23 +18587,121 @@ export class VoxelEngine {
     return true;
   }
 
+  private safeCreatureDismountPosition(mob: MobEntity) {
+    const from = { x: this.position.x, y: this.position.y, z: this.position.z, radius: PLAYER_RADIUS, height: this.currentPlayerHeight() };
+    const offsets: Array<{ x: number; z: number }> = [];
+    for (const radius of [1.55, 2.15, 2.85]) for (const turn of [Math.PI / 2, -Math.PI / 2, Math.PI, 0, Math.PI / 4, -Math.PI / 4]) {
+      offsets.push({ x: Math.cos(mob.angle + turn) * radius, z: Math.sin(mob.angle + turn) * radius });
+    }
+    for (const offset of offsets) {
+      const x = Math.round((mob.group.position.x + offset.x) * 10) / 10;
+      const z = Math.round((mob.group.position.z + offset.z) * 10) / 10;
+      const localWater = blockContainsWater(this.world.getBlock(Math.floor(x + 0.5), Math.floor(mob.group.position.y + 0.5), Math.floor(z + 0.5)));
+      const ground = this.world.findWalkableY(Math.round(x), Math.round(z), mob.group.position.y);
+      const y = localWater ? mob.group.position.y + 0.1 : ground + 0.51;
+      if (!Number.isFinite(y) || Math.abs(y - mob.group.position.y) > 5.5) continue;
+      const target = new THREE.Vector3(x, y, z);
+      if (this.collidesAt(target) || this.playerIntersectsSolidMob(target)) continue;
+      const transition = validateMountTransition(from, { x, y, z, radius: PLAYER_RADIUS, height: this.currentPlayerHeight() }, (px, py, pz) => {
+        const probe = new THREE.Vector3(px, py, pz);
+        return !this.collidesAt(probe) && !this.playerIntersectsSolidMob(probe);
+      });
+      if (transition.clear) return target;
+    }
+    return null;
+  }
+
+  private boardCreatureMount(mob: MobEntity, riderId: string) {
+    const profile = MOUNT_PROFILES[mob.kind];
+    if (!profile) return -1;
+    const registry = this.creatureMountSeats ?? (this.creatureMountSeats = new Map<number, string[]>());
+    for (const [mountId, seats] of registry) {
+      const existing = seats.indexOf(riderId);
+      if (existing < 0 || mountId === mob.id) continue;
+      seats[existing] = "";
+    }
+    const seats = registry.get(mob.id) ?? [];
+    const existing = seats.indexOf(riderId);
+    if (existing >= 0) return existing;
+    let seat = seats.findIndex((occupant, index) => index < profile.seats && !occupant);
+    if (seat < 0) seat = seats.length < profile.seats ? seats.length : -1;
+    if (seat < 0) return -1;
+    seats[seat] = riderId;
+    registry.set(mob.id, seats.slice(0, profile.seats));
+    return seat;
+  }
+
+  private creaturePassengerSeatAvailable(mob: MobEntity, riderId: string) {
+    const profile = MOUNT_PROFILES[mob.kind];
+    const seats = this.creatureMountSeats?.get(mob.id) ?? [];
+    return Boolean(profile && profile.seats > 1 && seats[0] && seats[0] !== riderId
+      && !mob.hostile && (seats.includes(riderId) || seats.slice(1, profile.seats).some((occupant) => !occupant) || seats.length < profile.seats));
+  }
+
+  private leaveCreatureMount(mobId: number, riderId: string) {
+    const seats = this.creatureMountSeats?.get(mobId);
+    if (!seats) return;
+    const seat = seats.indexOf(riderId);
+    if (seat >= 0) seats[seat] = "";
+    while (seats.length && !seats.at(-1)) seats.pop();
+    if (seats.some(Boolean)) this.creatureMountSeats?.set(mobId, seats);
+    else this.creatureMountSeats?.delete(mobId);
+  }
+
+  private creatureSeatPosition(mob: MobEntity, seat: number) {
+    this.mobBounds.setFromObject(mob.visual);
+    const top = Math.max(mob.group.position.y + .7, this.mobBounds.max.y + .1);
+    const longitudinal = seat === 0 ? 0 : .62 + (seat - 1) * .48;
+    return new THREE.Vector3(
+      mob.group.position.x - Math.cos(mob.angle) * longitudinal,
+      top,
+      mob.group.position.z - Math.sin(mob.angle) * longitudinal,
+    );
+  }
+
+  private mountedBodyVolumeClear(mode: MountMode, x: number, y: number, z: number, radius: number, height: number) {
+    const ring = Math.max(.18, radius * .82);
+    const offsets = [
+      [0, 0], [ring, 0], [-ring, 0], [0, ring], [0, -ring],
+      [ring * .7, ring * .7], [ring * .7, -ring * .7], [-ring * .7, ring * .7], [-ring * .7, -ring * .7],
+    ] as const;
+    const heights = [Math.min(.2, height * .2), height * .5, Math.max(.25, height - .12)];
+    for (const [offsetX, offsetZ] of offsets) for (const offsetY of heights) {
+      const block = this.world.getBlock(Math.floor(x + offsetX + .5), Math.floor(y + offsetY), Math.floor(z + offsetZ + .5));
+      if (mode === "swim") {
+        if (!blockContainsWater(block)) return false;
+      } else if (BLOCKS[block ?? BlockId.Air]?.solid) return false;
+    }
+    return true;
+  }
+
+  private beginLocalCreatureRide(mob: MobEntity) {
+    const seat = this.boardCreatureMount(mob, this.localPlayerId());
+    if (seat < 0) {
+      this.events.onToast(`Every fitted seat on ${mob.name} is occupied.`);
+      return false;
+    }
+    this.mountedCreatureId = mob.id;
+    this.mountedCreatureSeat = seat;
+    if (this.cameraMode === "first") this.cameraMode = "third-rear";
+    this.keys.clear();
+    return true;
+  }
+
   dismountCreature() {
     if (this.mountedCreatureId === null) return;
     const mob = this.mobs.find((candidate) => candidate.id === this.mountedCreatureId);
     if (mob) {
-      const sideX = Math.cos(mob.angle + Math.PI / 2) * 1.7;
-      const sideZ = Math.sin(mob.angle + Math.PI / 2) * 1.7;
-      const x = Math.round(mob.group.position.x + sideX);
-      const z = Math.round(mob.group.position.z + sideZ);
-      if (mob.leviathanGrowth || mob.dragonState) {
-        this.mobBounds.setFromObject(mob.visual);
-        this.position.set(x, Math.max(mob.group.position.y + 0.6, this.mobBounds.max.y + 0.18), z);
-      } else {
-        const ground = this.world.findWalkableY(x, z, mob.group.position.y);
-        this.position.set(x, ground + 0.51, z);
+      const safe = this.safeCreatureDismountPosition(mob);
+      if (!safe) {
+        this.events.onToast("No safe footing nearby. Land, surface, or move into open water before dismounting.");
+        return;
       }
+      this.position.copy(safe);
     }
+    if (mob) this.leaveCreatureMount(mob.id, this.localPlayerId());
     this.mountedCreatureId = null;
+    this.mountedCreatureSeat = null;
     this.velocity.set(0, 0, 0);
     this.events.onToast(mob?.kind === "reedstrider" ? "You step down from the Reedstrider."
       : mob?.kind === "wild-horse" ? "You swing down from the Wildwood Courser."
@@ -16204,8 +18712,56 @@ export class VoxelEngine {
     this.saveSoon();
   }
 
+  private unifiedMountEligibility(mob: MobEntity, riderId: string) {
+    const profile = MOUNT_PROFILES[mob.kind];
+    if (!profile) return null;
+    const specialOwner = mob.dragonState?.ownerId ?? mob.petState?.ownerId ?? mob.shadeState?.ownerId
+      ?? mob.reedstriderBond?.ownerId ?? mob.courserBond?.ownerId ?? mob.leviathanGrowth?.ownerId ?? null;
+    const tamed = Boolean(mob.creatureTamed || mob.dragonState?.tamed || mob.petState?.tamed || mob.shadeState?.tamed
+      || mob.reedstriderBond?.tamed || mob.courserBond?.tamed || mob.leviathanGrowth?.tamed);
+    const bondedTier = specialOwner && tamed && mob.progression.bondTier === "wary" ? "partnered" as const : mob.progression.bondTier;
+    const baby = Boolean(mob.dragonState?.stage === 1 || mob.petState?.baby || mob.careState?.baby
+      || mob.leviathanGrowth && mob.leviathanGrowth.stage !== "adult");
+    const lifeStage = mob.dragonState ? `stage-${mob.dragonState.stage}` : mob.leviathanGrowth?.stage ?? (baby ? "juvenile" : "adult");
+    const saddleFitted = Boolean(mob.creatureEquipment.saddle || mob.dragonState?.equipment.saddle || mob.shadeState?.saddled
+      || mob.reedstriderBond?.saddled || mob.courserBond?.saddled || mob.leviathanGrowth?.saddled || profile.saddleKind === null);
+    return evaluateMountEligibility(profile, {
+      bondTier: bondedTier,
+      level: mob.progression.level,
+      lifeStage,
+      baby,
+      tamed,
+      owned: (mob.creatureOwnerId ?? specialOwner) === riderId,
+      saddleFitted,
+    });
+  }
+
+  private mountEligibilityMessage(mob: MobEntity) {
+    const result = this.unifiedMountEligibility(mob, this.localPlayerId());
+    if (!result) return "This creature is not anatomically suited to riding.";
+    return result.reason === "not-owned" ? `${mob.name} has not formed a keeper bond with you.`
+      : result.reason === "not-bonded" ? `${mob.name} needs a stronger bond before carrying a rider.`
+        : result.reason === "too-young" ? `${mob.name} is not yet large or experienced enough to ride.`
+          : result.reason === "needs-saddle" ? `${mob.name} needs its authored harness or saddle fitted at Creature Camp.`
+            : `${mob.name} is ready.`;
+  }
+
   updateMountedCreature(dt: number) {
     const mob = this.mobs.find((candidate) => candidate.id === this.mountedCreatureId);
+    if (!mob) {
+      this.mountedCreatureId = null;
+      this.mountedCreatureSeat = null;
+      return;
+    }
+    if ((this.mountedCreatureSeat ?? 0) > 0) {
+      const seat = this.creatureSeatPosition(mob, this.mountedCreatureSeat!);
+      this.position.copy(seat);
+      this.velocity.set(0, 0, 0);
+      this.grounded = mob.mountMode === "land" || mob.mountMode === "climb";
+      this.fallVelocity = 0;
+      this.lastPosition.copy(this.position);
+      return;
+    }
     const ownerId = this.localPlayerId();
     if (mob?.dragonState && canMountDragon(mob.dragonState, ownerId)) {
       this.updateMountedDragon(mob, dt);
@@ -16223,8 +18779,16 @@ export class VoxelEngine {
       baby: mob.leviathanGrowth.stage !== "adult",
       aligned: mob.aligned,
     }));
-    if (!mob || (!ridingShadecrawler && !ridingReedstrider && !ridingCourser && !ridingLeviathan)) {
+    const ridingUnified = Boolean(mob && this.unifiedMountEligibility(mob, ownerId)?.allowed);
+    if (!mob || (!ridingShadecrawler && !ridingReedstrider && !ridingCourser && !ridingLeviathan && !ridingUnified)) {
       this.mountedCreatureId = null;
+      this.mountedCreatureSeat = null;
+      return;
+    }
+    const profile = MOUNT_PROFILES[mob.kind];
+    if (!profile || !mob.mountExertion) {
+      this.mountedCreatureId = null;
+      this.mountedCreatureSeat = null;
       return;
     }
     const forward = (this.keys.has("KeyW") ? 1 : 0) - (this.keys.has("KeyS") ? 1 : 0);
@@ -16236,37 +18800,85 @@ export class VoxelEngine {
     if (moving) mob.desiredAngle = Math.atan2(desiredZ, desiredX);
     const mountedInWater = blockContainsWater(this.world.getBlock(Math.floor(mob.group.position.x + 0.5), Math.floor(mob.group.position.y + 0.5), Math.floor(mob.group.position.z + 0.5)));
     const mountedSprint = this.keys.has("ControlLeft") || this.keys.has("ControlRight") || this.sprintLatched;
-    const leviathanProfile = ridingLeviathan ? creatureMountProfile(mob.kind as CoreMobKind) : null;
-    const courserProfile = ridingCourser ? creatureMountProfile(mob.kind as CoreMobKind) : null;
-    const leviathanAirborne = Boolean(ridingLeviathan && mob.kind === "aetherbell-leviathan" && !mountedInWater);
-    const speed = moving ? (ridingReedstrider ? reedstriderRideSpeed(mountedInWater, mountedSprint)
-      : ridingLeviathan ? (leviathanAirborne ? leviathanProfile?.airSpeed ?? 2.6 : mountedInWater ? leviathanProfile?.waterSpeed ?? 1.3 : leviathanProfile?.landSpeed ?? 0.12) * (mountedSprint ? 1.22 : 1)
-        : ridingCourser ? ((mountedInWater ? courserProfile?.waterSpeed ?? 1.1 : courserProfile?.landSpeed ?? 4.3) * 1.65 * (mountedSprint ? 1.2 : 1)) : 5.75) : 0;
+    const ascentHeld = this.keys.has("Space");
+    const descentHeld = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
+    const surfaceY = this.world.surfaceAt(Math.round(mob.group.position.x), Math.round(mob.group.position.z)) + mob.definition.footOffset;
+    const grounded = mob.group.position.y <= surfaceY + 0.34 && mob.mountVerticalVelocity <= 0;
+    const gradeProbeDistance = Math.max(1, mob.definition.radius * this.mobBaseScale(mob));
+    const gradeX = mob.group.position.x + (moving ? desiredX : Math.cos(mob.angle)) * gradeProbeDistance;
+    const gradeZ = mob.group.position.z + (moving ? desiredZ : Math.sin(mob.angle)) * gradeProbeDistance;
+    const gradeSurfaceY = this.world.surfaceAt(Math.round(gradeX), Math.round(gradeZ)) + mob.definition.footOffset;
+    const steepSurface = grounded && Math.abs(gradeSurfaceY - surfaceY) > Math.max(.9, gradeProbeDistance * .7);
+    const upperCell = this.world.getBlock(Math.floor(mob.group.position.x + 0.5), Math.floor(mob.group.position.y + mob.definition.height * this.mobBaseScale(mob) + 0.5), Math.floor(mob.group.position.z + 0.5));
+    const openAirVolume = !BLOCKS[upperCell ?? BlockId.Air]?.solid;
+    const selectedMode = selectMountMode(profile, {
+      inWater: mountedInWater,
+      grounded,
+      steepSurface,
+      openAirVolume,
+      requestedAscent: ascentHeld || profile.capabilities.includes("fly") && mob.kind === "aetherbell-leviathan",
+    });
+    const mode = selectedMode ?? (profile.capabilities.includes("land") && Math.abs(mob.mountVerticalVelocity) > 0.01 ? "land" : null);
+    if (!mode) {
+      this.dismountCreature();
+      this.events.onToast(`${mob.name} cannot carry a rider in this medium.`);
+      return;
+    }
+    mob.mountMode = mode;
+    mob.mountExertion = stepMountExertion(mob.mountExertion, {
+      dt,
+      sprinting: mountedSprint && moving,
+      ascending: (mode === "fly" || mode === "swim") && ascentHeld,
+      charge: false,
+      recoveryBonus: 0,
+    });
+    const modeSpeed = mode === "swim" ? profile.waterSpeed : mode === "fly" || mode === "glide" ? profile.airSpeed : profile.landSpeed;
+    const speed = moving ? modeSpeed * exertionSpeedScale(mob.mountExertion, mountedSprint) : 0;
     const before = mob.group.position.clone();
     const nx = mob.group.position.x + Math.cos(mob.angle) * speed * dt;
     const nz = mob.group.position.z + Math.sin(mob.angle) * speed * dt;
     let targetY: number | null;
-    if (ridingLeviathan && (mountedInWater || leviathanAirborne)) {
-      const vertical = moving ? Math.sin(this.pitch) * speed * dt * (leviathanAirborne ? 0.9 : 0.55) : 0;
-      const candidateY = mob.group.position.y + vertical;
-      if (leviathanAirborne) {
-        const terrainClearance = this.world.surfaceAt(Math.round(nx), Math.round(nz)) + 5.5;
-        targetY = Math.max(candidateY, terrainClearance);
-      } else targetY = !blockContainsWater(this.world.getBlock(Math.floor(nx + 0.5), Math.floor(candidateY + 0.5), Math.floor(nz + 0.5)))
-        ? mob.group.position.y : candidateY;
-    } else targetY = ridingReedstrider && mountedInWater
-      ? mob.group.position.y
-      : moving ? this.mobMoveTarget(mob, nx, nz, ridingShadecrawler ? 1.7 : 1) : mob.group.position.y;
-    const blocked = targetY === null;
+    if (mode === "swim" || mode === "fly") {
+      const verticalInput = Number(ascentHeld) - Number(descentHeld);
+      const rate = verticalInput >= 0 ? profile.ascentRate : profile.descentRate;
+      targetY = mob.group.position.y + verticalInput * rate * dt;
+      if (mode === "swim" && !blockContainsWater(this.world.getBlock(Math.floor(nx + 0.5), Math.floor(targetY + 0.5), Math.floor(nz + 0.5)))) targetY = mob.group.position.y;
+      if (mode === "fly") targetY = clamp(targetY, this.world.surfaceAt(Math.round(nx), Math.round(nz)) + mob.definition.footOffset, MAX_Y - mob.definition.height - 2);
+      mob.mountVerticalVelocity = 0;
+    } else if (mode === "glide") {
+      targetY = Math.max(this.world.surfaceAt(Math.round(nx), Math.round(nz)) + mob.definition.footOffset, mob.group.position.y - profile.descentRate * dt);
+      mob.mountVerticalVelocity = 0;
+    } else {
+      const groundTarget = moving ? this.mobMoveTarget(mob, nx, nz, mode === "climb" ? 2.4 : ridingShadecrawler ? 1.7 : 1) : surfaceY;
+      if (ascentHeld && grounded && profile.jumpStrength > 0) mob.mountVerticalVelocity = profile.jumpStrength;
+      if (Math.abs(mob.mountVerticalVelocity) > 0.01 || !grounded) {
+        mob.mountVerticalVelocity -= 18 * dt;
+        const airborneY = mob.group.position.y + mob.mountVerticalVelocity * dt;
+        if (groundTarget !== null && airborneY <= groundTarget && mob.mountVerticalVelocity <= 0) {
+          targetY = groundTarget;
+          mob.mountVerticalVelocity = 0;
+        } else targetY = airborneY;
+      } else targetY = groundTarget;
+    }
+    const radius = Math.max(.35, mob.definition.radius * this.mobBaseScale(mob));
+    const height = Math.max(.6, mob.definition.height * this.mobBaseScale(mob));
+    const transition = targetY === null ? { clear: false } : validateMountTransition(
+      { x: mob.group.position.x, y: mob.group.position.y, z: mob.group.position.z, radius, height },
+      { x: nx, y: targetY, z: nz, radius, height },
+      (x, y, z, bodyRadius, bodyHeight) => bodyRadius > 0 && this.mountedBodyVolumeClear(mode, x, y, z, bodyRadius, bodyHeight),
+    );
+    const blocked = !transition.clear;
     if (!blocked && targetY !== null) {
       mob.group.position.x = nx;
       mob.group.position.z = nz;
-      mob.group.position.y += (targetY - mob.group.position.y) * Math.min(1, dt * 10);
+      mob.group.position.y = mode === "land" || mode === "climb"
+        ? mob.group.position.y + (targetY - mob.group.position.y) * Math.min(1, dt * 12)
+        : targetY;
       mob.baseY = mob.group.position.y;
     }
     mob.steering = updateStableSteering(mob.steering, {
       dt,
-      turnRate: mob.definition.turnRate * 0.78,
+      turnRate: profile.turnRate,
       blocked,
       mobId: mob.id,
       desiredHeading: mob.desiredAngle,
@@ -16276,6 +18888,9 @@ export class VoxelEngine {
     this.animateMob(mob, before.distanceTo(mob.group.position));
     this.mobBounds.setFromObject(mob.visual);
     this.position.set(mob.group.position.x, this.mobBounds.max.y + 0.1, mob.group.position.z);
+    this.velocity.set(0, 0, 0);
+    this.grounded = mode === "land" || mode === "climb";
+    this.fallVelocity = 0;
     this.lastPosition.copy(this.position);
   }
 
@@ -16283,6 +18898,7 @@ export class VoxelEngine {
     const state = mob.dragonState;
     if (!state || !canMountDragon(state, this.localPlayerId())) {
       this.mountedCreatureId = null;
+      this.mountedCreatureSeat = null;
       return;
     }
     const forward = (this.keys.has("KeyW") ? 1 : 0) - (this.keys.has("KeyS") ? 1 : 0);
@@ -16300,9 +18916,15 @@ export class VoxelEngine {
     const seaGrounded = state.type === "sea" && !seaInWater && mob.group.position.y <= currentSurface + mob.definition.footOffset + 0.3;
     const seaMode = state.type === "sea" ? seaInWater ? "swim" : seaGrounded && vertical <= 0 ? "walk" : "fly" : null;
     const seaAttributes = state.type === "sea" ? seaDragonAttributes(state.stage, dragonLevelForState(state)) : null;
+    const unifiedProfile = MOUNT_PROFILES[mob.kind];
+    const unifiedMode: MountMode = seaMode === "walk" ? "land" : seaMode ?? "fly";
+    mob.mountMode = unifiedMode;
+    if (unifiedProfile && mob.mountExertion) mob.mountExertion = stepMountExertion(mob.mountExertion, {
+      dt, sprinting: sprint && moving, ascending: vertical > 0 && unifiedMode === "fly", charge: false,
+    });
     const speed = (seaAttributes && seaMode
       ? seaDragonSpeedForMode(seaAttributes, seaMode)
-      : 6.2 + state.stage * 1.22) * (sprint ? 1.32 : 1);
+      : 6.2 + state.stage * 1.22) * (mob.mountExertion ? exertionSpeedScale(mob.mountExertion, sprint) : sprint ? 1.32 : 1);
     mob.steering = updateStableSteering(mob.steering, {
       dt,
       turnRate: (seaAttributes?.turnRate ?? mob.definition.turnRate * 1.28),
@@ -16757,6 +19379,7 @@ export class VoxelEngine {
     if (index >= 0) this.removeMob(index);
     const replacement = this.spawnMob(growth.kind, position, {
       id: mob.id,
+      specimenId: mob.specimenId,
       age: mob.age,
       naturalSpawned: mob.naturalSpawned,
       everLed: mob.everLed,
@@ -16773,16 +19396,30 @@ export class VoxelEngine {
       followDistance: mob.followDistance,
       followCommand: mob.followCommand,
       attunedOrbId: mob.attunedOrbId,
+      primeAnchorId: mob.primeAnchorId,
+      progression: mob.progression,
+      typeSources: mob.typeSources,
+      combatStatuses: mob.combatStatuses,
+      creatureWork: mob.creatureWork,
+      creatureEquipment: mob.creatureEquipment,
+      creatureOwnerId: mob.creatureOwnerId,
+      creatureTamed: mob.creatureTamed,
     });
     this.targetMob = replacement;
     return replacement;
   }
 
   mobBaseScale(mob: MobEntity) {
-    if (mob.dragonState) return mob.dragonState.growthScale;
-    if (mob.leviathanGrowth) return mob.leviathanGrowth.growthScale;
-    if (mob.shadeState) return shadecrawlerScale(mob.shadeState);
-    return husbandryAgeScale(mob.kind, Boolean(mob.petState?.baby || mob.careState?.baby));
+    const base = mob.dragonState ? mob.dragonState.growthScale
+      : mob.leviathanGrowth ? mob.leviathanGrowth.growthScale
+        : mob.shadeState ? shadecrawlerScale(mob.shadeState)
+          : husbandryAgeScale(mob.kind, Boolean(mob.petState?.baby || mob.careState?.baby));
+    // Fully spawned and restored mobs always carry v2 progression. Keeping the
+    // geometry/collision query tolerant of a missing record protects legacy
+    // worlds and bounded simulation fixtures while their entity is migrating.
+    const appearanceScale = mob.progression ? creatureAppearance(mob.kind, mob.progression).sizeScale : 1;
+    const primeScale = mob.progression?.rarityForm === "prime" ? PRIME_FORM_PROFILES[mob.kind]?.sizeScale ?? 1 : 1;
+    return base * appearanceScale * primeScale;
   }
 
   mobCollisionProfile(mob: MobEntity) {
@@ -17036,6 +19673,30 @@ export class VoxelEngine {
     });
   }
 
+  syncCreatureWorkVisual(mob: MobEntity) {
+    const shellModule = mob.creatureWork.shellModule;
+    const saddled = Boolean(mob.creatureEquipment.saddle
+      || mob.dragonState?.equipment.saddle
+      || mob.shadeState?.saddled
+      || mob.reedstriderBond?.saddled
+      || mob.courserBond?.saddled
+      || mob.leviathanGrowth?.saddled);
+    mob.visual.traverse((part) => {
+      const tagged = part.userData.creatureShellModule;
+      if (typeof tagged === "string") part.visible = tagged === shellModule;
+      if (part.userData.creatureSaddle === true) part.visible = saddled;
+    });
+  }
+
+  private offspringIdentity(kind: MobKind, geneticSeed: number, left: MobEntity, right: MobEntity) {
+    const lineageSeed = stableCreatureSeed(kind, `${left.specimenId}|${right.specimenId}`, geneticSeed, this.day);
+    const specimenId = `lineage:${kind}:${lineageSeed.toString(36)}:${(geneticSeed >>> 0).toString(36)}`;
+    return {
+      specimenId,
+      progression: offspringProgressionLegacy(kind, specimenId, geneticSeed, left.progression, right.progression),
+    } as const;
+  }
+
   spawnMob(kind: MobKind, position: THREE.Vector3, options: SpawnMobOptions = {}) {
     const definition = MOB_DEFS[kind];
     const id = options.id ?? this.nextMobId++;
@@ -17070,6 +19731,56 @@ export class VoxelEngine {
         ageDays: 78 + (id % 44),
       }))
       : null;
+    const profile = creatureProfile(kind);
+    const primePlan = PRIME_FORM_PROFILES[kind] && (options.naturalSpawned || options.primeAnchorId || options.progression?.rarityForm === "prime")
+      ? planPrimeEncounter(kind, {
+        worldSeed: this.world.seedText,
+        x: position.x,
+        y: position.y,
+        z: position.z,
+        surfaceY: this.world.surfaceAt(Math.round(position.x), Math.round(position.z)),
+        biomeName: BIOME_NAMES[this.world.biomeAt(Math.round(position.x), Math.round(position.z))] ?? "unmapped",
+        weather: this.weatherState.kind,
+        daylight: this.daylightAmount(),
+      })
+      : null;
+    const activatesPrime = Boolean(primePlan?.eligible && !options.primeAnchorId && !options.progression
+      && !this.primeEncounters.has(primePlan.anchorId));
+    const primeAnchorId = options.primeAnchorId
+      ?? (activatesPrime || options.progression?.rarityForm === "prime" ? primePlan?.anchorId ?? `prime:${kind}:legacy:${id}` : null);
+    const primeProfile = primeAnchorId || activatesPrime || options.progression?.rarityForm === "prime"
+      ? PRIME_FORM_PROFILES[kind] ?? null : null;
+    const specimenId = options.specimenId?.trim().slice(0, 160)
+      || (primeAnchorId ? `${primeAnchorId}:specimen`
+        : options.groundedSummonLineageId ? `summon:${options.groundedSummonLineageId}`
+          : `world:${this.world.seedText}:${kind}:${Math.floor(position.x / 16)},${Math.floor(position.z / 16)}:${Math.floor(this.day / 4)}:${id}`);
+    const primeIdentitySeed = primeAnchorId ? stableCreatureSeed(kind, primeAnchorId, 0, 0) : stableCreatureSeed(kind, specimenId, dragonState?.geneticSeed ?? id, 0);
+    const primeAptitude = primeProfile ? primeAptitudeForMotif(primeProfile.motif) : null;
+    const requestedProgression = primeProfile ? {
+      ...(options.progression ?? {}),
+      rarityForm: "prime" as const,
+      level: options.progression?.level ?? Math.min(profile.stats.maximumLevel, 10 + primeIdentitySeed % 31),
+      phenotype: options.progression?.phenotype ?? phenotypeFromSeed(primeIdentitySeed),
+      shiny: options.progression?.shiny ?? isShinySeed(primeIdentitySeed),
+      aptitudes: Object.freeze([...new Set([primeAptitude!, ...(options.progression?.aptitudes ?? aptitudesFromSeed(primeIdentitySeed))])].slice(0, 2)),
+    } : options.progression ?? (!options.naturalSpawned ? { shiny: false } as CreatureProgressionV2 : null);
+    const requestedProgressionLevel = requestedProgression?.level ?? (dragonState ? Math.max(1, Math.min(profile.stats.maximumLevel, dragonState.stage * 10)) : 1);
+    const progression = migrateCreatureProgression({
+      kind,
+      entityId: specimenId,
+      geneticSeed: dragonState?.geneticSeed ?? petState?.geneticSeed ?? careState?.geneticSeed ?? id,
+      age: options.age ?? 0,
+      maximumLevel: profile.stats.maximumLevel,
+      defaultMoveIds: learnedMovesAtLevel(profile.moves, requestedProgressionLevel),
+      legacy: requestedProgression ?? null,
+    });
+    const typeSources = Object.freeze([...(options.typeSources ?? [])]);
+    const resolvedTypes = resolveCreatureTypes(profile.naturalTypes, typeSources, this.worldSimulationSeconds());
+    const combatStatuses = Object.freeze([...(options.combatStatuses ?? [])]);
+    const unifiedMountProfile = MOUNT_PROFILES[kind];
+    const mountExertion = unifiedMountProfile
+      ? Object.freeze({ ...(options.mountExertion ?? createMountExertion(unifiedMountProfile)) })
+      : null;
     const socialMode = socialGroupModeForMob(kind);
     const socialGroupId = options.socialGroupId ?? (socialMode
       ? `${socialMode}:${kind}:${Math.floor(position.x / 16)},${Math.floor(position.z / 16)}` : null);
@@ -17077,12 +19788,13 @@ export class VoxelEngine {
       ? { ...(options.peelopShedding ?? createPeelopSheddingState(petState?.geneticSeed ?? id)) }
       : null;
     const shadeHealthScale = shadeState ? shadecrawlerScale(shadeState) : 1;
+    const ordinaryMaximumHealth = creatureMaximumHealth(definition, profile.stats, progression.level) * shadeHealthScale;
     const mob: MobEntity = {
-      id, kind, name: options.name?.trim() || dragonState?.customName || petState?.name || definition.name, hostile: definition.hostile && !shadeState?.tamed && !dragonState?.tamed && (dragonState?.stage ?? 2) > 1, definition, group, visual,
+      id, specimenId, kind, name: options.name?.trim() || primeProfile?.name || dragonState?.customName || petState?.name || definition.name, hostile: definition.hostile && !shadeState?.tamed && !dragonState?.tamed && (dragonState?.stage ?? 2) > 1, definition, group, visual,
       sentientLod, sentientTier: "full", sentientSimulationAccumulator: 0, parts,
-      health: options.health ?? dragonState?.health ?? petState?.health ?? definition.health * shadeHealthScale,
-      maxHealth: dragonState?.maxHealth ?? petState?.maxHealth ?? definition.health * shadeHealthScale,
-      damage: dragonState ? dragonAttackPlan(dragonState.type, dragonState.stage, "melee").damage : definition.damage, angle, desiredAngle: angle, steering: createStableSteering(angle), route: createCreatureRouteState(angle), wanderTimer: 1 + Math.random() * 4,
+      health: options.health ?? dragonState?.health ?? petState?.health ?? ordinaryMaximumHealth,
+      maxHealth: dragonState?.maxHealth ?? petState?.maxHealth ?? ordinaryMaximumHealth,
+      damage: dragonState ? dragonAttackPlan(dragonState.type, dragonState.stage, "melee").damage : definition.damage * creatureOutputMultiplier(profile.stats, progression.level), angle, desiredAngle: angle, steering: createStableSteering(angle), route: createCreatureRouteState(angle), wanderTimer: 1 + Math.random() * 4,
       attackCooldown: 0, hurtTimer: 0, age: options.age ?? 0, bob: Math.random() * Math.PI * 2, gait: 0,
       naturalSpawned: options.naturalSpawned ?? false,
       everLed: options.everLed ?? false,
@@ -17097,6 +19809,11 @@ export class VoxelEngine {
       shadeSaddle: visual.getObjectByName("shadecrawler-saddle") ?? null, visualBaseY, visualMinY,
       persistentPoiResident: options.persistentPoiResident ?? Boolean(definition.persistent),
       poiMarkerId: options.poiMarkerId ?? null,
+      legendaryEncounterId: options.legendaryEncounterId ?? null,
+      legendarySiteId: options.legendarySiteId ?? null,
+      primeAnchorId,
+      groundedSummonLineageId: options.groundedSummonLineageId ?? null,
+      groundedSummonEntityId: options.groundedSummonEntityId ?? null,
       enclosed: options.enclosed ?? false,
       enclosureTimer: 0,
       sightCheckTimer: (id % 5) * 0.045,
@@ -17124,10 +19841,38 @@ export class VoxelEngine {
       dragonSlowSeconds: 0,
       dragonScaldSeconds: 0,
       dragonStatusTick: 0,
+      progression,
+      typeSources,
+      resolvedTypes,
+      combatStatuses,
+      threatLedger: Object.freeze([]),
+      moveCooldowns: {},
+      activeMove: null,
+      mountExertion,
+      mountMode: options.mountMode ?? null,
+      mountVerticalVelocity: Number(options.mountVerticalVelocity) || 0,
+      creatureWork: normalizeCreatureWorkState(kind, options.creatureWork ?? createCreatureWorkState(kind)),
+      creatureEquipment: { ...(options.creatureEquipment ?? {}) },
+      creatureOwnerId: options.creatureOwnerId ?? null,
+      creatureTamed: options.creatureTamed ?? false,
     };
+    if (mob.profession?.startsWith("guild:")) {
+      mob.group.userData.guildHomeX = position.x;
+      mob.group.userData.guildHomeY = position.y;
+      mob.group.userData.guildHomeZ = position.z;
+    }
+    applyCreatureRarityVisual(mob.visual, creatureAppearance(kind, progression), primeProfile);
+    if (primeAnchorId && primePlan) {
+      const current = this.primeEncounters.get(primeAnchorId);
+      const next = current
+        ? transitionPrimeEncounter(current, current.status, id, Date.now())
+        : createPrimeEncounterState({ ...primePlan, anchorId: primeAnchorId }, kind, id, Date.now());
+      this.primeEncounters.set(primeAnchorId, Object.freeze({ ...next, specimenId: current?.specimenId ?? specimenId }));
+    }
     if (dragonState) this.applyDragonState(mob, dragonState);
     else this.applyMobScale(mob, this.mobBaseScale(mob));
     this.syncWoolhornCoat(mob);
+    this.syncCreatureWorkVisual(mob);
     this.mobs.push(mob);
     this.refreshMobSpatialEntry(mob);
     return mob;
@@ -17136,6 +19881,7 @@ export class VoxelEngine {
   serializeCreature(mob: MobEntity): SavedCreature {
     return {
       id: mob.id,
+      specimenId: mob.specimenId,
       kind: mob.kind,
       ...(mob.name !== mob.definition.name ? { name: mob.name } : {}),
       x: mob.group.position.x,
@@ -17150,6 +19896,11 @@ export class VoxelEngine {
       ...(mob.outOfRangeSeconds > 0 ? { outOfRangeSeconds: mob.outOfRangeSeconds } : {}),
       ...(mob.persistentPoiResident ? { persistentPoiResident: true } : {}),
       ...(mob.poiMarkerId ? { poiMarkerId: mob.poiMarkerId } : {}),
+      ...(mob.legendaryEncounterId ? { legendaryEncounterId: mob.legendaryEncounterId } : {}),
+      ...(mob.legendarySiteId ? { legendarySiteId: mob.legendarySiteId } : {}),
+      ...(mob.primeAnchorId ? { primeAnchorId: mob.primeAnchorId } : {}),
+      ...(mob.groundedSummonLineageId ? { groundedSummonLineageId: mob.groundedSummonLineageId } : {}),
+      ...(mob.groundedSummonEntityId ? { groundedSummonEntityId: mob.groundedSummonEntityId } : {}),
       ...(mob.enclosed ? { enclosed: true } : {}),
       ...(mob.petState ? { petState: { ...mob.petState } } : {}),
       ...(mob.careState ? { careState: { ...mob.careState } } : {}),
@@ -17173,6 +19924,14 @@ export class VoxelEngine {
       ...(mob.followCommand !== "follow" ? { followCommand: mob.followCommand } : {}),
       ...(mob.attunedOrbId ? { attunedOrbId: mob.attunedOrbId } : {}),
       ...(mob.dragonState ? { dragonState: serializeDragonState({ ...mob.dragonState, health: mob.health }) } : {}),
+      progression: mob.progression,
+      ...(mob.typeSources.length ? { typeSources: mob.typeSources } : {}),
+      ...(mob.combatStatuses.length ? { combatStatuses: mob.combatStatuses } : {}),
+      ...(mob.mountExertion ? { mountExertion: mob.mountExertion, mountMode: mob.mountMode, mountVerticalVelocity: mob.mountVerticalVelocity } : {}),
+      creatureWork: mob.creatureWork,
+      ...(Object.keys(mob.creatureEquipment).length ? { creatureEquipment: { ...mob.creatureEquipment } } : {}),
+      ...(mob.creatureOwnerId ? { creatureOwnerId: mob.creatureOwnerId } : {}),
+      ...(mob.creatureTamed ? { creatureTamed: true } : {}),
     };
   }
 
@@ -17216,6 +19975,7 @@ export class VoxelEngine {
       : false;
     return this.spawnMob(migrated.kind, position, {
       id: migrated.id,
+      specimenId: migrated.specimenId ?? null,
       health: Math.max(0.1, Number(migrated.health) || MOB_DEFS[migrated.kind].health),
       age: Math.max(0, Number(migrated.age) || 0),
       naturalSpawned: legacyNatural,
@@ -17225,6 +19985,11 @@ export class VoxelEngine {
       yaw: Number(migrated.yaw) || 0,
       persistentPoiResident: Boolean(migrated.persistentPoiResident),
       poiMarkerId: migrated.poiMarkerId ?? null,
+      legendaryEncounterId: migrated.legendaryEncounterId ?? null,
+      legendarySiteId: migrated.legendarySiteId ?? null,
+      primeAnchorId: migrated.primeAnchorId ?? null,
+      groundedSummonLineageId: migrated.groundedSummonLineageId ?? null,
+      groundedSummonEntityId: migrated.groundedSummonEntityId ?? null,
       enclosed: Boolean(migrated.enclosed),
       petState: migrated.petState ?? null,
       careState: migrated.careState ?? null,
@@ -17249,6 +20014,16 @@ export class VoxelEngine {
       followCommand: migrated.followCommand ?? "follow",
       attunedOrbId: migrated.attunedOrbId ?? null,
       dragonState: migrated.dragonState ?? null,
+      progression: migrated.progression ?? null,
+      typeSources: migrated.typeSources ?? [],
+      combatStatuses: migrated.combatStatuses ?? [],
+      mountExertion: migrated.mountExertion ?? null,
+      mountMode: migrated.mountMode ?? null,
+      mountVerticalVelocity: migrated.mountVerticalVelocity ?? 0,
+      creatureWork: migrated.creatureWork ?? null,
+      creatureEquipment: migrated.creatureEquipment ?? null,
+      creatureOwnerId: migrated.creatureOwnerId ?? null,
+      creatureTamed: Boolean(migrated.creatureTamed),
     });
   }
 
@@ -17395,6 +20170,18 @@ export class VoxelEngine {
       const factionTag = tagValue("faction:");
       const factionId = isNpcFactionId(factionTag) ? factionTag : null;
       const aligned = marker.tags?.includes("aligned:true") ?? Boolean(factionId);
+      const legendaryTag = tagValue("legendary-encounter:");
+      const legendaryEncounterId = legendaryTag && legendaryTag in LEGENDARY_ENCOUNTERS ? legendaryTag as LegendaryEncounterId : null;
+      const legendarySiteId = legendaryEncounterId ? tagValue("legendary-site:") ?? markerKey : null;
+      if (legendaryEncounterId && legendarySiteId) {
+        const previous = this.legendaryEncounters.get(legendarySiteId)
+          ?? createLegendaryEncounterState(legendaryEncounterId, legendarySiteId);
+        if (!legendaryCanManifest(previous)) {
+          this.activatedStructureMarkers.add(markerKey);
+          continue;
+        }
+        this.legendaryEncounters.set(legendarySiteId, activateLegendaryEncounter(previous));
+      }
       if (residentId && factionId && profession && marker.tags?.includes("outpost-merchant") && !this.merchants.has(residentId)) {
         this.merchants.set(residentId, createMerchant(
           this.factionRelations.authorityId,
@@ -17450,6 +20237,8 @@ export class VoxelEngine {
           this.spawnMob(kind, new THREE.Vector3(x, spawnY, z), {
             persistentPoiResident: marker.persistent,
             poiMarkerId: markerKey,
+            legendaryEncounterId,
+            legendarySiteId,
             petState: kind === "peelop" ? createPeelopState(((marker.position.x * 73856093) ^ (marker.position.z * 19349663) ^ index) >>> 0, index % 5 === 0) : null,
             apiaryBee: kind === "hive-queen" ? boundApiary?.queen ?? null
               : kind === "honeybee" ? boundApiary?.workers[index] ?? null : null,
@@ -17723,7 +20512,7 @@ export class VoxelEngine {
           aquatic = true;
         } else {
           if (this.daylightAmount() >= 0.2 || this.spawnProtection > 0) { this.noteEcologyRejection("daylight"); continue; }
-          if (y <= SEA_LEVEL || this.hostileSpawnSuppressedByTorch(x, y + 1, z) || this.hostileSpawnSuppressedBySettlement(x, z)) {
+          if (y <= SEA_LEVEL || this.hostileSpawnSuppressedByTorch(x, y + 1, z) || this.hostileSpawnSuppressedBySettlement(x, z) || this.isInsideHearthward(x, z)) {
             this.noteEcologyRejection("safe-area");
             continue;
           }
@@ -17862,6 +20651,8 @@ export class VoxelEngine {
       });
       const hurtPulse = mob.hurtTimer > 0 ? 1 + Math.sin(mob.hurtTimer * 45) * 0.035 : 1;
       this.applyMobScale(mob, this.mobBaseScale(mob) * hurtPulse);
+      updateCreatureRarityVisual(mob.visual, mob.age);
+      this.updatePrimeAmbientBehavior(mob);
       return;
     }
     const seated = mob.visual.userData.seated === true;
@@ -17914,6 +20705,8 @@ export class VoxelEngine {
       Math.min(1, moved * 4),
       mob.state === "chase" || mob.state === "flee" || mob.state === "windup" || companionGolemAttackRecovery ? 1 : 0,
     );
+    updateCreatureRarityVisual(mob.visual, mob.age);
+    this.updatePrimeAmbientBehavior(mob);
   }
 
   updateBeeMob(mob: MobEntity, dt: number, distance: number, dx: number, dz: number) {
@@ -17939,7 +20732,7 @@ export class VoxelEngine {
         mob.group.position.y += (target.group.position.y + target.definition.height * 0.55 - mob.group.position.y) * Math.min(1, dt * 5);
         const sting = beeStingProfile(bee, true);
         if (sting.defendsOwner && guardDistance <= mob.definition.attackRange + 0.35 && mob.attackCooldown <= 0) {
-          target.health -= sting.damage;
+          this.applyCombatDamageToMob(target, sting.damage, mob, { effectId: "bee-sting", attackType: "venom", status: "poisoned", statusSeconds: 4 });
           target.hurtTimer = 0.3;
           mob.attackCooldown = sting.cooldownSeconds;
           this.engageCombat();
@@ -18185,6 +20978,353 @@ export class VoxelEngine {
     return amount * (1 - protection);
   }
 
+  private mobCombatOwnerId(mob: MobEntity) {
+    return mob.dragonState?.ownerId ?? mob.petState?.ownerId ?? mob.shadeState?.ownerId
+      ?? mob.reedstriderBond?.ownerId ?? mob.courserBond?.ownerId ?? mob.leviathanGrowth?.ownerId
+      ?? mob.apiaryBee?.ownerId ?? mob.hiredByPlayerId ?? null;
+  }
+
+  private dragonCombatType(type: DragonType): CreatureTypeId {
+    return type === "fire" ? "flame" : type === "ice" ? "frost" : type === "steel" ? "metal"
+      : type === "sea" ? "tide" : type === "gold" ? "radiant" : "arcane";
+  }
+
+  private combatActorForMob(mob: MobEntity): CombatActor {
+    const actorKind = this.temporarySummons?.has(mob.id) || mob.groundedSummonEntityId || mob.kind in SUMMON_CONTRACTS ? "summon"
+      : mob.legendaryEncounterId || mob.primeAnchorId || mob.definition.family === "dragon" || mob.definition.family === "leviathan" ? "boss"
+        : mob.definition.family === "construct" ? "construct"
+          : mob.definition.sentient ? "sentient" : "creature";
+    return {
+      ref: { kind: actorKind, id: mob.id },
+      profile: {
+        level: mob.progression.level,
+        stats: statsAtLevel(creatureProfile(mob.kind).stats, mob.progression.level),
+        currentTypes: mob.resolvedTypes.types,
+        factionId: mob.factionId,
+        ownerId: this.mobCombatOwnerId(mob),
+        partyId: null,
+        temperament: mob.definition.temperament,
+        statuses: mob.combatStatuses,
+        currentHealth: mob.health,
+        maximumHealth: mob.maxHealth,
+        storyProtected: Boolean(mob.persistentPoiResident && mob.definition.sentient),
+      },
+    };
+  }
+
+  private playerCombatActor(id = this.localPlayerId(), state: PlayerSessionSnapshot | null = null): CombatActor {
+    const playerLevel = Number.isFinite(state?.level ?? this.level) ? Math.max(1, state?.level ?? this.level) : 1;
+    const levelScale = Math.max(0, playerLevel - 1);
+    const equipment = state?.equipment;
+    const equippedArmor = equipment
+      ? Object.values(equipment).reduce((total, slot) => total + (slot ? (ITEMS[slot.item]?.armor ?? 0) : 0), 0)
+      : this.armorPoints();
+    return {
+      ref: { kind: "player", id },
+      profile: {
+        level: playerLevel,
+        stats: {
+          vitality: 36 + levelScale,
+          power: 34 + levelScale,
+          focus: 32 + levelScale,
+          guard: 22 + Math.floor(levelScale * 0.5) + equippedArmor * 2.5,
+          ward: 20 + Math.floor(levelScale * 0.5),
+          agility: 38 + Math.floor(levelScale * 0.5),
+        },
+        currentTypes: ["neutral"],
+        factionId: "player",
+        ownerId: id,
+        partyId: this.multiplayer?.sessionId ?? null,
+        temperament: "Defensive",
+        statuses: state ? [] : (this.playerCombatStatuses ?? []),
+        currentHealth: state?.health ?? this.health,
+        maximumHealth: 10,
+      },
+    };
+  }
+
+  private applyCombatEventToMob(target: MobEntity, event: CombatEvent, nowSeconds: number) {
+    if (!event.legal) return;
+    for (const mutation of event.mutations) {
+      if (mutation.kind === "health" && mutation.actor.id === target.id) target.health = mutation.resultingHealth;
+      else if (mutation.kind === "status-add" && mutation.actor.id === target.id) {
+        target.combatStatuses = Object.freeze([...target.combatStatuses.filter((status) => status.id !== mutation.status.id), mutation.status]);
+      } else if (mutation.kind === "status-remove" && mutation.actor.id === target.id) {
+        target.combatStatuses = Object.freeze(target.combatStatuses.flatMap((status) => status.id !== mutation.statusId ? [status]
+          : status.stacks > mutation.stacks ? [{ ...status, stacks: status.stacks - mutation.stacks }] : []));
+      } else if (mutation.kind === "threat" && mutation.actor.id === target.id) {
+        target.threatLedger = updateThreatLedger(target.threatLedger, mutation.source, mutation.amount, nowSeconds);
+      } else if (mutation.kind === "reaction-cooldown" && mutation.actor.id === target.id) {
+        const setupStatus = CREATURE_REACTIONS.find((reaction) => reaction.id === mutation.reactionId)?.setupStatus;
+        if (setupStatus) target.combatStatuses = Object.freeze(target.combatStatuses.map((status) => status.id === setupStatus
+          ? Object.freeze({ ...status, reactionReadyAt: mutation.readyAtSeconds }) : status));
+      }
+    }
+  }
+
+  private applyCombatEventToLocalPlayer(event: CombatEvent, source: string) {
+    if (!event.legal) return false;
+    let resultingHealth = this.health;
+    for (const mutation of event.mutations) {
+      if (mutation.kind === "health" && mutation.actor.kind === "player" && String(mutation.actor.id) === this.localPlayerId()) {
+        resultingHealth = mutation.resultingHealth;
+      } else if (mutation.kind === "status-add" && mutation.actor.kind === "player" && String(mutation.actor.id) === this.localPlayerId()) {
+        this.playerCombatStatuses = Object.freeze([...this.playerCombatStatuses.filter((status) => status.id !== mutation.status.id), mutation.status]);
+      } else if (mutation.kind === "status-remove" && mutation.actor.kind === "player" && String(mutation.actor.id) === this.localPlayerId()) {
+        this.playerCombatStatuses = Object.freeze(this.playerCombatStatuses.flatMap((status) => status.id !== mutation.statusId ? [status]
+          : status.stacks > mutation.stacks ? [{ ...status, stacks: status.stacks - mutation.stacks }] : []));
+      } else if (mutation.kind === "reaction-cooldown" && mutation.actor.kind === "player" && String(mutation.actor.id) === this.localPlayerId()) {
+        const setupStatus = CREATURE_REACTIONS.find((reaction) => reaction.id === mutation.reactionId)?.setupStatus;
+        if (setupStatus) this.playerCombatStatuses = Object.freeze(this.playerCombatStatuses.map((status) => status.id === setupStatus
+          ? Object.freeze({ ...status, reactionReadyAt: mutation.readyAtSeconds }) : status));
+      }
+    }
+    const damage = Math.max(0, this.health - resultingHealth);
+    this.health = applyAscendantHealthFloor(this.skillState ?? createSkillState(), resultingHealth, 10);
+    if (damage <= 0) return false;
+    this.damageRevision += 1;
+    this.gainSkillExperience("survival", Math.min(8, 1 + damage * 1.5));
+    this.playerInvulnerability = 0.7;
+    this.audio.play("hurt");
+    this.events.onToast(`${source} cost ${damage.toFixed(damage % 1 ? 1 : 0)} ${damage === 1 ? "heart" : "hearts"}.`);
+    if (this.health <= 0) this.respawn(true);
+    return true;
+  }
+
+  private applyCombatDamageToMob(
+    target: MobEntity,
+    amount: number,
+    source: MobEntity | CombatActorRef | null,
+    options: Readonly<{
+      effectId?: string;
+      channel?: CombatEffect["channel"];
+      attackType?: CreatureTypeId;
+      status?: ActiveCombatStatus["id"];
+      statusSeconds?: number;
+      cannotFaint?: boolean;
+    }> = {},
+  ) {
+    const attacker = source && "definition" in source
+      ? this.combatActorForMob(source)
+      : source?.kind === "player" ? this.playerCombatActor(String(source.id))
+        : {
+          ref: source ?? { kind: "environment" as const, id: options.effectId ?? "world" },
+          profile: {
+            level: 1,
+            stats: { vitality: 1, power: 30, focus: 30, guard: 1, ward: 1, agility: 1 },
+            currentTypes: [options.attackType ?? "neutral"], factionId: null, ownerId: null, partyId: null,
+            temperament: "Hostile" as const, statuses: [], currentHealth: 1, maximumHealth: 1,
+          },
+        };
+    const targetActor = this.combatActorForMob(target);
+    const effect: CombatEffect = {
+      id: options.effectId ?? "legacy-impact",
+      name: options.effectId ?? "Impact",
+      intent: "damage",
+      baseAmount: Math.max(0, amount),
+      channel: options.channel ?? "physical",
+      packets: [{ type: options.attackType ?? attacker.profile.currentTypes[0] ?? "neutral", share: 1 }],
+      appliesStatus: options.status,
+      statusDurationSeconds: options.statusSeconds,
+      cannotFaint: options.cannotFaint,
+    };
+    const event = resolveCombatEffect(attacker, targetActor, effect, {
+      isHost: this.multiplayer?.role !== "guest",
+      nowSeconds: this.worldSimulationSeconds(),
+      eventToken: `${effect.id}:${String(attacker.ref.id)}:${target.id}:${Math.floor(this.worldSimulationSeconds() * 60)}`,
+      friendlyFire: "off",
+      pvpEnabled: false,
+      factionStanding: (left, right) => left === right ? "allied" : "neutral",
+    });
+    if (!event.legal) return event;
+    this.applyCombatEventToMob(target, event, this.worldSimulationSeconds());
+    return event;
+  }
+
+  private applyCreatureMoveToMob(attackerMob: MobEntity, target: MobEntity, moveId: string) {
+    const move = CREATURE_MOVES[moveId];
+    if (!move) return false;
+    const attacker = this.combatActorForMob(attackerMob);
+    const defender = this.combatActorForMob(target);
+    const profile = creatureProfile(attackerMob.kind);
+    const baseAmount = Math.max(0.5, attackerMob.damage * creatureOutputMultiplier(profile.stats, attackerMob.progression.level));
+    const effect = effectFromMove(move, baseAmount);
+    const nowSeconds = this.worldSimulationSeconds();
+    const event = resolveCombatEffect(attacker, defender, effect, {
+      isHost: this.multiplayer?.role !== "guest",
+      nowSeconds,
+      eventToken: `move:${move.id}:${attackerMob.id}:${target.id}:${Math.floor(nowSeconds * 60)}`,
+      friendlyFire: "off",
+      pvpEnabled: false,
+      factionStanding: (left, right) => left === right ? "allied" : "neutral",
+    });
+    if (!event.legal) return false;
+    this.applyCombatEventToMob(target, event, nowSeconds);
+    if (event.resolvedAmount > 0) {
+      target.hurtTimer = Math.max(target.hurtTimer, 0.3);
+      target.awarenessTimer = Math.max(target.awarenessTimer, 4);
+      if (attackerMob.kind === "vellum-warden" && target.hostile) {
+        this.observeTemporarySummonTrial(attackerMob, "meaningful-action-resolved", nowSeconds);
+      }
+      this.engageCombat();
+    }
+    return target.health <= 0;
+  }
+
+  private applyCreatureMoveToPlayer(attackerMob: MobEntity, moveId: string) {
+    if (this.mode !== "survival" || this.playerInvulnerability > 0 || this.spawnProtection > 0) return false;
+    const move = CREATURE_MOVES[moveId];
+    if (!move) return false;
+    const attacker = this.combatActorForMob(attackerMob);
+    const defender = this.playerCombatActor();
+    const baseAmount = Math.max(0.5, attackerMob.damage * creatureOutputMultiplier(creatureProfile(attackerMob.kind).stats, attackerMob.progression.level));
+    const effect = effectFromMove(move, baseAmount);
+    const nowSeconds = this.worldSimulationSeconds();
+    const event = resolveCombatEffect(attacker, defender, effect, {
+      isHost: this.multiplayer?.role !== "guest",
+      nowSeconds,
+      eventToken: `move:${move.id}:${attackerMob.id}:${this.localPlayerId()}:${Math.floor(nowSeconds * 60)}`,
+      friendlyFire: "off",
+      pvpEnabled: false,
+      factionStanding: (left, right) => left === right ? "allied" : "neutral",
+    });
+    return this.applyCombatEventToLocalPlayer(event, `${attackerMob.name}'s ${move.name}`);
+  }
+
+  private beginPlannedCreatureMove(mob: MobEntity, targetMob: MobEntity | null, targetPlayer: boolean) {
+    if (mob.activeMove || this.multiplayer?.role === "guest") return false;
+    const targetPosition = targetMob?.group.position ?? this.position;
+    const distance = mob.group.position.distanceTo(targetPosition);
+    const verticalDistance = Math.abs(targetPosition.y - mob.group.position.y);
+    const sightOrigin = mob.group.position.clone().add(new THREE.Vector3(0, mob.definition.height * 0.68, 0));
+    const sightTarget = targetPosition.clone().add(new THREE.Vector3(0, targetMob ? targetMob.definition.height * 0.5 : this.cameraEyeHeight * 0.5, 0));
+    const targetActor = targetMob ? this.combatActorForMob(targetMob) : this.playerCombatActor();
+    const owned = Boolean(this.mobCombatOwnerId(mob));
+    const choice = chooseCreatureMove({
+      moveIds: mob.progression.activeMoveIds.length ? mob.progression.activeMoveIds : [creatureProfile(mob.kind).moves.basicMoveId],
+      cooldowns: mob.moveCooldowns,
+      tactic: owned ? mob.progression.tactic : mob.hostile ? "pursue" : mob.progression.tactic,
+      distance,
+      verticalDistance,
+      hasLineOfSight: this.hasClearLineOfSight(sightOrigin, sightTarget),
+      attackerTypes: mob.resolvedTypes.types,
+      targetTypes: targetActor.profile.currentTypes,
+      healthRatio: mob.health / Math.max(1, mob.maxHealth),
+      ownerHealthRatio: targetPlayer ? this.health / 10 : 1,
+      targetHealthRatio: targetActor.profile.currentHealth / Math.max(1, targetActor.profile.maximumHealth),
+      friendlyFireRisk: 0,
+      terrainFit: 0,
+    });
+    if (!choice || choice.score <= 0) return false;
+    const target = choice.move.target === "self"
+      ? { kind: this.combatActorForMob(mob).ref.kind, id: mob.id }
+      : targetMob ? this.combatActorForMob(targetMob).ref : { kind: "player" as const, id: this.localPlayerId() };
+    mob.activeMove = beginCreatureMove(choice.move, target);
+    mob.state = "windup";
+    mob.stateTimer = choice.move.windupSeconds;
+    mob.desiredAngle = Math.atan2(targetPosition.z - mob.group.position.z, targetPosition.x - mob.group.position.x);
+    if (mob.group.position.distanceToSquared(this.position) <= 24 * 24
+      && this.hasClearLineOfSight(sightOrigin, this.position.clone().add(new THREE.Vector3(0, this.cameraEyeHeight * .5, 0)))) {
+      this.recordBestiaryMilestone(mob.kind, `move-witnessed:${choice.move.id}`);
+    }
+    return true;
+  }
+
+  private triggerMountedCreatureMove(mob: MobEntity, key: "KeyZ" | "KeyX" | "KeyC") {
+    const profile = MOUNT_PROFILES[mob.kind];
+    if (!profile || profile.mountedMoveSlots <= 0 || mob.activeMove) return false;
+    const slot = key === "KeyZ" ? 0 : key === "KeyX" ? 1 : 2;
+    if (slot >= profile.mountedMoveSlots) return false;
+    const learned = mob.progression.activeMoveIds.filter((moveId) => Boolean(CREATURE_MOVES[moveId]));
+    const move = CREATURE_MOVES[learned[slot]];
+    if (!move) {
+      this.events.onToast(`${mob.name} has no mounted technique fitted to that command slot.`);
+      return true;
+    }
+    if ((mob.moveCooldowns[move.id] ?? 0) > 0) {
+      this.events.onToast(`${move.name} is still recovering.`);
+      return true;
+    }
+    const targetMob = this.targetMob && this.targetMob !== mob && this.targetMob.health > 0 ? this.targetMob : null;
+    const target = move.target === "self" || move.target === "ally"
+      ? this.combatActorForMob(mob).ref
+      : targetMob ? this.combatActorForMob(targetMob).ref : null;
+    if (!target) {
+      this.events.onToast(`${move.name} needs a creature target in reach.`);
+      return true;
+    }
+    mob.activeMove = beginCreatureMove(move, target);
+    mob.state = "windup";
+    mob.stateTimer = move.windupSeconds;
+    if (targetMob) mob.desiredAngle = Math.atan2(targetMob.group.position.z - mob.group.position.z, targetMob.group.position.x - mob.group.position.x);
+    this.events.onToast(`${mob.name} readies ${move.name}.`);
+    return true;
+  }
+
+  private advancePlannedCreatureMove(mob: MobEntity, dt: number) {
+    const nowSeconds = this.worldSimulationSeconds();
+    mob.moveCooldowns = stepMoveCooldowns(mob.moveCooldowns, dt);
+    mob.combatStatuses = Object.freeze(mob.combatStatuses.filter((status) => status.expiresAtSeconds > nowSeconds));
+    const ecologicalSourceIds = new Set(["moonpetal-night", "sunpetal-day", "current-charge", "cooled-skin", "feast-memory", "crowned-kiln-heart"]);
+    const persistentSources = mob.typeSources.filter((source) => !ecologicalSourceIds.has(source.id) && (source.expiresAtSeconds === undefined || source.expiresAtSeconds > nowSeconds));
+    const healthRatio = mob.health / Math.max(1, mob.maxHealth);
+    const contextualSources = ecologicalTypeSources(mob.kind, {
+      daylight: this.daylightAmount(),
+      night: this.daylightAmount() < .18,
+      charged: mob.combatStatuses.some((status) => status.id === "shocked") || mob.activeMove?.moveId === "currentweaver-eel--charge-drink",
+      deeplyChilled: mob.combatStatuses.some((status) => status.id === "chilled"),
+      feastMemory: mob.kind === "sugarwake-sovereign" && healthRatio > .33 && healthRatio <= .66,
+      kilnHeart: mob.kind === "sugarwake-sovereign" && healthRatio <= .33,
+    });
+    mob.typeSources = Object.freeze([...persistentSources, ...contextualSources]);
+    mob.resolvedTypes = resolveCreatureTypes(creatureProfile(mob.kind).naturalTypes, mob.typeSources, nowSeconds);
+    if (!mob.activeMove) return false;
+    const previous = mob.activeMove;
+    const stepped = stepCreatureMove(previous, dt);
+    mob.activeMove = stepped.state;
+    if (stepped.event === "became-active" && stepped.state && !stepped.state.applied) {
+      const move = CREATURE_MOVES[stepped.state.moveId];
+      const target = stepped.state.target;
+      if (move) {
+        if (target.id === mob.id && target.kind !== "player") this.applyCreatureMoveToMob(mob, mob, move.id);
+        else if (target.kind === "player" && target.id === this.localPlayerId()) {
+          const delta = this.position.clone().sub(mob.group.position);
+          const inRange = Math.hypot(delta.x, delta.z) <= move.range + Math.max(0.3, move.radius)
+            && Math.abs(delta.y) <= move.verticalTolerance;
+          const visible = !move.requiresLineOfSight || this.hasClearLineOfSight(
+            mob.group.position.clone().add(new THREE.Vector3(0, mob.definition.height * 0.68, 0)),
+            this.position.clone().add(new THREE.Vector3(0, this.cameraEyeHeight * 0.5, 0)),
+          );
+          if (inRange && visible) {
+            const applied = this.applyCreatureMoveToPlayer(mob, move.id);
+            if (applied) this.applyLegendaryEventForMob(mob, "survive-phase");
+          }
+        } else {
+          const targetMob = this.mobs.find((candidate) => candidate.id === target.id && candidate.health > 0) ?? null;
+          if (targetMob) {
+            const delta = targetMob.group.position.clone().sub(mob.group.position);
+            const inRange = Math.hypot(delta.x, delta.z) <= move.range + Math.max(0.3, move.radius)
+              && Math.abs(delta.y) <= move.verticalTolerance;
+            const visible = !move.requiresLineOfSight || this.hasClearLineOfSight(
+              mob.group.position.clone().add(new THREE.Vector3(0, mob.definition.height * 0.68, 0)),
+              targetMob.group.position.clone().add(new THREE.Vector3(0, targetMob.definition.height * 0.5, 0)),
+            );
+            if (inRange && visible) {
+              const killed = this.applyCreatureMoveToMob(mob, targetMob, move.id);
+              if (killed) this.killMob(targetMob);
+            }
+          }
+        }
+        mob.moveCooldowns[move.id] = move.cooldownSeconds;
+        mob.activeMove = markCreatureMoveApplied(stepped.state);
+        this.audio.play("attack");
+      }
+      mob.state = "recover";
+    } else if (stepped.event === "became-recovery") mob.state = "recover";
+    else if (stepped.event === "finished") mob.state = "wander";
+    return true;
+  }
+
   dragonStatusSpeedScale(mob: MobEntity) {
     return mob.dragonSlowSeconds > 0 ? 0.55 : 1;
   }
@@ -18235,7 +21375,13 @@ export class VoxelEngine {
     const playerOwned = state.tamed && state.ownerId === this.localPlayerId();
     if (plan.kind === "melee") {
       if (playerOwned && targetMob && targetMob.health > 0) {
-        targetMob.health -= this.dragonDamageAfterArmor(targetMob, plan.damage);
+        this.applyCombatDamageToMob(targetMob, this.dragonDamageAfterArmor(targetMob, plan.damage), mob, {
+          effectId: `dragon-${plan.kind}`,
+          channel: "physical",
+          attackType: this.dragonCombatType(state.type),
+          status: plan.status === "burning" ? "burning" : plan.status === "slowed" ? "chilled" : plan.status === "scalded" ? "soaked" : undefined,
+          statusSeconds: plan.statusSeconds,
+        });
         targetMob.hurtTimer = 0.34;
         targetMob.fleeTimer = Math.max(targetMob.fleeTimer, 1.2);
         this.applyDragonStatusToMob(targetMob, effect);
@@ -18273,7 +21419,16 @@ export class VoxelEngine {
             if (friendly || (!mob.hostile && mob.factionId === "player")) continue;
             const center = mob.group.position.clone().add(new THREE.Vector3(0, mob.definition.height * this.mobBaseScale(mob) * 0.48, 0));
             if (!dragonEffectHits(effect, center, mob.definition.radius * this.mobBaseScale(mob) * 0.55)) continue;
-            mob.health -= this.dragonDamageAfterArmor(mob, effect.damage);
+            const dragonSource = this.mobs.find((candidate) => candidate.id === effect.ownerMobId)
+              ?? (effect.ownerMobId === -1 ? { kind: "spell" as const, id: `spell-effect:${effect.id}` }
+                : { kind: "projectile" as const, id: `dragon-effect:${effect.id}` });
+            this.applyCombatDamageToMob(mob, this.dragonDamageAfterArmor(mob, effect.damage), dragonSource, {
+              effectId: `dragon-${effect.attack}`,
+              channel: "magical",
+              attackType: this.dragonCombatType(effect.element),
+              status: effect.status === "burning" ? "burning" : effect.status === "slowed" ? "chilled" : effect.status === "scalded" ? "soaked" : undefined,
+              statusSeconds: effect.statusSeconds,
+            });
             mob.hurtTimer = 0.36;
             mob.fleeTimer = Math.max(mob.fleeTimer, effect.element === "ice" ? 2.4 : 1.1);
             this.applyDragonStatusToMob(mob, effect);
@@ -18846,9 +22001,47 @@ export class VoxelEngine {
     else this.audio.play("attack");
   }
 
+  private applyProjectileHitToPlayer(projectile: ArrowProjectile, owner: MobEntity | null) {
+    if (this.mode !== "survival" || this.playerInvulnerability > 0 || this.spawnProtection > 0) return false;
+    const ownerActor = owner ? this.combatActorForMob(owner) : null;
+    const attacker: CombatActor = {
+      ref: { kind: "projectile", id: `${projectile.owner.kind}:${projectile.owner.id}:${projectile.id}` },
+      profile: ownerActor?.profile ?? {
+        level: 1,
+        stats: { vitality: 1, power: 30, focus: 30, guard: 1, ward: 1, agility: 1 },
+        currentTypes: ["neutral"], factionId: null, ownerId: null, partyId: null,
+        temperament: "Hostile", statuses: [], currentHealth: 1, maximumHealth: 1,
+      },
+    };
+    const nowSeconds = this.worldSimulationSeconds();
+    const effect: CombatEffect = {
+      id: projectile.effect?.kind ?? "projectile-hit",
+      name: projectile.effect?.kind === "verdant-root" ? "Verdant volley"
+        : projectile.effect?.kind === "webspinner-bind" ? "Webspinner bind" : "Ranged attack",
+      intent: "damage",
+      baseAmount: projectile.damage,
+      channel: projectile.effect ? "mixed" : "physical",
+      packets: [{ type: projectile.effect?.kind === "verdant-root" ? "verdant"
+        : projectile.effect?.kind === "webspinner-bind" ? "venom" : "neutral", share: 1 }],
+      appliesStatus: projectile.effect ? "rooted" : undefined,
+      statusDurationSeconds: projectile.effect?.seconds,
+    };
+    const event = resolveCombatEffect(attacker, this.playerCombatActor(), effect, {
+      isHost: this.multiplayer?.role !== "guest",
+      nowSeconds,
+      eventToken: `projectile:${projectile.id}`,
+      friendlyFire: "off",
+      pvpEnabled: false,
+    });
+    return this.applyCombatEventToLocalPlayer(event, owner?.name ?? effect.name);
+  }
+
   commitClockworkHoundAttack(mob: MobEntity, targetMob: MobEntity, bodyCheck: boolean) {
     const damage = bodyCheck ? mob.damage * 0.85 : mob.damage;
-    targetMob.health -= this.dragonDamageAfterArmor(targetMob, damage);
+    this.applyCombatDamageToMob(targetMob, this.dragonDamageAfterArmor(targetMob, damage), mob, {
+      effectId: bodyCheck ? "clockwork-body-check" : "clockwork-bite",
+      attackType: bodyCheck ? "metal" : "wild",
+    });
     if (targetMob.dragonState) this.applyDragonState(targetMob, { ...targetMob.dragonState, health: Math.max(0, targetMob.health), alive: targetMob.health > 0 });
     if (targetMob.petState) targetMob.petState.health = Math.max(0, targetMob.health);
     targetMob.hurtTimer = 0.34;
@@ -18983,8 +22176,19 @@ export class VoxelEngine {
       if (result.kind === "target") {
         if (projectile.owner.kind === "mob" && result.targetId === "local") {
           const owner = this.mobs.find((mob) => mob.id === projectile.owner.id);
-          this.damagePlayer(projectile.damage, owner?.name ?? "ranged attack");
-          if (projectile.effect?.kind === "verdant-root" || projectile.effect?.kind === "webspinner-bind") {
+          const now = this.worldSimulationSeconds();
+          const ironwake = consumeIronwakeFragment(this.ironwakeWard, now);
+          const intercepted = ironwake.intercepted;
+          if (intercepted) {
+            this.ironwakeWard = ironwake.ward ? { ...ironwake.ward } : null;
+            this.spawnParticles(projectile.visual.position.x, projectile.visual.position.y, projectile.visual.position.z, BlockId.IronOre, 7);
+            const remaining = this.ironwakeWard?.fragments ?? 0;
+            this.events.onToast(`Ironwake catches a physical projectile (${remaining} fragment${remaining === 1 ? "" : "s"} remain).`);
+            if (!this.ironwakeWard) {
+              delete this.potionBuffs["ironwake-guard"];
+            }
+          } else this.applyProjectileHitToPlayer(projectile, owner ?? null);
+          if (!intercepted && (projectile.effect?.kind === "verdant-root" || projectile.effect?.kind === "webspinner-bind")) {
             this.potionBuffs["dragon-slowed"] = Math.max(
               this.potionBuffs["dragon-slowed"] ?? 0,
               this.worldSimulationSeconds() + projectile.effect.seconds,
@@ -18994,7 +22198,14 @@ export class VoxelEngine {
         else {
           const mob = this.mobs.find((candidate) => candidate.id === result.targetId);
           if (mob) {
-            mob.health -= this.dragonDamageAfterArmor(mob, projectile.damage);
+            const projectileSource: CombatActorRef = { kind: "projectile", id: `${projectile.owner.kind}:${projectile.owner.id}:${projectile.id}` };
+            this.applyCombatDamageToMob(mob, this.dragonDamageAfterArmor(mob, projectile.damage), projectileSource, {
+              effectId: projectile.effect?.kind ?? "projectile-hit",
+              channel: projectile.effect ? "mixed" : "physical",
+              attackType: projectile.effect?.kind === "verdant-root" ? "verdant" : projectile.effect?.kind === "webspinner-bind" ? "venom" : "neutral",
+              status: projectile.effect?.kind === "verdant-root" ? "rooted" : projectile.effect?.kind === "webspinner-bind" ? "rooted" : undefined,
+              statusSeconds: projectile.effect?.seconds,
+            });
             if (projectile.owner.kind === "player") this.gainSkillExperience("ranged", 4 + Math.min(18, projectile.damage));
             if (mob.dragonState) this.applyDragonState(mob, { ...mob.dragonState, health: Math.max(0, mob.health), alive: mob.health > 0 });
             if (mob.petState) mob.petState.health = Math.max(0, mob.health);
@@ -19051,7 +22262,160 @@ export class VoxelEngine {
     }
   }
 
+  private creatureWorkObservation(mob: MobEntity) {
+    const origin = mob.creatureWork.home ?? mob.group.position;
+    const x0 = Math.round(origin.x);
+    const y0 = Math.round(origin.y);
+    const z0 = Math.round(origin.z);
+    const biomeName = String(BIOME_NAMES[this.world.biomeAt(x0, z0)] ?? "ordinary").toLocaleLowerCase();
+    const habitatTag = biomeName.includes("bog") || biomeName.includes("swamp") || biomeName.includes("fen") ? "bog" as const
+      : biomeName.includes("snow") || biomeName.includes("frost") || biomeName.includes("ice") ? "snow" as const
+        : biomeName.includes("ash") || biomeName.includes("volcan") || biomeName.includes("cinder") ? "ash" as const
+          : biomeName.includes("forest") || biomeName.includes("wood") || biomeName.includes("grove") ? "woodland" as const
+            : biomeName.includes("coast") || biomeName.includes("ocean") || biomeName.includes("reef") ? "coast" as const
+              : biomeName.includes("desert") || biomeName.includes("dune") ? "desert" as const
+                : y0 < this.world.surfaceAt(x0, z0) - 4 ? "cave" as const
+                  : biomeName.includes("meadow") || biomeName.includes("plain") ? "meadow" as const : "ordinary" as const;
+    let flowerCount = 0;
+    let wetCellCount = 0;
+    let unstableCrystalCount = 0;
+    let caveOpeningCount = 0;
+    let heatPressure = 0;
+    let oreSignal: "iron" | "gold" | "crystal" | "veinmetal" | null = null;
+    let signalPosition: THREE.Vector3 | null = null;
+    const flowerBlocks = new Set<BlockId>([BlockId.RedFlower, BlockId.BlueFlower, BlockId.Sunpetal, BlockId.MoonOrchid, BlockId.CoastAster, BlockId.SakuraBloom, BlockId.Dreamblossom, BlockId.AbyssBloom]);
+    const scanRadius = 6;
+    for (let dz = -scanRadius; dz <= scanRadius; dz += 2) for (let dx = -scanRadius; dx <= scanRadius; dx += 2) {
+      const x = x0 + dx;
+      const z = z0 + dz;
+      const surface = this.world.surfaceAt(x, z);
+      const type = this.world.getBlock(x, surface + 1, z);
+      if (type !== undefined && flowerBlocks.has(type)) {
+        flowerCount += 1;
+        signalPosition ??= new THREE.Vector3(x, surface + 1, z);
+      }
+      if ([surface, surface + 1, y0].some((y) => blockContainsWater(this.world.getBlock(x, y, z)))) {
+        wetCellCount += 1;
+        if (!signalPosition) signalPosition = new THREE.Vector3(x, surface + 1, z);
+      }
+      const sampleY = Math.min(surface - 1, y0);
+      if (sampleY < surface - 3 && this.world.isWalkThrough(this.world.getBlock(x, sampleY, z))) caveOpeningCount += 1;
+      if ([surface, y0].some((y) => this.world.getBlock(x, y, z) === BlockId.Lava)) heatPressure = Math.max(heatPressure, .85);
+    }
+    const orePriority = new Map<BlockId, "iron" | "gold" | "crystal" | "veinmetal">([
+      [BlockId.VeinmetalHeart, "veinmetal"], [BlockId.GoldOre, "gold"], [BlockId.CrystalOre, "crystal"], [BlockId.IronOre, "iron"],
+    ]);
+    for (let dy = -5; dy <= 3 && !oreSignal; dy += 2) for (let dz = -8; dz <= 8 && !oreSignal; dz += 2) for (let dx = -8; dx <= 8; dx += 2) {
+      const type = this.world.getBlock(x0 + dx, y0 + dy, z0 + dz);
+      const signal = type === undefined ? null : orePriority.get(type) ?? null;
+      if (!signal) continue;
+      oreSignal = signal;
+      signalPosition = new THREE.Vector3(x0 + Math.sign(dx) * 5, y0, z0 + Math.sign(dz) * 5);
+      if (type === BlockId.CrystalOre) unstableCrystalCount += 1;
+      break;
+    }
+    const nearby = this.mobCandidatesWithin(mob, 20).filter((candidate) => candidate !== mob && candidate.health > 0);
+    const hostileCount = nearby.filter((candidate) => candidate.hostile && candidate.factionId !== mob.factionId).length;
+    const allyCount = nearby.filter((candidate) => !candidate.hostile && (candidate.creatureOwnerId === mob.creatureOwnerId || candidate.factionId === mob.factionId)).length;
+    const unknownActorCount = Math.max(0, nearby.filter((candidate) => !candidate.hostile).length - allyCount);
+    const livestockCount = nearby.filter((candidate) => creatureEcologyContract(candidate.kind).workRoles.includes("herd-support") || candidate.definition.breedable).length;
+    const damagedAllyCount = nearby.filter((candidate) => !candidate.hostile && candidate.health < candidate.maxHealth * .7).length;
+    const looseItems = this.drops.filter((drop) => drop.pickupDelay !== Number.POSITIVE_INFINITY && drop.mesh.position.distanceToSquared(mob.group.position) <= 14 ** 2);
+    return {
+      observation: {
+        worldSeconds: this.worldSimulationSeconds(), habitatTag, hostileCount, unknownActorCount, allyCount, flowerCount,
+        maturePlantCount: this.saplings ? [...this.saplings.keys()].filter((key) => {
+          const p = blockPositionFromKey(key); return p ? (p.x - x0) ** 2 + (p.z - z0) ** 2 <= 14 ** 2 : false;
+        }).length : 0,
+        wetCellCount, oreSignal, looseItemCount: looseItems.length, livestockCount, damagedAllyCount,
+        unstableCrystalCount, caveOpeningCount, heatPressure: Math.max(
+          heatPressure,
+          this.weatherState.kind === "thunder" || this.weatherState.kind === "sandstorm" || this.weatherState.kind === "ashfall" ? .7 : 0,
+        ),
+      },
+      signalPosition,
+      nearby,
+      looseItems,
+    };
+  }
+
+  private updateCreatureHabitatWork(dt: number) {
+    if (this.multiplayer?.role === "guest") return;
+    this.creatureWorkTimer -= dt;
+    if (this.creatureWorkTimer > 0) return;
+    this.creatureWorkTimer = 2;
+    const workers = this.mobs.filter((mob) => mob.health > 0 && mob.group.visible && (
+      mob.creatureTamed || Boolean(mob.creatureOwnerId || mob.attunedOrbId || mob.enclosed || mob.aligned
+        || mob.petState?.tamed || mob.shadeState?.tamed || mob.reedstriderBond?.tamed || mob.courserBond?.tamed || mob.leviathanGrowth?.tamed)
+    )).map((mob) => ({ entityId: String(mob.id), kind: mob.kind, state: mob.creatureWork }));
+    const byId = new Map(this.mobs.map((mob) => [String(mob.id), mob] as const));
+    for (const group of aggregateCreatureWorkers(workers)) {
+      const representative = byId.get(group.workers[0]?.entityId ?? "");
+      if (!representative) continue;
+      const cadence = Math.max(8, creatureEcologyContract(representative.kind).workCadenceSeconds);
+      const due = group.workers.filter((worker) => this.worldSimulationSeconds() - worker.state.lastCycleAt >= cadence);
+      if (!due.length) continue;
+      const environment = this.creatureWorkObservation(representative);
+      let groupGardenPower = 0;
+      let groupRetrievalPower = 0;
+      let groupRescuePower = 0;
+      let groupComfortPower = 0;
+      for (const worker of due) {
+        const mob = byId.get(worker.entityId);
+        if (!mob) continue;
+        if (!mob.creatureWork.home) mob.creatureWork = Object.freeze({ ...mob.creatureWork, home: Object.freeze({ x: mob.group.position.x, y: mob.group.position.y, z: mob.group.position.z }) });
+        const result = resolveCreatureWorkCycle(mob.kind, mob.creatureWork, environment.observation);
+        mob.creatureWork = result.state;
+        groupGardenPower += result.gardenPower;
+        groupRetrievalPower += result.retrievalPower;
+        groupRescuePower += result.rescuePower;
+        groupComfortPower += result.comfortPower;
+        if (result.signalId && result.message && result.signalId !== worker.state.lastSignal
+          && mob.group.position.distanceToSquared(this.position) <= 28 ** 2) {
+          this.events.onToast(result.message);
+          this.playCreatureEvent(mob, "ambient");
+          if (result.mapSignal && environment.signalPosition) {
+            const markerId = `creature-signal:${mob.id}:${result.mapSignal}`;
+            this.mapKnowledge = discoverNaturalPoi(this.mapKnowledge, {
+              id: markerId,
+              name: `${mob.name}: ${result.mapSignal.replaceAll("-", " ")}`,
+              position: { x: environment.signalPosition.x, y: environment.signalPosition.y, z: environment.signalPosition.z },
+              playerId: this.localPlayerId(),
+              discoveredAt: Date.now(),
+              icon: `creature-${result.mapSignal}`,
+            });
+          }
+        }
+      }
+      if (groupGardenPower > 0 && this.saplings) {
+        const home = representative.creatureWork.home ?? representative.group.position;
+        let accelerated = 0;
+        for (const [key, deadline] of this.saplings) {
+          if (accelerated >= 12) break;
+          const position = blockPositionFromKey(key);
+          if (!position || (position.x - home.x) ** 2 + (position.z - home.z) ** 2 > 14 ** 2) continue;
+          this.saplings.set(key, Math.max(Date.now() + 8_000, deadline - Math.min(25_000, 8_000 * groupGardenPower)));
+          accelerated += 1;
+        }
+      }
+      if (groupRetrievalPower > 0 && environment.looseItems.length) {
+        const target = representative.creatureWork.home ?? representative.group.position;
+        const drop = environment.looseItems[0];
+        const pull = new THREE.Vector3(target.x - drop.mesh.position.x, 0.3, target.z - drop.mesh.position.z).normalize().multiplyScalar(Math.min(2.2, .8 + groupRetrievalPower));
+        drop.velocity.add(pull);
+      }
+      if (groupRescuePower > 0) {
+        const ally = environment.nearby.find((candidate) => !candidate.hostile && candidate.health < candidate.maxHealth * .7);
+        if (ally) ally.health = Math.min(ally.maxHealth, ally.health + Math.min(2, groupRescuePower));
+      }
+      if (groupComfortPower > 0) for (const ally of environment.nearby.slice(0, 8)) if (!ally.hostile) {
+        ally.fleeTimer = Math.max(0, ally.fleeTimer - groupComfortPower * 2);
+      }
+    }
+  }
+
   updateMobs(dt: number) {
+    this.updateTemporaryMagic();
     this.wakeSleepingCreatures(dt);
     this.passiveMobSpawnTimer -= dt;
     if (this.passiveMobSpawnTimer <= 0) {
@@ -19068,6 +22432,7 @@ export class VoxelEngine {
     }
     this.rebuildMobSpatialIndex();
     this.mobSpatialIndexFrameActive = true;
+    this.updateCreatureHabitatWork(dt);
     const ownerId = this.localPlayerId();
     this.refreshSocialMotions(dt);
     const leaderSpeed = Math.hypot(this.velocity.x, this.velocity.z);
@@ -19098,6 +22463,7 @@ export class VoxelEngine {
         || (mob.reedstriderBond?.tamed && mob.followCommand !== "hold")
         || (mob.courserBond?.tamed && mob.followCommand !== "hold")
         || (mob.hiredByPlayerId === bondedOwner && mob.followCommand !== "hold" && (!mob.settlementId || !mob.residentId
+          || Boolean(this.guildNpcForMob(mob))
           || Boolean(this.settlements.get(mob.settlementId)?.residents.find((resident) => resident.id === mob.residentId)?.orders.follow))),
       );
     });
@@ -19131,6 +22497,18 @@ export class VoxelEngine {
         else { this.removeMob(index); continue; }
       }
       const mobLeader = leaders.get(followerOwner(mob) ?? "") ?? null;
+      const escortNpc = this.guildNpcForMob(mob);
+      if (escortNpc && mobLeader && mob.hiredByPlayerId && mob.followCommand !== "hold") {
+        const originX = Number.isFinite(mob.group.userData.guildEscortOriginX) ? Number(mob.group.userData.guildEscortOriginX) : mob.group.position.x;
+        const originZ = Number.isFinite(mob.group.userData.guildEscortOriginZ) ? Number(mob.group.userData.guildEscortOriginZ) : mob.group.position.z;
+        const traveled = Math.hypot(mob.group.position.x - originX, mob.group.position.z - originZ);
+        const reunited = (mob.group.position.x - mobLeader.x) ** 2 + (mob.group.position.z - mobLeader.z) ** 2 <= 8 * 8;
+        if (traveled >= 24 && reunited) {
+          this.dispatchGuildEvent("escortActor", 1, `escort:${escortNpc.id}:${Math.floor(mob.group.position.x / 24)},${Math.floor(mob.group.position.z / 24)}`, { actorId: escortNpc.id });
+          mob.group.userData.guildEscortOriginX = mob.group.position.x;
+          mob.group.userData.guildEscortOriginZ = mob.group.position.z;
+        }
+      }
       if (mob.dragonState?.onShoulder && mob.dragonState.ownerId && leaders.has(mob.dragonState.ownerId)) {
         const shoulderLeader = leaders.get(mob.dragonState.ownerId)!;
         const side = mob.id % 2 === 0 ? -1 : 1;
@@ -19152,7 +22530,7 @@ export class VoxelEngine {
         enclosed: enclosureProtectsCreature(mob.naturalSpawned, mob.enclosed),
         leashed: this.leadAnchors.has(mob.id),
         everLed: mob.everLed,
-        persistentPoiResident: mob.persistentPoiResident || Boolean(mob.dragonState),
+        persistentPoiResident: mob.persistentPoiResident || Boolean(mob.dragonState) || Boolean(mob.primeAnchorId),
       });
       const simulationRadius = this.settings.simulationDistance * CHUNK_SIZE + 10;
       mob.age += dt;
@@ -19203,6 +22581,7 @@ export class VoxelEngine {
       } else mob.group.visible = true;
 
       mob.attackCooldown = Math.max(0, mob.attackCooldown - mobDt);
+      const plannedMoveActive = this.advancePlannedCreatureMove(mob, mobDt);
       if (mob.dragonState) {
         for (const kind of ["melee", "breath", "projectile"] as const) mob.dragonAttackCooldowns[kind] = Math.max(0, mob.dragonAttackCooldowns[kind] - mobDt);
         mob.dragonWingSoundTimer = Math.max(0, mob.dragonWingSoundTimer - mobDt);
@@ -19236,7 +22615,7 @@ export class VoxelEngine {
         mob.dragonStatusTick -= mobDt;
         if (mob.dragonStatusTick <= 0) {
           mob.dragonStatusTick = 1;
-          mob.health -= Math.max(0.5, mob.maxHealth * 0.006);
+          this.applyCombatDamageToMob(mob, Math.max(0.5, mob.maxHealth * 0.006), { kind: "environment", id: "burning" }, { effectId: "burning-tick", channel: "magical", attackType: "flame" });
           mob.hurtTimer = Math.max(mob.hurtTimer, 0.12);
           if (mob.dragonState) this.applyDragonState(mob, { ...mob.dragonState, health: Math.max(0, mob.health), alive: mob.health > 0 });
           if (mob.health <= 0) { this.killMob(mob); continue; }
@@ -19309,7 +22688,7 @@ export class VoxelEngine {
           distance = Math.hypot(dx, dz);
         }
       }
-      if (distance < 10 && !this.bestiary[mob.kind].seen) { this.bestiary[mob.kind].seen = true; this.saveSoon(); }
+      if (distance < 10 && !this.bestiary[mob.kind].seen) { observeBestiaryEntry(this.bestiary[mob.kind], Date.now()); this.saveSoon(); }
       if (mob.kind === "zombie") {
         if (distance < 24 && mob.voiceTimer <= 0 && this.zombieVoiceCooldown <= 0) {
           this.audio.playSample(Math.random() < 0.5 ? "zombieMoan1" : "zombieMoan2", { gain: 0.78 + Math.random() * 0.18, playbackRate: 0.94 + Math.random() * 0.1, position: mob.group.position, refDistance: 2, maxDistance: 50 });
@@ -19320,12 +22699,13 @@ export class VoxelEngine {
         const mz = Math.round(mob.group.position.z);
         const onSurface = mob.group.position.y >= this.world.surfaceAt(mx, mz) + mob.definition.footOffset - 0.3;
         if (onSurface && this.daylightAmount() > 0.72) {
-          mob.health -= mobDt * 1.35;
+          this.applyCombatDamageToMob(mob, mobDt * 1.35, { kind: "environment", id: "sunlight" }, { effectId: "undead-sunlight", channel: "magical", attackType: "radiant" });
           mob.hurtTimer = Math.max(mob.hurtTimer, 0.08);
           if (mob.health <= 0) { this.killMob(mob); continue; }
         }
       } else if (distance < 22 && mob.voiceTimer <= 0 && (CREATURE_SOUND_EVENTS[mob.kind as CoreMobKind]?.ambient || mob.definition.sentient || mob.hostile)) {
         this.playCreatureEvent(mob, "ambient");
+        if (distance < 14) this.advancePrimeClue(mob, "distinctive-call");
         mob.voiceTimer = (mob.definition.sentient ? 14 : mob.hostile ? 11 : 8) + (mob.id % 7) * 1.4 + Math.random() * 6;
       }
       if (!protectedCreature && mob.hostile && this.daylightAmount() > 0.65 && mob.group.position.y > SEA_LEVEL && distance > 25) {
@@ -19386,6 +22766,18 @@ export class VoxelEngine {
         || mob.hiredByPlayerId === ownerId;
       const petHolding = Boolean((mob.petState?.tamed && (mob.petState.command === "sit" || mob.petState.command === "stay"))
         || (bondedToOwner && mob.followCommand === "hold"));
+      const threatCandidates = this.mobCandidatesWithin(mob, 22);
+      const threatCandidateById = new Map(threatCandidates.map((candidate) => [candidate.id, candidate] as const));
+      const threatRef = chooseCombatThreatTarget(mob.threatLedger, this.worldSimulationSeconds(), (ref) => {
+        if (ref.kind === "player") return ref.id === ownerId && distance <= 22;
+        const candidate = threatCandidateById.get(Number(ref.id));
+        if (!candidate || candidate.health <= 0 || candidate === mob) return false;
+        if (this.mobCombatOwnerId(candidate) && this.mobCombatOwnerId(candidate) === this.mobCombatOwnerId(mob)) return false;
+        if (candidate.factionId && candidate.factionId === mob.factionId) return false;
+        return true;
+      });
+      const threatMob = threatRef && threatRef.kind !== "player" ? threatCandidateById.get(Number(threatRef.id)) ?? null : null;
+      const threatPlayer = Boolean(threatRef?.kind === "player" && threatRef.id === ownerId);
       const followerDistance = followerSlot
         ? Math.hypot(followerSlot.x - mob.group.position.x, followerSlot.z - mob.group.position.z)
         : 0;
@@ -19429,13 +22821,8 @@ export class VoxelEngine {
             mob.state = "chase";
             mob.desiredAngle = Math.atan2(enemyDz, enemyDx);
             if (mob.definition.ranged && enemyDistance >= 3 && enemyDistance < 16 && mob.attackCooldown <= 0) this.fireMobArrowAt(mob, residentEnemy);
-            else if (enemyDistance < creatureMeleeReach(mob.definition, this.mobBaseScale(mob)) && mob.attackCooldown <= 0) {
-              residentEnemy.health -= mob.damage;
-              residentEnemy.hurtTimer = 0.3;
-              residentEnemy.awarenessTimer = Math.max(residentEnemy.awarenessTimer, 4);
-              mob.attackCooldown = 0.9;
-              this.audio.play("attack");
-              if (residentEnemy.health <= 0) companionKills.add(residentEnemy);
+            else if (!plannedMoveActive && enemyDistance < creatureMeleeReach(mob.definition, this.mobBaseScale(mob)) + 0.5 && mob.attackCooldown <= 0) {
+              this.beginPlannedCreatureMove(mob, residentEnemy, false);
             }
           } else if (plan.action !== "follow" && plan.target) {
             residentTarget = plan.target;
@@ -19449,6 +22836,47 @@ export class VoxelEngine {
               mob.state = "wander";
               mob.desiredAngle = mob.angle;
             }
+          }
+        }
+      }
+      const guildNpc = this.guildNpcForMob(mob);
+      if (guildNpc && !mob.hostile && !mob.hiredByPlayerId && !residentEnemy) {
+        let nearestDistance = 18 * 18;
+        for (const candidate of this.mobCandidatesWithin(mob, 18)) {
+          if (candidate === mob || candidate.health <= 0 || !candidate.hostile || candidate.factionId === mob.factionId) continue;
+          const candidateDistance = candidate.group.position.distanceToSquared(mob.group.position);
+          if (candidateDistance >= nearestDistance) continue;
+          if (!this.hasClearLineOfSight(
+            mob.group.position.clone().add(new THREE.Vector3(0, mob.definition.height * .7, 0)),
+            candidate.group.position.clone().add(new THREE.Vector3(0, candidate.definition.height * .5, 0)),
+          )) continue;
+          nearestDistance = candidateDistance;
+          residentEnemy = candidate;
+        }
+        if (residentEnemy) {
+          const enemyDx = residentEnemy.group.position.x - mob.group.position.x;
+          const enemyDz = residentEnemy.group.position.z - mob.group.position.z;
+          const enemyDistance = Math.hypot(enemyDx, enemyDz);
+          mob.state = "chase";
+          mob.desiredAngle = Math.atan2(enemyDz, enemyDx);
+          if (mob.definition.ranged && enemyDistance >= 3 && enemyDistance < 16 && mob.attackCooldown <= 0) this.fireMobArrowAt(mob, residentEnemy);
+          else if (!plannedMoveActive && enemyDistance < creatureMeleeReach(mob.definition, this.mobBaseScale(mob)) + .5 && mob.attackCooldown <= 0) this.beginPlannedCreatureMove(mob, residentEnemy, false);
+        } else {
+          const homeX = Number(mob.group.userData.guildHomeX) || mob.group.position.x;
+          const homeZ = Number(mob.group.userData.guildHomeZ) || mob.group.position.z;
+          const hour = this.worldTime * 24;
+          const phase = hour < 6 || hour >= 22 ? "home" : hour < 9 ? "prepare" : hour < 18 ? "service" : "debrief";
+          const angle = ((mob.id * 1.61803398875) % (Math.PI * 2));
+          const radius = phase === "service" ? 5.5 : phase === "debrief" ? 2.2 : phase === "prepare" ? 1.4 : 0;
+          const target = { x: homeX + Math.cos(angle) * radius, z: homeZ + Math.sin(angle) * radius };
+          const targetDistance = Math.hypot(target.x - mob.group.position.x, target.z - mob.group.position.z);
+          if (targetDistance > .8) {
+            residentTarget = target;
+            mob.state = "chase";
+            mob.desiredAngle = Math.atan2(target.z - mob.group.position.z, target.x - mob.group.position.x);
+          } else {
+            residentHolding = true;
+            mob.visual.userData.seated = phase === "home" || phase === "debrief";
           }
         }
       }
@@ -19502,15 +22930,7 @@ export class VoxelEngine {
             mob.state = defenseAction === "idle" ? "wander" : "chase";
             mob.desiredAngle = Math.atan2(enemyDz, enemyDx);
             if (defenseAction === "ranged") this.fireMobArrowAt(mob, residentEnemy);
-            else if (defenseAction === "melee") {
-              residentEnemy.health -= mob.damage;
-              residentEnemy.hurtTimer = 0.34;
-              residentEnemy.awarenessTimer = Math.max(residentEnemy.awarenessTimer, 4);
-              mob.attackCooldown = 1.05;
-              this.audio.play("attack");
-              this.spawnParticles(residentEnemy.group.position.x, residentEnemy.group.position.y + residentEnemy.definition.height * 0.4, residentEnemy.group.position.z, BlockId.RivetedBrass, 7);
-              if (residentEnemy.health <= 0) companionKills.add(residentEnemy);
-            }
+            else if (defenseAction === "melee" && !plannedMoveActive) this.beginPlannedCreatureMove(mob, residentEnemy, false);
           }
         }
       }
@@ -19544,8 +22964,18 @@ export class VoxelEngine {
           peelopTarget = candidate;
         }
       }
-      if (residentEnemy || residentTarget || residentHolding) {
+      if (plannedMoveActive) {
+        // The shared move phase machine owns orientation, timing, and damage.
+      } else if (residentEnemy || residentTarget || residentHolding) {
         // The schedule above owns this frame's direction and combat action.
+      } else if (threatMob || threatPlayer) {
+        const targetPosition = threatMob?.group.position ?? this.position;
+        const threatDx = targetPosition.x - mob.group.position.x;
+        const threatDz = targetPosition.z - mob.group.position.z;
+        const threatDistance = Math.hypot(threatDx, threatDz);
+        mob.state = "chase";
+        mob.desiredAngle = Math.atan2(threatDz, threatDx);
+        if (threatDistance <= 6.2 && mob.attackCooldown <= 0) this.beginPlannedCreatureMove(mob, threatMob, threatPlayer);
       } else if (companionGolemTarget) {
         const guardDx = companionGolemTarget.group.position.x - mob.group.position.x;
         const guardDz = companionGolemTarget.group.position.z - mob.group.position.z;
@@ -19580,7 +23010,7 @@ export class VoxelEngine {
         mob.state = "chase";
         mob.desiredAngle = Math.atan2(guardDz, guardDx);
         if (defense.attacks) {
-          peelopTarget.health -= defense.damage;
+          this.applyCombatDamageToMob(peelopTarget, defense.damage, mob, { effectId: "peelop-defense", attackType: "wild" });
           peelopTarget.hurtTimer = 0.3;
           peelopTarget.awarenessTimer = Math.max(peelopTarget.awarenessTimer, 3.2);
           mob.attackCooldown = defense.nextCooldownSeconds;
@@ -19597,6 +23027,7 @@ export class VoxelEngine {
         if (mob.stateTimer <= 0) {
           if (distance < creatureMeleeReach(mob.definition, this.mobBaseScale(mob)) + 0.35 && Math.abs(this.position.y - mob.group.position.y) < 2) {
             this.damagePlayer(mob.damage, mob.name);
+            this.applyLegendaryEventForMob(mob, "survive-phase");
             if (mob.kind === "shadecrawler") this.potionBuffs["venom-poison"] = Math.max(this.potionBuffs["venom-poison"] ?? 0, this.worldSimulationSeconds() + 7);
             this.velocity.add(new THREE.Vector3(dx, 0.1, dz).normalize().multiplyScalar(mob.kind === "ridgeback" ? 4.4 : 3.2));
             this.engageCombat();
@@ -19620,7 +23051,7 @@ export class VoxelEngine {
       else if (aggressive && mob.awarenessTimer > 0 && distance < (this.crouching ? 11 : 20)) {
         mob.state = "chase";
         mob.desiredAngle = Math.atan2(dz, dx);
-        if (distance < creatureMeleeReach(mob.definition, this.mobBaseScale(mob)) && mob.attackCooldown <= 0) { mob.state = "windup"; mob.stateTimer = mob.kind === "rattlekin" ? 0.52 : mob.kind === "zombie" ? 0.44 : 0.34; }
+        if (distance < creatureMeleeReach(mob.definition, this.mobBaseScale(mob)) + 0.55 && mob.attackCooldown <= 0) this.beginPlannedCreatureMove(mob, null, true);
       } else if (aggressive && mob.awarenessTimer <= 0 && mob.state === "chase") {
         mob.state = "wander";
         mob.desiredAngle = mob.angle;
@@ -19737,8 +23168,17 @@ export class VoxelEngine {
       * skillMultiplier(this.skillState.skills.melee.level);
     const damage = this.dragonDamageAfterArmor(mob, rawDamage);
     this.attackCooldown = item?.toolKind === "sword" ? 0.38 : 0.55;
-    mob.health -= damage;
-    this.gainSkillExperience("melee", 3 + Math.min(16, damage));
+    const beforeHealth = mob.health;
+    this.applyCombatDamageToMob(mob, damage, { kind: "player", id: this.localPlayerId() }, {
+      effectId: item?.toolKind === "sword" ? "player-sword" : "player-melee",
+      attackType: item?.toolKind === "sword" ? "metal" : "neutral",
+    });
+    const resolvedDamage = beforeHealth - mob.health;
+    if (resolvedDamage > 0) {
+      this.applyLegendaryEventForMob(mob, "break-restraint");
+      if (mob.health / Math.max(1, mob.maxHealth) <= .35) this.applyLegendaryEventForMob(mob, "win-fair-contest");
+    }
+    this.gainSkillExperience("melee", 3 + Math.min(16, resolvedDamage));
     if (mob.dragonState) {
       if (!mob.dragonState.tamed) {
         mob.hostile = true;
@@ -19872,9 +23312,47 @@ export class VoxelEngine {
   }
 
   killMob(mob: MobEntity) {
+    if (this.temporarySummons?.has(mob.id)) {
+      const index = this.mobs.indexOf(mob);
+      if (index >= 0) this.removeMob(index);
+      return;
+    }
     // Attuned creatures faint instead of producing death loot or being deleted.
     // Their exact state returns to the still-linked orb and must be healed there.
     if (mob.attunedOrbId && this.recallAttunedMob(mob, "fainted")) return;
+    if (mob.legendaryEncounterId && mob.legendarySiteId) {
+      const state = this.legendaryEncounters.get(mob.legendarySiteId)
+        ?? createLegendaryEncounterState(mob.legendaryEncounterId, mob.legendarySiteId);
+      const progress = legendaryStageProgress(state);
+      const finalReady = state.status === "active" && state.stageIndex === progress.definition.stages.length - 1 && progress.complete;
+      if (!finalReady) {
+        mob.health = mob.maxHealth;
+        mob.hostile = false;
+        mob.awarenessTimer = 0;
+        mob.fleeTimer = 8;
+        mob.state = "flee";
+        this.events.onToast(`${progress.definition.title} retreats into its authored route. The unresolved ecological encounter remains, with no loot or duplicate body.`);
+        this.saveSoon(); this.emitHud(true);
+        return;
+      }
+      this.resolveLegendaryOutcome(mob, "defeat");
+    }
+    if (mob.primeAnchorId && this.multiplayer?.role !== "guest") {
+      const state = this.primeEncounters.get(mob.primeAnchorId);
+      if (state) this.primeEncounters.set(mob.primeAnchorId, Object.freeze({
+        ...transitionPrimeEncounter(state, "defeated", null, Date.now()),
+        specimenId: mob.specimenId,
+        custodyId: null,
+      }));
+    }
+    if (mob.groundedSummonEntityId && mob.kind in SUMMON_CONTRACTS) {
+      this.summonContractState = recordGroundedSummonLifeEvent(
+        this.summonContractState,
+        mob.kind as SummonedCreatureKind,
+        mob.groundedSummonEntityId,
+        "lost",
+      );
+    }
     const position = mob.group.position.clone();
     if (mob.naturalSpawned && !this.creatureIsDomesticOrAuthored(mob) && !isRareNaturalDefinition(mob.definition)) {
       const key = ecologySectorKey(position.x, position.z);
@@ -19923,7 +23401,7 @@ export class VoxelEngine {
       this.chests.delete(cargoKey);
     }
     this.addXp(mob.definition.xp);
-    this.bestiary[mob.kind].seen = true;
+    observeBestiaryEntry(this.bestiary[mob.kind], Date.now());
     this.bestiary[mob.kind].kills += 1;
     if (mob.dragonState?.stage && mob.dragonState.stage >= 3) this.recordBestiaryMilestone(mob.kind, "mature-defeated");
     this.dispatchQuestEvent({ type: "mob-killed", mobKind: mob.kind, at: Date.now() });
@@ -20049,7 +23527,12 @@ export class VoxelEngine {
   removeMob(index: number) {
     const mob = this.mobs[index];
     if (!mob) return;
-    if (mob.id === this.mountedCreatureId) this.mountedCreatureId = null;
+    this.temporarySummons?.delete(mob.id);
+    if (mob.id === this.mountedCreatureId) {
+      this.mountedCreatureId = null;
+      this.mountedCreatureSeat = null;
+    }
+    this.creatureMountSeats?.delete(mob.id);
     this.removeLead(mob.id);
     this.creatureGroup.remove(mob.group);
     this.disposeObject(mob.group);
@@ -20377,6 +23860,8 @@ export class VoxelEngine {
     this.boats.clear();
     this.mountedBoatId = null;
     this.mountedCreatureId = null;
+    this.mountedCreatureSeat = null;
+    this.creatureMountSeats.clear();
     this.targetBoat = null;
     for (const visual of this.exhibitVisuals.values()) {
       this.exhibitGroup.remove(visual.group);
@@ -20403,6 +23888,8 @@ export class VoxelEngine {
       disposeDragonAttackEffect(effect);
     }
     this.dragonEffects = [];
+    this.clearTemporaryMagicState();
+    this.ironwakeWard = null;
     this.activePet = null;
     this.activeDragon = null;
   }
@@ -20554,6 +24041,7 @@ export class VoxelEngine {
     const heldLantern = lightItem === Item.DeepgearLanternItem;
     const heldBugJar = lightItem === Item.LightningBugJar;
     const heldGlow = lightItem === BlockId.Glowstone || lightItem === BlockId.CrystalBlock;
+    const deepLantern = (this.potionBuffs["deep-lantern"] ?? 0) > this.worldSimulationSeconds();
     const lightInOffhand = lightItem >= 0 && selected?.item !== lightItem;
     if (this.cameraMode === "first") {
       this.heldLightWorldOffset.set(lightInOffhand ? -this.heldLightOffset.x : this.heldLightOffset.x, this.heldLightOffset.y, this.heldLightOffset.z).applyQuaternion(this.camera.quaternion);
@@ -20562,10 +24050,10 @@ export class VoxelEngine {
       this.heldLightWorldOffset.set(lightInOffhand ? -0.28 : 0.28, this.crouching ? 0.82 : 1.08, -0.25).applyAxisAngle(this.worldUp, this.yaw);
       this.caveLight.position.copy(this.position).add(this.heldLightWorldOffset);
     }
-    this.caveLight.color.setHex(lightItem === BlockId.CrystalBlock ? 0x69e8ef : heldBugJar ? 0xcfff63 : heldLantern ? 0xffd77a : 0xffb45e);
+    this.caveLight.color.setHex(lightItem === BlockId.CrystalBlock ? 0x69e8ef : heldBugJar ? 0xcfff63 : heldLantern ? 0xffd77a : deepLantern && lightItem < 0 ? 0x83d9d8 : 0xffb45e);
     const heldFlicker = torchAnimationSample(timeSeconds, this.position, true);
-    this.caveLight.intensity = heldTorch ? 3.15 * heldFlicker.lightIntensity : heldLantern ? 3.35 : heldBugJar ? 1.7 * (1 + Math.sin(timeSeconds * 3.2) * 0.08) : heldGlow ? 2.55 : 0;
-    this.caveLight.distance = heldTorch ? heldFlicker.lightRadius * 3 : heldLantern ? 25 : heldBugJar ? 11 : 20;
+    this.caveLight.intensity = heldTorch ? 3.15 * heldFlicker.lightIntensity : heldLantern ? 3.35 : heldBugJar ? 1.7 * (1 + Math.sin(timeSeconds * 3.2) * 0.08) : heldGlow ? 2.55 : deepLantern ? .9 * (1 + Math.sin(timeSeconds * 1.6) * .09) : 0;
+    this.caveLight.distance = heldTorch ? heldFlicker.lightRadius * 3 : heldLantern ? 25 : heldBugJar ? 11 : deepLantern ? 12 : 20;
   }
 
   daylightAmount() {
@@ -20660,7 +24148,7 @@ export class VoxelEngine {
     if (strike.distanceFromOrigin <= 1.65) this.damagePlayer(strike.damageHearts, "a lightning strike", true);
     const struckMobs = this.mobs.filter((mob) => Math.hypot(mob.group.position.x - strike.x, mob.group.position.z - strike.z) <= 1.65);
     for (const mob of struckMobs) {
-      mob.health = Math.max(0, mob.health - strike.damageHearts);
+      this.applyCombatDamageToMob(mob, strike.damageHearts, { kind: "environment", id: "lightning" }, { effectId: "lightning-strike", channel: "magical", attackType: "storm", status: "shocked", statusSeconds: 3 });
       mob.hurtTimer = 0.36;
       this.spawnParticles(mob.group.position.x, mob.group.position.y + mob.definition.height * 0.4, mob.group.position.z, BlockId.Glowstone, 8);
       if (mob.health <= 0) this.killMob(mob);
@@ -21692,7 +25180,28 @@ export class VoxelEngine {
       targetName: this.target ? BLOCKS[this.target.type].name : this.targetBoat ? "Wayfarer Sailboat"
         : this.targetEggDrop ? ITEMS[this.targetEggDrop.item]?.name ?? "Leviathan Egg"
           : this.targetRemotePlayerId ? this.remotePlayers.get(this.targetRemotePlayerId)?.model.playerName ?? "Player" : null,
-      targetMob: this.targetMob ? { name: this.targetMob.name, health: this.targetMob.health, maxHealth: this.targetMob.maxHealth } : null,
+      targetMob: this.targetMob ? {
+        name: this.targetMob.name,
+        health: this.targetMob.health,
+        maxHealth: this.targetMob.maxHealth,
+        capture: selectedSlot?.item === Item.CaptureOrb && !captureOrbFromInventorySlot(selectedSlot)?.creature
+          ? this.captureReadinessForMob(this.targetMob, captureOrbUnitFromInventorySlot(selectedSlot) ?? createEmptyCaptureOrb("hud-preview"))
+          : null,
+        ...(this.targetMob.kind in SUMMON_CONTRACTS && this.temporarySummons?.has(this.targetMob.id) ? (() => {
+          const definition = SUMMON_CONTRACTS[this.targetMob!.kind as SummonedCreatureKind];
+          const manifestation = this.temporarySummons!.get(this.targetMob!.id)!;
+          const contract = this.summonContractState.records[definition.kind];
+          const anchorWindowSeconds = Math.max(0, (contract?.anchorWindowUntil ?? 0) - this.worldSimulationSeconds());
+          return { summonContract: {
+            realm: definition.realm,
+            concordance: contract?.concordance ?? 0,
+            required: definition.concordanceRequired,
+            anchorWindowSeconds,
+            echo: manifestation.echo,
+            worldpinReady: !manifestation.echo && anchorWindowSeconds > 0,
+          } };
+        })() : {}),
+      } : null,
       breakProgress: clamp(this.miningProgress, 0, 1),
       day: this.day,
       clock: `${displayHour}:${String(minutes).padStart(2, "0")} ${suffix}`,
@@ -21744,6 +25253,11 @@ export class VoxelEngine {
       mountedBoat: Boolean(this.mountedBoatId),
       mountedCreature: this.mountedCreatureId !== null,
       mountedCreatureName: this.mountedCreatureId === null ? null : this.mobs.find((mob) => mob.id === this.mountedCreatureId)?.name ?? "Creature",
+      mountedCreatureMode: this.mountedCreatureId === null ? null : this.mobs.find((mob) => mob.id === this.mountedCreatureId)?.mountMode ?? null,
+      mountedCreatureExertion: this.mountedCreatureId === null ? undefined : (() => {
+        const exertion = this.mobs.find((mob) => mob.id === this.mountedCreatureId)?.mountExertion;
+        return exertion ? Math.round(exertion.current / Math.max(1, exertion.capacity) * 100) : undefined;
+      })(),
       mapKnowledge: this.mapKnowledge,
       questBook: this.questBook,
       questDefinitions: this.allQuestDefinitions(),
@@ -21757,7 +25271,9 @@ export class VoxelEngine {
       settlements: [...this.settlements.values()],
       activeSettlementId: this.activeSettlementId,
       activeMerchant: this.activeMerchantId ? this.merchants.get(this.activeMerchantId) ?? null : null,
-      activeSentient: this.activeSentient ? {
+      activeSentient: this.activeSentient ? (() => {
+        const guildNpc = this.guildNpcForMob(this.activeSentient!);
+        return {
         id: this.activeSentient.id,
         residentId: this.activeSentient.residentId,
         name: this.activeSentient.name,
@@ -21766,7 +25282,12 @@ export class VoxelEngine {
         hired: Boolean(this.activeSentient.hiredByPlayerId),
         followDistance: this.activeSentient.followDistance,
         nearby: this.activeSentient.health > 0 && this.activeSentient.group.position.distanceToSquared(this.position) <= 36,
-      } : null,
+        guildNpcId: guildNpc?.id ?? null,
+        guildId: guildNpc?.guildId ?? null,
+        recruitable: guildNpc?.recruitable ?? false,
+        recruitReady: guildNpc ? this.guildRecruitReady(guildNpc) : false,
+      };
+      })() : null,
       bankAccount: this.bankAccount,
       stockMarket: this.stockMarket,
       potionBuffs: { ...this.potionBuffs },
@@ -21775,6 +25296,7 @@ export class VoxelEngine {
       magic: this.magicState,
       skills: this.skillState,
       spellWheelOpen: this.spellWheelOpen,
+      guildBook: this.guildBook,
     });
   }
 
@@ -21980,6 +25502,13 @@ export class VoxelEngine {
         output: normalizeCaptureOrbInventorySlot(value.output),
       }])),
       chests: Object.fromEntries([...this.chests.entries()].map(([key, value]) => [key, value.map(normalizeCaptureOrbInventorySlot)])),
+      contextualLoot: normalizeContextualLootWorldState({
+        schema: 1,
+        acquiredUniqueIds: [...this.acquiredLootUniqueIds],
+        containers: Object.fromEntries(this.contextualLootContainers),
+      }),
+      roadEvents: Object.fromEntries([...this.roadEvents.entries()].slice(-4096)),
+      surfaceRoadGraph: this.world.serializeSurfaceRoadGraph(),
       apiaries: Object.fromEntries([...this.apiaries.entries()].map(([key, value]) => [key, cloneApiaryBlockState(value)])),
       orbRacks: Object.fromEntries([...this.orbRacks.entries()].map(([key, value]) => [key, createOrbRack(value.slots.map(cloneCaptureOrb))])),
       healingStations: Object.fromEntries([...this.healingStations.entries()].map(([key, value]) => [key, {
@@ -21995,6 +25524,11 @@ export class VoxelEngine {
         })),
         lastBreedingCycle: state.lastBreedingCycle,
       }])),
+      fieldPerches: Object.fromEntries([...this.fieldPerches.entries()].map(([key, state]) => [key, JSON.parse(JSON.stringify(state)) as FieldPerchState])),
+      summonContracts: normalizeSummonContractState(this.summonContractState, this.localPlayerId()),
+      guildBook: normalizeGuildBook(this.guildBook),
+      legendaryEncounters: Object.fromEntries([...this.legendaryEncounters.entries()].map(([siteId, state]) => [siteId, normalizeLegendaryEncounterState(state, state.encounterId, siteId)])),
+      primeEncounters: Object.fromEntries(this.primeEncounters),
       digitalItemVault: normalizeDigitalItemVault(this.digitalItemVault),
       digitalCreatureArchive: normalizeDigitalCreatureArchive(this.digitalCreatureArchive),
       golemForges: Object.fromEntries([...this.golemForges.entries()].map(([key, value]) => [key, normalizeGolemForgeState(value)])),
@@ -22007,6 +25541,11 @@ export class VoxelEngine {
       blueprints: this.blueprints,
       plantBestiary: this.plantBestiary,
       magicState: this.magicState,
+      spellWorldState: {
+        schema: 1,
+        ironwakeWard: this.ironwakeWard ? { ...this.ironwakeWard } : null,
+        tidemendSites: Object.fromEntries([...this.tidemendSites.entries()].slice(-512)),
+      },
       skillState: this.skillState,
       multiplayerPlayers: Object.fromEntries([...this.multiplayerPlayerStates.entries()].map(([playerId, state]) => [
         playerId,
@@ -22046,7 +25585,7 @@ export class VoxelEngine {
       playerVariant: this.playerVariant,
       liquidLevels: [...this.liquidCells.entries()].map(([key, cell]) => [key, { ...cell }]),
       weatherState: { ...this.weatherState },
-      creatures: this.mobs.filter((mob) => !mob.beeHiveKey).map((mob) => this.serializeCreature(mob)),
+      creatures: this.mobs.filter((mob) => !mob.beeHiveKey && !this.temporarySummons?.has(mob.id)).map((mob) => this.serializeCreature(mob)),
       sleepingCreatures: this.sleepingCreatures.map((saved) => ({ ...saved })),
       ecologySectors: Object.fromEntries([...this.ecologySectors.entries()].map(([key, sector]) => [
         key,

@@ -7,6 +7,7 @@ import {
   normalizeCreatureMetadata,
   type CreatureMetadata,
 } from "./creature-cage";
+import type { CaptureLensId } from "./creature-capture";
 
 export const CAPTURE_ORB_RACK_SIZE = 4;
 export const CREATURE_HEALER_SIZE = 4;
@@ -30,6 +31,8 @@ export type CaptureOrb = Readonly<{
   orbId: string;
   capturedAt: number;
   creature: CreatureMetadata | null;
+  /** Fitted lenses alter valid ecological approaches, never hidden odds. */
+  lens?: CaptureLensId | null;
   /** An attuned orb remains linked while its creature is deployed. */
   attunement?: CaptureOrbAttunement | null;
 }>;
@@ -52,8 +55,14 @@ export const createEmptyCaptureOrb = (orbId: string): CaptureOrb => ({
   orbId: orbId.trim().slice(0, 80) || "orb",
   capturedAt: 0,
   creature: null,
+  lens: null,
   attunement: null,
 });
+
+export function fitCaptureOrbLens(orb: CaptureOrb, lens: CaptureLensId | null): CaptureOrb | null {
+  if (orb.creature || orb.attunement?.activeEntityId) return null;
+  return { ...orb, lens };
+}
 
 export function captureIntoOrb(orb: CaptureOrb, creature: CreatureMetadata, capturedAt = Date.now()): CaptureOrb | null {
   if (orb.creature || !canCaptureCreature(creature)) return null;
@@ -165,7 +174,11 @@ export function decodeCaptureOrb(value: string): CaptureOrb | null {
     const parsed = JSON.parse(value) as Partial<CaptureOrb>;
     if (parsed.schema !== 1 || typeof parsed.orbId !== "string" || parsed.orbId.length === 0 || parsed.orbId.length > 80
       || typeof parsed.capturedAt !== "number" || !Number.isFinite(parsed.capturedAt) || parsed.capturedAt < 0) return null;
-    if (parsed.creature === null) return createEmptyCaptureOrb(parsed.orbId);
+    if (parsed.creature === null) {
+      const lens = (parsed as Partial<CaptureOrb>).lens;
+      if (lens !== undefined && lens !== null && !["gentle", "gloam", "tide", "resonance"].includes(lens)) return null;
+      return { ...createEmptyCaptureOrb(parsed.orbId), lens: lens ?? null };
+    }
     const creature = normalizeCreatureMetadata(parsed.creature);
     if (!creature) return null;
     const rawAttunement = (parsed as Partial<CaptureOrb>).attunement;
@@ -186,7 +199,9 @@ export function decodeCaptureOrb(value: string): CaptureOrb | null {
         fainted: rawAttunement.fainted || creature.health <= 0,
       };
     }
-    return { schema: 1, orbId: parsed.orbId, capturedAt: parsed.capturedAt, creature, attunement };
+    const lens = (parsed as Partial<CaptureOrb>).lens;
+    if (lens !== undefined && lens !== null && !["gentle", "gloam", "tide", "resonance"].includes(lens)) return null;
+    return { schema: 1, orbId: parsed.orbId, capturedAt: parsed.capturedAt, creature, lens: lens ?? null, attunement };
   } catch {
     return null;
   }
@@ -212,6 +227,7 @@ export function captureOrbInventorySlot(orb: CaptureOrb): InventorySlot {
         attunedOwnerId: orb.attunement?.ownerId,
         deployed: Boolean(orb.attunement?.activeEntityId),
         fainted: Boolean(orb.attunement?.fainted || creature.health <= 0),
+        captureLens: orb.lens ?? null,
       } : {}),
     },
   };

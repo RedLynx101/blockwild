@@ -13,7 +13,7 @@ import {
   caveGraphNodesInBounds,
   nearestUpperCaveNode,
 } from "../app/game/underground";
-import { BIOME_NAMES, BiomeId, CHUNK_SIZE, ChunkWorld, planDeepgearMineRoad, selectSettlementSite, type SettlementWorldPlan } from "../app/game/world";
+import { BIOME_NAMES, BiomeId, CHUNK_SIZE, ChunkWorld, planDeepgearMineRoad, selectDeepgearLiftSite, selectSettlementSite, type SettlementWorldPlan } from "../app/game/world";
 
 const AUDIT_SEEDS = Object.freeze(["WILDERNESS", "GLASSWATER", "DEEP-ROADS"]);
 const SURFACE_RADIUS = 4_096;
@@ -301,10 +301,11 @@ export function dwarfHoldAudit(world: ChunkWorld) {
 
   const { candidate, layout } = verified;
   const holdY = candidate.floorY ?? world.sampleColumn(candidate.center.x, candidate.center.z).height - 18;
-  const liftX = candidate.center.x + Math.max(7, layout.radiusBlocks - 5);
-  const liftZ = candidate.center.z;
-  const liftBottomY = holdY + 1;
-  const liftTopY = world.sampleColumn(liftX, liftZ).height + 1;
+  const lift = selectDeepgearLiftSite(candidate.center, layout.radiusBlocks, holdY, (x, z) => world.sampleColumn(x, z));
+  const liftX = lift.x;
+  const liftZ = lift.z;
+  const liftBottomY = lift.liftBottomY;
+  const liftTopY = lift.liftTopY;
   for (let x = liftX - 2; x <= liftX + 2; x += 4) for (let z = liftZ - 2; z <= liftZ + 2; z += 4) {
     world.generateChunk(Math.floor(x / CHUNK_SIZE), Math.floor(z / CHUNK_SIZE));
   }

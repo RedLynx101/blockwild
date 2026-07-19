@@ -53,6 +53,17 @@ export function AquariumPanel({ state, onInsertSelected, onRemoveResident, onClo
         </p>
       )}
 
+      <div aria-label="Aquarium ecology summary" style={{ marginTop: 14, padding: 12, border: "1px solid rgba(143,216,221,.34)", borderRadius: 12, background: "rgba(7, 27, 34, .66)" }}>
+        <strong style={{ color: "#b9f1e7" }}>Habitat ecology</strong>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(92px, 1fr))", gap: 7, marginTop: 8, fontSize: 12 }}>
+          <span>Health {state.ecology.health}%</span><span>Clarity {state.ecology.clarity}%</span>
+          <span>Comfort {state.ecology.comfort}%</span><span>Discovery {state.ecology.discovery}%</span>
+        </div>
+        <p style={{ margin: "8px 0 0", color: "#b9d4d7", fontSize: 12, lineHeight: 1.45 }}>
+          {state.ecology.activeBenefits.length ? state.ecology.activeBenefits.join(" · ") : "Add compatible residents to establish functional roles."}
+        </p>
+      </div>
+
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "center", gap: 12, margin: "18px 0", padding: 14, borderRadius: 13, background: "rgba(125, 203, 191, .09)" }}>
         <div>
           <strong style={{ display: "block", color: "#eafff8" }}>

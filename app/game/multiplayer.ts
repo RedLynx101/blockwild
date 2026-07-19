@@ -8,6 +8,7 @@ import type { MapKnowledge } from "./map-system";
 import type { PlantBestiaryState } from "./plants";
 import type { BlueprintState } from "./blueprints";
 import type { MagicState } from "./magic";
+import type { LivingBestiaryEntryV2 } from "./living-bestiary";
 
 /**
  * Browser-only, host-authoritative WebRTC multiplayer transport for Blockwild.
@@ -97,6 +98,8 @@ export type PlayerPose = {
   boatTurn?: number;
   /** Host-approved ridden creature; omitted immediately on dismount. */
   mountedCreatureId?: number;
+  /** Host-assigned zero-based seat. Only seat zero contributes movement input. */
+  mountedCreatureSeat?: number;
 };
 
 export type BlockEdit = { x: number; y: number; z: number; type: number };
@@ -138,10 +141,27 @@ export type MobSnapshotEntry = {
   yaw: number;
   health: number;
   state: string;
+  /** Compact Living Bestiary combat state; protocol-v1 peers ignore it. */
+  level?: number;
+  currentTypes?: string[];
+  typeRevision?: string;
+  statuses?: Array<{ id: string; stacks: number; remainingSeconds: number }>;
+  activeMove?: { moveId: string; phase: "windup" | "active" | "recovery"; remainingSeconds: number } | null;
+  /** Stable specimen and compact host-authored appearance keep rare forms identical for every peer. */
+  specimenId?: string;
+  primeAnchorId?: string | null;
+  appearanceRevision?: string;
+  appearance?: {
+    progressionSeed: number;
+    shiny: boolean;
+    rarityForm: "ordinary" | "prime" | "regional" | "seasonal" | "story" | "legendary" | "summoned";
+    phenotype: { sizeScale: number; hueShift: number; markingMask: number; markingIntensity: number; accentVariant: number };
+  };
   /** Optional appearance/bond hints; old clients safely ignore them. */
   scale?: number;
   tamed?: boolean;
   saddled?: boolean;
+  bondTier?: "wary" | "familiar" | "trusted" | "partnered" | "kindred";
   baby?: boolean;
   cargoChests?: number;
   lifeStage?: "tiny" | "juvenile" | "adult";
@@ -352,15 +372,7 @@ export type PlayerSessionSnapshot = {
   skills: SkillState;
 };
 
-export type PlayerBestiarySnapshot = Record<string, {
-  seen: boolean;
-  kills: number;
-  captures: number;
-  tames?: number;
-  breeds?: number;
-  secretUnlocked?: boolean;
-  milestones?: Record<string, number>;
-}>;
+export type PlayerBestiarySnapshot = Record<string, LivingBestiaryEntryV2>;
 
 export type PlayerProgressionSnapshot = {
   questBook: QuestBook;
@@ -440,6 +452,8 @@ export type CreatureAction = {
   crouching?: boolean;
   /** Host result for mount/dismount interactions; guests never author this field. */
   mounted?: boolean;
+  /** Host-assigned zero-based seat when `mounted` is true. */
+  mountSeat?: number;
   panel?: "pet" | "follower" | "dragon" | "sentient";
   merchantId?: string;
   tradeDirection?: "player-buys" | "player-sells";
@@ -497,6 +511,8 @@ export type WorldSnapshot = {
   containers?: ContainerSnapshot[];
   /** Targeted host-owned state for the peer receiving this snapshot. */
   playerState?: PlayerSessionSnapshot;
+  /** Shared host-authored guild ledger; guests may inspect but never mutate it directly. */
+  guildBook?: unknown;
 };
 
 export type MultiplayerPayloadMap = {
@@ -789,6 +805,7 @@ function validatePose(value: unknown): value is PlayerPose {
     && (value.boatForward === undefined || isFiniteNumber(value.boatForward, -1, 1))
     && (value.boatTurn === undefined || isFiniteNumber(value.boatTurn, -1, 1))
     && (value.mountedCreatureId === undefined || isInteger(value.mountedCreatureId, 0, Number.MAX_SAFE_INTEGER))
+    && (value.mountedCreatureSeat === undefined || isInteger(value.mountedCreatureSeat, 0, 3))
     && validEquipment;
 }
 
@@ -872,9 +889,33 @@ function validateMob(value: unknown): value is MobSnapshotEntry {
     && isFiniteNumber(value.yaw, -100_000, 100_000)
     && isFiniteNumber(value.health, 0, 100_000)
     && isShortString(value.state, 32)
+    && (value.level === undefined || isInteger(value.level, 1, 60))
+    && (value.currentTypes === undefined || (Array.isArray(value.currentTypes) && value.currentTypes.length <= 32 && value.currentTypes.every((type) => isShortString(type, 24))))
+    && (value.typeRevision === undefined || isShortString(value.typeRevision, 512))
+    && (value.statuses === undefined || (Array.isArray(value.statuses) && value.statuses.length <= 12 && value.statuses.every((status) => isRecord(status)
+      && isShortString(status.id, 32) && isInteger(status.stacks, 1, 3) && isFiniteNumber(status.remainingSeconds, 0, 120))))
+    && (value.activeMove === undefined || value.activeMove === null || (isRecord(value.activeMove)
+      && isShortString(value.activeMove.moveId, 64)
+      && ["windup", "active", "recovery"].includes(value.activeMove.phase as string)
+      && isFiniteNumber(value.activeMove.remainingSeconds, 0, 30)))
+    && (value.specimenId === undefined || isShortString(value.specimenId, 160))
+    && (value.primeAnchorId === undefined || value.primeAnchorId === null
+      || (typeof value.primeAnchorId === "string" && isShortString(value.primeAnchorId, 160) && value.primeAnchorId.startsWith(`prime:${value.kind}:`)))
+    && (value.appearanceRevision === undefined || isShortString(value.appearanceRevision, 256))
+    && (value.appearance === undefined || (isRecord(value.appearance)
+      && isInteger(value.appearance.progressionSeed, 0, 0xffff_ffff)
+      && typeof value.appearance.shiny === "boolean"
+      && ["ordinary", "prime", "regional", "seasonal", "story", "legendary", "summoned"].includes(value.appearance.rarityForm as string)
+      && isRecord(value.appearance.phenotype)
+      && isFiniteNumber(value.appearance.phenotype.sizeScale, .5, 2)
+      && isFiniteNumber(value.appearance.phenotype.hueShift, -.5, .5)
+      && isInteger(value.appearance.phenotype.markingMask, 0, 15)
+      && isFiniteNumber(value.appearance.phenotype.markingIntensity, 0, 1)
+      && isInteger(value.appearance.phenotype.accentVariant, 0, 15)))
     && (value.scale === undefined || isFiniteNumber(value.scale, 0.01, 8))
     && (value.tamed === undefined || typeof value.tamed === "boolean")
     && (value.saddled === undefined || typeof value.saddled === "boolean")
+    && (value.bondTier === undefined || ["wary", "familiar", "trusted", "partnered", "kindred"].includes(value.bondTier as string))
     && (value.baby === undefined || typeof value.baby === "boolean")
     && (value.cargoChests === undefined || isInteger(value.cargoChests, 0, 6))
     && (value.lifeStage === undefined || value.lifeStage === "tiny" || value.lifeStage === "juvenile" || value.lifeStage === "adult")
@@ -1029,6 +1070,13 @@ function validateFacilityState(value: unknown) {
   if (value === undefined) return true;
   if (!isRecord(value)) return false;
   try { return JSON.stringify(value).length <= 128 * 1024; }
+  catch { return false; }
+}
+
+function validateGuildBookPayload(value: unknown) {
+  if (value === undefined) return true;
+  if (!isRecord(value) || value.schema !== 1 || !isRecord(value.guilds) || !isRecord(value.worldQuestOutcomes)) return false;
+  try { return JSON.stringify(value).length <= 256 * 1024; }
   catch { return false; }
 }
 
@@ -1313,6 +1361,7 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
         && (value.distance === undefined || value.distance === "dynamic" || isFiniteNumber(value.distance, 1.5, 10))
         && (value.crouching === undefined || typeof value.crouching === "boolean")
         && (value.mounted === undefined || typeof value.mounted === "boolean")
+        && (value.mountSeat === undefined || isInteger(value.mountSeat, 0, 3))
         && (value.panel === undefined || value.panel === "pet" || value.panel === "follower" || value.panel === "dragon" || value.panel === "sentient")
         && (value.merchantId === undefined || isShortString(value.merchantId, 160))
         && (value.tradeDirection === undefined || value.tradeDirection === "player-buys" || value.tradeDirection === "player-sells")
@@ -1377,7 +1426,8 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
         && (value.worldOptions === undefined || validateSessionWorldOptions(value.worldOptions))
         && (value.inventory === undefined || validateInventorySnapshot(value.inventory))
         && (value.containers === undefined || (Array.isArray(value.containers) && value.containers.length <= 4 && value.containers.every(validateContainerSnapshot)))
-        && (value.playerState === undefined || validatePlayerSessionSnapshot(value.playerState));
+        && (value.playerState === undefined || validatePlayerSessionSnapshot(value.playerState))
+        && validateGuildBookPayload(value.guildBook);
     default:
       return false;
   }

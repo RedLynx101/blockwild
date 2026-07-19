@@ -137,6 +137,42 @@ export type UndergroundMobKind =
   | "chimewing"
   | "cinder-kite"
   | "veinling";
+export type LivingRosterKind =
+  | "thornhide-trufflehog"
+  | "orchard-glider"
+  | "petalmask-tanuki"
+  | "ironbeak-magpie"
+  | "hearthback-badger"
+  | "sunfoil-pangolin"
+  | "glassstep-jerboa"
+  | "stormcrest-ibex"
+  | "cindercoil-gecko"
+  | "cloudkite-pika"
+  | "briarclaw-lynx"
+  | "gravebell-jackal"
+  | "cragglass-basilisk"
+  | "stormglass-roclet"
+  | "brinewhisk-otter"
+  | "riverwright-beaver"
+  | "mirecrown-crane"
+  | "inkveil-cuttle"
+  | "prismclaw-mantis-shrimp"
+  | "reefmender-shrimp"
+  | "currentweaver-eel"
+  | "shellcarrier-hermit"
+  | "wreckwhistle-porpoise"
+  | "kilnscale-salamander"
+  | "sporeback-gardener"
+  | "voidmantle-ray"
+  | "fossilback-trilobite";
+export type LegendaryCreatureKind =
+  | "ilyr-virebloom"
+  | "thalassene"
+  | "orichalc"
+  | "varkesh-stormmane"
+  | "kharza"
+  | "sugarwake-sovereign";
+export type SummonedCreatureKind = "asterjaw" | "vellum-warden" | "choir-of-one" | "glasswake-stag";
 export type CoreMobKind =
   | LegacyMobKind
   | MosslingVariantKind
@@ -155,11 +191,14 @@ export type CoreMobKind =
   | SentientMobKind
   | UndergroundMobKind
   | AdventureMobKind
-  | SpecialMobKind;
+  | SpecialMobKind
+  | LivingRosterKind
+  | LegendaryCreatureKind
+  | SummonedCreatureKind;
 export type MobKind = CoreMobKind | ButterflyKind;
 export type MobTemperament = "Gentle" | "Skittish" | "Defensive" | "Hostile";
 export type MobMovement = "ground" | "flying" | "aquatic" | "amphibious";
-export type MobFamily = "surface" | "underground" | "rabbit" | "bird" | "fish" | "sea-slug" | "pet" | "mount" | "leviathan" | "dragon" | "pollinator" | "construct" | "undead" | "sentient" | "butterfly";
+export type MobFamily = "surface" | "underground" | "rabbit" | "bird" | "fish" | "sea-slug" | "pet" | "mount" | "leviathan" | "dragon" | "pollinator" | "construct" | "undead" | "sentient" | "butterfly" | "legendary" | "summon";
 
 export type MobDrop = {
   item: ItemCode;
@@ -471,9 +510,346 @@ function seaSlugDefinition(kind: SeaSlugKind, profile: SeaSlugProfile): MobDefin
   };
 }
 
+type LivingRosterSeed = Readonly<{
+  name: string;
+  temperament: MobTemperament;
+  health: number;
+  damage: number;
+  speed: number;
+  radius: number;
+  height: number;
+  footOffset: number;
+  habitat: string;
+  active: string;
+  behavior: string;
+  lore: string;
+  utility: string;
+  discoveryHint: string;
+  colors: [number, number, number];
+  family: MobFamily;
+  movement: MobMovement;
+  food: ItemCode;
+  drops?: MobDrop[];
+  hostile?: boolean;
+  rideable?: boolean;
+  aquatic?: boolean;
+  flying?: boolean;
+  bottomDweller?: boolean;
+}>;
+
+function livingRosterMob(kind: LivingRosterKind, seed: LivingRosterSeed): MobDefinition {
+  return {
+    kind, name: seed.name, temperament: seed.temperament, hostile: seed.hostile ?? false,
+    health: seed.health, damage: seed.damage, xp: Math.max(3, Math.round(seed.health / 4)), speed: seed.speed,
+    chaseSpeed: seed.speed * (seed.hostile ? 3.2 : 2.2), turnRate: seed.radius < 0.4 ? 8 : seed.flying ? 5.8 : 4.6,
+    attackRange: seed.damage > 0 ? Math.max(0.8, seed.radius * 1.65) : 0,
+    footOffset: seed.footOffset, radius: seed.radius, height: seed.height,
+    habitat: seed.habitat, active: seed.active, behavior: seed.behavior, lore: seed.lore, colors: seed.colors,
+    drops: seed.drops ?? [], family: seed.family, movement: seed.movement, aquatic: seed.aquatic,
+    flying: seed.flying, bottomDweller: seed.bottomDweller, tameable: true, tameItems: [seed.food],
+    breedable: true, breedingFoods: [seed.food], diet: [seed.food], captureItem: Item.CaptureOrb,
+    rideable: seed.rideable, foodLure: !seed.hostile, utility: seed.utility, discoveryHint: seed.discoveryHint,
+    fieldNotes: Object.freeze([
+      { id: "field-sign", title: "Field Sign", text: seed.behavior, hint: seed.discoveryHint, requires: [{ metric: "seen", atLeast: 1 }] },
+      { id: "close-study", title: "Close Study", text: seed.utility, hint: "Secure one healthy specimen and inspect it at Creature Camp.", requires: [{ metric: "captures", atLeast: 1 }] },
+      { id: "lineage", title: "Lineage Note", text: `${seed.name} markings and care preferences remain visible across a raised lineage without hidden combat genetics.`, hint: "Raise or breed this species responsibly.", requires: [{ metric: "breeds", atLeast: 1 }] },
+    ]),
+  };
+}
+
+export const LIVING_ROSTER_MOBS: Record<LivingRosterKind, MobDefinition> = {
+  "thornhide-trufflehog": livingRosterMob("thornhide-trufflehog", {
+    name: "Thornhide Trufflehog", temperament: "Gentle", health: 22, damage: 3, speed: .55, radius: .62, height: .72, footOffset: .5676,
+    habitat: "Mushroom Fen and rain-soft Bloomwood clearings", active: "Dawn, dusk, and after rain", family: "surface", movement: "ground", food: Item.Dreamcap,
+    behavior: "Reads fungal threads through a divided copper snout, then parts the soil with ivory root-tusks while its living thorn mantle folds flat around nearby young.",
+    lore: "Old orchard keepers say a Trufflehog does not find mushrooms; it listens until the forest admits where it hid them.",
+    utility: "Snuffles out authored buried food, rare fungi, and root caches without exposing protected structures.", discoveryHint: "Follow paired furrows ending at an untouched ring of mushrooms.",
+    colors: [0x5a4436, 0x637b42, 0xe5c68b], drops: [{ item: Item.Hide, min: 1, max: 2, chance: .42 }, { item: Item.Fiber, min: 1, max: 3, chance: .7 }],
+  }),
+  "orchard-glider": livingRosterMob("orchard-glider", {
+    name: "Orchard Glider", temperament: "Skittish", health: 8, damage: 1, speed: 1.25, radius: .28, height: .28, footOffset: .5,
+    habitat: "Birchlight, Bloomwood, and Sakurabloom canopy edges", active: "Dusk and clear early morning", family: "surface", movement: "flying", flying: true, food: Item.Apple,
+    behavior: "Spreads leaf-veined membranes between all four limbs, banks on its rudder tail, and taps ripe fruit with a bright seed-marking call.",
+    lore: "A glider nest is assembled from one seed of every tree it has crossed, a tiny map of an orchard not yet grown.", utility: "Marks mature fruit and retrieves one loose seed from reachable canopy blocks.",
+    discoveryHint: "Place fruit on a low branch and wait without sprinting beneath the canopy.", colors: [0x8b5e3c, 0xd9a95b, 0x315f49], drops: [{ item: Item.Fiber, min: 1, max: 1, chance: .28 }],
+  }),
+  "petalmask-tanuki": livingRosterMob("petalmask-tanuki", {
+    name: "Petalmask Tanuki", temperament: "Defensive", health: 24, damage: 4, speed: .68, radius: .58, height: .82, footOffset: .5492,
+    habitat: "Rainy Sakurabloom groves and Glimmerwood paths", active: "Rain, dusk, and moonlit nights", family: "surface", movement: "ground", food: Item.Moonpetal,
+    behavior: "Wears a naturally shed blossom mask, rolls its ringed tail through drifting petals, and lays several false scent trails while preserving one honest ecological track.",
+    lore: "The oldest masks are repaired with sap instead of replaced; each crack marks a trick that failed and a lesson the animal kept.", utility: "Creates a short-lived decoy and can borrow the scent of a tracked wild creature.",
+    discoveryHint: "In rain, ignore the brightest petals and follow the trail that bends around seedlings.", colors: [0x725444, 0xe8b8c8, 0x423e67], drops: [{ item: Item.Fiber, min: 1, max: 2, chance: .5 }],
+  }),
+  "ironbeak-magpie": livingRosterMob("ironbeak-magpie", {
+    name: "Ironbeak Magpie", temperament: "Skittish", health: 9, damage: 2, speed: 1.42, radius: .25, height: .42, footOffset: .76,
+    habitat: "Forest roads, wayposts, and abandoned settlement roofs", active: "Daylight", family: "bird", movement: "flying", flying: true, food: Item.WheatSeeds,
+    behavior: "Balances on a long blue-black tail, tests metal with a pale forged-looking bill, and catalogs every cache with a different two-note call.",
+    lore: "Deepgear miners treat a Magpie returning a lost fastener as luck; one stealing the same fastener twice is considered an inspection.", utility: "Retrieves one dropped metal object, carries a tiny message tube, and reveals its own bounded cache.",
+    discoveryHint: "Leave one harmless polished lure near a road marker and watch from cover.", colors: [0x202b39, 0xc7d4d2, 0x4d87a5], drops: [{ item: Item.Feather, min: 1, max: 2, chance: .62 }],
+  }),
+  "hearthback-badger": livingRosterMob("hearthback-badger", {
+    name: "Hearthback Badger", temperament: "Defensive", health: 30, damage: 5, speed: .48, radius: .68, height: .62, footOffset: .5604,
+    habitat: "Wildwood banks and Frostpine root burrows", active: "Dawn and evening", family: "surface", movement: "ground", food: Item.Sunroot,
+    behavior: "Digs with slate foreclaws, carries dry moss in a warm russet saddle of fur, and plants itself between danger and a burrow rather than chasing far.",
+    lore: "Travelers once followed the smoke-colored stripe on its back home, mistaking it for a road warmed by a distant hearth.", utility: "Finds tubers and compostable roots and guards one small assigned camp radius.",
+    discoveryHint: "Set edible roots downhill from a den and keep the den entrance clear.", colors: [0x3d3935, 0xa35f3e, 0xe9d9b7], drops: [{ item: Item.Hide, min: 1, max: 2, chance: .55 }],
+  }),
+  "sunfoil-pangolin": livingRosterMob("sunfoil-pangolin", {
+    name: "Sunfoil Pangolin", temperament: "Defensive", health: 34, damage: 4, speed: .42, radius: .62, height: .62, footOffset: .5148,
+    habitat: "Sunstep Savanna termite fields and Painted Badlands ledges", active: "Warm daylight", family: "surface", movement: "ground", food: Item.Sunroot,
+    behavior: "Overlapping brass-gold scales hinge into a nearly seamless sphere; uncurled, its long tongue flicks through termite towers while the foil edges scatter heat.",
+    lore: "No two scale rows catch the sun in the same order, so caravans once named individuals as moving hours of the day.", utility: "Finds clay and flint pockets and braces into a temporary defensive barrier.",
+    discoveryHint: "Wait beside a disturbed termite mound until the armored silhouette fully uncurls.", colors: [0xb9883f, 0xf0cd6b, 0x342d29], drops: [{ item: Item.Flint, min: 1, max: 2, chance: .45 }],
+  }),
+  "glassstep-jerboa": livingRosterMob("glassstep-jerboa", {
+    name: "Glassstep Jerboa", temperament: "Skittish", health: 6, damage: 1, speed: 1.38, radius: .2, height: .42, footOffset: .8756,
+    habitat: "Sunglass Desert dunes and moonlit glass flats", active: "Night", family: "surface", movement: "ground", food: Item.WheatSeeds,
+    behavior: "Launches from impossibly long hind feet, steadies with a brush-tipped tail, and crosses brittle glass sand without making the fracture tone of heavier animals.",
+    lore: "Desert children read its moonlit hop pattern as a warning alphabet for hollow ground.", utility: "Detects unstable sand, buried chambers, and authored desert caches.",
+    discoveryHint: "Sit silently near paired pinprick tracks and offer seeds after moonrise.", colors: [0xd7bc87, 0x8ecbd0, 0x241f2d], drops: [],
+  }),
+  "stormcrest-ibex": livingRosterMob("stormcrest-ibex", {
+    name: "Stormcrest Ibex", temperament: "Defensive", health: 38, damage: 7, speed: .74, radius: .7, height: 1.32, footOffset: .7252,
+    habitat: "Cloudbreak Highlands and Snowcap Mountains", active: "High wind and storms", family: "mount", movement: "ground", food: Item.Wheat, rideable: true,
+    behavior: "Plants split iron-dark hooves on near-vertical shelves while twin spiral horns collect harmless blue static along weather-cut ridges.",
+    lore: "A resting herd always leaves one horn pointed into the wind; climbers who notice it in time rarely walk into the storm's worst face.", utility: "A Partnered climbing pack mount with a bounded fall-rescue leap.",
+    discoveryHint: "Follow a herd's high route until the storm quiets and every adult kneels.", colors: [0x59636d, 0xa9c4cc, 0xd5c45d], drops: [{ item: Item.Hide, min: 1, max: 3, chance: .58 }],
+  }),
+  "cindercoil-gecko": livingRosterMob("cindercoil-gecko", {
+    name: "Cindercoil Gecko", temperament: "Skittish", health: 7, damage: 2, speed: .62, radius: .25, height: .18, footOffset: .58,
+    habitat: "Ember Wastes basalt and hot Painted Badlands ledges", active: "Warm dusk and night", family: "surface", movement: "ground", food: Item.CaveGel,
+    behavior: "Clings with broad ash-gray toe fans, coils a coal-red tail around warm stone, and dims its ember freckles before crossing a dangerously hot seam.",
+    lore: "Kilnkeepers trust a sleeping Gecko more than a dial: it leaves before the first brick cracks.", utility: "Signals dangerous heat and provides a modest, assignment-based furnace assist.",
+    discoveryHint: "Cool one basking stone and wait for the ember freckles to brighten again.", colors: [0x403b3b, 0xd45e3e, 0xffc36a], drops: [],
+  }),
+  "cloudkite-pika": livingRosterMob("cloudkite-pika", {
+    name: "Cloudkite Pika", temperament: "Skittish", health: 7, damage: 0, speed: .78, radius: .23, height: .3, footOffset: .5028,
+    habitat: "Cloudreed peaks and sheltered highland scree", active: "Windy daylight", family: "surface", movement: "ground", food: Item.Wheat,
+    behavior: "Raises two sail-like ears into crosswinds and answers distant kin with a clear three-note whistle that briefly shapes a soft updraft over the colony.",
+    lore: "Their hay piles are weighted with exactly one stone from above and one from below, a small treaty between cliff and cloud.", utility: "Provides a cooldown-based updraft pulse and an audible danger warning.",
+    discoveryHint: "Sound a wind chime from the sheltered side of a ridge, then wait below the hay line.", colors: [0xc7b89d, 0x91c8d7, 0xf2e7c9], drops: [],
+  }),
+  "briarclaw-lynx": livingRosterMob("briarclaw-lynx", {
+    name: "Briarclaw Lynx", temperament: "Hostile", hostile: true, health: 32, damage: 8, speed: .92, radius: .58, height: .84, footOffset: .6092,
+    habitat: "Rare Wildwood, Frostpine, and Bloomwood cover", active: "Dusk, night, and snowfall", family: "surface", movement: "ground", food: Item.RawMeat,
+    behavior: "Moves beneath a broken mantle of thorn-like shoulder fur, leaves deliberate false pawprints, and watches across several nights before committing to one readable pounce.",
+    lore: "The white old hunter of Frostpine is not feared for being unseen, but for allowing itself to be seen exactly once.", utility: "A Partnered ambush guardian and hostile-track specialist with a bounded leash.",
+    discoveryHint: "Survive its repeated stalking signs, then calm or weaken it after the final pounce.", colors: [0x51473f, 0x6f8550, 0xf0d694], drops: [{ item: Item.Hide, min: 1, max: 2, chance: .62 }, { item: Item.RawMeat, min: 1, max: 2, chance: .55 }],
+  }),
+  "gravebell-jackal": livingRosterMob("gravebell-jackal", {
+    name: "Gravebell Jackal", temperament: "Defensive", health: 26, damage: 6, speed: .86, radius: .52, height: .76, footOffset: .6176,
+    habitat: "Painted Badlands ruins and Ember Wastes cairns", active: "Night", family: "surface", movement: "ground", food: Item.BoneShard,
+    behavior: "Carries a hollow bone bell beneath its throat, listens at old cairns, and rings only when an unquiet spirit crosses a boundary it has chosen to guard.",
+    lore: "Returning a relic earns silence; stealing one earns a bell note that follows a thief much farther than paws do.", utility: "Reveals nearby undead, graves, and authored curse clues without exposing ordinary loot.",
+    discoveryHint: "Return one displaced relic to the matching bone cache before offering food.", colors: [0x4a3c39, 0x9a7454, 0x9bd0c7], drops: [{ item: Item.BoneShard, min: 1, max: 2, chance: .45 }],
+  }),
+  "cragglass-basilisk": livingRosterMob("cragglass-basilisk", {
+    name: "Cragglass Basilisk", temperament: "Hostile", hostile: true, health: 44, damage: 9, speed: .54, radius: .72, height: .66, footOffset: .5572,
+    habitat: "Badland stone circles and Crystaldeep fringes", active: "Low sun and crystal resonance", family: "underground", movement: "ground", food: Item.CrystalShard,
+    behavior: "Carries a faceted crown over six low limbs; the crown focuses a slowing glass gaze that fractures into harmless color when reflected at the correct angle.",
+    lore: "Its victims are not statues but patient animals caught in a mineral trance, often waking days later beneath a new skin of dust.", utility: "Slows one pursuing threat and detects petrified fauna or reflective puzzle marks.",
+    discoveryHint: "Interrupt the gaze with a reflective surface, then approach during its clearly visible molt.", colors: [0x586152, 0x85b8a9, 0xe2b76d], drops: [{ item: Item.CrystalShard, min: 1, max: 3, chance: .65 }],
+  }),
+  "stormglass-roclet": livingRosterMob("stormglass-roclet", {
+    name: "Stormglass Roclet", temperament: "Defensive", health: 28, damage: 7, speed: 1.18, radius: .66, height: .88, footOffset: 1.02,
+    habitat: "Storm-struck Cloudbreak and Snowcap nests", active: "Storms and strong highland wind", family: "mount", movement: "flying", flying: true, food: Item.RawMeat, rideable: true,
+    behavior: "A juvenile carries translucent storm-quartz vanes among broad slate feathers; rescued birds replace broken vanes over time and learn to bank beneath a falling companion.",
+    lore: "At level thirty the name Roclet is no longer accurate, but highlanders keep it as a reminder that every great Roc was once carried home in a blanket.", utility: "Matures into a one-seat flying Roc after Partnered bond and completed flight training; clears soft gust hazards.",
+    discoveryHint: "Find a storm-fallen juvenile below a high nest and shelter it before attempting capture.", colors: [0x556477, 0x8fd0dc, 0xe8d16b], drops: [{ item: Item.Feather, min: 2, max: 4, chance: .7 }],
+  }),
+  "brinewhisk-otter": livingRosterMob("brinewhisk-otter", {
+    name: "Brinewhisk Otter", temperament: "Gentle", health: 18, damage: 3, speed: .82, radius: .42, height: .46, footOffset: .32,
+    habitat: "Wandering River, Siltfen pools, and Sunwash Coast", active: "Daylight and calm rain", family: "surface", movement: "amphibious", aquatic: true, food: Item.RawFish,
+    behavior: "Steers with a ribbon tail, stores a favorite shell in a chest-fur pocket, and invites cautious strangers into a repeated shell-return game before accepting touch.",
+    lore: "A lost boat key has a better chance of returning in an Otter's paws than in a fisher's net—provided the finder is thanked with the right shell.", utility: "Retrieves floating or shallow submerged drops and can tow a tiring swimmer briefly.",
+    discoveryHint: "Return the same shell three times near a lodge without entering the nursery water.", colors: [0x5a493b, 0xcaa476, 0x92d0d1], drops: [{ item: Item.RawFish, min: 1, max: 1, chance: .25 }],
+  }),
+  "riverwright-beaver": livingRosterMob("riverwright-beaver", {
+    name: "Riverwright Beaver", temperament: "Defensive", health: 27, damage: 5, speed: .54, radius: .58, height: .62, footOffset: .4,
+    habitat: "Rare Wandering River colonies and Siltfen channels", active: "Dawn, dusk, and flowing water", family: "surface", movement: "amphibious", aquatic: true, food: Item.Stick,
+    behavior: "Scores every carried branch with paired incisors, packs mud using a broad patterned tail, and repairs only recognized lodge or irrigation anchors rather than arbitrary structures.",
+    lore: "The spiral notches on an old dam are not decoration; they are a maintenance ledger readable to every colony downstream.", utility: "Improves assigned irrigation, fishing, and driftwood structures through bounded work events.",
+    discoveryHint: "Repair the marked gap in a damaged lodge with local wood, then wait downstream.", colors: [0x5c4331, 0x8a6a43, 0xd9bf82], drops: [{ item: Item.Hide, min: 1, max: 2, chance: .48 }, { item: Item.Stick, min: 1, max: 3, chance: .7 }],
+  }),
+  "mirecrown-crane": livingRosterMob("mirecrown-crane", {
+    name: "Mirecrown Crane", temperament: "Skittish", health: 14, damage: 2, speed: .76, radius: .4, height: 1.32, footOffset: .92,
+    habitat: "Migratory Siltfen and Flower Meadow ponds", active: "Dawn migrations and rain-cleared evenings", family: "bird", movement: "flying", flying: true, aquatic: true, food: Item.RawFish,
+    behavior: "Steps on reed-thin legs, fans a moss-green crown during courtship, and sweeps one long wing between nestlings and foul water before calling the flock elsewhere.",
+    lore: "Where a Mirecrown completes its dance, pond keepers expect clean water and new flowers before the next moon.", utility: "Locates rare pond flora and healthy shallows and can cleanse one minor aquatic ailment.",
+    discoveryHint: "Observe the complete courtship from outside the reeds, then answer the final two-note call.", colors: [0xd6d6c5, 0x5c8065, 0xc96957], drops: [{ item: Item.Feather, min: 1, max: 3, chance: .6 }],
+  }),
+  "inkveil-cuttle": livingRosterMob("inkveil-cuttle", {
+    name: "Inkveil Cuttle", temperament: "Skittish", health: 16, damage: 3, speed: 1.12, radius: .48, height: .38, footOffset: .28,
+    habitat: "Brightwater reefs, Abyssal shelves, and Lumen Trench observatories", active: "Dim water and dusk", family: "fish", movement: "aquatic", aquatic: true, food: Item.RawFish,
+    behavior: "Runs waves of violet, pearl, and night blue across its mantle, folds eight short arms into false facial shapes, and jets behind a bounded cloud of living ink.",
+    lore: "The observatory cuttle does not copy objects. It copies the last emotion of anyone reflected in its glass.", utility: "Creates an escape ink cloud, provides brief camouflage, and enriches a dim aquarium.",
+    discoveryHint: "Dim nearby light and remain motionless until its pupil returns to a calm W shape.", colors: [0x493f72, 0x76c3b7, 0xf0c4da], drops: [{ item: Item.LivingInk, min: 1, max: 2, chance: .42 }],
+  }),
+  "prismclaw-mantis-shrimp": livingRosterMob("prismclaw-mantis-shrimp", {
+    name: "Prismclaw Mantis Shrimp", temperament: "Defensive", health: 24, damage: 8, speed: .72, radius: .4, height: .28, footOffset: .24,
+    habitat: "Reef caverns and Lumen Trench structure seams", active: "Bright current changes", family: "fish", movement: "aquatic", aquatic: true, bottomDweller: true, food: Item.RawFish,
+    behavior: "Carries two folded hammer clubs beneath a stained-glass carapace; each strike is preceded by a visible color-lock and can crack only authored weakened reef stone.",
+    lore: "Tideglass masons test windows by letting a Prismclaw look at them. If the animal loses interest, the glass will outlive the wall.", utility: "Breaks specially marked cracked underwater blocks and produces a short flashburst in combat.",
+    discoveryHint: "Bait its color-locked strike against a hardened shell and approach during recovery.", colors: [0x3ba89b, 0xe06e55, 0xf1d65f], drops: [{ item: Item.StarCoralShard, min: 1, max: 2, chance: .45 }],
+  }),
+  "reefmender-shrimp": livingRosterMob("reefmender-shrimp", {
+    name: "Reefmender Shrimp", temperament: "Gentle", health: 4, damage: 0, speed: .5, radius: .18, height: .16, footOffset: .13,
+    habitat: "Brightwater coral cleaning stations", active: "Daylight underwater", family: "fish", movement: "aquatic", aquatic: true, bottomDweller: true, food: Item.LumenKelpFrond,
+    behavior: "Waves long white feelers from a coral perch, signals larger fish into a patient queue, and removes parasites with jewel-fine foreclaws without damaging healthy scales.",
+    lore: "A reef without a mender may still be colorful. A reef with one is quiet enough for every color to stay.", utility: "Maintains aquarium health, tends coral, and removes one minor ailment from a water-carried ally.",
+    discoveryHint: "Wait until it is actively cleaning another creature; an idle shrimp will retreat into coral.", colors: [0xf2e7d2, 0xd95e5e, 0x75d5c7], drops: [],
+  }),
+  "currentweaver-eel": livingRosterMob("currentweaver-eel", {
+    name: "Currentweaver Eel", temperament: "Defensive", health: 21, damage: 6, speed: 1.28, radius: .32, height: .3, footOffset: .22,
+    habitat: "Lumen Trench, Abyssal Ocean, and Glasswater currents", active: "Storms, charged lures, and strong currents", family: "fish", movement: "aquatic", aquatic: true, food: Item.RawFish,
+    behavior: "Braids its ribbon body around moving water, drinks charge through copper-blue finlets, and adds a visible Storm affinity only while the luminous lateral line remains full.",
+    lore: "A Currentweaver is never struck by the same current twice; it edits the second one before it arrives.", utility: "Powers a held lamp or produces a brief aquatic stun while visibly charged.",
+    discoveryHint: "Charge a Tide Lens lure and intercept the animal along its current rather than chasing behind it.", colors: [0x234f63, 0x47c5c3, 0xeedc78], drops: [{ item: Item.GlowScale, min: 1, max: 2, chance: .44 }],
+  }),
+  "shellcarrier-hermit": livingRosterMob("shellcarrier-hermit", {
+    name: "Shellcarrier Hermit", temperament: "Gentle", health: 12, damage: 2, speed: .32, radius: .34, height: .3, footOffset: .24,
+    habitat: "Sunwash and Brightwater shallows", active: "Low tide and calm daylight", family: "fish", movement: "amphibious", aquatic: true, bottomDweller: true, food: Item.RawFish,
+    behavior: "Tests vacant shells with mismatched feelers, braces a chosen home on six red legs, and ties one small carried object beneath the lip using living tidevine.",
+    lore: "The finest shell is not the brightest but the one the Hermit leaves behind without looking back.", utility: "Acts as a tiny mobile satchel and cleans loose aquarium substrate; shell gear visibly changes Guard.",
+    discoveryHint: "Offer a clearly better empty shell instead of weakening the animal.", colors: [0xb45c48, 0x8e9b85, 0xe8d4a5], drops: [{ item: Item.TidevineFiber, min: 1, max: 2, chance: .4 }],
+  }),
+  "wreckwhistle-porpoise": livingRosterMob("wreckwhistle-porpoise", {
+    name: "Wreckwhistle Porpoise", temperament: "Gentle", health: 34, damage: 4, speed: 1.62, radius: .72, height: .62, footOffset: .45,
+    habitat: "Rare ocean pods along old wreck routes", active: "Daylight, storms, and distress calls", family: "mount", movement: "aquatic", aquatic: true, food: Item.RawFish, rideable: true,
+    behavior: "Carries pale wake scars along a compact slate body, maps debris with layered whistles, and lifts trapped podmates using its shoulder rather than its beak.",
+    lore: "Sailors follow the descending whistle to wreckage and the rising whistle home. Confusing the two is considered an insult to the listener.", utility: "A Partnered one-seat swimming mount that marks wrecks and escorts boats through dangerous water.",
+    discoveryHint: "Follow its calls and clear debris from a trapped podmate before fitting a tide harness.", colors: [0x496f7b, 0xb9d8d7, 0xefd58b], drops: [{ item: Item.RawFish, min: 1, max: 3, chance: .38 }],
+  }),
+  "kilnscale-salamander": livingRosterMob("kilnscale-salamander", {
+    name: "Kilnscale Salamander", temperament: "Defensive", health: 17, damage: 4, speed: .48, radius: .42, height: .24, footOffset: .5852,
+    habitat: "Emberdeep Fumaroles and heated mineral terraces", active: "Near stable heat gradients", family: "underground", movement: "amphibious", food: Item.CaveGel,
+    behavior: "Tiles of black-red scale overlap a low broad body, opening like kiln vents when warm and sealing to blue-gray stone when deeply chilled.",
+    lore: "Delvers once carried them as living coals until they learned the animal prefers choosing its own hearth.", utility: "Provides camp warmth and a modest assigned smelting bonus; its Flame type visibly fades while deeply chilled.",
+    discoveryHint: "Vent or cool its fumarole into a safe gradient before approaching the basking shelf.", colors: [0x3d3533, 0xc75037, 0xffaa59], drops: [{ item: Item.SulfurGrowthItem, min: 1, max: 2, chance: .4 }],
+  }),
+  "sporeback-gardener": livingRosterMob("sporeback-gardener", {
+    name: "Sporeback Gardener", temperament: "Gentle", health: 23, damage: 2, speed: .38, radius: .58, height: .72, footOffset: .6132,
+    habitat: "Rootweave Grotto and old fungal pockets", active: "Dim ecological centers", family: "underground", movement: "ground", food: Item.Dreamcap,
+    behavior: "Walks on four root-knuckled feet beneath a cultivated crown of caps, collects exhausted growth into a belly compost chamber, and replants only prepared mushroom beds.",
+    lore: "Its garden is inheritance, shelter, and biography. A bare-backed Gardener is not young but newly arrived.", utility: "Plants mushrooms, produces compost, and supports bounded cave-garden cycles.",
+    discoveryHint: "Complete a broken mushroom ring and leave the center unharvested overnight.", colors: [0x566642, 0xb57f68, 0xb9e887], drops: [{ item: Item.SporePodItem, min: 1, max: 3, chance: .5 }, { item: Item.Fiber, min: 1, max: 2, chance: .55 }],
+  }),
+  "voidmantle-ray": livingRosterMob("voidmantle-ray", {
+    name: "Voidmantle Ray", temperament: "Skittish", health: 30, damage: 5, speed: 1.35, radius: 1.05, height: .34, footOffset: .5,
+    habitat: "Very large Glasswater and Pillarstone caverns", active: "Darkness between ecological centers", family: "mount", movement: "flying", flying: true, food: Item.LumenKelpFrond, rideable: true,
+    behavior: "Sails through dense cave air on a black-violet diamond mantle, following luminous plankton routes while two trailing fins read pillars like fingertips.",
+    lore: "It does not fly so much as refuse to decide whether the cavern is air or sea.", utility: "A Partnered one-seat cavern glider that cannot gain altitude indefinitely and needs genuinely open volume.",
+    discoveryHint: "Follow its full luminous feeding route without cutting across the school beneath it.", colors: [0x292642, 0x675f9e, 0x63c8bd], drops: [{ item: Item.LivingInk, min: 1, max: 2, chance: .35 }],
+  }),
+  "fossilback-trilobite": livingRosterMob("fossilback-trilobite", {
+    name: "Fossilback Trilobite", temperament: "Gentle", health: 15, damage: 1, speed: .22, radius: .38, height: .2, footOffset: .16,
+    habitat: "Glasswater beds and Pillarstone sediment shelves", active: "Slow cave-current cycles", family: "fish", movement: "aquatic", aquatic: true, bottomDweller: true, food: Item.CaveGel,
+    behavior: "Ripples many tiny legs beneath three copper-brown lobes, settles into sediment with only its eye ridges exposed, and taps when ancient strata lie below.",
+    lore: "Its shell resembles a fossil because fossils resemble its ancestors; the animal has never had reason to hurry away from a successful design.", utility: "Detects fossils, ancient strata, and authored submerged ruins; Prime lineages unlock historical notes.",
+    discoveryHint: "Brush sediment away around the moving shell instead of mining the occupied block.", colors: [0x7d6449, 0xb59462, 0x83c4b7], drops: [{ item: Item.FossilStoneItem, min: 1, max: 1, chance: .25 }],
+  }),
+};
+
+function mythicMob(kind: LegendaryCreatureKind, seed: Omit<LivingRosterSeed, "food"> & { food: ItemCode }): MobDefinition {
+  const base = livingRosterMob(kind as unknown as LivingRosterKind, seed);
+  return {
+    ...base, kind, family: "legendary", persistent: true, breedable: false, foodLure: false,
+    xp: Math.max(120, Math.round(seed.health * 1.5)), captureItem: Item.CaptureOrb,
+    fieldNotes: Object.freeze([
+      { id: "trail", title: "The Trail", text: seed.discoveryHint, hint: "Complete the authored regional hunt trail.", requires: [{ metric: "seen", atLeast: 1 }] },
+      { id: "encounter", title: "Living Encounter", text: seed.behavior, hint: "Reach the encounter without destroying its ecological anchors.", requires: [{ milestone: "legendary-encounter", atLeast: 1 }] },
+      { id: "resolution", title: "Resolution", text: seed.utility, hint: "Resolve the encounter through capture, covenant, protection, or the authored destructive choice.", requires: [{ milestone: "legendary-resolution", atLeast: 1 }] },
+    ]),
+  };
+}
+
+export const LEGENDARY_CREATURE_MOBS: Record<LegendaryCreatureKind, MobDefinition> = {
+  "ilyr-virebloom": mythicMob("ilyr-virebloom", {
+    name: "Ilyr Virebloom, the Walking Spring", temperament: "Defensive", health: 360, damage: 14, speed: .66, radius: 1.48, height: 2.55, footOffset: 1.18,
+    habitat: "A restored migration between three dry ecological centers", active: "After the three springs flow", family: "legendary", movement: "amphibious", aquatic: true, rideable: true, food: Item.RareSeedPouch,
+    behavior: "An enormous deer-tapir guardian carries flowering watercourses through branching antlers; small birds rest among the reeds while each hoofstep opens a brief spring that closes behind it.",
+    lore: "Ilyr is not the source of the watershed. It is the promise that separated waters can remember one another.", utility: "A late-game land and shallow-water sanctuary mount that restores authored ecological sites and discovers rare seeds.",
+    discoveryHint: "Restore three dry ecological centers, then follow the new water while keeping poachers from closing the route.", colors: [0x426b53, 0x75c8a6, 0xf0d889],
+  }),
+  thalassene: mythicMob("thalassene", {
+    name: "Thalassene, the Reef That Swims", temperament: "Defensive", health: 440, damage: 16, speed: .42, radius: 2.15, height: 1.62, footOffset: .9,
+    habitat: "A migrating reef route between Brightwater and collapsing trenches", active: "During the Tideglass restoration campaign", family: "legendary", movement: "aquatic", aquatic: true, rideable: true, food: Item.LivingCoral,
+    behavior: "A broad leviathan bears a complete living reef whose arches admit fish; bleaching patches visibly dim as parasites are removed without striking the host.",
+    lore: "Maps draw reefs as places. Thalassene is the old correction: some places choose where to be.", utility: "A bounded two-seat swimming sanctuary and mobile aquarium hub with protected resident slots.",
+    discoveryHint: "Diagnose the bleaching, protect the migration, and install three temporary reef anchors before the trench fails.", colors: [0x2f6f76, 0x5abf9d, 0xf0d77b],
+  }),
+  orichalc: mythicMob("orichalc", {
+    name: "Orichalc, the Oath Under Stone", temperament: "Defensive", health: 500, damage: 18, speed: .28, radius: 1.78, height: 2.35, footOffset: .12,
+    habitat: "A protected Veinmetal seam below a Deepgear hold", active: "When the living seam is interpreted rather than mined", family: "legendary", movement: "ground", food: Item.VeinmetalFlake,
+    behavior: "Colossal articulated ore segments assemble around an empty or unseen center, alternating between anatomical flexion and machine-perfect indexing without confirming either interpretation.",
+    lore: "The Delvers call it an oath because every witness describes a different heart and agrees that something answered.", utility: "Can be left dormant, redirected, bound, or awakened; every outcome preserves Veinmetal's biological, magical, and mechanical ambiguity.",
+    discoveryHint: "Mine around the living seam, rescue trapped delvers, and interpret the machinery that behaves like anatomy.", colors: [0x6d746e, 0xb37a4f, 0x6ce0c0],
+  }),
+  "varkesh-stormmane": mythicMob("varkesh-stormmane", {
+    name: "Varkesh Stormmane", temperament: "Defensive", health: 330, damage: 17, speed: 1.32, radius: 1.22, height: 1.6, footOffset: 1.25,
+    habitat: "The storm aerie above rebuilt highland wayposts", active: "Major storm fronts", family: "legendary", movement: "flying", flying: true, rideable: true, food: Item.RawMeat,
+    behavior: "An adult Stormglass Roc carries a mane of charged cloud-feathers and weathered road markers woven into its breast and nest, diving only after a full beacon cry.",
+    lore: "Varkesh does not guard the road. It guards the idea that a road must still lead somewhere after the storm.", utility: "A fast two-seat flying mount by bond or voluntary travel pact; protecting the aerie instead yields a Roclet lineage egg.",
+    discoveryHint: "Rebuild the highland wayposts and cross the storm without killing the displaced flock.", colors: [0x465b76, 0x9bd4df, 0xf3cf58],
+  }),
+  kharza: mythicMob("kharza", {
+    name: "Kharza, the Red Banner Warg", temperament: "Hostile", hostile: true, health: 300, damage: 18, speed: 1.05, radius: 1.05, height: 1.45, footOffset: .7388,
+    habitat: "A rival-company coercion camp beyond the Brassroot roads", active: "During the Freeblades finale", family: "legendary", movement: "ground", rideable: true, food: Item.WargFeed,
+    behavior: "A scarred war-warg carries broken mercenary banners through a riveted coercion harness; red pursuit runes flare before each chain leap and fail visibly as their anchors are destroyed.",
+    lore: "The banner is not allegiance. It is every order Kharza survived long enough to tear in half.", utility: "Destroying the harness permits capture or a free pack pact and changes Freeblade doctrine; seizing it preserves a dangerous coercive tool.",
+    discoveryHint: "Trace the alchemical control chain and break every harness anchor before attempting capture.", colors: [0x4b3835, 0xb64a43, 0xd6b173],
+  }),
+  "sugarwake-sovereign": mythicMob("sugarwake-sovereign", {
+    name: "The Sugarwake Sovereign", temperament: "Defensive", health: 380, damage: 15, speed: .58, radius: 1.35, height: 2.1, footOffset: .72,
+    habitat: "The Sugarcourt masterworks feast", active: "When competing festival works awaken together", family: "legendary", movement: "ground", food: Item.Gumdrop,
+    behavior: "Pulled-sugar antlers frame a crowned kiln-heart beneath caramel-glass plates; ribbon limbs harden and soften across cooling, feast-memory, and kiln phases.",
+    lore: "No confectioner made the Sovereign. Each made the part they were certain mattered most, and the feast supplied the argument between them.", utility: "May become a permanent guardian, a capturable heart-form, or a unique communal crafting station according to the finale resolution.",
+    discoveryHint: "Contain syrup floods, cool the kiln-heart, and protect guests while the feast remembers itself.", colors: [0xb85b3f, 0xf0b968, 0xffe5a3],
+  }),
+};
+
+function summonedMob(kind: SummonedCreatureKind, seed: LivingRosterSeed): MobDefinition {
+  const base = livingRosterMob(kind as unknown as LivingRosterKind, seed);
+  return { ...base, kind, family: "summon", persistent: true, breedable: false, foodLure: false };
+}
+
+export const SUMMONED_CREATURE_MOBS: Record<SummonedCreatureKind, MobDefinition> = {
+  asterjaw: summonedMob("asterjaw", {
+    name: "Asterjaw", temperament: "Defensive", health: 68, damage: 10, speed: 1.08, radius: .68, height: 1.1, footOffset: .8092,
+    habitat: "The Unwalked Meridian", active: "For 75 seconds, or permanently after a valid Worldpin grounding", family: "summon", movement: "ground", food: Item.CloudglassRelic,
+    behavior: "A long-legged hound of dark blue night is jointed by brass compass stars; a moving route constellation turns inside its open ribcage.",
+    lore: "It follows roads that were planned, dreamed, or abandoned, where distance obeys intention before geometry.", utility: "Tracks, rescues, crosses one bounded obstacle, and returns along a visible Homeward Arc.",
+    discoveryHint: "Learn Call Asterjaw from the Hearthroad League and cast its stable contract.", colors: [0x172642, 0xc7a65d, 0x8ad7e4],
+  }),
+  "vellum-warden": summonedMob("vellum-warden", {
+    name: "Vellum Warden", temperament: "Defensive", health: 82, damage: 8, speed: .52, radius: .72, height: 1.85, footOffset: .22,
+    habitat: "The Palimpsest Expanse", active: "For 90 seconds, or permanently after a valid Worldpin grounding", family: "summon", movement: "ground", food: Item.BoundBook,
+    behavior: "A tall folded guardian layers moving paper plates over living-ink joints; its lantern head contains an unwritten page that brightens before a redline interrupt.",
+    lore: "Every erased sentence becomes terrain in its home realm, and every repeated action leaves a margin note.", utility: "Guards allies, interrupts repeated moves, answers one mapped non-legendary technique, and clears one debuff.",
+    discoveryHint: "Recover Fold Vellum Warden from a Moonbough Palimpsest lesson.", colors: [0xd7c9a8, 0x3f3549, 0xe8a55e],
+  }),
+  "choir-of-one": summonedMob("choir-of-one", {
+    name: "Choir-of-One", temperament: "Defensive", health: 58, damage: 9, speed: .78, radius: .64, height: 1.35, footOffset: .88,
+    habitat: "The Hush Between Bells", active: "For 55 seconds, or permanently after a valid Worldpin grounding", family: "summon", movement: "flying", flying: true, food: Item.WhisperglassItem,
+    behavior: "A floating dark mantle surrounds one silver throat-ring; several implied faces exist only for the instant in which the being permits a sound.",
+    lore: "Its realm is the interval after a bell moves but before sound is allowed to exist, where declarations arrive before actions.", utility: "Creates Hush zones, stores sound for an Echo reply, repositions when targeted, and interrupts one long windup.",
+    discoveryHint: "Learn Invoke Choir-of-One only after demonstrating silence without cruelty.", colors: [0x20202c, 0xbcc3cf, 0x6f9eaa],
+  }),
+  "glasswake-stag": summonedMob("glasswake-stag", {
+    name: "Glasswake Stag", temperament: "Gentle", health: 72, damage: 9, speed: .94, radius: .78, height: 1.48, footOffset: .72,
+    habitat: "The Sea Behind Mirrors", active: "For 65 seconds, or permanently after a valid Worldpin grounding", family: "summon", movement: "amphibious", aquatic: true, rideable: true, food: Item.MirrorstoneItem,
+    behavior: "A translucent stag contains a sideways ocean; branching antlers split incoming light into moving shorelines and leave a second wake in air.",
+    lore: "Its tides flow toward remembered observers in an ocean visible in every reflection and absent behind the glass.", utility: "Bends ordinary projectiles, leaves a decoy reflection, and creates a brief directed rescue path through air or water.",
+    discoveryHint: "Recover Open Glasswake beside still water and cast while your reflection remains unbroken.", colors: [0x8fcfd0, 0x5e7db0, 0xe3f5ef],
+  }),
+};
+
 export const MOB_DEFS: Record<MobKind, MobDefinition> = {
   ...V1_SENTIENT_MOBS,
   ...V1_CREATURE_MOBS,
+  ...LIVING_ROSTER_MOBS,
+  ...LEGENDARY_CREATURE_MOBS,
+  ...SUMMONED_CREATURE_MOBS,
   "grotto-grazer": {
     kind: "grotto-grazer", name: "Grotto Grazer", temperament: "Gentle", hostile: false,
     health: 18, damage: 2, xp: 5, speed: 0.58, chaseSpeed: 2.15, turnRate: 5.6, attackRange: 1.1,
@@ -780,6 +1156,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     lore: "A lantern with wings. Some ruins are only found by following their silent midnight spirals.",
     colors: [0x6b5030, 0xf4cc55, 0xfff2a8],
     drops: [{ item: Item.GlowDust, min: 1, max: 2, chance: 0.84 }],
+    family: "pollinator", movement: "flying", flying: true,
     discoveryHint: "Watch warm lights and Mooncap flowers after sunset for slow golden spirals.",
   },
   shadecrawler: {
@@ -2197,6 +2574,15 @@ export const SENTIENT_MOB_ORDER: SentientMobKind[] = [...HOBBIT_ORDER, ...GOBLIN
 export const SPECIAL_MOB_ORDER: SpecialMobKind[] = ["peelop", "reliquary-sentinel", "skeleton", "warg"];
 export const ADVENTURE_MOB_ORDER: AdventureMobKind[] = ["auric-scarab", "rootwrithe", "bellroot-matron", "vaultwing", "cinder-maw", "ossuary-keeper", "mossback-kite", "clockwork-marmot", "inkmaw-curator"];
 export const UNDERGROUND_MOB_ORDER: UndergroundMobKind[] = ["grotto-grazer", "lanternray", "prismtail-swift", "glassback-newt", "sailfin-skimmer", "ashnose-bat", "chimewing", "cinder-kite", "veinling"];
+export const LIVING_ROSTER_ORDER: LivingRosterKind[] = [
+  "thornhide-trufflehog", "orchard-glider", "petalmask-tanuki", "ironbeak-magpie", "hearthback-badger", "sunfoil-pangolin",
+  "glassstep-jerboa", "stormcrest-ibex", "cindercoil-gecko", "cloudkite-pika", "briarclaw-lynx", "gravebell-jackal",
+  "cragglass-basilisk", "stormglass-roclet", "brinewhisk-otter", "riverwright-beaver", "mirecrown-crane", "inkveil-cuttle",
+  "prismclaw-mantis-shrimp", "reefmender-shrimp", "currentweaver-eel", "shellcarrier-hermit", "wreckwhistle-porpoise",
+  "kilnscale-salamander", "sporeback-gardener", "voidmantle-ray", "fossilback-trilobite",
+];
+export const LEGENDARY_CREATURE_ORDER: LegendaryCreatureKind[] = ["ilyr-virebloom", "thalassene", "orichalc", "varkesh-stormmane", "kharza", "sugarwake-sovereign"];
+export const SUMMONED_CREATURE_ORDER: SummonedCreatureKind[] = ["asterjaw", "vellum-warden", "choir-of-one", "glasswake-stag"];
 export const CORE_MOB_ORDER: CoreMobKind[] = [
   ...LEGACY_MOB_ORDER,
   ...MOSSLING_VARIANT_ORDER,
@@ -2216,5 +2602,8 @@ export const CORE_MOB_ORDER: CoreMobKind[] = [
   ...UNDERGROUND_MOB_ORDER,
   ...ADVENTURE_MOB_ORDER,
   ...SPECIAL_MOB_ORDER,
+  ...LIVING_ROSTER_ORDER,
+  ...LEGENDARY_CREATURE_ORDER,
+  ...SUMMONED_CREATURE_ORDER,
 ];
 export const MOB_ORDER: MobKind[] = [...CORE_MOB_ORDER, ...BUTTERFLY_ORDER];

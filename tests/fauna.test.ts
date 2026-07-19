@@ -137,14 +137,16 @@ test("expanded ecology catalog includes mounts, livestock, thin fish, pollinator
   assert.deepEqual(fishKindsForHabitat("ocean"), [
     "shoalfin", "pocket-goldfish", "silverthread", "blue-mackerel", "coralback", "sunwheel-angelfish", "tideglass-crab", "reefglide-terrapin",
     "emberribbon", "glassfin", "tidepup", "sunset-sea-slug", "blue-dragon-sea-slug", "leafsheep-sea-slug", "sea-bunny-nudibranch",
-    "spanish-dancer-sea-slug", "ringed-phyllidia", "embercrown-sea-slug", "kelpwarden-sea-slug",
+    "spanish-dancer-sea-slug", "ringed-phyllidia", "embercrown-sea-slug", "kelpwarden-sea-slug", "inkveil-cuttle",
+    "prismclaw-mantis-shrimp", "reefmender-shrimp", "shellcarrier-hermit", "wreckwhistle-porpoise",
   ]);
   assert.deepEqual(fishKindsForHabitat("river"), ["brookdart", "reedneedle", "redfin-salmon", "pocket-goldfish", "stonewhisker-loach"]);
   assert.deepEqual(fishKindsForHabitat("deep-ocean"), [
     "blue-mackerel", "glassfin", "silverthread", "lanternjaw", "shoalfin", "coralback", "deepwater-shark", "abyss-skater", "tidepup", "dreadcoil", "worldshell-leviathan", "aetherbell-leviathan", "pocket-goldfish", "sunset-sea-slug", "moonlace-sea-slug",
-    "crystal-tipped-nudibranch", "hooded-melibe", "sea-angel-slug", "starlight-choir-sea-slug", "voidglass-sea-slug",
+    "crystal-tipped-nudibranch", "hooded-melibe", "sea-angel-slug", "starlight-choir-sea-slug", "voidglass-sea-slug", "inkveil-cuttle",
+    "currentweaver-eel", "wreckwhistle-porpoise", "voidmantle-ray",
   ]);
-  assert.deepEqual(fishKindsForHabitat("underground"), ["gloomfin", "cavefilament", "stonewhisker-loach"]);
+  assert.deepEqual(fishKindsForHabitat("underground"), ["gloomfin", "cavefilament", "stonewhisker-loach", "currentweaver-eel", "fossilback-trilobite"]);
   assert.deepEqual(HEARTHROADS_WILDLIFE_ORDER, ["burrowbell", "dewback-tapir"]);
   assert.deepEqual(HEARTHROADS_AQUATIC_ORDER, ["redfin-salmon", "blue-mackerel", "deepwater-shark"]);
   assert.equal(HOBBIT_ORDER.length, 7);
@@ -189,10 +191,10 @@ test("expanded ecology catalog includes mounts, livestock, thin fish, pollinator
   assert.equal(MOB_DEFS["reliquary-sentinel"].hostile, true);
   assert.equal(passiveMobKindForBiome(BiomeId.Meadow, 0.01), "thimbledeer");
   assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.3), "puddlehopper");
-  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.45), "reedstrider");
-  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.54), "mirestride-courser");
-  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.68), "lightning-bug");
-  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.72), "pebbletortoise");
+  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.4), "reedstrider");
+  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.45), "mirestride-courser");
+  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.58), "lightning-bug");
+  assert.equal(passiveMobKindForBiome(BiomeId.Siltfen, 0.68), "pebbletortoise");
   assert.equal(CORE_MOB_ORDER.filter((kind) => MOB_DEFS[kind].sentient).length, SENTIENT_MOB_ORDER.length);
   assert.equal(usesGenericCreatureBond("rimecoat-hound"), true);
   assert.equal(usesGenericCreatureBond("bramblewhisk-cat"), true);
@@ -238,8 +240,8 @@ test("v0.5 habitat tables place mammals, pollinators, and fish without ambient q
   }
 
   assert.deepEqual(fishSpawnTableForHabitat("river").map(([kind]) => kind), ["brookdart", "reedneedle", "redfin-salmon", "pocket-goldfish", "stonewhisker-loach"]);
-  assert.deepEqual(fishSpawnTableForHabitat("underground").map(([kind]) => kind), ["gloomfin", "cavefilament", "stonewhisker-loach"]);
-  assert.equal(new Set(fishSpawnTableForHabitat("ocean").map(([kind]) => kind)).size, 19);
+  assert.deepEqual(fishSpawnTableForHabitat("underground").map(([kind]) => kind), ["gloomfin", "cavefilament", "stonewhisker-loach", "currentweaver-eel", "fossilback-trilobite"]);
+  assert.equal(new Set(fishSpawnTableForHabitat("ocean").map(([kind]) => kind)).size, 24);
   assert.equal(fishSpawnTableForHabitat("ocean").some(([kind]) => kind === "tideglass-crab"), true);
   assert.equal(fishSpawnTableForHabitat("ocean").some(([kind]) => kind === "reefglide-terrapin"), true);
   assert.equal(fishSpawnTableForHabitat("ocean").some(([kind]) => kind === "deepwater-shark"), false);

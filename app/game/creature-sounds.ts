@@ -98,11 +98,84 @@ const OWL_EVENTS = Object.freeze({
   breed: cue("owl-call-a", "mob", 0.5, 0.05, ["owl-call-b"]),
 } satisfies Partial<Record<CreatureSoundEvent, CreatureSoundCue>>);
 
+const BIRD_SHARED_EVENTS = Object.freeze({
+  ambient: cue("bird-chirp", "mob", 0.48, 0.16),
+  hurt: cue("bird-chirp", "attack", 0.62, 0.11),
+  feed: cue("bird-chirp", "eat", 0.38, 0.15),
+} satisfies Partial<Record<CreatureSoundEvent, CreatureSoundCue>>);
+
+const CRUSTACEAN_EVENTS = Object.freeze({
+  ambient: cue("crab-chitter", "mob", 0.38, 0.15),
+  attack: cue("crab-chitter", "attack", 0.62, 0.1),
+  hurt: cue("crab-chitter", "attack", 0.52, 0.12),
+} satisfies Partial<Record<CreatureSoundEvent, CreatureSoundCue>>);
+
+const PREDATOR_EVENTS = Object.freeze({
+  ambient: cue("warg-deep-growl", "mob", 0.46, 0.09),
+  attack: cue("warg-deep-growl", "attack", 0.72, 0.055),
+  hurt: cue("warg-deep-growl", "attack", 0.6, 0.07),
+} satisfies Partial<Record<CreatureSoundEvent, CreatureSoundCue>>);
+
+const LEGENDARY_GROWL_EVENTS = Object.freeze({
+  ambient: cue("dragon-ambient-deep-growl", "mob", 0.52, 0.035),
+  attack: cue("warg-deep-growl", "attack", 0.8, 0.03),
+  hurt: cue("dragon-ambient-deep-growl", "attack", 0.66, 0.025),
+} satisfies Partial<Record<CreatureSoundEvent, CreatureSoundCue>>);
+
+const MYSTIC_SUMMON_EVENTS = Object.freeze({
+  ambient: cue("owl-call-a", "mob", 0.4, 0.08, ["owl-call-b"]),
+  attack: cue("dragon-ambient-deep-growl", "attack", 0.58, 0.045),
+  hurt: cue("owl-call-b", "attack", 0.5, 0.07),
+} satisfies Partial<Record<CreatureSoundEvent, CreatureSoundCue>>);
+
 /**
  * Event metadata is deliberately independent from the browser audio loader so
  * generated WAV assets can be added without changing creature behavior.
  */
 export const CREATURE_SOUND_EVENTS: Partial<Record<CoreMobKind, Partial<Record<CreatureSoundEvent, CreatureSoundCue>>>> = {
+  // Wild Bonds roster: recorded calls are shared intentionally by anatomy,
+  // then pitch/gain variation keeps neighboring species from sounding cloned.
+  "thornhide-trufflehog": GRAZER_EVENTS,
+  "orchard-glider": LITTLE_ANIMAL_EVENTS,
+  "petalmask-tanuki": WILDCAT_EVENTS,
+  "ironbeak-magpie": BIRD_SHARED_EVENTS,
+  "hearthback-badger": PREDATOR_EVENTS,
+  "sunfoil-pangolin": CRUSTACEAN_EVENTS,
+  "glassstep-jerboa": LITTLE_ANIMAL_EVENTS,
+  "stormcrest-ibex": NATURAL_HORSE_EVENTS,
+  "cindercoil-gecko": CRUSTACEAN_EVENTS,
+  "cloudkite-pika": LITTLE_ANIMAL_EVENTS,
+  "briarclaw-lynx": PREDATOR_EVENTS,
+  "gravebell-jackal": PREDATOR_EVENTS,
+  "cragglass-basilisk": {
+    ambient: cue("shadecrawler-stone-chitter", "mob", 0.46, 0.09),
+    attack: cue("shadecrawler-echo-screech", "attack", 0.72, 0.06),
+    hurt: cue("shadecrawler-stone-chitter", "attack", 0.58, 0.07),
+  },
+  "stormglass-roclet": BIRD_SHARED_EVENTS,
+  "brinewhisk-otter": LITTLE_ANIMAL_EVENTS,
+  "riverwright-beaver": LITTLE_ANIMAL_EVENTS,
+  "mirecrown-crane": { ambient: cue("reedstrider-call", "mob", 0.5, 0.11), hurt: cue("reedstrider-call", "attack", 0.62, 0.08) },
+  "inkveil-cuttle": DEEP_CREATURE_EVENTS,
+  "prismclaw-mantis-shrimp": CRUSTACEAN_EVENTS,
+  "reefmender-shrimp": CRUSTACEAN_EVENTS,
+  "currentweaver-eel": DEEP_CREATURE_EVENTS,
+  "shellcarrier-hermit": CRUSTACEAN_EVENTS,
+  "wreckwhistle-porpoise": DEEP_CREATURE_EVENTS,
+  "kilnscale-salamander": CRUSTACEAN_EVENTS,
+  "sporeback-gardener": LITTLE_ANIMAL_EVENTS,
+  "voidmantle-ray": DEEP_CREATURE_EVENTS,
+  "fossilback-trilobite": CRUSTACEAN_EVENTS,
+  "ilyr-virebloom": NATURAL_HORSE_EVENTS,
+  thalassene: DEEP_CREATURE_EVENTS,
+  orichalc: DWARVEN_AUTOMATON_EVENTS,
+  "varkesh-stormmane": LEGENDARY_GROWL_EVENTS,
+  kharza: PREDATOR_EVENTS,
+  "sugarwake-sovereign": LEGENDARY_GROWL_EVENTS,
+  asterjaw: PREDATOR_EVENTS,
+  "vellum-warden": DWARVEN_AUTOMATON_EVENTS,
+  "choir-of-one": MYSTIC_SUMMON_EVENTS,
+  "glasswake-stag": NATURAL_HORSE_EVENTS,
   "grotto-grazer": GRAZER_EVENTS,
   lanternray: DEEP_CREATURE_EVENTS,
   "sailfin-skimmer": DEEP_CREATURE_EVENTS,
