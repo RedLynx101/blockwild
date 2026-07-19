@@ -102,7 +102,7 @@ export type PlayerPose = {
   mountedCreatureSeat?: number;
 };
 
-export type BlockEdit = { x: number; y: number; z: number; type: number };
+export type BlockEdit = { x: number; y: number; z: number; type: number; facing?: 0 | 1 | 2 | 3 };
 export type ActionStatus = "request" | "accepted" | "rejected";
 
 export type BlockAction = {
@@ -770,7 +770,8 @@ function validateBlockEdit(value: unknown): value is BlockEdit {
     && isInteger(value.x, -COORDINATE_LIMIT, COORDINATE_LIMIT)
     && isInteger(value.y, -4096, 4096)
     && isInteger(value.z, -COORDINATE_LIMIT, COORDINATE_LIMIT)
-    && isInteger(value.type, 0, 65_535);
+    && isInteger(value.type, 0, 65_535)
+    && (value.facing === undefined || isInteger(value.facing, 0, 3));
 }
 
 function validatePose(value: unknown): value is PlayerPose {
@@ -845,8 +846,17 @@ function validateSailboat(value: unknown): value is SailboatSnapshotEntry {
 }
 
 function validateDragonState(value: unknown): value is DragonState {
-  if (!isRecord(value) || value.schemaVersion !== 1) return false;
-  if (value.type !== "fire" && value.type !== "ice" && value.type !== "steel" && value.type !== "sea") return false;
+  if (!isRecord(value) || (value.schemaVersion !== 1 && value.schemaVersion !== 2)) return false;
+  if (value.type !== "fire" && value.type !== "ice" && value.type !== "steel" && value.type !== "sea" && value.type !== "gold" && value.type !== "silver") return false;
+  const validVariants: Readonly<Record<string, readonly string[]>> = {
+    fire: ["furnacecrest", "cindercoil", "crownflare", "emberkite"],
+    ice: ["glacierhorn", "rimeplume", "hoarfang", "prismcoil"],
+    steel: ["rivetback", "gearwing", "anvilback", "razorfan"],
+    sea: ["tidemane", "mantaroyal", "ribboncoil", "reefcrown"],
+    gold: ["sunmane", "auric-roc", "treasury-coil", "idolback"],
+    silver: ["moonhart", "argent-moth", "mirrorcoil", "crescent-wyvern"],
+  };
+  if (value.schemaVersion === 2 && !validVariants[value.type].includes(String(value.variant))) return false;
   if (value.sex !== "female" && value.sex !== "male") return false;
   if (value.command !== "follow" && value.command !== "stay" && value.command !== "guard-lair" && value.command !== "wander") return false;
   const equipment = value.equipment;

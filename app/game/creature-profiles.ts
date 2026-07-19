@@ -66,6 +66,14 @@ const EXACT_TYPES: Readonly<Partial<Record<MobKind, readonly CreatureTypeId[]>>>
   orichalc: ["metal", "stone"], "varkesh-stormmane": ["sky", "storm", "wild"], kharza: ["wild", "umbral", "metal"],
   "sugarwake-sovereign": ["confection", "arcane", "flame"], asterjaw: ["sky", "radiant", "spirit"],
   "vellum-warden": ["arcane", "dream", "spirit"], "choir-of-one": ["hush", "echo", "umbral"], "glasswake-stag": ["mirror", "tide", "dream"],
+  "bellstep-qilin": ["radiant", "echo", "wild"], "aerolith-baleen": ["sky", "stone", "spirit"],
+  "mireglass-kelpie": ["tide", "mirror", "umbral"], "cinderwing-pyrausta": ["flame", "sky", "arcane"],
+  "nacre-gatewyrm": ["tide", "draconic", "arcane"], "frostcauldron-behemoth": ["frost", "stone", "wild"],
+  "briarcrown-manticore": ["wild", "verdant", "venom"], ammonarch: ["stone", "tide", "arcane"],
+  "handtail-ahuizotl": ["tide", "wild", "spirit"], "tideclock-cetus": ["tide", "spirit", "metal"],
+  "anemoi-gryphon": ["sky", "storm", "wild"], "sable-gorgon": ["stone", "venom", "mirror"],
+  "namarra-makara": ["tide", "radiant", "spirit"], "ashen-salamander-king": ["flame", "arcane", "draconic"],
+  "mycelial-oneirophant": ["dream", "verdant", "spirit"],
 });
 
 export const EXPANSION_CREATURE_NATURAL_TYPES = Object.freeze({
@@ -82,6 +90,14 @@ export const EXPANSION_CREATURE_NATURAL_TYPES = Object.freeze({
   orichalc: ["metal", "stone"], "varkesh-stormmane": ["sky", "storm", "wild"], kharza: ["wild", "umbral", "metal"],
   "sugarwake-sovereign": ["confection", "arcane", "flame"], asterjaw: ["sky", "radiant", "spirit"],
   "vellum-warden": ["arcane", "dream", "spirit"], "choir-of-one": ["hush", "echo", "umbral"], "glasswake-stag": ["mirror", "tide", "dream"],
+  "bellstep-qilin": ["radiant", "echo", "wild"], "aerolith-baleen": ["sky", "stone", "spirit"],
+  "mireglass-kelpie": ["tide", "mirror", "umbral"], "cinderwing-pyrausta": ["flame", "sky", "arcane"],
+  "nacre-gatewyrm": ["tide", "draconic", "arcane"], "frostcauldron-behemoth": ["frost", "stone", "wild"],
+  "briarcrown-manticore": ["wild", "verdant", "venom"], ammonarch: ["stone", "tide", "arcane"],
+  "handtail-ahuizotl": ["tide", "wild", "spirit"], "tideclock-cetus": ["tide", "spirit", "metal"],
+  "anemoi-gryphon": ["sky", "storm", "wild"], "sable-gorgon": ["stone", "venom", "mirror"],
+  "namarra-makara": ["tide", "radiant", "spirit"], "ashen-salamander-king": ["flame", "arcane", "draconic"],
+  "mycelial-oneirophant": ["dream", "verdant", "spirit"],
 } as const satisfies Readonly<Record<ExpansionCreatureKind, readonly CreatureTypeId[]>>);
 
 const EXPANSION_ECOLOGY_ROLES = Object.freeze({
@@ -97,6 +113,14 @@ const EXPANSION_ECOLOGY_ROLES = Object.freeze({
   "ilyr-virebloom": ["mount", "restorer", "boss"], thalassene: ["mount", "reef-helper", "boss"], orichalc: ["construct", "research", "boss"],
   "varkesh-stormmane": ["mount", "guardian", "boss"], kharza: ["mount", "predator", "boss"], "sugarwake-sovereign": ["guardian", "worker", "boss"],
   asterjaw: ["scout", "guardian"], "vellum-warden": ["guardian", "healer"], "choir-of-one": ["sentinel", "research"], "glasswake-stag": ["mount", "guardian"],
+  "bellstep-qilin": ["mount", "scout", "guardian"], "aerolith-baleen": ["mount", "restorer", "guardian"],
+  "mireglass-kelpie": ["mount", "scout", "predator"], "cinderwing-pyrausta": ["guardian", "healer", "research"],
+  "nacre-gatewyrm": ["mount", "guardian", "restorer"], "frostcauldron-behemoth": ["mount", "guardian", "worker"],
+  "briarcrown-manticore": ["mount", "predator", "guardian"], ammonarch: ["guardian", "research", "restorer"],
+  "handtail-ahuizotl": ["retriever", "companion", "guardian"], "tideclock-cetus": ["mount", "scout", "guardian"],
+  "anemoi-gryphon": ["mount", "predator", "boss"], "sable-gorgon": ["guardian", "research", "boss"],
+  "namarra-makara": ["mount", "guardian", "boss"], "ashen-salamander-king": ["worker", "research", "boss"],
+  "mycelial-oneirophant": ["mount", "restorer", "boss"],
 } as const satisfies Readonly<Record<ExpansionCreatureKind, readonly EcologyRole[]>>);
 
 function typePair(definition: MobDefinition): readonly CreatureTypeId[] {

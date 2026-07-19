@@ -4,21 +4,31 @@ import * as THREE from "three";
 import { BLOCKS, TORCH_BLOCKS, BlockId, ITEMS, Item, RECIPES, type InventorySlot } from "../app/game/data.ts";
 import {
   DEFAULT_UNARMED_DAMAGE,
+  DEFAULT_WORLD_OPTIONS,
   FOOD_USAGE_MULTIPLIER,
+  POINTER_LOCK_REACQUIRE_SUPPRESSION_EVENTS,
+  POINTER_LOOK_MAX_RADIANS_PER_FRAME,
+  POINTER_LOOK_STALE_AFTER_MS,
   VoxelEngine,
   bedCounterpart,
   bedPlacementForYaw,
   bedRespawnCandidates,
+  boundLookDeltaForFrame,
   chestModelLayout,
   combatSceneForEncounter,
+  findAquaticSpawnColumn,
+  findCaveAirY,
+  findCaveFloorY,
+  fishHabitatForSpawnSite,
+  fishHabitatSupportsNaturalPool,
+  fishKindForNaturalPool,
+  gatePointerLockMovement,
   isInstantBreakBlock,
   migrateSavedWorld,
   mobPopulationCaps,
   naturalMobPopulation,
   nextPeelopBananaShedSeconds,
   nextSleepTransition,
-  gatePointerLockMovement,
-  POINTER_LOCK_REACQUIRE_SUPPRESSION_EVENTS,
   positionInPlayerViewCone,
   restoreChestStorage,
   regenerationFoodUsage,
@@ -28,6 +38,7 @@ import {
   type WorldSave,
 } from "../app/game/engine.ts";
 import { harvestPlant } from "../app/game/farming.ts";
+import { CHEST_VISUAL, chestLatchCenters } from "../app/game/chest-model.ts";
 import { ChunkWorld, BIOME_NAMES, BiomeId, GENERATOR_VERSION, GLASS_OPACITY, LIQUID_SURFACE_INSET, MAX_Y, MIN_Y, PACKED_VERTEX_COLOR_RANGE, RADIAL_STREAMING_DISTANCE_THRESHOLD, SECTION_HEIGHT, WORLD_HEIGHT, blockIndex, chunkAabbRadialDistanceSquared, chunkKey, chunkWithinStreamingRadius, chunksWithinStreamingRadius, liquidSurfaceInsetForCell, splitCoordinate } from "../app/game/world.ts";
 import { MOB_DEFS, MOB_ORDER } from "../app/game/mobs.ts";
 import { createHeldToolSpec, createRidgebackSpec, createZombieSpec, INSPECTOR_MODEL_SPECS, RIDGEBACK_GROUND_LIFT } from "../app/game/model-specs.ts";
@@ -57,9 +68,85 @@ test("survival food expenditure is doubled for travel and regeneration", () => {
   assert.equal(regenerationFoodUsage(2), 0.35);
 });
 
+test("pointer-lock reacquisition discards browser recenter deltas without replaying them", () => {
+  let remaining = POINTER_LOCK_REACQUIRE_SUPPRESSION_EVENTS;
+  for (let index = 0; index < POINTER_LOCK_REACQUIRE_SUPPRESSION_EVENTS; index += 1) {
+    const gated = gatePointerLockMovement(800, -600, remaining);
+    assert.equal(gated.apply, false);
+    assert.equal(gated.reason, "reacquire");
+    remaining = gated.remainingSuppressedEvents;
+  }
+
+  assert.equal(remaining, 0);
+  assert.deepEqual(gatePointerLockMovement(4, -3, remaining), {
+    apply: true,
+    remainingSuppressedEvents: 0,
+    reason: "accepted",
+  });
+  assert.equal(gatePointerLockMovement(Number.NaN, 4, remaining).reason, "invalid");
+});
+
+test("pointer look rejects input queued during a stalled frame", () => {
+  assert.equal(
+    gatePointerLockMovement(20, 0, 0, { eventAgeMs: POINTER_LOOK_STALE_AFTER_MS + 1 }).reason,
+    "stale",
+  );
+  assert.equal(
+    gatePointerLockMovement(20, 0, 0, { frameAgeMs: POINTER_LOOK_STALE_AFTER_MS + 1 }).reason,
+    "stale",
+  );
+  assert.equal(
+    gatePointerLockMovement(20, 0, 0, {
+      eventAgeMs: POINTER_LOOK_STALE_AFTER_MS,
+      frameAgeMs: POINTER_LOOK_STALE_AFTER_MS,
+    }).reason,
+    "accepted",
+  );
+});
+
+test("pointer and touch look cannot rotate farther than the per-frame camera budget", () => {
+  const sensitivity = 0.002;
+  const ordinary = boundLookDeltaForFrame(4, -3, sensitivity);
+  assert.deepEqual(ordinary, { deltaX: 4, deltaY: -3, totalX: 4, totalY: -3, clamped: false });
+
+  const huge = boundLookDeltaForFrame(2_000, 2_000, sensitivity);
+  assert.equal(huge.clamped, true);
+  assert.ok(
+    Math.hypot(huge.totalX, huge.totalY) * sensitivity <= POINTER_LOOK_MAX_RADIANS_PER_FRAME + 1e-12,
+  );
+
+  const sameFrame = boundLookDeltaForFrame(
+    2_000,
+    0,
+    sensitivity,
+    huge.totalX,
+    huge.totalY,
+  );
+  assert.ok(
+    Math.hypot(sameFrame.totalX, sameFrame.totalY) * sensitivity <= POINTER_LOOK_MAX_RADIANS_PER_FRAME + 1e-12,
+  );
+
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  Object.assign(engine, {
+    settings: { sensitivity },
+    yaw: 0,
+    pitch: 0,
+    lookDeltaXThisFrame: 0,
+    lookDeltaYThisFrame: 0,
+  });
+  engine.look(4_000, -3_000);
+  engine.look(4_000, -3_000);
+  assert.ok(Math.hypot(engine.yaw, engine.pitch) <= POINTER_LOOK_MAX_RADIANS_PER_FRAME + 1e-12);
+  engine.resetLookFrameBudget();
+  const priorYaw = engine.yaw;
+  engine.look(4, 0);
+  assert.equal(engine.yaw, priorYaw - 4 * sensitivity);
+});
+
 test("tree and aquatic growth schedules use the same fivefold plant pace", () => {
   const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
   engine.saplings = new Map();
+  engine.world = { getBlock: () => BlockId.Sand, seedText: "SHELLFRUIT-SCHEDULE" } as unknown as VoxelEngine["world"];
   const now = Date.now();
   engine.schedulePlantGrowth(3, 40, 5, BlockId.WildwoodSapling);
   const treeDelay = (engine.saplings.get("3,40,5") ?? 0) - now;
@@ -68,6 +155,10 @@ test("tree and aquatic growth schedules use the same fivefold plant pace", () =>
   engine.schedulePlantGrowth(4, 20, 6, BlockId.GlowKelp);
   const aquaticDelay = (engine.saplings.get("4,20,6") ?? 0) - now;
   assert.ok(aquaticDelay >= 250_000 && aquaticDelay <= 600_100, `aquatic delay was ${aquaticDelay}ms`);
+
+  engine.schedulePlantGrowth(5, 18, 7, BlockId.ShellfruitSprout);
+  const shellfruitDelay = (engine.saplings.get("5,18,7") ?? 0) - now;
+  assert.ok(shellfruitDelay >= 289_000 && shellfruitDelay <= 417_000, `Shellfruit stage delay was ${shellfruitDelay}ms`);
 });
 
 test("world generation is deterministic and seed-sensitive", () => {
@@ -85,6 +176,123 @@ test("world generation is deterministic and seed-sensitive", () => {
   first.dispose();
   second.dispose();
   third.dispose();
+});
+
+test("aquatic habitat resolution accepts real volumes and rejects decorative puddles", () => {
+  const blocks = new Map<string, BlockId>();
+  const key = (x: number, y: number, z: number) => `${x},${y},${z}`;
+  for (let x = -1; x <= 1; x += 1) for (let z = -1; z <= 1; z += 1) {
+    blocks.set(key(x, 4, z), BlockId.Stone);
+    for (let y = 5; y <= 8; y += 1) blocks.set(key(x, y, z), BlockId.Water);
+  }
+  const fixture = {
+    getBlock: (x: number, y: number, z: number) => blocks.get(key(x, y, z)) ?? BlockId.Air,
+    isWalkThrough: (type: BlockId | undefined) => type === BlockId.Air,
+  };
+  assert.deepEqual(findAquaticSpawnColumn(fixture, 0, 0, 7, 0, 12), {
+    floorY: 4, bottomY: 5, surfaceY: 8, liquid: "water", neighborCells: 9,
+  });
+  assert.equal(findCaveFloorY(fixture, 0, 0, 7, 8), null, "a submerged floor is not dry cave footing");
+  assert.equal(findCaveAirY(fixture, 0, 0, 7, 8), 9, "dry cave air remains independently discoverable");
+
+  blocks.clear();
+  blocks.set(key(0, 4, 0), BlockId.Stone);
+  blocks.set(key(0, 5, 0), BlockId.Water);
+  assert.equal(findAquaticSpawnColumn(fixture, 0, 0, 5, 0, 10), null, "one-cell water cannot seed wildlife");
+  blocks.delete(key(0, 5, 0));
+  assert.equal(findCaveFloorY(fixture, 0, 0, 6, 8), 4);
+});
+
+test("fish population selection respects habitat, pool, and renewable resource needs", () => {
+  assert.equal(fishHabitatForSpawnSite(BiomeId.Glimmerwood, false, "water"), "glimmer-pond");
+  assert.equal(fishHabitatForSpawnSite(BiomeId.SugarplumVale, false, "syrup"), "syrup-pond");
+  assert.equal(fishHabitatForSpawnSite(BiomeId.Ocean, true, "water"), "underground");
+  assert.equal(fishHabitatSupportsNaturalPool("river", "water-ambient"), true);
+  assert.equal(fishHabitatSupportsNaturalPool("river", "water-animal"), false);
+  for (const roll of [0, 0.27, 0.71, 0.999]) {
+    const kind = fishKindForNaturalPool("underground", "cave-water", true, false, Item.RawFish, roll);
+    assert.ok(kind);
+    assert.ok(MOB_DEFS[kind].drops?.some((drop) => drop.item === Item.RawFish && drop.chance > 0));
+  }
+});
+
+test("nearby-water spawning works from a shoreline and in a generated Glasswater cavern", () => {
+  const surfaceWorld = new ChunkWorld();
+  surfaceWorld.reset("WILDERNESS");
+  const surfaceEngine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  Object.assign(surfaceEngine, { world: surfaceWorld, naturalSpawnInterestCursor: 0 });
+  const shoreline = surfaceWorld.sampleColumn(-1024, -904);
+  assert.ok(![BiomeId.DeepOcean, BiomeId.Ocean, BiomeId.River, BiomeId.LumenTrench].includes(shoreline.biome));
+  const shoreCandidates = surfaceEngine.naturalAquaticSpawnCandidates({
+    id: "shore", x: -1024, y: shoreline.height + 2, z: -904, yaw: 0,
+  }, false);
+  assert.ok(shoreCandidates.some((candidate) => candidate.habitat === "ocean" && candidate.distance <= 56));
+  surfaceWorld.dispose();
+
+  const caveWorld = new ChunkWorld();
+  caveWorld.reset("WILDERNESS");
+  const caveEngine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  Object.assign(caveEngine, { world: caveWorld, naturalSpawnInterestCursor: 0 });
+  const caveCandidates = caveEngine.naturalAquaticSpawnCandidates({
+    id: "cave", x: -855, y: -55, z: -354, yaw: 0,
+  }, true);
+  assert.ok(caveCandidates.length >= 4, "the generated Glasswater cathedral should expose several valid pools");
+  assert.ok(caveCandidates.every((candidate) => candidate.underground && candidate.habitat === "underground"));
+  assert.ok(caveCandidates.every((candidate) => candidate.column.surfaceY < caveWorld.surfaceAt(candidate.x, candidate.z) - 2));
+  caveWorld.dispose();
+});
+
+test("the natural spawn loop fills the independent cave-water pool in Glasswater", () => {
+  const world = new ChunkWorld();
+  world.reset("WILDERNESS");
+  const focus = { id: "local", x: -855, y: -55, z: -354, yaw: 0 };
+  const spawns: Array<{ kind: string; pool: string; aquatic: boolean; underground: boolean; position: THREE.Vector3 }> = [];
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  Object.assign(engine, {
+    world,
+    worldOptions: { ...DEFAULT_WORLD_OPTIONS, mobDensity: 1 },
+    touchMode: false,
+    skyVisibility: 0,
+    naturalSpawnInterestCursor: 0,
+    worldTime: 0.5,
+    weatherState: { kind: "clear" },
+    mobs: [],
+    ecologyDiagnostics: { attempts: 0, successes: 0, aquaticCandidates: 0, lastSuccess: null, rejections: {} },
+    simulationInterestPoints: () => [focus],
+    localPlayerId: () => "local",
+    naturalPopulationRecords: () => [],
+    daylightAmount: () => 0,
+    naturalSpawnVisibleToPlayer: () => false,
+    ecologyAllowsSpecies: () => true,
+    spawnNaturalGroup: (kind: string, position: THREE.Vector3, _maximum: number, pool: string, aquatic: boolean, underground: boolean) => {
+      spawns.push({ kind, pool, aquatic, underground, position: position.clone() });
+      return [{}];
+    },
+  });
+  engine.trySpawnMob("passive", focus);
+  assert.equal(spawns.length, 1);
+  assert.equal(spawns[0].pool, "cave-water");
+  assert.equal(spawns[0].aquatic, true);
+  assert.equal(spawns[0].underground, true);
+  assert.ok(spawns[0].position.y < world.surfaceAt(Math.round(spawns[0].position.x), Math.round(spawns[0].position.z)) - 2);
+  assert.ok(MOB_DEFS[spawns[0].kind as keyof typeof MOB_DEFS].aquatic);
+  world.dispose();
+});
+
+test("zero-density worlds skip habitat scans as well as natural population creation", () => {
+  const focus = { id: "local", x: 0, y: 32, z: 0, yaw: 0 };
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  Object.assign(engine, {
+    worldOptions: { ...DEFAULT_WORLD_OPTIONS, mobDensity: 0 },
+    skyVisibility: 1,
+    naturalSpawnInterestCursor: 0,
+    simulationInterestPoints: () => [focus],
+    localPlayerId: () => "local",
+    naturalAquaticSpawnCandidates: () => {
+      assert.fail("zero-density worlds must not scan aquatic habitat");
+    },
+  });
+  engine.trySpawnMob("passive", focus);
 });
 
 test("chunk edits survive unload and deterministic regeneration", () => {
@@ -1141,6 +1349,7 @@ test("double-chest storage preserves all 54 slots when a world is rehydrated", (
 
 test("shift-click equips armor and armor reduces damage while losing durability", () => {
   const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  const playedSamples: string[] = [];
   engine.inventory = Array.from({ length: 36 }, () => null);
   engine.inventory[0] = { item: Item.IronPlate, count: 1, durability: 100 };
   engine.equipment = { head: null, chest: null, legs: null, feet: null };
@@ -1156,11 +1365,96 @@ test("shift-click equips armor and armor reduces damage while losing durability"
   engine.health = 10;
   engine.playerInvulnerability = 0;
   engine.spawnProtection = 0;
-  engine.audio = { play: () => undefined } as unknown as VoxelEngine["audio"];
+  engine.audio = {
+    play: () => undefined,
+    playSample: (sample: string) => { playedSamples.push(sample); },
+  } as unknown as VoxelEngine["audio"];
   engine.events = { onToast: () => undefined } as unknown as VoxelEngine["events"];
   engine.damagePlayer(4, "ridgeback");
   assert.equal(engine.health, 6.5);
   assert.equal(engine.equipment.chest?.durability, 99);
+  assert.deepEqual(playedSamples, ["playerDirectDamage"]);
+});
+
+test("player impacts add bounded horizontal recoil and a small upward hit response", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  engine.position = new THREE.Vector3(0, 4, 0);
+  engine.velocity = new THREE.Vector3();
+  engine.yaw = 0;
+  engine.mountedCreatureId = null;
+  engine.mountedBoatId = null;
+  engine.seatedAt = null;
+
+  const applied = engine.applyPlayerKnockback({ x: -1, z: 0 }, 2.4);
+  assert.equal(applied, 2.4);
+  assert.ok(engine.velocity.x > 2.3);
+  assert.equal(engine.velocity.y, 0.72);
+  for (let index = 0; index < 8; index += 1) engine.applyPlayerKnockback({ x: -1, z: 0 }, 4.6);
+  assert.ok(Math.hypot(engine.velocity.x, engine.velocity.z) <= 6.2 + Number.EPSILON);
+});
+
+test("mob recoil stops at terrain and the recovery probe extracts an embedded ground creature", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  engine.mountedCreatureId = null;
+  engine.refreshMobSpatialEntry = () => undefined;
+  engine.mobBodyProfile = () => ({ solid: true, size: "medium", radius: 0.5, height: 1.1, visualScale: 1, mass: 1 });
+  engine.mobMoveTarget = () => 0.5;
+  engine.mobTerrainClearAt = (_mob, x) => x <= 0.34;
+  const mob = {
+    id: 1,
+    kind: "peelop",
+    definition: MOB_DEFS.peelop,
+    group: new THREE.Group(),
+    baseY: 0.5,
+    state: "wander",
+    stateTimer: 0,
+    pushVelocity: new THREE.Vector2(),
+  } as never;
+  (mob as { group: THREE.Group }).group.position.set(0, 0.5, 0);
+
+  engine.applyMobKnockback(mob, { x: -1, z: 0 }, 4);
+  for (let frame = 0; frame < 90; frame += 1) engine.advanceMobKnockback(mob, 1 / 60);
+  assert.ok((mob as { group: THREE.Group }).group.position.x > 0.2);
+  assert.ok((mob as { group: THREE.Group }).group.position.x <= 0.34, "the impact must stop before the wall");
+  assert.equal((mob as { pushVelocity: THREE.Vector2 }).pushVelocity.length(), 0);
+
+  (mob as { group: THREE.Group }).group.position.x = 0.5;
+  assert.equal(engine.recoverMobFromTerrain(mob), true);
+  assert.ok((mob as { group: THREE.Group }).group.position.x <= 0.34, "the safety probe relocates the body to clear terrain");
+});
+
+test("overlapping ground mobs separate with the smaller body yielding farther", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  engine.mountedCreatureId = null;
+  const small = { id: 1, kind: "meadow-cottontail", definition: MOB_DEFS["meadow-cottontail"], group: new THREE.Group() };
+  const large = { id: 2, kind: "ridgeback", definition: MOB_DEFS.ridgeback, group: new THREE.Group() };
+  small.group.position.set(0, 0.5, 0);
+  large.group.position.set(0.6, 0.5, 0);
+  engine.mobs = [small, large] as never;
+  engine.mobBodyProfile = (mob) => ({
+    solid: true,
+    size: mob.id === 1 ? "small" : "large",
+    radius: 0.5,
+    height: 1,
+    visualScale: 1,
+    mass: mob.id === 1 ? 0.4 : 2.4,
+  });
+  engine.mobFootY = () => 0;
+  engine.ensureMobSpatialIndex = () => ({
+    queryCircle: () => [
+      { id: 1, value: small },
+      { id: 2, value: large },
+    ],
+  }) as never;
+  engine.moveMobWithTerrain = (mob, dx, dz) => {
+    mob.group.position.x += dx;
+    mob.group.position.z += dz;
+    return Math.hypot(dx, dz);
+  };
+
+  for (let frame = 0; frame < 20; frame += 1) engine.resolveMobBodyOverlaps(1 / 30);
+  assert.ok(Math.abs(small.group.position.x) > Math.abs(large.group.position.x - 0.6));
+  assert.ok(large.group.position.x - small.group.position.x >= 1.02 - 0.00001);
 });
 
 test("door interaction updates both halves with an immediate batch edit", () => {
@@ -1369,6 +1663,10 @@ test("the runtime chest lid opens upward around its rear hinge", () => {
   assert.equal(eastWest.depth, northSouth.depth, "double chests stay shallow instead of opening a longways lid");
   assert.equal(eastWest.rotationY, 0);
   assert.equal(northSouth.rotationY, Math.PI / 2, "a north-south pair rotates so its hinge remains behind the chest");
+  assert.equal(eastWest.depth, CHEST_VISUAL.bodyDepth);
+  assert.equal(eastWest.lidDepth, CHEST_VISUAL.lidDepth);
+  assert.deepEqual(chestLatchCenters(false), [0]);
+  assert.deepEqual(chestLatchCenters(true), [-0.5, 0.5], "closed and articulated double chests both retain one latch per block");
 });
 
 test("placing a bed reserves two supported cells and writes its oriented halves as one batch", () => {

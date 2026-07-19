@@ -32,6 +32,7 @@ import {
 } from "../app/game/blueprints.ts";
 import {
   FAST_TRAVEL_CHANNEL_SECONDS,
+  FAST_TRAVEL_MANUAL_CHARGE_COST,
   advanceFastTravelChannel,
   bankFastTravelCharges,
   beginFastTravel,
@@ -42,6 +43,7 @@ import {
   createMapKnowledge,
   discoverNaturalPoi,
   fastTravelDestination,
+  fastTravelChargeCost,
   joinCartographySession,
   markChunkRendered,
   markChunksRendered,
@@ -158,7 +160,8 @@ test("map markers distinguish POIs, personal bed spawns, manual notes, and renam
 
   assert.equal(fastTravelDestination(map, "poi-apiary")?.kind, "natural-poi");
   assert.equal(fastTravelDestination(map, "bed-noah")?.kind, "bed-spawn");
-  assert.equal(fastTravelDestination(map, "manual-camp"), null, "manual notes never become travel points");
+  assert.equal(fastTravelDestination(map, "manual-camp")?.kind, "manual");
+  assert.equal(fastTravelChargeCost(fastTravelDestination(map, "manual-camp")!), FAST_TRAVEL_MANUAL_CHARGE_COST);
   assert.equal(map.markers.find((marker) => marker.id === "shrine-oak")?.name, "Oakway Hearth");
   const withoutBed = clearBedSpawn(map);
   assert.equal(withoutBed.activeBedId, null);
@@ -219,6 +222,23 @@ test("charged fast travel requires five still, damage-free seconds and spends on
   const damaged = advanceFastTravelChannel(begun.channel, point(0), 102, 5);
   assert.deepEqual([damaged.status, damaged.cancelledReason], ["cancelled", "damaged"]);
   assert.equal(commitFastTravel(map, moved).ok, false);
+});
+
+test("custom map locations fast travel for exactly two banked charges", () => {
+  let map = placeManualMapMarker(createMapKnowledge("world", "traveler"), markerInput("camp", "Remote Camp", 160, "traveler"));
+  map = bankFastTravelCharges(map, 1);
+  assert.equal(beginFastTravel(map, { id: "manual-low", mode: "map-charge", destinationId: "camp" }, point(0), 0, 0).ok, false);
+  map = bankFastTravelCharges(map, 1);
+  const begun = beginFastTravel(map, { id: "manual-ready", mode: "map-charge", destinationId: "camp" }, point(0), 0, 0);
+  assert.equal(begun.ok, true);
+  if (!begun.ok) return;
+  assert.equal(begun.channel.chargeCost, 2);
+  const committed = commitFastTravel(map, advanceFastTravelChannel(begun.channel, point(0), FAST_TRAVEL_CHANNEL_SECONDS, 0));
+  assert.equal(committed.ok, true);
+  if (!committed.ok) return;
+  assert.equal(committed.chargeSpent, 2);
+  assert.equal(committed.state.fastTravelCharges, 0);
+  assert.deepEqual(committed.position, point(160));
 });
 
 test("wayshrines form a free network only when used at a known shrine", () => {

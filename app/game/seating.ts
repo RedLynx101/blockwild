@@ -1,4 +1,5 @@
 import { BLOCKS, BlockId } from "./data";
+import { blockFacingYaw, normalizeBlockFacing, rotateBlockOffset, type BlockFacing } from "./block-facing";
 
 export type SeatAnchor = Readonly<{
   x: number;
@@ -23,13 +24,15 @@ export function isSeatBlock(block: BlockId | undefined) {
  * rig's hips align with the authored seat board. This avoids turning chairs
  * into invisible moving platforms and keeps the pose stable in multiplayer.
  */
-export function seatAnchorForBlock(block: BlockId, x: number, y: number, z: number): SeatAnchor | null {
+export function seatAnchorForBlock(block: BlockId, x: number, y: number, z: number, facing: BlockFacing = 0): SeatAnchor | null {
   if (!isSeatBlock(block)) return null;
   const chair = BLOCKS[block]?.shape === "chair";
+  const normalizedFacing = normalizeBlockFacing(facing);
+  const offset = rotateBlockOffset(0, chair ? -0.06 : 0, normalizedFacing);
   return {
-    x,
+    x: x + offset.x,
     y: y - 0.49,
-    z: z + (chair ? -0.06 : 0),
-    ...(chair ? { yaw: 0 } : {}),
+    z: z + offset.z,
+    ...(chair ? { yaw: blockFacingYaw(normalizedFacing) } : {}),
   };
 }

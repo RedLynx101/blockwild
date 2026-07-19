@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { BLOCKS, BlockId, Item, ITEMS, LEAF_BLOCKS, RECIPES, worldTextureBlockForItem } from "../app/game/data.ts";
+import { BLOCKS, BlockId, Item, ITEMS, LEAF_BLOCKS, RECIPES, blockContainsWater, worldTextureBlockForItem } from "../app/game/data.ts";
 import { CAVE_ENTRANCE_REALIZATION_RATE, caveEntranceAt, caveEntranceForCell, caveFeatureAt } from "../app/game/caves.ts";
 import {
   canGrowPlant,
@@ -67,6 +67,29 @@ test("berries and wheat plant only on valid soil and advance through explicit st
   assert.equal(nextPlantStage(BlockId.WheatCrop), null);
   assert.equal(canGrowPlant(BlockId.MoonberryBush, BlockId.Dirt, 0.3), true);
   assert.equal(canGrowPlant(BlockId.SunberryBush, BlockId.Dirt, 0.3), false);
+});
+
+test("Shellfruit is a renewable submerged crop with water-preserving stages", () => {
+  assert.equal(ITEMS[Item.Shellfruit].useKind, "plant");
+  assert.equal(ITEMS[Item.Shellfruit].plantBlock, BlockId.ShellfruitSprout);
+  assert.equal(plantingResult(Item.Shellfruit, BlockId.Sand, BlockId.Water)?.block, BlockId.ShellfruitSprout);
+  assert.equal(plantingResult(Item.Shellfruit, BlockId.Clay, BlockId.Water)?.block, BlockId.ShellfruitSprout);
+  assert.equal(plantingResult(Item.Shellfruit, BlockId.Sand, BlockId.Air), null, "Shellfruit must remain submerged");
+  assert.equal(plantingResult(Item.Shellfruit, BlockId.Planks, BlockId.Water), null, "a constructed shelf is not a living seabed");
+  assert.equal(nextPlantStage(BlockId.ShellfruitSprout), BlockId.ShellfruitYoung);
+  assert.equal(nextPlantStage(BlockId.ShellfruitYoung), BlockId.ShellfruitCrop);
+  assert.equal(nextPlantStage(BlockId.ShellfruitCrop), null);
+  assert.equal(canGrowPlant(BlockId.ShellfruitYoung, BlockId.Gravel, .2), true);
+  assert.equal(canGrowPlant(BlockId.ShellfruitYoung, BlockId.Dirt, .2), false);
+  for (const stage of [BlockId.ShellfruitSprout, BlockId.ShellfruitYoung, BlockId.ShellfruitCrop]) {
+    assert.equal(BLOCKS[stage].waterlogged, true);
+    assert.equal(blockContainsWater(stage), true);
+  }
+  assert.deepEqual(harvestPlant(BlockId.ShellfruitCrop, false, 0), {
+    replacement: BlockId.ShellfruitYoung,
+    drops: [{ item: Item.Shellfruit, count: 2 }],
+    replanted: true,
+  });
 });
 
 test("two-block tall grass uses connected halves and breaks atomically from either half", () => {
@@ -193,6 +216,7 @@ test("Frostpears form a complete cold-climate orchard and reversible nine-fruit 
     ["sunberry-crate", Item.Sunberry, BlockId.SunberryCrate],
     ["apple-crate", Item.Apple, BlockId.AppleCrate],
     ["frostpear-crate", Item.Frostpear, BlockId.FrostpearCrate],
+    ["shellfruit-crate", Item.Shellfruit, BlockId.ShellfruitCrate],
   ] as const;
   for (const [id, item, crate] of crateContracts) {
     const packed = RECIPES.find((recipe) => recipe.id === id)!;
@@ -203,6 +227,16 @@ test("Frostpears form a complete cold-climate orchard and reversible nine-fruit 
     assert.equal(ITEMS[crate].iconKind, "produce-crate");
   }
   assert.equal(ITEMS[BlockId.MushroomCap].iconKind, "giant-mushroom");
+});
+
+test("Star Crystal storage is lossless and Deepgear Lantern batches yield three", () => {
+  const packed = RECIPES.find((recipe) => recipe.id === "star-crystal-block")!;
+  const unpacked = RECIPES.find((recipe) => recipe.id === "star-crystal-block-open")!;
+  assert.deepEqual(packed.pattern, Array(9).fill(Item.CrystalShard));
+  assert.deepEqual(packed.output, { item: BlockId.CrystalBlock, count: 1 });
+  assert.deepEqual(unpacked.output, { item: Item.CrystalShard, count: 9 });
+  assert.equal(BLOCKS[BlockId.CrystalBlock].top === BLOCKS[BlockId.CrystalBlock].side, false, "the storage block needs directional authored faces");
+  assert.equal(RECIPES.find((recipe) => recipe.id === "deepgear-lantern")?.output.count, 3);
 });
 
 test("stacking aquatic flora connects only to its own species and keeps a distinct silhouette profile", () => {

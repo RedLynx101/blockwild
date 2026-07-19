@@ -96,6 +96,44 @@ test("orb stations split crafted count-two output one unit at a time with unique
   engine.machineClick("orb-rack", 0, "left");
   assert.equal(engine.cursor.count, 2, "an occupied slot never consumes or swaps a stacked orb");
   assert.equal(engine.orbRacks.get(key)?.slots[0]?.orbId, occupied?.orbId);
+
+  engine.cursor = { item: Item.CaptureOrb, count: 1 };
+  engine.machineClick("orb-rack", 7, "left");
+  assert.ok(engine.orbRacks.get(key)?.slots[7], "the expanded lower shelf exposes its fourth dynamic slot");
+  assert.equal(engine.cursor, null);
+});
+
+test("healing station Cave Gel uses an explicit reversible input instead of its orb sockets", () => {
+  const engine = stubMachineEngine();
+  const key = "4,5,6";
+  engine.activeOrbRackKey = null;
+  engine.activeHealingStationKey = key;
+  engine.orbRacks = new Map();
+  engine.healingStations = new Map([[key, createCreatureHealer()]]);
+  engine.cursor = { item: Item.CaveGel, count: 3 };
+
+  engine.machineClick("healing-station", -1, "left");
+  assert.equal(engine.healingStations.get(key)?.gelUnits, 3);
+  assert.equal(engine.cursor, null);
+
+  engine.machineClick("healing-station", -1, "right");
+  assert.deepEqual(engine.cursor, { item: Item.CaveGel, count: 1 });
+  assert.equal(engine.healingStations.get(key)?.gelUnits, 2);
+});
+
+test("rack and healer world displays share the same state-driven Capture Orb model", () => {
+  const engine = stubMachineEngine();
+  const orbs = Array.from({ length: 8 }, (_, index) => createEmptyCaptureOrb(`orb-display-${index}`));
+  const rack = engine.createOrbStationVisual("0,0,0", createOrbRack(orbs), "orb-rack");
+  const healer = engine.createOrbStationVisual("0,0,0", createCreatureHealer(orbs.slice(0, 4), 32), "healing-station");
+
+  assert.equal(rack.children.filter((child) => child.name.startsWith("capture-orb-display-")).length, 8);
+  assert.equal(healer.children.filter((child) => child.name.startsWith("capture-orb-display-")).length, 4);
+  assert.ok(healer.getObjectByName("healing-station-cave-gel-reservoir"));
+  for (const station of [rack, healer]) {
+    const orb = station.getObjectByName("capture-orb-display-0")!;
+    for (const part of ["capture-orb-shell-0", "capture-orb-equator-0", "capture-orb-meridian-0", "capture-orb-cap-0", "capture-orb-rune-0"]) assert.ok(orb.getObjectByName(part), part);
+  }
 });
 
 test("a filled Hive Queen orb stocks an apiary and can be pulled back out unchanged", () => {
@@ -168,7 +206,7 @@ test("persistent healing stations restore bounded clocks and heal stored exact m
   const restored = restoreHealingStationStorage({
     "2,3,4": { ...createCreatureHealer([wounded], 1), healClock: 999, healCycles: 0 },
   }).get("2,3,4")!;
-  assert.ok(restored.healClock <= 10);
+  assert.ok(restored.healClock <= 20);
 
   const engine = stubMachineEngine();
   engine.apiaries = new Map();
@@ -180,8 +218,9 @@ test("persistent healing stations restore bounded clocks and heal stored exact m
   engine.spawnParticles = () => undefined;
   engine.updatePersistentMachines(0.1);
   const healed = engine.healingStations.get("2,3,4")!;
-  assert.equal(healed.slots[0]?.creature?.health, 3);
+  assert.equal(healed.slots[0]?.creature?.health, 5);
   assert.equal(healed.gelUnits, 0);
+  assert.equal(healed.gelFuelSeconds, 580, "unused active Gel pauses as soon as the specimen is healthy");
 });
 
 test("breaking a wild hive preserves products, rolls hive materials, and releases every angry resident", () => {

@@ -4,6 +4,8 @@ export const MAP_CHUNK_SIZE = 16;
 export const MAX_EXPLORED_CHUNKS = 262_144;
 export const MAX_MAP_MARKERS = 4_096;
 export const MAX_FAST_TRAVEL_CHARGES = 999;
+export const FAST_TRAVEL_DEFAULT_CHARGE_COST = 1;
+export const FAST_TRAVEL_MANUAL_CHARGE_COST = 2;
 export const FAST_TRAVEL_CHANNEL_SECONDS = 5;
 export const FAST_TRAVEL_STILL_RADIUS = 0.12;
 export const WAYSHRINE_USE_RADIUS = 3.5;
@@ -131,6 +133,7 @@ export type FastTravelChannel = Readonly<{
   origin: WorldPoint;
   startedAt: number;
   durationSeconds: typeof FAST_TRAVEL_CHANNEL_SECONDS;
+  chargeCost: number;
   damageRevision: number;
   status: FastTravelChannelStatus;
   cancelledReason: "moved" | "damaged" | null;
@@ -335,6 +338,23 @@ export function panMapView(state: MapViewState, deltaX: number, deltaZ: number, 
     panX: normalized.panX + finite(deltaX),
     panZ: normalized.panZ + finite(deltaZ),
   }, limits);
+}
+
+/**
+ * Keeps the parchment over its authored extent. At whole-map zoom there is no
+ * empty direction to pan into; closer views may move only until an outer map
+ * edge reaches the viewport edge. This prevents a valid terrain canvas from
+ * looking as though chunks stopped rendering after a long drag.
+ */
+export function constrainMapViewState(base: MapViewportBounds, state: MapViewState, limits: MapZoomLimits = {}): MapViewState {
+  const normalized = normalizeMapViewState(state, limits);
+  const baseWidth = Math.max(1, finite(base.maxX) - finite(base.minX));
+  const baseHeight = Math.max(1, finite(base.maxZ) - finite(base.minZ));
+  const maximumPanX = Math.max(0, (baseWidth - baseWidth / normalized.zoom) / 2);
+  const maximumPanZ = Math.max(0, (baseHeight - baseHeight / normalized.zoom) / 2);
+  const panX = maximumPanX === 0 ? 0 : clamp(normalized.panX, -maximumPanX, maximumPanX);
+  const panZ = maximumPanZ === 0 ? 0 : clamp(normalized.panZ, -maximumPanZ, maximumPanZ);
+  return panX === normalized.panX && panZ === normalized.panZ ? normalized : { ...normalized, panX, panZ };
 }
 
 /** Keeps x and z in chunk space; zoom changes only the visible span. */
@@ -850,10 +870,13 @@ export function shareMapsAtCartographyTable(
 export function fastTravelDestination(state: MapKnowledge, markerId: string) {
   const marker = state.markers.find((entry) => entry.id === markerId);
   if (!marker) return null;
-  if (marker.kind === "manual") return null;
   if (marker.kind === "settlement" && marker.settlementKnowledge !== "visited") return null;
   if (marker.kind === "bed-spawn" && marker.id !== state.activeBedId) return null;
   return marker;
+}
+
+export function fastTravelChargeCost(marker: Pick<MapMarker, "kind">) {
+  return marker.kind === "manual" ? FAST_TRAVEL_MANUAL_CHARGE_COST : FAST_TRAVEL_DEFAULT_CHARGE_COST;
 }
 
 export function beginFastTravel(
@@ -868,8 +891,10 @@ export function beginFastTravel(
   if (!destination) return { ok: false, reason: "illegal-destination" } as const;
   const origin = cleanPoint(currentPosition);
   let originWayshrineId: string | null = null;
+  let chargeCost = 0;
   if (request.mode === "map-charge") {
-    if (normalized.fastTravelCharges < 1) return { ok: false, reason: "no-banked-travel" } as const;
+    chargeCost = fastTravelChargeCost(destination);
+    if (normalized.fastTravelCharges < chargeCost) return { ok: false, reason: "no-banked-travel" } as const;
   } else {
     const originShrine = normalized.markers.find((marker) => marker.id === request.originWayshrineId && marker.kind === "wayshrine");
     if (!originShrine || destination.kind !== "wayshrine" || distanceSquared(origin, originShrine.position) > WAYSHRINE_USE_RADIUS ** 2) {
@@ -886,6 +911,7 @@ export function beginFastTravel(
     origin,
     startedAt: Math.max(0, finite(startedAt)),
     durationSeconds: FAST_TRAVEL_CHANNEL_SECONDS,
+    chargeCost,
     damageRevision: Math.max(0, integer(damageRevision)),
     status: "channeling",
     cancelledReason: null,
@@ -918,11 +944,12 @@ export function commitFastTravel(state: MapKnowledge, channel: FastTravelChannel
     if (!origin || destination.kind !== "wayshrine") return { ok: false, reason: "wayshrine-network-lost", state: normalized } as const;
     return { ok: true, state: normalized, position: destination.position, chargeSpent: 0 } as const;
   }
-  if (normalized.fastTravelCharges < 1) return { ok: false, reason: "no-banked-travel", state: normalized } as const;
+  const chargeCost = fastTravelChargeCost(destination);
+  if (normalized.fastTravelCharges < chargeCost) return { ok: false, reason: "no-banked-travel", state: normalized } as const;
   return {
     ok: true,
-    state: { ...normalized, revision: normalized.revision + 1, fastTravelCharges: normalized.fastTravelCharges - 1 },
+    state: { ...normalized, revision: normalized.revision + 1, fastTravelCharges: normalized.fastTravelCharges - chargeCost },
     position: destination.position,
-    chargeSpent: 1,
+    chargeSpent: chargeCost,
   } as const;
 }

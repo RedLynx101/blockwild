@@ -24,6 +24,7 @@ import {
   decodeCaptureOrb,
   captureOrbFromInventorySlot,
   captureOrbInventorySlot,
+  CREATURE_HEALER_GEL_SECONDS,
   createCreatureHealer,
   createEmptyCaptureOrb,
   createOrbRack,
@@ -208,11 +209,11 @@ test("imported creature containers reject unknown species and malformed faction 
   assert.equal(decodeCaptureOrb(JSON.stringify({ ...encoded, creature: { ...encoded.creature, health: 99, maxHealth: 12 } })), null);
 });
 
-test("four-slot racks and healers expose UI state; healing is passive with optional gel acceleration", () => {
+test("eight-slot racks and four-slot healers expose UI state; Cave Gel powers active-time tenfold healing", () => {
   const captured = captureIntoOrb(createEmptyCaptureOrb("orb-a"), creature, 123)!;
   const rack = createOrbRack([captured]);
-  assert.equal(rack.slots.length, 4);
-  assert.deepEqual(orbRackContainerStatus(rack), { kind: "orb-rack", capacity: 4, occupied: 1, slots: rack.slots });
+  assert.equal(rack.slots.length, 8);
+  assert.deepEqual(orbRackContainerStatus(rack), { kind: "orb-rack", capacity: 8, occupied: 1, slots: rack.slots });
 
   const passiveStart = createCreatureHealer([captured]);
   const halfway = stepCreatureHealer(passiveStart, 10);
@@ -220,14 +221,50 @@ test("four-slot racks and healers expose UI state; healing is passive with optio
   const passive = stepCreatureHealer(halfway.state, 10);
   assert.equal(passive.healed, 1);
   assert.equal(passive.gelUsed, 0);
-  const accelerated = stepCreatureHealer(createCreatureHealer([captured], 4), 10);
-  assert.equal(accelerated.healed, 1);
-  assert.equal(accelerated.gelUsed, 1);
+  const acceleratedHalfway = stepCreatureHealer(createCreatureHealer([captured], 4), 10);
+  assert.equal(acceleratedHalfway.healed, 0);
+  assert.equal(acceleratedHalfway.gelUsed, 1);
+  assert.equal(acceleratedHalfway.state.gelUnits, 3);
+  assert.equal(acceleratedHalfway.state.gelFuelSeconds, 590);
+  const accelerated = stepCreatureHealer(acceleratedHalfway.state, 10);
+  assert.equal(accelerated.healed, 6, "a fueled hit restores up to ten health without over-healing");
+  assert.equal(accelerated.gelUsed, 0, "the loaded Gel charge is reused rather than consumed on every hit");
+  assert.equal(accelerated.state.gelFuelSeconds, 580);
   const status = healingStationContainerStatus(passive.state);
   assert.equal(status.kind, "healing-station");
   assert.equal(status.capacity, 4);
   assert.equal(status.slots[0]?.healing, true);
 });
+
+test("healing fuel pauses while idle, lasts ten active minutes, and ignores occupant count", () => {
+  const healthy = captureIntoOrb(createEmptyCaptureOrb("orb-healthy"), { ...creature, health: 7 }, 123)!;
+  const idle = stepCreatureHealer(createCreatureHealer([healthy], 2), 3_600);
+  assert.equal(idle.gelUsed, 0);
+  assert.equal(idle.state.gelUnits, 2);
+  assert.equal(idle.state.gelFuelSeconds, 0);
+  assert.equal(idle.state.healClock, 0);
+
+  const durable = { ...capturedForLongHealing(), creature: { ...creature, health: 1, maxHealth: 1_000 } };
+  const fullCharge = stepCreatureHealer(createCreatureHealer([durable], 1), CREATURE_HEALER_GEL_SECONDS);
+  assert.equal(fullCharge.gelUsed, 1);
+  assert.equal(fullCharge.state.gelUnits, 0);
+  assert.equal(fullCharge.state.gelFuelSeconds, 0);
+  assert.equal(fullCharge.healed, 300, "thirty 20-second fueled hits each restore ten health");
+  const freeAfterFuel = stepCreatureHealer(fullCharge.state, 20);
+  assert.equal(freeAfterFuel.healed, 1);
+
+  const second = { ...durable, orbId: "orb-long-b" };
+  const single = stepCreatureHealer(createCreatureHealer([durable], 1), 20);
+  const pair = stepCreatureHealer(createCreatureHealer([durable, second], 1), 20);
+  assert.equal(single.gelUsed, 1);
+  assert.equal(pair.gelUsed, 1, "one active charge powers the station, not an individual socket");
+  assert.equal(single.state.gelFuelSeconds, pair.state.gelFuelSeconds);
+  assert.equal(pair.healed, single.healed * 2);
+});
+
+function capturedForLongHealing() {
+  return captureIntoOrb(createEmptyCaptureOrb("orb-long-a"), creature, 123)!;
+}
 
 test("Reedstriders tame and ride, Peelops defend selectively and shed bananas", () => {
   let bond = createReedstriderBond();
@@ -312,6 +349,9 @@ test("utility model contracts and butterfly antenna dimensions are inspection-re
   }
   assert.equal(modelSpecForItemModel("wildwood-chest").id, "wildwood-chest");
   assert.equal(modelSpecForItemModel("capture-orb").id, "waykeeper-capture-orb");
+  assert.equal(createOrbRackSpec().boxes.filter((entry) => entry.part === "socket").length, 8);
+  assert.equal(createHealingStationSpec().boxes.filter((entry) => entry.part === "socket").length, 4);
+  assert.equal(createHealingStationSpec().boxes.filter((entry) => entry.part === "rim").length, 4);
   assert.equal(BUTTERFLY_ANTENNA_CONTRACT.count, 2);
   assert.ok(BUTTERFLY_ANTENNA_CONTRACT.length > 0.1);
 });

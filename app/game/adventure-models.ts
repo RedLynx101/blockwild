@@ -201,7 +201,7 @@ export function createAdventureMobVisual(kind: AdventureMobKind, id: number): Ad
       wing.name = `vaultwing-${sideName}-wing-pivot`;
       wing.position.set(side * 0.24, 0.2, -0.05);
       wing.userData.side = side;
-      wing.userData.phase = side < 0 ? 0 : Math.PI;
+      wing.userData.phase = 0;
       visual.add(wing);
       parts.wings.push(wing);
       const upper = add(wing, [1.08, 0.1, 0.16], [side * 0.5, 0, 0], dark, `vaultwing-${sideName}-wing-arm`);
@@ -274,7 +274,7 @@ export function createAdventureMobVisual(kind: AdventureMobKind, id: number): Ad
       const sideName = side < 0 ? "left" : "right";
       const wing = joint(visual, `mossback-kite-${sideName}-wing-pivot`, [side * 0.31, 0.73, -0.02]);
       wing.userData.side = side;
-      wing.userData.phase = side < 0 ? 0 : Math.PI;
+      wing.userData.phase = 0;
       parts.wings.push(wing);
       const spar = add(wing, [1.35, 0.12, 0.2], [side * 0.62, 0, 0], dark, `mossback-kite-${sideName}-wing-spar`);
       spar.rotation.z = side * -0.12;

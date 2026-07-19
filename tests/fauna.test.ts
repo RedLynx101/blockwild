@@ -110,13 +110,16 @@ import {
   chooseCreatureRoute,
   createBirdFlightRouteState,
   createCreatureRouteState,
+  creatureBodyMass,
   creatureMeleeReach,
   creatureCollisionProfile,
+  creatureKnockbackSpeed,
   findFollowerTeleportTarget,
   followerTravelSpeed,
   planFollowerFormation,
   separateCreatureCircles,
   shouldTeleportFollower,
+  splitCreatureSeparation,
 } from "../app/game/creature-pathing.ts";
 
 test("expanded ecology catalog includes mounts, livestock, thin fish, pollinators, a pet, guardian, and archer", () => {
@@ -202,6 +205,47 @@ test("expanded ecology catalog includes mounts, livestock, thin fish, pollinator
   assert.equal(usesGenericCreatureBond("rimecoat-hound"), true);
   assert.equal(usesGenericCreatureBond("bramblewhisk-cat"), true);
   assert.deepEqual(COMPANION_BOND_MOB_KINDS, ["tidepup", "sakurakit", "taffy-hound", "praline-cat", "rimecoat-hound", "bramblewhisk-cat"]);
+});
+
+test("birdlike flight rigs expose mirrored wing sides on one shared stroke phase", () => {
+  const synchronizedKinds = [
+    ...BIRD_ORDER,
+    "runeowl",
+    "vaultwing",
+    "mossback-kite",
+    "lanternray",
+    "prismtail-swift",
+    "sailfin-skimmer",
+    "ashnose-bat",
+    "chimewing",
+    "cinder-kite",
+  ] as const;
+  for (const kind of synchronizedKinds) {
+    const model = createMobVisual(kind, 7_400);
+    const pairedWings = model.parts.wings.filter((wing) => /-(?:left|right)-(?:wing|fin)/u.test(wing.name));
+    assert.ok(pairedWings.length >= 2, `${kind} needs a paired flight rig`);
+    for (const wing of pairedWings) {
+      const expectedSide = wing.name.includes("-left-") ? -1 : 1;
+      assert.equal(Number(wing.userData.side), expectedSide, `${wing.name} needs its authored side`);
+      assert.equal(Number(wing.userData.phase) || 0, 0, `${wing.name} must share its mate's stroke phase`);
+    }
+  }
+
+  for (const kind of ["prismtail-swift", "ashnose-bat", "chimewing", "cinder-kite"] as const) {
+    const model = createMobVisual(kind, 7_401);
+    applyWildlifePose(model.visual, kind, 1.37, 0.82, 0.25);
+    const left = model.visual.getObjectByName(`${kind}-left-wing-pivot`);
+    const right = model.visual.getObjectByName(`${kind}-right-wing-pivot`);
+    assert.ok(left && right);
+    assert.ok(Math.abs(left.rotation.z + right.rotation.z) < 1e-10, `${kind} wings must mirror one shared stroke`);
+  }
+
+  const reedstrider = createMobVisual("reedstrider", 7_402);
+  applyWildlifePose(reedstrider.visual, "reedstrider", 1.37, 0.82, 0.25);
+  const reedLeft = reedstrider.visual.getObjectByName("reedstrider-left-wing-pivot");
+  const reedRight = reedstrider.visual.getObjectByName("reedstrider-right-wing-pivot");
+  assert.ok(reedLeft && reedRight);
+  assert.ok(Math.abs(reedLeft.rotation.z + reedRight.rotation.z) < 1e-10, "Reedstrider's vestigial wings must lift together");
 });
 
 test("v0.5 habitat tables place mammals, pollinators, and fish without ambient queen spam", () => {
@@ -455,6 +499,19 @@ test("scaled collision policy makes medium and large ground creatures solid with
   const separation = separateCreatureCircles({ x: 0, z: 0, radius: 0.5 }, { x: 0.7, z: 0, radius: 0.5 });
   assert.ok(separation && separation.dx < 0);
   assert.ok(Math.abs(separation!.overlap - 0.36) < 0.00001);
+});
+
+test("physical creature contacts move lighter bodies farther and resist knockback by authored size", () => {
+  const rabbitMass = creatureBodyMass({ size: "small", radius: 0.22, height: 0.42 });
+  const peelopMass = creatureBodyMass({ size: "medium", radius: 0.52, height: 1.15 });
+  const ridgebackMass = creatureBodyMass({ size: "large", radius: 0.9, height: 1.85 });
+  assert.ok(rabbitMass < peelopMass && peelopMass < ridgebackMass);
+
+  const split = splitCreatureSeparation(0.8, rabbitMass, ridgebackMass);
+  assert.ok(split.first > split.second, "the rabbit-sized body should yield farther than the ridgeback-sized body");
+  assert.ok(Math.abs(split.first + split.second - 0.8) < 0.00001);
+  assert.ok(creatureKnockbackSpeed(4, rabbitMass) > creatureKnockbackSpeed(4, ridgebackMass));
+  assert.ok(creatureKnockbackSpeed(100, rabbitMass) <= 6.2, "extreme impacts remain numerically bounded");
 });
 
 test("followers own stable Skyrim-like formation slots that stand farther back and spread with group size", () => {

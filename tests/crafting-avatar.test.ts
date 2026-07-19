@@ -152,7 +152,7 @@ test("player variants and equipment alter the production rig", () => {
 test("SSR and the first browser render share deterministic settings text", () => {
   assert.deepEqual(initialHydrationSettings(), {
     volume: 0.55, muted: false, sensitivity: 0.0022, fov: 72, weather: "clear",
-    renderDistance: 10, simulationDistance: 8, showFps: false, showBreakingTexture: true, showBreakProgress: false, showToolEffectiveness: true, musicVolume: 0.72, resourceMode: "auto",
+    renderDistance: 10, simulationDistance: 8, showFps: false, showMinimap: false, showBreakingTexture: true, showBreakProgress: false, showToolEffectiveness: true, musicVolume: 0.72, resourceMode: "auto",
   });
   const serverHtml = renderToString(createElement(VoxelGame));
   assert.match(serverHtml, /aria-label="Main menu"/u);
@@ -559,6 +559,9 @@ test("inventory artwork stays semantic at real slot sizes and food hover copy is
   assert.equal(itemIconKind(Item.GlassBottle), "bottle-empty");
   assert.equal(itemIconKind(Item.WaterBottle), "bottle-water");
   assert.equal(itemIconKind(BlockId.AlchemyStand), "alchemy");
+  assert.equal(itemIconKind(Item.CrystalShard), "star-crystal");
+  assert.equal(itemIconKind(BlockId.CrystalBlock), "star-crystal-block");
+  assert.equal(itemIconKind(Item.Shellfruit), "shellfruit");
   for (const tome of [Item.TomeFlameJet, Item.TomeFrostLance, Item.TomeSteelSpear, Item.TomeHealingLight, Item.TomeBlinkstep, Item.TomeArcaneWard, Item.TomeVerdantVolley, Item.TomeStarlightSnare]) {
     assert.equal(itemIconKind(tome), "tome");
   }

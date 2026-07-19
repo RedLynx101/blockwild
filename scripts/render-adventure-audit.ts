@@ -63,6 +63,7 @@ function legendarySpec(item: ItemCode): InspectionModelSpec {
 }
 
 function structurePlanSvg(plan: AdventureStructurePlan, tileX: number, tileY: number, width: number, height: number) {
+  const clipId = `structure-tile-${plan.id}`.replace(/[^A-Za-z0-9_-]+/gu, "-");
   const underground = ADVENTURE_DUNGEON_ARCHETYPES.some((entry) => entry.kind === plan.kind && entry.underground);
   const eligible = underground ? plan.placements.filter((placement) => placement.y <= plan.origin.y - 10) : plan.placements;
   const top = new Map<string, (typeof eligible)[number]>();
@@ -101,14 +102,15 @@ function structurePlanSvg(plan: AdventureStructurePlan, tileX: number, tileY: nu
   }).join("");
   const archetype = [...ADVENTURE_POI_ARCHETYPES, ...ADVENTURE_DUNGEON_ARCHETYPES].find((entry) => entry.kind === plan.kind)!;
   return `<g transform="translate(${tileX} ${tileY})">
+    <defs><clipPath id="${clipId}"><rect x="9" y="58" width="${width - 18}" height="${height - 68}" rx="8"/></clipPath></defs>
     <rect x="5" y="5" width="${width - 10}" height="${height - 10}" rx="14" fill="#141a17" stroke="#405047" stroke-width="2"/>
     <text x="18" y="31" fill="#f2d27a" font-size="17" font-weight="900">${escapeXml(archetype.name)}</text>
     <text x="18" y="51" fill="#96aa9d" font-size="10" font-weight="800" letter-spacing="1.1">${archetype.scale.toUpperCase()} · ${plan.placements.length} BLOCKS · ${plan.markers.filter((marker) => marker.type === "spawn").length} ENCOUNTERS</text>
-    ${blocks}${rooms}${markers}
+    <g clip-path="url(#${clipId})">${blocks}${rooms}${markers}</g>
   </g>`;
 }
 
-function renderStructureAtlas(plans: readonly AdventureStructurePlan[]) {
+export function renderStructureAtlas(plans: readonly AdventureStructurePlan[], options: Readonly<{ title?: string; subtitle?: string }> = {}) {
   const columns = 5;
   const tileWidth = 380;
   const tileHeight = 340;
@@ -120,8 +122,8 @@ function renderStructureAtlas(plans: readonly AdventureStructurePlan[]) {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
   <rect width="100%" height="100%" fill="#0b100e"/>
-  <text x="28" y="43" fill="#f3ca6a" font-family="ui-sans-serif, system-ui" font-size="28" font-weight="900">BLOCKWILD V1.4 · LIVING RUINS BLUEPRINT ATLAS</text>
-  <text x="28" y="71" fill="#9bad9f" font-family="ui-monospace, monospace" font-size="13">${ADVENTURE_POI_ARCHETYPES.length} deterministic landmarks · ${ADVENTURE_DUNGEON_ARCHETYPES.length} multi-stage dungeons · red encounter · gold chest · cyan map heart</text>
+  <text x="28" y="43" fill="#f3ca6a" font-family="ui-sans-serif, system-ui" font-size="28" font-weight="900">${escapeXml(options.title ?? "BLOCKWILD V1.4 · LIVING RUINS BLUEPRINT ATLAS")}</text>
+  <text x="28" y="71" fill="#9bad9f" font-family="ui-monospace, monospace" font-size="13">${escapeXml(options.subtitle ?? `${ADVENTURE_POI_ARCHETYPES.length} deterministic landmarks · ${ADVENTURE_DUNGEON_ARCHETYPES.length} multi-stage dungeons · red encounter · gold chest · cyan map heart`)}</text>
   ${tiles}
 </svg>`;
 }

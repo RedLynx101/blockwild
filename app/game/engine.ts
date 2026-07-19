@@ -17,6 +17,19 @@ import {
   toolEffectivenessForIds,
 } from "./breaking-visuals";
 import { plantInteractionBounds, rayDistanceToInteractionBounds } from "./block-hitboxes";
+import {
+  BLOCK_FACING_EAST,
+  BLOCK_FACING_SOUTH,
+  BLOCK_FACING_WEST,
+  blockFacingForYaw,
+  blockFacingRight,
+  blockFacingYaw,
+  isDirectionallyPlacedBlock,
+  normalizeBlockFacing,
+  rotateBlockOffset,
+  type BlockFacing,
+} from "./block-facing";
+import { CHEST_VISUAL, chestLatchCenters } from "./chest-model";
 import { isDoubleTallGrass, planDoubleTallGrassRemoval } from "./tall-grass";
 import { SHIELD_PROFILES, resolveShieldHit, shouldRaiseOffhandShield, type ShieldKind } from "./shields";
 import {
@@ -117,9 +130,9 @@ import {
 } from "./creature-combat-ai";
 import { advanceBestiaryResearch, appendBestiaryRecord, createLivingBestiary, normalizeLivingBestiaryEntry, observeBestiaryEntry, recordBestiaryAppearanceForms, recordSpeciesCapture, type LivingBestiaryEntryV2 } from "./living-bestiary";
 import { createHeldToolSpec } from "./model-specs";
-import { applyCompanionPose, applyDragonLifeStage, applyDragonPose, applyOceanCreaturePose, applyWildlifePose, createMobVisual, createSentientLodVisual } from "./mob-models";
+import { applyCompanionPose, applyDragonLifeStage, applyDragonPose, applyDragonVariant, applyOceanCreaturePose, applyWildlifePose, createMobVisual, createSentientLodVisual } from "./mob-models";
 import {
-  DRAGON_TYPES,
+  DRAGON_SCHEMA_VERSION,
   DRAGON_RIDER_CONTROLS,
   attachDragonChest,
   bondDragonHatchling,
@@ -238,7 +251,7 @@ import {
   layLeviathanEggFromParents,
   chooseLocalWalkableGround,
   aquaticSpawnBandForMob,
-  fishKindForHabitat,
+  fishSpawnTableForHabitat,
   foodLureResponseForMob,
   husbandryAgeScale,
   naturalActivityAllowsSpawn,
@@ -256,6 +269,7 @@ import {
   usesCompanionBond,
   usesGenericCreatureBond,
   type BirdBehaviorState,
+  type FishHabitat,
   type AetherbellMorphState,
   type LeviathanEggMetadata,
   type LeviathanGrowthState,
@@ -297,12 +311,15 @@ import {
   chooseBirdPerch,
   chooseCreatureRoute,
   createCreatureRouteState,
+  creatureBodyMass,
+  creatureKnockbackSpeed,
   creatureMeleeReach,
   creatureCollisionProfile,
   findFollowerTeleportTarget,
   followerTravelSpeed,
   planFollowerFormation,
   separateCreatureCircles,
+  splitCreatureSeparation,
   shouldTeleportFollower,
   type BirdPerchCandidate,
   type CreatureRouteProbe,
@@ -424,12 +441,14 @@ import {
 } from "./guilds";
 import {
   LEGENDARY_ENCOUNTERS,
+  advanceLegendarySiteRecovery,
   activateLegendaryEncounter,
   applyLegendaryEvent,
   createLegendaryEncounterState,
   legendaryCanManifest,
   legendaryStageProgress,
   normalizeLegendaryEncounterState,
+  recordLegendarySiteVisit,
   resolveLegendaryEncounter,
   transferLegendaryCustody,
   type LegendaryEncounterId,
@@ -437,6 +456,13 @@ import {
   type LegendaryEncounterState,
   type LegendaryOutcome,
 } from "./legendary-encounters";
+import {
+  createMythicShedState,
+  isMythicFrontierCreature,
+  stepMythicShed,
+  type MythicShedState,
+} from "./mythic-creatures";
+import { mythicRecoveryPolicyForSite, mythicSiteByEncounterId } from "./mythic-frontiers";
 import {
   CONTEXTUAL_LOOT_GENERATOR_VERSION,
   normalizeContextualLootWorldState,
@@ -540,6 +566,7 @@ import {
   isMultiplayerOperationCancellation,
   parseMultiplayerLatencyRange,
   type BlockAction,
+  type BlockEdit,
   type BoatAction,
   type CartographyMapShare,
   type CombatAction,
@@ -658,6 +685,8 @@ import {
   CAPTURE_ORB_RACK_SIZE,
   CREATURE_HEAL_INTERVAL_SECONDS,
   CREATURE_HEALER_GEL_CAP,
+  CREATURE_HEALER_GEL_SECONDS,
+  CREATURE_HEALER_SIZE,
   captureIntoOrb,
   captureOrbFromInventorySlot,
   captureOrbInventorySlot,
@@ -923,6 +952,7 @@ export type GameSettings = {
   renderDistance: number;
   simulationDistance: number;
   showFps: boolean;
+  showMinimap: boolean;
   showBreakingTexture: boolean;
   showBreakProgress: boolean;
   showToolEffectiveness: boolean;
@@ -945,12 +975,12 @@ export function chestModelLayout(positions: ReadonlyArray<readonly [number, numb
   const pairAlongX = large && positions.every((position) => position[2] === positions[0][2]);
   // The local chest model is always wider left-to-right. Z-adjacent pairs are
   // rotated as a unit so their lid never becomes a long front-to-back flap.
-  return {
-    large,
-    width: large ? 1.88 : 0.88,
-    depth: 0.88,
-    lidWidth: large ? 1.92 : 0.92,
-    lidDepth: 0.92,
+    return {
+      large,
+      width: large ? 1.88 : 0.88,
+      depth: CHEST_VISUAL.bodyDepth,
+      lidWidth: large ? 1.92 : 0.92,
+      lidDepth: CHEST_VISUAL.lidDepth,
     rotationY: large && !pairAlongX ? Math.PI / 2 : 0,
   } as const;
 }
@@ -984,6 +1014,9 @@ export type OrbMorphLoomHudState = OrbMorphLoomState & Readonly<{
 export type OrbRackHudState = { slots: Array<InventorySlot | null> };
 export type HealingStationHudState = OrbRackHudState & {
   gelUnits: number;
+  gelFuelSeconds: number;
+  gelFuelMaxSeconds: number;
+  fuelActive: boolean;
   healClock: number;
   healIntervalSeconds: number;
   healingProgress: number[];
@@ -1178,6 +1211,7 @@ export type SavedCreature = {
   apiaryBee?: ApiaryBee;
   socialGroupId?: string;
   peelopShedding?: PeelopSheddingState;
+  mythicShed?: MythicShedState;
   milkCooldown?: number;
   woolRegrowSeconds?: number;
   factionId?: FactionId | null;
@@ -1279,6 +1313,8 @@ export type WorldSave = {
   seed: string;
   mode: GameMode;
   edits: ChunkEditSave;
+  /** Sparse cardinal metadata for asymmetric player-placed blocks. */
+  blockFacings?: Record<string, BlockFacing>;
   player: { x: number; y: number; z: number; yaw: number; pitch: number };
   spawn: { x: number; y: number; z: number };
   startingSettlementId?: string | null;
@@ -1454,6 +1490,7 @@ type MobEntity = {
   beeHiveKey: string | null;
   socialGroupId: string | null;
   peelopShedding: PeelopSheddingState | null;
+  mythicShed: MythicShedState | null;
   milkCooldown: number;
   woolRegrowSeconds: number;
   shadeSaddle: THREE.Object3D | null;
@@ -1500,6 +1537,9 @@ type MobEntity = {
   threatLedger: readonly ThreatEntry[];
   moveCooldowns: Record<string, number>;
   activeMove: ActiveCreatureMove | null;
+  /** Ephemeral recoil and recovery state; neither belongs in save data. */
+  pushVelocity?: THREE.Vector2;
+  terrainCheckTimer?: number;
   mountExertion: MountExertionState | null;
   mountMode: MountMode | null;
   mountVerticalVelocity: number;
@@ -1586,6 +1626,7 @@ type SpawnMobOptions = {
   beeHiveKey?: string | null;
   socialGroupId?: string | null;
   peelopShedding?: PeelopSheddingState | null;
+  mythicShed?: MythicShedState | null;
   milkCooldown?: number;
   woolRegrowSeconds?: number;
   name?: string | null;
@@ -1744,6 +1785,7 @@ export const ENVIRONMENT_LIGHT_POOL_SIZE = Object.freeze({ desktop: 16, touch: 8
 const PLAYER_HEIGHT = 1.8;
 const CROUCH_HEIGHT = 1.48;
 const PLAYER_RADIUS = 0.3;
+const PLAYER_BODY_MASS = 1.15;
 const PHYSICS_STEP = 1 / 60;
 const INVENTORY_SIZE = 36;
 const TREE_PERCH_BLOCKS = new Set<BlockId>([
@@ -1792,19 +1834,62 @@ export const HOSTILE_CAP_SCALE = 0.42;
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
 export const POINTER_LOCK_REACQUIRE_SUPPRESSION_EVENTS = 2;
+export const POINTER_LOOK_STALE_AFTER_MS = 150;
+/** Twelve degrees per presented frame still permits a 720-degree/second turn at 60 FPS. */
+export const POINTER_LOOK_MAX_RADIANS_PER_FRAME = Math.PI / 15;
 
 export function gatePointerLockMovement(
   movementX: number,
   movementY: number,
   suppressedEvents: number,
-): Readonly<{ apply: boolean; remainingSuppressedEvents: number }> {
+  timing: Readonly<{ eventAgeMs?: number; frameAgeMs?: number }> = {},
+): Readonly<{ apply: boolean; remainingSuppressedEvents: number; reason: "accepted" | "empty" | "invalid" | "reacquire" | "stale" }> {
+  const remainingSuppressedEvents = Math.max(0, Math.trunc(Number(suppressedEvents) || 0));
   if (!Number.isFinite(movementX) || !Number.isFinite(movementY)) {
-    return { apply: false, remainingSuppressedEvents: Math.max(0, suppressedEvents) };
+    return { apply: false, remainingSuppressedEvents, reason: "invalid" };
   }
-  if (suppressedEvents > 0) {
-    return { apply: false, remainingSuppressedEvents: suppressedEvents - 1 };
+  if (remainingSuppressedEvents > 0) {
+    return { apply: false, remainingSuppressedEvents: remainingSuppressedEvents - 1, reason: "reacquire" };
   }
-  return { apply: movementX !== 0 || movementY !== 0, remainingSuppressedEvents: 0 };
+  const eventAgeMs = Math.max(0, Number(timing.eventAgeMs) || 0);
+  const frameAgeMs = Math.max(0, Number(timing.frameAgeMs) || 0);
+  if (eventAgeMs > POINTER_LOOK_STALE_AFTER_MS || frameAgeMs > POINTER_LOOK_STALE_AFTER_MS) {
+    return { apply: false, remainingSuppressedEvents: 0, reason: "stale" };
+  }
+  const apply = movementX !== 0 || movementY !== 0;
+  return { apply, remainingSuppressedEvents: 0, reason: apply ? "accepted" : "empty" };
+}
+
+/**
+ * Limits the net view rotation that can become visible in one rendered frame.
+ * Excess pointer/touch motion is intentionally dropped rather than replayed as
+ * a delayed camera glide after a hitch.
+ */
+export function boundLookDeltaForFrame(
+  movementX: number,
+  movementY: number,
+  sensitivity: number,
+  appliedX = 0,
+  appliedY = 0,
+  maximumRadians = POINTER_LOOK_MAX_RADIANS_PER_FRAME,
+) {
+  const safeSensitivity = clamp(Math.abs(Number(sensitivity) || 0.0022), 0.0001, 0.02);
+  const pixelLimit = Math.max(1, Math.abs(Number(maximumRadians) || POINTER_LOOK_MAX_RADIANS_PER_FRAME) / safeSensitivity);
+  const currentX = Number.isFinite(appliedX) ? appliedX : 0;
+  const currentY = Number.isFinite(appliedY) ? appliedY : 0;
+  const requestedX = currentX + (Number.isFinite(movementX) ? movementX : 0);
+  const requestedY = currentY + (Number.isFinite(movementY) ? movementY : 0);
+  const requestedLength = Math.hypot(requestedX, requestedY);
+  const scale = requestedLength > pixelLimit ? pixelLimit / requestedLength : 1;
+  const totalX = requestedX * scale;
+  const totalY = requestedY * scale;
+  return {
+    deltaX: totalX - currentX,
+    deltaY: totalY - currentY,
+    totalX,
+    totalY,
+    clamped: scale < 1,
+  } as const;
 }
 
 /** Multiplicative movement effects shared by walking, sprinting and swimming. */
@@ -1987,6 +2072,15 @@ export function naturalMobPopulation(mobs: readonly NaturalMobPopulationEntry[])
 
 export type SimulationInterestPoint = Readonly<{ id: string; x: number; y: number; z: number; yaw: number }>;
 
+type NaturalAquaticSpawnCandidate = Readonly<{
+  x: number;
+  z: number;
+  distance: number;
+  habitat: FishHabitat;
+  column: AquaticSpawnColumn;
+  underground: boolean;
+}>;
+
 /** One shared spawn clock, with a bounded sublinear cap for separated players. */
 export function multiplayerNaturalMobCap(baseCap: number, playerCount: number) {
   const players = Math.max(1, Math.min(4, Math.floor(playerCount)));
@@ -2160,22 +2254,16 @@ function placedLeviathanEggMetadata(metadata: Record<string, unknown> | undefine
 export function placedDragonEggMetadata(metadata: Record<string, unknown> | undefined, requirePlaced = true): DragonEgg | null {
   if (!metadata || (requirePlaced ? metadata.kind !== "placed-dragon-egg" : metadata.kind !== "placed-dragon-egg" && metadata.kind !== "dragon-egg")) return null;
   if (!metadata.egg || typeof metadata.egg !== "object") return null;
-  const egg = metadata.egg as Partial<DragonEgg>;
-  if (egg.schemaVersion !== 1 || typeof egg.eggId !== "string"
-    || !DRAGON_TYPES.includes(egg.type as DragonType)
-    || (egg.sex !== "female" && egg.sex !== "male")
-    || typeof egg.geneticSeed !== "number" || !Number.isFinite(egg.geneticSeed)
-    || typeof egg.incubationTicks !== "number" || !Number.isFinite(egg.incubationTicks)
-    || typeof egg.requiredTicks !== "number" || !Number.isFinite(egg.requiredTicks)) return null;
-  return egg as DragonEgg;
+  return dragonEggFromDropMetadata({ kind: "dragon-egg", egg: metadata.egg });
 }
 
 function dragonSpawnEggMetadata(metadata: Record<string, unknown> | undefined): DragonSpawnEgg | null {
   if (metadata?.kind !== "dragon-spawn-egg" || !metadata.spawnEgg || typeof metadata.spawnEgg !== "object") return null;
   const value = metadata.spawnEgg as Partial<DragonSpawnEgg>;
-  if (value.schemaVersion !== 1 || value.kind !== "ready-dragon-spawn-egg" || typeof value.preparedAtTick !== "number" || !value.egg) return null;
+  const schemaVersion = (value as { schemaVersion?: number }).schemaVersion;
+  if ((schemaVersion !== 1 && schemaVersion !== DRAGON_SCHEMA_VERSION) || value.kind !== "ready-dragon-spawn-egg" || typeof value.preparedAtTick !== "number" || !value.egg) return null;
   const egg = placedDragonEggMetadata({ kind: "dragon-egg", egg: value.egg as unknown as Record<string, unknown> }, false);
-  return egg ? { schemaVersion: 1, kind: "ready-dragon-spawn-egg", preparedAtTick: value.preparedAtTick, egg } : null;
+  return egg ? { schemaVersion: DRAGON_SCHEMA_VERSION, kind: "ready-dragon-spawn-egg", preparedAtTick: value.preparedAtTick, egg } : null;
 }
 
 export function nextPeelopBananaShedSeconds(id: number, cycle: number) {
@@ -2340,6 +2428,28 @@ const STRUCTURE_LOOT_ITEMS: Readonly<Record<string, ItemCode>> = Object.freeze({
   "bound-book": Item.BoundBook,
   "blueprint-dragonbone-arms": Item.DragonboneArmsBlueprint,
   "blueprint-dragon-scale-armor": Item.DragonScaleArmorBlueprint,
+  "water-breathing-potion": Item.WaterBreathingPotion,
+  "nacre-tidework": Item.NacreTideworkItem,
+  "windworn-alabaster": Item.WindwornAlabasterItem,
+  "fossilroot-calcite": Item.FossilrootCalciteItem,
+  "emberglass-archive": Item.EmberglassArchiveItem,
+  mirrorpeat: Item.MirrorpeatItem,
+  "moonfelt-mycelium": Item.MoonfeltMyceliumItem,
+  "mythic-bellkeeper-tack": Item.BellkeeperTack,
+  "mythic-cloudwhale-map": Item.CloudwhaleMigrationMap,
+  "mythic-stillwater-chime": Item.StillwaterFeintChime,
+  "mythic-emberglass-net": Item.EmberglassNetUpgrade,
+  "mythic-pressure-flask": Item.DeepPressureFlask,
+  "mythic-behemoth-harness": Item.BehemothHaulingHarness,
+  "mythic-briarcrown-kit": Item.BriarcrownAntidoteKit,
+  "mythic-acoustic-coil": Item.AcousticSurveyCoil,
+  "mythic-tailgrip-charm": Item.TailGripRetrievalCharm,
+  "mythic-tideclock-compass": Item.TideclockCompass,
+  "mythic-nine-wind-standard": Item.NineWindStandard,
+  "mythic-merciful-mirror": Item.MercifulMirrorShield,
+  "mythic-pearl-regalia": Item.PearlCourtRegalia,
+  "mythic-heat-script-lens": Item.HeatScriptLens,
+  "mythic-remembered-path": Item.RememberedPathSpore,
 });
 
 export function resolveStructureLootItem(itemKey: string): ItemCode | null {
@@ -2440,6 +2550,142 @@ export function aquaticSpawnHeight(kind: MobKind, floorY: number, waterSurfaceY:
   if (kind === "dreadcoil") return floorY + Math.max(1.2, depth * 0.28);
   if (kind === "aetherbell-larva") return floorY + Math.max(1, depth * 0.36);
   return floorY + 0.8 + unit * Math.max(0.2, depth - 1.2);
+}
+
+export type AquaticSpawnColumn = Readonly<{
+  floorY: number;
+  bottomY: number;
+  surfaceY: number;
+  liquid: "water" | "syrup";
+  neighborCells: number;
+}>;
+
+const aquaticLiquidMatches = (type: BlockId | undefined, liquid: AquaticSpawnColumn["liquid"]) => liquid === "syrup"
+  ? type === BlockId.Syrup
+  : blockContainsWater(type);
+
+/**
+ * Finds a real contiguous liquid segment without asking the dry-land floor
+ * resolver to treat water as walkable air. The small horizontal-volume check
+ * prevents a bucket cell or one-wide decorative trickle from growing wildlife.
+ */
+export function findAquaticSpawnColumn(
+  world: Pick<ChunkWorld, "getBlock">,
+  x: number,
+  z: number,
+  aroundY: number,
+  minimumY: number,
+  maximumY: number,
+  liquid: AquaticSpawnColumn["liquid"] = "water",
+  minimumNeighborCells = 5,
+): AquaticSpawnColumn | null {
+  const lower = clamp(Math.floor(Math.min(minimumY, maximumY)), MIN_Y + 1, MAX_Y - 1);
+  const upper = clamp(Math.ceil(Math.max(minimumY, maximumY)), MIN_Y + 1, MAX_Y - 1);
+  const origin = clamp(Math.round(aroundY), lower, upper);
+  let foundY: number | null = null;
+  for (let offset = 0; offset <= upper - lower && foundY === null; offset += 1) {
+    const below = origin - offset;
+    const above = origin + offset;
+    if (below >= lower && aquaticLiquidMatches(world.getBlock(x, below, z), liquid)) foundY = below;
+    else if (above <= upper && aquaticLiquidMatches(world.getBlock(x, above, z), liquid)) foundY = above;
+  }
+  if (foundY === null) return null;
+  let bottomY = foundY;
+  let surfaceY = foundY;
+  while (bottomY > MIN_Y + 1 && aquaticLiquidMatches(world.getBlock(x, bottomY - 1, z), liquid)) bottomY -= 1;
+  while (surfaceY < MAX_Y - 1 && aquaticLiquidMatches(world.getBlock(x, surfaceY + 1, z), liquid)) surfaceY += 1;
+  const sampleY = clamp(origin, bottomY, surfaceY);
+  let neighborCells = 0;
+  for (let dx = -1; dx <= 1; dx += 1) for (let dz = -1; dz <= 1; dz += 1) {
+    if (aquaticLiquidMatches(world.getBlock(x + dx, sampleY, z + dz), liquid)) neighborCells += 1;
+  }
+  if (neighborCells < minimumNeighborCells) return null;
+  return Object.freeze({ floorY: bottomY - 1, bottomY, surfaceY, liquid, neighborCells });
+}
+
+/** A cave floor search never falls back to the unrelated surface height. */
+export function findCaveFloorY(
+  world: Pick<ChunkWorld, "getBlock" | "isWalkThrough">,
+  x: number,
+  z: number,
+  aroundY: number,
+  verticalRange = 48,
+) {
+  const top = clamp(Math.round(aroundY + 16), MIN_Y + 1, MAX_Y - 2);
+  const bottom = clamp(Math.round(aroundY - Math.max(16, verticalRange)), MIN_Y + 1, MAX_Y - 2);
+  for (let y = top; y >= bottom; y -= 1) {
+    const ground = world.getBlock(x, y, z);
+    if (ground === undefined || !BLOCKS[ground]?.solid) continue;
+    if (world.isWalkThrough(world.getBlock(x, y + 1, z)) && world.isWalkThrough(world.getBlock(x, y + 2, z))) return y;
+  }
+  return null;
+}
+
+/** Finds two cells of dry cave air for airborne fauna without surface fallback. */
+export function findCaveAirY(
+  world: Pick<ChunkWorld, "getBlock" | "isWalkThrough">,
+  x: number,
+  z: number,
+  aroundY: number,
+  verticalRange = 32,
+) {
+  const lower = clamp(Math.round(aroundY - verticalRange), MIN_Y + 2, MAX_Y - 3);
+  const upper = clamp(Math.round(aroundY + verticalRange), MIN_Y + 2, MAX_Y - 3);
+  const origin = clamp(Math.round(aroundY), lower, upper);
+  for (let offset = 0; offset <= upper - lower; offset += 1) {
+    for (const y of offset === 0 ? [origin] : [origin - offset, origin + offset]) {
+      if (y < lower || y > upper) continue;
+      const feet = world.getBlock(x, y, z);
+      const head = world.getBlock(x, y + 1, z);
+      if (feet === undefined || head === undefined || blockContainsWater(feet) || blockContainsWater(head)) continue;
+      if (world.isWalkThrough(feet) && world.isWalkThrough(head)) return y;
+    }
+  }
+  return null;
+}
+
+export function fishHabitatForSpawnSite(biome: BiomeId, underground: boolean, liquid: AquaticSpawnColumn["liquid"]): FishHabitat {
+  if (liquid === "syrup") return "syrup-pond";
+  if (underground) return "underground";
+  if (biome === BiomeId.DeepOcean) return "deep-ocean";
+  if (biome === BiomeId.LumenTrench) return "lumen-trench";
+  if (biome === BiomeId.Ocean) return "ocean";
+  if (biome === BiomeId.Glimmerwood) return "glimmer-pond";
+  return "river";
+}
+
+export function fishHabitatSupportsNaturalPool(habitat: FishHabitat, pool: NaturalPopulationPool, underground = false) {
+  return fishSpawnTableForHabitat(habitat).some(([kind]) => {
+    const definition = MOB_DEFS[kind];
+    return !definition.hostile && naturalPopulationPoolForDefinition(definition, underground) === pool;
+  });
+}
+
+/** Weighted habitat choice after pool and progression-resource constraints are known. */
+export function fishKindForNaturalPool(
+  habitat: FishHabitat,
+  pool: NaturalPopulationPool,
+  underground: boolean,
+  hostile: boolean,
+  requiredDrop?: ItemCode,
+  roll = Math.random(),
+) {
+  const eligible = fishSpawnTableForHabitat(habitat).filter(([kind]) => {
+    const definition = MOB_DEFS[kind];
+    return definition.hostile === hostile && naturalPopulationPoolForDefinition(definition, underground) === pool;
+  });
+  const preferred = requiredDrop === undefined ? eligible : eligible.filter(([kind]) => (
+    MOB_DEFS[kind].drops?.some((drop) => drop.item === requiredDrop && drop.chance > 0)
+  ));
+  const choices = preferred.length ? preferred : eligible;
+  const total = choices.reduce((sum, [, weight]) => sum + Math.max(0, weight), 0);
+  if (total <= 0) return null;
+  let cursor = clamp(Number.isFinite(roll) ? roll : 0.5, 0, 0.999999) * total;
+  for (const [kind, weight] of choices) {
+    cursor -= Math.max(0, weight);
+    if (cursor <= 0) return kind;
+  }
+  return choices.at(-1)?.[0] ?? null;
 }
 
 /**
@@ -2668,7 +2914,7 @@ export function restoreOrbRackStorage(saved: Record<string, OrbRackState> = {}) 
 
 export function restoreHealingStationStorage(saved: Record<string, CreatureHealerState> = {}) {
   return new Map(Object.entries(saved).map(([key, state]) => {
-    const base = createCreatureHealer((state?.slots ?? []).map(cloneCaptureOrb), state?.gelUnits ?? 0);
+    const base = createCreatureHealer((state?.slots ?? []).map(cloneCaptureOrb), state?.gelUnits ?? 0, state?.gelFuelSeconds ?? 0);
     return [key, {
       ...base,
       healClock: clamp(Number(state?.healClock) || 0, 0, CREATURE_HEAL_INTERVAL_SECONDS),
@@ -2787,6 +3033,9 @@ export function healingStationHudState(state: CreatureHealerState): HealingStati
   return {
     slots: state.slots.map((orb) => orb ? captureOrbInventorySlot(orb) : null),
     gelUnits: status.gelUnits,
+    gelFuelSeconds: status.gelFuelSeconds,
+    gelFuelMaxSeconds: CREATURE_HEALER_GEL_SECONDS,
+    fuelActive: status.fuelActive,
     healClock: state.healClock,
     healIntervalSeconds: CREATURE_HEAL_INTERVAL_SECONDS,
     healingProgress: state.slots.map((orb) => !orb?.creature || orb.creature.health >= orb.creature.maxHealth
@@ -2863,6 +3112,7 @@ export function readSettings(): GameSettings {
     fov: 72,
     weather: "clear",
     showFps: false,
+    showMinimap: false,
     showBreakingTexture: true,
     showBreakProgress: false,
     showToolEffectiveness: true,
@@ -2885,6 +3135,7 @@ export function readSettings(): GameSettings {
       fov: clamp(Number(parsed.fov ?? fallback.fov), 55, 100),
       weather: parsed.weather === "rain" ? "rain" : "clear",
       showFps: Boolean(parsed.showFps ?? fallback.showFps),
+      showMinimap: Boolean(parsed.showMinimap ?? fallback.showMinimap),
       showBreakingTexture: Boolean(parsed.showBreakingTexture ?? fallback.showBreakingTexture),
       showBreakProgress: Boolean(parsed.showBreakProgress ?? fallback.showBreakProgress),
       showToolEffectiveness: Boolean(parsed.showToolEffectiveness ?? fallback.showToolEffectiveness),
@@ -3410,6 +3661,9 @@ export class VoxelEngine {
   resizeObserver: ResizeObserver | null = null;
   keyboardEscapeLocked = false;
   pointerLockMovementSuppression = 0;
+  lookDeltaXThisFrame = 0;
+  lookDeltaYThisFrame = 0;
+  lastPresentedFrameTime = performance.now();
   nativePixelRatio = 1;
   renderPixelRatio = 1;
   averageFrameMs = 16.7;
@@ -3648,6 +3902,7 @@ export class VoxelEngine {
   ecologyDiagnostics = {
     attempts: 0,
     successes: 0,
+    aquaticCandidates: 0,
     lastSuccess: null as null | { kind: MobKind; pool: NaturalPopulationPool; playerId: string; x: number; z: number },
     rejections: {} as Record<string, number>,
   };
@@ -4013,14 +4268,16 @@ export class VoxelEngine {
     this.locked = document.pointerLockElement === this.canvas;
     if (!this.locked) {
       this.pointerLockMovementSuppression = 0;
+      this.resetLookFrameBudget();
       if (this.running && !this.touchMode) this.paused = !this.multiplayerSimulationActive();
       this.clearInput();
       this.mineHeld = false;
     } else {
-      // Pointer-lock reacquisition can deliver one or two cursor-recenter
-      // deltas from mouse movement that happened over the inventory. Never
-      // replay those menu deltas into gameplay view rotation.
+      // Browsers may deliver one or two cursor-recenter deltas after lock is
+      // reacquired. They are not player intent and must never rotate the view.
       this.pointerLockMovementSuppression = POINTER_LOCK_REACQUIRE_SUPPRESSION_EVENTS;
+      this.resetLookFrameBudget();
+      this.lastPresentedFrameTime = performance.now();
       this.paused = false;
       this.titleMode = false;
       void this.audio.unlock();
@@ -4030,7 +4287,15 @@ export class VoxelEngine {
 
   onMouseMove = (event: MouseEvent) => {
     if (!this.locked || document.pointerLockElement !== this.canvas || !this.running || this.gameplayOverlayOpen || this.paused) return;
-    const gate = gatePointerLockMovement(event.movementX, event.movementY, this.pointerLockMovementSuppression);
+    const now = performance.now();
+    const eventTimestamp = Number(event.timeStamp);
+    const eventAgeMs = Number.isFinite(eventTimestamp) && eventTimestamp >= 0 && eventTimestamp <= now + 1_000
+      ? now - eventTimestamp
+      : 0;
+    const gate = gatePointerLockMovement(event.movementX, event.movementY, this.pointerLockMovementSuppression, {
+      eventAgeMs,
+      frameAgeMs: now - this.lastPresentedFrameTime,
+    });
     this.pointerLockMovementSuppression = gate.remainingSuppressedEvents;
     if (!gate.apply) return;
     this.look(event.movementX, event.movementY);
@@ -4199,6 +4464,7 @@ export class VoxelEngine {
     this.spellWheelOpen = false;
     this.offhandUseHeld = false;
     this.localPlayerModel.setOffhandRaised(false);
+    this.resetLookFrameBudget();
   };
   onPageHide = () => this.saveNow(false);
 
@@ -4214,9 +4480,23 @@ export class VoxelEngine {
   };
 
   look(dx: number, dy: number) {
-    this.yaw -= dx * this.settings.sensitivity;
-    this.pitch -= dy * this.settings.sensitivity;
+    const bounded = boundLookDeltaForFrame(
+      dx,
+      dy,
+      this.settings.sensitivity,
+      this.lookDeltaXThisFrame,
+      this.lookDeltaYThisFrame,
+    );
+    this.lookDeltaXThisFrame = bounded.totalX;
+    this.lookDeltaYThisFrame = bounded.totalY;
+    this.yaw -= bounded.deltaX * this.settings.sensitivity;
+    this.pitch -= bounded.deltaY * this.settings.sensitivity;
     this.pitch = clamp(this.pitch, -Math.PI / 2 + 0.04, Math.PI / 2 - 0.04);
+  }
+
+  resetLookFrameBudget() {
+    this.lookDeltaXThisFrame = 0;
+    this.lookDeltaYThisFrame = 0;
   }
 
   cycleCameraMode() {
@@ -4544,6 +4824,181 @@ export class VoxelEngine {
     return this.originPreviewWorld.resolveSettlementOrigin(normalized.origin, traits.waterBreathing, maxRegionRadius);
   }
 
+  /** Deterministic in-engine gallery used by browser visual regression checks. */
+  primeDirectionalPlacementAudit() {
+    this.world.setRenderDistance(5);
+    this.clearEntities();
+    this.inventory = blankInventory();
+    this.selected = 0;
+    const centerX = Math.round(this.position.x);
+    const centerZ = Math.round(this.position.z);
+    const groundY = Math.round(this.position.y - 0.51);
+    const edits: BlockEdit[] = [];
+    for (let x = centerX - 10; x <= centerX + 10; x += 1) for (let z = centerZ - 13; z <= centerZ + 6; z += 1) {
+      edits.push({ x, y: groundY, z, type: BlockId.StoneBrick });
+      for (let y = groundY + 1; y <= groundY + 12; y += 1) edits.push({ x, y, z, type: BlockId.Air });
+    }
+    this.world.setBlocksBatch(edits, true, true);
+
+    const frontZ = centerZ - 5;
+    const place = (dx: number, dy: number, dz: number, type: BlockId, facing: BlockFacing) => {
+      const x = centerX + dx;
+      const y = groundY + 1 + dy;
+      const z = frontZ + dz;
+      this.world.setBlock(x, y, z, type, true, true);
+      this.world.setBlockFacing(x, y, z, facing, true);
+      return `${x},${y},${z}`;
+    };
+
+    // A seamless 2 x 2 rack wall exercises both lateral and vertical joins.
+    for (const [dx, dy] of [[-5, 0], [-4, 0], [-5, 1], [-4, 1]] as const) {
+      this.orbRacks.set(place(dx, dy, 0, BlockId.CaptureOrbRack, BLOCK_FACING_SOUTH), createOrbRack());
+    }
+    const healerKey = place(-1, 0, 0, BlockId.CreatureHealer, BLOCK_FACING_SOUTH);
+    this.healingStations.set(healerKey, createCreatureHealer([], 3, CREATURE_HEALER_GEL_SECONDS / 2));
+    place(2, 0, 0, BlockId.WildwoodTable, BLOCK_FACING_SOUTH);
+    place(5, 0, 0, BlockId.WildwoodShelf, BLOCK_FACING_SOUTH);
+
+    place(-5, 0, -3, BlockId.Chest, BLOCK_FACING_SOUTH);
+    place(-4, 0, -3, BlockId.Chest, BLOCK_FACING_SOUTH);
+    place(-1, 0, -3, BlockId.Furnace, BLOCK_FACING_SOUTH);
+    place(2, 0, -3, BlockId.HearthFireplace, BLOCK_FACING_SOUTH);
+    place(5, 0, -3, BlockId.ArchiveShelf, BLOCK_FACING_SOUTH);
+
+    // Side-facing specimens make the four-way rotation legible in one frame.
+    const auditChestBlock = place(-5, 0, 2, BlockId.Chest, BLOCK_FACING_EAST);
+    place(-2, 0, 2, BlockId.Furnace, BLOCK_FACING_WEST);
+    place(2, 0, 2, BlockId.WildwoodShelf, BLOCK_FACING_EAST);
+    place(5, 0, 2, BlockId.HearthChair, BLOCK_FACING_WEST);
+
+    this.position.set(centerX, groundY + 0.51, centerZ + 3.2);
+    this.spawn.copy(this.position);
+    this.yaw = 0;
+    this.pitch = -0.12;
+    this.worldTime = 0.28;
+    this.visualWorldTime = this.worldTime;
+    this.syncOrbRackVisuals(true);
+    this.emitHud(true);
+    return this.resolveChest(auditChestBlock);
+  }
+
+  /** Deterministic overlook for the grounded underground-liquid regression. */
+  primeCaveLiquidAudit() {
+    this.world.setRenderDistance(5);
+    this.clearEntities();
+    const x = -904;
+    const z = -408;
+    const waterSurfaceY = -44;
+    this.world.initializeAround(x, z);
+    this.world.setBlock(x, waterSurfaceY, z, BlockId.GlasswaterStone, true, true);
+    this.world.setBlock(x - 1, waterSurfaceY + 1, z - 1, BlockId.DeepgearLantern, true, true);
+    this.position.set(x, waterSurfaceY + 0.51, z);
+    this.spawn.copy(this.position);
+    this.yaw = -2.4;
+    this.pitch = -0.16;
+    this.worldTime = 0.18;
+    this.visualWorldTime = this.worldTime;
+    this.emitHud(true);
+  }
+
+  /** Deterministic impact lane for browser review of body separation and wall-safe recoil. */
+  primeCreatureCollisionAudit() {
+    this.world.setRenderDistance(5);
+    this.clearEntities();
+    const centerX = Math.round(this.position.x);
+    const centerZ = Math.round(this.position.z);
+    const groundY = Math.round(this.position.y - 0.51);
+    const edits: BlockEdit[] = [];
+    for (let x = centerX - 8; x <= centerX + 8; x += 1) for (let z = centerZ - 12; z <= centerZ + 4; z += 1) {
+      edits.push({ x, y: groundY, z, type: BlockId.StoneBrick });
+      for (let y = groundY + 1; y <= groundY + 6; y += 1) edits.push({ x, y, z, type: BlockId.Air });
+    }
+    for (let x = centerX - 6; x <= centerX + 6; x += 1) for (let y = groundY + 1; y <= groundY + 3; y += 1) {
+      edits.push({ x, y, z: centerZ - 8, type: BlockId.StoneBrick });
+    }
+    this.world.setBlocksBatch(edits, true, true);
+
+    const specimens = [
+      this.spawnMob("meadow-cottontail", new THREE.Vector3(centerX - 2.2, groundY + MOB_DEFS["meadow-cottontail"].footOffset, centerZ - 5.2), { persistentPoiResident: true, yaw: Math.PI }),
+      this.spawnMob("peelop", new THREE.Vector3(centerX, groundY + MOB_DEFS.peelop.footOffset, centerZ - 5.2), { persistentPoiResident: true, yaw: Math.PI }),
+      this.spawnMob("ridgeback", new THREE.Vector3(centerX + 2.2, groundY + MOB_DEFS.ridgeback.footOffset, centerZ - 5.2), { persistentPoiResident: true, yaw: Math.PI }),
+    ];
+    for (const mob of specimens) {
+      mob.state = "recover";
+      mob.stateTimer = 999;
+      mob.wanderTimer = 999;
+      this.applyMobKnockback(mob, { x: mob.group.position.x, z: centerZ - 2.5 }, 4.1);
+    }
+
+    this.position.set(centerX, groundY + 0.51, centerZ + 1.5);
+    this.spawn.copy(this.position);
+    this.yaw = 0;
+    this.pitch = -0.08;
+    this.worldTime = 0.28;
+    this.visualWorldTime = this.worldTime;
+    this.emitHud(true);
+  }
+
+  /** Opens the deterministic gallery chest without requiring pointer-lock interaction. */
+  primeOpenChestAudit(chestKey: string) {
+    this.activeChestKey = chestKey;
+    this.showChestModel(chestKey);
+    this.chestOpenAmount = 1;
+    if (this.chestLidPivot) this.chestLidPivot.rotation.x = 1.08;
+    this.emitHud(true);
+  }
+
+  /** Deterministic explored chart used to exercise map panning, travel, tracking, and the HUD minimap. */
+  primeMapNavigationAudit(farDestination = false, selectWayshrine = false) {
+    const playerId = this.localPlayerId();
+    const centerChunkX = Math.floor(this.position.x / CHUNK_SIZE);
+    const centerChunkZ = Math.floor(this.position.z / CHUNK_SIZE);
+    const discoveries = [];
+    for (let dz = -7; dz <= 7; dz += 1) for (let dx = -10; dx <= 10; dx += 1) {
+      const water = dx >= 6 || (dx >= 4 && Math.abs(dz) >= 5);
+      const biome = water ? BiomeId.Ocean : dx <= -7 ? BiomeId.Wildwood : dz <= -5 ? BiomeId.Snowfield : BiomeId.Meadow;
+      discoveries.push({
+        x: centerChunkX + dx,
+        z: centerChunkZ + dz,
+        biome,
+        surfaceColors: water ? ["#3e83c6", "#3e83c6", "#3e83c6", "#3e83c6"] as const
+          : biome === BiomeId.Wildwood ? ["#315e3c", "#3f7046", "#426f43", "#2f5d38"] as const
+            : biome === BiomeId.Snowfield ? ["#d4ded8", "#c8d6d1", "#dde6e2", "#bdccc7"] as const
+              : ["#668d52", "#72955b", "#5d8249", "#789b61"] as const,
+      });
+    }
+    this.mapKnowledge = markChunksRendered(createMapKnowledge(`world:${this.world.seedText}`, playerId), discoveries);
+    this.mapKnowledge = discoverNaturalPoi(this.mapKnowledge, {
+      id: "audit:forest-watch",
+      name: "Forest Watch",
+      position: { x: this.position.x - 96, y: this.position.y, z: this.position.z - 48 },
+      playerId,
+      discoveredAt: Date.now() - 2_000,
+      icon: "poi",
+    });
+    const wayshrineId = "wayshrine:audit:crossroads";
+    this.mapKnowledge = placeWayshrine(this.mapKnowledge, {
+      id: wayshrineId,
+      name: "Crossroads Waystone",
+      position: { x: this.position.x + 48, y: this.position.y, z: this.position.z - 32 },
+      playerId,
+      discoveredAt: Date.now() - 1_500,
+      icon: "wayshrine",
+    });
+    const manualId = "manual:audit:far-camp";
+    this.mapKnowledge = placeManualMapMarker(this.mapKnowledge, {
+      id: manualId,
+      name: "Far Camp",
+      position: { x: this.position.x + (farDestination ? 8_000 : 128), y: this.position.y, z: this.position.z + 80 },
+      playerId,
+      discoveredAt: Date.now() - 1_000,
+      icon: "pin",
+    });
+    this.mapKnowledge = bankFastTravelCharges(this.mapKnowledge, 4);
+    this.emitHud(true);
+    return selectWayshrine ? wayshrineId : manualId;
+  }
+
   loadWorld(save: WorldSave, options: Partial<WorldOptions> = save.options ?? {}, worldId: string | null = this.worldStorage.activeWorldId) {
     this.persistent = true;
     this.running = true;
@@ -4566,7 +5021,7 @@ export class VoxelEngine {
       .map(([key, cell]) => [key, { ...cell }]));
     this.oxygenSeconds = DEFAULT_SWIM_RULES.maxOxygenSeconds;
     this.drowningAccumulator = 0;
-    this.world.reset(save.seed, save.edits, generationOptionsFromWorldOptions(this.worldOptions, save.generatorProfile ?? "world-below-v15"));
+    this.world.reset(save.seed, save.edits, generationOptionsFromWorldOptions(this.worldOptions, save.generatorProfile ?? "world-below-v15"), save.blockFacings);
     this.world.restoreSurfaceRoadGraph(save.surfaceRoadGraph);
     this.world.initializeAround(save.player.x, save.player.z);
     this.position.set(save.player.x, save.player.y, save.player.z);
@@ -6723,18 +7178,23 @@ export class VoxelEngine {
   }
 
   private networkBlockEdits(limit = 5200) {
-    const edits: Array<{ x: number; y: number; z: number; type: number }> = [];
+    const edits: BlockEdit[] = [];
     for (const [key, entries] of Object.entries(this.world.serializeEdits())) {
       const [cx, cz] = key.split(",").map(Number);
       if (!Number.isFinite(cx) || !Number.isFinite(cz)) continue;
       for (const [index, type] of entries) {
         const layer = Math.floor(index / (CHUNK_SIZE * CHUNK_SIZE));
         const horizontal = index % (CHUNK_SIZE * CHUNK_SIZE);
+        const x = cx * CHUNK_SIZE + horizontal % CHUNK_SIZE;
+        const y = MIN_Y + layer;
+        const z = cz * CHUNK_SIZE + Math.floor(horizontal / CHUNK_SIZE);
+        const facing = this.worldBlockFacing(x, y, z);
         edits.push({
-          x: cx * CHUNK_SIZE + horizontal % CHUNK_SIZE,
-          y: MIN_Y + layer,
-          z: cz * CHUNK_SIZE + Math.floor(horizontal / CHUNK_SIZE),
+          x,
+          y,
+          z,
           type,
+          ...(facing === 0 ? {} : { facing }),
         });
       }
     }
@@ -6888,6 +7348,20 @@ export class VoxelEngine {
     return edits;
   }
 
+  private facingsFromNetwork(blockEdits: WorldSnapshot["blockEdits"]) {
+    return Object.fromEntries(blockEdits.flatMap((edit) => edit.facing === undefined
+      ? [] : [[blockKey(edit.x, edit.y, edit.z), normalizeBlockFacing(edit.facing)] as const]));
+  }
+
+  private applyBlockEditFacings(blockEdits: readonly BlockEdit[], immediate = false) {
+    const setter = this.world?.setBlockFacing;
+    if (typeof setter !== "function") return;
+    for (const edit of blockEdits) {
+      if (!isDirectionallyPlacedBlock(edit.type as BlockId)) continue;
+      setter.call(this.world, edit.x, edit.y, edit.z, normalizeBlockFacing(edit.facing), immediate);
+    }
+  }
+
   private applyInitialWorldSnapshot(snapshot: WorldSnapshot, hostPeer: PeerInfo) {
     const snapshotProfile = snapshot.generatorProfile ?? "world-below-v15";
     if (snapshot.generatorVersion !== GENERATOR_VERSION
@@ -6910,7 +7384,12 @@ export class VoxelEngine {
     this.multiplayerContainerRevisions.clear();
     this.multiplayerContainerSignatures.clear();
     this.multiplayerContainerAwaiting.clear();
-    this.world.reset(snapshot.seed, this.editsFromNetwork(snapshot.blockEdits), generationOptionsFromWorldOptions(this.worldOptions, snapshotProfile));
+    this.world.reset(
+      snapshot.seed,
+      this.editsFromNetwork(snapshot.blockEdits),
+      generationOptionsFromWorldOptions(this.worldOptions, snapshotProfile),
+      this.facingsFromNetwork(snapshot.blockEdits),
+    );
     const guestPlayerId = this.multiplayer?.identity.id ?? "guest";
     const sessionAuthority = `session:${snapshot.seed}`;
     // A guest enters the host session, never a hybrid of the host terrain and
@@ -6984,6 +7463,7 @@ export class VoxelEngine {
     this.butterflyDensity = this.worldOptions.butterflyDensity;
     if (snapshot.blockEdits.length) {
       this.world.setBlocksBatch(snapshot.blockEdits.map((edit) => ({ ...edit, type: edit.type as BlockId })), true, false);
+      this.applyBlockEditFacings(snapshot.blockEdits, false);
       this.lightRefreshTimer = 0;
     }
     this.worldTime = snapshot.time.worldTime;
@@ -7343,7 +7823,11 @@ export class VoxelEngine {
         ? { ...action, status: "accepted" }
         : {
           ...action,
-          edits: action.edits.map((edit) => ({ ...edit, type: this.world.getBlock(edit.x, edit.y, edit.z) ?? BlockId.Air })),
+          edits: action.edits.map((edit) => {
+            const type = this.world.getBlock(edit.x, edit.y, edit.z) ?? BlockId.Air;
+            const facing = this.worldBlockFacing(edit.x, edit.y, edit.z);
+            return { ...edit, type, ...(isDirectionallyPlacedBlock(type) ? { facing } : {}) };
+          }),
           status: "rejected",
           reason: "The host rejected an out-of-range, occupied, or invalid block edit.",
         };
@@ -7364,6 +7848,7 @@ export class VoxelEngine {
           else this.dropBlockLoot(isTorchBlock(drop.type) ? BlockId.Torch : drop.type, drop.x, drop.y, drop.z);
         }
         this.world.setBlocksBatch(action.edits.map((edit) => ({ ...edit, type: edit.type as BlockId })), true, true);
+        this.applyBlockEditFacings(action.edits, true);
         this.publishDestructionTombstones(action.edits
           .filter((edit) => edit.type === BlockId.Air)
           .map((edit) => ({ kind: "block" as const, cause: "broken" as const, block: { x: edit.x, y: edit.y, z: edit.z } })));
@@ -7389,6 +7874,7 @@ export class VoxelEngine {
       this.pendingGuestPlacementRequests.delete(action.requestId);
       if (action.status === "accepted" && action.actorId !== this.multiplayer.identity.id && action.effect?.kind === "tree-fell") this.animateNetworkTreeFell(action);
       this.world.setBlocksBatch(action.edits.map((edit) => ({ ...edit, type: edit.type as BlockId })), true, true);
+      this.applyBlockEditFacings(action.edits, true);
       for (const edit of action.edits) if (edit.type === BlockId.Chest) {
         const key = blockKey(edit.x, edit.y, edit.z);
         if (!this.chests.has(key) && !this.chestStorageKey(key).includes("|")) this.chests.set(key, Array.from({ length: 27 }, () => null));
@@ -8651,6 +9137,10 @@ export class VoxelEngine {
       mob.hurtTimer = 0.32;
       mob.fleeTimer = mob.hostile ? 0.45 : 3.2;
       mob.awarenessTimer = Math.max(mob.awarenessTimer, 4.5);
+      const impactStrength = action.attack === "ranged"
+        ? 2.2
+        : definition?.toolKind === "sword" ? 4.1 : 2.8;
+      this.applyMobKnockback(mob, actorPose, impactStrength);
       const killed = mob.health <= 0;
       const result: CombatAction = { ...action, status: "accepted", resultingHealth: mob.health, killed };
       this.multiplayerCombatCooldowns.set(action.actorId, cooldown);
@@ -8721,7 +9211,8 @@ export class VoxelEngine {
     }
     let resultingHealth = 0;
     if (action.targetId === session.identity.id) {
-      this.applyCombatEventToLocalPlayer(event, "Another player's strike");
+      const applied = this.applyCombatEventToLocalPlayer(event, "Another player's strike");
+      if (applied) this.applyPlayerKnockback(actorPose, action.attack === "ranged" ? 1.65 : 2.35);
       resultingHealth = this.health;
     } else {
       const healthMutation = event.mutations.find((mutation) => mutation.kind === "health" && mutation.actor.kind === "player" && mutation.actor.id === action.targetId);
@@ -8747,7 +9238,9 @@ export class VoxelEngine {
     }
     if (this.multiplayer.role !== "guest" || action.status !== "accepted") return;
     if (action.targetKind === "player" && action.targetId === this.multiplayer.identity.id) {
-      this.audio.play("hurt");
+      this.playPlayerDamageSound();
+      const attacker = this.remotePlayers.get(action.actorId)?.target;
+      if (attacker) this.applyPlayerKnockback(attacker, action.attack === "ranged" ? 1.65 : 2.35);
       if (action.resultingHealth !== undefined) this.health = clamp(action.resultingHealth, 0, 10);
       if (action.killed) {
         this.position.copy(this.spawn);
@@ -9290,13 +9783,25 @@ export class VoxelEngine {
     return block;
   }
 
+  worldBlockFacing(x: number, y: number, z: number): BlockFacing {
+    const resolver = this.world?.blockFacingAt;
+    return typeof resolver === "function" ? normalizeBlockFacing(resolver.call(this.world, x, y, z)) : 0;
+  }
+
   resolveChest(block: string) {
     const existing = this.chestStorageKey(block);
     if (existing.includes("|")) return existing;
     const [x, y, z] = block.split(",").map(Number);
-    const neighbor = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+    const facing = this.worldBlockFacing(x, y, z);
+    const right = blockFacingRight(facing);
+    const neighbor = [[right.x, right.z], [-right.x, -right.z]]
       .map(([dx, dz]) => blockKey(x + dx, y, z + dz))
-      .find((candidate) => this.world.getBlock(...candidate.split(",").map(Number) as [number, number, number]) === BlockId.Chest && !this.chestStorageKey(candidate).includes("|"));
+      .find((candidate) => {
+        const [candidateX, candidateY, candidateZ] = candidate.split(",").map(Number) as [number, number, number];
+        return this.world.getBlock(candidateX, candidateY, candidateZ) === BlockId.Chest
+          && this.worldBlockFacing(candidateX, candidateY, candidateZ) === facing
+          && !this.chestStorageKey(candidate).includes("|");
+      });
     if (!neighbor) {
       if (!this.chests.has(block)) this.chests.set(block, this.generateChestLoot(block));
       return block;
@@ -9326,21 +9831,29 @@ export class VoxelEngine {
     const lidDepth = layout.lidDepth;
     const group = new THREE.Group();
     group.position.set(x, y, z);
-    group.rotation.y = layout.rotationY;
+    const facing = this.worldBlockFacing(positions[0][0], positions[0][1], positions[0][2]);
+    const right = blockFacingRight(facing);
+    const pairMatchesFacing = positions.length < 2 || Math.abs((positions[1][0] - positions[0][0]) * right.z - (positions[1][2] - positions[0][2]) * right.x) < 0.001;
+    group.rotation.y = pairMatchesFacing ? blockFacingYaw(facing) : layout.rotationY;
     const wood = new THREE.MeshLambertMaterial({ map: this.world.atlas, color: 0xffffff });
     const base = new THREE.Mesh(createAtlasBlockGeometry(BlockId.Chest), wood);
-    base.scale.set(bodyWidth, 0.63, bodyDepth);
-    base.position.y = -0.185;
+    base.scale.set(bodyWidth, CHEST_VISUAL.bodyTop - CHEST_VISUAL.bodyBottom, bodyDepth);
+    base.position.y = (CHEST_VISUAL.bodyBottom + CHEST_VISUAL.bodyTop) / 2;
     group.add(base);
-    const latch = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.22, 0.07), new THREE.MeshLambertMaterial({ color: 0xe0b54e }));
-    latch.position.set(0, 0.135, -bodyDepth / 2 - 0.045);
-    group.add(latch);
+    const latchMaterial = new THREE.MeshLambertMaterial({ map: this.world.atlas, color: 0xffffff });
+    for (const centerX of chestLatchCenters(layout.large)) {
+      const latch = new THREE.Mesh(createAtlasBlockGeometry(BlockId.GoldBlock), latchMaterial);
+      latch.scale.set(CHEST_VISUAL.latchWidth, CHEST_VISUAL.latchTop - CHEST_VISUAL.latchBottom, CHEST_VISUAL.latchDepth);
+      latch.position.set(centerX, (CHEST_VISUAL.latchBottom + CHEST_VISUAL.latchTop) / 2, CHEST_VISUAL.latchCenterZ);
+      latch.name = "wildwood-chest-latch";
+      group.add(latch);
+    }
     const pivot = new THREE.Group();
-    pivot.position.set(0, 0.16, lidDepth / 2);
+    pivot.position.set(0, CHEST_VISUAL.lidBottom, lidDepth / 2);
     const lidMaterial = new THREE.MeshLambertMaterial({ map: this.world.atlas, color: 0xffffff });
     const lid = new THREE.Mesh(createAtlasBlockGeometry(BlockId.Chest), lidMaterial);
-    lid.scale.set(lidWidth, 0.21, lidDepth);
-    lid.position.set(0, 0.105, -lidDepth / 2);
+    lid.scale.set(lidWidth, CHEST_VISUAL.lidTop - CHEST_VISUAL.lidBottom, lidDepth);
+    lid.position.set(0, (CHEST_VISUAL.lidTop - CHEST_VISUAL.lidBottom) / 2, -lidDepth / 2);
     pivot.add(lid);
     group.add(pivot);
     this.scene.add(group);
@@ -10868,6 +11381,7 @@ export class VoxelEngine {
         slot.count -= moved;
         if (slot.count <= 0) this.inventory[index] = null;
         this.audio.play("craft");
+        this.syncOrbRackVisuals(true);
         this.saveSoon();
         this.emitHud(true);
         return;
@@ -10886,6 +11400,7 @@ export class VoxelEngine {
         const target = station?.slots.findIndex((entry) => !entry) ?? -1;
         if (!station || target < 0) { this.events.onToast("The Healing Station is full."); return; }
         this.healingStations.set(this.activeHealingStationKey!, setHealerOrb(station, target, orb));
+        this.syncOrbRackVisuals(true);
       }
       slot.count -= 1;
       if (slot.count <= 0) this.inventory[index] = null;
@@ -11712,23 +12227,45 @@ export class VoxelEngine {
   }
 
   orbStationMachineClick(machine: "orb-rack" | "healing-station", index: number, button: "left" | "right", shift: boolean) {
-    if (index < 0 || index >= CAPTURE_ORB_RACK_SIZE) return;
     const key = machine === "orb-rack" ? this.activeOrbRackKey : this.activeHealingStationKey;
     if (!key) return;
     const rack = machine === "orb-rack" ? this.orbRacks.get(key) : this.healingStations.get(key);
     if (!rack) return;
-    if (machine === "healing-station" && this.cursor?.item === Item.CaveGel) {
+
+    // The healer's gel tank is an explicit pseudo-slot at -1. It behaves like
+    // a normal reversible inventory slot instead of hiding fuel insertion on
+    // top of the four unrelated orb cards.
+    if (machine === "healing-station" && index === -1) {
       const healer = rack as CreatureHealerState;
-      const moved = Math.min(button === "right" ? 1 : this.cursor.count, CREATURE_HEALER_GEL_CAP - healer.gelUnits);
-      if (moved <= 0) return;
-      this.healingStations.set(key, { ...healer, gelUnits: healer.gelUnits + moved });
-      this.cursor.count -= moved;
-      if (this.cursor.count <= 0) this.cursor = null;
-      this.audio.play("craft");
+      let moved = 0;
+      if (this.cursor?.item === Item.CaveGel) {
+        moved = Math.min(button === "right" ? 1 : this.cursor.count, CREATURE_HEALER_GEL_CAP - healer.gelUnits);
+        if (moved <= 0) { this.events.onToast("The healing station's Cave Gel reserve is full."); return; }
+        this.cursor.count -= moved;
+        if (this.cursor.count <= 0) this.cursor = null;
+        this.healingStations.set(key, { ...healer, gelUnits: healer.gelUnits + moved });
+        this.audio.play("craft");
+      } else if (this.cursor) {
+        this.events.onToast("This reservoir accepts Cave Gel. The four numbered sockets accept Capture Orbs.");
+        return;
+      } else if (healer.gelUnits > 0) {
+        if (shift) {
+          moved = healer.gelUnits - this.addItem(Item.CaveGel, healer.gelUnits, undefined, MAIN_THEN_HOTBAR);
+        } else {
+          moved = button === "right" ? 1 : Math.min(healer.gelUnits, maxStack(Item.CaveGel));
+          this.cursor = { item: Item.CaveGel, count: moved };
+        }
+        if (moved <= 0) { this.events.onToast("Make room in your pack before withdrawing Cave Gel."); return; }
+        this.healingStations.set(key, { ...healer, gelUnits: healer.gelUnits - moved });
+        this.audio.play("pickup");
+      } else return;
+      this.syncOrbRackVisuals(true);
       this.saveSoon();
       this.emitHud(true);
       return;
     }
+    const capacity = machine === "orb-rack" ? CAPTURE_ORB_RACK_SIZE : CREATURE_HEALER_SIZE;
+    if (index < 0 || index >= capacity) return;
     const existing = rack.slots[index] ?? null;
     if (shift && existing) {
       const slot = captureOrbInventorySlot(existing);
@@ -11737,14 +12274,20 @@ export class VoxelEngine {
         this.orbRacks.set(key, setRackOrb(rack as OrbRackState, index, null));
         this.syncOrbRackVisuals(true);
       }
-      else this.healingStations.set(key, setHealerOrb(rack as CreatureHealerState, index, null));
+      else {
+        this.healingStations.set(key, setHealerOrb(rack as CreatureHealerState, index, null));
+        this.syncOrbRackVisuals(true);
+      }
     } else if (!this.cursor && existing) {
       this.cursor = captureOrbInventorySlot(existing);
       if (machine === "orb-rack") {
         this.orbRacks.set(key, setRackOrb(rack as OrbRackState, index, null));
         this.syncOrbRackVisuals(true);
       }
-      else this.healingStations.set(key, setHealerOrb(rack as CreatureHealerState, index, null));
+      else {
+        this.healingStations.set(key, setHealerOrb(rack as CreatureHealerState, index, null));
+        this.syncOrbRackVisuals(true);
+      }
     } else if (this.cursor) {
       const incoming = captureOrbUnitFromInventorySlot(this.cursor);
       if (!incoming) { this.events.onToast("This slot accepts one Waykeeper Capture Orb."); return; }
@@ -11762,7 +12305,10 @@ export class VoxelEngine {
         this.orbRacks.set(key, setRackOrb(rack as OrbRackState, index, incoming));
         this.syncOrbRackVisuals(true);
       }
-      else this.healingStations.set(key, setHealerOrb(rack as CreatureHealerState, index, incoming));
+      else {
+        this.healingStations.set(key, setHealerOrb(rack as CreatureHealerState, index, incoming));
+        this.syncOrbRackVisuals(true);
+      }
     } else return;
     this.audio.play("ui");
     this.saveSoon();
@@ -12212,15 +12758,6 @@ export class VoxelEngine {
         this.saplings.set(key, now + ORCHARD_REGROWTH_BASE_MS + Math.random() * ORCHARD_REGROWTH_JITTER_MS);
         continue;
       }
-      if (isWaterloggedFloraBlock(current)) {
-        const growth = planAquaticGrowth(current, { x, y, z }, (bx, by, bz) => this.world.getBlock(bx, by, bz));
-        this.saplings.delete(key);
-        if (!growth) continue;
-        this.world.setBlock(growth.x, growth.y, growth.z, growth.type, true, true);
-        this.publishBlockEdits([{ x: growth.x, y: growth.y, z: growth.z, type: growth.type }], "place");
-        this.schedulePlantGrowth(growth.x, growth.y, growth.z, growth.type, growth.y - y + 1);
-        continue;
-      }
       const plant = plantProfileForBlock(current);
       if (plant) {
         const soil = this.world.getBlock(x, y - 1, z);
@@ -12241,6 +12778,15 @@ export class VoxelEngine {
         this.world.setBlock(x, y, z, next, true, true);
         this.publishBlockEdits([{ x, y, z, type: next }], "place");
         this.schedulePlantGrowth(x, y, z, next, plant.stage + 1);
+        continue;
+      }
+      if (isWaterloggedFloraBlock(current)) {
+        const growth = planAquaticGrowth(current, { x, y, z }, (bx, by, bz) => this.world.getBlock(bx, by, bz));
+        this.saplings.delete(key);
+        if (!growth) continue;
+        this.world.setBlock(growth.x, growth.y, growth.z, growth.type, true, true);
+        this.publishBlockEdits([{ x: growth.x, y: growth.y, z: growth.z, type: growth.type }], "place");
+        this.schedulePlantGrowth(growth.x, growth.y, growth.z, growth.type, growth.y - y + 1);
         continue;
       }
       if (![BlockId.WildwoodSapling, BlockId.JungleSapling, BlockId.SakuraSapling, BlockId.CandywoodSapling].includes(current)) { this.saplings.delete(key); continue; }
@@ -12424,6 +12970,7 @@ export class VoxelEngine {
     const now = Date.now();
     const maximum = Math.min(8, entries.length);
     let meaningfulChange = false;
+    let hudChange = false;
     for (let offset = 0; offset < maximum; offset += 1) {
       const entry = entries[(this.persistentMachineCursor + offset) % entries.length];
       const previous = this.persistentMachineLastStep.get(entry.key) ?? now;
@@ -12473,6 +13020,9 @@ export class VoxelEngine {
         if (!station) continue;
         const result = stepCreatureHealer(station, elapsed);
         this.healingStations.set(entry.key, result.state);
+        if (result.gelUsed > 0) meaningfulChange = true;
+        if (this.activeHealingStationKey === entry.key
+          && (result.state.gelFuelSeconds !== station.gelFuelSeconds || result.state.healClock !== station.healClock)) hudChange = true;
         if (result.healed > 0) {
           meaningfulChange = true;
           const [x, y, z] = entry.key.split(",").map(Number);
@@ -12511,7 +13061,7 @@ export class VoxelEngine {
     if (meaningfulChange) {
       this.saveSoon();
       this.emitHud(true);
-    }
+    } else if (hudChange) this.emitHud(true);
   }
 
   pickTarget() {
@@ -12616,6 +13166,7 @@ export class VoxelEngine {
     if (next.tamed && next.stage >= 3) this.recordBestiaryMilestone(mob.kind, "stage-3");
     this.applyMobScale(mob, next.growthScale);
     applyDragonLifeStage(mob.visual, next.stage);
+    applyDragonVariant(mob.visual, next.variant);
     const visibleFor = (fragment: string, visible: boolean) => mob.visual.traverse((object) => {
       if (object.name.includes(fragment)) object.visible = visible;
     });
@@ -12667,15 +13218,19 @@ export class VoxelEngine {
       this.saplings.set(blockKey(x, y, z), now + (95_000 + Math.random() * 80_000) * PLANT_GROWTH_TIME_MULTIPLIER);
       return;
     }
+    const soil = this.world.getBlock(x, y - 1, z);
+    const delay = growthDelaySeconds(type, soil === BlockId.HydratedFarmland, this.world.seedText, { x, y, z }, cycle);
+    if (delay !== null) {
+      if (nextPlantStage(type) !== null) this.saplings.set(blockKey(x, y, z), now + delay * 1000);
+      else this.saplings.delete(blockKey(x, y, z));
+      return;
+    }
     if (isWaterloggedFloraBlock(type)) {
       const hash = Math.abs(Math.imul(x ^ Math.imul(y, 31) ^ Math.imul(z, 131) ^ cycle, 0x45d9f3b));
       this.saplings.set(blockKey(x, y, z), now + (50_000 + (hash % 70_000)) * PLANT_GROWTH_TIME_MULTIPLIER);
       return;
     }
-    const soil = this.world.getBlock(x, y - 1, z);
-    const delay = growthDelaySeconds(type, soil === BlockId.HydratedFarmland, this.world.seedText, { x, y, z }, cycle);
-    if (delay !== null && nextPlantStage(type) !== null) this.saplings.set(blockKey(x, y, z), now + delay * 1000);
-    else this.saplings.delete(blockKey(x, y, z));
+    this.saplings.delete(blockKey(x, y, z));
   }
 
   applyHarvest(x: number, y: number, z: number, type: BlockId, useScythe: boolean) {
@@ -12746,6 +13301,7 @@ export class VoxelEngine {
         ...(mob.apiaryBee ? { apiaryBee: mob.apiaryBee } : {}),
         ...(mob.socialGroupId ? { socialGroupId: mob.socialGroupId } : {}),
         ...(mob.peelopShedding ? { peelopShedding: mob.peelopShedding } : {}),
+        ...(mob.mythicShed ? { mythicShed: mob.mythicShed } : {}),
         ...(MILKABLE_MOB_KINDS.has(mob.kind) && mob.milkCooldown > 0 ? { milkCooldown: mob.milkCooldown } : {}),
         ...(mob.kind === "woolhorn" && mob.woolRegrowSeconds > 0 ? { woolRegrowSeconds: mob.woolRegrowSeconds } : {}),
         ...(mob.followCommand !== "follow" ? { followCommand: mob.followCommand } : {}),
@@ -12775,9 +13331,11 @@ export class VoxelEngine {
     if (!mob.legendaryEncounterId || !mob.legendarySiteId) return false;
     const current = this.legendaryEncounters.get(mob.legendarySiteId)
       ?? createLegendaryEncounterState(mob.legendaryEncounterId, mob.legendarySiteId);
+    const mythicSite = mythicSiteByEncounterId(mob.legendaryEncounterId);
+    const recoveryPolicy = mythicSite ? mythicRecoveryPolicyForSite(mythicSite.id) : undefined;
     const next = current.status === "resolved" && current.outcome === "capture" && current.custodyEntityId
       ? transferLegendaryCustody(current, current.custodyEntityId, custodyEntityId)
-      : resolveLegendaryEncounter(current, "capture", custodyEntityId);
+      : resolveLegendaryEncounter(current, "capture", custodyEntityId, this.day, recoveryPolicy);
     if (next === current) return false;
     this.legendaryEncounters.set(mob.legendarySiteId, next);
     this.events.onToast(`${mob.name}'s legendary capture is now the only living custody reference for this world.`);
@@ -12825,7 +13383,8 @@ export class VoxelEngine {
   private resolveLegendaryOutcome(mob: MobEntity, outcome: Exclude<LegendaryOutcome, "capture">) {
     if (!mob.legendarySiteId || !mob.legendaryEncounterId || this.multiplayer?.role === "guest") return false;
     const current = this.legendaryEncounters.get(mob.legendarySiteId) ?? createLegendaryEncounterState(mob.legendaryEncounterId, mob.legendarySiteId);
-    const next = resolveLegendaryEncounter(current, outcome);
+    const mythicSite = mythicSiteByEncounterId(mob.legendaryEncounterId);
+    const next = resolveLegendaryEncounter(current, outcome, null, this.day, mythicSite ? mythicRecoveryPolicyForSite(mythicSite.id) : undefined);
     if (next === current) return false;
     this.legendaryEncounters.set(mob.legendarySiteId, next);
     this.dispatchGuildEvent("choiceOutcome", 1, `legendary-outcome:${mob.legendaryEncounterId}:${outcome}`, { encounterId: mob.legendaryEncounterId });
@@ -13067,6 +13626,7 @@ export class VoxelEngine {
       apiaryBee: metadata.custom.apiaryBee ? metadata.custom.apiaryBee as unknown as ApiaryBee : null,
       socialGroupId: typeof metadata.custom.socialGroupId === "string" ? metadata.custom.socialGroupId : null,
       peelopShedding: metadata.custom.peelopShedding ? metadata.custom.peelopShedding as unknown as PeelopSheddingState : null,
+      mythicShed: metadata.custom.mythicShed ? metadata.custom.mythicShed as unknown as MythicShedState : null,
       milkCooldown: MILKABLE_MOB_KINDS.has(metadata.kind) ? Math.max(0, Number(metadata.custom.milkCooldown) || 0) : 0,
       woolRegrowSeconds: metadata.kind === "woolhorn" ? Math.max(0, Number(metadata.custom.woolRegrowSeconds) || 0) : 0,
       persistentPoiResident: Boolean(metadata.custom.persistentPoiResident),
@@ -15508,7 +16068,7 @@ export class VoxelEngine {
   }
 
   toggleSeat(x: number, y: number, z: number, block: BlockId) {
-    const anchor = seatAnchorForBlock(block, x, y, z);
+    const anchor = seatAnchorForBlock(block, x, y, z, this.worldBlockFacing(x, y, z));
     if (!anchor) return false;
     if (this.seatedAt?.x === anchor.x && this.seatedAt.y === anchor.y && this.seatedAt.z === anchor.z) {
       this.leaveSeat(true);
@@ -15545,7 +16105,7 @@ export class VoxelEngine {
     let replacedUpper: BlockId | undefined;
     let replacedPartner: BlockId | undefined;
     let type = requestedType;
-    let placedEdits: Array<{ x: number; y: number; z: number; type: BlockId }>;
+    let placedEdits: Array<{ x: number; y: number; z: number; type: BlockId; facing?: BlockFacing }>;
     if (current === undefined || (!BLOCKS[current]?.replaceable && current !== BlockId.Air)) return;
     if (requestedType === BlockId.ButterflyExhibit) {
       const connectedBlocks = new Set<string>();
@@ -15630,8 +16190,10 @@ export class VoxelEngine {
       ];
       this.world.setBlocksBatch(placedEdits, true, true);
     } else {
-      placedEdits = [{ x, y, z, type }];
+      const facing = isDirectionallyPlacedBlock(type) ? blockFacingForYaw(this.yaw) : undefined;
+      placedEdits = [{ x, y, z, type, ...(facing === undefined ? {} : { facing }) }];
       this.world.setBlock(x, y, z, type, true, true);
+      if (facing !== undefined) this.world.setBlockFacing?.(x, y, z, facing, true);
     }
     const occupiedRemote = BLOCKS[type].solid && placedEdits.some((edit) => [...(this.remotePlayers?.values() ?? [])].some((remote) => blockEditIntersectsPlayer(edit, remote.target, PLAYER_HEIGHT * playerVariantHeightScale(remote.target.variant ?? "male"))));
     if (BLOCKS[type].solid && (this.collidesAt(this.position) || occupiedRemote)) {
@@ -15660,7 +16222,10 @@ export class VoxelEngine {
     if (type === BlockId.ChrysalisLoom) this.morphLooms.set(placedKey, createOrbMorphLoom());
     if (type === BlockId.CaptureOrbRack) this.orbRacks.set(placedKey, createOrbRack());
     if (type === BlockId.CaptureOrbRack) this.syncOrbRackVisuals(true);
-    if (type === BlockId.CreatureHealer) this.healingStations.set(placedKey, createCreatureHealer());
+    if (type === BlockId.CreatureHealer) {
+      this.healingStations.set(placedKey, createCreatureHealer());
+      this.syncOrbRackVisuals(true);
+    }
     if (type === BlockId.FieldPerch) this.fieldPerches.set(placedKey, createFieldPerchState());
     if (type === BlockId.AlchemyStand) this.alchemyStands.set(placedKey, createAlchemyStand());
     if (type === BlockId.Distillery) this.distilleries.set(placedKey, createDistillery());
@@ -15961,6 +16526,7 @@ export class VoxelEngine {
       }
       this.healingStations.delete(key);
       this.persistentMachineLastStep.delete(key);
+      this.syncOrbRackVisuals(true);
     }
     if (type === BlockId.FieldPerch) {
       const state = this.fieldPerches.get(key);
@@ -16130,6 +16696,7 @@ export class VoxelEngine {
       }
       this.healingStations.delete(key);
       this.persistentMachineLastStep.delete(key);
+      this.syncOrbRackVisuals(true);
     }
     if (type === BlockId.FieldPerch) {
       const state = this.fieldPerches.get(key);
@@ -16735,6 +17302,7 @@ export class VoxelEngine {
       const candidate = this.collisionCandidate.set(this.position.x + sx, this.position.y + sy, this.position.z + sz);
       const edgeBlocked = this.crouching && this.grounded && !dy
         && !this.collidesAt(this.collisionSupport.set(candidate.x, candidate.y - 0.12, candidate.z), this.currentPlayerHeight());
+      if (!dy) this.pushMobsFromPlayer(candidate, this.currentPlayerHeight());
       const creatureBlocked = !dy && this.playerIntersectsSolidMob(candidate, this.currentPlayerHeight(), true);
       if (!this.collidesAt(candidate) && !edgeBlocked && !creatureBlocked) this.position.copy(candidate);
       else {
@@ -16797,12 +17365,36 @@ export class VoxelEngine {
       }
       const definition = BLOCKS[type];
       if (definition?.solid) {
+        if (["table", "shelf", "archive-shelf", "fireplace"].includes(definition.shape ?? "")) {
+          if (this.playerIntersectsFurnitureCell(position, x, y, z, type, height)) return true;
+          continue;
+        }
         const bottom = y - 0.5;
         const top = bottom + (definition.collisionHeight ?? 1);
         if (position.y + height > bottom && position.y < top) return true;
       }
     }
     return false;
+  }
+
+  playerIntersectsFurnitureCell(position: THREE.Vector3, x: number, y: number, z: number, type: BlockId, height = this.currentPlayerHeight()) {
+    const shape = BLOCKS[type]?.shape;
+    const bounds = shape === "table" ? { x0: -0.48, x1: 0.48, y1: 0.42, z0: -0.42, z1: 0.42 }
+      : shape === "fireplace" ? { x0: -0.5, x1: 0.5, y1: 0.48, z0: -0.4, z1: 0.4 }
+        : shape === "archive-shelf" ? { x0: -0.48, x1: 0.48, y1: 0.5, z0: -0.24, z1: 0.24 }
+          : shape === "shelf" ? { x0: -0.47, x1: 0.47, y1: 0.5, z0: -0.2, z1: 0.2 }
+            : null;
+    if (!bounds) return true;
+    const facing = this.worldBlockFacing(x, y, z);
+    const corner0 = rotateBlockOffset(bounds.x0, bounds.z0, facing);
+    const corner1 = rotateBlockOffset(bounds.x1, bounds.z1, facing);
+    const blockMinX = x + Math.min(corner0.x, corner1.x);
+    const blockMaxX = x + Math.max(corner0.x, corner1.x);
+    const blockMinZ = z + Math.min(corner0.z, corner1.z);
+    const blockMaxZ = z + Math.max(corner0.z, corner1.z);
+    return position.x + PLAYER_RADIUS > blockMinX && position.x - PLAYER_RADIUS < blockMaxX
+      && position.y + height > y - 0.5 && position.y < y + bounds.y1
+      && position.z + PLAYER_RADIUS > blockMinZ && position.z - PLAYER_RADIUS < blockMaxZ;
   }
 
   playerIntersectsDoorCell(position: THREE.Vector3, x: number, y: number, z: number, type: BlockId, height = this.currentPlayerHeight()) {
@@ -16999,8 +17591,9 @@ export class VoxelEngine {
     this.gainSkillExperience("survival", Math.min(8, 1 + finalAmount * 1.5));
     if (armor > 0 && !bypassArmor) this.damageArmor();
     this.playerInvulnerability = 0.7;
-    if (feedback === "direct" && typeof this.audio.playSample === "function") this.audio.playSample("playerDirectDamage", { gain: 0.78 });
+    if (feedback === "direct") this.playPlayerDamageSound();
     else this.audio.play("hurt");
+    if (feedback === "direct" && attackerMob) this.applyPlayerKnockback(attackerMob.group.position, this.playerImpactStrengthForMob(attackerMob));
     this.events.onToast(`${source[0].toUpperCase()}${source.slice(1)} cost ${finalAmount} ${finalAmount === 1 ? "heart" : "hearts"}.`);
     if (this.health <= 0) this.respawn(true);
   }
@@ -18816,8 +19409,8 @@ export class VoxelEngine {
   requestFastTravel(markerId: string) {
     if (this.fastTravelChannel?.status === "channeling") return false;
     const destination = this.mapKnowledge.markers.find((marker) => marker.id === markerId);
-    if (!destination || destination.kind === "manual") {
-      this.events.onToast("Manual pins are waypoints only; travel needs a known POI, bed, or wayshrine.");
+    if (!destination) {
+      this.events.onToast("That map destination is no longer available.");
       return false;
     }
     const originShrine = this.mapKnowledge.markers.find((marker) => marker.kind === "wayshrine"
@@ -18831,7 +19424,9 @@ export class VoxelEngine {
     }, this.position, this.worldSimulationSeconds(), this.damageRevision);
     if (!begun.ok) {
       this.events.onToast(begun.reason === "no-banked-travel"
-        ? "Brew and drink a Wayskip Draught to bank a map journey. Wayshrine-to-wayshrine travel is free."
+        ? destination.kind === "manual"
+          ? "Custom destinations cost two banked journeys. Brew and drink another Wayskip Draught."
+          : "Brew and drink a Wayskip Draught to bank a map journey. Wayshrine-to-wayshrine travel is free."
         : "That destination is not available from here.");
       return false;
     }
@@ -18870,7 +19465,7 @@ export class VoxelEngine {
     this.position.set(x, ground + 0.51, z);
     this.velocity.set(0, 0, 0);
     this.world.scheduleAround(x, z, true);
-    this.events.onToast(`Arrived · ${committed.chargeSpent ? "one banked journey spent" : "wayshrine network"}.`);
+    this.events.onToast(`Arrived · ${committed.chargeSpent ? `${committed.chargeSpent} banked ${committed.chargeSpent === 1 ? "journey" : "journeys"} spent` : "wayshrine network"}.`);
     this.spawnParticles(x, ground + 1, z, BlockId.CrystalBlock, 18);
     this.audio.play("craft");
     this.saveSoon();
@@ -20043,54 +20638,110 @@ export class VoxelEngine {
     }
   }
 
-  createOrbRackVisual(key: string, state: OrbRackState) {
+  createCaptureOrbDisplayVisual(orb: CaptureOrb, index: number) {
+    const color = orb.creature ? MOB_DEFS[orb.creature.kind].colors[0] : 0x9bded9;
+    const group = new THREE.Group();
+    group.name = `capture-orb-display-${index}`;
+    const shell = new THREE.Mesh(
+      new THREE.DodecahedronGeometry(0.07, 0),
+      new THREE.MeshLambertMaterial({ color, emissive: orb.creature ? new THREE.Color(color).multiplyScalar(0.14) : new THREE.Color(0x132e30) }),
+    );
+    shell.name = `capture-orb-shell-${index}`;
+    group.add(shell);
+    for (const [name, rotation] of [
+      ["equator", [Math.PI / 2, 0, 0]],
+      ["meridian", [0, Math.PI / 2, 0]],
+    ] as const) {
+      const band = new THREE.Mesh(new THREE.TorusGeometry(0.071, 0.009, 4, 12), new THREE.MeshLambertMaterial({ color: 0x574d52 }));
+      band.name = `capture-orb-${name}-${index}`;
+      band.rotation.set(rotation[0], rotation[1], rotation[2]);
+      group.add(band);
+    }
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.025, 0.04), new THREE.MeshLambertMaterial({ color: 0xd6b45b }));
+    cap.name = `capture-orb-cap-${index}`;
+    cap.position.y = 0.078;
+    group.add(cap);
+    const rune = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.028, 0.012), new THREE.MeshBasicMaterial({ color: orb.creature ? 0xf6fff4 : 0xc8fff5 }));
+    rune.name = `capture-orb-rune-${index}`;
+    rune.position.z = -0.072;
+    rune.rotation.z = Math.PI / 4;
+    group.add(rune);
+    return group;
+  }
+
+  createOrbStationVisual(key: string, state: OrbRackState | CreatureHealerState, machine: "orb-rack" | "healing-station") {
     const position = blockPositionFromKey(key);
     const group = new THREE.Group();
-    group.name = `orb-rack-contents:${key}`;
+    group.name = `${machine}-contents:${key}`;
     if (!position) return group;
     group.position.set(position.x, position.y, position.z);
-    const offsets = [-0.27, -0.09, 0.09, 0.27];
+    group.rotation.y = blockFacingYaw(this.worldBlockFacing(position.x, position.y, position.z));
+    const offsets = machine === "orb-rack"
+      ? [
+        [-0.27, -0.055, 0], [-0.09, -0.055, 0], [0.09, -0.055, 0], [0.27, -0.055, 0],
+        [-0.27, 0.295, 0], [-0.09, 0.295, 0], [0.09, 0.295, 0], [0.27, 0.295, 0],
+      ] as const
+      : [
+        [-0.23, 0.22, -0.22], [0.23, 0.22, -0.22], [-0.23, 0.22, 0.22], [0.23, 0.22, 0.22],
+      ] as const;
     state.slots.forEach((orb, index) => {
       if (!orb || index >= offsets.length) return;
-      const color = orb.creature ? MOB_DEFS[orb.creature.kind].colors[0] : 0x9bded9;
-      const shell = new THREE.Mesh(
-        new THREE.DodecahedronGeometry(0.07, 0),
-        new THREE.MeshLambertMaterial({ color, emissive: orb.creature ? new THREE.Color(color).multiplyScalar(0.14) : new THREE.Color(0x132e30) }),
-      );
-      shell.name = `rack-orb-${index}`;
-      shell.position.set(offsets[index], 0.405, 0);
-      const band = new THREE.Mesh(new THREE.TorusGeometry(0.071, 0.011, 4, 12), new THREE.MeshLambertMaterial({ color: 0x574d52 }));
-      band.rotation.x = Math.PI / 2;
-      shell.add(band);
-      if (orb.creature) {
-        const core = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.035, 0.075), new THREE.MeshBasicMaterial({ color: 0xf6fff4 }));
-        shell.add(core);
-      }
-      group.add(shell);
+      const orbVisual = this.createCaptureOrbDisplayVisual(orb, index);
+      const offset = offsets[index];
+      orbVisual.position.set(offset[0], offset[1], offset[2]);
+      group.add(orbVisual);
     });
+    if (machine === "healing-station") {
+      const healer = state as CreatureHealerState;
+      const gelEquivalent = healer.gelUnits + healer.gelFuelSeconds / CREATURE_HEALER_GEL_SECONDS;
+      if (gelEquivalent > 0) {
+        const fillRatio = Math.min(1, gelEquivalent / CREATURE_HEALER_GEL_CAP);
+        const gel = new THREE.Mesh(
+          new THREE.BoxGeometry(0.48, Math.max(0.025, 0.14 * fillRatio), 0.025),
+          new THREE.MeshBasicMaterial({ color: 0x70c99d, transparent: true, opacity: 0.62 + fillRatio * 0.25 }),
+        );
+        gel.name = "healing-station-cave-gel-reservoir";
+        gel.position.set(0, -0.19 + 0.07 * fillRatio, -0.475);
+        group.add(gel);
+      }
+      if (healer.gelFuelSeconds > 0) {
+        const activeFuel = new THREE.Mesh(
+          new THREE.BoxGeometry(0.16, 0.045, 0.018),
+          new THREE.MeshBasicMaterial({ color: 0xa8ffe0, transparent: true, opacity: 0.9 }),
+        );
+        activeFuel.name = "healing-station-active-fuel";
+        activeFuel.position.set(0, -0.12, -0.493);
+        group.add(activeFuel);
+      }
+    }
     return group;
   }
 
   syncOrbRackVisuals(force = false, dt = 0) {
     // Focused machine tests and save-repair paths can invoke rack mutations on
     // a prototype-only engine before the world/scene registries exist.
-    if (!this.world || !this.exhibitGroup || !this.orbRacks || !this.orbRackVisuals) return;
+    if (!this.world || !this.exhibitGroup || !this.orbRacks || !this.healingStations || !this.orbRackVisuals) return;
     this.orbRackVisualTimer -= dt;
     if (!force && this.orbRackVisualTimer > 0) return;
     this.orbRackVisualTimer = 0.45;
     const live = new Set<string>();
-    for (const [key, state] of this.orbRacks) {
+    const stations = [
+      ...[...this.orbRacks.entries()].map(([key, state]) => ({ key, state, machine: "orb-rack" as const, block: BlockId.CaptureOrbRack })),
+      ...[...this.healingStations.entries()].map(([key, state]) => ({ key, state, machine: "healing-station" as const, block: BlockId.CreatureHealer })),
+    ];
+    for (const { key, state, machine, block } of stations) {
       const position = blockPositionFromKey(key);
-      if (!position || this.world.getBlock(position.x, position.y, position.z) !== BlockId.CaptureOrbRack) continue;
+      if (!position || this.world.getBlock(position.x, position.y, position.z) !== block) continue;
       live.add(key);
-      const occupancySignature = orbRackOccupancySignature(state);
+      const healerState = machine === "healing-station" ? state as CreatureHealerState : null;
+      const occupancySignature = `${machine}|facing:${this.worldBlockFacing(position.x, position.y, position.z)}|${orbRackOccupancySignature(state)}|gel:${healerState ? `${healerState.gelUnits}:${healerState.gelFuelSeconds > 0 ? 1 : 0}` : 0}`;
       const previous = this.orbRackVisuals.get(key);
       if (previous?.occupancySignature === occupancySignature) continue;
       if (previous) {
         this.exhibitGroup.remove(previous.group);
         this.disposeObject(previous.group);
       }
-      const group = this.createOrbRackVisual(key, state);
+      const group = this.createOrbStationVisual(key, state, machine);
       this.exhibitGroup.add(group);
       this.orbRackVisuals.set(key, { group, occupancySignature });
     }
@@ -20386,6 +21037,249 @@ export class VoxelEngine {
       height: Math.max(0.8, mob.definition.height * scale),
       visualScale: scale,
     };
+  }
+
+  /** Physical contact includes small ground animals even when they are not hard blockers. */
+  mobBodyProfile(mob: MobEntity) {
+    const collision = this.mobCollisionProfile(mob);
+    const scale = this.mobBaseScale(mob);
+    const radius = collision.solid
+      ? collision.radius
+      : clamp(mob.definition.radius * scale * 0.72, 0.12, 0.42);
+    const height = collision.solid
+      ? collision.height
+      : Math.max(0.16, mob.definition.height * scale);
+    return {
+      ...collision,
+      radius,
+      height,
+      mass: creatureBodyMass({ size: collision.size, radius, height }),
+    };
+  }
+
+  mobTerrainClearAt(mob: MobEntity, x: number, groupY: number, z: number) {
+    const body = this.mobBodyProfile(mob);
+    const bottom = this.mobFootY(mob, groupY) + 0.001;
+    const top = bottom + body.height - 0.002;
+    const minX = Math.floor(x - body.radius + 0.5);
+    const maxX = Math.floor(x + body.radius - 0.001 + 0.5);
+    const minY = Math.floor(bottom + 0.5);
+    const maxY = Math.floor(top + 0.5);
+    const minZ = Math.floor(z - body.radius + 0.5);
+    const maxZ = Math.floor(z + body.radius - 0.001 + 0.5);
+    for (let blockX = minX; blockX <= maxX; blockX += 1) for (let blockZ = minZ; blockZ <= maxZ; blockZ += 1) {
+      const nearestX = clamp(x, blockX - 0.5, blockX + 0.5);
+      const nearestZ = clamp(z, blockZ - 0.5, blockZ + 0.5);
+      if ((x - nearestX) ** 2 + (z - nearestZ) ** 2 >= body.radius ** 2) continue;
+      for (let blockY = minY; blockY <= maxY; blockY += 1) {
+        const type = this.world.getBlock(blockX, blockY, blockZ);
+        if (type === undefined) return false;
+        const walkThrough = typeof this.world.isWalkThrough === "function"
+          ? this.world.isWalkThrough(type)
+          : !BLOCKS[type]?.solid;
+        if (walkThrough) continue;
+        const definition = BLOCKS[type];
+        if (!definition?.solid) continue;
+        const blockBottom = blockY - 0.5;
+        const blockTop = blockBottom + (definition.collisionHeight ?? 1);
+        if (top > blockBottom && bottom < blockTop) return false;
+      }
+    }
+    return true;
+  }
+
+  moveMobWithTerrain(mob: MobEntity, dx: number, dz: number) {
+    const distance = Math.hypot(dx, dz);
+    if (distance <= 0.00001 || mob.id === this.mountedCreatureId || mob.dragonState?.onShoulder) return 0;
+    const movement = mob.definition.movement ?? (mob.definition.aquatic ? "aquatic" : mob.definition.flying ? "flying" : "ground");
+    const steps = Math.max(1, Math.ceil(distance / 0.11));
+    const stepX = dx / steps;
+    const stepZ = dz / steps;
+    const startX = mob.group.position.x;
+    const startZ = mob.group.position.z;
+    let referenceGround = Math.round(mob.group.position.y - mob.definition.footOffset);
+    for (let step = 0; step < steps; step += 1) {
+      const x = mob.group.position.x + stepX;
+      const z = mob.group.position.z + stepZ;
+      let targetY = mob.group.position.y;
+      if (movement === "ground") {
+        const resolvedY = this.mobMoveTarget(mob, x, z, this.mobBaseScale(mob), referenceGround, false);
+        if (resolvedY === null) break;
+        targetY = resolvedY;
+      } else if (movement === "aquatic") {
+        const liquid = this.world.getBlock(Math.floor(x + 0.5), Math.floor(targetY + 0.5), Math.floor(z + 0.5));
+        if (mob.kind === "syrupfin" ? liquid !== BlockId.Syrup : !blockContainsWater(liquid)) break;
+      }
+      if (!this.mobTerrainClearAt(mob, x, targetY, z)) break;
+      mob.group.position.set(x, targetY, z);
+      if (movement === "ground") {
+        mob.baseY = targetY;
+        referenceGround = Math.round(targetY - mob.definition.footOffset);
+      }
+    }
+    this.refreshMobSpatialEntry(mob);
+    return Math.hypot(mob.group.position.x - startX, mob.group.position.z - startZ);
+  }
+
+  applyMobKnockback(mob: MobEntity, origin: Readonly<{ x: number; z: number }>, strength: number) {
+    if (mob.id === this.mountedCreatureId || mob.dragonState?.onShoulder) return 0;
+    const body = this.mobBodyProfile(mob);
+    let dx = mob.group.position.x - origin.x;
+    let dz = mob.group.position.z - origin.z;
+    const distance = Math.hypot(dx, dz);
+    if (distance <= 0.00001) {
+      const angle = ((mob.id * 0.61803398875) % 1) * Math.PI * 2;
+      dx = Math.cos(angle);
+      dz = Math.sin(angle);
+    } else {
+      dx /= distance;
+      dz /= distance;
+    }
+    const speed = creatureKnockbackSpeed(strength, body.mass);
+    const velocity = mob.pushVelocity ??= new THREE.Vector2();
+    velocity.x += dx * speed;
+    velocity.y += dz * speed;
+    if (velocity.length() > 6.2) velocity.setLength(6.2);
+    mob.state = "recover";
+    mob.stateTimer = Math.max(mob.stateTimer, 0.12);
+    return speed;
+  }
+
+  advanceMobKnockback(mob: MobEntity, dt: number) {
+    const velocity = mob.pushVelocity ??= new THREE.Vector2();
+    const speed = velocity.length();
+    if (speed <= 0.025) {
+      velocity.set(0, 0);
+      return 0;
+    }
+    const requested = speed * dt;
+    const moved = this.moveMobWithTerrain(mob, velocity.x * dt, velocity.y * dt);
+    if (moved + 0.002 < requested * 0.35) velocity.set(0, 0);
+    else velocity.multiplyScalar(Math.exp(-7.5 * dt));
+    return moved;
+  }
+
+  recoverMobFromTerrain(mob: MobEntity) {
+    const movement = mob.definition.movement ?? (mob.definition.aquatic ? "aquatic" : mob.definition.flying ? "flying" : "ground");
+    if (movement !== "ground" || mob.id === this.mountedCreatureId || mob.dragonState?.onShoulder
+      || this.mobTerrainClearAt(mob, mob.group.position.x, mob.group.position.y, mob.group.position.z)) return false;
+    const startX = mob.group.position.x;
+    const startZ = mob.group.position.z;
+    const referenceGround = Math.round(mob.group.position.y - mob.definition.footOffset);
+    for (const radius of [0, 0.45, 0.85, 1.3, 1.9, 2.5]) {
+      const probes = radius === 0 ? 1 : 12;
+      for (let probe = 0; probe < probes; probe += 1) {
+        const angle = probe / probes * Math.PI * 2 + mob.id * 0.73;
+        const x = startX + Math.cos(angle) * radius;
+        const z = startZ + Math.sin(angle) * radius;
+        const targetY = this.mobMoveTarget(mob, x, z, this.mobBaseScale(mob), referenceGround, false);
+        if (targetY === null || !this.mobTerrainClearAt(mob, x, targetY, z)) continue;
+        mob.group.position.set(x, targetY, z);
+        mob.baseY = targetY;
+        mob.pushVelocity?.set(0, 0);
+        this.refreshMobSpatialEntry(mob);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  pushMobsFromPlayer(position: THREE.Vector3, height = this.currentPlayerHeight()) {
+    const playerTop = position.y + height;
+    for (const mob of this.mobs) {
+      if (!mob.group.visible || mob.id === this.mountedCreatureId || mob.dragonState?.onShoulder) continue;
+      const movement = mob.definition.movement ?? (mob.definition.aquatic ? "aquatic" : mob.definition.flying ? "flying" : "ground");
+      if (movement !== "ground") continue;
+      const body = this.mobBodyProfile(mob);
+      const mobBottom = this.mobFootY(mob);
+      if (playerTop <= mobBottom || position.y >= mobBottom + body.height) continue;
+      const currentDistance = Math.hypot(this.position.x - mob.group.position.x, this.position.z - mob.group.position.z);
+      const candidateDistance = Math.hypot(position.x - mob.group.position.x, position.z - mob.group.position.z);
+      if (candidateDistance > currentDistance + 0.0001) continue;
+      const separation = separateCreatureCircles(
+        { x: mob.group.position.x, z: mob.group.position.z, radius: body.radius },
+        { x: position.x, z: position.z, radius: PLAYER_RADIUS },
+        0.025,
+        mob.id,
+      );
+      if (!separation) continue;
+      const share = splitCreatureSeparation(separation.overlap, body.mass, PLAYER_BODY_MASS).first;
+      const scale = share / Math.max(0.0001, separation.overlap);
+      this.moveMobWithTerrain(mob, separation.dx * scale, separation.dz * scale);
+    }
+  }
+
+  resolveMobBodyOverlaps(dt: number) {
+    const relaxation = Math.min(1, Math.max(0, dt) * 12);
+    if (relaxation <= 0) return;
+    let pairBudget = 256;
+    for (const mob of this.mobs) {
+      if (pairBudget <= 0 || !mob.group.visible || mob.id === this.mountedCreatureId || mob.dragonState?.onShoulder) continue;
+      const movement = mob.definition.movement ?? (mob.definition.aquatic ? "aquatic" : mob.definition.flying ? "flying" : "ground");
+      if (movement !== "ground") continue;
+      const body = this.mobBodyProfile(mob);
+      const nearby = this.ensureMobSpatialIndex().queryCircle(mob.group.position.x, mob.group.position.z, body.radius + 3);
+      for (const { value: other } of nearby) {
+        if (pairBudget <= 0) break;
+        if (other.id <= mob.id || !other.group.visible || other.id === this.mountedCreatureId || other.dragonState?.onShoulder) continue;
+        const otherMovement = other.definition.movement ?? (other.definition.aquatic ? "aquatic" : other.definition.flying ? "flying" : "ground");
+        if (otherMovement !== "ground") continue;
+        const otherBody = this.mobBodyProfile(other);
+        const mobBottom = this.mobFootY(mob);
+        const otherBottom = this.mobFootY(other);
+        if (mobBottom + body.height <= otherBottom || otherBottom + otherBody.height <= mobBottom) continue;
+        const separation = separateCreatureCircles(
+          { x: mob.group.position.x, z: mob.group.position.z, radius: body.radius },
+          { x: other.group.position.x, z: other.group.position.z, radius: otherBody.radius },
+          0.025,
+          mob.id ^ other.id,
+        );
+        if (!separation) continue;
+        pairBudget -= 1;
+        const share = splitCreatureSeparation(separation.overlap, body.mass, otherBody.mass);
+        const unitX = separation.dx / Math.max(0.0001, separation.overlap);
+        const unitZ = separation.dz / Math.max(0.0001, separation.overlap);
+        const firstTarget = share.first * relaxation;
+        const firstMoved = this.moveMobWithTerrain(mob, unitX * firstTarget, unitZ * firstTarget);
+        const transfer = Math.max(0, firstTarget - firstMoved);
+        const secondTarget = share.second * relaxation + transfer;
+        this.moveMobWithTerrain(other, -unitX * secondTarget, -unitZ * secondTarget);
+      }
+    }
+  }
+
+  playerImpactStrengthForMob(mob: MobEntity) {
+    const mass = this.mobBodyProfile(mob).mass;
+    return clamp(1.45 + Math.sqrt(mass) * 0.62, 1.65, 3.4);
+  }
+
+  applyPlayerKnockback(origin: Readonly<{ x: number; z: number }>, strength: number) {
+    if (this.mountedCreatureId || this.mountedBoatId || this.seatedAt) return 0;
+    let dx = this.position.x - origin.x;
+    let dz = this.position.z - origin.z;
+    const distance = Math.hypot(dx, dz);
+    if (distance <= 0.00001) {
+      dx = -Math.sin(this.yaw);
+      dz = -Math.cos(this.yaw);
+    } else {
+      dx /= distance;
+      dz /= distance;
+    }
+    const speed = clamp(strength, 0, 4.6);
+    this.velocity.x += dx * speed;
+    this.velocity.z += dz * speed;
+    const horizontalSpeed = Math.hypot(this.velocity.x, this.velocity.z);
+    if (horizontalSpeed > 6.2) {
+      this.velocity.x = this.velocity.x / horizontalSpeed * 6.2;
+      this.velocity.z = this.velocity.z / horizontalSpeed * 6.2;
+    }
+    this.velocity.y = Math.max(this.velocity.y, 0.72);
+    return speed;
+  }
+
+  playPlayerDamageSound() {
+    if (typeof this.audio.playSample === "function") this.audio.playSample("playerDirectDamage", { gain: 0.78 });
+    else this.audio.play("hurt");
   }
 
   mobSpatialEntry(mob: MobEntity, order?: number): XZSpatialEntry<MobEntity> {
@@ -20736,6 +21630,9 @@ export class VoxelEngine {
     const peelopShedding = kind === "peelop"
       ? { ...(options.peelopShedding ?? createPeelopSheddingState(petState?.geneticSeed ?? id)) }
       : null;
+    const mythicShed = isMythicFrontierCreature(kind)
+      ? { ...(options.mythicShed ?? createMythicShedState(kind, specimenId)) }
+      : null;
     const shadeHealthScale = shadeState ? shadecrawlerScale(shadeState) : 1;
     const ordinaryMaximumHealth = creatureMaximumHealth(definition, profile.stats, progression.level) * shadeHealthScale;
     const mob: MobEntity = {
@@ -20752,7 +21649,7 @@ export class VoxelEngine {
       fleeTimer: 0, state: "wander", stateTimer: 0, baseY: position.y, voiceTimer: 2 + Math.random() * 8,
       birdState: definition.movement === "flying" ? createBirdBehavior(kind as Parameters<typeof createBirdBehavior>[0], id * 0.71) : null,
       petState, careState, shadeState, reedstriderBond, courserBond, leviathanGrowth, aetherbellMorph, apiaryBee, beeHiveKey: options.beeHiveKey ?? null,
-      socialGroupId, peelopShedding,
+      socialGroupId, peelopShedding, mythicShed,
       milkCooldown: MILKABLE_MOB_KINDS.has(kind) ? clamp(Number(options.milkCooldown) || 0, 0, CLOVERBACK_MILK_COOLDOWN_SECONDS) : 0,
       woolRegrowSeconds: kind === "woolhorn" ? clamp(Number(options.woolRegrowSeconds) || 0, 0, 900) : 0,
       shadeSaddle: visual.getObjectByName("shadecrawler-saddle") ?? null, visualBaseY, visualMinY,
@@ -20797,6 +21694,8 @@ export class VoxelEngine {
       threatLedger: Object.freeze([]),
       moveCooldowns: {},
       activeMove: null,
+      pushVelocity: new THREE.Vector2(),
+      terrainCheckTimer: 0.35 + (id % 7) * 0.11,
       mountExertion,
       mountMode: options.mountMode ?? null,
       mountVerticalVelocity: Number(options.mountVerticalVelocity) || 0,
@@ -20861,6 +21760,7 @@ export class VoxelEngine {
       ...(mob.apiaryBee ? { apiaryBee: { ...mob.apiaryBee } } : {}),
       ...(mob.socialGroupId ? { socialGroupId: mob.socialGroupId } : {}),
       ...(mob.peelopShedding ? { peelopShedding: { ...mob.peelopShedding } } : {}),
+      ...(mob.mythicShed ? { mythicShed: { ...mob.mythicShed } } : {}),
       ...(MILKABLE_MOB_KINDS.has(mob.kind) && mob.milkCooldown > 0 ? { milkCooldown: mob.milkCooldown } : {}),
       ...(mob.kind === "woolhorn" && mob.woolRegrowSeconds > 0 ? { woolRegrowSeconds: mob.woolRegrowSeconds } : {}),
       ...(mob.factionId ? { factionId: mob.factionId } : {}),
@@ -20929,7 +21829,11 @@ export class VoxelEngine {
       age: Math.max(0, Number(migrated.age) || 0),
       naturalSpawned: legacyNatural,
       everLed: Boolean(migrated.everLed),
-      naturalPool: migrated.naturalPool ?? (legacyNatural ? naturalPopulationPoolForDefinition(definition, restoredUnderground) : null),
+      naturalPool: legacyNatural
+        ? (migrated.naturalPool === "cave-water"
+          ? "cave-water"
+          : naturalPopulationPoolForDefinition(definition, restoredUnderground))
+        : null,
       outOfRangeSeconds: Math.max(0, Number(migrated.outOfRangeSeconds) || 0),
       yaw: Number(migrated.yaw) || 0,
       persistentPoiResident: Boolean(migrated.persistentPoiResident),
@@ -20950,6 +21854,7 @@ export class VoxelEngine {
       apiaryBee: migrated.apiaryBee ?? null,
       socialGroupId: migrated.socialGroupId ?? null,
       peelopShedding: migrated.peelopShedding ?? null,
+      mythicShed: migrated.mythicShed ?? null,
       milkCooldown: migrated.milkCooldown ?? 0,
       woolRegrowSeconds: migrated.woolRegrowSeconds ?? 0,
       name: migrated.name ?? null,
@@ -21112,8 +22017,12 @@ export class VoxelEngine {
       const legendaryEncounterId = legendaryTag && legendaryTag in LEGENDARY_ENCOUNTERS ? legendaryTag as LegendaryEncounterId : null;
       const legendarySiteId = legendaryEncounterId ? tagValue("legendary-site:") ?? markerKey : null;
       if (legendaryEncounterId && legendarySiteId) {
-        const previous = this.legendaryEncounters.get(legendarySiteId)
+        let previous = this.legendaryEncounters.get(legendarySiteId)
           ?? createLegendaryEncounterState(legendaryEncounterId, legendarySiteId);
+        const mythicSite = mythicSiteByEncounterId(legendaryEncounterId);
+        if (mythicSite) previous = advanceLegendarySiteRecovery(previous, this.day, mythicRecoveryPolicyForSite(mythicSite.id));
+        previous = recordLegendarySiteVisit(previous, this.day);
+        this.legendaryEncounters.set(legendarySiteId, previous);
         if (!legendaryCanManifest(previous)) {
           this.activatedStructureMarkers.add(markerKey);
           continue;
@@ -21241,12 +22150,12 @@ export class VoxelEngine {
     this.ecologyDiagnostics.rejections[reason] = (this.ecologyDiagnostics.rejections[reason] ?? 0) + 1;
   }
 
-  naturalSpawnVisibleToPlayer(x: number, y: number, z: number) {
+  naturalSpawnVisibleToPlayer(x: number, y: number, z: number, maximumDistance = 48) {
     const target = new THREE.Vector3(x, y + 0.8, z);
     return this.simulationInterestPoints().some((player) => {
       const dx = x - player.x;
       const dz = z - player.z;
-      if (dx * dx + dz * dz > 48 * 48 || !positionInPlayerViewCone(player.yaw, dx, dz)) return false;
+      if (dx * dx + dz * dz > maximumDistance * maximumDistance || !positionInPlayerViewCone(player.yaw, dx, dz)) return false;
       return this.hasClearLineOfSight(
         new THREE.Vector3(player.x, player.y + this.cameraEyeHeight, player.z),
         target,
@@ -21280,11 +22189,12 @@ export class VoxelEngine {
         if (kind === "syrupfin" ? liquid !== BlockId.Syrup : !blockContainsWater(liquid)) continue;
       } else if (underground) {
         if (MOB_DEFS[kind].flying) {
-          const body = this.world.getBlock(Math.round(x), Math.round(center.y + 2), Math.round(z));
-          if (!this.world.isWalkThrough(body)) continue;
-          y = center.y + 2 + MOB_DEFS[kind].footOffset;
+          const airY = findCaveAirY(this.world, Math.round(x), Math.round(z), center.y - MOB_DEFS[kind].footOffset, 8);
+          if (airY === null) continue;
+          y = airY + MOB_DEFS[kind].footOffset;
         } else {
-          const ground = this.world.findWalkableY(Math.round(x), Math.round(z), center.y);
+          const ground = findCaveFloorY(this.world, Math.round(x), Math.round(z), center.y - MOB_DEFS[kind].footOffset, 10);
+          if (ground === null) continue;
           const feet = this.world.getBlock(Math.round(x), ground + 1, Math.round(z));
           const head = this.world.getBlock(Math.round(x), ground + 2, Math.round(z));
           if (!this.world.isWalkThrough(feet) || !this.world.isWalkThrough(head)) continue;
@@ -21341,6 +22251,74 @@ export class VoxelEngine {
     return null;
   }
 
+  naturalAquaticSpawnCandidates(focus: SimulationInterestPoint, underground: boolean) {
+    const candidates: NaturalAquaticSpawnCandidate[] = [];
+    const visited = new Set<string>();
+    const phase = (this.naturalSpawnInterestCursor % 24) * 0.271;
+    const radii = [12, 20, 28, 36, 48, 56] as const;
+    const aquaticSurfaceBiomes = new Set([BiomeId.DeepOcean, BiomeId.Ocean, BiomeId.River, BiomeId.LumenTrench]);
+    for (let probe = 0; probe < 36 && candidates.length < 12; probe += 1) {
+      const radius = radii[probe % radii.length];
+      const angle = phase + probe * 2.399963229728653;
+      const x = Math.round(focus.x + Math.cos(angle) * radius);
+      const z = Math.round(focus.z + Math.sin(angle) * radius);
+      const key = `${x},${z}`;
+      if (visited.has(key)) continue;
+      visited.add(key);
+      const columnSample = this.world.sampleColumn(x, z);
+      const probeY = underground ? Math.round(focus.y) : Math.round(columnSample.waterline);
+      const loaded = this.world.getBlock(x, probeY, z) !== undefined;
+      const likelyNaturalWater = underground
+        ? this.world.undergroundBiomeAt(x, focus.y, z) === UndergroundBiomeId.GlasswaterDeeps
+        : aquaticSurfaceBiomes.has(columnSample.biome) && columnSample.height < columnSample.waterline;
+      if (!loaded && !likelyNaturalWater) continue;
+      if (!loaded) this.world.generateChunk(Math.floor(x / CHUNK_SIZE), Math.floor(z / CHUNK_SIZE));
+      const minimumY = underground
+        ? focus.y - 32
+        : Math.min(columnSample.height + 1, focus.y - 8);
+      const maximumY = underground
+        ? focus.y + 32
+        : Math.max(columnSample.waterline + 2, columnSample.height + 8, focus.y + 8);
+      const syrup = !underground && columnSample.biome === BiomeId.SugarplumVale
+        ? findAquaticSpawnColumn(this.world, x, z, focus.y, minimumY, maximumY, "syrup")
+        : null;
+      const aquaticColumn = syrup ?? findAquaticSpawnColumn(
+        this.world,
+        x,
+        z,
+        underground ? focus.y : columnSample.waterline,
+        minimumY,
+        maximumY,
+        "water",
+      );
+      if (!aquaticColumn) continue;
+      candidates.push(Object.freeze({
+        x,
+        z,
+        distance: Math.hypot(x - focus.x, z - focus.z),
+        habitat: fishHabitatForSpawnSite(columnSample.biome, underground, aquaticColumn.liquid),
+        column: aquaticColumn,
+        underground,
+      }));
+    }
+    return candidates;
+  }
+
+  naturalAquaticResourcePriority(pool: NaturalPopulationPool, focus: SimulationInterestPoint): ItemCode | undefined {
+    if (pool !== "water-ambient" && pool !== "cave-water") return undefined;
+    const scale = Math.max(0, this.worldOptions.mobDensity) * (this.touchMode ? 0.65 : 1);
+    if (scale <= 0) return undefined;
+    const nearby = this.mobs.filter((mob) => mob.naturalSpawned && mob.naturalPool === pool
+      && !this.creatureIsDomesticOrAuthored(mob)
+      && (mob.group.position.x - focus.x) ** 2 + (mob.group.position.z - focus.z) ** 2 <= 64 ** 2);
+    const dropCount = (item: ItemCode) => nearby.filter((mob) => mob.definition.family === "fish"
+      && mob.definition.drops?.some((drop) => drop.item === item && drop.chance > 0)).length;
+    const foodMinimum = Math.max(1, Math.ceil((pool === "cave-water" ? 3 : 8) * scale));
+    if (dropCount(Item.RawFish) < foodMinimum) return Item.RawFish;
+    if (pool === "cave-water" && dropCount(Item.GlowScale) < Math.max(1, Math.ceil(3 * scale))) return Item.GlowScale;
+    return undefined;
+  }
+
   trySpawnMob(intent: "passive" | "hostile" = "passive", requestedFocus?: SimulationInterestPoint) {
     const interests = this.simulationInterestPoints();
     const focus = requestedFocus ?? selectSimulationInterest(interests, this.naturalSpawnInterestCursor++);
@@ -21349,16 +22327,24 @@ export class VoxelEngine {
       ? this.skyVisibility < 0.18
       : focus.y < this.world.surfaceAt(Math.round(focus.x), Math.round(focus.z)) - 2;
     if (intent === "hostile" && this.worldOptions.difficulty === "peaceful") return;
+    if (this.worldOptions.mobDensity <= 0) return;
     const focusBiome = this.world.biomeAt(Math.round(focus.x), Math.round(focus.z));
     const waterBiome = [BiomeId.DeepOcean, BiomeId.Ocean, BiomeId.River, BiomeId.LumenTrench].includes(focusBiome);
-    const allowedPools: NaturalPopulationPool[] = intent === "hostile" ? ["monster"]
-      : underground ? ["underground"]
-        : waterBiome ? (focusBiome === BiomeId.River
-          ? ["water-ambient", "surface-animal", "ambient"]
-          : ["water-animal", "water-ambient"])
-          : focusBiome === BiomeId.SugarplumVale
-            ? ["surface-animal", "ambient", "water-ambient"]
-            : ["surface-animal", "ambient"];
+    const aquaticCandidates = intent === "passive" || (!underground && waterBiome)
+      ? this.naturalAquaticSpawnCandidates(focus, underground)
+      : [];
+    this.ecologyDiagnostics.aquaticCandidates = aquaticCandidates.length;
+    const aquaticPools: NaturalPopulationPool[] = underground
+      ? (aquaticCandidates.some((candidate) => fishHabitatSupportsNaturalPool(candidate.habitat, "cave-water", true)) ? ["cave-water"] : [])
+      : (["water-animal", "water-ambient"] as const).filter((candidatePool) => (
+        aquaticCandidates.some((candidate) => fishHabitatSupportsNaturalPool(candidate.habitat, candidatePool, false))
+      ));
+    const landPools: NaturalPopulationPool[] = underground ? ["underground"]
+      : waterBiome && focusBiome !== BiomeId.River ? [] : ["surface-animal", "ambient"];
+    const allowedPools: NaturalPopulationPool[] = intent === "hostile"
+      ? ["monster"]
+      : [...new Set([...aquaticPools, ...landPools])];
+    if (!allowedPools.length) { this.noteEcologyRejection("no-population-habitat"); return; }
     const budgets = naturalPoolBudgets(this.touchMode, this.worldOptions.mobDensity);
     const records = this.naturalPopulationRecords();
     const localPopulation = naturalPopulationSnapshot(records, focus, 64);
@@ -21370,81 +22356,72 @@ export class VoxelEngine {
     this.ecologyDiagnostics.attempts += 1;
 
     for (let placementAttempt = 0; placementAttempt < 6; placementAttempt += 1) {
+      const aquaticPool = pool === "water-animal" || pool === "water-ambient" || pool === "cave-water";
+      const compatibleAquatic = aquaticCandidates.filter((candidate) => (
+        fishHabitatSupportsNaturalPool(candidate.habitat, pool, underground)
+      ));
+      const preferredAquatic = aquaticPool
+        ? compatibleAquatic.filter((candidate) => pool === "water-animal" ? candidate.distance >= 24 : candidate.distance <= 36)
+        : [];
+      const aquaticCandidate = aquaticPool
+        ? (preferredAquatic.length ? preferredAquatic : compatibleAquatic)[placementAttempt % Math.max(1, preferredAquatic.length || compatibleAquatic.length)]
+        : undefined;
+      if (aquaticPool && !aquaticCandidate) { this.noteEcologyRejection("no-aquatic-habitat"); break; }
       const angle = Math.random() * Math.PI * 2;
       const radius = 24 + Math.random() * 32;
-      const x = Math.round(focus.x + Math.cos(angle) * radius);
-      const z = Math.round(focus.z + Math.sin(angle) * radius);
+      let x = aquaticCandidate?.x ?? Math.round(focus.x + Math.cos(angle) * radius);
+      let z = aquaticCandidate?.z ?? Math.round(focus.z + Math.sin(angle) * radius);
       this.world.generateChunk(Math.floor(x / CHUNK_SIZE), Math.floor(z / CHUNK_SIZE));
       const biome = this.world.biomeAt(x, z);
-      let y = underground ? this.world.findWalkableY(x, z, focus.y) : this.world.surfaceAt(x, z);
+      let y = underground ? focus.y : this.world.surfaceAt(x, z);
       let kind: MobKind | null = null;
       let aquatic = false;
 
-      if (pool === "underground" || (pool === "monster" && underground)) {
-        if (Math.abs(y - focus.y) > 14 || y >= this.world.surfaceAt(x, z) - 2) { this.noteEcologyRejection("cave-topology"); continue; }
-        const waterY = [Math.round(focus.y), Math.round(focus.y) - 1, Math.round(focus.y) + 1]
-          .find((candidateY) => blockContainsWater(this.world.getBlock(x, candidateY, z)));
-        const caveBiome = this.world.undergroundBiomeAt(x, y, z);
+      if (aquaticCandidate) {
+        const requiredDrop = this.naturalAquaticResourcePriority(pool, focus);
+        kind = fishKindForNaturalPool(
+          aquaticCandidate.habitat,
+          pool,
+          aquaticCandidate.underground,
+          intent === "hostile",
+          requiredDrop,
+        );
+        if (!kind) { this.noteEcologyRejection("no-water-species"); continue; }
+        const aquaticY = aquaticSpawnHeight(kind, aquaticCandidate.column.floorY, aquaticCandidate.column.surfaceY, Math.random());
+        if (aquaticY === null) { this.noteEcologyRejection("water-depth"); continue; }
+        y = aquaticY;
+        aquatic = true;
+      } else if (pool === "underground" || (pool === "monster" && underground)) {
+        const caveBiome = this.world.undergroundBiomeAt(x, focus.y, z);
         for (let attempt = 0; attempt < 14; attempt += 1) {
           const candidate = undergroundMobKindForBiome(caveBiome, Math.random());
           const definition = MOB_DEFS[candidate];
           if (definition.hostile !== (intent === "hostile")) continue;
-          if (intent === "passive" && Boolean(definition.aquatic) !== (waterY !== undefined)) continue;
+          if (definition.aquatic || definition.movement === "aquatic") continue;
           if (naturalPopulationPoolForDefinition(definition, true) !== pool) continue;
           if (!naturalActivityAllowsSpawn(candidate, { timeOfDay: this.worldTime, daylight: this.daylightAmount(), weather: this.weatherState.kind, underground: true })) continue;
           kind = candidate;
           break;
         }
-        if (!kind && intent === "passive" && waterY !== undefined) kind = fishKindForHabitat("underground");
         if (!kind) { this.noteEcologyRejection("no-cave-species"); continue; }
-        aquatic = Boolean(MOB_DEFS[kind].aquatic);
-        if (aquatic && waterY !== undefined) y = waterY;
-        if (!aquatic) {
-          const feet = this.world.getBlock(x, y + 1, z);
-          const head = this.world.getBlock(x, y + 2, z);
-          if (!this.world.isWalkThrough(feet) || !this.world.isWalkThrough(head)) { this.noteEcologyRejection("cave-clearance"); continue; }
+        const definition = MOB_DEFS[kind];
+        if (definition.flying || definition.movement === "flying") {
+          const airY = findCaveAirY(this.world, x, z, focus.y, 32);
+          if (airY === null || airY >= this.world.surfaceAt(x, z) - 2) { this.noteEcologyRejection("cave-air"); continue; }
+          y = airY + definition.footOffset;
+        } else {
+          const groundY = findCaveFloorY(this.world, x, z, focus.y, 48);
+          if (groundY === null || groundY >= this.world.surfaceAt(x, z) - 2) { this.noteEcologyRejection("cave-floor"); continue; }
+          y = groundY + definition.footOffset;
         }
-      } else if (pool === "water-animal" || pool === "water-ambient") {
-        let waterY: number | undefined;
-        let habitat: Parameters<typeof fishKindForHabitat>[0] = biome === BiomeId.River ? "river"
-          : biome === BiomeId.LumenTrench ? "lumen-trench" : biome === BiomeId.DeepOcean ? "deep-ocean" : "ocean";
-        if (biome === BiomeId.SugarplumVale) {
-          waterY = [y + 2, y + 1, y, y - 1, y - 2, y - 3].find((candidateY) => this.world.getBlock(x, candidateY, z) === BlockId.Syrup);
-          habitat = "syrup-pond";
-        } else if ([BiomeId.DeepOcean, BiomeId.Ocean, BiomeId.River, BiomeId.LumenTrench].includes(biome)) {
-          waterY = SEA_LEVEL;
-          while (waterY > y && !blockContainsWater(this.world.getBlock(x, waterY, z))) waterY -= 1;
-          if (!blockContainsWater(this.world.getBlock(x, waterY, z))) waterY = undefined;
-        }
-        if (waterY === undefined) { this.noteEcologyRejection("no-water"); continue; }
-        for (let attempt = 0; attempt < 10; attempt += 1) {
-          const candidate = fishKindForHabitat(habitat);
-          if (MOB_DEFS[candidate].hostile !== (intent === "hostile")) continue;
-          if (naturalPopulationPoolForDefinition(MOB_DEFS[candidate], false) !== pool) continue;
-          kind = candidate;
-          break;
-        }
-        if (!kind) { this.noteEcologyRejection("no-water-species"); continue; }
-        const aquaticY = aquaticSpawnHeight(kind, y, waterY, Math.random());
-        if (aquaticY === null) { this.noteEcologyRejection("water-depth"); continue; }
-        y = aquaticY;
-        aquatic = true;
       } else if (pool === "monster") {
-        if ([BiomeId.DeepOcean, BiomeId.Ocean, BiomeId.River, BiomeId.LumenTrench].includes(biome)) {
-          let waterY = SEA_LEVEL;
-          while (waterY > y && !blockContainsWater(this.world.getBlock(x, waterY, z))) waterY -= 1;
-          if (!blockContainsWater(this.world.getBlock(x, waterY, z))) { this.noteEcologyRejection("no-hostile-water"); continue; }
-          const habitat: Parameters<typeof fishKindForHabitat>[0] = biome === BiomeId.River ? "river"
-            : biome === BiomeId.LumenTrench ? "lumen-trench" : biome === BiomeId.DeepOcean ? "deep-ocean" : "ocean";
-          for (let attempt = 0; attempt < 12; attempt += 1) {
-            const candidate = fishKindForHabitat(habitat);
-            if (MOB_DEFS[candidate].hostile && naturalPopulationPoolForDefinition(MOB_DEFS[candidate]) === "monster") {
-              kind = candidate;
-              break;
-            }
-          }
+        if (waterBiome && aquaticCandidates.length) {
+          const candidate = aquaticCandidates[placementAttempt % aquaticCandidates.length];
+          x = candidate.x;
+          z = candidate.z;
+          kind = fishKindForNaturalPool(candidate.habitat, "monster", false, true);
           if (!kind) { this.noteEcologyRejection("no-hostile-water-species"); continue; }
-          const aquaticY = aquaticSpawnHeight(kind, y, waterY, Math.random());
+          const aquaticY = aquaticSpawnHeight(kind, candidate.column.floorY, candidate.column.surfaceY, Math.random());
           if (aquaticY === null) { this.noteEcologyRejection("hostile-water-depth"); continue; }
           y = aquaticY;
           aquatic = true;
@@ -21466,7 +22443,8 @@ export class VoxelEngine {
         if (!kind) { this.noteEcologyRejection("no-land-species"); continue; }
       }
 
-      if (this.naturalSpawnVisibleToPlayer(x, y, z)) { this.noteEcologyRejection("visible-pop-in"); continue; }
+      const maximumVisibilityDistance = pool === "water-ambient" || pool === "cave-water" ? 18 : 48;
+      if (this.naturalSpawnVisibleToPlayer(x, y, z, maximumVisibilityDistance)) { this.noteEcologyRejection("visible-pop-in"); continue; }
       if (!this.ecologyAllowsSpecies(kind, x, z)) { this.noteEcologyRejection("hunting-pressure"); continue; }
       const cost = naturalPopulationCost(MOB_DEFS[kind]);
       const localRemaining = Math.max(0, budgets[pool].ceiling - localPopulation.byPool[pool].cost);
@@ -21475,7 +22453,7 @@ export class VoxelEngine {
       if (maximum <= 0) { this.noteEcologyRejection("weighted-capacity"); return; }
       const spawned = this.spawnNaturalGroup(
         kind,
-        new THREE.Vector3(x, aquatic ? y : y + MOB_DEFS[kind].footOffset, z),
+        new THREE.Vector3(x, aquatic || underground ? y : y + MOB_DEFS[kind].footOffset, z),
         pool === "monster" ? Math.min(1, maximum) : maximum,
         pool,
         aquatic,
@@ -22024,7 +23002,7 @@ export class VoxelEngine {
     this.damageRevision += 1;
     this.gainSkillExperience("survival", Math.min(8, 1 + damage * 1.5));
     this.playerInvulnerability = 0.7;
-    this.audio.play("hurt");
+    this.playPlayerDamageSound();
     this.events.onToast(`${source} cost ${damage.toFixed(damage % 1 ? 1 : 0)} ${damage === 1 ? "heart" : "hearts"}.`);
     if (this.health <= 0) this.respawn(true);
     return true;
@@ -22102,6 +23080,10 @@ export class VoxelEngine {
     if (event.resolvedAmount > 0) {
       target.hurtTimer = Math.max(target.hurtTimer, 0.3);
       target.awarenessTimer = Math.max(target.awarenessTimer, 4);
+      if (target !== attackerMob) {
+        const impactStrength = 2.25 + Math.min(1.8, Math.sqrt(this.mobBodyProfile(attackerMob).mass) * 0.52);
+        this.applyMobKnockback(target, attackerMob.group.position, impactStrength);
+      }
       if (attackerMob.kind === "vellum-warden" && target.hostile) {
         this.observeTemporarySummonTrial(attackerMob, "meaningful-action-resolved", nowSeconds);
       }
@@ -22127,7 +23109,9 @@ export class VoxelEngine {
       pvpEnabled: false,
       factionStanding: (left, right) => left === right ? "allied" : "neutral",
     });
-    return this.applyCombatEventToLocalPlayer(event, `${attackerMob.name}'s ${move.name}`);
+    const applied = this.applyCombatEventToLocalPlayer(event, `${attackerMob.name}'s ${move.name}`);
+    if (applied) this.applyPlayerKnockback(attackerMob.group.position, this.playerImpactStrengthForMob(attackerMob));
+    return applied;
   }
 
   private beginPlannedCreatureMove(mob: MobEntity, targetMob: MobEntity | null, targetPlayer: boolean) {
@@ -22281,7 +23265,10 @@ export class VoxelEngine {
       const push = effect.velocity.lengthSq() > 0.001
         ? effect.velocity.clone().setY(0).normalize()
         : mob.group.position.clone().sub(effect.visual.position).setY(0).normalize();
-      if (push.lengthSq() > 0.001) mob.group.position.addScaledVector(push, Math.min(2.2, 0.45 + effect.damage * 0.025));
+      if (push.lengthSq() > 0.001) {
+        const origin = mob.group.position.clone().sub(push);
+        this.applyMobKnockback(mob, origin, Math.min(4.8, 2.5 + effect.damage * 0.035));
+      }
     }
   }
 
@@ -22327,8 +23314,6 @@ export class VoxelEngine {
         if (targetMob.health <= 0) this.killMob(targetMob);
       } else if (!playerOwned && target.distanceToSquared(this.position) <= plan.range * plan.range) {
         this.damagePlayer(Math.max(1, Math.round(plan.damage / 4)), `${mob.name}'s claws`);
-        const push = this.position.clone().sub(mob.group.position).setY(0);
-        if (push.lengthSq() > 0.001) this.velocity.addScaledVector(push.normalize(), 3.4 + state.stage * 0.35);
       }
     }
     this.engageCombat(18);
@@ -22389,7 +23374,10 @@ export class VoxelEngine {
           if (statusKey) this.potionBuffs[statusKey] = this.worldSimulationSeconds() + effect.statusSeconds;
           if (effect.status === "knockback" || effect.status === "scalded") {
             const push = effect.velocity.clone().setY(0);
-            if (push.lengthSq() > 0.001) this.velocity.addScaledVector(push.normalize(), effect.status === "scalded" ? 2.2 : 4.2);
+            if (push.lengthSq() > 0.001) {
+              const origin = this.position.clone().sub(push.normalize());
+              this.applyPlayerKnockback(origin, effect.status === "scalded" ? 2.2 : 4.2);
+            }
           }
           if (effect.attack === "projectile") collided = true;
         }
@@ -22972,7 +23960,12 @@ export class VoxelEngine {
       friendlyFire: "off",
       pvpEnabled: false,
     });
-    return this.applyCombatEventToLocalPlayer(event, owner?.name ?? effect.name);
+    const applied = this.applyCombatEventToLocalPlayer(event, owner?.name ?? effect.name);
+    if (applied) {
+      const origin = owner?.group.position ?? projectile.position.clone().sub(projectile.velocity.clone().normalize());
+      this.applyPlayerKnockback(origin, owner ? this.playerImpactStrengthForMob(owner) * 0.72 : 1.45);
+    }
+    return applied;
   }
 
   commitClockworkHoundAttack(mob: MobEntity, targetMob: MobEntity, bodyCheck: boolean) {
@@ -22987,6 +23980,7 @@ export class VoxelEngine {
     targetMob.awarenessTimer = Math.max(targetMob.awarenessTimer, 4.5);
     targetMob.fleeTimer = bodyCheck ? Math.max(targetMob.fleeTimer, 0.32) : targetMob.fleeTimer;
     targetMob.dragonSlowSeconds = Math.max(targetMob.dragonSlowSeconds, bodyCheck ? 0.34 : 0.16);
+    this.applyMobKnockback(targetMob, mob.group.position, bodyCheck ? 4.2 : 2.25);
     mob.attackCooldown = bodyCheck ? 0.82 : 0.62;
     mob.state = "recover";
     mob.stateTimer = bodyCheck ? 0.22 : 0.16;
@@ -23155,6 +24149,8 @@ export class VoxelEngine {
             }
             mob.fleeTimer = mob.hostile ? 0.45 : 3.2;
             mob.state = mob.hostile ? "chase" : "flee";
+            const impactOrigin = projectile.position.clone().sub(projectile.velocity.clone().normalize());
+            this.applyMobKnockback(mob, impactOrigin, projectile.effect ? 1.6 : 2.35);
             if (mob.hostile) { mob.awarenessTimer = Math.max(mob.awarenessTimer, 5); this.engageCombat(); }
             this.playCreatureEvent(mob, "hurt");
             this.spawnParticles(
@@ -23579,6 +24575,17 @@ export class VoxelEngine {
           }
         }
       }
+      if (mob.mythicShed && isMythicFrontierCreature(mob.kind) && this.multiplayer?.role !== "guest") {
+        const encounter = mob.legendarySiteId ? this.legendaryEncounters.get(mob.legendarySiteId) : null;
+        const peacefulSiteResolved = encounter?.status === "resolved" && encounter.outcome !== "defeat";
+        const shedding = stepMythicShed(mob.kind, mob.mythicShed, Math.floor(mob.age * 20), peacefulSiteResolved, mob.health / Math.max(1, mob.maxHealth));
+        mob.mythicShed = shedding.state;
+        if (shedding.drop) {
+          this.spawnDrop(shedding.drop.item, shedding.drop.count, mob.group.position.clone());
+          if (mob.group.position.distanceToSquared(this.position) < 100) this.audio.play("pickup");
+          this.saveSoon();
+        }
+      }
       if (mob.careState) mob.careState = tickCreatureHusbandry(mob.careState, mobDt * 20);
       if (mob.leviathanGrowth) {
         const underwater = blockContainsWater(this.world.getBlock(
@@ -23607,6 +24614,12 @@ export class VoxelEngine {
         mob.maxHealth = Math.round(mob.definition.health * shadecrawlerScale(mob.shadeState));
       }
       this.applyMobScale(mob, this.mobBaseScale(mob));
+      mob.terrainCheckTimer = (mob.terrainCheckTimer ?? 0) - mobDt;
+      if (mob.terrainCheckTimer <= 0) {
+        mob.terrainCheckTimer = 1.6 + (mob.id % 7) * 0.13;
+        this.recoverMobFromTerrain(mob);
+      }
+      this.advanceMobKnockback(mob, mobDt);
       this.refreshMobSpatialEntry(mob);
       if (followerSlot && shouldTeleportFollower({
         distanceToLeader: distance,
@@ -23952,6 +24965,7 @@ export class VoxelEngine {
           this.applyCombatDamageToMob(peelopTarget, defense.damage, mob, { effectId: "peelop-defense", attackType: "wild" });
           peelopTarget.hurtTimer = 0.3;
           peelopTarget.awarenessTimer = Math.max(peelopTarget.awarenessTimer, 3.2);
+          this.applyMobKnockback(peelopTarget, mob.group.position, 2.1);
           mob.attackCooldown = defense.nextCooldownSeconds;
           this.playCreatureEvent(mob, "hurt");
           this.spawnParticles(peelopTarget.group.position.x, peelopTarget.group.position.y, peelopTarget.group.position.z, BlockId.Dirt, 4);
@@ -23968,7 +24982,6 @@ export class VoxelEngine {
             this.damagePlayer(mob.damage, mob.name);
             this.applyLegendaryEventForMob(mob, "survive-phase");
             if (mob.kind === "shadecrawler") this.potionBuffs["venom-poison"] = Math.max(this.potionBuffs["venom-poison"] ?? 0, this.worldSimulationSeconds() + 7);
-            this.velocity.add(new THREE.Vector3(dx, 0.1, dz).normalize().multiplyScalar(mob.kind === "ridgeback" ? 4.4 : 3.2));
             this.engageCombat();
             if (mob.kind === "zombie") this.audio.playSample(Math.random() < 0.5 ? "zombieMoan1" : "zombieMoan2", { gain: 0.9, position: mob.group.position, refDistance: 2, maxDistance: 48 });
             else this.audio.play("mob");
@@ -24007,6 +25020,8 @@ export class VoxelEngine {
       let speed = (mob.state === "chase" ? mob.definition.chaseSpeed : mob.state === "flee" ? mob.definition.chaseSpeed * 0.86 : mob.definition.speed)
         * (mob.state === "wander" ? social?.speedScale ?? 1 : 1)
         * this.dragonStatusSpeedScale(mob);
+      const recoilSpeed = mob.pushVelocity?.length() ?? 0;
+      if (recoilSpeed > 0.15) speed *= clamp(1 - recoilSpeed / 5.5, 0.18, 1);
       const puddleJump = mob.kind === "puddlehopper"
         ? puddlehopperJumpPlan(mob.id, mob.age, this.weather === "rain", mob.fleeTimer > 0)
         : null;
@@ -24087,6 +25102,7 @@ export class VoxelEngine {
       this.refreshMobSpatialEntry(mob);
     }
     for (const defeated of companionKills) if (this.mobs.includes(defeated) && defeated.health <= 0) this.killMob(defeated);
+    this.resolveMobBodyOverlaps(dt);
     this.mobSpatialIndexFrameActive = false;
   }
 
@@ -24130,8 +25146,9 @@ export class VoxelEngine {
     mob.fleeTimer = mob.hostile ? 0.45 : 3.2;
     mob.state = mob.hostile ? "chase" : "flee";
     if (mob.hostile) mob.awarenessTimer = Math.max(mob.awarenessTimer, 4.5);
-    const away = mob.group.position.clone().sub(this.position).setY(0).normalize().multiplyScalar(0.65);
-    mob.group.position.add(away);
+    const playerSprinting = this.sprintLatched || this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
+    const impactStrength = (item?.toolKind === "sword" ? 4.1 : 2.8) * (playerSprinting ? 1.28 : 1);
+    this.applyMobKnockback(mob, this.position, impactStrength);
     if (item?.toolKind === "sword") this.audio.playSample("swordSwing", { playbackRate: 0.96 + Math.random() * 0.08 });
     else this.audio.play("attack");
     // Every creature hit remains audible even before a custom generated cue is
@@ -24440,20 +25457,22 @@ export class VoxelEngine {
         continue;
       }
       const hostOwnsMotion = this.multiplayer?.role !== "guest";
-      if (constraint.taut && mob.id !== this.mountedCreatureId && hostOwnsMotion) {
-        mob.group.position.x += constraint.x;
-        mob.group.position.z += constraint.z;
-      }
       const movement = mob.definition.movement ?? (mob.definition.aquatic ? "aquatic" : mob.definition.flying ? "flying" : "ground");
       if (hostOwnsMotion && movement === "ground" && mob.id !== this.mountedCreatureId) {
-        // Recover from an already-elevated animal using the keeper/fence floor
-        // as the search reference. Looking only around the floating Y can
-        // never rediscover terrain after the lead has pulled it too high.
+        // Re-ground before applying horizontal tension. Otherwise an already
+        // floating animal asks the terrain solver to search around its bad Y.
         const anchorGround = lead.fence?.y ?? Math.round(keeper!.y - 0.5);
         const ground = this.mobMoveTarget(mob, mob.group.position.x, mob.group.position.z, this.mobBaseScale(mob), anchorGround, false)
           ?? this.mobMoveTarget(mob, mob.group.position.x, mob.group.position.z, this.mobBaseScale(mob), Math.round(mob.baseY - mob.definition.footOffset), false);
         if (ground !== null) mob.group.position.y = ground;
         mob.baseY = mob.group.position.y;
+      }
+      if (constraint.taut && mob.id !== this.mountedCreatureId && hostOwnsMotion) {
+        if (movement === "ground") this.moveMobWithTerrain(mob, constraint.x, constraint.z);
+        else {
+          mob.group.position.x += constraint.x;
+          mob.group.position.z += constraint.z;
+        }
       }
       const positions = line.geometry.getAttribute("position") as THREE.BufferAttribute;
       positions.setXYZ(0, anchor.x, anchor.y, anchor.z);
@@ -24768,7 +25787,7 @@ export class VoxelEngine {
     this.sleepingCreatureWakeTimer = 0;
     this.ecologySectors.clear();
     this.enclosureCache?.clear();
-    this.ecologyDiagnostics = { attempts: 0, successes: 0, lastSuccess: null, rejections: {} };
+    this.ecologyDiagnostics = { attempts: 0, successes: 0, aquaticCandidates: 0, lastSuccess: null, rejections: {} };
     while (this.drops.length) this.removeDrop(this.drops.length - 1);
     for (const tree of this.fallingTrees) { this.disposeObject(tree.group); this.scene.remove(tree.group); }
     this.fallingTrees = [];
@@ -26030,6 +27049,8 @@ export class VoxelEngine {
     this.refreshCloudField(false, dt);
     const simulationMilliseconds = Math.max(0, performance.now() - simulationStartedAt - chunkWorkMilliseconds);
     if (!this.webglContextLost) this.renderer.render(this.scene, this.camera);
+    this.lastPresentedFrameTime = performance.now();
+    this.resetLookFrameBudget();
     this.performanceSampler.record({
       frameMilliseconds: rawDt * 1000,
       simulationMilliseconds,
@@ -26127,6 +27148,7 @@ export class VoxelEngine {
         sectorsUnderHuntingPressure: this.ecologySectors.size,
         attempts: this.ecologyDiagnostics.attempts,
         successes: this.ecologyDiagnostics.successes,
+        aquaticCandidates: this.ecologyDiagnostics.aquaticCandidates,
         rejections: this.ecologyDiagnostics.rejections,
         lastSuccess: this.ecologyDiagnostics.lastSuccess,
       },
@@ -26156,6 +27178,8 @@ export class VoxelEngine {
     this.updateGameplayCamera(Math.min(duration, 0.1));
     this.updateTarget();
     this.renderer.render(this.scene, this.camera);
+    this.lastPresentedFrameTime = performance.now();
+    this.resetLookFrameBudget();
   }
 
   emitHud(force = false, now = performance.now()) {
@@ -26522,6 +27546,7 @@ export class VoxelEngine {
       seed: this.world.seedText,
       mode: this.mode,
       edits: this.world.serializeEdits(),
+      blockFacings: this.world.serializeBlockFacings?.() ?? {},
       player: { x: this.position.x, y: this.position.y, z: this.position.z, yaw: this.yaw, pitch: this.pitch },
       spawn: { x: this.spawn.x, y: this.spawn.y, z: this.spawn.z },
       startingSettlementId: this.startingSettlementId,

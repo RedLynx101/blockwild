@@ -558,7 +558,7 @@ function planWaykeeperHealingGrotto(origin: WorldPosition, seed: string | number
     builder.set(5, 4, edge, BlockId.Glass, "grotto-canopy");
   }
   builder.set(0, 1, 0, BlockId.CreatureHealer, "four-orb-healer");
-  builder.set(-2, 1, 0, BlockId.CaptureOrbRack, "four-orb-rack");
+  builder.set(-2, 1, 0, BlockId.CaptureOrbRack, "eight-orb-rack");
   builder.chest(2, 1, 0, "healer-cache", seed, "waykeeper-supplies");
   builder.spawn(0, 2, 3, "reed-dragonfly", 3, 4, "grotto-dragonflies", true, ["grotto-resident", "ambient"]);
   builder.landmark(0, 1, 0, "waykeeper-healing-grotto", "healing-heart");

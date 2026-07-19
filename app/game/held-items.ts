@@ -395,16 +395,21 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
     group.userData.dragonEggType = definition.dragonType;
   } else if (definition.heldModel === "orb-rack") {
     addBox([0.54, 0.1, 0.34], [0, -0.13, 0], 0x765139);
-    for (const x of [-0.23, 0.23]) addBox([0.07, 0.48, 0.08], [x, 0.08, 0], 0x4e3526);
-    for (const y of [-0.01, 0.19]) addBox([0.43, 0.055, 0.07], [0, y, 0], 0x8a6042);
-    for (const x of [-0.15, -0.05, 0.05, 0.15]) addSphere(0.045, [x, 0.25, -0.035], 0x7de0d9, true);
+    for (const x of [-0.23, 0.23]) addBox([0.07, 0.56, 0.08], [x, 0.11, 0], 0x4e3526);
+    for (const y of [-0.02, 0.2]) addBox([0.43, 0.055, 0.13], [0, y, 0], 0x8a6042);
+    for (const y of [0.04, 0.26]) for (const x of [-0.15, -0.05, 0.05, 0.15]) addSphere(0.042, [x, y, -0.055], 0x7de0d9, true);
     group.scale.setScalar(0.82);
     group.rotation.set(0.12, 0.28, -0.08);
   } else if (definition.heldModel === "orb-healer") {
-    addBox([0.5, 0.1, 0.45], [0, -0.16, 0], 0x46575a);
-    addBox([0.44, 0.44, 0.4], [0, 0.08, 0], 0x2f5558);
-    addSphere(0.16, [0, 0.09, -0.19], 0x8df2e8, true);
-    addBox([0.52, 0.08, 0.47], [0, 0.34, 0], 0x637376);
+    addBox([0.52, 0.1, 0.46], [0, -0.17, 0], 0x46575a);
+    addBox([0.46, 0.23, 0.4], [0, -0.01, 0], 0x526664);
+    addBox([0.36, 0.035, 0.31], [0, 0.12, 0], 0x315b59);
+    addBox([0.52, 0.08, 0.08], [0, 0.18, -0.19], 0x78958e);
+    addBox([0.52, 0.08, 0.08], [0, 0.18, 0.19], 0x78958e);
+    addBox([0.08, 0.08, 0.3], [-0.22, 0.18, 0], 0x78958e);
+    addBox([0.08, 0.08, 0.3], [0.22, 0.18, 0], 0x78958e);
+    for (const [x, z] of [[-0.11, -0.1], [0.11, -0.1], [-0.11, 0.1], [0.11, 0.1]] as const) addSphere(0.052, [x, 0.2, z], 0x8df2e8, true);
+    addBox([0.25, 0.1, 0.035], [0, -0.04, -0.215], 0x70c99d, [0, 0, 0], true);
     group.scale.setScalar(0.74);
     group.rotation.set(0.1, 0.25, -0.08);
   } else if (definition.heldModel === "cartography") {

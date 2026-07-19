@@ -165,13 +165,30 @@ export type LivingRosterKind =
   | "sporeback-gardener"
   | "voidmantle-ray"
   | "fossilback-trilobite";
+export type MythicFrontierCreatureKind =
+  | "bellstep-qilin"
+  | "aerolith-baleen"
+  | "mireglass-kelpie"
+  | "cinderwing-pyrausta"
+  | "nacre-gatewyrm"
+  | "frostcauldron-behemoth"
+  | "briarcrown-manticore"
+  | "ammonarch"
+  | "handtail-ahuizotl"
+  | "tideclock-cetus"
+  | "anemoi-gryphon"
+  | "sable-gorgon"
+  | "namarra-makara"
+  | "ashen-salamander-king"
+  | "mycelial-oneirophant";
 export type LegendaryCreatureKind =
   | "ilyr-virebloom"
   | "thalassene"
   | "orichalc"
   | "varkesh-stormmane"
   | "kharza"
-  | "sugarwake-sovereign";
+  | "sugarwake-sovereign"
+  | MythicFrontierCreatureKind;
 export type SummonedCreatureKind = "asterjaw" | "vellum-warden" | "choir-of-one" | "glasswake-stag";
 export type CoreMobKind =
   | LegacyMobKind
@@ -750,10 +767,29 @@ export const LIVING_ROSTER_MOBS: Record<LivingRosterKind, MobDefinition> = {
   }),
 };
 
-function mythicMob(kind: LegendaryCreatureKind, seed: Omit<LivingRosterSeed, "food"> & { food: ItemCode }): MobDefinition {
+const MYTHIC_FRONTIER_DROPS: Partial<Record<LegendaryCreatureKind, MobDrop[]>> = {
+  "bellstep-qilin": [{ item: Item.Fiber, min: 1, max: 2, chance: .55 }],
+  "aerolith-baleen": [{ item: Item.MineralCrustItem, min: 1, max: 3, chance: .68 }],
+  "mireglass-kelpie": [{ item: Item.LumenreedFrond, min: 1, max: 2, chance: .58 }],
+  "cinderwing-pyrausta": [{ item: Item.SulfurGrowthItem, min: 1, max: 2, chance: .62 }],
+  "nacre-gatewyrm": [{ item: Item.LivingCoral, min: 1, max: 2, chance: .6 }],
+  "frostcauldron-behemoth": [{ item: Item.Wool, min: 2, max: 5, chance: .82 }, { item: Item.RawMeat, min: 2, max: 4, chance: .52 }],
+  "briarcrown-manticore": [{ item: Item.Hide, min: 1, max: 3, chance: .66 }, { item: Item.Fiber, min: 1, max: 2, chance: .55 }],
+  ammonarch: [{ item: Item.FossilStoneItem, min: 1, max: 3, chance: .72 }],
+  "handtail-ahuizotl": [{ item: Item.TidevineFiber, min: 1, max: 2, chance: .58 }],
+  "tideclock-cetus": [{ item: Item.RawFish, min: 2, max: 4, chance: .68 }, { item: Item.LumenPearl, min: 1, max: 1, chance: .16 }],
+  "anemoi-gryphon": [{ item: Item.Feather, min: 2, max: 5, chance: .78 }],
+  "sable-gorgon": [{ item: Item.MirrorstoneItem, min: 1, max: 2, chance: .62 }],
+  "namarra-makara": [{ item: Item.LivingCoral, min: 1, max: 3, chance: .62 }, { item: Item.LumenPearl, min: 1, max: 1, chance: .22 }],
+  "ashen-salamander-king": [{ item: Item.HeatCrackedRockItem, min: 1, max: 3, chance: .7 }],
+  "mycelial-oneirophant": [{ item: Item.SporePodItem, min: 1, max: 3, chance: .72 }],
+};
+
+ function mythicMob(kind: LegendaryCreatureKind, seed: Omit<LivingRosterSeed, "food"> & { food: ItemCode }): MobDefinition {
   const base = livingRosterMob(kind as unknown as LivingRosterKind, seed);
   return {
     ...base, kind, family: "legendary", persistent: true, breedable: false, foodLure: false,
+    drops: seed.drops?.length ? base.drops : MYTHIC_FRONTIER_DROPS[kind] ?? base.drops,
     xp: Math.max(120, Math.round(seed.health * 1.5)), captureItem: Item.CaptureOrb,
     fieldNotes: Object.freeze([
       { id: "trail", title: "The Trail", text: seed.discoveryHint, hint: "Complete the authored regional hunt trail.", requires: [{ metric: "seen", atLeast: 1 }] },
@@ -805,6 +841,81 @@ export const LEGENDARY_CREATURE_MOBS: Record<LegendaryCreatureKind, MobDefinitio
     behavior: "Pulled-sugar antlers frame a crowned kiln-heart beneath caramel-glass plates; ribbon limbs harden and soften across cooling, feast-memory, and kiln phases.",
     lore: "No confectioner made the Sovereign. Each made the part they were certain mattered most, and the feast supplied the argument between them.", utility: "May become a permanent guardian, a capturable heart-form, or a unique communal crafting station according to the finale resolution.",
     discoveryHint: "Contain syrup floods, cool the kiln-heart, and protect guests while the feast remembers itself.", colors: [0xb85b3f, 0xf0b968, 0xffe5a3],
+  }),
+  "bellstep-qilin": mythicMob("bellstep-qilin", {
+    name: "Bellstep Qilin", temperament: "Gentle", health: 285, damage: 12, speed: .94, radius: 1.08, height: 1.78, footOffset: .7,
+    habitat: "The Road of Quiet Bells across desert, badlands, and old savanna routes", active: "At dawn after every roadside bell is tuned", family: "legendary", movement: "ground", rideable: true, food: Item.RareSeedPouch,
+    behavior: "A long-maned road guardian tests a traveler with patient circuits, chiming hooves, and a radiant gallop that never tramples the bell gardens.", lore: "The road did not tame the Qilin. It learned courtesy by watching which travelers repaired what they did not break.", utility: "A swift covenant mount that reveals safe roads, settlement approaches, and lost caravan shrines.", discoveryHint: "Tune the quiet bells in route order and complete its circuit without drawing a weapon.", colors: [0x536e56, 0xd5b45e, 0xffeaa0],
+  }),
+  "aerolith-baleen": mythicMob("aerolith-baleen", {
+    name: "Aerolith Baleen", temperament: "Gentle", health: 440, damage: 14, speed: .72, radius: 2.2, height: 1.45, footOffset: 1.1,
+    habitat: "Cloudwhale Graveyards above Cloudreed Glen and exposed highland cliffs", active: "Daylight, storms, and distress calls", family: "legendary", movement: "flying", flying: true, rideable: true, food: Item.LumenKelpFrond,
+    behavior: "A sky-whale carries shelves of aerolith stone along its back and cups fallen cloud bones beneath six patient fins.", lore: "Its baleen combs weather rather than krill, straining old voices from the wind and returning them to the graveyard.", utility: "A sanctuary-scale flying carrier that lifts expedition cargo and safely descends through storms.", discoveryHint: "Return three scattered grave-bones and follow the lowest mourning call through the cloud shelf.", colors: [0x667f8c, 0xc5d8cf, 0xf4d47b],
+  }),
+  "mireglass-kelpie": mythicMob("mireglass-kelpie", {
+    name: "Mireglass Kelpie", temperament: "Defensive", health: 305, damage: 13, speed: 1.08, radius: 1.02, height: 1.48, footOffset: .66,
+    habitat: "The Mirrorfen Processional in swamps, fens, and flooded jungle roads", active: "Mist, rain, and moonlit water", family: "legendary", movement: "amphibious", aquatic: true, rideable: true, food: Item.Moonpetal,
+    behavior: "A reed-maned water horse casts a false wake beside its real body and only lowers its mirrored bridle after a traveler distinguishes rescue from pursuit.", lore: "Every fen keeps one path for the lost and another for those who enjoy making others lost.", utility: "A fast amphibious mount whose decoy wake draws hostile attention away from swimmers.", discoveryHint: "Walk the processional in reflection order and rescue each stranded lantern without chasing the false horse.", colors: [0x315f62, 0x78b9a8, 0xbff4e4],
+  }),
+  "cinderwing-pyrausta": mythicMob("cinderwing-pyrausta", {
+    name: "Cinderwing Pyrausta", temperament: "Defensive", health: 260, damage: 14, speed: 1.24, radius: .86, height: 1.12, footOffset: .92,
+    habitat: "The Emberglass Hatchery in Ember Wastes and Emberdeep vents", active: "Stable heat and protected hatchery cycles", family: "legendary", movement: "flying", flying: true, food: Item.SulfurGrowthItem,
+    behavior: "A great ember moth fans cinder dust over glass eggs, shearing only threats that cross the heated nursery wards.", lore: "Pyraustae are born from flame only in tavern stories. In truth they work very hard to keep their eggs from becoming flame.", utility: "Stabilizes hatcheries, reveals heat-writing, and carries one rider in short thermal climbs after a sanctuary pact.", discoveryHint: "Restore the hatchery vents and shelter all egg cradles through one cooling cycle.", colors: [0x73352c, 0xd7833b, 0xffe48a],
+  }),
+  "nacre-gatewyrm": mythicMob("nacre-gatewyrm", {
+    name: "Nacre Gatewyrm", temperament: "Defensive", health: 360, damage: 15, speed: .74, radius: 1.32, height: 1.34, footOffset: .45,
+    habitat: "The Drowned Moon Gate beneath Lumen Trench and Abyssal Shelf", active: "Tidal thresholds and opened moonwells", family: "legendary", movement: "aquatic", aquatic: true, rideable: true, food: Item.LivingCoral,
+    behavior: "An armored threshold serpent folds nacre plates into temporary air pockets before ramming anything that breaks a sealed garden.", lore: "The gate is not a door. It is the agreement that water may enter only after asking.", utility: "A covenant swimmer that creates brief breathing pockets and opens sealed tidework passages.", discoveryHint: "Drain the broken gate chambers, restore both air gardens, and meet the wyrm at the moonwell.", colors: [0x427b83, 0xd8d6bb, 0xa9fff0],
+  }),
+  "frostcauldron-behemoth": mythicMob("frostcauldron-behemoth", {
+    name: "Frostcauldron Behemoth", temperament: "Defensive", health: 520, damage: 20, speed: .4, radius: 1.85, height: 2.15, footOffset: .48,
+    habitat: "Titan's Kettle in Snowcap Range, Snowfield, and Frostpine country", active: "Blizzards and caravan distress", family: "legendary", movement: "ground", rideable: true, food: Item.Wheat,
+    behavior: "A vast shaggy kettle-backed beast braces avalanches with horn and shoulder, then warms stranded caravans beneath a steam-rimmed mantle.", lore: "Dwarves measure mountain weather by the Kettle's sleep. A waking snort means the pass has made a decision.", utility: "A slow two-seat pack mount that snowplows drifts, prevents one avalanche, and shelters travelers.", discoveryHint: "Clear the kettle rim without disturbing nearby Dwarven approaches, then escort the lost caravan into its lee.", colors: [0x65747b, 0xd8e7df, 0xf5c871],
+  }),
+  "briarcrown-manticore": mythicMob("briarcrown-manticore", {
+    name: "Briarcrown Manticore", temperament: "Hostile", hostile: true, health: 345, damage: 19, speed: .96, radius: 1.22, height: 1.55, footOffset: .64,
+    habitat: "The Root-Crown Menagerie above Rootweave under Glimmerwood and Wildwood", active: "Dusk and disturbed root courts", family: "legendary", movement: "ground", rideable: true, food: Item.RawMeat,
+    behavior: "A lion-bodied root predator opens a fan of measured venom briars and pounces between living menagerie terraces rather than through them.", lore: "Its old keepers called the crown a restraint. The manticore remembers it as a garden that happened to have rules.", utility: "A kindred combat mount able to mark venom-safe paths and disperse invasive thickets.", discoveryHint: "Release the menagerie habitats in the correct ecological order and survive its unpoisoned challenge.", colors: [0x5a4936, 0x789a54, 0xd8a95e],
+  }),
+  ammonarch: mythicMob("ammonarch", {
+    name: "Ammonarch", temperament: "Defensive", health: 500, damage: 15, speed: .3, radius: 1.9, height: 1.5, footOffset: .3,
+    habitat: "The Fossil Orchard in Pillarstone Halls and Crystaldeep", active: "Resonant cistern tides", family: "legendary", movement: "amphibious", aquatic: true, food: Item.FossilStoneItem,
+    behavior: "A walking ammonite fortress rotates its spiral mantle to redirect pressure while fossil fruit resonates in the orchard around it.", lore: "The orchard grows histories slowly enough that stone mistakes them for minerals.", utility: "A sanctuary guardian that reveals fossils, braces cave rooms, and tunes ancient cisterns.", discoveryHint: "Rewater the porous orchard floor and return its spiral fossils without mining the living shell.", colors: [0x7c715b, 0xb4a26d, 0x8ed7c2],
+  }),
+  "handtail-ahuizotl": mythicMob("handtail-ahuizotl", {
+    name: "Handtail Ahuizotl", temperament: "Skittish", health: 280, damage: 12, speed: 1.12, radius: .96, height: 1.02, footOffset: .38,
+    habitat: "The Lanternroot Cistern between Rootweave Grotto and Glasswater", active: "Rising cistern currents", family: "legendary", movement: "amphibious", aquatic: true, food: Item.RawFish,
+    behavior: "A sleek canal beast uses the dexterous hand at its tail to return keepsakes, pull rescue ropes, and redirect dangerous backwash.", lore: "Stories blame the hand for drownings because stories rarely ask what the hand was trying to retrieve.", utility: "A trusted rescue companion that fetches dropped items and hauls swimmers from currents.", discoveryHint: "Return the stolen keepsakes to their dry niches and let the Ahuizotl choose the final one.", colors: [0x314d53, 0x77998b, 0xe0cb78],
+  }),
+  "tideclock-cetus": mythicMob("tideclock-cetus", {
+    name: "Tideclock Cetus", temperament: "Gentle", health: 510, damage: 18, speed: .62, radius: 2.25, height: 1.5, footOffset: .72,
+    habitat: "The Tideclock Wreck across Brightwater Shelf and the Abyssal Shelf", active: "Long currents and turning wreck bells", family: "legendary", movement: "aquatic", aquatic: true, rideable: true, food: Item.RawFish,
+    behavior: "A plated cetacean turns a brass tideclock in its ribs and rolls wrecks upright with a slow sounding call.", lore: "Its clock never tells the hour. It measures how long a lost thing has been willing to be found.", utility: "A two-seat deep-water carrier that detects wrecks and grants a bounded slipstream.", discoveryHint: "Reset the wreck's four tide gears and follow the long current without harvesting the memorial cargo.", colors: [0x315d72, 0x9b8c66, 0xa7efe1],
+  }),
+  "anemoi-gryphon": mythicMob("anemoi-gryphon", {
+    name: "Anemoi Gryphon", temperament: "Defensive", health: 430, damage: 21, speed: 1.34, radius: 1.42, height: 1.78, footOffset: .98,
+    habitat: "The Palace of Nine Winds above Cloudreed Glen and the Highlands", active: "When all nine palace drafts are open", family: "legendary", movement: "flying", flying: true, rideable: true, food: Item.RawMeat,
+    behavior: "A crown-maned gryphon rides crosswinds between nine open courts and attacks only after announcing a full palace circuit.", lore: "Each wind claims to be the first. The gryphon has heard all nine arguments and is impressed by none.", utility: "An apex two-seat flying mount with crosswind shielding and controlled vertical rescue.", discoveryHint: "Open all nine wind shutters, climb the palace ascent, and complete its circuit without shortcuts.", colors: [0x74684d, 0xd8c38c, 0x9ce5ea],
+  }),
+  "sable-gorgon": mythicMob("sable-gorgon", {
+    name: "Sable Gorgon", temperament: "Hostile", hostile: true, health: 465, damage: 19, speed: .55, radius: 1.48, height: 1.62, footOffset: .32,
+    habitat: "The Gorgon Quarry descending from Badlands and Desert into Crystaldeep", active: "After quarry mirrors are aligned", family: "legendary", movement: "ground", food: Item.MirrorstoneItem,
+    behavior: "A black-stone bull with mirrored serpent mane charges through false quarry walls, cocooning rather than killing workers caught in its gaze.", lore: "Petrification is the quarry's word for preservation. The Gorgon has never agreed that stillness and death are the same.", utility: "A capturable apex guardian that raises temporary stone cover and reverses one petrifying effect.", discoveryHint: "Align the merciful mirrors, free every stone cocoon, and turn its final charge back into the empty wall.", colors: [0x34353a, 0x756a68, 0xcad7cf],
+  }),
+  "namarra-makara": mythicMob("namarra-makara", {
+    name: "Namarra Makara", temperament: "Defensive", health: 490, damage: 19, speed: .78, radius: 1.72, height: 1.6, footOffset: .52,
+    habitat: "The Sunken Court of Namarra in Lumen Trench and Deep Ocean", active: "Pearl audiences and restored air gardens", family: "legendary", movement: "aquatic", aquatic: true, rideable: true, food: Item.LivingCoral,
+    behavior: "A regal elephant-crocodile sea guardian rolls through flooded courts, carrying pearl regalia and opening sealed air gardens for worthy guests.", lore: "Namarra sank by choice when its rulers mistook height for dignity. The Makara has kept the better parts of court below.", utility: "A covenant court mount that grants rider breathing, pressure safety, and pearl-current commands.", discoveryHint: "Restore both air gardens and conduct the court audience without looting sealed memorials.", colors: [0x356f76, 0xc3a96e, 0xd9fff1],
+  }),
+  "ashen-salamander-king": mythicMob("ashen-salamander-king", {
+    name: "Ashen Salamander King", temperament: "Hostile", hostile: true, health: 445, damage: 22, speed: .64, radius: 1.45, height: 1.28, footOffset: .28,
+    habitat: "The Ashen Library of Salamander Kings in Ember Wastes and Emberdeep", active: "When memory kilns are relit", family: "legendary", movement: "amphibious", aquatic: true, food: Item.SulfurGrowthItem,
+    behavior: "A crowned furnace-salamander lashes with a kiln tail and changes the heat of archive tablets to reveal or erase royal memory.", lore: "Every king burned the previous king's account. The library survived by learning to write in temperature.", utility: "A capturable apex creature that heats forges, reveals thermal text, and tempers crafted gear.", discoveryHint: "Recover the seven temperature tablets and relight the chimney without burning the archive stacks.", colors: [0x4a3430, 0xb84f35, 0xffc767],
+  }),
+  "mycelial-oneirophant": mythicMob("mycelial-oneirophant", {
+    name: "Mycelial Oneirophant", temperament: "Gentle", health: 520, damage: 13, speed: .34, radius: 1.9, height: 2.25, footOffset: .4,
+    habitat: "The Hollow Moon Menagerie between Mooncap Hollow and Starbloom Gallery", active: "Dormant dream cycles and restored memory ponds", family: "legendary", movement: "ground", rideable: true, food: Item.Dreamcap,
+    behavior: "A colossal fungal elephant walks remembered habitats into being, unfurling moonfelt fans only around the menagerie's living pond.", lore: "It does not dream of places it has visited. Places become capable of dreaming after it remembers them.", utility: "A covenant sanctuary mount that recreates bounded habitat echoes and calms nearby wildlife.", discoveryHint: "Repair all six habitat loops, refill the memory pond, and follow the remembered path without waking dormant tunnels.", colors: [0x554d67, 0x8fa66d, 0xd9c6f3],
   }),
 };
 
@@ -2601,7 +2712,12 @@ export const LIVING_ROSTER_ORDER: LivingRosterKind[] = [
   "prismclaw-mantis-shrimp", "reefmender-shrimp", "currentweaver-eel", "shellcarrier-hermit", "wreckwhistle-porpoise",
   "kilnscale-salamander", "sporeback-gardener", "voidmantle-ray", "fossilback-trilobite",
 ];
-export const LEGENDARY_CREATURE_ORDER: LegendaryCreatureKind[] = ["ilyr-virebloom", "thalassene", "orichalc", "varkesh-stormmane", "kharza", "sugarwake-sovereign"];
+export const LEGENDARY_CREATURE_ORDER: LegendaryCreatureKind[] = [
+  "ilyr-virebloom", "thalassene", "orichalc", "varkesh-stormmane", "kharza", "sugarwake-sovereign",
+  "bellstep-qilin", "aerolith-baleen", "mireglass-kelpie", "cinderwing-pyrausta", "nacre-gatewyrm",
+  "frostcauldron-behemoth", "briarcrown-manticore", "ammonarch", "handtail-ahuizotl", "tideclock-cetus",
+  "anemoi-gryphon", "sable-gorgon", "namarra-makara", "ashen-salamander-king", "mycelial-oneirophant",
+];
 export const SUMMONED_CREATURE_ORDER: SummonedCreatureKind[] = ["asterjaw", "vellum-warden", "choir-of-one", "glasswake-stag"];
 export const CORE_MOB_ORDER: CoreMobKind[] = [
   ...LEGACY_MOB_ORDER,

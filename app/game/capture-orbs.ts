@@ -9,13 +9,14 @@ import {
 } from "./creature-cage";
 import type { CaptureLensId } from "./creature-capture";
 
-export const CAPTURE_ORB_RACK_SIZE = 4;
+export const CAPTURE_ORB_RACK_SIZE = 8;
 export const CREATURE_HEALER_SIZE = 4;
 export const ORB_RACK_CONTAINER_KIND = "orb-rack" as const;
 export const HEALING_STATION_CONTAINER_KIND = "healing-station" as const;
-export const CREATURE_HEAL_INTERVAL_SECONDS = 10;
-export const CREATURE_PASSIVE_HEAL_INTERVAL_SECONDS = CREATURE_HEAL_INTERVAL_SECONDS * 2;
+export const CREATURE_HEAL_INTERVAL_SECONDS = 20;
 export const CREATURE_HEALER_GEL_CAP = 64;
+export const CREATURE_HEALER_GEL_SECONDS = 10 * 60;
+export const CREATURE_HEALER_GEL_MULTIPLIER = 10;
 
 export type CaptureOrbAttunement = Readonly<{
   ownerId: string;
@@ -45,7 +46,10 @@ export type OrbRackState = Readonly<{
 export type CreatureHealerState = Readonly<{
   schema: 1;
   slots: readonly (CaptureOrb | null)[];
+  /** Buffered whole Cave Gel units not yet loaded into the active chamber. */
   gelUnits: number;
+  /** Active-healing seconds remaining in the currently loaded Gel unit. */
+  gelFuelSeconds: number;
   healClock: number;
   healCycles: number;
 }>;
@@ -277,11 +281,12 @@ export function setRackOrb(state: OrbRackState, index: number, orb: CaptureOrb |
   return { ...state, slots };
 }
 
-export function createCreatureHealer(slots: readonly (CaptureOrb | null)[] = [], gelUnits = 0): CreatureHealerState {
+export function createCreatureHealer(slots: readonly (CaptureOrb | null)[] = [], gelUnits = 0, gelFuelSeconds = 0): CreatureHealerState {
   return {
     schema: 1,
     slots: Array.from({ length: CREATURE_HEALER_SIZE }, (_, index) => slots[index] ?? null),
     gelUnits: Math.max(0, Math.min(CREATURE_HEALER_GEL_CAP, Math.floor(gelUnits))),
+    gelFuelSeconds: Math.max(0, Math.min(CREATURE_HEALER_GEL_SECONDS, Number(gelFuelSeconds) || 0)),
     healClock: 0,
     healCycles: 0,
   };
@@ -295,38 +300,50 @@ export function setHealerOrb(state: CreatureHealerState, index: number, orb: Cap
 }
 
 /**
- * Every deposited creature heals passively once per twenty seconds. Cave Gel
- * optionally adds an accelerated heal on the intervening ten-second cycles.
+ * Every deposited creature heals once per twenty seconds. A loaded Cave Gel
+ * makes that same pulse ten times stronger for every wounded creature. One Gel
+ * lasts for ten minutes of active healing and pauses, along with the pulse
+ * clock, whenever all stored creatures are healthy.
  */
 export function stepCreatureHealer(state: CreatureHealerState, deltaSeconds: number): { state: CreatureHealerState; healed: number; gelUsed: number } {
-  const dt = Math.max(0, Math.min(3600, deltaSeconds));
-  let healClock = state.healClock + dt;
+  let remaining = Math.max(0, Math.min(3600, deltaSeconds));
+  let healClock = Math.max(0, Math.min(CREATURE_HEAL_INTERVAL_SECONDS, state.healClock));
   let gelUnits = state.gelUnits;
+  let gelFuelSeconds = Math.max(0, Math.min(CREATURE_HEALER_GEL_SECONDS, state.gelFuelSeconds));
   const slots = [...state.slots];
   let healed = 0;
   let gelUsed = 0;
   let healCycles = state.healCycles;
-  const cycles = Math.min(360, Math.floor(healClock / CREATURE_HEAL_INTERVAL_SECONDS));
-  healClock -= cycles * CREATURE_HEAL_INTERVAL_SECONDS;
-  for (let cycle = 0; cycle < cycles; cycle += 1) {
+  let iterations = 0;
+  const hasWoundedCreature = () => slots.some((orb) => Boolean(orb?.creature && orb.creature.health < orb.creature.maxHealth));
+  while (remaining > 1e-6 && hasWoundedCreature() && iterations < 720) {
+    iterations += 1;
+    if (gelFuelSeconds <= 1e-6 && gelUnits > 0) {
+      gelUnits -= 1;
+      gelUsed += 1;
+      gelFuelSeconds = CREATURE_HEALER_GEL_SECONDS;
+    }
+    const timeToPulse = Math.max(1e-6, CREATURE_HEAL_INTERVAL_SECONDS - healClock);
+    const segment = Math.min(remaining, timeToPulse, gelFuelSeconds > 1e-6 ? gelFuelSeconds : remaining);
+    const pulseFueled = gelFuelSeconds > 1e-6 && segment >= timeToPulse - 1e-6;
+    healClock += segment;
+    remaining -= segment;
+    if (gelFuelSeconds > 1e-6) gelFuelSeconds = Math.max(0, gelFuelSeconds - segment);
+    if (healClock < CREATURE_HEAL_INTERVAL_SECONDS - 1e-6) continue;
+    healClock = 0;
     healCycles += 1;
-    const passiveCycle = healCycles % (CREATURE_PASSIVE_HEAL_INTERVAL_SECONDS / CREATURE_HEAL_INTERVAL_SECONDS) === 0;
+    const strength = pulseFueled ? CREATURE_HEALER_GEL_MULTIPLIER : 1;
     for (let index = 0; index < slots.length; index += 1) {
       const orb = slots[index];
       if (!orb?.creature || orb.creature.health >= orb.creature.maxHealth) continue;
-      const accelerated = !passiveCycle && gelUnits > 0;
-      if (!passiveCycle && !accelerated) continue;
       const creature = cloneCreatureMetadata(orb.creature);
-      creature.health = Math.min(creature.maxHealth, creature.health + 1);
+      const previousHealth = creature.health;
+      creature.health = Math.min(creature.maxHealth, creature.health + strength);
       slots[index] = refreshAttunedOrbHealth({ ...orb, creature });
-      if (accelerated) {
-        gelUnits -= 1;
-        gelUsed += 1;
-      }
-      healed += 1;
+      healed += creature.health - previousHealth;
     }
   }
-  return { state: { ...state, slots, gelUnits, healClock, healCycles }, healed, gelUsed };
+  return { state: { ...state, slots, gelUnits, gelFuelSeconds, healClock, healCycles }, healed, gelUsed };
 }
 
 export function healingStationContainerStatus(state: CreatureHealerState) {
@@ -334,6 +351,9 @@ export function healingStationContainerStatus(state: CreatureHealerState) {
     kind: HEALING_STATION_CONTAINER_KIND,
     capacity: CREATURE_HEALER_SIZE,
     gelUnits: state.gelUnits,
+    gelFuelSeconds: state.gelFuelSeconds,
+    fuelActive: state.gelFuelSeconds > 0,
+    bufferedHealingSeconds: state.gelFuelSeconds + state.gelUnits * CREATURE_HEALER_GEL_SECONDS,
     progress: state.healClock / CREATURE_HEAL_INTERVAL_SECONDS,
     slots: state.slots.map((orb) => orb?.creature ? {
       orbId: orb.orbId,

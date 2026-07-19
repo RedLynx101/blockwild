@@ -36,7 +36,7 @@ test("the unified visual theme is executable and stable", () => {
 });
 
 test("every approved faceted creature records a silhouette reason", () => {
-  assert.equal(CUBIC_STORYBOOK_VISUAL_KINDS.length, 33);
+  assert.equal(CUBIC_STORYBOOK_VISUAL_KINDS.length, 48);
   assert.equal(FACETED_STORYBOOK_EXCEPTION_KINDS.length, 4);
   const cubicKinds = new Set(CUBIC_STORYBOOK_VISUAL_KINDS);
   assert.ok(FACETED_STORYBOOK_EXCEPTION_KINDS.every((kind) => !cubicKinds.has(kind)));
@@ -56,8 +56,8 @@ test("reference models link to canonical portraits", () => {
 
 test("all production creatures and blocks pass the release contract", () => {
   const audit = auditVisualTheme({ generatedAt: "2026-07-18T00:00:00.000Z" });
-  assert.equal(audit.totals.creatures, 216);
-  assert.equal(audit.totals.blocks, 294);
+  assert.equal(audit.totals.creatures, 231);
+  assert.equal(audit.totals.blocks, 305);
   assert.equal(audit.totals.blockFamilies, 17);
   assert.equal(audit.totals.creatureViolations, 0);
   assert.equal(audit.totals.blockViolations, 0);

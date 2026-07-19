@@ -14,7 +14,9 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from "react";
 import {
+  constrainMapViewState,
   createMapViewState,
+  fastTravelChargeCost,
   mapChunkAtViewportPoint,
   mapChunksInViewport,
   mapTerrainPalette,
@@ -347,7 +349,7 @@ const MARKER_META: Readonly<Record<MapMarkerKind, Readonly<{ icon: string; label
   "natural-poi": { icon: "◆", label: "Discovered place" },
   manual: { icon: "✦", label: "Personal marker" },
   "bed-spawn": { icon: "⌂", label: "Bed spawn" },
-  wayshrine: { icon: "♜", label: "Wayshrine" },
+  wayshrine: { icon: "ᛉ", label: "Wayshrine" },
   settlement: { icon: "⌂", label: "Settlement knowledge" },
 };
 
@@ -356,13 +358,32 @@ const SEMANTIC_MARKER_ICONS: Readonly<Record<string, string>> = {
   town: "⌂",
   pin: "✦",
   bed: "⌂",
-  wayshrine: "♜",
+  wayshrine: "ᛉ",
   settlement: "⌂",
 };
 
 function markerGlyph(marker: MapMarker) {
   if (!marker.icon) return MARKER_META[marker.kind].icon;
   return SEMANTIC_MARKER_ICONS[marker.icon] ?? (marker.icon.length <= 2 ? marker.icon : MARKER_META[marker.kind].icon);
+}
+
+function WaystoneMapIcon() {
+  return (
+    <svg className="waystone-map-icon" data-map-icon="waystone" viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+      <path className="waystone-map-icon__stone" d="M8 3.5h8l1.8 3.2-1.2 11H7.4l-1.2-11L8 3.5Z" />
+      <path className="waystone-map-icon__facet" d="m8.3 6.7 2-1.2h3.8l1.6 1.2-.8 8.4H9.1l-.8-8.4Z" />
+      <path className="waystone-map-icon__rune" d="M12 7v8.2m0-5.7-2.4 2.2M12 12l2.5 2.1" />
+      <path className="waystone-map-icon__base" d="M5 17.5h14v2H5Zm2 2h10V22H7Z" />
+    </svg>
+  );
+}
+
+function markerVisual(marker: MapMarker) {
+  return marker.kind === "wayshrine" || marker.icon === "wayshrine" ? <WaystoneMapIcon /> : markerGlyph(marker);
+}
+
+function markerKindVisual(kind: MapMarkerKind, fallback: string) {
+  return kind === "wayshrine" ? <WaystoneMapIcon /> : fallback;
 }
 
 type MapBounds = MapViewportBounds;
@@ -523,6 +544,8 @@ export type MapPanelProps = Readonly<{
   alwaysShowPoiLabels?: boolean;
   trackedTargetId?: string | null;
   onTrackTarget?: (targetId: string | null) => void;
+  minimapEnabled?: boolean;
+  onMinimapEnabledChange?: (enabled: boolean) => void;
   onClose?: () => void;
 }>;
 
@@ -549,6 +572,8 @@ export function MapPanel({
   alwaysShowPoiLabels = false,
   trackedTargetId = null,
   onTrackTarget,
+  minimapEnabled = false,
+  onMinimapEnabledChange,
   onClose,
 }: MapPanelProps) {
   const titleId = useId();
@@ -594,8 +619,8 @@ export function MapPanel({
   );
   const zoomLimits = useMemo(() => ({ minimum: minimumZoom } as const), [minimumZoom]);
   const activeViewState = useMemo(
-    () => normalizeMapViewState(controlledViewState ?? localViewState, zoomLimits),
-    [controlledViewState, localViewState, zoomLimits],
+    () => constrainMapViewState(baseBounds, controlledViewState ?? localViewState, zoomLimits),
+    [baseBounds, controlledViewState, localViewState, zoomLimits],
   );
   const bounds = useMemo(
     () => mapViewportBounds(baseBounds, activeViewState, zoomLimits),
@@ -632,14 +657,15 @@ export function MapPanel({
       : clamp(fastTravelElapsedSeconds / fastTravelChannel.durationSeconds, 0, 1)
     : 0;
   const isChanneling = fastTravelChannel?.status === "channeling";
-  const destinationIsChargeEligible = selected !== null && selected.kind !== "manual"
+  const destinationIsChargeEligible = selected !== null
     && !(selected.kind === "settlement" && selected.settlementKnowledge !== "visited");
+  const destinationChargeCost = selected ? fastTravelChargeCost(selected) : 1;
   const destinationIsShrineEligible = selected?.kind === "wayshrine"
     && currentWayshrineId !== null
     && currentWayshrineId !== selected.id;
 
   const updateViewState = (next: MapViewState) => {
-    const normalized = normalizeMapViewState(next, zoomLimits);
+    const normalized = constrainMapViewState(baseBounds, normalizeMapViewState(next, zoomLimits), zoomLimits);
     if (!controlledViewState) setLocalViewState(normalized);
     onViewStateChange?.(normalized);
   };
@@ -758,6 +784,15 @@ export function MapPanel({
             >
               <b>World below</b><small>{undergroundLayer ? "ON" : "OFF"}</small>
             </button>
+            <button
+              type="button"
+              className={`hearthroads-map-detail-toggle minimap${minimapEnabled ? " active" : ""}`}
+              aria-pressed={minimapEnabled}
+              onClick={() => onMinimapEnabledChange?.(!minimapEnabled)}
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <b>HUD minimap</b><small>{minimapEnabled ? "ON" : "OFF"}</small>
+            </button>
             {undergroundLayer ? (
               <div className="hearthroads-map-depth-bands" role="group" aria-label="Underground depth band" onPointerDown={(event) => event.stopPropagation()}>
                 {(["upper", "middle", "deep"] as const).map((band) => (
@@ -826,7 +861,7 @@ export function MapPanel({
                 aria-pressed={selected?.id === marker.id}
                 title={marker.name}
               >
-                <span aria-hidden="true">{markerGlyph(marker)}</span>
+                <span aria-hidden="true">{markerVisual(marker)}</span>
                 {(alwaysShowPoiLabels || activeViewState.zoom >= 2.6 || trackedTargetId === marker.id) && marker.kind !== "manual" ? <small>{marker.name}</small> : null}
               </button>
             ))}
@@ -839,7 +874,7 @@ export function MapPanel({
             <span><i aria-hidden="true">▲</i>Players and heading</span>
             <span><i aria-hidden="true">≈</i>Water and sea</span>
             {Object.entries(MARKER_META).map(([kind, entry]) => (
-              <span key={kind}><i aria-hidden="true">{entry.icon}</i>{entry.label}</span>
+              <span key={kind}><i aria-hidden="true">{markerKindVisual(kind as MapMarkerKind, entry.icon)}</i>{entry.label}</span>
             ))}
           </div>
         </div>
@@ -849,7 +884,7 @@ export function MapPanel({
             <>
               <div className="hearthroads-location-heading">
                 <span className={`hearthroads-location-sigil marker-${selected.kind}`} aria-hidden="true">
-                  {markerGlyph(selected)}
+                  {markerVisual(selected)}
                 </span>
                 <div>
                   <small>{MARKER_META[selected.kind].label}</small>
@@ -896,10 +931,10 @@ export function MapPanel({
                 <button
                   className="pixel-button gold-button"
                   type="button"
-                  disabled={!destinationIsChargeEligible || knowledge.fastTravelCharges < 1 || Boolean(isChanneling)}
+                  disabled={!destinationIsChargeEligible || knowledge.fastTravelCharges < destinationChargeCost || Boolean(isChanneling)}
                   onClick={() => onBeginFastTravel(selected, "map-charge")}
                 >
-                  Travel · 1 charge
+                  Travel · {destinationChargeCost} {destinationChargeCost === 1 ? "charge" : "charges"}
                 </button>
                 {destinationIsShrineEligible ? (
                   <button

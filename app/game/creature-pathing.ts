@@ -63,6 +63,46 @@ export type CircleSeparation = {
   overlap: number;
 };
 
+export type CreatureBodyMassProfile = {
+  size: CreatureSizeClass;
+  radius: number;
+  height: number;
+};
+
+/**
+ * A compact gameplay mass derived from the authored collision body. It is not
+ * a physics-engine kilogram value: it only controls how an overlap correction
+ * is shared and how strongly an impact can displace the creature.
+ */
+export function creatureBodyMass(profile: CreatureBodyMassProfile) {
+  const classMass = profile.size === "large" ? 2.35 : profile.size === "medium" ? 1 : 0.4;
+  const footprint = Math.max(0.16, profile.radius);
+  const bulk = clamp((footprint / 0.5) ** 2 * Math.max(0.45, profile.height), 0.35, 5.5);
+  return clamp(classMass * Math.pow(bulk, 0.32), 0.24, 8);
+}
+
+export type CreatureSeparationShare = {
+  first: number;
+  second: number;
+};
+
+/** Splits penetration inversely by mass: the smaller body yields farther. */
+export function splitCreatureSeparation(overlap: number, firstMass: number, secondMass: number): CreatureSeparationShare {
+  const penetration = Math.max(0, overlap);
+  const safeFirst = Math.max(0.05, firstMass);
+  const safeSecond = Math.max(0.05, secondMass);
+  const total = safeFirst + safeSecond;
+  return {
+    first: penetration * safeSecond / total,
+    second: penetration * safeFirst / total,
+  };
+}
+
+/** Converts an authored impact into a bounded horizontal speed. */
+export function creatureKnockbackSpeed(strength: number, mass: number) {
+  return clamp(Math.max(0, strength) / Math.sqrt(Math.max(0.2, mass)), 0, 6.2);
+}
+
 /** Returns the smallest horizontal correction that moves `mover` out of `obstacle`. */
 export function separateCreatureCircles(
   mover: CircleBody,
