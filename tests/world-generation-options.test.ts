@@ -1,13 +1,36 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { BlockId } from "../app/game/data.ts";
+import { BlockId, Item } from "../app/game/data.ts";
+import { oreBlockDropRange } from "../app/game/engine.ts";
+import {
+  DESERT_BARREL_CACTUS_SPAWN_CHANCE,
+  DESERT_CACTUS_DENSITY_SCALE,
+  DESERT_SAGUARO_SPAWN_CHANCE,
+} from "../app/game/structures.ts";
 import {
   DEFAULT_WORLD_GENERATION_OPTIONS,
+  DESERT_CACTUS_SPAWN_CHANCE,
   MIN_Y,
+  ORE_SPAWN_RATE_MULTIPLIER,
+  ORE_VEIN_CELL_SIZE,
   ChunkWorld,
   blockIndex,
   normalizeWorldGenerationOptions,
 } from "../app/game/world.ts";
+
+test("the richer ore contract raises spawn rolls and permits broader seams", () => {
+  assert.equal(ORE_SPAWN_RATE_MULTIPLIER, 1.25);
+  assert.deepEqual(ORE_VEIN_CELL_SIZE, { horizontal: 3, vertical: 2 });
+  assert.deepEqual(oreBlockDropRange(BlockId.IronOre), [Item.RawIron, 1, 4]);
+  assert.deepEqual(oreBlockDropRange(BlockId.CopperOre), [Item.RawCopper, 1, 4]);
+});
+
+test("desert cactus density is fifteen percent of its legacy roll", () => {
+  assert.equal(DESERT_CACTUS_SPAWN_CHANCE, 0.00225);
+  assert.equal(DESERT_CACTUS_SPAWN_CHANCE / 0.015, 0.15);
+  assert.equal(DESERT_CACTUS_DENSITY_SCALE, 0.15);
+  assert.ok(Math.abs(DESERT_SAGUARO_SPAWN_CHANCE + DESERT_BARREL_CACTUS_SPAWN_CHANCE - 0.0045) < 1e-12);
+});
 
 test("generation options clamp safely and an omitted options object restores exact defaults", () => {
   assert.deepEqual(normalizeWorldGenerationOptions(), DEFAULT_WORLD_GENERATION_OPTIONS);

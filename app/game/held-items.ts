@@ -1,8 +1,9 @@
 import * as THREE from "three";
-import { BlockId, Item, ITEMS, type ItemCode } from "./data";
+import { BLOCKS, BlockId, Item, ITEMS, type ItemCode } from "./data";
 import { createButterflyVisual } from "./butterflies";
 import { BUTTERFLY_ORDER, type ButterflyKind } from "./mobs";
 import { createHeldToolSpec } from "./model-specs";
+import { createAtlasTilePlaneGeometry } from "./world";
 
 export type DragonEquipmentElement = "fire" | "ice" | "steel" | "sea" | "gold" | "silver";
 
@@ -22,7 +23,7 @@ export const DRAGON_EQUIPMENT_PALETTES: Readonly<Record<DragonEquipmentElement, 
 });
 
 /** Shared first/third-person, remote-player, dropped-item, and paper-doll model. */
-export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptureOrb?: boolean } = {}) {
+export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptureOrb?: boolean; atlas?: THREE.Texture } = {}) {
   const definition = ITEMS[item];
   if (!definition) return null;
   const group = new THREE.Group();
@@ -66,7 +67,29 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
     return mesh;
   };
 
-  if (definition.heldModel === "dragon-saddle") {
+  if (definition.heldModel === "world-texture" && definition.worldTextureBlock !== undefined) {
+    const block = BLOCKS[definition.worldTextureBlock];
+    const material = () => {
+      const settings = {
+        map: options.atlas,
+        color: options.atlas ? 0xffffff : definition.color,
+        alphaTest: options.atlas ? 0.18 : 0,
+        transparent: Boolean(options.atlas),
+        side: THREE.DoubleSide,
+      } as const;
+      return block.layer === "emissive" ? new THREE.MeshBasicMaterial(settings) : new THREE.MeshLambertMaterial(settings);
+    };
+    for (const [name, rotationY] of [["a", 0], ["b", Math.PI / 2]] as const) {
+      const plane = new THREE.Mesh(createAtlasTilePlaneGeometry(definition.worldTextureBlock), material());
+      plane.name = `world-texture-${definition.worldTextureBlock}-plane-${name}`;
+      plane.rotation.y = rotationY;
+      plane.position.y = 0.02;
+      group.add(plane);
+    }
+    group.userData.worldTextureBlock = definition.worldTextureBlock;
+    group.scale.setScalar(0.88);
+    group.rotation.set(0.08, 0.32, -0.12);
+  } else if (definition.heldModel === "dragon-saddle") {
     addBox([0.58, 0.1, 0.76], [0, -0.08, 0], 0x522b27).name = "dragonflight-saddle-quilted-pad";
     addBox([0.48, 0.17, 0.62], [0, 0.02, -0.02], 0x8b4f38).name = "dragonflight-saddle-seat";
     addBox([0.51, 0.31, 0.12], [0, 0.19, 0.27], 0x633128, [-0.26, 0, 0]).name = "dragonflight-saddle-cantle";

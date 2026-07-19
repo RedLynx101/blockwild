@@ -641,6 +641,7 @@ const AUTHORED_MOVE_SHEETS: Readonly<Record<string, AuthoredMoveSheet>> = Object
   "boglantern-mossling": { types: ["verdant", "tide", "radiant"], moves: ["Root Tangle", "Lantern Spore", "Moss Mend", "Wetbed Recovery"] },
   "cindercone-mossling": { types: ["verdant", "flame"], moves: ["Root Tangle", "Ash Spore", "Moss Mend", "Ashbed Recovery"] },
   "moonbloom-mossling": { types: ["verdant", "dream"], moves: ["Root Tangle", "Dream Spore", "Moss Mend", "Seed Gathering"] },
+  "moonbrawn-mossling": { types: ["verdant", "stone"], moves: ["Root Hammer", "Bramble Brace", "Moonberry Mend", "Soil Restoration"] },
   emberjay: { types: ["sky", "flame"], moves: ["Cinder Cry", "Hostile Warning", "Perch Rest", "Scout Route"] },
   "canopy-lark": { types: ["sky", "verdant"], moves: ["Leafbeat", "Mature Tree Mark", "Perch Rest", "Canopy Scout"] },
   "tidewing-gull": { types: ["sky", "tide"], moves: ["Brine Dive", "Fishschool Mark", "Drop Retrieval", "Coast Scout"] },

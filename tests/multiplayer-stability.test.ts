@@ -298,6 +298,29 @@ test("host simulation integrates fresh seat-zero guest helm input and expires st
   assert.equal(boat.save.z, 0);
 });
 
+test("a local sailboat rider can free-look without steering the hull or snapping the camera", () => {
+  const playerId = "local";
+  const boat = {
+    save: { id: "wayfarer-freelook", x: 3, y: 63.58, z: -2, yaw: -0.4, velocity: 0, passengers: [playerId], inventory: Array.from({ length: 18 }, () => null), ownerId: playerId },
+    group: new THREE.Group(),
+  };
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine & Record<string, unknown>;
+  Object.assign(engine, {
+    boats: new Map([[boat.save.id, boat]]),
+    multiplayer: null,
+    multiplayerBoatInputs: new Map(),
+    keys: new Set<string>(), world: { getBlock: () => BlockId.Water },
+    mountedBoatId: boat.save.id, position: new THREE.Vector3(), velocity: new THREE.Vector3(), grounded: true,
+    yaw: 1.17,
+  });
+
+  VoxelEngine.prototype.updateBoats.call(engine, 0.1);
+
+  assert.equal(engine.yaw, 1.17, "the rider's look direction must remain independent from the hull heading");
+  assert.equal(boat.save.yaw, -0.4, "free-looking must not steer a stationary hull");
+  assert.equal(engine.mountedBoatId, boat.save.id);
+});
+
 test("host lifecycle atomically consumes guest launches, boards, leaves and repacks an empty boat", () => {
   const current = sessionState();
   current.inventory[0] = { item: Item.Sailboat, count: 1 };

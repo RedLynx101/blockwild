@@ -55,6 +55,7 @@ import { legendaryContractForItem } from "./legendary-items";
 import { captureOrbFromInventorySlot } from "./capture-orbs";
 import { BlockPlayerModel, type PlayerEquipmentAppearance } from "./player-model";
 import { GAME_RELEASE_NAME, GAME_VERSION, GAME_VERSION_LABEL } from "./version";
+import { createBlockAtlas } from "./world";
 import {
   DEFAULT_WORLD_OPTIONS,
   WORLD_OWNERSHIP_NOTICE,
@@ -617,20 +618,21 @@ function workstationAuditOrb(kind: MobKind, name: string, health: number, maxHea
 }
 
 function workstationAuditMorphLoom(): OrbMorphLoomHudState {
-  const inputSlot = workstationAuditOrb("honeybee", "Marigold Worker", MOB_DEFS.honeybee.health, MOB_DEFS.honeybee.health);
+  const inputSlot = workstationAuditOrb("mossling", "Mallow", MOB_DEFS.mossling.health, MOB_DEFS.mossling.health);
   const inputOrb = captureOrbFromInventorySlot(inputSlot)!;
   return {
-    schema: 1,
-    selectedRecipeId: "worker-to-hive-queen",
+    schema: 2,
+    selectedRecipeId: "mossling-to-moonbrawn",
     inputOrb,
     outputOrb: null,
-    royalJelly: 3,
+    moonberries: 7,
     starCrystals: 2,
-    activeJob: { recipeId: "worker-to-hive-queen", progressSeconds: 19, durationSeconds: 42, startedAt: 1 },
+    legacyRoyalJelly: 0,
+    activeJob: { recipeId: "mossling-to-moonbrawn", progressSeconds: 21, durationSeconds: 48, startedAt: 1 },
     completedMorphs: 4,
     inputSlot,
     outputSlot: null,
-    progress: 19 / 42,
+    progress: 21 / 48,
   };
 }
 
@@ -1308,8 +1310,12 @@ function PlantPortrait({ plant, seen, mini = false }: { plant: PlantDefinition; 
   );
 }
 
+let avatarPreviewAtlas: THREE.Texture | null = null;
+
 function createPreviewHeldItem(item: ItemCode | undefined) {
-  return item === undefined ? null : createAvatarHeldItemModel(item);
+  if (item === undefined) return null;
+  avatarPreviewAtlas ??= createBlockAtlas();
+  return createAvatarHeldItemModel(item, { atlas: avatarPreviewAtlas });
 }
 
 function disposePreviewObject(object: THREE.Object3D | null) {
@@ -2978,40 +2984,41 @@ export default function VoxelGame() {
     if (!source) return null;
     const progressPercent = Math.round(normalizedProgress(source.progress) * 100);
     const active = Boolean(source.activeJob);
-    const ready = Boolean(source.inputOrb?.creature?.kind === "honeybee" && source.royalJelly >= 1 && source.starCrystals >= 1 && !source.outputOrb);
+    const ready = Boolean(source.inputOrb?.creature?.kind === "mossling" && source.moonberries >= 4 && source.starCrystals >= 1 && !source.outputOrb);
     const api = engineRef.current as unknown as WorkstationEngineApi | null;
     return (
       <section className={`menu-overlay inventory-overlay workstation-overlay morph-loom-overlay ${audit ? "workstation-audit-overlay" : ""}`} aria-labelledby="morph-loom-title" onPointerMove={trackCursor}>
         <div className="mc-window workstation-window morph-loom-window">
           <header className="mc-window-header workstation-header">
-            <div><span className="panel-eyebrow">WAYKEEPER CHRYSALIS LOOM · LIVING PATTERNWORK</span><h2 id="morph-loom-title">Crown a Hive Queen</h2></div>
+            <div><span className="panel-eyebrow">WAYKEEPER CHRYSALIS LOOM · LIVING PATTERNWORK</span><h2 id="morph-loom-title">Root a Moonbrawn</h2></div>
             {!audit && <button type="button" className="panel-close" onClick={resume} aria-label="Close Chrysalis Loom">×</button>}
           </header>
           <div className="morph-loom-workspace">
             <section className="morph-loom-story">
-              <small>PATTERN 01 · APIARY KIN</small>
-              <h3>Worker → Hive Queen</h3>
+              <small>PATTERN 01 · GROVE KIN</small>
+              <h3>Mossling → Moonbrawn Mossling</h3>
               <p>The loom changes the creature held inside one exact Capture Orb. Its bond, owner, name, and orb identity remain intact.</p>
-              <div className="morph-loom-cost-note"><span>42 seconds</span><span>Scales by morph complexity</span><span>Safe to cancel</span></div>
+              <div className="morph-loom-cost-note"><span>48 seconds</span><span>Scales by morph complexity</span><span>Safe to cancel</span></div>
             </section>
             <section className={`morph-loom-chamber ${active ? "active" : source.outputOrb ? "complete" : ready ? "ready" : "idle"}`} aria-label={`Morph chamber ${active ? `${progressPercent}% complete` : source.outputOrb ? "complete" : ready ? "ready" : "idle"}`}>
               <div className="morph-loom-ring" aria-hidden="true"><i /><b /><span /></div>
               <div className="morph-loom-orb-input">
-                {renderSlot(source.inputSlot, "morph-loom-input", (shift) => workstationClick("morph-loom", 0, "left", shift), () => workstationClick("morph-loom", 0, "right"), "machine-slot morph-orb-slot", "Worker Honeybee Capture Orb")}
-                <small>WORKER ORB</small>
+                {renderSlot(source.inputSlot, "morph-loom-input", (shift) => workstationClick("morph-loom", 0, "left", shift), () => workstationClick("morph-loom", 0, "right"), "machine-slot morph-orb-slot", "Mossling Capture Orb")}
+                <small>MOSSLING ORB</small>
               </div>
               <div className="morph-loom-transit" aria-hidden="true"><i /><i /><i /><strong>✦</strong></div>
               <div className="morph-loom-orb-output">
-                {renderSlot(source.outputSlot, "morph-loom-output", (shift) => workstationClick("morph-loom", 3, "left", shift), () => workstationClick("morph-loom", 3, "right"), "machine-slot morph-orb-slot output", "Crowned Hive Queen Capture Orb")}
-                <small>QUEEN ORB</small>
+                {renderSlot(source.outputSlot, "morph-loom-output", (shift) => workstationClick("morph-loom", 3, "left", shift), () => workstationClick("morph-loom", 3, "right"), "machine-slot morph-orb-slot output", "Moonbrawn Mossling Capture Orb")}
+                <small>MOONBRAWN ORB</small>
               </div>
             </section>
             <section className="morph-loom-resources" aria-label="Morph resources">
-              <div><span className="morph-resource-swatch jelly" aria-hidden="true">◆</span><div><small>COLONY INSTINCT</small><strong>Royal Jelly</strong><span>{source.royalJelly}/64 stored · 1 required</span></div>{renderSlot(source.royalJelly ? { item: Item.RoyalJelly, count: source.royalJelly } : null, "morph-jelly", (shift) => workstationClick("morph-loom", 1, "left", shift), () => workstationClick("morph-loom", 1, "right"), "machine-slot", "Royal Jelly catalyst")}</div>
+              <div><span className="morph-resource-swatch jelly" aria-hidden="true">●</span><div><small>ROOTHEART NOURISHMENT</small><strong>Moonberries</strong><span>{source.moonberries}/64 stored · 4 required</span></div>{renderSlot(source.moonberries ? { item: Item.Berry, count: source.moonberries } : null, "morph-berries", (shift) => workstationClick("morph-loom", 1, "left", shift), () => workstationClick("morph-loom", 1, "right"), "machine-slot", "Moonberry nourishment")}</div>
               <div><span className="morph-resource-swatch crystal" aria-hidden="true">✦</span><div><small>PATTERN ANCHOR</small><strong>Star Crystal</strong><span>{source.starCrystals}/64 stored · 1 required</span></div>{renderSlot(source.starCrystals ? { item: Item.CrystalShard, count: source.starCrystals } : null, "morph-crystal", (shift) => workstationClick("morph-loom", 2, "left", shift), () => workstationClick("morph-loom", 2, "right"), "machine-slot", "Star Crystal focus")}</div>
+              {source.legacyRoyalJelly > 0 && <div><span className="morph-resource-swatch jelly" aria-hidden="true">◇</span><div><small>LEGACY RECOVERY</small><strong>Royal Jelly</strong><span>{source.legacyRoyalJelly} stored · no longer consumed here</span></div>{renderSlot({ item: Item.RoyalJelly, count: source.legacyRoyalJelly }, "morph-legacy-jelly", (shift) => workstationClick("morph-loom", 4, "left", shift), () => workstationClick("morph-loom", 4, "right"), "machine-slot", "Recover legacy Royal Jelly")}</div>}
             </section>
             <section className="morph-loom-controls">
-              <div><span><small>{active ? "CHRYSALIS TURNING" : source.outputOrb ? "PATTERN COMPLETE" : "PATTERN READINESS"}</small><strong>{active ? `${progressPercent}% · ${Math.max(0, Math.ceil((source.activeJob?.durationSeconds ?? 0) - (source.activeJob?.progressSeconds ?? 0)))}s remaining` : source.outputOrb ? "Collect the crowned queen orb" : ready ? "All inputs are ready" : "Add the worker orb and both catalysts"}</strong></span><em>{source.completedMorphs} completed</em></div>
+              <div><span><small>{active ? "CHRYSALIS TURNING" : source.outputOrb ? "PATTERN COMPLETE" : "PATTERN READINESS"}</small><strong>{active ? `${progressPercent}% · ${Math.max(0, Math.ceil((source.activeJob?.durationSeconds ?? 0) - (source.activeJob?.progressSeconds ?? 0)))}s remaining` : source.outputOrb ? "Collect the Moonbrawn orb" : ready ? "All inputs are ready" : "Add a Mossling orb, Moonberries, and Star Crystal"}</strong></span><em>{source.completedMorphs} completed</em></div>
               <span className="morph-progress"><i style={{ width: `${progressPercent}%` }} /></span>
               <div className="morph-loom-actions"><PixelButton className="gold-button" disabled={audit || active || !ready} onClick={() => api?.startActiveOrbMorph?.()}>Begin morph</PixelButton><PixelButton className="secondary-button" disabled={audit || !active} onClick={() => api?.cancelActiveOrbMorph?.()}>Cancel safely</PixelButton></div>
             </section>
@@ -3434,7 +3441,7 @@ export default function VoxelGame() {
             <span className={hud.crouching ? "active" : ""}><kbd>SHIFT</kbd><strong>{hud.crouching ? "CROUCHING" : hud.sprinting ? "SPRINTING" : "CROUCH"}</strong></span>
             {hud.onlinePlayers > 1 && <span className="online"><kbd>●</kbd><strong>{hud.onlinePlayers} ONLINE</strong></span>}
           </div>
-          {hud.mountedBoat && <div className="boat-hud" role="status"><strong>WAYFARER</strong><span><kbd>WASD</kbd> SAIL</span><span><kbd>SPACE</kbd> DISMOUNT</span></div>}
+          {hud.mountedBoat && <div className="boat-hud" role="status"><strong>WAYFARER</strong><span><kbd>WASD</kbd> SAIL</span><span><kbd>MOUSE</kbd> LOOK</span><span><kbd>SPACE</kbd> DISMOUNT</span></div>}
           {hud.mountedCreature && <div className="boat-hud creature-mount-hud" role="status"><strong>{hud.mountedCreatureName ?? "MOUNT"}</strong><span className="mount-mode-label">{(hud.mountedCreatureMode ?? "land").toUpperCase()} · {hud.mountedCreatureExertion ?? 100}% EXERTION</span><span><kbd>WASD</kbd> STEER · <kbd>SPACE / SHIFT</kbd> {hud.mountedCreatureMode === "land" || hud.mountedCreatureMode === "climb" ? "JUMP / BRAKE" : "ASCEND / DESCEND"}</span><span><kbd>Z X C</kbd> MOVES · <kbd>F</kbd> DISMOUNT</span></div>}
           {hud.rangedWeapon && <div className={`ranged-ammo-hud${hud.rangedWeapon.reloading ? " reloading" : ""}`} role="status"><strong>{hud.rangedWeapon.loaded}/{hud.rangedWeapon.magazine}</strong><span>{hud.rangedWeapon.reloading ? "RELOADING" : `${hud.rangedWeapon.spare} BOLTS · R TO RELOAD`}</span></div>}
           <ManaHud magic={hud.magic} magicSkillLevel={hud.skills.skills.magic.level} />

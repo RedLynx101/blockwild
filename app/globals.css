@@ -7169,6 +7169,59 @@ input:focus-visible {
 .item-icon-kind-world-flora-moon::after,
 .item-icon-kind-world-texture::after { opacity: .83; transform: skewY(7deg) rotate(8deg) scaleX(.72); }
 
+/* Glimmerwood forage uses its authored silhouettes at the real 28px slot
+   scale instead of inheriting the generic four-petal flower icon. */
+.item-icon-kind-world-texture[data-world-texture="161"]::before {
+  left: 2px;
+  top: 1px;
+  width: 25px;
+  height: 27px;
+  background: linear-gradient(135deg, #d8ffeb 0 8%, #79dcac 24% 55%, #2d785c 80% 100%);
+  clip-path: polygon(47% 100%, 43% 75%, 12% 88%, 8% 78%, 39% 66%, 2% 65%, 7% 54%, 40% 57%, 14% 39%, 23% 32%, 44% 49%, 30% 20%, 41% 16%, 50% 43%, 59% 8%, 70% 12%, 58% 49%, 84% 27%, 91% 36%, 61% 58%, 98% 49%, 100% 61%, 62% 68%, 92% 73%, 87% 84%, 58% 76%, 55% 100%);
+  filter: drop-shadow(2px 2px 0 rgba(0, 0, 0, .48)) drop-shadow(0 0 2px rgba(145, 255, 207, .45));
+  transform: none;
+}
+
+.item-icon-kind-world-texture[data-world-texture="161"]::after {
+  left: 13px;
+  top: 3px;
+  width: 3px;
+  height: 24px;
+  border-radius: 2px;
+  background: #c7ffe2;
+  box-shadow: -8px 7px 0 -1px #53b889, 7px 4px 0 -1px #8ee7ba, -10px 13px 0 -1px #4c9e78, 9px 11px 0 -1px #72c99c;
+  filter: drop-shadow(0 0 2px rgba(163, 255, 215, .7));
+  opacity: .82;
+  transform: rotate(-4deg);
+}
+
+.item-icon-kind-world-texture[data-world-texture="162"]::before {
+  left: 2px;
+  top: 1px;
+  width: 26px;
+  height: 27px;
+  background:
+    radial-gradient(ellipse at 38% 39%, #e7d9ff 0 5%, transparent 6%),
+    radial-gradient(ellipse at 66% 24%, #f2e7ff 0 5%, transparent 6%),
+    radial-gradient(ellipse at 71% 36%, #9e79dc 0 22%, #65468f 23% 29%, transparent 30%),
+    radial-gradient(ellipse at 34% 52%, #bd91ee 0 23%, #674792 24% 31%, transparent 32%),
+    linear-gradient(90deg, transparent 26%, #ded6e8 27% 36%, transparent 37% 63%, #eee8f4 64% 72%, transparent 73%);
+  filter: drop-shadow(2px 2px 0 rgba(0, 0, 0, .48)) drop-shadow(0 0 2px rgba(188, 139, 255, .55));
+  transform: none;
+}
+
+.item-icon-kind-world-texture[data-world-texture="162"]::after {
+  left: 15px;
+  top: 14px;
+  width: 11px;
+  height: 13px;
+  border-radius: 55% 55% 12% 12%;
+  background: radial-gradient(ellipse at 50% 23%, #e9d8ff 0 12%, #8b65c2 14% 56%, transparent 58%), linear-gradient(90deg, transparent 39%, #d9cfdf 40% 61%, transparent 62%);
+  filter: drop-shadow(1px 2px 0 rgba(0, 0, 0, .38));
+  opacity: 1;
+  transform: rotate(5deg);
+}
+
 .item-icon-kind-produce::before {
   left: 2px;
   top: 6px;

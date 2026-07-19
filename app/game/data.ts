@@ -747,6 +747,8 @@ export type ToolKind = "pickaxe" | "axe" | "shovel" | "sword" | "crossbow" | "sp
 export type BlockTool = "pickaxe" | "axe" | "shovel" | "hand";
 export type EquipmentSlot = "head" | "chest" | "legs" | "feet";
 
+/** Save-stable legacy cell, now authored as embedded luminous crystal seams. */
+export const STAR_CRYSTAL_ORE_TILE = 42;
 /** Renderer-only atlas cells reserved for the Dragonwake hoard family. */
 export const DRAGON_HOARD_GOLD_TILE = 163;
 export const DRAGON_HOARD_COIN_TILE = 164;
@@ -771,6 +773,11 @@ export const FROSTPEAR_CRATE_SIDE_TILE = 224;
 export const FROSTPEAR_SAPLING_TILE = 225;
 export const FROSTPEAR_LEAVES_TILE = 226;
 export const FROSTPEAR_FRUIT_TILE = 227;
+/** Dedicated v1.8.4 Glimmerwood foliage/flora and desert-cactus cells. */
+export const MOONBOUGH_LEAVES_TILE = 228;
+export const STARFERN_TILE = 229;
+export const DREAMCAP_TILE = 230;
+export const CACTUS_TOP_TILE = 231;
 
 export type InventorySlot = {
   item: ItemCode;
@@ -862,8 +869,8 @@ export type ItemDefinition = {
   /** Reuse a world atlas texture for the handheld/icon representation. */
   worldTextureBlock?: BlockId;
   /** Shared semantic model hooks consumed by held-item and dropped-item renderers. */
-  heldModel?: "wildwood-chest" | "apiary" | "capture-orb" | "dragon-egg" | "dragon-saddle" | "dragon-pannier" | "dragon-barding" | "gold-hoard-block" | "gold-pile" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "potion" | "mead" | "blueprint" | "crossbow" | "spear" | "shears" | "lightning-bug-jar";
-  dropModel?: "wildwood-chest" | "apiary" | "capture-orb" | "dragon-egg" | "dragon-saddle" | "dragon-pannier" | "dragon-barding" | "gold-hoard-block" | "gold-pile" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "potion" | "mead" | "blueprint" | "crossbow" | "spear" | "shears" | "lightning-bug-jar";
+  heldModel?: "world-texture" | "wildwood-chest" | "apiary" | "capture-orb" | "dragon-egg" | "dragon-saddle" | "dragon-pannier" | "dragon-barding" | "gold-hoard-block" | "gold-pile" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "potion" | "mead" | "blueprint" | "crossbow" | "spear" | "shears" | "lightning-bug-jar";
+  dropModel?: "world-texture" | "wildwood-chest" | "apiary" | "capture-orb" | "dragon-egg" | "dragon-saddle" | "dragon-pannier" | "dragon-barding" | "gold-hoard-block" | "gold-pile" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "potion" | "mead" | "blueprint" | "crossbow" | "spear" | "shears" | "lightning-bug-jar";
 };
 
 const block = (
@@ -929,7 +936,7 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.BirchLeaves]: block(BlockId.BirchLeaves, "Birchlight Leaves", 23, 23, 23, 0.3, "#78a84c", "hand", 0, { layer: "cutout" }),
   [BlockId.RedSand]: block(BlockId.RedSand, "Red Sand", 24, 24, 24, 0.52, "#bd7046", "shovel"),
   [BlockId.Clay]: block(BlockId.Clay, "Clay", 25, 25, 25, 0.65, "#8998a0", "shovel"),
-  [BlockId.Cactus]: block(BlockId.Cactus, "Cactus", 26, 26, 26, 0.45, "#4e913e", "hand"),
+  [BlockId.Cactus]: block(BlockId.Cactus, "Cactus", CACTUS_TOP_TILE, 26, 26, 0.45, "#4e913e", "hand"),
   [BlockId.Mud]: block(BlockId.Mud, "Mud", 27, 27, 27, 0.6, "#4f4034", "shovel"),
   [BlockId.SwampGrass]: block(BlockId.SwampGrass, "Siltfen Grass", 28, 29, 24, 0.65, "#566d35", "shovel"),
   [BlockId.SavannaGrass]: block(BlockId.SavannaGrass, "Sunstep Grass", 30, 31, 2, 0.65, "#a99f4e", "shovel"),
@@ -941,7 +948,7 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.Torch]: block(BlockId.Torch, "Torch", 39, 39, 39, 0.05, "#f4bd4f", "hand", 0, { solid: false, layer: "emissive", shape: "torch", replaceable: true }),
   [BlockId.CopperOre]: block(BlockId.CopperOre, "Copper Ore", 40, 40, 40, 1.9, "#b16d4e", "pickaxe", 1),
   [BlockId.GoldOre]: block(BlockId.GoldOre, "Gold Ore", 41, 41, 41, 2.4, "#cda934", "pickaxe", 2),
-  [BlockId.CrystalOre]: block(BlockId.CrystalOre, "Star Crystal Ore", 42, 42, 42, 3.1, "#64d6df", "pickaxe", 3),
+  [BlockId.CrystalOre]: block(BlockId.CrystalOre, "Star Crystal Ore", STAR_CRYSTAL_ORE_TILE, STAR_CRYSTAL_ORE_TILE, STAR_CRYSTAL_ORE_TILE, 3.1, "#64d6df", "pickaxe", 3),
   [BlockId.Deepstone]: block(BlockId.Deepstone, "Deepstone", 43, 43, 43, 2.15, "#3e454a", "pickaxe", 2),
   [BlockId.Lava]: block(BlockId.Lava, "Lava", 44, 44, 44, 0, "#ed642f", "hand", 0, { solid: false, layer: "transparent", replaceable: true, liquid: "lava" }),
   [BlockId.MushroomCap]: block(BlockId.MushroomCap, "Giant Mooncap", GIANT_MUSHROOM_TOP_TILE, GIANT_MUSHROOM_SIDE_TILE, GIANT_MUSHROOM_GILLS_TILE, 0.55, "#a94e62", "axe"),
@@ -1066,10 +1073,10 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.GiantLollipopOrchid]: block(BlockId.GiantLollipopOrchid, "Cultivated Lollipop Orchid", 141, 141, 141, 0.08, "#f4acd7", "hand", 0, { solid: false, layer: "cutout", shape: "tall-flower", replaceable: true, verticalConnectGroup: "cultivated-flower" }),
   [BlockId.GlimmerGrass]: block(BlockId.GlimmerGrass, "Glimmerwood Grass", 149, 150, 2, 0.62, "#315f4d", "shovel"),
   [BlockId.MoonboughLog]: block(BlockId.MoonboughLog, "Moonbough Log", 110, 109, 110, 1.12, "#58677f", "axe"),
-  [BlockId.MoonboughLeaves]: block(BlockId.MoonboughLeaves, "Moonbough Leaves", 113, 113, 113, 0.28, "#4a8c79", "hand", 0, { layer: "emissive" }),
+  [BlockId.MoonboughLeaves]: block(BlockId.MoonboughLeaves, "Moonbough Leaves", MOONBOUGH_LEAVES_TILE, MOONBOUGH_LEAVES_TILE, MOONBOUGH_LEAVES_TILE, 0.28, "#4a8c79", "hand", 0, { layer: "emissive" }),
   [BlockId.Moonpetal]: block(BlockId.Moonpetal, "Moonpetal", 113, 113, 113, 0.04, "#a8a3ff", "hand", 0, { solid: false, layer: "emissive", shape: "cross", replaceable: true }),
-  [BlockId.Starfern]: block(BlockId.Starfern, "Starfern", 132, 132, 132, 0.04, "#68d6ac", "hand", 0, { solid: false, layer: "emissive", shape: "cross", replaceable: true }),
-  [BlockId.Dreamcap]: block(BlockId.Dreamcap, "Dreamcap", 45, 45, 45, 0.05, "#9f7cff", "hand", 0, { solid: false, layer: "emissive", shape: "cross", replaceable: true }),
+  [BlockId.Starfern]: block(BlockId.Starfern, "Starfern", STARFERN_TILE, STARFERN_TILE, STARFERN_TILE, 0.04, "#68d6ac", "hand", 0, { solid: false, layer: "emissive", shape: "cross", replaceable: true }),
+  [BlockId.Dreamcap]: block(BlockId.Dreamcap, "Dreamcap", DREAMCAP_TILE, DREAMCAP_TILE, DREAMCAP_TILE, 0.05, "#9f7cff", "hand", 0, { solid: false, layer: "emissive", shape: "cross", replaceable: true }),
   [BlockId.Lumenreed]: block(BlockId.Lumenreed, "Lumenreed", 114, 114, 114, 0.04, "#5ce4d0", "hand", 0, { solid: false, layer: "emissive", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "lumenreed", aquaticProfile: "reed" }),
   [BlockId.SnowcapStone]: block(BlockId.SnowcapStone, "Snowcap Stone", 86, 86, 86, 2.2, "#87929a", "pickaxe", 2),
   [BlockId.DeepgearBrick]: block(BlockId.DeepgearBrick, "Deepgear Brick", DEEPGEAR_BRICK_TILE, DEEPGEAR_BRICK_TILE, DEEPGEAR_BRICK_TILE, 2.4, "#545e62", "pickaxe", 2),
@@ -1221,6 +1228,7 @@ for (const type of [BlockId.Torch, BlockId.TorchWallNorth, BlockId.TorchWallSout
 }
 configureBlockLight(BlockId.Lava, 15, [1, 0.28, 0.08], 0.9);
 configureBlockLight(BlockId.Glowstone, 15, GOLD_LIGHT, 0.9);
+configureBlockLight(BlockId.CrystalOre, 9, CYAN_LIGHT, 0.68);
 configureBlockLight(BlockId.CrystalBlock, 13, CYAN_LIGHT, 0.82);
 configureBlockLight(BlockId.RuneStone, 6, [0.42, 0.72, 0.46], 0.32);
 configureBlockLight(BlockId.CreatureHealer, 10, CYAN_LIGHT, 0.68);
@@ -1637,8 +1645,8 @@ Object.assign(ITEMS, {
   [Item.SilverElderLairSurvey]: { id: Item.SilverElderLairSurvey, name: "Elder Silver Lair Survey", color: "#a9bfd7", maxStack: 8, useKind: "lair-survey", lairSurvey: { dragonType: "silver", minimumStage: 5 }, iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
   [Item.BoundBook]: { id: Item.BoundBook, name: "Bound Book", color: "#79533c", maxStack: 16, iconKind: "blueprint", heldModel: "blueprint", dropModel: "blueprint" },
   [Item.Moonpetal]: { id: Item.Moonpetal, name: "Moonpetal", color: "#aaa5ff", maxStack: 64, useKind: "plant", plantBlock: BlockId.Moonpetal, placeBlock: BlockId.Moonpetal, worldTextureBlock: BlockId.Moonpetal },
-  [Item.StarfernFrond]: { id: Item.StarfernFrond, name: "Starfern Frond", color: "#68d6ac", maxStack: 64, placeBlock: BlockId.Starfern, worldTextureBlock: BlockId.Starfern },
-  [Item.Dreamcap]: { id: Item.Dreamcap, name: "Dreamcap", color: "#9f7cff", maxStack: 64, food: 2, placeBlock: BlockId.Dreamcap, worldTextureBlock: BlockId.Dreamcap },
+  [Item.StarfernFrond]: { id: Item.StarfernFrond, name: "Starfern Frond", color: "#68d6ac", maxStack: 64, placeBlock: BlockId.Starfern, worldTextureBlock: BlockId.Starfern, heldModel: "world-texture", dropModel: "world-texture" },
+  [Item.Dreamcap]: { id: Item.Dreamcap, name: "Dreamcap", color: "#9f7cff", maxStack: 64, food: 2, placeBlock: BlockId.Dreamcap, worldTextureBlock: BlockId.Dreamcap, heldModel: "world-texture", dropModel: "world-texture" },
   [Item.MoonboughStaff]: { id: Item.MoonboughStaff, name: "Moonbough Staff", color: "#75d5b3", maxStack: 1, toolKind: "staff", damage: 5, maxDurability: 580, iconKind: "spear", heldModel: "spear", dropModel: "spear" },
   [Item.Glimmerbow]: { id: Item.Glimmerbow, name: "Glimmerbow", color: "#7fe2bf", maxStack: 1, toolKind: "bow", damage: 7, maxDurability: 640, useKind: "ranged-weapon", ammoItem: Item.GlimmerArrow, magazineSize: 1, iconKind: "crossbow", heldModel: "crossbow", dropModel: "crossbow" },
   [Item.GlimmerArrow]: { id: Item.GlimmerArrow, name: "Glimmer Arrow", color: "#bfffe5", maxStack: 64, damage: 2, iconKind: "bolt" },
@@ -2235,6 +2243,7 @@ export const RECIPES: Recipe[] = [
   { id: "capture_orb_rack", name: "Capture Orb Rack", width: 3, height: 2, pattern: [Item.Stick, Item.CrystalShard, Item.Stick, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: BlockId.CaptureOrbRack, count: 1 }, table: true },
   { id: "creature_healer", name: "Creature Healer", width: 3, height: 3, pattern: [BlockId.Glass, Item.GlowDust, BlockId.Glass, Item.CaveGel, Item.CrystalShard, Item.CaveGel, Item.IronIngot, BlockId.Planks, Item.IronIngot], output: { item: BlockId.CreatureHealer, count: 1 }, table: true },
   { id: "wildwood_apiary", name: "Wildwood Apiary", width: 3, height: 3, pattern: [BlockId.Planks, BlockId.Planks, BlockId.Planks, Item.Fiber, Item.Honeycomb, Item.Fiber, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: BlockId.Apiary, count: 1 }, table: true },
+  { id: "queen_cell", name: "Queen Cell", width: 2, height: 1, pattern: [Item.WorkerBee, Item.RoyalJelly], output: { item: Item.QueenCell, count: 1 }, table: true },
   { id: "chrysalis-loom", name: "Waykeeper Chrysalis Loom", width: 3, height: 3, pattern: [Item.RivetedBrassItem, BlockId.Glass, Item.RivetedBrassItem, Item.GearCluster, Item.CrystalShard, Item.GearCluster, BlockId.Planks, Item.Honeycomb, BlockId.Planks], output: { item: Item.ChrysalisLoomItem, count: 1 }, table: true },
   { id: "cartography_table", name: "Cartography Table", width: 3, height: 3, pattern: [Item.Feather, BlockId.Glass, Item.Feather, BlockId.Planks, BlockId.Planks, BlockId.Planks, Item.Stick, 0, Item.Stick], output: { item: BlockId.CartographyTable, count: 1 }, table: true },
   { id: "alchemy_stand", name: "Alchemy Stand", width: 3, height: 3, pattern: [Item.GlassBottle, Item.CaveGel, Item.GlassBottle, 0, Item.CrystalShard, 0, BlockId.StoneBrick, BlockId.StoneBrick, BlockId.StoneBrick], output: { item: BlockId.AlchemyStand, count: 1 }, table: true },

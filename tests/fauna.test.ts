@@ -132,7 +132,10 @@ test("expanded ecology catalog includes mounts, livestock, thin fish, pollinator
   assert.equal(AQUATIC_MOB_ORDER.length, 8);
   assert.equal(POLLINATOR_ORDER.length, 4);
   assert.ok(POLLINATOR_ORDER.includes("lightning-bug"));
-  assert.deepEqual(MOSSLING_VARIANT_ORDER, ["boglantern-mossling", "cindercone-mossling", "moonbloom-mossling"]);
+  assert.deepEqual(MOSSLING_VARIANT_ORDER, ["boglantern-mossling", "cindercone-mossling", "moonbloom-mossling", "moonbrawn-mossling"]);
+  assert.equal(usesGenericCreatureBond("moonbrawn-mossling"), true);
+  assert.equal(MOB_DEFS["moonbrawn-mossling"].tameable, true);
+  assert.deepEqual(MOB_DEFS["moonbrawn-mossling"].tameItems, [Item.Berry]);
   assert.ok(TIDEGLASS_AQUATIC_ORDER.includes("reefglide-terrapin"));
   assert.deepEqual(fishKindsForHabitat("ocean"), [
     "shoalfin", "pocket-goldfish", "silverthread", "blue-mackerel", "coralback", "sunwheel-angelfish", "tideglass-crab", "reefglide-terrapin",
@@ -711,6 +714,18 @@ test("eligible surface creatures accept their diet, enter love mode, breed, and 
   assert.ok(family.left.loveCooldownTicks > 0);
   assert.equal(tickCreatureHusbandry(family.child, 24_000).baby, false);
   assert.equal(breedCreatureStates("thimbledeer", fedLeft.state, "puddlehopper", fedRight.state), null);
+});
+
+test("bonded Moonbrawn Mosslings breed true to their morphed form", () => {
+  const definition = MOB_DEFS["moonbrawn-mossling"];
+  const fedLeft = feedCreatureForHusbandry(definition, createCreatureHusbandryState(301), Item.Berry);
+  const fedRight = feedCreatureForHusbandry(definition, createCreatureHusbandryState(302), Item.Berry);
+  assert.equal(fedLeft.accepted, true);
+  assert.equal(fedLeft.breedingFood, true);
+  const family = breedCreatureStates("moonbrawn-mossling", fedLeft.state, "moonbrawn-mossling", fedRight.state);
+  assert.ok(family);
+  assert.equal(family.child.baby, true);
+  assert.equal(breedCreatureStates("moonbrawn-mossling", fedLeft.state, "mossling", fedRight.state), null);
 });
 
 test("Shadecrawlers require patient Moonberry feeding, a rare catalyst, growth, and a saddle before riding", () => {

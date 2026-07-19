@@ -5,11 +5,15 @@ import test from "node:test";
 import {
   BLOCKS,
   BLOCK_ITEM_ALIASES,
+  CACTUS_TOP_TILE,
   DEEPGEAR_BRICK_TILE,
+  DREAMCAP_TILE,
   ITEMS,
   Item,
+  MOONBOUGH_LEAVES_TILE,
   RIVETED_BRASS_TILE,
   ROOTWEAVE_SOIL_SIDE_TILE,
+  STARFERN_TILE,
   BlockId,
 } from "../app/game/data";
 import { CUBIC_STORYBOOK_VISUAL_KINDS, FACETED_STORYBOOK_EXCEPTION_KINDS } from "../app/game/living-bestiary-models";
@@ -52,7 +56,7 @@ test("reference models link to canonical portraits", () => {
 
 test("all production creatures and blocks pass the release contract", () => {
   const audit = auditVisualTheme({ generatedAt: "2026-07-18T00:00:00.000Z" });
-  assert.equal(audit.totals.creatures, 215);
+  assert.equal(audit.totals.creatures, 216);
   assert.equal(audit.totals.blocks, 294);
   assert.equal(audit.totals.blockFamilies, 17);
   assert.equal(audit.totals.creatureViolations, 0);
@@ -83,6 +87,20 @@ test("new directional and Deepgear materials use dedicated atlas cells", () => {
     assert.ok(family.id);
     for (const tile of [definition.top, definition.side, definition.bottom]) assert.ok(Number.isInteger(tile) && tile >= 0 && tile < 256);
   }
+});
+
+test("Glimmerwood flora and cactus faces no longer borrow generic atlas art", () => {
+  assert.equal(BLOCKS[BlockId.Cactus].top, CACTUS_TOP_TILE);
+  assert.notEqual(BLOCKS[BlockId.Cactus].top, BLOCKS[BlockId.Cactus].side);
+  assert.deepEqual(
+    [BLOCKS[BlockId.MoonboughLeaves].top, BLOCKS[BlockId.MoonboughLeaves].side, BLOCKS[BlockId.MoonboughLeaves].bottom],
+    [MOONBOUGH_LEAVES_TILE, MOONBOUGH_LEAVES_TILE, MOONBOUGH_LEAVES_TILE],
+  );
+  assert.equal(BLOCKS[BlockId.Starfern].side, STARFERN_TILE);
+  assert.equal(BLOCKS[BlockId.Dreamcap].side, DREAMCAP_TILE);
+  assert.equal(new Set([MOONBOUGH_LEAVES_TILE, STARFERN_TILE, DREAMCAP_TILE, CACTUS_TOP_TILE]).size, 4);
+  assert.equal(ITEMS[Item.StarfernFrond].heldModel, "world-texture");
+  assert.equal(ITEMS[Item.Dreamcap].dropModel, "world-texture");
 });
 
 test("pixel canvas preserves opaque, alpha, clear, and stroke operations", () => {

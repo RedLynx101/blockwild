@@ -15,6 +15,7 @@ import {
   addOrbMorphResource,
   cancelOrbMorph,
   createOrbMorphLoom,
+  normalizeOrbMorphLoom,
   setOrbMorphInput,
   startOrbMorph,
   stepOrbMorph,
@@ -45,10 +46,28 @@ const workerMetadata = (): CreatureMetadata => ({
   },
 });
 
-test("the Chrysalis Loom cancels safely and crowns a queen without changing orb identity", () => {
-  const orb = captureIntoOrb(createEmptyCaptureOrb("orb-marigold"), workerMetadata(), 100)!;
+const mosslingMetadata = (): CreatureMetadata => ({
+  schema: 1,
+  entityId: "mossling-mallow",
+  kind: "mossling",
+  health: 4,
+  maxHealth: 5,
+  ageTicks: 24_000,
+  baby: false,
+  temperament: "Skittish",
+  hostile: false,
+  tamed: true,
+  ownerId: "keeper-a",
+  name: "Mallow",
+  geneticSeed: 818,
+  command: "follow",
+  custom: { favoritePatch: "north-moonberry-bed" },
+});
+
+test("the Chrysalis Loom cancels safely and roots a Moonbrawn without changing orb identity", () => {
+  const orb = captureIntoOrb(createEmptyCaptureOrb("orb-mallow"), mosslingMetadata(), 100)!;
   let state = setOrbMorphInput(createOrbMorphLoom(), captureOrbInventorySlot(orb))!;
-  state = addOrbMorphResource(state, Item.RoyalJelly, 1).state;
+  state = addOrbMorphResource(state, Item.Berry, 4).state;
   state = addOrbMorphResource(state, Item.CrystalShard, 1).state;
 
   let started = startOrbMorph(state, 120);
@@ -56,21 +75,43 @@ test("the Chrysalis Loom cancels safely and crowns a queen without changing orb 
   const partial = stepOrbMorph(started.state, 20).state;
   const cancelled = cancelOrbMorph(partial);
   assert.equal(cancelled.cancelled, true);
-  assert.equal(cancelled.state.inputOrb?.orbId, "orb-marigold");
-  assert.equal(cancelled.state.royalJelly, 1);
+  assert.equal(cancelled.state.inputOrb?.orbId, "orb-mallow");
+  assert.equal(cancelled.state.moonberries, 4);
   assert.equal(cancelled.state.starCrystals, 1);
 
   started = startOrbMorph(cancelled.state, 200);
-  const completed = stepOrbMorph(started.state, 42);
+  const completed = stepOrbMorph(started.state, 48);
   assert.equal(completed.completed, true);
   assert.equal(completed.state.inputOrb, null);
-  assert.equal(completed.state.outputOrb?.orbId, "orb-marigold");
-  assert.equal(completed.state.outputOrb?.creature?.kind, "hive-queen");
-  assert.equal(completed.state.outputOrb?.creature?.name, "Marigold");
+  assert.equal(completed.state.outputOrb?.orbId, "orb-mallow");
+  assert.equal(completed.state.outputOrb?.creature?.kind, "moonbrawn-mossling");
+  assert.equal(completed.state.outputOrb?.creature?.name, "Mallow");
   assert.equal(completed.state.outputOrb?.creature?.ownerId, "keeper-a");
   assert.equal(completed.state.outputOrb?.creature?.tamed, true);
-  assert.equal(completed.state.royalJelly, 0);
+  assert.equal(completed.state.outputOrb?.creature?.custom.favoritePatch, "north-moonberry-bed");
+  assert.equal(completed.state.outputOrb?.creature?.health, 12.8, "the 80% health ratio survives the form change");
+  assert.equal(completed.state.moonberries, 0);
   assert.equal(completed.state.starCrystals, 0);
+});
+
+test("retired bee-crowning Loom saves preserve both orbs and expose Royal Jelly for recovery", () => {
+  const orb = captureIntoOrb(createEmptyCaptureOrb("orb-legacy-worker"), workerMetadata(), 100)!;
+  const migrated = normalizeOrbMorphLoom({
+    schema: 1,
+    selectedRecipeId: "worker-to-hive-queen",
+    inputOrb: orb,
+    outputOrb: null,
+    royalJelly: 3,
+    starCrystals: 2,
+    activeJob: { recipeId: "worker-to-hive-queen", progressSeconds: 17, durationSeconds: 42, startedAt: 1 },
+    completedMorphs: 2,
+  });
+  assert.equal(migrated.schema, 2);
+  assert.equal(migrated.selectedRecipeId, "mossling-to-moonbrawn");
+  assert.equal(migrated.activeJob, null, "the retired job is cancelled without consuming inputs");
+  assert.equal(migrated.inputOrb?.orbId, "orb-legacy-worker");
+  assert.equal(migrated.legacyRoyalJelly, 3);
+  assert.equal(migrated.starCrystals, 2);
 });
 
 test("a queen bootstraps workers over time and removing her preserves the dormant colony", () => {

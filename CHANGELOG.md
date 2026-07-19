@@ -2,6 +2,16 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.8.4 - Moonbrawn Motherlode - 2026-07-19
+
+- Reworked Frostpear Leaves into noisy, clustered foliage with ragged openings, five-tone canopy depth, individually readable leaflets, and pale frost tips.
+- Reduced desert cactus generation to 15% of its previous density, rebuilt cactus faces with ribbed sides and a distinct spined crown, and replaced Glimmerwood's borrowed flora art with dedicated Moonbough Leaves, Starfern, and Dreamcap textures. Starfern and Dreamcap now carry that same authored world art when held or dropped, and Palimpsest Vault stairs have full descending headroom.
+- Rebuilt Star Crystal Ore around connected cyan crystal seams embedded in dark host stone, with bright facet cores, restrained violet glints, visible self-emission, and a soft cyan world glow below the strength of finished Star Crystal Blocks.
+- Increased Iron and Copper Ore yields to one-to-four raw ore per block, raised conventional ore-generation rolls by 25%, and expanded deterministic vein cells from 2 x 2 x 2 to porous 3 x 2 x 3 seams while preserving the Living Vein ecology's bespoke rarity.
+- Restored the legacy Worker Bee plus Royal Jelly Queen Cell recipe and made Queen Cells reusable as true Hive Queen spawn eggs while retaining their crafted-apiary insertion behavior.
+- Retired bee crowning from the Waykeeper Chrysalis Loom in favor of a four-Moonberry plus Star Crystal Mossling morph. Old Loom saves cancel retired jobs safely and keep both orbs, Star Crystals, and Royal Jelly recoverable.
+- Added the Moonbrawn Mossling as a high-detail, exactly grounded grove guardian with an articulated root-and-bark model, authored animation, Bestiary research, fixed stats and moves, keeper bonding, Capture Orb persistence, and true-form breeding.
+
 ## 1.8.3 - Bottles & Bundles - 2026-07-19
 
 - Collapsed released ordinary Capture Orbs back to metadata-free shells so they stack with crafted empties, while preserving intentional lens upgrades as distinct singleton orbs.

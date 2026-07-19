@@ -37,7 +37,7 @@ export type CreatureContentSheet = Readonly<{
 }>;
 
 const EXACT_TYPES: Readonly<Partial<Record<MobKind, readonly CreatureTypeId[]>>> = Object.freeze({
-  mossling: ["verdant", "wild"], "boglantern-mossling": ["verdant", "radiant"], "cindercone-mossling": ["verdant", "flame"], "moonbloom-mossling": ["verdant", "dream"],
+  mossling: ["verdant", "wild"], "boglantern-mossling": ["verdant", "radiant"], "cindercone-mossling": ["verdant", "flame"], "moonbloom-mossling": ["verdant", "dream"], "moonbrawn-mossling": ["verdant", "stone"],
   ridgeback: ["stone", "wild"], woolhorn: ["wild", "frost"], glowmoth: ["radiant", "sky"], shadecrawler: ["umbral", "venom"], caveblob: ["tide", "umbral"], rattlekin: ["spirit", "neutral"], zombie: ["umbral", "spirit"],
   "sunstep-grazer": ["radiant", "wild"], pebbletortoise: ["stone", "wild"], brambleboar: ["verdant", "wild"], petalfox: ["verdant", "wild"], "emberbrush-fox": ["flame", "wild"], "moonpetal-fox": ["dream", "wild"],
   duneclatter: ["stone", "wild"], thimbledeer: ["verdant", "wild"], "frostlace-hart": ["frost", "wild"], "reedcrown-deer": ["tide", "verdant"], lanternshell: ["radiant", "stone"], puddlehopper: ["tide", "wild"], reedstrider: ["tide", "sky"],

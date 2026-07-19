@@ -320,7 +320,7 @@ const sets = {
 
 const explicitWork: Readonly<Partial<Record<MobKind, readonly CreatureWorkRole[]>>> = Object.freeze({
   petalfox: ["forager", "tracker", "garden"], "emberbrush-fox": ["forager", "tracker"], "moonpetal-fox": ["forager", "tracker", "scout"],
-  mossling: ["soil", "garden"], "boglantern-mossling": ["soil", "garden", "light"], "cindercone-mossling": ["soil", "compost"], "moonbloom-mossling": ["garden", "light"],
+  mossling: ["soil", "garden"], "boglantern-mossling": ["soil", "garden", "light"], "cindercone-mossling": ["soil", "compost"], "moonbloom-mossling": ["garden", "light"], "moonbrawn-mossling": ["soil", "garden", "pack", "sentinel"],
   emberjay: ["scout", "sentinel"], "canopy-lark": ["scout", "forager"], "tidewing-gull": ["scout", "retriever"], frostquill: ["scout", "weather"], runeowl: ["scout", "tracker"],
   puddlehopper: ["weather", "mineral-sense"], burrowbell: ["sentinel"],
   woolhorn: ["herd-support"], "meadow-cow": ["herd-support", "compost"], "sunstep-grazer": ["herd-support", "mount"], ridgeback: ["pack", "sentinel"], mistmane: ["herd-support", "weather"],

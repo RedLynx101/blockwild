@@ -199,6 +199,7 @@ export const CREATURE_SOUND_EVENTS: Partial<Record<CoreMobKind, Partial<Record<C
   "boglantern-mossling": LITTLE_ANIMAL_EVENTS,
   "cindercone-mossling": LITTLE_ANIMAL_EVENTS,
   "moonbloom-mossling": LITTLE_ANIMAL_EVENTS,
+  "moonbrawn-mossling": LITTLE_ANIMAL_EVENTS,
   "meadow-cottontail": RABBIT_EVENTS,
   "russet-rabbit": RABBIT_EVENTS,
   "frost-hare": RABBIT_EVENTS,

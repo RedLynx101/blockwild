@@ -1,7 +1,7 @@
 /** Human-facing release identity. Save-schema and generator versions are separate. */
-export const GAME_VERSION = "1.8.3" as const;
+export const GAME_VERSION = "1.8.4" as const;
 export const GAME_VERSION_LABEL = `v${GAME_VERSION}` as const;
-export const GAME_RELEASE_NAME = "Bottles & Bundles" as const;
+export const GAME_RELEASE_NAME = "Moonbrawn Motherlode" as const;
 export const LEGACY_GAME_VERSION = "0.1.0" as const;
 
 export function normalizeGameVersion(value: unknown, fallback: string = LEGACY_GAME_VERSION): string {

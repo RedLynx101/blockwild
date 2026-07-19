@@ -85,6 +85,22 @@ test("six faction wayposts expose one aligned merchant-guide plus local quest id
   }
 });
 
+test("Palimpsest Vault descending treads preserve transition headroom", () => {
+  const plan = planAdventureStructure("palimpsest-vault", ORIGIN, "palimpsest-clearance");
+  const blocks = new Map(plan.placements.map((placement) => [`${placement.x},${placement.y},${placement.z}`, placement.block]));
+  const treads = plan.placements.filter((placement) => placement.variant?.startsWith("palimpsest-vault-stair-step-"));
+  assert.equal(treads.length, 18);
+  for (const tread of treads) {
+    for (let clearance = 1; clearance <= 3; clearance += 1) {
+      assert.equal(
+        blocks.get(`${tread.x},${tread.y + clearance},${tread.z}`),
+        BlockId.Air,
+        `stair ${tread.variant} needs ${clearance} blocks of descending clearance`,
+      );
+    }
+  }
+});
+
 test("Lantern Piehouse keeper is grounded indoors and reliably stocks its signature pie", () => {
   const plan = planAdventureStructure("lantern-piehouse", ORIGIN, "piehouse-contract");
   const keeper = plan.markers.find((marker) => marker.type === "spawn" && marker.id === "lantern-piehouse-keeper");

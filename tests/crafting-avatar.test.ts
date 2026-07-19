@@ -5,7 +5,7 @@ import { createElement } from "react";
 import { renderToString } from "react-dom/server";
 import * as THREE from "three";
 import { createBlueprintState } from "../app/game/blueprints.ts";
-import { BlockId, Item, RECIPES, mirrorRecipePattern } from "../app/game/data.ts";
+import { BlockId, Item, ITEMS, RECIPES, mirrorRecipePattern } from "../app/game/data.ts";
 import { VoxelEngine, bestiaryProgressSignature, isEditableKeyboardTarget, type BestiaryProgress, type InventorySlot } from "../app/game/engine.ts";
 import { createAvatarHeldItemModel } from "../app/game/held-items.ts";
 import { MOB_DEFS } from "../app/game/mobs.ts";
@@ -42,6 +42,18 @@ import {
   type SingleFlightGate,
 } from "../app/game/VoxelGame.tsx";
 import VoxelGame from "../app/game/VoxelGame.tsx";
+
+test("Glimmerwood forage reuses the atlas texture in held and dropped models", () => {
+  const atlas = new THREE.Texture();
+  for (const item of [Item.StarfernFrond, Item.Dreamcap] as const) {
+    const model = createAvatarHeldItemModel(item, { atlas });
+    assert.ok(model);
+    assert.equal(model.userData.worldTextureBlock, ITEMS[item].worldTextureBlock);
+    const planes = model.children.filter((child): child is THREE.Mesh => child instanceof THREE.Mesh);
+    assert.equal(planes.length, 2);
+    assert.ok(planes.every((plane) => (plane.material as THREE.MeshBasicMaterial).map === atlas));
+  }
+});
 
 function craftingHarness(inventory: Array<InventorySlot | null>, size: 2 | 3 = 3) {
   const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
@@ -440,8 +452,8 @@ test("workstation UI normalizes apiary production and exact capture-orb metadata
 });
 
 test("human release identity stays separate from save schemas", () => {
-  assert.equal(GAME_VERSION, "1.8.3");
-  assert.equal(GAME_RELEASE_NAME, "Bottles & Bundles");
+  assert.equal(GAME_VERSION, "1.8.4");
+  assert.equal(GAME_RELEASE_NAME, "Moonbrawn Motherlode");
   assert.equal(normalizeGameVersion("garbage"), "0.1.0");
 });
 

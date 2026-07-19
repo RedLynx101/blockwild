@@ -915,16 +915,20 @@ test("placed lights use data-driven colored voxel emission", () => {
   assert.equal(BLOCKS[BlockId.Torch].lightEmission, 14);
   assert.deepEqual(BLOCKS[BlockId.Torch].lightColor, [1, 0.58, 0.24]);
   assert.ok((BLOCKS[BlockId.Lava].lightEmission ?? 0) >= 14);
+  assert.equal(BLOCKS[BlockId.CrystalOre].lightEmission, 9);
+  assert.deepEqual(BLOCKS[BlockId.CrystalOre].lightColor, [0.34, 0.95, 1]);
+  assert.equal(BLOCKS[BlockId.CrystalOre].emissiveStrength, 0.68);
+  assert.ok((BLOCKS[BlockId.CrystalOre].lightEmission ?? 0) < (BLOCKS[BlockId.CrystalBlock].lightEmission ?? 0), "unrefined ore should glow more softly than a finished crystal block");
   assert.ok((BLOCKS[BlockId.Dreamblossom].emissiveStrength ?? 0) > 0);
 });
 
-test("every directional torch and a placed lava pool enter the nearest-first light index", () => {
+test("every directional torch, a placed lava pool, and Star Crystal Ore enter the nearest-first light index", () => {
   const world = new ChunkWorld();
   world.reset("ALL-PLACED-LIGHTS", undefined, { structures: false });
   const chunk = world.generateChunk(0, 0);
   chunk.blocks.fill(BlockId.Air);
   chunk.lightIndices.clear();
-  const lights = [...TORCH_BLOCKS, BlockId.Lava] as const;
+  const lights = [...TORCH_BLOCKS, BlockId.Lava, BlockId.CrystalOre] as const;
   lights.forEach((type, index) => world.setBlock(2 + index, 4, 2, type, false, false));
   const found = world.lightSourcesNear(4, 4, 2, 12).map((source) => source.type);
   for (const type of lights) assert.ok(found.includes(type), `${BLOCKS[type].name} missing from light index`);

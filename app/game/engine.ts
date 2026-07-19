@@ -2063,6 +2063,13 @@ function dragonEggItem(type: DragonType) {
   return type === "fire" ? Item.FireDragonEgg : type === "ice" ? Item.IceDragonEgg : type === "sea" ? Item.SeaDragonEgg : type === "gold" ? Item.GoldDragonEgg : type === "silver" ? Item.SilverDragonEgg : Item.SteelDragonEgg;
 }
 
+/** Central ore-yield contract shared by runtime harvesting and deterministic tests. */
+export function oreBlockDropRange(type: BlockId): readonly [item: ItemCode, minimum: number, maximum: number] | null {
+  if (type === BlockId.IronOre) return [Item.RawIron, 1, 4];
+  if (type === BlockId.CopperOre) return [Item.RawCopper, 1, 4];
+  return null;
+}
+
 function dragonLootItemCode(item: string): ItemCode | null {
   const byName: Readonly<Record<string, ItemCode>> = {
     RawDragonMeat: Item.RawDragonMeat,
@@ -11529,7 +11536,7 @@ export class VoxelEngine {
 
   morphLoomMachineClick(index: number, button: "left" | "right", shift: boolean) {
     const key = this.activeMorphLoomKey;
-    if (!key || index < 0 || index > 3) return;
+    if (!key || index < 0 || index > 4) return;
     if (this.multiplayer?.role === "guest") {
       this.events.onToast("The world host operates this shared Chrysalis Loom.");
       return;
@@ -11543,7 +11550,7 @@ export class VoxelEngine {
       if (this.cursor) {
         const next = setOrbMorphInput(state, { ...this.cursor, count: 1 });
         if (!next) {
-          this.events.onToast("The cradle accepts one undeployed Capture Orb holding a worker Honeybee.");
+          this.events.onToast("The cradle accepts one undeployed Capture Orb holding a Mossling.");
           return;
         }
         this.cursor.count -= 1;
@@ -11555,7 +11562,7 @@ export class VoxelEngine {
       if (!slot) return;
       if (shift) {
         if (this.addItem(slot.item, 1, slot.durability, MAIN_THEN_HOTBAR, slot.metadata) > 0) {
-          this.events.onToast("Make one pack slot for the worker's Capture Orb.");
+          this.events.onToast("Make one pack slot for the Mossling's Capture Orb.");
           return;
         }
       } else this.cursor = slot;
@@ -11567,7 +11574,7 @@ export class VoxelEngine {
       if (!slot) return;
       if (shift) {
         if (this.addItem(slot.item, 1, slot.durability, MAIN_THEN_HOTBAR, slot.metadata) > 0) {
-          this.events.onToast("Make one pack slot for the crowned queen's Capture Orb.");
+          this.events.onToast("Make one pack slot for the Moonbrawn's Capture Orb.");
           return;
         }
       } else {
@@ -11577,11 +11584,30 @@ export class VoxelEngine {
       this.commitMorphLoomState(key, { ...state, outputOrb: null }, "pickup");
       return;
     }
-    const item = index === 1 ? Item.RoyalJelly : Item.CrystalShard;
-    const available = index === 1 ? state.royalJelly : state.starCrystals;
+    if (index === 4) {
+      if (this.cursor) {
+        this.events.onToast("This recovery slot only returns Royal Jelly left in a Loom by the retired queen-crowning pattern.");
+        return;
+      }
+      const available = state.legacyRoyalJelly;
+      if (available <= 0) return;
+      const requested = shift ? available : button === "right" ? Math.ceil(available / 2) : available;
+      if (shift) {
+        const leftover = this.addItem(Item.RoyalJelly, requested, undefined, MAIN_THEN_HOTBAR);
+        const moved = requested - leftover;
+        if (moved <= 0) return;
+        this.commitMorphLoomState(key, { ...state, legacyRoyalJelly: available - moved }, "pickup");
+      } else {
+        this.cursor = { item: Item.RoyalJelly, count: requested };
+        this.commitMorphLoomState(key, { ...state, legacyRoyalJelly: available - requested }, "pickup");
+      }
+      return;
+    }
+    const item = index === 1 ? Item.Berry : Item.CrystalShard;
+    const available = index === 1 ? state.moonberries : state.starCrystals;
     if (this.cursor) {
       if (this.cursor.item !== item) {
-        this.events.onToast(index === 1 ? "This vial takes Royal Jelly." : "This focus takes Star Crystals.");
+        this.events.onToast(index === 1 ? "This root tray takes Moonberries." : "This focus takes Star Crystals.");
         return;
       }
       const requested = shift || button === "left" ? this.cursor.count : 1;
@@ -11615,17 +11641,17 @@ export class VoxelEngine {
     if (!result.started) {
       const messages: Record<string, string> = {
         busy: "The chrysalis is already turning.",
-        "output-occupied": "Collect the crowned queen orb before starting another morph.",
-        "missing-orb": "Place a worker Honeybee inside a filled Capture Orb.",
-        "wrong-creature": "Only a worker Honeybee can follow this first morph pattern.",
-        deployed: "Recall the attuned bee into its orb before morphing it.",
-        "missing-resources": "This morph needs one Royal Jelly and one Star Crystal.",
+        "output-occupied": "Collect the Moonbrawn orb before starting another morph.",
+        "missing-orb": "Place a Mossling inside a filled Capture Orb.",
+        "wrong-creature": "Only a Mossling can follow this rootheart morph pattern.",
+        deployed: "Recall the attuned Mossling into its orb before morphing it.",
+        "missing-resources": "This morph needs four Moonberries and one Star Crystal.",
       };
       this.events.onToast(messages[result.reason] ?? "The morph cannot begin yet.");
       return false;
     }
     this.commitMorphLoomState(key, result.state, "craft");
-    this.events.onToast("The Chrysalis Loom begins a careful forty-two-second crowning cycle.");
+    this.events.onToast("The Chrysalis Loom begins a careful forty-eight-second rootheart cycle.");
     return true;
   }
 
@@ -11635,7 +11661,7 @@ export class VoxelEngine {
     const result = cancelOrbMorph(this.morphLooms.get(key) ?? createOrbMorphLoom());
     if (!result.cancelled) return false;
     this.commitMorphLoomState(key, result.state, "ui");
-    this.events.onToast("Morph cancelled. The worker orb, Royal Jelly, and Star Crystal remain untouched.");
+    this.events.onToast("Morph cancelled. The Mossling orb, Moonberries, and Star Crystal remain untouched.");
     return true;
   }
 
@@ -12439,7 +12465,7 @@ export class VoxelEngine {
           if ((x - this.position.x) ** 2 + (z - this.position.z) ** 2 < 24 * 24) {
             this.spawnParticles(x, y + 0.8, z, BlockId.CrystalBlock, 12);
             this.audio.play("craft");
-            this.events.onToast("The chrysalis opens: a Hive Queen waits safely inside her original Capture Orb.");
+            this.events.onToast("The chrysalis opens: a Moonbrawn Mossling waits safely inside its original Capture Orb.");
           }
         }
       } else if (entry.kind === "healer") {
@@ -13530,6 +13556,35 @@ export class VoxelEngine {
       this.emitHud(true);
       return;
     }
+    if (heldSlot?.item === Item.QueenCell && this.target
+      && this.target.type !== BlockId.Apiary && this.target.type !== BlockId.WildBeehive) {
+      const placement = { x: this.target.placeX, y: this.target.placeY, z: this.target.placeZ };
+      if (!this.world.isWalkThrough(this.world.getBlock(placement.x, placement.y, placement.z))) {
+        this.events.onToast("The Queen Cell needs one open space in which to hatch its resident queen.");
+        return;
+      }
+      const beeId = typeof heldSlot.metadata?.beeId === "string"
+        ? heldSlot.metadata.beeId.slice(0, 80)
+        : `queen-cell:${this.localPlayerId()}:${this.day}:${this.nextDropId}`;
+      const geneticSeed = Number.isFinite(heldSlot.metadata?.geneticSeed)
+        ? Number(heldSlot.metadata?.geneticSeed) >>> 0
+        : Math.imul(this.nextDropId ^ Math.floor(this.day * 31), 0x85ebca6b) >>> 0;
+      const queen = createApiary(beeId, [], geneticSeed, this.day).queen;
+      this.spawnMob("hive-queen", new THREE.Vector3(placement.x, placement.y + 0.82, placement.z), {
+        apiaryBee: { ...queen, home: false, outbound: false, angry: false },
+        persistentPoiResident: true,
+      });
+      if (this.mode === "survival") this.consumeSelectedUnit();
+      this.bestiary["hive-queen"].seen = true;
+      this.placeCooldown = 0.35;
+      this.heldUse = 1;
+      this.audio.play("craft");
+      this.spawnParticles(placement.x, placement.y + 0.55, placement.z, BlockId.Glowstone, 8);
+      this.events.onToast("The Queen Cell opens. A neutral Hive Queen stretches her wings and remains in the world.");
+      this.saveSoon();
+      this.emitHud(true);
+      return;
+    }
     if (heldSlot && (heldSlot.item === Item.WorldshellEgg || heldSlot.item === Item.AetherbellEgg)) {
       const placement = this.target ? { x: this.target.placeX, y: this.target.placeY, z: this.target.placeZ } : null;
       const eggBed = placement ? this.world.getBlock(placement.x, placement.y - 1, placement.z) : undefined;
@@ -14484,7 +14539,38 @@ export class VoxelEngine {
           } else this.events.onToast(`${companion.name} trust ${trust}/6.`);
         } else if (bond.ownerId === ownerId) {
           companion.health = Math.min(companion.maxHealth, companion.health + 3);
-          this.events.onToast(`${companion.name} is fed and recovering.`);
+          let bred = false;
+          if (companion.careState) {
+            const fed = feedCreatureForHusbandry(companion.definition, companion.careState, heldSlot.item);
+            companion.careState = fed.state;
+            if (fed.breedingFood) {
+              const partner = this.mobs.find((candidate) => candidate !== companion && candidate.kind === companion.kind
+                && candidate.courserBond?.tamed && candidate.courserBond.ownerId === ownerId && candidate.careState
+                && candidate.group.position.distanceToSquared(companion.group.position) < 25
+                && canBreedCreatures(companion.kind, fed.state, candidate.kind, candidate.careState));
+              const family = partner?.careState ? breedCreatureStates(companion.kind, fed.state, partner.kind, partner.careState, {
+                leftId: companion.specimenId, rightId: partner.specimenId, bornDay: this.day, temperament: companion.definition.temperament,
+              }) : null;
+              if (family && partner) {
+                companion.careState = family.left;
+                partner.careState = family.right;
+                const identity = this.offspringIdentity(companion.kind, family.child.geneticSeed, companion, partner);
+                this.spawnMob(companion.kind, companion.group.position.clone().add(new THREE.Vector3(0.58, 0, 0.42)), {
+                  careState: family.child,
+                  ...identity,
+                  courserBond: { ...createReedstriderBond(), tamed: true, ownerId, trust: 8 },
+                });
+                this.bestiary[companion.kind].breeds = (this.bestiary[companion.kind].breeds ?? 0) + 1;
+                this.events.onToast(`A young ${companion.definition.name} joins the bonded pair.`);
+                this.playCreatureEvent(companion, "breed");
+                bred = true;
+              }
+            }
+          }
+          if (!bred) {
+            this.events.onToast(`${companion.name} is fed and recovering.`);
+            this.playCreatureEvent(companion, "feed");
+          }
         } else {
           this.events.onToast(`${companion.name} is already bonded to another keeper.`);
           return;
@@ -15817,8 +15903,9 @@ export class VoxelEngine {
       for (const slot of [orbMorphInputSlot(state), orbMorphOutputSlot(state)]) {
         if (slot) this.spawnDrop(slot.item, slot.count, position, slot.durability, slot.metadata);
       }
-      if (state.royalJelly > 0) this.spawnDrop(Item.RoyalJelly, state.royalJelly, position);
+      if (state.moonberries > 0) this.spawnDrop(Item.Berry, state.moonberries, position);
       if (state.starCrystals > 0) this.spawnDrop(Item.CrystalShard, state.starCrystals, position);
+      if (state.legacyRoyalJelly > 0) this.spawnDrop(Item.RoyalJelly, state.legacyRoyalJelly, position);
     }
     this.morphLooms.delete(key);
     this.persistentMachineLastStep.delete(key);
@@ -16131,14 +16218,17 @@ export class VoxelEngine {
 
   dropBlockLoot(type: BlockId, x: number, y: number, z: number) {
     let drops: Array<[ItemCode, number]> = [];
+    const oreDrop = oreBlockDropRange(type);
     const harvestedPlant = harvestPlant(type, false, Math.random());
     if (harvestedPlant) drops = harvestedPlant.drops.map((drop) => [drop.item, drop.count]);
     else if (type === BlockId.SugarplumGrass) drops = [[Item.SugarSoilBlock, 1]];
     else if (type === BlockId.Grass || type === BlockId.SnowyGrass || type === BlockId.SavannaGrass || type === BlockId.SwampGrass || type === BlockId.JungleGrass || type === BlockId.SakuraGrass) drops = [[BlockId.Dirt, 1]];
     else if (type === BlockId.Stone || type === BlockId.Deepstone || type === BlockId.Basalt) drops = [[BlockId.Cobblestone, 1]];
     else if (type === BlockId.CoalOre) drops = this.randomDrop(Item.Coal, 1, 2);
-    else if (type === BlockId.IronOre) drops = [[Item.RawIron, 1]];
-    else if (type === BlockId.CopperOre) drops = this.randomDrop(Item.RawCopper, 1, 2);
+    else if (oreDrop) {
+      const [item, minimum, maximum] = oreDrop;
+      drops = this.randomDrop(item, minimum, maximum);
+    }
     else if (type === BlockId.GoldOre) drops = [[Item.RawGold, 1]];
     else if (type === BlockId.CrystalOre) drops = this.randomDrop(Item.CrystalShard, 1, 2);
     else if (type === BlockId.LivingVein) drops = this.randomDrop(Item.VeinmetalFlake, 1, 2);
@@ -19651,7 +19741,9 @@ export class VoxelEngine {
         this.mountedBoatId = boat.save.id;
         const seat = sailboatSeatOffset(localSeat, boat.save.yaw);
         this.position.set(boat.save.x + seat.x, boat.save.y + seat.y, boat.save.z + seat.z);
-        this.yaw = boat.save.yaw;
+        // The helm owns the hull heading, not the rider's camera. Keeping the
+        // view yaw independent lets both pilots and passengers free-look while
+        // A/D continues to turn the boat, matching the game's other mounts.
         this.velocity.set(0, 0, 0);
         this.grounded = true;
       }
@@ -24428,7 +24520,7 @@ export class VoxelEngine {
       if (ITEMS[item].dropModel) {
         const filledCaptureOrb = item === Item.CaptureOrb
           && Boolean(captureOrbFromInventorySlot({ item, count: 1, ...(metadata ? { metadata } : {}) })?.creature);
-        mesh = createAvatarHeldItemModel(item, { filledCaptureOrb }) ?? new THREE.Object3D();
+        mesh = createAvatarHeldItemModel(item, { filledCaptureOrb, atlas: this.world?.atlas }) ?? new THREE.Object3D();
         mesh.name = `dropped-${ITEMS[item].dropModel}`;
         mesh.scale.multiplyScalar(0.52);
         ownsVisual = true;
@@ -25367,7 +25459,7 @@ export class VoxelEngine {
   }
 
   createAvatarHeldItem(item: ItemCode, filledCaptureOrb = false) {
-    return createAvatarHeldItemModel(item, { filledCaptureOrb });
+    return createAvatarHeldItemModel(item, { filledCaptureOrb, atlas: this.world?.atlas });
   }
 
   equipmentAppearanceFromCodes(codes?: Partial<Record<EquipmentSlot, ItemCode>>): PlayerEquipmentAppearance {
@@ -25641,7 +25733,7 @@ export class VoxelEngine {
           && BUTTERFLY_ORDER.includes(definition.creatureKind as ButterflyKind))) {
           const selectedSlot = this.selectedSlot();
           const filledCaptureOrb = item === Item.CaptureOrb && Boolean(captureOrbFromInventorySlot(selectedSlot)?.creature);
-          const productionHeld = createAvatarHeldItemModel(item, { filledCaptureOrb });
+          const productionHeld = createAvatarHeldItemModel(item, { filledCaptureOrb, atlas: this.world?.atlas });
           if (productionHeld) {
             productionHeld.name = `first-person-${productionHeld.name}`;
             const workingTool = definition.useKind === "net";
@@ -25705,7 +25797,7 @@ export class VoxelEngine {
         this.offhandRoot.remove(child);
       }
       this.offhandItemCode = offhandItem;
-      const productionOffhand = offhandItem >= 0 ? createAvatarHeldItemModel(offhandItem) : null;
+      const productionOffhand = offhandItem >= 0 ? createAvatarHeldItemModel(offhandItem, { atlas: this.world?.atlas }) : null;
       if (productionOffhand) {
         applyFirstPersonHeldItemOrientation(offhandItem, productionOffhand);
         productionOffhand.name = `first-person-offhand-${productionOffhand.name}`;

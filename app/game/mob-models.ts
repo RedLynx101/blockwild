@@ -1095,17 +1095,94 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     return targetFootY;
   };
 
-  type MosslingKind = "mossling" | "boglantern-mossling" | "cindercone-mossling" | "moonbloom-mossling";
+  type MosslingKind = "mossling" | "boglantern-mossling" | "cindercone-mossling" | "moonbloom-mossling" | "moonbrawn-mossling";
   const buildMossling = (mosslingKind: MosslingKind) => {
     const prefix = mosslingKind;
     const bog = mosslingKind === "boglantern-mossling";
     const cinder = mosslingKind === "cindercone-mossling";
     const moon = mosslingKind === "moonbloom-mossling";
+    const brawn = mosslingKind === "moonbrawn-mossling";
     const targetFootY = 0.5 - MOB_DEFS[mosslingKind].footOffset;
     const bark = material(cinder ? 0x3b2d29 : moon ? 0x263e49 : bog ? 0x2d4939 : 0x31522c);
     const leaf = material(cinder ? 0xc56a3f : moon ? 0x978be0 : bog ? 0x779c50 : 0x7fb768);
     const glow = material(cinder ? 0xffbf55 : moon ? 0xd8fff0 : bog ? 0xe7ff82 : 0xf4cf6c, cinder || moon || bog, 0.94);
     visual.userData.wildlifeRig = "mossling";
+
+    if (brawn) {
+      // A genuine form change rather than a palette swap: broad bark shoulders,
+      // articulated rooted arms and planted feet frame the same kind Mossling face.
+      const deepBark = material(0x263523);
+      const warmBark = material(0x4d5d3b);
+      const moss = material(0x6f9b57);
+      const freshLeaf = material(0x98bb6d);
+      const moonberry = material(0x9a67b5, true, 0.92);
+      const crystal = material(0xa8f0df, true, 0.88);
+      const faceLight = material(0xa7bd79);
+      visual.userData.mosslingForm = "moonbrawn";
+
+      add(visual, [0.82, 0.68, 0.62], warmBark, [0, 0.18, 0.05], "body", `${prefix}-rootheart-torso`);
+      add(visual, [0.68, 0.42, 0.54], bodyMaterial, [0, -0.12, 0.08], "body", `${prefix}-lower-trunk`);
+      add(visual, [1.02, 0.3, 0.54], moss, [0, 0.4, 0.02], undefined, `${prefix}-mossy-shoulder-yoke`);
+      for (const side of [-1, 1] as const) {
+        const sideName = side < 0 ? "left" : "right";
+        add(visual, [0.34, 0.42, 0.5], deepBark, [side * 0.48, 0.33, 0.03], undefined, `${prefix}-${sideName}-bark-shoulder`);
+
+        const leg = pivotBox([0.3, 0.38, 0.3], deepBark, [side * 0.25, -0.02, 0.08], [0, -0.19, 0], "legs", `${prefix}-${sideName}-leg`);
+        leg.userData.phase = side < 0 ? 0 : Math.PI;
+        leg.userData.restX = 0;
+        add(leg, [0.25, 0.32, 0.25], warmBark, [0, targetFootY + 0.22 + 0.02, -0.015], undefined, `${prefix}-${sideName}-root-shin`);
+        add(leg, [0.46, 0.16, 0.55], deepBark, [0, targetFootY + 0.08 + 0.02, -0.11], undefined, `${prefix}-${sideName}-root-foot`);
+        for (let toe = 0; toe < 3; toe += 1) {
+          add(leg, [0.12, 0.1, 0.28], toe === 1 ? warmBark : deepBark,
+            [(toe - 1) * 0.14, targetFootY + 0.05 + 0.02, -0.36], undefined, `${prefix}-${sideName}-toe-${toe + 1}`);
+        }
+
+        const arm = pivotBox([0.28, 0.5, 0.3], warmBark, [side * 0.57, 0.43, -0.01], [0, -0.21, 0], "arms", `${prefix}-${sideName}-arm`);
+        arm.userData.phase = side < 0 ? 0 : Math.PI;
+        arm.userData.restX = -0.08;
+        arm.rotation.x = -0.08;
+        add(arm, [0.36, 0.26, 0.38], moss, [0, -0.08, 0], undefined, `${prefix}-${sideName}-moss-elbow-guard`);
+        const elbow = childPivot(arm, `${prefix}-${sideName}-forearm-pivot`, [side * 0.025, -0.36, -0.02]);
+        elbow.userData.side = side;
+        elbow.userData.restX = -0.12;
+        elbow.rotation.x = -0.12;
+        add(elbow, [0.34, 0.44, 0.36], deepBark, [side * 0.03, -0.18, -0.02], undefined, `${prefix}-${sideName}-root-forearm`);
+        add(elbow, [0.48, 0.29, 0.46], warmBark, [side * 0.035, -0.43, -0.09], undefined, `${prefix}-${sideName}-root-fist`);
+        for (let knuckle = 0; knuckle < 3; knuckle += 1) {
+          add(elbow, [0.13, 0.12, 0.16], deepBark,
+            [side * 0.04 + (knuckle - 1) * 0.14, -0.49, -0.31], undefined, `${prefix}-${sideName}-knuckle-${knuckle + 1}`);
+        }
+      }
+
+      const head = pivotBox([0.56, 0.48, 0.5], faceLight, [0, 0.67, -0.18], [0, 0, 0], "head", `${prefix}-head`);
+      add(head, [0.4, 0.22, 0.32], warmBark, [0, -0.14, -0.36], undefined, `${prefix}-root-muzzle`);
+      add(head, [0.17, 0.1, 0.08], deepBark, [0, -0.1, -0.57], undefined, `${prefix}-seed-nose`);
+      for (const side of [-1, 1] as const) {
+        const sideName = side < 0 ? "left" : "right";
+        add(head, [0.16, 0.1, 0.08], deepBark, [side * 0.17, 0.12, -0.33], undefined, `${prefix}-${sideName}-brow`).rotation.z = side * -0.12;
+        add(head, [0.09, 0.1, 0.055], crystal, [side * 0.16, 0.035, -0.49], undefined, `${prefix}-${sideName}-eye`);
+        add(head, [0.035, 0.045, 0.025], eyeMaterial, [side * 0.16, 0.035, -0.525], undefined, `${prefix}-${sideName}-pupil`);
+        add(head, [0.16, 0.13, 0.11], moss, [side * 0.24, -0.1, -0.32], undefined, `${prefix}-${sideName}-moss-cheek`);
+      }
+
+      add(visual, [0.31, 0.26, 0.12], moonberry, [0, 0.15, -0.35], undefined, `${prefix}-moonberry-rootheart`);
+      add(visual, [0.14, 0.15, 0.06], crystal, [0, 0.15, -0.43], undefined, `${prefix}-star-crystal-kernel`).rotation.y = Math.PI / 4;
+      for (let plate = 0; plate < 4; plate += 1) {
+        const backPlate = add(visual, [0.36 - plate * 0.035, 0.34, 0.13], deepBark,
+          [0, 0.42 - plate * 0.16, 0.36 + plate * 0.05], undefined, `${prefix}-back-bark-plate-${plate + 1}`);
+        backPlate.rotation.x = -0.22 + plate * 0.04;
+      }
+      for (let leafIndex = 0; leafIndex < 4; leafIndex += 1) {
+        const side = leafIndex % 2 ? 1 : -1;
+        const leafNode = add(visual, [0.32, 0.07, 0.19], leafIndex < 2 ? freshLeaf : moss,
+          [side * (0.18 + leafIndex * 0.035), 0.88 - Math.floor(leafIndex / 2) * 0.13, 0.03 + leafIndex * 0.04], undefined, `${prefix}-crown-leaf-${leafIndex + 1}`);
+        leafNode.rotation.z = side * (-0.45 + leafIndex * 0.04);
+        leafNode.rotation.y = side * 0.22;
+      }
+      add(visual, [0.12, 0.24, 0.12], warmBark, [0, 0.88, 0.02], undefined, `${prefix}-crown-stem`);
+      add(visual, [0.2, 0.14, 0.2], moonberry, [0, 1.02, 0.02], undefined, `${prefix}-crown-berry`).rotation.y = Math.PI / 4;
+      return;
+    }
 
     if (moon) {
       add(visual, [0.42, 0.54, 0.4], bodyMaterial, [0, 0.03, 0], "body", `${prefix}-bud-body`);
@@ -3407,7 +3484,7 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       add(visual, [0.34 * scale, 0.34 * scale, 1.05 * scale], metal, [0.72 * scale, 1.02 * scale, -0.55 * scale], undefined, `${kind}-aether-projector`);
       add(visual, [0.18 * scale, 0.18 * scale, 0.52 * scale], core, [0.72 * scale, 1.02 * scale, -1.28 * scale], undefined, `${kind}-projector-focus`);
     }
-  } else if (["mossling", "boglantern-mossling", "cindercone-mossling", "moonbloom-mossling"].includes(kind)) {
+  } else if (["mossling", "boglantern-mossling", "cindercone-mossling", "moonbloom-mossling", "moonbrawn-mossling"].includes(kind)) {
     buildMossling(kind as MosslingKind);
   } else if (["grotto-grazer", "lanternray", "prismtail-swift", "glassback-newt", "sailfin-skimmer", "ashnose-bat", "chimewing", "cinder-kite", "veinling"].includes(kind)) {
     const undergroundKind = kind as UndergroundMobKind;
@@ -4987,6 +5064,23 @@ export function applyWildlifePose(
     const core = visual.getObjectByName("webspinner-golem-loom-aether-core");
     if (core) core.scale.setScalar(1 + Math.sin(time * 4.1) * 0.09 + alert * 0.07);
   } else if (rig === "mossling") {
+    if (kind === "moonbrawn-mossling") {
+      const cadence = time * (1.45 + travel * 3.2);
+      for (const sideName of ["left", "right"] as const) {
+        const side = sideName === "left" ? -1 : 1;
+        const arm = visual.getObjectByName(`${kind}-${sideName}-arm-pivot`);
+        const forearm = visual.getObjectByName(`${kind}-${sideName}-forearm-pivot`);
+        const leg = visual.getObjectByName(`${kind}-${sideName}-leg-pivot`);
+        const phase = side < 0 ? 0 : Math.PI;
+        if (arm) arm.rotation.x = (Number(arm.userData.restX) || -0.08) + Math.sin(cadence + phase) * travel * 0.24 - alert * 0.16;
+        if (forearm) forearm.rotation.x = (Number(forearm.userData.restX) || -0.12) - Math.max(0, Math.sin(cadence + phase)) * travel * 0.16 - alert * 0.2;
+        if (leg) leg.rotation.x = Math.sin(cadence + phase) * travel * 0.18;
+      }
+      const torso = visual.getObjectByName(`${kind}-rootheart-torso`);
+      if (torso) torso.scale.y = 1 + Math.sin(time * 1.55) * 0.018;
+      const heart = visual.getObjectByName(`${kind}-moonberry-rootheart`);
+      if (heart) heart.scale.setScalar(1 + Math.sin(time * 2.15) * 0.045 + alert * 0.04);
+    }
     for (const suffix of ["sprout-stem", "flower-stem", "lantern-stalk"]) {
       const stem = visual.getObjectByName(`${kind}-${suffix}`);
       if (stem) stem.rotation.z += Math.sin(time * 1.15) * (0.018 + travel * 0.025);

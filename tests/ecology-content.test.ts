@@ -278,7 +278,9 @@ test("new data, recipes, biome content and semantic held models are registered",
   const orbRecipe = RECIPES.find((recipe) => recipe.id === "creature_cage")!;
   assert.deepEqual(orbRecipe.output, { item: Item.CaptureOrb, count: 4 });
   assert.equal(RECIPES.some((recipe) => recipe.id === "capture_orb"), false);
-  assert.equal(RECIPES.some((recipe) => recipe.id === "queen_cell"), false, "queens are transformed in the Loom instead of crafted instantly");
+  const queenCellRecipe = RECIPES.find((recipe) => recipe.id === "queen_cell");
+  assert.deepEqual(queenCellRecipe?.pattern, [Item.WorkerBee, Item.RoyalJelly]);
+  assert.deepEqual(queenCellRecipe?.output, { item: Item.QueenCell, count: 1 }, "the legacy Queen Cell remains a tangible spawn egg and apiary starter");
   assert.equal(BLOCKS[BlockId.ChrysalisLoom].name, "Waykeeper Chrysalis Loom");
   assert.deepEqual(RECIPES.find((recipe) => recipe.id === "chrysalis-loom")?.output, { item: Item.ChrysalisLoomItem, count: 1 });
   assert.equal(ITEMS[BlockId.Chest].iconKind, "chest");

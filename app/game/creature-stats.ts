@@ -103,6 +103,7 @@ const DEEPENED_LEGACY_STAT_SEEDS = Object.freeze({
   "boglantern-mossling": seed(stat(30, 16, 48, 33, 44, 25), "mystic"),
   "cindercone-mossling": seed(stat(29, 24, 43, 35, 36, 26), "mystic"),
   "moonbloom-mossling": seed(stat(27, 14, 52, 28, 49, 29), "mystic"),
+  "moonbrawn-mossling": seed(stat(48, 52, 28, 62, 36, 31), "guardian"),
   emberjay: seed(stat(20, 30, 31, 16, 24, 75), "swift"),
   "canopy-lark": seed(stat(18, 18, 34, 14, 27, 82), "swift"),
   "tidewing-gull": seed(stat(22, 23, 28, 18, 25, 76), "swift"),

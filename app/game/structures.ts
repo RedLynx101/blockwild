@@ -706,6 +706,11 @@ export type VegetationPlan = Readonly<{
   features: readonly VegetationFeature[];
 }>;
 
+/** Both authored cactus shapes retain their old mix at 15% total density. */
+export const DESERT_CACTUS_DENSITY_SCALE = 0.15;
+export const DESERT_SAGUARO_SPAWN_CHANCE = 0.013 * DESERT_CACTUS_DENSITY_SCALE;
+export const DESERT_BARREL_CACTUS_SPAWN_CHANCE = 0.017 * DESERT_CACTUS_DENSITY_SCALE;
+
 /** O(16x16) per chunk with a hard cap of 64 emitted features. */
 export function planBiomeVegetation(input: Readonly<{
   seed: string | number;
@@ -728,7 +733,7 @@ export function planBiomeVegetation(input: Readonly<{
       let variant: VegetationVariant | undefined;
 
       if (input.biome === "desert") {
-        if (roll > 0.987) {
+        if (roll > 1 - DESERT_SAGUARO_SPAWN_CHANCE) {
           variant = "saguaro";
           const height = 2 + Math.floor(hashUnit(input.seed, `saguaro-height:${x},${z}`) * 3);
           for (let dy = 0; dy < height; dy += 1) placements.push({ x, y: y + dy, z, block: BlockId.Cactus, variant });
@@ -736,13 +741,13 @@ export function planBiomeVegetation(input: Readonly<{
             const direction = hashUnit(input.seed, `saguaro-arm:${x},${z}`) < 0.5 ? -1 : 1;
             placements.push({ x: x + direction, y: y + height - 2, z, block: BlockId.Cactus, variant });
           }
-        } else if (roll > 0.97) {
+        } else if (roll > 1 - DESERT_SAGUARO_SPAWN_CHANCE - DESERT_BARREL_CACTUS_SPAWN_CHANCE) {
           variant = "barrel-cactus";
           placements.push({ x, y, z, block: BlockId.Cactus, variant });
-        } else if (roll > 0.952) {
+        } else if (roll > 0.952 && roll <= 0.97) {
           variant = "dry-shrub";
           placements.push({ x, y, z, block: BlockId.TallGrass, variant });
-        } else if (roll > 0.944) {
+        } else if (roll > 0.944 && roll <= 0.952) {
           variant = "sunspike-rock";
           placements.push({ x, y, z, block: BlockId.Stone, variant });
           if (hashUnit(input.seed, `sunspike:${x},${z}`) > 0.55) placements.push({ x, y: y + 1, z, block: BlockId.Stone, variant });

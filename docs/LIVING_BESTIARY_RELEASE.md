@@ -4,7 +4,7 @@ This document is the maintained implementation and verification index for v1.7.0
 
 ## Player-facing scope
 
-- 215 creatures total: 178 retained entries plus 27 regular additions, six legendaries, and four summons.
+- 216 creatures total: 178 retained entries plus 28 regular additions, six legendaries, and four summons.
 - 21 universal creature types, fixed visible species stats, level-and-bond move unlocks, and no IV-style hidden rolls.
 - One real-time host-authoritative combat resolver for player, creature, summon, construct, resident, boss, projectile, spell, mounted, and PvP actors.
 - Append-only Bestiary research, individual specimen/capture history, forms, Prime routes, care clues, mounts, rarity, and Summoned Origins.
@@ -57,7 +57,7 @@ The living release audit must report:
 - no failures across 50 regional road seeds and 50 Dwarven infrastructure seeds;
 - six valid legendary encounters and four valid summon contracts.
 
-The ecology audit must report all 215 discovery hints, all 46 flora assignments, 24 surface biomes, and seven underground habitats. `npm test` is the final build, rendered HTML/audio, migration, multiplayer, world, UI, and gameplay regression gate.
+The ecology audit must report all 216 discovery hints, all 46 flora assignments, 24 surface biomes, and seven underground habitats. `npm test` is the final build, rendered HTML/audio, migration, multiplayer, world, UI, and gameplay regression gate.
 
 `npm run soak:living-world` fast-forwards two representative in-game hours across 320 actors and eight player-interest points. It is a deterministic collection-growth gate for spatial queries, threat ledgers, contextual loot, road anchors, and append-only Bestiary research. It complements rather than replaces an actual long browser playtest.
 

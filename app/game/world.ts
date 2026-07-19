@@ -13,11 +13,13 @@ import {
   APPLE_CRATE_SIDE_TILE,
   APPLE_CRATE_TOP_TILE,
   BLOCKS,
+  CACTUS_TOP_TILE,
   DEEPGEAR_BRICK_TILE,
   DEEPGEAR_LANTERN_TILE,
   DRAGON_HOARD_COIN_TILE,
   DRAGON_HOARD_GOLD_TILE,
   DRAGON_HOARD_JEWEL_TILE,
+  DREAMCAP_TILE,
   FROSTPEAR_CRATE_SIDE_TILE,
   FROSTPEAR_CRATE_TOP_TILE,
   FROSTPEAR_FRUIT_TILE,
@@ -29,8 +31,11 @@ import {
   LEAF_BLOCKS,
   MOONBERRY_CRATE_SIDE_TILE,
   MOONBERRY_CRATE_TOP_TILE,
+  MOONBOUGH_LEAVES_TILE,
   RIVETED_BRASS_TILE,
   ROOTWEAVE_SOIL_SIDE_TILE,
+  STAR_CRYSTAL_ORE_TILE,
+  STARFERN_TILE,
   SUNBERRY_CRATE_SIDE_TILE,
   SUNBERRY_CRATE_TOP_TILE,
   BlockId,
@@ -108,6 +113,12 @@ export const SEA_LEVEL = 32;
 export const SECTION_HEIGHT = 16;
 export const SECTION_COUNT = WORLD_HEIGHT / SECTION_HEIGHT;
 export const GENERATOR_VERSION = 17;
+/** v1.8.4: conventional ore rolls are 25% richer before the world's abundance setting. */
+export const ORE_SPAWN_RATE_MULTIPLIER = 1.25;
+/** Shared vein cells were 2 x 2 x 2; broader 3 x 2 x 3 cells permit larger, still porous seams. */
+export const ORE_VEIN_CELL_SIZE = Object.freeze({ horizontal: 3, vertical: 2 });
+/** Desert cacti now appear at 15% of their original 1.5% per-column roll. */
+export const DESERT_CACTUS_SPAWN_CHANCE = 0.00225;
 
 export type SettlementWorldPlan = Readonly<{
   candidate: SettlementCandidate;
@@ -1043,6 +1054,18 @@ export function createAtlasBlockGeometry(type: BlockId, size = 1) {
   return geometry;
 }
 
+/** A vertical atlas-mapped plane for crossed flora models used in-world and in-hand. */
+export function createAtlasTilePlaneGeometry(type: BlockId, width = 0.72, height = 0.86) {
+  const geometry = new THREE.PlaneGeometry(width, height);
+  const uv = geometry.getAttribute("uv") as THREE.BufferAttribute;
+  const [u0, v0, u1, v1] = TILE_UVS[BLOCKS[type].side];
+  for (let vertex = 0; vertex < uv.count; vertex += 1) {
+    uv.setXY(vertex, lerp(u0, u1, uv.getX(vertex)), lerp(v0, v1, uv.getY(vertex)));
+  }
+  uv.needsUpdate = true;
+  return geometry;
+}
+
 function blocksSky(type: BlockId) {
   const definition = BLOCKS[type];
   const fullCube = !definition?.shape || definition.shape === "cube";
@@ -1461,13 +1484,13 @@ export function createBlockAtlas() {
     context.globalAlpha = 1;
   };
 
-  const oreTiles = new Set([9, 10, 40, 41, 42]);
-  const leafTiles = new Set([7, 20, 23, 34, 80, 106, 111, 134]);
+  const oreTiles = new Set([9, 10, 40, 41]);
+  const leafTiles = new Set([7, 20, 23, 34, 80, 106, 111, 134, MOONBOUGH_LEAVES_TILE]);
   const logSideTiles = new Set([5, 18, 21, 32, 104, 109, 132]);
   const logTopTiles = new Set([6, 19, 22, 33, 105, 110, 133]);
   const crossTiles = new Set([39, 53, 54, 55, 56, 59, 66, 67, 68, 69, 73, 74, 75, 76, 77, 78, 79, 81, 82, 83,
     100, 101, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 138, 139, 140, 141, 142, 158, 159,
-    173, 177, 178, 179, 180, 183, 184, 185, 186, 194, 197, 203, 204, 205, 206]);
+    173, 177, 178, 179, 180, 183, 184, 185, 186, 194, 197, 203, 204, 205, 206, STARFERN_TILE, DREAMCAP_TILE]);
   for (let index = 0; index < grid * grid; index += 1) {
     const base = TILE_COLORS[index] ?? "#777777";
     const ox = (index % grid) * tile;
@@ -1906,8 +1929,39 @@ export function createBlockAtlas() {
       }
     }
     if (oreTiles.has(index)) {
-      const oreColor = index === 9 ? "#25282a" : index === 10 ? "#a85f3f" : index === 40 ? "#d27854" : index === 41 ? "#f0c94f" : "#67edf2";
+      const oreColor = index === 9 ? "#25282a" : index === 10 ? "#a85f3f" : index === 40 ? "#d27854" : "#f0c94f";
       for (let i = 0; i < 20; i += 1) pixel(index, Math.floor(random() * tile), Math.floor(random() * tile), oreColor);
+    }
+    if (index === STAR_CRYSTAL_ORE_TILE) {
+      // A dark load-bearing host frames one continuous mineral seam. Matching
+      // edge exits let adjacent ore faces read as one deposit rather than cyan
+      // confetti, while the luminous core remains well below 25% coverage.
+      context.fillStyle = "#29323b";
+      context.fillRect(ox, oy, tile, tile);
+      for (let y = 0; y < tile; y += 1) for (let x = 0; x < tile; x += 1) {
+        if ((x * 11 + y * 7 + 5) % 29 === 0) pixel(index, x, y, "#43505a");
+        else if ((x * 5 + y * 13 + 3) % 31 === 0) pixel(index, x, y, "#1e272f");
+        else if (y % 6 === 1 && (x + y * 3) % 5 < 2) pixel(index, x, y, "#343f49");
+      }
+      const seam = [
+        [0, 12], [1, 12], [2, 11], [3, 11], [4, 10], [5, 9], [6, 9], [7, 8],
+        [8, 8], [9, 9], [10, 10], [11, 10], [12, 11], [13, 11], [14, 12], [15, 12],
+        [5, 0], [5, 1], [6, 2], [6, 3], [7, 4], [7, 5], [6, 6], [7, 7],
+        [8, 9], [7, 10], [7, 11], [6, 12], [6, 13], [5, 14], [5, 15],
+      ] as const;
+      const seamKeys = new Set(seam.map(([x, y]) => `${x},${y}`));
+      for (const [x, y] of seam) for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
+        const sx = x + dx, sy = y + dy;
+        if (sx >= 0 && sx < tile && sy >= 0 && sy < tile && !seamKeys.has(`${sx},${sy}`)) pixel(index, sx, sy, "#173844");
+      }
+      for (const [offset, [x, y]] of seam.entries()) pixel(index, x, y, offset % 4 === 0 ? "#83f4f2" : offset % 3 === 0 ? "#4bcbd3" : "#3298ad");
+      for (const [x, y, color] of [
+        [2, 11, "#d8ffff"], [5, 9, "#b6ffff"], [7, 8, "#e9ffff"], [10, 10, "#9ef7ff"],
+        [13, 11, "#d8ffff"], [6, 3, "#aab6ff"], [7, 5, "#dcffff"], [6, 12, "#9daeff"],
+      ] as Array<[number, number, string]>) {
+        pixel(index, x, y, color);
+        if ((x + y) % 2 === 0 && x + 1 < tile) pixel(index, x + 1, y, "#6edee6", 0.92);
+      }
     }
     if (index === 8 || index === 44) {
       for (let y = 2; y < tile; y += 5) for (let x = 0; x < tile; x += 1) if ((x + y) % 3) pixel(index, x, y, index === 8 ? "#75b8e5" : "#ffb33d", 0.55);
@@ -2312,15 +2366,105 @@ export function createBlockAtlas() {
   }
   clearTile(FROSTPEAR_LEAVES_TILE);
   for (let x = 0; x < tile; x += 1) for (let y = 0; y < tile; y += 1) {
-    if ((x * 5 + y * 7) % 19 < 2) continue;
-    pixel(FROSTPEAR_LEAVES_TILE, x, y, (x + y) % 5 === 0 ? "#7ba495" : (x * 3 + y) % 4 === 0 ? "#355f59" : "#4b786b");
+    const edge = Math.min(x, y, 15 - x, 15 - y);
+    const grain = (x * 11 + y * 17 + x * y * 3) % 31;
+    // Irregular pinholes and a slightly ragged edge keep adjacent blocks full
+    // while breaking the old flat, moss-like sheet into visible leaf clusters.
+    if (grain < (edge === 0 ? 8 : edge === 1 ? 5 : 3)) continue;
+    const color = grain < 8 ? "#294f4b"
+      : grain < 14 ? "#37675e"
+        : grain < 21 ? "#4f7f70"
+          : grain < 27 ? "#6b9b87" : "#91b6a1";
+    pixel(FROSTPEAR_LEAVES_TILE, x, y, color);
   }
+  // Paired two- and three-pixel leaflets provide readable little blades at
+  // nearest filtering; cool tips retain Frostpear's wintry orchard identity.
+  for (const [x, y, flip] of [[2, 2, 0], [6, 1, 1], [11, 2, 0], [4, 5, 1], [9, 5, 0], [13, 6, 1], [1, 9, 0], [6, 9, 1], [10, 10, 0], [4, 13, 0], [9, 14, 1], [13, 12, 0]] as Array<[number, number, number]>) {
+    pixel(FROSTPEAR_LEAVES_TILE, x, y, flip ? "#a8cbb4" : "#7eab94");
+    if (x + 1 < tile) pixel(FROSTPEAR_LEAVES_TILE, x + 1, y + (flip ? 1 : 0), "#c2ddc8");
+    if (y + 1 < tile) pixel(FROSTPEAR_LEAVES_TILE, x, y + 1, "#557f6f");
+  }
+  for (const [x, y] of [[3, 3], [7, 3], [10, 6], [8, 8], [5, 11], [11, 12]] as Array<[number, number]>) pixel(FROSTPEAR_LEAVES_TILE, x, y, "#d9ead2");
   clearTile(FROSTPEAR_FRUIT_TILE);
   for (let x = 5; x <= 10; x += 1) for (let y = 5; y <= 12; y += 1) {
     const width = y < 8 ? 2 : y < 11 ? 3 : 2;
     if (Math.abs(x - 7.5) <= width) pixel(FROSTPEAR_FRUIT_TILE, x, y, x < 7 ? "#76aeb4" : x > 9 ? "#c9eee7" : "#9bd0cf");
   }
   pixel(FROSTPEAR_FRUIT_TILE, 8, 3, "#6a4b32"); pixel(FROSTPEAR_FRUIT_TILE, 8, 4, "#6a4b32"); pixel(FROSTPEAR_FRUIT_TILE, 9, 3, "#6f9258");
+
+  // Cactus sides read as ribbed living tissue rather than flat green noise;
+  // the dedicated top tile exposes a compact rosette and pale spine clusters.
+  fillTile(26, "#397839");
+  for (let x = 0; x < tile; x += 1) {
+    const rib = x % 5;
+    const color = rib === 0 ? "#24592f" : rib === 1 ? "#63a94d" : rib === 2 ? "#4b9140" : "#347336";
+    context.fillStyle = color;
+    context.fillRect((26 % grid) * tile + x, Math.floor(26 / grid) * tile, 1, tile);
+  }
+  for (const [x, y] of [[1, 2], [6, 5], [11, 3], [1, 11], [6, 14], [11, 10], [15, 7]] as Array<[number, number]>) {
+    pixel(26, x, y, "#e7dfb0");
+    if (x + 1 < tile) pixel(26, x + 1, y, "#9fc572");
+  }
+  fillTile(CACTUS_TOP_TILE, "#245b31");
+  for (let ring = 1; ring <= 6; ring += 1) {
+    const color = ring % 2 === 0 ? "#4c9241" : "#37783a";
+    context.strokeStyle = color;
+    context.strokeRect((CACTUS_TOP_TILE % grid) * tile + ring, Math.floor(CACTUS_TOP_TILE / grid) * tile + ring, tile - ring * 2, tile - ring * 2);
+  }
+  for (const [x, y] of [[3, 3], [12, 3], [3, 12], [12, 12], [8, 2], [2, 8], [13, 8], [8, 13]] as Array<[number, number]>) pixel(CACTUS_TOP_TILE, x, y, "#eadfaf");
+  for (const [x, y] of [[7, 7], [8, 7], [7, 8], [8, 8]] as Array<[number, number]>) pixel(CACTUS_TOP_TILE, x, y, "#82bd57");
+
+  // Moonbough crowns are dense, irregular leaf clusters with restrained
+  // moonlit flecks—not the four-petal flower cell they previously borrowed.
+  clearTile(MOONBOUGH_LEAVES_TILE);
+  for (let x = 0; x < tile; x += 1) for (let y = 0; y < tile; y += 1) {
+    const edge = Math.min(x, y, 15 - x, 15 - y);
+    if ((x * 7 + y * 11 + x * y) % 23 < (edge === 0 ? 8 : 3)) continue;
+    const leafColor = (x * 3 + y * 5) % 11 < 3 ? "#2f6156" : (x + y * 2) % 7 < 2 ? "#70a98c" : "#477d69";
+    pixel(MOONBOUGH_LEAVES_TILE, x, y, leafColor);
+  }
+  for (const [x, y] of [[2, 4], [12, 2], [7, 6], [4, 12], [13, 10], [9, 14]] as Array<[number, number]>) {
+    pixel(MOONBOUGH_LEAVES_TILE, x, y, "#b9f3d2");
+    if (x + 1 < tile) pixel(MOONBOUGH_LEAVES_TILE, x + 1, y, "#8cbfa5");
+  }
+
+  // A many-frond fern silhouette with a bright central rachis and cool tips.
+  clearTile(STARFERN_TILE);
+  for (let y = 3; y < tile; y += 1) {
+    const stemX = 7 + Math.round(Math.sin(y * 0.42));
+    pixel(STARFERN_TILE, stemX, y, y < 7 ? "#b9ffe1" : "#67c99b");
+    if (y >= 5 && y <= 13) {
+      const reach = y < 8 ? 2 : y < 11 ? 4 : 5;
+      for (let step = 1; step <= reach; step += 1) {
+        const rise = Math.floor(step / 2);
+        pixel(STARFERN_TILE, stemX - step, y - rise, step === reach ? "#a9f6d1" : "#3b9b75");
+        pixel(STARFERN_TILE, stemX + step, y - rise - (y % 2), step === reach ? "#d2ffe9" : "#53bd8c");
+      }
+    }
+  }
+  for (const [x, y] of [[5, 15], [7, 14], [9, 15]] as Array<[number, number]>) pixel(STARFERN_TILE, x, y, "#2b795e");
+
+  // Dreamcaps form a readable mushroom cluster with layered caps, gills and
+  // stems so both the crossed world mesh and its held model stay distinctive.
+  clearTile(DREAMCAP_TILE);
+  for (const [stemX, capY, capRadius] of [[4, 8, 3], [9, 5, 4], [12, 10, 2]] as Array<[number, number, number]>) {
+    for (let y = capY + 2; y < 16; y += 1) {
+      pixel(DREAMCAP_TILE, stemX, y, y % 3 === 0 ? "#c9c3df" : "#eee8f4");
+      if (y > capY + 5 && stemX + 1 < tile) pixel(DREAMCAP_TILE, stemX + 1, y, "#a99fbd");
+    }
+    for (let dx = -capRadius; dx <= capRadius; dx += 1) {
+      const height = Math.max(1, capRadius - Math.floor(Math.abs(dx) / 2));
+      for (let dy = 0; dy <= height; dy += 1) {
+        const x = stemX + dx;
+        const y = capY + dy;
+        if (x < 0 || x >= tile || y < 0 || y >= tile) continue;
+        pixel(DREAMCAP_TILE, x, y, dy === height ? "#674b9d" : dx < 0 ? "#8565c5" : "#ae8cf0");
+      }
+      const gillX = stemX + dx;
+      if (gillX >= 0 && gillX < tile) pixel(DREAMCAP_TILE, gillX, capY + height + 1, dx % 2 ? "#d8c4ef" : "#f1ddff");
+    }
+  }
+  for (const [x, y] of [[3, 8], [8, 5], [10, 6], [12, 10]] as Array<[number, number]>) pixel(DREAMCAP_TILE, x, y, "#e5d5ff");
   const texture = new THREE.CanvasTexture(canvas);
   texture.magFilter = THREE.NearestFilter;
   texture.minFilter = THREE.NearestFilter;
@@ -3122,21 +3266,14 @@ export class ChunkWorld {
             }
 
             if (this.generationOptions.profile === "world-below-v15" && (type === BlockId.Stone || type === BlockId.Deepstone || type === BlockId.Basalt)) {
-              const cellHash = hash3(Math.floor(gx / 2), Math.floor(y / 2), Math.floor(gz / 2), this.seed ^ 0x1234567);
+              const effectiveAbundance = resourceAbundance * ORE_SPAWN_RATE_MULTIPLIER;
+              const cellHash = hash3(Math.floor(gx / ORE_VEIN_CELL_SIZE.horizontal), Math.floor(y / ORE_VEIN_CELL_SIZE.vertical), Math.floor(gz / ORE_VEIN_CELL_SIZE.horizontal), this.seed ^ 0x1234567);
               const detailHash = hash3(gx, y, gz, this.seed ^ 0x89abcdef);
-              if (resourceAbundance === 1) {
-                if (y < 66 && cellHash > 0.992 && detailHash > 0.25) type = BlockId.CoalOre;
-                if (y < 48 && cellHash < 0.008 && detailHash > 0.3) type = BlockId.IronOre;
-                if (y < 54 && cellHash > 0.983 && cellHash < 0.987 && detailHash > 0.35) type = BlockId.CopperOre;
-                if (y < 8 && cellHash > 0.976 && cellHash < 0.9785 && detailHash > 0.4) type = BlockId.GoldOre;
-                if (y < -24 && cellHash > 0.97 && cellHash < 0.9715 && detailHash > 0.5) type = BlockId.CrystalOre;
-              } else {
-                if (y < 66 && cellHash > 1 - 0.008 * resourceAbundance && detailHash > 0.25) type = BlockId.CoalOre;
-                if (y < 48 && cellHash < 0.008 * resourceAbundance && detailHash > 0.3) type = BlockId.IronOre;
-                if (y < 54 && Math.abs(cellHash - 0.985) < 0.002 * resourceAbundance && detailHash > 0.35) type = BlockId.CopperOre;
-                if (y < 8 && Math.abs(cellHash - 0.97725) < 0.00125 * resourceAbundance && detailHash > 0.4) type = BlockId.GoldOre;
-                if (y < -24 && Math.abs(cellHash - 0.97075) < 0.00075 * resourceAbundance && detailHash > 0.5) type = BlockId.CrystalOre;
-              }
+              if (y < 66 && cellHash > 1 - 0.008 * effectiveAbundance && detailHash > 0.25) type = BlockId.CoalOre;
+              if (y < 48 && cellHash < 0.008 * effectiveAbundance && detailHash > 0.3) type = BlockId.IronOre;
+              if (y < 54 && Math.abs(cellHash - 0.985) < 0.002 * effectiveAbundance && detailHash > 0.35) type = BlockId.CopperOre;
+              if (y < 8 && Math.abs(cellHash - 0.97725) < 0.00125 * effectiveAbundance && detailHash > 0.4) type = BlockId.GoldOre;
+              if (y < -24 && Math.abs(cellHash - 0.97075) < 0.00075 * effectiveAbundance && detailHash > 0.5) type = BlockId.CrystalOre;
             }
             if (type === BlockId.Stone || type === BlockId.Deepstone || type === BlockId.Basalt) {
               const veinField = hash3(Math.floor(gx / 3), Math.floor(y / 2), Math.floor(gz / 3), this.seed ^ 0x8f1bbcdc);
@@ -3733,7 +3870,7 @@ export class ChunkWorld {
       const above = chunk.blocks[aboveIndex] as BlockId;
       if (!canGenerateSurfaceFlora(ground, above, caveMouth)) continue;
       const roll = hash2(x, z, this.seed ^ 0x44444444);
-      if (column.biome === BiomeId.Desert && roll > 0.985) {
+      if (column.biome === BiomeId.Desert && roll > 1 - DESERT_CACTUS_SPAWN_CHANCE) {
         const cactusHeight = 2 + Math.floor(hash2(x, z, this.seed ^ 0x55555555) * 3);
         for (let y = 1; y <= cactusHeight; y += 1) set(x, column.height + y, z, BlockId.Cactus);
       } else if (column.biome === BiomeId.Beach) {

@@ -48,7 +48,7 @@ export type TideglassAquaticKind =
   | "worldshell-leviathan"
   | "aetherbell-larva"
   | "aetherbell-leviathan";
-export type MosslingVariantKind = "boglantern-mossling" | "cindercone-mossling" | "moonbloom-mossling";
+export type MosslingVariantKind = "boglantern-mossling" | "cindercone-mossling" | "moonbloom-mossling" | "moonbrawn-mossling";
 export type SugarplumAquaticKind = "syrupfin";
 export type RabbitKind = "meadow-cottontail" | "russet-rabbit" | "frost-hare" | "chocolate-bunny";
 export type SeaSlugKind =
@@ -1124,6 +1124,26 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     drops: [{ item: Item.Fiber, min: 1, max: 2, chance: 0.72 }, { item: Item.GlowDust, min: 1, max: 1, chance: 0.28 }],
     family: "surface", movement: "ground", sentient: false, breedable: true, breedingFoods: [Item.Moonpetal], diet: [Item.Moonpetal, Item.StarfernFrond],
     utility: "Its open crown indicates unobstructed moonlight.", discoveryHint: "Wait beside Moonpetals until a closed bud rises onto three roots.",
+  },
+  "moonbrawn-mossling": {
+    kind: "moonbrawn-mossling", name: "Moonbrawn Mossling", temperament: "Gentle", hostile: false,
+    health: 16, damage: 3, xp: 6, speed: 0.58, chaseSpeed: 2.35, turnRate: 5.4, attackRange: 1.2,
+    footOffset: 1.08, radius: 0.57, height: 1.42, habitat: "Waykeeper Chrysalis Looms and carefully tended moonberry gardens", active: "Day, dusk and moonlit night",
+    behavior: "Plants broad root-feet, braces its bark-plated shoulders, and uses heavy rooted forearms to protect smaller grove life. It relaxes by tamping loose soil around berry bushes.",
+    lore: "Moonberries feed a Mossling's patience; a Star Crystal gives that patience weight. The resulting Moonbrawn keeps the grove-tender's gentle nature inside a body grown for hauling stone and sheltering seedlings.",
+    colors: [0x314a2f, 0x6f9b57, 0x9a67b5],
+    drops: [{ item: Item.Fiber, min: 2, max: 4, chance: 0.9 }, { item: Item.Berry, min: 1, max: 2, chance: 0.45 }],
+    family: "surface", movement: "ground", sentient: false,
+    tameable: true, tameItems: [Item.Berry], breedable: true, breedingFoods: [Item.Berry], diet: [Item.Berry, Item.Wheat], foodLure: true,
+    captureItem: Item.CaptureOrb,
+    utility: "A bonded Moonbrawn is a sturdy grove companion whose planted stance makes it useful around gardens and vulnerable followers.",
+    postTameNotes: "Bonded pairs breed after both accept Moonberries; their offspring remain Moonbrawn Mosslings and inherit the family's keeper bond.",
+    discoveryHint: "This form does not occur naturally. Place a Mossling in a Chrysalis Loom with four Moonberries and one Star Crystal.",
+    fieldNotes: Object.freeze([
+      { id: "morph", title: "Crystal-fed Rootheart", text: "The Moonbrawn form is made in a Chrysalis Loom from one captured Mossling, four Moonberries, and one Star Crystal.", hint: "Complete its Loom morph.", requires: [{ metric: "seen", atLeast: 1 }] },
+      { id: "bond", title: "Gentle Strength", text: "Repeated Moonberries establish a keeper bond. Its broad arms are defensive tools, not a change in temperament.", hint: "Tame one with Moonberries.", requires: [{ metric: "tames", atLeast: 1 }] },
+      { id: "family", title: "Rooted Lineage", text: "Two bonded, well-fed Moonbrawns produce a young Moonbrawn rather than reverting to their smaller ancestral form.", hint: "Breed a bonded pair with Moonberries.", requires: [{ metric: "breeds", atLeast: 1 }] },
+    ]),
   },
   ridgeback: {
     kind: "ridgeback", name: "Ridgeback", temperament: "Defensive", hostile: false,
@@ -2532,7 +2552,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
 
 export const BUTTERFLY_ORDER: ButterflyKind[] = ["meadowwing", "azure-skippers", "embertip", "frostveil", "bloom-monarch", "fen-lantern", "bonbonwing", "moonveil-wing"];
 export const LEGACY_MOB_ORDER: LegacyMobKind[] = ["mossling", "ridgeback", "woolhorn", "glowmoth", "shadecrawler", "caveblob", "rattlekin", "zombie"];
-export const MOSSLING_VARIANT_ORDER: MosslingVariantKind[] = ["boglantern-mossling", "cindercone-mossling", "moonbloom-mossling"];
+export const MOSSLING_VARIANT_ORDER: MosslingVariantKind[] = ["boglantern-mossling", "cindercone-mossling", "moonbloom-mossling", "moonbrawn-mossling"];
 export const SURFACE_MOB_ORDER: SurfaceMobKind[] = [
   "sunstep-grazer", "pebbletortoise", "brambleboar", "petalfox", "emberbrush-fox", "moonpetal-fox", "duneclatter",
   "thimbledeer", "frostlace-hart", "reedcrown-deer", "lanternshell", "puddlehopper", "reedstrider", "wild-horse", "rimehoof-courser", "sunscar-courser",

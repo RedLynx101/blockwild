@@ -629,6 +629,9 @@ function planUndergroundDungeon(kind: AdventureDungeonKind, origin: WorldPositio
     b.set(stairX, stairGroundY, stairZ, profile.floor, `${kind}-stair-step-${step}`);
     b.set(stairX, stairGroundY + 1, stairZ, BlockId.Air, `${kind}-stair-headroom`);
     b.set(stairX, stairGroundY + 2, stairZ, BlockId.Air, `${kind}-stair-headroom`);
+    // The player still occupies the higher tread while stepping down. Clearing
+    // one extra cell prevents the descending edge from catching their head.
+    b.set(stairX, stairGroundY + 3, stairZ, BlockId.Air, `${kind}-stair-transition-clearance`);
   }
   // The final tread and the threshold chamber share a floor at base - 1.
   b.fill(-3, base, 14, -1, base + 2, 14, BlockId.Air, `${kind}-stair-threshold-door`);

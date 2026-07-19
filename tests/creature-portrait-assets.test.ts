@@ -44,6 +44,7 @@ const NEWCOMER_KINDS = [
   "boglantern-mossling",
   "cindercone-mossling",
   "moonbloom-mossling",
+  "moonbrawn-mossling",
   "reefglide-terrapin",
   "emberbrush-fox",
   "moonpetal-fox",
