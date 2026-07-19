@@ -75,10 +75,10 @@ test("lightning placement is deterministic and never implies fire", () => {
 });
 
 test("day and moon light respect sky exposure instead of brightening caves globally", () => {
-  const surfaceNoon = skyLightLevels({ daylight: 1, moonlight: 0, skyVisibility: 1, weatherLight: 1, underwater: false, underground: false });
-  const caveNoon = skyLightLevels({ daylight: 1, moonlight: 0, skyVisibility: 0, weatherLight: 1, underwater: false, underground: true });
-  const clearMoon = skyLightLevels({ daylight: 0, moonlight: 1, skyVisibility: 1, weatherLight: 1, underwater: false, underground: false });
-  const roofedRoom = skyLightLevels({ daylight: 1, moonlight: 0, skyVisibility: 0, weatherLight: 1, underwater: false, underground: false });
+  const surfaceNoon = skyLightLevels({ daylight: 1, moonlight: 0, skyVisibility: 1, weatherLight: 1, underwater: false, subterraneanBlend: 0 });
+  const caveNoon = skyLightLevels({ daylight: 1, moonlight: 0, skyVisibility: 0, weatherLight: 1, underwater: false, subterraneanBlend: 1 });
+  const clearMoon = skyLightLevels({ daylight: 0, moonlight: 1, skyVisibility: 1, weatherLight: 1, underwater: false, subterraneanBlend: 0 });
+  const roofedRoom = skyLightLevels({ daylight: 1, moonlight: 0, skyVisibility: 0, weatherLight: 1, underwater: false, subterraneanBlend: 0.16 });
   assert.ok(surfaceNoon.directional > 0.7);
   assert.ok(caveNoon.hemisphere < 0.02 && caveNoon.directional === 0);
   assert.ok(clearMoon.directional > 0.05, "a clear moon contributes visible surface light");

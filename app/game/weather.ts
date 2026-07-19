@@ -413,7 +413,8 @@ export type SkyLightProbe = Readonly<{
   skyVisibility: number;
   weatherLight: number;
   underwater: boolean;
-  underground: boolean;
+  /** 0 outdoors, 1 deep underground. Kept continuous to avoid cave threshold pops. */
+  subterraneanBlend: number;
 }>;
 
 /**
@@ -427,9 +428,10 @@ export function skyLightLevels(probe: SkyLightProbe) {
   const moonlight = clamp01(probe.moonlight);
   const visibility = clamp01(probe.skyVisibility);
   const weatherLight = clamp01(probe.weatherLight);
-  const bouncedExposure = probe.underground
-    ? visibility * visibility
-    : 0.18 + Math.sqrt(visibility) * 0.82;
+  const subterranean = clamp01(probe.subterraneanBlend);
+  const openBounce = 0.18 + Math.sqrt(visibility) * 0.82;
+  const caveBounce = visibility * visibility;
+  const bouncedExposure = openBounce + (caveBounce - openBounce) * subterranean;
   return {
     hemisphere: (0.012 + (daylight * 0.36 + moonlight * 0.055) * bouncedExposure) * weatherLight,
     directional: (daylight * 0.78 + moonlight * 0.07) * visibility * weatherLight,

@@ -773,6 +773,14 @@ export type BlockDefinition = {
   collisionHeight?: number;
   /** Blocks in the same group visually connect across horizontal faces. */
   connectGroup?: "fence";
+  /** Propagated world-light strength. Visual self-glow is controlled separately. */
+  lightEmission?: number;
+  /** Linear RGB tint for propagated light, with every component in the 0-1 range. */
+  lightColor?: readonly [number, number, number];
+  /** Light removed while entering this voxel: 0 is transparent and 15 is opaque. */
+  lightDampening?: number;
+  /** Texture self-illumination independent from how much world light the block casts. */
+  emissiveStrength?: number;
 };
 
 export type ItemDefinition = {
@@ -837,20 +845,33 @@ const block = (
   preferredTool: BlockTool,
   requiredTier = 0,
   extras: Partial<BlockDefinition> = {},
-): BlockDefinition => ({
-  id,
-  name,
-  top,
-  side,
-  bottom,
-  hardness,
-  color,
-  preferredTool,
-  requiredTier,
-  solid: true,
-  layer: "opaque",
-  ...extras,
-});
+): BlockDefinition => {
+  const solid = extras.solid ?? true;
+  const layer = extras.layer ?? "opaque";
+  const fullCube = !extras.shape || extras.shape === "cube";
+  const lightDampening = extras.lightDampening
+    ?? (id === BlockId.Air ? 0
+      : extras.liquid === "water" || extras.waterlogged ? 1
+        : layer === "transparent" ? 0
+          : layer === "cutout" ? 1
+            : solid && fullCube ? 15 : 0);
+  return {
+    id,
+    name,
+    top,
+    side,
+    bottom,
+    hardness,
+    color,
+    preferredTool,
+    requiredTier,
+    solid,
+    layer,
+    lightDampening,
+    emissiveStrength: layer === "emissive" ? 0.72 : 0,
+    ...extras,
+  };
+};
 
 export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.Air]: block(BlockId.Air, "Air", 0, 0, 0, 0, "#ffffff", "hand", 0, { solid: false, layer: "none", replaceable: true }),
@@ -1140,6 +1161,71 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.CaveBridge]: block(BlockId.CaveBridge, "Cave Bridge Plank", 208, 208, 208, 0.82, "#655143", "axe"),
   [BlockId.DeepgearLift]: block(BlockId.DeepgearLift, "Deepgear Lift Platform", 209, 209, 209, 3.2, "#667278", "pickaxe", 2),
 };
+
+const configureBlockLight = (type: BlockId, lightEmission: number, lightColor: readonly [number, number, number], emissiveStrength = 0.72) => {
+  const definition = BLOCKS[type];
+  if (!definition) return;
+  definition.lightEmission = lightEmission;
+  definition.lightColor = lightColor;
+  definition.emissiveStrength = emissiveStrength;
+};
+
+const WARM_LIGHT = [1, 0.58, 0.24] as const;
+const GOLD_LIGHT = [1, 0.78, 0.3] as const;
+const CYAN_LIGHT = [0.34, 0.95, 1] as const;
+const GREEN_LIGHT = [0.47, 1, 0.55] as const;
+const VIOLET_LIGHT = [0.65, 0.48, 1] as const;
+
+for (const type of [BlockId.Torch, BlockId.TorchWallNorth, BlockId.TorchWallSouth, BlockId.TorchWallEast, BlockId.TorchWallWest]) {
+  configureBlockLight(type, 14, WARM_LIGHT, 1);
+}
+configureBlockLight(BlockId.Lava, 15, [1, 0.28, 0.08], 0.9);
+configureBlockLight(BlockId.Glowstone, 15, GOLD_LIGHT, 0.9);
+configureBlockLight(BlockId.CrystalBlock, 13, CYAN_LIGHT, 0.82);
+configureBlockLight(BlockId.RuneStone, 6, [0.42, 0.72, 0.46], 0.32);
+configureBlockLight(BlockId.CreatureHealer, 10, CYAN_LIGHT, 0.68);
+configureBlockLight(BlockId.LightningBugJar, 10, [0.76, 1, 0.28], 0.9);
+configureBlockLight(BlockId.DeepgearLantern, 15, GOLD_LIGHT, 1);
+configureBlockLight(BlockId.AetherConduit, 13, CYAN_LIGHT, 0.9);
+configureBlockLight(BlockId.Moonwell, 10, [0.35, 0.78, 1], 0.75);
+configureBlockLight(BlockId.HearthFireplace, 14, WARM_LIGHT, 1);
+configureBlockLight(BlockId.Whisperglass, 6, CYAN_LIGHT, 0.66);
+configureBlockLight(BlockId.Wayshrine, 9, [0.38, 0.82, 0.78], 0.72);
+configureBlockLight(BlockId.DraconicIncubator, 8, VIOLET_LIGHT, 0.72);
+configureBlockLight(BlockId.SeaDragonEggBlock, 8, CYAN_LIGHT, 0.86);
+configureBlockLight(BlockId.GoldDragonEggBlock, 11, GOLD_LIGHT, 1);
+configureBlockLight(BlockId.SilverDragonEggBlock, 11, [0.62, 0.8, 1], 1);
+configureBlockLight(BlockId.GildedDragonstone, 5, GOLD_LIGHT, 0.56);
+configureBlockLight(BlockId.ArgentDragonstone, 5, [0.62, 0.8, 1], 0.56);
+
+for (const type of [BlockId.Dreamblossom, BlockId.GiantDreamblossom, BlockId.Moonpetal, BlockId.GiantMoonpetal, BlockId.Dreamcap, BlockId.StarbloomCap]) {
+  configureBlockLight(type, type === BlockId.GiantDreamblossom || type === BlockId.GiantMoonpetal ? 7 : 4, VIOLET_LIGHT, 0.78);
+}
+for (const type of [BlockId.LumenKelp, BlockId.Lumenreed, BlockId.Starfern, BlockId.LuminousGills, BlockId.LuminousAlgae]) {
+  configureBlockLight(type, 5, [0.34, 1, 0.8], 0.78);
+}
+configureBlockLight(BlockId.StarCoral, 6, [1, 0.36, 0.54], 0.8);
+configureBlockLight(BlockId.AbyssBloom, 7, VIOLET_LIGHT, 0.88);
+configureBlockLight(BlockId.LanternLotus, 7, WARM_LIGHT, 0.8);
+configureBlockLight(BlockId.GiantLanternLotus, 9, WARM_LIGHT, 0.9);
+configureBlockLight(BlockId.MoonboughLeaves, 2, [0.34, 0.74, 0.58], 0.34);
+configureBlockLight(BlockId.LuminousRoot, 4, GREEN_LIGHT, 0.62);
+configureBlockLight(BlockId.LanternBloom, 7, GOLD_LIGHT, 0.84);
+configureBlockLight(BlockId.GlowmossCarpet, 3, GREEN_LIGHT, 0.64);
+configureBlockLight(BlockId.ResonantCrystal, 10, [0.42, 0.56, 1], 0.88);
+configureBlockLight(BlockId.CrystalCluster, 8, [0.48, 0.66, 1], 0.92);
+configureBlockLight(BlockId.FumaroleVent, 10, [1, 0.32, 0.12], 0.78);
+configureBlockLight(BlockId.LivingVein, 4, [0.48, 0.82, 0.64], 0.48);
+configureBlockLight(BlockId.VeinmetalHeart, 11, [0.48, 0.92, 0.72], 0.9);
+configureBlockLight(BlockId.CaveMarker, 8, GOLD_LIGHT, 0.86);
+
+for (const type of [BlockId.WaygridVaultTerminal, BlockId.WaygridCreatureArchive, BlockId.WaygridCellI, BlockId.WaygridCellII, BlockId.WaygridCellIII]) {
+  configureBlockLight(type, type === BlockId.WaygridCellIII ? 10 : 7, type === BlockId.WaygridCellIII ? VIOLET_LIGHT : CYAN_LIGHT, 0.8);
+}
+
+export function blockEmitsLight(type: BlockId | undefined): type is BlockId {
+  return type !== undefined && (BLOCKS[type]?.lightEmission ?? 0) > 0;
+}
 
 export const TORCH_BLOCKS: readonly BlockId[] = [
   BlockId.Torch,
