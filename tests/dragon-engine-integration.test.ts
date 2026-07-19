@@ -207,9 +207,11 @@ test("multiplayer snapshots carry exact dragon lifecycle state through protocol 
   assert.deepEqual(snapshot[0].dragonState, serializeDragonState(dragonState));
   assert.equal(snapshot[0].baby, true);
   assert.equal(snapshot[0].tamed, true);
-  assert.equal(validatePayload("mob-snapshot", { tick: 1, mobs: snapshot }), true);
+  const scope = { centerPlayerId: "player-dragon-test", radius: 64, epoch: 1 };
+  assert.equal(validatePayload("mob-snapshot", { tick: 1, scope, mobs: snapshot }), true);
   assert.equal(validatePayload("mob-snapshot", {
     tick: 1,
+    scope,
     mobs: [{ ...snapshot[0], kind: "fire-dragon" }],
   }), false, "a dragon payload cannot claim a kind that disagrees with its full state");
 });

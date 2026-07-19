@@ -149,6 +149,7 @@ test("tiny leviathans render at their authored eight-percent hatchling scale", (
 test("multiplayer accepts bounded egg metadata and rejects oversized drop payloads", () => {
   const base = {
     tick: 1,
+    scope: { centerPlayerId: "player-ocean-test", radius: 64, epoch: 1 },
     drops: [{ id: 1, item: Item.WorldshellEgg, count: 1, x: 0, y: 8, z: 0, age: 1 }],
   };
   assert.equal(validatePayload("drop-snapshot", {

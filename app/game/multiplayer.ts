@@ -23,10 +23,10 @@ import type { MagicState } from "./magic";
  * events, validates actions as host, and publishes authoritative snapshots.
  */
 
-export const MULTIPLAYER_PROTOCOL_VERSION = 1 as const;
+export const MULTIPLAYER_PROTOCOL_VERSION = 2 as const;
 export const MULTIPLAYER_PROTOCOL_NAME = "blockwild-webrtc" as const;
-export const RELIABLE_CHANNEL_LABEL = "blockwild.gameplay.v1" as const;
-export const MOVEMENT_CHANNEL_LABEL = "blockwild.movement.v1" as const;
+export const RELIABLE_CHANNEL_LABEL = "blockwild.gameplay.v2" as const;
+export const MOVEMENT_CHANNEL_LABEL = "blockwild.movement.v2" as const;
 
 export const MAX_RELIABLE_MESSAGE_BYTES = 256 * 1024;
 export const MAX_MOVEMENT_MESSAGE_BYTES = 64 * 1024;
@@ -165,7 +165,13 @@ export type MobSnapshotEntry = {
   } | null;
 };
 
-export type MobSnapshot = { tick: number; mobs: MobSnapshotEntry[] };
+export type SnapshotScope = {
+  centerPlayerId: string;
+  radius: number;
+  epoch: number;
+};
+
+export type MobSnapshot = { tick: number; scope: SnapshotScope; mobs: MobSnapshotEntry[] };
 
 export type DropSnapshotEntry = {
   id: number;
@@ -180,7 +186,18 @@ export type DropSnapshotEntry = {
   metadata?: Record<string, unknown>;
 };
 
-export type DropSnapshot = { tick: number; drops: DropSnapshotEntry[] };
+export type DropSnapshot = { tick: number; scope: SnapshotScope; drops: DropSnapshotEntry[] };
+
+export type DestructionTombstone = {
+  id: string;
+  tick: number;
+  kind: "block" | "mob" | "drop";
+  cause: "broken" | "killed" | "collected" | "expired" | "replaced";
+  entityId?: number;
+  block?: { x: number; y: number; z: number };
+};
+
+export type TombstoneBatch = { tick: number; tombstones: DestructionTombstone[] };
 export type SailboatSnapshotEntry = {
   id: string;
   x: number;
@@ -255,20 +272,31 @@ export type InventoryAction = {
   reason?: string;
 };
 
+export type ContainerSlotTarget = {
+  owner: "player" | "container" | "equipment" | "offhand" | "trash";
+  slot: number;
+};
+
+export type ContainerOperation =
+  | { op: "click"; target: ContainerSlotTarget; button: "left" | "right"; shift?: boolean }
+  | { op: "distribute"; targets: number[]; button: "left" | "right" }
+  | { op: "collect-matching"; item?: number }
+  | { op: "sort"; target: "player" | "container" }
+  | { op: "stack" | "transfer-all"; direction: "player-to-container" | "container-to-player" };
+
 export type ContainerAction = {
   requestId: string;
   actorId: string;
   containerId: string;
-  kind: "open" | "close" | "take" | "place" | "quick-move" | "craft" | "smelt";
-  slot?: number;
-  targetSlot?: number;
-  count?: number;
+  kind: "open" | "close" | "mutate";
   expectedRevision?: number;
   /** Host-owned player revision on which this atomic chest transaction is based. */
   expectedPlayerRevision?: number;
-  /** A bounded authoritative slot image used for shared chest transactions. */
+  /** Compact player intent. Guests never author full inventory images for mutations. */
+  operation?: ContainerOperation;
+  /** Host-authored recovery/commit image. It is forbidden on guest requests. */
   slots?: ItemStackSnapshot[];
-  /** The matching player inventory image makes chest transfers one host-owned transaction. */
+  /** Host-authored matching player recovery/commit image. Never guest input. */
   playerState?: PlayerSessionSnapshot;
   /** Host-authored furnace clocks travel with its shared three-slot image. */
   machine?: { progress: number; burn: number; burnMax: number };
@@ -458,7 +486,10 @@ export type WorldSnapshot = {
   players: PlayerPose[];
   blockEdits: BlockEdit[];
   mobs: MobSnapshotEntry[];
+  mobScope: SnapshotScope;
   drops: DropSnapshotEntry[];
+  dropScope: SnapshotScope;
+  tombstones?: DestructionTombstone[];
   boats?: SailboatSnapshotEntry[];
   time: TimeWeatherSnapshot;
   worldOptions?: SessionWorldOptions;
@@ -477,6 +508,7 @@ export type MultiplayerPayloadMap = {
   "block-action": BlockAction;
   "mob-snapshot": MobSnapshot;
   "drop-snapshot": DropSnapshot;
+  tombstones: TombstoneBatch;
   "time-weather": TimeWeatherSnapshot;
   "sleep-vote": SleepVote;
   "inventory-action": InventoryAction;
@@ -575,6 +607,8 @@ export type MultiplayerOptions = {
   connectionTimeoutMs?: number;
   iceGatheringTimeoutMs?: number;
   autoMaintenance?: boolean;
+  /** Developer-only outbound transport delay used for real browser QA. */
+  artificialLatencyMs?: { min: number; max: number };
   onEvent?: MultiplayerListener;
 };
 
@@ -620,7 +654,7 @@ type PeerRecord = {
 };
 
 const MESSAGE_TYPES = new Set<MultiplayerMessageType>([
-  "hello", "heartbeat", "goodbye", "snapshot", "player-pose", "block-action", "mob-snapshot", "drop-snapshot", "time-weather", "sleep-vote", "inventory-action", "container-action", "facility-action", "player-state", "player-progress", "boat-action", "combat-action", "creature-action", "map-share",
+  "hello", "heartbeat", "goodbye", "snapshot", "player-pose", "block-action", "mob-snapshot", "drop-snapshot", "tombstones", "time-weather", "sleep-vote", "inventory-action", "container-action", "facility-action", "player-state", "player-progress", "boat-action", "combat-action", "creature-action", "map-share",
 ]);
 const CONTROL_TYPES = new Set<MultiplayerMessageType>(["hello", "heartbeat", "goodbye"]);
 const GUEST_OUTBOUND_TYPES = new Set<MultiplayerMessageType>(["hello", "heartbeat", "goodbye", "player-pose", "block-action", "sleep-vote", "inventory-action", "container-action", "facility-action", "player-state", "player-progress", "boat-action", "combat-action", "creature-action", "map-share"]);
@@ -910,6 +944,48 @@ function validateEndpoint(value: unknown): value is InventoryEndpoint {
     && (value.containerId === undefined || isShortString(value.containerId, 96));
 }
 
+function validateSnapshotScope(value: unknown): value is SnapshotScope {
+  return isRecord(value)
+    && isId(value.centerPlayerId)
+    && isFiniteNumber(value.radius, 1, 4_096)
+    && isInteger(value.epoch, 0, Number.MAX_SAFE_INTEGER);
+}
+
+function validateContainerOperation(value: unknown): value is ContainerOperation {
+  if (!isRecord(value) || typeof value.op !== "string") return false;
+  if (value.op === "click") return isRecord(value.target)
+    && ["player", "container", "equipment", "offhand", "trash"].includes(value.target.owner as string)
+    && isInteger(value.target.slot, 0, 1023)
+    && (value.button === "left" || value.button === "right")
+    && (value.shift === undefined || typeof value.shift === "boolean");
+  if (value.op === "distribute") return Array.isArray(value.targets)
+    && value.targets.length >= 2
+    && value.targets.length <= 36
+    && new Set(value.targets).size === value.targets.length
+    && value.targets.every((target) => isInteger(target, 0, 35))
+    && (value.button === "left" || value.button === "right");
+  if (value.op === "collect-matching") return value.item === undefined || isInteger(value.item, 0, 65_535);
+  if (value.op === "sort") return value.target === "player" || value.target === "container";
+  if (value.op === "stack" || value.op === "transfer-all") return value.direction === "player-to-container" || value.direction === "container-to-player";
+  return false;
+}
+
+function validateTombstone(value: unknown): value is DestructionTombstone {
+  if (!isRecord(value)
+    || !isId(value.id)
+    || !isInteger(value.tick, 0, Number.MAX_SAFE_INTEGER)
+    || !["block", "mob", "drop"].includes(value.kind as string)
+    || !["broken", "killed", "collected", "expired", "replaced"].includes(value.cause as string)
+    || (value.entityId !== undefined && !isInteger(value.entityId, 0, Number.MAX_SAFE_INTEGER))) return false;
+  if (value.block !== undefined) {
+    if (!isRecord(value.block)
+      || !isInteger(value.block.x, -COORDINATE_LIMIT, COORDINATE_LIMIT)
+      || !isInteger(value.block.y, -4096, 4096)
+      || !isInteger(value.block.z, -COORDINATE_LIMIT, COORDINATE_LIMIT)) return false;
+  }
+  return value.kind === "block" ? value.block !== undefined : value.entityId !== undefined;
+}
+
 function validateStatusFields(value: Record<string, unknown>) {
   return (value.status === undefined || value.status === "request" || value.status === "accepted" || value.status === "rejected")
     && (value.reason === undefined || isShortString(value.reason, 160, true));
@@ -1055,6 +1131,7 @@ function validatePlayerSessionSnapshot(value: unknown): value is PlayerSessionSn
     && value.inventory.length === 36
     && value.inventory.every(validateItemStack)
     && (value.cursor === undefined || validateItemStack(value.cursor))
+    && (value.trash === undefined || validateItemStack(value.trash))
     && (value.offhand === undefined || validateItemStack(value.offhand))
     && equipmentSlots.every((slot) => validateItemStack(equipment[slot]))
     && isInteger(value.selected, 0, 8)
@@ -1118,14 +1195,21 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
         && validateStatusFields(value);
     case "mob-snapshot":
       return isInteger(value.tick, 0, Number.MAX_SAFE_INTEGER)
+        && validateSnapshotScope(value.scope)
         && Array.isArray(value.mobs)
         && value.mobs.length <= 512
         && value.mobs.every(validateMob);
     case "drop-snapshot":
       return isInteger(value.tick, 0, Number.MAX_SAFE_INTEGER)
+        && validateSnapshotScope(value.scope)
         && Array.isArray(value.drops)
         && value.drops.length <= 1024
         && value.drops.every(validateDrop);
+    case "tombstones":
+      return isInteger(value.tick, 0, Number.MAX_SAFE_INTEGER)
+        && Array.isArray(value.tombstones)
+        && value.tombstones.length <= 512
+        && value.tombstones.every(validateTombstone);
     case "time-weather":
       return validateTimeWeather(value);
     case "sleep-vote":
@@ -1152,14 +1236,14 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
       return isId(value.requestId)
         && isId(value.actorId)
         && isShortString(value.containerId, 96)
-        && ["open", "close", "take", "place", "quick-move", "craft", "smelt"].includes(value.kind as string)
-        && (value.slot === undefined || isInteger(value.slot, 0, 1023))
-        && (value.targetSlot === undefined || isInteger(value.targetSlot, 0, 1023))
-        && (value.count === undefined || isInteger(value.count, 1, 65_535))
+        && (value.kind === "open" || value.kind === "close" || value.kind === "mutate")
         && (value.expectedRevision === undefined || isInteger(value.expectedRevision, 0, Number.MAX_SAFE_INTEGER))
+        && (value.expectedPlayerRevision === undefined || isInteger(value.expectedPlayerRevision, 0, Number.MAX_SAFE_INTEGER))
+        && (value.kind === "mutate" ? validateContainerOperation(value.operation) : value.operation === undefined)
         && (value.slots === undefined || (Array.isArray(value.slots) && value.slots.length <= 128 && value.slots.every(validateItemStack)))
         && (value.playerState === undefined || validatePlayerSessionSnapshot(value.playerState))
         && validateMachineState(value.machine)
+        && ((value.status !== undefined && value.status !== "request") || (value.slots === undefined && value.playerState === undefined && value.machine === undefined))
         && validateStatusFields(value);
     case "facility-action":
       return isId(value.requestId)
@@ -1282,9 +1366,12 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
         && Array.isArray(value.mobs)
         && value.mobs.length <= 512
         && value.mobs.every(validateMob)
+        && validateSnapshotScope(value.mobScope)
         && Array.isArray(value.drops)
         && value.drops.length <= 1024
         && value.drops.every(validateDrop)
+        && validateSnapshotScope(value.dropScope)
+        && (value.tombstones === undefined || (Array.isArray(value.tombstones) && value.tombstones.length <= 512 && value.tombstones.every(validateTombstone)))
         && (value.boats === undefined || (Array.isArray(value.boats) && value.boats.length <= 128 && value.boats.every(validateSailboat)))
         && validateTimeWeather(value.time)
         && (value.worldOptions === undefined || validateSessionWorldOptions(value.worldOptions))
@@ -1413,6 +1500,21 @@ function defaultRandomId(prefix: string) {
   return `${prefix}_${bytesToBase64Url(bytes)}`;
 }
 
+/**
+ * Opt-in real-browser transport impairment for multiplayer acceptance tests.
+ * Example: `?mpLatency=100-250`. Invalid or excessive values fail closed so
+ * normal players can never accidentally inherit a pathological delay.
+ */
+export function parseMultiplayerLatencyRange(search: string) {
+  const value = new URLSearchParams(search.startsWith("?") ? search : `?${search}`).get("mpLatency")?.trim() ?? "";
+  const match = /^(\d{1,4})-(\d{1,4})$/u.exec(value);
+  if (!match) return undefined;
+  const min = Number(match[1]);
+  const max = Number(match[2]);
+  if (!Number.isFinite(min) || !Number.isFinite(max) || min < 0 || max < min || max > 2_000) return undefined;
+  return { min, max };
+}
+
 export function createPeerIdentity(
   name: string,
   color: string,
@@ -1472,11 +1574,21 @@ export class MultiplayerSession {
   private readonly peerTimeoutMs: number;
   private readonly connectionTimeoutMs: number;
   private readonly iceGatheringTimeoutMs: number;
+  private readonly artificialLatencyMs: { min: number; max: number } | null;
   private readonly peers = new Map<string, PeerRecord>();
   private readonly listeners = new Set<MultiplayerListener>();
   private maintenanceTimer: ReturnType<typeof setInterval> | null = null;
   private reliableSequence = 0;
   private movementSequence = 0;
+  private readonly artificialSendTimers = new Set<ReturnType<typeof setTimeout>>();
+  private readonly nextReliableArtificialSendAt = new Map<string, number>();
+  /** Final host responses retained briefly so reconnect/retry is exactly-once. */
+  private readonly responseCache = new Map<string, {
+    peerId: string;
+    requestId: string;
+    expiresAt: number;
+    envelopes: Array<{ type: MultiplayerMessageType; payload: MultiplayerPayloadMap[MultiplayerMessageType] }>;
+  }>();
   private disposed = false;
 
   constructor(options: MultiplayerOptions) {
@@ -1497,10 +1609,13 @@ export class MultiplayerSession {
     this.peerTimeoutMs = options.peerTimeoutMs ?? 12_000;
     this.connectionTimeoutMs = options.connectionTimeoutMs ?? 90_000;
     this.iceGatheringTimeoutMs = options.iceGatheringTimeoutMs ?? 12_000;
+    this.artificialLatencyMs = options.artificialLatencyMs ?? null;
     if (!isFiniteNumber(this.heartbeatIntervalMs, 250, 60_000)
       || !isFiniteNumber(this.peerTimeoutMs, this.heartbeatIntervalMs * 2, 300_000)
       || !isFiniteNumber(this.connectionTimeoutMs, 5_000, 600_000)
-      || !isFiniteNumber(this.iceGatheringTimeoutMs, 500, 60_000)) {
+      || !isFiniteNumber(this.iceGatheringTimeoutMs, 500, 60_000)
+      || (this.artificialLatencyMs !== null && (!isFiniteNumber(this.artificialLatencyMs.min, 0, 2_000)
+        || !isFiniteNumber(this.artificialLatencyMs.max, this.artificialLatencyMs.min, 2_000)))) {
       throw new MultiplayerProtocolError("Invalid multiplayer timeout configuration");
     }
     if (options.onEvent) this.listeners.add(options.onEvent);
@@ -1833,13 +1948,29 @@ export class MultiplayerSession {
       if (kind === "reliable") this.emitError(new Error("Reliable multiplayer channel is backpressured"), peer);
       return false;
     }
-    try {
-      channel.send(encoded);
+    const sendNow = () => {
+      if (peer.closed || channel.readyState !== "open") return;
+      try { channel.send(encoded); }
+      catch (error) { this.emitError(error, peer); }
+    };
+    if (this.artificialLatencyMs) {
+      const randomDelay = this.artificialLatencyMs.min
+        + Math.random() * (this.artificialLatencyMs.max - this.artificialLatencyMs.min);
+      const now = this.now();
+      let sendAt = now + randomDelay;
+      if (kind === "reliable") {
+        sendAt = Math.max(sendAt, (this.nextReliableArtificialSendAt.get(peer.token) ?? now) + 1);
+        this.nextReliableArtificialSendAt.set(peer.token, sendAt);
+      }
+      const timer = setTimeout(() => {
+        this.artificialSendTimers.delete(timer);
+        sendNow();
+      }, Math.max(0, sendAt - now));
+      this.artificialSendTimers.add(timer);
       return true;
-    } catch (error) {
-      this.emitError(error, peer);
-      return false;
     }
+    try { channel.send(encoded); return true; }
+    catch (error) { this.emitError(error, peer); return false; }
   }
 
   private sendControl<K extends "hello" | "heartbeat" | "goodbye">(peer: PeerRecord, type: K, payload: MultiplayerPayloadMap[K]) {
@@ -1847,6 +1978,49 @@ export class MultiplayerSession {
     const envelope = this.makeEnvelope(type, payload, "reliable") as MultiplayerEnvelope;
     const encoded = encodeEnvelope(envelope, MAX_RELIABLE_MESSAGE_BYTES);
     return this.sendEncoded(peer, "reliable", encoded);
+  }
+
+  private pruneResponseCache(at = this.now()) {
+    for (const [key, entry] of this.responseCache) if (entry.expiresAt <= at) this.responseCache.delete(key);
+    while (this.responseCache.size > 1_024) {
+      const oldest = this.responseCache.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.responseCache.delete(oldest);
+    }
+  }
+
+  private cacheHostResponse(peer: PeerRecord, type: MultiplayerMessageType, payload: MultiplayerPayloadMap[MultiplayerMessageType]) {
+    if (this.role !== "host" || !peer.identity || !isRecord(payload) || !("requestId" in payload) || !("status" in payload)) return;
+    const requestId = typeof payload.requestId === "string" ? payload.requestId : null;
+    if (!requestId || (payload.status !== "accepted" && payload.status !== "rejected")) return;
+    this.pruneResponseCache();
+    const key = `${peer.identity.id}|${requestId}`;
+    const existing = this.responseCache.get(key);
+    const envelopes = existing?.envelopes.filter((entry) => entry.type !== type) ?? [];
+    envelopes.push({ type, payload: structuredClone(payload) });
+    this.responseCache.delete(key);
+    this.responseCache.set(key, {
+      peerId: peer.identity.id,
+      requestId,
+      expiresAt: this.now() + 20_000,
+      envelopes,
+    });
+    const peerEntries = [...this.responseCache.entries()].filter(([, entry]) => entry.peerId === peer.identity!.id);
+    for (let index = 0; index < Math.max(0, peerEntries.length - 256); index += 1) this.responseCache.delete(peerEntries[index][0]);
+  }
+
+  private replayCachedResponse(peer: PeerRecord, requestId: string) {
+    if (!peer.identity) return false;
+    this.pruneResponseCache();
+    const cached = this.responseCache.get(`${peer.identity.id}|${requestId}`);
+    if (!cached || !peer.reliable || peer.reliable.readyState !== "open") return false;
+    let replayed = false;
+    for (const response of cached.envelopes) {
+      const envelope = this.makeEnvelope(response.type, response.payload, "reliable") as MultiplayerEnvelope;
+      const encoded = encodeEnvelope(envelope, MAX_RELIABLE_MESSAGE_BYTES);
+      replayed = this.sendEncoded(peer, "reliable", encoded) || replayed;
+    }
+    return replayed;
   }
 
   send<K extends Exclude<MultiplayerMessageType, "hello" | "heartbeat" | "goodbye">>(type: K, payload: MultiplayerPayloadMap[K], peerId?: string) {
@@ -1884,7 +2058,14 @@ export class MultiplayerSession {
     const envelope = this.makeEnvelope(type, payload, kind) as MultiplayerEnvelope;
     const encoded = encodeEnvelope(envelope, kind === "movement" ? MAX_MOVEMENT_MESSAGE_BYTES : MAX_RELIABLE_MESSAGE_BYTES);
     let sent = 0;
-    for (const peer of recipients) if (this.sendEncoded(peer, kind, encoded)) sent += 1;
+    for (const peer of recipients) {
+      const delivered = this.sendEncoded(peer, kind, encoded);
+      // Cache a final host decision even if the channel is momentarily under
+      // backpressure. The mutation may already be committed; a retry must
+      // replay the decision rather than execute it a second time.
+      if (kind === "reliable") this.cacheHostResponse(peer, type, payload as MultiplayerPayloadMap[MultiplayerMessageType]);
+      if (delivered) sent += 1;
+    }
     return sent;
   }
 
@@ -1893,6 +2074,7 @@ export class MultiplayerSession {
   sendBlockAction(payload: BlockAction, peerId?: string) { return this.send("block-action", payload, peerId); }
   sendMobSnapshot(payload: MobSnapshot, peerId?: string) { return this.send("mob-snapshot", payload, peerId); }
   sendDropSnapshot(payload: DropSnapshot, peerId?: string) { return this.send("drop-snapshot", payload, peerId); }
+  sendTombstones(payload: TombstoneBatch, peerId?: string) { return this.send("tombstones", payload, peerId); }
   sendTimeWeather(payload: TimeWeatherSnapshot, peerId?: string) { return this.send("time-weather", payload, peerId); }
   sendSleepVote(payload: SleepVote, peerId?: string) { return this.send("sleep-vote", payload, peerId); }
   sendInventoryAction(payload: InventoryAction, peerId?: string) { return this.send("inventory-action", payload, peerId); }
@@ -1988,6 +2170,10 @@ export class MultiplayerSession {
       this.closePeer(peer, (envelope.payload as MultiplayerPayloadMap["goodbye"]).reason || "remote-disconnect", "disconnected");
       return;
     }
+    if (this.role === "host" && isRecord(envelope.payload) && "requestId" in envelope.payload
+      && typeof envelope.payload.requestId === "string"
+      && (!("status" in envelope.payload) || envelope.payload.status === undefined || envelope.payload.status === "request")
+      && this.replayCachedResponse(peer, envelope.payload.requestId)) return;
     this.emit({ type: "message", peer: this.peerInfo(peer), channel: kind, envelope });
   }
 
@@ -2006,6 +2192,7 @@ export class MultiplayerSession {
 
   maintenanceTick(at = this.now()) {
     if (this.disposed) return;
+    this.pruneResponseCache(at);
     for (const peer of [...this.peers.values()]) {
       if (peer.closed) continue;
       if (peer.state !== "connected") {
@@ -2057,6 +2244,7 @@ export class MultiplayerSession {
     try { peer.movement?.close(); } catch { /* Already closed. */ }
     try { peer.connection.close(); } catch { /* Already closed. */ }
     this.peers.delete(peer.token);
+    this.nextReliableArtificialSendAt.delete(peer.token);
     this.emitPeer(peer, reason);
     this.recalculateSessionState();
   }
@@ -2070,6 +2258,9 @@ export class MultiplayerSession {
       this.closePeer(peer, reason, "closed");
     }
     this.setState("closed");
+    for (const timer of this.artificialSendTimers) clearTimeout(timer);
+    this.artificialSendTimers.clear();
+    this.nextReliableArtificialSendAt.clear();
     this.listeners.clear();
   }
 }

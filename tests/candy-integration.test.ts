@@ -95,7 +95,9 @@ function multiplayerSnapshot(enabledFactions: unknown | typeof OMIT_FACTIONS) {
     players: [],
     blockEdits: [],
     mobs: [],
+    mobScope: { centerPlayerId: "player-sugarcourt-test", radius: 64, epoch: 1 },
     drops: [],
+    dropScope: { centerPlayerId: "player-sugarcourt-test", radius: 64, epoch: 1 },
     time: { tick: 8, worldTime: 0.4, day: 2, weather: "clear" },
     worldOptions,
   };

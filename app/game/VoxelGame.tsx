@@ -289,6 +289,7 @@ type MultiplayerEngineApi = {
   joinMultiplayerRoom?: (roomCode: string, playerName: string) => Promise<{ hostName: string; seed?: string; worldReady?: boolean }>;
   suggestMultiplayerRoomCode?: () => string;
   disconnectMultiplayer?: () => void | Promise<void>;
+  downloadMultiplayerDiagnostics?: () => unknown;
 };
 
 type WorkstationEngineApi = {
@@ -3806,6 +3807,7 @@ export default function VoxelGame() {
             <p className="multiplayer-ownership-note">{multiplayerReturn === "title" ? "The host browser owns this world save. Joining creates no local world and never changes your existing catalog." : "Your world save stays owned by this browser on the host device. Guests receive session state; they do not become owners of the host's local catalog entry."} Share connection codes only with people you trust.</p>
             <div className="panel-actions multiplayer-actions">
               <PixelButton className="secondary-button" disabled={multiplayerBusy} onClick={() => setOverlay(multiplayerReturn)}>Back</PixelButton>
+              <PixelButton className="secondary-button" onClick={() => (engineRef.current as unknown as MultiplayerEngineApi | null)?.downloadMultiplayerDiagnostics?.()}>Download diagnostics</PixelButton>
               {multiplayerReturn === "pause" && <PixelButton className="danger-button" disabled={multiplayerBusy || ["idle", "disconnected", "closed"].includes(multiplayerState.status)} onClick={() => void disconnectMultiplayer()}>Disconnect Session</PixelButton>}
             </div>
           </div>

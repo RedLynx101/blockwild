@@ -246,8 +246,6 @@ test("graceful guest disconnect flushes dirty progression before closing transpo
     removeAllRemotePlayers: () => undefined,
     sleepVotes: new Map(),
     multiplayerContainerAwaiting: new Set(),
-    multiplayerPendingContainerMutations: new Set(),
-    multiplayerQueuedContainerMutations: new Set(),
     pendingGuestPlacementRequests: new Map(),
     multiplayerPeerActiveContainers: new Map(),
     multiplayerPeerContainerSignatures: new Map(),
@@ -359,6 +357,7 @@ test("shared furnace/facility payloads are bounded and item transactions conserv
   }), true);
   assert.equal(validatePayload("mob-snapshot", {
     tick: 1,
+    scope: { centerPlayerId: before.playerId, radius: 64, epoch: 1 },
     mobs: [{ id: 3, kind: "peelop", x: 0, y: 1, z: 2, yaw: 0, health: 6, state: "wander", lead: { ownerId: before.playerId, maximumLength: 7 } }],
   }), true);
   assert.equal(validatePayload("creature-action", {
@@ -698,6 +697,7 @@ test("guest-thrown items are host-spawned once with exact metadata and a committ
   Object.assign(engine, {
     multiplayer: {
       role: "host",
+      identity: { id: "player_host_authority_001" },
       sendInventoryAction: (action: InventoryAction) => { responses.push(action); return 1; },
       sendDropSnapshot: (snapshot: unknown) => { snapshots.push(snapshot); return 1; },
     },
@@ -726,10 +726,10 @@ test("guest-thrown items are host-spawned once with exact metadata and a committ
   assert.equal(snapshots.length, 1);
 });
 
-test("guest pickup intents bridge bounded pose lag but reject remote collection", () => {
+test("guest pickups bridge delayed walk/sprint poses, work 100+ blocks from host, and reject remote claims", () => {
   const player = sessionState();
   const responses: InventoryAction[] = [];
-  const makeEngine = (dropX: number) => {
+  const makeEngine = (dropX: number, remoteX = 0) => {
     const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
     const drop = { id: 44, item: Item.Stick, count: 1, mesh: { position: new THREE.Vector3(dropX, 70.8, 0) } };
     Object.assign(engine, {
@@ -738,7 +738,8 @@ test("guest pickup intents bridge bounded pose lag but reject remote collection"
         sendInventoryAction: (action: InventoryAction) => { responses.push(action); return 1; },
         sendDropSnapshot: () => 1,
       },
-      remotePlayers: new Map([[player.playerId, { target: { x: 0, y: 70, z: 0 } }]]),
+      position: new THREE.Vector3(0, 70, 0),
+      remotePlayers: new Map([[player.playerId, { target: { x: remoteX, y: 70, z: 0 } }]]),
       multiplayerPlayerStates: new Map([[player.playerId, structuredClone(player)]]),
       drops: [drop],
       ensureHostPlayerSession: () => engine.multiplayerPlayerStates.get(player.playerId),
@@ -767,6 +768,14 @@ test("guest pickup intents bridge bounded pose lag but reject remote collection"
   }, peer);
   assert.equal(responses.at(-1)?.status, "rejected");
   assert.equal(remote.drops.length, 1);
+
+  const distantGuest = makeEngine(160, 160);
+  (distantGuest as unknown as { handleRemoteInventoryAction(action: InventoryAction, peer: unknown): void }).handleRemoteInventoryAction({
+    requestId: "pickup_far_host_001", actorId: player.playerId, kind: "collect", dropId: 44,
+    pickupAt: { x: 160, y: 70.8, z: 0 }, status: "request",
+  }, peer);
+  assert.equal(responses.at(-1)?.status, "accepted");
+  assert.equal(distantGuest.drops.length, 0);
 });
 
 test("furnace clocks replicate without churning the slot transaction revision", () => {
@@ -993,6 +1002,7 @@ test("tree effects and companion transactions are bounded reliable actions", () 
   }), true);
   assert.equal(validatePayload("mob-snapshot", {
     tick: 93,
+    scope: { centerPlayerId: actorId, radius: 64, epoch: 1 },
     mobs: [{
       id: 22, kind: "peelop", x: 4, y: 8, z: -2, yaw: 0, health: 8, state: "wander",
       tamed: true, ownerId: actorId, command: "follow", name: "Nana", attunedOrbId: null,
@@ -1049,16 +1059,20 @@ test("container requests bind chest and player revisions and demand-sync without
     status: "request",
   }), true);
   assert.equal(validatePayload("container-action", {
-    requestId: "container_place_001",
+    requestId: "container_mutate_001",
     actorId,
     containerId: "4,8,-2",
-    kind: "place",
+    kind: "mutate",
     expectedRevision: 3,
     expectedPlayerRevision: 7,
-    slots: Array.from({ length: 27 }, () => null),
-    playerState: { ...sessionState(), revision: 8 },
+    operation: { op: "click", target: { owner: "player", slot: 9 }, button: "left", shift: true },
     status: "request",
   }), true);
+  assert.equal(validatePayload("container-action", {
+    requestId: "container_legacy_image_001", actorId, containerId: "4,8,-2", kind: "place",
+    expectedRevision: 3, expectedPlayerRevision: 7, slots: Array.from({ length: 27 }, () => null),
+    playerState: { ...sessionState(), revision: 8 }, status: "request",
+  }), false, "protocol v2 rejects guest-authored full inventory images");
 });
 
 test("demand container snapshots select the requested chest beyond the old 32-entry prefix", () => {
@@ -1103,7 +1117,10 @@ test("send-zero leaves player and container signatures dirty for retry", () => {
     multiplayerContainerSignatures: new Map([[containerId, "stale-container-image"]]),
     multiplayerContainerRevisions: new Map([[containerId, 2]]),
     multiplayerContainerAwaiting: new Set<string>(),
-    multiplayerPendingContainerMutations: new Set<string>(),
+    multiplayerOptimisticContainers: new Map(),
+    pendingReliableRequests: new Map(),
+    multiplayerState: { error: "" },
+    multiplayerTick: 1,
     activeChestKey: null,
     chests: new Map([[containerId, Array.from({ length: 27 }, () => null)]]),
     localPlayerSessionSnapshot: () => current,
@@ -1114,7 +1131,7 @@ test("send-zero leaves player and container signatures dirty for retry", () => {
   engine.activeChestKey = containerId;
   (engine as unknown as { syncMultiplayerContainers(): void }).syncMultiplayerContainers();
   assert.equal(engine.multiplayerContainerSignatures.get(containerId), "stale-container-image");
-  assert.equal(engine.multiplayerPendingContainerMutations.has(containerId), false);
+  assert.equal(engine.multiplayerContainerAwaiting.has(containerId), true);
 });
 
 test("host rejects a chest transaction when either player or container revision is stale", () => {
@@ -1141,22 +1158,19 @@ test("host rejects a chest transaction when either player or container revision 
     saveSoon: () => undefined,
     emitHud: () => undefined,
   });
-  const movedPlayer = { ...current, revision: 8, inventory: current.inventory.map((slot, index) => index === 0 ? null : slot) };
-  const chestSlots = Array.from({ length: 27 }, (_, index) => index === 0 ? current.inventory[0] : null);
   const base = {
     requestId: "container_atomic_001",
     actorId: current.playerId,
     containerId,
-    kind: "place" as const,
+    kind: "mutate" as const,
+    operation: { op: "click" as const, target: { owner: "player" as const, slot: 0 }, button: "left" as const, shift: true },
     expectedRevision: 2,
-    slots: chestSlots,
-    playerState: movedPlayer,
     status: "request" as const,
   };
   (engine as unknown as { handleRemoteContainerAction(action: typeof base & { expectedPlayerRevision: number }, peer: { identity: { id: string } }): void })
     .handleRemoteContainerAction({ ...base, expectedPlayerRevision: 6 }, { identity: { id: current.playerId } });
   assert.equal(replies.at(-1)?.status, "rejected");
-  assert.match(replies.at(-1)?.reason ?? "", /pack changed/iu);
+  assert.match(replies.at(-1)?.reason ?? "", /changed/iu);
   assert.equal(engine.chests.get(containerId)?.[0], null);
 });
 
@@ -1367,21 +1381,32 @@ test("host-authoritative guest placement consumes exactly one matching held bloc
 
 test("a second guest chest edit queues while the first revision is in flight", () => {
   const containerId = "4,8,-2";
-  const slots = Array.from({ length: 27 }, () => null) as Array<null | { item: number; count: number }>;
-  const submittedSignature = JSON.stringify(slots);
-  slots[0] = { item: Item.Apple, count: 1 };
+  const current = sessionState();
+  const sent: ContainerAction[] = [];
   const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
   Object.assign(engine, {
-    multiplayer: { role: "guest", identity: { id: "player_stable_guest_001" } },
-    activeChestKey: containerId,
-    chests: new Map([[containerId, slots]]),
-    multiplayerContainerAwaiting: new Set<string>(),
-    multiplayerPendingContainerMutations: new Set([containerId]),
-    multiplayerQueuedContainerMutations: new Set<string>(),
-    multiplayerContainerSignatures: new Map([[containerId, submittedSignature]]),
+    multiplayer: {
+      role: "guest",
+      identity: { id: current.playerId },
+      sendContainerAction: (action: ContainerAction) => { sent.push(action); return 1; },
+      getPeers: () => [],
+    },
+    activeNetworkContainerId: containerId,
+    multiplayerTick: 5,
+    multiplayerOptimisticContainers: new Map([[containerId, {
+      confirmedSlots: Array.from({ length: 27 }, () => null),
+      confirmedPlayer: current,
+      confirmedContainerRevision: 2,
+      confirmedPlayerRevision: current.revision,
+      pending: [],
+    }]]),
   });
-  (engine as unknown as { syncMultiplayerContainers(): void }).syncMultiplayerContainers();
-  assert.equal(engine.multiplayerQueuedContainerMutations.has(containerId), true);
+  const queue = (engine as unknown as { queueGuestContainerOperation(operation: { op: "click"; target: { owner: "player"; slot: number }; button: "left"; shift: boolean }): boolean }).queueGuestContainerOperation.bind(engine);
+  assert.equal(queue({ op: "click", target: { owner: "player", slot: 0 }, button: "left", shift: true }), true);
+  assert.equal(queue({ op: "click", target: { owner: "player", slot: 1 }, button: "left", shift: true }), true);
+  const state = engine.multiplayerOptimisticContainers.get(containerId)!;
+  assert.equal(state.pending.length, 2);
+  assert.equal(sent.length, 1, "only the head intent may be in flight");
 });
 
 function tradingEngine() {

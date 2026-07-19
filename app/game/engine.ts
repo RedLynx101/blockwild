@@ -393,15 +393,19 @@ import {
 } from "./player-model";
 import {
   MultiplayerSession,
+  MULTIPLAYER_PROTOCOL_NAME,
+  MULTIPLAYER_PROTOCOL_VERSION,
   createPeerIdentity,
   detectMultiplayerSupport,
   isMultiplayerOperationCancellation,
+  parseMultiplayerLatencyRange,
   type BlockAction,
   type BoatAction,
   type CartographyMapShare,
   type CombatAction,
   type CreatureAction,
   type ContainerAction,
+  type ContainerOperation,
   type ContainerSnapshot,
   type FacilityAction,
   type SharedFacilityKind,
@@ -418,7 +422,12 @@ import {
   type WorldSnapshot,
   type SleepTarget,
   type SleepVote,
+  type SnapshotScope,
+  type DestructionTombstone,
+  type TombstoneBatch,
 } from "./multiplayer";
+import { applyContainerOperation } from "./multiplayer-inventory";
+import { MultiplayerDiagnosticsRing, multiplayerRejectionCategory } from "./multiplayer-diagnostics";
 import {
   createRoomCode,
   hostByRoomCode,
@@ -1409,6 +1418,26 @@ type PendingGuestDropRequest = {
   action: InventoryAction;
   lastSentAt: number;
   attempts: number;
+};
+
+type PendingContainerIntent = {
+  action: ContainerAction;
+  operation: ContainerOperation;
+  lastSentAt: number | null;
+  attempts: number;
+};
+
+type OptimisticContainerState = {
+  confirmedSlots: ItemStackSnapshot[];
+  confirmedPlayer: PlayerSessionSnapshot;
+  confirmedContainerRevision: number;
+  confirmedPlayerRevision: number;
+  pending: PendingContainerIntent[];
+  closing?: boolean;
+  closeRequestSent?: boolean;
+  closeAction?: ContainerAction;
+  closeLastSentAt?: number | null;
+  closeAttempts?: number;
 };
 
 type LeafParticleVisual = {
@@ -2912,6 +2941,30 @@ export function isEditableKeyboardTarget(target: EventTarget | null) {
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || Boolean(element?.isContentEditable) || element?.getAttribute?.("role") === "textbox";
 }
 
+/** A guest always adopts the host snapshot mode; absent legacy values fail closed to survival. */
+export function applyAuthoritativeNetworkMode(target: { mode: GameMode }, mode: WorldSnapshot["mode"] | undefined) {
+  target.mode = mode === "builder" ? "builder" : "survival";
+  return target.mode;
+}
+
+/** Drop expiry is actor-centered: any active player keeps nearby loot alive. */
+export function shouldExpireWorldDrop(
+  age: number,
+  position: Readonly<{ x: number; y: number; z: number }>,
+  activePlayers: readonly Readonly<{ x: number; y: number; z: number }>[],
+  maxAge = 120,
+  maxDistance = 85,
+) {
+  const maxDistanceSquared = maxDistance * maxDistance;
+  const nearestSquared = activePlayers.reduce((nearest, player) => {
+    const dx = position.x - player.x;
+    const dy = position.y - (player.y + 0.8);
+    const dz = position.z - player.z;
+    return Math.min(nearest, dx * dx + dy * dy + dz * dz);
+  }, Number.POSITIVE_INFINITY);
+  return age > maxAge || nearestSquared > maxDistanceSquared;
+}
+
 export class VoxelEngine {
   canvas: HTMLCanvasElement;
   events: EngineEvents;
@@ -3281,15 +3334,21 @@ export class VoxelEngine {
   multiplayerContainerSignatures = new Map<string, string>();
   /** Containers are demand-synced; a guest must never upload generated placeholder loot. */
   multiplayerContainerAwaiting = new Set<string>();
-  multiplayerPendingContainerMutations = new Set<string>();
-  /** A second local chest edit made while the previous revision is in flight. */
-  multiplayerQueuedContainerMutations = new Set<string>();
+  /** Ordered semantic intents and their last host-confirmed recovery baseline. */
+  multiplayerOptimisticContainers = new Map<string, OptimisticContainerState>();
   multiplayerPeerActiveContainers = new Map<string, string>();
   multiplayerPeerContainerSignatures = new Map<string, string>();
+  multiplayerPeerScopeEpochs = new Map<string, number>();
   pendingReliableRequests = new Map<string, PendingReliableRequest>();
   multiplayerCombatCooldowns = new Map<string, number>();
   pendingGuestDropRequests = new Map<number, PendingGuestDropRequest>();
+  lastNetworkMobSnapshotTick = -1;
+  lastNetworkMobSnapshotScope: SnapshotScope | null = null;
   lastNetworkDropSnapshotTick = -1;
+  lastNetworkDropSnapshotScope: SnapshotScope | null = null;
+  multiplayerTombstones: DestructionTombstone[] = [];
+  appliedMultiplayerTombstones = new Map<string, number>();
+  multiplayerDiagnostics = new MultiplayerDiagnosticsRing(512);
   pendingGuestCreatureInventoryRequests = new Map<string, number>();
   /** Suppresses generic pack uploads until the host resolves optimistic placement costs. */
   pendingGuestPlacementRequests = new Map<string, number>();
@@ -4224,6 +4283,27 @@ export class VoxelEngine {
     };
   }
 
+  getMultiplayerDiagnosticsReport() {
+    return (this.multiplayerDiagnostics ??= new MultiplayerDiagnosticsRing(512)).export(
+      this.multiplayer?.role ?? this.multiplayerState.role,
+      this.multiplayer?.state ?? this.multiplayerState.status,
+      `${MULTIPLAYER_PROTOCOL_NAME}/${MULTIPLAYER_PROTOCOL_VERSION}`,
+    );
+  }
+
+  downloadMultiplayerDiagnostics() {
+    const report = this.getMultiplayerDiagnosticsReport();
+    if (typeof document === "undefined" || typeof URL === "undefined") return report;
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `blockwild-multiplayer-diagnostics-${new Date().toISOString().replace(/[:.]/gu, "-")}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    return report;
+  }
+
   private multiplayerIdentity(name: string) {
     const profile = this.activeCharacterProfile;
     const cleanName = (profile?.name ?? name).trim().slice(0, 24) || "Wanderer";
@@ -4296,7 +4376,8 @@ export class VoxelEngine {
       colors: identity.colors ?? { shirt: identity.color },
     }));
     else this.localPlayerModel.setVariant(identity.variant ?? "male").setColors({ shirt: identity.color });
-    this.multiplayer = new MultiplayerSession({ identity, onEvent: (event) => this.handleMultiplayerEvent(event) });
+    const artificialLatencyMs = typeof window !== "undefined" ? parseMultiplayerLatencyRange(window.location.search) : undefined;
+    this.multiplayer = new MultiplayerSession({ identity, artificialLatencyMs, onEvent: (event) => this.handleMultiplayerEvent(event) });
     this.multiplayerState.status = "idle";
     this.multiplayerState.role = null;
     this.multiplayerState.peers = [];
@@ -4318,16 +4399,22 @@ export class VoxelEngine {
     this.multiplayerProgressOutgoing = [];
     this.multiplayerBoatInputs.clear();
     this.pendingGuestDropRequests.clear();
+    this.lastNetworkMobSnapshotTick = -1;
+    this.lastNetworkMobSnapshotScope = null;
     this.lastNetworkDropSnapshotTick = -1;
+    this.lastNetworkDropSnapshotScope = null;
     this.pendingGuestCreatureInventoryRequests?.clear();
     this.pendingGuestPlacementRequests.clear();
     this.pendingNetworkMobDeaths.clear();
     this.multiplayerContainerSignatures = new Map([...this.chests.entries()].map(([id, slots]) => [id, JSON.stringify(slots.map(networkItemStack))]));
     this.multiplayerContainerAwaiting.clear();
-    this.multiplayerPendingContainerMutations.clear();
-    this.multiplayerQueuedContainerMutations.clear();
+    this.multiplayerOptimisticContainers?.clear();
     this.multiplayerPeerActiveContainers.clear();
     this.multiplayerPeerContainerSignatures.clear();
+    this.multiplayerPeerScopeEpochs.clear();
+    this.multiplayerTombstones = [];
+    this.appliedMultiplayerTombstones.clear();
+    this.multiplayerDiagnostics.clear();
     this.multiplayerFacilityRevisions.clear();
     this.multiplayerFacilitySignatures.clear();
     this.multiplayerPendingFacilityMutations.clear();
@@ -4533,8 +4620,7 @@ export class VoxelEngine {
     this.multiplayerReceivedSnapshot = false;
     this.sleepVotes.clear();
     this.multiplayerContainerAwaiting.clear();
-    this.multiplayerPendingContainerMutations.clear();
-    this.multiplayerQueuedContainerMutations.clear();
+    this.multiplayerOptimisticContainers?.clear();
     this.pendingGuestCreatureInventoryRequests?.clear();
     this.pendingGuestPlacementRequests.clear();
     this.multiplayerPeerActiveContainers.clear();
@@ -4881,6 +4967,30 @@ export class VoxelEngine {
     return id.startsWith("furnace:") ? "furnace" : id.includes("|") ? "double-chest" : "chest";
   }
 
+  private applySemanticContainerOperation(
+    id: string,
+    player: PlayerSessionSnapshot,
+    slots: readonly ItemStackSnapshot[],
+    operation: ContainerOperation,
+  ) {
+    return applyContainerOperation(player, slots, operation, {
+      containerKind: this.networkContainerKind(id),
+      canPlace: (index, stack) => {
+        if (id.startsWith("exhibit:")) return typeof this.isExhibitResidentSlot !== "function" || this.isExhibitResidentSlot(stack);
+        if (!id.startsWith("furnace:")) return true;
+        if (index === 0) return Boolean(SMELTING[stack.item]);
+        if (index === 1) return this.fuelValue(stack.item) > 0;
+        return false;
+      },
+      maxCount: () => id.startsWith("exhibit:") ? 1 : 65_535,
+      canUsePlayerTarget: (owner, index, stack) => {
+        if (owner === "offhand") return Boolean(offhandItemKind(stack.item));
+        const equipmentSlot = (["head", "chest", "legs", "feet"] as EquipmentSlot[])[index];
+        return Boolean(equipmentSlot && ITEMS[stack.item]?.equipmentSlot === equipmentSlot);
+      },
+    });
+  }
+
   private networkContainerSnapshots(ids: readonly string[] = []): ContainerSnapshot[] {
     // Migrate older saves that still hold adjacent placed chests as two single inventories.
     for (const id of [...this.chests.keys()]) {
@@ -4922,7 +5032,6 @@ export class VoxelEngine {
       this.multiplayerContainerRevisions.set(entry.id, entry.revision);
       this.multiplayerContainerSignatures.set(entry.id, JSON.stringify(entry.slots));
       this.multiplayerContainerAwaiting.delete(entry.id);
-      this.multiplayerPendingContainerMutations.delete(entry.id);
     }
     this.emitHud(true);
   }
@@ -5147,6 +5256,13 @@ export class VoxelEngine {
     if (!this.multiplayer) return;
     if (this.multiplayer.role === "guest" && (action.status === "accepted" || action.status === "rejected")) {
       if (action.kind === "collect" && action.dropId !== undefined) {
+        (this.multiplayerDiagnostics ??= new MultiplayerDiagnosticsRing()).record({
+          requestId: action.requestId,
+          kind: "pickup",
+          phase: "response",
+          peerId: peer.identity?.id,
+          rejectionCategory: action.status === "rejected" ? multiplayerRejectionCategory(action.reason) : undefined,
+        });
         this.pendingGuestDropRequests.delete(action.dropId);
         if (action.status === "accepted") {
           const index = this.drops.findIndex((candidate) => candidate.id === action.dropId);
@@ -5224,20 +5340,59 @@ export class VoxelEngine {
       && claimedPickupPoint.distanceToSquared(remotePickupPoint) <= 4 * 4
       && drop.mesh.position.distanceToSquared(claimedPickupPoint) <= 1.8 * 1.8);
     const withinReach = directReach || lagCompensatedReach;
+    const serverPickupDistance = drop && remotePickupPoint ? drop.mesh.position.distanceTo(remotePickupPoint) : undefined;
+    const claimedPickupDistance = drop && claimedPickupPoint ? drop.mesh.position.distanceTo(claimedPickupPoint) : undefined;
+    (this.multiplayerDiagnostics ??= new MultiplayerDiagnosticsRing()).record({
+      requestId: action.requestId,
+      kind: "pickup",
+      phase: "received",
+      peerId: peer.identity.id,
+      interestDistance: serverPickupDistance,
+      serverPickupDistance,
+      claimedPickupDistance,
+    });
     if (!drop || !withinReach) {
+      this.multiplayerDiagnostics.record({
+        requestId: action.requestId,
+        kind: "pickup",
+        phase: "rejected",
+        peerId: peer.identity.id,
+        rejectionCategory: "out-of-range",
+        interestDistance: serverPickupDistance,
+        serverPickupDistance,
+        claimedPickupDistance,
+      });
       this.multiplayer.sendInventoryAction({ ...action, status: "rejected", reason: "That drop is no longer within pickup reach." }, peer.identity.id);
       return;
     }
     const current = this.ensureHostPlayerSession(peer.identity);
     const result = addItemToMultiplayerState(current, drop.item, drop.count, drop.durability, drop.metadata);
     if (result.added <= 0) {
+      this.multiplayerDiagnostics.record({
+        requestId: action.requestId,
+        kind: "pickup",
+        phase: "rejected",
+        peerId: peer.identity.id,
+        rejectionCategory: "capacity",
+        serverPickupDistance,
+        claimedPickupDistance,
+      });
       this.multiplayer.sendInventoryAction({ ...action, status: "rejected", reason: "The host-owned inventory is full." }, peer.identity.id);
       return;
     }
     const next = { ...result.state, revision: current.revision + 1 };
     this.multiplayerPlayerStates.set(peer.identity.id, next);
     drop.count -= result.added;
-    if (drop.count <= 0) this.removeDrop(dropIndex);
+    if (drop.count <= 0) this.removeDrop(dropIndex, "collected");
+    this.multiplayerDiagnostics.record({
+      requestId: action.requestId,
+      kind: "pickup",
+      phase: "committed",
+      peerId: peer.identity.id,
+      actualPlayerRevision: next.revision,
+      serverPickupDistance,
+      claimedPickupDistance,
+    });
     this.multiplayer.sendInventoryAction({ ...action, count: result.added, status: "accepted" }, peer.identity.id);
     this.sendAuthoritativePlayerState(peer.identity.id, action.requestId);
     this.sendDropSnapshotsToConnectedPeers();
@@ -5293,7 +5448,7 @@ export class VoxelEngine {
     if (!session || session.role !== "guest") return false;
     this.multiplayerContainerAwaiting.add(containerId);
     const action: ContainerAction = {
-      requestId: `container_open_${Date.now().toString(36)}_${this.multiplayerTick.toString(36)}`,
+      requestId: `container_open_${Date.now().toString(36)}_${(this.multiplayerTick ?? 0).toString(36)}`,
       actorId: session.identity.id,
       containerId,
       kind: "open",
@@ -5304,14 +5459,181 @@ export class VoxelEngine {
     return this.queueCriticalReliableRequest(`container-open:${containerId}`, () => session.sendContainerAction(action));
   }
 
+  private createOptimisticContainerState(
+    containerId: string,
+    slots: readonly ItemStackSnapshot[],
+    player: PlayerSessionSnapshot,
+    containerRevision: number,
+  ) {
+    const optimisticContainers = this.multiplayerOptimisticContainers ??= new Map();
+    const previous = optimisticContainers.get(containerId);
+    const state: OptimisticContainerState = {
+      confirmedSlots: slots.map((slot) => slot ? structuredClone(slot) : null),
+      confirmedPlayer: structuredClone(player),
+      confirmedContainerRevision: containerRevision,
+      confirmedPlayerRevision: player.revision,
+      pending: previous?.pending ?? [],
+      closing: previous?.closing,
+      closeRequestSent: previous?.closeRequestSent,
+      closeAction: previous?.closeAction,
+      closeLastSentAt: previous?.closeLastSentAt,
+      closeAttempts: previous?.closeAttempts,
+    };
+    optimisticContainers.set(containerId, state);
+    return state;
+  }
+
+  private replayOptimisticContainerState(containerId: string, state: OptimisticContainerState) {
+    let player = structuredClone(state.confirmedPlayer);
+    let slots = state.confirmedSlots.map((slot) => slot ? structuredClone(slot) : null);
+    const retained: PendingContainerIntent[] = [];
+    for (const pending of state.pending) {
+      const replay = this.applySemanticContainerOperation(containerId, player, slots, pending.operation);
+      if (!replay.applied) {
+        if (pending.lastSentAt === null) this.events.onToast(`A later inventory click was skipped: ${replay.reason ?? "its slot changed"}`);
+        continue;
+      }
+      player = replay.player;
+      slots = replay.slots;
+      retained.push(pending);
+    }
+    state.pending = retained;
+    this.setNetworkContainerSlots(containerId, slots.map(inventorySlotFromNetwork));
+    this.inventory = player.inventory.map(inventorySlotFromNetwork);
+    this.cursor = inventorySlotFromNetwork(player.cursor ?? null);
+    this.trash = inventorySlotFromNetwork(player.trash ?? null);
+    this.equipment = Object.fromEntries((Object.keys(player.equipment) as EquipmentSlot[])
+      .map((slot) => [slot, inventorySlotFromNetwork(player.equipment[slot])])) as Record<EquipmentSlot, InventorySlot | null>;
+    this.offhand = inventorySlotFromNetwork(player.offhand ?? null);
+    this.selected = player.selected;
+    this.emitHud(true);
+  }
+
+  private sendNextOptimisticContainerIntent(containerId: string, retry = false) {
+    const session = this.multiplayer;
+    const state = (this.multiplayerOptimisticContainers ??= new Map()).get(containerId);
+    const pending = state?.pending[0];
+    if (!session || session.role !== "guest" || !state || !pending) return false;
+    if (!retry && pending.lastSentAt !== null) return false;
+    if (pending.lastSentAt === null) {
+      pending.action = {
+        ...pending.action,
+        expectedRevision: state.confirmedContainerRevision,
+        expectedPlayerRevision: state.confirmedPlayerRevision,
+      };
+    }
+    try {
+      if (session.sendContainerAction(pending.action) <= 0) return false;
+      const now = Date.now();
+      pending.lastSentAt = now;
+      pending.attempts += 1;
+      (this.multiplayerDiagnostics ??= new MultiplayerDiagnosticsRing()).record({
+        requestId: pending.action.requestId,
+        kind: `container:${pending.operation.op}`,
+        phase: pending.attempts > 1 ? "retry" : "sent",
+        peerId: session.getPeers()[0]?.identity?.id,
+        expectedPlayerRevision: pending.action.expectedPlayerRevision,
+        expectedContainerRevision: pending.action.expectedRevision,
+      });
+      return true;
+    } catch { return false; }
+  }
+
+  private updateGuestContainerIntentRetries() {
+    if (this.multiplayer?.role !== "guest") return;
+    const now = Date.now();
+    for (const [containerId, state] of this.multiplayerOptimisticContainers) {
+      const pending = state.pending[0];
+      if (pending?.lastSentAt === null) this.sendNextOptimisticContainerIntent(containerId);
+      else if (pending && now - pending.lastSentAt >= Math.min(1_200, 360 + pending.attempts * 120) && pending.attempts < 20) this.sendNextOptimisticContainerIntent(containerId, true);
+      else if (pending && pending.attempts >= 20 && now - pending.lastSentAt >= 2_000) {
+        state.pending = [];
+        this.replayOptimisticContainerState(containerId, state);
+        this.requestNetworkContainerSnapshot(containerId);
+        this.events.onToast("The shared inventory stopped answering, so Blockwild restored its last confirmed state.");
+      }
+      if (!state.pending.length && state.closing) this.maybeSendOptimisticContainerClose(containerId, now);
+    }
+  }
+
+  private maybeSendOptimisticContainerClose(containerId: string, now = Date.now()) {
+    const session = this.multiplayer;
+    const state = (this.multiplayerOptimisticContainers ??= new Map()).get(containerId);
+    if (!session || session.role !== "guest" || !state?.closing || state.pending.length) return false;
+    state.closeAction ??= {
+      requestId: `container_close_${Date.now().toString(36)}_${this.multiplayerTick.toString(36)}`,
+      actorId: session.identity.id,
+      containerId,
+      kind: "close",
+      status: "request",
+    };
+    const attempts = state.closeAttempts ?? 0;
+    const lastSentAt = state.closeLastSentAt ?? null;
+    if (attempts >= 60 || (lastSentAt !== null && now - lastSentAt < 500)) return false;
+    try {
+      if (session.sendContainerAction(state.closeAction) <= 0) return false;
+      state.closeRequestSent = true;
+      state.closeLastSentAt = now;
+      state.closeAttempts = attempts + 1;
+      (this.multiplayerDiagnostics ??= new MultiplayerDiagnosticsRing()).record({
+        requestId: state.closeAction.requestId,
+        kind: "container:close",
+        phase: attempts > 0 ? "retry" : "sent",
+        peerId: session.getPeers()[0]?.identity?.id,
+      });
+      return true;
+    } catch { return false; }
+  }
+
+  private queueGuestContainerOperation(operation: ContainerOperation) {
+    const session = this.multiplayer;
+    const containerId = this.activeNetworkContainerId;
+    if (!session || session.role !== "guest" || !containerId) return false;
+    const state = (this.multiplayerOptimisticContainers ??= new Map()).get(containerId);
+    if (!state) {
+      this.requestNetworkContainerSnapshot(containerId);
+      return false;
+    }
+    const requestId = `container_op_${Date.now().toString(36)}_${this.multiplayerTick.toString(36)}_${state.pending.length.toString(36)}`;
+    state.pending.push({
+      operation,
+      action: {
+        requestId,
+        actorId: session.identity.id,
+        containerId,
+        kind: "mutate",
+        operation,
+        expectedRevision: state.confirmedContainerRevision,
+        expectedPlayerRevision: state.confirmedPlayerRevision,
+        status: "request",
+      },
+      lastSentAt: null,
+      attempts: 0,
+    });
+    if (state.pending.length === 1) this.sendNextOptimisticContainerIntent(containerId);
+    return true;
+  }
+
   private handleRemoteContainerAction(action: ContainerAction, peer: PeerInfo) {
     if (!this.multiplayer) return;
     if (this.multiplayer.role === "host" && action.status !== "accepted" && peer.identity) {
       const peerId = peer.identity.id;
       if (action.kind === "close") {
+        let currentPlayer = this.ensureHostPlayerSession(peer.identity);
+        const carried = inventorySlotFromNetwork(currentPlayer.cursor ?? null);
+        if (carried) {
+          const returned = addItemToMultiplayerState({ ...currentPlayer, cursor: null }, carried.item, carried.count, carried.durability, carried.metadata);
+          const remainder = carried.count - returned.added;
+          currentPlayer = normalizeMultiplayerPlayerState({
+            ...returned.state,
+            cursor: remainder > 0 ? networkItemStack({ ...carried, count: remainder }) : null,
+            revision: currentPlayer.revision + 1,
+          }, peerId, currentPlayer.variant);
+          this.multiplayerPlayerStates.set(peerId, currentPlayer);
+        }
         this.multiplayerPeerActiveContainers.delete(peerId);
         for (const key of [...this.multiplayerPeerContainerSignatures.keys()]) if (key.startsWith(`${peerId}|`)) this.multiplayerPeerContainerSignatures.delete(key);
-        this.multiplayer.sendContainerAction({ ...action, status: "accepted" }, peerId);
+        this.multiplayer.sendContainerAction({ ...action, playerState: currentPlayer, status: "accepted" }, peerId);
         return;
       }
       if (action.kind === "open") {
@@ -5372,26 +5694,16 @@ export class VoxelEngine {
         }
         return;
       }
-      if (!action.slots) return;
       const activeId = this.multiplayerPeerActiveContainers.get(peerId);
-       const existing = activeId === action.containerId ? this.networkContainerSlots(action.containerId) ?? undefined : undefined;
+      const existing = activeId === action.containerId ? this.networkContainerSlots(action.containerId) ?? undefined : undefined;
       const currentRevision = this.multiplayerContainerRevisions.get(action.containerId) ?? 0;
       const currentPlayer = this.ensureHostPlayerSession(peer.identity);
-      const validLength = existing ? action.slots.length === existing.length : action.slots.length === 27 || action.slots.length === 54;
-      const validPlayerRevision = Boolean(action.playerState
-        && action.expectedPlayerRevision === currentPlayer.revision
-        && action.playerState.revision === currentPlayer.revision + 1);
-      const conservesItems = Boolean(existing && action.playerState && multiplayerContainerTransactionConservesItems(
-        currentPlayer,
-        existing.map(networkItemStack),
-        action.playerState,
-        action.slots,
-      ));
-      const validResidentSlots = !action.containerId.startsWith("exhibit:") || action.slots.every((slot) => {
-        const inventorySlot = inventorySlotFromNetwork(slot);
-        return !inventorySlot || this.isExhibitResidentSlot(inventorySlot);
-      });
-      if (!existing || !validLength || action.expectedRevision !== currentRevision || !validPlayerRevision || !conservesItems || !validResidentSlots) {
+      const semanticRequest = action.kind === "mutate" && action.operation;
+      const validRevisions = action.expectedRevision === currentRevision && action.expectedPlayerRevision === currentPlayer.revision;
+      const operationResult = existing && semanticRequest && validRevisions
+        ? this.applySemanticContainerOperation(action.containerId, currentPlayer, existing.map(networkItemStack), semanticRequest)
+        : null;
+      if (!existing || !semanticRequest || !validRevisions || !operationResult?.applied) {
         const response: ContainerAction = {
           ...action,
           slots: existing?.map(networkItemStack),
@@ -5400,17 +5712,26 @@ export class VoxelEngine {
           playerState: currentPlayer,
           status: "rejected",
           reason: !existing ? "Open this shared chest before changing it."
-            : !validPlayerRevision ? "Your pack changed; both the container and host-owned pack were refreshed."
-              : !conservesItems ? "The transfer did not conserve the exact shared items, so the host refreshed both inventories."
-              : !validResidentSlots ? "The conservatory accepts only eligible small-creature residents."
-                : "The shared chest changed; its host-owned contents were refreshed.",
+            : !semanticRequest ? "This client must use semantic shared-container commands; both inventories were refreshed."
+              : !validRevisions ? "The shared state changed; the host refreshed both inventories before replaying later clicks."
+                : operationResult?.reason ?? "That shared-container action is no longer valid.",
         };
+        (this.multiplayerDiagnostics ??= new MultiplayerDiagnosticsRing()).record({
+          requestId: action.requestId,
+          kind: `container:${action.kind}`,
+          phase: "rejected",
+          peerId,
+          expectedPlayerRevision: action.expectedPlayerRevision,
+          actualPlayerRevision: currentPlayer.revision,
+          expectedContainerRevision: action.expectedRevision,
+          actualContainerRevision: currentRevision,
+          rejectionCategory: multiplayerRejectionCategory(response.reason),
+        });
         this.queueCriticalReliableRequest(`host-container-reject:${peerId}:${action.requestId}`, () => this.multiplayer?.sendContainerAction(response, peerId) ?? 0, 4_000);
         return;
       }
-      const proposedPlayer = normalizeMultiplayerPlayerState(action.playerState!, peerId, action.playerState!.variant);
       const revision = currentRevision + 1;
-      const slots = action.slots.map(inventorySlotFromNetwork);
+      const slots = operationResult.slots.map(inventorySlotFromNetwork);
       this.setNetworkContainerSlots(action.containerId, slots);
       if (action.containerId.startsWith("exhibit:")) this.syncExhibitVisuals(true);
       if (action.containerId.startsWith("boat:")) {
@@ -5419,12 +5740,12 @@ export class VoxelEngine {
       }
       const committedPlayer = {
         ...currentPlayer,
-        inventory: proposedPlayer.inventory,
-        cursor: proposedPlayer.cursor,
-        trash: proposedPlayer.trash,
-        equipment: proposedPlayer.equipment,
-        offhand: proposedPlayer.offhand,
-        selected: proposedPlayer.selected,
+        inventory: operationResult.player.inventory,
+        cursor: operationResult.player.cursor,
+        trash: operationResult.player.trash,
+        equipment: operationResult.player.equipment,
+        offhand: operationResult.player.offhand,
+        selected: operationResult.player.selected,
         revision: currentPlayer.revision + 1,
       };
       this.multiplayerPlayerStates.set(peer.identity.id, committedPlayer);
@@ -5434,6 +5755,16 @@ export class VoxelEngine {
       // are replicated presentation state and must not make a valid item move
       // stale while it is crossing the network.
       this.multiplayerContainerSignatures.set(action.containerId, JSON.stringify(responseSlots));
+      (this.multiplayerDiagnostics ??= new MultiplayerDiagnosticsRing()).record({
+        requestId: action.requestId,
+        kind: `container:${semanticRequest.op}`,
+        phase: "committed",
+        peerId,
+        expectedPlayerRevision: action.expectedPlayerRevision,
+        actualPlayerRevision: committedPlayer.revision,
+        expectedContainerRevision: action.expectedRevision,
+        actualContainerRevision: revision,
+      });
       for (const [watcherId, watchedContainer] of this.multiplayerPeerActiveContainers) {
         if (watchedContainer !== action.containerId || !this.multiplayer.getPeer(watcherId)) continue;
         const response: ContainerAction = {
@@ -5456,17 +5787,11 @@ export class VoxelEngine {
     }
     if (this.multiplayer.role === "guest" && (action.status === "accepted" || action.status === "rejected")) {
       const ownResponse = action.actorId === this.multiplayer.identity.id;
-      const replayQueuedMutation = ownResponse && action.status === "accepted"
-        && this.multiplayerQueuedContainerMutations.delete(action.containerId);
-      if (ownResponse) this.multiplayerPendingContainerMutations.delete(action.containerId);
-      if (ownResponse && action.status === "rejected") this.multiplayerQueuedContainerMutations.delete(action.containerId);
-      const queuedSlots = replayQueuedMutation
-        ? this.networkContainerSlots(action.containerId)?.map(cloneSlot)
-        : undefined;
-      const queuedPlayer = replayQueuedMutation
-        ? this.localPlayerSessionSnapshot(this.multiplayerPlayerStateRevision)
-        : null;
-      if (action.kind === "close") return;
+      if (action.kind === "close") {
+        if (ownResponse && action.playerState) this.applyLocalPlayerSessionSnapshot(action.playerState, true);
+        this.multiplayerOptimisticContainers.delete(action.containerId);
+        return;
+      }
       const previousActive = this.activeNetworkContainerId;
       if (action.kind === "open") {
         if (previousActive) this.multiplayerContainerAwaiting.delete(previousActive);
@@ -5478,6 +5803,7 @@ export class VoxelEngine {
       }
       if (!action.slots) {
         if (action.reason) this.events.onToast(action.reason);
+        if (ownResponse) this.requestNetworkContainerSnapshot(action.containerId);
         return;
       }
       const revision = action.expectedRevision ?? 0;
@@ -5488,23 +5814,33 @@ export class VoxelEngine {
         slots: action.slots,
         ...(action.machine ? { machine: action.machine } : {}),
       }]);
-      if (action.actorId === this.multiplayer.identity.id && action.playerState) {
-        this.applyLocalPlayerSessionSnapshot(action.playerState, true);
-      }
-      if (queuedSlots && queuedPlayer) {
-        // The accepted response is the new revision base. Replay the newer
-        // local click image on top, then immediately submit it as revision N+1.
-        this.setNetworkContainerSlots(action.containerId, queuedSlots);
-        this.inventory = queuedPlayer.inventory.map(inventorySlotFromNetwork);
-        this.cursor = inventorySlotFromNetwork(queuedPlayer.cursor ?? null);
-        this.trash = inventorySlotFromNetwork(queuedPlayer.trash ?? null);
-        this.equipment = Object.fromEntries((Object.keys(queuedPlayer.equipment) as EquipmentSlot[])
-          .map((slot) => [slot, inventorySlotFromNetwork(queuedPlayer.equipment[slot])])) as Record<EquipmentSlot, InventorySlot | null>;
-        this.offhand = inventorySlotFromNetwork(queuedPlayer.offhand ?? null);
-        this.selected = queuedPlayer.selected;
-        this.emitHud(true);
-        this.syncMultiplayerContainers();
-      }
+      const existingOptimistic = (this.multiplayerOptimisticContainers ??= new Map()).get(action.containerId);
+      const authoritativePlayer = ownResponse && action.playerState
+        ? action.playerState
+        : existingOptimistic?.confirmedPlayer;
+      if (authoritativePlayer) {
+        const state = this.createOptimisticContainerState(action.containerId, action.slots, authoritativePlayer, revision);
+        if (ownResponse && action.kind === "mutate") {
+          const responseIndex = state.pending.findIndex((pending) => pending.action.requestId === action.requestId);
+          if (responseIndex >= 0) state.pending.splice(responseIndex, 1);
+          (this.multiplayerDiagnostics ??= new MultiplayerDiagnosticsRing()).record({
+            requestId: action.requestId,
+            kind: `container:${action.operation?.op ?? action.kind}`,
+            phase: "response",
+            peerId: this.multiplayer.getPeers()[0]?.identity?.id,
+            expectedPlayerRevision: action.expectedPlayerRevision,
+            actualPlayerRevision: authoritativePlayer.revision,
+            expectedContainerRevision: action.expectedRevision,
+            actualContainerRevision: revision,
+            rejectionCategory: action.status === "rejected" ? multiplayerRejectionCategory(action.reason) : undefined,
+          });
+        }
+        this.multiplayerPlayerStateRevision = authoritativePlayer.revision;
+        this.multiplayerPlayerStateSignature = multiplayerPlayerStateSignature(authoritativePlayer);
+        this.replayOptimisticContainerState(action.containerId, state);
+        this.sendNextOptimisticContainerIntent(action.containerId);
+        if (!state.pending.length && state.closing) this.maybeSendOptimisticContainerClose(action.containerId);
+      } else if (ownResponse && action.playerState) this.applyLocalPlayerSessionSnapshot(action.playerState, true);
       if (action.reason) this.events.onToast(action.reason);
     }
   }
@@ -5766,41 +6102,22 @@ export class VoxelEngine {
     }
     const activeId = this.activeNetworkContainerId ?? this.activeChestKey ?? (this.activeFurnaceKey ? `furnace:${this.activeFurnaceKey}` : null);
     if (!activeId || this.multiplayerContainerAwaiting.has(activeId)) return;
-    if (this.multiplayerPendingContainerMutations.has(activeId)) {
-      const slots = this.networkContainerSlots(activeId);
-      if (slots) {
-        const signature = JSON.stringify(slots.map(networkItemStack));
-        if (signature !== this.multiplayerContainerSignatures.get(activeId)) {
-          this.multiplayerQueuedContainerMutations.add(activeId);
-        }
-      }
+    const optimistic = (this.multiplayerOptimisticContainers ??= new Map()).get(activeId);
+    if (!optimistic) {
+      this.requestNetworkContainerSnapshot(activeId);
       return;
     }
-    const entries = [[activeId, this.networkContainerSlots(activeId)] as const];
-    for (const [id, slots] of entries) {
-      if (!slots) continue;
-      const networkSlots = slots.map(networkItemStack);
-      const signature = JSON.stringify(networkSlots);
-      if (signature === this.multiplayerContainerSignatures.get(id)) continue;
-      const revision = this.multiplayerContainerRevisions.get(id) ?? 0;
-      const action: ContainerAction = {
-        requestId: `container_${Date.now().toString(36)}_${revision.toString(36)}`,
-        actorId: session.identity.id,
-        containerId: id,
-        kind: "place",
-        expectedRevision: revision,
-        expectedPlayerRevision: this.multiplayerPlayerStateRevision,
-        slots: networkSlots,
-        playerState: this.localPlayerSessionSnapshot(this.multiplayerPlayerStateRevision + 1) ?? undefined,
-        status: "request",
-      };
-      try {
-        if (session.sendContainerAction(action) > 0) {
-          this.multiplayerContainerSignatures.set(id, signature);
-          this.multiplayerPendingContainerMutations.add(id);
-        }
-      }
-      catch { /* A later interval retries once a peer is connected. */ }
+    if (optimistic.pending.length > 0) return;
+    const slots = this.networkContainerSlots(activeId)?.map(networkItemStack);
+    const localPlayer = this.localPlayerSessionSnapshot(optimistic.confirmedPlayerRevision);
+    if (!slots || !localPlayer) return;
+    const slotDrift = JSON.stringify(slots) !== JSON.stringify(optimistic.confirmedSlots);
+    const playerDrift = multiplayerPlayerStateSignature(localPlayer) !== multiplayerPlayerStateSignature(optimistic.confirmedPlayer);
+    if (slotDrift || playerDrift) {
+      // An uninstrumented UI path must never turn its local image into
+      // authority. Restore the confirmed baseline and request a repair image.
+      this.replayOptimisticContainerState(activeId, optimistic);
+      this.requestNetworkContainerSnapshot(activeId);
     }
   }
 
@@ -5814,20 +6131,26 @@ export class VoxelEngine {
       if (drop.pickupDelay > 0 || drop.mesh.position.distanceToSquared(pickupPoint) >= 1.7 * 1.7) continue;
       const pending = this.pendingGuestDropRequests.get(drop.id);
       if (pending) {
-        if (pending.attempts >= 6 || now - pending.lastSentAt > 4_000) {
+        if (pending.attempts >= 30 || now - pending.lastSentAt > 20_000) {
           this.pendingGuestDropRequests.delete(drop.id);
         } else if (now - pending.lastSentAt >= 420) {
           try {
             if (session.sendInventoryAction(pending.action) > 0) {
               pending.lastSentAt = now;
               pending.attempts += 1;
+              (this.multiplayerDiagnostics ??= new MultiplayerDiagnosticsRing()).record({
+                requestId: pending.action.requestId,
+                kind: "pickup",
+                phase: "retry",
+                peerId: session.getPeers()[0]?.identity?.id,
+              });
             }
           } catch { /* The same idempotent pickup intent retries after reconnect. */ }
         }
         continue;
       }
       const request: InventoryAction = {
-        requestId: `pickup_${session.identity.id.slice(-8)}_${drop.id.toString(36)}_${this.multiplayerTick.toString(36)}`,
+        requestId: `pickup_${session.identity.id.slice(-8)}_${drop.id.toString(36)}_${(this.multiplayerTick ?? 0).toString(36)}`,
         actorId: session.identity.id,
         kind: "collect",
         dropId: drop.id,
@@ -5835,7 +6158,15 @@ export class VoxelEngine {
         status: "request",
       };
       try {
-        if (session.sendInventoryAction(request) > 0) this.pendingGuestDropRequests.set(drop.id, { action: request, lastSentAt: now, attempts: 1 });
+        if (session.sendInventoryAction(request) > 0) {
+          this.pendingGuestDropRequests.set(drop.id, { action: request, lastSentAt: now, attempts: 1 });
+          (this.multiplayerDiagnostics ??= new MultiplayerDiagnosticsRing()).record({
+            requestId: request.requestId,
+            kind: "pickup",
+            phase: "sent",
+            peerId: session.getPeers()[0]?.identity?.id,
+          });
+        }
       } catch { /* The drop remains available for a later retry. */ }
     }
   }
@@ -5926,9 +6257,9 @@ export class VoxelEngine {
     }));
   }
 
-  private hostWorldSnapshot(peerId?: string): WorldSnapshot {
+  private hostWorldSnapshot(peerId: string): WorldSnapshot {
     const local = this.localNetworkPose();
-    const identity = peerId ? this.multiplayer?.getPeer(peerId)?.identity : null;
+    const identity = this.multiplayer?.getPeer(peerId)?.identity;
     return {
       tick: this.multiplayerTick,
       seed: this.world.seedText,
@@ -5937,8 +6268,11 @@ export class VoxelEngine {
       generatorProfile: this.world.generationOptions.profile,
       players: [local, ...[...this.remotePlayers.values()].map((remote) => remote.target)].filter((pose): pose is PlayerPose => Boolean(pose)),
       blockEdits: this.networkBlockEdits(),
-      mobs: peerId ? this.networkMobSnapshotForPeer(peerId) : this.networkMobSnapshot(),
-      drops: peerId ? this.networkDropSnapshotForPeer(peerId) : this.networkDropSnapshot(),
+      mobs: this.networkMobSnapshotForPeer(peerId),
+      mobScope: this.networkSnapshotScope(peerId, "mob"),
+      drops: this.networkDropSnapshotForPeer(peerId),
+      dropScope: this.networkSnapshotScope(peerId, "drop"),
+      tombstones: this.activeMultiplayerTombstones(),
       boats: [...this.boats.values()].map(({ save }) => ({
         id: save.id, x: save.x, y: save.y, z: save.z, yaw: save.yaw, velocity: save.velocity, passengers: [...save.passengers], ownerId: save.ownerId,
       })),
@@ -5948,7 +6282,7 @@ export class VoxelEngine {
       // arbitrary prefix or let a guest treat generated placeholder loot as
       // authoritative. Only the recipient's actively opened chest may ride a
       // targeted recovery snapshot.
-      containers: peerId && this.multiplayerPeerActiveContainers.get(peerId)
+      containers: this.multiplayerPeerActiveContainers.get(peerId)
         ? this.networkContainerSnapshots([this.multiplayerPeerActiveContainers.get(peerId)!])
         : [],
       ...(identity ? { playerState: this.ensureHostPlayerSession(identity) } : {}),
@@ -5989,7 +6323,7 @@ export class VoxelEngine {
     const hostPose = snapshot.players.find((pose) => pose.playerId === hostPeer.identity?.id) ?? snapshot.players[0];
     // The host world decides the game mode. A guest must never retain a local
     // builder catalog when entering somebody else's survival save.
-    this.mode = snapshot.mode === "builder" ? "builder" : "survival";
+    applyAuthoritativeNetworkMode(this, snapshot.mode);
     this.worldOptions = normalizeWorldOptions(snapshot.worldOptions ?? this.worldOptions);
     this.butterflyDensity = this.worldOptions.butterflyDensity;
     this.clearEntities();
@@ -6046,9 +6380,13 @@ export class VoxelEngine {
     this.titleMode = false;
     this.persistent = false;
     this.activeWorldId = null;
-    this.applyNetworkMobSnapshot(snapshot.mobs);
+    this.lastNetworkMobSnapshotTick = -1;
+    this.lastNetworkMobSnapshotScope = null;
+    this.lastNetworkDropSnapshotScope = null;
+    this.applyNetworkMobSnapshot(snapshot.mobs, snapshot.tick, snapshot.mobScope);
     this.lastNetworkDropSnapshotTick = -1;
-    this.applyNetworkDropSnapshot(snapshot.drops, snapshot.tick);
+    this.applyNetworkDropSnapshot(snapshot.drops, snapshot.tick, snapshot.dropScope);
+    this.applyDestructionTombstones({ tick: snapshot.tick, tombstones: snapshot.tombstones });
     this.applyNetworkBoatSnapshot(snapshot.boats ?? []);
     this.applyNetworkContainerSnapshots(snapshot.containers ?? []);
     if (guestPlayerId) this.applyLocalPlayerSessionSnapshot(snapshot.playerState
@@ -6061,7 +6399,7 @@ export class VoxelEngine {
 
   private applyIncrementalWorldSnapshot(snapshot: WorldSnapshot, hostPeer: PeerInfo) {
     if (snapshot.generatorVersion !== GENERATOR_VERSION || snapshot.seed !== this.world.seedText) return;
-    this.mode = snapshot.mode === "builder" ? "builder" : "survival";
+    applyAuthoritativeNetworkMode(this, snapshot.mode);
     this.worldOptions = normalizeWorldOptions(snapshot.worldOptions ?? this.worldOptions);
     this.butterflyDensity = this.worldOptions.butterflyDensity;
     if (snapshot.blockEdits.length) {
@@ -6072,28 +6410,49 @@ export class VoxelEngine {
     this.day = snapshot.time.day;
     this.weather = snapshot.time.weather;
     if (snapshot.time.weatherState) this.weatherState = { ...snapshot.time.weatherState };
-    this.applyNetworkMobSnapshot(snapshot.mobs);
-    this.applyNetworkDropSnapshot(snapshot.drops, snapshot.tick);
+    this.applyNetworkMobSnapshot(snapshot.mobs, snapshot.tick, snapshot.mobScope);
+    this.applyNetworkDropSnapshot(snapshot.drops, snapshot.tick, snapshot.dropScope);
+    this.applyDestructionTombstones({ tick: snapshot.tick, tombstones: snapshot.tombstones });
     this.applyNetworkBoatSnapshot(snapshot.boats ?? []);
     this.applyNetworkContainerSnapshots(snapshot.containers ?? []);
     if (snapshot.playerState && snapshot.playerState.playerId === this.multiplayer?.identity.id) this.applyLocalPlayerSessionSnapshot(snapshot.playerState, true);
     for (const pose of snapshot.players) this.upsertRemotePlayer(pose, pose.playerId === hostPeer.identity?.id ? hostPeer : undefined);
   }
 
-  private applyNetworkMobSnapshot(entries: WorldSnapshot["mobs"]) {
+  private applyNetworkMobSnapshot(entries: WorldSnapshot["mobs"], tick = this.multiplayerTick, scope?: SnapshotScope) {
     // Old in-memory guests and focused reconstruction harnesses may enter this
     // path without having run the current field initializers. Lazily creating
     // the tombstone set is safe and keeps a late snapshot from crashing them.
     this.pendingNetworkMobDeaths ??= new Set<number>();
+    this.appliedMultiplayerTombstones ??= new Map<string, number>();
     this.leadAnchors ??= new Map<number, LeadAnchor>();
     this.leadLines ??= new Map<number, THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>>();
+    if (scope) {
+      if (this.multiplayer?.identity.id && scope.centerPlayerId !== this.multiplayer.identity.id) return;
+      const previous = this.lastNetworkMobSnapshotScope;
+      if (previous && (scope.epoch < previous.epoch || (scope.epoch === previous.epoch && tick < this.lastNetworkMobSnapshotTick))) return;
+      if (!previous || scope.epoch !== previous.epoch) this.lastNetworkMobSnapshotTick = -1;
+      this.lastNetworkMobSnapshotScope = { ...scope };
+    } else if (tick < this.lastNetworkMobSnapshotTick) return;
+    this.lastNetworkMobSnapshotTick = tick;
     const incoming = new Set(entries.map((entry) => entry.id));
     // A combat result can overtake the preceding periodic mob image on the
     // reliable queue. Keep the defeated id suppressed until the host sends an
     // image that actually omits it, then retire the tombstone.
     for (const id of [...this.pendingNetworkMobDeaths]) if (!incoming.has(id)) this.pendingNetworkMobDeaths.delete(id);
-    for (let index = this.mobs.length - 1; index >= 0; index -= 1) if (!incoming.has(this.mobs[index].id)) this.removeMob(index);
+    for (let index = this.mobs.length - 1; index >= 0; index -= 1) {
+      const mob = this.mobs[index];
+      if (incoming.has(mob.id)) continue;
+      const insideScope = !scope || mob.group.position.distanceToSquared(this.position) <= scope.radius ** 2;
+      // Omission has meaning only inside the declared recipient scope. An
+      // entity outside it is retained until a tombstone, an in-scope omission,
+      // or a later scoped image updates it.
+      if (insideScope) this.removeMob(index);
+    }
     for (const entry of entries) {
+      const tombstoneTick = this.appliedMultiplayerTombstones.get(`mob:${entry.id}`);
+      if (tombstoneTick !== undefined && tombstoneTick >= tick) continue;
+      if (tombstoneTick !== undefined) this.appliedMultiplayerTombstones.delete(`mob:${entry.id}`);
       if (this.pendingNetworkMobDeaths.has(entry.id)) continue;
       if (!(entry.kind in MOB_DEFS) || BUTTERFLY_ORDER.includes(entry.kind as ButterflyKind)) continue;
       let mob = this.mobs.find((candidate) => candidate.id === entry.id);
@@ -6206,13 +6565,31 @@ export class VoxelEngine {
     }
   }
 
-  private applyNetworkDropSnapshot(entries: WorldSnapshot["drops"], tick = this.multiplayerTick) {
-    if (tick < this.lastNetworkDropSnapshotTick) return;
+  private applyNetworkDropSnapshot(entries: WorldSnapshot["drops"], tick = this.multiplayerTick, scope?: SnapshotScope) {
+    this.appliedMultiplayerTombstones ??= new Map<string, number>();
+    if (scope) {
+      if (this.multiplayer?.identity.id && scope.centerPlayerId !== this.multiplayer.identity.id) return;
+      const previous = this.lastNetworkDropSnapshotScope;
+      if (previous && (scope.epoch < previous.epoch || (scope.epoch === previous.epoch && tick < this.lastNetworkDropSnapshotTick))) return;
+      if (!previous || scope.epoch !== previous.epoch) this.lastNetworkDropSnapshotTick = -1;
+      this.lastNetworkDropSnapshotScope = { ...scope };
+    } else if (tick < this.lastNetworkDropSnapshotTick) return;
     this.lastNetworkDropSnapshotTick = tick;
     const incoming = new Set(entries.map((entry) => entry.id));
-    for (const dropId of this.pendingGuestDropRequests.keys()) if (!incoming.has(dropId)) this.pendingGuestDropRequests.delete(dropId);
-    for (let index = this.drops.length - 1; index >= 0; index -= 1) if (!incoming.has(this.drops[index].id)) this.removeDrop(index);
+    for (const dropId of this.pendingGuestDropRequests.keys()) {
+      if (incoming.has(dropId)) continue;
+      const drop = this.drops.find((candidate) => candidate.id === dropId);
+      if (!scope || (drop && drop.mesh.position.distanceToSquared(this.position) <= scope.radius ** 2)) this.pendingGuestDropRequests.delete(dropId);
+    }
+    for (let index = this.drops.length - 1; index >= 0; index -= 1) {
+      const drop = this.drops[index];
+      if (incoming.has(drop.id)) continue;
+      if (!scope || drop.mesh.position.distanceToSquared(this.position) <= scope.radius ** 2) this.removeDrop(index);
+    }
     for (const entry of entries) {
+      const tombstoneTick = this.appliedMultiplayerTombstones.get(`drop:${entry.id}`);
+      if (tombstoneTick !== undefined && tombstoneTick >= tick) continue;
+      if (tombstoneTick !== undefined) this.appliedMultiplayerTombstones.delete(`drop:${entry.id}`);
       if (!ITEMS[entry.item] || entry.count <= 0) continue;
       let drop = this.drops.find((candidate) => candidate.id === entry.id);
       if (!drop || drop.item !== entry.item) {
@@ -6350,6 +6727,9 @@ export class VoxelEngine {
           else this.dropBlockLoot(isTorchBlock(drop.type) ? BlockId.Torch : drop.type, drop.x, drop.y, drop.z);
         }
         this.world.setBlocksBatch(action.edits.map((edit) => ({ ...edit, type: edit.type as BlockId })), true, true);
+        this.publishDestructionTombstones(action.edits
+          .filter((edit) => edit.type === BlockId.Air)
+          .map((edit) => ({ kind: "block" as const, cause: "broken" as const, block: { x: edit.x, y: edit.y, z: edit.z } })));
         for (const edit of action.edits) if (edit.type === BlockId.Chest) {
           const key = blockKey(edit.x, edit.y, edit.z);
           if (!this.chests.has(key)) this.chests.set(key, Array.from({ length: 27 }, () => null));
@@ -6397,6 +6777,10 @@ export class VoxelEngine {
     } else if (event.type === "peer") {
       this.multiplayerState.peers = this.multiplayer?.getPeers() ?? [];
       if (event.peer.state === "connected" && this.multiplayer?.role === "host" && event.peer.identity) {
+        if (event.reason === "connected") (this.multiplayerPeerScopeEpochs ??= new Map()).set(
+          event.peer.identity.id,
+          (this.multiplayerPeerScopeEpochs.get(event.peer.identity.id) ?? 0) + 1,
+        );
         this.ensureHostPlayerSession(event.peer.identity);
         this.sendHostWorldSnapshot(event.peer.identity.id);
         this.sendAuthoritativePlayerProgression(event.peer.identity);
@@ -6457,11 +6841,15 @@ export class VoxelEngine {
       else if (envelope.type === "creature-action") this.handleRemoteCreatureAction(envelope.payload as CreatureAction, event.peer);
       else if (envelope.type === "sleep-vote") this.handleRemoteSleepVote(envelope.payload as SleepVote, event.peer);
       else if (envelope.type === "map-share") this.handleRemoteMapShare(envelope.payload as CartographyMapShare, event.peer);
-      else if (envelope.type === "mob-snapshot" && this.multiplayer?.role === "guest") this.applyNetworkMobSnapshot((envelope.payload as { mobs: WorldSnapshot["mobs"] }).mobs);
-      else if (envelope.type === "drop-snapshot" && this.multiplayer?.role === "guest") {
-        const snapshot = envelope.payload as { tick: number; drops: WorldSnapshot["drops"] };
-        this.applyNetworkDropSnapshot(snapshot.drops, snapshot.tick);
+      else if (envelope.type === "mob-snapshot" && this.multiplayer?.role === "guest") {
+        const snapshot = envelope.payload as { tick: number; scope: SnapshotScope; mobs: WorldSnapshot["mobs"] };
+        this.applyNetworkMobSnapshot(snapshot.mobs, snapshot.tick, snapshot.scope);
       }
+      else if (envelope.type === "drop-snapshot" && this.multiplayer?.role === "guest") {
+        const snapshot = envelope.payload as { tick: number; scope: SnapshotScope; drops: WorldSnapshot["drops"] };
+        this.applyNetworkDropSnapshot(snapshot.drops, snapshot.tick, snapshot.scope);
+      }
+      else if (envelope.type === "tombstones" && this.multiplayer?.role === "guest") this.applyDestructionTombstones(envelope.payload as TombstoneBatch);
       else if (envelope.type === "time-weather" && this.multiplayer?.role === "guest") {
         const time = envelope.payload as WorldSnapshot["time"] & { boats?: NonNullable<WorldSnapshot["boats"]> };
         this.worldTime = time.worldTime;
@@ -6498,7 +6886,12 @@ export class VoxelEngine {
       this.queueCriticalReliableRequest(`block:${action.requestId}`, () => this.multiplayer?.sendBlockAction(action) ?? 0, 6_000);
       return;
     }
-    try { this.multiplayer.sendBlockAction(action); }
+    try {
+      this.multiplayer.sendBlockAction(action);
+      this.publishDestructionTombstones(edits
+        .filter((edit) => edit.type === BlockId.Air)
+        .map((edit) => ({ kind: "block" as const, cause: "broken" as const, block: { x: edit.x, y: edit.y, z: edit.z } })));
+    }
     catch (error) { this.multiplayerState.error = error instanceof Error ? error.message : String(error); }
   }
 
@@ -6513,6 +6906,7 @@ export class VoxelEngine {
     this.multiplayerProgressionTimer -= dt;
     this.multiplayerContainerTimer -= dt;
     this.retryCriticalReliableRequests();
+    this.updateGuestContainerIntentRetries();
     this.flushPlayerProgressionTransfers();
     for (const [playerId, cooldown] of this.multiplayerCombatCooldowns) {
       const next = cooldown - dt;
@@ -6531,8 +6925,16 @@ export class VoxelEngine {
       for (const peer of session.getPeers()) {
         if (peer.state !== "connected" || !peer.identity) continue;
         try {
-          session.sendMobSnapshot({ tick: this.multiplayerTick, mobs: this.networkMobSnapshotForPeer(peer.identity.id) }, peer.identity.id);
-          session.sendDropSnapshot({ tick: this.multiplayerTick, drops: this.networkDropSnapshotForPeer(peer.identity.id) }, peer.identity.id);
+          session.sendMobSnapshot({
+            tick: this.multiplayerTick,
+            scope: this.networkSnapshotScope(peer.identity.id, "mob"),
+            mobs: this.networkMobSnapshotForPeer(peer.identity.id),
+          }, peer.identity.id);
+          session.sendDropSnapshot({
+            tick: this.multiplayerTick,
+            scope: this.networkSnapshotScope(peer.identity.id, "drop"),
+            drops: this.networkDropSnapshotForPeer(peer.identity.id),
+          }, peer.identity.id);
           session.sendTimeWeather({
             tick: this.multiplayerTick, worldTime: this.worldTime, day: this.day, weather: this.weather, weatherState: { ...this.weatherState },
             boats: [...this.boats.values()].map(({ save }) => ({ id: save.id, x: save.x, y: save.y, z: save.z, yaw: save.yaw, velocity: save.velocity, passengers: [...save.passengers], ownerId: save.ownerId })),
@@ -7060,7 +7462,7 @@ export class VoxelEngine {
     this.multiplayerPlayerStates.set(peer.id, next);
     const response: CreatureAction = { ...action, status: "accepted", mounted, ...(panel ? { panel } : {}), message, playerState: next };
     this.queueCriticalReliableRequest(`host-creature-response:${peer.id}:${action.requestId}`, () => session.sendCreatureAction(response, peer.id), 6_000);
-    try { session.sendMobSnapshot({ tick: this.multiplayerTick, mobs: this.networkMobSnapshot() }); }
+    try { this.sendMobSnapshotsToConnectedPeers(); }
     catch { /* The 5 Hz authoritative image remains the fallback. */ }
     this.sendAuthoritativePlayerState(peer.id, action.requestId);
     this.saveSoon();
@@ -7168,7 +7570,7 @@ export class VoxelEngine {
       } else this.removeLead(mob.id, true);
       const message = action.kind === "lead-hitch" ? `${mob.name}'s lead is hitched to the fence.` : `${mob.name}'s lead is unclipped.`;
       session.sendCreatureAction({ ...action, message, status: "accepted" }, peer.identity.id);
-      session.sendMobSnapshot({ tick: this.multiplayerTick, mobs: this.networkMobSnapshotForPeer(peer.identity.id) }, peer.identity.id);
+      session.sendMobSnapshot({ tick: this.multiplayerTick, scope: this.networkSnapshotScope(peer.identity.id, "mob"), mobs: this.networkMobSnapshotForPeer(peer.identity.id) }, peer.identity.id);
       this.saveSoon();
       return;
     }
@@ -7223,7 +7625,7 @@ export class VoxelEngine {
       const response: CreatureAction = { ...action, playerState, message, status: "accepted" };
       this.queueCriticalReliableRequest(`host-dragon-panel:${peer.identity.id}:${action.requestId}`, () => session.sendCreatureAction(response, peer.identity!.id), 6_000);
       this.sendAuthoritativePlayerState(peer.identity.id, action.requestId);
-      try { session.sendMobSnapshot({ tick: this.multiplayerTick, mobs: this.networkMobSnapshotForPeer(peer.identity.id) }, peer.identity.id); }
+      try { session.sendMobSnapshot({ tick: this.multiplayerTick, scope: this.networkSnapshotScope(peer.identity.id, "mob"), mobs: this.networkMobSnapshotForPeer(peer.identity.id) }, peer.identity.id); }
       catch { /* The 5 Hz host image remains the fallback for a dropped presentation frame. */ }
       this.saveSoon();
       this.emitHud(true);
@@ -7364,7 +7766,7 @@ export class VoxelEngine {
         mob.name = mob.petState.name || mob.definition.name;
       }
       this.queueCriticalReliableRequest(`host-creature-command:${peer.identity.id}:${action.requestId}`, () => session.sendCreatureAction({ ...action, status: "accepted" }, peer.identity!.id), 6_000);
-      try { session.sendMobSnapshot({ tick: this.multiplayerTick, mobs: this.networkMobSnapshot() }); }
+      try { this.sendMobSnapshotsToConnectedPeers(); }
       catch { /* Periodic state will retry. */ }
       this.saveSoon();
       return;
@@ -7466,7 +7868,7 @@ export class VoxelEngine {
     }, peer.identity.id, current.variant);
     this.multiplayerPlayerStates.set(peer.identity.id, next);
     this.queueCriticalReliableRequest(`host-creature-response:${peer.identity.id}:${action.requestId}`, () => session.sendCreatureAction({ ...action, targetId, status: "accepted" }, peer.identity!.id), 6_000);
-    try { session.sendMobSnapshot({ tick: this.multiplayerTick, mobs: this.networkMobSnapshot() }); }
+    try { this.sendMobSnapshotsToConnectedPeers(); }
     catch { /* The next periodic image completes the transaction. */ }
     this.sendAuthoritativePlayerState(peer.identity.id, action.requestId);
     this.saveSoon();
@@ -7524,7 +7926,7 @@ export class VoxelEngine {
         for (const connectedPeer of session.getPeers()) {
           if (connectedPeer.state !== "connected" || !connectedPeer.identity) continue;
           try {
-            session.sendMobSnapshot({ tick: this.multiplayerTick, mobs: this.networkMobSnapshotForPeer(connectedPeer.identity.id) }, connectedPeer.identity.id);
+            session.sendMobSnapshot({ tick: this.multiplayerTick, scope: this.networkSnapshotScope(connectedPeer.identity.id, "mob"), mobs: this.networkMobSnapshotForPeer(connectedPeer.identity.id) }, connectedPeer.identity.id);
           } catch { /* Periodic snapshots retry after a transient channel close. */ }
         }
         this.sendDropSnapshotsToConnectedPeers();
@@ -8639,9 +9041,11 @@ export class VoxelEngine {
 
   closeContainer() {
     const closingChest = this.activeNetworkContainerId;
+    const guestSharedContainer = Boolean(closingChest && this.multiplayer?.role === "guest"
+      && this.multiplayerOptimisticContainers?.has(closingChest));
     const closingFacility = this.activeNetworkFacilityId;
     const closingSentientId = this.activeSentient?.id;
-    if (this.cursor) {
+    if (this.cursor && !guestSharedContainer) {
       const leftover = this.addItem(this.cursor.item, this.cursor.count, this.cursor.durability, undefined, this.cursor.metadata);
       if (leftover > 0) this.spawnDrop(this.cursor.item, leftover, this.position.clone().add(new THREE.Vector3(0, 1, 0)), this.cursor.durability);
       this.cursor = null;
@@ -8654,18 +9058,23 @@ export class VoxelEngine {
       this.craftGrid[index] = null;
     }
     if (closingChest) {
-      this.syncMultiplayerContainers();
       const session = this.multiplayer;
       if (session?.role === "guest") {
-        const action: ContainerAction = {
-          requestId: `container_close_${Date.now().toString(36)}_${this.multiplayerTick.toString(36)}`,
-          actorId: session.identity.id,
-          containerId: closingChest,
-          kind: "close",
-          status: "request",
-        };
-        this.queueCriticalReliableRequest(`container-close:${closingChest}`, () => session.sendContainerAction(action), 2_000);
-      }
+        const state = this.multiplayerOptimisticContainers?.get(closingChest);
+        if (state) {
+          state.closing = true;
+          this.maybeSendOptimisticContainerClose(closingChest);
+        } else {
+          const action: ContainerAction = {
+            requestId: `container_close_${Date.now().toString(36)}_${(this.multiplayerTick ?? 0).toString(36)}`,
+            actorId: session.identity.id,
+            containerId: closingChest,
+            kind: "close",
+            status: "request",
+          };
+          this.queueCriticalReliableRequest(`container-close:${closingChest}`, () => session.sendContainerAction(action), 20_000);
+        }
+      } else this.syncMultiplayerContainers();
     }
     if (closingFacility && this.multiplayer?.role === "guest") {
       const parts = this.sharedFacilityParts(closingFacility);
@@ -8724,7 +9133,7 @@ export class VoxelEngine {
   private networkMobSnapshotForPeer(peerId: string) {
     const pose = this.remotePlayers.get(peerId)?.target;
     if (!pose) return [];
-    const radius = Math.max(48, this.settings.simulationDistance * CHUNK_SIZE + 16);
+    const radius = Math.max(48, (this.settings?.simulationDistance ?? DEFAULT_SIMULATION_DISTANCE) * CHUNK_SIZE + 16);
     const radiusSquared = radius * radius;
     return this.networkMobSnapshot()
       .filter((mob) => (mob.x - pose.x) ** 2 + (mob.y - pose.y) ** 2 + (mob.z - pose.z) ** 2 <= radiusSquared)
@@ -8735,12 +9144,92 @@ export class VoxelEngine {
   private networkDropSnapshotForPeer(peerId: string) {
     const pose = this.remotePlayers.get(peerId)?.target;
     if (!pose) return [];
-    const radius = Math.max(40, this.settings.simulationDistance * CHUNK_SIZE + 8);
+    const radius = Math.max(40, (this.settings?.simulationDistance ?? DEFAULT_SIMULATION_DISTANCE) * CHUNK_SIZE + 8);
     const radiusSquared = radius * radius;
     return this.networkDropSnapshot()
       .filter((drop) => (drop.x - pose.x) ** 2 + (drop.y - pose.y) ** 2 + (drop.z - pose.z) ** 2 <= radiusSquared)
       .sort((left, right) => ((left.x - pose.x) ** 2 + (left.z - pose.z) ** 2) - ((right.x - pose.x) ** 2 + (right.z - pose.z) ** 2))
       .slice(0, 256);
+  }
+
+  private networkSnapshotScope(peerId: string, kind: "mob" | "drop"): SnapshotScope {
+    const simulationDistance = this.settings?.simulationDistance ?? DEFAULT_SIMULATION_DISTANCE;
+    const radius = kind === "mob"
+      ? Math.max(48, simulationDistance * CHUNK_SIZE + 16)
+      : Math.max(40, simulationDistance * CHUNK_SIZE + 8);
+    return {
+      centerPlayerId: peerId,
+      radius,
+      epoch: (this.multiplayerPeerScopeEpochs ??= new Map()).get(peerId) ?? 1,
+    };
+  }
+
+  private sendMobSnapshotsToConnectedPeers() {
+    const session = this.multiplayer;
+    if (!session || session.role !== "host" || typeof session.getPeers !== "function") return;
+    for (const peer of session.getPeers()) {
+      if (peer.state !== "connected" || !peer.identity) continue;
+      try {
+        session.sendMobSnapshot({
+          tick: this.multiplayerTick,
+          scope: this.networkSnapshotScope(peer.identity.id, "mob"),
+          mobs: this.networkMobSnapshotForPeer(peer.identity.id),
+        }, peer.identity.id);
+      } catch { /* The periodic 5 Hz image repairs a transient send failure. */ }
+    }
+  }
+
+  private activeMultiplayerTombstones() {
+    const oldestTick = Math.max(0, this.multiplayerTick - 600);
+    this.multiplayerTombstones ??= [];
+    this.multiplayerTombstones = this.multiplayerTombstones.filter((entry) => entry.tick >= oldestTick
+      && (entry.kind !== "block" || !entry.block || this.world.getBlock(entry.block.x, entry.block.y, entry.block.z) === BlockId.Air));
+    return this.multiplayerTombstones.map((entry) => ({ ...entry, ...(entry.block ? { block: { ...entry.block } } : {}) }));
+  }
+
+  private publishDestructionTombstones(entries: Array<Omit<DestructionTombstone, "id" | "tick">>) {
+    const session = this.multiplayer;
+    if (!session || session.role !== "host" || entries.length === 0) return;
+    const tombstones = entries.map((entry, index): DestructionTombstone => ({
+      ...entry,
+      id: `tomb_${entry.kind}_${entry.entityId ?? `${entry.block?.x}_${entry.block?.y}_${entry.block?.z}`}_${this.multiplayerTick}_${index}`,
+      tick: this.multiplayerTick,
+    }));
+    (this.multiplayerTombstones ??= []).push(...tombstones);
+    this.activeMultiplayerTombstones();
+    try { session.sendTombstones({ tick: this.multiplayerTick, tombstones }); }
+    catch { /* Recipient-specific recovery snapshots carry the short-lived ring. */ }
+  }
+
+  private applyDestructionTombstones(batch: TombstoneBatch | { tick: number; tombstones?: DestructionTombstone[] }) {
+    this.appliedMultiplayerTombstones ??= new Map<string, number>();
+    this.pendingNetworkMobDeaths ??= new Set<number>();
+    this.pendingGuestDropRequests ??= new Map<number, PendingGuestDropRequest>();
+    for (const tombstone of batch.tombstones ?? []) {
+      const authorityKey = tombstone.kind === "block" && tombstone.block
+        ? `block:${tombstone.block.x},${tombstone.block.y},${tombstone.block.z}`
+        : `${tombstone.kind}:${tombstone.entityId}`;
+      const previousTick = this.appliedMultiplayerTombstones.get(authorityKey) ?? -1;
+      if (tombstone.tick <= previousTick) continue;
+      this.appliedMultiplayerTombstones.set(authorityKey, tombstone.tick);
+      if (tombstone.kind === "block" && tombstone.block) {
+        this.world.setBlock(tombstone.block.x, tombstone.block.y, tombstone.block.z, BlockId.Air, true, true);
+        this.lightRefreshTimer = 0;
+      } else if (tombstone.kind === "mob" && tombstone.entityId !== undefined) {
+        this.pendingNetworkMobDeaths.add(tombstone.entityId);
+        const mob = this.mobs.find((candidate) => candidate.id === tombstone.entityId);
+        if (mob) {
+          if (tombstone.cause === "killed") this.spawnMobRemains(mob);
+          this.removeMob(this.mobs.indexOf(mob));
+        }
+      } else if (tombstone.kind === "drop" && tombstone.entityId !== undefined) {
+        this.pendingGuestDropRequests.delete(tombstone.entityId);
+        const index = this.drops.findIndex((candidate) => candidate.id === tombstone.entityId);
+        if (index >= 0) this.removeDrop(index);
+      }
+    }
+    const minimumTick = Math.max(0, batch.tick - 1_800);
+    for (const [id, tick] of this.appliedMultiplayerTombstones) if (tick < minimumTick) this.appliedMultiplayerTombstones.delete(id);
   }
 
   /** Publish an actor-centered image to every guest, never a host-centered global prefix. */
@@ -8750,14 +9239,25 @@ export class VoxelEngine {
     if (typeof session.getPeers !== "function") {
       // Compatibility for migrated in-memory sessions and focused harnesses;
       // browser sessions always expose peers and use actor-centered images.
-      try { session.sendDropSnapshot({ tick: this.multiplayerTick, drops: this.networkDropSnapshot() }); } catch { /* no connected transport */ }
+      try {
+        const simulationDistance = this.settings?.simulationDistance ?? DEFAULT_SIMULATION_DISTANCE;
+        session.sendDropSnapshot({
+          tick: this.multiplayerTick,
+          scope: { centerPlayerId: session.identity.id, radius: Math.max(40, simulationDistance * CHUNK_SIZE + 8), epoch: 1 },
+          drops: this.networkDropSnapshot(),
+        });
+      } catch { /* no connected transport */ }
       return;
     }
     const peers = session.getPeers();
     for (const peer of peers) {
       if (peer.state !== "connected" || !peer.identity) continue;
       try {
-        session.sendDropSnapshot({ tick: this.multiplayerTick, drops: this.networkDropSnapshotForPeer(peer.identity.id) }, peer.identity.id);
+        session.sendDropSnapshot({
+          tick: this.multiplayerTick,
+          scope: this.networkSnapshotScope(peer.identity.id, "drop"),
+          drops: this.networkDropSnapshotForPeer(peer.identity.id),
+        }, peer.identity.id);
       } catch { /* The periodic 5 Hz image repairs a transient send failure. */ }
     }
   }
@@ -8944,6 +9444,14 @@ export class VoxelEngine {
   }
 
   equipmentClick(slot: EquipmentSlot, button: "left" | "right", shift = false) {
+    const equipmentIndex = (["head", "chest", "legs", "feet"] as EquipmentSlot[]).indexOf(slot);
+    const containerOperation: ContainerOperation | null = this.multiplayer?.role === "guest" && this.activeNetworkContainerId
+      ? { op: "click", target: { owner: "equipment", slot: equipmentIndex }, button, ...(shift ? { shift: true } : {}) }
+      : null;
+    if (containerOperation && !this.multiplayerOptimisticContainers.has(this.activeNetworkContainerId!)) {
+      this.requestNetworkContainerSnapshot(this.activeNetworkContainerId!);
+      return;
+    }
     const equipped = this.equipment[slot];
     if (shift && equipped) {
       const leftover = this.addItem(equipped.item, equipped.count, equipped.durability);
@@ -8966,6 +9474,8 @@ export class VoxelEngine {
     this.audio.play("ui");
     this.saveSoon();
     this.emitHud(true);
+    if (containerOperation) this.queueGuestContainerOperation(containerOperation);
+    else this.syncInventoryMutationNow();
   }
 
   collectMatching(preferredItem?: ItemCode) {
@@ -8973,7 +9483,8 @@ export class VoxelEngine {
     if (item === undefined || !ITEMS[item]) return;
     if (!this.cursor) this.cursor = { item, count: 0, ...(ITEMS[item].maxDurability ? { durability: ITEMS[item].maxDurability } : {}) };
     const durability = this.cursor.durability;
-    const sources: Array<Array<InventorySlot | null>> = [this.inventory, this.craftGrid];
+    const sources: Array<Array<InventorySlot | null>> = [this.inventory];
+    if (!(this.multiplayer?.role === "guest" && this.activeNetworkContainerId)) sources.push(this.craftGrid);
     if (this.activeChestKey) {
       const chest = this.chests.get(this.activeChestKey);
       if (chest) sources.push(chest);
@@ -8998,15 +9509,24 @@ export class VoxelEngine {
     this.audio.play("pickup");
     this.saveSoon();
     this.emitHud(true);
+    if (this.multiplayer?.role === "guest" && this.activeNetworkContainerId) this.queueGuestContainerOperation({ op: "collect-matching", item });
   }
 
   inventoryClick(index: number, button: "left" | "right", shift = false) {
     if (index < 0 || index >= this.inventory.length) return;
+    const containerOperation: ContainerOperation | null = this.multiplayer?.role === "guest" && this.activeNetworkContainerId
+      ? { op: "click", target: { owner: "player", slot: index }, button, ...(shift ? { shift: true } : {}) }
+      : null;
+    if (containerOperation && !this.multiplayerOptimisticContainers.has(this.activeNetworkContainerId!)) {
+      this.requestNetworkContainerSnapshot(this.activeNetworkContainerId!);
+      return;
+    }
     if (shift && this.inventory[index]) {
       this.shiftMove(index);
       this.audio.play("ui");
       this.emitHud(true);
-      this.syncInventoryMutationNow();
+      if (containerOperation) this.queueGuestContainerOperation(containerOperation);
+      else this.syncInventoryMutationNow();
       return;
     }
     const slot = this.inventory[index];
@@ -9045,9 +9565,17 @@ export class VoxelEngine {
     this.audio.play("ui");
     this.saveSoon();
     this.emitHud(true);
+    if (containerOperation) this.queueGuestContainerOperation(containerOperation);
   }
 
   trashClick(button: "left" | "right") {
+    const containerOperation: ContainerOperation | null = this.multiplayer?.role === "guest" && this.activeNetworkContainerId
+      ? { op: "click", target: { owner: "trash", slot: 0 }, button }
+      : null;
+    if (containerOperation && !this.multiplayerOptimisticContainers.has(this.activeNetworkContainerId!)) {
+      this.requestNetworkContainerSnapshot(this.activeNetworkContainerId!);
+      return;
+    }
     if (!this.cursor && !this.trash) return;
     if (button === "left") {
       if (!this.cursor) {
@@ -9074,7 +9602,8 @@ export class VoxelEngine {
     this.audio.play("ui");
     this.saveSoon();
     this.emitHud(true);
-    this.syncInventoryMutationNow();
+    if (containerOperation) this.queueGuestContainerOperation(containerOperation);
+    else this.syncInventoryMutationNow();
   }
 
   distributeCursorAcrossSlots(targets: readonly InventoryDragTarget[], button: "left" | "right") {
@@ -9089,6 +9618,10 @@ export class VoxelEngine {
         && (this.craftingSize === 3 || CRAFT_POSITIONS_2.includes(target.index));
     });
     if (accepted.length < 2) return false;
+    const sharedGuestContainer = this.multiplayer?.role === "guest" && Boolean(this.activeNetworkContainerId);
+    // Shared inventory transactions cover the 36 player slots. Craft-grid
+    // painting remains local because it is not part of a chest/furnace view.
+    if (sharedGuestContainer && accepted.some((target) => target.area !== "inventory")) return false;
     const current = accepted.map((target) => target.area === "inventory"
       ? this.inventory[target.index]
       : this.craftGrid[target.index]);
@@ -9104,7 +9637,12 @@ export class VoxelEngine {
     this.audio.play("ui");
     this.saveSoon();
     this.emitHud(true);
-    this.syncInventoryMutationNow();
+    if (sharedGuestContainer) this.queueGuestContainerOperation({
+      op: "distribute",
+      targets: accepted.map((target) => target.index),
+      button,
+    });
+    else this.syncInventoryMutationNow();
     return true;
   }
 
@@ -9239,27 +9777,26 @@ export class VoxelEngine {
     }
   }
 
-  private finishInventoryConvenience(message: string, moved = 0) {
+  private finishInventoryConvenience(message: string, moved = 0, operation?: ContainerOperation) {
     this.audio.play(moved > 0 ? "pickup" : "ui");
     this.events.onToast(message);
     this.saveSoon();
-    // Shared chests use one revisioned transaction containing both the chest
-    // and player inventory image. Sending immediately avoids waiting for the
-    // normal sync cadence without bypassing host authority.
-    this.syncMultiplayerContainers();
+    // Shared chests send a semantic operation immediately. Outside a shared
+    // view, use the ordinary revisioned player-state lane.
+    if (!operation || !this.queueGuestContainerOperation(operation)) this.syncInventoryMutationNow();
     this.emitHud(true);
   }
 
   sortPack() {
     this.inventory = sortInventoryRegion(this.inventory, 9, this.inventory.length) as Array<InventorySlot | null>;
-    this.finishInventoryConvenience("Pack sorted. The hotbar stayed exactly where you left it.");
+    this.finishInventoryConvenience("Pack sorted. The hotbar stayed exactly where you left it.", 1, { op: "sort", target: "player" });
   }
 
   sortActiveChest() {
     const chest = this.activeChestKey ? this.chests.get(this.activeChestKey) : null;
     if (!chest || this.activeChestKey?.startsWith("exhibit:")) return false;
     this.chests.set(this.activeChestKey!, sortInventoryRegion(chest) as ChestState);
-    this.finishInventoryConvenience("Chest sorted for a quicker trail stop.");
+    this.finishInventoryConvenience("Chest sorted for a quicker trail stop.", 1, { op: "sort", target: "container" });
     return true;
   }
 
@@ -9269,7 +9806,7 @@ export class VoxelEngine {
     const result = transferInventoryStacks(this.inventory, chest, { onlyAlreadyPresent: true, sourceStart: 9 });
     this.inventory = result.source as Array<InventorySlot | null>;
     this.chests.set(this.activeChestKey!, result.target as ChestState);
-    this.finishInventoryConvenience(result.moved ? `${result.moved} matching item${result.moved === 1 ? "" : "s"} stacked into the chest.` : "Nothing in the pack matches this chest yet.", result.moved);
+    this.finishInventoryConvenience(result.moved ? `${result.moved} matching item${result.moved === 1 ? "" : "s"} stacked into the chest.` : "Nothing in the pack matches this chest yet.", result.moved, { op: "stack", direction: "player-to-container" });
     return result.moved > 0;
   }
 
@@ -9280,7 +9817,7 @@ export class VoxelEngine {
     const result = transferInventoryStacks(chest, orderedPack, { onlyAlreadyPresent: true });
     this.chests.set(this.activeChestKey!, result.source as ChestState);
     this.inventory = [...result.target.slice(27), ...result.target.slice(0, 27)] as Array<InventorySlot | null>;
-    this.finishInventoryConvenience(result.moved ? `${result.moved} matching item${result.moved === 1 ? "" : "s"} stacked into the pack.` : "Nothing in the chest matches your pack yet.", result.moved);
+    this.finishInventoryConvenience(result.moved ? `${result.moved} matching item${result.moved === 1 ? "" : "s"} stacked into the pack.` : "Nothing in the chest matches your pack yet.", result.moved, { op: "stack", direction: "container-to-player" });
     return result.moved > 0;
   }
 
@@ -9291,7 +9828,7 @@ export class VoxelEngine {
     const result = transferInventoryStacks(chest, orderedPack);
     this.chests.set(this.activeChestKey!, result.source as ChestState);
     this.inventory = [...result.target.slice(27), ...result.target.slice(0, 27)] as Array<InventorySlot | null>;
-    this.finishInventoryConvenience(result.moved ? `Took ${result.moved} item${result.moved === 1 ? "" : "s"}.` : "The chest is empty or your pack is full.", result.moved);
+    this.finishInventoryConvenience(result.moved ? `Took ${result.moved} item${result.moved === 1 ? "" : "s"}.` : "The chest is empty or your pack is full.", result.moved, { op: "transfer-all", direction: "container-to-player" });
     return result.moved > 0;
   }
 
@@ -9301,7 +9838,7 @@ export class VoxelEngine {
     const result = transferInventoryStacks(this.inventory, chest, { sourceStart: 9 });
     this.inventory = result.source as Array<InventorySlot | null>;
     this.chests.set(this.activeChestKey!, result.target as ChestState);
-    this.finishInventoryConvenience(result.moved ? `Stored ${result.moved} item${result.moved === 1 ? "" : "s"}; hotbar untouched.` : "The chest is full or the pack is already clear.", result.moved);
+    this.finishInventoryConvenience(result.moved ? `Stored ${result.moved} item${result.moved === 1 ? "" : "s"}; hotbar untouched.` : "The chest is full or the pack is already clear.", result.moved, { op: "transfer-all", direction: "player-to-container" });
     return result.moved > 0;
   }
 
@@ -9801,6 +10338,13 @@ export class VoxelEngine {
   }
 
   offhandClick(button: "left" | "right", shift = false) {
+    const containerOperation: ContainerOperation | null = this.multiplayer?.role === "guest" && this.activeNetworkContainerId
+      ? { op: "click", target: { owner: "offhand", slot: 0 }, button, ...(shift ? { shift: true } : {}) }
+      : null;
+    if (containerOperation && !this.multiplayerOptimisticContainers.has(this.activeNetworkContainerId!)) {
+      this.requestNetworkContainerSnapshot(this.activeNetworkContainerId!);
+      return;
+    }
     const equipped = this.offhand;
     if (shift && equipped) {
       const leftover = this.addItem(equipped.item, equipped.count, equipped.durability, MAIN_THEN_HOTBAR, equipped.metadata);
@@ -9835,6 +10379,8 @@ export class VoxelEngine {
     this.audio.play("ui");
     this.saveSoon();
     this.emitHud(true);
+    if (containerOperation) this.queueGuestContainerOperation(containerOperation);
+    else this.syncInventoryMutationNow();
   }
 
   orbStationMachineClick(machine: "orb-rack" | "healing-station", index: number, button: "left" | "right", shift: boolean) {
@@ -9985,6 +10531,13 @@ export class VoxelEngine {
       if (!chest || index < 0 || index >= chest.length) return;
       slots = chest;
     }
+    const containerOperation: ContainerOperation | null = this.multiplayer?.role === "guest" && this.activeNetworkContainerId
+      ? { op: "click", target: { owner: "container", slot: index }, button, ...(shift ? { shift: true } : {}) }
+      : null;
+    if (containerOperation && !this.multiplayerOptimisticContainers.has(this.activeNetworkContainerId!)) {
+      this.requestNetworkContainerSnapshot(this.activeNetworkContainerId!);
+      return;
+    }
     if (machine === "chest" && this.activeChestKey?.startsWith("exhibit:") && this.cursor && !this.isExhibitResidentSlot(this.cursor)) {
       this.events.onToast("The conservatory accepts butterfly specimens and eligible small creatures in Waykeeper Cages.");
       return;
@@ -10015,6 +10568,7 @@ export class VoxelEngine {
       this.audio.play("ui");
       this.saveSoon();
       this.emitHud(true);
+      if (containerOperation) this.queueGuestContainerOperation(containerOperation);
       return;
     }
     if (shift && slot) {
@@ -10029,7 +10583,8 @@ export class VoxelEngine {
       if (leftover < original) this.audio.play("pickup");
       this.saveSoon();
       this.emitHud(true);
-      this.syncInventoryMutationNow();
+      if (containerOperation) this.queueGuestContainerOperation(containerOperation);
+      else this.syncInventoryMutationNow();
       return;
     }
     if (machine === "furnace" && index === 2) {
@@ -10053,6 +10608,7 @@ export class VoxelEngine {
       this.audio.play("pickup");
       this.saveSoon();
       this.emitHud(true);
+      if (containerOperation) this.queueGuestContainerOperation(containerOperation);
       return;
     }
     if (machine === "furnace" && this.cursor) {
@@ -10097,6 +10653,7 @@ export class VoxelEngine {
     this.audio.play("ui");
     this.saveSoon();
     this.emitHud(true);
+    if (containerOperation) this.queueGuestContainerOperation(containerOperation);
   }
 
   generateChestLoot(key: string): ChestState {
@@ -19403,6 +19960,7 @@ export class VoxelEngine {
     }
     this.events.onToast(`${mob.name} defeated · Bestiary kill ${this.bestiary[mob.kind].kills}`);
     this.spawnMobRemains(mob);
+    this.publishDestructionTombstones([{ kind: "mob", cause: "killed", entityId: mob.id }]);
     const index = this.mobs.indexOf(mob);
     if (index >= 0) this.removeMob(index);
     this.audio.play("pickup");
@@ -19631,7 +20189,7 @@ export class VoxelEngine {
             aetherbellMorph: hatchling.species === "aetherbell-leviathan" ? createAetherbellMorphState("sea") : null,
             persistentPoiResident: true,
           });
-          this.removeDrop(index);
+          this.removeDrop(index, "replaced");
           if (position.distanceToSquared(this.position) < 30 * 30) this.events.onToast(`A tiny ${MOB_DEFS[hatchling.kind].name} hatches into the current.`);
           this.audio.play("craft");
           this.saveSoon();
@@ -19695,7 +20253,7 @@ export class VoxelEngine {
             : hatchling;
           this.spawnMob(kind, position, { dragonState: state, persistentPoiResident: true });
           this.recordBestiaryMilestone(kind, "hatched");
-          this.removeDrop(index);
+          this.removeDrop(index, "replaced");
           if (position.distanceToSquared(this.position) < 40 * 40) this.events.onToast(`A tiny ${MOB_DEFS[kind].name} breaks free of its shell.`);
           this.audio.playDragon(hatchling.type, "egg-crack", 1, position);
           if (hatchling.type === "sea") this.dispatchQuestEvent({ type: "custom", eventId: "sea-dragon-hatched", at: Date.now() });
@@ -19727,21 +20285,16 @@ export class VoxelEngine {
           if (itemId) this.dispatchQuestEvent({ type: "item-acquired", itemId, count: acquired, at: Date.now() });
         }
         drop.count = leftover;
-        if (drop.count <= 0) { this.removeDrop(index); this.saveSoon(); this.emitHud(true); continue; }
+        if (drop.count <= 0) { this.removeDrop(index, "collected"); this.saveSoon(); this.emitHud(true); continue; }
       }
       const protectedDragonEgg = dragonEggDropIsProtected(drop.metadata, drop.age, this.worldOptions.dayLengthMinutes);
-      const nearestActivePlayerDistance = Math.sqrt(dropInterestPoints.reduce((nearestSquared, player) => {
-        const dx = drop.mesh.position.x - player.x;
-        const dy = drop.mesh.position.y - (player.y + 0.8);
-        const dz = drop.mesh.position.z - player.z;
-        return Math.min(nearestSquared, dx * dx + dy * dy + dz * dz);
-      }, Number.POSITIVE_INFINITY));
-      if (!protectedDragonEgg && (drop.age > 120 || nearestActivePlayerDistance > 85)) this.removeDrop(index);
+      if (!protectedDragonEgg && shouldExpireWorldDrop(drop.age, drop.mesh.position, dropInterestPoints)) this.removeDrop(index, "expired");
     }
   }
 
-  removeDrop(index: number) {
+  removeDrop(index: number, cause?: DestructionTombstone["cause"]) {
     const drop = this.drops[index];
+    if (cause) this.publishDestructionTombstones([{ kind: "drop", cause, entityId: drop.id }]);
     if (this.targetEggDrop === drop) this.targetEggDrop = null;
     this.dropGroup.remove(drop.mesh);
     if (drop.ownsVisual) this.disposeObject(drop.mesh);

@@ -13,11 +13,14 @@ import {
   detectMultiplayerSupport,
   encodeEnvelope,
   encodeInviteCode,
+  parseMultiplayerLatencyRange,
   validateEnvelope,
   validatePeerIdentity,
   type BlockAction,
+  type ContainerAction,
   type DataChannelLike,
   type ManualSignal,
+  type InventoryAction,
   type MultiplayerEnvelope,
   type MultiplayerEvent,
   type PeerConnectionFactory,
@@ -50,8 +53,9 @@ class FakeDataChannel implements DataChannelLike {
   onmessage: ((event: MessageEvent) => void) | null = null;
   remote: FakeDataChannel | null = null;
   sent: string[] = [];
+  private nextOrderedDeliveryAt = 0;
 
-  constructor(label: string, options: RTCDataChannelInit = {}) {
+  constructor(label: string, options: RTCDataChannelInit = {}, private readonly deliveryDelayMs: () => number = () => 0) {
     this.label = label;
     this.ordered = options.ordered ?? true;
     this.maxRetransmits = options.maxRetransmits ?? null;
@@ -67,9 +71,20 @@ class FakeDataChannel implements DataChannelLike {
     if (this.readyState !== "open") throw new Error("channel is not open");
     this.sent.push(data);
     const target = this.remote;
-    queueMicrotask(() => {
+    const deliver = () => {
       if (target?.readyState === "open") target.onmessage?.({ data } as MessageEvent);
-    });
+    };
+    const delay = this.deliveryDelayMs();
+    if (delay <= 0) {
+      queueMicrotask(deliver);
+      return;
+    }
+    const now = Date.now();
+    const deliveryAt = this.ordered ? Math.max(now + delay, this.nextOrderedDeliveryAt + 1) : now + delay;
+    if (this.ordered) this.nextOrderedDeliveryAt = deliveryAt;
+    const scheduledDelay = Math.max(0, deliveryAt - now);
+    if (scheduledDelay > 0) setTimeout(deliver, scheduledDelay);
+    else queueMicrotask(deliver);
   }
 
   close() {
@@ -93,7 +108,7 @@ class FakeRtcNetwork {
   private sequence = 0;
   readonly connections = new Map<string, FakePeerConnection>();
 
-  constructor(readonly nativeDescriptionPrototype = false) {}
+  constructor(readonly nativeDescriptionPrototype = false, readonly deliveryDelayMs: () => number = () => 0) {}
 
   factory: PeerConnectionFactory = () => {
     const connection = new FakePeerConnection(this, `rtc_${++this.sequence}`);
@@ -116,7 +131,7 @@ class FakePeerConnection implements PeerConnectionLike {
   constructor(private readonly network: FakeRtcNetwork, readonly id: string) {}
 
   createDataChannel(label: string, options?: RTCDataChannelInit) {
-    const channel = new FakeDataChannel(label, options);
+    const channel = new FakeDataChannel(label, options, this.network.deliveryDelayMs);
     this.channels.push(channel);
     return channel;
   }
@@ -151,7 +166,7 @@ class FakePeerConnection implements PeerConnectionLike {
 
   private connectToGuest(guest: FakePeerConnection) {
     for (const local of this.channels) {
-      const remote = new FakeDataChannel(local.label, { ordered: local.ordered, ...(local.maxRetransmits === null ? {} : { maxRetransmits: local.maxRetransmits }) });
+      const remote = new FakeDataChannel(local.label, { ordered: local.ordered, ...(local.maxRetransmits === null ? {} : { maxRetransmits: local.maxRetransmits }) }, this.network.deliveryDelayMs);
       local.remote = remote;
       remote.remote = local;
       guest.channels.push(remote);
@@ -232,6 +247,21 @@ test("identity, invite, and versioned envelope codecs round-trip with bounds", (
   const bytes = new TextEncoder().encode(encoded);
   assert.deepEqual(decodeEnvelope(bytes, MAX_MOVEMENT_MESSAGE_BYTES), envelope);
   assert.equal(validateEnvelope({ ...envelope, version: 999 }), false);
+  const semanticContainerRequest: ContainerAction = {
+    requestId: "container_codec_001", actorId: HOST.id, containerId: "1,2,3", kind: "mutate",
+    operation: { op: "distribute", targets: [9, 10], button: "right" }, expectedRevision: 2,
+    expectedPlayerRevision: 5, status: "request",
+  };
+  const containerEnvelope = {
+    ...envelope,
+    type: "container-action" as const,
+    payload: semanticContainerRequest,
+  } satisfies MultiplayerEnvelope<"container-action">;
+  assert.equal(validateEnvelope(containerEnvelope), true);
+  assert.equal(validateEnvelope({
+    ...containerEnvelope,
+    payload: { ...semanticContainerRequest, slots: [{ item: 1, count: 64 }] },
+  }), false, "guest requests cannot upload full inventory images");
   assert.throws(() => encodeEnvelope(envelope, 20), MultiplayerProtocolError);
   assert.throws(() => decodeEnvelope("{bad json"), MultiplayerProtocolError);
   assert.throws(() => decodeInviteCode("BW9.not-supported"), MultiplayerProtocolError);
@@ -242,6 +272,14 @@ test("feature detection reports missing browser WebRTC without throwing", () => 
   assert.equal(support.supported, false);
   assert.equal(support.webRTC, false);
   assert.ok(support.reasons.some((reason) => reason.includes("RTCPeerConnection")));
+});
+
+test("browser multiplayer latency QA range is explicit and safely bounded", () => {
+  assert.deepEqual(parseMultiplayerLatencyRange("?mpLatency=100-250"), { min: 100, max: 250 });
+  assert.deepEqual(parseMultiplayerLatencyRange("mode=qa&mpLatency=0-2000"), { min: 0, max: 2_000 });
+  assert.equal(parseMultiplayerLatencyRange("?mpLatency=250-100"), undefined);
+  assert.equal(parseMultiplayerLatencyRange("?mpLatency=0-2001"), undefined);
+  assert.equal(parseMultiplayerLatencyRange("?mpLatency=fast"), undefined);
 });
 
 test("closing a session during ICE setup cancels cleanly without a false transport error", async () => {
@@ -338,7 +376,11 @@ test("manual offer/answer creates both channel modes and carries host-authoritat
   assert.equal(host.sendTimeWeather(time), 1);
   await flushMessages();
   assert.equal(guestEvents.some((event) => event.type === "message" && event.envelope.type === "time-weather"), true);
-  assert.throws(() => guest.sendMobSnapshot({ tick: 3, mobs: [] }), /Guests cannot authoritatively send/u);
+  assert.throws(() => guest.sendMobSnapshot({
+    tick: 3,
+    scope: { centerPlayerId: GUEST_A.id, radius: 8, epoch: 1 },
+    mobs: [],
+  }), /Guests cannot authoritatively send/u);
   assert.throws(() => guest.sendPlayerPose(pose(HOST.id)), /local peer identity/u);
   assert.throws(() => guest.sendBlockAction({ ...action, status: "accepted" }), /only send action requests/u);
 
@@ -382,7 +424,9 @@ test("one host maintains independent star links for multiple guests and broadcas
     players: [pose(HOST.id, 6)],
     blockEdits: [],
     mobs: [],
+    mobScope: { centerPlayerId: GUEST_A.id, radius: 64, epoch: 1 },
     drops: [],
+    dropScope: { centerPlayerId: GUEST_A.id, radius: 64, epoch: 1 },
     time: { tick: 6, worldTime: 0.21, day: 2, weather: "clear" },
     worldOptions: {
       difficulty: "hard",
@@ -412,4 +456,79 @@ test("one host maintains independent star links for multiple guests and broadcas
   first.dispose();
   second.dispose();
   assert.equal(host.state, "closed");
+});
+
+test("100-250ms jitter and reconnect replay pending pickup and container responses exactly once", async () => {
+  let delivery = 0;
+  const network = new FakeRtcNetwork(false, () => 100 + (delivery++ % 4) * 50);
+  let clock = 1_000;
+  const hostEvents: MultiplayerEvent[] = [];
+  const guestEvents: MultiplayerEvent[] = [];
+  const host = makeSession(HOST, network, () => clock, hostEvents);
+  const guest = makeSession(GUEST_A, network, () => clock, guestEvents);
+  await connect(host, guest);
+  await new Promise((resolve) => setTimeout(resolve, 550));
+
+  const request: InventoryAction = {
+    requestId: "pickup_idempotent_jitter_001",
+    actorId: GUEST_A.id,
+    kind: "collect",
+    dropId: 71,
+    pickupAt: { x: 1, y: 2, z: 3 },
+    status: "request",
+  };
+  const transferRequest: ContainerAction = {
+    requestId: "container_idempotent_jitter_001", actorId: GUEST_A.id, containerId: "4,5,6", kind: "mutate",
+    operation: { op: "click", target: { owner: "player", slot: 9 }, button: "left", shift: true },
+    expectedRevision: 3, expectedPlayerRevision: 7, status: "request",
+  };
+  assert.equal(guest.sendInventoryAction(request), 1);
+  assert.equal(guest.sendContainerAction(transferRequest), 1);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(hostEvents.filter((event) => event.type === "message" && event.envelope.type === "inventory-action").length, 1);
+  assert.equal(hostEvents.filter((event) => event.type === "message" && event.envelope.type === "container-action").length, 1);
+
+  assert.equal(host.sendInventoryAction({ ...request, count: 1, status: "accepted" }, GUEST_A.id), 1);
+  assert.equal(host.sendContainerAction({ ...transferRequest, status: "accepted" }, GUEST_A.id), 1);
+  // The response is cached at send time, but this client disconnects before
+  // the delayed channel can deliver it. A new transport with the same stable
+  // player identity retries the pending request.
+  guest.dispose();
+  const reconnectedEvents: MultiplayerEvent[] = [];
+  const reconnectedGuest = makeSession(GUEST_A, network, () => clock, reconnectedEvents);
+  await connect(host, reconnectedGuest);
+  await new Promise((resolve) => setTimeout(resolve, 550));
+  assert.equal(reconnectedGuest.sendInventoryAction(request), 1);
+  assert.equal(reconnectedGuest.sendContainerAction(transferRequest), 1);
+  await new Promise((resolve) => setTimeout(resolve, 550));
+  assert.equal(hostEvents.filter((event) => event.type === "message" && event.envelope.type === "inventory-action").length, 1);
+  assert.equal(hostEvents.filter((event) => event.type === "message" && event.envelope.type === "container-action").length, 1);
+  assert.equal(reconnectedEvents.filter((event) => event.type === "message" && event.envelope.type === "inventory-action").length, 1);
+  assert.equal(reconnectedEvents.filter((event) => event.type === "message" && event.envelope.type === "container-action").length, 1);
+
+  clock += 20_001;
+  host.maintenanceTick();
+  assert.equal((host as unknown as { responseCache: Map<string, unknown> }).responseCache.size, 0, "final responses expire after 20 seconds");
+  reconnectedGuest.dispose();
+  host.dispose();
+});
+
+test("idempotent response history is bounded to 256 final commands per peer", async () => {
+  const network = new FakeRtcNetwork();
+  const host = makeSession(HOST, network, () => 1_000, []);
+  const guest = makeSession(GUEST_A, network, () => 1_000, []);
+  await connect(host, guest);
+  for (let index = 0; index < 300; index += 1) {
+    host.sendInventoryAction({
+      requestId: `bounded_response_${index.toString().padStart(3, "0")}`,
+      actorId: GUEST_A.id,
+      kind: "collect",
+      dropId: index,
+      count: 1,
+      status: "accepted",
+    }, GUEST_A.id);
+  }
+  assert.equal((host as unknown as { responseCache: Map<string, unknown> }).responseCache.size, 256);
+  guest.dispose();
+  host.dispose();
 });
