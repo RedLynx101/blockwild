@@ -17,6 +17,8 @@ import {
   naturalMobPopulation,
   nextPeelopBananaShedSeconds,
   nextSleepTransition,
+  gatePointerLockMovement,
+  POINTER_LOCK_REACQUIRE_SUPPRESSION_EVENTS,
   positionInPlayerViewCone,
   restoreChestStorage,
   regenerationFoodUsage,
@@ -848,6 +850,55 @@ test("submerged waterlogged plants meet stacked water without an air seam", () =
   assert.equal(boundaryY.some((y) => Math.abs(y - (0.5 - LIQUID_SURFACE_INSET)) < 1e-6), false, "a submerged cell must not stop below the next water block");
   assert.ok(boundaryY.filter((y) => Math.abs(y - 0.5) < 1e-6).length >= 4, "the lower and upper water faces should meet on the block boundary");
   world.dispose();
+});
+
+test("waterlogged flora does not draw pale implicit-water faces against solid ground or walls", () => {
+  const world = new ChunkWorld();
+  world.reset("WATERLOGGED-SOLID-SEAM");
+  const chunk = world.generateChunk(0, 0);
+  chunk.blocks.fill(BlockId.Air);
+  world.setBlock(2, 0, 2, BlockId.GlowKelp, false, false);
+  world.setBlock(3, 0, 2, BlockId.Stone, false, false);
+  world.setBlock(2, -1, 2, BlockId.Stone, false, false);
+  const section = Math.floor((0 - MIN_Y) / SECTION_HEIGHT);
+  world.rebuildSection(chunk, section);
+  const normals = chunk.sections.get(section)?.transparent?.geometry.getAttribute("normal");
+  assert.ok(normals);
+  const emitted = Array.from({ length: normals?.count ?? 0 }, (_, index) => [
+    normals?.getX(index) ?? 0,
+    normals?.getY(index) ?? 0,
+    normals?.getZ(index) ?? 0,
+  ] as const);
+  assert.equal(emitted.some(([x, y]) => x > 0.9 && Math.abs(y) < 0.1), false, "east wall boundary must stay hidden");
+  assert.equal(emitted.some(([x, y, z]) => y < -0.9 && Math.abs(x) < 0.1 && Math.abs(z) < 0.1), false, "ground boundary must stay hidden");
+  assert.equal(emitted.some(([, y]) => y > 0.9), true, "the open water surface must remain rendered");
+  world.dispose();
+});
+
+test("held-light uniforms stay independent from propagated chunk light", () => {
+  const world = new ChunkWorld();
+  const position = new THREE.Vector3(3, 7, -2);
+  const color = new THREE.Color(0xffa34f);
+  world.setHeldLight({ position, color, intensity: 1.25, radius: 13.5 });
+  const uniforms = world.materials.opaque.userData.voxelLightingUniforms as Record<string, { value: unknown }>;
+  assert.deepEqual((uniforms.voxelHeldLightPosition.value as THREE.Vector3).toArray(), position.toArray());
+  assert.equal((uniforms.voxelHeldLightColor.value as THREE.Color).getHex(), color.getHex());
+  assert.equal(uniforms.voxelHeldLightIntensity.value, 1.25);
+  assert.equal(uniforms.voxelHeldLightRadius.value, 13.5);
+  world.dispose();
+});
+
+test("pointer-lock reacquisition discards menu cursor deltas without replaying them later", () => {
+  let remaining = POINTER_LOCK_REACQUIRE_SUPPRESSION_EVENTS;
+  for (const [x, y] of [[920, -410], [-330, 240]] as const) {
+    const gated = gatePointerLockMovement(x, y, remaining);
+    assert.equal(gated.apply, false);
+    remaining = gated.remainingSuppressedEvents;
+  }
+  const live = gatePointerLockMovement(4, -3, remaining);
+  assert.equal(live.apply, true);
+  assert.equal(live.remainingSuppressedEvents, 0);
+  assert.equal(gatePointerLockMovement(Number.NaN, 1, 0).apply, false);
 });
 
 test("placed lights use data-driven colored voxel emission", () => {

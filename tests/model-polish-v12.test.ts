@@ -6,7 +6,7 @@ import test from "node:test";
 import * as THREE from "three";
 import { CHARACTER_RACES } from "../app/game/character-profiles.ts";
 import { BlockId, Item, ITEMS } from "../app/game/data.ts";
-import { createAvatarHeldItemModel } from "../app/game/held-items.ts";
+import { applyFirstPersonHeldItemOrientation, createAvatarHeldItemModel } from "../app/game/held-items.ts";
 import { createMobVisual } from "../app/game/mob-models.ts";
 import { BlockPlayerModel, type PlayerVariant } from "../app/game/player-model.ts";
 import { objectToInspectionSpec, renderModelInspection } from "../scripts/render-models.ts";
@@ -50,14 +50,22 @@ test("player tools, shields and seated legs use one shared forward-facing articu
   player.dispose();
 });
 
-test("the player torch uses the same ninety-degree working pose as forward tools", () => {
+test("the player torch stands upright at the end of the ninety-degree working arm", () => {
   const player = new BlockPlayerModel();
   const torch = createAvatarHeldItemModel(BlockId.Torch)!;
   player.setHeldItem(torch).setPose({ locomotion: "idle" });
-  assert.equal(torch.userData.gripPose, "forward-90");
+  assert.equal(torch.userData.gripPose, "upright-at-hand");
   assert.ok(Math.abs(Number(torch.userData.workingAngle) - Math.PI / 2) < 1e-8);
   assert.ok(player.parts.rightArm.rotation.x > 1.48 && player.parts.rightArm.rotation.x < 1.66);
-  assert.ok(Math.abs(torch.rotation.x - Math.PI) < 1e-8, "the torch shaft should continue outward from the forward hand instead of hanging down");
+  assert.ok(Math.abs(torch.rotation.x + Math.PI / 2) < 1e-8);
+  player.group.updateMatrixWorld(true);
+  const shaftDirection = new THREE.Vector3(0, 1, 0).applyQuaternion(torch.getWorldQuaternion(new THREE.Quaternion())).normalize();
+  assert.ok(shaftDirection.y > 0.95, "the torch shaft should rise from the fist instead of pointing away along the arm");
+  assert.ok(Math.abs(shaftDirection.z) < 0.2);
+  const firstPersonTorch = applyFirstPersonHeldItemOrientation(BlockId.Torch, createAvatarHeldItemModel(BlockId.Torch)!);
+  assert.ok(Math.abs(firstPersonTorch.rotation.x) < 1e-8, "first-person presentation must not inherit the articulated-arm counter-rotation");
+  assert.ok(Math.abs(firstPersonTorch.rotation.y - Math.PI) < 1e-8, "first-person torches retain the preferred 180-degree reverse presentation");
+  assert.equal(firstPersonTorch.userData.firstPersonReverse, true);
   player.dispose();
 });
 

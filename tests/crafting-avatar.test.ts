@@ -440,7 +440,7 @@ test("workstation UI normalizes apiary production and exact capture-orb metadata
 });
 
 test("human release identity stays separate from save schemas", () => {
-  assert.equal(GAME_VERSION, "1.8.0");
+  assert.equal(GAME_VERSION, "1.8.1");
   assert.equal(GAME_RELEASE_NAME, "Hearthlands & Frontiers");
   assert.equal(normalizeGameVersion("garbage"), "0.1.0");
 });

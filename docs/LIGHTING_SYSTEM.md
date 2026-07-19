@@ -88,8 +88,12 @@ permanently. A light-only change replaces these buffer attributes without
 rebuilding vertex positions, UVs, normals, or indices.
 
 Daylight color and strength, minimum ambient response, and cave presentation are
-shared uniforms. Three.js point lights are restrained accents for nearby flames
-and magical sources; voxel light remains correct when every accent slot is busy.
+shared uniforms. The local main/offhand light is one moving shader uniform: it
+updates terrain immediately without mutating or re-propagating the chunk field.
+The matching Three.js point light remains available to creatures, drops, and
+held meshes. Other Three.js point lights are restrained accents for nearby
+flames and magical sources; placed voxel light remains correct when every accent
+slot is busy.
 
 ## Caves, weather, and celestial presentation
 
@@ -124,6 +128,7 @@ subterranean blend, dirty light-section count, and derived field memory.
 - Large batches rebuild only a deduplicated one-chunk halo.
 - Light dirtiness is tracked independently from geometry dirtiness.
 - Dynamic accent lights use a small nearest-source pool and a bounded query.
+- The local held light updates shared uniforms only; it never dirties chunks.
 - Propagation never crosses an unloaded chunk boundary.
 
 Before changing these boundaries, benchmark the initial 3 x 3 area, the dense
@@ -144,6 +149,7 @@ The release lighting suite must cover:
 - deterministic dense-source propagation and bounded runtime;
 - packed light attributes and a light-only buffer update;
 - separate, bounded vertex occlusion;
+- main- and offhand moving light without a propagated-field rebuild;
 - authoritative weather, crop, and hostile-spawn queries; and
 - a newly generated world in a real browser with no shader, console, or page
   errors.

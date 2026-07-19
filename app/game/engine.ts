@@ -443,7 +443,7 @@ import {
   type LootContainerRecord,
 } from "./contextual-loot";
 import { normalizeRoadEventState, planRoadEvent, type RoadEdge, type RoadEventState } from "./surface-roads";
-import { createAvatarHeldItemModel } from "./held-items";
+import { applyFirstPersonHeldItemOrientation, createAvatarHeldItemModel } from "./held-items";
 import {
   boardSailboat,
   createSailboatVisual,
@@ -1756,6 +1756,22 @@ export const PASSIVE_SPAWN_INTERVAL_SECONDS = Object.freeze([1.8, 3.2] as const)
 export const HOSTILE_CAP_SCALE = 0.42;
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+export const POINTER_LOCK_REACQUIRE_SUPPRESSION_EVENTS = 2;
+
+export function gatePointerLockMovement(
+  movementX: number,
+  movementY: number,
+  suppressedEvents: number,
+): Readonly<{ apply: boolean; remainingSuppressedEvents: number }> {
+  if (!Number.isFinite(movementX) || !Number.isFinite(movementY)) {
+    return { apply: false, remainingSuppressedEvents: Math.max(0, suppressedEvents) };
+  }
+  if (suppressedEvents > 0) {
+    return { apply: false, remainingSuppressedEvents: suppressedEvents - 1 };
+  }
+  return { apply: movementX !== 0 || movementY !== 0, remainingSuppressedEvents: 0 };
+}
 
 /** Multiplicative movement effects shared by walking, sprinting and swimming. */
 export function timedMovementMultiplier(buffs: Readonly<Record<string, number>> | undefined, nowSeconds: number) {
@@ -3318,6 +3334,7 @@ export class VoxelEngine {
   settings: GameSettings;
   resizeObserver: ResizeObserver | null = null;
   keyboardEscapeLocked = false;
+  pointerLockMovementSuppression = 0;
   nativePixelRatio = 1;
   renderPixelRatio = 1;
   averageFrameMs = 16.7;
@@ -3914,10 +3931,15 @@ export class VoxelEngine {
   onPointerLockChange = () => {
     this.locked = document.pointerLockElement === this.canvas;
     if (!this.locked) {
+      this.pointerLockMovementSuppression = 0;
       if (this.running && !this.touchMode) this.paused = !this.multiplayerSimulationActive();
       this.clearInput();
       this.mineHeld = false;
     } else {
+      // Pointer-lock reacquisition can deliver one or two cursor-recenter
+      // deltas from mouse movement that happened over the inventory. Never
+      // replay those menu deltas into gameplay view rotation.
+      this.pointerLockMovementSuppression = POINTER_LOCK_REACQUIRE_SUPPRESSION_EVENTS;
       this.paused = false;
       this.titleMode = false;
       void this.audio.unlock();
@@ -3926,7 +3948,10 @@ export class VoxelEngine {
   };
 
   onMouseMove = (event: MouseEvent) => {
-    if (!this.locked || !this.running) return;
+    if (!this.locked || document.pointerLockElement !== this.canvas || !this.running || this.gameplayOverlayOpen || this.paused) return;
+    const gate = gatePointerLockMovement(event.movementX, event.movementY, this.pointerLockMovementSuppression);
+    this.pointerLockMovementSuppression = gate.remainingSuppressedEvents;
+    if (!gate.apply) return;
     this.look(event.movementX, event.movementY);
   };
 
@@ -24342,6 +24367,16 @@ export class VoxelEngine {
     const heldFlicker = torchAnimationSample(timeSeconds, this.position, true);
     this.caveLight.intensity = heldTorch ? 3.15 * heldFlicker.lightIntensity : heldLantern ? 3.35 : heldBugJar ? 1.7 * (1 + Math.sin(timeSeconds * 3.2) * 0.08) : heldGlow ? 2.55 : deepLantern ? .9 * (1 + Math.sin(timeSeconds * 1.6) * .09) : 0;
     this.caveLight.distance = heldTorch ? heldFlicker.lightRadius * 3 : heldLantern ? 25 : heldBugJar ? 11 : deepLantern ? 12 : 20;
+    // World terrain now uses propagated voxel light instead of Three.js point
+    // lights. Feed the one moving local hand light directly to that shader so
+    // it remains immediate without rebuilding or re-propagating chunks every
+    // frame. The PointLight stays for creatures, drops, and held models.
+    this.world.setHeldLight({
+      position: this.caveLight.position,
+      color: this.caveLight.color,
+      intensity: this.caveLight.intensity > 0 ? clamp(this.caveLight.intensity * 0.42, 0, 1.5) : 0,
+      radius: heldTorch ? heldFlicker.lightRadius * 1.8 : heldLantern ? 15 : heldBugJar ? 9 : heldGlow ? 12 : deepLantern ? 10 : 0,
+    });
   }
 
   daylightAmount() {
@@ -24959,9 +24994,12 @@ export class VoxelEngine {
           return mesh;
         };
         if (item === BlockId.Torch) {
-          addBox([0.08, 0.48, 0.08], [0, 0, 0], 0x8d542b, [0, 0, -0.12]);
-          const outer = addBox([0.14, 0.14, 0.14], [-0.03, 0.27, 0], 0xffbe45, [0, 0, 0], true);
-          const inner = addBox([0.07, 0.08, 0.07], [-0.04, 0.37, 0], 0xffef93, [0, 0, 0], true);
+          const torchModel = applyFirstPersonHeldItemOrientation(item, new THREE.Group());
+          torchModel.name = "first-person-main-torch";
+          this.heldRoot.add(torchModel);
+          addBox([0.08, 0.48, 0.08], [0, 0, 0], 0x8d542b, [0, 0, -0.12], false, torchModel);
+          const outer = addBox([0.14, 0.14, 0.14], [-0.03, 0.27, 0], 0xffbe45, [0, 0, 0], true, torchModel);
+          const inner = addBox([0.07, 0.08, 0.07], [-0.04, 0.37, 0], 0xffef93, [0, 0, 0], true, torchModel);
           outer.name = "torch-flame-outer";
           inner.name = "torch-flame-inner";
           outer.userData.torchBase = outer.position.toArray();
@@ -25071,6 +25109,7 @@ export class VoxelEngine {
       this.offhandItemCode = offhandItem;
       const productionOffhand = offhandItem >= 0 ? createAvatarHeldItemModel(offhandItem) : null;
       if (productionOffhand) {
+        applyFirstPersonHeldItemOrientation(offhandItem, productionOffhand);
         productionOffhand.name = `first-person-offhand-${productionOffhand.name}`;
         productionOffhand.scale.multiplyScalar(shieldKindForItem(offhandItem) ? 0.92 : 0.88);
         productionOffhand.traverse((object) => {

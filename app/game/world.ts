@@ -652,6 +652,13 @@ export type VoxelLightingEnvironment = Readonly<{
   minimumAmbient?: number;
 }>;
 
+export type VoxelHeldLight = Readonly<{
+  position: THREE.Vector3;
+  color: THREE.Color;
+  intensity: number;
+  radius: number;
+}>;
+
 type VoxelLightingUniforms = {
   voxelSkyColor: { value: THREE.Color };
   voxelSkyIntensity: { value: number };
@@ -660,6 +667,10 @@ type VoxelLightingUniforms = {
   voxelSunIntensity: { value: number };
   voxelBlockIntensity: { value: number };
   voxelMinimumAmbient: { value: number };
+  voxelHeldLightPosition: { value: THREE.Vector3 };
+  voxelHeldLightColor: { value: THREE.Color };
+  voxelHeldLightIntensity: { value: number };
+  voxelHeldLightRadius: { value: number };
 };
 
 function createVoxelWorldMaterial(
@@ -688,12 +699,14 @@ attribute float voxelOcclusion;
 varying vec4 vVoxelLight;
 varying float vVoxelEmission;
 varying float vVoxelOcclusion;
-varying vec3 vVoxelNormal;`)
+varying vec3 vVoxelNormal;
+varying vec3 vVoxelWorldPosition;`)
       .replace("#include <begin_vertex>", `#include <begin_vertex>
 vVoxelLight = voxelLight;
 vVoxelEmission = voxelEmission;
 vVoxelOcclusion = voxelOcclusion;
-vVoxelNormal = normalize(normal);`);
+vVoxelNormal = normalize(normal);
+vVoxelWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;`);
     shader.fragmentShader = shader.fragmentShader
       .replace("#include <common>", `#include <common>
 uniform vec3 voxelSkyColor;
@@ -703,10 +716,15 @@ uniform vec3 voxelSunDirection;
 uniform float voxelSunIntensity;
 uniform float voxelBlockIntensity;
 uniform float voxelMinimumAmbient;
+uniform vec3 voxelHeldLightPosition;
+uniform vec3 voxelHeldLightColor;
+uniform float voxelHeldLightIntensity;
+uniform float voxelHeldLightRadius;
 varying vec4 vVoxelLight;
 varying float vVoxelEmission;
 varying float vVoxelOcclusion;
-varying vec3 vVoxelNormal;`)
+varying vec3 vVoxelNormal;
+varying vec3 vVoxelWorldPosition;`)
       .replace("#include <opaque_fragment>", `
 float voxelSky = pow(clamp(vVoxelLight.x, 0.0, 1.0), 1.22);
 vec3 voxelBlock = pow(clamp(vVoxelLight.yzw, 0.0, 1.0), vec3(1.32));
@@ -715,12 +733,21 @@ vec3 voxelIllumination = vec3(voxelMinimumAmbient)
   + voxelSkyColor * voxelSky * voxelSkyIntensity
   + voxelSunColor * voxelSunFacing * voxelSky * voxelSunIntensity
   + voxelBlock * voxelBlockIntensity;
+vec3 voxelHeldDelta = voxelHeldLightPosition - vVoxelWorldPosition;
+float voxelHeldDistance = length(voxelHeldDelta);
+float voxelHeldAttenuation = voxelHeldLightRadius > 0.0
+  ? pow(clamp(1.0 - voxelHeldDistance / voxelHeldLightRadius, 0.0, 1.0), 1.45)
+  : 0.0;
+float voxelHeldFacing = voxelHeldDistance > 0.0001
+  ? max(dot(normalize(vVoxelNormal), voxelHeldDelta / voxelHeldDistance), 0.0)
+  : 1.0;
+voxelIllumination += voxelHeldLightColor * voxelHeldLightIntensity * voxelHeldAttenuation * (0.16 + voxelHeldFacing * 0.84);
 voxelIllumination *= vVoxelOcclusion;
 outgoingLight *= voxelIllumination;
 outgoingLight += diffuseColor.rgb * vVoxelEmission;
 #include <opaque_fragment>`);
   };
-  material.customProgramCacheKey = () => "blockwild-voxel-light-v2";
+  material.customProgramCacheKey = () => "blockwild-voxel-light-v3-held";
   return material;
 }
 
@@ -2327,6 +2354,10 @@ export class ChunkWorld {
     voxelSunIntensity: { value: 0.28 },
     voxelBlockIntensity: { value: 1.35 },
     voxelMinimumAmbient: { value: 0.028 },
+    voxelHeldLightPosition: { value: new THREE.Vector3() },
+    voxelHeldLightColor: { value: new THREE.Color(0xffb45e) },
+    voxelHeldLightIntensity: { value: 0 },
+    voxelHeldLightRadius: { value: 0 },
   };
   private readonly surfaceLightSample: [number, number, number, number] = [0, 0, 0, 0];
   /**
@@ -4202,6 +4233,13 @@ export class ChunkWorld {
     return accepted;
   }
 
+  setHeldLight(light: VoxelHeldLight) {
+    this.lightingUniforms.voxelHeldLightPosition.value.copy(light.position);
+    this.lightingUniforms.voxelHeldLightColor.value.copy(light.color);
+    this.lightingUniforms.voxelHeldLightIntensity.value = Math.max(0, light.intensity);
+    this.lightingUniforms.voxelHeldLightRadius.value = Math.max(0, light.radius);
+  }
+
   private settlementTerrainSampler(sample: (x: number, z: number) => ColumnSample = (x, z) => this.sampleColumn(x, z)): SettlementTerrainSampler {
     return (x, z) => {
       const column = sample(x, z);
@@ -5491,7 +5529,11 @@ export class ChunkWorld {
       );
       for (const face of FACES) {
         const [dx, dy, dz] = face.direction;
-        if (blockContainsWater(neighborAt(localX + dx, y + dy, localZ + dz))) continue;
+        const neighbor = neighborAt(localX + dx, y + dy, localZ + dz);
+        // Match an ordinary water cell: do not draw a hidden water skin flush
+        // against opaque ground or walls. Those coplanar boundaries produced
+        // the pale rectangular patch beside waterlogged flora.
+        if (!this.faceVisible(BlockId.Water, neighbor)) continue;
         addQuad(buckets.transparent, face.corners, face.direction, BLOCKS[BlockId.Water].side, face.shade, tint,
           localX, y, localZ, surfaceInset, shadeAt(localX + dx, y + dy, localZ + dz));
       }

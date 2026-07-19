@@ -512,13 +512,13 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
     inner.name = "torch-flame-inner";
     outer.userData.torchBase = outer.position.toArray();
     inner.userData.torchBase = inner.position.toArray();
-    // The arm rotates from hanging (-Y) to player-forward (-Z). Turning the
-    // torch around its local X axis keeps its shaft continuing out from the
-    // fist instead of doubling back through the forearm.
-    group.rotation.x = Math.PI;
+    // The working arm points forward. Counter-rotating the torch by ninety
+    // degrees keeps the flame upright at the fist instead of extending the
+    // shaft straight away from the character along the forearm.
+    group.rotation.x = -Math.PI / 2;
     group.position.set(0, -0.03, 0);
     group.userData.workingAngle = Math.PI / 2;
-    group.userData.gripPose = "forward-90";
+    group.userData.gripPose = "upright-at-hand";
     group.userData.offhandLight = true;
   } else if (item === Item.Berry) {
     // Keep remote/third-person Moonberries identical to the first-person
@@ -660,4 +660,20 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
     addBox([0.28, 0.38, 0.2], [0, 0.1, 0], definition.color, [0.12, 0.15, -0.06]);
   }
   return group;
+}
+
+/**
+ * First-person hand models face back toward their owner so their authored
+ * grip/front reads correctly from the camera. Keep this separate from the
+ * shared third-person model transform: changing one must not flip the other.
+ */
+export function applyFirstPersonHeldItemOrientation(item: ItemCode, model: THREE.Object3D) {
+  if (item !== BlockId.Torch) return model;
+  // Shared avatar torches counter-rotate against an articulated forward arm.
+  // A first-person root has no such arm, so remove that counter-rotation before
+  // reversing the camera-facing side.
+  model.rotation.x = 0;
+  model.rotation.y += Math.PI;
+  model.userData.firstPersonReverse = true;
+  return model;
 }

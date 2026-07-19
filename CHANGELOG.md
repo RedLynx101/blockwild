@@ -2,6 +2,13 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.8.1 - Hearthlands hotfix - 2026-07-19
+
+- Corrected main- and offhand torches to rise upright from the fist at the end of the forward working arm, and restored the preferred 180-degree first-person presentation without coupling the camera and avatar transforms.
+- Restored moving held-light illumination to voxel terrain through a shared shader uniform while retaining the new propagated placed-light field, bounded accent pool, and existing creature/drop PointLight response.
+- Quarantined pointer-lock cursor-recenter deltas on inventory exit so menu mouse movement can never replay into a delayed camera turn.
+- Culled implicit water skins where waterlogged flora meets solid floors and walls, removing the pale clipping patch while preserving seamless water above and around the plant.
+
 ## 1.7.1 - Frostpine Fieldcraft - 2026-07-19
 
 - Added sparse Frostpine Taiga undergrowth, two harvestable berry species, and naturally generated Frostpear trees with plantable fruit, authored leaves, hanging harvest blocks, and deterministic regrowth.

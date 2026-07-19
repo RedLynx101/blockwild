@@ -1,6 +1,6 @@
 # Blockwild
 
-Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.8.0 Hearthlands & Frontiers**.
+Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.8.1 Hearthlands & Frontiers**.
 
 The project is a real game rather than a voxel-rendering demo. You can mine, build, craft, smelt, farm, fight, collect field notes, manage several worlds, and carry those worlds between browsers with export files.
 
@@ -9,6 +9,10 @@ The project is a real game rather than a voxel-rendering demo. You can mine, bui
 ![Blockwild field guide with all 215 rendered creatures](public/creatures/blockwild-creatures.svg)
 
 The integrated creature-design pass expands the Courser family with Rimehoof, Sunscar, Mirestride, and Starbough ecological breeds plus the forge-built Deepgear Courser. It also gives all six dragon families production stage forms, rebuilds birds, pets, crabs, mosslings, foxes, harts, deer, longhorns, terrapins, and other core wildlife, and preserves one model path for gameplay, Bestiary portraits, and visual audits.
+
+## v1.8.1 Hearthlands hotfix
+
+Torches now stand upright from either articulated hand at the end of the forward working arm, while first-person main- and offhand presentation keeps its reversed camera-facing orientation. Held light reaches the voxel terrain through one allocation-free moving shader uniform, leaving the propagated placed-light field and bounded accent pool intact. Pointer-lock reacquisition discards browser cursor-recenter deltas instead of rotating the camera after an inventory closes, and waterlogged flora no longer draws hidden pale water faces against solid floors or walls.
 
 ## v1.8.0 Hearthlands & Frontiers
 
@@ -24,7 +28,7 @@ Stacked water plants now connect only to their own species and use distinct ribb
 
 Creature presentation and handling are safer and calmer. Creature Camp owns an explicit, stable specimen selector; all care, gear, research, rename, and archive actions remain bound to that exact orb even when the hotbar changes. Renames propagate to deployed companions and Capture Orb labels. Puddlehopper settles between hops, Rimecoat Hound travel tails use a slower weight-appropriate cadence, Trufflehog and other Living Bestiary quadrupeds receive their gait rigs, and the 88-part Clockwork Marmot gains articulated gears, piston legs, a pressure gauge, whistle stack, winding key, and exact ground contact.
 
-Player torches use the shared ninety-degree forward tool pose. The opening control reminder remains visible for 8.5 seconds, V/Shift hints no longer cover three pinned quests, and Follower Orders uses value-preserving dropdowns with explicit selected summaries and unshadowed rename text. The release passes the 215-creature/293-block strict visual-theme audit.
+Player torches use the shared ninety-degree forward arm pose. The opening control reminder remains visible for 8.5 seconds, V/Shift hints no longer cover three pinned quests, and Follower Orders uses value-preserving dropdowns with explicit selected summaries and unshadowed rename text. The release passes the 215-creature/293-block strict visual-theme audit.
 
 ## v1.7.0 Wild Bonds & Hearthroads
 
