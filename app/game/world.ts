@@ -35,6 +35,7 @@ import {
   MOONBERRY_CRATE_SIDE_TILE,
   MOONBERRY_CRATE_TOP_TILE,
   MOONBOUGH_LEAVES_TILE,
+  MOONFELT_MYCELIUM_TILE,
   PEARLFAN_TILE,
   RIVETED_BRASS_TILE,
   ROOTWEAVE_SOIL_SIDE_TILE,
@@ -2508,6 +2509,25 @@ export function createBlockAtlas() {
     }
   }
   for (const [x, y] of [[2, 2], [5, 0], [9, 1], [13, 3]] as Array<[number, number]>) pixel(PEARLFAN_TILE, x, y, "#fff3d9");
+
+  // Moonfelt is a building substrate, not a crossed plant. Its subdued
+  // toroidal grain and wrapping hyphae repeat cleanly over floors, walls, and
+  // ceilings without an obvious grass top or directional border.
+  fillTile(MOONFELT_MYCELIUM_TILE, "#5b5066");
+  const moonfeltBase = ["#51495d", "#5b5066", "#65586f", "#706179"] as const;
+  for (let y = 0; y < tile; y += 1) for (let x = 0; x < tile; x += 1) {
+    const grain = (x * 5 + y * 3 + x * y * 2) & 15;
+    pixel(MOONFELT_MYCELIUM_TILE, x, y, moonfeltBase[grain & 3]);
+    const descendingThread = ((x - y + 16) & 7) === 0;
+    const risingThread = ((x + y * 2) & 7) === 0;
+    if (descendingThread && ((x + y) & 3) !== 1) pixel(MOONFELT_MYCELIUM_TILE, x, y, "#8d7b9c");
+    if (risingThread && ((x + y * 3) & 7) < 5) pixel(MOONFELT_MYCELIUM_TILE, x, y, "#a08caf");
+    if (descendingThread && risingThread) pixel(MOONFELT_MYCELIUM_TILE, x, y, "#d0bfda");
+  }
+  for (const [x, y] of [[1, 3], [6, 6], [12, 1], [14, 9], [4, 13], [10, 11]] as Array<[number, number]>) {
+    pixel(MOONFELT_MYCELIUM_TILE, x, y, "#b6a2c4");
+    pixel(MOONFELT_MYCELIUM_TILE, (x + 1) & 15, y, "#796986");
+  }
 
   clearTile(FROSTPEAR_SAPLING_TILE);
   for (let y = 5; y < 16; y += 1) pixel(FROSTPEAR_SAPLING_TILE, 7, y, y % 3 ? "#755138" : "#9b7248");

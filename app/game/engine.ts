@@ -4902,6 +4902,8 @@ export class VoxelEngine {
     place(-2, 0, 2, BlockId.Furnace, BLOCK_FACING_WEST);
     place(2, 0, 2, BlockId.WildwoodShelf, BLOCK_FACING_EAST);
     place(5, 0, 2, BlockId.HearthChair, BLOCK_FACING_WEST);
+    // A four-block swatch exposes Moonfelt's horizontal and vertical seams.
+    for (const [dx, dy] of [[8, 0], [9, 0], [8, 1], [9, 1]] as const) place(dx, dy, 2, BlockId.MoonfeltMycelium, BLOCK_FACING_SOUTH);
 
     this.position.set(centerX, groundY + 0.51, centerZ + 3.2);
     this.spawn.copy(this.position);
@@ -4912,6 +4914,18 @@ export class VoxelEngine {
     this.syncOrbRackVisuals(true);
     this.emitHud(true);
     return this.resolveChest(auditChestBlock);
+  }
+
+  /** Close deterministic view of the dedicated seamless Moonfelt swatch. */
+  primeMoonfeltMyceliumAudit() {
+    this.primeDirectionalPlacementAudit();
+    const centerX = Math.round(this.spawn.x);
+    const centerZ = Math.round(this.spawn.z);
+    this.position.set(centerX + 8.5, this.spawn.y, centerZ + 3.2);
+    this.spawn.copy(this.position);
+    this.yaw = 0;
+    this.pitch = -0.06;
+    this.emitHud(true);
   }
 
   /** Deterministic overlook for the grounded underground-liquid regression. */

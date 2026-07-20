@@ -839,6 +839,7 @@ export const BRINEGRASS_TILE = 240;
 export const SAILKELP_TILE = 241;
 export const FEATHERWRACK_TILE = 242;
 export const PEARLFAN_TILE = 243;
+export const MOONFELT_MYCELIUM_TILE = 244;
 
 export type InventorySlot = {
   item: ItemCode;
@@ -1274,7 +1275,7 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.EmberglassArchive]: block(BlockId.EmberglassArchive, "Emberglass Archive Brick", 153, 153, 49, 2.35, "#a9573e", "pickaxe", 2),
   [BlockId.Mirrorpeat]: block(BlockId.Mirrorpeat, "Mirrorpeat", 27, 27, 27, .7, "#443e46", "shovel"),
   [BlockId.Reedglass]: block(BlockId.Reedglass, "Reedglass", 182, 182, 182, 1.5, "#729d91", "pickaxe", 1, { layer: "transparent" }),
-  [BlockId.MoonfeltMycelium]: block(BlockId.MoonfeltMycelium, "Moonfelt Mycelium", 180, 180, 180, .55, "#75658d", "shovel"),
+  [BlockId.MoonfeltMycelium]: block(BlockId.MoonfeltMycelium, "Moonfelt Mycelium", MOONFELT_MYCELIUM_TILE, MOONFELT_MYCELIUM_TILE, MOONFELT_MYCELIUM_TILE, .55, "#75658d", "shovel"),
   [BlockId.ShellfruitSprout]: block(BlockId.ShellfruitSprout, "Shellfruit Sprout", SHELLFRUIT_SPROUT_TILE, SHELLFRUIT_SPROUT_TILE, SHELLFRUIT_SPROUT_TILE, .04, "#66aa8f", "hand", 0, { solid: false, layer: "cutout", shape: "aquatic", replaceable: true, waterlogged: true, aquaticProfile: "bloom" }),
   [BlockId.ShellfruitYoung]: block(BlockId.ShellfruitYoung, "Young Shellfruit", SHELLFRUIT_YOUNG_TILE, SHELLFRUIT_YOUNG_TILE, SHELLFRUIT_YOUNG_TILE, .05, "#84b79b", "hand", 0, { solid: false, layer: "cutout", shape: "aquatic", replaceable: true, waterlogged: true, aquaticProfile: "bloom" }),
   [BlockId.ShellfruitCrop]: block(BlockId.ShellfruitCrop, "Ripe Shellfruit Bed", SHELLFRUIT_CROP_TILE, SHELLFRUIT_CROP_TILE, SHELLFRUIT_CROP_TILE, .07, "#e0a765", "hand", 0, { solid: false, layer: "cutout", shape: "aquatic", replaceable: true, waterlogged: true, aquaticProfile: "bloom" }),

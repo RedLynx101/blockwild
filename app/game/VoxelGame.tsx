@@ -2218,12 +2218,13 @@ export default function VoxelGame() {
     const caveLiquidAudit = auditParameters.get("cave-liquid-audit") === "1";
     const oceanFloraAudit = auditParameters.get("ocean-flora-audit") === "1";
     const creatureCollisionAudit = auditParameters.get("mob-collision-audit") === "1";
+    const moonfeltAudit = auditParameters.get("moonfelt-audit") === "1";
     const settlementOriginAudit = auditParameters.get("origin-audit") === "wood-elf-remote";
     const itemGuideAudit = auditParameters.get("item-guide-audit") === "1";
-    const placementAudit = auditParameters.get("placement-audit") === "1" || mapNavigationAudit || waystoneIconAudit || chestAudit || caveLiquidAudit || oceanFloraAudit || creatureCollisionAudit || settlementOriginAudit || itemGuideAudit;
+    const placementAudit = auditParameters.get("placement-audit") === "1" || mapNavigationAudit || waystoneIconAudit || chestAudit || caveLiquidAudit || oceanFloraAudit || creatureCollisionAudit || moonfeltAudit || settlementOriginAudit || itemGuideAudit;
     if (placementAudit) {
       engine.createWorld(
-        settlementOriginAudit ? "WOOD-ELF-REMOTE-1" : caveLiquidAudit ? "WILDERNESS" : oceanFloraAudit ? "OCEAN-FLORA-AUDIT" : creatureCollisionAudit ? "MOB-COLLISION-AUDIT" : mapNavigationAudit || waystoneIconAudit ? "MAP-NAVIGATION-AUDIT" : "DIRECTIONAL-PLACEMENT-AUDIT",
+        settlementOriginAudit ? "WOOD-ELF-REMOTE-1" : caveLiquidAudit ? "WILDERNESS" : oceanFloraAudit ? "OCEAN-FLORA-AUDIT" : creatureCollisionAudit ? "MOB-COLLISION-AUDIT" : moonfeltAudit ? "MOONFELT-MYCELIUM-AUDIT" : mapNavigationAudit || waystoneIconAudit ? "MAP-NAVIGATION-AUDIT" : "DIRECTIONAL-PLACEMENT-AUDIT",
         "builder",
         settlementOriginAudit ? {
           ...DEFAULT_WORLD_OPTIONS,
@@ -2233,14 +2234,15 @@ export default function VoxelGame() {
           mobDensity: 0,
           butterflyDensity: 0,
         } : { structures: false, weather: false, mobDensity: 0, butterflyDensity: 0 },
-        settlementOriginAudit ? "Remote Wood Elf Origin Audit" : caveLiquidAudit ? "Cave Liquid Audit" : oceanFloraAudit ? "Ocean Flora Audit" : creatureCollisionAudit ? "Creature Collision Audit" : mapNavigationAudit || waystoneIconAudit ? "Map Navigation Audit" : "Directional Placement Audit",
+        settlementOriginAudit ? "Remote Wood Elf Origin Audit" : caveLiquidAudit ? "Cave Liquid Audit" : oceanFloraAudit ? "Ocean Flora Audit" : creatureCollisionAudit ? "Creature Collision Audit" : moonfeltAudit ? "Moonfelt Mycelium Audit" : mapNavigationAudit || waystoneIconAudit ? "Map Navigation Audit" : "Directional Placement Audit",
         settlementOriginAudit ? MAX_SETTLEMENT_ORIGIN_SEARCH_RADIUS : DEFAULT_SETTLEMENT_ORIGIN_SEARCH_RADIUS,
       );
       const auditMarkerId = mapNavigationAudit || waystoneIconAudit ? engine.primeMapNavigationAudit(auditParameters.get("far-track") === "1", waystoneIconAudit) : null;
-      const auditChestKey = !mapNavigationAudit && !waystoneIconAudit && !caveLiquidAudit && !oceanFloraAudit && !creatureCollisionAudit && !settlementOriginAudit && !itemGuideAudit ? engine.primeDirectionalPlacementAudit() : null;
+      const auditChestKey = !mapNavigationAudit && !waystoneIconAudit && !caveLiquidAudit && !oceanFloraAudit && !creatureCollisionAudit && !moonfeltAudit && !settlementOriginAudit && !itemGuideAudit ? engine.primeDirectionalPlacementAudit() : null;
       if (caveLiquidAudit) engine.primeCaveLiquidAudit();
       if (oceanFloraAudit) engine.primeOceanFloraAudit();
       if (creatureCollisionAudit) engine.primeCreatureCollisionAudit();
+      if (moonfeltAudit) engine.primeMoonfeltMyceliumAudit();
       if (chestAudit && auditChestKey) engine.primeOpenChestAudit(auditChestKey);
       startedRef.current = true;
       overlayRef.current = mapNavigationAudit || waystoneIconAudit ? "map" : null;
