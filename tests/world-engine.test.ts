@@ -54,7 +54,7 @@ test("Giant Mooncaps keep full collision while rendering an inset stem", () => {
 });
 import { harvestPlant } from "../app/game/farming.ts";
 import { CHEST_VISUAL, chestLatchCenters } from "../app/game/chest-model.ts";
-import { ChunkWorld, BIOME_NAMES, BiomeId, GENERATOR_VERSION, GLASS_OPACITY, LIQUID_SURFACE_INSET, MAX_Y, MIN_Y, PACKED_VERTEX_COLOR_RANGE, RADIAL_STREAMING_DISTANCE_THRESHOLD, SECTION_HEIGHT, WORLD_HEIGHT, blockIndex, chunkAabbRadialDistanceSquared, chunkKey, chunkWithinStreamingRadius, chunksWithinStreamingRadius, liquidSurfaceInsetForCell, splitCoordinate } from "../app/game/world.ts";
+import { ChunkWorld, BIOME_NAMES, BiomeId, CHUNK_SIZE, GENERATOR_VERSION, GLASS_OPACITY, LIQUID_SURFACE_INSET, MAX_Y, MIN_Y, PACKED_VERTEX_COLOR_RANGE, RADIAL_STREAMING_DISTANCE_THRESHOLD, SECTION_HEIGHT, WORLD_HEIGHT, blockIndex, chunkAabbRadialDistanceSquared, chunkKey, chunkWithinStreamingRadius, chunksWithinStreamingRadius, liquidSurfaceInsetForCell, splitCoordinate } from "../app/game/world.ts";
 import { MOB_DEFS, MOB_ORDER } from "../app/game/mobs.ts";
 import { createHeldToolSpec, createRidgebackSpec, createZombieSpec, INSPECTOR_MODEL_SPECS, RIDGEBACK_GROUND_LIFT } from "../app/game/model-specs.ts";
 
@@ -265,6 +265,8 @@ test("the hard streaming budget rotates priority instead of starving queues", ()
   world.reset("STREAMING-FAIRNESS", undefined, { structures: false });
   world.playerChunkX = 0;
   world.playerChunkZ = 0;
+  const playerChunk = world.generateChunk(0, 0);
+  for (const section of [3, 4]) if (playerChunk.sectionBlockCounts[section] > 0) world.rebuildSection(playerChunk, section);
   world.streamingFrameBudgetMilliseconds = 0;
   world.generationWorkPerFrame = 1;
   world.meshWorkPerFrame = 1;
@@ -276,6 +278,76 @@ test("the hard streaming budget rotates priority instead of starving queues", ()
   world.processMesh = (() => { order.push("mesh"); return true; }) as typeof world.processMesh;
   for (let frame = 0; frame < 4; frame += 1) world.update(0, 0);
   assert.deepEqual(order, ["initial-light", "relight", "mesh", "generation"]);
+  world.dispose();
+});
+
+test("streaming preempts resumable generation and lighting for the player chunk", () => {
+  const generationWorld = new ChunkWorld();
+  generationWorld.reset("PLAYER-FIRST-GENERATION", undefined, { structures: false });
+  generationWorld.setRenderDistance(2);
+  generationWorld.scheduleAround(0, 0, true, 32);
+  assert.equal(generationWorld.processGenerationSlice(), true);
+  const pausedGeneration = generationWorld.activeGenerationTask;
+  assert.equal(pausedGeneration?.key, chunkKey(0, 0));
+  generationWorld.scheduleAround(CHUNK_SIZE, 0, true, 32);
+  assert.equal(generationWorld.activeGenerationTask, null, "crossing into a missing chunk must pause older terrain work");
+  assert.equal(generationWorld.generationTasks.get(chunkKey(0, 0)), pausedGeneration, "partial deterministic terrain work is retained");
+  assert.equal(generationWorld.processGenerationSlice(), true);
+  assert.equal((generationWorld.activeGenerationTask as { key: string } | null)?.key, chunkKey(1, 0), "the occupied chunk starts before retained neighbors");
+  generationWorld.dispose();
+
+  const lightingWorld = new ChunkWorld();
+  lightingWorld.reset("PLAYER-FIRST-LIGHTING", undefined, { structures: false });
+  lightingWorld.setRenderDistance(2);
+  const near = lightingWorld.generateChunk(0, 0);
+  const far = lightingWorld.generateChunk(1, 0);
+  for (const chunk of [near, far]) {
+    chunk.light.fill(0);
+    chunk.lightInitialized = false;
+  }
+  lightingWorld.scheduleAround(CHUNK_SIZE, 0, true, 32);
+  assert.equal(lightingWorld.processLightInitialization(), true);
+  const pausedLighting = lightingWorld.activeLightInitialization?.task;
+  assert.equal(lightingWorld.activeLightInitialization?.key, far.key);
+  lightingWorld.scheduleAround(0, 0, true, 32);
+  assert.equal(lightingWorld.activeLightInitialization, null, "the newly occupied unlit chunk preempts background lighting");
+  assert.equal(lightingWorld.lightInitializationTasks.get(far.key), pausedLighting, "partial lighting state is resumable");
+  assert.equal(lightingWorld.processLightInitialization(), true);
+  assert.equal((lightingWorld.activeLightInitialization as { key: string } | null)?.key, near.key);
+  assert.equal(lightingWorld.streamingDiagnostics().playerChunkStage, "lighting");
+  let lightingSlices = 1;
+  while (!near.lightInitialized || !far.lightInitialized) {
+    assert.equal(lightingWorld.processLightInitialization(), true);
+    lightingSlices += 1;
+    assert.ok(lightingSlices < 20_000, "preempted lighting tasks must converge");
+  }
+  const lightingReference = new ChunkWorld();
+  lightingReference.reset("PLAYER-FIRST-LIGHTING", undefined, { structures: false });
+  const expectedNear = lightingReference.generateChunk(0, 0);
+  const expectedFar = lightingReference.generateChunk(1, 0);
+  assert.deepEqual(near.light, expectedNear.light, "preemption must preserve the near chunk's exact packed light");
+  assert.deepEqual(far.light, expectedFar.light, "resuming must preserve the far chunk's exact packed light");
+  lightingReference.dispose();
+  lightingWorld.dispose();
+});
+
+test("mesh selection is player- and height-aware even when nearer work was appended later", () => {
+  const world = new ChunkWorld();
+  world.reset("PLAYER-FIRST-MESH", undefined, { structures: false });
+  const near = world.generateChunk(0, 0);
+  const far = world.generateChunk(2, 0);
+  const nearSection = near.sectionBlockCounts.findIndex((count) => count > 0);
+  const farSection = far.sectionBlockCounts.findIndex((count) => count > 0);
+  assert.ok(nearSection >= 0 && farSection >= 0);
+  world.playerChunkX = 0;
+  world.playerChunkZ = 0;
+  world.playerSection = nearSection;
+  world.queueMesh(far.key, farSection, true);
+  assert.equal(world.streamingDiagnostics().playerChunkStage, "meshing");
+  world.streamingFrameBudgetMilliseconds = 0;
+  world.update(0, 0, MIN_Y + nearSection * SECTION_HEIGHT + 2);
+  assert.equal(world.activeMeshTask?.key, near.key);
+  assert.equal(world.activeMeshTask?.section, nearSection);
   world.dispose();
 });
 
@@ -851,6 +923,9 @@ test("the radial generation halo remeshes its visible cardinal neighbor", () => 
   world.reset("RADIAL-REMESH-HALO", undefined, { structures: false });
   world.setRenderDistance(13);
   const visibleEdge = world.generateChunk(13, 0);
+  const visibleSection = visibleEdge.sectionBlockCounts.findIndex((count) => count > 0);
+  assert.ok(visibleSection >= 0);
+  world.rebuildSection(visibleEdge, visibleSection);
   world.scheduleAround(0, 0, true);
   world.generationQueue = [{ cx: 14, cz: 0, distance: 13.5 }];
   world.generationQueued = new Set([chunkKey(14, 0)]);
@@ -863,7 +938,8 @@ test("the radial generation halo remeshes its visible cardinal neighbor", () => 
 
   const halo = world.processGeneration();
   assert.equal(halo?.group.visible, false);
-  assert.equal([...world.meshQueued].some((entry) => entry.startsWith(`${visibleEdge.key}:`)), true, "the hidden halo must remesh its visible seam neighbor");
+  assert.equal(world.meshQueued.has(`${visibleEdge.key}:${visibleSection}`), true, "the hidden halo must remesh its already-rendered seam neighbor");
+  assert.equal([...world.meshQueued].filter((entry) => entry.startsWith(`${visibleEdge.key}:`)).length, 1, "unbuilt sections already see the halo on their first mesh and need no duplicate rebuild");
   assert.equal([...world.meshQueued].some((entry) => entry.startsWith(`${halo?.key}:`)), false, "the hidden halo itself must not be meshed");
   world.dispose();
 });

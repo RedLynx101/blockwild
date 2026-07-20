@@ -27170,11 +27170,11 @@ export class VoxelEngine {
       this.camera.position.set(this.spawn.x + Math.sin(t) * 24, this.spawn.y + 13 + Math.sin(t * 1.8) * 1.2, this.spawn.z + Math.cos(t) * 24);
       this.camera.lookAt(this.spawn.x, this.spawn.y + 4, this.spawn.z);
       const chunkWorkStartedAt = performance.now();
-      chunkWorkReport = this.world.update(this.spawn.x, this.spawn.z);
+      chunkWorkReport = this.world.update(this.spawn.x, this.spawn.z, this.spawn.y);
       chunkWorkMilliseconds = performance.now() - chunkWorkStartedAt;
     } else {
       const chunkWorkStartedAt = performance.now();
-      chunkWorkReport = this.world.update(this.position.x, this.position.z);
+      chunkWorkReport = this.world.update(this.position.x, this.position.z, this.position.y);
       chunkWorkMilliseconds = performance.now() - chunkWorkStartedAt;
       if (this.running && !this.paused) this.updateBoats(dt);
       if (this.running && !this.paused && (this.locked || this.touchMode)) {

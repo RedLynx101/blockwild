@@ -11,6 +11,7 @@ Named releases summarize player-visible changes and the compatibility work that 
 - Added the 522-entry searchable Trailcraft Guide with deterministic origins, descriptions, recipes, reverse uses, ingredient links, and pattern-board handoff from every relevant crafting facility.
 - Added opt-in one-second local performance telemetry with editable emergency timeout and JSON downloads on stop, timeout, or Save & Quit.
 - Reworked exploration streaming into resumable terrain, voxel-light, and mesh slices under a fair wall-clock frame budget. Existing terrain and packed geometry remain bit-exact while diagnostics now separate scheduling, generation, lighting, meshing, and queue pressure.
+- Added a player-first streaming lane: crossing into an unfinished chunk now preempts and later resumes farther terrain and light work, prioritizes the player's vertical mesh band, and avoids redundant seam rebuilds for sections whose first build has not started. Telemetry reports the occupied chunk's exact generation, lighting, meshing, or ready state.
 - Pulled the Giant Mooncap underside into a stout inset stem while retaining the full crown and full-block collision.
 
 ## 1.8.4 - Moonbrawn Motherlode - 2026-07-19
