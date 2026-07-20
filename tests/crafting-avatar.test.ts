@@ -152,7 +152,7 @@ test("player variants and equipment alter the production rig", () => {
 test("SSR and the first browser render share deterministic settings text", () => {
   assert.deepEqual(initialHydrationSettings(), {
     volume: 0.55, muted: false, sensitivity: 0.0022, fov: 72, weather: "clear",
-    renderDistance: 10, simulationDistance: 8, showFps: false, showMinimap: false, showBreakingTexture: true, showBreakProgress: false, showToolEffectiveness: true, musicVolume: 0.72, resourceMode: "auto",
+    renderDistance: 10, simulationDistance: 8, showFps: false, showMinimap: false, showBreakingTexture: true, showBreakProgress: false, showToolEffectiveness: true, debugTelemetry: false, debugTelemetryMaxMinutes: 60, musicVolume: 0.72, resourceMode: "auto",
   });
   const serverHtml = renderToString(createElement(VoxelGame));
   assert.match(serverHtml, /aria-label="Main menu"/u);
@@ -452,8 +452,8 @@ test("workstation UI normalizes apiary production and exact capture-orb metadata
 });
 
 test("human release identity stays separate from save schemas", () => {
-  assert.equal(GAME_VERSION, "1.8.4");
-  assert.equal(GAME_RELEASE_NAME, "Moonbrawn Motherlode");
+  assert.equal(GAME_VERSION, "1.8.5");
+  assert.equal(GAME_RELEASE_NAME, "Trailcraft Currents");
   assert.equal(normalizeGameVersion("garbage"), "0.1.0");
 });
 

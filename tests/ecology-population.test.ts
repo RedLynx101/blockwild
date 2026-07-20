@@ -26,9 +26,10 @@ test("ecology exposes seven independent weighted population pools", () => {
   const budgets = naturalPoolBudgets(false, 1);
   assert.deepEqual(budgets["surface-animal"], { target: 12, ceiling: 17 });
   assert.deepEqual(budgets.ambient, { target: 10, ceiling: 14 });
-  assert.deepEqual(budgets["water-animal"], { target: 5, ceiling: 7 });
-  assert.deepEqual(budgets["water-ambient"], { target: 10, ceiling: 16 });
-  assert.deepEqual(budgets["cave-water"], { target: 4, ceiling: 6 });
+  assert.deepEqual(budgets["water-animal"], { target: 8, ceiling: 12 });
+  assert.deepEqual(budgets["water-ambient"], { target: 20, ceiling: 30 });
+  assert.deepEqual(budgets["cave-water"], { target: 8, ceiling: 12 });
+  assert.equal(globalNaturalCostCeiling(false, 1, 1), 92, "the global ceiling leaves room for the expanded water ecology");
   assert.deepEqual(budgets.underground, { target: 8, ceiling: 12 });
   assert.deepEqual(budgets.monster, { target: 7, ceiling: 11 });
   assert.ok(globalNaturalCostCeiling(false, 1, 2) > globalNaturalCostCeiling(false, 1, 1));

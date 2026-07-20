@@ -17,9 +17,9 @@ export type NaturalPoolBudget = Readonly<{ target: number; ceiling: number }>;
 const DESKTOP_POOL_BUDGETS: Readonly<Record<NaturalPopulationPool, NaturalPoolBudget>> = Object.freeze({
   "surface-animal": { target: 12, ceiling: 17 },
   ambient: { target: 10, ceiling: 14 },
-  "water-animal": { target: 5, ceiling: 7 },
-  "water-ambient": { target: 10, ceiling: 16 },
-  "cave-water": { target: 4, ceiling: 6 },
+  "water-animal": { target: 8, ceiling: 12 },
+  "water-ambient": { target: 20, ceiling: 30 },
+  "cave-water": { target: 8, ceiling: 12 },
   underground: { target: 8, ceiling: 12 },
   monster: { target: 7, ceiling: 11 },
 });
@@ -38,7 +38,7 @@ export function naturalPoolBudgets(touch: boolean, density: number) {
 /** Global safety ceiling remains sublinear for separated players while local targets guarantee fairness. */
 export function globalNaturalCostCeiling(touch: boolean, density: number, playerCount: number) {
   const players = Math.max(1, Math.min(4, Math.floor(playerCount)));
-  const base = touch ? 40 : 64;
+  const base = touch ? 58 : 92;
   return roundQuarter(base * Math.max(0, Number.isFinite(density) ? density : 1) * Math.sqrt(players));
 }
 

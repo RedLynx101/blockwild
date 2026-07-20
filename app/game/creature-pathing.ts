@@ -301,7 +301,7 @@ function routeIsValid(sample: CreatureRouteProbe, input: CreatureRouteInput) {
   const rise = sample.elevationDelta ?? 0;
   return sample.walkable
     && !sample.hazard
-    && (input.allowWater || !sample.water)
+    && ((input.movement ?? "ground") === "aquatic" ? sample.water === true : (input.allowWater || !sample.water))
     && rise <= (input.maxStepUp ?? 1) + 0.0001
     && rise >= -(input.maxDrop ?? 1) - 0.0001;
 }
@@ -314,7 +314,7 @@ function routeIsValid(sample: CreatureRouteProbe, input: CreatureRouteInput) {
 export function chooseCreatureRoute(input: CreatureRouteInput): CreatureRouteDecision {
   const dt = clamp(Number.isFinite(input.dt) ? input.dt : 0, 0, 0.1);
   const desiredHeading = normalizeAngle(input.desiredHeading);
-  if ((input.movement ?? "ground") !== "ground") {
+  if ((input.movement ?? "ground") === "flying") {
     return {
       heading: desiredHeading,
       blocked: false,
@@ -335,7 +335,7 @@ export function chooseCreatureRoute(input: CreatureRouteInput): CreatureRouteDec
         heading: heldHeading,
         blocked: false,
         probe: null,
-        state: { heading: heldHeading, holdSeconds: remainingHold, blockedSeconds: 0, probeCooldown: remainingProbeCooldown },
+        state: { heading: heldHeading, holdSeconds: remainingHold, blockedSeconds: Math.max(0, input.state.blockedSeconds - dt * 2), probeCooldown: remainingProbeCooldown },
       };
     }
     const heldProbe = input.probe(heldHeading);
@@ -344,7 +344,7 @@ export function chooseCreatureRoute(input: CreatureRouteInput): CreatureRouteDec
         heading: heldHeading,
         blocked: false,
         probe: heldProbe,
-        state: { heading: heldHeading, holdSeconds: remainingHold, blockedSeconds: 0, probeCooldown: 0.055 },
+        state: { heading: heldHeading, holdSeconds: remainingHold, blockedSeconds: Math.max(0, input.state.blockedSeconds - dt * 2), probeCooldown: 0.055 },
       };
     }
   }
@@ -357,7 +357,7 @@ export function chooseCreatureRoute(input: CreatureRouteInput): CreatureRouteDec
       heading: desiredHeading,
       blocked: false,
       probe: directSample,
-      state: { heading: desiredHeading, holdSeconds: 0.22, blockedSeconds: 0, probeCooldown: 0.055 },
+      state: { heading: desiredHeading, holdSeconds: 0.22, blockedSeconds: Math.max(0, input.state.blockedSeconds - dt * 2), probeCooldown: 0.055 },
     };
   }
 
@@ -385,7 +385,7 @@ export function chooseCreatureRoute(input: CreatureRouteInput): CreatureRouteDec
       + Math.abs(sample.elevationDelta ?? 0) * 0.38
       + crowding * 3.2
       + (1 - clearance) * 1.15
-      + (sample.water ? 1.8 : 0)
+      + ((input.movement ?? "ground") === "ground" && sample.water ? 1.8 : 0)
       - (sample.openDoor && offset === 0 ? 0.2 : 0);
     if (!best || score < best.score - 0.00001) best = { heading, offset, sample, score };
   }
@@ -405,8 +405,50 @@ export function chooseCreatureRoute(input: CreatureRouteInput): CreatureRouteDec
     heading: best.heading,
     blocked: false,
     probe: best.sample,
-    state: { heading: best.heading, holdSeconds, blockedSeconds: 0, probeCooldown: 0.055 },
+    state: { heading: best.heading, holdSeconds, blockedSeconds: Math.max(0, input.state.blockedSeconds - dt * 2), probeCooldown: 0.055 },
   };
+}
+
+/**
+ * Route probes are predictions. This reconciles them with observed movement so
+ * a creature wedged on a corner or shoreline cannot clear its recovery timer
+ * merely because an endpoint probe looked open.
+ */
+export function recordCreatureRouteProgress(
+  state: CreatureRouteState,
+  requestedDistance: number,
+  movedDistance: number,
+  dt: number,
+): CreatureRouteState {
+  const elapsed = clamp(Number.isFinite(dt) ? dt : 0, 0, 0.1);
+  const requested = Math.max(0, Number.isFinite(requestedDistance) ? requestedDistance : 0);
+  const moved = Math.max(0, Number.isFinite(movedDistance) ? movedDistance : 0);
+  if (requested <= 0.0001) return {
+    ...state,
+    blockedSeconds: Math.max(0, state.blockedSeconds - elapsed * 2),
+  };
+  const progress = moved / requested;
+  if (progress >= 0.72) return {
+    ...state,
+    blockedSeconds: Math.max(0, state.blockedSeconds - elapsed * 4),
+  };
+  if (progress >= 0.3) return {
+    ...state,
+    blockedSeconds: Math.max(0, state.blockedSeconds - elapsed),
+    probeCooldown: 0,
+  };
+  return {
+    ...state,
+    holdSeconds: 0,
+    blockedSeconds: state.blockedSeconds + elapsed,
+    probeCooldown: 0,
+  };
+}
+
+/** Threatened ground creatures may commit to a survivable two-block descent. */
+export function creatureDropAllowance(threatened: boolean, movement: MobMovement = "ground") {
+  if (movement !== "ground") return 0;
+  return threatened ? 2 : 1;
 }
 
 export type BirdFlightProbe = {

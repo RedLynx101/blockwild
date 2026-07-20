@@ -14,6 +14,7 @@ export const MIN_MAP_ZOOM = 0.5;
 export const MAX_MAP_ZOOM = 12;
 export const ABSOLUTE_MIN_MAP_ZOOM = 0.1;
 export const MAX_MAP_PAN_CHUNKS = 1_048_576;
+export const DEFAULT_MAP_OPEN_SPAN_BLOCKS = 1_024;
 export const MAP_WATER_SURFACE_COLOR = "#3e83c6";
 
 export type WorldPoint = Readonly<{ x: number; y: number; z: number }>;
@@ -299,7 +300,16 @@ export function createMapViewState(): MapViewState {
   return { schema: MAP_VIEW_SCHEMA, zoom: 1, panX: 0, panZ: 0 };
 }
 
-/** Old, missing and malformed view state opens at the entire explored map. */
+/** The map always opens to a predictable square around the player. */
+export function mapOpeningBounds(currentChunkX: number, currentChunkZ: number, spanBlocks = DEFAULT_MAP_OPEN_SPAN_BLOCKS): MapViewportBounds {
+  const spanChunks = Math.max(8, Math.round(Math.max(MAP_CHUNK_SIZE, finite(spanBlocks, DEFAULT_MAP_OPEN_SPAN_BLOCKS)) / MAP_CHUNK_SIZE));
+  const half = spanChunks / 2;
+  const centerX = finite(currentChunkX);
+  const centerZ = finite(currentChunkZ);
+  return { minX: centerX - half, maxX: centerX + half, minZ: centerZ - half, maxZ: centerZ + half };
+}
+
+/** Old, missing and malformed view state starts at the authored default scale. */
 function normalizedZoomLimits(limits: MapZoomLimits = {}) {
   const minimum = clamp(finite(limits.minimum, MIN_MAP_ZOOM), ABSOLUTE_MIN_MAP_ZOOM, MAX_MAP_ZOOM);
   const maximum = clamp(finite(limits.maximum, MAX_MAP_ZOOM), minimum, MAX_MAP_ZOOM);
@@ -341,20 +351,12 @@ export function panMapView(state: MapViewState, deltaX: number, deltaZ: number, 
 }
 
 /**
- * Keeps the parchment over its authored extent. At whole-map zoom there is no
- * empty direction to pan into; closer views may move only until an outer map
- * edge reaches the viewport edge. This prevents a valid terrain canvas from
- * looking as though chunks stopped rendering after a long drag.
+ * Panning is intentionally independent of explored bounds. The parchment is a
+ * viewport over world coordinates, not a movable image cropped to yesterday's
+ * discovery shape.
  */
-export function constrainMapViewState(base: MapViewportBounds, state: MapViewState, limits: MapZoomLimits = {}): MapViewState {
-  const normalized = normalizeMapViewState(state, limits);
-  const baseWidth = Math.max(1, finite(base.maxX) - finite(base.minX));
-  const baseHeight = Math.max(1, finite(base.maxZ) - finite(base.minZ));
-  const maximumPanX = Math.max(0, (baseWidth - baseWidth / normalized.zoom) / 2);
-  const maximumPanZ = Math.max(0, (baseHeight - baseHeight / normalized.zoom) / 2);
-  const panX = maximumPanX === 0 ? 0 : clamp(normalized.panX, -maximumPanX, maximumPanX);
-  const panZ = maximumPanZ === 0 ? 0 : clamp(normalized.panZ, -maximumPanZ, maximumPanZ);
-  return panX === normalized.panX && panZ === normalized.panZ ? normalized : { ...normalized, panX, panZ };
+export function constrainMapViewState(_base: MapViewportBounds, state: MapViewState, limits: MapZoomLimits = {}): MapViewState {
+  return normalizeMapViewState(state, limits);
 }
 
 /** Keeps x and z in chunk space; zoom changes only the visible span. */

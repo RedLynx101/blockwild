@@ -312,12 +312,14 @@ import {
   chooseCreatureRoute,
   createCreatureRouteState,
   creatureBodyMass,
+  creatureDropAllowance,
   creatureKnockbackSpeed,
   creatureMeleeReach,
   creatureCollisionProfile,
   findFollowerTeleportTarget,
   followerTravelSpeed,
   planFollowerFormation,
+  recordCreatureRouteProgress,
   separateCreatureCircles,
   splitCreatureSeparation,
   shouldTeleportFollower,
@@ -933,6 +935,14 @@ export { BLOCKS, CREATIVE_BLOCKS, ITEMS, Item, RECIPES, BlockId, BIOME_NAMES, MO
 export const SAVE_KEY = "blockwild-world-v2";
 export const SETTINGS_KEY = "blockwild-settings-v2";
 export const CLOVERBACK_MILK_COOLDOWN_SECONDS = 90;
+export const PLAYER_SAFE_FALL_BLOCKS = 4;
+
+/** Falls through four blocks are safe; damage begins only beyond that distance. */
+export function fallDamageForDistance(distance: number) {
+  const unsafeDistance = Math.max(0, (Number.isFinite(distance) ? distance : 0) - PLAYER_SAFE_FALL_BLOCKS);
+  if (unsafeDistance <= 0) return 0;
+  return Math.min(6, Math.ceil(unsafeDistance - 0.0001));
+}
 const LEGACY_GENERATOR_MIN_Y = -32;
 const NEUTRAL_CREATURE_ORB_KINDS = {
   "unaligned-warg-orb": "warg",
@@ -960,6 +970,8 @@ export type GameSettings = {
   showBreakingTexture: boolean;
   showBreakProgress: boolean;
   showToolEffectiveness: boolean;
+  debugTelemetry: boolean;
+  debugTelemetryMaxMinutes: number;
   resourceMode: ResourceMode;
 };
 
@@ -3120,6 +3132,8 @@ export function readSettings(): GameSettings {
     showBreakingTexture: true,
     showBreakProgress: false,
     showToolEffectiveness: true,
+    debugTelemetry: false,
+    debugTelemetryMaxMinutes: 60,
     resourceMode: "auto",
     ...fallbackDistances,
   };
@@ -3143,6 +3157,8 @@ export function readSettings(): GameSettings {
       showBreakingTexture: Boolean(parsed.showBreakingTexture ?? fallback.showBreakingTexture),
       showBreakProgress: Boolean(parsed.showBreakProgress ?? fallback.showBreakProgress),
       showToolEffectiveness: Boolean(parsed.showToolEffectiveness ?? fallback.showToolEffectiveness),
+      debugTelemetry: Boolean(parsed.debugTelemetry ?? fallback.debugTelemetry),
+      debugTelemetryMaxMinutes: clamp(Math.round(Number(parsed.debugTelemetryMaxMinutes ?? fallback.debugTelemetryMaxMinutes)), 1, 180),
       resourceMode: parsed.resourceMode === "cpu" || parsed.resourceMode === "memory" ? parsed.resourceMode : "auto",
       ...distances,
     };
@@ -3883,6 +3899,7 @@ export class VoxelEngine {
   lastPosition = new THREE.Vector3();
   followerHeading = -Math.PI / 2;
   fallVelocity = 0;
+  fallDistance = 0;
   fallCuePlayed = false;
   wasInWater = false;
   lastHudTime = 0;
@@ -4872,6 +4889,7 @@ export class VoxelEngine {
     this.healingStations.set(healerKey, createCreatureHealer([], 3, CREATURE_HEALER_GEL_SECONDS / 2));
     place(2, 0, 0, BlockId.WildwoodTable, BLOCK_FACING_SOUTH);
     place(5, 0, 0, BlockId.WildwoodShelf, BLOCK_FACING_SOUTH);
+    place(8, 0, 0, BlockId.MushroomCap, BLOCK_FACING_SOUTH);
 
     place(-5, 0, -3, BlockId.Chest, BLOCK_FACING_SOUTH);
     place(-4, 0, -3, BlockId.Chest, BLOCK_FACING_SOUTH);
@@ -5270,6 +5288,51 @@ export class VoxelEngine {
       this.multiplayer?.state ?? this.multiplayerState.status,
       `${MULTIPLAYER_PROTOCOL_NAME}/${MULTIPLAYER_PROTOCOL_VERSION}`,
     );
+  }
+
+  performanceTelemetrySnapshot() {
+    const browserPerformance = typeof performance === "undefined" ? null : performance as Performance & { memory?: { usedJSHeapSize: number; totalJSHeapSize: number; jsHeapSizeLimit: number } };
+    const memory = browserPerformance?.memory;
+    const multiplayer = this.getMultiplayerState();
+    return {
+      capturedAt: new Date().toISOString(),
+      performance: this.performanceSampler.summary(),
+      renderer: {
+        drawCalls: this.renderer.info.render.calls,
+        triangles: this.renderer.info.render.triangles,
+        points: this.renderer.info.render.points,
+        lines: this.renderer.info.render.lines,
+        geometries: this.renderer.info.memory.geometries,
+        textures: this.renderer.info.memory.textures,
+      },
+      world: {
+        loadedChunks: this.world.loadedCount,
+        renderDistance: this.settings.renderDistance,
+        simulationDistance: this.settings.simulationDistance,
+        player: { x: Number(this.position.x.toFixed(2)), y: Number(this.position.y.toFixed(2)), z: Number(this.position.z.toFixed(2)) },
+      },
+      entities: {
+        creatures: this.mobs.length,
+        butterflies: this.butterflies.entities.length,
+        drops: this.drops.length,
+        particles: this.particles.length + this.leafParticles.length,
+        projectiles: this.projectiles.length,
+        boats: this.boats.size,
+        sleepingCreatures: this.sleepingCreatures.length,
+      },
+      ecology: {
+        attempts: this.ecologyDiagnostics.attempts,
+        successes: this.ecologyDiagnostics.successes,
+        aquaticCandidates: this.ecologyDiagnostics.aquaticCandidates,
+        rejections: { ...this.ecologyDiagnostics.rejections },
+      },
+      multiplayer: { role: multiplayer.role, status: multiplayer.status, peers: multiplayer.peers.length },
+      memory: memory ? {
+        usedJsHeapBytes: memory.usedJSHeapSize,
+        totalJsHeapBytes: memory.totalJSHeapSize,
+        heapLimitBytes: memory.jsHeapSizeLimit,
+      } : null,
+    };
   }
 
   downloadMultiplayerDiagnostics() {
@@ -16073,6 +16136,7 @@ export class VoxelEngine {
     this.lastPosition.copy(this.position);
     this.velocity.set(0, 0, 0);
     this.fallVelocity = 0;
+    this.fallDistance = 0;
     this.grounded = false;
     this.heldUse = 1;
     this.placeCooldown = 0.35;
@@ -17075,6 +17139,7 @@ export class VoxelEngine {
   updatePlayer(dt: number) {
     if (this.mountedBoatId) {
       this.fallVelocity = 0;
+      this.fallDistance = 0;
       this.fallCuePlayed = false;
       this.velocity.set(0, 0, 0);
       this.grounded = true;
@@ -17083,6 +17148,7 @@ export class VoxelEngine {
     if (this.mountedCreatureId !== null) {
       this.updateMountedCreature(dt);
       this.fallVelocity = 0;
+      this.fallDistance = 0;
       this.fallCuePlayed = false;
       this.velocity.set(0, 0, 0);
       this.grounded = true;
@@ -17159,6 +17225,7 @@ export class VoxelEngine {
 
     if (inSwimmableLiquid) {
       this.fallVelocity = 0;
+      this.fallDistance = 0;
       this.fallCuePlayed = false;
       const bankX = Math.round(this.position.x - Math.sin(this.yaw) * 0.62);
       const bankZ = Math.round(this.position.z - Math.cos(this.yaw) * 0.62);
@@ -17197,12 +17264,14 @@ export class VoxelEngine {
       if (swim.damage > 0 && this.mode === "survival") this.damagePlayer(swim.damage, "drowning", true, "ambient");
     } else if (inLava) {
       this.fallVelocity = 0;
+      this.fallDistance = 0;
       this.fallCuePlayed = false;
       this.velocity.y -= 5 * dt;
       this.velocity.y *= Math.max(0, 1 - 2.4 * dt);
       if (this.keys.has("Space")) this.velocity.y += 9.5 * dt;
     } else if (onRopeLadder) {
       this.fallVelocity = 0;
+      this.fallDistance = 0;
       this.fallCuePlayed = false;
       const climb = this.keys.has("Space") || forwardAmount > 0 ? 3.35 : this.crouching ? -2.25 : 0;
       this.velocity.y += (climb - this.velocity.y) * Math.min(1, dt * 12);
@@ -17229,15 +17298,21 @@ export class VoxelEngine {
     }
 
     this.moveWithCollisions(this.velocity.x * dt, 0, 0);
+    const verticalStart = this.position.y;
     this.moveWithCollisions(0, this.velocity.y * dt, 0);
+    if (!inLiquid && !onRopeLadder && this.velocity.y < 0) {
+      this.fallDistance += Math.max(0, verticalStart - this.position.y);
+    }
     this.moveWithCollisions(0, 0, this.velocity.z * dt);
     const wasGrounded = this.grounded;
     this.groundProbe.set(this.position.x, this.position.y - 0.055, this.position.z);
     this.grounded = this.collidesAt(this.groundProbe);
     if (!wasGrounded && this.grounded && !inLiquid) {
       this.audio.play("land", this.blockUnderfoot());
-      if (this.mode === "survival" && this.fallVelocity < -11.2) this.damagePlayer(Math.min(6, Math.max(1, Math.floor((-this.fallVelocity - 9) / 2))), "the fall", true, "ambient");
+      const fallDamage = fallDamageForDistance(this.fallDistance);
+      if (this.mode === "survival" && fallDamage > 0) this.damagePlayer(fallDamage, "the fall", true, "ambient");
       this.fallVelocity = 0;
+      this.fallDistance = 0;
       this.fallCuePlayed = false;
     }
     if (this.position.y < MIN_Y - 8) this.respawn(true);
@@ -17632,6 +17707,7 @@ export class VoxelEngine {
     this.health = 10;
     this.hunger = Math.max(this.hunger, 6);
     this.fallVelocity = 0;
+    this.fallDistance = 0;
     this.spawnProtection = 8;
     if (announce) {
       this.events.onDeath();
@@ -20104,6 +20180,7 @@ export class VoxelEngine {
       this.velocity.set(0, 0, 0);
       this.grounded = mob.mountMode === "land" || mob.mountMode === "climb";
       this.fallVelocity = 0;
+      this.fallDistance = 0;
       this.lastPosition.copy(this.position);
       return;
     }
@@ -20236,6 +20313,7 @@ export class VoxelEngine {
     this.velocity.set(0, 0, 0);
     this.grounded = mode === "land" || mode === "climb";
     this.fallVelocity = 0;
+    this.fallDistance = 0;
     this.lastPosition.copy(this.position);
   }
 
@@ -20316,6 +20394,7 @@ export class VoxelEngine {
     this.velocity.set(0, 0, 0);
     this.grounded = seaMode === "walk";
     this.fallVelocity = 0;
+    this.fallDistance = 0;
     this.lastPosition.copy(this.position);
   }
 
@@ -21102,7 +21181,13 @@ export class VoxelEngine {
     return true;
   }
 
-  moveMobWithTerrain(mob: MobEntity, dx: number, dz: number) {
+  moveMobWithTerrain(
+    mob: MobEntity,
+    dx: number,
+    dz: number,
+    maxStepUp = 1,
+    maxDrop = mob.kind === "caveblob" || mob.kind === "puddlehopper" ? 2 : 1,
+  ) {
     const distance = Math.hypot(dx, dz);
     if (distance <= 0.00001 || mob.id === this.mountedCreatureId || mob.dragonState?.onShoulder) return 0;
     const movement = mob.definition.movement ?? (mob.definition.aquatic ? "aquatic" : mob.definition.flying ? "flying" : "ground");
@@ -21112,24 +21197,39 @@ export class VoxelEngine {
     const startX = mob.group.position.x;
     const startZ = mob.group.position.z;
     let referenceGround = Math.round(mob.group.position.y - mob.definition.footOffset);
-    for (let step = 0; step < steps; step += 1) {
-      const x = mob.group.position.x + stepX;
-      const z = mob.group.position.z + stepZ;
+    const attemptStep = (x: number, z: number) => {
       let targetY = mob.group.position.y;
       if (movement === "ground") {
-        const resolvedY = this.mobMoveTarget(mob, x, z, this.mobBaseScale(mob), referenceGround, false);
-        if (resolvedY === null) break;
+        const resolvedY = this.mobMoveTarget(mob, x, z, this.mobBaseScale(mob), referenceGround, false, maxStepUp, maxDrop);
+        if (resolvedY === null) return false;
         targetY = resolvedY;
       } else if (movement === "aquatic") {
         const liquid = this.world.getBlock(Math.floor(x + 0.5), Math.floor(targetY + 0.5), Math.floor(z + 0.5));
-        if (mob.kind === "syrupfin" ? liquid !== BlockId.Syrup : !blockContainsWater(liquid)) break;
+        if (mob.kind === "syrupfin" ? liquid !== BlockId.Syrup : !blockContainsWater(liquid)) return false;
       }
-      if (!this.mobTerrainClearAt(mob, x, targetY, z)) break;
+      if (!this.mobTerrainClearAt(mob, x, targetY, z)) return false;
       mob.group.position.set(x, targetY, z);
       if (movement === "ground") {
         mob.baseY = targetY;
         referenceGround = Math.round(targetY - mob.definition.footOffset);
       }
+      return true;
+    };
+    for (let step = 0; step < steps; step += 1) {
+      const startStepX = mob.group.position.x;
+      const startStepZ = mob.group.position.z;
+      if (attemptStep(startStepX + stepX, startStepZ + stepZ)) continue;
+      // Sliding one axis at a time keeps bodies moving around square corners.
+      // A stable per-creature preference prevents a crowd from choosing the
+      // same side and oscillating every frame.
+      const xFirst = (mob.id & 1) === 0;
+      const firstMoved = xFirst
+        ? attemptStep(startStepX + stepX, startStepZ)
+        : attemptStep(startStepX, startStepZ + stepZ);
+      const secondMoved = xFirst
+        ? attemptStep(mob.group.position.x, mob.group.position.z + stepZ)
+        : attemptStep(mob.group.position.x + stepX, mob.group.position.z);
+      if (!firstMoved && !secondMoved) break;
     }
     this.refreshMobSpatialEntry(mob);
     return Math.hypot(mob.group.position.x - startX, mob.group.position.z - startZ);
@@ -21417,7 +21517,15 @@ export class VoxelEngine {
     return { blocked, crowding };
   }
 
-  creatureRouteProbe(mob: MobEntity, heading: number, lookahead: number): CreatureRouteProbe {
+  creatureRouteProbe(mob: MobEntity, heading: number, lookahead: number, maxStepUp = 1, maxDrop = 1): CreatureRouteProbe {
+    const referenceGround = Math.round(mob.group.position.y - mob.definition.footOffset);
+    const middleX = mob.group.position.x + Math.cos(heading) * lookahead * 0.5;
+    const middleZ = mob.group.position.z + Math.sin(heading) * lookahead * 0.5;
+    const middleY = this.mobMoveTarget(mob, middleX, middleZ, this.mobBaseScale(mob), referenceGround, false, maxStepUp, maxDrop);
+    if (middleY === null || !this.mobTerrainClearAt(mob, middleX, middleY, middleZ)) return {
+      walkable: false,
+      clearance: 0,
+    };
     const x = mob.group.position.x + Math.cos(heading) * lookahead;
     const z = mob.group.position.z + Math.sin(heading) * lookahead;
     const targetY = this.mobMoveTarget(
@@ -21425,8 +21533,10 @@ export class VoxelEngine {
       x,
       z,
       this.mobBaseScale(mob),
-      Math.round(mob.group.position.y - mob.definition.footOffset),
+      Math.round(middleY - mob.definition.footOffset),
       false,
+      maxStepUp,
+      maxDrop,
     );
     const groundY = targetY === null
       ? Math.round(mob.group.position.y - mob.definition.footOffset)
@@ -21454,6 +21564,34 @@ export class VoxelEngine {
       crowding: dynamic.crowding,
       clearance: targetY === null ? 0 : clamp(1 - dynamic.crowding * 0.42, 0, 1),
       openDoor,
+    };
+  }
+
+  aquaticRouteProbe(mob: MobEntity, heading: number, lookahead: number): CreatureRouteProbe {
+    const syrup = mob.kind === "syrupfin";
+    let targetX = mob.group.position.x;
+    let targetZ = mob.group.position.z;
+    for (const fraction of [0.45, 1]) {
+      targetX = mob.group.position.x + Math.cos(heading) * lookahead * fraction;
+      targetZ = mob.group.position.z + Math.sin(heading) * lookahead * fraction;
+      const liquid = this.world.getBlock(
+        Math.floor(targetX + 0.5),
+        Math.floor(mob.group.position.y + 0.5),
+        Math.floor(targetZ + 0.5),
+      );
+      const matches = syrup ? liquid === BlockId.Syrup : blockContainsWater(liquid);
+      if (!matches || !this.mobTerrainClearAt(mob, targetX, mob.group.position.y, targetZ)) return {
+        walkable: false,
+        water: false,
+        clearance: 0,
+      };
+    }
+    const dynamic = this.mobDynamicObstaclesAt(mob, targetX, mob.group.position.y, targetZ, true);
+    return {
+      walkable: !dynamic.blocked,
+      water: true,
+      crowding: dynamic.crowding,
+      clearance: clamp(1 - dynamic.crowding * 0.42, 0, 1),
     };
   }
 
@@ -22190,7 +22328,7 @@ export class VoxelEngine {
     if (count <= 0) return [] as MobEntity[];
     const mode = socialGroupModeForMob(kind);
     const groupId = `${mode ?? "solitary"}:${kind}:${this.nextMobId}:${Math.floor(center.x)},${Math.floor(center.z)}`;
-    const radius = mode === "herd" ? 4.8 : mode === "shoal" ? 1.8 : 1.2;
+    const radius = mode === "herd" ? 4.8 : mode === "shoal" ? 3.4 : 1.2;
     const spawned: MobEntity[] = [];
     for (let index = 0; index < count; index += 1) {
       const angle = index / Math.max(1, count) * Math.PI * 2 + (this.nextMobId % 17) * 0.19;
@@ -22488,6 +22626,8 @@ export class VoxelEngine {
     collisionScale = this.mobBaseScale(mob),
     referenceGround = Math.round(mob.group.position.y - mob.definition.footOffset),
     checkCreatureCollision = true,
+    maxStepUp = 1,
+    maxDrop = mob.kind === "caveblob" || mob.kind === "puddlehopper" ? 2 : 1,
   ) {
     const definition = mob.definition;
     const centerX = Math.round(nx);
@@ -22522,8 +22662,8 @@ export class VoxelEngine {
     const centerGround = chooseLocalWalkableGround(
       currentGround,
       (groundY) => standableAt(centerX, centerZ, groundY),
-      1,
-      mob.kind === "caveblob" || mob.kind === "puddlehopper" ? 2 : 1,
+      maxStepUp,
+      maxDrop,
     );
     if (centerGround === null) return null;
     let insideOpenDoor = false;
@@ -22535,19 +22675,26 @@ export class VoxelEngine {
     const samples: Array<[number, number]> = insideOpenDoor
       ? [[0, 0]]
       : [[0, 0], [effectiveRadius, effectiveRadius], [-effectiveRadius, effectiveRadius], [effectiveRadius, -effectiveRadius], [-effectiveRadius, -effectiveRadius]];
-    let groundY = -Infinity;
+    let groundY = centerGround;
+    let supportedSamples = 0;
     for (const [ox, oz] of samples) {
       const sampleX = Math.round(nx + ox);
       const sampleZ = Math.round(nz + oz);
       const ground = chooseLocalWalkableGround(
         currentGround,
         (candidateY) => standableAt(sampleX, sampleZ, candidateY),
-        1,
-        mob.kind === "caveblob" || mob.kind === "puddlehopper" ? 2 : 1,
+        maxStepUp,
+        maxDrop,
       );
-      if (ground === null) return null;
+      if (ground === null) continue;
+      supportedSamples += 1;
       groundY = Math.max(groundY, ground);
     }
+    // Requiring every diagonal to have support trapped wide creatures on bank
+    // lips and block corners. The center must remain valid, while three of the
+    // five footprint samples provide enough support for a stable next step.
+    const minimumSupport = insideOpenDoor ? 1 : Math.min(samples.length, Math.max(3, Math.ceil(samples.length * 0.6)));
+    if (supportedSamples < minimumSupport) return null;
     const targetY = groundY + definition.footOffset;
     if (checkCreatureCollision && this.mobCollisionProfile(mob).solid
       && this.mobDynamicObstaclesAt(mob, nx, targetY, nz, true).blocked) return null;
@@ -22801,10 +22948,24 @@ export class VoxelEngine {
     if (social && mob.fleeTimer <= 0 && distance >= 2.2) mob.desiredAngle = Math.atan2(social.z, social.x);
     const speed = (holding ? 0 : (seaHunter || mob.fleeTimer > 0 ? mob.definition.chaseSpeed : mob.definition.speed) * (social?.speedScale ?? 1))
       * this.dragonStatusSpeedScale(mob);
-    mob.steering = updateStableSteering(mob.steering, { dt, turnRate: mob.definition.turnRate, blocked: false, mobId: mob.id, desiredHeading: mob.desiredAngle });
+    const lookahead = Math.max(0.7, mob.definition.radius * this.mobBaseScale(mob) + 0.4, speed * 0.45);
+    const route = chooseCreatureRoute({
+      state: mob.route,
+      dt,
+      desiredHeading: mob.desiredAngle,
+      mobId: mob.id,
+      movement: "aquatic",
+      allowWater: true,
+      probe: (heading) => this.aquaticRouteProbe(mob, heading, lookahead),
+    });
+    mob.route = route.state;
+    mob.steering = updateStableSteering(mob.steering, { dt, turnRate: mob.definition.turnRate, blocked: route.blocked, mobId: mob.id, desiredHeading: route.heading });
     mob.angle = mob.steering.heading;
-    const nx = mob.group.position.x + Math.cos(mob.angle) * speed * dt;
-    const nz = mob.group.position.z + Math.sin(mob.angle) * speed * dt;
+    const requested = Math.max(0, speed * dt);
+    const dxStep = Math.cos(mob.angle) * requested;
+    const dzStep = Math.sin(mob.angle) * requested;
+    const nx = mob.group.position.x + dxStep;
+    const nz = mob.group.position.z + dzStep;
     const seafloorCrawler = mob.kind === "tideglass-crab";
     if (seafloorCrawler) {
       const floorY = this.world.surfaceAt(Math.round(nx), Math.round(nz));
@@ -22814,16 +22975,19 @@ export class VoxelEngine {
     const ny = mob.baseY + verticalWave;
     const nextLiquid = this.world.getBlock(Math.floor(nx + 0.5), Math.floor(ny + 0.5), Math.floor(nz + 0.5));
     const water = mob.kind === "syrupfin" ? nextLiquid === BlockId.Syrup : blockContainsWater(nextLiquid);
-    if (water) {
-      const before = mob.group.position.clone();
-      mob.group.position.set(nx, ny, nz);
+    const before = mob.group.position.clone();
+    const moved = !route.blocked && water ? this.moveMobWithTerrain(mob, dxStep, dzStep) : 0;
+    mob.route = recordCreatureRouteProgress(mob.route, requested, moved, dt);
+    if (moved > 0.0001) {
+      mob.group.position.y = ny;
+      mob.baseY = seafloorCrawler ? mob.baseY : ny - verticalWave;
       mob.group.rotation.y = -mob.angle - Math.PI / 2;
       mob.visual.rotation.z = seafloorCrawler ? 0 : Math.sin(mob.age * 6 + mob.id) * 0.055;
       this.animateMob(mob, before.distanceTo(mob.group.position));
-    } else {
-      mob.desiredAngle += Math.PI * (0.7 + (mob.id % 7) * 0.04);
-      mob.steering = createStableSteering(mob.angle);
-      mob.wanderTimer = 0.7;
+    } else if (mob.route.blockedSeconds > 0.32) {
+      // The route planner now owns a stable reverse/side fan; only renew the
+      // wander target after a measured stall instead of twitching at each bank.
+      mob.wanderTimer = 0;
     }
   }
 
@@ -25055,10 +25219,13 @@ export class VoxelEngine {
       const movement = mob.definition.movement ?? (mob.definition.aquatic ? "aquatic" : mob.definition.flying ? "flying" : "ground");
       let routeBlocked = false;
       let routeHeading = mob.desiredAngle;
+      let routeMaxDrop = mob.kind === "caveblob" || mob.kind === "puddlehopper" ? 2 : 1;
       if (movement === "ground" && speed > 0.001) {
         const profile = this.mobCollisionProfile(mob);
         const baseLookahead = Math.max(0.72, (profile.radius || mob.definition.radius * this.mobBaseScale(mob)) + 0.36, speed * 0.42);
         const lookahead = followerSlot && !peelopTarget && !companionGolemTarget ? Math.max(0.3, Math.min(baseLookahead, followerDistance)) : baseLookahead;
+        const threatened = mob.state === "chase" || mob.state === "flee" || mob.awarenessTimer > 0 || mob.hurtTimer > 0;
+        routeMaxDrop = Math.max(routeMaxDrop, creatureDropAllowance(threatened, movement));
         const route = chooseCreatureRoute({
           state: mob.route,
           dt: mobDt,
@@ -25066,9 +25233,9 @@ export class VoxelEngine {
           mobId: mob.id,
           movement,
           maxStepUp: 1,
-          maxDrop: mob.kind === "caveblob" || mob.kind === "puddlehopper" ? 2 : 1,
+          maxDrop: routeMaxDrop,
           allowWater: mob.definition.family !== "construct",
-          probe: (heading) => this.creatureRouteProbe(mob, heading, lookahead),
+          probe: (heading) => this.creatureRouteProbe(mob, heading, lookahead, 1, routeMaxDrop),
         });
         mob.route = route.state;
         routeBlocked = route.blocked;
@@ -25078,39 +25245,25 @@ export class VoxelEngine {
         dt: mobDt, turnRate: mob.definition.turnRate, blocked: routeBlocked, mobId: mob.id, desiredHeading: routeHeading,
       });
       mob.angle = mob.steering.heading;
-      let blocked = routeBlocked;
       if (!routeBlocked && (mob.kind === "glowmoth" || mob.kind === "lightning-bug")) {
-        const nx = mob.group.position.x + Math.cos(mob.angle) * speed * mobDt;
-        const nz = mob.group.position.z + Math.sin(mob.angle) * speed * mobDt;
-        const targetY = this.mobMoveTarget(mob, nx, nz);
-        if (targetY !== null) {
-          mob.group.position.x = nx;
-          mob.group.position.z = nz;
-          mob.baseY += (targetY - mob.baseY) * Math.min(1, mobDt * 4);
-        } else { blocked = true; mob.wanderTimer = Math.max(mob.wanderTimer, 0.35); }
+        const requested = speed * mobDt;
+        const moved = this.moveMobWithTerrain(mob, Math.cos(mob.angle) * requested, Math.sin(mob.angle) * requested, 1, routeMaxDrop);
+        if (moved <= requested * 0.3) mob.wanderTimer = Math.max(mob.wanderTimer, 0.35);
         const floatAmplitude = mob.kind === "lightning-bug" ? 0.3 : 0.22;
         mob.group.position.y = mob.baseY + Math.sin(performance.now() * (mob.kind === "lightning-bug" ? 0.0042 : 0.003) + mob.id) * floatAmplitude;
       } else if (!routeBlocked && speed > 0.001) {
-        const nx = mob.group.position.x + Math.cos(mob.angle) * speed * mobDt;
-        const nz = mob.group.position.z + Math.sin(mob.angle) * speed * mobDt;
-        const targetY = this.mobMoveTarget(mob, nx, nz);
-        if (targetY !== null) {
-          mob.group.position.x = nx;
-          mob.group.position.z = nz;
+        const requested = speed * mobDt;
+        const movedDistance = this.moveMobWithTerrain(mob, Math.cos(mob.angle) * requested, Math.sin(mob.angle) * requested, 1, routeMaxDrop);
+        if (movedDistance > requested * 0.3) {
           const puddleInterval = this.weather === "rain" ? 1.45 : 2.8;
           const puddlePhase = mob.age % puddleInterval / puddleInterval;
           const hop = mob.kind === "caveblob" ? Math.max(0, Math.sin(performance.now() * 0.006 + mob.id)) * 0.1
             : puddleJump?.jumps && speed > 0 ? Math.max(0, Math.sin(puddlePhase * Math.PI)) * Math.min(0.75, puddleJump.verticalVelocity * 0.1) : 0;
-          mob.group.position.y += (targetY + hop - mob.group.position.y) * Math.min(1, mobDt * 9);
-        } else { blocked = true; mob.wanderTimer = Math.max(mob.wanderTimer, 0.5); }
+          mob.group.position.y = mob.baseY + hop;
+        } else mob.wanderTimer = Math.max(mob.wanderTimer, 0.5);
       }
       const moved = Math.hypot(mob.group.position.x - beforeX, mob.group.position.z - beforeZ);
-      if (blocked && !routeBlocked) mob.route = {
-        heading: mob.route.heading,
-        holdSeconds: 0,
-        blockedSeconds: mob.route.blockedSeconds + Math.min(0.1, Math.max(0, mobDt)),
-        probeCooldown: 0,
-      };
+      mob.route = recordCreatureRouteProgress(mob.route, speed * mobDt, moved, mobDt);
       mob.group.rotation.y = -mob.angle - Math.PI / 2;
       this.animateMob(mob, moved);
       this.refreshMobSpatialEntry(mob);

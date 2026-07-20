@@ -100,6 +100,8 @@ test("inventory markup exposes drag targets, trash guidance, and a bounded Bone 
   assert.match(ui, /data-inventory-drag-target/u);
   assert.match(ui, /Recover until replaced/u);
   assert.match(ui, /Hold and drag to share a stack/u);
+  assert.match(ui, /inventoryDragPreview/u);
+  assert.match(css, /inventory-drag-preview-mark/u);
   assert.match(ui, /formatHudHealth\(specimen\.health\)/u);
   assert.match(ui, /formatHudHealth\(hud\.activePet\.health\)/u);
   assert.match(ui, /formatHudHealth\(creature\.health\)/u);

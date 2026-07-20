@@ -2,6 +2,16 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.8.5 - Trailcraft Currents - 2026-07-19
+
+- Rebuilt ground and aquatic pathing around measured body progress, swept corner sliding, stable bank avoidance, partial ledge support, and deliberate two-block threatened descents.
+- Increased fish ecology headroom and shoal spacing while retaining bounded group sizes, independent population pools, and low-density fast paths.
+- Added continuous inventory drag previews and made the first four blocks of player fall distance safe.
+- Reworked Known Roads into a freely pannable world-coordinate viewport that opens at a stable 1,024-block scale and no longer clips rendering to an earlier discovery shape.
+- Added the 522-entry searchable Trailcraft Guide with deterministic origins, descriptions, recipes, reverse uses, ingredient links, and pattern-board handoff from every relevant crafting facility.
+- Added opt-in one-second local performance telemetry with editable emergency timeout and JSON downloads on stop, timeout, or Save & Quit.
+- Pulled the Giant Mooncap underside into a stout inset stem while retaining the full crown and full-block collision.
+
 ## 1.8.4 - Moonbrawn Motherlode - 2026-07-19
 
 - Reworked Frostpear Leaves into noisy, clustered foliage with ragged openings, five-tone canopy depth, individually readable leaflets, and pale frost tips.

@@ -845,7 +845,7 @@ export type BlockDefinition = {
   color: string;
   preferredTool: BlockTool;
   requiredTier: number;
-  shape?: "cube" | "cross" | "tall-flower" | "aquatic" | "torch" | "door" | "chest" | "bed" | "exhibit" | "aquarium" | "fireplace" | "bush" | "fruit" | "fence" | "gate" | "apiary" | "wild-hive" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "morph-loom" | "incubator" | "archive-shelf" | "tome-display" | "gold-pile" | "dragon-egg" | "lightning-bug-jar" | "chair" | "table" | "stool" | "shelf" | "barrel";
+  shape?: "cube" | "mooncap" | "cross" | "tall-flower" | "aquatic" | "torch" | "door" | "chest" | "bed" | "exhibit" | "aquarium" | "fireplace" | "bush" | "fruit" | "fence" | "gate" | "apiary" | "wild-hive" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "morph-loom" | "incubator" | "archive-shelf" | "tome-display" | "gold-pile" | "dragon-egg" | "lightning-bug-jar" | "chair" | "table" | "stool" | "shelf" | "barrel";
   replaceable?: boolean;
   liquid?: "water" | "lava" | "honey" | "syrup";
   /** The block occupies a water source cell; breaking it restores the water. */
@@ -997,7 +997,7 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.CrystalOre]: block(BlockId.CrystalOre, "Star Crystal Ore", STAR_CRYSTAL_ORE_TILE, STAR_CRYSTAL_ORE_TILE, STAR_CRYSTAL_ORE_TILE, 3.1, "#64d6df", "pickaxe", 3),
   [BlockId.Deepstone]: block(BlockId.Deepstone, "Deepstone", 43, 43, 43, 2.15, "#3e454a", "pickaxe", 2),
   [BlockId.Lava]: block(BlockId.Lava, "Lava", 44, 44, 44, 0, "#ed642f", "hand", 0, { solid: false, layer: "transparent", replaceable: true, liquid: "lava" }),
-  [BlockId.MushroomCap]: block(BlockId.MushroomCap, "Giant Mooncap", GIANT_MUSHROOM_TOP_TILE, GIANT_MUSHROOM_SIDE_TILE, GIANT_MUSHROOM_GILLS_TILE, 0.55, "#a94e62", "axe"),
+  [BlockId.MushroomCap]: block(BlockId.MushroomCap, "Giant Mooncap", GIANT_MUSHROOM_TOP_TILE, GIANT_MUSHROOM_SIDE_TILE, GIANT_MUSHROOM_GILLS_TILE, 0.55, "#a94e62", "axe", 0, { shape: "mooncap", lightDampening: 15 }),
   [BlockId.Moss]: block(BlockId.Moss, "Cave Moss", 46, 46, 46, 0.35, "#4b8245", "shovel"),
   [BlockId.Gravel]: block(BlockId.Gravel, "Gravel", 47, 47, 47, 0.6, "#85817c", "shovel"),
   [BlockId.Ice]: block(BlockId.Ice, "Ice", 48, 48, 48, 0.45, "#8fd0e2", "pickaxe", 0, { layer: "transparent" }),

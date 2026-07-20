@@ -166,10 +166,10 @@ export type SocialGroupMotion = Readonly<{ id: string; x: number; z: number; spe
 
 /** Bounded cohesion/separation/alignment shared by large herds and thin-fish shoals. */
 export function planSocialGroupMotion(members: readonly SocialGroupMember[], mode: SocialGroupMode): SocialGroupMotion[] {
-  const separationRadius = mode === "herd" ? 2.4 : 0.72;
-  const cohesionWeight = mode === "herd" ? 0.16 : 0.28;
-  const separationWeight = mode === "herd" ? 1.15 : 0.74;
-  const alignmentWeight = mode === "herd" ? 0.1 : 0.32;
+  const separationRadius = mode === "herd" ? 2.4 : 1.18;
+  const cohesionWeight = mode === "herd" ? 0.16 : 0.21;
+  const separationWeight = mode === "herd" ? 1.15 : 1.02;
+  const alignmentWeight = mode === "herd" ? 0.1 : 0.28;
   return members.map((member) => {
     const neighbors = members
       .filter((candidate) => candidate.id !== member.id)
@@ -196,7 +196,7 @@ export function planSocialGroupMotion(members: readonly SocialGroupMember[], mod
 
 export function planGroupSpawn(seed: string | number, kind: MobKind, center: Readonly<{ x: number; y: number; z: number }>, mode: SocialGroupMode) {
   const count = mode === "herd" ? 4 + Math.floor(hashUnit(seed, `${kind}:herd-count`) * 4) : 6 + Math.floor(hashUnit(seed, `${kind}:shoal-count`) * 7);
-  const radius = mode === "herd" ? 7 : 2.8;
+  const radius = mode === "herd" ? 7 : 4.4;
   return Array.from({ length: count }, (_, index) => {
     const angle = hashUnit(seed, `${kind}:${index}:angle`) * Math.PI * 2;
     const distance = Math.sqrt(hashUnit(seed, `${kind}:${index}:distance`)) * radius;

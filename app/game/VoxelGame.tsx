@@ -97,7 +97,9 @@ import {
   type NpcFactionId,
 } from "./factions";
 import { commerceItemCode, commerceKeyForItem, inventoryResourceCounts, playerCommerceItem } from "./hearthroads-adapter";
-import { inventorySlotStackLimit, inventorySlotsCanStack } from "./inventory-convenience";
+import { distributeInventoryCursor, inventorySlotStackLimit, inventorySlotsCanStack } from "./inventory-convenience";
+import { ITEM_GUIDE_ENTRIES, itemGuideMatches, type ItemGuideProcess } from "./item-guide";
+import { ResourceTelemetryLog, telemetryFileName, type ResourceTelemetryReport, type ResourceTelemetryStopReason } from "./performance-log";
 import { createMapKnowledge, type MapMarker } from "./map-system";
 import { PLANTS, createPlantBestiaryState, nativeBiomesForPlant, type PlantCategory, type PlantDefinition } from "./plants";
 import { createQuestBook, type QuestObjective, type QuestSource } from "./quests";
@@ -657,11 +659,23 @@ export const INITIAL_GAME_SETTINGS: Readonly<GameSettings> = Object.freeze({
   showBreakingTexture: true,
   showBreakProgress: false,
   showToolEffectiveness: true,
+  debugTelemetry: false,
+  debugTelemetryMaxMinutes: 60,
   resourceMode: "auto",
 });
 
 export function initialHydrationSettings(): GameSettings {
   return { ...INITIAL_GAME_SETTINGS };
+}
+
+function downloadResourceTelemetryReport(report: ResourceTelemetryReport) {
+  if (typeof document === "undefined" || typeof URL === "undefined") return;
+  const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = telemetryFileName();
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 export type TouchControlsMode = "auto" | "off" | "on";
@@ -1847,6 +1861,7 @@ export default function VoxelGame() {
   const bestiaryFiltersOpenRef = useRef(false);
   const bestiaryFilterTriggerRef = useRef<HTMLButtonElement | null>(null);
   const bestiaryFilterPanelRef = useRef<HTMLElement | null>(null);
+  const telemetryLogRef = useRef(new ResourceTelemetryLog());
 
   const [overlay, setOverlayState] = useState<Overlay>("title");
   const [titleMenuView, setTitleMenuViewState] = useState<TitleMenuView>("main");
@@ -1855,6 +1870,7 @@ export default function VoxelGame() {
   const [hud, setHud] = useState<ExtendedHudState>(INITIAL_HUD);
   const [toast, setToast] = useState("There is always another horizon. Usually with teeth.");
   const [savedPulse, setSavedPulse] = useState(false);
+  const [inventoryDragRevision, setInventoryDragRevision] = useState(0);
   const [worlds, setWorlds] = useState<WorldMetadata[]>([]);
   const [characterCatalog, setCharacterCatalog] = useState<CharacterProfileCatalog>(FALLBACK_CHARACTER_CATALOG);
   const [selectedWorldId, setSelectedWorldId] = useState<string | null>(null);
@@ -1880,6 +1896,11 @@ export default function VoxelGame() {
   const [recipeQuery, setRecipeQuery] = useState("");
   const [previewRecipeId, setPreviewRecipeId] = useState<string | null>(null);
   const [recipeFeedback, setRecipeFeedback] = useState<RecipePlanResult | null>(null);
+  const [itemGuideOpen, setItemGuideOpen] = useState(false);
+  const [itemGuideQuery, setItemGuideQuery] = useState("");
+  const [itemGuideItem, setItemGuideItem] = useState<ItemCode | null>(null);
+  const [telemetryRunning, setTelemetryRunning] = useState(false);
+  const [telemetrySamples, setTelemetrySamples] = useState(0);
   const [petNameDraft, setPetNameDraft] = useState("");
   const [selectedBestiary, setSelectedBestiary] = useState<MobKind>("mossling");
   const [bestiaryFacets, setBestiaryFacets] = useState<BestiaryFacetSelections>(createEmptyBestiaryFacetSelections);
@@ -2182,7 +2203,8 @@ export default function VoxelGame() {
     const caveLiquidAudit = auditParameters.get("cave-liquid-audit") === "1";
     const creatureCollisionAudit = auditParameters.get("mob-collision-audit") === "1";
     const settlementOriginAudit = auditParameters.get("origin-audit") === "wood-elf-remote";
-    const placementAudit = auditParameters.get("placement-audit") === "1" || mapNavigationAudit || waystoneIconAudit || chestAudit || caveLiquidAudit || creatureCollisionAudit || settlementOriginAudit;
+    const itemGuideAudit = auditParameters.get("item-guide-audit") === "1";
+    const placementAudit = auditParameters.get("placement-audit") === "1" || mapNavigationAudit || waystoneIconAudit || chestAudit || caveLiquidAudit || creatureCollisionAudit || settlementOriginAudit || itemGuideAudit;
     if (placementAudit) {
       engine.createWorld(
         settlementOriginAudit ? "WOOD-ELF-REMOTE-1" : caveLiquidAudit ? "WILDERNESS" : creatureCollisionAudit ? "MOB-COLLISION-AUDIT" : mapNavigationAudit || waystoneIconAudit ? "MAP-NAVIGATION-AUDIT" : "DIRECTIONAL-PLACEMENT-AUDIT",
@@ -2212,6 +2234,10 @@ export default function VoxelGame() {
           setSelectedMapMarkerId(auditMarkerId);
           setTrackedNavigationId(auditMarkerId);
         }
+        if (itemGuideAudit) {
+          setItemGuideItem(Item.Stick);
+          setItemGuideOpen(true);
+        }
       });
     } else if (initialWorld) engine.previewWorld(initialWorld.seed);
     return () => {
@@ -2232,6 +2258,24 @@ export default function VoxelGame() {
     setSettingsState(stored);
     engineRef.current?.setSettings(stored);
   }, []);
+
+  useEffect(() => {
+    if (!telemetryRunning) return;
+    const sample = () => {
+      const engine = engineRef.current;
+      if (!engine) return;
+      telemetryLogRef.current.record(engine.performanceTelemetrySnapshot());
+      setTelemetrySamples(telemetryLogRef.current.sampleCount);
+      if (telemetryLogRef.current.hasReachedLimit(settings.debugTelemetryMaxMinutes)) {
+        const report = telemetryLogRef.current.stop("time-limit");
+        if (report) downloadResourceTelemetryReport(report);
+        setTelemetryRunning(false);
+      }
+    };
+    sample();
+    const interval = window.setInterval(sample, 1000);
+    return () => window.clearInterval(interval);
+  }, [settings.debugTelemetryMaxMinutes, telemetryRunning]);
 
   useEffect(() => {
     try {
@@ -2577,6 +2621,19 @@ export default function VoxelGame() {
     }
   };
 
+  const stopTelemetry = (reason: ResourceTelemetryStopReason = "manual") => {
+    const report = telemetryLogRef.current.stop(reason);
+    if (report) downloadResourceTelemetryReport(report);
+    setTelemetryRunning(false);
+    setTelemetrySamples(0);
+  };
+
+  const startTelemetry = () => {
+    telemetryLogRef.current.start();
+    setTelemetrySamples(0);
+    setTelemetryRunning(true);
+  };
+
   const resume = () => {
     engineRef.current?.closeContainer();
     setOverlay(null);
@@ -2593,6 +2650,7 @@ export default function VoxelGame() {
   const saveAndQuit = () => {
     const engine = engineRef.current;
     if (!engine) return;
+    if (telemetryLogRef.current.running) stopTelemetry("save-and-quit");
     clearFirstPersonHeldPresentation(engine);
     engine.quitToTitle();
     startedRef.current = false;
@@ -2891,6 +2949,7 @@ export default function VoxelGame() {
       targets: [target],
       keys: new Set([key]),
     };
+    setInventoryDragRevision((revision) => revision + 1);
   };
 
   const visitInventoryDrag = (event: ReactPointerEvent<HTMLButtonElement>, target?: InventoryDragTarget) => {
@@ -2900,15 +2959,39 @@ export default function VoxelGame() {
     if (gesture.keys.has(key)) return;
     gesture.keys.add(key);
     gesture.targets.push(target);
+    setInventoryDragRevision((revision) => revision + 1);
   };
 
   const finishInventoryDrag = (event: ReactPointerEvent<HTMLElement>) => {
     const gesture = inventoryDragRef.current;
     if (!gesture || gesture.pointerId !== event.pointerId) return;
     inventoryDragRef.current = null;
+    setInventoryDragRevision((revision) => revision + 1);
     if (gesture.targets.length < 2) return;
     if (engineRef.current?.distributeCursorAcrossSlots(gesture.targets, gesture.button)) suppressSlotClickRef.current = true;
   };
+
+  const cancelInventoryDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    if (inventoryDragRef.current?.pointerId !== event.pointerId) return;
+    inventoryDragRef.current = null;
+    setInventoryDragRevision((revision) => revision + 1);
+  };
+
+  const inventoryDragPreview = useMemo(() => {
+    const gesture = inventoryDragRef.current;
+    if (!gesture || !hud.cursor) return null;
+    const sourceSlots = gesture.targets.map((target) => target.area === "inventory"
+      ? hud.inventory[target.index] ?? null
+      : hud.craftGrid[target.index] ?? null);
+    const distribution = distributeInventoryCursor(hud.cursor, sourceSlots, gesture.button);
+    return {
+      revision: inventoryDragRevision,
+      cursor: distribution.cursor,
+      moved: distribution.moved,
+      slots: new Map(gesture.targets.map((target, index) => [`${target.area}:${target.index}`, distribution.slots[index] ?? null])),
+    };
+  }, [hud.craftGrid, hud.cursor, hud.inventory, inventoryDragRevision]);
+  const inventoryDisplayCursor = inventoryDragPreview ? inventoryDragPreview.cursor : hud.cursor;
 
   const slotAction = (index: number, button: "left" | "right", shift = false) => engineRef.current?.inventoryClick(index, button, shift);
   const slotContext = (event: ReactMouseEvent, action: () => void) => {
@@ -2929,14 +3012,18 @@ export default function VoxelGame() {
     className = "",
     label?: string,
     dragTarget?: InventoryDragTarget,
-  ) => (
+  ) => {
+    const dragKey = dragTarget ? `${dragTarget.area}:${dragTarget.index}` : null;
+    const previewing = Boolean(dragKey && inventoryDragPreview?.slots.has(dragKey));
+    const displaySlot = previewing ? inventoryDragPreview!.slots.get(dragKey!) ?? null : slot;
+    return (
     <button
       type="button"
       key={key}
-      className={`mc-slot ${className}`}
-      title={itemHoverText(slot, label)}
-      aria-label={slot ? `${itemHoverText(slot)}, ${slot.count}` : label ?? "Empty slot"}
-      data-inventory-drag-target={dragTarget ? `${dragTarget.area}:${dragTarget.index}` : undefined}
+      className={`mc-slot ${className}${previewing ? " drag-preview" : ""}`}
+      title={itemHoverText(displaySlot, label)}
+      aria-label={displaySlot ? `${itemHoverText(displaySlot)}, ${displaySlot.count}` : label ?? "Empty slot"}
+      data-inventory-drag-target={dragKey ?? undefined}
       onPointerDown={(event) => beginInventoryDrag(event, dragTarget)}
       onPointerEnter={(event) => visitInventoryDrag(event, dragTarget)}
       onClick={(event) => {
@@ -2950,9 +3037,11 @@ export default function VoxelGame() {
       }}
       onContextMenu={(event) => slotContext(event, onRight)}
     >
-      <SlotContents slot={slot} />
+      <SlotContents slot={displaySlot} />
+      {previewing && <span className="inventory-drag-preview-mark" aria-hidden="true" />}
     </button>
-  );
+    );
+  };
 
   const renderPlayerInventory = (showPackActions = false) => (
     <div className="player-inventory-section">
@@ -3166,6 +3255,61 @@ export default function VoxelGame() {
     setPreviewRecipeId(recipeId);
   };
 
+  const openItemGuide = (item?: ItemCode) => {
+    setItemGuideItem(item ?? itemGuideItem ?? ITEM_GUIDE_ENTRIES[0]?.item ?? null);
+    setItemGuideOpen(true);
+  };
+
+  const openGuideCraftingPattern = (process: ItemGuideProcess) => {
+    if (!process.craftingRecipeId) return;
+    setRecipeQuery("");
+    setRecipeFeedback(null);
+    setPreviewRecipeId(process.craftingRecipeId);
+    setInventoryTab("recipes");
+    setItemGuideOpen(false);
+  };
+
+  const renderGuideProcess = (process: ItemGuideProcess, canOpenPattern = false) => (
+    <article key={process.id} className="item-guide-process">
+      <header><span>{process.station}</span><strong>{process.name}</strong></header>
+      <div className="item-guide-process-flow">
+        <div>{process.inputs.map((ingredient, index) => (
+          <button type="button" key={`${process.id}-input-${index}`} onClick={() => ingredient.items[0] !== undefined && setItemGuideItem(ingredient.items[0])} title={`Open ${ingredient.label}`}>
+            {ingredient.items[0] !== undefined && <ItemIcon item={ingredient.items[0]} small />}
+            <span>{ingredient.count}× {ingredient.label}</span>
+          </button>
+        ))}</div>
+        <i aria-hidden="true">→</i>
+        <button type="button" className="item-guide-output" onClick={() => setItemGuideItem(process.outputItem)}><ItemIcon item={process.outputItem} small /><span>{process.outputCount}× {ITEMS[process.outputItem]?.name}</span></button>
+      </div>
+      <p>{process.description}</p>
+      {canOpenPattern && process.craftingRecipeId && <button type="button" className="item-guide-pattern-button" onClick={() => openGuideCraftingPattern(process)}>Open pattern board</button>}
+    </article>
+  );
+
+  const renderItemGuide = () => {
+    const filtered = ITEM_GUIDE_ENTRIES.filter((entry) => itemGuideMatches(entry, itemGuideQuery));
+    const selected = ITEM_GUIDE_ENTRIES.find((entry) => entry.item === itemGuideItem) ?? filtered[0] ?? ITEM_GUIDE_ENTRIES[0];
+    return (
+      <div className="mc-window item-guide-window">
+        <header className="mc-window-header"><div><span className="panel-eyebrow">FIELD REFERENCE · RECIPES · ORIGINS</span><h2 id="item-guide-title">Trailcraft Guide</h2></div><button type="button" className="panel-close" onClick={() => setItemGuideOpen(false)} aria-label="Close item guide">×</button></header>
+        <div className="item-guide-layout">
+          <aside className="item-guide-index">
+            <label><span className="sr-only">Search the item guide</span><input autoFocus type="search" value={itemGuideQuery} onChange={(event) => setItemGuideQuery(event.target.value)} placeholder="Item, source, recipe…" /></label>
+            <small>{filtered.length}/{ITEM_GUIDE_ENTRIES.length} entries</small>
+            <div>{filtered.map((entry) => <button type="button" key={entry.item} className={selected?.item === entry.item ? "active" : ""} onClick={() => setItemGuideItem(entry.item)}><ItemIcon item={entry.item} small /><span>{entry.name}</span></button>)}</div>
+          </aside>
+          {selected && <main className="item-guide-detail">
+            <header><ItemIcon item={selected.item} /><div><span>ITEM {selected.item}</span><h3>{selected.name}</h3><p>{selected.description}</p></div></header>
+            <section><h4>Deterministic origins</h4><ul>{selected.origins.map((origin) => <li key={origin}>{origin}</li>)}</ul></section>
+            <section><h4>How to make it</h4>{selected.madeBy.length ? selected.madeBy.map((process) => renderGuideProcess(process, true)) : <p className="item-guide-empty">No manufacturing process is recorded. Follow the origins above.</p>}</section>
+            <section><h4>What it makes</h4>{selected.usedIn.length ? selected.usedIn.map((process) => renderGuideProcess(process, true)) : <p className="item-guide-empty">No downstream recipe currently uses this item.</p>}</section>
+          </main>}
+        </div>
+      </div>
+    );
+  };
+
   const renderRecipeBook = (includeTable: boolean) => {
     const filtered = RECIPES.filter((recipe) => recipeMatchesQuery(recipe, recipeQuery));
     const preview = filtered.find((recipe) => recipe.id === previewRecipeId) ?? filtered[0] ?? null;
@@ -3175,7 +3319,7 @@ export default function VoxelGame() {
     return (
       <aside className="recipe-book">
         <section className="recipe-library" aria-label="Recipe list">
-          <div className="recipe-book-title"><span aria-hidden="true">▤</span><strong>RECIPE BOOK</strong><small>{filtered.length}/{RECIPES.length}</small></div>
+          <div className="recipe-book-title"><span aria-hidden="true">▤</span><strong>RECIPE BOOK</strong><small>{filtered.length}/{RECIPES.length}</small><button type="button" onClick={() => openItemGuide(preview?.output.item)}>ITEM WIKI</button></div>
           <label className="recipe-search">
             <span className="sr-only">Search recipes</span>
             <span aria-hidden="true">⌕</span>
@@ -4057,7 +4201,7 @@ export default function VoxelGame() {
       )}
 
       {(overlay === "inventory" || overlay === "crafting") && (
-        <section className="menu-overlay inventory-overlay" aria-labelledby="inventory-title" onPointerMove={trackCursor} onPointerUp={finishInventoryDrag} onPointerCancel={finishInventoryDrag}>
+        <section className="menu-overlay inventory-overlay" aria-labelledby="inventory-title" onPointerMove={trackCursor} onPointerUp={finishInventoryDrag} onPointerCancel={cancelInventoryDrag}>
           <div className={`mc-window inventory-window ${inventoryTab === "recipes" ? "recipe-mode" : ""}`}>
             <header className="mc-window-header">
               <div><span className="panel-eyebrow">{overlay === "crafting" ? "CRAFTING TABLE · 3×3" : hud.mode === "builder" ? "BUILDER INVENTORY" : "PACK · 2×2 CRAFTING"}</span><h2 id="inventory-title">{overlay === "crafting" ? "Crafting Table" : "Inventory"}</h2></div>
@@ -4114,7 +4258,7 @@ export default function VoxelGame() {
             )}
             <div className="inventory-instructions">Left click moves stacks · Hold and drag to share a stack · Right click splits or paints one per slot · Double-click gathers matching items · Shift-click transfers</div>
           </div>
-          {hud.cursor && <div ref={setHeldStackElement} className="held-stack"><SlotContents slot={hud.cursor} /></div>}
+          {inventoryDisplayCursor && <div ref={setHeldStackElement} className="held-stack"><SlotContents slot={inventoryDisplayCursor} /></div>}
         </section>
       )}
 
@@ -4662,11 +4806,18 @@ export default function VoxelGame() {
             <div className="toggle-setting"><span><strong>Block crack texture</strong><small>Shows the familiar staged crack overlay while breaking full blocks.</small></span><button type="button" className={settings.showBreakingTexture ? "active" : ""} onClick={() => updateSettings({ showBreakingTexture: !settings.showBreakingTexture })}>{settings.showBreakingTexture ? "ON" : "OFF"}</button></div>
             <div className="toggle-setting"><span><strong>Breaking progress bar</strong><small>Optional numeric-style HUD meter; off by default while the crack texture is active.</small></span><button type="button" className={settings.showBreakProgress ? "active" : ""} onClick={() => updateSettings({ showBreakProgress: !settings.showBreakProgress })}>{settings.showBreakProgress ? "ON" : "OFF"}</button></div>
             <div className="toggle-setting"><span><strong>Tool effectiveness outline</strong><small>Subtly shifts the target outline green, amber, or red for the held tool.</small></span><button type="button" className={settings.showToolEffectiveness ? "active" : ""} onClick={() => updateSettings({ showToolEffectiveness: !settings.showToolEffectiveness })}>{settings.showToolEffectiveness ? "ON" : "OFF"}</button></div>
+            <div className="toggle-setting"><span><strong>Performance debug logging</strong><small>Opt-in one-second resource samples. Nothing is uploaded; stopping downloads a JSON report.</small></span><button type="button" className={settings.debugTelemetry ? "active" : ""} onClick={() => { if (settings.debugTelemetry && telemetryRunning) stopTelemetry("manual"); updateSettings({ debugTelemetry: !settings.debugTelemetry }); }}>{settings.debugTelemetry ? "ON" : "OFF"}</button></div>
+            {settings.debugTelemetry && <div className="telemetry-setting"><label><span><strong>Emergency stop</strong><small>Automatically download after this many minutes (1–180).</small></span><input type="number" min="1" max="180" value={settings.debugTelemetryMaxMinutes} onChange={(event) => updateSettings({ debugTelemetryMaxMinutes: Math.max(1, Math.min(180, Number(event.target.value) || 60)) })} /></label><button type="button" className={telemetryRunning ? "active" : ""} onClick={() => telemetryRunning ? stopTelemetry("manual") : startTelemetry()}>{telemetryRunning ? `STOP & DOWNLOAD · ${telemetrySamples} SAMPLES` : "START LOGGING"}</button></div>}
             <div className="fullscreen-setting"><PixelButton onClick={() => engineRef.current?.toggleFullscreen()}>{hud.fullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}</PixelButton></div>
             <div className="panel-actions"><PixelButton className="gold-button" onClick={() => setOverlay(settingsReturn)}>Done</PixelButton></div>
           </div>
         </section>
       )}
+
+      {overlay && ["inventory", "crafting", "furnace", "alchemy", "distillery", "sugarworks", "apiary", "morph-loom", "golem-forge"].includes(overlay) && !itemGuideOpen && (
+        <button type="button" className="item-guide-launcher" onClick={() => openItemGuide(selectedSlot?.item)} aria-label="Open Trailcraft item guide">ITEM WIKI <kbd>?</kbd></button>
+      )}
+      {itemGuideOpen && <section className="menu-overlay item-guide-overlay" aria-labelledby="item-guide-title">{renderItemGuide()}</section>}
 
       {webglError && (
         <section className="webgl-fallback" role="alert" aria-labelledby="webgl-title"><div className="pixel-panel confirm-panel"><div className="warning-cube" aria-hidden="true">◇</div><h2 id="webgl-title">The world could not render</h2><p>Blockwild needs WebGL hardware acceleration. Try a current desktop browser and make sure graphics acceleration is enabled.</p><PixelButton className="secondary-button" onClick={() => setWebglError(false)}>Browse Menus Anyway</PixelButton></div></section>

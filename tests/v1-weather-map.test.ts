@@ -19,6 +19,7 @@ import {
   mapTerrainPalette,
   mapViewportBounds,
   mapViewportProjection,
+  mapOpeningBounds,
   MAP_WATER_SURFACE_COLOR,
   markChunksRendered,
   normalizeMapKnowledge,
@@ -107,13 +108,16 @@ test("map zoom and pan retain the same x/z chunk coordinate system", () => {
   assert.equal(mapChunkAtViewportPoint(20, 200, { minX: -10, maxX: 10, minZ: -20, maxZ: 20 }, 800, 400), null);
 });
 
-test("map panning is clamped so known terrain cannot be dragged out of the canvas", () => {
+test("map panning is unbounded by discovery shape and opening scale is stable", () => {
   const base = { minX: -10, maxX: 10, minZ: -8, maxZ: 8 };
-  assert.deepEqual(constrainMapViewState(base, panMapView(createMapViewState(), 500, -500)), createMapViewState());
+  assert.deepEqual(mapOpeningBounds(5, -3), { minX: -27, maxX: 37, minZ: -35, maxZ: 29 });
+  const whole = constrainMapViewState(base, panMapView(createMapViewState(), 500, -500));
+  assert.equal(whole.panX, 500);
+  assert.equal(whole.panZ, -500);
   const close = constrainMapViewState(base, panMapView({ ...createMapViewState(), zoom: 4 }, 500, -500));
-  assert.equal(close.panX, 7.5);
-  assert.equal(close.panZ, -6);
-  assert.deepEqual(mapViewportBounds(base, close), { minX: 5, maxX: 10, minZ: -8, maxZ: -4 });
+  assert.equal(close.panX, 500);
+  assert.equal(close.panZ, -500);
+  assert.deepEqual(mapViewportBounds(base, close), { minX: 497.5, maxX: 502.5, minZ: -502, maxZ: -498 });
 });
 
 test("detailed map sampling gives water precedence and culls offscreen chunks", () => {

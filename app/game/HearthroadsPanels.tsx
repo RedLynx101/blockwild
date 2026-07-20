@@ -22,9 +22,9 @@ import {
   mapTerrainPalette,
   mapViewportBounds,
   mapViewportProjection,
+  mapOpeningBounds,
   normalizeMapViewState,
   panMapView,
-  parseChunkKey,
   projectMapWorldPoint,
   stepMapZoom,
   undergroundDepthBandForY,
@@ -389,35 +389,6 @@ function markerKindVisual(kind: MapMarkerKind, fallback: string) {
 type MapBounds = MapViewportBounds;
 type MapViewportSize = Readonly<{ width: number; height: number }>;
 
-function mapBounds(state: MapKnowledge, currentChunkX: number, currentChunkZ: number): MapBounds {
-  let minX = currentChunkX;
-  let maxX = currentChunkX;
-  let minZ = currentChunkZ;
-  let maxZ = currentChunkZ;
-  for (const key of state.exploredChunks) {
-    const chunk = parseChunkKey(key);
-    if (!chunk) continue;
-    minX = Math.min(minX, chunk.x);
-    maxX = Math.max(maxX, chunk.x);
-    minZ = Math.min(minZ, chunk.z);
-    maxZ = Math.max(maxZ, chunk.z);
-  }
-  for (const marker of state.markers) {
-    const x = Math.floor(marker.position.x / 16);
-    const z = Math.floor(marker.position.z / 16);
-    minX = Math.min(minX, x);
-    maxX = Math.max(maxX, x);
-    minZ = Math.min(minZ, z);
-    maxZ = Math.max(maxZ, z);
-  }
-  return {
-    minX: minX - 1,
-    maxX: maxX + 1,
-    minZ: minZ - 1,
-    maxZ: maxZ + 1,
-  };
-}
-
 function mapPointStyle(
   position: Pick<WorldPoint, "x" | "z">,
   bounds: MapBounds,
@@ -614,8 +585,8 @@ export function MapPanel({
   const currentChunkX = Math.floor(currentPosition.x / 16);
   const currentChunkZ = Math.floor(currentPosition.z / 16);
   const baseBounds = useMemo(
-    () => mapBounds(knowledge, currentChunkX, currentChunkZ),
-    [currentChunkX, currentChunkZ, knowledge],
+    () => mapOpeningBounds(currentChunkX, currentChunkZ),
+    [currentChunkX, currentChunkZ],
   );
   const zoomLimits = useMemo(() => ({ minimum: minimumZoom } as const), [minimumZoom]);
   const activeViewState = useMemo(
@@ -665,7 +636,7 @@ export function MapPanel({
     && currentWayshrineId !== selected.id;
 
   const updateViewState = (next: MapViewState) => {
-    const normalized = constrainMapViewState(baseBounds, normalizeMapViewState(next, zoomLimits), zoomLimits);
+    const normalized = normalizeMapViewState(next, zoomLimits);
     if (!controlledViewState) setLocalViewState(normalized);
     onViewStateChange?.(normalized);
   };
@@ -715,7 +686,6 @@ export function MapPanel({
   };
 
   const handleMapWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
-    event.preventDefault();
     updateViewState(stepMapZoom(activeViewState, event.deltaY < 0 ? 1 : -1, zoomLimits));
   };
 
@@ -805,7 +775,7 @@ export function MapPanel({
             <div className="hearthroads-map-controls" aria-label="Map view controls" onPointerDown={(event) => event.stopPropagation()}>
               <button type="button" onClick={() => updateViewState(panMapView(activeViewState, 0, -panStepZ, zoomLimits))} aria-label="Pan map north">↑</button>
               <button type="button" onClick={() => updateViewState(panMapView(activeViewState, -panStepX, 0, zoomLimits))} aria-label="Pan map west">←</button>
-              <button type="button" onClick={() => updateViewState(createMapViewState())} aria-label="Show the whole explored map">◉</button>
+              <button type="button" onClick={() => updateViewState(createMapViewState())} aria-label="Center map on the player">◉</button>
               <button type="button" onClick={() => updateViewState(panMapView(activeViewState, panStepX, 0, zoomLimits))} aria-label="Pan map east">→</button>
               <button type="button" onClick={() => updateViewState(panMapView(activeViewState, 0, panStepZ, zoomLimits))} aria-label="Pan map south">↓</button>
               <button type="button" onClick={() => updateViewState(stepMapZoom(activeViewState, -1, zoomLimits))} disabled={activeViewState.zoom <= minimumZoom} aria-label="Zoom map out">−</button>

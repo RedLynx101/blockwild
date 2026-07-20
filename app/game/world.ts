@@ -6043,6 +6043,16 @@ export class ChunkWorld {
           addTorchSprite(widthB, 0.91);
           continue;
         }
+        if (definition.shape === "mooncap") {
+          const environment = shadeAt(lx, y, lz);
+          // Gameplay collision remains one solid block. Only the rendered
+          // underside pulls inward into a stout stem beneath the full crown.
+          addTexturedCuboid(bucket, lx - 0.22, y - 0.5, lz - 0.22, lx + 0.22, y + 0.18, lz + 0.22,
+            definition.bottom, definition.bottom, definition.bottom, tint, environment);
+          addTexturedCuboid(bucket, lx - 0.5, y + 0.12, lz - 0.5, lx + 0.5, y + 0.5, lz + 0.5,
+            definition.side, definition.top, definition.bottom, tint, environment);
+          continue;
+        }
         if (definition.shape === "bush" || definition.shape === "fruit") {
           const tile = definition.side;
           const environment = shadeAt(lx, y, lz);

@@ -111,12 +111,14 @@ import {
   createBirdFlightRouteState,
   createCreatureRouteState,
   creatureBodyMass,
+  creatureDropAllowance,
   creatureMeleeReach,
   creatureCollisionProfile,
   creatureKnockbackSpeed,
   findFollowerTeleportTarget,
   followerTravelSpeed,
   planFollowerFormation,
+  recordCreatureRouteProgress,
   separateCreatureCircles,
   shouldTeleportFollower,
   splitCreatureSeparation,
@@ -638,6 +640,42 @@ test("ground route look-ahead caches a proven heading without losing detour hyst
   }
   assert.ok(probes < 12, `short safe-route caching should avoid one voxel probe every frame (got ${probes})`);
   assert.equal(new Set(decisions.map((heading) => Math.sign(heading))).size, 1);
+});
+
+test("route recovery follows measured progress and threatened creatures accept a two-block escape", () => {
+  let state = createCreatureRouteState(0);
+  state = recordCreatureRouteProgress(state, 0.2, 0, 0.1);
+  state = recordCreatureRouteProgress(state, 0.2, 0.02, 0.1);
+  assert.equal(state.blockedSeconds, 0.2, "endpoint probes cannot erase a body-level stall");
+  const recovered = recordCreatureRouteProgress(state, 0.2, 0.2, 0.1);
+  assert.ok(recovered.blockedSeconds < state.blockedSeconds);
+  assert.equal(creatureDropAllowance(false, "ground"), 1);
+  assert.equal(creatureDropAllowance(true, "ground"), 2);
+  assert.equal(creatureDropAllowance(true, "aquatic"), 0);
+});
+
+test("aquatic route planning follows open water instead of repeatedly pressing into a shoreline", () => {
+  const route = chooseCreatureRoute({
+    state: createCreatureRouteState(),
+    dt: 1 / 60,
+    desiredHeading: 0,
+    mobId: 22,
+    movement: "aquatic",
+    probe: (heading) => Math.abs(heading) < 0.2
+      ? { walkable: false, water: false, clearance: 0 }
+      : { walkable: true, water: true, clearance: 1 },
+  });
+  assert.equal(route.blocked, false);
+  assert.ok(Math.abs(route.heading) >= Math.PI / 8);
+  const dryOnly = chooseCreatureRoute({
+    state: createCreatureRouteState(),
+    dt: 0.1,
+    desiredHeading: 0,
+    mobId: 22,
+    movement: "aquatic",
+    probe: () => ({ walkable: true, water: false, clearance: 1 }),
+  });
+  assert.equal(dryOnly.blocked, true);
 });
 
 test("bird flight routing uses bounded stable tree avoidance and climbs when lateral air is closed", () => {

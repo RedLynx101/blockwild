@@ -284,9 +284,12 @@ test("herds, shoals and Puddlehopper jumps are bounded, social and deterministic
   const shoal = planGroupSpawn(7, "silverthread", { x: 0, y: 0, z: 0 }, "shoal");
   assert.ok(herd.length >= 4 && herd.length <= 7);
   assert.ok(shoal.length >= 6 && shoal.length <= 12);
+  assert.ok(Math.max(...shoal.map((member) => Math.hypot(member.x, member.z))) > 3,
+    "fish schools should occupy a readable patch of water rather than one tight knot");
   const motion = planSocialGroupMotion(Array.from({ length: 18 }, (_, index) => ({ id: String(index), x: index * 0.2, z: 0, vx: 1, vz: 0 })), "shoal");
   assert.equal(motion.length, 18);
   assert.equal(motion.every((entry) => Number.isFinite(entry.x) && entry.speedScale <= 1.3), true);
+  assert.ok(motion[0].x < 0, "an overcrowded edge fish should steer away from the school center");
   assert.ok(puddlehopperJumpPlan("hop", 4, true, false).nextDecisionSeconds < puddlehopperJumpPlan("hop", 4, false, false).nextDecisionSeconds + 2);
 });
 

@@ -22,6 +22,7 @@ import {
   fishHabitatForSpawnSite,
   fishHabitatSupportsNaturalPool,
   fishKindForNaturalPool,
+  fallDamageForDistance,
   gatePointerLockMovement,
   isInstantBreakBlock,
   migrateSavedWorld,
@@ -37,6 +38,20 @@ import {
   torchBlockForPlacement,
   type WorldSave,
 } from "../app/game/engine.ts";
+
+test("player fall damage begins only after four blocks", () => {
+  assert.equal(fallDamageForDistance(3.99), 0);
+  assert.equal(fallDamageForDistance(4), 0);
+  assert.equal(fallDamageForDistance(4.01), 1);
+  assert.equal(fallDamageForDistance(7.2), 4);
+  assert.equal(fallDamageForDistance(99), 6);
+});
+
+test("Giant Mooncaps keep full collision while rendering an inset stem", () => {
+  assert.equal(BLOCKS[BlockId.MushroomCap].solid, true);
+  assert.equal(BLOCKS[BlockId.MushroomCap].shape, "mooncap");
+  assert.equal(BLOCKS[BlockId.MushroomCap].lightDampening, 15);
+});
 import { harvestPlant } from "../app/game/farming.ts";
 import { CHEST_VISUAL, chestLatchCenters } from "../app/game/chest-model.ts";
 import { ChunkWorld, BIOME_NAMES, BiomeId, GENERATOR_VERSION, GLASS_OPACITY, LIQUID_SURFACE_INSET, MAX_Y, MIN_Y, PACKED_VERTEX_COLOR_RANGE, RADIAL_STREAMING_DISTANCE_THRESHOLD, SECTION_HEIGHT, WORLD_HEIGHT, blockIndex, chunkAabbRadialDistanceSquared, chunkKey, chunkWithinStreamingRadius, chunksWithinStreamingRadius, liquidSurfaceInsetForCell, splitCoordinate } from "../app/game/world.ts";
