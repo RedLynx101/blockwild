@@ -49,6 +49,11 @@ test("the fixed sampler reports percentiles and adaptive pressure", () => {
   const smooth = new PerformanceSampler(60);
   for (let index = 0; index < 60; index += 1) smooth.record({
     frameMilliseconds: 10,
+    chunkWorkMilliseconds: 4,
+    chunkSchedulingMilliseconds: 0.25,
+    chunkGenerationMilliseconds: 1,
+    chunkLightingMilliseconds: 1.25,
+    chunkMeshingMilliseconds: 1.5,
     visibleChunks: 441,
     triangles: 120_000,
     drawCalls: 780,
@@ -62,6 +67,11 @@ test("the fixed sampler reports percentiles and adaptive pressure", () => {
   assert.equal(smoothSummary.peakDrawCalls, 780);
   assert.equal(smoothSummary.peakGeometries, 640);
   assert.equal(smoothSummary.peakTextures, 38);
+  assert.equal(smoothSummary.averageChunkWorkMilliseconds, 4);
+  assert.equal(smoothSummary.averageChunkSchedulingMilliseconds, 0.25);
+  assert.equal(smoothSummary.averageChunkGenerationMilliseconds, 1);
+  assert.equal(smoothSummary.averageChunkLightingMilliseconds, 1.25);
+  assert.equal(smoothSummary.averageChunkMeshingMilliseconds, 1.5);
   assert.equal(classifyBudgetPressure(smoothSummary), "headroom");
   assert.ok(recommendFrameWorkBudget(smoothSummary).liquidOperations > DEFAULT_FRAME_WORK_BUDGET.liquidOperations);
 

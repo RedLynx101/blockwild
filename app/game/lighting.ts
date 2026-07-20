@@ -43,6 +43,17 @@ export type LightBlockChange = Readonly<{
   next: BlockId;
 }>;
 
+export type VoxelLightInitializationTask = {
+  chunk: VoxelLightChunk;
+  phase: "seed" | "scan" | "boundary" | "propagate" | "complete";
+  cursor: number;
+  queueX: number[];
+  queueY: number[];
+  queueZ: number[];
+  queueHead: number;
+  queued: Set<string>;
+};
+
 type LocatedLight = {
   chunk: VoxelLightChunk;
   index: number;
@@ -313,36 +324,86 @@ export class VoxelLightEngine {
     this.propagateIncrease(dirty);
   }
 
-  initializeChunk(chunk: VoxelLightChunk) {
+  private enqueueInitialization(task: VoxelLightInitializationTask, x: number, y: number, z: number) {
+    if (!this.locate(x, y, z)) return;
+    const key = this.coordinateKey(x, y, z);
+    if (task.queued.has(key)) return;
+    task.queued.add(key);
+    task.queueX.push(x);
+    task.queueY.push(y);
+    task.queueZ.push(z);
+  }
+
+  /**
+   * Starts a resumable light build. New streaming chunks use this path so the
+   * 49k-voxel seed scan and breadth-first propagation cannot monopolize one
+   * presented frame. The synchronous initializeChunk API below remains the
+   * exact same operation completed in one call for startup, tests, and edits.
+   */
+  beginChunkInitialization(chunk: VoxelLightChunk): VoxelLightInitializationTask {
     chunk.light.fill(0);
+    chunk.lightInitialized = false;
     this.directSkyCache.clear();
+    return {
+      chunk,
+      phase: "seed",
+      cursor: 0,
+      queueX: [],
+      queueY: [],
+      queueZ: [],
+      queueHead: 0,
+      queued: new Set<string>(),
+    };
+  }
+
+  /** Advances a resumable light build by a bounded amount of voxel work. */
+  stepChunkInitialization(task: VoxelLightInitializationTask, maximumOperations = 2_048) {
+    let remaining = Math.max(1, Math.floor(maximumOperations));
+    const { chunk } = task;
     const originX = chunk.cx * this.chunkSize;
     const originZ = chunk.cz * this.chunkSize;
-    for (let localX = 0; localX < this.chunkSize; localX += 1) {
-      for (let localZ = 0; localZ < this.chunkSize; localZ += 1) {
-        const worldX = originX + localX;
-        const worldZ = originZ + localZ;
-        const direct = this.directSkyColumn(worldX, worldZ);
+    const volume = this.columnArea * this.worldHeight;
+    while (remaining > 0 && task.phase !== "complete") {
+      if (task.phase === "seed") {
+        if (task.cursor >= this.columnArea) {
+          task.phase = "scan";
+          task.cursor = 0;
+          continue;
+        }
+        const localX = task.cursor % this.chunkSize;
+        const localZ = Math.floor(task.cursor / this.chunkSize);
+        const direct = this.directSkyColumn(originX + localX, originZ + localZ);
         for (let y = this.minY; y <= this.maxY; y += 1) {
           const index = localX + this.chunkSize * (localZ + this.chunkSize * (y - this.minY));
           const type = chunk.blocks[index] as BlockId;
-          chunk.light[index] = emittedLightForDefinition(this.getDefinition(type));
-          chunk.light[index] = withLightChannel(chunk.light[index], LightChannel.Sky, direct[y - this.minY]);
+          chunk.light[index] = withLightChannel(
+            emittedLightForDefinition(this.getDefinition(type)),
+            LightChannel.Sky,
+            direct[y - this.minY],
+          );
         }
+        task.cursor += 1;
+        remaining -= this.worldHeight;
+        continue;
       }
-    }
-    chunk.lightInitialized = true;
 
-    this.beginQueue();
-    for (let localX = 0; localX < this.chunkSize; localX += 1) {
-      for (let localZ = 0; localZ < this.chunkSize; localZ += 1) {
-        for (let y = this.minY; y <= this.maxY; y += 1) {
-          const x = originX + localX;
-          const z = originZ + localZ;
-          const packed = this.getPacked(x, y, z);
-          if (perceivedBlockLight(packed) > 0) this.enqueue(x, y, z);
-          const sky = lightChannel(packed, LightChannel.Sky);
-          if (sky <= 0) continue;
+      if (task.phase === "scan") {
+        if (task.cursor >= volume) {
+          task.phase = "boundary";
+          task.cursor = 0;
+          continue;
+        }
+        const layer = Math.floor(task.cursor / this.columnArea);
+        const horizontal = task.cursor % this.columnArea;
+        const localZ = Math.floor(horizontal / this.chunkSize);
+        const localX = horizontal % this.chunkSize;
+        const x = originX + localX;
+        const y = this.minY + layer;
+        const z = originZ + localZ;
+        const packed = chunk.light[task.cursor];
+        if (perceivedBlockLight(packed) > 0) this.enqueueInitialization(task, x, y, z);
+        const sky = lightChannel(packed, LightChannel.Sky);
+        if (sky > 0) {
           const boundary = localX === 0 || localZ === 0 || localX === this.chunkSize - 1 || localZ === this.chunkSize - 1;
           let transition = boundary;
           if (!transition) for (const [dx, dy, dz] of DIRECTIONS) {
@@ -352,20 +413,75 @@ export class VoxelLightEngine {
               break;
             }
           }
-          if (transition) this.enqueue(x, y, z);
+          if (transition) this.enqueueInitialization(task, x, y, z);
         }
+        task.cursor += 1;
+        remaining -= 1;
+        continue;
       }
-    }
-    for (let y = this.minY; y <= this.maxY; y += 1) {
-      for (let offset = 0; offset < this.chunkSize; offset += 1) {
-        this.enqueue(originX - 1, y, originZ + offset);
-        this.enqueue(originX + this.chunkSize, y, originZ + offset);
-        this.enqueue(originX + offset, y, originZ - 1);
-        this.enqueue(originX + offset, y, originZ + this.chunkSize);
+
+      if (task.phase === "boundary") {
+        const boundaryCells = this.worldHeight * this.chunkSize * 4;
+        if (task.cursor >= boundaryCells) {
+          task.phase = "propagate";
+          task.cursor = 0;
+          continue;
+        }
+        const faceArea = this.worldHeight * this.chunkSize;
+        const face = Math.floor(task.cursor / faceArea);
+        const withinFace = task.cursor % faceArea;
+        const layer = Math.floor(withinFace / this.chunkSize);
+        const offset = withinFace % this.chunkSize;
+        const y = this.minY + layer;
+        if (face === 0) this.enqueueInitialization(task, originX - 1, y, originZ + offset);
+        else if (face === 1) this.enqueueInitialization(task, originX + this.chunkSize, y, originZ + offset);
+        else if (face === 2) this.enqueueInitialization(task, originX + offset, y, originZ - 1);
+        else this.enqueueInitialization(task, originX + offset, y, originZ + this.chunkSize);
+        task.cursor += 1;
+        remaining -= 1;
+        continue;
       }
+
+      if (task.queueHead >= task.queueX.length) {
+        task.phase = "complete";
+        chunk.lightInitialized = true;
+        this.directSkyCache.clear();
+        break;
+      }
+      const x = task.queueX[task.queueHead];
+      const y = task.queueY[task.queueHead];
+      const z = task.queueZ[task.queueHead];
+      task.queueHead += 1;
+      task.queued.delete(this.coordinateKey(x, y, z));
+      const source = this.getPacked(x, y, z);
+      if (source !== 0) for (const [dx, dy, dz] of DIRECTIONS) {
+        const nx = x + dx;
+        const ny = y + dy;
+        const nz = z + dz;
+        if (!this.locate(nx, ny, nz)) continue;
+        const materialDampening = this.dampeningAt(nx, ny, nz);
+        const attenuation = materialDampening >= MAX_LIGHT_LEVEL
+          ? MAX_LIGHT_LEVEL
+          : Math.min(MAX_LIGHT_LEVEL, 1 + materialDampening);
+        const current = this.getPacked(nx, ny, nz);
+        let next = current;
+        for (let channel = 0; channel < LIGHT_CHANNEL_COUNT; channel += 1) {
+          const candidate = Math.max(0, lightChannel(source, channel) - attenuation);
+          if (candidate > lightChannel(next, channel)) next = withLightChannel(next, channel, candidate);
+        }
+        if (next !== current && this.writePacked(nx, ny, nz, next, true)) this.enqueueInitialization(task, nx, ny, nz);
+      }
+      remaining -= 1;
     }
-    this.propagateIncrease(true);
-    this.directSkyCache.clear();
+    return task.phase === "complete";
+  }
+
+  initializeChunk(chunk: VoxelLightChunk) {
+    const task = this.beginChunkInitialization(chunk);
+    while (!this.stepChunkInitialization(task, Number.MAX_SAFE_INTEGER)) {
+      // The maximum operation budget completes ordinary chunks in one pass;
+      // retain the loop so pathological propagation remains correct.
+    }
   }
 
   /**

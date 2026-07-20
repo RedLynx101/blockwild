@@ -73,6 +73,7 @@ import {
   createAtlasBlockGeometry,
   guildHallBlockPalette,
   type ChunkEditSave,
+  type ChunkWorkFrameReport,
 } from "./world";
 import { BUTTERFLY_ORDER, MOB_DEFS, MOB_ORDER, type ButterflyKind, type CoreMobKind, type MobDefinition, type MobKind, type SummonedCreatureKind } from "./mobs";
 import { creatureProfile } from "./creature-profiles";
@@ -5365,6 +5366,7 @@ export class VoxelEngine {
         renderDistance: this.settings.renderDistance,
         simulationDistance: this.settings.simulationDistance,
         player: { x: Number(this.position.x.toFixed(2)), y: Number(this.position.y.toFixed(2)), z: Number(this.position.z.toFixed(2)) },
+        streaming: this.world.streamingDiagnostics(),
       },
       entities: {
         creatures: this.mobs.length,
@@ -27157,6 +27159,15 @@ export class VoxelEngine {
     this.combatMusicTimer = Math.max(0, this.combatMusicTimer - dt);
     const simulationStartedAt = performance.now();
     let chunkWorkMilliseconds = 0;
+    let chunkWorkReport: ChunkWorkFrameReport = {
+      schedulingMilliseconds: 0,
+      generationMilliseconds: 0,
+      lightingMilliseconds: 0,
+      meshingMilliseconds: 0,
+      generationSlices: 0,
+      lightingSlices: 0,
+      meshSlices: 0,
+    };
 
     if (this.running && !this.titleMode && !this.paused) {
       this.magicState = regenerateMana(this.magicState, dt, this.skillState.skills.magic.level);
@@ -27173,11 +27184,11 @@ export class VoxelEngine {
       this.camera.position.set(this.spawn.x + Math.sin(t) * 24, this.spawn.y + 13 + Math.sin(t * 1.8) * 1.2, this.spawn.z + Math.cos(t) * 24);
       this.camera.lookAt(this.spawn.x, this.spawn.y + 4, this.spawn.z);
       const chunkWorkStartedAt = performance.now();
-      this.world.update(this.spawn.x, this.spawn.z);
+      chunkWorkReport = this.world.update(this.spawn.x, this.spawn.z);
       chunkWorkMilliseconds = performance.now() - chunkWorkStartedAt;
     } else {
       const chunkWorkStartedAt = performance.now();
-      this.world.update(this.position.x, this.position.z);
+      chunkWorkReport = this.world.update(this.position.x, this.position.z);
       chunkWorkMilliseconds = performance.now() - chunkWorkStartedAt;
       if (this.running && !this.paused) this.updateBoats(dt);
       if (this.running && !this.paused && (this.locked || this.touchMode)) {
@@ -27277,6 +27288,10 @@ export class VoxelEngine {
       frameMilliseconds: rawDt * 1000,
       simulationMilliseconds,
       chunkWorkMilliseconds,
+      chunkSchedulingMilliseconds: chunkWorkReport.schedulingMilliseconds,
+      chunkGenerationMilliseconds: chunkWorkReport.generationMilliseconds,
+      chunkLightingMilliseconds: chunkWorkReport.lightingMilliseconds,
+      chunkMeshingMilliseconds: chunkWorkReport.meshingMilliseconds,
       visibleChunks: this.world.loadedCount,
       simulatedEntities: this.mobs.length + this.butterflies.entities.length,
       triangles: this.renderer.info.render.triangles,
@@ -27381,7 +27396,14 @@ export class VoxelEngine {
         rejections: this.ecologyDiagnostics.rejections,
         lastSuccess: this.ecologyDiagnostics.lastSuccess,
       },
-      performance: { averageFps: Number(this.averageFps.toFixed(1)), renderDistance: this.settings.renderDistance, simulationDistance: this.settings.simulationDistance, loadedChunks: this.world.loadedCount },
+      performance: {
+        averageFps: Number(this.averageFps.toFixed(1)),
+        renderDistance: this.settings.renderDistance,
+        simulationDistance: this.settings.simulationDistance,
+        loadedChunks: this.world.loadedCount,
+        frame: this.performanceSampler.summary(),
+        streaming: this.world.streamingDiagnostics(),
+      },
     });
   }
 

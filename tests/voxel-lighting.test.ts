@@ -176,3 +176,29 @@ test("dense-source initialization stays bounded and deterministic", () => {
   assert.deepEqual(harness.chunks.get("0,0")!.light, first, "derived lighting is deterministic across reloads");
   assert.ok(elapsed < 750, `dense light initialization took ${elapsed.toFixed(1)}ms`);
 });
+
+test("resumable initialization is bit-exact across tiny work slices", () => {
+  const populate = (harness: Harness) => {
+    harness.addChunk(0, 0);
+    for (let x = 0; x < SIZE; x += 1) for (let z = 0; z < SIZE; z += 1) {
+      harness.setRaw(x, 5 + ((x + z) % 3), z, BlockId.Stone);
+    }
+    harness.setRaw(2, 8, 2, BlockId.Torch);
+    harness.setRaw(5, 9, 4, BlockId.CrystalBlock);
+  };
+  const synchronous = createHarness();
+  const resumable = createHarness();
+  populate(synchronous);
+  populate(resumable);
+  synchronous.engine.initializeChunk(synchronous.chunks.get("0,0")!);
+  const chunk = resumable.chunks.get("0,0")!;
+  const task = resumable.engine.beginChunkInitialization(chunk);
+  let slices = 0;
+  while (!resumable.engine.stepChunkInitialization(task, 13)) {
+    slices += 1;
+    assert.ok(slices < 20_000, "resumable lighting must converge");
+  }
+  assert.ok(slices > 10, "the fixture must exercise actual yielding");
+  assert.deepEqual(chunk.light, synchronous.chunks.get("0,0")!.light);
+  assert.equal(chunk.lightInitialized, true);
+});

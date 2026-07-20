@@ -193,6 +193,92 @@ test("world generation is deterministic and seed-sensitive", () => {
   third.dispose();
 });
 
+test("resumable chunk generation and lighting are bit-exact", () => {
+  const synchronous = new ChunkWorld();
+  const resumable = new ChunkWorld();
+  synchronous.reset("STREAMING-PARITY", undefined, { structures: false });
+  resumable.reset("STREAMING-PARITY", undefined, { structures: false });
+  const expected = synchronous.generateChunk(0, 0);
+  resumable.playerChunkX = 0;
+  resumable.playerChunkZ = 0;
+  resumable.generationQueue = [{ cx: 0, cz: 0, distance: 0 }];
+  resumable.generationQueued = new Set([chunkKey(0, 0)]);
+  let generationSlices = 0;
+  while (!resumable.chunks.has(chunkKey(0, 0))) {
+    assert.equal(resumable.processGenerationSlice(), true);
+    generationSlices += 1;
+    assert.ok(generationSlices < 100, "resumable generation must converge");
+  }
+  const actual = resumable.chunks.get(chunkKey(0, 0))!;
+  let lightingSlices = 0;
+  while (!actual.lightInitialized) {
+    assert.equal(resumable.processLightInitialization(), true);
+    lightingSlices += 1;
+    assert.ok(lightingSlices < 10_000, "resumable lighting must converge");
+  }
+  assert.ok(generationSlices > 8, "terrain and finalization must yield across frames");
+  assert.ok(lightingSlices > 1, "lighting must yield across frames");
+  assert.deepEqual(actual.blocks, expected.blocks);
+  assert.deepEqual(actual.heightmap, expected.heightmap);
+  assert.deepEqual(actual.biomes, expected.biomes);
+  assert.deepEqual(actual.light, expected.light);
+  synchronous.dispose();
+  resumable.dispose();
+});
+
+test("resumable meshing preserves every packed geometry buffer", () => {
+  const synchronous = new ChunkWorld();
+  const resumable = new ChunkWorld();
+  synchronous.reset("MESH-SLICE-PARITY", undefined, { structures: false });
+  resumable.reset("MESH-SLICE-PARITY", undefined, { structures: false });
+  const expectedChunk = synchronous.generateChunk(0, 0);
+  const actualChunk = resumable.generateChunk(0, 0);
+  const section = expectedChunk.sectionBlockCounts.findIndex((count) => count > 0);
+  assert.ok(section >= 0);
+  synchronous.rebuildSection(expectedChunk, section);
+  resumable.queueMesh(actualChunk.key, section);
+  let slices = 0;
+  while (resumable.processMesh()) {
+    slices += 1;
+    if (resumable.queuedCount === 0) break;
+    assert.ok(slices < 20, "resumable meshing must converge");
+  }
+  assert.ok(slices >= 16, "a 16-column section must be built one bounded column at a time");
+  const expectedMeshes = expectedChunk.sections.get(section)!;
+  const actualMeshes = actualChunk.sections.get(section)!;
+  for (const layer of ["opaque", "cutout", "transparent", "glass", "emissive"] as const) {
+    const expected = expectedMeshes[layer]?.geometry;
+    const actual = actualMeshes[layer]?.geometry;
+    assert.equal(Boolean(actual), Boolean(expected), `${layer} presence differs`);
+    if (!expected || !actual) continue;
+    assert.deepEqual(Array.from(actual.index?.array ?? []), Array.from(expected.index?.array ?? []), `${layer} indices differ`);
+    for (const attribute of ["position", "normal", "color", "voxelLight", "voxelEmission", "voxelOcclusion", "uv"] as const) {
+      assert.deepEqual(Array.from(actual.getAttribute(attribute).array), Array.from(expected.getAttribute(attribute).array), `${layer}.${attribute} differs`);
+    }
+  }
+  synchronous.dispose();
+  resumable.dispose();
+});
+
+test("the hard streaming budget rotates priority instead of starving queues", () => {
+  const world = new ChunkWorld();
+  world.reset("STREAMING-FAIRNESS", undefined, { structures: false });
+  world.playerChunkX = 0;
+  world.playerChunkZ = 0;
+  world.streamingFrameBudgetMilliseconds = 0;
+  world.generationWorkPerFrame = 1;
+  world.meshWorkPerFrame = 1;
+  world.lightSectionQueued.add("fixture:0");
+  const order: string[] = [];
+  world.processGenerationSlice = (() => { order.push("generation"); return true; }) as typeof world.processGenerationSlice;
+  world.processLightInitialization = (() => { order.push("initial-light"); return true; }) as typeof world.processLightInitialization;
+  world.processLightSection = (() => { order.push("relight"); }) as typeof world.processLightSection;
+  world.processMesh = (() => { order.push("mesh"); return true; }) as typeof world.processMesh;
+  for (let frame = 0; frame < 4; frame += 1) world.update(0, 0);
+  assert.deepEqual(order, ["initial-light", "relight", "mesh", "generation"]);
+  world.dispose();
+});
+
 test("aquatic habitat resolution accepts real volumes and rejects decorative puddles", () => {
   const blocks = new Map<string, BlockId>();
   const key = (x: number, y: number, z: number) => `${x},${y},${z}`;
@@ -814,7 +900,10 @@ test("streaming skips empty sections, lazily cancels stale mesh work, and keeps 
   for (let section = 0; section < WORLD_HEIGHT / SECTION_HEIGHT; section += 1) world.rebuildSection(chunk, section);
   let rebuilds = 0;
   const rebuildSection = world.rebuildSection.bind(world);
-  world.rebuildSection = ((target, section) => { rebuilds += 1; rebuildSection(target, section); }) as typeof world.rebuildSection;
+  world.rebuildSection = ((target, section, slice) => {
+    if (!slice || slice.finalize) rebuilds += 1;
+    rebuildSection(target, section, slice);
+  }) as typeof world.rebuildSection;
   world.queueMesh(chunk.key, occupiedSection);
   world.cancelQueuedMesh(chunk.key, occupiedSection);
   chunk.dirty.delete(occupiedSection); // mirrors the immediate rebuild that consumes a canceled edit
@@ -824,8 +913,7 @@ test("streaming skips empty sections, lazily cancels stale mesh work, and keeps 
   world.generationQueue = [];
   world.generationQueued.clear();
   world.queueMesh(chunk.key, occupiedSection, true);
-  world.processMesh();
-  world.processMesh();
+  for (let index = 0; index < 20 && world.streamingDiagnostics().meshSectionsQueued > 0; index += 1) world.processMesh();
   assert.equal(rebuilds, 1, "the lazily canceled normal entry must not cause a duplicate rebuild");
 
   const haloKey = chunkKey(3, 0);
@@ -1259,7 +1347,7 @@ test("edits to retained invisible chunks remesh when the chunk becomes visible a
   assert.equal(chunk.dirty.has(section), true, "the skipped remesh must remain dirty");
 
   world.scheduleAround(0, 0, true);
-  for (let index = 0; index < 3; index += 1) world.processMesh();
+  for (let index = 0; index < 80 && world.streamingDiagnostics().meshSectionsQueued > 0; index += 1) world.processMesh();
   assert.equal(chunk.sections.get(section)?.opaque?.geometry.getAttribute("position").count, 24);
   assert.equal(chunk.dirty.has(section), false);
   world.dispose();
