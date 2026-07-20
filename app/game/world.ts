@@ -119,7 +119,7 @@ import {
   nearestUpperCaveNode,
   undergroundBiomeAt as sampleUndergroundBiome,
 } from "./underground";
-import { LightChannel, MAX_LIGHT_LEVEL, VoxelLightEngine, lightChannel, perceivedBlockLight } from "./lighting";
+import { LightChannel, MAX_LIGHT_LEVEL, VoxelLightEngine, lightChannel, perceivedBlockLight, type VoxelLightInitializationTask } from "./lighting";
 import {
   BLOCK_FACING_NORTH,
   blockFacingRight,
@@ -642,6 +642,42 @@ type GeometryBucket = {
   uvs: number[];
   indices: number[];
 };
+
+type ChunkGenerationStage = "terrain" | "caves" | "features" | "finalize" | "complete";
+
+type ChunkGenerationTask = {
+  key: string;
+  cx: number;
+  cz: number;
+  chunk: Chunk;
+  samples: Map<string, ColumnSample>;
+  sample: (x: number, z: number) => ColumnSample;
+  aquiferColumns: Map<string, Readonly<{ wet: boolean; waterTable: number }>>;
+  aquiferColumn: (x: number, z: number) => Readonly<{ wet: boolean; waterTable: number }>;
+  stage: ChunkGenerationStage;
+  nextLocalX: number;
+  nextSection: number;
+  editsApplied: boolean;
+};
+
+type MeshBuildTask = {
+  key: string;
+  section: number;
+  buckets: Record<WorldRenderLayer, GeometryBucket>;
+  nextLocalX: number;
+};
+
+export type ChunkWorkFrameReport = Readonly<{
+  schedulingMilliseconds: number;
+  generationMilliseconds: number;
+  lightingMilliseconds: number;
+  meshingMilliseconds: number;
+  generationSlices: number;
+  lightingSlices: number;
+  meshSlices: number;
+}>;
+
+export const DEFAULT_STREAMING_FRAME_BUDGET_MS = 7;
 
 // Biome tints deliberately use a little overbright headroom. Packing colors
 // relative to this range preserves those tints while allowing normalized bytes.
@@ -2636,12 +2672,18 @@ export class ChunkWorld {
   private surfaceRoadCache = new Map<string, readonly RoadPoint[]>();
   generationQueue: Array<{ cx: number; cz: number; distance: number }> = [];
   generationQueued = new Set<string>();
+  activeGenerationTask: ChunkGenerationTask | null = null;
+  lightInitializationQueue: string[] = [];
+  lightInitializationQueueHead = 0;
+  lightInitializationQueued = new Set<string>();
+  activeLightInitialization: { key: string; task: VoxelLightInitializationTask } | null = null;
   meshQueue: Array<{ key: string; section: number }> = [];
   meshQueueHead = 0;
   meshQueued = new Set<string>();
   urgentMeshQueue: Array<{ key: string; section: number }> = [];
   urgentMeshQueueHead = 0;
   urgentMeshQueued = new Set<string>();
+  activeMeshTask: MeshBuildTask | null = null;
   lightSectionQueue: Array<{ key: string; section: number }> = [];
   lightSectionQueueHead = 0;
   lightSectionQueued = new Set<string>();
@@ -2651,6 +2693,7 @@ export class ChunkWorld {
   retentionPadding = 2;
   generationWorkPerFrame = 1;
   meshWorkPerFrame = 2;
+  streamingFrameBudgetMilliseconds = DEFAULT_STREAMING_FRAME_BUDGET_MS;
   generationOptions = normalizeWorldGenerationOptions();
   playerChunkX = Number.NaN;
   playerChunkZ = Number.NaN;
@@ -2759,6 +2802,13 @@ export class ChunkWorld {
   setStreamingBudgets(chunkGenerations: number, chunkMeshSections: number) {
     this.generationWorkPerFrame = clamp(Math.round(chunkGenerations), 1, 3);
     this.meshWorkPerFrame = clamp(Math.round(chunkMeshSections), 1, 8);
+    // Count limits preserve adaptive throughput; this wall-clock guard keeps a
+    // high-headroom burst from turning back into a long exploration frame.
+    this.streamingFrameBudgetMilliseconds = clamp(
+      5.5 + this.generationWorkPerFrame * 0.5 + this.meshWorkPerFrame * 0.25,
+      6,
+      9,
+    );
   }
 
   reset(
@@ -2770,12 +2820,18 @@ export class ChunkWorld {
     this.disposeChunks();
     this.generationQueue = [];
     this.generationQueued.clear();
+    this.activeGenerationTask = null;
+    this.lightInitializationQueue = [];
+    this.lightInitializationQueueHead = 0;
+    this.lightInitializationQueued.clear();
+    this.activeLightInitialization = null;
     this.meshQueue = [];
     this.meshQueueHead = 0;
     this.meshQueued.clear();
     this.urgentMeshQueue = [];
     this.urgentMeshQueueHead = 0;
     this.urgentMeshQueued.clear();
+    this.activeMeshTask = null;
     this.lightSectionQueue = [];
     this.lightSectionQueueHead = 0;
     this.lightSectionQueued.clear();
@@ -2876,14 +2932,79 @@ export class ChunkWorld {
     this.scheduleAround(x, z, true);
   }
 
-  update(x: number, z: number) {
+  update(x: number, z: number): ChunkWorkFrameReport {
+    let schedulingMilliseconds = 0;
+    let generationMilliseconds = 0;
+    let lightingMilliseconds = 0;
+    let meshingMilliseconds = 0;
+    let generationSlices = 0;
+    let lightingSlices = 0;
+    let meshSlices = 0;
     this.frame += 1;
+    const streamingStartedAt = performance.now();
+    const deadline = streamingStartedAt + this.streamingFrameBudgetMilliseconds;
     const cx = Math.floor(x / CHUNK_SIZE);
     const cz = Math.floor(z / CHUNK_SIZE);
-    if (cx !== this.playerChunkX || cz !== this.playerChunkZ || this.frame % 180 === 0) this.scheduleAround(x, z);
-    for (let index = 0; index < this.generationWorkPerFrame; index += 1) this.processGeneration();
-    for (let index = 0; index < this.meshWorkPerFrame * 2; index += 1) this.processLightSection();
-    for (let index = 0; index < this.meshWorkPerFrame; index += 1) this.processMesh();
+    if (cx !== this.playerChunkX || cz !== this.playerChunkZ || this.frame % 180 === 0) {
+      const startedAt = performance.now();
+      this.scheduleAround(x, z);
+      schedulingMilliseconds = performance.now() - startedAt;
+    }
+    // Round-robin the four streaming categories. The start category rotates
+    // each frame, so a single unusually dense terrain/light/mesh slice cannot
+    // starve the other queues when it consumes the remaining time budget.
+    const remaining = [
+      this.generationWorkPerFrame,
+      this.meshWorkPerFrame * 2,
+      Math.max(1, Math.ceil(this.meshWorkPerFrame / 2)),
+      this.meshWorkPerFrame * 2,
+    ];
+    let cursor = this.frame % remaining.length;
+    let completedWork = false;
+    while (remaining.some((count) => count > 0) && (!completedWork || performance.now() < deadline)) {
+      let foundWork = false;
+      for (let offset = 0; offset < remaining.length; offset += 1) {
+        const category = (cursor + offset) % remaining.length;
+        if (remaining[category] <= 0) continue;
+        remaining[category] -= 1;
+        const startedAt = performance.now();
+        if (category === 0) {
+          const processed = this.processGenerationSlice();
+          generationMilliseconds += performance.now() - startedAt;
+          if (!processed) continue;
+          generationSlices += 1;
+        } else if (category === 1) {
+          const processed = this.processLightInitialization();
+          lightingMilliseconds += performance.now() - startedAt;
+          if (!processed) continue;
+          lightingSlices += 1;
+        } else if (category === 2) {
+          if (this.lightSectionQueued.size === 0) continue;
+          this.processLightSection();
+          lightingMilliseconds += performance.now() - startedAt;
+          lightingSlices += 1;
+        } else {
+          const processed = this.processMesh();
+          meshingMilliseconds += performance.now() - startedAt;
+          if (!processed) continue;
+          meshSlices += 1;
+        }
+        cursor = (category + 1) % remaining.length;
+        completedWork = true;
+        foundWork = true;
+        break;
+      }
+      if (!foundWork) break;
+    }
+    return {
+      schedulingMilliseconds,
+      generationMilliseconds,
+      lightingMilliseconds,
+      meshingMilliseconds,
+      generationSlices,
+      lightingSlices,
+      meshSlices,
+    };
   }
 
   scheduleAround(x: number, z: number, force = false) {
@@ -2894,6 +3015,17 @@ export class ChunkWorld {
     this.playerChunkZ = cz;
     const generationRadius = this.renderDistance + 1;
     const radialStreaming = this.renderDistance > RADIAL_STREAMING_DISTANCE_THRESHOLD;
+    if (this.activeGenerationTask
+      && this.activeGenerationTask.stage !== "finalize"
+      && !chunkWithinStreamingRadius(
+        this.activeGenerationTask.cx - cx,
+        this.activeGenerationTask.cz - cz,
+        generationRadius,
+        radialStreaming,
+      )) {
+      this.generationQueued.delete(this.activeGenerationTask.key);
+      this.activeGenerationTask = null;
+    }
     this.generationQueue = this.generationQueue
       .filter((entry) => !this.chunks.has(chunkKey(entry.cx, entry.cz)) && chunkWithinStreamingRadius(entry.cx - cx, entry.cz - cz, generationRadius, radialStreaming))
       .map((entry) => ({ ...entry, distance: chunkStreamingSortDistance(entry.cx - cx, entry.cz - cz, radialStreaming) }));
@@ -2946,7 +3078,8 @@ export class ChunkWorld {
           this.generationQueued.add(key);
         } else if (chunk && chunkWithinStreamingRadius(dx, dz, this.renderDistance, radialStreaming)) {
           chunk.group.visible = true;
-          for (let section = 0; section < SECTION_COUNT; section += 1) {
+          if (!chunk.lightInitialized) this.queueLightInitialization(key);
+          else for (let section = 0; section < SECTION_COUNT; section += 1) {
             if (chunk.dirty.has(section) || (!chunk.sections.has(section) && chunk.sectionBlockCounts[section] > 0)) this.queueMesh(key, section);
           }
         }
@@ -2963,43 +3096,157 @@ export class ChunkWorld {
       if (!chunkWithinStreamingRadius(offsetX, offsetZ, retainRadius, radialStreaming)) this.unloadChunk(key);
       else chunk.group.visible = chunkWithinStreamingRadius(offsetX, offsetZ, this.renderDistance, radialStreaming);
     }
+    if (this.activeMeshTask && !this.chunks.get(this.activeMeshTask.key)?.group.visible) this.activeMeshTask = null;
+  }
+
+  private prepareGeneratedChunk(chunk: Chunk) {
+    const offsetX = chunk.cx - this.playerChunkX;
+    const offsetZ = chunk.cz - this.playerChunkZ;
+    const radialStreaming = this.renderDistance > RADIAL_STREAMING_DISTANCE_THRESHOLD;
+    chunk.group.visible = chunkWithinStreamingRadius(offsetX, offsetZ, this.renderDistance, radialStreaming);
+    if (chunk.group.visible && !chunk.lightInitialized) this.queueLightInitialization(chunk.key);
+    else this.queueChunkMeshesAndSeams(chunk);
+  }
+
+  private queueChunkMeshesAndSeams(chunk: Chunk) {
+    if (chunk.group.visible && chunk.lightInitialized) {
+      for (let section = 0; section < SECTION_COUNT; section += 1) {
+        if (chunk.sectionBlockCounts[section] > 0) this.queueMesh(chunk.key, section);
+      }
+    }
+    // A hidden generation-halo chunk still changes face visibility at the seam
+    // of an already rendered neighbor. Rebuild only that visible neighbor; the
+    // halo itself remains unmeshed until it enters render distance.
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const neighbor = this.chunks.get(chunkKey(chunk.cx + dx, chunk.cz + dz));
+      if (!neighbor || !neighbor.group.visible || !neighbor.lightInitialized) continue;
+      for (let section = 0; section < SECTION_COUNT; section += 1) {
+        if (neighbor.sectionBlockCounts[section] > 0) this.queueMesh(neighbor.key, section);
+      }
+    }
   }
 
   processGeneration() {
+    if (this.activeGenerationTask) {
+      const task = this.activeGenerationTask;
+      this.activeGenerationTask = null;
+      const chunk = this.completeChunkGenerationSynchronously(task);
+      this.prepareGeneratedChunk(chunk);
+      return chunk;
+    }
     const next = this.generationQueue.pop();
     if (!next) return;
     const key = chunkKey(next.cx, next.cz);
     this.generationQueued.delete(key);
     if (this.chunks.has(key)) return;
     const chunk = this.generateChunk(next.cx, next.cz);
-    const offsetX = next.cx - this.playerChunkX;
-    const offsetZ = next.cz - this.playerChunkZ;
-    const radialStreaming = this.renderDistance > RADIAL_STREAMING_DISTANCE_THRESHOLD;
-    chunk.group.visible = chunkWithinStreamingRadius(offsetX, offsetZ, this.renderDistance, radialStreaming);
-    if (chunk.group.visible) {
-      for (let section = 0; section < SECTION_COUNT; section += 1) {
-        if (chunk.sectionBlockCounts[section] > 0) this.queueMesh(key, section);
-      }
-    }
-    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      const neighbor = this.chunks.get(chunkKey(next.cx + dx, next.cz + dz));
-      if (!neighbor || !neighbor.group.visible) continue;
-      for (let section = 0; section < SECTION_COUNT; section += 1) {
-        if (neighbor.sectionBlockCounts[section] > 0) this.queueMesh(neighbor.key, section);
-      }
-    }
+    this.prepareGeneratedChunk(chunk);
     return chunk;
   }
 
+  processGenerationSlice() {
+    while (!this.activeGenerationTask) {
+      const next = this.generationQueue.pop();
+      if (!next) return false;
+      const key = chunkKey(next.cx, next.cz);
+      if (this.chunks.has(key)) {
+        this.generationQueued.delete(key);
+        continue;
+      }
+      this.activeGenerationTask = this.createChunkGenerationTask(next.cx, next.cz);
+    }
+    const task = this.activeGenerationTask;
+    const completed = this.advanceChunkGeneration(task, 2, 1);
+    if (completed) {
+      this.activeGenerationTask = null;
+      this.prepareGeneratedChunk(completed);
+    }
+    return true;
+  }
+
+  private queueLightInitialization(key: string) {
+    const chunk = this.chunks.get(key);
+    if (!chunk || chunk.lightInitialized || !chunk.group.visible
+      || this.lightInitializationQueued.has(key) || this.activeLightInitialization?.key === key) return;
+    this.lightInitializationQueued.add(key);
+    this.lightInitializationQueue.push(key);
+  }
+
+  processLightInitialization() {
+    while (!this.activeLightInitialization) {
+      if (this.lightInitializationQueueHead >= this.lightInitializationQueue.length) {
+        this.lightInitializationQueue = [];
+        this.lightInitializationQueueHead = 0;
+        return false;
+      }
+      const key = this.lightInitializationQueue[this.lightInitializationQueueHead];
+      this.lightInitializationQueueHead += 1;
+      const chunk = this.chunks.get(key);
+      if (!this.lightInitializationQueued.has(key) || !chunk || !chunk.group.visible || chunk.lightInitialized) {
+        this.lightInitializationQueued.delete(key);
+        continue;
+      }
+      this.activeLightInitialization = { key, task: this.lightEngine.beginChunkInitialization(chunk) };
+    }
+    const active = this.activeLightInitialization;
+    const chunk = this.chunks.get(active.key);
+    if (!chunk || !chunk.group.visible) {
+      this.lightInitializationQueued.delete(active.key);
+      this.activeLightInitialization = null;
+      return true;
+    }
+    if (this.lightEngine.stepChunkInitialization(active.task, 1_024)) {
+      this.lightInitializationQueued.delete(active.key);
+      this.activeLightInitialization = null;
+      this.queueChunkMeshesAndSeams(chunk);
+    }
+    return true;
+  }
+
   processMesh() {
-    while (true) {
+    while (!this.activeMeshTask) {
       const next = this.takeQueuedMesh(true) ?? this.takeQueuedMesh(false);
-      if (!next) return;
+      if (!next) return false;
       const chunk = this.chunks.get(next.key);
       if (!chunk || !chunk.group.visible) continue;
-      this.rebuildSection(chunk, next.section);
-      return;
+      if (!chunk.lightInitialized) {
+        this.queueLightInitialization(chunk.key);
+        continue;
+      }
+      if (chunk.sectionBlockCounts[next.section] === 0) {
+        this.rebuildSection(chunk, next.section);
+        return true;
+      }
+      this.activeMeshTask = {
+        key: next.key,
+        section: next.section,
+        buckets: { opaque: emptyBucket(), cutout: emptyBucket(), transparent: emptyBucket(), glass: emptyBucket(), emissive: emptyBucket() },
+        nextLocalX: 0,
+      };
     }
+    const active = this.activeMeshTask;
+    const chunk = this.chunks.get(active.key);
+    if (!chunk || !chunk.group.visible || !chunk.lightInitialized) {
+      this.activeMeshTask = null;
+      return true;
+    }
+    const startLocalX = active.nextLocalX;
+    const endLocalX = Math.min(CHUNK_SIZE, startLocalX + 1);
+    const finalize = endLocalX >= CHUNK_SIZE;
+    this.rebuildSection(chunk, active.section, {
+      buckets: active.buckets,
+      startLocalX,
+      endLocalX,
+      finalize,
+    });
+    active.nextLocalX = endLocalX;
+    if (finalize) {
+      const queueKey = `${active.key}:${active.section}`;
+      const requeued = this.meshQueued.has(queueKey) || this.urgentMeshQueued.has(queueKey);
+      this.activeMeshTask = null;
+      if (requeued) chunk.dirty.add(active.section);
+    }
+    return true;
   }
 
   private queueLightSection(key: string, section: number) {
@@ -3189,6 +3436,7 @@ export class ChunkWorld {
     const queueKey = `${key}:${section}`;
     this.meshQueued.delete(queueKey);
     this.urgentMeshQueued.delete(queueKey);
+    if (this.activeMeshTask?.key === key && this.activeMeshTask.section === section) this.activeMeshTask = null;
   }
 
   sampleColumn(x: number, z: number): ColumnSample {
@@ -3368,10 +3616,8 @@ export class ChunkWorld {
     return { height, waterline, biome, temperature, moisture, continental, river, mountain };
   }
 
-  generateChunk(cx: number, cz: number) {
+  private createChunkGenerationTask(cx: number, cz: number): ChunkGenerationTask {
     const key = chunkKey(cx, cz);
-    const existing = this.chunks.get(key);
-    if (existing) return existing;
     const chunk: Chunk = {
       key,
       cx,
@@ -3390,7 +3636,6 @@ export class ChunkWorld {
       leafIndices: new Set(),
     };
     chunk.group.position.set(cx * CHUNK_SIZE, 0, cz * CHUNK_SIZE);
-    this.group.add(chunk.group);
     const samples = new Map<string, ColumnSample>();
     const sample = (x: number, z: number) => {
       const sampleKey = `${x},${z}`;
@@ -3398,8 +3643,6 @@ export class ChunkWorld {
       if (!value) { value = this.sampleColumn(x, z); samples.set(sampleKey, value); }
       return value;
     };
-    const caveFrequency = this.generationOptions.caveFrequency;
-    const resourceAbundance = this.generationOptions.resourceAbundance;
     const aquiferColumns = new Map<string, Readonly<{ wet: boolean; waterTable: number }>>();
     const aquiferColumn = (x: number, z: number) => {
       const aquiferKey = `${x},${z}`;
@@ -3414,7 +3657,29 @@ export class ChunkWorld {
       return value;
     };
 
-    for (let lx = 0; lx < CHUNK_SIZE; lx += 1) {
+    return {
+      key,
+      cx,
+      cz,
+      chunk,
+      samples,
+      sample,
+      aquiferColumns,
+      aquiferColumn,
+      stage: "terrain",
+      nextLocalX: 0,
+      nextSection: 0,
+      editsApplied: false,
+    };
+  }
+
+  private generateTerrainSlice(task: ChunkGenerationTask, localXColumns = 2) {
+    const { chunk, cx, cz, sample, aquiferColumn } = task;
+    const endLocalX = Math.min(CHUNK_SIZE, task.nextLocalX + Math.max(1, Math.floor(localXColumns)));
+    const caveFrequency = this.generationOptions.caveFrequency;
+    const resourceAbundance = this.generationOptions.resourceAbundance;
+
+    for (let lx = task.nextLocalX; lx < endLocalX; lx += 1) {
       for (let lz = 0; lz < CHUNK_SIZE; lz += 1) {
         const gx = cx * CHUNK_SIZE + lx;
         const gz = cz * CHUNK_SIZE + lz;
@@ -3507,13 +3772,37 @@ export class ChunkWorld {
       }
     }
 
-    if (this.generationOptions.profile === "world-below-v15") this.carveGraphCaves(chunk, sample);
-    this.generateFeatures(chunk, sample);
-    const saved = this.edits.get(key);
-    if (saved) for (const [index, type] of saved.entries()) chunk.blocks[index] = type;
+    task.nextLocalX = endLocalX;
+    if (task.nextLocalX >= CHUNK_SIZE) task.stage = "caves";
+  }
+
+  private advanceChunkGeneration(task: ChunkGenerationTask, localXColumns = 2, finalizeSections = 1) {
+    if (task.stage === "terrain") {
+      this.generateTerrainSlice(task, localXColumns);
+      return undefined;
+    }
+    if (task.stage === "caves") {
+      if (this.generationOptions.profile === "world-below-v15") this.carveGraphCaves(task.chunk, task.sample);
+      task.stage = "features";
+      return undefined;
+    }
+    if (task.stage === "features") {
+      this.generateFeatures(task.chunk, task.sample);
+      task.stage = "finalize";
+      return undefined;
+    }
+    if (task.stage !== "finalize") return task.chunk;
+
+    const { chunk, key } = task;
+    if (!task.editsApplied) {
+      const saved = this.edits.get(key);
+      if (saved) for (const [index, type] of saved.entries()) chunk.blocks[index] = type;
+      task.editsApplied = true;
+    }
     const sectionVolume = CHUNK_SIZE * CHUNK_SIZE * SECTION_HEIGHT;
     const indexedLavaCells = new Set<string>();
-    for (let section = 0; section < SECTION_COUNT; section += 1) {
+    const endSection = Math.min(SECTION_COUNT, task.nextSection + Math.max(1, Math.floor(finalizeSections)));
+    for (let section = task.nextSection; section < endSection; section += 1) {
       const end = (section + 1) * sectionVolume;
       let occupied = 0;
       for (let index = section * sectionVolume; index < end; index += 1) {
@@ -3536,9 +3825,39 @@ export class ChunkWorld {
       }
       chunk.sectionBlockCounts[section] = occupied;
     }
+    task.nextSection = endSection;
+    if (task.nextSection < SECTION_COUNT) return undefined;
     this.chunks.set(key, chunk);
-    this.lightEngine.initializeChunk(chunk);
+    this.group.add(chunk.group);
+    this.generationQueued.delete(key);
+    task.stage = "complete";
     return chunk;
+  }
+
+  private completeChunkGenerationSynchronously(task: ChunkGenerationTask) {
+    while (task.stage !== "complete") this.advanceChunkGeneration(task, CHUNK_SIZE, SECTION_COUNT);
+    if (!task.chunk.lightInitialized) this.lightEngine.initializeChunk(task.chunk);
+    return task.chunk;
+  }
+
+  generateChunk(cx: number, cz: number) {
+    const key = chunkKey(cx, cz);
+    const existing = this.chunks.get(key);
+    if (existing) {
+      if (!existing.lightInitialized) {
+        if (this.activeLightInitialization?.key === key) this.activeLightInitialization = null;
+        this.lightInitializationQueued.delete(key);
+        this.lightEngine.initializeChunk(existing);
+      }
+      return existing;
+    }
+    let task: ChunkGenerationTask;
+    if (this.activeGenerationTask?.key === key) {
+      task = this.activeGenerationTask;
+      this.activeGenerationTask = null;
+    } else task = this.createChunkGenerationTask(cx, cz);
+    this.generationQueued.delete(key);
+    return this.completeChunkGenerationSynchronously(task);
   }
 
   surfaceBlocks(biome: BiomeId, height: number, temperature: number): [BlockId, BlockId] {
@@ -5946,17 +6265,24 @@ export class ChunkWorld {
     return !nextOccludes;
   }
 
-  rebuildSection(chunk: Chunk, section: number) {
+  rebuildSection(chunk: Chunk, section: number, slice?: Readonly<{
+    buckets: Record<WorldRenderLayer, GeometryBucket>;
+    startLocalX: number;
+    endLocalX: number;
+    finalize: boolean;
+  }>) {
     const old = chunk.sections.get(section);
-    if (old) {
+    if (!slice && old) {
       for (const mesh of Object.values(old)) if (mesh) { chunk.group.remove(mesh); mesh.geometry.dispose(); }
     }
     if (chunk.sectionBlockCounts[section] === 0) {
+      if (slice && old) for (const mesh of Object.values(old)) if (mesh) { chunk.group.remove(mesh); mesh.geometry.dispose(); }
       chunk.sections.set(section, {});
       chunk.dirty.delete(section);
       return;
     }
-    const buckets: Record<WorldRenderLayer, GeometryBucket> = { opaque: emptyBucket(), cutout: emptyBucket(), transparent: emptyBucket(), glass: emptyBucket(), emissive: emptyBucket() };
+    const buckets: Record<WorldRenderLayer, GeometryBucket> = slice?.buckets
+      ?? { opaque: emptyBucket(), cutout: emptyBucket(), transparent: emptyBucket(), glass: emptyBucket(), emissive: emptyBucket() };
     const startY = MIN_Y + section * SECTION_HEIGHT;
     const endY = Math.min(MAX_Y, startY + SECTION_HEIGHT - 1);
     const west = this.chunks.get(chunkKey(chunk.cx - 1, chunk.cz));
@@ -6134,7 +6460,7 @@ export class ChunkWorld {
       }
     };
 
-    for (let lx = 0; lx < CHUNK_SIZE; lx += 1) for (let lz = 0; lz < CHUNK_SIZE; lz += 1) {
+    for (let lx = slice?.startLocalX ?? 0; lx < (slice?.endLocalX ?? CHUNK_SIZE); lx += 1) for (let lz = 0; lz < CHUNK_SIZE; lz += 1) {
       const tint = BIOME_TINT[chunk.biomes[lx + lz * CHUNK_SIZE]] ?? [1, 1, 1];
       for (let y = startY; y <= endY; y += 1) {
         const type = chunk.blocks[blockIndex(lx, y, lz)] as BlockId;
@@ -6748,6 +7074,8 @@ export class ChunkWorld {
       }
     }
 
+    if (slice && !slice.finalize) return;
+    if (slice && old) for (const mesh of Object.values(old)) if (mesh) { chunk.group.remove(mesh); mesh.geometry.dispose(); }
     const nextMeshes: ChunkMeshes = {};
     for (const layer of ["opaque", "cutout", "transparent", "glass", "emissive"] as const) {
       const bucket = buckets[layer];
@@ -6778,10 +7106,14 @@ export class ChunkWorld {
   unloadChunk(key: string) {
     const chunk = this.chunks.get(key);
     if (!chunk) return;
+    this.lightInitializationQueued.delete(key);
+    if (this.activeLightInitialization?.key === key) this.activeLightInitialization = null;
+    if (this.activeMeshTask?.key === key) this.activeMeshTask = null;
     for (let section = 0; section < SECTION_COUNT; section += 1) {
       const queueKey = `${key}:${section}`;
       this.meshQueued.delete(queueKey);
       this.urgentMeshQueued.delete(queueKey);
+      this.lightSectionQueued.delete(queueKey);
     }
     for (const section of chunk.sections.values()) for (const mesh of Object.values(section)) if (mesh) mesh.geometry.dispose();
     this.group.remove(chunk.group);
@@ -6803,7 +7135,27 @@ export class ChunkWorld {
   }
 
   get queuedCount() {
-    return this.generationQueue.length + this.meshQueued.size + this.urgentMeshQueued.size;
+    return this.generationQueue.length
+      + (this.activeGenerationTask ? 1 : 0)
+      + this.lightInitializationQueued.size
+      + this.meshQueued.size
+      + this.urgentMeshQueued.size
+      + (this.activeMeshTask ? 1 : 0);
+  }
+
+  streamingDiagnostics() {
+    return {
+      generationQueued: this.generationQueue.length + (this.activeGenerationTask ? 1 : 0),
+      generationStage: this.activeGenerationTask?.stage ?? null,
+      lightingQueued: this.lightInitializationQueued.size,
+      lightingStage: this.activeLightInitialization?.task.phase ?? null,
+      meshSectionsQueued: this.meshQueued.size + this.urgentMeshQueued.size + (this.activeMeshTask ? 1 : 0),
+      meshSliceProgress: this.activeMeshTask ? this.activeMeshTask.nextLocalX / CHUNK_SIZE : null,
+      relightSectionsQueued: this.lightSectionQueued.size,
+      generationBudget: this.generationWorkPerFrame,
+      meshSliceBudget: this.meshWorkPerFrame,
+      frameBudgetMilliseconds: this.streamingFrameBudgetMilliseconds,
+    };
   }
 
   dispose() {

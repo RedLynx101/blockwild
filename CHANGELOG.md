@@ -10,6 +10,7 @@ Named releases summarize player-visible changes and the compatibility work that 
 - Reworked Known Roads into a freely pannable world-coordinate viewport that opens at a stable 1,024-block scale and no longer clips rendering to an earlier discovery shape.
 - Added the 522-entry searchable Trailcraft Guide with deterministic origins, descriptions, recipes, reverse uses, ingredient links, and pattern-board handoff from every relevant crafting facility.
 - Added opt-in one-second local performance telemetry with editable emergency timeout and JSON downloads on stop, timeout, or Save & Quit.
+- Reworked exploration streaming into resumable terrain, voxel-light, and mesh slices under a fair wall-clock frame budget. Existing terrain and packed geometry remain bit-exact while diagnostics now separate scheduling, generation, lighting, meshing, and queue pressure.
 - Pulled the Giant Mooncap underside into a stout inset stem while retaining the full crown and full-block collision.
 
 ## 1.8.4 - Moonbrawn Motherlode - 2026-07-19

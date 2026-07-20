@@ -81,6 +81,10 @@ export type PerformanceSample = Readonly<{
   frameMilliseconds: number;
   simulationMilliseconds?: number;
   chunkWorkMilliseconds?: number;
+  chunkSchedulingMilliseconds?: number;
+  chunkGenerationMilliseconds?: number;
+  chunkLightingMilliseconds?: number;
+  chunkMeshingMilliseconds?: number;
   visibleChunks?: number;
   simulatedEntities?: number;
   triangles?: number;
@@ -99,6 +103,10 @@ export type PerformanceSummary = Readonly<{
   longFrameRatio: number;
   averageSimulationMilliseconds: number;
   averageChunkWorkMilliseconds: number;
+  averageChunkSchedulingMilliseconds: number;
+  averageChunkGenerationMilliseconds: number;
+  averageChunkLightingMilliseconds: number;
+  averageChunkMeshingMilliseconds: number;
   peakVisibleChunks: number;
   peakSimulatedEntities: number;
   peakTriangles: number;
@@ -136,6 +144,10 @@ export class PerformanceSampler {
       frameMilliseconds: Math.max(0, Number.isFinite(sample.frameMilliseconds) ? sample.frameMilliseconds : 0),
       simulationMilliseconds: Math.max(0, sample.simulationMilliseconds ?? 0),
       chunkWorkMilliseconds: Math.max(0, sample.chunkWorkMilliseconds ?? 0),
+      chunkSchedulingMilliseconds: Math.max(0, sample.chunkSchedulingMilliseconds ?? 0),
+      chunkGenerationMilliseconds: Math.max(0, sample.chunkGenerationMilliseconds ?? 0),
+      chunkLightingMilliseconds: Math.max(0, sample.chunkLightingMilliseconds ?? 0),
+      chunkMeshingMilliseconds: Math.max(0, sample.chunkMeshingMilliseconds ?? 0),
       visibleChunks: Math.max(0, Math.round(sample.visibleChunks ?? 0)),
       simulatedEntities: Math.max(0, Math.round(sample.simulatedEntities ?? 0)),
       triangles: Math.max(0, Math.round(sample.triangles ?? 0)),
@@ -168,6 +180,10 @@ export class PerformanceSampler {
       longFrameRatio: sampleCount ? this.samples.filter((sample) => sample.frameMilliseconds >= longFrameThresholdMilliseconds).length / sampleCount : 0,
       averageSimulationMilliseconds: sampleCount ? sum((sample) => sample.simulationMilliseconds ?? 0) / sampleCount : 0,
       averageChunkWorkMilliseconds: sampleCount ? sum((sample) => sample.chunkWorkMilliseconds ?? 0) / sampleCount : 0,
+      averageChunkSchedulingMilliseconds: sampleCount ? sum((sample) => sample.chunkSchedulingMilliseconds ?? 0) / sampleCount : 0,
+      averageChunkGenerationMilliseconds: sampleCount ? sum((sample) => sample.chunkGenerationMilliseconds ?? 0) / sampleCount : 0,
+      averageChunkLightingMilliseconds: sampleCount ? sum((sample) => sample.chunkLightingMilliseconds ?? 0) / sampleCount : 0,
+      averageChunkMeshingMilliseconds: sampleCount ? sum((sample) => sample.chunkMeshingMilliseconds ?? 0) / sampleCount : 0,
       peakVisibleChunks: max((sample) => sample.visibleChunks ?? 0),
       peakSimulatedEntities: max((sample) => sample.simulatedEntities ?? 0),
       peakTriangles: max((sample) => sample.triangles ?? 0),
