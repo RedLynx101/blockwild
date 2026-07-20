@@ -37,6 +37,7 @@
     "showcase:living-bestiary": "node --import tsx scripts/render-living-bestiary-showcase.ts",
     "showcase:living-bestiary:compare": "node --import tsx scripts/compose-living-bestiary-comparison.ts",
     "showcase:visual-theme": "node --import tsx scripts/render-block-style-review.ts",
+    "showcase:ocean-flora": "node --import tsx scripts/render-ocean-flora-review.ts",
     "validate:artifact": "bash scripts/validate-artifact.sh",
     "lint": "bash scripts/sites-env.sh -- eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern output --ignore-pattern outputs --ignore-pattern work",
     "db:generate": "bash scripts/sites-env.sh -- drizzle-kit generate"

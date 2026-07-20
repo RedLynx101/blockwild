@@ -47,6 +47,41 @@ import { caveAudit, dwarfHoldAudit, generatedContentAudit, surfaceAudit } from "
 
 const OVERHAUL_PROFILE = { profile: "world-below-v15" as const };
 
+function auditUndergroundLiquidFaces(
+  world: ChunkWorld,
+  type: BlockId.Water | BlockId.Lava,
+  bounds: Readonly<{ minimumX: number; maximumX: number; minimumZ: number; maximumZ: number; minimumY: number; maximumY: number }>,
+) {
+  let cells = 0;
+  let unsupported = 0;
+  let submergedOpenFaces = 0;
+  let wideSubmergedFaces = 0;
+  const faces = [
+    { dx: 1, dz: 0, tangentX: 0, tangentZ: 1 },
+    { dx: -1, dz: 0, tangentX: 0, tangentZ: 1 },
+    { dx: 0, dz: 1, tangentX: 1, tangentZ: 0 },
+    { dx: 0, dz: -1, tangentX: 1, tangentZ: 0 },
+  ] as const;
+  for (let x = bounds.minimumX; x <= bounds.maximumX; x += 1) for (let z = bounds.minimumZ; z <= bounds.maximumZ; z += 1) {
+    for (let y = bounds.minimumY; y <= bounds.maximumY; y += 1) {
+      if (world.getBlock(x, y, z) !== type) continue;
+      cells += 1;
+      if (world.getBlock(x, y - 1, z) === BlockId.Air) unsupported += 1;
+      if (world.getBlock(x, y + 1, z) !== type) continue;
+      for (const face of faces) {
+        if (world.getBlock(x + face.dx, y, z + face.dz) !== BlockId.Air) continue;
+        submergedOpenFaces += 1;
+        const tangentX = x + face.tangentX;
+        const tangentZ = z + face.tangentZ;
+        if (world.getBlock(tangentX, y, tangentZ) === type
+          && world.getBlock(tangentX, y + 1, tangentZ) === type
+          && world.getBlock(tangentX + face.dx, y, tangentZ + face.dz) === BlockId.Air) wideSubmergedFaces += 1;
+      }
+    }
+  }
+  return { cells, unsupported, submergedOpenFaces, wideSubmergedFaces };
+}
+
 test("The World Below profile keeps the locked dimensions and deterministically expands surface identity", () => {
   assert.deepEqual({ minimum: MIN_Y, sea: SEA_LEVEL, maximum: MAX_Y, height: WORLD_HEIGHT }, {
     minimum: -64,
@@ -202,13 +237,13 @@ test("dry graph tunnels seal legacy aquifer fluids behind a rock shell", () => {
   assert.ok(checkedAir > 8, "the midpoint should remain a navigable dry tunnel");
 });
 
-test("underground rivers and ecological pools settle onto cavern floors", () => {
+test("underground rivers and ecological pools have sealed floors and submerged banks", () => {
   const world = new ChunkWorld();
   world.reset("WILDERNESS", undefined, OVERHAUL_PROFILE);
 
   // This deterministic chunk contains the lower edge of a vast Glasswater
-  // basin intersecting a deeper cathedral cavern. It formerly produced a
-  // broad diagonal lake sheet with open air directly beneath it.
+  // basin intersecting a deeper cathedral cavern. It formerly produced first
+  // a floating lake, then a supported but vertically exposed water curtain.
   world.generateChunk(-57, -26);
   let waterCells = 0;
   let unsupportedWater = 0;
@@ -220,7 +255,11 @@ test("underground rivers and ecological pools settle onto cavern floors", () => 
     }
   }
   assert.ok(waterCells > 3_000, "the Glasswater basin should remain a substantial underwater habitat");
-  assert.equal(unsupportedWater, 0, "the basin must pack downward instead of floating through the cathedral");
+  assert.equal(unsupportedWater, 0, "the basin must have a geological floor rather than float through the cathedral");
+  const waterIntegrity = auditUndergroundLiquidFaces(world, BlockId.Water, {
+    minimumX: -912, maximumX: -897, minimumZ: -416, maximumZ: -401, minimumY: MIN_Y + 6, maximumY: 16,
+  });
+  assert.equal(waterIntegrity.submergedOpenFaces, 0, "the Glasswater fixture must not expose a submerged side to cave air");
 
   // Emberdeep uses the same grounded-basin path while retaining lava rather
   // than being silently converted to water.
@@ -236,6 +275,34 @@ test("underground rivers and ecological pools settle onto cavern floors", () => 
   }
   assert.ok(lavaCells > 1_000, "the Emberdeep fixture should retain its lava basin");
   assert.equal(unsupportedLava, 0, "lava basins must settle onto supported cave floors");
+  const lavaIntegrity = auditUndergroundLiquidFaces(world, BlockId.Lava, {
+    minimumX: -816, maximumX: -801, minimumZ: -352, maximumZ: -337, minimumY: MIN_Y + 6, maximumY: 16,
+  });
+  assert.equal(lavaIntegrity.submergedOpenFaces, 0, "the Emberdeep fixture must not expose a submerged side to cave air");
+});
+
+test("aquifer envelopes eliminate wide water curtains across chunk seams while preserving narrow waterfalls", () => {
+  const world = new ChunkWorld();
+  world.reset("WILDERNESS", undefined, OVERHAUL_PROFILE);
+  for (let cx = -58; cx <= -56; cx += 1) for (let cz = -27; cz <= -25; cz += 1) world.generateChunk(cx, cz);
+
+  const integrity = auditUndergroundLiquidFaces(world, BlockId.Water, {
+    minimumX: -927, maximumX: -882, minimumZ: -431, maximumZ: -386, minimumY: MIN_Y + 5, maximumY: 16,
+  });
+  assert.ok(integrity.cells > 30_000, "the sealed Glasswater region should remain a large aquatic habitat");
+  assert.ok(integrity.unsupported <= 16, "only the narrow authored waterfall centerline may fall through open air");
+  assert.ok(integrity.submergedOpenFaces <= 48, "exposed vertical water should be limited to the narrow authored falls");
+  assert.equal(integrity.wideSubmergedFaces, 0, "no multi-block submerged water face may open into dry cave air");
+
+  // The masks and aquifer envelope sample world coordinates, so generating
+  // the two halves of a seam in the opposite order must produce identical
+  // terrain rather than a load-order-dependent bank.
+  const reverse = new ChunkWorld();
+  reverse.reset("WILDERNESS", undefined, OVERHAUL_PROFILE);
+  reverse.generateChunk(-57, -26);
+  reverse.generateChunk(-58, -26);
+  assert.deepEqual(reverse.generateChunk(-57, -26).blocks, world.generateChunk(-57, -26).blocks);
+  assert.deepEqual(reverse.generateChunk(-58, -26).blocks, world.generateChunk(-58, -26).blocks);
 });
 
 test("six ecological centers exceed minimum biodiversity while ordinary tunnels retain light contrast", () => {

@@ -129,6 +129,7 @@ export function blockVisualFamily(id: BlockId, definition: BlockDefinition): Blo
   const text = `${enumName} ${name}`;
   let family: BlockVisualFamilyId;
   if (id === BlockId.Air || definition.liquid) family = "fluids-and-air";
+  else if ([BlockId.Brinegrass, BlockId.Sailkelp, BlockId.Featherwrack, BlockId.Pearlfan].includes(id)) family = "flora-and-farming";
   else if (id >= BlockId.RootweaveSoil) family = "world-below";
   else if (/dragon|gold block|gold pile|incubator|archive shelf|tome display/u.test(text)) family = "dragonwake";
   else if (/sugar|candy|peppermint|cocoa|lollipop|marshmallow|gumdrop|syrup|honey/u.test(text)) family = "sugarcourt";

@@ -14,6 +14,7 @@ import {
   APPLE_CRATE_SIDE_TILE,
   APPLE_CRATE_TOP_TILE,
   BLOCKS,
+  BRINEGRASS_TILE,
   CACTUS_TOP_TILE,
   DEEPGEAR_BRICK_TILE,
   DEEPGEAR_LANTERN_TILE,
@@ -26,6 +27,7 @@ import {
   FROSTPEAR_FRUIT_TILE,
   FROSTPEAR_LEAVES_TILE,
   FROSTPEAR_SAPLING_TILE,
+  FEATHERWRACK_TILE,
   GIANT_MUSHROOM_GILLS_TILE,
   GIANT_MUSHROOM_SIDE_TILE,
   GIANT_MUSHROOM_TOP_TILE,
@@ -33,8 +35,10 @@ import {
   MOONBERRY_CRATE_SIDE_TILE,
   MOONBERRY_CRATE_TOP_TILE,
   MOONBOUGH_LEAVES_TILE,
+  PEARLFAN_TILE,
   RIVETED_BRASS_TILE,
   ROOTWEAVE_SOIL_SIDE_TILE,
+  SAILKELP_TILE,
   STAR_CRYSTAL_ORE_TILE,
   STARFERN_TILE,
   SHELLFRUIT_CRATE_SIDE_TILE,
@@ -2439,6 +2443,72 @@ export function createBlockAtlas() {
   crateTop(SHELLFRUIT_CRATE_TOP_TILE, "#c9835f", "#fff0bb");
   crateSide(SHELLFRUIT_CRATE_SIDE_TILE, "#c9835f", "#fff0bb", "shellfruit");
 
+  // Ordinary seas are grounded by two matte staples and two restrained
+  // accents. Every tall texture reaches both tile edges so adjacent segments
+  // overlap into one continuous organism in the aquatic mesh.
+  clearTile(BRINEGRASS_TILE);
+  for (const [baseX, lean, height, dark, light] of [
+    [2, 1, 12, "#183f37", "#4e9476"],
+    [5, -1, 15, "#245548", "#70ae86"],
+    [8, 1, 13, "#1d4a40", "#5da17e"],
+    [11, -1, 11, "#285d4d", "#78b58b"],
+    [14, -1, 14, "#183f37", "#4d8d70"],
+  ] as Array<[number, number, number, string, string]>) {
+    for (let step = 0; step <= height; step += 1) {
+      const y = 15 - step;
+      const x = Math.max(0, Math.min(15, baseX + Math.round(step / 5) * lean));
+      pixel(BRINEGRASS_TILE, x, y, step % 4 === 0 ? light : dark);
+      if (step > 2 && step % 3 !== 0 && x + 1 < tile) pixel(BRINEGRASS_TILE, x + 1, y, light, .92);
+    }
+    pixel(BRINEGRASS_TILE, baseX, 15, "#102e29");
+  }
+  for (const x of [5, 8, 14]) pixel(BRINEGRASS_TILE, x, 0, "#75b58a");
+
+  clearTile(SAILKELP_TILE);
+  for (let y = 0; y < tile; y += 1) {
+    pixel(SAILKELP_TILE, 7, y, y % 4 ? "#4a4929" : "#6b6937");
+    pixel(SAILKELP_TILE, 8, y, y % 5 ? "#777541" : "#aaa75c");
+  }
+  for (const [startY, direction, span] of [[1, -1, 5], [4, 1, 6], [8, -1, 6], [11, 1, 5]] as Array<[number, number, number]>) {
+    for (let step = 1; step <= span; step += 1) {
+      const x = direction < 0 ? 7 - step : 8 + step;
+      const y = Math.min(15, startY + Math.floor(step * .62));
+      pixel(SAILKELP_TILE, x, y, step === span ? "#aab064" : step % 3 === 0 ? "#8e914d" : "#706f3d");
+      if (y + 1 < tile && step < span) pixel(SAILKELP_TILE, x, y + 1, "#4e4e2c");
+    }
+  }
+  for (const [x, y] of [[7, 0], [8, 0], [7, 15], [8, 15]] as Array<[number, number]>) pixel(SAILKELP_TILE, x, y, y === 0 ? "#aeb768" : "#3d3d26");
+
+  clearTile(FEATHERWRACK_TILE);
+  for (let y = 0; y < tile; y += 1) {
+    pixel(FEATHERWRACK_TILE, 7, y, y % 4 ? "#6e3938" : "#9a5148");
+    if (y % 3 !== 1) pixel(FEATHERWRACK_TILE, 8, y, "#b76a57");
+  }
+  for (const [y, reach] of [[2, 3], [5, 5], [8, 4], [11, 5], [13, 3]] as Array<[number, number]>) {
+    for (let step = 1; step <= reach; step += 1) {
+      const rise = Math.floor(step / 2);
+      pixel(FEATHERWRACK_TILE, 7 - step, Math.max(0, y - rise), step === reach ? "#d38b6d" : "#9f554b");
+      pixel(FEATHERWRACK_TILE, 8 + step, Math.min(15, y + rise), step === reach ? "#c77c62" : "#85413e");
+    }
+  }
+  pixel(FEATHERWRACK_TILE, 7, 0, "#d18a68"); pixel(FEATHERWRACK_TILE, 7, 15, "#4f2c2f");
+
+  clearTile(PEARLFAN_TILE);
+  for (let y = 9; y < tile; y += 1) {
+    pixel(PEARLFAN_TILE, 7, y, y > 13 ? "#4f5558" : "#89847f");
+    pixel(PEARLFAN_TILE, 8, y, y > 13 ? "#66605c" : "#c5b7aa");
+  }
+  for (let row = 0; row < 8; row += 1) {
+    const half = Math.min(7, 2 + row);
+    const y = 8 - row;
+    for (let x = 8 - half; x <= 7 + half; x += 1) {
+      const edge = x === 8 - half || x === 7 + half;
+      if ((x + row) % 3 === 0 && !edge) continue;
+      pixel(PEARLFAN_TILE, x, y, edge ? "#6c6871" : row % 3 === 0 ? "#eee1ca" : row % 2 ? "#b8aeb2" : "#d5c8bd");
+    }
+  }
+  for (const [x, y] of [[2, 2], [5, 0], [9, 1], [13, 3]] as Array<[number, number]>) pixel(PEARLFAN_TILE, x, y, "#fff3d9");
+
   clearTile(FROSTPEAR_SAPLING_TILE);
   for (let y = 5; y < 16; y += 1) pixel(FROSTPEAR_SAPLING_TILE, 7, y, y % 3 ? "#755138" : "#9b7248");
   for (const [x, y] of [[5, 5], [9, 4], [4, 8], [10, 8], [6, 11], [9, 12]] as Array<[number, number]>) {
@@ -3330,6 +3400,19 @@ export class ChunkWorld {
     };
     const caveFrequency = this.generationOptions.caveFrequency;
     const resourceAbundance = this.generationOptions.resourceAbundance;
+    const aquiferColumns = new Map<string, Readonly<{ wet: boolean; waterTable: number }>>();
+    const aquiferColumn = (x: number, z: number) => {
+      const aquiferKey = `${x},${z}`;
+      let value = aquiferColumns.get(aquiferKey);
+      if (!value) {
+        value = Object.freeze({
+          waterTable: -4 + Math.floor(7 * fbm2(x, z, this.seed ^ 0x7ed55d16, 1 / 170, 2)),
+          wet: valueNoise2(x / 64, z / 64, this.seed ^ 0x94d049bd) > 0.28,
+        });
+        aquiferColumns.set(aquiferKey, value);
+      }
+      return value;
+    };
 
     for (let lx = 0; lx < CHUNK_SIZE; lx += 1) {
       for (let lz = 0; lz < CHUNK_SIZE; lz += 1) {
@@ -3345,11 +3428,13 @@ export class ChunkWorld {
         const ravineSegment = fbm2(gx, gz, this.seed ^ 0x9e3779f9, 1 / 520, 2);
         const ravineTop = column.height - 5;
         const ravineBottom = Math.max(MIN_Y + 5, column.height - 38);
-        const waterTable = -4 + Math.floor(7 * fbm2(gx, gz, this.seed ^ 0x7ed55d16, 1 / 170, 2));
-        // Aquifer identity is column-stable. A 3D wetness sample used to flip
-        // between water and air from one vertical voxel to the next, producing
-        // suspended ribbons and holes inside otherwise flooded cave pockets.
-        const aquiferWet = valueNoise2(gx / 64, gz / 64, this.seed ^ 0x94d049bd) > 0.28;
+        const aquifer = aquiferColumn(gx, gz);
+        const neighboringAquifers = [
+          aquiferColumn(gx - 1, gz),
+          aquiferColumn(gx + 1, gz),
+          aquiferColumn(gx, gz - 1),
+          aquiferColumn(gx, gz + 1),
+        ];
         const caveEntrance = caveFrequency > 0 ? caveEntranceAt(this.seed, gx, gz, column.height, column.waterline) : null;
         for (let y = MIN_Y; y <= Math.max(column.height, column.waterline); y += 1) {
           let type = BlockId.Air;
@@ -3380,8 +3465,13 @@ export class ChunkWorld {
               const feature = caveFeatureAt(this.seed, gx, y, gz, column.height, caveFrequency);
               if (cheese || spaghetti || deepCavern || ravine || feature.chamber || feature.chimney || surfaceMouth) {
                 if (y <= MIN_Y + 7) type = BlockId.Lava;
-                else if (y <= waterTable && aquiferWet) type = BlockId.Water;
-                else type = BlockId.Air;
+                else if (aquifer.wet && y <= aquifer.waterTable) type = BlockId.Water;
+                // A cave may cut through an aquifer, but it cannot expose a
+                // hydrostatic volume directly to dry air. Keep the first dry
+                // cell around every wet column as its deterministic stone
+                // envelope. Looking up all four world-space neighbors makes
+                // the rule identical on either side of a chunk boundary.
+                else if (!neighboringAquifers.some((neighbor) => neighbor.wet && y <= neighbor.waterTable)) type = BlockId.Air;
               }
             }
 
@@ -3492,8 +3582,9 @@ export class ChunkWorld {
     const biomeMask = new Uint8Array(volume);
     const roadMask = new Uint8Array(volume);
     const streamMask = new Uint8Array(volume);
+    const waterfallMask = new Uint8Array(volume);
     const basinMask = new Uint8Array(volume);
-    const liquidLevel = new Int16Array(volume).fill(MIN_Y - 1);
+    const basinSealMask = new Uint8Array(volume);
     const radiusScale = clamp(0.72 + Math.sqrt(frequency) * 0.28, 0.72, 1.35);
 
     const mark = (
@@ -3507,9 +3598,9 @@ export class ChunkWorld {
       settleStream = false,
       settleBasin = false,
     ) => {
-      if (x < minX || x > maxX || z < minZ || z > maxZ || y <= MIN_Y + 4 || y > MAX_Y) return;
+      if (x < minX || x > maxX || z < minZ || z > maxZ || y <= MIN_Y + 4 || y > MAX_Y) return -1;
       const column = sample(x, z);
-      if (y > column.height || (!allowSurface && y > column.height - 4)) return;
+      if (y > column.height || (!allowSurface && y > column.height - 4)) return -1;
       const index = blockIndex(x - minX, y, z - minZ);
       carveMask[index] = 1;
       if (biome !== UndergroundBiomeId.OrdinaryTunnel) biomeMask[index] = biome;
@@ -3517,7 +3608,8 @@ export class ChunkWorld {
       if (settleStream) streamMask[index] = 1;
       if (settleBasin) {
         if (y <= liquidSurface) basinMask[index] = biome === UndergroundBiomeId.EmberdeepFumaroles ? 2 : 1;
-      } else if (liquidSurface > liquidLevel[index]) liquidLevel[index] = liquidSurface;
+      }
+      return index;
     };
 
     const sphere = (
@@ -3544,6 +3636,32 @@ export class ChunkWorld {
         const distance = ((x - centerX) / radiusX) ** 2 + ((y - centerY) / radiusY) ** 2 + ((z - centerZ) / radiusZ) ** 2;
         if (distance <= 1) mark(x, y, z, biome, road, liquidSurface, allowSurface, settleStream, settleBasin);
       }
+      if (settleBasin && liquidSurface > MIN_Y - 1) {
+        // A pool is a water-bearing geological room, not a free-standing
+        // liquid ellipsoid. Author its stone envelope from the same global
+        // shape so intersections with noise caves or other graph rooms cannot
+        // punch open its floor and submerged sides. The expanded bounds make
+        // the seal deterministic across chunk seams.
+        const shell = 1.5;
+        const sealStartX = Math.max(minX, Math.floor(centerX - radiusX - shell));
+        const sealEndX = Math.min(maxX, Math.ceil(centerX + radiusX + shell));
+        const sealStartZ = Math.max(minZ, Math.floor(centerZ - radiusZ - shell));
+        const sealEndZ = Math.min(maxZ, Math.ceil(centerZ + radiusZ + shell));
+        const sealStartY = Math.max(MIN_Y + 5, Math.floor(centerY - radiusY - shell));
+        const sealEndY = Math.min(MAX_Y, Math.min(liquidSurface, Math.ceil(centerY + radiusY + shell)));
+        const sealType = biome === UndergroundBiomeId.EmberdeepFumaroles ? 2 : 1;
+        for (let x = sealStartX; x <= sealEndX; x += 1) for (let z = sealStartZ; z <= sealEndZ; z += 1) for (let y = sealStartY; y <= sealEndY; y += 1) {
+          const innerDistance = ((x - centerX) / radiusX) ** 2 + ((y - centerY) / radiusY) ** 2 + ((z - centerZ) / radiusZ) ** 2;
+          if (innerDistance <= 1) continue;
+          const outerDistance = ((x - centerX) / (radiusX + shell)) ** 2
+            + ((y - centerY) / (radiusY + shell)) ** 2
+            + ((z - centerZ) / (radiusZ + shell)) ** 2;
+          if (outerDistance > 1) continue;
+          const column = sample(x, z);
+          if (y > column.height - 4) continue;
+          basinSealMask[blockIndex(x - minX, y, z - minZ)] = sealType;
+        }
+      }
     };
 
     const tunnel = (
@@ -3553,8 +3671,8 @@ export class ChunkWorld {
       road = false,
       allowSurface = false,
       biome = UndergroundBiomeId.OrdinaryTunnel,
-      liquidSurfaceAt?: (progress: number, centerY: number) => number,
       settleStream = false,
+      fallingWater = false,
     ) => {
       const distance = Math.hypot(to.x - from.x, to.y - from.y, to.z - from.z);
       const steps = Math.max(1, Math.ceil(distance / 1.35));
@@ -3570,11 +3688,41 @@ export class ChunkWorld {
           radius,
           biome,
           road,
-          liquidSurfaceAt?.(progress, lerp(from.y, to.y, progress)) ?? MIN_Y - 1,
+          MIN_Y - 1,
           allowSurface,
           settleStream,
           false,
         );
+      }
+      if (fallingWater) {
+        // Waterfalls follow the tunnel centerline as a narrow cascade. Filling
+        // each tunnel sphere to its roof produced four-to-five-block-wide
+        // tubes whose exposed sides read as gigantic freestanding pillars.
+        const cascadeSteps = Math.max(1, Math.ceil(distance / 0.55));
+        let previous: Readonly<{ x: number; y: number; z: number }> | null = null;
+        const fillCascadeCell = (x: number, y: number, z: number) => {
+          const index = mark(x, y, z, biome);
+          if (index >= 0) waterfallMask[index] = 1;
+        };
+        for (let step = 0; step <= cascadeSteps; step += 1) {
+          const progress = step / cascadeSteps;
+          const wobble = Math.sin(progress * Math.PI * 4 + from.x * 0.031 + from.z * 0.023) * 0.7;
+          const x = Math.round(lerp(from.x, to.x, progress) + wobble);
+          const y = Math.round(lerp(from.y, to.y, progress) + Math.sin(progress * Math.PI * 2) * 0.45);
+          const z = Math.round(lerp(from.z, to.z, progress) - wobble * 0.65);
+          if (previous) {
+            // Rounding a diagonal line can otherwise make two liquid voxels
+            // touch only at an edge. Bridge each changed axis in a stable
+            // order so the narrow cascade is physically face-connected.
+            let bridgeX: number = previous.x;
+            let bridgeY: number = previous.y;
+            let bridgeZ: number = previous.z;
+            while (bridgeY !== y) { bridgeY += Math.sign(y - bridgeY); fillCascadeCell(bridgeX, bridgeY, bridgeZ); }
+            while (bridgeX !== x) { bridgeX += Math.sign(x - bridgeX); fillCascadeCell(bridgeX, bridgeY, bridgeZ); }
+            while (bridgeZ !== z) { bridgeZ += Math.sign(z - bridgeZ); fillCascadeCell(bridgeX, bridgeY, bridgeZ); }
+          } else fillCascadeCell(x, y, z);
+          previous = { x, y, z };
+        }
       }
     };
 
@@ -3588,10 +3736,7 @@ export class ChunkWorld {
       if (edgeMaxX < minX || edgeMinX > maxX || edgeMaxZ < minZ || edgeMinZ > maxZ) continue;
       const edgeRadius = edge.radius * radiusScale;
       const waterBiome = edge.flow === "dry" ? UndergroundBiomeId.OrdinaryTunnel : UndergroundBiomeId.GlasswaterDeeps;
-      const liquidSurfaceAt = edge.flow === "waterfall"
-          ? (_progress: number, centerY: number) => Math.ceil(centerY + edgeRadius)
-          : undefined;
-      tunnel(edge.from, edge.to, edgeRadius, edge.stoneRoad, false, waterBiome, liquidSurfaceAt, edge.flow === "stream");
+      tunnel(edge.from, edge.to, edgeRadius, edge.stoneRoad, false, waterBiome, edge.flow === "stream", edge.flow === "waterfall");
     }
 
     const nodes = caveGraphNodesInBounds(this.seed, minX - expanded, maxX + expanded, minZ - expanded, maxZ + expanded);
@@ -3631,6 +3776,13 @@ export class ChunkWorld {
     }
 
     const isFluid = (block: BlockId) => block === BlockId.Water || block === BlockId.Lava;
+    const floorBlock = (biome: UndergroundBiomeId, hash: number) => biome === UndergroundBiomeId.RootweaveGrotto
+      ? (hash > 0.46 ? BlockId.RootweaveSoil : BlockId.GrottoMoss)
+      : biome === UndergroundBiomeId.StarbloomHollows ? (hash > 0.58 ? BlockId.GrottoMoss : BlockId.RootweaveSoil)
+        : biome === UndergroundBiomeId.GlasswaterDeeps ? (hash > 0.72 ? BlockId.MineralCrust : BlockId.GlasswaterStone)
+          : biome === UndergroundBiomeId.PillarstoneReaches ? (hash > 0.82 ? BlockId.FossilStone : hash > 0.4 ? BlockId.Flowstone : BlockId.Pillarstone)
+            : biome === UndergroundBiomeId.CrystaldeepGallery ? (hash > 0.82 ? BlockId.BuddingCrystal : BlockId.CrystaldeepStone)
+              : (hash > 0.74 ? BlockId.MineralTerrace : hash > 0.42 ? BlockId.SulfurStone : BlockId.HeatCrackedRock);
     // The legacy noise pass can leave aquifer water immediately outside a dry
     // graph tunnel. Seal a one-block shell before carving so routes travel
     // through rock rather than becoming impossible air tubes inside water.
@@ -3641,7 +3793,6 @@ export class ChunkWorld {
       if (!carveMask[index]) continue;
       const layer = Math.floor(index / (CHUNK_SIZE * CHUNK_SIZE));
       const y = MIN_Y + layer;
-      if (liquidLevel[index] >= y) continue;
       const horizontal = index % (CHUNK_SIZE * CHUNK_SIZE);
       const lx = horizontal % CHUNK_SIZE;
       const lz = Math.floor(horizontal / CHUNK_SIZE);
@@ -3662,44 +3813,44 @@ export class ChunkWorld {
     }
     for (let index = 0; index < volume; index += 1) {
       if (!carveMask[index]) continue;
-      const y = MIN_Y + Math.floor(index / (CHUNK_SIZE * CHUNK_SIZE));
       const current = chunk.blocks[index] as BlockId;
       if (current === BlockId.Bedrock) continue;
-      const biome = biomeMask[index] as UndergroundBiomeId;
-      if (liquidLevel[index] >= y) {
-        chunk.blocks[index] = biome === UndergroundBiomeId.EmberdeepFumaroles ? BlockId.Lava : BlockId.Water;
-      } else chunk.blocks[index] = BlockId.Air;
+      chunk.blocks[index] = BlockId.Air;
     }
 
-    // Ecological pools retain their authored volume but obey gravity within
-    // the final union of graph rooms and older noise caves. Pack each vertical
-    // basin run from the first supported cell upward, so overlapping caverns
-    // deepen a pool instead of leaving its original ellipsoid floating.
-    for (let lz = 0; lz < CHUNK_SIZE; lz += 1) for (let lx = 0; lx < CHUNK_SIZE; lx += 1) {
-      let y = MIN_Y + 5;
-      while (y <= MAX_Y) {
-        const basinType = basinMask[blockIndex(lx, y, lz)];
-        if (!basinType) {
-          y += 1;
-          continue;
-        }
+    // Restore the geological shell after all cave volumes have been unioned.
+    // This makes water/lava rooms watertight without a flood-fill dependency
+    // on neighboring chunk load order. Existing solid strata remain intact;
+    // only openings and unrelated legacy fluid inside the authored annulus are
+    // replaced with the ecological room's wall material.
+    for (let index = 0; index < volume; index += 1) {
+      const sealType = basinSealMask[index];
+      if (!sealType || basinMask[index]) continue;
+      const current = chunk.blocks[index] as BlockId;
+      if (current !== BlockId.Air && !isFluid(current)) continue;
+      const layer = Math.floor(index / (CHUNK_SIZE * CHUNK_SIZE));
+      const y = MIN_Y + layer;
+      const horizontal = index % (CHUNK_SIZE * CHUNK_SIZE);
+      const lx = horizontal % CHUNK_SIZE;
+      const lz = Math.floor(horizontal / CHUNK_SIZE);
+      const biome = sealType === 2 ? UndergroundBiomeId.EmberdeepFumaroles : UndergroundBiomeId.GlasswaterDeeps;
+      chunk.blocks[index] = floorBlock(biome, hash3(minX + lx, y, minZ + lz, this.seed ^ 0x2d98c47a));
+    }
 
-        const runBottom = y;
-        while (y <= MAX_Y && basinMask[blockIndex(lx, y, lz)] === basinType) y += 1;
-        let remainingDepth = y - runBottom;
-        let settledY = runBottom;
-        while (settledY > MIN_Y + 5 && chunk.blocks[blockIndex(lx, settledY - 1, lz)] === BlockId.Air) settledY -= 1;
+    // Ecological pools keep their authored ellipsoid and liquid plane. Their
+    // new annulus supplies the floor and banks, so volume no longer needs to
+    // be conserved by stacking a column through a lower intersecting cavern.
+    for (let index = 0; index < volume; index += 1) {
+      const basinType = basinMask[index];
+      if (!basinType || chunk.blocks[index] === BlockId.Bedrock) continue;
+      chunk.blocks[index] = basinType === 2 ? BlockId.Lava : BlockId.Water;
+    }
 
-        while (remainingDepth > 0 && settledY <= MAX_Y) {
-          const index = blockIndex(lx, settledY, lz);
-          const current = chunk.blocks[index] as BlockId;
-          if (current === BlockId.Air) {
-            chunk.blocks[index] = basinType === 2 ? BlockId.Lava : BlockId.Water;
-            remainingDepth -= 1;
-          } else if (!isFluid(current)) break;
-          settledY += 1;
-        }
-      }
+    // Intentional falls are the sole uncontained vertical liquid. They are a
+    // one-block centerline, never the full width of their surrounding tunnel.
+    for (let index = 0; index < volume; index += 1) {
+      if (!waterfallMask[index] || basinMask[index] === 2 || chunk.blocks[index] === BlockId.Bedrock) continue;
+      chunk.blocks[index] = BlockId.Water;
     }
 
     // Horizontal cave streams are authored as tunnel volumes, then settled
@@ -3707,8 +3858,8 @@ export class ChunkWorld {
     // suspended sheet whenever an edge crossed a cathedral-sized chamber.
     // Following the contiguous open column keeps the water on the local cave
     // floor even when the graph route intersects an older noise cavern. A solid
-    // voxel or an existing basin stops the descent. Waterfalls and ecological
-    // node basins remain volume-authored through liquidLevel.
+    // voxel or an existing basin stops the descent. Waterfalls keep their
+    // narrow centerline while ecological basins keep their sealed volume.
     for (let lz = 0; lz < CHUNK_SIZE; lz += 1) for (let lx = 0; lx < CHUNK_SIZE; lx += 1) {
       let y = MIN_Y + 5;
       while (y <= MAX_Y) {
@@ -3732,14 +3883,6 @@ export class ChunkWorld {
         chunk.blocks[index] = biome === UndergroundBiomeId.EmberdeepFumaroles ? BlockId.Lava : BlockId.Water;
       }
     }
-
-    const floorBlock = (biome: UndergroundBiomeId, hash: number) => biome === UndergroundBiomeId.RootweaveGrotto
-      ? (hash > 0.46 ? BlockId.RootweaveSoil : BlockId.GrottoMoss)
-      : biome === UndergroundBiomeId.StarbloomHollows ? (hash > 0.58 ? BlockId.GrottoMoss : BlockId.RootweaveSoil)
-        : biome === UndergroundBiomeId.GlasswaterDeeps ? (hash > 0.72 ? BlockId.MineralCrust : BlockId.GlasswaterStone)
-          : biome === UndergroundBiomeId.PillarstoneReaches ? (hash > 0.82 ? BlockId.FossilStone : hash > 0.4 ? BlockId.Flowstone : BlockId.Pillarstone)
-            : biome === UndergroundBiomeId.CrystaldeepGallery ? (hash > 0.82 ? BlockId.BuddingCrystal : BlockId.CrystaldeepStone)
-              : (hash > 0.74 ? BlockId.MineralTerrace : hash > 0.42 ? BlockId.SulfurStone : BlockId.HeatCrackedRock);
 
     for (let index = 0; index < volume; index += 1) {
       if (!carveMask[index]) continue;
@@ -6086,7 +6229,8 @@ export class ChunkWorld {
             const connectedAbove = definition.verticalConnectGroup !== undefined
               && BLOCKS[neighborAt(lx, y + 1, lz)]?.verticalConnectGroup === definition.verticalConnectGroup;
             const profile = definition.aquaticProfile ?? "reed";
-            const overlap = profile === "kelp" || profile === "ribbon" || profile === "vine" ? 0.64 : profile === "reed" ? 0.59 : 0.56;
+            const overlap = profile === "kelp" || profile === "ribbon" || profile === "vine" || profile === "sail" ? 0.64
+              : profile === "wrack" ? .61 : profile === "reed" || profile === "grass" ? 0.59 : 0.56;
             const y0 = y - (connectedBelow ? overlap : 0.5);
             const y1 = y + (connectedAbove ? overlap : 0.5);
             const worldX = chunk.cx * CHUNK_SIZE + lx;
@@ -6110,6 +6254,23 @@ export class ChunkWorld {
             } else if (profile === "algae") {
               addFullCross(0.45, y0, y1 - 0.14, 0.9);
               addFullCross(0.29, y0 + 0.18, y1, 1.02, lean, -lean);
+            } else if (profile === "grass") {
+              const grassTop = connectedAbove ? y1 : y + .34;
+              addFullCross(.13, y0, grassTop, .94, -.21 + lean * .35, -.12);
+              addFullCross(.16, y0 + .02, grassTop - .06, 1, .08, .17 + lean * .2);
+              addFullCross(.11, y0 + .04, grassTop - .14, .84, .24 - lean * .3, -.18);
+            } else if (profile === "sail") {
+              addFullCross(.47, y0, y1, 1, lean * .25, lean * .5);
+              addFullCross(.24, y0 + .08, y1 - .04, .84, -lean * .65, -.12);
+              addFullCross(.12, y0, y1, .76, .16, .18);
+            } else if (profile === "wrack") {
+              addFullCross(.18, y0, y1, .88, lean * .15, 0);
+              addFullCross(.4, y0 + .08, y1 - .1, 1, lean, -.08);
+              addFullCross(.27, y0 + .2, y1, .9, -.16, lean * .7);
+            } else if (profile === "fan") {
+              addFullCross(.13, y0, y + .03, .82);
+              addFullCross(.49, y - .08, y1, 1, lean * .35, 0);
+              addFullCross(.31, y + .02, y1 - .03, .9, -.09, lean * .25);
             } else {
               addFullCross(0.28, y0, y1, 0.96, lean * 0.3, 0);
               addFullCross(0.14, y0 + 0.06, y1 - 0.03, 0.84, -lean * 0.5, lean);

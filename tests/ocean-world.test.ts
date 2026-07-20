@@ -15,7 +15,7 @@ import {
   itemForBlock,
   worldTextureBlockForItem,
 } from "../app/game/data.ts";
-import { planFullTree, planSubmergedFlora, treeLogsAreFaceConnected } from "../app/game/ecology.ts";
+import { AQUATIC_FLORA_HABITAT_WEIGHTS, planFullTree, planSubmergedFlora, treeLogsAreFaceConnected } from "../app/game/ecology.ts";
 import {
   AQUATIC_GROWTH_LIMITS,
   discoverRootedTree,
@@ -49,8 +49,9 @@ test("shoreline, biome, crop and aquatic ids remain byte-safe and registered", (
 });
 
 test("all aquatic flora is waterlogged, breakable, replantable and bounded upward", () => {
-  assert.ok(AQUATIC_FLORA.length >= 8);
+  assert.ok(AQUATIC_FLORA.length >= 12);
   assert.ok(AQUATIC_FLORA.includes(BlockId.Lumenreed));
+  for (const block of [BlockId.Brinegrass, BlockId.Sailkelp, BlockId.Featherwrack, BlockId.Pearlfan]) assert.ok(AQUATIC_FLORA.includes(block));
   for (const block of AQUATIC_FLORA) {
     assert.equal(BLOCKS[block].waterlogged, true, BLOCKS[block].name);
     assert.equal(BLOCKS[block].hardness > 0, true);
@@ -68,11 +69,38 @@ test("all aquatic flora is waterlogged, breakable, replantable and bounded upwar
   assert.deepEqual(planAquaticGrowth(BlockId.LumenKelp, { x: 0, y: 0, z: 0 }, read), { x: 0, y: 1, z: 0, type: BlockId.LumenKelp, maximumHeight: 7 });
   assert.equal(AQUATIC_GROWTH_LIMITS[BlockId.StarCoral], 3);
   assert.equal(AQUATIC_GROWTH_LIMITS[BlockId.Lumenreed], 4);
+  assert.equal(AQUATIC_GROWTH_LIMITS[BlockId.Brinegrass], 2);
+  assert.equal(AQUATIC_GROWTH_LIMITS[BlockId.Sailkelp], 6);
+  assert.equal(AQUATIC_GROWTH_LIMITS[BlockId.Featherwrack], 3);
+  assert.equal(AQUATIC_GROWTH_LIMITS[BlockId.Pearlfan], 1);
   const coral = new Map<string, BlockId>([["0,0,0", BlockId.StarCoral], ["0,1,0", BlockId.Water]]);
   assert.deepEqual(
     planAquaticGrowth(BlockId.StarCoral, { x: 0, y: 0, z: 0 }, (x, y, z) => coral.get(`${x},${y},${z}`) ?? BlockId.Stone),
     { x: 0, y: 1, z: 0, type: BlockId.StarCoral, maximumHeight: 3 },
   );
+});
+
+test("ordinary oceans are matte staple beds while trench glow remains concentrated", () => {
+  const luminous = new Set([BlockId.GlowKelp, BlockId.LumenKelp, BlockId.StarCoral, BlockId.AbyssBloom]);
+  const staples = new Set([BlockId.Brinegrass, BlockId.Sailkelp]);
+  for (const habitat of ["coast", "ocean", "deep-ocean", "lumen-trench"] as const) {
+    const weights = AQUATIC_FLORA_HABITAT_WEIGHTS[habitat];
+    assert.ok(Math.abs(weights.reduce((sum, entry) => sum + entry.weight, 0) - 1) < 1e-9, `${habitat} weights must total one`);
+  }
+  const oceanWeights = AQUATIC_FLORA_HABITAT_WEIGHTS.ocean;
+  assert.ok(oceanWeights.filter((entry) => staples.has(entry.block)).reduce((sum, entry) => sum + entry.weight, 0) >= .85);
+  assert.ok(oceanWeights.filter((entry) => luminous.has(entry.block)).reduce((sum, entry) => sum + entry.weight, 0) <= .02);
+  assert.ok(AQUATIC_FLORA_HABITAT_WEIGHTS["lumen-trench"].filter((entry) => luminous.has(entry.block)).reduce((sum, entry) => sum + entry.weight, 0) >= .65);
+
+  const generated: BlockId[] = [];
+  for (let x = -96; x <= 96; x += 1) for (let z = -96; z <= 96; z += 1) {
+    const plan = planSubmergedFlora("OCEAN-FLORA-REDESIGN", x, -20, z, 18, "ocean");
+    if (plan[0]) generated.push(plan[0].block);
+    assert.ok(plan.every((entry) => entry.block === plan[0]?.block), "one vertical plant must never change species between cells");
+  }
+  assert.ok(generated.length > 5_000, "ordinary ocean fixture should produce broad visible beds");
+  assert.ok(generated.filter((block) => staples.has(block)).length / generated.length >= .80);
+  assert.ok(generated.filter((block) => luminous.has(block)).length / generated.length <= .03);
 });
 
 test("trimming an aquatic column clears unsupported upper segments and leaves a renewable base", () => {
