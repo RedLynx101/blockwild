@@ -5,14 +5,18 @@ import test from "node:test";
 import {
   BLOCKS,
   BLOCK_ITEM_ALIASES,
+  BRINEGRASS_TILE,
   CACTUS_TOP_TILE,
   DEEPGEAR_BRICK_TILE,
   DREAMCAP_TILE,
+  FEATHERWRACK_TILE,
   ITEMS,
   Item,
   MOONBOUGH_LEAVES_TILE,
+  PEARLFAN_TILE,
   RIVETED_BRASS_TILE,
   ROOTWEAVE_SOIL_SIDE_TILE,
+  SAILKELP_TILE,
   STARFERN_TILE,
   BlockId,
 } from "../app/game/data";
@@ -25,7 +29,7 @@ import {
   CREATURE_VISUAL_EXCEPTIONS,
   blockVisualFamily,
 } from "../app/game/visual-theme";
-import { PixelCanvas } from "../scripts/lib/pixel-canvas";
+import { PixelCanvas, installPixelCanvasDocument } from "../scripts/lib/pixel-canvas";
 
 test("the unified visual theme is executable and stable", () => {
   assert.equal(BLOCKWILD_VISUAL_THEME.thesis, "handcrafted voxel naturalism");
@@ -57,7 +61,7 @@ test("reference models link to canonical portraits", () => {
 test("all production creatures and blocks pass the release contract", () => {
   const audit = auditVisualTheme({ generatedAt: "2026-07-18T00:00:00.000Z" });
   assert.equal(audit.totals.creatures, 231);
-  assert.equal(audit.totals.blocks, 305);
+  assert.equal(audit.totals.blocks, 309);
   assert.equal(audit.totals.blockFamilies, 17);
   assert.equal(audit.totals.creatureViolations, 0);
   assert.equal(audit.totals.blockViolations, 0);
@@ -101,6 +105,46 @@ test("Glimmerwood flora and cactus faces no longer borrow generic atlas art", ()
   assert.equal(new Set([MOONBOUGH_LEAVES_TILE, STARFERN_TILE, DREAMCAP_TILE, CACTUS_TOP_TILE]).size, 4);
   assert.equal(ITEMS[Item.StarfernFrond].heldModel, "world-texture");
   assert.equal(ITEMS[Item.Dreamcap].dropModel, "world-texture");
+});
+
+test("ordinary ocean flora uses dedicated connected matte art", async () => {
+  const species = [
+    [BlockId.Brinegrass, BRINEGRASS_TILE, "brinegrass", "grass"],
+    [BlockId.Sailkelp, SAILKELP_TILE, "sailkelp", "sail"],
+    [BlockId.Featherwrack, FEATHERWRACK_TILE, "featherwrack", "wrack"],
+    [BlockId.Pearlfan, PEARLFAN_TILE, "pearlfan", "fan"],
+  ] as const;
+  assert.equal(new Set(species.map((entry) => entry[1])).size, species.length);
+  for (const [block, tile, connection, profile] of species) {
+    const definition = BLOCKS[block];
+    assert.deepEqual([definition.top, definition.side, definition.bottom], [tile, tile, tile]);
+    assert.equal(definition.layer, "cutout");
+    assert.equal(definition.waterlogged, true);
+    assert.equal(definition.verticalConnectGroup, connection);
+    assert.equal(definition.aquaticProfile, profile);
+    assert.equal(blockVisualFamily(block, definition).id, "flora-and-farming");
+  }
+
+  const shim = installPixelCanvasDocument();
+  try {
+    const { createBlockAtlas } = await import("../app/game/world");
+    const texture = createBlockAtlas();
+    const canvas = texture.image as unknown as PixelCanvas;
+    const edgeAlpha = (tile: number, row: 0 | 15) => {
+      const left = (tile % 16) * 16;
+      const top = Math.floor(tile / 16) * 16 + row;
+      let occupied = 0;
+      for (let x = 0; x < 16; x += 1) if (canvas.pixels[(top * canvas.width + left + x) * 4 + 3] > 0) occupied += 1;
+      return occupied;
+    };
+    for (const [, tile] of species) {
+      assert.ok(edgeAlpha(tile, 0) > 0, `tile ${tile} must reach the next segment above`);
+      assert.ok(edgeAlpha(tile, 15) > 0, `tile ${tile} must remain rooted into the segment below`);
+    }
+    texture.dispose();
+  } finally {
+    shim.restore();
+  }
 });
 
 test("pixel canvas preserves opaque, alpha, clear, and stroke operations", () => {

@@ -566,6 +566,7 @@ test("inventory artwork stays semantic at real slot sizes and food hover copy is
     assert.equal(itemIconKind(tome), "tome");
   }
   assert.match(itemHoverText({ item: Item.Apple, count: 1 }), /Food \+4/u);
+  assert.equal(itemHoverText({ item: Item.CaveGel, count: 1 }), "Cave Gel");
 });
 
 test("v0.5 furniture and capture orbs use production held and drop silhouettes", () => {

@@ -292,6 +292,10 @@ export function wildPeppermintHeight(seed: string | number, x: number, z: number
 }
 
 const AQUATIC_FLORA_HEIGHT: Readonly<Partial<Record<BlockId, number>>> = Object.freeze({
+  [BlockId.Brinegrass]: 2,
+  [BlockId.Sailkelp]: 6,
+  [BlockId.Featherwrack]: 3,
+  [BlockId.Pearlfan]: 1,
   [BlockId.RiverRibbon]: 3,
   [BlockId.GlowKelp]: 5,
   [BlockId.ReedBloom]: 2,
@@ -300,6 +304,66 @@ const AQUATIC_FLORA_HEIGHT: Readonly<Partial<Record<BlockId, number>>> = Object.
   [BlockId.AbyssBloom]: 2,
   [BlockId.Tidevine]: 5,
 });
+
+export type AquaticFloraWeight = Readonly<{ block: BlockId; weight: number }>;
+
+/**
+ * Broad matte plants own ordinary seas; light-producing plants become small
+ * signals there and remain abundant only inside the Lumen Trench ecosystem.
+ * Keeping the weights public makes that art-direction rule auditable.
+ */
+export const AQUATIC_FLORA_HABITAT_WEIGHTS = Object.freeze({
+  river: Object.freeze([
+    { block: BlockId.ReedBloom, weight: .58 },
+    { block: BlockId.RiverRibbon, weight: .42 },
+  ]),
+  coast: Object.freeze([
+    { block: BlockId.Brinegrass, weight: .58 },
+    { block: BlockId.Sailkelp, weight: .24 },
+    { block: BlockId.Featherwrack, weight: .08 },
+    { block: BlockId.ReedBloom, weight: .04 },
+    { block: BlockId.Tidevine, weight: .025 },
+    { block: BlockId.Pearlfan, weight: .025 },
+    { block: BlockId.StarCoral, weight: .01 },
+  ]),
+  ocean: Object.freeze([
+    { block: BlockId.Brinegrass, weight: .54 },
+    { block: BlockId.Sailkelp, weight: .40 },
+    { block: BlockId.Featherwrack, weight: .025 },
+    { block: BlockId.Tidevine, weight: .015 },
+    { block: BlockId.Pearlfan, weight: .01 },
+    { block: BlockId.StarCoral, weight: .007 },
+    { block: BlockId.GlowKelp, weight: .003 },
+  ]),
+  "deep-ocean": Object.freeze([
+    { block: BlockId.Sailkelp, weight: .55 },
+    { block: BlockId.Brinegrass, weight: .34 },
+    { block: BlockId.Featherwrack, weight: .05 },
+    { block: BlockId.Tidevine, weight: .03 },
+    { block: BlockId.Pearlfan, weight: .025 },
+    { block: BlockId.LumenKelp, weight: .003 },
+    { block: BlockId.StarCoral, weight: .0015 },
+    { block: BlockId.AbyssBloom, weight: .0005 },
+  ]),
+  "lumen-trench": Object.freeze([
+    { block: BlockId.LumenKelp, weight: .38 },
+    { block: BlockId.Sailkelp, weight: .22 },
+    { block: BlockId.StarCoral, weight: .16 },
+    { block: BlockId.GlowKelp, weight: .10 },
+    { block: BlockId.Brinegrass, weight: .06 },
+    { block: BlockId.AbyssBloom, weight: .05 },
+    { block: BlockId.Pearlfan, weight: .03 },
+  ]),
+} satisfies Readonly<Record<AquaticFloraHabitat, readonly AquaticFloraWeight[]>>);
+
+function pickAquaticFlora(weights: readonly AquaticFloraWeight[], roll: number) {
+  let cursor = 0;
+  for (const entry of weights) {
+    cursor += entry.weight;
+    if (roll < cursor) return entry.block;
+  }
+  return weights.at(-1)?.block ?? BlockId.Brinegrass;
+}
 
 export function planSubmergedFlora(
   seed: string | number,
@@ -312,15 +376,17 @@ export function planSubmergedFlora(
   const depth = Math.max(0, Math.floor(waterDepth));
   if (depth < 2) return [];
   const roll = hashUnit(seed, `submerged:${x},${z}`);
-  const densityFloor = habitat === "lumen-trench" ? 0.7 : habitat === "deep-ocean" ? 0.77 : habitat === "ocean" ? 0.81 : habitat === "coast" ? 0.88 : 0.82;
+  const baseDensityFloor = habitat === "lumen-trench" ? .67 : habitat === "deep-ocean" ? .74 : habitat === "ocean" ? .76 : habitat === "coast" ? .82 : .82;
+  const patchSize = habitat === "river" ? 4 : habitat === "coast" ? 5 : 7;
+  const patchX = Math.floor(x / patchSize);
+  const patchZ = Math.floor(z / patchSize);
+  const fertility = hashUnit(seed, `submerged-fertility:${habitat}:${patchX},${patchZ}`);
+  const densityFloor = Math.max(.56, Math.min(.93, baseDensityFloor + (.5 - fertility) * .16));
   if (roll < densityFloor) return [];
-  const speciesRoll = hashUnit(seed, `submerged-species:${habitat}:${x},${z}`);
-  let block: BlockId;
-  if (habitat === "lumen-trench") block = speciesRoll > 0.78 ? BlockId.AbyssBloom : speciesRoll > 0.44 ? BlockId.LumenKelp : speciesRoll > 0.2 ? BlockId.StarCoral : BlockId.GlowKelp;
-  else if (habitat === "deep-ocean") block = speciesRoll > 0.86 ? BlockId.AbyssBloom : speciesRoll > 0.58 ? BlockId.LumenKelp : speciesRoll > 0.28 ? BlockId.Tidevine : BlockId.StarCoral;
-  else if (habitat === "ocean") block = speciesRoll > 0.78 ? BlockId.StarCoral : speciesRoll > 0.42 ? BlockId.Tidevine : BlockId.GlowKelp;
-  else if (habitat === "coast") block = speciesRoll > 0.72 ? BlockId.StarCoral : speciesRoll > 0.34 ? BlockId.Tidevine : BlockId.ReedBloom;
-  else block = speciesRoll > 0.74 ? BlockId.RiverRibbon : BlockId.ReedBloom;
+  const patchSpecies = hashUnit(seed, `submerged-species-patch:${habitat}:${patchX},${patchZ}`);
+  const localSpecies = hashUnit(seed, `submerged-species-local:${habitat}:${x},${z}`);
+  const breaksPatch = hashUnit(seed, `submerged-species-mix:${habitat}:${x},${z}`) > .88;
+  const block = pickAquaticFlora(AQUATIC_FLORA_HABITAT_WEIGHTS[habitat], breaksPatch ? localSpecies : patchSpecies);
   const naturalLimit = AQUATIC_FLORA_HEIGHT[block] ?? 1;
   const heightRoll = 0.55 + hashUnit(seed, `submerged-height:${x},${z}`) * 0.75;
   const height = Math.max(1, Math.min(naturalLimit, depth - 1, Math.round(naturalLimit * heightRoll)));

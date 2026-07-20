@@ -321,6 +321,11 @@ export enum BlockId {
   ShellfruitYoung = 566,
   ShellfruitCrop = 567,
   ShellfruitCrate = 568,
+  /** v1.8.5 ordinary-ocean flora; appended so persisted block ids never move. */
+  Brinegrass = 569,
+  Sailkelp = 570,
+  Featherwrack = 571,
+  Pearlfan = 572,
 }
 
 export const Item = {
@@ -774,6 +779,11 @@ export const Item = {
   PearlCourtRegalia: 588,
   HeatScriptLens: 589,
   RememberedPathSpore: 590,
+  /** v1.8.5 ocean-flora cuttings; append-only because inventory stacks persist. */
+  BrinegrassCutting: 591,
+  SailkelpFrond: 592,
+  FeatherwrackSprig: 593,
+  PearlfanCutting: 594,
 } as const;
 
 export type ItemCode = number;
@@ -824,6 +834,11 @@ export const SHELLFRUIT_YOUNG_TILE = 236;
 export const SHELLFRUIT_CROP_TILE = 237;
 export const SHELLFRUIT_CRATE_TOP_TILE = 238;
 export const SHELLFRUIT_CRATE_SIDE_TILE = 239;
+/** v1.8.5 matte ocean staples and restrained accent flora. */
+export const BRINEGRASS_TILE = 240;
+export const SAILKELP_TILE = 241;
+export const FEATHERWRACK_TILE = 242;
+export const PEARLFAN_TILE = 243;
 
 export type InventorySlot = {
   item: ItemCode;
@@ -851,9 +866,9 @@ export type BlockDefinition = {
   /** The block occupies a water source cell; breaking it restores the water. */
   waterlogged?: boolean;
   /** Adjacent stems in this group overlap slightly so stacked flora reads as one plant. */
-  verticalConnectGroup?: "lumen-kelp" | "star-coral" | "abyss-bloom" | "tidevine" | "lumenreed" | "river-ribbon" | "glow-kelp" | "reed-bloom" | "cave-reed" | "luminous-algae" | "egg-reed" | "cultivated-flower" | "wild-peppermint" | "double-tall-grass" | "cave-root" | "rope-ladder";
+  verticalConnectGroup?: "lumen-kelp" | "star-coral" | "abyss-bloom" | "tidevine" | "lumenreed" | "river-ribbon" | "glow-kelp" | "reed-bloom" | "brinegrass" | "sailkelp" | "featherwrack" | "pearlfan" | "cave-reed" | "luminous-algae" | "egg-reed" | "cultivated-flower" | "wild-peppermint" | "double-tall-grass" | "cave-root" | "rope-ladder";
   /** Silhouette contract used by the connected aquatic-flora mesh. */
-  aquaticProfile?: "ribbon" | "kelp" | "reed" | "coral" | "bloom" | "vine" | "algae";
+  aquaticProfile?: "ribbon" | "kelp" | "reed" | "coral" | "bloom" | "vine" | "algae" | "grass" | "sail" | "wrack" | "fan";
   /** Partial-height collision used by connected fences and similar blocks. */
   collisionHeight?: number;
   /** Blocks in the same group visually connect across horizontal faces. */
@@ -1264,6 +1279,10 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.ShellfruitYoung]: block(BlockId.ShellfruitYoung, "Young Shellfruit", SHELLFRUIT_YOUNG_TILE, SHELLFRUIT_YOUNG_TILE, SHELLFRUIT_YOUNG_TILE, .05, "#84b79b", "hand", 0, { solid: false, layer: "cutout", shape: "aquatic", replaceable: true, waterlogged: true, aquaticProfile: "bloom" }),
   [BlockId.ShellfruitCrop]: block(BlockId.ShellfruitCrop, "Ripe Shellfruit Bed", SHELLFRUIT_CROP_TILE, SHELLFRUIT_CROP_TILE, SHELLFRUIT_CROP_TILE, .07, "#e0a765", "hand", 0, { solid: false, layer: "cutout", shape: "aquatic", replaceable: true, waterlogged: true, aquaticProfile: "bloom" }),
   [BlockId.ShellfruitCrate]: block(BlockId.ShellfruitCrate, "Shellfruit Crate", SHELLFRUIT_CRATE_TOP_TILE, SHELLFRUIT_CRATE_SIDE_TILE, 11, .82, "#bd8059", "axe"),
+  [BlockId.Brinegrass]: block(BlockId.Brinegrass, "Brinegrass", BRINEGRASS_TILE, BRINEGRASS_TILE, BRINEGRASS_TILE, .04, "#397c65", "hand", 0, { solid: false, layer: "cutout", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "brinegrass", aquaticProfile: "grass" }),
+  [BlockId.Sailkelp]: block(BlockId.Sailkelp, "Sailkelp", SAILKELP_TILE, SAILKELP_TILE, SAILKELP_TILE, .05, "#827b43", "hand", 0, { solid: false, layer: "cutout", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "sailkelp", aquaticProfile: "sail" }),
+  [BlockId.Featherwrack]: block(BlockId.Featherwrack, "Featherwrack", FEATHERWRACK_TILE, FEATHERWRACK_TILE, FEATHERWRACK_TILE, .05, "#a45d4f", "hand", 0, { solid: false, layer: "cutout", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "featherwrack", aquaticProfile: "wrack" }),
+  [BlockId.Pearlfan]: block(BlockId.Pearlfan, "Pearlfan", PEARLFAN_TILE, PEARLFAN_TILE, PEARLFAN_TILE, .06, "#c8bdba", "hand", 0, { solid: false, layer: "cutout", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "pearlfan", aquaticProfile: "fan" }),
 };
 
 const configureBlockLight = (type: BlockId, lightEmission: number, lightColor: readonly [number, number, number], emissiveStrength = 0.72) => {
@@ -1892,6 +1911,10 @@ Object.assign(ITEMS, {
   [Item.PearlCourtRegalia]: { id: Item.PearlCourtRegalia, name: "Pearl Court Regalia", color: "#e6d8ae", maxStack: 1, rarity: "legendary", legendaryEffect: "Signals peaceful audience status inside Namarra's restored court.", iconKind: "relic" },
   [Item.HeatScriptLens]: { id: Item.HeatScriptLens, name: "Heat-Script Lens", color: "#e18b55", maxStack: 1, rarity: "legendary", legendaryEffect: "Reveals one thermal archive layer without igniting its shelf.", iconKind: "relic" },
   [Item.RememberedPathSpore]: { id: Item.RememberedPathSpore, name: "Remembered Path Spore", color: "#c8b4e6", maxStack: 4, rarity: "legendary", legendaryEffect: "Briefly highlights the player's own recent route near a restored memory pond.", iconKind: "relic" },
+  [Item.BrinegrassCutting]: { id: Item.BrinegrassCutting, name: "Brinegrass Cutting", color: "#397c65", maxStack: 64, useKind: "plant", plantBlock: BlockId.Brinegrass, iconKind: "produce", worldTextureBlock: BlockId.Brinegrass },
+  [Item.SailkelpFrond]: { id: Item.SailkelpFrond, name: "Sailkelp Frond", color: "#827b43", maxStack: 64, useKind: "plant", plantBlock: BlockId.Sailkelp, iconKind: "produce", worldTextureBlock: BlockId.Sailkelp },
+  [Item.FeatherwrackSprig]: { id: Item.FeatherwrackSprig, name: "Featherwrack Sprig", color: "#a45d4f", maxStack: 64, useKind: "plant", plantBlock: BlockId.Featherwrack, iconKind: "produce", worldTextureBlock: BlockId.Featherwrack },
+  [Item.PearlfanCutting]: { id: Item.PearlfanCutting, name: "Pearlfan Cutting", color: "#c8bdba", maxStack: 64, useKind: "plant", plantBlock: BlockId.Pearlfan, iconKind: "produce", worldTextureBlock: BlockId.Pearlfan },
 } satisfies Record<number, ItemDefinition>);
 
 /**
@@ -1900,6 +1923,10 @@ Object.assign(ITEMS, {
  * 103 (Iron Ingot) merely because both enums share a number.
  */
 export const BLOCK_ITEM_ALIASES: Readonly<Partial<Record<BlockId, ItemCode>>> = Object.freeze({
+  [BlockId.Brinegrass]: Item.BrinegrassCutting,
+  [BlockId.Sailkelp]: Item.SailkelpFrond,
+  [BlockId.Featherwrack]: Item.FeatherwrackSprig,
+  [BlockId.Pearlfan]: Item.PearlfanCutting,
   [BlockId.NacreTidework]: Item.NacreTideworkItem,
   [BlockId.WindwornAlabaster]: Item.WindwornAlabasterItem,
   [BlockId.FossilrootCalcite]: Item.FossilrootCalciteItem,
@@ -2137,6 +2164,10 @@ export const CULTIVATED_FLOWERS: readonly BlockId[] = Object.freeze([
 export const POLLINATOR_FLOWERS: readonly BlockId[] = Object.freeze([...ORDINARY_FLOWERS, ...CULTIVATED_FLOWERS]);
 
 export const AQUATIC_FLORA: readonly BlockId[] = Object.freeze([
+  BlockId.Brinegrass,
+  BlockId.Sailkelp,
+  BlockId.Featherwrack,
+  BlockId.Pearlfan,
   BlockId.RiverRibbon,
   BlockId.GlowKelp,
   BlockId.ReedBloom,
@@ -2169,6 +2200,10 @@ export const CREATIVE_FLORA: readonly ItemCode[] = [
   BlockId.RiverRibbon,
   BlockId.GlowKelp,
   BlockId.ReedBloom,
+  Item.BrinegrassCutting,
+  Item.SailkelpFrond,
+  Item.FeatherwrackSprig,
+  Item.PearlfanCutting,
   BlockId.Cloudbell,
   Item.Gumdrop,
   Item.PeppermintCane,

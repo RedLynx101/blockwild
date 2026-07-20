@@ -997,7 +997,6 @@ export function itemHoverText(slot: InventorySlot | null, fallback = "Empty slot
   const details = [inventorySlotDisplayName(slot)];
   if (definition?.food) details.push(`Food +${definition.food}`);
   if (definition?.damage) details.push(`${definition.damage} attack damage`);
-  if (slot.item === Item.CaveGel) details.push("Healing Station fuel: one unit powers 10× healing hits for 10 active minutes; the timer pauses while idle; also used in alchemy");
   const legendary = legendaryContractForItem(slot.item);
   if (legendary) details.push(`Legendary · ${legendary.infiniteDurability ? "Infinite durability" : `${slot.durability ?? definition?.maxDurability} durability`} · ${legendary.mechanic}`);
   else if (slot.durability !== undefined) details.push(`${slot.durability} durability`);
@@ -1945,17 +1944,33 @@ export default function VoxelGame() {
             : iconAudit === "1" ? "all" : null);
     setHeldAuditMode(parameters.get("held-audit") === "1");
     setSpellWheelAuditMode(parameters.get("spell-wheel-audit") === "empty");
-    if (parameters.get("inventory-audit") === "1") {
+    const inventoryAudit = parameters.get("inventory-audit");
+    if (inventoryAudit === "1" || inventoryAudit === "cave-gel") {
       overlayRef.current = "inventory";
       setOverlayState("inventory");
+      if (inventoryAudit === "cave-gel") window.setTimeout(() => setHud((current) => {
+        const inventory = [...current.inventory];
+        inventory[0] = { item: Item.CaveGel, count: 16 };
+        return { ...current, inventory, selected: 0 };
+      }), 250);
     }
     const bestiaryAudit = parameters.get("bestiary-audit");
-    if (["1", "filters", "variants", "research", "care"].includes(bestiaryAudit ?? "")) {
+    if (["1", "filters", "variants", "research", "care", "ammonarch"].includes(bestiaryAudit ?? "")) {
       window.setTimeout(() => {
         overlayRef.current = "bestiary";
         setOverlayState("bestiary");
         setFieldGuideSection("creatures");
         setBestiaryFiltersOpen(bestiaryAudit === "filters");
+        if (bestiaryAudit === "ammonarch") {
+          setSelectedBestiary("ammonarch");
+          setHud((current) => ({
+            ...current,
+            bestiary: {
+              ...current.bestiary,
+              ammonarch: { ...current.bestiary.ammonarch, seen: true, firstSeenAt: Date.UTC(2026, 6, 19, 12) },
+            },
+          }));
+        }
         if (["variants", "research", "care"].includes(bestiaryAudit ?? "")) {
           setSelectedBestiary("cragglass-basilisk");
           setBestiaryPageTab(bestiaryAudit as BestiaryPageTab);
@@ -2176,18 +2191,20 @@ export default function VoxelGame() {
     const waystoneIconAudit = auditParameters.get("waystone-icon-audit") === "1";
     const chestAudit = auditParameters.get("chest-audit") === "open";
     const caveLiquidAudit = auditParameters.get("cave-liquid-audit") === "1";
+    const oceanFloraAudit = auditParameters.get("ocean-flora-audit") === "1";
     const creatureCollisionAudit = auditParameters.get("mob-collision-audit") === "1";
-    const placementAudit = auditParameters.get("placement-audit") === "1" || mapNavigationAudit || waystoneIconAudit || chestAudit || caveLiquidAudit || creatureCollisionAudit;
+    const placementAudit = auditParameters.get("placement-audit") === "1" || mapNavigationAudit || waystoneIconAudit || chestAudit || caveLiquidAudit || oceanFloraAudit || creatureCollisionAudit;
     if (placementAudit) {
       engine.createWorld(
-        caveLiquidAudit ? "WILDERNESS" : creatureCollisionAudit ? "MOB-COLLISION-AUDIT" : mapNavigationAudit || waystoneIconAudit ? "MAP-NAVIGATION-AUDIT" : "DIRECTIONAL-PLACEMENT-AUDIT",
+        caveLiquidAudit ? "WILDERNESS" : oceanFloraAudit ? "OCEAN-FLORA-AUDIT" : creatureCollisionAudit ? "MOB-COLLISION-AUDIT" : mapNavigationAudit || waystoneIconAudit ? "MAP-NAVIGATION-AUDIT" : "DIRECTIONAL-PLACEMENT-AUDIT",
         "builder",
         { structures: false, weather: false, mobDensity: 0, butterflyDensity: 0 },
-        caveLiquidAudit ? "Cave Liquid Audit" : creatureCollisionAudit ? "Creature Collision Audit" : mapNavigationAudit || waystoneIconAudit ? "Map Navigation Audit" : "Directional Placement Audit",
+        caveLiquidAudit ? "Cave Liquid Audit" : oceanFloraAudit ? "Ocean Flora Audit" : creatureCollisionAudit ? "Creature Collision Audit" : mapNavigationAudit || waystoneIconAudit ? "Map Navigation Audit" : "Directional Placement Audit",
       );
       const auditMarkerId = mapNavigationAudit || waystoneIconAudit ? engine.primeMapNavigationAudit(auditParameters.get("far-track") === "1", waystoneIconAudit) : null;
-      const auditChestKey = !mapNavigationAudit && !waystoneIconAudit && !caveLiquidAudit && !creatureCollisionAudit ? engine.primeDirectionalPlacementAudit() : null;
+      const auditChestKey = !mapNavigationAudit && !waystoneIconAudit && !caveLiquidAudit && !oceanFloraAudit && !creatureCollisionAudit ? engine.primeDirectionalPlacementAudit() : null;
       if (caveLiquidAudit) engine.primeCaveLiquidAudit();
+      if (oceanFloraAudit) engine.primeOceanFloraAudit();
       if (creatureCollisionAudit) engine.primeCreatureCollisionAudit();
       if (chestAudit && auditChestKey) engine.primeOpenChestAudit(auditChestKey);
       startedRef.current = true;

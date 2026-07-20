@@ -120,6 +120,34 @@ test("critical silhouettes have authored anatomy and true supernatural negative 
   const basilisk = createMobVisual("cragglass-basilisk", 94_002).visual;
   const basiliskLegs = basilisk.children.filter((child) => /(?:front|rear|middle)-(?:left|right)-leg-pivot|(?:left|right)-middle-leg-pivot/u.test(child.name));
   assert.equal(basiliskLegs.length, 6, "the six-legged basilisk keeps its lore silhouette");
+  let basiliskMeshes = 0;
+  basilisk.traverse((object) => { if (object instanceof THREE.Mesh) basiliskMeshes += 1; });
+  assert.ok(basiliskMeshes >= 120, "the signature Basilisk should retain its layered production-detail budget");
+  const basiliskHead = basilisk.getObjectByName("cragglass-basilisk-head-pivot")!;
+  const basiliskJaw = basilisk.getObjectByName("cragglass-basilisk-lower-jaw-attack-pivot")!;
+  const basiliskCrown = basilisk.getObjectByName("cragglass-basilisk-gaze-crown-pivot")!;
+  const basiliskTailTip = basilisk.getObjectByName("cragglass-basilisk-tail-tip-pivot")!;
+  assert.equal(basiliskJaw.parent, basiliskHead, "the opening jaw must follow the Basilisk's head");
+  assert.equal(basiliskCrown.parent, basiliskHead, "the gaze crown must be rooted in the skull instead of floating above it");
+  assert.equal(basilisk.getObjectByName("cragglass-basilisk-tail-breaker-cragglass")?.parent, basiliskTailTip, "the breaker belongs to the articulated tail tip");
+  for (const side of ["left", "right"] as const) {
+    const middle = basilisk.getObjectByName(`cragglass-basilisk-middle-${side}-leg-pivot`)!;
+    const knee = basilisk.getObjectByName(`cragglass-basilisk-middle-${side}-knee-pivot`)!;
+    const ankle = basilisk.getObjectByName(`cragglass-basilisk-middle-${side}-ankle-pivot`)!;
+    const foot = basilisk.getObjectByName(`cragglass-basilisk-middle-${side}-foot-pivot`)!;
+    assert.equal(knee.parent, middle);
+    assert.equal(ankle.parent, knee);
+    assert.equal(foot.parent, ankle);
+    assert.equal(foot.children.filter((child) => /middle-(?:left|right)-claw/u.test(child.name)).length, 3);
+  }
+  applyWildlifePose(basilisk, "cragglass-basilisk", .8, 0, 0);
+  const restingJaw = basiliskJaw.rotation.x;
+  const restingCrown = basiliskCrown.rotation.x;
+  const restingMiddleLeg = basilisk.getObjectByName("cragglass-basilisk-middle-left-leg-pivot")!.rotation.x;
+  applyWildlifePose(basilisk, "cragglass-basilisk", 1.35, 1, 1);
+  assert.ok(basiliskJaw.rotation.x < restingJaw - .1, "an alerted Basilisk should visibly open its jaw");
+  assert.notEqual(basiliskCrown.rotation.x, restingCrown, "the focusing crown should tense with the gaze");
+  assert.notEqual(basilisk.getObjectByName("cragglass-basilisk-middle-left-leg-pivot")!.rotation.x, restingMiddleLeg, "all six legs should join the crawl cycle");
 
   const cuttle = createMobVisual("inkveil-cuttle", 94_003).visual;
   assert.equal(cuttle.getObjectByName("inkveil-cuttle-tail-root-pivot")?.visible, false, "cuttlefish do not retain the generic fish tail");
@@ -170,7 +198,14 @@ test("the anatomy pass connects load-bearing limbs, feet, claws, and faces to th
       assert.ok(legs.length >= 6, `${kind} needs its complete arthropod gait`);
       for (const leg of legs) {
         const knee = leg.children.find((child) => /-knee-pivot$/u.test(child.name));
-        assert.ok(knee?.children.some((child) => /-foot-pivot$/u.test(child.name)), `${leg.name} needs a chained tibia and foot`);
+        const foot = knee?.children.find((child) => /-foot-pivot$/u.test(child.name));
+        assert.ok(foot, `${leg.name} needs a chained tibia and foot`);
+        visual.updateMatrixWorld(true);
+        const hipY = leg.getWorldPosition(new THREE.Vector3()).y;
+        const kneeY = knee!.getWorldPosition(new THREE.Vector3()).y;
+        const footY = foot!.getWorldPosition(new THREE.Vector3()).y;
+        assert.ok(kneeY < hipY, `${leg.name} knee must descend below its hip; ${kneeY} !< ${hipY}`);
+        assert.ok(footY < kneeY, `${leg.name} foot must descend below its knee; ${footY} !< ${kneeY}`);
       }
     }
     if (!MOB_DEFS[kind].flying && !MOB_DEFS[kind].aquatic) {

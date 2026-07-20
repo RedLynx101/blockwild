@@ -140,6 +140,70 @@ function flowerBoxes(plant: PlantDefinition): ModelBox[] {
 function aquaticBoxes(plant: PlantDefinition): ModelBox[] {
   const frond = colorForPlant(plant, "#4ca38d");
   const luminous = /glow|lumen|star|abyss/i.test(plant.id);
+  const bed = () => [
+    box("bed", "waterbed", [2.5, 0.24, 1.9], [0, 0.12, 0], WATER_STONE),
+    box("holdfast", "roots", [1.15, .16, .84], [0, .28, 0], "#46584f"),
+  ];
+  if (plant.id === "brinegrass") {
+    const result: ModelBox[] = bed();
+    const blades = [
+      [-.9, -.35, 1.45, -.22], [-.66, .25, 1.9, .18], [-.38, -.12, 1.6, -.1],
+      [-.08, .3, 2.15, .12], [.24, -.28, 1.72, -.16], [.55, .2, 1.98, .19], [.86, -.1, 1.4, .25],
+    ] as const;
+    blades.forEach(([x, z, height, lean], index) => result.push(
+      box(`blade-${index + 1}`, "blade", [.12, height, .2], [x + lean * .22, .28 + height / 2, z], index % 3 === 0 ? "#6fae86" : index % 2 ? "#397c65" : "#4f9475", [0, 0, lean]),
+    ));
+    return result;
+  }
+  if (plant.id === "sailkelp") {
+    const result: ModelBox[] = bed();
+    result.push(
+      box("stipe-lower", "stipe", [.22, 2.35, .22], [0, 1.45, 0], "#46462b", [0, 0, -.035]),
+      box("stipe-upper", "stipe", [.2, 2.3, .2], [-.11, 3.62, 0], "#69683a", [0, 0, .08]),
+    );
+    const sails = [
+      [-.52, 1.15, 1.12, -.43, "#777541"], [.6, 1.78, 1.36, .5, "#969653"],
+      [-.58, 2.48, 1.45, -.48, "#676837"], [.54, 3.15, 1.34, .45, "#a8ad61"],
+      [-.46, 3.84, 1.16, -.39, "#7c8046"], [.38, 4.42, .96, .33, "#b5ba69"],
+    ] as const;
+    sails.forEach(([x, y, height, roll, color], index) => result.push(
+      box(`sail-${index + 1}`, "sail", [.72, height, .1], [x, y, index % 2 ? .06 : -.06], color, [0, index % 2 ? .1 : -.1, roll]),
+      box(`rib-${index + 1}`, "sail-rib", [.1, height * .9, .14], [x - Math.sign(x) * .22, y, index % 2 ? .05 : -.05], "#4d4e2d", [0, index % 2 ? .1 : -.1, roll]),
+    ));
+    return result;
+  }
+  if (plant.id === "featherwrack") {
+    const result: ModelBox[] = bed();
+    result.push(box("wrack-stem", "stem", [.18, 2.8, .18], [0, 1.68, 0], "#743b3a", [0, 0, -.04]));
+    const branches = [[.7, .88, .18], [-.78, 1.28, -.2], [.86, 1.72, .2], [-.72, 2.12, -.18], [.58, 2.5, .16]] as const;
+    branches.forEach(([x, y, roll], index) => {
+      result.push(box(`branch-${index + 1}`, "branch", [Math.abs(x) * 1.18, .12, .14], [x * .48, y, 0], index % 2 ? "#8c4642" : "#a55a4d", [0, 0, roll]));
+      for (let leaflet = 0; leaflet < 4; leaflet += 1) {
+        const fraction = (leaflet + 1) / 5;
+        result.push(box(`leaflet-${index + 1}-${leaflet + 1}`, "leaflet", [.11, .42 - leaflet * .035, .16], [x * fraction, y + (leaflet % 2 ? .14 : -.12), 0], leaflet === 3 ? "#d28a69" : "#b56654", [0, 0, x > 0 ? -.34 : .34]));
+      }
+    });
+    return result;
+  }
+  if (plant.id === "pearlfan") {
+    const result: ModelBox[] = bed();
+    result.push(box("fan-stem", "stem", [.18, .8, .18], [0, .7, 0], "#69625d"));
+    const spokes = [-1.02, -.76, -.5, -.24, 0, .24, .5, .76, 1.02] as const;
+    spokes.forEach((angle, index) => {
+      const length = 1.35 + (1 - Math.abs(angle) / 1.1) * .48;
+      const x = Math.sin(angle) * length * .46;
+      const y = .92 + Math.cos(angle) * length * .46;
+      result.push(
+        box(`fan-spoke-${index + 1}`, "fan-spoke", [.13, length, .12], [x, y, 0], index % 2 ? "#b8aeb2" : "#d6c9bd", [0, 0, -angle]),
+        box(`pearl-tip-${index + 1}`, "fan-tip", [.2, .2, .16], [x * 1.85, .88 + Math.cos(angle) * length * .88, 0], index % 2 ? "#f1e4cf" : "#fff3db"),
+      );
+    });
+    result.push(
+      box("fan-bar-lower", "fan-web", [1.55, .11, .08], [0, 1.35, .02], "#8d8588"),
+      box("fan-bar-upper", "fan-web", [2.15, .1, .08], [0, 1.92, .02], "#c5b9b3"),
+    );
+    return result;
+  }
   if (plant.id === "shellfruit") {
     const result: ModelBox[] = [
       box("bed", "waterbed", [2.5, 0.24, 1.9], [0, 0.12, 0], WATER_STONE),

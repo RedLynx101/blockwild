@@ -590,6 +590,10 @@ export type AquaticGrowthPlan = Readonly<{ x: number; y: number; z: number; type
 export type AquaticColumnRemovalPlan = Readonly<BlockPosition & { type: BlockId.Water }>;
 
 export const AQUATIC_GROWTH_LIMITS: Readonly<Partial<Record<BlockId, number>>> = Object.freeze({
+  [BlockId.Brinegrass]: 2,
+  [BlockId.Sailkelp]: 6,
+  [BlockId.Featherwrack]: 3,
+  [BlockId.Pearlfan]: 1,
   [BlockId.RiverRibbon]: 3,
   [BlockId.GlowKelp]: 5,
   [BlockId.ReedBloom]: 2,

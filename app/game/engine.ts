@@ -4886,17 +4886,58 @@ export class VoxelEngine {
   primeCaveLiquidAudit() {
     this.world.setRenderDistance(5);
     this.clearEntities();
-    const x = -904;
-    const z = -408;
-    const waterSurfaceY = -44;
+    const x = -914;
+    const z = -401;
+    const waterSurfaceY = -7;
     this.world.initializeAround(x, z);
     this.world.setBlock(x, waterSurfaceY, z, BlockId.GlasswaterStone, true, true);
-    this.world.setBlock(x - 1, waterSurfaceY + 1, z - 1, BlockId.DeepgearLantern, true, true);
+    // Two low mineral piers illuminate the former curtain boundary without
+    // replacing or concealing its generated bank and narrow waterfall.
+    this.world.setBlock(x + 1, waterSurfaceY, z, BlockId.GlasswaterStone, true, true);
+    this.world.setBlock(x + 1, waterSurfaceY + 1, z, BlockId.DeepgearLantern, true, true);
+    this.world.setBlock(x + 4, waterSurfaceY, z - 5, BlockId.GlasswaterStone, true, true);
+    this.world.setBlock(x + 4, waterSurfaceY + 1, z - 5, BlockId.DeepgearLantern, true, true);
     this.position.set(x, waterSurfaceY + 0.51, z);
     this.spawn.copy(this.position);
-    this.yaw = -2.4;
-    this.pitch = -0.16;
+    this.yaw = Math.PI / 4;
+    this.pitch = 0.04;
     this.worldTime = 0.18;
+    this.visualWorldTime = this.worldTime;
+    this.emitHud(true);
+  }
+
+  /** Deterministic submerged meadow for exact-runtime ocean-flora review. */
+  primeOceanFloraAudit() {
+    this.world.setRenderDistance(5);
+    this.clearEntities();
+    const centerX = Math.round(this.position.x);
+    const centerZ = Math.round(this.position.z);
+    const floorY = Math.round(this.position.y - .51);
+    const edits: BlockEdit[] = [];
+    for (let x = centerX - 12; x <= centerX + 12; x += 1) for (let z = centerZ - 14; z <= centerZ + 7; z += 1) {
+      const bed = (x + z) % 7 === 0 ? BlockId.Gravel : (x * 3 + z * 5) % 11 === 0 ? BlockId.Clay : BlockId.Sand;
+      edits.push({ x, y: floorY, z, type: bed });
+      for (let y = floorY + 1; y <= floorY + 9; y += 1) edits.push({ x, y, z, type: BlockId.Water });
+    }
+    this.world.setBlocksBatch(edits, true, true);
+    const plantColumn = (dx: number, dz: number, block: BlockId, height: number) => {
+      for (let dy = 1; dy <= height; dy += 1) this.world.setBlock(centerX + dx, floorY + dy, centerZ + dz, block, true, true);
+    };
+    // Broad matte beds occupy the center of the view. Their varied heights
+    // deliberately expose every vertical seam to the browser regression shot.
+    for (const [dx, dz, height] of [[-9, -5, 1], [-7, -7, 2], [-6, -4, 1], [-4, -8, 2], [-2, -5, 2]] as const) plantColumn(dx, dz, BlockId.Brinegrass, height);
+    for (const [dx, dz, height] of [[-3, -10, 6], [0, -8, 5], [3, -10, 4], [5, -7, 6]] as const) plantColumn(dx, dz, BlockId.Sailkelp, height);
+    for (const [dx, dz, height] of [[5, -4, 2], [7, -8, 3], [9, -6, 2]] as const) plantColumn(dx, dz, BlockId.Featherwrack, height);
+    for (const [dx, dz] of [[7, -3], [9, -10], [10, -5]] as const) plantColumn(dx, dz, BlockId.Pearlfan, 1);
+    // One small distant light source demonstrates the new hierarchy without
+    // turning the ordinary meadow into a glowing trench.
+    plantColumn(10, -12, BlockId.StarCoral, 1);
+
+    this.position.set(centerX, floorY + 2.51, centerZ + 5.4);
+    this.spawn.copy(this.position);
+    this.yaw = 0;
+    this.pitch = -.08;
+    this.worldTime = .31;
     this.visualWorldTime = this.worldTime;
     this.emitHud(true);
   }

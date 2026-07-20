@@ -405,14 +405,16 @@ function arthropod(builder: Builder, config: Readonly<{ body: [number, number, n
       `${sideName}-leg-${index + 1}`, "legs");
     leg.userData.side = side;
     leg.userData.phase = phase;
-    leg.rotation.z = side * .16;
+    // Each mirrored femur must descend away from the carapace. Using the
+    // same sign as the side lifts both legs above the body instead.
+    leg.rotation.z = side * -.16;
     add(leg, [.12, .12, .12], legMaterial, [0, 0, 0], `${sideName}-leg-${index + 1}-coxa`, undefined, "joint");
     add(leg, [upperLength, .075, .11], legMaterial, [side * upperLength * .45, -.025, 0], `${sideName}-leg-${index + 1}-femur`, undefined, "limb-x");
     const knee = joint(leg, [side * upperLength * .9, -.055, 0], `${sideName}-leg-${index + 1}-knee`);
     knee.userData.side = side;
     knee.userData.phase = phase;
     knee.userData.livingJointRole = "arthropod-knee";
-    knee.rotation.z = side * .38;
+    knee.rotation.z = side * -.38;
     add(knee, [.105, .1, .105], mats.pale, [0, 0, 0], `${sideName}-leg-${index + 1}-knee-joint`, undefined, "joint");
     add(knee, [lowerLength, .065, .08], legMaterial, [side * lowerLength * .45, -.055, 0], `${sideName}-leg-${index + 1}-tibia`, undefined, "limb-x");
     const foot = joint(knee, [side * lowerLength * .88, -.11, 0], `${sideName}-leg-${index + 1}-foot`);
@@ -443,7 +445,7 @@ function arthropod(builder: Builder, config: Readonly<{ body: [number, number, n
 }
 
 function decorateRegular(builder: Builder) {
-  const { kind, visual, mats, add, pivot, joint, eyesOn } = builder;
+  const { kind, visual, mats, lambert, glow, add, pivot, joint, eyesOn } = builder;
   switch (kind) {
     case "thornhide-trufflehog":
       quadruped(builder, { body: [1.08, .66, 1.34], bodyY: .64, head: [.72, .58, .72], headY: .64, headZ: -.86, legLength: .42, legX: .38, frontZ: -.4, rearZ: .44, tail: "short", muzzle: "snout", ears: "round" });
@@ -537,32 +539,155 @@ function decorateRegular(builder: Builder) {
       add(visual, [.24, .28, .2], mats.glass, [0, .58, -.78], "grave-bell");
       add(visual, [.08, .22, .08], mats.pale, [0, .39, -.78], "bell-clapper");
       break;
-    case "cragglass-basilisk":
-      quadruped(builder, { body: [1.22, .52, 1.5], bodyY: .5, head: [.74, .52, .74], headY: .6, headZ: -.94, legLength: .32, legX: .46, frontZ: -.5, rearZ: .5, tail: "long", muzzle: "snout", ears: "none" });
+    case "cragglass-basilisk": { // A low, six-beat mineral ambush predator rather than a decorated generic lizard.
+      const basalt = lambert(0x28312e);
+      const scaleShadow = lambert(0x39433d);
+      const fractureGold = glow(0xe0a943);
+      const mouth = lambert(0x351f23);
+      quadruped(builder, {
+        body: [1.38, .58, 1.72], bodyY: .53,
+        head: [.94, .6, .9], headY: .64, headZ: -1.07,
+        legLength: .36, legX: .52, frontZ: -.56, rearZ: .56,
+        tail: "long", muzzle: "none", ears: "none",
+      });
+
+      // Broaden the tail into a counterweight and end it in a cragglass breaker.
+      const tailRoot = visual.getObjectByName("cragglass-basilisk-tail-root-pivot")!;
+      const tailRootMesh = visual.getObjectByName("cragglass-basilisk-tail-root") as THREE.Mesh;
+      const tailTip = visual.getObjectByName("cragglass-basilisk-tail-tip-pivot")!;
+      const tailTipMesh = visual.getObjectByName("cragglass-basilisk-tail-tip") as THREE.Mesh;
+      tailRootMesh.scale.set(.34, .26, .82);
+      tailTipMesh.scale.set(.28, .21, .6);
+      add(tailRoot, [.16, .24, .42], scaleShadow, [0, .15, .42], "tail-keel-root", undefined, "hard");
+      add(tailTip, [.18, .28, .46], mats.glass, [0, .16, .32], "tail-keel-tip", undefined, "hard");
+      add(tailTip, [.44, .32, .42], mats.dark, [0, 0, .61], "tail-breaker-frame", undefined, "hard");
+      add(tailTip, [.3, .24, .34], mats.glass, [0, 0, .7], "tail-breaker-cragglass", undefined, "hard");
+      for (const side of [-1, 1] as const) {
+        const spur = add(tailTip, [.28, .1, .18], mats.pale, [side * .25, 0, .62], `tail-breaker-spur-${side}`, undefined, "hard");
+        spur.rotation.z = side * -.28;
+      }
+
+      // A layered shoulder shield and staggered flank mirrors sell both weight
+      // and the reflective defense described by the field guide.
+      add(visual, [1.44, .2, .64], basalt, [0, .79, -.47], "shoulder-bastion", "body", "hard");
+      add(visual, [1.22, .14, .5], mats.accent, [0, .89, -.46], "shoulder-glass-cap", undefined, "hard");
+      add(visual, [1.32, .18, .56], scaleShadow, [0, .75, .48], "haunch-bastion", "body", "hard");
       for (const side of [-1, 1] as const) {
         const sideName = side < 0 ? "left" : "right";
-        const middle = joint(visual, [side * .47, .31, 0], `${sideName}-middle-leg`, "legs");
-        middle.userData.side = side;
-        middle.userData.phase = side < 0 ? Math.PI : 0;
-        add(middle, [.24, .16, .2], mats.dark, [0, -.015, 0], `${sideName}-middle-hip`, undefined, "joint");
-        add(middle, [.19, .16, .18], mats.dark, [0, -.07, 0], `${sideName}-middle-upper`, undefined, "limb-y");
-        const knee = joint(middle, [0, -.145, -.02], `${sideName}-middle-knee`);
-        knee.userData.side = side;
-        knee.userData.phase = side < 0 ? Math.PI : 0;
-        knee.userData.livingJointRole = "knee";
-        knee.rotation.x = -.1;
-        add(knee, [.2, .16, .18], mats.glass, [0, 0, 0], `${sideName}-middle-knee-joint`, undefined, "joint");
-        add(knee, [.15, .18, .14], mats.dark, [0, -.08, 0], `${sideName}-middle-lower`, undefined, "limb-y");
-        const foot = joint(knee, [0, -.17, -.025], `${sideName}-middle-foot`);
-        foot.userData.livingJointRole = "foot";
-        foot.userData.side = side;
-        add(foot, [.27, .09, .3], mats.accent, [0, -.035, -.06], `${sideName}-middle-foot-pad`, undefined, "organic");
-        for (let toe = -1; toe <= 1; toe += 1) add(foot, [.045, .045, .18], mats.pale,
-          [toe * .07, -.055, -.2], `${sideName}-middle-claw-${toe + 2}`, undefined, "spike-forward");
+        for (let plate = 0; plate < 3; plate += 1) {
+          const mirror = add(visual, [.12, .3 - plate * .025, .48], plate === 1 ? mats.glass : mats.accent,
+            [side * (.64 + plate * .015), .61 + (plate % 2) * .05, -.43 + plate * .45], `${sideName}-reflective-flank-plate-${plate + 1}`, undefined, "hard");
+          mirror.rotation.z = side * (.13 + plate * .025);
+          mirror.rotation.y = side * (.08 - plate * .035);
+        }
       }
-      for (let crown = -2; crown <= 2; crown += 1) { const shard = add(visual, [.14, .48 - Math.abs(crown) * .06, .16], crown === 0 ? mats.glow : mats.glass, [crown * .15, 1.02 - Math.abs(crown) * .04, -.86], `crown-shard-${crown}`); shard.rotation.z = crown * -.1; }
-      for (let side = -1; side <= 1; side += 2) add(visual, [.1, .08, .56], mats.glass, [side * .42, .72, -.12], `reflective-plate-${side}`).rotation.z = side * .26;
+      for (let scute = 0; scute < 7; scute += 1) {
+        const height = .25 + (3 - Math.abs(3 - scute)) * .055;
+        const dorsal = add(visual, [.19, height, .25], scute % 2 ? mats.glass : basalt,
+          [0, .86 + height * .36, -.56 + scute * .2], `dorsal-cragglass-scute-${scute + 1}`, undefined, "hard");
+        dorsal.rotation.x = -.12 + scute * .025;
+      }
+
+      // Complete the middle pair to the same socket-to-claw standard as the
+      // front and rear legs. All six now participate in the gait cache.
+      for (const side of [-1, 1] as const) {
+        const sideName = side < 0 ? "left" : "right";
+        const phase = side < 0 ? Math.PI : 0;
+        const middle = joint(visual, [side * .53, .32, 0], `middle-${sideName}-leg`, "legs");
+        middle.userData.side = side;
+        middle.userData.phase = phase;
+        middle.userData.limbRole = "upper";
+        add(middle, [.27, .21, .25], basalt, [0, -.01, 0], `middle-${sideName}-hip-socket`, undefined, "joint");
+        add(middle, [.21, .18, .21], mats.dark, [0, -.1, -.01], `middle-${sideName}-upper-leg`, undefined, "limb-y");
+        const knee = joint(middle, [0, -.18, -.025], `middle-${sideName}-knee`);
+        knee.userData.side = side;
+        knee.userData.phase = phase;
+        knee.userData.livingJointRole = "knee";
+        knee.rotation.x = -.09;
+        add(knee, [.22, .19, .21], mats.glass, [0, 0, 0], `middle-${sideName}-knee-guard`, undefined, "joint");
+        add(knee, [.16, .18, .16], mats.dark, [0, -.09, .005], `middle-${sideName}-lower-leg`, undefined, "limb-y");
+        const ankle = joint(knee, [0, -.18, .02], `middle-${sideName}-ankle`);
+        ankle.userData.side = side;
+        ankle.userData.phase = phase;
+        ankle.userData.livingJointRole = "ankle";
+        add(ankle, [.17, .13, .18], basalt, [0, 0, 0], `middle-${sideName}-ankle-joint`, undefined, "joint");
+        const foot = joint(ankle, [0, -.055, -.035], `middle-${sideName}-foot`);
+        foot.userData.side = side;
+        foot.userData.phase = phase;
+        foot.userData.livingJointRole = "foot";
+        add(foot, [.3, .1, .34], mats.accent, [0, -.035, -.07], `middle-${sideName}-foot-pad`, undefined, "hard");
+        for (let toe = 0; toe < 3; toe += 1) {
+          const spread = toe - 1;
+          const claw = add(foot, [.055, .06, .2 + (toe === 1 ? .04 : 0)], mats.pale,
+            [spread * .085, -.055, -.24], `middle-${sideName}-claw-${toe + 1}`, undefined, "spike-forward");
+          claw.rotation.y = spread * -.1;
+        }
+      }
+
+      // Armor the existing limb sockets without covering their articulation.
+      for (const position of ["front", "rear"] as const) for (const sideName of ["left", "right"] as const) {
+        const leg = visual.getObjectByName(`cragglass-basilisk-${position}-${sideName}-leg-pivot`)!;
+        add(leg, [.28, .12, .3], mats.glass, [0, .05, 0], `${position}-${sideName}-socket-mirror`, undefined, "hard");
+      }
+
+      // The whole expression follows the real head pivot: wedge snout, buried
+      // gaze, cheek armor, an opening jaw, and teeth rooted in the mouth.
+      const head = visual.getObjectByName("cragglass-basilisk-head-pivot")!;
+      add(head, [.78, .24, .54], basalt, [0, -.14, -.49], "wedge-snout", undefined, "hard");
+      add(head, [.46, .14, .23], scaleShadow, [0, -.08, -.77], "snout-cap", undefined, "hard");
+      for (const side of [-1, 1] as const) {
+        const sideName = side < 0 ? "left" : "right";
+        const socket = add(head, [.34, .25, .12], mats.black, [side * .26, .08, -.49], `${sideName}-gaze-socket`, undefined, "hard");
+        socket.rotation.z = side * -.08;
+        const brow = add(head, [.43, .15, .24], basalt, [side * .24, .22, -.43], `${sideName}-predatory-brow`, undefined, "hard");
+        brow.rotation.z = side * -.16;
+        const cheek = add(head, [.25, .34, .4], mats.accent, [side * .4, -.08, -.28], `${sideName}-cheek-plate`, undefined, "hard");
+        cheek.rotation.z = side * .09;
+        add(head, [.075, .055, .055], mats.black, [side * .15, -.08, -.89], `${sideName}-nostril`, undefined, "hard");
+      }
+      for (const sideName of ["left", "right"] as const) {
+        const eye = head.getObjectByName(`cragglass-basilisk-${sideName}-eye`) as THREE.Mesh;
+        const highlight = head.getObjectByName(`cragglass-basilisk-${sideName}-eye-highlight`) as THREE.Mesh;
+        const side = sideName === "left" ? -1 : 1;
+        eye.position.set(side * .27, .08, -.56);
+        eye.scale.set(.12, .085, .06);
+        highlight.position.set(side * .245, .105, -.598);
+      }
+
+      const jaw = joint(head, [0, -.2, -.14], "lower-jaw-attack");
+      jaw.userData.livingJointRole = "basilisk-jaw";
+      add(jaw, [.72, .16, .58], scaleShadow, [0, -.08, -.32], "lower-jaw", undefined, "hard");
+      add(jaw, [.58, .035, .42], mouth, [0, .012, -.35], "mouth-interior", undefined, "hard");
+      add(jaw, [.46, .08, .22], mats.accent, [0, -.15, -.48], "chin-armor", undefined, "hard");
+      for (const side of [-1, 1] as const) for (let fang = 0; fang < 2; fang += 1) {
+        const tooth = add(head, [.07, .19 - fang * .025, .075], mats.white,
+          [side * (.18 + fang * .13), -.25, -.63 + fang * .03], `upper-fang-${side}-${fang + 1}`, undefined, "hard");
+        tooth.rotation.x = .08;
+      }
+      for (const side of [-1, 1] as const) {
+        const lowerTooth = add(jaw, [.06, .13, .065], mats.white, [side * .22, .01, -.52], `lower-fang-${side}`, undefined, "hard");
+        lowerTooth.rotation.x = -.06;
+      }
+
+      // A framed crown focuses the slowing gaze. Its crystal fan is physically
+      // attached to the skull and continues down the spine as a readable motif.
+      const crown = joint(head, [0, .25, -.02], "gaze-crown", "head");
+      crown.userData.livingJointRole = "basilisk-crown";
+      add(crown, [.68, .12, .32], basalt, [0, .03, .02], "crown-cragglass-frame", undefined, "hard");
+      for (let shard = -3; shard <= 3; shard += 1) {
+        const height = .62 - Math.abs(shard) * .075;
+        const crystal = add(crown, [.13, height, .15], shard === 0 ? fractureGold : mats.glass,
+          [shard * .115, .24 + height * .28, .015 + Math.abs(shard) * .025], `crown-shard-${shard + 4}`, undefined, "hard");
+        crystal.rotation.z = shard * -.075;
+      }
+      add(head, [.34, .22, .1], mats.glass, [0, .22, -.5], "gaze-lens-frame", undefined, "hard");
+      add(head, [.18, .12, .065], fractureGold, [0, .22, -.565], "gaze-focus", undefined, "hard");
+      for (const side of [-1, 1] as const) {
+        const fracture = add(head, [.035, .24, .045], fractureGold, [side * .17, .21, -.58], `gaze-fracture-${side}`, undefined, "hard");
+        fracture.rotation.z = side * .43;
+      }
       break;
+    }
     case "stormglass-roclet":
       bird(builder, { body: [1.05, .82, 1.42], wingSpan: 1.8, legLength: .62, beak: .58, tail: 1.05 });
       for (let vane = -3; vane <= 3; vane += 1) { const shard = add(visual, [.13, .48 - Math.abs(vane) * .035, .12], vane % 2 ? mats.glass : mats.glow, [vane * .15, 1.38, -.08 + Math.abs(vane) * .04], `storm-vane-${vane}`); shard.rotation.z = vane * -.06; }
@@ -1332,7 +1457,7 @@ const LIVING_ART_FOOT_CORRECTIONS: Readonly<Partial<Record<LivingBestiaryVisualK
   "cloudkite-pika": .0468574304,
   "briarclaw-lynx": .0139522957,
   "gravebell-jackal": .0170371521,
-  "cragglass-basilisk": .0555110572,
+  "cragglass-basilisk": .1552093305,
   "kilnscale-salamander": .0499638439,
   "sporeback-gardener": .0304048631,
   "ilyr-virebloom": .0072129217,
@@ -1377,6 +1502,8 @@ export function createLivingBestiaryMobVisual(kind: LivingBestiaryVisualKind, id
 type LivingPoseNode = THREE.Object3D & { userData: Record<string, unknown> };
 type LivingPoseCache = Readonly<{
   tail: LivingPoseNode | null;
+  jaw: LivingPoseNode | null;
+  crown: LivingPoseNode | null;
   fins: readonly LivingPoseNode[];
   wings: readonly LivingPoseNode[];
   wingPairPhases: ReadonlyMap<LivingPoseNode, number>;
@@ -1408,6 +1535,8 @@ function livingPoseCache(visual: THREE.Object3D, kind: LivingBestiaryVisualKind)
   const shimmers: LivingPoseNode[] = [];
   const swings: LivingPoseNode[] = [];
   let tail: LivingPoseNode | null = null;
+  let jaw: LivingPoseNode | null = null;
+  let crown: LivingPoseNode | null = null;
   visual.traverse((raw) => {
     const node = raw as LivingPoseNode;
     const name = node.name;
@@ -1421,11 +1550,13 @@ function livingPoseCache(visual: THREE.Object3D, kind: LivingBestiaryVisualKind)
     node.userData.livingRestScaleZ ??= node.scale.z;
     if (node instanceof THREE.Mesh) node.userData.livingRestOpacity ??= (Array.isArray(node.material) ? node.material[0] : node.material).opacity;
     if (name === `${kind}-tail-root-pivot`) tail = node;
+    if (name === `${kind}-lower-jaw-attack-pivot`) jaw = node;
+    if (name === `${kind}-gaze-crown-pivot`) crown = node;
     if (/-fin-\d+-pivot$/u.test(name) || /-mantle-[^/]+$/u.test(name)) fins.push(node);
     if (/-wing-pivot$/u.test(name)) wings.push(node);
     if (/-tentacle-\d+-pivot$/u.test(name)) tentacles.push(node);
     if (visual.userData.bodyPlan === "arthropod" && /-leg-\d+-pivot$/u.test(name)) arthropodLegs.push(node);
-    if (visual.userData.bodyPlan !== "arthropod" && /-(?:front|rear)-(?:left|right)-leg-pivot$|-(?:left|right)-leg-pivot$/u.test(name)) groundLegs.push(node);
+    if (visual.userData.bodyPlan !== "arthropod" && /-(?:front|middle|rear)-(?:left|right)-leg-pivot$|-(?:left|right)-leg-pivot$/u.test(name)) groundLegs.push(node);
     if (typeof node.userData.livingJointRole === "string") limbJoints.push(node);
     if (/glow|heart|spark|mote|star|note|shoreline|unwritten-page|color-wave/u.test(name)) pulses.push(node);
     if (/ore-segment|vellum-plate|mantle-fold|implied-face|living-coral|antler-flower/u.test(name)) specials.push(node);
@@ -1441,7 +1572,7 @@ function livingPoseCache(visual: THREE.Object3D, kind: LivingBestiaryVisualKind)
     if (!pairPhaseByName.has(pairName)) pairPhaseByName.set(pairName, pairPhaseByName.size * .35);
     wingPairPhases.set(wing, pairPhaseByName.get(pairName) ?? 0);
   }
-  const cache = Object.freeze({ tail, fins, wings, wingPairPhases, tentacles, groundLegs, limbJoints, arthropodLegs, pulses, specials, floaters, spinners, shimmers, swings });
+  const cache = Object.freeze({ tail, jaw, crown, fins, wings, wingPairPhases, tentacles, groundLegs, limbJoints, arthropodLegs, pulses, specials, floaters, spinners, shimmers, swings });
   visual.userData.livingBestiaryPoseCache = cache;
   return cache;
 }
@@ -1470,8 +1601,13 @@ export function applyLivingBestiaryPose(
 
   if (cache.tail) {
     const aquatic = visual.userData.bodyPlan === "aquatic" || ["thalassene", "voidmantle-ray", "wreckwhistle-porpoise"].includes(livingKind);
-    const cadence = aquatic ? 2.8 + travel * 4.2 : 1.05 + travel * 2.2;
-    cache.tail.rotation.y = rest(cache.tail, "Y") + Math.sin(time * cadence) * (aquatic ? .13 + travel * .22 : .055 + travel * .12);
+    const basilisk = livingKind === "cragglass-basilisk";
+    const cadence = aquatic ? 2.8 + travel * 4.2 : basilisk ? .72 + travel * 1.45 : 1.05 + travel * 2.2;
+    cache.tail.rotation.y = rest(cache.tail, "Y") + Math.sin(time * cadence) * (aquatic ? .13 + travel * .22 : basilisk ? .035 + travel * .075 : .055 + travel * .12);
+  }
+  if (livingKind === "cragglass-basilisk") {
+    if (cache.jaw) cache.jaw.rotation.x = rest(cache.jaw, "X") - .025 - alert * (.16 + Math.max(0, Math.sin(time * 7.5)) * .08);
+    if (cache.crown) cache.crown.rotation.x = rest(cache.crown, "X") - alert * .035 + Math.sin(time * .82) * .008;
   }
   for (const [index, fin] of cache.fins.entries()) {
     const side = sideOf(fin);
@@ -1487,7 +1623,7 @@ export function applyLivingBestiaryPose(
     arm.rotation.x = rest(arm, "X") + Math.sin(time * (1.7 + travel * 1.8) + index * .72) * (.08 + travel * .08);
     arm.rotation.y = rest(arm, "Y") + Math.cos(time * 1.15 + index * .55) * .07;
   }
-  const groundCadence = time * (2.15 + travel * 5.6);
+  const groundCadence = time * (livingKind === "cragglass-basilisk" ? 1.55 + travel * 4.15 : 2.15 + travel * 5.6);
   for (const leg of cache.groundLegs) {
     const phase = Number(leg.userData.phase) || 0;
     leg.rotation.x = rest(leg, "X") + Math.sin(groundCadence + phase) * travel * .2;
@@ -1497,6 +1633,7 @@ export function applyLivingBestiaryPose(
     const role = String(joint.userData.livingJointRole || "");
     const stride = Math.sin(groundCadence + phase) * travel;
     const planted = Math.max(0, Math.sin(groundCadence + phase)) * travel;
+    if (role === "basilisk-jaw" || role === "basilisk-crown") continue;
     if (role === "knee" || role === "hock") joint.rotation.x = rest(joint, "X") - stride * .11 + planted * .08;
     else if (role === "ankle" || role === "foot") joint.rotation.x = rest(joint, "X") + stride * .08 - planted * .045;
     else if (role === "arthropod-knee") joint.rotation.z = rest(joint, "Z") - sideOf(joint) * stride * .08;

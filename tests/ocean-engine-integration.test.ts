@@ -415,3 +415,37 @@ test("the live block-break path clears a trimmed aquatic column and re-arms its 
   assert.equal(engine.saplings.has("0,0,0"), true);
   assert.ok((engine.saplings.get("0,0,0") ?? 0) > Date.now());
 });
+
+test("the browser ocean-flora audit builds continuous matte beds for all four species", () => {
+  const blocks = new Map<string, BlockId>();
+  const world = {
+    setRenderDistance: () => undefined,
+    setBlocksBatch: (edits: readonly { x: number; y: number; z: number; type: BlockId }[]) => {
+      for (const edit of edits) blocks.set(`${edit.x},${edit.y},${edit.z}`, edit.type);
+    },
+    setBlock: (x: number, y: number, z: number, type: BlockId) => { blocks.set(`${x},${y},${z}`, type); },
+  };
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  engine.world = world as never;
+  engine.position = new THREE.Vector3(0, 10.51, 0);
+  engine.spawn = new THREE.Vector3();
+  (engine as unknown as { clearEntities: () => void }).clearEntities = () => undefined;
+  (engine as unknown as { emitHud: (force?: boolean) => void }).emitHud = () => undefined;
+
+  engine.primeOceanFloraAudit();
+  const species = [BlockId.Brinegrass, BlockId.Sailkelp, BlockId.Featherwrack, BlockId.Pearlfan] as const;
+  for (const block of species) assert.ok([...blocks.values()].includes(block), `${BlockId[block]} must appear in the exact-runtime gallery`);
+  assert.equal([...blocks.values()].filter((block) => block === BlockId.StarCoral).length, 1, "ordinary ocean glow stays a single distant accent");
+
+  const columns = new Map<string, number[]>();
+  for (const [key, block] of blocks) if (species.includes(block as typeof species[number])) {
+    const [x, y, z] = key.split(",").map(Number);
+    const column = `${x},${z}:${block}`;
+    columns.set(column, [...(columns.get(column) ?? []), y]);
+  }
+  for (const heights of columns.values()) {
+    heights.sort((a, b) => a - b);
+    for (let index = 1; index < heights.length; index += 1) assert.equal(heights[index], heights[index - 1] + 1, "tall audit flora must have no vertical gap");
+  }
+  assert.ok([...columns.values()].some((heights) => heights.length === 6), "the gallery must expose a complete six-cell Sailkelp seam chain");
+});
