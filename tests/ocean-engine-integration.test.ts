@@ -9,7 +9,7 @@ import {
   structureMobSpawnY,
   worldTicksForDelta,
 } from "../app/game/engine.ts";
-import { BlockId, Item, ITEMS, itemForBlock } from "../app/game/data.ts";
+import { AQUATIC_FLORA, BlockId, Item, ITEMS, itemForBlock } from "../app/game/data.ts";
 import type { CreatureMetadata } from "../app/game/creature-cage.ts";
 import { MOB_DEFS } from "../app/game/mobs.ts";
 import { validatePayload } from "../app/game/multiplayer.ts";
@@ -416,7 +416,7 @@ test("the live block-break path clears a trimmed aquatic column and re-arms its 
   assert.ok((engine.saplings.get("0,0,0") ?? 0) > Date.now());
 });
 
-test("the browser ocean-flora audit builds continuous matte beds for all four species", () => {
+test("the browser ocean-flora audit uses natural patches with open seabed and continuous columns", () => {
   const blocks = new Map<string, BlockId>();
   const world = {
     setRenderDistance: () => undefined,
@@ -433,19 +433,21 @@ test("the browser ocean-flora audit builds continuous matte beds for all four sp
   (engine as unknown as { emitHud: (force?: boolean) => void }).emitHud = () => undefined;
 
   engine.primeOceanFloraAudit();
-  const species = [BlockId.Brinegrass, BlockId.Sailkelp, BlockId.Featherwrack, BlockId.Pearlfan] as const;
-  for (const block of species) assert.ok([...blocks.values()].includes(block), `${BlockId[block]} must appear in the exact-runtime gallery`);
-  assert.equal([...blocks.values()].filter((block) => block === BlockId.StarCoral).length, 1, "ordinary ocean glow stays a single distant accent");
-
   const columns = new Map<string, number[]>();
-  for (const [key, block] of blocks) if (species.includes(block as typeof species[number])) {
+  const visibleSpecies = new Set<BlockId>();
+  for (const [key, block] of blocks) if (AQUATIC_FLORA.includes(block)) {
     const [x, y, z] = key.split(",").map(Number);
     const column = `${x},${z}:${block}`;
     columns.set(column, [...(columns.get(column) ?? []), y]);
+    visibleSpecies.add(block);
   }
+  assert.ok(visibleSpecies.has(BlockId.Brinegrass), "the natural ocean audit retains its dominant short meadow");
+  assert.ok(visibleSpecies.has(BlockId.Sailkelp), "the natural ocean audit retains its dominant canopy");
+  assert.ok(visibleSpecies.size >= 3, "the reviewed window should still include a restrained accent species");
+  assert.ok(columns.size >= 80 && columns.size <= 180, "the reviewed window balances planted beds with open seabed");
   for (const heights of columns.values()) {
     heights.sort((a, b) => a - b);
     for (let index = 1; index < heights.length; index += 1) assert.equal(heights[index], heights[index - 1] + 1, "tall audit flora must have no vertical gap");
   }
-  assert.ok([...columns.values()].some((heights) => heights.length === 6), "the gallery must expose a complete six-cell Sailkelp seam chain");
+  assert.ok([...columns.values()].some((heights) => heights.length >= 4), "the natural audit must expose a tall connected canopy");
 });

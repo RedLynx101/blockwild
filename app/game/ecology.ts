@@ -365,6 +365,113 @@ function pickAquaticFlora(weights: readonly AquaticFloraWeight[], roll: number) 
   return weights.at(-1)?.block ?? BlockId.Brinegrass;
 }
 
+const AQUATIC_FLORA_BASE_SPAWN_CHANCE = Object.freeze({
+  river: .18,
+  coast: .18,
+  ocean: .24,
+  "deep-ocean": .26,
+  "lumen-trench": .33,
+} satisfies Readonly<Record<AquaticFloraHabitat, number>>);
+
+const AQUATIC_FLORA_PATCH_SCALE = Object.freeze({
+  river: 8,
+  coast: 11,
+  ocean: 14,
+  "deep-ocean": 16,
+  "lumen-trench": 13,
+} satisfies Readonly<Record<AquaticFloraHabitat, number>>);
+
+const AQUATIC_PATCH_HASH_CACHE_LIMIT = 8_192;
+const aquaticPatchHashCache = new Map<string, number>();
+
+function aquaticPatchHash(seed: string | number, salt: string) {
+  const key = `${seed}:${salt}`;
+  const cached = aquaticPatchHashCache.get(key);
+  if (cached !== undefined) return cached;
+  const value = hashUnit(seed, salt);
+  if (aquaticPatchHashCache.size >= AQUATIC_PATCH_HASH_CACHE_LIMIT) {
+    const oldest = aquaticPatchHashCache.keys().next().value as string | undefined;
+    if (oldest !== undefined) aquaticPatchHashCache.delete(oldest);
+  }
+  aquaticPatchHashCache.set(key, value);
+  return value;
+}
+
+/**
+ * Every coarse cell owns one jittered, rotated, softly lobed bed. Dense flora
+ * inside and a tiny background chance outside create readable meadow islands
+ * with open water between them. Average coverage keeps the multiplier centered
+ * near one, preserving each habitat's former spawn chance.
+ */
+function aquaticPatchSpawnChance(seed: string | number, habitat: AquaticFloraHabitat, x: number, z: number) {
+  const scale = AQUATIC_FLORA_PATCH_SCALE[habitat];
+  const cellX = Math.floor(x / scale);
+  const cellZ = Math.floor(z / scale);
+  let insideBed = false;
+  for (let offsetX = -1; offsetX <= 1 && !insideBed; offsetX += 1) for (let offsetZ = -1; offsetZ <= 1; offsetZ += 1) {
+    const candidateX = cellX + offsetX;
+    const candidateZ = cellZ + offsetZ;
+    const key = `${habitat}:${candidateX},${candidateZ}`;
+    const centerX = (candidateX + .14 + aquaticPatchHash(seed, `submerged-bed-x:${key}`) * .72) * scale;
+    const centerZ = (candidateZ + .14 + aquaticPatchHash(seed, `submerged-bed-z:${key}`) * .72) * scale;
+    const dx = x - centerX;
+    const dz = z - centerZ;
+    // No lobe can exceed this conservative radius. Rejecting distant centers
+    // before rotations and trigonometry keeps the per-column planner cheap.
+    const maximumRadius = scale * .47;
+    if (dx * dx + dz * dz > maximumRadius * maximumRadius) continue;
+    const radiusX = scale * (.30 + aquaticPatchHash(seed, `submerged-bed-radius-x:${key}`) * .12);
+    const radiusZ = scale * (.30 + aquaticPatchHash(seed, `submerged-bed-radius-z:${key}`) * .12);
+    const rotation = aquaticPatchHash(seed, `submerged-bed-rotation:${key}`) * Math.PI * 2;
+    const cosine = Math.cos(rotation);
+    const sine = Math.sin(rotation);
+    const rotatedX = dx * cosine - dz * sine;
+    const rotatedZ = dx * sine + dz * cosine;
+    const normalizedX = rotatedX / radiusX;
+    const normalizedZ = rotatedZ / radiusZ;
+    const radialAngle = Math.atan2(normalizedZ, normalizedX);
+    const phaseA = aquaticPatchHash(seed, `submerged-bed-lobe-a:${key}`) * Math.PI * 2;
+    const phaseB = aquaticPatchHash(seed, `submerged-bed-lobe-b:${key}`) * Math.PI * 2;
+    const edge = .93 + Math.sin(radialAngle * 3 + phaseA) * .10 + Math.sin(radialAngle * 5 + phaseB) * .055;
+    if (normalizedX * normalizedX + normalizedZ * normalizedZ <= edge * edge) {
+      insideBed = true;
+      break;
+    }
+  }
+  return AQUATIC_FLORA_BASE_SPAWN_CHANCE[habitat] * (insideBed ? 2.7 : .05);
+}
+
+/**
+ * A jittered nearest-center field gives each species an organic bed instead
+ * of a square patch. Nine candidates are enough because centers remain within
+ * the middle seventy percent of their owning cell.
+ */
+function aquaticPatchSpeciesRoll(seed: string | number, habitat: AquaticFloraHabitat, x: number, z: number) {
+  // Species groupings sit inside the broader fertility pockets. Keeping them
+  // at roughly half that scale prevents one large bed from biasing a region's
+  // established habitat mix while retaining organic same-species neighbors.
+  const scale = Math.max(4.5, AQUATIC_FLORA_PATCH_SCALE[habitat] * .42);
+  const cellX = Math.floor(x / scale);
+  const cellZ = Math.floor(z / scale);
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  let nearestCellX = cellX;
+  let nearestCellZ = cellZ;
+  for (let offsetX = -1; offsetX <= 1; offsetX += 1) for (let offsetZ = -1; offsetZ <= 1; offsetZ += 1) {
+    const candidateX = cellX + offsetX;
+    const candidateZ = cellZ + offsetZ;
+    const centerX = (candidateX + .15 + aquaticPatchHash(seed, `submerged-center-x:${habitat}:${candidateX},${candidateZ}`) * .7) * scale;
+    const centerZ = (candidateZ + .15 + aquaticPatchHash(seed, `submerged-center-z:${habitat}:${candidateX},${candidateZ}`) * .7) * scale;
+    const dx = x - centerX;
+    const dz = z - centerZ;
+    const distance = dx * dx + dz * dz;
+    if (distance >= nearestDistance) continue;
+    nearestDistance = distance;
+    nearestCellX = candidateX;
+    nearestCellZ = candidateZ;
+  }
+  return aquaticPatchHash(seed, `submerged-species-bed:${habitat}:${nearestCellX},${nearestCellZ}`);
+}
+
 export function planSubmergedFlora(
   seed: string | number,
   x: number,
@@ -375,15 +482,9 @@ export function planSubmergedFlora(
 ): SubmergedFloraPlacement[] {
   const depth = Math.max(0, Math.floor(waterDepth));
   if (depth < 2) return [];
-  const roll = hashUnit(seed, `submerged:${x},${z}`);
-  const baseDensityFloor = habitat === "lumen-trench" ? .67 : habitat === "deep-ocean" ? .74 : habitat === "ocean" ? .76 : habitat === "coast" ? .82 : .82;
-  const patchSize = habitat === "river" ? 4 : habitat === "coast" ? 5 : 7;
-  const patchX = Math.floor(x / patchSize);
-  const patchZ = Math.floor(z / patchSize);
-  const fertility = hashUnit(seed, `submerged-fertility:${habitat}:${patchX},${patchZ}`);
-  const densityFloor = Math.max(.56, Math.min(.93, baseDensityFloor + (.5 - fertility) * .16));
-  if (roll < densityFloor) return [];
-  const patchSpecies = hashUnit(seed, `submerged-species-patch:${habitat}:${patchX},${patchZ}`);
+  const roll = hashUnit(seed, `submerged-scatter:${x},${z}`);
+  if (roll >= aquaticPatchSpawnChance(seed, habitat, x, z)) return [];
+  const patchSpecies = aquaticPatchSpeciesRoll(seed, habitat, x, z);
   const localSpecies = hashUnit(seed, `submerged-species-local:${habitat}:${x},${z}`);
   const breaksPatch = hashUnit(seed, `submerged-species-mix:${habitat}:${x},${z}`) > .88;
   const block = pickAquaticFlora(AQUATIC_FLORA_HABITAT_WEIGHTS[habitat], breaksPatch ? localSpecies : patchSpecies);

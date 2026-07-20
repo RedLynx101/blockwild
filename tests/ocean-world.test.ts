@@ -103,6 +103,53 @@ test("ordinary oceans are matte staple beds while trench glow remains concentrat
   assert.ok(generated.filter((block) => luminous.has(block)).length / generated.length <= .03);
 });
 
+test("river and sea flora form compact two-dimensional beds without changing habitat ratios", () => {
+  const habitats = [
+    ["river", 6, .18],
+    ["coast", 8, .18],
+    ["ocean", 18, .24],
+    ["deep-ocean", 24, .26],
+    ["lumen-trench", 24, .33],
+  ] as const;
+  for (const [habitat, depth, expectedDensity] of habitats) {
+    const occupied = new Set<string>();
+    const generated: BlockId[] = [];
+    for (let x = -80; x < 80; x += 1) for (let z = -80; z < 80; z += 1) {
+      const plan = planSubmergedFlora("AQUATIC-PATCH-REGRESSION", x, -24, z, depth, habitat);
+      if (!plan[0]) continue;
+      occupied.add(`${x},${z}`);
+      generated.push(plan[0].block);
+    }
+    const density = occupied.size / (160 * 160);
+    assert.ok(Math.abs(density - expectedDensity) <= .055, `${habitat} density ${density.toFixed(3)} should retain its old average`);
+
+    let neighborEdges = 0;
+    let orthogonallySupported = 0;
+    for (const key of occupied) {
+      const [x, z] = key.split(",").map(Number);
+      const east = occupied.has(`${x + 1},${z}`);
+      const west = occupied.has(`${x - 1},${z}`);
+      const south = occupied.has(`${x},${z + 1}`);
+      const north = occupied.has(`${x},${z - 1}`);
+      neighborEdges += Number(east) + Number(west) + Number(south) + Number(north);
+      if ((east || west) && (south || north)) orthogonallySupported += 1;
+    }
+    const neighborRate = neighborEdges / Math.max(1, occupied.size * 4);
+    const twoDimensionalRate = orthogonallySupported / Math.max(1, occupied.size);
+    assert.ok(neighborRate >= expectedDensity * 1.16, `${habitat} should visibly cluster rather than scatter into rows`);
+    assert.ok(twoDimensionalRate >= .16, `${habitat} beds need width as well as length`);
+
+    const counts = new Map<BlockId, number>();
+    for (const block of generated) counts.set(block, (counts.get(block) ?? 0) + 1);
+    const weights = AQUATIC_FLORA_HABITAT_WEIGHTS[habitat];
+    const dominant = weights.filter((entry) => entry.weight >= .1);
+    for (const entry of dominant) {
+      const observed = (counts.get(entry.block) ?? 0) / generated.length;
+      assert.ok(Math.abs(observed - entry.weight) <= .08, `${habitat} keeps the ${BLOCKS[entry.block].name} ratio`);
+    }
+  }
+});
+
 test("trimming an aquatic column clears unsupported upper segments and leaves a renewable base", () => {
   const column = new Map<string, BlockId>([
     ["0,0,0", BlockId.LumenKelp],
@@ -142,16 +189,17 @@ test("generated aquatic flora is a targetable voxel and breaking restores its wa
 });
 
 test("deep habitats choose deterministic bioluminescent waterlogged flora", () => {
+  const luminous = new Set([BlockId.LumenKelp, BlockId.GlowKelp, BlockId.StarCoral, BlockId.AbyssBloom]);
   let usedSeed = "trench";
   let plan = planSubmergedFlora(usedSeed, 8, -24, 9, 28, "lumen-trench");
-  for (let salt = 0; plan.length === 0 && salt < 200; salt += 1) {
+  for (let salt = 0; (!plan[0] || !luminous.has(plan[0].block)) && salt < 200; salt += 1) {
     usedSeed = `trench-${salt}`;
     plan = planSubmergedFlora(usedSeed, 8, -24, 9, 28, "lumen-trench");
   }
   assert.ok(plan.length > 0);
   assert.deepEqual(plan, planSubmergedFlora(usedSeed, 8, -24, 9, 28, "lumen-trench"));
   assert.ok(plan.every((placement) => placement.waterlogged && placement.replacesWater === false));
-  assert.ok(plan.every((placement) => [BlockId.LumenKelp, BlockId.GlowKelp, BlockId.StarCoral, BlockId.AbyssBloom].includes(placement.block)));
+  assert.ok(plan.every((placement) => luminous.has(placement.block)));
   assert.ok(plan.length <= 7);
 });
 

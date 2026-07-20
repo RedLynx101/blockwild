@@ -31,6 +31,7 @@ import {
 } from "./block-facing";
 import { CHEST_VISUAL, chestLatchCenters } from "./chest-model";
 import { isDoubleTallGrass, planDoubleTallGrassRemoval } from "./tall-grass";
+import { planSubmergedFlora } from "./ecology";
 import { SHIELD_PROFILES, resolveShieldHit, shouldRaiseOffhandShield, type ShieldKind } from "./shields";
 import {
   BLOCKS,
@@ -4967,23 +4968,18 @@ export class VoxelEngine {
       for (let y = floorY + 1; y <= floorY + 9; y += 1) edits.push({ x, y, z, type: BlockId.Water });
     }
     this.world.setBlocksBatch(edits, true, true);
-    const plantColumn = (dx: number, dz: number, block: BlockId, height: number) => {
-      for (let dy = 1; dy <= height; dy += 1) this.world.setBlock(centerX + dx, floorY + dy, centerZ + dz, block, true, true);
-    };
-    // Broad matte beds occupy the center of the view. Their varied heights
-    // deliberately expose every vertical seam to the browser regression shot.
-    for (const [dx, dz, height] of [[-9, -5, 1], [-7, -7, 2], [-6, -4, 1], [-4, -8, 2], [-2, -5, 2]] as const) plantColumn(dx, dz, BlockId.Brinegrass, height);
-    for (const [dx, dz, height] of [[-3, -10, 6], [0, -8, 5], [3, -10, 4], [5, -7, 6]] as const) plantColumn(dx, dz, BlockId.Sailkelp, height);
-    for (const [dx, dz, height] of [[5, -4, 2], [7, -8, 3], [9, -6, 2]] as const) plantColumn(dx, dz, BlockId.Featherwrack, height);
-    for (const [dx, dz] of [[7, -3], [9, -10], [10, -5]] as const) plantColumn(dx, dz, BlockId.Pearlfan, 1);
-    // One small distant light source demonstrates the new hierarchy without
-    // turning the ordinary meadow into a glowing trench.
-    plantColumn(10, -12, BlockId.StarCoral, 1);
+    // Use the production planner here so browser review sees the same irregular
+    // underwater meadows as a generated ocean rather than a hand-arranged row.
+    for (let x = centerX - 12; x <= centerX + 12; x += 1) for (let z = centerZ - 14; z <= centerZ + 7; z += 1) {
+      for (const placement of planSubmergedFlora("OCEAN-FLORA-PATCH-AUDIT", x, floorY, z, 9, "ocean")) {
+        this.world.setBlock(placement.x, placement.y, placement.z, placement.block, true, true);
+      }
+    }
 
-    this.position.set(centerX, floorY + 2.51, centerZ + 5.4);
+    this.position.set(centerX, floorY + 3.7, centerZ + 5.4);
     this.spawn.copy(this.position);
     this.yaw = 0;
-    this.pitch = -.08;
+    this.pitch = -.24;
     this.worldTime = .31;
     this.visualWorldTime = this.worldTime;
     this.emitHud(true);
