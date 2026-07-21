@@ -8,6 +8,8 @@ The project is a real game rather than a voxel-rendering demo. You can mine, bui
 
 **Engineering case study:** [Building Blockwild with Agentic Autoresearch](BLOCKWILD_AGENTIC_AUTORESEARCH_CASE_STUDY.md) documents the human-directed multi-agent workflow, repository-scale feedback system, production audits, and telemetry-led optimization work behind the game.
 
+**Performance ledger:** [Blockwild performance comparison log](docs/PERFORMANCE_COMPARISON_LOG.md) keeps the browser captures, deterministic before/after probes, interaction-latency checks, regressions, and next acceptance run in one tracked record.
+
 ![Blockwild field guide with all 231 rendered creatures](public/creatures/blockwild-creatures.svg)
 
 The integrated creature-design pass expands the Courser family with Rimehoof, Sunscar, Mirestride, and Starbough ecological breeds plus the forge-built Deepgear Courser. It also gives all six dragon families production stage forms, rebuilds birds, pets, crabs, mosslings, foxes, harts, deer, longhorns, terrapins, and other core wildlife, and preserves one model path for gameplay, Bestiary portraits, and visual audits.

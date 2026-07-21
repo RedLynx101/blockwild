@@ -29,6 +29,16 @@ test("XZ spatial queries preserve source order through movement and exact-distan
   assert.deepEqual(index.queryCircle(0, 0, 1.999).map((entry) => entry.value), []);
 });
 
+test("same-cell movement reuses the indexed record while updating exact position", () => {
+  const index = new XZSpatialIndex<string>(8);
+  const original = index.upsert({ id: 1, value: "grazer", x: 1, z: 1, radius: 0.4, order: 0 });
+  const updated = index.upsert({ id: 1, value: "grazer", x: 2.25, z: 2.5, radius: 0.4, order: 0 });
+
+  assert.equal(updated, original, "ordinary within-cell motion should not allocate or rebucket the record");
+  assert.deepEqual(index.queryCircle(2.25, 2.5, 0.01).map((entry) => entry.value), ["grazer"]);
+  assert.deepEqual(index.queryCircle(1, 1, 0.01), []);
+});
+
 test("new entries append after surviving ties when a removal compacts source order", () => {
   const index = new XZSpatialIndex<string>(4);
   index.rebuild([

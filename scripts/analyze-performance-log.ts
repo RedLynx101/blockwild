@@ -24,6 +24,13 @@ const weighted = (field: string) => {
   return weight ? total / weight : 0;
 };
 const final = samples.at(-1);
+const first = samples.find((sample) => number(sample.performance?.sampleCount) > 0) ?? samples[0];
+const nestedNumber = (sample: Snapshot | undefined, path: readonly string[]) => {
+  let value: unknown = sample;
+  for (const key of path) value = value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
+  return number(value);
+};
+const delta = (path: readonly string[]) => nestedNumber(final, path) - nestedNumber(first, path);
 let distance = 0;
 for (let index = 1; index < samples.length; index += 1) {
   const previous = samples[index - 1].world?.player;
@@ -37,12 +44,24 @@ console.log(JSON.stringify({
   exportedWindows: samples.length,
   routeDistance: distance,
   weightedFrameMilliseconds: weighted("averageFrameMilliseconds"),
+  weightedP95FrameMilliseconds: weighted("p95FrameMilliseconds"),
+  weightedP99FrameMilliseconds: weighted("p99FrameMilliseconds"),
+  weightedLongFrameRatio: weighted("longFrameRatio"),
   weightedActiveCpuMilliseconds: weighted("averageActiveCpuMilliseconds"),
   weightedSimulationMilliseconds: weighted("averageSimulationMilliseconds"),
   weightedMobSimulationMilliseconds: weighted("averageMobSimulationMilliseconds"),
   weightedChunkMilliseconds: weighted("averageChunkWorkMilliseconds"),
   weightedRenderSubmissionMilliseconds: weighted("averageRenderSubmissionMilliseconds"),
   weightedGpuMilliseconds: weighted("averageGpuMilliseconds"),
+  captureDeltas: {
+    terrainMergeSubmissions: delta(["world", "streaming", "terrainWorker", "submitted"]),
+    terrainTransferBytes: delta(["world", "streaming", "terrainWorker", "transferBytes"]),
+    staleTerrainMerges: delta(["world", "streaming", "terrainWorker", "staleResults"]),
+    geometriesCreated: delta(["world", "streaming", "terrainSubmission", "geometriesCreated"]),
+    geometriesDisposed: delta(["world", "streaming", "terrainSubmission", "geometriesDisposed"]),
+    coalescedTerrainMerges: delta(["world", "streaming", "terrainWorker", "coalescedRequests"]),
+    invalidatedCombinedMeshes: delta(["world", "streaming", "terrainSubmission", "invalidatedCombinedMeshes"]),
+  },
   finalRenderer: final?.renderer ?? null,
   finalStreaming: final?.world?.streaming ?? null,
 }, null, 2));

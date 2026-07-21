@@ -1532,6 +1532,14 @@ type MobEntity = {
   milkCooldown: number;
   woolRegrowSeconds: number;
   shadeSaddle: THREE.Object3D | null;
+  scaleAttachments?: {
+    wargSaddle: THREE.Object3D | null;
+    courserSaddle: THREE.Object3D | null;
+    reedstriderSaddle: THREE.Object3D | null;
+    taffaloSaddle: THREE.Object3D | null;
+    factionAccessory: THREE.Object3D | null;
+    leviathanSaddle: THREE.Object3D | null;
+  };
   visualBaseY: number;
   visualMinY: number;
   persistentPoiResident: boolean;
@@ -3916,6 +3924,7 @@ export class VoxelEngine {
   socialMotionTimer = 0;
   socialMotions = new Map<number, SocialGroupMotion>();
   creatureWorkTimer = 1;
+  creatureWorkCursor = 0;
   debug = false;
   fullscreen = false;
   target: VoxelHit | null = null;
@@ -5462,6 +5471,7 @@ export class VoxelEngine {
   beginPerformanceTelemetry() {
     this.telemetryIntervalSampler.clear();
     this.longAnimationFrameSampler.drain();
+    this.world.resetPlayerEditFeedbackDiagnostics();
   }
 
   downloadMultiplayerDiagnostics() {
@@ -16588,7 +16598,9 @@ export class VoxelEngine {
         { x, y, z, type: bed.foot },
         { x: headX, y, z: headZ, type: bed.head },
       ];
+      const playerEditFeedback = this.world.beginPlayerEditFeedback?.("place");
       this.world.setBlocksBatch(placedEdits, true, true);
+      if (playerEditFeedback !== undefined) this.world.completePlayerEditFeedback?.(playerEditFeedback);
     } else if (type === BlockId.DoorClosedLower || type === BlockId.WroughtIronDoorClosedLower) {
       const upper = this.world.getBlock(x, y + 1, z);
       replacedUpper = upper;
@@ -16603,12 +16615,16 @@ export class VoxelEngine {
         { x, y, z, type: placedDoor.lower },
         { x, y: y + 1, z, type: placedDoor.upper },
       ];
+      const playerEditFeedback = this.world.beginPlayerEditFeedback?.("place");
       this.world.setBlocksBatch(placedEdits, true, true);
+      if (playerEditFeedback !== undefined) this.world.completePlayerEditFeedback?.(playerEditFeedback);
     } else {
       const facing = isDirectionallyPlacedBlock(type) ? blockFacingForYaw(this.yaw) : undefined;
       placedEdits = [{ x, y, z, type, ...(facing === undefined ? {} : { facing }) }];
+      const playerEditFeedback = this.world.beginPlayerEditFeedback?.("place");
       this.world.setBlock(x, y, z, type, true, true);
       if (facing !== undefined) this.world.setBlockFacing?.(x, y, z, facing, true);
+      if (playerEditFeedback !== undefined) this.world.completePlayerEditFeedback?.(playerEditFeedback);
     }
     const occupiedRemote = BLOCKS[type].solid && placedEdits.some((edit) => [...(this.remotePlayers?.values() ?? [])].some((remote) => blockEditIntersectsPlayer(edit, remote.target, PLAYER_HEIGHT * playerVariantHeightScale(remote.target.variant ?? "male"))));
     if (BLOCKS[type].solid && (this.collidesAt(this.position) || occupiedRemote)) {
@@ -16723,6 +16739,7 @@ export class VoxelEngine {
     void _legacyType;
     const tree = discoverRootedTree({ x, y, z }, (bx, by, bz) => this.world.getBlock(bx, by, bz));
     if (!tree) return false;
+    const playerEditFeedback = this.world.beginPlayerEditFeedback?.("tree-fell");
     const root: [number, number, number] = [tree.root.x, tree.root.y, tree.root.z];
     const changes = [...tree.logs, ...tree.leaves, ...tree.attachments].map((block) => ({ x: block.x, y: block.y, z: block.z, type: BlockId.Air }));
     // Remove the standing mesh before the falling presentation moves. The
@@ -16755,6 +16772,10 @@ export class VoxelEngine {
     addTexturedSegments(tree.leaves, true);
     addTexturedSegments(tree.attachments, true);
     this.scene.add(group);
+    if (playerEditFeedback !== undefined) {
+      this.world.markPlayerEditProxyStarted?.(playerEditFeedback);
+      this.world.completePlayerEditFeedback?.(playerEditFeedback);
+    }
     const away = new THREE.Vector3(root[0] - this.position.x, 0, root[2] - this.position.z).normalize();
     if (away.lengthSq() < 0.1) away.set(Math.sin(this.yaw), 0, Math.cos(this.yaw));
     this.publishBlockEdits(changes, "batch", {
@@ -17025,6 +17046,7 @@ export class VoxelEngine {
       return;
     }
     const harvested = this.toolCanHarvest(type, this.selectedSlot());
+    const playerEditFeedback = this.world.beginPlayerEditFeedback?.("break");
     let brokenEdits: Array<{ x: number; y: number; z: number; type: BlockId }>;
     if (this.isDoor(type)) {
       const lowerY = this.doorLowerY(type, y);
@@ -17052,6 +17074,7 @@ export class VoxelEngine {
     for (const edit of brokenEdits) this.breakUnsupportedAround(edit.x, edit.y, edit.z);
     for (const edit of brokenEdits) this.notifyLiquidChanged(edit.x, edit.y, edit.z);
     this.publishBlockEdits(brokenEdits, brokenEdits.length > 1 ? "batch" : "break");
+    if (playerEditFeedback !== undefined) this.world.completePlayerEditFeedback?.(playerEditFeedback);
     if (this.mode === "survival") {
       if (harvested && ownsBreakLoot) {
         if (!this.isDoor(type) && !this.isBed(type) && type !== BlockId.WildBeehive) {
@@ -21820,7 +21843,9 @@ export class VoxelEngine {
   rebuildMobSpatialIndex() {
     const mobs = this.mobs ?? [];
     const index = this.mobSpatialIndex ?? new XZSpatialIndex<MobEntity>(8);
-    index.clear();
+    const canUpdateInPlace = index.size === mobs.length
+      && mobs.every((mob, order) => index.get(mob.id)?.order === order);
+    if (!canUpdateInPlace) index.clear();
     for (let order = 0; order < mobs.length; order += 1) {
       index.upsert(this.mobSpatialEntry(mobs[order], order));
     }
@@ -22093,21 +22118,23 @@ export class VoxelEngine {
       const saddled = Boolean(mob.shadeState?.saddled);
       if (mob.shadeSaddle.visible !== saddled) mob.shadeSaddle.visible = saddled;
     }
-    const wargSaddle = mob.kind === "warg" ? mob.visual.getObjectByName("warg-saddle") : null;
-    if (wargSaddle) wargSaddle.visible = Boolean(mob.courserBond?.saddled);
-    const courserSaddle = creatureMountProfile(mob.kind as CoreMobKind) && mob.courserBond
-      ? mob.visual.getObjectByName(`${mob.kind}-saddle`) : null;
-    if (courserSaddle) courserSaddle.visible = Boolean(mob.courserBond?.saddled);
-    const reedstriderSaddle = mob.kind === "reedstrider" ? mob.visual.getObjectByName("reedstrider-saddle") : null;
-    if (reedstriderSaddle) reedstriderSaddle.visible = Boolean(mob.reedstriderBond?.saddled);
-    const taffaloSaddle = mob.kind === "taffalo" ? mob.visual.getObjectByName("taffalo-saddle") : null;
-    if (taffaloSaddle) taffaloSaddle.visible = Boolean(mob.courserBond?.saddled);
-    const sugarcourtCollar = mob.kind === "taffy-hound" ? mob.visual.getObjectByName("taffy-hound-faction-collar")
-      : mob.kind === "praline-cat" ? mob.visual.getObjectByName("praline-cat-faction-bell") : null;
-    if (sugarcourtCollar) sugarcourtCollar.visible = Boolean(mob.aligned && mob.factionId === "sugarcourt");
+    const attachments = mob.scaleAttachments ??= {
+      wargSaddle: mob.kind === "warg" ? mob.visual.getObjectByName("warg-saddle") ?? null : null,
+      courserSaddle: creatureMountProfile(mob.kind as CoreMobKind)
+        ? mob.visual.getObjectByName(`${mob.kind}-saddle`) ?? null : null,
+      reedstriderSaddle: mob.kind === "reedstrider" ? mob.visual.getObjectByName("reedstrider-saddle") ?? null : null,
+      taffaloSaddle: mob.kind === "taffalo" ? mob.visual.getObjectByName("taffalo-saddle") ?? null : null,
+      factionAccessory: mob.kind === "taffy-hound" ? mob.visual.getObjectByName("taffy-hound-faction-collar") ?? null
+        : mob.kind === "praline-cat" ? mob.visual.getObjectByName("praline-cat-faction-bell") ?? null : null,
+      leviathanSaddle: mob.leviathanGrowth ? mob.visual.getObjectByName(`${mob.kind}-saddle`) ?? null : null,
+    };
+    if (attachments.wargSaddle) attachments.wargSaddle.visible = Boolean(mob.courserBond?.saddled);
+    if (attachments.courserSaddle) attachments.courserSaddle.visible = Boolean(mob.courserBond?.saddled);
+    if (attachments.reedstriderSaddle) attachments.reedstriderSaddle.visible = Boolean(mob.reedstriderBond?.saddled);
+    if (attachments.taffaloSaddle) attachments.taffaloSaddle.visible = Boolean(mob.courserBond?.saddled);
+    if (attachments.factionAccessory) attachments.factionAccessory.visible = Boolean(mob.aligned && mob.factionId === "sugarcourt");
     if (mob.leviathanGrowth) {
-      const saddle = mob.visual.getObjectByName(`${mob.kind}-saddle`);
-      if (saddle) saddle.visible = mob.leviathanGrowth.saddled;
+      if (attachments.leviathanSaddle) attachments.leviathanSaddle.visible = mob.leviathanGrowth.saddled;
       const limit = mob.definition.cargoChestLimit ?? 0;
       for (let index = 1; index <= limit; index += 1) {
         const cargo = mob.visual.getObjectByName(`${mob.kind}-cargo-${index}`);
@@ -24920,7 +24947,14 @@ export class VoxelEngine {
         || mob.petState?.tamed || mob.shadeState?.tamed || mob.reedstriderBond?.tamed || mob.courserBond?.tamed || mob.leviathanGrowth?.tamed)
     )).map((mob) => ({ entityId: String(mob.id), kind: mob.kind, state: mob.creatureWork }));
     const byId = new Map(this.mobs.map((mob) => [String(mob.id), mob] as const));
-    for (const group of aggregateCreatureWorkers(workers)) {
+    const groups = aggregateCreatureWorkers(workers);
+    if (!groups.length) return;
+    const workStartedAt = performance.now();
+    const start = this.creatureWorkCursor % groups.length;
+    let processed = 0;
+    for (let offset = 0; offset < groups.length; offset += 1) {
+      const group = groups[(start + offset) % groups.length];
+      processed += 1;
       const representative = byId.get(group.workers[0]?.entityId ?? "");
       if (!representative) continue;
       const cadence = Math.max(8, creatureEcologyContract(representative.kind).workCadenceSeconds);
@@ -24982,7 +25016,13 @@ export class VoxelEngine {
       if (groupComfortPower > 0) for (const ally of environment.nearby.slice(0, 8)) if (!ally.hostile) {
         ally.fleeTimer = Math.max(0, ally.fleeTimer - groupComfortPower * 2);
       }
+      // Habitat observations scan real blocks and ore signals. Distribute
+      // independent worker groups across frames instead of concentrating all
+      // scans into a recurring mob-simulation spike.
+      if (performance.now() - workStartedAt >= 0.8) break;
     }
+    this.creatureWorkCursor = (start + processed) % groups.length;
+    if (processed < groups.length) this.creatureWorkTimer = Math.min(this.creatureWorkTimer, 0.05);
   }
 
   updateMobs(dt: number) {

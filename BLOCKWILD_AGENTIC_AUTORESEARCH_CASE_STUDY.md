@@ -12,6 +12,14 @@
 
 ---
 
+## Living operational continuation
+
+This case study preserves its original evidence snapshot, while the engineering loop continues on `main`. The tracked [`performance comparison log`](docs/PERFORMANCE_COMPARISON_LOG.md) is the current measurement ledger: it records comparable and non-comparable captures, exact before/after commit probes, player-action presentation latency, negative results, and the next acceptance run. Keeping the historical narrative separate from the append-only ledger prevents a new optimization from silently rewriting the evidence used by older portfolio artifacts.
+
+The July 21 player-first pass demonstrates that continuation. A user report that broken blocks and standing trees remained visible after the falling proxy began was translated into an explicit ordering contract, production telemetry, a deterministic interaction benchmark, and a terrain-consolidation redesign. On the exact pre-change versus post-change Node streaming probe, terrain merge submissions fell from 962 to 147, stale merges from 39 to 2, warm installation work from 0.0595 ms to 0.0178 ms, and final weighted debt from 63.98 to 13.60. The same record also retains the transient submitted-mesh increase and small readiness-delay regressions for the next hardware-browser run rather than presenting a one-sided score.
+
+---
+
 ## Executive abstract
 
 Blockwild is useful as an AI-development case study because it is not a bounded coding exercise. It is a persistent, stateful game with an unusually wide integration surface: deterministic procedural terrain, streamed voxel geometry, colored lighting, fluids, weather, survival simulation, real-time creature combat, capture and husbandry, settlements, quests, guild campaigns, multiplayer authority, browser persistence, generated art, spatial audio, compatibility migrations, performance telemetry, and a production deployment path. A change to one subsystem can damage several others. A new creature is not complete when its definition compiles; it needs ecology, a model, animation, dimensions, sound, drops, capture behavior, Bestiary data, persistence, multiplayer representation, visual review, and regression coverage.

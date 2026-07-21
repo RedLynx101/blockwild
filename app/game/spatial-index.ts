@@ -77,9 +77,22 @@ export class XZSpatialIndex<T> {
   upsert(entry: XZSpatialEntry<T>) {
     if (!Number.isFinite(entry.x) || !Number.isFinite(entry.z)) throw new RangeError("entry coordinates must be finite");
     const previous = this.entries.get(entry.id);
-    if (previous) this.delete(entry.id);
     const radius = Math.max(0, Number.isFinite(entry.radius) ? entry.radius ?? 0 : 0);
     const requestedOrder = entry.order ?? previous?.order;
+    const cells = this.cellKeys(entry.x - radius, entry.z - radius, entry.x + radius, entry.z + radius);
+    if (previous && requestedOrder === previous.order
+      && cells.length === previous.cells.length
+      && cells.every((key, index) => key === previous.cells[index])) {
+      // Most simulated bodies remain inside the same spatial cells from one
+      // frame to the next. Mutating the shared bucket record avoids clearing
+      // and rebuilding every Map plus allocating a replacement entry.
+      previous.value = entry.value;
+      previous.x = entry.x;
+      previous.z = entry.z;
+      previous.radius = radius;
+      return previous;
+    }
+    if (previous) this.delete(entry.id);
     let order = Number.isFinite(requestedOrder) ? requestedOrder as number : this.nextOrder;
     // A removal compacts the source array, so a newly appended entry can be
     // offered an order that still belongs to a surviving entry. Keep orders
@@ -87,7 +100,6 @@ export class XZSpatialIndex<T> {
     if (this.occupiedOrders.has(order)) order = this.nextOrder;
     while (this.occupiedOrders.has(order)) order += 1;
     this.nextOrder = Math.max(this.nextOrder, order + 1);
-    const cells = this.cellKeys(entry.x - radius, entry.z - radius, entry.x + radius, entry.z + radius);
     const stored: StoredEntry<T> = { ...entry, radius, order, cells, queryToken: 0 };
     this.entries.set(entry.id, stored);
     this.occupiedOrders.add(order);

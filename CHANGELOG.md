@@ -2,6 +2,13 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## Unreleased - Player-first terrain feedback
+
+- Made local break, place, and tree-felling presentation authoritative inside the input transaction: stale combined terrain is detached before the edited source mesh or falling proxy appears, while seam and light work remains budgeted.
+- Coalesced terrain consolidation by current render layer and delayed snapshots until source mesh and light state are stable, sharply reducing redundant merges, transfer churn, stale results, and retained geometry in the deterministic comparison.
+- Reconciled canceled queue timestamps, froze static terrain transforms, reused same-cell mob spatial records, cached repeated model attachment lookups, and distributed habitat work across bounded slices.
+- Added player-action timing telemetry, a deterministic edit benchmark, expanded performance-log analysis, and a tracked comparison ledger linked from the README and autoresearch case study.
+
 ## 1.8.8 - Packhand Hotfix - 2026-07-21
 
 - Restored Minecraft-style double-left-click collection across visible inventory stacks without regressing ordinary cursor placement or multi-slot drag painting.

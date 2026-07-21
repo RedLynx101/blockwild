@@ -553,6 +553,21 @@ export type Chunk = {
   leafIndices: Set<number>;
 };
 
+export type PlayerEditFeedbackKind = "break" | "place" | "tree-fell";
+
+type PlayerEditFeedbackRecord = {
+  id: number;
+  kind: PlayerEditFeedbackKind;
+  inputStartedAt: number;
+  mutationStartedAt?: number;
+  staleGeometryHiddenAt?: number;
+  localMeshVisibleAt?: number;
+  proxyStartedAt?: number;
+  completedAt?: number;
+  consolidatedAt?: number;
+  pendingConsolidations: Set<string>;
+};
+
 const LEAF_BLOCK_SET = new Set<BlockId>(LEAF_BLOCKS);
 const GENERATED_TREE_BLOCK_SET = new Set<BlockId>([
   ...LEAF_BLOCKS,
@@ -2792,9 +2807,12 @@ export class ChunkWorld {
   consolidationQueue: Array<{ key: string; layer: WorldRenderLayer }> = [];
   consolidationQueued = new Set<string>();
   consolidationRevision = new Map<string, number>();
+  consolidationDirtyLayers = new Map<string, Set<WorldRenderLayer>>();
   pendingConsolidations = new Set<string>();
   completedConsolidations: Array<{ key: string; layer: WorldRenderLayer; revision: number; geometry: TerrainMergedGeometry | null }> = [];
   staleConsolidations = 0;
+  coalescedConsolidations = 0;
+  invalidatedCombinedMeshes = 0;
   terrainBufferPipeline = new TerrainBufferPipeline();
   terrainGenerationPipeline = new TerrainGenerationPipeline();
   pendingWorkerGeneration = new Set<string>();
@@ -2811,6 +2829,11 @@ export class ChunkWorld {
   lightSectionQueue: Array<{ key: string; section: number }> = [];
   lightSectionQueueHead = 0;
   lightSectionQueued = new Set<string>();
+  lightSectionsPendingByChunk = new Map<string, number>();
+  private nextPlayerEditFeedbackId = 1;
+  private activePlayerEditFeedback: PlayerEditFeedbackRecord | null = null;
+  private playerEditFeedbackRecords: PlayerEditFeedbackRecord[] = [];
+  private playerEditConsolidationWaiters = new Map<string, Set<number>>();
   seedText = "WILDERNESS";
   seed = seedToInt(this.seedText);
   renderDistance = 10;
@@ -2975,9 +2998,12 @@ export class ChunkWorld {
     this.consolidationQueue = [];
     this.consolidationQueued.clear();
     this.consolidationRevision.clear();
+    this.consolidationDirtyLayers.clear();
     this.pendingConsolidations.clear();
     this.completedConsolidations = [];
     this.staleConsolidations = 0;
+    this.coalescedConsolidations = 0;
+    this.invalidatedCombinedMeshes = 0;
     this.pendingWorkerGeneration.clear();
     this.completedWorkerGeneration = [];
     this.staleWorkerGeneration = 0;
@@ -2999,6 +3025,11 @@ export class ChunkWorld {
     this.lightSectionQueue = [];
     this.lightSectionQueueHead = 0;
     this.lightSectionQueued.clear();
+    this.lightSectionsPendingByChunk.clear();
+    this.nextPlayerEditFeedbackId = 1;
+    this.activePlayerEditFeedback = null;
+    this.playerEditFeedbackRecords = [];
+    this.playerEditConsolidationWaiters.clear();
     this.edits.clear();
     this.structureMarkers.clear();
     this.settlementPlans.clear();
@@ -3045,7 +3076,11 @@ export class ChunkWorld {
     else this.blockFacings.set(key, normalized);
     const sx = splitCoordinate(x);
     const sz = splitCoordinate(z);
+    const chunk = this.chunks.get(chunkKey(sx.chunk, sz.chunk));
+    this.markPlayerEditMutation();
+    if (immediate && chunk?.group.visible) this.invalidateCombinedMeshesForImmediateEdit(chunk);
     this.refreshEditedBlock(sx.chunk, sz.chunk, sx.local, y, sz.local, immediate);
+    if (immediate) this.markPlayerEditLocalMeshVisible();
     return true;
   }
 
@@ -3256,6 +3291,11 @@ export class ChunkWorld {
       ...(this.activeGenerationTask ? [this.activeGenerationTask.key] : []),
       ...this.pendingWorkerGeneration,
     ]);
+    for (const key of [...this.generationEnqueuedAt.keys()]) {
+      if (this.generationQueued.has(key)) continue;
+      this.generationEnqueuedAt.delete(key);
+      this.streamingCanceled.generation += 1;
+    }
     const activeMeshQueued = this.meshQueued;
     const seenMeshEntries = new Set<string>();
     this.meshQueue = this.meshQueue.slice(this.meshQueueHead).filter((entry) => {
@@ -3282,6 +3322,12 @@ export class ChunkWorld {
     });
     this.urgentMeshQueueHead = 0;
     this.urgentMeshQueued = new Set(this.urgentMeshQueue.map((entry) => `${entry.key}:${entry.section}`));
+    const activeMeshQueueKey = this.activeMeshTask ? `${this.activeMeshTask.key}:${this.activeMeshTask.section}` : null;
+    for (const queueKey of [...this.meshEnqueuedAt.keys()]) {
+      if (queueKey === activeMeshQueueKey || this.meshQueued.has(queueKey) || this.urgentMeshQueued.has(queueKey)) continue;
+      this.meshEnqueuedAt.delete(queueKey);
+      this.streamingCanceled.meshing += 1;
+    }
     for (let dx = -generationRadius; dx <= generationRadius; dx += 1) {
       for (let dz = -generationRadius; dz <= generationRadius; dz += 1) {
         if (!chunkWithinStreamingRadius(dx, dz, generationRadius, radialStreaming)) continue;
@@ -3394,6 +3440,7 @@ export class ChunkWorld {
       const chunk = this.chunks.get(key);
       if (!chunk || !chunk.group.visible || chunk.lightInitialized) {
         this.lightInitializationQueued.delete(key);
+        this.lightInitializationEnqueuedAt.delete(key);
         this.lightInitializationTasks.delete(key);
         continue;
       }
@@ -3470,6 +3517,7 @@ export class ChunkWorld {
     chunk.group.position.set(chunk.cx * CHUNK_SIZE, 0, chunk.cz * CHUNK_SIZE);
     this.chunks.set(chunk.key, chunk);
     this.group.add(chunk.group);
+    this.freezeTerrainTransform(chunk.group);
     this.prepareGeneratedChunk(chunk);
     return chunk;
   }
@@ -3592,6 +3640,7 @@ export class ChunkWorld {
         chunk.group.position.set(chunk.cx * CHUNK_SIZE, 0, chunk.cz * CHUNK_SIZE);
         this.chunks.set(chunk.key, chunk);
         this.group.add(chunk.group);
+        this.freezeTerrainTransform(chunk.group);
         this.generationQueued.delete(chunk.key);
         this.generationEnqueuedAt.delete(chunk.key);
         this.streamingCompleted.generation += 1;
@@ -3869,14 +3918,130 @@ export class ChunkWorld {
     return true;
   }
 
-  private queueChunkConsolidation(chunk: Chunk) {
-    for (const layer of WORLD_RENDER_LAYERS) {
+  beginPlayerEditFeedback(kind: PlayerEditFeedbackKind, inputStartedAt = performance.now()) {
+    if (this.activePlayerEditFeedback) this.completePlayerEditFeedback(this.activePlayerEditFeedback.id);
+    const record: PlayerEditFeedbackRecord = {
+      id: this.nextPlayerEditFeedbackId++,
+      kind,
+      inputStartedAt,
+      pendingConsolidations: new Set(),
+    };
+    this.activePlayerEditFeedback = record;
+    this.playerEditFeedbackRecords.push(record);
+    while (this.playerEditFeedbackRecords.length > 64) {
+      const removed = this.playerEditFeedbackRecords.shift()!;
+      for (const queueKey of removed.pendingConsolidations) {
+        const waiters = this.playerEditConsolidationWaiters.get(queueKey);
+        waiters?.delete(removed.id);
+        if (waiters?.size === 0) this.playerEditConsolidationWaiters.delete(queueKey);
+      }
+    }
+    return record.id;
+  }
+
+  markPlayerEditProxyStarted(id: number, now = performance.now()) {
+    const record = this.playerEditFeedbackRecords.findLast((entry) => entry.id === id);
+    if (record) record.proxyStartedAt = now;
+  }
+
+  completePlayerEditFeedback(id: number, now = performance.now()) {
+    const record = this.playerEditFeedbackRecords.findLast((entry) => entry.id === id);
+    if (!record) return;
+    record.completedAt = now;
+    if (!record.pendingConsolidations.size) record.consolidatedAt = now;
+    if (this.activePlayerEditFeedback?.id === id) this.activePlayerEditFeedback = null;
+  }
+
+  private markPlayerEditMutation(now = performance.now()) {
+    if (this.activePlayerEditFeedback && this.activePlayerEditFeedback.mutationStartedAt === undefined) {
+      this.activePlayerEditFeedback.mutationStartedAt = now;
+    }
+  }
+
+  private markPlayerEditLocalMeshVisible(now = performance.now()) {
+    if (!this.activePlayerEditFeedback) return;
+    this.activePlayerEditFeedback.staleGeometryHiddenAt ??= now;
+    this.activePlayerEditFeedback.localMeshVisibleAt = now;
+  }
+
+  private notePlayerEditConsolidation(queueKey: string) {
+    const record = this.activePlayerEditFeedback;
+    if (!record || record.pendingConsolidations.has(queueKey)) return;
+    record.pendingConsolidations.add(queueKey);
+    const waiters = this.playerEditConsolidationWaiters.get(queueKey) ?? new Set<number>();
+    waiters.add(record.id);
+    this.playerEditConsolidationWaiters.set(queueKey, waiters);
+  }
+
+  private resolvePlayerEditConsolidation(queueKey: string, now = performance.now()) {
+    const waiters = this.playerEditConsolidationWaiters.get(queueKey);
+    if (!waiters) return;
+    for (const id of waiters) {
+      const record = this.playerEditFeedbackRecords.findLast((entry) => entry.id === id);
+      if (!record) continue;
+      record.pendingConsolidations.delete(queueKey);
+      if (!record.pendingConsolidations.size) record.consolidatedAt = now;
+    }
+    this.playerEditConsolidationWaiters.delete(queueKey);
+  }
+
+  private queueChunkConsolidation(chunk: Chunk, layers: Iterable<WorldRenderLayer> = WORLD_RENDER_LAYERS) {
+    let dirtyLayers = this.consolidationDirtyLayers.get(chunk.key);
+    if (!dirtyLayers) {
+      dirtyLayers = new Set();
+      this.consolidationDirtyLayers.set(chunk.key, dirtyLayers);
+    }
+    for (const layer of layers) {
       const queueKey = `${chunk.key}:${layer}`;
+      if (dirtyLayers.has(layer) || this.consolidationQueued.has(queueKey) || this.pendingConsolidations.has(queueKey)) {
+        this.coalescedConsolidations += 1;
+      }
+      dirtyLayers.add(layer);
       this.consolidationRevision.set(queueKey, (this.consolidationRevision.get(queueKey) ?? 0) + 1);
+      this.notePlayerEditConsolidation(queueKey);
       if (this.consolidationQueued.has(queueKey)) continue;
       this.consolidationQueued.add(queueKey);
       this.consolidationQueue.push({ key: chunk.key, layer });
     }
+  }
+
+  private invalidateCombinedMeshesForImmediateEdit(chunk: Chunk) {
+    const invalidatedLayers: WorldRenderLayer[] = [];
+    for (const layer of WORLD_RENDER_LAYERS) {
+      const mesh = chunk.combinedMeshes[layer];
+      if (!mesh) continue;
+      chunk.group.remove(mesh);
+      this.disposeTerrainGeometry(mesh.geometry);
+      delete chunk.combinedMeshes[layer];
+      invalidatedLayers.push(layer);
+    }
+    if (!invalidatedLayers.length) return;
+    this.invalidatedCombinedMeshes += invalidatedLayers.length;
+    for (const section of chunk.sections.values()) {
+      for (const layer of invalidatedLayers) if (section[layer]) section[layer]!.visible = true;
+    }
+    // Invalidate in-flight snapshots before rebuilding. The directly edited
+    // section becomes the temporary presentation source; one stable merge is
+    // queued after all local/seam/light work for the chunk settles.
+    this.queueChunkConsolidation(chunk, invalidatedLayers);
+  }
+
+  private chunkConsolidationSourcesStable(chunk: Chunk) {
+    const hasDirtyGeometrySource = [...chunk.dirty].some((section) => {
+      if (chunk.sectionBlockCounts[section] > 0) return true;
+      const meshes = chunk.sections.get(section);
+      return Boolean(meshes && Object.values(meshes).some(Boolean));
+    });
+    return !hasDirtyGeometrySource
+      && this.activeMeshTask?.key !== chunk.key
+      && (this.lightSectionsPendingByChunk.get(chunk.key) ?? 0) === 0;
+  }
+
+  private freezeTerrainTransform(object: THREE.Object3D) {
+    object.matrixAutoUpdate = false;
+    object.updateMatrix();
+    object.updateMatrixWorld(true);
+    object.matrixWorldAutoUpdate = false;
   }
 
   private terrainSectionGeometry(geometry: THREE.BufferGeometry): TerrainSectionGeometry {
@@ -3943,6 +4108,7 @@ export class ChunkWorld {
     const mesh = new THREE.Mesh(geometry, this.materials[layer]);
     mesh.renderOrder = layer === "glass" ? 4 : layer === "transparent" ? 3 : layer === "emissive" ? 2 : layer === "cutout" ? 1 : 0;
     chunk.group.add(mesh);
+    this.freezeTerrainTransform(mesh);
     chunk.combinedMeshes[layer] = mesh;
     for (const section of chunk.sections.values()) if (section[layer]) section[layer]!.visible = false;
   }
@@ -3954,19 +4120,23 @@ export class ChunkWorld {
       const queueKey = `${completed.key}:${completed.layer}`;
       if (completed.revision === this.consolidationRevision.get(queueKey)) {
         this.installCombinedGeometry(completed.key, completed.layer, completed.geometry);
+        this.resolvePlayerEditConsolidation(queueKey);
       } else this.staleConsolidations += 1;
       return true;
     }
-    while (this.consolidationQueue.length) {
+    const attempts = this.consolidationQueue.length;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
       const next = this.consolidationQueue.shift()!;
       const queueKey = `${next.key}:${next.layer}`;
       if (!this.consolidationQueued.delete(queueKey)) continue;
       const chunk = this.chunks.get(next.key);
       if (!chunk) continue;
-      if (this.pendingConsolidations.has(queueKey)) {
+      const dirtyLayers = this.consolidationDirtyLayers.get(next.key);
+      if (!dirtyLayers?.has(next.layer)) continue;
+      if (this.pendingConsolidations.has(queueKey) || !this.chunkConsolidationSourcesStable(chunk)) {
         this.consolidationQueued.add(queueKey);
         this.consolidationQueue.push(next);
-        return false;
+        continue;
       }
       const parts: TerrainSectionGeometry[] = [];
       for (const section of chunk.sections.values()) {
@@ -3974,6 +4144,8 @@ export class ChunkWorld {
         if (mesh) parts.push(this.terrainSectionGeometry(mesh.geometry));
       }
       const revision = this.consolidationRevision.get(queueKey) ?? 0;
+      dirtyLayers.delete(next.layer);
+      if (!dirtyLayers.size) this.consolidationDirtyLayers.delete(next.key);
       this.pendingConsolidations.add(queueKey);
       this.terrainBufferPipeline.submit(
         parts,
@@ -3984,6 +4156,9 @@ export class ChunkWorld {
         () => {
           this.pendingConsolidations.delete(queueKey);
           if (!this.chunks.has(next.key) || revision !== this.consolidationRevision.get(queueKey)) return;
+          const retryLayers = this.consolidationDirtyLayers.get(next.key) ?? new Set<WorldRenderLayer>();
+          retryLayers.add(next.layer);
+          this.consolidationDirtyLayers.set(next.key, retryLayers);
           this.consolidationQueued.add(queueKey);
           this.consolidationQueue.push(next);
         },
@@ -3998,6 +4173,7 @@ export class ChunkWorld {
     const queueKey = `${key}:${section}`;
     if (this.lightSectionQueued.has(queueKey)) return;
     this.lightSectionQueued.add(queueKey);
+    this.lightSectionsPendingByChunk.set(key, (this.lightSectionsPendingByChunk.get(key) ?? 0) + 1);
     this.lightSectionQueue.push({ key, section });
   }
 
@@ -4014,6 +4190,9 @@ export class ChunkWorld {
       const next = this.lightSectionQueue[this.lightSectionQueueHead];
       this.lightSectionQueueHead += 1;
       if (!this.lightSectionQueued.delete(`${next.key}:${next.section}`)) continue;
+      const remaining = Math.max(0, (this.lightSectionsPendingByChunk.get(next.key) ?? 1) - 1);
+      if (remaining) this.lightSectionsPendingByChunk.set(next.key, remaining);
+      else this.lightSectionsPendingByChunk.delete(next.key);
       if (this.lightSectionQueueHead >= 256 && this.lightSectionQueueHead * 2 >= this.lightSectionQueue.length) {
         this.lightSectionQueue = this.lightSectionQueue.slice(this.lightSectionQueueHead);
         this.lightSectionQueueHead = 0;
@@ -4031,8 +4210,8 @@ export class ChunkWorld {
       if (!next) return;
       const chunk = this.chunks.get(next.key);
       if (!chunk || !chunk.group.visible || !chunk.sections.has(next.section)) continue;
-      this.updateSectionLighting(chunk, next.section);
-      this.queueChunkConsolidation(chunk);
+      const updatedLayers = this.updateSectionLighting(chunk, next.section);
+      this.queueChunkConsolidation(chunk, updatedLayers);
       return;
     }
   }
@@ -4096,8 +4275,10 @@ export class ChunkWorld {
 
   private updateSectionLighting(chunk: Chunk, section: number) {
     const meshes = chunk.sections.get(section);
-    if (!meshes) return;
-    for (const mesh of Object.values(meshes)) {
+    if (!meshes) return [] as WorldRenderLayer[];
+    const updatedLayers: WorldRenderLayer[] = [];
+    for (const layer of WORLD_RENDER_LAYERS) {
+      const mesh = meshes[layer];
       if (!mesh) continue;
       const position = mesh.geometry.getAttribute("position");
       const normal = mesh.geometry.getAttribute("normal");
@@ -4113,7 +4294,9 @@ export class ChunkWorld {
         for (let channel = 0; channel < 4; channel += 1) lights[index * 4 + channel] = Math.round(clamp(sampled[channel] / MAX_LIGHT_LEVEL, 0, 1) * 255);
       }
       mesh.geometry.setAttribute("voxelLight", new THREE.BufferAttribute(lights, 4, true));
+      updatedLayers.push(layer);
     }
+    return updatedLayers;
   }
 
   flushLightSections(maximum = 64) {
@@ -4587,6 +4770,7 @@ export class ChunkWorld {
     if (task.nextSection < SECTION_COUNT) return undefined;
     this.chunks.set(key, chunk);
     this.group.add(chunk.group);
+    this.freezeTerrainTransform(chunk.group);
     this.generationQueued.delete(key);
     this.generationEnqueuedAt.delete(key);
     this.streamingCompleted.generation += 1;
@@ -6807,6 +6991,7 @@ export class ChunkWorld {
     const index = blockIndex(sx.local, y, sz.local);
     const previousType = chunk.blocks[index] as BlockId;
     const resolvedType = type === BlockId.Air && isWaterloggedFloraBlock(previousType) ? BlockId.Water : type;
+    this.markPlayerEditMutation();
     if (!isDirectionallyPlacedBlock(resolvedType)) this.blockFacings.delete(`${x},${y},${z}`);
     this.writeChunkBlock(chunk, index, resolvedType);
     this.lightEngine.updateBlock({ x, y, z, previous: previousType, next: resolvedType });
@@ -6816,8 +7001,10 @@ export class ChunkWorld {
       if (!edits) { edits = new Map(); this.edits.set(key, edits); }
       edits.set(index, resolvedType);
     }
+    if (immediate && chunk.group.visible) this.invalidateCombinedMeshesForImmediateEdit(chunk);
     this.refreshEditedBlock(sx.chunk, sz.chunk, sx.local, y, sz.local, immediate);
     if (immediate) this.flushLightSections();
+    if (immediate) this.markPlayerEditLocalMeshVisible();
     return true;
   }
 
@@ -6848,6 +7035,7 @@ export class ChunkWorld {
   ) {
     const affected = new Set<string>();
     const directlyAffected = new Set<string>();
+    const directlyAffectedChunks = new Set<string>();
     const affectedLavaCells = new Map<string, { x: number; y: number; z: number }>();
     const lightChanges: Array<{ x: number; y: number; z: number; previous: BlockId; next: BlockId }> = [];
     const batchRelight = changes.length > 12;
@@ -6861,6 +7049,7 @@ export class ChunkWorld {
       const previousType = chunk.blocks[index] as BlockId;
       const resolvedType = change.type === BlockId.Air && isWaterloggedFloraBlock(previousType) ? BlockId.Water : change.type;
       if (previousType === resolvedType) continue;
+      this.markPlayerEditMutation();
       if (!isDirectionallyPlacedBlock(resolvedType)) this.blockFacings.delete(`${change.x},${change.y},${change.z}`);
       this.writeChunkBlock(chunk, index, resolvedType);
       const lightChange = { x: change.x, y: change.y, z: change.z, previous: previousType, next: resolvedType };
@@ -6876,6 +7065,7 @@ export class ChunkWorld {
       }
       const section = sectionForY(change.y);
       const directEntry = `${key}:${section}`;
+      directlyAffectedChunks.add(key);
       directlyAffected.add(directEntry);
       affected.add(directEntry);
       if ((change.y - MIN_Y) % SECTION_HEIGHT === 0) affected.add(`${key}:${section - 1}`);
@@ -6890,6 +7080,10 @@ export class ChunkWorld {
       else this.lightEngine.rebuildAround(lightChanges);
     }
     for (const change of affectedLavaCells.values()) this.refreshLavaLightCell(change.x, change.y, change.z);
+    if (immediate) for (const key of directlyAffectedChunks) {
+      const chunk = this.chunks.get(key);
+      if (chunk?.group.visible) this.invalidateCombinedMeshesForImmediateEdit(chunk);
+    }
     for (const entry of affected) {
       const separator = entry.lastIndexOf(":");
       const key = entry.slice(0, separator);
@@ -6902,10 +7096,15 @@ export class ChunkWorld {
       // sections that actually contained an edit and leave seam/light work on
       // the urgent frame-budgeted queues.
       const rebuildNow = immediate && (!deferLighting || directlyAffected.has(entry));
-      if (rebuildNow && chunk?.group.visible) { this.cancelQueuedMesh(key, section); this.rebuildSection(chunk, section); }
+      if (rebuildNow && chunk?.group.visible) {
+        this.invalidateCombinedMeshesForImmediateEdit(chunk);
+        this.cancelQueuedMesh(key, section);
+        this.rebuildSection(chunk, section);
+      }
       else this.queueMesh(key, section, true);
     }
     if (immediate && !deferLighting) this.flushLightSections();
+    if (immediate) this.markPlayerEditLocalMeshVisible();
   }
 
   refreshEditedBlock(cx: number, cz: number, localX: number, y: number, localZ: number, immediate: boolean) {
@@ -6920,7 +7119,11 @@ export class ChunkWorld {
     for (const [key, targetSection] of targets) {
       if (targetSection < 0 || targetSection >= SECTION_COUNT) continue;
       const targetChunk = this.chunks.get(key);
-      if (immediate && targetChunk?.group.visible) { this.cancelQueuedMesh(key, targetSection); this.rebuildSection(targetChunk, targetSection); }
+      if (immediate && targetChunk?.group.visible) {
+        this.invalidateCombinedMeshesForImmediateEdit(targetChunk);
+        this.cancelQueuedMesh(key, targetSection);
+        this.rebuildSection(targetChunk, targetSection);
+      }
       else this.queueMesh(key, targetSection, true);
     }
   }
@@ -7079,6 +7282,7 @@ export class ChunkWorld {
     finalize: boolean;
   }>) {
     const old = chunk.sections.get(section);
+    const oldLayers = old ? WORLD_RENDER_LAYERS.filter((layer) => Boolean(old[layer])) : [];
     if (!slice && old) {
       for (const mesh of Object.values(old)) if (mesh) { chunk.group.remove(mesh); this.disposeTerrainGeometry(mesh.geometry); }
     }
@@ -7086,7 +7290,7 @@ export class ChunkWorld {
       if (slice && old) for (const mesh of Object.values(old)) if (mesh) { chunk.group.remove(mesh); this.disposeTerrainGeometry(mesh.geometry); }
       chunk.sections.set(section, {});
       chunk.dirty.delete(section);
-      this.queueChunkConsolidation(chunk);
+      this.queueChunkConsolidation(chunk, oldLayers);
       return;
     }
     const buckets: Record<WorldRenderLayer, GeometryBucket> = slice?.buckets
@@ -7907,11 +8111,13 @@ export class ChunkWorld {
       mesh.renderOrder = layer === "glass" ? 4 : layer === "transparent" ? 3 : layer === "emissive" ? 2 : layer === "cutout" ? 1 : 0;
       mesh.visible = !chunk.combinedMeshes[layer];
       chunk.group.add(mesh);
+      this.freezeTerrainTransform(mesh);
       nextMeshes[layer] = mesh;
     }
     chunk.sections.set(section, nextMeshes);
     chunk.dirty.delete(section);
-    this.queueChunkConsolidation(chunk);
+    const changedLayers = WORLD_RENDER_LAYERS.filter((layer) => Boolean(old?.[layer] || nextMeshes[layer]));
+    this.queueChunkConsolidation(chunk, changedLayers);
   }
 
   unloadChunk(key: string) {
@@ -7923,6 +8129,7 @@ export class ChunkWorld {
     this.lightInitializationQueued.delete(key);
     this.lightInitializationEnqueuedAt.delete(key);
     this.lightReconciliationQueued.delete(key);
+    this.lightSectionsPendingByChunk.delete(key);
     if (this.activeLightReconciliation?.key === key) this.activeLightReconciliation = null;
     this.generationEnqueuedAt.delete(key);
     this.lightInitializationTasks.delete(key);
@@ -7937,8 +8144,13 @@ export class ChunkWorld {
     }
     for (const section of chunk.sections.values()) for (const mesh of Object.values(section)) if (mesh) this.disposeTerrainGeometry(mesh.geometry);
     for (const mesh of Object.values(chunk.combinedMeshes)) if (mesh) this.disposeTerrainGeometry(mesh.geometry);
-    for (const layer of WORLD_RENDER_LAYERS) this.consolidationQueued.delete(`${key}:${layer}`);
-    for (const layer of WORLD_RENDER_LAYERS) this.consolidationRevision.delete(`${key}:${layer}`);
+    this.consolidationDirtyLayers.delete(key);
+    for (const layer of WORLD_RENDER_LAYERS) {
+      const queueKey = `${key}:${layer}`;
+      this.consolidationQueued.delete(queueKey);
+      this.consolidationRevision.delete(queueKey);
+      this.resolvePlayerEditConsolidation(queueKey);
+    }
     this.group.remove(chunk.group);
     this.chunks.delete(key);
   }
@@ -8066,6 +8278,59 @@ export class ChunkWorld {
       geometriesCreated: this.terrainGeometriesCreated,
       geometriesDisposed: this.terrainGeometriesDisposed,
       liveGeometryBytes: this.liveTerrainGeometryBytes,
+      invalidatedCombinedMeshes: this.invalidatedCombinedMeshes,
+      coalescedConsolidations: this.coalescedConsolidations,
+    } as const;
+  }
+
+  resetPlayerEditFeedbackDiagnostics() {
+    if (this.activePlayerEditFeedback) return false;
+    this.playerEditFeedbackRecords = [];
+    this.playerEditConsolidationWaiters.clear();
+    return true;
+  }
+
+  private playerEditFeedbackDiagnostics() {
+    const records = this.playerEditFeedbackRecords;
+    const duration = (start: number | undefined, end: number | undefined) => start === undefined || end === undefined
+      ? undefined : Math.max(0, end - start);
+    const summarize = (values: Array<number | undefined>) => {
+      const sorted = values.filter((value): value is number => Number.isFinite(value)).sort((left, right) => left - right);
+      const percentile = (fraction: number) => sorted.length
+        ? sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1)]
+        : 0;
+      return {
+        count: sorted.length,
+        p50Milliseconds: percentile(0.5),
+        p95Milliseconds: percentile(0.95),
+        maxMilliseconds: sorted.at(-1) ?? 0,
+      } as const;
+    };
+    const latest = records.at(-1);
+    return {
+      total: records.length,
+      byKind: records.reduce<Record<PlayerEditFeedbackKind, number>>((counts, record) => {
+        counts[record.kind] += 1;
+        return counts;
+      }, { break: 0, place: 0, "tree-fell": 0 }),
+      pendingConsolidationTransactions: records.filter((record) => record.pendingConsolidations.size > 0).length,
+      inputToMutation: summarize(records.map((record) => duration(record.inputStartedAt, record.mutationStartedAt))),
+      mutationToStaleGeometryHidden: summarize(records.map((record) => duration(record.mutationStartedAt, record.staleGeometryHiddenAt))),
+      mutationToLocalMeshVisible: summarize(records.map((record) => duration(record.mutationStartedAt, record.localMeshVisibleAt))),
+      localMeshToConsolidated: summarize(records.map((record) => duration(record.localMeshVisibleAt, record.consolidatedAt))),
+      treeProxyAfterStaleGeometryHidden: summarize(records
+        .filter((record) => record.kind === "tree-fell")
+        .map((record) => duration(record.staleGeometryHiddenAt, record.proxyStartedAt))),
+      last: latest ? {
+        id: latest.id,
+        kind: latest.kind,
+        inputToMutationMilliseconds: duration(latest.inputStartedAt, latest.mutationStartedAt) ?? null,
+        mutationToStaleGeometryHiddenMilliseconds: duration(latest.mutationStartedAt, latest.staleGeometryHiddenAt) ?? null,
+        mutationToLocalMeshVisibleMilliseconds: duration(latest.mutationStartedAt, latest.localMeshVisibleAt) ?? null,
+        localMeshToConsolidatedMilliseconds: duration(latest.localMeshVisibleAt, latest.consolidatedAt) ?? null,
+        treeProxyAfterStaleGeometryHiddenMilliseconds: duration(latest.staleGeometryHiddenAt, latest.proxyStartedAt) ?? null,
+        pendingConsolidations: latest.pendingConsolidations.size,
+      } : null,
     } as const;
   }
 
@@ -8107,8 +8372,13 @@ export class ChunkWorld {
       meshSliceProgress: this.activeMeshTask ? this.activeMeshTask.nextLocalX / CHUNK_SIZE : null,
       relightSectionsQueued: this.lightSectionQueued.size,
       consolidationLayersQueued: this.consolidationQueued.size,
-      terrainWorker: { ...this.terrainBufferPipeline.diagnostics(), staleResults: this.staleConsolidations },
+      terrainWorker: {
+        ...this.terrainBufferPipeline.diagnostics(),
+        staleResults: this.staleConsolidations,
+        coalescedRequests: this.coalescedConsolidations,
+      },
       terrainSubmission: this.terrainSubmissionDiagnostics(),
+      playerEdits: this.playerEditFeedbackDiagnostics(),
       generationBudget: this.generationWorkPerFrame,
       meshSliceBudget: this.meshWorkPerFrame,
       frameBudgetMilliseconds: this.streamingFrameBudgetMilliseconds,

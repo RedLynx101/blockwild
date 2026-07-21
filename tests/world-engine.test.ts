@@ -2127,11 +2127,70 @@ test("terrain sections consolidate to at most one visible submission per render 
   }
   const sectionMeshes = [...chunk.sections.values()].flatMap((section) => Object.values(section).filter(Boolean));
   assert.ok(sectionMeshes.length > 5, "the fixture must span enough sections/layers to prove consolidation");
+  world.flushLightSections(256);
   for (let guard = 0; guard < 100 && world.processConsolidation(); guard += 1) {
     assert.ok(guard < 99, "consolidation must converge");
   }
   const combined = Object.values(chunk.combinedMeshes).filter(Boolean);
   assert.ok(combined.length > 0 && combined.length <= 5);
   assert.equal(sectionMeshes.filter((mesh) => mesh?.visible).length, 0);
+  assert.equal(chunk.group.matrixAutoUpdate, false, "static chunk transforms should not be recomposed every render");
+  assert.ok(combined.every((mesh) => mesh?.matrixAutoUpdate === false), "static combined terrain transforms should remain frozen");
+  assert.ok(world.terrainBufferPipeline.diagnostics().submitted <= 5, "stable layers should merge once instead of once per completed section");
+  world.dispose();
+});
+
+test("player edits invalidate consolidated terrain before the local mesh is presented", () => {
+  const world = new ChunkWorld();
+  world.reset("CONSOLIDATED-EDIT-FEEDBACK", undefined, { structures: false });
+  const chunk = world.generateChunk(0, 0);
+  chunk.blocks.fill(BlockId.Air);
+  chunk.sectionBlockCounts.fill(0);
+  world.lightEngine.initializeChunk(chunk);
+  const y = 0;
+  const section = Math.floor((y - MIN_Y) / SECTION_HEIGHT);
+  world.setBlock(3, y, 4, BlockId.Stone, false, true);
+  for (let guard = 0; guard < 20 && world.processConsolidation(); guard += 1) assert.ok(guard < 19);
+  assert.ok(chunk.combinedMeshes.opaque, "the production edit path must begin from consolidated terrain");
+  assert.equal(chunk.sections.get(section)?.opaque?.visible, false);
+
+  const feedback = world.beginPlayerEditFeedback("break", performance.now());
+  world.setBlock(3, y, 4, BlockId.Air, true, true);
+  world.completePlayerEditFeedback(feedback);
+
+  assert.equal(chunk.combinedMeshes.opaque, undefined, "the stale combined layer must be detached in the edit transaction");
+  assert.equal(chunk.sections.get(section)?.opaque, undefined, "the directly edited source section must show the removed block immediately");
+  const diagnostics = world.streamingDiagnostics().playerEdits;
+  assert.equal(diagnostics.total, 1);
+  assert.equal(diagnostics.byKind.break, 1);
+  assert.equal(diagnostics.mutationToLocalMeshVisible.count, 1);
+  assert.ok(diagnostics.last && diagnostics.last.mutationToLocalMeshVisibleMilliseconds! >= 0);
+  world.dispose();
+});
+
+test("terrain consolidation defers unstable chunks and queue debt drops reconciled timestamps", () => {
+  const world = new ChunkWorld();
+  world.reset("STABLE-CONSOLIDATION-DEBT", undefined, { structures: false });
+  const chunk = world.generateChunk(0, 0);
+  const sections = [...chunk.sectionBlockCounts.keys()].filter((section) => chunk.sectionBlockCounts[section] > 0);
+  assert.ok(sections.length >= 2);
+  world.rebuildSection(chunk, sections[0]);
+  world.queueMesh(chunk.key, sections[1]);
+  assert.equal(world.processConsolidation(), false, "a dirty source section must prevent an intermediate worker merge");
+  assert.equal(world.terrainBufferPipeline.diagnostics().submitted, 0);
+  world.cancelQueuedMesh(chunk.key, sections[1]);
+  world.rebuildSection(chunk, sections[1]);
+  world.flushLightSections(256);
+  assert.equal(world.processConsolidation(), true);
+
+  world.generationEnqueuedAt.set("99,99", performance.now() - 60_000);
+  world.meshEnqueuedAt.set("99,99:0", performance.now() - 60_000);
+  world.lightInitializationQueued.add("99,99");
+  world.lightInitializationEnqueuedAt.set("99,99", performance.now() - 60_000);
+  world.scheduleAround(0, 0, true, 0);
+  assert.equal(world.generationEnqueuedAt.has("99,99"), false);
+  assert.equal(world.meshEnqueuedAt.has("99,99:0"), false);
+  assert.equal(world.lightInitializationEnqueuedAt.has("99,99"), false);
+  assert.ok(world.streamingDiagnostics().debt.oldestNearJobMilliseconds < 60_000);
   world.dispose();
 });
