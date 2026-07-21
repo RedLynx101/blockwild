@@ -101,8 +101,11 @@ test("inventory markup exposes drag targets, trash guidance, and a bounded Bone 
   assert.match(ui, /Recover until replaced/u);
   assert.match(ui, /Hold and drag to share a stack/u);
   assert.match(ui, /inventoryDragPreview/u);
-  assert.match(ui, /onPointerUp=\{\(event\) => finishInventoryDrag\(event, onLeft\)\}/u, "a single-slot release commits immediately instead of leaving paint mode armed");
+  assert.match(ui, /onPointerUp=\{\(event\) => finishInventoryDrag\(event, onLeft\)\}/u, "a single-slot release exits paint mode through the shared release router");
   assert.match(ui, /at - pending\.at <= 80/u, "trailing click suppression is target-bound and expires before a later ordinary click");
+  assert.match(ui, /const pendingRelease = takePendingSingleSlotRelease\(event\.currentTarget\)/u, "the click consumes a pending same-slot release before normal routing");
+  assert.match(ui, /if \(event\.detail >= 2\) engineRef\.current\?\.collectMatching/u, "the second click reaches collect-all before the pending release can place the cursor stack");
+  assert.match(ui, /window\.setTimeout\(\(\) => \{[\s\S]*pending\.onLeft\(pending\.shift\);[\s\S]*\}, 0\)/u, "a lost trailing click still falls back to ordinary same-slot placement");
   assert.match(css, /inventory-drag-preview-mark/u);
   assert.match(ui, /formatHudHealth\(specimen\.health\)/u);
   assert.match(ui, /formatHudHealth\(hud\.activePet\.health\)/u);

@@ -1875,6 +1875,12 @@ export default function VoxelGame() {
   const slotInteractionReadyAtRef = useRef(0);
   const inventoryDragRef = useRef<InventoryDragGesture | null>(null);
   const suppressSlotClickRef = useRef<{ target: EventTarget | null; at: number } | null>(null);
+  const pendingSingleSlotReleaseRef = useRef<{
+    target: EventTarget | null;
+    onLeft: (shift: boolean) => void;
+    shift: boolean;
+    timer: number;
+  } | null>(null);
   const heldStackElementRef = useRef<HTMLDivElement | null>(null);
   const heldStackPositionRef = useRef<ReturnType<typeof createHeldStackPositionController> | null>(null);
   const bestiaryFiltersOpenRef = useRef(false);
@@ -3085,6 +3091,38 @@ export default function VoxelGame() {
     return Boolean(pending && pending.target === target && at >= pending.at && at - pending.at <= 80);
   };
 
+  const takePendingSingleSlotRelease = (target: EventTarget | null) => {
+    const pending = pendingSingleSlotReleaseRef.current;
+    if (!pending || pending.target !== target) return null;
+    window.clearTimeout(pending.timer);
+    pendingSingleSlotReleaseRef.current = null;
+    return pending;
+  };
+
+  const queuePendingSingleSlotRelease = (event: ReactPointerEvent<HTMLElement>, onLeft: (shift: boolean) => void) => {
+    const previous = pendingSingleSlotReleaseRef.current;
+    if (previous) {
+      window.clearTimeout(previous.timer);
+      pendingSingleSlotReleaseRef.current = null;
+      if (slotInteractionAllowed(slotInteractionReadyAtRef.current)) previous.onLeft(previous.shift);
+    }
+    const pending = {
+      target: event.currentTarget,
+      onLeft,
+      shift: event.shiftKey,
+      timer: 0,
+    };
+    // A normal click consumes this pending release before the timer runs. The
+    // fallback preserves same-slot placement only when a re-rendered overlay
+    // prevents the browser from dispatching that trailing click.
+    pending.timer = window.setTimeout(() => {
+      if (pendingSingleSlotReleaseRef.current !== pending) return;
+      pendingSingleSlotReleaseRef.current = null;
+      if (slotInteractionAllowed(slotInteractionReadyAtRef.current)) pending.onLeft(pending.shift);
+    }, 0);
+    pendingSingleSlotReleaseRef.current = pending;
+  };
+
   const finishInventoryDrag = (event: ReactPointerEvent<HTMLElement>, onSingleLeft?: (shift: boolean) => void) => {
     const gesture = inventoryDragRef.current;
     if (!gesture || gesture.pointerId !== event.pointerId) return;
@@ -3092,11 +3130,11 @@ export default function VoxelGame() {
     setInventoryDragRevision((revision) => revision + 1);
     if (gesture.targets.length < 2) {
       // A held stack released over the same slot is an ordinary click, not a
-      // paint gesture. Commit it on pointer-up so machine/chest overlays cannot
-      // leave the gesture armed while waiting for a trailing click event.
+      // paint gesture. Let the trailing click distinguish a single placement
+      // from the second click of collect-all; its zero-delay fallback still
+      // commits when an overlay re-render prevents that click from arriving.
       if (gesture.button === "left" && onSingleLeft) {
-        onSingleLeft(event.shiftKey);
-        armTrailingSlotEventSuppression(event);
+        queuePendingSingleSlotRelease(event, onSingleLeft);
       }
       return;
     }
@@ -3162,6 +3200,13 @@ export default function VoxelGame() {
       onPointerUp={(event) => finishInventoryDrag(event, onLeft)}
       onPointerCancel={cancelInventoryDrag}
       onClick={(event) => {
+        const pendingRelease = takePendingSingleSlotRelease(event.currentTarget);
+        if (pendingRelease) {
+          if (!slotInteractionAllowed(slotInteractionReadyAtRef.current)) return;
+          if (event.detail >= 2) engineRef.current?.collectMatching(slot?.item ?? hud.cursor?.item);
+          else pendingRelease.onLeft(event.shiftKey);
+          return;
+        }
         if (consumeTrailingSlotEvent(event.currentTarget, event.timeStamp)) return;
         if (!slotInteractionAllowed(slotInteractionReadyAtRef.current)) return;
         if (event.detail >= 2) engineRef.current?.collectMatching(slot?.item ?? hud.cursor?.item);

@@ -1182,3 +1182,9 @@ Current request: Refresh the pushed `design-1` branch, publish an incremental v1
 - Same-slot left-button release commits the held cursor stack directly, while genuine multi-slot drag painting retains its existing distribution behavior.
 - Local, host-resolved, and remote tree-fell edits immediately rebuild only directly edited visible sections before the falling proxy moves. Neighbor seams and the large lighting halo remain deferred, preventing the standing-tree duplicate without restoring broad synchronous work.
 - Verification passes 216 focused quest/inventory/world/tree/multiplayer/release tests plus all 197 standard pretest checks, native TypeScript, changed-file ESLint, whitespace validation, all five Vinext production phases, and Worker/manifest validation. The official client loaded v1.8.7 without a console-error artifact; its full inventory frame was manually reviewed at release size. Release-ready.
+
+## v1.8.8 Packhand Hotfix - 2026-07-21
+
+- Reproduced the collect-all regression at the browser-event boundary: pointer releases carry no click count, while the trailing clicks carry details one and two. The v1.8.7 direct pointer-up placement therefore emptied the cursor before the second click could collect matching stacks.
+- Deferred a same-slot release until its immediately following click so detail two reaches `collectMatching` before any placement mutation. A zero-delay, target-bound fallback preserves the earlier repair when a facility overlay re-renders before dispatching its click; genuine multi-slot painting remains unchanged.
+- Focused inventory, world-engine, and multiplayer coverage passes 151/151; all 197 standard pretest checks, native TypeScript, changed-file ESLint, all five Vinext production stages, and Worker/manifest validation pass. The official web-game client loaded v1.8.8 without console or page errors, emitted the correct versioned state, and its 1280x720 title frame was manually reviewed. Release-ready.
