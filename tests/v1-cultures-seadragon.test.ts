@@ -51,7 +51,7 @@ import {
   startGolemForge,
   unlockGolemBlueprint,
 } from "../app/game/v1-cultures";
-import { BiomeId, CHUNK_SIZE, ChunkWorld, selectSettlementSite } from "../app/game/world";
+import { BiomeId, CHUNK_SIZE, ChunkWorld, selectSettlementSite, settlementBedBlocksForFacing, settlementGateBlockForFacing } from "../app/game/world";
 import { QuestPanel } from "../app/game/HearthroadsPanels.tsx";
 
 function assertConnectedTilePlan(plan: ReturnType<typeof planV1Settlement>) {
@@ -135,6 +135,42 @@ test("settlement adapter preserves surface terrain sampling and authors a real u
     || Math.abs(node.position.z - elfCandidate.center.z) === wallRadius));
   assert.ok(!elfLayout.wall.some((node) => node.position.x === elfLayout.gates[0].position.x && node.position.z === elfLayout.gates[0].position.z));
   assert.ok(elfLayout.lights.some((light) => light.kind === "glimmer-orb"));
+  const homes = elfLayout.buildings.filter((building) => building.role === "living-home");
+  assert.ok(homes.length >= 2, "a tiled enclave needs multiple resident homes");
+  const localOffset = (building: (typeof homes)[number], x: number, z: number) => {
+    const dx = x - building.position.x;
+    const dz = z - building.position.z;
+    const result = building.facing === 1 ? { x: dz, z: -dx }
+      : building.facing === 2 ? { x: -dx, z: -dz }
+        : building.facing === 3 ? { x: -dz, z: dx }
+          : { x: dx, z: dz };
+    return { x: result.x || 0, z: result.z || 0 };
+  };
+  for (const home of homes) {
+    assert.ok(home.width >= 7 && home.depth >= 7, "small Moonbough homes retain a usable interior");
+    const occupied = home.furniture.filter((entry) => entry.kind !== "door").map((entry) => localOffset(home, entry.position.x, entry.position.z));
+    assert.ok(!occupied.some((entry) => entry.x === 0 && entry.z === -1), "the tile behind the front door stays clear");
+    const bed = home.furniture.find((entry) => entry.kind === "bed")!;
+    assert.deepEqual(localOffset(home, bed.position.x, bed.position.z), { x: -1, z: 0 });
+    assert.equal(bed.facing, ((home.facing + 2) & 3), "the bed head points toward the rear wall");
+    const placement = settlementBedBlocksForFacing(bed.facing);
+    const head = localOffset(home, bed.position.x + placement.dx, bed.position.z + placement.dz);
+    assert.deepEqual(head, { x: -1, z: 1 });
+  }
+  const gate = elfLayout.gates[0];
+  const gateDx = gate.position.x - elfLayout.center.x;
+  const gateDz = gate.position.z - elfLayout.center.z;
+  const expectedGateFacing = Math.abs(gateDx) > Math.abs(gateDz) ? (gateDx > 0 ? 1 : 3) : (gateDz > 0 ? 2 : 0);
+  assert.equal(gate.facing, expectedGateFacing, "the opening faces outward on its perimeter side");
+  assert.equal(settlementGateBlockForFacing(gate.facing), gate.facing % 2 === 0 ? BlockId.FenceGateNorthSouthClosed : BlockId.FenceGateEastWestClosed);
+  const elfState = createSettlementState("host", elfCandidate, elfLayout);
+  assert.ok(new Set(elfState.residents.map((resident) => resident.homeBuildingId)).size >= 4, "residents distribute across role-appropriate buildings");
+  for (const resident of elfState.residents) {
+    const home = elfLayout.buildings.find((building) => building.id === resident.homeBuildingId);
+    if (!home) continue;
+    assert.notDeepEqual(resident.position, home.position, "residents begin on an interior floor tile, not a roof-seeking furnished center");
+    assert.ok(!home.furniture.some((entry) => entry.position.x === resident.position.x && entry.position.z === resident.position.z));
+  }
 
   const dwarfCandidate: SettlementCandidate = {
     ...common, id: "dwarf-layout", center: { x: 1_100, y: 72, z: 1_620 }, floorY: 54,
@@ -328,6 +364,7 @@ test("quest journal exposes each active pin without clearing its neighbors", () 
   assert.match(html, /The Light Below/u);
   assert.match(html, /Unpin quest/u);
   assert.match(html, /aria-pressed="true"/u);
+  assert.doesNotMatch(html, /The Long-Table Watch/u, "locked side roads stay out of the journal until their prerequisite opens");
 });
 
 test("Sea Dragon attributes, nest charts, and live world markers share one deterministic contract", () => {
@@ -455,5 +492,26 @@ test("Wood Elf Moonwells author a living Glowfin pond instead of a sealed house"
     world.getBlock(moonwell.position.x, surfaceY, moonwell.position.z + 1),
   ].includes(BlockId.Lumenreed));
   assert.ok([...world.structureMarkers.values()].some((marker) => marker.type === "spawn" && marker.mobKind === "glowfin" && marker.tags?.includes("habitat:glimmer-pond")));
+  const home = settlement.layout.buildings.find((building) => building.role === "living-home")!;
+  world.generateChunk(Math.floor(home.position.x / CHUNK_SIZE), Math.floor(home.position.z / CHUNK_SIZE));
+  const homeY = world.sampleColumn(home.position.x, home.position.z).height + 1;
+  const chair = home.furniture.find((entry) => entry.kind === "living-chair")!;
+  world.generateChunk(Math.floor(chair.position.x / CHUNK_SIZE), Math.floor(chair.position.z / CHUNK_SIZE));
+  assert.equal(world.getBlock(chair.position.x, homeY, chair.position.z), BlockId.MoonboughChair);
+  assert.equal(world.blockFacingAt(chair.position.x, homeY, chair.position.z), chair.facing, "generated chairs inherit the rotated room facing");
+  const bed = home.furniture.find((entry) => entry.kind === "bed")!;
+  const bedPlacement = settlementBedBlocksForFacing(bed.facing);
+  world.generateChunk(Math.floor((bed.position.x + bedPlacement.dx) / CHUNK_SIZE), Math.floor((bed.position.z + bedPlacement.dz) / CHUNK_SIZE));
+  assert.equal(world.getBlock(bed.position.x, homeY, bed.position.z), bedPlacement.foot);
+  assert.equal(world.getBlock(bed.position.x + bedPlacement.dx, homeY, bed.position.z + bedPlacement.dz), bedPlacement.head);
+  const resident = createSettlementState("world", woodElf, settlement.layout).residents[0];
+  const residentBuilding = settlement.layout.buildings.find((building) => building.id === resident.homeBuildingId)!;
+  world.generateChunk(Math.floor(resident.position.x / CHUNK_SIZE), Math.floor(resident.position.z / CHUNK_SIZE));
+  const residentY = world.sampleColumn(residentBuilding.position.x, residentBuilding.position.z).height + 1;
+  const residentMarker = [...world.structureMarkers.values()].find((marker) => marker.type === "spawn" && marker.id === resident.id);
+  assert.ok(residentMarker && residentMarker.type === "spawn");
+  assert.equal(residentMarker.position.y, residentY);
+  assert.equal(residentMarker.radius, 0.25);
+  assert.ok(residentMarker.tags?.includes("authored-interior-spawn"));
   world.dispose();
 });

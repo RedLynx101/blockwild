@@ -3,7 +3,7 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { MapPanel } from "../app/game/HearthroadsPanels.tsx";
+import { MapPanel, formatMapZoom } from "../app/game/HearthroadsPanels.tsx";
 import { MinimapHud, NavigationHud } from "../app/game/NavigationHud.tsx";
 import {
   constrainMapViewState,
@@ -11,6 +11,7 @@ import {
   createMapKnowledge,
   createMapViewState,
   ABSOLUTE_MIN_MAP_ZOOM,
+  MAX_MAP_ZOOM,
   MIN_MAP_ZOOM,
   joinCartographySession,
   mapChunkAtViewportPoint,
@@ -87,8 +88,9 @@ test("cartography shares terrain samples without replacing the local sample", ()
 });
 
 test("map zoom and pan retain the same x/z chunk coordinate system", () => {
-  assert.equal(MIN_MAP_ZOOM, 0.5);
-  assert.equal(ABSOLUTE_MIN_MAP_ZOOM, 0.1);
+  assert.equal(MIN_MAP_ZOOM, 0.05);
+  assert.equal(ABSOLUTE_MIN_MAP_ZOOM, 0.01);
+  assert.equal(MAX_MAP_ZOOM, 12);
   assert.deepEqual(normalizeMapViewState({ schema: 99, zoom: -20, panX: Number.NaN, panZ: Infinity }), createMapViewState());
   const base = { minX: -10, maxX: 10, minZ: -20, maxZ: 20 };
   const zoomed = stepMapZoom(createMapViewState(), 1);
@@ -106,6 +108,21 @@ test("map zoom and pan retain the same x/z chunk coordinate system", () => {
   assert.equal(projection.offsetX, 300, "a narrow map is centered instead of stretched horizontally");
   assert.deepEqual(mapChunkAtViewportPoint(405, 205, { minX: -10, maxX: 10, minZ: -20, maxZ: 20 }, 800, 400), { x: 0, z: 0 });
   assert.equal(mapChunkAtViewportPoint(20, 200, { minX: -10, maxX: 10, minZ: -20, maxZ: 20 }, 800, 400), null);
+
+  let farView = createMapViewState();
+  for (let step = 0; step < 40; step += 1) farView = stepMapZoom(farView, -1, { minimum: 0.01 });
+  assert.equal(farView.zoom, 0.01, "Ascendant cartography reaches a ten-times wider scale without changing coordinates");
+  const farBounds = mapViewportBounds(base, farView, { minimum: 0.01 });
+  assert.equal((farBounds.minX + farBounds.maxX) / 2, 0);
+  assert.equal((farBounds.minZ + farBounds.maxZ) / 2, 0);
+  assert.equal(farBounds.maxX - farBounds.minX, 2_000);
+
+  let closeView = createMapViewState();
+  for (let step = 0; step < 40; step += 1) closeView = stepMapZoom(closeView, 1);
+  assert.equal(closeView.zoom, MAX_MAP_ZOOM);
+  assert.equal(formatMapZoom(0.01), "0.01");
+  assert.equal(formatMapZoom(0.05), "0.05");
+  assert.equal(formatMapZoom(1.35), "1.4");
 });
 
 test("map panning is unbounded by discovery shape and opening scale is stable", () => {

@@ -233,13 +233,22 @@ export function discoverRootedTree(
   const logLimit = Math.max(3, Math.min(768, Math.floor(maximumLogs)));
   const leafLimit = Math.max(0, Math.min(2_048, Math.floor(maximumLeaves)));
   const keyOf = (x: number, y: number, z: number) => `${x},${y},${z}`;
+  const blockCache = new Map<string, BlockId | undefined>([[keyOf(start.x, start.y, start.z), startType]]);
+  const readCached = (x: number, y: number, z: number) => {
+    const key = keyOf(x, y, z);
+    if (blockCache.has(key)) return blockCache.get(key);
+    const block = readBlock(x, y, z);
+    blockCache.set(key, block);
+    return block;
+  };
   const logs = new Map<string, DiscoveredTreeBlock>();
   const logQueue: BlockPosition[] = [start];
-  while (logQueue.length && logs.size < logLimit) {
-    const position = logQueue.shift()!;
+  let logQueueHead = 0;
+  while (logQueueHead < logQueue.length && logs.size < logLimit) {
+    const position = logQueue[logQueueHead++];
     const key = keyOf(position.x, position.y, position.z);
     if (logs.has(key)) continue;
-    const type = readBlock(position.x, position.y, position.z);
+    const type = readCached(position.x, position.y, position.z);
     if (!isTreeLogBlock(type)) continue;
     logs.set(key, { ...position, type: type! });
     for (const [dx, dy, dz] of TREE_NEIGHBORS) logQueue.push({ x: position.x + dx, y: position.y + dy, z: position.z + dz });
@@ -249,18 +258,18 @@ export function discoverRootedTree(
     for (const stepY of [-1, 1]) for (let dx = -1; dx <= 1; dx += 1) for (let dz = -1; dz <= 1; dz += 1) {
       if (!dx && !dz) continue;
       const candidate = { x: position.x + dx, y: position.y + stepY, z: position.z + dz };
-      const candidateType = readBlock(candidate.x, candidate.y, candidate.z);
+      const candidateType = readCached(candidate.x, candidate.y, candidate.z);
       if (!isTreeLogBlock(candidateType)) continue;
       let canopyEvidence = false;
       for (let ox = -1; ox <= 1 && !canopyEvidence; ox += 1) for (let oy = -1; oy <= 2 && !canopyEvidence; oy += 1) for (let oz = -1; oz <= 1; oz += 1) {
-        if (isTreeLeafBlock(readBlock(candidate.x + ox, candidate.y + oy, candidate.z + oz))) { canopyEvidence = true; break; }
+        if (isTreeLeafBlock(readCached(candidate.x + ox, candidate.y + oy, candidate.z + oz))) { canopyEvidence = true; break; }
       }
       if (canopyEvidence) logQueue.push(candidate);
     }
   }
   if (logs.size < 3) return null;
   const roots = [...logs.values()]
-    .filter((log) => isRootableTreeSoil(readBlock(log.x, log.y - 1, log.z)))
+    .filter((log) => isRootableTreeSoil(readCached(log.x, log.y - 1, log.z)))
     .sort((left, right) => left.y - right.y || left.x - right.x || left.z - right.z);
   if (!roots.length) return null;
 
@@ -279,7 +288,7 @@ export function discoverRootedTree(
       if (!next || neighbors.includes(next)) continue;
       let canopyEvidence = false;
       for (let ox = -1; ox <= 1 && !canopyEvidence; ox += 1) for (let oy = -1; oy <= 1 && !canopyEvidence; oy += 1) for (let oz = -1; oz <= 1; oz += 1) {
-        if (isTreeLeafBlock(readBlock(next.x + ox, next.y + oy, next.z + oz))) { canopyEvidence = true; break; }
+        if (isTreeLeafBlock(readCached(next.x + ox, next.y + oy, next.z + oz))) { canopyEvidence = true; break; }
       }
       if (canopyEvidence) neighbors.push(next);
     }
@@ -294,9 +303,10 @@ export function discoverRootedTree(
     const first = unclusteredRoots.values().next().value as DiscoveredTreeBlock;
     const cluster: DiscoveredTreeBlock[] = [];
     const queue = [first];
+    let queueHead = 0;
     unclusteredRoots.delete(keyOf(first.x, first.y, first.z));
-    while (queue.length) {
-      const current = queue.shift()!;
+    while (queueHead < queue.length) {
+      const current = queue[queueHead++];
       cluster.push(current);
       for (const candidate of [...unclusteredRoots.values()]) {
         const horizontalDistance = Math.max(Math.abs(candidate.x - current.x), Math.abs(candidate.z - current.z));
@@ -312,9 +322,10 @@ export function discoverRootedTree(
   const distancesByCluster = rootClusters.map((cluster) => {
     const distances = new Map<string, number>();
     const queue = cluster.map((root) => ({ block: root, distance: 0 }));
+    let queueHead = 0;
     for (const root of cluster) distances.set(keyOf(root.x, root.y, root.z), 0);
-    while (queue.length) {
-      const { block, distance } = queue.shift()!;
+    while (queueHead < queue.length) {
+      const { block, distance } = queue[queueHead++];
       for (const next of logNeighbors(block)) {
         const key = keyOf(next.x, next.y, next.z);
         if (distances.has(key)) continue;
@@ -337,19 +348,21 @@ export function discoverRootedTree(
   const selectedClusterIndex = ownerFor(startKey);
   if (selectedClusterIndex < 0) return null;
   const selectedRoots = rootClusters[selectedClusterIndex];
-  const ownedCandidates = new Map([...logs].filter(([key]) => ownerFor(key) === selectedClusterIndex));
+  const ownerByLogKey = new Map([...logs.keys()].map((key) => [key, ownerFor(key)]));
+  const ownedCandidates = new Map([...logs].filter(([key]) => ownerByLogKey.get(key) === selectedClusterIndex));
 
   // Multi-source parents provide a deterministic route from every natural
   // branch back to the complete rooted footprint.
   const parents = new Map<string, string | null>();
   const connectedQueue: DiscoveredTreeBlock[] = [];
+  let connectedQueueHead = 0;
   for (const root of selectedRoots) {
     const key = keyOf(root.x, root.y, root.z);
     parents.set(key, null);
     connectedQueue.push(root);
   }
-  while (connectedQueue.length) {
-    const current = connectedQueue.shift()!;
+  while (connectedQueueHead < connectedQueue.length) {
+    const current = connectedQueue[connectedQueueHead++];
     const currentKey = keyOf(current.x, current.y, current.z);
     for (const next of logNeighbors(current)) {
       const nextKey = keyOf(next.x, next.y, next.z);
@@ -407,7 +420,7 @@ export function discoverRootedTree(
   for (const log of ownedCandidates.values()) {
     let touchesCanopy = false;
     for (let dx = -1; dx <= 1 && !touchesCanopy; dx += 1) for (let dy = -1; dy <= 1 && !touchesCanopy; dy += 1) for (let dz = -1; dz <= 1; dz += 1) {
-      if (isTreeLeafBlock(readBlock(log.x + dx, log.y + dy, log.z + dz))) { touchesCanopy = true; break; }
+      if (isTreeLeafBlock(readCached(log.x + dx, log.y + dy, log.z + dz))) { touchesCanopy = true; break; }
     }
     if (!touchesCanopy) continue;
     retainPath(keyOf(log.x, log.y, log.z));
@@ -416,40 +429,77 @@ export function discoverRootedTree(
   const treeLogs = [...ownedCandidates.values()].filter((log) => retained.has(keyOf(log.x, log.y, log.z)));
   if (treeLogs.length < 3) return null;
 
-  const foreignLogs = [...logs.values()].filter((log) => ownerFor(keyOf(log.x, log.y, log.z)) !== selectedClusterIndex);
+  const foreignLogs = [...logs.values()].filter((log) => ownerByLogKey.get(keyOf(log.x, log.y, log.z)) !== selectedClusterIndex);
+  const spatialBucketSize = 4;
+  const bucketKey = (x: number, y: number, z: number) => `${Math.floor(x / spatialBucketSize)},${Math.floor(y / spatialBucketSize)},${Math.floor(z / spatialBucketSize)}`;
+  const createLogIndex = (initial: readonly DiscoveredTreeBlock[]) => {
+    const buckets = new Map<string, DiscoveredTreeBlock[]>();
+    const known = new Set<string>();
+    const add = (log: DiscoveredTreeBlock) => {
+      const positionKey = keyOf(log.x, log.y, log.z);
+      if (known.has(positionKey)) return;
+      known.add(positionKey);
+      const key = bucketKey(log.x, log.y, log.z);
+      buckets.set(key, [...(buckets.get(key) ?? []), log]);
+    };
+    for (const log of initial) add(log);
+    const nearestSquared = (position: BlockPosition, maximumDistance: number) => {
+      let best = maximumDistance * maximumDistance + Number.EPSILON;
+      const bucketRadius = Math.ceil(maximumDistance / spatialBucketSize) + 1;
+      const centerX = Math.floor(position.x / spatialBucketSize);
+      const centerY = Math.floor(position.y / spatialBucketSize);
+      const centerZ = Math.floor(position.z / spatialBucketSize);
+      for (let bx = centerX - bucketRadius; bx <= centerX + bucketRadius; bx += 1) {
+        for (let by = centerY - bucketRadius; by <= centerY + bucketRadius; by += 1) {
+          for (let bz = centerZ - bucketRadius; bz <= centerZ + bucketRadius; bz += 1) {
+            for (const log of buckets.get(`${bx},${by},${bz}`) ?? []) {
+              const distance = (position.x - log.x) ** 2 + (position.y - log.y) ** 2 + (position.z - log.z) ** 2;
+              if (distance < best) best = distance;
+            }
+          }
+        }
+      }
+      return best;
+    };
+    return { add, nearestSquared };
+  };
+  const ownLogIndex = createLogIndex(treeLogs);
+  const foreignLogIndex = createLogIndex(foreignLogs);
   const leaves = new Map<string, DiscoveredTreeBlock>();
   const examinedLeaves = new Set<string>();
   const leafQueue: BlockPosition[] = [];
+  let leafQueueHead = 0;
   for (const log of treeLogs) for (let dx = -1; dx <= 1; dx += 1) for (let dy = -1; dy <= 1; dy += 1) for (let dz = -1; dz <= 1; dz += 1) {
     if (!dx && !dy && !dz) continue;
     leafQueue.push({ x: log.x + dx, y: log.y + dy, z: log.z + dz });
   }
-  while (leafQueue.length && leaves.size < leafLimit) {
-    const position = leafQueue.shift()!;
+  while (leafQueueHead < leafQueue.length && leaves.size < leafLimit) {
+    const position = leafQueue[leafQueueHead++];
     const key = keyOf(position.x, position.y, position.z);
     if (examinedLeaves.has(key)) continue;
     examinedLeaves.add(key);
-    const type = readBlock(position.x, position.y, position.z);
+    const type = readCached(position.x, position.y, position.z);
     if (!isTreeLeafBlock(type)) continue;
-    const ownDistance = treeLogs.reduce((best, log) => Math.min(best,
-      (position.x - log.x) ** 2 + (position.y - log.y) ** 2 + (position.z - log.z) ** 2), Number.POSITIVE_INFINITY);
+    const ownDistance = ownLogIndex.nearestSquared(position, 7);
     // All production crowns stay within seven cells of their supporting wood.
     // This bound prevents a decorative/player-built leaf wall from being swept
     // into a natural felling operation merely because one corner touches.
     if (ownDistance > 49) continue;
-    let foreignDistance = foreignLogs.reduce((best, log) => Math.min(best,
-      (position.x - log.x) ** 2 + (position.y - log.y) ** 2 + (position.z - log.z) ** 2), Number.POSITIVE_INFINITY);
-    const radius = Math.min(7, Math.max(2, Math.ceil(Math.sqrt(ownDistance)) + 1));
+    const radius = Math.min(7, Math.max(2, Math.ceil(Math.sqrt(ownDistance))));
+    let foreignDistance = foreignLogIndex.nearestSquared(position, radius);
+    searchForForeignLog:
     for (let dx = -radius; dx <= radius; dx += 1) for (let dy = -radius; dy <= radius; dy += 1) for (let dz = -radius; dz <= radius; dz += 1) {
       const candidateKey = keyOf(position.x + dx, position.y + dy, position.z + dz);
       if (retained.has(candidateKey)) continue;
       // A deliberately excluded beam can still be part of the selected root's
       // connected log graph. It must remain standing, but it is not a competing
       // tree and therefore must not steal the genuine crown around it.
-      if (logs.has(candidateKey) && ownerFor(candidateKey) === selectedClusterIndex) continue;
-      const candidate = readBlock(position.x + dx, position.y + dy, position.z + dz);
+      if (logs.has(candidateKey) && ownerByLogKey.get(candidateKey) === selectedClusterIndex) continue;
+      const candidate = readCached(position.x + dx, position.y + dy, position.z + dz);
       if (!isTreeLogBlock(candidate)) continue;
       foreignDistance = Math.min(foreignDistance, dx * dx + dy * dy + dz * dz);
+      foreignLogIndex.add({ x: position.x + dx, y: position.y + dy, z: position.z + dz, type: candidate! });
+      if (foreignDistance < ownDistance) break searchForForeignLog;
     }
     if (foreignDistance < ownDistance) continue;
     leaves.set(key, { ...position, type: type! });
@@ -464,7 +514,7 @@ export function discoverRootedTree(
   const attachments = new Map<string, DiscoveredTreeBlock>();
   for (const leaf of leaves.values()) {
     const attachmentY = leaf.y - 1;
-    const type = readBlock(leaf.x, attachmentY, leaf.z);
+    const type = readCached(leaf.x, attachmentY, leaf.z);
     if (type !== BlockId.AppleFruit) continue;
     attachments.set(keyOf(leaf.x, attachmentY, leaf.z), { x: leaf.x, y: attachmentY, z: leaf.z, type });
   }

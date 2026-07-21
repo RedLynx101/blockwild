@@ -1199,6 +1199,45 @@ test("voxel corner occlusion is a separate bounded shading attribute", () => {
   world.dispose();
 });
 
+test("no-op block batches do not record edits or enqueue redundant mesh work", () => {
+  const world = new ChunkWorld();
+  world.reset("NO-OP-BATCH", undefined, { structures: false });
+  const chunk = world.generateChunk(0, 0);
+  chunk.blocks.fill(BlockId.Air);
+  world.edits.clear();
+  world.meshQueued.clear();
+  world.urgentMeshQueued.clear();
+  world.lightSectionQueued.clear();
+  world.setBlocksBatch([
+    { x: 2, y: 2, z: 2, type: BlockId.Air },
+    { x: 2, y: 2, z: 2, type: BlockId.Air },
+  ], true, true, true);
+  assert.equal(world.edits.size, 0);
+  assert.equal(world.meshQueued.size + world.urgentMeshQueued.size + world.lightSectionQueued.size, 0);
+  world.dispose();
+});
+
+test("deferred batch lighting requeues an invalidated active chunk task", () => {
+  const world = new ChunkWorld();
+  world.reset("DEFERRED-LIGHT-BATCH", undefined, { structures: false });
+  const chunk = world.generateChunk(0, 0);
+  chunk.blocks.fill(BlockId.Air);
+  chunk.group.visible = true;
+  const key = "0,0";
+  world.activeLightInitialization = { key, task: world.lightEngine.beginChunkInitialization(chunk) };
+  world.lightInitializationQueued.add(key);
+  world.lightInitializationQueue = [];
+  world.lightInitializationQueueHead = 0;
+  world.setBlocksBatch([
+    { x: 2, y: 2, z: 2, type: BlockId.Stone },
+    ...Array.from({ length: 12 }, (_, index) => ({ x: 3 + index, y: 2, z: 2, type: BlockId.Air })),
+  ], false, false, true);
+  assert.equal(world.activeLightInitialization, null);
+  assert.equal(world.lightInitializationQueued.has(key), true);
+  assert.equal(world.lightInitializationQueue.slice(world.lightInitializationQueueHead).includes(key), true);
+  world.dispose();
+});
+
 test("partial block shapes preserve the full cube faces beside them", () => {
   const world = new ChunkWorld();
   world.reset("PARTIAL-FACE");
@@ -1404,6 +1443,38 @@ test("urgent edits rebuild the visible section immediately and keep the light in
   world.setBlock(5, y, 4, BlockId.Air, true, true);
   world.setBlocksBatch([{ x: 5, y, z: 6, type: BlockId.Air }], true, true);
   assert.equal(world.lightSourcesNear(5, y, 6, 2).length, 0, "breaking a light source must remove it from the pooled-light index");
+  world.dispose();
+});
+
+test("deferred animated removals hide edited voxels immediately without synchronously rebuilding neighbor seams", () => {
+  const world = new ChunkWorld();
+  world.reset("ANIMATED-BATCH-VISIBILITY", undefined, { structures: false });
+  const chunk = world.generateChunk(0, 0);
+  const neighbor = world.generateChunk(1, 0);
+  chunk.blocks.fill(BlockId.Air);
+  neighbor.blocks.fill(BlockId.Air);
+  chunk.sectionBlockCounts.fill(0);
+  neighbor.sectionBlockCounts.fill(0);
+  world.lightEngine.initializeChunk(chunk);
+  world.lightEngine.initializeChunk(neighbor);
+  const y = 0;
+  const section = Math.floor((y - MIN_Y) / SECTION_HEIGHT);
+  world.setBlock(16, y, 4, BlockId.Stone, false, true);
+  world.setBlock(15, y, 4, BlockId.WildwoodLog, false, true);
+  world.rebuildSection(neighbor, section);
+
+  const rebuilt: string[] = [];
+  const rebuildSection = world.rebuildSection.bind(world);
+  world.rebuildSection = ((target, targetSection, slice) => {
+    rebuilt.push(`${target.key}:${targetSection}`);
+    rebuildSection(target, targetSection, slice);
+  }) as typeof world.rebuildSection;
+
+  world.setBlocksBatch([{ x: 15, y, z: 4, type: BlockId.Air }], true, true, true);
+
+  assert.equal(chunk.sections.get(section)?.opaque, undefined, "the standing log mesh must disappear in the felling update");
+  assert.deepEqual(rebuilt, [`${chunk.key}:${section}`], "only the section containing removed voxels should rebuild synchronously");
+  assert.equal(neighbor.dirty.has(section), true, "the newly exposed neighbor seam remains queued for the frame budget");
   world.dispose();
 });
 
@@ -1685,6 +1756,68 @@ test("a door cannot close around the player and X-axis doors keep their orientat
     { x: 0, y: 0, z: 0, type: BlockId.DoorXOpenLower },
     { x: 0, y: 1, z: 0, type: BlockId.DoorXOpenUpper },
   ]);
+});
+
+test("fence gates use a thin collision slab and cannot close through an occupant", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  const writes: BlockId[] = [];
+  engine.world = { setBlock: (_x: number, _y: number, _z: number, type: BlockId) => { writes.push(type); } } as unknown as VoxelEngine["world"];
+  engine.audio = { playSample: () => undefined } as unknown as VoxelEngine["audio"];
+  engine.events = { onToast: () => undefined } as unknown as VoxelEngine["events"];
+  engine.publishBlockEdits = () => undefined;
+  engine.saveSoon = () => undefined;
+  engine.remotePlayers = new Map();
+  engine.mobs = [];
+  engine.position = new THREE.Vector3(0, 0, 0);
+
+  assert.equal(engine.playerIntersectsFenceGateCell(engine.position, 0, 0, 0, BlockId.FenceGateNorthSouthClosed), true);
+  assert.equal(engine.playerIntersectsFenceGateCell(new THREE.Vector3(0, 0, 0.5), 0, 0, 0, BlockId.FenceGateNorthSouthClosed), false);
+  assert.equal(engine.toggleFenceGateAt(0, 0, 0, BlockId.FenceGateNorthSouthOpen), false);
+  assert.equal(writes.length, 0, "closing through the player must not mutate the gate");
+
+  engine.position.set(3, 0, 3);
+  assert.equal(engine.toggleFenceGateAt(0, 0, 0, BlockId.FenceGateNorthSouthOpen), true);
+  assert.deepEqual(writes, [BlockId.FenceGateNorthSouthClosed]);
+});
+
+test("sentient ground routes open a closed gate and close it after clearing the passage", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  const blocks = new Map([["1,1,0", BlockId.FenceGateNorthSouthClosed]]);
+  engine.world = {
+    getBlock: (x: number, y: number, z: number) => blocks.get(`${x},${y},${z}`) ?? BlockId.Air,
+    setBlock: (x: number, y: number, z: number, type: BlockId) => { blocks.set(`${x},${y},${z}`, type); },
+  } as unknown as VoxelEngine["world"];
+  engine.audio = { playSample: () => undefined } as unknown as VoxelEngine["audio"];
+  engine.events = { onToast: () => undefined } as unknown as VoxelEngine["events"];
+  engine.publishBlockEdits = () => undefined;
+  engine.saveSoon = () => undefined;
+  engine.remotePlayers = new Map();
+  engine.mobs = [];
+  engine.position = new THREE.Vector3(20, 0, 20);
+  engine.mobBaseScale = () => 1;
+  type SentientFixture = {
+    age: number;
+    definition: { sentient: boolean; footOffset: number; height: number; radius: number };
+    group: THREE.Group;
+    openedPassage?: { kind: string };
+  };
+  const mob: SentientFixture = {
+    age: 0,
+    definition: { sentient: true, footOffset: 0, height: 1, radius: 0.25 },
+    group: new THREE.Group(),
+  };
+  const passageApi = engine as unknown as {
+    tryOpenSentientPassage(subject: SentientFixture, heading: number, lookahead: number): boolean;
+    updateSentientPassage(subject: SentientFixture): void;
+  };
+  assert.equal(passageApi.tryOpenSentientPassage(mob, 0, 1), true);
+  assert.equal(blocks.get("1,1,0"), BlockId.FenceGateNorthSouthOpen);
+  assert.equal(mob.openedPassage?.kind, "gate");
+
+  mob.age = 3;
+  mob.group.position.set(3, 0, 0);
+  passageApi.updateSentientPassage(mob);
+  assert.equal(blocks.get("1,1,0"), BlockId.FenceGateNorthSouthClosed);
 });
 
 test("due saplings remain scheduled while their chunk is unloaded", () => {

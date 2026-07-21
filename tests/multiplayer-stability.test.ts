@@ -30,7 +30,7 @@ import { createPeelopState } from "../app/game/peelop.ts";
 import { createReedstriderBond } from "../app/game/ecology.ts";
 import { createEmptyApiaryBlock } from "../app/game/apiary.ts";
 import { createDragonState } from "../app/game/dragons.ts";
-import { createPeerIdentity, validatePayload, validatePeerIdentity, type ContainerAction, type CreatureAction, type InventoryAction, type PlayerProgressionSnapshot, type PlayerSessionSnapshot } from "../app/game/multiplayer.ts";
+import { createPeerIdentity, validatePayload, validatePeerIdentity, type ContainerAction, type CreatureAction, type DropSnapshotEntry, type InventoryAction, type PlayerProgressionSnapshot, type PlayerSessionSnapshot } from "../app/game/multiplayer.ts";
 
 function sessionState(): PlayerSessionSnapshot {
   const inventory = Array.from({ length: 36 }, () => null) as PlayerSessionSnapshot["inventory"];
@@ -782,6 +782,9 @@ test("guest pickups bridge delayed walk/sprint poses, work 100+ blocks from host
     pickupAt: { x: 3, y: 70.8, z: 0 }, status: "request",
   }, peer);
   assert.equal(responses.at(-1)?.status, "accepted");
+  assert.equal(responses.at(-1)?.remainingCount, 0);
+  assert.equal(responses.at(-1)?.playerState?.inventory.some((slot) => slot?.item === Item.Stick), true,
+    "the reliable acceptance must carry the committed pack image with the drop removal");
   assert.equal(lagged.drops.length, 0);
 
   const remote = makeEngine(9);
@@ -792,6 +795,15 @@ test("guest pickups bridge delayed walk/sprint poses, work 100+ blocks from host
   assert.equal(responses.at(-1)?.status, "rejected");
   assert.equal(remote.drops.length, 1);
 
+  const delayed = makeEngine(0);
+  delayed.drops[0].pickupDelay = 0.2;
+  (delayed as unknown as { handleRemoteInventoryAction(action: InventoryAction, peer: unknown): void }).handleRemoteInventoryAction({
+    requestId: "pickup_delay_001", actorId: player.playerId, kind: "collect", dropId: 44,
+    pickupAt: { x: 0, y: 70.8, z: 0 }, status: "request",
+  }, peer);
+  assert.equal(responses.at(-1)?.status, "rejected", "the host must honor the same pickup delay as local collection");
+  assert.equal(delayed.drops.length, 1);
+
   const distantGuest = makeEngine(160, 160);
   (distantGuest as unknown as { handleRemoteInventoryAction(action: InventoryAction, peer: unknown): void }).handleRemoteInventoryAction({
     requestId: "pickup_far_host_001", actorId: player.playerId, kind: "collect", dropId: 44,
@@ -799,6 +811,30 @@ test("guest pickups bridge delayed walk/sprint poses, work 100+ blocks from host
   }, peer);
   assert.equal(responses.at(-1)?.status, "accepted");
   assert.equal(distantGuest.drops.length, 0);
+});
+
+test("network drop reconstruction preserves identities and host velocity without local stack merging", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  Object.assign(engine, {
+    drops: [],
+    dropGroup: new THREE.Group(),
+    sharedDropGeometry: new THREE.BoxGeometry(0.25, 0.25, 0.25),
+    dropMaterials: new Map(),
+    nextDropId: 1,
+    pendingGuestDropRequests: new Map(),
+    lastNetworkDropSnapshotTick: -1,
+  });
+  const entries: DropSnapshotEntry[] = [
+    { id: 81, item: Item.Stick, count: 2, x: 1, y: 4, z: 1, vx: 1.2, vy: -0.4, vz: 0.3, age: 2, pickupDelay: 0 },
+    { id: 82, item: Item.Stick, count: 3, x: 1.1, y: 4, z: 1.1, vx: -0.2, vy: 0.8, vz: -0.5, age: 1, pickupDelay: 0.25 },
+  ];
+  (engine as unknown as { applyNetworkDropSnapshot(entries: DropSnapshotEntry[], tick: number): void })
+    .applyNetworkDropSnapshot(entries, 10);
+  assert.deepEqual(engine.drops.map((drop) => [drop.id, drop.count]), [[81, 2], [82, 3]]);
+  assert.deepEqual(engine.drops[0].velocity.toArray(), [1.2, -0.4, 0.3]);
+  assert.equal(engine.drops[1].pickupDelay, 0.25);
+  engine.sharedDropGeometry.dispose();
+  for (const material of engine.dropMaterials.values()) material.dispose();
 });
 
 test("furnace clocks replicate without churning the slot transaction revision", () => {
@@ -948,14 +984,7 @@ test("a guest can open only a real nearby shared furnace and receives its slots 
     },
     remotePlayers: new Map([[player.playerId, { target: { x: 1, y: 2, z: 4 } }]]),
     world: { getBlock: () => blockAtTarget },
-    furnaces: new Map([[key, {
-      input: { item: BlockId.Cobblestone, count: 2 },
-      fuel: { item: Item.Coal, count: 3 },
-      output: null,
-      progress: 1.25,
-      burn: 4.5,
-      burnMax: 8,
-    }]]),
+    furnaces: new Map(),
     chests: new Map(), boats: new Map(), mobs: [],
     multiplayerContainerRevisions: new Map([[`furnace:${key}`, 6]]),
     multiplayerPlayerStates: new Map([[player.playerId, player]]),
@@ -971,6 +1000,19 @@ test("a guest can open only a real nearby shared furnace and receives its slots 
   api.handleRemoteContainerAction(request, peer);
   assert.equal(responses.at(-1)?.status, "accepted");
   assert.equal(responses.at(-1)?.containerId, `furnace:${key}`);
+  assert.deepEqual(responses.at(-1)?.slots, [null, null, null]);
+  assert.deepEqual(responses.at(-1)?.machine, { progress: 0, burn: 0, burnMax: 0 });
+  assert.equal(engine.furnaces.has(key), true, "a real unopened furnace is materialized lazily by the host");
+
+  engine.furnaces.set(key, {
+    input: { item: BlockId.Cobblestone, count: 2 },
+    fuel: { item: Item.Coal, count: 3 },
+    output: null,
+    progress: 1.25,
+    burn: 4.5,
+    burnMax: 8,
+  });
+  api.handleRemoteContainerAction({ ...request, requestId: "furnace_open_existing_001" }, peer);
   assert.deepEqual(responses.at(-1)?.slots, [{ item: BlockId.Cobblestone, count: 2 }, { item: Item.Coal, count: 3 }, null]);
   assert.deepEqual(responses.at(-1)?.machine, { progress: 1.25, burn: 4.5, burnMax: 8 });
 

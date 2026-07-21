@@ -454,12 +454,71 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
     addBox([0.08, 0.15, 0.12], [0, 0.02, -0.25], 0xc7a548);
     group.scale.setScalar(0.72);
     group.rotation.set(0.1, 0.27, -0.08);
+  } else if (definition.heldModel === "wheat-mill") {
+    addBox([0.58, 0.11, 0.46], [0, -0.2, 0], 0x6f4829).name = "wheat-mill-oak-plinth";
+    for (const x of [-0.23, 0.23]) {
+      addBox([0.09, 0.48, 0.1], [x, 0, 0.08], 0x7d512d).name = `wheat-mill-${x < 0 ? "left" : "right"}-frame-post`;
+    }
+    addBox([0.52, 0.08, 0.13], [0, 0.23, 0.08], 0xa9793e).name = "wheat-mill-hopper-rail";
+    addBox([0.36, 0.19, 0.3], [0, 0.31, 0.03], 0xb98749, [0.12, 0, 0]).name = "wheat-mill-grain-hopper";
+    addBox([0.19, 0.1, 0.2], [0, 0.17, 0.02], 0x5d3d27).name = "wheat-mill-hopper-throat";
+    const wheel = addCylinder(0.22, 0.13, [0, 0.02, -0.08], 0x8b806d, [0, 0, Math.PI / 2]);
+    wheel.name = "wheat-mill-stone-wheel";
+    addCylinder(0.065, 0.56, [0, 0.02, -0.08], 0x4f3524, [0, 0, Math.PI / 2]).name = "wheat-mill-wooden-axle";
+    addBox([0.18, 0.055, 0.055], [0.34, 0.04, -0.08], 0xb1844c, [0, 0, 0.3]).name = "wheat-mill-hand-crank";
+    addBox([0.27, 0.08, 0.2], [0, -0.1, -0.25], 0xc8a96c, [-0.25, 0, 0]).name = "wheat-mill-flour-chute";
+    addBox([0.16, 0.035, 0.12], [0, -0.17, -0.37], 0xe7d8aa).name = "wheat-mill-flour-dust";
+    group.scale.setScalar(0.7);
+    group.rotation.set(0.1, 0.28, -0.08);
+  } else if (definition.heldModel === "stool") {
+    const deepgear = item === Item.DeepgearStoolItem;
+    const seat = deepgear ? 0x9a7448 : 0x9f7144;
+    const frame = deepgear ? 0x5f5350 : 0x70482b;
+    addBox([0.46, 0.11, 0.42], [0, 0.12, 0], seat).name = deepgear ? "deepgear-stool-seat" : "wildwood-stool-seat";
+    for (const [index, [x, z]] of [[-0.17, -0.15], [0.17, -0.15], [-0.17, 0.15], [0.17, 0.15]].entries()) {
+      addBox([0.065, 0.42, 0.065], [x, -0.13, z], frame, [z * 0.15, 0, -x * 0.15]).name = `${deepgear ? "deepgear" : "wildwood"}-stool-leg-${index + 1}`;
+    }
+    for (const z of [-0.16, 0.16]) addBox([0.35, 0.045, 0.045], [0, -0.15, z], deepgear ? 0xb28a50 : 0x87572f).name = `${deepgear ? "deepgear" : "wildwood"}-stool-cross-brace`;
+    if (deepgear) {
+      for (const [x, z] of [[-0.16, -0.14], [0.16, -0.14], [-0.16, 0.14], [0.16, 0.14]] as const) {
+        addCylinder(0.018, 0.025, [x, 0.185, z], 0xd0b36b).name = "deepgear-stool-seat-rivet";
+      }
+    }
+    group.scale.setScalar(0.78);
+    group.rotation.set(0.12, 0.25, -0.08);
+  } else if (definition.heldModel === "fence") {
+    for (const x of [-0.23, 0.23]) {
+      addBox([0.1, 0.64, 0.1], [x, 0.05, 0], 0x70482b).name = `wildwood-fence-${x < 0 ? "left" : "right"}-post`;
+      addBox([0.14, 0.09, 0.14], [x, 0.4, 0], 0xa97945, [0, Math.PI / 4, 0]).name = "wildwood-fence-post-cap";
+    }
+    for (const y of [-0.08, 0.2]) addBox([0.48, 0.09, 0.08], [0, y, 0], y > 0 ? 0xa97945 : 0x8b5b34).name = "wildwood-fence-rail";
+    group.scale.setScalar(0.78);
+    group.rotation.set(0.08, 0.3, -0.08);
+  } else if (definition.heldModel === "fence-gate") {
+    for (const x of [-0.23, 0.23]) addBox([0.085, 0.62, 0.09], [x, 0.05, 0], 0x70482b).name = `wildwood-gate-${x < 0 ? "hinge" : "latch"}-post`;
+    for (const y of [-0.16, 0.2]) addBox([0.48, 0.08, 0.08], [0, y, 0], 0x9c6a3a).name = "wildwood-gate-rail";
+    addBox([0.08, 0.54, 0.075], [0, 0.02, -0.005], 0x87552f, [0, 0, -0.76]).name = "wildwood-gate-diagonal-brace";
+    addBox([0.1, 0.08, 0.12], [0.19, 0.05, -0.04], 0xc19a57).name = "wildwood-gate-latch";
+    group.scale.setScalar(0.78);
+    group.rotation.set(0.08, 0.3, -0.08);
   } else if (definition.heldModel === "chair") {
     addBox([0.42, 0.1, 0.38], [0, -0.02, 0], 0x9f7144);
     for (const [x, z] of [[-0.17, -0.15], [0.17, -0.15], [-0.17, 0.15], [0.17, 0.15]] as Array<[number, number]>) addBox([0.06, 0.4, 0.06], [x, -0.22, z], 0x70482b);
     addBox([0.42, 0.44, 0.08], [0, 0.23, 0.15], 0x9f7144);
     group.scale.setScalar(0.72);
     group.rotation.set(0.12, 0.25, -0.08);
+  } else if (definition.heldModel === "moonberry-cookie") {
+    // A shallow twelve-sided bake is readable in hand, on remote avatars,
+    // and on the ground. Grouped berry pockets plus the pressed pale crescent
+    // carry the same Moonbough material grammar as the 16px icon.
+    addCylinder(0.285, 0.055, [0, -0.015, 0], 0x7f4b2e).name = "moonberry-cookie-baked-rim";
+    addCylinder(0.255, 0.07, [0, 0.018, 0], 0xb87943).name = "moonberry-cookie-biscuit";
+    for (const [x, z, color] of [
+      [-0.11, -0.07, 0x74438f], [0.11, -0.04, 0xa66bc0], [-0.08, 0.11, 0x8b51a8], [0.12, 0.11, 0x6d397f],
+    ] as Array<[number, number, number]>) addBox([0.065, 0.035, 0.065], [x, 0.068, z], color, [0, Math.PI / 4, 0]).name = "moonberry-cookie-berry-pocket";
+    for (const [x, z] of [[-0.025, -0.015], [0.015, 0.015], [0.02, 0.055]] as Array<[number, number]>) addBox([0.04, 0.025, 0.055], [x, 0.088, z], 0xf1dfad, [0, -0.45, 0]).name = "moonberry-cookie-moon-press";
+    group.scale.setScalar(0.72);
+    group.rotation.set(-Math.PI / 2 - 0.12, 0.28, -0.12);
   } else if (definition.heldModel === "shears") {
     addBox([0.1, 0.48, 0.07], [-0.1, 0.15, 0], 0xd4b9a7, [0, 0, -0.34]).name = "shears-left-blade";
     addBox([0.1, 0.48, 0.07], [0.1, 0.15, 0], 0xe5d1c2, [0, 0, 0.34]).name = "shears-right-blade";
@@ -696,6 +755,11 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
  * shared third-person model transform: changing one must not flip the other.
  */
 export function applyFirstPersonHeldItemOrientation(item: ItemCode, model: THREE.Object3D) {
+  if (item === Item.MoonberryCookie) {
+    model.rotation.y += Math.PI;
+    model.userData.firstPersonReverse = true;
+    return model;
+  }
   if (item !== BlockId.Torch) return model;
   // Shared avatar torches counter-rotate against an articulated forward arm.
   // A first-person root has no such arm, so remove that counter-rotation before

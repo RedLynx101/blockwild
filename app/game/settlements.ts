@@ -185,6 +185,7 @@ export type SettlementBuildingRole =
   | "guardhouse"
   | "market"
   | "farm"
+  | "wheat-mill"
   | "mine-store"
   | "blacksmith"
   | "bank"
@@ -229,6 +230,7 @@ export type SettlementFurniture = Readonly<{
     | "chair"
     | "table"
     | "barrel"
+    | "wheat-mill"
     | "distillery"
     | "merchant-counter"
     | "bank-counter"
@@ -378,15 +380,16 @@ function buildingRoles(factionId: Exclude<FactionId, "player">, size: Settlement
     ];
     return expandBuildingRoles(sugarcourt, ["bonbon-home", "gumdrop-garden", "bonbon-home", "sweet-market", "taffy-kennel"], target, seed);
   }
-  const common: SettlementBuildingRole[] = ["mayor-hall", "guardhouse", "market", "home", "home", "farm"];
+  const agrarianRole: SettlementBuildingRole = factionId === "hobbits" ? "wheat-mill" : "farm";
+  const common: SettlementBuildingRole[] = ["mayor-hall", "guardhouse", "market", "home", "home", agrarianRole];
   const themed: SettlementBuildingRole[] = factionId === "hobbits"
-    ? ["brewery", "bank", "farm", "home", "alchemist", "warehouse"]
+    ? ["brewery", "bank", "wheat-mill", "home", "alchemist", "warehouse"]
     : ["mine-store", "blacksmith", "warg-kennel", "home", "alchemist", "warehouse"];
-  const expanded: SettlementBuildingRole[] = [...common, ...themed, "home", "guardhouse", "market", "home", "farm", "warehouse"];
+  const expanded: SettlementBuildingRole[] = [...common, ...themed, "home", "guardhouse", "market", "home", agrarianRole, "warehouse"];
   return expandBuildingRoles(
     expanded,
     factionId === "hobbits"
-      ? ["home", "farm", "home", "brewery", "warehouse", "guardhouse"]
+      ? ["home", "wheat-mill", "home", "brewery", "warehouse", "guardhouse"]
       : ["home", "mine-store", "home", "warg-kennel", "warehouse", "guardhouse"],
     target,
     seed,
@@ -410,7 +413,9 @@ function paletteFor(factionId: Exclude<FactionId, "player">, role: SettlementBui
     return ["living-coral", "reef-stone", "reefglass"];
   }
   if (factionId === "hobbits") {
-    return role === "bank" ? ["river-stone", "dark-oak", "copper"] : ["wildwood", "plaster", "mossy-thatch"];
+    if (role === "bank") return ["river-stone", "dark-oak", "copper"];
+    if (role === "wheat-mill") return ["river-stone", "wildwood", "mossy-thatch", "wheat-mill"];
+    return ["wildwood", "plaster", "mossy-thatch"];
   }
   if (factionId === "sugarcourt") {
     if (role === "sugar-palace") return ["boiled-sugarbrick", "candywood", "sugar-glass"];
@@ -420,13 +425,38 @@ function paletteFor(factionId: Exclude<FactionId, "player">, role: SettlementBui
   return role === "blacksmith" ? ["basalt", "iron", "ember-brick"] : ["stone", "brasswood", "patched-slate"];
 }
 
+/** Rotates an interior offset authored with the front door at local -Z. */
+function settlementLocalPoint(position: SettlementPoint, facing: 0 | 1 | 2 | 3, x: number, z: number, y = 0): SettlementPoint {
+  const rotated = facing === 1 ? { x: -z, z: x }
+    : facing === 2 ? { x: -x, z: -z }
+      : facing === 3 ? { x: z, z: -x }
+        : { x, z };
+  return {
+    x: position.x + rotated.x,
+    z: position.z + rotated.z,
+    ...(position.y === undefined ? {} : { y: position.y + y }),
+  };
+}
+
 function furnitureFor(factionId: Exclude<FactionId, "player">, buildingId: string, role: SettlementBuildingRole, position: SettlementPoint, facing: 0 | 1 | 2 | 3) {
+  const entries: SettlementFurniture[] = [];
+  const add = (
+    kind: SettlementFurniture["kind"],
+    x: number,
+    z: number,
+    y = 0,
+    functional = true,
+    itemFacing: 0 | 1 | 2 | 3 = facing,
+  ) => entries.push({ kind, position: settlementLocalPoint(position, facing, x, z, y), facing: itemFacing, functional });
+  const addDoor = () => add("door", 0, -2);
+  const addBed = (x: number, z: number) => add("bed", x, z, 0, true, ((facing + 2) & 3) as 0 | 1 | 2 | 3);
+
   if (factionId === "wood-elves") {
-    const entries: SettlementFurniture[] = [{ kind: "door", position: { x: position.x, z: position.z - 2, ...(position.y === undefined ? {} : { y: position.y }) }, facing, functional: true }];
-    const add = (kind: SettlementFurniture["kind"], dx: number, dz: number, dy = 0) => entries.push({
-      kind, position: { x: position.x + dx, z: position.z + dz, ...(position.y === undefined ? {} : { y: position.y + dy }) }, facing, functional: true,
-    });
-    if (["living-home", "moonbough-hall", "leafwarden-lodge"].includes(role)) { add("bed", -1, 1); add("living-chair", 1, 0); }
+    addDoor();
+    // Keep the entrance aisle (local x=0, z<0) open. Beds point toward the
+    // rear wall and the chair sits beyond the central table instead of in the
+    // doorway when the entire house rotates east, south, or west.
+    if (["living-home", "moonbough-hall", "leafwarden-lodge"].includes(role)) { addBed(-1, 0); add("living-chair", 1, 1, 0, true, ((facing + 2) & 3) as 0 | 1 | 2 | 3); }
     if (role === "glimmer-library") { add("tome-lectern", -1, 1); add("tome-lectern", 1, 1); }
     if (role === "moonwell") add("moonwell-basin", 0, 0);
     if (role === "enclave-market") add("merchant-counter", 0, 1);
@@ -435,11 +465,8 @@ function furnitureFor(factionId: Exclude<FactionId, "player">, buildingId: strin
     return entries;
   }
   if (factionId === "dwarves") {
-    const entries: SettlementFurniture[] = [{ kind: "door", position: { x: position.x, z: position.z - 2, ...(position.y === undefined ? {} : { y: position.y }) }, facing, functional: true }];
-    const add = (kind: SettlementFurniture["kind"], dx: number, dz: number, dy = 0) => entries.push({
-      kind, position: { x: position.x + dx, z: position.z + dz, ...(position.y === undefined ? {} : { y: position.y + dy }) }, facing, functional: true,
-    });
-    if (["stone-home", "deepgear-hall", "entrance-barracks"].includes(role)) add("bed", -1, 1);
+    addDoor();
+    if (["stone-home", "deepgear-hall", "entrance-barracks"].includes(role)) addBed(-1, 0);
     if (role === "golem-forge") { add("golem-cradle", 0, 1); add("mana-conduit", 1, 1); }
     if (role === "powderworks") add("powder-bench", 0, 1);
     if (role === "gear-market") add("merchant-counter", 0, 1);
@@ -450,13 +477,6 @@ function furnitureFor(factionId: Exclude<FactionId, "player">, buildingId: strin
     return entries;
   }
   if (factionId === "atlantians") {
-    const entries: SettlementFurniture[] = [];
-    const add = (kind: SettlementFurniture["kind"], dx: number, dz: number, dy = 0, functional = true) => entries.push({
-      kind,
-      position: { x: position.x + dx, z: position.z + dz, ...(position.y === undefined ? {} : { y: position.y + dy }) },
-      facing,
-      functional,
-    });
     if (["home", "tide-hall", "guard-grotto"].includes(role)) add("rest-alcove", -1, 1);
     if (role === "home" || role === "tide-hall") add("nest", 1, 1, 1);
     if (role === "kelp-garden") add("kelp-trough", 0, 0);
@@ -468,11 +488,10 @@ function furnitureFor(factionId: Exclude<FactionId, "player">, buildingId: strin
     return entries;
   }
   if (factionId === "sugarcourt") {
-    const entries: SettlementFurniture[] = [{ kind: "door", position: { x: position.x, z: position.z - 2 }, facing, functional: true }];
-    const add = (kind: SettlementFurniture["kind"], dx: number, dz: number, functional = true) => entries.push({ kind, position: { x: position.x + dx, z: position.z + dz }, facing, functional });
-    if (["bonbon-home", "sugar-palace", "brittle-barracks"].includes(role)) add("bed", -1, 1);
-    if (role === "bonbon-home" || role === "sugar-palace") add("bed", 1, 1);
-    add("chair", -1, 0);
+    addDoor();
+    if (["bonbon-home", "sugar-palace", "brittle-barracks"].includes(role)) addBed(-1, 0);
+    if (role === "bonbon-home" || role === "sugar-palace") addBed(1, 0);
+    add("chair", 0, 1, 0, true, ((facing + 2) & 3) as 0 | 1 | 2 | 3);
     add("table", 0, 0);
     if (role === "sugarworks") { add("sugarworks-kettle", 1, 1); add("syrup-vat", -1, 1); }
     if (role === "gumdrop-garden") add("syrup-vat", 1, 1);
@@ -482,12 +501,19 @@ function furnitureFor(factionId: Exclude<FactionId, "player">, buildingId: strin
     void buildingId;
     return entries;
   }
-  const entries: SettlementFurniture[] = [{ kind: "door", position: { x: position.x, z: position.z - 2 }, facing, functional: true }];
-  const add = (kind: SettlementFurniture["kind"], dx: number, dz: number, functional = true) => entries.push({ kind, position: { x: position.x + dx, z: position.z + dz }, facing, functional });
-  if (role === "home" || role === "mayor-hall" || role === "guardhouse") add("bed", -1, 1);
-  if (role === "home" || role === "mayor-hall") add("bed", 1, 1);
-  add("chair", -1, 0);
-  add("table", 0, 0);
+  addDoor();
+  if (role === "home" || role === "mayor-hall" || role === "guardhouse") addBed(-1, 0);
+  if (role === "home" || role === "mayor-hall") addBed(1, 0);
+  if (role === "wheat-mill") {
+    // Keep the doorway and resident anchor clear while giving the farmer a
+    // functional, visually distinct workplace rather than another bed-house.
+    add("wheat-mill", 0, 1);
+    add("barrel", -1, 1);
+    add("table", 1, 0);
+  } else {
+    add("chair", 0, 1, 0, true, ((facing + 2) & 3) as 0 | 1 | 2 | 3);
+    add("table", 0, 0);
+  }
   if (role === "brewery") { add("barrel", -1, 1); add("distillery", 1, 1); }
   if (role === "bank") add("bank-counter", 1, 0);
   if (role === "market") add("merchant-counter", 1, 0);
@@ -569,13 +595,14 @@ function planV1CultureLayout(candidate: SettlementCandidate): SettlementLayoutPl
   const buildings = planned.tiles.map((tile): SettlementBuildingPlan => {
     const position = tilePosition(tile.gridX, tile.gridZ, tile.yOffset);
     const role = v1RoleToBuilding(tile.role, candidate.factionId as "wood-elves" | "dwarves");
+    const moonboughHome = candidate.factionId === "wood-elves" && role === "living-home";
     return {
       id: tile.id,
       role,
       position,
       facing: tile.rotation,
-      width: tile.width,
-      depth: tile.depth,
+      width: moonboughHome ? Math.max(7, tile.width | 1) : tile.width,
+      depth: moonboughHome ? Math.max(7, tile.depth | 1) : tile.depth,
       floors: tile.floors,
       materialPalette: paletteFor(candidate.factionId, role),
       furniture: furnitureFor(candidate.factionId, tile.id, role, position, tile.rotation),
@@ -598,7 +625,10 @@ function planV1CultureLayout(candidate: SettlementCandidate): SettlementLayoutPl
   };
   const nearestGuard = buildings.find((building) => building.role === (underground ? "entrance-barracks" : "leafwarden-lodge"))?.position ?? center;
   addLine(paths, entrance, nearestGuard, 1);
-  const gate: SettlementGatePlan = { id: `${candidate.id}-main-gate`, position: entrance, facing: 0, patrolRadius: underground ? 9 : 7 };
+  const gateFacing = planned.surfaceEntrance.gridZ < 0 ? 0
+    : planned.surfaceEntrance.gridX > 0 ? 1
+      : planned.surfaceEntrance.gridZ > 0 ? 2 : 3;
+  const gate: SettlementGatePlan = { id: `${candidate.id}-main-gate`, position: entrance, facing: gateFacing, patrolRadius: underground ? 9 : 7 };
   const wall: SettlementWallNode[] = [];
   if (!underground) {
     // Planner wall coordinates are expressed in settlement tiles, while the
@@ -764,7 +794,9 @@ export function planSettlementLayout(candidate: SettlementCandidate): Settlement
 
   const wall: SettlementWallNode[] = [];
   const pushWall = (x: number, z: number) => {
-    if (gates.some((gate) => Math.hypot(gate.position.x - x, gate.position.z - z) <= 1.5)) return;
+    // A gate occupies one authored perimeter cell. Removing its neighbors made
+    // a three-wide breach around a one-wide gate and broke fence continuity.
+    if (gates.some((gate) => gate.position.x === x && gate.position.z === z)) return;
     const offset = Math.abs(x - center.x) + Math.abs(z - center.z);
     const corner = Math.abs(x - center.x) === perimeterRadius && Math.abs(z - center.z) === perimeterRadius;
     wall.push({
@@ -1101,7 +1133,7 @@ function professionPlan(candidate: SettlementCandidate, count: number) {
   return Array.from({ length: count }, (_, index) => index < common.length ? common[index] : faction[(index - common.length) % faction.length]);
 }
 
-function preferredBuilding(layout: SettlementLayoutPlan, profession: ResidentProfession) {
+function preferredBuildings(layout: SettlementLayoutPlan, profession: ResidentProfession) {
   const role: SettlementBuildingRole = profession === "wood-elf-elderweaver" ? "moonbough-hall"
     : profession === "wood-elf-leafwarden" || profession === "wood-elf-bow-warden" ? "leafwarden-lodge"
       : profession === "wood-elf-grovekeeper" ? "glow-garden"
@@ -1130,14 +1162,36 @@ function preferredBuilding(layout: SettlementLayoutPlan, profession: ResidentPro
                           : profession === "sugarcourt-kennelkeeper" ? "taffy-kennel"
               : profession === "mayor" ? "mayor-hall"
     : profession === "warrior" ? "guardhouse"
-      : profession === "farmer" ? "farm"
+      : profession === "farmer" ? (layout.buildings.some((building) => building.role === "wheat-mill") ? "wheat-mill" : "farm")
         : profession === "miner" ? "mine-store"
           : profession === "brewer" ? "brewery"
             : profession === "banker" ? "bank"
               : profession === "alchemist" ? "alchemist"
                 : profession === "blacksmith" ? "blacksmith"
                   : "home";
-  return layout.buildings.find((building) => building.role === role) ?? layout.buildings.find((building) => building.role === "home") ?? layout.buildings[0];
+  const preferred = layout.buildings.filter((building) => building.role === role);
+  const homes = layout.buildings.filter((building) => ["home", "living-home", "stone-home", "bonbon-home"].includes(building.role));
+  return preferred.length ? preferred : homes.length ? homes : layout.buildings;
+}
+
+/** Chooses a clear floor tile inside the resident's assigned building. */
+function residentInteriorPosition(building: SettlementBuildingPlan | undefined, residentIndex: number, fallback: SettlementPoint) {
+  if (!building) return fallback;
+  const occupied = new Set<string>();
+  for (const furniture of building.furniture) {
+    occupied.add(`${furniture.position.x},${furniture.position.z}`);
+    if (furniture.kind === "bed") {
+      const head = settlementLocalPoint(furniture.position, furniture.facing, 0, -1);
+      occupied.add(`${head.x},${head.z}`);
+    }
+  }
+  const anchors = [[0, -1], [1, -1], [-1, -1], [0, 1], [1, 1], [-1, 1]] as const;
+  for (let offset = 0; offset < anchors.length; offset += 1) {
+    const [x, z] = anchors[(residentIndex + offset) % anchors.length];
+    const position = settlementLocalPoint(building.position, building.facing, x, z);
+    if (!occupied.has(`${position.x},${position.z}`)) return position;
+  }
+  return settlementLocalPoint(building.position, building.facing, 0, -1);
 }
 
 function defaultEquipment(factionId: Exclude<FactionId, "player">, profession: ResidentProfession, index: number): ResidentEquipment {
@@ -1218,7 +1272,7 @@ function alignedCreaturesForFaction(
       // Keep its broad chassis in the clear west service bay rather than on the
       // center gear table, north cradle, or conduit. The marker uses a tight
       // spawn radius so runtime grounding cannot promote that furniture to floor.
-      position: { ...forge.position, x: forge.position.x - 2, z: forge.position.z + 1 }, patrolGateId: forge.id, tameable: false as const,
+      position: settlementLocalPoint(forge.position, forge.facing, -2, 1), patrolGateId: forge.id, tameable: false as const,
     }] : [];
     return [...golems, hound, ...webspinner, ...kennels];
   }
@@ -1254,8 +1308,13 @@ function alignedCreaturesForFaction(
 export function createSettlementState(authorityId: string, candidate: SettlementCandidate, layout = planSettlementLayout(candidate)): SettlementState {
   const count = Math.min(SETTLEMENT_SIZE_RULES[candidate.size].populationTarget, layout.populationSoftCap);
   const professions = professionPlan(candidate, count);
+  const buildingAssignments = new Map<string, number>();
   const residents = professions.map((profession, index): SettlementResident => {
-    const building = preferredBuilding(layout, profession);
+    const candidates = preferredBuildings(layout, profession);
+    const assignmentKey = candidates.map((building) => building.id).join("|");
+    const assignmentIndex = buildingAssignments.get(assignmentKey) ?? 0;
+    buildingAssignments.set(assignmentKey, assignmentIndex + 1);
+    const building = candidates.length ? candidates[assignmentIndex % candidates.length] : undefined;
     const id = `${candidate.id}-resident-${index}`;
     return {
       id,
@@ -1269,7 +1328,7 @@ export function createSettlementState(authorityId: string, candidate: Settlement
       health: isWarriorProfession(profession) ? (candidate.factionId === "atlantians" ? 20 : 18) : candidate.factionId === "atlantians" ? 13 : 12,
       maxHealth: isWarriorProfession(profession) ? (candidate.factionId === "atlantians" ? 20 : 18) : candidate.factionId === "atlantians" ? 13 : 12,
       homeBuildingId: building?.id ?? null,
-      position: building?.position ?? candidate.center,
+      position: residentInteriorPosition(building, assignmentIndex, candidate.center),
       equipment: defaultEquipment(candidate.factionId, profession, index),
       hiredByPlayerId: null,
       orders: { stance: "defensive", follow: false, followDistance: "dynamic", holdPosition: null },
@@ -1465,7 +1524,7 @@ export function growSettlementPopulation(
     health: 8,
     maxHealth: 8,
     homeBuildingId: home?.id ?? null,
-    position: home?.position ?? settlement.layout.center,
+    position: residentInteriorPosition(home, index, settlement.layout.center),
     equipment: { weapon: null, tool: null },
     hiredByPlayerId: null,
     orders: { stance: "passive", follow: false, followDistance: "dynamic", holdPosition: null },

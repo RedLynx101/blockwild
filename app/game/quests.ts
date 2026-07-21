@@ -104,10 +104,36 @@ export type QuestEvent =
   | Readonly<{ type: "entity-died"; entityId: string; role?: string | null; at: number }>
   | Readonly<{ type: "custom"; eventId: string; count?: number; at: number }>;
 
+export type QuestDurableFacts = Readonly<{
+  currentDay?: number;
+  discoveredTowns?: readonly Readonly<{ townId: string; factionId: string }>[];
+  trades?: readonly Readonly<{ factionId: string; count: number }>[];
+  kills?: readonly Readonly<{ mobKind: string; count: number }>[];
+  acquiredItems?: readonly Readonly<{ itemId: string; count: number }>[];
+  interactions?: readonly Readonly<{ entityId: string; role?: string | null; count: number }>[];
+  customEvents?: readonly Readonly<{ eventId: string; count: number }>[];
+}>;
+
+export type SystemQuestBootstrapOptions = Readonly<{
+  acceptedAt?: number;
+  facts?: QuestDurableFacts;
+  /** Extra system-owned quests for a mode or authored origin. */
+  mainQuestIds?: readonly string[];
+  sideQuestIds?: readonly string[];
+  /** Makes a culture's giver-less discovery quest appropriate at world start. */
+  appropriateFactionIds?: readonly string[];
+}>;
+
+export const DEFAULT_SYSTEM_MAIN_QUEST_IDS = Object.freeze(["main-first-dawn"] as const);
+export const DEFAULT_SYSTEM_SIDE_QUEST_IDS = Object.freeze(["dragonwake-living-archive"] as const);
+
 const EMPTY_REWARD: QuestReward = Object.freeze({ gold: 0, items: [], blueprints: [], factionAlignment: {} });
 const finite = (value: unknown, fallback = 0) => typeof value === "number" && Number.isFinite(value) ? value : fallback;
 const count = (value: unknown, fallback = 0) => Math.max(0, Math.trunc(finite(value, fallback)));
 const cleanId = (value: unknown) => typeof value === "string" ? value.trim().slice(0, 96) : "";
+
+/** Day 1 is the day currently in progress, so no full survival day has elapsed yet. */
+export const completedSurvivalDays = (currentDay: unknown) => Math.max(0, count(currentDay) - 1);
 
 function cleanNullableId(value: unknown) {
   const cleaned = cleanId(value);
@@ -686,6 +712,14 @@ export function questAvailability(book: QuestBook, definition: QuestDefinition):
   return prerequisitesMet(normalized, definition) ? "available" : "locked";
 }
 
+/** Locked work stays out of the journal; offerable, active, and historical work remains legible. */
+export function questVisibleInJournal(book: QuestBook, definition: QuestDefinition, source: QuestSource | null = null) {
+  const availability = questAvailability(book, definition);
+  if (availability === "locked") return false;
+  if (availability === "available" || availability === "abandoned") return questSourceCanOffer(definition, source);
+  return true;
+}
+
 function targetForObjective(objective: QuestObjective) {
   if (objective.kind === "survive-day") return objective.targetDay;
   if (objective.kind === "discover-town") return 1;
@@ -787,7 +821,7 @@ export function abandonQuest(book: QuestBook, definitions: readonly QuestDefinit
 }
 
 function eventProgress(objective: QuestObjective, previous: number, event: QuestEvent) {
-  if (objective.kind === "survive-day" && event.type === "day-reached") return Math.max(previous, count(event.day));
+  if (objective.kind === "survive-day" && event.type === "day-reached") return Math.max(previous, completedSurvivalDays(event.day));
   if (objective.kind === "discover-town" && event.type === "town-discovered" && (!objective.factionId || objective.factionId === event.factionId)) return 1;
   if (objective.kind === "trade" && event.type === "trade-completed" && (!objective.factionId || objective.factionId === event.factionId)) return previous + Math.max(1, count(event.count, 1));
   if (objective.kind === "kill" && event.type === "mob-killed" && objective.mobKind === event.mobKind) return previous + Math.max(1, count(event.count, 1));
@@ -840,6 +874,126 @@ export function applyQuestEvent(book: QuestBook, definitions: readonly QuestDefi
     });
   }
   return { ...normalized, active, failed: failed.slice(-MAX_QUEST_HISTORY), pinnedQuestIds, pinnedQuestId: pinnedQuestIds[0] ?? null };
+}
+
+function durableObjectiveProgress(objective: QuestObjective, facts: QuestDurableFacts) {
+  if (objective.kind === "survive-day") return completedSurvivalDays(facts.currentDay);
+  if (objective.kind === "discover-town") return (facts.discoveredTowns ?? []).some((town) => {
+    const townId = cleanId(town.townId);
+    const factionId = cleanId(town.factionId);
+    return Boolean(townId) && (!objective.factionId || objective.factionId === factionId);
+  }) ? 1 : 0;
+  if (objective.kind === "trade") return (facts.trades ?? []).reduce((total, trade) => (
+    !objective.factionId || objective.factionId === cleanId(trade.factionId) ? total + count(trade.count) : total
+  ), 0);
+  if (objective.kind === "kill") return (facts.kills ?? []).reduce((total, kill) => (
+    objective.mobKind === cleanId(kill.mobKind) ? total + count(kill.count) : total
+  ), 0);
+  if (objective.kind === "collect-item") return (facts.acquiredItems ?? []).reduce((total, item) => (
+    objective.itemId === cleanId(item.itemId) ? total + count(item.count) : total
+  ), 0);
+  // Delivery objectives intentionally use current inventory at turn-in. Past
+  // acquisition is not proof that the player still possesses the goods.
+  if (objective.kind === "deliver-item") return 0;
+  if (objective.kind === "interact") return (facts.interactions ?? []).reduce((total, interaction) => {
+    if (objective.entityId && objective.entityId !== cleanId(interaction.entityId)) return total;
+    if (objective.role && objective.role !== cleanNullableId(interaction.role)) return total;
+    return total + count(interaction.count);
+  }, 0);
+  return (facts.customEvents ?? []).reduce((total, event) => (
+    objective.eventId === cleanId(event.eventId) ? total + count(event.count) : total
+  ), 0);
+}
+
+/**
+ * Replays durable world facts into active quests without reducing live event
+ * progress. This makes late acceptance and migrated saves deterministic.
+ */
+export function reconcileQuestBookWithDurableFacts(
+  book: QuestBook,
+  definitions: readonly QuestDefinition[],
+  facts: QuestDurableFacts = {},
+) {
+  const normalized = normalizeQuestBook(book);
+  const byId = definitionsById(definitions);
+  const active = normalized.active.map((current): ActiveQuest => {
+    const definition = byId.get(current.questId);
+    if (!definition) return current;
+    const objectiveProgress = { ...current.objectiveProgress };
+    for (const objective of definition.objectives) {
+      const durableProgress = durableObjectiveProgress(objective, facts);
+      objectiveProgress[objective.id] = Math.min(
+        targetForObjective(objective),
+        objective.kind === "survive-day" && facts.currentDay !== undefined
+          ? durableProgress
+          : Math.max(objectiveProgress[objective.id] ?? 0, durableProgress),
+      );
+    }
+    return {
+      ...current,
+      objectiveProgress,
+      status: reportableObjectivesComplete(definition, objectiveProgress) ? "ready" : "active",
+    };
+  });
+  return { ...normalized, active };
+}
+
+export function acceptQuestWithDurableFacts(
+  book: QuestBook,
+  definitions: readonly QuestDefinition[],
+  questId: string,
+  acceptedAt: number,
+  facts: QuestDurableFacts,
+  giverEntityId: string | null = null,
+  source: QuestSource | null = null,
+) {
+  const accepted = acceptQuest(book, definitions, questId, acceptedAt, giverEntityId, source);
+  return accepted.ok
+    ? { ...accepted, book: reconcileQuestBookWithDurableFacts(accepted.book, definitions, facts) }
+    : accepted;
+}
+
+/**
+ * Adds system-owned opening quests exactly once. Generic side work is always
+ * eligible; culture discovery quests opt in only for known/selected factions.
+ * Abandoned or historical quests are respected rather than silently revived.
+ */
+export function bootstrapSystemQuests(
+  book: QuestBook,
+  definitions: readonly QuestDefinition[],
+  options: SystemQuestBootstrapOptions = {},
+) {
+  let next = normalizeQuestBook(book);
+  const facts = options.facts ?? {};
+  const appropriateFactions = new Set([
+    ...(options.appropriateFactionIds ?? []).map(cleanId).filter(Boolean),
+    ...(facts.discoveredTowns ?? []).map((town) => cleanId(town.factionId)).filter(Boolean),
+  ]);
+  const requested = new Set<string>([
+    ...DEFAULT_SYSTEM_MAIN_QUEST_IDS,
+    ...DEFAULT_SYSTEM_SIDE_QUEST_IDS,
+    ...(options.mainQuestIds ?? []),
+    ...(options.sideQuestIds ?? []),
+  ]);
+  for (const definition of definitions) {
+    if (definition.giver) continue;
+    if (definition.kind === "main") {
+      requested.add(definition.id);
+      continue;
+    }
+    const factions = definition.objectives
+      .filter((objective): objective is Extract<QuestObjective, { kind: "discover-town" }> => objective.kind === "discover-town")
+      .map((objective) => cleanNullableId(objective.factionId))
+      .filter((factionId): factionId is string => Boolean(factionId));
+    if (factions.length === 0 || factions.some((factionId) => appropriateFactions.has(factionId))) requested.add(definition.id);
+  }
+  for (const questId of requested) {
+    const definition = definitions.find((entry) => entry.id === questId);
+    if (!definition || definition.giver || questAvailability(next, definition) !== "available") continue;
+    const accepted = acceptQuest(next, definitions, questId, count(options.acceptedAt));
+    if (accepted.ok) next = accepted.book;
+  }
+  return reconcileQuestBookWithDurableFacts(next, definitions, facts);
 }
 
 export function failQuest(book: QuestBook, questId: string, reason: string, failedAt: number) {

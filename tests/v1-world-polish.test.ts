@@ -24,6 +24,14 @@ test("chairs and stools resolve stable floor-level sitting anchors", () => {
   assert.equal(eastChair.yaw, -Math.PI / 2);
 });
 
+test("transparent Moonbough foliage and Moonwells leave connected solid faces visible", () => {
+  const world = new ChunkWorld();
+  assert.equal(world.faceVisible(BlockId.MoonboughLog, BlockId.MoonboughLeaves), true);
+  assert.equal(world.faceVisible(BlockId.MoonboughLeaves, BlockId.MoonboughLeaves), false);
+  assert.equal(world.faceVisible(BlockId.MoonboughLog, BlockId.Moonwell), true);
+  world.dispose();
+});
+
 test("Meadow Grass accepts saplings and wild peppermint columns remain connected", () => {
   assert.equal(canPlantSaplingOn(BlockId.MeadowGrass), true);
   assert.equal(canPlantSaplingOn(BlockId.CloudreedGrass), true);

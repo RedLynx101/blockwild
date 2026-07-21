@@ -90,6 +90,14 @@ test("wood elf player and resident models have visibly staged pointed features",
   assert.ok((staff.geometry as THREE.BoxGeometry).parameters.depth > 1.5, "warden staff reads as a forward weapon");
 });
 
+test("Hearthkin residents present carried work items in front of their hands", () => {
+  for (const kind of ["hobbit-farmer", "hobbit-miner", "hobbit-merchant", "hobbit-banker", "hobbit-mayor"] as const) {
+    const resident = createMobVisual(kind, -320);
+    assert.ok(resident.parts.arms.length >= 2, `${kind} has articulated arms`);
+    assert.ok(resident.parts.arms.slice(-2).every((arm) => arm.rotation.x >= 0.85), `${kind} carries its work item forward rather than through a lowered hand`);
+  }
+});
+
 test("dragonfly wings resolve to mirrored final rotations for both wing pairs", () => {
   const visual = createMobVisual("reed-dragonfly", -302);
   const clockMs = 1_337;

@@ -27,6 +27,7 @@ export type ArrowStepResult =
   | { kind: "expired" };
 
 const GRAVITY = 8.2;
+const PROJECTILE_VISUAL_FORWARD = new THREE.Vector3(0, 0, -1);
 
 export function aimArrowVelocity(origin: THREE.Vector3, target: THREE.Vector3, speed = 11.5) {
   const delta = target.clone().sub(origin);
@@ -59,8 +60,9 @@ export function createArrowVisual() {
 
 export function orientArrowVisual(projectile: Pick<ArrowProjectile, "visual" | "velocity">) {
   if (projectile.velocity.lengthSq() < 1e-8) return;
-  const target = projectile.visual.position.clone().add(projectile.velocity);
-  projectile.visual.lookAt(target);
+  // Every projectile model is authored nose-first on local -Z. Object3D.lookAt
+  // points local +Z at its target, which made arrows fly tail-first.
+  projectile.visual.quaternion.setFromUnitVectors(PROJECTILE_VISUAL_FORWARD, projectile.velocity.clone().normalize());
 }
 
 export function createArrowProjectile(

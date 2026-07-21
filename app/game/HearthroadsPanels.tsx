@@ -14,6 +14,8 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from "react";
 import {
+  MAX_MAP_ZOOM,
+  MIN_MAP_ZOOM,
   constrainMapViewState,
   createMapViewState,
   fastTravelChargeCost,
@@ -47,6 +49,7 @@ import {
   questSourceCanOffer,
   questSourceCanTurnIn,
   questTurnInRoute,
+  questVisibleInJournal,
   type QuestAvailability,
   type QuestBook,
   type QuestDefinition,
@@ -55,6 +58,13 @@ import {
   type QuestSource,
   type QuestTurnInRoute,
 } from "./quests";
+import {
+  GUILDS,
+  GUILD_QUESTS,
+  questProgress as guildQuestProgress,
+  type GuildBookState,
+  type GuildQuestDefinition,
+} from "./guilds";
 import { hasBlueprint, type BlueprintState } from "./blueprints";
 import {
   ingredientAvailableCount,
@@ -520,6 +530,11 @@ export type MapPanelProps = Readonly<{
   onClose?: () => void;
 }>;
 
+export function formatMapZoom(zoom: number) {
+  const finiteZoom = Number.isFinite(zoom) ? Math.max(0, zoom) : 1;
+  return finiteZoom < 0.1 ? finiteZoom.toFixed(2) : finiteZoom.toFixed(1);
+}
+
 export function MapPanel({
   knowledge,
   currentPosition,
@@ -539,7 +554,7 @@ export function MapPanel({
   otherPlayers = [],
   viewState: controlledViewState,
   onViewStateChange,
-  minimumZoom = 1,
+  minimumZoom = MIN_MAP_ZOOM,
   alwaysShowPoiLabels = false,
   trackedTargetId = null,
   onTrackTarget,
@@ -588,7 +603,7 @@ export function MapPanel({
     () => mapOpeningBounds(currentChunkX, currentChunkZ),
     [currentChunkX, currentChunkZ],
   );
-  const zoomLimits = useMemo(() => ({ minimum: minimumZoom } as const), [minimumZoom]);
+  const zoomLimits = useMemo(() => ({ minimum: minimumZoom, maximum: MAX_MAP_ZOOM } as const), [minimumZoom]);
   const activeViewState = useMemo(
     () => constrainMapViewState(baseBounds, controlledViewState ?? localViewState, zoomLimits),
     [baseBounds, controlledViewState, localViewState, zoomLimits],
@@ -727,7 +742,7 @@ export function MapPanel({
           <div
             ref={mapCanvasRef}
             className={`hearthroads-map-canvas${dragState ? " dragging" : ""}`}
-            aria-label={`Map with ${knowledge.exploredChunks.length} explored chunks at ${activeViewState.zoom.toFixed(1)} times zoom`}
+            aria-label={`Map with ${knowledge.exploredChunks.length} explored chunks at ${formatMapZoom(activeViewState.zoom)} times zoom`}
             onPointerDown={handleMapPointerDown}
             onPointerMove={handleMapPointerMove}
             onPointerUp={finishMapDrag}
@@ -779,8 +794,8 @@ export function MapPanel({
               <button type="button" onClick={() => updateViewState(panMapView(activeViewState, panStepX, 0, zoomLimits))} aria-label="Pan map east">→</button>
               <button type="button" onClick={() => updateViewState(panMapView(activeViewState, 0, panStepZ, zoomLimits))} aria-label="Pan map south">↓</button>
               <button type="button" onClick={() => updateViewState(stepMapZoom(activeViewState, -1, zoomLimits))} disabled={activeViewState.zoom <= minimumZoom} aria-label="Zoom map out">−</button>
-              <output aria-label="Current map zoom">{activeViewState.zoom.toFixed(1)}×</output>
-              <button type="button" onClick={() => updateViewState(stepMapZoom(activeViewState, 1, zoomLimits))} disabled={activeViewState.zoom >= 12} aria-label="Zoom map in">+</button>
+              <output aria-label="Current map zoom">{formatMapZoom(activeViewState.zoom)}×</output>
+              <button type="button" onClick={() => updateViewState(stepMapZoom(activeViewState, 1, zoomLimits))} disabled={activeViewState.zoom >= MAX_MAP_ZOOM} aria-label="Zoom map in">+</button>
             </div>
             <MapTerrainCanvas
               bounds={bounds}
@@ -1016,13 +1031,17 @@ function rewardSummary(definition: QuestDefinition) {
   return rewards;
 }
 
+export type QuestJournalTab = QuestKind | "guild";
+
 export type QuestPanelProps = Readonly<{
   book: QuestBook;
   definitions: readonly QuestDefinition[];
+  guildBook?: GuildBookState | null;
+  guildDefinitions?: readonly GuildQuestDefinition[];
   selectedQuestId?: string | null;
   onSelectQuest?: (questId: string) => void;
-  activeTab?: QuestKind;
-  onTabChange?: (tab: QuestKind) => void;
+  activeTab?: QuestJournalTab;
+  onTabChange?: (tab: QuestJournalTab) => void;
   onAccept: (questId: string) => void;
   onPin: (questId: string | null) => void;
   onAbandon: (questId: string) => void;
@@ -1035,6 +1054,8 @@ export type QuestPanelProps = Readonly<{
 export function QuestPanel({
   book,
   definitions,
+  guildBook = null,
+  guildDefinitions = GUILD_QUESTS,
   selectedQuestId,
   onSelectQuest,
   activeTab,
@@ -1048,27 +1069,29 @@ export function QuestPanel({
   onClose,
 }: QuestPanelProps) {
   const titleId = useId();
-  const [localTab, setLocalTab] = useState<QuestKind>("main");
+  const [localTab, setLocalTab] = useState<QuestJournalTab>("main");
   const [localSelectedId, setLocalSelectedId] = useState<string | null>(null);
   const tab = activeTab ?? localTab;
-  const visibleDefinitions = definitions.filter((definition) => {
-    if (definition.kind !== tab) return false;
-    const availability = questAvailability(book, definition);
-    if (["active", "ready", "completed", "failed"].includes(availability)) return true;
-    return questSourceCanOffer(definition, source);
-  });
+  const activeGuildDefinitions = guildBook ? guildDefinitions.filter((definition) => (
+    guildBook.guilds[definition.guildId]?.activeQuestIds.includes(definition.id)
+  )) : [];
+  const visibleDefinitions = tab === "guild" ? [] : definitions.filter((definition) => (
+    definition.kind === tab && questVisibleInJournal(book, definition, source)
+  ));
   const fallbackSelected = visibleDefinitions.find((definition) => book.active.some((active) => active.questId === definition.id))
     ?? visibleDefinitions[0]
     ?? null;
   const selectedId = selectedQuestId === undefined ? localSelectedId : selectedQuestId;
   const selected = visibleDefinitions.find((definition) => definition.id === selectedId) ?? fallbackSelected;
+  const selectedGuild = activeGuildDefinitions.find((definition) => definition.id === selectedId) ?? activeGuildDefinitions[0] ?? null;
+  const selectedGuildProgress = selectedGuild && guildBook ? guildQuestProgress(guildBook, selectedGuild.id) : null;
   const active = selected ? book.active.find((entry) => entry.questId === selected.id) ?? null : null;
   const availability = selected ? questAvailability(book, selected) : null;
   const turnInRoute = selected ? questTurnInRoute(book, selected) : null;
   const canTurnInHere = selected ? questSourceCanTurnIn(book, selected, source) : false;
   const rewards = selected ? rewardSummary(selected) : [];
 
-  const selectTab = (nextTab: QuestKind) => {
+  const selectTab = (nextTab: QuestJournalTab) => {
     setLocalTab(nextTab);
     onTabChange?.(nextTab);
     setLocalSelectedId(null);
@@ -1087,11 +1110,11 @@ export function QuestPanel({
         subtitle="Main roads branch; side roads can be left behind."
         titleId={titleId}
         onClose={onClose}
-        meta={<span className="hearthroads-quest-count">{book.active.length} active</span>}
+        meta={<span className="hearthroads-quest-count">{book.active.length + activeGuildDefinitions.length} active</span>}
       />
 
       <nav className="hearthroads-journal-tabs inventory-tabs" aria-label="Quest categories">
-        {(["main", "side"] as const).map((kind) => (
+        {(["main", "side", ...(activeGuildDefinitions.length ? ["guild" as const] : [])] as const).map((kind) => (
           <button
             className={tab === kind ? "active" : ""}
             key={kind}
@@ -1099,14 +1122,31 @@ export function QuestPanel({
             onClick={() => selectTab(kind)}
             aria-current={tab === kind ? "page" : undefined}
           >
-            {kind === "main" ? "Main story" : "Side quests"}
+            {kind === "main" ? "Main story" : kind === "side" ? "Side quests" : "Guild quests"}
           </button>
         ))}
       </nav>
 
       <div className="hearthroads-journal-layout">
         <div className="hearthroads-quest-list" role="list" aria-label={`${tab} quests`}>
-          {visibleDefinitions.map((definition) => {
+          {tab === "guild" ? activeGuildDefinitions.map((definition) => {
+            const progress = guildBook ? guildQuestProgress(guildBook, definition.id) : null;
+            return (
+              <button
+                className={`hearthroads-quest-row status-${progress?.complete ? "ready" : "active"}${selectedGuild?.id === definition.id ? " selected" : ""}`}
+                key={definition.id}
+                type="button"
+                onClick={() => selectQuest(definition.id)}
+                aria-pressed={selectedGuild?.id === definition.id}
+              >
+                <span className="hearthroads-quest-knot" aria-hidden="true">{progress?.complete ? "✓" : "◇"}</span>
+                <span>
+                  <strong>{definition.name}</strong>
+                  <small>{progress?.complete ? "Ready to report" : GUILDS[definition.guildId].name}</small>
+                </span>
+              </button>
+            );
+          }) : visibleDefinitions.map((definition) => {
             const status = questAvailability(book, definition);
             const isPinned = book.pinnedQuestIds.includes(definition.id);
             return (
@@ -1125,16 +1165,64 @@ export function QuestPanel({
               </button>
             );
           })}
-          {visibleDefinitions.length === 0 ? (
+          {(tab === "guild" ? activeGuildDefinitions.length : visibleDefinitions.length) === 0 ? (
             <div className="hearthroads-list-empty">
-              <strong>No {tab === "main" ? "story chapters" : "side quests"} yet</strong>
-              <span>New paths will appear as you meet people and explore.</span>
+              <strong>No {tab === "main" ? "story chapters" : tab === "side" ? "side quests" : "accepted guild quests"} yet</strong>
+              <span>{tab === "guild" ? "Guild chapters appear here after you accept them from the guild ledger." : "New paths will appear as you meet people and explore."}</span>
             </div>
           ) : null}
         </div>
 
         <article className="hearthroads-quest-detail" aria-live="polite">
-          {selected && availability ? (
+          {tab === "guild" ? (selectedGuild && selectedGuildProgress ? (
+            <>
+              <header>
+                <span className={`hearthroads-status-ribbon status-${selectedGuildProgress.complete ? "ready" : "active"}`}>
+                  {selectedGuildProgress.complete ? "Ready to report" : "Active"}
+                </span>
+                <h3>{selectedGuild.name}</h3>
+                <p>{selectedGuild.summary}</p>
+                <small className="hearthroads-quest-source">
+                  {GUILDS[selectedGuild.guildId].name} · chapter {selectedGuild.number} · report to {prettyId(selectedGuild.giverId)}
+                </small>
+              </header>
+
+              <section className="hearthroads-objectives" aria-labelledby={`${titleId}-guild-objectives`}>
+                <h4 id={`${titleId}-guild-objectives`}>Guild demonstrations</h4>
+                <ol>
+                  {selectedGuildProgress.objectives.map((objective) => {
+                    const complete = objective.current >= objective.target;
+                    return (
+                      <li className={complete ? "complete" : ""} key={objective.id}>
+                        <span aria-hidden="true">{complete ? "✓" : "○"}</span>
+                        <div>
+                          <strong>{objective.explanation}</strong>
+                          <small>{objective.current} / {objective.target}</small>
+                          <span className="hearthroads-progress-track" aria-hidden="true">
+                            <i style={{ width: `${clamp(objective.current / Math.max(1, objective.target), 0, 1) * 100}%` }} />
+                          </span>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </section>
+
+              <section className="hearthroads-quest-rewards" aria-labelledby={`${titleId}-guild-change`}>
+                <h4 id={`${titleId}-guild-change`}>Persistent change</h4>
+                <p>{selectedGuild.persistentChange}</p>
+              </section>
+
+              <footer className="hearthroads-quest-actions">
+                <small>New guild chapters remain optional and are accepted from the Guilds ledger.</small>
+              </footer>
+            </>
+          ) : (
+            <div className="hearthroads-selection-empty">
+              <span aria-hidden="true">⌁</span>
+              <h3>No accepted guild quest selected</h3>
+            </div>
+          )) : selected && availability ? (
             <>
               <header>
                 <span className={`hearthroads-status-ribbon status-${availability}`}>{statusLabel(availability)}</span>

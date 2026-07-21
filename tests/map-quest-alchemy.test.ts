@@ -56,16 +56,21 @@ import {
   shareMapsAtCartographyTable,
 } from "../app/game/map-system.ts";
 import {
+  DEFAULT_QUEST_DEFINITIONS,
   HEARTHROADS_MAIN_QUESTS,
   abandonQuest,
   acceptQuest,
+  acceptQuestWithDurableFacts,
   applyQuestEvent,
+  bootstrapSystemQuests,
   createDeliverySideQuest,
   createQuestBook,
   normalizeQuestBook,
   pinQuest,
   questAvailability,
+  questVisibleInJournal,
   questlineBranches,
+  reconcileQuestBookWithDurableFacts,
   turnInQuest,
   type QuestDefinition,
 } from "../app/game/quests.ts";
@@ -288,7 +293,9 @@ test("the opening main quest branches after day one and keeps rewards claim-base
   assert.equal(accepted.ok, true);
   book = accepted.book;
   book = pinQuest(book, first.id);
-  book = applyQuestEvent(book, HEARTHROADS_MAIN_QUESTS, { type: "day-reached", day: 1, at: 100 });
+  book = applyQuestEvent(book, HEARTHROADS_MAIN_QUESTS, { type: "day-reached", day: 1, at: 99 });
+  assert.equal(questAvailability(book, first), "active", "starting day one is not itself a survived day");
+  book = applyQuestEvent(book, HEARTHROADS_MAIN_QUESTS, { type: "day-reached", day: 2, at: 100 });
   assert.equal(questAvailability(book, first), "ready");
   assert.equal(book.pinnedQuestId, first.id);
   const completed = turnInQuest(book, HEARTHROADS_MAIN_QUESTS, first.id, {}, 101);
@@ -299,8 +306,80 @@ test("the opening main quest branches after day one and keeps rewards claim-base
   assert.equal(book.pinnedQuestId, null);
   assert.equal(questAvailability(book, five), "available");
   assert.equal(questAvailability(book, town), "available");
+  const advanced = bootstrapSystemQuests(book, HEARTHROADS_MAIN_QUESTS, { acceptedAt: 102, facts: { currentDay: 2 } });
+  assert.deepEqual(new Set(advanced.active.map((entry) => entry.questId)), new Set([five.id, town.id]), "newly unlocked giver-less main branches activate without a redundant accept step");
   const branches = questlineBranches(HEARTHROADS_MAIN_QUESTS, "hearthroads-main").find((entry) => entry.questId === first.id)!;
   assert.deepEqual(new Set(branches.unlocks), new Set([five.id, town.id]));
+});
+
+test("system quest bootstrap is idempotent and activates only appropriate giver-less side roads", () => {
+  const facts = {
+    currentDay: 1,
+    discoveredTowns: [{ townId: "freehold-start", factionId: "hobbits" }],
+    customEvents: [{ eventId: "rare-creature-species-captured", count: 2 }],
+  } as const;
+  const bootstrapped = bootstrapSystemQuests(createQuestBook(), DEFAULT_QUEST_DEFINITIONS, { acceptedAt: 50, facts });
+  assert.deepEqual(new Set(bootstrapped.active.map((entry) => entry.questId)), new Set([
+    "main-first-dawn",
+    "dragonwake-living-archive",
+    "hobbit-smoke-on-the-hedgerow",
+  ]));
+  assert.equal(bootstrapped.active.find((entry) => entry.questId === "main-first-dawn")?.status, "active");
+  assert.equal(bootstrapped.active.find((entry) => entry.questId === "hobbit-smoke-on-the-hedgerow")?.status, "ready");
+  assert.equal(bootstrapped.active.find((entry) => entry.questId === "dragonwake-living-archive")?.objectiveProgress["capture-rare-creatures"], 2);
+  assert.deepEqual(bootstrapSystemQuests(bootstrapped, DEFAULT_QUEST_DEFINITIONS, { acceptedAt: 999, facts }), bootstrapped);
+  assert.equal(bootstrapped.active.some((entry) => entry.questId === "goblin-brass-on-the-ridge"), false);
+});
+
+test("day-one durable facts repair the formerly auto-completed opening quest", () => {
+  const bootstrapped = bootstrapSystemQuests(createQuestBook(), HEARTHROADS_MAIN_QUESTS, {
+    acceptedAt: 10,
+    facts: { currentDay: 1 },
+  });
+  const first = bootstrapped.active.find((entry) => entry.questId === "main-first-dawn")!;
+  assert.equal(first.status, "active");
+  assert.equal(first.objectiveProgress["survive-day-one"], 0);
+
+  const stale = {
+    ...bootstrapped,
+    active: bootstrapped.active.map((entry) => entry.questId === "main-first-dawn"
+      ? { ...entry, status: "ready" as const, objectiveProgress: { "survive-day-one": 1 } }
+      : entry),
+  };
+  const repaired = reconcileQuestBookWithDurableFacts(stale, HEARTHROADS_MAIN_QUESTS, { currentDay: 1 });
+  const repairedFirst = repaired.active.find((entry) => entry.questId === "main-first-dawn")!;
+  assert.equal(repairedFirst.status, "active");
+  assert.equal(repairedFirst.objectiveProgress["survive-day-one"], 0);
+});
+
+test("durable facts reconcile late quest acceptance without counting spent delivery goods", () => {
+  const discovery = DEFAULT_QUEST_DEFINITIONS.find((quest) => quest.id === "hobbit-smoke-on-the-hedgerow")!;
+  const facts = { discoveredTowns: [{ townId: "known-freehold", factionId: "hobbits" }] } as const;
+  const accepted = acceptQuestWithDurableFacts(createQuestBook(), [discovery], discovery.id, 20, facts);
+  assert.equal(accepted.ok, true);
+  assert.equal(accepted.book.active[0]?.status, "ready");
+  assert.equal(accepted.book.active[0]?.objectiveProgress["discover-hobbit-town"], 1);
+
+  const delivery: QuestDefinition = {
+    id: "delivery-is-not-history",
+    questlineId: "test",
+    kind: "side",
+    name: "Present Goods",
+    summary: "Current inventory remains authoritative.",
+    objectives: [{ id: "apples", label: "Deliver apples", kind: "deliver-item", itemId: "apple", count: 3 }],
+    rewards: { gold: 0, items: [], blueprints: [], factionAlignment: {} },
+  };
+  const deliveryBook = acceptQuest(createQuestBook(), [delivery], delivery.id, 0).book;
+  const reconciled = reconcileQuestBookWithDurableFacts(deliveryBook, [delivery], { acquiredItems: [{ itemId: "apple", count: 99 }] });
+  assert.equal(reconciled.active[0]?.objectiveProgress.apples, 0);
+});
+
+test("locked side quests stay hidden while offerable and historical journal entries remain visible", () => {
+  const opening = DEFAULT_QUEST_DEFINITIONS.find((quest) => quest.id === "hobbit-smoke-on-the-hedgerow")!;
+  const locked = DEFAULT_QUEST_DEFINITIONS.find((quest) => quest.id === "hobbit-long-table-watch")!;
+  const book = createQuestBook();
+  assert.equal(questVisibleInJournal(book, opening), true);
+  assert.equal(questVisibleInJournal(book, locked), false);
 });
 
 test("multiple quest criteria advance independently and giver hand-in atomically consumes deliveries", () => {

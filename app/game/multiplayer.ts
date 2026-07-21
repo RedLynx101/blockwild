@@ -202,7 +202,13 @@ export type DropSnapshotEntry = {
   x: number;
   y: number;
   z: number;
+  /** Host velocity for smooth guest prediction. Omitted by older protocol-v2 clients. */
+  vx?: number;
+  vy?: number;
+  vz?: number;
   age: number;
+  /** Remaining host pickup lock. Omitted by older protocol-v2 clients. */
+  pickupDelay?: number | null;
   durability?: number;
   /** Bounded JSON state for placed eggs and other exact-state world drops. */
   metadata?: Record<string, unknown>;
@@ -296,6 +302,10 @@ export type InventoryAction = {
    * player pose.
    */
   pickupAt?: { x: number; y: number; z: number };
+  /** Host-authored pack image committed atomically with a pickup. */
+  playerState?: PlayerSessionSnapshot;
+  /** Host-authored stack remainder after the accepted pickup. */
+  remainingCount?: number;
   status?: ActionStatus;
   reason?: string;
 };
@@ -336,7 +346,7 @@ export type ItemStackSnapshot = { item: number; count: number; durability?: numb
 export type InventorySnapshot = { revision: number; slots: ItemStackSnapshot[]; selected: number };
 export type ContainerSnapshot = {
   id: string;
-  kind: "chest" | "double-chest" | "furnace" | "crafting";
+  kind: "chest" | "double-chest" | "furnace" | "wheat-mill" | "crafting";
   revision: number;
   slots: ItemStackSnapshot[];
   machine?: { progress: number; burn: number; burnMax: number };
@@ -974,7 +984,11 @@ function validateDrop(value: unknown): value is DropSnapshotEntry {
     && isFiniteNumber(value.x, -COORDINATE_LIMIT, COORDINATE_LIMIT)
     && isFiniteNumber(value.y, -4096, 4096)
     && isFiniteNumber(value.z, -COORDINATE_LIMIT, COORDINATE_LIMIT)
+    && (value.vx === undefined || isFiniteNumber(value.vx, -128, 128))
+    && (value.vy === undefined || isFiniteNumber(value.vy, -128, 128))
+    && (value.vz === undefined || isFiniteNumber(value.vz, -128, 128))
     && isFiniteNumber(value.age, 0, 1_000_000)
+    && (value.pickupDelay === undefined || value.pickupDelay === null || isFiniteNumber(value.pickupDelay, 0, 1_000_000))
     && (value.durability === undefined || isInteger(value.durability, 0, 1_000_000))
     && validateDropMetadata(value.metadata);
 }
@@ -1127,7 +1141,7 @@ function validateInventorySnapshot(value: unknown): value is InventorySnapshot {
 function validateContainerSnapshot(value: unknown): value is ContainerSnapshot {
   return isRecord(value)
     && isShortString(value.id, 96)
-    && ["chest", "double-chest", "furnace", "crafting"].includes(value.kind as string)
+    && ["chest", "double-chest", "furnace", "wheat-mill", "crafting"].includes(value.kind as string)
     && isInteger(value.revision, 0, Number.MAX_SAFE_INTEGER)
     && Array.isArray(value.slots)
     && value.slots.length <= 128
@@ -1303,6 +1317,9 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
           && isFiniteNumber(value.pickupAt.x, -COORDINATE_LIMIT, COORDINATE_LIMIT)
           && isFiniteNumber(value.pickupAt.y, -4096, 4096)
           && isFiniteNumber(value.pickupAt.z, -COORDINATE_LIMIT, COORDINATE_LIMIT)))
+        && (value.playerState === undefined || validatePlayerSessionSnapshot(value.playerState))
+        && (value.remainingCount === undefined || isInteger(value.remainingCount, 0, 65_535))
+        && ((value.status !== undefined && value.status !== "request") || (value.playerState === undefined && value.remainingCount === undefined))
         && validateStatusFields(value);
     case "container-action":
       return isId(value.requestId)

@@ -582,6 +582,8 @@ input:focus-visible {
   font-size: 10px;
 }
 
+.target-label.target-destroyed { color: rgba(255, 220, 181, .7); }
+
 .block-icon {
   --block-color: #888;
   position: relative;
@@ -658,6 +660,25 @@ input:focus-visible {
   text-shadow: 2px 2px 0 #000;
   animation: save-fade 1.3s steps(5, end) both;
 }
+
+.context-reference-hint {
+  position: fixed;
+  right: 1rem;
+  bottom: 4.35rem;
+  z-index: 205;
+  display: flex;
+  gap: .45rem;
+  padding: .38rem .5rem;
+  border: 1px solid rgba(223, 202, 126, .48);
+  background: rgba(10, 16, 12, .9);
+  color: #dce5d7;
+  font: 700 .62rem/1.2 monospace;
+  box-shadow: 0 .25rem .8rem rgba(0, 0, 0, .42);
+  pointer-events: none;
+}
+
+.context-reference-hint span { display: flex; align-items: center; gap: .25rem; }
+.context-reference-hint kbd { color: #fff2ad; }
 
 .menu-overlay {
   position: absolute;
@@ -3729,6 +3750,38 @@ input:focus-visible {
 .item-guide-process p { margin: .4rem 0; color: #aebca9; font-size: .78rem; }
 .item-guide-pattern-button { border: 1px solid #cfb963; background: #354733; color: #fff1ad; padding: .48rem .7rem; font: inherit; cursor: pointer; }
 .item-guide-empty { color: #95a38f; font-style: italic; }
+.item-guide-board {
+  margin: 1rem 0 .55rem;
+  padding: .85rem;
+  border: 1px solid rgba(224, 201, 111, .42);
+  background: linear-gradient(145deg, rgba(39, 52, 39, .86), rgba(12, 20, 15, .92));
+}
+.item-guide-board .recipe-board-title { display: flex; justify-content: space-between; color: #f0dda0; }
+.item-guide-board .recipe-preview-row { width: fit-content; margin: .9rem auto .45rem; }
+.item-guide-board .recipe-preview-ingredients { justify-content: center; color: #c8d4c2; }
+
+.wheat-mill-window { width: min(910px, 96vw); }
+.wheat-mill-layout {
+  display: grid;
+  grid-template-columns: minmax(92px, 1fr) 76px minmax(115px, 1.25fr) minmax(92px, 1fr) minmax(180px, 1.5fr);
+  align-items: center;
+  gap: .8rem;
+  padding: 1rem;
+  border: 1px solid rgba(217, 178, 103, .4);
+  background: linear-gradient(145deg, #30251a, #1b2119 58%, #131914);
+}
+.wheat-mill-slot { display: grid; justify-items: center; gap: .45rem; color: #d9c48e; font-size: .62rem; }
+.mill-wheel { position: relative; width: 62px; height: 62px; border: 7px double #ad976f; border-radius: 50%; box-shadow: inset 0 0 0 7px #544735, 3px 4px 0 rgba(0,0,0,.45); }
+.mill-wheel::before, .mill-wheel::after { content: ""; position: absolute; inset: 25px -5px; background: #d1bb86; box-shadow: 0 0 0 2px #5a482f; }
+.mill-wheel::after { transform: rotate(90deg); }
+.mill-wheel > span { position: absolute; inset: 19px; z-index: 2; border-radius: 50%; background: #4c4133; box-shadow: inset 0 0 0 3px #d2bc8c; }
+.mill-wheel.turning { animation: mill-turn 1.4s steps(8, end) infinite; }
+@keyframes mill-turn { to { transform: rotate(360deg); } }
+@media (max-width: 760px) {
+  .wheat-mill-layout { grid-template-columns: 1fr 64px 1fr; }
+  .wheat-mill-layout .smelt-progress { grid-column: 1 / -1; grid-row: 2; width: 100%; }
+  .wheat-mill-layout .smelt-guide { grid-column: 1 / -1; }
+}
 
 .telemetry-setting { display: grid; grid-template-columns: 1fr; gap: .75rem; align-items: center; padding: .8rem; border: 1px solid rgba(162, 197, 157, .28); background: rgba(14, 29, 20, .55); }
 .telemetry-setting label { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 1rem; }
@@ -7498,6 +7551,37 @@ input:focus-visible {
   box-shadow: -8px 2px #cb4d47;
 }
 
+.item-icon-kind-moonberry-cookie::before {
+  left: 2px;
+  top: 3px;
+  width: 26px;
+  height: 25px;
+  border: 2px solid #6b3e28;
+  border-radius: 43% 48% 45% 42%;
+  background:
+    radial-gradient(circle at 26% 34%, #74438f 0 7%, #4f2c65 8% 10%, transparent 11%),
+    radial-gradient(circle at 70% 30%, #aa6bc2 0 7%, #714089 8% 10%, transparent 11%),
+    radial-gradient(circle at 31% 73%, #9258ae 0 7%, #633477 8% 10%, transparent 11%),
+    radial-gradient(circle at 76% 70%, #6d397f 0 6%, #4d285c 7% 9%, transparent 10%),
+    linear-gradient(135deg, #e5b86f 0 14%, #c98b4c 15% 43%, #b57641 44% 68%, #d79b55 69% 100%);
+  box-shadow: inset -3px -3px 0 #8c542f, inset 2px 2px 0 #f0c982, 2px 3px 0 rgba(0, 0, 0, .42);
+  clip-path: polygon(15% 0, 74% 0, 74% 4%, 92% 4%, 92% 13%, 100% 13%, 100% 78%, 92% 78%, 92% 91%, 78% 91%, 78% 100%, 18% 100%, 18% 95%, 7% 95%, 7% 84%, 0 84%, 0 18%, 7% 18%, 7% 8%, 15% 8%);
+  transform: rotate(-7deg);
+}
+
+.item-icon-kind-moonberry-cookie::after {
+  left: 11px;
+  top: 10px;
+  width: 8px;
+  height: 9px;
+  border: 3px solid #f1dfad;
+  border-top-color: transparent;
+  border-right-color: transparent;
+  border-radius: 50%;
+  filter: drop-shadow(1px 1px 0 #8f653e);
+  transform: rotate(-35deg);
+}
+
 .item-icon-kind-seed::before {
   left: 3px;
   top: 5px;
@@ -7574,6 +7658,71 @@ input:focus-visible {
   border: 4px solid #5e3921;
   background: linear-gradient(32deg, transparent 42%, #a46e3d 43% 57%, transparent 58%), linear-gradient(-32deg, transparent 42%, #a46e3d 43% 57%, transparent 58%);
   box-shadow: inset 0 5px 0 #b47b45, inset 0 -5px 0 #82512e, 2px 2px 0 rgba(0, 0, 0, .52);
+}
+
+.item-icon-kind-fence::before {
+  left: 3px;
+  top: 2px;
+  width: 23px;
+  height: 27px;
+  background:
+    linear-gradient(90deg, transparent 0 3px, #6b4227 3px 8px, transparent 8px 15px, #6b4227 15px 20px, transparent 20px),
+    linear-gradient(transparent 7px, #ad7542 7px 12px, transparent 12px 19px, #87562f 19px 24px, transparent 24px);
+  filter: drop-shadow(2px 2px 0 rgba(0, 0, 0, .52));
+}
+
+.item-icon-kind-stool::before {
+  left: 4px;
+  top: 6px;
+  width: 22px;
+  height: 8px;
+  border: 2px solid #5e3921;
+  border-radius: 45% 45% 18% 18%;
+  background: linear-gradient(#c08a51, #8e5b32);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, .5);
+}
+
+.item-icon-kind-stool::after {
+  left: 7px;
+  top: 15px;
+  width: 16px;
+  height: 13px;
+  border-left: 4px solid #704529;
+  border-right: 4px solid #704529;
+  transform: perspective(20px) rotateX(-8deg);
+}
+
+.item-icon-kind-flour::before {
+  left: 4px;
+  top: 6px;
+  width: 23px;
+  height: 23px;
+  border: 2px solid #897958;
+  border-radius: 4px 4px 7px 7px;
+  background: radial-gradient(circle at 52% 56%, #fff4cf 0 22%, #e5d29e 24% 42%, transparent 44%), linear-gradient(90deg, #bba979, #f2dfaa 45% 60%, #a89163);
+  box-shadow: inset 0 3px 0 rgba(255, 250, 222, .45), 2px 2px 0 rgba(0, 0, 0, .5);
+  clip-path: polygon(15% 0, 85% 0, 78% 20%, 94% 100%, 6% 100%, 22% 20%);
+}
+
+.item-icon-kind-wheat-mill::before {
+  left: 2px;
+  top: 8px;
+  width: 27px;
+  height: 21px;
+  border: 3px solid #563821;
+  background: linear-gradient(90deg, #8b5c35, #c08749 48% 63%, #704527 64%);
+  box-shadow: inset 0 5px 0 rgba(244, 201, 116, .18), 2px 2px 0 rgba(0, 0, 0, .55);
+}
+
+.item-icon-kind-wheat-mill::after {
+  left: 8px;
+  top: 1px;
+  width: 15px;
+  height: 15px;
+  border: 3px dashed #d2ad6d;
+  border-radius: 50%;
+  background: radial-gradient(circle, #54402b 0 18%, #9a7544 20% 48%, #5f452a 50% 58%, transparent 60%);
+  filter: drop-shadow(1px 2px 0 rgba(0, 0, 0, .5));
 }
 
 .item-icon-kind-hoe::before,
@@ -7726,17 +7875,19 @@ input:focus-visible {
 }
 
 .item-icon-kind-orb-rack::before {
-  left: 2px;
+  left: 50%;
   top: 7px;
   width: 26px;
   height: 21px;
+  box-sizing: border-box;
   border: 3px solid #513723;
   background: linear-gradient(#745138 0 18%, transparent 19% 42%, #745138 43% 58%, transparent 59% 82%, #745138 83%);
   box-shadow: 2px 3px 0 rgba(0, 0, 0, .55);
+  transform: translateX(-50%);
 }
 
 .item-icon-kind-orb-rack::after {
-  left: 5px;
+  left: 3px;
   top: 8px;
   width: 6px;
   height: 6px;
@@ -8607,6 +8758,10 @@ input:focus-visible {
 .item-icon-kind-compass::before { width: 22px !important; height: 22px !important; }
 .item-icon-kind-lead::before { width: 22px !important; height: 22px !important; }
 .item-icon-kind-fence-gate::before { width: 26px !important; height: 23px !important; }
+.item-icon-kind-fence::before { width: 23px !important; height: 27px !important; }
+.item-icon-kind-stool::before { width: 22px !important; height: 8px !important; }
+.item-icon-kind-flour::before { width: 23px !important; height: 23px !important; }
+.item-icon-kind-wheat-mill::before { width: 27px !important; height: 21px !important; }
 .item-icon-kind-nocturne-heart::before { width: 24px !important; height: 26px !important; }
 .custom-item-icon[data-item-icon^="armor-"]::before { width: 22px !important; height: 25px !important; }
 

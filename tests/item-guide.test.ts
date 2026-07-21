@@ -14,15 +14,19 @@ test("the item guide covers every registered item with deterministic prose and o
   }
 });
 
-test("crafting, furnace, alchemy, distillery, and Sugarworks processes share one index", () => {
+test("crafting, milling, furnace, alchemy, distillery, and Sugarworks processes share one index", () => {
   for (const recipe of RECIPES) assert.ok(ITEM_GUIDE_PROCESSES.some((process) => process.craftingRecipeId === recipe.id));
   for (const input of Object.keys(SMELTING)) assert.ok(ITEM_GUIDE_PROCESSES.some((process) => process.id === `smelt:${input}`));
-  for (const station of ["Hand crafting", "Crafting table", "Furnace", "Alchemy Stand", "Distillery", "Sugarworks"] as const) {
+  for (const station of ["Hand crafting", "Crafting table", "Furnace", "Wheat Mill", "Alchemy Stand", "Distillery", "Sugarworks"] as const) {
     assert.ok(ITEM_GUIDE_PROCESSES.some((process) => process.station === station), station);
   }
   const stick = ITEM_GUIDE_ENTRIES.find((entry) => entry.item === Item.Stick)!;
   assert.ok(stick.usedIn.length > 4);
   assert.equal(itemGuideMatches(stick, "crafting"), true);
+  const flour = ITEM_GUIDE_ENTRIES.find((entry) => entry.item === Item.Flour)!;
+  assert.ok(flour.madeBy.some((process) => process.station === "Wheat Mill" && process.inputs.some((input) => input.items.includes(Item.Wheat))));
+  const wheat = ITEM_GUIDE_ENTRIES.find((entry) => entry.item === Item.Wheat)!;
+  assert.ok(wheat.usedIn.some((process) => process.station === "Wheat Mill" && process.outputItem === Item.Flour));
 });
 
 test("the searchable guide is available beside recipes and every crafting station", () => {

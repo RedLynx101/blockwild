@@ -9,6 +9,7 @@ import {
   applyAscendantHealthFloor,
   ascendantTraitEnabled,
   createSkillState,
+  explorationMinimumMapZoom,
   hasAllSkillsMastered,
   normalizeSkillState,
   setAscendantTraitEnabled,
@@ -17,6 +18,26 @@ import {
   skillXpForNextRank,
   unlockPerk,
 } from "../app/game/skills.ts";
+
+test("exploration map scale expands tenfold at every progression tier", () => {
+  const ordinary = createSkillState();
+  assert.equal(explorationMinimumMapZoom(ordinary), 0.05);
+
+  const perkState = {
+    ...ordinary,
+    skills: { ...ordinary.skills, exploration: { level: 25, xp: 0 } },
+    unlockedPerkIds: ["exploration-trail-memory"],
+  };
+  assert.equal(explorationMinimumMapZoom(perkState), 0.025);
+
+  const mastered = {
+    ...ordinary,
+    skills: { ...ordinary.skills, exploration: { level: MAX_SKILL_LEVEL, xp: 0 } },
+  };
+  const ascendant = setAscendantTraitEnabled(mastered, "exploration", true);
+  assert.equal(ascendant.reason, "enabled");
+  assert.equal(explorationMinimumMapZoom(ascendant.state), 0.01);
+});
 
 test("all ten extensible skills use the exact one-percent-per-point rule", () => {
   assert.deepEqual(SKILL_IDS, ["melee", "ranged", "mining", "crafting", "survival", "husbandry", "exploration", "magic", "bartering", "luck"]);

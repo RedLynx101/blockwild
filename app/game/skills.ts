@@ -338,8 +338,8 @@ export function hasPerkAbility(state: SkillState, ability: string) {
  * world-scale survey without changing chunk coordinates.
  */
 export function explorationMinimumMapZoom(state: SkillState) {
-  if (ascendantTraitEnabled(state, "exploration")) return 0.1;
-  return hasPerkAbility(state, "extended-map-zoom") ? 0.25 : 0.5;
+  if (ascendantTraitEnabled(state, "exploration")) return 0.01;
+  return hasPerkAbility(state, "extended-map-zoom") ? 0.025 : 0.05;
 }
 
 export function explorationShowsDistantPoiLabels(_state: SkillState) {
