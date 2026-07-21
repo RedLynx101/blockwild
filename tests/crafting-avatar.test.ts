@@ -452,8 +452,8 @@ test("workstation UI normalizes apiary production and exact capture-orb metadata
 });
 
 test("human release identity stays separate from save schemas", () => {
-  assert.equal(GAME_VERSION, "1.8.5");
-  assert.equal(GAME_RELEASE_NAME, "Trailcraft Currents");
+  assert.equal(GAME_VERSION, "1.8.6");
+  assert.equal(GAME_RELEASE_NAME, "Hearthmill Handshake");
   assert.equal(normalizeGameVersion("garbage"), "0.1.0");
 });
 

@@ -264,6 +264,9 @@ test("layout plans make thematic, lit, walled towns with gates, paths, furniture
   assert.deepEqual(planSettlementLayout(hobbitCandidate), hobbitLayout);
   assert.equal(hobbitLayout.buildings.some((building) => building.role === "bank"), true);
   assert.equal(hobbitLayout.buildings.some((building) => building.role === "brewery" && building.furniture.some((item) => item.kind === "distillery")), true);
+  assert.equal(hobbitLayout.buildings.some((building) => building.role === "wheat-mill"
+    && building.materialPalette.includes("wheat-mill")
+    && building.furniture.some((item) => item.kind === "wheat-mill")), true);
   assert.equal(goblinLayout.buildings.some((building) => building.role === "warg-kennel"), true);
   assert.equal(goblinLayout.buildings.some((building) => building.role === "blacksmith"), true);
   assert.equal(hobbitLayout.gates.length, SETTLEMENT_SIZE_RULES.village.gateCount);
@@ -333,6 +336,12 @@ test("every culture uses a bounded connected tile graph with seeded branches and
       for (const gate of layout.gates) {
         assert.ok(roadPoints.has(`${gate.position.x},surface,${gate.position.z}`));
         assert.equal(layout.wall.some((node) => node.position.x === gate.position.x && node.position.z === gate.position.z), false, "gate cells remain open");
+        const neighbors = gate.facing % 2 === 0
+          ? [{ x: gate.position.x - 1, z: gate.position.z }, { x: gate.position.x + 1, z: gate.position.z }]
+          : [{ x: gate.position.x, z: gate.position.z - 1 }, { x: gate.position.x, z: gate.position.z + 1 }];
+        for (const neighbor of neighbors) {
+          assert.equal(layout.wall.some((node) => node.position.x === neighbor.x && node.position.z === neighbor.z), true, "fence resumes immediately beside each gate");
+        }
       }
     } else {
       assert.equal(layout.topology, "subterranean-hold");
@@ -355,6 +364,9 @@ test("resident names, roles, equipment, waypoints, and Warg alignment are determ
   const hobbits = createSettlementState("host-a", hobbitCandidate);
   const goblins = createSettlementState("host-a", goblinCandidate);
   assert.ok(findRoleWaypoint(hobbits, "mayor"));
+  const farmer = hobbits.residents.find((resident) => resident.profession === "farmer");
+  assert.ok(farmer);
+  assert.equal(hobbits.layout.buildings.find((building) => building.id === farmer.homeBuildingId)?.role, "wheat-mill");
   assert.equal(hobbits.residents.filter((resident) => resident.profession === "warrior").some((resident) => resident.equipment.weapon === "crossbow"), true);
   assert.equal(goblins.residents.filter((resident) => resident.profession === "warrior").every((resident) => resident.equipment.weapon === "goblin-spear"), true);
   assert.equal(goblins.alignedCreatures.every((creature) => creature.kind === "warg" && !creature.tameable), true);

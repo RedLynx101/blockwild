@@ -185,6 +185,7 @@ export type SettlementBuildingRole =
   | "guardhouse"
   | "market"
   | "farm"
+  | "wheat-mill"
   | "mine-store"
   | "blacksmith"
   | "bank"
@@ -229,6 +230,7 @@ export type SettlementFurniture = Readonly<{
     | "chair"
     | "table"
     | "barrel"
+    | "wheat-mill"
     | "distillery"
     | "merchant-counter"
     | "bank-counter"
@@ -378,15 +380,16 @@ function buildingRoles(factionId: Exclude<FactionId, "player">, size: Settlement
     ];
     return expandBuildingRoles(sugarcourt, ["bonbon-home", "gumdrop-garden", "bonbon-home", "sweet-market", "taffy-kennel"], target, seed);
   }
-  const common: SettlementBuildingRole[] = ["mayor-hall", "guardhouse", "market", "home", "home", "farm"];
+  const agrarianRole: SettlementBuildingRole = factionId === "hobbits" ? "wheat-mill" : "farm";
+  const common: SettlementBuildingRole[] = ["mayor-hall", "guardhouse", "market", "home", "home", agrarianRole];
   const themed: SettlementBuildingRole[] = factionId === "hobbits"
-    ? ["brewery", "bank", "farm", "home", "alchemist", "warehouse"]
+    ? ["brewery", "bank", "wheat-mill", "home", "alchemist", "warehouse"]
     : ["mine-store", "blacksmith", "warg-kennel", "home", "alchemist", "warehouse"];
-  const expanded: SettlementBuildingRole[] = [...common, ...themed, "home", "guardhouse", "market", "home", "farm", "warehouse"];
+  const expanded: SettlementBuildingRole[] = [...common, ...themed, "home", "guardhouse", "market", "home", agrarianRole, "warehouse"];
   return expandBuildingRoles(
     expanded,
     factionId === "hobbits"
-      ? ["home", "farm", "home", "brewery", "warehouse", "guardhouse"]
+      ? ["home", "wheat-mill", "home", "brewery", "warehouse", "guardhouse"]
       : ["home", "mine-store", "home", "warg-kennel", "warehouse", "guardhouse"],
     target,
     seed,
@@ -410,7 +413,9 @@ function paletteFor(factionId: Exclude<FactionId, "player">, role: SettlementBui
     return ["living-coral", "reef-stone", "reefglass"];
   }
   if (factionId === "hobbits") {
-    return role === "bank" ? ["river-stone", "dark-oak", "copper"] : ["wildwood", "plaster", "mossy-thatch"];
+    if (role === "bank") return ["river-stone", "dark-oak", "copper"];
+    if (role === "wheat-mill") return ["river-stone", "wildwood", "mossy-thatch", "wheat-mill"];
+    return ["wildwood", "plaster", "mossy-thatch"];
   }
   if (factionId === "sugarcourt") {
     if (role === "sugar-palace") return ["boiled-sugarbrick", "candywood", "sugar-glass"];
@@ -499,8 +504,16 @@ function furnitureFor(factionId: Exclude<FactionId, "player">, buildingId: strin
   addDoor();
   if (role === "home" || role === "mayor-hall" || role === "guardhouse") addBed(-1, 0);
   if (role === "home" || role === "mayor-hall") addBed(1, 0);
-  add("chair", 0, 1, 0, true, ((facing + 2) & 3) as 0 | 1 | 2 | 3);
-  add("table", 0, 0);
+  if (role === "wheat-mill") {
+    // Keep the doorway and resident anchor clear while giving the farmer a
+    // functional, visually distinct workplace rather than another bed-house.
+    add("wheat-mill", 0, 1);
+    add("barrel", -1, 1);
+    add("table", 1, 0);
+  } else {
+    add("chair", 0, 1, 0, true, ((facing + 2) & 3) as 0 | 1 | 2 | 3);
+    add("table", 0, 0);
+  }
   if (role === "brewery") { add("barrel", -1, 1); add("distillery", 1, 1); }
   if (role === "bank") add("bank-counter", 1, 0);
   if (role === "market") add("merchant-counter", 1, 0);
@@ -781,7 +794,9 @@ export function planSettlementLayout(candidate: SettlementCandidate): Settlement
 
   const wall: SettlementWallNode[] = [];
   const pushWall = (x: number, z: number) => {
-    if (gates.some((gate) => Math.hypot(gate.position.x - x, gate.position.z - z) <= 1.5)) return;
+    // A gate occupies one authored perimeter cell. Removing its neighbors made
+    // a three-wide breach around a one-wide gate and broke fence continuity.
+    if (gates.some((gate) => gate.position.x === x && gate.position.z === z)) return;
     const offset = Math.abs(x - center.x) + Math.abs(z - center.z);
     const corner = Math.abs(x - center.x) === perimeterRadius && Math.abs(z - center.z) === perimeterRadius;
     wall.push({
@@ -1147,7 +1162,7 @@ function preferredBuildings(layout: SettlementLayoutPlan, profession: ResidentPr
                           : profession === "sugarcourt-kennelkeeper" ? "taffy-kennel"
               : profession === "mayor" ? "mayor-hall"
     : profession === "warrior" ? "guardhouse"
-      : profession === "farmer" ? "farm"
+      : profession === "farmer" ? (layout.buildings.some((building) => building.role === "wheat-mill") ? "wheat-mill" : "farm")
         : profession === "miner" ? "mine-store"
           : profession === "brewer" ? "brewery"
             : profession === "banker" ? "bank"
@@ -1509,7 +1524,7 @@ export function growSettlementPopulation(
     health: 8,
     maxHealth: 8,
     homeBuildingId: home?.id ?? null,
-    position: home?.position ?? settlement.layout.center,
+    position: residentInteriorPosition(home, index, settlement.layout.center),
     equipment: { weapon: null, tool: null },
     hiredByPlayerId: null,
     orders: { stance: "passive", follow: false, followDistance: "dynamic", holdPosition: null },

@@ -327,6 +327,8 @@ const CRATE_CONTENT_ITEM = new Map<ItemCode, ItemCode>([
   [BlockId.FrostpearCrate, Item.Frostpear],
   [BlockId.ShellfruitCrate, Item.Shellfruit],
   [BlockId.MoonberryCookieCrate, Item.MoonberryCookie],
+  [BlockId.FlourCrate, Item.Flour],
+  [BlockId.BreadCrate, Item.Bread],
 ]);
 
 function ordinaryPlayerCommerceBaseValue(item: ItemCode) {

@@ -117,7 +117,7 @@ test("Lantern Piehouse keeper is grounded indoors and reliably stocks its signat
   assert.equal(structureMobSpawnY(world as never, "hobbit-merchant", keeper.position.x, keeper.position.z, keeper.position.y, keeper.tags), ORIGIN.y + MOB_DEFS["hobbit-merchant"].footOffset);
   const merchant = createMerchant("host", "waypost-lantern-piehouse", "hobbits", "brewer");
   assert.ok(merchant.inventory.some((stack) => stack.itemKey === "hearthberry-apple-pie" && stack.count >= 1));
-  assert.deepEqual(RECIPES.find((entry) => entry.id === "hearthberry-apple-pie")?.pattern, [Item.Wheat, Item.Wheat, Item.Wheat, Item.Apple, Item.Berry, Item.HoneyJar]);
+  assert.deepEqual(RECIPES.find((entry) => entry.id === "hearthberry-apple-pie")?.pattern, [Item.Flour, Item.Flour, Item.Flour, Item.Apple, Item.Berry, Item.HoneyJar]);
   assert.equal(ITEMS[Item.HearthberryApplePie].food, 8);
   assert.ok(createAvatarHeldItemModel(Item.HearthberryApplePie)?.getObjectByName("hearthberry-pie-crust"));
 });

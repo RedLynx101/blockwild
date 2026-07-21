@@ -795,19 +795,20 @@ import {
 import { UNDERGROUND_BIOME_NAMES, UndergroundBiomeId } from "./underground";
 import {
   DEFAULT_QUEST_DEFINITIONS,
-  HEARTHROADS_MAIN_QUESTS,
-  acceptQuest,
   acceptQuestFromSource,
   abandonQuest,
   applyQuestEvent,
+  bootstrapSystemQuests,
   createQuestBook,
   normalizeQuestBook,
   pinQuest,
   togglePinnedQuest,
   turnInQuestAtSource,
   questTurnInRoute,
+  reconcileQuestBookWithDurableFacts,
   type QuestBook,
   type QuestDefinition,
+  type QuestDurableFacts,
   type QuestEvent,
   type QuestSource,
 } from "./quests";
@@ -836,6 +837,14 @@ import {
   type SugarworksState,
 } from "./candyworks";
 import {
+  WHEAT_MILL_CYCLE_SECONDS,
+  breakWheatMill,
+  createWheatMill,
+  normalizeWheatMill,
+  stepWheatMill,
+  type WheatMillState,
+} from "./wheat-mill";
+import {
   blueprintCraftingLock,
   createBlueprintState,
   normalizeBlueprintState,
@@ -846,6 +855,7 @@ import {
   createPlantBestiaryState,
   discoverPlantBlock,
   normalizePlantBestiaryState,
+  plantForBlock,
   type PlantBestiaryState,
 } from "./plants";
 import {
@@ -1098,6 +1108,7 @@ export type HudState = {
   craftOutput: InventorySlot | null;
   craftingSize: 2 | 3;
   activeFurnace: FurnaceState | null;
+  activeWheatMill: WheatMillState | null;
   activeChest: ChestState | null;
   activeChestTitle: string;
   activeApiary?: ApiaryHudState | null;
@@ -1117,6 +1128,7 @@ export type HudState = {
   bestiary: BestiaryProgress;
   selected: number;
   targetName: string | null;
+  targetCollectible: boolean;
   targetMob: {
     name: string;
     health: number;
@@ -1355,6 +1367,7 @@ export type WorldSave = {
   day: number;
   weather: Weather;
   furnaces: Record<string, FurnaceState>;
+  wheatMills?: Record<string, WheatMillState>;
   chests: Record<string, ChestState>;
   contextualLoot?: ContextualLootWorldState;
   roadEvents?: Record<string, RoadEventState>;
@@ -1419,7 +1432,7 @@ export type WorldSave = {
   savedAt: number;
 };
 
-export type OverlayKind = "inventory" | "crafting" | "furnace" | "chest" | "apiary" | "morph-loom" | "orb-rack" | "healing-station" | "waygrid-items" | "waygrid-creatures" | "aquarium" | "golem-forge" | "bestiary" | "creature-camp" | "multiplayer" | "sleep" | "pet" | "dragon" | "magic" | "skills" | "spell-wheel" | "library" | "incubator" | "map" | "quests" | "guilds" | "cartography" | "alchemy" | "distillery" | "sugarworks" | "sentient" | "trade" | "bank" | "settlement" | "follower";
+export type OverlayKind = "inventory" | "crafting" | "furnace" | "wheat-mill" | "chest" | "apiary" | "morph-loom" | "orb-rack" | "healing-station" | "waygrid-items" | "waygrid-creatures" | "aquarium" | "golem-forge" | "bestiary" | "creature-camp" | "multiplayer" | "sleep" | "pet" | "dragon" | "magic" | "skills" | "spell-wheel" | "library" | "incubator" | "map" | "quests" | "guilds" | "cartography" | "alchemy" | "distillery" | "sugarworks" | "sentient" | "trade" | "bank" | "settlement" | "follower";
 export type CameraMode = "first" | "third-rear" | "third-front";
 
 export type MultiplayerUiState = {
@@ -1570,6 +1583,7 @@ type MobEntity = {
   networkVelocity?: THREE.Vector3;
   networkSnapshotAge?: number;
   networkSnapshotAt?: number;
+  openedPassage?: { kind: "door" | "gate"; x: number; y: number; z: number; closeAfter: number };
 };
 
 type SailboatEntity = {
@@ -1734,9 +1748,21 @@ type DropEntity = {
   mesh: THREE.Object3D;
   ownsVisual?: boolean;
   velocity: THREE.Vector3;
+  networkTarget?: THREE.Vector3;
+  networkVelocity?: THREE.Vector3;
+  networkSnapshotAge?: number;
   age: number;
   pickupDelay: number;
 };
+
+type DropSpawnOptions = Readonly<{
+  allowMerge?: boolean;
+  exactPosition?: boolean;
+  id?: number;
+  velocity?: Readonly<{ x: number; y: number; z: number }>;
+  pickupDelay?: number;
+  networkReplica?: boolean;
+}>;
 
 type Particle = {
   mesh: THREE.Mesh;
@@ -1750,6 +1776,7 @@ type PendingGuestDropRequest = {
   action: InventoryAction;
   lastSentAt: number;
   attempts: number;
+  tombstoned?: boolean;
 };
 
 type PendingContainerIntent = {
@@ -1803,6 +1830,8 @@ export const ENVIRONMENT_LIGHT_POOL_SIZE = Object.freeze({ desktop: 16, touch: 8
 const PLAYER_HEIGHT = 1.8;
 const CROUCH_HEIGHT = 1.48;
 const PLAYER_RADIUS = 0.3;
+export const WORLD_DROP_PICKUP_RADIUS = 1.45;
+const WORLD_DROP_PICKUP_LAG_TOLERANCE = 4;
 const PLAYER_BODY_MASS = 1.15;
 const PHYSICS_STEP = 1 / 60;
 const INVENTORY_SIZE = 36;
@@ -3794,6 +3823,7 @@ export class VoxelEngine {
   craftGrid: Array<InventorySlot | null> = Array.from({ length: 9 }, () => null);
   craftingSize: 2 | 3 = 2;
   activeFurnaceKey: string | null = null;
+  activeWheatMillKey: string | null = null;
   activeChestKey: string | null = null;
   /** Shared slot container currently watched over multiplayer (chest or furnace). */
   activeNetworkContainerId: string | null = null;
@@ -3807,6 +3837,7 @@ export class VoxelEngine {
   activeGolemForgeKey: string | null = null;
   activeChestTitle = "Chest";
   furnaces = new Map<string, FurnaceState>();
+  wheatMills = new Map<string, WheatMillState>();
   chests = new Map<string, ChestState>();
   acquiredLootUniqueIds = new Set<string>();
   contextualLootContainers = new Map<string, LootContainerRecord>();
@@ -4413,6 +4444,14 @@ export class VoxelEngine {
       this.openOverlay("skills");
       return;
     }
+    if (event.code === "KeyB" && !event.repeat) {
+      if (this.targetMob) this.openOverlay("bestiary", `creature:${this.targetMob.kind}`);
+      else {
+        const plant = plantForBlock(this.target?.type);
+        this.openOverlay("bestiary", plant ? `plant:${plant.id}` : undefined);
+      }
+      return;
+    }
     if (event.code === "KeyQ" && !event.repeat && !this.paused && !this.titleMode) {
       this.spellKeyState = pressSpellKey(this.spellKeyState, performance.now()).state;
       return;
@@ -4637,6 +4676,7 @@ export class VoxelEngine {
     this.lastLightningId = "";
     this.lightningFlash = 0;
     this.clearEntities();
+    this.wheatMills.clear();
     this.apiaries.clear();
     this.morphLooms.clear();
     this.orbRacks.clear();
@@ -4755,6 +4795,7 @@ export class VoxelEngine {
     this.trash = null;
     this.craftGrid = Array.from({ length: 9 }, () => null);
     this.furnaces.clear();
+    this.wheatMills.clear();
     this.chests.clear();
     this.acquiredLootUniqueIds.clear();
     this.contextualLootContainers.clear();
@@ -4798,8 +4839,6 @@ export class VoxelEngine {
     this.goldWallet = createGoldWallet(authorityId, playerId, 0);
     this.bankAccount = createBankAccount(authorityId, playerId, this.day);
     this.stockMarket = createStockMarket(authorityId, playerId, this.world.seedText, this.day);
-    const openingQuest = acceptQuest(this.questBook, HEARTHROADS_MAIN_QUESTS, "main-first-dawn", Date.now());
-    if (openingQuest.ok) this.questBook = pinQuest(openingQuest.book, "main-first-dawn");
     const raceTraits = characterRaceTraits(this.activeCharacterProfile?.appearance.race ?? "wayfarer");
     const settlementOrigin = this.world.resolveSettlementOrigin(
       this.worldOptions.origin,
@@ -4829,6 +4868,8 @@ export class VoxelEngine {
       factionId: settlementOrigin.candidate.factionId,
       settlementSize: settlementOrigin.candidate.size,
     });
+    this.reconcileSystemQuests(true);
+    if (this.questBook.active.some((quest) => quest.questId === "main-first-dawn")) this.questBook = pinQuest(this.questBook, "main-first-dawn");
     if (mode === "survival") {
       this.inventory[0] = { item: Item.Berry, count: 3 };
     } else {
@@ -5130,6 +5171,7 @@ export class VoxelEngine {
     this.mapSurfaceSurveyedThisSession.clear();
     this.questBook = normalizeQuestBook(save.questBook);
     this.sideQuestDefinitions = Array.isArray(save.sideQuestDefinitions) ? save.sideQuestDefinitions.slice(0, 128) : [];
+    this.reconcileSystemQuests(true);
     this.blueprints = normalizeBlueprintState(save.blueprints);
     this.plantBestiary = normalizePlantBestiaryState(save.plantBestiary);
     this.magicState = normalizeMagicState(save.magicState);
@@ -5219,6 +5261,7 @@ export class VoxelEngine {
       fuel: normalizeCaptureOrbInventorySlot(value.fuel),
       output: normalizeCaptureOrbInventorySlot(value.output),
     }]));
+    this.wheatMills = new Map(Object.entries(save.wheatMills ?? {}).map(([key, value]) => [key, normalizeWheatMill(value)]));
     this.chests = restoreChestStorage(save.chests ?? {});
     const contextualLoot = normalizeContextualLootWorldState(save.contextualLoot);
     this.acquiredLootUniqueIds = new Set(contextualLoot.acquiredUniqueIds);
@@ -5250,6 +5293,7 @@ export class VoxelEngine {
     this.archiveShelves = new Map(Object.entries(save.archiveShelves ?? {}).map(([key, value]) => [key, normalizeArchiveShelf(value)]));
     this.tomeDisplays = new Map(Object.entries(save.tomeDisplays ?? {}).map(([key, value]) => [key, normalizeTomeDisplay(value)]));
     this.activeAlchemyKey = null;
+    this.activeWheatMillKey = null;
     this.activeMorphLoomKey = null;
     this.activeDistilleryKey = null;
     this.activeSugarworksKey = null;
@@ -5270,6 +5314,7 @@ export class VoxelEngine {
       ...this.golemForges.keys(),
       ...this.alchemyStands.keys(),
       ...this.distilleries.keys(),
+      ...this.wheatMills.keys(),
       ...this.sugarworks.keys(),
     ]) this.persistentMachineLastStep.set(key, restoredAt);
     this.persistentMachineTimer = 0;
@@ -6069,6 +6114,10 @@ export class VoxelEngine {
   }
 
   private networkContainerSlots(id: string): Array<InventorySlot | null> | null {
+    if (id.startsWith("wheat-mill:")) {
+      const mill = this.wheatMills.get(id.slice("wheat-mill:".length));
+      return mill ? [mill.input, mill.output] : null;
+    }
     if (id.startsWith("furnace:")) {
       const furnace = this.furnaces.get(id.slice("furnace:".length));
       return furnace ? [furnace.input, furnace.fuel, furnace.output] : null;
@@ -6077,6 +6126,13 @@ export class VoxelEngine {
   }
 
   private setNetworkContainerSlots(id: string, slots: Array<InventorySlot | null>) {
+    if (id.startsWith("wheat-mill:")) {
+      const key = id.slice("wheat-mill:".length);
+      const mill = this.wheatMills.get(key);
+      if (!mill || slots.length !== 2) return false;
+      this.wheatMills.set(key, normalizeWheatMill({ ...mill, input: slots[0], output: slots[1] }));
+      return true;
+    }
     if (id.startsWith("furnace:")) {
       const key = id.slice("furnace:".length);
       const furnace = this.furnaces.get(key);
@@ -6089,13 +6145,17 @@ export class VoxelEngine {
   }
 
   private networkContainerMachine(id: string) {
+    if (id.startsWith("wheat-mill:")) {
+      const mill = this.wheatMills.get(id.slice("wheat-mill:".length));
+      return mill ? { progress: mill.progressSeconds, burn: mill.input ? 1 : 0, burnMax: WHEAT_MILL_CYCLE_SECONDS } : undefined;
+    }
     if (!id.startsWith("furnace:")) return undefined;
     const furnace = this.furnaces.get(id.slice("furnace:".length));
     return furnace ? { progress: furnace.progress, burn: furnace.burn, burnMax: furnace.burnMax } : undefined;
   }
 
   private networkContainerKind(id: string): ContainerSnapshot["kind"] {
-    return id.startsWith("furnace:") ? "furnace" : id.includes("|") ? "double-chest" : "chest";
+    return id.startsWith("wheat-mill:") ? "wheat-mill" : id.startsWith("furnace:") ? "furnace" : id.includes("|") ? "double-chest" : "chest";
   }
 
   private applySemanticContainerOperation(
@@ -6108,6 +6168,7 @@ export class VoxelEngine {
       containerKind: this.networkContainerKind(id),
       canPlace: (index, stack) => {
         if (id.startsWith("exhibit:")) return typeof this.isExhibitResidentSlot !== "function" || this.isExhibitResidentSlot(stack);
+        if (id.startsWith("wheat-mill:")) return index === 0 && stack.item === Item.Wheat;
         if (!id.startsWith("furnace:")) return true;
         if (index === 0) return Boolean(SMELTING[stack.item]);
         if (index === 1) return this.fuelValue(stack.item) > 0;
@@ -6145,11 +6206,20 @@ export class VoxelEngine {
 
   private applyNetworkContainerSnapshots(entries: readonly ContainerSnapshot[]) {
     for (const entry of entries) {
-      if (entry.kind !== "chest" && entry.kind !== "double-chest" && entry.kind !== "furnace") continue;
+      if (entry.kind !== "chest" && entry.kind !== "double-chest" && entry.kind !== "furnace" && entry.kind !== "wheat-mill") continue;
       const currentRevision = this.multiplayerContainerRevisions.get(entry.id) ?? -1;
       if (entry.revision < currentRevision) continue;
       const slots = entry.slots.map(inventorySlotFromNetwork);
-      if (entry.kind === "furnace") {
+      if (entry.kind === "wheat-mill") {
+        const key = entry.id.startsWith("wheat-mill:") ? entry.id.slice("wheat-mill:".length) : entry.id;
+        const current = this.wheatMills.get(key) ?? createWheatMill();
+        this.wheatMills.set(key, normalizeWheatMill({
+          ...current,
+          input: slots[0] ?? null,
+          output: slots[1] ?? null,
+          progressSeconds: entry.machine?.progress ?? current.progressSeconds,
+        }));
+      } else if (entry.kind === "furnace") {
         const key = entry.id.startsWith("furnace:") ? entry.id.slice("furnace:".length) : entry.id;
         const current = this.furnaces.get(key) ?? blankFurnace();
         this.furnaces.set(key, {
@@ -6392,6 +6462,7 @@ export class VoxelEngine {
     if (!this.multiplayer) return;
     if (this.multiplayer.role === "guest" && (action.status === "accepted" || action.status === "rejected")) {
       if (action.kind === "collect" && action.dropId !== undefined) {
+        const pending = this.pendingGuestDropRequests.get(action.dropId);
         (this.multiplayerDiagnostics ??= new MultiplayerDiagnosticsRing()).record({
           requestId: action.requestId,
           kind: "pickup",
@@ -6401,11 +6472,17 @@ export class VoxelEngine {
         });
         this.pendingGuestDropRequests.delete(action.dropId);
         if (action.status === "accepted") {
+          if (action.playerState) this.applyLocalPlayerSessionSnapshot(action.playerState, true);
           const index = this.drops.findIndex((candidate) => candidate.id === action.dropId);
-          if (index >= 0) this.removeDrop(index);
+          if (index >= 0) {
+            const remaining = action.remainingCount ?? 0;
+            if (remaining <= 0) this.removeDrop(index);
+            else this.drops[index].count = remaining;
+          }
         } else {
-          const drop = this.drops.find((candidate) => candidate.id === action.dropId);
-          if (drop) drop.pickupDelay = Math.max(drop.pickupDelay, 0.65);
+          const index = this.drops.findIndex((candidate) => candidate.id === action.dropId);
+          if (index >= 0 && pending?.tombstoned) this.removeDrop(index);
+          else if (index >= 0) this.drops[index].pickupDelay = Math.max(this.drops[index].pickupDelay, 0.65);
         }
       }
       if (action.status === "rejected" && action.reason) this.events.onToast(action.reason);
@@ -6471,10 +6548,13 @@ export class VoxelEngine {
     // The latest 20 Hz pose remains authoritative. A recent client-observed
     // pickup point may bridge a small movement-lane delay, but only when it is
     // itself close to that authoritative pose and the drop.
-    const directReach = Boolean(drop && remotePickupPoint && drop.mesh.position.distanceToSquared(remotePickupPoint) <= 2.25 * 2.25);
+    const pickupReady = Boolean(drop && (drop.pickupDelay ?? 0) <= 0);
+    const directReach = Boolean(pickupReady && drop && remotePickupPoint
+      && drop.mesh.position.distanceToSquared(remotePickupPoint) <= WORLD_DROP_PICKUP_RADIUS ** 2);
     const lagCompensatedReach = Boolean(drop && remotePickupPoint && claimedPickupPoint
-      && claimedPickupPoint.distanceToSquared(remotePickupPoint) <= 4 * 4
-      && drop.mesh.position.distanceToSquared(claimedPickupPoint) <= 1.8 * 1.8);
+      && pickupReady
+      && claimedPickupPoint.distanceToSquared(remotePickupPoint) <= WORLD_DROP_PICKUP_LAG_TOLERANCE ** 2
+      && drop.mesh.position.distanceToSquared(claimedPickupPoint) <= WORLD_DROP_PICKUP_RADIUS ** 2);
     const withinReach = directReach || lagCompensatedReach;
     const serverPickupDistance = drop && remotePickupPoint ? drop.mesh.position.distanceTo(remotePickupPoint) : undefined;
     const claimedPickupDistance = drop && claimedPickupPoint ? drop.mesh.position.distanceTo(claimedPickupPoint) : undefined;
@@ -6529,8 +6609,13 @@ export class VoxelEngine {
       serverPickupDistance,
       claimedPickupDistance,
     });
-    this.multiplayer.sendInventoryAction({ ...action, count: result.added, status: "accepted" }, peer.identity.id);
-    this.sendAuthoritativePlayerState(peer.identity.id, action.requestId);
+    this.multiplayer.sendInventoryAction({
+      ...action,
+      count: result.added,
+      remainingCount: Math.max(0, drop.count),
+      playerState: next,
+      status: "accepted",
+    }, peer.identity.id);
     this.sendDropSnapshotsToConnectedPeers();
     this.saveSoon();
   }
@@ -6774,13 +6859,15 @@ export class VoxelEngine {
       }
       if (action.kind === "open") {
         const furnaceContainer = action.containerId.startsWith("furnace:");
-        const rawContainerId = furnaceContainer ? action.containerId.slice("furnace:".length) : action.containerId;
+        const millContainer = action.containerId.startsWith("wheat-mill:");
+        const rawContainerId = furnaceContainer ? action.containerId.slice("furnace:".length)
+          : millContainer ? action.containerId.slice("wheat-mill:".length) : action.containerId;
         const exhibitContainer = rawContainerId.startsWith("exhibit:");
         const exhibitBlock = exhibitContainer ? rawContainerId.slice("exhibit:".length) : null;
         const firstBlock = exhibitBlock ?? rawContainerId.split("|")[0];
         const coords = firstBlock.split(",").map(Number);
         const exhibitTopology = exhibitContainer && coords.length === 3 && coords.every(Number.isFinite) ? this.exhibitTopologyAt(coords[0], coords[1], coords[2]) : null;
-        const canonicalId = furnaceContainer ? `furnace:${rawContainerId}` : exhibitTopology ? this.consolidateExhibit(exhibitTopology) : coords.length === 3 && coords.every(Number.isFinite)
+        const canonicalId = furnaceContainer ? `furnace:${rawContainerId}` : millContainer ? `wheat-mill:${rawContainerId}` : exhibitTopology ? this.consolidateExhibit(exhibitTopology) : coords.length === 3 && coords.every(Number.isFinite)
           && this.world.getBlock(coords[0], coords[1], coords[2]) === BlockId.Chest
           ? this.resolveChest(firstBlock)
           : rawContainerId;
@@ -6791,14 +6878,18 @@ export class VoxelEngine {
           ? cargoMob.dragonState && dragonCargoSlots(cargoMob.dragonState) > 0
           : cargoMob.leviathanGrowth && cargoMob.leviathanGrowth.chestModules > 0));
         if (boat && !this.chests.has(canonicalId)) this.chests.set(canonicalId, boat.save.inventory);
-        const slots = this.networkContainerSlots(canonicalId);
-        const pose = this.remotePlayers.get(peerId)?.target;
         const furnacePosition = furnaceContainer && coords.length === 3 && coords.every(Number.isFinite)
           && this.world.getBlock(coords[0], coords[1], coords[2]) === BlockId.Furnace
           ? new THREE.Vector3(coords[0], coords[1], coords[2])
           : null;
+        const millPosition = millContainer && coords.length === 3 && coords.every(Number.isFinite)
+          && this.world.getBlock(coords[0], coords[1], coords[2]) === BlockId.WheatMill
+          ? new THREE.Vector3(coords[0], coords[1], coords[2])
+          : null;
+        const pose = this.remotePlayers.get(peerId)?.target;
         const keeperPosition = pose ? new THREE.Vector3(pose.x, pose.y, pose.z) : null;
         const inReach = Boolean(keeperPosition && ((furnacePosition && furnacePosition.distanceToSquared(keeperPosition) <= 8 * 8)
+          || (millPosition && millPosition.distanceToSquared(keeperPosition) <= 8 * 8)
           || (boat && boat.group.position.distanceToSquared(keeperPosition) <= 8 * 8)
           || (validCargo && cargoMob!.group.position.distanceToSquared(keeperPosition) <= 8 * 8)
           || (exhibitTopology && exhibitTopology.blocks.some((block) => new THREE.Vector3(block.x, block.y, block.z).distanceToSquared(keeperPosition) <= 8 * 8))
@@ -6807,8 +6898,14 @@ export class VoxelEngine {
           return position.length === 3 && position.every(Number.isFinite)
             && new THREE.Vector3(position[0], position[1], position[2]).distanceToSquared(keeperPosition) <= 8 * 8;
           })));
+        // Generated and newly placed furnaces have no storage record until a
+        // valid nearby keeper opens them. Only then materialize their canonical
+        // empty host-owned machine state.
+        if (furnacePosition && inReach && !this.furnaces.has(rawContainerId)) this.furnaces.set(rawContainerId, blankFurnace());
+        if (millPosition && inReach && !this.wheatMills.has(rawContainerId)) this.wheatMills.set(rawContainerId, createWheatMill());
+        const slots = this.networkContainerSlots(canonicalId);
         if (!slots || !inReach) {
-          const response: ContainerAction = { ...action, status: "rejected", reason: "That shared chest is unavailable or too far away." };
+          const response: ContainerAction = { ...action, status: "rejected", reason: "That shared workstation is unavailable or too far away." };
           this.queueCriticalReliableRequest(`host-container-reject:${peerId}:${action.requestId}`, () => this.multiplayer?.sendContainerAction(response, peerId) ?? 0, 4_000);
           return;
         }
@@ -6934,7 +7031,7 @@ export class VoxelEngine {
         this.multiplayerContainerAwaiting.delete(action.containerId);
         if (previousActive && action.status === "accepted") {
           this.activeNetworkContainerId = action.containerId;
-          if (!action.containerId.startsWith("furnace:")) this.activeChestKey = action.containerId;
+          if (!action.containerId.startsWith("furnace:") && !action.containerId.startsWith("wheat-mill:")) this.activeChestKey = action.containerId;
         }
       }
       if (!action.slots) {
@@ -7236,7 +7333,8 @@ export class VoxelEngine {
       }
       return;
     }
-    const activeId = this.activeNetworkContainerId ?? this.activeChestKey ?? (this.activeFurnaceKey ? `furnace:${this.activeFurnaceKey}` : null);
+    const activeId = this.activeNetworkContainerId ?? this.activeChestKey
+      ?? (this.activeFurnaceKey ? `furnace:${this.activeFurnaceKey}` : this.activeWheatMillKey ? `wheat-mill:${this.activeWheatMillKey}` : null);
     if (!activeId || this.multiplayerContainerAwaiting.has(activeId)) return;
     const optimistic = (this.multiplayerOptimisticContainers ??= new Map()).get(activeId);
     if (!optimistic) {
@@ -7263,12 +7361,26 @@ export class VoxelEngine {
     const pickupPoint = this.position.clone().add(new THREE.Vector3(0, 0.8, 0));
     const now = Date.now();
     for (const drop of this.drops) {
+      if (drop.networkTarget) {
+        drop.networkSnapshotAge = Math.min(0.3, (drop.networkSnapshotAge ?? 0) + dt);
+        const predicted = drop.networkVelocity
+          ? drop.networkTarget.clone().addScaledVector(drop.networkVelocity, Math.min(0.22, drop.networkSnapshotAge))
+          : drop.networkTarget;
+        const alpha = 1 - Math.exp(-dt * 14);
+        if (drop.mesh.position.distanceToSquared(predicted) > 8 * 8) drop.mesh.position.copy(predicted);
+        else drop.mesh.position.lerp(predicted, alpha);
+      }
+      drop.mesh.rotation.y += dt * 2.5;
       drop.pickupDelay = Math.max(0, drop.pickupDelay - dt);
-      if (drop.pickupDelay > 0 || drop.mesh.position.distanceToSquared(pickupPoint) >= 1.7 * 1.7) continue;
+      if (drop.pickupDelay > 0 || drop.mesh.position.distanceToSquared(pickupPoint) >= WORLD_DROP_PICKUP_RADIUS ** 2) continue;
       const pending = this.pendingGuestDropRequests.get(drop.id);
       if (pending) {
         if (pending.attempts >= 30 || now - pending.lastSentAt > 20_000) {
           this.pendingGuestDropRequests.delete(drop.id);
+          if (pending.tombstoned) {
+            const index = this.drops.indexOf(drop);
+            if (index >= 0) this.removeDrop(index);
+          }
         } else if (now - pending.lastSentAt >= 420) {
           try {
             if (session.sendInventoryAction(pending.action) > 0) {
@@ -7415,7 +7527,11 @@ export class VoxelEngine {
       x: drop.mesh.position.x,
       y: drop.mesh.position.y,
       z: drop.mesh.position.z,
+      vx: drop.velocity.x,
+      vy: drop.velocity.y,
+      vz: drop.velocity.z,
       age: drop.age,
+      pickupDelay: Number.isFinite(drop.pickupDelay) ? Math.max(0, drop.pickupDelay) : null,
       ...(drop.durability !== undefined ? { durability: drop.durability } : {}),
       ...(drop.metadata ? { metadata: cloneSlot({ item: drop.item, count: 1, metadata: drop.metadata })?.metadata } : {}),
     }));
@@ -7822,15 +7938,19 @@ export class VoxelEngine {
     } else if (tick < this.lastNetworkDropSnapshotTick) return;
     this.lastNetworkDropSnapshotTick = tick;
     const incoming = new Set(entries.map((entry) => entry.id));
-    for (const dropId of this.pendingGuestDropRequests.keys()) {
-      if (incoming.has(dropId)) continue;
-      const drop = this.drops.find((candidate) => candidate.id === dropId);
-      if (!scope || (drop && drop.mesh.position.distanceToSquared(this.position) <= scope.radius ** 2)) this.pendingGuestDropRequests.delete(dropId);
-    }
     for (let index = this.drops.length - 1; index >= 0; index -= 1) {
       const drop = this.drops[index];
       if (incoming.has(drop.id)) continue;
-      if (!scope || drop.mesh.position.distanceToSquared(this.position) <= scope.radius ** 2) this.removeDrop(index);
+      if (scope && drop.mesh.position.distanceToSquared(this.position) > scope.radius ** 2) continue;
+      const pending = this.pendingGuestDropRequests.get(drop.id);
+      if (pending) {
+        // The unordered snapshot lane may reveal host removal before the
+        // reliable atomic pickup response. Preserve the visual until the pack
+        // image and authoritative remainder arrive together.
+        pending.tombstoned = true;
+        continue;
+      }
+      this.removeDrop(index);
     }
     for (const entry of entries) {
       const tombstoneTick = this.appliedMultiplayerTombstones.get(`drop:${entry.id}`);
@@ -7840,20 +7960,36 @@ export class VoxelEngine {
       let drop = this.drops.find((candidate) => candidate.id === entry.id);
       if (!drop || drop.item !== entry.item) {
         if (drop) this.removeDrop(this.drops.indexOf(drop));
-        drop = this.spawnDrop(entry.item, entry.count, new THREE.Vector3(entry.x, entry.y, entry.z), entry.durability, entry.metadata) ?? undefined;
+        drop = this.spawnDrop(
+          entry.item,
+          entry.count,
+          new THREE.Vector3(entry.x, entry.y, entry.z),
+          entry.durability,
+          entry.metadata,
+          {
+            allowMerge: false,
+            exactPosition: true,
+            id: entry.id,
+            velocity: { x: entry.vx ?? 0, y: entry.vy ?? 0, z: entry.vz ?? 0 },
+            pickupDelay: entry.pickupDelay ?? Number.POSITIVE_INFINITY,
+            networkReplica: true,
+          },
+        ) ?? undefined;
         if (!drop) continue;
-        drop.id = entry.id;
-        drop.mesh.position.set(entry.x, entry.y, entry.z);
       } else {
         drop.count = entry.count;
         drop.durability = entry.durability;
         drop.metadata = entry.metadata ? cloneSlot({ item: entry.item, count: 1, metadata: entry.metadata })?.metadata : undefined;
-        drop.mesh.position.lerp(new THREE.Vector3(entry.x, entry.y, entry.z), 0.78);
       }
-      drop.velocity.set(0, 0, 0);
+      drop.networkTarget ??= new THREE.Vector3();
+      drop.networkTarget.set(entry.x, entry.y, entry.z);
+      drop.networkVelocity ??= new THREE.Vector3();
+      drop.networkVelocity.set(entry.vx ?? 0, entry.vy ?? 0, entry.vz ?? 0);
+      drop.networkSnapshotAge = 0;
+      drop.velocity.set(entry.vx ?? 0, entry.vy ?? 0, entry.vz ?? 0);
+      if (drop.mesh.position.distanceToSquared(drop.networkTarget) > 8 * 8) drop.mesh.position.copy(drop.networkTarget);
       drop.age = entry.age;
-      if (placedLeviathanEggMetadata(drop.metadata) || placedDragonEggMetadata(drop.metadata)) drop.pickupDelay = Number.POSITIVE_INFINITY;
-      else drop.pickupDelay = Math.min(drop.pickupDelay, Math.max(0, 0.35 - entry.age));
+      drop.pickupDelay = entry.pickupDelay ?? Number.POSITIVE_INFINITY;
       this.nextDropId = Math.max(this.nextDropId, entry.id + 1);
     }
   }
@@ -7977,7 +8113,12 @@ export class VoxelEngine {
           if (drop.item !== undefined) this.spawnDrop(drop.item, 1, new THREE.Vector3(drop.x, drop.y, drop.z));
           else this.dropBlockLoot(isTorchBlock(drop.type) ? BlockId.Torch : drop.type, drop.x, drop.y, drop.z);
         }
-        this.world.setBlocksBatch(action.edits.map((edit) => ({ ...edit, type: edit.type as BlockId })), true, true);
+        this.world.setBlocksBatch(
+          action.edits.map((edit) => ({ ...edit, type: edit.type as BlockId })),
+          true,
+          action.effect?.kind !== "tree-fell",
+          action.effect?.kind === "tree-fell",
+        );
         this.applyBlockEditFacings(action.edits, true);
         this.publishDestructionTombstones(action.edits
           .filter((edit) => edit.type === BlockId.Air)
@@ -7992,7 +8133,7 @@ export class VoxelEngine {
           this.multiplayerPlayerStates.set(peer.identity.id, placement.state);
           this.sendAuthoritativePlayerState(peer.identity.id, action.requestId);
         }
-        this.saveSoon();
+        if (action.effect?.kind !== "tree-fell") this.saveSoon();
         this.multiplayer.sendBlockAction(resolved);
       } else if (peer.identity) {
         this.multiplayer.sendBlockAction(resolved, peer.identity.id);
@@ -8001,10 +8142,21 @@ export class VoxelEngine {
       return;
     }
     if (this.multiplayer.role === "guest" && (action.status === "accepted" || action.status === "rejected")) {
+      const predictedTreeFall = action.status === "accepted"
+        && action.actorId === this.multiplayer.identity.id
+        && action.effect?.kind === "tree-fell"
+        && this.pendingGuestPlacementRequests.has(action.requestId);
       this.pendingGuestPlacementRequests.delete(action.requestId);
       if (action.status === "accepted" && action.actorId !== this.multiplayer.identity.id && action.effect?.kind === "tree-fell") this.animateNetworkTreeFell(action);
-      this.world.setBlocksBatch(action.edits.map((edit) => ({ ...edit, type: edit.type as BlockId })), true, true);
-      this.applyBlockEditFacings(action.edits, true);
+      if (!predictedTreeFall) {
+        this.world.setBlocksBatch(
+          action.edits.map((edit) => ({ ...edit, type: edit.type as BlockId })),
+          true,
+          action.effect?.kind !== "tree-fell",
+          action.effect?.kind === "tree-fell",
+        );
+        this.applyBlockEditFacings(action.edits, true);
+      }
       for (const edit of action.edits) if (edit.type === BlockId.Chest) {
         const key = blockKey(edit.x, edit.y, edit.z);
         if (!this.chests.has(key) && !this.chestStorageKey(key).includes("|")) this.chests.set(key, Array.from({ length: 27 }, () => null));
@@ -10412,7 +10564,8 @@ export class VoxelEngine {
   }
 
   openOverlay(kind: OverlayKind, key?: string) {
-    if (kind !== "chest" && kind !== "furnace") this.activeNetworkContainerId = null;
+    if (kind !== "chest" && kind !== "furnace" && kind !== "wheat-mill") this.activeNetworkContainerId = null;
+    if (kind !== "wheat-mill") this.activeWheatMillKey = null;
     if (kind !== "apiary") this.activeApiaryKey = null;
     if (kind !== "morph-loom") this.activeMorphLoomKey = null;
     if (kind !== "orb-rack") this.activeOrbRackKey = null;
@@ -10445,6 +10598,18 @@ export class VoxelEngine {
       this.activeNetworkContainerId = `furnace:${key}`;
       if (this.multiplayer?.role === "guest") {
         this.furnaces.set(key, blankFurnace());
+        this.multiplayerContainerSignatures.delete(this.activeNetworkContainerId);
+        this.requestNetworkContainerSnapshot(this.activeNetworkContainerId);
+      }
+    } else if (kind === "wheat-mill" && key) {
+      this.activeWheatMillKey = key;
+      this.activeFurnaceKey = null;
+      this.activeChestKey = null;
+      if (!this.wheatMills.has(key)) this.wheatMills.set(key, createWheatMill());
+      this.persistentMachineLastStep.set(key, Date.now());
+      this.activeNetworkContainerId = `wheat-mill:${key}`;
+      if (this.multiplayer?.role === "guest") {
+        this.wheatMills.set(key, createWheatMill());
         this.multiplayerContainerSignatures.delete(this.activeNetworkContainerId);
         this.requestNetworkContainerSnapshot(this.activeNetworkContainerId);
       }
@@ -10604,6 +10769,7 @@ export class VoxelEngine {
       this.requestNetworkCreatureAction({ kind: "sentient-close", targetId: closingSentientId });
     }
     this.activeFurnaceKey = null;
+    this.activeWheatMillKey = null;
     this.activeChestKey = null;
     this.activeNetworkContainerId = null;
     this.activeNetworkFacilityId = null;
@@ -10733,7 +10899,14 @@ export class VoxelEngine {
           this.removeMob(this.mobs.indexOf(mob));
         }
       } else if (tombstone.kind === "drop" && tombstone.entityId !== undefined) {
-        this.pendingGuestDropRequests.delete(tombstone.entityId);
+        const pending = this.pendingGuestDropRequests.get(tombstone.entityId);
+        if (pending) {
+          // The reliable pickup response owns the inventory transition. A
+          // tombstone may win the race on the unordered snapshot lane, so
+          // retain the replica until the atomic response arrives.
+          pending.tombstoned = true;
+          continue;
+        }
         const index = this.drops.findIndex((candidate) => candidate.id === tombstone.entityId);
         if (index >= 0) this.removeDrop(index);
       }
@@ -11313,6 +11486,10 @@ export class VoxelEngine {
       const furnace = this.furnaces.get(this.activeFurnaceKey);
       if (furnace) sources.push([furnace.input, furnace.fuel, furnace.output]);
     }
+    if (this.activeWheatMillKey) {
+      const mill = this.wheatMills.get(this.activeWheatMillKey);
+      if (mill) sources.push([mill.input, mill.output]);
+    }
     for (const source of sources) for (let index = 0; index < source.length; index += 1) {
       const slot = source[index];
       if (!slot || !inventorySlotsCanStack(slot, this.cursor) || slot.durability !== durability || this.cursor.count >= inventorySlotStackLimit(this.cursor)) continue;
@@ -11325,6 +11502,10 @@ export class VoxelEngine {
       const furnace = this.furnaces.get(this.activeFurnaceKey);
       const source = sources.at(-1);
       if (furnace && source?.length === 3) [furnace.input, furnace.fuel, furnace.output] = source as [InventorySlot | null, InventorySlot | null, InventorySlot | null];
+    } else if (this.activeWheatMillKey) {
+      const mill = this.wheatMills.get(this.activeWheatMillKey);
+      const source = sources.at(-1);
+      if (mill && source?.length === 2) this.wheatMills.set(this.activeWheatMillKey, normalizeWheatMill({ ...mill, input: source[0], output: source[1] }));
     }
     this.audio.play("pickup");
     this.saveSoon();
@@ -11579,6 +11760,15 @@ export class VoxelEngine {
       const destination = [furnace[target]];
       if (this.transferInto(slot, destination)) this.inventory[index] = null;
       furnace[target] = destination[0];
+      this.saveSoon();
+      return;
+    }
+    if (this.activeWheatMillKey) {
+      const mill = this.wheatMills.get(this.activeWheatMillKey);
+      if (!mill || slot.item !== Item.Wheat) return;
+      const destination = [mill.input];
+      if (this.transferInto(slot, destination)) this.inventory[index] = null;
+      this.wheatMills.set(this.activeWheatMillKey, normalizeWheatMill({ ...mill, input: destination[0] }));
       this.saveSoon();
       return;
     }
@@ -12522,7 +12712,7 @@ export class VoxelEngine {
     return true;
   }
 
-  machineClick(machine: "furnace" | "chest" | "apiary" | "morph-loom" | "orb-rack" | "healing-station", index: number, button: "left" | "right", shift = false) {
+  machineClick(machine: "furnace" | "wheat-mill" | "chest" | "apiary" | "morph-loom" | "orb-rack" | "healing-station", index: number, button: "left" | "right", shift = false) {
     if (machine === "apiary") { this.apiaryMachineClick(index, button, shift); return; }
     if (machine === "morph-loom") { this.morphLoomMachineClick(index, button, shift); return; }
     if (machine === "orb-rack" || machine === "healing-station") { this.orbStationMachineClick(machine, index, button, shift); return; }
@@ -12531,6 +12721,10 @@ export class VoxelEngine {
       const furnace = this.activeFurnaceKey ? this.furnaces.get(this.activeFurnaceKey) : null;
       if (!furnace || index < 0 || index > 2) return;
       slots = [furnace.input, furnace.fuel, furnace.output];
+    } else if (machine === "wheat-mill") {
+      const mill = this.activeWheatMillKey ? this.wheatMills.get(this.activeWheatMillKey) : null;
+      if (!mill || index < 0 || index > 1) return;
+      slots = [mill.input, mill.output];
     } else {
       const chest = this.activeChestKey ? this.chests.get(this.activeChestKey) : null;
       if (!chest || index < 0 || index >= chest.length) return;
@@ -12587,6 +12781,10 @@ export class VoxelEngine {
       if (machine === "furnace") {
         const furnace = this.furnaces.get(this.activeFurnaceKey ?? "");
         if (furnace) [furnace.input, furnace.fuel, furnace.output] = slots as [InventorySlot | null, InventorySlot | null, InventorySlot | null];
+      } else if (machine === "wheat-mill") {
+        const key = this.activeWheatMillKey ?? "";
+        const mill = this.wheatMills.get(key);
+        if (mill) this.wheatMills.set(key, normalizeWheatMill({ ...mill, input: slots[0], output: slots[1] }));
       }
       if (leftover < original) this.audio.play("pickup");
       this.saveSoon();
@@ -12595,7 +12793,7 @@ export class VoxelEngine {
       else this.syncInventoryMutationNow();
       return;
     }
-    if (machine === "furnace" && index === 2) {
+    if ((machine === "furnace" && index === 2) || (machine === "wheat-mill" && index === 1)) {
       if (!slot) return;
       if (!this.cursor) {
         if (button === "left") { this.cursor = slot; slots[index] = null; }
@@ -12611,8 +12809,14 @@ export class VoxelEngine {
         slot.count -= take;
         if (slot.count <= 0) slots[index] = null;
       }
-      const furnace = this.furnaces.get(this.activeFurnaceKey ?? "");
-      if (furnace) furnace.output = slots[2];
+      if (machine === "furnace") {
+        const furnace = this.furnaces.get(this.activeFurnaceKey ?? "");
+        if (furnace) furnace.output = slots[2];
+      } else {
+        const key = this.activeWheatMillKey ?? "";
+        const mill = this.wheatMills.get(key);
+        if (mill) this.wheatMills.set(key, normalizeWheatMill({ ...mill, output: slots[1] }));
+      }
       this.audio.play("pickup");
       this.saveSoon();
       this.emitHud(true);
@@ -12628,6 +12832,10 @@ export class VoxelEngine {
         this.events.onToast("That item is not furnace fuel.");
         return;
       }
+    }
+    if (machine === "wheat-mill" && this.cursor && (index !== 0 || this.cursor.item !== Item.Wheat)) {
+      this.events.onToast("The mill hopper accepts wheat only.");
+      return;
     }
     if (button === "left") {
       if (!this.cursor && slot) { this.cursor = slot; slots[index] = null; }
@@ -12657,6 +12865,10 @@ export class VoxelEngine {
     if (machine === "furnace") {
       const furnace = this.furnaces.get(this.activeFurnaceKey ?? "");
       if (furnace) [furnace.input, furnace.fuel, furnace.output] = slots as [InventorySlot | null, InventorySlot | null, InventorySlot | null];
+    } else if (machine === "wheat-mill") {
+      const key = this.activeWheatMillKey ?? "";
+      const mill = this.wheatMills.get(key);
+      if (mill) this.wheatMills.set(key, normalizeWheatMill({ ...mill, input: slots[0], output: slots[1] }));
     }
     this.audio.play("ui");
     this.saveSoon();
@@ -13067,6 +13279,7 @@ export class VoxelEngine {
     this.distilleries ??= new Map();
     this.sugarworks ??= new Map();
     this.golemForges ??= new Map();
+    this.wheatMills ??= new Map();
     this.persistentMachineLastStep ??= new Map();
     if (!Number.isFinite(this.persistentMachineCursor)) this.persistentMachineCursor = 0;
     if (!Number.isFinite(this.persistentMachineTimer)) this.persistentMachineTimer = 0;
@@ -13094,6 +13307,7 @@ export class VoxelEngine {
       ...[...this.alchemyStands.keys()].map((key) => ({ kind: "alchemy" as const, key })),
       ...[...this.distilleries.keys()].map((key) => ({ kind: "distillery" as const, key })),
       ...[...this.sugarworks.keys()].map((key) => ({ kind: "sugarworks" as const, key })),
+      ...[...this.wheatMills.keys()].map((key) => ({ kind: "wheat-mill" as const, key })),
       ...[...this.golemForges.keys()].map((key) => ({ kind: "golem-forge" as const, key })),
     ];
     if (!entries.length) return;
@@ -13179,6 +13393,13 @@ export class VoxelEngine {
         const next = stepSugarworks(station, elapsed * skillMultiplier(this.skillState.skills.crafting.level));
         this.sugarworks.set(entry.key, next);
         if (station.activeBatch && !next.activeBatch) meaningfulChange = true;
+      } else if (entry.kind === "wheat-mill") {
+        const station = this.wheatMills.get(entry.key);
+        if (!station) continue;
+        const next = stepWheatMill(station, elapsed * skillMultiplier(this.skillState.skills.crafting.level));
+        this.wheatMills.set(entry.key, next);
+        if ((station.input?.count ?? 0) !== (next.input?.count ?? 0) || (station.output?.count ?? 0) !== (next.output?.count ?? 0)) meaningfulChange = true;
+        if (this.activeWheatMillKey === entry.key && station.progressSeconds !== next.progressSeconds) hudChange = true;
       } else {
         const station = this.golemForges.get(entry.key);
         if (!station) continue;
@@ -13225,7 +13446,7 @@ export class VoxelEngine {
     return lowerDoorY(type, y);
   }
 
-  toggleDoor(x: number, y: number, z: number, type: BlockId) {
+  toggleDoor(x: number, y: number, z: number, type: BlockId, source: "player" | "sentient" = "player") {
     const lowerY = this.doorLowerY(type, y);
     const open = this.doorIsOpen(type);
     const xAxis = this.doorUsesXAxis(type);
@@ -13234,10 +13455,14 @@ export class VoxelEngine {
     const { lower: openLower, upper: openUpper } = doorBlocks(family, true, xAxis);
     const remoteInDoorway = open && [...(this.remotePlayers?.values() ?? [])].some((remote) => this.playerIntersectsDoorCell(new THREE.Vector3(remote.target.x, remote.target.y, remote.target.z), x, lowerY, z, closedLower)
       || this.playerIntersectsDoorCell(new THREE.Vector3(remote.target.x, remote.target.y, remote.target.z), x, lowerY + 1, z, closedUpper));
-    if (open && (remoteInDoorway || this.playerIntersectsDoorCell(this.position, x, lowerY, z, closedLower) || this.playerIntersectsDoorCell(this.position, x, lowerY + 1, z, closedUpper))) {
-      this.events.onToast(remoteInDoorway ? "Another player is standing in the doorway." : "Step clear of the doorway before closing it.");
-      this.placeCooldown = 0.18;
-      return;
+    const mobInDoorway = open && (this.mobs?.some((mob) => this.playerIntersectsDoorCell(mob.group.position, x, lowerY, z, closedLower, mob.definition.height * this.mobBaseScale(mob))
+      || this.playerIntersectsDoorCell(mob.group.position, x, lowerY + 1, z, closedUpper, mob.definition.height * this.mobBaseScale(mob))) ?? false);
+    if (open && (remoteInDoorway || mobInDoorway || this.playerIntersectsDoorCell(this.position, x, lowerY, z, closedLower) || this.playerIntersectsDoorCell(this.position, x, lowerY + 1, z, closedUpper))) {
+      if (source === "player") {
+        this.events.onToast(remoteInDoorway ? "Another player is standing in the doorway." : "The doorway is occupied.");
+        this.placeCooldown = 0.18;
+      }
+      return false;
     }
     const edits = [
       { x, y: lowerY, z, type: open ? closedLower : openLower },
@@ -13246,8 +13471,40 @@ export class VoxelEngine {
     this.world.setBlocksBatch(edits, true, true);
     this.publishBlockEdits(edits, "batch");
     this.audio.playSample?.(open ? "chestClose" : "chestOpen", { gain: 0.62, playbackRate: 1.22, position: [x, lowerY + 0.8, z], refDistance: 1.5, maxDistance: 30 });
-    this.placeCooldown = 0.18;
+    if (source === "player") this.placeCooldown = 0.18;
     this.saveSoon();
+    return true;
+  }
+
+  toggleFenceGateAt(x: number, y: number, z: number, type: BlockId, source: "player" | "sentient" = "player") {
+    const next = toggleFenceGate(type);
+    if (next === null) return false;
+    const closing = type === BlockId.FenceGateNorthSouthOpen || type === BlockId.FenceGateEastWestOpen;
+    const remoteInGate = closing && [...(this.remotePlayers?.values() ?? [])].some((remote) => this.playerIntersectsFenceGateCell(
+      new THREE.Vector3(remote.target.x, remote.target.y, remote.target.z), x, y, z, next,
+    ));
+    const mobInGate = closing && (this.mobs?.some((mob) => this.playerIntersectsFenceGateCell(
+      mob.group.position, x, y, z, next, mob.definition.height * this.mobBaseScale(mob), this.mobCollisionProfile(mob).radius,
+    )) ?? false);
+    if (closing && (remoteInGate || mobInGate || this.playerIntersectsFenceGateCell(this.position, x, y, z, next))) {
+      if (source === "player") {
+        this.events.onToast(remoteInGate ? "Another player is standing in the gate." : "The gate is occupied.");
+        this.placeCooldown = 0.18;
+      }
+      return false;
+    }
+    this.world.setBlock(x, y, z, next, true, true);
+    this.publishBlockEdits([{ x, y, z, type: next }], "place");
+    if (source === "player") this.placeCooldown = 0.18;
+    this.audio.playSample?.(closing ? "chestClose" : "chestOpen", {
+      gain: 0.55,
+      playbackRate: 1.28,
+      position: [x, y + 0.55, z],
+      refDistance: 1.5,
+      maxDistance: 30,
+    });
+    this.saveSoon();
+    return true;
   }
 
   playCreatureEvent(mob: MobEntity, event: CreatureSoundEvent) {
@@ -15892,12 +16149,7 @@ export class VoxelEngine {
       }
       const gate = toggleFenceGate(this.target.type);
       if (gate !== null) {
-        this.world.setBlock(this.target.x, this.target.y, this.target.z, gate, true, true);
-        this.publishBlockEdits([{ x: this.target.x, y: this.target.y, z: this.target.z, type: gate }], "place");
-        this.placeCooldown = 0.18;
-        this.audio.playSample?.(this.target.type === BlockId.FenceGateNorthSouthOpen || this.target.type === BlockId.FenceGateEastWestOpen
-          ? "chestClose" : "chestOpen", { gain: 0.55, playbackRate: 1.28 });
-        this.saveSoon();
+        this.toggleFenceGateAt(this.target.x, this.target.y, this.target.z, this.target.type);
         return;
       }
       if (canHitchLead(this.crouching, this.target.type, this.leadAnchors.values())) {
@@ -16121,6 +16373,7 @@ export class VoxelEngine {
       }
       if (this.target.type === BlockId.CraftingTable) { this.openOverlay("crafting", key); return; }
       if (this.target.type === BlockId.Furnace) { this.openOverlay("furnace", key); return; }
+      if (this.target.type === BlockId.WheatMill) { this.openOverlay("wheat-mill", key); return; }
       if (this.target.type === BlockId.Chest) { this.openOverlay("chest", key); return; }
       if (this.target.type === BlockId.Apiary || this.target.type === BlockId.WildBeehive) { this.openOverlay("apiary", key); return; }
       if (this.target.type === BlockId.ChrysalisLoom) { this.openOverlay("morph-loom", key); return; }
@@ -16349,6 +16602,7 @@ export class VoxelEngine {
       this.resolveChest(placedKey);
     }
     if (type === BlockId.Furnace) this.furnaces.set(placedKey, blankFurnace());
+    if (type === BlockId.WheatMill) this.wheatMills.set(placedKey, createWheatMill());
     if (type === BlockId.Apiary) this.apiaries.set(placedKey, createEmptyApiaryBlock());
     if (type === BlockId.ChrysalisLoom) this.morphLooms.set(placedKey, createOrbMorphLoom());
     if (type === BlockId.CaptureOrbRack) this.orbRacks.set(placedKey, createOrbRack());
@@ -16440,7 +16694,9 @@ export class VoxelEngine {
     if (!tree) return false;
     const root: [number, number, number] = [tree.root.x, tree.root.y, tree.root.z];
     const changes = [...tree.logs, ...tree.leaves, ...tree.attachments].map((block) => ({ x: block.x, y: block.y, z: block.z, type: BlockId.Air }));
-    this.world.setBlocksBatch(changes, true, true);
+    // The falling presentation hides the removed crown while chunk meshes and
+    // the large light halo rebuild through the normal frame-budgeted queues.
+    this.world.setBlocksBatch(changes, true, false, true);
     const group = new THREE.Group();
     group.position.set(root[0], root[1], root[2]);
     const matrix = new THREE.Matrix4();
@@ -16523,8 +16779,8 @@ export class VoxelEngine {
     }
     this.spawnParticles(landing.x, landing.y, landing.z, tree.primaryLogType, 18);
     this.audio.play("land", tree.primaryLogType);
-    this.disposeObject(tree.group);
     this.scene.remove(tree.group);
+    window.setTimeout(() => this.disposeObject(tree.group), 120);
   }
 
   updateFallingTrees(dt: number) {
@@ -16536,7 +16792,8 @@ export class VoxelEngine {
       if (tree.progress >= 1) {
         this.settleFallingTree(tree);
         this.fallingTrees.splice(index, 1);
-        this.saveSoon();
+        this.autoSaveAccumulator = 0;
+        this.saveSoon(8_000);
       }
     }
   }
@@ -16618,6 +16875,12 @@ export class VoxelEngine {
         this.spawnDrop(slot.item, slot.count, position, slot.durability, slot.metadata);
       }
       this.furnaces.delete(key);
+    }
+    if (type === BlockId.WheatMill) {
+      const broken = breakWheatMill(this.wheatMills.get(key) ?? createWheatMill());
+      if (this.mode === "survival") for (const slot of broken.drops) this.spawnDrop(slot.item, slot.count, new THREE.Vector3(x, y, z), slot.durability, slot.metadata);
+      this.wheatMills.delete(key);
+      this.persistentMachineLastStep.delete(key);
     }
     if (type === BlockId.Chest) {
       const storageKey = this.chestStorageKey(key);
@@ -17507,6 +17770,10 @@ export class VoxelEngine {
       }
       const definition = BLOCKS[type];
       if (definition?.solid) {
+        if (definition.shape === "gate") {
+          if (this.playerIntersectsFenceGateCell(position, x, y, z, type, height)) return true;
+          continue;
+        }
         if (["table", "shelf", "archive-shelf", "fireplace"].includes(definition.shape ?? "")) {
           if (this.playerIntersectsFurnitureCell(position, x, y, z, type, height)) return true;
           continue;
@@ -17555,6 +17822,27 @@ export class VoxelEngine {
     return playerMaxX > slabMinX && playerMinX < slabMaxX
       && playerMaxY > y - 0.5 && playerMinY < y + 0.5
       && playerMaxZ > slabMinZ && playerMinZ < slabMaxZ;
+  }
+
+  playerIntersectsFenceGateCell(
+    position: THREE.Vector3,
+    x: number,
+    y: number,
+    z: number,
+    type: BlockId,
+    height = this.currentPlayerHeight(),
+    radius = PLAYER_RADIUS,
+  ) {
+    if (type === BlockId.FenceGateNorthSouthOpen || type === BlockId.FenceGateEastWestOpen) return false;
+    const northSouth = type === BlockId.FenceGateNorthSouthClosed;
+    if (!northSouth && type !== BlockId.FenceGateEastWestClosed) return false;
+    const slabMinX = northSouth ? x - 0.48 : x - 0.1;
+    const slabMaxX = northSouth ? x + 0.48 : x + 0.1;
+    const slabMinZ = northSouth ? z - 0.1 : z - 0.48;
+    const slabMaxZ = northSouth ? z + 0.1 : z + 0.48;
+    return position.x + radius > slabMinX && position.x - radius < slabMaxX
+      && position.y + height > y - 0.5 && position.y < y + 0.75
+      && position.z + radius > slabMinZ && position.z - radius < slabMaxZ;
   }
 
   breakUnsupportedAbove(x: number, y: number, z: number) {
@@ -18927,6 +19215,23 @@ export class VoxelEngine {
     return [...DEFAULT_QUEST_DEFINITIONS, ...this.sideQuestDefinitions] as readonly QuestDefinition[];
   }
 
+  private questDurableFacts(): QuestDurableFacts {
+    return {
+      currentDay: this.day,
+      discoveredTowns: (this.mapKnowledge?.markers ?? [])
+        .filter((marker) => marker.kind === "settlement" && Boolean(marker.factionId))
+        .map((marker) => ({ townId: marker.id, factionId: marker.factionId! })),
+    };
+  }
+
+  private reconcileSystemQuests(bootstrap = true) {
+    const definitions = this.allQuestDefinitions();
+    const facts = this.questDurableFacts();
+    this.questBook = bootstrap
+      ? bootstrapSystemQuests(this.questBook, definitions, { acceptedAt: Date.now(), facts })
+      : reconcileQuestBookWithDurableFacts(this.questBook, definitions, facts);
+  }
+
   private dispatchQuestEvent(event: QuestEvent) {
     const next = applyQuestEvent(this.questBook, this.allQuestDefinitions(), event);
     if (next !== this.questBook) {
@@ -18937,6 +19242,7 @@ export class VoxelEngine {
       this.dispatchGuildEvent("resolveEncounter", 1, `combat:${event.mobKind}:${Math.floor(this.worldSimulationSeconds())}`, { creatureKind: event.mobKind });
       this.dispatchGuildEvent("defendArea", 1, `defense:${event.mobKind}:${Math.floor(this.worldSimulationSeconds())}`, { creatureKind: event.mobKind });
     } else if (event.type === "town-discovered") {
+      this.reconcileSystemQuests(true);
       this.dispatchGuildEvent("surveyLocation", 1, `survey:${event.townId}`);
     } else if (event.type === "trade-completed") {
       this.dispatchGuildEvent("negotiate", 1, `trade:${event.factionId}`);
@@ -18956,6 +19262,7 @@ export class VoxelEngine {
     // Newly accepted quests join the journey board while one of its three
     // spaces is available. Existing pins remain intact.
     this.questBook = pinQuest(result.book, questId);
+    this.reconcileSystemQuests(false);
     if (questId === "dragonwake-living-archive") {
       const alreadyRecorded = [...DRAGONWAKE_RARE_CAPTURE_KINDS]
         .filter((kind) => (this.bestiary[kind]?.captures ?? 0) > 0).length;
@@ -19452,7 +19759,10 @@ export class VoxelEngine {
       return false;
     }
     this.consumeResourceDelta(consumedResourceDelta(before, result.inventory));
-    this.questBook = result.book;
+    this.questBook = bootstrapSystemQuests(result.book, definitions, {
+      acceptedAt: Date.now(),
+      facts: this.questDurableFacts(),
+    });
     if (questId === MAGIC_ATTUNEMENT_QUEST_ID) {
       const attunement = attuneMagicFromQuest(this.magicState, this.questBook.completed, Date.now());
       this.magicState = attunement.state;
@@ -19784,7 +20094,21 @@ export class VoxelEngine {
             : settlement.ownerFactionId === "goblins" ? "goblin-worker"
               : settlement.ownerFactionId === "sugarcourt" ? "sugarcourt-gumdrop-gardener"
                 : "hobbit-merchant";
-          const ground = this.world.findWalkableY(Math.round(resident.position.x), Math.round(resident.position.z), resident.position.y);
+          const residentX = Math.round(resident.position.x);
+          const residentZ = Math.round(resident.position.z);
+          const authoredGround = Math.round(resident.position.y ?? settlement.layout.center.y ?? 0);
+          const interiorGround = [0, -1, 1, -2, 2].map((offset) => authoredGround + offset).find((candidateY) => {
+            const ground = this.world.getBlock(residentX, candidateY, residentZ);
+            const feet = this.world.getBlock(residentX, candidateY + 1, residentZ);
+            const head = this.world.getBlock(residentX, candidateY + 2, residentZ);
+            return Boolean(
+              ground !== undefined
+              && BLOCKS[ground]?.solid
+              && (feet === undefined || !BLOCKS[feet]?.solid)
+              && (head === undefined || !BLOCKS[head]?.solid),
+            );
+          });
+          const ground = interiorGround ?? this.world.findWalkableY(residentX, residentZ, resident.position.y);
           const spawnY = settlement.environment === "underwater" ? resident.position.y : ground + MOB_DEFS[kind].footOffset;
           const child = this.spawnMob(kind, new THREE.Vector3(resident.position.x, spawnY, resident.position.z), {
             name: resident.name,
@@ -21607,7 +21931,8 @@ export class VoxelEngine {
     let openDoor = false;
     for (let offset = 1; offset <= clearanceCells; offset += 1) {
       const type = this.world.getBlock(centerX, groundY + offset, centerZ);
-      if (type !== undefined && this.isDoor(type) && this.doorIsOpen(type)) { openDoor = true; break; }
+      if (type !== undefined && ((this.isDoor(type) && this.doorIsOpen(type))
+        || type === BlockId.FenceGateNorthSouthOpen || type === BlockId.FenceGateEastWestOpen)) { openDoor = true; break; }
     }
     return {
       walkable: targetY !== null && !dynamic.blocked,
@@ -21618,6 +21943,52 @@ export class VoxelEngine {
       clearance: targetY === null ? 0 : clamp(1 - dynamic.crowding * 0.42, 0, 1),
       openDoor,
     };
+  }
+
+  private updateSentientPassage(mob: MobEntity) {
+    const passage = mob.openedPassage;
+    if (!passage || mob.age < passage.closeAfter) return;
+    const type = this.world.getBlock(passage.x, passage.y, passage.z);
+    const stillOpen = passage.kind === "door"
+      ? type !== undefined && this.isDoor(type) && this.doorIsOpen(type)
+      : type === BlockId.FenceGateNorthSouthOpen || type === BlockId.FenceGateEastWestOpen;
+    if (!stillOpen) {
+      delete mob.openedPassage;
+      return;
+    }
+    const closed = passage.kind === "door"
+      ? this.toggleDoor(passage.x, passage.y, passage.z, type!, "sentient")
+      : this.toggleFenceGateAt(passage.x, passage.y, passage.z, type!, "sentient");
+    if (closed) delete mob.openedPassage;
+    else passage.closeAfter = mob.age + 0.5;
+  }
+
+  private tryOpenSentientPassage(mob: MobEntity, heading: number, lookahead: number) {
+    if (!mob.definition.sentient || mob.openedPassage) return false;
+    const groundY = Math.round(mob.group.position.y - mob.definition.footOffset);
+    const clearance = Math.max(1, Math.ceil(mob.definition.height * this.mobBaseScale(mob)));
+    for (const fraction of [0.42, 0.7, 1]) {
+      const x = Math.round(mob.group.position.x + Math.cos(heading) * lookahead * fraction);
+      const z = Math.round(mob.group.position.z + Math.sin(heading) * lookahead * fraction);
+      for (let offset = 1; offset <= clearance; offset += 1) {
+        const y = groundY + offset;
+        const type = this.world.getBlock(x, y, z);
+        if (type === undefined) continue;
+        const gateClosed = type === BlockId.FenceGateNorthSouthClosed || type === BlockId.FenceGateEastWestClosed;
+        if (gateClosed && this.toggleFenceGateAt(x, y, z, type, "sentient")) {
+          mob.openedPassage = { kind: "gate", x, y, z, closeAfter: mob.age + 2.2 };
+          return true;
+        }
+        if (!this.isDoor(type) || this.doorIsOpen(type)) continue;
+        const lowerY = this.doorLowerY(type, y);
+        const lowerType = this.world.getBlock(x, lowerY, z);
+        if (lowerType !== undefined && this.isDoor(lowerType) && this.toggleDoor(x, lowerY, z, lowerType, "sentient")) {
+          mob.openedPassage = { kind: "door", x, y: lowerY, z, closeAfter: mob.age + 2.2 };
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   aquaticRouteProbe(mob: MobEntity, heading: number, lookahead: number): CreatureRouteProbe {
@@ -22722,7 +23093,8 @@ export class VoxelEngine {
     let insideOpenDoor = false;
     for (let offset = 1; offset <= clearanceCells; offset += 1) {
       const type = this.world.getBlock(centerX, centerGround + offset, centerZ);
-      if (type !== undefined && this.isDoor(type) && this.doorIsOpen(type)) { insideOpenDoor = true; break; }
+      if (type !== undefined && ((this.isDoor(type) && this.doorIsOpen(type))
+        || type === BlockId.FenceGateNorthSouthOpen || type === BlockId.FenceGateEastWestOpen)) { insideOpenDoor = true; break; }
     }
     const effectiveRadius = Math.min(1.18, definition.radius * Math.max(0.62, collisionScale));
     const samples: Array<[number, number]> = insideOpenDoor
@@ -24715,6 +25087,7 @@ export class VoxelEngine {
         following: Boolean(followerSlot || mob.id === this.mountedCreatureId || this.leadAnchors.has(mob.id)),
       });
       mob.outOfRangeSeconds = rangeAction.outOfRangeSeconds;
+      if (mob.definition.sentient) this.updateSentientPassage(mob);
       if (rangeAction.action === "despawn") {
         this.removeMob(index);
         continue;
@@ -25277,6 +25650,7 @@ export class VoxelEngine {
         const profile = this.mobCollisionProfile(mob);
         const baseLookahead = Math.max(0.72, (profile.radius || mob.definition.radius * this.mobBaseScale(mob)) + 0.36, speed * 0.42);
         const lookahead = followerSlot && !peelopTarget && !companionGolemTarget ? Math.max(0.3, Math.min(baseLookahead, followerDistance)) : baseLookahead;
+        if (mob.definition.sentient) this.tryOpenSentientPassage(mob, mob.desiredAngle, lookahead);
         const threatened = mob.state === "chase" || mob.state === "flee" || mob.awarenessTimer > 0 || mob.hurtTimer > 0;
         routeMaxDrop = Math.max(routeMaxDrop, creatureDropAllowance(threatened, movement));
         const route = chooseCreatureRoute({
@@ -25730,12 +26104,19 @@ export class VoxelEngine {
     }
   }
 
-  spawnDrop(item: ItemCode, count: number, position: THREE.Vector3, durability?: number, metadata?: Record<string, unknown>): DropEntity | undefined {
+  spawnDrop(
+    item: ItemCode,
+    count: number,
+    position: THREE.Vector3,
+    durability?: number,
+    metadata?: Record<string, unknown>,
+    options: DropSpawnOptions = {},
+  ): DropEntity | undefined {
     if (!ITEMS[item] || count <= 0) return;
     const resolvedDurability = durability ?? ITEMS[item]?.maxDurability;
     const stackLimit = inventorySlotStackLimit({ item, count: 1, ...(resolvedDurability !== undefined ? { durability: resolvedDurability } : {}), ...(metadata ? { metadata } : {}) });
     let firstDrop: DropEntity | undefined;
-    const nearby = stackLimit > 1 ? this.drops.find((drop) => drop.item === item && drop.durability === resolvedDurability
+    const nearby = options.allowMerge !== false && stackLimit > 1 ? this.drops.find((drop) => drop.item === item && drop.durability === resolvedDurability
       && JSON.stringify(drop.metadata ?? null) === JSON.stringify(metadata ?? null)
       && drop.mesh.position.distanceToSquared(position) < 2.25 && drop.count < stackLimit) : undefined;
     if (nearby) {
@@ -25768,15 +26149,29 @@ export class VoxelEngine {
         if (!material) { material = new THREE.MeshLambertMaterial({ color: ITEMS[item].color }); this.dropMaterials.set(item, material); }
         mesh = new THREE.Mesh(this.sharedDropGeometry, material);
       }
-      mesh.position.copy(position).add(new THREE.Vector3((Math.random() - 0.5) * 0.45, 0.25, (Math.random() - 0.5) * 0.45));
+      mesh.position.copy(position);
+      if (!options.exactPosition) mesh.position.add(new THREE.Vector3((Math.random() - 0.5) * 0.45, 0.25, (Math.random() - 0.5) * 0.45));
       this.dropGroup.add(mesh);
+      const velocity = options.velocity
+        ? new THREE.Vector3(options.velocity.x, options.velocity.y, options.velocity.z)
+        : new THREE.Vector3((Math.random() - 0.5) * 1.4, 2 + Math.random(), (Math.random() - 0.5) * 1.4);
       const drop: DropEntity = {
-        id: this.nextDropId++, item, count: amount,
+        id: options.id ?? this.nextDropId++, item, count: amount,
         ...(resolvedDurability !== undefined ? { durability: resolvedDurability } : {}),
         ...(metadata ? { metadata: cloneSlot({ item, count: 1, metadata })?.metadata } : {}),
-        mesh, ...(ownsVisual ? { ownsVisual: true } : {}), velocity: new THREE.Vector3((Math.random() - 0.5) * 1.4, 2 + Math.random(), (Math.random() - 0.5) * 1.4), age: 0, pickupDelay: 0.35,
+        mesh,
+        ...(ownsVisual ? { ownsVisual: true } : {}),
+        velocity,
+        ...(options.networkReplica ? {
+          networkTarget: position.clone(),
+          networkVelocity: velocity.clone(),
+          networkSnapshotAge: 0,
+        } : {}),
+        age: 0,
+        pickupDelay: options.pickupDelay ?? 0.35,
       };
       this.drops.push(drop);
+      if (options.id !== undefined) this.nextDropId = Math.max(this.nextDropId, options.id + 1);
       firstDrop ??= drop;
       count -= amount;
     }
@@ -25935,7 +26330,7 @@ export class VoxelEngine {
       }
       const localPickupPoint = this.position.clone().add(new THREE.Vector3(0, 0.8, 0));
       const distance = drop.mesh.position.distanceTo(localPickupPoint);
-      if (drop.pickupDelay <= 0 && distance < 1.45) {
+      if (drop.pickupDelay <= 0 && distance < WORLD_DROP_PICKUP_RADIUS) {
         const beforeCount = drop.count;
         const leftover = this.addItem(drop.item, drop.count, drop.durability, undefined, drop.metadata);
         const acquired = beforeCount - leftover;
@@ -27474,6 +27869,7 @@ export class VoxelEngine {
       craftOutput: this.activeRecipe ? cloneSlot(this.activeRecipe.output) : null,
       craftingSize: this.craftingSize,
       activeFurnace: this.activeFurnaceKey ? { ...(this.furnaces.get(this.activeFurnaceKey) ?? blankFurnace()), input: cloneSlot(this.furnaces.get(this.activeFurnaceKey)?.input ?? null), fuel: cloneSlot(this.furnaces.get(this.activeFurnaceKey)?.fuel ?? null), output: cloneSlot(this.furnaces.get(this.activeFurnaceKey)?.output ?? null) } : null,
+      activeWheatMill: this.activeWheatMillKey ? normalizeWheatMill(this.wheatMills.get(this.activeWheatMillKey)) : null,
       activeChest: this.activeChestKey ? (this.chests.get(this.activeChestKey) ?? []).map(cloneSlot) : null,
       activeChestTitle: this.activeChestTitle,
       activeApiary: this.activeApiaryKey ? apiaryHudState(this.apiaries.get(this.activeApiaryKey) ?? createEmptyApiaryBlock()) : null,
@@ -27490,6 +27886,7 @@ export class VoxelEngine {
       targetName: this.target ? BLOCKS[this.target.type].name : this.targetBoat ? "Wayfarer Sailboat"
         : this.targetEggDrop ? ITEMS[this.targetEggDrop.item]?.name ?? "Leviathan Egg"
           : this.targetRemotePlayerId ? this.remotePlayers.get(this.targetRemotePlayerId)?.model.playerName ?? "Player" : null,
+      targetCollectible: this.target ? this.mode === "builder" || this.toolCanHarvest(this.target.type, selectedSlot) : true,
       targetMob: this.targetMob ? {
         name: this.targetMob.name,
         health: this.targetMob.health,
@@ -27778,10 +28175,10 @@ export class VoxelEngine {
     this.events.onToast(weather === "rain" ? "A rainstorm rolls across the wild." : "The clouds begin to clear.");
   }
 
-  saveSoon() {
+  saveSoon(delayMilliseconds = 2_500) {
     if (!this.persistent) return;
     window.clearTimeout(this.saveTimer);
-    this.saveTimer = window.setTimeout(() => this.saveNow(), 2_500);
+    this.saveTimer = window.setTimeout(() => this.saveNow(), delayMilliseconds);
   }
 
   serialize(): WorldSave {
@@ -27820,6 +28217,7 @@ export class VoxelEngine {
         fuel: normalizeCaptureOrbInventorySlot(value.fuel),
         output: normalizeCaptureOrbInventorySlot(value.output),
       }])),
+      wheatMills: Object.fromEntries([...this.wheatMills.entries()].map(([key, value]) => [key, normalizeWheatMill(value)])),
       chests: Object.fromEntries([...this.chests.entries()].map(([key, value]) => [key, value.map(normalizeCaptureOrbInventorySlot)])),
       contextualLoot: normalizeContextualLootWorldState({
         schema: 1,

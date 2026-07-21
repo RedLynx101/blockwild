@@ -65,7 +65,7 @@ test("reference models link to canonical portraits", () => {
 test("all production creatures and blocks pass the release contract", () => {
   const audit = auditVisualTheme({ generatedAt: "2026-07-18T00:00:00.000Z" });
   assert.equal(audit.totals.creatures, 231);
-  assert.equal(audit.totals.blocks, 310);
+  assert.equal(audit.totals.blocks, 313);
   assert.equal(audit.totals.blockFamilies, 17);
   assert.equal(audit.totals.creatureViolations, 0);
   assert.equal(audit.totals.blockViolations, 0);

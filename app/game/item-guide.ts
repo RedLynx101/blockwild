@@ -4,8 +4,9 @@ import { BLOCKS, ITEMS, RECIPES, SMELTING, type Ingredient, type ItemCode } from
 import { resourceItemCode } from "./hearthroads-adapter";
 import { MOB_DEFS } from "./mobs";
 import { PLANTS } from "./plants";
+import { WHEAT_MILL_PROCESS } from "./wheat-mill";
 
-export type ItemGuideStation = "Hand crafting" | "Crafting table" | "Furnace" | "Alchemy Stand" | "Distillery" | "Sugarworks";
+export type ItemGuideStation = "Hand crafting" | "Crafting table" | "Furnace" | "Wheat Mill" | "Alchemy Stand" | "Distillery" | "Sugarworks";
 export type ItemGuideIngredient = Readonly<{ items: readonly ItemCode[]; count: number; label: string }>;
 export type ItemGuideProcess = Readonly<{
   id: string;
@@ -72,6 +73,21 @@ export function buildItemGuideProcesses(): readonly ItemGuideProcess[] {
     inputs: [{ items: [Number(input)], count: 1, label: ITEMS[Number(input)]?.name ?? input }],
     outputItem: output.item,
     outputCount: output.count,
+    craftingRecipeId: null,
+    blueprintId: null,
+  });
+  processes.push({
+    id: `mill:${WHEAT_MILL_PROCESS.id}`,
+    name: WHEAT_MILL_PROCESS.name,
+    station: "Wheat Mill",
+    description: "Grind Wheat passively into Flour without fuel.",
+    inputs: [{
+      items: [WHEAT_MILL_PROCESS.input.item],
+      count: WHEAT_MILL_PROCESS.input.count,
+      label: names([WHEAT_MILL_PROCESS.input.item]),
+    }],
+    outputItem: WHEAT_MILL_PROCESS.output.item,
+    outputCount: WHEAT_MILL_PROCESS.output.count,
     craftingRecipeId: null,
     blueprintId: null,
   });

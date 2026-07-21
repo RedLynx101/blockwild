@@ -13,6 +13,8 @@ import { mythicSiteByStructureKind, validateMythicSitePlacement } from "./mythic
 import {
   APPLE_CRATE_SIDE_TILE,
   APPLE_CRATE_TOP_TILE,
+  BREAD_CRATE_SIDE_TILE,
+  BREAD_CRATE_TOP_TILE,
   BLOCKS,
   BRINEGRASS_TILE,
   CACTUS_TOP_TILE,
@@ -28,6 +30,8 @@ import {
   FROSTPEAR_LEAVES_TILE,
   FROSTPEAR_SAPLING_TILE,
   FEATHERWRACK_TILE,
+  FLOUR_CRATE_SIDE_TILE,
+  FLOUR_CRATE_TOP_TILE,
   GIANT_MUSHROOM_GILLS_TILE,
   GIANT_MUSHROOM_SIDE_TILE,
   GIANT_MUSHROOM_TOP_TILE,
@@ -43,6 +47,8 @@ import {
   ROOTWEAVE_SOIL_SIDE_TILE,
   SAILKELP_TILE,
   STAR_CRYSTAL_ORE_TILE,
+  WHEAT_MILL_SIDE_TILE,
+  WHEAT_MILL_TOP_TILE,
   STARFERN_TILE,
   SHELLFRUIT_CRATE_SIDE_TILE,
   SHELLFRUIT_CRATE_TOP_TILE,
@@ -2402,7 +2408,7 @@ export function createBlockAtlas() {
       pixel(index, cx, cy - 1, "#f4dfaa");
     }
   };
-  const crateSide = (index: number, fruit: string, highlight: string, glyph: "berry" | "apple" | "pear" | "shellfruit" | "cookie") => {
+  const crateSide = (index: number, fruit: string, highlight: string, glyph: "berry" | "apple" | "pear" | "shellfruit" | "cookie" | "flour" | "bread") => {
     fillTile(index, "#9a673c");
     for (const y of [0, 5, 10, 15]) {
       context.fillStyle = y % 10 === 0 ? "#5a3924" : "#c0874a";
@@ -2421,6 +2427,12 @@ export function createBlockAtlas() {
       for (const [x, y] of [[7, 6], [8, 6], [6, 7], [7, 7], [8, 7], [9, 7], [6, 8], [7, 8], [8, 8], [9, 8], [7, 9], [8, 9]] as Array<[number, number]>) pixel(index, x, y, y === 6 ? highlight : fruit);
       pixel(index, 6, 7, "#74438f"); pixel(index, 9, 8, "#a66bc0");
       pixel(index, 8, 7, "#f6e2ae"); pixel(index, 8, 8, "#e8c98e");
+    } else if (glyph === "flour") {
+      for (let y = 6; y <= 10; y += 1) for (let x = 6 + Math.abs(8 - y); x <= 9 - Math.abs(8 - y); x += 1) pixel(index, x, y, y < 8 ? highlight : fruit);
+      pixel(index, 7, 6, "#876f48"); pixel(index, 8, 6, "#876f48");
+    } else if (glyph === "bread") {
+      for (let y = 7; y <= 10; y += 1) for (let x = 5; x <= 10; x += 1) pixel(index, x, y, y === 7 ? highlight : fruit);
+      pixel(index, 6, 8, "#f1cb7c"); pixel(index, 8, 8, "#f1cb7c");
     } else if (glyph === "shellfruit") {
       for (const [x, y] of [[6, 7], [7, 6], [8, 6], [9, 7], [5, 8], [6, 9], [7, 9], [8, 9], [9, 9], [10, 8]] as Array<[number, number]>) pixel(index, x, y, fruit);
       for (const [x, y] of [[7, 7], [8, 7], [7, 8], [8, 8]] as Array<[number, number]>) pixel(index, x, y, highlight);
@@ -2465,6 +2477,24 @@ export function createBlockAtlas() {
   crateSide(FROSTPEAR_CRATE_SIDE_TILE, "#8bc4c7", "#d7fbef", "pear");
   cookieCrateTop(MOONBERRY_COOKIE_CRATE_TOP_TILE);
   crateSide(MOONBERRY_COOKIE_CRATE_SIDE_TILE, "#b87943", "#e8bb70", "cookie");
+  crateTop(FLOUR_CRATE_TOP_TILE, "#e3d2a6", "#fff2c8");
+  crateSide(FLOUR_CRATE_SIDE_TILE, "#ddc993", "#fff0bd", "flour");
+  crateTop(BREAD_CRATE_TOP_TILE, "#b96f35", "#f0bd69");
+  crateSide(BREAD_CRATE_SIDE_TILE, "#b96f35", "#f0bd69", "bread");
+
+  // The mill reads as a maintained Hearthkin machine: timber housing, a
+  // pale stone runner, iron axle pins, and a shallow grain hopper.
+  fillTile(WHEAT_MILL_TOP_TILE, "#8a5a34");
+  for (let y = 2; y <= 13; y += 1) for (let x = 2; x <= 13; x += 1) {
+    const distance = Math.hypot(x - 7.5, y - 7.5);
+    if (distance < 5.2) pixel(WHEAT_MILL_TOP_TILE, x, y, distance < 1.7 ? "#544635" : (x + y) % 3 ? "#b8aa8b" : "#8f856f");
+  }
+  for (const x of [1, 14]) for (let y = 0; y < tile; y += 1) pixel(WHEAT_MILL_TOP_TILE, x, y, "#5b3924");
+  fillTile(WHEAT_MILL_SIDE_TILE, "#9a673a");
+  for (const y of [1, 7, 14]) for (let x = 0; x < tile; x += 1) pixel(WHEAT_MILL_SIDE_TILE, x, y, y === 7 ? "#d0a05e" : "#5b3a25");
+  for (const [x, y] of [[3, 4], [12, 4], [3, 11], [12, 11]] as Array<[number, number]>) {
+    pixel(WHEAT_MILL_SIDE_TILE, x, y, "#d3c5a5"); pixel(WHEAT_MILL_SIDE_TILE, x + (x < 8 ? 1 : -1), y, "#6f6759");
+  }
   const clearTile = (index: number) => context.clearRect((index % grid) * tile, Math.floor(index / grid) * tile, tile, tile);
 
   // A Star Crystal block reads as nine fused celestial prisms rather than a
@@ -3359,6 +3389,31 @@ export class ChunkWorld {
       && this.chunkStreamingPriority(key) < this.chunkStreamingPriority(this.activeLightInitialization.key)) {
       this.lightInitializationQueue.push(this.activeLightInitialization.key);
       this.activeLightInitialization = null;
+    }
+  }
+
+  private deferLightRebuildAround(changes: ReadonlyArray<{ x: number; z: number }>) {
+    const rebuild = new Set<string>();
+    for (const change of changes) {
+      const centerX = Math.floor(change.x / CHUNK_SIZE);
+      const centerZ = Math.floor(change.z / CHUNK_SIZE);
+      for (let dx = -1; dx <= 1; dx += 1) for (let dz = -1; dz <= 1; dz += 1) {
+        rebuild.add(chunkKey(centerX + dx, centerZ + dz));
+      }
+    }
+    for (const key of rebuild) {
+      const chunk = this.chunks.get(key);
+      if (!chunk) continue;
+      if (this.activeLightInitialization?.key === key) {
+        this.activeLightInitialization = null;
+        // takeQueuedLightInitialization already consumed the queue entry while
+        // the membership bit stayed set for the active task. Clear the bit so
+        // invalidation can append a fresh resumable task.
+        this.lightInitializationQueued.delete(key);
+      }
+      this.lightInitializationTasks.delete(key);
+      chunk.lightInitialized = false;
+      this.queueLightInitialization(key);
     }
   }
 
@@ -6064,6 +6119,7 @@ export class ChunkWorld {
                                     : furniture.kind === "moonwell-basin" ? BlockId.Moonwell
                                       : furniture.kind === "tome-lectern" ? BlockId.TomeDisplay
                                         : furniture.kind === "living-chair" ? BlockId.MoonboughChair
+                                          : furniture.kind === "wheat-mill" ? BlockId.WheatMill
                     : furniture.kind === "bed" ? bed!.foot
             : furniture.kind === "chair" ? BlockId.HearthChair
               : furniture.kind === "distillery" || furniture.kind === "barrel" ? BlockId.Distillery
@@ -6311,7 +6367,12 @@ export class ChunkWorld {
     return true;
   }
 
-  setBlocksBatch(changes: Array<{ x: number; y: number; z: number; type: BlockId }>, record = true, immediate = false) {
+  setBlocksBatch(
+    changes: Array<{ x: number; y: number; z: number; type: BlockId }>,
+    record = true,
+    immediate = false,
+    deferLighting = false,
+  ) {
     const affected = new Set<string>();
     const affectedLavaCells = new Map<string, { x: number; y: number; z: number }>();
     const lightChanges: Array<{ x: number; y: number; z: number; previous: BlockId; next: BlockId }> = [];
@@ -6325,13 +6386,12 @@ export class ChunkWorld {
       const index = blockIndex(sx.local, change.y, sz.local);
       const previousType = chunk.blocks[index] as BlockId;
       const resolvedType = change.type === BlockId.Air && isWaterloggedFloraBlock(previousType) ? BlockId.Water : change.type;
+      if (previousType === resolvedType) continue;
       if (!isDirectionallyPlacedBlock(resolvedType)) this.blockFacings.delete(`${change.x},${change.y},${change.z}`);
       this.writeChunkBlock(chunk, index, resolvedType);
-      if (previousType !== resolvedType) {
-        const lightChange = { x: change.x, y: change.y, z: change.z, previous: previousType, next: resolvedType };
-        if (batchRelight) lightChanges.push(lightChange);
-        else this.lightEngine.updateBlock(lightChange);
-      }
+      const lightChange = { x: change.x, y: change.y, z: change.z, previous: previousType, next: resolvedType };
+      if (batchRelight) lightChanges.push(lightChange);
+      else this.lightEngine.updateBlock(lightChange);
       if (previousType === BlockId.Lava || resolvedType === BlockId.Lava) {
         affectedLavaCells.set(lavaLightCellKey(change.x, change.y, change.z), change);
       }
@@ -6349,7 +6409,10 @@ export class ChunkWorld {
       if (sz.local === 0) affected.add(`${chunkKey(sx.chunk, sz.chunk - 1)}:${section}`);
       if (sz.local === CHUNK_SIZE - 1) affected.add(`${chunkKey(sx.chunk, sz.chunk + 1)}:${section}`);
     }
-    if (lightChanges.length > 0) this.lightEngine.rebuildAround(lightChanges);
+    if (lightChanges.length > 0) {
+      if (deferLighting) this.deferLightRebuildAround(lightChanges);
+      else this.lightEngine.rebuildAround(lightChanges);
+    }
     for (const change of affectedLavaCells.values()) this.refreshLavaLightCell(change.x, change.y, change.z);
     for (const entry of affected) {
       const separator = entry.lastIndexOf(":");

@@ -1,6 +1,6 @@
 {
   "name": "blockwild",
-  "version": "1.8.5",
+  "version": "1.8.6",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
@@ -22,7 +22,7 @@
     "test:multiplayer-authority": "node --import tsx --test tests/multiplayer-authority.test.ts",
     "test:block-facing": "node --import tsx --test tests/block-facing.test.ts",
     "test:settlement-heartlands": "node --import tsx --test tests/settlement-heartlands.test.ts",
-    "test:visual-theme": "node --import tsx --test tests/visual-theme.test.ts",
+    "test:visual-theme": "node --import tsx --test tests/visual-theme.test.ts tests/wheat-mill-content.test.ts",
     "models:render": "node --import tsx scripts/render-models.ts",
     "plants:render": "node --import tsx scripts/render-plants.ts",
     "benchmark:simulation": "node --import tsx scripts/benchmark-simulation.ts",

@@ -13,6 +13,8 @@ test("visible arrows arc forward and use swept block collision", () => {
   const names = new Set<string>();
   arrow.visual.traverse((object) => names.add(object.name));
   assert.equal(names.has("visible-arrow-projectile"), true);
+  const visualNose = new THREE.Vector3(0, 0, -1).applyQuaternion(arrow.visual.quaternion);
+  assert.ok(visualNose.dot(arrow.velocity.clone().normalize()) > 0.999, "the modeled arrowhead must lead the velocity");
   const result = stepArrowProjectile(arrow, 0.1, (position) => position.z < -0.7, () => null);
   assert.equal(result.kind, "block");
   assert.ok(arrow.position.z < 0);

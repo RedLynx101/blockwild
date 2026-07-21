@@ -242,7 +242,7 @@ test("Moonberry Cookies are a complete trail-bake and reversible storage family"
   assert.ok(CREATIVE_BLOCKS.includes(BlockId.MoonberryCookieCrate));
 
   const baked = RECIPES.find((recipe) => recipe.id === "moonberry-cookies")!;
-  assert.deepEqual(baked.pattern, [Item.Wheat, Item.Berry, Item.Wheat]);
+  assert.deepEqual(baked.pattern, [Item.Flour, Item.Berry, Item.Flour]);
   assert.deepEqual(baked.output, { item: Item.MoonberryCookie, count: 4 });
   assert.equal(baked.table, true);
 

@@ -364,6 +364,7 @@ test("quest journal exposes each active pin without clearing its neighbors", () 
   assert.match(html, /The Light Below/u);
   assert.match(html, /Unpin quest/u);
   assert.match(html, /aria-pressed="true"/u);
+  assert.doesNotMatch(html, /The Long-Table Watch/u, "locked side roads stay out of the journal until their prerequisite opens");
 });
 
 test("Sea Dragon attributes, nest charts, and live world markers share one deterministic contract", () => {

@@ -2,6 +2,18 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.8.6 - Hearthmill Handshake - 2026-07-21
+
+- Repaired guest furnace access by resolving and initializing authoritative nearby machines before rejecting an interaction, including older worlds whose furnace state had not yet been materialized.
+- Rebuilt multiplayer drops around authoritative pickup transactions, backward-compatible velocity snapshots, smooth guest interpolation, and credited-removal ordering so a guest can collect a fresh drop immediately without watching it vanish or waiting for it to settle.
+- Reduced tree-felling stalls with cached bounded tree discovery, no-op batch filtering, deferred halo lighting, queued remeshing, predicted-echo suppression, and delayed cleanup/save work while preserving the complete falling-tree animation.
+- Added the passive one-input Wheat Mill, Flour, Flour Crates, and Bread Crates; renamed Field Bread to Bread, generalized shared meat drops, and moved bread, cookies, and pies onto a wheat-to-flour baking chain.
+- Added a Hearthkin millhouse and farmer assignment, corrected resident floor spawns and gate/fence continuity, prevented gates from closing through players, and taught sentient residents to open and traverse doors and gates while visibly carrying their working tools.
+- Embedded recipe boards directly in the Item Wiki, linked patterns back to a pre-filtered Recipe Book, added contextual Item Wiki and Bestiary/Plant Compendium hotkeys across inventory surfaces, and exposed those shortcuts through an optional default-on hint.
+- Unified quest discovery around durable settlement facts, retroactive exploration credit, automatically available core journeys, hidden unmet branches, and a dedicated accepted Guild Journal.
+- Added harvest-result glyphs, restored precise single-click inventory placement before drag distribution, extended map zoom-out limits by tenfold, verified projectile-forward conventions, and recentered the Capture Orb Rack artwork at its real inventory size.
+- Added a runtime guard for overlapping item identifiers while retaining the one documented legacy block/item alias.
+
 ## 1.8.5 - Trailcraft Currents - 2026-07-19
 
 - Rebuilt ground and aquatic pathing around measured body progress, swept corner sliding, stable bank avoidance, partial ledge support, and deliberate two-block threatened descents.

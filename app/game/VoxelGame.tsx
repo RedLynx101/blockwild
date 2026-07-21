@@ -55,6 +55,7 @@ import { legendaryContractForItem } from "./legendary-items";
 import { captureOrbFromInventorySlot } from "./capture-orbs";
 import { BlockPlayerModel, type PlayerEquipmentAppearance } from "./player-model";
 import { GAME_RELEASE_NAME, GAME_VERSION, GAME_VERSION_LABEL } from "./version";
+import { WHEAT_MILL_CYCLE_SECONDS } from "./wheat-mill";
 import { createBlockAtlas } from "./world";
 import {
   DEFAULT_WORLD_OPTIONS,
@@ -101,7 +102,7 @@ import { distributeInventoryCursor, inventorySlotStackLimit, inventorySlotsCanSt
 import { ITEM_GUIDE_ENTRIES, itemGuideMatches, type ItemGuideProcess } from "./item-guide";
 import { ResourceTelemetryLog, telemetryFileName, type ResourceTelemetryReport, type ResourceTelemetryStopReason } from "./performance-log";
 import { createMapKnowledge, type MapMarker } from "./map-system";
-import { PLANTS, createPlantBestiaryState, nativeBiomesForPlant, type PlantCategory, type PlantDefinition } from "./plants";
+import { PLANTS, createPlantBestiaryState, nativeBiomesForPlant, plantForBlock, type PlantCategory, type PlantDefinition } from "./plants";
 import { createQuestBook, type QuestObjective, type QuestSource } from "./quests";
 import { createSettlementState, isMayorProfession, type ResidentProfession, type SettlementCandidate } from "./settlements";
 import {
@@ -135,7 +136,7 @@ import {
   type CharacterProfileCatalog,
 } from "./character-profiles";
 
-type WorkstationOverlay = "apiary" | "morph-loom" | "orb-rack" | "healing-station" | "sugarworks";
+type WorkstationOverlay = "apiary" | "morph-loom" | "orb-rack" | "healing-station" | "sugarworks" | "wheat-mill";
 type CivicAuditMode = "atlantian-dialogue" | "atlantian-trade" | "atlantian-settlement";
 type Overlay = "title" | "new" | "pause" | "help" | "settings" | OverlayKind | null;
 type TitleMenuView = "main" | "characters" | "worlds";
@@ -144,6 +145,10 @@ type BestiaryQuickFilter = "all" | "discovered" | "captured";
 export type BestiarySort = "catalog" | "name" | "observed" | "research" | "level" | "rarity";
 type BestiaryPageTab = "overview" | "ecology" | "combat" | "care" | "research" | "specimens" | "variants";
 type FieldGuideSection = "creatures" | "plants";
+type ContextReferenceTarget = Readonly<{
+  item: ItemCode;
+  field?: Readonly<{ kind: "creature"; id: MobKind } | { kind: "plant"; id: string }>;
+}>;
 export const BESTIARY_FACET_KEYS = ["habitat", "type", "relationship", "movement", "temperament", "research", "rarity", "utility", "guild"] as const;
 export type BestiaryFacetKey = (typeof BESTIARY_FACET_KEYS)[number];
 export type BestiaryFacetSelections = Readonly<Record<BestiaryFacetKey, readonly string[]>>;
@@ -689,11 +694,13 @@ export type InputCapabilities = {
 export type UiPreferences = {
   touchControls: TouchControlsMode;
   targetOutlineOpacity: number;
+  showReferenceHints: boolean;
 };
 
 export const INITIAL_UI_PREFERENCES: Readonly<UiPreferences> = Object.freeze({
   touchControls: "auto",
   targetOutlineOpacity: 0.9,
+  showReferenceHints: true,
 });
 
 const UI_PREFERENCES_KEY = "blockwild-ui-preferences-v1";
@@ -709,7 +716,8 @@ export function sanitizeUiPreferences(value: unknown): UiPreferences {
   const touchControls = parsed.touchControls === "off" || parsed.touchControls === "on" ? parsed.touchControls : "auto";
   const rawOpacity = Number(parsed.targetOutlineOpacity ?? INITIAL_UI_PREFERENCES.targetOutlineOpacity);
   const targetOutlineOpacity = Number.isFinite(rawOpacity) ? Math.min(1, Math.max(0.05, rawOpacity)) : INITIAL_UI_PREFERENCES.targetOutlineOpacity;
-  return { touchControls, targetOutlineOpacity };
+  const showReferenceHints = parsed.showReferenceHints !== false;
+  return { touchControls, targetOutlineOpacity, showReferenceHints };
 }
 
 export function resolveTouchControls(mode: TouchControlsMode, capabilities: InputCapabilities) {
@@ -867,6 +875,7 @@ const INITIAL_HUD: ExtendedHudState = {
   craftOutput: null,
   craftingSize: 2,
   activeFurnace: null,
+  activeWheatMill: null,
   activeChest: null,
   activeChestTitle: "Wildwood Chest",
   equipment: { head: null, chest: null, legs: null, feet: null },
@@ -876,6 +885,7 @@ const INITIAL_HUD: ExtendedHudState = {
   bestiary: Object.fromEntries(MOB_ORDER.map((kind) => [kind, { seen: false, kills: 0, captures: 0 }])) as HudState["bestiary"],
   selected: 0,
   targetName: null,
+  targetCollectible: true,
   targetMob: null,
   breakProgress: 0,
   day: 1,
@@ -1259,13 +1269,15 @@ function ItemIcon({ item, slot, small = false }: { item: ItemCode; slot?: Invent
   const iconKind = itemIconKind(item);
   const isTool = Boolean(definition?.toolKind) && iconKind.startsWith("tool-");
   const custom = iconKind !== "block" && iconKind !== "item" && !isTool;
-  const filledCaptureOrb = item === Item.CaptureOrb && Boolean(captureOrbFromInventorySlot(slot)?.creature);
+  const capturedCreature = item === Item.CaptureOrb ? captureOrbFromInventorySlot(slot)?.creature : null;
+  const filledCaptureOrb = Boolean(capturedCreature);
   return (
     <span
       className={`item-icon item-icon-kind-${iconKind} ${filledCaptureOrb ? "item-icon-filled" : ""} ${small ? "item-icon-small" : ""} ${isTool ? `tool-icon tool-${definition.toolKind}` : custom ? "custom-item-icon" : "block-item-icon"}`}
       style={{ "--item-color": definition?.color ?? "#777" } as CSSProperties}
       data-item-icon={iconKind}
       data-item-id={item}
+      data-creature-kind={capturedCreature?.kind}
       data-world-texture={definition?.worldTextureBlock}
       aria-hidden="true"
     />
@@ -1835,6 +1847,14 @@ const RESOURCE_ASSET_AUDIT_ITEMS = new Set<ItemCode>([
   Item.Shellfruit,
   BlockId.ShellfruitCrate,
   Item.DeepgearLanternItem,
+  Item.Flour,
+  Item.WheatMillItem,
+  BlockId.FlourCrate,
+  BlockId.BreadCrate,
+  Item.WildwoodStoolItem,
+  Item.WildwoodFenceGate,
+  BlockId.WildwoodFence,
+  BlockId.CaptureOrbRack,
 ]);
 
 export default function VoxelGame() {
@@ -1861,6 +1881,7 @@ export default function VoxelGame() {
   const bestiaryFilterTriggerRef = useRef<HTMLButtonElement | null>(null);
   const bestiaryFilterPanelRef = useRef<HTMLElement | null>(null);
   const telemetryLogRef = useRef(new ResourceTelemetryLog());
+  const contextReferenceRef = useRef<ContextReferenceTarget | null>(null);
 
   const [overlay, setOverlayState] = useState<Overlay>("title");
   const [titleMenuView, setTitleMenuViewState] = useState<TitleMenuView>("main");
@@ -1898,6 +1919,7 @@ export default function VoxelGame() {
   const [itemGuideOpen, setItemGuideOpen] = useState(false);
   const [itemGuideQuery, setItemGuideQuery] = useState("");
   const [itemGuideItem, setItemGuideItem] = useState<ItemCode | null>(null);
+  const [contextReference, setContextReference] = useState<ContextReferenceTarget | null>(null);
   const [telemetryRunning, setTelemetryRunning] = useState(false);
   const [telemetrySamples, setTelemetrySamples] = useState(0);
   const [petNameDraft, setPetNameDraft] = useState("");
@@ -2038,7 +2060,7 @@ export default function VoxelGame() {
       }, 250);
     }
     const workstationAudit = parameters.get("workstation-audit");
-    setWorkstationAuditMode(workstationAudit === "apiary" || workstationAudit === "morph-loom" || workstationAudit === "orb-rack" || workstationAudit === "healing-station" || workstationAudit === "sugarworks" ? workstationAudit : null);
+    setWorkstationAuditMode(workstationAudit === "apiary" || workstationAudit === "morph-loom" || workstationAudit === "orb-rack" || workstationAudit === "healing-station" || workstationAudit === "sugarworks" || workstationAudit === "wheat-mill" ? workstationAudit : null);
     const civicAudit = parameters.get("civic-audit");
     setCivicAuditMode(civicAudit === "atlantian-dialogue" || civicAudit === "atlantian-trade" || civicAudit === "atlantian-settlement" ? civicAudit : null);
   }, []);
@@ -2166,7 +2188,20 @@ export default function VoxelGame() {
             return;
           }
           if (kind === "inventory" || kind === "crafting") setInventoryTab(kind === "inventory" ? "inventory" : "recipes");
-          if (["inventory", "crafting", "furnace", "chest", "apiary", "morph-loom", "aquarium", "orb-rack", "healing-station", "waygrid-items", "waygrid-creatures"].includes(kind)) slotInteractionReadyAtRef.current = performance.now() + 180;
+          if (kind === "bestiary" && key?.startsWith("creature:")) {
+            const creatureKind = key.slice("creature:".length) as MobKind;
+            if (MOB_DEFS[creatureKind]) {
+              setFieldGuideSection("creatures");
+              setSelectedBestiary(creatureKind);
+            }
+          } else if (kind === "bestiary" && key?.startsWith("plant:")) {
+            const plantId = key.slice("plant:".length);
+            if (PLANTS.some((plant) => plant.id === plantId)) {
+              setFieldGuideSection("plants");
+              setSelectedPlantId(plantId);
+            }
+          }
+          if (["inventory", "crafting", "furnace", "wheat-mill", "chest", "apiary", "morph-loom", "aquarium", "orb-rack", "healing-station", "waygrid-items", "waygrid-creatures"].includes(kind)) slotInteractionReadyAtRef.current = performance.now() + 180;
           setOverlay(kind as Overlay);
         },
         onDeath: () => undefined,
@@ -2385,11 +2420,68 @@ export default function VoxelGame() {
   }, [bestiaryFiltersOpen]);
 
   useEffect(() => {
+    const referenceForElement = (target: EventTarget | null): ContextReferenceTarget | null => {
+      if (!(target instanceof Element)) return null;
+      const icon = target.closest<HTMLElement>("[data-item-id]");
+      if (!icon) return null;
+      const item = Number(icon.dataset.itemId) as ItemCode;
+      if (!Number.isFinite(item) || !ITEMS[item]) return null;
+      const creatureKind = icon.dataset.creatureKind as MobKind | undefined;
+      if (creatureKind && MOB_DEFS[creatureKind]) return { item, field: { kind: "creature", id: creatureKind } };
+      const definition = ITEMS[item];
+      const plant = plantForBlock(definition?.placeBlock ?? definition?.worldTextureBlock);
+      return plant ? { item, field: { kind: "plant", id: plant.id } } : { item };
+    };
+    const commit = (next: ContextReferenceTarget | null) => {
+      const current = contextReferenceRef.current;
+      if (current?.item === next?.item && current?.field?.kind === next?.field?.kind && current?.field?.id === next?.field?.id) return;
+      contextReferenceRef.current = next;
+      setContextReference(next);
+    };
+    const enter = (event: Event) => commit(referenceForElement(event.target));
+    const leave = (event: PointerEvent) => {
+      if (referenceForElement(event.relatedTarget)) return;
+      commit(null);
+    };
+    document.addEventListener("pointerover", enter);
+    document.addEventListener("pointerout", leave);
+    document.addEventListener("focusin", enter);
+    return () => {
+      document.removeEventListener("pointerover", enter);
+      document.removeEventListener("pointerout", leave);
+      document.removeEventListener("focusin", enter);
+    };
+  }, []);
+
+  useEffect(() => {
     const handleMenuKeys = (event: KeyboardEvent) => {
       const current = overlayRef.current;
       const engine = engineRef.current;
       if (acceptsTextInput(event.target) && event.code !== "Escape") return;
-      if (event.code === "KeyE" && ["inventory", "crafting", "furnace", "chest", "apiary", "aquarium", "orb-rack", "healing-station", "waygrid-items", "waygrid-creatures", "pet"].includes(current ?? "")) {
+      if ((event.key === "?" || (event.code === "Slash" && event.shiftKey)) && current && current !== "title" && current !== "new") {
+        const reference = contextReferenceRef.current;
+        if (!reference) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        setItemGuideItem(reference.item);
+        setItemGuideOpen(true);
+        return;
+      }
+      if (event.code === "KeyB" && current && current !== "title" && current !== "new") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const field = contextReferenceRef.current?.field;
+        if (field?.kind === "plant") {
+          setFieldGuideSection("plants");
+          setSelectedPlantId(field.id);
+        } else {
+          setFieldGuideSection("creatures");
+          if (field?.kind === "creature") setSelectedBestiary(field.id);
+        }
+        setOverlay("bestiary");
+        return;
+      }
+      if (event.code === "KeyE" && ["inventory", "crafting", "furnace", "wheat-mill", "chest", "apiary", "aquarium", "orb-rack", "healing-station", "waygrid-items", "waygrid-creatures", "pet"].includes(current ?? "")) {
         event.preventDefault();
         event.stopImmediatePropagation();
         engine?.closeContainer();
@@ -2412,7 +2504,7 @@ export default function VoxelGame() {
         return;
       }
       if (current !== null) {
-        if (["inventory", "crafting", "furnace", "chest", "apiary", "aquarium", "orb-rack", "healing-station", "waygrid-items", "waygrid-creatures", "pet", "dragon", "library", "incubator"].includes(current)) engine?.closeContainer();
+        if (["inventory", "crafting", "furnace", "wheat-mill", "chest", "apiary", "aquarium", "orb-rack", "healing-station", "waygrid-items", "waygrid-creatures", "pet", "dragon", "library", "incubator"].includes(current)) engine?.closeContainer();
         if (startedRef.current) {
           if (current === "pause") { setOverlay(null); engine?.activate(); }
           else if (current === "settings" || current === "help" || current === "bestiary" || current === "multiplayer") setOverlay("pause");
@@ -2989,7 +3081,11 @@ export default function VoxelGame() {
     inventoryDragRef.current = null;
     setInventoryDragRevision((revision) => revision + 1);
     if (gesture.targets.length < 2) return;
-    if (engineRef.current?.distributeCursorAcrossSlots(gesture.targets, gesture.button)) suppressSlotClickRef.current = true;
+    // A real drag owns its release even when every visited slot rejected the
+    // stack. Letting the trailing click escape would place into the final slot
+    // and make ordinary click placement feel intermittently broken.
+    engineRef.current?.distributeCursorAcrossSlots(gesture.targets, gesture.button);
+    suppressSlotClickRef.current = true;
   };
 
   const cancelInventoryDrag = (event: ReactPointerEvent<HTMLElement>) => {
@@ -3283,11 +3379,57 @@ export default function VoxelGame() {
 
   const openGuideCraftingPattern = (process: ItemGuideProcess) => {
     if (!process.craftingRecipeId) return;
-    setRecipeQuery("");
+    setRecipeQuery(ITEMS[process.outputItem]?.name ?? process.name);
     setRecipeFeedback(null);
     setPreviewRecipeId(process.craftingRecipeId);
     setInventoryTab("recipes");
     setItemGuideOpen(false);
+  };
+
+  const renderItemGuideBoard = (recipe: Recipe) => {
+    const cells = recipePreviewGrid(recipe);
+    const labels = recipePreviewLabels(recipe);
+    const ingredients = recipeIngredientLabels(recipe);
+    return (
+      <section className="item-guide-board" aria-label={`${recipe.name} item board`}>
+        <div className="recipe-board-title"><span>ITEM BOARD</span><small>{recipe.mirrored ? "Mirrored pattern supported" : `${recipe.width}Ã—${recipe.height} pattern`}</small></div>
+        <div className="recipe-preview-row">
+          <div className="recipe-preview-grid" aria-label={`${recipe.name} crafting pattern`}>
+            {cells.map((item, index) => item === 0
+              ? <span key={index} className="recipe-preview-slot" aria-label="Empty crafting slot" />
+              : <RecipePreviewIngredient key={index} item={item} label={labels[index] ?? ITEMS[item]?.name ?? "Unknown item"} onNavigate={(recipeId) => {
+                const ingredientRecipe = RECIPES.find((candidate) => candidate.id === recipeId);
+                if (ingredientRecipe) setItemGuideItem(ingredientRecipe.output.item);
+              }} />)}
+          </div>
+          <span className="recipe-preview-arrow" aria-hidden="true" />
+          <span className="recipe-preview-output"><ItemIcon item={recipe.output.item} /><b>{recipe.output.count}</b></span>
+        </div>
+        <div className="recipe-preview-ingredients"><small>NEEDS</small><span>{ingredients.join(" Â· ")}</span></div>
+      </section>
+    );
+  };
+
+  const renderWheatMillPanel = (source: HudState["activeWheatMill"], audit = false) => {
+    const progressPercent = Math.min(100, (source?.progressSeconds ?? 0) / WHEAT_MILL_CYCLE_SECONDS * 100);
+    const turning = (source?.input?.count ?? 0) > 0 && (source?.output?.count ?? 0) < 64;
+    return (
+      <section className={`menu-overlay inventory-overlay ${audit ? "workstation-audit-overlay" : ""}`} aria-labelledby="wheat-mill-title" onPointerMove={trackCursor}>
+        <div className="mc-window machine-window wheat-mill-window">
+          <header className="mc-window-header"><div><span className="panel-eyebrow">HEARTHKIN PANTRY CRAFT</span><h2 id="wheat-mill-title">Wheat Mill</h2></div>{!audit && <button type="button" className="panel-close" onClick={resume}>×</button>}</header>
+          <div className="wheat-mill-layout">
+            <div className="wheat-mill-slot"><small>GRAIN HOPPER</small>{renderSlot(source?.input ?? null, "wheat-mill-input", (shift) => engineRef.current?.machineClick("wheat-mill", 0, "left", shift), () => engineRef.current?.machineClick("wheat-mill", 0, "right"), "machine-slot", "Wheat input")}</div>
+            <div className={`mill-wheel ${turning ? "turning" : ""}`} aria-hidden="true"><span /></div>
+            <div className="smelt-progress" aria-label={`Milling ${Math.round(progressPercent)}% complete`}><span style={{ width: `${progressPercent}%` }} /><i aria-hidden="true" /></div>
+            <div className="wheat-mill-slot"><small>FLOUR SACK</small>{renderSlot(source?.output ?? null, "wheat-mill-output", (shift) => engineRef.current?.machineClick("wheat-mill", 1, "left", shift), () => engineRef.current?.machineClick("wheat-mill", 1, "right"), "machine-slot furnace-output-slot", "Flour output")}</div>
+            <div className="smelt-guide"><strong>PASSIVE MILLING</strong><span>1 Wheat → 1 Flour</span><small>No fuel needed. The runner turns while grain and output room remain.</small></div>
+          </div>
+          {!audit && renderPlayerInventory()}
+          {audit && <p className="workstation-audit-note">One input, one output, one-to-one milling. Each side holds a single stack.</p>}
+        </div>
+        {!audit && hud.cursor && <div ref={setHeldStackElement} className="held-stack"><SlotContents slot={hud.cursor} /></div>}
+      </section>
+    );
   };
 
   const renderGuideProcess = (process: ItemGuideProcess, canOpenPattern = false) => (
@@ -3311,6 +3453,10 @@ export default function VoxelGame() {
   const renderItemGuide = () => {
     const filtered = ITEM_GUIDE_ENTRIES.filter((entry) => itemGuideMatches(entry, itemGuideQuery));
     const selected = ITEM_GUIDE_ENTRIES.find((entry) => entry.item === itemGuideItem) ?? filtered[0] ?? ITEM_GUIDE_ENTRIES[0];
+    const selectedCraftingProcess = selected?.madeBy.find((process) => process.craftingRecipeId);
+    const selectedRecipe = selectedCraftingProcess?.craftingRecipeId
+      ? RECIPES.find((recipe) => recipe.id === selectedCraftingProcess.craftingRecipeId) ?? null
+      : null;
     return (
       <div className="mc-window item-guide-window">
         <header className="mc-window-header"><div><span className="panel-eyebrow">FIELD REFERENCE · RECIPES · ORIGINS</span><h2 id="item-guide-title">Trailcraft Guide</h2></div><button type="button" className="panel-close" onClick={() => setItemGuideOpen(false)} aria-label="Close item guide">×</button></header>
@@ -3323,6 +3469,7 @@ export default function VoxelGame() {
           {selected && <main className="item-guide-detail">
             <header><ItemIcon item={selected.item} /><div><span>ITEM {selected.item}</span><h3>{selected.name}</h3><p>{selected.description}</p></div></header>
             <section><h4>Deterministic origins</h4><ul>{selected.origins.map((origin) => <li key={origin}>{origin}</li>)}</ul></section>
+            {selectedRecipe && <>{renderItemGuideBoard(selectedRecipe)}<button type="button" className="item-guide-pattern-button" onClick={() => openGuideCraftingPattern(selectedCraftingProcess!)}>Open and filter in Recipe Book</button></>}
             <section><h4>How to make it</h4>{selected.madeBy.length ? selected.madeBy.map((process) => renderGuideProcess(process, true)) : <p className="item-guide-empty">No manufacturing process is recorded. Follow the origins above.</p>}</section>
             <section><h4>What it makes</h4>{selected.usedIn.length ? selected.usedIn.map((process) => renderGuideProcess(process, true)) : <p className="item-guide-empty">No downstream recipe currently uses this item.</p>}</section>
           </main>}
@@ -3751,13 +3898,19 @@ export default function VoxelGame() {
                 </button>
               ))}
             </div>
-            <div className="target-label">{hud.targetName ? `▣ ${hud.targetName}` : ""}</div>
+            <div className={`target-label ${hud.targetCollectible === false ? "target-destroyed" : "target-collected"}`}>{hud.targetName ? `${hud.targetCollectible === false ? "□" : "▣"} ${hud.targetName}` : ""}</div>
           </div>
         </div>
       )}
 
       {toast && started && overlay === null && <div className="toast-message">{toast}</div>}
       {savedPulse && <div className="save-pulse">WORLD SAVED</div>}
+      {uiPreferences.showReferenceHints && contextReference && overlay && overlay !== "title" && overlay !== "new" && (
+        <div className="context-reference-hint" role="status">
+          <span><kbd>?</kbd> Item Wiki</span>
+          {contextReference.field && <span><kbd>B</kbd> {contextReference.field.kind === "plant" ? "Plant" : "Bestiary"}</span>}
+        </div>
+      )}
 
       {started && overlay === null && showTouchControls && (
         <div className="mobile-controls touch-controls-visible" aria-label="Touch game controls">
@@ -4030,13 +4183,12 @@ export default function VoxelGame() {
             <p className="panel-flavor">{hud.onlinePlayers > 1 ? "This shared world keeps running while the session menu is open." : `Loaded ${hud.loadedChunks} chunks around you. The rest of infinity is waiting politely offscreen.`}</p>
             <div className="stacked-menu-buttons">
               <PixelButton className="gold-button" onClick={() => { setOverlay(null); engineRef.current?.activate(); }}>Back to Game</PixelButton>
-              <PixelButton onClick={() => engineRef.current?.openOverlay("inventory")}>Inventory & Crafting</PixelButton>
               <PixelButton onClick={() => engineRef.current?.openOverlay("map")}>Map <kbd>M</kbd></PixelButton>
               <PixelButton onClick={() => engineRef.current?.openOverlay("quests")}>Quest Journal <kbd>J</kbd></PixelButton>
               <PixelButton onClick={() => engineRef.current?.openOverlay("guilds")}>Guilds of Hearthroads</PixelButton>
               <PixelButton onClick={() => engineRef.current?.openOverlay("magic")}>Spell Journal <kbd>K</kbd></PixelButton>
               <PixelButton onClick={() => engineRef.current?.openOverlay("skills")}>Skills & Perks <kbd>L</kbd></PixelButton>
-              <PixelButton onClick={() => engineRef.current?.openOverlay("bestiary")}>Bestiary</PixelButton>
+              <PixelButton onClick={() => engineRef.current?.openOverlay("bestiary")}>Bestiary <kbd>B</kbd></PixelButton>
               <PixelButton onClick={() => engineRef.current?.openOverlay("creature-camp")}>Creature Camp</PixelButton>
               <PixelButton onClick={() => openMultiplayer("pause")}>Multiplayer Session</PixelButton>
               <PixelButton onClick={() => engineRef.current?.toggleFullscreen()}>{hud.fullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}</PixelButton>
@@ -4303,6 +4455,23 @@ export default function VoxelGame() {
         </section>
       )}
 
+      {overlay === "wheat-mill" && (
+        <section className="menu-overlay inventory-overlay" aria-labelledby="wheat-mill-title" onPointerMove={trackCursor}>
+          <div className="mc-window machine-window wheat-mill-window">
+            <header className="mc-window-header"><div><span className="panel-eyebrow">HEARTHKIN PANTRY CRAFT</span><h2 id="wheat-mill-title">Wheat Mill</h2></div><button type="button" className="panel-close" onClick={resume}>Ã—</button></header>
+            <div className="wheat-mill-layout">
+              <div className="wheat-mill-slot"><small>GRAIN HOPPER</small>{renderSlot(hud.activeWheatMill?.input ?? null, "wheat-mill-input", (shift) => engineRef.current?.machineClick("wheat-mill", 0, "left", shift), () => engineRef.current?.machineClick("wheat-mill", 0, "right"), "machine-slot", "Wheat input")}</div>
+              <div className={`mill-wheel ${(hud.activeWheatMill?.input?.count ?? 0) > 0 && (hud.activeWheatMill?.output?.count ?? 0) < 64 ? "turning" : ""}`} aria-hidden="true"><span /></div>
+              <div className="smelt-progress" aria-label={`Milling ${Math.round(Math.min(100, (hud.activeWheatMill?.progressSeconds ?? 0) / WHEAT_MILL_CYCLE_SECONDS * 100))}% complete`}><span style={{ width: `${Math.min(100, (hud.activeWheatMill?.progressSeconds ?? 0) / WHEAT_MILL_CYCLE_SECONDS * 100)}%` }} /><i aria-hidden="true" /></div>
+              <div className="wheat-mill-slot"><small>FLOUR SACK</small>{renderSlot(hud.activeWheatMill?.output ?? null, "wheat-mill-output", (shift) => engineRef.current?.machineClick("wheat-mill", 1, "left", shift), () => engineRef.current?.machineClick("wheat-mill", 1, "right"), "machine-slot furnace-output-slot", "Flour output")}</div>
+              <div className="smelt-guide"><strong>PASSIVE MILLING</strong><span>1 Wheat â†’ 1 Flour</span><small>No fuel needed. The runner turns while grain and output room remain.</small></div>
+            </div>
+            {renderPlayerInventory()}
+          </div>
+          {hud.cursor && <div ref={setHeldStackElement} className="held-stack"><SlotContents slot={hud.cursor} /></div>}
+        </section>
+      )}
+
       {overlay === "chest" && (
         <section className="menu-overlay inventory-overlay" aria-labelledby="chest-title" onPointerMove={trackCursor}>
           <div className="mc-window chest-window">
@@ -4415,6 +4584,7 @@ export default function VoxelGame() {
           <QuestPanel
             book={hud.questBook}
             definitions={hud.questDefinitions}
+            guildBook={hud.guildBook}
             onAccept={(questId) => { hearthroadsApi?.acceptQuestById?.(questId); }}
             onPin={(questId) => { hearthroadsApi?.pinQuestById?.(questId); }}
             onAbandon={(questId) => { hearthroadsApi?.abandonQuestById?.(questId); }}
@@ -4787,6 +4957,8 @@ export default function VoxelGame() {
               <div><kbd>R</kbd><span><strong>Reload</strong>Load the selected crossbow from bolts in your pack.</span></div>
               <div><kbd>Q</kbd><span><strong>Cast / spell wheel</strong>Tap to cast the selected spell; hold for up to ten favorites.</span></div>
               <div><kbd>K / L</kbd><span><strong>Arcane journals</strong>Open spells or the character skills and perks tree.</span></div>
+              <div><kbd>?</kbd><span><strong>Item Wiki</strong>Hover an item in any inventory or workstation, then press the key to open its reference page.</span></div>
+              <div><kbd>B</kbd><span><strong>Bestiary / plants</strong>Inspect the creature or plant under your crosshair, or the specimen represented by a hovered item.</span></div>
               <div><kbd>G</kbd><span><strong>Drop item</strong>Toss one from the selected stack.</span></div>
               <div><kbd>Z / X / C</kbd><span><strong>Dragon attacks</strong>Melee, breath, and ranged attacks while riding.</span></div>
               <div><kbd>ESC</kbd><span><strong>Menu</strong>Open or close the current menu. Fullscreen remains a menu button.</span></div>
@@ -4802,7 +4974,7 @@ export default function VoxelGame() {
               <div><b>5</b><strong>Own the night</strong><span>Hostiles drop shards, gel, bone, coal, and XP.</span></div>
               <div><b>6</b><strong>Go below zero</strong><span>Crystal deeps, lava, aquifers, and the worldheart await.</span></div>
             </div>
-            <div className="panel-actions"><PixelButton className="gold-button" onClick={() => setOverlay(started ? "pause" : "title")}>{started ? "Back to Menu" : "Back"}</PixelButton></div>
+            <div className="panel-actions"><PixelButton onClick={() => { setItemGuideItem(null); setItemGuideOpen(true); }}>Open Item Wiki <kbd>?</kbd></PixelButton><PixelButton className="gold-button" onClick={() => setOverlay(started ? "pause" : "title")}>{started ? "Back to Menu" : "Back"}</PixelButton></div>
           </div>
         </section>
       )}
@@ -4821,6 +4993,7 @@ export default function VoxelGame() {
             <label className="setting-row resource-setting"><span><strong>Resource reserve</strong><small>{settings.resourceMode === "cpu" ? "CPU boost raises streaming and simulation work budgets." : settings.resourceMode === "memory" ? "Memory cache retains more nearby chunks to reduce traversal reload stutter." : "Auto adapts work and cache pressure to this device."}</small></span><select value={settings.resourceMode} onChange={(event) => updateSettings({ resourceMode: event.target.value as GameSettings["resourceMode"] })}><option value="auto">Auto (adaptive)</option><option value="cpu">CPU boost</option><option value="memory">Memory cache</option></select></label>
             <label className="setting-row resource-setting"><span><strong>Touch controls</strong><small>Auto follows the active pointer: touch shows the overlay, while mouse or pen keeps hybrid PCs clear.</small></span><select value={uiPreferences.touchControls} onChange={(event) => updateUiPreferences({ touchControls: event.target.value as TouchControlsMode })}><option value="auto">Auto (active pointer)</option><option value="off">Off</option><option value="on">On</option></select></label>
             <label className="setting-row"><span><strong>Target outline</strong><small>{Math.round(uiPreferences.targetOutlineOpacity * 100)}% opacity</small></span><input type="range" min="0.05" max="1" step="0.05" value={uiPreferences.targetOutlineOpacity} onChange={(event) => updateUiPreferences({ targetOutlineOpacity: Number(event.target.value) })} /></label>
+            <div className="toggle-setting"><span><strong>Context reference hints</strong><small>Shows the short Item Wiki and Bestiary hotkey hint while an item is hovered.</small></span><button type="button" className={uiPreferences.showReferenceHints ? "active" : ""} onClick={() => updateUiPreferences({ showReferenceHints: !uiPreferences.showReferenceHints })}>{uiPreferences.showReferenceHints ? "ON" : "OFF"}</button></div>
             <div className="toggle-setting"><span><strong>Music, sound effects & ambience</strong><small>Includes the Blockwild day, night, and sea score.</small></span><button type="button" className={settings.muted ? "" : "active"} onClick={() => updateSettings({ muted: !settings.muted })}>{settings.muted ? "OFF" : "ON"}</button></div>
             <div className="toggle-setting"><span><strong>FPS counter</strong><small>Shows a compact live performance readout while playing.</small></span><button type="button" className={settings.showFps ? "active" : ""} onClick={() => updateSettings({ showFps: !settings.showFps })}>{settings.showFps ? "ON" : "OFF"}</button></div>
             <div className="toggle-setting"><span><strong>HUD minimap</strong><small>Shows a north-up local terrain chart in the upper-left while playing. Disabled by default.</small></span><button type="button" className={settings.showMinimap ? "active" : ""} onClick={() => updateSettings({ showMinimap: !settings.showMinimap })}>{settings.showMinimap ? "ON" : "OFF"}</button></div>
@@ -4903,6 +5076,12 @@ export default function VoxelGame() {
           />
         </section>
       )}
+      {workstationAuditMode === "wheat-mill" && renderWheatMillPanel({
+        schema: 1,
+        input: { item: Item.Wheat, count: 18 },
+        output: { item: Item.Flour, count: 7 },
+        progressSeconds: WHEAT_MILL_CYCLE_SECONDS * 0.63,
+      }, true)}
 
       {civicAuditMode && (
         <section className="menu-overlay hearthroads-overlay civic-audit-overlay" aria-label="Atlantian civic interface audit">

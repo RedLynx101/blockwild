@@ -3339,6 +3339,12 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
       add(visual, [0.09, 0.09, 1.05], leather, [0.24, baseY + 0.7, -0.5], undefined, `${prefix}-pick-handle`);
       add(visual, [0.68, 0.12, 0.18], metal, [0.24, baseY + 0.7, -1.05], undefined, `${prefix}-pick-head`);
     };
+    const addForwardHoe = () => {
+      readyHands();
+      add(visual, [0.09, 0.09, 1.02], leather, [0.24, baseY + 0.7, -0.52], undefined, `${prefix}-hoe-handle`);
+      const blade = add(visual, [0.46, 0.12, 0.3], metal, [0.24, baseY + 0.72, -1.07], undefined, `${prefix}-hoe-blade`);
+      blade.rotation.x = -0.24;
+    };
 
     if (kind === "hobbit-hammer-guard") {
       addForwardHammer();
@@ -3358,20 +3364,24 @@ export function createMobVisual(kind: MobKind, id: number): MobVisual {
     } else if (kind === "hobbit-farmer" || kind === "goblin-worker") {
       add(visual, [0.46, 0.5, 0.05], material(0xe5d3a4), [0, baseY + 0.52, -0.235], undefined, `${prefix}-work-apron`);
       if (hobbit) {
+        addForwardHoe();
         add(visual, [0.84, 0.1, 0.7], material(0xd8b560), [0, headY + 0.3, 0], undefined, `${prefix}-straw-hat-brim`);
         add(visual, [0.46, 0.24, 0.42], material(0xc89c4c), [0, headY + 0.43, 0.03], undefined, `${prefix}-straw-hat-crown`);
       } else {
         add(visual, [0.5, 0.22, 0.18], leather, [0, baseY + 0.64, 0.29], undefined, `${prefix}-seed-pouch`);
       }
     } else if (kind === "hobbit-banker") {
+      readyHands();
       add(visual, [0.45, 0.5, 0.05], material(0xf1ead1), [0, baseY + 0.59, -0.235], undefined, `${prefix}-waistcoat-front`);
       add(visual, [0.4, 0.28, 0.08], material(0xd9b74e, true), [0.26, baseY + 0.47, -0.28], undefined, `${prefix}-gold-ledger`);
       add(visual, [0.15, 0.15, 0.08], metal, [-0.16, baseY + 0.78, -0.25], undefined, `${prefix}-spectacles-left`);
       add(visual, [0.15, 0.15, 0.08], metal, [0.16, baseY + 0.78, -0.25], undefined, `${prefix}-spectacles-right`);
     } else if (kind === "hobbit-merchant") {
+      readyHands();
       add(visual, [0.52, 0.5, 0.2], leather, [0, baseY + 0.57, 0.3], undefined, `${prefix}-merchant-pack`);
       add(visual, [0.34, 0.4, 0.05], material(0xe7d4aa), [-0.26, baseY + 0.63, -0.25], undefined, `${prefix}-price-ledger`);
     } else if (kind === "hobbit-mayor") {
+      readyHands();
       add(visual, [0.13, 0.75, 0.06], material(0xe2bf5b), [-0.14, baseY + 0.72, -0.24], undefined, `${prefix}-mayoral-sash`).rotation.z = -0.32;
       add(visual, [0.2, 0.2, 0.08], material(0xf0cf6a, true), [0.14, baseY + 0.64, -0.27], undefined, `${prefix}-town-seal`);
       add(visual, [0.44, 0.36, 0.08], leather, [0.27, baseY + 0.49, -0.28], undefined, `${prefix}-town-ledger`);

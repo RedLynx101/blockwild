@@ -41,6 +41,8 @@ test("produce crates sell at ten underlying item base values", () => {
     [BlockId.FrostpearCrate, Item.Frostpear],
     [BlockId.ShellfruitCrate, Item.Shellfruit],
     [BlockId.MoonberryCookieCrate, Item.MoonberryCookie],
+    [BlockId.FlourCrate, Item.Flour],
+    [BlockId.BreadCrate, Item.Bread],
   ] as const;
   for (const [crate, produce] of pairs) {
     assert.equal(playerCommerceItem(crate)?.baseValue, (playerCommerceItem(produce)?.baseValue ?? 0) * 10);

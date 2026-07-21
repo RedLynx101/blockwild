@@ -3,7 +3,9 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { GuildPanel } from "../app/game/GuildPanel.tsx";
+import { QuestPanel } from "../app/game/HearthroadsPanels.tsx";
 import { VoxelEngine } from "../app/game/engine.ts";
+import { createQuestBook } from "../app/game/quests.ts";
 import {
   GUILDS,
   GUILD_NPCS,
@@ -85,6 +87,38 @@ test("all seven campaigns carry authored runtime predicates, recovery, solutions
     assert.ok(npc.recoveryProtocol.length > 20);
     assert.equal(Boolean(npc.recruitCondition), npc.recruitable);
   }
+});
+
+test("accepted guild chapters appear in the quest journal without moving acceptance there", () => {
+  const quest = GUILD_QUESTS.find((entry) => entry.guildId === "waykeeper" && entry.number === 1)!;
+  let guildBook = enterGuild(createGuildBook(), "waykeeper", GUILDS.waykeeper.principalNpcIds[0]);
+  const withoutAcceptedQuest = renderToStaticMarkup(createElement(QuestPanel, {
+    book: createQuestBook(),
+    definitions: [],
+    guildBook,
+    onAccept: () => undefined,
+    onPin: () => undefined,
+    onAbandon: () => undefined,
+    onTurnIn: () => undefined,
+  }));
+  assert.doesNotMatch(withoutAcceptedQuest, /Guild quests/u);
+
+  guildBook = startGuildQuest(guildBook, quest.id);
+  const accepted = renderToStaticMarkup(createElement(QuestPanel, {
+    book: createQuestBook(),
+    definitions: [],
+    guildBook,
+    activeTab: "guild",
+    selectedQuestId: quest.id,
+    onAccept: () => undefined,
+    onPin: () => undefined,
+    onAbandon: () => undefined,
+    onTurnIn: () => undefined,
+  }));
+  assert.match(accepted, /Guild quests/u);
+  assert.match(accepted, new RegExp(quest.name, "u"));
+  assert.match(accepted, /New guild chapters remain optional and are accepted from the Guilds ledger/u);
+  assert.doesNotMatch(accepted, /Accept quest/u);
 });
 
 test("joining requires a principal invitation or discovered hall", () => {
