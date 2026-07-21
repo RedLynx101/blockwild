@@ -236,6 +236,13 @@ test("engine felling removes one complete wide tree across chunks and preserves 
   assert.deepEqual(fellingBatch, { immediate: true, deferLighting: true }, "felling hides the standing mesh immediately while keeping relighting deferred");
   assert.equal(engine.fallingTrees[0]?.logCount, plan.filter((block) => block.block === BlockId.WildwoodLog).length);
   assert.equal(engine.fallingTrees[0]?.leafCount, plan.filter((block) => block.block === BlockId.WildwoodLeaves).length);
+  const fallingLeafMaterials = engine.fallingTrees[0]!.group.children.flatMap((child) => {
+    const material = (child as THREE.Mesh).material;
+    const materials = Array.isArray(material) ? material : [material];
+    return materials.filter((entry): entry is THREE.MeshLambertMaterial => entry instanceof THREE.MeshLambertMaterial && entry.alphaTest > 0);
+  });
+  assert.ok(fallingLeafMaterials.length > 0);
+  assert.ok(fallingLeafMaterials.every((material) => !material.transparent && material.depthWrite), "falling foliage must use the standing terrain's cutout/depth contract");
   for (const block of plan) assert.equal(engine.world.getBlock(block.x, block.y, block.z), BlockId.Air, `tree voxel remained at ${keyOf(block.x, block.y, block.z)}`);
   for (const block of beam) assert.equal(engine.world.getBlock(block.x, block.y, block.z), BlockId.WildwoodLog, "touching build was felled");
   for (const falling of engine.fallingTrees) engine.disposeObject(falling.group);

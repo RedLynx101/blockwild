@@ -4979,6 +4979,40 @@ export class VoxelEngine {
     return this.resolveChest(auditChestBlock);
   }
 
+  /** Deterministic staged fall used to review proxy depth and relight handoff. */
+  primeTreeFallAudit() {
+    this.world.setRenderDistance(5);
+    this.clearEntities();
+    this.inventory = blankInventory();
+    const centerX = Math.round(this.position.x);
+    const centerZ = Math.round(this.position.z);
+    const groundY = Math.round(this.position.y - 0.51);
+    const root = { x: centerX, y: groundY + 1, z: centerZ - 5 };
+    const edits: BlockEdit[] = [];
+    for (let x = centerX - 10; x <= centerX + 10; x += 1) for (let z = centerZ - 16; z <= centerZ + 5; z += 1) {
+      edits.push({ x, y: groundY, z, type: BlockId.MeadowGrass });
+      for (let y = groundY + 1; y <= groundY + 12; y += 1) edits.push({ x, y, z, type: BlockId.Air });
+    }
+    for (let y = 0; y < 8; y += 1) edits.push({ x: root.x, y: root.y + y, z: root.z, type: BlockId.WildwoodLog });
+    for (let dy = 4; dy <= 8; dy += 1) {
+      const radius = dy === 8 ? 1 : dy === 4 ? 1 : 2;
+      for (let dx = -radius; dx <= radius; dx += 1) for (let dz = -radius; dz <= radius; dz += 1) {
+        if (dx === 0 && dz === 0 && dy < 8) continue;
+        if (Math.abs(dx) + Math.abs(dz) > radius + 1) continue;
+        edits.push({ x: root.x + dx, y: root.y + dy, z: root.z + dz, type: BlockId.WildwoodLeaves });
+      }
+    }
+    this.world.setBlocksBatch(edits, true, true);
+    this.position.set(centerX, groundY + 0.51, centerZ + 3.5);
+    this.spawn.copy(this.position);
+    this.yaw = 0;
+    this.pitch = -0.08;
+    this.worldTime = 0.28;
+    this.visualWorldTime = this.worldTime;
+    this.emitHud(true);
+    return root;
+  }
+
   /** Close deterministic view of the dedicated seamless Moonfelt swatch. */
   primeMoonfeltMyceliumAudit() {
     this.primeDirectionalPlacementAudit();
@@ -8059,7 +8093,10 @@ export class VoxelEngine {
         const material = new THREE.MeshLambertMaterial({
           map: this.world.atlas,
           color: 0xffffff,
-          ...(leafy ? { transparent: true, alphaTest: 0.32, side: THREE.DoubleSide } : {}),
+          // Leaves are cutouts in the standing terrain. Keeping the falling
+          // proxy in the same opaque depth pass avoids a large blended/depth
+          // footprint sweeping across the ground in the fall direction.
+          ...(leafy ? { alphaTest: 0.32, depthWrite: true, side: THREE.DoubleSide } : {}),
         });
         const mesh = new THREE.InstancedMesh(geometry, material, positions.length);
         positions.forEach((block, index) => {
@@ -16757,7 +16794,7 @@ export class VoxelEngine {
         const material = new THREE.MeshLambertMaterial({
           map: this.world.atlas,
           color: 0xffffff,
-          ...(leafy ? { transparent: true, alphaTest: 0.32, side: THREE.DoubleSide } : {}),
+          ...(leafy ? { alphaTest: 0.32, depthWrite: true, side: THREE.DoubleSide } : {}),
         });
         const mesh = new THREE.InstancedMesh(geometry, material, positions.length);
         positions.forEach((block, index) => {

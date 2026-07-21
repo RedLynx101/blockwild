@@ -218,6 +218,11 @@ test("resumable chunk generation and lighting are bit-exact", () => {
   }
   assert.ok(generationSlices > 8, "terrain and finalization must yield across frames");
   assert.ok(lightingSlices > 1, "lighting must yield across frames");
+  assert.equal(
+    resumable.lightSectionQueued.size,
+    0,
+    "a full resumable relight must not publish partially propagated light to visible section attributes",
+  );
   assert.deepEqual(actual.blocks, expected.blocks);
   assert.deepEqual(actual.heightmap, expected.heightmap);
   assert.deepEqual(actual.biomes, expected.biomes);
@@ -2165,6 +2170,65 @@ test("player edits invalidate consolidated terrain before the local mesh is pres
   assert.equal(diagnostics.byKind.break, 1);
   assert.equal(diagnostics.mutationToLocalMeshVisible.count, 1);
   assert.ok(diagnostics.last && diagnostics.last.mutationToLocalMeshVisibleMilliseconds! >= 0);
+  world.dispose();
+});
+
+test("immediate edits keep unaffected consolidated render layers installed", () => {
+  const world = new ChunkWorld();
+  world.reset("LAYER-SCOPED-EDIT", undefined, { structures: false });
+  const chunk = world.generateChunk(0, 0);
+  chunk.blocks.fill(BlockId.Air);
+  chunk.sectionBlockCounts.fill(0);
+  world.lightEngine.initializeChunk(chunk);
+  world.setBlock(3, 0, 4, BlockId.Stone, false, true);
+  world.setBlock(9, 20, 9, BlockId.Water, false, true);
+  for (let guard = 0; guard < 40 && world.processConsolidation(); guard += 1) assert.ok(guard < 39);
+  const transparent = chunk.combinedMeshes.transparent;
+  assert.ok(chunk.combinedMeshes.opaque && transparent, "the fixture must begin with independently consolidated solid and water layers");
+
+  world.setBlock(3, 0, 4, BlockId.Air, true, true);
+
+  assert.equal(chunk.combinedMeshes.opaque, undefined, "the edited opaque layer must be detached immediately");
+  assert.equal(chunk.combinedMeshes.transparent, transparent, "an unrelated water layer must stay consolidated and submitted once");
+  world.dispose();
+});
+
+test("consolidation can retire a stable layer while another layer remains dirty", () => {
+  const world = new ChunkWorld();
+  world.reset("LAYER-STABLE-CONSOLIDATION", undefined, { structures: false });
+  const chunk = world.generateChunk(0, 0);
+  chunk.blocks.fill(BlockId.Air);
+  chunk.sectionBlockCounts.fill(0);
+  world.lightEngine.initializeChunk(chunk);
+  world.setBlock(3, 0, 4, BlockId.Stone, false, true);
+  world.setBlock(9, 20, 9, BlockId.TallGrass, false, true);
+  for (let guard = 0; guard < 40 && world.processConsolidation(); guard += 1) assert.ok(guard < 39);
+  const cutoutSection = Math.floor((20 - MIN_Y) / SECTION_HEIGHT);
+  world.queueMesh(chunk.key, cutoutSection);
+  const submittedBefore = world.terrainBufferPipeline.diagnostics().submitted;
+
+  world.setBlock(3, 0, 4, BlockId.Air, true, true);
+  assert.equal(world.processConsolidation(), true, "dirty cutout work must not hold a stable opaque snapshot hostage");
+  assert.equal(world.terrainBufferPipeline.diagnostics().submitted, submittedBefore + 1);
+  world.dispose();
+});
+
+test("bounded queue aging promotes old nearby work without overtaking the immediate ring", () => {
+  const world = new ChunkWorld();
+  world.reset("BOUNDED-AGE-PROMOTION", undefined, { structures: false });
+  world.playerChunkX = 0;
+  world.playerChunkZ = 0;
+  for (const cx of [1, 2, 4]) world.generateChunk(cx, 0);
+  const now = performance.now();
+  world.meshEnqueuedAt.set("4,0:0", now - 60_000);
+  world.meshEnqueuedAt.set("2,0:0", now);
+  world.meshEnqueuedAt.set("1,0:0", now);
+  const compare = (world as unknown as {
+    compareMeshPriority(left: { key: string; section: number }, right: { key: string; section: number }): number;
+  }).compareMeshPriority.bind(world);
+
+  assert.ok(compare({ key: "4,0", section: 0 }, { key: "2,0", section: 0 }) < 0, "aged mid-ring work should pass newer mid-ring work");
+  assert.ok(compare({ key: "4,0", section: 0 }, { key: "1,0", section: 0 }) > 0, "aged work must remain behind the immediate ring");
   world.dispose();
 });
 

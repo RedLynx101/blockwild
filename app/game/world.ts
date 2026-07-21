@@ -2806,6 +2806,7 @@ export class ChunkWorld {
   meshEnqueuedAt = new Map<string, number>();
   consolidationQueue: Array<{ key: string; layer: WorldRenderLayer }> = [];
   consolidationQueued = new Set<string>();
+  consolidationEnqueuedAt = new Map<string, number>();
   consolidationRevision = new Map<string, number>();
   consolidationDirtyLayers = new Map<string, Set<WorldRenderLayer>>();
   pendingConsolidations = new Set<string>();
@@ -2997,6 +2998,7 @@ export class ChunkWorld {
     this.meshEnqueuedAt.clear();
     this.consolidationQueue = [];
     this.consolidationQueued.clear();
+    this.consolidationEnqueuedAt.clear();
     this.consolidationRevision.clear();
     this.consolidationDirtyLayers.clear();
     this.pendingConsolidations.clear();
@@ -3076,10 +3078,10 @@ export class ChunkWorld {
     else this.blockFacings.set(key, normalized);
     const sx = splitCoordinate(x);
     const sz = splitCoordinate(z);
-    const chunk = this.chunks.get(chunkKey(sx.chunk, sz.chunk));
     this.markPlayerEditMutation();
-    if (immediate && chunk?.group.visible) this.invalidateCombinedMeshesForImmediateEdit(chunk);
-    this.refreshEditedBlock(sx.chunk, sz.chunk, sx.local, y, sz.local, immediate);
+    const type = this.getBlock(x, y, z) ?? BlockId.Air;
+    const affectedLayers = this.renderLayersAffectedByEdit(x, y, z, type, type);
+    this.refreshEditedBlock(sx.chunk, sz.chunk, sx.local, y, sz.local, immediate, affectedLayers);
     if (immediate) this.markPlayerEditLocalMeshVisible();
     return true;
   }
@@ -3352,9 +3354,17 @@ export class ChunkWorld {
         }
       }
     }
-    this.generationQueue.sort((a, b) => radialStreaming
-      ? b.distance - a.distance || b.cx - a.cx || b.cz - a.cz
-      : b.distance - a.distance);
+    const generationPriority = (entry: Readonly<{ cx: number; cz: number }>) => {
+      const key = chunkKey(entry.cx, entry.cz);
+      return this.agedStreamingPriority(
+        this.coordinateStreamingPriority(entry.cx, entry.cz),
+        this.generationEnqueuedAt.get(key),
+      );
+    };
+    // processGenerationSlice pops from the end, so keep the strongest item
+    // last while preserving deterministic coordinate ties.
+    this.generationQueue.sort((a, b) => generationPriority(b) - generationPriority(a)
+      || b.cx - a.cx || b.cz - a.cz);
     this.sortMeshQueues();
     this.preemptMeshForPlayer();
 
@@ -3369,12 +3379,10 @@ export class ChunkWorld {
     if (this.activeMeshTask && !this.chunks.get(this.activeMeshTask.key)?.group.visible) this.activeMeshTask = null;
   }
 
-  private chunkStreamingPriority(key: string) {
-    const chunk = this.chunks.get(key);
-    if (!chunk) return Number.POSITIVE_INFINITY;
+  private coordinateStreamingPriority(cx: number, cz: number) {
     const radialStreaming = this.renderDistance > RADIAL_STREAMING_DISTANCE_THRESHOLD;
-    const dx = chunk.cx - this.playerChunkX;
-    const dz = chunk.cz - this.playerChunkZ;
+    const dx = cx - this.playerChunkX;
+    const dz = cz - this.playerChunkZ;
     const base = chunkStreamingSortDistance(dx, dz, radialStreaming);
     const lookahead = chunkStreamingSortDistance(
       dx - this.streamingLookaheadChunkX,
@@ -3384,18 +3392,40 @@ export class ChunkWorld {
     return base + Math.min(0, lookahead - base) * 0.35;
   }
 
+  private chunkStreamingPriority(key: string) {
+    const chunk = this.chunks.get(key);
+    return chunk ? this.coordinateStreamingPriority(chunk.cx, chunk.cz) : Number.POSITIVE_INFINITY;
+  }
+
+  /**
+   * Valid nearby work gains bounded priority after four seconds. It can pass
+   * newer mid-ring work, but never the occupied chunk or immediate ring.
+   */
+  private agedStreamingPriority(base: number, enqueuedAt: number | undefined, now = performance.now()) {
+    if (!Number.isFinite(base) || base <= 1 || enqueuedAt === undefined) return base;
+    const promotion = Math.max(0, now - enqueuedAt - 4_000) / 8_000;
+    return Math.max(1.05, base - promotion);
+  }
+
   private compareMeshPriority(
     left: Readonly<{ key: string; section: number }>,
     right: Readonly<{ key: string; section: number }>,
   ) {
     const leftChunk = this.chunks.get(left.key);
     const rightChunk = this.chunks.get(right.key);
-    const leftAge = performance.now() - (this.meshEnqueuedAt.get(`${left.key}:${left.section}`) ?? performance.now());
-    const rightAge = performance.now() - (this.meshEnqueuedAt.get(`${right.key}:${right.section}`) ?? performance.now());
-    const agePriority = Math.abs(leftAge - rightAge) >= 2_000 ? Math.sign(rightAge - leftAge) : 0;
-    const distanceDifference = this.chunkStreamingPriority(left.key) - this.chunkStreamingPriority(right.key);
+    const now = performance.now();
+    const leftPriority = this.agedStreamingPriority(
+      this.chunkStreamingPriority(left.key),
+      this.meshEnqueuedAt.get(`${left.key}:${left.section}`),
+      now,
+    );
+    const rightPriority = this.agedStreamingPriority(
+      this.chunkStreamingPriority(right.key),
+      this.meshEnqueuedAt.get(`${right.key}:${right.section}`),
+      now,
+    );
+    const distanceDifference = leftPriority - rightPriority;
     return distanceDifference
-      || agePriority
       || Math.abs(left.section - this.playerSection) - Math.abs(right.section - this.playerSection)
       || (leftChunk?.cx ?? Infinity) - (rightChunk?.cx ?? Infinity)
       || (leftChunk?.cz ?? Infinity) - (rightChunk?.cz ?? Infinity)
@@ -3446,8 +3476,13 @@ export class ChunkWorld {
       }
       candidates.push(key);
     }
-    candidates.sort((left, right) => this.chunkStreamingPriority(left) - this.chunkStreamingPriority(right)
-      || left.localeCompare(right));
+    candidates.sort((left, right) => this.agedStreamingPriority(
+      this.chunkStreamingPriority(left),
+      this.lightInitializationEnqueuedAt.get(left),
+    ) - this.agedStreamingPriority(
+      this.chunkStreamingPriority(right),
+      this.lightInitializationEnqueuedAt.get(right),
+    ) || left.localeCompare(right));
     this.lightInitializationQueue = candidates;
     this.lightInitializationQueueHead = 0;
   }
@@ -3769,7 +3804,10 @@ export class ChunkWorld {
         this.lightInitializationTasks.delete(key);
         continue;
       }
-      const priority = this.chunkStreamingPriority(key);
+      const priority = this.agedStreamingPriority(
+        this.chunkStreamingPriority(key),
+        this.lightInitializationEnqueuedAt.get(key),
+      );
       if (priority < bestPriority || (priority === bestPriority && key < (this.lightInitializationQueue[bestIndex] ?? ""))) {
         bestPriority = priority;
         bestIndex = index;
@@ -3999,15 +4037,36 @@ export class ChunkWorld {
       dirtyLayers.add(layer);
       this.consolidationRevision.set(queueKey, (this.consolidationRevision.get(queueKey) ?? 0) + 1);
       this.notePlayerEditConsolidation(queueKey);
+      if (!this.consolidationEnqueuedAt.has(queueKey)) this.consolidationEnqueuedAt.set(queueKey, performance.now());
       if (this.consolidationQueued.has(queueKey)) continue;
       this.consolidationQueued.add(queueKey);
       this.consolidationQueue.push({ key: chunk.key, layer });
     }
   }
 
-  private invalidateCombinedMeshesForImmediateEdit(chunk: Chunk) {
+  private renderLayersAffectedByEdit(x: number, y: number, z: number, previous: BlockId, next: BlockId) {
+    const layers = new Set<WorldRenderLayer>();
+    const add = (type: BlockId | undefined) => {
+      if (type === undefined || type === BlockId.Air) return;
+      layers.add((BLOCKS[type]?.layer ?? "opaque") as WorldRenderLayer);
+    };
+    add(previous);
+    add(next);
+    // A changed cube can expose or cover one face owned by each neighbor. Keep
+    // the immediate invalidation exact to those materials instead of waking
+    // every render layer in the chunk.
+    for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]] as const) {
+      add(this.getBlock(x + dx, y + dy, z + dz));
+    }
+    return layers;
+  }
+
+  private invalidateCombinedMeshesForImmediateEdit(
+    chunk: Chunk,
+    layers: Iterable<WorldRenderLayer> = WORLD_RENDER_LAYERS,
+  ) {
     const invalidatedLayers: WorldRenderLayer[] = [];
-    for (const layer of WORLD_RENDER_LAYERS) {
+    for (const layer of new Set(layers)) {
       const mesh = chunk.combinedMeshes[layer];
       if (!mesh) continue;
       chunk.group.remove(mesh);
@@ -4026,15 +4085,46 @@ export class ChunkWorld {
     this.queueChunkConsolidation(chunk, invalidatedLayers);
   }
 
-  private chunkConsolidationSourcesStable(chunk: Chunk) {
-    const hasDirtyGeometrySource = [...chunk.dirty].some((section) => {
-      if (chunk.sectionBlockCounts[section] > 0) return true;
-      const meshes = chunk.sections.get(section);
-      return Boolean(meshes && Object.values(meshes).some(Boolean));
-    });
+  private sectionCanAffectLayer(chunk: Chunk, section: number, layer: WorldRenderLayer) {
+    const meshes = chunk.sections.get(section);
+    // An unbuilt occupied section has unknown layer composition. Once a
+    // source exists, unrelated layers no longer hold one another hostage.
+    if (!meshes) return chunk.sectionBlockCounts[section] > 0;
+    return Boolean(meshes[layer]);
+  }
+
+  private chunkConsolidationSourcesStable(chunk: Chunk, layer: WorldRenderLayer) {
+    const hasDirtyGeometrySource = [...chunk.dirty]
+      .some((section) => this.sectionCanAffectLayer(chunk, section, layer));
+    const activeMeshCanAffectLayer = this.activeMeshTask?.key === chunk.key
+      && this.sectionCanAffectLayer(chunk, this.activeMeshTask.section, layer);
+    let layerLightingPending = false;
+    if ((this.lightSectionsPendingByChunk.get(chunk.key) ?? 0) > 0) {
+      for (let section = 0; section < SECTION_COUNT; section += 1) {
+        if (this.lightSectionQueued.has(`${chunk.key}:${section}`)
+          && this.sectionCanAffectLayer(chunk, section, layer)) {
+          layerLightingPending = true;
+          break;
+        }
+      }
+    }
     return !hasDirtyGeometrySource
-      && this.activeMeshTask?.key !== chunk.key
-      && (this.lightSectionsPendingByChunk.get(chunk.key) ?? 0) === 0;
+      && !activeMeshCanAffectLayer
+      && !layerLightingPending;
+  }
+
+  private consolidationPriority(entry: Readonly<{ key: string; layer: WorldRenderLayer }>, now: number) {
+    const base = this.agedStreamingPriority(
+      this.chunkStreamingPriority(entry.key),
+      this.consolidationEnqueuedAt.get(`${entry.key}:${entry.layer}`),
+      now,
+    );
+    if (base <= 1) return base;
+    const chunk = this.chunks.get(entry.key);
+    if (!chunk) return Number.POSITIVE_INFINITY;
+    let visibleSources = 0;
+    for (const section of chunk.sections.values()) if (section[entry.layer]?.visible) visibleSources += 1;
+    return Math.max(1.02, base - Math.min(0.8, visibleSources * 0.05));
   }
 
   private freezeTerrainTransform(object: THREE.Object3D) {
@@ -4121,19 +4211,42 @@ export class ChunkWorld {
       if (completed.revision === this.consolidationRevision.get(queueKey)) {
         this.installCombinedGeometry(completed.key, completed.layer, completed.geometry);
         this.resolvePlayerEditConsolidation(queueKey);
+        this.consolidationEnqueuedAt.delete(queueKey);
       } else this.staleConsolidations += 1;
       return true;
     }
     const attempts = this.consolidationQueue.length;
+    if (attempts > 1) {
+      const now = performance.now();
+      let bestIndex = 0;
+      let bestPriority = this.consolidationPriority(this.consolidationQueue[0], now);
+      for (let index = 1; index < attempts; index += 1) {
+        const priority = this.consolidationPriority(this.consolidationQueue[index], now);
+        if (priority < bestPriority) {
+          bestPriority = priority;
+          bestIndex = index;
+        }
+      }
+      if (bestIndex > 0) [this.consolidationQueue[0], this.consolidationQueue[bestIndex]] = [
+        this.consolidationQueue[bestIndex],
+        this.consolidationQueue[0],
+      ];
+    }
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       const next = this.consolidationQueue.shift()!;
       const queueKey = `${next.key}:${next.layer}`;
       if (!this.consolidationQueued.delete(queueKey)) continue;
       const chunk = this.chunks.get(next.key);
-      if (!chunk) continue;
+      if (!chunk) {
+        this.consolidationEnqueuedAt.delete(queueKey);
+        continue;
+      }
       const dirtyLayers = this.consolidationDirtyLayers.get(next.key);
-      if (!dirtyLayers?.has(next.layer)) continue;
-      if (this.pendingConsolidations.has(queueKey) || !this.chunkConsolidationSourcesStable(chunk)) {
+      if (!dirtyLayers?.has(next.layer)) {
+        this.consolidationEnqueuedAt.delete(queueKey);
+        continue;
+      }
+      if (this.pendingConsolidations.has(queueKey) || !this.chunkConsolidationSourcesStable(chunk, next.layer)) {
         this.consolidationQueued.add(queueKey);
         this.consolidationQueue.push(next);
         continue;
@@ -6991,6 +7104,7 @@ export class ChunkWorld {
     const index = blockIndex(sx.local, y, sz.local);
     const previousType = chunk.blocks[index] as BlockId;
     const resolvedType = type === BlockId.Air && isWaterloggedFloraBlock(previousType) ? BlockId.Water : type;
+    const affectedLayers = this.renderLayersAffectedByEdit(x, y, z, previousType, resolvedType);
     this.markPlayerEditMutation();
     if (!isDirectionallyPlacedBlock(resolvedType)) this.blockFacings.delete(`${x},${y},${z}`);
     this.writeChunkBlock(chunk, index, resolvedType);
@@ -7001,8 +7115,7 @@ export class ChunkWorld {
       if (!edits) { edits = new Map(); this.edits.set(key, edits); }
       edits.set(index, resolvedType);
     }
-    if (immediate && chunk.group.visible) this.invalidateCombinedMeshesForImmediateEdit(chunk);
-    this.refreshEditedBlock(sx.chunk, sz.chunk, sx.local, y, sz.local, immediate);
+    this.refreshEditedBlock(sx.chunk, sz.chunk, sx.local, y, sz.local, immediate, affectedLayers);
     if (immediate) this.flushLightSections();
     if (immediate) this.markPlayerEditLocalMeshVisible();
     return true;
@@ -7035,7 +7148,13 @@ export class ChunkWorld {
   ) {
     const affected = new Set<string>();
     const directlyAffected = new Set<string>();
-    const directlyAffectedChunks = new Set<string>();
+    const affectedLayersByEntry = new Map<string, Set<WorldRenderLayer>>();
+    const markAffected = (entry: string, layers: Iterable<WorldRenderLayer>) => {
+      affected.add(entry);
+      const recorded = affectedLayersByEntry.get(entry) ?? new Set<WorldRenderLayer>();
+      for (const layer of layers) recorded.add(layer);
+      affectedLayersByEntry.set(entry, recorded);
+    };
     const affectedLavaCells = new Map<string, { x: number; y: number; z: number }>();
     const lightChanges: Array<{ x: number; y: number; z: number; previous: BlockId; next: BlockId }> = [];
     const batchRelight = changes.length > 12;
@@ -7049,6 +7168,7 @@ export class ChunkWorld {
       const previousType = chunk.blocks[index] as BlockId;
       const resolvedType = change.type === BlockId.Air && isWaterloggedFloraBlock(previousType) ? BlockId.Water : change.type;
       if (previousType === resolvedType) continue;
+      const affectedLayers = this.renderLayersAffectedByEdit(change.x, change.y, change.z, previousType, resolvedType);
       this.markPlayerEditMutation();
       if (!isDirectionallyPlacedBlock(resolvedType)) this.blockFacings.delete(`${change.x},${change.y},${change.z}`);
       this.writeChunkBlock(chunk, index, resolvedType);
@@ -7065,25 +7185,20 @@ export class ChunkWorld {
       }
       const section = sectionForY(change.y);
       const directEntry = `${key}:${section}`;
-      directlyAffectedChunks.add(key);
       directlyAffected.add(directEntry);
-      affected.add(directEntry);
-      if ((change.y - MIN_Y) % SECTION_HEIGHT === 0) affected.add(`${key}:${section - 1}`);
-      if ((change.y - MIN_Y) % SECTION_HEIGHT === SECTION_HEIGHT - 1) affected.add(`${key}:${section + 1}`);
-      if (sx.local === 0) affected.add(`${chunkKey(sx.chunk - 1, sz.chunk)}:${section}`);
-      if (sx.local === CHUNK_SIZE - 1) affected.add(`${chunkKey(sx.chunk + 1, sz.chunk)}:${section}`);
-      if (sz.local === 0) affected.add(`${chunkKey(sx.chunk, sz.chunk - 1)}:${section}`);
-      if (sz.local === CHUNK_SIZE - 1) affected.add(`${chunkKey(sx.chunk, sz.chunk + 1)}:${section}`);
+      markAffected(directEntry, affectedLayers);
+      if ((change.y - MIN_Y) % SECTION_HEIGHT === 0) markAffected(`${key}:${section - 1}`, affectedLayers);
+      if ((change.y - MIN_Y) % SECTION_HEIGHT === SECTION_HEIGHT - 1) markAffected(`${key}:${section + 1}`, affectedLayers);
+      if (sx.local === 0) markAffected(`${chunkKey(sx.chunk - 1, sz.chunk)}:${section}`, affectedLayers);
+      if (sx.local === CHUNK_SIZE - 1) markAffected(`${chunkKey(sx.chunk + 1, sz.chunk)}:${section}`, affectedLayers);
+      if (sz.local === 0) markAffected(`${chunkKey(sx.chunk, sz.chunk - 1)}:${section}`, affectedLayers);
+      if (sz.local === CHUNK_SIZE - 1) markAffected(`${chunkKey(sx.chunk, sz.chunk + 1)}:${section}`, affectedLayers);
     }
     if (lightChanges.length > 0) {
       if (deferLighting) this.deferLightRebuildAround(lightChanges);
       else this.lightEngine.rebuildAround(lightChanges);
     }
     for (const change of affectedLavaCells.values()) this.refreshLavaLightCell(change.x, change.y, change.z);
-    if (immediate) for (const key of directlyAffectedChunks) {
-      const chunk = this.chunks.get(key);
-      if (chunk?.group.visible) this.invalidateCombinedMeshesForImmediateEdit(chunk);
-    }
     for (const entry of affected) {
       const separator = entry.lastIndexOf(":");
       const key = entry.slice(0, separator);
@@ -7097,7 +7212,7 @@ export class ChunkWorld {
       // the urgent frame-budgeted queues.
       const rebuildNow = immediate && (!deferLighting || directlyAffected.has(entry));
       if (rebuildNow && chunk?.group.visible) {
-        this.invalidateCombinedMeshesForImmediateEdit(chunk);
+        this.invalidateCombinedMeshesForImmediateEdit(chunk, affectedLayersByEntry.get(entry) ?? WORLD_RENDER_LAYERS);
         this.cancelQueuedMesh(key, section);
         this.rebuildSection(chunk, section);
       }
@@ -7107,7 +7222,15 @@ export class ChunkWorld {
     if (immediate) this.markPlayerEditLocalMeshVisible();
   }
 
-  refreshEditedBlock(cx: number, cz: number, localX: number, y: number, localZ: number, immediate: boolean) {
+  refreshEditedBlock(
+    cx: number,
+    cz: number,
+    localX: number,
+    y: number,
+    localZ: number,
+    immediate: boolean,
+    affectedLayers: Iterable<WorldRenderLayer> = WORLD_RENDER_LAYERS,
+  ) {
     const section = sectionForY(y);
     const targets: Array<[string, number]> = [[chunkKey(cx, cz), section]];
     if ((y - MIN_Y) % SECTION_HEIGHT === 0) targets.push([chunkKey(cx, cz), section - 1]);
@@ -7120,7 +7243,7 @@ export class ChunkWorld {
       if (targetSection < 0 || targetSection >= SECTION_COUNT) continue;
       const targetChunk = this.chunks.get(key);
       if (immediate && targetChunk?.group.visible) {
-        this.invalidateCombinedMeshesForImmediateEdit(targetChunk);
+        this.invalidateCombinedMeshesForImmediateEdit(targetChunk, affectedLayers);
         this.cancelQueuedMesh(key, targetSection);
         this.rebuildSection(targetChunk, targetSection);
       }
@@ -8148,6 +8271,7 @@ export class ChunkWorld {
     for (const layer of WORLD_RENDER_LAYERS) {
       const queueKey = `${key}:${layer}`;
       this.consolidationQueued.delete(queueKey);
+      this.consolidationEnqueuedAt.delete(queueKey);
       this.consolidationRevision.delete(queueKey);
       this.resolvePlayerEditConsolidation(queueKey);
     }

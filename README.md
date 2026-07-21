@@ -1,6 +1,6 @@
 # Blockwild
 
-Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.8.8 Packhand Hotfix**.
+Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.8.9 Canopy Frame Hotfix**.
 
 The project is a real game rather than a voxel-rendering demo. You can mine, build, craft, smelt, farm, fight, collect field notes, manage several worlds, and carry those worlds between browsers with export files.
 
@@ -13,6 +13,12 @@ The project is a real game rather than a voxel-rendering demo. You can mine, bui
 ![Blockwild field guide with all 231 rendered creatures](public/creatures/blockwild-creatures.svg)
 
 The integrated creature-design pass expands the Courser family with Rimehoof, Sunscar, Mirestride, and Starbough ecological breeds plus the forge-built Deepgear Courser. It also gives all six dragon families production stage forms, rebuilds birds, pets, crabs, mosslings, foxes, harts, deer, longhorns, terrapins, and other core wildlife, and preserves one model path for gameplay, Bestiary portraits, and visual audits.
+
+## v1.8.9 Canopy Frame Hotfix
+
+Terrain consolidation now retires temporary section meshes per render layer, prioritizes the occupied and immediate-ring chunks, favors chunks carrying the most visible source submissions, and gives old valid nearby work bounded promotion without ever displacing the player’s critical ring. Immediate edits invalidate only the materials their changed cube and neighboring faces can affect, preserving the fast local response while avoiding unnecessary water, glass, foliage, and emissive draw calls.
+
+Full resumable relighting no longer publishes partially propagated light into visible terrain. Tree felling therefore keeps its immediate standing-tree removal without sending a moving dark front across the ground; falling foliage also uses the same opaque cutout/depth contract as standing leaves. A deterministic tree-fall audit preserves the complete standing-to-falling-to-relit visual handoff for future browser checks.
 
 ## v1.8.8 Packhand Hotfix
 

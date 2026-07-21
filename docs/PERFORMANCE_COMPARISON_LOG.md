@@ -72,9 +72,32 @@ These Node timings establish ordering and a low-cost local path; they are not cl
 - Mob spatial records update in place inside unchanged hash cells; scale-dependent attachment lookup is cached; expensive habitat work is rotated through a bounded sub-millisecond slice.
 - Performance-log analysis now includes p95, p99, long-frame ratio, merge/transfer/geometry deltas, coalescing, invalidation, and player-action phases.
 
+## 2026-07-21 sustained-rendering follow-up and v1.8.9
+
+The supplied `2026-07-21T18-51-21-933Z` capture covered 808.51 blocks over 220.70 seconds on the player's browser. It confirms that the player-feedback pass removed most wasteful merge churn while also exposing a sustained submission problem.
+
+| Metric | Earlier browser baseline | Supplied follow-up | Interpretation |
+| --- | ---: | ---: | --- |
+| Weighted frame interval | 10.80 ms | 13.68 ms | Not directly comparable: the follow-up route was 69% longer. |
+| p95 / p99 frame interval | 16.52 / 33.43 ms | 18.86 / 26.68 ms | Better tail maximum, slightly worse p95. |
+| Terrain merges per second | 89.0 | 11.45 | 87.1% less merge traffic. |
+| Terrain transfer per second | 9.03 MB | 1.91 MB | 78.8% less transferred geometry. |
+| Stale merge fraction | 9.27% | 0.12% | 98.7% lower. |
+| Geometry creations per second | 97.9 | 51.8 | 47.1% lower. |
+| Final terrain submissions | 313 | 687 | Too many independent section sources remained visible. |
+| Immediate ring | 9/9 | 9/9 | Occupied and adjacent chunks stayed present at export. |
+
+The capture's eight player edits all hid stale geometry within 9.7 ms, and five falling-tree proxies followed within 0.7 ms. However, local-to-consolidated p95 reached 9.11 seconds, 185 visible section meshes remained beside 502 combined meshes, and the oldest valid nearby job reached 73.97 seconds. These measurements motivated the narrower v1.8.9 pass rather than another broad architecture change.
+
+v1.8.9 makes edit invalidation material-layer specific, allows a stable render layer to consolidate while an unrelated layer is still dirty, prioritizes immediate-ring and high-source-pressure consolidation, and gives old valid mid-ring work bounded promotion without allowing it to pass the immediate ring. The deterministic player-action probe now records a 5.31 ms stale-hide/local-presentation p95, 0.327 ms local-to-consolidated p95, zero pending transactions, and zero stale results across 32 edits and one tree fall.
+
+The falling-tree dark-front defect was reproduced as an invalid intermediate lighting state: a resumable full relight zeroed its private light buffer, then marked sections dirty while breadth-first propagation was only partly complete. v1.8.9 no longer exposes partial full-relight writes; the finished light field is published in one mesh refresh. Incremental boundary reconciliation still publishes normally. Falling foliage now uses the same alpha-tested, depth-writing cutout contract as standing leaves, eliminating a second directional blended-depth footprint.
+
+An automated 431.11-block Chromium route followed by a 20-second stop exercised production streaming without page or console errors and kept the immediate ring 9/9 ready. During the stop, combined layers rose from 47 to 75, visible section sources fell from 300 to 292 despite additional terrain finishing, consolidation debt fell from 182 to 159 queued layers, and mesh debt fell from 201 to 131 sections. Absolute FPS from this run is deliberately excluded because the audit browser uses SwiftShader rather than the player's hardware GPU. A manually reviewed deterministic tree-fall sequence showed uniformly lit ground before and after the proxy, with no moving directional dark region.
+
 ## Next comparable capture
 
-Use the same hardware and settings as `2026-07-21T17-37-01-753Z`, traverse a similar 450-500-block route for roughly two minutes, break grass and ordinary blocks, fell several trees, and include a settled 20-second stop. The acceptance readout is: current chunk never missing; p95/p99 and long-frame ratio no worse; visible action response within one presented frame; materially fewer merge submissions, transfer bytes, stale merges, and geometry creations per minute; and settled terrain submissions at or below the prior browser baseline.
+Use the same hardware and settings as `2026-07-21T18-51-21-933Z`, traverse a similar route, break grass and ordinary blocks, fell several trees, and include a settled 20-second stop. The acceptance readout is: no directional tree-fall darkness; current chunk never missing; p95/p99 and long-frame ratio no worse; visible action response within one presented frame; materially fewer visible section sources and final terrain submissions; old valid nearby work no longer accumulating without bound; and no regression in merge submissions, transfer bytes, stale merges, or geometry churn per minute.
 
 ## Commands
 

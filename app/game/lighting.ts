@@ -46,6 +46,13 @@ export type LightBlockChange = Readonly<{
 export type VoxelLightInitializationTask = {
   chunk: VoxelLightChunk;
   phase: "seed" | "scan" | "boundary" | "propagate" | "complete";
+  /**
+   * Boundary reconciliation mutates an already-present light field and must
+   * refresh affected section attributes as propagation advances. A complete
+   * chunk rebuild starts from zero, so exposing its intermediate writes would
+   * briefly paint a moving dark front across otherwise unchanged land.
+   */
+  markDirtyDuringPropagation: boolean;
   cursor: number;
   queueX: number[];
   queueY: number[];
@@ -347,6 +354,7 @@ export class VoxelLightEngine {
     return {
       chunk,
       phase: "seed",
+      markDirtyDuringPropagation: false,
       cursor: 0,
       queueX: [],
       queueY: [],
@@ -469,7 +477,9 @@ export class VoxelLightEngine {
           const candidate = Math.max(0, lightChannel(source, channel) - attenuation);
           if (candidate > lightChannel(next, channel)) next = withLightChannel(next, channel, candidate);
         }
-        if (next !== current && this.writePacked(nx, ny, nz, next, true)) this.enqueueInitialization(task, nx, ny, nz);
+        if (next !== current && this.writePacked(nx, ny, nz, next, task.markDirtyDuringPropagation)) {
+          this.enqueueInitialization(task, nx, ny, nz);
+        }
       }
       remaining -= 1;
     }
@@ -493,6 +503,7 @@ export class VoxelLightEngine {
     const task: VoxelLightInitializationTask = {
       chunk,
       phase: "boundary",
+      markDirtyDuringPropagation: true,
       cursor: 0,
       queueX: [],
       queueY: [],
