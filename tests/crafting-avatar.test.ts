@@ -37,6 +37,7 @@ import {
   resolveTouchControls,
   runSingleFlight,
   shouldSuppressGameContextMenu,
+  shouldCloseItemGuideOnEscape,
   shouldCloseSpellWheelOnKeyRelease,
   slotInteractionAllowed,
   type SingleFlightGate,
@@ -538,6 +539,19 @@ test("releasing Q closes only the active spell wheel", () => {
   assert.equal(shouldCloseSpellWheelOnKeyRelease("KeyQ", "spell-wheel"), true);
   assert.equal(shouldCloseSpellWheelOnKeyRelease("KeyQ", null), false);
   assert.equal(shouldCloseSpellWheelOnKeyRelease("Escape", "spell-wheel"), false);
+});
+
+test("Escape dismisses the layered Item Wiki before its base overlay", () => {
+  assert.equal(shouldCloseItemGuideOnEscape("Escape", true), true);
+  assert.equal(shouldCloseItemGuideOnEscape("Escape", false), false);
+  assert.equal(shouldCloseItemGuideOnEscape("KeyE", true), false);
+
+  const ui = readFileSync(new URL("../app/game/VoxelGame.tsx", import.meta.url), "utf8");
+  assert.match(
+    ui,
+    /if \(shouldCloseItemGuideOnEscape\(event\.code, itemGuideOpenRef\.current\)\) \{[\s\S]*?setItemGuideVisible\(false\);[\s\S]*?return;[\s\S]*?if \(current === "bestiary"/u,
+    "the Item Wiki consumes Escape before any underlying overlay branch",
+  );
 });
 
 test("inventory artwork stays semantic at real slot sizes and food hover copy is explicit", () => {

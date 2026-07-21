@@ -740,6 +740,10 @@ export function shouldCloseSpellWheelOnKeyRelease(code: string, overlay: Overlay
   return code === "KeyQ" && overlay === "spell-wheel";
 }
 
+export function shouldCloseItemGuideOnEscape(code: string, itemGuideOpen: boolean) {
+  return code === "Escape" && itemGuideOpen;
+}
+
 export type SingleFlightGate = { current: Promise<unknown> | null };
 
 export async function runSingleFlight<T>(gate: SingleFlightGate, operation: () => Promise<T>) {
@@ -1888,6 +1892,7 @@ export default function VoxelGame() {
   const bestiaryFilterPanelRef = useRef<HTMLElement | null>(null);
   const telemetryLogRef = useRef(new ResourceTelemetryLog());
   const contextReferenceRef = useRef<ContextReferenceTarget | null>(null);
+  const itemGuideOpenRef = useRef(false);
 
   const [overlay, setOverlayState] = useState<Overlay>("title");
   const [titleMenuView, setTitleMenuViewState] = useState<TitleMenuView>("main");
@@ -1939,6 +1944,11 @@ export default function VoxelGame() {
   const [campCompareOrbId, setCampCompareOrbId] = useState("");
   const [campNameDraft, setCampNameDraft] = useState("");
   const [fieldGuideSection, setFieldGuideSection] = useState<FieldGuideSection>("creatures");
+
+  const setItemGuideVisible = useCallback((next: boolean) => {
+    itemGuideOpenRef.current = next;
+    setItemGuideOpen(next);
+  }, []);
   const [selectedPlantId, setSelectedPlantId] = useState(PLANTS[0]?.id ?? "");
   const [plantFilter, setPlantFilter] = useState<"all" | PlantCategory>("all");
   const [selectedMapMarkerId, setSelectedMapMarkerId] = useState<string | null>(null);
@@ -2263,7 +2273,9 @@ export default function VoxelGame() {
     const creatureCollisionAudit = auditParameters.get("mob-collision-audit") === "1";
     const moonfeltAudit = auditParameters.get("moonfelt-audit") === "1";
     const settlementOriginAudit = auditParameters.get("origin-audit") === "wood-elf-remote";
-    const itemGuideAudit = auditParameters.get("item-guide-audit") === "1";
+    const itemGuideAuditMode = auditParameters.get("item-guide-audit");
+    const itemGuideAudit = itemGuideAuditMode === "1" || itemGuideAuditMode === "inventory";
+    const placementAuditOverlay: Overlay = mapNavigationAudit || waystoneIconAudit ? "map" : itemGuideAuditMode === "inventory" ? "inventory" : null;
     const placementAudit = auditParameters.get("placement-audit") === "1" || mapNavigationAudit || waystoneIconAudit || chestAudit || caveLiquidAudit || oceanFloraAudit || creatureCollisionAudit || moonfeltAudit || settlementOriginAudit || itemGuideAudit;
     if (placementAudit) {
       engine.createWorld(
@@ -2288,17 +2300,17 @@ export default function VoxelGame() {
       if (moonfeltAudit) engine.primeMoonfeltMyceliumAudit();
       if (chestAudit && auditChestKey) engine.primeOpenChestAudit(auditChestKey);
       startedRef.current = true;
-      overlayRef.current = mapNavigationAudit || waystoneIconAudit ? "map" : null;
+      overlayRef.current = placementAuditOverlay;
       window.queueMicrotask(() => {
         setStarted(true);
-        setOverlayState(mapNavigationAudit || waystoneIconAudit ? "map" : null);
+        setOverlayState(placementAuditOverlay);
         if (auditMarkerId) {
           setSelectedMapMarkerId(auditMarkerId);
           setTrackedNavigationId(auditMarkerId);
         }
         if (itemGuideAudit) {
           setItemGuideItem(Item.Stick);
-          setItemGuideOpen(true);
+          setItemGuideVisible(true);
         }
       });
     } else if (initialWorld) engine.previewWorld(initialWorld.seed);
@@ -2470,7 +2482,7 @@ export default function VoxelGame() {
         event.preventDefault();
         event.stopImmediatePropagation();
         setItemGuideItem(reference.item);
-        setItemGuideOpen(true);
+        setItemGuideVisible(true);
         return;
       }
       if (event.code === "KeyB" && current && current !== "title" && current !== "new") {
@@ -2499,6 +2511,10 @@ export default function VoxelGame() {
       event.preventDefault();
       event.stopImmediatePropagation();
       if (event.repeat) return;
+      if (shouldCloseItemGuideOnEscape(event.code, itemGuideOpenRef.current)) {
+        setItemGuideVisible(false);
+        return;
+      }
       if (current === "bestiary" && bestiaryFiltersOpenRef.current) {
         bestiaryFiltersOpenRef.current = false;
         setBestiaryFiltersOpen(false);
@@ -2536,7 +2552,7 @@ export default function VoxelGame() {
       window.removeEventListener("keydown", handleMenuKeys, true);
       window.removeEventListener("keyup", handleMenuKeyUp, true);
     };
-  }, [setOverlay, setTitleMenuView]);
+  }, [setItemGuideVisible, setOverlay, setTitleMenuView]);
 
   const applyCharacterProfile = (profile: CharacterProfile) => {
     setMultiplayerName(profile.name);
@@ -3435,7 +3451,7 @@ export default function VoxelGame() {
 
   const openItemGuide = (item?: ItemCode) => {
     setItemGuideItem(item ?? itemGuideItem ?? ITEM_GUIDE_ENTRIES[0]?.item ?? null);
-    setItemGuideOpen(true);
+    setItemGuideVisible(true);
   };
 
   const openGuideCraftingPattern = (process: ItemGuideProcess) => {
@@ -3444,7 +3460,7 @@ export default function VoxelGame() {
     setRecipeFeedback(null);
     setPreviewRecipeId(process.craftingRecipeId);
     setInventoryTab("recipes");
-    setItemGuideOpen(false);
+    setItemGuideVisible(false);
   };
 
   const renderItemGuideBoard = (recipe: Recipe) => {
@@ -3520,7 +3536,7 @@ export default function VoxelGame() {
       : null;
     return (
       <div className="mc-window item-guide-window">
-        <header className="mc-window-header"><div><span className="panel-eyebrow">FIELD REFERENCE · RECIPES · ORIGINS</span><h2 id="item-guide-title">Trailcraft Guide</h2></div><button type="button" className="panel-close" onClick={() => setItemGuideOpen(false)} aria-label="Close item guide">×</button></header>
+        <header className="mc-window-header"><div><span className="panel-eyebrow">FIELD REFERENCE · RECIPES · ORIGINS</span><h2 id="item-guide-title">Trailcraft Guide</h2></div><button type="button" className="panel-close" onClick={() => setItemGuideVisible(false)} aria-label="Close item guide">×</button></header>
         <div className="item-guide-layout">
           <aside className="item-guide-index">
             <label><span className="sr-only">Search the item guide</span><input autoFocus type="search" value={itemGuideQuery} onChange={(event) => setItemGuideQuery(event.target.value)} placeholder="Item, source, recipe…" /></label>
@@ -5035,7 +5051,7 @@ export default function VoxelGame() {
               <div><b>5</b><strong>Own the night</strong><span>Hostiles drop shards, gel, bone, coal, and XP.</span></div>
               <div><b>6</b><strong>Go below zero</strong><span>Crystal deeps, lava, aquifers, and the worldheart await.</span></div>
             </div>
-            <div className="panel-actions"><PixelButton onClick={() => { setItemGuideItem(null); setItemGuideOpen(true); }}>Open Item Wiki <kbd>?</kbd></PixelButton><PixelButton className="gold-button" onClick={() => setOverlay(started ? "pause" : "title")}>{started ? "Back to Menu" : "Back"}</PixelButton></div>
+            <div className="panel-actions"><PixelButton onClick={() => { setItemGuideItem(null); setItemGuideVisible(true); }}>Open Item Wiki <kbd>?</kbd></PixelButton><PixelButton className="gold-button" onClick={() => setOverlay(started ? "pause" : "title")}>{started ? "Back to Menu" : "Back"}</PixelButton></div>
           </div>
         </section>
       )}

@@ -1201,3 +1201,10 @@ Current request: Refresh the pushed `design-1` branch, publish an incremental v1
 - Final 24-second Chromium/SwiftShader traversal: zero occupied-chunk outages, 9/9 immediate-ring readiness, 6.73 ms average active CPU, 5.08 ms bounded chunk work, 1.20 ms render submission, 45 peak draw calls, and no page/console errors. GPU time averaged 20.10 ms, correctly identifying the software-GPU constraint instead of attributing its 50 ms p95 frame interval to CPU simulation.
 - Manually reviewed `work/performance-overhaul/browser-traversal-v5/after-traversal.png` and both final official-client placement frames at 1280x720. Streamed coast/water and authored blocks remain continuous with no new holes, seams, transparency, or lighting defects.
 - Final verification passes all standard audits and 798/798 TypeScript gameplay/content tests, the verified five-phase Vinext production build and deployable Worker/manifest validation. The tracked plan records achieved gates, honest residual targets, and all future WebGPU/autoresearch work. Released on `design-1`; TODO: none.
+
+## Layered Item Wiki Escape handling - 2026-07-21
+
+- Added a synchronized Item Wiki visibility layer to keyboard routing. Escape now dismisses the wiki before evaluating Bestiary filters, spell wheels, inventories, facilities, pause menus, or title navigation beneath it.
+- Preserved normal stacking behavior: with Inventory beneath the wiki, the first Escape closes only the wiki and the second closes Inventory through the existing container path.
+- Added a deterministic Inventory-plus-Item-Wiki browser audit and regression coverage for the ordering contract. Focused UI/inventory tests pass 35/35, all 197 standard pretest checks pass, native TypeScript and changed-file ESLint pass, and the five-stage production build plus Worker/manifest validation succeed.
+- Browser verification observed `wiki=0, inventory=1` after the first Escape and `wiki=0, inventory=0` after the second. The official web-game client rendered the layered Trailcraft Guide cleanly at 1280x720 with no console or page errors. TODO: none.
