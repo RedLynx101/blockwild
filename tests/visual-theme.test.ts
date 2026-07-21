@@ -17,10 +17,16 @@ import {
   MOONBOUGH_LEAVES_TILE,
   MOONFELT_MYCELIUM_TILE,
   PEARLFAN_TILE,
+  REED_BLOOM_CROWN_TILE,
+  REED_BLOOM_STEM_TILE,
+  RIVER_RIBBON_TILE,
   RIVETED_BRASS_TILE,
   ROOTWEAVE_SOIL_SIDE_TILE,
   SAILKELP_TILE,
   STARFERN_TILE,
+  STAR_CRYSTAL_BLOCK_BOTTOM_TILE,
+  STAR_CRYSTAL_BLOCK_SIDE_TILE,
+  STAR_CRYSTAL_BLOCK_TOP_TILE,
   BlockId,
   itemForBlock,
 } from "../app/game/data";
@@ -222,6 +228,44 @@ test("ordinary ocean flora uses dedicated connected matte art", async () => {
     for (const [, tile] of species) {
       assert.ok(edgeAlpha(tile, 0) > 0, `tile ${tile} must reach the next segment above`);
       assert.ok(edgeAlpha(tile, 15) > 0, `tile ${tile} must remain rooted into the segment below`);
+    }
+    texture.dispose();
+  } finally {
+    shim.restore();
+  }
+});
+
+test("Star Crystal tiles mirror cleanly and stacked river flora shares exact texture edges", async () => {
+  assert.equal(BLOCKS[BlockId.RiverRibbon].side, RIVER_RIBBON_TILE);
+  assert.deepEqual(
+    [BLOCKS[BlockId.ReedBloom].top, BLOCKS[BlockId.ReedBloom].side, BLOCKS[BlockId.ReedBloom].bottom],
+    [REED_BLOOM_CROWN_TILE, REED_BLOOM_STEM_TILE, REED_BLOOM_STEM_TILE],
+  );
+  assert.equal(BLOCKS[BlockId.ReedBloom].aquaticProfile, "reed-bloom");
+  const shim = installPixelCanvasDocument();
+  try {
+    const { createBlockAtlas } = await import("../app/game/world");
+    const texture = createBlockAtlas();
+    const canvas = texture.image as unknown as PixelCanvas;
+    const rgba = (atlasTile: number, x: number, y: number) => {
+      const left = (atlasTile % 16) * 16;
+      const top = Math.floor(atlasTile / 16) * 16;
+      const offset = ((top + y) * canvas.width + left + x) * 4;
+      return Array.from(canvas.pixels.slice(offset, offset + 4));
+    };
+    for (const atlasTile of [STAR_CRYSTAL_BLOCK_TOP_TILE, STAR_CRYSTAL_BLOCK_SIDE_TILE, STAR_CRYSTAL_BLOCK_BOTTOM_TILE]) {
+      const colors = new Set<string>();
+      for (let y = 0; y < 16; y += 1) for (let x = 0; x < 16; x += 1) {
+        const sample = rgba(atlasTile, x, y);
+        colors.add(sample.join(","));
+        assert.deepEqual(sample, rgba(atlasTile, 15 - x, y), `tile ${atlasTile} must mirror horizontally`);
+        assert.deepEqual(sample, rgba(atlasTile, x, 15 - y), `tile ${atlasTile} must mirror vertically`);
+      }
+      assert.ok(colors.size >= 5, `tile ${atlasTile} needs a readable crystalline value range`);
+    }
+    for (const atlasTile of [RIVER_RIBBON_TILE, REED_BLOOM_STEM_TILE]) {
+      for (let x = 0; x < 16; x += 1) assert.deepEqual(rgba(atlasTile, x, 0), rgba(atlasTile, x, 15), `tile ${atlasTile} must join vertically`);
+      assert.ok(Array.from({ length: 16 }, (_, x) => rgba(atlasTile, x, 0)[3]).some((alpha) => alpha > 0));
     }
     texture.dispose();
   } finally {

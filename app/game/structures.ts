@@ -53,11 +53,15 @@ export type SpawnMarker = Readonly<{
   tags?: readonly string[];
 }>;
 
+export type LandmarkMapLayer = "surface" | "underground" | "underwater" | "sky";
+
 export type LandmarkMarker = Readonly<{
   type: "landmark";
   id: string;
   position: WorldPosition;
   tag: string;
+  /** Semantic map layer; oceans and sky-islands must not be guessed from elevation. */
+  mapLayer?: LandmarkMapLayer;
 }>;
 
 export type StructureMarker = ChestMarker | SpawnMarker | LandmarkMarker;
@@ -364,12 +368,13 @@ class PlanBuilder {
     });
   }
 
-  landmark(dx: number, dy: number, dz: number, tag: string, id: string) {
+  landmark(dx: number, dy: number, dz: number, tag: string, id: string, mapLayer: LandmarkMapLayer = "surface") {
     this.markers.push({
       type: "landmark",
       id,
       position: { x: this.origin.x + dx, y: this.origin.y + dy, z: this.origin.z + dz },
       tag,
+      mapLayer,
     });
   }
 

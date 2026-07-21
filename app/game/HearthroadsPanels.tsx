@@ -25,6 +25,7 @@ import {
   mapViewportBounds,
   mapViewportProjection,
   mapOpeningBounds,
+  mapMarkerMatchesLayer,
   normalizeMapViewState,
   panMapView,
   projectMapWorldPoint,
@@ -624,9 +625,7 @@ export function MapPanel({
   const visibleMarkers = useMemo(() => knowledge.markers.filter((marker) => {
     const x = marker.position.x / 16;
     const z = marker.position.z / 16;
-    const matchesLayer = undergroundLayer
-      ? undergroundDepthBandForY(marker.position.y) === undergroundDepthBand
-      : marker.position.y >= 24;
+    const matchesLayer = mapMarkerMatchesLayer(marker, undergroundLayer, undergroundDepthBand);
     return matchesLayer && x >= bounds.minX && x <= bounds.maxX && z >= bounds.minZ && z <= bounds.maxZ;
   }), [bounds, knowledge.markers, undergroundDepthBand, undergroundLayer]);
   const visibleOtherPlayers = useMemo(() => otherPlayers.filter((player) => {
@@ -836,7 +835,7 @@ export function MapPanel({
             ))}
             {visibleMarkers.map((marker) => (
               <button
-                className={`hearthroads-map-pin marker-${marker.kind}${selected?.id === marker.id ? " selected" : ""}${trackedTargetId === marker.id ? " tracked" : ""}`}
+                className={`hearthroads-map-pin marker-${marker.kind} map-layer-${marker.layer}${selected?.id === marker.id ? " selected" : ""}${trackedTargetId === marker.id ? " tracked" : ""}`}
                 key={marker.id}
                 type="button"
                 style={mapPointStyle(marker.position, bounds, mapViewport)}

@@ -46,6 +46,9 @@ import {
   MOONBOUGH_LEAVES_TILE,
   MOONFELT_MYCELIUM_TILE,
   PEARLFAN_TILE,
+  REED_BLOOM_CROWN_TILE,
+  REED_BLOOM_STEM_TILE,
+  RIVER_RIBBON_TILE,
   RIVETED_BRASS_TILE,
   ROOTWEAVE_SOIL_SIDE_TILE,
   SAILKELP_TILE,
@@ -148,7 +151,7 @@ export const WORLD_HEIGHT = MAX_Y - MIN_Y + 1;
 export const SEA_LEVEL = 32;
 export const SECTION_HEIGHT = 16;
 export const SECTION_COUNT = WORLD_HEIGHT / SECTION_HEIGHT;
-export const GENERATOR_VERSION = 17;
+export const GENERATOR_VERSION = 18;
 /** v1.8.4: conventional ore rolls are 25% richer before the world's abundance setting. */
 export const ORE_SPAWN_RATE_MULTIPLIER = 1.25;
 /** Shared vein cells were 2 x 2 x 2; broader 3 x 2 x 3 cells permit larger, still porous seams. */
@@ -2520,38 +2523,71 @@ export function createBlockAtlas() {
   }
   const clearTile = (index: number) => context.clearRect((index % grid) * tile, Math.floor(index / grid) * tile, tile, tile);
 
-  // A Star Crystal block reads as nine fused celestial prisms rather than a
-  // cyan recolor: the top carries the starburst, the sides show locked veins,
-  // and the quieter underside provides a grounded shadow face.
-  fillTile(STAR_CRYSTAL_BLOCK_TOP_TILE, "#123946");
-  for (let ring = 0; ring < 7; ring += 1) {
-    const color = ring < 2 ? "#efffff" : ring < 4 ? "#8df5ee" : "#3cb8c8";
-    for (const [x, y] of [[7 - ring, 7], [8 + ring, 8], [7, 7 - ring], [8, 8 + ring]] as Array<[number, number]>) {
-      if (x >= 0 && x < tile && y >= 0 && y < tile) pixel(STAR_CRYSTAL_BLOCK_TOP_TILE, x, y, color);
+  // Star Crystal is a fused, tileable lattice. Every sample is derived from
+  // mirrored coordinates, so all three faces repeat on both axes without a
+  // directional crest or the old noisy edge discontinuity.
+  const paintStarCrystalFace = (index: number, palette: readonly [string, string, string, string, string], intensity: number) => {
+    for (let y = 0; y < tile; y += 1) for (let x = 0; x < tile; x += 1) {
+      const mx = Math.min(x, 15 - x);
+      const my = Math.min(y, 15 - y);
+      const dx = Math.abs(x - 7.5);
+      const dy = Math.abs(y - 7.5);
+      const centralFacet = dx + dy <= 3.5 + intensity;
+      const crossFacet = (dx <= 0.5 + intensity * .2 && dy <= 6.5) || (dy <= 0.5 + intensity * .2 && dx <= 6.5);
+      const diagonalVein = Math.abs(mx - my) <= (intensity > .5 ? 0 : -1) && mx >= 2;
+      const lattice = ((mx * 3 + my * 5) % 7 === 0) && mx > 0 && my > 0;
+      const color = centralFacet ? (dx + dy <= 1.5 ? palette[4] : palette[3])
+        : crossFacet ? palette[2]
+          : diagonalVein ? palette[2]
+            : lattice ? palette[1] : palette[0];
+      pixel(index, x, y, color);
     }
-    if (ring < 5) for (const [x, y] of [[7 - ring, 7 - ring], [8 + ring, 7 - ring], [7 - ring, 8 + ring], [8 + ring, 8 + ring]] as Array<[number, number]>) {
-      if (x >= 0 && x < tile && y >= 0 && y < tile) pixel(STAR_CRYSTAL_BLOCK_TOP_TILE, x, y, ring < 2 ? "#ffffff" : "#59d9df");
+  };
+  paintStarCrystalFace(STAR_CRYSTAL_BLOCK_TOP_TILE, ["#123a47", "#1b5665", "#43aeba", "#8dece8", "#efffff"], 1);
+  paintStarCrystalFace(STAR_CRYSTAL_BLOCK_SIDE_TILE, ["#153e4a", "#205967", "#378b98", "#71d7d7", "#d9ffff"], .45);
+  paintStarCrystalFace(STAR_CRYSTAL_BLOCK_BOTTOM_TILE, ["#0e303a", "#184754", "#286d78", "#52aeb5", "#a9e7e5"], .12);
+
+  // River Ribbon uses a periodic current curve: the first and final texture
+  // rows are identical, so stacked blocks read as one broad plant rather than
+  // a set of disconnected cards.
+  clearTile(RIVER_RIBBON_TILE);
+  for (let y = 0; y < tile; y += 1) {
+    const phase = y / 15 * Math.PI * 2;
+    const centerA = Math.round(5 + Math.sin(phase) * 2);
+    const centerB = Math.round(11 + Math.sin(phase + Math.PI) * 1.5);
+    for (const [center, dark, mid, light] of [
+      [centerA, "#173f38", "#34755f", "#72b08b"],
+      [centerB, "#1d4b41", "#40856b", "#8bc39a"],
+    ] as Array<[number, string, string, string]>) {
+      for (const [offset, color] of [[-2, dark], [-1, mid], [0, light], [1, mid]] as Array<[number, string]>) {
+        const x = center + offset;
+        if (x >= 0 && x < tile) pixel(RIVER_RIBBON_TILE, x, y, color);
+      }
     }
   }
-  for (const [x, y, color] of [[2, 3, "#87fff3"], [12, 2, "#54c7d5"], [3, 12, "#2f9aa9"], [13, 11, "#9cfff8"], [11, 14, "#357f9a"]] as Array<[number, number, string]>) {
-    pixel(STAR_CRYSTAL_BLOCK_TOP_TILE, x, y, color); pixel(STAR_CRYSTAL_BLOCK_TOP_TILE, Math.min(15, x + 1), y, "#1e697d");
-  }
-  fillTile(STAR_CRYSTAL_BLOCK_SIDE_TILE, "#164553");
-  for (let x = 0; x < tile; x += 1) {
-    const crest = 3 + Math.abs(7 - x) % 5;
-    for (let y = crest; y < tile; y += 1) {
-      const seam = x % 5 === 0 || y === crest;
-      pixel(STAR_CRYSTAL_BLOCK_SIDE_TILE, x, y, seam ? "#2a8395" : (x + y) % 7 === 0 ? "#68dce1" : "#1b5968");
+
+  // Reed Bloom is now a jointed waterside reed rather than a recycled flower
+  // sprite. Middle segments carry uninterrupted teal stems; only the top
+  // segment opens its amber seed-cups and paired blue-green flags.
+  const paintReedStem = (index: number) => {
+    clearTile(index);
+    for (let y = 0; y < tile; y += 1) {
+      for (const [x, color] of [[5, "#244f4a"], [6, "#5c9180"], [10, "#2f6256"], [11, "#76aa8b"]] as Array<[number, string]>) pixel(index, x, y, color);
+      if (y === 4 || y === 11) {
+        pixel(index, 4, y, "#315f53"); pixel(index, 7, y, "#80a98b");
+        pixel(index, 9, y, "#396d5c"); pixel(index, 12, y, "#91b894");
+      }
     }
+  };
+  paintReedStem(REED_BLOOM_STEM_TILE);
+  paintReedStem(REED_BLOOM_CROWN_TILE);
+  for (const [cx, cy] of [[5, 4], [11, 6]] as Array<[number, number]>) {
+    for (const [dx, dy, color] of [
+      [-2, 0, "#8a5a32"], [-1, -1, "#c4873f"], [0, -2, "#f0c968"], [1, -1, "#e0a64c"], [2, 0, "#8a5a32"],
+      [-1, 0, "#e5b753"], [0, 0, "#fff0a1"], [1, 0, "#c98a3d"], [0, 1, "#7b4b2d"],
+    ] as Array<[number, number, string]>) pixel(REED_BLOOM_CROWN_TILE, cx + dx, cy + dy, color);
   }
-  for (const [x, height] of [[2, 8], [6, 12], [10, 10], [13, 6]] as Array<[number, number]>) {
-    for (let y = 15; y >= 15 - height; y -= 1) pixel(STAR_CRYSTAL_BLOCK_SIDE_TILE, x + ((15 - y) % 5 === 0 ? 1 : 0), y, y < 7 ? "#d8ffff" : "#6ce8e7");
-  }
-  fillTile(STAR_CRYSTAL_BLOCK_BOTTOM_TILE, "#0d303c");
-  for (let x = 1; x < tile; x += 3) for (let y = 1; y < tile; y += 3) {
-    pixel(STAR_CRYSTAL_BLOCK_BOTTOM_TILE, x, y, (x + y) % 2 ? "#23687a" : "#318c99");
-    if ((x * 3 + y) % 5 === 0) pixel(STAR_CRYSTAL_BLOCK_BOTTOM_TILE, Math.min(15, x + 1), y, "#75dadd");
-  }
+  for (const [x, y, color] of [[2, 8, "#4d8876"], [3, 9, "#77ad8d"], [8, 10, "#3c7568"], [9, 9, "#6ba389"], [13, 11, "#8ab494"]] as Array<[number, number, string]>) pixel(REED_BLOOM_CROWN_TILE, x, y, color);
 
   // Shellfruit grows as a low seafloor rosette. Each stage adds fronds and
   // then opens warm scalloped shells around a pale edible pearl.
@@ -2826,6 +2862,8 @@ export class ChunkWorld {
   urgentMeshQueue: Array<{ key: string; section: number }> = [];
   urgentMeshQueueHead = 0;
   urgentMeshQueued = new Set<string>();
+  /** Sections whose old consolidated geometry still contains a now-resolved chunk-edge face. */
+  seamMeshRebuilds = new Set<string>();
   activeMeshTask: MeshBuildTask | null = null;
   lightSectionQueue: Array<{ key: string; section: number }> = [];
   lightSectionQueueHead = 0;
@@ -3016,6 +3054,7 @@ export class ChunkWorld {
     this.urgentMeshQueue = [];
     this.urgentMeshQueueHead = 0;
     this.urgentMeshQueued.clear();
+    this.seamMeshRebuilds.clear();
     this.activeMeshTask = null;
     this.streamingCompleted = { generation: 0, lighting: 0, meshing: 0 };
     this.streamingCanceled = { generation: 0, lighting: 0, meshing: 0 };
@@ -3508,7 +3547,12 @@ export class ChunkWorld {
   }
 
   private chunkCacheKey(key: string) {
-    return `terrain-v2|${this.seedText}|${JSON.stringify(this.generationOptions)}|${key}|${this.chunkEditSignature(key)}`;
+    // Generated terrain is disposable, while player edits are not. Including
+    // the generator version prevents a persistent v17 chunk from being
+    // restored beside a freshly generated v18 neighbor after an update. That
+    // mixed-generation boundary was the source of terrain, grass, and liquid
+    // discontinuities that could otherwise survive indefinitely in a save.
+    return `terrain-v3|g${GENERATOR_VERSION}|${this.seedText}|${JSON.stringify(this.generationOptions)}|${key}|${this.chunkEditSignature(key)}`;
   }
 
   private cachedChunkData(chunk: Chunk): CachedChunkData {
@@ -3607,7 +3651,12 @@ export class ChunkWorld {
         const sectionWasBuilt = neighbor.sections.has(section);
         const sectionIsBuilding = this.activeMeshTask?.key === neighbor.key && this.activeMeshTask.section === section;
         if (neighbor.sectionBlockCounts[section] > 0 && (sectionWasBuilt || sectionIsBuilding)) {
-          this.queueMesh(neighbor.key, section);
+          // Cross-chunk faces are speculative only until the generation halo
+          // exists. Reconcile them ahead of ordinary background meshing so a
+          // water wall, grass slit, or solid-block crack cannot linger while
+          // the player is already looking at the boundary.
+          this.seamMeshRebuilds.add(`${neighbor.key}:${section}`);
+          this.queueMesh(neighbor.key, section, true);
         }
       }
     }
@@ -4488,6 +4537,7 @@ export class ChunkWorld {
     const queueKey = `${key}:${section}`;
     this.meshQueued.delete(queueKey);
     this.urgentMeshQueued.delete(queueKey);
+    this.seamMeshRebuilds.delete(queueKey);
     if (this.meshEnqueuedAt.delete(queueKey)) this.streamingCanceled.meshing += 1;
     if (this.activeMeshTask?.key === key && this.activeMeshTask.section === section) this.activeMeshTask = null;
   }
@@ -4517,7 +4567,10 @@ export class ChunkWorld {
     height -= oceanWeight * (2.5 + oceanBasin * 7 + trenchField * 17);
     const riverField = Math.abs(fbm2(warpX + 211, warpZ - 173, this.seed ^ 0x85157af5, 1 / 320, 3));
     const river = (1 - smoothstep(0.018, 0.066, riverField)) * smoothstep(-0.16, 0.06, continental) * (1 - 0.75 * mountain);
-    const waterline = SEA_LEVEL + Math.floor(2 * smoothstep(-0.05, 0.55, continental));
+    // A connected surface-water system must have one datum. Vary the bed and
+    // banks, never the fill plane: the former continental formula introduced
+    // abrupt 32/33 transitions where rivers, coasts, or adjacent chunks met.
+    const waterline = SEA_LEVEL;
     const riverBedNoise = 0.5 + 0.5 * fbm2(warpX - 377, warpZ + 229, this.seed ^ 0xa511e9b3, 1 / 74, 3);
     const broadChannel = smoothstep(0.12, 0.78, river);
     height = lerp(height, waterline - (2.5 + riverBedNoise * 2), broadChannel * 0.92);
@@ -5367,7 +5420,7 @@ export class ChunkWorld {
       }
 
       const markerPosition = { x: node.x, y: standY + 1, z: node.z };
-      const landmark: StructureMarker = { type: "landmark", id: node.id, position: markerPosition, tag: `underground:${node.poi}:${node.biome}` };
+      const landmark: StructureMarker = { type: "landmark", id: node.id, position: markerPosition, tag: `underground:${node.poi}:${node.biome}`, mapLayer: "underground" };
       this.structureMarkers.set(`${node.id}:landmark`, landmark);
       if (["delver-camp", "drowned-ruin", "challenge-vault"].includes(node.poi)) {
         const chestPosition = { x: node.x + (node.poi === "delver-camp" ? 1 : 0), y: standY, z: node.z };
@@ -5957,12 +6010,14 @@ export class ChunkWorld {
           id: `${site.id}:clue:${index}`,
           position: { x, y: y + 1, z },
           tag: `legendary-clue:${site.encounterId}:${site.id}:observe-sign:${index}`,
+          mapLayer: site.underground ? "underground" : site.aquatic ? "underwater" : "surface",
         });
       }
       if (inside(site.center.x, site.center.z)) {
         const spawnY = site.underground ? site.center.y : site.center.y + 1;
         this.structureMarkers.set(`${site.id}:landmark`, {
           type: "landmark", id: site.id, position: site.center, tag: `legendary-encounter:${site.encounterId}:dormant`,
+          mapLayer: site.underground ? "underground" : site.aquatic ? "underwater" : "surface",
         });
         this.structureMarkers.set(`${site.id}:spawn`, {
           type: "spawn", id: `${site.id}:guardian`, position: { ...site.center, y: spawnY }, mobKind: site.kind,
@@ -6079,6 +6134,7 @@ export class ChunkWorld {
           id: nest.id,
           position: nest.center,
           tag: `dragon-nest:sea:stage-${nest.guardianStage}:${nest.guardianSex}`,
+          mapLayer: "underwater",
         };
         this.structureMarkers.set(`${nest.id}:spawn:${guardian.id}`, guardian);
         this.structureMarkers.set(`${nest.id}:landmark:${landmark.id}`, landmark);
@@ -6970,6 +7026,7 @@ export class ChunkWorld {
           id: candidate.id,
           position: { x: candidate.center.x, y: candidate.center.y ?? centerColumn.height + 2, z: candidate.center.z },
           tag: `settlement:${candidate.factionId}:${candidate.size}`,
+          mapLayer: candidate.environment,
         };
         this.structureMarkers.set(`${candidate.id}:landmark:${candidate.id}`, marker);
       }
@@ -7673,13 +7730,13 @@ export class ChunkWorld {
         if (definition.shape === "cross" || definition.shape === "aquatic" || definition.shape === "tall-flower") {
           let tile = definition.side;
           const environment = definition.layer === "emissive" ? Math.max(0.82, shadeAt(lx, y, lz)) : shadeAt(lx, y, lz);
-          const addFullCross = (half: number, y0: number, y1: number, shade = 1, offsetX = 0, offsetZ = 0) => {
+          const addFullCross = (half: number, y0: number, y1: number, shade = 1, offsetX = 0, offsetZ = 0, tileOverride = tile) => {
             const cx = lx + offsetX;
             const cz = lz + offsetZ;
-            addQuad(bucket, [[cx - half, y0, cz - half], [cx - half, y1, cz - half], [cx + half, y1, cz + half], [cx + half, y0, cz + half]], [0.7, 0, -0.7], tile, shade, tint, 0, 0, 0, 0, environment);
-            addQuad(bucket, [[cx + half, y0, cz - half], [cx + half, y1, cz - half], [cx - half, y1, cz + half], [cx - half, y0, cz + half]], [-0.7, 0, -0.7], tile, shade * 0.92, tint, 0, 0, 0, 0, environment);
-            addQuad(bucket, [[cx - half, y0, cz], [cx - half, y1, cz], [cx + half, y1, cz], [cx + half, y0, cz]], [0, 0, -1], tile, shade * 0.96, tint, 0, 0, 0, 0, environment);
-            addQuad(bucket, [[cx, y0, cz - half], [cx, y1, cz - half], [cx, y1, cz + half], [cx, y0, cz + half]], [-1, 0, 0], tile, shade * 0.9, tint, 0, 0, 0, 0, environment);
+            addQuad(bucket, [[cx - half, y0, cz - half], [cx - half, y1, cz - half], [cx + half, y1, cz + half], [cx + half, y0, cz + half]], [0.7, 0, -0.7], tileOverride, shade, tint, 0, 0, 0, 0, environment);
+            addQuad(bucket, [[cx + half, y0, cz - half], [cx + half, y1, cz - half], [cx - half, y1, cz + half], [cx - half, y0, cz + half]], [-0.7, 0, -0.7], tileOverride, shade * 0.92, tint, 0, 0, 0, 0, environment);
+            addQuad(bucket, [[cx - half, y0, cz], [cx - half, y1, cz], [cx + half, y1, cz], [cx + half, y0, cz]], [0, 0, -1], tileOverride, shade * 0.96, tint, 0, 0, 0, 0, environment);
+            addQuad(bucket, [[cx, y0, cz - half], [cx, y1, cz - half], [cx, y1, cz + half], [cx, y0, cz + half]], [-1, 0, 0], tileOverride, shade * 0.9, tint, 0, 0, 0, 0, environment);
           };
           if (definition.shape === "aquatic") {
             // A connection is species-specific. Adjacent kelp can overlap into
@@ -7698,8 +7755,8 @@ export class ChunkWorld {
             const worldZ = chunk.cz * CHUNK_SIZE + lz;
             const lean = (hash2(worldX, worldZ, this.seed ^ (type * 7919)) - 0.5) * 0.15;
             if (profile === "ribbon") {
-              addFullCross(0.38, y0, y1, 0.96, lean, -lean * 0.45);
-              addFullCross(0.2, y0 + 0.08, y1 - 0.04, 0.82, -lean * 0.55, lean * 0.8);
+              addFullCross(0.38, y0, y1, 0.96, lean, -lean * 0.45, RIVER_RIBBON_TILE);
+              addFullCross(0.2, y0, y1, 0.82, -lean * 0.55, lean * 0.8, RIVER_RIBBON_TILE);
             } else if (profile === "kelp") {
               addFullCross(0.46, y0, y1, 1, lean * 0.35, lean);
               addFullCross(0.25, y0 + 0.12, y1, 0.86, -lean, lean * 0.25);
@@ -7709,6 +7766,12 @@ export class ChunkWorld {
             } else if (profile === "bloom") {
               addFullCross(0.37, y0, y1 - 0.12, 0.94, lean * 0.4, 0);
               addFullCross(0.48, Math.max(y0, y1 - 0.46), y1, 1.04, -lean * 0.25, lean * 0.25);
+            } else if (profile === "reed-bloom") {
+              addFullCross(0.2, y0, y1, 0.94, lean * .22, 0, REED_BLOOM_STEM_TILE);
+              addFullCross(0.16, y0, y1, 0.84, -lean * .2, lean * .25, REED_BLOOM_STEM_TILE);
+              if (!connectedAbove) {
+                addFullCross(0.48, Math.max(y0, y1 - .78), y1, 1.04, lean * .15, -lean * .12, REED_BLOOM_CROWN_TILE);
+              }
             } else if (profile === "vine") {
               addFullCross(0.32, y0, y1, 0.95, lean, lean * 0.4);
               addFullCross(0.16, y0 + 0.04, y1 - 0.03, 0.8, -lean * 0.7, -lean);
@@ -8211,6 +8274,29 @@ export class ChunkWorld {
 
     if (slice && !slice.finalize) return;
     if (slice && old) for (const mesh of Object.values(old)) if (mesh) { chunk.group.remove(mesh); this.disposeTerrainGeometry(mesh.geometry); }
+    const queueKey = `${chunk.key}:${section}`;
+    const completingSeamRebuild = this.seamMeshRebuilds.has(queueKey)
+      && !this.meshQueued.has(queueKey)
+      && !this.urgentMeshQueued.has(queueKey);
+    const invalidatedLayers: WorldRenderLayer[] = [];
+    if (completingSeamRebuild) {
+      this.seamMeshRebuilds.delete(queueKey);
+      // Consolidated geometry owns the section's previous edge faces. Retire
+      // it only when the replacement section is ready, avoiding both a stale
+      // seam and a transient hole while the urgent rebuild is in progress.
+      for (const layer of WORLD_RENDER_LAYERS) {
+        const combined = chunk.combinedMeshes[layer];
+        if (!combined) continue;
+        chunk.group.remove(combined);
+        this.disposeTerrainGeometry(combined.geometry);
+        delete chunk.combinedMeshes[layer];
+        invalidatedLayers.push(layer);
+      }
+      for (const meshes of chunk.sections.values()) {
+        for (const layer of WORLD_RENDER_LAYERS) if (meshes[layer]) meshes[layer]!.visible = true;
+      }
+      this.invalidatedCombinedMeshes += invalidatedLayers.length;
+    }
     const nextMeshes: ChunkMeshes = {};
     for (const layer of WORLD_RENDER_LAYERS) {
       const bucket = buckets[layer];
@@ -8239,7 +8325,9 @@ export class ChunkWorld {
     }
     chunk.sections.set(section, nextMeshes);
     chunk.dirty.delete(section);
-    const changedLayers = WORLD_RENDER_LAYERS.filter((layer) => Boolean(old?.[layer] || nextMeshes[layer]));
+    const changedLayers = WORLD_RENDER_LAYERS.filter((layer) => Boolean(
+      old?.[layer] || nextMeshes[layer] || invalidatedLayers.includes(layer),
+    ));
     this.queueChunkConsolidation(chunk, changedLayers);
   }
 
@@ -8262,6 +8350,7 @@ export class ChunkWorld {
       const queueKey = `${key}:${section}`;
       this.meshQueued.delete(queueKey);
       this.urgentMeshQueued.delete(queueKey);
+      this.seamMeshRebuilds.delete(queueKey);
       this.meshEnqueuedAt.delete(queueKey);
       this.lightSectionQueued.delete(queueKey);
     }

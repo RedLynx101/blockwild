@@ -1,6 +1,6 @@
 # Blockwild
 
-Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.8.9 Canopy Frame Hotfix**.
+Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.9.0 Seamwater & Cartography**.
 
 The project is a real game rather than a voxel-rendering demo. You can mine, build, craft, smelt, farm, fight, collect field notes, manage several worlds, and carry those worlds between browsers with export files.
 
@@ -13,6 +13,12 @@ The project is a real game rather than a voxel-rendering demo. You can mine, bui
 ![Blockwild field guide with all 231 rendered creatures](public/creatures/blockwild-creatures.svg)
 
 The integrated creature-design pass expands the Courser family with Rimehoof, Sunscar, Mirestride, and Starbough ecological breeds plus the forge-built Deepgear Courser. It also gives all six dragon families production stage forms, rebuilds birds, pets, crabs, mosslings, foxes, harts, deer, longhorns, terrapins, and other core wildlife, and preserves one model path for gameplay, Bestiary portraits, and visual audits.
+
+## v1.9.0 Seamwater & Cartography
+
+Generator v18 prevents persistent terrain-cache entries from surviving across incompatible generation rules, so old and new chunks can no longer form permanent grass, terrain, or liquid discontinuities. Rivers, coasts, and oceans now share one connected surface-water datum while retaining varied beds and banks. When a late generation-halo chunk arrives, every already-rendered material layer on its neighbor receives an urgent seam reconciliation; the stale combined mesh remains visible only until its corrected replacement is complete.
+
+POIs now carry semantic surface, underground, underwater, or sky layers instead of using elevation as a proxy. Underwater and sky landmarks remain visible on the surface parchment, while cave locations stay in entered World Below depth bands. Star Crystal blocks use symmetric, two-axis tileable faces; River Ribbon stacks as one continuous current-shaped plant; and the fully redesigned Reed Bloom uses dedicated jointed stems with one amber crown at the top of each connected colony.
 
 ## v1.8.9 Canopy Frame Hotfix
 

@@ -66,6 +66,7 @@ export type MapPlayerMarker = Readonly<{
   color?: string;
 }>;
 export type MapMarkerKind = "natural-poi" | "manual" | "bed-spawn" | "wayshrine" | "settlement";
+export type MapMarkerLayer = "surface" | "underground" | "underwater" | "sky";
 export type SettlementKnowledge = "rumored" | "charted" | "visited";
 
 export type MapMarker = Readonly<{
@@ -78,6 +79,7 @@ export type MapMarker = Readonly<{
   discoveredBy: string;
   ownerId: string | null;
   icon: string | null;
+  layer: MapMarkerLayer;
   settlementKnowledge?: SettlementKnowledge;
   factionId?: string;
   settlementSize?: "hamlet" | "village" | "town";
@@ -110,6 +112,8 @@ export type MarkerInput = Readonly<{
   playerId: string;
   discoveredAt: number;
   icon?: string | null;
+  layer?: MapMarkerLayer;
+  updatedAt?: number;
   settlementKnowledge?: SettlementKnowledge;
   factionId?: string;
   settlementSize?: "hamlet" | "village" | "town";
@@ -238,6 +242,12 @@ function normalizeSurfaceSample(value: unknown): MapSurfaceSample | null {
 
 export function undergroundDepthBandForY(elevation: number): UndergroundDepthBand {
   return elevation >= -4 ? "upper" : elevation >= -32 ? "middle" : "deep";
+}
+
+/** Surface parchment includes water and sky landmarks; cave knowledge remains tied to entered depth bands. */
+export function mapMarkerMatchesLayer(marker: Pick<MapMarker, "layer" | "position">, underground: boolean, band: UndergroundDepthBand) {
+  if (underground) return marker.layer === "underground" && undergroundDepthBandForY(marker.position.y) === band;
+  return marker.layer !== "underground";
 }
 
 function normalizeUndergroundBandSample(value: unknown): MapUndergroundBandSample | null {
@@ -482,16 +492,22 @@ function normalizeMarker(value: unknown): MapMarker | null {
   if (!(input.kind === "natural-poi" || input.kind === "manual" || input.kind === "bed-spawn" || input.kind === "wayshrine" || input.kind === "settlement")) return null;
   const id = cleanId(input.id, "");
   if (!id) return null;
+  const position = cleanPoint(input.position);
+  const layer: MapMarkerLayer = input.layer === "surface" || input.layer === "underground"
+    || input.layer === "underwater" || input.layer === "sky"
+    ? input.layer
+    : position.y < 24 ? "underground" : "surface";
   return {
     id,
     kind: input.kind,
     name: cleanName(input.name, input.kind === "bed-spawn" ? "Bed Spawn" : "Map Marker"),
-    position: cleanPoint(input.position),
+    position,
     discoveredAt: Math.max(0, integer(input.discoveredAt)),
     updatedAt: Math.max(0, integer(input.updatedAt, integer(input.discoveredAt))),
     discoveredBy: cleanId(input.discoveredBy, "unknown"),
     ownerId: input.ownerId === null ? null : cleanId(input.ownerId, "unknown"),
     icon: typeof input.icon === "string" ? input.icon.slice(0, 48) : null,
+    layer,
     ...(input.kind === "settlement" ? {
       settlementKnowledge: input.settlementKnowledge === "visited" || input.settlementKnowledge === "charted" ? input.settlementKnowledge : "rumored",
       ...(typeof input.factionId === "string" ? { factionId: input.factionId.slice(0, 48) } : {}),
@@ -682,8 +698,8 @@ export function markUndergroundChunk(
 
 function compareMarkerFreshness(left: MapMarker, right: MapMarker) {
   if (left.updatedAt !== right.updatedAt) return left.updatedAt - right.updatedAt;
-  const leftStable = `${left.kind}|${left.name}|${left.position.x},${left.position.y},${left.position.z}|${left.discoveredBy}`;
-  const rightStable = `${right.kind}|${right.name}|${right.position.x},${right.position.y},${right.position.z}|${right.discoveredBy}`;
+  const leftStable = `${left.kind}|${left.layer}|${left.name}|${left.position.x},${left.position.y},${left.position.z}|${left.discoveredBy}`;
+  const rightStable = `${right.kind}|${right.layer}|${right.name}|${right.position.x},${right.position.y},${right.position.z}|${right.discoveredBy}`;
   return leftStable.localeCompare(rightStable);
 }
 
@@ -699,16 +715,20 @@ function upsertMarker(state: MapKnowledge, marker: MapMarker): MapKnowledge {
 
 function markerFromInput(kind: MapMarkerKind, input: MarkerInput, ownerId: string | null): MapMarker {
   const discoveredAt = Math.max(0, integer(input.discoveredAt));
+  const position = cleanPoint(input.position);
   return {
     id: cleanId(input.id, `${kind}-marker`),
     kind,
     name: cleanName(input.name, kind === "bed-spawn" ? "Bed Spawn" : kind === "wayshrine" ? "Wayshrine" : "Map Marker"),
-    position: cleanPoint(input.position),
+    position,
     discoveredAt,
-    updatedAt: discoveredAt,
+    updatedAt: Math.max(discoveredAt, integer(input.updatedAt, discoveredAt)),
     discoveredBy: cleanId(input.playerId, "player"),
     ownerId,
     icon: typeof input.icon === "string" ? input.icon.slice(0, 48) : null,
+    layer: input.layer === "surface" || input.layer === "underground" || input.layer === "underwater" || input.layer === "sky"
+      ? input.layer
+      : position.y < 24 ? "underground" : "surface",
     ...(kind === "settlement" ? {
       settlementKnowledge: input.settlementKnowledge === "visited" || input.settlementKnowledge === "charted" ? input.settlementKnowledge : "rumored",
       ...(typeof input.factionId === "string" ? { factionId: input.factionId.slice(0, 48) } : {}),

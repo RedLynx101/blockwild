@@ -168,6 +168,7 @@ test("a tracked destination remains on the HUD at any distance and clamps behind
     discoveredBy: "player",
     ownerId: "player",
     icon: "pin",
+    layer: "surface" as const,
   }];
   const entries = compassEntries(0, { x: 0, y: 30, z: 0 }, navigationTargets(markers, [], "manual:far-camp"));
   const tracked = entries.find((entry) => entry.id === "manual:far-camp");

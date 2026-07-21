@@ -889,6 +889,9 @@ export const FLOUR_CRATE_TOP_TILE = 249;
 export const FLOUR_CRATE_SIDE_TILE = 250;
 export const BREAD_CRATE_TOP_TILE = 251;
 export const BREAD_CRATE_SIDE_TILE = 252;
+export const RIVER_RIBBON_TILE = 253;
+export const REED_BLOOM_STEM_TILE = 254;
+export const REED_BLOOM_CROWN_TILE = 255;
 
 export type InventorySlot = {
   item: ItemCode;
@@ -918,7 +921,7 @@ export type BlockDefinition = {
   /** Adjacent stems in this group overlap slightly so stacked flora reads as one plant. */
   verticalConnectGroup?: "lumen-kelp" | "star-coral" | "abyss-bloom" | "tidevine" | "lumenreed" | "river-ribbon" | "glow-kelp" | "reed-bloom" | "brinegrass" | "sailkelp" | "featherwrack" | "pearlfan" | "cave-reed" | "luminous-algae" | "egg-reed" | "cultivated-flower" | "wild-peppermint" | "double-tall-grass" | "cave-root" | "rope-ladder";
   /** Silhouette contract used by the connected aquatic-flora mesh. */
-  aquaticProfile?: "ribbon" | "kelp" | "reed" | "coral" | "bloom" | "vine" | "algae" | "grass" | "sail" | "wrack" | "fan";
+  aquaticProfile?: "ribbon" | "kelp" | "reed" | "reed-bloom" | "coral" | "bloom" | "vine" | "algae" | "grass" | "sail" | "wrack" | "fan";
   /** Partial-height collision used by connected fences and similar blocks. */
   collisionHeight?: number;
   /** Blocks in the same group visually connect across horizontal faces. */
@@ -1257,9 +1260,9 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.Apiary]: block(BlockId.Apiary, "Wildwood Apiary", 92, 91, 11, 1.15, "#bd7b32", "axe", 0, { shape: "apiary" }),
   [BlockId.CaptureOrbRack]: block(BlockId.CaptureOrbRack, "Capture Orb Rack", 94, 94, 11, 0.85, "#795031", "axe", 0, { shape: "orb-rack" }),
   [BlockId.CreatureHealer]: block(BlockId.CreatureHealer, "Creature Healer", 95, 94, 11, 1.4, "#67d8d4", "pickaxe", 2, { shape: "orb-healer" }),
-  [BlockId.RiverRibbon]: block(BlockId.RiverRibbon, "River Ribbon", 53, 53, 53, 0.04, "#3f8c68", "hand", 0, { solid: false, layer: "cutout", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "river-ribbon", aquaticProfile: "ribbon" }),
+  [BlockId.RiverRibbon]: block(BlockId.RiverRibbon, "River Ribbon", RIVER_RIBBON_TILE, RIVER_RIBBON_TILE, RIVER_RIBBON_TILE, 0.04, "#3f8c68", "hand", 0, { solid: false, layer: "cutout", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "river-ribbon", aquaticProfile: "ribbon" }),
   [BlockId.GlowKelp]: block(BlockId.GlowKelp, "Glow Kelp", 67, 67, 67, 0.04, "#58d7b0", "hand", 0, { solid: false, layer: "emissive", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "glow-kelp", aquaticProfile: "kelp" }),
-  [BlockId.ReedBloom]: block(BlockId.ReedBloom, "Reed Bloom", 66, 66, 66, 0.05, "#d8a84d", "hand", 0, { solid: false, layer: "cutout", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "reed-bloom", aquaticProfile: "bloom" }),
+  [BlockId.ReedBloom]: block(BlockId.ReedBloom, "Reed Bloom", REED_BLOOM_CROWN_TILE, REED_BLOOM_STEM_TILE, REED_BLOOM_STEM_TILE, 0.05, "#d8a84d", "hand", 0, { solid: false, layer: "cutout", shape: "aquatic", replaceable: true, waterlogged: true, verticalConnectGroup: "reed-bloom", aquaticProfile: "reed-bloom" }),
   [BlockId.CloudreedGrass]: block(BlockId.CloudreedGrass, "Cloudreed Turf", 64, 65, 2, 0.62, "#4f8b6c", "shovel"),
   [BlockId.Cloudbell]: block(BlockId.Cloudbell, "Cloudbell", 67, 67, 67, 0.05, "#96cfe0", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
   [BlockId.WildBeehive]: block(BlockId.WildBeehive, "Wild Beehive", 93, 93, 11, 0.9, "#d09a3f", "axe", 0, { shape: "wild-hive" }),

@@ -144,6 +144,55 @@ function aquaticBoxes(plant: PlantDefinition): ModelBox[] {
     box("bed", "waterbed", [2.5, 0.24, 1.9], [0, 0.12, 0], WATER_STONE),
     box("holdfast", "roots", [1.15, .16, .84], [0, .28, 0], "#46584f"),
   ];
+  if (plant.id === "river-ribbon") {
+    const result: ModelBox[] = bed();
+    const ribbons = [
+      { x: -.62, z: -.16, colors: ["#214f43", "#3f8067", "#78b291"], lean: -.12 },
+      { x: .03, z: .24, colors: ["#285d4e", "#4d9275", "#8bc49a"], lean: .08 },
+      { x: .68, z: -.2, colors: ["#173f38", "#39745f", "#6ba987"], lean: .14 },
+    ] as const;
+    ribbons.forEach((ribbon, ribbonIndex) => {
+      let baseY = .31;
+      for (let segment = 0; segment < 4; segment += 1) {
+        const height = .95;
+        const offset = Math.sin(segment * 1.35 + ribbonIndex) * .18 + ribbon.lean * segment;
+        result.push(box(
+          `ribbon-${ribbonIndex + 1}-${segment + 1}`,
+          "ribbon-frond",
+          [.32, height + .04, .1],
+          [ribbon.x + offset, baseY + height / 2, ribbon.z],
+          ribbon.colors[segment % ribbon.colors.length],
+          [0, ribbonIndex * .22 - .2, segment % 2 ? -.11 : .11],
+        ));
+        result.push(box(`ribbon-joint-${ribbonIndex + 1}-${segment + 1}`, "joint", [.37, .12, .13], [ribbon.x + offset, baseY + height, ribbon.z], ribbon.colors[1]));
+        baseY += height;
+      }
+    });
+    return result;
+  }
+  if (plant.id === "reed-bloom") {
+    const result: ModelBox[] = bed();
+    const stems = [[-.62, -.16, 3.4], [0, .2, 4.15], [.66, -.08, 3.65]] as const;
+    stems.forEach(([x, z, height], stemIndex) => {
+      const segmentHeight = height / 3;
+      for (let segment = 0; segment < 3; segment += 1) {
+        const y = .29 + segmentHeight * (segment + .5);
+        result.push(box(`reed-${stemIndex + 1}-${segment + 1}`, "jointed-stem", [.14, segmentHeight + .04, .14], [x, y, z], segment % 2 ? "#477d6b" : "#5d9680"));
+        if (segment < 2) result.push(box(`node-${stemIndex + 1}-${segment + 1}`, "stem-node", [.22, .13, .2], [x, .29 + segmentHeight * (segment + 1), z], "#315f54"));
+      }
+      const bloomY = .3 + height;
+      result.push(box(`cup-${stemIndex + 1}`, "seed-cup", [.42, .36, .38], [x, bloomY, z], "#f1c96b", [0, stemIndex * .28 - .28, 0]));
+      const petals = [[-.33, 0, -.18], [.33, 0, .18], [0, .25, 0], [0, -.24, .02]] as const;
+      petals.forEach(([dx, dy, rotation], index) => result.push(box(`bloom-${stemIndex + 1}-${index + 1}`, "amber-sepal", [.48, .24, .18], [x + dx, bloomY + dy, z], index % 2 ? "#d99b45" : "#efbd58", [0, 0, rotation])));
+      result.push(box(`heart-${stemIndex + 1}`, "bloom-heart", [.18, .2, .2], [x, bloomY + .04, z - .16], "#fff0a2", [0, 0, 0], true));
+    });
+    result.push(
+      box("flag-left", "reed-flag", [.86, .17, .34], [-.34, 1.56, .02], "#4e8b78", [0, 0, -.3]),
+      box("flag-right", "reed-flag", [.9, .16, .32], [.39, 2.25, .04], "#72a98c", [0, 0, .28]),
+      box("root-crown", "roots", [1.65, .2, 1.08], [0, .34, 0], "#3f5b51"),
+    );
+    return result;
+  }
   if (plant.id === "brinegrass") {
     const result: ModelBox[] = bed();
     const blades = [

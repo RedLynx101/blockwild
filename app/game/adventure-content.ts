@@ -2,6 +2,7 @@ import { BlockId } from "./data";
 import {
   rollStructureLoot,
   type PlannedBlock,
+  type LandmarkMapLayer,
   type StructureLootTableId,
   type StructureMarker,
   type WorldPosition,
@@ -186,7 +187,11 @@ class AdventurePlanBuilder {
   readonly rooms: AdventureRoom[] = [];
   private readonly blocks = new Map<string, PlannedBlock>();
 
-  constructor(readonly origin: WorldPosition, readonly seed: string | number) {}
+  constructor(
+    readonly origin: WorldPosition,
+    readonly seed: string | number,
+    readonly defaultMapLayer: LandmarkMapLayer = "surface",
+  ) {}
 
   set(dx: number, dy: number, dz: number, block: BlockId, variant?: string) {
     const placed = { x: this.origin.x + dx, y: this.origin.y + dy, z: this.origin.z + dz, block, ...(variant ? { variant } : {}) };
@@ -239,9 +244,9 @@ class AdventurePlanBuilder {
     this.markers.push({ type: "spawn", id, position: { x: this.origin.x + dx, y: this.origin.y + dy, z: this.origin.z + dz }, mobKind, count, radius, persistent: true, tags });
   }
 
-  landmark(dx: number, dy: number, dz: number, tag: string) {
+  landmark(dx: number, dy: number, dz: number, tag: string, mapLayer: LandmarkMapLayer = this.defaultMapLayer) {
     const id = tag.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 72) || "map-heart";
-    this.markers.push({ type: "landmark", id, position: { x: this.origin.x + dx, y: this.origin.y + dy, z: this.origin.z + dz }, tag });
+    this.markers.push({ type: "landmark", id, position: { x: this.origin.x + dx, y: this.origin.y + dy, z: this.origin.z + dz }, tag, mapLayer });
   }
 
   room(id: string, name: string, stage: number, center: readonly [number, number, number], radius: readonly [number, number, number], objective: string) {
@@ -609,7 +614,7 @@ function dungeonProfile(kind: AdventureDungeonKind) {
 }
 
 function planUndergroundDungeon(kind: AdventureDungeonKind, origin: WorldPosition, seed: string | number) {
-  const b = new AdventurePlanBuilder(origin, seed);
+  const b = new AdventurePlanBuilder(origin, seed, "underground");
   const profile = dungeonProfile(kind);
   const base = -16;
   // Surface threshold and a descending, lit access shaft.
@@ -886,7 +891,7 @@ function addUndergroundPoiAccess(builder: AdventurePlanBuilder, definition: Myth
   builder.fill(x + 3, 1, surfaceZ, x + 3, 5, surfaceZ, material.support, `${definition.id}-approach-arch`);
   builder.fill(x - 3, 5, surfaceZ, x + 3, 5, surfaceZ, material.shell, `${definition.id}-approach-arch`);
   builder.set(x, 4, surfaceZ, material.accent, `${definition.id}-approach-keystone`);
-  builder.landmark(x, 2, surfaceZ, `mythic-surface-threshold:${definition.id}`);
+  builder.landmark(x, 2, surfaceZ, `mythic-surface-threshold:${definition.id}`, "surface");
 }
 
 /** Adds the approach-readable landmark shape which distinguishes each site. */
@@ -1030,7 +1035,7 @@ function addMythicApproachSilhouette(builder: AdventurePlanBuilder, definition: 
 function planMythicFrontierPoi(kind: (typeof MYTHIC_POI_KINDS)[number], origin: WorldPosition, seed: string | number) {
   const definition = mythicSiteForStructure(kind);
   const material = mythicMaterial(definition);
-  const builder = new AdventurePlanBuilder(origin, seed);
+  const builder = new AdventurePlanBuilder(origin, seed, definition.layer);
   const baseY = definition.layer === "sky" ? 14 : definition.layer === "underwater" ? -12 : definition.layer === "underground" ? -15 : 1;
   const centers: Array<readonly [number, number, number]> = [];
   const floodedRooms = floodedMythicRoomIndices(definition, definition.minimumRooms);
@@ -1049,7 +1054,7 @@ function planMythicFrontierPoi(kind: (typeof MYTHIC_POI_KINDS)[number], origin: 
   if (definition.id === "cloudwhale-graveyard") {
     const entrance = centers[0];
     connectMythicRooms(builder, definition, material, [entrance[0], 1, entrance[2] + 20], [entrance[0], entrance[1], entrance[2] + 4], 0, false, false);
-    builder.landmark(entrance[0], 2, entrance[2] + 20, `mythic-surface-threshold:${definition.id}`);
+    builder.landmark(entrance[0], 2, entrance[2] + 20, `mythic-surface-threshold:${definition.id}`, "surface");
   }
   addMythicApproachSilhouette(builder, definition, material, centers, baseY);
   // Passages are carved after room dressing. Reassert the intentionally sparse
@@ -1087,7 +1092,7 @@ function mythicEcologyKinds(definition: MythicFrontierSiteDefinition): readonly 
 function planMythicFrontierDungeon(kind: (typeof MYTHIC_DUNGEON_KINDS)[number], origin: WorldPosition, seed: string | number) {
   const definition = mythicSiteForStructure(kind);
   const material = mythicMaterial(definition);
-  const builder = new AdventurePlanBuilder(origin, seed);
+  const builder = new AdventurePlanBuilder(origin, seed, definition.layer);
   const underwater = definition.layer === "underwater";
   const underground = definition.layer === "underground";
   const baseY = underwater ? -16 : underground ? -16 : 2;

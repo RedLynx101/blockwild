@@ -397,6 +397,7 @@ export function planDragonLairForRegion(input: DragonLairRegionInput): DragonLai
     id,
     position: { x: centerX, y: centerY, z: centerZ },
     tag: `dragon-lair:${type}:stage-${stage}:${sex}`,
+    mapLayer: "underground",
   });
 
   if (placements.size > DRAGON_LAIR_MAX_PLACEMENTS) {

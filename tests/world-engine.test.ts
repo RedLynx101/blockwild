@@ -943,9 +943,10 @@ test("the radial generation halo remeshes its visible cardinal neighbor", () => 
 
   const halo = world.processGeneration();
   assert.equal(halo?.group.visible, false);
-  assert.equal(world.meshQueued.has(`${visibleEdge.key}:${visibleSection}`), true, "the hidden halo must remesh its already-rendered seam neighbor");
-  assert.equal([...world.meshQueued].filter((entry) => entry.startsWith(`${visibleEdge.key}:`)).length, 1, "unbuilt sections already see the halo on their first mesh and need no duplicate rebuild");
-  assert.equal([...world.meshQueued].some((entry) => entry.startsWith(`${halo?.key}:`)), false, "the hidden halo itself must not be meshed");
+  assert.equal(world.urgentMeshQueued.has(`${visibleEdge.key}:${visibleSection}`), true, "the hidden halo must urgently reconcile its already-rendered seam neighbor");
+  assert.equal([...world.urgentMeshQueued].filter((entry) => entry.startsWith(`${visibleEdge.key}:`)).length, 1, "unbuilt sections already see the halo on their first mesh and need no duplicate rebuild");
+  assert.equal(world.seamMeshRebuilds.has(`${visibleEdge.key}:${visibleSection}`), true, "the old consolidated boundary must be retired with the replacement section");
+  assert.equal([...world.urgentMeshQueued].some((entry) => entry.startsWith(`${halo?.key}:`)), false, "the hidden halo itself must not be meshed");
   world.dispose();
 });
 
@@ -2142,6 +2143,52 @@ test("terrain sections consolidate to at most one visible submission per render 
   assert.equal(chunk.group.matrixAutoUpdate, false, "static chunk transforms should not be recomposed every render");
   assert.ok(combined.every((mesh) => mesh?.matrixAutoUpdate === false), "static combined terrain transforms should remain frozen");
   assert.ok(world.terrainBufferPipeline.diagnostics().submitted <= 5, "stable layers should merge once instead of once per completed section");
+  world.dispose();
+});
+
+test("generator-v17 saves keep edits and modern settlement options while terrain caches advance to v18", () => {
+  const previous = {
+    version: 2,
+    generatorVersion: 17,
+    generatorProfile: "world-below-v15",
+    seed: "SEAMWATER-MIGRATION",
+    options: { settlementPattern: "heartlands-v2" },
+    edits: { "1,-1": [[19_337, BlockId.CrystalBlock], [19_338, BlockId.Air]] },
+  } as unknown as WorldSave;
+  const migrated = migrateSavedWorld(previous);
+  assert.equal(migrated?.generatorVersion, GENERATOR_VERSION);
+  assert.equal(migrated?.options?.settlementPattern, "heartlands-v2");
+  assert.deepEqual(migrated?.edits, previous.edits);
+});
+
+test("a late neighboring chunk urgently removes speculative water and terrain edge faces", () => {
+  const world = new ChunkWorld();
+  world.reset("LATE-SEAM-RECONCILIATION", undefined, { structures: false });
+  const left = world.generateChunk(0, 0);
+  left.blocks.fill(BlockId.Air);
+  left.sectionBlockCounts.fill(0);
+  world.lightEngine.initializeChunk(left);
+  world.setBlock(15, 0, 0, BlockId.Water, false, false);
+  const section = Math.floor((0 - MIN_Y) / SECTION_HEIGHT);
+  world.rebuildSection(left, section);
+  assert.equal(left.sections.get(section)?.transparent?.geometry.getAttribute("position").count, 24, "the absent neighbor initially exposes six water faces");
+
+  const right = world.generateChunk(1, 0);
+  right.blocks.fill(BlockId.Air);
+  right.sectionBlockCounts.fill(0);
+  world.lightEngine.initializeChunk(right);
+  world.setBlock(16, 0, 0, BlockId.Water, false, false);
+  world.meshQueue = [];
+  world.meshQueueHead = 0;
+  world.meshQueued.clear();
+  world.urgentMeshQueue = [];
+  world.urgentMeshQueueHead = 0;
+  world.urgentMeshQueued.clear();
+  (world as unknown as { queueChunkMeshesAndSeams: (chunk: typeof right) => void }).queueChunkMeshesAndSeams(right);
+  assert.equal(world.urgentMeshQueued.has(`${left.key}:${section}`), true);
+  for (let slice = 0; slice < 20; slice += 1) world.processMesh(left.key);
+  assert.equal(left.sections.get(section)?.transparent?.geometry.getAttribute("position").count, 20, "water beside water must have no internal chunk-wall quad");
+  assert.equal(world.seamMeshRebuilds.has(`${left.key}:${section}`), false);
   world.dispose();
 });
 

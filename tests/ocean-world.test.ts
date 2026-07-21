@@ -30,7 +30,7 @@ import { createWeatherState, planCloudField, weatherVisuals } from "../app/game/
 import { BiomeId, ChunkWorld, GENERATOR_VERSION, planPoiAmenities } from "../app/game/world.ts";
 
 test("shoreline, biome, crop and aquatic ids remain byte-safe and registered", () => {
-  assert.equal(GENERATOR_VERSION, 17);
+  assert.equal(GENERATOR_VERSION, 18);
   for (const block of [BlockId.Saltbrush, BlockId.CoastAster, BlockId.JungleGrass, BlockId.SakuraGrass, BlockId.LumenKelp, BlockId.AbyssBloom, BlockId.SunrootCrop]) {
     assert.ok(block > 99 && block <= 255);
     assert.ok(BLOCKS[block]);
@@ -101,6 +101,15 @@ test("ordinary oceans are matte staple beds while trench glow remains concentrat
   assert.ok(generated.length > 5_000, "ordinary ocean fixture should produce broad visible beds");
   assert.ok(generated.filter((block) => staples.has(block)).length / generated.length >= .80);
   assert.ok(generated.filter((block) => luminous.has(block)).length / generated.length <= .03);
+});
+
+test("rivers, coasts, and adjacent chunks share one continuous surface-water datum", () => {
+  const world = new ChunkWorld();
+  world.reset("CONNECTED-WATER-DATUM", undefined, { structures: false });
+  const levels = new Set<number>();
+  for (let x = -96; x <= 96; x += 7) for (let z = -96; z <= 96; z += 11) levels.add(world.sampleColumn(x, z).waterline);
+  assert.deepEqual([...levels], [32], "bed depth may vary, but connected surface water must never step at a river, biome, or chunk boundary");
+  world.dispose();
 });
 
 test("river and sea flora form compact two-dimensional beds without changing habitat ratios", () => {

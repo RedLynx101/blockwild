@@ -48,6 +48,7 @@ import {
   markChunkRendered,
   markChunksRendered,
   markWorldPositionRendered,
+  mapMarkerMatchesLayer,
   normalizeMapKnowledge,
   placeManualMapMarker,
   placeWayshrine,
@@ -244,6 +245,23 @@ test("custom map locations fast travel for exactly two banked charges", () => {
   assert.equal(committed.chargeSpent, 2);
   assert.equal(committed.state.fastTravelCharges, 0);
   assert.deepEqual(committed.position, point(160));
+});
+
+test("semantic marker layers keep underwater and sky POIs on the surface map without leaking caves", () => {
+  let map = createMapKnowledge("layered-world", "surveyor");
+  map = discoverNaturalPoi(map, { ...markerInput("moon-gate", "Drowned Moon Gate", 32, "surveyor"), position: point(32, 8), layer: "underwater" });
+  map = discoverNaturalPoi(map, { ...markerInput("cloud-grave", "Cloudwhale Graveyard", 64, "surveyor"), position: point(64, 12), layer: "sky" });
+  map = discoverNaturalPoi(map, { ...markerInput("crystal-vault", "Crystal Vault", 96, "surveyor"), position: point(96, -12), layer: "underground" });
+  const underwater = map.markers.find((marker) => marker.id === "moon-gate")!;
+  const sky = map.markers.find((marker) => marker.id === "cloud-grave")!;
+  const cave = map.markers.find((marker) => marker.id === "crystal-vault")!;
+  assert.equal(mapMarkerMatchesLayer(underwater, false, "middle"), true);
+  assert.equal(mapMarkerMatchesLayer(sky, false, "middle"), true);
+  assert.equal(mapMarkerMatchesLayer(cave, false, "middle"), false);
+  assert.equal(mapMarkerMatchesLayer(cave, true, "middle"), true);
+
+  const legacy = normalizeMapKnowledge({ ...map, markers: [{ ...underwater, id: "legacy-low", layer: undefined }] });
+  assert.equal(legacy.markers.find((marker) => marker.id === "legacy-low")?.layer, "underground", "old saves retain their elevation fallback until the live landmark repairs them");
 });
 
 test("wayshrines form a free network only when used at a known shrine", () => {

@@ -795,6 +795,7 @@ import {
   shareMapsAtCartographyTable,
   type FastTravelChannel,
   type MapKnowledge,
+  type MapMarkerLayer,
   type MapPlayerMarker,
 } from "./map-system";
 import { UNDERGROUND_BIOME_NAMES, UndergroundBiomeId } from "./underground";
@@ -2544,6 +2545,11 @@ export function migrateSavedWorld(value: unknown): WorldSave | null {
   if (parsed.version !== 2 || typeof parsed.seed !== "string") return null;
   if (parsed.generatorVersion === GENERATOR_VERSION) return {
     ...parsed,
+    generatorProfile: parsed.generatorProfile === "legacy-v14" ? "legacy-v14" : "world-below-v15",
+  };
+  if (parsed.generatorVersion === 17) return {
+    ...parsed,
+    generatorVersion: GENERATOR_VERSION,
     generatorProfile: parsed.generatorProfile === "legacy-v14" ? "legacy-v14" : "world-below-v15",
   };
   if (parsed.generatorVersion === 16) return {
@@ -5056,25 +5062,44 @@ export class VoxelEngine {
     const centerX = Math.round(this.position.x);
     const centerZ = Math.round(this.position.z);
     const floorY = Math.round(this.position.y - .51);
+    const seamX = (Math.floor(centerX / CHUNK_SIZE) + 1) * CHUNK_SIZE;
     const edits: BlockEdit[] = [];
-    for (let x = centerX - 12; x <= centerX + 12; x += 1) for (let z = centerZ - 14; z <= centerZ + 7; z += 1) {
+    for (let x = seamX - 18; x <= seamX + 18; x += 1) for (let z = centerZ - 22; z <= centerZ + 12; z += 1) {
       const bed = (x + z) % 7 === 0 ? BlockId.Gravel : (x * 3 + z * 5) % 11 === 0 ? BlockId.Clay : BlockId.Sand;
       edits.push({ x, y: floorY, z, type: bed });
-      for (let y = floorY + 1; y <= floorY + 9; y += 1) edits.push({ x, y, z, type: BlockId.Water });
+      const perimeter = Math.abs(x - seamX) === 18 || z === centerZ - 22 || z === centerZ + 12;
+      for (let y = floorY + 1; y <= floorY + 9; y += 1) edits.push({ x, y, z, type: perimeter ? BlockId.GlasswaterStone : BlockId.Water });
     }
     this.world.setBlocksBatch(edits, true, true);
     // Use the production planner here so browser review sees the same irregular
     // underwater meadows as a generated ocean rather than a hand-arranged row.
-    for (let x = centerX - 12; x <= centerX + 12; x += 1) for (let z = centerZ - 14; z <= centerZ + 7; z += 1) {
+    for (let x = seamX - 17; x <= seamX + 17; x += 1) for (let z = centerZ - 21; z <= centerZ + 11; z += 1) {
       for (const placement of planSubmergedFlora("OCEAN-FLORA-PATCH-AUDIT", x, floorY, z, 9, "ocean")) {
         this.world.setBlock(placement.x, placement.y, placement.z, placement.block, true, true);
       }
     }
+    // A small authored foreground groups the redesigned species beside a
+    // Star Crystal swatch and deliberately straddles a real chunk boundary.
+    // This makes both vertical joins and water-to-water seam culling visible
+    // in the same exact-runtime audit.
+    const foregroundEdits: BlockEdit[] = [];
+    for (let x = seamX - 8; x <= seamX + 8; x += 1) for (let z = centerZ - 16; z <= centerZ + 4; z += 1) {
+      for (let y = floorY + 1; y <= floorY + 8; y += 1) foregroundEdits.push({ x, y, z, type: BlockId.Water });
+    }
+    for (let y = floorY + 1; y <= floorY + 4; y += 1) {
+      foregroundEdits.push({ x: seamX - 2, y, z: centerZ - 6, type: BlockId.RiverRibbon });
+      foregroundEdits.push({ x: seamX + 2, y, z: centerZ - 6, type: BlockId.ReedBloom });
+    }
+    for (let x = seamX - 1; x <= seamX + 1; x += 1) {
+      foregroundEdits.push({ x, y: floorY + 1, z: centerZ - 14, type: BlockId.CrystalBlock });
+      if (x === seamX) foregroundEdits.push({ x, y: floorY + 2, z: centerZ - 14, type: BlockId.CrystalBlock });
+    }
+    this.world.setBlocksBatch(foregroundEdits, true, true);
 
-    this.position.set(centerX, floorY + 3.7, centerZ + 5.4);
+    this.position.set(seamX, floorY + 3.7, centerZ + 3.4);
     this.spawn.copy(this.position);
     this.yaw = 0;
-    this.pitch = -.24;
+    this.pitch = -.05;
     this.worldTime = .31;
     this.visualWorldTime = this.worldTime;
     this.emitHud(true);
@@ -5154,6 +5179,25 @@ export class VoxelEngine {
       playerId,
       discoveredAt: Date.now() - 2_000,
       icon: "poi",
+      layer: "surface",
+    });
+    this.mapKnowledge = discoverNaturalPoi(this.mapKnowledge, {
+      id: "audit:drowned-moon-gate",
+      name: "Drowned Moon Gate",
+      position: { x: this.position.x + 120, y: 8, z: this.position.z - 72 },
+      playerId,
+      discoveredAt: Date.now() - 1_800,
+      icon: "poi",
+      layer: "underwater",
+    });
+    this.mapKnowledge = discoverNaturalPoi(this.mapKnowledge, {
+      id: "audit:crystal-vault",
+      name: "Crystal Vault",
+      position: { x: this.position.x - 32, y: -12, z: this.position.z + 48 },
+      playerId,
+      discoveredAt: Date.now() - 1_700,
+      icon: "poi",
+      layer: "underground",
     });
     const wayshrineId = "wayshrine:audit:crossroads";
     this.mapKnowledge = placeWayshrine(this.mapKnowledge, {
@@ -20265,6 +20309,26 @@ export class VoxelEngine {
     return [colors[0], colors[1], colors[2], colors[3]];
   }
 
+  private landmarkMapLayer(marker: Extract<StructureMarker, { type: "landmark" }>): MapMarkerLayer {
+    if (marker.mapLayer) return marker.mapLayer;
+    const tag = marker.tag.toLowerCase();
+    if (tag.startsWith("underground:") || tag.startsWith("dragon-lair:")
+      || tag.includes("emberglass-hatchery") || tag.includes("fossil-orchard")
+      || tag.includes("lanternroot-cistern") || tag.includes("gorgon-quarry")
+      || tag.includes("ashen-library") || tag.includes("hollow-moon")) return "underground";
+    if (tag.startsWith("dragon-nest:sea") || tag.includes("underwater") || tag.includes("drowned-moon")
+      || tag.includes("tideclock") || tag.includes("sunken-court") || tag.includes("namarra")
+      || tag.includes("settlement:atlantians")) return "underwater";
+    if (tag.includes("cloudwhale") || tag.includes("palace-nine-winds")) return "sky";
+    const block = this.world.getBlock(
+      Math.floor(marker.position.x),
+      Math.floor(marker.position.y),
+      Math.floor(marker.position.z),
+    );
+    if (blockContainsWater(block)) return "underwater";
+    return marker.position.y < 24 ? "underground" : "surface";
+  }
+
   private updateMapDiscovery(dt: number) {
     this.mapDiscoveryTimer -= dt;
     if (this.mapDiscoveryTimer > 0) return;
@@ -20319,20 +20383,25 @@ export class VoxelEngine {
       if (marker.type !== "landmark") continue;
       if (marker.tag.startsWith("guild-hall:")) this.applyGuildHallUpgrade(key, marker);
       const markerChunk = this.world.chunks.get(`${Math.floor(marker.position.x / CHUNK_SIZE)},${Math.floor(marker.position.z / CHUNK_SIZE)}`);
-      const markerIsUnderground = marker.position.y < 24;
+      const markerLayer = this.landmarkMapLayer(marker);
+      const markerIsUnderground = markerLayer === "underground";
       const nearUndergroundMarker = isEnteredCave
         && Math.hypot(marker.position.x - this.position.x, marker.position.z - this.position.z) <= 42
         && Math.abs(marker.position.y - this.position.y) <= 24;
+      const existingMarker = this.mapKnowledge.markers.find((entry) => entry.id === key);
       if ((!markerIsUnderground && !markerChunk?.group.visible)
         || (markerIsUnderground && !nearUndergroundMarker)
-        || this.mapKnowledge.markers.some((entry) => entry.id === key)) continue;
+        || existingMarker?.layer === markerLayer) continue;
+      const discoveredAt = existingMarker?.discoveredAt ?? Date.now();
       this.mapKnowledge = discoverNaturalPoi(this.mapKnowledge, {
         id: key,
         name: this.mapLocationName(marker.tag),
         position: marker.position,
         playerId: this.localPlayerId(),
-        discoveredAt: Date.now(),
+        discoveredAt,
+        updatedAt: existingMarker ? Date.now() : discoveredAt,
         icon: marker.tag.startsWith("settlement:") ? "town" : "poi",
+        layer: markerLayer,
       });
       if (marker.tag.startsWith("guild-hall:") || marker.tag.startsWith("guild-lodge:")) {
         changed = this.recordGuildHallDiscovery(key, marker) || changed;
