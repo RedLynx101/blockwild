@@ -485,6 +485,44 @@ export class VoxelLightEngine {
   }
 
   /**
+   * An isolated worker build already contains exact direct sky and internal
+   * emission. Seeding both sides of its four seams propagates only additional
+   * neighbor light; level 15 cannot travel beyond the loaded one-chunk halo.
+   */
+  beginChunkBoundaryReconciliation(chunk: VoxelLightChunk) {
+    const task: VoxelLightInitializationTask = {
+      chunk,
+      phase: "boundary",
+      cursor: 0,
+      queueX: [],
+      queueY: [],
+      queueZ: [],
+      queueHead: 0,
+      queued: new Set<string>(),
+    };
+    if (!chunk.lightInitialized) return task;
+    const originX = chunk.cx * this.chunkSize;
+    const originZ = chunk.cz * this.chunkSize;
+    this.directSkyCache.clear();
+    for (let y = this.minY; y <= this.maxY; y += 1) for (let offset = 0; offset < this.chunkSize; offset += 1) {
+      for (const [x, z] of [
+        [originX, originZ + offset],
+        [originX + this.chunkSize - 1, originZ + offset],
+        [originX + offset, originZ],
+        [originX + offset, originZ + this.chunkSize - 1],
+      ] as const) this.enqueueInitialization(task, x, y, z);
+    }
+    return task;
+  }
+
+  reconcileChunkBoundaries(chunk: VoxelLightChunk) {
+    const task = this.beginChunkBoundaryReconciliation(chunk);
+    while (!this.stepChunkInitialization(task, Number.MAX_SAFE_INTEGER)) {
+      // Synchronous compatibility API for tests and non-streaming callers.
+    }
+  }
+
+  /**
    * Rebuilds the one-chunk light halo around a large block batch in one pass.
    * A level-15 source cannot cross more than one complete neighboring chunk,
    * so the halo contains every value that the batch can invalidate.

@@ -11,6 +11,8 @@ test("resource telemetry is opt-in, one-session, and bounded by the configured e
   assert.equal(log.hasReachedLimit(1, 60_999), false);
   assert.equal(log.hasReachedLimit(1, 61_000), true);
   const report = log.stop("time-limit", 61_000);
+  assert.equal(report?.schema, 2);
+  assert.equal(report?.aggregation, "non-overlapping-frame-windows");
   assert.equal(report?.samples.length, 1);
   assert.equal(report?.elapsedSeconds, 60);
   assert.equal(report?.stopReason, "time-limit");

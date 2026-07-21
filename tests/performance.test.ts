@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   AdaptiveBudgetController,
+  advanceCreatureSimulation,
   advanceSentientCoarseSimulation,
   applyResourceMode,
   DEFAULT_FRAME_WORK_BUDGET,
@@ -14,6 +15,7 @@ import {
   chunksWithinDistance,
   chunkRetentionPadding,
   classifyBudgetPressure,
+  creatureSimulationTier,
   normalizeViewDistances,
   recommendFrameWorkBudget,
   sentientSimulationTier,
@@ -49,11 +51,15 @@ test("the fixed sampler reports percentiles and adaptive pressure", () => {
   const smooth = new PerformanceSampler(60);
   for (let index = 0; index < 60; index += 1) smooth.record({
     frameMilliseconds: 10,
+    activeCpuMilliseconds: 8,
+    mobSimulationMilliseconds: 2,
     chunkWorkMilliseconds: 4,
     chunkSchedulingMilliseconds: 0.25,
     chunkGenerationMilliseconds: 1,
     chunkLightingMilliseconds: 1.25,
     chunkMeshingMilliseconds: 1.5,
+    renderSubmissionMilliseconds: 1.25,
+    gpuMilliseconds: 4,
     visibleChunks: 441,
     triangles: 120_000,
     drawCalls: 780,
@@ -72,7 +78,39 @@ test("the fixed sampler reports percentiles and adaptive pressure", () => {
   assert.equal(smoothSummary.averageChunkGenerationMilliseconds, 1);
   assert.equal(smoothSummary.averageChunkLightingMilliseconds, 1.25);
   assert.equal(smoothSummary.averageChunkMeshingMilliseconds, 1.5);
+  assert.equal(smoothSummary.averageActiveCpuMilliseconds, 8);
+  assert.equal(smoothSummary.averageMobSimulationMilliseconds, 2);
+  assert.equal(smoothSummary.averageRenderSubmissionMilliseconds, 1.25);
+  assert.equal(smoothSummary.averageGpuMilliseconds, 4);
+  assert.equal(smoothSummary.gpuSampleCount, 60);
   assert.equal(classifyBudgetPressure(smoothSummary), "headroom");
+  assert.equal(classifyBudgetPressure({ ...smoothSummary, p95FrameMilliseconds: 16, averageActiveCpuMilliseconds: 7 }, 1000 / 60, {
+    weightedDebt: 20,
+    oldestNearJobMilliseconds: 1_500,
+    immediateRingCompleteness: 0.8,
+  }), "headroom", "streaming debt may borrow proven CPU headroom without ignoring p99 stalls");
+  assert.equal(classifyBudgetPressure({
+    ...smoothSummary,
+    p95FrameMilliseconds: 50,
+    p99FrameMilliseconds: 50,
+    longFrameRatio: 0.6,
+    averageActiveCpuMilliseconds: 4.5,
+  }, 1000 / 60, {
+    weightedDebt: 50,
+    oldestNearJobMilliseconds: 5_000,
+    immediateRingCompleteness: 0.9,
+  }), "headroom", "GPU-bound presentation stalls may repair an incomplete immediate ring");
+  assert.equal(classifyBudgetPressure({
+    ...smoothSummary,
+    p95FrameMilliseconds: 50,
+    p99FrameMilliseconds: 50,
+    longFrameRatio: 0.6,
+    averageActiveCpuMilliseconds: 4.5,
+  }, 1000 / 60, {
+    weightedDebt: 50,
+    oldestNearJobMilliseconds: 5_000,
+    immediateRingCompleteness: 1,
+  }), "balanced", "GPU-bound far-field debt must not consume unlimited main-thread time");
   assert.ok(recommendFrameWorkBudget(smoothSummary).liquidOperations > DEFAULT_FRAME_WORK_BUDGET.liquidOperations);
 
   const slow = new PerformanceSampler(60);
@@ -87,6 +125,32 @@ test("the fixed sampler reports percentiles and adaptive pressure", () => {
   assert.deepEqual(controller.current, DEFAULT_FRAME_WORK_BUDGET);
   controller.observe(slowSummary);
   assert.ok(controller.current.liquidOperations < DEFAULT_FRAME_WORK_BUDGET.liquidOperations);
+});
+
+test("telemetry interval summaries drain instead of overlapping", () => {
+  const sampler = new PerformanceSampler(60);
+  sampler.record({ frameMilliseconds: 10 });
+  sampler.record({ frameMilliseconds: 20 });
+  assert.equal(sampler.drainSummary().averageFrameMilliseconds, 15);
+  assert.equal(sampler.size, 0);
+  sampler.record({ frameMilliseconds: 30 });
+  assert.equal(sampler.drainSummary().averageFrameMilliseconds, 30);
+});
+
+test("ordinary wildlife uses deterministic full, active, coarse, and sleep tiers", () => {
+  assert.equal(creatureSimulationTier({ distance: 10, simulationRadius: 140 }), "full");
+  assert.equal(creatureSimulationTier({ distance: 48, simulationRadius: 140 }), "active");
+  assert.equal(creatureSimulationTier({ distance: 90, simulationRadius: 140 }), "coarse");
+  assert.equal(creatureSimulationTier({ distance: 141, simulationRadius: 140 }), "sleep");
+  assert.equal(creatureSimulationTier({ distance: 90, simulationRadius: 140, requiresFullDetail: true }), "full");
+  let accumulator = 0;
+  let activeUpdates = 0;
+  for (let frame = 0; frame < 60; frame += 1) {
+    const step = advanceCreatureSimulation("active", accumulator, 1 / 60);
+    accumulator = step.accumulator;
+    if (step.advance) activeUpdates += 1;
+  }
+  assert.equal(activeUpdates, 10);
 });
 
 test("resource modes trade CPU or memory for steadier traversal", () => {

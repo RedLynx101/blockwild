@@ -519,14 +519,19 @@ import {
   DEFAULT_SIMULATION_DISTANCE,
   normalizeViewDistances,
   PerformanceSampler,
+  LongAnimationFrameSampler,
   AdaptiveBudgetController,
+  advanceCreatureSimulation,
   advanceSentientCoarseSimulation,
   applyResourceMode,
   chunkRetentionPadding,
+  creatureSimulationTier,
   sentientSimulationTier,
   type SentientSimulationTier,
+  type CreatureSimulationTier,
   type ResourceMode,
 } from "./performance";
+import { WebGlGpuTimer } from "./webgl-gpu-timer";
 import {
   celestialVisibilityThroughClouds,
   cloudCelestialOcclusion,
@@ -1486,6 +1491,8 @@ type MobEntity = {
   sentientLod: THREE.Group | null;
   sentientTier: SentientSimulationTier;
   sentientSimulationAccumulator: number;
+  simulationTier: CreatureSimulationTier;
+  simulationAccumulator: number;
   parts: Record<string, THREE.Object3D[]>;
   health: number;
   maxHealth: number;
@@ -3737,7 +3744,10 @@ export class VoxelEngine {
   lastForwardTap = -Infinity;
   sprintLatched = false;
   performanceSampler = new PerformanceSampler(240);
+  telemetryIntervalSampler = new PerformanceSampler(240);
+  longAnimationFrameSampler = new LongAnimationFrameSampler();
   budgetController = new AdaptiveBudgetController();
+  gpuTimer: WebGlGpuTimer;
   performanceReportTimer = 0;
   averageFps = 60;
   yaw = 0;
@@ -4129,6 +4139,7 @@ export class VoxelEngine {
     this.touchMode = window.matchMedia?.("(pointer: coarse)").matches ?? false;
     this.audio = new SynthAudio(settings);
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: "high-performance" });
+    this.gpuTimer = new WebGlGpuTimer(this.renderer.getContext());
     this.nativePixelRatio = Math.min(window.devicePixelRatio || 1, this.touchMode ? 1.2 : 1.5);
     this.renderPixelRatio = this.nativePixelRatio;
     this.renderer.setPixelRatio(this.renderPixelRatio);
@@ -5390,10 +5401,21 @@ export class VoxelEngine {
   performanceTelemetrySnapshot() {
     const browserPerformance = typeof performance === "undefined" ? null : performance as Performance & { memory?: { usedJSHeapSize: number; totalJSHeapSize: number; jsHeapSizeLimit: number } };
     const memory = browserPerformance?.memory;
+    const navigatorMemory = typeof navigator === "undefined" ? undefined : (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
     const multiplayer = this.getMultiplayerState();
     return {
       capturedAt: new Date().toISOString(),
-      performance: this.performanceSampler.summary(),
+      runtime: {
+        gameVersion: GAME_VERSION,
+        userAgent: typeof navigator === "undefined" ? "unknown" : navigator.userAgent,
+        logicalProcessors: typeof navigator === "undefined" ? null : navigator.hardwareConcurrency,
+        deviceMemoryGiB: navigatorMemory ?? null,
+        pixelRatio: this.renderPixelRatio,
+        webgl2: this.renderer.capabilities.isWebGL2,
+      },
+      performance: this.telemetryIntervalSampler.drainSummary(),
+      longAnimationFrames: this.longAnimationFrameSampler.drain(),
+      gpuTimingSupported: this.gpuTimer.supported,
       renderer: {
         drawCalls: this.renderer.info.render.calls,
         triangles: this.renderer.info.render.triangles,
@@ -5417,6 +5439,10 @@ export class VoxelEngine {
         projectiles: this.projectiles.length,
         boats: this.boats.size,
         sleepingCreatures: this.sleepingCreatures.length,
+        simulationTiers: this.mobs.reduce<Record<CreatureSimulationTier, number>>((counts, mob) => {
+          counts[mob.simulationTier] += 1;
+          return counts;
+        }, { full: 0, active: 0, coarse: 0, sleep: 0 }),
       },
       ecology: {
         attempts: this.ecologyDiagnostics.attempts,
@@ -5431,6 +5457,11 @@ export class VoxelEngine {
         heapLimitBytes: memory.jsHeapSizeLimit,
       } : null,
     };
+  }
+
+  beginPerformanceTelemetry() {
+    this.telemetryIntervalSampler.clear();
+    this.longAnimationFrameSampler.drain();
   }
 
   downloadMultiplayerDiagnostics() {
@@ -22214,7 +22245,8 @@ export class VoxelEngine {
     const ordinaryMaximumHealth = creatureMaximumHealth(definition, profile.stats, progression.level) * shadeHealthScale;
     const mob: MobEntity = {
       id, specimenId, kind, name: options.name?.trim() || primeProfile?.name || dragonState?.customName || petState?.name || definition.name, hostile: definition.hostile && !shadeState?.tamed && !dragonState?.tamed && (dragonState?.stage ?? 2) > 1, definition, group, visual,
-      sentientLod, sentientTier: "full", sentientSimulationAccumulator: 0, parts,
+      sentientLod, sentientTier: "full", sentientSimulationAccumulator: 0,
+      simulationTier: "full", simulationAccumulator: 0, parts,
       health: options.health ?? dragonState?.health ?? petState?.health ?? ordinaryMaximumHealth,
       maxHealth: dragonState?.maxHealth ?? petState?.maxHealth ?? ordinaryMaximumHealth,
       damage: dragonState ? dragonAttackPlan(dragonState.type, dragonState.stage, "melee").damage : definition.damage * creatureOutputMultiplier(profile.stats, progression.level), angle, desiredAngle: angle, steering: createStableSteering(angle), route: createCreatureRouteState(angle), wanderTimer: 1 + Math.random() * 4,
@@ -25100,6 +25132,7 @@ export class VoxelEngine {
       if (rangeAction.action === "linger") {
         if (mob.definition.sentient) this.setSentientDetailTier(mob, "sleep");
         else mob.group.visible = false;
+        mob.simulationTier = "sleep";
         mob.sentientSimulationAccumulator = 0;
         continue;
       }
@@ -25112,13 +25145,36 @@ export class VoxelEngine {
           requiresFullDetail: Boolean(followerSlot || mob.id === this.mountedCreatureId || this.targetMob === mob),
         });
         this.setSentientDetailTier(mob, tier);
+        mob.simulationTier = tier === "coarse" ? "coarse" : tier;
         if (tier === "coarse") {
           const coarse = advanceSentientCoarseSimulation(mob.sentientSimulationAccumulator, dt);
           mob.sentientSimulationAccumulator = coarse.accumulator;
           if (!coarse.advance) continue;
           mobDt = coarse.elapsedSeconds;
         } else mob.sentientSimulationAccumulator = 0;
-      } else mob.group.visible = true;
+      } else {
+        mob.group.visible = true;
+        const requiresFullDetail = Boolean(
+          followerSlot
+          || mob.id === this.mountedCreatureId
+          || this.targetMob === mob
+          || this.leadAnchors.has(mob.id)
+          || mob.hostile && distance <= 36
+          || mob.hurtTimer > 0
+          || mob.fleeTimer > 0
+          || mob.dragonAttackAnimation,
+        );
+        const tier = creatureSimulationTier({
+          distance,
+          simulationRadius: followerSlot ? Math.max(simulationRadius, distance) : simulationRadius,
+          requiresFullDetail,
+        });
+        mob.simulationTier = tier;
+        const step = advanceCreatureSimulation(tier, mob.simulationAccumulator, dt);
+        mob.simulationAccumulator = step.accumulator;
+        if (!step.advance) continue;
+        mobDt = step.elapsedSeconds;
+      }
 
       mob.attackCooldown = Math.max(0, mob.attackCooldown - mobDt);
       const plannedMoveActive = this.advancePlannedCreatureMove(mob, mobDt);
@@ -27541,6 +27597,7 @@ export class VoxelEngine {
 
   animate = (now: number) => {
     if (this.disposed) return;
+    const activeFrameStartedAt = performance.now();
     const rawDt = (now - this.previousTime) / 1000;
     const dt = Math.min(0.08, Math.max(0, rawDt));
     this.previousTime = now;
@@ -27551,14 +27608,17 @@ export class VoxelEngine {
     this.combatMusicTimer = Math.max(0, this.combatMusicTimer - dt);
     const simulationStartedAt = performance.now();
     let chunkWorkMilliseconds = 0;
+    let mobSimulationMilliseconds = 0;
     let chunkWorkReport: ChunkWorkFrameReport = {
       schedulingMilliseconds: 0,
       generationMilliseconds: 0,
       lightingMilliseconds: 0,
       meshingMilliseconds: 0,
+      installationMilliseconds: 0,
       generationSlices: 0,
       lightingSlices: 0,
       meshSlices: 0,
+      installationSlices: 0,
     };
 
     if (this.running && !this.titleMode && !this.paused) {
@@ -27580,7 +27640,7 @@ export class VoxelEngine {
       chunkWorkMilliseconds = performance.now() - chunkWorkStartedAt;
     } else {
       const chunkWorkStartedAt = performance.now();
-      chunkWorkReport = this.world.update(this.position.x, this.position.z, this.position.y);
+      chunkWorkReport = this.world.update(this.position.x, this.position.z, this.position.y, this.velocity.x, this.velocity.z);
       chunkWorkMilliseconds = performance.now() - chunkWorkStartedAt;
       if (this.running && !this.paused) this.updateBoats(dt);
       if (this.running && !this.paused && (this.locked || this.touchMode)) {
@@ -27634,7 +27694,9 @@ export class VoxelEngine {
           this.animateMob(mob, Math.hypot(mob.group.position.x - beforeX, mob.group.position.z - beforeZ));
         }
       } else {
+        const mobSimulationStartedAt = performance.now();
         this.updateMobs(dt);
+        mobSimulationMilliseconds = performance.now() - mobSimulationStartedAt;
         this.updateRemotePlayerMobDamage();
       }
       this.updateLeads();
@@ -27672,32 +27734,52 @@ export class VoxelEngine {
       this.cloudMesh.position.set(this.cloudDrift.x, 0, this.cloudDrift.z);
     }
     this.refreshCloudField(false, dt);
-    const simulationMilliseconds = Math.max(0, performance.now() - simulationStartedAt - chunkWorkMilliseconds);
-    if (!this.webglContextLost) this.renderer.render(this.scene, this.camera);
+    const renderStartedAt = performance.now();
+    const simulationMilliseconds = Math.max(0, renderStartedAt - simulationStartedAt - chunkWorkMilliseconds);
+    let gpuMilliseconds = this.gpuTimer.poll();
+    if (!this.webglContextLost) {
+      this.gpuTimer.begin();
+      this.renderer.render(this.scene, this.camera);
+      this.gpuTimer.end();
+      gpuMilliseconds = this.gpuTimer.poll() ?? gpuMilliseconds;
+    }
+    const renderSubmissionMilliseconds = Math.max(0, performance.now() - renderStartedAt);
     this.lastPresentedFrameTime = performance.now();
     this.resetLookFrameBudget();
-    this.performanceSampler.record({
+    const sample = {
       frameMilliseconds: rawDt * 1000,
+      activeCpuMilliseconds: Math.max(0, performance.now() - activeFrameStartedAt),
       simulationMilliseconds,
+      mobSimulationMilliseconds,
       chunkWorkMilliseconds,
       chunkSchedulingMilliseconds: chunkWorkReport.schedulingMilliseconds,
       chunkGenerationMilliseconds: chunkWorkReport.generationMilliseconds,
       chunkLightingMilliseconds: chunkWorkReport.lightingMilliseconds,
       chunkMeshingMilliseconds: chunkWorkReport.meshingMilliseconds,
+      chunkInstallationMilliseconds: chunkWorkReport.installationMilliseconds,
+      renderSubmissionMilliseconds,
+      gpuMilliseconds,
       visibleChunks: this.world.loadedCount,
       simulatedEntities: this.mobs.length + this.butterflies.entities.length,
       triangles: this.renderer.info.render.triangles,
       drawCalls: this.renderer.info.render.calls,
       geometries: this.renderer.info.memory.geometries,
       textures: this.renderer.info.memory.textures,
-    });
+    } as const;
+    this.performanceSampler.record(sample);
+    this.telemetryIntervalSampler.record(sample);
     this.performanceReportTimer += dt;
     if (this.performanceReportTimer >= 1.5) {
       this.performanceReportTimer = 0;
       const report = this.performanceSampler.summary();
       this.averageFps = report.framesPerSecond || this.averageFps;
-      const budget = applyResourceMode(this.settings.resourceMode, this.budgetController.observe(report));
-      this.world.setStreamingBudgets(budget.chunkGenerations, budget.chunkMeshSections);
+      const streaming = this.world.streamingDiagnostics();
+      const budget = applyResourceMode(this.settings.resourceMode, this.budgetController.observe(report, 1000 / 60, {
+        weightedDebt: streaming.debt.weightedDebt,
+        oldestNearJobMilliseconds: streaming.debt.oldestNearJobMilliseconds,
+        immediateRingCompleteness: streaming.immediateRing.ratio,
+      }));
+      this.world.setStreamingBudgets(budget.chunkGenerations, budget.chunkMeshSections, budget.streamingFrameMilliseconds);
     }
     if (this.running && this.persistent) {
       this.autoSaveAccumulator += dt;
@@ -28385,6 +28467,8 @@ export class VoxelEngine {
     this.sharedDropGeometry.dispose();
     for (const material of this.dropMaterials.values()) material.dispose();
     this.disposePooledParticleResources();
+    this.gpuTimer.dispose();
+    this.longAnimationFrameSampler.dispose();
     this.renderer.dispose();
     // `dispose()` releases Three.js allocations but browsers may retain the
     // context until GC. Explicit loss prevents repeated React mounts/previews

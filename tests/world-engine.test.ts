@@ -2117,3 +2117,21 @@ test("ever-led protection survives creature serialization and restoration", () =
   assert.equal(restored?.everLed, true);
   assert.equal(restored?.naturalSpawned, true);
 });
+
+test("terrain sections consolidate to at most one visible submission per render layer", () => {
+  const world = new ChunkWorld();
+  world.reset("DRAW-SUBMISSION-PARITY", undefined, { structures: false });
+  const chunk = world.generateChunk(0, 0);
+  for (let section = 0; section < chunk.sectionBlockCounts.length; section += 1) {
+    if (chunk.sectionBlockCounts[section] > 0) world.rebuildSection(chunk, section);
+  }
+  const sectionMeshes = [...chunk.sections.values()].flatMap((section) => Object.values(section).filter(Boolean));
+  assert.ok(sectionMeshes.length > 5, "the fixture must span enough sections/layers to prove consolidation");
+  for (let guard = 0; guard < 100 && world.processConsolidation(); guard += 1) {
+    assert.ok(guard < 99, "consolidation must converge");
+  }
+  const combined = Object.values(chunk.combinedMeshes).filter(Boolean);
+  assert.ok(combined.length > 0 && combined.length <= 5);
+  assert.equal(sectionMeshes.filter((mesh) => mesh?.visible).length, 0);
+  world.dispose();
+});

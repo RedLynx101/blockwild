@@ -1,4 +1,7 @@
 import * as THREE from "three";
+import { ChunkMemoryCache, ChunkPersistentCache, type CachedChunkData } from "./chunk-cache";
+import { TerrainBufferPipeline, type TerrainMergedGeometry, type TerrainSectionGeometry } from "./terrain-buffer-pipeline";
+import { TerrainGenerationPipeline, type TerrainGenerationResult } from "./terrain-generation-pipeline";
 import {
   adventureClearanceBounds,
   adventureDungeonCandidateForChunk,
@@ -517,6 +520,7 @@ function legendarySitePalette(encounterId: LegendaryEncounterId) {
 }
 
 type WorldRenderLayer = Exclude<RenderLayer, "none"> | "glass";
+const WORLD_RENDER_LAYERS = ["opaque", "cutout", "transparent", "glass", "emissive"] as const satisfies readonly WorldRenderLayer[];
 type ChunkMeshes = {
   opaque?: THREE.Mesh;
   cutout?: THREE.Mesh;
@@ -535,6 +539,8 @@ export type Chunk = {
   biomes: Uint8Array;
   group: THREE.Group;
   sections: Map<number, ChunkMeshes>;
+  /** One submitted mesh per material layer; section geometries remain CPU-editable. */
+  combinedMeshes: ChunkMeshes;
   dirty: Set<number>;
   sectionBlockCounts: Uint16Array;
   /** Highest full opaque cube in each column, maintained independently from terrain height. */
@@ -695,12 +701,14 @@ export type ChunkWorkFrameReport = Readonly<{
   generationMilliseconds: number;
   lightingMilliseconds: number;
   meshingMilliseconds: number;
+  installationMilliseconds: number;
   generationSlices: number;
   lightingSlices: number;
   meshSlices: number;
+  installationSlices: number;
 }>;
 
-export const DEFAULT_STREAMING_FRAME_BUDGET_MS = 7;
+export const DEFAULT_STREAMING_FRAME_BUDGET_MS = 5;
 
 // Biome tints deliberately use a little overbright headroom. Packing colors
 // relative to this range preserves those tints while allowing normalized bytes.
@@ -2765,16 +2773,37 @@ export class ChunkWorld {
   private surfaceRoadCache = new Map<string, readonly RoadPoint[]>();
   generationQueue: Array<{ cx: number; cz: number; distance: number }> = [];
   generationQueued = new Set<string>();
+  generationEnqueuedAt = new Map<string, number>();
   activeGenerationTask: ChunkGenerationTask | null = null;
   generationTasks = new Map<string, ChunkGenerationTask>();
   lightInitializationQueue: string[] = [];
   lightInitializationQueueHead = 0;
   lightInitializationQueued = new Set<string>();
+  lightInitializationEnqueuedAt = new Map<string, number>();
   activeLightInitialization: { key: string; task: VoxelLightInitializationTask } | null = null;
   lightInitializationTasks = new Map<string, VoxelLightInitializationTask>();
+  lightReconciliationQueue: Array<{ key: string; task: VoxelLightInitializationTask }> = [];
+  lightReconciliationQueued = new Set<string>();
+  activeLightReconciliation: { key: string; task: VoxelLightInitializationTask } | null = null;
   meshQueue: Array<{ key: string; section: number }> = [];
   meshQueueHead = 0;
   meshQueued = new Set<string>();
+  meshEnqueuedAt = new Map<string, number>();
+  consolidationQueue: Array<{ key: string; layer: WorldRenderLayer }> = [];
+  consolidationQueued = new Set<string>();
+  consolidationRevision = new Map<string, number>();
+  pendingConsolidations = new Set<string>();
+  completedConsolidations: Array<{ key: string; layer: WorldRenderLayer; revision: number; geometry: TerrainMergedGeometry | null }> = [];
+  staleConsolidations = 0;
+  terrainBufferPipeline = new TerrainBufferPipeline();
+  terrainGenerationPipeline = new TerrainGenerationPipeline();
+  pendingWorkerGeneration = new Set<string>();
+  completedWorkerGeneration: TerrainGenerationResult[] = [];
+  staleWorkerGeneration = 0;
+  terrainGeometriesCreated = 0;
+  terrainGeometriesDisposed = 0;
+  liveTerrainGeometryBytes = 0;
+  private terrainGeometryBytes = new WeakMap<THREE.BufferGeometry, number>();
   urgentMeshQueue: Array<{ key: string; section: number }> = [];
   urgentMeshQueueHead = 0;
   urgentMeshQueued = new Set<string>();
@@ -2789,6 +2818,17 @@ export class ChunkWorld {
   generationWorkPerFrame = 1;
   meshWorkPerFrame = 2;
   streamingFrameBudgetMilliseconds = DEFAULT_STREAMING_FRAME_BUDGET_MS;
+  streamingLookaheadChunkX = 0;
+  streamingLookaheadChunkZ = 0;
+  streamingCompleted = { generation: 0, lighting: 0, meshing: 0 };
+  streamingCanceled = { generation: 0, lighting: 0, meshing: 0 };
+  playerUnreadyStartedAt: number | null = null;
+  playerReadinessEpisodes: number[] = [];
+  chunkMemoryCache = new ChunkMemoryCache();
+  chunkPersistentCache = new ChunkPersistentCache();
+  pendingPersistentChunks = new Set<string>();
+  persistentCacheHits = 0;
+  persistentCacheMisses = 0;
   generationOptions = normalizeWorldGenerationOptions();
   playerChunkX = Number.NaN;
   playerChunkZ = Number.NaN;
@@ -2895,15 +2935,15 @@ export class ChunkWorld {
     this.retentionPadding = clamp(Math.round(padding), 2, 6);
   }
 
-  setStreamingBudgets(chunkGenerations: number, chunkMeshSections: number) {
+  setStreamingBudgets(chunkGenerations: number, chunkMeshSections: number, frameMilliseconds?: number) {
     this.generationWorkPerFrame = clamp(Math.round(chunkGenerations), 1, 3);
     this.meshWorkPerFrame = clamp(Math.round(chunkMeshSections), 1, 8);
     // Count limits preserve adaptive throughput; this wall-clock guard keeps a
     // high-headroom burst from turning back into a long exploration frame.
     this.streamingFrameBudgetMilliseconds = clamp(
-      5.5 + this.generationWorkPerFrame * 0.5 + this.meshWorkPerFrame * 0.25,
-      6,
-      9,
+      frameMilliseconds ?? 5.5 + this.generationWorkPerFrame * 0.5 + this.meshWorkPerFrame * 0.25,
+      2,
+      10,
     );
   }
 
@@ -2916,20 +2956,46 @@ export class ChunkWorld {
     this.disposeChunks();
     this.generationQueue = [];
     this.generationQueued.clear();
+    this.generationEnqueuedAt.clear();
     this.activeGenerationTask = null;
     this.generationTasks.clear();
     this.lightInitializationQueue = [];
     this.lightInitializationQueueHead = 0;
     this.lightInitializationQueued.clear();
+    this.lightInitializationEnqueuedAt.clear();
     this.activeLightInitialization = null;
     this.lightInitializationTasks.clear();
+    this.lightReconciliationQueue = [];
+    this.lightReconciliationQueued.clear();
+    this.activeLightReconciliation = null;
     this.meshQueue = [];
     this.meshQueueHead = 0;
     this.meshQueued.clear();
+    this.meshEnqueuedAt.clear();
+    this.consolidationQueue = [];
+    this.consolidationQueued.clear();
+    this.consolidationRevision.clear();
+    this.pendingConsolidations.clear();
+    this.completedConsolidations = [];
+    this.staleConsolidations = 0;
+    this.pendingWorkerGeneration.clear();
+    this.completedWorkerGeneration = [];
+    this.staleWorkerGeneration = 0;
+    this.terrainGeometriesCreated = 0;
+    this.terrainGeometriesDisposed = 0;
+    this.liveTerrainGeometryBytes = 0;
+    this.terrainGeometryBytes = new WeakMap();
     this.urgentMeshQueue = [];
     this.urgentMeshQueueHead = 0;
     this.urgentMeshQueued.clear();
     this.activeMeshTask = null;
+    this.streamingCompleted = { generation: 0, lighting: 0, meshing: 0 };
+    this.streamingCanceled = { generation: 0, lighting: 0, meshing: 0 };
+    this.playerUnreadyStartedAt = null;
+    this.playerReadinessEpisodes = [];
+    this.pendingPersistentChunks.clear();
+    this.persistentCacheHits = 0;
+    this.persistentCacheMisses = 0;
     this.lightSectionQueue = [];
     this.lightSectionQueueHead = 0;
     this.lightSectionQueued.clear();
@@ -2946,6 +3012,7 @@ export class ChunkWorld {
     this.seedText = seedText || "WILDERNESS";
     this.seed = seedToInt(this.seedText);
     this.generationOptions = normalizeWorldGenerationOptions(generationOptions);
+    this.chunkMemoryCache.clear();
     this.playerChunkX = Number.NaN;
     this.playerChunkZ = Number.NaN;
     this.playerSection = sectionForY(0);
@@ -3031,19 +3098,24 @@ export class ChunkWorld {
     this.scheduleAround(x, z, true);
   }
 
-  update(x: number, z: number, y?: number): ChunkWorkFrameReport {
+  update(x: number, z: number, y?: number, velocityX = 0, velocityZ = 0): ChunkWorkFrameReport {
     let schedulingMilliseconds = 0;
     let generationMilliseconds = 0;
     let lightingMilliseconds = 0;
     let meshingMilliseconds = 0;
+    let installationMilliseconds = 0;
     let generationSlices = 0;
     let lightingSlices = 0;
     let meshSlices = 0;
+    let installationSlices = 0;
     this.frame += 1;
     const streamingStartedAt = performance.now();
     const deadline = streamingStartedAt + this.streamingFrameBudgetMilliseconds;
     const cx = Math.floor(x / CHUNK_SIZE);
     const cz = Math.floor(z / CHUNK_SIZE);
+    const speed = Math.hypot(velocityX, velocityZ);
+    this.streamingLookaheadChunkX = speed > 0.5 ? clamp(Math.round(velocityX / speed * 2), -2, 2) : 0;
+    this.streamingLookaheadChunkZ = speed > 0.5 ? clamp(Math.round(velocityZ / speed * 2), -2, 2) : 0;
     const focusSection = Number.isFinite(y) ? clamp(sectionForY(y!), 0, SECTION_COUNT - 1) : this.playerSection;
     if (cx !== this.playerChunkX || cz !== this.playerChunkZ || focusSection !== this.playerSection || this.frame % 180 === 0) {
       const startedAt = performance.now();
@@ -3098,7 +3170,7 @@ export class ChunkWorld {
           if (!processed) continue;
           generationSlices += 1;
         } else if (category === 1) {
-          const processed = this.processLightInitialization();
+          const processed = this.processLightingSlice();
           lightingMilliseconds += performance.now() - startedAt;
           if (!processed) continue;
           lightingSlices += 1;
@@ -3120,14 +3192,23 @@ export class ChunkWorld {
       }
       if (!foundWork) break;
     }
+    for (let index = 0; index < this.meshWorkPerFrame && performance.now() < deadline; index += 1) {
+      const startedAt = performance.now();
+      if (!this.processConsolidation()) break;
+      installationSlices += 1;
+      installationMilliseconds += performance.now() - startedAt;
+    }
+    this.recordPlayerReadiness(performance.now());
     return {
       schedulingMilliseconds,
       generationMilliseconds,
       lightingMilliseconds,
       meshingMilliseconds,
+      installationMilliseconds,
       generationSlices,
       lightingSlices,
       meshSlices,
+      installationSlices,
     };
   }
 
@@ -3149,7 +3230,9 @@ export class ChunkWorld {
       if (!activeIsRetained || currentNeedsGeneration) {
         if (!activeIsRetained) {
           this.generationQueued.delete(active.key);
+          this.generationEnqueuedAt.delete(active.key);
           this.generationTasks.delete(active.key);
+          this.streamingCanceled.generation += 1;
         }
         this.activeGenerationTask = null;
       }
@@ -3171,6 +3254,7 @@ export class ChunkWorld {
     this.generationQueued = new Set([
       ...this.generationQueue.map((entry) => chunkKey(entry.cx, entry.cz)),
       ...(this.activeGenerationTask ? [this.activeGenerationTask.key] : []),
+      ...this.pendingWorkerGeneration,
     ]);
     const activeMeshQueued = this.meshQueued;
     const seenMeshEntries = new Set<string>();
@@ -3203,10 +3287,16 @@ export class ChunkWorld {
         if (!chunkWithinStreamingRadius(dx, dz, generationRadius, radialStreaming)) continue;
         const key = chunkKey(cx + dx, cz + dz);
         const distance = chunkStreamingSortDistance(dx, dz, radialStreaming);
-        const chunk = this.chunks.get(key);
+        let chunk = this.chunks.get(key);
+        if (!chunk) {
+          const cached = this.chunkMemoryCache.take(this.chunkCacheKey(key));
+          if (cached) chunk = this.restoreCachedChunk(cached);
+        }
         if (!chunk && key !== this.activeGenerationTask?.key && !this.generationQueued.has(key)) {
+          if (distance <= 2 && this.requestPersistentChunk(key, cx + dx, cz + dz, distance)) continue;
           this.generationQueue.push({ cx: cx + dx, cz: cz + dz, distance });
           this.generationQueued.add(key);
+          this.generationEnqueuedAt.set(key, performance.now());
         } else if (chunk && chunkWithinStreamingRadius(dx, dz, this.renderDistance, radialStreaming)) {
           chunk.group.visible = true;
           if (!chunk.lightInitialized) this.queueLightInitialization(key);
@@ -3237,7 +3327,15 @@ export class ChunkWorld {
     const chunk = this.chunks.get(key);
     if (!chunk) return Number.POSITIVE_INFINITY;
     const radialStreaming = this.renderDistance > RADIAL_STREAMING_DISTANCE_THRESHOLD;
-    return chunkStreamingSortDistance(chunk.cx - this.playerChunkX, chunk.cz - this.playerChunkZ, radialStreaming);
+    const dx = chunk.cx - this.playerChunkX;
+    const dz = chunk.cz - this.playerChunkZ;
+    const base = chunkStreamingSortDistance(dx, dz, radialStreaming);
+    const lookahead = chunkStreamingSortDistance(
+      dx - this.streamingLookaheadChunkX,
+      dz - this.streamingLookaheadChunkZ,
+      radialStreaming,
+    );
+    return base + Math.min(0, lookahead - base) * 0.35;
   }
 
   private compareMeshPriority(
@@ -3246,8 +3344,12 @@ export class ChunkWorld {
   ) {
     const leftChunk = this.chunks.get(left.key);
     const rightChunk = this.chunks.get(right.key);
+    const leftAge = performance.now() - (this.meshEnqueuedAt.get(`${left.key}:${left.section}`) ?? performance.now());
+    const rightAge = performance.now() - (this.meshEnqueuedAt.get(`${right.key}:${right.section}`) ?? performance.now());
+    const agePriority = Math.abs(leftAge - rightAge) >= 2_000 ? Math.sign(rightAge - leftAge) : 0;
     const distanceDifference = this.chunkStreamingPriority(left.key) - this.chunkStreamingPriority(right.key);
     return distanceDifference
+      || agePriority
       || Math.abs(left.section - this.playerSection) - Math.abs(right.section - this.playerSection)
       || (leftChunk?.cx ?? Infinity) - (rightChunk?.cx ?? Infinity)
       || (leftChunk?.cz ?? Infinity) - (rightChunk?.cz ?? Infinity)
@@ -3312,10 +3414,104 @@ export class ChunkWorld {
     else this.queueChunkMeshesAndSeams(chunk);
   }
 
+  private chunkEditSignature(key: string) {
+    const edits = this.edits.get(key);
+    if (!edits?.size) return "0";
+    let hash = 0x811c9dc5;
+    for (const [index, type] of [...edits].sort((left, right) => left[0] - right[0])) {
+      hash = Math.imul(hash ^ index, 0x01000193) >>> 0;
+      hash = Math.imul(hash ^ type, 0x01000193) >>> 0;
+    }
+    return hash.toString(36);
+  }
+
+  private chunkCacheKey(key: string) {
+    return `terrain-v2|${this.seedText}|${JSON.stringify(this.generationOptions)}|${key}|${this.chunkEditSignature(key)}`;
+  }
+
+  private cachedChunkData(chunk: Chunk): CachedChunkData {
+    return {
+      cacheKey: this.chunkCacheKey(chunk.key),
+      key: chunk.key,
+      cx: chunk.cx,
+      cz: chunk.cz,
+      blocks: chunk.blocks,
+      heightmap: chunk.heightmap,
+      biomes: chunk.biomes,
+      sectionBlockCounts: chunk.sectionBlockCounts,
+      skyTops: chunk.skyTops,
+      light: chunk.light,
+      lightInitialized: chunk.lightInitialized,
+      lightIndices: [...chunk.lightIndices],
+      leafIndices: [...chunk.leafIndices],
+    };
+  }
+
+  private restoreCachedChunk(data: CachedChunkData) {
+    if (data.cacheKey !== this.chunkCacheKey(data.key) || this.chunks.has(data.key)) return undefined;
+    const chunk: Chunk = {
+      key: data.key,
+      cx: data.cx,
+      cz: data.cz,
+      blocks: data.blocks,
+      heightmap: data.heightmap,
+      biomes: data.biomes,
+      group: new THREE.Group(),
+      sections: new Map(),
+      combinedMeshes: {},
+      dirty: new Set(),
+      sectionBlockCounts: data.sectionBlockCounts,
+      skyTops: data.skyTops,
+      light: data.light,
+      lightInitialized: data.lightInitialized,
+      lightIndices: new Set(data.lightIndices),
+      leafIndices: new Set(data.leafIndices),
+    };
+    chunk.group.position.set(chunk.cx * CHUNK_SIZE, 0, chunk.cz * CHUNK_SIZE);
+    this.chunks.set(chunk.key, chunk);
+    this.group.add(chunk.group);
+    this.prepareGeneratedChunk(chunk);
+    return chunk;
+  }
+
+  private requestPersistentChunk(key: string, cx: number, cz: number, distance: number) {
+    const cacheKey = this.chunkCacheKey(key);
+    if (!this.chunkPersistentCache.supported || this.pendingPersistentChunks.has(cacheKey)) return false;
+    const queueGenerationFallback = () => {
+      if (cacheKey !== this.chunkCacheKey(key) || this.chunks.has(key)) return;
+      const radialStreaming = this.renderDistance > RADIAL_STREAMING_DISTANCE_THRESHOLD;
+      if (!chunkWithinStreamingRadius(cx - this.playerChunkX, cz - this.playerChunkZ, this.renderDistance + 1, radialStreaming)) return;
+      if (this.generationQueued.has(key) || this.activeGenerationTask?.key === key) return;
+      this.generationQueue.push({ cx, cz, distance });
+      this.generationQueued.add(key);
+      this.generationEnqueuedAt.set(key, performance.now());
+      this.generationQueue.sort((left, right) => right.distance - left.distance || right.cx - left.cx || right.cz - left.cz);
+    };
+    this.pendingPersistentChunks.add(cacheKey);
+    void this.chunkPersistentCache.get(cacheKey).then((data) => {
+      this.pendingPersistentChunks.delete(cacheKey);
+      if (cacheKey !== this.chunkCacheKey(key) || this.chunks.has(key)) return;
+      if (data) {
+        this.persistentCacheHits += 1;
+        this.restoreCachedChunk(data);
+        return;
+      }
+      this.persistentCacheMisses += 1;
+      queueGenerationFallback();
+    }).catch(() => {
+      this.pendingPersistentChunks.delete(cacheKey);
+      this.persistentCacheMisses += 1;
+      queueGenerationFallback();
+    });
+    return true;
+  }
+
   private queueChunkMeshesAndSeams(chunk: Chunk) {
     if (chunk.group.visible && chunk.lightInitialized) {
+      const immediate = Math.max(Math.abs(chunk.cx - this.playerChunkX), Math.abs(chunk.cz - this.playerChunkZ)) <= 1;
+      const required = immediate ? new Set(this.playerRequiredMeshSections(chunk)) : null;
       for (let section = 0; section < SECTION_COUNT; section += 1) {
-        if (chunk.sectionBlockCounts[section] > 0) this.queueMesh(chunk.key, section);
+        if (chunk.sectionBlockCounts[section] > 0) this.queueMesh(chunk.key, section, Boolean(required?.has(section)));
       }
     }
     // A hidden generation-halo chunk still changes face visibility at the seam
@@ -3348,6 +3544,7 @@ export class ChunkWorld {
     if (!next) return;
     const key = chunkKey(next.cx, next.cz);
     this.generationQueued.delete(key);
+    this.generationEnqueuedAt.delete(key);
     if (this.chunks.has(key)) return;
     const task = this.generationTasks.get(key);
     const chunk = task ? this.completeChunkGenerationSynchronously(task) : this.generateChunk(next.cx, next.cz);
@@ -3357,12 +3554,105 @@ export class ChunkWorld {
   }
 
   processGenerationSlice() {
+    if (this.terrainGenerationPipeline.supported) {
+      const completed = this.completedWorkerGeneration.shift();
+      if (completed) {
+        this.pendingWorkerGeneration.delete(completed.key);
+        const radialStreaming = this.renderDistance > RADIAL_STREAMING_DISTANCE_THRESHOLD;
+        const retained = chunkWithinStreamingRadius(
+          completed.cx - this.playerChunkX,
+          completed.cz - this.playerChunkZ,
+          this.renderDistance + 1,
+          radialStreaming,
+        );
+        if (completed.namespace !== this.chunkCacheKey(completed.key) || !retained || this.chunks.has(completed.key)) {
+          this.generationQueued.delete(completed.key);
+          this.generationEnqueuedAt.delete(completed.key);
+          this.staleWorkerGeneration += 1;
+          return true;
+        }
+        const chunk: Chunk = {
+          key: completed.key,
+          cx: completed.cx,
+          cz: completed.cz,
+          blocks: completed.blocks,
+          heightmap: completed.heightmap,
+          biomes: completed.biomes,
+          group: new THREE.Group(),
+          sections: new Map(),
+          combinedMeshes: {},
+          dirty: new Set(),
+          sectionBlockCounts: completed.sectionBlockCounts,
+          skyTops: completed.skyTops,
+          light: completed.light,
+          lightInitialized: true,
+          lightIndices: new Set(completed.lightIndices),
+          leafIndices: new Set(completed.leafIndices),
+        };
+        chunk.group.position.set(chunk.cx * CHUNK_SIZE, 0, chunk.cz * CHUNK_SIZE);
+        this.chunks.set(chunk.key, chunk);
+        this.group.add(chunk.group);
+        this.generationQueued.delete(chunk.key);
+        this.generationEnqueuedAt.delete(chunk.key);
+        this.streamingCompleted.generation += 1;
+        this.queueLightReconciliation(chunk);
+        this.prepareGeneratedChunk(chunk);
+        return true;
+      }
+      if (this.terrainGenerationPipeline.availableSlots <= 0) return false;
+      const currentKey = chunkKey(this.playerChunkX, this.playerChunkZ);
+      const downstreamDebt = this.lightInitializationQueued.size + this.lightReconciliationQueued.size
+        + Math.ceil((this.meshQueued.size + this.urgentMeshQueued.size) / 4);
+      const nearestQueuedDistance = this.generationQueue.at(-1)?.distance ?? Number.POSITIVE_INFINITY;
+      if (this.chunks.has(currentKey) && downstreamDebt >= 32 && nearestQueuedDistance > 1) return false;
+      while (this.generationQueue.length) {
+        const next = this.generationQueue.pop()!;
+        const key = chunkKey(next.cx, next.cz);
+        if (this.chunks.has(key) || this.pendingWorkerGeneration.has(key)) continue;
+        const request = {
+          namespace: this.chunkCacheKey(key),
+          seedText: this.seedText,
+          generationOptions: this.generationOptions as unknown as Readonly<Record<string, unknown>>,
+          key,
+          cx: next.cx,
+          cz: next.cz,
+          edits: [...(this.edits.get(key) ?? new Map<number, BlockId>())],
+        };
+        if (!this.terrainGenerationPipeline.submit(
+          request,
+          (result) => this.completedWorkerGeneration.push(result),
+          () => {
+            this.pendingWorkerGeneration.delete(key);
+            const radialStreaming = this.renderDistance > RADIAL_STREAMING_DISTANCE_THRESHOLD;
+            const retained = chunkWithinStreamingRadius(
+              next.cx - this.playerChunkX,
+              next.cz - this.playerChunkZ,
+              this.renderDistance + 1,
+              radialStreaming,
+            );
+            if (request.namespace !== this.chunkCacheKey(key) || !retained || this.chunks.has(key)) {
+              this.generationQueued.delete(key);
+              this.generationEnqueuedAt.delete(key);
+              return;
+            }
+            this.generationQueue.push(next);
+          },
+        )) {
+          this.generationQueue.push(next);
+          return false;
+        }
+        this.pendingWorkerGeneration.add(key);
+        return true;
+      }
+      return false;
+    }
     while (!this.activeGenerationTask) {
       const next = this.generationQueue.pop();
       if (!next) return false;
       const key = chunkKey(next.cx, next.cz);
       if (this.chunks.has(key)) {
         this.generationQueued.delete(key);
+        this.generationEnqueuedAt.delete(key);
         this.generationTasks.delete(key);
         continue;
       }
@@ -3384,6 +3674,7 @@ export class ChunkWorld {
     if (!chunk || chunk.lightInitialized || !chunk.group.visible
       || this.lightInitializationQueued.has(key) || this.activeLightInitialization?.key === key) return;
     this.lightInitializationQueued.add(key);
+    if (!this.lightInitializationEnqueuedAt.has(key)) this.lightInitializationEnqueuedAt.set(key, performance.now());
     this.lightInitializationQueue.push(key);
     if (this.activeLightInitialization
       && this.chunkStreamingPriority(key) < this.chunkStreamingPriority(this.activeLightInitialization.key)) {
@@ -3479,11 +3770,48 @@ export class ChunkWorld {
     }
     if (this.lightEngine.stepChunkInitialization(active.task, 1_024)) {
       this.lightInitializationQueued.delete(active.key);
+      this.lightInitializationEnqueuedAt.delete(active.key);
       this.lightInitializationTasks.delete(active.key);
       this.activeLightInitialization = null;
+      this.streamingCompleted.lighting += 1;
       this.queueChunkMeshesAndSeams(chunk);
     }
     return true;
+  }
+
+  private queueLightReconciliation(chunk: Chunk) {
+    if (this.lightReconciliationQueued.has(chunk.key) || this.activeLightReconciliation?.key === chunk.key) return;
+    this.lightReconciliationQueued.add(chunk.key);
+    this.lightReconciliationQueue.push({ key: chunk.key, task: this.lightEngine.beginChunkBoundaryReconciliation(chunk) });
+    this.lightReconciliationQueue.sort((left, right) => this.chunkStreamingPriority(left.key) - this.chunkStreamingPriority(right.key));
+  }
+
+  private processLightReconciliation() {
+    while (!this.activeLightReconciliation) {
+      const next = this.lightReconciliationQueue.shift();
+      if (!next) return false;
+      if (!this.lightReconciliationQueued.has(next.key) || !this.chunks.has(next.key)) continue;
+      this.activeLightReconciliation = next;
+    }
+    const active = this.activeLightReconciliation;
+    if (!this.chunks.has(active.key)) {
+      this.lightReconciliationQueued.delete(active.key);
+      this.activeLightReconciliation = null;
+      return true;
+    }
+    if (this.lightEngine.stepChunkInitialization(active.task, 2_048)) {
+      this.lightReconciliationQueued.delete(active.key);
+      this.activeLightReconciliation = null;
+      this.streamingCompleted.lighting += 1;
+    }
+    return true;
+  }
+
+  private processLightingSlice() {
+    const currentStage = this.playerChunkStreamingState().playerChunkStage;
+    if (currentStage === "lighting") return this.processLightInitialization();
+    if (this.frame % 2 === 0) return this.processLightReconciliation() || this.processLightInitialization();
+    return this.processLightInitialization() || this.processLightReconciliation();
   }
 
   processMesh(preferredKey?: string) {
@@ -3532,9 +3860,137 @@ export class ChunkWorld {
       const queueKey = `${active.key}:${active.section}`;
       const requeued = this.meshQueued.has(queueKey) || this.urgentMeshQueued.has(queueKey);
       this.activeMeshTask = null;
+      if (!requeued) {
+        this.meshEnqueuedAt.delete(queueKey);
+        this.streamingCompleted.meshing += 1;
+      }
       if (requeued) chunk.dirty.add(active.section);
     }
     return true;
+  }
+
+  private queueChunkConsolidation(chunk: Chunk) {
+    for (const layer of WORLD_RENDER_LAYERS) {
+      const queueKey = `${chunk.key}:${layer}`;
+      this.consolidationRevision.set(queueKey, (this.consolidationRevision.get(queueKey) ?? 0) + 1);
+      if (this.consolidationQueued.has(queueKey)) continue;
+      this.consolidationQueued.add(queueKey);
+      this.consolidationQueue.push({ key: chunk.key, layer });
+    }
+  }
+
+  private terrainSectionGeometry(geometry: THREE.BufferGeometry): TerrainSectionGeometry {
+    const attribute = <T extends THREE.TypedArray>(name: string) => {
+      const array = (geometry.getAttribute(name) as unknown as { array: T }).array;
+      return array.slice() as T;
+    };
+    const rawIndex = geometry.getIndex()?.array;
+    const indices = rawIndex instanceof Uint32Array ? rawIndex.slice() : new Uint16Array(rawIndex ?? []);
+    return {
+      positions: attribute<Float32Array>("position"),
+      normals: attribute<Int8Array>("normal"),
+      colors: attribute<Uint8Array>("color"),
+      lights: attribute<Uint8Array>("voxelLight"),
+      emissions: attribute<Uint8Array>("voxelEmission"),
+      occlusions: attribute<Uint8Array>("voxelOcclusion"),
+      uvs: attribute<Uint16Array>("uv"),
+      indices,
+    };
+  }
+
+  private registerTerrainGeometry(geometry: THREE.BufferGeometry) {
+    let bytes = geometry.getIndex()?.array.byteLength ?? 0;
+    for (const attribute of Object.values(geometry.attributes)) {
+      bytes += (attribute as THREE.BufferAttribute).array.byteLength;
+    }
+    this.terrainGeometryBytes.set(geometry, bytes);
+    this.liveTerrainGeometryBytes += bytes;
+    this.terrainGeometriesCreated += 1;
+  }
+
+  private disposeTerrainGeometry(geometry: THREE.BufferGeometry) {
+    const bytes = this.terrainGeometryBytes.get(geometry) ?? 0;
+    this.liveTerrainGeometryBytes = Math.max(0, this.liveTerrainGeometryBytes - bytes);
+    this.terrainGeometryBytes.delete(geometry);
+    this.terrainGeometriesDisposed += 1;
+    geometry.dispose();
+  }
+
+  private installCombinedGeometry(key: string, layer: WorldRenderLayer, payload: TerrainMergedGeometry | null) {
+    const chunk = this.chunks.get(key);
+    if (!chunk) return;
+    const old = chunk.combinedMeshes[layer];
+    if (old) {
+      chunk.group.remove(old);
+      this.disposeTerrainGeometry(old.geometry);
+      delete chunk.combinedMeshes[layer];
+    }
+    if (!payload) {
+      for (const section of chunk.sections.values()) if (section[layer]) section[layer]!.visible = true;
+      return;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(payload.positions, 3));
+    geometry.setAttribute("normal", new THREE.BufferAttribute(payload.normals, 3, true));
+    geometry.setAttribute("color", new THREE.BufferAttribute(payload.colors, 3, true));
+    geometry.setAttribute("voxelLight", new THREE.BufferAttribute(payload.lights, 4, true));
+    geometry.setAttribute("voxelEmission", new THREE.BufferAttribute(payload.emissions, 1, true));
+    geometry.setAttribute("voxelOcclusion", new THREE.BufferAttribute(payload.occlusions, 1, true));
+    geometry.setAttribute("uv", new THREE.BufferAttribute(payload.uvs, 2, true));
+    geometry.setIndex(new THREE.BufferAttribute(payload.indices, 1));
+    geometry.computeBoundingSphere();
+    this.registerTerrainGeometry(geometry);
+    const mesh = new THREE.Mesh(geometry, this.materials[layer]);
+    mesh.renderOrder = layer === "glass" ? 4 : layer === "transparent" ? 3 : layer === "emissive" ? 2 : layer === "cutout" ? 1 : 0;
+    chunk.group.add(mesh);
+    chunk.combinedMeshes[layer] = mesh;
+    for (const section of chunk.sections.values()) if (section[layer]) section[layer]!.visible = false;
+  }
+
+  /** Dispatches or installs one layer; stale worker results can never overwrite a newer edit. */
+  processConsolidation() {
+    const completed = this.completedConsolidations.shift();
+    if (completed) {
+      const queueKey = `${completed.key}:${completed.layer}`;
+      if (completed.revision === this.consolidationRevision.get(queueKey)) {
+        this.installCombinedGeometry(completed.key, completed.layer, completed.geometry);
+      } else this.staleConsolidations += 1;
+      return true;
+    }
+    while (this.consolidationQueue.length) {
+      const next = this.consolidationQueue.shift()!;
+      const queueKey = `${next.key}:${next.layer}`;
+      if (!this.consolidationQueued.delete(queueKey)) continue;
+      const chunk = this.chunks.get(next.key);
+      if (!chunk) continue;
+      if (this.pendingConsolidations.has(queueKey)) {
+        this.consolidationQueued.add(queueKey);
+        this.consolidationQueue.push(next);
+        return false;
+      }
+      const parts: TerrainSectionGeometry[] = [];
+      for (const section of chunk.sections.values()) {
+        const mesh = section[next.layer];
+        if (mesh) parts.push(this.terrainSectionGeometry(mesh.geometry));
+      }
+      const revision = this.consolidationRevision.get(queueKey) ?? 0;
+      this.pendingConsolidations.add(queueKey);
+      this.terrainBufferPipeline.submit(
+        parts,
+        (geometry) => {
+          this.pendingConsolidations.delete(queueKey);
+          this.completedConsolidations.push({ key: next.key, layer: next.layer, revision, geometry });
+        },
+        () => {
+          this.pendingConsolidations.delete(queueKey);
+          if (!this.chunks.has(next.key) || revision !== this.consolidationRevision.get(queueKey)) return;
+          this.consolidationQueued.add(queueKey);
+          this.consolidationQueue.push(next);
+        },
+      );
+      return true;
+    }
+    return false;
   }
 
   private queueLightSection(key: string, section: number) {
@@ -3576,6 +4032,7 @@ export class ChunkWorld {
       const chunk = this.chunks.get(next.key);
       if (!chunk || !chunk.group.visible || !chunk.sections.has(next.section)) continue;
       this.updateSectionLighting(chunk, next.section);
+      this.queueChunkConsolidation(chunk);
       return;
     }
   }
@@ -3721,11 +4178,13 @@ export class ChunkWorld {
       if (this.urgentMeshQueued.has(queueKey)) return;
       this.meshQueued.delete(queueKey);
       this.urgentMeshQueued.add(queueKey);
+      if (!this.meshEnqueuedAt.has(queueKey)) this.meshEnqueuedAt.set(queueKey, performance.now());
       this.urgentMeshQueue.push({ key, section });
       return;
     }
     if (this.meshQueued.has(queueKey) || this.urgentMeshQueued.has(queueKey)) return;
     this.meshQueued.add(queueKey);
+    if (!this.meshEnqueuedAt.has(queueKey)) this.meshEnqueuedAt.set(queueKey, performance.now());
     this.meshQueue.push({ key, section });
   }
 
@@ -3733,6 +4192,7 @@ export class ChunkWorld {
     const queueKey = `${key}:${section}`;
     this.meshQueued.delete(queueKey);
     this.urgentMeshQueued.delete(queueKey);
+    if (this.meshEnqueuedAt.delete(queueKey)) this.streamingCanceled.meshing += 1;
     if (this.activeMeshTask?.key === key && this.activeMeshTask.section === section) this.activeMeshTask = null;
   }
 
@@ -3924,6 +4384,7 @@ export class ChunkWorld {
       biomes: new Uint8Array(CHUNK_SIZE * CHUNK_SIZE),
       group: new THREE.Group(),
       sections: new Map(),
+      combinedMeshes: {},
       dirty: new Set(),
       sectionBlockCounts: new Uint16Array(SECTION_COUNT),
       skyTops: new Int16Array(CHUNK_SIZE * CHUNK_SIZE).fill(MIN_Y - 1),
@@ -4127,6 +4588,8 @@ export class ChunkWorld {
     this.chunks.set(key, chunk);
     this.group.add(chunk.group);
     this.generationQueued.delete(key);
+    this.generationEnqueuedAt.delete(key);
+    this.streamingCompleted.generation += 1;
     task.stage = "complete";
     return chunk;
   }
@@ -4134,6 +4597,16 @@ export class ChunkWorld {
   private completeChunkGenerationSynchronously(task: ChunkGenerationTask) {
     while (task.stage !== "complete") this.advanceChunkGeneration(task, CHUNK_SIZE, SECTION_COUNT);
     if (!task.chunk.lightInitialized) this.lightEngine.initializeChunk(task.chunk);
+    return task.chunk;
+  }
+
+  /** Worker entry point: deterministic terrain/features/finalization without neighbor-sensitive lighting. */
+  generateChunkTerrainOnly(cx: number, cz: number) {
+    const key = chunkKey(cx, cz);
+    const existing = this.chunks.get(key);
+    if (existing) return existing;
+    const task = this.createChunkGenerationTask(cx, cz);
+    while (task.stage !== "complete") this.advanceChunkGeneration(task, CHUNK_SIZE, SECTION_COUNT);
     return task.chunk;
   }
 
@@ -6607,12 +7080,13 @@ export class ChunkWorld {
   }>) {
     const old = chunk.sections.get(section);
     if (!slice && old) {
-      for (const mesh of Object.values(old)) if (mesh) { chunk.group.remove(mesh); mesh.geometry.dispose(); }
+      for (const mesh of Object.values(old)) if (mesh) { chunk.group.remove(mesh); this.disposeTerrainGeometry(mesh.geometry); }
     }
     if (chunk.sectionBlockCounts[section] === 0) {
-      if (slice && old) for (const mesh of Object.values(old)) if (mesh) { chunk.group.remove(mesh); mesh.geometry.dispose(); }
+      if (slice && old) for (const mesh of Object.values(old)) if (mesh) { chunk.group.remove(mesh); this.disposeTerrainGeometry(mesh.geometry); }
       chunk.sections.set(section, {});
       chunk.dirty.delete(section);
+      this.queueChunkConsolidation(chunk);
       return;
     }
     const buckets: Record<WorldRenderLayer, GeometryBucket> = slice?.buckets
@@ -7409,9 +7883,9 @@ export class ChunkWorld {
     }
 
     if (slice && !slice.finalize) return;
-    if (slice && old) for (const mesh of Object.values(old)) if (mesh) { chunk.group.remove(mesh); mesh.geometry.dispose(); }
+    if (slice && old) for (const mesh of Object.values(old)) if (mesh) { chunk.group.remove(mesh); this.disposeTerrainGeometry(mesh.geometry); }
     const nextMeshes: ChunkMeshes = {};
-    for (const layer of ["opaque", "cutout", "transparent", "glass", "emissive"] as const) {
+    for (const layer of WORLD_RENDER_LAYERS) {
       const bucket = buckets[layer];
       if (!bucket.positions.length) continue;
       const geometry = new THREE.BufferGeometry();
@@ -7423,6 +7897,7 @@ export class ChunkWorld {
       geometry.setAttribute("voxelOcclusion", new THREE.BufferAttribute(packScalarUnorm8(bucket.occlusions), 1, true));
       geometry.setAttribute("uv", new THREE.BufferAttribute(packUnorm16(bucket.uvs), 2, true));
       geometry.setIndex(bucket.indices);
+      this.registerTerrainGeometry(geometry);
       const centerY = (startY + endY) / 2;
       geometry.boundingSphere = new THREE.Sphere(
         new THREE.Vector3((CHUNK_SIZE - 1) / 2, centerY, (CHUNK_SIZE - 1) / 2),
@@ -7430,17 +7905,26 @@ export class ChunkWorld {
       );
       const mesh = new THREE.Mesh(geometry, this.materials[layer]);
       mesh.renderOrder = layer === "glass" ? 4 : layer === "transparent" ? 3 : layer === "emissive" ? 2 : layer === "cutout" ? 1 : 0;
+      mesh.visible = !chunk.combinedMeshes[layer];
       chunk.group.add(mesh);
       nextMeshes[layer] = mesh;
     }
     chunk.sections.set(section, nextMeshes);
     chunk.dirty.delete(section);
+    this.queueChunkConsolidation(chunk);
   }
 
   unloadChunk(key: string) {
     const chunk = this.chunks.get(key);
     if (!chunk) return;
+    const cached = this.cachedChunkData(chunk);
+    this.chunkMemoryCache.set(cached);
+    void this.chunkPersistentCache.set(cached);
     this.lightInitializationQueued.delete(key);
+    this.lightInitializationEnqueuedAt.delete(key);
+    this.lightReconciliationQueued.delete(key);
+    if (this.activeLightReconciliation?.key === key) this.activeLightReconciliation = null;
+    this.generationEnqueuedAt.delete(key);
     this.lightInitializationTasks.delete(key);
     if (this.activeLightInitialization?.key === key) this.activeLightInitialization = null;
     if (this.activeMeshTask?.key === key) this.activeMeshTask = null;
@@ -7448,9 +7932,13 @@ export class ChunkWorld {
       const queueKey = `${key}:${section}`;
       this.meshQueued.delete(queueKey);
       this.urgentMeshQueued.delete(queueKey);
+      this.meshEnqueuedAt.delete(queueKey);
       this.lightSectionQueued.delete(queueKey);
     }
-    for (const section of chunk.sections.values()) for (const mesh of Object.values(section)) if (mesh) mesh.geometry.dispose();
+    for (const section of chunk.sections.values()) for (const mesh of Object.values(section)) if (mesh) this.disposeTerrainGeometry(mesh.geometry);
+    for (const mesh of Object.values(chunk.combinedMeshes)) if (mesh) this.disposeTerrainGeometry(mesh.geometry);
+    for (const layer of WORLD_RENDER_LAYERS) this.consolidationQueued.delete(`${key}:${layer}`);
+    for (const layer of WORLD_RENDER_LAYERS) this.consolidationRevision.delete(`${key}:${layer}`);
     this.group.remove(chunk.group);
     this.chunks.delete(key);
   }
@@ -7472,7 +7960,9 @@ export class ChunkWorld {
   get queuedCount() {
     return this.generationQueue.length
       + (this.activeGenerationTask ? 1 : 0)
+      + this.pendingWorkerGeneration.size
       + this.lightInitializationQueued.size
+      + this.lightReconciliationQueued.size
       + this.meshQueued.size
       + this.urgentMeshQueued.size
       + (this.activeMeshTask ? 1 : 0);
@@ -7518,6 +8008,67 @@ export class ChunkWorld {
       .filter((section) => chunk.sectionBlockCounts[section] > 0);
   }
 
+  private recordPlayerReadiness(now: number) {
+    const ready = this.playerChunkStreamingState().playerChunkReady;
+    if (!ready && this.playerUnreadyStartedAt === null) this.playerUnreadyStartedAt = now;
+    if (ready && this.playerUnreadyStartedAt !== null) {
+      this.playerReadinessEpisodes.push(Math.max(0, now - this.playerUnreadyStartedAt));
+      if (this.playerReadinessEpisodes.length > 256) this.playerReadinessEpisodes.shift();
+      this.playerUnreadyStartedAt = null;
+    }
+  }
+
+  private ringCompleteness(radius: number) {
+    let desired = 0;
+    let ready = 0;
+    for (let dx = -radius; dx <= radius; dx += 1) for (let dz = -radius; dz <= radius; dz += 1) {
+      desired += 1;
+      const chunk = this.chunks.get(chunkKey(this.playerChunkX + dx, this.playerChunkZ + dz));
+      if (!chunk?.lightInitialized) continue;
+      if (this.playerRequiredMeshSections(chunk).every((section) => chunk.sections.has(section))) ready += 1;
+    }
+    return { desired, ready, ratio: desired ? ready / desired : 1 } as const;
+  }
+
+  private streamingDebt(now: number) {
+    let weightedDebt = 0;
+    let oldestNearJobMilliseconds = 0;
+    const add = (key: string, enqueuedAt: number, weight: number) => {
+      const separator = key.indexOf(",");
+      const cx = Number(key.slice(0, separator));
+      const cz = Number(key.slice(separator + 1));
+      const distance = Math.max(Math.abs(cx - this.playerChunkX), Math.abs(cz - this.playerChunkZ));
+      weightedDebt += weight / Math.max(1, distance + 0.5);
+      if (distance <= 4) oldestNearJobMilliseconds = Math.max(oldestNearJobMilliseconds, now - enqueuedAt);
+    };
+    for (const [key, enqueuedAt] of this.generationEnqueuedAt) add(key, enqueuedAt, 3);
+    for (const [key, enqueuedAt] of this.lightInitializationEnqueuedAt) add(key, enqueuedAt, 2);
+    for (const [queueKey, enqueuedAt] of this.meshEnqueuedAt) add(queueKey.slice(0, queueKey.lastIndexOf(":")), enqueuedAt, 1);
+    return { weightedDebt, oldestNearJobMilliseconds } as const;
+  }
+
+  private terrainSubmissionDiagnostics() {
+    let sectionMeshes = 0;
+    let visibleSectionMeshes = 0;
+    let combinedMeshes = 0;
+    for (const chunk of this.chunks.values()) {
+      for (const section of chunk.sections.values()) for (const mesh of Object.values(section)) if (mesh) {
+        sectionMeshes += 1;
+        if (mesh.visible) visibleSectionMeshes += 1;
+      }
+      for (const mesh of Object.values(chunk.combinedMeshes)) if (mesh) combinedMeshes += 1;
+    }
+    return {
+      sectionMeshes,
+      visibleSectionMeshes,
+      combinedMeshes,
+      submittedMeshes: visibleSectionMeshes + combinedMeshes,
+      geometriesCreated: this.terrainGeometriesCreated,
+      geometriesDisposed: this.terrainGeometriesDisposed,
+      liveGeometryBytes: this.liveTerrainGeometryBytes,
+    } as const;
+  }
+
   private ensurePlayerChunkMeshQueue() {
     const key = chunkKey(this.playerChunkX, this.playerChunkZ);
     const chunk = this.chunks.get(key);
@@ -7533,27 +8084,61 @@ export class ChunkWorld {
 
   streamingDiagnostics() {
     const playerState = this.playerChunkStreamingState();
+    const now = performance.now();
+    const episodes = [...this.playerReadinessEpisodes].sort((left, right) => left - right);
+    const currentUnreadyMilliseconds = this.playerUnreadyStartedAt === null ? 0 : now - this.playerUnreadyStartedAt;
+    const percentile = (fraction: number) => episodes.length
+      ? episodes[Math.min(episodes.length - 1, Math.ceil(episodes.length * fraction) - 1)]
+      : 0;
     return {
       ...playerState,
       playerChunk: chunkKey(this.playerChunkX, this.playerChunkZ),
       playerSection: this.playerSection,
-      generationQueued: this.generationQueue.length + (this.activeGenerationTask ? 1 : 0),
-      generationStage: this.activeGenerationTask?.stage ?? null,
-      lightingQueued: this.lightInitializationQueued.size,
-      lightingStage: this.activeLightInitialization?.task.phase ?? null,
+      generationQueued: this.generationQueue.length + (this.activeGenerationTask ? 1 : 0) + this.pendingWorkerGeneration.size,
+      generationStage: this.activeGenerationTask?.stage ?? (this.pendingWorkerGeneration.size ? "worker" : null),
+      generationWorker: { ...this.terrainGenerationPipeline.diagnostics(), staleResults: this.staleWorkerGeneration },
+      lightingQueued: this.lightInitializationQueued.size + this.lightReconciliationQueued.size,
+      lightingStage: this.activeLightInitialization?.task.phase ?? this.activeLightReconciliation?.task.phase ?? null,
+      lightInitializationQueued: this.lightInitializationQueued.size,
+      lightReconciliationQueued: this.lightReconciliationQueued.size,
       meshSectionsQueued: this.meshQueued.size + this.urgentMeshQueued.size + (this.activeMeshTask ? 1 : 0),
       activeMeshChunk: this.activeMeshTask?.key ?? null,
       activeMeshSection: this.activeMeshTask?.section ?? null,
       meshSliceProgress: this.activeMeshTask ? this.activeMeshTask.nextLocalX / CHUNK_SIZE : null,
       relightSectionsQueued: this.lightSectionQueued.size,
+      consolidationLayersQueued: this.consolidationQueued.size,
+      terrainWorker: { ...this.terrainBufferPipeline.diagnostics(), staleResults: this.staleConsolidations },
+      terrainSubmission: this.terrainSubmissionDiagnostics(),
       generationBudget: this.generationWorkPerFrame,
       meshSliceBudget: this.meshWorkPerFrame,
       frameBudgetMilliseconds: this.streamingFrameBudgetMilliseconds,
+      immediateRing: this.ringCompleteness(1),
+      midRing: this.ringCompleteness(Math.min(4, this.renderDistance)),
+      debt: this.streamingDebt(now),
+      throughput: { ...this.streamingCompleted },
+      canceled: { ...this.streamingCanceled },
+      cache: {
+        memory: this.chunkMemoryCache.diagnostics(),
+        persistentSupported: this.chunkPersistentCache.supported,
+        persistentHits: this.persistentCacheHits,
+        persistentMisses: this.persistentCacheMisses,
+        pendingReads: this.pendingPersistentChunks.size,
+      },
+      lookahead: { x: this.streamingLookaheadChunkX, z: this.streamingLookaheadChunkZ },
+      readinessEpisodes: {
+        completed: episodes.length,
+        currentMilliseconds: currentUnreadyMilliseconds,
+        p95Milliseconds: percentile(0.95),
+        p99Milliseconds: percentile(0.99),
+        maxMilliseconds: Math.max(currentUnreadyMilliseconds, episodes.at(-1) ?? 0),
+      },
     };
   }
 
   dispose() {
     this.disposeChunks();
+    this.terrainBufferPipeline.dispose();
+    this.terrainGenerationPipeline.dispose();
     this.atlas.dispose();
     for (const material of Object.values(this.materials)) material.dispose();
   }

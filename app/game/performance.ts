@@ -17,6 +17,42 @@ export const SENTIENT_FULL_DETAIL_DISTANCE = 18;
 export const SENTIENT_COARSE_STEP_SECONDS = 0.2;
 export type SentientSimulationTier = "full" | "coarse" | "sleep";
 
+/**
+ * Ordinary wildlife uses the same distance-based policy as residents, with an
+ * additional active tier. Rendering remains independent: throttled creatures
+ * stay visible and animation time still advances from their wall-clock age.
+ */
+export const CREATURE_FULL_SIMULATION_DISTANCE = 32;
+export const CREATURE_ACTIVE_SIMULATION_DISTANCE = 64;
+export const CREATURE_ACTIVE_STEP_SECONDS = 0.1;
+export const CREATURE_COARSE_STEP_SECONDS = 0.25;
+export type CreatureSimulationTier = "full" | "active" | "coarse" | "sleep";
+
+export function creatureSimulationTier(input: Readonly<{
+  distance: number;
+  simulationRadius: number;
+  requiresFullDetail?: boolean;
+}>): CreatureSimulationTier {
+  const distance = Math.max(0, Number.isFinite(input.distance) ? input.distance : 0);
+  const simulationRadius = Math.max(CREATURE_ACTIVE_SIMULATION_DISTANCE, Number.isFinite(input.simulationRadius)
+    ? input.simulationRadius
+    : CREATURE_ACTIVE_SIMULATION_DISTANCE);
+  if (distance > simulationRadius) return "sleep";
+  if (input.requiresFullDetail || distance <= CREATURE_FULL_SIMULATION_DISTANCE) return "full";
+  if (distance <= CREATURE_ACTIVE_SIMULATION_DISTANCE) return "active";
+  return "coarse";
+}
+
+export function advanceCreatureSimulation(tier: CreatureSimulationTier, accumulator: number, elapsedSeconds: number) {
+  if (tier === "full") return { advance: true, elapsedSeconds: Math.max(0, elapsedSeconds), accumulator: 0 } as const;
+  if (tier === "sleep") return { advance: false, elapsedSeconds: 0, accumulator: 0 } as const;
+  const stepSeconds = tier === "active" ? CREATURE_ACTIVE_STEP_SECONDS : CREATURE_COARSE_STEP_SECONDS;
+  const next = Math.min(stepSeconds * 3, Math.max(0, Number.isFinite(accumulator) ? accumulator : 0)
+    + Math.max(0, Number.isFinite(elapsedSeconds) ? elapsedSeconds : 0));
+  if (next + 1e-9 < stepSeconds) return { advance: false, elapsedSeconds: 0, accumulator: next } as const;
+  return { advance: true, elapsedSeconds: next, accumulator: Math.max(0, next - stepSeconds) } as const;
+}
+
 export function sentientSimulationTier(input: Readonly<{
   distance: number;
   simulationRadius: number;
@@ -79,12 +115,18 @@ export function chunkOffsetsByDistance(distance: number) {
 
 export type PerformanceSample = Readonly<{
   frameMilliseconds: number;
+  activeCpuMilliseconds?: number;
   simulationMilliseconds?: number;
+  mobSimulationMilliseconds?: number;
   chunkWorkMilliseconds?: number;
   chunkSchedulingMilliseconds?: number;
   chunkGenerationMilliseconds?: number;
   chunkLightingMilliseconds?: number;
   chunkMeshingMilliseconds?: number;
+  chunkInstallationMilliseconds?: number;
+  renderSubmissionMilliseconds?: number;
+  postRenderMilliseconds?: number;
+  gpuMilliseconds?: number;
   visibleChunks?: number;
   simulatedEntities?: number;
   triangles?: number;
@@ -101,12 +143,19 @@ export type PerformanceSummary = Readonly<{
   p99FrameMilliseconds: number;
   framesPerSecond: number;
   longFrameRatio: number;
+  averageActiveCpuMilliseconds: number;
   averageSimulationMilliseconds: number;
+  averageMobSimulationMilliseconds: number;
   averageChunkWorkMilliseconds: number;
   averageChunkSchedulingMilliseconds: number;
   averageChunkGenerationMilliseconds: number;
   averageChunkLightingMilliseconds: number;
   averageChunkMeshingMilliseconds: number;
+  averageChunkInstallationMilliseconds: number;
+  averageRenderSubmissionMilliseconds: number;
+  averagePostRenderMilliseconds: number;
+  averageGpuMilliseconds: number | null;
+  gpuSampleCount: number;
   peakVisibleChunks: number;
   peakSimulatedEntities: number;
   peakTriangles: number;
@@ -142,12 +191,20 @@ export class PerformanceSampler {
   record(sample: PerformanceSample) {
     const normalized: PerformanceSample = {
       frameMilliseconds: Math.max(0, Number.isFinite(sample.frameMilliseconds) ? sample.frameMilliseconds : 0),
+      activeCpuMilliseconds: Math.max(0, sample.activeCpuMilliseconds ?? 0),
       simulationMilliseconds: Math.max(0, sample.simulationMilliseconds ?? 0),
+      mobSimulationMilliseconds: Math.max(0, sample.mobSimulationMilliseconds ?? 0),
       chunkWorkMilliseconds: Math.max(0, sample.chunkWorkMilliseconds ?? 0),
       chunkSchedulingMilliseconds: Math.max(0, sample.chunkSchedulingMilliseconds ?? 0),
       chunkGenerationMilliseconds: Math.max(0, sample.chunkGenerationMilliseconds ?? 0),
       chunkLightingMilliseconds: Math.max(0, sample.chunkLightingMilliseconds ?? 0),
       chunkMeshingMilliseconds: Math.max(0, sample.chunkMeshingMilliseconds ?? 0),
+      chunkInstallationMilliseconds: Math.max(0, sample.chunkInstallationMilliseconds ?? 0),
+      renderSubmissionMilliseconds: Math.max(0, sample.renderSubmissionMilliseconds ?? 0),
+      postRenderMilliseconds: Math.max(0, sample.postRenderMilliseconds ?? 0),
+      gpuMilliseconds: sample.gpuMilliseconds === undefined || !Number.isFinite(sample.gpuMilliseconds)
+        ? undefined
+        : Math.max(0, sample.gpuMilliseconds),
       visibleChunks: Math.max(0, Math.round(sample.visibleChunks ?? 0)),
       simulatedEntities: Math.max(0, Math.round(sample.simulatedEntities ?? 0)),
       triangles: Math.max(0, Math.round(sample.triangles ?? 0)),
@@ -170,6 +227,7 @@ export class PerformanceSampler {
     const averageFrameMilliseconds = sampleCount ? sum((sample) => sample.frameMilliseconds) / sampleCount : 0;
     const max = (selector: (sample: PerformanceSample) => number) =>
       this.samples.reduce((peak, sample) => Math.max(peak, selector(sample)), 0);
+    const gpuSamples = this.samples.filter((sample) => sample.gpuMilliseconds !== undefined);
     return {
       sampleCount,
       averageFrameMilliseconds,
@@ -178,12 +236,21 @@ export class PerformanceSampler {
       p99FrameMilliseconds: percentile(frames, 0.99),
       framesPerSecond: averageFrameMilliseconds > 0 ? 1000 / averageFrameMilliseconds : 0,
       longFrameRatio: sampleCount ? this.samples.filter((sample) => sample.frameMilliseconds >= longFrameThresholdMilliseconds).length / sampleCount : 0,
+      averageActiveCpuMilliseconds: sampleCount ? sum((sample) => sample.activeCpuMilliseconds ?? 0) / sampleCount : 0,
       averageSimulationMilliseconds: sampleCount ? sum((sample) => sample.simulationMilliseconds ?? 0) / sampleCount : 0,
+      averageMobSimulationMilliseconds: sampleCount ? sum((sample) => sample.mobSimulationMilliseconds ?? 0) / sampleCount : 0,
       averageChunkWorkMilliseconds: sampleCount ? sum((sample) => sample.chunkWorkMilliseconds ?? 0) / sampleCount : 0,
       averageChunkSchedulingMilliseconds: sampleCount ? sum((sample) => sample.chunkSchedulingMilliseconds ?? 0) / sampleCount : 0,
       averageChunkGenerationMilliseconds: sampleCount ? sum((sample) => sample.chunkGenerationMilliseconds ?? 0) / sampleCount : 0,
       averageChunkLightingMilliseconds: sampleCount ? sum((sample) => sample.chunkLightingMilliseconds ?? 0) / sampleCount : 0,
       averageChunkMeshingMilliseconds: sampleCount ? sum((sample) => sample.chunkMeshingMilliseconds ?? 0) / sampleCount : 0,
+      averageChunkInstallationMilliseconds: sampleCount ? sum((sample) => sample.chunkInstallationMilliseconds ?? 0) / sampleCount : 0,
+      averageRenderSubmissionMilliseconds: sampleCount ? sum((sample) => sample.renderSubmissionMilliseconds ?? 0) / sampleCount : 0,
+      averagePostRenderMilliseconds: sampleCount ? sum((sample) => sample.postRenderMilliseconds ?? 0) / sampleCount : 0,
+      averageGpuMilliseconds: gpuSamples.length
+        ? gpuSamples.reduce((total, sample) => total + (sample.gpuMilliseconds ?? 0), 0) / gpuSamples.length
+        : null,
+      gpuSampleCount: gpuSamples.length,
       peakVisibleChunks: max((sample) => sample.visibleChunks ?? 0),
       peakSimulatedEntities: max((sample) => sample.simulatedEntities ?? 0),
       peakTriangles: max((sample) => sample.triangles ?? 0),
@@ -192,6 +259,70 @@ export class PerformanceSampler {
       peakTextures: max((sample) => sample.textures ?? 0),
     };
   }
+
+  /** Returns an interval summary and clears the window, avoiding overlap. */
+  drainSummary(longFrameThresholdMilliseconds = 25) {
+    const result = this.summary(longFrameThresholdMilliseconds);
+    this.clear();
+    return result;
+  }
+}
+
+export type LongAnimationFrameSummary = Readonly<{
+  supported: boolean;
+  count: number;
+  totalDurationMilliseconds: number;
+  peakDurationMilliseconds: number;
+  totalBlockingDurationMilliseconds: number;
+}>;
+
+/** Browser-native long-frame observer. Unsupported engines remain a clean no-op. */
+export class LongAnimationFrameSampler {
+  private observer: PerformanceObserver | null = null;
+  private count = 0;
+  private totalDurationMilliseconds = 0;
+  private peakDurationMilliseconds = 0;
+  private totalBlockingDurationMilliseconds = 0;
+  readonly supported: boolean;
+
+  constructor() {
+    const entryTypes = typeof PerformanceObserver === "undefined" ? [] : PerformanceObserver.supportedEntryTypes ?? [];
+    this.supported = entryTypes.includes("long-animation-frame");
+    if (!this.supported) return;
+    try {
+      this.observer = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          const blockingDuration = Number((entry as PerformanceEntry & { blockingDuration?: number }).blockingDuration ?? 0);
+          this.count += 1;
+          this.totalDurationMilliseconds += Math.max(0, entry.duration);
+          this.peakDurationMilliseconds = Math.max(this.peakDurationMilliseconds, entry.duration);
+          this.totalBlockingDurationMilliseconds += Math.max(0, blockingDuration);
+        }
+      });
+      this.observer.observe({ type: "long-animation-frame", buffered: true });
+    } catch {
+      this.observer?.disconnect();
+      this.observer = null;
+      this.supported = false;
+    }
+  }
+
+  drain(): LongAnimationFrameSummary {
+    const result = Object.freeze({
+      supported: this.supported,
+      count: this.count,
+      totalDurationMilliseconds: this.totalDurationMilliseconds,
+      peakDurationMilliseconds: this.peakDurationMilliseconds,
+      totalBlockingDurationMilliseconds: this.totalBlockingDurationMilliseconds,
+    });
+    this.count = 0;
+    this.totalDurationMilliseconds = 0;
+    this.peakDurationMilliseconds = 0;
+    this.totalBlockingDurationMilliseconds = 0;
+    return result;
+  }
+
+  dispose() { this.observer?.disconnect(); }
 }
 
 export type FrameWorkBudget = Readonly<{
@@ -200,6 +331,7 @@ export type FrameWorkBudget = Readonly<{
   liquidOperations: number;
   entitySteps: number;
   structureColumns: number;
+  streamingFrameMilliseconds: number;
 }>;
 
 export function applyResourceMode(mode: ResourceMode, adaptive: FrameWorkBudget): FrameWorkBudget {
@@ -210,6 +342,7 @@ export function applyResourceMode(mode: ResourceMode, adaptive: FrameWorkBudget)
     liquidOperations: Math.max(384, adaptive.liquidOperations),
     entitySteps: Math.max(256, adaptive.entitySteps),
     structureColumns: Math.max(64, adaptive.structureColumns),
+    streamingFrameMilliseconds: Math.max(7.5, adaptive.streamingFrameMilliseconds),
   };
 }
 
@@ -221,6 +354,7 @@ export const DEFAULT_FRAME_WORK_BUDGET: FrameWorkBudget = Object.freeze({
   liquidOperations: 192,
   entitySteps: 160,
   structureColumns: 32,
+  streamingFrameMilliseconds: 5,
 });
 
 const MIN_FRAME_WORK_BUDGET: FrameWorkBudget = Object.freeze({
@@ -229,6 +363,7 @@ const MIN_FRAME_WORK_BUDGET: FrameWorkBudget = Object.freeze({
   liquidOperations: 48,
   entitySteps: 48,
   structureColumns: 8,
+  streamingFrameMilliseconds: 2,
 });
 
 const MAX_FRAME_WORK_BUDGET: FrameWorkBudget = Object.freeze({
@@ -237,6 +372,7 @@ const MAX_FRAME_WORK_BUDGET: FrameWorkBudget = Object.freeze({
   liquidOperations: 768,
   entitySteps: 512,
   structureColumns: 128,
+  streamingFrameMilliseconds: 10,
 });
 
 const scaleBudget = (budget: FrameWorkBudget, factor: number): FrameWorkBudget => {
@@ -250,14 +386,34 @@ const scaleBudget = (budget: FrameWorkBudget, factor: number): FrameWorkBudget =
     liquidOperations: scale("liquidOperations"),
     entitySteps: scale("entitySteps"),
     structureColumns: scale("structureColumns"),
+    streamingFrameMilliseconds: Math.max(
+      MIN_FRAME_WORK_BUDGET.streamingFrameMilliseconds,
+      Math.min(MAX_FRAME_WORK_BUDGET.streamingFrameMilliseconds, budget.streamingFrameMilliseconds * factor),
+    ),
   };
 };
 
 export type BudgetPressure = "high" | "balanced" | "headroom";
+export type StreamingDebtSignal = Readonly<{
+  weightedDebt: number;
+  oldestNearJobMilliseconds: number;
+  immediateRingCompleteness: number;
+}>;
 
-export function classifyBudgetPressure(summary: PerformanceSummary, targetFrameMilliseconds = 1000 / 60): BudgetPressure {
+export function classifyBudgetPressure(
+  summary: PerformanceSummary,
+  targetFrameMilliseconds = 1000 / 60,
+  streaming?: StreamingDebtSignal,
+): BudgetPressure {
   if (summary.sampleCount < 30) return "balanced";
-  if (summary.p95FrameMilliseconds > targetFrameMilliseconds * 1.45 || summary.longFrameRatio > 0.12) return "high";
+  const framePressure = summary.p99FrameMilliseconds > targetFrameMilliseconds * 2.5
+    || summary.p95FrameMilliseconds > targetFrameMilliseconds * 1.45
+    || summary.longFrameRatio > 0.12;
+  const activeCpuKnown = summary.averageActiveCpuMilliseconds > 0;
+  if (framePressure && (!activeCpuKnown || summary.averageActiveCpuMilliseconds > targetFrameMilliseconds * 0.8)) return "high";
+  if (streaming && (streaming.immediateRingCompleteness < 1 || streaming.oldestNearJobMilliseconds > 1_000)
+    && summary.averageActiveCpuMilliseconds < targetFrameMilliseconds * 0.72
+    && (!framePressure || streaming.immediateRingCompleteness < 1)) return "headroom";
   if (summary.p95FrameMilliseconds < targetFrameMilliseconds * 0.88 && summary.longFrameRatio < 0.02) return "headroom";
   return "balanced";
 }
@@ -266,8 +422,9 @@ export function recommendFrameWorkBudget(
   summary: PerformanceSummary,
   current: FrameWorkBudget = DEFAULT_FRAME_WORK_BUDGET,
   targetFrameMilliseconds = 1000 / 60,
+  streaming?: StreamingDebtSignal,
 ) {
-  const pressure = classifyBudgetPressure(summary, targetFrameMilliseconds);
+  const pressure = classifyBudgetPressure(summary, targetFrameMilliseconds, streaming);
   if (pressure === "high") return scaleBudget(current, 0.75);
   if (pressure === "headroom") return scaleBudget(current, 1.2);
   return current;
@@ -290,8 +447,8 @@ export class AdaptiveBudgetController {
     return this.budget;
   }
 
-  observe(summary: PerformanceSummary, targetFrameMilliseconds = 1000 / 60) {
-    const pressure = classifyBudgetPressure(summary, targetFrameMilliseconds);
+  observe(summary: PerformanceSummary, targetFrameMilliseconds = 1000 / 60, streaming?: StreamingDebtSignal) {
+    const pressure = classifyBudgetPressure(summary, targetFrameMilliseconds, streaming);
     if (pressure === "balanced") {
       this.repeatedPressure = pressure;
       this.repetitions = 0;
@@ -304,7 +461,7 @@ export class AdaptiveBudgetController {
     }
     this.repetitions += 1;
     if (this.repetitions >= this.observationsBeforeChange) {
-      this.budget = recommendFrameWorkBudget(summary, this.budget, targetFrameMilliseconds);
+      this.budget = recommendFrameWorkBudget(summary, this.budget, targetFrameMilliseconds, streaming);
       this.repetitions = 0;
     }
     return this.budget;

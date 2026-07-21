@@ -2,13 +2,14 @@ export type ResourceTelemetrySnapshot = Readonly<Record<string, unknown>>;
 export type ResourceTelemetryStopReason = "manual" | "save-and-quit" | "time-limit" | "page-exit";
 
 export type ResourceTelemetryReport = Readonly<{
-  schema: 1;
+  schema: 2;
   game: "Blockwild";
   startedAt: string;
   stoppedAt: string;
   elapsedSeconds: number;
   stopReason: ResourceTelemetryStopReason;
   sampleIntervalSeconds: 1;
+  aggregation: "non-overlapping-frame-windows";
   samples: readonly ResourceTelemetrySnapshot[];
 }>;
 
@@ -45,13 +46,14 @@ export class ResourceTelemetryLog {
     this.startedAt = 0;
     this.samples = [];
     return Object.freeze({
-      schema: 1,
+      schema: 2,
       game: "Blockwild",
       startedAt: new Date(startedAt).toISOString(),
       stoppedAt: new Date(now).toISOString(),
       elapsedSeconds: Math.max(0, (now - startedAt) / 1000),
       stopReason: reason,
       sampleIntervalSeconds: 1,
+      aggregation: "non-overlapping-frame-windows",
       samples,
     });
   }

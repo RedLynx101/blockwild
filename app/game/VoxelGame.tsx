@@ -2748,6 +2748,7 @@ export default function VoxelGame() {
   };
 
   const startTelemetry = () => {
+    engineRef.current?.beginPerformanceTelemetry();
     telemetryLogRef.current.start();
     setTelemetrySamples(0);
     setTelemetryRunning(true);
