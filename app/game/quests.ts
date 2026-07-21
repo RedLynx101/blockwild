@@ -132,6 +132,9 @@ const finite = (value: unknown, fallback = 0) => typeof value === "number" && Nu
 const count = (value: unknown, fallback = 0) => Math.max(0, Math.trunc(finite(value, fallback)));
 const cleanId = (value: unknown) => typeof value === "string" ? value.trim().slice(0, 96) : "";
 
+/** Day 1 is the day currently in progress, so no full survival day has elapsed yet. */
+export const completedSurvivalDays = (currentDay: unknown) => Math.max(0, count(currentDay) - 1);
+
 function cleanNullableId(value: unknown) {
   const cleaned = cleanId(value);
   return cleaned || null;
@@ -818,7 +821,7 @@ export function abandonQuest(book: QuestBook, definitions: readonly QuestDefinit
 }
 
 function eventProgress(objective: QuestObjective, previous: number, event: QuestEvent) {
-  if (objective.kind === "survive-day" && event.type === "day-reached") return Math.max(previous, count(event.day));
+  if (objective.kind === "survive-day" && event.type === "day-reached") return Math.max(previous, completedSurvivalDays(event.day));
   if (objective.kind === "discover-town" && event.type === "town-discovered" && (!objective.factionId || objective.factionId === event.factionId)) return 1;
   if (objective.kind === "trade" && event.type === "trade-completed" && (!objective.factionId || objective.factionId === event.factionId)) return previous + Math.max(1, count(event.count, 1));
   if (objective.kind === "kill" && event.type === "mob-killed" && objective.mobKind === event.mobKind) return previous + Math.max(1, count(event.count, 1));
@@ -874,7 +877,7 @@ export function applyQuestEvent(book: QuestBook, definitions: readonly QuestDefi
 }
 
 function durableObjectiveProgress(objective: QuestObjective, facts: QuestDurableFacts) {
-  if (objective.kind === "survive-day") return count(facts.currentDay);
+  if (objective.kind === "survive-day") return completedSurvivalDays(facts.currentDay);
   if (objective.kind === "discover-town") return (facts.discoveredTowns ?? []).some((town) => {
     const townId = cleanId(town.townId);
     const factionId = cleanId(town.factionId);
@@ -918,9 +921,12 @@ export function reconcileQuestBookWithDurableFacts(
     if (!definition) return current;
     const objectiveProgress = { ...current.objectiveProgress };
     for (const objective of definition.objectives) {
+      const durableProgress = durableObjectiveProgress(objective, facts);
       objectiveProgress[objective.id] = Math.min(
         targetForObjective(objective),
-        Math.max(objectiveProgress[objective.id] ?? 0, durableObjectiveProgress(objective, facts)),
+        objective.kind === "survive-day" && facts.currentDay !== undefined
+          ? durableProgress
+          : Math.max(objectiveProgress[objective.id] ?? 0, durableProgress),
       );
     }
     return {

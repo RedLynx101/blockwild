@@ -6374,6 +6374,7 @@ export class ChunkWorld {
     deferLighting = false,
   ) {
     const affected = new Set<string>();
+    const directlyAffected = new Set<string>();
     const affectedLavaCells = new Map<string, { x: number; y: number; z: number }>();
     const lightChanges: Array<{ x: number; y: number; z: number; previous: BlockId; next: BlockId }> = [];
     const batchRelight = changes.length > 12;
@@ -6401,7 +6402,9 @@ export class ChunkWorld {
         edits.set(index, resolvedType);
       }
       const section = sectionForY(change.y);
-      affected.add(`${key}:${section}`);
+      const directEntry = `${key}:${section}`;
+      directlyAffected.add(directEntry);
+      affected.add(directEntry);
       if ((change.y - MIN_Y) % SECTION_HEIGHT === 0) affected.add(`${key}:${section - 1}`);
       if ((change.y - MIN_Y) % SECTION_HEIGHT === SECTION_HEIGHT - 1) affected.add(`${key}:${section + 1}`);
       if (sx.local === 0) affected.add(`${chunkKey(sx.chunk - 1, sz.chunk)}:${section}`);
@@ -6420,10 +6423,16 @@ export class ChunkWorld {
       const section = Number(entry.slice(separator + 1));
       if (section < 0 || section >= SECTION_COUNT) continue;
       const chunk = this.chunks.get(key);
-      if (immediate && chunk?.group.visible) { this.cancelQueuedMesh(key, section); this.rebuildSection(chunk, section); }
+      // Large animated removals need their old voxels gone before the proxy
+      // begins moving, but synchronously rebuilding every exposed neighbor
+      // recreates the tree-felling hitch. With deferred lighting, rebuild only
+      // sections that actually contained an edit and leave seam/light work on
+      // the urgent frame-budgeted queues.
+      const rebuildNow = immediate && (!deferLighting || directlyAffected.has(entry));
+      if (rebuildNow && chunk?.group.visible) { this.cancelQueuedMesh(key, section); this.rebuildSection(chunk, section); }
       else this.queueMesh(key, section, true);
     }
-    if (immediate) this.flushLightSections();
+    if (immediate && !deferLighting) this.flushLightSections();
   }
 
   refreshEditedBlock(cx: number, cz: number, localX: number, y: number, localZ: number, immediate: boolean) {

@@ -226,7 +226,14 @@ test("engine felling removes one complete wide tree across chunks and preserves 
   engine.audio = { play: () => undefined } as unknown as VoxelEngine["audio"];
   engine.events = { onToast: () => undefined } as unknown as VoxelEngine["events"];
   engine.publishBlockEdits = () => undefined;
+  const originalBatch = engine.world.setBlocksBatch.bind(engine.world);
+  let fellingBatch: { immediate: boolean; deferLighting: boolean } | null = null;
+  engine.world.setBlocksBatch = ((changes, record, immediate, deferLighting) => {
+    fellingBatch = { immediate: Boolean(immediate), deferLighting: Boolean(deferLighting) };
+    return originalBatch(changes, record, immediate, deferLighting);
+  }) as typeof engine.world.setBlocksBatch;
   assert.equal(engine.tryFellTree(origin.x, origin.y, origin.z, BlockId.WildwoodLog), true);
+  assert.deepEqual(fellingBatch, { immediate: true, deferLighting: true }, "felling hides the standing mesh immediately while keeping relighting deferred");
   assert.equal(engine.fallingTrees[0]?.logCount, plan.filter((block) => block.block === BlockId.WildwoodLog).length);
   assert.equal(engine.fallingTrees[0]?.leafCount, plan.filter((block) => block.block === BlockId.WildwoodLeaves).length);
   for (const block of plan) assert.equal(engine.world.getBlock(block.x, block.y, block.z), BlockId.Air, `tree voxel remained at ${keyOf(block.x, block.y, block.z)}`);

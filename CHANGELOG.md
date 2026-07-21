@@ -2,6 +2,12 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.8.7 - First Dawn Hotfix - 2026-07-21
+
+- Corrected “A Fire Through First Dawn” to count a day only after it has been survived, and repaired old day-one quest states that had already been marked ready incorrectly.
+- Made a held cursor stack commit to one inventory slot on a same-slot left-button release instead of leaving the pack stuck in drag-paint mode.
+- Removed the original standing tree mesh before the falling proxy moves in local and multiplayer felling, while keeping neighboring seam and light-halo work on the frame-budgeted queues.
+
 ## 1.8.6 - Hearthmill Handshake - 2026-07-21
 
 - Repaired guest furnace access by resolving and initializing authoritative nearby machines before rejecting an interaction, including older worlds whose furnace state had not yet been materialized.

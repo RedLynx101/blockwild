@@ -1446,6 +1446,38 @@ test("urgent edits rebuild the visible section immediately and keep the light in
   world.dispose();
 });
 
+test("deferred animated removals hide edited voxels immediately without synchronously rebuilding neighbor seams", () => {
+  const world = new ChunkWorld();
+  world.reset("ANIMATED-BATCH-VISIBILITY", undefined, { structures: false });
+  const chunk = world.generateChunk(0, 0);
+  const neighbor = world.generateChunk(1, 0);
+  chunk.blocks.fill(BlockId.Air);
+  neighbor.blocks.fill(BlockId.Air);
+  chunk.sectionBlockCounts.fill(0);
+  neighbor.sectionBlockCounts.fill(0);
+  world.lightEngine.initializeChunk(chunk);
+  world.lightEngine.initializeChunk(neighbor);
+  const y = 0;
+  const section = Math.floor((y - MIN_Y) / SECTION_HEIGHT);
+  world.setBlock(16, y, 4, BlockId.Stone, false, true);
+  world.setBlock(15, y, 4, BlockId.WildwoodLog, false, true);
+  world.rebuildSection(neighbor, section);
+
+  const rebuilt: string[] = [];
+  const rebuildSection = world.rebuildSection.bind(world);
+  world.rebuildSection = ((target, targetSection, slice) => {
+    rebuilt.push(`${target.key}:${targetSection}`);
+    rebuildSection(target, targetSection, slice);
+  }) as typeof world.rebuildSection;
+
+  world.setBlocksBatch([{ x: 15, y, z: 4, type: BlockId.Air }], true, true, true);
+
+  assert.equal(chunk.sections.get(section)?.opaque, undefined, "the standing log mesh must disappear in the felling update");
+  assert.deepEqual(rebuilt, [`${chunk.key}:${section}`], "only the section containing removed voxels should rebuild synchronously");
+  assert.equal(neighbor.dirty.has(section), true, "the newly exposed neighbor seam remains queued for the frame budget");
+  world.dispose();
+});
+
 test("edits to retained invisible chunks remesh when the chunk becomes visible again", () => {
   const world = new ChunkWorld();
   world.reset("RETAINED-REMESH");

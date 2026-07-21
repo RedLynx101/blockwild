@@ -101,6 +101,8 @@ test("inventory markup exposes drag targets, trash guidance, and a bounded Bone 
   assert.match(ui, /Recover until replaced/u);
   assert.match(ui, /Hold and drag to share a stack/u);
   assert.match(ui, /inventoryDragPreview/u);
+  assert.match(ui, /onPointerUp=\{\(event\) => finishInventoryDrag\(event, onLeft\)\}/u, "a single-slot release commits immediately instead of leaving paint mode armed");
+  assert.match(ui, /at - pending\.at <= 80/u, "trailing click suppression is target-bound and expires before a later ordinary click");
   assert.match(css, /inventory-drag-preview-mark/u);
   assert.match(ui, /formatHudHealth\(specimen\.health\)/u);
   assert.match(ui, /formatHudHealth\(hud\.activePet\.health\)/u);

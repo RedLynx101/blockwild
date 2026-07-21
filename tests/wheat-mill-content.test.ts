@@ -143,6 +143,6 @@ test("mill, stool, fence, and gate share recognizable held and drop model contra
 
 test("capture orb rack artwork centers the rack and its specimen rows", () => {
   const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
-  assert.match(css, /\.item-icon-kind-orb-rack::before\s*\{[^}]*left:\s*50%;[^}]*transform:\s*translateX\(-50%\);/su);
-  assert.match(css, /\.item-icon-kind-orb-rack::after\s*\{[^}]*left:\s*3px;[^}]*width:\s*6px;[^}]*box-shadow:[^}]*18px 9px/su);
+  assert.match(css, /\.item-icon-kind-orb-rack::before\s*\{[^}]*left:\s*50%;[^}]*transform:\s*translateX\(-50%\);/u);
+  assert.match(css, /\.item-icon-kind-orb-rack::after\s*\{[^}]*left:\s*3px;[^}]*width:\s*6px;[^}]*box-shadow:[^}]*18px 9px/u);
 });

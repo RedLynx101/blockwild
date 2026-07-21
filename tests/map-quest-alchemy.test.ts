@@ -293,7 +293,9 @@ test("the opening main quest branches after day one and keeps rewards claim-base
   assert.equal(accepted.ok, true);
   book = accepted.book;
   book = pinQuest(book, first.id);
-  book = applyQuestEvent(book, HEARTHROADS_MAIN_QUESTS, { type: "day-reached", day: 1, at: 100 });
+  book = applyQuestEvent(book, HEARTHROADS_MAIN_QUESTS, { type: "day-reached", day: 1, at: 99 });
+  assert.equal(questAvailability(book, first), "active", "starting day one is not itself a survived day");
+  book = applyQuestEvent(book, HEARTHROADS_MAIN_QUESTS, { type: "day-reached", day: 2, at: 100 });
   assert.equal(questAvailability(book, first), "ready");
   assert.equal(book.pinnedQuestId, first.id);
   const completed = turnInQuest(book, HEARTHROADS_MAIN_QUESTS, first.id, {}, 101);
@@ -304,7 +306,7 @@ test("the opening main quest branches after day one and keeps rewards claim-base
   assert.equal(book.pinnedQuestId, null);
   assert.equal(questAvailability(book, five), "available");
   assert.equal(questAvailability(book, town), "available");
-  const advanced = bootstrapSystemQuests(book, HEARTHROADS_MAIN_QUESTS, { acceptedAt: 102, facts: { currentDay: 1 } });
+  const advanced = bootstrapSystemQuests(book, HEARTHROADS_MAIN_QUESTS, { acceptedAt: 102, facts: { currentDay: 2 } });
   assert.deepEqual(new Set(advanced.active.map((entry) => entry.questId)), new Set([five.id, town.id]), "newly unlocked giver-less main branches activate without a redundant accept step");
   const branches = questlineBranches(HEARTHROADS_MAIN_QUESTS, "hearthroads-main").find((entry) => entry.questId === first.id)!;
   assert.deepEqual(new Set(branches.unlocks), new Set([five.id, town.id]));
@@ -322,11 +324,32 @@ test("system quest bootstrap is idempotent and activates only appropriate giver-
     "dragonwake-living-archive",
     "hobbit-smoke-on-the-hedgerow",
   ]));
-  assert.equal(bootstrapped.active.find((entry) => entry.questId === "main-first-dawn")?.status, "ready");
+  assert.equal(bootstrapped.active.find((entry) => entry.questId === "main-first-dawn")?.status, "active");
   assert.equal(bootstrapped.active.find((entry) => entry.questId === "hobbit-smoke-on-the-hedgerow")?.status, "ready");
   assert.equal(bootstrapped.active.find((entry) => entry.questId === "dragonwake-living-archive")?.objectiveProgress["capture-rare-creatures"], 2);
   assert.deepEqual(bootstrapSystemQuests(bootstrapped, DEFAULT_QUEST_DEFINITIONS, { acceptedAt: 999, facts }), bootstrapped);
   assert.equal(bootstrapped.active.some((entry) => entry.questId === "goblin-brass-on-the-ridge"), false);
+});
+
+test("day-one durable facts repair the formerly auto-completed opening quest", () => {
+  const bootstrapped = bootstrapSystemQuests(createQuestBook(), HEARTHROADS_MAIN_QUESTS, {
+    acceptedAt: 10,
+    facts: { currentDay: 1 },
+  });
+  const first = bootstrapped.active.find((entry) => entry.questId === "main-first-dawn")!;
+  assert.equal(first.status, "active");
+  assert.equal(first.objectiveProgress["survive-day-one"], 0);
+
+  const stale = {
+    ...bootstrapped,
+    active: bootstrapped.active.map((entry) => entry.questId === "main-first-dawn"
+      ? { ...entry, status: "ready" as const, objectiveProgress: { "survive-day-one": 1 } }
+      : entry),
+  };
+  const repaired = reconcileQuestBookWithDurableFacts(stale, HEARTHROADS_MAIN_QUESTS, { currentDay: 1 });
+  const repairedFirst = repaired.active.find((entry) => entry.questId === "main-first-dawn")!;
+  assert.equal(repairedFirst.status, "active");
+  assert.equal(repairedFirst.objectiveProgress["survive-day-one"], 0);
 });
 
 test("durable facts reconcile late quest acceptance without counting spent delivery goods", () => {

@@ -1874,7 +1874,7 @@ export default function VoxelGame() {
   const multiplayerFlightRef = useRef<Promise<unknown> | null>(null);
   const slotInteractionReadyAtRef = useRef(0);
   const inventoryDragRef = useRef<InventoryDragGesture | null>(null);
-  const suppressSlotClickRef = useRef(false);
+  const suppressSlotClickRef = useRef<{ target: EventTarget | null; at: number } | null>(null);
   const heldStackElementRef = useRef<HTMLDivElement | null>(null);
   const heldStackPositionRef = useRef<ReturnType<typeof createHeldStackPositionController> | null>(null);
   const bestiaryFiltersOpenRef = useRef(false);
@@ -3075,17 +3075,36 @@ export default function VoxelGame() {
     setInventoryDragRevision((revision) => revision + 1);
   };
 
-  const finishInventoryDrag = (event: ReactPointerEvent<HTMLElement>) => {
+  const armTrailingSlotEventSuppression = (event: ReactPointerEvent<HTMLElement>) => {
+    suppressSlotClickRef.current = { target: event.currentTarget, at: event.timeStamp };
+  };
+
+  const consumeTrailingSlotEvent = (target: EventTarget | null, at: number) => {
+    const pending = suppressSlotClickRef.current;
+    suppressSlotClickRef.current = null;
+    return Boolean(pending && pending.target === target && at >= pending.at && at - pending.at <= 80);
+  };
+
+  const finishInventoryDrag = (event: ReactPointerEvent<HTMLElement>, onSingleLeft?: (shift: boolean) => void) => {
     const gesture = inventoryDragRef.current;
     if (!gesture || gesture.pointerId !== event.pointerId) return;
     inventoryDragRef.current = null;
     setInventoryDragRevision((revision) => revision + 1);
-    if (gesture.targets.length < 2) return;
+    if (gesture.targets.length < 2) {
+      // A held stack released over the same slot is an ordinary click, not a
+      // paint gesture. Commit it on pointer-up so machine/chest overlays cannot
+      // leave the gesture armed while waiting for a trailing click event.
+      if (gesture.button === "left" && onSingleLeft) {
+        onSingleLeft(event.shiftKey);
+        armTrailingSlotEventSuppression(event);
+      }
+      return;
+    }
     // A real drag owns its release even when every visited slot rejected the
     // stack. Letting the trailing click escape would place into the final slot
     // and make ordinary click placement feel intermittently broken.
     engineRef.current?.distributeCursorAcrossSlots(gesture.targets, gesture.button);
-    suppressSlotClickRef.current = true;
+    armTrailingSlotEventSuppression(event);
   };
 
   const cancelInventoryDrag = (event: ReactPointerEvent<HTMLElement>) => {
@@ -3113,10 +3132,7 @@ export default function VoxelGame() {
   const slotAction = (index: number, button: "left" | "right", shift = false) => engineRef.current?.inventoryClick(index, button, shift);
   const slotContext = (event: ReactMouseEvent, action: () => void) => {
     event.preventDefault();
-    if (suppressSlotClickRef.current) {
-      suppressSlotClickRef.current = false;
-      return;
-    }
+    if (consumeTrailingSlotEvent(event.currentTarget, event.timeStamp)) return;
     if (!slotInteractionAllowed(slotInteractionReadyAtRef.current)) return;
     action();
   };
@@ -3143,11 +3159,10 @@ export default function VoxelGame() {
       data-inventory-drag-target={dragKey ?? undefined}
       onPointerDown={(event) => beginInventoryDrag(event, dragTarget)}
       onPointerEnter={(event) => visitInventoryDrag(event, dragTarget)}
+      onPointerUp={(event) => finishInventoryDrag(event, onLeft)}
+      onPointerCancel={cancelInventoryDrag}
       onClick={(event) => {
-        if (suppressSlotClickRef.current) {
-          suppressSlotClickRef.current = false;
-          return;
-        }
+        if (consumeTrailingSlotEvent(event.currentTarget, event.timeStamp)) return;
         if (!slotInteractionAllowed(slotInteractionReadyAtRef.current)) return;
         if (event.detail >= 2) engineRef.current?.collectMatching(slot?.item ?? hud.cursor?.item);
         else onLeft(event.shiftKey);

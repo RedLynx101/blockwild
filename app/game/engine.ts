@@ -8116,7 +8116,7 @@ export class VoxelEngine {
         this.world.setBlocksBatch(
           action.edits.map((edit) => ({ ...edit, type: edit.type as BlockId })),
           true,
-          action.effect?.kind !== "tree-fell",
+          true,
           action.effect?.kind === "tree-fell",
         );
         this.applyBlockEditFacings(action.edits, true);
@@ -8152,7 +8152,7 @@ export class VoxelEngine {
         this.world.setBlocksBatch(
           action.edits.map((edit) => ({ ...edit, type: edit.type as BlockId })),
           true,
-          action.effect?.kind !== "tree-fell",
+          true,
           action.effect?.kind === "tree-fell",
         );
         this.applyBlockEditFacings(action.edits, true);
@@ -16694,9 +16694,10 @@ export class VoxelEngine {
     if (!tree) return false;
     const root: [number, number, number] = [tree.root.x, tree.root.y, tree.root.z];
     const changes = [...tree.logs, ...tree.leaves, ...tree.attachments].map((block) => ({ x: block.x, y: block.y, z: block.z, type: BlockId.Air }));
-    // The falling presentation hides the removed crown while chunk meshes and
-    // the large light halo rebuild through the normal frame-budgeted queues.
-    this.world.setBlocksBatch(changes, true, false, true);
+    // Remove the standing mesh before the falling presentation moves. The
+    // world rebuilds only directly edited visible sections synchronously while
+    // deferring the large light halo and neighboring seams across frames.
+    this.world.setBlocksBatch(changes, true, true, true);
     const group = new THREE.Group();
     group.position.set(root[0], root[1], root[2]);
     const matrix = new THREE.Matrix4();
