@@ -12,6 +12,8 @@ import {
   FEATHERWRACK_TILE,
   ITEMS,
   Item,
+  MOONBERRY_COOKIE_CRATE_SIDE_TILE,
+  MOONBERRY_COOKIE_CRATE_TOP_TILE,
   MOONBOUGH_LEAVES_TILE,
   MOONFELT_MYCELIUM_TILE,
   PEARLFAN_TILE,
@@ -20,6 +22,7 @@ import {
   SAILKELP_TILE,
   STARFERN_TILE,
   BlockId,
+  itemForBlock,
 } from "../app/game/data";
 import { CUBIC_STORYBOOK_VISUAL_KINDS, FACETED_STORYBOOK_EXCEPTION_KINDS } from "../app/game/living-bestiary-models";
 import { auditCreatureVisual, auditVisualTheme } from "../app/game/visual-theme-audit";
@@ -62,7 +65,7 @@ test("reference models link to canonical portraits", () => {
 test("all production creatures and blocks pass the release contract", () => {
   const audit = auditVisualTheme({ generatedAt: "2026-07-18T00:00:00.000Z" });
   assert.equal(audit.totals.creatures, 231);
-  assert.equal(audit.totals.blocks, 309);
+  assert.equal(audit.totals.blocks, 310);
   assert.equal(audit.totals.blockFamilies, 17);
   assert.equal(audit.totals.creatureViolations, 0);
   assert.equal(audit.totals.blockViolations, 0);
@@ -108,6 +111,17 @@ test("Glimmerwood flora and cactus faces no longer borrow generic atlas art", ()
   assert.equal(ITEMS[Item.Dreamcap].dropModel, "world-texture");
 });
 
+test("Moonbough leaves preserve neighboring faces and chairs keep their own item identity", () => {
+  const leaves = BLOCKS[BlockId.MoonboughLeaves];
+  assert.equal(leaves.layer, "cutout", "transparent foliage must not occlude an adjacent full cube");
+  assert.ok((leaves.emissiveStrength ?? 0) > 0, "Moonbough foliage keeps its moonlit accent");
+  assert.equal(BLOCKS[BlockId.Moonwell].layer, "cutout", "transparent Moonwells must preserve their neighboring faces");
+  assert.ok((BLOCKS[BlockId.Moonwell].emissiveStrength ?? 0) > 0, "Moonwells keep their authored glow");
+  assert.equal(itemForBlock(BlockId.MoonboughChair), Item.MoonboughChairItem);
+  assert.notEqual(itemForBlock(BlockId.MoonboughChair), Item.LavaBucket);
+  assert.equal(ITEMS[Item.MoonboughChairItem].placeBlock, BlockId.MoonboughChair);
+});
+
 test("Moonfelt Mycelium is an opaque seamless building texture, not grass", async () => {
   const definition = BLOCKS[BlockId.MoonfeltMycelium];
   assert.deepEqual(
@@ -138,6 +152,37 @@ test("Moonfelt Mycelium is an opaque seamless building texture, not grass", asyn
     }
     assert.ok(colors.size >= 7, "Moonfelt should retain readable fungal grain");
     assert.ok(blue > green && red > green, "Moonfelt should read as muted fungal violet rather than green grass");
+    texture.dispose();
+  } finally {
+    shim.restore();
+  }
+});
+
+test("Moonberry Cookie storage has dedicated readable Moonbough crate faces", async () => {
+  const definition = BLOCKS[BlockId.MoonberryCookieCrate];
+  assert.deepEqual([definition.top, definition.side], [MOONBERRY_COOKIE_CRATE_TOP_TILE, MOONBERRY_COOKIE_CRATE_SIDE_TILE]);
+  assert.equal(ITEMS[BlockId.MoonberryCookieCrate].iconKind, "produce-crate");
+
+  const shim = installPixelCanvasDocument();
+  try {
+    const { createBlockAtlas } = await import("../app/game/world");
+    const texture = createBlockAtlas();
+    const canvas = texture.image as unknown as PixelCanvas;
+    const tileColors = (tile: number) => {
+      const left = (tile % 16) * 16;
+      const top = Math.floor(tile / 16) * 16;
+      const colors = new Set<string>();
+      for (let y = 0; y < 16; y += 1) for (let x = 0; x < 16; x += 1) {
+        const offset = ((top + y) * canvas.width + left + x) * 4;
+        colors.add(Array.from(canvas.pixels.slice(offset, offset + 4)).join(","));
+      }
+      return colors;
+    };
+    const topColors = tileColors(MOONBERRY_COOKIE_CRATE_TOP_TILE);
+    const sideColors = tileColors(MOONBERRY_COOKIE_CRATE_SIDE_TILE);
+    assert.ok(topColors.size >= 7, "top face should show timber, bakes, berry pockets, and moon presses");
+    assert.ok(sideColors.size >= 9, "side face should carry a legible cookie crate mark");
+    assert.notDeepEqual(topColors, sideColors);
     texture.dispose();
   } finally {
     shim.restore();

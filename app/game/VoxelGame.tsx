@@ -1970,12 +1970,14 @@ export default function VoxelGame() {
     setHeldAuditMode(parameters.get("held-audit") === "1");
     setSpellWheelAuditMode(parameters.get("spell-wheel-audit") === "empty");
     const inventoryAudit = parameters.get("inventory-audit");
-    if (inventoryAudit === "1" || inventoryAudit === "cave-gel") {
+    if (inventoryAudit === "1" || inventoryAudit === "cave-gel" || inventoryAudit === "moonberry-cookie") {
       overlayRef.current = "inventory";
       setOverlayState("inventory");
-      if (inventoryAudit === "cave-gel") window.setTimeout(() => setHud((current) => {
+      if (inventoryAudit === "cave-gel" || inventoryAudit === "moonberry-cookie") window.setTimeout(() => setHud((current) => {
         const inventory = [...current.inventory];
-        inventory[0] = { item: Item.CaveGel, count: 16 };
+        inventory[0] = inventoryAudit === "moonberry-cookie"
+          ? { item: Item.MoonberryCookie, count: 16 }
+          : { item: Item.CaveGel, count: 16 };
         return { ...current, inventory, selected: 0 };
       }), 250);
     }

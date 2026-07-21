@@ -460,6 +460,18 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
     addBox([0.42, 0.44, 0.08], [0, 0.23, 0.15], 0x9f7144);
     group.scale.setScalar(0.72);
     group.rotation.set(0.12, 0.25, -0.08);
+  } else if (definition.heldModel === "moonberry-cookie") {
+    // A shallow twelve-sided bake is readable in hand, on remote avatars,
+    // and on the ground. Grouped berry pockets plus the pressed pale crescent
+    // carry the same Moonbough material grammar as the 16px icon.
+    addCylinder(0.285, 0.055, [0, -0.015, 0], 0x7f4b2e).name = "moonberry-cookie-baked-rim";
+    addCylinder(0.255, 0.07, [0, 0.018, 0], 0xb87943).name = "moonberry-cookie-biscuit";
+    for (const [x, z, color] of [
+      [-0.11, -0.07, 0x74438f], [0.11, -0.04, 0xa66bc0], [-0.08, 0.11, 0x8b51a8], [0.12, 0.11, 0x6d397f],
+    ] as Array<[number, number, number]>) addBox([0.065, 0.035, 0.065], [x, 0.068, z], color, [0, Math.PI / 4, 0]).name = "moonberry-cookie-berry-pocket";
+    for (const [x, z] of [[-0.025, -0.015], [0.015, 0.015], [0.02, 0.055]] as Array<[number, number]>) addBox([0.04, 0.025, 0.055], [x, 0.088, z], 0xf1dfad, [0, -0.45, 0]).name = "moonberry-cookie-moon-press";
+    group.scale.setScalar(0.72);
+    group.rotation.set(-Math.PI / 2 - 0.12, 0.28, -0.12);
   } else if (definition.heldModel === "shears") {
     addBox([0.1, 0.48, 0.07], [-0.1, 0.15, 0], 0xd4b9a7, [0, 0, -0.34]).name = "shears-left-blade";
     addBox([0.1, 0.48, 0.07], [0.1, 0.15, 0], 0xe5d1c2, [0, 0, 0.34]).name = "shears-right-blade";
@@ -696,6 +708,11 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
  * shared third-person model transform: changing one must not flip the other.
  */
 export function applyFirstPersonHeldItemOrientation(item: ItemCode, model: THREE.Object3D) {
+  if (item === Item.MoonberryCookie) {
+    model.rotation.y += Math.PI;
+    model.userData.firstPersonReverse = true;
+    return model;
+  }
   if (item !== BlockId.Torch) return model;
   // Shared avatar torches counter-rotate against an articulated forward arm.
   // A first-person root has no such arm, so remove that counter-rotation before

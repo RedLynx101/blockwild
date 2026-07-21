@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { BLOCKS, BlockId, Item, ITEMS, LEAF_BLOCKS, RECIPES, blockContainsWater, worldTextureBlockForItem } from "../app/game/data.ts";
+import { BLOCKS, CREATIVE_BLOCKS, BlockId, Item, ITEMS, LEAF_BLOCKS, RECIPES, blockContainsWater, worldTextureBlockForItem } from "../app/game/data.ts";
+import { applyFirstPersonHeldItemOrientation, createAvatarHeldItemModel } from "../app/game/held-items.ts";
 import { CAVE_ENTRANCE_REALIZATION_RATE, caveEntranceAt, caveEntranceForCell, caveFeatureAt } from "../app/game/caves.ts";
 import {
   canGrowPlant,
@@ -217,6 +218,7 @@ test("Frostpears form a complete cold-climate orchard and reversible nine-fruit 
     ["apple-crate", Item.Apple, BlockId.AppleCrate],
     ["frostpear-crate", Item.Frostpear, BlockId.FrostpearCrate],
     ["shellfruit-crate", Item.Shellfruit, BlockId.ShellfruitCrate],
+    ["moonberry-cookie-crate", Item.MoonberryCookie, BlockId.MoonberryCookieCrate],
   ] as const;
   for (const [id, item, crate] of crateContracts) {
     const packed = RECIPES.find((recipe) => recipe.id === id)!;
@@ -227,6 +229,30 @@ test("Frostpears form a complete cold-climate orchard and reversible nine-fruit 
     assert.equal(ITEMS[crate].iconKind, "produce-crate");
   }
   assert.equal(ITEMS[BlockId.MushroomCap].iconKind, "giant-mushroom");
+});
+
+test("Moonberry Cookies are a complete trail-bake and reversible storage family", () => {
+  const cookie = ITEMS[Item.MoonberryCookie];
+  assert.equal(cookie.name, "Moonberry Cookie");
+  assert.equal(cookie.food, 5);
+  assert.equal(cookie.iconKind, "moonberry-cookie");
+  assert.equal(cookie.heldModel, "moonberry-cookie");
+  assert.equal(cookie.dropModel, "moonberry-cookie");
+  assert.ok(CREATIVE_BLOCKS.includes(Item.MoonberryCookie));
+  assert.ok(CREATIVE_BLOCKS.includes(BlockId.MoonberryCookieCrate));
+
+  const baked = RECIPES.find((recipe) => recipe.id === "moonberry-cookies")!;
+  assert.deepEqual(baked.pattern, [Item.Wheat, Item.Berry, Item.Wheat]);
+  assert.deepEqual(baked.output, { item: Item.MoonberryCookie, count: 4 });
+  assert.equal(baked.table, true);
+
+  const model = createAvatarHeldItemModel(Item.MoonberryCookie)!;
+  assert.ok(model.getObjectByName("moonberry-cookie-biscuit"));
+  assert.equal(model.children.filter((child) => child.name === "moonberry-cookie-berry-pocket").length, 4);
+  assert.equal(model.children.filter((child) => child.name === "moonberry-cookie-moon-press").length, 3);
+  assert.ok(model.rotation.x < -Math.PI / 2, "shared avatar/drop face points toward model-front -Z");
+  const firstPerson = applyFirstPersonHeldItemOrientation(Item.MoonberryCookie, createAvatarHeldItemModel(Item.MoonberryCookie)!);
+  assert.equal(firstPerson.userData.firstPersonReverse, true);
 });
 
 test("Star Crystal storage is lossless and Deepgear Lantern batches yield three", () => {

@@ -34,6 +34,8 @@ import {
   LEAF_BLOCKS,
   MOONBERRY_CRATE_SIDE_TILE,
   MOONBERRY_CRATE_TOP_TILE,
+  MOONBERRY_COOKIE_CRATE_SIDE_TILE,
+  MOONBERRY_COOKIE_CRATE_TOP_TILE,
   MOONBOUGH_LEAVES_TILE,
   MOONFELT_MYCELIUM_TILE,
   PEARLFAN_TILE,
@@ -439,6 +441,20 @@ export function settlementBlockPalette(factionId: string): SettlementBlockPalett
     path: BlockId.Gravel, perimeterWall: BlockId.StoneBrick, tower: BlockId.StoneBrick, lightBase: BlockId.StoneBrick,
     buildingWall: BlockId.Planks, corner: BlockId.WildwoodLog, roof: BlockId.Planks, floor: BlockId.Planks, hallFloor: BlockId.StoneBrick,
   });
+}
+
+/** The gate rails run along the wall edge while the opening faces outward. */
+export function settlementGateBlockForFacing(facing: number) {
+  return normalizeBlockFacing(facing) % 2 === 0 ? BlockId.FenceGateNorthSouthClosed : BlockId.FenceGateEastWestClosed;
+}
+
+/** Complete two-cell bed placement for authored settlement interiors. */
+export function settlementBedBlocksForFacing(facing: number) {
+  const normalized = normalizeBlockFacing(facing);
+  if (normalized === 1) return { foot: BlockId.BedEastFoot, head: BlockId.BedEastHead, dx: 1, dz: 0 } as const;
+  if (normalized === 2) return { foot: BlockId.BedSouthFoot, head: BlockId.BedSouthHead, dx: 0, dz: 1 } as const;
+  if (normalized === 3) return { foot: BlockId.BedWestFoot, head: BlockId.BedWestHead, dx: -1, dz: 0 } as const;
+  return { foot: BlockId.BedNorthFoot, head: BlockId.BedNorthHead, dx: 0, dz: -1 } as const;
 }
 
 /** A restrained accent palette gives each hall an identity without making it
@@ -2365,7 +2381,28 @@ export function createBlockAtlas() {
     }
     for (const [x, y] of [[6, 4], [10, 7], [5, 10]] as Array<[number, number]>) pixel(index, x, y, "#5f843e");
   };
-  const crateSide = (index: number, fruit: string, highlight: string, glyph: "berry" | "apple" | "pear" | "shellfruit") => {
+  const cookieCrateTop = (index: number) => {
+    fillTile(index, "#8a5b35");
+    const ox = (index % grid) * tile;
+    const oy = Math.floor(index / grid) * tile;
+    for (let offset = 0; offset < 3; offset += 1) {
+      context.fillStyle = offset === 1 ? "#c18a50" : "#5a3a25";
+      context.fillRect(ox + offset, oy + offset, tile - offset * 2, 1);
+      context.fillRect(ox + offset, oy + tile - 1 - offset, tile - offset * 2, 1);
+      context.fillRect(ox + offset, oy + offset, 1, tile - offset * 2);
+      context.fillRect(ox + tile - 1 - offset, oy + offset, 1, tile - offset * 2);
+    }
+    // Four clearly grouped trail bakes replace the random-fruit scatter used
+    // by produce crates. Purple pockets and pale moon presses tie them to the
+    // Glimmerwood without turning the timber crate into neon confectionery.
+    for (const [cx, cy] of [[5, 5], [10, 5], [6, 10], [11, 10]] as Array<[number, number]>) {
+      for (const [dx, dy] of [[0, -1], [-1, 0], [0, 0], [1, 0], [0, 1]] as Array<[number, number]>) pixel(index, cx + dx, cy + dy, dy < 0 ? "#e8bb70" : "#b87943");
+      pixel(index, cx - 1, cy, "#74438f");
+      pixel(index, cx + 1, cy + (cy % 2 ? 0 : 1), "#a66bc0");
+      pixel(index, cx, cy - 1, "#f4dfaa");
+    }
+  };
+  const crateSide = (index: number, fruit: string, highlight: string, glyph: "berry" | "apple" | "pear" | "shellfruit" | "cookie") => {
     fillTile(index, "#9a673c");
     for (const y of [0, 5, 10, 15]) {
       context.fillStyle = y % 10 === 0 ? "#5a3924" : "#c0874a";
@@ -2380,6 +2417,10 @@ export function createBlockAtlas() {
     context.fillRect((index % grid) * tile + 4, Math.floor(index / grid) * tile + 5, 8, 6);
     if (glyph === "berry") {
       for (const [x, y] of [[6, 8], [8, 7], [9, 9]] as Array<[number, number]>) { pixel(index, x, y, fruit); pixel(index, x + 1, y, highlight); }
+    } else if (glyph === "cookie") {
+      for (const [x, y] of [[7, 6], [8, 6], [6, 7], [7, 7], [8, 7], [9, 7], [6, 8], [7, 8], [8, 8], [9, 8], [7, 9], [8, 9]] as Array<[number, number]>) pixel(index, x, y, y === 6 ? highlight : fruit);
+      pixel(index, 6, 7, "#74438f"); pixel(index, 9, 8, "#a66bc0");
+      pixel(index, 8, 7, "#f6e2ae"); pixel(index, 8, 8, "#e8c98e");
     } else if (glyph === "shellfruit") {
       for (const [x, y] of [[6, 7], [7, 6], [8, 6], [9, 7], [5, 8], [6, 9], [7, 9], [8, 9], [9, 9], [10, 8]] as Array<[number, number]>) pixel(index, x, y, fruit);
       for (const [x, y] of [[7, 7], [8, 7], [7, 8], [8, 8]] as Array<[number, number]>) pixel(index, x, y, highlight);
@@ -2422,6 +2463,8 @@ export function createBlockAtlas() {
   crateSide(APPLE_CRATE_SIDE_TILE, "#b83f36", "#ef8064", "apple");
   crateTop(FROSTPEAR_CRATE_TOP_TILE, "#8bc4c7", "#d7fbef");
   crateSide(FROSTPEAR_CRATE_SIDE_TILE, "#8bc4c7", "#d7fbef", "pear");
+  cookieCrateTop(MOONBERRY_COOKIE_CRATE_TOP_TILE);
+  crateSide(MOONBERRY_COOKIE_CRATE_SIDE_TILE, "#b87943", "#e8bb70", "cookie");
   const clearTile = (index: number) => context.clearRect((index % grid) * tile, Math.floor(index / grid) * tile, tile, tile);
 
   // A Star Crystal block reads as nine fused celestial prisms rather than a
@@ -5617,6 +5660,16 @@ export class ChunkWorld {
     const startRegionZ = Math.floor((minZ - reach) / regionSize);
     const endRegionZ = Math.floor((minZ + CHUNK_SIZE + reach) / regionSize);
     const insideChunk = (x: number, z: number) => x >= minX && x < minX + CHUNK_SIZE && z >= minZ && z < minZ + CHUNK_SIZE;
+    const setGeneratedFacing = (x: number, y: number, z: number, facing: number) => {
+      if (!insideChunk(x, z) || y < MIN_Y || y > MAX_Y) return;
+      const index = blockIndex(x - minX, y, z - minZ);
+      // Player edits and serialized facings always outrank regenerated decor.
+      if (this.edits.get(chunk.key)?.has(index)) return;
+      const key = `${x},${y},${z}`;
+      if (this.blockFacings.has(key)) return;
+      const normalized = normalizeBlockFacing(facing);
+      if (normalized !== BLOCK_FACING_NORTH) this.blockFacings.set(key, normalized);
+    };
 
     this.generateRegionalRoadsForChunk(chunk, sample, set);
 
@@ -5843,7 +5896,7 @@ export class ChunkWorld {
       }
       for (const gate of layout.gates) if (insideChunk(gate.position.x, gate.position.z)) {
         const ground = sample(gate.position.x, gate.position.z).height;
-        const gateBlock = gate.facing % 2 === 0 ? BlockId.FenceGateNorthSouthClosed : BlockId.FenceGateEastWestClosed;
+        const gateBlock = settlementGateBlockForFacing(gate.facing);
         set(gate.position.x, ground + 1, gate.position.z, gateBlock, false);
       }
       for (const light of layout.lights) if (insideChunk(light.position.x, light.position.z)) {
@@ -5856,6 +5909,7 @@ export class ChunkWorld {
         }
       }
 
+      const buildingInteriorY = new Map<string, number>();
       for (const building of layout.buildings) {
         const buildingPalette = building.guildHall ? guildHallBlockPalette(building.guildHall.guildId, building.guildHall.state) : palette;
         const halfWidth = Math.floor(building.width / 2);
@@ -5874,6 +5928,7 @@ export class ChunkWorld {
           ? Math.max(sample(building.position.x, building.position.z).height + 1, (building.position.y ?? candidate.floorY ?? centerColumn.height) - 1)
           : underground ? (building.position.y ?? candidate.floorY ?? centerColumn.height - 18) - 1
           : sample(building.position.x, building.position.z).height;
+        buildingInteriorY.set(building.id, baseY + 1);
         const wallHeight = building.floors * 3 + 1;
         const localCoordinates = (x: number, z: number) => {
           const dx = x - building.position.x;
@@ -5986,9 +6041,13 @@ export class ChunkWorld {
           set(doorX, baseY + 1, doorZ, xAxisDoor ? BlockId.DoorXClosedLower : BlockId.DoorClosedLower, false);
           set(doorX, baseY + 2, doorZ, xAxisDoor ? BlockId.DoorXClosedUpper : BlockId.DoorClosedUpper, false);
         }
-        for (const furniture of building.furniture) if (insideChunk(furniture.position.x, furniture.position.z)) {
+        for (const furniture of building.furniture) {
           if (furniture.kind === "door") continue;
           const fy = underwater || underground ? furniture.position.y ?? baseY + 1 : baseY + 1;
+          const bed = furniture.kind === "bed" ? settlementBedBlocksForFacing(furniture.facing) : null;
+          const footInside = insideChunk(furniture.position.x, furniture.position.z);
+          const headInside = bed ? insideChunk(furniture.position.x + bed.dx, furniture.position.z + bed.dz) : false;
+          if (!footInside && !headInside) continue;
           const furnitureBlock = furniture.kind === "rest-alcove" || furniture.kind === "nest" ? BlockId.HearthChair
             : furniture.kind === "kelp-trough" ? BlockId.LumenKelp
               : furniture.kind === "coral-loom" ? BlockId.CartographyTable
@@ -6005,15 +6064,16 @@ export class ChunkWorld {
                                     : furniture.kind === "moonwell-basin" ? BlockId.Moonwell
                                       : furniture.kind === "tome-lectern" ? BlockId.TomeDisplay
                                         : furniture.kind === "living-chair" ? BlockId.MoonboughChair
-                    : furniture.kind === "bed" ? BlockId.BedNorthFoot
+                    : furniture.kind === "bed" ? bed!.foot
             : furniture.kind === "chair" ? BlockId.HearthChair
               : furniture.kind === "distillery" || furniture.kind === "barrel" ? BlockId.Distillery
                 : furniture.kind === "forge" ? BlockId.Furnace
                   : furniture.kind === "bank-counter" || furniture.kind === "merchant-counter" ? BlockId.Chest
                     : furniture.kind === "table" ? BlockId.CartographyTable
                       : BlockId.CraftingTable;
-          set(furniture.position.x, fy, furniture.position.z, furnitureBlock, false);
-          if (furniture.kind === "bed") set(furniture.position.x, fy, furniture.position.z + 1, BlockId.BedNorthHead, false);
+          if (footInside) set(furniture.position.x, fy, furniture.position.z, furnitureBlock, false);
+          if (footInside && isDirectionallyPlacedBlock(furnitureBlock)) setGeneratedFacing(furniture.position.x, fy, furniture.position.z, furniture.facing);
+          if (bed) set(furniture.position.x + bed.dx, fy, furniture.position.z + bed.dz, bed.head, false);
         }
         if (building.guildHall) {
           const hall = building.guildHall;
@@ -6090,15 +6150,16 @@ export class ChunkWorld {
       const state = createSettlementState("world", candidate, layout);
       for (const resident of state.residents) if (insideChunk(resident.position.x, resident.position.z)) {
         const mobKind = settlementResidentMobKind(resident, candidate.factionId);
+        const interiorY = resident.homeBuildingId ? buildingInteriorY.get(resident.homeBuildingId) : undefined;
         const marker: StructureMarker = {
           type: "spawn",
           id: resident.id,
-          position: { x: resident.position.x, y: resident.position.y ?? sample(resident.position.x, resident.position.z).height + 1, z: resident.position.z },
+          position: { x: resident.position.x, y: interiorY ?? resident.position.y ?? sample(resident.position.x, resident.position.z).height + 1, z: resident.position.z },
           mobKind,
           count: 1,
-          radius: 1.5,
+          radius: 0.25,
           persistent: true,
-          tags: [`settlement:${candidate.id}`, `resident:${resident.id}`, `name:${resident.name}`, `profession:${resident.profession}`, `faction:${candidate.factionId}`],
+          tags: [`settlement:${candidate.id}`, `resident:${resident.id}`, `name:${resident.name}`, `profession:${resident.profession}`, `faction:${candidate.factionId}`, "authored-interior-spawn"],
         };
         this.structureMarkers.set(`${candidate.id}:spawn:${resident.id}`, marker);
       }

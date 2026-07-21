@@ -326,6 +326,8 @@ export enum BlockId {
   Sailkelp = 570,
   Featherwrack = 571,
   Pearlfan = 572,
+  /** Moonberry Cookie storage; kept beyond every occupied item/block code. */
+  MoonberryCookieCrate = 597,
 }
 
 export const Item = {
@@ -784,6 +786,10 @@ export const Item = {
   SailkelpFrond: 592,
   FeatherwrackSprig: 593,
   PearlfanCutting: 594,
+  /** Moonbough furniture alias; append-only because inventory stacks persist. */
+  MoonboughChairItem: 595,
+  /** Moonbough trail bake; append-only because inventory stacks persist. */
+  MoonberryCookie: 596,
 } as const;
 
 export type ItemCode = number;
@@ -840,6 +846,9 @@ export const SAILKELP_TILE = 241;
 export const FEATHERWRACK_TILE = 242;
 export const PEARLFAN_TILE = 243;
 export const MOONFELT_MYCELIUM_TILE = 244;
+/** Moonbough trail-bake storage uses dedicated faces rather than recolored produce art. */
+export const MOONBERRY_COOKIE_CRATE_TOP_TILE = 245;
+export const MOONBERRY_COOKIE_CRATE_SIDE_TILE = 246;
 
 export type InventorySlot = {
   item: ItemCode;
@@ -927,12 +936,12 @@ export type ItemDefinition = {
   /** Contents rendered in and placed from a bucket. */
   bucketLiquid?: "water" | "lava" | "honey" | "syrup";
   /** Semantic UI hook for non-cube inventory artwork. */
-  iconKind?: "crafting-table" | "chest" | "apiary" | "aquarium" | "fireplace" | "capture-orb" | "orb-rack" | "orb-healer" | "morph-loom" | "bucket" | "fence-gate" | "lead" | "shield" | "seed" | "produce" | "produce-crate" | "giant-mushroom" | "pie" | "honeycomb" | "honey" | "jelly" | "wax" | "milk" | "relic" | "dragon-egg" | "dragon-scale" | "dragon-heart" | "dragon-skull" | "dragon-bone" | "dragon-saddle" | "dragon-pannier" | "dragon-barding-fire" | "dragon-barding-ice" | "dragon-barding-steel" | "dragon-barding-sea" | "dragon-barding-gold" | "dragon-barding-silver" | "gold-hoard-block" | "gold-pile" | "queen-cell" | "bee" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "bottle-empty" | "bottle-water" | "potion" | "potion-health" | "mead" | "blueprint" | "bolt" | "spear" | "crossbow" | "sword" | "armor";
+  iconKind?: "crafting-table" | "chest" | "apiary" | "aquarium" | "fireplace" | "capture-orb" | "orb-rack" | "orb-healer" | "morph-loom" | "bucket" | "fence-gate" | "lead" | "shield" | "seed" | "produce" | "produce-crate" | "giant-mushroom" | "pie" | "moonberry-cookie" | "honeycomb" | "honey" | "jelly" | "wax" | "milk" | "relic" | "dragon-egg" | "dragon-scale" | "dragon-heart" | "dragon-skull" | "dragon-bone" | "dragon-saddle" | "dragon-pannier" | "dragon-barding-fire" | "dragon-barding-ice" | "dragon-barding-steel" | "dragon-barding-sea" | "dragon-barding-gold" | "dragon-barding-silver" | "gold-hoard-block" | "gold-pile" | "queen-cell" | "bee" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "bottle-empty" | "bottle-water" | "potion" | "potion-health" | "mead" | "blueprint" | "bolt" | "spear" | "crossbow" | "sword" | "armor";
   /** Reuse a world atlas texture for the handheld/icon representation. */
   worldTextureBlock?: BlockId;
   /** Shared semantic model hooks consumed by held-item and dropped-item renderers. */
-  heldModel?: "world-texture" | "wildwood-chest" | "apiary" | "capture-orb" | "dragon-egg" | "dragon-saddle" | "dragon-pannier" | "dragon-barding" | "gold-hoard-block" | "gold-pile" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "potion" | "mead" | "blueprint" | "crossbow" | "spear" | "shears" | "lightning-bug-jar";
-  dropModel?: "world-texture" | "wildwood-chest" | "apiary" | "capture-orb" | "dragon-egg" | "dragon-saddle" | "dragon-pannier" | "dragon-barding" | "gold-hoard-block" | "gold-pile" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "bottle" | "potion" | "mead" | "blueprint" | "crossbow" | "spear" | "shears" | "lightning-bug-jar";
+  heldModel?: "world-texture" | "wildwood-chest" | "apiary" | "capture-orb" | "dragon-egg" | "dragon-saddle" | "dragon-pannier" | "dragon-barding" | "gold-hoard-block" | "gold-pile" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "moonberry-cookie" | "bottle" | "potion" | "mead" | "blueprint" | "crossbow" | "spear" | "shears" | "lightning-bug-jar";
+  dropModel?: "world-texture" | "wildwood-chest" | "apiary" | "capture-orb" | "dragon-egg" | "dragon-saddle" | "dragon-pannier" | "dragon-barding" | "gold-hoard-block" | "gold-pile" | "orb-rack" | "orb-healer" | "cartography" | "alchemy" | "wayshrine" | "distillery" | "sugarworks" | "chair" | "moonberry-cookie" | "bottle" | "potion" | "mead" | "blueprint" | "crossbow" | "spear" | "shears" | "lightning-bug-jar";
 };
 
 const block = (
@@ -1135,7 +1144,7 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.GiantLollipopOrchid]: block(BlockId.GiantLollipopOrchid, "Cultivated Lollipop Orchid", 141, 141, 141, 0.08, "#f4acd7", "hand", 0, { solid: false, layer: "cutout", shape: "tall-flower", replaceable: true, verticalConnectGroup: "cultivated-flower" }),
   [BlockId.GlimmerGrass]: block(BlockId.GlimmerGrass, "Glimmerwood Grass", 149, 150, 2, 0.62, "#315f4d", "shovel"),
   [BlockId.MoonboughLog]: block(BlockId.MoonboughLog, "Moonbough Log", 110, 109, 110, 1.12, "#58677f", "axe"),
-  [BlockId.MoonboughLeaves]: block(BlockId.MoonboughLeaves, "Moonbough Leaves", MOONBOUGH_LEAVES_TILE, MOONBOUGH_LEAVES_TILE, MOONBOUGH_LEAVES_TILE, 0.28, "#4a8c79", "hand", 0, { layer: "emissive" }),
+  [BlockId.MoonboughLeaves]: block(BlockId.MoonboughLeaves, "Moonbough Leaves", MOONBOUGH_LEAVES_TILE, MOONBOUGH_LEAVES_TILE, MOONBOUGH_LEAVES_TILE, 0.28, "#4a8c79", "hand", 0, { layer: "cutout", emissiveStrength: 0.72 }),
   [BlockId.Moonpetal]: block(BlockId.Moonpetal, "Moonpetal", 113, 113, 113, 0.04, "#a8a3ff", "hand", 0, { solid: false, layer: "emissive", shape: "cross", replaceable: true }),
   [BlockId.Starfern]: block(BlockId.Starfern, "Starfern", STARFERN_TILE, STARFERN_TILE, STARFERN_TILE, 0.04, "#68d6ac", "hand", 0, { solid: false, layer: "emissive", shape: "cross", replaceable: true }),
   [BlockId.Dreamcap]: block(BlockId.Dreamcap, "Dreamcap", DREAMCAP_TILE, DREAMCAP_TILE, DREAMCAP_TILE, 0.05, "#9f7cff", "hand", 0, { solid: false, layer: "emissive", shape: "cross", replaceable: true }),
@@ -1150,7 +1159,7 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.AetherConduit]: block(BlockId.AetherConduit, "Aether Conduit", 51, RIVETED_BRASS_TILE, DEEPGEAR_BRICK_TILE, 3, "#7adce5", "pickaxe", 3, { layer: "emissive" }),
   [BlockId.DwarfStool]: block(BlockId.DwarfStool, "Deepgear Stool", RIVETED_BRASS_TILE, RIVETED_BRASS_TILE, 11, 0.9, "#8b6749", "axe", 0, { shape: "stool" }),
   [BlockId.MoonboughChair]: block(BlockId.MoonboughChair, "Moonbough Chair", 110, 109, 110, 0.8, "#647693", "axe", 0, { shape: "chair" }),
-  [BlockId.Moonwell]: block(BlockId.Moonwell, "Moonwell", 115, 114, 98, 2, "#7fcfe2", "pickaxe", 1, { layer: "emissive" }),
+  [BlockId.Moonwell]: block(BlockId.Moonwell, "Moonwell", 115, 114, 98, 2, "#7fcfe2", "pickaxe", 1, { layer: "cutout", emissiveStrength: 0.75 }),
   [BlockId.SeaDragonEggBlock]: block(BlockId.SeaDragonEggBlock, "Sea Dragon Egg", 148, 148, 148, 1.25, "#45b9c7", "hand", 0, { shape: "dragon-egg", layer: "emissive" }),
   [BlockId.WaygridVaultTerminal]: block(BlockId.WaygridVaultTerminal, "Waygrid Vault Terminal", 51, 40, 35, 2.35, "#72cfd1", "pickaxe", 2, { layer: "emissive" }),
   [BlockId.WaygridCreatureArchive]: block(BlockId.WaygridCreatureArchive, "Waygrid Creature Archive", 95, 94, 35, 2.35, "#91c9f0", "pickaxe", 2, { layer: "emissive" }),
@@ -1266,6 +1275,7 @@ export const BLOCKS: Record<number, BlockDefinition> = {
   [BlockId.SunberryCrate]: block(BlockId.SunberryCrate, "Sunberry Crate", SUNBERRY_CRATE_TOP_TILE, SUNBERRY_CRATE_SIDE_TILE, 11, 0.8, "#c98639", "axe"),
   [BlockId.AppleCrate]: block(BlockId.AppleCrate, "Wild Apple Crate", APPLE_CRATE_TOP_TILE, APPLE_CRATE_SIDE_TILE, 11, 0.8, "#a94b3e", "axe"),
   [BlockId.FrostpearCrate]: block(BlockId.FrostpearCrate, "Frostpear Crate", FROSTPEAR_CRATE_TOP_TILE, FROSTPEAR_CRATE_SIDE_TILE, 11, 0.8, "#91b8c0", "axe"),
+  [BlockId.MoonberryCookieCrate]: block(BlockId.MoonberryCookieCrate, "Moonberry Cookie Crate", MOONBERRY_COOKIE_CRATE_TOP_TILE, MOONBERRY_COOKIE_CRATE_SIDE_TILE, 11, 0.82, "#b27a48", "axe"),
   [BlockId.FrostpearSapling]: block(BlockId.FrostpearSapling, "Frostpear Sapling", FROSTPEAR_SAPLING_TILE, FROSTPEAR_SAPLING_TILE, FROSTPEAR_SAPLING_TILE, 0.08, "#739873", "hand", 0, { solid: false, layer: "cutout", shape: "cross", replaceable: true }),
   [BlockId.FrostpearLeaves]: block(BlockId.FrostpearLeaves, "Frostpear Leaves", FROSTPEAR_LEAVES_TILE, FROSTPEAR_LEAVES_TILE, FROSTPEAR_LEAVES_TILE, 0.3, "#4d776d", "hand", 0, { layer: "cutout" }),
   [BlockId.FrostpearFruit]: block(BlockId.FrostpearFruit, "Ripe Frostpear", FROSTPEAR_FRUIT_TILE, FROSTPEAR_FRUIT_TILE, FROSTPEAR_FRUIT_TILE, 0.05, "#a8d6d8", "hand", 0, { solid: false, layer: "cutout", shape: "fruit" }),
@@ -1460,7 +1470,7 @@ for (const definition of Object.values(BLOCKS)) {
 }
 
 ITEMS[BlockId.MushroomCap] = { ...ITEMS[BlockId.MushroomCap], iconKind: "giant-mushroom" };
-for (const crate of [BlockId.MoonberryCrate, BlockId.SunberryCrate, BlockId.AppleCrate, BlockId.FrostpearCrate, BlockId.ShellfruitCrate] as const) {
+for (const crate of [BlockId.MoonberryCrate, BlockId.SunberryCrate, BlockId.AppleCrate, BlockId.FrostpearCrate, BlockId.ShellfruitCrate, BlockId.MoonberryCookieCrate] as const) {
   ITEMS[crate] = { ...ITEMS[crate], iconKind: "produce-crate" };
 }
 
@@ -1768,6 +1778,7 @@ Object.assign(ITEMS, {
   [Item.ArgentDragonstoneItem]: { id: Item.ArgentDragonstoneItem, name: "Argent Dragonstone", color: "#8293aa", maxStack: 64, placeBlock: BlockId.ArgentDragonstone, worldTextureBlock: BlockId.ArgentDragonstone },
   [Item.MoonboughLogItem]: { id: Item.MoonboughLogItem, name: "Moonbough Log", color: "#58677f", maxStack: 64, placeBlock: BlockId.MoonboughLog },
   [Item.MoonboughLeavesItem]: { id: Item.MoonboughLeavesItem, name: "Moonbough Leaves", color: "#4a8c79", maxStack: 64, placeBlock: BlockId.MoonboughLeaves },
+  [Item.MoonboughChairItem]: { id: Item.MoonboughChairItem, name: "Moonbough Chair", color: "#647693", maxStack: 64, placeBlock: BlockId.MoonboughChair, iconKind: "chair", heldModel: "chair", dropModel: "chair" },
   [Item.GlimmerGrassBlock]: { id: Item.GlimmerGrassBlock, name: "Glimmerwood Grass", color: "#315f4d", maxStack: 64, placeBlock: BlockId.GlimmerGrass },
   [Item.SnowcapStoneItem]: { id: Item.SnowcapStoneItem, name: "Snowcap Stone", color: "#87929a", maxStack: 64, placeBlock: BlockId.SnowcapStone },
   [Item.DeepgearBrickItem]: { id: Item.DeepgearBrickItem, name: "Deepgear Brick", color: "#545e62", maxStack: 64, placeBlock: BlockId.DeepgearBrick },
@@ -1916,6 +1927,7 @@ Object.assign(ITEMS, {
   [Item.SailkelpFrond]: { id: Item.SailkelpFrond, name: "Sailkelp Frond", color: "#827b43", maxStack: 64, useKind: "plant", plantBlock: BlockId.Sailkelp, iconKind: "produce", worldTextureBlock: BlockId.Sailkelp },
   [Item.FeatherwrackSprig]: { id: Item.FeatherwrackSprig, name: "Featherwrack Sprig", color: "#a45d4f", maxStack: 64, useKind: "plant", plantBlock: BlockId.Featherwrack, iconKind: "produce", worldTextureBlock: BlockId.Featherwrack },
   [Item.PearlfanCutting]: { id: Item.PearlfanCutting, name: "Pearlfan Cutting", color: "#c8bdba", maxStack: 64, useKind: "plant", plantBlock: BlockId.Pearlfan, iconKind: "produce", worldTextureBlock: BlockId.Pearlfan },
+  [Item.MoonberryCookie]: { id: Item.MoonberryCookie, name: "Moonberry Cookie", color: "#b98550", maxStack: 64, food: 5, iconKind: "moonberry-cookie", heldModel: "moonberry-cookie", dropModel: "moonberry-cookie" },
 } satisfies Record<number, ItemDefinition>);
 
 /**
@@ -2004,6 +2016,7 @@ export const BLOCK_ITEM_ALIASES: Readonly<Partial<Record<BlockId, ItemCode>>> = 
   [BlockId.GlimmerGrass]: Item.GlimmerGrassBlock,
   [BlockId.MoonboughLog]: Item.MoonboughLogItem,
   [BlockId.MoonboughLeaves]: Item.MoonboughLeavesItem,
+  [BlockId.MoonboughChair]: Item.MoonboughChairItem,
   [BlockId.Moonpetal]: Item.Moonpetal,
   [BlockId.Starfern]: Item.StarfernFrond,
   [BlockId.Dreamcap]: Item.Dreamcap,
@@ -2273,7 +2286,7 @@ export const WILD_BONDS_TOMES: readonly ItemCode[] = Object.freeze([
   Item.TomeDeepLantern, Item.TomeIronwake, Item.TomeTidemend, Item.TomeHearthward,
 ]);
 
-export const CREATIVE_BLOCKS: ItemCode[] = [...new Set<ItemCode>([...DRAGON_ITEMS, ...V1_CULTURE_ITEMS, ...V1_STORAGE_ITEMS, ...V1_2_HOMESTEAD_ITEMS, ...WILD_BONDS_TOMES, Item.IronFilings, ...Object.values(BLOCKS)
+export const CREATIVE_BLOCKS: ItemCode[] = [...new Set<ItemCode>([...DRAGON_ITEMS, ...V1_CULTURE_ITEMS, ...V1_STORAGE_ITEMS, ...V1_2_HOMESTEAD_ITEMS, ...WILD_BONDS_TOMES, Item.IronFilings, Item.MoonberryCookie, ...Object.values(BLOCKS)
   .filter((definition) => ITEMS[definition.id] && BLOCK_ITEM_ALIASES[definition.id] === undefined && !definition.replaceable && definition.id !== BlockId.WheatCrop)
   .map((definition) => definition.id), ...CREATIVE_FLORA, ...Object.values(BLOCK_ITEM_ALIASES).filter((item): item is ItemCode => item !== undefined), BlockId.Torch, Item.WildwoodDoor, Item.WildwoodBed, Item.Sailboat, Item.CaptureOrb, Item.WorldshellEgg, Item.AetherbellEgg, Item.Shellfruit, Item.Reefglass, Item.LivingCoral, Item.LumenPearl, Item.PrismaticPearl, Item.TideglassTrident, Item.GlowmenderSalve, Item.TemperedRootspike, Item.RareSeedPouch, Item.WargFeed, Item.Honeycomb, Item.HoneyJar, Item.RoyalJelly, Item.Beeswax, Item.MilkBottle, Item.CloudglassRelic, Item.QueenCell, Item.WorkerBee, Item.GlassBottle, Item.WaterBottle, Item.HealthPotion, Item.WayfarerPotion, Item.HearthwardTonic, Item.GloamstepElixir, Item.WaterBreathingPotion, Item.Honeymead, Item.HobbitCrossbowBlueprint, Item.FineCrossbowBlueprint, Item.GoblinSpearBlueprint, Item.GloamstepBlueprint, Item.HearthwardBlueprint, Item.MeadBlueprint, Item.HearthguardCrossbow, Item.WayfarerCrossbow, Item.CrossbowBolt, Item.GoblinsmithSpear, Item.Berry, Item.Sunberry, Item.Apple, Item.Banana, Item.Wheat, Item.WheatSeeds, Item.Moonrice, Item.MoonriceSeeds, Item.Sunroot, Item.SunrootStarts, Item.SaltbrushSprig, Item.CoastAsterPetal, Item.LumenKelpFrond, Item.StarCoralShard, Item.AbyssBloomNectar, Item.TidevineFiber, Item.RainveilLog, Item.SakurabloomLog, Item.RainveilSapling, Item.SakurabloomSapling, Item.SakuraBloomItem, Item.DreamblossomItem, Item.RainveilFernItem, Item.LanternLotusItem, Item.WildwoodTableItem, Item.WildwoodStoolItem, Item.WildwoodShelfItem, Item.SealedBarrelItem, Item.RainveilLeavesItem, Item.SakurabloomLeavesItem, Item.RainveilGrassBlock, Item.SakurabloomGrassBlock, Item.StarrootScepter, Item.Feather, Item.RawFish, Item.CookedFish, Item.GlowScale, Item.BreatherCharm, Item.SunwardCompass, Item.WoodHoe, Item.StoneHoe, Item.IronHoe, Item.HarvestScythe, Item.Bucket, Item.WaterBucket, Item.LavaBucket, Item.HoneyBucket, Item.SyrupBucket, Item.Lead, Item.WildwoodFenceGate, Item.Saddle, Item.NocturneHeart, Item.ButterflyNet, Item.MeadowwingJar, Item.AzureSkipperJar, Item.EmbertipJar, Item.FrostveilJar, Item.BloomMonarchJar, Item.FenLanternJar, Item.BonbonwingTreat, Item.SyrupfinFillet, Item.CandiedAlloy, Item.RockcandySaber, Item.PeppermintLance, Item.FondantCrown, Item.FondantCuirass, Item.FondantGreaves, Item.FondantBoots, Item.PeppermintRush, Item.MarshmallowWard, Item.SugarcourtArmsBlueprint, Item.FondantArmorBlueprint, Item.PeppermintRushBlueprint, Item.MarshmallowWardBlueprint, Item.HideHood, Item.HideTunic, Item.HideLeggings, Item.HideBoots, Item.IronHelm, Item.IronPlate, Item.IronGreaves, Item.IronBoots, Item.WindSilk, Item.LivingInk, Item.ClockworkSpring])];
 
@@ -2326,6 +2339,8 @@ export const RECIPES: Recipe[] = [
   { id: "shellfruit-crate-open", name: "Shellfruit", width: 1, height: 1, pattern: [BlockId.ShellfruitCrate], output: { item: Item.Shellfruit, count: 9 }, table: false },
   { id: "moonberry-crate", name: "Moonberry Crate", width: 3, height: 3, pattern: Array<ItemCode>(9).fill(Item.Berry), output: { item: BlockId.MoonberryCrate, count: 1 }, table: true },
   { id: "moonberry-crate-open", name: "Moonberries", width: 1, height: 1, pattern: [BlockId.MoonberryCrate], output: { item: Item.Berry, count: 9 }, table: false },
+  { id: "moonberry-cookie-crate", name: "Moonberry Cookie Crate", width: 3, height: 3, pattern: Array<ItemCode>(9).fill(Item.MoonberryCookie), output: { item: BlockId.MoonberryCookieCrate, count: 1 }, table: true },
+  { id: "moonberry-cookie-crate-open", name: "Moonberry Cookies", width: 1, height: 1, pattern: [BlockId.MoonberryCookieCrate], output: { item: Item.MoonberryCookie, count: 9 }, table: false },
   { id: "sunberry-crate", name: "Sunberry Crate", width: 3, height: 3, pattern: Array<ItemCode>(9).fill(Item.Sunberry), output: { item: BlockId.SunberryCrate, count: 1 }, table: true },
   { id: "sunberry-crate-open", name: "Sunberries", width: 1, height: 1, pattern: [BlockId.SunberryCrate], output: { item: Item.Sunberry, count: 9 }, table: false },
   { id: "apple-crate", name: "Wild Apple Crate", width: 3, height: 3, pattern: Array<ItemCode>(9).fill(Item.Apple), output: { item: BlockId.AppleCrate, count: 1 }, table: true },
@@ -2340,6 +2355,7 @@ export const RECIPES: Recipe[] = [
   { id: "torch", name: "Torches", width: 1, height: 2, pattern: [ANY_COAL, Item.Stick], output: { item: BlockId.Torch, count: 4 }, table: false },
   { id: "bread", name: "Field Bread", width: 3, height: 1, pattern: [Item.Wheat, Item.Wheat, Item.Wheat], output: { item: Item.Bread, count: 1 }, table: true },
   { id: "hearthberry-apple-pie", name: "Hearthberry Apple Pie", width: 3, height: 2, pattern: [Item.Wheat, Item.Wheat, Item.Wheat, Item.Apple, Item.Berry, Item.HoneyJar], output: { item: Item.HearthberryApplePie, count: 1 }, table: true },
+  { id: "moonberry-cookies", name: "Moonberry Cookies", width: 3, height: 1, pattern: [Item.Wheat, Item.Berry, Item.Wheat], output: { item: Item.MoonberryCookie, count: 4 }, table: true },
   { id: "furnace", name: "Furnace", width: 3, height: 3, pattern: [BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone, 0, BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone, BlockId.Cobblestone], output: { item: BlockId.Furnace, count: 1 }, table: true },
   { id: "chest", name: "Wildwood Chest", width: 3, height: 3, pattern: [BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks, 0, BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: BlockId.Chest, count: 1 }, table: true },
   { id: "door", name: "Wildwood Doors", width: 2, height: 3, pattern: [BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks, BlockId.Planks], output: { item: Item.WildwoodDoor, count: 3 }, table: true },

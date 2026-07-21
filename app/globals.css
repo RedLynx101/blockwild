@@ -7498,6 +7498,37 @@ input:focus-visible {
   box-shadow: -8px 2px #cb4d47;
 }
 
+.item-icon-kind-moonberry-cookie::before {
+  left: 2px;
+  top: 3px;
+  width: 26px;
+  height: 25px;
+  border: 2px solid #6b3e28;
+  border-radius: 43% 48% 45% 42%;
+  background:
+    radial-gradient(circle at 26% 34%, #74438f 0 7%, #4f2c65 8% 10%, transparent 11%),
+    radial-gradient(circle at 70% 30%, #aa6bc2 0 7%, #714089 8% 10%, transparent 11%),
+    radial-gradient(circle at 31% 73%, #9258ae 0 7%, #633477 8% 10%, transparent 11%),
+    radial-gradient(circle at 76% 70%, #6d397f 0 6%, #4d285c 7% 9%, transparent 10%),
+    linear-gradient(135deg, #e5b86f 0 14%, #c98b4c 15% 43%, #b57641 44% 68%, #d79b55 69% 100%);
+  box-shadow: inset -3px -3px 0 #8c542f, inset 2px 2px 0 #f0c982, 2px 3px 0 rgba(0, 0, 0, .42);
+  clip-path: polygon(15% 0, 74% 0, 74% 4%, 92% 4%, 92% 13%, 100% 13%, 100% 78%, 92% 78%, 92% 91%, 78% 91%, 78% 100%, 18% 100%, 18% 95%, 7% 95%, 7% 84%, 0 84%, 0 18%, 7% 18%, 7% 8%, 15% 8%);
+  transform: rotate(-7deg);
+}
+
+.item-icon-kind-moonberry-cookie::after {
+  left: 11px;
+  top: 10px;
+  width: 8px;
+  height: 9px;
+  border: 3px solid #f1dfad;
+  border-top-color: transparent;
+  border-right-color: transparent;
+  border-radius: 50%;
+  filter: drop-shadow(1px 1px 0 #8f653e);
+  transform: rotate(-35deg);
+}
+
 .item-icon-kind-seed::before {
   left: 3px;
   top: 5px;
