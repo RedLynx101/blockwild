@@ -2,6 +2,11 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.8.8 - Packhand Hotfix - 2026-07-21
+
+- Restored Minecraft-style double-left-click collection across visible inventory stacks without regressing ordinary cursor placement or multi-slot drag painting.
+- Routed same-slot releases through the browser's click count before mutating inventory, with a bounded fallback for overlays that replace the clicked slot before its trailing click arrives.
+
 ## 1.8.7 - First Dawn Hotfix - 2026-07-21
 
 - Corrected “A Fire Through First Dawn” to count a day only after it has been survived, and repaired old day-one quest states that had already been marked ready incorrectly.
