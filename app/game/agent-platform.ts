@@ -386,6 +386,15 @@ function validateCommandArguments(kind: AgentCommandKind, args: Record<string, u
   }
   if ((kind === "build_commit" || kind === "build_cancel") && !isId(args.previewId)) return false;
   if ((kind === "harvest_area" || kind === "gather_resource") && (args.radius !== undefined && !isFiniteNumber(args.radius, 1, AGENT_MAX_HARVEST_RADIUS))) return false;
+  if (kind === "task_pin" && (!isShortString(args.title, 120)
+    || (args.note !== undefined && !isShortString(args.note, 320, true))
+    || (args.owner !== undefined && !isShortString(args.owner, 80)))) return false;
+  if (kind === "task_update" && (!isId(args.taskId)
+    || (args.title !== undefined && !isShortString(args.title, 120))
+    || (args.note !== undefined && !isShortString(args.note, 320, true))
+    || (args.status !== undefined && !["queued", "active", "paused", "blocked", "completed", "cancelled"].includes(String(args.status))))) return false;
+  if (kind === "waypoint_pin" && (!isShortString(args.name, 80)
+    || (args.position !== undefined && !validateVector(args.position)))) return false;
   if (kind === "world_delete" && (!isId(args.worldId) || args.confirm !== true)) return false;
   return true;
 }
@@ -807,6 +816,25 @@ export function createAgentTask(input: Partial<AgentTaskRecord> & Pick<AgentTask
     updatedAt: now,
     waypointIds: Object.freeze([...(input.waypointIds ?? [])].filter(isId).slice(0, 32)),
     previewIds: Object.freeze([...(input.previewIds ?? [])].filter(isId).slice(0, 32)),
+  });
+}
+
+export function createAgentWaypoint(
+  input: Partial<AgentWaypointRecord> & Pick<AgentWaypointRecord, "agentId" | "name" | "position">,
+  now = Date.now(),
+): AgentWaypointRecord {
+  const id = isId(input.id) ? input.id : `waypoint_${input.agentId}_${now.toString(36)}`;
+  return Object.freeze({
+    id,
+    agentId: input.agentId,
+    name: input.name.trim().slice(0, 80) || "Unnamed waypoint",
+    position: Object.freeze({
+      x: Math.max(-30_000_000, Math.min(30_000_000, Number(input.position.x) || 0)),
+      y: Math.max(-4_096, Math.min(4_096, Number(input.position.y) || 0)),
+      z: Math.max(-30_000_000, Math.min(30_000_000, Number(input.position.z) || 0)),
+    }),
+    createdAt: input.createdAt ?? now,
+    source: input.source ?? "agent",
   });
 }
 

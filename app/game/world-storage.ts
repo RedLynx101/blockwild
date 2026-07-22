@@ -704,12 +704,15 @@ export class WorldStorage {
     if (value.version !== WORLD_EXPORT_VERSION) return fail("unsupported-version", "That Blockwild world export uses an unsupported version.");
     if (!isRecord(value.world) || value.world.version !== WORLD_CATALOG_VERSION) return fail("invalid", "The exported world record is incomplete.");
     if (!isRecord(value.world.metadata) || !isRecord(value.world.options)) return fail("invalid", "The exported world metadata or options are incomplete.");
-    const save = migrateLegacyWorldSave(value.world.save);
-    if (!save) return fail("invalid", "The exported world save is corrupt or incomplete.");
+    const sourceSave = migrateLegacyWorldSave(value.world.save);
+    if (!sourceSave) return fail("invalid", "The exported world save is corrupt or incomplete.");
     const now = this.now();
-    const sourceMetadata = normalizeMetadata(value.world.metadata, { id: "world", save, now });
+    const sourceMetadata = normalizeMetadata(value.world.metadata, { id: "world", save: sourceSave, now });
     if (!sourceMetadata) return fail("invalid", "The exported world metadata is corrupt or incomplete.");
     const id = this.uniqueId(sourceMetadata.id);
+    // Imports are distinct world instances. Private runner notebooks must be
+    // explicitly relinked instead of silently merging on seed equality.
+    const save: WorldSave = { ...sourceSave, agentWorldFingerprint: `worldfp_import_${id}_${now.toString(36)}` };
     const metadata: WorldMetadata = {
       ...sourceMetadata,
       id,

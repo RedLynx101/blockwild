@@ -6976,6 +6976,7 @@ input:focus-visible {
 .agent-client-badge code { color: #fff2b3; }
 
 .agent-session-roster,
+.agent-task-board,
 .multiplayer-chat-panel {
   display: grid;
   gap: 9px;
@@ -6986,6 +6987,7 @@ input:focus-visible {
 }
 
 .agent-session-roster > header,
+.agent-task-board > header,
 .multiplayer-chat-panel > header {
   display: flex;
   align-items: end;
@@ -6994,9 +6996,26 @@ input:focus-visible {
 }
 
 .agent-session-roster h3,
+.agent-task-board h3,
 .multiplayer-chat-panel h3 { margin: 3px 0 0; color: #e8fff5; font-size: 15px; }
 .agent-session-roster header > small,
+.agent-task-board header > small,
 .multiplayer-chat-panel header > small { color: #8eb9aa; font-size: 8px; }
+
+.agent-task-list { display: grid; gap: 6px; }
+.agent-task-list article { display: grid; grid-template-columns: minmax(160px, 1fr) auto auto auto; align-items: center; gap: 6px; padding: 8px; border-left: 3px solid #7edec0; background: rgba(21, 37, 33, .88); }
+.agent-task-list article > div { display: grid; gap: 2px; min-width: 0; }
+.agent-task-list strong { color: #edfff8; font-size: 9px; }
+.agent-task-list small { color: #82a99b; font-size: 6px; }
+.agent-task-list p { margin: 2px 0 0; color: #bed1c9; font-size: 8px; line-height: 1.4; }
+.agent-task-list select,
+.agent-task-list button { min-height: 28px; border: 1px solid #657a71; background: #1c2b26; color: #dcebe5; font: 700 7px var(--font-geist-mono), monospace; }
+.agent-task-list .danger { border-color: #87554f; background: #472c29; color: #ffd9d4; }
+.agent-waypoint-list { display: flex; flex-wrap: wrap; gap: 5px; }
+.agent-waypoint-list > span { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; min-width: 150px; padding: 6px 7px; border: 1px solid #476c60; background: #10211c; }
+.agent-waypoint-list b { color: #d8f7eb; font-size: 8px; }
+.agent-waypoint-list small { grid-column: 1; color: #7eb6a3; font-size: 6px; }
+.agent-waypoint-list button { grid-column: 2; grid-row: 1 / 3; border: 0; background: transparent; color: #d9857d; cursor: pointer; }
 
 .agent-session-roster article {
   display: grid;
@@ -7069,7 +7088,10 @@ input:focus-visible {
 @media (max-width: 720px) {
   .agent-chat-hud { bottom: 178px; }
   .agent-session-roster > header,
+  .agent-task-board > header,
   .multiplayer-chat-panel > header { align-items: start; flex-direction: column; }
+  .agent-task-list article { grid-template-columns: 1fr 1fr; }
+  .agent-task-list article > div { grid-column: 1 / -1; }
   .multiplayer-chat-panel form,
   .agent-chat-hud form { grid-template-columns: 1fr; }
 }

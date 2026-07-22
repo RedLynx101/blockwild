@@ -611,11 +611,15 @@ import { buildMaterialRequirements, reserveBuildMaterials } from "./agent-work";
 import {
   AgentAuthority,
   AgentChatRing,
+  AgentDiagnostics,
   AGENT_DEFAULT_RENDER_DISTANCE,
   AGENT_DEFAULT_SIMULATION_DISTANCE,
+  createAgentTask,
+  createAgentWaypoint,
   defaultAgentCapabilities,
   mergeAgentInterestRegions,
   createAgentResult,
+  normalizeAgentWorldSave,
   type AgentCapability,
   type AgentCapabilityGrant,
   type AgentBlockPlacement,
@@ -627,6 +631,10 @@ import {
   type AgentObservationV1,
   type AgentNearbyEntity,
   type AgentSessionRecord,
+  type AgentTaskRecord,
+  type AgentWaypointRecord,
+  type AgentWorldSaveV1,
+  type AgentDiagnosticsV1,
 } from "./agent-platform";
 import {
   createRoomCode,
@@ -1460,6 +1468,12 @@ export type WorldSave = {
   multiplayerProgressions?: Record<string, PlayerProgressionRecord>;
   /** Host-owned guest wallets persist alongside their stable player profiles. */
   multiplayerWallets?: Record<string, GoldWalletState>;
+  /** Public, host-editable companion task and waypoint ledger. */
+  agentPlatform?: AgentWorldSaveV1;
+  /** Stable per world instance; imports receive a new value before notebook relinking. */
+  agentWorldFingerprint?: string;
+  /** Only worlds created by an explicit local agent test-admin session carry this marker. */
+  agentTestWorld?: boolean;
   savedAt: number;
 };
 
@@ -1480,6 +1494,8 @@ export type MultiplayerUiState = {
   agents: AgentSessionRecord[];
   chat: AgentChatMessage[];
   newestChatSequence: number;
+  agentTasks: AgentTaskRecord[];
+  agentWaypoints: AgentWaypointRecord[];
 };
 
 export type EngineEvents = {
@@ -1497,7 +1513,7 @@ export type EngineEvents = {
   onRendererState?: (lost: boolean) => void;
 };
 
-export type VoxelEngineOptions = Readonly<{ agentMode?: boolean }>;
+export type VoxelEngineOptions = Readonly<{ agentMode?: boolean; agentTestAdmin?: boolean }>;
 
 type VoxelHit = {
   x: number;
@@ -4124,6 +4140,7 @@ export class VoxelEngine {
   activeChestBlocks: Array<readonly [number, number, number]> = [];
   multiplayer: MultiplayerSession | null = null;
   readonly agentMode: boolean;
+  readonly agentTestAdmin: boolean;
   hostRendezvous: HostRendezvous | null = null;
   multiplayerState: MultiplayerUiState = {
     ...detectMultiplayerSupport(),
@@ -4138,6 +4155,8 @@ export class VoxelEngine {
     agents: [],
     chat: [],
     newestChatSequence: 0,
+    agentTasks: [],
+    agentWaypoints: [],
   };
   multiplayerTick = 0;
   multiplayerPoseTimer = 0;
@@ -4198,6 +4217,10 @@ export class VoxelEngine {
   agentBuildJobs = new Map<string, AgentBuildJob>();
   agentBuildPreviewVisuals = new Map<string, THREE.InstancedMesh>();
   agentWorkFeedback: AgentWorkFeedback[] = [];
+  agentWorldState: AgentWorldSaveV1 = normalizeAgentWorldSave(null);
+  agentDiagnostics: AgentDiagnostics | null = null;
+  agentTestWorld = false;
+  agentWorldFingerprint = "worldfp_unlinked";
   pendingGuestCreatureInventoryRequests = new Map<string, number>();
   /** Suppresses generic pack uploads until the host resolves optimistic placement costs. */
   pendingGuestPlacementRequests = new Map<string, number>();
@@ -4208,6 +4231,7 @@ export class VoxelEngine {
 
   constructor(canvas: HTMLCanvasElement, events: EngineEvents, settings = readSettings(), options: VoxelEngineOptions = {}) {
     this.agentMode = options.agentMode === true;
+    this.agentTestAdmin = this.agentMode && options.agentTestAdmin === true;
     if (this.agentMode) settings = {
       ...settings,
       renderDistance: AGENT_DEFAULT_RENDER_DISTANCE,
@@ -4848,6 +4872,7 @@ export class VoxelEngine {
     options: Partial<WorldOptions> = {},
     name = "New World",
     originSearchRadius = DEFAULT_SETTLEMENT_ORIGIN_SEARCH_RADIUS,
+    agentTestWorld = false,
   ) {
     this.persistent = true;
     this.running = true;
@@ -4857,6 +4882,11 @@ export class VoxelEngine {
     this.world.setRenderDistance(this.titleMode ? Math.min(this.settings.renderDistance, this.touchMode ? 4 : 6) : this.settings.renderDistance);
     this.localPlayerModel.setVariant(this.playerVariant);
     this.worldOptions = normalizeWorldOptions(options);
+    this.agentTestWorld = agentTestWorld;
+    this.agentWorldState = normalizeAgentWorldSave(null);
+    this.agentDiagnostics = null;
+    const fingerprintBytes = crypto.getRandomValues(new Uint8Array(12));
+    this.agentWorldFingerprint = `worldfp_${Date.now().toString(36)}_${[...fingerprintBytes].map((value) => value.toString(16).padStart(2, "0")).join("")}`;
     this.startingSettlementId = null;
     this.butterflyDensity = this.worldOptions.butterflyDensity;
     if (!this.worldOptions.weather) this.weather = "clear";
@@ -5393,6 +5423,12 @@ export class VoxelEngine {
     this.world.setRenderDistance(this.settings.renderDistance);
     this.localPlayerModel.setVariant(this.playerVariant);
     this.worldOptions = normalizeWorldOptions(options);
+    this.agentTestWorld = save.agentTestWorld === true;
+    this.agentWorldState = normalizeAgentWorldSave(save.agentPlatform);
+    this.agentDiagnostics = null;
+    this.agentWorldFingerprint = typeof save.agentWorldFingerprint === "string" && /^worldfp_[A-Za-z0-9_-]{8,120}$/u.test(save.agentWorldFingerprint)
+      ? save.agentWorldFingerprint
+      : `worldfp_${(worldId ?? save.seed).replace(/[^A-Za-z0-9_-]/gu, "_").slice(0, 80)}_${GENERATOR_VERSION}`;
     this.startingSettlementId = typeof save.startingSettlementId === "string" ? save.startingSettlementId : null;
     this.butterflyDensity = this.worldOptions.butterflyDensity;
     this.activeWorldId = worldId;
@@ -5627,6 +5663,7 @@ export class VoxelEngine {
   getMultiplayerState(): MultiplayerUiState {
     const authority = this.agentAuthority ??= new AgentAuthority();
     const chat = this.agentChat ??= new AgentChatRing();
+    const agentWorldState = this.agentWorldState ??= normalizeAgentWorldSave(null);
     if (this.multiplayer) {
       const awaitingGuest = Boolean(this.hostRendezvous && this.multiplayer.role !== "host");
       this.multiplayerState.status = awaitingGuest ? "hosting" : this.multiplayer.state;
@@ -5636,12 +5673,16 @@ export class VoxelEngine {
     this.multiplayerState.agents = authority.list();
     this.multiplayerState.chat = chat.list();
     this.multiplayerState.newestChatSequence = chat.newestSequence();
+    this.multiplayerState.agentTasks = [...agentWorldState.tasks];
+    this.multiplayerState.agentWaypoints = [...agentWorldState.waypoints];
     return {
       ...this.multiplayerState,
       peers: this.multiplayerState.peers.map((peer) => ({ ...peer, identity: peer.identity ? { ...peer.identity } : null })),
       reasons: [...this.multiplayerState.reasons],
       agents: this.multiplayerState.agents.map((agent) => ({ ...agent, requested: [...agent.requested], granted: [...agent.granted] })),
       chat: this.multiplayerState.chat.map((message) => ({ ...message, ...(message.position ? { position: { ...message.position } } : {}) })),
+      agentTasks: this.multiplayerState.agentTasks.map((task) => ({ ...task, waypointIds: [...task.waypointIds], previewIds: [...task.previewIds] })),
+      agentWaypoints: this.multiplayerState.agentWaypoints.map((waypoint) => ({ ...waypoint, position: { ...waypoint.position } })),
     };
   }
 
@@ -5741,6 +5782,136 @@ export class VoxelEngine {
 
   getAgentInventory(agentId: string) {
     return (this.agentInventories.get(agentId) ?? []).map((slot) => cloneSlot(slot));
+  }
+
+  updateAgentTaskFromHost(taskId: string, input: Readonly<{ status?: AgentTaskRecord["status"]; note?: string; title?: string }>) {
+    if (this.multiplayer?.role !== "host") return false;
+    const existing = this.agentWorldState.tasks.find((task) => task.id === taskId);
+    if (!existing) return false;
+    const updated = createAgentTask({
+      ...existing,
+      title: input.title ?? existing.title,
+      note: input.note ?? existing.note,
+      status: input.status ?? existing.status,
+      owner: existing.owner,
+    });
+    this.agentWorldState = normalizeAgentWorldSave({ ...this.agentWorldState, tasks: this.agentWorldState.tasks.map((task) => task.id === taskId ? updated : task) });
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  removeAgentTaskFromHost(taskId: string) {
+    if (this.multiplayer?.role !== "host" || !this.agentWorldState.tasks.some((task) => task.id === taskId)) return false;
+    this.agentWorldState = normalizeAgentWorldSave({ ...this.agentWorldState, tasks: this.agentWorldState.tasks.filter((task) => task.id !== taskId) });
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  removeAgentWaypointFromHost(waypointId: string) {
+    if (this.multiplayer?.role !== "host" || !this.agentWorldState.waypoints.some((waypoint) => waypoint.id === waypointId)) return false;
+    this.agentWorldState = normalizeAgentWorldSave({
+      ...this.agentWorldState,
+      waypoints: this.agentWorldState.waypoints.filter((waypoint) => waypoint.id !== waypointId),
+      tasks: this.agentWorldState.tasks.map((task) => ({ ...task, waypointIds: task.waypointIds.filter((id) => id !== waypointId) })),
+    });
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  private assertLocalAgentTestAdmin() {
+    return this.agentTestAdmin && (!this.multiplayer || this.multiplayer.role !== "guest");
+  }
+
+  listAgentTestWorlds() {
+    if (!this.assertLocalAgentTestAdmin()) return [];
+    return this.worldStorage.listWorlds().flatMap((metadata) => {
+      const loaded = this.worldStorage.loadWorld(metadata.id, false);
+      return loaded.ok && loaded.value.save.agentTestWorld === true ? [{ ...metadata }] : [];
+    });
+  }
+
+  createAgentTestWorld(input: Readonly<{ seed: string; name?: string; mode?: GameMode; options?: Partial<WorldOptions>; fixture?: string }>) {
+    if (!this.assertLocalAgentTestAdmin()) return { ok: false as const, code: "test_admin_denied" };
+    const created = this.createWorld(input.seed, input.mode === "survival" ? "survival" : "builder", input.options ?? { weather: false }, input.name ?? "Agent Test World", DEFAULT_SETTLEMENT_ORIGIN_SEARCH_RADIUS, true);
+    if (created) switch (input.fixture) {
+      case "agent-drone": this.primeAgentDroneAudit(); break;
+      case "map-navigation": this.primeMapNavigationAudit(false, false); break;
+      case "ocean-flora": this.primeOceanFloraAudit(); break;
+      case "cave-liquid": this.primeCaveLiquidAudit(); break;
+      case "tree-fall": this.primeTreeFallAudit(); break;
+      case "creature-collision": this.primeCreatureCollisionAudit(); break;
+      default: break;
+    }
+    return created ? { ok: true as const, world: created } : { ok: false as const, code: "world_create_failed" };
+  }
+
+  loadAgentTestWorld(worldId: string) {
+    if (!this.assertLocalAgentTestAdmin()) return { ok: false as const, code: "test_admin_denied" };
+    const loaded = this.worldStorage.loadWorld(worldId, false);
+    if (!loaded.ok || loaded.value.save.agentTestWorld !== true) return { ok: false as const, code: "test_world_not_found" };
+    this.loadWorld(loaded.value.save, loaded.value.options, worldId);
+    return { ok: true as const, world: { ...loaded.value.metadata } };
+  }
+
+  exportAgentTestWorld(worldId: string) {
+    if (!this.assertLocalAgentTestAdmin()) return { ok: false as const, code: "test_admin_denied" };
+    const loaded = this.worldStorage.loadWorld(worldId, false);
+    if (!loaded.ok || loaded.value.save.agentTestWorld !== true) return { ok: false as const, code: "test_world_not_found" };
+    const exported = this.worldStorage.exportWorld(worldId);
+    return exported.ok ? { ok: true as const, json: exported.value } : { ok: false as const, code: exported.error.code };
+  }
+
+  importAgentTestWorld(json: string) {
+    if (!this.assertLocalAgentTestAdmin()) return { ok: false as const, code: "test_admin_denied" };
+    try {
+      const value = JSON.parse(json) as { world?: { save?: { agentTestWorld?: unknown } } };
+      if (value.world?.save?.agentTestWorld !== true) return { ok: false as const, code: "not_an_agent_test_world" };
+    } catch { return { ok: false as const, code: "invalid_world_export" }; }
+    const imported = this.worldStorage.importWorld(json);
+    return imported.ok ? { ok: true as const, world: imported.value } : { ok: false as const, code: imported.error.code };
+  }
+
+  deleteAgentTestWorld(worldId: string, confirm: boolean) {
+    if (!this.assertLocalAgentTestAdmin() || confirm !== true) return { ok: false as const, code: "destructive_confirmation_required" };
+    if (worldId === this.activeWorldId) return { ok: false as const, code: "active_test_world_cannot_be_deleted" };
+    const loaded = this.worldStorage.loadWorld(worldId, false);
+    if (!loaded.ok || loaded.value.save.agentTestWorld !== true) return { ok: false as const, code: "test_world_not_found" };
+    const deleted = this.worldStorage.deleteWorld(worldId);
+    return deleted.ok ? { ok: true as const, world: deleted.value } : { ok: false as const, code: deleted.error.code };
+  }
+
+  startLocalAgentDiagnostics(runner: Readonly<{ model?: string; reasoning?: string }> = {}) {
+    if (!this.assertLocalAgentTestAdmin() || !this.agentTestWorld) return { ok: false as const, code: "diagnostics_test_world_only" };
+    this.agentDiagnostics = new AgentDiagnostics();
+    this.agentDiagnostics.runner = { model: String(runner.model ?? "unreported").slice(0, 64), reasoning: String(runner.reasoning ?? "unreported").slice(0, 32) };
+    return { ok: true as const, startedAt: this.agentDiagnostics.startedAt };
+  }
+
+  exportLocalAgentDiagnostics(): AgentDiagnosticsV1 | null {
+    return this.agentDiagnostics?.export() ?? null;
+  }
+
+  stopLocalAgentDiagnostics() {
+    const report = this.agentDiagnostics?.export() ?? null;
+    this.agentDiagnostics = null;
+    return report;
+  }
+
+  setLocalAgentTestPaused(paused: boolean) {
+    if (!this.assertLocalAgentTestAdmin() || !this.agentTestWorld) return { ok: false as const, code: "test_admin_denied" };
+    this.paused = paused;
+    return { ok: true as const, paused: this.paused };
+  }
+
+  advanceLocalAgentTest(milliseconds: number) {
+    if (!this.assertLocalAgentTestAdmin() || !this.agentTestWorld) return { ok: false as const, code: "test_admin_denied" };
+    if (!this.paused) return { ok: false as const, code: "pause_test_world_first" };
+    const bounded = Math.max(0, Math.min(10_000, Math.trunc(milliseconds)));
+    this.advanceSimulation(bounded);
+    return { ok: true as const, advancedMilliseconds: bounded, observation: this.createAgentObservation() };
   }
 
   sendMultiplayerChat(text: string, channel: AgentChatChannel = "global") {
@@ -6217,6 +6388,8 @@ export class VoxelEngine {
       agents: [],
       chat: [],
       newestChatSequence: 0,
+      agentTasks: [],
+      agentWaypoints: [],
     };
     this.agentAuthority = new AgentAuthority();
     (this.agentChat ??= new AgentChatRing()).clear();
@@ -8670,6 +8843,7 @@ export class VoxelEngine {
             requested: event.peer.identity.requestedCapabilities,
           });
           if (!record) {
+            if (this.agentDiagnostics) this.agentDiagnostics.capacity.rejectedAgents += 1;
             const rejected: AgentCapabilityGrant = {
               schema: 1,
               agentId: event.peer.identity.id,
@@ -8684,6 +8858,7 @@ export class VoxelEngine {
             queueMicrotask(() => this.multiplayer?.disconnectPeer(event.peer.identity!.id, "agent-capacity-reached"));
             this.events.onToast(`${event.peer.identity.name} could not join: drone capacity reached.`);
           } else {
+            if (this.agentDiagnostics) this.agentDiagnostics.capacity.admittedAgents = this.agentAuthority.list().filter((agent) => agent.status === "approved" || agent.status === "paused" || agent.status === "pending").length;
             this.sendAgentGrant(record, "Waiting for host approval.");
             if (!this.agentInventories.has(record.agentId)) this.agentInventories.set(record.agentId, blankInventory());
             const slot = Math.max(0, this.agentAuthority.list().findIndex((agent) => agent.agentId === record.agentId));
@@ -23313,6 +23488,12 @@ export class VoxelEngine {
           : [];
       });
       const plan = mergeAgentInterestRegions(points.map((point) => ({ x: point.x, y: point.y, z: point.z })), agentEntries);
+      if (this.agentDiagnostics) {
+        this.agentDiagnostics.capacity.admittedAgents = plan.admittedAgentIds.length;
+        this.agentDiagnostics.capacity.mergedRegions = plan.agentRegions;
+        const diameter = AGENT_DEFAULT_SIMULATION_DISTANCE * 2 + 1;
+        this.agentDiagnostics.capacity.simulatedChunks = plan.agentRegions * diameter * diameter;
+      }
       for (const region of plan.mergedAgentRegions) {
         const leader = region.agentIds.map((agentId) => this.remotePlayers.get(agentId)?.target).find(Boolean);
         if (leader) points.push({ id: `agent-region:${region.key}`, x: leader.x, y: leader.y, z: leader.z, yaw: leader.yaw });
@@ -28411,6 +28592,7 @@ export class VoxelEngine {
 
   private publishAgentResult(result: AgentCommandResult) {
     this.agentAuthority.setCurrentResult(result);
+    this.agentDiagnostics?.recordResult(result);
     try { this.multiplayer?.sendAgentResult(result, result.agentId); } catch { /* Replayed by command id after reconnect. */ }
     return result;
   }
@@ -28576,6 +28758,7 @@ export class VoxelEngine {
       const channel = ["local", "party", "global", "system"].includes(String(args.channel)) ? args.channel as AgentChatChannel : "global";
       const appended = this.agentChat.append({ authorId: command.agentId, authorName: record?.name ?? "Field Drone", peerKind: "agent", channel, text, sentAt: Date.now(), position: { x: pose.x, y: pose.y, z: pose.z } });
       if (!appended.ok) return blocked(appended.code, "The chat message was invalid or rate limited.");
+      if (this.agentDiagnostics) this.agentDiagnostics.communications.chatMessages += 1;
       this.multiplayer?.sendChat(appended.message);
       return completed("chat_sent", "The message was sent as in-world dialogue.", { sequence: appended.message.sequence });
     }
@@ -28813,6 +28996,61 @@ export class VoxelEngine {
       this.agentBuildJobs.set(command.agentId, { command, preview, placementIndex: 0, removalIndex: 0, reserved, startedAt, committed: 0, lastReportAt: performance.now() });
       return this.publishAgentResult(createAgentResult(command, "running", revision, "build_committing", "Materials reserved. The host is placing bounded batches from the approved preview.", { startedAt, progress: { completed: 0, total: preview.placements.length + preview.removals.length } }));
     }
+    if (command.kind === "task_pin") {
+      if (!this.agentWorldState.enabled) return blocked("agent_tasks_disabled", "The host disabled the public companion task board for this world.");
+      const task = createAgentTask({
+        agentId: command.agentId,
+        title: String(args.title),
+        owner: String(args.owner ?? command.agentId),
+        note: String(args.note ?? ""),
+        status: ["queued", "active", "paused", "blocked", "completed", "cancelled"].includes(String(args.status)) ? args.status as AgentTaskRecord["status"] : "queued",
+        waypointIds: Array.isArray(args.waypointIds) ? args.waypointIds.map(String) : [],
+        previewIds: Array.isArray(args.previewIds) ? args.previewIds.map(String) : [],
+      });
+      this.agentWorldState = normalizeAgentWorldSave({ ...this.agentWorldState, tasks: [...this.agentWorldState.tasks, task] });
+      this.saveSoon();
+      return completed("task_pinned", "The task was added to the host-visible world task board.", { task });
+    }
+    if (command.kind === "task_update") {
+      const taskId = String(args.taskId);
+      const existing = this.agentWorldState.tasks.find((task) => task.id === taskId);
+      if (!existing || existing.agentId !== command.agentId) return blocked("task_not_found", "That task does not belong to this drone or no longer exists.");
+      const updated = createAgentTask({
+        ...existing,
+        title: args.title === undefined ? existing.title : String(args.title),
+        note: args.note === undefined ? existing.note : String(args.note),
+        status: args.status === undefined ? existing.status : args.status as AgentTaskRecord["status"],
+      });
+      this.agentWorldState = normalizeAgentWorldSave({ ...this.agentWorldState, tasks: this.agentWorldState.tasks.map((task) => task.id === taskId ? updated : task) });
+      this.saveSoon();
+      return completed("task_updated", "The public task checkpoint was updated.", { task: updated });
+    }
+    if (command.kind === "waypoint_pin") {
+      if (!this.agentWorldState.enabled) return blocked("agent_tasks_disabled", "The host disabled companion waypoints for this world.");
+      const requested = args.position as { x: number; y: number; z: number } | undefined;
+      const waypoint = createAgentWaypoint({ agentId: command.agentId, name: String(args.name), position: requested ?? { x: pose.x, y: pose.y, z: pose.z }, source: "agent" });
+      this.agentWorldState = normalizeAgentWorldSave({ ...this.agentWorldState, waypoints: [...this.agentWorldState.waypoints, waypoint] });
+      this.saveSoon();
+      return completed("waypoint_pinned", "The waypoint was added to this world's public companion ledger.", { waypoint });
+    }
+    if (["memory_pin", "memory_list", "memory_remove"].includes(command.kind)) return blocked("private_runner_notebook", "Private notebook records live in the runner workspace. Use the repository agent-player skill so secrets and private notes never enter multiplayer or the world save.");
+    if (["world_list", "world_create", "world_load", "world_export", "world_delete"].includes(command.kind)) return blocked("guest_world_admin_denied", "World administration is never available through a guest multiplayer command. Launch /agent?testAdmin=1 locally and use the dedicated test-world bridge.");
+    if (command.kind === "diagnostics_start") {
+      if (!this.agentTestWorld) return blocked("diagnostics_test_world_only", "Agent diagnostics require a world created by explicit local test-admin mode.");
+      this.agentDiagnostics = new AgentDiagnostics();
+      this.agentDiagnostics.runner = { model: String(args.model ?? "unreported").slice(0, 64), reasoning: String(args.reasoning ?? "unreported").slice(0, 32) };
+      return completed("diagnostics_started", "Bounded engine-verifiable agent diagnostics started for this test world.");
+    }
+    if (command.kind === "diagnostics_stop") {
+      if (!this.agentDiagnostics) return blocked("diagnostics_not_running", "Agent diagnostics are not running.");
+      const report = this.agentDiagnostics.export();
+      this.agentDiagnostics = null;
+      return completed("diagnostics_stopped", "Agent diagnostics stopped and returned a sanitized report.", { report });
+    }
+    if (command.kind === "diagnostics_export") {
+      if (!this.agentDiagnostics) return blocked("diagnostics_not_running", "Agent diagnostics are not running.");
+      return completed("diagnostics_ready", "A bounded engine-verifiable diagnostics snapshot is ready.", { report: this.agentDiagnostics.export() });
+    }
     return blocked("command_not_supported", `The deterministic executor does not support ${command.kind} in this phase.`);
   }
 
@@ -29015,7 +29253,7 @@ export class VoxelEngine {
     this.agentObservationSequences.set(agentId, sequence);
     const safeWorldId = (this.activeWorldId ?? `world_${this.world.seedText}`).replace(/[^A-Za-z0-9:_-]/gu, "_").slice(0, 128) || "world_session";
     const messages = chat.since(Math.max(0, chat.newestSequence() - 40), 40);
-    return {
+    const observation: AgentObservationV1 = {
       schema: 1,
       observationSequence: sequence,
       observedAt: now,
@@ -29024,7 +29262,7 @@ export class VoxelEngine {
       coordinateSystem: "+x east, +y up, +z south; block coordinates are integer cells; actor y is its ground-plane height",
       session: {
         worldId: safeWorldId,
-        worldFingerprint: `worldfp_${this.world.seedText.replace(/[^A-Za-z0-9_-]/gu, "_").slice(0, 96) || "unknown"}_${GENERATOR_VERSION}`,
+        worldFingerprint: this.agentWorldFingerprint,
         gameVersion: GAME_VERSION,
         generatorVersion: GENERATOR_VERSION,
         multiplayerProtocolVersion: MULTIPLAYER_PROTOCOL_VERSION,
@@ -29061,8 +29299,9 @@ export class VoxelEngine {
         reachable,
       },
       chat: { newestSequence: chat.newestSequence(), newChatCount: messages.length, messages },
-      tasks: [],
-      waypoints: [],
+      tasks: this.agentWorldState.tasks.filter((task) => task.agentId === agentId || task.owner === agentId).slice(-64),
+      waypoints: this.agentWorldState.waypoints.filter((waypoint) => waypoint.agentId === agentId
+        || this.agentWorldState.tasks.some((task) => (task.agentId === agentId || task.owner === agentId) && task.waypointIds.includes(waypoint.id))).slice(-128),
       performance: {
         fps: this.averageFps,
         renderDistance: this.agentMode ? AGENT_DEFAULT_RENDER_DISTANCE : this.settings.renderDistance,
@@ -29071,6 +29310,8 @@ export class VoxelEngine {
         channelBackpressure: 0,
       },
     };
+    this.agentDiagnostics?.recordObservation(observation);
+    return observation;
   }
 
   getLatestAgentObservation() { return this.latestAgentObservation ? structuredClone(this.latestAgentObservation) : null; }
@@ -29690,6 +29931,9 @@ export class VoxelEngine {
         inventory: save.inventory.map(normalizeCaptureOrbInventorySlot),
       })),
       leads: serializeLeadAnchors(this.leadAnchors, new Set(this.mobs.map((mob) => mob.id))),
+      agentPlatform: normalizeAgentWorldSave(this.agentWorldState),
+      agentWorldFingerprint: this.agentWorldFingerprint,
+      ...(this.agentTestWorld ? { agentTestWorld: true } : {}),
       savedAt: Date.now(),
     };
   }

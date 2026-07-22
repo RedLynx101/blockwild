@@ -39,7 +39,7 @@ import {
   type RecipePlanResult,
 } from "./engine";
 import { BUTTERFLY_ORDER } from "./mobs";
-import type { AgentCapability, AgentChatMessage, AgentSessionRecord } from "./agent-platform";
+import type { AgentCapability, AgentChatMessage, AgentSessionRecord, AgentTaskRecord, AgentWaypointRecord } from "./agent-platform";
 import { createAgentBrowserBridge, type AgentBrowserBridge } from "./agent-bridge";
 import type { BestiaryFieldNote, BestiaryNoteMetric, MobDefinition } from "./mobs";
 import { creatureProfile } from "./creature-profiles";
@@ -349,6 +349,8 @@ type MultiplayerViewState = {
   agents: AgentSessionRecord[];
   chat: AgentChatMessage[];
   newestChatSequence: number;
+  agentTasks: AgentTaskRecord[];
+  agentWaypoints: AgentWaypointRecord[];
 };
 
 export function multiplayerViewStatesEqual(left: MultiplayerViewState, right: MultiplayerViewState) {
@@ -364,7 +366,9 @@ export function multiplayerViewStatesEqual(left: MultiplayerViewState, right: Mu
     || left.reasons.length !== right.reasons.length
     || left.peers.length !== right.peers.length
     || left.agents.length !== right.agents.length
-    || left.chat.length !== right.chat.length) return false;
+    || left.chat.length !== right.chat.length
+    || left.agentTasks.length !== right.agentTasks.length
+    || left.agentWaypoints.length !== right.agentWaypoints.length) return false;
   if (left.reasons.some((reason, index) => reason !== right.reasons[index])) return false;
   const peersEqual = left.peers.every((peer, index) => {
     const other = right.peers[index];
@@ -377,13 +381,22 @@ export function multiplayerViewStatesEqual(left: MultiplayerViewState, right: Mu
       && peer.latencyMs === other.latencyMs;
   });
   if (!peersEqual) return false;
-  return left.agents.every((agent, index) => {
+  const agentsEqual = left.agents.every((agent, index) => {
     const other = right.agents[index];
     return agent.agentId === other.agentId
       && agent.status === other.status
       && agent.muted === other.muted
       && agent.updatedAt === other.updatedAt
       && agent.granted.join("|") === other.granted.join("|");
+  });
+  if (!agentsEqual) return false;
+  if (left.agentTasks.some((task, index) => {
+    const other = right.agentTasks[index];
+    return task.id !== other.id || task.updatedAt !== other.updatedAt || task.status !== other.status || task.note !== other.note;
+  })) return false;
+  return !left.agentWaypoints.some((waypoint, index) => {
+    const other = right.agentWaypoints[index];
+    return waypoint.id !== other.id || waypoint.name !== other.name || waypoint.position.x !== other.position.x || waypoint.position.y !== other.position.y || waypoint.position.z !== other.position.z;
   });
 }
 
@@ -407,6 +420,9 @@ type MultiplayerEngineApi = {
   muteAgent?: (agentId: string, muted: boolean) => boolean;
   stopAgent?: (agentId: string) => boolean;
   getAgentInventory?: (agentId: string) => Array<InventorySlot | null>;
+  updateAgentTaskFromHost?: (taskId: string, input: Readonly<{ status?: AgentTaskRecord["status"]; note?: string; title?: string }>) => boolean;
+  removeAgentTaskFromHost?: (taskId: string) => boolean;
+  removeAgentWaypointFromHost?: (waypointId: string) => boolean;
   sendMultiplayerChat?: (text: string, channel?: "local" | "party" | "global") => boolean;
 };
 
@@ -463,6 +479,8 @@ const EMPTY_MULTIPLAYER_STATE: MultiplayerViewState = {
   agents: [],
   chat: [],
   newestChatSequence: 0,
+  agentTasks: [],
+  agentWaypoints: [],
 };
 
 type ApiaryBeeHud = { alive?: boolean; home?: boolean; id?: string; name?: string };
@@ -2279,7 +2297,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
           });
         },
         onRendererState: (lost) => setWebglError(lost),
-      }, settings, { agentMode });
+      }, settings, { agentMode, agentTestAdmin: agentMode && new URLSearchParams(window.location.search).get("testAdmin") === "1" });
     } catch {
       window.queueMicrotask(() => setWebglError(true));
       return;
@@ -2309,6 +2327,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
           role: state.role,
           roomCode: state.roomCode,
           agentName: engine.multiplayer?.identity.name ?? "Field Drone",
+          testAdmin: engine.agentTestAdmin,
         };
       },
       connect: async (roomCode, name) => {
@@ -2322,10 +2341,25 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
         }
         return { hostName: result.hostName };
       },
+      host: async (roomCode, name) => {
+        if (!engine.agentTestAdmin || !engine.agentTestWorld) throw new Error("Create or load an explicit local agent test world before hosting.");
+        await engine.createMultiplayerRoom(roomCode, name);
+      },
       observe: () => engine.getLatestAgentObservation(),
       latestResult: () => engine.getLatestAgentResult(),
       sendCommand: (command) => engine.submitAgentCommand(command),
       sendChat: (text, channel) => engine.sendMultiplayerChat(text, channel),
+      worldList: () => engine.listAgentTestWorlds(),
+      worldCreate: (input) => engine.createAgentTestWorld({ ...input, options: input.options as Partial<WorldOptions> | undefined }),
+      worldLoad: (worldId) => engine.loadAgentTestWorld(worldId),
+      worldExport: (worldId) => engine.exportAgentTestWorld(worldId),
+      worldImport: (json) => engine.importAgentTestWorld(json),
+      worldDelete: (worldId, confirm) => engine.deleteAgentTestWorld(worldId, confirm),
+      diagnosticsStart: (input) => engine.startLocalAgentDiagnostics(input),
+      diagnosticsExport: () => engine.exportLocalAgentDiagnostics(),
+      diagnosticsStop: () => engine.stopLocalAgentDiagnostics(),
+      testPause: (paused) => engine.setLocalAgentTestPaused(paused),
+      testAdvance: (milliseconds) => engine.advanceLocalAgentTest(milliseconds),
       disconnect: () => engine.disconnectMultiplayer(),
     });
     const auditParameters = new URLSearchParams(window.location.search);
@@ -2949,6 +2983,8 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
           agents: Array.isArray(state.agents) ? state.agents : [],
           chat: Array.isArray(state.chat) ? state.chat : [],
           newestChatSequence: typeof state.newestChatSequence === "number" ? state.newestChatSequence : 0,
+          agentTasks: Array.isArray(state.agentTasks) ? state.agentTasks : [],
+          agentWaypoints: Array.isArray(state.agentWaypoints) ? state.agentWaypoints : [],
         };
         return multiplayerViewStatesEqual(current, next) ? current : next;
       });
@@ -5172,6 +5208,17 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
                   <button type="button" className="danger" onClick={() => updateAgent((api) => api.stopAgent?.(agent.agentId) ?? false)}>STOP</button>
                 </div>
               </article>)}
+            </section>}
+
+            {multiplayerState.role === "host" && (multiplayerState.agentTasks.length > 0 || multiplayerState.agentWaypoints.length > 0) && <section className="agent-task-board" aria-labelledby="agent-task-board-heading">
+              <header><div><span className="panel-eyebrow">WORLD-SAVED PUBLIC LEDGER</span><h3 id="agent-task-board-heading">Drone task board</h3></div><small>{multiplayerState.agentTasks.length} tasks · {multiplayerState.agentWaypoints.length} pins</small></header>
+              <div className="agent-task-list">{multiplayerState.agentTasks.map((task) => <article key={task.id}>
+                <div><strong>{task.title}</strong><small>{task.owner} · {task.agentId}</small><p>{task.note || "No public checkpoint note."}</p></div>
+                <select aria-label={`Status for ${task.title}`} value={task.status} onChange={(event) => updateAgent((api) => api.updateAgentTaskFromHost?.(task.id, { status: event.target.value as AgentTaskRecord["status"] }) ?? false)}>{["queued", "active", "paused", "blocked", "completed", "cancelled"].map((status) => <option key={status} value={status}>{status}</option>)}</select>
+                <button type="button" onClick={() => { const note = window.prompt("Public task note", task.note); if (note !== null) updateAgent((api) => api.updateAgentTaskFromHost?.(task.id, { note }) ?? false); }}>EDIT NOTE</button>
+                <button type="button" className="danger" onClick={() => updateAgent((api) => api.removeAgentTaskFromHost?.(task.id) ?? false)}>REMOVE</button>
+              </article>)}</div>
+              {multiplayerState.agentWaypoints.length > 0 && <div className="agent-waypoint-list">{multiplayerState.agentWaypoints.map((waypoint) => <span key={waypoint.id}><b>{waypoint.name}</b><small>{Math.round(waypoint.position.x)}, {Math.round(waypoint.position.y)}, {Math.round(waypoint.position.z)}</small><button type="button" aria-label={`Remove ${waypoint.name}`} onClick={() => updateAgent((api) => api.removeAgentWaypointFromHost?.(waypoint.id) ?? false)}>×</button></span>)}</div>}
             </section>}
 
             {multiplayerState.role && <section className="multiplayer-chat-panel" aria-labelledby="multiplayer-chat-heading">

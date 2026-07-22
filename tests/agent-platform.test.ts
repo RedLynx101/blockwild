@@ -9,6 +9,7 @@ import {
   AgentDiagnostics,
   createAgentResult,
   createAgentTask,
+  createAgentWaypoint,
   defaultAgentCapabilities,
   mergeAgentInterestRegions,
   normalizeAgentWorldSave,
@@ -54,6 +55,9 @@ describe("agent platform contracts", () => {
     assert.equal(validateAgentCommand(command({ kind: "world_delete", arguments: { worldId: "world_test", confirm: true } }), now), true);
     assert.equal(validateAgentCommand(command({ kind: "build_plan", arguments: { placements: [] } }), now), false);
     assert.equal(validateAgentCommand(command({ kind: "build_plan", arguments: { placements: [{ x: 1, y: 2, z: 3, block: 4 }] } }), now), true);
+    assert.equal(validateAgentCommand(command({ kind: "task_pin", arguments: { title: "Tend the west field", note: "Mature crops only" } }), now), true);
+    assert.equal(validateAgentCommand(command({ kind: "task_update", arguments: { taskId: "task_1", status: "invented" } }), now), false);
+    assert.equal(validateAgentCommand(command({ kind: "waypoint_pin", arguments: { name: "West field", position: { x: 2, y: 3, z: 4 } } }), now), true);
   });
 
   test("result terminal state is internally consistent", () => {
@@ -152,9 +156,11 @@ describe("agent platform contracts", () => {
 
   test("public tasks and waypoints normalize without importing opaque memory", () => {
     const task = createAgentTask({ agentId: "agent_test", title: "Tend the western field", note: "Only mature wheat" }, 100);
-    const save = normalizeAgentWorldSave({ schema: 1, enabled: true, tasks: [task, { bad: true }], waypoints: [{ id: "way_1", agentId: "agent_test", name: "West field", position: { x: 2, y: 3, z: 4 }, createdAt: 100, source: "agent" }], privateTranscript: "must not survive" });
+    const waypoint = createAgentWaypoint({ id: "way_1", agentId: "agent_test", name: "West field", position: { x: 2, y: 3, z: 4 }, source: "agent" }, 100);
+    const save = normalizeAgentWorldSave({ schema: 1, enabled: true, tasks: [task, { bad: true }], waypoints: [waypoint], privateTranscript: "must not survive" });
     assert.equal(save.tasks.length, 1);
     assert.equal(save.waypoints.length, 1);
+    assert.deepEqual(save.waypoints[0]?.position, { x: 2, y: 3, z: 4 });
     assert.equal("privateTranscript" in save, false);
   });
 

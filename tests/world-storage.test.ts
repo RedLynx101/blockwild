@@ -77,6 +77,30 @@ test("runtime autosaves reuse trusted document metadata instead of reparsing the
   assert.equal(storage.getItemCalls.get(dataKey), 1, "subsequent saves should use the validated shell cache");
 });
 
+test("public agent tasks and test-world provenance round-trip with the owning world", () => {
+  const storage = new MemoryStorage();
+  const worlds = new WorldStorage(storage, { now: () => 2_500, idFactory: () => "agent-ledger" });
+  const worldSave: WorldSave = {
+    ...save("AGENT-LEDGER"),
+    agentTestWorld: true,
+    agentPlatform: {
+      schema: 1,
+      enabled: true,
+      tasks: [{ id: "task_1", agentId: "agent_1", title: "Tend west field", status: "active", owner: "agent_1", note: "Mature only", createdAt: 1, updatedAt: 2, waypointIds: ["way_1"], previewIds: [] }],
+      waypoints: [{ id: "way_1", agentId: "agent_1", name: "West field", position: { x: 4, y: 30, z: -2 }, createdAt: 1, source: "agent" }],
+    },
+  };
+  const created = worlds.createWorld({ name: "Agent Ledger", save: worldSave });
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+  const loaded = worlds.loadWorld(created.value.id, false);
+  assert.equal(loaded.ok, true);
+  if (!loaded.ok) return;
+  assert.equal(loaded.value.save.agentTestWorld, true);
+  assert.equal(loaded.value.save.agentPlatform?.tasks[0]?.title, "Tend west field");
+  assert.deepEqual(loaded.value.save.agentPlatform?.waypoints[0]?.position, { x: 4, y: 30, z: -2 });
+});
+
 test("autosaves refresh stale shells changed by another WorldStorage instance", () => {
   const storage = new MemoryStorage();
   let firstNow = 1_000;
@@ -338,7 +362,7 @@ test("world exports validate on import and use collision-safe local IDs", () => 
   const worlds = new WorldStorage(storage, { now: () => 5_000, idFactory: () => "same-id" });
   const created = worlds.createWorld({
     name: "Export Me",
-    save: save("PORTABLE"),
+    save: { ...save("PORTABLE"), agentWorldFingerprint: "worldfp_original_portable" },
     options: { difficulty: "hard", keepInventory: true, biomeScale: 2.5 },
   });
   assert.equal(created.ok, true);
@@ -357,6 +381,8 @@ test("world exports validate on import and use collision-safe local IDs", () => 
   assert.equal(copy.ok, true);
   if (!copy.ok) return;
   assert.equal(copy.value.save.seed, "PORTABLE");
+  assert.match(copy.value.save.agentWorldFingerprint ?? "", /^worldfp_import_same-id-2_/u);
+  assert.notEqual(copy.value.save.agentWorldFingerprint, "worldfp_original_portable");
   assert.equal(copy.value.options.difficulty, "hard");
   assert.equal(copy.value.options.keepInventory, true);
   assert.equal(copy.value.options.biomeScale, 2.5);

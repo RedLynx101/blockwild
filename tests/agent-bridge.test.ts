@@ -30,6 +30,7 @@ test("typed agent bridge constructs fresh host-authorized commands without expos
   assert.equal(sent[0]?.agentId, "agent_1");
   assert.equal(sent[0]?.expectedWorldRevision, 42);
   assert.equal(bridge.status().lastObservationSequence, 7);
+  assert.equal(bridge.status().testAdmin, false);
   assert.equal("engine" in bridge, false);
   assert.equal("executeJavaScript" in bridge, false);
   assert.equal(Object.isFrozen(bridge), true);
@@ -44,4 +45,32 @@ test("typed agent bridge refuses mutation before an authoritative observation", 
   });
   assert.deepEqual(bridge.command({ kind: "move_to", arguments: { target: { x: 1, y: 2, z: 3 } } }), { accepted: false, commandId: "", error: "no_observation" });
   assert.equal(sends, 0);
+});
+
+test("local test-admin bridge is explicit and keeps destructive confirmation separate", async () => {
+  const calls: string[] = [];
+  const bridge = createAgentBrowserBridge({
+    getStatus: () => ({ connected: false, role: null, roomCode: "", agentName: "Mica", testAdmin: true }),
+    connect: async () => ({ hostName: "Noah" }),
+    host: async (roomCode) => { calls.push(`host:${roomCode}`); },
+    observe: () => observation,
+    latestResult: () => null,
+    sendCommand: () => false,
+    sendChat: () => false,
+    worldList: () => [{ id: "world_test" }],
+    worldCreate: (input) => ({ ok: true, seed: input.seed }),
+    worldLoad: (worldId) => ({ ok: true, worldId }),
+    worldExport: (worldId) => ({ ok: true, worldId, json: "{}" }),
+    worldDelete: (worldId, confirm) => ({ ok: confirm, worldId }),
+    diagnosticsStart: () => ({ ok: true }),
+    diagnosticsExport: () => ({ schema: 1 }),
+    diagnosticsStop: () => ({ schema: 1 }),
+    disconnect: () => undefined,
+  });
+  assert.equal(bridge.status().testAdmin, true);
+  assert.deepEqual(bridge.worldList(), [{ id: "world_test" }]);
+  assert.deepEqual(bridge.worldDelete({ worldId: "world_test", confirm: false }), { ok: false, worldId: "world_test" });
+  assert.deepEqual(bridge.worldDelete({ worldId: "world_test", confirm: true }), { ok: true, worldId: "world_test" });
+  await bridge.host({ roomCode: "test room", name: "Mica" });
+  assert.deepEqual(calls, ["host:TESTROOM"]);
 });

@@ -17,6 +17,7 @@ export type AgentBridgeStatus = Readonly<{
   agentName: string;
   lastObservationSequence: number;
   lastCommandId: string | null;
+  testAdmin: boolean;
 }>;
 
 export type AgentBridgeCommandInput = Readonly<{
@@ -32,20 +33,44 @@ export type AgentBrowserBridge = Readonly<{
   version: 1;
   status(): AgentBridgeStatus;
   connect(input: Readonly<{ roomCode: string; name?: string }>): Promise<Readonly<{ connected: boolean; hostName: string; roomCode: string }>>;
+  host(input: Readonly<{ roomCode: string; name?: string }>): Promise<Readonly<{ hosted: boolean; roomCode: string }>>;
   observe(): AgentObservationV1 | null;
   latestResult(): AgentCommandResult | null;
   command(input: AgentBridgeCommandInput): Readonly<{ accepted: boolean; commandId: string; error?: string }>;
   chat(text: string, channel?: AgentChatChannel): boolean;
+  worldList(): unknown;
+  worldCreate(input: Readonly<{ seed: string; name?: string; mode?: "survival" | "builder"; options?: Readonly<Record<string, unknown>>; fixture?: string }>): unknown;
+  worldLoad(worldId: string): unknown;
+  worldExport(worldId: string): unknown;
+  worldImport(json: string): unknown;
+  worldDelete(input: Readonly<{ worldId: string; confirm: boolean }>): unknown;
+  diagnosticsStart(input?: Readonly<{ model?: string; reasoning?: string }>): unknown;
+  diagnosticsExport(): unknown;
+  diagnosticsStop(): unknown;
+  testPause(paused: boolean): unknown;
+  testAdvance(milliseconds: number): unknown;
   disconnect(): void;
 }>;
 
 export type AgentBridgeAdapter = Readonly<{
-  getStatus(): Omit<AgentBridgeStatus, "schema" | "ready" | "lastObservationSequence" | "lastCommandId" | "agentId">;
+  getStatus(): Omit<AgentBridgeStatus, "schema" | "ready" | "lastObservationSequence" | "lastCommandId" | "agentId" | "testAdmin"> & Readonly<{ testAdmin?: boolean }>;
   connect(roomCode: string, name: string): Promise<{ hostName: string }>;
+  host?(roomCode: string, name: string): Promise<void>;
   observe(): AgentObservationV1 | null;
   latestResult(): AgentCommandResult | null;
   sendCommand(command: AgentCommandEnvelope): boolean;
   sendChat(text: string, channel: AgentChatChannel): boolean;
+  worldList?(): unknown;
+  worldCreate?(input: Readonly<{ seed: string; name?: string; mode?: "survival" | "builder"; options?: Readonly<Record<string, unknown>>; fixture?: string }>): unknown;
+  worldLoad?(worldId: string): unknown;
+  worldExport?(worldId: string): unknown;
+  worldImport?(json: string): unknown;
+  worldDelete?(worldId: string, confirm: boolean): unknown;
+  diagnosticsStart?(input?: Readonly<{ model?: string; reasoning?: string }>): unknown;
+  diagnosticsExport?(): unknown;
+  diagnosticsStop?(): unknown;
+  testPause?(paused: boolean): unknown;
+  testAdvance?(milliseconds: number): unknown;
   disconnect(): void;
 }>;
 
@@ -69,6 +94,7 @@ export function createAgentBrowserBridge(adapter: AgentBridgeAdapter): AgentBrow
         schema: AGENT_PLATFORM_SCHEMA_VERSION,
         ready: true,
         ...current,
+        testAdmin: current.testAdmin === true,
         agentId: observation?.self.agentId ?? null,
         lastObservationSequence: observation?.observationSequence ?? 0,
         lastCommandId,
@@ -80,6 +106,13 @@ export function createAgentBrowserBridge(adapter: AgentBridgeAdapter): AgentBrow
       const name = cleanName(input.name ?? "Field Drone");
       const joined = await adapter.connect(roomCode, name);
       return { connected: true, hostName: joined.hostName, roomCode };
+    },
+    async host(input) {
+      const roomCode = cleanRoomCode(input.roomCode);
+      if (!roomCode) throw new Error("A room code is required.");
+      if (!adapter.host) throw new Error("Local test-world hosting is unavailable.");
+      await adapter.host(roomCode, cleanName(input.name ?? "Field Drone"));
+      return { hosted: true, roomCode };
     },
     observe: () => adapter.observe(),
     latestResult: () => adapter.latestResult(),
@@ -109,6 +142,17 @@ export function createAgentBrowserBridge(adapter: AgentBridgeAdapter): AgentBrow
       const clean = text.trim().slice(0, 480);
       return Boolean(clean) && adapter.sendChat(clean, channel);
     },
+    worldList: () => adapter.worldList?.() ?? { ok: false, code: "test_admin_unavailable" },
+    worldCreate: (input) => adapter.worldCreate?.(input) ?? { ok: false, code: "test_admin_unavailable" },
+    worldLoad: (worldId) => adapter.worldLoad?.(String(worldId).slice(0, 128)) ?? { ok: false, code: "test_admin_unavailable" },
+    worldExport: (worldId) => adapter.worldExport?.(String(worldId).slice(0, 128)) ?? { ok: false, code: "test_admin_unavailable" },
+    worldImport: (json) => adapter.worldImport?.(String(json).slice(0, 16 * 1024 * 1024)) ?? { ok: false, code: "test_admin_unavailable" },
+    worldDelete: (input) => adapter.worldDelete?.(String(input.worldId).slice(0, 128), input.confirm === true) ?? { ok: false, code: "test_admin_unavailable" },
+    diagnosticsStart: (input = {}) => adapter.diagnosticsStart?.(input) ?? { ok: false, code: "diagnostics_unavailable" },
+    diagnosticsExport: () => adapter.diagnosticsExport?.() ?? null,
+    diagnosticsStop: () => adapter.diagnosticsStop?.() ?? null,
+    testPause: (paused) => adapter.testPause?.(paused === true) ?? { ok: false, code: "test_admin_unavailable" },
+    testAdvance: (milliseconds) => adapter.testAdvance?.(Math.max(0, Math.min(10_000, Math.trunc(milliseconds)))) ?? { ok: false, code: "test_admin_unavailable" },
     disconnect: () => adapter.disconnect(),
   });
 }

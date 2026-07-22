@@ -679,6 +679,8 @@ test("multiplayer polling retains React state when the visible session is unchan
     agents: [],
     chat: [],
     newestChatSequence: 0,
+    agentTasks: [],
+    agentWaypoints: [],
   };
   assert.equal(multiplayerViewStatesEqual(state, structuredClone(state)), true);
   assert.equal(multiplayerViewStatesEqual(state, { ...structuredClone(state), peers: [{ ...state.peers[0], latencyMs: 25 }] }), false);

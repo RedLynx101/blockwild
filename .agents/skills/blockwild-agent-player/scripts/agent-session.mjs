@@ -36,10 +36,11 @@ async function readNotebook(worldFingerprint, agentId) {
   const file = notebookPath(worldFingerprint, agentId);
   try {
     const parsed = JSON.parse(await fs.readFile(file, "utf8"));
-    return { schema: 1, worldFingerprint, agentId, pins: Array.isArray(parsed.pins) ? parsed.pins.slice(-256) : [] };
+    const now = Date.now();
+    return { schema: 1, worldFingerprint, agentId, enabled: parsed.enabled !== false, pins: Array.isArray(parsed.pins) ? parsed.pins.filter((pin) => !Number.isFinite(pin?.expiresAt) || pin.expiresAt > now).slice(-256) : [] };
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
-    return { schema: 1, worldFingerprint, agentId, pins: [] };
+    return { schema: 1, worldFingerprint, agentId, enabled: true, pins: [] };
   }
 }
 
@@ -56,8 +57,11 @@ function validatePin(pin) {
   if (!pin || typeof pin !== "object" || Array.isArray(pin)) throw new Error("pin must be an object");
   for (const key of Object.keys(pin)) if (FORBIDDEN_PIN_FIELD.test(key)) throw new Error(`forbidden notebook field: ${key}`);
   if (!String(pin.text ?? "").trim() || String(pin.text).length > 640) throw new Error("pin text must be 1-640 characters");
+  if (/(?:api[_ -]?key|authorization|bearer|password|invite code|BEGIN [A-Z ]+ KEY)/iu.test(String(pin.text))) throw new Error("pin text appears to contain a secret or invite credential");
   if (!['player', 'agent', 'system'].includes(pin.source)) throw new Error("pin source must be player, agent, or system");
   if (!Number.isFinite(pin.confidence) || pin.confidence < 0 || pin.confidence > 1) throw new Error("pin confidence must be between 0 and 1");
+  if (pin.position && (![pin.position.x, pin.position.y, pin.position.z].every(Number.isFinite)
+    || Math.abs(pin.position.x) > 30_000_000 || Math.abs(pin.position.y) > 4_096 || Math.abs(pin.position.z) > 30_000_000)) throw new Error("pin position is outside world bounds");
 }
 
 async function connectPage(cdpUrl) {
@@ -105,7 +109,7 @@ async function main() {
   const options = args(process.argv.slice(2));
   const action = options._[0] || "help";
   if (action === "help") {
-    process.stdout.write("agent-session.mjs status|observe|command|speak|notebook-list|notebook-pin|notebook-remove [options]\n");
+    process.stdout.write("agent-session.mjs status|observe|command|host|world-list|world-create|world-load|world-export|world-import|world-delete|test-pause|test-resume|test-advance|diagnostics-start|diagnostics-export|diagnostics-stop|speak|notebook-list|notebook-pin|notebook-correct|notebook-remove|notebook-export|notebook-disable [options]\n");
     return;
   }
   if (action === "status") {
@@ -121,6 +125,51 @@ async function main() {
     process.stdout.write(`${JSON.stringify(await bridgeCall(options.cdp, "command", [payload]), null, 2)}\n`);
     return;
   }
+  if (action === "host") {
+    process.stdout.write(`${JSON.stringify(await bridgeCall(options.cdp, "host", [{ roomCode: options.room, name: options.name }]), null, 2)}\n`);
+    return;
+  }
+  if (action === "world-list") {
+    process.stdout.write(`${JSON.stringify(await bridgeCall(options.cdp, "worldList", []), null, 2)}\n`);
+    return;
+  }
+  if (action === "world-create") {
+    const payload = { seed: String(options.seed || "AGENT-TEST"), name: String(options.name || "Agent Test World"), mode: options.mode === "survival" ? "survival" : "builder", ...(options.fixture ? { fixture: String(options.fixture) } : {}) };
+    process.stdout.write(`${JSON.stringify(await bridgeCall(options.cdp, "worldCreate", [payload]), null, 2)}\n`);
+    return;
+  }
+  if (action === "world-load" || action === "world-export") {
+    const method = action === "world-load" ? "worldLoad" : "worldExport";
+    process.stdout.write(`${JSON.stringify(await bridgeCall(options.cdp, method, [String(options.world || "")]), null, 2)}\n`);
+    return;
+  }
+  if (action === "world-import") {
+    const json = await fs.readFile(path.resolve(String(options.file || "")), "utf8");
+    process.stdout.write(`${JSON.stringify(await bridgeCall(options.cdp, "worldImport", [json]), null, 2)}\n`);
+    return;
+  }
+  if (action === "world-delete") {
+    if (options.confirm !== "DELETE") throw new Error("world-delete requires --confirm DELETE");
+    process.stdout.write(`${JSON.stringify(await bridgeCall(options.cdp, "worldDelete", [{ worldId: String(options.world || ""), confirm: true }]), null, 2)}\n`);
+    return;
+  }
+  if (action === "diagnostics-start") {
+    process.stdout.write(`${JSON.stringify(await bridgeCall(options.cdp, "diagnosticsStart", [{ model: options.model, reasoning: options.reasoning }]), null, 2)}\n`);
+    return;
+  }
+  if (action === "test-pause" || action === "test-resume") {
+    process.stdout.write(`${JSON.stringify(await bridgeCall(options.cdp, "testPause", [action === "test-pause"]), null, 2)}\n`);
+    return;
+  }
+  if (action === "test-advance") {
+    process.stdout.write(`${JSON.stringify(await bridgeCall(options.cdp, "testAdvance", [Number(options.milliseconds || 0)]), null, 2)}\n`);
+    return;
+  }
+  if (action === "diagnostics-export" || action === "diagnostics-stop") {
+    const method = action === "diagnostics-export" ? "diagnosticsExport" : "diagnosticsStop";
+    process.stdout.write(`${JSON.stringify(await bridgeCall(options.cdp, method, []), null, 2)}\n`);
+    return;
+  }
   if (action === "speak") {
     const text = String(options.text || "").trim();
     const audio = await elevenLabsSpeech(text);
@@ -132,10 +181,13 @@ async function main() {
   if (!world || !agent) throw new Error("--world and --agent are required for notebook operations");
   const notebook = await readNotebook(world, agent);
   if (action === "notebook-list") {
-    process.stdout.write(`${JSON.stringify(notebook, null, 2)}\n`);
+    const taskId = options.task ? safeSegment(options.task, "") : "";
+    const selected = taskId ? { ...notebook, pins: notebook.pins.filter((pin) => pin.taskId === taskId) } : notebook;
+    process.stdout.write(`${JSON.stringify(selected, null, 2)}\n`);
     return;
   }
   if (action === "notebook-pin") {
+    if (!notebook.enabled) throw new Error("this world notebook is disabled");
     const now = Date.now();
     const pin = {
       id: safeSegment(options.id, `pin-${now.toString(36)}`),
@@ -146,11 +198,24 @@ async function main() {
       verifiedAt: now,
       ...(options.expires ? { expiresAt: Number(options.expires) } : {}),
       ...(options.task ? { taskId: safeSegment(options.task, "task") } : {}),
+      ...(options.x !== undefined && options.y !== undefined && options.z !== undefined ? { position: { x: Number(options.x), y: Number(options.y), z: Number(options.z) } } : {}),
     };
     validatePin(pin);
     notebook.pins = [...notebook.pins.filter((entry) => entry.id !== pin.id), pin].slice(-256);
     await writeNotebook(notebook);
     process.stdout.write(`${JSON.stringify(pin)}\n`);
+    return;
+  }
+  if (action === "notebook-correct") {
+    if (!notebook.enabled) throw new Error("this world notebook is disabled");
+    const id = safeSegment(options.id, "");
+    const existing = notebook.pins.find((pin) => pin.id === id);
+    if (!existing) throw new Error("notebook pin not found");
+    const corrected = { ...existing, text: String(options.text || existing.text).trim(), source: options.source || "player", confidence: Number(options.confidence ?? existing.confidence), verifiedAt: Date.now() };
+    validatePin(corrected);
+    notebook.pins = notebook.pins.map((pin) => pin.id === id ? corrected : pin);
+    await writeNotebook(notebook);
+    process.stdout.write(`${JSON.stringify(corrected)}\n`);
     return;
   }
   if (action === "notebook-remove") {
@@ -161,6 +226,17 @@ async function main() {
     process.stdout.write(`${JSON.stringify({ removed: before !== notebook.pins.length, id })}\n`);
     return;
   }
+  if (action === "notebook-export") {
+    process.stdout.write(`${JSON.stringify(notebook, null, 2)}\n`);
+    return;
+  }
+  if (action === "notebook-disable") {
+    notebook.enabled = options.enable === true || options.enable === "true";
+    if (!notebook.enabled && options.clear === "YES") notebook.pins = [];
+    await writeNotebook(notebook);
+    process.stdout.write(`${JSON.stringify({ enabled: notebook.enabled, pins: notebook.pins.length })}\n`);
+    return;
+  }
   throw new Error(`Unknown action: ${action}`);
 }
 
@@ -169,4 +245,3 @@ catch (error) {
   process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
   process.exitCode = 1;
 }
-
