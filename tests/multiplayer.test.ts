@@ -8,6 +8,7 @@ import {
   MultiplayerProtocolError,
   MultiplayerSession,
   RELIABLE_CHANNEL_LABEL,
+  VOICE_CHANNEL_LABEL,
   decodeEnvelope,
   decodeInviteCode,
   detectMultiplayerSupport,
@@ -30,6 +31,7 @@ import {
   type TimeWeatherSnapshot,
   type WorldSnapshot,
 } from "../app/game/multiplayer.ts";
+import type { AgentChatMessage, AgentCommandEnvelope, AgentVoiceChunk } from "../app/game/agent-platform.ts";
 
 const HOST: PeerIdentity = { id: "player_host_001", name: "Host", color: "#44aaee" };
 const GUEST_A: PeerIdentity = { id: "player_guest_01", name: "Guest A", color: "#ee8844" };
@@ -316,7 +318,7 @@ test("browser-native local descriptions survive the automatic offer and answer e
   assert.equal(guestEvents.some((event) => event.type === "error"), false);
 });
 
-test("manual offer/answer creates both channel modes and carries host-authoritative messages", async () => {
+test("manual offer/answer creates gameplay, movement, and voice lanes and carries host-authoritative messages", async () => {
   const network = new FakeRtcNetwork();
   let clock = 1_000;
   const hostEvents: MultiplayerEvent[] = [];
@@ -334,6 +336,7 @@ test("manual offer/answer creates both channel modes and carries host-authoritat
   const movement = hostConnection.channels.find((channel) => channel.label === MOVEMENT_CHANNEL_LABEL);
   assert.equal(movement?.ordered, false);
   assert.equal(movement?.maxRetransmits, 0);
+  assert.equal(hostConnection.channels.find((channel) => channel.label === VOICE_CHANNEL_LABEL)?.ordered, true);
 
   const action: BlockAction = {
     requestId: "request_block_01",
@@ -395,6 +398,83 @@ test("manual offer/answer creates both channel modes and carries host-authoritat
   assert.equal(host.state, "hosting");
   host.dispose();
   guest.dispose();
+});
+
+test("agent peers preserve identity, command ownership, chat ordering, and dedicated voice routing", async () => {
+  const network = new FakeRtcNetwork();
+  const hostEvents: MultiplayerEvent[] = [];
+  const agentEvents: MultiplayerEvent[] = [];
+  const agent: PeerIdentity = {
+    id: "agent_fieldhand_01",
+    name: "Fieldhand",
+    color: "#7bd6c6",
+    peerKind: "agent",
+    runnerVersion: "runner-1.0.0",
+    requestedCapabilities: ["observe.world", "move.self", "chat.send", "voice.send"],
+  };
+  assert.equal(validatePeerIdentity(agent), true);
+  assert.equal(validatePeerIdentity({ ...GUEST_A, requestedCapabilities: ["observe.world"] }), false, "human peers cannot smuggle agent capability requests");
+  const host = makeSession(HOST, network, Date.now, hostEvents);
+  const runner = makeSession(agent, network, Date.now, agentEvents);
+  await connect(host, runner);
+
+  const peer = host.getPeers()[0];
+  assert.equal(peer.identity?.peerKind, "agent");
+  assert.equal(peer.identity?.runnerVersion, "runner-1.0.0");
+  assert.equal(peer.voiceOpen, true);
+
+  const issuedAt = Date.now();
+  const command: AgentCommandEnvelope = {
+    schema: 1,
+    commandId: "command_move_01",
+    agentId: agent.id,
+    kind: "move_to",
+    expectedWorldRevision: 3,
+    issuedAt,
+    expiresAt: issuedAt + 60_000,
+    arguments: { target: { x: 5, y: 40, z: -2 } },
+  };
+  assert.equal(runner.sendAgentCommand(command), 1);
+  const chat: AgentChatMessage = {
+    schema: 1,
+    id: "chat_fieldhand_01",
+    sequence: 1,
+    authorId: agent.id,
+    authorName: agent.name,
+    peerKind: "agent",
+    channel: "local",
+    text: "I am heading to the marker.",
+    sentAt: issuedAt,
+    position: { x: 0, y: 40, z: 0 },
+  };
+  assert.equal(runner.sendChat(chat), 1);
+  const voice: AgentVoiceChunk = {
+    schema: 1,
+    streamId: "voice_stream_01",
+    agentId: agent.id,
+    messageId: chat.id,
+    mimeType: "audio/mpeg",
+    textHash: "sha256_demo_hash",
+    text: chat.text,
+    sequence: 1,
+    chunkIndex: 0,
+    chunkCount: 1,
+    durationMs: 1_200,
+    data: "QUJDRA==",
+    position: { x: 0, y: 40, z: 0 },
+  };
+  assert.equal(runner.sendVoiceChunk(voice), 1);
+  await flushMessages();
+
+  const messages = hostEvents.filter((event): event is Extract<MultiplayerEvent, { type: "message" }> => event.type === "message");
+  assert.equal(messages.some((event) => event.envelope.type === "agent-command" && event.channel === "reliable"), true);
+  assert.equal(messages.some((event) => event.envelope.type === "chat" && event.channel === "reliable"), true);
+  assert.equal(messages.some((event) => event.envelope.type === "voice-chunk" && event.channel === "voice"), true);
+  assert.throws(() => runner.sendAgentCommand({ ...command, agentId: GUEST_A.id }), /local peer identity/u);
+  assert.throws(() => runner.sendChat({ ...chat, authorId: GUEST_A.id }), /local peer identity/u);
+
+  runner.dispose();
+  host.dispose();
 });
 
 test("one host maintains independent star links for multiple guests and broadcasts snapshots", async () => {

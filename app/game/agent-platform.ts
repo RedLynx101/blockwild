@@ -559,7 +559,7 @@ export class AgentAuthority {
       status: "pending",
       requested: Object.freeze(requested),
       granted: Object.freeze([]),
-      currentCommand: null,
+      currentCommand: current?.currentCommand ?? null,
       connectedAt: current?.connectedAt ?? now,
       updatedAt: now,
       muted: current?.muted ?? false,
@@ -698,6 +698,15 @@ export class AgentChatRing {
     recent.push(now);
     this.sentAtByAuthor.set(input.authorId, recent);
     return { ok: true as const, message: candidate };
+  }
+
+  /** Accepts host-sequenced chat on guests without re-authoring its identity. */
+  appendAuthoritative(message: AgentChatMessage) {
+    if (!validateAgentChatMessage(message) || message.sequence <= this.sequence) return false;
+    this.sequence = message.sequence;
+    this.messages.push(Object.freeze({ ...message, ...(message.position ? { position: Object.freeze({ ...message.position }) } : {}) }));
+    if (this.messages.length > AGENT_MAX_CHAT_HISTORY) this.messages.splice(0, this.messages.length - AGENT_MAX_CHAT_HISTORY);
+    return true;
   }
 
   since(sequence: number, limit = 40) {

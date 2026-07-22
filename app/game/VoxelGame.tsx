@@ -39,6 +39,7 @@ import {
   type RecipePlanResult,
 } from "./engine";
 import { BUTTERFLY_ORDER } from "./mobs";
+import type { AgentCapability, AgentChatMessage, AgentSessionRecord } from "./agent-platform";
 import type { BestiaryFieldNote, BestiaryNoteMetric, MobDefinition } from "./mobs";
 import { creatureProfile } from "./creature-profiles";
 import { captureKnowledgeForResearch } from "./creature-capture";
@@ -328,7 +329,7 @@ type MultiplayerPeerView = {
   token?: string;
   id?: string;
   name?: string;
-  identity?: { id?: string; name?: string } | null;
+  identity?: { id?: string; name?: string; peerKind?: "human" | "agent" } | null;
   state?: string;
   latencyMs?: number | null;
 };
@@ -344,6 +345,9 @@ type MultiplayerViewState = {
   roomCode: string;
   rendezvousStatus: "opening" | "waiting" | "retrying" | "exchanging" | "connected" | "closed" | "error" | "idle";
   error: string | null;
+  agents: AgentSessionRecord[];
+  chat: AgentChatMessage[];
+  newestChatSequence: number;
 };
 
 export function multiplayerViewStatesEqual(left: MultiplayerViewState, right: MultiplayerViewState) {
@@ -355,10 +359,13 @@ export function multiplayerViewStatesEqual(left: MultiplayerViewState, right: Mu
     || left.roomCode !== right.roomCode
     || left.rendezvousStatus !== right.rendezvousStatus
     || left.error !== right.error
+    || left.newestChatSequence !== right.newestChatSequence
     || left.reasons.length !== right.reasons.length
-    || left.peers.length !== right.peers.length) return false;
+    || left.peers.length !== right.peers.length
+    || left.agents.length !== right.agents.length
+    || left.chat.length !== right.chat.length) return false;
   if (left.reasons.some((reason, index) => reason !== right.reasons[index])) return false;
-  return left.peers.every((peer, index) => {
+  const peersEqual = left.peers.every((peer, index) => {
     const other = right.peers[index];
     return peer.token === other.token
       && peer.id === other.id
@@ -367,6 +374,15 @@ export function multiplayerViewStatesEqual(left: MultiplayerViewState, right: Mu
       && peer.identity?.name === other.identity?.name
       && peer.state === other.state
       && peer.latencyMs === other.latencyMs;
+  });
+  if (!peersEqual) return false;
+  return left.agents.every((agent, index) => {
+    const other = right.agents[index];
+    return agent.agentId === other.agentId
+      && agent.status === other.status
+      && agent.muted === other.muted
+      && agent.updatedAt === other.updatedAt
+      && agent.granted.join("|") === other.granted.join("|");
   });
 }
 
@@ -382,6 +398,14 @@ type MultiplayerEngineApi = {
   suggestMultiplayerRoomCode?: () => string;
   disconnectMultiplayer?: () => void | Promise<void>;
   downloadMultiplayerDiagnostics?: () => unknown;
+  approveAgent?: (agentId: string, grants?: readonly AgentCapability[]) => boolean;
+  setAgentCapability?: (agentId: string, capability: AgentCapability, granted: boolean) => boolean;
+  pauseAgent?: (agentId: string) => boolean;
+  resumeAgent?: (agentId: string) => boolean;
+  revokeAgent?: (agentId: string) => boolean;
+  muteAgent?: (agentId: string, muted: boolean) => boolean;
+  stopAgent?: (agentId: string) => boolean;
+  sendMultiplayerChat?: (text: string, channel?: "local" | "party" | "global") => boolean;
 };
 
 type WorkstationEngineApi = {
@@ -434,6 +458,9 @@ const EMPTY_MULTIPLAYER_STATE: MultiplayerViewState = {
   roomCode: "",
   rendezvousStatus: "idle",
   error: null,
+  agents: [],
+  chat: [],
+  newestChatSequence: 0,
 };
 
 type ApiaryBeeHud = { alive?: boolean; home?: boolean; id?: string; name?: string };
@@ -1876,6 +1903,8 @@ export default function VoxelGame() {
   const lookPointerRef = useRef<{ id: number; x: number; y: number } | null>(null);
   const activePetDraftIdRef = useRef<number | null>(null);
   const multiplayerFlightRef = useRef<Promise<unknown> | null>(null);
+  const chatInputRef = useRef<HTMLInputElement>(null);
+  const chatOpenRef = useRef(false);
   const slotInteractionReadyAtRef = useRef(0);
   const inventoryDragRef = useRef<InventoryDragGesture | null>(null);
   const suppressSlotClickRef = useRef<{ target: EventTarget | null; at: number } | null>(null);
@@ -1965,6 +1994,9 @@ export default function VoxelGame() {
   const [multiplayerState, setMultiplayerState] = useState<MultiplayerViewState>(EMPTY_MULTIPLAYER_STATE);
   const [multiplayerBusy, setMultiplayerBusy] = useState(false);
   const [multiplayerReturn, setMultiplayerReturn] = useState<"title" | "pause">("title");
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatInput, setChatInput] = useState("");
+  const [chatChannel, setChatChannel] = useState<"local" | "party" | "global">("global");
   const [iconAuditMode, setIconAuditMode] = useState<"all" | "tomes" | "dragons" | "alchemy" | "resources" | null>(null);
   const [civicAuditMode, setCivicAuditMode] = useState<CivicAuditMode | null>(null);
   const [heldAuditMode, setHeldAuditMode] = useState(false);
@@ -1974,6 +2006,8 @@ export default function VoxelGame() {
   const activeCharacterProfile = characterCatalog.profiles.find((profile) => profile.id === characterCatalog.selectedProfileId)
     ?? characterCatalog.profiles[0]
     ?? FALLBACK_CHARACTER_PROFILE;
+
+  useEffect(() => { chatOpenRef.current = chatOpen; }, [chatOpen]);
 
   useEffect(() => {
     if (overlay !== "new" || worldOptions.origin.mode === "wilderness" || !worldOptions.structures || worldOptions.settlementDensity <= 0) {
@@ -2490,6 +2524,27 @@ export default function VoxelGame() {
     const handleMenuKeys = (event: KeyboardEvent) => {
       const current = overlayRef.current;
       const engine = engineRef.current;
+      if (chatOpenRef.current && event.code === "Escape") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        chatOpenRef.current = false;
+        setChatOpen(false);
+        setChatInput("");
+        engine?.activate();
+        return;
+      }
+      if (event.code === "Enter" && current === null && startedRef.current && !acceptsTextInput(event.target)) {
+        const session = (engine as unknown as MultiplayerEngineApi | null)?.getMultiplayerState?.();
+        if (session?.role) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          chatOpenRef.current = true;
+          setChatOpen(true);
+          if (document.pointerLockElement) void document.exitPointerLock();
+          window.requestAnimationFrame(() => chatInputRef.current?.focus());
+          return;
+        }
+      }
       if (acceptsTextInput(event.target) && event.code !== "Escape") return;
       if ((event.key === "?" || (event.code === "Slash" && event.shiftKey)) && current && current !== "title" && current !== "new") {
         const reference = contextReferenceRef.current;
@@ -2850,6 +2905,9 @@ export default function VoxelGame() {
           roomCode: typeof state.roomCode === "string" ? state.roomCode : current.roomCode,
           rendezvousStatus: ["opening", "waiting", "retrying", "exchanging", "connected", "closed", "error"].includes(String(state.rendezvousStatus)) ? state.rendezvousStatus as MultiplayerViewState["rendezvousStatus"] : current.rendezvousStatus,
           error: typeof state.error === "string" ? state.error : null,
+          agents: Array.isArray(state.agents) ? state.agents : [],
+          chat: Array.isArray(state.chat) ? state.chat : [],
+          newestChatSequence: typeof state.newestChatSequence === "number" ? state.newestChatSequence : 0,
         };
         return multiplayerViewStatesEqual(current, next) ? current : next;
       });
@@ -2860,11 +2918,11 @@ export default function VoxelGame() {
   }, []);
 
   useEffect(() => {
-    if (overlay !== "multiplayer") return;
+    if (overlay !== "multiplayer" && !started) return;
     refreshMultiplayerState();
     const timer = window.setInterval(refreshMultiplayerState, 650);
     return () => window.clearInterval(timer);
-  }, [overlay, refreshMultiplayerState]);
+  }, [overlay, refreshMultiplayerState, started]);
 
   const recordMultiplayerResult = (result: MultiplayerActionResult, key: "inviteCode" | "answerCode") => {
     const code = typeof result === "string" ? result : result?.[key];
@@ -3056,6 +3114,27 @@ export default function VoxelGame() {
     } catch {
       window.prompt("Copy this connection code", code);
     }
+  };
+
+  const submitChat = () => {
+    const text = chatInput.trim();
+    if (!text) return;
+    const sent = (engineRef.current as unknown as MultiplayerEngineApi | null)?.sendMultiplayerChat?.(text, chatChannel) ?? false;
+    if (!sent) {
+      setMultiplayerState((current) => ({ ...current, error: "Chat could not be sent. Check the session or wait a moment before retrying." }));
+      return;
+    }
+    setChatInput("");
+    chatOpenRef.current = false;
+    setChatOpen(false);
+    engineRef.current?.activate();
+    refreshMultiplayerState();
+  };
+
+  const updateAgent = (operation: (api: MultiplayerEngineApi) => boolean) => {
+    const api = engineRef.current as unknown as MultiplayerEngineApi | null;
+    if (!api || !operation(api)) return;
+    refreshMultiplayerState();
   };
 
   const handleLookDown = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -3996,6 +4075,24 @@ export default function VoxelGame() {
       )}
 
       {toast && started && overlay === null && <div className="toast-message">{toast}</div>}
+      {started && overlay === null && multiplayerState.role && (
+        <section className={`agent-chat-hud ${chatOpen ? "open" : ""}`} aria-label="Multiplayer chat">
+          <div className="agent-chat-history" aria-live="polite">
+            {multiplayerState.chat.slice(-6).map((message) => (
+              <p key={message.id} className={`peer-${message.peerKind}`}><b>{message.authorName}</b><span>{message.text}</span><small>{message.channel.toUpperCase()}</small></p>
+            ))}
+          </div>
+          {chatOpen ? (
+            <form onSubmit={(event) => { event.preventDefault(); submitChat(); }}>
+              <select aria-label="Chat channel" value={chatChannel} onChange={(event) => setChatChannel(event.target.value as typeof chatChannel)}>
+                <option value="local">Local</option><option value="party">Party</option><option value="global">Global</option>
+              </select>
+              <input ref={chatInputRef} value={chatInput} maxLength={480} onChange={(event) => setChatInput(event.target.value)} placeholder="Speak to the expedition…" aria-label="Chat message" />
+              <button type="submit" disabled={!chatInput.trim()}>SEND</button>
+            </form>
+          ) : <button type="button" className="agent-chat-open" onClick={() => { chatOpenRef.current = true; setChatOpen(true); if (document.pointerLockElement) void document.exitPointerLock(); window.requestAnimationFrame(() => chatInputRef.current?.focus()); }}><kbd>ENTER</kbd> CHAT</button>}
+        </section>
+      )}
       {savedPulse && <div className="save-pulse">WORLD SAVED</div>}
       {uiPreferences.showReferenceHints && contextReference && overlay && overlay !== "title" && overlay !== "new" && (
         <div className="context-reference-hint" role="status">
@@ -5017,6 +5114,28 @@ export default function VoxelGame() {
             </details>}
 
             {multiplayerState.peers.length > 0 && <section className="multiplayer-peer-list"><span className="panel-eyebrow">SESSION PLAYERS</span>{multiplayerState.peers.map((peer, index) => <div key={peer.id ?? peer.token ?? index}><span className="peer-cube" aria-hidden="true" /><strong>{peer.identity?.name ?? peer.name ?? peer.id ?? `Player ${index + 1}`}</strong><small>{(peer.state ?? "connected").toUpperCase()}{typeof peer.latencyMs === "number" ? ` · ${Math.round(peer.latencyMs)}ms` : ""}</small></div>)}</section>}
+
+            {multiplayerState.role === "host" && multiplayerState.agents.length > 0 && <section className="agent-session-roster" aria-labelledby="agent-session-heading">
+              <header><div><span className="panel-eyebrow">CONNECTION-BOUND AUTHORITY</span><h3 id="agent-session-heading">Companion drones</h3></div><small>{multiplayerState.agents.filter((agent) => agent.status === "approved" || agent.status === "paused").length}/4 admitted</small></header>
+              {multiplayerState.agents.map((agent) => <article key={agent.agentId} className={`status-${agent.status}`}>
+                <div className="agent-session-heading"><span className="agent-drone-glyph" aria-hidden="true">◆</span><div><strong>{agent.name}</strong><small>{agent.runnerVersion} · {agent.status.toUpperCase()}</small></div></div>
+                <div className="agent-capability-list" aria-label={`${agent.name} requested capabilities`}>{agent.requested.map((capability) => <label key={capability}><input type="checkbox" checked={agent.granted.includes(capability)} disabled={agent.status === "pending" || agent.status === "revoked" || agent.status === "disconnected"} onChange={(event) => updateAgent((api) => api.setAgentCapability?.(agent.agentId, capability, event.target.checked) ?? false)} /><span>{capability}</span></label>)}</div>
+                <div className="agent-session-actions">
+                  {agent.status === "pending" && <button type="button" className="approve" onClick={() => updateAgent((api) => api.approveAgent?.(agent.agentId, agent.requested) ?? false)}>APPROVE REQUESTED</button>}
+                  {agent.status === "approved" && <button type="button" onClick={() => updateAgent((api) => api.pauseAgent?.(agent.agentId) ?? false)}>PAUSE</button>}
+                  {agent.status === "paused" && <button type="button" className="approve" onClick={() => updateAgent((api) => api.resumeAgent?.(agent.agentId) ?? false)}>RESUME</button>}
+                  <button type="button" onClick={() => updateAgent((api) => api.muteAgent?.(agent.agentId, !agent.muted) ?? false)}>{agent.muted ? "UNMUTE" : "MUTE"}</button>
+                  {agent.status !== "revoked" && agent.status !== "disconnected" && <button type="button" className="danger" onClick={() => updateAgent((api) => api.revokeAgent?.(agent.agentId) ?? false)}>REVOKE</button>}
+                  <button type="button" className="danger" onClick={() => updateAgent((api) => api.stopAgent?.(agent.agentId) ?? false)}>STOP</button>
+                </div>
+              </article>)}
+            </section>}
+
+            {multiplayerState.role && <section className="multiplayer-chat-panel" aria-labelledby="multiplayer-chat-heading">
+              <header><div><span className="panel-eyebrow">UNTRUSTED IN-WORLD DIALOGUE</span><h3 id="multiplayer-chat-heading">Expedition chat</h3></div><small>{multiplayerState.chat.length} retained</small></header>
+              <div className="multiplayer-chat-log" aria-live="polite">{multiplayerState.chat.length ? multiplayerState.chat.slice(-12).map((message) => <p key={message.id} className={`peer-${message.peerKind}`}><b>{message.authorName}</b><span>{message.text}</span><small>{message.channel.toUpperCase()}</small></p>) : <p className="empty">No messages yet. Chat never grants commands or capabilities.</p>}</div>
+              <form onSubmit={(event) => { event.preventDefault(); submitChat(); }}><select aria-label="Chat channel" value={chatChannel} onChange={(event) => setChatChannel(event.target.value as typeof chatChannel)}><option value="local">Local</option><option value="party">Party</option><option value="global">Global</option></select><input value={chatInput} maxLength={480} onChange={(event) => setChatInput(event.target.value)} placeholder="Message players and drones" aria-label="Chat message" /><button type="submit" disabled={!chatInput.trim()}>SEND</button></form>
+            </section>}
 
             <p className="multiplayer-ownership-note">{multiplayerReturn === "title" ? "The host browser owns this world save. Joining creates no local world and never changes your existing catalog." : "Your world save stays owned by this browser on the host device. Guests receive session state; they do not become owners of the host's local catalog entry."} Share connection codes only with people you trust.</p>
             <div className="panel-actions multiplayer-actions">

@@ -607,6 +607,17 @@ import {
 import { applyContainerOperation } from "./multiplayer-inventory";
 import { MultiplayerDiagnosticsRing, multiplayerRejectionCategory } from "./multiplayer-diagnostics";
 import {
+  AgentAuthority,
+  AgentChatRing,
+  createAgentResult,
+  type AgentCapability,
+  type AgentCapabilityGrant,
+  type AgentChatChannel,
+  type AgentChatMessage,
+  type AgentCommandEnvelope,
+  type AgentSessionRecord,
+} from "./agent-platform";
+import {
   createRoomCode,
   hostByRoomCode,
   joinByRoomCode,
@@ -1454,6 +1465,9 @@ export type MultiplayerUiState = {
   roomCode: string;
   rendezvousStatus: RendezvousStatus;
   error: string;
+  agents: AgentSessionRecord[];
+  chat: AgentChatMessage[];
+  newestChatSequence: number;
 };
 
 export type EngineEvents = {
@@ -4065,6 +4079,9 @@ export class VoxelEngine {
     roomCode: "",
     rendezvousStatus: "closed",
     error: "",
+    agents: [],
+    chat: [],
+    newestChatSequence: 0,
   };
   multiplayerTick = 0;
   multiplayerPoseTimer = 0;
@@ -4112,6 +4129,9 @@ export class VoxelEngine {
   multiplayerTombstones: DestructionTombstone[] = [];
   appliedMultiplayerTombstones = new Map<string, number>();
   multiplayerDiagnostics = new MultiplayerDiagnosticsRing(512);
+  agentAuthority = new AgentAuthority();
+  agentChat = new AgentChatRing();
+  private localChatSequence = 0;
   pendingGuestCreatureInventoryRequests = new Map<string, number>();
   /** Suppresses generic pack uploads until the host resolves optimistic placement costs. */
   pendingGuestPlacementRequests = new Map<string, number>();
@@ -5501,17 +5521,128 @@ export class VoxelEngine {
   }
 
   getMultiplayerState(): MultiplayerUiState {
+    const authority = this.agentAuthority ??= new AgentAuthority();
+    const chat = this.agentChat ??= new AgentChatRing();
     if (this.multiplayer) {
       const awaitingGuest = Boolean(this.hostRendezvous && this.multiplayer.role !== "host");
       this.multiplayerState.status = awaitingGuest ? "hosting" : this.multiplayer.state;
       this.multiplayerState.role = awaitingGuest ? "host" : this.multiplayer.role;
       this.multiplayerState.peers = this.multiplayer.getPeers();
     }
+    this.multiplayerState.agents = authority.list();
+    this.multiplayerState.chat = chat.list();
+    this.multiplayerState.newestChatSequence = chat.newestSequence();
     return {
       ...this.multiplayerState,
       peers: this.multiplayerState.peers.map((peer) => ({ ...peer, identity: peer.identity ? { ...peer.identity } : null })),
       reasons: [...this.multiplayerState.reasons],
+      agents: this.multiplayerState.agents.map((agent) => ({ ...agent, requested: [...agent.requested], granted: [...agent.granted] })),
+      chat: this.multiplayerState.chat.map((message) => ({ ...message, ...(message.position ? { position: { ...message.position } } : {}) })),
     };
+  }
+
+  private sendAgentGrant(record: AgentSessionRecord, reason?: string) {
+    if (!this.multiplayer || this.multiplayer.role !== "host") return 0;
+    const grant: AgentCapabilityGrant = {
+      schema: 1,
+      agentId: record.agentId,
+      connectionId: record.connectionId,
+      status: record.status,
+      requested: [...record.requested],
+      granted: [...record.granted],
+      updatedAt: record.updatedAt,
+      ...(reason ? { reason } : {}),
+    };
+    try { return this.multiplayer.sendAgentCapabilities(grant, record.agentId); }
+    catch { return 0; }
+  }
+
+  approveAgent(agentId: string, grants?: readonly AgentCapability[]) {
+    const record = this.agentAuthority.approve(agentId, grants);
+    if (!record) return false;
+    this.sendAgentGrant(record, "Approved by the host for this session.");
+    this.events.onToast(`${record.name} approved.`);
+    this.emitHud(true);
+    return true;
+  }
+
+  setAgentCapability(agentId: string, capability: AgentCapability, granted: boolean) {
+    const record = this.agentAuthority.setCapability(agentId, capability, granted);
+    if (!record) return false;
+    this.sendAgentGrant(record, granted ? `${capability} granted by the host.` : `${capability} revoked by the host.`);
+    this.emitHud(true);
+    return true;
+  }
+
+  pauseAgent(agentId: string) {
+    const record = this.agentAuthority.pause(agentId);
+    if (!record) return false;
+    this.sendAgentGrant(record, "Paused by the host.");
+    this.emitHud(true);
+    return true;
+  }
+
+  resumeAgent(agentId: string) {
+    const record = this.agentAuthority.resume(agentId);
+    if (!record) return false;
+    this.sendAgentGrant(record, "Resumed by the host.");
+    this.emitHud(true);
+    return true;
+  }
+
+  revokeAgent(agentId: string) {
+    const record = this.agentAuthority.revoke(agentId);
+    if (!record) return false;
+    this.sendAgentGrant(record, "All session authority was revoked by the host.");
+    this.events.onToast(`${record.name} revoked.`);
+    this.emitHud(true);
+    return true;
+  }
+
+  muteAgent(agentId: string, muted: boolean) {
+    const record = this.agentAuthority.setMuted(agentId, muted);
+    if (!record) return false;
+    this.emitHud(true);
+    return true;
+  }
+
+  stopAgent(agentId: string) {
+    const record = this.agentAuthority.revoke(agentId);
+    if (!record) return false;
+    this.sendAgentGrant(record, "Stopped and disconnected by the host.");
+    queueMicrotask(() => this.multiplayer?.disconnectPeer(agentId, "agent-stopped-by-host"));
+    this.emitHud(true);
+    return true;
+  }
+
+  sendMultiplayerChat(text: string, channel: AgentChatChannel = "global") {
+    const session = this.multiplayer;
+    const clean = text.trim().slice(0, 480);
+    if (!session || !session.role || !clean) return false;
+    const base = {
+      authorId: session.identity.id,
+      authorName: session.identity.name,
+      peerKind: session.identity.peerKind ?? "human" as const,
+      channel,
+      text: clean,
+      sentAt: Date.now(),
+      position: { x: this.position.x, y: this.position.y, z: this.position.z },
+    };
+    if (session.role === "host") {
+      const appended = this.agentChat.append(base);
+      if (!appended.ok) return false;
+      session.sendChat(appended.message);
+    } else {
+      const outbound: AgentChatMessage = {
+        schema: 1,
+        id: `chat_local_${(++this.localChatSequence).toString(36)}_${Date.now().toString(36)}`,
+        sequence: this.localChatSequence,
+        ...base,
+      };
+      session.sendChat(outbound);
+    }
+    this.emitHud(true);
+    return true;
   }
 
   getMultiplayerDiagnosticsReport() {
@@ -5646,6 +5777,9 @@ export class VoxelEngine {
   private beginMultiplayerSession(name: string) {
     this.multiplayer?.dispose("new-session");
     this.removeAllRemotePlayers();
+    this.agentAuthority = new AgentAuthority();
+    (this.agentChat ??= new AgentChatRing()).clear();
+    this.localChatSequence = 0;
     this.multiplayerState.inviteCode = "";
     this.multiplayerState.answerCode = "";
     this.multiplayerState.error = "";
@@ -5914,7 +6048,13 @@ export class VoxelEngine {
       roomCode: "",
       rendezvousStatus: "closed",
       error: "",
+      agents: [],
+      chat: [],
+      newestChatSequence: 0,
     };
+    this.agentAuthority = new AgentAuthority();
+    (this.agentChat ??= new AgentChatRing()).clear();
+    this.localChatSequence = 0;
     this.multiplayerReceivedSnapshot = false;
     this.sleepVotes.clear();
     this.multiplayerContainerAwaiting.clear();
@@ -8341,6 +8481,40 @@ export class VoxelEngine {
     } else if (event.type === "peer") {
       this.multiplayerState.peers = this.multiplayer?.getPeers() ?? [];
       if (event.peer.state === "connected" && this.multiplayer?.role === "host" && event.peer.identity) {
+        if (event.peer.identity.peerKind === "agent") {
+          if (event.reason !== "connected") {
+            this.emitHud(true);
+            return;
+          }
+          const record = this.agentAuthority.register({
+            agentId: event.peer.identity.id,
+            connectionId: event.peer.token,
+            name: event.peer.identity.name,
+            runnerVersion: event.peer.identity.runnerVersion,
+            color: event.peer.identity.color,
+            requested: event.peer.identity.requestedCapabilities,
+          });
+          if (!record) {
+            const rejected: AgentCapabilityGrant = {
+              schema: 1,
+              agentId: event.peer.identity.id,
+              connectionId: event.peer.token,
+              status: "revoked",
+              requested: event.peer.identity.requestedCapabilities ?? [],
+              granted: [],
+              updatedAt: Date.now(),
+              reason: "This host already has four admitted drones.",
+            };
+            try { this.multiplayer.sendAgentCapabilities(rejected, event.peer.identity.id); } catch { /* Connection may already be closing. */ }
+            queueMicrotask(() => this.multiplayer?.disconnectPeer(event.peer.identity!.id, "agent-capacity-reached"));
+            this.events.onToast(`${event.peer.identity.name} could not join: drone capacity reached.`);
+          } else {
+            this.sendAgentGrant(record, "Waiting for host approval.");
+            this.events.onToast(`${record.name} requests drone access.`);
+          }
+          this.emitHud(true);
+          return;
+        }
         if (event.reason === "connected") (this.multiplayerPeerScopeEpochs ??= new Map()).set(
           event.peer.identity.id,
           (this.multiplayerPeerScopeEpochs.get(event.peer.identity.id) ?? 0) + 1,
@@ -8351,6 +8525,7 @@ export class VoxelEngine {
         this.events.onToast(`${event.peer.identity.name} joined the session.`);
       }
       if (["disconnected", "failed", "closed", "stale"].includes(event.peer.state) && event.peer.identity) {
+        if (event.peer.identity.peerKind === "agent") this.agentAuthority.disconnect(event.peer.identity.id);
         this.removeRemotePlayer(event.peer.identity.id);
         this.multiplayerBoatInputs.delete(event.peer.identity.id);
         for (const boat of this.boats.values()) boat.save.passengers = leaveSailboat(boat.save.passengers, event.peer.identity.id);
@@ -8367,7 +8542,36 @@ export class VoxelEngine {
       this.emitHud(true);
     } else if (event.type === "message") {
       const { envelope } = event;
-      if (envelope.type === "player-pose") {
+      if (envelope.type === "chat") {
+        const incoming = envelope.payload as AgentChatMessage;
+        if (this.multiplayer?.role === "host" && event.peer.identity) {
+          const appended = this.agentChat.append({
+            authorId: event.peer.identity.id,
+            authorName: event.peer.identity.name,
+            peerKind: event.peer.identity.peerKind ?? "human",
+            channel: incoming.channel,
+            text: incoming.text,
+            sentAt: incoming.sentAt,
+            ...(incoming.position ? { position: incoming.position } : {}),
+          });
+          if (appended.ok) this.multiplayer.sendChat(appended.message);
+        } else if (this.multiplayer?.role === "guest") this.agentChat.appendAuthoritative(incoming);
+        this.emitHud(true);
+      } else if (envelope.type === "agent-command" && this.multiplayer?.role === "host") {
+        const command = envelope.payload as AgentCommandEnvelope;
+        const blocked = this.agentAuthority.authorize(command, event.peer.token, 0);
+        if (blocked) {
+          this.agentAuthority.setCurrentResult(blocked);
+          this.multiplayer.sendAgentResult(blocked, command.agentId);
+        } else {
+          const deferred = createAgentResult(command, "blocked", 0, "executor_initializing", "The host approved this command, but its task executor is not active yet. Retry after the agent runtime finishes initializing.");
+          this.agentAuthority.setCurrentResult(deferred);
+          this.multiplayer.sendAgentResult(deferred, command.agentId);
+        }
+      } else if (envelope.type === "agent-capabilities" && this.multiplayer?.role === "guest") {
+        const grant = envelope.payload as AgentCapabilityGrant;
+        if (grant.status === "revoked" && grant.reason) this.events.onToast(grant.reason);
+      } else if (envelope.type === "player-pose") {
         let pose = envelope.payload as PlayerPose;
         if (this.multiplayer?.role === "host" && event.peer.identity) {
           let state = this.ensureHostPlayerSession(event.peer.identity);

@@ -9,6 +9,23 @@ import type { PlantBestiaryState } from "./plants";
 import type { BlueprintState } from "./blueprints";
 import type { MagicState } from "./magic";
 import type { LivingBestiaryEntryV2 } from "./living-bestiary";
+import {
+  AGENT_CAPABILITIES,
+  validateAgentCapabilityGrant,
+  validateAgentChatMessage,
+  validateAgentCommand,
+  validateAgentObservation,
+  validateAgentResult,
+  validateAgentVoiceChunk,
+  type AgentCapability,
+  type AgentCapabilityGrant,
+  type AgentChatMessage,
+  type AgentCommandEnvelope,
+  type AgentCommandResult,
+  type AgentObservationV1,
+  type AgentPeerKind,
+  type AgentVoiceChunk,
+} from "./agent-platform";
 
 /**
  * Browser-only, host-authoritative WebRTC multiplayer transport for Blockwild.
@@ -24,24 +41,27 @@ import type { LivingBestiaryEntryV2 } from "./living-bestiary";
  * events, validates actions as host, and publishes authoritative snapshots.
  */
 
-export const MULTIPLAYER_PROTOCOL_VERSION = 2 as const;
+export const MULTIPLAYER_PROTOCOL_VERSION = 3 as const;
 export const MULTIPLAYER_PROTOCOL_NAME = "blockwild-webrtc" as const;
-export const RELIABLE_CHANNEL_LABEL = "blockwild.gameplay.v2" as const;
-export const MOVEMENT_CHANNEL_LABEL = "blockwild.movement.v2" as const;
+export const RELIABLE_CHANNEL_LABEL = "blockwild.gameplay.v3" as const;
+export const MOVEMENT_CHANNEL_LABEL = "blockwild.movement.v3" as const;
+export const VOICE_CHANNEL_LABEL = "blockwild.voice.v1" as const;
 
 export const MAX_RELIABLE_MESSAGE_BYTES = 256 * 1024;
 export const MAX_MOVEMENT_MESSAGE_BYTES = 64 * 1024;
+export const MAX_VOICE_MESSAGE_BYTES = 64 * 1024;
 export const MAX_INVITE_CODE_CHARS = 160 * 1024;
 const MAX_SDP_CHARS = 112 * 1024;
 const MAX_RELIABLE_BUFFERED_BYTES = 2 * 1024 * 1024;
 const MAX_MOVEMENT_BUFFERED_BYTES = 64 * 1024;
+const MAX_VOICE_BUFFERED_BYTES = 512 * 1024;
 const MAX_PROTOCOL_STRIKES = 3;
 const COORDINATE_LIMIT = 30_000_000;
 
 export type MultiplayerRole = "host" | "guest";
 export type MultiplayerSessionState = "idle" | "hosting" | "joining" | "connected" | "disconnected" | "closed" | "error";
 export type MultiplayerPeerState = "invited" | "connecting" | "connected" | "stale" | "disconnected" | "failed" | "closed";
-export type MultiplayerChannelKind = "reliable" | "movement";
+export type MultiplayerChannelKind = "reliable" | "movement" | "voice";
 
 export type PeerIdentity = {
   id: string;
@@ -57,6 +77,12 @@ export type PeerIdentity = {
   colors?: CharacterColors;
   /** First-join progression seed. The host uses it only when no saved state exists. */
   startingSkills?: CharacterSkillAllocation;
+  /** Protocol-v3 peers default to human when this field is absent. */
+  peerKind?: AgentPeerKind;
+  /** Agent runner build, surfaced to the host during approval and diagnostics. */
+  runnerVersion?: string;
+  /** Least-privilege request. The host remains authoritative over the grant. */
+  requestedCapabilities?: AgentCapability[];
 };
 
 export type PlayerPose = {
@@ -554,6 +580,12 @@ export type MultiplayerPayloadMap = {
   "combat-action": CombatAction;
   "creature-action": CreatureAction;
   "map-share": CartographyMapShare;
+  "agent-command": AgentCommandEnvelope;
+  "agent-result": AgentCommandResult;
+  "agent-observation": AgentObservationV1;
+  "agent-capabilities": AgentCapabilityGrant;
+  chat: AgentChatMessage;
+  "voice-chunk": AgentVoiceChunk;
 };
 
 export type MultiplayerMessageType = keyof MultiplayerPayloadMap;
@@ -577,6 +609,7 @@ export type PeerInfo = {
   latencyMs: number | null;
   reliableOpen: boolean;
   movementOpen: boolean;
+  voiceOpen: boolean;
 };
 
 export type MultiplayerEvent =
@@ -674,6 +707,7 @@ type PeerRecord = {
   connection: PeerConnectionLike;
   reliable: DataChannelLike | null;
   movement: DataChannelLike | null;
+  voice: DataChannelLike | null;
   state: MultiplayerPeerState;
   createdAt: number;
   connectedAt: number | null;
@@ -681,6 +715,7 @@ type PeerRecord = {
   latencyMs: number | null;
   lastReliableSequence: number;
   lastMovementSequence: number;
+  lastVoiceSequence: number;
   protocolStrikes: number;
   pendingHeartbeatNonce: string | null;
   pendingHeartbeatAt: number;
@@ -688,10 +723,10 @@ type PeerRecord = {
 };
 
 const MESSAGE_TYPES = new Set<MultiplayerMessageType>([
-  "hello", "heartbeat", "goodbye", "snapshot", "player-pose", "block-action", "mob-snapshot", "drop-snapshot", "tombstones", "time-weather", "sleep-vote", "inventory-action", "container-action", "facility-action", "player-state", "player-progress", "boat-action", "combat-action", "creature-action", "map-share",
+  "hello", "heartbeat", "goodbye", "snapshot", "player-pose", "block-action", "mob-snapshot", "drop-snapshot", "tombstones", "time-weather", "sleep-vote", "inventory-action", "container-action", "facility-action", "player-state", "player-progress", "boat-action", "combat-action", "creature-action", "map-share", "agent-command", "agent-result", "agent-observation", "agent-capabilities", "chat", "voice-chunk",
 ]);
 const CONTROL_TYPES = new Set<MultiplayerMessageType>(["hello", "heartbeat", "goodbye"]);
-const GUEST_OUTBOUND_TYPES = new Set<MultiplayerMessageType>(["hello", "heartbeat", "goodbye", "player-pose", "block-action", "sleep-vote", "inventory-action", "container-action", "facility-action", "player-state", "player-progress", "boat-action", "combat-action", "creature-action", "map-share"]);
+const GUEST_OUTBOUND_TYPES = new Set<MultiplayerMessageType>(["hello", "heartbeat", "goodbye", "player-pose", "block-action", "sleep-vote", "inventory-action", "container-action", "facility-action", "player-state", "player-progress", "boat-action", "combat-action", "creature-action", "map-share", "agent-command", "chat", "voice-chunk"]);
 
 export class MultiplayerProtocolError extends Error {
   constructor(message: string) {
@@ -742,6 +777,7 @@ function validateCharacterSkillAllocation(value: unknown): value is CharacterSki
 }
 
 export function validatePeerIdentity(value: unknown): value is PeerIdentity {
+  const requestedCapabilities = value && isRecord(value) ? value.requestedCapabilities : undefined;
   return isRecord(value)
     && isId(value.id)
     && typeof value.name === "string"
@@ -758,7 +794,14 @@ export function validatePeerIdentity(value: unknown): value is PeerIdentity {
     && (value.browserId === undefined || isId(value.browserId))
     && (value.race === undefined || CHARACTER_RACES.has(value.race as string))
     && (value.colors === undefined || validateCharacterColors(value.colors))
-    && (value.startingSkills === undefined || validateCharacterSkillAllocation(value.startingSkills));
+    && (value.startingSkills === undefined || validateCharacterSkillAllocation(value.startingSkills))
+    && (value.peerKind === undefined || value.peerKind === "human" || value.peerKind === "agent")
+    && (value.runnerVersion === undefined || isShortString(value.runnerVersion, 64))
+    && (requestedCapabilities === undefined || (Array.isArray(requestedCapabilities)
+      && requestedCapabilities.length <= AGENT_CAPABILITIES.length
+      && new Set(requestedCapabilities).size === requestedCapabilities.length
+      && requestedCapabilities.every((capability) => AGENT_CAPABILITIES.includes(capability as AgentCapability))))
+    && (value.peerKind === "agent" || (value.runnerVersion === undefined && value.requestedCapabilities === undefined));
 }
 
 function validateDescription(value: unknown, type: "offer" | "answer"): value is RTCSessionDescriptionInit {
@@ -1258,6 +1301,18 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
       return isId(value.nonce) && typeof value.reply === "boolean";
     case "goodbye":
       return isShortString(value.reason, 160, true);
+    case "agent-command":
+      return validateAgentCommand(value);
+    case "agent-result":
+      return validateAgentResult(value);
+    case "agent-observation":
+      return validateAgentObservation(value);
+    case "agent-capabilities":
+      return validateAgentCapabilityGrant(value);
+    case "chat":
+      return validateAgentChatMessage(value);
+    case "voice-chunk":
+      return validateAgentVoiceChunk(value);
     case "player-pose":
       return validatePose(value);
     case "block-action":
@@ -1612,11 +1667,11 @@ export function createPeerIdentity(
   color: string,
   idFactory = defaultRandomId,
   variant?: "male" | "female",
-  details: Partial<Pick<PeerIdentity, "profileId" | "browserId" | "sex" | "race" | "colors" | "startingSkills">> = {},
+  details: Partial<Pick<PeerIdentity, "profileId" | "browserId" | "sex" | "race" | "colors" | "startingSkills" | "peerKind" | "runnerVersion" | "requestedCapabilities">> = {},
 ): PeerIdentity {
   const sex = details.sex ?? variant;
   const identity = {
-    id: idFactory("player"),
+    id: idFactory(details.peerKind === "agent" ? "agent" : "player"),
     name,
     color,
     ...(variant ? { variant } : sex ? { variant: sex } : {}),
@@ -1639,6 +1694,9 @@ function copyIdentity(identity: PeerIdentity): PeerIdentity {
     ...(identity.race ? { race: identity.race } : {}),
     ...(identity.colors ? { colors: { ...identity.colors } } : {}),
     ...(identity.startingSkills ? { startingSkills: { ...identity.startingSkills } } : {}),
+    ...(identity.peerKind ? { peerKind: identity.peerKind } : {}),
+    ...(identity.runnerVersion ? { runnerVersion: identity.runnerVersion } : {}),
+    ...(identity.requestedCapabilities ? { requestedCapabilities: [...identity.requestedCapabilities] } : {}),
   };
 }
 
@@ -1672,8 +1730,10 @@ export class MultiplayerSession {
   private maintenanceTimer: ReturnType<typeof setInterval> | null = null;
   private reliableSequence = 0;
   private movementSequence = 0;
+  private voiceSequence = 0;
   private readonly artificialSendTimers = new Set<ReturnType<typeof setTimeout>>();
   private readonly nextReliableArtificialSendAt = new Map<string, number>();
+  private readonly nextVoiceArtificialSendAt = new Map<string, number>();
   /** Final host responses retained briefly so reconnect/retry is exactly-once. */
   private readonly responseCache = new Map<string, {
     peerId: string;
@@ -1756,6 +1816,7 @@ export class MultiplayerSession {
       latencyMs: peer.latencyMs,
       reliableOpen: peer.reliable?.readyState === "open",
       movementOpen: peer.movement?.readyState === "open",
+      voiceOpen: peer.voice?.readyState === "open",
     };
   }
 
@@ -1789,6 +1850,7 @@ export class MultiplayerSession {
       connection,
       reliable: null,
       movement: null,
+      voice: null,
       state,
       createdAt: now,
       connectedAt: null,
@@ -1796,6 +1858,7 @@ export class MultiplayerSession {
       latencyMs: null,
       lastReliableSequence: -1,
       lastMovementSequence: -1,
+      lastVoiceSequence: -1,
       protocolStrikes: 0,
       pendingHeartbeatNonce: null,
       pendingHeartbeatAt: 0,
@@ -1820,16 +1883,18 @@ export class MultiplayerSession {
   }
 
   private bindChannel(peer: PeerRecord, channel: DataChannelLike, kind: MultiplayerChannelKind) {
-    const expectedLabel = kind === "reliable" ? RELIABLE_CHANNEL_LABEL : MOVEMENT_CHANNEL_LABEL;
-    const validOptions = kind === "reliable" ? channel.ordered : !channel.ordered && channel.maxRetransmits === 0;
-    if (channel.label !== expectedLabel || !validOptions || (kind === "reliable" ? peer.reliable : peer.movement)) {
+    const expectedLabel = kind === "reliable" ? RELIABLE_CHANNEL_LABEL : kind === "movement" ? MOVEMENT_CHANNEL_LABEL : VOICE_CHANNEL_LABEL;
+    const validOptions = kind === "reliable" ? channel.ordered : kind === "movement" ? !channel.ordered && channel.maxRetransmits === 0 : channel.ordered;
+    const existing = kind === "reliable" ? peer.reliable : kind === "movement" ? peer.movement : peer.voice;
+    if (channel.label !== expectedLabel || !validOptions || existing) {
       channel.close();
       this.protocolStrike(peer, `Rejected invalid or duplicate ${kind} channel`);
       return;
     }
     channel.binaryType = "arraybuffer";
     if (kind === "reliable") peer.reliable = channel;
-    else peer.movement = channel;
+    else if (kind === "movement") peer.movement = channel;
+    else peer.voice = channel;
     channel.onopen = () => this.maybeMarkConnected(peer);
     channel.onmessage = (event) => this.handleChannelMessage(peer, kind, event.data);
     channel.onerror = () => this.emitError(new Error(`${kind} data channel error`), peer);
@@ -1840,7 +1905,7 @@ export class MultiplayerSession {
   }
 
   private maybeMarkConnected(peer: PeerRecord) {
-    if (peer.closed || !peer.identity || peer.reliable?.readyState !== "open" || peer.movement?.readyState !== "open") return;
+    if (peer.closed || !peer.identity || peer.reliable?.readyState !== "open" || peer.movement?.readyState !== "open" || peer.voice?.readyState !== "open") return;
     const firstConnection = peer.connectedAt === null;
     peer.state = "connected";
     peer.connectedAt ??= this.now();
@@ -1900,6 +1965,7 @@ export class MultiplayerSession {
     try {
       this.bindChannel(peer, peer.connection.createDataChannel(RELIABLE_CHANNEL_LABEL, { ordered: true }), "reliable");
       this.bindChannel(peer, peer.connection.createDataChannel(MOVEMENT_CHANNEL_LABEL, { ordered: false, maxRetransmits: 0 }), "movement");
+      this.bindChannel(peer, peer.connection.createDataChannel(VOICE_CHANNEL_LABEL, { ordered: true }), "voice");
       const offer = await peer.connection.createOffer();
       if (!validateDescription(offer, "offer")) throw new MultiplayerProtocolError("Browser created an invalid WebRTC offer");
       await peer.connection.setLocalDescription(offer);
@@ -1940,6 +2006,7 @@ export class MultiplayerSession {
       const channel = event.channel as unknown as DataChannelLike;
       if (channel.label === RELIABLE_CHANNEL_LABEL) this.bindChannel(peer, channel, "reliable");
       else if (channel.label === MOVEMENT_CHANNEL_LABEL) this.bindChannel(peer, channel, "movement");
+      else if (channel.label === VOICE_CHANNEL_LABEL) this.bindChannel(peer, channel, "voice");
       else channel.close();
     };
     try {
@@ -2012,8 +2079,12 @@ export class MultiplayerSession {
       if (this.reliableSequence >= Number.MAX_SAFE_INTEGER) throw new MultiplayerProtocolError("Reliable sequence space exhausted");
       return this.reliableSequence++;
     }
-    if (this.movementSequence >= Number.MAX_SAFE_INTEGER) throw new MultiplayerProtocolError("Movement sequence space exhausted");
-    return this.movementSequence++;
+    if (kind === "movement") {
+      if (this.movementSequence >= Number.MAX_SAFE_INTEGER) throw new MultiplayerProtocolError("Movement sequence space exhausted");
+      return this.movementSequence++;
+    }
+    if (this.voiceSequence >= Number.MAX_SAFE_INTEGER) throw new MultiplayerProtocolError("Voice sequence space exhausted");
+    return this.voiceSequence++;
   }
 
   private makeEnvelope<K extends MultiplayerMessageType>(type: K, payload: MultiplayerPayloadMap[K], kind: MultiplayerChannelKind): MultiplayerEnvelope<K> {
@@ -2033,9 +2104,9 @@ export class MultiplayerSession {
 
   private sendEncoded(peer: PeerRecord, kind: MultiplayerChannelKind, encoded: string) {
     if (peer.closed || peer.state !== "connected") return false;
-    const channel = kind === "reliable" ? peer.reliable : peer.movement;
+    const channel = kind === "reliable" ? peer.reliable : kind === "movement" ? peer.movement : peer.voice;
     if (!channel || channel.readyState !== "open") return false;
-    const bufferedLimit = kind === "reliable" ? MAX_RELIABLE_BUFFERED_BYTES : MAX_MOVEMENT_BUFFERED_BYTES;
+    const bufferedLimit = kind === "reliable" ? MAX_RELIABLE_BUFFERED_BYTES : kind === "movement" ? MAX_MOVEMENT_BUFFERED_BYTES : MAX_VOICE_BUFFERED_BYTES;
     if (channel.bufferedAmount > bufferedLimit) {
       if (kind === "reliable") this.emitError(new Error("Reliable multiplayer channel is backpressured"), peer);
       return false;
@@ -2053,6 +2124,9 @@ export class MultiplayerSession {
       if (kind === "reliable") {
         sendAt = Math.max(sendAt, (this.nextReliableArtificialSendAt.get(peer.token) ?? now) + 1);
         this.nextReliableArtificialSendAt.set(peer.token, sendAt);
+      } else if (kind === "voice") {
+        sendAt = Math.max(sendAt, (this.nextVoiceArtificialSendAt.get(peer.token) ?? now) + 1);
+        this.nextVoiceArtificialSendAt.set(peer.token, sendAt);
       }
       const timer = setTimeout(() => {
         this.artificialSendTimers.delete(timer);
@@ -2121,16 +2195,26 @@ export class MultiplayerSession {
     if (!validatePayload(type, payload)) throw new MultiplayerProtocolError(`Invalid ${type} payload`);
     if (this.role === "guest" && !GUEST_OUTBOUND_TYPES.has(type)) throw new MultiplayerProtocolError(`Guests cannot authoritatively send ${type}`);
     if (this.role === "guest") {
-      const actorId = "actorId" in payload ? payload.actorId : "playerId" in payload ? payload.playerId : undefined;
+      const actorId = "actorId" in payload
+        ? payload.actorId
+        : "playerId" in payload
+          ? payload.playerId
+          : "agentId" in payload
+            ? payload.agentId
+            : "authorId" in payload
+              ? payload.authorId
+              : undefined;
       if (actorId && actorId !== this.identity.id) throw new MultiplayerProtocolError("Guest actions must use the local peer identity");
       if ("status" in payload && payload.status !== undefined && payload.status !== "request") throw new MultiplayerProtocolError("Guests can only send action requests");
     }
     // High-rate reconstructable world images belong on the unordered,
     // no-retransmit lane. A stale mob frame must never head-of-line block a
     // chest, placement, trade, or selected-slot acknowledgement.
-    const kind: MultiplayerChannelKind = type === "player-pose" || type === "mob-snapshot" || type === "drop-snapshot" || type === "time-weather"
-      ? "movement"
-      : "reliable";
+    const kind: MultiplayerChannelKind = type === "voice-chunk"
+      ? "voice"
+      : type === "player-pose" || type === "mob-snapshot" || type === "drop-snapshot" || type === "time-weather"
+        ? "movement"
+        : "reliable";
     const recipients: PeerRecord[] = [];
     if (this.role === "host") {
       if (peerId) {
@@ -2148,7 +2232,7 @@ export class MultiplayerSession {
     }
     if (!recipients.length) return 0;
     const envelope = this.makeEnvelope(type, payload, kind) as MultiplayerEnvelope;
-    const encoded = encodeEnvelope(envelope, kind === "movement" ? MAX_MOVEMENT_MESSAGE_BYTES : MAX_RELIABLE_MESSAGE_BYTES);
+    const encoded = encodeEnvelope(envelope, kind === "movement" ? MAX_MOVEMENT_MESSAGE_BYTES : kind === "voice" ? MAX_VOICE_MESSAGE_BYTES : MAX_RELIABLE_MESSAGE_BYTES);
     let sent = 0;
     for (const peer of recipients) {
       const delivered = this.sendEncoded(peer, kind, encoded);
@@ -2178,6 +2262,12 @@ export class MultiplayerSession {
   sendCombatAction(payload: CombatAction, peerId?: string) { return this.send("combat-action", payload, peerId); }
   sendCreatureAction(payload: CreatureAction, peerId?: string) { return this.send("creature-action", payload, peerId); }
   sendMapShare(payload: CartographyMapShare, peerId?: string) { return this.send("map-share", payload, peerId); }
+  sendAgentCommand(payload: AgentCommandEnvelope, peerId?: string) { return this.send("agent-command", payload, peerId); }
+  sendAgentResult(payload: AgentCommandResult, peerId?: string) { return this.send("agent-result", payload, peerId); }
+  sendAgentObservation(payload: AgentObservationV1, peerId?: string) { return this.send("agent-observation", payload, peerId); }
+  sendAgentCapabilities(payload: AgentCapabilityGrant, peerId?: string) { return this.send("agent-capabilities", payload, peerId); }
+  sendChat(payload: AgentChatMessage, peerId?: string) { return this.send("chat", payload, peerId); }
+  sendVoiceChunk(payload: AgentVoiceChunk, peerId?: string) { return this.send("voice-chunk", payload, peerId); }
 
   private protocolStrike(peer: PeerRecord, message: string) {
     if (peer.closed) return;
@@ -2200,6 +2290,9 @@ export class MultiplayerSession {
       return payload.actorId === peer.identity.id && (payload.status === undefined || payload.status === "request");
     }
     if (envelope.type === "sleep-vote") return payload.actorId === peer.identity.id;
+    if (envelope.type === "agent-command") return peer.identity.peerKind === "agent" && payload.agentId === peer.identity.id;
+    if (envelope.type === "chat") return payload.authorId === peer.identity.id && payload.peerKind === (peer.identity.peerKind ?? "human");
+    if (envelope.type === "voice-chunk") return peer.identity.peerKind === "agent" && payload.agentId === peer.identity.id;
     return true;
   }
 
@@ -2207,14 +2300,16 @@ export class MultiplayerSession {
     if (peer.closed) return;
     let envelope: MultiplayerEnvelope;
     try {
-      envelope = decodeEnvelope(data, kind === "movement" ? MAX_MOVEMENT_MESSAGE_BYTES : MAX_RELIABLE_MESSAGE_BYTES);
+      envelope = decodeEnvelope(data, kind === "movement" ? MAX_MOVEMENT_MESSAGE_BYTES : kind === "voice" ? MAX_VOICE_MESSAGE_BYTES : MAX_RELIABLE_MESSAGE_BYTES);
     } catch (error) {
       this.protocolStrike(peer, error instanceof Error ? error.message : "Invalid multiplayer message");
       return;
     }
-    const expectedKind: MultiplayerChannelKind = envelope.type === "player-pose" || envelope.type === "mob-snapshot" || envelope.type === "drop-snapshot" || envelope.type === "time-weather"
-      ? "movement"
-      : "reliable";
+    const expectedKind: MultiplayerChannelKind = envelope.type === "voice-chunk"
+      ? "voice"
+      : envelope.type === "player-pose" || envelope.type === "mob-snapshot" || envelope.type === "drop-snapshot" || envelope.type === "time-weather"
+        ? "movement"
+        : "reliable";
     if (expectedKind !== kind) { this.protocolStrike(peer, `${envelope.type} arrived on the wrong channel`); return; }
     if (envelope.sessionId !== this.sessionId || envelope.from !== peer.identity?.id) {
       this.protocolStrike(peer, "Message identity or session mismatch");
@@ -2228,10 +2323,11 @@ export class MultiplayerSession {
       this.protocolStrike(peer, "Guest action attempted to impersonate another player");
       return;
     }
-    const lastSequence = kind === "reliable" ? peer.lastReliableSequence : peer.lastMovementSequence;
+    const lastSequence = kind === "reliable" ? peer.lastReliableSequence : kind === "movement" ? peer.lastMovementSequence : peer.lastVoiceSequence;
     if (envelope.sequence <= lastSequence) return;
     if (kind === "reliable") peer.lastReliableSequence = envelope.sequence;
-    else peer.lastMovementSequence = envelope.sequence;
+    else if (kind === "movement") peer.lastMovementSequence = envelope.sequence;
+    else peer.lastVoiceSequence = envelope.sequence;
     peer.lastSeenAt = this.now();
     peer.protocolStrikes = Math.max(0, peer.protocolStrikes - 1);
 
@@ -2329,14 +2425,17 @@ export class MultiplayerSession {
     peer.state = state;
     if (peer.reliable) peer.reliable.onopen = peer.reliable.onclose = peer.reliable.onerror = peer.reliable.onmessage = null;
     if (peer.movement) peer.movement.onopen = peer.movement.onclose = peer.movement.onerror = peer.movement.onmessage = null;
+    if (peer.voice) peer.voice.onopen = peer.voice.onclose = peer.voice.onerror = peer.voice.onmessage = null;
     peer.connection.onconnectionstatechange = null;
     peer.connection.ondatachannel = null;
     peer.connection.onicegatheringstatechange = null;
     try { peer.reliable?.close(); } catch { /* Already closed. */ }
     try { peer.movement?.close(); } catch { /* Already closed. */ }
+    try { peer.voice?.close(); } catch { /* Already closed. */ }
     try { peer.connection.close(); } catch { /* Already closed. */ }
     this.peers.delete(peer.token);
     this.nextReliableArtificialSendAt.delete(peer.token);
+    this.nextVoiceArtificialSendAt.delete(peer.token);
     this.emitPeer(peer, reason);
     this.recalculateSessionState();
   }
@@ -2353,6 +2452,7 @@ export class MultiplayerSession {
     for (const timer of this.artificialSendTimers) clearTimeout(timer);
     this.artificialSendTimers.clear();
     this.nextReliableArtificialSendAt.clear();
+    this.nextVoiceArtificialSendAt.clear();
     this.listeners.clear();
   }
 }

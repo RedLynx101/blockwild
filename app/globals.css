@@ -6948,6 +6948,103 @@ input:focus-visible {
   margin-top: 0;
 }
 
+.agent-session-roster,
+.multiplayer-chat-panel {
+  display: grid;
+  gap: 9px;
+  margin-top: 12px;
+  padding: 11px;
+  border: 2px solid #455b54;
+  background: rgba(8, 20, 18, 0.72);
+}
+
+.agent-session-roster > header,
+.multiplayer-chat-panel > header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.agent-session-roster h3,
+.multiplayer-chat-panel h3 { margin: 3px 0 0; color: #e8fff5; font-size: 15px; }
+.agent-session-roster header > small,
+.multiplayer-chat-panel header > small { color: #8eb9aa; font-size: 8px; }
+
+.agent-session-roster article {
+  display: grid;
+  gap: 8px;
+  padding: 9px;
+  border-left: 3px solid #d5aa54;
+  background: rgba(25, 40, 35, 0.88);
+}
+
+.agent-session-roster article.status-approved { border-left-color: #70d6a5; }
+.agent-session-roster article.status-paused { border-left-color: #7fa9d9; }
+.agent-session-roster article.status-revoked,
+.agent-session-roster article.status-disconnected { border-left-color: #bd6259; opacity: .78; }
+
+.agent-session-heading { display: flex; align-items: center; gap: 8px; }
+.agent-session-heading > div { display: grid; gap: 2px; }
+.agent-session-heading strong { color: #f2fff9; font-size: 10px; }
+.agent-session-heading small { color: #9eb0a8; font-size: 7px; }
+.agent-drone-glyph { color: #7ce3bd; font-size: 18px; filter: drop-shadow(0 0 5px rgba(92, 224, 181, .55)); }
+
+.agent-capability-list { display: flex; flex-wrap: wrap; gap: 5px; }
+.agent-capability-list label { display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px; border: 1px solid #50665d; background: #18231f; color: #c1d3cb; font: 7px var(--font-geist-mono), monospace; }
+.agent-capability-list input { width: 12px; height: 12px; accent-color: #70d6a5; }
+.agent-session-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.agent-session-actions button,
+.multiplayer-chat-panel form button,
+.agent-chat-hud button { min-height: 28px; padding: 5px 8px; border: 1px solid #718078; background: #27312d; color: #e6eee9; font: 800 7px var(--font-geist-mono), monospace; }
+.agent-session-actions .approve { border-color: #69b995; background: #244c3c; color: #d9ffee; }
+.agent-session-actions .danger { border-color: #93564e; background: #4d2927; color: #ffd5d0; }
+
+.multiplayer-chat-log,
+.agent-chat-history { display: grid; gap: 4px; }
+.multiplayer-chat-log { max-height: 150px; overflow: auto; padding: 6px; background: rgba(0, 0, 0, .28); }
+.multiplayer-chat-log p,
+.agent-chat-history p { display: grid; grid-template-columns: auto 1fr auto; gap: 7px; margin: 0; color: #dfe8e2; font-size: 8px; line-height: 1.4; }
+.multiplayer-chat-log p.peer-agent b,
+.agent-chat-history p.peer-agent b { color: #7ce3bd; }
+.multiplayer-chat-log b,
+.agent-chat-history b { color: #f2d77c; }
+.multiplayer-chat-log small,
+.agent-chat-history small { color: #72827b; font-size: 6px; }
+.multiplayer-chat-log .empty { display: block; color: #87928c; font-style: italic; }
+.multiplayer-chat-panel form,
+.agent-chat-hud form { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 5px; }
+.multiplayer-chat-panel select,
+.multiplayer-chat-panel input,
+.agent-chat-hud select,
+.agent-chat-hud input { min-height: 30px; border: 1px solid #59665f; background: #0b100e; color: #ecf3ef; font: 8px var(--font-geist-mono), monospace; }
+.multiplayer-chat-panel input,
+.agent-chat-hud input { padding: 5px 7px; }
+
+.agent-chat-hud {
+  position: fixed;
+  z-index: 24;
+  left: 18px;
+  bottom: 118px;
+  width: min(540px, calc(100vw - 36px));
+  display: grid;
+  gap: 6px;
+  pointer-events: none;
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, .56));
+}
+.agent-chat-hud.open { padding: 8px; border: 1px solid rgba(100, 140, 124, .65); background: rgba(5, 12, 10, .88); pointer-events: auto; }
+.agent-chat-history p { padding: 3px 6px; background: rgba(4, 8, 7, .66); text-shadow: 1px 1px #000; }
+.agent-chat-open { width: max-content; pointer-events: auto; opacity: .74; }
+.agent-chat-open kbd { color: #f1d471; }
+
+@media (max-width: 720px) {
+  .agent-chat-hud { bottom: 178px; }
+  .agent-session-roster > header,
+  .multiplayer-chat-panel > header { align-items: start; flex-direction: column; }
+  .multiplayer-chat-panel form,
+  .agent-chat-hud form { grid-template-columns: 1fr; }
+}
+
 .butterfly-capture-record {
   border-color: #7d9768;
   background: rgba(228, 247, 200, 0.34);
