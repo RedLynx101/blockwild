@@ -32,6 +32,7 @@ import {
 import { CHEST_VISUAL, chestLatchCenters } from "./chest-model";
 import { isDoubleTallGrass, planDoubleTallGrassRemoval } from "./tall-grass";
 import { planSubmergedFlora } from "./ecology";
+import { adventurePoiCandidateForChunk } from "./adventure-content";
 import { SHIELD_PROFILES, resolveShieldHit, shouldRaiseOffhandShield, type ShieldKind } from "./shields";
 import {
   BLOCKS,
@@ -71,6 +72,7 @@ import {
   SEA_LEVEL,
   BiomeId,
   ChunkWorld,
+  adventureBiomeFromId,
   createAtlasBlockGeometry,
   guildHallBlockPalette,
   type ChunkEditSave,
@@ -5220,6 +5222,41 @@ export class VoxelEngine {
     this.mapKnowledge = bankFastTravelCharges(this.mapKnowledge, 4);
     this.emitHud(true);
     return selectWayshrine ? wayshrineId : manualId;
+  }
+
+  /**
+   * Moves to a real, distant surface POI candidate without generating its
+   * chunks synchronously. The browser audit therefore exercises the same
+   * worker -> main-thread landmark handoff used during ordinary exploration.
+   */
+  primeGeneratedPoiAudit() {
+    const startChunkX = Math.floor(this.position.x / CHUNK_SIZE);
+    const startChunkZ = Math.floor(this.position.z / CHUNK_SIZE);
+    for (let radius = 8; radius <= 64; radius += 1) {
+      for (let dx = -radius; dx <= radius; dx += 1) for (let dz = -radius; dz <= radius; dz += 1) {
+        if (Math.max(Math.abs(dx), Math.abs(dz)) !== radius) continue;
+        const chunkX = startChunkX + dx;
+        const chunkZ = startChunkZ + dz;
+        const x = chunkX * CHUNK_SIZE + Math.floor(CHUNK_SIZE / 2);
+        const z = chunkZ * CHUNK_SIZE + Math.floor(CHUNK_SIZE / 2);
+        const column = this.world.sampleColumn(x, z);
+        const biome = adventureBiomeFromId(column.biome);
+        if (!biome || (biome !== "coast" && column.height <= column.waterline + 2)) continue;
+        const kind = adventurePoiCandidateForChunk({ seed: this.world.seedText, chunkX, chunkZ, biome });
+        if (!kind) continue;
+        const y = column.height + 0.51;
+        this.mapKnowledge = createMapKnowledge(`world:${this.world.seedText}`, this.localPlayerId());
+        this.mapSurfaceSurveyedThisSession.clear();
+        this.position.set(x, y, z);
+        this.spawn.copy(this.position);
+        this.world.scheduleAround(x, z, true, y);
+        this.yaw = 0;
+        this.pitch = -.12;
+        this.emitHud(true);
+        return { kind, chunkX, chunkZ } as const;
+      }
+    }
+    throw new Error("Unable to find a deterministic surface POI audit candidate.");
   }
 
   loadWorld(save: WorldSave, options: Partial<WorldOptions> = save.options ?? {}, worldId: string | null = this.worldStorage.activeWorldId) {

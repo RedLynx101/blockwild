@@ -1,3 +1,5 @@
+import type { StructureMarker } from "./structures";
+
 export type CachedChunkData = Readonly<{
   cacheKey: string;
   key: string;
@@ -12,7 +14,20 @@ export type CachedChunkData = Readonly<{
   lightInitialized: boolean;
   lightIndices: readonly number[];
   leafIndices: readonly number[];
+  /** Semantic POI/chest/spawn metadata owned by this chunk. */
+  structureMarkers: readonly (readonly [string, StructureMarker])[];
 }>;
+
+const cloneStructureMarker = (marker: StructureMarker): StructureMarker => {
+  const position = { ...marker.position };
+  if (marker.type === "chest") return { ...marker, position, loot: marker.loot.map((entry) => ({ ...entry })) };
+  if (marker.type === "spawn") return { ...marker, position, ...(marker.tags ? { tags: [...marker.tags] } : {}) };
+  return { ...marker, position };
+};
+
+const cloneStructureMarkers = (entries: CachedChunkData["structureMarkers"]) => entries.map(
+  ([key, marker]) => [key, cloneStructureMarker(marker)] as const,
+);
 
 const byteLengthOf = (chunk: CachedChunkData) => chunk.blocks.byteLength
   + chunk.heightmap.byteLength
@@ -20,7 +35,8 @@ const byteLengthOf = (chunk: CachedChunkData) => chunk.blocks.byteLength
   + chunk.sectionBlockCounts.byteLength
   + chunk.skyTops.byteLength
   + chunk.light.byteLength
-  + (chunk.lightIndices.length + chunk.leafIndices.length) * 8;
+  + (chunk.lightIndices.length + chunk.leafIndices.length) * 8
+  + JSON.stringify(chunk.structureMarkers).length * 2;
 
 const cloneChunkData = (data: CachedChunkData): CachedChunkData => ({
   ...data,
@@ -32,6 +48,7 @@ const cloneChunkData = (data: CachedChunkData): CachedChunkData => ({
   light: data.light.slice(),
   lightIndices: [...data.lightIndices],
   leafIndices: [...data.leafIndices],
+  structureMarkers: cloneStructureMarkers(data.structureMarkers),
 });
 
 /** Byte-bounded LRU for recently unloaded chunks. Taking transfers ownership. */
@@ -109,6 +126,13 @@ const isPersistentRecord = (value: unknown, cacheKey: string): value is Persiste
     && record.lightIndices.every(Number.isInteger)
     && Array.isArray(record.leafIndices)
     && record.leafIndices.every(Number.isInteger)
+    && Array.isArray(record.structureMarkers)
+    && record.structureMarkers.every((entry) => Array.isArray(entry)
+      && entry.length === 2
+      && typeof entry[0] === "string"
+      && Boolean(entry[1])
+      && typeof entry[1] === "object"
+      && (entry[1] as Partial<StructureMarker>).position !== undefined)
     && typeof record.accessedAt === "number"
     && Number.isFinite(record.accessedAt);
 };

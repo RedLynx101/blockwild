@@ -3552,7 +3552,21 @@ export class ChunkWorld {
     // restored beside a freshly generated v18 neighbor after an update. That
     // mixed-generation boundary was the source of terrain, grass, and liquid
     // discontinuities that could otherwise survive indefinitely in a save.
-    return `terrain-v3|g${GENERATOR_VERSION}|${this.seedText}|${JSON.stringify(this.generationOptions)}|${key}|${this.chunkEditSignature(key)}`;
+    // v4 adds semantic structure markers to worker/cache payloads. Invalidating
+    // older voxel-only records is required: their buildings still exist, but
+    // their POIs, chests, residents, and encounters cannot be rediscovered.
+    return `terrain-v4|g${GENERATOR_VERSION}|${this.seedText}|${JSON.stringify(this.generationOptions)}|${key}|${this.chunkEditSignature(key)}`;
+  }
+
+  private structureMarkerEntriesForChunk(cx: number, cz: number) {
+    return [...this.structureMarkers.entries()].filter(([, marker]) => (
+      Math.floor(marker.position.x / CHUNK_SIZE) === cx
+      && Math.floor(marker.position.z / CHUNK_SIZE) === cz
+    ));
+  }
+
+  private restoreStructureMarkerEntries(entries: readonly (readonly [string, StructureMarker])[]) {
+    for (const [key, marker] of entries) this.structureMarkers.set(key, marker);
   }
 
   private cachedChunkData(chunk: Chunk): CachedChunkData {
@@ -3570,6 +3584,7 @@ export class ChunkWorld {
       lightInitialized: chunk.lightInitialized,
       lightIndices: [...chunk.lightIndices],
       leafIndices: [...chunk.leafIndices],
+      structureMarkers: this.structureMarkerEntriesForChunk(chunk.cx, chunk.cz),
     };
   }
 
@@ -3597,6 +3612,7 @@ export class ChunkWorld {
     this.chunks.set(chunk.key, chunk);
     this.group.add(chunk.group);
     this.freezeTerrainTransform(chunk.group);
+    this.restoreStructureMarkerEntries(data.structureMarkers);
     this.prepareGeneratedChunk(chunk);
     return chunk;
   }
@@ -3725,6 +3741,7 @@ export class ChunkWorld {
         this.chunks.set(chunk.key, chunk);
         this.group.add(chunk.group);
         this.freezeTerrainTransform(chunk.group);
+        this.restoreStructureMarkerEntries(completed.structureMarkers);
         this.generationQueued.delete(chunk.key);
         this.generationEnqueuedAt.delete(chunk.key);
         this.streamingCompleted.generation += 1;

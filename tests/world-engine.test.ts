@@ -2146,6 +2146,27 @@ test("terrain sections consolidate to at most one visible submission per render 
   world.dispose();
 });
 
+test("chunk cache restoration preserves landmark metadata for map discovery", () => {
+  const world = new ChunkWorld();
+  world.reset("POI-CACHE-TEST", undefined, { structures: false });
+  world.generateChunk(0, 0);
+  world.structureMarkers.set("audit:surface-poi", {
+    type: "landmark",
+    id: "audit:surface-poi",
+    position: { x: 8, y: 40, z: 8 },
+    tag: "adventure-poi:forest-watch",
+    mapLayer: "surface",
+  });
+
+  world.unloadChunk("0,0");
+  world.structureMarkers.clear();
+  world.scheduleAround(8, 8, true, 40);
+
+  assert.equal(world.chunks.has("0,0"), true, "the nearby chunk should restore from the memory cache immediately");
+  assert.equal(world.structureMarkers.get("audit:surface-poi")?.type, "landmark");
+  world.dispose();
+});
+
 test("generator-v17 saves keep edits and modern settlement options while terrain caches advance to v18", () => {
   const previous = {
     version: 2,

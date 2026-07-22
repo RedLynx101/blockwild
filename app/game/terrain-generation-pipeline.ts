@@ -1,3 +1,5 @@
+import type { StructureMarker } from "./structures";
+
 export type TerrainGenerationRequest = Readonly<{
   namespace: string;
   seedText: string;
@@ -21,6 +23,8 @@ export type TerrainGenerationResult = Readonly<{
   light: Uint16Array;
   lightIndices: readonly number[];
   leafIndices: readonly number[];
+  /** Worker-side generation effects that cannot be reconstructed from voxels. */
+  structureMarkers: readonly (readonly [string, StructureMarker])[];
 }>;
 
 type WorkerResponse = Readonly<{ id: number; result: TerrainGenerationResult }>;
@@ -65,7 +69,8 @@ export class TerrainGenerationPipeline {
         this.completed += 1;
         const result = event.data.result;
         this.transferBytes += result.blocks.byteLength + result.heightmap.byteLength + result.biomes.byteLength
-          + result.sectionBlockCounts.byteLength + result.skyTops.byteLength + result.light.byteLength;
+          + result.sectionBlockCounts.byteLength + result.skyTops.byteLength + result.light.byteLength
+          + JSON.stringify(result.structureMarkers).length * 2;
         callback.complete(result);
       };
       slot.worker.onerror = () => {
