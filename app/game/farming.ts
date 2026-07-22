@@ -702,64 +702,65 @@ export type HarvestResult = Readonly<{
   replanted: boolean;
 }>;
 
-export function harvestPlant(block: BlockId, useScythe = false, yieldRoll = 0.5): HarvestResult | null {
+export function harvestPlant(block: BlockId, useScythe = false, yieldRoll = 0.5, preserveCultivated = false): HarvestResult | null {
   const roll = Math.max(0, Math.min(0.9999, yieldRoll));
+  const replant = useScythe || preserveCultivated;
   if (block === BlockId.WheatCrop) {
     const wheat = 2 + Math.floor(roll * 2) + (useScythe ? 1 : 0);
     const seeds = 1 + (roll > 0.56 ? 1 : 0) + (useScythe && roll > 0.82 ? 1 : 0);
     return {
-      replacement: useScythe ? BlockId.WheatSprout : BlockId.Air,
+      replacement: replant ? BlockId.WheatSprout : BlockId.Air,
       drops: [{ item: Item.Wheat, count: wheat }, { item: Item.WheatSeeds, count: seeds }],
-      replanted: useScythe,
+      replanted: replant,
     };
   }
   if (block === BlockId.MoonriceCrop) {
     return {
-      replacement: useScythe ? BlockId.MoonriceSprout : BlockId.Air,
+      replacement: replant ? BlockId.MoonriceSprout : BlockId.Air,
       drops: [{ item: Item.Moonrice, count: 2 + Math.floor(roll * 3) + (useScythe ? 1 : 0) }, { item: Item.MoonriceSeeds, count: 1 + (roll > 0.5 ? 1 : 0) }],
-      replanted: useScythe,
+      replanted: replant,
     };
   }
   if (block === BlockId.SunrootCrop) {
     return {
-      replacement: useScythe ? BlockId.SunrootSprout : BlockId.Air,
+      replacement: replant ? BlockId.SunrootSprout : BlockId.Air,
       drops: [{ item: Item.Sunroot, count: 2 + Math.floor(roll * 3) + (useScythe ? 1 : 0) }, { item: Item.SunrootStarts, count: 1 + (roll > 0.62 ? 1 : 0) }],
-      replanted: useScythe,
+      replanted: replant,
     };
   }
   if (block === BlockId.PeppermintCrop) {
     return {
-      replacement: useScythe ? BlockId.PeppermintSprout : BlockId.Air,
+      replacement: replant ? BlockId.PeppermintSprout : BlockId.Air,
       drops: [{ item: Item.PeppermintCane, count: 2 + Math.floor(roll * 3) + (useScythe ? 1 : 0) }, { item: Item.PeppermintSeeds, count: 1 + (roll > 0.58 ? 1 : 0) }],
-      replanted: useScythe,
+      replanted: replant,
     };
   }
   if (block === BlockId.CocoaCrop) {
     return {
-      replacement: useScythe ? BlockId.CocoaSprout : BlockId.Air,
+      replacement: replant ? BlockId.CocoaSprout : BlockId.Air,
       drops: [{ item: Item.CocoaNib, count: 2 + Math.floor(roll * 3) + (useScythe ? 1 : 0) }, { item: Item.CocoaSeeds, count: 1 + (roll > 0.62 ? 1 : 0) }],
-      replanted: useScythe,
+      replanted: replant,
     };
   }
   if (block === BlockId.CottonCrop) {
     return {
-      replacement: useScythe ? BlockId.CottonSprout : BlockId.Air,
+      replacement: replant ? BlockId.CottonSprout : BlockId.Air,
       drops: [{ item: Item.CottonBoll, count: 2 + Math.floor(roll * 3) + (useScythe ? 1 : 0) }, { item: Item.CottonSeeds, count: 1 + (roll > 0.55 ? 1 : 0) }],
-      replanted: useScythe,
+      replanted: replant,
     };
   }
   if (block === BlockId.SunCarrotCrop) {
     return {
-      replacement: useScythe ? BlockId.SunCarrotSprout : BlockId.Air,
+      replacement: replant ? BlockId.SunCarrotSprout : BlockId.Air,
       drops: [{ item: Item.SunCarrot, count: 2 + Math.floor(roll * 2) + (useScythe ? 1 : 0) }, { item: Item.SunCarrotSeeds, count: 1 + (roll > 0.62 ? 1 : 0) }],
-      replanted: useScythe,
+      replanted: replant,
     };
   }
   if (block === BlockId.BluepodCrop) {
     return {
-      replacement: useScythe ? BlockId.BluepodSprout : BlockId.Air,
+      replacement: replant ? BlockId.BluepodSprout : BlockId.Air,
       drops: [{ item: Item.BluepodBeans, count: 2 + Math.floor(roll * 3) + (useScythe ? 1 : 0) }, { item: Item.BluepodSeeds, count: 1 + (roll > 0.58 ? 1 : 0) }],
-      replanted: useScythe,
+      replanted: replant,
     };
   }
   if (block === BlockId.ShellfruitCrop) {
@@ -805,6 +806,16 @@ export function harvestPlant(block: BlockId, useScythe = false, yieldRoll = 0.5)
   if (block === BlockId.AbyssBloom) return { replacement: BlockId.Water, drops: [{ item: Item.AbyssBloomNectar, count: 1 }], replanted: false };
   if (block === BlockId.Tidevine) return { replacement: BlockId.Water, drops: [{ item: Item.TidevineFiber, count: 1 + Math.floor(roll * 3) }], replanted: false };
   return null;
+}
+
+const MATURE_CULTIVATED_PLANTS = new Set<BlockId>([
+  ...Object.values(PLANT_GROWTH).map((profile) => profile.stages.at(-1)!),
+  BlockId.AppleFruit,
+  BlockId.FrostpearFruit,
+]);
+
+export function isMatureCultivatedPlant(block: BlockId | undefined): block is BlockId {
+  return block !== undefined && MATURE_CULTIVATED_PLANTS.has(block);
 }
 
 export type PlannedFarmBlock = Readonly<{ x: number; y: number; z: number; type: BlockId }>;

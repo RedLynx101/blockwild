@@ -181,6 +181,9 @@ test("right-click harvest preserves bushes and scythes replant wheat with seeds"
   assert.equal(wheat?.replanted, true);
   assert.ok((wheat?.drops.find((drop) => drop.item === Item.WheatSeeds)?.count ?? 0) >= 2);
   assert.deepEqual(harvestPlant(BlockId.AppleFruit), { replacement: BlockId.Air, drops: [{ item: Item.Apple, count: 1 }], replanted: false });
+  const rightUseWheat = harvestPlant(BlockId.WheatCrop, false, 0.1, true);
+  assert.equal(rightUseWheat?.replacement, BlockId.WheatSprout);
+  assert.equal(rightUseWheat?.replanted, true);
 });
 
 test("apple-tree plans are deterministic, attractive canopies with separately harvestable hanging fruit", () => {

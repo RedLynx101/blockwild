@@ -607,6 +607,7 @@ import {
 import { applyContainerOperation } from "./multiplayer-inventory";
 import { MultiplayerDiagnosticsRing, multiplayerRejectionCategory } from "./multiplayer-diagnostics";
 import { advanceAgentAlongPath, findAgentVoxelPath, type AgentPathCell } from "./agent-navigation";
+import { buildMaterialRequirements, reserveBuildMaterials } from "./agent-work";
 import {
   AgentAuthority,
   AgentChatRing,
@@ -617,6 +618,8 @@ import {
   createAgentResult,
   type AgentCapability,
   type AgentCapabilityGrant,
+  type AgentBlockPlacement,
+  type AgentMaterialRequirement,
   type AgentChatChannel,
   type AgentChatMessage,
   type AgentCommandEnvelope,
@@ -657,6 +660,7 @@ import {
   fenceGateForYaw,
   growthDelaySeconds,
   harvestPlant,
+  isMatureCultivatedPlant,
   isTreeLeafBlock,
   isTreeLogBlock,
   nextPlantStage,
@@ -1779,6 +1783,31 @@ type AgentRuntimeTask = {
   replans: number;
   lastPosition: { x: number; y: number; z: number };
 };
+
+type AgentBuildPreview = {
+  id: string;
+  agentId: string;
+  createdAt: number;
+  expiresAt: number;
+  worldRevision: number;
+  placements: readonly AgentBlockPlacement[];
+  removals: readonly { x: number; y: number; z: number }[];
+  requirements: readonly AgentMaterialRequirement[];
+  warnings: readonly string[];
+};
+
+type AgentBuildJob = {
+  command: AgentCommandEnvelope;
+  preview: AgentBuildPreview;
+  placementIndex: number;
+  removalIndex: number;
+  reserved: Map<ItemCode, number>;
+  startedAt: number;
+  committed: number;
+  lastReportAt: number;
+};
+
+type AgentWorkFeedback = { object: THREE.Object3D; expiresAt: number; pulse: boolean };
 
 type KeyboardLockApi = {
   lock: (keys?: string[]) => Promise<void>;
@@ -4165,6 +4194,10 @@ export class VoxelEngine {
   latestAgentObservation: AgentObservationV1 | null = null;
   latestAgentResult: AgentCommandResult | null = null;
   agentRuntimeTasks = new Map<string, AgentRuntimeTask>();
+  agentBuildPreviews = new Map<string, AgentBuildPreview>();
+  agentBuildJobs = new Map<string, AgentBuildJob>();
+  agentBuildPreviewVisuals = new Map<string, THREE.InstancedMesh>();
+  agentWorkFeedback: AgentWorkFeedback[] = [];
   pendingGuestCreatureInventoryRequests = new Map<string, number>();
   /** Suppresses generic pack uploads until the host resolves optimistic placement costs. */
   pendingGuestPlacementRequests = new Map<string, number>();
@@ -5628,6 +5661,22 @@ export class VoxelEngine {
     catch { return 0; }
   }
 
+  private clearAgentWorkRuntime() {
+    (this.agentBuildPreviews ??= new Map()).clear();
+    (this.agentBuildJobs ??= new Map()).clear();
+    for (const visual of (this.agentBuildPreviewVisuals ??= new Map()).values()) {
+      visual.removeFromParent();
+      visual.geometry.dispose();
+      (visual.material as THREE.Material).dispose();
+    }
+    this.agentBuildPreviewVisuals.clear();
+    for (const feedback of this.agentWorkFeedback ??= []) {
+      feedback.object.removeFromParent();
+      this.disposeObject(feedback.object);
+    }
+    this.agentWorkFeedback = [];
+  }
+
   approveAgent(agentId: string, grants?: readonly AgentCapability[]) {
     const record = this.agentAuthority.approve(agentId, grants);
     if (!record) return false;
@@ -5662,6 +5711,8 @@ export class VoxelEngine {
   }
 
   revokeAgent(agentId: string) {
+    this.cancelAgentRuntime(agentId, "revoked", "The host revoked this drone's active command.");
+    this.cancelAgentBuild(agentId, "revoked", "The host revoked the build; unplaced materials were returned.");
     const record = this.agentAuthority.revoke(agentId);
     if (!record) return false;
     this.sendAgentGrant(record, "All session authority was revoked by the host.");
@@ -5678,6 +5729,8 @@ export class VoxelEngine {
   }
 
   stopAgent(agentId: string) {
+    this.cancelAgentRuntime(agentId, "stopped", "The host stopped this drone's active command.");
+    this.cancelAgentBuild(agentId, "stopped", "The host stopped the build; unplaced materials were returned.");
     const record = this.agentAuthority.revoke(agentId);
     if (!record) return false;
     this.sendAgentGrant(record, "Stopped and disconnected by the host.");
@@ -5887,6 +5940,7 @@ export class VoxelEngine {
     (this.agentInventories ??= new Map()).clear();
     (this.agentObservationSequences ??= new Map()).clear();
     (this.agentRuntimeTasks ??= new Map()).clear();
+    this.clearAgentWorkRuntime();
     this.latestAgentObservation = null;
     this.latestAgentResult = null;
     this.multiplayerState.inviteCode = "";
@@ -6170,6 +6224,7 @@ export class VoxelEngine {
     (this.agentInventories ??= new Map()).clear();
     (this.agentObservationSequences ??= new Map()).clear();
     (this.agentRuntimeTasks ??= new Map()).clear();
+    this.clearAgentWorkRuntime();
     this.latestAgentObservation = null;
     this.latestAgentResult = null;
     this.multiplayerReceivedSnapshot = false;
@@ -8662,7 +8717,11 @@ export class VoxelEngine {
         this.events.onToast(`${event.peer.identity.name} joined the session.`);
       }
       if (["disconnected", "failed", "closed", "stale"].includes(event.peer.state) && event.peer.identity) {
-        if (event.peer.identity.peerKind === "agent") this.agentAuthority.disconnect(event.peer.identity.id);
+        if (event.peer.identity.peerKind === "agent") {
+          this.cancelAgentRuntime(event.peer.identity.id, "connection_lost", "The drone disconnected; its active movement lease was released.");
+          this.cancelAgentBuild(event.peer.identity.id, "connection_lost", "The drone disconnected; unplaced build materials were returned.");
+          this.agentAuthority.disconnect(event.peer.identity.id);
+        }
         this.removeRemotePlayer(event.peer.identity.id);
         this.multiplayerBoatInputs.delete(event.peer.identity.id);
         for (const boat of this.boats.values()) boat.save.passengers = leaveSailboat(boat.save.passengers, event.peer.identity.id);
@@ -8814,7 +8873,7 @@ export class VoxelEngine {
     this.retryCriticalReliableRequests();
     this.updateGuestContainerIntentRetries();
     this.flushPlayerProgressionTransfers();
-    if (session.role === "host") this.updateAgentRuntime(dt);
+    if (session.role === "host") { this.updateAgentRuntime(dt); this.updateAgentBuildJobs(); }
     for (const [playerId, cooldown] of this.multiplayerCombatCooldowns) {
       const next = cooldown - dt;
       if (next <= 0) this.multiplayerCombatCooldowns.delete(playerId);
@@ -14132,7 +14191,7 @@ export class VoxelEngine {
   }
 
   applyHarvest(x: number, y: number, z: number, type: BlockId, useScythe: boolean) {
-    const result = harvestPlant(type, useScythe, Math.random());
+    const result = harvestPlant(type, useScythe, Math.random(), true);
     if (!result) return false;
     const aquaticColumn = isWaterloggedFloraBlock(type)
       ? planAquaticColumnRemoval(type, { x, y, z }, (bx, by, bz) => this.world.getBlock(bx, by, bz))
@@ -28408,6 +28467,96 @@ export class VoxelEngine {
     return this.remotePlayers.get(playerId)?.target ?? null;
   }
 
+  private addAgentStack(agentId: string, stack: InventorySlot) {
+    const inventory = this.agentInventories.get(agentId) ?? blankInventory();
+    const transfer = transferInventoryStacks([stack], inventory);
+    this.agentInventories.set(agentId, transfer.target as Array<InventorySlot | null>);
+    return transfer.source[0]?.count ?? 0;
+  }
+
+  private showAgentBuildPreview(preview: AgentBuildPreview) {
+    const old = this.agentBuildPreviewVisuals.get(preview.id);
+    if (old) { old.removeFromParent(); old.geometry.dispose(); (old.material as THREE.Material).dispose(); }
+    const geometry = new THREE.BoxGeometry(0.94, 0.94, 0.94);
+    const material = new THREE.MeshBasicMaterial({ color: preview.warnings.length ? 0xe6a64f : 0x4ee8ca, transparent: true, opacity: 0.22, depthWrite: false, wireframe: true });
+    const mesh = new THREE.InstancedMesh(geometry, material, preview.placements.length);
+    const matrix = new THREE.Matrix4();
+    preview.placements.forEach((placement, index) => {
+      matrix.makeTranslation(placement.x, placement.y, placement.z);
+      mesh.setMatrixAt(index, matrix);
+    });
+    mesh.name = `agent-build-preview:${preview.id}`;
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 20;
+    this.scene.add(mesh);
+    this.agentBuildPreviewVisuals.set(preview.id, mesh);
+  }
+
+  private clearAgentBuildPreview(previewId: string) {
+    this.agentBuildPreviews.delete(previewId);
+    const visual = this.agentBuildPreviewVisuals.get(previewId);
+    if (visual) { visual.removeFromParent(); visual.geometry.dispose(); (visual.material as THREE.Material).dispose(); }
+    this.agentBuildPreviewVisuals.delete(previewId);
+  }
+
+  private markAgentWork(agentId: string, cell: { x: number; y: number; z: number }, color = 0x52e1bf) {
+    const outline = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1.025, 1.025, 1.025)), new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.85 }));
+    outline.position.set(cell.x, cell.y, cell.z);
+    outline.name = "agent-work-afterglow";
+    this.scene.add(outline);
+    this.agentWorkFeedback.push({ object: outline, expiresAt: performance.now() + 2_000, pulse: true });
+    const pose = this.agentPose(agentId);
+    if (pose) {
+      const geometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(pose.x, pose.y + 1.25, pose.z), new THREE.Vector3(cell.x, cell.y, cell.z)]);
+      const beam = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.72 }));
+      beam.name = "agent-work-beam";
+      this.scene.add(beam);
+      this.agentWorkFeedback.push({ object: beam, expiresAt: performance.now() + 240, pulse: false });
+    }
+  }
+
+  private updateAgentWorkFeedback() {
+    const now = performance.now();
+    for (let index = this.agentWorkFeedback.length - 1; index >= 0; index -= 1) {
+      const feedback = this.agentWorkFeedback[index];
+      const remaining = feedback.expiresAt - now;
+      if (remaining <= 0) {
+        feedback.object.removeFromParent();
+        this.disposeObject(feedback.object);
+        this.agentWorkFeedback.splice(index, 1);
+        continue;
+      }
+      if (feedback.pulse) {
+        const scale = 1 + Math.sin(now * 0.012) * 0.025;
+        feedback.object.scale.setScalar(scale);
+        const material = (feedback.object as THREE.LineSegments).material as THREE.LineBasicMaterial | undefined;
+        if (material) material.opacity = Math.min(0.9, remaining / 1_000) * (0.72 + Math.sin(now * 0.012) * 0.12);
+      }
+    }
+    for (const [previewId, preview] of this.agentBuildPreviews) if (preview.expiresAt <= Date.now() && !this.agentBuildJobs.has(preview.agentId)) this.clearAgentBuildPreview(previewId);
+  }
+
+  private returnBuildReservation(job: AgentBuildJob) {
+    for (const [item, count] of job.reserved) {
+      if (count <= 0) continue;
+      const leftover = this.addAgentStack(job.preview.agentId, { item, count });
+      if (leftover) {
+        const pose = this.agentPose(job.preview.agentId);
+        if (pose) this.spawnDrop(item, leftover, new THREE.Vector3(pose.x, pose.y + 0.5, pose.z));
+      }
+    }
+  }
+
+  private cancelAgentBuild(agentId: string, code = "build_cancelled", message = "The build stopped and all unplaced reserved materials were returned.") {
+    const job = this.agentBuildJobs.get(agentId);
+    if (!job) return null;
+    this.agentBuildJobs.delete(agentId);
+    this.returnBuildReservation(job);
+    this.agentAuthority.releaseCommandLeases(job.command.commandId);
+    this.clearAgentBuildPreview(job.preview.id);
+    return this.publishAgentResult(createAgentResult(job.command, "cancelled", this.world.mutationRevision, code, message, { startedAt: job.startedAt, progress: { completed: job.committed, total: job.preview.placements.length + job.preview.removals.length } }));
+  }
+
   private executeAgentCommand(command: AgentCommandEnvelope) {
     const args = command.arguments as Record<string, unknown>;
     const pose = this.agentPose(command.agentId);
@@ -28415,6 +28564,7 @@ export class VoxelEngine {
     const completed = (code: string, message: string, data?: Record<string, unknown>) => this.publishAgentResult(createAgentResult(command, "completed", this.world.mutationRevision, code, message, data ? { data } : {}));
     const blocked = (code: string, message: string, data?: Record<string, unknown>) => this.publishAgentResult(createAgentResult(command, "blocked", this.world.mutationRevision, code, message, data ? { data } : {}));
     if (!pose) return blocked("agent_pose_unavailable", "The host has not established this drone's physical pose yet.");
+    if (this.agentBuildJobs.has(command.agentId) && !["build_cancel", "stop", "session.pause", "session.stop", "observe", "session.status"].includes(command.kind)) return blocked("agent_busy", "This drone is already committing a build. Cancel or finish it before starting another mutation.");
 
     if (["observe", "session.status"].includes(command.kind)) return completed("observation_ready", "A fresh host-authored observation is available.", { observationSequence: this.createAgentObservation(command.agentId).observationSequence });
     if (command.kind === "capabilities.list") return completed("capabilities_ready", "Current session capabilities returned.", { capabilities: [...(this.agentAuthority.get(command.agentId)?.granted ?? [])] });
@@ -28429,9 +28579,9 @@ export class VoxelEngine {
       this.multiplayer?.sendChat(appended.message);
       return completed("chat_sent", "The message was sent as in-world dialogue.", { sequence: appended.message.sequence });
     }
-    if (command.kind === "session.pause") { this.cancelAgentRuntime(command.agentId, "paused", "The runner paused its active command."); this.agentAuthority.pause(command.agentId); return completed("agent_paused", "The drone is paused and will not start new work."); }
+    if (command.kind === "session.pause") { this.agentAuthority.pause(command.agentId); return completed("agent_paused", "The drone safely suspended its current command and will not start new work."); }
     if (command.kind === "session.resume") { this.agentAuthority.resume(command.agentId); return completed("agent_resumed", "The drone re-observed and resumed accepting work."); }
-    if (command.kind === "session.stop") { this.cancelAgentRuntime(command.agentId, "stopped", "The runner stopped its active command."); this.agentAuthority.releaseAgentLeases(command.agentId); return completed("agent_stopped", "All drone work leases were released."); }
+    if (command.kind === "session.stop") { this.cancelAgentRuntime(command.agentId, "stopped", "The runner stopped its active command."); this.cancelAgentBuild(command.agentId, "stopped", "The build stopped safely; unplaced materials were returned."); this.agentAuthority.releaseAgentLeases(command.agentId); return completed("agent_stopped", "All drone work leases were released."); }
     if (command.kind === "stop") {
       const cancelled = this.cancelAgentRuntime(command.agentId, "stopped", "Movement stopped at the current safe position.");
       return cancelled ?? completed("already_stopped", "The drone had no active movement command.");
@@ -28529,10 +28679,145 @@ export class VoxelEngine {
       }));
       return completed("recipe_results", `${matches.length} recipe match${matches.length === 1 ? "" : "es"} found.`, { matches });
     }
+    if (command.kind === "harvest_area") {
+      const radius = Math.max(1, Math.min(32, Number(args.radius) || 8));
+      const center = args.center && typeof args.center === "object" ? args.center as { x: number; y: number; z: number } : pose;
+      const candidates: Array<{ x: number; y: number; z: number; type: BlockId; result: NonNullable<ReturnType<typeof harvestPlant>> }> = [];
+      for (let x = Math.floor(center.x - radius); x <= Math.ceil(center.x + radius) && candidates.length < 512; x += 1) for (let z = Math.floor(center.z - radius); z <= Math.ceil(center.z + radius) && candidates.length < 512; z += 1) {
+        if (Math.hypot(x - center.x, z - center.z) > radius) continue;
+        for (let y = Math.floor(center.y - 4); y <= Math.ceil(center.y + 4); y += 1) {
+          const type = this.world.getBlock(x, y, z);
+          if (!isMatureCultivatedPlant(type)) continue;
+          const result = harvestPlant(type, false, Math.abs(Math.sin(x * 12.9898 + z * 78.233 + this.day)), true);
+          if (result) candidates.push({ x, y, z, type, result });
+        }
+      }
+      if (!candidates.length) return completed("nothing_mature", "No mature cultivated crops or orchard fruit were found in the bounded area.", { harvested: 0 });
+      const lease = this.agentAuthority.acquireLease(candidates.map((cell) => `crop:${blockKey(cell.x, cell.y, cell.z)}`), command.commandId, command.agentId, command.expiresAt);
+      if (!lease.ok) return blocked("work_lease_conflict", "Another worker already owns part of this harvest area.", { conflict: lease.conflict });
+      let working = (this.agentInventories.get(command.agentId) ?? blankInventory()).map(cloneSlot);
+      const accepted: typeof candidates = [];
+      let full = false;
+      for (const candidate of candidates) {
+        let next = working;
+        let fits = true;
+        for (const drop of candidate.result.drops) {
+          const transfer = transferInventoryStacks([{ item: drop.item, count: drop.count }], next);
+          if (transfer.source[0]) { fits = false; break; }
+          next = transfer.target as Array<InventorySlot | null>;
+        }
+        if (!fits) { full = true; break; }
+        working = next;
+        accepted.push(candidate);
+      }
+      if (!accepted.length) { this.agentAuthority.releaseCommandLeases(command.commandId); return blocked("inventory_full", "The drone pack has no room for the first mature crop's yield."); }
+      const edits = accepted.map((cell) => ({ x: cell.x, y: cell.y, z: cell.z, type: cell.result.replacement }));
+      this.world.setBlocksBatch(edits, true, true);
+      this.publishBlockEdits(edits, "batch");
+      this.agentInventories.set(command.agentId, working);
+      for (const cell of accepted) { this.schedulePlantGrowth(cell.x, cell.y, cell.z, cell.result.replacement, 1); this.markAgentWork(command.agentId, cell); }
+      this.agentAuthority.releaseCommandLeases(command.commandId);
+      this.saveSoon();
+      return completed(full ? "harvest_pack_full" : "harvest_complete", `Harvested and reset ${accepted.length} mature plant${accepted.length === 1 ? "" : "s"}${full ? " before the pack filled" : ""}.`, { harvested: accepted.length, skippedImmature: true, stoppedForFullPack: full });
+    }
+    if (command.kind === "gather_resource") {
+      const radius = Math.max(1, Math.min(16, Number(args.radius) || 6));
+      const requested = new Set((Array.isArray(args.blocks) ? args.blocks : [args.block]).map(Number).filter((value) => Number.isInteger(value) && BLOCKS[value]));
+      if (!requested.size) return blocked("resource_unspecified", "gather_resource requires one or more numeric Blockwild block IDs.");
+      const inventory = this.agentInventories.get(command.agentId) ?? blankInventory();
+      const targets: Array<{ x: number; y: number; z: number; type: BlockId }> = [];
+      for (let x = Math.floor(pose.x - radius); x <= Math.ceil(pose.x + radius) && targets.length < 128; x += 1) for (let z = Math.floor(pose.z - radius); z <= Math.ceil(pose.z + radius) && targets.length < 128; z += 1) for (let y = Math.floor(pose.y - radius); y <= Math.ceil(pose.y + radius); y += 1) {
+        const type = this.world.getBlock(x, y, z);
+        if (type !== undefined && requested.has(type) && !isMatureCultivatedPlant(type)) targets.push({ x, y, z, type });
+      }
+      if (!targets.length) return completed("resource_not_found", "No matching resource blocks were found inside the bounded loaded area.", { gathered: 0 });
+      const first = targets[0];
+      const definition = BLOCKS[first.type];
+      const matchingTool = inventory.find((slot) => slot && ITEMS[slot.item]?.toolKind === definition.preferredTool && (ITEMS[slot.item]?.tier ?? 0) >= definition.requiredTier);
+      if (definition.preferredTool !== "hand" && !matchingTool) return blocked("missing_tool", `Gathering ${definition.name} requires a ${definition.preferredTool} of tier ${definition.requiredTier} or better.`);
+      let blocks = targets.slice(0, 64);
+      if (isTreeLogBlock(first.type)) {
+        const tree = discoverRootedTree(first, (x, y, z) => this.world.getBlock(x, y, z));
+        if (tree) blocks = [...tree.logs, ...tree.leaves, ...tree.attachments];
+      }
+      const resourceBlocks = blocks.filter((cell) => requested.has(cell.type) || (isTreeLogBlock(first.type) && isTreeLogBlock(cell.type)));
+      const output = resourceBlocks.reduce((counts, cell) => counts.set(itemForBlock(cell.type), (counts.get(itemForBlock(cell.type)) ?? 0) + 1), new Map<ItemCode, number>());
+      let working = inventory.map(cloneSlot);
+      for (const [item, count] of output) {
+        const transfer = transferInventoryStacks([{ item, count }], working);
+        if (transfer.source[0]) return blocked("inventory_full", `The drone pack cannot hold ${count} ${ITEMS[item]?.name ?? "resource"}.`);
+        working = transfer.target as Array<InventorySlot | null>;
+      }
+      const lease = this.agentAuthority.acquireLease(blocks.map((cell) => `block:${blockKey(cell.x, cell.y, cell.z)}`), command.commandId, command.agentId, command.expiresAt);
+      if (!lease.ok) return blocked("work_lease_conflict", "Another worker already owns part of that resource.", { conflict: lease.conflict });
+      const edits = blocks.map((cell) => ({ x: cell.x, y: cell.y, z: cell.z, type: BlockId.Air }));
+      this.world.setBlocksBatch(edits, true, true);
+      this.publishBlockEdits(edits, "batch");
+      this.agentInventories.set(command.agentId, working);
+      for (const cell of resourceBlocks.slice(0, 128)) this.markAgentWork(command.agentId, cell);
+      this.agentAuthority.releaseCommandLeases(command.commandId);
+      this.saveSoon();
+      return completed("resource_gathered", `Gathered ${resourceBlocks.length} resource block${resourceBlocks.length === 1 ? "" : "s"} with host-verified tools and pack space.`, { gathered: resourceBlocks.length });
+    }
+    if (command.kind === "build_plan") {
+      const placements = (args.placements as AgentBlockPlacement[]).map((placement) => ({ ...placement }));
+      const removals = Array.isArray(args.removals) ? (args.removals as Array<{ x: number; y: number; z: number }>).map((cell) => ({ ...cell })) : [];
+      const duplicate = new Set<string>();
+      const warnings: string[] = [];
+      for (const placement of placements) {
+        const cellKey = blockKey(placement.x, placement.y, placement.z);
+        if (duplicate.has(cellKey)) return blocked("duplicate_build_cell", `The build plan addresses ${cellKey} more than once.`);
+        duplicate.add(cellKey);
+        const definition = BLOCKS[placement.block as BlockId];
+        const current = this.world.getBlock(placement.x, placement.y, placement.z);
+        if (!definition || placement.block === BlockId.Air || placement.y < MIN_Y || placement.y > MAX_Y) return blocked("invalid_build_cell", `The placement at ${cellKey} uses an invalid block or world height.`);
+        if (current === undefined) return blocked("build_chunk_unloaded", `The placement at ${cellKey} is outside loaded host terrain.`);
+        if (current !== BlockId.Air && !BLOCKS[current]?.replaceable && placement.replace !== true) return blocked("build_cell_occupied", `The placement at ${cellKey} would replace ${BLOCKS[current]?.name ?? "a solid block"} without explicit replace permission.`);
+        const edit = { x: placement.x, y: placement.y, z: placement.z, type: placement.block as BlockId };
+        const humanCollision = definition.solid && (blockEditIntersectsPlayer(edit, { x: this.position.x, y: this.position.y, z: this.position.z }, this.currentPlayerHeight()) || [...this.remotePlayers.values()].some((remote) => remote.model.modelKind !== "drone" && blockEditIntersectsPlayer(edit, remote.target, PLAYER_HEIGHT * playerVariantHeightScale(remote.target.variant ?? "male"))));
+        if (humanCollision) return blocked("build_entity_collision", `The placement at ${cellKey} intersects a human player.`);
+        const belowPlanned = placements.some((candidate) => candidate.x === placement.x && candidate.y === placement.y - 1 && candidate.z === placement.z);
+        if (!belowPlanned && !BLOCKS[this.world.getBlock(placement.x, placement.y - 1, placement.z) ?? BlockId.Air]?.solid) warnings.push(`${cellKey} has no solid support`);
+      }
+      const requirements = buildMaterialRequirements(placements, this.agentInventories.get(command.agentId) ?? []);
+      const missing = requirements.filter((entry) => entry.missing > 0);
+      if (missing.length) return this.publishAgentResult(createAgentResult(command, "blocked", revision, "insufficient_materials", `The plan is short ${missing.map((entry) => `${entry.missing} ${entry.name ?? entry.block}`).join(", ")}.`, { materials: requirements, choices: ["modify_plan", "stop", "get_more_resources"] }));
+      const previewId = `preview_${command.agentId}_${Date.now().toString(36)}`;
+      const preview: AgentBuildPreview = { id: previewId, agentId: command.agentId, createdAt: Date.now(), expiresAt: Date.now() + 120_000, worldRevision: revision, placements, removals, requirements, warnings: [...new Set(warnings)].slice(0, 64) };
+      this.agentBuildPreviews.set(previewId, preview);
+      this.showAgentBuildPreview(preview);
+      return completed("build_preview_ready", `Validated ${placements.length} placements and ${removals.length} removals. Nothing has changed yet.`, { previewId, placements: placements.length, removals: removals.length, warnings: preview.warnings, materials: requirements });
+    }
+    if (command.kind === "build_cancel") {
+      const previewId = String(args.previewId);
+      const job = this.agentBuildJobs.get(command.agentId);
+      if (job?.preview.id === previewId) return this.cancelAgentBuild(command.agentId) ?? completed("build_cancelled", "The build was already stopped.");
+      const preview = this.agentBuildPreviews.get(previewId);
+      if (!preview || preview.agentId !== command.agentId) return blocked("preview_not_found", "That build preview does not belong to this drone or has expired.");
+      this.clearAgentBuildPreview(previewId);
+      return completed("build_preview_cancelled", "The uncommitted build preview was removed.");
+    }
+    if (command.kind === "build_commit") {
+      const previewId = String(args.previewId);
+      const preview = this.agentBuildPreviews.get(previewId);
+      if (!preview || preview.agentId !== command.agentId || preview.expiresAt <= Date.now()) return blocked("preview_not_found", "That build preview does not belong to this drone or has expired.");
+      if (preview.worldRevision !== revision) return blocked("world_revision_conflict", "The world changed after preview. Re-plan before committing.");
+      const leaseKeys = [...preview.placements.map((cell) => `block:${blockKey(cell.x, cell.y, cell.z)}`), ...preview.removals.map((cell) => `block:${blockKey(cell.x, cell.y, cell.z)}`)];
+      const lease = this.agentAuthority.acquireLease(leaseKeys, command.commandId, command.agentId, command.expiresAt);
+      if (!lease.ok) return blocked("work_lease_conflict", "Another worker owns part of this build site.", { conflict: lease.conflict });
+      const reservation = reserveBuildMaterials(this.agentInventories.get(command.agentId) ?? [], preview.requirements);
+      if (!reservation.ok) { this.agentAuthority.releaseCommandLeases(command.commandId); return blocked("inventory_changed", "The drone no longer has the material counts accepted by the preview."); }
+      this.agentInventories.set(command.agentId, reservation.inventory as Array<InventorySlot | null>);
+      const reserved = new Map<ItemCode, number>(reservation.reserved);
+      const startedAt = Date.now();
+      this.agentBuildJobs.set(command.agentId, { command, preview, placementIndex: 0, removalIndex: 0, reserved, startedAt, committed: 0, lastReportAt: performance.now() });
+      return this.publishAgentResult(createAgentResult(command, "running", revision, "build_committing", "Materials reserved. The host is placing bounded batches from the approved preview.", { startedAt, progress: { completed: 0, total: preview.placements.length + preview.removals.length } }));
+    }
     return blocked("command_not_supported", `The deterministic executor does not support ${command.kind} in this phase.`);
   }
 
   private updateAgentRuntime(dt: number) {
+    this.updateAgentWorkFeedback();
     const now = performance.now();
     for (const [agentId, task] of this.agentRuntimeTasks) {
       const record = this.agentAuthority.get(agentId);
@@ -28591,6 +28876,60 @@ export class VoxelEngine {
       if (now - task.lastReportAt >= 500) {
         task.lastReportAt = now;
         this.publishAgentResult(createAgentResult(task.command, "running", this.world.mutationRevision, task.kind === "follow" ? "following" : "navigating", task.kind === "follow" ? "Maintaining the requested follow band." : "Following the validated voxel route.", { startedAt: task.startedAt, progress: { completed: task.pathIndex, total: Math.max(1, task.path.length), current: task.path[task.pathIndex] ?? null } }));
+      }
+    }
+  }
+
+  private updateAgentBuildJobs() {
+    const frameStartedAt = performance.now();
+    for (const [agentId, job] of this.agentBuildJobs) {
+      const record = this.agentAuthority.get(agentId);
+      if (!record || record.status !== "approved") continue;
+      let steps = 0;
+      while (steps < 8 && performance.now() - frameStartedAt < 1.25) {
+        if (job.removalIndex < job.preview.removals.length) {
+          const cell = job.preview.removals[job.removalIndex++];
+          const current = this.world.getBlock(cell.x, cell.y, cell.z);
+          if (current === undefined) { this.cancelAgentBuild(agentId, "build_chunk_unloaded", `The build stopped before ${blockKey(cell.x, cell.y, cell.z)} because its chunk unloaded.`); break; }
+          if (current !== BlockId.Air) {
+            this.world.setBlock(cell.x, cell.y, cell.z, BlockId.Air, true, true);
+            this.publishBlockEdits([{ x: cell.x, y: cell.y, z: cell.z, type: BlockId.Air }], "break");
+            this.markAgentWork(agentId, cell, 0xe7a84f);
+          }
+          job.committed += 1;
+          steps += 1;
+          continue;
+        }
+        if (job.placementIndex < job.preview.placements.length) {
+          const cell = job.preview.placements[job.placementIndex];
+          const current = this.world.getBlock(cell.x, cell.y, cell.z);
+          if (current === undefined || (current !== BlockId.Air && !BLOCKS[current]?.replaceable && cell.replace !== true)) {
+            this.cancelAgentBuild(agentId, "build_site_changed", `The build stopped at ${blockKey(cell.x, cell.y, cell.z)} because the approved cell changed. Unplaced materials were returned.`);
+            break;
+          }
+          const item = itemForBlock(cell.block as BlockId);
+          const remaining = job.reserved.get(item) ?? 0;
+          if (remaining <= 0) { this.cancelAgentBuild(agentId, "reservation_missing", "The internal material reservation no longer matches the approved plan."); break; }
+          this.world.setBlock(cell.x, cell.y, cell.z, cell.block as BlockId, true, true);
+          if (cell.facing !== undefined) this.world.setBlockFacing(cell.x, cell.y, cell.z, cell.facing, true);
+          this.publishBlockEdits([{ x: cell.x, y: cell.y, z: cell.z, type: cell.block as BlockId, ...(cell.facing === undefined ? {} : { facing: cell.facing }) }], "place");
+          job.reserved.set(item, remaining - 1);
+          job.placementIndex += 1;
+          job.committed += 1;
+          this.markAgentWork(agentId, cell);
+          steps += 1;
+          continue;
+        }
+        this.agentBuildJobs.delete(agentId);
+        this.agentAuthority.releaseCommandLeases(job.command.commandId);
+        this.clearAgentBuildPreview(job.preview.id);
+        this.publishAgentResult(createAgentResult(job.command, "completed", this.world.mutationRevision, "build_complete", `Committed ${job.committed} approved build cells.`, { startedAt: job.startedAt, progress: { completed: job.committed, total: job.committed }, data: { committed: job.committed } }));
+        this.saveSoon();
+        break;
+      }
+      if (this.agentBuildJobs.has(agentId) && performance.now() - job.lastReportAt > 500) {
+        job.lastReportAt = performance.now();
+        this.publishAgentResult(createAgentResult(job.command, "running", this.world.mutationRevision, "build_committing", "Placing the approved plan in bounded host batches.", { startedAt: job.startedAt, progress: { completed: job.committed, total: job.preview.placements.length + job.preview.removals.length, current: job.preview.placements[job.placementIndex] ?? job.preview.removals[job.removalIndex] ?? null } }));
       }
     }
   }
