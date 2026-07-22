@@ -1,6 +1,6 @@
 # Blockwild
 
-Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.9.2 Undertow Pass**.
+Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.10.0 Fieldglass Accord**.
 
 The project is a real game rather than a voxel-rendering demo. You can mine, build, craft, smelt, farm, fight, collect field notes, manage several worlds, and carry those worlds between browsers with export files.
 
@@ -10,11 +10,19 @@ The project is a real game rather than a voxel-rendering demo. You can mine, bui
 
 **Performance ledger:** [Blockwild performance comparison log](docs/PERFORMANCE_COMPARISON_LOG.md) keeps the browser captures, deterministic before/after probes, interaction-latency checks, regressions, and next acceptance run in one tracked record.
 
-**AI companion proposal:** [Blockwild AI Companion Drone Platform](docs/AI_COMPANION_DRONE_PLATFORM_PROPOSAL.md) specifies the proposed host-authoritative drone agents, deterministic tool bridge, chat/TTS, low-resource client, inventory-safe building, farming, memory, test-world, security, and evaluation architecture. It is a review document, not an implemented feature.
+**AI companion platform:** [proposal and acceptance contract](docs/AI_COMPANION_DRONE_PLATFORM_PROPOSAL.md) · [implementation, operations, evidence, and rollback ledger](docs/AI_COMPANION_DRONE_PLATFORM_IMPLEMENTATION.md)
 
 ![Blockwild field guide with all 231 rendered creatures](public/creatures/blockwild-creatures.svg)
 
 The integrated creature-design pass expands the Courser family with Rimehoof, Sunscar, Mirestride, and Starbough ecological breeds plus the forge-built Deepgear Courser. It also gives all six dragon families production stage forms, rebuilds birds, pets, crabs, mosslings, foxes, harts, deer, longhorns, terrapins, and other core wildlife, and preserves one model path for gameplay, Bestiary portraits, and visual audits.
+
+## v1.10.0 Fieldglass Accord
+
+AI companions can now join a Blockwild multiplayer world as visible floating fieldglass drones. The human host approves their exact capabilities and can inspect, pause, mute, stop, or revoke them at any time. Drones navigate and follow through deterministic host execution, use ordinary inventories and reach, inspect containers and references, tend farms, gather bounded resources, and preview inventory-backed construction before committing it.
+
+The low-resource [`/agent`](https://blockwild.noahhicks.chatgpt.site/agent) endpoint exposes a frozen typed bridge and compact host-authored observations while retaining a real inspectable world view. Human and drone chat is spatially aware but remains untrusted in-world dialogue. Optional ElevenLabs speech is caption-first and runner-only; listeners choose spatial, universal, or captions-only playback and retain individual mute/volume controls.
+
+World-saved public tasks, runner-local private memory, tagged test-world tooling, diagnostics, explicit multi-agent capacity, and the repository `blockwild-agent-player` skill support long-running assistance and repeatable testing without exposing arbitrary JavaScript, engine mutation, browser secrets, or host world administration to a guest.
 
 ## v1.9.2 Undertow Pass
 

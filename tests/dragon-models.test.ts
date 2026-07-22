@@ -329,6 +329,10 @@ test("deployed dragon portraits are exact exports of the production rigs", async
   const specs = createMobInspectionSpecs().filter((spec) => DRAGON_ORDER.includes(spec.id as (typeof DRAGON_ORDER)[number]));
   for (const spec of specs) {
     const deployed = await readFile(path.resolve("public", "creatures", `${spec.id}.svg`), "utf8");
-    assert.equal(deployed, renderModelPortrait(spec), `${spec.id}.svg is stale; regenerate the creature portrait catalog`);
+    assert.equal(
+      deployed.replace(/\r\n?/gu, "\n"),
+      renderModelPortrait(spec).replace(/\r\n?/gu, "\n"),
+      `${spec.id}.svg is stale; regenerate the creature portrait catalog`,
+    );
   }
 });

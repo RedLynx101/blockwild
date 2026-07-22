@@ -22,6 +22,7 @@ import {
 } from "../scripts/render-models.ts";
 
 const PUBLIC_ROOT = path.resolve("public");
+const normalizeTextEol = (value: string) => value.replace(/\r\n?/gu, "\n");
 const NEWCOMER_KINDS = [
   "sakurakit",
   "sunwash-crab",
@@ -103,8 +104,8 @@ test("every v0.7 newcomer bestiary URL resolves to its current production render
     const spec = productionSpecs.get(kind);
     assert.ok(spec, `${kind} should remain in the production model catalog`);
     assert.equal(
-      deployedSvg,
-      renderModelPortrait(spec),
+      normalizeTextEol(deployedSvg),
+      normalizeTextEol(renderModelPortrait(spec)),
       `${url} is stale; regenerate public portraits with npm run models:render`,
     );
   }
@@ -118,8 +119,8 @@ test("every World Below creature portrait matches its second-pass production mod
     const spec = productionSpecs.get(kind);
     assert.ok(spec, `${kind} should remain in the production model catalog`);
     assert.equal(
-      deployedSvg,
-      renderModelPortrait(spec),
+      normalizeTextEol(deployedSvg),
+      normalizeTextEol(renderModelPortrait(spec)),
       `${url} is stale; regenerate the public World Below portraits`,
     );
   }
@@ -145,7 +146,7 @@ test("every Sugarplum fauna and Sugarcourt role portrait is the current producti
     const deployedSvg = await readNonemptySvg(url);
     const spec = productionSpecs.get(kind);
     assert.ok(spec, `${kind} should remain in the production model catalog`);
-    assert.equal(deployedSvg, renderModelPortrait(spec), `${url} is stale; regenerate the public candy portraits`);
+    assert.equal(normalizeTextEol(deployedSvg), normalizeTextEol(renderModelPortrait(spec)), `${url} is stale; regenerate the public candy portraits`);
   }
 });
 
@@ -166,7 +167,7 @@ test("Bonbonwing uses its four-panel production model in the public Bestiary por
   const url = "/creatures/butterfly-bonbonwing.svg";
   const deployedSvg = await readNonemptySvg(url);
   const spec = createButterflyInspectionSpec("bonbonwing");
-  assert.equal(deployedSvg, renderModelPortrait(spec), `${url} is stale; regenerate the public candy portraits`);
+  assert.equal(normalizeTextEol(deployedSvg), normalizeTextEol(renderModelPortrait(spec)), `${url} is stale; regenerate the public candy portraits`);
   assert.equal(spec.boxes.filter((box) => box.id.includes("wing-panel")).length, 4);
 });
 

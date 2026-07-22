@@ -2,6 +2,16 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.10.0 - Fieldglass Accord - 2026-07-22
+
+- Added host-authorized AI companion drones as real multiplayer peers with explicit connection-bound capabilities, pause/stop/mute/revoke controls, four-drone admission, nonblocking invulnerable bodies, and ordinary host-owned inventories.
+- Added the lightweight `/agent` client, a frozen typed browser bridge, bounded semantic observations, deterministic movement/following, exact revision-checked container transfers, safe workstation inspection, and human-readable terminal results.
+- Added lease-protected area harvesting, atomic mature-crop harvest-and-reset, two-phase construction previews, exact material shortage reports, inventory reservations, incremental commits, cancellation refunds, and visible Blockwild-style work marks.
+- Added sequenced human/agent chat that remains untrusted world dialogue, public task/waypoint records, a secret-filtered runner notebook, tagged local test worlds, paused fixture stepping, and engine-verifiable diagnostics with real transport and performance health.
+- Added caption-first optional ElevenLabs speech generated only by the trusted runner, a separate bounded voice lane, spatial/universal/captions-only listener modes, and individual drone mute/volume controls. Text and gameplay transactions survive every voice failure.
+- Added a repeatable 1/2/4-agent capacity soak, complete agent-player skill/manual/schema package, implementation and rollback ledger, and dedicated exact-runtime drone and agent-page release audits.
+- Integrated Undertow Pass unchanged: tapered dynamic water, submerged tread behavior, reliable shore exits, faster sprint-swim ascent, retained dive momentum, and the generic Glow Scale name remain covered by the combined release suite.
+
 ## 1.9.2 - Undertow Pass - 2026-07-21
 
 - Slowed dynamic liquid propagation to one pre-existing frontier per 0.2-second liquid step and rendered water's simulated source-distance levels as a closed seven-stage taper.

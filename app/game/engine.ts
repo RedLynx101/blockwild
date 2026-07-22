@@ -6011,6 +6011,9 @@ export class VoxelEngine {
 
   noteLocalAgentManualFallback(_reason = "manual visual recovery") {
     if (!this.assertLocalAgentTestAdmin() || !this.agentTestWorld || !this.agentDiagnostics) return { ok: false as const, code: "diagnostics_not_running" };
+    // Record only the bounded counter. Free-form runner context must not enter
+    // shared world diagnostics or a future model-facing observation.
+    void _reason;
     this.agentDiagnostics.manualFallbacks += 1;
     return { ok: true as const, manualFallbacks: this.agentDiagnostics.manualFallbacks };
   }
@@ -6299,10 +6302,10 @@ export class VoxelEngine {
     (this.agentObservationSequences ??= new Map()).clear();
     (this.agentRuntimeTasks ??= new Map()).clear();
     this.clearAgentWorkRuntime();
-    this.agentVoiceAssembler.clear();
+    this.agentVoiceAssembler?.clear();
     this.agentVoicePending = [];
-    this.localMutedAgentVoices.clear();
-    this.localAgentVoiceGains.clear();
+    (this.localMutedAgentVoices ??= new Set()).clear();
+    (this.localAgentVoiceGains ??= new Map()).clear();
     this.agentVoiceSequence = 0;
     this.latestAgentObservation = null;
     this.latestAgentResult = null;
@@ -6591,10 +6594,10 @@ export class VoxelEngine {
     (this.agentObservationSequences ??= new Map()).clear();
     (this.agentRuntimeTasks ??= new Map()).clear();
     this.clearAgentWorkRuntime();
-    this.agentVoiceAssembler.clear();
+    this.agentVoiceAssembler?.clear();
     this.agentVoicePending = [];
-    this.localMutedAgentVoices.clear();
-    this.localAgentVoiceGains.clear();
+    (this.localMutedAgentVoices ??= new Set()).clear();
+    (this.localAgentVoiceGains ??= new Map()).clear();
     this.latestAgentObservation = null;
     this.latestAgentResult = null;
     this.multiplayerReceivedSnapshot = false;

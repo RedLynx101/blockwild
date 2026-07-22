@@ -119,4 +119,13 @@ The safest full rollback is the parent of the proposal commit. A narrower rollba
 
 ## Final release evidence
 
-Pending the exact integrated commit, full suite, browser review, GitHub push, and Sites production readback. This section is filled only from observed release results.
+The v1.10.0 local release gate was observed on July 22, 2026 after integrating the complete v1.9.2 water branch into the companion work:
+
+- all 237 standard pretest checks pass, including the 39 agent bridge, authority, navigation, work, voice, runner, drone-model, and multiplayer checks;
+- the verified five-stage Vinext build and deployable Worker/manifest validator pass, followed by 10 rendered-page/audio checks and all 817 gameplay, content, world, storage, rendering, and multiplayer checks (1,064 total repository checks);
+- native TypeScript, whole-repository ESLint, and whitespace validation pass;
+- the accelerated soak completes six 30-simulated-minute scenarios for one, two, and four drones in co-located and separated layouts. Every admitted interest remains represented, every one of 840 commands reaches a terminal result, the fifth drone is rejected explicitly, stale transfer contention is rejected, and item/build reservations conserve exact counts. Four separated drones peak at five merged interest regions and 245 simulated chunks;
+- the 1280 x 720 human audit shows the authored articulated drone, hover silhouette, cyan state hierarchy, grounded scene relationship, and work presentation clearly. The 1280 x 720 `/agent` audit shows the fixed `RENDER 4 / SIM 3` badge and a readable low-resource game client. A 390 x 844 layout probe reports a viewport-filling canvas and a 354 px-wide badge with no overflow;
+- both audit pages report zero browser console warnings or errors. The reviewed local evidence is saved in ignored `work/agent-platform-release/browser/human-drone-1280x720.png` and `agent-client-1280x720.png`.
+
+GitHub and Sites publication/readback are recorded after the exact release commit is deployed; no publication claim is inferred from a successful local build.

@@ -10,6 +10,7 @@ import { renderModelPortrait } from "../scripts/render-models.ts";
 import { createPlantInspectionSpecs } from "../scripts/render-plants.ts";
 
 const PUBLIC_ROOT = path.resolve("public");
+const normalizeTextEol = (value: string) => value.replace(/\r\n?/gu, "\n");
 
 test("v1.2 creature filters keep humanoids, rabbits, and sea slugs organized", () => {
   const humanoids = bestiaryKindsForFilter("humanoids");
@@ -37,7 +38,11 @@ test("every Plant Compendium entry uses its current generated field specimen", a
   for (const spec of specs) {
     const asset = path.join(PUBLIC_ROOT, "plants", `${spec.id}.svg`);
     assert.ok((await stat(asset)).size > 1_000, `${spec.id} should have a substantive portrait`);
-    assert.equal(await readFile(asset, "utf8"), renderModelPortrait(spec), `${spec.id} portrait is stale`);
+    assert.equal(
+      normalizeTextEol(await readFile(asset, "utf8")),
+      normalizeTextEol(renderModelPortrait(spec)),
+      `${spec.id} portrait is stale`,
+    );
   }
 });
 
