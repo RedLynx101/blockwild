@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  DEFAULT_SWIM_RULES,
+  LIQUID_SIMULATION_STEP_SECONDS,
   LiquidSimulator,
   stepSwimming,
   waterAnimationPhase,
@@ -8,6 +10,7 @@ import {
   type LiquidCell,
   type LiquidPosition,
   type LiquidWorldAdapter,
+  type SwimmerState,
 } from "../app/game/liquids.ts";
 
 const key = (position: LiquidPosition) => `${position.x},${position.y},${position.z}`;
@@ -49,6 +52,21 @@ test("liquid flow propagates down and sideways while respecting solid cells", ()
   assert.equal(world.getLiquid({ x: 1, y: 3, z: 0 })?.level, 1);
   assert.equal(world.getLiquid({ x: 8, y: 3, z: 0 }), undefined, "horizontal spread is finite");
   assert.equal(world.getLiquid({ x: 0, y: 0, z: 0 }), undefined, "water never replaces support blocks");
+});
+
+test("each liquid tick advances only one horizontal frontier level", () => {
+  const world = new TestLiquidWorld();
+  for (let z = -8; z <= 8; z += 1) for (let x = -8; x <= 8; x += 1) world.solids.add(`${x},0,${z}`);
+  const simulator = new LiquidSimulator(world);
+  simulator.addSource({ x: 0, y: 1, z: 0 });
+
+  simulator.process(256);
+  assert.equal(world.getLiquid({ x: 1, y: 1, z: 0 })?.level, 1);
+  assert.equal(world.getLiquid({ x: 2, y: 1, z: 0 }), undefined, "one update may not drain multiple frontier levels");
+
+  simulator.process(256);
+  assert.equal(world.getLiquid({ x: 2, y: 1, z: 0 })?.level, 2);
+  assert.equal(LIQUID_SIMULATION_STEP_SECONDS, 0.2);
 });
 
 test("two supported water sources renew the cell between them", () => {
@@ -126,8 +144,41 @@ test("an idle swimmer settles downward while an intentional swim stroke rises", 
   assert.ok(rising.velocityY > 1.5, `jump-held swim velocity was ${rising.velocityY}`);
 });
 
+test("sprint-swimming adds exactly twenty percent to vertical stroke acceleration", () => {
+  const state = { velocityY: 0, oxygenSeconds: 12, drowningAccumulator: 0 };
+  const environment = { submersion: 1, headSubmerged: true, horizontalCollision: false };
+  const isolatedStrokeRules = {
+    ...DEFAULT_SWIM_RULES,
+    buoyancyAcceleration: 0,
+    passiveSinkAcceleration: 0,
+    waterDrag: 0,
+  };
+  const ordinary = stepSwimming(state, { jumpHeld: true, movingForward: true }, environment, 0.1, isolatedStrokeRules);
+  const sprinting = stepSwimming(state, { jumpHeld: true, movingForward: true, sprinting: true }, environment, 0.1, isolatedStrokeRules);
+  assert.ok(Math.abs(sprinting.state.velocityY / ordinary.state.velocityY - 1.2) < 1e-9);
+});
+
+test("holding jump treads below the surface instead of climbing onto it", () => {
+  let feetY = -1.56;
+  let swimmer: SwimmerState = { velocityY: 0, oxygenSeconds: 12, drowningAccumulator: 0, entryMomentumSpeed: 0 };
+  let highestFeetY = feetY;
+  for (let frame = 0; frame < 600; frame += 1) {
+    const headSubmerged = feetY + 1.5 < 0;
+    swimmer = stepSwimming(
+      swimmer,
+      { jumpHeld: true, movingForward: true },
+      { submersion: headSubmerged ? 1 : 0.68, headSubmerged, horizontalCollision: false },
+      1 / 60,
+    ).state;
+    feetY += swimmer.velocityY / 60;
+    highestFeetY = Math.max(highestFeetY, feetY);
+  }
+  assert.ok(highestFeetY < -1.35, `feet rose to ${highestFeetY}, which would put the player on top of the water`);
+  assert.ok(feetY < -1.4, `surface tread should settle inside the water, got ${feetY}`);
+});
+
 test("a real fall carries moderated momentum through the water surface", () => {
-  const entered = stepSwimming(
+  let entered = stepSwimming(
     { velocityY: -16, oxygenSeconds: 12, drowningAccumulator: 0 },
     { jumpHeld: false, movingForward: true },
     { submersion: 0.68, headSubmerged: false, horizontalCollision: false, enteredFromAir: true },
@@ -135,6 +186,18 @@ test("a real fall carries moderated momentum through the water surface", () => {
   );
   assert.ok(entered.state.velocityY < -3, `entry velocity ${entered.state.velocityY} should not stop at the surface`);
   assert.ok(entered.state.velocityY > -10, "water must still absorb most of a dangerous fall");
+  let depth = -entered.state.velocityY / 60;
+  for (let frame = 0; frame < 18; frame += 1) {
+    entered = stepSwimming(
+      entered.state,
+      { jumpHeld: false, movingForward: true },
+      { submersion: 1, headSubmerged: true, horizontalCollision: false },
+      1 / 60,
+    );
+    depth += -entered.state.velocityY / 60;
+    if (frame === 0) assert.ok(entered.state.velocityY < -3, "entry momentum must survive beyond the first submerged frame");
+  }
+  assert.ok(depth > 1.2, `a long fall should carry the player meaningfully underwater, reached ${depth}`);
 });
 
 test("crouching produces a deliberate faster dive without changing jump ascent", () => {

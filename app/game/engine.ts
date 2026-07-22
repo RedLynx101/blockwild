@@ -511,6 +511,7 @@ import {
 import {
   LiquidSimulator,
   DEFAULT_SWIM_RULES,
+  LIQUID_SIMULATION_STEP_SECONDS,
   liquidBlockForKind,
   liquidKindForBlock,
   stepSwimming,
@@ -3756,6 +3757,7 @@ export class VoxelEngine {
   liquidTickAccumulator = 0;
   oxygenSeconds = DEFAULT_SWIM_RULES.maxOxygenSeconds;
   drowningAccumulator = 0;
+  waterEntryMomentumSpeed = 0;
   headSubmerged = false;
   lastForwardTap = -Infinity;
   sprintLatched = false;
@@ -4125,6 +4127,7 @@ export class VoxelEngine {
     this.events = events;
     this.settings = settings;
     this.weather = settings.weather;
+    this.world.setLiquidCellProvider((x, y, z) => this.liquidCells.get(blockKey(x, y, z)));
     this.liquidSimulator = new LiquidSimulator({
       minY: MIN_Y,
       maxY: MAX_Y,
@@ -5057,6 +5060,55 @@ export class VoxelEngine {
     this.emitHud(true);
   }
 
+  /** Query-only deterministic scenes for dynamic-flow visuals and swim physics. */
+  primeWaterPhysicsAudit(mode: "flow" | "swim") {
+    this.world.setRenderDistance(4);
+    this.clearEntities();
+    const centerX = Math.round(this.position.x);
+    const centerZ = Math.round(this.position.z);
+    const floorY = Math.round(this.position.y - 0.51) + 2;
+    const edits: BlockEdit[] = [];
+    const auditRadius = mode === "flow" ? 14 : 6;
+    for (let cx = Math.floor((centerX - auditRadius) / CHUNK_SIZE); cx <= Math.floor((centerX + auditRadius) / CHUNK_SIZE); cx += 1) {
+      for (let cz = Math.floor((centerZ - auditRadius) / CHUNK_SIZE); cz <= Math.floor((centerZ + auditRadius) / CHUNK_SIZE); cz += 1) {
+        this.world.generateChunk(cx, cz);
+      }
+    }
+    if (mode === "flow") {
+      for (let x = centerX - 14; x <= centerX + 14; x += 1) for (let z = centerZ - 14; z <= centerZ + 14; z += 1) {
+        if (Math.abs(x - centerX) <= 10 && Math.abs(z - centerZ) <= 10) {
+          edits.push({ x, y: floorY, z, type: BlockId.Stone });
+        }
+        for (let y = floorY + 1; y <= floorY + 16; y += 1) edits.push({ x, y, z, type: BlockId.Air });
+      }
+      this.world.setBlocksBatch(edits, true, true);
+      this.liquidSimulator.addSource({ x: centerX, y: floorY + 1, z: centerZ }, "water");
+      for (let frontier = 0; frontier < 8; frontier += 1) this.liquidSimulator.process(768);
+      this.position.set(centerX, floorY + 0.51, centerZ + 8);
+      this.yaw = 0;
+      this.pitch = -0.28;
+    } else {
+      const radius = 6;
+      for (let x = centerX - radius; x <= centerX + radius; x += 1) for (let z = centerZ - radius; z <= centerZ + radius; z += 1) {
+        const wall = Math.abs(x - centerX) === radius || Math.abs(z - centerZ) === radius;
+        edits.push({ x, y: floorY, z, type: BlockId.Stone });
+        for (let y = floorY + 1; y <= floorY + 4; y += 1) {
+          edits.push({ x, y, z, type: wall ? BlockId.Glass : BlockId.Water });
+        }
+        for (let y = floorY + 5; y <= floorY + 7; y += 1) edits.push({ x, y, z, type: BlockId.Air });
+      }
+      this.world.setBlocksBatch(edits, true, true);
+      this.position.set(centerX, floorY + 2.2, centerZ);
+      this.yaw = 0;
+      this.pitch = 0;
+    }
+    this.spawn.copy(this.position);
+    this.velocity.set(0, 0, 0);
+    this.worldTime = 0.5;
+    this.visualWorldTime = this.worldTime;
+    this.emitHud(true);
+  }
+
   /** Deterministic submerged meadow for exact-runtime ocean-flora review. */
   primeOceanFloraAudit() {
     this.world.setRenderDistance(5);
@@ -5075,7 +5127,7 @@ export class VoxelEngine {
     this.world.setBlocksBatch(edits, true, true);
     // Use the production planner here so browser review sees the same irregular
     // underwater meadows as a generated ocean rather than a hand-arranged row.
-    for (let x = seamX - 17; x <= seamX + 17; x += 1) for (let z = centerZ - 21; z <= centerZ + 11; z += 1) {
+    for (let x = seamX - 17; x <= seamX + 17; x += 1) for (let z = centerZ - 21; z <= centerZ + 8; z += 1) {
       for (const placement of planSubmergedFlora("OCEAN-FLORA-PATCH-AUDIT", x, floorY, z, 9, "ocean")) {
         this.world.setBlock(placement.x, placement.y, placement.z, placement.block, true, true);
       }
@@ -13153,8 +13205,8 @@ export class VoxelEngine {
 
   updateLiquids(dt: number) {
     this.liquidTickAccumulator += dt;
-    if (this.liquidTickAccumulator < 0.08) return;
-    this.liquidTickAccumulator %= 0.08;
+    if (this.liquidTickAccumulator < LIQUID_SIMULATION_STEP_SECONDS) return;
+    this.liquidTickAccumulator %= LIQUID_SIMULATION_STEP_SECONDS;
     const changes = this.liquidSimulator.process(applyResourceMode(this.settings.resourceMode, this.budgetController.current).liquidOperations);
     if (!changes.length) return;
     const edits = changes.map(({ position, next }) => ({
@@ -17675,6 +17727,7 @@ export class VoxelEngine {
     const enteredSwimmableLiquid = inSwimmableLiquid && !this.wasInWater;
     if (enteredSwimmableLiquid) this.audio.play("splash");
     this.wasInWater = inSwimmableLiquid;
+    if (!inSwimmableLiquid) this.waterEntryMomentumSpeed = 0;
     const raceTraits = characterRaceTraits(this.activeCharacterProfile?.appearance.race ?? "wayfarer");
     const wantsCrouch = Boolean(this.seatedAt) || this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
     if (wantsCrouch) this.crouching = true;
@@ -17728,8 +17781,18 @@ export class VoxelEngine {
       const mountBreathing = inWater && activeMount && ["water", "air-and-water"].includes(MOUNT_PROFILES[activeMount.kind]?.riderBreathing ?? "none");
       if (inWater && (raceTraits.waterBreathing || mountBreathing)) this.oxygenSeconds = DEFAULT_SWIM_RULES.maxOxygenSeconds;
       const swim = stepSwimming(
-        { velocityY: this.velocity.y, oxygenSeconds: this.oxygenSeconds, drowningAccumulator: this.drowningAccumulator },
-        { jumpHeld: this.keys.has("Space"), movingForward: forwardAmount > 0, crouching: this.crouching },
+        {
+          velocityY: this.velocity.y,
+          oxygenSeconds: this.oxygenSeconds,
+          drowningAccumulator: this.drowningAccumulator,
+          entryMomentumSpeed: this.waterEntryMomentumSpeed,
+        },
+        {
+          jumpHeld: this.keys.has("Space"),
+          movingForward: forwardAmount > 0,
+          crouching: this.crouching,
+          sprinting: this.sprinting,
+        },
         {
           submersion: this.headSubmerged ? 1 : 0.68,
           headSubmerged: this.headSubmerged,
@@ -17746,6 +17809,7 @@ export class VoxelEngine {
           : hasBreatherCharm ? { ...DEFAULT_SWIM_RULES, maxOxygenSeconds: 24 } : DEFAULT_SWIM_RULES,
       );
       this.velocity.y = swim.state.velocityY;
+      this.waterEntryMomentumSpeed = swim.state.entryMomentumSpeed ?? 0;
       if (inHoney) this.velocity.y *= Math.max(0, 1 - 3.6 * dt);
       else if (inSyrup) this.velocity.y *= Math.max(0, 1 - 2.1 * dt);
       this.oxygenSeconds = swim.state.oxygenSeconds;
@@ -28015,9 +28079,10 @@ export class VoxelEngine {
       state: this.titleMode ? "title" : this.paused ? "paused" : "playing",
       player: {
         position: [Number(this.position.x.toFixed(2)), Number(this.position.y.toFixed(2)), Number(this.position.z.toFixed(2))],
+        velocity: [Number(this.velocity.x.toFixed(2)), Number(this.velocity.y.toFixed(2)), Number(this.velocity.z.toFixed(2))],
         yaw: Number(this.yaw.toFixed(3)), pitch: Number(this.pitch.toFixed(3)),
         health: this.health, hunger: this.hunger, oxygen: Number(this.oxygenSeconds.toFixed(2)),
-        variant: this.playerVariant, camera: this.cameraMode, sprinting: this.sprinting, crouching: this.crouching,
+        variant: this.playerVariant, camera: this.cameraMode, sprinting: this.sprinting, crouching: this.crouching, submerged: this.headSubmerged,
         mountedBoatId: this.mountedBoatId, mountedCreatureId: this.mountedCreatureId,
       },
       world: {

@@ -54,7 +54,7 @@ test("Giant Mooncaps keep full collision while rendering an inset stem", () => {
 });
 import { harvestPlant } from "../app/game/farming.ts";
 import { CHEST_VISUAL, chestLatchCenters } from "../app/game/chest-model.ts";
-import { ChunkWorld, BIOME_NAMES, BiomeId, CHUNK_SIZE, GENERATOR_VERSION, GLASS_OPACITY, LIQUID_SURFACE_INSET, MAX_Y, MIN_Y, PACKED_VERTEX_COLOR_RANGE, RADIAL_STREAMING_DISTANCE_THRESHOLD, SECTION_HEIGHT, WORLD_HEIGHT, blockIndex, chunkAabbRadialDistanceSquared, chunkKey, chunkWithinStreamingRadius, chunksWithinStreamingRadius, liquidSurfaceInsetForCell, splitCoordinate } from "../app/game/world.ts";
+import { ChunkWorld, BIOME_NAMES, BiomeId, CHUNK_SIZE, FLOWING_WATER_LEVEL_INSET, GENERATOR_VERSION, GLASS_OPACITY, LIQUID_SURFACE_INSET, MAX_Y, MIN_Y, PACKED_VERTEX_COLOR_RANGE, RADIAL_STREAMING_DISTANCE_THRESHOLD, SECTION_HEIGHT, WORLD_HEIGHT, blockIndex, chunkAabbRadialDistanceSquared, chunkKey, chunkWithinStreamingRadius, chunksWithinStreamingRadius, liquidSurfaceInsetForCell, splitCoordinate } from "../app/game/world.ts";
 import { MOB_DEFS, MOB_ORDER } from "../app/game/mobs.ts";
 import { createHeldToolSpec, createRidgebackSpec, createZombieSpec, INSPECTOR_MODEL_SPECS, RIDGEBACK_GROUND_LIFT } from "../app/game/model-specs.ts";
 
@@ -2143,6 +2143,43 @@ test("terrain sections consolidate to at most one visible submission per render 
   assert.equal(chunk.group.matrixAutoUpdate, false, "static chunk transforms should not be recomposed every render");
   assert.ok(combined.every((mesh) => mesh?.matrixAutoUpdate === false), "static combined terrain transforms should remain frozen");
   assert.ok(world.terrainBufferPipeline.diagnostics().submitted <= 5, "stable layers should merge once instead of once per completed section");
+  world.dispose();
+});
+
+test("flowing water renders a seven-level taper with closed step faces", () => {
+  assert.equal(liquidSurfaceInsetForCell(BlockId.Water, BlockId.Air, 0, false), -LIQUID_SURFACE_INSET);
+  assert.equal(liquidSurfaceInsetForCell(BlockId.Water, BlockId.Air, 1, false), -(LIQUID_SURFACE_INSET + FLOWING_WATER_LEVEL_INSET));
+  assert.equal(liquidSurfaceInsetForCell(BlockId.Water, BlockId.Air, 7, false), -0.86);
+  assert.equal(liquidSurfaceInsetForCell(BlockId.Water, BlockId.Air, 7, true), -LIQUID_SURFACE_INSET, "falling columns stay visually continuous");
+
+  const world = new ChunkWorld();
+  const levels = new Map([
+    ["2,0,2", { level: 1, source: false, falling: false }],
+    ["3,0,2", { level: 7, source: false, falling: false }],
+  ]);
+  world.setLiquidCellProvider((x, y, z) => levels.get(`${x},${y},${z}`));
+  world.reset("FLOWING-WATER-TAPER");
+  const chunk = world.generateChunk(0, 0);
+  chunk.blocks.fill(BlockId.Air);
+  world.setBlock(2, 0, 2, BlockId.Water, false, false);
+  world.setBlock(3, 0, 2, BlockId.Water, false, false);
+  const section = Math.floor((0 - MIN_Y) / SECTION_HEIGHT);
+  world.rebuildSection(chunk, section);
+
+  const positions = chunk.sections.get(section)?.transparent?.geometry.getAttribute("position");
+  assert.ok(positions);
+  const vertices = Array.from({ length: positions?.count ?? 0 }, (_, index) => ({
+    x: positions?.getX(index) ?? Number.NaN,
+    y: positions?.getY(index) ?? Number.NaN,
+    z: positions?.getZ(index) ?? Number.NaN,
+  }));
+  const levelOneTop = 0.5 - LIQUID_SURFACE_INSET - FLOWING_WATER_LEVEL_INSET;
+  const levelSevenTop = 0.5 - 0.86;
+  assert.ok(vertices.some((vertex) => Math.abs(vertex.y - levelOneTop) < 1e-6));
+  assert.ok(vertices.some((vertex) => Math.abs(vertex.y - levelSevenTop) < 1e-6));
+  const sharedStep = vertices.filter((vertex) => Math.abs(vertex.x - 2.5) < 1e-6 && Math.abs(vertex.z - 2) <= 0.51);
+  assert.ok(sharedStep.some((vertex) => Math.abs(vertex.y - levelOneTop) < 1e-6));
+  assert.ok(sharedStep.some((vertex) => Math.abs(vertex.y - levelSevenTop) < 1e-6), "the taller cell must close the exposed face down to its lower neighbor");
   world.dispose();
 });
 

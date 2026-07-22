@@ -1,6 +1,6 @@
 # Blockwild
 
-Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.9.1 Landmark Ledger Hotfix**.
+Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.9.2 Undertow Pass**.
 
 The project is a real game rather than a voxel-rendering demo. You can mine, build, craft, smelt, farm, fight, collect field notes, manage several worlds, and carry those worlds between browsers with export files.
 
@@ -15,6 +15,12 @@ The project is a real game rather than a voxel-rendering demo. You can mine, bui
 ![Blockwild field guide with all 231 rendered creatures](public/creatures/blockwild-creatures.svg)
 
 The integrated creature-design pass expands the Courser family with Rimehoof, Sunscar, Mirestride, and Starbough ecological breeds plus the forge-built Deepgear Courser. It also gives all six dragon families production stage forms, rebuilds birds, pets, crabs, mosslings, foxes, harts, deer, longhorns, terrapins, and other core wildlife, and preserves one model path for gameplay, Bestiary portraits, and visual audits.
+
+## v1.9.2 Undertow Pass
+
+Dynamic water now advances one visible frontier at a time and uses its existing source-distance levels to taper from a full source to a thin seventh-block edge. Closed step faces keep differently sized neighboring cells watertight while falling columns remain continuous.
+
+Holding Space near open water now treads just below the surface instead of alternating into an air/water walking equilibrium. Sprint-swim strokes gain exactly 20% vertical input, genuine air-to-water impacts retain moderated sink momentum across multiple frames, and the shared multi-species drop is named Glow Scale in inventory.
 
 ## v1.9.1 Landmark Ledger Hotfix
 
