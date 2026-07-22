@@ -3851,6 +3851,7 @@ export class VoxelEngine {
   waterEntryMomentumSpeed = 0;
   waterSurfaceBreachReady = true;
   waterSurfaceBreachSeconds = 0;
+  waterSurfaceStrokeCooldownSeconds = 0;
   headSubmerged = false;
   lastForwardTap = -Infinity;
   sprintLatched = false;
@@ -5001,6 +5002,7 @@ export class VoxelEngine {
     this.waterEntryMomentumSpeed = 0;
     this.waterSurfaceBreachReady = true;
     this.waterSurfaceBreachSeconds = 0;
+    this.waterSurfaceStrokeCooldownSeconds = 0;
     this.world.reset(seed.trim() || this.randomSeed(), undefined, generationOptionsFromWorldOptions(this.worldOptions));
     const authorityId = `world:${this.world.seedText}`;
     const playerId = this.localPlayerId();
@@ -5521,6 +5523,7 @@ export class VoxelEngine {
     this.waterEntryMomentumSpeed = 0;
     this.waterSurfaceBreachReady = true;
     this.waterSurfaceBreachSeconds = 0;
+    this.waterSurfaceStrokeCooldownSeconds = 0;
     this.world.reset(save.seed, save.edits, generationOptionsFromWorldOptions(this.worldOptions, save.generatorProfile ?? "world-below-v15"), save.blockFacings);
     this.world.restoreSurfaceRoadGraph(save.surfaceRoadGraph);
     this.world.initializeAround(save.player.x, save.player.z);
@@ -18567,6 +18570,7 @@ export class VoxelEngine {
     if (!inSwimmableLiquid) {
       this.waterEntryMomentumSpeed = 0;
       this.waterSurfaceBreachSeconds = 0;
+      this.waterSurfaceStrokeCooldownSeconds = 0;
     }
     const raceTraits = characterRaceTraits(this.activeCharacterProfile?.appearance.race ?? "wayfarer");
     const wantsCrouch = Boolean(this.seatedAt) || this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
@@ -18628,6 +18632,7 @@ export class VoxelEngine {
           entryMomentumSpeed: this.waterEntryMomentumSpeed,
           surfaceBreachReady: this.waterSurfaceBreachReady,
           surfaceBreachSeconds: this.waterSurfaceBreachSeconds,
+          surfaceStrokeCooldownSeconds: this.waterSurfaceStrokeCooldownSeconds,
         },
         {
           jumpHeld: this.keys.has("Space"),
@@ -18654,6 +18659,7 @@ export class VoxelEngine {
       this.waterEntryMomentumSpeed = swim.state.entryMomentumSpeed ?? 0;
       this.waterSurfaceBreachReady = swim.state.surfaceBreachReady ?? true;
       this.waterSurfaceBreachSeconds = swim.state.surfaceBreachSeconds ?? 0;
+      this.waterSurfaceStrokeCooldownSeconds = swim.state.surfaceStrokeCooldownSeconds ?? 0;
       if (inHoney) this.velocity.y *= Math.max(0, 1 - 3.6 * dt);
       else if (inSyrup) this.velocity.y *= Math.max(0, 1 - 2.1 * dt);
       this.oxygenSeconds = swim.state.oxygenSeconds;
@@ -29768,7 +29774,11 @@ export class VoxelEngine {
         health: this.health, hunger: this.hunger, oxygen: Number(this.oxygenSeconds.toFixed(2)),
         variant: this.playerVariant, camera: this.cameraMode, sprinting: this.sprinting, crouching: this.crouching, submerged: this.headSubmerged,
         input: { jumpHeld: this.keys.has("Space"), forwardHeld: this.keys.has("KeyW") },
-        surfaceBreach: { ready: this.waterSurfaceBreachReady, remainingSeconds: Number(this.waterSurfaceBreachSeconds.toFixed(3)) },
+        surfaceBreach: {
+          ready: this.waterSurfaceBreachReady,
+          remainingSeconds: Number(this.waterSurfaceBreachSeconds.toFixed(3)),
+          strokeCooldownSeconds: Number(this.waterSurfaceStrokeCooldownSeconds.toFixed(3)),
+        },
         mountedBoatId: this.mountedBoatId, mountedCreatureId: this.mountedCreatureId,
       },
       world: {

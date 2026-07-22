@@ -2824,6 +2824,7 @@ export class ChunkWorld {
   group = new THREE.Group();
   chunks = new Map<string, Chunk>();
   edits = new Map<string, Map<number, BlockId>>();
+  private chunkEditSignatureCache = new Map<string, string>();
   /** Monotonic session-local revision for optimistic agent commands. */
   mutationRevision = 0;
   structureMarkers = new Map<string, StructureMarker>();
@@ -2875,6 +2876,8 @@ export class ChunkWorld {
   urgentMeshQueued = new Set<string>();
   /** Sections whose old consolidated geometry still contains a now-resolved chunk-edge face. */
   seamMeshRebuilds = new Set<string>();
+  /** New sections held back until every already-present neighbor has retired its speculative edge. */
+  seamPresentationPending = new Map<string, { key: string; section: number; urgent: boolean; blockers: Set<string> }>();
   activeMeshTask: MeshBuildTask | null = null;
   lightSectionQueue: Array<{ key: string; section: number }> = [];
   lightSectionQueueHead = 0;
@@ -3076,6 +3079,7 @@ export class ChunkWorld {
     this.urgentMeshQueueHead = 0;
     this.urgentMeshQueued.clear();
     this.seamMeshRebuilds.clear();
+    this.seamPresentationPending.clear();
     this.activeMeshTask = null;
     this.streamingCompleted = { generation: 0, lighting: 0, meshing: 0 };
     this.streamingCanceled = { generation: 0, lighting: 0, meshing: 0 };
@@ -3093,6 +3097,7 @@ export class ChunkWorld {
     this.playerEditFeedbackRecords = [];
     this.playerEditConsolidationWaiters.clear();
     this.edits.clear();
+    this.chunkEditSignatureCache.clear();
     this.mutationRevision = 0;
     this.structureMarkers.clear();
     this.settlementPlans.clear();
@@ -3208,6 +3213,8 @@ export class ChunkWorld {
     let installationSlices = 0;
     this.frame += 1;
     const streamingStartedAt = performance.now();
+    this.releaseOrphanedSeamPresentationBlockers();
+    schedulingMilliseconds += performance.now() - streamingStartedAt;
     const deadline = streamingStartedAt + this.streamingFrameBudgetMilliseconds;
     const cx = Math.floor(x / CHUNK_SIZE);
     const cz = Math.floor(z / CHUNK_SIZE);
@@ -3218,7 +3225,7 @@ export class ChunkWorld {
     if (cx !== this.playerChunkX || cz !== this.playerChunkZ || focusSection !== this.playerSection || this.frame % 180 === 0) {
       const startedAt = performance.now();
       this.scheduleAround(x, z, false, y);
-      schedulingMilliseconds = performance.now() - startedAt;
+      schedulingMilliseconds += performance.now() - startedAt;
     }
     // A missing player chunk is a correctness problem, not ordinary backlog.
     // Spend the bounded frame allowance on its next required stage and follow
@@ -3234,7 +3241,11 @@ export class ChunkWorld {
         generationMilliseconds += performance.now() - startedAt;
         generationSlices += 1;
       } else if (stage === "lighting") {
-        if (!this.processLightInitialization()) break;
+        const currentKey = chunkKey(this.playerChunkX, this.playerChunkZ);
+        const processed = this.lightReconciliationQueued.has(currentKey) || this.activeLightReconciliation?.key === currentKey
+          ? this.processLightReconciliation()
+          : this.processLightInitialization();
+        if (!processed) break;
         lightingMilliseconds += performance.now() - startedAt;
         lightingSlices += 1;
       } else {
@@ -3409,7 +3420,8 @@ export class ChunkWorld {
         } else if (chunk && chunkWithinStreamingRadius(dx, dz, this.renderDistance, radialStreaming)) {
           chunk.group.visible = true;
           if (!chunk.lightInitialized) this.queueLightInitialization(key);
-          else for (let section = 0; section < SECTION_COUNT; section += 1) {
+          else if (this.chunkLightPresentationReady(key)) for (let section = 0; section < SECTION_COUNT; section += 1) {
+            if (this.seamPresentationPending.has(`${key}:${section}`)) continue;
             if (chunk.dirty.has(section) || (!chunk.sections.has(section) && chunk.sectionBlockCounts[section] > 0)) this.queueMesh(key, section);
           }
         }
@@ -3549,23 +3561,44 @@ export class ChunkWorld {
   }
 
   private prepareGeneratedChunk(chunk: Chunk) {
+    this.setChunkStreamingVisibility(chunk);
+    if (!chunk.lightInitialized) {
+      if (chunk.group.visible) this.queueLightInitialization(chunk.key);
+      return;
+    }
+    if (this.chunkLightPresentationReady(chunk.key)) this.queueChunkMeshesAndSeams(chunk);
+  }
+
+  private setChunkStreamingVisibility(chunk: Chunk) {
     const offsetX = chunk.cx - this.playerChunkX;
     const offsetZ = chunk.cz - this.playerChunkZ;
     const radialStreaming = this.renderDistance > RADIAL_STREAMING_DISTANCE_THRESHOLD;
     chunk.group.visible = chunkWithinStreamingRadius(offsetX, offsetZ, this.renderDistance, radialStreaming);
-    if (chunk.group.visible && !chunk.lightInitialized) this.queueLightInitialization(chunk.key);
-    else this.queueChunkMeshesAndSeams(chunk);
+  }
+
+  private chunkLightPresentationReady(key: string) {
+    const chunk = this.chunks.get(key);
+    return Boolean(chunk?.lightInitialized)
+      && !this.lightReconciliationQueued.has(key)
+      && this.activeLightReconciliation?.key !== key;
   }
 
   private chunkEditSignature(key: string) {
+    const cached = this.chunkEditSignatureCache.get(key);
+    if (cached !== undefined) return cached;
     const edits = this.edits.get(key);
-    if (!edits?.size) return "0";
+    if (!edits?.size) {
+      this.chunkEditSignatureCache.set(key, "0");
+      return "0";
+    }
     let hash = 0x811c9dc5;
     for (const [index, type] of [...edits].sort((left, right) => left[0] - right[0])) {
       hash = Math.imul(hash ^ index, 0x01000193) >>> 0;
       hash = Math.imul(hash ^ type, 0x01000193) >>> 0;
     }
-    return hash.toString(36);
+    const signature = hash.toString(36);
+    this.chunkEditSignatureCache.set(key, signature);
+    return signature;
   }
 
   private chunkCacheKey(key: string) {
@@ -3577,7 +3610,17 @@ export class ChunkWorld {
     // v4 adds semantic structure markers to worker/cache payloads. Invalidating
     // older voxel-only records is required: their buildings still exist, but
     // their POIs, chests, residents, and encounters cannot be rediscovered.
-    return `terrain-v4|g${GENERATOR_VERSION}|${this.seedText}|${JSON.stringify(this.generationOptions)}|${key}|${this.chunkEditSignature(key)}`;
+    // v5 also includes the one-chunk edit halo. Edge faces, corner occlusion,
+    // and propagated light are neighbor-dependent; restoring a chunk cached
+    // before an adjacent torch/wall/water edit could otherwise reintroduce a
+    // stale bright or dark stripe until another full lighting mutation.
+    const [cx, cz] = key.split(",").map(Number);
+    const editHalo = Array.from({ length: 9 }, (_, index) => {
+      const dx = index % 3 - 1;
+      const dz = Math.floor(index / 3) - 1;
+      return this.chunkEditSignature(chunkKey(cx + dx, cz + dz));
+    }).join(".");
+    return `terrain-v5|g${GENERATOR_VERSION}|${this.seedText}|${JSON.stringify(this.generationOptions)}|${key}|${editHalo}`;
   }
 
   private structureMarkerEntriesForChunk(cx: number, cz: number) {
@@ -3635,7 +3678,9 @@ export class ChunkWorld {
     this.group.add(chunk.group);
     this.freezeTerrainTransform(chunk.group);
     this.restoreStructureMarkerEntries(data.structureMarkers);
-    this.prepareGeneratedChunk(chunk);
+    this.setChunkStreamingVisibility(chunk);
+    if (chunk.lightInitialized) this.queueLightReconciliation(chunk);
+    else this.prepareGeneratedChunk(chunk);
     return chunk;
   }
 
@@ -3672,13 +3717,8 @@ export class ChunkWorld {
   }
 
   private queueChunkMeshesAndSeams(chunk: Chunk) {
-    if (chunk.group.visible && chunk.lightInitialized) {
-      const immediate = Math.max(Math.abs(chunk.cx - this.playerChunkX), Math.abs(chunk.cz - this.playerChunkZ)) <= 1;
-      const required = immediate ? new Set(this.playerRequiredMeshSections(chunk)) : null;
-      for (let section = 0; section < SECTION_COUNT; section += 1) {
-        if (chunk.sectionBlockCounts[section] > 0) this.queueMesh(chunk.key, section, Boolean(required?.has(section)));
-      }
-    }
+    if (!this.chunkLightPresentationReady(chunk.key)) return;
+    const blockersBySection = Array.from({ length: SECTION_COUNT }, () => new Set<string>());
     // A hidden generation-halo chunk still changes face visibility at the seam
     // of an already rendered neighbor. Rebuild only that visible neighbor; the
     // halo itself remains unmeshed until it enters render distance.
@@ -3693,12 +3733,60 @@ export class ChunkWorld {
           // exists. Reconcile them ahead of ordinary background meshing so a
           // water wall, grass slit, or solid-block crack cannot linger while
           // the player is already looking at the boundary.
-          this.seamMeshRebuilds.add(`${neighbor.key}:${section}`);
+          const blocker = `${neighbor.key}:${section}`;
+          this.seamMeshRebuilds.add(blocker);
           this.queueMesh(neighbor.key, section, true);
+          blockersBySection[section].add(blocker);
         }
       }
     }
+    if (chunk.group.visible) {
+      const immediate = Math.max(Math.abs(chunk.cx - this.playerChunkX), Math.abs(chunk.cz - this.playerChunkZ)) <= 1;
+      const required = immediate ? new Set(this.playerRequiredMeshSections(chunk)) : null;
+      for (let section = 0; section < SECTION_COUNT; section += 1) {
+        if (chunk.sectionBlockCounts[section] <= 0) continue;
+        const queueKey = `${chunk.key}:${section}`;
+        const blockers = blockersBySection[section];
+        if (blockers.size > 0) {
+          // Present the two sides as one atomic section transition. The old
+          // neighbor stays intact while its speculative edge is rebuilt; the
+          // arriving section becomes mesh-eligible only after every matching
+          // edge replacement is installed.
+          this.seamPresentationPending.set(queueKey, {
+            key: chunk.key,
+            section,
+            urgent: Boolean(required?.has(section)),
+            blockers,
+          });
+          continue;
+        }
+        this.queueMesh(chunk.key, section, Boolean(required?.has(section)));
+      }
+    }
     this.preemptMeshForPlayer();
+  }
+
+  private releaseSeamPresentationBlocker(blocker: string) {
+    for (const [queueKey, pending] of this.seamPresentationPending) {
+      if (!pending.blockers.delete(blocker) || pending.blockers.size > 0) continue;
+      this.seamPresentationPending.delete(queueKey);
+      const chunk = this.chunks.get(pending.key);
+      if (!chunk?.group.visible || !this.chunkLightPresentationReady(pending.key)) continue;
+      this.queueMesh(pending.key, pending.section, pending.urgent);
+    }
+  }
+
+  private releaseOrphanedSeamPresentationBlockers() {
+    if (this.seamPresentationPending.size === 0) return;
+    const active = this.activeMeshTask ? `${this.activeMeshTask.key}:${this.activeMeshTask.section}` : null;
+    const blockers = new Set<string>();
+    for (const pending of this.seamPresentationPending.values()) for (const blocker of pending.blockers) blockers.add(blocker);
+    for (const blocker of blockers) {
+      const owned = this.meshQueued.has(blocker) || this.urgentMeshQueued.has(blocker) || active === blocker;
+      if (this.seamMeshRebuilds.has(blocker) && owned) continue;
+      this.seamMeshRebuilds.delete(blocker);
+      this.releaseSeamPresentationBlocker(blocker);
+    }
   }
 
   processGeneration() {
@@ -3767,8 +3855,8 @@ export class ChunkWorld {
         this.generationQueued.delete(chunk.key);
         this.generationEnqueuedAt.delete(chunk.key);
         this.streamingCompleted.generation += 1;
+        this.setChunkStreamingVisibility(chunk);
         this.queueLightReconciliation(chunk);
-        this.prepareGeneratedChunk(chunk);
         return true;
       }
       if (this.terrainGenerationPipeline.availableSlots <= 0) return false;
@@ -3957,7 +4045,13 @@ export class ChunkWorld {
   private queueLightReconciliation(chunk: Chunk) {
     if (this.lightReconciliationQueued.has(chunk.key) || this.activeLightReconciliation?.key === chunk.key) return;
     this.lightReconciliationQueued.add(chunk.key);
-    this.lightReconciliationQueue.push({ key: chunk.key, task: this.lightEngine.beginChunkBoundaryReconciliation(chunk) });
+    const queued = { key: chunk.key, task: this.lightEngine.beginChunkBoundaryReconciliation(chunk) };
+    this.lightReconciliationQueue.push(queued);
+    if (this.activeLightReconciliation
+      && this.chunkStreamingPriority(chunk.key) < this.chunkStreamingPriority(this.activeLightReconciliation.key)) {
+      this.lightReconciliationQueue.push(this.activeLightReconciliation);
+      this.activeLightReconciliation = null;
+    }
     this.lightReconciliationQueue.sort((left, right) => this.chunkStreamingPriority(left.key) - this.chunkStreamingPriority(right.key));
   }
 
@@ -3975,16 +4069,24 @@ export class ChunkWorld {
       return true;
     }
     if (this.lightEngine.stepChunkInitialization(active.task, 2_048)) {
+      const chunk = this.chunks.get(active.key);
       this.lightReconciliationQueued.delete(active.key);
       this.activeLightReconciliation = null;
       this.streamingCompleted.lighting += 1;
+      if (chunk) this.prepareGeneratedChunk(chunk);
     }
     return true;
   }
 
   private processLightingSlice() {
     const currentStage = this.playerChunkStreamingState().playerChunkStage;
-    if (currentStage === "lighting") return this.processLightInitialization();
+    if (currentStage === "lighting") {
+      const currentKey = chunkKey(this.playerChunkX, this.playerChunkZ);
+      if (this.lightReconciliationQueued.has(currentKey) || this.activeLightReconciliation?.key === currentKey) {
+        return this.processLightReconciliation();
+      }
+      return this.processLightInitialization();
+    }
     if (this.frame % 2 === 0) return this.processLightReconciliation() || this.processLightInitialization();
     return this.processLightInitialization() || this.processLightReconciliation();
   }
@@ -4004,6 +4106,7 @@ export class ChunkWorld {
         this.queueLightInitialization(chunk.key);
         continue;
       }
+      if (!this.chunkLightPresentationReady(next.key) || this.seamPresentationPending.has(`${next.key}:${next.section}`)) continue;
       if (chunk.sectionBlockCounts[next.section] === 0) {
         this.rebuildSection(chunk, next.section);
         return true;
@@ -4017,7 +4120,7 @@ export class ChunkWorld {
     }
     const active = this.activeMeshTask;
     const chunk = this.chunks.get(active.key);
-    if (!chunk || !chunk.group.visible || !chunk.lightInitialized) {
+    if (!chunk || !chunk.group.visible || !this.chunkLightPresentationReady(chunk.key)) {
       this.activeMeshTask = null;
       return true;
     }
@@ -4576,7 +4679,7 @@ export class ChunkWorld {
     const queueKey = `${key}:${section}`;
     this.meshQueued.delete(queueKey);
     this.urgentMeshQueued.delete(queueKey);
-    this.seamMeshRebuilds.delete(queueKey);
+    if (this.seamMeshRebuilds.delete(queueKey)) this.releaseSeamPresentationBlocker(queueKey);
     if (this.meshEnqueuedAt.delete(queueKey)) this.streamingCanceled.meshing += 1;
     if (this.activeMeshTask?.key === key && this.activeMeshTask.section === section) this.activeMeshTask = null;
   }
@@ -7212,6 +7315,7 @@ export class ChunkWorld {
       let edits = this.edits.get(key);
       if (!edits) { edits = new Map(); this.edits.set(key, edits); }
       edits.set(index, resolvedType);
+      this.chunkEditSignatureCache.delete(key);
     }
     this.refreshEditedBlock(sx.chunk, sz.chunk, sx.local, y, sz.local, immediate, affectedLayers);
     if (immediate) this.flushLightSections();
@@ -7282,6 +7386,7 @@ export class ChunkWorld {
         let edits = this.edits.get(key);
         if (!edits) { edits = new Map(); this.edits.set(key, edits); }
         edits.set(index, resolvedType);
+        this.chunkEditSignatureCache.delete(key);
       }
       const section = sectionForY(change.y);
       const directEntry = `${key}:${section}`;
@@ -8393,6 +8498,7 @@ export class ChunkWorld {
       old?.[layer] || nextMeshes[layer] || invalidatedLayers.includes(layer),
     ));
     this.queueChunkConsolidation(chunk, changedLayers);
+    if (completingSeamRebuild) this.releaseSeamPresentationBlocker(queueKey);
   }
 
   unloadChunk(key: string) {
@@ -8414,7 +8520,8 @@ export class ChunkWorld {
       const queueKey = `${key}:${section}`;
       this.meshQueued.delete(queueKey);
       this.urgentMeshQueued.delete(queueKey);
-      this.seamMeshRebuilds.delete(queueKey);
+      if (this.seamMeshRebuilds.delete(queueKey)) this.releaseSeamPresentationBlocker(queueKey);
+      this.seamPresentationPending.delete(queueKey);
       this.meshEnqueuedAt.delete(queueKey);
       this.lightSectionQueued.delete(queueKey);
     }
@@ -8470,10 +8577,14 @@ export class ChunkWorld {
         playerChunkDetail: task?.stage ?? (this.generationQueued.has(key) ? "queued" : "missing"),
       };
     }
-    if (!chunk.lightInitialized) return {
+    if (!this.chunkLightPresentationReady(key)) return {
       playerChunkReady: false,
       playerChunkStage: "lighting" as const,
-      playerChunkDetail: this.activeLightInitialization?.key === key
+      playerChunkDetail: this.activeLightReconciliation?.key === key
+        ? `seam-${this.activeLightReconciliation.task.phase}`
+        : this.lightReconciliationQueued.has(key)
+          ? "seam-queued"
+          : this.activeLightInitialization?.key === key
         ? this.activeLightInitialization.task.phase
         : this.lightInitializationTasks.get(key)?.phase ?? "queued",
     };
@@ -8513,7 +8624,7 @@ export class ChunkWorld {
     for (let dx = -radius; dx <= radius; dx += 1) for (let dz = -radius; dz <= radius; dz += 1) {
       desired += 1;
       const chunk = this.chunks.get(chunkKey(this.playerChunkX + dx, this.playerChunkZ + dz));
-      if (!chunk?.lightInitialized) continue;
+      if (!chunk || !this.chunkLightPresentationReady(chunk.key)) continue;
       if (this.playerRequiredMeshSections(chunk).every((section) => chunk.sections.has(section))) ready += 1;
     }
     return { desired, ready, ratio: desired ? ready / desired : 1 } as const;
@@ -8614,11 +8725,12 @@ export class ChunkWorld {
   private ensurePlayerChunkMeshQueue() {
     const key = chunkKey(this.playerChunkX, this.playerChunkZ);
     const chunk = this.chunks.get(key);
-    if (!chunk?.lightInitialized || !chunk.group.visible) return;
+    if (!chunk?.lightInitialized || !chunk.group.visible || !this.chunkLightPresentationReady(key)) return;
     for (const section of this.playerRequiredMeshSections(chunk)) {
       if (chunk.sections.has(section)) continue;
       if (this.activeMeshTask?.key === key && this.activeMeshTask.section === section) continue;
       const queueKey = `${key}:${section}`;
+      if (this.seamPresentationPending.has(queueKey)) continue;
       if (this.meshQueued.has(queueKey) || this.urgentMeshQueued.has(queueKey)) continue;
       this.queueMesh(key, section);
     }
@@ -8647,6 +8759,7 @@ export class ChunkWorld {
       activeMeshChunk: this.activeMeshTask?.key ?? null,
       activeMeshSection: this.activeMeshTask?.section ?? null,
       meshSliceProgress: this.activeMeshTask ? this.activeMeshTask.nextLocalX / CHUNK_SIZE : null,
+      seamPresentationSections: this.seamPresentationPending.size,
       relightSectionsQueued: this.lightSectionQueued.size,
       consolidationLayersQueued: this.consolidationQueued.size,
       terrainWorker: {

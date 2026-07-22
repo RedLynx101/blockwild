@@ -158,12 +158,18 @@ test("sprint-swimming adds exactly twenty percent to vertical stroke acceleratio
   assert.ok(Math.abs(sprinting.state.velocityY / ordinary.state.velocityY - 1.2) < 1e-9);
 });
 
-test("a fresh upward stroke breaches the surface once while held jump returns to a submerged tread", () => {
-  let feetY = -1.56;
+test("held swim input produces repeatable breathing bobs without walking on the surface", () => {
+  // Begin roughly the same 0.68 blocks below eye-level breathing depth as the
+  // production swim audit, rather than giving the first stroke a head start.
+  let feetY = -2.18;
   let swimmer: SwimmerState = { velocityY: 0, oxygenSeconds: 12, drowningAccumulator: 0, entryMomentumSpeed: 0 };
   let highestFeetY = feetY;
+  let lowestFeetYAfterFirstBreach = Number.POSITIVE_INFINITY;
   let breachStarts = 0;
-  for (let frame = 0; frame < 600; frame += 1) {
+  let headAboveFrames = 0;
+  let longestHeadAboveRun = 0;
+  let currentHeadAboveRun = 0;
+  for (let frame = 0; frame < 900; frame += 1) {
     const headSubmerged = feetY + 1.5 < 0;
     const priorBreachSeconds = swimmer.surfaceBreachSeconds ?? 0;
     const next = stepSwimming(
@@ -176,11 +182,19 @@ test("a fresh upward stroke breaches the surface once while held jump returns to
     swimmer = next;
     feetY += swimmer.velocityY / 60;
     highestFeetY = Math.max(highestFeetY, feetY);
+    if (breachStarts > 0) lowestFeetYAfterFirstBreach = Math.min(lowestFeetYAfterFirstBreach, feetY);
+    if (feetY + 1.5 >= 0) {
+      headAboveFrames += 1;
+      currentHeadAboveRun += 1;
+      longestHeadAboveRun = Math.max(longestHeadAboveRun, currentHeadAboveRun);
+    } else currentHeadAboveRun = 0;
   }
-  assert.equal(breachStarts, 1, "one held Space press must not renew the surface breach");
+  assert.ok(breachStarts >= 5, `held Space only produced ${breachStarts} surface strokes`);
   assert.ok(highestFeetY > -0.7, `feet only rose to ${highestFeetY}, which cannot clear the water sample`);
-  assert.ok(highestFeetY < -0.25, `feet rose to ${highestFeetY}, which would launch too far above the water`);
-  assert.ok(feetY < -1.4, `surface tread should settle inside the water, got ${feetY}`);
+  assert.ok(highestFeetY < -0.25, `feet rose to ${highestFeetY}, which would become a water-walking launch`);
+  assert.ok(lowestFeetYAfterFirstBreach < -1.52, `the swimmer never dipped back under after a breach: ${lowestFeetYAfterFirstBreach}`);
+  assert.ok(headAboveFrames > 90, `the swimmer could breathe for only ${headAboveFrames} frames`);
+  assert.ok(longestHeadAboveRun >= 10, `the longest breathing window was only ${longestHeadAboveRun} frames`);
 
   const released = stepSwimming(
     swimmer,
@@ -189,6 +203,7 @@ test("a fresh upward stroke breaches the surface once while held jump returns to
     1 / 60,
   ).state;
   assert.equal(released.surfaceBreachReady, true, "releasing Space should arm the next intentional breach");
+  assert.equal(released.surfaceStrokeCooldownSeconds, 0, "releasing Space should clear the held-stroke recovery timer");
 });
 
 test("a real fall carries moderated momentum through the water surface", () => {

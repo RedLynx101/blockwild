@@ -378,6 +378,8 @@ export type SwimmerState = Readonly<{
   surfaceBreachReady?: boolean;
   /** Remaining time for the current surface-crossing stroke. */
   surfaceBreachSeconds?: number;
+  /** Recovery window before held swim input may begin another surface stroke. */
+  surfaceStrokeCooldownSeconds?: number;
 }>;
 
 export type SwimEnvironment = Readonly<{
@@ -429,10 +431,12 @@ export type SwimRules = Readonly<{
   shoreExitVelocity: number;
   entryMomentumRetention?: number;
   entryMomentumDecayPerSecond: number;
-  surfaceTreadVelocity: number;
-  surfaceTreadResponse: number;
   surfaceBreachVelocity: number;
   surfaceBreachDurationSeconds: number;
+  /** Downward recovery after a breach; this creates a real bob instead of a surface clamp. */
+  surfaceRecoveryAcceleration: number;
+  /** Minimum stroke-to-stroke interval while Space remains held. */
+  surfaceStrokeCycleSeconds: number;
 }>;
 
 export const DEFAULT_SWIM_RULES: SwimRules = Object.freeze({
@@ -454,14 +458,13 @@ export const DEFAULT_SWIM_RULES: SwimRules = Object.freeze({
   shoreExitVelocity: 8.15,
   entryMomentumRetention: 0.54,
   entryMomentumDecayPerSecond: 3.6,
-  // Holding Space at the surface treads water around the air/water boundary;
-  // it does not become an elevator that lifts the player's feet onto the top.
-  surfaceTreadVelocity: -0.08,
-  surfaceTreadResponse: 11,
-  // A fresh upward stroke may carry the swimmer's feet through the surface,
-  // but holding Space cannot renew this impulse until the button is released.
-  surfaceBreachVelocity: 3.8,
-  surfaceBreachDurationSeconds: 0.24,
+  // A surface stroke crosses the air/water boundary briefly. Recovery then
+  // pulls the player back under before held Space can start another stroke,
+  // producing Minecraft-like breathing bobs without a walkable-water state.
+  surfaceBreachVelocity: 3.65,
+  surfaceBreachDurationSeconds: 0.14,
+  surfaceRecoveryAcceleration: 13.5,
+  surfaceStrokeCycleSeconds: 0.62,
 });
 
 /** Pure player-water step; the caller applies returned velocity and damage. */
@@ -480,9 +483,17 @@ export function stepSwimming(
   let entryMomentumSpeed = Math.max(0, state.entryMomentumSpeed ?? 0);
   let surfaceBreachReady = state.surfaceBreachReady ?? true;
   let surfaceBreachSeconds = Math.max(0, state.surfaceBreachSeconds ?? 0);
+  let surfaceStrokeCooldownSeconds = Math.max(0, state.surfaceStrokeCooldownSeconds ?? 0);
+  surfaceStrokeCooldownSeconds = Math.max(0, surfaceStrokeCooldownSeconds - dt);
   if (!input.jumpHeld) {
     surfaceBreachReady = true;
     surfaceBreachSeconds = 0;
+    surfaceStrokeCooldownSeconds = 0;
+  } else if (environment.headSubmerged && surfaceStrokeCooldownSeconds <= 0) {
+    // A held swimmer earns another stroke only after returning beneath the
+    // surface for the complete recovery interval. Merely remaining above the
+    // water never renews upward thrust.
+    surfaceBreachReady = true;
   }
 
   if (environment.headSubmerged) {
@@ -518,7 +529,8 @@ export function stepSwimming(
     velocityY += rules.buoyancyAcceleration * Math.max(0, submersion - 0.84) * dt;
     velocityY -= rules.passiveSinkAcceleration * dt;
     if (input.crouching && !input.jumpHeld) velocityY -= rules.crouchSinkAcceleration * dt;
-    if (input.jumpHeld && (environment.headSubmerged || entryMomentumSpeed > ordinaryMaximumSink)) {
+    const recoveringFromSurfaceStroke = input.jumpHeld && environment.headSubmerged && surfaceStrokeCooldownSeconds > 0;
+    if (input.jumpHeld && ((environment.headSubmerged && !recoveringFromSurfaceStroke) || entryMomentumSpeed > ordinaryMaximumSink)) {
       velocityY += rules.swimAcceleration * (input.sprinting ? rules.sprintVerticalMultiplier : 1) * dt;
     }
     if (entryMomentumSpeed > ordinaryMaximumSink) {
@@ -540,6 +552,7 @@ export function stepSwimming(
       if (beginsSurfaceBreach) {
         surfaceBreachReady = false;
         surfaceBreachSeconds = rules.surfaceBreachDurationSeconds;
+        surfaceStrokeCooldownSeconds = rules.surfaceStrokeCycleSeconds;
       }
       if (surfaceBreachSeconds > 0) {
         // Preserve a short, deliberate crossing stroke so the feet can clear
@@ -547,10 +560,10 @@ export function stepSwimming(
         velocityY = Math.max(velocityY, rules.surfaceBreachVelocity);
         surfaceBreachSeconds = Math.max(0, surfaceBreachSeconds - dt);
       } else {
-        // Close the discrete feet-sample gap at the surface. The small negative
-        // target produces a controlled tread/bob instead of alternating between
-        // upward water thrust and downward air gravity above the water plane.
-        velocityY += (rules.surfaceTreadVelocity - velocityY) * Math.min(1, rules.surfaceTreadResponse * dt);
+        // Do not clamp the swimmer to the waterline. A strong but continuous
+        // recovery acceleration creates the short above-water arc and the
+        // submerged reset that a repeatable swimming bob needs.
+        velocityY -= rules.surfaceRecoveryAcceleration * dt;
       }
     }
   }
@@ -563,6 +576,7 @@ export function stepSwimming(
       entryMomentumSpeed,
       surfaceBreachReady,
       surfaceBreachSeconds,
+      surfaceStrokeCooldownSeconds,
     },
     damage,
     shoreBoosted,

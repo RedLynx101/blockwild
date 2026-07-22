@@ -2204,6 +2204,22 @@ test("chunk cache restoration preserves landmark metadata for map discovery", ()
   world.dispose();
 });
 
+test("chunk cache identity follows neighboring edits that can change a presented seam", () => {
+  const world = new ChunkWorld();
+  world.reset("CARDINAL-CACHE-HALO", undefined, { structures: false });
+  const cacheKey = (world as unknown as { chunkCacheKey: (key: string) => string }).chunkCacheKey.bind(world);
+  const centerKey = chunkKey(0, 0);
+  const before = cacheKey(centerKey);
+  world.generateChunk(1, 0);
+  world.setBlock(CHUNK_SIZE, 0, 0, BlockId.Torch, true, true);
+  const afterAdjacentEdit = cacheKey(centerKey);
+  assert.notEqual(afterAdjacentEdit, before, "adjacent light and geometry edits must invalidate the cached edge presentation");
+  world.generateChunk(1, 1);
+  world.setBlock(CHUNK_SIZE, 0, CHUNK_SIZE, BlockId.Torch, true, true);
+  assert.notEqual(cacheKey(centerKey), afterAdjacentEdit, "diagonal light can reach a chunk corner and belongs to the same cache halo");
+  world.dispose();
+});
+
 test("generator-v17 saves keep edits and modern settlement options while terrain caches advance to v18", () => {
   const previous = {
     version: 2,
@@ -2244,9 +2260,54 @@ test("a late neighboring chunk urgently removes speculative water and terrain ed
   world.urgentMeshQueued.clear();
   (world as unknown as { queueChunkMeshesAndSeams: (chunk: typeof right) => void }).queueChunkMeshesAndSeams(right);
   assert.equal(world.urgentMeshQueued.has(`${left.key}:${section}`), true);
+  assert.equal(world.seamPresentationPending.has(`${right.key}:${section}`), true, "the arriving section must wait for the old edge replacement");
+  assert.equal(world.meshQueued.has(`${right.key}:${section}`), false, "both sides of an unresolved seam must never be presented together");
   for (let slice = 0; slice < 20; slice += 1) world.processMesh(left.key);
   assert.equal(left.sections.get(section)?.transparent?.geometry.getAttribute("position").count, 20, "water beside water must have no internal chunk-wall quad");
   assert.equal(world.seamMeshRebuilds.has(`${left.key}:${section}`), false);
+  assert.equal(world.seamPresentationPending.has(`${right.key}:${section}`), false, "installing the corrected edge must release its arriving section");
+  assert.equal(world.meshQueued.has(`${right.key}:${section}`), true, "the coherent arriving section should become eligible immediately");
+  for (let slice = 0; slice < 20; slice += 1) world.processMesh(right.key);
+  assert.equal(right.sections.get(section)?.transparent?.geometry.getAttribute("position").count, 20);
+  world.dispose();
+});
+
+test("worker-light reconciliation completes before an arriving chunk can mesh", () => {
+  const world = new ChunkWorld();
+  world.reset("ATOMIC-LIGHT-SEAM", undefined, { structures: false });
+  world.playerChunkX = 1;
+  world.playerChunkZ = 0;
+  const chunk = world.generateChunk(1, 0);
+  chunk.blocks.fill(BlockId.Air);
+  chunk.sectionBlockCounts.fill(0);
+  world.lightEngine.initializeChunk(chunk);
+  world.setBlock(16, 0, 0, BlockId.Water, false, false);
+  const section = Math.floor((0 - MIN_Y) / SECTION_HEIGHT);
+  world.meshQueue = [];
+  world.meshQueueHead = 0;
+  world.meshQueued.clear();
+  world.urgentMeshQueue = [];
+  world.urgentMeshQueueHead = 0;
+  world.urgentMeshQueued.clear();
+
+  const internals = world as unknown as {
+    queueLightReconciliation: (target: typeof chunk) => void;
+    queueChunkMeshesAndSeams: (target: typeof chunk) => void;
+    processLightReconciliation: () => boolean;
+  };
+  internals.queueLightReconciliation(chunk);
+  internals.queueChunkMeshesAndSeams(chunk);
+  assert.equal(world.meshQueued.has(`${chunk.key}:${section}`), false, "isolated worker light must not reach a visible mesh");
+  assert.equal(world.streamingDiagnostics().playerChunkStage, "lighting");
+  for (let guard = 0; world.lightReconciliationQueued.size > 0; guard += 1) {
+    assert.ok(guard < 32, "bounded seam light should reconcile promptly");
+    internals.processLightReconciliation();
+  }
+  assert.equal(
+    world.meshQueued.has(`${chunk.key}:${section}`) || world.urgentMeshQueued.has(`${chunk.key}:${section}`),
+    true,
+    "the section becomes eligible only with reconciled boundary light",
+  );
   world.dispose();
 });
 

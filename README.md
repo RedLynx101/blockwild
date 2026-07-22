@@ -1,6 +1,6 @@
 # Blockwild
 
-Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.10.0 Fieldglass Accord**.
+Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.10.1 Seamwake**.
 
 The project is a real game rather than a voxel-rendering demo. You can mine, build, craft, smelt, farm, fight, collect field notes, manage several worlds, and carry those worlds between browsers with export files.
 
@@ -15,6 +15,14 @@ The project is a real game rather than a voxel-rendering demo. You can mine, bui
 ![Blockwild field guide with all 231 rendered creatures](public/creatures/blockwild-creatures.svg)
 
 The integrated creature-design pass expands the Courser family with Rimehoof, Sunscar, Mirestride, and Starbough ecological breeds plus the forge-built Deepgear Courser. It also gives all six dragon families production stage forms, rebuilds birds, pets, crabs, mosslings, foxes, harts, deer, longhorns, terrapins, and other core wildlife, and preserves one model path for gameplay, Bestiary portraits, and visual audits.
+
+## v1.10.1 Seamwake
+
+Swimming no longer settles into a fixed velocity just below the surface. Holding Space now produces a real stroke-and-recovery cycle: the player rises from below breathing depth, crosses the waterline briefly, falls back under continuous water/air forces, and automatically begins another stroke only after dipping back beneath the surface. The result is a controllable breathing bob rather than an invisible elevator or a walkable-water equilibrium. Forward contact with a low dry bank retains the stronger exit impulse, letting the same input become a small hop back onto land.
+
+Streamed terrain now treats each visible chunk edge as one presentation transaction. Worker and cached chunks reconcile neighbor light before meshing, and an arriving vertical section waits until the matching old neighbor section has retired its speculative edge. This removes temporary different-shade strips, false water walls, ambient-occlusion bands, and exposed terrain faces while chunks finish loading. Terrain cache v5 also fingerprints the complete neighboring edit halo, so an adjacent torch, wall, water, or corner edit cannot restore stale boundary shading later.
+
+The deterministic release benchmark finishes with no pending seam sections or generation/light/mesh debt. Cold streaming averages 4.64 ms per update with a 7.11 ms p95 on the repository benchmark; warm reverse traversal preserves a two-frame maximum readiness delay while using the new atomic presentation gate.
 
 ## v1.10.0 Fieldglass Accord
 

@@ -2,6 +2,14 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.10.1 - Seamwake - 2026-07-22
+
+- Replaced the held-Space surface tread clamp with a repeatable swim-stroke cycle: submerged thrust produces a brief controlled breach, continuous recovery pulls the player back into the water, and another stroke rearms only after the swimmer dips beneath the surface. Players can keep their head above water in natural breathing bobs without standing or walking on the water.
+- Preserved the stronger forward bank exit so a swimmer meeting a one-block dry ledge can carry the stroke into a small landward hop. Sprint-swim keeps its exact 20% vertical bonus; crouch dives, oxygen, drowning, and retained entry momentum remain unchanged.
+- Made worker and restored chunks finish boundary-light reconciliation before their geometry is eligible for display. Arriving vertical sections now wait for already-visible neighbor edge replacements, presenting both sides atomically instead of briefly exposing a different light field, ambient-occlusion band, water wall, or terrain face.
+- Advanced the derived terrain cache to v5 with a cached 3 x 3 edit-halo signature, preventing adjacent and diagonal light/geometry edits from restoring stale boundary presentation without adding a full relight to ordinary warm-cache reads.
+- Added streaming diagnostics for pending seam presentations, bounded interrupted-work recovery, deep-start multi-cycle swim coverage, atomic late-neighbor geometry checks, worker-light presentation gates, and cache-halo regressions.
+
 ## 1.10.0 - Fieldglass Accord - 2026-07-22
 
 - Added host-authorized AI companion drones as real multiplayer peers with explicit connection-bound capabilities, pause/stop/mute/revoke controls, four-drone admission, nonblocking invulnerable bodies, and ordinary host-owned inventories.
