@@ -112,6 +112,9 @@ describe("agent platform contracts", () => {
     for (let index = 0; index < 7; index += 1) assert.equal(ring.append({ authorId: "player_1", authorName: "Noah", peerKind: "human", channel: "global", text: `line ${index}`, sentAt: 11 + index }, 11 + index).ok, true);
     assert.equal(ring.append({ authorId: "player_1", authorName: "Noah", peerKind: "human", channel: "global", text: "too fast", sentAt: 20 }, 20).ok, false);
     assert.deepEqual(ring.since(7).map((message) => message.sequence), [8]);
+    const relayed = new AgentChatRing().append({ authorId: "agent_1", authorName: "Mica", peerKind: "agent", channel: "local", text: "Caption", sentAt: 30 }, 30, "chat_local_agent_1");
+    assert.equal(relayed.ok && relayed.message.id, "chat_local_agent_1");
+    assert.equal(relayed.ok && relayed.message.sequence, 1);
   });
 
   test("prompt-like chat cannot approve a drone, grant authority, or acquire work leases", () => {

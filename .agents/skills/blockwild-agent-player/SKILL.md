@@ -24,3 +24,4 @@ The multiplayer host is authoritative. The page exposes no unrestricted JavaScri
 
 Use `scripts/validate-command.mjs` before sending hand-authored payloads. Use `scripts/agent-session.mjs` for notebook storage, command submission over an attached Playwright/CDP browser, optional ElevenLabs speech generation, and compact status output.
 
+For voice, use the runner's `speak` action rather than putting credentials or audio in a generic command. The caption is authoritative and must survive every TTS failure; voice is optional presentation data.

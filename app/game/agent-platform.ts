@@ -686,13 +686,16 @@ export class AgentChatRing {
   private readonly sentAtByAuthor = new Map<string, number[]>();
   private sequence = 0;
 
-  append(input: Omit<AgentChatMessage, "schema" | "id" | "sequence">, now = Date.now()) {
+  append(input: Omit<AgentChatMessage, "schema" | "id" | "sequence">, now = Date.now(), requestedId?: string) {
     const recent = (this.sentAtByAuthor.get(input.authorId) ?? []).filter((stamp) => now - stamp < 10_000);
     if (recent.length >= 8) return { ok: false as const, code: "chat_rate_limited" };
+    const sequence = ++this.sequence;
     const candidate: AgentChatMessage = Object.freeze({
       schema: AGENT_PLATFORM_SCHEMA_VERSION,
-      id: `chat_${(++this.sequence).toString(36)}_${now.toString(36)}`,
-      sequence: this.sequence,
+      id: requestedId && isId(requestedId) && !this.messages.some((message) => message.id === requestedId)
+        ? requestedId
+        : `chat_${sequence.toString(36)}_${now.toString(36)}`,
+      sequence,
       authorId: input.authorId,
       authorName: input.authorName.trim().slice(0, 48) || "Wanderer",
       peerKind: input.peerKind,

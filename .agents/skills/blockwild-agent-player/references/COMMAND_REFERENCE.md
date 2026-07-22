@@ -23,7 +23,7 @@ All commands use schema 1, a unique idempotent `commandId`, the stable `agentId`
 | Session | `session.status`, `session.pause`, `session.resume`, `session.stop`, `capabilities.list` | none or reason |
 | Observe | `observe`, `inspect_area`, `inspect_target`, `wiki_lookup`, `bestiary_lookup`, `recipe_lookup` | center/radius, target, query/id |
 | Movement | `move_to`, `move_relative`, `follow_player`, `face`, `wait`, `stop` | target/delta, playerId + distance band, milliseconds |
-| Social | `chat_read`, `chat_send`, `speak`, `emote` | afterSequence, text, channel |
+| Social | `chat_read`, `chat_send`, `speak`, `emote` | afterSequence, text, channel; runner `speak` adds bounded audio to the host-authored caption |
 | Inventory | `inventory_get`, `inventory_move`, `inventory_drop`, `agent_inventory_open_for_host` | slots, count, expected revision |
 | Interaction | `interact`, `open_container`, `container_get`, `container_transfer`, `use_workstation` | target/coordinates, slots/count/revisions |
 | Work | `harvest_area`, `gather_resource`, `build_plan`, `build_commit`, `build_cancel` | bounded region/filter; placements/removals; previewId |
@@ -62,4 +62,3 @@ If blocked for materials, the result includes `materials: [{block,name,have,need
 - `blocked`, `completed`, `cancelled`, and `failed` are terminal.
 - Every accepted command must eventually receive a typed terminal result.
 - Verify success from returned inventory/world deltas and a fresh observation, not from chat or model narration.
-

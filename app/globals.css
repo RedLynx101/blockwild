@@ -6917,7 +6917,7 @@ input:focus-visible {
 
 .multiplayer-peer-list > div {
   display: grid;
-  grid-template-columns: 15px 1fr auto;
+  grid-template-columns: 15px 1fr auto auto;
   align-items: center;
   gap: 7px;
   font-size: 8px;
@@ -6932,6 +6932,16 @@ input:focus-visible {
 
 .multiplayer-peer-list small {
   color: #aab3a7;
+}
+
+.multiplayer-peer-list button {
+  min-height: 24px;
+  padding: 3px 6px;
+  border: 1px solid #55776c;
+  background: #172a24;
+  color: #bff4df;
+  font: 800 6px var(--font-geist-mono), monospace;
+  cursor: pointer;
 }
 
 .multiplayer-ownership-note {
@@ -7060,6 +7070,11 @@ input:focus-visible {
 .multiplayer-chat-log small,
 .agent-chat-history small { color: #72827b; font-size: 6px; }
 .multiplayer-chat-log .empty { display: block; color: #87928c; font-style: italic; }
+.drone-voice-mixer { display: grid; gap: 4px; padding: 6px; border: 1px solid #3d5d52; background: rgba(10, 24, 20, .7); }
+.drone-voice-mixer label { display: grid; grid-template-columns: minmax(80px, auto) minmax(90px, 1fr) 34px auto; align-items: center; gap: 6px; color: #bff4df; font-size: 7px; }
+.multiplayer-chat-panel .drone-voice-mixer input { min-height: auto; accent-color: #70d6a5; }
+.drone-voice-mixer small { color: #93b9aa; font-size: 6px; text-align: right; }
+.drone-voice-mixer button { min-height: 24px; padding: 3px 6px; border: 1px solid #55776c; background: #172a24; color: #bff4df; font: 800 6px var(--font-geist-mono), monospace; cursor: pointer; }
 .multiplayer-chat-panel form,
 .agent-chat-hud form { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 5px; }
 .multiplayer-chat-panel select,

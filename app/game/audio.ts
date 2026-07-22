@@ -691,6 +691,20 @@ export class SynthAudio {
     });
   }
 
+  /** Decode and play bounded runner speech through the same pooled voice path as game SFX. */
+  async playEncodedAudio(encoded: ArrayBuffer, options: SamplePlaybackOptions = {}) {
+    const context = this.context;
+    if (!context || context.state === "closed" || this.settings.muted || this.disposed || !encoded.byteLength) return false;
+    try {
+      const buffer = await context.decodeAudioData(encoded.slice(0));
+      if (!Number.isFinite(buffer.duration) || buffer.duration <= 0 || buffer.duration > 32 || this.disposed) return false;
+      this.startDecodedBuffer(buffer, 0.82, options);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   private acquireSpatialVoice() {
     const context = this.context;
     if (!context) return null;
@@ -716,6 +730,10 @@ export class SynthAudio {
   }
 
   startSample(kind: SampleKind, buffer: AudioBuffer, options: SamplePlaybackOptions) {
+    this.startDecodedBuffer(buffer, SAMPLES[kind].gain, options);
+  }
+
+  private startDecodedBuffer(buffer: AudioBuffer, baseGain: number, options: SamplePlaybackOptions) {
     const context = this.context;
     const master = this.master;
     if (!context || !master || context.state === "closed" || this.settings.muted || this.disposed) return;
@@ -745,7 +763,7 @@ export class SynthAudio {
     source.buffer = buffer;
     source.playbackRate.value = Math.max(0.25, Math.min(4, options.playbackRate ?? 1));
     source.detune.value = Math.max(-2400, Math.min(2400, options.detune ?? 0));
-    gain.gain.value = SAMPLES[kind].gain * Math.max(0, Math.min(2, options.gain ?? 1));
+    gain.gain.value = Math.max(0, baseGain) * Math.max(0, Math.min(2, options.gain ?? 1));
     if (spatialVoice && spatialPosition) {
       const panner = spatialVoice.panner;
       panner.panningModel = "HRTF";

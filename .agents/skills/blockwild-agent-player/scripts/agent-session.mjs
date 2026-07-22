@@ -97,7 +97,7 @@ async function elevenLabsSpeech(text) {
   const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream?output_format=mp3_44100_128`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "xi-api-key": apiKey },
-    body: JSON.stringify({ text, model_id: "eleven_flash_v2_5", voice_settings: { stability: 0.55, similarity_boost: 0.72 } }),
+    body: JSON.stringify({ text, model_id: process.env.ELEVENLABS_MODEL_ID || "eleven_flash_v2_5", voice_settings: { stability: 0.55, similarity_boost: 0.72 } }),
   });
   if (!response.ok) throw new Error(`ElevenLabs request failed (${response.status})`);
   const bytes = Buffer.from(await response.arrayBuffer());
@@ -172,8 +172,14 @@ async function main() {
   }
   if (action === "speak") {
     const text = String(options.text || "").trim();
-    const audio = await elevenLabsSpeech(text);
-    process.stdout.write(`${JSON.stringify(await bridgeCall(options.cdp, "publishVoice", [{ ...audio, channel: options.channel || "local" }]), null, 2)}\n`);
+    const channel = options.channel || "local";
+    try {
+      const audio = await elevenLabsSpeech(text);
+      process.stdout.write(`${JSON.stringify(await bridgeCall(options.cdp, "publishVoice", [{ ...audio, channel }]), null, 2)}\n`);
+    } catch (error) {
+      const captionSent = await bridgeCall(options.cdp, "chat", [text, channel]).catch(() => false);
+      process.stdout.write(`${JSON.stringify({ ok: false, code: "voice_generation_failed", captionSent, message: error instanceof Error ? error.message : String(error) }, null, 2)}\n`);
+    }
     return;
   }
   const world = String(options.world || "");

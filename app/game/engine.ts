@@ -608,6 +608,7 @@ import { applyContainerOperation } from "./multiplayer-inventory";
 import { MultiplayerDiagnosticsRing, multiplayerRejectionCategory } from "./multiplayer-diagnostics";
 import { advanceAgentAlongPath, findAgentVoxelPath, type AgentPathCell } from "./agent-navigation";
 import { buildMaterialRequirements, reserveBuildMaterials } from "./agent-work";
+import { AgentVoiceAssembler, chunkAgentVoiceData } from "./agent-voice";
 import {
   AgentAuthority,
   AgentChatRing,
@@ -626,6 +627,8 @@ import {
   type AgentMaterialRequirement,
   type AgentChatChannel,
   type AgentChatMessage,
+  type AgentVoiceChunk,
+  type AgentVoiceMode,
   type AgentCommandEnvelope,
   type AgentCommandResult,
   type AgentObservationV1,
@@ -1024,6 +1027,7 @@ export type GameSettings = {
   debugTelemetry: boolean;
   debugTelemetryMaxMinutes: number;
   resourceMode: ResourceMode;
+  agentVoiceMode: AgentVoiceMode;
 };
 
 export type FurnaceState = {
@@ -3274,6 +3278,7 @@ export function readSettings(): GameSettings {
     debugTelemetry: false,
     debugTelemetryMaxMinutes: 60,
     resourceMode: "auto",
+    agentVoiceMode: "spatial",
     ...fallbackDistances,
   };
   if (typeof window === "undefined") return fallback;
@@ -3299,6 +3304,7 @@ export function readSettings(): GameSettings {
       debugTelemetry: Boolean(parsed.debugTelemetry ?? fallback.debugTelemetry),
       debugTelemetryMaxMinutes: clamp(Math.round(Number(parsed.debugTelemetryMaxMinutes ?? fallback.debugTelemetryMaxMinutes)), 1, 180),
       resourceMode: parsed.resourceMode === "cpu" || parsed.resourceMode === "memory" ? parsed.resourceMode : "auto",
+      agentVoiceMode: parsed.agentVoiceMode === "off" || parsed.agentVoiceMode === "universal" ? parsed.agentVoiceMode : "spatial",
       ...distances,
     };
   } catch {
@@ -4219,6 +4225,11 @@ export class VoxelEngine {
   agentWorkFeedback: AgentWorkFeedback[] = [];
   agentWorldState: AgentWorldSaveV1 = normalizeAgentWorldSave(null);
   agentDiagnostics: AgentDiagnostics | null = null;
+  agentVoiceAssembler = new AgentVoiceAssembler();
+  agentVoicePending: Array<Readonly<{ chunk: AgentVoiceChunk; bytes: Uint8Array; receivedAt: number }>> = [];
+  localMutedAgentVoices = new Set<string>();
+  localAgentVoiceGains = new Map<string, number>();
+  private agentVoiceSequence = 0;
   agentTestWorld = false;
   agentWorldFingerprint = "worldfp_unlinked";
   pendingGuestCreatureInventoryRequests = new Map<string, number>();
@@ -5914,10 +5925,11 @@ export class VoxelEngine {
     return { ok: true as const, advancedMilliseconds: bounded, observation: this.createAgentObservation() };
   }
 
-  sendMultiplayerChat(text: string, channel: AgentChatChannel = "global") {
+  private sendMultiplayerChatMessage(text: string, channel: AgentChatChannel = "global") {
     const session = this.multiplayer;
     const clean = text.trim().slice(0, 480);
-    if (!session || !session.role || !clean) return false;
+    if (!session || !session.role || !clean) return null;
+    const observedPosition = this.agentMode ? this.latestAgentObservation?.self.position : null;
     const base = {
       authorId: session.identity.id,
       authorName: session.identity.name,
@@ -5925,23 +5937,92 @@ export class VoxelEngine {
       channel,
       text: clean,
       sentAt: Date.now(),
-      position: { x: this.position.x, y: this.position.y, z: this.position.z },
+      position: observedPosition ? { ...observedPosition } : { x: this.position.x, y: this.position.y, z: this.position.z },
     };
+    let message: AgentChatMessage;
     if (session.role === "host") {
       const appended = this.agentChat.append(base);
-      if (!appended.ok) return false;
+      if (!appended.ok) return null;
+      message = appended.message;
       session.sendChat(appended.message);
     } else {
-      const outbound: AgentChatMessage = {
+      message = {
         schema: 1,
         id: `chat_local_${(++this.localChatSequence).toString(36)}_${Date.now().toString(36)}`,
         sequence: this.localChatSequence,
         ...base,
       };
-      session.sendChat(outbound);
+      if (session.sendChat(message) <= 0) return null;
     }
     this.emitHud(true);
-    return true;
+    return message;
+  }
+
+  sendMultiplayerChat(text: string, channel: AgentChatChannel = "global") {
+    return Boolean(this.sendMultiplayerChatMessage(text, channel));
+  }
+
+  publishAgentVoice(input: Readonly<{
+    mimeType: AgentVoiceChunk["mimeType"];
+    dataBase64: string;
+    text: string;
+    textHash: string;
+    durationMs?: number;
+    channel?: AgentChatChannel;
+  }>) {
+    const session = this.multiplayer;
+    const observation = this.latestAgentObservation;
+    if (!this.agentMode || !session || session.role !== "guest" || !observation) return { ok: false as const, code: "agent_session_unavailable" };
+    if (!observation.session.capabilities.includes("voice.send")) return { ok: false as const, code: "voice_capability_denied" };
+    if (!observation.session.capabilities.includes("chat.send")) return { ok: false as const, code: "caption_capability_denied" };
+    const packets = chunkAgentVoiceData(input.dataBase64);
+    if (!packets) return { ok: false as const, code: "voice_payload_too_large_or_invalid" };
+    const caption = this.sendMultiplayerChatMessage(input.text, input.channel ?? "local");
+    if (!caption) return { ok: false as const, code: "caption_not_sent" };
+    const now = Date.now();
+    const streamId = `voice_${session.identity.id}_${now.toString(36)}_${(++this.agentVoiceSequence).toString(36)}`;
+    const durationMs = Math.max(1, Math.min(30_000, Math.trunc(input.durationMs ?? input.text.length * 55)));
+    let sent = 0;
+    for (let chunkIndex = 0; chunkIndex < packets.length; chunkIndex += 1) {
+      const chunk: AgentVoiceChunk = {
+        schema: 1,
+        streamId,
+        agentId: session.identity.id,
+        messageId: caption.id,
+        mimeType: input.mimeType,
+        textHash: input.textHash.trim().slice(0, 128),
+        text: caption.text,
+        sequence: ++this.agentVoiceSequence,
+        chunkIndex,
+        chunkCount: packets.length,
+        durationMs,
+        data: packets[chunkIndex],
+        position: { ...observation.self.position },
+      };
+      try { sent += session.sendVoiceChunk(chunk); }
+      catch { break; }
+    }
+    return sent === packets.length
+      ? { ok: true as const, streamId, messageId: caption.id, chunks: packets.length, bytes: Math.floor(input.dataBase64.length * 0.75) }
+      : { ok: false as const, code: "voice_channel_backpressure", streamId, messageId: caption.id, chunksSent: sent, chunks: packets.length };
+  }
+
+  setLocalAgentVoiceMuted(agentId: string, muted: boolean) {
+    if (muted) this.localMutedAgentVoices.add(agentId);
+    else this.localMutedAgentVoices.delete(agentId);
+    this.flushAgentVoicePlayback();
+  }
+
+  isLocalAgentVoiceMuted(agentId: string) {
+    return this.localMutedAgentVoices.has(agentId);
+  }
+
+  setLocalAgentVoiceGain(agentId: string, gain: number) {
+    this.localAgentVoiceGains.set(agentId, clamp(Number(gain) || 0, 0, 1.5));
+  }
+
+  getLocalAgentVoiceGain(agentId: string) {
+    return this.localAgentVoiceGains.get(agentId) ?? 1;
   }
 
   getMultiplayerDiagnosticsReport() {
@@ -6112,6 +6193,11 @@ export class VoxelEngine {
     (this.agentObservationSequences ??= new Map()).clear();
     (this.agentRuntimeTasks ??= new Map()).clear();
     this.clearAgentWorkRuntime();
+    this.agentVoiceAssembler.clear();
+    this.agentVoicePending = [];
+    this.localMutedAgentVoices.clear();
+    this.localAgentVoiceGains.clear();
+    this.agentVoiceSequence = 0;
     this.latestAgentObservation = null;
     this.latestAgentResult = null;
     this.multiplayerState.inviteCode = "";
@@ -6398,6 +6484,10 @@ export class VoxelEngine {
     (this.agentObservationSequences ??= new Map()).clear();
     (this.agentRuntimeTasks ??= new Map()).clear();
     this.clearAgentWorkRuntime();
+    this.agentVoiceAssembler.clear();
+    this.agentVoicePending = [];
+    this.localMutedAgentVoices.clear();
+    this.localAgentVoiceGains.clear();
     this.latestAgentObservation = null;
     this.latestAgentResult = null;
     this.multiplayerReceivedSnapshot = false;
@@ -8814,6 +8904,71 @@ export class VoxelEngine {
     }
   }
 
+  private handleAgentVoiceChunk(chunk: AgentVoiceChunk, peer: PeerInfo) {
+    const session = this.multiplayer;
+    if (!session || peer.identity?.peerKind !== "agent" && session.role === "host") return;
+    if (session.role === "guest" && (this.settings.agentVoiceMode === "off" || this.localMutedAgentVoices.has(chunk.agentId))) return;
+    if (session.role === "host") {
+      const record = this.agentAuthority.get(chunk.agentId);
+      if (!record || record.status !== "approved" || record.muted || !record.granted.includes("voice.send")) {
+        if (this.agentDiagnostics) this.agentDiagnostics.communications.voiceDrops += 1;
+        return;
+      }
+    }
+    const result = this.agentVoiceAssembler.accept(chunk);
+    if (result.status === "dropped") {
+      if (this.agentDiagnostics) this.agentDiagnostics.communications.voiceDrops += 1;
+      return;
+    }
+    if (session.role === "host" && result.status !== "duplicate") {
+      for (const recipient of session.getPeers()) {
+        if (recipient.state !== "connected" || !recipient.identity || recipient.identity.id === peer.identity?.id || recipient.identity.peerKind === "agent") continue;
+        try { session.sendVoiceChunk(chunk, recipient.identity.id); }
+        catch { /* A caption remains useful when a listener's voice lane is unavailable. */ }
+      }
+    }
+    if (result.status === "complete") {
+      this.agentVoicePending.push({ chunk: result.chunk, bytes: result.bytes, receivedAt: Date.now() });
+      if (this.agentVoicePending.length > 8) {
+        this.agentVoicePending.splice(0, this.agentVoicePending.length - 8);
+        if (this.agentDiagnostics) this.agentDiagnostics.communications.voiceDrops += 1;
+      }
+      if (this.agentDiagnostics) {
+        this.agentDiagnostics.communications.voiceMessages += 1;
+        this.agentDiagnostics.communications.voiceCharacters += result.chunk.text.length;
+        this.agentDiagnostics.communications.voiceBytes += result.bytes.byteLength;
+      }
+      this.flushAgentVoicePlayback();
+    }
+  }
+
+  private flushAgentVoicePlayback(now = Date.now()) {
+    const retained: typeof this.agentVoicePending = [];
+    for (const pending of this.agentVoicePending) {
+      const caption = this.agentChat.list().find((message) => message.id === pending.chunk.messageId
+        && message.authorId === pending.chunk.agentId
+        && message.peerKind === "agent"
+        && message.text === pending.chunk.text);
+      if (!caption) {
+        if (now - pending.receivedAt <= 5_000) retained.push(pending);
+        else if (this.agentDiagnostics) this.agentDiagnostics.communications.voiceDrops += 1;
+        continue;
+      }
+      if (this.settings.agentVoiceMode === "off" || this.localMutedAgentVoices.has(pending.chunk.agentId)) continue;
+      const encoded = pending.bytes.buffer.slice(
+        pending.bytes.byteOffset,
+        pending.bytes.byteOffset + pending.bytes.byteLength,
+      ) as ArrayBuffer;
+      const options = this.settings.agentVoiceMode === "spatial"
+        ? { position: pending.chunk.position, refDistance: 3, maxDistance: 56, rolloffFactor: 1.05, gain: this.getLocalAgentVoiceGain(pending.chunk.agentId) }
+        : { gain: this.getLocalAgentVoiceGain(pending.chunk.agentId) };
+      void this.audio.playEncodedAudio(encoded, options).then((played) => {
+        if (!played && this.agentDiagnostics) this.agentDiagnostics.communications.playbackFailures += 1;
+      });
+    }
+    this.agentVoicePending = retained;
+  }
+
   private handleMultiplayerEvent(event: MultiplayerEvent) {
     if (event.type === "state") {
       this.multiplayerState.status = event.state;
@@ -8896,6 +9051,8 @@ export class VoxelEngine {
           this.cancelAgentRuntime(event.peer.identity.id, "connection_lost", "The drone disconnected; its active movement lease was released.");
           this.cancelAgentBuild(event.peer.identity.id, "connection_lost", "The drone disconnected; unplaced build materials were returned.");
           this.agentAuthority.disconnect(event.peer.identity.id);
+          this.agentVoiceAssembler.dropAgent(event.peer.identity.id);
+          this.agentVoicePending = this.agentVoicePending.filter((entry) => entry.chunk.agentId !== event.peer.identity!.id);
         }
         this.removeRemotePlayer(event.peer.identity.id);
         this.multiplayerBoatInputs.delete(event.peer.identity.id);
@@ -8916,6 +9073,10 @@ export class VoxelEngine {
       if (envelope.type === "chat") {
         const incoming = envelope.payload as AgentChatMessage;
         if (this.multiplayer?.role === "host" && event.peer.identity) {
+          if (event.peer.identity.peerKind === "agent") {
+            const record = this.agentAuthority.get(event.peer.identity.id);
+            if (!record || record.status !== "approved" || record.muted || !record.granted.includes("chat.send")) return;
+          }
           const appended = this.agentChat.append({
             authorId: event.peer.identity.id,
             authorName: event.peer.identity.name,
@@ -8924,10 +9085,16 @@ export class VoxelEngine {
             text: incoming.text,
             sentAt: incoming.sentAt,
             ...(incoming.position ? { position: incoming.position } : {}),
-          });
-          if (appended.ok) this.multiplayer.sendChat(appended.message);
+          }, Date.now(), incoming.id);
+          if (appended.ok) {
+            this.multiplayer.sendChat(appended.message);
+            if (event.peer.identity.peerKind === "agent" && this.agentDiagnostics) this.agentDiagnostics.communications.chatMessages += 1;
+          }
         } else if (this.multiplayer?.role === "guest") this.agentChat.appendAuthoritative(incoming);
+        this.flushAgentVoicePlayback();
         this.emitHud(true);
+      } else if (envelope.type === "voice-chunk") {
+        this.handleAgentVoiceChunk(envelope.payload as AgentVoiceChunk, event.peer);
       } else if (envelope.type === "agent-command" && this.multiplayer?.role === "host") {
         const command = envelope.payload as AgentCommandEnvelope;
         const blocked = this.agentAuthority.authorize(command, event.peer.token, this.world.mutationRevision);
@@ -9045,6 +9212,9 @@ export class VoxelEngine {
     this.multiplayerProgressionTimer -= dt;
     this.multiplayerContainerTimer -= dt;
     this.agentObservationTimer -= dt;
+    const expiredVoiceStreams = this.agentVoiceAssembler.prune();
+    if (expiredVoiceStreams && this.agentDiagnostics) this.agentDiagnostics.communications.voiceDrops += expiredVoiceStreams;
+    if (this.agentVoicePending.length) this.flushAgentVoicePlayback();
     this.retryCriticalReliableRequests();
     this.updateGuestContainerIntentRetries();
     this.flushPlayerProgressionTransfers();
@@ -28751,7 +28921,7 @@ export class VoxelEngine {
     if (["observe", "session.status"].includes(command.kind)) return completed("observation_ready", "A fresh host-authored observation is available.", { observationSequence: this.createAgentObservation(command.agentId).observationSequence });
     if (command.kind === "capabilities.list") return completed("capabilities_ready", "Current session capabilities returned.", { capabilities: [...(this.agentAuthority.get(command.agentId)?.granted ?? [])] });
     if (command.kind === "chat_read") return completed("chat_ready", "Bounded chat delta returned as untrusted in-world dialogue.", { messages: this.agentChat.since(Number(args.afterSequence) || 0, 40) });
-    if (command.kind === "chat_send") {
+    if (command.kind === "chat_send" || command.kind === "speak") {
       const record = this.agentAuthority.get(command.agentId);
       if (record?.muted) return blocked("agent_muted", "The host muted this drone's communications.");
       const text = String(args.text ?? "").trim().slice(0, 480);
@@ -28760,7 +28930,9 @@ export class VoxelEngine {
       if (!appended.ok) return blocked(appended.code, "The chat message was invalid or rate limited.");
       if (this.agentDiagnostics) this.agentDiagnostics.communications.chatMessages += 1;
       this.multiplayer?.sendChat(appended.message);
-      return completed("chat_sent", "The message was sent as in-world dialogue.", { sequence: appended.message.sequence });
+      return command.kind === "speak"
+        ? completed("speech_caption_sent", "The caption was sent. Generated audio must be published by the trusted runner voice bridge.", { sequence: appended.message.sequence, messageId: appended.message.id })
+        : completed("chat_sent", "The message was sent as in-world dialogue.", { sequence: appended.message.sequence, messageId: appended.message.id });
     }
     if (command.kind === "session.pause") { this.agentAuthority.pause(command.agentId); return completed("agent_paused", "The drone safely suspended its current command and will not start new work."); }
     if (command.kind === "session.resume") { this.agentAuthority.resume(command.agentId); return completed("agent_resumed", "The drone re-observed and resumed accepting work."); }
@@ -29760,6 +29932,9 @@ export class VoxelEngine {
       musicVolume: clamp(next.musicVolume ?? this.settings.musicVolume, 0, 1),
       sensitivity: clamp(next.sensitivity ?? this.settings.sensitivity, 0.0008, 0.005),
       fov: clamp(next.fov ?? this.settings.fov, 55, 100),
+      agentVoiceMode: (next.agentVoiceMode ?? this.settings.agentVoiceMode) === "off" || (next.agentVoiceMode ?? this.settings.agentVoiceMode) === "universal"
+        ? (next.agentVoiceMode ?? this.settings.agentVoiceMode)
+        : "spatial",
       ...distances,
     };
     this.weather = this.worldOptions.weather ? this.settings.weather : "clear";

@@ -29,6 +29,15 @@ export type AgentBridgeCommandInput = Readonly<{
   commandId?: string;
 }>;
 
+export type AgentBridgeVoiceInput = Readonly<{
+  mimeType: "audio/mpeg" | "audio/ogg" | "audio/wav";
+  dataBase64: string;
+  text: string;
+  textHash: string;
+  durationMs?: number;
+  channel?: AgentChatChannel;
+}>;
+
 export type AgentBrowserBridge = Readonly<{
   version: 1;
   status(): AgentBridgeStatus;
@@ -38,6 +47,7 @@ export type AgentBrowserBridge = Readonly<{
   latestResult(): AgentCommandResult | null;
   command(input: AgentBridgeCommandInput): Readonly<{ accepted: boolean; commandId: string; error?: string }>;
   chat(text: string, channel?: AgentChatChannel): boolean;
+  publishVoice(input: AgentBridgeVoiceInput): unknown;
   worldList(): unknown;
   worldCreate(input: Readonly<{ seed: string; name?: string; mode?: "survival" | "builder"; options?: Readonly<Record<string, unknown>>; fixture?: string }>): unknown;
   worldLoad(worldId: string): unknown;
@@ -60,6 +70,7 @@ export type AgentBridgeAdapter = Readonly<{
   latestResult(): AgentCommandResult | null;
   sendCommand(command: AgentCommandEnvelope): boolean;
   sendChat(text: string, channel: AgentChatChannel): boolean;
+  publishVoice?(input: AgentBridgeVoiceInput): unknown;
   worldList?(): unknown;
   worldCreate?(input: Readonly<{ seed: string; name?: string; mode?: "survival" | "builder"; options?: Readonly<Record<string, unknown>>; fixture?: string }>): unknown;
   worldLoad?(worldId: string): unknown;
@@ -141,6 +152,24 @@ export function createAgentBrowserBridge(adapter: AgentBridgeAdapter): AgentBrow
     chat(text, channel = "global") {
       const clean = text.trim().slice(0, 480);
       return Boolean(clean) && adapter.sendChat(clean, channel);
+    },
+    publishVoice(input) {
+      const cleanText = String(input.text ?? "").trim().slice(0, 480);
+      const cleanHash = String(input.textHash ?? "").trim().slice(0, 128);
+      const cleanData = String(input.dataBase64 ?? "");
+      const mimeType = input.mimeType;
+      if (!adapter.publishVoice || !cleanText || !cleanHash || !cleanData
+        || !["audio/mpeg", "audio/ogg", "audio/wav"].includes(mimeType)) {
+        return { ok: false, code: "invalid_voice_payload" };
+      }
+      return adapter.publishVoice({
+        mimeType,
+        dataBase64: cleanData,
+        text: cleanText,
+        textHash: cleanHash,
+        durationMs: Math.max(1, Math.min(30_000, Math.trunc(input.durationMs ?? cleanText.length * 55))),
+        channel: input.channel ?? "local",
+      });
     },
     worldList: () => adapter.worldList?.() ?? { ok: false, code: "test_admin_unavailable" },
     worldCreate: (input) => adapter.worldCreate?.(input) ?? { ok: false, code: "test_admin_unavailable" },

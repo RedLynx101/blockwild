@@ -418,6 +418,10 @@ type MultiplayerEngineApi = {
   resumeAgent?: (agentId: string) => boolean;
   revokeAgent?: (agentId: string) => boolean;
   muteAgent?: (agentId: string, muted: boolean) => boolean;
+  setLocalAgentVoiceMuted?: (agentId: string, muted: boolean) => void;
+  isLocalAgentVoiceMuted?: (agentId: string) => boolean;
+  setLocalAgentVoiceGain?: (agentId: string, gain: number) => void;
+  getLocalAgentVoiceGain?: (agentId: string) => number;
   stopAgent?: (agentId: string) => boolean;
   getAgentInventory?: (agentId: string) => Array<InventorySlot | null>;
   updateAgentTaskFromHost?: (taskId: string, input: Readonly<{ status?: AgentTaskRecord["status"]; note?: string; title?: string }>) => boolean;
@@ -714,6 +718,7 @@ export const INITIAL_GAME_SETTINGS: Readonly<GameSettings> = Object.freeze({
   debugTelemetry: false,
   debugTelemetryMaxMinutes: 60,
   resourceMode: "auto",
+  agentVoiceMode: "spatial",
 });
 
 export function initialHydrationSettings(): GameSettings {
@@ -1967,6 +1972,8 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
   const [currentWorldSeed, setCurrentWorldSeed] = useState("WILDERNESS");
   const [mode, setMode] = useState<GameMode>("survival");
   const [settings, setSettingsState] = useState<GameSettings>(initialHydrationSettings);
+  const [mutedDroneVoices, setMutedDroneVoices] = useState<ReadonlySet<string>>(() => new Set());
+  const [droneVoiceVolumes, setDroneVoiceVolumes] = useState<Readonly<Record<string, number>>>({});
   const [uiPreferences, setUiPreferencesState] = useState<UiPreferences>(() => ({ ...INITIAL_UI_PREFERENCES }));
   const [inputCapabilities, setInputCapabilities] = useState<InputCapabilities>(() => ({ ...INITIAL_INPUT_CAPABILITIES }));
   const [settingsReturn, setSettingsReturn] = useState<"title" | "pause">("title");
@@ -2012,6 +2019,13 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
   const [multiplayerInvite, setMultiplayerInvite] = useState("");
   const [multiplayerAnswer, setMultiplayerAnswer] = useState("");
   const [multiplayerState, setMultiplayerState] = useState<MultiplayerViewState>(EMPTY_MULTIPLAYER_STATE);
+  const droneVoiceSpeakers = useMemo(() => {
+    const latest = new Map<string, { agentId: string; name: string }>();
+    for (const message of multiplayerState.chat) if (message.peerKind === "agent") {
+      latest.set(message.authorId, { agentId: message.authorId, name: message.authorName });
+    }
+    return [...latest.values()];
+  }, [multiplayerState.chat]);
   const [multiplayerBusy, setMultiplayerBusy] = useState(false);
   const [multiplayerReturn, setMultiplayerReturn] = useState<"title" | "pause">("title");
   const [chatOpen, setChatOpen] = useState(false);
@@ -2349,6 +2363,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
       latestResult: () => engine.getLatestAgentResult(),
       sendCommand: (command) => engine.submitAgentCommand(command),
       sendChat: (text, channel) => engine.sendMultiplayerChat(text, channel),
+      publishVoice: (input) => engine.publishAgentVoice(input),
       worldList: () => engine.listAgentTestWorlds(),
       worldCreate: (input) => engine.createAgentTestWorld({ ...input, options: input.options as Partial<WorldOptions> | undefined }),
       worldLoad: (worldId) => engine.loadAgentTestWorld(worldId),
@@ -3165,6 +3180,8 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
       setMultiplayerRoomCode("");
       setMultiplayerInvite("");
       setMultiplayerAnswer("");
+      setMutedDroneVoices(new Set());
+      setDroneVoiceVolumes({});
       if (wasGuest && engineRef.current) {
         clearFirstPersonHeldPresentation(engineRef.current);
         engineRef.current.quitToTitle();
@@ -3206,6 +3223,24 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
     setChatOpen(false);
     engineRef.current?.activate();
     refreshMultiplayerState();
+  };
+
+  const toggleMutedDroneVoice = (agentId: string) => {
+    if (!agentId) return;
+    const muted = !mutedDroneVoices.has(agentId);
+    (engineRef.current as unknown as MultiplayerEngineApi | null)?.setLocalAgentVoiceMuted?.(agentId, muted);
+    setMutedDroneVoices((current) => {
+      const next = new Set(current);
+      if (muted) next.add(agentId);
+      else next.delete(agentId);
+      return next;
+    });
+  };
+
+  const setDroneVoiceVolume = (agentId: string, gain: number) => {
+    const bounded = Math.max(0, Math.min(1.5, Number(gain) || 0));
+    (engineRef.current as unknown as MultiplayerEngineApi | null)?.setLocalAgentVoiceGain?.(agentId, bounded);
+    setDroneVoiceVolumes((current) => ({ ...current, [agentId]: bounded }));
   };
 
   const updateAgent = (operation: (api: MultiplayerEngineApi) => boolean) => {
@@ -5191,7 +5226,11 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
               </div>
             </details>}
 
-            {multiplayerState.peers.length > 0 && <section className="multiplayer-peer-list"><span className="panel-eyebrow">SESSION PLAYERS</span>{multiplayerState.peers.map((peer, index) => <div key={peer.id ?? peer.token ?? index}><span className="peer-cube" aria-hidden="true" /><strong>{peer.identity?.name ?? peer.name ?? peer.id ?? `Player ${index + 1}`}</strong><small>{(peer.state ?? "connected").toUpperCase()}{typeof peer.latencyMs === "number" ? ` · ${Math.round(peer.latencyMs)}ms` : ""}</small></div>)}</section>}
+            {multiplayerState.peers.length > 0 && <section className="multiplayer-peer-list"><span className="panel-eyebrow">SESSION PLAYERS</span>{multiplayerState.peers.map((peer, index) => <div key={peer.id ?? peer.token ?? index}><span className="peer-cube" aria-hidden="true" /><strong>{peer.identity?.name ?? peer.name ?? peer.id ?? `Player ${index + 1}`}</strong><small>{(peer.state ?? "connected").toUpperCase()}{typeof peer.latencyMs === "number" ? ` · ${Math.round(peer.latencyMs)}ms` : ""}</small>{peer.identity?.peerKind === "agent" && <button type="button" onClick={() => {
+              const agentId = peer.identity!.id ?? peer.id ?? peer.token;
+              if (!agentId) return;
+              toggleMutedDroneVoice(agentId);
+            }}>{mutedDroneVoices.has(peer.identity.id ?? peer.id ?? peer.token ?? "") ? "VOICE ON" : "VOICE OFF"}</button>}</div>)}</section>}
 
             {multiplayerState.role === "host" && multiplayerState.agents.length > 0 && <section className="agent-session-roster" aria-labelledby="agent-session-heading">
               <header><div><span className="panel-eyebrow">CONNECTION-BOUND AUTHORITY</span><h3 id="agent-session-heading">Companion drones</h3></div><small>{multiplayerState.agents.filter((agent) => agent.status === "approved" || agent.status === "paused").length}/4 admitted</small></header>
@@ -5224,6 +5263,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
             {multiplayerState.role && <section className="multiplayer-chat-panel" aria-labelledby="multiplayer-chat-heading">
               <header><div><span className="panel-eyebrow">UNTRUSTED IN-WORLD DIALOGUE</span><h3 id="multiplayer-chat-heading">Expedition chat</h3></div><small>{multiplayerState.chat.length} retained</small></header>
               <div className="multiplayer-chat-log" aria-live="polite">{multiplayerState.chat.length ? multiplayerState.chat.slice(-12).map((message) => <p key={message.id} className={`peer-${message.peerKind}`}><b>{message.authorName}</b><span>{message.text}</span><small>{message.channel.toUpperCase()}</small></p>) : <p className="empty">No messages yet. Chat never grants commands or capabilities.</p>}</div>
+              {droneVoiceSpeakers.length > 0 && <div className="drone-voice-mixer" aria-label="Individual drone voice levels">{droneVoiceSpeakers.map((speaker) => <label key={speaker.agentId}><span>{speaker.name}</span><input type="range" min="0" max="1.5" step="0.1" value={droneVoiceVolumes[speaker.agentId] ?? 1} onChange={(event) => setDroneVoiceVolume(speaker.agentId, Number(event.target.value))} aria-label={`${speaker.name} voice volume`} /><small>{Math.round((droneVoiceVolumes[speaker.agentId] ?? 1) * 100)}%</small><button type="button" onClick={() => toggleMutedDroneVoice(speaker.agentId)}>{mutedDroneVoices.has(speaker.agentId) ? "UNMUTE" : "MUTE"}</button></label>)}</div>}
               <form onSubmit={(event) => { event.preventDefault(); submitChat(); }}><select aria-label="Chat channel" value={chatChannel} onChange={(event) => setChatChannel(event.target.value as typeof chatChannel)}><option value="local">Local</option><option value="party">Party</option><option value="global">Global</option></select><input value={chatInput} maxLength={480} onChange={(event) => setChatInput(event.target.value)} placeholder="Message players and drones" aria-label="Chat message" /><button type="submit" disabled={!chatInput.trim()}>SEND</button></form>
             </section>}
 
@@ -5292,6 +5332,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
             <label className="setting-row"><span><strong>Render distance</strong><small>{settings.renderDistance} chunks · about {settings.renderDistance * 16} blocks · default 10, maximum 16</small></span><input type="range" min="2" max="16" step="1" value={settings.renderDistance} onChange={(event) => updateSettings({ renderDistance: Number(event.target.value), simulationDistance: Math.min(settings.simulationDistance, Number(event.target.value)) })} /></label>
             <label className="setting-row"><span><strong>Simulation distance</strong><small>{settings.simulationDistance} chunks · creatures, liquids, crops, and POIs tick inside this radius</small></span><input type="range" min="2" max={settings.renderDistance} step="1" value={settings.simulationDistance} onChange={(event) => updateSettings({ simulationDistance: Number(event.target.value) })} /></label>
             <label className="setting-row resource-setting"><span><strong>Resource reserve</strong><small>{settings.resourceMode === "cpu" ? "CPU boost raises streaming and simulation work budgets." : settings.resourceMode === "memory" ? "Memory cache retains more nearby chunks to reduce traversal reload stutter." : "Auto adapts work and cache pressure to this device."}</small></span><select value={settings.resourceMode} onChange={(event) => updateSettings({ resourceMode: event.target.value as GameSettings["resourceMode"] })}><option value="auto">Auto (adaptive)</option><option value="cpu">CPU boost</option><option value="memory">Memory cache</option></select></label>
+            <label className="setting-row resource-setting"><span><strong>Drone voices</strong><small>Spatial voices come from each drone; universal voices play at a constant level. Captions always remain in chat.</small></span><select value={settings.agentVoiceMode} onChange={(event) => updateSettings({ agentVoiceMode: event.target.value as GameSettings["agentVoiceMode"] })}><option value="spatial">Spatial</option><option value="universal">Universal</option><option value="off">Captions only</option></select></label>
             <label className="setting-row resource-setting"><span><strong>Touch controls</strong><small>Auto follows the active pointer: touch shows the overlay, while mouse or pen keeps hybrid PCs clear.</small></span><select value={uiPreferences.touchControls} onChange={(event) => updateUiPreferences({ touchControls: event.target.value as TouchControlsMode })}><option value="auto">Auto (active pointer)</option><option value="off">Off</option><option value="on">On</option></select></label>
             <label className="setting-row"><span><strong>Target outline</strong><small>{Math.round(uiPreferences.targetOutlineOpacity * 100)}% opacity</small></span><input type="range" min="0.05" max="1" step="0.05" value={uiPreferences.targetOutlineOpacity} onChange={(event) => updateUiPreferences({ targetOutlineOpacity: Number(event.target.value) })} /></label>
             <div className="toggle-setting"><span><strong>Context reference hints</strong><small>Shows the short Item Wiki and Bestiary hotkey hint while an item is hovered.</small></span><button type="button" className={uiPreferences.showReferenceHints ? "active" : ""} onClick={() => updateUiPreferences({ showReferenceHints: !uiPreferences.showReferenceHints })}>{uiPreferences.showReferenceHints ? "ON" : "OFF"}</button></div>
