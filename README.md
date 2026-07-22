@@ -10,6 +10,8 @@ The project is a real game rather than a voxel-rendering demo. You can mine, bui
 
 **Performance ledger:** [Blockwild performance comparison log](docs/PERFORMANCE_COMPARISON_LOG.md) keeps the browser captures, deterministic before/after probes, interaction-latency checks, regressions, and next acceptance run in one tracked record.
 
+**AI companion proposal:** [Blockwild AI Companion Drone Platform](docs/AI_COMPANION_DRONE_PLATFORM_PROPOSAL.md) specifies the proposed host-authoritative drone agents, deterministic tool bridge, chat/TTS, low-resource client, inventory-safe building, farming, memory, test-world, security, and evaluation architecture. It is a review document, not an implemented feature.
+
 ![Blockwild field guide with all 231 rendered creatures](public/creatures/blockwild-creatures.svg)
 
 The integrated creature-design pass expands the Courser family with Rimehoof, Sunscar, Mirestride, and Starbough ecological breeds plus the forge-built Deepgear Courser. It also gives all six dragon families production stage forms, rebuilds birds, pets, crabs, mosslings, foxes, harts, deer, longhorns, terrapins, and other core wildlife, and preserves one model path for gameplay, Bestiary portraits, and visual audits.
