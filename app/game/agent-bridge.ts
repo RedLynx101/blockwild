@@ -1,0 +1,114 @@
+import {
+  AGENT_PLATFORM_SCHEMA_VERSION,
+  validateAgentCommand,
+  type AgentChatChannel,
+  type AgentCommandEnvelope,
+  type AgentCommandResult,
+  type AgentObservationV1,
+} from "./agent-platform";
+
+export type AgentBridgeStatus = Readonly<{
+  schema: 1;
+  ready: boolean;
+  connected: boolean;
+  role: string | null;
+  roomCode: string;
+  agentId: string | null;
+  agentName: string;
+  lastObservationSequence: number;
+  lastCommandId: string | null;
+}>;
+
+export type AgentBridgeCommandInput = Readonly<{
+  kind: AgentCommandEnvelope["kind"];
+  arguments?: Readonly<Record<string, unknown>>;
+  expectedWorldRevision?: number;
+  expiresInMs?: number;
+  clientIntent?: string;
+  commandId?: string;
+}>;
+
+export type AgentBrowserBridge = Readonly<{
+  version: 1;
+  status(): AgentBridgeStatus;
+  connect(input: Readonly<{ roomCode: string; name?: string }>): Promise<Readonly<{ connected: boolean; hostName: string; roomCode: string }>>;
+  observe(): AgentObservationV1 | null;
+  latestResult(): AgentCommandResult | null;
+  command(input: AgentBridgeCommandInput): Readonly<{ accepted: boolean; commandId: string; error?: string }>;
+  chat(text: string, channel?: AgentChatChannel): boolean;
+  disconnect(): void;
+}>;
+
+export type AgentBridgeAdapter = Readonly<{
+  getStatus(): Omit<AgentBridgeStatus, "schema" | "ready" | "lastObservationSequence" | "lastCommandId" | "agentId">;
+  connect(roomCode: string, name: string): Promise<{ hostName: string }>;
+  observe(): AgentObservationV1 | null;
+  latestResult(): AgentCommandResult | null;
+  sendCommand(command: AgentCommandEnvelope): boolean;
+  sendChat(text: string, channel: AgentChatChannel): boolean;
+  disconnect(): void;
+}>;
+
+const cleanRoomCode = (value: string) => value.trim().toUpperCase().replace(/[^A-Z0-9-]/gu, "").slice(0, 24);
+const cleanName = (value: string) => value.trim().replace(/\s+/gu, " ").slice(0, 32) || "Field Drone";
+
+/**
+ * Create the only browser-facing actuator surface for a companion runner.
+ * It intentionally has no generic property access, script evaluation, or raw
+ * engine handle. The multiplayer host remains authoritative for every result.
+ */
+export function createAgentBrowserBridge(adapter: AgentBridgeAdapter): AgentBrowserBridge {
+  let lastCommandId: string | null = null;
+  let commandSequence = 0;
+  return Object.freeze({
+    version: 1 as const,
+    status() {
+      const observation = adapter.observe();
+      const current = adapter.getStatus();
+      return {
+        schema: AGENT_PLATFORM_SCHEMA_VERSION,
+        ready: true,
+        ...current,
+        agentId: observation?.self.agentId ?? null,
+        lastObservationSequence: observation?.observationSequence ?? 0,
+        lastCommandId,
+      };
+    },
+    async connect(input) {
+      const roomCode = cleanRoomCode(input.roomCode);
+      if (!roomCode) throw new Error("A host room code is required.");
+      const name = cleanName(input.name ?? "Field Drone");
+      const joined = await adapter.connect(roomCode, name);
+      return { connected: true, hostName: joined.hostName, roomCode };
+    },
+    observe: () => adapter.observe(),
+    latestResult: () => adapter.latestResult(),
+    command(input) {
+      const observation = adapter.observe();
+      if (!observation) return { accepted: false, commandId: input.commandId ?? "", error: "no_observation" };
+      const now = Date.now();
+      const commandId = input.commandId?.trim().slice(0, 128)
+        || `cmd_${now.toString(36)}_${(++commandSequence).toString(36)}`;
+      const envelope: AgentCommandEnvelope = {
+        schema: AGENT_PLATFORM_SCHEMA_VERSION,
+        commandId,
+        agentId: observation.self.agentId,
+        kind: input.kind,
+        expectedWorldRevision: input.expectedWorldRevision ?? observation.worldRevision,
+        issuedAt: now,
+        expiresAt: now + Math.min(120_000, Math.max(1_000, input.expiresInMs ?? 30_000)),
+        arguments: input.arguments ?? {},
+        ...(input.clientIntent?.trim() ? { clientIntent: input.clientIntent.trim().slice(0, 480) } : {}),
+      };
+      if (!validateAgentCommand(envelope, now)) return { accepted: false, commandId, error: "invalid_command" };
+      const accepted = adapter.sendCommand(envelope);
+      if (accepted) lastCommandId = commandId;
+      return { accepted, commandId, ...(!accepted ? { error: "transport_unavailable" } : {}) };
+    },
+    chat(text, channel = "global") {
+      const clean = text.trim().slice(0, 480);
+      return Boolean(clean) && adapter.sendChat(clean, channel);
+    },
+    disconnect: () => adapter.disconnect(),
+  });
+}

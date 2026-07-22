@@ -609,12 +609,19 @@ import { MultiplayerDiagnosticsRing, multiplayerRejectionCategory } from "./mult
 import {
   AgentAuthority,
   AgentChatRing,
+  AGENT_DEFAULT_RENDER_DISTANCE,
+  AGENT_DEFAULT_SIMULATION_DISTANCE,
+  defaultAgentCapabilities,
+  mergeAgentInterestRegions,
   createAgentResult,
   type AgentCapability,
   type AgentCapabilityGrant,
   type AgentChatChannel,
   type AgentChatMessage,
   type AgentCommandEnvelope,
+  type AgentCommandResult,
+  type AgentObservationV1,
+  type AgentNearbyEntity,
   type AgentSessionRecord,
 } from "./agent-platform";
 import {
@@ -1484,6 +1491,8 @@ export type EngineEvents = {
   /** True while the primary WebGL context is unavailable. */
   onRendererState?: (lost: boolean) => void;
 };
+
+export type VoxelEngineOptions = Readonly<{ agentMode?: boolean }>;
 
 type VoxelHit = {
   x: number;
@@ -4068,6 +4077,7 @@ export class VoxelEngine {
   chestOpenAmount = 0;
   activeChestBlocks: Array<readonly [number, number, number]> = [];
   multiplayer: MultiplayerSession | null = null;
+  readonly agentMode: boolean;
   hostRendezvous: HostRendezvous | null = null;
   multiplayerState: MultiplayerUiState = {
     ...detectMultiplayerSupport(),
@@ -4132,6 +4142,11 @@ export class VoxelEngine {
   agentAuthority = new AgentAuthority();
   agentChat = new AgentChatRing();
   private localChatSequence = 0;
+  agentInventories = new Map<string, Array<InventorySlot | null>>();
+  agentObservationSequences = new Map<string, number>();
+  agentObservationTimer = 0;
+  latestAgentObservation: AgentObservationV1 | null = null;
+  latestAgentResult: AgentCommandResult | null = null;
   pendingGuestCreatureInventoryRequests = new Map<string, number>();
   /** Suppresses generic pack uploads until the host resolves optimistic placement costs. */
   pendingGuestPlacementRequests = new Map<string, number>();
@@ -4140,7 +4155,17 @@ export class VoxelEngine {
   activeCharacterProfile: CharacterProfile | null = null;
   sleepVotes = new Map<string, SleepTarget>();
 
-  constructor(canvas: HTMLCanvasElement, events: EngineEvents, settings = readSettings()) {
+  constructor(canvas: HTMLCanvasElement, events: EngineEvents, settings = readSettings(), options: VoxelEngineOptions = {}) {
+    this.agentMode = options.agentMode === true;
+    if (this.agentMode) settings = {
+      ...settings,
+      renderDistance: AGENT_DEFAULT_RENDER_DISTANCE,
+      simulationDistance: AGENT_DEFAULT_SIMULATION_DISTANCE,
+      showFps: false,
+      showMinimap: false,
+      resourceMode: "cpu",
+      musicVolume: 0,
+    };
     this.canvas = canvas;
     this.events = events;
     this.settings = settings;
@@ -4177,7 +4202,7 @@ export class VoxelEngine {
     this.audio = new SynthAudio(settings);
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: "high-performance" });
     this.gpuTimer = new WebGlGpuTimer(this.renderer.getContext());
-    this.nativePixelRatio = Math.min(window.devicePixelRatio || 1, this.touchMode ? 1.2 : 1.5);
+    this.nativePixelRatio = Math.min(window.devicePixelRatio || 1, this.agentMode ? 1 : this.touchMode ? 1.2 : 1.5);
     this.renderPixelRatio = this.nativePixelRatio;
     this.renderer.setPixelRatio(this.renderPixelRatio);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -5007,6 +5032,34 @@ export class VoxelEngine {
     return this.resolveChest(auditChestBlock);
   }
 
+  /** Deterministic exact-runtime gallery used to review the companion drone. */
+  primeAgentDroneAudit() {
+    this.primeDirectionalPlacementAudit();
+    const id = "agent_visual_audit";
+    this.removeRemotePlayer(id);
+    const model = new BlockPlayerModel({ playerId: id, playerName: "Mica", mode: "remote", modelKind: "drone" });
+    const pose: PlayerPose = {
+      playerId: id,
+      tick: 0,
+      x: Math.round(this.position.x),
+      y: this.position.y + 0.1,
+      z: Math.round(this.position.z) - 4.8,
+      yaw: Math.PI,
+      pitch: 0,
+      vx: 0,
+      vy: 0,
+      vz: 0,
+      grounded: false,
+      action: "none",
+    };
+    model.group.position.set(pose.x, pose.y, pose.z);
+    this.scene.add(model.group);
+    this.remotePlayers.set(id, { model, pose: { ...pose }, target: { ...pose }, lastUpdate: performance.now() });
+    this.yaw = 0;
+    this.pitch = -0.08;
+    this.emitHud(true);
+  }
+
   /** Deterministic staged fall used to review proxy depth and relight handoff. */
   primeTreeFallAudit() {
     this.world.setRenderDistance(5);
@@ -5734,6 +5787,35 @@ export class VoxelEngine {
   }
 
   private multiplayerIdentity(name: string) {
+    if (this.agentMode) {
+      const parameters = typeof window === "undefined" ? new URLSearchParams() : new URLSearchParams(window.location.search);
+      const requestedName = (parameters.get("agentName") ?? name ?? "Field Drone").trim().slice(0, 24) || "Field Drone";
+      const runnerVersion = (parameters.get("runnerVersion") ?? "codex-runner-1").trim().slice(0, 64) || "codex-runner-1";
+      const storageKey = "blockwild-agent-id";
+      let stableId = (parameters.get("agentId") ?? "").trim();
+      if (!/^[A-Za-z0-9_.-]{8,160}$/u.test(stableId)) {
+        try { stableId = window.localStorage.getItem(storageKey) ?? ""; } catch { stableId = ""; }
+      }
+      if (!/^agent_[A-Za-z0-9_.-]{6,154}$/u.test(stableId)) {
+        const bytes = new Uint8Array(16);
+        crypto.getRandomValues(bytes);
+        stableId = `agent_${[...bytes].map((value) => value.toString(16).padStart(2, "0")).join("")}`;
+        try { window.localStorage.setItem(storageKey, stableId); } catch { /* Stable for this page lifetime. */ }
+      }
+      const requestedCapabilities: AgentCapability[] = [...new Set([
+        ...defaultAgentCapabilities(),
+        "container.read" as const,
+        "container.write" as const,
+        "build" as const,
+        "harvest" as const,
+        "diagnostics" as const,
+      ])];
+      return createPeerIdentity(requestedName, "#62c8b4", () => stableId, undefined, {
+        peerKind: "agent",
+        runnerVersion,
+        requestedCapabilities,
+      });
+    }
     const profile = this.activeCharacterProfile;
     const cleanName = (profile?.name ?? name).trim().slice(0, 24) || "Wanderer";
     let hash = 2166136261;
@@ -5780,6 +5862,10 @@ export class VoxelEngine {
     this.agentAuthority = new AgentAuthority();
     (this.agentChat ??= new AgentChatRing()).clear();
     this.localChatSequence = 0;
+    (this.agentInventories ??= new Map()).clear();
+    (this.agentObservationSequences ??= new Map()).clear();
+    this.latestAgentObservation = null;
+    this.latestAgentResult = null;
     this.multiplayerState.inviteCode = "";
     this.multiplayerState.answerCode = "";
     this.multiplayerState.error = "";
@@ -5941,17 +6027,20 @@ export class VoxelEngine {
       this.multiplayerState.status = session.state;
       this.multiplayerState.role = "guest";
       this.multiplayerState.error = "";
-      // Rendezvous completes before the authoritative snapshot arrives. Keep a
-      // title guest on the safe preview scene until the host world is applied.
+      // Rendezvous completes before the first authoritative payload arrives.
+      // Human clients wait for the host world; lightweight agent clients wait
+      // for their task-shaped semantic observation instead of downloading it.
       const deadline = performance.now() + 18_000;
-      while (!this.multiplayerReceivedSnapshot) {
+      while (this.agentMode ? !this.latestAgentObservation : !this.multiplayerReceivedSnapshot) {
         if (this.disposed || this.multiplayer !== session || session.state === "closed" || session.state === "error") throw new Error("The host connection closed before its world arrived.");
-        if (performance.now() >= deadline) throw new Error("Connected to the host, but their world did not arrive in time. Try the invite code again.");
+        if (performance.now() >= deadline) throw new Error(this.agentMode
+          ? "Connected to the host, but no semantic observation arrived in time. The host may still need to approve this drone."
+          : "Connected to the host, but their world did not arrive in time. Try the invite code again.");
         await new Promise<void>((resolve) => window.setTimeout(resolve, 40));
       }
       this.events.onToast(`Connected to ${joined.hostName}'s world through room ${joined.code}.`);
       this.emitHud(true);
-      return { hostName: joined.hostName, seed: this.world.seedText, worldReady: true as const };
+      return { hostName: joined.hostName, seed: this.agentMode ? undefined : this.world.seedText, worldReady: true as const };
     } catch (error) {
       if (isMultiplayerOperationCancellation(error)) {
         if (joiningFromTitle) this.disconnectMultiplayer();
@@ -6055,6 +6144,10 @@ export class VoxelEngine {
     this.agentAuthority = new AgentAuthority();
     (this.agentChat ??= new AgentChatRing()).clear();
     this.localChatSequence = 0;
+    (this.agentInventories ??= new Map()).clear();
+    (this.agentObservationSequences ??= new Map()).clear();
+    this.latestAgentObservation = null;
+    this.latestAgentResult = null;
     this.multiplayerReceivedSnapshot = false;
     this.sleepVotes.clear();
     this.multiplayerContainerAwaiting.clear();
@@ -6108,6 +6201,7 @@ export class VoxelEngine {
         variant: pose.sex ?? pose.variant ?? identity?.sex ?? identity?.variant ?? "male",
         race: pose.race ?? identity?.race ?? "wayfarer",
         colors: colors ? { ...colors } : identity?.color ? { shirt: identity.color } : undefined,
+        modelKind: identity?.peerKind === "agent" ? "drone" : "player",
       });
       model.setEquipmentAppearance(this.equipmentAppearanceFromCodes(pose.equipment));
       model.group.position.set(pose.x, pose.y, pose.z);
@@ -7869,9 +7963,11 @@ export class VoxelEngine {
   private sendHostWorldSnapshot(peerId?: string) {
     if (!this.multiplayer || this.multiplayer.role !== "host") return;
     try {
-      if (peerId) this.multiplayer.sendSnapshot(this.hostWorldSnapshot(peerId), peerId);
+      if (peerId) {
+        if (this.multiplayer.getPeer(peerId)?.identity?.peerKind !== "agent") this.multiplayer.sendSnapshot(this.hostWorldSnapshot(peerId), peerId);
+      }
       else for (const peer of this.multiplayer.getPeers()) {
-        if (peer.state === "connected" && peer.identity) this.multiplayer.sendSnapshot(this.hostWorldSnapshot(peer.identity.id), peer.identity.id);
+        if (peer.state === "connected" && peer.identity && peer.identity.peerKind !== "agent") this.multiplayer.sendSnapshot(this.hostWorldSnapshot(peer.identity.id), peer.identity.id);
       }
     } catch (error) { this.multiplayerState.error = error instanceof Error ? error.message : String(error); }
   }
@@ -8510,6 +8606,23 @@ export class VoxelEngine {
             this.events.onToast(`${event.peer.identity.name} could not join: drone capacity reached.`);
           } else {
             this.sendAgentGrant(record, "Waiting for host approval.");
+            if (!this.agentInventories.has(record.agentId)) this.agentInventories.set(record.agentId, blankInventory());
+            const slot = Math.max(0, this.agentAuthority.list().findIndex((agent) => agent.agentId === record.agentId));
+            const angle = this.yaw + Math.PI + (slot - 1.5) * 0.48;
+            this.upsertRemotePlayer({
+              playerId: record.agentId,
+              tick: this.multiplayerTick,
+              x: this.position.x + Math.sin(angle) * 2.2,
+              y: this.position.y,
+              z: this.position.z + Math.cos(angle) * 2.2,
+              yaw: this.yaw,
+              pitch: 0,
+              vx: 0,
+              vy: 0,
+              vz: 0,
+              grounded: false,
+              action: "none",
+            }, event.peer);
             this.events.onToast(`${record.name} requests drone access.`);
           }
           this.emitHud(true);
@@ -8559,18 +8672,22 @@ export class VoxelEngine {
         this.emitHud(true);
       } else if (envelope.type === "agent-command" && this.multiplayer?.role === "host") {
         const command = envelope.payload as AgentCommandEnvelope;
-        const blocked = this.agentAuthority.authorize(command, event.peer.token, 0);
+        const blocked = this.agentAuthority.authorize(command, event.peer.token, this.world.mutationRevision);
         if (blocked) {
           this.agentAuthority.setCurrentResult(blocked);
           this.multiplayer.sendAgentResult(blocked, command.agentId);
         } else {
-          const deferred = createAgentResult(command, "blocked", 0, "executor_initializing", "The host approved this command, but its task executor is not active yet. Retry after the agent runtime finishes initializing.");
+          const deferred = createAgentResult(command, "blocked", this.world.mutationRevision, "executor_initializing", "The host approved this command, but its task executor is not active yet. Retry after the agent runtime finishes initializing.");
           this.agentAuthority.setCurrentResult(deferred);
           this.multiplayer.sendAgentResult(deferred, command.agentId);
         }
       } else if (envelope.type === "agent-capabilities" && this.multiplayer?.role === "guest") {
         const grant = envelope.payload as AgentCapabilityGrant;
         if (grant.status === "revoked" && grant.reason) this.events.onToast(grant.reason);
+      } else if (envelope.type === "agent-observation" && this.multiplayer?.role === "guest" && this.agentMode) {
+        this.latestAgentObservation = structuredClone(envelope.payload as AgentObservationV1);
+      } else if (envelope.type === "agent-result" && this.multiplayer?.role === "guest" && this.agentMode) {
+        this.latestAgentResult = structuredClone(envelope.payload as AgentCommandResult);
       } else if (envelope.type === "player-pose") {
         let pose = envelope.payload as PlayerPose;
         if (this.multiplayer?.role === "host" && event.peer.identity) {
@@ -8673,6 +8790,7 @@ export class VoxelEngine {
     this.multiplayerPlayerStateTimer -= dt;
     this.multiplayerProgressionTimer -= dt;
     this.multiplayerContainerTimer -= dt;
+    this.agentObservationTimer -= dt;
     this.retryCriticalReliableRequests();
     this.updateGuestContainerIntentRetries();
     this.flushPlayerProgressionTransfers();
@@ -8681,7 +8799,7 @@ export class VoxelEngine {
       if (next <= 0) this.multiplayerCombatCooldowns.delete(playerId);
       else this.multiplayerCombatCooldowns.set(playerId, next);
     }
-    if (this.multiplayerPoseTimer <= 0) {
+    if (!this.agentMode && this.multiplayerPoseTimer <= 0) {
       this.multiplayerPoseTimer = 0.05;
       const pose = this.localNetworkPose();
       if (pose) {
@@ -8692,6 +8810,7 @@ export class VoxelEngine {
       this.multiplayerWorldTimer = 0.2;
       for (const peer of session.getPeers()) {
         if (peer.state !== "connected" || !peer.identity) continue;
+        if (peer.identity.peerKind === "agent") continue;
         try {
           session.sendMobSnapshot({
             tick: this.multiplayerTick,
@@ -8710,15 +8829,23 @@ export class VoxelEngine {
         } catch { /* Reconstructable images are retried on the next 5 Hz frame. */ }
       }
     }
-    if (session.role === "guest" && this.multiplayerPlayerStateTimer <= 0) {
+    if (session.role === "host" && this.agentObservationTimer <= 0) {
+      this.agentObservationTimer = 0.5;
+      for (const peer of session.getPeers()) {
+        if (peer.state !== "connected" || peer.identity?.peerKind !== "agent") continue;
+        try { session.sendAgentObservation(this.createAgentObservation(peer.identity.id), peer.identity.id); }
+        catch { /* A fresh semantic observation is available on the next two-hertz frame. */ }
+      }
+    }
+    if (!this.agentMode && session.role === "guest" && this.multiplayerPlayerStateTimer <= 0) {
       this.multiplayerPlayerStateTimer = 0.08;
       this.syncMultiplayerPlayerState();
     }
-    if (session.role === "guest" && this.multiplayerProgressionTimer <= 0) {
+    if (!this.agentMode && session.role === "guest" && this.multiplayerProgressionTimer <= 0) {
       this.multiplayerProgressionTimer = 5;
       this.syncMultiplayerPlayerProgression();
     }
-    if (this.multiplayerContainerTimer <= 0) {
+    if (!this.agentMode && this.multiplayerContainerTimer <= 0) {
       this.multiplayerContainerTimer = 0.08;
       this.syncMultiplayerContainers();
       this.syncMultiplayerFacilities();
@@ -8735,7 +8862,7 @@ export class VoxelEngine {
     this.titleMode = false;
     this.gameplayOverlayOpen = false;
     void this.audio.unlock();
-    if (!this.touchMode) this.requestPointerLockSafely();
+    if (!this.touchMode && !this.agentMode) this.requestPointerLockSafely();
   }
 
   private multiplayerSimulationActive() {
@@ -13816,8 +13943,8 @@ export class VoxelEngine {
     const family = doorState(type)?.family ?? "wildwood";
     const { lower: closedLower, upper: closedUpper } = doorBlocks(family, false, xAxis);
     const { lower: openLower, upper: openUpper } = doorBlocks(family, true, xAxis);
-    const remoteInDoorway = open && [...(this.remotePlayers?.values() ?? [])].some((remote) => this.playerIntersectsDoorCell(new THREE.Vector3(remote.target.x, remote.target.y, remote.target.z), x, lowerY, z, closedLower)
-      || this.playerIntersectsDoorCell(new THREE.Vector3(remote.target.x, remote.target.y, remote.target.z), x, lowerY + 1, z, closedUpper));
+    const remoteInDoorway = open && [...(this.remotePlayers?.values() ?? [])].some((remote) => remote.model.modelKind !== "drone" && (this.playerIntersectsDoorCell(new THREE.Vector3(remote.target.x, remote.target.y, remote.target.z), x, lowerY, z, closedLower)
+      || this.playerIntersectsDoorCell(new THREE.Vector3(remote.target.x, remote.target.y, remote.target.z), x, lowerY + 1, z, closedUpper)));
     const mobInDoorway = open && (this.mobs?.some((mob) => this.playerIntersectsDoorCell(mob.group.position, x, lowerY, z, closedLower, mob.definition.height * this.mobBaseScale(mob))
       || this.playerIntersectsDoorCell(mob.group.position, x, lowerY + 1, z, closedUpper, mob.definition.height * this.mobBaseScale(mob))) ?? false);
     if (open && (remoteInDoorway || mobInDoorway || this.playerIntersectsDoorCell(this.position, x, lowerY, z, closedLower) || this.playerIntersectsDoorCell(this.position, x, lowerY + 1, z, closedUpper))) {
@@ -13843,7 +13970,7 @@ export class VoxelEngine {
     const next = toggleFenceGate(type);
     if (next === null) return false;
     const closing = type === BlockId.FenceGateNorthSouthOpen || type === BlockId.FenceGateEastWestOpen;
-    const remoteInGate = closing && [...(this.remotePlayers?.values() ?? [])].some((remote) => this.playerIntersectsFenceGateCell(
+    const remoteInGate = closing && [...(this.remotePlayers?.values() ?? [])].some((remote) => remote.model.modelKind !== "drone" && this.playerIntersectsFenceGateCell(
       new THREE.Vector3(remote.target.x, remote.target.y, remote.target.z), x, y, z, next,
     ));
     const mobInGate = closing && (this.mobs?.some((mob) => this.playerIntersectsFenceGateCell(
@@ -16948,7 +17075,7 @@ export class VoxelEngine {
       if (facing !== undefined) this.world.setBlockFacing?.(x, y, z, facing, true);
       if (playerEditFeedback !== undefined) this.world.completePlayerEditFeedback?.(playerEditFeedback);
     }
-    const occupiedRemote = BLOCKS[type].solid && placedEdits.some((edit) => [...(this.remotePlayers?.values() ?? [])].some((remote) => blockEditIntersectsPlayer(edit, remote.target, PLAYER_HEIGHT * playerVariantHeightScale(remote.target.variant ?? "male"))));
+    const occupiedRemote = BLOCKS[type].solid && placedEdits.some((edit) => [...(this.remotePlayers?.values() ?? [])].some((remote) => remote.model.modelKind !== "drone" && blockEditIntersectsPlayer(edit, remote.target, PLAYER_HEIGHT * playerVariantHeightScale(remote.target.variant ?? "male"))));
     if (BLOCKS[type].solid && (this.collidesAt(this.position) || occupiedRemote)) {
       if (requestedType === BlockId.BedNorthFoot) {
         const partner = placedEdits[1];
@@ -17806,6 +17933,7 @@ export class VoxelEngine {
     // Prototype-only test harnesses and pre-multiplayer save bootstraps can
     // target the world before the remote-player registry is initialized.
     for (const [playerId, remote] of this.remotePlayers?.entries() ?? []) {
+      if (remote.model.modelKind === "drone") continue;
       const bounds = remote.model.getWorldBounds(new THREE.Box3());
       if (!ray.intersectBox(bounds, hit)) continue;
       const distance = origin.distanceTo(hit);
@@ -19055,7 +19183,7 @@ export class VoxelEngine {
       const z = Math.round(startZ + dz * t);
       if (this.mobs.some((mob) => mob.health > 0 && Math.abs(mob.group.position.y - y) < 1.6
         && Math.hypot(mob.group.position.x - x, mob.group.position.z - z) < mob.definition.radius + 0.7)) return 0;
-      if ([...this.remotePlayers.values()].some((remote) => Math.abs(remote.model.group.position.y - y) < 1.8
+      if ([...this.remotePlayers.values()].some((remote) => remote.model.modelKind !== "drone" && Math.abs(remote.model.group.position.y - y) < 1.8
         && Math.hypot(remote.model.group.position.x - x, remote.model.group.position.z - z) < 1.1)) return 0;
       if ([...this.world.structureMarkers.values()].some((marker) => Math.abs(marker.position.y - y) < 7
         && Math.hypot(marker.position.x - x, marker.position.z - z) < 6)) return 0;
@@ -23096,8 +23224,18 @@ export class VoxelEngine {
       for (const [id, remote] of [...this.remotePlayers.entries()].sort(([left], [right]) => left.localeCompare(right))) {
         const pose = remote.target;
         if (![pose.x, pose.y, pose.z, pose.yaw].every(Number.isFinite)) continue;
-        points.push({ id, x: pose.x, y: pose.y, z: pose.z, yaw: pose.yaw });
-        if (points.length >= 4) break;
+        if (remote.model.modelKind !== "drone") points.push({ id, x: pose.x, y: pose.y, z: pose.z, yaw: pose.yaw });
+      }
+      const agentEntries = (this.agentAuthority ??= new AgentAuthority()).list().flatMap((agent) => {
+        const pose = this.remotePlayers.get(agent.agentId)?.target;
+        return pose && [pose.x, pose.y, pose.z].every(Number.isFinite)
+          ? [{ agentId: agent.agentId, status: agent.status, position: { x: pose.x, y: pose.y, z: pose.z } }]
+          : [];
+      });
+      const plan = mergeAgentInterestRegions(points.map((point) => ({ x: point.x, y: point.y, z: point.z })), agentEntries);
+      for (const region of plan.mergedAgentRegions) {
+        const leader = region.agentIds.map((agentId) => this.remotePlayers.get(agentId)?.target).find(Boolean);
+        if (leader) points.push({ id: `agent-region:${region.key}`, x: leader.x, y: leader.y, z: leader.z, yaw: leader.yaw });
       }
     }
     return points;
@@ -27663,6 +27801,10 @@ export class VoxelEngine {
         headPitch: remote.pose.pitch,
         headYaw: 0,
       });
+      if (remote.model.modelKind === "drone") {
+        if (now - remote.lastUpdate > 20_000) this.removeRemotePlayer(id);
+        continue;
+      }
       const appearanceSignature = `${latest.sex ?? latest.variant ?? "male"}|${latest.race ?? "wayfarer"}|${JSON.stringify(latest.colors ?? {})}`;
       if (remote.model.group.userData.appearanceSignature !== appearanceSignature) {
         remote.model.group.userData.appearanceSignature = appearanceSignature;
@@ -28187,6 +28329,154 @@ export class VoxelEngine {
     return "Worldheart";
   }
 
+  createAgentObservation(agentId = this.multiplayer?.identity.id ?? "agent_local"): AgentObservationV1 {
+    const now = Date.now();
+    const authority = this.agentAuthority ??= new AgentAuthority();
+    const chat = this.agentChat ??= new AgentChatRing();
+    const record = authority.get(agentId);
+    const remote = this.remotePlayers.get(agentId)?.target;
+    const isLocalAgent = this.multiplayer?.identity.id === agentId && this.multiplayer.identity.peerKind === "agent";
+    const selfPose = remote ?? {
+      x: this.position.x, y: this.position.y, z: this.position.z,
+      vx: this.velocity.x, vy: this.velocity.y, vz: this.velocity.z,
+      yaw: this.yaw, pitch: this.pitch,
+    };
+    const selfPosition = { x: selfPose.x, y: selfPose.y, z: selfPose.z };
+    const distanceToSelf = (position: { x: number; y: number; z: number }) => Math.hypot(position.x - selfPose.x, position.y - selfPose.y, position.z - selfPose.z);
+    const nearby: AgentNearbyEntity[] = [];
+    for (const mob of this.mobs) {
+      const position = { x: mob.group.position.x, y: mob.group.position.y, z: mob.group.position.z };
+      const distance = distanceToSelf(position);
+      if (distance > 32) continue;
+      nearby.push({ id: `creature:${mob.id}`, kind: "creature", name: mob.name, position, distance, state: mob.state, interactable: distance <= 5 });
+    }
+    for (const drop of this.drops) {
+      const position = { x: drop.mesh.position.x, y: drop.mesh.position.y, z: drop.mesh.position.z };
+      const distance = distanceToSelf(position);
+      if (distance > 20) continue;
+      nearby.push({ id: `drop:${drop.id}`, kind: "drop", name: ITEMS[drop.item]?.name ?? `Item ${drop.item}`, position, distance, state: `count:${drop.count}`, interactable: distance <= 3 });
+    }
+    for (const [key, slots] of this.chests) {
+      const position = blockPositionFromKey(key);
+      if (!position) continue;
+      const distance = distanceToSelf(position);
+      if (distance > 20) continue;
+      nearby.push({ id: `container:${key}`, kind: "container", name: "Storage container", position, distance, state: `${slots.filter(Boolean).length}/${slots.length} slots used`, interactable: distance <= 5 });
+    }
+    let poiIndex = 0;
+    for (const [, marker] of this.world.structureMarkersNear(selfPose.x, selfPose.y, selfPose.z, 48)) {
+      if (marker.type !== "landmark") continue;
+      const position = { ...marker.position };
+      nearby.push({ id: `poi:${++poiIndex}`, kind: "poi", name: marker.tag?.replace(/[-:]/gu, " ") ?? marker.id ?? "Landmark", position, distance: distanceToSelf(position), state: marker.mapLayer ?? "world" });
+    }
+    nearby.sort((left, right) => left.distance - right.distance || left.id.localeCompare(right.id));
+
+    const players: AgentNearbyEntity[] = [];
+    const localIdentity = this.multiplayer?.identity;
+    if (localIdentity && localIdentity.id !== agentId && this.multiplayer?.role === "host") players.push({
+      id: localIdentity.id,
+      kind: localIdentity.peerKind === "agent" ? "agent" : "player",
+      name: localIdentity.name,
+      position: { x: this.position.x, y: this.position.y, z: this.position.z },
+      distance: distanceToSelf(this.position),
+      state: "online",
+    });
+    for (const [id, candidate] of this.remotePlayers) {
+      if (id === agentId) continue;
+      const identity = this.multiplayer?.getPeer(id)?.identity;
+      const position = { x: candidate.target.x, y: candidate.target.y, z: candidate.target.z };
+      players.push({ id, kind: candidate.model.modelKind === "drone" ? "agent" : "player", name: identity?.name ?? candidate.model.playerName, position, distance: distanceToSelf(position), state: "online" });
+    }
+    players.sort((left, right) => left.distance - right.distance || left.id.localeCompare(right.id));
+
+    const inventory = isLocalAgent
+      ? this.inventory
+      : (this.agentInventories ??= new Map()).get(agentId) ?? [];
+    const x = Math.floor(selfPose.x);
+    const y = Math.floor(selfPose.y);
+    const z = Math.floor(selfPose.z);
+    const surfaceDepth = this.world.surfaceAt(x, z) - selfPose.y;
+    const depth = selfPose.y > 28 ? "Surface" : selfPose.y > 0 ? "Stoneways" : selfPose.y > -28 ? "Deepstone Caves" : selfPose.y > -52 ? "Crystal Deeps" : "Worldheart";
+    const currentBlock = this.world.getBlock(x, y, z);
+    const currentLiquid = liquidKindForBlock(currentBlock);
+    const directions = [[1, 0, "east"], [-1, 0, "west"], [0, 1, "south"], [0, -1, "north"]] as const;
+    const reachable = directions.flatMap(([dx, dz, label]) => {
+      const feet = this.world.getBlock(x + dx, y, z + dz);
+      const head = this.world.getBlock(x + dx, y + 1, z + dz);
+      const floor = this.world.getBlock(x + dx, y - 1, z + dz);
+      return feet !== undefined && head !== undefined && floor !== undefined && !BLOCKS[feet]?.solid && !BLOCKS[head]?.solid && BLOCKS[floor]?.solid ? [label] : [];
+    });
+    const sequence = ((this.agentObservationSequences ??= new Map()).get(agentId) ?? 0) + 1;
+    this.agentObservationSequences.set(agentId, sequence);
+    const safeWorldId = (this.activeWorldId ?? `world_${this.world.seedText}`).replace(/[^A-Za-z0-9:_-]/gu, "_").slice(0, 128) || "world_session";
+    const messages = chat.since(Math.max(0, chat.newestSequence() - 40), 40);
+    return {
+      schema: 1,
+      observationSequence: sequence,
+      observedAt: now,
+      expiresAt: now + 2_000,
+      worldRevision: this.world.mutationRevision,
+      coordinateSystem: "+x east, +y up, +z south; block coordinates are integer cells; actor y is its ground-plane height",
+      session: {
+        worldId: safeWorldId,
+        worldFingerprint: `worldfp_${this.world.seedText.replace(/[^A-Za-z0-9_-]/gu, "_").slice(0, 96) || "unknown"}_${GENERATOR_VERSION}`,
+        gameVersion: GAME_VERSION,
+        generatorVersion: GENERATOR_VERSION,
+        multiplayerProtocolVersion: MULTIPLAYER_PROTOCOL_VERSION,
+        agentProtocolVersion: 1,
+        role: this.multiplayer?.role === "host" ? "guest" : this.multiplayer?.role ?? "single-player",
+        connected: this.multiplayer?.state === "connected",
+        capabilities: [...(record?.granted ?? [])],
+      },
+      self: {
+        agentId,
+        name: record?.name ?? localIdentity?.name ?? "Field Drone",
+        position: selfPosition,
+        velocity: { x: selfPose.vx, y: selfPose.vy, z: selfPose.vz },
+        yaw: selfPose.yaw,
+        pitch: selfPose.pitch,
+        biome: BIOME_NAMES[this.world.biomeAt(x, z)] ?? "Unmapped",
+        depth: `${depth} (${Math.max(0, Math.round(surfaceDepth))} blocks below local surface)`,
+        liquid: currentLiquid ?? null,
+        light: this.world.gameplayLightAt(x, y + 1, z, this.daylightAmount()),
+        inventory: {
+          used: inventory.filter(Boolean).length,
+          capacity: inventory.length,
+          slots: inventory.map((slot, index) => slot ? { index, item: slot.item, name: ITEMS[slot.item]?.name, count: slot.count, ...(slot.durability !== undefined ? { durability: slot.durability } : {}) } : null),
+        },
+        command: record?.currentCommand ?? null,
+      },
+      world: {
+        day: this.day,
+        time: this.worldTime,
+        weather: this.weatherState.kind,
+        occupiedChunkReady: currentBlock !== undefined,
+        players,
+        nearby: nearby.slice(0, 96),
+        reachable,
+      },
+      chat: { newestSequence: chat.newestSequence(), newChatCount: messages.length, messages },
+      tasks: [],
+      waypoints: [],
+      performance: {
+        fps: this.averageFps,
+        renderDistance: this.agentMode ? AGENT_DEFAULT_RENDER_DISTANCE : this.settings.renderDistance,
+        simulationDistance: this.agentMode ? AGENT_DEFAULT_SIMULATION_DISTANCE : this.settings.simulationDistance,
+        commandQueue: record?.currentCommand && !record.currentCommand.terminal ? 1 : 0,
+        channelBackpressure: 0,
+      },
+    };
+  }
+
+  getLatestAgentObservation() { return this.latestAgentObservation ? structuredClone(this.latestAgentObservation) : null; }
+
+  getLatestAgentResult() { return this.latestAgentResult ? structuredClone(this.latestAgentResult) : null; }
+
+  submitAgentCommand(command: AgentCommandEnvelope) {
+    if (!this.multiplayer || this.multiplayer.role !== "guest" || this.multiplayer.identity.peerKind !== "agent") return false;
+    return this.multiplayer.sendAgentCommand(command) > 0;
+  }
+
   renderGameToText() {
     const nearbyMobs = this.mobs
       .map((mob) => ({
@@ -28604,6 +28894,15 @@ export class VoxelEngine {
   }
 
   setSettings(next: Partial<GameSettings>) {
+    if (this.agentMode) next = {
+      ...next,
+      renderDistance: AGENT_DEFAULT_RENDER_DISTANCE,
+      simulationDistance: AGENT_DEFAULT_SIMULATION_DISTANCE,
+      showFps: false,
+      showMinimap: false,
+      resourceMode: "cpu",
+      musicVolume: 0,
+    };
     const distances = normalizeViewDistances({
       renderDistance: next.renderDistance ?? this.settings.renderDistance,
       simulationDistance: next.simulationDistance ?? this.settings.simulationDistance,

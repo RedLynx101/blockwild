@@ -51,6 +51,29 @@ test("the block player exposes articulated parts and rests on local Y=0", () => 
   assert.equal(player.isDisposed, true);
 });
 
+test("companion drone uses a detailed connected block rig with animated scanner and hover", () => {
+  const drone = new BlockPlayerModel({ modelKind: "drone", playerId: "agent_1", playerName: "Mica" });
+  assert.equal(drone.modelKind, "drone");
+  assert.equal(drone.rig.visible, false);
+  assert.equal(drone.group.userData.modelKind, "drone");
+  const root = drone.group.getObjectByName("agent-drone-rig");
+  const scanner = drone.group.getObjectByName("drone-scanner-crown");
+  assert.ok(root);
+  assert.ok(scanner);
+  const meshes: THREE.Mesh[] = [];
+  root?.traverse((child) => { if (child instanceof THREE.Mesh) meshes.push(child); });
+  assert.ok(meshes.length >= 20, `expected a detailed drone silhouette, found ${meshes.length} cuboids`);
+  assert.ok(drone.group.getObjectByName("drone-lens-light"));
+  assert.ok(drone.group.getObjectByName("drone-left-wing"));
+  assert.ok(drone.group.getObjectByName("drone-right-wing"));
+  const beforeY = root?.position.y ?? 0;
+  const beforeYaw = scanner?.rotation.y ?? 0;
+  drone.update(0.2);
+  assert.notEqual(root?.position.y, beforeY);
+  assert.notEqual(scanner?.rotation.y, beforeYaw);
+  drone.dispose();
+});
+
 test("pose and snapshot interpolation cross cyclic and angular seams smoothly", () => {
   const fromPose = poseForAnimation("walk", 0.95, { headYaw: THREE.MathUtils.degToRad(170), headPitch: -0.2 });
   const toPose = poseForAnimation("run", 0.05, { headYaw: THREE.MathUtils.degToRad(-170), headPitch: 0.4 });

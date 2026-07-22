@@ -40,6 +40,7 @@ import {
 } from "./engine";
 import { BUTTERFLY_ORDER } from "./mobs";
 import type { AgentCapability, AgentChatMessage, AgentSessionRecord } from "./agent-platform";
+import { createAgentBrowserBridge, type AgentBrowserBridge } from "./agent-bridge";
 import type { BestiaryFieldNote, BestiaryNoteMetric, MobDefinition } from "./mobs";
 import { creatureProfile } from "./creature-profiles";
 import { captureKnowledgeForResearch } from "./creature-capture";
@@ -1888,7 +1889,7 @@ const RESOURCE_ASSET_AUDIT_ITEMS = new Set<ItemCode>([
   BlockId.CaptureOrbRack,
 ]);
 
-export default function VoxelGame() {
+export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: boolean }>) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<VoxelEngine | null>(null);
   const worldStorageRef = useRef<WorldStorage | null>(null);
@@ -2228,7 +2229,7 @@ export default function VoxelGame() {
         onSelectedSlot: (selected) => setHud((current) => current.selected === selected ? current : { ...current, selected }),
         onToast: showToast,
         onLockChange: (locked) => {
-          if (!locked && startedRef.current && overlayRef.current === null) setOverlay("pause");
+          if (!agentMode && !locked && startedRef.current && overlayRef.current === null) setOverlay("pause");
         },
         onOverlayRequest: (kind: OverlayKind, key?: string) => {
           if (!startedRef.current) return;
@@ -2277,7 +2278,7 @@ export default function VoxelGame() {
           });
         },
         onRendererState: (lost) => setWebglError(lost),
-      }, settings);
+      }, settings, { agentMode });
     } catch {
       window.queueMicrotask(() => setWebglError(true));
       return;
@@ -2292,12 +2293,40 @@ export default function VoxelGame() {
     const automationWindow = window as Window & {
       render_game_to_text?: () => string;
       advanceTime?: (milliseconds: number) => Promise<void>;
+      blockwildAgent?: AgentBrowserBridge;
     };
     automationWindow.render_game_to_text = () => engine.renderGameToText();
     automationWindow.advanceTime = async (milliseconds: number) => {
       engine.advanceSimulation(milliseconds);
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
     };
+    if (agentMode) automationWindow.blockwildAgent = createAgentBrowserBridge({
+      getStatus: () => {
+        const state = engine.getMultiplayerState();
+        return {
+          connected: state.status === "connected",
+          role: state.role,
+          roomCode: state.roomCode,
+          agentName: engine.multiplayer?.identity.name ?? "Field Drone",
+        };
+      },
+      connect: async (roomCode, name) => {
+        const result = await engine.joinMultiplayerRoom(roomCode, name);
+        if (result.worldReady) {
+          startedRef.current = true;
+          overlayRef.current = null;
+          setStarted(true);
+          setOverlayState(null);
+          engine.activate();
+        }
+        return { hostName: result.hostName };
+      },
+      observe: () => engine.getLatestAgentObservation(),
+      latestResult: () => engine.getLatestAgentResult(),
+      sendCommand: (command) => engine.submitAgentCommand(command),
+      sendChat: (text, channel) => engine.sendMultiplayerChat(text, channel),
+      disconnect: () => engine.disconnectMultiplayer(),
+    });
     const auditParameters = new URLSearchParams(window.location.search);
     const mapNavigationAudit = auditParameters.get("map-audit") === "1";
     const waystoneIconAudit = auditParameters.get("waystone-icon-audit") === "1";
@@ -2308,11 +2337,12 @@ export default function VoxelGame() {
     const creatureCollisionAudit = auditParameters.get("mob-collision-audit") === "1";
     const moonfeltAudit = auditParameters.get("moonfelt-audit") === "1";
     const treeFallAudit = auditParameters.get("tree-fall-audit") === "1";
+    const agentDroneAudit = auditParameters.get("agent-drone-audit") === "1";
     const settlementOriginAudit = auditParameters.get("origin-audit") === "wood-elf-remote";
     const itemGuideAuditMode = auditParameters.get("item-guide-audit");
     const itemGuideAudit = itemGuideAuditMode === "1" || itemGuideAuditMode === "inventory";
     const placementAuditOverlay: Overlay = mapNavigationAudit || waystoneIconAudit || generatedPoiAudit ? "map" : itemGuideAuditMode === "inventory" ? "inventory" : null;
-    const placementAudit = auditParameters.get("placement-audit") === "1" || mapNavigationAudit || waystoneIconAudit || generatedPoiAudit || chestAudit || caveLiquidAudit || oceanFloraAudit || creatureCollisionAudit || moonfeltAudit || treeFallAudit || settlementOriginAudit || itemGuideAudit;
+    const placementAudit = auditParameters.get("placement-audit") === "1" || mapNavigationAudit || waystoneIconAudit || generatedPoiAudit || chestAudit || caveLiquidAudit || oceanFloraAudit || creatureCollisionAudit || moonfeltAudit || treeFallAudit || agentDroneAudit || settlementOriginAudit || itemGuideAudit;
     let treeFallTimer: number | undefined;
     if (placementAudit) {
       engine.createWorld(
@@ -2337,7 +2367,7 @@ export default function VoxelGame() {
       );
       const auditMarkerId = mapNavigationAudit || waystoneIconAudit ? engine.primeMapNavigationAudit(auditParameters.get("far-track") === "1", waystoneIconAudit) : null;
       if (generatedPoiAudit) engine.primeGeneratedPoiAudit();
-      const auditChestKey = !mapNavigationAudit && !waystoneIconAudit && !generatedPoiAudit && !caveLiquidAudit && !oceanFloraAudit && !creatureCollisionAudit && !moonfeltAudit && !treeFallAudit && !settlementOriginAudit && !itemGuideAudit ? engine.primeDirectionalPlacementAudit() : null;
+      const auditChestKey = !mapNavigationAudit && !waystoneIconAudit && !generatedPoiAudit && !caveLiquidAudit && !oceanFloraAudit && !creatureCollisionAudit && !moonfeltAudit && !treeFallAudit && !agentDroneAudit && !settlementOriginAudit && !itemGuideAudit ? engine.primeDirectionalPlacementAudit() : null;
       if (caveLiquidAudit) engine.primeCaveLiquidAudit();
       if (oceanFloraAudit) engine.primeOceanFloraAudit();
       if (creatureCollisionAudit) engine.primeCreatureCollisionAudit();
@@ -2346,6 +2376,7 @@ export default function VoxelGame() {
       if (treeFallRoot) treeFallTimer = window.setTimeout(() => {
         engine.tryFellTree(treeFallRoot.x, treeFallRoot.y, treeFallRoot.z, BlockId.WildwoodLog);
       }, 900);
+      if (agentDroneAudit) engine.primeAgentDroneAudit();
       if (chestAudit && auditChestKey) engine.primeOpenChestAudit(auditChestKey);
       startedRef.current = true;
       overlayRef.current = placementAuditOverlay;
@@ -2361,6 +2392,14 @@ export default function VoxelGame() {
           setItemGuideVisible(true);
         }
       });
+    } else if (agentMode) {
+      engine.previewWorld("AGENT-CLIENT-PREVIEW");
+      overlayRef.current = "multiplayer";
+      window.queueMicrotask(() => {
+        setMultiplayerReturn("title");
+        setMultiplayerName(new URLSearchParams(window.location.search).get("agentName")?.slice(0, 32) || "Field Drone");
+        setOverlayState("multiplayer");
+      });
     } else if (initialWorld) engine.previewWorld(initialWorld.seed);
     return () => {
       window.clearTimeout(toastTimerRef.current);
@@ -2371,10 +2410,11 @@ export default function VoxelGame() {
       characterStoreRef.current = null;
       delete automationWindow.render_game_to_text;
       delete automationWindow.advanceTime;
+      delete automationWindow.blockwildAgent;
     };
     // The engine owns its listeners for the lifetime of the canvas.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshWorldCatalog, setOverlay, showToast]);
+  }, [agentMode, refreshWorldCatalog, setOverlay, showToast]);
 
   useEffect(() => {
     const stored = readSettings();
@@ -3950,13 +3990,14 @@ export default function VoxelGame() {
 
   return (
     <main
-      className={`game-shell ${showTouchControls ? "touch-controls-active" : ""}`}
+      className={`game-shell ${showTouchControls ? "touch-controls-active" : ""}${agentMode ? " agent-client-mode" : ""}`}
       onContextMenu={(event) => {
         if (shouldSuppressGameContextMenu(started, event.target)) event.preventDefault();
       }}
     >
       <canvas ref={canvasRef} className="game-canvas" aria-label="Blockwild endless 3D game world" />
       <div className="sky-vignette" aria-hidden="true" />
+      {agentMode && <aside className="agent-client-badge" aria-label="Lightweight companion client"><strong>COMPANION DRONE</strong><span>SEMANTIC CLIENT · RENDER 4 · SIM 3</span><small>Use <code>window.blockwildAgent</code> through the repository skill. Host approval is required.</small></aside>}
 
       {started && overlay === null && (
         <div className={`game-hud${settings.showMinimap ? " minimap-enabled" : ""}`} aria-live="polite">

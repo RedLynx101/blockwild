@@ -2815,6 +2815,8 @@ export class ChunkWorld {
   group = new THREE.Group();
   chunks = new Map<string, Chunk>();
   edits = new Map<string, Map<number, BlockId>>();
+  /** Monotonic session-local revision for optimistic agent commands. */
+  mutationRevision = 0;
   structureMarkers = new Map<string, StructureMarker>();
   settlementPlans = new Map<string, SettlementWorldPlan>();
   private readonly settlementIndex = new SettlementIndex();
@@ -3072,6 +3074,7 @@ export class ChunkWorld {
     this.playerEditFeedbackRecords = [];
     this.playerEditConsolidationWaiters.clear();
     this.edits.clear();
+    this.mutationRevision = 0;
     this.structureMarkers.clear();
     this.settlementPlans.clear();
     this.settlementCandidateCache.clear();
@@ -7178,6 +7181,8 @@ export class ChunkWorld {
     const index = blockIndex(sx.local, y, sz.local);
     const previousType = chunk.blocks[index] as BlockId;
     const resolvedType = type === BlockId.Air && isWaterloggedFloraBlock(previousType) ? BlockId.Water : type;
+    if (previousType === resolvedType) return true;
+    this.mutationRevision += 1;
     const affectedLayers = this.renderLayersAffectedByEdit(x, y, z, previousType, resolvedType);
     this.markPlayerEditMutation();
     if (!isDirectionallyPlacedBlock(resolvedType)) this.blockFacings.delete(`${x},${y},${z}`);
@@ -7232,6 +7237,7 @@ export class ChunkWorld {
     const affectedLavaCells = new Map<string, { x: number; y: number; z: number }>();
     const lightChanges: Array<{ x: number; y: number; z: number; previous: BlockId; next: BlockId }> = [];
     const batchRelight = changes.length > 12;
+    let mutated = false;
     for (const change of changes) {
       if (change.y < MIN_Y || change.y > MAX_Y) continue;
       const sx = splitCoordinate(change.x);
@@ -7242,6 +7248,7 @@ export class ChunkWorld {
       const previousType = chunk.blocks[index] as BlockId;
       const resolvedType = change.type === BlockId.Air && isWaterloggedFloraBlock(previousType) ? BlockId.Water : change.type;
       if (previousType === resolvedType) continue;
+      mutated = true;
       const affectedLayers = this.renderLayersAffectedByEdit(change.x, change.y, change.z, previousType, resolvedType);
       this.markPlayerEditMutation();
       if (!isDirectionallyPlacedBlock(resolvedType)) this.blockFacings.delete(`${change.x},${change.y},${change.z}`);
@@ -7268,6 +7275,7 @@ export class ChunkWorld {
       if (sz.local === 0) markAffected(`${chunkKey(sx.chunk, sz.chunk - 1)}:${section}`, affectedLayers);
       if (sz.local === CHUNK_SIZE - 1) markAffected(`${chunkKey(sx.chunk, sz.chunk + 1)}:${section}`, affectedLayers);
     }
+    if (mutated) this.mutationRevision += 1;
     if (lightChanges.length > 0) {
       if (deferLighting) this.deferLightRebuildAround(lightChanges);
       else this.lightEngine.rebuildAround(lightChanges);

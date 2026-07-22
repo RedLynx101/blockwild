@@ -60,6 +60,8 @@ export type PlayerModelOptions = {
   equipment?: PlayerEquipmentAppearance;
   castShadow?: boolean;
   receiveShadow?: boolean;
+  /** Agent peers reuse the network interpolation shell but render a nonblocking field drone. */
+  modelKind?: "player" | "drone";
 };
 
 export type PlayerModelParts = {
@@ -313,6 +315,7 @@ export class BlockPlayerModel {
   readonly nameAnchor = new THREE.Object3D();
   readonly mode: PlayerModelMode;
   readonly playerId?: string;
+  readonly modelKind: "player" | "drone";
 
   private readonly blockGeometry = new THREE.BoxGeometry(1, 1, 1);
   private readonly ownedMeshes: THREE.Mesh[] = [];
@@ -342,10 +345,16 @@ export class BlockPlayerModel {
   private _race: FactionRace;
   private disposed = false;
   private _playerName = "Player";
+  private readonly droneRoot = new THREE.Group();
+  private readonly droneScanner = new THREE.Group();
+  private readonly droneCore = new THREE.Group();
+  private readonly extraMaterials: THREE.Material[] = [];
+  private droneTime = 0;
 
   constructor(options: PlayerModelOptions = {}) {
     this.mode = options.mode ?? "remote";
     this.playerId = options.playerId;
+    this.modelKind = options.modelKind ?? "player";
     const colors = { ...DEFAULT_PLAYER_COLORS, ...options.colors };
     this.baseHairColor.set(colors.hair);
     this._variant = options.variant ?? "male";
@@ -367,6 +376,7 @@ export class BlockPlayerModel {
     this.group.name = "block-player";
     this.group.userData.playerModel = true;
     this.group.userData.playerMode = this.mode;
+    this.group.userData.modelKind = this.modelKind;
     if (this.playerId !== undefined) this.group.userData.playerId = this.playerId;
     this.rig.name = "player-rig";
     this.group.add(this.rig);
@@ -430,6 +440,7 @@ export class BlockPlayerModel {
     this.setRace(this._race);
     this.setEquipmentAppearance(options.equipment ?? {});
     this.applyPose(this.pose);
+    if (this.modelKind === "drone") this.buildDrone(options);
   }
 
   get playerName(): string {
@@ -605,6 +616,7 @@ export class BlockPlayerModel {
       next.actionPhase = wrapUnit(this.pose.actionPhase + actionsPerSecond * delta);
     }
     this.applyPose(next);
+    if (this.modelKind === "drone") this.animateDrone(delta);
     return this;
   }
 
@@ -689,6 +701,7 @@ export class BlockPlayerModel {
     this.group.clear();
     this.blockGeometry.dispose();
     for (const material of Object.values(this.materials)) material.dispose();
+    for (const material of this.extraMaterials) material.dispose();
     this.ownedMeshes.length = 0;
     this.disposed = true;
   }
@@ -698,6 +711,91 @@ export class BlockPlayerModel {
     part.name = name;
     part.userData.playerPart = name;
     return part;
+  }
+
+  private buildDrone(options: PlayerModelOptions) {
+    this.rig.visible = false;
+    this.group.name = "blockwild-agent-drone";
+    this.group.userData.agentDrone = true;
+    this.materials.shirt.metalness = 0.62;
+    this.materials.shirt.roughness = 0.32;
+    this.materials.details.metalness = 0.72;
+    this.materials.details.roughness = 0.24;
+    this.materials.accent.emissive.set(0x2dd6a2);
+    this.materials.accent.emissiveIntensity = 1.8;
+    const glass = new THREE.MeshStandardMaterial({
+      color: 0x6be6c2,
+      emissive: 0x1c9877,
+      emissiveIntensity: 1.1,
+      transparent: true,
+      opacity: 0.34,
+      roughness: 0.18,
+      metalness: 0.18,
+      depthWrite: false,
+    });
+    this.extraMaterials.push(glass);
+    this.droneRoot.name = "agent-drone-rig";
+    this.droneRoot.position.y = 1.28;
+    this.group.add(this.droneRoot);
+
+    const body = new THREE.Group();
+    body.name = "drone-body";
+    this.droneRoot.add(body);
+    body.add(
+      this.createBlock("drone-core-housing", [0.68, 0.42, 0.58], [0, 0, 0], this.materials.shirt, options),
+      this.createBlock("drone-top-rail", [0.46, 0.11, 0.66], [0, 0.245, 0.01], this.materials.details, options),
+      this.createBlock("drone-lower-keel", [0.28, 0.18, 0.42], [0, -0.29, 0.02], this.materials.details, options),
+      this.createBlock("drone-left-cheek", [0.15, 0.3, 0.44], [-0.405, 0, 0.02], this.materials.details, options),
+      this.createBlock("drone-right-cheek", [0.15, 0.3, 0.44], [0.405, 0, 0.02], this.materials.details, options),
+    );
+
+    this.droneCore.name = "drone-lens";
+    this.droneCore.position.set(0, 0.015, -0.34);
+    this.droneCore.add(
+      this.createBlock("drone-lens-frame", [0.34, 0.25, 0.1], [0, 0, 0], this.materials.details, options),
+      this.createBlock("drone-lens-light", [0.19, 0.12, 0.115], [0, 0, -0.012], this.materials.accent, { ...options, castShadow: false }),
+    );
+    body.add(this.droneCore);
+
+    for (const side of [-1, 1] as const) {
+      const wing = new THREE.Group();
+      wing.name = side < 0 ? "drone-left-wing" : "drone-right-wing";
+      wing.position.x = side * 0.48;
+      wing.add(
+        this.createBlock("drone-wing-arm", [0.34, 0.12, 0.18], [side * 0.12, 0.02, 0.02], this.materials.shirt, options),
+        this.createBlock("drone-wing-tip", [0.16, 0.32, 0.28], [side * 0.3, 0.02, 0.02], this.materials.details, options),
+        this.createBlock("drone-thruster", [0.11, 0.12, 0.2], [side * 0.3, -0.22, 0.03], this.materials.accent, { ...options, castShadow: false }),
+        this.createBlock("drone-glass-vane", [0.06, 0.44, 0.38], [side * 0.32, 0.28, 0.08], glass, { ...options, castShadow: false, receiveShadow: false }),
+      );
+      this.droneRoot.add(wing);
+    }
+
+    this.droneScanner.name = "drone-scanner-crown";
+    this.droneScanner.position.y = 0.43;
+    this.droneScanner.add(
+      this.createBlock("scanner-cross-x", [0.86, 0.055, 0.08], [0, 0, 0], this.materials.accent, { ...options, castShadow: false }),
+      this.createBlock("scanner-cross-z", [0.08, 0.055, 0.86], [0, 0, 0], this.materials.accent, { ...options, castShadow: false }),
+      this.createBlock("scanner-mast", [0.09, 0.24, 0.09], [0, 0.13, 0], this.materials.details, options),
+    );
+    this.droneRoot.add(this.droneScanner);
+
+    const undercarriage = new THREE.Group();
+    undercarriage.name = "drone-undercarriage";
+    for (const side of [-1, 1] as const) undercarriage.add(
+      this.createBlock("drone-landing-strut", [0.09, 0.34, 0.09], [side * 0.22, -0.48, 0.03], this.materials.details, options),
+      this.createBlock("drone-landing-foot", [0.24, 0.07, 0.18], [side * 0.22, -0.66, -0.01], this.materials.shirt, options),
+    );
+    this.droneRoot.add(undercarriage);
+    this.nameAnchor.position.set(0, 2.05, 0);
+  }
+
+  private animateDrone(delta: number) {
+    this.droneTime += delta;
+    this.droneRoot.position.y = 1.3 + Math.sin(this.droneTime * 2.1) * 0.055;
+    this.droneRoot.rotation.z = Math.sin(this.droneTime * 1.35) * 0.025;
+    this.droneScanner.rotation.y = wrapAngle(this.droneScanner.rotation.y + delta * 1.7);
+    const pulse = 1 + Math.sin(this.droneTime * 4.8) * 0.08;
+    this.droneCore.scale.set(pulse, pulse, 1);
   }
 
   private isMeshDisplayed(mesh: THREE.Mesh): boolean {

@@ -173,6 +173,18 @@ describe("agent platform contracts", () => {
     assert.deepEqual(plan.mergedAgentRegions[0]?.agentIds, ["agent_b", "agent_c"]);
   });
 
+  test("one, two, and four separated drones all retain explicit simulation interest", () => {
+    for (const count of [1, 2, 4]) {
+      const plan = mergeAgentInterestRegions([], Array.from({ length: count }, (_, index) => ({
+        agentId: `agent_${index}`,
+        position: { x: index * 96, y: 4, z: index * -80 },
+        status: "approved" as const,
+      })));
+      assert.equal(plan.admittedAgentIds.length, count);
+      assert.equal(plan.mergedAgentRegions.length, count);
+    }
+  });
+
   test("diagnostics exports engine-verifiable counters without prompts", () => {
     const diagnostics = new AgentDiagnostics();
     diagnostics.recordResult(createAgentResult(command(), "completed", 4, "observed", "Done"));

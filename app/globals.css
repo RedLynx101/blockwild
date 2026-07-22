@@ -6948,6 +6948,33 @@ input:focus-visible {
   margin-top: 0;
 }
 
+.agent-client-mode .game-canvas {
+  image-rendering: pixelated;
+}
+
+.agent-client-badge {
+  position: fixed;
+  z-index: 28;
+  top: 18px;
+  left: 18px;
+  display: grid;
+  gap: 3px;
+  width: min(360px, calc(100vw - 36px));
+  padding: 12px 14px;
+  color: #d8fff4;
+  border: 2px solid #5ccdb0;
+  border-radius: 4px;
+  background: rgba(8, 23, 22, 0.91);
+  box-shadow: 0 0 0 2px rgba(4, 12, 12, 0.7), 0 10px 36px rgba(0, 0, 0, 0.36);
+  font-family: var(--font-pixel), monospace;
+  pointer-events: none;
+}
+
+.agent-client-badge strong { color: #8fffdc; letter-spacing: 0.12em; }
+.agent-client-badge span { color: #f0d985; font-size: 0.72rem; letter-spacing: 0.08em; }
+.agent-client-badge small { color: #b1c9c3; line-height: 1.4; }
+.agent-client-badge code { color: #fff2b3; }
+
 .agent-session-roster,
 .multiplayer-chat-panel {
   display: grid;

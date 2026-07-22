@@ -2283,6 +2283,7 @@ export class MultiplayerSession {
 
   private validateActorOwnership(peer: PeerRecord, envelope: MultiplayerEnvelope) {
     if (this.role !== "host" || !peer.identity) return true;
+    if (peer.identity.peerKind === "agent" && !["hello", "heartbeat", "goodbye", "agent-command", "chat", "voice-chunk"].includes(envelope.type)) return false;
     const payload = envelope.payload as unknown;
     if (!isRecord(payload)) return false;
     if (envelope.type === "player-pose") return payload.playerId === peer.identity.id;
