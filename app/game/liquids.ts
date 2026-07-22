@@ -392,6 +392,8 @@ export type SwimEnvironment = Readonly<{
   shoreLedgeHeight?: number;
   /** Vertical distance from the eyes to the water surface. */
   surfaceGap?: number;
+  /** Signed eye clearance above the waterline; negative means submerged. */
+  surfaceClearance?: number;
   /** The first submerged step may retain part of a real fall's momentum. */
   enteredFromAir?: boolean;
 }>;
@@ -433,6 +435,10 @@ export type SwimRules = Readonly<{
   entryMomentumDecayPerSecond: number;
   surfaceBreachVelocity: number;
   surfaceBreachDurationSeconds: number;
+  /** Small repeat stroke that keeps the breathing point above water without lifting the body out. */
+  surfaceBobVelocity: number;
+  /** Eye clearance at which a descending held swimmer begins the next breathing stroke. */
+  surfaceBobFloorClearance: number;
   /** Downward recovery after a breach; this creates a real bob instead of a surface clamp. */
   surfaceRecoveryAcceleration: number;
   /** Minimum stroke-to-stroke interval while Space remains held. */
@@ -459,12 +465,14 @@ export const DEFAULT_SWIM_RULES: SwimRules = Object.freeze({
   entryMomentumRetention: 0.54,
   entryMomentumDecayPerSecond: 3.6,
   // A surface stroke crosses the air/water boundary briefly. Recovery then
-  // pulls the player back under before held Space can start another stroke,
-  // producing Minecraft-like breathing bobs without a walkable-water state.
+  // descends toward the waterline, where a smaller maintenance stroke keeps
+  // the eyes clear while the body remains immersed.
   surfaceBreachVelocity: 3.65,
   surfaceBreachDurationSeconds: 0.14,
+  surfaceBobVelocity: 3.4,
+  surfaceBobFloorClearance: 0.34,
   surfaceRecoveryAcceleration: 13.5,
-  surfaceStrokeCycleSeconds: 0.62,
+  surfaceStrokeCycleSeconds: 0.18,
 });
 
 /** Pure player-water step; the caller applies returned velocity and damage. */
@@ -489,10 +497,13 @@ export function stepSwimming(
     surfaceBreachReady = true;
     surfaceBreachSeconds = 0;
     surfaceStrokeCooldownSeconds = 0;
-  } else if (environment.headSubmerged && surfaceStrokeCooldownSeconds <= 0) {
-    // A held swimmer earns another stroke only after returning beneath the
-    // surface for the complete recovery interval. Merely remaining above the
-    // water never renews upward thrust.
+  } else if (surfaceStrokeCooldownSeconds <= 0
+    && (environment.headSubmerged
+      || (environment.surfaceClearance ?? Number.NEGATIVE_INFINITY) <= rules.surfaceBobFloorClearance)) {
+    // A held swimmer earns another stroke after the complete recovery
+    // interval. This catches the bottom of the breathing arc just before the
+    // eye sample falls underwater, while the cooldown still prevents a
+    // walkable-water elevator.
     surfaceBreachReady = true;
   }
 
@@ -549,10 +560,21 @@ export function stepSwimming(
       surfaceBreachSeconds = 0;
     } else if (input.jumpHeld && !environment.headSubmerged && entryMomentumSpeed <= ordinaryMaximumSink) {
       const beginsSurfaceBreach = surfaceBreachReady && velocityY > 0.35;
+      const beginsHeldSurfaceBob = surfaceBreachReady
+        && surfaceStrokeCooldownSeconds <= 0
+        && (environment.surfaceClearance ?? Number.NEGATIVE_INFINITY) <= rules.surfaceBobFloorClearance
+        && !beginsSurfaceBreach;
       if (beginsSurfaceBreach) {
         surfaceBreachReady = false;
         surfaceBreachSeconds = rules.surfaceBreachDurationSeconds;
         surfaceStrokeCooldownSeconds = rules.surfaceStrokeCycleSeconds;
+      } else if (beginsHeldSurfaceBob) {
+        // Repeating a full breach impulse would climb out of open water. The
+        // maintenance stroke reverses only the bottom of the arc, leaving the
+        // feet and torso immersed while the breathing point remains clear.
+        surfaceBreachReady = false;
+        surfaceStrokeCooldownSeconds = rules.surfaceStrokeCycleSeconds;
+        velocityY = Math.max(velocityY, rules.surfaceBobVelocity);
       }
       if (surfaceBreachSeconds > 0) {
         // Preserve a short, deliberate crossing stroke so the feet can clear

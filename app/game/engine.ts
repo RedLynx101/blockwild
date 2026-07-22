@@ -18550,8 +18550,12 @@ export class VoxelEngine {
     const forwardAmount = (this.keys.has("KeyW") ? 1 : 0) - (this.keys.has("KeyS") ? 1 : 0);
     const rightAmount = (this.keys.has("KeyD") ? 1 : 0) - (this.keys.has("KeyA") ? 1 : 0);
     const moving = forwardAmount !== 0 || rightAmount !== 0;
-    const feetBlock = this.world.getBlock(Math.floor(this.position.x + 0.5), Math.floor(this.position.y + 0.6), Math.floor(this.position.z + 0.5));
-    const headBlock = this.world.getBlock(Math.floor(this.position.x + 0.5), Math.floor(this.position.y + this.cameraEyeHeight + 0.5), Math.floor(this.position.z + 0.5));
+    const liquidSampleX = Math.floor(this.position.x + 0.5);
+    const liquidSampleZ = Math.floor(this.position.z + 0.5);
+    const feetCellY = Math.floor(this.position.y + 0.6);
+    const headCellY = Math.floor(this.position.y + this.cameraEyeHeight + 0.5);
+    const feetBlock = this.world.getBlock(liquidSampleX, feetCellY, liquidSampleZ);
+    const headBlock = this.world.getBlock(liquidSampleX, headCellY, liquidSampleZ);
     const liquidKind = liquidKindForBlock(feetBlock);
     const inWater = liquidKind === "water";
     const inLava = liquidKind === "lava";
@@ -18563,6 +18567,18 @@ export class VoxelEngine {
     const onRopeLadder = feetBlock === BlockId.RopeLadder || headBlock === BlockId.RopeLadder;
     const headLiquid = liquidKindForBlock(headBlock);
     this.headSubmerged = headLiquid !== undefined && headLiquid !== "lava";
+    let liquidSurfaceClearance: number | undefined;
+    if (liquidKind !== undefined && this.keys.has("Space")) {
+      let topLiquidY = feetCellY;
+      // The breathing controller only needs the nearby surface. A bounded
+      // four-cell probe keeps deep-water movement allocation-free and cheap.
+      for (let step = 0; step < 4; step += 1) {
+        const aboveKind = liquidKindForBlock(this.world.getBlock(liquidSampleX, topLiquidY + 1, liquidSampleZ));
+        if (aboveKind !== liquidKind) break;
+        topLiquidY += 1;
+      }
+      liquidSurfaceClearance = this.position.y + this.cameraEyeHeight - (topLiquidY + 0.5);
+    }
     const enteredSwimmableLiquid = inSwimmableLiquid && !this.wasInWater;
     if (enteredSwimmableLiquid) this.audio.play("splash");
     this.wasInWater = inSwimmableLiquid;
@@ -18646,6 +18662,7 @@ export class VoxelEngine {
           horizontalCollision,
           shoreLedgeHeight: horizontalCollision ? 1 : undefined,
           surfaceGap: this.headSubmerged ? 0.25 : 0.72,
+          surfaceClearance: liquidSurfaceClearance,
           enteredFromAir: enteredSwimmableLiquid,
         },
         dt,

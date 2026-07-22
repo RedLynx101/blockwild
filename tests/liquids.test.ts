@@ -159,42 +159,48 @@ test("sprint-swimming adds exactly twenty percent to vertical stroke acceleratio
 });
 
 test("held swim input produces repeatable breathing bobs without walking on the surface", () => {
-  // Begin roughly the same 0.68 blocks below eye-level breathing depth as the
-  // production swim audit, rather than giving the first stroke a head start.
-  let feetY = -2.18;
   let swimmer: SwimmerState = { velocityY: 0, oxygenSeconds: 12, drowningAccumulator: 0, entryMomentumSpeed: 0 };
-  let highestFeetY = feetY;
-  let lowestFeetYAfterFirstBreach = Number.POSITIVE_INFINITY;
-  let breachStarts = 0;
-  let headAboveFrames = 0;
-  let longestHeadAboveRun = 0;
-  let currentHeadAboveRun = 0;
-  for (let frame = 0; frame < 900; frame += 1) {
-    const headSubmerged = feetY + 1.5 < 0;
-    const priorBreachSeconds = swimmer.surfaceBreachSeconds ?? 0;
-    const next = stepSwimming(
-      swimmer,
-      { jumpHeld: true, movingForward: true },
-      { submersion: headSubmerged ? 1 : 0.68, headSubmerged, horizontalCollision: false },
-      1 / 60,
-    ).state;
-    if (priorBreachSeconds === 0 && (next.surfaceBreachSeconds ?? 0) > 0) breachStarts += 1;
-    swimmer = next;
-    feetY += swimmer.velocityY / 60;
-    highestFeetY = Math.max(highestFeetY, feetY);
-    if (breachStarts > 0) lowestFeetYAfterFirstBreach = Math.min(lowestFeetYAfterFirstBreach, feetY);
-    if (feetY + 1.5 >= 0) {
-      headAboveFrames += 1;
-      currentHeadAboveRun += 1;
-      longestHeadAboveRun = Math.max(longestHeadAboveRun, currentHeadAboveRun);
-    } else currentHeadAboveRun = 0;
+  for (const fps of [30, 60, 120]) {
+    // Begin roughly the same 0.68 blocks below eye-level breathing depth as
+    // the production audit, rather than giving the first stroke a head start.
+    let feetY = -2.18;
+    swimmer = { velocityY: 0, oxygenSeconds: 12, drowningAccumulator: 0, entryMomentumSpeed: 0 };
+    let firstBreathFrame = -1;
+    let highestFeetY = feetY;
+    let stableLowestFeetY = Number.POSITIVE_INFINITY;
+    let stableHighestFeetY = Number.NEGATIVE_INFINITY;
+    let stableSubmergedFrames = 0;
+    let minimumStableOxygen = 12;
+    let strokeStarts = 0;
+    for (let frame = 0; frame < fps * 15; frame += 1) {
+      const headSubmerged = feetY + 1.5 < 0;
+      const priorCooldown = swimmer.surfaceStrokeCooldownSeconds ?? 0;
+      const next = stepSwimming(
+        swimmer,
+        { jumpHeld: true, movingForward: true },
+        { submersion: headSubmerged ? 1 : 0.68, headSubmerged, horizontalCollision: false, surfaceClearance: feetY + 1.5 },
+        1 / fps,
+      ).state;
+      if (priorCooldown <= 0 && (next.surfaceStrokeCooldownSeconds ?? 0) > 0) strokeStarts += 1;
+      swimmer = next;
+      feetY += swimmer.velocityY / fps;
+      highestFeetY = Math.max(highestFeetY, feetY);
+      if (feetY + 1.5 >= 0 && firstBreathFrame < 0) firstBreathFrame = frame;
+      if (firstBreathFrame >= 0 && frame > firstBreathFrame + fps) {
+        stableLowestFeetY = Math.min(stableLowestFeetY, feetY);
+        stableHighestFeetY = Math.max(stableHighestFeetY, feetY);
+        if (feetY + 1.5 < 0) stableSubmergedFrames += 1;
+        minimumStableOxygen = Math.min(minimumStableOxygen, swimmer.oxygenSeconds);
+      }
+    }
+    assert.ok(strokeStarts >= 20, `${fps} FPS held Space only produced ${strokeStarts} strokes`);
+    assert.ok(highestFeetY > -0.7, `${fps} FPS feet only rose to ${highestFeetY}, which cannot clear the water sample`);
+    assert.ok(highestFeetY < -0.25, `${fps} FPS feet rose to ${highestFeetY}, which would become a water-walking launch`);
+    assert.ok(stableLowestFeetY > -1.28, `${fps} FPS breathing bob fell too low: ${stableLowestFeetY}`);
+    assert.ok(stableHighestFeetY < -0.75, `${fps} FPS breathing bob lifted the body too far: ${stableHighestFeetY}`);
+    assert.equal(stableSubmergedFrames, 0, `${fps} FPS held swimming dipped the breathing point underwater`);
+    assert.equal(minimumStableOxygen, 12, `${fps} FPS held swimming consumed oxygen after reaching the surface`);
   }
-  assert.ok(breachStarts >= 5, `held Space only produced ${breachStarts} surface strokes`);
-  assert.ok(highestFeetY > -0.7, `feet only rose to ${highestFeetY}, which cannot clear the water sample`);
-  assert.ok(highestFeetY < -0.25, `feet rose to ${highestFeetY}, which would become a water-walking launch`);
-  assert.ok(lowestFeetYAfterFirstBreach < -1.52, `the swimmer never dipped back under after a breach: ${lowestFeetYAfterFirstBreach}`);
-  assert.ok(headAboveFrames > 90, `the swimmer could breathe for only ${headAboveFrames} frames`);
-  assert.ok(longestHeadAboveRun >= 10, `the longest breathing window was only ${longestHeadAboveRun} frames`);
 
   const released = stepSwimming(
     swimmer,
