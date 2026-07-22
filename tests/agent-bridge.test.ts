@@ -10,7 +10,7 @@ const observation: AgentObservationV1 = {
   self: { agentId: "agent_1", name: "Mica", position: { x: 0, y: 2, z: 0 }, velocity: { x: 0, y: 0, z: 0 }, yaw: 0, pitch: 0, biome: "Wildwood", depth: "Surface", liquid: null, light: 15, inventory: { used: 0, capacity: 36 }, command: null },
   world: { day: 1, time: 0.25, weather: "clear", occupiedChunkReady: true, players: [], nearby: [], reachable: ["north"] },
   chat: { newestSequence: 0, newChatCount: 0, messages: [] }, tasks: [], waypoints: [],
-  performance: { fps: 30, renderDistance: 4, simulationDistance: 3, commandQueue: 0, channelBackpressure: 0 },
+  performance: { fps: 30, renderDistance: 4, simulationDistance: 3, basicRenderDistance: 4, commandQueue: 0, channelBackpressure: 0 },
 };
 
 test("typed agent bridge constructs fresh host-authorized commands without exposing an engine", async () => {

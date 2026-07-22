@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { BLOCKS, AQUATIC_FLORA, BlockId, Item } from "../app/game/data.ts";
-import { caveEntranceAt } from "../app/game/caves.ts";
 import { wildPeppermintHeight } from "../app/game/ecology.ts";
 import { canPlantSaplingOn, plantingResult, planPeppermintColumnRemoval } from "../app/game/farming.ts";
 import { rayDistanceToTorchBounds, torchInteractionBounds } from "../app/game/engine.ts";
@@ -106,7 +105,10 @@ test("surface cave mouths remain free of generated plants", () => {
   let checked = 0;
   for (let z = -96; z <= 96 && checked < 12; z += 1) for (let x = -96; x <= 96 && checked < 12; x += 1) {
     const column = world.sampleColumn(x, z);
-    if (!caveEntranceAt(world.seed, x, z, column.height, column.waterline)) continue;
+    // Query the same relocated, full-footprint descriptor used by terrain
+    // carving. The legacy center-only helper intentionally cannot see which
+    // deterministic dry alternative the world selected for this cell.
+    if (!world.safeCaveEntranceAt(x, z, column)) continue;
     world.generateChunk(Math.floor(x / 16), Math.floor(z / 16));
     assert.equal(world.getBlock(x, column.height, z), BlockId.Air);
     const above = world.getBlock(x, column.height + 1, z);

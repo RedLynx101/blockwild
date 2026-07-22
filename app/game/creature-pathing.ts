@@ -652,3 +652,27 @@ export function creatureMeleeReach(
   const bodyAllowance = clamp(definition.radius * scale * 0.72, 0.18, 1.35);
   return Math.max(0, definition.attackRange) + bodyAllowance;
 }
+
+/**
+ * Preserve the old visible world height after an authoritative one-block
+ * ground snap. Large corrections are teleports and deliberately do not tween.
+ */
+export function accumulateGroundStepPresentationOffset(
+  currentOffset: number,
+  previousRootY: number,
+  nextRootY: number,
+  maximumStep = 1.05,
+) {
+  const safeCurrent = Number.isFinite(currentOffset) ? currentOffset : 0;
+  const delta = nextRootY - previousRootY;
+  if (!Number.isFinite(delta) || Math.abs(delta) < 0.0001) return safeCurrent;
+  if (Math.abs(delta) > maximumStep) return 0;
+  return clamp(safeCurrent - delta, -1.35, 1.35);
+}
+
+/** Monotonic visual decay; collision and navigation never consume this value. */
+export function stepGroundPresentationOffset(currentOffset: number, dt: number) {
+  if (!Number.isFinite(currentOffset) || !Number.isFinite(dt) || dt < 0) return 0;
+  const next = currentOffset * Math.exp(-Math.min(0.25, dt) * 22);
+  return Math.abs(next) < 0.02 ? 0 : next;
+}

@@ -8,6 +8,8 @@ import {
   DEFAULT_FRAME_WORK_BUDGET,
   DEFAULT_RENDER_DISTANCE,
   DEFAULT_SIMULATION_DISTANCE,
+  DEFAULT_BASIC_RENDER_DISTANCE,
+  MAX_BASIC_RENDER_DISTANCE,
   MAX_RENDER_DISTANCE,
   PerformanceSampler,
   benchmarkTask,
@@ -23,19 +25,23 @@ import {
   SENTIENT_FULL_DETAIL_DISTANCE,
 } from "../app/game/performance.ts";
 
-test("view distances default to 10/8 and simulation never exceeds rendering", () => {
+test("view distances preserve simulation <= render <= basic", () => {
   assert.deepEqual(normalizeViewDistances(undefined), {
     renderDistance: DEFAULT_RENDER_DISTANCE,
     simulationDistance: DEFAULT_SIMULATION_DISTANCE,
+    basicRenderDistance: DEFAULT_BASIC_RENDER_DISTANCE,
   });
   assert.deepEqual(normalizeViewDistances({ renderDistance: 99, simulationDistance: 99 }), {
     renderDistance: MAX_RENDER_DISTANCE,
     simulationDistance: MAX_RENDER_DISTANCE,
+    basicRenderDistance: DEFAULT_BASIC_RENDER_DISTANCE,
   });
-  assert.deepEqual(normalizeViewDistances({ renderDistance: 6, simulationDistance: 12 }), {
+  assert.deepEqual(normalizeViewDistances({ renderDistance: 6, simulationDistance: 12, basicRenderDistance: 4 }), {
     renderDistance: 6,
     simulationDistance: 6,
+    basicRenderDistance: 6,
   });
+  assert.equal(normalizeViewDistances({ basicRenderDistance: 99 }).basicRenderDistance, MAX_BASIC_RENDER_DISTANCE);
 });
 
 test("chunk estimates and streaming order are exact", () => {

@@ -1,6 +1,6 @@
 # Blockwild
 
-Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.10.1 Seamwake**.
+Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.10.2 Veilreach**.
 
 The project is a real game rather than a voxel-rendering demo. You can mine, build, craft, smelt, farm, fight, collect field notes, manage several worlds, and carry those worlds between browsers with export files.
 
@@ -15,6 +15,14 @@ The project is a real game rather than a voxel-rendering demo. You can mine, bui
 ![Blockwild field guide with all 231 rendered creatures](public/creatures/blockwild-creatures.svg)
 
 The integrated creature-design pass expands the Courser family with Rimehoof, Sunscar, Mirestride, and Starbough ecological breeds plus the forge-built Deepgear Courser. It also gives all six dragon families production stage forms, rebuilds birds, pets, crabs, mosslings, foxes, harts, deer, longhorns, terrapins, and other core wildlife, and preserves one model path for gameplay, Bestiary portraits, and visual audits.
+
+## v1.10.2 Veilreach
+
+Ordinary hostile melee now has one host-authoritative contact contract from move selection through the active frame. Creatures approach, face, commit, and recover without accidental sideways path steering; local players, remote players, and other mobs share body-aware reach, forward-arc, vertical, target-motion, and line-of-sight validation. Confirmed player hits are louder, deliver the requested doubled horizontal recoil within safe caps, and add a controlled grounded hop.
+
+Ground creatures retain immediate collision authority while a child presentation root eases one-block rises and drops over about 0.18 seconds. Cave mouths now validate a deterministic padded footprint and choose a safe dry alternative before the surface and underground graph carve the same supported throat, with extra lateral roof protection at wet river banks.
+
+Underground presentation separates propagated skylight from direct exposure: roofs can hide celestial bodies without turning houses into caves, while deep enclosed caverns now reach a genuinely dark backdrop. A new Basic Render Distance setting adds worker-built, non-interactive surface and cavern silhouettes beyond full chunks. Desktop defaults are 8 simulation, 10 full-render, and 20 basic-render chunks; touch and AI clients leave the outer tier disabled. The default proxy ring is two draw calls, about 82,000 triangles and 4.9 MiB in the deterministic benchmark, with generation off the main thread and deferred under frame pressure.
 
 ## v1.10.1 Seamwake
 

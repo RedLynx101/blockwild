@@ -5,6 +5,28 @@ import type { CombatActorRef, ThreatEntry } from "./combat-resolver";
 
 export type MoveTargetToken = Readonly<{ kind: CombatActorRef["kind"]; id: CombatActorRef["id"] }>;
 
+export type CreatureMoveMovementPolicy = "stationary" | "track" | "authored";
+
+export type CombatContactEnvelope = Readonly<{
+  acquireDistance: number;
+  commitDistance: number;
+  activeDistance: number;
+  verticalTolerance: number;
+  facingCosine: number;
+  targetGrace: number;
+}>;
+
+export type CombatContactResult = "hit" | "dodged" | "obstructed" | "invalid";
+
+export type CombatContactCheck = Readonly<{
+  attacker: Readonly<{ x: number; y: number; z: number }>;
+  attackerFacing: number;
+  target: Readonly<{ x: number; y: number; z: number }>;
+  previousTarget?: Readonly<{ x: number; y: number; z: number }> | null;
+  envelope: CombatContactEnvelope;
+  lineOfSight: boolean;
+}>;
+
 export type ActiveCreatureMove = Readonly<{
   moveId: string;
   phase: "windup" | "active" | "recovery";
@@ -45,6 +67,82 @@ export type ScoredCreatureMove = Readonly<{
 
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
 
+/**
+ * One body-aware reach contract shared by acquisition, commitment, and the hit
+ * frame. The authored range remains the dominant term; body radii only keep
+ * differently sized creatures from having to overlap their visual bodies.
+ */
+export function combatContactEnvelope(
+  move: CreatureMoveDefinition,
+  attackerRadius = 0.45,
+  targetRadius = 0.34,
+): CombatContactEnvelope {
+  const bodyAllowance = Math.max(
+    Math.max(0.3, move.radius),
+    Math.max(0, attackerRadius) * 0.34 + Math.max(0, targetRadius) * 0.46,
+  );
+  const activeDistance = Math.max(0, move.range) + bodyAllowance;
+  const contact = move.shape === "contact";
+  return Object.freeze({
+    acquireDistance: activeDistance + (contact ? 0.38 : 0.18),
+    commitDistance: Math.max(0, activeDistance - (contact ? 0.08 : 0)),
+    activeDistance,
+    verticalTolerance: Math.max(0.2, move.verticalTolerance),
+    facingCosine: contact ? Math.cos(Math.PI * 0.42) : -1,
+    targetGrace: contact ? 0.26 : 0.12,
+  });
+}
+
+/** Contact strikes plant their feet; ranged moves track; explicit mobility
+ * shapes retain authored translation. */
+export function creatureMoveMovementPolicy(move: CreatureMoveDefinition): CreatureMoveMovementPolicy {
+  if (move.shape === "contact") return "stationary";
+  if (move.shape === "dash" || move.aiTags.includes("mobility")) return "authored";
+  return "track";
+}
+
+/** Deterministic active-frame contact check with a tightly bounded target sweep. */
+export function evaluateCombatContact(check: CombatContactCheck): CombatContactResult {
+  const values = [
+    check.attacker.x, check.attacker.y, check.attacker.z, check.attackerFacing,
+    check.target.x, check.target.y, check.target.z,
+  ];
+  if (values.some((value) => !Number.isFinite(value))) return "invalid";
+  if (!check.lineOfSight) return "obstructed";
+  if (Math.abs(check.target.y - check.attacker.y) > check.envelope.verticalTolerance) return "dodged";
+
+  const currentX = check.target.x;
+  const currentZ = check.target.z;
+  let previousX = check.previousTarget?.x ?? currentX;
+  let previousZ = check.previousTarget?.z ?? currentZ;
+  const sweepX = previousX - currentX;
+  const sweepZ = previousZ - currentZ;
+  const sweepLength = Math.hypot(sweepX, sweepZ);
+  if (sweepLength > check.envelope.targetGrace && sweepLength > 0.00001) {
+    const scale = check.envelope.targetGrace / sweepLength;
+    previousX = currentX + sweepX * scale;
+    previousZ = currentZ + sweepZ * scale;
+  }
+  const segmentX = currentX - previousX;
+  const segmentZ = currentZ - previousZ;
+  const segmentLengthSquared = segmentX * segmentX + segmentZ * segmentZ;
+  const along = segmentLengthSquared <= 0.000001 ? 1 : Math.max(0, Math.min(1,
+    ((check.attacker.x - previousX) * segmentX + (check.attacker.z - previousZ) * segmentZ) / segmentLengthSquared,
+  ));
+  const closestX = previousX + segmentX * along;
+  const closestZ = previousZ + segmentZ * along;
+  if (Math.hypot(closestX - check.attacker.x, closestZ - check.attacker.z) > check.envelope.activeDistance) return "dodged";
+
+  const targetDx = currentX - check.attacker.x;
+  const targetDz = currentZ - check.attacker.z;
+  const targetDistance = Math.hypot(targetDx, targetDz);
+  if (targetDistance > 0.00001) {
+    const facingDot = (Math.cos(check.attackerFacing) * targetDx + Math.sin(check.attackerFacing) * targetDz) / targetDistance;
+    if (facingDot < check.envelope.facingCosine) return "dodged";
+  }
+  return "hit";
+}
+
 function tacticWeight(move: CreatureMoveDefinition, tactic: CreatureTactic) {
   if (tactic === "guard") return move.aiTags.includes("defense") ? 2.8 : move.aiTags.includes("control") ? 1.8 : 0;
   if (tactic === "support") return move.aiTags.includes("support") ? 3.5 : move.channel === "healing" ? 4 : -0.25;
@@ -71,7 +169,8 @@ export function scoreCreatureMoves(context: CreatureMoveChoiceContext): readonly
     if (move.requiresLineOfSight && !context.hasLineOfSight) continue;
     const targetsSelf = move.target === "self" || move.target === "ally";
     if (context.tactic === "hold" && !targetsSelf && !move.aiTags.includes("defense")) continue;
-    if (!targetsSelf && (context.distance > move.range + Math.max(0.3, move.radius) || context.verticalDistance > move.verticalTolerance)) continue;
+    if (!targetsSelf && !context.canReachTarget
+      && (context.distance > move.range + Math.max(0.3, move.radius) || context.verticalDistance > move.verticalTolerance)) continue;
 
     let score = 1;
     const reasons: string[] = [];

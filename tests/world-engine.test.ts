@@ -47,6 +47,18 @@ test("player fall damage begins only after four blocks", () => {
   assert.equal(fallDamageForDistance(99), 6);
 });
 
+test("authoritative ground snaps become short monotonic visual step offsets", () => {
+  const steppedUp = accumulateGroundStepPresentationOffset(0, 0.5, 1.5);
+  assert.equal(steppedUp, -1);
+  const firstFrame = stepGroundPresentationOffset(steppedUp, 1 / 60);
+  assert.ok(firstFrame > steppedUp && firstFrame < 0);
+  let settled = firstFrame;
+  for (let frame = 0; frame < 14; frame += 1) settled = stepGroundPresentationOffset(settled, 1 / 60);
+  assert.equal(settled, 0);
+  assert.equal(accumulateGroundStepPresentationOffset(0, 1.5, 0.5), 1);
+  assert.equal(accumulateGroundStepPresentationOffset(0.4, 0.5, 3.5), 0);
+});
+
 test("Giant Mooncaps keep full collision while rendering an inset stem", () => {
   assert.equal(BLOCKS[BlockId.MushroomCap].solid, true);
   assert.equal(BLOCKS[BlockId.MushroomCap].shape, "mooncap");
@@ -56,6 +68,7 @@ import { harvestPlant } from "../app/game/farming.ts";
 import { CHEST_VISUAL, chestLatchCenters } from "../app/game/chest-model.ts";
 import { ChunkWorld, BIOME_NAMES, BiomeId, CHUNK_SIZE, FLOWING_WATER_LEVEL_INSET, GENERATOR_VERSION, GLASS_OPACITY, LIQUID_SURFACE_INSET, MAX_Y, MIN_Y, PACKED_VERTEX_COLOR_RANGE, RADIAL_STREAMING_DISTANCE_THRESHOLD, SECTION_HEIGHT, WORLD_HEIGHT, blockIndex, chunkAabbRadialDistanceSquared, chunkKey, chunkWithinStreamingRadius, chunksWithinStreamingRadius, liquidSurfaceInsetForCell, splitCoordinate } from "../app/game/world.ts";
 import { MOB_DEFS, MOB_ORDER } from "../app/game/mobs.ts";
+import { accumulateGroundStepPresentationOffset, stepGroundPresentationOffset } from "../app/game/creature-pathing.ts";
 import { createHeldToolSpec, createRidgebackSpec, createZombieSpec, INSPECTOR_MODEL_SPECS, RIDGEBACK_GROUND_LIFT } from "../app/game/model-specs.ts";
 
 test("chunk coordinates remain correct across negative boundaries", () => {
@@ -1632,7 +1645,7 @@ test("shift-click equips armor and armor reduces damage while losing durability"
   assert.deepEqual(playedSamples, ["playerDirectDamage"]);
 });
 
-test("player impacts add bounded horizontal recoil and a small upward hit response", () => {
+test("player impacts double horizontal recoil and add a bounded grounded hop", () => {
   const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
   engine.position = new THREE.Vector3(0, 4, 0);
   engine.velocity = new THREE.Vector3();
@@ -1640,13 +1653,16 @@ test("player impacts add bounded horizontal recoil and a small upward hit respon
   engine.mountedCreatureId = null;
   engine.mountedBoatId = null;
   engine.seatedAt = null;
+  engine.grounded = true;
+  engine.world = { getBlock: () => BlockId.Air } as unknown as VoxelEngine["world"];
 
   const applied = engine.applyPlayerKnockback({ x: -1, z: 0 }, 2.4);
-  assert.equal(applied, 2.4);
-  assert.ok(engine.velocity.x > 2.3);
-  assert.equal(engine.velocity.y, 0.72);
+  assert.equal(applied, 4.8);
+  assert.ok(engine.velocity.x > 4.7);
+  assert.equal(engine.velocity.y, 3.8);
+  assert.equal(engine.grounded, false);
   for (let index = 0; index < 8; index += 1) engine.applyPlayerKnockback({ x: -1, z: 0 }, 4.6);
-  assert.ok(Math.hypot(engine.velocity.x, engine.velocity.z) <= 6.2 + Number.EPSILON);
+  assert.ok(Math.hypot(engine.velocity.x, engine.velocity.z) <= 9.5 + Number.EPSILON);
 });
 
 test("mob recoil stops at terrain and the recovery probe extracts an embedded ground creature", () => {

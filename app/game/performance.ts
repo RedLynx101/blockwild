@@ -3,6 +3,8 @@
 export const MIN_RENDER_DISTANCE = 2;
 export const DEFAULT_RENDER_DISTANCE = 10;
 export const MAX_RENDER_DISTANCE = 16;
+export const DEFAULT_BASIC_RENDER_DISTANCE = 20;
+export const MAX_BASIC_RENDER_DISTANCE = 32;
 export const DEFAULT_SIMULATION_DISTANCE = 8;
 export type ResourceMode = "auto" | "cpu" | "memory";
 
@@ -79,6 +81,7 @@ export function advanceSentientCoarseSimulation(accumulator: number, elapsedSeco
 export type ViewDistanceSettings = Readonly<{
   renderDistance: number;
   simulationDistance: number;
+  basicRenderDistance: number;
 }>;
 
 const finiteInteger = (value: unknown, fallback: number) =>
@@ -93,7 +96,11 @@ export function normalizeViewDistances(value: Partial<ViewDistanceSettings> | nu
     MIN_RENDER_DISTANCE,
     Math.min(renderDistance, finiteInteger(value?.simulationDistance, DEFAULT_SIMULATION_DISTANCE)),
   );
-  return { renderDistance, simulationDistance };
+  const basicRenderDistance = Math.max(
+    renderDistance,
+    Math.min(MAX_BASIC_RENDER_DISTANCE, finiteInteger(value?.basicRenderDistance, DEFAULT_BASIC_RENDER_DISTANCE)),
+  );
+  return { renderDistance, simulationDistance, basicRenderDistance };
 }
 
 /** Number of chunks in a square Chebyshev-radius window. */

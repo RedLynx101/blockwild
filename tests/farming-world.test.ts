@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { BLOCKS, CREATIVE_BLOCKS, BlockId, Item, ITEMS, LEAF_BLOCKS, RECIPES, blockContainsWater, worldTextureBlockForItem } from "../app/game/data.ts";
 import { applyFirstPersonHeldItemOrientation, createAvatarHeldItemModel } from "../app/game/held-items.ts";
-import { CAVE_ENTRANCE_REALIZATION_RATE, caveEntranceAt, caveEntranceForCell, caveFeatureAt } from "../app/game/caves.ts";
+import { CAVE_ENTRANCE_REALIZATION_RATE, caveEntranceAt, caveEntranceForCell, caveEntranceSampleForSite, caveFeatureAt, resolveSafeCaveEntranceSite } from "../app/game/caves.ts";
 import {
   canGrowPlant,
   canHitchLead,
@@ -360,6 +360,25 @@ test("cave entrances and room/chimney features stay sparse, deterministic, and v
   }
   assert.ok(chambers > 0);
   assert.ok(chimneys > 0);
+});
+
+test("safe cave mouths validate their full bank footprint and relocate deterministically", () => {
+  let primary: NonNullable<ReturnType<typeof caveEntranceForCell>> | null = null;
+  for (let cellX = -12; cellX <= 12 && !primary; cellX += 1) for (let cellZ = -12; cellZ <= 12 && !primary; cellZ += 1) {
+    primary = caveEntranceForCell(45678, cellX, cellZ);
+  }
+  assert.ok(primary);
+  const sample = (x: number, z: number) => ({
+    surfaceY: 48,
+    waterline: 32,
+    aquatic: Math.hypot(x - primary!.centerX, z - primary!.centerZ) <= primary!.radius + 2,
+  });
+  const site = resolveSafeCaveEntranceSite(45678, primary.cellX, primary.cellZ, sample);
+  assert.ok(site, "a dry deterministic alternative should preserve the realized mouth cell");
+  assert.notDeepEqual([site.centerX, site.centerZ], [primary.centerX, primary.centerZ]);
+  assert.deepEqual(resolveSafeCaveEntranceSite(45678, primary.cellX, primary.cellZ, sample), site);
+  assert.ok(caveEntranceSampleForSite(site, site.centerX, site.centerZ));
+  assert.equal(resolveSafeCaveEntranceSite(45678, primary.cellX, primary.cellZ, () => ({ surfaceY: 48, waterline: 32, aquatic: true })), null);
 });
 
 test("world generation exposes surface mouths, biome stone accents, greater relief, and sparse wild wheat", () => {

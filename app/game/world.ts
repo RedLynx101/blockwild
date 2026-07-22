@@ -73,7 +73,13 @@ import {
   isWaterloggedFloraBlock,
   type RenderLayer,
 } from "./data";
-import { CAVE_ENTRANCE_CELL_SIZE, caveEntranceAt, caveEntranceForCell, caveFeatureAt } from "./caves";
+import {
+  CAVE_ENTRANCE_CELL_SIZE,
+  caveEntranceSampleForSite,
+  caveFeatureAt,
+  resolveSafeCaveEntranceSite,
+  type SafeCaveEntranceSite,
+} from "./caves";
 import { CHEST_VISUAL } from "./chest-model";
 import { doorIsOpen, doorState, doorUsesXAxis, isDoorBlock } from "./doors";
 import { DENSE_CUTOUT_LEAF_POLICY, planFullTree, planSubmergedFlora, planSyrupPondsForChunk, syrupPondColumnAt, wildPeppermintHeight, type TreeForm, type TreePlanBlock } from "./ecology";
@@ -221,6 +227,14 @@ export enum BiomeId {
   SugarplumVale = 21,
   Glimmerwood = 22,
   SnowcapRange = 23,
+}
+
+function aquaticSurfaceBiome(biome: BiomeId) {
+  return biome === BiomeId.River
+    || biome === BiomeId.Ocean
+    || biome === BiomeId.DeepOcean
+    || biome === BiomeId.LumenTrench
+    || biome === BiomeId.Beach;
 }
 
 export const BIOME_NAMES: Record<number, string> = {
@@ -2834,6 +2848,7 @@ export class ChunkWorld {
   private settlementValidatedCandidateCache = new Map<string, SettlementCandidate | null>();
   private surfaceRoadGraphCache = new Map<string, readonly RoadEdge[]>();
   private surfaceRoadCache = new Map<string, readonly RoadPoint[]>();
+  private safeCaveEntranceCache = new Map<string, SafeCaveEntranceSite | null>();
   generationQueue: Array<{ cx: number; cz: number; distance: number }> = [];
   generationQueued = new Set<string>();
   generationEnqueuedAt = new Map<string, number>();
@@ -3105,6 +3120,7 @@ export class ChunkWorld {
     this.settlementValidatedCandidateCache.clear();
     this.surfaceRoadGraphCache.clear();
     this.surfaceRoadCache.clear();
+    this.safeCaveEntranceCache.clear();
     this.settlementIndex.clear();
     this.hiddenChestVisuals.clear();
     this.blockFacings.clear();
@@ -4949,7 +4965,16 @@ export class ChunkWorld {
           aquiferColumn(gx, gz - 1),
           aquiferColumn(gx, gz + 1),
         ];
-        const caveEntrance = caveFrequency > 0 ? caveEntranceAt(this.seed, gx, gz, column.height, column.waterline) : null;
+        const caveEntrance = caveFrequency > 0 ? this.safeCaveEntranceAt(gx, gz, column, sample) : null;
+        const bankRing = [
+          sample(gx - 3, gz), sample(gx + 3, gz), sample(gx, gz - 3), sample(gx, gz + 3),
+          sample(gx - 2, gz - 2), sample(gx + 2, gz - 2), sample(gx - 2, gz + 2), sample(gx + 2, gz + 2),
+        ];
+        const nearAquaticBank = bankRing.some((neighbor) => aquaticSurfaceBiome(neighbor.biome)
+          || neighbor.height <= neighbor.waterline + 2);
+        const protectedCaveRoofY = nearAquaticBank
+          ? Math.min(column.height - 7, Math.min(...bankRing.map((neighbor) => neighbor.height)) - 3)
+          : column.height - 4;
         for (let y = MIN_Y; y <= Math.max(column.height, column.waterline); y += 1) {
           let type = BlockId.Air;
           if (y <= MIN_Y + extraBedrock) type = BlockId.Bedrock;
@@ -4959,7 +4984,7 @@ export class ChunkWorld {
             else type = y < MIN_Y + 18 ? BlockId.Basalt : y < -10 ? BlockId.Deepstone : column.biome === BiomeId.Volcanic ? BlockId.Basalt : BlockId.Stone;
 
             const surfaceMouth = caveEntrance !== null && y >= caveEntrance.floorY && y <= column.height;
-            if (caveFrequency > 0 && (y < column.height - 4 || surfaceMouth) && y > MIN_Y + 4) {
+            if (caveFrequency > 0 && (y < protectedCaveRoofY || surfaceMouth) && y > MIN_Y + 4) {
               const depth = column.height - y;
               const baseCheeseThreshold = lerp(0.5, 0.34, smoothstep(12, 52, depth));
               const cheeseThreshold = caveFrequency === 1 ? baseCheeseThreshold : baseCheeseThreshold + (1 - caveFrequency) * 0.1;
@@ -5142,6 +5167,38 @@ export class ChunkWorld {
     if (biome === BiomeId.RainveilJungle) return [BlockId.JungleGrass, BlockId.Dirt];
     if (biome === BiomeId.SakurabloomGrove) return [BlockId.SakuraGrass, BlockId.Dirt];
     return [BlockId.Grass, BlockId.Dirt];
+  }
+
+  safeCaveEntranceSiteForCell(
+    cellX: number,
+    cellZ: number,
+    sampleColumn: (x: number, z: number) => ColumnSample = (x, z) => this.sampleColumn(x, z),
+  ) {
+    const key = `${cellX},${cellZ}`;
+    if (this.safeCaveEntranceCache.has(key)) return this.safeCaveEntranceCache.get(key) ?? null;
+    const site = resolveSafeCaveEntranceSite(this.seed, cellX, cellZ, (x, z) => {
+      const column = sampleColumn(x, z);
+      return {
+        surfaceY: column.height,
+        waterline: column.waterline,
+        aquatic: aquaticSurfaceBiome(column.biome),
+      };
+    });
+    this.safeCaveEntranceCache.set(key, site);
+    return site;
+  }
+
+  safeCaveEntranceAt(
+    x: number,
+    z: number,
+    column = this.sampleColumn(x, z),
+    sampleColumn: (sampleX: number, sampleZ: number) => ColumnSample = (sampleX, sampleZ) => this.sampleColumn(sampleX, sampleZ),
+  ) {
+    const cellX = Math.floor(x / CAVE_ENTRANCE_CELL_SIZE);
+    const cellZ = Math.floor(z / CAVE_ENTRANCE_CELL_SIZE);
+    const site = this.safeCaveEntranceSiteForCell(cellX, cellZ, sampleColumn);
+    const entrance = caveEntranceSampleForSite(site, x, z);
+    return entrance && column.height >= site!.minimumSurfaceY ? entrance : null;
   }
 
   undergroundBiomeAt(x: number, y: number, z: number) {
@@ -5350,12 +5407,17 @@ export class ChunkWorld {
     const entranceMinCellZ = Math.floor((minZ - expanded) / CAVE_ENTRANCE_CELL_SIZE);
     const entranceMaxCellZ = Math.floor((maxZ + expanded) / CAVE_ENTRANCE_CELL_SIZE);
     for (let cellX = entranceMinCellX; cellX <= entranceMaxCellX; cellX += 1) for (let cellZ = entranceMinCellZ; cellZ <= entranceMaxCellZ; cellZ += 1) {
-      const entrance = caveEntranceForCell(this.seed, cellX, cellZ);
+      const entrance = this.safeCaveEntranceSiteForCell(cellX, cellZ, sample);
       if (!entrance) continue;
       const column = sample(entrance.centerX, entrance.centerZ);
-      if (column.height <= column.waterline + 3) continue;
       const target = nearestUpperCaveNode(this.seed, entrance.centerX, entrance.centerZ);
-      tunnel({ x: entrance.centerX, y: column.height - 1, z: entrance.centerZ }, target, 2.15 * radiusScale, false, true);
+      const throatTarget = {
+        x: entrance.centerX,
+        y: Math.min(column.height - 7, entrance.rimY - 6),
+        z: entrance.centerZ,
+      };
+      tunnel({ x: entrance.centerX, y: entrance.rimY - 1, z: entrance.centerZ }, throatTarget, Math.max(1.55, entrance.radius * 0.45) * radiusScale, false, true);
+      tunnel(throatTarget, target, 2.15 * radiusScale, false, false);
     }
 
     const isFluid = (block: BlockId) => block === BlockId.Water || block === BlockId.Lava;
@@ -5693,7 +5755,7 @@ export class ChunkWorld {
         const z = cellZ * cellSize + 4 + Math.floor(hash2(cellX, cellZ, this.seed ^ 0x22222222) * 2);
         if (x * x + z * z < 28) continue;
         const column = sample(x, z);
-        if (caveEntranceAt(this.seed, x, z, column.height, column.waterline)) continue;
+        if (this.safeCaveEntranceAt(x, z, column)) continue;
         if (syrupPondColumnAt(this.seedText, x, z, sample, BiomeId.SugarplumVale)) continue;
         const roll = hash2(cellX, cellZ, this.seed ^ 0x33333333);
         const density: Partial<Record<BiomeId, number>> = {
@@ -5802,7 +5864,7 @@ export class ChunkWorld {
       const z = minZ + lz;
       const column = sample(x, z);
       if (column.height <= column.waterline) continue;
-      const caveMouth = Boolean(caveEntranceAt(this.seed, x, z, column.height, column.waterline));
+      const caveMouth = Boolean(this.safeCaveEntranceAt(x, z, column));
       if (caveMouth || syrupPondCells.has(`${x},${z}`)) continue;
       const aboveIndex = blockIndex(lx, column.height + 1, lz);
       const ground = chunk.blocks[blockIndex(lx, column.height, lz)] as BlockId;
@@ -5941,7 +6003,7 @@ export class ChunkWorld {
         const column = sample(placement.x, placement.z);
         const inWaterway = column.height <= column.waterline
           || [BiomeId.DeepOcean, BiomeId.Ocean, BiomeId.River].includes(column.biome);
-        const overCaveMouth = caveEntranceAt(this.seed, placement.x, placement.z, column.height, column.waterline) !== null;
+        const overCaveMouth = this.safeCaveEntranceAt(placement.x, placement.z, column) !== null;
         const inLegacyClearing = legacyClearings.some((bounds) => placement.x >= bounds.minX && placement.x <= bounds.maxX
           && placement.z >= bounds.minZ && placement.z <= bounds.maxZ);
         if (inWaterway || overCaveMouth || inLegacyClearing) continue;
@@ -8499,6 +8561,48 @@ export class ChunkWorld {
     ));
     this.queueChunkConsolidation(chunk, changedLayers);
     if (completingSeamRebuild) this.releaseSeamPresentationBlocker(queueKey);
+  }
+
+  /** Direct presentation exposure, separate from propagated skylight. */
+  directSkyExposureAt(x: number, y: number, z: number) {
+    const sampleX = Math.floor(x + 0.5);
+    const sampleZ = Math.floor(z + 0.5);
+    const sampleY = Math.floor(y + 0.5);
+    let open = 0;
+    let total = 0;
+    for (const [dx, dz, weight] of [[0, 0, 3], [1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1]] as const) {
+      const top = this.skyTopAt(sampleX + dx, sampleZ + dz);
+      total += weight;
+      if (top !== undefined && top < sampleY) open += weight;
+    }
+    return total > 0 ? clamp(open / total, 0, 1) : 0;
+  }
+
+  /** Sparse conservative voxel ray used only for sun/moon presentation. */
+  celestialVisibleAt(
+    x: number,
+    y: number,
+    z: number,
+    direction: Readonly<{ x: number; y: number; z: number }>,
+  ) {
+    const length = Math.hypot(direction.x, direction.y, direction.z);
+    if (length <= 0.0001 || direction.y <= 0.015) return false;
+    if (this.directSkyExposureAt(x, y, z) >= 0.99) return true;
+    const dx = direction.x / length;
+    const dy = direction.y / length;
+    const dz = direction.z / length;
+    const maxDistance = Math.min(224, Math.max(8, (MAX_Y + 1 - y) / dy));
+    const step = 0.55;
+    for (let distance = step; distance <= maxDistance; distance += step) {
+      const sampleX = Math.floor(x + dx * distance + 0.5);
+      const sampleY = Math.floor(y + dy * distance + 0.5);
+      const sampleZ = Math.floor(z + dz * distance + 0.5);
+      if (sampleY > MAX_Y) return true;
+      const type = this.getBlock(sampleX, sampleY, sampleZ);
+      if (type === undefined) return false;
+      if (blocksSky(type)) return false;
+    }
+    return false;
   }
 
   unloadChunk(key: string) {

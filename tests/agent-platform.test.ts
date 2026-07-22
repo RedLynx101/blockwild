@@ -3,6 +3,7 @@ import { describe, test } from "node:test";
 import {
   AGENT_DEFAULT_RENDER_DISTANCE,
   AGENT_DEFAULT_SIMULATION_DISTANCE,
+  AGENT_DEFAULT_BASIC_RENDER_DISTANCE,
   AGENT_PLATFORM_SCHEMA_VERSION,
   AgentAuthority,
   AgentChatRing,
@@ -42,6 +43,7 @@ describe("agent platform contracts", () => {
   test("fixed agent resource profile remains render 4 and simulation 3", () => {
     assert.equal(AGENT_DEFAULT_RENDER_DISTANCE, 4);
     assert.equal(AGENT_DEFAULT_SIMULATION_DISTANCE, 3);
+    assert.equal(AGENT_DEFAULT_BASIC_RENDER_DISTANCE, 4);
   });
 
   test("commands round trip and malformed, oversized, stale, and dangerous forms fail closed", () => {
@@ -230,7 +232,7 @@ describe("agent platform contracts", () => {
       world: { day: 1, time: 0.3, weather: "clear", occupiedChunkReady: true, players: [], nearby: [], reachable: [] },
       chat: { newestSequence: 0, newChatCount: 0, messages: [] },
       tasks: [], waypoints: [],
-      performance: { fps: 30, renderDistance: 4, simulationDistance: 3, commandQueue: 0, channelBackpressure: 0 },
+      performance: { fps: 30, renderDistance: 4, simulationDistance: 3, basicRenderDistance: 4, commandQueue: 0, channelBackpressure: 0 },
     };
     assert.equal(validateAgentObservation(observation), true);
   });

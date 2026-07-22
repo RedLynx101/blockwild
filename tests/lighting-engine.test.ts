@@ -4,9 +4,40 @@ import * as THREE from "three";
 import { BlockId } from "../app/game/data.ts";
 import { ENVIRONMENT_LIGHT_POOL_SIZE, ENVIRONMENT_LIGHT_QUERY_RADIUS, VoxelEngine, environmentLightPriority, nextAdaptivePixelRatio, type EnvironmentLightSource, type GameSettings } from "../app/game/engine.ts";
 import type { ChunkWorld } from "../app/game/world.ts";
+import { OPEN_CAMERA_ENVIRONMENT, cameraEnvironmentTarget, stepCameraEnvironment } from "../app/game/camera-environment.ts";
 
 const camera = { x: 0, y: 8, z: 0 };
 const forward = { x: 0, y: 0, z: -1 };
+
+test("camera enclosure darkens deep caves without turning a shallow roof into a cave", () => {
+  const open = cameraEnvironmentTarget({
+    propagatedSkyLight: 1,
+    directSkyExposure: 1,
+    depthBelowSurface: 0,
+    sunUnobstructed: true,
+    moonUnobstructed: true,
+  });
+  const roof = cameraEnvironmentTarget({
+    propagatedSkyLight: 0.15,
+    directSkyExposure: 0,
+    depthBelowSurface: 0.5,
+    sunUnobstructed: false,
+    moonUnobstructed: false,
+  });
+  const cave = cameraEnvironmentTarget({
+    propagatedSkyLight: 0.08,
+    directSkyExposure: 0,
+    depthBelowSurface: 18,
+    sunUnobstructed: false,
+    moonUnobstructed: false,
+  });
+  assert.equal(open.caveBackdropBlend, 0);
+  assert.ok(roof.caveBackdropBlend < 0.15);
+  assert.ok(cave.caveBackdropBlend > 0.95);
+  assert.equal(cave.sunVisibility, 0);
+  const stepped = stepCameraEnvironment(OPEN_CAMERA_ENVIRONMENT, cave, 1 / 60);
+  assert.ok(stepped.caveBackdropBlend > 0 && stepped.caveBackdropBlend < cave.caveBackdropBlend);
+});
 
 test("environment light selection is nearest-first and independent of facing", () => {
   const litTerrainAhead = environmentLightPriority({ x: 0, y: 8, z: -42, type: BlockId.Torch }, camera, forward);
@@ -47,7 +78,7 @@ test("the fixed light pool binds to the nearest source even when it is beside th
     requestedRadius = radius;
     return sources;
   } } as unknown as ChunkWorld;
-  engine.settings = { volume: 0, musicVolume: 0.72, muted: true, sensitivity: 0.002, fov: 72, weather: "clear", renderDistance: 5, simulationDistance: 5, showFps: false, showMinimap: false, showBreakingTexture: true, showBreakProgress: false, showToolEffectiveness: true, debugTelemetry: false, debugTelemetryMaxMinutes: 60, resourceMode: "auto", agentVoiceMode: "spatial" } satisfies GameSettings;
+  engine.settings = { volume: 0, musicVolume: 0.72, muted: true, sensitivity: 0.002, fov: 72, weather: "clear", renderDistance: 5, simulationDistance: 5, basicRenderDistance: 8, showFps: false, showMinimap: false, showBreakingTexture: true, showBreakProgress: false, showToolEffectiveness: true, debugTelemetry: false, debugTelemetryMaxMinutes: 60, resourceMode: "auto", agentVoiceMode: "spatial" } satisfies GameSettings;
   engine.placedLightPool = [new THREE.PointLight()];
   engine.environmentLightCandidates = [];
   engine.environmentLightCandidateCache = [];

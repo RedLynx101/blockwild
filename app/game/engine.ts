@@ -1,5 +1,12 @@
 import * as THREE from "three";
 import { SynthAudio, type SampleKind } from "./audio";
+import { BasicWorldRenderer } from "./basic-world-renderer";
+import {
+  OPEN_CAMERA_ENVIRONMENT,
+  cameraEnvironmentTarget as deriveCameraEnvironmentTarget,
+  stepCameraEnvironment,
+  type CameraEnvironmentState,
+} from "./camera-environment";
 import {
   distributeInventoryCursor,
   goldForIngots,
@@ -125,8 +132,11 @@ import {
 } from "./combat-resolver";
 import {
   beginCreatureMove,
+  combatContactEnvelope,
   chooseThreatTarget as chooseCombatThreatTarget,
   chooseCreatureMove,
+  creatureMoveMovementPolicy,
+  evaluateCombatContact,
   markCreatureMoveApplied,
   stepCreatureMove,
   stepMoveCooldowns,
@@ -311,6 +321,7 @@ import {
   type NaturalPopulationRecord,
 } from "./ecology-population";
 import {
+  accumulateGroundStepPresentationOffset,
   chooseBirdFlightRoute,
   chooseBirdPerch,
   chooseCreatureRoute,
@@ -326,6 +337,7 @@ import {
   recordCreatureRouteProgress,
   separateCreatureCircles,
   splitCreatureSeparation,
+  stepGroundPresentationOffset,
   shouldTeleportFollower,
   type BirdPerchCandidate,
   type CreatureRouteProbe,
@@ -520,6 +532,7 @@ import {
 import {
   DEFAULT_RENDER_DISTANCE,
   DEFAULT_SIMULATION_DISTANCE,
+  DEFAULT_BASIC_RENDER_DISTANCE,
   normalizeViewDistances,
   PerformanceSampler,
   LongAnimationFrameSampler,
@@ -616,6 +629,7 @@ import {
   AgentDiagnostics,
   AGENT_DEFAULT_RENDER_DISTANCE,
   AGENT_DEFAULT_SIMULATION_DISTANCE,
+  AGENT_DEFAULT_BASIC_RENDER_DISTANCE,
   createAgentTask,
   createAgentWaypoint,
   defaultAgentCapabilities,
@@ -1020,6 +1034,7 @@ export type GameSettings = {
   weather: Weather;
   renderDistance: number;
   simulationDistance: number;
+  basicRenderDistance: number;
   showFps: boolean;
   showMinimap: boolean;
   showBreakingTexture: boolean;
@@ -1539,6 +1554,7 @@ type MobEntity = {
   hostile: boolean;
   definition: MobDefinition;
   group: THREE.Group;
+  presentationRoot: THREE.Group;
   visual: THREE.Group;
   sentientLod: THREE.Group | null;
   sentientTier: SentientSimulationTier;
@@ -1635,6 +1651,9 @@ type MobEntity = {
   threatLedger: readonly ThreatEntry[];
   moveCooldowns: Record<string, number>;
   activeMove: ActiveCreatureMove | null;
+  combatAlignmentSeconds: number;
+  activeMoveTargetPrevious: THREE.Vector3 | null;
+  stepPresentationOffset: number;
   /** Ephemeral recoil and recovery state; neither belongs in save data. */
   pushVelocity?: THREE.Vector2;
   terrainCheckTimer?: number;
@@ -3263,6 +3282,7 @@ export function readSettings(): GameSettings {
   const fallbackDistances = normalizeViewDistances({
     renderDistance: mobile ? 6 : DEFAULT_RENDER_DISTANCE,
     simulationDistance: mobile ? 4 : DEFAULT_SIMULATION_DISTANCE,
+    basicRenderDistance: mobile ? 6 : DEFAULT_BASIC_RENDER_DISTANCE,
   });
   const fallback: GameSettings = {
     volume: 0.55,
@@ -3289,6 +3309,7 @@ export function readSettings(): GameSettings {
     const distances = normalizeViewDistances({
       renderDistance: Number(parsed.renderDistance ?? fallback.renderDistance),
       simulationDistance: Number(parsed.simulationDistance ?? fallback.simulationDistance),
+      basicRenderDistance: Number(parsed.basicRenderDistance ?? fallback.basicRenderDistance),
     });
     return {
       volume: clamp(Number(parsed.volume ?? fallback.volume), 0, 1),
@@ -3775,6 +3796,7 @@ export class VoxelEngine {
   scene = new THREE.Scene();
   camera: THREE.PerspectiveCamera;
   world = new ChunkWorld();
+  basicWorldRenderer: BasicWorldRenderer;
   private originPreviewWorld: ChunkWorld | null = null;
   butterflies: ButterflySystem;
   ambienceGroup = new THREE.Group();
@@ -3812,6 +3834,8 @@ export class VoxelEngine {
   skyVisibilityTarget = 1;
   subterraneanBlend = 0;
   subterraneanBlendTarget = 0;
+  cameraEnvironment: CameraEnvironmentState = OPEN_CAMERA_ENVIRONMENT;
+  cameraEnvironmentTarget: CameraEnvironmentState = OPEN_CAMERA_ENVIRONMENT;
   cavePresentationActive = false;
   skyColor = new THREE.Color();
   daylightSkyColor = new THREE.Color("#78b9ed");
@@ -4248,11 +4272,13 @@ export class VoxelEngine {
 
   constructor(canvas: HTMLCanvasElement, events: EngineEvents, settings = readSettings(), options: VoxelEngineOptions = {}) {
     this.agentMode = options.agentMode === true;
+    this.basicWorldRenderer = new BasicWorldRenderer(!this.agentMode);
     this.agentTestAdmin = this.agentMode && options.agentTestAdmin === true;
     if (this.agentMode) settings = {
       ...settings,
       renderDistance: AGENT_DEFAULT_RENDER_DISTANCE,
       simulationDistance: AGENT_DEFAULT_SIMULATION_DISTANCE,
+      basicRenderDistance: AGENT_DEFAULT_BASIC_RENDER_DISTANCE,
       showFps: false,
       showMinimap: false,
       resourceMode: "cpu",
@@ -4299,7 +4325,7 @@ export class VoxelEngine {
     this.renderPixelRatio = this.nativePixelRatio;
     this.renderer.setPixelRatio(this.renderPixelRatio);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.camera = new THREE.PerspectiveCamera(settings.fov, 1, 0.05, 256);
+    this.camera = new THREE.PerspectiveCamera(settings.fov, 1, 0.05, Math.max(256, (settings.basicRenderDistance + 2) * CHUNK_SIZE));
     this.camera.rotation.order = "YXZ";
     this.world.setRenderDistance(settings.renderDistance);
     this.world.setRetentionPadding(chunkRetentionPadding(settings.resourceMode));
@@ -4311,7 +4337,7 @@ export class VoxelEngine {
       this.saveSoon();
       this.emitHud(true);
     });
-    this.scene.add(this.camera, this.world.group, this.ambienceGroup, this.creatureGroup, this.dropGroup, this.boatGroup, this.exhibitGroup, this.projectileGroup);
+    this.scene.add(this.camera, this.world.group, this.basicWorldRenderer.group, this.ambienceGroup, this.creatureGroup, this.dropGroup, this.boatGroup, this.exhibitGroup, this.projectileGroup);
     this.scene.add(this.butterflies.group);
     this.localPlayerModel.group.visible = false;
     this.scene.add(this.localPlayerModel.group);
@@ -6173,6 +6199,8 @@ export class VoxelEngine {
         loadedChunks: this.world.loadedCount,
         renderDistance: this.settings.renderDistance,
         simulationDistance: this.settings.simulationDistance,
+        basicRenderDistance: this.settings.basicRenderDistance,
+        basicRenderer: this.basicWorldRenderer.stats(this.averageFrameMs > 24),
         player: { x: Number(this.position.x.toFixed(2)), y: Number(this.position.y.toFixed(2)), z: Number(this.position.z.toFixed(2)) },
         streaming: this.world.streamingDiagnostics(),
       },
@@ -10598,87 +10626,89 @@ export class VoxelEngine {
     }
   }
 
+  private applyCreatureMoveToRemotePlayer(mob: MobEntity, moveId: string, playerId: string) {
+    const session = this.multiplayer;
+    const remote = this.remotePlayers.get(playerId);
+    const current = this.multiplayerPlayerStates.get(playerId);
+    const move = CREATURE_MOVES[moveId];
+    if (!session || session.role !== "host" || !remote || !current || current.health <= 0 || !move) return false;
+    const pose = remote.target;
+    const difficultyScale = this.worldOptions.difficulty === "hard" ? 1.35 : this.worldOptions.difficulty === "easy" ? 0.75 : 1;
+    const baseAmount = mob.damage * creatureOutputMultiplier(creatureProfile(mob.kind).stats, mob.progression.level);
+    let damage = Math.max(0.5, Math.round(effectFromMove(move, baseAmount).baseAmount * difficultyScale * 2) / 2);
+    let offhand = current.offhand;
+    const offhandSlot = inventorySlotFromNetwork(offhand ?? null);
+    const shieldKind = pose.shieldRaised ? shieldKindForItem(offhandSlot?.item) : null;
+    if (shieldKind && offhandSlot) {
+      const maximum = ITEMS[offhandSlot.item]?.maxDurability ?? SHIELD_PROFILES[shieldKind].maxDurability;
+      const block = resolveShieldHit({
+        kind: shieldKind,
+        raised: true,
+        durability: offhandSlot.durability ?? maximum,
+        incomingDamage: damage,
+        attackerDirection: { x: mob.group.position.x - pose.x, z: mob.group.position.z - pose.z },
+        defenderYaw: pose.yaw,
+      });
+      if (block.blocked) {
+        damage = Math.max(0.5, Math.round(block.damage * 2) / 2);
+        offhand = block.broken ? null : networkItemStack({ ...offhandSlot, durability: block.durability });
+      }
+    }
+    const remainingHealth = Math.max(0, current.health - damage);
+    const killed = remainingHealth <= 0;
+    let inventory = current.inventory;
+    let equipment = current.equipment;
+    if (killed && !this.worldOptions.keepInventory) {
+      for (const slot of [...current.inventory, ...Object.values(current.equipment), offhand ?? null]) {
+        const item = inventorySlotFromNetwork(slot);
+        if (item) this.spawnDrop(item.item, item.count, new THREE.Vector3(pose.x, pose.y + 0.5, pose.z), item.durability, item.metadata);
+      }
+      inventory = blankInventory().map(networkItemStack);
+      equipment = Object.fromEntries((Object.keys(current.equipment) as EquipmentSlot[]).map((slot) => [slot, null])) as PlayerSessionSnapshot["equipment"];
+      offhand = null;
+    }
+    this.multiplayerPlayerStates.set(playerId, {
+      ...current,
+      inventory,
+      equipment,
+      offhand,
+      health: killed ? 10 : remainingHealth,
+      hunger: killed ? Math.max(6, current.hunger) : current.hunger,
+      revision: current.revision + 1,
+    });
+    const requestId = `mob_hit_${mob.id}_${move.id}_${this.multiplayerTick}`;
+    try {
+      session.sendCombatAction({
+        requestId,
+        actorId: session.identity.id,
+        tick: this.multiplayerTick,
+        targetKind: "player",
+        targetId: playerId,
+        attack: "melee",
+        status: "accepted",
+        resultingHealth: remainingHealth,
+        killed,
+      }, playerId);
+    } catch (error) {
+      this.multiplayerState.error = error instanceof Error ? error.message : String(error);
+    }
+    this.sendAuthoritativePlayerState(playerId, requestId);
+    mob.attackCooldown = Math.max(mob.attackCooldown, move.cooldownSeconds);
+    mob.awarenessTimer = Math.max(mob.awarenessTimer, 3);
+    this.saveSoon();
+    return true;
+  }
+
   private updateRemotePlayerMobDamage() {
     const session = this.multiplayer;
     if (!session || session.role !== "host" || this.worldOptions.difficulty === "peaceful") return;
     for (const mob of this.mobs) {
-      if (!mob.hostile || mob.health <= 0 || mob.attackCooldown > 0) continue;
+      if (!mob.hostile || mob.health <= 0 || mob.attackCooldown > 0 || mob.activeMove) continue;
       for (const [playerId, remote] of this.remotePlayers) {
-        const pose = remote.target;
-        const playerCenter = new THREE.Vector3(pose.x, pose.y + 0.8, pose.z);
-        const mobCenter = mob.group.position.clone().add(new THREE.Vector3(0, mob.definition.height * this.mobBaseScale(mob) * 0.45, 0));
-        const reach = Math.max(1.15, creatureMeleeReach(mob.definition, this.mobBaseScale(mob)));
-        if (mobCenter.distanceToSquared(playerCenter) > reach * reach || !this.hasClearLineOfSight(mobCenter, playerCenter)) continue;
         const current = this.multiplayerPlayerStates.get(playerId);
         if (!current || current.health <= 0) continue;
-        const difficultyScale = this.worldOptions.difficulty === "hard" ? 1.35 : this.worldOptions.difficulty === "easy" ? 0.75 : 1;
-        let damage = Math.max(0.5, Math.round(mob.damage * difficultyScale * 2) / 2);
-        let offhand = current.offhand;
-        const offhandSlot = inventorySlotFromNetwork(offhand ?? null);
-        const shieldKind = pose.shieldRaised ? shieldKindForItem(offhandSlot?.item) : null;
-        if (shieldKind && offhandSlot) {
-          const maximum = ITEMS[offhandSlot.item]?.maxDurability ?? SHIELD_PROFILES[shieldKind].maxDurability;
-          const block = resolveShieldHit({
-            kind: shieldKind,
-            raised: true,
-            durability: offhandSlot.durability ?? maximum,
-            incomingDamage: damage,
-            attackerDirection: { x: mob.group.position.x - pose.x, z: mob.group.position.z - pose.z },
-            defenderYaw: pose.yaw,
-          });
-          if (block.blocked) {
-            damage = Math.max(0.5, Math.round(block.damage * 2) / 2);
-            offhand = block.broken ? null : networkItemStack({ ...offhandSlot, durability: block.durability });
-          }
-        }
-        const remainingHealth = Math.max(0, current.health - damage);
-        const killed = remainingHealth <= 0;
-        let inventory = current.inventory;
-        let equipment = current.equipment;
-        if (killed && !this.worldOptions.keepInventory) {
-          for (const slot of [...current.inventory, ...Object.values(current.equipment), offhand ?? null]) {
-            const item = inventorySlotFromNetwork(slot);
-            if (item) this.spawnDrop(item.item, item.count, new THREE.Vector3(pose.x, pose.y + 0.5, pose.z), item.durability, item.metadata);
-          }
-          inventory = blankInventory().map(networkItemStack);
-          equipment = Object.fromEntries((Object.keys(current.equipment) as EquipmentSlot[]).map((slot) => [slot, null])) as PlayerSessionSnapshot["equipment"];
-          offhand = null;
-        }
-        const next = {
-          ...current,
-          inventory,
-          equipment,
-          offhand,
-          health: killed ? 10 : remainingHealth,
-          hunger: killed ? Math.max(6, current.hunger) : current.hunger,
-          revision: current.revision + 1,
-        };
-        this.multiplayerPlayerStates.set(playerId, next);
-        const requestId = `mob_hit_${mob.id}_${this.multiplayerTick}`;
-        try {
-          session.sendCombatAction({
-            requestId,
-            // CombatAction actor ids are peer identities. The host is the
-            // authoritative actor for simulated mob damage; the mob id is
-            // already encoded in requestId and must not violate the protocol.
-            actorId: session.identity.id,
-            tick: this.multiplayerTick,
-            targetKind: "player",
-            targetId: playerId,
-            attack: "melee",
-            status: "accepted",
-            resultingHealth: remainingHealth,
-            killed,
-          }, playerId);
-        } catch (error) {
-          // Never let a transport validation/close race abort the render loop.
-          this.multiplayerState.error = error instanceof Error ? error.message : String(error);
-        }
-        this.sendAuthoritativePlayerState(playerId, requestId);
-        mob.attackCooldown = 1.2;
-        mob.awarenessTimer = Math.max(mob.awarenessTimer, 3);
-        this.saveSoon();
-        break;
+        if (Math.hypot(remote.target.x - mob.group.position.x, remote.target.z - mob.group.position.z) > 6.2) continue;
+        if (this.beginPlannedCreatureMove(mob, null, playerId)) break;
       }
     }
   }
@@ -22714,8 +22744,15 @@ export class VoxelEngine {
         if (mob.kind === "syrupfin" ? liquid !== BlockId.Syrup : !blockContainsWater(liquid)) return false;
       }
       if (!this.mobTerrainClearAt(mob, x, targetY, z)) return false;
+      const previousY = mob.group.position.y;
       mob.group.position.set(x, targetY, z);
       if (movement === "ground") {
+        mob.stepPresentationOffset = accumulateGroundStepPresentationOffset(
+          mob.stepPresentationOffset,
+          previousY,
+          targetY,
+        );
+        if (mob.presentationRoot) mob.presentationRoot.position.y = mob.stepPresentationOffset;
         mob.baseY = targetY;
         referenceGround = Math.round(targetY - mob.definition.footOffset);
       }
@@ -22885,20 +22922,31 @@ export class VoxelEngine {
       dx /= distance;
       dz /= distance;
     }
-    const speed = clamp(strength, 0, 4.6);
+    const playerBlock = this.world?.getBlock?.(
+      Math.floor(this.position.x + 0.5),
+      Math.floor(this.position.y + 0.5),
+      Math.floor(this.position.z + 0.5),
+    );
+    const swimming = blockContainsWater(playerBlock);
+    const speed = clamp(strength * (swimming ? 1.2 : 2), 0, swimming ? 5.5 : 9.2);
     this.velocity.x += dx * speed;
     this.velocity.z += dz * speed;
     const horizontalSpeed = Math.hypot(this.velocity.x, this.velocity.z);
-    if (horizontalSpeed > 6.2) {
-      this.velocity.x = this.velocity.x / horizontalSpeed * 6.2;
-      this.velocity.z = this.velocity.z / horizontalSpeed * 6.2;
+    const horizontalCap = swimming ? 5.7 : 9.5;
+    if (horizontalSpeed > horizontalCap) {
+      this.velocity.x = this.velocity.x / horizontalSpeed * horizontalCap;
+      this.velocity.z = this.velocity.z / horizontalSpeed * horizontalCap;
     }
-    this.velocity.y = Math.max(this.velocity.y, 0.72);
+    if (swimming) this.velocity.y = Math.max(this.velocity.y, 1.5);
+    else if (this.grounded) {
+      this.velocity.y = Math.max(this.velocity.y, 3.8);
+      this.grounded = false;
+    }
     return speed;
   }
 
   playPlayerDamageSound() {
-    if (typeof this.audio.playSample === "function") this.audio.playSample("playerDirectDamage", { gain: 0.78 });
+    if (typeof this.audio.playSample === "function") this.audio.playSample("playerDirectDamage", { gain: 1.1 });
     else this.audio.play("hurt");
   }
 
@@ -23258,8 +23306,13 @@ export class VoxelEngine {
     const visualBounds = new THREE.Box3().setFromObject(visual);
     const visualBaseY = visual.position.y;
     const visualMinY = visualBounds.min.y;
+    const presentationRoot = new THREE.Group();
+    presentationRoot.name = `${kind}-presentation-root`;
+    group.remove(visual);
+    presentationRoot.add(visual);
+    group.add(presentationRoot);
     const sentientLod = definition.sentient ? createSentientLodVisual(kind, id, visualBounds) : null;
-    if (sentientLod) group.add(sentientLod);
+    if (sentientLod) presentationRoot.add(sentientLod);
     group.position.copy(position);
     this.creatureGroup.add(group);
     const angle = options.yaw ?? Math.random() * Math.PI * 2;
@@ -23345,7 +23398,7 @@ export class VoxelEngine {
     const shadeHealthScale = shadeState ? shadecrawlerScale(shadeState) : 1;
     const ordinaryMaximumHealth = creatureMaximumHealth(definition, profile.stats, progression.level) * shadeHealthScale;
     const mob: MobEntity = {
-      id, specimenId, kind, name: options.name?.trim() || primeProfile?.name || dragonState?.customName || petState?.name || definition.name, hostile: definition.hostile && !shadeState?.tamed && !dragonState?.tamed && (dragonState?.stage ?? 2) > 1, definition, group, visual,
+      id, specimenId, kind, name: options.name?.trim() || primeProfile?.name || dragonState?.customName || petState?.name || definition.name, hostile: definition.hostile && !shadeState?.tamed && !dragonState?.tamed && (dragonState?.stage ?? 2) > 1, definition, group, presentationRoot, visual,
       sentientLod, sentientTier: "full", sentientSimulationAccumulator: 0,
       simulationTier: "full", simulationAccumulator: 0, parts,
       health: options.health ?? dragonState?.health ?? petState?.health ?? ordinaryMaximumHealth,
@@ -23404,6 +23457,9 @@ export class VoxelEngine {
       threatLedger: Object.freeze([]),
       moveCooldowns: {},
       activeMove: null,
+      combatAlignmentSeconds: 0,
+      activeMoveTargetPrevious: null,
+      stepPresentationOffset: 0,
       pushVelocity: new THREE.Vector2(),
       terrainCheckTimer: 0.35 + (id % 7) * 0.11,
       mountExertion,
@@ -24868,15 +24924,26 @@ export class VoxelEngine {
     return applied;
   }
 
-  private beginPlannedCreatureMove(mob: MobEntity, targetMob: MobEntity | null, targetPlayer: boolean) {
+  private beginPlannedCreatureMove(mob: MobEntity, targetMob: MobEntity | null, targetPlayer: boolean | string) {
     if (mob.activeMove || this.multiplayer?.role === "guest") return false;
-    const targetPosition = targetMob?.group.position ?? this.position;
-    const distance = mob.group.position.distanceTo(targetPosition);
+    const targetPlayerId = typeof targetPlayer === "string" ? targetPlayer : targetPlayer ? this.localPlayerId() : null;
+    const remoteTargetPose = targetPlayerId && targetPlayerId !== this.localPlayerId()
+      ? this.remotePlayers.get(targetPlayerId)?.target ?? null
+      : null;
+    if (targetPlayerId && targetPlayerId !== this.localPlayerId() && !remoteTargetPose) return false;
+    const targetPosition = targetMob?.group.position
+      ?? (remoteTargetPose ? new THREE.Vector3(remoteTargetPose.x, remoteTargetPose.y, remoteTargetPose.z) : this.position);
+    const distance = Math.hypot(targetPosition.x - mob.group.position.x, targetPosition.z - mob.group.position.z);
     const verticalDistance = Math.abs(targetPosition.y - mob.group.position.y);
     const sightOrigin = mob.group.position.clone().add(new THREE.Vector3(0, mob.definition.height * 0.68, 0));
     const sightTarget = targetPosition.clone().add(new THREE.Vector3(0, targetMob ? targetMob.definition.height * 0.5 : this.cameraEyeHeight * 0.5, 0));
     const targetActor = targetMob ? this.combatActorForMob(targetMob) : this.playerCombatActor();
+    const remoteTargetState = targetPlayerId && targetPlayerId !== this.localPlayerId()
+      ? this.multiplayerPlayerStates.get(targetPlayerId) ?? null
+      : null;
     const owned = Boolean(this.mobCombatOwnerId(mob));
+    const attackerRadius = this.mobBodyProfile(mob).radius;
+    const targetRadius = targetMob ? this.mobBodyProfile(targetMob).radius : 0.34;
     const choice = chooseCreatureMove({
       moveIds: mob.progression.activeMoveIds.length ? mob.progression.activeMoveIds : [creatureProfile(mob.kind).moves.basicMoveId],
       cooldowns: mob.moveCooldowns,
@@ -24887,19 +24954,36 @@ export class VoxelEngine {
       attackerTypes: mob.resolvedTypes.types,
       targetTypes: targetActor.profile.currentTypes,
       healthRatio: mob.health / Math.max(1, mob.maxHealth),
-      ownerHealthRatio: targetPlayer ? this.health / 10 : 1,
-      targetHealthRatio: targetActor.profile.currentHealth / Math.max(1, targetActor.profile.maximumHealth),
+      ownerHealthRatio: targetPlayerId ? (remoteTargetState?.health ?? this.health) / 10 : 1,
+      targetHealthRatio: remoteTargetState
+        ? remoteTargetState.health / 10
+        : targetActor.profile.currentHealth / Math.max(1, targetActor.profile.maximumHealth),
       friendlyFireRisk: 0,
       terrainFit: 0,
+      canReachTarget: (move) => {
+        if (move.target === "self" || move.target === "ally") return true;
+        const envelope = combatContactEnvelope(move, attackerRadius, targetRadius);
+        return distance <= envelope.acquireDistance && verticalDistance <= envelope.verticalTolerance;
+      },
     });
     if (!choice || choice.score <= 0) return false;
+    const desiredAngle = Math.atan2(targetPosition.z - mob.group.position.z, targetPosition.x - mob.group.position.x);
+    mob.desiredAngle = desiredAngle;
+    if (choice.move.target !== "self" && choice.move.target !== "ally"
+      && creatureMoveMovementPolicy(choice.move) === "stationary") {
+      const angleDelta = Math.atan2(Math.sin(desiredAngle - mob.angle), Math.cos(desiredAngle - mob.angle));
+      if (Math.abs(angleDelta) > Math.PI * 0.24) {
+        mob.combatAlignmentSeconds = Math.max(mob.combatAlignmentSeconds, 0.16);
+        return false;
+      }
+    }
     const target = choice.move.target === "self"
       ? { kind: this.combatActorForMob(mob).ref.kind, id: mob.id }
-      : targetMob ? this.combatActorForMob(targetMob).ref : { kind: "player" as const, id: this.localPlayerId() };
+      : targetMob ? this.combatActorForMob(targetMob).ref : { kind: "player" as const, id: targetPlayerId ?? this.localPlayerId() };
     mob.activeMove = beginCreatureMove(choice.move, target);
     mob.state = "windup";
     mob.stateTimer = choice.move.windupSeconds;
-    mob.desiredAngle = Math.atan2(targetPosition.z - mob.group.position.z, targetPosition.x - mob.group.position.x);
+    mob.activeMoveTargetPrevious = targetPosition.clone();
     if (mob.group.position.distanceToSquared(this.position) <= 24 * 24
       && this.hasClearLineOfSight(sightOrigin, this.position.clone().add(new THREE.Vector3(0, this.cameraEyeHeight * .5, 0)))) {
       this.recordBestiaryMilestone(mob.kind, `move-witnessed:${choice.move.id}`);
@@ -24955,50 +25039,101 @@ export class VoxelEngine {
     });
     mob.typeSources = Object.freeze([...persistentSources, ...contextualSources]);
     mob.resolvedTypes = resolveCreatureTypes(creatureProfile(mob.kind).naturalTypes, mob.typeSources, nowSeconds);
-    if (!mob.activeMove) return false;
+    if (!mob.activeMove) {
+      mob.activeMoveTargetPrevious = null;
+      return false;
+    }
     const previous = mob.activeMove;
+    const previousTargetPosition = mob.activeMoveTargetPrevious?.clone() ?? null;
+    const targetBeforeStep = previous.target.kind === "player"
+      ? String(previous.target.id) === this.localPlayerId()
+        ? this.position
+        : (() => {
+          const pose = this.remotePlayers.get(String(previous.target.id))?.target;
+          return pose ? new THREE.Vector3(pose.x, pose.y, pose.z) : null;
+        })()
+      : previous.target.kind === "creature"
+        ? this.mobs.find((candidate) => candidate.id === Number(previous.target.id) && candidate.health > 0)?.group.position ?? null
+        : null;
+    const activeMoveDefinition = CREATURE_MOVES[previous.moveId];
+    if (targetBeforeStep && activeMoveDefinition && previous.target.id !== mob.id
+      && (previous.phase === "windup" || previous.phase === "active")) {
+      mob.desiredAngle = Math.atan2(targetBeforeStep.z - mob.group.position.z, targetBeforeStep.x - mob.group.position.x);
+    }
     const stepped = stepCreatureMove(previous, dt);
     mob.activeMove = stepped.state;
     if (stepped.event === "became-active" && stepped.state && !stepped.state.applied) {
       const move = CREATURE_MOVES[stepped.state.moveId];
       const target = stepped.state.target;
       if (move) {
-        if (target.id === mob.id && target.kind !== "player") this.applyCreatureMoveToMob(mob, mob, move.id);
-        else if (target.kind === "player" && target.id === this.localPlayerId()) {
-          const delta = this.position.clone().sub(mob.group.position);
-          const inRange = Math.hypot(delta.x, delta.z) <= move.range + Math.max(0.3, move.radius)
-            && Math.abs(delta.y) <= move.verticalTolerance;
+        let contactResult: "hit" | "dodged" | "obstructed" | "invalid" = "invalid";
+        let impactApplied = false;
+        if (target.id === mob.id && target.kind !== "player") {
+          this.applyCreatureMoveToMob(mob, mob, move.id);
+          contactResult = "hit";
+          impactApplied = true;
+        }
+        else if (target.kind === "player") {
+          const playerId = String(target.id);
+          const remotePose = playerId === this.localPlayerId() ? null : this.remotePlayers.get(playerId)?.target ?? null;
+          const playerPosition = playerId === this.localPlayerId()
+            ? this.position
+            : remotePose ? new THREE.Vector3(remotePose.x, remotePose.y, remotePose.z) : null;
+          if (!playerPosition) {
+            contactResult = "invalid";
+          } else {
           const visible = !move.requiresLineOfSight || this.hasClearLineOfSight(
             mob.group.position.clone().add(new THREE.Vector3(0, mob.definition.height * 0.68, 0)),
-            this.position.clone().add(new THREE.Vector3(0, this.cameraEyeHeight * 0.5, 0)),
+            playerPosition.clone().add(new THREE.Vector3(0, this.cameraEyeHeight * 0.5, 0)),
           );
-          if (inRange && visible) {
-            const applied = this.applyCreatureMoveToPlayer(mob, move.id);
-            if (applied) this.applyLegendaryEventForMob(mob, "survive-phase");
+          contactResult = evaluateCombatContact({
+            attacker: mob.group.position,
+            attackerFacing: mob.angle,
+            target: playerPosition,
+            previousTarget: previousTargetPosition,
+            envelope: combatContactEnvelope(move, this.mobBodyProfile(mob).radius, 0.34),
+            lineOfSight: visible,
+          });
+          if (contactResult === "hit") {
+            impactApplied = playerId === this.localPlayerId()
+              ? this.applyCreatureMoveToPlayer(mob, move.id)
+              : this.applyCreatureMoveToRemotePlayer(mob, move.id, playerId);
+            if (impactApplied) this.applyLegendaryEventForMob(mob, "survive-phase");
+          }
           }
         } else {
           const targetMob = this.mobs.find((candidate) => candidate.id === target.id && candidate.health > 0) ?? null;
           if (targetMob) {
-            const delta = targetMob.group.position.clone().sub(mob.group.position);
-            const inRange = Math.hypot(delta.x, delta.z) <= move.range + Math.max(0.3, move.radius)
-              && Math.abs(delta.y) <= move.verticalTolerance;
             const visible = !move.requiresLineOfSight || this.hasClearLineOfSight(
               mob.group.position.clone().add(new THREE.Vector3(0, mob.definition.height * 0.68, 0)),
               targetMob.group.position.clone().add(new THREE.Vector3(0, targetMob.definition.height * 0.5, 0)),
             );
-            if (inRange && visible) {
+            contactResult = evaluateCombatContact({
+              attacker: mob.group.position,
+              attackerFacing: mob.angle,
+              target: targetMob.group.position,
+              previousTarget: previousTargetPosition,
+              envelope: combatContactEnvelope(move, this.mobBodyProfile(mob).radius, this.mobBodyProfile(targetMob).radius),
+              lineOfSight: visible,
+            });
+            if (contactResult === "hit") {
               const killed = this.applyCreatureMoveToMob(mob, targetMob, move.id);
+              impactApplied = true;
               if (killed) this.killMob(targetMob);
             }
           }
         }
-        mob.moveCooldowns[move.id] = move.cooldownSeconds;
+        mob.moveCooldowns[move.id] = contactResult === "obstructed" || contactResult === "invalid"
+          ? Math.max(0.2, move.cooldownSeconds * 0.35)
+          : move.cooldownSeconds;
         mob.activeMove = markCreatureMoveApplied(stepped.state);
-        this.audio.play("attack");
+        if (impactApplied) this.audio.play("attack");
       }
       mob.state = "recover";
     } else if (stepped.event === "became-recovery") mob.state = "recover";
     else if (stepped.event === "finished") mob.state = "wander";
+    mob.activeMoveTargetPrevious = targetBeforeStep?.clone() ?? null;
+    if (!mob.activeMove) mob.activeMoveTargetPrevious = null;
     return true;
   }
 
@@ -26308,6 +26443,11 @@ export class VoxelEngine {
       }
 
       mob.attackCooldown = Math.max(0, mob.attackCooldown - mobDt);
+      if (mob.definition.movement !== "ground" || mob.id === this.mountedCreatureId || mob.dragonState?.onShoulder) {
+        mob.stepPresentationOffset = 0;
+      } else mob.stepPresentationOffset = stepGroundPresentationOffset(mob.stepPresentationOffset, mobDt);
+      if (mob.presentationRoot) mob.presentationRoot.position.y = mob.stepPresentationOffset;
+      mob.combatAlignmentSeconds = Math.max(0, mob.combatAlignmentSeconds - mobDt);
       const plannedMoveActive = this.advancePlannedCreatureMove(mob, mobDt);
       if (mob.dragonState) {
         for (const kind of ["melee", "breath", "projectile"] as const) mob.dragonAttackCooldowns[kind] = Math.max(0, mob.dragonAttackCooldowns[kind] - mobDt);
@@ -26422,6 +26562,8 @@ export class VoxelEngine {
         if (recovery) {
           mob.group.position.set(recovery.x, recovery.y, recovery.z);
           mob.baseY = recovery.y;
+          mob.stepPresentationOffset = 0;
+          if (mob.presentationRoot) mob.presentationRoot.position.y = 0;
           mob.angle = Math.atan2(referenceZ - recovery.z, referenceX - recovery.x);
           mob.desiredAngle = mob.angle;
           mob.steering = createStableSteering(mob.angle);
@@ -26565,7 +26707,7 @@ export class VoxelEngine {
             mob.state = "chase";
             mob.desiredAngle = Math.atan2(enemyDz, enemyDx);
             if (mob.definition.ranged && enemyDistance >= 3 && enemyDistance < 16 && mob.attackCooldown <= 0) this.fireMobArrowAt(mob, residentEnemy);
-            else if (!plannedMoveActive && enemyDistance < creatureMeleeReach(mob.definition, this.mobBaseScale(mob)) + 0.5 && mob.attackCooldown <= 0) {
+            else if (!plannedMoveActive && enemyDistance < 6.2 && mob.attackCooldown <= 0) {
               this.beginPlannedCreatureMove(mob, residentEnemy, false);
             }
           } else if (plan.action !== "follow" && plan.target) {
@@ -26604,7 +26746,7 @@ export class VoxelEngine {
           mob.state = "chase";
           mob.desiredAngle = Math.atan2(enemyDz, enemyDx);
           if (mob.definition.ranged && enemyDistance >= 3 && enemyDistance < 16 && mob.attackCooldown <= 0) this.fireMobArrowAt(mob, residentEnemy);
-          else if (!plannedMoveActive && enemyDistance < creatureMeleeReach(mob.definition, this.mobBaseScale(mob)) + .5 && mob.attackCooldown <= 0) this.beginPlannedCreatureMove(mob, residentEnemy, false);
+          else if (!plannedMoveActive && enemyDistance < 6.2 && mob.attackCooldown <= 0) this.beginPlannedCreatureMove(mob, residentEnemy, false);
         } else {
           const homeX = Number(mob.group.userData.guildHomeX) || mob.group.position.x;
           const homeZ = Number(mob.group.userData.guildHomeZ) || mob.group.position.z;
@@ -26795,7 +26937,7 @@ export class VoxelEngine {
       else if (aggressive && mob.awarenessTimer > 0 && distance < (this.crouching ? 11 : 20)) {
         mob.state = "chase";
         mob.desiredAngle = Math.atan2(dz, dx);
-        if (distance < creatureMeleeReach(mob.definition, this.mobBaseScale(mob)) + 0.55 && mob.attackCooldown <= 0) this.beginPlannedCreatureMove(mob, null, true);
+        if (distance < 6.2 && mob.attackCooldown <= 0) this.beginPlannedCreatureMove(mob, null, true);
       } else if (aggressive && mob.awarenessTimer <= 0 && mob.state === "chase") {
         mob.state = "wander";
         mob.desiredAngle = mob.angle;
@@ -26819,7 +26961,11 @@ export class VoxelEngine {
         : null;
       if (puddleJump?.jumps) speed = Math.max(speed, puddleJump.forwardVelocity);
       if (mob.kind === "lanternshell" && this.weather === "rain") speed *= 1.55;
-      if (mob.state === "windup" || mob.state === "recover") speed *= 0.08;
+      const activeMovementPolicy = mob.activeMove
+        ? creatureMoveMovementPolicy(CREATURE_MOVES[mob.activeMove.moveId])
+        : null;
+      if (activeMovementPolicy === "stationary" || mob.combatAlignmentSeconds > 0) speed = 0;
+      else if (mob.state === "windup" || mob.state === "recover") speed *= 0.08;
       if (followerSlot && !peelopTarget && !companionGolemTarget) speed = followerTravelSpeed({
         walkSpeed: mob.definition.speed,
         chaseSpeed: mob.definition.chaseSpeed,
@@ -27812,13 +27958,31 @@ export class VoxelEngine {
       this.lightRefreshTimer = 0.18;
       this.skyVisibilityTarget = this.world.skyVisibilityAt(this.camera.position.x, this.camera.position.y, this.camera.position.z);
       this.subterraneanBlendTarget = this.world.subterraneanBlendAt(this.camera.position.x, this.camera.position.y, this.camera.position.z);
+      const directSkyExposure = this.world.directSkyExposureAt(this.camera.position.x, this.camera.position.y, this.camera.position.z);
+      const depthBelowSurface = this.world.surfaceAt(Math.floor(this.camera.position.x), Math.floor(this.camera.position.z)) - this.camera.position.y;
+      const sunDirection = this.celestialDirection.lengthSq() > 0.01 ? this.celestialDirection : new THREE.Vector3(0.45, 0.8, -0.24).normalize();
+      const moonDirection = this.moonDirection.lengthSq() > 0.01 ? this.moonDirection : sunDirection.clone().multiplyScalar(-1);
+      this.cameraEnvironmentTarget = deriveCameraEnvironmentTarget({
+        propagatedSkyLight: this.skyVisibilityTarget,
+        directSkyExposure,
+        depthBelowSurface,
+        sunUnobstructed: sunDirection.y > 0.015
+          && this.world.celestialVisibleAt(this.camera.position.x, this.camera.position.y, this.camera.position.z, sunDirection),
+        moonUnobstructed: moonDirection.y > 0.015
+          && this.world.celestialVisibleAt(this.camera.position.x, this.camera.position.y, this.camera.position.z, moonDirection),
+      });
       this.refreshEnvironmentLights();
     }
     this.skyVisibility += (this.skyVisibilityTarget - this.skyVisibility) * (1 - Math.exp(-dt * 5));
     this.subterraneanBlend += (this.subterraneanBlendTarget - this.subterraneanBlend) * (1 - Math.exp(-dt * 3.2));
+    this.cameraEnvironment = stepCameraEnvironment(
+      this.cameraEnvironment ?? OPEN_CAMERA_ENVIRONMENT,
+      this.cameraEnvironmentTarget ?? OPEN_CAMERA_ENVIRONMENT,
+      dt,
+    );
     if (this.cavePresentationActive) {
-      if (this.subterraneanBlend < 0.34) this.cavePresentationActive = false;
-    } else if (this.subterraneanBlend > 0.62) this.cavePresentationActive = true;
+      if (this.cameraEnvironment.caveBackdropBlend < 0.28) this.cavePresentationActive = false;
+    } else if (this.cameraEnvironment.caveBackdropBlend > 0.58) this.cavePresentationActive = true;
     const timeSeconds = performance.now() / 1000;
     for (const light of this.placedLightPool) {
       const target = Number(light.userData.targetIntensity) || 0;
@@ -28012,6 +28176,11 @@ export class VoxelEngine {
       0,
       1,
     );
+    const caveBackdrop = underwater ? 0 : clamp(
+      this.cameraEnvironment?.caveBackdropBlend ?? subterranean,
+      0,
+      1,
+    );
     if (underwater) sky.set("#1d5d82");
     else if (this.weatherState.kind === "sandstorm") sky.lerp(this.weatherSkyColor.set("#b88a55"), weatherFx.fogDensity * 0.62);
     else if (this.weatherState.kind === "ashfall") sky.lerp(this.weatherSkyColor.set("#493f43"), weatherFx.skyDarkening * 0.8);
@@ -28022,7 +28191,7 @@ export class VoxelEngine {
       sky.lerp(this.weatherSkyColor.set(stormSky), 0.94);
     }
     else sky.lerp(this.nightSkyColor, weatherFx.skyDarkening * 0.42);
-    if (!underwater && subterranean > 0) sky.lerp(this.weatherSkyColor.set("#101722"), subterranean * 0.72);
+    if (!underwater && caveBackdrop > 0) sky.lerp(this.weatherSkyColor.set("#080d14"), caveBackdrop * 0.98);
     this.updateLightning(weatherFx, dt);
     if (this.lightningFlash > 0.01) sky.lerp(this.weatherSkyColor.set("#dcecff"), Math.min(0.58, this.lightningFlash * 0.58));
     this.scene.background = sky;
@@ -28032,8 +28201,8 @@ export class VoxelEngine {
       const weatherVisibility = 1 - weatherFx.fogDensity * 0.72;
       const outdoorNear = view * 0.54 * weatherVisibility;
       const outdoorFar = Math.max(28, view * 1.05 * weatherVisibility);
-      this.scene.fog.near = underwater ? 3 : THREE.MathUtils.lerp(outdoorNear, 10, subterranean);
-      this.scene.fog.far = underwater ? 24 : THREE.MathUtils.lerp(outdoorFar, Math.max(30, view * 0.7), subterranean);
+      this.scene.fog.near = underwater ? 3 : THREE.MathUtils.lerp(outdoorNear, 8, caveBackdrop);
+      this.scene.fog.far = underwater ? 24 : THREE.MathUtils.lerp(outdoorFar, Math.max(26, view * 0.64), caveBackdrop);
     }
     // Sun and moon are global, but their direct and ambient contribution is
     // gated by actual sky exposure. Local point lights remain independent.
@@ -28064,14 +28233,18 @@ export class VoxelEngine {
     this.moon.position.copy(this.camera.position).addScaledVector(celestialDirection, -celestialDistance);
     this.sun.lookAt(this.camera.position);
     this.moon.lookAt(this.camera.position);
-    const openSkyPresentation = 1 - subterranean;
-    const sunOpacity = sunVisibility * openSkyPresentation;
-    const moonOpacity = moonVisibility * openSkyPresentation;
+    const environment = this.cameraEnvironment ?? OPEN_CAMERA_ENVIRONMENT;
+    const sunOpacity = sunVisibility * environment.sunVisibility;
+    const moonOpacity = moonVisibility * environment.moonVisibility;
     (this.sun.material as THREE.MeshBasicMaterial).opacity = sunOpacity;
     (this.moon.material as THREE.MeshBasicMaterial).opacity = moonOpacity;
     this.sun.visible = sunOpacity > 0.01 && sunHeight > -0.18;
     this.moon.visible = moonOpacity > 0.01 && sunHeight < 0.22;
-    (this.stars.material as THREE.PointsMaterial).opacity = clamp((1 - daylight) * 1.05 * weatherFx.celestialVisibility * openSkyPresentation, 0, 0.95);
+    (this.stars.material as THREE.PointsMaterial).opacity = clamp(
+      (1 - daylight) * 1.05 * weatherFx.celestialVisibility * environment.directSkyExposure * (1 - caveBackdrop),
+      0,
+      0.95,
+    );
     this.stars.position.copy(this.camera.position);
     this.directional.target.position.copy(this.camera.position);
     this.directional.position.copy(this.camera.position).addScaledVector(celestialDirection, 55);
@@ -28801,6 +28974,20 @@ export class VoxelEngine {
     this.updateLocalLights(dt);
     if (this.running && !this.titleMode && !this.paused) this.updateDynamicWeather(dt);
     this.updateDayNight(dt);
+    this.basicWorldRenderer.update({
+      world: this.world,
+      seedText: this.world.seedText,
+      generationOptions: this.world.generationOptions,
+      x: this.titleMode ? this.spawn.x : this.position.x,
+      y: this.titleMode ? this.spawn.y : this.position.y,
+      z: this.titleMode ? this.spawn.z : this.position.z,
+      fullDistance: this.settings.renderDistance,
+      basicDistance: this.settings.basicRenderDistance,
+      caveBlend: this.cameraEnvironment.caveBackdropBlend,
+      framePressure: this.averageFrameMs > 24 || chunkWorkMilliseconds > 6,
+      enabled: !this.agentMode && !this.titleMode,
+      now,
+    });
     this.updateChestModel(dt);
     if (!this.agentMode) this.updateHeldItem(dt);
     const multiplayerGuest = this.multiplayer?.role === "guest" && this.multiplayerReceivedSnapshot;
@@ -29737,6 +29924,7 @@ export class VoxelEngine {
         fps: this.averageFps,
         renderDistance: this.agentMode ? AGENT_DEFAULT_RENDER_DISTANCE : this.settings.renderDistance,
         simulationDistance: this.agentMode ? AGENT_DEFAULT_SIMULATION_DISTANCE : this.settings.simulationDistance,
+        basicRenderDistance: this.agentMode ? AGENT_DEFAULT_BASIC_RENDER_DISTANCE : this.settings.basicRenderDistance,
         commandQueue: record?.currentCommand && !record.currentCommand.terminal ? 1 : 0,
         channelBackpressure: this.multiplayer?.channelBackpressure() ?? 0,
       },
@@ -29835,6 +30023,8 @@ export class VoxelEngine {
         averageFps: Number(this.averageFps.toFixed(1)),
         renderDistance: this.settings.renderDistance,
         simulationDistance: this.settings.simulationDistance,
+        basicRenderDistance: this.settings.basicRenderDistance,
+        basicRenderer: this.basicWorldRenderer.stats(this.averageFrameMs > 24),
         loadedChunks: this.world.loadedCount,
         frame: this.performanceSampler.summary(),
         streaming: this.world.streamingDiagnostics(),
@@ -30182,6 +30372,7 @@ export class VoxelEngine {
       ...next,
       renderDistance: AGENT_DEFAULT_RENDER_DISTANCE,
       simulationDistance: AGENT_DEFAULT_SIMULATION_DISTANCE,
+      basicRenderDistance: AGENT_DEFAULT_BASIC_RENDER_DISTANCE,
       showFps: false,
       showMinimap: false,
       resourceMode: "cpu",
@@ -30190,6 +30381,7 @@ export class VoxelEngine {
     const distances = normalizeViewDistances({
       renderDistance: next.renderDistance ?? this.settings.renderDistance,
       simulationDistance: next.simulationDistance ?? this.settings.simulationDistance,
+      basicRenderDistance: next.basicRenderDistance ?? this.settings.basicRenderDistance,
     });
     this.settings = {
       ...this.settings,
@@ -30205,6 +30397,7 @@ export class VoxelEngine {
     };
     this.weather = this.worldOptions.weather ? this.settings.weather : "clear";
     this.camera.fov = this.settings.fov;
+    this.camera.far = Math.max(256, (this.settings.basicRenderDistance + 2) * CHUNK_SIZE);
     this.camera.updateProjectionMatrix();
     this.world.setRenderDistance(this.titleMode ? Math.min(this.settings.renderDistance, this.touchMode ? 4 : 6) : this.settings.renderDistance);
     this.world.setRetentionPadding(chunkRetentionPadding(this.settings.resourceMode));
@@ -30440,6 +30633,7 @@ export class VoxelEngine {
     for (const light of this.remoteHeldLights.values()) this.scene.remove(light);
     this.remoteHeldLights.clear();
     this.world.dispose();
+    this.basicWorldRenderer.dispose();
     this.sharedDropGeometry.dispose();
     for (const material of this.dropMaterials.values()) material.dispose();
     this.disposePooledParticleResources();

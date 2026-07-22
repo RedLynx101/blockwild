@@ -11,6 +11,7 @@ export const AGENT_PLATFORM_SCHEMA_VERSION = 1 as const;
 export const AGENT_PROTOCOL_VERSION = 1 as const;
 export const AGENT_DEFAULT_RENDER_DISTANCE = 4;
 export const AGENT_DEFAULT_SIMULATION_DISTANCE = 3;
+export const AGENT_DEFAULT_BASIC_RENDER_DISTANCE = 4;
 export const AGENT_MAX_ADMITTED = 4;
 export const AGENT_MAX_COMMAND_BYTES = 128 * 1024;
 export const AGENT_MAX_RESULT_BYTES = 192 * 1024;
@@ -231,6 +232,7 @@ export type AgentObservationV1 = Readonly<{
     fps: number;
     renderDistance: number;
     simulationDistance: number;
+    basicRenderDistance: number;
     commandQueue: number;
     channelBackpressure: number;
   }>;

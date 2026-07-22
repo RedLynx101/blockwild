@@ -14,6 +14,23 @@ export type CaveEntranceCenter = Readonly<{
   radius: number;
 }>;
 
+export type CaveEntranceSurfaceSample = Readonly<{
+  surfaceY: number;
+  waterline: number;
+  aquatic: boolean;
+}>;
+
+export type SafeCaveEntranceSite = Readonly<{
+  cellX: number;
+  cellZ: number;
+  centerX: number;
+  centerZ: number;
+  radius: number;
+  rimY: number;
+  minimumSurfaceY: number;
+  maximumSurfaceY: number;
+}>;
+
 export const CAVE_ENTRANCE_CELL_SIZE = 48;
 /** Only one quarter of otherwise valid cave-mouth cells open onto the surface. */
 export const CAVE_ENTRANCE_REALIZATION_RATE = 0.25;
@@ -35,6 +52,74 @@ export function caveEntranceForCell(seed: number, cellX: number, cellZ: number):
   const centerZ = cellZ * CAVE_ENTRANCE_CELL_SIZE + 8 + Math.floor(caveHash(seed ^ 0x735a2d97, cellX, 2, cellZ) * (CAVE_ENTRANCE_CELL_SIZE - 16));
   const radius = 3 + caveHash(seed ^ 0x1a7c9e31, cellX, 3, cellZ) * 1.8;
   return { cellX, cellZ, centerX, centerZ, radius };
+}
+
+function entranceCandidatesForCell(seed: number, cellX: number, cellZ: number) {
+  const primary = caveEntranceForCell(seed, cellX, cellZ);
+  if (!primary) return [];
+  const candidates: CaveEntranceCenter[] = [primary];
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    candidates.push({
+      cellX,
+      cellZ,
+      centerX: cellX * CAVE_ENTRANCE_CELL_SIZE + 8 + Math.floor(caveHash(seed ^ 0x2f6e2b1, cellX, 13 + attempt * 7, cellZ) * (CAVE_ENTRANCE_CELL_SIZE - 16)),
+      centerZ: cellZ * CAVE_ENTRANCE_CELL_SIZE + 8 + Math.floor(caveHash(seed ^ 0x735a2d97, cellX, 29 + attempt * 11, cellZ) * (CAVE_ENTRANCE_CELL_SIZE - 16)),
+      radius: Math.max(3, primary.radius - attempt * 0.12),
+    });
+  }
+  return candidates;
+}
+
+/**
+ * Validates the entire destructive mouth plus a two-block support collar.
+ * Sampling is world-coordinate pure, so the selected alternative is stable
+ * across chunk order, worker generation, and negative coordinates.
+ */
+export function resolveSafeCaveEntranceSite(
+  seed: number,
+  cellX: number,
+  cellZ: number,
+  sample: (x: number, z: number) => CaveEntranceSurfaceSample,
+): SafeCaveEntranceSite | null {
+  for (const candidate of entranceCandidatesForCell(seed, cellX, cellZ)) {
+    const supportRadius = Math.ceil(candidate.radius + 2);
+    let minimumSurfaceY = Number.POSITIVE_INFINITY;
+    let maximumSurfaceY = Number.NEGATIVE_INFINITY;
+    let invalid = false;
+    for (let dx = -supportRadius; dx <= supportRadius && !invalid; dx += 1) {
+      for (let dz = -supportRadius; dz <= supportRadius; dz += 1) {
+        if (dx * dx + dz * dz > (candidate.radius + 2) ** 2) continue;
+        const column = sample(candidate.centerX + dx, candidate.centerZ + dz);
+        if (!Number.isFinite(column.surfaceY) || !Number.isFinite(column.waterline)
+          || column.aquatic || column.surfaceY <= column.waterline + 5) {
+          invalid = true;
+          break;
+        }
+        minimumSurfaceY = Math.min(minimumSurfaceY, column.surfaceY);
+        maximumSurfaceY = Math.max(maximumSurfaceY, column.surfaceY);
+      }
+    }
+    if (invalid || maximumSurfaceY - minimumSurfaceY > 4) continue;
+    const centerSurface = sample(candidate.centerX, candidate.centerZ).surfaceY;
+    const rimY = Math.min(centerSurface, minimumSurfaceY + 2);
+    return Object.freeze({ ...candidate, rimY, minimumSurfaceY, maximumSurfaceY });
+  }
+  return null;
+}
+
+export function caveEntranceSampleForSite(
+  site: SafeCaveEntranceSite | null,
+  x: number,
+  z: number,
+): CaveEntranceSample | null {
+  if (!site) return null;
+  const dx = x - site.centerX;
+  const dz = z - site.centerZ;
+  const distance = Math.hypot(dx, dz);
+  if (distance > site.radius) return null;
+  const centerWeight = 1 - distance / site.radius;
+  const floorY = site.rimY - 2 - Math.floor(centerWeight * (12 + site.radius));
+  return { centerX: site.centerX, centerZ: site.centerZ, radius: site.radius, distance, floorY };
 }
 
 /**

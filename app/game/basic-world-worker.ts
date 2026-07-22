@@ -1,0 +1,25 @@
+import { buildBasicWorldGeometry, type BasicWorldGeometryRequest } from "./basic-world-geometry";
+import { ChunkWorld, type WorldGenerationOptions } from "./world";
+
+type WorkerRequest = Readonly<{
+  id: number;
+  seedText: string;
+  generationOptions: Partial<WorldGenerationOptions>;
+  request: BasicWorldGeometryRequest;
+}>;
+
+self.onmessage = (event: MessageEvent<WorkerRequest>) => {
+  const { id, seedText, generationOptions, request } = event.data;
+  const world = new ChunkWorld();
+  world.reset(seedText, undefined, generationOptions);
+  const geometry = buildBasicWorldGeometry(request, (x, z) => world.sampleColumn(x, z));
+  world.dispose();
+  self.postMessage({ id, geometry }, { transfer: [
+    geometry.surfacePositions.buffer,
+    geometry.surfaceColors.buffer,
+    geometry.surfaceIndices.buffer,
+    geometry.cavePositions.buffer,
+    geometry.caveColors.buffer,
+    geometry.caveIndices.buffer,
+  ] });
+};
