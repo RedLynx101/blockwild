@@ -7018,6 +7018,8 @@ input:focus-visible {
 .agent-drone-glyph { color: #7ce3bd; font-size: 18px; filter: drop-shadow(0 0 5px rgba(92, 224, 181, .55)); }
 
 .agent-capability-list { display: flex; flex-wrap: wrap; gap: 5px; }
+.agent-runtime-summary { display: flex; justify-content: space-between; gap: 10px; padding: 6px 8px; border: 1px solid #40554d; background: #111b18; color: #b9cbc4; font: 8px var(--font-geist-mono), monospace; }
+.agent-runtime-summary small { color: #f1d27d; }
 .agent-capability-list label { display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px; border: 1px solid #50665d; background: #18231f; color: #c1d3cb; font: 7px var(--font-geist-mono), monospace; }
 .agent-capability-list input { width: 12px; height: 12px; accent-color: #70d6a5; }
 .agent-session-actions { display: flex; flex-wrap: wrap; gap: 5px; }

@@ -627,10 +627,10 @@ export class AgentAuthority {
     const session = this.sessions.get(command.agentId);
     if (!session || session.connectionId !== connectionId) return createAgentResult(command, "blocked", worldRevision, "agent_identity_unverified", "The command is not bound to this approved connection.", {}, now);
     if (session.status === "pending") return createAgentResult(command, "blocked", worldRevision, "host_approval_required", "The host has not approved this drone yet.", {}, now);
-    if (session.status === "paused") return createAgentResult(command, "blocked", worldRevision, "agent_paused", "The host or runner paused this drone.", {}, now);
+    if (session.status === "paused" && !["session.status", "session.resume", "session.stop", "capabilities.list"].includes(command.kind)) return createAgentResult(command, "blocked", worldRevision, "agent_paused", "The host or runner paused this drone.", {}, now);
     if (session.status === "revoked" || session.status === "disconnected") return createAgentResult(command, "blocked", worldRevision, "agent_revoked", "This drone no longer has an active session grant.", {}, now);
     if (command.expiresAt < now) return createAgentResult(command, "blocked", worldRevision, "command_expired", "The command expired before the host could validate it.", {}, now);
-    if (command.expectedWorldRevision !== worldRevision && !["observe", "session.status", "capabilities.list", "chat_read"].includes(command.kind)) {
+    if (command.expectedWorldRevision !== worldRevision && !["observe", "session.status", "session.pause", "session.resume", "session.stop", "capabilities.list", "chat_read", "stop"].includes(command.kind)) {
       return createAgentResult(command, "blocked", worldRevision, "world_revision_conflict", `World revision ${worldRevision} no longer matches expected revision ${command.expectedWorldRevision}. Re-observe before retrying.`, {}, now);
     }
     const required = commandCapability(command.kind);

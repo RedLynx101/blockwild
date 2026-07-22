@@ -406,6 +406,7 @@ type MultiplayerEngineApi = {
   revokeAgent?: (agentId: string) => boolean;
   muteAgent?: (agentId: string, muted: boolean) => boolean;
   stopAgent?: (agentId: string) => boolean;
+  getAgentInventory?: (agentId: string) => Array<InventorySlot | null>;
   sendMultiplayerChat?: (text: string, channel?: "local" | "party" | "global") => boolean;
 };
 
@@ -5160,6 +5161,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
               <header><div><span className="panel-eyebrow">CONNECTION-BOUND AUTHORITY</span><h3 id="agent-session-heading">Companion drones</h3></div><small>{multiplayerState.agents.filter((agent) => agent.status === "approved" || agent.status === "paused").length}/4 admitted</small></header>
               {multiplayerState.agents.map((agent) => <article key={agent.agentId} className={`status-${agent.status}`}>
                 <div className="agent-session-heading"><span className="agent-drone-glyph" aria-hidden="true">◆</span><div><strong>{agent.name}</strong><small>{agent.runnerVersion} · {agent.status.toUpperCase()}</small></div></div>
+                <div className="agent-runtime-summary"><small>PACK {(engineRef.current as unknown as MultiplayerEngineApi | null)?.getAgentInventory?.(agent.agentId).filter(Boolean).length ?? 0}/36</small><span>{agent.currentCommand ? `${agent.currentCommand.kind} · ${agent.currentCommand.status}${agent.currentCommand.progress ? ` · ${agent.currentCommand.progress.completed}/${agent.currentCommand.progress.total}` : ""}` : "No active command"}</span></div>
                 <div className="agent-capability-list" aria-label={`${agent.name} requested capabilities`}>{agent.requested.map((capability) => <label key={capability}><input type="checkbox" checked={agent.granted.includes(capability)} disabled={agent.status === "pending" || agent.status === "revoked" || agent.status === "disconnected"} onChange={(event) => updateAgent((api) => api.setAgentCapability?.(agent.agentId, capability, event.target.checked) ?? false)} /><span>{capability}</span></label>)}</div>
                 <div className="agent-session-actions">
                   {agent.status === "pending" && <button type="button" className="approve" onClick={() => updateAgent((api) => api.approveAgent?.(agent.agentId, agent.requested) ?? false)}>APPROVE REQUESTED</button>}

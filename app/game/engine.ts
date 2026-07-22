@@ -606,6 +606,7 @@ import {
 } from "./multiplayer";
 import { applyContainerOperation } from "./multiplayer-inventory";
 import { MultiplayerDiagnosticsRing, multiplayerRejectionCategory } from "./multiplayer-diagnostics";
+import { advanceAgentAlongPath, findAgentVoxelPath, type AgentPathCell } from "./agent-navigation";
 import {
   AgentAuthority,
   AgentChatRing,
@@ -1761,6 +1762,22 @@ type RemotePlayer = {
   pose: PlayerPose;
   target: PlayerPose;
   lastUpdate: number;
+};
+
+type AgentRuntimeTask = {
+  command: AgentCommandEnvelope;
+  kind: "move" | "follow" | "wait";
+  path: readonly AgentPathCell[];
+  pathIndex: number;
+  goal: { x: number; y: number; z: number };
+  followPlayerId?: string;
+  remainingSeconds: number;
+  startedAt: number;
+  lastReplanAt: number;
+  lastReportAt: number;
+  blockedSeconds: number;
+  replans: number;
+  lastPosition: { x: number; y: number; z: number };
 };
 
 type KeyboardLockApi = {
@@ -4147,6 +4164,7 @@ export class VoxelEngine {
   agentObservationTimer = 0;
   latestAgentObservation: AgentObservationV1 | null = null;
   latestAgentResult: AgentCommandResult | null = null;
+  agentRuntimeTasks = new Map<string, AgentRuntimeTask>();
   pendingGuestCreatureInventoryRequests = new Map<string, number>();
   /** Suppresses generic pack uploads until the host resolves optimistic placement costs. */
   pendingGuestPlacementRequests = new Map<string, number>();
@@ -5668,6 +5686,10 @@ export class VoxelEngine {
     return true;
   }
 
+  getAgentInventory(agentId: string) {
+    return (this.agentInventories.get(agentId) ?? []).map((slot) => cloneSlot(slot));
+  }
+
   sendMultiplayerChat(text: string, channel: AgentChatChannel = "global") {
     const session = this.multiplayer;
     const clean = text.trim().slice(0, 480);
@@ -5864,6 +5886,7 @@ export class VoxelEngine {
     this.localChatSequence = 0;
     (this.agentInventories ??= new Map()).clear();
     (this.agentObservationSequences ??= new Map()).clear();
+    (this.agentRuntimeTasks ??= new Map()).clear();
     this.latestAgentObservation = null;
     this.latestAgentResult = null;
     this.multiplayerState.inviteCode = "";
@@ -6146,6 +6169,7 @@ export class VoxelEngine {
     this.localChatSequence = 0;
     (this.agentInventories ??= new Map()).clear();
     (this.agentObservationSequences ??= new Map()).clear();
+    (this.agentRuntimeTasks ??= new Map()).clear();
     this.latestAgentObservation = null;
     this.latestAgentResult = null;
     this.multiplayerReceivedSnapshot = false;
@@ -8676,11 +8700,7 @@ export class VoxelEngine {
         if (blocked) {
           this.agentAuthority.setCurrentResult(blocked);
           this.multiplayer.sendAgentResult(blocked, command.agentId);
-        } else {
-          const deferred = createAgentResult(command, "blocked", this.world.mutationRevision, "executor_initializing", "The host approved this command, but its task executor is not active yet. Retry after the agent runtime finishes initializing.");
-          this.agentAuthority.setCurrentResult(deferred);
-          this.multiplayer.sendAgentResult(deferred, command.agentId);
-        }
+        } else this.executeAgentCommand(command);
       } else if (envelope.type === "agent-capabilities" && this.multiplayer?.role === "guest") {
         const grant = envelope.payload as AgentCapabilityGrant;
         if (grant.status === "revoked" && grant.reason) this.events.onToast(grant.reason);
@@ -8794,6 +8814,7 @@ export class VoxelEngine {
     this.retryCriticalReliableRequests();
     this.updateGuestContainerIntentRetries();
     this.flushPlayerProgressionTransfers();
+    if (session.role === "host") this.updateAgentRuntime(dt);
     for (const [playerId, cooldown] of this.multiplayerCombatCooldowns) {
       const next = cooldown - dt;
       if (next <= 0) this.multiplayerCombatCooldowns.delete(playerId);
@@ -28327,6 +28348,251 @@ export class VoxelEngine {
     if (this.position.y > -28) return "Deepstone Caves";
     if (this.position.y > -52) return "Crystal Deeps";
     return "Worldheart";
+  }
+
+  private publishAgentResult(result: AgentCommandResult) {
+    this.agentAuthority.setCurrentResult(result);
+    try { this.multiplayer?.sendAgentResult(result, result.agentId); } catch { /* Replayed by command id after reconnect. */ }
+    return result;
+  }
+
+  private agentPose(agentId: string) {
+    return this.remotePlayers.get(agentId)?.target ?? null;
+  }
+
+  private agentNavigationQuery() {
+    return {
+      isLoaded: (x: number, y: number, z: number) => this.world.getBlock(x, y, z) !== undefined,
+      isPassable: (x: number, y: number, z: number) => {
+        const block = this.world.getBlock(x, y, z);
+        return block !== undefined && (!BLOCKS[block]?.solid || this.isDoor(block) || toggleFenceGate(block) !== null);
+      },
+      hasSupport: (x: number, y: number, z: number) => {
+        const below = this.world.getBlock(x, y - 1, z);
+        return below !== undefined && Boolean(BLOCKS[below]?.solid);
+      },
+      isLiquid: (x: number, y: number, z: number) => blockContainsWater(this.world.getBlock(x, y, z)),
+      isDoorOrGate: (x: number, y: number, z: number) => {
+        const block = this.world.getBlock(x, y, z);
+        return block !== undefined && (this.isDoor(block) || toggleFenceGate(block) !== null);
+      },
+    };
+  }
+
+  private planAgentPath(agentId: string, goal: { x: number; y: number; z: number }) {
+    const pose = this.agentPose(agentId);
+    if (!pose) return null;
+    const horizontal = Math.hypot(goal.x - pose.x, goal.z - pose.z);
+    const localGoal = horizontal > 56 ? (() => {
+      const ratio = 48 / horizontal;
+      const x = pose.x + (goal.x - pose.x) * ratio;
+      const z = pose.z + (goal.z - pose.z) * ratio;
+      const surface = this.world.surfaceAt(Math.round(x), Math.round(z));
+      return { x, y: pose.y > SEA_LEVEL - 8 ? surface + 0.51 : pose.y + (goal.y - pose.y) * ratio, z };
+    })() : goal;
+    return findAgentVoxelPath(this.agentNavigationQuery(), pose, localGoal);
+  }
+
+  private cancelAgentRuntime(agentId: string, code = "cancelled", message = "The active drone command was cancelled.") {
+    const task = this.agentRuntimeTasks.get(agentId);
+    if (!task) return null;
+    this.agentRuntimeTasks.delete(agentId);
+    this.agentAuthority.releaseCommandLeases(task.command.commandId);
+    return this.publishAgentResult(createAgentResult(task.command, "cancelled", this.world.mutationRevision, code, message, { startedAt: task.startedAt }));
+  }
+
+  private targetPlayerPose(playerId: string) {
+    if (playerId === this.localPlayerId() || playerId === this.multiplayer?.identity.id) return {
+      x: this.position.x, y: this.position.y, z: this.position.z, yaw: this.yaw,
+    };
+    return this.remotePlayers.get(playerId)?.target ?? null;
+  }
+
+  private executeAgentCommand(command: AgentCommandEnvelope) {
+    const args = command.arguments as Record<string, unknown>;
+    const pose = this.agentPose(command.agentId);
+    const revision = this.world.mutationRevision;
+    const completed = (code: string, message: string, data?: Record<string, unknown>) => this.publishAgentResult(createAgentResult(command, "completed", this.world.mutationRevision, code, message, data ? { data } : {}));
+    const blocked = (code: string, message: string, data?: Record<string, unknown>) => this.publishAgentResult(createAgentResult(command, "blocked", this.world.mutationRevision, code, message, data ? { data } : {}));
+    if (!pose) return blocked("agent_pose_unavailable", "The host has not established this drone's physical pose yet.");
+
+    if (["observe", "session.status"].includes(command.kind)) return completed("observation_ready", "A fresh host-authored observation is available.", { observationSequence: this.createAgentObservation(command.agentId).observationSequence });
+    if (command.kind === "capabilities.list") return completed("capabilities_ready", "Current session capabilities returned.", { capabilities: [...(this.agentAuthority.get(command.agentId)?.granted ?? [])] });
+    if (command.kind === "chat_read") return completed("chat_ready", "Bounded chat delta returned as untrusted in-world dialogue.", { messages: this.agentChat.since(Number(args.afterSequence) || 0, 40) });
+    if (command.kind === "chat_send") {
+      const record = this.agentAuthority.get(command.agentId);
+      if (record?.muted) return blocked("agent_muted", "The host muted this drone's communications.");
+      const text = String(args.text ?? "").trim().slice(0, 480);
+      const channel = ["local", "party", "global", "system"].includes(String(args.channel)) ? args.channel as AgentChatChannel : "global";
+      const appended = this.agentChat.append({ authorId: command.agentId, authorName: record?.name ?? "Field Drone", peerKind: "agent", channel, text, sentAt: Date.now(), position: { x: pose.x, y: pose.y, z: pose.z } });
+      if (!appended.ok) return blocked(appended.code, "The chat message was invalid or rate limited.");
+      this.multiplayer?.sendChat(appended.message);
+      return completed("chat_sent", "The message was sent as in-world dialogue.", { sequence: appended.message.sequence });
+    }
+    if (command.kind === "session.pause") { this.cancelAgentRuntime(command.agentId, "paused", "The runner paused its active command."); this.agentAuthority.pause(command.agentId); return completed("agent_paused", "The drone is paused and will not start new work."); }
+    if (command.kind === "session.resume") { this.agentAuthority.resume(command.agentId); return completed("agent_resumed", "The drone re-observed and resumed accepting work."); }
+    if (command.kind === "session.stop") { this.cancelAgentRuntime(command.agentId, "stopped", "The runner stopped its active command."); this.agentAuthority.releaseAgentLeases(command.agentId); return completed("agent_stopped", "All drone work leases were released."); }
+    if (command.kind === "stop") {
+      const cancelled = this.cancelAgentRuntime(command.agentId, "stopped", "Movement stopped at the current safe position.");
+      return cancelled ?? completed("already_stopped", "The drone had no active movement command.");
+    }
+    if (command.kind === "face") {
+      const target = args.target as { x: number; y: number; z: number };
+      const remote = this.remotePlayers.get(command.agentId)!;
+      remote.target = { ...remote.target, yaw: Math.atan2(-(target.x - pose.x), -(target.z - pose.z)), pitch: Math.atan2(target.y - pose.y, Math.hypot(target.x - pose.x, target.z - pose.z)) };
+      return completed("facing_target", "The drone turned toward the requested point.");
+    }
+    if (command.kind === "wait") {
+      this.cancelAgentRuntime(command.agentId);
+      const seconds = Math.max(0, Number(args.milliseconds) / 1000);
+      const running = createAgentResult(command, "running", revision, "waiting", `Waiting for ${seconds.toFixed(1)} seconds.`, { progress: { completed: 0, total: seconds }, startedAt: Date.now() });
+      this.agentRuntimeTasks.set(command.agentId, { command, kind: "wait", path: [], pathIndex: 0, goal: { x: pose.x, y: pose.y, z: pose.z }, remainingSeconds: seconds, startedAt: running.startedAt, lastReplanAt: performance.now(), lastReportAt: 0, blockedSeconds: 0, replans: 0, lastPosition: { x: pose.x, y: pose.y, z: pose.z } });
+      return this.publishAgentResult(running);
+    }
+    if (command.kind === "move_to" || command.kind === "move_relative" || command.kind === "follow_player") {
+      this.cancelAgentRuntime(command.agentId, "superseded", "A newer movement command replaced this one.");
+      const followPlayerId = command.kind === "follow_player" ? String(args.playerId ?? "") : undefined;
+      const targetPlayer = followPlayerId ? this.targetPlayerPose(followPlayerId) : null;
+      const goal = command.kind === "move_relative"
+        ? { x: pose.x + Number((args.delta as { x: number }).x), y: pose.y + Number((args.delta as { y: number }).y), z: pose.z + Number((args.delta as { z: number }).z) }
+        : command.kind === "move_to" ? args.target as { x: number; y: number; z: number }
+          : targetPlayer ? { x: targetPlayer.x + Math.sin(targetPlayer.yaw) * 3, y: targetPlayer.y, z: targetPlayer.z + Math.cos(targetPlayer.yaw) * 3 } : null;
+      if (!goal) return blocked("follow_target_unavailable", "That player is not connected to this host.");
+      const path = this.planAgentPath(command.agentId, goal);
+      if (!path?.ok) return blocked(path?.code ?? "path_unavailable", `No safe loaded route was found. Nearest reachable point: ${JSON.stringify(path?.nearest ?? pose)}.`, { nearest: path?.nearest ?? { x: pose.x, y: pose.y, z: pose.z }, visited: path?.visited ?? 0 });
+      const running = createAgentResult(command, "running", revision, command.kind === "follow_player" ? "following" : "navigating", command.kind === "follow_player" ? "Following the selected player within the requested distance band." : `Navigating a ${path.cells.length}-cell loaded route.`, { progress: { completed: 0, total: Math.max(1, path.cells.length), current: path.cells[0] ?? null }, startedAt: Date.now() });
+      this.agentRuntimeTasks.set(command.agentId, { command, kind: command.kind === "follow_player" ? "follow" : "move", path: path.cells, pathIndex: 0, goal, followPlayerId, remainingSeconds: 0, startedAt: running.startedAt, lastReplanAt: performance.now(), lastReportAt: 0, blockedSeconds: 0, replans: 0, lastPosition: { x: pose.x, y: pose.y, z: pose.z } });
+      return this.publishAgentResult(running);
+    }
+    if (command.kind === "inventory_get" || command.kind === "agent_inventory_open_for_host") {
+      const inventory = this.agentInventories.get(command.agentId) ?? [];
+      return completed("inventory_ready", "Host-owned drone inventory returned.", { slots: inventory.map((slot, index) => slot ? { index, item: slot.item, name: ITEMS[slot.item]?.name, count: slot.count } : null) });
+    }
+    if (command.kind === "inventory_move") {
+      const inventory = this.agentInventories.get(command.agentId) ?? [];
+      const from = Math.trunc(Number(args.from)), to = Math.trunc(Number(args.to));
+      if (from < 0 || to < 0 || from >= inventory.length || to >= inventory.length || !inventory[from]) return blocked("inventory_slot_invalid", "The requested source or destination slot is unavailable.");
+      [inventory[from], inventory[to]] = [inventory[to], inventory[from]];
+      return completed("inventory_moved", "The host committed the slot move.", { from, to });
+    }
+    if (command.kind === "inventory_drop") {
+      const inventory = this.agentInventories.get(command.agentId) ?? [];
+      const slotIndex = Math.trunc(Number(args.slot));
+      const slot = inventory[slotIndex];
+      if (!slot) return blocked("inventory_slot_empty", "That drone inventory slot is empty.");
+      const count = Math.max(1, Math.min(slot.count, Math.trunc(Number(args.count) || slot.count)));
+      this.spawnDrop(slot.item, count, new THREE.Vector3(pose.x, pose.y + 0.3, pose.z), slot.durability, slot.metadata);
+      slot.count -= count;
+      if (slot.count <= 0) inventory[slotIndex] = null;
+      return completed("inventory_dropped", `Dropped ${count} ${ITEMS[slot.item]?.name ?? "item"}.`, { count });
+    }
+    if (["open_container", "container_get", "container_transfer", "interact", "use_workstation"].includes(command.kind)) {
+      const targetId = String(args.containerId ?? args.targetId ?? "").replace(/^container:/u, "");
+      const targetPosition = blockPositionFromKey(targetId);
+      if (!targetPosition || Math.hypot(targetPosition.x - pose.x, targetPosition.y - pose.y, targetPosition.z - pose.z) > 5.5) return blocked("target_out_of_reach", "The requested world target is missing or outside the drone's physical interaction reach.");
+      const type = this.world.getBlock(targetPosition.x, targetPosition.y, targetPosition.z);
+      if (command.kind === "interact" && type !== undefined && this.isDoor(type)) return this.toggleDoor(targetPosition.x, targetPosition.y, targetPosition.z, type) ? completed("door_toggled", "The door was used.") : blocked("door_occupied", "The door could not move because its passage is occupied.");
+      if (command.kind === "interact" && type !== undefined && toggleFenceGate(type) !== null) return this.toggleFenceGateAt(targetPosition.x, targetPosition.y, targetPosition.z, type) ? completed("gate_toggled", "The fence gate was used.") : blocked("gate_occupied", "The gate could not move because its passage is occupied.");
+      const chest = this.chests.get(targetId);
+      if (!chest) return blocked("container_unavailable", "No host-owned container exists at that target.");
+      if (command.kind !== "container_transfer") return completed("container_ready", "The host returned a bounded container view.", { containerId: targetId, slots: chest.map((slot, index) => slot ? { index, item: slot.item, name: ITEMS[slot.item]?.name, count: slot.count } : null) });
+      const lease = this.agentAuthority.acquireLease([`container:${targetId}`], command.commandId, command.agentId, command.expiresAt);
+      if (!lease.ok) return blocked("work_lease_conflict", "Another agent or transaction currently owns this container lease.", { conflict: lease.conflict });
+      const inventory = this.agentInventories.get(command.agentId) ?? [];
+      const direction = args.direction === "container-to-agent" ? "container-to-agent" : "agent-to-container";
+      const transfer = direction === "agent-to-container" ? transferInventoryStacks(inventory, chest) : transferInventoryStacks(chest, inventory);
+      if (direction === "agent-to-container") { this.agentInventories.set(command.agentId, transfer.source as Array<InventorySlot | null>); this.chests.set(targetId, transfer.target as ChestState); }
+      else { this.chests.set(targetId, transfer.source as ChestState); this.agentInventories.set(command.agentId, transfer.target as Array<InventorySlot | null>); }
+      this.agentAuthority.releaseCommandLeases(command.commandId);
+      if (!transfer.moved) return blocked("transfer_no_space", "No items moved because the source was empty or the destination was full.");
+      this.saveSoon();
+      return completed("container_transfer_committed", `The host atomically transferred ${transfer.moved} item${transfer.moved === 1 ? "" : "s"}.`, { moved: transfer.moved, direction });
+    }
+    if (command.kind === "wiki_lookup") {
+      const query = String(args.query ?? "").trim().toLocaleLowerCase();
+      const matches = Object.entries(ITEMS).flatMap(([id, item]) => item?.name.toLocaleLowerCase().includes(query) ? [{ id: Number(id), name: item.name }] : []).slice(0, 12);
+      return completed("wiki_results", `${matches.length} item reference match${matches.length === 1 ? "" : "es"} found.`, { matches });
+    }
+    if (command.kind === "bestiary_lookup") {
+      const query = String(args.kind ?? args.query ?? "").trim().toLocaleLowerCase();
+      const matches = MOB_ORDER.filter((kind) => kind.includes(query) || MOB_DEFS[kind].name.toLocaleLowerCase().includes(query)).slice(0, 12).map((kind) => ({ kind, name: MOB_DEFS[kind].name, behavior: MOB_DEFS[kind].behavior, habitat: MOB_DEFS[kind].habitat }));
+      return completed("bestiary_results", `${matches.length} Bestiary match${matches.length === 1 ? "" : "es"} found.`, { matches });
+    }
+    if (command.kind === "recipe_lookup") {
+      const query = String(args.query ?? "").trim().toLocaleLowerCase();
+      const matches = RECIPES.filter((recipe) => ITEMS[recipe.output.item]?.name.toLocaleLowerCase().includes(query)).slice(0, 12).map((recipe) => ({
+        output: ITEMS[recipe.output.item]?.name,
+        count: recipe.output.count,
+        pattern: recipe.pattern.map((ingredient) => ingredient === 0 ? null : Array.isArray(ingredient)
+          ? ingredient.map((item) => ITEMS[item]?.name ?? String(item))
+          : ITEMS[ingredient]?.name ?? String(ingredient)),
+      }));
+      return completed("recipe_results", `${matches.length} recipe match${matches.length === 1 ? "" : "es"} found.`, { matches });
+    }
+    return blocked("command_not_supported", `The deterministic executor does not support ${command.kind} in this phase.`);
+  }
+
+  private updateAgentRuntime(dt: number) {
+    const now = performance.now();
+    for (const [agentId, task] of this.agentRuntimeTasks) {
+      const record = this.agentAuthority.get(agentId);
+      const remote = this.remotePlayers.get(agentId);
+      if (!remote || !record || record.status === "revoked" || record.status === "disconnected") { this.cancelAgentRuntime(agentId, "session_ended", "The agent session ended during execution."); continue; }
+      if (record.status === "paused") continue;
+      if (task.kind === "wait") {
+        task.remainingSeconds -= dt;
+        if (task.remainingSeconds <= 0) { this.agentRuntimeTasks.delete(agentId); this.publishAgentResult(createAgentResult(task.command, "completed", this.world.mutationRevision, "wait_complete", "The requested wait completed.", { startedAt: task.startedAt })); }
+        continue;
+      }
+      if (task.kind === "follow" && task.followPlayerId) {
+        const followed = this.targetPlayerPose(task.followPlayerId);
+        if (!followed) { this.cancelAgentRuntime(agentId, "follow_target_lost", "The followed player disconnected."); continue; }
+        const distance = Math.hypot(remote.target.x - followed.x, remote.target.z - followed.z);
+        const minDistance = Number(task.command.arguments.minDistance) || 2.5;
+        const maxDistance = Number(task.command.arguments.maxDistance) || 4;
+        if (distance >= minDistance && distance <= maxDistance && task.pathIndex >= task.path.length) continue;
+        if (now - task.lastReplanAt >= 750 || task.pathIndex >= task.path.length) {
+          task.goal = { x: followed.x + Math.sin(followed.yaw) * Math.max(minDistance, 3), y: followed.y, z: followed.z + Math.cos(followed.yaw) * Math.max(minDistance, 3) };
+          const path = this.planAgentPath(agentId, task.goal);
+          task.lastReplanAt = now;
+          if (!path?.ok) { task.blockedSeconds += dt; if (task.blockedSeconds >= 4) this.cancelAgentRuntime(agentId, path?.code ?? "follow_path_blocked", "The follower could not reach a safe loaded position."); continue; }
+          task.path = path.cells; task.pathIndex = 0; task.replans += 1; task.blockedSeconds = 0;
+        }
+      }
+      const cell = task.path[task.pathIndex];
+      if (!cell) {
+        if (task.kind === "follow") continue;
+        if (Math.hypot(task.goal.x - remote.target.x, task.goal.y - remote.target.y, task.goal.z - remote.target.z) > 1.5) {
+          const nextLeg = this.planAgentPath(agentId, task.goal);
+          if (!nextLeg?.ok) { this.cancelAgentRuntime(agentId, nextLeg?.code ?? "path_unavailable", "The next hierarchical route leg is not safely loaded."); continue; }
+          task.path = nextLeg.cells; task.pathIndex = 0; task.replans += 1; task.lastReplanAt = now;
+          continue;
+        }
+        this.agentRuntimeTasks.delete(agentId);
+        this.publishAgentResult(createAgentResult(task.command, "completed", this.world.mutationRevision, "destination_reached", "The drone reached the requested loaded destination.", { startedAt: task.startedAt, progress: { completed: task.path.length, total: task.path.length } }));
+        continue;
+      }
+      const cellBlock = this.world.getBlock(cell.x, cell.y, cell.z);
+      if (cellBlock !== undefined && this.isDoor(cellBlock) && !this.doorIsOpen(cellBlock)) this.toggleDoor(cell.x, cell.y, cell.z, cellBlock, "sentient");
+      else if (cellBlock !== undefined && toggleFenceGate(cellBlock) !== null && ![BlockId.FenceGateNorthSouthOpen, BlockId.FenceGateEastWestOpen].includes(cellBlock)) this.toggleFenceGateAt(cell.x, cell.y, cell.z, cellBlock, "sentient");
+      const previous = { x: remote.target.x, y: remote.target.y, z: remote.target.z };
+      const next = advanceAgentAlongPath(previous, cell, cell.transition === "swim" ? 2.4 : 3.8, dt);
+      remote.target = { ...remote.target, ...next.position, yaw: next.yaw, vx: (next.position.x - previous.x) / Math.max(dt, 0.001), vy: (next.position.y - previous.y) / Math.max(dt, 0.001), vz: (next.position.z - previous.z) / Math.max(dt, 0.001), grounded: false, action: "none" };
+      if (next.reached) task.pathIndex += 1;
+      const moved = Math.hypot(next.position.x - task.lastPosition.x, next.position.y - task.lastPosition.y, next.position.z - task.lastPosition.z);
+      task.blockedSeconds = moved < 0.005 ? task.blockedSeconds + dt : 0;
+      task.lastPosition = { ...next.position };
+      if (task.blockedSeconds >= 2.75) {
+        const path = this.planAgentPath(agentId, task.goal);
+        task.replans += 1; task.blockedSeconds = 0;
+        if (!path?.ok || task.replans > 3) { this.cancelAgentRuntime(agentId, "navigation_stuck", "The drone stopped after bounded replanning could not clear an obstruction."); continue; }
+        task.path = path.cells; task.pathIndex = 0;
+      }
+      if (now - task.lastReportAt >= 500) {
+        task.lastReportAt = now;
+        this.publishAgentResult(createAgentResult(task.command, "running", this.world.mutationRevision, task.kind === "follow" ? "following" : "navigating", task.kind === "follow" ? "Maintaining the requested follow band." : "Following the validated voxel route.", { startedAt: task.startedAt, progress: { completed: task.pathIndex, total: Math.max(1, task.path.length), current: task.path[task.pathIndex] ?? null } }));
+      }
+    }
   }
 
   createAgentObservation(agentId = this.multiplayer?.identity.id ?? "agent_local"): AgentObservationV1 {
