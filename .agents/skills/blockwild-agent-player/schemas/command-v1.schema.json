@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://blockwild.noahhicks.chatgpt.site/schemas/agent-command-v1.json",
+  "title": "Blockwild Agent Command V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "commandId", "agentId", "kind", "expectedWorldRevision", "issuedAt", "expiresAt", "arguments"],
+  "properties": {
+    "schema": { "const": 1 },
+    "commandId": { "$ref": "#/$defs/id" },
+    "agentId": { "$ref": "#/$defs/id" },
+    "kind": {
+      "enum": [
+        "session.status", "session.pause", "session.resume", "session.stop", "capabilities.list",
+        "observe", "inspect_area", "inspect_target", "wiki_lookup", "bestiary_lookup", "recipe_lookup",
+        "move_to", "move_relative", "follow_player", "face", "wait", "stop",
+        "chat_read", "chat_send", "speak", "emote",
+        "inventory_get", "inventory_move", "inventory_drop", "agent_inventory_open_for_host",
+        "interact", "open_container", "container_get", "container_transfer", "use_workstation",
+        "harvest_area", "gather_resource", "build_plan", "build_commit", "build_cancel",
+        "memory_pin", "memory_list", "memory_remove", "task_pin", "task_update", "waypoint_pin",
+        "world_list", "world_create", "world_load", "world_export", "world_delete",
+        "diagnostics_start", "diagnostics_stop", "diagnostics_export"
+      ]
+    },
+    "expectedWorldRevision": { "type": "integer", "minimum": 0 },
+    "issuedAt": { "type": "number", "minimum": 0 },
+    "expiresAt": { "type": "number", "minimum": 0 },
+    "arguments": { "type": "object", "maxProperties": 128 },
+    "clientIntent": { "type": "string", "maxLength": 320 }
+  },
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9:_-]{0,127}$" }
+  }
+}

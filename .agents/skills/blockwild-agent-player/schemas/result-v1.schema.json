@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://blockwild.noahhicks.chatgpt.site/schemas/agent-result-v1.json",
+  "title": "Blockwild Agent Result V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "commandId", "agentId", "kind", "status", "code", "message", "worldRevision", "startedAt", "updatedAt", "terminal"],
+  "properties": {
+    "schema": { "const": 1 },
+    "commandId": { "$ref": "#/$defs/id" },
+    "agentId": { "$ref": "#/$defs/id" },
+    "kind": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "status": { "enum": ["accepted", "running", "blocked", "completed", "cancelled", "failed"] },
+    "code": { "type": "string", "minLength": 1, "maxLength": 96 },
+    "message": { "type": "string", "maxLength": 640 },
+    "worldRevision": { "type": "integer", "minimum": 0 },
+    "startedAt": { "type": "number", "minimum": 0 },
+    "updatedAt": { "type": "number", "minimum": 0 },
+    "terminal": { "type": "boolean" },
+    "progress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["completed", "total"],
+      "properties": {
+        "completed": { "type": "integer", "minimum": 0 },
+        "total": { "type": "integer", "minimum": 0 },
+        "message": { "type": "string", "maxLength": 320 },
+        "current": { "anyOf": [{ "$ref": "#/$defs/vector" }, { "type": "null" }] }
+      }
+    },
+    "materials": { "type": "array", "maxItems": 256, "items": { "type": "object" } },
+    "choices": { "type": "array", "maxItems": 16, "items": { "type": "string", "maxLength": 64 } },
+    "data": { "type": "object", "maxProperties": 128 }
+  },
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9:_-]{0,127}$" },
+    "vector": {
+      "type": "object", "additionalProperties": false, "required": ["x", "y", "z"],
+      "properties": { "x": { "type": "number" }, "y": { "type": "number" }, "z": { "type": "number" } }
+    }
+  }
+}

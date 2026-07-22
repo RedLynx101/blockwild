@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://blockwild.noahhicks.chatgpt.site/schemas/agent-observation-v1.json",
+  "title": "Blockwild Agent Observation V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "observationSequence", "observedAt", "expiresAt", "worldRevision", "coordinateSystem", "session", "self", "world", "chat", "tasks", "waypoints", "performance"],
+  "properties": {
+    "schema": { "const": 1 },
+    "observationSequence": { "type": "integer", "minimum": 0 },
+    "observedAt": { "type": "number", "minimum": 0 },
+    "expiresAt": { "type": "number", "minimum": 0 },
+    "worldRevision": { "type": "integer", "minimum": 0 },
+    "coordinateSystem": { "type": "string", "maxLength": 240 },
+    "session": { "type": "object" },
+    "self": { "type": "object" },
+    "world": { "type": "object" },
+    "chat": { "type": "object" },
+    "tasks": { "type": "array", "maxItems": 128 },
+    "waypoints": { "type": "array", "maxItems": 128 },
+    "performance": { "type": "object" }
+  }
+}

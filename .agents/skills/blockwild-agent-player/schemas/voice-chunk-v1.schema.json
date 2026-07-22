@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://blockwild.noahhicks.chatgpt.site/schemas/voice-chunk-v1.json",
+  "title": "Blockwild Voice Chunk V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "streamId", "agentId", "messageId", "mimeType", "textHash", "text", "sequence", "chunkIndex", "chunkCount", "durationMs", "data", "position"],
+  "properties": {
+    "schema": { "const": 1 },
+    "streamId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "agentId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "messageId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "mimeType": { "enum": ["audio/mpeg", "audio/ogg", "audio/wav"] },
+    "textHash": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "text": { "type": "string", "minLength": 1, "maxLength": 480 },
+    "sequence": { "type": "integer", "minimum": 0 },
+    "chunkIndex": { "type": "integer", "minimum": 0, "maximum": 127 },
+    "chunkCount": { "type": "integer", "minimum": 1, "maximum": 128 },
+    "durationMs": { "type": "integer", "minimum": 1, "maximum": 30000 },
+    "data": { "type": "string", "maxLength": 65536, "pattern": "^[A-Za-z0-9+/]*={0,2}$" },
+    "position": { "type": "object" }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://blockwild.noahhicks.chatgpt.site/schemas/chat-v1.json",
+  "title": "Blockwild Chat Message V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "sequence", "authorId", "authorName", "peerKind", "channel", "text", "sentAt"],
+  "properties": {
+    "schema": { "const": 1 },
+    "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "sequence": { "type": "integer", "minimum": 0 },
+    "authorId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "authorName": { "type": "string", "minLength": 1, "maxLength": 48 },
+    "peerKind": { "enum": ["human", "agent"] },
+    "channel": { "enum": ["local", "party", "global", "system"] },
+    "text": { "type": "string", "minLength": 1, "maxLength": 480 },
+    "sentAt": { "type": "number", "minimum": 0 },
+    "position": { "type": "object" }
+  }
+}

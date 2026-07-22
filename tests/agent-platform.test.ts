@@ -1,0 +1,170 @@
+import assert from "node:assert/strict";
+import { describe, test } from "node:test";
+import {
+  AGENT_DEFAULT_RENDER_DISTANCE,
+  AGENT_DEFAULT_SIMULATION_DISTANCE,
+  AGENT_PLATFORM_SCHEMA_VERSION,
+  AgentAuthority,
+  AgentChatRing,
+  AgentDiagnostics,
+  createAgentResult,
+  createAgentTask,
+  defaultAgentCapabilities,
+  mergeAgentInterestRegions,
+  normalizeAgentWorldSave,
+  validateAgentCapabilityGrant,
+  validateAgentChatMessage,
+  validateAgentCommand,
+  validateAgentObservation,
+  validateAgentResult,
+  validateAgentVoiceChunk,
+  type AgentCommandEnvelope,
+  type AgentObservationV1,
+} from "../app/game/agent-platform";
+
+function command(overrides: Partial<AgentCommandEnvelope> = {}): AgentCommandEnvelope {
+  const issuedAt = Date.now();
+  return {
+    schema: AGENT_PLATFORM_SCHEMA_VERSION,
+    commandId: "cmd_test_001",
+    agentId: "agent_test",
+    kind: "observe",
+    expectedWorldRevision: 4,
+    issuedAt,
+    expiresAt: issuedAt + 30_000,
+    arguments: {},
+    ...overrides,
+  };
+}
+
+describe("agent platform contracts", () => {
+  test("fixed agent resource profile remains render 4 and simulation 3", () => {
+    assert.equal(AGENT_DEFAULT_RENDER_DISTANCE, 4);
+    assert.equal(AGENT_DEFAULT_SIMULATION_DISTANCE, 3);
+  });
+
+  test("commands round trip and malformed, oversized, stale, and dangerous forms fail closed", () => {
+    const now = Date.now();
+    assert.equal(validateAgentCommand(command({ issuedAt: now, expiresAt: now + 30_000 }), now), true);
+    assert.equal(validateAgentCommand({ ...command(), schema: 2 }), false);
+    assert.equal(validateAgentCommand({ ...command(), commandId: "bad id" }), false);
+    assert.equal(validateAgentCommand({ ...command(), expiresAt: now - 2_000 }, now), false);
+    assert.equal(validateAgentCommand({ ...command(), arguments: { text: "x".repeat(140 * 1024) } }, now), false);
+    assert.equal(validateAgentCommand(command({ kind: "world_delete", arguments: { worldId: "world_test" } }), now), false);
+    assert.equal(validateAgentCommand(command({ kind: "world_delete", arguments: { worldId: "world_test", confirm: true } }), now), true);
+    assert.equal(validateAgentCommand(command({ kind: "build_plan", arguments: { placements: [] } }), now), false);
+    assert.equal(validateAgentCommand(command({ kind: "build_plan", arguments: { placements: [{ x: 1, y: 2, z: 3, block: 4 }] } }), now), true);
+  });
+
+  test("result terminal state is internally consistent", () => {
+    const completed = createAgentResult(command(), "completed", 5, "observed", "Fresh observation returned.", { data: { okay: true } });
+    assert.equal(completed.terminal, true);
+    assert.equal(validateAgentResult(completed), true);
+    assert.equal(validateAgentResult({ ...completed, terminal: false }), false);
+  });
+
+  test("authority requires connection binding, approval, capability, and fresh world revision", () => {
+    const authority = new AgentAuthority(4);
+    const registered = authority.register({ agentId: "agent_test", connectionId: "peer_1", name: "Mica", requested: ["observe.world", "build"] });
+    assert.equal(registered?.status, "pending");
+    assert.equal(authority.authorize(command(), "peer_1", 4)?.code, "host_approval_required");
+    authority.approve("agent_test", ["observe.world"]);
+    assert.equal(authority.authorize(command(), "wrong_peer", 4)?.code, "agent_identity_unverified");
+    assert.equal(authority.authorize(command({ kind: "build_plan", arguments: { placements: [{ x: 1, y: 2, z: 3, block: 4 }] } }), "peer_1", 4)?.code, "capability_denied");
+    assert.equal(authority.authorize(command({ kind: "move_to", arguments: { target: { x: 1, y: 2, z: 3 } } }), "peer_1", 4)?.code, "capability_denied");
+    assert.equal(authority.authorize(command({ expectedWorldRevision: 3 }), "peer_1", 4), null, "read-only observe tolerates a stale expected revision");
+    authority.setCapability("agent_test", "build", true);
+    assert.equal(authority.authorize(command({ kind: "build_plan", expectedWorldRevision: 3, arguments: { placements: [{ x: 1, y: 2, z: 3, block: 4 }] } }), "peer_1", 4)?.code, "world_revision_conflict");
+    authority.pause("agent_test");
+    assert.equal(authority.authorize(command(), "peer_1", 4)?.code, "agent_paused");
+  });
+
+  test("terminal command replay and leases are exactly-once and conflict safe", () => {
+    const authority = new AgentAuthority();
+    authority.register({ agentId: "agent_test", connectionId: "peer_1", name: "Mica" });
+    authority.approve("agent_test");
+    const source = command();
+    const result = createAgentResult(source, "completed", 4, "done", "Done");
+    authority.setCurrentResult(result);
+    assert.deepEqual(authority.authorize(source, "peer_1", 4), result);
+    assert.equal(authority.acquireLease(["block:1,2,3"], source.commandId, source.agentId, Date.now() + 10_000).ok, true);
+    assert.deepEqual(authority.acquireLease(["block:1,2,3"], "cmd_other", "agent_other", Date.now() + 10_000), { ok: false, conflict: "block:1,2,3" });
+    authority.releaseCommandLeases(source.commandId);
+    assert.equal(authority.activeLeaseCount(), 0);
+  });
+
+  test("capacity rejects the fifth active drone explicitly", () => {
+    const authority = new AgentAuthority(4);
+    for (let index = 0; index < 4; index += 1) assert.ok(authority.register({ agentId: `agent_${index}`, connectionId: `peer_${index}`, name: `Drone ${index}` }));
+    assert.equal(authority.register({ agentId: "agent_4", connectionId: "peer_4", name: "Fifth" }), null);
+  });
+
+  test("chat is sequence ordered, bounded, sanitized, and rate limited", () => {
+    const ring = new AgentChatRing();
+    const first = ring.append({ authorId: "player_1", authorName: "Noah", peerKind: "human", channel: "local", text: "hello\u0000 world", sentAt: 10, position: { x: 1, y: 2, z: 3 } }, 10);
+    assert.equal(first.ok, true);
+    assert.equal(first.ok && first.message.text, "hello world");
+    assert.equal(first.ok && validateAgentChatMessage(first.message), true);
+    for (let index = 0; index < 7; index += 1) assert.equal(ring.append({ authorId: "player_1", authorName: "Noah", peerKind: "human", channel: "global", text: `line ${index}`, sentAt: 11 + index }, 11 + index).ok, true);
+    assert.equal(ring.append({ authorId: "player_1", authorName: "Noah", peerKind: "human", channel: "global", text: "too fast", sentAt: 20 }, 20).ok, false);
+    assert.deepEqual(ring.since(7).map((message) => message.sequence), [8]);
+  });
+
+  test("capability and voice payload validators reject spoofed or excessive data", () => {
+    assert.equal(validateAgentCapabilityGrant({ schema: 1, agentId: "agent_test", connectionId: "peer_1", status: "approved", requested: defaultAgentCapabilities(), granted: ["observe.world"], updatedAt: Date.now() }), true);
+    const voice = { schema: 1, streamId: "voice_1", agentId: "agent_test", messageId: "chat_1", mimeType: "audio/mpeg", textHash: "abc", text: "Hello", sequence: 1, chunkIndex: 0, chunkCount: 1, durationMs: 500, data: "AA==", position: { x: 0, y: 2, z: 0 } };
+    assert.equal(validateAgentVoiceChunk(voice), true);
+    assert.equal(validateAgentVoiceChunk({ ...voice, chunkCount: 129 }), false);
+    assert.equal(validateAgentVoiceChunk({ ...voice, text: "x".repeat(481) }), false);
+  });
+
+  test("public tasks and waypoints normalize without importing opaque memory", () => {
+    const task = createAgentTask({ agentId: "agent_test", title: "Tend the western field", note: "Only mature wheat" }, 100);
+    const save = normalizeAgentWorldSave({ schema: 1, enabled: true, tasks: [task, { bad: true }], waypoints: [{ id: "way_1", agentId: "agent_test", name: "West field", position: { x: 2, y: 3, z: 4 }, createdAt: 100, source: "agent" }], privateTranscript: "must not survive" });
+    assert.equal(save.tasks.length, 1);
+    assert.equal(save.waypoints.length, 1);
+    assert.equal("privateTranscript" in save, false);
+  });
+
+  test("co-located interests merge and separated agents stay declared", () => {
+    const plan = mergeAgentInterestRegions(
+      [{ x: 0, y: 0, z: 0 }],
+      [
+        { agentId: "agent_a", position: { x: 4, y: 2, z: 4 }, status: "approved" },
+        { agentId: "agent_b", position: { x: 40, y: 2, z: 0 }, status: "approved" },
+        { agentId: "agent_c", position: { x: 42, y: 2, z: 2 }, status: "approved" },
+      ],
+    );
+    assert.equal(plan.humanRegions, 1);
+    assert.equal(plan.agentRegions, 1);
+    assert.deepEqual(plan.admittedAgentIds, ["agent_a", "agent_b", "agent_c"]);
+    assert.deepEqual(plan.mergedAgentRegions[0]?.agentIds, ["agent_b", "agent_c"]);
+  });
+
+  test("diagnostics exports engine-verifiable counters without prompts", () => {
+    const diagnostics = new AgentDiagnostics();
+    diagnostics.recordResult(createAgentResult(command(), "completed", 4, "observed", "Done"));
+    const report = diagnostics.export();
+    assert.equal(report.commands.completed, 1);
+    assert.equal(report.commandCodes.observed, 1);
+    assert.equal("prompt" in report.runner, false);
+  });
+
+  test("observation validator accepts bounded structural observations", () => {
+    const observation: AgentObservationV1 = {
+      schema: 1,
+      observationSequence: 1,
+      observedAt: 10,
+      expiresAt: 12,
+      worldRevision: 4,
+      coordinateSystem: "+x east, +y up, +z south",
+      session: { worldId: "world_1", worldFingerprint: "fingerprint_1", gameVersion: "1.9.1", generatorVersion: 17, multiplayerProtocolVersion: 3, agentProtocolVersion: 1, role: "guest", connected: true, capabilities: ["observe.world"] },
+      self: { agentId: "agent_test", name: "Mica", position: { x: 0, y: 2, z: 0 }, velocity: { x: 0, y: 0, z: 0 }, yaw: 0, pitch: 0, biome: "Wildwood", depth: "Surface", liquid: null, light: 15, inventory: { used: 0, capacity: 36 }, command: null },
+      world: { day: 1, time: 0.3, weather: "clear", occupiedChunkReady: true, players: [], nearby: [], reachable: [] },
+      chat: { newestSequence: 0, newChatCount: 0, messages: [] },
+      tasks: [], waypoints: [],
+      performance: { fps: 30, renderDistance: 4, simulationDistance: 3, commandQueue: 0, channelBackpressure: 0 },
+    };
+    assert.equal(validateAgentObservation(observation), true);
+  });
+});
