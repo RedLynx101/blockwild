@@ -172,6 +172,7 @@ test("held swim input produces repeatable breathing bobs without walking on the 
     let stableSubmergedFrames = 0;
     let minimumStableOxygen = 12;
     let strokeStarts = 0;
+    const strokeTimes: number[] = [];
     for (let frame = 0; frame < fps * 15; frame += 1) {
       const headSubmerged = feetY + 1.5 < 0;
       const priorCooldown = swimmer.surfaceStrokeCooldownSeconds ?? 0;
@@ -181,7 +182,10 @@ test("held swim input produces repeatable breathing bobs without walking on the 
         { submersion: headSubmerged ? 1 : 0.68, headSubmerged, horizontalCollision: false, surfaceClearance: feetY + 1.5 },
         1 / fps,
       ).state;
-      if (priorCooldown <= 0 && (next.surfaceStrokeCooldownSeconds ?? 0) > 0) strokeStarts += 1;
+      if (priorCooldown <= 0 && (next.surfaceStrokeCooldownSeconds ?? 0) > 0) {
+        strokeStarts += 1;
+        strokeTimes.push(frame / fps);
+      }
       swimmer = next;
       feetY += swimmer.velocityY / fps;
       highestFeetY = Math.max(highestFeetY, feetY);
@@ -193,7 +197,10 @@ test("held swim input produces repeatable breathing bobs without walking on the 
         minimumStableOxygen = Math.min(minimumStableOxygen, swimmer.oxygenSeconds);
       }
     }
-    assert.ok(strokeStarts >= 20, `${fps} FPS held Space only produced ${strokeStarts} strokes`);
+    const stableIntervals = strokeTimes.slice(2).map((time, index) => time - strokeTimes[index + 1]);
+    const averageInterval = stableIntervals.reduce((sum, interval) => sum + interval, 0) / stableIntervals.length;
+    assert.ok(strokeStarts >= 10 && strokeStarts <= 14, `${fps} FPS held Space produced ${strokeStarts} strokes instead of the slower cadence`);
+    assert.ok(averageInterval >= 1.05 && averageInterval <= 1.32, `${fps} FPS breathing cycle averaged ${averageInterval}s`);
     assert.ok(highestFeetY > -0.7, `${fps} FPS feet only rose to ${highestFeetY}, which cannot clear the water sample`);
     assert.ok(highestFeetY < -0.25, `${fps} FPS feet rose to ${highestFeetY}, which would become a water-walking launch`);
     assert.ok(stableLowestFeetY > -1.28, `${fps} FPS breathing bob fell too low: ${stableLowestFeetY}`);

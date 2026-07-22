@@ -380,6 +380,8 @@ export type SwimmerState = Readonly<{
   surfaceBreachSeconds?: number;
   /** Recovery window before held swim input may begin another surface stroke. */
   surfaceStrokeCooldownSeconds?: number;
+  /** True only while the slow breathing bob owns near-surface vertical motion. */
+  surfaceBobActive?: boolean;
 }>;
 
 export type SwimEnvironment = Readonly<{
@@ -439,6 +441,8 @@ export type SwimRules = Readonly<{
   surfaceBobVelocity: number;
   /** Eye clearance at which a descending held swimmer begins the next breathing stroke. */
   surfaceBobFloorClearance: number;
+  /** Gentle downward acceleration used by the slow maintenance-bob arc. */
+  surfaceBobRecoveryAcceleration: number;
   /** Downward recovery after a breach; this creates a real bob instead of a surface clamp. */
   surfaceRecoveryAcceleration: number;
   /** Minimum stroke-to-stroke interval while Space remains held. */
@@ -469,9 +473,12 @@ export const DEFAULT_SWIM_RULES: SwimRules = Object.freeze({
   // the eyes clear while the body remains immersed.
   surfaceBreachVelocity: 3.65,
   surfaceBreachDurationSeconds: 0.14,
-  surfaceBobVelocity: 3.4,
+  surfaceBobVelocity: 0.98,
   surfaceBobFloorClearance: 0.34,
+  surfaceBobRecoveryAcceleration: 1.6,
   surfaceRecoveryAcceleration: 13.5,
+  // The cooldown only prevents an immediate retrigger at the bottom of the
+  // arc. The gentle bob velocity/acceleration determine the visible cadence.
   surfaceStrokeCycleSeconds: 0.18,
 });
 
@@ -492,11 +499,13 @@ export function stepSwimming(
   let surfaceBreachReady = state.surfaceBreachReady ?? true;
   let surfaceBreachSeconds = Math.max(0, state.surfaceBreachSeconds ?? 0);
   let surfaceStrokeCooldownSeconds = Math.max(0, state.surfaceStrokeCooldownSeconds ?? 0);
+  let surfaceBobActive = state.surfaceBobActive ?? false;
   surfaceStrokeCooldownSeconds = Math.max(0, surfaceStrokeCooldownSeconds - dt);
   if (!input.jumpHeld) {
     surfaceBreachReady = true;
     surfaceBreachSeconds = 0;
     surfaceStrokeCooldownSeconds = 0;
+    surfaceBobActive = false;
   } else if (surfaceStrokeCooldownSeconds <= 0
     && (environment.headSubmerged
       || (environment.surfaceClearance ?? Number.NEGATIVE_INFINITY) <= rules.surfaceBobFloorClearance)) {
@@ -533,12 +542,15 @@ export function stepSwimming(
         Math.abs(velocityY) * Math.max(0, Math.min(1, rules.entryMomentumRetention ?? 0.54)),
       );
     }
-    velocityY *= Math.exp(-rules.waterDrag * submersion * dt);
-    // Water is not an automatic elevator. A small deep-water buoyancy term
-    // softens the descent, while an idle player still settles beneath the
-    // surface and Space produces an intentional swim stroke.
-    velocityY += rules.buoyancyAcceleration * Math.max(0, submersion - 0.84) * dt;
-    velocityY -= rules.passiveSinkAcceleration * dt;
+    const slowSurfaceBob = surfaceBobActive && input.jumpHeld && !environment.headSubmerged;
+    if (!slowSurfaceBob) {
+      velocityY *= Math.exp(-rules.waterDrag * submersion * dt);
+      // Water is not an automatic elevator. A small deep-water buoyancy term
+      // softens the descent, while an idle player still settles beneath the
+      // surface and Space produces an intentional swim stroke.
+      velocityY += rules.buoyancyAcceleration * Math.max(0, submersion - 0.84) * dt;
+      velocityY -= rules.passiveSinkAcceleration * dt;
+    }
     if (input.crouching && !input.jumpHeld) velocityY -= rules.crouchSinkAcceleration * dt;
     const recoveringFromSurfaceStroke = input.jumpHeld && environment.headSubmerged && surfaceStrokeCooldownSeconds > 0;
     if (input.jumpHeld && ((environment.headSubmerged && !recoveringFromSurfaceStroke) || entryMomentumSpeed > ordinaryMaximumSink)) {
@@ -558,6 +570,7 @@ export function stepSwimming(
       shoreBoosted = true;
       surfaceBreachReady = false;
       surfaceBreachSeconds = 0;
+      surfaceBobActive = false;
     } else if (input.jumpHeld && !environment.headSubmerged && entryMomentumSpeed <= ordinaryMaximumSink) {
       const beginsSurfaceBreach = surfaceBreachReady && velocityY > 0.35;
       const beginsHeldSurfaceBob = surfaceBreachReady
@@ -568,12 +581,14 @@ export function stepSwimming(
         surfaceBreachReady = false;
         surfaceBreachSeconds = rules.surfaceBreachDurationSeconds;
         surfaceStrokeCooldownSeconds = rules.surfaceStrokeCycleSeconds;
+        surfaceBobActive = false;
       } else if (beginsHeldSurfaceBob) {
         // Repeating a full breach impulse would climb out of open water. The
         // maintenance stroke reverses only the bottom of the arc, leaving the
         // feet and torso immersed while the breathing point remains clear.
         surfaceBreachReady = false;
         surfaceStrokeCooldownSeconds = rules.surfaceStrokeCycleSeconds;
+        surfaceBobActive = true;
         velocityY = Math.max(velocityY, rules.surfaceBobVelocity);
       }
       if (surfaceBreachSeconds > 0) {
@@ -581,6 +596,11 @@ export function stepSwimming(
         // the water sample and normal air gravity can finish a small hop.
         velocityY = Math.max(velocityY, rules.surfaceBreachVelocity);
         surfaceBreachSeconds = Math.max(0, surfaceBreachSeconds - dt);
+      } else if (surfaceBobActive) {
+        // The maintenance arc is intentionally much slower than the initial
+        // breach. It remains a real rise and fall, but does not inherit deep-
+        // water drag/sink forces that previously compressed the cycle.
+        velocityY -= rules.surfaceBobRecoveryAcceleration * dt;
       } else {
         // Do not clamp the swimmer to the waterline. A strong but continuous
         // recovery acceleration creates the short above-water arc and the
@@ -599,6 +619,7 @@ export function stepSwimming(
       surfaceBreachReady,
       surfaceBreachSeconds,
       surfaceStrokeCooldownSeconds,
+      surfaceBobActive,
     },
     damage,
     shoreBoosted,
