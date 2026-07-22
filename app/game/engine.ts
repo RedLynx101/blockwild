@@ -3758,6 +3758,8 @@ export class VoxelEngine {
   oxygenSeconds = DEFAULT_SWIM_RULES.maxOxygenSeconds;
   drowningAccumulator = 0;
   waterEntryMomentumSpeed = 0;
+  waterSurfaceBreachReady = true;
+  waterSurfaceBreachSeconds = 0;
   headSubmerged = false;
   lastForwardTap = -Infinity;
   sprintLatched = false;
@@ -4858,6 +4860,9 @@ export class VoxelEngine {
     this.liquidCells.clear();
     this.oxygenSeconds = DEFAULT_SWIM_RULES.maxOxygenSeconds;
     this.drowningAccumulator = 0;
+    this.waterEntryMomentumSpeed = 0;
+    this.waterSurfaceBreachReady = true;
+    this.waterSurfaceBreachSeconds = 0;
     this.world.reset(seed.trim() || this.randomSeed(), undefined, generationOptionsFromWorldOptions(this.worldOptions));
     const authorityId = `world:${this.world.seedText}`;
     const playerId = this.localPlayerId();
@@ -5097,6 +5102,14 @@ export class VoxelEngine {
         }
         for (let y = floorY + 5; y <= floorY + 7; y += 1) edits.push({ x, y, z, type: BlockId.Air });
       }
+      // A low, dry bank on the forward edge exercises the stronger W+Space
+      // shore exit separately from the smaller open-water surface breach.
+      for (let x = centerX - 1; x <= centerX + 1; x += 1) {
+        for (let z = centerZ - radius; z >= centerZ - radius - 3; z -= 1) {
+          edits.push({ x, y: floorY + 4, z, type: BlockId.Stone });
+          for (let y = floorY + 5; y <= floorY + 7; y += 1) edits.push({ x, y, z, type: BlockId.Air });
+        }
+      }
       this.world.setBlocksBatch(edits, true, true);
       this.position.set(centerX, floorY + 2.2, centerZ);
       this.yaw = 0;
@@ -5333,6 +5346,9 @@ export class VoxelEngine {
       .map(([key, cell]) => [key, { ...cell }]));
     this.oxygenSeconds = DEFAULT_SWIM_RULES.maxOxygenSeconds;
     this.drowningAccumulator = 0;
+    this.waterEntryMomentumSpeed = 0;
+    this.waterSurfaceBreachReady = true;
+    this.waterSurfaceBreachSeconds = 0;
     this.world.reset(save.seed, save.edits, generationOptionsFromWorldOptions(this.worldOptions, save.generatorProfile ?? "world-below-v15"), save.blockFacings);
     this.world.restoreSurfaceRoadGraph(save.surfaceRoadGraph);
     this.world.initializeAround(save.player.x, save.player.z);
@@ -17727,7 +17743,11 @@ export class VoxelEngine {
     const enteredSwimmableLiquid = inSwimmableLiquid && !this.wasInWater;
     if (enteredSwimmableLiquid) this.audio.play("splash");
     this.wasInWater = inSwimmableLiquid;
-    if (!inSwimmableLiquid) this.waterEntryMomentumSpeed = 0;
+    if (!this.keys.has("Space")) this.waterSurfaceBreachReady = true;
+    if (!inSwimmableLiquid) {
+      this.waterEntryMomentumSpeed = 0;
+      this.waterSurfaceBreachSeconds = 0;
+    }
     const raceTraits = characterRaceTraits(this.activeCharacterProfile?.appearance.race ?? "wayfarer");
     const wantsCrouch = Boolean(this.seatedAt) || this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
     if (wantsCrouch) this.crouching = true;
@@ -17786,6 +17806,8 @@ export class VoxelEngine {
           oxygenSeconds: this.oxygenSeconds,
           drowningAccumulator: this.drowningAccumulator,
           entryMomentumSpeed: this.waterEntryMomentumSpeed,
+          surfaceBreachReady: this.waterSurfaceBreachReady,
+          surfaceBreachSeconds: this.waterSurfaceBreachSeconds,
         },
         {
           jumpHeld: this.keys.has("Space"),
@@ -17810,6 +17832,8 @@ export class VoxelEngine {
       );
       this.velocity.y = swim.state.velocityY;
       this.waterEntryMomentumSpeed = swim.state.entryMomentumSpeed ?? 0;
+      this.waterSurfaceBreachReady = swim.state.surfaceBreachReady ?? true;
+      this.waterSurfaceBreachSeconds = swim.state.surfaceBreachSeconds ?? 0;
       if (inHoney) this.velocity.y *= Math.max(0, 1 - 3.6 * dt);
       else if (inSyrup) this.velocity.y *= Math.max(0, 1 - 2.1 * dt);
       this.oxygenSeconds = swim.state.oxygenSeconds;
@@ -28083,6 +28107,8 @@ export class VoxelEngine {
         yaw: Number(this.yaw.toFixed(3)), pitch: Number(this.pitch.toFixed(3)),
         health: this.health, hunger: this.hunger, oxygen: Number(this.oxygenSeconds.toFixed(2)),
         variant: this.playerVariant, camera: this.cameraMode, sprinting: this.sprinting, crouching: this.crouching, submerged: this.headSubmerged,
+        input: { jumpHeld: this.keys.has("Space"), forwardHeld: this.keys.has("KeyW") },
+        surfaceBreach: { ready: this.waterSurfaceBreachReady, remainingSeconds: Number(this.waterSurfaceBreachSeconds.toFixed(3)) },
         mountedBoatId: this.mountedBoatId, mountedCreatureId: this.mountedCreatureId,
       },
       world: {

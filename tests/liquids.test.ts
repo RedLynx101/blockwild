@@ -158,23 +158,37 @@ test("sprint-swimming adds exactly twenty percent to vertical stroke acceleratio
   assert.ok(Math.abs(sprinting.state.velocityY / ordinary.state.velocityY - 1.2) < 1e-9);
 });
 
-test("holding jump treads below the surface instead of climbing onto it", () => {
+test("a fresh upward stroke breaches the surface once while held jump returns to a submerged tread", () => {
   let feetY = -1.56;
   let swimmer: SwimmerState = { velocityY: 0, oxygenSeconds: 12, drowningAccumulator: 0, entryMomentumSpeed: 0 };
   let highestFeetY = feetY;
+  let breachStarts = 0;
   for (let frame = 0; frame < 600; frame += 1) {
     const headSubmerged = feetY + 1.5 < 0;
-    swimmer = stepSwimming(
+    const priorBreachSeconds = swimmer.surfaceBreachSeconds ?? 0;
+    const next = stepSwimming(
       swimmer,
       { jumpHeld: true, movingForward: true },
       { submersion: headSubmerged ? 1 : 0.68, headSubmerged, horizontalCollision: false },
       1 / 60,
     ).state;
+    if (priorBreachSeconds === 0 && (next.surfaceBreachSeconds ?? 0) > 0) breachStarts += 1;
+    swimmer = next;
     feetY += swimmer.velocityY / 60;
     highestFeetY = Math.max(highestFeetY, feetY);
   }
-  assert.ok(highestFeetY < -1.35, `feet rose to ${highestFeetY}, which would put the player on top of the water`);
+  assert.equal(breachStarts, 1, "one held Space press must not renew the surface breach");
+  assert.ok(highestFeetY > -0.7, `feet only rose to ${highestFeetY}, which cannot clear the water sample`);
+  assert.ok(highestFeetY < -0.25, `feet rose to ${highestFeetY}, which would launch too far above the water`);
   assert.ok(feetY < -1.4, `surface tread should settle inside the water, got ${feetY}`);
+
+  const released = stepSwimming(
+    swimmer,
+    { jumpHeld: false, movingForward: false },
+    { submersion: 1, headSubmerged: true, horizontalCollision: false },
+    1 / 60,
+  ).state;
+  assert.equal(released.surfaceBreachReady, true, "releasing Space should arm the next intentional breach");
 });
 
 test("a real fall carries moderated momentum through the water surface", () => {

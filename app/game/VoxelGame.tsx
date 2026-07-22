@@ -2258,8 +2258,10 @@ export default function VoxelGame() {
     const automationWindow = window as Window & {
       render_game_to_text?: () => string;
       advanceTime?: (milliseconds: number) => Promise<void>;
+      set_game_key?: (code: string, down: boolean) => void;
     };
     automationWindow.render_game_to_text = () => engine.renderGameToText();
+    automationWindow.set_game_key = (code, down) => engine.setVirtualKey(code, down);
     automationWindow.advanceTime = async (milliseconds: number) => {
       engine.advanceSimulation(milliseconds);
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
@@ -2340,6 +2342,7 @@ export default function VoxelGame() {
       characterStoreRef.current = null;
       delete automationWindow.render_game_to_text;
       delete automationWindow.advanceTime;
+      delete automationWindow.set_game_key;
     };
     // The engine owns its listeners for the lifetime of the canvas.
     // eslint-disable-next-line react-hooks/exhaustive-deps
