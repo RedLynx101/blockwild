@@ -2,6 +2,13 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.9.2 - Undertow Pass - 2026-07-21
+
+- Slowed dynamic liquid propagation to one pre-existing frontier per 0.2-second liquid step and rendered water's simulated source-distance levels as a closed seven-stage taper.
+- Replaced held-Space surface skipping with a controlled submerged tread while preserving the explicit shore-exit boost, and increased sprint-swim vertical input by exactly 20%.
+- Retained moderated long-fall entry momentum across multiple submerged frames so a real dive carries meaningfully below the surface.
+- Standardized the shared aquatic drop's inventory name as Glow Scale instead of tying it to Gloomfin.
+
 ## Unreleased - Player-first terrain feedback
 
 - Made local break, place, and tree-felling presentation authoritative inside the input transaction: stale combined terrain is detached before the edited source mesh or falling proxy appears, while seam and light work remains budgeted.

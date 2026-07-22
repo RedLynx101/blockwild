@@ -1586,7 +1586,7 @@ Object.assign(ITEMS, {
   [Item.Feather]: { id: Item.Feather, name: "Bright Feather", color: "#e9d6a7", maxStack: 64 },
   [Item.RawFish]: { id: Item.RawFish, name: "Fresh Fish", color: "#72aeb9", maxStack: 64, food: 2 },
   [Item.CookedFish]: { id: Item.CookedFish, name: "Ember-Roasted Fish", color: "#d98c58", maxStack: 64, food: 6 },
-  [Item.GlowScale]: { id: Item.GlowScale, name: "Gloomfin Scale", color: "#5bd6ca", maxStack: 64 },
+  [Item.GlowScale]: { id: Item.GlowScale, name: "Glow Scale", color: "#5bd6ca", maxStack: 64 },
   [Item.BreatherCharm]: { id: Item.BreatherCharm, name: "Tideglass Charm", color: "#83e7df", maxStack: 1, maxDurability: 480 },
   [Item.SunwardCompass]: { id: Item.SunwardCompass, name: "Sunward Compass", color: "#f2cb64", maxStack: 1, maxDurability: 4096, useKind: "magic-relic" },
   [Item.Sunberry]: { id: Item.Sunberry, name: "Sunberry", color: "#e49a3f", maxStack: 64, food: 3, useKind: "plant", plantBlock: BlockId.SunberryShoot, iconKind: "produce" },

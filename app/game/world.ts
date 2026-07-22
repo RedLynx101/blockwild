@@ -1137,10 +1137,19 @@ const TILE_UVS = Array.from({ length: ATLAS_GRID * ATLAS_GRID }, (_, tile) => {
 export const GLASS_OPACITY = 0.42;
 /** Liquid tops sit below the voxel rim; bottoms remain flush with supporting blocks. */
 export const LIQUID_SURFACE_INSET = 0.09;
+/** Each horizontal flow level loses visible depth, from source 0 to thin edge 7. */
+export const FLOWING_WATER_LEVEL_INSET = 0.11;
 
 /** Only the uppermost water cell is lowered; submerged cells remain seamless. */
-export function liquidSurfaceInsetForCell(type: BlockId, above: BlockId | undefined) {
-  return blockContainsWater(type) && !blockContainsWater(above) ? -LIQUID_SURFACE_INSET : 0;
+export function liquidSurfaceInsetForCell(
+  type: BlockId,
+  above: BlockId | undefined,
+  level = 0,
+  falling = false,
+) {
+  if (!blockContainsWater(type) || blockContainsWater(above)) return 0;
+  const flowingLevel = falling ? 0 : Math.max(0, Math.min(7, Math.round(level)));
+  return -Math.min(0.86, LIQUID_SURFACE_INSET + flowingLevel * FLOWING_WATER_LEVEL_INSET);
 }
 
 /** A cube with every face remapped to the same atlas contract used by chunk meshes. */
@@ -2928,6 +2937,11 @@ export class ChunkWorld {
   /** Sparse metadata: only player-placed asymmetric blocks with non-default facing need entries. */
   blockFacings = new Map<string, BlockFacing>();
   private waterAnimationFrame = -1;
+  private liquidCellProvider: ((x: number, y: number, z: number) => Readonly<{
+    level: number;
+    source: boolean;
+    falling: boolean;
+  }> | undefined) | null = null;
 
   constructor() {
     this.atlas = typeof document === "undefined"
@@ -2953,6 +2967,11 @@ export class ChunkWorld {
       getDefinition: (type) => BLOCKS[type],
       markLightDirty: (x, y, z) => this.queueLightSectionAt(x, y, z),
     });
+  }
+
+  /** Supplies sparse runtime flow metadata without coupling world storage to the simulator. */
+  setLiquidCellProvider(provider: typeof this.liquidCellProvider) {
+    this.liquidCellProvider = provider;
   }
 
   setLightingEnvironment(environment: VoxelLightingEnvironment) {
@@ -7515,6 +7534,14 @@ export class ChunkWorld {
       if (localZ < 0) return north ? north.blocks[blockIndex(localX, y, CHUNK_SIZE - 1)] as BlockId : BlockId.Air;
       return south ? south.blocks[blockIndex(localX, y, 0)] as BlockId : BlockId.Air;
     };
+    const liquidSurfaceInsetAt = (localX: number, y: number, localZ: number, type: BlockId) => {
+      const cell = this.liquidCellProvider?.(
+        chunk.cx * CHUNK_SIZE + localX,
+        y,
+        chunk.cz * CHUNK_SIZE + localZ,
+      );
+      return liquidSurfaceInsetForCell(type, neighborAt(localX, y + 1, localZ), cell?.level, cell?.falling);
+    };
     const occlusionCacheWidth = CHUNK_SIZE + 2;
     const occlusionCache = new Uint8Array(occlusionCacheWidth * occlusionCacheWidth * (SECTION_HEIGHT + 2));
     const lightOccludesAt = (localX: number, y: number, localZ: number) => {
@@ -8280,15 +8307,27 @@ export class ChunkWorld {
         for (const face of FACES) {
           const [dx, dy, dz] = face.direction;
           const neighbor = neighborAt(lx + dx, y + dy, lz + dz);
+          const liquidSurfaceInset = definition.liquid
+            ? liquidSurfaceInsetAt(lx, y, lz, type)
+            : 0;
+          if (definition.liquid === "water" && dy === 0 && blockContainsWater(neighbor)) {
+            const neighborSurfaceInset = liquidSurfaceInsetAt(lx + dx, y, lz + dz, neighbor);
+            if (liquidSurfaceInset <= neighborSurfaceInset + 1e-6) continue;
+            const exposedCorners = face.corners.map(([cornerX, cornerY, cornerZ]) => [
+              cornerX,
+              0.5 + (cornerY > 0 ? liquidSurfaceInset : neighborSurfaceInset),
+              cornerZ,
+            ] as [number, number, number]);
+            addQuad(bucket, exposedCorners, face.direction, definition.side, face.shade, tint, lx, y, lz, 0,
+              shadeAt(lx + dx, y + dy, lz + dz));
+            continue;
+          }
           const internalLeafFace = LEAF_BLOCK_SET.has(type)
             && neighbor === type
             && dx + dy + dz > 0
             && hash3(chunk.cx * CHUNK_SIZE + lx + dx, y + dy, chunk.cz * CHUNK_SIZE + lz + dz, this.seed ^ 0x37b41cd9) < DENSE_CUTOUT_LEAF_POLICY.renderInternalFaceFraction;
           if (!this.faceVisible(type, neighbor) && !internalLeafFace) continue;
           const tile = dy > 0 ? definition.top : dy < 0 ? definition.bottom : definition.side;
-          const liquidSurfaceInset = definition.liquid
-            ? liquidSurfaceInsetForCell(type, neighborAt(lx, y + 1, lz))
-            : 0;
           const environment = definition.layer === "emissive"
             ? Math.max(0.82, shadeAt(lx + dx, y + dy, lz + dz))
             : shadeAt(lx + dx, y + dy, lz + dz);

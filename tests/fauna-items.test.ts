@@ -5,6 +5,7 @@ import {
   CREATIVE_BLOCKS,
   CREATIVE_FLORA,
   Item,
+  ITEMS,
   ORDINARY_FLOWERS,
   RECIPES,
   itemForBlock,
@@ -14,6 +15,7 @@ import { MOB_DEFS } from "../app/game/mobs.ts";
 import { canBreedPeelops, createPeelopState, feedPeelop, tryTamePeelop } from "../app/game/peelop.ts";
 
 test("birds and fish use their own useful drop families", () => {
+  assert.equal(ITEMS[Item.GlowScale].name, "Glow Scale", "the shared multi-species drop must use its generic inventory name");
   for (const kind of ["emberjay", "canopy-lark", "tidewing-gull", "frostquill"] as const) {
     assert.ok(MOB_DEFS[kind].drops.some((drop) => drop.item === Item.Feather && drop.chance === 1));
     assert.equal(MOB_DEFS[kind].drops.some((drop) => drop.item === Item.Fiber), false);

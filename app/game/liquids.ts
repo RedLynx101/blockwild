@@ -58,6 +58,13 @@ export const DEFAULT_LIQUID_SIMULATION_OPTIONS: LiquidSimulationOptions = Object
   maxOperationsPerTick: 192,
 });
 
+/**
+ * One visible flow-frontier step. Minecraft advances water on a deliberately
+ * legible cadence rather than resolving a whole spill in one render frame;
+ * Blockwild stays slightly more responsive while preserving that rhythm.
+ */
+export const LIQUID_SIMULATION_STEP_SECONDS = 0.2;
+
 export type LiquidProfile = Readonly<{
   block: BlockId;
   bucketItemName: string;
@@ -180,12 +187,25 @@ export class LiquidSimulator {
   process(operationBudget = this.options.maxOperationsPerTick): LiquidChange[] {
     const changes: LiquidChange[] = [];
     const budget = Math.max(0, Math.floor(operationBudget));
+    // A process call owns only the frontier that existed when the liquid tick
+    // began. Cells enqueued by those updates wait for the next tick, preventing
+    // a high operation budget from crossing several blocks in one frame.
+    const frontierEnd = Math.min(this.queue.length, this.queueHead + budget);
+    const occupiedAtTickStart: boolean[] = [];
+    for (let index = this.queueHead; index < frontierEnd; index += 1) {
+      occupiedAtTickStart.push(Boolean(this.world.getLiquid(this.queue[index])));
+    }
     let operations = 0;
 
-    while (operations < budget && this.queueHead < this.queue.length) {
+    while (this.queueHead < frontierEnd) {
       const position = this.queue[this.queueHead++];
-      this.queued.delete(positionKey(position));
-      if (this.isLoaded(position)) this.updateCell(position, changes);
+      const key = positionKey(position);
+      this.queued.delete(key);
+      if (occupiedAtTickStart[operations] && this.isLoaded(position)) this.updateCell(position, changes);
+      // A neighboring update may have filled a position that was empty when
+      // this tick began. Requeue it so it becomes next tick's frontier instead
+      // of either cascading now or being lost behind deduplication.
+      else if (this.world.getLiquid(position)) this.enqueue(position);
       operations += 1;
     }
 
@@ -352,6 +372,12 @@ export type SwimmerState = Readonly<{
   velocityY: number;
   oxygenSeconds: number;
   drowningAccumulator: number;
+  /** Retained sink-speed envelope from a genuine air-to-water impact. */
+  entryMomentumSpeed?: number;
+  /** A released Space press rearms one controlled breach through the surface. */
+  surfaceBreachReady?: boolean;
+  /** Remaining time for the current surface-crossing stroke. */
+  surfaceBreachSeconds?: number;
 }>;
 
 export type SwimEnvironment = Readonly<{
@@ -372,6 +398,8 @@ export type SwimInput = Readonly<{
   jumpHeld: boolean;
   movingForward: boolean;
   crouching?: boolean;
+  /** Sprint-swimming adds an exact multiplier to intentional vertical strokes. */
+  sprinting?: boolean;
 }>;
 
 export type SwimStep = Readonly<{
@@ -396,9 +424,15 @@ export type SwimRules = Readonly<{
   crouchSinkAcceleration: number;
   crouchMaximumSinkSpeed: number;
   swimAcceleration: number;
+  sprintVerticalMultiplier: number;
   waterDrag: number;
   shoreExitVelocity: number;
   entryMomentumRetention?: number;
+  entryMomentumDecayPerSecond: number;
+  surfaceTreadVelocity: number;
+  surfaceTreadResponse: number;
+  surfaceBreachVelocity: number;
+  surfaceBreachDurationSeconds: number;
 }>;
 
 export const DEFAULT_SWIM_RULES: SwimRules = Object.freeze({
@@ -415,9 +449,19 @@ export const DEFAULT_SWIM_RULES: SwimRules = Object.freeze({
   crouchSinkAcceleration: 7.5,
   crouchMaximumSinkSpeed: 4.2,
   swimAcceleration: 11.6,
+  sprintVerticalMultiplier: 1.2,
   waterDrag: 2.8,
   shoreExitVelocity: 8.15,
-  entryMomentumRetention: 0.46,
+  entryMomentumRetention: 0.54,
+  entryMomentumDecayPerSecond: 3.6,
+  // Holding Space at the surface treads water around the air/water boundary;
+  // it does not become an elevator that lifts the player's feet onto the top.
+  surfaceTreadVelocity: -0.08,
+  surfaceTreadResponse: 11,
+  // A fresh upward stroke may carry the swimmer's feet through the surface,
+  // but holding Space cannot renew this impulse until the button is released.
+  surfaceBreachVelocity: 3.8,
+  surfaceBreachDurationSeconds: 0.24,
 });
 
 /** Pure player-water step; the caller applies returned velocity and damage. */
@@ -433,6 +477,13 @@ export function stepSwimming(
   let oxygenSeconds = Math.max(0, Math.min(rules.maxOxygenSeconds, state.oxygenSeconds));
   let drowningAccumulator = Math.max(0, state.drowningAccumulator);
   let damage = 0;
+  let entryMomentumSpeed = Math.max(0, state.entryMomentumSpeed ?? 0);
+  let surfaceBreachReady = state.surfaceBreachReady ?? true;
+  let surfaceBreachSeconds = Math.max(0, state.surfaceBreachSeconds ?? 0);
+  if (!input.jumpHeld) {
+    surfaceBreachReady = true;
+    surfaceBreachSeconds = 0;
+  }
 
   if (environment.headSubmerged) {
     oxygenSeconds = Math.max(0, oxygenSeconds - dt * Math.max(0, rules.oxygenDrainPerSecond ?? 1));
@@ -453,6 +504,13 @@ export function stepSwimming(
   let velocityY = state.velocityY;
   let shoreBoosted = false;
   if (submersion > 0) {
+    const ordinaryMaximumSink = input.crouching ? rules.crouchMaximumSinkSpeed : rules.maximumSinkSpeed;
+    if (environment.enteredFromAir && velocityY < -ordinaryMaximumSink) {
+      entryMomentumSpeed = Math.max(
+        entryMomentumSpeed,
+        Math.abs(velocityY) * Math.max(0, Math.min(1, rules.entryMomentumRetention ?? 0.54)),
+      );
+    }
     velocityY *= Math.exp(-rules.waterDrag * submersion * dt);
     // Water is not an automatic elevator. A small deep-water buoyancy term
     // softens the descent, while an idle player still settles beneath the
@@ -460,23 +518,52 @@ export function stepSwimming(
     velocityY += rules.buoyancyAcceleration * Math.max(0, submersion - 0.84) * dt;
     velocityY -= rules.passiveSinkAcceleration * dt;
     if (input.crouching && !input.jumpHeld) velocityY -= rules.crouchSinkAcceleration * dt;
-    if (input.jumpHeld) velocityY += rules.swimAcceleration * dt;
-    const ordinaryMaximumSink = input.crouching ? rules.crouchMaximumSinkSpeed : rules.maximumSinkSpeed;
-    const entryMaximumSink = environment.enteredFromAir && state.velocityY < 0
-      ? Math.max(ordinaryMaximumSink, Math.abs(state.velocityY) * Math.max(0, Math.min(1, rules.entryMomentumRetention ?? 0.46)))
-      : ordinaryMaximumSink;
+    if (input.jumpHeld && (environment.headSubmerged || entryMomentumSpeed > ordinaryMaximumSink)) {
+      velocityY += rules.swimAcceleration * (input.sprinting ? rules.sprintVerticalMultiplier : 1) * dt;
+    }
+    if (entryMomentumSpeed > ordinaryMaximumSink) {
+      entryMomentumSpeed = Math.max(ordinaryMaximumSink, entryMomentumSpeed - rules.entryMomentumDecayPerSecond * dt);
+    }
+    const entryMaximumSink = Math.max(ordinaryMaximumSink, entryMomentumSpeed);
     velocityY = Math.max(-entryMaximumSink, velocityY);
+    if (velocityY >= -ordinaryMaximumSink + 1e-6) entryMomentumSpeed = 0;
 
     const ledgeHeight = environment.shoreLedgeHeight ?? Number.POSITIVE_INFINITY;
     const surfaceGap = environment.surfaceGap ?? Number.POSITIVE_INFINITY;
     if (input.jumpHeld && input.movingForward && environment.horizontalCollision && ledgeHeight <= 1.15 && surfaceGap <= 0.9) {
       velocityY = Math.max(velocityY, rules.shoreExitVelocity);
       shoreBoosted = true;
+      surfaceBreachReady = false;
+      surfaceBreachSeconds = 0;
+    } else if (input.jumpHeld && !environment.headSubmerged && entryMomentumSpeed <= ordinaryMaximumSink) {
+      const beginsSurfaceBreach = surfaceBreachReady && velocityY > 0.35;
+      if (beginsSurfaceBreach) {
+        surfaceBreachReady = false;
+        surfaceBreachSeconds = rules.surfaceBreachDurationSeconds;
+      }
+      if (surfaceBreachSeconds > 0) {
+        // Preserve a short, deliberate crossing stroke so the feet can clear
+        // the water sample and normal air gravity can finish a small hop.
+        velocityY = Math.max(velocityY, rules.surfaceBreachVelocity);
+        surfaceBreachSeconds = Math.max(0, surfaceBreachSeconds - dt);
+      } else {
+        // Close the discrete feet-sample gap at the surface. The small negative
+        // target produces a controlled tread/bob instead of alternating between
+        // upward water thrust and downward air gravity above the water plane.
+        velocityY += (rules.surfaceTreadVelocity - velocityY) * Math.min(1, rules.surfaceTreadResponse * dt);
+      }
     }
   }
 
   return {
-    state: { velocityY, oxygenSeconds, drowningAccumulator },
+    state: {
+      velocityY,
+      oxygenSeconds,
+      drowningAccumulator,
+      entryMomentumSpeed,
+      surfaceBreachReady,
+      surfaceBreachSeconds,
+    },
     damage,
     shoreBoosted,
     horizontalSpeedScale: 1 - submersion * 0.38,
