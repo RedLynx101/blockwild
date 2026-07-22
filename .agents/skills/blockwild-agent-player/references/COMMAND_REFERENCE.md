@@ -25,7 +25,7 @@ All commands use schema 1, a unique idempotent `commandId`, the stable `agentId`
 | Movement | `move_to`, `move_relative`, `follow_player`, `face`, `wait`, `stop` | target/delta, playerId + distance band, milliseconds |
 | Social | `chat_read`, `chat_send`, `speak`, `emote` | afterSequence, text, channel; runner `speak` adds bounded audio to the host-authored caption |
 | Inventory | `inventory_get`, `inventory_move`, `inventory_drop`, `agent_inventory_open_for_host` | slots, count, expected revision |
-| Interaction | `interact`, `open_container`, `container_get`, `container_transfer`, `use_workstation` | target/coordinates, slots/count/revisions |
+| Interaction | `interact`, `open_container`, `container_get`, `container_transfer`, `use_workstation` | target/coordinates; exact direction/source/count/destination + both revisions |
 | Work | `harvest_area`, `gather_resource`, `build_plan`, `build_commit`, `build_cancel` | bounded region/filter; placements/removals; previewId |
 | Public task | `task_pin`, `task_update`, `waypoint_pin` | title/status/note; name/position |
 | Runner memory | `memory_pin`, `memory_list`, `memory_remove` | intercepted by trusted runner notebook; never sent to host |
@@ -55,6 +55,25 @@ All commands use schema 1, a unique idempotent `commandId`, the stable `agentId`
 ```
 
 If blocked for materials, the result includes `materials: [{block,name,have,need,missing}]` and `choices: ["modify_plan","stop","get_more_resources"]`.
+
+## Exact container transfer example
+
+```json
+{
+  "kind": "container_transfer",
+  "arguments": {
+    "containerId": "12,30,-8",
+    "direction": "container-to-agent",
+    "sourceSlot": 4,
+    "destinationSlot": 9,
+    "count": 12,
+    "expectedContainerRevision": 3,
+    "expectedInventoryRevision": 8
+  }
+}
+```
+
+The host either moves exactly that stack count and increments both revisions or mutates neither side. On any revision conflict, re-read both inventories before planning another transfer.
 
 ## Result rules
 

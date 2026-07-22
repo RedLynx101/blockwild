@@ -270,13 +270,24 @@ export type AgentDiagnosticsV1 = Readonly<{
   startedAt: number;
   exportedAt: number;
   runner: Readonly<{ model: string; reasoning: string }>;
-  observations: Readonly<{ count: number; bytes: number; screenshots: number; manualFallbacks: number }>;
+  observations: Readonly<{ count: number; bytes: number; screenshots: number; manualFallbacks: number; latencyMs: Readonly<{ p50: number; p95: number; max: number }> }>;
   commands: Readonly<Record<AgentCommandStatus, number>>;
+  commandKinds: Readonly<Partial<Record<AgentCommandKind, number>>>;
   commandCodes: Readonly<Record<string, number>>;
   latencyMs: Readonly<{ samples: number; p50: number; p95: number; max: number }>;
   recovery: Readonly<{ replans: number; stuck: number; conflicts: number; reconnects: number; replayHits: number; reservationsReturned: number }>;
-  communications: Readonly<{ chatMessages: number; voiceMessages: number; voiceCharacters: number; voiceBytes: number; voiceDrops: number; playbackFailures: number }>;
-  capacity: Readonly<{ admittedAgents: number; mergedRegions: number; simulatedChunks: number; rejectedAgents: number }>;
+  communications: Readonly<{ chatMessages: number; voiceMessages: number; voiceCharacters: number; voiceBytes: number; voiceDurationMs: number; voiceDrops: number; playbackFailures: number }>;
+  capacity: Readonly<{ admittedAgents: number; mergedRegions: number; simulatedChunks: number; simulatedEntities: number; rejectedAgents: number }>;
+  evidence: Readonly<{ terminalResults: number; resultsWithData: number; resultsWithProgress: number; resultsWithMaterials: number }>;
+  performance: Readonly<{
+    fps: number;
+    p95FrameMs: number;
+    averageActiveCpuMs: number;
+    hostFrameBudgetMs: number;
+    heapBytes: number | null;
+    channelBackpressure: number;
+    occupiedChunkReady: boolean;
+  }>;
 }>;
 
 export type AgentSessionRecord = Readonly<{
@@ -379,13 +390,23 @@ function validateCommandArguments(kind: AgentCommandKind, args: Record<string, u
   if (kind === "move_relative" && !validateVector(args.delta)) return false;
   if (kind === "follow_player" && (!isId(args.playerId) || (args.minDistance !== undefined && !isFiniteNumber(args.minDistance, 1, 16)) || (args.maxDistance !== undefined && !isFiniteNumber(args.maxDistance, 1.5, 32)))) return false;
   if (kind === "wait" && !isInteger(args.milliseconds, 0, 60_000)) return false;
+  if (kind === "inspect_area" && ((args.center !== undefined && !validateVector(args.center)) || (args.radius !== undefined && !isFiniteNumber(args.radius, 1, 32)))) return false;
+  if (kind === "inspect_target" && (!isShortString(args.targetId ?? args.id, 160) || (args.includeInventory !== undefined && typeof args.includeInventory !== "boolean"))) return false;
   if ((kind === "chat_send" || kind === "speak") && (!isShortString(args.text, AGENT_MAX_CHAT_CHARS) || (args.channel !== undefined && !CHAT_CHANNEL_SET.has(args.channel as AgentChatChannel)))) return false;
+  if (kind === "emote" && args.action !== undefined && !isShortString(args.action, 120)) return false;
   if (kind === "build_plan") {
     if (!Array.isArray(args.placements) || args.placements.length < 1 || args.placements.length > AGENT_MAX_BUILD_CELLS || !args.placements.every(validatePlacement)) return false;
     if (args.removals !== undefined && (!Array.isArray(args.removals) || args.removals.length > AGENT_MAX_BUILD_CELLS || !args.removals.every(validateVector))) return false;
   }
   if ((kind === "build_commit" || kind === "build_cancel") && !isId(args.previewId)) return false;
   if ((kind === "harvest_area" || kind === "gather_resource") && (args.radius !== undefined && !isFiniteNumber(args.radius, 1, AGENT_MAX_HARVEST_RADIUS))) return false;
+  if (kind === "container_transfer" && (!isShortString(args.containerId ?? args.targetId, 160)
+    || !["agent-to-container", "container-to-agent"].includes(String(args.direction))
+    || !isInteger(args.sourceSlot, 0, 127)
+    || (args.destinationSlot !== undefined && !isInteger(args.destinationSlot, 0, 127))
+    || !isInteger(args.count, 1, 65_535)
+    || !isInteger(args.expectedContainerRevision)
+    || !isInteger(args.expectedInventoryRevision))) return false;
   if (kind === "task_pin" && (!isShortString(args.title, 120)
     || (args.note !== undefined && !isShortString(args.note, 320, true))
     || (args.owner !== undefined && !isShortString(args.owner, 80)))) return false;
@@ -734,40 +755,62 @@ export class AgentDiagnostics {
   runner = { model: "unreported", reasoning: "unreported" };
   observationCount = 0;
   observationBytes = 0;
+  observationLatencies: number[] = [];
   screenshots = 0;
   manualFallbacks = 0;
   commandCounts: Record<AgentCommandStatus, number> = { accepted: 0, running: 0, blocked: 0, completed: 0, cancelled: 0, failed: 0 };
+  commandKinds = new Map<AgentCommandKind, number>();
   commandCodes = new Map<string, number>();
   latencies: number[] = [];
   recovery = { replans: 0, stuck: 0, conflicts: 0, reconnects: 0, replayHits: 0, reservationsReturned: 0 };
-  communications = { chatMessages: 0, voiceMessages: 0, voiceCharacters: 0, voiceBytes: 0, voiceDrops: 0, playbackFailures: 0 };
-  capacity = { admittedAgents: 0, mergedRegions: 0, simulatedChunks: 0, rejectedAgents: 0 };
+  communications = { chatMessages: 0, voiceMessages: 0, voiceCharacters: 0, voiceBytes: 0, voiceDurationMs: 0, voiceDrops: 0, playbackFailures: 0 };
+  capacity = { admittedAgents: 0, mergedRegions: 0, simulatedChunks: 0, simulatedEntities: 0, rejectedAgents: 0 };
+  evidence = { terminalResults: 0, resultsWithData: 0, resultsWithProgress: 0, resultsWithMaterials: 0 };
+  performance = { fps: 0, p95FrameMs: 0, averageActiveCpuMs: 0, hostFrameBudgetMs: 1000 / 60, heapBytes: null as number | null, channelBackpressure: 0, occupiedChunkReady: false };
 
-  recordObservation(observation: AgentObservationV1) {
+  recordObservation(observation: AgentObservationV1, now = Date.now()) {
     this.observationCount += 1;
     this.observationBytes += jsonBytes(observation);
+    this.observationLatencies.push(Math.max(0, now - observation.observedAt));
+    if (this.observationLatencies.length > 2_048) this.observationLatencies.splice(0, this.observationLatencies.length - 2_048);
   }
   recordResult(result: AgentCommandResult) {
     this.commandCounts[result.status] += 1;
+    this.commandKinds.set(result.kind, (this.commandKinds.get(result.kind) ?? 0) + 1);
     this.commandCodes.set(result.code, (this.commandCodes.get(result.code) ?? 0) + 1);
     if (result.terminal) this.latencies.push(Math.max(0, result.updatedAt - result.startedAt));
+    if (result.terminal) this.evidence.terminalResults += 1;
+    if (result.data) this.evidence.resultsWithData += 1;
+    if (result.progress) this.evidence.resultsWithProgress += 1;
+    if (result.materials) this.evidence.resultsWithMaterials += 1;
     if (this.latencies.length > 2_048) this.latencies.splice(0, this.latencies.length - 2_048);
   }
   export(now = Date.now()): AgentDiagnosticsV1 {
     const sorted = [...this.latencies].sort((a, b) => a - b);
     const percentile = (ratio: number) => sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * ratio))] : 0;
+    const observationSorted = [...this.observationLatencies].sort((a, b) => a - b);
+    const observationPercentile = (ratio: number) => observationSorted.length ? observationSorted[Math.min(observationSorted.length - 1, Math.floor((observationSorted.length - 1) * ratio))] : 0;
     return Object.freeze({
       schema: AGENT_PLATFORM_SCHEMA_VERSION,
       startedAt: this.startedAt,
       exportedAt: now,
       runner: Object.freeze({ ...this.runner }),
-      observations: Object.freeze({ count: this.observationCount, bytes: this.observationBytes, screenshots: this.screenshots, manualFallbacks: this.manualFallbacks }),
+      observations: Object.freeze({
+        count: this.observationCount,
+        bytes: this.observationBytes,
+        screenshots: this.screenshots,
+        manualFallbacks: this.manualFallbacks,
+        latencyMs: Object.freeze({ p50: observationPercentile(0.5), p95: observationPercentile(0.95), max: observationSorted.at(-1) ?? 0 }),
+      }),
       commands: Object.freeze({ ...this.commandCounts }),
+      commandKinds: Object.freeze(Object.fromEntries(this.commandKinds)),
       commandCodes: Object.freeze(Object.fromEntries(this.commandCodes)),
       latencyMs: Object.freeze({ samples: sorted.length, p50: percentile(0.5), p95: percentile(0.95), max: sorted.at(-1) ?? 0 }),
       recovery: Object.freeze({ ...this.recovery }),
       communications: Object.freeze({ ...this.communications }),
       capacity: Object.freeze({ ...this.capacity }),
+      evidence: Object.freeze({ ...this.evidence }),
+      performance: Object.freeze({ ...this.performance }),
     });
   }
 }

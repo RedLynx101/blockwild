@@ -55,6 +55,8 @@ describe("agent platform contracts", () => {
     assert.equal(validateAgentCommand(command({ kind: "world_delete", arguments: { worldId: "world_test", confirm: true } }), now), true);
     assert.equal(validateAgentCommand(command({ kind: "build_plan", arguments: { placements: [] } }), now), false);
     assert.equal(validateAgentCommand(command({ kind: "build_plan", arguments: { placements: [{ x: 1, y: 2, z: 3, block: 4 }] } }), now), true);
+    assert.equal(validateAgentCommand(command({ kind: "container_transfer", arguments: { containerId: "10,20,30", direction: "container-to-agent", sourceSlot: 2, count: 4, expectedContainerRevision: 1, expectedInventoryRevision: 3 } }), now), true);
+    assert.equal(validateAgentCommand(command({ kind: "container_transfer", arguments: { containerId: "10,20,30", direction: "container-to-agent", sourceSlot: 2, count: 4 } }), now), false);
     assert.equal(validateAgentCommand(command({ kind: "task_pin", arguments: { title: "Tend the west field", note: "Mature crops only" } }), now), true);
     assert.equal(validateAgentCommand(command({ kind: "task_update", arguments: { taskId: "task_1", status: "invented" } }), now), false);
     assert.equal(validateAgentCommand(command({ kind: "waypoint_pin", arguments: { name: "West field", position: { x: 2, y: 3, z: 4 } } }), now), true);
@@ -197,9 +199,21 @@ describe("agent platform contracts", () => {
   test("diagnostics exports engine-verifiable counters without prompts", () => {
     const diagnostics = new AgentDiagnostics();
     diagnostics.recordResult(createAgentResult(command(), "completed", 4, "observed", "Done"));
+    diagnostics.screenshots = 2;
+    diagnostics.manualFallbacks = 1;
+    diagnostics.communications.voiceDurationMs = 1_250;
+    diagnostics.performance = { ...diagnostics.performance, fps: 58, p95FrameMs: 19, occupiedChunkReady: true };
     const report = diagnostics.export();
     assert.equal(report.commands.completed, 1);
+    assert.equal(report.commandKinds.observe, 1);
     assert.equal(report.commandCodes.observed, 1);
+    assert.equal(report.observations.count, 0);
+    assert.equal(report.observations.screenshots, 2);
+    assert.equal(report.observations.manualFallbacks, 1);
+    assert.deepEqual(report.observations.latencyMs, { p50: 0, p95: 0, max: 0 });
+    assert.equal(report.communications.voiceDurationMs, 1_250);
+    assert.equal(report.performance.occupiedChunkReady, true);
+    assert.equal(report.evidence.terminalResults, 1);
     assert.equal("prompt" in report.runner, false);
   });
 

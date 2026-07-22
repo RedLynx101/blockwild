@@ -1,10 +1,10 @@
 # Blockwild AI Companion Drone Platform
 
-**Status:** Proposal for review; no companion-platform implementation is authorized by this document.
+**Status:** Approved and implemented. See the [implementation and operations ledger](AI_COMPANION_DRONE_PLATFORM_IMPLEMENTATION.md) for requirement coverage, tradeoffs, validation, deployment evidence, and rollback guidance.
 
 **Prepared:** July 21, 2026 against Blockwild v1.9.1 on `main`
 
-**Decision requested:** Approve, revise, or reject the architecture and phase gates before implementation begins.
+**Approval outcome:** Implemented in phased commits with the host-authoritative boundary preserved.
 
 ## Executive recommendation
 
@@ -576,4 +576,4 @@ These defaults are safe enough to implement unless changed during approval:
 
 ## Approval outcome
 
-If approved, implementation should begin with Phase 0 on the newest `main`, use one commit per phase, and stop at every failed gate rather than carrying an ambiguous partial platform forward. The live game should remain fully playable without Codex, an API key, TTS, the agent page, or any connected drone.
+Implementation began with Phase 0 on `main`, used one commit per phase, and retained every gate as a release contract. The live game remains fully playable without Codex, an API key, TTS, the agent page, or any connected drone. The exact outcome and justified tradeoffs are recorded in the [implementation ledger](AI_COMPANION_DRONE_PLATFORM_IMPLEMENTATION.md).

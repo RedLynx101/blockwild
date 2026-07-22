@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { BlockId, Item } from "../app/game/data";
-import { buildMaterialRequirements, reserveBuildMaterials } from "../app/game/agent-work";
+import { buildMaterialRequirements, reserveBuildMaterials, transferAgentStacksExact } from "../app/game/agent-work";
 
 test("build material accounting reports exact shortages before mutation", () => {
   const placements = [
@@ -27,4 +27,21 @@ test("successful material reservation conserves exact stacks across split slots"
   assert.equal(reservation.ok, true);
   assert.equal(reservation.inventory.reduce((sum, slot) => sum + (slot?.item === BlockId.Planks ? slot.count : 0), 0), 2);
   assert.equal(reservation.inventory[2]?.item, Item.Berry);
+});
+
+test("exact agent transfers honor source, count, destination compatibility, and atomic failure", () => {
+  const source = [{ item: Item.Berry, count: 7 }, { item: Item.Stick, count: 2 }, null];
+  const destination = [{ item: Item.Berry, count: 62 }, null, { item: Item.Apple, count: 3 }];
+  const moved = transferAgentStacksExact(source, destination, { sourceSlot: 0, count: 5 });
+  assert.equal(moved.ok, true);
+  assert.equal(moved.moved, 5);
+  assert.equal(moved.source[0]?.count, 2);
+  assert.equal(moved.destination[0]?.count, 64);
+  assert.equal(moved.destination[1]?.count, 3);
+  assert.deepEqual(source, [{ item: Item.Berry, count: 7 }, { item: Item.Stick, count: 2 }, null], "inputs remain immutable");
+
+  const blocked = transferAgentStacksExact(source, destination, { sourceSlot: 1, destinationSlot: 2, count: 1 });
+  assert.deepEqual({ ok: blocked.ok, reason: blocked.reason, moved: blocked.moved }, { ok: false, reason: "destination_full", moved: 0 });
+  assert.deepEqual(blocked.source, source);
+  assert.deepEqual(blocked.destination, destination);
 });

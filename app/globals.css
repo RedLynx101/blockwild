@@ -7049,6 +7049,14 @@ input:focus-visible {
 .agent-capability-list { display: flex; flex-wrap: wrap; gap: 5px; }
 .agent-runtime-summary { display: flex; justify-content: space-between; gap: 10px; padding: 6px 8px; border: 1px solid #40554d; background: #111b18; color: #b9cbc4; font: 8px var(--font-geist-mono), monospace; }
 .agent-runtime-summary small { color: #f1d27d; }
+.agent-pack-inspector { border: 1px solid #40554d; background: #0e1714; }
+.agent-pack-inspector summary { padding: 6px 8px; color: #bfe8d8; font: 800 7px var(--font-geist-mono), monospace; cursor: pointer; }
+.agent-pack-inspector > div { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 3px; padding: 0 6px 6px; }
+.agent-pack-inspector span { position: relative; display: grid; min-height: 42px; align-content: center; gap: 2px; padding: 4px; border: 1px solid #35473f; background: #17211d; overflow: hidden; }
+.agent-pack-inspector span > small { position: absolute; top: 2px; left: 3px; color: #60746c; font-size: 5px; }
+.agent-pack-inspector span > b { color: #d9eee6; font-size: 6px; line-height: 1.25; }
+.agent-pack-inspector span > em { color: #f1d27d; font-size: 6px; font-style: normal; }
+.agent-pack-inspector span > i { color: #506058; font-size: 6px; font-style: normal; }
 .agent-capability-list label { display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px; border: 1px solid #50665d; background: #18231f; color: #c1d3cb; font: 7px var(--font-geist-mono), monospace; }
 .agent-capability-list input { width: 12px; height: 12px; accent-color: #70d6a5; }
 .agent-session-actions { display: flex; flex-wrap: wrap; gap: 5px; }

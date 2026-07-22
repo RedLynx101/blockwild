@@ -2373,6 +2373,8 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
       diagnosticsStart: (input) => engine.startLocalAgentDiagnostics(input),
       diagnosticsExport: () => engine.exportLocalAgentDiagnostics(),
       diagnosticsStop: () => engine.stopLocalAgentDiagnostics(),
+      diagnosticsNoteScreenshot: () => engine.noteLocalAgentScreenshot(),
+      diagnosticsNoteFallback: (reason) => engine.noteLocalAgentManualFallback(reason),
       testPause: (paused) => engine.setLocalAgentTestPaused(paused),
       testAdvance: (milliseconds) => engine.advanceLocalAgentTest(milliseconds),
       disconnect: () => engine.disconnectMultiplayer(),
@@ -5237,9 +5239,10 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
               {multiplayerState.agents.map((agent) => <article key={agent.agentId} className={`status-${agent.status}`}>
                 <div className="agent-session-heading"><span className="agent-drone-glyph" aria-hidden="true">◆</span><div><strong>{agent.name}</strong><small>{agent.runnerVersion} · {agent.status.toUpperCase()}</small></div></div>
                 <div className="agent-runtime-summary"><small>PACK {(engineRef.current as unknown as MultiplayerEngineApi | null)?.getAgentInventory?.(agent.agentId).filter(Boolean).length ?? 0}/36</small><span>{agent.currentCommand ? `${agent.currentCommand.kind} · ${agent.currentCommand.status}${agent.currentCommand.progress ? ` · ${agent.currentCommand.progress.completed}/${agent.currentCommand.progress.total}` : ""}` : "No active command"}</span></div>
+                <details className="agent-pack-inspector"><summary>OPEN DRONE PACK</summary><div>{((engineRef.current as unknown as MultiplayerEngineApi | null)?.getAgentInventory?.(agent.agentId) ?? []).map((slot, index) => <span key={`${agent.agentId}-pack-${index}`} className={slot ? "occupied" : "empty"}><small>{index + 1}</small>{slot ? <><b>{ITEMS[slot.item]?.name ?? `Item ${slot.item}`}</b><em>×{slot.count}</em></> : <i>empty</i>}</span>)}</div></details>
                 <div className="agent-capability-list" aria-label={`${agent.name} requested capabilities`}>{agent.requested.map((capability) => <label key={capability}><input type="checkbox" checked={agent.granted.includes(capability)} disabled={agent.status === "pending" || agent.status === "revoked" || agent.status === "disconnected"} onChange={(event) => updateAgent((api) => api.setAgentCapability?.(agent.agentId, capability, event.target.checked) ?? false)} /><span>{capability}</span></label>)}</div>
                 <div className="agent-session-actions">
-                  {agent.status === "pending" && <button type="button" className="approve" onClick={() => updateAgent((api) => api.approveAgent?.(agent.agentId, agent.requested) ?? false)}>APPROVE REQUESTED</button>}
+                  {agent.status === "pending" && <button type="button" className="approve" onClick={() => updateAgent((api) => api.approveAgent?.(agent.agentId, agent.requested.filter((capability) => capability !== "player.inventory.read" && capability !== "diagnostics")) ?? false)}>APPROVE SAFE REQUESTS</button>}
                   {agent.status === "approved" && <button type="button" onClick={() => updateAgent((api) => api.pauseAgent?.(agent.agentId) ?? false)}>PAUSE</button>}
                   {agent.status === "paused" && <button type="button" className="approve" onClick={() => updateAgent((api) => api.resumeAgent?.(agent.agentId) ?? false)}>RESUME</button>}
                   <button type="button" onClick={() => updateAgent((api) => api.muteAgent?.(agent.agentId, !agent.muted) ?? false)}>{agent.muted ? "UNMUTE" : "MUTE"}</button>

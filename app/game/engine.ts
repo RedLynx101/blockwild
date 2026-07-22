@@ -607,7 +607,7 @@ import {
 import { applyContainerOperation } from "./multiplayer-inventory";
 import { MultiplayerDiagnosticsRing, multiplayerRejectionCategory } from "./multiplayer-diagnostics";
 import { advanceAgentAlongPath, findAgentVoxelPath, type AgentPathCell } from "./agent-navigation";
-import { buildMaterialRequirements, reserveBuildMaterials } from "./agent-work";
+import { buildMaterialRequirements, reserveBuildMaterials, transferAgentStacksExact } from "./agent-work";
 import { AgentVoiceAssembler, chunkAgentVoiceData } from "./agent-voice";
 import {
   AgentAuthority,
@@ -4214,6 +4214,7 @@ export class VoxelEngine {
   agentChat = new AgentChatRing();
   private localChatSequence = 0;
   agentInventories = new Map<string, Array<InventorySlot | null>>();
+  agentInventoryRevisions = new Map<string, number>();
   agentObservationSequences = new Map<string, number>();
   agentObservationTimer = 0;
   latestAgentObservation: AgentObservationV1 | null = null;
@@ -5733,6 +5734,9 @@ export class VoxelEngine {
     const record = this.agentAuthority.approve(agentId, grants);
     if (!record) return false;
     this.sendAgentGrant(record, "Approved by the host for this session.");
+    // The semantic contract drives actions, but an approved visible agent
+    // still receives one slim authoritative world image for visual fallback.
+    this.sendHostWorldSnapshot(record.agentId);
     this.events.onToast(`${record.name} approved.`);
     this.emitHud(true);
     return true;
@@ -5901,14 +5905,46 @@ export class VoxelEngine {
     return { ok: true as const, startedAt: this.agentDiagnostics.startedAt };
   }
 
+  private snapshotAgentDiagnostics() {
+    const diagnostics = this.agentDiagnostics;
+    if (!diagnostics) return null;
+    const frame = this.performanceSampler.summary();
+    const streaming = this.world.streamingDiagnostics();
+    const browserPerformance = typeof performance === "undefined"
+      ? null
+      : performance as Performance & { memory?: { usedJSHeapSize: number } };
+    diagnostics.performance = {
+      fps: frame.framesPerSecond || this.averageFps,
+      p95FrameMs: frame.p95FrameMilliseconds,
+      averageActiveCpuMs: frame.averageActiveCpuMilliseconds,
+      hostFrameBudgetMs: 1000 / 60,
+      heapBytes: browserPerformance?.memory?.usedJSHeapSize ?? null,
+      channelBackpressure: this.multiplayer?.channelBackpressure() ?? 0,
+      occupiedChunkReady: this.latestAgentObservation?.world.occupiedChunkReady ?? streaming.playerChunkReady,
+    };
+    return diagnostics.export();
+  }
+
   exportLocalAgentDiagnostics(): AgentDiagnosticsV1 | null {
-    return this.agentDiagnostics?.export() ?? null;
+    return this.snapshotAgentDiagnostics();
   }
 
   stopLocalAgentDiagnostics() {
-    const report = this.agentDiagnostics?.export() ?? null;
+    const report = this.snapshotAgentDiagnostics();
     this.agentDiagnostics = null;
     return report;
+  }
+
+  noteLocalAgentScreenshot() {
+    if (!this.assertLocalAgentTestAdmin() || !this.agentTestWorld || !this.agentDiagnostics) return { ok: false as const, code: "diagnostics_not_running" };
+    this.agentDiagnostics.screenshots += 1;
+    return { ok: true as const, screenshots: this.agentDiagnostics.screenshots };
+  }
+
+  noteLocalAgentManualFallback(_reason = "manual visual recovery") {
+    if (!this.assertLocalAgentTestAdmin() || !this.agentTestWorld || !this.agentDiagnostics) return { ok: false as const, code: "diagnostics_not_running" };
+    this.agentDiagnostics.manualFallbacks += 1;
+    return { ok: true as const, manualFallbacks: this.agentDiagnostics.manualFallbacks };
   }
 
   setLocalAgentTestPaused(paused: boolean) {
@@ -6136,6 +6172,7 @@ export class VoxelEngine {
         "build" as const,
         "harvest" as const,
         "diagnostics" as const,
+        "player.inventory.read" as const,
       ])];
       return createPeerIdentity(requestedName, "#62c8b4", () => stableId, undefined, {
         peerKind: "agent",
@@ -6190,6 +6227,7 @@ export class VoxelEngine {
     (this.agentChat ??= new AgentChatRing()).clear();
     this.localChatSequence = 0;
     (this.agentInventories ??= new Map()).clear();
+    (this.agentInventoryRevisions ??= new Map()).clear();
     (this.agentObservationSequences ??= new Map()).clear();
     (this.agentRuntimeTasks ??= new Map()).clear();
     this.clearAgentWorkRuntime();
@@ -6481,6 +6519,7 @@ export class VoxelEngine {
     (this.agentChat ??= new AgentChatRing()).clear();
     this.localChatSequence = 0;
     (this.agentInventories ??= new Map()).clear();
+    (this.agentInventoryRevisions ??= new Map()).clear();
     (this.agentObservationSequences ??= new Map()).clear();
     (this.agentRuntimeTasks ??= new Map()).clear();
     this.clearAgentWorkRuntime();
@@ -8298,7 +8337,7 @@ export class VoxelEngine {
         ? this.networkContainerSnapshots([this.multiplayerPeerActiveContainers.get(peerId)!])
         : [],
       guildBook: this.guildBook,
-      ...(identity ? { playerState: this.ensureHostPlayerSession(identity) } : {}),
+      ...(identity && identity.peerKind !== "agent" ? { playerState: this.ensureHostPlayerSession(identity) } : {}),
     };
   }
 
@@ -8306,7 +8345,13 @@ export class VoxelEngine {
     if (!this.multiplayer || this.multiplayer.role !== "host") return;
     try {
       if (peerId) {
-        if (this.multiplayer.getPeer(peerId)?.identity?.peerKind !== "agent") this.multiplayer.sendSnapshot(this.hostWorldSnapshot(peerId), peerId);
+        const peer = this.multiplayer.getPeer(peerId);
+        if (peer?.identity?.peerKind === "agent") {
+          const full = this.hostWorldSnapshot(peerId);
+          const { playerState: _ignoredPlayerState, ...world } = full;
+          void _ignoredPlayerState;
+          this.multiplayer.sendSnapshot({ ...world, mobs: [], drops: [], containers: [] }, peerId);
+        } else this.multiplayer.sendSnapshot(this.hostWorldSnapshot(peerId), peerId);
       }
       else for (const peer of this.multiplayer.getPeers()) {
         if (peer.state === "connected" && peer.identity && peer.identity.peerKind !== "agent") this.multiplayer.sendSnapshot(this.hostWorldSnapshot(peer.identity.id), peer.identity.id);
@@ -8354,7 +8399,7 @@ export class VoxelEngine {
     // builder catalog when entering somebody else's survival save.
     applyAuthoritativeNetworkMode(this, snapshot.mode);
     this.worldOptions = normalizeWorldOptions(snapshot.worldOptions ?? this.worldOptions);
-    this.butterflyDensity = this.worldOptions.butterflyDensity;
+    this.butterflyDensity = this.agentMode ? 0 : this.worldOptions.butterflyDensity;
     this.clearEntities();
     this.pendingNetworkMobDeaths.clear();
     this.liquidCells.clear();
@@ -8428,7 +8473,7 @@ export class VoxelEngine {
     this.applyNetworkBoatSnapshot(snapshot.boats ?? []);
     this.applyNetworkContainerSnapshots(snapshot.containers ?? []);
     this.guildBook = normalizeGuildBook(snapshot.guildBook);
-    if (guestPlayerId) this.applyLocalPlayerSessionSnapshot(snapshot.playerState
+    if (guestPlayerId && !this.agentMode) this.applyLocalPlayerSessionSnapshot(snapshot.playerState
       ? normalizeMultiplayerPlayerState(snapshot.playerState, guestPlayerId, this.multiplayer?.identity.variant)
       : normalizeMultiplayerPlayerState(null, guestPlayerId, this.multiplayer?.identity.variant), false, true);
     for (const pose of snapshot.players) this.upsertRemotePlayer(pose, pose.playerId === hostPeer.identity?.id ? hostPeer : undefined);
@@ -8937,6 +8982,7 @@ export class VoxelEngine {
         this.agentDiagnostics.communications.voiceMessages += 1;
         this.agentDiagnostics.communications.voiceCharacters += result.chunk.text.length;
         this.agentDiagnostics.communications.voiceBytes += result.bytes.byteLength;
+        this.agentDiagnostics.communications.voiceDurationMs += result.chunk.durationMs;
       }
       this.flushAgentVoicePlayback();
     }
@@ -9016,6 +9062,7 @@ export class VoxelEngine {
             if (this.agentDiagnostics) this.agentDiagnostics.capacity.admittedAgents = this.agentAuthority.list().filter((agent) => agent.status === "approved" || agent.status === "paused" || agent.status === "pending").length;
             this.sendAgentGrant(record, "Waiting for host approval.");
             if (!this.agentInventories.has(record.agentId)) this.agentInventories.set(record.agentId, blankInventory());
+            if (!this.agentInventoryRevisions.has(record.agentId)) this.agentInventoryRevisions.set(record.agentId, 0);
             const slot = Math.max(0, this.agentAuthority.list().findIndex((agent) => agent.agentId === record.agentId));
             const angle = this.yaw + Math.PI + (slot - 1.5) * 0.48;
             this.upsertRemotePlayer({
@@ -9106,7 +9153,20 @@ export class VoxelEngine {
         const grant = envelope.payload as AgentCapabilityGrant;
         if (grant.status === "revoked" && grant.reason) this.events.onToast(grant.reason);
       } else if (envelope.type === "agent-observation" && this.multiplayer?.role === "guest" && this.agentMode) {
-        this.latestAgentObservation = structuredClone(envelope.payload as AgentObservationV1);
+        const observation = structuredClone(envelope.payload as AgentObservationV1);
+        this.latestAgentObservation = observation;
+        if (this.multiplayerReceivedSnapshot) {
+          this.position.set(observation.self.position.x, observation.self.position.y, observation.self.position.z);
+          this.velocity.set(observation.self.velocity.x, observation.self.velocity.y, observation.self.velocity.z);
+          this.yaw = observation.self.yaw;
+          this.pitch = observation.self.pitch;
+          this.day = observation.world.day;
+          this.worldTime = observation.world.time;
+          if (["clear", "rain", "thunder", "sandstorm", "ashfall"].includes(observation.world.weather)) {
+            this.weatherState = { ...this.weatherState, kind: observation.world.weather as WeatherState["kind"] };
+            this.weather = observation.world.weather === "clear" ? "clear" : "rain";
+          }
+        }
       } else if (envelope.type === "agent-result" && this.multiplayer?.role === "guest" && this.agentMode) {
         this.latestAgentResult = structuredClone(envelope.payload as AgentCommandResult);
       } else if (envelope.type === "player-pose") {
@@ -23663,6 +23723,7 @@ export class VoxelEngine {
         this.agentDiagnostics.capacity.mergedRegions = plan.agentRegions;
         const diameter = AGENT_DEFAULT_SIMULATION_DISTANCE * 2 + 1;
         this.agentDiagnostics.capacity.simulatedChunks = plan.agentRegions * diameter * diameter;
+        this.agentDiagnostics.capacity.simulatedEntities = this.mobs.length + this.butterflies.entities.length;
       }
       for (const region of plan.mergedAgentRegions) {
         const leader = region.agentIds.map((agentId) => this.remotePlayers.get(agentId)?.target).find(Boolean);
@@ -28557,6 +28618,13 @@ export class VoxelEngine {
 
   animate = (now: number) => {
     if (this.disposed) return;
+    if (this.agentMode) {
+      const presentationInterval = typeof document !== "undefined" && document.visibilityState === "hidden" ? 200 : 1000 / 30;
+      if (now - this.lastPresentedFrameTime < presentationInterval) {
+        this.animationFrame = requestAnimationFrame(this.animate);
+        return;
+      }
+    }
     const activeFrameStartedAt = performance.now();
     const rawDt = (now - this.previousTime) / 1000;
     const dt = Math.min(0.08, Math.max(0, rawDt));
@@ -28620,7 +28688,7 @@ export class VoxelEngine {
     if (this.running && !this.titleMode && !this.paused) this.updateDynamicWeather(dt);
     this.updateDayNight(dt);
     this.updateChestModel(dt);
-    this.updateHeldItem(dt);
+    if (!this.agentMode) this.updateHeldItem(dt);
     const multiplayerGuest = this.multiplayer?.role === "guest" && this.multiplayerReceivedSnapshot;
     if (this.running && !this.titleMode && !multiplayerGuest) {
       this.updateFurnaces(dt);
@@ -28682,18 +28750,18 @@ export class VoxelEngine {
       this.updateTransientDestructionPresentation(dt);
     }
     if (this.running && !this.titleMode) this.updateMultiplayer(dt);
-    this.updateRain(dt);
+    if (!this.agentMode) this.updateRain(dt);
     this.world.updateWaterAnimation(now);
     this.syncExhibitVisuals(false, dt);
     this.syncAquariumVisuals(false, dt);
     this.syncOrbRackVisuals(false, dt);
     this.syncFurnitureVisuals(false, dt);
-    this.updateParticles(dt);
-    this.cloudDrift = stepCloudDrift(this.cloudDrift, this.weatherState, dt);
-    if (this.cloudMesh) {
-      this.cloudMesh.position.set(this.cloudDrift.x, 0, this.cloudDrift.z);
+    if (!this.agentMode) {
+      this.updateParticles(dt);
+      this.cloudDrift = stepCloudDrift(this.cloudDrift, this.weatherState, dt);
+      if (this.cloudMesh) this.cloudMesh.position.set(this.cloudDrift.x, 0, this.cloudDrift.z);
+      this.refreshCloudField(false, dt);
     }
-    this.refreshCloudField(false, dt);
     const renderStartedAt = performance.now();
     const simulationMilliseconds = Math.max(0, renderStartedAt - simulationStartedAt - chunkWorkMilliseconds);
     let gpuMilliseconds = this.gpuTimer.poll();
@@ -28823,7 +28891,14 @@ export class VoxelEngine {
     const inventory = this.agentInventories.get(agentId) ?? blankInventory();
     const transfer = transferInventoryStacks([stack], inventory);
     this.agentInventories.set(agentId, transfer.target as Array<InventorySlot | null>);
+    if ((transfer.source[0]?.count ?? 0) < stack.count) this.bumpAgentInventoryRevision(agentId);
     return transfer.source[0]?.count ?? 0;
+  }
+
+  private bumpAgentInventoryRevision(agentId: string) {
+    const revision = (this.agentInventoryRevisions.get(agentId) ?? 0) + 1;
+    this.agentInventoryRevisions.set(agentId, revision);
+    return revision;
   }
 
   private showAgentBuildPreview(preview: AgentBuildPreview) {
@@ -28934,6 +29009,24 @@ export class VoxelEngine {
         ? completed("speech_caption_sent", "The caption was sent. Generated audio must be published by the trusted runner voice bridge.", { sequence: appended.message.sequence, messageId: appended.message.id })
         : completed("chat_sent", "The message was sent as in-world dialogue.", { sequence: appended.message.sequence, messageId: appended.message.id });
     }
+    if (command.kind === "emote") {
+      const record = this.agentAuthority.get(command.agentId);
+      if (record?.muted) return blocked("agent_muted", "The host muted this drone's communications.");
+      const action = String(args.action ?? args.text ?? "hovers attentively").trim().replace(/[\r\n*]+/gu, " ").slice(0, 120) || "hovers attentively";
+      const appended = this.agentChat.append({
+        authorId: command.agentId,
+        authorName: record?.name ?? "Field Drone",
+        peerKind: "agent",
+        channel: "local",
+        text: `* ${action}`,
+        sentAt: Date.now(),
+        position: { x: pose.x, y: pose.y, z: pose.z },
+      });
+      if (!appended.ok) return blocked(appended.code, "The emote was invalid or rate limited.");
+      if (this.agentDiagnostics) this.agentDiagnostics.communications.chatMessages += 1;
+      this.multiplayer?.sendChat(appended.message);
+      return completed("emote_played", "The drone performed a restrained world-visible emote.", { sequence: appended.message.sequence, messageId: appended.message.id });
+    }
     if (command.kind === "session.pause") { this.agentAuthority.pause(command.agentId); return completed("agent_paused", "The drone safely suspended its current command and will not start new work."); }
     if (command.kind === "session.resume") { this.agentAuthority.resume(command.agentId); return completed("agent_resumed", "The drone re-observed and resumed accepting work."); }
     if (command.kind === "session.stop") { this.cancelAgentRuntime(command.agentId, "stopped", "The runner stopped its active command."); this.cancelAgentBuild(command.agentId, "stopped", "The build stopped safely; unplaced materials were returned."); this.agentAuthority.releaseAgentLeases(command.agentId); return completed("agent_stopped", "All drone work leases were released."); }
@@ -28969,16 +29062,45 @@ export class VoxelEngine {
       this.agentRuntimeTasks.set(command.agentId, { command, kind: command.kind === "follow_player" ? "follow" : "move", path: path.cells, pathIndex: 0, goal, followPlayerId, remainingSeconds: 0, startedAt: running.startedAt, lastReplanAt: performance.now(), lastReportAt: 0, blockedSeconds: 0, replans: 0, lastPosition: { x: pose.x, y: pose.y, z: pose.z } });
       return this.publishAgentResult(running);
     }
+    if (command.kind === "inspect_area") {
+      const center = args.center && typeof args.center === "object" ? args.center as { x: number; y: number; z: number } : pose;
+      const radius = Math.max(1, Math.min(32, Number(args.radius) || 12));
+      const observation = this.createAgentObservation(command.agentId);
+      const within = (entry: AgentNearbyEntity) => Math.hypot(entry.position.x - center.x, entry.position.y - center.y, entry.position.z - center.z) <= radius;
+      return completed("area_inspected", `Returned bounded semantic entities within ${radius} blocks.`, {
+        center: { x: center.x, y: center.y, z: center.z },
+        radius,
+        entities: [...observation.world.players, ...observation.world.nearby].filter(within).slice(0, 128),
+        reachable: observation.world.reachable,
+      });
+    }
+    if (command.kind === "inspect_target") {
+      const targetId = String(args.targetId ?? args.id ?? "").trim();
+      const observation = this.createAgentObservation(command.agentId);
+      const target = [...observation.world.players, ...observation.world.nearby].find((entry) => entry.id === targetId);
+      if (!target) return blocked("target_unavailable", "That target is not present in the current bounded observation.");
+      const wantsInventory = args.includeInventory === true && (target.kind === "player" || target.kind === "agent");
+      if (!wantsInventory) return completed("target_inspected", "The host returned bounded semantic target state.", { target });
+      const record = this.agentAuthority.get(command.agentId);
+      if (!record?.granted.includes("player.inventory.read")) return blocked("capability_denied", "Reading another player's inventory requires player.inventory.read.", { requiredCapability: "player.inventory.read", target });
+      const targetInventory = target.id === this.multiplayer?.identity.id
+        ? this.inventory
+        : this.agentInventories.get(target.id) ?? this.multiplayerPlayerStates.get(target.id)?.inventory ?? [];
+      return completed("target_inventory_ready", "The explicitly authorized player inventory view is ready.", {
+        target,
+        slots: targetInventory.map((slot, index) => slot ? { index, item: slot.item, name: ITEMS[slot.item]?.name, count: slot.count } : null),
+      });
+    }
     if (command.kind === "inventory_get" || command.kind === "agent_inventory_open_for_host") {
       const inventory = this.agentInventories.get(command.agentId) ?? [];
-      return completed("inventory_ready", "Host-owned drone inventory returned.", { slots: inventory.map((slot, index) => slot ? { index, item: slot.item, name: ITEMS[slot.item]?.name, count: slot.count } : null) });
+      return completed("inventory_ready", "Host-owned drone inventory returned.", { revision: this.agentInventoryRevisions.get(command.agentId) ?? 0, slots: inventory.map((slot, index) => slot ? { index, item: slot.item, name: ITEMS[slot.item]?.name, count: slot.count } : null) });
     }
     if (command.kind === "inventory_move") {
       const inventory = this.agentInventories.get(command.agentId) ?? [];
       const from = Math.trunc(Number(args.from)), to = Math.trunc(Number(args.to));
       if (from < 0 || to < 0 || from >= inventory.length || to >= inventory.length || !inventory[from]) return blocked("inventory_slot_invalid", "The requested source or destination slot is unavailable.");
       [inventory[from], inventory[to]] = [inventory[to], inventory[from]];
-      return completed("inventory_moved", "The host committed the slot move.", { from, to });
+      return completed("inventory_moved", "The host committed the slot move.", { from, to, revision: this.bumpAgentInventoryRevision(command.agentId) });
     }
     if (command.kind === "inventory_drop") {
       const inventory = this.agentInventories.get(command.agentId) ?? [];
@@ -28989,7 +29111,7 @@ export class VoxelEngine {
       this.spawnDrop(slot.item, count, new THREE.Vector3(pose.x, pose.y + 0.3, pose.z), slot.durability, slot.metadata);
       slot.count -= count;
       if (slot.count <= 0) inventory[slotIndex] = null;
-      return completed("inventory_dropped", `Dropped ${count} ${ITEMS[slot.item]?.name ?? "item"}.`, { count });
+      return completed("inventory_dropped", `Dropped ${count} ${ITEMS[slot.item]?.name ?? "item"}.`, { count, revision: this.bumpAgentInventoryRevision(command.agentId) });
     }
     if (["open_container", "container_get", "container_transfer", "interact", "use_workstation"].includes(command.kind)) {
       const targetId = String(args.containerId ?? args.targetId ?? "").replace(/^container:/u, "");
@@ -28999,19 +29121,38 @@ export class VoxelEngine {
       if (command.kind === "interact" && type !== undefined && this.isDoor(type)) return this.toggleDoor(targetPosition.x, targetPosition.y, targetPosition.z, type) ? completed("door_toggled", "The door was used.") : blocked("door_occupied", "The door could not move because its passage is occupied.");
       if (command.kind === "interact" && type !== undefined && toggleFenceGate(type) !== null) return this.toggleFenceGateAt(targetPosition.x, targetPosition.y, targetPosition.z, type) ? completed("gate_toggled", "The fence gate was used.") : blocked("gate_occupied", "The gate could not move because its passage is occupied.");
       const chest = this.chests.get(targetId);
-      if (!chest) return blocked("container_unavailable", "No host-owned container exists at that target.");
-      if (command.kind !== "container_transfer") return completed("container_ready", "The host returned a bounded container view.", { containerId: targetId, slots: chest.map((slot, index) => slot ? { index, item: slot.item, name: ITEMS[slot.item]?.name, count: slot.count } : null) });
+      if (!chest) {
+        if (command.kind === "interact" || command.kind === "use_workstation") return completed("interaction_ready", `The drone used ${type === undefined ? "the target" : BLOCKS[type]?.name ?? "the target"}; no inventory surface was exposed.`, { targetId, block: type ?? null });
+        return blocked("container_unavailable", "No host-owned container exists at that target.");
+      }
+      const containerRevision = this.multiplayerContainerRevisions.get(targetId) ?? 0;
+      const inventoryRevision = this.agentInventoryRevisions.get(command.agentId) ?? 0;
+      if (command.kind !== "container_transfer") return completed("container_ready", "The host returned a bounded container view.", { containerId: targetId, containerRevision, inventoryRevision, slots: chest.map((slot, index) => slot ? { index, item: slot.item, name: ITEMS[slot.item]?.name, count: slot.count } : null) });
       const lease = this.agentAuthority.acquireLease([`container:${targetId}`], command.commandId, command.agentId, command.expiresAt);
       if (!lease.ok) return blocked("work_lease_conflict", "Another agent or transaction currently owns this container lease.", { conflict: lease.conflict });
       const inventory = this.agentInventories.get(command.agentId) ?? [];
+      if (Math.trunc(Number(args.expectedContainerRevision)) !== containerRevision || Math.trunc(Number(args.expectedInventoryRevision)) !== inventoryRevision) {
+        this.agentAuthority.releaseCommandLeases(command.commandId);
+        return blocked("container_revision_conflict", "The container or drone pack changed. Re-open both views before transferring.", { containerRevision, inventoryRevision });
+      }
       const direction = args.direction === "container-to-agent" ? "container-to-agent" : "agent-to-container";
-      const transfer = direction === "agent-to-container" ? transferInventoryStacks(inventory, chest) : transferInventoryStacks(chest, inventory);
-      if (direction === "agent-to-container") { this.agentInventories.set(command.agentId, transfer.source as Array<InventorySlot | null>); this.chests.set(targetId, transfer.target as ChestState); }
-      else { this.chests.set(targetId, transfer.source as ChestState); this.agentInventories.set(command.agentId, transfer.target as Array<InventorySlot | null>); }
+      const sourceSlot = Math.trunc(Number(args.sourceSlot));
+      const requestedCount = Math.max(1, Math.trunc(Number(args.count) || 1));
+      const explicitDestination = args.destinationSlot === undefined ? null : Math.trunc(Number(args.destinationSlot));
+      const transfer = transferAgentStacksExact(
+        direction === "agent-to-container" ? inventory : chest,
+        direction === "agent-to-container" ? chest : inventory,
+        { sourceSlot, destinationSlot: explicitDestination, count: requestedCount },
+      );
+      if (!transfer.ok) { this.agentAuthority.releaseCommandLeases(command.commandId); return blocked(transfer.reason === "source_empty" ? "container_source_empty" : "transfer_no_space", transfer.reason === "source_empty" ? "The requested source slot is empty or unavailable." : "The requested destination slot or pack has no compatible space."); }
+      if (direction === "agent-to-container") { this.agentInventories.set(command.agentId, transfer.source); this.chests.set(targetId, transfer.destination as ChestState); }
+      else { this.chests.set(targetId, transfer.source as ChestState); this.agentInventories.set(command.agentId, transfer.destination); }
+      const nextContainerRevision = containerRevision + 1;
+      this.multiplayerContainerRevisions.set(targetId, nextContainerRevision);
+      const nextInventoryRevision = this.bumpAgentInventoryRevision(command.agentId);
       this.agentAuthority.releaseCommandLeases(command.commandId);
-      if (!transfer.moved) return blocked("transfer_no_space", "No items moved because the source was empty or the destination was full.");
       this.saveSoon();
-      return completed("container_transfer_committed", `The host atomically transferred ${transfer.moved} item${transfer.moved === 1 ? "" : "s"}.`, { moved: transfer.moved, direction });
+      return completed("container_transfer_committed", `The host atomically transferred ${transfer.moved} item${transfer.moved === 1 ? "" : "s"}.`, { moved: transfer.moved, direction, sourceSlot, destinationSlot: transfer.destinationSlot, containerRevision: nextContainerRevision, inventoryRevision: nextInventoryRevision });
     }
     if (command.kind === "wiki_lookup") {
       const query = String(args.query ?? "").trim().toLocaleLowerCase();
@@ -29070,6 +29211,7 @@ export class VoxelEngine {
       this.world.setBlocksBatch(edits, true, true);
       this.publishBlockEdits(edits, "batch");
       this.agentInventories.set(command.agentId, working);
+      this.bumpAgentInventoryRevision(command.agentId);
       for (const cell of accepted) { this.schedulePlantGrowth(cell.x, cell.y, cell.z, cell.result.replacement, 1); this.markAgentWork(command.agentId, cell); }
       this.agentAuthority.releaseCommandLeases(command.commandId);
       this.saveSoon();
@@ -29109,6 +29251,7 @@ export class VoxelEngine {
       this.world.setBlocksBatch(edits, true, true);
       this.publishBlockEdits(edits, "batch");
       this.agentInventories.set(command.agentId, working);
+      this.bumpAgentInventoryRevision(command.agentId);
       for (const cell of resourceBlocks.slice(0, 128)) this.markAgentWork(command.agentId, cell);
       this.agentAuthority.releaseCommandLeases(command.commandId);
       this.saveSoon();
@@ -29163,6 +29306,7 @@ export class VoxelEngine {
       const reservation = reserveBuildMaterials(this.agentInventories.get(command.agentId) ?? [], preview.requirements);
       if (!reservation.ok) { this.agentAuthority.releaseCommandLeases(command.commandId); return blocked("inventory_changed", "The drone no longer has the material counts accepted by the preview."); }
       this.agentInventories.set(command.agentId, reservation.inventory as Array<InventorySlot | null>);
+      this.bumpAgentInventoryRevision(command.agentId);
       const reserved = new Map<ItemCode, number>(reservation.reserved);
       const startedAt = Date.now();
       this.agentBuildJobs.set(command.agentId, { command, preview, placementIndex: 0, removalIndex: 0, reserved, startedAt, committed: 0, lastReportAt: performance.now() });
@@ -29215,13 +29359,13 @@ export class VoxelEngine {
     }
     if (command.kind === "diagnostics_stop") {
       if (!this.agentDiagnostics) return blocked("diagnostics_not_running", "Agent diagnostics are not running.");
-      const report = this.agentDiagnostics.export();
+      const report = this.snapshotAgentDiagnostics();
       this.agentDiagnostics = null;
       return completed("diagnostics_stopped", "Agent diagnostics stopped and returned a sanitized report.", { report });
     }
     if (command.kind === "diagnostics_export") {
       if (!this.agentDiagnostics) return blocked("diagnostics_not_running", "Agent diagnostics are not running.");
-      return completed("diagnostics_ready", "A bounded engine-verifiable diagnostics snapshot is ready.", { report: this.agentDiagnostics.export() });
+      return completed("diagnostics_ready", "A bounded engine-verifiable diagnostics snapshot is ready.", { report: this.snapshotAgentDiagnostics() });
     }
     return blocked("command_not_supported", `The deterministic executor does not support ${command.kind} in this phase.`);
   }
@@ -29387,8 +29531,9 @@ export class VoxelEngine {
     nearby.sort((left, right) => left.distance - right.distance || left.id.localeCompare(right.id));
 
     const players: AgentNearbyEntity[] = [];
+    const canReadPlayerLocations = record?.granted.includes("player.location.read") ?? isLocalAgent;
     const localIdentity = this.multiplayer?.identity;
-    if (localIdentity && localIdentity.id !== agentId && this.multiplayer?.role === "host") players.push({
+    if (canReadPlayerLocations && localIdentity && localIdentity.id !== agentId && this.multiplayer?.role === "host") players.push({
       id: localIdentity.id,
       kind: localIdentity.peerKind === "agent" ? "agent" : "player",
       name: localIdentity.name,
@@ -29396,7 +29541,7 @@ export class VoxelEngine {
       distance: distanceToSelf(this.position),
       state: "online",
     });
-    for (const [id, candidate] of this.remotePlayers) {
+    for (const [id, candidate] of canReadPlayerLocations ? this.remotePlayers : []) {
       if (id === agentId) continue;
       const identity = this.multiplayer?.getPeer(id)?.identity;
       const position = { x: candidate.target.x, y: candidate.target.y, z: candidate.target.z };
@@ -29479,7 +29624,7 @@ export class VoxelEngine {
         renderDistance: this.agentMode ? AGENT_DEFAULT_RENDER_DISTANCE : this.settings.renderDistance,
         simulationDistance: this.agentMode ? AGENT_DEFAULT_SIMULATION_DISTANCE : this.settings.simulationDistance,
         commandQueue: record?.currentCommand && !record.currentCommand.terminal ? 1 : 0,
-        channelBackpressure: 0,
+        channelBackpressure: this.multiplayer?.channelBackpressure() ?? 0,
       },
     };
     this.agentDiagnostics?.recordObservation(observation);

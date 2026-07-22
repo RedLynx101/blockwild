@@ -70,12 +70,16 @@ test("local test-admin bridge is explicit and keeps destructive confirmation sep
     diagnosticsStart: () => ({ ok: true }),
     diagnosticsExport: () => ({ schema: 1 }),
     diagnosticsStop: () => ({ schema: 1 }),
+    diagnosticsNoteScreenshot: () => ({ ok: true, screenshots: 1 }),
+    diagnosticsNoteFallback: (reason) => ({ ok: true, reason }),
     disconnect: () => undefined,
   });
   assert.equal(bridge.status().testAdmin, true);
   assert.deepEqual(bridge.worldList(), [{ id: "world_test" }]);
   assert.deepEqual(bridge.worldDelete({ worldId: "world_test", confirm: false }), { ok: false, worldId: "world_test" });
   assert.deepEqual(bridge.worldDelete({ worldId: "world_test", confirm: true }), { ok: true, worldId: "world_test" });
+  assert.deepEqual(bridge.diagnosticsNoteScreenshot(), { ok: true, screenshots: 1 });
+  assert.deepEqual(bridge.diagnosticsNoteFallback("door UI"), { ok: true, reason: "door UI" });
   await bridge.host({ roomCode: "test room", name: "Mica" });
   assert.deepEqual(calls, ["host:TESTROOM"]);
 });

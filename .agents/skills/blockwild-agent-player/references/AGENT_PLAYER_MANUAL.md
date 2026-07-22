@@ -29,6 +29,8 @@ chat(text, channel?): boolean
 publishVoice({mimeType, dataBase64, text, textHash, durationMs?, channel?}): VoicePublishResult
 worldList/Create/Load/Export/Import/Delete(...): TestAdminResult
 diagnosticsStart/Export/Stop(...): AgentDiagnosticsV1 | result
+diagnosticsNoteScreenshot(): result
+diagnosticsNoteFallback(reason?): result
 testPause(paused): result
 testAdvance(milliseconds): result
 disconnect(): void
@@ -56,7 +58,7 @@ Use summary `observe` at 0.5-1 Hz while idle and on command events while active.
 - `wiki_lookup`, `bestiary_lookup`, `recipe_lookup`: authoritative game references.
 - `inspect_build_site`: represented by `inspect_area` around the intended anchor.
 
-Images are secondary. Request a screenshot for visual judgment or when semantic failure evidence is insufficient.
+Images are secondary. Request a screenshot for visual judgment or when semantic failure evidence is insufficient. While diagnostics are active, call `diagnosticsNoteScreenshot()` after every captured gameplay image and `diagnosticsNoteFallback(reason)` before manual mouse/keyboard recovery. The exported benchmark must reveal visual and manual dependence rather than hide it in an agent transcript.
 
 ## Movement and following
 
@@ -70,7 +72,7 @@ The drone has an ordinary host-owned survival inventory. It receives no free mat
 
 1. `open_container` with block coordinates or canonical container ID.
 2. `container_get` and record container/player revisions.
-3. `container_transfer` with source slot, destination slot or auto placement, count, and expected revisions.
+3. `container_transfer` with `containerId`, exact `direction` (`agent-to-container` or `container-to-agent`), `sourceSlot`, optional `destinationSlot`, exact `count`, `expectedContainerRevision`, and `expectedInventoryRevision`.
 4. Verify returned slots and self inventory.
 
 If another player/agent wins a revision race, re-read; never replay an unconfirmed mutation blindly.

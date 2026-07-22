@@ -1,5 +1,43 @@
 import { ITEMS, cloneSlot, itemForBlock, type InventorySlot, type ItemCode } from "./data";
 import type { AgentBlockPlacement, AgentMaterialRequirement } from "./agent-platform";
+import { inventorySlotStackLimit, inventorySlotsCanStack } from "./inventory-convenience";
+
+export function transferAgentStacksExact(
+  sourceSlots: readonly (InventorySlot | null)[],
+  destinationSlots: readonly (InventorySlot | null)[],
+  input: Readonly<{ sourceSlot: number; destinationSlot?: number | null; count: number }>,
+) {
+  const source = sourceSlots.map(cloneSlot);
+  const destination = destinationSlots.map(cloneSlot);
+  const sourceSlot = Math.trunc(input.sourceSlot);
+  const sourceStack = source[sourceSlot];
+  if (!sourceStack) return { ok: false as const, reason: "source_empty", source, destination, moved: 0 };
+  const requestedCount = Math.max(1, Math.trunc(input.count) || 1);
+  const explicitDestination = input.destinationSlot === undefined || input.destinationSlot === null ? null : Math.trunc(input.destinationSlot);
+  const candidates = explicitDestination === null
+    ? [...destination.map((_, index) => index).filter((index) => destination[index] && inventorySlotsCanStack(sourceStack, destination[index])), ...destination.map((_, index) => index).filter((index) => !destination[index])]
+    : [explicitDestination];
+  let remaining = Math.min(sourceStack.count, requestedCount);
+  let moved = 0;
+  let lastDestinationSlot: number | null = null;
+  for (const destinationSlot of candidates) {
+    if (destinationSlot < 0 || destinationSlot >= destination.length || remaining <= 0) continue;
+    const target = destination[destinationSlot];
+    if (target && !inventorySlotsCanStack(sourceStack, target)) continue;
+    const room = inventorySlotStackLimit(sourceStack) - (target?.count ?? 0);
+    const amount = Math.min(remaining, room);
+    if (amount <= 0) continue;
+    if (target) target.count += amount;
+    else destination[destinationSlot] = cloneSlot({ ...sourceStack, count: amount });
+    lastDestinationSlot = destinationSlot;
+    remaining -= amount;
+    moved += amount;
+  }
+  if (!moved) return { ok: false as const, reason: "destination_full", source, destination, moved: 0 };
+  sourceStack.count -= moved;
+  if (sourceStack.count <= 0) source[sourceSlot] = null;
+  return { ok: true as const, source, destination, moved, destinationSlot: explicitDestination ?? lastDestinationSlot };
+}
 
 export function buildMaterialRequirements(placements: readonly AgentBlockPlacement[], inventory: readonly (InventorySlot | null)[]): AgentMaterialRequirement[] {
   const needs = new Map<ItemCode, number>();

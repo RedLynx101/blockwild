@@ -1788,6 +1788,29 @@ export class MultiplayerSession {
     return peer ? this.peerInfo(peer) : null;
   }
 
+  /**
+   * Peak fraction of a channel's bounded send budget currently queued across
+   * connected peers. This is intentionally a normalized health signal: agent
+   * observations can react to transport pressure without learning private
+   * peer/channel internals or copying WebRTC implementation details.
+   */
+  channelBackpressure() {
+    let peak = 0;
+    for (const peer of this.peers.values()) {
+      if (peer.closed || peer.state !== "connected") continue;
+      const channels: readonly (readonly [DataChannelLike | null, number])[] = [
+        [peer.reliable, MAX_RELIABLE_BUFFERED_BYTES],
+        [peer.movement, MAX_MOVEMENT_BUFFERED_BYTES],
+        [peer.voice, MAX_VOICE_BUFFERED_BYTES],
+      ];
+      for (const [channel, limit] of channels) {
+        if (!channel || channel.readyState !== "open") continue;
+        peak = Math.max(peak, channel.bufferedAmount / limit);
+      }
+    }
+    return Math.max(0, Math.min(1, peak));
+  }
+
   private emit(event: MultiplayerEvent) {
     for (const listener of this.listeners) {
       try { listener(event); } catch { /* Consumers cannot break transport bookkeeping. */ }

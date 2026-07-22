@@ -109,7 +109,7 @@ async function main() {
   const options = args(process.argv.slice(2));
   const action = options._[0] || "help";
   if (action === "help") {
-    process.stdout.write("agent-session.mjs status|observe|command|host|world-list|world-create|world-load|world-export|world-import|world-delete|test-pause|test-resume|test-advance|diagnostics-start|diagnostics-export|diagnostics-stop|speak|notebook-list|notebook-pin|notebook-correct|notebook-remove|notebook-export|notebook-disable [options]\n");
+    process.stdout.write("agent-session.mjs status|observe|command|host|world-list|world-create|world-load|world-export|world-import|world-delete|test-pause|test-resume|test-advance|diagnostics-start|diagnostics-export|diagnostics-stop|diagnostics-note-screenshot|diagnostics-note-fallback|speak|notebook-list|notebook-pin|notebook-correct|notebook-remove|notebook-export|notebook-disable [options]\n");
     return;
   }
   if (action === "status") {
@@ -168,6 +168,14 @@ async function main() {
   if (action === "diagnostics-export" || action === "diagnostics-stop") {
     const method = action === "diagnostics-export" ? "diagnosticsExport" : "diagnosticsStop";
     process.stdout.write(`${JSON.stringify(await bridgeCall(options.cdp, method, []), null, 2)}\n`);
+    return;
+  }
+  if (action === "diagnostics-note-screenshot") {
+    process.stdout.write(`${JSON.stringify(await bridgeCall(options.cdp, "diagnosticsNoteScreenshot", []), null, 2)}\n`);
+    return;
+  }
+  if (action === "diagnostics-note-fallback") {
+    process.stdout.write(`${JSON.stringify(await bridgeCall(options.cdp, "diagnosticsNoteFallback", [String(options.reason || "manual visual recovery")]), null, 2)}\n`);
     return;
   }
   if (action === "speak") {
