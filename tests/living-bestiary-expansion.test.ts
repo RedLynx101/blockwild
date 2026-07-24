@@ -118,12 +118,12 @@ test("the unified combat resolver covers every actor pairing under host authorit
   assert.equal(combatLegality(actor("player", "a"), actor("creature", "b"), hit, { isHost: false, nowSeconds: 0, eventToken: "guest", friendlyFire: "on", pvpEnabled: true }).legal, false);
 });
 
-test("guild framework ships seven complete campaigns, cast schedules, semantic progress, and deterministic hall quotas", () => {
-  assert.equal(Object.keys(GUILDS).length, 7);
+test("guild framework ships nine complete campaigns, cast schedules, semantic progress, and deterministic hall quotas", () => {
+  assert.equal(Object.keys(GUILDS).length, 9);
   assert.ok(Object.values(GUILDS).every((guild) => guild.ranks.length === 6 && guild.questIds.length === 8 && guild.principalNpcIds.length === 3));
-  assert.equal(GUILD_QUESTS.length, 56);
-  assert.equal(GUILD_NPCS.length, 21);
-  assert.equal(GUILD_NPCS.filter((npc) => npc.recruitable).length, 7);
+  assert.equal(GUILD_QUESTS.length, 72);
+  assert.equal(GUILD_NPCS.length, 27);
+  assert.equal(GUILD_NPCS.filter((npc) => npc.recruitable).length, 9);
   assert.match(guildNpcScheduleAt(GUILD_NPCS[0], 7), /^dawn:/u);
   assert.match(guildNpcScheduleAt(GUILD_NPCS[0], 14), /^day:/u);
 

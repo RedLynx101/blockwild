@@ -797,6 +797,10 @@ export const Item = {
   /** Hearthcraft milling goods; deliberately disjoint from the appended block range. */
   Flour: 601,
   WheatMillItem: 602,
+  /** Cardforge custody items; append-only because inventory stacks persist. */
+  CardforgeCase: 603,
+  CardforgeBooster: 604,
+  LooseCard: 605,
 } as const;
 
 const ITEM_ID_COMPATIBILITY_ALIASES: ReadonlyMap<number, ReadonlySet<string>> = new Map([
@@ -955,7 +959,7 @@ export type ItemDefinition = {
   armor?: number;
   food?: number;
   fuel?: number;
-  useKind?: "net" | "release-creature" | "boat" | "creature-cage" | "capture-orb" | "magic-relic" | "plant" | "hoe" | "scythe" | "shears" | "bucket" | "lead" | "shield" | "blueprint" | "potion" | "ranged-weapon" | "spear" | "seed-pouch" | "spell-tome" | "mana-consumable" | "dragon-egg" | "dragon-module" | "lair-survey" | "settlement-chart";
+  useKind?: "net" | "release-creature" | "boat" | "creature-cage" | "capture-orb" | "magic-relic" | "plant" | "hoe" | "scythe" | "shears" | "bucket" | "lead" | "shield" | "blueprint" | "potion" | "ranged-weapon" | "spear" | "seed-pouch" | "spell-tome" | "mana-consumable" | "dragon-egg" | "dragon-module" | "lair-survey" | "settlement-chart" | "cardforge";
   captureLens?: "gentle" | "gloam" | "tide" | "resonance";
   /** Off-hand defensive contract; combat resolution lives in shields.ts. */
   shieldKind?: "wildwood-shield" | "iron-shield";
@@ -1979,6 +1983,9 @@ Object.assign(ITEMS, {
   [Item.MoonberryCookie]: { id: Item.MoonberryCookie, name: "Moonberry Cookie", color: "#b98550", maxStack: 64, food: 5, iconKind: "moonberry-cookie", heldModel: "moonberry-cookie", dropModel: "moonberry-cookie" },
   [Item.Flour]: { id: Item.Flour, name: "Flour", color: "#e4d4a7", maxStack: 64, iconKind: "flour" },
   [Item.WheatMillItem]: { id: Item.WheatMillItem, name: "Wheat Mill", color: "#ad7d43", maxStack: 64, placeBlock: BlockId.WheatMill, iconKind: "wheat-mill", heldModel: "wheat-mill", dropModel: "wheat-mill" },
+  [Item.CardforgeCase]: { id: Item.CardforgeCase, name: "Cardforge Case", color: "#7c4d2b", maxStack: 1, useKind: "cardforge", iconKind: "relic" },
+  [Item.CardforgeBooster]: { id: Item.CardforgeBooster, name: "Cardforge Booster", color: "#d39a45", maxStack: 64, useKind: "cardforge", iconKind: "relic" },
+  [Item.LooseCard]: { id: Item.LooseCard, name: "Loose Card", color: "#dfc48b", maxStack: 64, useKind: "cardforge", iconKind: "relic" },
 } satisfies Record<number, ItemDefinition>);
 
 /**

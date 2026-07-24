@@ -53,14 +53,14 @@ function enterGuild(book: GuildBookState, guildId: keyof typeof GUILDS, inviterI
   return joinGuild(inviteToGuild(book, guildId, inviterId), guildId);
 }
 
-test("all seven campaigns carry authored runtime predicates, recovery, solutions, and people", () => {
-  assert.equal(Object.keys(GUILDS).length, 7);
-  assert.equal(GUILD_QUESTS.length, 56);
-  assert.equal(GUILD_NPCS.length, 21);
-  assert.equal(GUILD_NPCS.filter((npc) => npc.recruitable).length, 7);
+test("all nine campaigns carry authored runtime predicates, recovery, solutions, and people", () => {
+  assert.equal(Object.keys(GUILDS).length, 9);
+  assert.equal(GUILD_QUESTS.length, 72);
+  assert.equal(GUILD_NPCS.length, 27);
+  assert.equal(GUILD_NPCS.filter((npc) => npc.recruitable).length, 9);
   assert.ok(Object.values(GUILDS).every((guild) => guild.ranks.length === 6 && guild.questIds.length === 8 && guild.principalNpcIds.length === 3));
-  assert.equal(new Set(GUILD_QUESTS.map((quest) => quest.failure)).size, 56, "every chapter needs its own failure state");
-  assert.equal(new Set(GUILD_QUESTS.map((quest) => quest.recovery)).size, 56, "every chapter needs its own recovery path");
+  assert.equal(new Set(GUILD_QUESTS.map((quest) => quest.failure)).size, 72, "every chapter needs its own failure state");
+  assert.equal(new Set(GUILD_QUESTS.map((quest) => quest.recovery)).size, 72, "every chapter needs its own recovery path");
 
   const targets = new Set<string>();
   for (const quest of GUILD_QUESTS) {
@@ -79,7 +79,7 @@ test("all seven campaigns carry authored runtime predicates, recovery, solutions
     }
   }
 
-  assert.equal(new Set(GUILD_NPCS.map((npc) => npc.homeSchedule.join("|"))).size, 21, "principals should have authored schedules rather than one template");
+  assert.equal(new Set(GUILD_NPCS.map((npc) => npc.homeSchedule.join("|"))).size, 27, "principals should have authored schedules rather than one template");
   for (const npc of GUILD_NPCS) {
     assert.equal(npc.homeSchedule.length, 4);
     assert.equal(npc.contextLines.length, 6);
@@ -188,7 +188,7 @@ test("objective predicates require their authored creature, site, item, actor, o
   assert.ok(completed.guilds[quest.guildId].completedQuestIds.includes(quest.id));
 });
 
-test("all 56 chapters are reachable in sequence through exact scoped proof", () => {
+test("all 72 chapters are reachable in sequence through exact scoped proof", () => {
   for (const guildId of Object.keys(GUILDS) as Array<keyof typeof GUILDS>) {
     const inviter = GUILD_NPCS.find((npc) => npc.guildId === guildId)!;
     let book = enterGuild(createGuildBook(), guildId, inviter.id);
