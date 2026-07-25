@@ -639,6 +639,55 @@ import {
   type DestructionTombstone,
   type TombstoneBatch,
 } from "./multiplayer";
+import { TCG_CATALOG } from "./tcg/catalog";
+import {
+  acceptTcgTrade,
+  allocateTcgLooseCards,
+  archiveTcgDuplicates,
+  cancelTcgTrade,
+  capturePrintingForMob,
+  claimTcgStarter,
+  createTcgTrade,
+  createTcgWorldState,
+  depositTcgLooseCards,
+  ensureTcgPlayer,
+  expireTcgTransactions,
+  grantTcgPrintings,
+  moveTcgCards,
+  normalizeTcgWorldState,
+  physicalPrintingToken,
+  saveTcgDeck,
+  setActiveTcgDeck,
+  signaturePrintingForMob,
+  upgradeTcgArchive,
+} from "./tcg/collection";
+import { buyFromTcgMerchant, restockTcgMerchant, sellToTcgMerchant } from "./tcg/market";
+import {
+  acceptTcgChallenge,
+  activeTcgMatchForPlayer,
+  applyWorldTcgMatchAction,
+  completeTcgTutorialMatch,
+  createTcgChallenge,
+  declineTcgChallenge,
+  expireTcgMatch,
+  publicTcgMatch,
+  recordTcgNpcResult,
+  startTcgTutorialMatch,
+  startWorldTcgMatch,
+  setTcgParticipantConnected,
+  TCG_NPC_OPPONENTS,
+  townTcgOpponents,
+} from "./tcg/match";
+import { issueTcgPackBatch, openTcgPack, remainingTcgPacks } from "./tcg/packs";
+import { tcgUnit } from "./tcg/rng";
+import { TCG_NETWORK_PROTOCOL_VERSION, type TcgNetworkAction, type TcgNetworkIntent } from "./tcg/network";
+import type {
+  TcgHudState,
+  TcgLocation,
+  TcgMatchAction,
+  TcgTradeAsset,
+  TcgWorldState,
+} from "./tcg/types";
 import { applyContainerOperation } from "./multiplayer-inventory";
 import { MultiplayerDiagnosticsRing, multiplayerRejectionCategory } from "./multiplayer-diagnostics";
 import { advanceAgentAlongPath, findAgentVoxelPath, type AgentPathCell } from "./agent-navigation";
@@ -1285,6 +1334,7 @@ export type HudState = {
   skills: SkillState;
   spellWheelOpen: boolean;
   guildBook: GuildBookState;
+  cardforge: TcgHudState;
 };
 
 export type SavedCreature = {
@@ -1511,6 +1561,8 @@ export type WorldSave = {
   multiplayerProgressions?: Record<string, PlayerProgressionRecord>;
   /** Host-owned guest wallets persist alongside their stable player profiles. */
   multiplayerWallets?: Record<string, GoldWalletState>;
+  /** Host-owned Cardforge catalog custody, pack, market, trade, and match state. */
+  cardforge?: TcgWorldState;
   /** Public, host-editable companion task and waypoint ledger. */
   agentPlatform?: AgentWorldSaveV1;
   /** Stable per world instance; imports receive a new value before notebook relinking. */
@@ -1520,7 +1572,7 @@ export type WorldSave = {
   savedAt: number;
 };
 
-export type OverlayKind = "inventory" | "crafting" | "furnace" | "wheat-mill" | "chest" | "apiary" | "morph-loom" | "orb-rack" | "healing-station" | "waygrid-items" | "waygrid-creatures" | "aquarium" | "golem-forge" | "bestiary" | "creature-camp" | "multiplayer" | "sleep" | "pet" | "dragon" | "magic" | "skills" | "spell-wheel" | "library" | "incubator" | "map" | "quests" | "guilds" | "cartography" | "alchemy" | "distillery" | "sugarworks" | "sentient" | "trade" | "bank" | "settlement" | "follower";
+export type OverlayKind = "inventory" | "crafting" | "furnace" | "wheat-mill" | "chest" | "apiary" | "morph-loom" | "orb-rack" | "healing-station" | "waygrid-items" | "waygrid-creatures" | "aquarium" | "golem-forge" | "bestiary" | "creature-camp" | "multiplayer" | "sleep" | "pet" | "dragon" | "magic" | "skills" | "spell-wheel" | "library" | "incubator" | "map" | "quests" | "guilds" | "cardforge" | "cartography" | "alchemy" | "distillery" | "sugarworks" | "sentient" | "trade" | "bank" | "settlement" | "follower";
 export type CameraMode = "first" | "third-rear" | "third-front";
 
 export type MultiplayerUiState = {
@@ -4088,6 +4140,9 @@ export class VoxelEngine {
   potionBuffs: Record<string, number> = {};
   factionRelations: FactionRelationsState = createFactionRelations("world");
   goldWallet: GoldWalletState = createGoldWallet("world", "local", 0);
+  cardforgeState: TcgWorldState = createTcgWorldState("world:cardforge");
+  cardforgeRemoteHud: TcgHudState | null = null;
+  cardforgeLastPackReveals = new Map<string, Readonly<{ batchId: string; printingIds: readonly string[]; openedAt: number }>>();
   bankAccount: BankAccountState = createBankAccount("world", "local", 0);
   stockMarket: StockMarketState = createStockMarket("world", "local", "WILDERNESS", 0);
   settlements = new Map<string, SettlementState>();
@@ -4972,6 +5027,9 @@ export class VoxelEngine {
     this.liquidCells.clear();
     this.world.setRenderDistance(Math.min(this.settings.renderDistance, this.touchMode ? 4 : 6));
     this.world.reset(seed, undefined, generationOptionsFromWorldOptions(DEFAULT_WORLD_OPTIONS));
+    this.cardforgeState = createTcgWorldState(`preview:${this.world.seedText}`);
+    this.cardforgeLastPackReveals.clear();
+    this.cardforgeRemoteHud = null;
     const spawn = this.findSpawn();
     this.world.initializeAround(spawn.x, spawn.z);
     const y = this.world.surfaceAt(spawn.x, spawn.z) + 0.51;
@@ -5113,6 +5171,9 @@ export class VoxelEngine {
       this.factionRelations = applyCharacterStartingAlignment(this.factionRelations, this.activeCharacterProfile.appearance.race);
     }
     this.goldWallet = createGoldWallet(authorityId, playerId, 0);
+    this.cardforgeState = ensureTcgPlayer(createTcgWorldState(authorityId), playerId).state;
+    this.cardforgeLastPackReveals.clear();
+    this.cardforgeRemoteHud = null;
     this.bankAccount = createBankAccount(authorityId, playerId, this.day);
     this.stockMarket = createStockMarket(authorityId, playerId, this.world.seedText, this.day);
     const raceTraits = characterRaceTraits(this.activeCharacterProfile?.appearance.race ?? "wayfarer");
@@ -5668,6 +5729,10 @@ export class VoxelEngine {
     }
     const authorityId = `world:${save.seed}`;
     const playerId = this.localPlayerId();
+    this.cardforgeState = normalizeTcgWorldState(save.cardforge, authorityId);
+    this.cardforgeLastPackReveals.clear();
+    this.cardforgeState = ensureTcgPlayer(this.cardforgeState, playerId).state;
+    this.cardforgeRemoteHud = null;
     this.mapKnowledge = normalizeMapKnowledge(save.mapKnowledge, authorityId, playerId);
     this.mapSurfaceSurveyedThisSession.clear();
     this.questBook = normalizeQuestBook(save.questBook);
@@ -7497,6 +7562,11 @@ export class VoxelEngine {
         this.sendAuthoritativePlayerState(peer.identity.id, action.requestId);
         return;
       }
+      if (slot.item === Item.LooseCard) {
+        this.multiplayer.sendInventoryAction({ ...action, status: "rejected", reason: "Loose Card custody tokens can move through inventories and containers, but cannot become world drops." }, peer.identity.id);
+        this.sendAuthoritativePlayerState(peer.identity.id, action.requestId);
+        return;
+      }
       const pose = remote.target;
       const horizontal = Math.cos(pose.pitch);
       const direction = new THREE.Vector3(
@@ -8657,6 +8727,9 @@ export class VoxelEngine {
     this.legendaryEncounters.clear();
     this.primeEncounters.clear();
     this.goldWallet = createGoldWallet(sessionAuthority, guestPlayerId, 0);
+    this.cardforgeState = ensureTcgPlayer(createTcgWorldState(sessionAuthority), guestPlayerId).state;
+    this.cardforgeLastPackReveals.clear();
+    this.cardforgeRemoteHud = null;
     this.bankAccount = createBankAccount(sessionAuthority, guestPlayerId, snapshot.time.day);
     this.stockMarket = createStockMarket(sessionAuthority, guestPlayerId, snapshot.seed, snapshot.time.day);
     this.potionBuffs = {};
@@ -9440,6 +9513,19 @@ export class VoxelEngine {
         this.applyNetworkDropSnapshot(snapshot.drops, snapshot.tick, snapshot.scope);
       }
       else if (envelope.type === "tombstones" && this.multiplayer?.role === "guest") this.applyDestructionTombstones(envelope.payload as TombstoneBatch);
+      else if (envelope.type === "tcg-action") {
+        const action = envelope.payload as TcgNetworkAction;
+        if (this.multiplayer?.role === "host" && event.peer.identity) this.resolveHostCardforgeAction(action, event.peer);
+        else if (this.multiplayer?.role === "guest" && action.status !== "request") {
+          this.pendingReliableRequests.delete(`cardforge:${action.requestId}`);
+          if (action.status === "accepted" && action.projection) {
+            this.cardforgeRemoteHud = action.projection;
+            if (action.walletState) this.goldWallet = action.walletState;
+            if (action.message) this.events.onToast(action.message);
+          } else this.events.onToast(action.reason ?? "The host rejected that Cardforge action.");
+          this.emitHud(true);
+        }
+      }
       else if (envelope.type === "time-weather" && this.multiplayer?.role === "guest") {
         const time = envelope.payload as WorldSnapshot["time"] & { boats?: NonNullable<WorldSnapshot["boats"]> };
         this.worldTime = time.worldTime;
@@ -10759,6 +10845,7 @@ export class VoxelEngine {
       this.resolveLegendaryCapture(mob, `orb:${captured.orbId}`);
       this.transferPrimeCustody(mob, "captured", `orb:${captured.orbId}`);
       this.recordHostCreatureCaptureForPlayer(peer.identity, mob, capturedAt);
+      this.grantCardforgeCapture(peer.identity.id, mob.kind);
       this.dispatchGuildEvent("captureCreature", 1, `capture:${mob.specimenId ?? mob.id}`, { creatureKind: mob.kind });
       this.captureSystemDiagnostics.successes += 1;
       if (readiness.route in this.captureSystemDiagnostics.readinessRoutes) {
@@ -16329,6 +16416,41 @@ export class VoxelEngine {
       return;
     }
     const targetingBookFurniture = Boolean(this.target && (ARCHIVE_SHELF_BLOCK_SET.has(this.target.type) || this.target.type === BlockId.TomeDisplay));
+    if (heldSlot && heldDefinition?.useKind === "cardforge") {
+      if (heldSlot.item === Item.LooseCard) {
+        if (this.multiplayer?.role === "guest") {
+          this.requestRemoteCardforgeAction("deposit-loose", {});
+        } else {
+          const raw = heldSlot.metadata?.cardforgeLoose;
+          const token = raw && typeof raw === "object" ? raw as { schema?: unknown; printingId?: unknown; count?: unknown; custodyBatchId?: unknown } : null;
+          const batchId = typeof token?.custodyBatchId === "string" ? token.custodyBatchId : "";
+          const validCount = typeof token?.count === "number" && token.count === heldSlot.count;
+          const eventId = `cardforge-loose-deposit:${this.localPlayerId()}:${batchId}:${this.cardforgeState.revision}`;
+          const deposited = validCount ? depositTcgLooseCards(this.cardforgeState, this.localPlayerId(), batchId, eventId) : null;
+          if (deposited?.applied) {
+            this.cardforgeState = deposited.state;
+            this.inventory[this.selected] = null;
+            this.events.onToast("Loose card returned to the Cardforge case; its custody count was not duplicated.");
+            this.saveSoon();
+          } else this.events.onToast("That loose card token is copied, split, stale, or no longer in active custody.");
+        }
+      } else if (heldSlot.item === Item.CardforgeBooster) {
+        if (this.multiplayer?.role === "guest") {
+          this.requestRemoteCardforgeAction("redeem-booster", {});
+        } else {
+          heldSlot.count -= 1;
+          if (heldSlot.count <= 0) this.inventory[this.selected] = null;
+          const playerId = this.localPlayerId();
+          const eventId = `cardforge-physical-booster:${playerId}:${Date.now()}:${this.cardforgeState.revision}`;
+          const issued = issueTcgPackBatch(this.cardforgeState, playerId, "cardforge-variety-booster", 1, "Recovered dungeon booster", eventId);
+          this.cardforgeState = issued.state;
+          this.saveSoon();
+          this.events.onToast("The sealed dungeon booster was registered to your Cardforge case.");
+        }
+      }
+      this.openCardforge();
+      return;
+    }
     if (heldSlot && heldDefinition?.useKind === "spell-tome" && heldDefinition.spellId && !targetingBookFurniture) {
       const tome = SPELLS.find((spell) => spell.id === heldDefinition.spellId)?.tomeItemId;
       if (!tome) return;
@@ -17033,6 +17155,7 @@ export class VoxelEngine {
       this.bestiary[mob.kind] = bestiaryEntry;
       const firstSpeciesCapture = bestiaryEntry.captures === 0;
       recordSpeciesCapture(bestiaryEntry, Date.now(), mob.specimenId);
+      this.grantCardforgeCapture(this.localPlayerId(), mob.kind);
       this.dispatchGuildEvent("captureCreature", 1, `capture:${mob.specimenId ?? mob.id}`, { creatureKind: mob.kind });
       this.captureSystemDiagnostics.successes += 1;
       if (readiness.route in this.captureSystemDiagnostics.readinessRoutes) {
@@ -20346,6 +20469,8 @@ export class VoxelEngine {
       deepgear: "copper-mole",
       hearthroad: "burrowbell",
       "sugarcourt-makers": "taffy-hound",
+      cardwright: "petalfox",
+      waytable: "runeowl",
     });
     return defaults[quest.guildId];
   }
@@ -20520,6 +20645,61 @@ export class VoxelEngine {
     if (next === current) return false;
     this.guildBook = next;
     this.saveSoon(); this.emitHud(true);
+    return true;
+  }
+
+  /**
+   * Cardforge chapters use authoritative ledger events rather than proximity to
+   * a spawned field marker. The active chapter supplies every authored
+   * predicate value, and replayed demonstration IDs remain idempotent.
+   */
+  private dispatchCardforgeGuildEvent(
+    guildId: "cardwright" | "waytable",
+    kind: GuildObjectiveKind,
+    demonstrationId: string,
+    amount = 1,
+  ) {
+    if (this.multiplayer?.role === "guest") return false;
+    const current = this.guildBook ?? (this.guildBook = createGuildBook());
+    const quest = current.guilds[guildId].activeQuestIds
+      .map((questId) => GUILD_QUESTS.find((entry) => entry.id === questId && entry.guildId === guildId))
+      .find((entry) => entry?.objectives.some((objective) => objective.kind === kind));
+    const objective = quest?.objectives.find((entry) => entry.kind === kind);
+    if (!quest || !objective) return false;
+    const context: GuildSemanticEventContext = {
+      creatureKind: objective.predicate.creatureKinds[0],
+      locationId: objective.predicate.locationIds[0],
+      itemId: objective.predicate.itemIds[0],
+      encounterId: objective.predicate.encounterIds[0],
+      actorId: objective.predicate.actorIds[0],
+    };
+    const next = applyGuildSemanticEvent(current, {
+      kind,
+      guildId,
+      questId: quest.id,
+      objectiveId: objective.id,
+      targetId: objective.predicate.targetIds[0],
+      context,
+      amount,
+      demonstrationId,
+    });
+    if (next === current) return false;
+    this.guildBook = next;
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  private ensureCardforgeGuildAccess() {
+    if (this.multiplayer?.role === "guest") return false;
+    let next = this.guildBook ?? createGuildBook();
+    next = discoverGuildHall(next, "cardwright", "cardforge-case");
+    next = inviteToGuild(next, "cardwright", "lysa-proofmark");
+    next = discoverGuildHall(next, "waytable", "starting-town-waytable");
+    next = inviteToGuild(next, "waytable", "orra-last-turn");
+    if (next === this.guildBook) return false;
+    this.guildBook = next;
+    this.saveSoon();
     return true;
   }
 
@@ -21198,6 +21378,992 @@ export class VoxelEngine {
 
   localPlayerId() {
     return this.multiplayer?.identity.id ?? "local";
+  }
+
+  private cardforgeMerchantId(playerId = this.localPlayerId()) {
+    const remoteMerchantId = playerId === this.localPlayerId() ? null : this.multiplayerPeerActiveMerchants.get(playerId);
+    return `cardforge:${remoteMerchantId ?? this.activeMerchantId ?? this.activeSettlementId ?? "waytable"}`;
+  }
+
+  private cardforgeSettlementForPlayer(playerId = this.localPlayerId()) {
+    if (playerId === this.localPlayerId()) return this.activeSettlementId ? this.settlements.get(this.activeSettlementId) ?? null : null;
+    const residentId = this.multiplayerPeerActiveMerchants.get(playerId);
+    const resident = residentId ? this.mobs.find((mob) => mob.residentId === residentId && mob.health > 0) : null;
+    return resident?.settlementId ? this.settlements.get(resident.settlementId) ?? null : null;
+  }
+
+  private ensureCardforgePlayer(playerId = this.localPlayerId()) {
+    const ensured = ensureTcgPlayer(this.cardforgeState, playerId);
+    this.cardforgeState = ensured.state;
+    return ensured.player;
+  }
+
+  private restockActiveCardforgeMerchant(force = false, playerId = this.localPlayerId()) {
+    const id = this.cardforgeMerchantId(playerId);
+    const sourceId = playerId === this.localPlayerId() ? this.activeMerchantId : this.multiplayerPeerActiveMerchants.get(playerId) ?? null;
+    const source = sourceId ? this.merchants.get(sourceId) : null;
+    const settlement = this.cardforgeSettlementForPlayer(playerId);
+    const restocked = restockTcgMerchant(this.cardforgeState, {
+      merchantId: id,
+      factionId: source?.factionId ?? settlement?.ownerFactionId ?? "player",
+      profession: source?.profession ?? "cardwright",
+      worldDay: this.day,
+      seed: this.world.seedText || "cardforge",
+    }, force);
+    this.cardforgeState = restocked.state;
+    return restocked.merchant;
+  }
+
+  cardforgeHudState(playerId = this.localPlayerId()): TcgHudState {
+    if (playerId === this.localPlayerId() && this.multiplayer?.role === "guest" && this.cardforgeRemoteHud) return this.cardforgeRemoteHud;
+    if (this.multiplayer?.role !== "guest") this.cardforgeState = expireTcgTransactions(this.cardforgeState);
+    const player = this.ensureCardforgePlayer(playerId);
+    const connectedHumanPeers = this.multiplayer?.getPeers()
+      .filter((peer) => peer.state === "connected" && peer.identity?.peerKind !== "agent" && peer.identity) ?? [];
+    const peers = connectedHumanPeers
+      .filter((peer) => peer.identity?.id !== playerId)
+      .map((peer) => ({ id: peer.identity!.id, name: peer.identity!.name })) ?? [];
+    if (this.multiplayer?.role !== "guest") {
+      const connectedIds = new Set([this.localPlayerId(), ...connectedHumanPeers.map((peer) => peer.identity!.id)]);
+      const matches = { ...this.cardforgeState.activeMatches };
+      let changed = false;
+      for (const [matchId, current] of Object.entries(matches)) {
+        let next = current;
+        for (const participant of current.players) {
+          if (participant.npc) continue;
+          const connected = connectedIds.has(participant.playerId);
+          const index = current.players.findIndex((entry) => entry.playerId === participant.playerId) as 0 | 1;
+          if ((connected && next.disconnectedAt[index] !== null) || (!connected && next.disconnectedAt[index] === null)) {
+            next = setTcgParticipantConnected(next, participant.playerId, connected);
+          }
+        }
+        next = expireTcgMatch(next);
+        if (next !== current) {
+          matches[matchId] = next;
+          changed = true;
+        }
+      }
+      if (changed) this.cardforgeState = Object.freeze({
+        ...this.cardforgeState,
+        revision: this.cardforgeState.revision + 1,
+        activeMatches: Object.freeze(matches),
+      });
+    }
+    const activeMatch = activeTcgMatchForPlayer(this.cardforgeState, playerId);
+    const settlement = this.cardforgeSettlementForPlayer(playerId);
+    const town = settlement ? townTcgOpponents({
+      settlementId: settlement.id,
+      factionId: settlement.ownerFactionId,
+      worldSeed: settlement.worldSeed,
+      residents: settlement.residents,
+    }) : null;
+    const settlementName = settlement ? `${FACTIONS[settlement.ownerFactionId]?.name ?? "Independent"} ${settlement.size}` : null;
+    return Object.freeze({
+      catalogRevision: TCG_CATALOG.revision,
+      player,
+      packBatches: remainingTcgPacks(this.cardforgeState, playerId),
+      lastPackReveal: this.cardforgeLastPackReveals.get(playerId) ?? null,
+      merchant: this.cardforgeState.merchantStock[this.cardforgeMerchantId(playerId)] ?? null,
+      activeMatch: activeMatch ? publicTcgMatch(activeMatch, playerId) : null,
+      opponents: town?.opponents ?? Object.freeze([]),
+      challenges: Object.freeze(Object.values(this.cardforgeState.challenges)
+        .filter((challenge) => challenge.challengerId === playerId || challenge.recipientId === playerId)
+        .slice(-64)),
+      trades: Object.freeze(Object.values(this.cardforgeState.activeTrades)
+        .filter((trade) => trade.initiatorId === playerId || trade.recipientId === playerId)
+        .slice(-64)),
+      peers: Object.freeze(peers),
+      settlementName,
+      challengerStatus: town
+        ? town.reason || `${town.opponents.length} deterministic challengers are seated in ${settlementName}.`
+        : "Visit a generated settlement and speak with a resident or merchant to find a Waytable challenger.",
+      recoveryIssues: Object.freeze(this.cardforgeState.recoveryIssues.slice(-64)),
+    });
+  }
+
+  openCardforge() {
+    if (this.multiplayer?.role === "guest") {
+      this.requestRemoteCardforgeAction("refresh", {});
+      this.openOverlay("cardforge");
+      this.emitHud(true);
+      return;
+    }
+    this.ensureCardforgeGuildAccess();
+    this.ensureCardforgePlayer();
+    this.restockActiveCardforgeMerchant();
+    this.openOverlay("cardforge");
+    this.emitHud(true);
+  }
+
+  startCardforgeTutorial() {
+    if (this.multiplayer?.role === "guest") return this.requestRemoteCardforgeAction("start-tutorial", {});
+    const playerId = this.localPlayerId();
+    const result = startTcgTutorialMatch(
+      this.cardforgeState,
+      playerId,
+      `cardforge-tutorial:${playerId}`,
+      this.activeCharacterProfile?.name ?? "Wayfarer",
+    );
+    if (!result.applied) {
+      if (result.match) {
+        this.openOverlay("cardforge");
+        this.emitHud(true);
+      } else this.events.onToast(result.reason === "tutorial-complete" ? "The Waytable lesson is already complete." : "The teaching table is not available.");
+      return false;
+    }
+    this.cardforgeState = result.state;
+    this.events.onToast("Mira sets out two loaner decks. The lesson has no reward until it is finished.");
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  claimCardforgeStarter() {
+    if (this.multiplayer?.role === "guest") return this.requestRemoteCardforgeAction("claim-starter", {});
+    const playerId = this.localPlayerId();
+    const eventId = `cardforge-starter:${playerId}`;
+    const result = claimTcgStarter(this.cardforgeState, playerId, eventId);
+    if (!result.applied) {
+      this.events.onToast(result.reason === "claimed" ? "Cardforge starter already claimed." : `Starter unavailable: ${result.reason}.`);
+      return false;
+    }
+    this.cardforgeState = result.state;
+    const packs = issueTcgPackBatch(this.cardforgeState, playerId, "wildroads-booster", 2, "Waytable tutorial", `${eventId}:packs`);
+    this.cardforgeState = packs.state;
+    if (this.countItem(Item.CardforgeCase) === 0) this.addItem(Item.CardforgeCase, 1);
+    this.ensureCardforgeGuildAccess();
+    this.dispatchCardforgeGuildEvent("cardwright", "surveyLocation", eventId);
+    this.events.onToast("Cardforge case, starter deck, and two Wildroads boosters claimed.");
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  primeCardforgeAudit(startBattle = false) {
+    const playerId = this.localPlayerId();
+    const ensured = ensureTcgPlayer(this.cardforgeState, playerId);
+    const primedPlayer = Object.freeze({
+      ...ensured.player,
+      revision: ensured.player.revision + 1,
+      tutorial: Object.freeze({ loanerAvailable: false, tutorialCompleted: true, starterClaimed: false }),
+    });
+    this.cardforgeState = Object.freeze({
+      ...ensured.state,
+      revision: ensured.state.revision + 1,
+      players: Object.freeze({ ...ensured.state.players, [playerId]: primedPlayer }),
+    });
+    if (!this.claimCardforgeStarter()) return false;
+    const fullArts = TCG_CATALOG.printingOrder
+      .map((printingId) => TCG_CATALOG.printings[printingId])
+      .filter((printing) => printing.variant === "full-art");
+    if (fullArts.length > 0) {
+      const grant = grantTcgPrintings(
+        this.cardforgeState,
+        playerId,
+        fullArts.map((printing) => printing.id),
+        `cardforge-audit-full-art:${playerId}`,
+        { location: "physical", acquiredAt: Date.now() },
+      );
+      if (grant.applied) this.cardforgeState = grant.state;
+    }
+    const firstPack = remainingTcgPacks(this.cardforgeState, playerId)[0];
+    if (firstPack) this.openCardforgePack(firstPack.id);
+    if (startBattle) {
+      const match = startWorldTcgMatch(
+        this.cardforgeState,
+        playerId,
+        TCG_NPC_OPPONENTS[0],
+        `cardforge-audit-match:${playerId}`,
+        this.activeCharacterProfile?.name ?? "Wayfarer",
+      );
+      if (match.applied) this.cardforgeState = match.state;
+    }
+    return true;
+  }
+
+  openCardforgePack(batchId: string) {
+    if (this.multiplayer?.role === "guest") return this.requestRemoteCardforgeAction("open-pack", { batchId });
+    const player = this.ensureCardforgePlayer();
+    const result = openTcgPack(this.cardforgeState, player.ownerId, batchId, `ui:${batchId}:${player.revision}`, player.revision);
+    if (!result.applied) {
+      this.events.onToast(`Pack could not open: ${result.reason}.`);
+      return false;
+    }
+    this.cardforgeState = result.state;
+    this.cardforgeLastPackReveals.set(player.ownerId, Object.freeze({
+      batchId,
+      printingIds: result.printingIds,
+      openedAt: Date.now(),
+    }));
+    this.dispatchCardforgeGuildEvent("cardwright", "resolveEncounter", `pack-opened:${batchId}`);
+    const names = result.printingIds.map((printingId) => TCG_CATALOG.definitions[TCG_CATALOG.printings[printingId].cardDefinitionId]?.name ?? "Card");
+    this.events.onToast(`Opened 5 cards: ${names.join(", ")}.`);
+    this.audio.play("pickup");
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  moveCardforgeCards(printingId: string, count: number, from: TcgLocation, to: TcgLocation) {
+    if (this.multiplayer?.role === "guest") return this.requestRemoteCardforgeAction("move-cards", { printingId, count, from, to });
+    const playerId = this.localPlayerId();
+    const result = moveTcgCards(this.cardforgeState, playerId, printingId, count, from, to, `cardforge-move:${playerId}:${Date.now()}:${this.cardforgeState.revision}`);
+    if (!result.applied) {
+      this.events.onToast(`Cards could not move: ${result.reason}.`);
+      return false;
+    }
+    this.cardforgeState = result.state;
+    if (to === "archived") this.dispatchCardforgeGuildEvent("cardwright", "surveyLocation", `card-archived:${printingId}:${result.state.revision}`);
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  archiveCardforgeDuplicates() {
+    if (this.multiplayer?.role === "guest") return this.requestRemoteCardforgeAction("archive-duplicates", {});
+    const playerId = this.localPlayerId();
+    const result = archiveTcgDuplicates(this.cardforgeState, playerId, `cardforge-bulk-archive:${playerId}:${Date.now()}:${this.cardforgeState.revision}`);
+    if (!result.applied) {
+      this.events.onToast(result.reason === "nothing-to-archive" ? "No unlocked physical duplicates are above active-deck needs." : `Cards could not archive: ${result.reason}.`);
+      return false;
+    }
+    this.cardforgeState = result.state;
+    this.dispatchCardforgeGuildEvent("cardwright", "surveyLocation", `card-bulk-archived:${result.state.revision}`);
+    this.events.onToast(`${result.moved} physical card${result.moved === 1 ? "" : "s"} archived without changing collection totals.`);
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  upgradeCardforgeArchive() {
+    if (this.multiplayer?.role === "guest") return this.requestRemoteCardforgeAction("upgrade-archive", {});
+    const playerId = this.localPlayerId();
+    const eventId = `cardforge-archive-upgrade:${playerId}:${this.cardforgeState.revision}`;
+    const result = upgradeTcgArchive(this.cardforgeState, playerId, eventId);
+    if (!result.applied) {
+      this.events.onToast(result.reason === "max-tier" ? "The Cardforge archive is already at its maximum tier." : `Archive upgrade unavailable: ${result.reason}.`);
+      return false;
+    }
+    const payment = debitGold(this.goldWallet, result.price, {
+      authorityId: this.goldWallet.authorityId,
+      expectedRevision: this.goldWallet.revision,
+      eventId,
+    });
+    if (!payment.applied) {
+      this.events.onToast(`The next archive tier costs ${result.price} gold.`);
+      return false;
+    }
+    this.goldWallet = payment.state;
+    this.cardforgeState = result.state;
+    this.events.onToast(`Cardforge archive upgraded to tier ${result.player.archiveTier}.`);
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  withdrawCardforgeLooseCard(printingId: string, count = 1) {
+    if (this.multiplayer?.role === "guest") return this.requestRemoteCardforgeAction("withdraw-loose", { printingId, count });
+    const playerId = this.localPlayerId();
+    const eventId = `cardforge-loose-withdraw:${playerId}:${printingId}:${Date.now()}:${this.cardforgeState.revision}`;
+    const result = allocateTcgLooseCards(this.cardforgeState, playerId, printingId, count, eventId);
+    if (!result.applied || !result.batch) {
+      this.events.onToast(`Loose card unavailable: ${result.reason}.`);
+      return false;
+    }
+    const printing = TCG_CATALOG.printings[printingId];
+    const metadata = { cardforgeLoose: physicalPrintingToken(printing, result.batch.count, result.batch.id) };
+    if (this.addItem(Item.LooseCard, result.batch.count, undefined, MAIN_THEN_HOTBAR, metadata) > 0) {
+      this.events.onToast("Make room in your pack before withdrawing a loose card.");
+      return false;
+    }
+    this.cardforgeState = result.state;
+    this.events.onToast(`${TCG_CATALOG.definitions[printing.cardDefinitionId]?.name ?? "Card"} is now a custody-backed loose card token.`);
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  saveCardforgeDeck(input: Readonly<{ id?: string; name: string; printingIds: readonly string[]; format?: "open" | "core" }>) {
+    if (this.multiplayer?.role === "guest") return this.requestRemoteCardforgeAction("save-deck", input);
+    const playerId = this.localPlayerId();
+    const result = saveTcgDeck(this.cardforgeState, playerId, input, `cardforge-deck:${playerId}:${Date.now()}:${this.cardforgeState.revision}`);
+    if (!result.applied) {
+      this.events.onToast(result.validation?.errors[0] ?? `Deck could not save: ${result.reason}.`);
+      return false;
+    }
+    this.cardforgeState = result.state;
+    this.dispatchCardforgeGuildEvent("waytable", "craftUnderConstraint", `deck-validated:${result.deck?.id ?? playerId}:${result.state.revision}`);
+    this.events.onToast(`${result.deck?.name ?? "Deck"} saved and validated.`);
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  setActiveCardforgeDeck(deckId: string) {
+    if (this.multiplayer?.role === "guest") return this.requestRemoteCardforgeAction("set-active-deck", { deckId });
+    const playerId = this.localPlayerId();
+    const result = setActiveTcgDeck(this.cardforgeState, playerId, deckId, `cardforge-active-deck:${playerId}:${Date.now()}`);
+    if (!result.applied) return false;
+    this.cardforgeState = result.state;
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  startCardforgeNpcMatch(opponentId: string) {
+    if (this.multiplayer?.role === "guest") return this.requestRemoteCardforgeAction("start-npc", { opponentId });
+    const playerId = this.localPlayerId();
+    const opponent = this.cardforgeHudState(playerId).opponents.find((entry) => entry.id === opponentId);
+    if (!opponent) {
+      this.events.onToast("This challenger is not available at the current settlement.");
+      return false;
+    }
+    const result = startWorldTcgMatch(this.cardforgeState, playerId, opponent, `cardforge-npc:${opponentId}:${Date.now()}`, this.activeCharacterProfile?.name ?? "Wayfarer");
+    if (!result.applied) {
+      this.events.onToast("Select a valid 30-card deck before playing.");
+      return false;
+    }
+    this.cardforgeState = result.state;
+    this.events.onToast(`${opponent.name} takes a seat at the Waytable.`);
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  actCardforgeMatch(matchId: string, action: TcgMatchAction, expectedRevision: number) {
+    if (this.multiplayer?.role === "guest") return this.requestRemoteCardforgeAction("match-action", { matchId, action, expectedRevision });
+    const playerId = this.localPlayerId();
+    const result = applyWorldTcgMatchAction(this.cardforgeState, playerId, matchId, action, `cardforge-match:${playerId}:${matchId}:${expectedRevision}`, expectedRevision);
+    if (!result.applied) {
+      this.events.onToast(`Move rejected: ${result.reason}.`);
+      return false;
+    }
+    this.cardforgeState = result.state;
+    const match = result.match;
+    if (match?.phase === "complete") {
+      const npcPlayerId = match.players.find((entry) => entry.npc)?.playerId ?? null;
+      this.dispatchCardforgeGuildEvent("waytable", npcPlayerId ? "resolveEncounter" : "defendArea", `match-complete:${match.id}`);
+      if (match.id.startsWith("tutorial_")) this.completeCardforgeTutorial(match.id, playerId);
+      else this.rewardCardforgeMatch(match.id, playerId, match.winnerId === playerId, npcPlayerId);
+    }
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  private rewardCardforgeMatch(matchId: string, playerId: string, won: boolean, npcPlayerId: string | null) {
+    const opponentId = npcPlayerId?.replace(/^npc:/u, "") ?? "";
+    const opponent = TCG_NPC_OPPONENTS.find((entry) => entry.id === opponentId);
+    if (!opponent) return;
+    const progress = recordTcgNpcResult(this.cardforgeState, playerId, opponentId, matchId, won, this.day);
+    if (!progress.applied) return;
+    this.cardforgeState = progress.state;
+    if (!progress.rewardEligible) {
+      this.events.onToast("Match recorded. This challenger has no additional reward available today.");
+      return;
+    }
+    const claimId = `cardforge-match-reward:${matchId}:${playerId}`;
+    const currentWallet = this.cardforgeWalletFor(playerId);
+    const rewardAmount = progress.firstWin ? opponent.rewardGold
+      : won ? Math.max(3, Math.floor(opponent.rewardGold / 2))
+        : Math.max(3, Math.floor(opponent.rewardGold / 4));
+    const wallet = creditGold(currentWallet, rewardAmount, {
+      authorityId: currentWallet.authorityId,
+      expectedRevision: currentWallet.revision,
+      eventId: claimId,
+    });
+    if (!wallet.applied) return;
+    this.setCardforgeWallet(playerId, wallet.state);
+    if (progress.firstWin) {
+      const productId = opponent.difficulty >= 3 ? "cardforge-variety-booster" : "wildroads-booster";
+      const pack = issueTcgPackBatch(this.cardforgeState, playerId, productId, 1, `Victory over ${opponent.name}`, `${claimId}:pack`);
+      this.cardforgeState = pack.state;
+      this.events.onToast(`First Waytable victory: ${rewardAmount} gold and a booster earned.`);
+    } else this.events.onToast(`Waytable result recorded: ${rewardAmount} daily gold earned.`);
+  }
+
+  private completeCardforgeTutorial(matchId: string, playerId: string, identity?: NonNullable<PeerInfo["identity"]>) {
+    const eventId = `cardforge-tutorial-complete:${matchId}:${playerId}`;
+    const completed = completeTcgTutorialMatch(this.cardforgeState, playerId, matchId, eventId);
+    if (!completed.applied) {
+      if (completed.reason === "tutorial-unfinished") this.events.onToast("Finish the teaching match without conceding to earn the starter.");
+      return false;
+    }
+    this.cardforgeState = completed.state;
+    const packs = issueTcgPackBatch(this.cardforgeState, playerId, "wildroads-booster", 2, "Waytable tutorial", `${eventId}:packs`);
+    this.cardforgeState = packs.state;
+    if (playerId === this.localPlayerId()) {
+      if (this.countItem(Item.CardforgeCase) === 0) this.addItem(Item.CardforgeCase, 1);
+    } else if (identity) {
+      const current = this.ensureHostPlayerSession(identity);
+      if (!current.inventory.some((slot) => slot?.item === Item.CardforgeCase)) {
+        const added = addItemToMultiplayerState(current, Item.CardforgeCase, 1);
+        if (added.added === 1) {
+          const next = normalizeMultiplayerPlayerState({ ...added.state, revision: current.revision + 1 }, playerId, current.variant);
+          this.multiplayerPlayerStates.set(playerId, next);
+          this.sendAuthoritativePlayerState(playerId, eventId);
+        }
+      }
+    }
+    this.ensureCardforgeGuildAccess();
+    this.dispatchCardforgeGuildEvent("cardwright", "surveyLocation", eventId);
+    this.events.onToast("Waytable lesson complete: starter deck, Cardforge Case, and two boosters awarded once.");
+    return true;
+  }
+
+  private grantCardforgeCapture(playerId: string, mobKind: MobKind) {
+    if (MOB_DEFS[mobKind]?.sentient) return;
+    const printing = capturePrintingForMob(mobKind);
+    if (!printing) return;
+    const eventId = `cardforge-capture-species:${playerId}:${mobKind}`;
+    // Some narrow engine integrations construct a prototype-backed fixture
+    // without running the full world initializer. Keep Cardforge an additive
+    // capture reward instead of making those otherwise-valid captures depend
+    // on constructor state.
+    const cardforgeState = this.cardforgeState ?? createTcgWorldState("world:cardforge");
+    const granted = grantTcgPrintings(cardforgeState, playerId, [printing.id], eventId, {
+      location: "physical",
+      claimId: eventId,
+    });
+    if (!granted.applied) return;
+    this.cardforgeState = granted.state;
+    this.events.onToast(`Cardforge capture printing added: ${TCG_CATALOG.definitions[printing.cardDefinitionId]?.name ?? mobKind}.`);
+  }
+
+  private grantCardforgeDefeat(playerId: string, mob: MobEntity) {
+    const owned = Boolean(mob.creatureTamed || mob.creatureOwnerId || mob.attunedOrbId || mob.aligned
+      || mob.dragonState?.tamed || mob.petState?.tamed || mob.shadeState?.tamed
+      || mob.reedstriderBond?.tamed || mob.courserBond?.tamed || mob.leviathanGrowth?.tamed
+      || mob.apiaryBee?.ownerId || mob.hiredByPlayerId);
+    if (mob.definition.sentient || owned || this.temporarySummons?.has(mob.id)) return;
+    const signature = signaturePrintingForMob(mob.kind);
+    const eventId = `cardforge-defeat:${playerId}:${mob.specimenId ?? mob.id}`;
+    if (signature) {
+      const granted = grantTcgPrintings(this.cardforgeState, playerId, [signature.id], `${eventId}:signature`, {
+        location: "physical",
+        claimId: `${eventId}:signature`,
+      });
+      this.cardforgeState = granted.state;
+      const pack = issueTcgPackBatch(this.cardforgeState, playerId, "vaults-booster", 1, `Boss trophy: ${mob.name}`, `${eventId}:pack`);
+      this.cardforgeState = pack.state;
+      if (granted.applied || pack.applied) this.events.onToast(`Cardforge boss reward secured from ${mob.name}.`);
+      return;
+    }
+    if (tcgUnit(`${this.world.seedText}|${eventId}|pack`) < 0.08) {
+      const productId = mob.group.position.y < 0 ? "vaults-booster" : "wildroads-booster";
+      const pack = issueTcgPackBatch(this.cardforgeState, playerId, productId, 1, `Creature drop: ${mob.name}`, `${eventId}:pack`);
+      this.cardforgeState = pack.state;
+      if (pack.applied) this.events.onToast(`${mob.name} dropped a sealed Cardforge booster.`);
+    }
+  }
+
+  buyCardforgeStock(entryId: string, quantity = 1) {
+    if (this.multiplayer?.role === "guest") return this.requestRemoteCardforgeAction("buy", { entryId, quantity });
+    const merchant = this.restockActiveCardforgeMerchant();
+    const player = this.ensureCardforgePlayer();
+    const eventId = `cardforge-buy:${player.ownerId}:${merchant.merchantId}:${Date.now()}:${merchant.revision}`;
+    const result = buyFromTcgMerchant(this.cardforgeState, player.ownerId, merchant.merchantId, entryId, quantity, this.goldWallet.balance, eventId, player.revision);
+    if (!result.applied || !result.total) {
+      this.events.onToast(`Purchase failed: ${result.reason}.`);
+      return false;
+    }
+    const debit = debitGold(this.goldWallet, result.total, {
+      authorityId: this.goldWallet.authorityId,
+      expectedRevision: this.goldWallet.revision,
+      eventId,
+    });
+    if (!debit.applied) return false;
+    this.goldWallet = debit.state;
+    this.cardforgeState = result.state;
+    this.dispatchCardforgeGuildEvent("cardwright", "negotiate", `market-buy:${eventId}`);
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  sellCardforgeCard(printingId: string, quantity = 1, location: TcgLocation = "physical") {
+    if (this.multiplayer?.role === "guest") return this.requestRemoteCardforgeAction("sell", { printingId, quantity, location });
+    const merchant = this.restockActiveCardforgeMerchant();
+    const playerId = this.localPlayerId();
+    const eventId = `cardforge-sell:${playerId}:${merchant.merchantId}:${Date.now()}:${merchant.revision}`;
+    const result = sellToTcgMerchant(this.cardforgeState, playerId, merchant.merchantId, printingId, quantity, location, this.goldWallet.balance, eventId);
+    if (!result.applied || !result.total) {
+      this.events.onToast(`Sale failed: ${result.reason}.`);
+      return false;
+    }
+    const credit = creditGold(this.goldWallet, result.total, {
+      authorityId: this.goldWallet.authorityId,
+      expectedRevision: this.goldWallet.revision,
+      eventId,
+    });
+    if (!credit.applied) return false;
+    this.goldWallet = credit.state;
+    this.cardforgeState = result.state;
+    this.dispatchCardforgeGuildEvent("cardwright", "negotiate", `market-sell:${eventId}`);
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  offerCardforgeTrade(recipientId: string, assets: readonly TcgTradeAsset[]) {
+    if (this.multiplayer?.role === "guest") return this.requestRemoteCardforgeAction("create-trade", { recipientId, assets });
+    const playerId = this.localPlayerId();
+    const result = createTcgTrade(this.cardforgeState, playerId, recipientId, assets, `cardforge-trade:${playerId}:${recipientId}:${Date.now()}`);
+    if (!result.applied) return false;
+    this.cardforgeState = result.state;
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  respondCardforgeTrade(tradeId: string, accept: boolean) {
+    if (this.multiplayer?.role === "guest") return this.requestRemoteCardforgeAction(accept ? "accept-trade" : "cancel-trade", { tradeId });
+    const playerId = this.localPlayerId();
+    const result = accept
+      ? acceptTcgTrade(this.cardforgeState, tradeId, playerId, `cardforge-trade-accept:${tradeId}:${Date.now()}`)
+      : cancelTcgTrade(this.cardforgeState, tradeId, playerId, `cardforge-trade-cancel:${tradeId}:${Date.now()}`);
+    if (!result.applied) return false;
+    this.cardforgeState = result.state;
+    if (accept) this.dispatchCardforgeGuildEvent("cardwright", "negotiate", `trade-complete:${tradeId}`);
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  challengeCardforgePeer(recipientId: string) {
+    if (this.multiplayer?.role === "guest") return this.requestRemoteCardforgeAction("challenge", { recipientId });
+    const playerId = this.localPlayerId();
+    this.cardforgeState = ensureTcgPlayer(this.cardforgeState, recipientId).state;
+    const result = createTcgChallenge(this.cardforgeState, playerId, recipientId, `cardforge-challenge:${playerId}:${recipientId}:${Date.now()}`);
+    if (!result.applied) return false;
+    this.cardforgeState = result.state;
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  respondCardforgeChallenge(challengeId: string, accept: boolean) {
+    if (this.multiplayer?.role === "guest") return this.requestRemoteCardforgeAction(accept ? "accept-challenge" : "decline-challenge", { challengeId });
+    const playerId = this.localPlayerId();
+    const names = Object.fromEntries([
+      [playerId, this.activeCharacterProfile?.name ?? "Wayfarer"],
+      ...(this.multiplayer?.getPeers().flatMap((peer) => peer.identity ? [[peer.identity.id, peer.identity.name] as const] : []) ?? []),
+    ]);
+    const result = accept
+      ? acceptTcgChallenge(this.cardforgeState, challengeId, playerId, `cardforge-challenge-accept:${challengeId}:${Date.now()}`, names)
+      : declineTcgChallenge(this.cardforgeState, challengeId, playerId);
+    if (!result.applied) return false;
+    this.cardforgeState = result.state;
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  private requestRemoteCardforgeAction(kind: TcgNetworkIntent["kind"], payload: Record<string, unknown>) {
+    const session = this.multiplayer;
+    if (!session || session.role !== "guest") return false;
+    const requestId = `tcg_${Date.now().toString(36)}_${this.multiplayerTick.toString(36)}`;
+    const action: TcgNetworkAction = {
+      protocolVersion: TCG_NETWORK_PROTOCOL_VERSION,
+      requestId,
+      actorId: session.identity.id,
+      tick: this.multiplayerTick,
+      status: "request",
+      intent: { kind, ...payload } as TcgNetworkIntent,
+    };
+    return this.queueCriticalReliableRequest(`cardforge:${requestId}`, () => session.sendTcgAction(action), 8_000);
+  }
+
+  private cardforgeWalletFor(playerId: string) {
+    if (playerId === this.localPlayerId()) return this.goldWallet;
+    const existing = this.multiplayerPlayerWallets.get(playerId);
+    if (existing) return existing;
+    const wallet = createGoldWallet(`session:${this.world.seedText}`, playerId, 0);
+    this.multiplayerPlayerWallets.set(playerId, wallet);
+    return wallet;
+  }
+
+  private setCardforgeWallet(playerId: string, wallet: GoldWalletState) {
+    if (playerId === this.localPlayerId()) this.goldWallet = wallet;
+    else this.multiplayerPlayerWallets.set(playerId, wallet);
+  }
+
+  private sendCardforgeProjection(playerId: string, requestId: string, message?: string) {
+    const session = this.multiplayer;
+    if (!session || session.role !== "host") return;
+    if (playerId === this.localPlayerId()) {
+      if (message) this.events.onToast(message);
+      this.emitHud(true);
+      return;
+    }
+    const response: TcgNetworkAction = {
+      protocolVersion: TCG_NETWORK_PROTOCOL_VERSION,
+      requestId,
+      actorId: playerId,
+      tick: this.multiplayerTick,
+      status: "accepted",
+      projection: this.cardforgeHudState(playerId),
+      walletState: this.cardforgeWalletFor(playerId),
+      ...(message ? { message } : {}),
+    };
+    this.queueCriticalReliableRequest(`host-cardforge:${playerId}:${requestId}`, () => session.sendTcgAction(response, playerId), 8_000);
+  }
+
+  private rejectHostCardforgeAction(action: TcgNetworkAction, peerId: string, reason: string) {
+    if (!this.multiplayer || this.multiplayer.role !== "host") return;
+    const response: TcgNetworkAction = {
+      protocolVersion: TCG_NETWORK_PROTOCOL_VERSION,
+      requestId: action.requestId,
+      actorId: peerId,
+      tick: this.multiplayerTick,
+      status: "rejected",
+      reason: reason.slice(0, 160),
+    };
+    this.queueCriticalReliableRequest(`host-cardforge-reject:${peerId}:${action.requestId}`, () => this.multiplayer?.sendTcgAction(response, peerId) ?? 0, 5_000);
+  }
+
+  private resolveHostCardforgeAction(action: TcgNetworkAction, peer: PeerInfo) {
+    const identity = peer.identity;
+    const intent = action.intent;
+    if (!this.multiplayer || this.multiplayer.role !== "host" || !identity || action.status !== "request" || !intent || action.actorId !== identity.id) return;
+    if (action.protocolVersion !== TCG_NETWORK_PROTOCOL_VERSION) {
+      this.rejectHostCardforgeAction(action, identity.id, `unsupported-cardforge-protocol:${action.protocolVersion}`);
+      return;
+    }
+    const actorId = identity.id;
+    this.cardforgeState = ensureTcgPlayer(this.cardforgeState, actorId).state;
+    const merchant = this.restockActiveCardforgeMerchant(false, actorId);
+    let wallet = this.cardforgeWalletFor(actorId);
+    let applied = true;
+    let reason = "ok";
+    let message = "Cardforge state refreshed.";
+    const touchedPlayers = new Set<string>([actorId]);
+    const eventId = `cardforge-net:${actorId}:${action.requestId}`;
+
+    if (intent.kind === "claim-starter") {
+      const result = claimTcgStarter(this.cardforgeState, actorId, eventId);
+      applied = result.applied;
+      reason = result.reason;
+      if (applied) {
+        this.cardforgeState = result.state;
+        this.ensureCardforgeGuildAccess();
+        this.dispatchCardforgeGuildEvent("cardwright", "surveyLocation", eventId);
+        const packs = issueTcgPackBatch(this.cardforgeState, actorId, "wildroads-booster", 2, "Waytable tutorial", `${eventId}:packs`);
+        this.cardforgeState = packs.state;
+        const current = this.ensureHostPlayerSession(identity);
+        if (!current.inventory.some((slot) => slot?.item === Item.CardforgeCase)) {
+          const added = addItemToMultiplayerState(current, Item.CardforgeCase, 1);
+          if (added.added === 1) {
+            const next = normalizeMultiplayerPlayerState({ ...added.state, revision: current.revision + 1 }, actorId, current.variant);
+            this.multiplayerPlayerStates.set(actorId, next);
+            this.sendAuthoritativePlayerState(actorId, action.requestId);
+          }
+        }
+        message = "Starter deck, Cardforge Case, and two boosters claimed.";
+      }
+    } else if (intent.kind === "start-tutorial") {
+      const result = startTcgTutorialMatch(this.cardforgeState, actorId, eventId, identity.name);
+      applied = result.applied;
+      reason = result.reason;
+      if (result.applied) {
+        this.cardforgeState = result.state;
+        message = "Mira set out two rewardless loaner decks for the Waytable lesson.";
+      } else if (result.match) {
+        applied = true;
+        message = "The existing Waytable lesson is still active.";
+      }
+    } else if (intent.kind === "redeem-booster") {
+      const current = this.ensureHostPlayerSession(identity);
+      const slot = current.inventory[current.selected];
+      if (!slot || slot.item !== Item.CardforgeBooster || slot.count < 1) {
+        applied = false;
+        reason = "booster-not-held";
+        message = "Hold a physical Cardforge Booster before registering it.";
+      } else {
+        const inventory = current.inventory.map((entry) => entry ? { ...entry, ...(entry.metadata ? { metadata: structuredClone(entry.metadata) } : {}) } : null);
+        const nextCount = slot.count - 1;
+        inventory[current.selected] = nextCount > 0 ? { ...slot, count: nextCount } : null;
+        const nextPlayer = normalizeMultiplayerPlayerState({ ...current, inventory, revision: current.revision + 1 }, actorId, current.variant);
+        this.multiplayerPlayerStates.set(actorId, nextPlayer);
+        const issued = issueTcgPackBatch(this.cardforgeState, actorId, "cardforge-variety-booster", 1, "Recovered dungeon booster", eventId);
+        this.cardforgeState = issued.state;
+        this.sendAuthoritativePlayerState(actorId, action.requestId);
+        message = "The sealed dungeon booster was registered to your Cardforge case.";
+      }
+    } else if (intent.kind === "archive-duplicates") {
+      const result = archiveTcgDuplicates(this.cardforgeState, actorId, eventId);
+      applied = result.applied;
+      reason = result.reason;
+      if (applied) {
+        this.cardforgeState = result.state;
+        this.dispatchCardforgeGuildEvent("cardwright", "surveyLocation", `card-bulk-archived:${result.state.revision}`);
+        message = `${result.moved} physical card${result.moved === 1 ? "" : "s"} archived without changing collection totals.`;
+      } else {
+        message = "No unlocked physical duplicates are above active-deck needs.";
+      }
+    } else if (intent.kind === "upgrade-archive") {
+      const result = upgradeTcgArchive(this.cardforgeState, actorId, eventId);
+      if (!result.applied) {
+        applied = false;
+        reason = result.reason;
+        message = result.reason === "max-tier" ? "The Cardforge archive is already at its maximum tier." : "That archive tier is unavailable.";
+      } else {
+        const payment = debitGold(wallet, result.price, {
+          authorityId: wallet.authorityId,
+          expectedRevision: wallet.revision,
+          eventId,
+        });
+        if (!payment.applied) {
+          applied = false;
+          reason = payment.reason;
+          message = `The next archive tier costs ${result.price} gold.`;
+        } else {
+          wallet = payment.state;
+          this.setCardforgeWallet(actorId, wallet);
+          this.cardforgeState = result.state;
+          message = `Cardforge archive upgraded to tier ${result.player.archiveTier}.`;
+        }
+      }
+    } else if (intent.kind === "withdraw-loose") {
+      const current = this.ensureHostPlayerSession(identity);
+      const allocated = allocateTcgLooseCards(this.cardforgeState, actorId, intent.printingId, intent.count, eventId);
+      const printing = TCG_CATALOG.printings[intent.printingId];
+      if (!allocated.applied || !allocated.batch || !printing) {
+        applied = false;
+        reason = allocated.reason;
+        message = "Those physical copies are unavailable or locked.";
+      } else {
+        const metadata = { cardforgeLoose: physicalPrintingToken(printing, allocated.batch.count, allocated.batch.id) };
+        const added = addItemToMultiplayerState(current, Item.LooseCard, allocated.batch.count, undefined, metadata);
+        if (added.added !== allocated.batch.count) {
+          applied = false;
+          reason = "inventory-full";
+          message = "Make room in your pack before withdrawing loose cards.";
+        } else {
+          this.cardforgeState = allocated.state;
+          const next = normalizeMultiplayerPlayerState({ ...added.state, revision: current.revision + 1 }, actorId, current.variant);
+          this.multiplayerPlayerStates.set(actorId, next);
+          this.sendAuthoritativePlayerState(actorId, action.requestId);
+          message = "Custody-backed loose card token added to your pack.";
+        }
+      }
+    } else if (intent.kind === "deposit-loose") {
+      const current = this.ensureHostPlayerSession(identity);
+      const slot = current.inventory[current.selected];
+      const raw = slot?.metadata?.cardforgeLoose;
+      const token = raw && typeof raw === "object" ? raw as { count?: unknown; custodyBatchId?: unknown } : null;
+      const batchId = typeof token?.custodyBatchId === "string" ? token.custodyBatchId : "";
+      const validCount = typeof token?.count === "number" && token.count === slot?.count;
+      const deposited = validCount ? depositTcgLooseCards(this.cardforgeState, actorId, batchId, eventId) : null;
+      if (!slot || slot.item !== Item.LooseCard || !deposited?.applied) {
+        applied = false;
+        reason = deposited?.reason ?? "invalid-token";
+        message = "That loose card token is copied, split, stale, or not yours.";
+      } else {
+        const inventory = current.inventory.map((entry, index) => index === current.selected ? null : entry);
+        const next = normalizeMultiplayerPlayerState({ ...current, inventory, revision: current.revision + 1 }, actorId, current.variant);
+        this.multiplayerPlayerStates.set(actorId, next);
+        this.cardforgeState = deposited.state;
+        this.sendAuthoritativePlayerState(actorId, action.requestId);
+        message = "Loose card returned to the Cardforge case without changing total custody.";
+      }
+    } else if (intent.kind === "open-pack") {
+      const player = this.cardforgeState.players[actorId];
+      const result = openTcgPack(this.cardforgeState, actorId, intent.batchId, eventId, player.revision);
+      applied = result.applied;
+      reason = result.reason;
+      if (applied) {
+        this.cardforgeState = result.state;
+        this.cardforgeLastPackReveals.set(actorId, Object.freeze({
+          batchId: intent.batchId,
+          printingIds: result.printingIds,
+          openedAt: Date.now(),
+        }));
+        this.dispatchCardforgeGuildEvent("cardwright", "resolveEncounter", `pack-opened:${intent.batchId}`);
+        message = `Opened: ${result.printingIds.map((id) => TCG_CATALOG.definitions[TCG_CATALOG.printings[id].cardDefinitionId]?.name ?? "Card").join(", ")}.`;
+      }
+    } else if (intent.kind === "move-cards") {
+      const result = moveTcgCards(this.cardforgeState, actorId, intent.printingId, intent.count, intent.from, intent.to, eventId);
+      applied = result.applied;
+      reason = result.reason;
+      if (applied) {
+        this.cardforgeState = result.state;
+        if (intent.to === "archived") this.dispatchCardforgeGuildEvent("cardwright", "surveyLocation", `card-archived:${intent.printingId}:${result.state.revision}`);
+        message = `${intent.count} card${intent.count === 1 ? "" : "s"} moved to ${intent.to}.`;
+      }
+    } else if (intent.kind === "save-deck") {
+      const result = saveTcgDeck(this.cardforgeState, actorId, intent, eventId);
+      applied = result.applied;
+      reason = result.reason;
+      if (applied) {
+        this.cardforgeState = result.state;
+        this.dispatchCardforgeGuildEvent("waytable", "craftUnderConstraint", `deck-validated:${result.deck?.id ?? actorId}:${result.state.revision}`);
+        message = `${result.deck?.name ?? "Deck"} saved.`;
+      } else message = result.validation.errors[0] ?? "Deck is not legal.";
+    } else if (intent.kind === "set-active-deck") {
+      const result = setActiveTcgDeck(this.cardforgeState, actorId, intent.deckId, eventId);
+      applied = result.applied;
+      reason = result.reason;
+      if (applied) {
+        this.cardforgeState = result.state;
+        message = "Active battle deck changed.";
+      }
+    } else if (intent.kind === "start-npc") {
+      const opponent = this.cardforgeHudState(actorId).opponents.find((entry) => entry.id === intent.opponentId);
+      const result = opponent ? startWorldTcgMatch(this.cardforgeState, actorId, opponent, eventId, identity.name) : null;
+      applied = Boolean(result?.applied);
+      reason = result?.reason ?? "unknown-opponent";
+      if (result?.applied) {
+        this.cardforgeState = result.state;
+        message = `${opponent!.name} takes a seat at the Waytable.`;
+      }
+    } else if (intent.kind === "match-action") {
+      const result = applyWorldTcgMatchAction(this.cardforgeState, actorId, intent.matchId, intent.action, eventId, intent.expectedRevision);
+      applied = result.applied;
+      reason = result.reason;
+      if (result.applied) {
+        this.cardforgeState = result.state;
+        message = "Move accepted by the host.";
+        const match = result.match;
+        for (const participant of match?.players ?? []) if (!participant.npc) touchedPlayers.add(participant.playerId);
+        if (match?.phase === "complete") {
+          const npcPlayer = match.players.find((entry) => entry.npc);
+          this.dispatchCardforgeGuildEvent("waytable", npcPlayer ? "resolveEncounter" : "defendArea", `match-complete:${match.id}`);
+          if (match.id.startsWith("tutorial_")) {
+            const completed = this.completeCardforgeTutorial(match.id, actorId, identity);
+            if (completed) message = "Lesson complete: starter deck, Cardforge Case, and two boosters awarded.";
+          } else {
+            const opponent = TCG_NPC_OPPONENTS.find((entry) => `npc:${entry.id}` === npcPlayer?.playerId);
+            if (opponent) {
+            const won = match.winnerId === actorId;
+              const progress = recordTcgNpcResult(this.cardforgeState, actorId, opponent.id, match.id, won, this.day);
+              if (progress.applied) {
+                this.cardforgeState = progress.state;
+                if (progress.rewardEligible) {
+                  const rewardId = `cardforge-match-reward:${match.id}:${actorId}`;
+                  const rewardAmount = progress.firstWin ? opponent.rewardGold
+                    : won ? Math.max(3, Math.floor(opponent.rewardGold / 2))
+                      : Math.max(3, Math.floor(opponent.rewardGold / 4));
+                  const reward = creditGold(wallet, rewardAmount, {
+                    authorityId: wallet.authorityId,
+                    expectedRevision: wallet.revision,
+                    eventId: rewardId,
+                  });
+                  if (reward.applied) {
+                    wallet = reward.state;
+                    this.setCardforgeWallet(actorId, wallet);
+                    if (progress.firstWin) {
+                      const pack = issueTcgPackBatch(this.cardforgeState, actorId, opponent.difficulty >= 3 ? "cardforge-variety-booster" : "wildroads-booster", 1, `Victory over ${opponent.name}`, `${rewardId}:pack`);
+                      this.cardforgeState = pack.state;
+                      message = `First victory: ${rewardAmount} gold and a booster earned.`;
+                    } else message = `Daily match reward: ${rewardAmount} gold.`;
+                  }
+                } else message = "Match recorded; this challenger has no additional reward today.";
+              }
+            }
+          }
+        }
+      }
+    } else if (intent.kind === "buy") {
+      const player = this.cardforgeState.players[actorId];
+      const result = buyFromTcgMerchant(this.cardforgeState, actorId, merchant.merchantId, intent.entryId, intent.quantity, wallet.balance, eventId, player.revision);
+      applied = result.applied;
+      reason = result.reason;
+      if (result.applied && result.total) {
+        const debit = debitGold(wallet, result.total, { authorityId: wallet.authorityId, expectedRevision: wallet.revision, eventId });
+        applied = debit.applied;
+        reason = debit.reason;
+        if (debit.applied) {
+          wallet = debit.state;
+          this.setCardforgeWallet(actorId, wallet);
+          this.cardforgeState = result.state;
+          this.dispatchCardforgeGuildEvent("cardwright", "negotiate", `market-buy:${eventId}`);
+          message = `Cardforge purchase posted for ${result.total} gold.`;
+        }
+      }
+    } else if (intent.kind === "sell") {
+      const result = sellToTcgMerchant(this.cardforgeState, actorId, merchant.merchantId, intent.printingId, intent.quantity, intent.location, wallet.balance, eventId);
+      applied = result.applied;
+      reason = result.reason;
+      if (result.applied && result.total) {
+        const credit = creditGold(wallet, result.total, { authorityId: wallet.authorityId, expectedRevision: wallet.revision, eventId });
+        applied = credit.applied;
+        reason = credit.reason;
+        if (credit.applied) {
+          wallet = credit.state;
+          this.setCardforgeWallet(actorId, wallet);
+          this.cardforgeState = result.state;
+          this.dispatchCardforgeGuildEvent("cardwright", "negotiate", `market-sell:${eventId}`);
+          message = `Cardforge sale posted for ${result.total} gold.`;
+        }
+      }
+    } else if (intent.kind === "create-trade") {
+      this.cardforgeState = ensureTcgPlayer(this.cardforgeState, intent.recipientId).state;
+      const result = createTcgTrade(this.cardforgeState, actorId, intent.recipientId, intent.assets, eventId, Date.now(), intent.requestedAssets ?? []);
+      applied = result.applied;
+      reason = result.reason;
+      if (result.applied) {
+        this.cardforgeState = result.state;
+        touchedPlayers.add(intent.recipientId);
+        message = "Custody-locked trade offer sent.";
+      }
+    } else if (intent.kind === "accept-trade" || intent.kind === "cancel-trade") {
+      const trade = this.cardforgeState.activeTrades[intent.tradeId];
+      const result = intent.kind === "accept-trade"
+        ? acceptTcgTrade(this.cardforgeState, intent.tradeId, actorId, eventId)
+        : cancelTcgTrade(this.cardforgeState, intent.tradeId, actorId, eventId);
+      applied = result.applied;
+      reason = result.reason;
+      if (result.applied) {
+        this.cardforgeState = result.state;
+        if (intent.kind === "accept-trade") this.dispatchCardforgeGuildEvent("cardwright", "negotiate", `trade-complete:${intent.tradeId}`);
+        if (trade) {
+          touchedPlayers.add(trade.initiatorId);
+          touchedPlayers.add(trade.recipientId);
+        }
+        message = intent.kind === "accept-trade" ? "Trade committed atomically." : "Trade cancelled; custody locks released.";
+      }
+    } else if (intent.kind === "challenge") {
+      this.cardforgeState = ensureTcgPlayer(this.cardforgeState, intent.recipientId).state;
+      const result = createTcgChallenge(this.cardforgeState, actorId, intent.recipientId, eventId);
+      applied = result.applied;
+      reason = result.reason;
+      if (result.applied) {
+        this.cardforgeState = result.state;
+        touchedPlayers.add(intent.recipientId);
+        message = "Waytable challenge sent.";
+      }
+    } else if (intent.kind === "accept-challenge" || intent.kind === "decline-challenge") {
+      const challenge = this.cardforgeState.challenges[intent.challengeId];
+      const names = Object.fromEntries([
+        [this.localPlayerId(), this.activeCharacterProfile?.name ?? "Host"],
+        ...this.multiplayer.getPeers().flatMap((entry) => entry.identity ? [[entry.identity.id, entry.identity.name] as const] : []),
+      ]);
+      const result = intent.kind === "accept-challenge"
+        ? acceptTcgChallenge(this.cardforgeState, intent.challengeId, actorId, eventId, names)
+        : declineTcgChallenge(this.cardforgeState, intent.challengeId, actorId);
+      applied = result.applied;
+      reason = result.reason;
+      if (result.applied) {
+        this.cardforgeState = result.state;
+        if (challenge) {
+          touchedPlayers.add(challenge.challengerId);
+          touchedPlayers.add(challenge.recipientId);
+        }
+        message = intent.kind === "accept-challenge" ? "Challenge accepted; the host created the match." : "Challenge declined.";
+      }
+    }
+
+    if (!applied) {
+      this.rejectHostCardforgeAction(action, actorId, message !== "Cardforge state refreshed." ? message : reason);
+      return;
+    }
+    this.setCardforgeWallet(actorId, wallet);
+    this.saveSoon();
+    for (const playerId of touchedPlayers) {
+      const responseId = playerId === actorId ? action.requestId : `tcg_sync_${Date.now().toString(36)}_${playerId.slice(-8)}`;
+      this.sendCardforgeProjection(playerId, responseId, playerId === actorId ? message : "Cardforge peer state changed.");
+    }
   }
 
   worldSimulationSeconds() {
@@ -25780,6 +26946,7 @@ export class VoxelEngine {
       factionStanding: (left, right) => left === right ? "allied" : "neutral",
     });
     if (!event.legal) return event;
+    if (attacker.ref.kind === "player") target.group.userData.cardforgeLastPlayerAttackerId = String(attacker.ref.id);
     this.applyCombatEventToMob(target, event, this.worldSimulationSeconds());
     if (event.resolvedAmount > 0 && this.capturePacification.has(target.id)) {
       this.capturePacification.set(target.id, interruptPacificationWithDamage(
@@ -28222,6 +29389,10 @@ export class VoxelEngine {
     this.addXp(mob.definition.xp);
     observeBestiaryEntry(this.bestiary[mob.kind], Date.now());
     this.bestiary[mob.kind].kills += 1;
+    const cardforgeKiller = typeof mob.group.userData.cardforgeLastPlayerAttackerId === "string"
+      ? mob.group.userData.cardforgeLastPlayerAttackerId
+      : null;
+    if (cardforgeKiller) this.grantCardforgeDefeat(cardforgeKiller, mob);
     if (mob.dragonState?.stage && mob.dragonState.stage >= 3) this.recordBestiaryMilestone(mob.kind, "mature-defeated");
     this.dispatchQuestEvent({ type: "mob-killed", mobKind: mob.kind, at: Date.now() });
     if (mob.dragonState?.stage && mob.dragonState.stage >= 4) this.dispatchQuestEvent({ type: "custom", eventId: "dragon-killed-stage-4-plus", at: Date.now() });
@@ -28641,6 +29812,10 @@ export class VoxelEngine {
     if (this.mode === "builder") return;
     const slot = this.selectedSlot();
     if (!slot) return;
+    if (slot.item === Item.LooseCard) {
+      this.events.onToast("Loose Card custody tokens can move through inventories and containers, but cannot become world drops. Use the card to return it to the case.");
+      return;
+    }
     if (this.multiplayer?.role === "guest") {
       const session = this.multiplayer;
       const request: InventoryAction = {
@@ -31151,6 +32326,7 @@ export class VoxelEngine {
       settlements: [...this.settlements.values()],
       activeSettlementId: this.activeSettlementId,
       activeMerchant: this.activeMerchantId ? this.merchants.get(this.activeMerchantId) ?? null : null,
+      cardforge: this.cardforgeHudState(),
       activeSentient: this.activeSentient ? (() => {
         const guildNpc = this.guildNpcForMob(this.activeSentient!);
         const settlement = this.activeSentient!.settlementId ? this.settlements.get(this.activeSentient!.settlementId) : null;
@@ -31460,6 +32636,7 @@ export class VoxelEngine {
         { revision: record.revision, state: normalizeMultiplayerPlayerProgression(record.state, playerId) },
       ])),
       multiplayerWallets: Object.fromEntries(this.multiplayerPlayerWallets.entries()),
+      cardforge: normalizeTcgWorldState(this.cardforgeState, `world:${this.world.seedText}`),
       archiveShelves: Object.fromEntries(this.archiveShelves.entries()),
       tomeDisplays: Object.fromEntries(this.tomeDisplays.entries()),
       goldWallet: this.goldWallet,

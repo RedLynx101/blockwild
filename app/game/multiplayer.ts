@@ -9,6 +9,7 @@ import type { PlantBestiaryState } from "./plants";
 import type { BlueprintState } from "./blueprints";
 import type { MagicState } from "./magic";
 import type { LivingBestiaryEntryV2 } from "./living-bestiary";
+import { validateTcgNetworkAction, type TcgNetworkAction } from "./tcg/network";
 import {
   AGENT_CAPABILITIES,
   validateAgentCapabilityGrant,
@@ -596,6 +597,7 @@ export type MultiplayerPayloadMap = {
   "boat-action": BoatAction;
   "combat-action": CombatAction;
   "creature-action": CreatureAction;
+  "tcg-action": TcgNetworkAction;
   "map-share": CartographyMapShare;
   "agent-command": AgentCommandEnvelope;
   "agent-result": AgentCommandResult;
@@ -740,10 +742,10 @@ type PeerRecord = {
 };
 
 const MESSAGE_TYPES = new Set<MultiplayerMessageType>([
-  "hello", "heartbeat", "goodbye", "snapshot", "player-pose", "block-action", "mob-snapshot", "drop-snapshot", "tombstones", "time-weather", "sleep-vote", "inventory-action", "container-action", "facility-action", "player-state", "player-progress", "boat-action", "combat-action", "creature-action", "map-share", "agent-command", "agent-result", "agent-observation", "agent-capabilities", "chat", "voice-chunk",
+  "hello", "heartbeat", "goodbye", "snapshot", "player-pose", "block-action", "mob-snapshot", "drop-snapshot", "tombstones", "time-weather", "sleep-vote", "inventory-action", "container-action", "facility-action", "player-state", "player-progress", "boat-action", "combat-action", "creature-action", "tcg-action", "map-share", "agent-command", "agent-result", "agent-observation", "agent-capabilities", "chat", "voice-chunk",
 ]);
 const CONTROL_TYPES = new Set<MultiplayerMessageType>(["hello", "heartbeat", "goodbye"]);
-const GUEST_OUTBOUND_TYPES = new Set<MultiplayerMessageType>(["hello", "heartbeat", "goodbye", "player-pose", "block-action", "sleep-vote", "inventory-action", "container-action", "facility-action", "player-state", "player-progress", "boat-action", "combat-action", "creature-action", "map-share", "agent-command", "chat", "voice-chunk"]);
+const GUEST_OUTBOUND_TYPES = new Set<MultiplayerMessageType>(["hello", "heartbeat", "goodbye", "player-pose", "block-action", "sleep-vote", "inventory-action", "container-action", "facility-action", "player-state", "player-progress", "boat-action", "combat-action", "creature-action", "tcg-action", "map-share", "agent-command", "chat", "voice-chunk"]);
 
 export class MultiplayerProtocolError extends Error {
   constructor(message: string) {
@@ -1506,6 +1508,8 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
         && (value.z === undefined || isFiniteNumber(value.z, -COORDINATE_LIMIT, COORDINATE_LIMIT))
         && (value.message === undefined || isShortString(value.message, 160, true))
         && validateStatusFields(value);
+    case "tcg-action":
+      return validateTcgNetworkAction(value);
     case "map-share": {
       if (!isShortString(value.tableKey, 96) || typeof value.reply !== "boolean" || !isRecord(value.map)) return false;
       const map = value.map;
@@ -2316,6 +2320,7 @@ export class MultiplayerSession {
   sendBoatAction(payload: BoatAction, peerId?: string) { return this.send("boat-action", payload, peerId); }
   sendCombatAction(payload: CombatAction, peerId?: string) { return this.send("combat-action", payload, peerId); }
   sendCreatureAction(payload: CreatureAction, peerId?: string) { return this.send("creature-action", payload, peerId); }
+  sendTcgAction(payload: TcgNetworkAction, peerId?: string) { return this.send("tcg-action", payload, peerId); }
   sendMapShare(payload: CartographyMapShare, peerId?: string) { return this.send("map-share", payload, peerId); }
   sendAgentCommand(payload: AgentCommandEnvelope, peerId?: string) { return this.send("agent-command", payload, peerId); }
   sendAgentResult(payload: AgentCommandResult, peerId?: string) { return this.send("agent-result", payload, peerId); }
@@ -2342,7 +2347,7 @@ export class MultiplayerSession {
     const payload = envelope.payload as unknown;
     if (!isRecord(payload)) return false;
     if (envelope.type === "player-pose") return payload.playerId === peer.identity.id;
-    if (envelope.type === "block-action" || envelope.type === "inventory-action" || envelope.type === "container-action" || envelope.type === "facility-action" || envelope.type === "player-state" || envelope.type === "player-progress" || envelope.type === "boat-action" || envelope.type === "combat-action" || envelope.type === "creature-action") {
+    if (envelope.type === "block-action" || envelope.type === "inventory-action" || envelope.type === "container-action" || envelope.type === "facility-action" || envelope.type === "player-state" || envelope.type === "player-progress" || envelope.type === "boat-action" || envelope.type === "combat-action" || envelope.type === "creature-action" || envelope.type === "tcg-action") {
       return payload.actorId === peer.identity.id && (payload.status === undefined || payload.status === "request");
     }
     if (envelope.type === "sleep-vote") return payload.actorId === peer.identity.id;

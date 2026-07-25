@@ -135,7 +135,11 @@ import { WaygridCreaturePanel, WaygridItemPanel } from "./WaygridPanels";
 import { CharacterStudio } from "./CharacterStudio";
 import { AquariumPanel } from "./AquariumPanel";
 import { GuildPanel } from "./GuildPanel";
+import { CardforgePanel } from "./CardforgePanel";
 import { GUILDS, createGuildBook } from "./guilds";
+import { createTcgPlayerState } from "./tcg/collection";
+import { TCG_NPC_OPPONENTS } from "./tcg/match";
+import { TCG_CATALOG_REVISION } from "./tcg/types";
 import {
   CharacterProfileStore,
   FALLBACK_CHARACTER_CATALOG,
@@ -1006,6 +1010,21 @@ const INITIAL_HUD: ExtendedHudState = {
   skills: createSkillState(),
   spellWheelOpen: false,
   guildBook: createGuildBook(),
+  cardforge: {
+    catalogRevision: TCG_CATALOG_REVISION,
+    player: createTcgPlayerState("local"),
+    packBatches: [],
+    lastPackReveal: null,
+    merchant: null,
+    activeMatch: null,
+    opponents: TCG_NPC_OPPONENTS,
+    challenges: [],
+    trades: [],
+    peers: [],
+    settlementName: null,
+    challengerStatus: "Visit a generated settlement to find Waytable challengers.",
+    recoveryIssues: [],
+  },
 };
 
 export function itemIconKind(item: ItemCode) {
@@ -2413,15 +2432,21 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
     const moonfeltAudit = auditParameters.get("moonfelt-audit") === "1";
     const treeFallAudit = auditParameters.get("tree-fall-audit") === "1";
     const agentDroneAudit = auditParameters.get("agent-drone-audit") === "1";
+    const cardforgeAuditMode = auditParameters.get("cardforge-audit");
+    const cardforgeAudit = cardforgeAuditMode === "1" || cardforgeAuditMode === "battle";
     const settlementOriginAudit = auditParameters.get("origin-audit") === "wood-elf-remote";
     const itemGuideAuditMode = auditParameters.get("item-guide-audit");
     const itemGuideAudit = itemGuideAuditMode === "1" || itemGuideAuditMode === "inventory";
-    const placementAuditOverlay: Overlay = mapNavigationAudit || waystoneIconAudit || generatedPoiAudit ? "map" : itemGuideAuditMode === "inventory" ? "inventory" : null;
-    const placementAudit = auditParameters.get("placement-audit") === "1" || mapNavigationAudit || waystoneIconAudit || generatedPoiAudit || chestAudit || caveLiquidAudit || waterPhysicsAudit || oceanFloraAudit || creatureCollisionAudit || moonfeltAudit || treeFallAudit || agentDroneAudit || settlementOriginAudit || itemGuideAudit;
+    const placementAuditOverlay: Overlay = mapNavigationAudit || waystoneIconAudit || generatedPoiAudit
+      ? "map"
+      : itemGuideAuditMode === "inventory"
+        ? "inventory"
+        : cardforgeAudit ? "cardforge" : null;
+    const placementAudit = auditParameters.get("placement-audit") === "1" || mapNavigationAudit || waystoneIconAudit || generatedPoiAudit || chestAudit || caveLiquidAudit || waterPhysicsAudit || oceanFloraAudit || creatureCollisionAudit || moonfeltAudit || treeFallAudit || agentDroneAudit || cardforgeAudit || settlementOriginAudit || itemGuideAudit;
     let treeFallTimer: number | undefined;
     if (placementAudit) {
       engine.createWorld(
-        settlementOriginAudit ? "WOOD-ELF-REMOTE-1" : caveLiquidAudit ? "WILDERNESS" : waterPhysicsAudit ? "WATER-PHYSICS-AUDIT" : oceanFloraAudit ? "OCEAN-FLORA-AUDIT" : creatureCollisionAudit ? "MOB-COLLISION-AUDIT" : moonfeltAudit ? "MOONFELT-MYCELIUM-AUDIT" : treeFallAudit ? "TREE-FALL-LIGHT-AUDIT" : generatedPoiAudit ? "GENERATED-POI-METADATA-AUDIT" : mapNavigationAudit || waystoneIconAudit ? "MAP-NAVIGATION-AUDIT" : "DIRECTIONAL-PLACEMENT-AUDIT",
+        settlementOriginAudit ? "WOOD-ELF-REMOTE-1" : caveLiquidAudit ? "WILDERNESS" : waterPhysicsAudit ? "WATER-PHYSICS-AUDIT" : oceanFloraAudit ? "OCEAN-FLORA-AUDIT" : creatureCollisionAudit ? "MOB-COLLISION-AUDIT" : moonfeltAudit ? "MOONFELT-MYCELIUM-AUDIT" : treeFallAudit ? "TREE-FALL-LIGHT-AUDIT" : generatedPoiAudit ? "GENERATED-POI-METADATA-AUDIT" : cardforgeAudit ? "CARDFORGE-AUDIT" : mapNavigationAudit || waystoneIconAudit ? "MAP-NAVIGATION-AUDIT" : "DIRECTIONAL-PLACEMENT-AUDIT",
         "builder",
         settlementOriginAudit ? {
           ...DEFAULT_WORLD_OPTIONS,
@@ -2437,12 +2462,12 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
           mobDensity: 0,
           butterflyDensity: 0,
         } : { structures: false, weather: false, mobDensity: 0, butterflyDensity: 0 },
-        settlementOriginAudit ? "Remote Wood Elf Origin Audit" : caveLiquidAudit ? "Cave Liquid Audit" : waterPhysicsAudit ? "Water Physics Audit" : oceanFloraAudit ? "Ocean Flora Audit" : creatureCollisionAudit ? "Creature Collision Audit" : moonfeltAudit ? "Moonfelt Mycelium Audit" : treeFallAudit ? "Tree Fall Light Audit" : generatedPoiAudit ? "Generated POI Metadata Audit" : mapNavigationAudit || waystoneIconAudit ? "Map Navigation Audit" : "Directional Placement Audit",
+        settlementOriginAudit ? "Remote Wood Elf Origin Audit" : caveLiquidAudit ? "Cave Liquid Audit" : waterPhysicsAudit ? "Water Physics Audit" : oceanFloraAudit ? "Ocean Flora Audit" : creatureCollisionAudit ? "Creature Collision Audit" : moonfeltAudit ? "Moonfelt Mycelium Audit" : treeFallAudit ? "Tree Fall Light Audit" : generatedPoiAudit ? "Generated POI Metadata Audit" : cardforgeAudit ? "Cardforge Audit" : mapNavigationAudit || waystoneIconAudit ? "Map Navigation Audit" : "Directional Placement Audit",
         settlementOriginAudit ? MAX_SETTLEMENT_ORIGIN_SEARCH_RADIUS : DEFAULT_SETTLEMENT_ORIGIN_SEARCH_RADIUS,
       );
       const auditMarkerId = mapNavigationAudit || waystoneIconAudit ? engine.primeMapNavigationAudit(auditParameters.get("far-track") === "1", waystoneIconAudit) : null;
       if (generatedPoiAudit) engine.primeGeneratedPoiAudit();
-      const auditChestKey = !mapNavigationAudit && !waystoneIconAudit && !generatedPoiAudit && !caveLiquidAudit && !waterPhysicsAudit && !oceanFloraAudit && !creatureCollisionAudit && !moonfeltAudit && !treeFallAudit && !agentDroneAudit && !settlementOriginAudit && !itemGuideAudit ? engine.primeDirectionalPlacementAudit() : null;
+      const auditChestKey = !mapNavigationAudit && !waystoneIconAudit && !generatedPoiAudit && !caveLiquidAudit && !waterPhysicsAudit && !oceanFloraAudit && !creatureCollisionAudit && !moonfeltAudit && !treeFallAudit && !agentDroneAudit && !cardforgeAudit && !settlementOriginAudit && !itemGuideAudit ? engine.primeDirectionalPlacementAudit() : null;
       if (caveLiquidAudit) engine.primeCaveLiquidAudit();
       if (waterPhysicsAudit) engine.primeWaterPhysicsAudit(waterPhysicsAuditMode);
       if (oceanFloraAudit) engine.primeOceanFloraAudit();
@@ -2456,6 +2481,10 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
       if (chestAudit && auditChestKey) engine.primeOpenChestAudit(auditChestKey);
       startedRef.current = true;
       overlayRef.current = placementAuditOverlay;
+      if (cardforgeAudit) {
+        engine.primeCardforgeAudit(cardforgeAuditMode === "battle");
+        engine.openCardforge();
+      }
       window.queueMicrotask(() => {
         setStarted(true);
         setOverlayState(placementAuditOverlay);
@@ -4533,6 +4562,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
               <PixelButton onClick={() => engineRef.current?.openOverlay("map")}>Map <kbd>M</kbd></PixelButton>
               <PixelButton onClick={() => engineRef.current?.openOverlay("quests")}>Quest Journal <kbd>J</kbd></PixelButton>
               <PixelButton onClick={() => engineRef.current?.openOverlay("guilds")}>Guilds of Hearthroads</PixelButton>
+              <PixelButton onClick={() => engineRef.current?.openCardforge()}>Cardforge TCG</PixelButton>
               <PixelButton onClick={() => engineRef.current?.openOverlay("magic")}>Spell Journal <kbd>K</kbd></PixelButton>
               <PixelButton onClick={() => engineRef.current?.openOverlay("skills")}>Skills & Perks <kbd>L</kbd></PixelButton>
               <PixelButton onClick={() => engineRef.current?.openOverlay("bestiary")}>Bestiary <kbd>B</kbd></PixelButton>
@@ -4980,6 +5010,37 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
           onStartQuest={(questId) => { engineRef.current?.startGuildQuest(questId); }}
           onResolveQuest={(questId, outcomeId) => { engineRef.current?.completeGuildQuest(questId, outcomeId); }}
           onPromote={(guildId) => { engineRef.current?.promoteGuild(guildId); }}
+        />
+      )}
+
+      {overlay === "cardforge" && (
+        <CardforgePanel
+          key={hud.cardforge.activeMatch?.id ?? "cardforge-hub"}
+          state={hud.cardforge}
+          guildBook={hud.guildBook}
+          walletBalance={hud.goldWallet.balance}
+          onClose={resume}
+          onStartTutorial={() => { engineRef.current?.startCardforgeTutorial(); }}
+          onClaimStarter={() => { engineRef.current?.claimCardforgeStarter(); }}
+          onOpenPack={(batchId) => { engineRef.current?.openCardforgePack(batchId); }}
+          onMoveCards={(printingId, count, from, to) => { engineRef.current?.moveCardforgeCards(printingId, count, from, to); }}
+          onArchiveDuplicates={() => { engineRef.current?.archiveCardforgeDuplicates(); }}
+          onUpgradeArchive={() => { engineRef.current?.upgradeCardforgeArchive(); }}
+          onWithdrawLoose={(printingId, count) => { engineRef.current?.withdrawCardforgeLooseCard(printingId, count); }}
+          onSaveDeck={(input) => { engineRef.current?.saveCardforgeDeck(input); }}
+          onSetActiveDeck={(deckId) => { engineRef.current?.setActiveCardforgeDeck(deckId); }}
+          onStartNpcMatch={(opponentId) => { engineRef.current?.startCardforgeNpcMatch(opponentId); }}
+          onMatchAction={(matchId, action, expectedRevision) => { engineRef.current?.actCardforgeMatch(matchId, action, expectedRevision); }}
+          onBuy={(entryId, quantity) => { engineRef.current?.buyCardforgeStock(entryId, quantity); }}
+          onSell={(printingId, quantity, location) => { engineRef.current?.sellCardforgeCard(printingId, quantity, location); }}
+          onTrade={(recipientId, assets) => { engineRef.current?.offerCardforgeTrade(recipientId, assets); }}
+          onTradeResponse={(tradeId, accept) => { engineRef.current?.respondCardforgeTrade(tradeId, accept); }}
+          onChallenge={(recipientId) => { engineRef.current?.challengeCardforgePeer(recipientId); }}
+          onChallengeResponse={(challengeId, accept) => { engineRef.current?.respondCardforgeChallenge(challengeId, accept); }}
+          onJoinGuild={(guildId) => { engineRef.current?.joinGuild(guildId); }}
+          onStartGuildQuest={(questId) => { engineRef.current?.startGuildQuest(questId); }}
+          onResolveGuildQuest={(questId, outcomeId) => { engineRef.current?.completeGuildQuest(questId, outcomeId); }}
+          onPromoteGuild={(guildId) => { engineRef.current?.promoteGuild(guildId); }}
         />
       )}
 

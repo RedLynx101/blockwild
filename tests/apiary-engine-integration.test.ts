@@ -26,6 +26,7 @@ import { captureCreature, encodeCapturedCreature, type CreatureMetadata } from "
 import { createButterflyVisual } from "../app/game/butterflies";
 import { createMobVisual } from "../app/game/mob-models";
 import { validatePayload, type PlayerPose } from "../app/game/multiplayer";
+import { capturePrintingForMob, totalTcgHolding } from "../app/game/tcg/collection";
 
 function metadata(kind: CreatureMetadata["kind"] = "puddlehopper", overrides: Partial<CreatureMetadata> = {}): CreatureMetadata {
   return {
@@ -361,6 +362,9 @@ test("Capture Orb capture and release rebuild held visuals and emit cyan crystal
   engine.useSelected();
   const filled = captureOrbFromInventorySlot(engine.inventory[0]);
   assert.equal(filled?.creature?.kind, "puddlehopper");
+  assert.equal(engine.bestiary.puddlehopper.captures, 1);
+  const capturePrinting = capturePrintingForMob("puddlehopper")!;
+  assert.equal(totalTcgHolding(engine.cardforgeState.players.local, capturePrinting.id), 1);
   assert.equal(engine.heldItemCode, -1);
   assert.deepEqual(bursts, [12]);
 
