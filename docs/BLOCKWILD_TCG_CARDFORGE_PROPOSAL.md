@@ -1,12 +1,12 @@
 # Blockwild TCG — Cardforge Full-System Proposal
 
-**Status:** Planning proposal only
+**Status:** Implemented baseline; Wildlight Full Art follow-up implemented 2026-07-24
 
 **Primary design input:** `C:\Users\NoahH\Downloads\BWTCG.txt` (read in place; not modified)
 
 **Target:** A complete Blockwild trading-card-game system, not a limited vertical slice
 
-**Implementation in this task:** None
+**Implementation note:** The original proposal was planning-only. The complete baseline and the later twelve-card Full Art launch roster now exist on `tcg-cardforge`; this document retains the rationale and records the resolved follow-up decisions.
 
 ## 1. Executive recommendation
 
@@ -15,7 +15,7 @@ Build Blockwild TCG as a distinct, data-driven subsystem with four firm boundari
 1. **The card catalog is static content.** Card rules, printings, sets, rarity, source links, and deterministic layout data live in versioned TypeScript data modules. Saves store IDs and counts, never copies of full definitions.
 2. **The host owns every mutation.** Pack opening, card grants, store trades, player transfers, deck validation, and match actions use the same request-ID, expected-revision, accepted/rejected pattern already used by Blockwild multiplayer.
 3. **Collection custody is not ordinary item metadata.** Sealed packs and withdrawn physical cards can appear in inventory, but a dedicated TCG ledger remains the authority for counts and locations. This prevents the same card from existing in inventory, digital storage, and a trade at once.
-4. **Card rendering is deterministic and text-safe.** Every card can ship using the repository's existing mob portrait assets. Optional future ImageGen art is an offline, reviewed asset-production step; it is never required at runtime and never renders card text.
+4. **Card rendering is deterministic and text-safe.** Standard, Capture, Showcase, and signature cards use repository portrait assets. Full Art printings use reviewed offline-generated backgrounds beneath deterministic DOM/SVG frames and text; generation never runs at runtime and never renders card text.
 
 The proposed launch rules use 30-card decks, five-card opening hands, an automatically growing energy resource, a three-unit board, and 20 Resolve. Matches should take roughly 8–12 minutes after tuning. Card rarity and visual variants affect collectibility and economic value, not raw competitive power.
 
@@ -57,7 +57,7 @@ These are proposed defaults because the repository and `BWTCG.txt` do not settle
 - **A4 — Content:** Launch size is coverage-driven rather than capped in advance. The full registry audit determines the definition count; every eligible live mob still needs a card or an explicit exclusion.
 - **A5 — Guilds:** Two full guilds ship with the system.
 - **A6 — Trust:** Multiplayer protection targets accidental duplication, stale actions, replay, and ordinary client tampering. A local host can edit its own save or client and cannot be made a trusted tournament server.
-- **A7 — Art:** No ImageGen illustration is required to ship functional cards.
+- **A7 — Art (superseded):** The baseline required no generated art. Noah's 2026-07-24 follow-up requires a generated background for every Full Art printing, while non-Full-Art cards keep deterministic fallbacks.
 
 ## 3. Design goals
 
@@ -175,6 +175,7 @@ Recommended variant policy:
 - standard printing: always present;
 - foil: low independent roll on eligible pack cards;
 - set showcase: authored subset, alternate illustration/frame;
+- Wildlight Full Art: curated subset with reviewed generated edge-to-edge art and etched surface treatment;
 - boss signature: guaranteed once from a resolved unique encounter;
 - capture print: species-linked mark and provenance, same rules as the standard card;
 - no random stat rolls, condition grading, durability, or gameplay-affecting serial numbers.
@@ -252,7 +253,7 @@ type TcgPrinting = {
   cardDefinitionId: string;
   setId: string;
   collectorNumber: string;
-  variant: "standard" | "showcase" | "capture" | "boss-signature" | "promo";
+  variant: "standard" | "showcase" | "full-art" | "capture" | "boss-signature" | "promo";
   finish: "standard" | "foil" | "etched" | "signature";
   illustrationKey: string;
   frameKey: string;
@@ -332,7 +333,8 @@ Collation rules:
 - apply a mild within-pack duplicate guard for definitions when the pool permits, but do not add collection-based duplicate protection;
 - roll finish after definition/printing selection so foil does not consume the rare slot;
 - sort the reveal by rarity, then collector number;
-- commit all five awards atomically;
+- commit all five base awards and any Full Art bonus atomically;
+- independently roll a 1.5% Wildlight pocket; on success, append one curated Full Art as a sixth bonus and reveal it last without replacing a base slot;
 - if capacity or normalization fails, keep the pack unopened and award nothing;
 - record the redeemed `packBatchId + packIndex` before publishing the result.
 
@@ -340,6 +342,7 @@ Recommended finish rates:
 
 - foil: 8% per eligible card;
 - showcase replacement: 1% per eligible authored definition;
+- Full Art: 1.5% per sealed pack as a sixth-card bonus from that product's curated set pool;
 - etched/signature: authored reward only, not a generic pack roll.
 
 Those rates are also assumptions. Variants remain cosmetic.
@@ -463,6 +466,7 @@ Suggested modifiers:
 - standard: ×1.00;
 - foil: ×1.25;
 - showcase: ×1.75;
+- Full Art: ×5.00;
 - capture print: ×1.00;
 - boss signature: no automatic merchant sale, or a separately authored value.
 
@@ -575,7 +579,7 @@ Filter:
 - type;
 - faction/guild;
 - rarity;
-- standard/foil/showcase/capture/signature;
+- standard/foil/showcase/full-art/capture/signature;
 - deck legal;
 - source family.
 
@@ -873,9 +877,9 @@ For Character, Relic, and Place cards:
 
 This produces a visually complete, reproducible set before any new production art.
 
-### 13.3 Optional future ImageGen workflow
+### 13.3 Reviewed Full Art ImageGen workflow
 
-ImageGen should be an offline content-production lane:
+ImageGen is an offline content-production lane for the Full Art roster:
 
 1. render the existing canonical 3D mob portrait to a high-resolution transparent PNG;
 2. create a prompt package from card source, set art direction, desired pose, palette, crop, and “no words, letters, border, UI, watermark” constraints;
@@ -887,7 +891,7 @@ ImageGen should be an offline content-production lane:
 8. record source hash, prompt version, generation tool/model metadata, reviewer, date, and intended printing;
 9. run the deterministic card renderer and manually review the final card at actual UI size.
 
-Set-level art-direction presets can support the brief's “edgier,” “cute,” “more realistic,” and “artsy” variants without letting each prompt invent a new creature design. Production art generation is a separate future task and requires manual review before release.
+The first reviewed roster contains twelve 768×1152 WebP scenes—four per launch set—under `public/cardforge/full-art/`. It spans wildlife, cultural leaders, places, and legendary encounters. Set-level art-direction presets can expand the roster without letting each prompt invent a new creature design; every new Full Art still requires manual review before release.
 
 ## 14. Persistence, migration, and consistency
 
@@ -1145,7 +1149,7 @@ This order delivers the entire system while keeping each phase reviewable. It is
 ### Phase 7 — Art/content production and polish
 
 - Complete authored deterministic frames and fallback crops.
-- Optionally produce reviewed ImageGen illustrations under the documented provenance workflow.
+- Produce and review generated backgrounds for every released Full Art printing under the documented provenance workflow.
 - Tune text, accessibility, animation, audio hooks, and responsive presentation.
 
 **Exit:** every released printing passes automated layout checks and manual visual review at game scale.
@@ -1192,10 +1196,10 @@ The recommended choice is first in each item.
 5. **World scope:** cards remain within the host world save; or design account/cross-world portability, which materially expands architecture and trust requirements.
 6. **Set release:** three themed partitions in one launch legality block; or separate staged set releases.
 7. **Formats:** Open + nonrotating Core at launch; or plan rotation/bans immediately.
-8. **Variants:** cosmetic-only foil/showcase/capture/signature; or any gameplay distinction, which this proposal strongly advises against.
+8. **Variants (resolved):** cosmetic-only foil/showcase/full-art/capture/signature. Full Art is presentation and collectibility only.
 9. **Player rewards:** no gold wagers and only bounded friendly-match rewards; or allow wagers/tournaments with added collusion controls.
 10. **Boss signatures:** count-based authored signature printings; or individually serialized one-per-world copies.
-11. **ImageGen:** ship deterministic existing-art cards first, then add reviewed generated illustrations; or require generated art before the first release.
+11. **ImageGen (resolved):** deterministic existing-art cards remain the baseline; every Full Art printing requires a reviewed generated background before release.
 12. **Economy targets:** accept the proposed 65-gold pack and reference-value model as a simulation starting point, not a final balance promise.
 
 ## 20. Concrete acceptance criteria

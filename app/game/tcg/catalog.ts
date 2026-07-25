@@ -95,6 +95,21 @@ export const TCG_PACKS: Readonly<Record<string, TcgPackProduct>> = Object.freeze
   }),
 });
 
+export const TCG_FULL_ART_ILLUSTRATIONS: Readonly<Record<string, string>> = Object.freeze({
+  "card:mob:petalfox": "/cardforge/full-art/petalfox.webp",
+  "card:mob:thimbledeer": "/cardforge/full-art/thimbledeer.webp",
+  "card:mob:brinewhisk-otter": "/cardforge/full-art/brinewhisk-otter.webp",
+  "card:authored:migration-confluence": "/cardforge/full-art/migration-confluence.webp",
+  "card:mob:hobbit-mayor": "/cardforge/full-art/hobbit-hearthwarden.webp",
+  "card:mob:wood-elf-elderweaver": "/cardforge/full-art/wood-elf-elderweaver.webp",
+  "card:mob:dwarf-thane": "/cardforge/full-art/deepgear-thane.webp",
+  "card:authored:cardwright-collegium": "/cardforge/full-art/cardwrights-collegium.webp",
+  "card:mob:fire-dragon": "/cardforge/full-art/fire-dragon.webp",
+  "card:mob:worldshell-leviathan": "/cardforge/full-art/worldshell-leviathan.webp",
+  "card:mob:ilyr-virebloom": "/cardforge/full-art/ilyr-virebloom.webp",
+  "card:authored:reliquary-vault": "/cardforge/full-art/reliquary-vault.webp",
+});
+
 const frozen = <T>(value: T): Readonly<T> => Object.freeze(value);
 const unique = <T>(values: readonly T[]) => Object.freeze([...new Set(values)]);
 
@@ -265,6 +280,8 @@ function printingFor(
   finish: TcgPrinting["finish"] = "standard",
 ): TcgPrinting {
   const sourceMob = definition.source.kind === "mob" ? definition.source.id : null;
+  const fullArtIllustration = variant === "full-art" ? TCG_FULL_ART_ILLUSTRATIONS[definition.id] : null;
+  if (variant === "full-art" && !fullArtIllustration) throw new Error(`Full-art printing ${definition.id} lacks generated art`);
   return frozen({
     schema: 1,
     id: printingIdFor(definition.id, setId, variant, finish),
@@ -273,9 +290,9 @@ function printingFor(
     collectorNumber: `${setId === "wildroads-core" ? "WRC" : setId === "halls-and-hearths" ? "HAH" : "VBL"}-${String(collectorNumber).padStart(3, "0")}${variant === "standard" && finish === "standard" ? "" : `-${variant.slice(0, 3).toUpperCase()}${finish === "standard" ? "" : `-${finish.slice(0, 3).toUpperCase()}`}`}`,
     variant,
     finish,
-    illustrationKey: sourceMob
+    illustrationKey: fullArtIllustration ?? (sourceMob
       ? `/creatures/${BUTTERFLY_ORDER.includes(sourceMob as (typeof BUTTERFLY_ORDER)[number]) ? `butterfly-${sourceMob}` : sourceMob}.svg`
-      : `cardforge:${definition.source.id}`,
+      : `cardforge:${definition.source.id}`),
     frameKey: `${setId}:${definition.primaryType ?? "neutral"}:${variant}`,
     acquisitionTags: unique([
       setId,
@@ -284,8 +301,12 @@ function printingFor(
       ...definition.traits.slice(0, 4),
       ...(variant === "capture" ? ["capture"] : []),
       ...(variant === "boss-signature" ? ["boss", "signature"] : []),
+      ...(variant === "full-art" ? ["full-art", "generated-illustration", "wildlight"] : []),
     ]),
-    valueModifierPermille: variant === "showcase" ? 1_750 : finish === "foil" ? 1_250 : variant === "boss-signature" ? 2_500 : 1_000,
+    valueModifierPermille: variant === "full-art" ? 5_000
+      : variant === "showcase" ? 1_750
+        : finish === "foil" ? 1_250
+          : variant === "boss-signature" ? 2_500 : 1_000,
     released: true,
   });
 }
@@ -305,7 +326,7 @@ function buildCatalog(): TcgCatalog {
     const collectorNumber = ++collectorBySet[setId];
     const ids: string[] = [];
     for (const variant of variants) {
-      const finish = variant === "boss-signature" ? "signature" : "standard";
+      const finish = variant === "boss-signature" ? "signature" : variant === "full-art" ? "etched" : "standard";
       const printing = printingFor(definition, setId, collectorNumber, variant, finish);
       if (printings[printing.id]) throw new Error(`Duplicate TCG printing id ${printing.id}`);
       printings[printing.id] = printing;
@@ -329,9 +350,15 @@ function buildCatalog(): TcgCatalog {
     if (!mob.sentient && mob.family !== "sentient") variants.push("capture");
     if (rarity === "legendary") variants.push("boss-signature");
     else if (rarity === "epic" || mob.dragonType) variants.push("showcase");
+    if (TCG_FULL_ART_ILLUSTRATIONS[definition.id]) variants.push("full-art");
     addDefinition(definition, mobSet(mob), variants);
   }
-  for (const input of CURATED_CARDS) addDefinition(curatedDefinition(input), input.setId, input.rarity === "epic" ? ["standard", "showcase"] : ["standard"]);
+  for (const input of CURATED_CARDS) {
+    const definition = curatedDefinition(input);
+    const variants: TcgVariant[] = input.rarity === "epic" ? ["standard", "showcase"] : ["standard"];
+    if (TCG_FULL_ART_ILLUSTRATIONS[definition.id]) variants.push("full-art");
+    addDefinition(definition, input.setId, variants);
+  }
 
   return frozen({
     revision: TCG_CATALOG_REVISION,
@@ -412,6 +439,9 @@ export function tcgCatalogAudit(catalog = TCG_CATALOG) {
       collectorNumbers.add(collectorKey);
       if (!catalog.sets[printing.setId]) errors.push(`Printing ${printingId} references unknown set`);
       if (!printing.illustrationKey) errors.push(`Printing ${printingId} lacks an illustration fallback`);
+      if (printing.variant === "full-art" && !printing.illustrationKey.startsWith("/cardforge/full-art/")) {
+        errors.push(`Full-art printing ${printingId} lacks a generated full-bleed illustration`);
+      }
     }
   }
   for (const product of Object.values(catalog.packs)) {

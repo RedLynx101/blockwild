@@ -15,6 +15,7 @@ import {
 } from "./types";
 
 const EVENT_HISTORY_LIMIT = 512;
+export const TCG_FULL_ART_BONUS_RATE = 0.015;
 
 const recent = (values: readonly string[], value: string) => Object.freeze([...values.filter((entry) => entry !== value), value].slice(-EVENT_HISTORY_LIMIT));
 const boundedQuantity = (value: number) => Math.max(1, Math.min(4_096, Math.floor(Number.isFinite(value) ? value : 1)));
@@ -78,6 +79,22 @@ function alternatePrinting(baseId: string, seed: string, catalog: TcgCatalog) {
   return baseId;
 }
 
+function fullArtBonus(productId: string, existingPrintingIds: readonly string[], seed: string, catalog: TcgCatalog) {
+  if (tcgUnit(`${seed}|wildlight-roll`) >= TCG_FULL_ART_BONUS_RATE) return null;
+  const product = catalog.packs[productId];
+  if (!product) return null;
+  const selectedDefinitions = new Set(existingPrintingIds
+    .map((printingId) => catalog.printings[printingId]?.cardDefinitionId)
+    .filter((definitionId): definitionId is string => Boolean(definitionId)));
+  const pool = catalog.printingOrder
+    .map((printingId) => catalog.printings[printingId])
+    .filter((printing) => printing.released
+      && printing.variant === "full-art"
+      && product.setIds.includes(printing.setId));
+  const uniquePool = pool.filter((printing) => !selectedDefinitions.has(printing.cardDefinitionId));
+  return tcgPick(uniquePool.length > 0 ? uniquePool : pool, `${seed}|wildlight-card`)?.id ?? null;
+}
+
 export function collateTcgPack(productId: string, seed: string, catalog = TCG_CATALOG) {
   const selectedDefinitions = new Set<string>();
   const printingIds: string[] = [];
@@ -91,11 +108,17 @@ export function collateTcgPack(productId: string, seed: string, catalog = TCG_CA
     selectedDefinitions.add(choice.cardDefinitionId);
     printingIds.push(alternatePrinting(choice.id, `${seed}|${slot}`, catalog));
   }
+  const bonus = fullArtBonus(productId, printingIds, seed, catalog);
+  if (bonus) printingIds.push(bonus);
   return Object.freeze(printingIds.sort((leftId, rightId) => {
+    const leftPrinting = catalog.printings[leftId];
+    const rightPrinting = catalog.printings[rightId];
+    const fullArtOrder = Number(leftPrinting?.variant === "full-art") - Number(rightPrinting?.variant === "full-art");
+    if (fullArtOrder !== 0) return fullArtOrder;
     const left = catalog.definitions[catalog.printings[leftId]?.cardDefinitionId ?? ""];
     const right = catalog.definitions[catalog.printings[rightId]?.cardDefinitionId ?? ""];
     return (TCG_RARITY_RANK[left?.rarity ?? "common"] - TCG_RARITY_RANK[right?.rarity ?? "common"])
-      || (catalog.printings[leftId]?.collectorNumber ?? "").localeCompare(catalog.printings[rightId]?.collectorNumber ?? "");
+      || (leftPrinting?.collectorNumber ?? "").localeCompare(rightPrinting?.collectorNumber ?? "");
   }));
 }
 
@@ -123,7 +146,7 @@ export function openTcgPack(
     return Object.freeze({ applied: false, reason: "duplicate", state: world, player, batch, printingIds: Object.freeze([]) });
   }
   const printingIds = collateTcgPack(batch.productId, `${world.authorityId}|${batch.id}|${batch.nextIndex}`, catalog);
-  if (printingIds.length !== 5) {
+  if (printingIds.length < 5 || printingIds.length > 6) {
     return Object.freeze({ applied: false, reason: "invalid-collation", state: world, player, batch, printingIds: Object.freeze([]) });
   }
   const grant = grantTcgPrintings(world, ownerId, printingIds, redemptionId, {
@@ -166,5 +189,10 @@ export function tcgPackOdds() {
       Object.freeze({ slots: "5", common: 0, uncommon: 0, rare: 0.80, epic: 0.17, legendary: 0.03 }),
     ]),
     revealOrder: TCG_RARITY_ORDER,
+    fullArtBonus: Object.freeze({
+      rate: TCG_FULL_ART_BONUS_RATE,
+      slot: "sixth-card Wildlight pocket",
+      replacesBaseCard: false,
+    }),
   });
 }

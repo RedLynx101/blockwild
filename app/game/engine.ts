@@ -20648,6 +20648,19 @@ export class VoxelEngine {
       players: Object.freeze({ ...ensured.state.players, [playerId]: primedPlayer }),
     });
     if (!this.claimCardforgeStarter()) return false;
+    const fullArts = TCG_CATALOG.printingOrder
+      .map((printingId) => TCG_CATALOG.printings[printingId])
+      .filter((printing) => printing.variant === "full-art");
+    if (fullArts.length > 0) {
+      const grant = grantTcgPrintings(
+        this.cardforgeState,
+        playerId,
+        fullArts.map((printing) => printing.id),
+        `cardforge-audit-full-art:${playerId}`,
+        { location: "physical", acquiredAt: Date.now() },
+      );
+      if (grant.applied) this.cardforgeState = grant.state;
+    }
     const firstPack = remainingTcgPacks(this.cardforgeState, playerId)[0];
     if (firstPack) this.openCardforgePack(firstPack.id);
     if (startBattle) {

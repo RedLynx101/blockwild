@@ -208,7 +208,7 @@ const CAMPAIGN_ROWS: Readonly<Record<GuildId, readonly [string, string, readonly
     ["Five Seals, One Proof", "Open a sealed booster and verify all five ordered reveals.", ["resolveEncounter"], ["open a found booster", "open a purchased booster"], "The reveal ledger becomes available at Cardwright counters."],
     ["The Honest Exchange", "Complete a custody-safe exchange whose terms survive host validation.", ["negotiate"], ["trade a physical copy", "trade an archived copy"], "Trade receipts and provenance inspection unlock."],
     ["A Page Becomes a Set", "Document collection milestones across three different set records.", ["surveyLocation"], ["complete set thresholds", "record three new set discoveries"], "Set checklists and completion summaries appear in the binder."],
-    ["Frames and Finishes", "Authenticate a normal, foil, or showcase printing without changing its rules.", ["surveyLocation"], ["compare finish records", "verify a showcase frame"], "Variant and finish filters unlock."],
+    ["Frames and Finishes", "Authenticate a normal, foil, showcase, or full-art printing without changing its rules.", ["surveyLocation"], ["compare finish records", "verify a Wildlight full-art scene"], "Variant and finish filters unlock."],
     ["Counter of Record", "Buy or sell through a Cardwright counter with a revision-safe receipt.", ["negotiate"], ["purchase a sealed product", "sell an unlocked duplicate"], "Price-history hints and old-set stock unlock."],
     ["The Grand Binder", "Charter the Collegium around public catalogs, guarded provenance, or open exchange.", ["choiceOutcome"], ["public catalogs", "guarded provenance", "open exchange"], "The archive hall and Cardwright services follow the charter."],
   ],

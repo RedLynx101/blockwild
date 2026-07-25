@@ -102,7 +102,7 @@ function normalizeHolding(value: unknown): TcgHolding {
 
 function normalizeDexEntry(value: unknown, definitionId: string): TcgDexEntry {
   const record = value && typeof value === "object" ? value as Partial<TcgDexEntry> : {};
-  const variantSet = new Set(["standard", "showcase", "capture", "boss-signature", "promo"]);
+  const variantSet = new Set(["standard", "showcase", "full-art", "capture", "boss-signature", "promo"]);
   const finishSet = new Set(["standard", "foil", "etched", "signature"]);
   return Object.freeze({
     definitionId,

@@ -47,15 +47,21 @@ function CardArt({ printingId, compact = false }: Readonly<{ printingId: string;
   if (!printing || !definition) return null;
   const layout = layoutTcgCard(definition, printing);
   const portrait = printing.illustrationKey.startsWith("/") ? printing.illustrationKey : null;
+  const fullArt = printing.variant === "full-art" && portrait;
   return (
-    <article className={`cardforge-card rarity-${definition.rarity} finish-${printing.finish}${compact ? " compact" : ""}`} title={definition.abilities.map((ability) => ability.text).join(" ")}>
+    <article className={`cardforge-card rarity-${definition.rarity} variant-${printing.variant} finish-${printing.finish}${compact ? " compact" : ""}`} title={definition.abilities.map((ability) => ability.text).join(" ")}>
+      {fullArt && <>
+        {/* Reviewed production art is immutable per printing; card text and layout remain deterministic DOM overlays. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img className="cardforge-full-art-bg" src={fullArt} alt="" draggable={false} loading="lazy" decoding="async" />
+      </>}
       <header><span>{definition.cost}</span><b>{definition.name}</b><em>{printing.collectorNumber}</em></header>
       <div className="cardforge-illustration">
-        {portrait ? <>
+        {!fullArt && portrait ? <>
           {/* Stable local creature portraits are already tiny SVG assets; image optimization would add indirection without reducing payload. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={portrait} alt="" draggable={false} />
-        </> : <span aria-hidden="true">{definition.class === "technique" ? "✦" : definition.class === "relic" ? "◆" : "⌂"}</span>}
+          <img src={portrait} alt="" draggable={false} loading="lazy" decoding="async" />
+        </> : !fullArt && <span aria-hidden="true">{definition.class === "technique" ? "✦" : definition.class === "relic" ? "◆" : "⌂"}</span>}
       </div>
       <div className="cardforge-type-line">{titleCase(definition.class)} · {definition.primaryType ? titleCase(definition.primaryType) : "Neutral"}</div>
       {!compact && <div className="cardforge-rules">
@@ -242,7 +248,7 @@ export function CardforgePanel(props: CardforgePanelProps) {
             <option value="all">All sets</option>{Object.values(TCG_SETS).map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
           </select>
           <select value={variant} onChange={(event) => setVariant(event.target.value)} aria-label="Filter by variant">
-            <option value="all">All variants</option>{["standard", "showcase", "capture", "boss-signature", "promo"].map((entry) => <option key={entry} value={entry}>{titleCase(entry)}</option>)}
+            <option value="all">All variants</option>{["standard", "showcase", "full-art", "capture", "boss-signature", "promo"].map((entry) => <option key={entry} value={entry}>{titleCase(entry)}</option>)}
           </select>
           <select value={finish} onChange={(event) => setFinish(event.target.value)} aria-label="Filter by finish">
             <option value="all">All finishes</option>{["standard", "foil", "etched", "signature"].map((entry) => <option key={entry} value={entry}>{titleCase(entry)}</option>)}
@@ -328,7 +334,7 @@ export function CardforgePanel(props: CardforgePanelProps) {
         </main>}
 
         {tab === "packs" && <main className="cardforge-packs">
-          {state.lastPackReveal && <section className="cardforge-pack-reveal" aria-label="Latest five-card pack reveal">
+          {state.lastPackReveal && <section className="cardforge-pack-reveal" aria-label="Latest Cardforge pack reveal">
             <header><b>Latest committed reveal</b><span>Least to most rare · batch {state.lastPackReveal.batchId.slice(-8)}</span></header>
             <div>{state.lastPackReveal.printingIds.map((printingId, index) => {
               const printing = TCG_CATALOG.printings[printingId];
@@ -342,9 +348,9 @@ export function CardforgePanel(props: CardforgePanelProps) {
           </section>}
           {state.packBatches.length === 0 ? <div className="cardforge-empty">No sealed boosters. Town stock, dungeon vaults, bosses, and Waytable wins can add more.</div> : state.packBatches.map((batch) => {
             const product = TCG_CATALOG.packs[batch.productId];
-            return <article key={batch.id}><div className="cardforge-pack-art" aria-hidden="true">◆<span>5</span></div><div><b>{product?.name ?? batch.productId}</b><p>{batch.source}</p><small>{batch.quantity - batch.nextIndex} sealed · deterministic batch #{batch.id.slice(-8)}</small></div><button onClick={() => props.onOpenPack(batch.id)}>Open next pack</button></article>;
+            return <article key={batch.id}><div className="cardforge-pack-art" aria-hidden="true">◆<span>5+</span></div><div><b>{product?.name ?? batch.productId}</b><p>{batch.source}</p><small>{batch.quantity - batch.nextIndex} sealed · deterministic batch #{batch.id.slice(-8)}</small></div><button onClick={() => props.onOpenPack(batch.id)}>Open next pack</button></article>;
           })}
-          <aside><b>Published collation</b><p>Three common-biased slots, one uncommon-plus slot, and one rare-plus slot. Foils replace a standard printing without changing rarity; every reveal sorts low-to-high.</p></aside>
+          <aside><b>Published collation</b><p>Three common-biased slots, one uncommon-plus slot, and one rare-plus slot. Foils replace a standard printing without changing rarity. A 1.5% Wildlight pocket adds one Full Art bonus; it never replaces a base slot and reveals last.</p></aside>
         </main>}
 
         {tab === "market" && <main className="cardforge-market">
@@ -430,16 +436,16 @@ export function CardforgePanel(props: CardforgePanelProps) {
         </section>}
 
         {tab === "guilds" && <main className="cardforge-guilds">
-          <article><span>◆</span><div><h3>The Cardwrights’ Hall</h3><p>Collect, archive, trade, and document printings. Hall standing is expressed through Dex completion, variant discovery, and honest custody transfer.</p><ol><li>Claim a case and starter</li><li>Archive ten distinct definitions</li><li>Open each set booster</li><li>Trade without duplication</li><li>Complete a set page</li><li>Showcase three finishes</li><li>Curate a town counter</li><li>Present the Grand Binder</li></ol></div></article>
+          <article><span>◆</span><div><h3>The Cardwrights’ Hall</h3><p>Collect, archive, trade, and document printings. Hall standing is expressed through Dex completion, variant discovery, and honest custody transfer.</p><ol><li>Claim a case and starter</li><li>Archive ten distinct definitions</li><li>Open each set booster</li><li>Trade without duplication</li><li>Complete a set page</li><li>Authenticate a Wildlight Full Art</li><li>Curate a town counter</li><li>Present the Grand Binder</li></ol></div></article>
           <article><span>⚔</span><div><h3>The Waytable Circuit</h3><p>Build legal decks and defeat authored town opponents before challenging connected keepers. Match logs and revisions are authoritative evidence.</p><ol><li>Finish the tutorial match</li><li>Win with a legal core deck</li><li>Defeat two town styles</li><li>Win after a mulligan</li><li>Use all five card classes</li><li>Win a peer challenge</li><li>Defeat a master opponent</li><li>Claim the Grand Waytable title</li></ol></div></article>
-          <aside><b>Card illustration pipeline</b><p>Every printing uses immutable definition text, a stable collector number, bounded text regions, and the existing creature portrait at <code>/creatures/&lt;mob&gt;.svg</code>. Future ImageGen art is an optional reviewed replacement keyed by <code>illustrationKey</code>; rules and layout never depend on generated pixels.</p></aside>
+          <aside><b>Card illustration pipeline</b><p>Every printing uses immutable definition text, a stable collector number, and bounded text regions. Standard and Showcase cards retain deterministic creature portraits. The curated Full Art roster uses reviewed generated scenes at <code>/cardforge/full-art/</code> beneath the same deterministic overlays; rules and match state never depend on generated pixels.</p></aside>
         </main>}
 
         {tab === "rules" && <main className="cardforge-rules-guide">
           <h2>Cardforge field rules</h2>
           <section><h3>Collection and custody</h3><p>Cards belong to this host world. Physical and archived counts are two locations in one host-owned ledger; decks and matches only lock references and never mint copies. Loose Card tokens can move through packs and containers but cannot become world drops. Direct or reciprocal peer offers lock exact assets until both sides commit, cancel, or expire.</p></section>
           <section><h3>Finding cards</h3><p>Your first completed teaching match grants one legal starter, a case, and two boosters. The first eligible capture of each non-sentient species grants one Capture Print. Dungeon vaults, resolved bosses, town stock, guild chapters, and bounded first-win rewards provide the other routes. Repeat captures, copied pack metadata, allied or attuned defeats, and repeated claim IDs grant nothing.</p></section>
-          <section><h3>Packs, rarity, and variants</h3><p>Every booster commits five cards: three common-biased slots, one Uncommon-or-better slot, and one Rare-or-better slot, revealed least to most rare. Common through Legendary describes supply, not a separate power budget. Foil, etched, showcase, capture, promo, and signature treatments are cosmetic printings of the same rules identity.</p></section>
+          <section><h3>Packs, rarity, and variants</h3><p>Every booster commits five base cards: three common-biased slots, one Uncommon-or-better slot, and one Rare-or-better slot, revealed least to most rare. A 1.5% Wildlight pocket adds a sixth, last-revealed Full Art card without replacing the guaranteed base slots. Common through Legendary describes supply, not a separate power budget. Foil, etched, Showcase, Full Art, Capture, promo, and signature treatments are cosmetic printings of the same rules identity.</p></section>
           <section><h3>Decks and turns</h3><p>Open and Core decks contain 30 cards, at least 12 Beings, no more than four Places, up to three copies per definition, and one copy of Legendary or Prime cards. Each keeper starts at 20 Resolve with five cards and three Being lanes. Mulligan once, gain and refill one more Trail Energy each turn to ten, then play, clash, and end. The first player skips a turn-one draw; the second receives a one-use Trail Spark. Guard must be challenged first, combat is simultaneous, and an empty required draw loses.</p></section>
           <section><h3>Multiplayer trust</h3><p>The host validates revisions, ownership, prices, hidden zones, shuffles, actions, rewards, and escrow. Guests receive only their own hand and public opposing counts. Rejected or stale actions are repaired from a fresh host projection. Friendly play has no wagers or ranked-security claim: the host is authoritative, not an independent tournament server.</p></section>
         </main>}

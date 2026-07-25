@@ -1,7 +1,7 @@
 import type { CreatureTypeId } from "../creature-types";
 
 export const TCG_SCHEMA = 1 as const;
-export const TCG_CATALOG_REVISION = "cardforge-1";
+export const TCG_CATALOG_REVISION = "cardforge-2";
 export const TCG_MAX_COUNT = 2_000_000_000;
 export const TCG_MAX_DECKS = 24;
 export const TCG_DECK_SIZE = 30;
@@ -11,7 +11,7 @@ export const TCG_MAX_ENERGY = 10;
 
 export type TcgCardClass = "creature" | "character" | "technique" | "relic" | "place";
 export type TcgRarity = "common" | "uncommon" | "rare" | "epic" | "legendary";
-export type TcgVariant = "standard" | "showcase" | "capture" | "boss-signature" | "promo";
+export type TcgVariant = "standard" | "showcase" | "full-art" | "capture" | "boss-signature" | "promo";
 export type TcgFinish = "standard" | "foil" | "etched" | "signature";
 export type TcgSetId = "wildroads-core" | "halls-and-hearths" | "vaults-below";
 export type TcgKeyword = "guard" | "swift" | "ambush" | "bond" | "faint" | "forage" | "attune" | "rally" | "dive" | "prime";

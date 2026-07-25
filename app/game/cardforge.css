@@ -29,6 +29,11 @@
   width: min(1440px, calc(100vw - 36px));
 }
 
+.cardforge-shell,
+.cardforge-shell * {
+  box-sizing: border-box;
+}
+
 .cardforge-shell button,
 .cardforge-shell input,
 .cardforge-shell select {
@@ -164,6 +169,11 @@
   padding: 8px 12px;
 }
 
+.cardforge-toolbar > * {
+  min-width: 0;
+  width: 100%;
+}
+
 .cardforge-toolbar input,
 .cardforge-toolbar select,
 .cardforge-decks input,
@@ -262,6 +272,92 @@
   inset: 0;
   pointer-events: none;
   position: absolute;
+  z-index: 3;
+}
+
+.cardforge-full-art-bg {
+  height: 100%;
+  inset: 0;
+  object-fit: cover;
+  pointer-events: none;
+  position: absolute;
+  width: 100%;
+  z-index: 0;
+}
+
+.cardforge-card.variant-full-art {
+  background: #121817;
+  border-color: #e7c876;
+  box-shadow: inset 0 0 0 2px #bcf7e5, 0 0 14px #71d9c388, 2px 3px 0 #0007;
+  color: #fff7df;
+}
+
+.cardforge-card.variant-full-art::before {
+  border: 2px solid #efffcbbb;
+  border-radius: 7px;
+  content: "";
+  inset: 3px;
+  pointer-events: none;
+  position: absolute;
+  z-index: 2;
+}
+
+.cardforge-card.variant-full-art::after {
+  background:
+    linear-gradient(112deg, transparent 17%, #d6fff02e 31%, transparent 45%),
+    radial-gradient(circle at 15% 12%, #fff4a633, transparent 34%),
+    radial-gradient(circle at 88% 76%, #8fdcff29, transparent 30%);
+  content: "";
+  inset: 0;
+  mix-blend-mode: screen;
+  pointer-events: none;
+  position: absolute;
+  z-index: 3;
+}
+
+.cardforge-card.variant-full-art header,
+.cardforge-card.variant-full-art footer,
+.cardforge-card.variant-full-art .cardforge-illustration,
+.cardforge-card.variant-full-art .cardforge-type-line,
+.cardforge-card.variant-full-art .cardforge-rules {
+  position: relative;
+  z-index: 1;
+}
+
+.cardforge-card.variant-full-art header,
+.cardforge-card.variant-full-art footer {
+  background: linear-gradient(90deg, #08100ed9, #152520b0 72%, #08100ed9);
+  color: #fff8dc;
+  text-shadow: 0 1px 2px #000;
+}
+
+.cardforge-card.variant-full-art header span {
+  background: #f1d27e;
+  box-shadow: 0 0 0 2px #183d37, 0 0 8px #d9fff4;
+  color: #17231e;
+  text-shadow: none;
+}
+
+.cardforge-card.variant-full-art .cardforge-illustration {
+  background: transparent;
+  border-color: transparent;
+}
+
+.cardforge-card.variant-full-art .cardforge-type-line {
+  background: linear-gradient(90deg, #0b1614d9, #385b50b8, #0b1614d9);
+  border-color: #e7c87699;
+  color: #fef2c9;
+  text-shadow: 0 1px 2px #000;
+}
+
+.cardforge-card.variant-full-art .cardforge-rules {
+  background: linear-gradient(180deg, #08100e63, #08100edd 46%);
+  color: #fff9e7;
+  text-shadow: 0 1px 2px #000;
+}
+
+.cardforge-card.variant-full-art .cardforge-rules i {
+  opacity: .9;
 }
 
 .cardforge-card header,
@@ -611,7 +707,7 @@
 .cardforge-pack-reveal > div {
   display: grid;
   gap: 8px;
-  grid-template-columns: repeat(5, minmax(90px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
 }
 
 .cardforge-pack-reveal article {
@@ -803,5 +899,5 @@
   .cardforge-toolbar { grid-template-columns: 1fr 1fr; }
   .cardforge-toolbar > input,
   .cardforge-toolbar > button { grid-column: 1 / -1; }
-  .cardforge-pack-reveal > div { grid-template-columns: repeat(5, 120px); overflow-x: auto; }
+  .cardforge-pack-reveal > div { grid-template-columns: repeat(6, 120px); overflow-x: auto; }
 }

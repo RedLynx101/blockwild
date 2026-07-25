@@ -17,7 +17,7 @@ import {
 } from "../app/game/tcg/collection.ts";
 import { buyFromTcgMerchant, restockTcgMerchant, simulateTcgPackEconomy } from "../app/game/tcg/market.ts";
 import { completeTcgTutorialMatch, startTcgTutorialMatch } from "../app/game/tcg/match.ts";
-import { collateTcgPack, issueTcgPackBatch, openTcgPack } from "../app/game/tcg/packs.ts";
+import { TCG_FULL_ART_BONUS_RATE, collateTcgPack, issueTcgPackBatch, openTcgPack, tcgPackOdds } from "../app/game/tcg/packs.ts";
 
 test("starter and booster grants are deterministic, duplicate-aware, and replay-safe", () => {
   const blank = createTcgWorldState("world:cardforge:test");
@@ -166,6 +166,25 @@ test("all released boosters remain below the liquidation-EV ceiling", () => {
     assert.equal(simulation.samples, 2_048);
     assert.ok(simulation.liquidationRatio < 0.55, `${product.id} liquidation ratio ${simulation.liquidationRatio}`);
   }
+});
+
+test("Wildlight pockets add deterministic last-revealed Full Art bonuses without replacing base slots", () => {
+  const odds = tcgPackOdds();
+  assert.equal(odds.fullArtBonus.rate, TCG_FULL_ART_BONUS_RATE);
+  assert.equal(odds.fullArtBonus.replacesBaseCard, false);
+  let bonuses = 0;
+  const samples = 10_000;
+  for (let index = 0; index < samples; index += 1) {
+    const cards = collateTcgPack("cardforge-variety-booster", `wildlight:${index}`);
+    assert.ok(cards.length === 5 || cards.length === 6);
+    if (cards.length === 6) {
+      bonuses += 1;
+      assert.equal(TCG_CATALOG.printings[cards[5]].variant, "full-art");
+      assert.ok(cards.slice(0, 5).every((printingId) => TCG_CATALOG.printings[printingId].variant !== "full-art"));
+    }
+  }
+  const observedRate = bonuses / samples;
+  assert.ok(observedRate >= 0.012 && observedRate <= 0.018, `observed Full Art bonus rate ${observedRate}`);
 });
 
 test("Waygrid archive tiers enforce atomic capacity before expanding", () => {

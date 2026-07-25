@@ -2,12 +2,12 @@ import { CREATURE_TYPES } from "../creature-types";
 import { TCG_CATALOG, TCG_SETS } from "./catalog";
 import type { TcgCardDefinition, TcgCatalog, TcgPrinting } from "./types";
 
-export const TCG_CARD_LAYOUT_VERSION = 1;
+export const TCG_CARD_LAYOUT_VERSION = 2;
 export const TCG_CARD_WIDTH = 744;
 export const TCG_CARD_HEIGHT = 1_040;
 
 export type TcgCardLayout = Readonly<{
-  version: 1;
+  version: 2;
   width: number;
   height: number;
   title: Readonly<{ text: string; x: number; y: number; width: number; fontSize: number }>;
@@ -76,14 +76,17 @@ export function layoutTcgCard(definition: TcgCardDefinition, printing: TcgPrinti
   const flavorRaw = definition.flavorText ?? "";
   const flavorFont = boundedFont(flavorRaw, 280, [21, 17, 14]);
   const flavor = wrapText(flavorRaw, flavorFont >= 21 ? 54 : flavorFont >= 17 ? 68 : 88, 5);
+  const fullArt = printing.variant === "full-art";
   if (flavor.overflow) overflow.push("flavor");
   return Object.freeze({
-    version: 1,
+    version: 2,
     width: TCG_CARD_WIDTH,
     height: TCG_CARD_HEIGHT,
     title: Object.freeze({ text: definition.name, x: 52, y: 70, width: 570, fontSize: titleFont }),
     cost: Object.freeze({ text: String(definition.cost), x: 680, y: 72 }),
-    illustration: Object.freeze({ key: printing.illustrationKey, x: 44, y: 112, width: 656, height: 390 }),
+    illustration: fullArt
+      ? Object.freeze({ key: printing.illustrationKey, x: 0, y: 0, width: TCG_CARD_WIDTH, height: TCG_CARD_HEIGHT })
+      : Object.freeze({ key: printing.illustrationKey, x: 44, y: 112, width: 656, height: 390 }),
     typeLine: Object.freeze({ text: typeText, x: 52, y: 548, width: 640, fontSize: 22 }),
     rules: Object.freeze({ lines: rules.lines, x: 62, y: 610, width: 620, fontSize: rulesFont, lineHeight: Math.round(rulesFont * 1.28) }),
     flavor: Object.freeze({ lines: flavor.lines, x: 62, y: 858, width: 620, fontSize: flavorFont, lineHeight: Math.round(flavorFont * 1.22) }),
@@ -112,33 +115,38 @@ function lineSvg(lines: readonly string[], x: number, y: number, fontSize: numbe
 
 export function renderTcgCardSvg(definition: TcgCardDefinition, printing: TcgPrinting) {
   const layout = layoutTcgCard(definition, printing);
+  const fullArt = printing.variant === "full-art";
   const typeColor = definition.primaryType ? CREATURE_TYPES[definition.primaryType]?.color ?? "#c9b987" : "#c9b987";
-  const frame = printing.variant === "boss-signature" ? "#d9b454"
-    : printing.variant === "showcase" ? "#86b8bf"
+  const frame = fullArt ? "#e7c876"
+    : printing.variant === "boss-signature" ? "#d9b454"
+      : printing.variant === "showcase" ? "#86b8bf"
       : definition.rarity === "legendary" ? "#c99b3d"
         : definition.rarity === "epic" ? "#8c65a8"
           : definition.rarity === "rare" ? "#4f83a9"
             : definition.rarity === "uncommon" ? "#5e8d65" : "#746c5d";
   const illustration = printing.illustrationKey.startsWith("/")
-    ? `<image href="${escapeXml(printing.illustrationKey)}" x="${layout.illustration.x}" y="${layout.illustration.y}" width="${layout.illustration.width}" height="${layout.illustration.height}" preserveAspectRatio="xMidYMid meet"/>`
+    ? `<image href="${escapeXml(printing.illustrationKey)}" x="${layout.illustration.x}" y="${layout.illustration.y}" width="${layout.illustration.width}" height="${layout.illustration.height}" preserveAspectRatio="${fullArt ? "xMidYMid slice" : "xMidYMid meet"}"${fullArt ? ' clip-path="url(#full-art-clip)"' : ""}/>`
     : `<rect x="${layout.illustration.x}" y="${layout.illustration.y}" width="${layout.illustration.width}" height="${layout.illustration.height}" fill="${typeColor}" opacity=".4"/><text x="372" y="320" text-anchor="middle" font-size="32">${escapeXml(definition.name)}</text>`;
   return [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}" role="img" aria-labelledby="title desc">`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}" role="img" aria-labelledby="title desc" data-treatment="${fullArt ? "full-art" : "windowed"}">`,
     `<title id="title">${escapeXml(definition.name)}</title>`,
     `<desc id="desc">${escapeXml(cardRulesText(definition))}</desc>`,
+    fullArt ? `<defs><clipPath id="full-art-clip"><rect width="${layout.width}" height="${layout.height}" rx="38"/></clipPath><linearGradient id="full-art-shade" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#07100d" stop-opacity=".48"/><stop offset=".28" stop-color="#07100d" stop-opacity=".02"/><stop offset=".55" stop-color="#07100d" stop-opacity=".08"/><stop offset="1" stop-color="#07100d" stop-opacity=".9"/></linearGradient></defs>` : "",
     `<rect width="100%" height="100%" rx="38" fill="#171813"/>`,
-    `<rect x="18" y="18" width="708" height="1004" rx="28" fill="#ede1bd" stroke="${frame}" stroke-width="18"/>`,
-    `<text x="${layout.title.x}" y="${layout.title.y}" font-family="serif" font-weight="700" font-size="${layout.title.fontSize}">${escapeXml(layout.title.text)}</text>`,
+    fullArt ? illustration : "",
+    fullArt ? `<rect width="100%" height="100%" rx="38" fill="url(#full-art-shade)"/><rect x="28" y="28" width="688" height="88" rx="18" fill="#07100d" opacity=".7"/><rect x="34" y="522" width="676" height="426" rx="18" fill="#07100d" opacity=".64"/>` : "",
+    `<rect x="18" y="18" width="708" height="1004" rx="28" fill="${fullArt ? "none" : "#ede1bd"}" stroke="${frame}" stroke-width="18"/>`,
+    `<text x="${layout.title.x}" y="${layout.title.y}" font-family="serif" font-weight="700" font-size="${layout.title.fontSize}"${fullArt ? ' fill="#fff7df" stroke="#07100d" stroke-width="1.5" paint-order="stroke"' : ""}>${escapeXml(layout.title.text)}</text>`,
     `<circle cx="${layout.cost.x}" cy="${layout.cost.y - 16}" r="35" fill="${typeColor}" stroke="#20231e" stroke-width="4"/>`,
     `<text x="${layout.cost.x}" y="${layout.cost.y}" text-anchor="middle" font-family="sans-serif" font-weight="800" font-size="36">${layout.cost.text}</text>`,
-    illustration,
-    `<rect x="44" y="112" width="656" height="390" fill="none" stroke="${frame}" stroke-width="6"/>`,
-    `<text x="${layout.typeLine.x}" y="${layout.typeLine.y}" font-family="sans-serif" font-weight="700" font-size="${layout.typeLine.fontSize}">${escapeXml(layout.typeLine.text)}</text>`,
-    lineSvg(layout.rules.lines, layout.rules.x, layout.rules.y, layout.rules.fontSize, layout.rules.lineHeight, "rules"),
-    lineSvg(layout.flavor.lines, layout.flavor.x, layout.flavor.y, layout.flavor.fontSize, layout.flavor.lineHeight, "flavor"),
+    fullArt ? "" : illustration,
+    fullArt ? "" : `<rect x="44" y="112" width="656" height="390" fill="none" stroke="${frame}" stroke-width="6"/>`,
+    `<text x="${layout.typeLine.x}" y="${layout.typeLine.y}" font-family="sans-serif" font-weight="700" font-size="${layout.typeLine.fontSize}"${fullArt ? ' fill="#fff7df"' : ""}>${escapeXml(layout.typeLine.text)}</text>`,
+    fullArt ? `<g fill="#fff9e7">${lineSvg(layout.rules.lines, layout.rules.x, layout.rules.y, layout.rules.fontSize, layout.rules.lineHeight, "rules")}</g>` : lineSvg(layout.rules.lines, layout.rules.x, layout.rules.y, layout.rules.fontSize, layout.rules.lineHeight, "rules"),
+    fullArt ? `<g fill="#fff9e7">${lineSvg(layout.flavor.lines, layout.flavor.x, layout.flavor.y, layout.flavor.fontSize, layout.flavor.lineHeight, "flavor")}</g>` : lineSvg(layout.flavor.lines, layout.flavor.x, layout.flavor.y, layout.flavor.fontSize, layout.flavor.lineHeight, "flavor"),
     definition.power !== undefined ? `<circle cx="72" cy="980" r="42" fill="#ad5c45"/><text x="72" y="993" text-anchor="middle" font-size="38" font-weight="800">${definition.power}</text>` : "",
     definition.guard !== undefined ? `<circle cx="672" cy="980" r="42" fill="#567890"/><text x="672" y="993" text-anchor="middle" font-size="38" font-weight="800">${definition.guard}</text>` : "",
-    `<text x="372" y="1010" text-anchor="middle" font-family="sans-serif" font-size="16">${escapeXml(`${layout.footer.set} • ${layout.footer.collectorNumber} • ${layout.footer.rarity} • ${layout.footer.printing}`)}</text>`,
+    `<text x="372" y="1010" text-anchor="middle" font-family="sans-serif" font-size="16"${fullArt ? ' fill="#fff7df"' : ""}>${escapeXml(`${layout.footer.set} • ${layout.footer.collectorNumber} • ${layout.footer.rarity} • ${layout.footer.printing}`)}</text>`,
     "</svg>",
   ].join("");
 }

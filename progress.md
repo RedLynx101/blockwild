@@ -13,6 +13,14 @@ Original prompt: Rework recipes and the pack GUI/avatar; fix twitchy Ridgebacks;
 - The official browser client and a longer-timeout DOM probe exercised seeded Binder custody, selected-card mulligan into live play, a committed five-card reveal, the rules surface, and the 390×844 responsive view. Screenshots were manually reviewed; page and console errors are zero and measured mobile page overflow is zero.
 - Final TODO: optional future ImageGen illustration replacements remain deliberately outside this implementation and must preserve immutable card rules/layout keys. No required Cardforge implementation work remains before the requested local commit.
 
+## Cardforge Wildlight Full Art follow-up - 2026-07-24
+
+- Active request: add a genuine Full Art chase tier with generated backgrounds, a broad launch roster, complete pack/catalog/UI integration, verification, and an unpushed commit on `tcg-cardforge`.
+- Art direction: created and manually reviewed twelve original Blockwild scenes at 768×1152 across Wildroads Core, Halls & Hearths, and Vaults Below. The roster deliberately spans common and rare wildlife, a migration event, cultural leaders, a guild hall, places, dragons, leviathans, and a legendary watershed being. Production assets live under `public/cardforge/full-art/`; every Full Art printing is required to resolve there.
+- System design: Full Art is a new rules-identical variant with an etched finish, generated edge-to-edge illustration, Wildlight acquisition tag, 5× reference modifier, distinct full-bleed deterministic SVG/DOM layout, and Binder/Dex filtering. Existing Showcase, foil, capture, and boss-signature identities remain separate.
+- Pack design: the original five deterministic rarity slots remain guaranteed. A host-authored 1.5% Wildlight roll may add a sixth Full Art bonus card, never replacing a base pull; the bonus is sorted to the final reveal. Merchant singles remain ordinary printings, so Full Art circulation begins through sealed product and then uses the existing host-owned custody/trade ledger.
+- Final verification: 19/19 Cardforge checks, 259/259 standard release-pretest checks, 10/10 rendered/audio checks, and the full 1,063/1,063 TypeScript suite pass. Native TypeScript, changed-file ESLint, whitespace validation, all five Vinext production stages, and packaged Worker/manifest validation pass. The official browser client and a persistent DOM probe exercised the Cardforge audit world at 1280×720 and 390×844; Full Art assets load at 768×1152, the filtered Binder and inspector show the full-bleed treatment, body/shell horizontal overflow is zero, and page/console errors are zero.
+
 ## v1.10.2 Combat, traversal, caves, and distant world - 2026-07-22
 
 - Active request: fully implement and validate `docs/COMBAT_TRAVERSAL_CAVE_VISIBILITY_PROPOSAL.md`, release version 1.10.2, and publish the exact validated commit to GitHub and Sites.
