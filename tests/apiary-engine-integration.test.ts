@@ -373,6 +373,10 @@ test("Capture Orb capture and release rebuild held visuals and emit cyan crystal
   releasedGroup.position.set(1.8, 20, 0);
   engine.spawnCreatureMetadata = (() => ({ name: "Puddlehopper", definition: MOB_DEFS.puddlehopper, group: releasedGroup })) as never;
   engine.heldItemCode = Item.CaptureOrb;
+  // The first use opens the visible six-second safety confirmation; the
+  // second commits the deliberate release.
+  engine.useSelected();
+  engine.placeCooldown = 0;
   engine.useSelected();
   assert.equal(captureOrbFromInventorySlot(engine.inventory[0])?.creature, null);
   assert.equal(engine.heldItemCode, -1);

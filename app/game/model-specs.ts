@@ -328,7 +328,7 @@ export function createApiarySpec(): ModelSpec {
 export function createCaptureOrbSpec(): ModelSpec {
   return assertModelSpec({
     id: "waykeeper-capture-orb",
-    label: "Waykeeper Capture Orb",
+    label: "Capture Orb",
     category: "utility",
     front: "-z",
     boxes: [

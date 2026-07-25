@@ -2905,6 +2905,165 @@ input:focus-visible {
   background: linear-gradient(90deg, #4a9b70, #8ac89a);
 }
 
+.creature-relationship-card {
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid rgba(110, 176, 139, .46);
+  background:
+    linear-gradient(90deg, rgba(54, 103, 76, .16), transparent 54%),
+    rgba(8, 17, 13, .6);
+}
+
+.creature-relationship-card > p,
+.creature-relationship-card > small {
+  display: block;
+  margin: 10px 0 0;
+  color: #aeb8aa;
+  font-size: 9px;
+  line-height: 1.55;
+}
+
+.creature-relationship-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.creature-relationship-steps > span {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 1px 7px;
+  min-height: 58px;
+  padding: 8px;
+  color: #8e968c;
+  border: 1px solid #38463b;
+  background: #111914;
+}
+
+.creature-relationship-steps > span > b {
+  grid-row: 1 / span 2;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: #718078;
+  border: 1px solid currentColor;
+}
+
+.creature-relationship-steps > span strong {
+  color: #aeb5a7;
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.creature-relationship-steps > span small {
+  font-size: 7px;
+  line-height: 1.35;
+}
+
+.creature-relationship-steps > span.active {
+  color: #e7cf7b;
+  border-color: #b09b58;
+  background: #29291b;
+}
+
+.creature-relationship-steps > span.done {
+  color: #88c7a1;
+  border-color: #4e8d68;
+  background: #13251a;
+}
+
+.creature-relationship-steps > span.done strong,
+.creature-relationship-steps > span.active strong {
+  color: currentColor;
+}
+
+.creature-relationship-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.creature-relationship-actions button {
+  min-width: 120px;
+  padding: 9px 12px;
+  color: #d9dfd5;
+  border: 1px solid #65766a;
+  background: #26362b;
+  font: inherit;
+}
+
+.creature-relationship-actions .bond-action {
+  color: #fff0b6;
+  border-color: #b79d50;
+  background: #4b4323;
+}
+
+.creature-relationship-actions button:disabled {
+  cursor: not-allowed;
+  opacity: .38;
+}
+
+.creature-transfer-inbox,
+.creature-transfer-offer {
+  margin: 0 0 12px;
+  padding: 12px;
+  border: 1px solid rgba(213, 185, 103, .5);
+  background: linear-gradient(90deg, rgba(105, 78, 31, .24), transparent), rgba(14, 22, 17, .88);
+}
+
+.creature-transfer-offer { margin-top: 12px; }
+.creature-transfer-inbox > div:not(.creature-camp-heading),
+.creature-transfer-offer > div:not(.creature-camp-heading) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.creature-transfer-inbox span {
+  display: grid;
+  gap: 3px;
+}
+
+.creature-transfer-inbox small,
+.creature-transfer-offer p {
+  color: #aeb8aa;
+  font-size: 8px;
+  line-height: 1.5;
+}
+
+.creature-transfer-offer select {
+  min-height: 36px;
+  padding: 6px 8px;
+  color: #eef2e8;
+  border: 1px solid #667669;
+  background: #111813;
+  font: inherit;
+}
+
+.creature-transfer-inbox button,
+.creature-transfer-offer button {
+  min-height: 36px;
+  padding: 8px 12px;
+  color: #fff0b6;
+  border: 1px solid #b79d50;
+  background: #4b4323;
+  font: inherit;
+}
+
+.creature-locked-note {
+  margin: 10px 0;
+  padding: 7px 9px;
+  color: #c4bda8;
+  font-size: 8px;
+  line-height: 1.5;
+  border-left: 3px solid #8f7951;
+  background: #2e2a1e;
+}
+
 .creature-camp-columns {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3188,11 +3347,15 @@ input:focus-visible {
   .creature-camp-hero { grid-template-columns: 88px 1fr; }
   .creature-camp-hero > .creature-portrait { width: 88px; height: 84px; }
   .creature-camp-health { grid-column: 1 / -1; }
+  .creature-relationship-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .creature-transfer-inbox > div:not(.creature-camp-heading),
+  .creature-transfer-offer > div:not(.creature-camp-heading) { grid-template-columns: 1fr; }
   .creature-camp-columns { grid-template-columns: 1fr; }
   .creature-tactic-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 @media (max-width: 380px) {
+  .creature-relationship-steps { grid-template-columns: 1fr; }
   .creature-care-actions,
   .creature-camp-moves { grid-template-columns: 1fr 1fr; }
 }

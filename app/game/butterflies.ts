@@ -444,8 +444,20 @@ export class ButterflySystem {
     const butterfly = this.entities[index];
     const definition = MOB_DEFS[butterfly.kind];
     this.removeAt(index);
-    this.onObserved?.(butterfly.kind, true);
+    // The caller commits custody only after the filled Capture Orb fits in the
+    // authoritative inventory. Merely removing the visual is not a capture.
+    this.onObserved?.(butterfly.kind, false);
     return { id, kind: butterfly.kind, item: definition.captureItem! };
+  }
+
+  /** Non-custodial survey used by the retired net as an optional research tool. */
+  survey(origin: THREE.Vector3, direction: THREE.Vector3, reach = 4.2): ButterflyKind | null {
+    const id = butterflyCaptureAlongRay(this.snapshots(), origin, direction, reach);
+    if (id === null) return null;
+    const butterfly = this.entities.find((candidate) => candidate.id === id);
+    if (!butterfly) return null;
+    this.onObserved?.(butterfly.kind, false);
+    return butterfly.kind;
   }
 
   release(kind: ButterflyKind, position: THREE.Vector3) {

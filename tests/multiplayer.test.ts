@@ -19,6 +19,7 @@ import {
   validatePeerIdentity,
   type BlockAction,
   type ContainerAction,
+  type CreatureAction,
   type DataChannelLike,
   type ManualSignal,
   type InventoryAction,
@@ -264,6 +265,25 @@ test("identity, invite, and versioned envelope codecs round-trip with bounds", (
     ...containerEnvelope,
     payload: { ...semanticContainerRequest, slots: [{ item: 1, count: 64 }] },
   }), false, "guest requests cannot upload full inventory images");
+  const transferOffer: CreatureAction = {
+    requestId: "transfer_offer_001",
+    actorId: HOST.id,
+    tick: 4,
+    kind: "camp-transfer-offer",
+    orbId: "orb_companion_01",
+    recipientId: GUEST_A.id,
+    status: "request",
+  };
+  assert.equal(validateEnvelope({
+    ...envelope,
+    type: "creature-action",
+    payload: transferOffer,
+  } satisfies MultiplayerEnvelope<"creature-action">), true);
+  assert.equal(validateEnvelope({
+    ...envelope,
+    type: "creature-action",
+    payload: { ...transferOffer, recipientId: "x".repeat(161) },
+  }), false);
   assert.throws(() => encodeEnvelope(envelope, 20), MultiplayerProtocolError);
   assert.throws(() => decodeEnvelope("{bad json"), MultiplayerProtocolError);
   assert.throws(() => decodeInviteCode("BW9.not-supported"), MultiplayerProtocolError);

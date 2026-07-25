@@ -752,10 +752,10 @@ test("creature cages preserve exact metadata and gate healthy hostiles", () => {
     custom: { awakened: true, room: [4, 8, 15], lootBond: { tier: 3 } },
   };
   assert.equal(canCaptureCreature(hostile), false);
-  assert.equal(canCaptureCreature({ ...hostile, health: 9 }), false, "exactly half health is not yet subdued");
-  assert.equal(canCaptureCreature({ ...hostile, health: 8.99 }), true);
+  assert.equal(canCaptureCreature({ ...hostile, health: 7.21 }), false, "health above the visible 40% threshold is not yet subdued");
+  assert.equal(canCaptureCreature({ ...hostile, health: 7.2 }), true, "the standard 40% threshold is inclusive");
   assert.equal(canCaptureCreature({ ...hostile, health: 1, maxHealth: 1 }), true, "one-health dangerous creatures remain cageable");
-  const wounded = { ...hostile, health: 8 };
+  const wounded = { ...hostile, health: 7 };
   const captured = captureCreature("cage:1", wounded, 12345)!;
   const decoded = decodeCapturedCreature(encodeCapturedCreature(captured))!;
   assert.deepEqual(releaseCreature(decoded), wounded);

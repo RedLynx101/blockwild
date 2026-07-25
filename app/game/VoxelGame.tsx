@@ -55,6 +55,13 @@ import { creatureEcologyContract, normalizeCreatureWorkState, type CreatureShell
 import { createAvatarHeldItemModel } from "./held-items";
 import { legendaryContractForItem } from "./legendary-items";
 import { captureOrbFromInventorySlot } from "./capture-orbs";
+import {
+  canAttuneCreature,
+  creatureRehabilitationStage,
+  creatureRelationshipPolicy,
+  normalizeCreatureRelationship,
+  preferredRelationshipFood,
+} from "./creature-relationships";
 import { BlockPlayerModel, type PlayerEquipmentAppearance } from "./player-model";
 import { GAME_RELEASE_NAME, GAME_VERSION, GAME_VERSION_LABEL } from "./version";
 import { WHEAT_MILL_CYCLE_SECONDS } from "./wheat-mill";
@@ -1087,6 +1094,16 @@ export function itemHoverText(slot: InventorySlot | null, fallback = "Empty slot
   else if (slot.durability !== undefined) details.push(`${slot.durability} durability`);
   const metadata = itemMetadataSummary(slot).replace(/^\s*·\s*/u, "");
   if (metadata) details.push(metadata);
+  const orb = captureOrbFromInventorySlot(slot);
+  if (orb?.creature) {
+    const relationship = normalizeCreatureRelationship(orb.creature);
+    const relationshipLabel = relationship.status === "companion" ? "Companion"
+      : relationship.status === "bond-ready" ? "Bond-ready"
+        : relationship.status === "acclimating" ? "Acclimating"
+          : relationship.status === "relocation-only" ? "Relocation-only"
+            : relationship.status.replaceAll("-", " ");
+    details.push("Custody: Captured", `Relationship: ${relationshipLabel}`);
+  }
   return details.join(" · ");
 }
 
@@ -2000,6 +2017,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
   const [bestiaryPageTab, setBestiaryPageTab] = useState<BestiaryPageTab>("overview");
   const [campCompareOrbId, setCampCompareOrbId] = useState("");
   const [campNameDraft, setCampNameDraft] = useState("");
+  const [campTransferRecipientId, setCampTransferRecipientId] = useState("");
   const [fieldGuideSection, setFieldGuideSection] = useState<FieldGuideSection>("creatures");
 
   const setItemGuideVisible = useCallback((next: boolean) => {
@@ -3867,12 +3885,27 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
   const campEcology = campCreature ? creatureEcologyContract(campCreature.kind) : null;
   const campWork = campCreature ? normalizeCreatureWorkState(campCreature.kind, campCreature.custom.creatureWork) : null;
   const campResearch = campCreature ? hud.bestiary[campCreature.kind].research["camp-observation"] : null;
+  const campRelationship = campCreature ? normalizeCreatureRelationship(campCreature) : null;
+  const campRelationshipPolicy = campCreature ? creatureRelationshipPolicy(campCreature.kind) : null;
+  const campRehabilitationStage = campCreature ? creatureRehabilitationStage(campCreature) : "unavailable";
+  const campPreferredFood = campCreature ? preferredRelationshipFood(campCreature.kind) : null;
+  const campUsable = campCreature ? canAttuneCreature(campCreature) : false;
+  const campTransferRecipients = useMemo(
+    () => multiplayerState.peers
+      .filter((peer) => peer.state === "connected" && peer.identity && peer.identity.peerKind !== "agent")
+      .map((peer) => ({ id: peer.identity!.id, name: peer.identity!.name })),
+    [multiplayerState.peers],
+  );
+  const campTransferOffers = engineRef.current?.pendingCreatureTransferOffers() ?? [];
   const campCompareOrb = campOrbs.find((orb) => orb.orbId === campCompareOrbId && orb.orbId !== campOrb?.orbId) ?? null;
   const campCompareProgression = campCompareOrb?.creature?.custom.progression as unknown as CreatureProgressionV2 | undefined;
   useEffect(() => {
     setCampNameDraft(campCreatureName?.trim() || (campCreatureKind ? MOB_DEFS[campCreatureKind].name : ""));
     setCampCompareOrbId((current) => current === campOrb?.orbId ? "" : current);
-  }, [campCreatureKind, campCreatureName, campOrb?.orbId]);
+    setCampTransferRecipientId((current) => campTransferRecipients.some((recipient) => recipient.id === current)
+      ? current
+      : campTransferRecipients[0]?.id ?? "");
+  }, [campCreatureKind, campCreatureName, campOrb?.orbId, campTransferRecipients]);
   const xpNeeded = 12 + hud.level * 6;
   const bestiarySeen = MOB_ORDER.filter((kind) => hud.bestiary[kind].seen).length;
   const bestiaryInventorySpecimens: readonly BestiarySpecimenSummary[] = campOrbs.map((orb) => ({
@@ -3930,7 +3963,10 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
   const bestiaryDefinition = MOB_DEFS[activeBestiary];
   const bestiaryProgress = hud.bestiary[activeBestiary];
   const activeCreatureProfile = creatureProfile(activeBestiary);
-  const activeCaptureKnowledge = captureKnowledgeForResearch(activeBestiary, activeCreatureProfile.captureProfile, bestiaryResearchLevel(bestiaryProgress));
+  const activeBestiaryResearchLevel = bestiaryResearchLevel(bestiaryProgress);
+  const activeBestiaryResearchStage = (["Unobserved", "Observed", "Studied", "Mastered"] as const)[activeBestiaryResearchLevel];
+  const activeCaptureKnowledge = captureKnowledgeForResearch(activeBestiary, activeCreatureProfile.captureProfile, activeBestiaryResearchLevel);
+  const activeRelationshipPolicy = creatureRelationshipPolicy(activeBestiary);
   const activePrimeProfile = PRIME_FORM_PROFILES[activeBestiary] ?? null;
   const activePrimeRoute = PRIME_ROUTE_PROFILES[activeBestiary as PrimeEligibleKind] ?? null;
   const activePrimeEncounter = [...(engineRef.current?.primeEncounters.values() ?? [])]
@@ -4161,8 +4197,8 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
               <span><i style={{ width: `${Math.max(0, hud.targetMob.health / hud.targetMob.maxHealth) * 100}%` }} /></span>
               <small>{formatHudHealth(hud.targetMob.health)} / {formatHudHealth(hud.targetMob.maxHealth)}</small>
               {hud.targetMob.capture && <div className={`capture-readiness ${hud.targetMob.capture.ready ? "ready" : "waiting"}`} role="status" aria-label={`${hud.targetMob.capture.profileName} capture ${hud.targetMob.capture.ready ? "ready" : "not ready"}`}>
-                <b><i aria-hidden="true" />{hud.targetMob.capture.profileName} · {hud.targetMob.capture.ready ? "READY" : "OBSERVE"}</b>
-                <ul>{hud.targetMob.capture.conditions.map((condition, index) => <li className={condition.satisfied ? "satisfied" : "missing"} key={`${condition.id ?? "unknown"}-${index}`}><span aria-hidden="true">{condition.satisfied ? "✓" : condition.learned ? "○" : "?"}</span>{condition.label}</li>)}</ul>
+                <b><i aria-hidden="true" />{hud.targetMob.capture.profileName} · {hud.targetMob.capture.ready ? "READY" : "PREPARE"}</b>
+                <ul>{hud.targetMob.capture.conditions.map((condition, index) => <li className={condition.satisfied ? "satisfied" : "missing"} key={`${condition.id ?? "rule"}-${index}`}><span aria-hidden="true">{condition.satisfied ? "✓" : "○"}</span>{condition.label}</li>)}</ul>
               </div>}
               {hud.targetMob.summonContract && <div className={`mob-summon-contract ${hud.targetMob.summonContract.worldpinReady ? "ready" : hud.targetMob.summonContract.echo ? "echo" : "waiting"}`} role="status" aria-label={`${hud.targetMob.summonContract.realm} summon concordance ${hud.targetMob.summonContract.concordance} of ${hud.targetMob.summonContract.required}. ${hud.targetMob.summonContract.echo ? "Echo manifestation cannot be grounded" : hud.targetMob.summonContract.worldpinReady ? `Worldpin ready for ${hud.targetMob.summonContract.anchorWindowSeconds.toFixed(1)} seconds` : "Worldpin anchor window closed"}.`}>
                 <header><span>SUMMON · {hud.targetMob.summonContract.realm.toLocaleUpperCase()}</span><b>{hud.targetMob.summonContract.concordance}/{hud.targetMob.summonContract.required} CONCORDANCE</b></header>
@@ -4547,6 +4583,10 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
             <button type="button" className="panel-close" onClick={() => setOverlay("pause")} aria-label="Close Creature Camp">×</button>
             <span className="panel-eyebrow">WAYKEEPER FIELD KIT · NO EXTRA SIMULATION</span>
             <h2 id="creature-camp-title">Creature Camp</h2>
+            {campTransferOffers.length > 0 && <section className="creature-transfer-inbox" aria-label="Pending companion transfers">
+              <div className="creature-camp-heading"><span>TRANSFER OFFER</span><small>Recipient consent required</small></div>
+              {campTransferOffers.map((offer) => <div key={offer.offerId}><span><strong>{offer.creatureName}</strong><small>Offered by {offer.sourceName} · expires in under one minute</small></span><button type="button" onClick={() => engineRef.current?.acceptCreatureTransfer(offer.offerId)}>Accept companion</button></div>)}
+            </section>}
             {campOrbs.length > 0 && <label className="creature-camp-specimen-select"><span>Working specimen</span><select value={campOrb?.orbId ?? ""} onChange={(event) => engineRef.current?.selectCampCreatureOrb(event.target.value)}>{campOrbs.map((orb) => <option key={orb.orbId} value={orb.orbId}>{orb.creature?.name?.trim() || (orb.creature ? MOB_DEFS[orb.creature.kind].name : "Stored creature")}</option>)}</select><small>Camp actions stay bound to this orb even when your hotbar changes.</small></label>}
             {!campCreature || !campOrb ? <div className="creature-camp-empty"><span aria-hidden="true">◇</span><h3>No stored creature available</h3><p>Place a filled Capture Orb anywhere in your pack, then return here to care for that exact specimen.</p><PixelButton onClick={() => engineRef.current?.openOverlay("inventory")}>Open Inventory</PixelButton></div> : <>
               <div className="creature-camp-hero">
@@ -4554,10 +4594,32 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
                 <div><small>{MOB_DEFS[campCreature.kind].family ?? "creature"} · {MOB_DEFS[campCreature.kind].temperament}</small><h3>{campCreature.name?.trim() || MOB_DEFS[campCreature.kind].name}</h3><p>{campProgression ? `Level ${campProgression.level} · ${campProgression.bondTier} bond · ${campProgression.tactic} tactic` : "New specimen · progression record initializing"}</p><div>{campProgression?.shiny && <span>SHINY</span>}{campProgression?.rarityForm && campProgression.rarityForm !== "ordinary" && <span>{campProgression.rarityForm.toUpperCase()}</span>}{campProgression?.aptitudes.map((aptitude) => <span key={aptitude}>{aptitude.replaceAll("-", " ")}</span>)}</div><form className="creature-camp-name" onSubmit={(event) => { event.preventDefault(); engineRef.current?.renameSelectedCampCreature(campNameDraft); }}><label htmlFor="camp-creature-name">Recorded name</label><input id="camp-creature-name" value={campNameDraft} maxLength={32} onChange={(event) => setCampNameDraft(event.target.value)} /><button type="submit" disabled={!campNameDraft.trim()}>Save</button></form></div>
                 <div className="creature-camp-health"><small>HEALTH</small><strong>{Math.ceil(campCreature.health)} / {Math.ceil(campCreature.maxHealth)}</strong><i><b style={{ width: `${campCreature.health / campCreature.maxHealth * 100}%` }} /></i></div>
               </div>
+              {campRelationship && campRelationshipPolicy && <section className={`creature-relationship-card stage-${campRehabilitationStage}`}>
+                <div className="creature-camp-heading"><span>{campRelationshipPolicy.title.toUpperCase()}</span><small>{campRelationship.status.replaceAll("-", " ")}</small></div>
+                <p>{campRelationshipPolicy.explanation}</p>
+                {campRelationship.mode === "care-bond" ? <>
+                  <div className="creature-relationship-steps">
+                    <span className={campRelationship.stabilized ? "done" : "active"}><b>1</b><strong>Stabilize</strong><small>{campRelationship.stabilized ? "75% health reached" : `${Math.ceil(campCreature.health / campCreature.maxHealth * 100)}% / 75% health`}</small></span>
+                    <span className={campRelationship.nourished ? "done" : campRehabilitationStage === "nourish" ? "active" : ""}><b>2</b><strong>Nourish</strong><small>{campRelationship.nourished ? "preferred food accepted" : campPreferredFood !== null ? ITEMS[campPreferredFood]?.name : "no recorded food"}</small></span>
+                    <span className={campRelationship.connectSessions >= campRelationship.requiredConnectSessions ? "done" : campRehabilitationStage === "connect" ? "active" : ""}><b>3</b><strong>Connect</strong><small>{campRelationship.connectSessions}/{campRelationship.requiredConnectSessions} sessions</small></span>
+                    <span className={campRelationship.status === "companion" ? "done" : campRehabilitationStage === "form-bond" ? "active" : ""}><b>4</b><strong>Form Bond</strong><small>{campRelationship.status === "companion" ? "friendly and usable" : "always an explicit choice"}</small></span>
+                  </div>
+                  <div className="creature-relationship-actions">
+                    <button type="button" disabled={campRehabilitationStage !== "connect"} onClick={() => engineRef.current?.connectSelectedCreature()}>Connect</button>
+                    <button type="button" className="bond-action" disabled={campRehabilitationStage !== "form-bond"} onClick={() => engineRef.current?.formBondWithSelectedCreature()}>Form Bond</button>
+                  </div>
+                </> : <small>{campRelationshipPolicy.mode === "relocation-only" ? "You can preserve, study, display, relocate, or release this specimen. It is not a field companion." : "Follow the visible authored relationship path shown in its Bestiary and quest record."}</small>}
+              </section>}
+              {campRelationship?.status === "companion" && campTransferRecipients.length > 0 && <section className="creature-transfer-offer" aria-label="Offer companion transfer">
+                <div className="creature-camp-heading"><span>KEEPER TRANSFER</span><small>Offer, then the recipient accepts</small></div>
+                <p>A transfer moves this exact stored companion and its history. It never sells a filled orb or changes ownership silently.</p>
+                <div><select value={campTransferRecipientId} onChange={(event) => setCampTransferRecipientId(event.target.value)} aria-label="Choose transfer recipient">{campTransferRecipients.map((recipient) => <option value={recipient.id} key={recipient.id}>{recipient.name}</option>)}</select><button type="button" disabled={!campTransferRecipientId} onClick={() => engineRef.current?.offerSelectedCampCreature(campTransferRecipientId)}>Offer companion</button></div>
+              </section>}
               <div className="creature-camp-columns">
-                <section><div className="creature-camp-heading"><span>CARE</span><small>Meaningful daily limits</small></div><div className="creature-care-meters">{([['exertion', campCare.exertion], ['presentation', campCare.presentation], ['cleanliness', campCare.cleanliness], ['enrichment', campCare.enrichment], ['rested', campCare.rested]] as const).map(([label, value]) => <div key={label}><span><strong>{label}</strong><small>{Math.round(value)}%</small></span><i><b style={{ width: `${value}%` }} /></i></div>)}</div><div className="creature-care-actions">{([['feed', 'Feed'], ['groom', 'Groom'], ['wash', 'Wash'], ['play', 'Play'], ['train', 'Train'], ['rest', 'Rest']] as const).map(([action, label]) => <button type="button" key={action} onClick={() => engineRef.current?.careSelectedCreature(action as CreatureCareAction)}><strong>{label}</strong><small>{action === "train" ? `${Math.max(0, 3 - campCare.dailyTrainingCount)} useful today` : action === "play" ? `${Math.max(0, 2 - campCare.dailyPlayCount)} useful today` : action === "rest" ? "revives at 1 health" : "care action"}</small></button>)}</div></section>
+                <section><div className="creature-camp-heading"><span>CARE</span><small>Meaningful daily limits</small></div><div className="creature-care-meters">{([['exertion', campCare.exertion], ['presentation', campCare.presentation], ['cleanliness', campCare.cleanliness], ['enrichment', campCare.enrichment], ['rested', campCare.rested]] as const).map(([label, value]) => <div key={label}><span><strong>{label}</strong><small>{Math.round(value)}%</small></span><i><b style={{ width: `${value}%` }} /></i></div>)}</div><div className="creature-care-actions">{([['feed', 'Feed'], ['groom', 'Groom'], ['wash', 'Wash'], ['play', 'Play'], ['train', 'Train'], ['rest', 'Rest']] as const).map(([action, label]) => <button type="button" key={action} onClick={() => engineRef.current?.careSelectedCreature(action as CreatureCareAction)}><strong>{label}</strong><small>{action === "feed" && campRehabilitationStage === "nourish" && campPreferredFood !== null ? `bond food: ${ITEMS[campPreferredFood]?.name}` : action === "train" ? `${Math.max(0, 3 - campCare.dailyTrainingCount)} useful today` : action === "play" ? `${Math.max(0, 2 - campCare.dailyPlayCount)} useful today` : action === "rest" ? "revives at 1 health" : "care action"}</small></button>)}</div></section>
                 <section>
-                  <div className="creature-camp-heading"><span>TACTIC & MOVES</span><small>Real-time companion behavior</small></div>
+                  <div className="creature-camp-heading"><span>TACTIC & MOVES</span><small>{campUsable ? "Real-time companion behavior" : "Locked until the relationship path is complete"}</small></div>
+                  {!campUsable && <p className="creature-locked-note">Containment alone never grants orders, labor, equipment, riding, or attunement.</p>}
                   <div className="creature-tactic-grid">{(['guard', 'support', 'pursue', 'cautious', 'hold'] as const).map((tactic) => <button type="button" className={campProgression?.tactic === tactic ? "active" : ""} onClick={() => engineRef.current?.setSelectedCreatureTactic(tactic)} key={tactic}>{tactic}</button>)}</div>
                   <div className="creature-camp-moves">{(campProgression?.learnedMoveIds ?? []).map((moveId) => { const move = CREATURE_MOVES[moveId]; const active = campProgression?.activeMoveIds.includes(moveId); return move ? <button type="button" className={active ? "active" : ""} aria-pressed={active} onClick={() => engineRef.current?.toggleSelectedCreatureMove(moveId)} key={moveId}><i style={{ color: CREATURE_TYPES[move.type].color }}>{CREATURE_TYPES[move.type].glyph}</i><span><strong>{move.name}</strong><small>{active ? "AI active" : "learned"} · {move.cooldownSeconds.toFixed(1)}s</small></span></button> : null; })}</div>
                   {campProfile && <button type="button" className="creature-utility-command" onClick={() => engineRef.current?.setSelectedCreatureFieldUtility(campProfile.moves.fieldUtilityMoveId)}><strong>{CREATURE_MOVES[campProfile.moves.fieldUtilityMoveId]?.name ?? "Field Utility"}</strong><small>{campProgression?.fieldUtilityMoveId === campProfile.moves.fieldUtilityMoveId ? "Equipped field command" : "Set field command"}</small></button>}
@@ -5159,12 +5221,12 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
                     <section className="behavior-note"><small>BEHAVIOR</small><p>{bestiaryDefinition.behavior}</p></section>
                     <section className="bestiary-care" aria-label={`${bestiaryDefinition.name} care information`}>
                       <div className="bestiary-care-heading"><small>CREATURE CARE</small><span>Recorded dynamically from known interactions</span></div>
-                      <div className="bestiary-care-grid"><div><small>TAMEABLE</small><strong>{bestiaryDefinition.tameable ? "Yes" : "No"}</strong>{bestiaryDefinition.tameable && <span>{bestiaryDefinition.tameItems?.length ? bestiaryDefinition.tameItems.map((item) => ITEMS[item]?.name).filter(Boolean).join(", ") : "Method not yet recorded"}</span>}</div><div><small>BREEDABLE</small><strong>{bestiaryDefinition.breedable ? "Yes" : "No"}</strong>{bestiaryDefinition.breedable && <span>{bestiaryDefinition.breedingFoods?.length ? bestiaryDefinition.breedingFoods.map((item) => ITEMS[item]?.name).filter(Boolean).join(", ") : "Breeding food unknown"}</span>}</div><div><small>EATS</small><strong>{bestiaryDefinition.diet?.length ? bestiaryDefinition.diet.map((item) => ITEMS[item]?.name).filter(Boolean).join(", ") : "No feeding response recorded"}</strong></div><div><small>SENTIENT</small><strong>{bestiaryDefinition.sentient ? "Yes" : "No"}</strong><span>{bestiaryDefinition.sentient ? "Can converse, trade, hold roles, and remember faction standing." : "Acts from instinct rather than factional intent."}</span></div></div>
+                      <div className="bestiary-care-grid"><div><small>CAPTURE</small><strong>{activeRelationshipPolicy.orbEligible ? "Normal Capture Orb" : activeRelationshipPolicy.title}</strong><span>{activeRelationshipPolicy.orbEligible ? "Capture grants custody only." : activeRelationshipPolicy.explanation}</span></div><div><small>COMPANION OUTCOME</small><strong>{activeRelationshipPolicy.companionEligible ? activeRelationshipPolicy.title : "Relocation only"}</strong><span>{activeRelationshipPolicy.companionEligible ? activeRelationshipPolicy.explanation : "This species can be safely relocated but not field-deployed as a companion."}</span></div><div><small>BREEDABLE</small><strong>{bestiaryDefinition.breedable ? "Yes" : "No"}</strong>{bestiaryDefinition.breedable && <span>{bestiaryDefinition.breedingFoods?.length ? bestiaryDefinition.breedingFoods.map((item) => ITEMS[item]?.name).filter(Boolean).join(", ") : "Breeding food unknown"}</span>}</div><div><small>EATS</small><strong>{bestiaryDefinition.diet?.length ? bestiaryDefinition.diet.map((item) => ITEMS[item]?.name).filter(Boolean).join(", ") : "No feeding response recorded"}</strong></div></div>
                       {activeCaptureKnowledge.careClues.length > 0 && <div className="bestiary-authored-care"><small>FIELD-VERIFIED CARE CLUES</small><ul>{activeCaptureKnowledge.careClues.map((clue) => <li key={clue}>{clue}</li>)}</ul></div>}
                     </section>
-                    {activeCaptureKnowledge.microHook && <section className="bestiary-authored-research"><div className="bestiary-care-heading"><small>CAPTURE RESEARCH</small><span>Revealed through field observation</span></div><p>{activeCaptureKnowledge.microHook}</p><small>{activeCaptureKnowledge.mastered ? "CAPTURE PROFILE MASTERED" : `${activeCaptureKnowledge.learnedConditions.length} condition${activeCaptureKnowledge.learnedConditions.length === 1 ? "" : "s"} documented`}</small></section>}
+                    {activeCaptureKnowledge.microHook && <section className="bestiary-authored-research"><div className="bestiary-care-heading"><small>CAPTURE RESEARCH · {activeBestiaryResearchStage.toLocaleUpperCase()}</small><span>Capture eligibility and its broad rule are always public</span></div><p>{activeCaptureKnowledge.microHook}</p><small>{activeCaptureKnowledge.mastered ? "MASTERED · FULL ECOLOGY AND CARE NOTES" : activeBestiaryResearchStage === "Studied" ? "STUDIED · PREFERRED CARE REVEALED" : "OBSERVED · CORE CAPTURE RULE REVEALED"}</small></section>}
                     {bestiaryDefinition.fieldNotes?.length ? <section className="bestiary-field-notes"><div className="bestiary-care-heading"><small>EXTENDED FIELD NOTES</small><span>{bestiaryDefinition.fieldNotes.filter((note) => bestiaryFieldNoteUnlocked(note, bestiaryProgress)).length}/{bestiaryDefinition.fieldNotes.length} unlocked</span></div>{bestiaryDefinition.fieldNotes.map((note) => { const unlocked = bestiaryFieldNoteUnlocked(note, bestiaryProgress); return <article key={note.id} className={unlocked ? "unlocked" : "locked"}><small>{unlocked ? "RECORDED" : "LOCKED"}</small><strong>{note.title}</strong><p>{unlocked ? note.text : note.hint}</p></article>; })}</section> : bestiaryDefinition.postTameNotes && <section className={`bestiary-secret ${bestiaryProgress.secretUnlocked || (bestiaryProgress.tames ?? 0) > 0 ? "unlocked" : "locked"}`}><small>COMPANION FIELD NOTES</small>{bestiaryProgress.secretUnlocked || (bestiaryProgress.tames ?? 0) > 0 ? <p>{bestiaryDefinition.postTameNotes}</p> : <p>Locked · {bestiaryDefinition.secretHint ?? `Tame a ${bestiaryDefinition.name} to reveal its deeper care and riding notes.`}</p>}</section>}
-                    {bestiaryDefinition.family === "butterfly" ? <section className="bestiary-loot butterfly-capture-record"><small>CAPTURE RECORD</small>{bestiaryDefinition.captureItem !== undefined && <div><ItemIcon item={bestiaryDefinition.captureItem} small /><span><strong>{bestiaryProgress.captures ? `${bestiaryProgress.captures} ${bestiaryProgress.captures === 1 ? "specimen" : "specimens"} cataloged` : "No specimen captured yet"}</strong><small>Equip a Butterfly Net and catch one gently to preserve it in a field jar.</small></span></div>}</section> : <section className="bestiary-loot"><small>OBSERVED DROPS</small>{bestiaryDefinition.drops.map((drop) => <div key={drop.item}><ItemIcon item={drop.item} small /><span><strong>{bestiaryProgress.kills ? ITEMS[drop.item]?.name : "Unknown drop"}</strong><small>{bestiaryProgress.kills ? `${drop.min}${drop.max !== drop.min ? `–${drop.max}` : ""} · ${Math.round(drop.chance * 100)}% chance` : "Defeat one to record it"}</small></span></div>)}</section>}
+                    {bestiaryDefinition.family === "butterfly" ? <section className="bestiary-loot butterfly-capture-record"><small>CAPTURE RECORD</small>{bestiaryDefinition.captureItem !== undefined && <div><ItemIcon item={Item.CaptureOrb} small /><span><strong>{bestiaryProgress.captures ? `${bestiaryProgress.captures} ${bestiaryProgress.captures === 1 ? "specimen" : "specimens"} cataloged` : "No specimen captured yet"}</strong><small>Use the same normal Capture Orb as every other creature. The Butterfly Net is an optional survey tool only.</small></span></div>}</section> : <section className="bestiary-loot"><small>OBSERVED DROPS</small>{bestiaryDefinition.drops.map((drop) => <div key={drop.item}><ItemIcon item={drop.item} small /><span><strong>{bestiaryProgress.kills ? ITEMS[drop.item]?.name : "Unknown drop"}</strong><small>{bestiaryProgress.kills ? `${drop.min}${drop.max !== drop.min ? `–${drop.max}` : ""} · ${Math.round(drop.chance * 100)}% chance` : "Defeat one to record it"}</small></span></div>)}</section>}
                   </> : <div className="unknown-entry"><span className="panel-eyebrow">NO RELIABLE OBSERVATION</span><h3>Unknown Creature</h3><p>{undiscoveredHabitatHint(bestiaryDefinition)} Bring it within view to reveal its field notes.</p></div>}
                 </article>
               </div>
@@ -5315,7 +5377,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
               <div><kbd>ESC</kbd><span><strong>Menu</strong>Open or close the current menu. Fullscreen remains a menu button.</span></div>
               <div><kbd>MIDDLE</kbd><span><strong>Pick block</strong>Match the targeted block in Builder mode.</span></div>
               <div><kbd>F3</kbd><span><strong>Debug</strong>Coordinates, depth, chunks, seed, and weather.</span></div>
-              <div><kbd>NET + RMB</kbd><span><strong>Capture butterfly</strong>Equip a Butterfly Net, aim gently, and add the specimen to your field notes.</span></div>
+              <div><kbd>ORB + RMB</kbd><span><strong>Capture creature</strong>Aim one normal Capture Orb at any ready creature, including butterflies. The Butterfly Net surveys pollinators without taking custody.</span></div>
             </div>
             <div className="progression-guide">
               <div><b>1</b><strong>Punch a tree</strong><span>Turn one log into four planks in your 2×2 grid.</span></div>

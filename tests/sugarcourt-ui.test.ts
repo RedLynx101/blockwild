@@ -87,8 +87,8 @@ test("Sugarcourt trade shows crops, finished equipment, blueprints, potions, and
   }));
   assert.match(html, /Sugarcourt Concord market/u);
   assert.match(html, /Trade across the cooling counter/u);
-  assert.match(html, /Capture Orb: Taffy Hound/u);
-  assert.match(html, /Capture Orb: Praline Cat/u);
+  assert.match(html, /Taffy Hound Care Transfer/u);
+  assert.match(html, /Praline Cat Care Transfer/u);
 });
 
 test("the Sugarworks station has themed batch copy, real ingredients, progress, and blueprint locks", () => {

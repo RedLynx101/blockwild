@@ -1,6 +1,6 @@
 # Blockwild
 
-Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.10.2 Veilreach**.
+Blockwild is an endless browser voxel-survival game built with TypeScript, React, and Three.js. A seed produces a deterministic world of streamed 16 x 16 chunks, 24 surface biomes, seven underground habitat layers, surface, underwater, and subterranean settlements, temples, dragon lairs, changing weather, creatures, and terrain running from Y -64 to Y 127. The game supports survival and builder modes, browser-local world management, adaptive touch controls, and direct host-authoritative multiplayer sessions. The current in-game release is **v1.11.0 Kinship Accord**.
 
 The project is a real game rather than a voxel-rendering demo. You can mine, build, craft, smelt, farm, fight, collect field notes, manage several worlds, and carry those worlds between browsers with export files.
 
@@ -15,6 +15,16 @@ The project is a real game rather than a voxel-rendering demo. You can mine, bui
 ![Blockwild field guide with all 231 rendered creatures](public/creatures/blockwild-creatures.svg)
 
 The integrated creature-design pass expands the Courser family with Rimehoof, Sunscar, Mirestride, and Starbough ecological breeds plus the forge-built Deepgear Courser. It also gives all six dragon families production stage forms, rebuilds birds, pets, crabs, mosslings, foxes, harts, deer, longhorns, terrapins, and other core wildlife, and preserves one model path for gameplay, Bestiary portraits, and visual audits.
+
+## v1.11.0 Kinship Accord
+
+Every ordinary capturable creature now uses one normal Capture Orb and one visible, deterministic readiness contract. Passive creatures must be calm; aggressive creatures retain the reliable 40%-health or one-heart route, with optional Break Its Tempo and Calming Offering alternatives; aquatic capture needs the same water medium but no special lens. The target card exposes the next action immediately, while research adds care, ecology, forms, and mastery rather than hiding basic permission.
+
+Capture now grants custody—not friendship. Eligible stored creatures follow an explicit Creature Camp sequence: Stabilize, Nourish, Connect, then Form Bond. Only that final host-authoritative action establishes ownership and unlocks attunement, deployment, commands, combat, work, gear, breeding, riding, and long-term progression. Relocation-only, commissioned, recruited, summoned, covenant, faction-aligned, owned, and otherwise ineligible creatures report their real path instead of failing ambiguously.
+
+Lens orbs and species-named orb items are retired from recipes, creative inventory, commerce, guild copy, and ordinary play. Existing saves normalize their IDs into canonical orbs without losing specimens; legacy lens materials receive a compact orb-shell refund. Butterflies, fish, sea slugs, Lightning Bugs, Honeybees, and Hive Queens share ordinary orb custody, while nets, jars, Queen Cells, and apiary worker capsules remain optional research, habitat, husbandry, or compatibility objects rather than competing capture tools.
+
+The complete design and acceptance contract is tracked in [Capture Orb and Creature Bonding Simplification](docs/CAPTURE_ORB_AND_CREATURE_BONDING_SIMPLIFICATION_PROPOSAL.md).
 
 ## v1.10.2 Veilreach
 

@@ -10,6 +10,13 @@ export const APIARY_JELLY_CYCLE_SECONDS = APIARY_HONEY_CYCLE_SECONDS * 4;
 export const APIARY_WORKER_GROWTH_SECONDS = 300;
 
 export type BeeRole = "queen" | "worker";
+export type StoredCaptureOrb = Readonly<{
+  item: typeof Item.CaptureOrb;
+  count: 1;
+  /** Canonical encoded orb; enough to reconstruct the exact custody record. */
+  captureOrb: string;
+}>;
+
 export type ApiaryBee = Readonly<{
   id: string;
   role: BeeRole;
@@ -23,6 +30,8 @@ export type ApiaryBee = Readonly<{
   angry: boolean;
   tamed: boolean;
   ownerId: string | null;
+  /** Exact custody record while this worker is housed in a player apiary. */
+  storedOrb?: StoredCaptureOrb | null;
 }>;
 
 export type ApiaryState = Readonly<{
@@ -113,9 +122,17 @@ export function insertQueenCellIntoApiary(
   return apiary.attached && item === Item.QueenCell ? createApiary(queenId, [], seed, worldDay) : null;
 }
 
-/** A netted worker becomes the tangible crafting ingredient used for a Queen Cell. */
+/** A worker removed from an apiary becomes a husbandry transfer capsule. */
 export function captureWorkerBeeItem(worker: ApiaryBee): InventorySlot | null {
   if (!worker.alive || worker.role !== "worker") return null;
+  if (worker.storedOrb?.item === Item.CaptureOrb && worker.storedOrb.count === 1
+    && typeof worker.storedOrb.captureOrb === "string") {
+    return {
+      item: Item.CaptureOrb,
+      count: 1,
+      metadata: { captureOrb: worker.storedOrb.captureOrb },
+    };
+  }
   return {
     item: Item.WorkerBee,
     count: 1,
@@ -149,6 +166,12 @@ function normalizeApiaryBee(value: unknown, expectedRole?: BeeRole): ApiaryBee |
     || (raw.role !== "queen" && raw.role !== "worker") || (expectedRole && raw.role !== expectedRole)
     || typeof raw.alive !== "boolean" || typeof raw.geneticSeed !== "number" || !Number.isFinite(raw.geneticSeed)
     || (raw.ownerId !== null && typeof raw.ownerId !== "string")) return null;
+  const storedOrb = raw.storedOrb && typeof raw.storedOrb === "object"
+    && raw.storedOrb.item === Item.CaptureOrb && raw.storedOrb.count === 1
+    && typeof raw.storedOrb.captureOrb === "string"
+    && raw.storedOrb.captureOrb.length <= 64_000
+    ? { item: Item.CaptureOrb, count: 1, captureOrb: raw.storedOrb.captureOrb } as const
+    : null;
   return {
     id: raw.id,
     role: raw.role,
@@ -163,6 +186,7 @@ function normalizeApiaryBee(value: unknown, expectedRole?: BeeRole): ApiaryBee |
     angry: raw.angry === true,
     tamed: raw.tamed === true,
     ownerId: typeof raw.ownerId === "string" ? raw.ownerId.slice(0, 160) : null,
+    ...(storedOrb ? { storedOrb } : {}),
   };
 }
 
@@ -504,7 +528,8 @@ export function harvestApiary(state: ApiaryState): { state: ApiaryState; drops: 
 }
 
 export function canCatchHiveQueen(health: number, maxHealth: number, tool: "net" | "capture-orb") {
-  return (tool === "net" || tool === "capture-orb") && maxHealth > 0 && health < maxHealth / 2;
+  if (maxHealth <= 0) return false;
+  return tool === "capture-orb" ? health <= 1 || health <= maxHealth * 0.4 : health < maxHealth / 2;
 }
 
 export function tameHiveQueen(queen: ApiaryBee, item: ItemCode, ownerId: string): ApiaryBee {

@@ -87,10 +87,32 @@ import {
 } from "./world";
 import { BUTTERFLY_ORDER, MOB_DEFS, MOB_ORDER, type ButterflyKind, type CoreMobKind, type MobDefinition, type MobKind, type SummonedCreatureKind } from "./mobs";
 import { creatureProfile } from "./creature-profiles";
-import { captureKnowledgeForResearch, evaluateCaptureReadiness, type CaptureReadiness } from "./creature-capture";
+import { evaluateCaptureReadiness, type CaptureReadiness } from "./creature-capture";
+import {
+  advanceCalmingOffering,
+  advanceOutmaneuverAttempt,
+  beginCalmingOffering,
+  createCreaturePacificationState,
+  interruptPacificationWithDamage,
+  pacificationProgressView,
+  recordCleanCommittedEvade,
+  type CreaturePacificationState,
+  type PacificationProgressView,
+} from "./creature-pacification";
+import {
+  canAttuneCreature,
+  connectWithCreature,
+  creatureRehabilitationStage,
+  creatureRelationshipPolicy,
+  formCreatureBond,
+  nourishCreatureRelationship,
+  preferredRelationshipFood,
+  refreshCreatureStabilization,
+  transferCreatureBond,
+} from "./creature-relationships";
 import { CREATURE_MOVES, CREATURE_REACTIONS, learnedMovesAtLevel } from "./creature-moves";
 import { creatureMaximumHealth, creatureOutputMultiplier, statsAtLevel } from "./creature-stats";
-import { aptitudesFromSeed, isShinySeed, migrateCreatureProgression, offspringProgressionLegacy, phenotypeFromSeed, recordCreatureCaptureHistory, recordCreatureReleaseHistory, stableCreatureSeed, type CreatureProgressionV2, type LegacyCreatureProgression } from "./creature-progression";
+import { aptitudesFromSeed, bondTierForPoints, isShinySeed, migrateCreatureProgression, offspringProgressionLegacy, phenotypeFromSeed, recordCreatureCaptureHistory, recordCreatureReleaseHistory, stableCreatureSeed, type CreatureProgressionV2, type LegacyCreatureProgression } from "./creature-progression";
 import { creatureAppearance } from "./creature-appearance";
 import { applyCreatureRarityVisual, triggerCreatureInspectionShimmer, updateCreatureRarityVisual } from "./creature-rarity-visuals";
 import {
@@ -100,7 +122,6 @@ import {
   normalizePrimeEncounterStates,
   planPrimeEncounter,
   primeAptitudeForMotif,
-  primeEncounterRouteComplete,
   transferPrimeEncounterCustody,
   transferPrimeCustodyReference,
   transitionPrimeEncounter,
@@ -751,6 +772,8 @@ import {
   CREATURE_HEALER_GEL_CAP,
   CREATURE_HEALER_GEL_SECONDS,
   CREATURE_HEALER_SIZE,
+  LEGACY_LENS_ORB_ITEMS,
+  LEGACY_SPECIES_ORB_ITEMS,
   captureIntoOrb,
   captureOrbFromInventorySlot,
   captureOrbInventorySlot,
@@ -1518,6 +1541,34 @@ export type MultiplayerUiState = {
   agentWaypoints: AgentWaypointRecord[];
 };
 
+export type CreatureTransferOfferView = Readonly<{
+  offerId: string;
+  sourceId: string;
+  sourceName: string;
+  recipientId: string;
+  orbId: string;
+  creatureName: string;
+  expiresAt: number;
+}>;
+
+type CaptureSystemDiagnostics = {
+  attempts: number;
+  successes: number;
+  readinessRoutes: Record<"health" | "outmaneuver" | "offering" | "open" | "authored", number>;
+  blockers: Record<"not-ready" | "policy" | "medium" | "inventory" | "conflict", number>;
+  rehabilitation: Record<"care" | "connect" | "bond" | "transfer" | "release-before-bond", number>;
+  migration: Record<"legacy-orb" | "lens-orb" | "species-orb", number>;
+};
+
+const createCaptureSystemDiagnostics = (): CaptureSystemDiagnostics => ({
+  attempts: 0,
+  successes: 0,
+  readinessRoutes: { health: 0, outmaneuver: 0, offering: 0, open: 0, authored: 0 },
+  blockers: { "not-ready": 0, policy: 0, medium: 0, inventory: 0, conflict: 0 },
+  rehabilitation: { care: 0, connect: 0, bond: 0, transfer: 0, "release-before-bond": 0 },
+  migration: { "legacy-orb": 0, "lens-orb": 0, "species-orb": 0 },
+});
+
 export type EngineEvents = {
   onHud: (hud: HudState) => void;
   /** Immediate, lightweight selection signal for responsive React hotbar chrome. */
@@ -1669,6 +1720,7 @@ type MobEntity = {
   networkVelocity?: THREE.Vector3;
   networkSnapshotAge?: number;
   networkSnapshotAt?: number;
+  pacificationView?: PacificationProgressView | null;
   openedPassage?: { kind: "door" | "gate"; x: number; y: number; z: number; closeAfter: number };
 };
 
@@ -2986,41 +3038,52 @@ let looseCaptureOrbSerial = 0;
 
 export function captureOrbUnitFromInventorySlot(slot: InventorySlot | null | undefined) {
   if (!slot || (slot.item !== Item.CaptureOrb && slot.item !== Item.LegacyCaptureOrb && ITEMS[slot.item]?.useKind !== "capture-orb") || slot.count <= 0) return null;
-  if (typeof slot.metadata?.captureOrb === "string") return slot.count === 1 ? decodeCaptureOrb(slot.metadata.captureOrb) : null;
-  if (slot.metadata?.capturedCreature) return slot.count === 1 ? captureOrbFromInventorySlot({ ...slot, item: Item.CaptureOrb }) : null;
-  const creatureKind = ITEMS[slot.item]?.creatureKind;
-  if (creatureKind && creatureKind in MOB_DEFS) {
-    looseCaptureOrbSerial += 1;
-    const kind = creatureKind as MobKind;
-    const definition = MOB_DEFS[kind];
-    const entityId = `orb-stock-${kind}-${Date.now().toString(36)}-${looseCaptureOrbSerial.toString(36)}`;
-    return captureIntoOrb(createEmptyCaptureOrb(`orb-stock-${entityId}`), {
-      schema: 1,
-      entityId,
-      kind,
-      health: definition.health,
-      maxHealth: definition.health,
-      ageTicks: 24_000,
-      baby: false,
-      temperament: definition.temperament,
-      hostile: false,
-      tamed: false,
-      ownerId: null,
-      name: null,
-      geneticSeed: Math.imul(Date.now() | 0, 0x9e3779b1) >>> 0,
-      command: null,
-      factionId: null,
-      settlementId: null,
-      aligned: false,
-      custom: { courserBond: createReedstriderBond() },
-    });
-  }
+  // Identity-bearing records are singletons. A malformed metadata stack must
+  // never silently mint a different empty shell and strand the specimen.
+  if (slot.count !== 1 && (typeof slot.metadata?.captureOrb === "string"
+    || typeof slot.metadata?.capturedCreature === "string")) return null;
+  const exact = captureOrbFromInventorySlot(slot);
+  if (exact) return exact;
   // Plain crafted orbs do not carry identity metadata until first use. Mint it
   // at that boundary so two orbs split from the same stack never share an id.
   looseCaptureOrbSerial += 1;
   const empty = createEmptyCaptureOrb(`orb-loose-${Date.now().toString(36)}-${looseCaptureOrbSerial.toString(36)}-${slot.item}-${slot.count}`);
   const lens = ITEMS[slot.item]?.captureLens ?? null;
   return lens ? { ...empty, lens } : empty;
+}
+
+export function apiaryWorkerTransferFromInventorySlot(slot: InventorySlot | null | undefined, worldDay = 0): Readonly<{
+  worker: ApiaryBee;
+  replacement: InventorySlot | null;
+}> | null {
+  const legacyWorker = workerBeeFromInventorySlot(slot);
+  if (legacyWorker) return Object.freeze({ worker: legacyWorker, replacement: null });
+  const orb = captureOrbFromInventorySlot(slot);
+  const creature = orb?.creature;
+  if (!orb || !creature || creature.kind !== "honeybee" || orb.attunement?.activeEntityId) return null;
+  const worker: ApiaryBee = Object.freeze({
+    id: creature.entityId,
+    role: "worker",
+    alive: creature.health > 0,
+    home: false,
+    outbound: false,
+    carryingNectar: 0,
+    lastReturnDay: Math.max(0, Math.floor(worldDay)),
+    disconnectedDay: null,
+    geneticSeed: creature.geneticSeed >>> 0,
+    angry: creature.hostile,
+    tamed: creature.tamed,
+    ownerId: creature.ownerId,
+    storedOrb: {
+      item: Item.CaptureOrb,
+      count: 1 as const,
+      captureOrb: encodeCaptureOrb(orb),
+    },
+  });
+  return Object.freeze({
+    worker,
+    replacement: captureOrbInventorySlot(createEmptyCaptureOrb(orb.orbId)),
+  });
 }
 
 export function apiaryPhaseForWorldTime(worldTime: number): ApiaryPhase {
@@ -3177,6 +3240,8 @@ export function orbMorphLoomHudState(value: unknown): OrbMorphLoomHudState {
 export function apiaryBeeCaptureSlot(bee: ApiaryBee): InventorySlot | null {
   const kind: MobKind = bee.role === "queen" ? "hive-queen" : "honeybee";
   const definition = MOB_DEFS[kind];
+  const serializableBee = { ...bee };
+  delete serializableBee.storedOrb;
   const metadata: CreatureMetadata = {
     schema: 1,
     entityId: bee.id,
@@ -3192,7 +3257,7 @@ export function apiaryBeeCaptureSlot(bee: ApiaryBee): InventorySlot | null {
     name: bee.role === "queen" ? "Hive Queen" : "Honeybee",
     geneticSeed: bee.geneticSeed,
     command: bee.tamed ? "follow" : "wander",
-    custom: { apiaryBee: { ...bee, home: false, outbound: false } },
+    custom: { apiaryBee: { ...serializableBee, home: false, outbound: false } },
   };
   const orb = captureIntoOrb(createEmptyCaptureOrb(`apiary-${bee.id}`), metadata, Date.now());
   return orb ? captureOrbInventorySlot(orb) : null;
@@ -3882,6 +3947,7 @@ export class VoxelEngine {
   sprintLatched = false;
   performanceSampler = new PerformanceSampler(240);
   telemetryIntervalSampler = new PerformanceSampler(240);
+  captureSystemDiagnostics = createCaptureSystemDiagnostics();
   longAnimationFrameSampler = new LongAnimationFrameSampler();
   budgetController = new AdaptiveBudgetController();
   gpuTimer: WebGlGpuTimer;
@@ -4095,6 +4161,8 @@ export class VoxelEngine {
   leafParticleTimer = 0;
   fallingTrees: FallingTree[] = [];
   mobs: MobEntity[] = [];
+  capturePacification = new Map<number, CreaturePacificationState>();
+  captureOrbReleaseConfirm = new Map<string, number>();
   mobSpatialIndex: XZSpatialIndex<MobEntity> | null = null;
   mobSpatialIndexSource: MobEntity[] | null = null;
   mobSpatialIndexFrameActive = false;
@@ -4200,6 +4268,7 @@ export class VoxelEngine {
   multiplayerSnapshotTimer = 0;
   multiplayerReceivedSnapshot = false;
   multiplayerPlayerStates = new Map<string, PlayerSessionSnapshot>();
+  creatureTransferOffers = new Map<string, CreatureTransferOfferView>();
   multiplayerPlayerProgressions = new Map<string, PlayerProgressionRecord>();
   multiplayerProgressTransfers = new Map<string, PlayerProgressTransfer>();
   multiplayerProgressOutgoing: Array<{ action: PlayerProgressAction; peerId?: string }> = [];
@@ -4891,6 +4960,7 @@ export class VoxelEngine {
     this.merchants.clear();
     this.persistentMachineLastStep.clear();
     this.multiplayerPlayerStates.clear();
+    this.creatureTransferOffers.clear();
     this.multiplayerPlayerProgressions.clear();
     this.multiplayerProgressTransfers.clear();
     this.multiplayerProgressOutgoing = [];
@@ -4969,8 +5039,10 @@ export class VoxelEngine {
       this.skillState = applyCharacterStartingSkills(this.skillState, this.activeCharacterProfile.startingSkills);
     }
     this.multiplayerPlayerStates.clear();
+    this.creatureTransferOffers.clear();
     this.multiplayerPlayerProgressions.clear();
     this.multiplayerProgressTransfers.clear();
+    this.creatureTransferOffers.clear();
     this.multiplayerProgressOutgoing = [];
     this.multiplayerPlayerWallets.clear();
     this.multiplayerPeerActiveMerchants.clear();
@@ -5520,7 +5592,29 @@ export class VoxelEngine {
     throw new Error("Unable to find a deterministic surface POI audit candidate.");
   }
 
+  private recordLegacyCaptureMigration(save: WorldSave) {
+    const pending: unknown[] = [save];
+    let visited = 0;
+    while (pending.length > 0 && visited < 250_000) {
+      const value = pending.pop();
+      visited += 1;
+      if (!value || typeof value !== "object") continue;
+      if (Array.isArray(value)) {
+        for (const child of value) pending.push(child);
+        continue;
+      }
+      const record = value as Record<string, unknown>;
+      const item = typeof record.item === "number" ? record.item as ItemCode : null;
+      if (item === Item.LegacyCaptureOrb) this.captureSystemDiagnostics.migration["legacy-orb"] += 1;
+      else if (item !== null && LEGACY_LENS_ORB_ITEMS.includes(item)) this.captureSystemDiagnostics.migration["lens-orb"] += 1;
+      else if (item !== null && LEGACY_SPECIES_ORB_ITEMS.includes(item)) this.captureSystemDiagnostics.migration["species-orb"] += 1;
+      for (const child of Object.values(record)) pending.push(child);
+    }
+  }
+
   loadWorld(save: WorldSave, options: Partial<WorldOptions> = save.options ?? {}, worldId: string | null = this.worldStorage.activeWorldId) {
+    this.captureSystemDiagnostics = createCaptureSystemDiagnostics();
+    this.recordLegacyCaptureMigration(save);
     this.persistent = true;
     this.running = true;
     this.paused = false;
@@ -5602,6 +5696,7 @@ export class VoxelEngine {
       return [[playerId, { revision, state: normalizeMultiplayerPlayerProgression(record.state, playerId) }] as const];
     }));
     this.multiplayerProgressTransfers.clear();
+    this.creatureTransferOffers.clear();
     this.multiplayerPlayerWallets = new Map(Object.entries(save.multiplayerWallets ?? {}).flatMap(([playerId, wallet]) => (
       wallet?.schema === 1 && wallet.ownerId === playerId ? [[playerId, wallet] as const] : []
     )));
@@ -5759,6 +5854,11 @@ export class VoxelEngine {
     this.syncAquariumVisuals(true);
     this.syncOrbRackVisuals(true);
     this.syncFurnitureVisuals(true);
+    const captureMigration = this.captureSystemDiagnostics.migration;
+    const normalizedOrbs = captureMigration["legacy-orb"] + captureMigration["lens-orb"] + captureMigration["species-orb"];
+    if (normalizedOrbs > 0) {
+      this.events.onToast(`Capture system updated: ${normalizedOrbs} orb record${normalizedOrbs === 1 ? "" : "s"} normalized, ${captureMigration["lens-orb"]} lens kit${captureMigration["lens-orb"] === 1 ? "" : "s"} refunded, and stored creatures preserved.`);
+    }
     this.emitHud(true);
   }
 
@@ -6172,7 +6272,12 @@ export class VoxelEngine {
     );
   }
 
+  private ensureCaptureSystemDiagnostics() {
+    return this.captureSystemDiagnostics ??= createCaptureSystemDiagnostics();
+  }
+
   performanceTelemetrySnapshot() {
+    this.ensureCaptureSystemDiagnostics();
     const browserPerformance = typeof performance === "undefined" ? null : performance as Performance & { memory?: { usedJSHeapSize: number; totalJSHeapSize: number; jsHeapSizeLimit: number } };
     const memory = browserPerformance?.memory;
     const navigatorMemory = typeof navigator === "undefined" ? undefined : (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
@@ -6225,6 +6330,14 @@ export class VoxelEngine {
         successes: this.ecologyDiagnostics.successes,
         aquaticCandidates: this.ecologyDiagnostics.aquaticCandidates,
         rejections: { ...this.ecologyDiagnostics.rejections },
+      },
+      captureSystem: {
+        attempts: this.captureSystemDiagnostics.attempts,
+        successes: this.captureSystemDiagnostics.successes,
+        readinessRoutes: { ...this.captureSystemDiagnostics.readinessRoutes },
+        blockers: { ...this.captureSystemDiagnostics.blockers },
+        rehabilitation: { ...this.captureSystemDiagnostics.rehabilitation },
+        migration: { ...this.captureSystemDiagnostics.migration },
       },
       multiplayer: { role: multiplayer.role, status: multiplayer.status, peers: multiplayer.peers.length },
       memory: memory ? {
@@ -6391,6 +6504,7 @@ export class VoxelEngine {
     this.multiplayerProgressionTimer = 1;
     this.multiplayerProgressionSignature = "";
     this.multiplayerProgressTransfers.clear();
+    this.creatureTransferOffers.clear();
     this.multiplayerProgressOutgoing = [];
     this.multiplayerBoatInputs.clear();
     this.pendingGuestDropRequests.clear();
@@ -8332,6 +8446,7 @@ export class VoxelEngine {
     // invoke snapshotting before newer field initializers have run.
     this.leadAnchors ??= new Map<number, LeadAnchor>();
     this.leadLines ??= new Map<number, THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>>();
+    this.capturePacification ??= new Map<number, CreaturePacificationState>();
     return this.mobs.map((mob) => {
       const settlement = mob.settlementId ? this.settlements.get(mob.settlementId) : null;
       const resident = mob.residentId ? settlement?.residents.find((entry) => entry.id === mob.residentId) : null;
@@ -8349,6 +8464,9 @@ export class VoxelEngine {
       typeRevision: mob.resolvedTypes?.revisionKey ?? `natural:${creatureProfile(mob.kind).naturalTypes.join("+")}`,
       statuses: (mob.combatStatuses ?? []).slice(0, 12).map((status) => ({ id: status.id, stacks: status.stacks, remainingSeconds: Math.max(0, status.expiresAtSeconds - this.worldSimulationSeconds()) })),
       activeMove: mob.activeMove ? { moveId: mob.activeMove.moveId, phase: mob.activeMove.phase, remainingSeconds: mob.activeMove.remaining } : null,
+      pacification: this.capturePacification.has(mob.id)
+        ? pacificationProgressView(this.capturePacification.get(mob.id), this.worldSimulationSeconds())
+        : null,
       specimenId: mob.specimenId,
       primeAnchorId: mob.primeAnchorId,
       ...(mob.progression ? {
@@ -8723,6 +8841,7 @@ export class VoxelEngine {
         target: mob.activeMove?.target ?? { kind: "creature", id: mob.id },
         applied: entry.activeMove.phase !== "active",
       } : null;
+      mob.pacificationView = entry.pacification ? Object.freeze({ ...entry.pacification }) : null;
       if (entry.name) mob.name = entry.name;
       if (entry.command === "follow" || entry.command === "hold") mob.followCommand = entry.command;
       if (entry.followDistance !== undefined) mob.followDistance = normalizeFollowDistance(entry.followDistance);
@@ -9983,6 +10102,7 @@ export class VoxelEngine {
   }
 
   private handleRemoteCreatureAction(action: CreatureAction, peer: PeerInfo) {
+    this.ensureCaptureSystemDiagnostics();
     const session = this.multiplayer;
     if (!session) return;
     if (session.role === "guest") {
@@ -9991,6 +10111,35 @@ export class VoxelEngine {
         this.pendingGuestCreatureInventoryRequests.delete(action.requestId);
       }
       if (action.status === "rejected" && action.actorId === session.identity.id && action.reason) this.events.onToast(action.reason);
+      if (action.status === "accepted" && action.kind === "camp-transfer-offer"
+        && action.recipientId === session.identity.id && action.offerId && action.orbId) {
+        this.creatureTransferOffers.set(action.offerId, Object.freeze({
+          offerId: action.offerId,
+          sourceId: action.actorId,
+          sourceName: action.sourceName ?? "Another keeper",
+          recipientId: action.recipientId,
+          orbId: action.orbId,
+          creatureName: action.creatureName ?? "a companion",
+          expiresAt: Date.now() + 60_000,
+        }));
+        if (action.message) this.events.onToast(action.message);
+        this.emitHud(true);
+        return;
+      }
+      if (action.status === "accepted" && action.kind === "camp-transfer-offer"
+        && action.actorId === session.identity.id) {
+        if (action.message) this.events.onToast(action.message);
+        return;
+      }
+      if (action.status === "accepted" && action.kind === "camp-transfer-accept"
+        && action.actorId === session.identity.id) {
+        if (action.offerId) this.creatureTransferOffers.delete(action.offerId);
+        if (action.playerState) this.applyLocalPlayerSessionSnapshot(action.playerState, true);
+        if (action.message) this.events.onToast(action.message);
+        this.audio.play("craft");
+        this.emitHud(true);
+        return;
+      }
       if (action.status === "accepted" && action.kind.startsWith("aquarium-") && action.containerKey && action.aquariumState) {
         const state = normalizeAquariumStorage({ [action.containerKey]: action.aquariumState }).get(action.containerKey);
         if (state) {
@@ -10045,6 +10194,20 @@ export class VoxelEngine {
       }
       if (action.status === "accepted" && (action.kind === "lead-hitch" || action.kind === "lead-unhitch") && action.actorId === session.identity.id) {
         if (action.message) this.events.onToast(action.message);
+        return;
+      }
+      if (action.status === "accepted" && action.kind === "pacify-offering" && action.actorId === session.identity.id) {
+        if (action.message) this.events.onToast(action.message);
+        this.audio.play("craft");
+        this.emitHud(true);
+        return;
+      }
+      if (action.status === "accepted" && (action.kind === "camp-care" || action.kind === "camp-connect" || action.kind === "camp-form-bond")
+        && action.actorId === session.identity.id) {
+        if (action.playerState) this.applyLocalPlayerSessionSnapshot(action.playerState, true);
+        if (action.message) this.events.onToast(action.message);
+        this.audio.play("craft");
+        this.emitHud(true);
         return;
       }
       if (action.status !== "accepted" || action.targetId === undefined) return;
@@ -10270,6 +10433,64 @@ export class VoxelEngine {
       this.emitHud(true);
       return;
     }
+    if (action.kind === "camp-transfer-offer") {
+      if (!action.orbId || !action.recipientId) {
+        this.rejectCreatureAction(action, peer.identity.id, "Choose a stored companion and a connected recipient.");
+        return;
+      }
+      const offer = this.createCreatureTransferOffer(peer.identity.id, action.orbId, action.recipientId, action.requestId);
+      if (!offer) {
+        this.rejectCreatureAction(action, peer.identity.id, "That companion, keeper, or recipient is no longer eligible for transfer.");
+        return;
+      }
+      this.queueCriticalReliableRequest(`host-transfer-offer:${peer.identity.id}:${action.requestId}`, () => session.sendCreatureAction({
+        ...action,
+        offerId: offer.offerId,
+        sourceName: offer.sourceName,
+        creatureName: offer.creatureName,
+        status: "accepted",
+        message: `${offer.creatureName} was offered to the selected keeper for one minute.`,
+      }, peer.identity!.id), 6_000);
+      return;
+    }
+    if (action.kind === "camp-transfer-accept") {
+      if (!action.offerId) {
+        this.rejectCreatureAction(action, peer.identity.id, "That transfer offer is missing.");
+        return;
+      }
+      const result = this.resolveCreatureTransferOffer(action.offerId, peer.identity.id, action.requestId);
+      if (!result.accepted) {
+        this.rejectCreatureAction(action, peer.identity.id, result.message);
+        return;
+      }
+      const recipientState = this.multiplayerPlayerStates.get(peer.identity.id);
+      this.queueCriticalReliableRequest(`host-transfer-accept:${peer.identity.id}:${action.requestId}`, () => session.sendCreatureAction({
+        ...action,
+        status: "accepted",
+        recipientId: peer.identity!.id,
+        creatureName: result.offer.creatureName,
+        message: result.message,
+        ...(recipientState ? { playerState: recipientState } : {}),
+      }, peer.identity!.id), 6_000);
+      if (result.offer.sourceId === this.localPlayerId()) {
+        this.events.onToast(`${result.offer.creatureName}'s transfer was accepted.`);
+      } else if (result.offer.sourceId !== peer.identity.id) {
+        const sourceState = this.multiplayerPlayerStates.get(result.offer.sourceId);
+        session.sendCreatureAction({
+          requestId: action.requestId,
+          actorId: result.offer.sourceId,
+          tick: this.multiplayerTick,
+          kind: "camp-transfer-accept",
+          status: "accepted",
+          offerId: action.offerId,
+          recipientId: peer.identity.id,
+          creatureName: result.offer.creatureName,
+          message: `${result.offer.creatureName}'s transfer was accepted.`,
+          ...(sourceState ? { playerState: sourceState } : {}),
+        }, result.offer.sourceId);
+      }
+      return;
+    }
     if (action.kind === "command") {
       const mob = action.targetId === undefined ? null : this.mobs.find((candidate) => candidate.id === action.targetId);
       const owner = mob?.creatureOwnerId ?? mob?.dragonState?.ownerId ?? mob?.petState?.ownerId ?? mob?.shadeState?.ownerId
@@ -10334,7 +10555,151 @@ export class VoxelEngine {
       return;
     }
     const inventory = current.inventory.map(inventorySlotFromNetwork);
+    if (action.kind === "camp-care" || action.kind === "camp-connect" || action.kind === "camp-form-bond") {
+      const orbIndex = action.orbId ? inventory.findIndex((slot) => captureOrbFromInventorySlot(slot)?.orbId === action.orbId) : -1;
+      const orb = orbIndex >= 0 ? captureOrbFromInventorySlot(inventory[orbIndex]) : null;
+      if (!orb?.creature || orb.attunement?.activeEntityId) {
+        this.rejectCreatureAction(action, peer.identity.id, "The host could not find that stored creature.");
+        return;
+      }
+      let creature = refreshCreatureStabilization(orb.creature);
+      let message = "";
+      if (action.kind === "camp-connect") {
+        const result = connectWithCreature(creature, this.day);
+        if (!result.accepted) {
+          this.rejectCreatureAction(action, peer.identity.id, result.message);
+          return;
+        }
+        creature = result.metadata;
+        message = result.message;
+        this.captureSystemDiagnostics.rehabilitation.connect += 1;
+      } else if (action.kind === "camp-form-bond") {
+        const result = formCreatureBond(creature, peer.identity.id, Date.now());
+        if (!result.accepted) {
+          this.rejectCreatureAction(action, peer.identity.id, result.message);
+          return;
+        }
+        creature = result.metadata;
+        const profile = creatureProfile(creature.kind);
+        const progression = migrateCreatureProgression({
+          kind: creature.kind,
+          entityId: creature.entityId,
+          geneticSeed: creature.geneticSeed,
+          age: creature.ageTicks,
+          maximumLevel: profile.stats.maximumLevel,
+          defaultMoveIds: learnedMovesAtLevel(profile.moves, 1),
+          legacy: creature.custom.progression as unknown as CreatureProgressionV2 | undefined,
+        });
+        const bondPoints = Math.max(45, progression.bondPoints);
+        creature = {
+          ...creature,
+          custom: JSON.parse(JSON.stringify({
+            ...creature.custom,
+            progression: { ...progression, bondPoints, bondTier: bondTierForPoints(bondPoints) },
+          })) as CreatureMetadata["custom"],
+        };
+        this.bestiary[creature.kind].tames += 1;
+        this.captureSystemDiagnostics.rehabilitation.bond += 1;
+        message = result.message;
+      } else {
+        const careAction = action.command as CreatureCareAction;
+        if (!["feed", "groom", "wash", "play", "train", "rest"].includes(careAction)) {
+          this.rejectCreatureAction(action, peer.identity.id, "That care action is not recognized.");
+          return;
+        }
+        let food: ItemCode | null = null;
+        if (careAction === "feed") {
+          const available = (item: ItemCode) => this.mode === "builder" || inventory.some((slot) => slot?.item === item && slot.count > 0);
+          const bondFood = creatureRehabilitationStage(creature) === "nourish" ? preferredRelationshipFood(creature.kind) : null;
+          food = bondFood !== null && available(bondFood)
+            ? bondFood
+            : [...(MOB_DEFS[creature.kind].diet ?? []), ...(MOB_DEFS[creature.kind].tameItems ?? [])].find(available) ?? null;
+          if (food === null) {
+            this.rejectCreatureAction(action, peer.identity.id, `${creature.name ?? MOB_DEFS[creature.kind].name} needs one of its displayed foods in your pack.`);
+            return;
+          }
+        }
+        const profile = creatureProfile(creature.kind);
+        const progression = migrateCreatureProgression({
+          kind: creature.kind, entityId: creature.entityId, geneticSeed: creature.geneticSeed, age: creature.ageTicks,
+          maximumLevel: profile.stats.maximumLevel, defaultMoveIds: learnedMovesAtLevel(profile.moves, 1),
+          legacy: creature.custom.progression as unknown as CreatureProgressionV2 | undefined,
+        });
+        const care = applyCreatureCareAction({
+          metadata: creature,
+          progression,
+          state: normalizeCreatureCareState(creature.custom.creatureCare),
+          action: careAction,
+          worldDay: this.day,
+          preferredFood: food !== null,
+          renewableMaterial: creature.kind === "woolhorn" ? "wool" : MOB_DEFS[creature.kind].family === "bird" ? "feather" : null,
+        });
+        if (!care.accepted) {
+          this.rejectCreatureAction(action, peer.identity.id, care.message);
+          return;
+        }
+        if (food !== null && this.mode === "survival") {
+          const foodIndex = inventory.findIndex((slot) => slot?.item === food && slot.count > 0);
+          if (foodIndex < 0 || !inventory[foodIndex]) {
+            this.rejectCreatureAction(action, peer.identity.id, "The selected food is no longer in your pack.");
+            return;
+          }
+          inventory[foodIndex]!.count -= 1;
+          if (inventory[foodIndex]!.count <= 0) inventory[foodIndex] = null;
+        }
+        creature = {
+          ...creature,
+          health: care.health,
+          custom: JSON.parse(JSON.stringify({
+            ...creature.custom,
+            progression: care.progression,
+            creatureCare: care.state,
+          })) as CreatureMetadata["custom"],
+        };
+        if (careAction === "feed" && food === preferredRelationshipFood(creature.kind)) creature = nourishCreatureRelationship(creature);
+        this.captureSystemDiagnostics.rehabilitation.care += 1;
+        message = care.message;
+      }
+      inventory[orbIndex] = captureOrbInventorySlot({ ...orb, creature });
+      const next = normalizeMultiplayerPlayerState({
+        ...current,
+        inventory: inventory.map(networkItemStack),
+        revision: current.revision + 1,
+      }, peer.identity.id, current.variant);
+      this.multiplayerPlayerStates.set(peer.identity.id, next);
+      this.queueCriticalReliableRequest(`host-camp-action:${peer.identity.id}:${action.requestId}`, () => session.sendCreatureAction({
+        ...action,
+        status: "accepted",
+        message,
+        playerState: next,
+      }, peer.identity!.id), 6_000);
+      this.sendAuthoritativePlayerState(peer.identity.id, action.requestId);
+      this.saveSoon();
+      return;
+    }
     const held = inventory[current.selected];
+    if (action.kind === "pacify-offering") {
+      const mob = action.targetId === undefined ? null : this.mobs.find((candidate) => candidate.id === action.targetId);
+      const keeperSight = pose ? new THREE.Vector3(pose.x, pose.y + this.cameraEyeHeight * 0.5, pose.z) : null;
+      const creatureSight = mob ? mob.group.position.clone().add(new THREE.Vector3(0, mob.definition.height * 0.5, 0)) : null;
+      if (!pose || !mob || !held || mob.group.position.distanceToSquared(new THREE.Vector3(pose.x, pose.y, pose.z)) > 8 * 8
+        || !keeperSight || !creatureSight || !this.hasClearLineOfSight(keeperSight, creatureSight)) {
+        this.rejectCreatureAction(action, peer.identity.id, "That creature or calming offering is no longer in reach.");
+        return;
+      }
+      const offering = this.beginCalmingOfferingForMob(mob, peer.identity.id, held.item);
+      if (!offering.accepted) {
+        this.rejectCreatureAction(action, peer.identity.id, offering.message);
+        return;
+      }
+      this.queueCriticalReliableRequest(`host-pacify-offering:${peer.identity.id}:${action.requestId}`, () => session.sendCreatureAction({
+        ...action,
+        status: "accepted",
+        message: offering.message,
+      }, peer.identity!.id), 6_000);
+      this.saveSoon();
+      return;
+    }
     const orb = captureOrbUnitFromInventorySlot(held);
     if (!pose || !held || !orb) {
       this.rejectCreatureAction(action, peer.identity.id, "The host could not find that keeper, selected orb, or creature state.");
@@ -10342,21 +10707,28 @@ export class VoxelEngine {
     }
     let targetId = action.targetId;
     if (action.kind === "capture") {
+      this.captureSystemDiagnostics.attempts += 1;
       const mob = targetId === undefined ? null : this.mobs.find((candidate) => candidate.id === targetId);
-      if (!mob || mob.group.position.distanceToSquared(new THREE.Vector3(pose.x, pose.y, pose.z)) > 8 * 8) {
+      const keeperSight = new THREE.Vector3(pose.x, pose.y + this.cameraEyeHeight * 0.5, pose.z);
+      const creatureSight = mob?.group.position.clone().add(new THREE.Vector3(0, mob.definition.height * 0.5, 0));
+      if (!mob || mob.group.position.distanceToSquared(new THREE.Vector3(pose.x, pose.y, pose.z)) > 8 * 8
+        || !creatureSight || !this.hasClearLineOfSight(keeperSight, creatureSight)) {
         this.rejectCreatureAction(action, peer.identity.id, "That creature is no longer within Capture Orb range.");
         return;
       }
       if (this.temporarySummons?.has(mob.id)) {
+        this.captureSystemDiagnostics.blockers.policy += 1;
         this.rejectCreatureAction(action, peer.identity.id, "Temporary manifestations and echoes cannot enter Capture Orbs; the host must commit a valid Worldpin grounding first.");
         return;
       }
       if (mob.aligned && mob.factionId && mob.factionId !== "player") {
+        this.captureSystemDiagnostics.blockers.policy += 1;
         this.rejectCreatureAction(action, peer.identity.id, "Faction-aligned creatures cannot be captured.");
         return;
       }
-      const readiness = this.captureReadinessForMob(mob, orb, new THREE.Vector3(pose.x, pose.y, pose.z));
+      const readiness = this.captureReadinessForMob(mob, orb, new THREE.Vector3(pose.x, pose.y, pose.z), peer.identity.id);
       if (!readiness.ready) {
+        this.captureSystemDiagnostics.blockers[readiness.missingKnown.includes("submerged") ? "medium" : "not-ready"] += 1;
         this.rejectCreatureAction(action, peer.identity.id, this.captureReadinessMessage(readiness));
         return;
       }
@@ -10364,7 +10736,7 @@ export class VoxelEngine {
       mob.progression = recordCreatureCaptureHistory(mob.progression, {
         capturedAt: Date.now(), captorId: peer.identity.id, methodId: "capture-orb",
       });
-      const captured = captureIntoOrb(orb, this.creatureMetadataForMob(mob));
+      const captured = captureIntoOrb(orb, this.creatureMetadataForMob(mob), Date.now(), peer.identity.id);
       if (!captured) {
         mob.progression = priorProgression;
         this.rejectCreatureAction(action, peer.identity.id, "That creature is still fighting too strongly to capture.");
@@ -10375,6 +10747,7 @@ export class VoxelEngine {
       else {
         const emptyIndex = inventory.findIndex((slot) => !slot);
         if (emptyIndex < 0) {
+          this.captureSystemDiagnostics.blockers.inventory += 1;
           mob.progression = priorProgression;
           this.rejectCreatureAction(action, peer.identity.id, "Make one empty pack slot before splitting a filled orb from this stack.");
           return;
@@ -10387,6 +10760,10 @@ export class VoxelEngine {
       this.transferPrimeCustody(mob, "captured", `orb:${captured.orbId}`);
       this.recordHostCreatureCaptureForPlayer(peer.identity, mob, capturedAt);
       this.dispatchGuildEvent("captureCreature", 1, `capture:${mob.specimenId ?? mob.id}`, { creatureKind: mob.kind });
+      this.captureSystemDiagnostics.successes += 1;
+      if (readiness.route in this.captureSystemDiagnostics.readinessRoutes) {
+        this.captureSystemDiagnostics.readinessRoutes[readiness.route as keyof CaptureSystemDiagnostics["readinessRoutes"]] += 1;
+      }
       this.spawnRecallSparkles(mob, 22);
       this.removeMob(this.mobs.indexOf(mob));
     } else if (action.kind === "recall") {
@@ -10428,14 +10805,25 @@ export class VoxelEngine {
         }
         mob.attunedOrbId = orb.orbId;
         mob.creatureOwnerId = peer.identity.id;
-        mob.creatureTamed = ["trusted", "partnered", "kindred"].includes(mob.progression.bondTier);
+        mob.creatureTamed = canAttuneCreature(deployment.creature);
         inventory[current.selected] = captureOrbInventorySlot({
           ...deployment.orb,
           attunement: deployment.orb.attunement ? { ...deployment.orb.attunement, activeEntityId: String(mob.id) } : null,
         });
         targetId = mob.id;
       } else {
+        if (creatureRelationshipPolicy(orb.creature.kind).mode === "care-bond" && !canAttuneCreature(orb.creature)) {
+          this.captureSystemDiagnostics.rehabilitation["release-before-bond"] += 1;
+        }
         const released = releaseCaptureOrb(orb);
+        if (released && MOB_DEFS[released.creature.kind].family === "butterfly") {
+          if (!this.butterflies.release(released.creature.kind as ButterflyKind, releasePosition)) {
+            this.rejectCreatureAction(action, peer.identity.id, "That butterfly needs a nearby open flower habitat.");
+            return;
+          }
+          inventory[current.selected] = captureOrbInventorySlot(released.orb);
+          targetId = undefined;
+        } else {
         const savedProgression = released?.creature.custom.progression as unknown as CreatureProgressionV2 | undefined;
         const releasedCreature = released && savedProgression ? {
           ...released.creature,
@@ -10448,6 +10836,7 @@ export class VoxelEngine {
         }
         inventory[current.selected] = captureOrbInventorySlot(released.orb);
         targetId = mob.id;
+        }
       }
     }
     const next = normalizeMultiplayerPlayerState({
@@ -12073,13 +12462,19 @@ export class VoxelEngine {
       if (neutralCreatureKind) {
         for (let index = 0; index < quantity; index += 1) {
           const definition = MOB_DEFS[neutralCreatureKind];
+          const commissioned = creatureRelationshipPolicy(neutralCreatureKind).mode === "commission";
           const entityId = `trade-${neutralCreatureKind}-${action.requestId}-${index}`;
           const orb = captureIntoOrb(createEmptyCaptureOrb(`merchant-orb-${entityId}`), {
             schema: 1, entityId, kind: neutralCreatureKind, health: definition.health, maxHealth: definition.health,
-            ageTicks: 24_000, baby: false, temperament: definition.temperament, hostile: false, tamed: false,
-            ownerId: null, name: null, geneticSeed: (Date.now() + index * 2654435761) >>> 0, command: null,
-            factionId: null, settlementId: null, aligned: false,
-            custom: JSON.parse(JSON.stringify({ courserBond: createReedstriderBond() })),
+            ageTicks: 24_000, baby: false, temperament: definition.temperament, hostile: false, tamed: commissioned,
+            ownerId: commissioned ? peer.id : null, name: null, geneticSeed: (Date.now() + index * 2654435761) >>> 0,
+            command: commissioned ? "follow" : null,
+            factionId: commissioned ? "player" : null, settlementId: null, aligned: commissioned,
+            custom: JSON.parse(JSON.stringify({
+              courserBond: commissioned
+                ? { ...createReedstriderBond(), trust: 8, tamed: true, ownerId: peer.id }
+                : createReedstriderBond(),
+            })),
           });
           const filled = orb ? captureOrbInventorySlot(orb) : null;
           if (!filled) { this.rejectCreatureAction(action, peer.id, "That creature orb could not be prepared."); return; }
@@ -12236,13 +12631,18 @@ export class VoxelEngine {
   }
 
   careSelectedCreature(action: CreatureCareAction) {
+    this.ensureCaptureSystemDiagnostics();
     const entry = this.selectedCampCreatureEntry(false);
     const orb = entry?.orb;
-    const creature = orb?.creature;
+    let creature = orb?.creature;
     if (!entry || !orb || !creature || orb.attunement?.activeEntityId) {
       this.events.onToast("Choose one stored creature in the Creature Camp selector first.");
       return false;
     }
+    if (this.multiplayer?.role === "guest") {
+      return this.requestNetworkCreatureAction({ kind: "camp-care", orbId: orb.orbId, command: action });
+    }
+    creature = refreshCreatureStabilization(creature);
     const profile = creatureProfile(creature.kind);
     const legacyProgression = creature.custom.progression as unknown as CreatureProgressionV2 | undefined;
     const progression = migrateCreatureProgression({
@@ -12252,8 +12652,11 @@ export class VoxelEngine {
     });
     let preferredFood: ItemCode | null = null;
     if (action === "feed") {
-      preferredFood = [...(MOB_DEFS[creature.kind].diet ?? []), ...(MOB_DEFS[creature.kind].tameItems ?? [])]
-        .find((item) => this.mode === "builder" || this.countItem(item) > 0) ?? null;
+      const bondFood = creatureRehabilitationStage(creature) === "nourish" ? preferredRelationshipFood(creature.kind) : null;
+      preferredFood = bondFood !== null && (this.mode === "builder" || this.countItem(bondFood) > 0)
+        ? bondFood
+        : [...(MOB_DEFS[creature.kind].diet ?? []), ...(MOB_DEFS[creature.kind].tameItems ?? [])]
+          .find((item) => this.mode === "builder" || this.countItem(item) > 0) ?? null;
       if (preferredFood === null) {
         this.events.onToast(`${creature.name ?? MOB_DEFS[creature.kind].name} needs one of its recorded foods in your pack.`);
         return false;
@@ -12274,13 +12677,17 @@ export class VoxelEngine {
     const combatStatuses = action === "wash" && Array.isArray(creature.custom.combatStatuses)
       ? creature.custom.combatStatuses.filter((status) => !(status && typeof status === "object" && washable.has(String((status as { id?: unknown }).id))))
       : creature.custom.combatStatuses;
-    const updatedCreature: CreatureMetadata = {
+    let updatedCreature: CreatureMetadata = {
       ...creature,
       health: result.health,
       custom: JSON.parse(JSON.stringify({ ...creature.custom, progression: result.progression, creatureCare: result.state, combatStatuses })) as CreatureMetadata["custom"],
     };
+    if (action === "feed" && preferredFood === preferredRelationshipFood(creature.kind)) {
+      updatedCreature = nourishCreatureRelationship(updatedCreature);
+    } else updatedCreature = refreshCreatureStabilization(updatedCreature);
     const updatedOrb: CaptureOrb = { ...orb, creature: updatedCreature };
     this.replaceCaptureOrbEverywhere(orb.orbId, updatedOrb);
+    this.captureSystemDiagnostics.rehabilitation.care += 1;
     if (result.renewableYield === "wool") this.addItem(Item.Wool, 1);
     else if (result.renewableYield === "feather") this.addItem(Item.Feather, 1);
     this.events.onToast(result.message);
@@ -12295,6 +12702,10 @@ export class VoxelEngine {
     if (!["guard", "support", "pursue", "cautious", "hold"].includes(tactic)) return false;
     const orb = this.selectedCampCreatureEntry(false)?.orb;
     if (!orb?.creature || orb.attunement?.activeEntityId) return false;
+    if (!canAttuneCreature(orb.creature)) {
+      this.events.onToast("Custody does not unlock combat tactics. Form a bond first.");
+      return false;
+    }
     const profile = creatureProfile(orb.creature.kind);
     const progression = migrateCreatureProgression({
       kind: orb.creature.kind, entityId: orb.creature.entityId, geneticSeed: orb.creature.geneticSeed, age: orb.creature.ageTicks,
@@ -12312,6 +12723,10 @@ export class VoxelEngine {
   toggleSelectedCreatureMove(moveId: string) {
     const orb = this.selectedCampCreatureEntry(false)?.orb;
     if (!orb?.creature || orb.attunement?.activeEntityId) return false;
+    if (!canAttuneCreature(orb.creature)) {
+      this.events.onToast("Custody does not unlock companion moves. Form a bond first.");
+      return false;
+    }
     const profile = creatureProfile(orb.creature.kind);
     const progression = migrateCreatureProgression({
       kind: orb.creature.kind, entityId: orb.creature.entityId, geneticSeed: orb.creature.geneticSeed, age: orb.creature.ageTicks,
@@ -12348,6 +12763,10 @@ export class VoxelEngine {
   setSelectedCreatureFieldUtility(moveId: string) {
     const orb = this.selectedCampCreatureEntry(false)?.orb;
     if (!orb?.creature || orb.attunement?.activeEntityId) return false;
+    if (!canAttuneCreature(orb.creature)) {
+      this.events.onToast("Field commands unlock only after a relationship path is complete.");
+      return false;
+    }
     const profile = creatureProfile(orb.creature.kind);
     if (moveId !== profile.moves.fieldUtilityMoveId || !CREATURE_MOVES[moveId]) return false;
     const progression = migrateCreatureProgression({
@@ -12368,6 +12787,10 @@ export class VoxelEngine {
   setSelectedCreatureWork(assignment: CreatureWorkAssignment) {
     const orb = this.selectedCampCreatureEntry(false)?.orb;
     if (!orb?.creature || orb.attunement?.activeEntityId) return false;
+    if (!canAttuneCreature(orb.creature)) {
+      this.events.onToast("Contained wildlife cannot be assigned labor. Form a bond first.");
+      return false;
+    }
     const current = normalizeCreatureWorkState(orb.creature.kind, orb.creature.custom.creatureWork);
     const next = assignCreatureWork(orb.creature.kind, current, assignment, null);
     if (!next) {
@@ -12389,6 +12812,10 @@ export class VoxelEngine {
   setSelectedTortoiseShellModule(module: CreatureShellModule | null) {
     const orb = this.selectedCampCreatureEntry(false)?.orb;
     if (!orb?.creature || orb.attunement?.activeEntityId) return false;
+    if (!canAttuneCreature(orb.creature)) {
+      this.events.onToast("Finish the creature's relationship path before fitting working habitat modules.");
+      return false;
+    }
     const current = normalizeCreatureWorkState(orb.creature.kind, orb.creature.custom.creatureWork);
     const next = fitCreatureShellModule(orb.creature.kind, current, module);
     if (!next) return false;
@@ -12433,6 +12860,10 @@ export class VoxelEngine {
   toggleSelectedCreatureGear(slotId: "saddle" | "lamp" | "charm", item: ItemCode) {
     const orb = this.selectedCampCreatureEntry(false)?.orb;
     if (!orb?.creature || orb.attunement?.activeEntityId) return false;
+    if (!canAttuneCreature(orb.creature)) {
+      this.events.onToast("Contained wildlife cannot be equipped for use. Form a bond first.");
+      return false;
+    }
     const allowed = slotId === "saddle" ? [Item.Saddle, Item.DragonSaddle]
       : slotId === "lamp" ? [Item.DeepgearLanternItem]
         : [Item.BreatherCharm];
@@ -12747,19 +13178,23 @@ export class VoxelEngine {
         this.saveSoon();
         this.emitHud(true);
       } else {
-        const worker = workerBeeFromInventorySlot(slot);
+        const transfer = apiaryWorkerTransferFromInventorySlot(slot, this.day);
+        const worker = transfer?.worker ?? null;
         const state = this.ensureApiaryState(this.activeApiaryKey);
         const inserted = worker ? insertApiaryBee(state, worker, this.localPlayerId(), this.day) : null;
         if (inserted?.inserted) {
           this.apiaries.set(this.activeApiaryKey, inserted.state);
-          slot.count -= 1;
-          if (slot.count <= 0) this.inventory[index] = null;
+          if (transfer?.replacement) this.inventory[index] = transfer.replacement;
+          else {
+            slot.count -= 1;
+            if (slot.count <= 0) this.inventory[index] = null;
+          }
           this.audio.play("craft");
           this.events.onToast("Worker bee joined the friendly apiary.");
           this.saveSoon();
           this.emitHud(true);
         } else this.events.onToast(isStockedApiary(state)
-          ? "This friendly apiary accepts exact worker-bee capsules in its honeycomb slots."
+          ? "This friendly apiary accepts a normal Capture Orb holding a worker bee."
           : "A vacant apiary accepts a Queen Cell or a Capture Orb holding a neutral or tamed Hive Queen.");
       }
       return;
@@ -12780,7 +13215,7 @@ export class VoxelEngine {
         return;
       }
       const orb = captureOrbUnitFromInventorySlot(slot);
-      if (!orb) { this.events.onToast("This station accepts single Waykeeper Capture Orbs."); return; }
+      if (!orb) { this.events.onToast("This station accepts one normal Capture Orb per slot."); return; }
       if (orb.attunement?.activeEntityId) { this.events.onToast("Recall this attuned creature before storing its orb in a station."); return; }
       if (this.activeOrbRackKey) {
         const rack = this.orbRacks.get(this.activeOrbRackKey);
@@ -13391,16 +13826,20 @@ export class VoxelEngine {
       if (!isStockedApiary(state)) return;
       const existing = livingApiaryWorkers(state)[index - 3] ?? null;
       if (this.cursor) {
-        const worker = workerBeeFromInventorySlot(this.cursor);
+        const transfer = apiaryWorkerTransferFromInventorySlot(this.cursor, this.day);
+        const worker = transfer?.worker ?? null;
         const inserted = worker ? insertApiaryBee(state, worker, this.localPlayerId(), this.day) : null;
         if (!inserted?.inserted) {
           this.events.onToast(inserted?.reason === "full" ? "This apiary already holds eight workers."
-            : "Friendly apiaries accept worker-bee capsules in these honeycomb slots.");
+            : "Friendly apiaries accept a normal Capture Orb holding a worker bee.");
           return;
         }
         this.apiaries.set(key, inserted.state);
-        this.cursor.count -= 1;
-        if (this.cursor.count <= 0) this.cursor = null;
+        if (transfer?.replacement) this.cursor = transfer.replacement;
+        else {
+          this.cursor.count -= 1;
+          if (this.cursor.count <= 0) this.cursor = null;
+        }
         this.audio.play("craft");
         this.saveSoon();
         this.emitHud(true);
@@ -13692,7 +14131,7 @@ export class VoxelEngine {
       }
     } else if (this.cursor) {
       const incoming = captureOrbUnitFromInventorySlot(this.cursor);
-      if (!incoming) { this.events.onToast("This slot accepts one Waykeeper Capture Orb."); return; }
+      if (!incoming) { this.events.onToast("This slot accepts one normal Capture Orb."); return; }
       if (incoming.attunement?.activeEntityId) { this.events.onToast("Recall this attuned creature before storing its orb in a station."); return; }
       if (existing && this.cursor.count !== 1) {
         this.events.onToast("Split the orb stack before swapping with an occupied station slot.");
@@ -14943,9 +15382,454 @@ export class VoxelEngine {
     return true;
   }
 
-  private captureReadinessForMob(mob: MobEntity, orb: CaptureOrb, keeperPosition: THREE.Vector3 = this.position): CaptureReadiness {
+  connectSelectedCreature() {
+    this.ensureCaptureSystemDiagnostics();
+    const entry = this.selectedCampCreatureEntry(false);
+    const orb = entry?.orb;
+    if (!entry || !orb?.creature || orb.attunement?.activeEntityId) {
+      this.events.onToast("Choose one stored creature in Creature Camp first.");
+      return false;
+    }
+    if (this.multiplayer?.role === "guest") {
+      return this.requestNetworkCreatureAction({ kind: "camp-connect", orbId: orb.orbId });
+    }
+    const result = connectWithCreature(orb.creature, this.day);
+    if (!result.accepted) {
+      this.events.onToast(result.message);
+      return false;
+    }
+    const profile = creatureProfile(result.metadata.kind);
+    const progression = migrateCreatureProgression({
+      kind: result.metadata.kind,
+      entityId: result.metadata.entityId,
+      geneticSeed: result.metadata.geneticSeed,
+      age: result.metadata.ageTicks,
+      maximumLevel: profile.stats.maximumLevel,
+      defaultMoveIds: learnedMovesAtLevel(profile.moves, 1),
+      legacy: result.metadata.custom.progression as unknown as CreatureProgressionV2 | undefined,
+    });
+    const creature: CreatureMetadata = {
+      ...result.metadata,
+      custom: JSON.parse(JSON.stringify({
+        ...result.metadata.custom,
+        progression: {
+          ...progression,
+          bondPoints: progression.bondPoints + 12,
+          bondTier: bondTierForPoints(progression.bondPoints + 12),
+        },
+      })) as CreatureMetadata["custom"],
+    };
+    this.replaceCaptureOrbEverywhere(orb.orbId, { ...orb, creature });
+    this.captureSystemDiagnostics.rehabilitation.connect += 1;
+    this.events.onToast(result.message);
+    this.audio.play("craft");
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  formBondWithSelectedCreature() {
+    this.ensureCaptureSystemDiagnostics();
+    const entry = this.selectedCampCreatureEntry(false);
+    const orb = entry?.orb;
+    if (!entry || !orb?.creature || orb.attunement?.activeEntityId) {
+      this.events.onToast("Choose one stored creature in Creature Camp first.");
+      return false;
+    }
+    if (this.multiplayer?.role === "guest") {
+      return this.requestNetworkCreatureAction({ kind: "camp-form-bond", orbId: orb.orbId });
+    }
+    const result = formCreatureBond(orb.creature, this.localPlayerId(), Date.now());
+    if (!result.accepted) {
+      this.events.onToast(result.message);
+      return false;
+    }
+    const profile = creatureProfile(result.metadata.kind);
+    const progression = migrateCreatureProgression({
+      kind: result.metadata.kind,
+      entityId: result.metadata.entityId,
+      geneticSeed: result.metadata.geneticSeed,
+      age: result.metadata.ageTicks,
+      maximumLevel: profile.stats.maximumLevel,
+      defaultMoveIds: learnedMovesAtLevel(profile.moves, 1),
+      legacy: result.metadata.custom.progression as unknown as CreatureProgressionV2 | undefined,
+    });
+    const bondPoints = Math.max(45, progression.bondPoints);
+    const creature: CreatureMetadata = {
+      ...result.metadata,
+      custom: JSON.parse(JSON.stringify({
+        ...result.metadata.custom,
+        progression: { ...progression, bondPoints, bondTier: bondTierForPoints(bondPoints) },
+      })) as CreatureMetadata["custom"],
+    };
+    this.replaceCaptureOrbEverywhere(orb.orbId, { ...orb, creature });
+    this.captureSystemDiagnostics.rehabilitation.bond += 1;
+    this.bestiary[creature.kind].tames = Math.max(1, this.bestiary[creature.kind].tames + 1);
+    this.dispatchGuildEvent("meetHabitatNeed", 1, `bond:${creature.entityId}`, { creatureKind: creature.kind });
+    this.events.onToast(result.message);
+    this.audio.play("craft");
+    this.saveSoon();
+    this.emitHud(true);
+    return true;
+  }
+
+  creatureTransferRecipients() {
+    const session = this.multiplayer;
+    if (!session) return [] as Array<{ id: string; name: string }>;
+    return session.getPeers()
+      .filter((peer) => peer.state === "connected" && peer.identity && peer.identity.peerKind !== "agent"
+        && peer.identity.id !== session.identity.id)
+      .map((peer) => ({ id: peer.identity!.id, name: peer.identity!.name }));
+  }
+
+  pendingCreatureTransferOffers() {
+    const playerId = this.localPlayerId();
+    const now = Date.now();
+    for (const [offerId, offer] of this.creatureTransferOffers) {
+      if (offer.expiresAt <= now) this.creatureTransferOffers.delete(offerId);
+    }
+    return [...this.creatureTransferOffers.values()]
+      .filter((offer) => offer.recipientId === playerId)
+      .map((offer) => ({ ...offer }));
+  }
+
+  private transferInventoryFor(playerId: string): Array<InventorySlot | null> | null {
+    if (playerId === this.localPlayerId()) return this.inventory.map((slot) => slot ? { ...slot, metadata: slot.metadata ? { ...slot.metadata } : undefined } : null);
+    const state = this.multiplayerPlayerStates.get(playerId);
+    return state ? state.inventory.map(inventorySlotFromNetwork) : null;
+  }
+
+  private commitTransferredInventory(playerId: string, inventory: Array<InventorySlot | null>, requestId: string) {
+    if (playerId === this.localPlayerId()) {
+      this.inventory = inventory;
+      if (this.activeCampOrbId && !inventory.some((slot) => captureOrbFromInventorySlot(slot)?.orbId === this.activeCampOrbId)) {
+        this.activeCampOrbId = null;
+      }
+      return true;
+    }
+    const session = this.multiplayer;
+    const identity = session?.getPeer(playerId)?.identity;
+    if (!session || session.role !== "host" || !identity) return false;
+    const current = this.ensureHostPlayerSession(identity);
+    const next = normalizeMultiplayerPlayerState({
+      ...current,
+      inventory: inventory.map(networkItemStack),
+      revision: current.revision + 1,
+    }, playerId, current.variant);
+    this.multiplayerPlayerStates.set(playerId, next);
+    this.sendAuthoritativePlayerState(playerId, requestId);
+    return true;
+  }
+
+  private createCreatureTransferOffer(sourceId: string, orbId: string, recipientId: string, requestId: string) {
+    const session = this.multiplayer;
+    if (!session || session.role !== "host" || sourceId === recipientId) return null;
+    const recipient = recipientId === this.localPlayerId()
+      ? session.identity
+      : session.getPeer(recipientId)?.identity ?? null;
+    if (!recipient || recipient.peerKind === "agent") return null;
+    const sourceInventory = this.transferInventoryFor(sourceId);
+    const orb = sourceInventory
+      ?.map((slot) => captureOrbFromInventorySlot(slot))
+      .find((candidate) => candidate?.orbId === orbId) ?? null;
+    if (!orb?.creature || orb.attunement?.activeEntityId) return null;
+    const preview = transferCreatureBond(orb.creature, sourceId, recipientId);
+    if (!preview.accepted) return null;
+    for (const [existingId, existing] of this.creatureTransferOffers) {
+      if (existing.sourceId === sourceId && existing.orbId === orbId) this.creatureTransferOffers.delete(existingId);
+    }
+    const sourceName = sourceId === this.localPlayerId()
+      ? session.identity.name
+      : session.getPeer(sourceId)?.identity?.name ?? "Another keeper";
+    const offer: CreatureTransferOfferView = Object.freeze({
+      offerId: `offer_${requestId}`.slice(0, 120),
+      sourceId,
+      sourceName,
+      recipientId,
+      orbId,
+      creatureName: orb.creature.name?.trim() || MOB_DEFS[orb.creature.kind].name,
+      expiresAt: Date.now() + 60_000,
+    });
+    this.creatureTransferOffers.set(offer.offerId, offer);
+    if (recipientId !== this.localPlayerId()) {
+      session.sendCreatureAction({
+        requestId: offer.offerId,
+        actorId: sourceId,
+        tick: this.multiplayerTick,
+        kind: "camp-transfer-offer",
+        status: "accepted",
+        offerId: offer.offerId,
+        orbId,
+        recipientId,
+        sourceName,
+        creatureName: offer.creatureName,
+        message: `${sourceName} offers you ${offer.creatureName}. Open Creature Camp to accept within one minute.`,
+      }, recipientId);
+    }
+    this.emitHud(true);
+    return offer;
+  }
+
+  offerSelectedCampCreature(recipientId: string) {
+    const entry = this.selectedCampCreatureEntry(false);
+    const orb = entry?.orb;
+    if (!entry || !orb?.creature || orb.attunement?.activeEntityId) {
+      this.events.onToast("Choose one stored companion in Creature Camp first.");
+      return false;
+    }
+    const relationship = transferCreatureBond(orb.creature, this.localPlayerId(), recipientId);
+    if (!relationship.accepted) {
+      this.events.onToast(relationship.message);
+      return false;
+    }
+    if (this.multiplayer?.role === "guest") {
+      return this.requestNetworkCreatureAction({ kind: "camp-transfer-offer", orbId: orb.orbId, recipientId });
+    }
+    const requestId = `local_${Date.now().toString(36)}_${this.multiplayerTick.toString(36)}`;
+    const offer = this.createCreatureTransferOffer(this.localPlayerId(), orb.orbId, recipientId, requestId);
+    if (!offer) {
+      this.events.onToast("That connected keeper is no longer available.");
+      return false;
+    }
+    this.events.onToast(`${offer.creatureName} offered to ${this.multiplayer?.getPeer(recipientId)?.identity?.name ?? "the other keeper"}.`);
+    return true;
+  }
+
+  private resolveCreatureTransferOffer(offerId: string, recipientId: string, requestId: string) {
+    this.ensureCaptureSystemDiagnostics();
+    const offer = this.creatureTransferOffers.get(offerId);
+    if (!offer || offer.recipientId !== recipientId || offer.expiresAt <= Date.now()) {
+      if (offer) this.creatureTransferOffers.delete(offerId);
+      return { accepted: false, message: "That transfer offer expired or no longer exists." } as const;
+    }
+    const sourceInventory = this.transferInventoryFor(offer.sourceId);
+    const recipientInventory = this.transferInventoryFor(offer.recipientId);
+    if (!sourceInventory || !recipientInventory) return { accepted: false, message: "One keeper's inventory is no longer available." } as const;
+    const sourceIndex = sourceInventory.findIndex((slot) => captureOrbFromInventorySlot(slot)?.orbId === offer.orbId);
+    const orb = sourceIndex >= 0 ? captureOrbFromInventorySlot(sourceInventory[sourceIndex]) : null;
+    const recipientIndex = recipientInventory.findIndex((slot) => !slot);
+    if (!orb?.creature || orb.attunement?.activeEntityId) return { accepted: false, message: "The offered companion is no longer stored in that orb." } as const;
+    if (recipientIndex < 0) return { accepted: false, message: "Make one empty pack slot before accepting this companion." } as const;
+    const transferred = transferCreatureBond(orb.creature, offer.sourceId, offer.recipientId);
+    if (!transferred.accepted) return { accepted: false, message: transferred.message } as const;
+    const transferredOrb: CaptureOrb = {
+      ...orb,
+      creature: transferred.metadata,
+      attunement: orb.attunement ? { ...orb.attunement, ownerId: offer.recipientId } : null,
+    };
+    sourceInventory[sourceIndex] = null;
+    recipientInventory[recipientIndex] = captureOrbInventorySlot(transferredOrb);
+    if (!this.commitTransferredInventory(offer.sourceId, sourceInventory, requestId)
+      || !this.commitTransferredInventory(offer.recipientId, recipientInventory, requestId)) {
+      return { accepted: false, message: "The host could not commit both inventories; the offer remains unchanged." } as const;
+    }
+    this.creatureTransferOffers.delete(offerId);
+    this.captureSystemDiagnostics.rehabilitation.transfer += 1;
+    this.saveSoon();
+    this.emitHud(true);
+    return { accepted: true, message: transferred.message, offer } as const;
+  }
+
+  acceptCreatureTransfer(offerId: string) {
+    if (this.multiplayer?.role === "guest") {
+      return this.requestNetworkCreatureAction({ kind: "camp-transfer-accept", offerId });
+    }
+    const requestId = `local_accept_${Date.now().toString(36)}_${this.multiplayerTick.toString(36)}`;
+    const result = this.resolveCreatureTransferOffer(offerId, this.localPlayerId(), requestId);
+    this.events.onToast(result.message);
+    this.audio.play(result.accepted ? "craft" : "ui");
+    if (result.accepted && result.offer?.sourceId !== this.localPlayerId() && this.multiplayer) {
+      this.multiplayer.sendCreatureAction({
+        requestId,
+        actorId: result.offer.sourceId,
+        tick: this.multiplayerTick,
+        kind: "camp-transfer-accept",
+        status: "accepted",
+        offerId,
+        recipientId: this.localPlayerId(),
+        message: `${result.offer.creatureName}'s transfer was accepted.`,
+      }, result.offer.sourceId);
+    }
+    return result.accepted;
+  }
+
+  private captureParticipantPosition(playerId: string) {
+    if (playerId === this.localPlayerId()) return this.position;
+    const pose = this.remotePlayers.get(playerId)?.target;
+    return pose ? new THREE.Vector3(pose.x, pose.y, pose.z) : null;
+  }
+
+  private playerHasPacificationItem(playerId: string, item: ItemCode) {
+    if (playerId === this.localPlayerId()) return this.mode === "builder" || this.countItem(item) > 0;
+    const state = this.multiplayerPlayerStates.get(playerId);
+    return Boolean(state?.inventory.some((entry) => entry?.item === item && entry.count > 0));
+  }
+
+  private consumePacificationItem(playerId: string, item: ItemCode) {
+    if (playerId === this.localPlayerId()) return this.mode === "builder" || this.removeItem(item, 1);
+    const current = this.multiplayerPlayerStates.get(playerId);
+    if (!current) return false;
+    const inventory = current.inventory.map(inventorySlotFromNetwork);
+    for (let index = inventory.length - 1; index >= 0; index -= 1) {
+      const slot = inventory[index];
+      if (!slot || slot.item !== item || slot.count <= 0) continue;
+      slot.count -= 1;
+      if (slot.count <= 0) inventory[index] = null;
+      const next = normalizeMultiplayerPlayerState({
+        ...current,
+        inventory: inventory.map(networkItemStack),
+        revision: current.revision + 1,
+      }, playerId, current.variant);
+      this.multiplayerPlayerStates.set(playerId, next);
+      this.sendAuthoritativePlayerState(playerId);
+      return true;
+    }
+    return false;
+  }
+
+  private calmingOfferingAnchorIsSafe(mob: MobEntity) {
+    const x = Math.floor(mob.group.position.x + 0.5);
+    const y = Math.floor(mob.group.position.y + 0.2);
+    const z = Math.floor(mob.group.position.z + 0.5);
+    if (mob.definition.aquatic || mob.definition.movement === "aquatic") return blockContainsWater(this.world.getBlock(x, y, z));
+    const below = this.world.getBlock(x, y - 1, z);
+    const feet = this.world.getBlock(x, y, z);
+    return Boolean(below !== undefined && BLOCKS[below]?.solid && feet !== BlockId.Lava && (!feet || !BLOCKS[feet]?.solid));
+  }
+
+  private beginCalmingOfferingForMob(mob: MobEntity, playerId: string, item: ItemCode) {
+    const preferred = preferredRelationshipFood(mob.kind);
+    const profile = creatureProfile(mob.kind);
+    if (profile.captureProfile === "uncapturable" || profile.captureProfile === "legendary") {
+      return { accepted: false, message: creatureRelationshipPolicy(mob.kind).explanation } as const;
+    }
+    if (!(mob.hostile || mob.definition.hostile || mob.definition.temperament === "Hostile")) {
+      return { accepted: false, message: "This creature is already calm enough for an ordinary Capture Orb." } as const;
+    }
+    if (preferred === null || item !== preferred) {
+      return {
+        accepted: false,
+        message: preferred === null
+          ? "This species has no calming offering route; use the visible 40% health route or Break Its Tempo."
+          : `Its displayed calming offering is ${ITEMS[preferred]?.name ?? "a preferred food"}.`,
+      } as const;
+    }
+    if (!this.calmingOfferingAnchorIsSafe(mob)) {
+      return { accepted: false, message: "Move the creature onto safe ground in its own medium before placing the offering." } as const;
+    }
+    const result = beginCalmingOffering(this.capturePacification.get(mob.id), {
+      participantId: playerId,
+      item,
+      now: this.worldSimulationSeconds(),
+    });
+    if (!result.accepted) return { accepted: false, message: result.reason ?? "The offering cannot begin yet." } as const;
+    this.capturePacification.set(mob.id, result.state);
+    mob.attackCooldown = Math.max(mob.attackCooldown, 0.8);
+    this.spawnParticles(mob.group.position.x, mob.group.position.y + 0.15, mob.group.position.z, BlockId.Moss, 10);
+    return {
+      accepted: true,
+      message: `${ITEMS[item]?.name ?? "Offering"} placed. Step outside the warning ring for four seconds; it is consumed only when accepted.`,
+    } as const;
+  }
+
+  private updateCapturePacification(dt: number) {
+    if (this.multiplayer?.role === "guest" || this.capturePacification.size === 0) return;
+    const now = this.worldSimulationSeconds();
+    for (const [mobId, initial] of this.capturePacification) {
+      const mob = this.mobs.find((candidate) => candidate.id === mobId && candidate.health > 0);
+      if (!mob) {
+        this.capturePacification.delete(mobId);
+        continue;
+      }
+      const participantId = initial.participantId;
+      const participant = participantId ? this.captureParticipantPosition(participantId) : null;
+      if (!participantId || !participant) {
+        if (initial.settledUntil <= now) this.capturePacification.delete(mobId);
+        continue;
+      }
+      let next = advanceOutmaneuverAttempt(initial, {
+        participantId,
+        now,
+        outsideAttackEnvelope: mob.group.position.distanceTo(participant) > Math.max(3.2, mob.definition.attackRange + 1.25),
+      });
+      if (next.offeringItem !== null) {
+        const offering = advanceCalmingOffering(next, {
+          participantId,
+          now,
+          deltaSeconds: Math.min(0.1, Math.max(0, dt)),
+          safeAnchor: this.calmingOfferingAnchorIsSafe(mob),
+          outsideWarningRing: mob.group.position.distanceTo(participant) > Math.max(3.2, mob.definition.attackRange + 1.25),
+          creatureInterrupted: mob.hurtTimer > 0.05,
+          offeringAvailable: this.playerHasPacificationItem(participantId, next.offeringItem),
+        });
+        next = offering.state;
+        if (offering.completed && offering.consumeItem !== null) {
+          if (!this.consumePacificationItem(participantId, offering.consumeItem)) {
+            next = interruptPacificationWithDamage(next, now);
+          } else {
+            mob.state = "wander";
+            mob.awarenessTimer = 0;
+            mob.fleeTimer = 0;
+            mob.attackCooldown = Math.max(mob.attackCooldown, 10);
+            this.spawnParticles(mob.group.position.x, mob.group.position.y + mob.definition.height * 0.45, mob.group.position.z, BlockId.Moss, 16);
+            if (participantId === this.localPlayerId()) this.events.onToast(`${mob.name} accepted the offering. Capture-ready for ten seconds.`);
+            this.saveSoon();
+          }
+        } else if (offering.interrupted && participantId === this.localPlayerId()) {
+          this.events.onToast("The calming offering was interrupted before acceptance; no food was consumed.");
+        }
+      }
+      const settledNow = next.settledUntil > now && initial.settledUntil <= now;
+      if (settledNow) {
+        mob.state = "wander";
+        mob.awarenessTimer = 0;
+        mob.fleeTimer = 0;
+        mob.attackCooldown = Math.max(mob.attackCooldown, 10);
+        this.spawnParticles(mob.group.position.x, mob.group.position.y + mob.definition.height * 0.45, mob.group.position.z, BlockId.Moss, 16);
+        if (participantId === this.localPlayerId() && next.settledRoute === "outmaneuver") {
+          this.events.onToast(`${mob.name}'s tempo breaks. Capture-ready for ten seconds.`);
+        }
+      }
+      this.capturePacification.set(mobId, next);
+      const view = pacificationProgressView(next, now);
+      if (!view.route && !view.settledRoute && view.retrySeconds <= 0) this.capturePacification.delete(mobId);
+    }
+  }
+
+  private captureReadinessForMob(
+    mob: MobEntity,
+    _orb: CaptureOrb,
+    keeperPosition: THREE.Vector3 = this.position,
+    keeperId = this.localPlayerId(),
+  ): CaptureReadiness {
     const profile = creatureProfile(mob.kind);
     const keeper = keeperPosition ?? this.position ?? mob.group.position;
+    const blocked = (profileName: string, summary: string): CaptureReadiness => Object.freeze({
+      capturable: false,
+      ready: false,
+      route: "blocked",
+      profileId: profile.captureProfile,
+      profileName,
+      summary,
+      conditions: Object.freeze([]),
+      missingKnown: Object.freeze([]),
+    });
+    const relationshipPolicy = creatureRelationshipPolicy(mob.kind);
+    const ownerId = mob.creatureOwnerId ?? mob.petState?.ownerId ?? mob.shadeState?.ownerId
+      ?? mob.reedstriderBond?.ownerId ?? mob.courserBond?.ownerId ?? mob.leviathanGrowth?.ownerId
+      ?? mob.apiaryBee?.ownerId ?? mob.hiredByPlayerId ?? null;
+    if (this.temporarySummons?.has(mob.id)) {
+      return blocked("Temporary summon", "Temporary manifestations use their visible Summoning and Worldpin lifecycle.");
+    }
+    if (mob.aligned && mob.factionId && mob.factionId !== "player") {
+      return blocked("Faction aligned", `${mob.name} belongs to ${FACTIONS[mob.factionId]?.name ?? "a settlement"} and cannot be captured.`);
+    }
+    if (ownerId && ownerId !== keeperId) {
+      return blocked("Already owned", `${mob.name} is already bonded to another keeper.`);
+    }
+    if (!relationshipPolicy.orbEligible) {
+      return blocked(relationshipPolicy.title, relationshipPolicy.explanation);
+    }
     // Capture is a migration boundary: old worlds and long-sleeping entities
     // can reach the orb before every v2 field has been materialized.
     mob.specimenId ||= `legacy:${mob.kind}:${mob.id}`;
@@ -14957,75 +15841,58 @@ export class VoxelEngine {
     });
     mob.combatStatuses ??= Object.freeze([]);
     mob.creatureEquipment ??= {};
-    const entry = normalizeLivingBestiaryEntry(this.bestiary?.[mob.kind]);
-    if (this.bestiary) this.bestiary[mob.kind] = entry;
-    const completedResearch = Object.values(entry.research).filter((node) => node.unlockedAt !== null).length;
-    const researchLevel = entry.secretUnlocked || completedResearch >= 2 ? 3 : completedResearch > 0 || entry.captures > 0 ? 2 : entry.seen ? 1 : 0;
-    const knowledge = captureKnowledgeForResearch(mob.kind, profile.captureProfile, researchLevel);
     const getBlock = typeof this.world?.getBlock === "function" ? this.world.getBlock.bind(this.world) : null;
-    const keeperSubmerged = Boolean(getBlock && blockContainsWater(getBlock(
+    const keeperBlock = getBlock ? getBlock(
       Math.floor(keeper.x + 0.5), Math.floor(keeper.y + 0.5), Math.floor(keeper.z + 0.5),
-    )));
-    const creatureSubmerged = Boolean(getBlock && blockContainsWater(getBlock(
+    ) : undefined;
+    const creatureBlock = getBlock ? getBlock(
       Math.floor(mob.group.position.x + 0.5), Math.floor(mob.group.position.y + 0.5), Math.floor(mob.group.position.z + 0.5),
-    )));
-    const bonded = Boolean(mob.dragonState?.tamed || mob.petState?.tamed || mob.shadeState?.tamed || mob.reedstriderBond?.tamed
-      || mob.courserBond?.tamed || mob.leviathanGrowth?.tamed || mob.apiaryBee?.tamed || mob.hiredByPlayerId);
-    const subdued = mob.health <= 1 || mob.health < mob.maxHealth * 0.5;
+    ) : undefined;
+    const keeperSubmerged = mob.kind === "syrupfin" ? keeperBlock === BlockId.Syrup : blockContainsWater(keeperBlock);
+    const creatureSubmerged = mob.kind === "syrupfin" ? creatureBlock === BlockId.Syrup : blockContainsWater(creatureBlock);
     const nowSeconds = this.worldSimulationSeconds();
-    const resonanceMatched = captureResonanceMatched(mob.combatStatuses, nowSeconds);
-    const encounterState = mob.legendarySiteId ? this.legendaryEncounters?.get(mob.legendarySiteId) ?? null : null;
-    const encounterProgress = encounterState ? legendaryStageProgress(encounterState) : null;
-    const encounterComplete = mob.progression.rarityForm !== "legendary" ? bonded
-      : Boolean(encounterState && encounterProgress?.complete
-        && encounterState.stageIndex === encounterProgress.definition.stages.length - 1
-        && encounterState.status === "active");
-    const ordinaryReadiness = evaluateCaptureReadiness({
+    let progress: PacificationProgressView;
+    if (this.multiplayer?.role === "guest" && mob.pacificationView) {
+      progress = mob.pacificationView;
+    } else {
+      // Focused harnesses and migrated engines may predate this bounded map.
+      const pacificationByMob = this.capturePacification ??= new Map<number, CreaturePacificationState>();
+      let pacification = pacificationByMob.get(mob.id) ?? createCreaturePacificationState();
+      if (pacification.participantId === keeperId && pacification.cleanEvades >= 2) {
+        pacification = advanceOutmaneuverAttempt(pacification, {
+          participantId: keeperId,
+          now: nowSeconds,
+          outsideAttackEnvelope: mob.group.position.distanceTo(keeper) > Math.max(3.2, mob.definition.attackRange + 1.25),
+        });
+        pacificationByMob.set(mob.id, pacification);
+      }
+      progress = pacificationProgressView(pacification, nowSeconds);
+    }
+    const aggressive = mob.hostile || mob.definition.hostile || mob.definition.temperament === "Hostile";
+    return evaluateCaptureReadiness({
       profileId: profile.captureProfile,
-      fittedLens: orb.lens ?? null,
-      learnedConditions: knowledge.learnedConditions,
+      hostile: aggressive,
+      health: mob.health,
+      maxHealth: mob.maxHealth,
+      aquatic: Boolean(mob.definition.aquatic || mob.definition.movement === "aquatic"),
+      now: nowSeconds,
+      calmUntil: progress.participantId === keeperId ? nowSeconds + progress.settledSeconds : 0,
+      calmRoute: progress.participantId === keeperId ? progress.settledRoute : null,
+      outmaneuverEvades: progress.participantId === keeperId ? progress.cleanEvades : 0,
+      outmaneuverHoldSeconds: progress.participantId === keeperId ? progress.holdSeconds : 0,
+      offeringName: preferredRelationshipFood(mob.kind) !== null ? ITEMS[preferredRelationshipFood(mob.kind)!]?.name ?? null : null,
+      offeringProgressSeconds: progress.participantId === keeperId ? progress.offeringSeconds : 0,
       states: {
-        "safe-approach": !mob.hostile && (mob.awarenessTimer ?? 0) <= 0.05,
-        calm: (mob.awarenessTimer ?? 0) <= 0.05 && (mob.fleeTimer ?? 0) <= 0.05,
-        fed: bonded,
-        unaware: !mob.seesPlayer && (mob.awarenessTimer ?? 0) <= 0.05,
-        tired: (mob.attackCooldown ?? 0) > 0.35 && (mob.fleeTimer ?? 0) <= 0.2,
-        intercepted: mob.group.position.distanceToSquared(keeper) <= 6.5 * 6.5 && (mob.fleeTimer ?? 0) <= 0.2,
-        vulnerable: (mob.hurtTimer ?? 0) > 0 || subdued,
-        "objective-resolved": !mob.hostile || bonded,
-        subdued,
+        calm: !aggressive && (mob.awarenessTimer ?? 0) <= 0.05 && (mob.fleeTimer ?? 0) <= 0.05,
+        subdued: mob.health <= 1 || mob.health <= mob.maxHealth * 0.4,
         submerged: keeperSubmerged && creatureSubmerged,
-        "resonance-matched": resonanceMatched,
-        rescued: mob.progression.captureHistory.lastMethodId === "rescue",
-        "anchor-window": mob.followCommand === "hold" || bonded,
-        "encounter-complete": encounterComplete,
-        "legendary-consent": bonded || encounterComplete,
       },
-    });
-    if (!mob.primeAnchorId || mob.progression.rarityForm !== "prime") return ordinaryReadiness;
-    const primeState = this.primeEncounters?.get(mob.primeAnchorId);
-    const routeReady = primeEncounterRouteComplete(primeState);
-    const routeCondition = Object.freeze({
-      id: null,
-      label: routeReady ? "Prime field route complete" : "Prime field route incomplete",
-      hint: routeReady ? "Its three ecological signs have been documented." : "Observe the specimen, hear its distinctive call, and complete an uninterrupted Kinmark study.",
-      satisfied: routeReady,
-      learned: Boolean(primeState?.routeProgress),
-    });
-    return Object.freeze({
-      ...ordinaryReadiness,
-      ready: ordinaryReadiness.ready && routeReady,
-      summary: routeReady ? ordinaryReadiness.summary : "Prime specimens require a completed three-step field route; damage cannot bypass it.",
-      conditions: Object.freeze([...ordinaryReadiness.conditions, routeCondition]),
     });
   }
 
   private captureReadinessMessage(readiness: CaptureReadiness) {
     if (!readiness.capturable) return readiness.summary;
-    const known = readiness.conditions.filter((condition) => condition.learned && !condition.satisfied).map((condition) => condition.label);
-    const unknown = readiness.conditions.filter((condition) => !condition.learned && !condition.satisfied).length;
-    return known.length || unknown ? `${readiness.profileName} capture needs ${[...known, ...(unknown ? [`${unknown} unknown condition${unknown === 1 ? "" : "s"}`] : [])].join(", ")}.`
-      : `${readiness.profileName} capture is ready.`;
+    return readiness.ready ? `${readiness.profileName} is ready.` : readiness.summary;
   }
 
   creatureReleasePosition(metadata: CreatureMetadata, requested: THREE.Vector3) {
@@ -15385,6 +16252,7 @@ export class VoxelEngine {
   }
 
   private performSelectedUse() {
+    this.ensureCaptureSystemDiagnostics();
     if (this.placeCooldown > 0) return;
     const heldSlot = this.selectedSlot();
     const heldDefinition = heldSlot ? ITEMS[heldSlot.item] : null;
@@ -15423,6 +16291,23 @@ export class VoxelEngine {
         this.events.onToast("Final terms are ready: use a Capture Orb, use a Bound Book for covenant, crouch-use empty-handed to release, or continue the fair fight.");
         return;
       }
+    }
+    if (heldSlot && this.targetMob && preferredRelationshipFood(this.targetMob.kind) === heldSlot.item
+      && (this.targetMob.hostile || this.targetMob.definition.hostile || this.targetMob.definition.temperament === "Hostile")) {
+      if (this.multiplayer?.role === "guest") {
+        this.requestNetworkCreatureAction({ kind: "pacify-offering", targetId: this.targetMob.id });
+        this.placeCooldown = 0.25;
+        return;
+      }
+      const offering = this.beginCalmingOfferingForMob(this.targetMob, this.localPlayerId(), heldSlot.item);
+      this.events.onToast(offering.message);
+      this.placeCooldown = 0.25;
+      this.heldUse = offering.accepted ? 1 : this.heldUse;
+      if (offering.accepted) {
+        this.audio.play("craft");
+        this.emitHud(true);
+      }
+      return;
     }
     if (!heldSlot && this.targetMob && this.leadAnchors.has(this.targetMob.id)) {
       const mob = this.targetMob;
@@ -15886,13 +16771,21 @@ export class VoxelEngine {
         // capture/release must instead be resolved by the host.
         if (!this.crouching) {
           if (orb.creature) {
+            if (!orb.attunement && (this.captureOrbReleaseConfirm.get(orb.orbId) ?? 0) < this.worldSimulationSeconds()) {
+              this.captureOrbReleaseConfirm.set(orb.orbId, this.worldSimulationSeconds() + 6);
+              this.events.onToast(!canAttuneCreature(orb.creature) && (orb.creature.hostile || orb.creature.temperament === "Hostile")
+                ? "Warning: this creature is still wild and aggressive. Use the orb again within six seconds to release it."
+                : "Release returns this creature to the world without forming a bond. Use the orb again within six seconds to confirm.");
+              return;
+            }
+            this.captureOrbReleaseConfirm.delete(orb.orbId);
             const direction = this.camera.getWorldDirection(new THREE.Vector3());
             const releasePosition = this.target
               ? new THREE.Vector3(this.target.placeX, this.target.placeY + MOB_DEFS[orb.creature.kind].footOffset, this.target.placeZ)
               : this.position.clone().add(direction.setY(0).normalize().multiplyScalar(1.8));
             this.requestNetworkCreatureAction({ kind: "release", x: releasePosition.x, y: releasePosition.y, z: releasePosition.z });
           } else if (this.targetMob) this.requestNetworkCreatureAction({ kind: "capture", targetId: this.targetMob.id });
-          else this.events.onToast("Aim the empty Capture Orb at a creature. Hostiles must be below half health or at one heart.");
+          else this.events.onToast("Aim the empty Capture Orb at a creature. Aggressive creatures are reliably ready at 40% health or one heart.");
           return;
         }
       }
@@ -15926,7 +16819,9 @@ export class VoxelEngine {
           } else {
             const attuned = attuneCaptureOrb(orb, ownerId, Date.now());
             if (!attuned) {
-              this.events.onToast("Only a conscious captured creature can be attuned.");
+              this.events.onToast(canAttuneCreature(orb.creature)
+                ? "Only a conscious bonded companion can be attuned."
+                : "Capture grants custody, not friendship. Complete Stabilize, Nourish, Connect, and Form Bond in Creature Camp first.");
               return;
             }
             this.replaceCaptureOrbEverywhere(orb.orbId, attuned);
@@ -15959,7 +16854,7 @@ export class VoxelEngine {
           }
           mob.attunedOrbId = orb.orbId;
           mob.creatureOwnerId = ownerId;
-          mob.creatureTamed = ["trusted", "partnered", "kindred"].includes(mob.progression.bondTier);
+          mob.creatureTamed = canAttuneCreature(deployment.creature);
           const deployedOrb: CaptureOrb = {
             ...deployment.orb,
             attunement: deployment.orb.attunement ? { ...deployment.orb.attunement, activeEntityId: String(mob.id) } : null,
@@ -15973,12 +16868,39 @@ export class VoxelEngine {
           this.emitHud(true);
           return;
         }
+        const releaseConfirmByOrb = this.captureOrbReleaseConfirm ??= new Map<string, number>();
+        if ((releaseConfirmByOrb.get(orb.orbId) ?? 0) < this.worldSimulationSeconds()) {
+          releaseConfirmByOrb.set(orb.orbId, this.worldSimulationSeconds() + 6);
+          this.events.onToast(!canAttuneCreature(orb.creature) && (orb.creature.hostile || orb.creature.temperament === "Hostile")
+            ? "Warning: this creature is still wild and aggressive. Use the orb again within six seconds to release it."
+            : "Release returns this creature to the world without forming a bond. Use the orb again within six seconds to confirm.");
+          return;
+        }
+        releaseConfirmByOrb.delete(orb.orbId);
         const released = releaseCaptureOrb(orb);
         if (!released) return;
+        if (creatureRelationshipPolicy(released.creature.kind).mode === "care-bond" && !canAttuneCreature(released.creature)) {
+          this.captureSystemDiagnostics.rehabilitation["release-before-bond"] += 1;
+        }
         const direction = this.camera.getWorldDirection(new THREE.Vector3());
         const releasePosition = this.target
           ? new THREE.Vector3(this.target.placeX, this.target.placeY + MOB_DEFS[released.creature.kind].footOffset, this.target.placeZ)
           : this.position.clone().add(direction.setY(0).normalize().multiplyScalar(1.8));
+        if (MOB_DEFS[released.creature.kind].family === "butterfly") {
+          if (!this.butterflies.release(released.creature.kind as ButterflyKind, releasePosition)) {
+            this.events.onToast(`${MOB_DEFS[released.creature.kind].name} needs a nearby open flower habitat.`);
+            return;
+          }
+          this.inventory[this.selected] = captureOrbInventorySlot(released.orb);
+          this.dispatchGuildEvent("releaseCreature", 1, `release:${released.orb.orbId}`, { creatureKind: released.creature.kind });
+          this.heldItemCode = -1;
+          this.placeCooldown = 0.35;
+          this.events.onToast(`${MOB_DEFS[released.creature.kind].name} returns to the flowers; the Capture Orb is empty again.`);
+          this.audio.play("craft");
+          this.saveSoon();
+          this.emitHud(true);
+          return;
+        }
         const releasedProgression = released.creature.custom.progression as unknown as CreatureProgressionV2 | undefined;
         const releasedCreature = releasedProgression ? {
           ...released.creature,
@@ -16001,24 +16923,78 @@ export class VoxelEngine {
         return;
       }
       if (!this.targetMob) {
-        this.events.onToast("Aim the empty Capture Orb at a creature. Its learned ecological checklist will show when capture is ready.");
+        const direction = this.camera.getWorldDirection(new THREE.Vector3());
+        const specimen = this.butterflies.capture(this.camera.position, direction);
+        if (specimen) {
+          this.captureSystemDiagnostics.attempts += 1;
+          const definition = MOB_DEFS[specimen.kind];
+          const entityId = `butterfly:${specimen.kind}:${specimen.id}:${Date.now().toString(36)}`;
+          const profile = creatureProfile(specimen.kind);
+          const progression = migrateCreatureProgression({
+            kind: specimen.kind,
+            entityId,
+            maximumLevel: profile.stats.maximumLevel,
+            defaultMoveIds: learnedMovesAtLevel(profile.moves, 1),
+          });
+          const captured = captureIntoOrb(orb, {
+            schema: 1,
+            entityId,
+            kind: specimen.kind,
+            health: definition.health,
+            maxHealth: definition.health,
+            ageTicks: 24_000,
+            baby: false,
+            temperament: definition.temperament,
+            hostile: false,
+            tamed: false,
+            ownerId: null,
+            name: null,
+            geneticSeed: Math.imul(specimen.id, 0x9e3779b1) >>> 0,
+            command: null,
+            factionId: null,
+            settlementId: null,
+            aligned: false,
+            custom: { progression: progression as unknown as CreatureMetadata["custom"][string] },
+          }, Date.now(), this.localPlayerId());
+          if (!captured || !this.storeFilledCaptureOrb(heldSlot, captured)) {
+            const releasePosition = this.camera.position.clone().add(direction.multiplyScalar(1.2));
+            this.butterflies.release(specimen.kind, releasePosition);
+            this.events.onToast("Make one empty pack slot before splitting a filled orb from this stack.");
+            return;
+          }
+          recordSpeciesCapture(this.bestiary[specimen.kind], Date.now(), entityId);
+          this.captureSystemDiagnostics.successes += 1;
+          this.captureSystemDiagnostics.readinessRoutes.open += 1;
+          this.heldItemCode = -1;
+          this.placeCooldown = 0.28;
+          this.audio.play("craft");
+          this.events.onToast(`${definition.name} is safely contained for relocation in a normal Capture Orb.`);
+          this.saveSoon();
+          this.emitHud(true);
+          return;
+        }
+        this.events.onToast("Aim the empty Capture Orb at a creature. Readiness is always visible: 40% health is reliable, with optional tempo-break and calming-offering routes.");
         return;
       }
       const mob = this.targetMob;
+      this.captureSystemDiagnostics.attempts += 1;
       if (this.temporarySummons?.has(mob.id)) {
+        this.captureSystemDiagnostics.blockers.policy += 1;
         this.events.onToast("Temporary manifestations and contract echoes cannot enter Capture Orbs. Earn concordance and ground the original with a Worldpin first.");
         return;
       }
       if (mob.aligned && mob.factionId && mob.factionId !== "player") {
+        this.captureSystemDiagnostics.blockers.policy += 1;
         this.events.onToast(`${mob.name} is bonded to ${FACTIONS[mob.factionId]?.name ?? "its settlement"}; faction-aligned creatures cannot be captured.`);
         return;
       }
       if (mob.kind === "hive-queen" && (mob.hostile || mob.apiaryBee?.angry) && !canCatchHiveQueen(mob.health, mob.maxHealth, "capture-orb")) {
-        this.events.onToast("The Hive Queen is too strong for the orb. Weaken her below half health first.");
+        this.events.onToast("The Hive Queen is too strong for the orb. Weaken her to 40% health, break her tempo, or use her displayed calming offering.");
         return;
       }
       const readiness = this.captureReadinessForMob(mob, orb);
       if (!readiness.ready) {
+        this.captureSystemDiagnostics.blockers[readiness.missingKnown.includes("submerged") ? "medium" : "not-ready"] += 1;
         this.events.onToast(this.captureReadinessMessage(readiness));
         return;
       }
@@ -16027,7 +17003,7 @@ export class VoxelEngine {
         capturedAt: Date.now(), captorId: this.localPlayerId(), methodId: "capture-orb",
       });
       const metadata = this.creatureMetadataForMob(mob);
-      const captured = captureIntoOrb(orb, metadata);
+      const captured = captureIntoOrb(orb, metadata, Date.now(), this.localPlayerId());
       if (!captured) {
         mob.progression = priorProgression;
         this.events.onToast(`${mob.name} is fighting too strongly to capture.`);
@@ -16035,6 +17011,7 @@ export class VoxelEngine {
       }
       if (!this.storeFilledCaptureOrb(heldSlot, captured)) {
         mob.progression = priorProgression;
+        this.captureSystemDiagnostics.blockers.inventory += 1;
         this.events.onToast("Make one empty pack slot before splitting a filled orb from this stack.");
         return;
       }
@@ -16052,9 +17029,15 @@ export class VoxelEngine {
       this.resolveLegendaryCapture(mob, `orb:${captured.orbId}`);
       this.observeCreatureRarity(mob);
       this.transferPrimeCustody(mob, "captured", `orb:${captured.orbId}`);
-      const firstSpeciesCapture = this.bestiary[mob.kind].captures === 0;
-      recordSpeciesCapture(this.bestiary[mob.kind], Date.now(), mob.specimenId);
+      const bestiaryEntry = normalizeLivingBestiaryEntry(this.bestiary[mob.kind]);
+      this.bestiary[mob.kind] = bestiaryEntry;
+      const firstSpeciesCapture = bestiaryEntry.captures === 0;
+      recordSpeciesCapture(bestiaryEntry, Date.now(), mob.specimenId);
       this.dispatchGuildEvent("captureCreature", 1, `capture:${mob.specimenId ?? mob.id}`, { creatureKind: mob.kind });
+      this.captureSystemDiagnostics.successes += 1;
+      if (readiness.route in this.captureSystemDiagnostics.readinessRoutes) {
+        this.captureSystemDiagnostics.readinessRoutes[readiness.route as keyof CaptureSystemDiagnostics["readinessRoutes"]] += 1;
+      }
       if (firstSpeciesCapture && DRAGONWAKE_RARE_CAPTURE_KINDS.has(mob.kind)) {
         this.dispatchQuestEvent({ type: "custom", eventId: "rare-creature-species-captured", at: Date.now() });
       }
@@ -16068,7 +17051,7 @@ export class VoxelEngine {
       this.heldItemCode = -1;
       this.placeCooldown = 0.4;
       this.audio.play("craft");
-      this.events.onToast(`${metadata.name ?? mob.definition.name} is safely preserved in the Waykeeper Capture Orb.`);
+      this.events.onToast(`${metadata.name ?? mob.definition.name} is safely contained. Custody does not grant companionship; use Creature Camp to build trust.`);
       this.saveSoon();
       this.emitHud(true);
       return;
@@ -17070,102 +18053,24 @@ export class VoxelEngine {
       return;
     }
     if (heldSlot && heldDefinition?.useKind === "net") {
-      if (this.targetMob?.kind === "honeybee") {
-        const worker = this.targetMob;
-        const workerBee = worker.apiaryBee ?? {
-          id: `worker-mob-${worker.id}`,
-          role: "worker" as const,
-          alive: true,
-          home: false,
-          outbound: false,
-          carryingNectar: 0,
-          lastReturnDay: this.day,
-          disconnectedDay: null,
-          geneticSeed: (worker.id * 2654435761) >>> 0,
-          angry: false,
-          tamed: false,
-          ownerId: null,
-        };
-        const workerItem = captureWorkerBeeItem(workerBee);
-        if (workerItem && this.addItem(workerItem.item, 1, workerItem.durability, undefined, workerItem.metadata) === 0) {
-          this.removeMob(this.mobs.indexOf(worker));
-          this.damageSelectedTool();
-          this.heldUse = 1;
-          this.placeCooldown = 0.3;
-          this.events.onToast("The worker settles into a breathable apiary capsule for Queen Cell crafting.");
-          this.audio.play("craft");
-          this.saveSoon();
-          this.emitHud(true);
-        } else this.events.onToast("Make room in your pack before netting this worker.");
-        return;
-      }
-      if (this.targetMob?.kind === "hive-queen") {
-        const queen = this.targetMob;
-        if ((queen.hostile || queen.apiaryBee?.angry) && !canCatchHiveQueen(queen.health, queen.maxHealth, "net")) {
-          this.events.onToast("The Hive Queen tears free. A net only holds her below half health.");
-          this.damageSelectedTool();
-          this.placeCooldown = 0.3;
-          return;
-        }
-        const metadata = queen.apiaryBee ? { beeId: queen.apiaryBee.id, geneticSeed: queen.apiaryBee.geneticSeed } : { beeId: `queen-${queen.id}`, geneticSeed: queen.id };
-        if (this.addItem(Item.QueenCell, 1, undefined, undefined, metadata) > 0) {
-          this.events.onToast("Make room in your pack before securing the queen.");
-          return;
-        }
-        this.removeMob(this.mobs.indexOf(queen));
-        this.damageSelectedTool();
-        this.heldUse = 1;
-        this.placeCooldown = 0.35;
-        this.bestiary["hive-queen"].captures += 1;
-        this.events.onToast("The weakened queen is secured as a living Queen Cell, ready for an empty apiary.");
-        this.audio.play("craft");
-        this.saveSoon();
-        this.emitHud(true);
-        return;
-      }
-      if (this.targetMob?.kind === "lightning-bug") {
-        const lightningBug = this.targetMob;
-        if (this.mode === "survival" && this.countItem(Item.GlassBottle) < 1) {
-          this.events.onToast("Carry an Empty Glass Bottle to net a Lightning Bug safely.");
-          this.placeCooldown = 0.22;
-          return;
-        }
-        if (this.addItem(Item.LightningBugJar, 1, undefined, MAIN_THEN_HOTBAR) > 0) {
-          this.events.onToast("Make room in your pack before bottling the Lightning Bug.");
-          return;
-        }
-        if (this.mode === "survival") this.removeItem(Item.GlassBottle, 1);
-        this.removeMob(this.mobs.indexOf(lightningBug));
-        this.damageSelectedTool();
-        this.heldUse = 1;
-        this.placeCooldown = 0.3;
-        this.bestiary["lightning-bug"].captures += 1;
-        this.events.onToast("The Lightning Bug settles into its jar. Hold or place it for a gentle living light.");
-        this.audio.play("craft");
-        this.saveSoon();
-        this.emitHud(true);
-        return;
-      }
       const direction = new THREE.Vector3();
       this.camera.getWorldDirection(direction);
-      const captured = this.butterflies.capture(this.camera.position, direction);
+      const butterfly = this.butterflies.survey(this.camera.position, direction);
+      const pollinator = this.targetMob && (this.targetMob.definition.family === "pollinator" || this.targetMob.definition.family === "butterfly")
+        ? this.targetMob : null;
       this.heldUse = 1;
       this.placeCooldown = 0.28;
       this.damageSelectedTool();
-      if (!captured) {
-        this.events.onToast("The net swept through empty air. Try leading the butterfly.");
+      if (!butterfly && !pollinator) {
+        this.events.onToast("The survey net found no pollinator. Capture custody always uses a normal Capture Orb.");
         this.audio.play("step", BlockId.TallGrass);
         return;
       }
-      const leftover = this.addItem(captured.item, 1);
-      if (leftover > 0) {
-        const releasePosition = this.camera.position.clone().add(direction.multiplyScalar(1.2));
-        this.butterflies.release(captured.kind, releasePosition);
-        this.events.onToast("Your pack is full; the butterfly slipped free.");
-      } else {
-        this.events.onToast(`Captured ${MOB_DEFS[captured.kind].name}. Release it from its jar whenever you like.`);
-        this.audio.play("craft");
-      }
+      const kind = butterfly ?? pollinator!.kind;
+      this.bestiary[kind].seen = true;
+      this.recordBestiaryMilestone(kind, "survey-net");
+      this.events.onToast(`${MOB_DEFS[kind].name} surveyed without taking custody. Use a normal Capture Orb to relocate it.`);
+      this.audio.play("craft");
       this.saveSoon();
       this.emitHud(true);
       return;
@@ -20504,6 +21409,7 @@ export class VoxelEngine {
         for (let index = 0; index < quantity; index += 1) {
           const entityId = `trade-${neutralCreatureKind}-${Date.now().toString(36)}-${index}`;
           const definition = MOB_DEFS[neutralCreatureKind];
+          const commissioned = creatureRelationshipPolicy(neutralCreatureKind).mode === "commission";
           const metadata: CreatureMetadata = {
             schema: 1,
             entityId,
@@ -20514,15 +21420,19 @@ export class VoxelEngine {
             baby: false,
             temperament: definition.temperament,
             hostile: false,
-            tamed: false,
-            ownerId: null,
+            tamed: commissioned,
+            ownerId: commissioned ? this.localPlayerId() : null,
             name: null,
             geneticSeed: (Date.now() + index * 2654435761) >>> 0,
-            command: null,
-            factionId: null,
+            command: commissioned ? "follow" : null,
+            factionId: commissioned ? "player" : null,
             settlementId: null,
-            aligned: false,
-            custom: JSON.parse(JSON.stringify({ courserBond: createReedstriderBond() })),
+            aligned: commissioned,
+            custom: JSON.parse(JSON.stringify({
+              courserBond: commissioned
+                ? { ...createReedstriderBond(), trust: 8, tamed: true, ownerId: this.localPlayerId() }
+                : createReedstriderBond(),
+            })),
           };
           const orb = captureIntoOrb(createEmptyCaptureOrb(`merchant-orb-${entityId}`), metadata);
           const filled = orb ? captureOrbInventorySlot(orb) : null;
@@ -24871,6 +25781,12 @@ export class VoxelEngine {
     });
     if (!event.legal) return event;
     this.applyCombatEventToMob(target, event, this.worldSimulationSeconds());
+    if (event.resolvedAmount > 0 && this.capturePacification.has(target.id)) {
+      this.capturePacification.set(target.id, interruptPacificationWithDamage(
+        this.capturePacification.get(target.id),
+        this.worldSimulationSeconds(),
+      ));
+    }
     return event;
   }
 
@@ -25105,6 +26021,18 @@ export class VoxelEngine {
               ? this.applyCreatureMoveToPlayer(mob, move.id)
               : this.applyCreatureMoveToRemotePlayer(mob, move.id, playerId);
             if (impactApplied) this.applyLegendaryEventForMob(mob, "survive-phase");
+          }
+          if (contactResult === "dodged" && (mob.hostile || mob.definition.hostile || mob.definition.temperament === "Hostile")) {
+            const actionToken = `${mob.id}:${move.id}:${Math.floor(nowSeconds * 1_000)}`;
+            const recorded = recordCleanCommittedEvade(this.capturePacification.get(mob.id), playerId, actionToken, nowSeconds);
+            if (recorded.accepted) {
+              this.capturePacification.set(mob.id, recorded.state);
+              if (playerId === this.localPlayerId()) {
+                this.events.onToast(recorded.state.cleanEvades >= 2
+                  ? `${mob.name}: 2/2 clean evades. Move beyond its warning ring and hold for three seconds.`
+                  : `${mob.name}: 1/2 clean committed attacks evaded.`);
+              }
+            }
           }
           }
         } else {
@@ -26259,6 +27187,7 @@ export class VoxelEngine {
 
   updateMobs(dt: number) {
     this.updateTemporaryMagic();
+    this.updateCapturePacification(dt);
     this.wakeSleepingCreatures(dt);
     this.passiveMobSpawnTimer -= dt;
     if (this.passiveMobSpawnTimer <= 0) {
@@ -27420,6 +28349,7 @@ export class VoxelEngine {
     const mob = this.mobs[index];
     if (!mob) return;
     this.temporarySummons?.delete(mob.id);
+    this.capturePacification?.delete(mob.id);
     if (mob.id === this.mountedCreatureId) {
       this.mountedCreatureId = null;
       this.mountedCreatureSeat = null;

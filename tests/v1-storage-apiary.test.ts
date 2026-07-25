@@ -13,9 +13,11 @@ import {
 import {
   attuneCaptureOrb,
   captureIntoOrb,
+  captureOrbFromInventorySlot,
   createCreatureHealer,
   createEmptyCaptureOrb,
   deployAttunedCaptureOrb,
+  encodeCaptureOrb,
   recallAttunedCreature,
   stepCreatureHealer,
   unattuneCaptureOrb,
@@ -108,6 +110,33 @@ test("angry queens cannot be stuffed into crafted apiaries and foreign bonded co
   if (bonded.state.queen === null) return;
   assert.equal(apiaryIsFriendly(bonded.state, "player-b"), false);
   assert.equal(insertApiaryBee(bonded.state, bee("worker-b", "worker"), "player-b").reason, "not-friendly");
+});
+
+test("a Honeybee housed from the universal orb returns the exact same custody record", () => {
+  const specimen = {
+    ...creature(4),
+    entityId: "honeybee-orb-worker",
+    kind: "honeybee" as const,
+    name: "Mintwing",
+  };
+  const filled = captureIntoOrb(createEmptyCaptureOrb("orb-mintwing"), specimen, 41)!;
+  const worker = bee(specimen.entityId, "worker", {
+    geneticSeed: specimen.geneticSeed,
+    tamed: specimen.tamed,
+    ownerId: specimen.ownerId,
+    storedOrb: {
+      item: Item.CaptureOrb,
+      count: 1,
+      captureOrb: encodeCaptureOrb(filled),
+    },
+  });
+  const activated = insertApiaryBee(createEmptyApiaryBlock(), bee("queen-orb-test", "queen"), "player-a", 4);
+  assert.notEqual(activated.state.queen, null);
+  const inserted = insertApiaryBee(activated.state, worker, "player-a", 4);
+  assert.equal(inserted.inserted, true);
+  const extracted = extractApiaryBee(inserted.state, specimen.entityId, "player-a");
+  const returned = extracted.bee ? captureWorkerBeeItem(extracted.bee) : null;
+  assert.deepEqual(captureOrbFromInventorySlot(returned), filled);
 });
 
 test("attuned orbs retain their creature while deployed, recall white-sparkle, and enforce fainting", () => {

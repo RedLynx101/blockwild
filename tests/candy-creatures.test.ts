@@ -56,7 +56,7 @@ test("Sugarplum creatures expose complete care, habitat and faction contracts", 
   }
   assert.equal(MOB_DEFS.syrupfin.liquidHabitat, "syrup");
   assert.deepEqual(SUGARPLUM_AQUATIC_ORDER, ["syrupfin"]);
-  assert.equal(MOB_DEFS.bonbonwing.captureItem, Item.BonbonwingTreat);
+  assert.equal(MOB_DEFS.bonbonwing.captureItem, Item.CaptureOrb);
   assert.equal(BUTTERFLY_ORDER.includes("bonbonwing"), true);
 });
 

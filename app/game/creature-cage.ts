@@ -97,13 +97,13 @@ export function cloneCreatureMetadata(metadata: CreatureMetadata): CreatureMetad
 }
 
 /**
- * Friendly and neutral creatures are always cageable. Hostiles must be at one
- * heart or below half health; the one-heart rule deliberately covers a tiny
- * hostile whose maximum health itself is only one.
+ * Friendly and neutral creatures are always cageable. Visible health reduction
+ * to 40% is the predominant, reliable hostile route. The one-heart fallback
+ * deliberately covers tiny hostiles and preserves old near-defeat saves.
  */
 export function canCaptureCreature(metadata: Pick<CreatureMetadata, "hostile" | "health" | "maxHealth">) {
   if (!metadata.hostile) return true;
-  return metadata.health <= 1 || metadata.health < metadata.maxHealth * 0.5;
+  return metadata.health <= 1 || metadata.health <= metadata.maxHealth * 0.4;
 }
 
 export function captureCreature(cageId: string, metadata: CreatureMetadata, capturedAt = Date.now()): CapturedCreature | null {

@@ -173,6 +173,18 @@ export type MobSnapshotEntry = {
   typeRevision?: string;
   statuses?: Array<{ id: string; stacks: number; remainingSeconds: number }>;
   activeMove?: { moveId: string; phase: "windup" | "active" | "recovery"; remainingSeconds: number } | null;
+  /** Public host-authored capture-readiness progress; no hidden rolls or private inventory data. */
+  pacification?: {
+    participantId: string | null;
+    route: "outmaneuver" | "offering" | null;
+    cleanEvades: number;
+    holdSeconds: number;
+    offeringItem: number | null;
+    offeringSeconds: number;
+    retrySeconds: number;
+    settledSeconds: number;
+    settledRoute: "outmaneuver" | "offering" | null;
+  } | null;
   /** Stable specimen and compact host-authored appearance keep rare forms identical for every peer. */
   specimenId?: string;
   primeAnchorId?: string | null;
@@ -487,9 +499,14 @@ export type CreatureAction = {
   requestId: string;
   actorId: string;
   tick: number;
-  kind: "capture" | "release" | "recall" | "command" | "interact" | "sentient-open" | "sentient-close" | "trade" | "lead-hitch" | "lead-unhitch" | "aquarium-sync" | "aquarium-insert" | "aquarium-remove" | "dragon-command" | "dragon-shoulder" | "dragon-harvest";
+  kind: "capture" | "release" | "recall" | "command" | "pacify-offering" | "camp-care" | "camp-connect" | "camp-form-bond" | "camp-transfer-offer" | "camp-transfer-accept" | "interact" | "sentient-open" | "sentient-close" | "trade" | "lead-hitch" | "lead-unhitch" | "aquarium-sync" | "aquarium-insert" | "aquarium-remove" | "dragon-command" | "dragon-shoulder" | "dragon-harvest";
   targetId?: number;
   command?: string;
+  orbId?: string;
+  offerId?: string;
+  recipientId?: string;
+  sourceName?: string;
+  creatureName?: string;
   name?: string;
   distance?: number | "dynamic";
   /** Interaction modifier is authored by the guest but revalidated by the host. */
@@ -969,6 +986,16 @@ function validateMob(value: unknown): value is MobSnapshotEntry {
       && isShortString(value.activeMove.moveId, 64)
       && ["windup", "active", "recovery"].includes(value.activeMove.phase as string)
       && isFiniteNumber(value.activeMove.remainingSeconds, 0, 30)))
+    && (value.pacification === undefined || value.pacification === null || (isRecord(value.pacification)
+      && (value.pacification.participantId === null || isShortString(value.pacification.participantId, 160))
+      && (value.pacification.route === null || value.pacification.route === "outmaneuver" || value.pacification.route === "offering")
+      && isInteger(value.pacification.cleanEvades, 0, 2)
+      && isFiniteNumber(value.pacification.holdSeconds, 0, 3)
+      && (value.pacification.offeringItem === null || isInteger(value.pacification.offeringItem, 0, 100_000))
+      && isFiniteNumber(value.pacification.offeringSeconds, 0, 4)
+      && isFiniteNumber(value.pacification.retrySeconds, 0, 30)
+      && isFiniteNumber(value.pacification.settledSeconds, 0, 10)
+      && (value.pacification.settledRoute === null || value.pacification.settledRoute === "outmaneuver" || value.pacification.settledRoute === "offering")))
     && (value.specimenId === undefined || isShortString(value.specimenId, 160))
     && (value.primeAnchorId === undefined || value.primeAnchorId === null
       || (typeof value.primeAnchorId === "string" && isShortString(value.primeAnchorId, 160) && value.primeAnchorId.startsWith(`prime:${value.kind}:`)))
@@ -1448,9 +1475,14 @@ export function validatePayload<K extends MultiplayerMessageType>(type: K, value
       return isId(value.requestId)
         && isId(value.actorId)
         && isInteger(value.tick, 0, Number.MAX_SAFE_INTEGER)
-        && ["capture", "release", "recall", "command", "interact", "sentient-open", "sentient-close", "trade", "lead-hitch", "lead-unhitch", "aquarium-sync", "aquarium-insert", "aquarium-remove", "dragon-command", "dragon-shoulder", "dragon-harvest"].includes(value.kind as string)
+        && ["capture", "release", "recall", "command", "pacify-offering", "camp-care", "camp-connect", "camp-form-bond", "camp-transfer-offer", "camp-transfer-accept", "interact", "sentient-open", "sentient-close", "trade", "lead-hitch", "lead-unhitch", "aquarium-sync", "aquarium-insert", "aquarium-remove", "dragon-command", "dragon-shoulder", "dragon-harvest"].includes(value.kind as string)
         && (value.targetId === undefined || isInteger(value.targetId, 0, Number.MAX_SAFE_INTEGER))
         && (value.command === undefined || isShortString(value.command, 32))
+        && (value.orbId === undefined || isShortString(value.orbId, 80))
+        && (value.offerId === undefined || isShortString(value.offerId, 120))
+        && (value.recipientId === undefined || isShortString(value.recipientId, 160))
+        && (value.sourceName === undefined || isShortString(value.sourceName, 48))
+        && (value.creatureName === undefined || isShortString(value.creatureName, 48))
         && (value.kind !== "dragon-command" || ["follow", "stay", "guard-lair", "wander"].includes(value.command as string))
         && ((value.kind === "dragon-command" || value.kind === "dragon-shoulder" || value.kind === "dragon-harvest") ? value.targetId !== undefined : true)
         && (value.name === undefined || isShortString(value.name, 48))

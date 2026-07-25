@@ -29,7 +29,10 @@ test("new Deepgear companions have permanent ids, blueprint contracts, and inven
   assert.equal(ITEMS[Item.WebspinnerBlueprint].blueprintId, "golem-webspinner");
   assert.equal(ITEMS[Item.ClockworkHoundOrb].creatureKind, "clockwork-hound-golem");
   assert.equal(ITEMS[Item.WebspinnerOrb].creatureKind, "webspinner-golem");
-  for (const item of [Item.ClockworkHoundBlueprint, Item.WebspinnerBlueprint, Item.ClockworkHoundOrb, Item.WebspinnerOrb]) assert.ok(V1_CULTURE_ITEMS.includes(item));
+  for (const item of [Item.ClockworkHoundBlueprint, Item.WebspinnerBlueprint]) assert.ok(V1_CULTURE_ITEMS.includes(item));
+  for (const legacyItem of [Item.ClockworkHoundOrb, Item.WebspinnerOrb]) {
+    assert.equal(V1_CULTURE_ITEMS.includes(legacyItem), false, "species orb ids remain decode-only and are absent from creative inventory");
+  }
   const blueprintIds = new Set(BLUEPRINTS.map((blueprint) => blueprint.id));
   assert.ok(blueprintIds.has("golem-clockwork-hound"));
   assert.ok(blueprintIds.has("golem-webspinner"));

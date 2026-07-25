@@ -1,13 +1,18 @@
 import type { CaptureProfileId } from "./creature-profiles";
-import type { LegendaryCreatureKind, LivingRosterKind, MobKind, SummonedCreatureKind } from "./mobs";
+import { ITEMS } from "./data";
+import { MOB_DEFS, type LegendaryCreatureKind, type LivingRosterKind, type MobKind, type SummonedCreatureKind } from "./mobs";
 
-/** Capture never rolls a hidden chance. A lens opens an authored route. */
+/**
+ * Capture never rolls a hidden chance. Lens ids remain decode-only save
+ * vocabulary; every live capture uses the same ordinary Capture Orb.
+ */
 export type CaptureLensId = "gentle" | "gloam" | "tide" | "resonance";
 export type CaptureConditionId =
   | "safe-approach" | "calm" | "fed" | "unaware" | "tired" | "intercepted"
   | "vulnerable" | "objective-resolved" | "subdued" | "submerged" | "tide-lens"
   | "resonance-matched" | "resonance-lens" | "rescued" | "anchor-window"
-  | "encounter-complete" | "legendary-consent";
+  | "encounter-complete" | "legendary-consent"
+  | "health-threshold" | "outmaneuver" | "calming-offering";
 
 export type CaptureConditionDefinition = Readonly<{
   id: CaptureConditionId;
@@ -26,13 +31,16 @@ export const CAPTURE_CONDITIONS: Readonly<Record<CaptureConditionId, CaptureCond
   "objective-resolved": { id: "objective-resolved", label: "Territory resolved", hint: "Remove the threat or disturbance it is defending." },
   subdued: { id: "subdued", label: "Subdued", hint: "Reduce its health below the visible capture threshold without defeating it." },
   submerged: { id: "submerged", label: "Keeper submerged", hint: "Remain in the creature's medium during capture." },
-  "tide-lens": { id: "tide-lens", label: "Tide Lens fitted", hint: "Fit a Tide Lens to stabilize the orb underwater." },
+  "tide-lens": { id: "tide-lens", label: "Legacy medium key", hint: "Decode-only compatibility state; the normal Capture Orb now works underwater." },
   "resonance-matched": { id: "resonance-matched", label: "Resonance matched", hint: "Reproduce the creature's learned call, light, rhythm, or magical state." },
-  "resonance-lens": { id: "resonance-lens", label: "Resonance Lens fitted", hint: "Fit a Resonance Lens so the orb can hold the matched pattern." },
+  "resonance-lens": { id: "resonance-lens", label: "Legacy resonance key", hint: "Decode-only compatibility state; resonance is now optional field knowledge." },
   rescued: { id: "rescued", label: "Rescued", hint: "Free the creature from the danger shown in its field notes." },
   "anchor-window": { id: "anchor-window", label: "Trust window", hint: "Stay near after the rescue until it voluntarily holds position." },
   "encounter-complete": { id: "encounter-complete", label: "Encounter complete", hint: "Complete every authored phase of this legendary encounter." },
   "legendary-consent": { id: "legendary-consent", label: "Resolution chosen", hint: "Earn or choose the encounter's explicit capture resolution." },
+  "health-threshold": { id: "health-threshold", label: "Subdue to 40% health", hint: "The reliable route: lower the visible health bar to 40% or one heart without defeating the creature." },
+  outmaneuver: { id: "outmaneuver", label: "Break Its Tempo", hint: "Cleanly evade two committed attacks, deal no damage, then hold beyond its attack envelope for three seconds." },
+  "calming-offering": { id: "calming-offering", label: "Calming Offering", hint: "Place its displayed preferred food on safe ground, step outside the warning ring, and let it accept the offering for four seconds." },
 });
 
 export type CaptureRequirement = Readonly<{
@@ -51,14 +59,14 @@ export type CaptureProfileDefinition = Readonly<{
 const requirement = (...anyOf: CaptureConditionId[]): CaptureRequirement => Object.freeze({ anyOf: Object.freeze(anyOf) });
 
 export const CAPTURE_PROFILES: Readonly<Record<Exclude<CaptureProfileId, "uncapturable">, CaptureProfileDefinition>> = Object.freeze({
-  open: Object.freeze({ id: "open", name: "Open", summary: "An ordinary, humane relocation.", requirements: [requirement("safe-approach")], suggestedLens: null }),
-  gentle: Object.freeze({ id: "gentle", name: "Gentle", summary: "Earn a quiet approach instead of injuring a skittish animal.", requirements: [requirement("calm", "fed", "unaware")], suggestedLens: "gentle" }),
-  pursuit: Object.freeze({ id: "pursuit", name: "Pursuit", summary: "Read its escape route and finish the chase safely.", requirements: [requirement("tired"), requirement("intercepted")], suggestedLens: null }),
-  armored: Object.freeze({ id: "armored", name: "Armored", summary: "Wait for the protection to open.", requirements: [requirement("vulnerable")], suggestedLens: null }),
-  territorial: Object.freeze({ id: "territorial", name: "Territorial", summary: "Resolve what it defends or subdue it without a kill.", requirements: [requirement("objective-resolved", "subdued")], suggestedLens: null }),
-  aquatic: Object.freeze({ id: "aquatic", name: "Aquatic", summary: "Meet it in its own medium with a stabilized orb.", requirements: [requirement("submerged"), requirement("tide-lens")], suggestedLens: "tide" }),
-  resonant: Object.freeze({ id: "resonant", name: "Resonant", summary: "Match its signature and preserve the pattern.", requirements: [requirement("resonance-matched"), requirement("resonance-lens")], suggestedLens: "resonance" }),
-  rescue: Object.freeze({ id: "rescue", name: "Rescue", summary: "Rescue first; capture only during the voluntary trust window.", requirements: [requirement("rescued"), requirement("anchor-window")], suggestedLens: "gentle" }),
+  open: Object.freeze({ id: "open", name: "Open", summary: "An ordinary, humane relocation using the universal Capture Orb.", requirements: [], suggestedLens: null }),
+  gentle: Object.freeze({ id: "gentle", name: "Gentle", summary: "A calm ordinary capture; species flavor gives guidance rather than a hidden gate.", requirements: [], suggestedLens: null }),
+  pursuit: Object.freeze({ id: "pursuit", name: "Pursuit", summary: "A mobile creature governed by the same visible readiness rules.", requirements: [], suggestedLens: null }),
+  armored: Object.freeze({ id: "armored", name: "Armored", summary: "A protected creature governed by the same visible readiness rules.", requirements: [], suggestedLens: null }),
+  territorial: Object.freeze({ id: "territorial", name: "Territorial", summary: "Subdue it to 40% health, break its tempo, or offer its displayed calming food.", requirements: [], suggestedLens: null }),
+  aquatic: Object.freeze({ id: "aquatic", name: "Aquatic", summary: "Use the normal Capture Orb while sharing its liquid medium.", requirements: [], suggestedLens: null }),
+  resonant: Object.freeze({ id: "resonant", name: "Resonant", summary: "Its signature remains flavorful field knowledge, not a second capture currency.", requirements: [], suggestedLens: null }),
+  rescue: Object.freeze({ id: "rescue", name: "Rescue", summary: "Rescue behavior is valuable field knowledge, not a hidden orb requirement.", requirements: [], suggestedLens: null }),
   legendary: Object.freeze({ id: "legendary", name: "Legendary", summary: "A complete authored encounter with an explicit resolution.", requirements: [requirement("encounter-complete"), requirement("legendary-consent")], suggestedLens: null }),
 });
 
@@ -90,31 +98,31 @@ const captureSheet = <K extends ExpansionCreatureKind>(
 export const AUTHORED_CREATURE_CAPTURE_SHEETS = Object.freeze({
   "thornhide-trufflehog": captureSheet("thornhide-trufflehog", "gentle", "Complete its blackcap ring, then offer a ripe truffle without crossing the living mycelium.", ["fed", "calm"], ["Loose woodland soil with an intact fungal bed.", "Forages best beside one familiar rooter or a quiet keeper."], "A leaf-litter pen must retain diggable soil and shade.", "Replants truffle spores in a suitable woodland ecology cell."),
   "orchard-glider": captureSheet("orchard-glider", "gentle", "Return a fallen nest seed to the parent tree and wait beneath its next voluntary glide.", ["unaware", "fed", "calm"], ["Tall fruiting branches and clear glide lanes.", "Needs a high nest box rather than a ground hutch."], "An orchard canopy route must connect perch to food tree.", "Carries one viable seed into a compatible young orchard."),
-  "petalmask-tanuki": captureSheet("petalmask-tanuki", "resonant", "Follow only the petal-bearing ecological trail, then mirror the real mask pattern with a Resonance Lens.", ["resonance-matched", "resonance-lens"], ["Leaf litter, moonlit cover, and scent puzzles.", "Becomes distressed if every hiding place is brightly lit."], "A woodland enclosure needs several real scent routes and one secluded den.", "Creates one harmless false trail away from a restored nesting patch."),
+  "petalmask-tanuki": captureSheet("petalmask-tanuki", "resonant", "Follow only the petal-bearing ecological trail, then mirror the real mask pattern as a field-study challenge.", ["resonance-matched"], ["Leaf litter, moonlit cover, and scent puzzles.", "Becomes distressed if every hiding place is brightly lit."], "A woodland enclosure needs several real scent routes and one secluded den.", "Creates one harmless false trail away from a restored nesting patch."),
   "ironbeak-magpie": captureSheet("ironbeak-magpie", "gentle", "Trade a plain useful fastener for a stolen trinket; do not take from its active cache.", ["fed", "safe-approach"], ["A metal-free perch edge prevents beak abrasion.", "Provide a small legal cache and rotating puzzle objects."], "A tall aviary needs a lockable cache tray and message-tube perch.", "Returns one cached non-unique object before joining a wild rookery."),
   "hearthback-badger": captureSheet("hearthback-badger", "territorial", "Repair its collapsed warm burrow entrance, then stand clear while it inspects every exit.", ["objective-resolved", "calm"], ["Deep diggable soil with a dry warm chamber.", "Prefers a single stable den over frequent enclosure changes."], "Burrow walls need two exits and an unblocked turning chamber.", "Excavates a small den starter that later wildlife can occupy."),
   "sunfoil-pangolin": captureSheet("sunfoil-pangolin", "armored", "Clear predators from its feeding mound and raise the orb only during the fully animated uncurl window.", ["objective-resolved", "vulnerable"], ["Warm dry substrate and live insect mounds.", "Sun-basking time matters more than repeated feeding."], "A low rock shelf must provide direct morning sun and a shaded retreat.", "Reopens a dormant insect mound without damaging nearby crops."),
   "glassstep-jerboa": captureSheet("glassstep-jerboa", "gentle", "Trace its moonlit glass tracks to a burrow and wait motionless outside the escape lane.", ["unaware", "calm"], ["Deep dry sand and a cool underground chamber.", "Needs long unobstructed hopping lanes."], "Fine mesh must leave a full spring-length clear around the burrow.", "Seeds sparse desert grass along its departure route."),
   "stormcrest-ibex": captureSheet("stormcrest-ibex", "rescue", "Reach the storm cairn, repair the broken descent route, and catch a separated kid before the trust window.", ["rescued", "anchor-window"], ["Steep stone, high wind, and a dry overhang.", "Bond advances through safe climbs, not flat pen feeding."], "A highland range needs ledges of several heights and no sheer escape drop.", "Reopens an abstract highland migration anchor after release."),
-  "cindercoil-gecko": captureSheet("cindercoil-gecko", "resonant", "Stabilize a dangerous wall heat gradient, then match its toe-pad pulse with a Resonance Lens.", ["objective-resolved", "resonance-matched", "resonance-lens"], ["Warm vertical stone with a cooler retreat seam.", "Feed small cave insects at dusk rather than raw meat."], "The habitat needs climbable heated wall panels and one unheated crevice.", "Occupies a safe fumarole wall and warns nearby wildlife of pressure."),
-  "cloudkite-pika": captureSheet("cloudkite-pika", "resonant", "Repair three descending wind chimes and reproduce the flock's safe-route whistle.", ["resonance-matched", "resonance-lens"], ["Cool highland talus with constant clean airflow.", "Social calls require at least one echoing rock face."], "A cliff aviary needs soft landing nets below multiple ledges.", "Adds one safe abstract descent cue to a highland travel route."),
+  "cindercoil-gecko": captureSheet("cindercoil-gecko", "resonant", "Stabilize a dangerous wall heat gradient, then match its toe-pad pulse as a field-study challenge.", ["objective-resolved", "resonance-matched"], ["Warm vertical stone with a cooler retreat seam.", "Feed small cave insects at dusk rather than raw meat."], "The habitat needs climbable heated wall panels and one unheated crevice.", "Occupies a safe fumarole wall and warns nearby wildlife of pressure."),
+  "cloudkite-pika": captureSheet("cloudkite-pika", "resonant", "Repair three descending wind chimes and reproduce the flock's safe-route whistle.", ["resonance-matched"], ["Cool highland talus with constant clean airflow.", "Social calls require at least one echoing rock face."], "A cliff aviary needs soft landing nets below multiple ledges.", "Adds one safe abstract descent cue to a highland travel route."),
   "briarclaw-lynx": captureSheet("briarclaw-lynx", "pursuit", "Survive all stalking phases, reveal its final cover, then intercept without fire or damaging traps.", ["tired", "intercepted"], ["Dense real cover and elevated resting shelves.", "Needs solitary retreat space even when bonded."], "A forest range must break sightlines without trapping the lynx in corners.", "Temporarily suppresses overabundant small predators in a healthy forest cell."),
-  "gravebell-jackal": captureSheet("gravebell-jackal", "resonant", "Cleanse a disturbed relic and answer its three-part bell howl without opening the reliquary.", ["objective-resolved", "resonance-matched", "resonance-lens"], ["Quiet shade beside a respectfully sealed memorial.", "Avoid loose bells that mask its warning phrases."], "A sanctuary cell needs a sealed relic alcove and an open patrol loop.", "Guards one undisturbed memorial from hostile undead for a world-day band."),
+  "gravebell-jackal": captureSheet("gravebell-jackal", "resonant", "Cleanse a disturbed relic and answer its three-part bell howl without opening the reliquary.", ["objective-resolved", "resonance-matched"], ["Quiet shade beside a respectfully sealed memorial.", "Avoid loose bells that mask its warning phrases."], "A sanctuary cell needs a sealed relic alcove and an open patrol loop.", "Guards one undisturbed memorial from hostile undead for a world-day band."),
   "cragglass-basilisk": captureSheet("cragglass-basilisk", "armored", "Reflect three gaze beams into the Prime crown or flank scales, then capture during the transparent molt.", ["resonance-matched", "vulnerable"], ["Sun-warmed glass stone with broad turning room.", "Never place reflective panels where its resting gaze meets residents."], "A research range needs angled matte barriers and a separate basking shelf.", "Stabilizes one brittle glassland outcrop without petrifying wildlife."),
   "stormglass-roclet": captureSheet("stormglass-roclet", "rescue", "Free the grounded Roclet from storm debris and wait until it chooses the rescue gauntlet.", ["rescued", "anchor-window"], ["High open air, charged-stone perches, and flight exercise.", "Maturation requires completed flight training and Partnered bond."], "An aerie needs a full takeoff lane and a sheltered thunder perch.", "Returns to its aerie lineage and strengthens the regional rescue flock."),
   "brinewhisk-otter": captureSheet("brinewhisk-otter", "gentle", "Return its favorite shell through a play sequence, then let it offer the shell back.", ["fed", "calm"], ["Clean flowing water, smooth banks, and loose shell toys.", "Daily play can be short; social access matters more."], "A river enclosure needs both deep dive water and a dry communal holt.", "Rejoins a river family and clears one littered shallow."),
   "riverwright-beaver": captureSheet("riverwright-beaver", "rescue", "Deliver assigned logs to repair its breached lodge without placing blocks over the water exit.", ["rescued", "anchor-window"], ["Flowing water, chew-safe logs, and a dry lodge chamber.", "Work assignments must name exact anchors."], "The pond edge needs a protected swim-through entrance and legal log rack.", "Repairs one authored wetland lodge anchor and improves local shelter."),
-  "mirecrown-crane": captureSheet("mirecrown-crane", "resonant", "Complete the dawn reed-court circle without entering it, then answer the final call.", ["unaware", "resonance-matched", "resonance-lens"], ["Shallow clean water with tall reeds and open sky.", "Seasonal solitude is normal and should not count as neglect."], "A wetland aviary needs a quiet courtship circle free of path traffic.", "Seeds reeds along one degraded wetland edge."),
-  "inkveil-cuttle": captureSheet("inkveil-cuttle", "aquatic", "Restore the observatory's color lamps, match its emotional pattern, and remain submerged with a Tide Lens.", ["resonance-matched", "submerged", "tide-lens"], ["Complex reef cover, dim color lamps, and live hunting puzzles.", "Avoid blank bright tanks that offer no camouflage."], "A deep aquarium needs multiple textured hides and a dark retreat chamber.", "Adds one bounded cleaning-and-camouflage role to a healthy reef."),
+  "mirecrown-crane": captureSheet("mirecrown-crane", "resonant", "Complete the dawn reed-court circle without entering it, then answer the final call.", ["unaware", "resonance-matched"], ["Shallow clean water with tall reeds and open sky.", "Seasonal solitude is normal and should not count as neglect."], "A wetland aviary needs a quiet courtship circle free of path traffic.", "Seeds reeds along one degraded wetland edge."),
+  "inkveil-cuttle": captureSheet("inkveil-cuttle", "aquatic", "Restore the observatory's color lamps, match its emotional pattern, and remain submerged with the normal Capture Orb.", ["resonance-matched", "submerged"], ["Complex reef cover, dim color lamps, and live hunting puzzles.", "Avoid blank bright tanks that offer no camouflage."], "A deep aquarium needs multiple textured hides and a dark retreat chamber.", "Adds one bounded cleaning-and-camouflage role to a healthy reef."),
   "prismclaw-mantis-shrimp": captureSheet("prismclaw-mantis-shrimp", "armored", "Open an authored cracked shell-bed, then present the orb while both striking clubs are folded.", ["objective-resolved", "vulnerable"], ["Deep burrow substrate and reinforced strike stones.", "Keep delicate glass and tiny tankmates out of its club reach."], "A species tank needs a deep burrow and replaceable impact block.", "Opens one clogged reef crevice for cleaner species."),
-  "reefmender-shrimp": captureSheet("reefmender-shrimp", "aquatic", "Let it finish cleaning an injured wild fish, then approach underwater with the Tide Lens.", ["calm", "submerged", "tide-lens"], ["Living coral, gentle current, and compatible client fish.", "Cannot thrive as a solitary decorative specimen."], "A planted reef tank needs cleaning stations reachable by larger residents.", "Establishes a small cleaning station at a compatible reef anchor."),
-  "currentweaver-eel": captureSheet("currentweaver-eel", "resonant", "Route a safe lamp current through its pool, match the lateral-line pattern, then use a Tide Lens.", ["resonance-matched", "submerged", "tide-lens"], ["Long current loop, insulated lamp link, and dark shelter tube.", "Discharge opportunities must never expose small residents."], "An aquarium needs a protected electrical loop and multiple retreat tunnels.", "Restores one dim lamp-link clue along an underwater route."),
+  "reefmender-shrimp": captureSheet("reefmender-shrimp", "aquatic", "Let it finish cleaning an injured wild fish, then approach underwater with the normal Capture Orb.", ["calm", "submerged"], ["Living coral, gentle current, and compatible client fish.", "Cannot thrive as a solitary decorative specimen."], "A planted reef tank needs cleaning stations reachable by larger residents.", "Establishes a small cleaning station at a compatible reef anchor."),
+  "currentweaver-eel": captureSheet("currentweaver-eel", "resonant", "Route a safe lamp current through its pool and match the lateral-line pattern as a mastery study.", ["resonance-matched", "submerged"], ["Long current loop, insulated lamp link, and dark shelter tube.", "Discharge opportunities must never expose small residents."], "An aquarium needs a protected electrical loop and multiple retreat tunnels.", "Restores one dim lamp-link clue along an underwater route."),
   "shellcarrier-hermit": captureSheet("shellcarrier-hermit", "gentle", "Offer a clearly better empty shell and wait until it abandons the old one voluntarily.", ["fed", "calm"], ["Mixed shell sizes, loose clean substrate, and tidevine.", "Never glue equipment to its living shell choice."], "A shallow tank needs open shell-changing space and a low cargo rack.", "Leaves its prior shell as habitat for a smaller shore animal."),
   "wreckwhistle-porpoise": captureSheet("wreckwhistle-porpoise", "rescue", "Follow the descending wrecksong, clear debris from a trapped podmate, then accept the rising home call.", ["rescued", "anchor-window"], ["Large deep-water circuit and regular pod contact.", "A tide harness is fitted only after the rescue bond quest."], "A sea sanctuary needs an unobstructed breathing circuit and social pod slots.", "Guides its pod around one dangerous wreck route after release."),
   "kilnscale-salamander": captureSheet("kilnscale-salamander", "territorial", "Vent or cool its fumarole into a stable gradient, then approach the chosen basking shelf.", ["objective-resolved", "calm"], ["A continuous hot-to-cool stone gradient.", "Deep chill requires gradual rewarming, not repeated feeding."], "The habitat needs connected hot, warm, and cool shelves with no flame trap.", "Maintains a safe heat-gradient clue near a cave ecology center."),
   "sporeback-gardener": captureSheet("sporeback-gardener", "gentle", "Complete its broken mushroom ring and leave the center unharvested through one night.", ["fed", "safe-approach"], ["Prepared fungal beds, dim moisture, and spent compost.", "Its visible cap family should remain with its inherited garden."], "A grotto pen needs several prepared beds and an untouched central ring.", "Restarts one dormant fungal patch and leaves viable compost."),
   "voidmantle-ray": captureSheet("voidmantle-ray", "pursuit", "Follow its entire luminous feeding route without cutting across the school, then intercept at the resting arch.", ["tired", "intercepted"], ["Very large dark cavern volume and luminous plankton route.", "Partnered glides require a clear descending lane."], "A cavern sanctuary needs open three-dimensional volume, not a narrow pen.", "Rejoins an abstract plankton migration through a restored cavern."),
-  "fossilback-trilobite": captureSheet("fossilback-trilobite", "aquatic", "Brush sediment from around the moving shell without mining it, then remain submerged with a Tide Lens.", ["safe-approach", "submerged", "tide-lens"], ["Deep undisturbed sediment and low current.", "Do not constantly rake the substrate it reads."], "A research aquarium needs layered sediment and protected resting patches.", "Settles into one suitable ancient-water stratum and reveals a history clue."),
+  "fossilback-trilobite": captureSheet("fossilback-trilobite", "aquatic", "Brush sediment from around the moving shell without mining it, then remain submerged with the normal Capture Orb.", ["safe-approach", "submerged"], ["Deep undisturbed sediment and low current.", "Do not constantly rake the substrate it reads."], "A research aquarium needs layered sediment and protected resting patches.", "Settles into one suitable ancient-water stratum and reveals a history clue."),
   "ilyr-virebloom": captureSheet("ilyr-virebloom", "legendary", "Restore three dry centers, calm their spirits, survive the nonlethal charge, and offer a Sanctuary Seal while Ilyr drinks.", ["encounter-complete", "legendary-consent"], ["A sanctuary-scale migration between living springs.", "Care is ecological restoration, not stable chores."], "Ilyr remains a legendary-world resident except during an earned travel covenant.", "Restores the chosen watershed route and persists at its regional anchor."),
   thalassene: captureSheet("thalassene", "legendary", "Install three reef anchors and complete the trench rescue without striking the living reef.", ["encounter-complete", "legendary-consent"], ["A protected migration and bounded resident reef slots.", "Bleaching and parasite care resolve at authored sites."], "Thalassene is a mobile sanctuary, never a conventional aquarium captive.", "Reestablishes the protected reef migration and its resident schools."),
   orichalc: captureSheet("orichalc", "legendary", "Mine around the seam, rescue delvers, and choose bind, redirect, wake, or dormancy without resolving its nature.", ["encounter-complete", "legendary-consent"], ["An intact Veinmetal seam and non-destructive maintenance access.", "No food or breeding model applies."], "Any bound state remains at a purpose-built Deepgear anchor.", "Returns to dormancy or redirects its living seam according to the chosen oath."),
@@ -149,6 +157,17 @@ export function authoredCreatureCaptureSheet(kind: MobKind) {
 export type CaptureReadinessContext = Readonly<{
   profileId: CaptureProfileId;
   states: Readonly<Partial<Record<CaptureConditionId, boolean>>>;
+  hostile?: boolean;
+  health?: number;
+  maxHealth?: number;
+  aquatic?: boolean;
+  now?: number;
+  calmUntil?: number;
+  calmRoute?: "outmaneuver" | "offering" | null;
+  outmaneuverEvades?: number;
+  outmaneuverHoldSeconds?: number;
+  offeringName?: string | null;
+  offeringProgressSeconds?: number;
   fittedLens?: CaptureLensId | null;
   learnedConditions?: readonly CaptureConditionId[];
 }>;
@@ -164,6 +183,7 @@ export type CaptureConditionView = Readonly<{
 export type CaptureReadiness = Readonly<{
   capturable: boolean;
   ready: boolean;
+  route: "open" | "health" | "outmaneuver" | "offering" | "authored" | "blocked";
   profileId: CaptureProfileId;
   profileName: string;
   summary: string;
@@ -171,37 +191,90 @@ export type CaptureReadiness = Readonly<{
   missingKnown: readonly CaptureConditionId[];
 }>;
 
-function conditionSatisfied(id: CaptureConditionId, context: CaptureReadinessContext) {
-  if (id === "tide-lens") return context.fittedLens === "tide";
-  if (id === "resonance-lens") return context.fittedLens === "resonance";
-  return context.states[id] === true;
+export const AGGRESSIVE_CAPTURE_HEALTH_RATIO = 0.4;
+export const CAPTURE_CALM_WINDOW_SECONDS = 10;
+export const OUTMANEUVER_REQUIRED_EVASIONS = 2;
+export const OUTMANEUVER_HOLD_SECONDS = 3;
+export const CALMING_OFFERING_SECONDS = 4;
+
+function view(
+  id: CaptureConditionId,
+  satisfied: boolean,
+  label?: string,
+  hint?: string,
+): CaptureConditionView {
+  return Object.freeze({
+    ...CAPTURE_CONDITIONS[id],
+    ...(label ? { label } : {}),
+    ...(hint ? { hint } : {}),
+    satisfied,
+    learned: true,
+  });
 }
+
 export function evaluateCaptureReadiness(context: CaptureReadinessContext): CaptureReadiness {
-  if (context.profileId === "uncapturable") return Object.freeze({
-    capturable: false, ready: false, profileId: context.profileId, profileName: "Uncapturable",
-    summary: "This being must be recruited, built, defeated, or resolved through its authored system.",
+  if (context.profileId === "uncapturable" || context.profileId === "legendary") return Object.freeze({
+    capturable: false, ready: false, route: "authored", profileId: context.profileId,
+    profileName: context.profileId === "legendary" ? "Authored covenant" : "Different relationship path",
+    summary: "This being must be recruited, commissioned, summoned, hatched, or resolved through its visible authored system.",
     conditions: Object.freeze([]), missingKnown: Object.freeze([]),
   });
   const profile = CAPTURE_PROFILES[context.profileId];
-  const learned = new Set(context.learnedConditions ?? []);
-  const conditions: CaptureConditionView[] = [];
-  const missingKnown: CaptureConditionId[] = [];
-  let ready = true;
-  for (const group of profile.requirements) {
-    const satisfied = group.anyOf.some((id) => conditionSatisfied(id, context));
-    ready &&= satisfied;
-    const revealed = group.anyOf.filter((id) => learned.has(id));
-    if (!revealed.length) {
-      conditions.push(Object.freeze({ id: null, label: "Unknown condition", hint: "Observe this species or consult a guild naturalist.", satisfied, learned: false }));
-      continue;
-    }
-    const preferred = revealed.find((id) => conditionSatisfied(id, context)) ?? revealed[0];
-    if (!satisfied) missingKnown.push(...revealed);
-    conditions.push(Object.freeze({ ...CAPTURE_CONDITIONS[preferred], satisfied, learned: true }));
+  const inMedium = !context.aquatic || context.states.submerged === true;
+  const mediumView = context.aquatic
+    ? view("submerged", inMedium, "Share its liquid medium", "Enter the same water or syrup before using the normal Capture Orb.")
+    : null;
+  if (!context.hostile) {
+    const calm = context.states.calm !== false;
+    const conditions = [view("calm", calm, "Calm enough to relocate", "Do not use a Capture Orb during an active danger response."), ...(mediumView ? [mediumView] : [])];
+    return Object.freeze({
+      capturable: true,
+      ready: calm && inMedium,
+      route: calm && inMedium ? "open" : "blocked",
+      profileId: profile.id,
+      profileName: "Universal Capture Orb",
+      summary: "One orb, one visible readiness state. Capture grants custody, not friendship.",
+      conditions: Object.freeze(conditions),
+      missingKnown: Object.freeze(conditions.filter((condition) => !condition.satisfied).map((condition) => condition.id).filter((id): id is CaptureConditionId => id !== null)),
+    });
   }
+
+  const maxHealth = Math.max(1, Number(context.maxHealth) || 1);
+  const health = Math.max(0, Math.min(maxHealth, Number(context.health) || 0));
+  const threshold = Math.max(1, Math.floor(maxHealth * AGGRESSIVE_CAPTURE_HEALTH_RATIO * 10) / 10);
+  const healthReady = health <= 1 || health <= maxHealth * AGGRESSIVE_CAPTURE_HEALTH_RATIO || context.states.subdued === true;
+  const now = Number(context.now) || 0;
+  const calmActive = Number(context.calmUntil) > now;
+  const outmaneuverReady = calmActive && context.calmRoute === "outmaneuver";
+  const offeringReady = calmActive && context.calmRoute === "offering";
+  const route = healthReady ? "health" : outmaneuverReady ? "outmaneuver" : offeringReady ? "offering" : "blocked";
+  const conditions = [
+    view("health-threshold", healthReady, `Health ${health.toFixed(1)} / ${maxHealth.toFixed(1)} · ready at ${threshold.toFixed(1)}`,
+      "Predominant reliable route: visibly lower health to 40% or one heart without defeating the creature."),
+    view("outmaneuver", outmaneuverReady,
+      outmaneuverReady
+        ? `Break Its Tempo · calm ${Math.max(0, Number(context.calmUntil) - now).toFixed(1)}s`
+        : `Break Its Tempo · ${Math.min(OUTMANEUVER_REQUIRED_EVASIONS, Math.max(0, Math.floor(Number(context.outmaneuverEvades) || 0)))}/${OUTMANEUVER_REQUIRED_EVASIONS} evades · ${Math.min(OUTMANEUVER_HOLD_SECONDS, Math.max(0, Number(context.outmaneuverHoldSeconds) || 0)).toFixed(1)}/${OUTMANEUVER_HOLD_SECONDS}s clear`,
+      CAPTURE_CONDITIONS.outmaneuver.hint),
+    view("calming-offering", offeringReady,
+      offeringReady
+        ? `Calming Offering · calm ${Math.max(0, Number(context.calmUntil) - now).toFixed(1)}s`
+        : `${context.offeringName ?? "Preferred food"} · ${Math.min(CALMING_OFFERING_SECONDS, Math.max(0, Number(context.offeringProgressSeconds) || 0)).toFixed(1)}/${CALMING_OFFERING_SECONDS}s accepted`,
+      CAPTURE_CONDITIONS["calming-offering"].hint),
+    ...(mediumView ? [mediumView] : []),
+  ];
+  const ready = route !== "blocked" && inMedium;
   return Object.freeze({
-    capturable: true, ready, profileId: profile.id, profileName: profile.name, summary: profile.summary,
-    conditions: Object.freeze(conditions), missingKnown: Object.freeze([...new Set(missingKnown)]),
+    capturable: true,
+    ready,
+    route: ready ? route : "blocked",
+    profileId: profile.id,
+    profileName: "Universal Capture Orb",
+    summary: ready
+      ? `${route === "health" ? "Subdued" : route === "outmaneuver" ? "Tempo broken" : "Offering accepted"} · custody ready for ${CAPTURE_CALM_WINDOW_SECONDS === 10 ? "the visible window" : "capture"}.`
+      : "Use the reliable 40% health route, or optionally break its tempo or offer its displayed food.",
+    conditions: Object.freeze(conditions),
+    missingKnown: Object.freeze(conditions.filter((condition) => !condition.satisfied).map((condition) => condition.id).filter((id): id is CaptureConditionId => id !== null)),
   });
 }
 
@@ -213,17 +286,27 @@ export type CreatureCaptureKnowledge = Readonly<{
   careClues: readonly string[];
 }>;
 
-/** Research reveals requirements in authored order; mastery never changes the rules. */
+/**
+ * Universal capture rules are readable from first contact. Research reveals
+ * creature flavor, care, and mastery knowledge; it never hides a requirement.
+ */
 export function captureKnowledgeForResearch(kind: MobKind, profileId: CaptureProfileId, researchLevel: number): CreatureCaptureKnowledge {
   const authoredSheet = authoredCreatureCaptureSheet(kind);
+  const definition = MOB_DEFS[kind];
+  const preferredFood = definition.tameItems?.[0] ?? definition.diet?.[0] ?? definition.breedingFoods?.[0] ?? null;
+  const fallbackCareClues = Object.freeze([
+    preferredFood !== null
+      ? `${ITEMS[preferredFood]?.name ?? "Its displayed preferred food"} is a reliable first offering during acclimation.`
+      : "A quiet rest at Creature Camp is the safest first acclimation step.",
+    `A sanctuary resembling ${definition.habitat.toLocaleLowerCase()} supports calmer connection sessions.`,
+  ] as const);
   const details = {
-    microHook: researchLevel >= 1 ? authoredSheet?.microHook ?? null : null,
-    careClues: Object.freeze(researchLevel >= 2 ? [...(authoredSheet?.careClues ?? [])] : []),
+    microHook: authoredSheet?.microHook
+      ?? "Read the visible health bar, committed attacks, and displayed preferred food; the same three readiness routes apply to every ordinary aggressive creature.",
+    careClues: Object.freeze(researchLevel >= 2 ? [...(authoredSheet?.careClues ?? fallbackCareClues)] : []),
   };
   if (profileId === "uncapturable") return Object.freeze({ kind, learnedConditions: Object.freeze([]), mastered: researchLevel >= 3, ...details });
-  const ordered = authoredSheet?.conditionRevealOrder.length
-    ? authoredSheet.conditionRevealOrder
-    : CAPTURE_PROFILES[profileId].requirements.flatMap((group) => group.anyOf);
-  const count = researchLevel <= 0 ? 0 : researchLevel === 1 ? 1 : researchLevel === 2 ? Math.max(1, Math.ceil(ordered.length / 2)) : ordered.length;
-  return Object.freeze({ kind, learnedConditions: Object.freeze(ordered.slice(0, count)), mastered: researchLevel >= 3, ...details });
+  const universal: CaptureConditionId[] = ["health-threshold", "outmaneuver", "calming-offering"];
+  if (profileId === "aquatic") universal.push("submerged");
+  return Object.freeze({ kind, learnedConditions: Object.freeze(universal), mastered: researchLevel >= 3, ...details });
 }

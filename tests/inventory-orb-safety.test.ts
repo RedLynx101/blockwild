@@ -70,8 +70,8 @@ test("cursor clicks swap filled orbs instead of stacking them or erasing either 
   const clover = filledOrb("orb-clover", "Clover");
   const engine = clickHarness([mallow], clover);
   engine.inventoryClick(0, "left");
-  assert.equal(inventorySlotDisplayName(engine.inventory[0]), "Waykeeper Capture Orb · Clover (Peelop)");
-  assert.equal(inventorySlotDisplayName(engine.cursor), "Waykeeper Capture Orb · Mallow (Peelop)");
+  assert.equal(inventorySlotDisplayName(engine.inventory[0]), "Capture Orb · Clover (Peelop)");
+  assert.equal(inventorySlotDisplayName(engine.cursor), "Capture Orb · Mallow (Peelop)");
   assert.equal(engine.inventory[0]?.count, 1);
   assert.equal(engine.cursor?.count, 1);
 });
@@ -88,7 +88,7 @@ test("stack convenience never treats a filled orb as a matching bulk stack", () 
 
 test("held and hover labels show both a creature's name and species", () => {
   const slot = filledOrb("orb-mallow", "Mallow");
-  assert.equal(inventorySlotDisplayName(slot), "Waykeeper Capture Orb · Mallow (Peelop)");
+  assert.equal(inventorySlotDisplayName(slot), "Capture Orb · Mallow (Peelop)");
   assert.match(itemHoverText(slot), /Mallow \(Peelop\)/u);
 });
 

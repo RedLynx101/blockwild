@@ -6,15 +6,15 @@ import { BUTTERFLY_FLIGHT_TUNING, butterflyCaptureAlongRay, butterflyFlowerKey, 
 import { MOB_DEFS } from "../app/game/mobs.ts";
 import { BiomeId } from "../app/game/world.ts";
 
-test("flower biomes select distinct butterfly variants with capturable bestiary records", () => {
+test("flower biomes select distinct butterfly variants with universal-orb records", () => {
   assert.equal(butterflyKindForBiome(BiomeId.Bloomwood, 0.1), "bloom-monarch");
   assert.equal(butterflyKindForBiome(BiomeId.Frostpine, 0.1), "frostveil");
   assert.equal(butterflyKindForBiome(BiomeId.Siltfen, 0.1), "fen-lantern");
   assert.equal(butterflyKindForBiome(BiomeId.Badlands, 0.1), "embertip");
-  assert.equal(MOB_DEFS.meadowwing.captureItem, Item.MeadowwingJar);
+  assert.equal(MOB_DEFS.meadowwing.captureItem, Item.CaptureOrb);
 });
 
-test("the net captures the nearest butterfly inside its view cone", () => {
+test("the universal orb targets the nearest butterfly inside its view cone", () => {
   const origin = new THREE.Vector3(0, 2, 0);
   const direction = new THREE.Vector3(0, 0, -1);
   const id = butterflyCaptureAlongRay([

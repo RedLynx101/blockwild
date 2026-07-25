@@ -1,4 +1,4 @@
-import { Item, type InventorySlot } from "./data";
+import { Item, ITEMS, type InventorySlot, type ItemCode } from "./data";
 import {
   canCaptureCreature,
   cloneCreatureMetadata,
@@ -8,6 +8,8 @@ import {
   type CreatureMetadata,
 } from "./creature-cage";
 import type { CaptureLensId } from "./creature-capture";
+import { canAttuneCreature, creatureRelationshipPolicy, markCreatureCaptured } from "./creature-relationships";
+import { MOB_DEFS, type MobKind } from "./mobs";
 
 export const CAPTURE_ORB_RACK_SIZE = 8;
 export const CREATURE_HEALER_SIZE = 4;
@@ -17,6 +19,57 @@ export const CREATURE_HEAL_INTERVAL_SECONDS = 20;
 export const CREATURE_HEALER_GEL_CAP = 64;
 export const CREATURE_HEALER_GEL_SECONDS = 10 * 60;
 export const CREATURE_HEALER_GEL_MULTIPLIER = 10;
+export const LEGACY_LENS_ORB_ITEMS = Object.freeze([
+  Item.GentleLensOrb,
+  Item.GloamLensOrb,
+  Item.TideLensOrb,
+  Item.ResonanceLensOrb,
+] as readonly ItemCode[]);
+export const LEGACY_SPECIES_ORB_ITEMS = Object.freeze([
+  Item.GlimmerhartOrb,
+  Item.RuneowlOrb,
+  Item.CopperScoutOrb,
+  Item.StoneBulwarkOrb,
+  Item.AetherforgedSentinelOrb,
+  Item.CopperMoleOrb,
+  Item.DeepgearCourserOrb,
+  Item.ClockworkHoundOrb,
+  Item.WebspinnerOrb,
+] as readonly ItemCode[]);
+
+let legacySpeciesOrbSerial = 0;
+
+function legacySpeciesOrb(slot: InventorySlot): CaptureOrb | null {
+  if (!LEGACY_SPECIES_ORB_ITEMS.includes(slot.item) || slot.count !== 1) return null;
+  const creatureKind = ITEMS[slot.item]?.creatureKind;
+  if (!creatureKind || !(creatureKind in MOB_DEFS)) return null;
+  const kind = creatureKind as MobKind;
+  const definition = MOB_DEFS[kind];
+  const commissioned = creatureRelationshipPolicy(kind).mode === "commission";
+  legacySpeciesOrbSerial += 1;
+  const serial = legacySpeciesOrbSerial.toString(36);
+  const entityId = `legacy-stock:${kind}:${Date.now().toString(36)}:${serial}`;
+  return captureIntoOrb(createEmptyCaptureOrb(`legacy-orb:${entityId}`), {
+    schema: 1,
+    entityId,
+    kind,
+    health: definition.health,
+    maxHealth: definition.health,
+    ageTicks: 24_000,
+    baby: false,
+    temperament: definition.temperament,
+    hostile: false,
+    tamed: commissioned,
+    ownerId: null,
+    name: null,
+    geneticSeed: Math.imul(Date.now() | 0, 0x9e3779b1) >>> 0,
+    command: commissioned ? "follow" : null,
+    factionId: null,
+    settlementId: null,
+    aligned: false,
+    custom: {},
+  }, Date.now(), "legacy-migration");
+}
 
 export type CaptureOrbAttunement = Readonly<{
   ownerId: string;
@@ -65,12 +118,25 @@ export const createEmptyCaptureOrb = (orbId: string): CaptureOrb => ({
 
 export function fitCaptureOrbLens(orb: CaptureOrb, lens: CaptureLensId | null): CaptureOrb | null {
   if (orb.creature || orb.attunement?.activeEntityId) return null;
-  return { ...orb, lens };
+  // Decode-only compatibility surface. New play has one normal orb and no lens
+  // fitting step; explicitly removing an old lens remains harmless.
+  return lens === null ? { ...orb, lens: null } : null;
 }
 
-export function captureIntoOrb(orb: CaptureOrb, creature: CreatureMetadata, capturedAt = Date.now()): CaptureOrb | null {
+export function captureIntoOrb(
+  orb: CaptureOrb,
+  creature: CreatureMetadata,
+  capturedAt = Date.now(),
+  captorId = creature.ownerId ?? "unclaimed",
+): CaptureOrb | null {
   if (orb.creature || !canCaptureCreature(creature)) return null;
-  return { ...orb, capturedAt, creature: cloneCreatureMetadata(creature), attunement: null };
+  return {
+    ...orb,
+    capturedAt,
+    creature: markCreatureCaptured(cloneCreatureMetadata(creature), captorId, capturedAt),
+    lens: null,
+    attunement: null,
+  };
 }
 
 export function releaseCaptureOrb(orb: CaptureOrb): { orb: CaptureOrb; creature: CreatureMetadata } | null {
@@ -85,7 +151,7 @@ const cleanOwnerId = (ownerId: string) => ownerId.trim().slice(0, 160);
 
 export function attuneCaptureOrb(orb: CaptureOrb, ownerId: string, attunedAt = Date.now()): CaptureOrb | null {
   const owner = cleanOwnerId(ownerId);
-  if (!orb.creature || !owner || orb.attunement?.activeEntityId || orb.creature.health <= 0) return null;
+  if (!orb.creature || !owner || orb.attunement?.activeEntityId || orb.creature.health <= 0 || !canAttuneCreature(orb.creature)) return null;
   if (orb.attunement && orb.attunement.ownerId !== owner) return null;
   return {
     ...orb,
@@ -113,7 +179,7 @@ export type AttunedOrbDeployment = Readonly<{ orb: CaptureOrb; creature: Creatur
 export function deployAttunedCaptureOrb(orb: CaptureOrb, ownerId: string): AttunedOrbDeployment | null {
   const attunement = orb.attunement;
   if (!orb.creature || !attunement || attunement.ownerId !== cleanOwnerId(ownerId) || attunement.activeEntityId
-    || attunement.fainted || orb.creature.health <= 0) return null;
+    || attunement.fainted || orb.creature.health <= 0 || !canAttuneCreature(orb.creature)) return null;
   const creature = cloneCreatureMetadata(orb.creature);
   creature.ownerId = ownerId;
   creature.custom = { ...creature.custom, attunedOrbId: orb.orbId };
@@ -181,7 +247,7 @@ export function decodeCaptureOrb(value: string): CaptureOrb | null {
     if (parsed.creature === null) {
       const lens = (parsed as Partial<CaptureOrb>).lens;
       if (lens !== undefined && lens !== null && !["gentle", "gloam", "tide", "resonance"].includes(lens)) return null;
-      return { ...createEmptyCaptureOrb(parsed.orbId), lens: lens ?? null };
+      return createEmptyCaptureOrb(parsed.orbId);
     }
     const creature = normalizeCreatureMetadata(parsed.creature);
     if (!creature) return null;
@@ -205,7 +271,7 @@ export function decodeCaptureOrb(value: string): CaptureOrb | null {
     }
     const lens = (parsed as Partial<CaptureOrb>).lens;
     if (lens !== undefined && lens !== null && !["gentle", "gloam", "tide", "resonance"].includes(lens)) return null;
-    return { schema: 1, orbId: parsed.orbId, capturedAt: parsed.capturedAt, creature, lens: lens ?? null, attunement };
+    return { schema: 1, orbId: parsed.orbId, capturedAt: parsed.capturedAt, creature, lens: null, attunement };
   } catch {
     return null;
   }
@@ -213,11 +279,9 @@ export function decodeCaptureOrb(value: string): CaptureOrb | null {
 
 export function captureOrbInventorySlot(orb: CaptureOrb): InventorySlot {
   const creature = orb.creature;
-  // A plain empty shell has no identity-bearing state. Collapse it back to the
-  // canonical crafted item so released/migrated orbs can rejoin ordinary
-  // stacks. Fitted lenses remain authored upgrades and therefore retain their
-  // exact singleton metadata until the lens is deliberately removed.
-  if (!creature && !orb.lens && !orb.attunement) return { item: Item.CaptureOrb, count: 1 };
+  // A plain empty shell has no identity-bearing state and always rejoins the
+  // one canonical crafted stack. Legacy lens state is discarded on write.
+  if (!creature && !orb.attunement) return { item: Item.CaptureOrb, count: 1 };
   return {
     item: Item.CaptureOrb,
     count: 1,
@@ -236,14 +300,16 @@ export function captureOrbInventorySlot(orb: CaptureOrb): InventorySlot {
         attunedOwnerId: orb.attunement?.ownerId,
         deployed: Boolean(orb.attunement?.activeEntityId),
         fainted: Boolean(orb.attunement?.fainted || creature.health <= 0),
-        captureLens: orb.lens ?? null,
       } : {}),
     },
   };
 }
 
 export function captureOrbFromInventorySlot(slot: InventorySlot | null | undefined) {
-  if (!slot || (slot.item !== Item.CaptureOrb && slot.item !== Item.LegacyCaptureOrb) || slot.count !== 1) return null;
+  if (!slot || slot.count !== 1) return null;
+  const legacyLens = LEGACY_LENS_ORB_ITEMS.includes(slot.item);
+  const legacySpecies = LEGACY_SPECIES_ORB_ITEMS.includes(slot.item);
+  if (slot.item !== Item.CaptureOrb && slot.item !== Item.LegacyCaptureOrb && !legacyLens && !legacySpecies) return null;
   if (typeof slot.metadata?.captureOrb === "string") return decodeCaptureOrb(slot.metadata.captureOrb);
   if (typeof slot.metadata?.capturedCreature === "string") {
     const legacy = decodeCapturedCreature(slot.metadata.capturedCreature);
@@ -254,11 +320,18 @@ export function captureOrbFromInventorySlot(slot: InventorySlot | null | undefin
       creature: cloneCreatureMetadata(legacy.creature),
     };
   }
+  if (legacySpecies) return legacySpeciesOrb(slot);
   return createEmptyCaptureOrb(`orb-${slot.item}`);
 }
 
-/** Normalizes both old cage saves and the short-lived id 178 into item id 156. */
+/** Normalizes old cages, id 178, retired lenses, and species stock into id 156. */
 export function migrateCaptureOrbInventorySlot(slot: InventorySlot): InventorySlot {
+  if (LEGACY_LENS_ORB_ITEMS.includes(slot.item) && !slot.metadata?.captureOrb && !slot.metadata?.capturedCreature) {
+    // A second normal shell is the compact, idempotent compensation for the
+    // retired lens materials. It stays in one stack and cannot duplicate on
+    // reload because the item id is canonical after this write.
+    return { item: Item.CaptureOrb, count: Math.max(1, Math.min(ITEMS[Item.CaptureOrb]?.maxStack ?? 16, slot.count * 2)) };
+  }
   const orb = captureOrbFromInventorySlot(slot);
   return orb ? captureOrbInventorySlot(orb) : slot;
 }

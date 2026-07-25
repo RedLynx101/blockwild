@@ -721,7 +721,7 @@ export const LIVING_ROSTER_MOBS: Record<LivingRosterKind, MobDefinition> = {
     habitat: "Lumen Trench, Abyssal Ocean, and Glasswater currents", active: "Storms, charged lures, and strong currents", family: "fish", movement: "aquatic", aquatic: true, food: Item.RawFish,
     behavior: "Braids its ribbon body around moving water, drinks charge through copper-blue finlets, and adds a visible Storm affinity only while the luminous lateral line remains full.",
     lore: "A Currentweaver is never struck by the same current twice; it edits the second one before it arrives.", utility: "Powers a held lamp or produces a brief aquatic stun while visibly charged.",
-    discoveryHint: "Charge a Tide Lens lure and intercept the animal along its current rather than chasing behind it.", colors: [0x234f63, 0x47c5c3, 0xeedc78], drops: [{ item: Item.GlowScale, min: 1, max: 2, chance: .44 }],
+    discoveryHint: "Offer its displayed lure and intercept the animal along its current rather than chasing behind it.", colors: [0x234f63, 0x47c5c3, 0xeedc78], drops: [{ item: Item.GlowScale, min: 1, max: 2, chance: .44 }],
   }),
   "shellcarrier-hermit": livingRosterMob("shellcarrier-hermit", {
     name: "Shellcarrier Hermit", temperament: "Gentle", health: 12, damage: 2, speed: .32, radius: .34, height: .3, footOffset: .24,
@@ -1696,7 +1696,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     behavior: "Selects a flower, lands to gather nectar, and returns to its queen before dusk.",
     lore: "Each worker carries a map of flowers written in sunlight and scent.",
     colors: [0xe8ad32, 0x35291f, 0xf2e4bd], drops: [{ item: Item.Beeswax, min: 1, max: 1, chance: 0.16 }],
-    family: "pollinator", movement: "flying", flying: true, persistent: true, utility: "Pollinates crops and returns nectar to a queen.", captureItem: Item.WorkerBee,
+    family: "pollinator", movement: "flying", flying: true, persistent: true, utility: "Pollinates crops and returns nectar to a queen.", captureItem: Item.CaptureOrb,
     discoveryHint: "Follow a worker traveling between meadow flowers and a hanging Wild Hive.",
   },
   "hive-queen": {
@@ -1706,10 +1706,10 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     behavior: "Builds a colony from as few as zero workers, defends it with a heavy sting, and directs workers home at dusk.",
     lore: "A queen's wingbeat is lower than a worker's and can quiet an entire hive.",
     colors: [0xf0c850, 0x3d2b24, 0xffefaf], drops: [{ item: Item.QueenCell, min: 1, max: 1, chance: 0.28 }, { item: Item.Honeycomb, min: 1, max: 2, chance: 0.65 }],
-    family: "pollinator", movement: "flying", flying: true, persistent: true, utility: "Produces workers and can be tamed with Royal Jelly below half health.",
+    family: "pollinator", movement: "flying", flying: true, persistent: true, utility: "Produces workers; containment and a later care bond are separate decisions.",
     sentient: false, tameable: true, tameItems: [Item.RoyalJelly], diet: [Item.RoyalJelly], captureItem: Item.CaptureOrb,
     postTameNotes: "A trusted queen directs her workers to defend the keeper who fed her Royal Jelly.",
-    secretHint: "A net or Capture Orb only catches a queen once she is below half health.",
+    secretHint: "A Capture Orb is reliably ready at 40% health; clean evasion or an accepted Royal Jelly offering can also calm her.",
     discoveryHint: "Listen for a low wingbeat within an occupied Wild Hive or stocked Apiary.",
   },
   "reed-dragonfly": {
@@ -2593,7 +2593,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     footOffset: 0.12, radius: 0.12, height: 0.18, habitat: "Flower meadows and sunny Wildwood edges", active: "Clear daylight",
     behavior: "Drifts between Ember Blooms, lands to drink, and rises when a shadow passes overhead.",
     lore: "The first bright wings of spring. Trailkeepers judge the health of a meadow by how many dance above it.",
-    colors: [0xf3d451, 0x4b3b25, 0xfff4a8], drops: [], family: "butterfly", movement: "flying", flying: true, captureItem: Item.MeadowwingJar,
+    colors: [0xf3d451, 0x4b3b25, 0xfff4a8], drops: [], family: "butterfly", movement: "flying", flying: true, captureItem: Item.CaptureOrb,
     discoveryHint: "Search clear daylight above Ember Blooms in flower meadows.",
   },
   "azure-skippers": {
@@ -2602,7 +2602,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     footOffset: 0.12, radius: 0.11, height: 0.17, habitat: "Skybells in Birchlight and Wildwood", active: "Bright morning",
     behavior: "Flies in quick blue dashes, shares flowers reluctantly, and rarely rests for long.",
     lore: "A chip of summer sky that refused to stay put.",
-    colors: [0x54bce8, 0x244f78, 0xdaf7ff], drops: [], family: "butterfly", movement: "flying", flying: true, captureItem: Item.AzureSkipperJar,
+    colors: [0x54bce8, 0x244f78, 0xdaf7ff], drops: [], family: "butterfly", movement: "flying", flying: true, captureItem: Item.CaptureOrb,
     discoveryHint: "Watch morning Skybells for tiny blue dashes that rarely settle.",
   },
   embertip: {
@@ -2611,7 +2611,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     footOffset: 0.12, radius: 0.12, height: 0.18, habitat: "Savanna blooms and warm badland oases", active: "Hot daylight",
     behavior: "Warms its dark wings on stone before circling red flowers in wide loops.",
     lore: "Its wing tips hold sunset long after noon has passed.",
-    colors: [0xed743d, 0x3b2722, 0xffc35a], drops: [], family: "butterfly", movement: "flying", flying: true, captureItem: Item.EmbertipJar,
+    colors: [0xed743d, 0x3b2722, 0xffc35a], drops: [], family: "butterfly", movement: "flying", flying: true, captureItem: Item.CaptureOrb,
     discoveryHint: "Check sun-warmed stone beside savanna flowers and badland oases.",
   },
   frostveil: {
@@ -2620,7 +2620,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     footOffset: 0.12, radius: 0.13, height: 0.19, habitat: "Rare flowers along Frostpine snow lines", active: "Still, sunny afternoons",
     behavior: "Glides more than it flaps and folds into the snow whenever the wind rises.",
     lore: "Often mistaken for a loose snowflake until it chooses a flower.",
-    colors: [0xd8f2f5, 0x7896af, 0xffffff], drops: [], family: "butterfly", movement: "flying", flying: true, captureItem: Item.FrostveilJar,
+    colors: [0xd8f2f5, 0x7896af, 0xffffff], drops: [], family: "butterfly", movement: "flying", flying: true, captureItem: Item.CaptureOrb,
     discoveryHint: "Wait for a still sunny afternoon beside rare flowers on the Frostpine snow line.",
   },
   "bloom-monarch": {
@@ -2629,7 +2629,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     footOffset: 0.12, radius: 0.15, height: 0.2, habitat: "Bloomwood Vale flower canopies", active: "Sunlit noon",
     behavior: "Claims a small court of flowers and returns to the same favorite bloom throughout the day.",
     lore: "Bloomwood children insist every Monarch rules exactly seven flowers.",
-    colors: [0xe88fc8, 0x713c70, 0xffd5ee], drops: [], family: "butterfly", movement: "flying", flying: true, captureItem: Item.BloomMonarchJar,
+    colors: [0xe88fc8, 0x713c70, 0xffd5ee], drops: [], family: "butterfly", movement: "flying", flying: true, captureItem: Item.CaptureOrb,
     discoveryHint: "Inspect the sunlit flower canopy of Bloomwood Vale around noon.",
   },
   "fen-lantern": {
@@ -2638,7 +2638,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     footOffset: 0.12, radius: 0.13, height: 0.18, habitat: "Sunny clearings in Siltfen and Mooncap Fen", active: "Humid daylight",
     behavior: "Hovers close to flowers and flashes pale green when another tiny creature approaches.",
     lore: "A daytime cousin of the Glowmoth, carrying a softer and more patient light.",
-    colors: [0xb6df62, 0x3e6040, 0xf1ffb5], drops: [], family: "butterfly", movement: "flying", flying: true, captureItem: Item.FenLanternJar,
+    colors: [0xb6df62, 0x3e6040, 0xf1ffb5], drops: [], family: "butterfly", movement: "flying", flying: true, captureItem: Item.CaptureOrb,
     discoveryHint: "Search humid sunny clearings in Siltfen or Mooncap Fen for a soft green flash.",
   },
   bonbonwing: {
@@ -2647,7 +2647,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     footOffset: 0.12, radius: 0.14, height: 0.19, habitat: "Lollipop Orchids and gumdrop clearings in the Sugarplum Vale", active: "Clear daylight",
     behavior: "Loops between candy flowers on four wrapper-shaped wings and rests only briefly before the next bright patch catches its attention.",
     lore: "Bonbonwings are living sweets: caught gently, one may be released again or eaten as a small traveling treat.",
-    colors: [0xf08fbd, 0x51314d, 0xffed79], drops: [], family: "butterfly", movement: "flying", flying: true, captureItem: Item.BonbonwingTreat,
+    colors: [0xf08fbd, 0x51314d, 0xffed79], drops: [], family: "butterfly", movement: "flying", flying: true, captureItem: Item.CaptureOrb,
     utility: "A releasable and edible candy butterfly.", discoveryHint: "Search sunlit Lollipop Orchids in the Sugarplum Vale.",
   },
   "moonveil-wing": {
@@ -2656,7 +2656,7 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     footOffset: 0.12, radius: 0.14, height: 0.19, habitat: "Moonpetals and Starferns in the Glimmerwood", active: "Dusk and moonlit night",
     behavior: "Drifts between glowing plants and draws a soft crescent with each wingbeat.",
     lore: "Enclaves leave one Moonpetal unharvested for every Moonveil seen that week.",
-    colors: [0x8d8bf3, 0x3b466e, 0xd9fff1], drops: [], family: "butterfly", movement: "flying", flying: true, captureItem: Item.FenLanternJar,
+    colors: [0x8d8bf3, 0x3b466e, 0xd9fff1], drops: [], family: "butterfly", movement: "flying", flying: true, captureItem: Item.CaptureOrb,
     utility: "A luminous Glimmerwood pollinator.", discoveryHint: "Wait beside Moonpetals after sunset in the Glimmerwood.",
   },
 };
