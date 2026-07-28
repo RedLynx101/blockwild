@@ -1,6 +1,6 @@
 # Creature Visual Brief
 
-Use this before modeling or substantially redesigning a creature. Replace every bracketed field; a generic answer is a signal that the design is not ready.
+Use this before modeling or substantially redesigning a creature. Replace every bracketed field; a generic answer is a signal that the design is not ready. When generating concept art for Tripo, the TCG, or Cardforge, complete this brief and then use [`BLOCKWILD_CREATURE_IMAGEGEN_PROMPT.md`](BLOCKWILD_CREATURE_IMAGEGEN_PROMPT.md).
 
 ## Identity
 
