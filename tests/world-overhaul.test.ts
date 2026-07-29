@@ -346,8 +346,8 @@ test("six ecological centers exceed minimum biodiversity while ordinary tunnels 
   assert.ok(ecologicalLights > ordinaryLights * 2, "ecological centers should concentrate the underground glow");
 });
 
-test("all nine signature creatures have authored models, animation contracts, field notes, sounds, and spawn roles", () => {
-  assert.equal(UNDERGROUND_MOB_ORDER.length, 9);
+test("all ten signature creatures have authored models, animation contracts, field notes, sounds, and spawn roles", () => {
+  assert.equal(UNDERGROUND_MOB_ORDER.length, 10);
   const secondPassDetails: Readonly<Record<string, readonly string[]>> = {
     "grotto-grazer": ["split-lip-muzzle", "left-antler-tine-1", "tail-moss-brush"],
     lanternray: ["left-lantern-organ", "left-cephalic-lobe", "left-tail-streamer"],
@@ -357,6 +357,7 @@ test("all nine signature creatures have authored models, animation contracts, fi
     "ashnose-bat": ["heat-leaf-nose", "left-wing-finger-1", "left-roost-claw-2"],
     chimewing: ["crown-vane-2", "left-wing-chime", "tail-chime-2"],
     "cinder-kite": ["furnace-beak", "left-ember-vein-1", "back-vent-1"],
+    "embercarapace-beetle": ["heat-heart", "left-wing-case-seam", "leg-left-front-foot"],
     veinling: ["unresolved-heart", "left-face-fracture", "front-left-repair-prong-2"],
   };
   for (const kind of UNDERGROUND_MOB_ORDER) {
@@ -394,6 +395,7 @@ test("every second-pass creature silhouette keeps a visible articulated detail",
     ["ashnose-bat", "ashnose-bat-heat-leaf-nose", "scale-x", "wildlife"],
     ["chimewing", "chimewing-left-wing-chime", "rotation-z", "wildlife"],
     ["cinder-kite", "cinder-kite-back-vent-1", "scale-x", "wildlife"],
+    ["embercarapace-beetle", "embercarapace-beetle-head-pivot", "rotation-x", "wildlife"],
     ["veinling", "veinling-unresolved-heart", "scale-x", "wildlife"],
   ] as const;
   const readChannel = (part: THREE.Object3D, channel: typeof animatedDetails[number][2]) => channel === "scale-x"

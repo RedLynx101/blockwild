@@ -163,6 +163,7 @@ export const CREATURE_SOUND_EVENTS: Partial<Record<CoreMobKind, Partial<Record<C
   "shellcarrier-hermit": CRUSTACEAN_EVENTS,
   "wreckwhistle-porpoise": DEEP_CREATURE_EVENTS,
   "kilnscale-salamander": CRUSTACEAN_EVENTS,
+  "embercarapace-beetle": CRUSTACEAN_EVENTS,
   "sporeback-gardener": LITTLE_ANIMAL_EVENTS,
   "voidmantle-ray": DEEP_CREATURE_EVENTS,
   "fossilback-trilobite": CRUSTACEAN_EVENTS,

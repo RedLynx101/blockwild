@@ -290,7 +290,7 @@ const CRYSTALDEEP_FAUNA: readonly WeightedMob[] = Object.freeze([
 ]);
 const EMBERDEEP_FAUNA: readonly WeightedMob[] = Object.freeze([
   ["cinder-kite", 0.21], ["cinder-maw", 0.15], ["cindercone-mossling", 0.13], ["ashnose-bat", 0.12],
-  ["auric-scarab", 0.08], ["caveblob", 0.07], ["shadecrawler", 0.06], ["veinling", 0.025], ["prismtail-swift", 0.02],
+  ["embercarapace-beetle", 0.11], ["auric-scarab", 0.08], ["caveblob", 0.07], ["shadecrawler", 0.06], ["veinling", 0.025], ["prismtail-swift", 0.02],
   ["kilnscale-salamander", 0.085], ["cindercoil-gecko", 0.028],
 ]);
 
@@ -562,6 +562,7 @@ export const NATURAL_GROUP_RANGES: Readonly<Partial<Record<MobKind, readonly [mi
   "ashnose-bat": [3, 8],
   chimewing: [2, 5],
   "cinder-kite": [1, 3],
+  "embercarapace-beetle": [2, 4],
   "sunstep-grazer": [4, 7],
   "wild-horse": [3, 6],
   "rimehoof-courser": [3, 5],

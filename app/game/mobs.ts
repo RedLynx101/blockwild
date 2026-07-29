@@ -136,6 +136,7 @@ export type UndergroundMobKind =
   | "ashnose-bat"
   | "chimewing"
   | "cinder-kite"
+  | "embercarapace-beetle"
   | "veinling";
 export type LivingRosterKind =
   | "thornhide-trufflehog"
@@ -1072,6 +1073,21 @@ export const MOB_DEFS: Record<MobKind, MobDefinition> = {
     fieldNotes: [
       { id: "pressure", title: "Pressure Gauge", text: "A Kite climbs higher and circles tighter as pressure builds beneath its chosen vent.", hint: "Survive an encounter near a vent.", requires: [{ metric: "seen", atLeast: 1 }] },
       { id: "mineral-nest", title: "Mineral Nest", text: "Its nest is fused from sulfur needles and heat-cracked stone rather than gathered brush.", hint: "Defeat a territorial adult.", requires: [{ metric: "kills", atLeast: 1 }] },
+    ],
+  },
+  "embercarapace-beetle": {
+    kind: "embercarapace-beetle", name: "Embercarapace Beetle", temperament: "Defensive", hostile: true,
+    health: 20, damage: 4, xp: 10, speed: 0.72, chaseSpeed: 2.8, turnRate: 5.9, attackRange: 1.22,
+    footOffset: 0.42, radius: 0.54, height: 0.74, habitat: "Emberdeep Fumarole basalt shelves and the dark tunnels immediately beyond their glow", active: "Fumarole surges and the cooling hours after them",
+    behavior: "Searches ash with paired stepped antennae, braces on six plated legs, and vents stored heat through its orange abdomen before a short territorial shoulder-charge.",
+    lore: "Its black wing-cases insulate a living furnace. Dwarven ventwrights call a retreat when a whole colony turns its glowing abdomens toward the same wall.",
+    colors: [0x182124, 0x9d3122, 0xff9a2e], drops: [{ item: Item.SulfurGrowthItem, min: 1, max: 2, chance: 0.62 }, { item: Item.GlowDust, min: 1, max: 2, chance: 0.24 }],
+    family: "underground", movement: "ground", breedable: true, breedingFoods: [Item.SulfurGrowthItem], diet: [Item.SulfurGrowthItem, Item.CaveGel], captureItem: Item.CaptureOrb,
+    utility: "A bonded colony gives an early warning before dangerous Emberdeep pressure surges and sheds useful sulfur growths without mining a vent.", discoveryHint: "Follow paired six-foot tracks from a cooling fumarole into the first dark side passage.",
+    fieldNotes: [
+      { id: "tripod-gait", title: "Tripod Gait", text: "Three feet remain planted while the opposing three advance, keeping the heavy shell stable on fractured basalt.", hint: "Watch one cross uneven stone without provoking it.", requires: [{ metric: "seen", atLeast: 1 }] },
+      { id: "heat-warning", title: "Heat Warning", text: "The abdominal bands brighten in sequence before the beetle vents or charges; the same sequence precedes nearby pressure shifts.", hint: "Record more than one territorial warning.", requires: [{ metric: "seen", atLeast: 2 }] },
+      { id: "vent-colony", title: "Vent Colony", text: "A settled group rotates between warm stone and darkness so that no individual furnace overheats.", hint: "Capture two colony members for close study.", requires: [{ metric: "captures", atLeast: 2 }] },
     ],
   },
   veinling: {
@@ -2704,7 +2720,7 @@ export const V1_FACTION_CREATURE_ORDER: V1FactionCreatureKind[] = ["glimmerhart"
 export const SENTIENT_MOB_ORDER: SentientMobKind[] = [...HOBBIT_ORDER, ...GOBLIN_ORDER, ...ATLANTIAN_ORDER, ...SUGARCOURT_ORDER, ...WOOD_ELF_ORDER, ...DWARF_ORDER];
 export const SPECIAL_MOB_ORDER: SpecialMobKind[] = ["peelop", "reliquary-sentinel", "skeleton", "warg"];
 export const ADVENTURE_MOB_ORDER: AdventureMobKind[] = ["auric-scarab", "rootwrithe", "bellroot-matron", "vaultwing", "cinder-maw", "ossuary-keeper", "mossback-kite", "clockwork-marmot", "inkmaw-curator"];
-export const UNDERGROUND_MOB_ORDER: UndergroundMobKind[] = ["grotto-grazer", "lanternray", "prismtail-swift", "glassback-newt", "sailfin-skimmer", "ashnose-bat", "chimewing", "cinder-kite", "veinling"];
+export const UNDERGROUND_MOB_ORDER: UndergroundMobKind[] = ["grotto-grazer", "lanternray", "prismtail-swift", "glassback-newt", "sailfin-skimmer", "ashnose-bat", "chimewing", "cinder-kite", "embercarapace-beetle", "veinling"];
 export const LIVING_ROSTER_ORDER: LivingRosterKind[] = [
   "thornhide-trufflehog", "orchard-glider", "petalmask-tanuki", "ironbeak-magpie", "hearthback-badger", "sunfoil-pangolin",
   "glassstep-jerboa", "stormcrest-ibex", "cindercoil-gecko", "cloudkite-pika", "briarclaw-lynx", "gravebell-jackal",

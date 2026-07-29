@@ -24,6 +24,7 @@ import {
 } from "./mobs";
 import { createArrowVisual } from "./projectiles";
 import { DRAGON_VARIANTS, dragonVariantForSeed, isDragonVariantForType, type DragonType, type DragonVariantId } from "./dragons";
+import { applyEmbercarapaceBeetlePose, createEmbercarapaceBeetleVisual } from "./tripo-creature-models";
 
 const TAU = Math.PI * 2;
 /** Counteracts the rotated repair-prong bounds so the Veinling's contact plane is exactly local Y=0. */
@@ -501,6 +502,7 @@ export function createSentientLodVisual(kind: MobKind, id: number, bounds: THREE
  */
 export function createMobVisual(kind: MobKind, id: number): MobVisual {
   if (!CORE_MOB_ORDER.includes(kind as CoreMobKind)) throw new Error(`'${kind}' is not a world mob visual.`);
+  if (kind === "embercarapace-beetle") return createEmbercarapaceBeetleVisual(id);
   if (ADVENTURE_MOB_ORDER.includes(kind as AdventureMobKind)) return createAdventureMobVisual(kind as AdventureMobKind, id);
   if ((LIVING_BESTIARY_VISUAL_KINDS as readonly MobKind[]).includes(kind)) return createLivingBestiaryMobVisual(kind as LivingBestiaryVisualKind, id);
 
@@ -5092,6 +5094,7 @@ export function applyWildlifePose(
   const time = Number.isFinite(timeSeconds) ? timeSeconds : 0;
   const travel = THREE.MathUtils.clamp(Number.isFinite(travelAmount) ? travelAmount : 0, 0, 1);
   const alert = THREE.MathUtils.clamp(Number.isFinite(alertAmount) ? alertAmount : 0, 0, 1);
+  if (rig === "embercarapace-beetle") return applyEmbercarapaceBeetlePose(visual, time, travel, alert);
   // Living Bestiary models carry their own cached rig instead of a legacy
   // `wildlifeRig` tag. Previously this early-return skipped every authored
   // quadruped gait, including the Trufflehog's four articulated legs.
