@@ -3,6 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://blockwild.app"),
+  manifest: "/manifest.webmanifest",
   title: "Blockwild — Endless Browser Voxel Survival",
   description: "Explore endless streamed biomes, mine deep caves, craft tools, build, smelt, fight creatures, and survive in an original browser voxel world.",
   openGraph: {
@@ -18,8 +19,20 @@ export const metadata: Metadata = {
     images: ["/og.png"],
   },
   icons: {
-    icon: "/favicon.svg",
-    shortcut: "/favicon.svg",
+    icon: [
+      { url: "/brand/blockwild-icon-16.png", sizes: "16x16", type: "image/png" },
+      { url: "/brand/blockwild-icon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/brand/blockwild-icon-64.png", sizes: "64x64", type: "image/png" },
+      { url: "/brand/blockwild-icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/brand/blockwild-icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    shortcut: "/brand/blockwild-icon-32.png",
+    apple: [{ url: "/brand/blockwild-icon-180.png", sizes: "180x180", type: "image/png" }],
+  },
+  appleWebApp: {
+    capable: true,
+    title: "Blockwild",
+    statusBarStyle: "black-translucent",
   },
 };
 

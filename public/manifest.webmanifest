@@ -1,0 +1,23 @@
+{
+  "name": "Blockwild",
+  "short_name": "Blockwild",
+  "description": "Explore, build, craft, capture creatures, and survive in an endless voxel wilderness.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#07100d",
+  "theme_color": "#d99f45",
+  "icons": [
+    {
+      "src": "/brand/blockwild-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/brand/blockwild-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
