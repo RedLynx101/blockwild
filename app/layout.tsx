@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://blockwild.noahhicks.chatgpt.site"),
+  metadataBase: new URL("https://blockwild.app"),
   title: "Blockwild — Endless Browser Voxel Survival",
   description: "Explore endless streamed biomes, mine deep caves, craft tools, build, smelt, fight creatures, and survive in an original browser voxel world.",
   openGraph: {

@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { TCG_CATALOG, TCG_RARITY_ORDER, TCG_SETS, tcgCardSearchText, tcgDefinitionForPrinting } from "./tcg/catalog";
 import { TCG_ARCHIVE_CAPACITY, TCG_ARCHIVE_UPGRADE_PRICE, totalTcgArchived, validateTcgDeck } from "./tcg/collection";
-import { layoutTcgCard } from "./tcg/layout";
+import { layoutTcgCard } from "./tcg/card-layout";
 import { tcgPrintingReferenceValue } from "./tcg/market";
 import type { TcgHudState, TcgLocation, TcgMatchAction, TcgPublicMatchPlayer, TcgTradeAsset } from "./tcg/types";
 import { GUILDS, GUILD_QUESTS, promotionEligibility, questProgress, type GuildBookState, type GuildId } from "./guilds";

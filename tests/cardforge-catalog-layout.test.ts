@@ -11,7 +11,7 @@ import { MOB_ORDER } from "../app/game/mobs.ts";
 import { LOOT_FAMILIES } from "../app/game/contextual-loot.ts";
 import { TCG_CATALOG, TCG_FULL_ART_ILLUSTRATIONS, tcgCatalogAudit } from "../app/game/tcg/catalog.ts";
 import { createTcgPlayerState } from "../app/game/tcg/collection.ts";
-import { auditTcgLayouts, layoutTcgCard, renderTcgCardSvg } from "../app/game/tcg/layout.ts";
+import { auditTcgLayouts, layoutTcgCard, renderTcgCardSvg } from "../app/game/tcg/card-layout.ts";
 
 test("Cardforge catalog covers every live mob and guild with complete pack pools", () => {
   const audit = tcgCatalogAudit();
