@@ -4,7 +4,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   metadataBase: new URL("https://blockwild.app"),
   manifest: "/manifest.webmanifest",
-  title: "Blockwild — Endless Browser Voxel Survival",
+  title: "Blockwild",
   description: "Explore endless streamed biomes, mine deep caves, craft tools, build, smelt, fight creatures, and survive in an original browser voxel world.",
   openGraph: {
     title: "Blockwild — Endless Browser Voxel Survival",

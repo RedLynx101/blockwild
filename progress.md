@@ -1406,3 +1406,8 @@ Current request: Refresh the pushed `design-1` branch, publish an incremental v1
 - Production treatment: preserve the approved transparent source, derive purpose-built 16, 32, 64, 180, 192, and 512 px PNGs with consistent clear space, replace the generic SVG favicon, and expose the identity through browser, Apple, and installable-app metadata.
 - Release contract: verify true transparency and exact dimensions, manually inspect the production artwork and live title screen, pass native TypeScript, focused tests, lint, both Next/Vercel and Vinext/Sites builds, then publish one exact SHA across all three release paths.
 - Validation checkpoint: 2/2 icon/metadata regressions, native TypeScript, changed-file ESLint, whitespace validation, the full Next/Webpack production build, all five Vinext stages, and direct Sites Worker/manifest validation pass. The exact Next production runtime reached a ready v1.11.0 title state with no browser error artifact; its title scene and the integrated 512 px transparent icon were manually reviewed.
+
+## Concise browser title - 2026-08-01
+
+- Active request: shorten the browser-tab title to `Blockwild`, validate it locally, and commit without publishing.
+- Validation checkpoint: the rendered production document title is exactly `Blockwild`; native TypeScript, changed-file ESLint, 2/2 icon/metadata checks, and the Next/Webpack production build pass. The official deterministic client reached the ready title state without an error artifact, and its screenshot was manually reviewed. Publication is intentionally deferred.
