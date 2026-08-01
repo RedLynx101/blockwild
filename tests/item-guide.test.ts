@@ -31,7 +31,9 @@ test("crafting, milling, furnace, alchemy, distillery, and Sugarworks processes 
 
 test("the searchable guide is available beside recipes and every crafting station", () => {
   const ui = readFileSync(new URL("../app/game/VoxelGame.tsx", import.meta.url), "utf8");
-  assert.match(ui, /Trailcraft Guide/u);
+  assert.match(ui, /Blockwild Wiki/u);
+  assert.match(ui, /WIKI_CATEGORY_ORDER/u);
+  assert.match(ui, /Open web wiki/u);
   assert.match(ui, /Deterministic origins/u);
   assert.match(ui, /What it makes/u);
   assert.match(ui, /Open pattern board/u);

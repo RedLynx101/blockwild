@@ -1,99 +1,78 @@
 # Blockwild roadmap
 
-Blockwild v1.3 Echoes and Ruins adds HRTF spatial/environment audio, twenty new POIs, five staged dungeons, six authored encounter creatures, three legendary heirlooms, fixed-budget bird routing, redesigned wildlife, and nine production biome-surface recipes. Trailbound, Realms and Recall, Wyrmweave, Sugarcourt, Tidelight, and Hearthroads remain part of the same deterministic world and progression layer. The systems below are intentionally outside the v1.3 release boundary. This is a direction document, not a schedule.
+This is a direction document, not a schedule. A feature should not be advertised as playable until its complete loop, persistence, multiplayer authority, UI feedback, performance budget, and migration behavior are implemented and tested.
 
-## Explicit post-v1.3 backlog
+## Near-term quality priorities
 
-Realms and Recall adds Wood Elves, Dwarves, Sea Dragons, attuned creature recall, and expandable digital storage. The following ideas from the 1.0 design brief are deliberately recorded rather than partially shipped:
+### Playability and performance
 
-- Human settlements and human firearms beyond the Dwarven flintlock line.
-- Mekanism-style factories, powered drills, broad automation chains, and chunk-loading machines.
-- Creature evolutions, cross-species monster hybrids, and cross-type dragon hybrids. These require explicit inheritance, model, balance, save, and multiplayer rules first.
-- Deeper settlement variation beyond the connected hamlet, village, and town tiers: culture-specific districts, authored civic landmarks, construction history, and save-safe growth after generation.
-- Deeper player-town management, hired parties, faction war, autonomous sieges, and post-capture cultural rebuilding.
+- Continue the measured optimization loop using browser performance captures, deterministic benchmarks, and the tracked comparison ledger.
+- Virtualize very large collection and archive lists when their DOM/layout cost becomes visible; keep images lazy and local.
+- Expand low-spec and touch validation without weakening host authority or simulation correctness.
+- Keep player-caused feedback immediate while mesh consolidation, lighting, ecology, and distant world work remain budgeted.
 
-These are not hidden v1.3 features and should not be advertised as playable until their complete loops exist.
+### Public usability
 
-## Character origins and starting scenarios
+- Grow the living wiki from the shared registries instead of adding isolated hand-written lists.
+- Add a small number of curated biome and system diagrams where they explain relationships better than prose.
+- Improve controller, keyboard-only, reduced-motion, contrast, and screen-reader coverage across the densest interfaces.
+- Add an explicit save-health and backup reminder for large or long-lived browser worlds.
 
-Trailbound characters already preserve their name, race, sex, colors, browser identity, and starting skill allocation. A later character release may add optional backstories and explicit starting scenarios without making any one origin mandatory:
+### Creature and Cardforge quality
 
-- Choose a known settlement, wilderness camp, shipwreck, underground entrance, or faction home as an origin when world generation supports a safe deterministic spawn there.
-- Pair an origin with a bounded starting equipment package, reputation adjustments, quest hooks, and discoverable map knowledge.
-- Preview the concrete tradeoffs before world entry and keep the chosen origin in save and multiplayer metadata.
-- Preserve the current neutral trailhead as the default and never silently move an existing character when an old world migrates.
+- Keep canonical production models as the source of truth for gameplay, Bestiary portraits, wiki art, and creature cards.
+- Reserve premium Full Art for a curated roster; favor strong scene direction over many weak alternate assets.
+- Add Binder windowing when collection scale proves it necessary rather than paying the complexity cost preemptively.
+- Continue capture, care, combat, riding, swimming, flight, and work-role polish without creating hidden species-specific rule checklists.
 
-These options require spawn validation, faction-disabled fallbacks, multiplayer ownership rules, and save-compatible quest starts before they should ship.
+## Larger systems under consideration
 
-## More dragons and cross-type hybrids
+### Optional portable accounts and cloud saves
 
-Realms and Recall carries one durable lifecycle across Fire, Ice, Steel, and Sea Dragons and stages one through five. Later dragon releases can extend that model without turning each creature into an unrelated boss script:
+Browser-local ownership is simple and private, but it does not follow a player across devices. Any account or cloud-save system needs explicit authentication, conflict resolution, encryption, quotas, export guarantees, deletion, offline behavior, and a migration path that never makes current local worlds inaccessible.
 
-- Add new dragon families with distinct silhouettes, habitats, lairs, breath rules, husbandry, equipment, and ecological pressure.
-- Add cross-type hybrids only after inheritance rules can preserve type, sex, genetics, attack identity, scale color, egg conditions, and save compatibility without combinatorial one-off code.
-- Consider stage-six elder variants, migration between lairs, richer territorial disputes, and wild breeding under bounded off-screen simulation.
-- Expand rider tactics, aerial enemies, dragon-vs-dragon behavior, and counterplay without making a bonded elder solve every other progression route.
+### Deeper settlements and player towns
 
-Hybrids are deliberately absent from v1.0. Same-type opposite-sex breeding and elemental catalysts are the shipped boundary.
+- Culture-specific districts, authored civic landmarks, and save-safe settlement growth.
+- Player-founded towns with beds, jobs, storage, workshops, farms, defenses, and a legible management surface.
+- Mixed-culture habitat rules rather than treating underwater, subterranean, Confectkin, Atlantian, Wood Elf, and Dwarven needs as interchangeable.
+- Recoverable behavior when players alter doors, beds, roads, workstations, or boundaries.
 
-## Magic after Realms and Recall
+### Parties, diplomacy, and war
 
-The first release includes attunement, mana, reusable tomes, a journal, favorites, five schools, six spells, cast effects, and Magic-1000 mastery. Later work can add:
+- Named parties of guards, workers, mounts, and ranged units with bounded off-screen state.
+- Reputation, declarations, truces, patrols, sieges, surrender, ownership changes, resident movement, and rebuilding.
+- Map, music, trade, quests, guards, and population behavior that update coherently after political changes.
 
-- More faction, quest, lair, exploration, and rare-loot tomes without collapsing every school into direct damage.
-- Enchantment, charged equipment, ritual or environmental magic, spell interactions, summons, and counterspells.
-- More noncombat utility for building, farming, creatures, weather, mapping, travel, and settlements.
-- Explicit multiplayer authority for collaborative or hostile spell effects before adding broad area magic.
+These systems should extend the existing faction and follower foundations rather than create a second simulation.
 
-Unrestricted teleportation is still out of scope. Wayshrines, banked map travel, and safe Blinkstep collision remain the bounded travel rules.
+### More worlds and dimensions
 
-## Deeper skills and Ascendant modes
+Additional dimensions remain a future expansion. Each needs a complete travel contract, ecology, resources, hazards, visual identity, return path, save ownership, and multiplayer loading model. Summoned creatures can imply particular other realms now without making those realms playable prematurely.
 
-The rank curve, perk graph, one-percent-per-rank multipliers, uncapped character level, mastery detection, and opt-in ten-percent health floor are foundations rather than a finished god-mode suite. Later progression should add:
+### Advanced production and automation
 
-- More meaningful branching perks and active abilities at intermediate and high ranks.
-- Clear respec, loadout, and multiplayer presentation rules before trees become difficult to reverse.
-- Additional Ascendant switches such as resource immunity, altered hunger, flight, damage constraints, or creative-scale world interaction, each independently toggleable.
-- Balance rules that keep ordinary survival readable when only some players in a session are Ascendant.
+Broader factories, drills, logistics, powered systems, and chunk-scale automation require energy, throughput, loading, ownership, griefing, save, and simulation-budget rules first. Automation should create new planning decisions rather than erase exploration, creature work, settlements, and fieldcraft.
 
-Realms and Recall does not ship invulnerability, arbitrary world editing, or the full set of godlike toggles.
+### Creature inheritance and evolution
 
-## Full settlement management and player towns
+Cross-type dragons, creature evolutions, and hybrids are deferred until inheritance can preserve type, anatomy, attacks, sex, genetics, equipment, eggs, variants, save normalization, and multiplayer determinism without a combinatorial pile of exceptions.
 
-The player faction can already be represented in faction and settlement ownership records. A later settlement release should turn that groundwork into a complete management loop:
+### Deeper magic and skills
 
-- Found a new player town or formally claim an existing site.
-- Name the town and manage beds, doors, population capacity, resident roles, equipment, work priorities, and defensive posts from one interface.
-- Let buildings, paths, storage, workshops, farms, walls, and gates contribute to town function without making ordinary player building invalid.
-- Recover gracefully when a player removes a door, bed, workstation, wall, or role-preferred building.
+- More noncombat magic for building, farming, creatures, mapping, weather, travel, and settlements.
+- Enchantment, ritual, environmental interaction, counters, and cooperative casting with explicit authority.
+- More meaningful intermediate skill branches, respec rules, and independently toggleable Ascendant preferences.
 
-Realms and Recall still does not include a city-builder overlay, construction queue, town budget, or complete player-governance UI. Future mixed-race player settlements will also need explicit surface, underwater, subterranean, and culture-specific habitat rules rather than treating Atlantians, Confectkin, Wood Elves, or Dwarves as generic residents.
+Unrestricted teleportation and silent god-mode upgrades are not assumed. Wayshrines, safe Blinkstep collision, and explicit player choices remain the current bounded model.
 
-## Raiding parties and hired forces
+## Release gates for every major addition
 
-Individual followers and hireling orders are the base layer. Formation-level play comes later:
-
-- Assemble guards, workers, mounts, and ranged units into named parties.
-- Hire a party through a mayor or the player's own settlement authority.
-- Give a party a destination, escort target, patrol route, defensive post, or raid target.
-- Persist casualties, equipment, commands, ownership, and return behavior without turning every distant unit into a full-cost simulation object.
-
-## Broader diplomacy, war, and conquest
-
-Faction relations already distinguish allied, neutral, and war states, and settlement records can change owner. The full world behavior is deferred:
-
-- Diplomatic decisions, reputation gates, declarations, truces, and faction-wide consequences.
-- Autonomous attacks between factions that are at war.
-- Town sieges, surrender, capture, resident flight, and repopulation under the new owner.
-- Player intervention on either side, including the long-term cost of coercing a mayor or killing defenders.
-- Map, music, trade, quests, guards, and resident populations updating coherently after ownership changes.
-
-This needs bounded off-screen simulation and host-authoritative multiplayer messages before it is safe to ship.
-
-## Fishing and mature aquatic professions
-
-Fish and larger sea creatures in v1.0 are physical entities: they swim, school or patrol a habitat, can be attacked or tamed where appropriate, and belong to river, coast, ocean, underground, deep-ocean, Lumen Trench, glimmer-pond, or syrup-pond populations. Water plants can be harvested and replanted, Atlantians trade aquatic goods and Sea Dragon charts, Syrupfins live only in syrup, and leviathans provide long-range sea and air travel. Rods, lines, bait, hooked-fish behavior, fishing loot tables, boats specialized for fishing, and fishing professions remain deferred.
-
-## Release guardrails
-
-These additions should preserve deterministic generation, migrate existing saves, keep the host authoritative in multiplayer, stay within the simulation-distance budget, and expose focused tests before entering the production engine. A feature is not complete because its data type exists; it is complete when the player-facing loop, persistence, multiplayer boundary, visuals, audio, and failure behavior agree. Dragon and spell work must also keep its production model or effect renderer, generated catalog assets, and visual-audit sheets aligned.
+- The player-facing purpose and failure states are understandable without an external checklist.
+- Persistent fields normalize from old saves and survive export/import.
+- Multiplayer mutations are host-authoritative and retry-safe.
+- Runtime work is bounded and appears in relevant telemetry or benchmarks.
+- Art follows the block, creature, and interface theme contracts and is manually reviewed.
+- Keyboard, touch, narrow-screen, and core accessibility paths remain usable.
+- Tests cover the actual system boundary rather than only helper functions.
+- README, wiki, changelog, and relevant design contracts agree with the shipped behavior.

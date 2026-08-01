@@ -1,30 +1,30 @@
-# Cardforge Wildlight Full Art
+# Cardforge art provenance
 
-These twelve backgrounds are the first reviewed Full Art roster for Cardforge catalog revision `cardforge-2`.
+Cardforge revision `cardforge-3` separates creature identity from scene art.
 
-They were generated offline with OpenAI ImageGen on 2026-07-24, manually reviewed as a set, and exported as 768×1152 WebP assets. The prompts requested original Blockwild storybook fantasy grounded in readable voxel forms, edge-to-edge composition, calm title/rules zones, and no text, card frames, logos, trademarks, or copied trading-card trade dress.
+## Canonical creature Full Art
 
-| Set | Card definition | Asset |
-|---|---|---|
-| Wildroads Core | `card:mob:petalfox` | `petalfox.webp` |
-| Wildroads Core | `card:mob:thimbledeer` | `thimbledeer.webp` |
-| Wildroads Core | `card:mob:brinewhisk-otter` | `brinewhisk-otter.webp` |
-| Wildroads Core | `card:authored:migration-confluence` | `migration-confluence.webp` |
-| Halls & Hearths | `card:mob:hobbit-mayor` | `hobbit-hearthwarden.webp` |
-| Halls & Hearths | `card:mob:wood-elf-elderweaver` | `wood-elf-elderweaver.webp` |
-| Halls & Hearths | `card:mob:dwarf-thane` | `deepgear-thane.webp` |
-| Halls & Hearths | `card:authored:cardwright-collegium` | `cardwrights-collegium.webp` |
-| Vaults Below | `card:mob:fire-dragon` | `fire-dragon.webp` |
-| Vaults Below | `card:mob:worldshell-leviathan` | `worldshell-leviathan.webp` |
-| Vaults Below | `card:mob:ilyr-virebloom` | `ilyr-virebloom.webp` |
-| Vaults Below | `card:authored:reliquary-vault` | `reliquary-vault.webp` |
+The 38 released creature Full Art printings in `../full-art-canonical/` are deterministic SVG scenes rendered offline by `scripts/render-cardforge-creature-art.ts`. Every subject comes from the same production model path used by gameplay and the Bestiary:
 
-The generated pixels never contain rules text. `app/game/tcg/layout.ts` and `app/game/CardforgePanel.tsx` apply the authoritative title, cost, rules, stats, collector number, and finish overlays.
+- model source: `app/game/mob-models.ts`
+- portrait extraction: `scripts/render-models.ts`
+- selection and habitat direction: `app/game/tcg/creature-art.ts`
+- generated asset manifest: `../full-art-canonical/manifest.json`
 
-For every future Full Art:
+The habitat, framing, and lighting motif may change, but the anatomy cannot drift. These files are small local assets, contain no runtime generation, and preserve deterministic Cardforge text overlays.
 
-1. Generate only a vertical background illustration.
-2. Preserve the source creature or place identity and the relevant set art direction.
-3. Keep the title and lower rules zones compositionally quiet.
-4. Reject text, watermark, anatomy drift, copied characters, and framing that hides the subject.
-5. Export a reviewed 2:3 WebP, add it to `TCG_FULL_ART_ILLUSTRATIONS`, bump the catalog revision, and run the Cardforge asset/layout/browser checks.
+## Authored scene Full Art
+
+Three reviewed 768 x 1152 WebP backgrounds remain active for non-creature cards:
+
+| Card definition | Asset |
+|---|---|
+| `card:authored:migration-confluence` | `migration-confluence.webp` |
+| `card:authored:cardwright-collegium` | `cardwrights-collegium.webp` |
+| `card:authored:reliquary-vault` | `reliquary-vault.webp` |
+
+They were generated offline with OpenAI ImageGen on 2026-07-24 and manually reviewed. Their pixels contain no rules text. The remaining WebP files in this directory are retained as design-history references but are no longer released printings because their creature anatomy was less faithful to the production models.
+
+## Acceptance rule
+
+New creature art must begin with a canonical production-model render or an explicitly approved locked reference. Reject anatomy drift, generated text, watermarks, copied characters, incompatible trade dress, unreadable silhouettes, and busy title or rules zones. Add any released path to `TCG_FULL_ART_ILLUSTRATIONS`, bump the catalog revision, and run the Cardforge asset, layout, and browser checks.

@@ -10,6 +10,7 @@ import { GUILDS, createGuildBook, inviteToGuild } from "../app/game/guilds.ts";
 import { MOB_ORDER } from "../app/game/mobs.ts";
 import { LOOT_FAMILIES } from "../app/game/contextual-loot.ts";
 import { TCG_CATALOG, TCG_FULL_ART_ILLUSTRATIONS, tcgCatalogAudit } from "../app/game/tcg/catalog.ts";
+import { CARDFORGE_FEATURED_FULL_ART_MOBS } from "../app/game/tcg/creature-art.ts";
 import { createTcgPlayerState } from "../app/game/tcg/collection.ts";
 import { auditTcgLayouts, layoutTcgCard, renderTcgCardSvg } from "../app/game/tcg/card-layout.ts";
 
@@ -48,11 +49,11 @@ test("all card layouts fit deterministic bounded regions", () => {
   assert.match(left, new RegExp(definition.name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"));
 });
 
-test("every Full Art printing uses one reviewed generated background and full-bleed deterministic layout", () => {
+test("every Full Art printing uses reviewed canonical-model or authored scene art", () => {
   const fullArts = TCG_CATALOG.printingOrder
     .map((printingId) => TCG_CATALOG.printings[printingId])
     .filter((printing) => printing.variant === "full-art");
-  assert.equal(fullArts.length, 12);
+  assert.equal(fullArts.length, CARDFORGE_FEATURED_FULL_ART_MOBS.length + 3);
   assert.equal(Object.keys(TCG_FULL_ART_ILLUSTRATIONS).length, fullArts.length);
   assert.deepEqual(new Set(fullArts.map((printing) => printing.setId)), new Set(["wildroads-core", "halls-and-hearths", "vaults-below"]));
 
@@ -61,13 +62,23 @@ test("every Full Art printing uses one reviewed generated background and full-bl
     assert.equal(printing.valueModifierPermille, 5_000);
     assert.ok(printing.acquisitionTags.includes("wildlight"));
     assert.equal(printing.illustrationKey, TCG_FULL_ART_ILLUSTRATIONS[printing.cardDefinitionId]);
-    assert.match(printing.illustrationKey, /^\/cardforge\/full-art\/[a-z0-9-]+\.webp$/u);
+    assert.match(printing.illustrationKey, /^\/cardforge\/full-art(?:-canonical)?\/[a-z0-9-]+\.(?:svg|webp)$/u);
     const assetPath = join(process.cwd(), "public", printing.illustrationKey.slice(1));
-    assert.ok(existsSync(assetPath), `${printing.id} needs its generated background`);
-    assert.ok(statSync(assetPath).size > 100_000, `${printing.id} should retain production illustration detail`);
-    const header = readFileSync(assetPath).subarray(0, 12);
-    assert.equal(header.subarray(0, 4).toString("ascii"), "RIFF");
-    assert.equal(header.subarray(8, 12).toString("ascii"), "WEBP");
+    assert.ok(existsSync(assetPath), `${printing.id} needs its reviewed background`);
+    if (printing.illustrationKey.endsWith(".svg")) {
+      assert.ok(printing.acquisitionTags.includes("canonical-model-art"));
+      assert.ok(statSync(assetPath).size > 15_000, `${printing.id} should retain canonical model detail`);
+      const markup = readFileSync(assetPath, "utf8");
+      assert.match(markup, /^<\?xml[^]*<svg/u);
+      assert.match(markup, /canonical Cardforge Full Art/u);
+      assert.match(markup, /data:image\/svg\+xml;base64/u);
+    } else {
+      assert.ok(printing.acquisitionTags.includes("authored-scene"));
+      assert.ok(statSync(assetPath).size > 100_000, `${printing.id} should retain production illustration detail`);
+      const header = readFileSync(assetPath).subarray(0, 12);
+      assert.equal(header.subarray(0, 4).toString("ascii"), "RIFF");
+      assert.equal(header.subarray(8, 12).toString("ascii"), "WEBP");
+    }
   }
 
   const printing = fullArts.find((entry) => entry.cardDefinitionId === "card:mob:petalfox")!;
@@ -83,7 +94,7 @@ test("every Full Art printing uses one reviewed generated background and full-bl
   const svg = renderTcgCardSvg(definition, printing);
   assert.match(svg, /data-treatment="full-art"/u);
   assert.match(svg, /preserveAspectRatio="xMidYMid slice"/u);
-  assert.match(svg, /\/cardforge\/full-art\/petalfox\.webp/u);
+  assert.match(svg, /\/cardforge\/full-art-canonical\/petalfox\.svg/u);
 });
 
 test("dungeon families contain physical boosters that redeem into the Cardforge ledger", () => {
@@ -196,6 +207,6 @@ test("Cardforge UI renders Full Art as an edge-to-edge generated scene", () => {
   }));
   assert.match(markup, /variant-full-art/u);
   assert.match(markup, /cardforge-full-art-bg/u);
-  assert.match(markup, /\/cardforge\/full-art\/petalfox\.webp/u);
+  assert.match(markup, /\/cardforge\/full-art-canonical\/petalfox\.svg/u);
   assert.match(markup, />Full Art</u);
 });

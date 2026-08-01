@@ -2,6 +2,7 @@ import { creatureProfile } from "../creature-profiles";
 import { CREATURE_TYPE_IDS, type CreatureTypeId } from "../creature-types";
 import { GUILDS, type GuildId } from "../guilds";
 import { BUTTERFLY_ORDER, MOB_DEFS, MOB_ORDER, type MobDefinition, type MobKind } from "../mobs";
+import { CARDFORGE_FEATURED_FULL_ART_MOBS, canonicalFullArtPath } from "./creature-art";
 import {
   TCG_CATALOG_REVISION,
   type TcgAbility,
@@ -96,18 +97,10 @@ export const TCG_PACKS: Readonly<Record<string, TcgPackProduct>> = Object.freeze
 });
 
 export const TCG_FULL_ART_ILLUSTRATIONS: Readonly<Record<string, string>> = Object.freeze({
-  "card:mob:petalfox": "/cardforge/full-art/petalfox.webp",
-  "card:mob:thimbledeer": "/cardforge/full-art/thimbledeer.webp",
-  "card:mob:brinewhisk-otter": "/cardforge/full-art/brinewhisk-otter.webp",
   "card:authored:migration-confluence": "/cardforge/full-art/migration-confluence.webp",
-  "card:mob:hobbit-mayor": "/cardforge/full-art/hobbit-hearthwarden.webp",
-  "card:mob:wood-elf-elderweaver": "/cardforge/full-art/wood-elf-elderweaver.webp",
-  "card:mob:dwarf-thane": "/cardforge/full-art/deepgear-thane.webp",
   "card:authored:cardwright-collegium": "/cardforge/full-art/cardwrights-collegium.webp",
-  "card:mob:fire-dragon": "/cardforge/full-art/fire-dragon.webp",
-  "card:mob:worldshell-leviathan": "/cardforge/full-art/worldshell-leviathan.webp",
-  "card:mob:ilyr-virebloom": "/cardforge/full-art/ilyr-virebloom.webp",
   "card:authored:reliquary-vault": "/cardforge/full-art/reliquary-vault.webp",
+  ...Object.fromEntries(CARDFORGE_FEATURED_FULL_ART_MOBS.map((kind) => [`card:mob:${kind}`, canonicalFullArtPath(kind)])),
 });
 
 const frozen = <T>(value: T): Readonly<T> => Object.freeze(value);
@@ -301,7 +294,7 @@ function printingFor(
       ...definition.traits.slice(0, 4),
       ...(variant === "capture" ? ["capture"] : []),
       ...(variant === "boss-signature" ? ["boss", "signature"] : []),
-      ...(variant === "full-art" ? ["full-art", "generated-illustration", "wildlight"] : []),
+      ...(variant === "full-art" ? ["full-art", sourceMob ? "canonical-model-art" : "authored-scene", "wildlight"] : []),
     ]),
     valueModifierPermille: variant === "full-art" ? 5_000
       : variant === "showcase" ? 1_750
@@ -439,8 +432,8 @@ export function tcgCatalogAudit(catalog = TCG_CATALOG) {
       collectorNumbers.add(collectorKey);
       if (!catalog.sets[printing.setId]) errors.push(`Printing ${printingId} references unknown set`);
       if (!printing.illustrationKey) errors.push(`Printing ${printingId} lacks an illustration fallback`);
-      if (printing.variant === "full-art" && !printing.illustrationKey.startsWith("/cardforge/full-art/")) {
-        errors.push(`Full-art printing ${printingId} lacks a generated full-bleed illustration`);
+      if (printing.variant === "full-art" && !printing.illustrationKey.startsWith("/cardforge/full-art")) {
+        errors.push(`Full-art printing ${printingId} lacks a reviewed full-bleed illustration`);
       }
     }
   }

@@ -27,7 +27,7 @@ test("renders Blockwild production metadata", async () => {
     /^text\/html\b/i,
   );
   const html = await response.text();
-  assert.match(html, /<title>Blockwild[^<]*Endless Browser Voxel Survival<\/title>/i);
+  assert.match(html, /<title>Blockwild<\/title>/i);
   assert.match(html, /<meta(?=[^>]*\bname=["']description["'])(?=[^>]*\bcontent=["'][^"']*endless streamed biomes[^"']*["'])[^>]*>/i);
   assert.doesNotMatch(html, /\bcodex-preview\b/i);
 });

@@ -400,13 +400,85 @@
   display: flex;
   justify-content: center;
   overflow: hidden;
+  position: relative;
 }
 
 .cardforge-illustration img {
   height: 100%;
   object-fit: contain;
+  position: relative;
   width: 100%;
+  z-index: 2;
 }
+
+.cardforge-habitat-scene { inset: 0; overflow: hidden; pointer-events: none; position: absolute; z-index: 0; }
+.cardforge-habitat-scene i { display: block; position: absolute; }
+.cardforge-illustration.art-field { background: #91ad8b; }
+.cardforge-illustration.art-field .cardforge-habitat-scene::before { background: #c4d1ac; content: ""; height: 48%; inset: 0 0 auto; position: absolute; }
+.cardforge-illustration.art-field .cardforge-habitat-scene::after { background: #58734e; bottom: -18%; clip-path: polygon(0 28%, 20% 4%, 42% 30%, 64% 0, 84% 26%, 100% 10%, 100% 100%, 0 100%); content: ""; height: 66%; inset-inline: 0; position: absolute; }
+.cardforge-illustration.art-field .cardforge-habitat-scene i:first-child { background: #eedc91; height: 20%; right: 12%; top: 12%; width: 13%; }
+
+.cardforge-illustration.art-forest { background: #55745c; }
+.cardforge-illustration.art-forest .cardforge-habitat-scene::before, .cardforge-illustration.art-forest .cardforge-habitat-scene::after { background: #233d2d; content: ""; height: 92%; position: absolute; top: 0; width: 17%; }
+.cardforge-illustration.art-forest .cardforge-habitat-scene::before { left: 2%; }
+.cardforge-illustration.art-forest .cardforge-habitat-scene::after { right: 2%; }
+.cardforge-illustration.art-forest .cardforge-habitat-scene i:first-child, .cardforge-illustration.art-forest .cardforge-habitat-scene i:nth-child(2) { background: #426148; height: 44%; top: 0; width: 34%; }
+.cardforge-illustration.art-forest .cardforge-habitat-scene i:first-child { left: 0; }
+.cardforge-illustration.art-forest .cardforge-habitat-scene i:nth-child(2) { right: 0; }
+.cardforge-illustration.art-forest .cardforge-habitat-scene i:nth-child(3) { background: #2f5138; bottom: 0; height: 25%; left: 0; right: 0; }
+
+.cardforge-illustration.art-aquatic { background: #1c6076; }
+.cardforge-illustration.art-aquatic .cardforge-habitat-scene::before { border-block: 4px solid #7fb6b3; content: ""; inset: 20% 0 auto; height: 19%; opacity: .35; position: absolute; }
+.cardforge-illustration.art-aquatic .cardforge-habitat-scene::after { background: #123a47; bottom: -14%; clip-path: polygon(0 28%, 15% 4%, 33% 24%, 55% 0, 78% 28%, 100% 8%, 100% 100%, 0 100%); content: ""; height: 43%; inset-inline: 0; position: absolute; }
+.cardforge-illustration.art-aquatic .cardforge-habitat-scene i { border: 3px solid #87c8bd; height: 11%; width: 8%; }
+.cardforge-illustration.art-aquatic .cardforge-habitat-scene i:first-child { left: 10%; top: 18%; }
+.cardforge-illustration.art-aquatic .cardforge-habitat-scene i:nth-child(2) { height: 7%; right: 13%; top: 31%; width: 5%; }
+.cardforge-illustration.art-aquatic .cardforge-habitat-scene i:nth-child(3) { background: #477c68; bottom: 0; height: 31%; right: 9%; width: 5%; }
+
+.cardforge-illustration.art-cavern { background: #27322e; }
+.cardforge-illustration.art-cavern .cardforge-habitat-scene::before { background: #59665b; clip-path: polygon(0 0, 100% 0, 100% 25%, 82% 14%, 68% 38%, 52% 18%, 34% 34%, 18% 12%, 0 29%); content: ""; inset: 0 0 auto; height: 48%; position: absolute; }
+.cardforge-illustration.art-cavern .cardforge-habitat-scene::after { background: #151d1a; bottom: 0; clip-path: polygon(0 43%, 18% 8%, 39% 31%, 58% 0, 75% 35%, 100% 10%, 100% 100%, 0 100%); content: ""; height: 48%; inset-inline: 0; position: absolute; }
+.cardforge-illustration.art-cavern .cardforge-habitat-scene i:first-child, .cardforge-illustration.art-cavern .cardforge-habitat-scene i:nth-child(2) { background: #d4bd72; bottom: 5%; clip-path: polygon(50% 0, 100% 100%, 0 100%); height: 26%; opacity: .72; width: 11%; }
+.cardforge-illustration.art-cavern .cardforge-habitat-scene i:first-child { left: 10%; }
+.cardforge-illustration.art-cavern .cardforge-habitat-scene i:nth-child(2) { right: 10%; }
+
+.cardforge-illustration.art-frost { background: #a9bec1; }
+.cardforge-illustration.art-frost .cardforge-habitat-scene::before { background: #e2e8df; content: ""; inset: 0 0 auto; height: 46%; position: absolute; }
+.cardforge-illustration.art-frost .cardforge-habitat-scene::after { background: #708c94; bottom: -8%; clip-path: polygon(0 35%, 20% 4%, 36% 42%, 58% 0, 77% 38%, 100% 11%, 100% 100%, 0 100%); content: ""; height: 70%; inset-inline: 0; position: absolute; }
+.cardforge-illustration.art-frost .cardforge-habitat-scene i { background: #f7f8ed; height: 5%; width: 5%; }
+.cardforge-illustration.art-frost .cardforge-habitat-scene i:first-child { left: 12%; top: 19%; }
+.cardforge-illustration.art-frost .cardforge-habitat-scene i:nth-child(2) { right: 16%; top: 11%; }
+
+.cardforge-illustration.art-desert { background: #d49b54; }
+.cardforge-illustration.art-desert .cardforge-habitat-scene::before { background: #f0c879; content: ""; inset: 0 0 auto; height: 53%; position: absolute; }
+.cardforge-illustration.art-desert .cardforge-habitat-scene::after { background: #9a6038; bottom: -23%; clip-path: polygon(0 22%, 32% 0, 58% 28%, 84% 4%, 100% 17%, 100% 100%, 0 100%); content: ""; height: 63%; inset-inline: 0; position: absolute; }
+.cardforge-illustration.art-desert .cardforge-habitat-scene i:first-child { background: #f8df8d; height: 21%; right: 12%; top: 10%; width: 14%; }
+
+.cardforge-illustration.art-volcanic { background: #4d3831; }
+.cardforge-illustration.art-volcanic .cardforge-habitat-scene::before { background: #823f30; content: ""; inset: 0 0 auto; height: 50%; position: absolute; }
+.cardforge-illustration.art-volcanic .cardforge-habitat-scene::after { background: #252321; bottom: -10%; clip-path: polygon(0 27%, 18% 0, 36% 31%, 56% 4%, 74% 36%, 100% 8%, 100% 100%, 0 100%); content: ""; height: 66%; inset-inline: 0; position: absolute; }
+.cardforge-illustration.art-volcanic .cardforge-habitat-scene i:first-child { background: #e36d38; bottom: 0; clip-path: polygon(42% 0, 62% 0, 100% 100%, 0 100%); height: 42%; left: 34%; opacity: .8; width: 38%; }
+
+.cardforge-illustration.art-sugar { background: #bd8297; }
+.cardforge-illustration.art-sugar .cardforge-habitat-scene::before { background: #e9bdc0; content: ""; inset: 0 0 auto; height: 52%; position: absolute; }
+.cardforge-illustration.art-sugar .cardforge-habitat-scene::after { background: #75638f; bottom: -15%; clip-path: polygon(0 27%, 18% 4%, 38% 30%, 58% 0, 76% 28%, 100% 5%, 100% 100%, 0 100%); content: ""; height: 64%; inset-inline: 0; position: absolute; }
+.cardforge-illustration.art-sugar .cardforge-habitat-scene i:first-child, .cardforge-illustration.art-sugar .cardforge-habitat-scene i:nth-child(2) { background: #f1d787; height: 40%; top: 35%; width: 6%; }
+.cardforge-illustration.art-sugar .cardforge-habitat-scene i:first-child { left: 8%; }
+.cardforge-illustration.art-sugar .cardforge-habitat-scene i:nth-child(2) { right: 8%; }
+
+.cardforge-illustration.art-settlement { background: #767a69; }
+.cardforge-illustration.art-settlement .cardforge-habitat-scene::before { background: #aaa083; content: ""; inset: 0 0 auto; height: 48%; position: absolute; }
+.cardforge-illustration.art-settlement .cardforge-habitat-scene::after { background: #494d42; bottom: 0; clip-path: polygon(0 27%, 15% 27%, 15% 2%, 30% 2%, 30% 36%, 49% 36%, 49% 10%, 67% 10%, 67% 31%, 84% 31%, 84% 0, 100% 0, 100% 100%, 0 100%); content: ""; height: 72%; inset-inline: 0; position: absolute; }
+.cardforge-illustration.art-settlement .cardforge-habitat-scene i { background: #e5c674; height: 8%; top: 52%; width: 7%; }
+.cardforge-illustration.art-settlement .cardforge-habitat-scene i:first-child { left: 21%; }
+.cardforge-illustration.art-settlement .cardforge-habitat-scene i:nth-child(2) { right: 19%; }
+
+.cardforge-illustration.art-sky { background: #7ca5af; }
+.cardforge-illustration.art-sky .cardforge-habitat-scene::before { background: #c2d2cd; content: ""; inset: 0 0 auto; height: 62%; position: absolute; }
+.cardforge-illustration.art-sky .cardforge-habitat-scene::after { background: #4f6f77; bottom: -22%; clip-path: polygon(0 34%, 20% 5%, 39% 31%, 61% 0, 80% 32%, 100% 8%, 100% 100%, 0 100%); content: ""; height: 62%; inset-inline: 0; position: absolute; }
+.cardforge-illustration.art-sky .cardforge-habitat-scene i:first-child, .cardforge-illustration.art-sky .cardforge-habitat-scene i:nth-child(2) { background: #e8ede3; height: 13%; top: 20%; width: 30%; }
+.cardforge-illustration.art-sky .cardforge-habitat-scene i:first-child { left: 4%; }
+.cardforge-illustration.art-sky .cardforge-habitat-scene i:nth-child(2) { right: 5%; top: 36%; }
 
 .cardforge-illustration > span {
   color: #f6e6a6;

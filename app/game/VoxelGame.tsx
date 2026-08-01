@@ -109,6 +109,7 @@ import {
 import { commerceItemCode, commerceKeyForItem, inventoryResourceCounts, playerCommerceItem } from "./hearthroads-adapter";
 import { distributeInventoryCursor, inventorySlotStackLimit, inventorySlotsCanStack } from "./inventory-convenience";
 import { ITEM_GUIDE_ENTRIES, itemGuideMatches, type ItemGuideProcess } from "./item-guide";
+import { WIKI_CATEGORY_ORDER, WIKI_ENTRIES, wikiEntryMatches, type WikiCategory } from "./wiki-content";
 import { ResourceTelemetryLog, telemetryFileName, type ResourceTelemetryReport, type ResourceTelemetryStopReason } from "./performance-log";
 import { createMapKnowledge, type MapMarker } from "./map-system";
 import { PLANTS, createPlantBestiaryState, nativeBiomesForPlant, plantForBlock, type PlantCategory, type PlantDefinition } from "./plants";
@@ -1439,6 +1440,13 @@ function PlantPortrait({ plant, seen, mini = false }: { plant: PlantDefinition; 
   );
 }
 
+function WikiPortraitImage({ src, className, lazy = false }: Readonly<{ src: string; className: string; lazy?: boolean }>) {
+  // These are tiny deterministic local SVGs shared with the Bestiary; an image
+  // optimization hop would cost more than the source asset and break that path.
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img className={className} src={src} alt="" loading={lazy ? "lazy" : "eager"} decoding="async" />;
+}
+
 let avatarPreviewAtlas: THREE.Texture | null = null;
 
 function createPreviewHeldItem(item: ItemCode | undefined) {
@@ -2023,6 +2031,8 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
   const [itemGuideOpen, setItemGuideOpen] = useState(false);
   const [itemGuideQuery, setItemGuideQuery] = useState("");
   const [itemGuideItem, setItemGuideItem] = useState<ItemCode | null>(null);
+  const [itemGuideCategory, setItemGuideCategory] = useState<WikiCategory>("item");
+  const [itemGuideEntryKey, setItemGuideEntryKey] = useState("system:getting-started");
   const [contextReference, setContextReference] = useState<ContextReferenceTarget | null>(null);
   const [telemetryRunning, setTelemetryRunning] = useState(false);
   const [telemetrySamples, setTelemetrySamples] = useState(0);
@@ -2494,6 +2504,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
         }
         if (itemGuideAudit) {
           setItemGuideItem(Item.Stick);
+          setItemGuideCategory("item");
           setItemGuideVisible(true);
         }
       });
@@ -2698,6 +2709,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
         event.preventDefault();
         event.stopImmediatePropagation();
         setItemGuideItem(reference.item);
+        setItemGuideCategory("item");
         setItemGuideVisible(true);
         return;
       }
@@ -3712,7 +3724,13 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
   };
 
   const openItemGuide = (item?: ItemCode) => {
-    setItemGuideItem(item ?? itemGuideItem ?? ITEM_GUIDE_ENTRIES[0]?.item ?? null);
+    if (item !== undefined) {
+      setItemGuideItem(item);
+      setItemGuideCategory("item");
+    } else {
+      setItemGuideCategory("system");
+      setItemGuideEntryKey("system:getting-started");
+    }
     setItemGuideVisible(true);
   };
 
@@ -3790,27 +3808,53 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
   );
 
   const renderItemGuide = () => {
-    const filtered = ITEM_GUIDE_ENTRIES.filter((entry) => itemGuideMatches(entry, itemGuideQuery));
-    const selected = ITEM_GUIDE_ENTRIES.find((entry) => entry.item === itemGuideItem) ?? filtered[0] ?? ITEM_GUIDE_ENTRIES[0];
-    const selectedCraftingProcess = selected?.madeBy.find((process) => process.craftingRecipeId);
+    const filteredItems = ITEM_GUIDE_ENTRIES.filter((entry) => itemGuideMatches(entry, itemGuideQuery));
+    const filteredWiki = WIKI_ENTRIES.filter((entry) => entry.category === itemGuideCategory && wikiEntryMatches(entry, itemGuideQuery));
+    const selected = ITEM_GUIDE_ENTRIES.find((entry) => entry.item === itemGuideItem) ?? filteredItems[0] ?? ITEM_GUIDE_ENTRIES[0];
+    const selectedWiki = WIKI_ENTRIES.find((entry) => entry.key === itemGuideEntryKey && entry.category === itemGuideCategory) ?? filteredWiki[0];
+    const activeWikiKey = itemGuideCategory === "item" && selected ? `item:${selected.item}` : selectedWiki?.key;
+    const resultCount = itemGuideCategory === "item" ? filteredItems.length : filteredWiki.length;
+    const categoryLabels: Readonly<Record<WikiCategory, string>> = { system: "Topics", item: "Items", creature: "Creatures", plant: "Flora", biome: "Biomes" };
+    const selectedCraftingProcess = itemGuideCategory === "item" ? selected?.madeBy.find((process) => process.craftingRecipeId) : undefined;
     const selectedRecipe = selectedCraftingProcess?.craftingRecipeId
       ? RECIPES.find((recipe) => recipe.id === selectedCraftingProcess.craftingRecipeId) ?? null
       : null;
+    const chooseCategory = (category: WikiCategory) => {
+      setItemGuideCategory(category);
+      setItemGuideQuery("");
+      const first = WIKI_ENTRIES.find((entry) => entry.category === category);
+      if (first) {
+        setItemGuideEntryKey(first.key);
+        if (category === "item") setItemGuideItem(Number(first.key.slice("item:".length)) as ItemCode);
+      }
+    };
     return (
       <div className="mc-window item-guide-window">
-        <header className="mc-window-header"><div><span className="panel-eyebrow">FIELD REFERENCE · RECIPES · ORIGINS</span><h2 id="item-guide-title">Trailcraft Guide</h2></div><button type="button" className="panel-close" onClick={() => setItemGuideVisible(false)} aria-label="Close item guide">×</button></header>
+        <header className="mc-window-header"><div><span className="panel-eyebrow">SHARED FIELD REFERENCE · PERSONAL DISCOVERY STAYS IN THE BESTIARY</span><h2 id="item-guide-title">Blockwild Wiki</h2></div><a className="item-guide-web-link" href={activeWikiKey ? `/wiki?entry=${encodeURIComponent(activeWikiKey)}` : "/wiki"} target="_blank" rel="noreferrer">Open web wiki ↗</a><button type="button" className="panel-close" onClick={() => setItemGuideVisible(false)} aria-label="Close Blockwild Wiki">×</button></header>
+        <nav className="item-guide-tabs" aria-label="Wiki sections">{WIKI_CATEGORY_ORDER.map((category) => <button type="button" key={category} className={itemGuideCategory === category ? "active" : ""} onClick={() => chooseCategory(category)}>{categoryLabels[category]} <small>{WIKI_ENTRIES.filter((entry) => entry.category === category).length}</small></button>)}</nav>
         <div className="item-guide-layout">
           <aside className="item-guide-index">
-            <label><span className="sr-only">Search the item guide</span><input autoFocus type="search" value={itemGuideQuery} onChange={(event) => setItemGuideQuery(event.target.value)} placeholder="Item, source, recipe…" /></label>
-            <small>{filtered.length}/{ITEM_GUIDE_ENTRIES.length} entries</small>
-            <div>{filtered.map((entry) => <button type="button" key={entry.item} className={selected?.item === entry.item ? "active" : ""} onClick={() => setItemGuideItem(entry.item)}><ItemIcon item={entry.item} small /><span>{entry.name}</span></button>)}</div>
+            <label><span className="sr-only">Search the Blockwild Wiki</span><input autoFocus type="search" value={itemGuideQuery} onChange={(event) => setItemGuideQuery(event.target.value)} placeholder="Search this section…" /></label>
+            <small>{resultCount} {resultCount === 1 ? "entry" : "entries"}</small>
+            <div>{itemGuideCategory === "item" ? filteredItems.map((entry) => <button type="button" key={entry.item} className={selected?.item === entry.item ? "active" : ""} onClick={() => { setItemGuideItem(entry.item); setItemGuideEntryKey(`item:${entry.item}`); }}><ItemIcon item={entry.item} small /><span>{entry.name}</span></button>) : filteredWiki.map((entry) => <button type="button" key={entry.key} className={selectedWiki?.key === entry.key ? "active" : ""} onClick={() => setItemGuideEntryKey(entry.key)}>{entry.image ? <WikiPortraitImage className="item-guide-index-portrait" src={entry.image} lazy /> : <i className="item-guide-index-mark" aria-hidden="true">{categoryLabels[entry.category].slice(0, 2).toUpperCase()}</i>}<span>{entry.name}</span></button>)}</div>
           </aside>
-          {selected && <main className="item-guide-detail">
+          {itemGuideCategory === "item" && selected && <main className="item-guide-detail">
             <header><ItemIcon item={selected.item} /><div><span>ITEM {selected.item}</span><h3>{selected.name}</h3><p>{selected.description}</p></div></header>
             <section><h4>Deterministic origins</h4><ul>{selected.origins.map((origin) => <li key={origin}>{origin}</li>)}</ul></section>
             {selectedRecipe && <>{renderItemGuideBoard(selectedRecipe)}<button type="button" className="item-guide-pattern-button" onClick={() => openGuideCraftingPattern(selectedCraftingProcess!)}>Open and filter in Recipe Book</button></>}
             <section><h4>How to make it</h4>{selected.madeBy.length ? selected.madeBy.map((process) => renderGuideProcess(process, true)) : <p className="item-guide-empty">No manufacturing process is recorded. Follow the origins above.</p>}</section>
             <section><h4>What it makes</h4>{selected.usedIn.length ? selected.usedIn.map((process) => renderGuideProcess(process, true)) : <p className="item-guide-empty">No downstream recipe currently uses this item.</p>}</section>
+          </main>}
+          {itemGuideCategory !== "item" && selectedWiki && <main className="item-guide-detail item-guide-article">
+            <header>{selectedWiki.image ? <WikiPortraitImage className="item-guide-article-portrait" src={selectedWiki.image} /> : <i className="item-guide-article-mark" aria-hidden="true">BW</i>}<div><span>{selectedWiki.eyebrow}</span><h3>{selectedWiki.name}</h3><p>{selectedWiki.summary}</p></div></header>
+            {selectedWiki.facts.length > 0 && <dl className="item-guide-facts">{selectedWiki.facts.map((fact) => <div key={`${fact.label}:${fact.value}`}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}</dl>}
+            {selectedWiki.sections.map((section) => <section key={section.heading}><h4>{section.heading}</h4>{section.paragraphs.map((paragraph, index) => <p key={`${section.heading}:${index}`}>{paragraph}</p>)}</section>)}
+            {(selectedWiki.category === "creature" || selectedWiki.category === "plant") && <button type="button" className="item-guide-pattern-button" onClick={() => {
+              if (selectedWiki.category === "creature") { setFieldGuideSection("creatures"); setSelectedBestiary(selectedWiki.key.slice("creature:".length) as MobKind); }
+              else { setFieldGuideSection("plants"); setSelectedPlantId(selectedWiki.key.slice("plant:".length)); }
+              setItemGuideVisible(false);
+              setOverlay("bestiary");
+            }}>Open personal {selectedWiki.category === "creature" ? "Bestiary record" : "Plant Compendium record"}</button>}
           </main>}
         </div>
       </div>
@@ -4311,7 +4355,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
           <div className="title-mist" />
           <div className="title-screen-utility">
             <span className="game-version-badge"><b>{GAME_VERSION_LABEL}</b> {GAME_RELEASE_NAME}</span>
-            <button type="button" onClick={() => engineRef.current?.toggleFullscreen()} aria-label={hud.fullscreen ? "Exit fullscreen" : "Enter fullscreen"}>{hud.fullscreen ? "EXIT FULLSCREEN" : "FULLSCREEN"}</button>
+            <span className="title-screen-actions"><a href="/wiki">WIKI</a><button type="button" onClick={() => engineRef.current?.toggleFullscreen()} aria-label={hud.fullscreen ? "Exit fullscreen" : "Enter fullscreen"}>{hud.fullscreen ? "EXIT FULLSCREEN" : "FULLSCREEN"}</button></span>
           </div>
           <div ref={titleContentRef} className={`title-content ${titleMenuView === "main" ? "" : "title-submenu-open"}`}>
             <div className="logo-wrap">
@@ -5448,7 +5492,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
               <div><b>5</b><strong>Own the night</strong><span>Hostiles drop shards, gel, bone, coal, and XP.</span></div>
               <div><b>6</b><strong>Go below zero</strong><span>Crystal deeps, lava, aquifers, and the worldheart await.</span></div>
             </div>
-            <div className="panel-actions"><PixelButton onClick={() => { setItemGuideItem(null); setItemGuideVisible(true); }}>Open Item Wiki <kbd>?</kbd></PixelButton><PixelButton className="gold-button" onClick={() => setOverlay(started ? "pause" : "title")}>{started ? "Back to Menu" : "Back"}</PixelButton></div>
+            <div className="panel-actions"><PixelButton onClick={() => openItemGuide()}>Open Blockwild Wiki <kbd>?</kbd></PixelButton><PixelButton className="gold-button" onClick={() => setOverlay(started ? "pause" : "title")}>{started ? "Back to Menu" : "Back"}</PixelButton></div>
           </div>
         </section>
       )}
@@ -5485,7 +5529,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
       )}
 
       {overlay && ["inventory", "crafting", "furnace", "alchemy", "distillery", "sugarworks", "apiary", "morph-loom", "golem-forge"].includes(overlay) && !itemGuideOpen && (
-        <button type="button" className="item-guide-launcher" onClick={() => openItemGuide(selectedSlot?.item)} aria-label="Open Trailcraft item guide">ITEM WIKI <kbd>?</kbd></button>
+        <button type="button" className="item-guide-launcher" onClick={() => openItemGuide(selectedSlot?.item)} aria-label="Open Blockwild Wiki">WIKI <kbd>?</kbd></button>
       )}
       {itemGuideOpen && <section className="menu-overlay item-guide-overlay" aria-labelledby="item-guide-title">{renderItemGuide()}</section>}
 

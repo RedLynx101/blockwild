@@ -2,6 +2,21 @@
 
 Named releases summarize player-visible changes and the compatibility work that keeps browser-local worlds loadable. Dates use the repository release date.
 
+## 1.12.0 - Field Archive - 2026-08-01
+
+- Added a searchable public `/wiki` with stable article links and lazy category shards for 537 items, 232 creatures, 52 plants, 24 surface biomes, and ten maintained system guides.
+- Rebuilt the in-game Item Wiki as the shared Blockwild Wiki while preserving the `?` context shortcut, detailed recipe boards, and direct handoff into personal Bestiary and Plant Compendium records.
+- Kept public rules separate from character discovery: hidden field notes, variants, capture history, and research progression still unlock only through the Bestiary.
+- Restaged standard Cardforge creature art in habitat-aware scenes and replaced anatomy-drifting creature Full Art with 38 deterministic scenes rendered from the exact production models. Three reviewed authored non-creature scenes remain.
+- Added wiki and canonical-art generators, coverage/provenance tests, public architecture and development guides, contribution and security policies, an explicit source-visible license boundary, and a concise current README.
+- Added a title-screen Wiki link and preserved the shorter browser tab title, `Blockwild`.
+
+## 1.11.0 - Kinship Accord - 2026-07-31
+
+- Unified ordinary creature capture around one normal Capture Orb and one visible readiness contract, retaining the reliable aggressive-creature health threshold plus optional non-damage routes.
+- Separated custody from companionship with the host-authoritative Creature Camp sequence: Stabilize, Nourish, Connect, then Form Bond.
+- Normalized legacy capture items without losing stored specimens and made ineligible recruitment, faction, summon, commission, and covenant paths explicit.
+
 ## 1.10.1 - Seamwake - 2026-07-22
 
 - Replaced the held-Space surface tread clamp with a repeatable swim-stroke cycle: submerged thrust produces a brief controlled breach, continuous recovery pulls the player back into the water, and another stroke rearms only after the swimmer dips beneath the surface. Players can keep their head above water in natural breathing bobs without standing or walking on the water.

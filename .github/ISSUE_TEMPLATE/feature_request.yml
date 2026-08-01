@@ -1,0 +1,27 @@
+name: Feature request
+description: Propose a player-facing improvement that fits Blockwild's systems
+title: "[Idea]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Player problem or opportunity
+      description: Describe the experience, not only the implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: fit
+    attributes:
+      label: Fit with existing systems
+      description: Consider saves, multiplayer authority, performance, UI, world generation, and creature or visual themes where relevant.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives or tradeoffs

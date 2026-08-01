@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { TCG_CATALOG, TCG_RARITY_ORDER, TCG_SETS, tcgCardSearchText, tcgDefinitionForPrinting } from "./tcg/catalog";
+import { creatureCardArtThemeForKind } from "./tcg/creature-art";
 import { TCG_ARCHIVE_CAPACITY, TCG_ARCHIVE_UPGRADE_PRICE, totalTcgArchived, validateTcgDeck } from "./tcg/collection";
 import { layoutTcgCard } from "./tcg/card-layout";
 import { tcgPrintingReferenceValue } from "./tcg/market";
@@ -48,16 +49,18 @@ function CardArt({ printingId, compact = false }: Readonly<{ printingId: string;
   const layout = layoutTcgCard(definition, printing);
   const portrait = printing.illustrationKey.startsWith("/") ? printing.illustrationKey : null;
   const fullArt = printing.variant === "full-art" && portrait;
+  const artTheme = definition.source.kind === "mob" ? creatureCardArtThemeForKind(definition.source.id) : null;
   return (
-    <article className={`cardforge-card rarity-${definition.rarity} variant-${printing.variant} finish-${printing.finish}${compact ? " compact" : ""}`} title={definition.abilities.map((ability) => ability.text).join(" ")}>
+    <article className={`cardforge-card rarity-${definition.rarity} variant-${printing.variant} finish-${printing.finish}${compact ? " compact" : ""}`} data-art-theme={artTheme ?? undefined} title={definition.abilities.map((ability) => ability.text).join(" ")}>
       {fullArt && <>
         {/* Reviewed production art is immutable per printing; card text and layout remain deterministic DOM overlays. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img className="cardforge-full-art-bg" src={fullArt} alt="" draggable={false} loading="lazy" decoding="async" />
       </>}
       <header><span>{definition.cost}</span><b>{definition.name}</b><em>{printing.collectorNumber}</em></header>
-      <div className="cardforge-illustration">
+      <div className={`cardforge-illustration${artTheme ? ` art-${artTheme}` : ""}`}>
         {!fullArt && portrait ? <>
+          <span className="cardforge-habitat-scene" aria-hidden="true"><i /><i /><i /></span>
           {/* Stable local creature portraits are already tiny SVG assets; image optimization would add indirection without reducing payload. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={portrait} alt="" draggable={false} loading="lazy" decoding="async" />

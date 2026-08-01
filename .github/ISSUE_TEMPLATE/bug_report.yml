@@ -1,0 +1,56 @@
+name: Bug report
+description: Report a reproducible Blockwild gameplay or interface problem
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include private saves, invite codes, credentials, or security vulnerabilities. Use SECURITY.md for sensitive reports.
+  - type: input
+    id: version
+    attributes:
+      label: Blockwild version
+      description: Shown in the upper-left corner of the title screen.
+      placeholder: v1.12.0 Field Archive
+    validations:
+      required: true
+  - type: dropdown
+    id: target
+    attributes:
+      label: Where did it happen?
+      options:
+        - blockwild.app
+        - Sites mirror
+        - Local development build
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Use a synthetic or newly created world when possible.
+      placeholder: "1. Create or load...\n2. Move to...\n3. Use..."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Browser and device
+      placeholder: Chrome 140, Windows 11, desktop GPU
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshots or non-sensitive logs
+      description: Remove player names, invite codes, local paths, and world data you do not want public.

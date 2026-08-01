@@ -1,7 +1,7 @@
 import type { CreatureTypeId } from "../creature-types";
 
 export const TCG_SCHEMA = 1 as const;
-export const TCG_CATALOG_REVISION = "cardforge-2";
+export const TCG_CATALOG_REVISION = "cardforge-3";
 export const TCG_MAX_COUNT = 2_000_000_000;
 export const TCG_MAX_DECKS = 24;
 export const TCG_DECK_SIZE = 30;
