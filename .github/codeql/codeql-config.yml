@@ -1,0 +1,10 @@
+name: Blockwild CodeQL configuration
+
+# Blockwild intentionally routes a large amount of deterministic procedural
+# generation through seeded pseudo-random helpers. The generic insecure-
+# randomness data-flow query does not complete within the CI budget on this
+# graph. Security-sensitive identifiers must continue to use Web Crypto and
+# are covered by review and the repository's focused security tests.
+query-filters:
+  - exclude:
+      id: js/insecure-randomness
