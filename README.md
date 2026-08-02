@@ -4,7 +4,14 @@
   <img src="public/og.png" alt="Blockwild wilderness and title" width="920" />
 </p>
 
-Blockwild is an original browser voxel-survival game built with TypeScript, React, Three.js, and deterministic procedural generation. It combines a streamed block world with survival, building, farming, settlements, dungeons, creature research and capture, multiplayer, magic, dragons, Cardforge, and a large living ecology.
+<p align="center">
+  <a href="https://github.com/RedLynx101/blockwild/actions/workflows/ci.yml"><img src="https://github.com/RedLynx101/blockwild/actions/workflows/ci.yml/badge.svg" alt="Blockwild CI" /></a>
+  <a href="https://github.com/RedLynx101/blockwild/actions/workflows/codeql.yml"><img src="https://github.com/RedLynx101/blockwild/actions/workflows/codeql.yml/badge.svg" alt="CodeQL" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-d7a849" alt="MIT License" /></a>
+  <a href="https://blockwild.app"><img src="https://img.shields.io/badge/play-blockwild.app-4f8767" alt="Play Blockwild" /></a>
+</p>
+
+Blockwild is an open-source, systems-dense browser voxel survival RPG built with TypeScript, React, Three.js, and deterministic procedural generation. It is a playable world rather than a static technical demo: streamed terrain, ecology, combat, building, farming, settlements, dungeons, creature research and capture, host-authoritative multiplayer, magic, dragons, and Cardforge all operate on a persistent simulation.
 
 The current release is **v1.12.0 Field Archive**.
 
@@ -15,6 +22,23 @@ The current release is **v1.12.0 Field Archive**.
 - **Project direction:** [ROADMAP.md](ROADMAP.md)
 
 > Blockwild is an active public prototype. Worlds and characters are stored in the browser, so export important saves from the Worlds screen.
+
+## Scope snapshot
+
+These figures are generated or counted from the v1.12.0 release source, not roadmap promises.
+
+| Area | Current release |
+|---|---:|
+| Authored creatures | 232 |
+| Items / flora / surface biomes | 537 / 52 / 24 |
+| Guilds / quest chapters | 9 / 72 |
+| Spells / legendary encounter contracts | 20 / 21 |
+| Cardforge definitions / deterministic printings | 254 / 819 |
+| Searchable wiki entries | 855 |
+| TypeScript/JavaScript source and test code | 139,707 lines across 325 files |
+| Automated validation | 1,000+ checks across 128 test files |
+
+The numbers matter because the systems are connected. Creature definitions feed ecology, combat, rendering, capture, persistence, the Bestiary, wiki articles, Cardforge printings, and audits. World generation feeds streaming, maps, settlement placement, cave ecology, lighting, liquids, and compatibility tests. That shared-source design is what keeps the game's breadth maintainable.
 
 ## What makes it Blockwild
 
@@ -97,7 +121,27 @@ The same principle applies to content:
 - Cardforge definitions remain deterministic; standard and Full Art creature printings reference canonical production models.
 - Multiplayer is host-authoritative. Guests send bounded actions rather than owning shared world mutation.
 
-See [Architecture](docs/ARCHITECTURE.md), [Development and validation](docs/DEVELOPMENT.md), [Creature model style](docs/CREATURE_MODEL_STYLE.md), [visual theme](docs/BLOCKWILD_VISUAL_THEME_PROPOSAL.md), and [lighting system](docs/LIGHTING_SYSTEM.md) for the working contracts.
+```mermaid
+flowchart LR
+  Registries["Canonical content registries"] --> Simulation["Deterministic simulation"]
+  Registries --> Models["Production creature models"]
+  Registries --> Wiki["Website and in-game wiki"]
+  Registries --> Cardforge["Cardforge catalog"]
+  Simulation --> Persistence["Versioned browser saves"]
+  Authority["Host authority and bounded actions"] --> Simulation
+  Telemetry["Telemetry, benchmarks, and audits"] --> Simulation
+```
+
+See the [engineering overview](docs/ENGINEERING_OVERVIEW.md) for a guided codebase tour, then [Architecture](docs/ARCHITECTURE.md), [Development and validation](docs/DEVELOPMENT.md), [Creature model style](docs/CREATURE_MODEL_STYLE.md), [visual theme](docs/BLOCKWILD_VISUAL_THEME_PROPOSAL.md), and [lighting system](docs/LIGHTING_SYSTEM.md) for the working contracts.
+
+## Engineering depth
+
+- **Bounded real-time work:** chunk generation, voxel lighting, meshing, ecology, pathing, and persistence are scheduled in resumable budgets so local actions remain immediate.
+- **Deterministic worlds:** terrain and authored structures derive from seeds and compatibility versions; saves store edits and durable state instead of copying untouched terrain.
+- **Multiplayer authority:** shared mutations are validated by the host, encoded as bounded actions, and covered for reconnect, replay, stale revisions, and guest interaction.
+- **Living content pipeline:** canonical registries project into runtime systems, searchable public knowledge, Cardforge, audits, and generated model art without hand-maintained duplicate catalogs.
+- **Measured optimization:** in-game telemetry, deterministic benchmarks, soak tests, and a tracked comparison log support evidence-driven performance work.
+- **Reproducible release gates:** GitHub Actions checks generated-content drift, types, lint, the production builds, the full deterministic suite, dependencies, and CodeQL analysis.
 
 ## Saves and privacy
 
@@ -117,6 +161,7 @@ The application does not currently require D1, R2, or a server database. The emp
 
 ## Project documentation
 
+- [Engineering overview](docs/ENGINEERING_OVERVIEW.md) — a concise tour of the simulation, content, persistence, multiplayer, validation, and release architecture
 - [Building Blockwild with Agentic Autoresearch](BLOCKWILD_AGENTIC_AUTORESEARCH_CASE_STUDY.md) — the human-directed agent workflow, telemetry loop, and optimization case study
 - [Performance comparison log](docs/PERFORMANCE_COMPARISON_LOG.md) — measured browser and deterministic benchmark history
 - [Living Bestiary release contract](docs/LIVING_BESTIARY_RELEASE.md)
@@ -128,4 +173,4 @@ The application does not currently require D1, R2, or a server database. The emp
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before changing content or systems, and use [SECURITY.md](SECURITY.md) for vulnerability reports. Changes should preserve deterministic generation, save compatibility, host authority, bounded runtime work, canonical visual identity, and accessible UI behavior.
 
-The repository is source-visible but is **not currently open source**. See [LICENSE.md](LICENSE.md). A public repository does not grant reuse rights by itself.
+Blockwild is open source under the [MIT License](LICENSE). Original third-party media, where present, remains subject to its recorded attribution and license.

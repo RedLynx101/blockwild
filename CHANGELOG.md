@@ -8,7 +8,8 @@ Named releases summarize player-visible changes and the compatibility work that 
 - Rebuilt the in-game Item Wiki as the shared Blockwild Wiki while preserving the `?` context shortcut, detailed recipe boards, and direct handoff into personal Bestiary and Plant Compendium records.
 - Kept public rules separate from character discovery: hidden field notes, variants, capture history, and research progression still unlock only through the Bestiary.
 - Restaged standard Cardforge creature art in habitat-aware scenes and replaced anatomy-drifting creature Full Art with 38 deterministic scenes rendered from the exact production models. Three reviewed authored non-creature scenes remain.
-- Added wiki and canonical-art generators, coverage/provenance tests, public architecture and development guides, contribution and security policies, an explicit source-visible license boundary, and a concise current README.
+- Added wiki and canonical-art generators, coverage/provenance tests, public architecture and development guides, contribution and security policies, MIT licensing, portfolio-facing engineering documentation, and a concise current README.
+- Added GitHub Actions gates for static analysis, generated-content drift, the full deterministic suite, both production build paths, CodeQL, and dependency review, with weekly Dependabot maintenance.
 - Added a title-screen Wiki link and preserved the shorter browser tab title, `Blockwild`.
 
 ## 1.11.0 - Kinship Accord - 2026-07-31

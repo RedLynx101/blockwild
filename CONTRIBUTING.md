@@ -2,6 +2,8 @@
 
 Blockwild is an active game prototype with tightly connected simulation, save, multiplayer, visual, and content systems. Small changes can have wide effects. Discuss substantial features before investing in a large implementation.
 
+By contributing, you agree that your contribution may be distributed under the repository's [MIT License](LICENSE).
+
 ## Before opening a change
 
 1. Search existing issues, the [roadmap](ROADMAP.md), and the relevant design contract under `docs/`.
