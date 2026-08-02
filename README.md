@@ -1,7 +1,7 @@
 # Blockwild
 
 <p align="center">
-  <img src="public/og.png" alt="Blockwild wilderness and title" width="920" />
+  <img src="docs/assets/screenshots/2026-08-01-field-archive/2026-08-01-title-screen.png" alt="Blockwild v1.12.0 title screen over a live streamed wilderness" width="920" />
 </p>
 
 <p align="center">
@@ -39,6 +39,29 @@ These figures are generated or counted from the v1.12.0 release source, not road
 | Automated validation | 1,000+ checks across 128 test files |
 
 The numbers matter because the systems are connected. Creature definitions feed ecology, combat, rendering, capture, persistence, the Bestiary, wiki articles, Cardforge printings, and audits. World generation feeds streaming, maps, settlement placement, cave ecology, lighting, liquids, and compatibility tests. That shared-source design is what keeps the game's breadth maintainable.
+
+## In-game gallery
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/assets/screenshots/2026-08-01-field-archive/2026-08-01-frostpine-foraging.png" alt="A player foraging for Moonberries in the Frostpine Taiga" /><br /><sub>Explore, forage, and read the living landscape.</sub></td>
+    <td width="50%"><img src="docs/assets/screenshots/2026-08-01-field-archive/2026-08-01-dynamic-timber-felling.png" alt="A Frostpine tree falling after being harvested" /><br /><sub>Harvest timber with physical falling-tree feedback.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/assets/screenshots/2026-08-01-field-archive/2026-08-01-survival-workstations.png" alt="A player equipped for survival beside field workstations" /><br /><sub>Build a field base, craft equipment, and shape the world.</sub></td>
+    <td width="50%"><img src="docs/assets/screenshots/2026-08-01-field-archive/2026-08-01-deepstone-cavern.png" alt="A vast dark Deepstone cavern beneath Blockwild" /><br /><sub>Descend into a second living world below the surface.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/assets/screenshots/2026-08-01-field-archive/2026-08-01-known-roads-map.png" alt="The Known Roads map tracking a discovered waystone" /><br /><sub>Survey terrain, track discoveries, and travel by waystone.</sub></td>
+    <td width="50%"><img src="docs/assets/screenshots/2026-08-01-field-archive/2026-08-01-living-bestiary.png" alt="The Living Bestiary showing a researched Frostquill" /><br /><sub>Discover, capture, care for, and research 232 creatures.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/assets/screenshots/2026-08-01-field-archive/2026-08-01-skills-and-perks.png" alt="The Skills and Perks screen showing the Magic discipline" /><br /><sub>Grow disciplines through use and choose extensible perks.</sub></td>
+    <td width="50%"><img src="docs/assets/screenshots/2026-08-01-field-archive/2026-08-01-cardforge-binder.png" alt="The Cardforge binder filled with canonical creature cards" /><br /><sub>Collect, trade, build decks, and battle in Cardforge.</sub></td>
+  </tr>
+</table>
+
+<p align="center"><sub>Unedited captures from v1.12.0 Field Archive on 2026-08-01. <a href="docs/assets/screenshots/2026-08-01-field-archive/README.md">View the dated source set and provenance.</a></sub></p>
 
 ## What makes it Blockwild
 
