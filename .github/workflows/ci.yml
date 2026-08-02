@@ -1,0 +1,80 @@
+name: Blockwild CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: blockwild-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: true
+
+jobs:
+  quality:
+    name: Static analysis and generated content
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Use Node.js 22.13.1
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.13.1
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Verify repository contract
+        run: npm run test:repository
+      - name: Type check
+        run: npx tsc --noEmit
+      - name: Lint
+        run: npm run lint
+      - name: Rebuild generated knowledge and creature art
+        run: |
+          npm run build:wiki
+          npm run cardforge:render-art
+      - name: Reject stale generated artifacts
+        run: git diff --exit-code -- public/knowledge public/cardforge/full-art-canonical
+
+  full-suite:
+    name: Full deterministic suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Use Node.js 22.13.1
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.13.1
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Build and test
+        run: npm test
+
+  vercel-build:
+    name: Vercel production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Use Node.js 22.13.1
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.13.1
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Build production application
+        run: npm run build:vercel
