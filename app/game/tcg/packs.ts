@@ -136,24 +136,26 @@ export function openTcgPack(
   const player = ensured.player;
   const batch = world.packBatches[batchId];
   if (!batch || batch.ownerId !== ownerId || batch.nextIndex >= batch.quantity) {
-    return Object.freeze({ applied: false, reason: "pack-unavailable", state: world, player, batch: batch ?? null, printingIds: Object.freeze([]) });
+    return Object.freeze({ applied: false, reason: "pack-unavailable", state: world, player, batch: batch ?? null, printingIds: Object.freeze([]), newPrintingIds: Object.freeze([]) });
   }
   if (expectedPlayerRevision !== undefined && player.revision !== expectedPlayerRevision) {
-    return Object.freeze({ applied: false, reason: "stale", state: world, player, batch, printingIds: Object.freeze([]) });
+    return Object.freeze({ applied: false, reason: "stale", state: world, player, batch, printingIds: Object.freeze([]), newPrintingIds: Object.freeze([]) });
   }
   const redemptionId = `pack-open:${batch.id}:${batch.nextIndex}`;
   if (world.recentEventIds.includes(redemptionId) || world.recentEventIds.includes(eventId)) {
-    return Object.freeze({ applied: false, reason: "duplicate", state: world, player, batch, printingIds: Object.freeze([]) });
+    return Object.freeze({ applied: false, reason: "duplicate", state: world, player, batch, printingIds: Object.freeze([]), newPrintingIds: Object.freeze([]) });
   }
   const printingIds = collateTcgPack(batch.productId, `${world.authorityId}|${batch.id}|${batch.nextIndex}`, catalog);
   if (printingIds.length < 5 || printingIds.length > 6) {
-    return Object.freeze({ applied: false, reason: "invalid-collation", state: world, player, batch, printingIds: Object.freeze([]) });
+    return Object.freeze({ applied: false, reason: "invalid-collation", state: world, player, batch, printingIds: Object.freeze([]), newPrintingIds: Object.freeze([]) });
   }
+  const newPrintingIds = Object.freeze(printingIds.filter((printingId, index) => !player.holdings[printingId]
+    && printingIds.indexOf(printingId) === index));
   const grant = grantTcgPrintings(world, ownerId, printingIds, redemptionId, {
     location: "physical",
     acquiredAt,
   }, catalog);
-  if (!grant.applied) return Object.freeze({ applied: false, reason: grant.reason, state: grant.state, player: grant.player, batch, printingIds: Object.freeze([]) });
+  if (!grant.applied) return Object.freeze({ applied: false, reason: grant.reason, state: grant.state, player: grant.player, batch, printingIds: Object.freeze([]), newPrintingIds: Object.freeze([]) });
   const nextIndex = batch.nextIndex + 1;
   const nextBatch = Object.freeze({ ...batch, nextIndex });
   const packBatches = { ...grant.state.packBatches };
@@ -172,6 +174,7 @@ export function openTcgPack(
     player: state.players[ownerId],
     batch: nextIndex >= batch.quantity ? null : nextBatch,
     printingIds,
+    newPrintingIds,
   });
 }
 

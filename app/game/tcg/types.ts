@@ -318,6 +318,8 @@ export type TcgPackOpenResult = Readonly<{
   player: TcgPlayerState;
   batch: TcgPackBatch | null;
   printingIds: readonly string[];
+  /** Exact printings first added to this collection by the committed pack. */
+  newPrintingIds: readonly string[];
 }>;
 
 export type TcgMatchAction =
@@ -372,7 +374,7 @@ export type TcgHudState = Readonly<{
   catalogRevision: string;
   player: TcgPlayerState;
   packBatches: readonly TcgPackBatch[];
-  lastPackReveal: Readonly<{ batchId: string; printingIds: readonly string[]; openedAt: number }> | null;
+  lastPackReveal: Readonly<{ batchId: string; printingIds: readonly string[]; newPrintingIds: readonly string[]; openedAt: number }> | null;
   merchant: TcgMerchantStock | null;
   activeMatch: TcgPublicMatchState | null;
   opponents: readonly TcgNpcOpponent[];

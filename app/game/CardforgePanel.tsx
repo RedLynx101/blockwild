@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { TCG_CATALOG, TCG_RARITY_ORDER, TCG_SETS, tcgCardSearchText, tcgDefinitionForPrinting } from "./tcg/catalog";
 import { creatureCardArtThemeForKind } from "./tcg/creature-art";
 import { TCG_ARCHIVE_CAPACITY, TCG_ARCHIVE_UPGRADE_PRICE, totalTcgArchived, validateTcgDeck } from "./tcg/collection";
@@ -81,6 +81,54 @@ function CardArt({ printingId, compact = false }: Readonly<{ printingId: string;
   );
 }
 
+export type CardforgePackRevealEntry = Readonly<{
+  printingId: string;
+  name: string;
+  rarity: string;
+  variant: string;
+  finish: string;
+  ownedCount: number;
+  isNew: boolean;
+}>;
+
+export type CardforgePackRevealProgress = Readonly<{ key: string; index: number; summary: boolean }>;
+
+/** Advance exactly one deliberate reveal step, then hand off to the pack summary. */
+export function advanceCardforgePackReveal(
+  current: CardforgePackRevealProgress | null,
+  cardCount: number,
+): CardforgePackRevealProgress | null {
+  if (!current || cardCount <= 0) return null;
+  if (current.summary) return null;
+  if (current.index >= cardCount - 1) return Object.freeze({ ...current, summary: true });
+  return Object.freeze({ ...current, index: current.index + 1 });
+}
+
+/** Stable presentation metadata supplied by the same authoritative pack commit. */
+export function cardforgePackRevealEntries(state: TcgHudState): readonly CardforgePackRevealEntry[] {
+  const reveal = state.lastPackReveal;
+  if (!reveal) return Object.freeze([]);
+  const newPrintings = new Set(reveal.newPrintingIds);
+  const alreadyMarkedNew = new Set<string>();
+  return Object.freeze(reveal.printingIds.flatMap((printingId) => {
+    const printing = TCG_CATALOG.printings[printingId];
+    const definition = printing ? TCG_CATALOG.definitions[printing.cardDefinitionId] : null;
+    if (!printing || !definition) return [];
+    const holding = state.player.holdings[printingId];
+    const isNew = newPrintings.has(printingId) && !alreadyMarkedNew.has(printingId);
+    alreadyMarkedNew.add(printingId);
+    return [Object.freeze({
+      printingId,
+      name: definition.name,
+      rarity: definition.rarity,
+      variant: printing.variant,
+      finish: printing.finish,
+      ownedCount: (holding?.physical ?? 0) + (holding?.archived ?? 0),
+      isNew,
+    })];
+  }));
+}
+
 function MatchPlayer({ player, active, own }: Readonly<{
   player: TcgPublicMatchPlayer;
   active: boolean;
@@ -119,6 +167,18 @@ export function CardforgePanel(props: CardforgePanelProps) {
   const [deckCards, setDeckCards] = useState<string[]>(activeDeck ? [...activeDeck.printingIds] : []);
   const [tradeRecipient, setTradeRecipient] = useState(state.peers[0]?.id ?? "");
   const [tradeCount, setTradeCount] = useState(1);
+  const revealKey = state.lastPackReveal ? `${state.lastPackReveal.batchId}:${state.lastPackReveal.openedAt}` : null;
+  const observedRevealKey = useRef(revealKey);
+  const pendingPackBatch = useRef<string | null>(null);
+  const [packReveal, setPackReveal] = useState<CardforgePackRevealProgress | null>(null);
+  const packRevealEntries = useMemo(() => cardforgePackRevealEntries(state), [state]);
+  useEffect(() => {
+    if (!revealKey || revealKey === observedRevealKey.current) return;
+    observedRevealKey.current = revealKey;
+    if (!state.lastPackReveal || pendingPackBatch.current !== state.lastPackReveal.batchId) return;
+    pendingPackBatch.current = null;
+    setPackReveal(Object.freeze({ key: revealKey, index: 0, summary: false }));
+  }, [revealKey, state.lastPackReveal]);
   const archivedTotal = totalTcgArchived(state.player);
   const archiveCapacity = TCG_ARCHIVE_CAPACITY[state.player.archiveTier];
   const archiveUpgradePrice = state.player.archiveTier === 1 ? TCG_ARCHIVE_UPGRADE_PRICE[1]
@@ -209,6 +269,19 @@ export function CardforgePanel(props: CardforgePanelProps) {
       ...(targetBoardSlot !== undefined && targetBoardSlot >= 0 ? { targetBoardSlot } : {}),
     }, state.activeMatch.revision);
   };
+
+  const openPack = (batchId: string) => {
+    pendingPackBatch.current = batchId;
+    props.onOpenPack(batchId);
+  };
+
+  const reviewLastPack = () => {
+    if (!revealKey || packRevealEntries.length === 0) return;
+    setPackReveal(Object.freeze({ key: revealKey, index: 0, summary: false }));
+  };
+
+  const advancePackReveal = () => setPackReveal((current) => advanceCardforgePackReveal(current, packRevealEntries.length));
+  const activeRevealEntry = packReveal ? packRevealEntries[packReveal.index] ?? null : null;
 
   return (
     <section className="menu-overlay cardforge-overlay" aria-label="Cardforge trading card game">
@@ -338,20 +411,12 @@ export function CardforgePanel(props: CardforgePanelProps) {
 
         {tab === "packs" && <main className="cardforge-packs">
           {state.lastPackReveal && <section className="cardforge-pack-reveal" aria-label="Latest Cardforge pack reveal">
-            <header><b>Latest committed reveal</b><span>Least to most rare · batch {state.lastPackReveal.batchId.slice(-8)}</span></header>
-            <div>{state.lastPackReveal.printingIds.map((printingId, index) => {
-              const printing = TCG_CATALOG.printings[printingId];
-              const holding = state.player.holdings[printingId];
-              const dex = printing ? state.player.dex[printing.cardDefinitionId] : null;
-              return <article key={`${printingId}-${index}`}>
-                <CardArt printingId={printingId} compact />
-                <small>{dex?.acquiredCount === 1 ? "New" : "Owned"} · {holding ? holding.physical + holding.archived : 0} total · {titleCase(printing?.variant ?? "standard")} · {titleCase(printing?.finish ?? "standard")}</small>
-              </article>;
-            })}</div>
+            <div><span>LAST COMMITTED PACK</span><b>{packRevealEntries.length} cards · batch {state.lastPackReveal.batchId.slice(-8)}</b><small>Least to most rare · exact host-authoritative custody</small></div>
+            <button type="button" onClick={reviewLastPack}>Review reveal</button>
           </section>}
           {state.packBatches.length === 0 ? <div className="cardforge-empty">No sealed boosters. Town stock, dungeon vaults, bosses, and Waytable wins can add more.</div> : state.packBatches.map((batch) => {
             const product = TCG_CATALOG.packs[batch.productId];
-            return <article key={batch.id}><div className="cardforge-pack-art" aria-hidden="true">◆<span>5+</span></div><div><b>{product?.name ?? batch.productId}</b><p>{batch.source}</p><small>{batch.quantity - batch.nextIndex} sealed · deterministic batch #{batch.id.slice(-8)}</small></div><button onClick={() => props.onOpenPack(batch.id)}>Open next pack</button></article>;
+            return <article key={batch.id}><div className="cardforge-pack-art" aria-hidden="true">◆<span>5+</span></div><div><b>{product?.name ?? batch.productId}</b><p>{batch.source}</p><small>{batch.quantity - batch.nextIndex} sealed · deterministic batch #{batch.id.slice(-8)}</small></div><button onClick={() => openPack(batch.id)}>Open next pack</button></article>;
           })}
           <aside><b>Published collation</b><p>Three common-biased slots, one uncommon-plus slot, and one rare-plus slot. Foils replace a standard printing without changing rarity. A 1.5% Wildlight pocket adds one Full Art bonus; it never replaces a base slot and reveals last.</p></aside>
         </main>}
@@ -452,6 +517,64 @@ export function CardforgePanel(props: CardforgePanelProps) {
           <section><h3>Decks and turns</h3><p>Open and Core decks contain 30 cards, at least 12 Beings, no more than four Places, up to three copies per definition, and one copy of Legendary or Prime cards. Each keeper starts at 20 Resolve with five cards and three Being lanes. Mulligan once, gain and refill one more Trail Energy each turn to ten, then play, clash, and end. The first player skips a turn-one draw; the second receives a one-use Trail Spark. Guard must be challenged first, combat is simultaneous, and an empty required draw loses.</p></section>
           <section><h3>Multiplayer trust</h3><p>The host validates revisions, ownership, prices, hidden zones, shuffles, actions, rewards, and escrow. Guests receive only their own hand and public opposing counts. Rejected or stale actions are repaired from a fresh host projection. Friendly play has no wagers or ranked-security claim: the host is authoritative, not an independent tournament server.</p></section>
         </main>}
+
+        {packReveal && state.lastPackReveal && packRevealEntries.length > 0 && <section
+          className="cardforge-reveal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Cardforge pack opening"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setPackReveal(null);
+            else if (event.key === "ArrowRight") { event.preventDefault(); advancePackReveal(); }
+          }}
+        >
+          <header className="cardforge-reveal-masthead">
+            <div><span>WAYGRID PACK OPENING</span><b>{packReveal.summary ? "Pack registered" : "Turn the trail"}</b><small>Committed batch {state.lastPackReveal.batchId.slice(-8)}</small></div>
+            <button type="button" onClick={() => setPackReveal(null)} aria-label="Close pack reveal">×</button>
+          </header>
+          {!packReveal.summary && activeRevealEntry ? <>
+            <div className={`cardforge-reveal-stage rarity-${activeRevealEntry.rarity}`} aria-live="polite">
+              <span className="cardforge-reveal-light" aria-hidden="true" />
+              <button
+                key={`${packReveal.key}:${packReveal.index}`}
+                type="button"
+                className="cardforge-reveal-card-button"
+                onClick={advancePackReveal}
+                autoFocus
+                aria-label={`${activeRevealEntry.name}. ${activeRevealEntry.isNew ? "New card. " : ""}${packReveal.index + 1} of ${packRevealEntries.length}. Reveal next card.`}
+              >
+                {activeRevealEntry.isNew && <strong className="cardforge-reveal-new">NEW</strong>}
+                <CardArt printingId={activeRevealEntry.printingId} />
+              </button>
+              <div className="cardforge-reveal-caption">
+                <span>{packReveal.index + 1} / {packRevealEntries.length}</span>
+                <b>{activeRevealEntry.name}</b>
+                <small>{titleCase(activeRevealEntry.rarity)} · {titleCase(activeRevealEntry.variant)} · {titleCase(activeRevealEntry.finish)} · {activeRevealEntry.ownedCount} owned</small>
+              </div>
+            </div>
+            <nav className="cardforge-reveal-lineup" aria-label="Pack card lineup">
+              {packRevealEntries.map((entry, index) => <span
+                key={`${entry.printingId}:${index}`}
+                className={`${index < packReveal.index ? "revealed" : index === packReveal.index ? "current" : "sealed"}${entry.isNew && index <= packReveal.index ? " new" : ""}`}
+                aria-label={`Card ${index + 1}: ${index <= packReveal.index ? entry.name : "sealed"}`}
+              >
+                {index <= packReveal.index ? <CardArt printingId={entry.printingId} compact /> : <i className="cardforge-card-back" aria-hidden="true">◆</i>}
+              </span>)}
+            </nav>
+            <footer className="cardforge-reveal-actions">
+              <span>Click the card or press →</span>
+              <button type="button" onClick={advancePackReveal}>{packReveal.index === packRevealEntries.length - 1 ? "View pack" : "Next card"}</button>
+            </footer>
+          </> : <div className="cardforge-reveal-summary" aria-live="polite">
+            <header><span>COLLECTION UPDATED</span><b>{packRevealEntries.filter((entry) => entry.isNew).length} new · {packRevealEntries.length} cards secured</b><small>Every copy is already committed to the host-owned case.</small></header>
+            <div>{packRevealEntries.map((entry, index) => <article key={`${entry.printingId}:${index}`}>
+              {entry.isNew && <strong>NEW</strong>}
+              <CardArt printingId={entry.printingId} compact />
+              <small>{entry.ownedCount} owned</small>
+            </article>)}</div>
+            <button type="button" onClick={() => setPackReveal(null)} autoFocus>Return to sealed packs</button>
+          </div>}
+        </section>}
       </div>
     </section>
   );

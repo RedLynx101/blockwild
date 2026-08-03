@@ -818,8 +818,7 @@ test("network drop reconstruction preserves identities and host velocity without
   Object.assign(engine, {
     drops: [],
     dropGroup: new THREE.Group(),
-    sharedDropGeometry: new THREE.BoxGeometry(0.25, 0.25, 0.25),
-    dropMaterials: new Map(),
+    dropModelTemplates: new Map(),
     nextDropId: 1,
     pendingGuestDropRequests: new Map(),
     lastNetworkDropSnapshotTick: -1,
@@ -833,8 +832,6 @@ test("network drop reconstruction preserves identities and host velocity without
   assert.deepEqual(engine.drops.map((drop) => [drop.id, drop.count]), [[81, 2], [82, 3]]);
   assert.deepEqual(engine.drops[0].velocity.toArray(), [1.2, -0.4, 0.3]);
   assert.equal(engine.drops[1].pickupDelay, 0.25);
-  engine.sharedDropGeometry.dispose();
-  for (const material of engine.dropMaterials.values()) material.dispose();
 });
 
 test("furnace clocks replicate without churning the slot transaction revision", () => {

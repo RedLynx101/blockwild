@@ -3,7 +3,8 @@ import { BLOCKS, BlockId, Item, ITEMS, type ItemCode } from "./data";
 import { createButterflyVisual } from "./butterflies";
 import { BUTTERFLY_ORDER, type ButterflyKind } from "./mobs";
 import { createHeldToolSpec } from "./model-specs";
-import { createAtlasTilePlaneGeometry } from "./world";
+import { itemPresentationFamily } from "./item-presentation";
+import { createAtlasBlockGeometry, createAtlasTilePlaneGeometry } from "./world";
 
 export type DragonEquipmentElement = "fire" | "ice" | "steel" | "sea" | "gold" | "silver";
 
@@ -28,6 +29,9 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
   if (!definition) return null;
   const group = new THREE.Group();
   group.name = `avatar-held-${definition.name.toLowerCase().replace(/\s+/g, "-")}`;
+  const worldTextureDefinition = definition.worldTextureBlock !== undefined ? BLOCKS[definition.worldTextureBlock] : undefined;
+  const worldTextureUsesPlane = Boolean(worldTextureDefinition
+    && (!worldTextureDefinition.solid || (worldTextureDefinition.shape && worldTextureDefinition.shape !== "cube")));
   const addBox = (
     size: [number, number, number],
     position: [number, number, number],
@@ -67,11 +71,11 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
     return mesh;
   };
 
-  if (definition.heldModel === "world-texture" && definition.worldTextureBlock !== undefined) {
+  if (definition.worldTextureBlock !== undefined && worldTextureUsesPlane) {
     const block = BLOCKS[definition.worldTextureBlock];
     const material = () => {
       const settings = {
-        map: options.atlas,
+        ...(options.atlas ? { map: options.atlas } : {}),
         color: options.atlas ? 0xffffff : definition.color,
         alphaTest: options.atlas ? 0.18 : 0,
         transparent: Boolean(options.atlas),
@@ -741,11 +745,122 @@ export function createAvatarHeldItemModel(item: ItemCode, options: { filledCaptu
     latch.name = "wrought-door-latch";
     group.scale.setScalar(0.72);
     group.rotation.set(0.08, 0.3, -0.08);
-  } else if (definition.placeBlock !== undefined) {
-    addBox([0.42, 0.42, 0.42], [0, 0.1, 0], definition.color, [0.16, 0.2, 0]);
+  } else if (definition.placeBlock !== undefined || definition.worldTextureBlock !== undefined) {
+    const blockType = definition.placeBlock ?? definition.worldTextureBlock!;
+    const material = new THREE.MeshLambertMaterial({
+      ...(options.atlas ? { map: options.atlas } : {}),
+      color: options.atlas ? 0xffffff : definition.color,
+    });
+    const cube = new THREE.Mesh(createAtlasBlockGeometry(blockType, 0.46), material);
+    cube.name = `presentation-voxel-block-${blockType}`;
+    cube.position.y = 0.1;
+    cube.rotation.set(0.16, 0.2, 0);
+    group.add(cube);
+    group.userData.worldTextureBlock = blockType;
   } else {
-    addBox([0.28, 0.38, 0.2], [0, 0.1, 0], definition.color, [0.12, 0.15, -0.06]);
+    const family = itemPresentationFamily(item);
+    const icon = definition.iconKind ?? "";
+    const dark = new THREE.Color(definition.color).multiplyScalar(0.55).getHex();
+    const light = new THREE.Color(definition.color).lerp(new THREE.Color(0xffffff), 0.34).getHex();
+    if (family === "document") {
+      addBox([0.43, 0.04, 0.58], [0, 0.08, 0], dark, [-0.04, 0.18, -0.08]).name = "presentation-document-cover";
+      addBox([0.37, 0.035, 0.52], [0.015, 0.12, -0.005], 0xead9ae, [-0.04, 0.18, -0.08]).name = "presentation-document-pages";
+      addBox([0.055, 0.055, 0.46], [-0.14, 0.16, 0.01], definition.color, [-0.04, 0.18, -0.08]).name = "presentation-document-binding";
+      addBox([0.2, 0.018, 0.035], [0.07, 0.147, -0.08], definition.useKind === "spell-tome" ? 0xffdd73 : 0x725f43, [-0.04, 0.18, -0.08]).name = "presentation-document-mark";
+    } else if (family === "mineral") {
+      [[-0.12, 0.02, 0.04, 0.22], [0.1, 0.1, -0.02, 0.18], [0.02, -0.03, 0.13, 0.14]].forEach(([x, y, z, size], index) => {
+        const shard = addBox([size, size * 1.25, size], [x, y, z], index === 1 ? light : definition.color, [0.08 * index, 0.24 * index, index ? 0.34 : -0.18], icon.includes("glow") || icon.includes("crystal"));
+        shard.name = `presentation-mineral-shard-${index + 1}`;
+      });
+      addBox([0.42, 0.055, 0.32], [0, -0.14, 0.03], dark).name = "presentation-mineral-matrix";
+    } else if (family === "ingot") {
+      addBox([0.46, 0.14, 0.28], [0, 0.04, 0], definition.color, [0.04, 0.2, -0.08]).name = "presentation-ingot-body";
+      addBox([0.32, 0.035, 0.17], [0, 0.12, 0], light, [0.04, 0.2, -0.08]).name = "presentation-ingot-stamp";
+      addBox([0.05, 0.02, 0.1], [0, 0.145, 0], dark, [0.04, 0.2, Math.PI / 4]).name = "presentation-ingot-maker-mark";
+    } else if (family === "fiber") {
+      const coil = new THREE.Group();
+      coil.name = "presentation-fiber-coil";
+      for (let strand = 0; strand < 4; strand += 1) {
+        const strandMesh = new THREE.Mesh(new THREE.TorusGeometry(0.16 + strand * 0.018, 0.022, 4, 12), new THREE.MeshLambertMaterial({ color: strand % 2 ? light : definition.color }));
+        strandMesh.position.set((strand - 1.5) * 0.018, 0.06 + strand * 0.02, 0);
+        strandMesh.rotation.set(Math.PI / 2, 0.18, 0.08);
+        strandMesh.name = `presentation-fiber-strand-${strand + 1}`;
+        coil.add(strandMesh);
+      }
+      group.add(coil);
+      addBox([0.08, 0.38, 0.07], [0.18, -0.02, 0.04], dark, [0.2, 0, -0.3]).name = "presentation-fiber-tail";
+    } else if (family === "food") {
+      if (["meat", "fish-raw", "fish-cooked", "rotten-flesh"].includes(icon)) {
+        addBox([0.42, 0.22, 0.24], [-0.02, 0.04, 0], definition.color, [0.04, 0.24, -0.08]).name = "presentation-food-cut";
+        addBox([0.18, 0.08, 0.08], [0.23, 0.06, 0], 0xead9bd, [0.04, 0.24, -0.08]).name = "presentation-food-bone";
+      } else if (icon === "seed") {
+        for (let seed = 0; seed < 5; seed += 1) addBox([0.09, 0.045, 0.13], [(seed % 3 - 1) * 0.1, 0.02 + Math.floor(seed / 3) * 0.07, (seed % 2 - 0.5) * 0.1], seed % 2 ? light : definition.color, [0.1, seed * 0.4, seed * 0.18]).name = `presentation-seed-${seed + 1}`;
+      } else {
+        addBox([0.34, 0.31, 0.32], [0, 0.03, 0], definition.color, [0.04, 0.22, -0.05]).name = "presentation-produce-body";
+        addBox([0.09, 0.16, 0.08], [0.02, 0.25, 0], 0x55713c, [0.18, 0, -0.2]).name = "presentation-produce-stem";
+        addBox([0.18, 0.055, 0.11], [0.12, 0.25, 0], 0x6d934e, [0.1, 0.4, -0.32]).name = "presentation-produce-leaf";
+      }
+    } else if (family === "creature-part") {
+      if (icon === "dragon-skull") {
+        addBox([0.42, 0.3, 0.34], [0, 0.08, 0], 0xddd3b7, [0.04, 0.2, 0]).name = "presentation-skull-cranium";
+        addBox([0.29, 0.18, 0.25], [0, -0.08, -0.24], 0xbeb395, [0.04, 0.2, 0]).name = "presentation-skull-muzzle";
+        for (const side of [-1, 1]) addBox([0.07, 0.34, 0.07], [side * 0.18, 0.28, 0.05], dark, [side * -0.42, 0, side * -0.2]).name = `presentation-skull-horn-${side < 0 ? "left" : "right"}`;
+      } else if (icon.includes("heart") || item === Item.NocturneHeart) {
+        addBox([0.25, 0.3, 0.24], [-0.1, 0.08, 0], definition.color, [0, 0.18, -0.28]).name = "presentation-heart-left";
+        addBox([0.25, 0.3, 0.24], [0.1, 0.08, 0], definition.color, [0, 0.18, 0.28]).name = "presentation-heart-right";
+        addBox([0.21, 0.26, 0.22], [0, -0.09, 0], dark, [0, 0.18, Math.PI / 4], icon.includes("dragon")).name = "presentation-heart-core";
+      } else if (icon.includes("scale") || item === Item.GlowScale) {
+        for (let plate = 0; plate < 3; plate += 1) addBox([0.24, 0.055, 0.32], [(plate - 1) * 0.12, 0.03 + plate * 0.055, 0], plate === 1 ? light : definition.color, [0.08, 0.25, (plate - 1) * 0.18]).name = `presentation-scale-${plate + 1}`;
+      } else {
+        addBox([0.1, 0.46, 0.1], [0, 0.05, 0], 0xd9cfb4, [0.35, 0.2, -0.65]).name = "presentation-creature-part-shaft";
+        addBox([0.18, 0.14, 0.16], [-0.14, -0.1, 0], definition.color, [0.2, 0.1, -0.2]).name = "presentation-creature-part-detail";
+      }
+    } else if (family === "relic") {
+      addBox([0.24, 0.31, 0.22], [0, 0.08, 0], definition.color, [0, 0.18, Math.PI / 4], true).name = "presentation-relic-core";
+      for (const side of [-1, 1]) {
+        addBox([0.07, 0.39, 0.08], [side * 0.18, 0.03, 0], dark, [0.15, side * 0.12, side * -0.28]).name = `presentation-relic-prong-${side < 0 ? "left" : "right"}`;
+        addBox([0.12, 0.07, 0.13], [side * 0.18, 0.25, 0], light, [0, side * 0.15, Math.PI / 4], true).name = `presentation-relic-light-${side < 0 ? "left" : "right"}`;
+      }
+      addBox([0.34, 0.08, 0.27], [0, -0.17, 0], dark).name = "presentation-relic-base";
+    } else if (family === "armor" || family === "equipment") {
+      if (definition.equipmentSlot === "head") {
+        addBox([0.42, 0.28, 0.38], [0, 0.08, 0], definition.color, [0.02, 0.2, 0]).name = "presentation-armor-crown";
+        addBox([0.45, 0.08, 0.4], [0, -0.08, 0], dark, [0.02, 0.2, 0]).name = "presentation-armor-rim";
+      } else if (definition.equipmentSlot === "feet") {
+        for (const side of [-1, 1]) addBox([0.19, 0.24, 0.34], [side * 0.12, 0, -0.04], side < 0 ? definition.color : light, [0, 0.2, 0]).name = `presentation-boot-${side < 0 ? "left" : "right"}`;
+      } else {
+        addBox([0.42, 0.4, 0.19], [0, 0.05, 0], definition.color, [0.04, 0.2, 0]).name = "presentation-equipment-body";
+        addBox([0.48, 0.09, 0.22], [0, 0.2, 0], light, [0.04, 0.2, 0]).name = "presentation-equipment-trim";
+        addBox([0.08, 0.45, 0.23], [0, 0.04, 0], dark, [0.04, 0.2, 0]).name = "presentation-equipment-spine";
+      }
+    } else if (family === "capture") {
+      const glass = new THREE.MeshLambertMaterial({ color: 0xb8e7e8, transparent: true, opacity: 0.46, depthWrite: false });
+      const vessel = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.39, 0.31), glass);
+      vessel.name = "presentation-capture-vessel";
+      vessel.position.y = 0.04;
+      vessel.rotation.y = 0.18;
+      group.add(vessel);
+      addBox([0.38, 0.07, 0.35], [0, -0.17, 0], dark, [0, 0.18, 0]).name = "presentation-capture-base";
+      addBox([0.25, 0.08, 0.24], [0, 0.27, 0], 0x76583b, [0, 0.18, 0]).name = "presentation-capture-lid";
+      addBox([0.15, 0.16, 0.13], [0, 0.03, 0], definition.color, [0.1, 0.28, Math.PI / 4], true).name = "presentation-capture-resident";
+    } else if (family === "container") {
+      addBox([0.42, 0.32, 0.35], [0, 0.02, 0], definition.color, [0.04, 0.2, 0]).name = "presentation-container-body";
+      addBox([0.45, 0.07, 0.38], [0, 0.21, 0], light, [0.04, 0.2, 0]).name = "presentation-container-lid";
+      for (const side of [-1, 1]) addBox([0.055, 0.35, 0.39], [side * 0.17, 0.03, 0], dark, [0.04, 0.2, 0]).name = `presentation-container-band-${side < 0 ? "left" : "right"}`;
+    } else if (family === "ammunition") {
+      for (let bolt = 0; bolt < 3; bolt += 1) {
+        addBox([0.055, 0.48, 0.055], [(bolt - 1) * 0.09, 0.04, 0], dark, [0.75, 0, -0.28 + bolt * 0.12]).name = `presentation-ammunition-shaft-${bolt + 1}`;
+        addBox([0.12, 0.1, 0.08], [(bolt - 1) * 0.09 - 0.14, 0.2, 0], definition.color, [0.75, 0, -0.28 + bolt * 0.12]).name = `presentation-ammunition-head-${bolt + 1}`;
+      }
+    } else {
+      addBox([0.34, 0.3, 0.28], [0, 0.04, 0], definition.color, [0.08, 0.24, -0.08]).name = "presentation-crafted-core";
+      addBox([0.38, 0.07, 0.31], [0, 0.18, 0], light, [0.08, 0.24, -0.08]).name = "presentation-crafted-cap";
+      addBox([0.09, 0.35, 0.32], [0, 0.04, 0], dark, [0.08, 0.24, -0.08]).name = "presentation-crafted-band";
+    }
+    group.scale.setScalar(0.86);
+    group.rotation.set(0.08, 0.28, -0.1);
   }
+  group.userData.itemPresentationFamily = itemPresentationFamily(item);
   return group;
 }
 

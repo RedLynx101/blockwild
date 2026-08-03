@@ -56,6 +56,7 @@
     "audit:world-overhaul": "node --import tsx scripts/audit-world-overhaul.ts",
     "audit:living-bestiary": "node --import tsx scripts/audit-living-bestiary-release.ts --write",
     "audit:visual-theme": "node --import tsx scripts/audit-visual-theme.ts --strict",
+    "audit:items": "node --import tsx scripts/audit-item-presentations.ts",
     "showcase:world-overhaul": "node --import tsx scripts/render-world-overhaul-showcase.ts",
     "showcase:living-bestiary": "node --import tsx scripts/render-living-bestiary-showcase.ts",
     "showcase:living-bestiary:compare": "node --import tsx scripts/compose-living-bestiary-comparison.ts",

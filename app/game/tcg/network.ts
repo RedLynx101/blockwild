@@ -149,8 +149,12 @@ function validateProjection(value: unknown): value is TcgHudState {
     || !isString(value.lastPackReveal.batchId, 192)
     || !isInteger(value.lastPackReveal.openedAt)
     || !Array.isArray(value.lastPackReveal.printingIds)
-    || value.lastPackReveal.printingIds.length !== 5
-    || !value.lastPackReveal.printingIds.every((entry) => isString(entry, 192)))) return false;
+    || value.lastPackReveal.printingIds.length < 5
+    || value.lastPackReveal.printingIds.length > 6
+    || !value.lastPackReveal.printingIds.every((entry) => isString(entry, 192))
+    || !Array.isArray(value.lastPackReveal.newPrintingIds)
+    || value.lastPackReveal.newPrintingIds.length > value.lastPackReveal.printingIds.length
+    || !value.lastPackReveal.newPrintingIds.every((entry) => isString(entry, 192)))) return false;
   if (!Array.isArray(value.opponents) || value.opponents.length > 64) return false;
   if (!Array.isArray(value.challenges) || value.challenges.length > 64) return false;
   if (!Array.isArray(value.trades) || value.trades.length > 64) return false;

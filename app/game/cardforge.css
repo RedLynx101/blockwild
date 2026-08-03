@@ -26,6 +26,7 @@
   height: min(900px, calc(100vh - 36px));
   max-width: 1440px;
   overflow: hidden;
+  position: relative;
   width: min(1440px, calc(100vw - 36px));
 }
 
@@ -763,32 +764,319 @@
 }
 
 .cardforge-pack-reveal {
+  align-items: center;
   background: #3b2923;
   border: 3px solid #d4a84f;
   color: #f8e8bf;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
   margin-bottom: 14px;
   padding: 10px;
 }
 
-.cardforge-pack-reveal > header {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-
 .cardforge-pack-reveal > div {
   display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
-}
-
-.cardforge-pack-reveal article {
-  min-width: 0;
+  gap: 3px;
 }
 
 .cardforge-pack-reveal small {
+  color: #d5c29c;
+}
+
+.cardforge-reveal-overlay {
+  background:
+    radial-gradient(circle at 50% 36%, rgba(219, 173, 83, .2), transparent 32%),
+    linear-gradient(145deg, rgba(33, 17, 14, .98), rgba(8, 15, 15, .99));
+  color: #f8e8bf;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  inset: 0;
+  isolation: isolate;
+  overflow: hidden;
+  position: absolute;
+  z-index: 30;
+}
+
+.cardforge-reveal-overlay::before {
+  background:
+    repeating-linear-gradient(90deg, transparent 0 22px, rgba(229, 192, 112, .035) 23px 24px),
+    repeating-linear-gradient(0deg, transparent 0 22px, rgba(229, 192, 112, .025) 23px 24px);
+  content: "";
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+  z-index: -1;
+}
+
+.cardforge-reveal-masthead {
+  align-items: center;
+  border-bottom: 1px solid rgba(230, 196, 119, .32);
+  display: flex;
+  justify-content: space-between;
+  padding: 12px 16px;
+}
+
+.cardforge-reveal-masthead > div,
+.cardforge-reveal-caption,
+.cardforge-reveal-summary > header {
+  display: grid;
+  gap: 3px;
+}
+
+.cardforge-reveal-masthead span,
+.cardforge-reveal-summary header span {
+  color: #e2b95f;
+  font-size: 10px;
+  letter-spacing: .18em;
+}
+
+.cardforge-reveal-masthead b {
+  font-family: Georgia, serif;
+  font-size: clamp(18px, 2vw, 28px);
+}
+
+.cardforge-reveal-masthead small,
+.cardforge-reveal-summary header small {
+  color: #b9af96;
+}
+
+.cardforge-reveal-stage {
+  align-content: center;
+  display: grid;
+  justify-items: center;
+  min-height: 0;
+  padding: 8px 24px 4px;
+  position: relative;
+}
+
+.cardforge-reveal-light {
+  background: radial-gradient(ellipse, rgba(225, 182, 84, .3), transparent 68%);
+  filter: blur(12px);
+  height: min(52vh, 470px);
+  pointer-events: none;
+  position: absolute;
+  width: min(55vw, 610px);
+}
+
+.cardforge-reveal-stage.rarity-rare .cardforge-reveal-light,
+.cardforge-reveal-stage.rarity-epic .cardforge-reveal-light,
+.cardforge-reveal-stage.rarity-legendary .cardforge-reveal-light,
+.cardforge-reveal-stage.rarity-prime .cardforge-reveal-light {
+  background: radial-gradient(ellipse, rgba(239, 196, 91, .48), rgba(116, 95, 187, .18) 40%, transparent 70%);
+}
+
+.cardforge-shell .cardforge-reveal-card-button {
+  animation: cardforge-card-arrive .42s cubic-bezier(.18, .82, .2, 1) both;
+  background: transparent;
+  border: 0;
+  filter: drop-shadow(0 18px 22px #000b);
+  min-height: 0;
+  padding: 0;
+  position: relative;
+  transform-origin: 50% 90%;
+  width: clamp(190px, min(26vw, 31vh), 270px);
+  z-index: 2;
+}
+
+.cardforge-shell .cardforge-reveal-card-button:hover,
+.cardforge-shell .cardforge-reveal-card-button:focus-visible {
+  background: transparent;
+  box-shadow: none;
+  filter: drop-shadow(0 22px 28px #000d) drop-shadow(0 0 12px rgba(244, 203, 106, .45));
+  outline: 2px solid #f4d37f;
+  outline-offset: 6px;
+}
+
+.cardforge-reveal-card-button .cardforge-card {
+  aspect-ratio: 5 / 7;
+  min-width: 0;
+  width: 100%;
+}
+
+.cardforge-reveal-new {
+  animation: cardforge-new-arrive .5s .2s cubic-bezier(.12, .9, .25, 1.25) both;
+  background: #f5cb65;
+  border: 2px solid #4a2d1f;
+  box-shadow: 3px 3px #0008;
+  color: #281811;
+  font-size: clamp(16px, 2.2vw, 25px);
+  left: -18px;
+  letter-spacing: .08em;
+  padding: 5px 9px;
+  position: absolute;
+  top: 14px;
+  transform: rotate(-8deg);
+  z-index: 8;
+}
+
+.cardforge-reveal-caption {
+  margin-top: 7px;
+  position: relative;
+  text-align: center;
+  z-index: 2;
+}
+
+.cardforge-reveal-caption > span {
+  color: #d6b159;
+  font-size: 10px;
+  letter-spacing: .16em;
+}
+
+.cardforge-reveal-caption > b {
+  font-family: Georgia, serif;
+  font-size: clamp(18px, 2.2vw, 27px);
+}
+
+.cardforge-reveal-caption > small {
+  color: #c7bda6;
+}
+
+.cardforge-reveal-lineup {
+  align-items: end;
+  display: flex;
+  gap: clamp(5px, 1vw, 11px);
+  justify-content: center;
+  min-height: 84px;
+  padding: 3px 16px 9px;
+}
+
+.cardforge-reveal-lineup > span {
+  aspect-ratio: 5 / 7;
+  display: block;
+  filter: brightness(.62);
+  position: relative;
+  transform: translateY(7px);
+  transition: filter .18s ease, transform .18s ease;
+  width: clamp(40px, 5vw, 64px);
+}
+
+.cardforge-reveal-lineup > span.current {
+  filter: none;
+  transform: translateY(0);
+}
+
+.cardforge-reveal-lineup > span.revealed {
+  filter: brightness(.85);
+}
+
+.cardforge-reveal-lineup .cardforge-card {
+  height: 100%;
+  min-width: 0;
+  width: 100%;
+}
+
+.cardforge-reveal-lineup > span.new::after {
+  background: #efc65e;
+  color: #2c1c16;
+  content: "NEW";
+  font-size: 7px;
+  font-weight: 900;
+  left: -3px;
+  padding: 2px 3px;
+  position: absolute;
+  top: -3px;
+  z-index: 5;
+}
+
+.cardforge-card-back {
+  align-items: center;
+  background:
+    repeating-linear-gradient(45deg, transparent 0 5px, rgba(229, 193, 108, .12) 5px 7px),
+    #233d38;
+  border: 4px double #d1ad5f;
+  color: #d6b25f;
+  display: flex;
+  font-size: 20px;
+  height: 100%;
+  justify-content: center;
+  width: 100%;
+}
+
+.cardforge-reveal-actions {
+  align-items: center;
+  background: rgba(0, 0, 0, .24);
+  border-top: 1px solid rgba(230, 196, 119, .24);
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+  padding: 8px 14px;
+}
+
+.cardforge-reveal-actions > span {
+  color: #aaa18e;
+  font-size: 11px;
+}
+
+.cardforge-shell .cardforge-reveal-actions button,
+.cardforge-shell .cardforge-reveal-summary > button {
+  background: #d6aa51;
+  border-color: #38231a;
+  box-shadow: inset 0 -3px rgba(91, 48, 25, .45), 3px 3px #0007;
+  font-weight: 800;
+  min-width: 150px;
+}
+
+.cardforge-reveal-summary {
+  align-content: center;
+  display: grid;
+  gap: clamp(12px, 2.2vh, 24px);
+  justify-items: center;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px;
+}
+
+.cardforge-reveal-summary > header {
+  text-align: center;
+}
+
+.cardforge-reveal-summary > header b {
+  font-family: Georgia, serif;
+  font-size: clamp(22px, 3vw, 36px);
+}
+
+.cardforge-reveal-summary > div {
+  display: grid;
+  gap: clamp(7px, 1.2vw, 15px);
+  grid-template-columns: repeat(6, minmax(0, 150px));
+  justify-content: center;
+  width: min(100%, 970px);
+}
+
+.cardforge-reveal-summary article {
+  min-width: 0;
+  position: relative;
+  text-align: center;
+}
+
+.cardforge-reveal-summary article > strong {
+  background: #f2ca68;
+  border: 1px solid #3b251b;
+  color: #2a1811;
+  font-size: 9px;
+  left: -4px;
+  padding: 3px 5px;
+  position: absolute;
+  top: -5px;
+  transform: rotate(-5deg);
+  z-index: 5;
+}
+
+.cardforge-reveal-summary article > small {
+  color: #c8bca2;
   display: block;
   margin-top: 5px;
+}
+
+@keyframes cardforge-card-arrive {
+  from { opacity: 0; transform: translateY(28px) rotateY(-14deg) scale(.9); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes cardforge-new-arrive {
+  from { opacity: 0; transform: rotate(-8deg) scale(.55); }
+  to { opacity: 1; transform: rotate(-8deg) scale(1); }
 }
 
 .cardforge-packs > article > div:nth-child(2),
@@ -971,5 +1259,28 @@
   .cardforge-toolbar { grid-template-columns: 1fr 1fr; }
   .cardforge-toolbar > input,
   .cardforge-toolbar > button { grid-column: 1 / -1; }
-  .cardforge-pack-reveal > div { grid-template-columns: repeat(6, 120px); overflow-x: auto; }
+  .cardforge-reveal-summary > div { grid-template-columns: repeat(3, minmax(0, 130px)); }
+}
+
+@media (max-width: 560px), (max-height: 640px) {
+  .cardforge-pack-reveal { align-items: stretch; flex-direction: column; }
+  .cardforge-reveal-masthead { padding: 7px 9px; }
+  .cardforge-reveal-masthead small { display: none; }
+  .cardforge-reveal-stage { padding: 4px 10px 2px; }
+  .cardforge-shell .cardforge-reveal-card-button { width: clamp(148px, min(45vw, 29vh), 214px); }
+  .cardforge-reveal-caption { margin-top: 3px; }
+  .cardforge-reveal-caption > small { font-size: 9px; }
+  .cardforge-reveal-lineup { min-height: 62px; padding-bottom: 4px; }
+  .cardforge-reveal-lineup > span { width: clamp(30px, 7.6vw, 48px); }
+  .cardforge-reveal-actions { padding: 5px 8px; }
+  .cardforge-reveal-actions > span { display: none; }
+  .cardforge-reveal-summary { padding: 9px; }
+  .cardforge-reveal-summary > div { grid-template-columns: repeat(3, minmax(0, 96px)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cardforge-shell .cardforge-reveal-card-button,
+  .cardforge-reveal-new {
+    animation: none;
+  }
 }

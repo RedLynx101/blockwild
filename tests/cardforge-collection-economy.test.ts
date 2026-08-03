@@ -43,6 +43,11 @@ test("starter and booster grants are deterministic, duplicate-aware, and replay-
   const opened = openTcgPack(issued.state, "alice", issued.batch!.id, "open:event", issued.player.revision, 200);
   assert.equal(opened.applied, true);
   assert.deepEqual(opened.printingIds, expected);
+  assert.deepEqual(
+    opened.newPrintingIds,
+    expected.filter((printingId, index) => !issued.player.holdings[printingId] && expected.indexOf(printingId) === index),
+    "the authoritative commit identifies only first-owned printings, once",
+  );
   assert.equal(openTcgPack(opened.state, "alice", issued.batch!.id, "open:event", opened.player.revision, 201).reason, "duplicate");
 
   for (const printingId of opened.printingIds) assert.ok(totalTcgHolding(opened.player, printingId) >= 1);

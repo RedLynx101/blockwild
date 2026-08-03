@@ -53,6 +53,7 @@ import { MOUNT_PROFILES } from "./creature-mounts";
 import { PRIME_FORM_PROFILES, PRIME_ROUTE_PROFILES, type PrimeEligibleKind } from "./creature-rarity";
 import { creatureEcologyContract, normalizeCreatureWorkState, type CreatureShellModule } from "./creature-ecology";
 import { createAvatarHeldItemModel } from "./held-items";
+import { fallbackInventoryIconKind, itemPresentationFamily } from "./item-presentation";
 import { legendaryContractForItem } from "./legendary-items";
 import { captureOrbFromInventorySlot } from "./capture-orbs";
 import {
@@ -1099,7 +1100,7 @@ export function itemIconKind(item: ItemCode) {
     default:
       if (definition?.worldTextureBlock !== undefined) return "world-texture";
       if (definition?.iconKind) return definition.iconKind;
-      return definition?.placeBlock !== undefined ? "block" : "item";
+      return fallbackInventoryIconKind(item);
   }
 }
 
@@ -1362,7 +1363,7 @@ function ItemIcon({ item, slot, small = false }: { item: ItemCode; slot?: Invent
   const definition = ITEMS[item];
   const iconKind = itemIconKind(item);
   const isTool = Boolean(definition?.toolKind) && iconKind.startsWith("tool-");
-  const custom = iconKind !== "block" && iconKind !== "item" && !isTool;
+  const custom = !isTool;
   const capturedCreature = item === Item.CaptureOrb ? captureOrbFromInventorySlot(slot)?.creature : null;
   const filledCaptureOrb = Boolean(capturedCreature);
   return (
@@ -1373,6 +1374,7 @@ function ItemIcon({ item, slot, small = false }: { item: ItemCode; slot?: Invent
       data-item-id={item}
       data-creature-kind={capturedCreature?.kind}
       data-world-texture={definition?.worldTextureBlock}
+      data-presentation-family={itemPresentationFamily(item)}
       aria-hidden="true"
     />
   );
@@ -5680,6 +5682,14 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
               [Item.SeaDragonEgg, "Sea Dragon Egg"],
               [Item.GoldDragonEgg, "Gold Dragon Egg"],
               [Item.SilverDragonEgg, "Silver Dragon Egg"],
+              [BlockId.Stone, "Atlas-ready voxel block"],
+              [Item.RawCopper, "Raw mineral cluster"],
+              [Item.CopperIngot, "Forged ingot profile"],
+              [Item.String, "Fiber and cord profile"],
+              [Item.Bread, "Food profile"],
+              [Item.Hide, "Creature material profile"],
+              [Item.CaveGel, "Contained reagent profile"],
+              [Item.CardforgeCase, "Relic and case profile"],
             ] as const).map(([item, label], index) => <figure key={item}><PlayerAvatarPreview variant={index % 2 ? "female" : "male"} heldItem={item} /><figcaption><strong>{label}</strong><small>{ITEMS[item].name} · production scale</small></figcaption></figure>)}
           </div>
         </section>

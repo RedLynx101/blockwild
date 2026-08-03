@@ -511,6 +511,7 @@ import {
 } from "./contextual-loot";
 import { normalizeRoadEventState, planRoadEvent, type RoadEdge, type RoadEventState } from "./surface-roads";
 import { applyFirstPersonHeldItemOrientation, createAvatarHeldItemModel } from "./held-items";
+import { itemPresentationFamily } from "./item-presentation";
 import {
   boardSailboat,
   createSailboatVisual,
@@ -4142,7 +4143,7 @@ export class VoxelEngine {
   goldWallet: GoldWalletState = createGoldWallet("world", "local", 0);
   cardforgeState: TcgWorldState = createTcgWorldState("world:cardforge");
   cardforgeRemoteHud: TcgHudState | null = null;
-  cardforgeLastPackReveals = new Map<string, Readonly<{ batchId: string; printingIds: readonly string[]; openedAt: number }>>();
+  cardforgeLastPackReveals = new Map<string, Readonly<{ batchId: string; printingIds: readonly string[]; newPrintingIds: readonly string[]; openedAt: number }>>();
   bankAccount: BankAccountState = createBankAccount("world", "local", 0);
   stockMarket: StockMarketState = createStockMarket("world", "local", "WILDERNESS", 0);
   settlements = new Map<string, SettlementState>();
@@ -4285,8 +4286,8 @@ export class VoxelEngine {
   combatMusicScene: "combatA" | "combatB" = "combatA";
   mobRaycaster = new THREE.Raycaster();
   activeRecipe: Recipe | null = null;
-  sharedDropGeometry = new THREE.BoxGeometry(0.23, 0.23, 0.23);
-  dropMaterials = new Map<number, THREE.MeshLambertMaterial>();
+  /** Shared immutable visuals keep authored drops cheaper than the old cube fallback. */
+  dropModelTemplates = new Map<string, THREE.Object3D>();
   heldRoot = new THREE.Group();
   offhandRoot = new THREE.Group();
   heldItemCode: ItemCode = -1;
@@ -21593,6 +21594,7 @@ export class VoxelEngine {
     this.cardforgeLastPackReveals.set(player.ownerId, Object.freeze({
       batchId,
       printingIds: result.printingIds,
+      newPrintingIds: result.newPrintingIds,
       openedAt: Date.now(),
     }));
     this.dispatchCardforgeGuildEvent("cardwright", "resolveEncounter", `pack-opened:${batchId}`);
@@ -22177,6 +22179,7 @@ export class VoxelEngine {
         this.cardforgeLastPackReveals.set(actorId, Object.freeze({
           batchId: intent.batchId,
           printingIds: result.printingIds,
+          newPrintingIds: result.newPrintingIds,
           openedAt: Date.now(),
         }));
         this.dispatchCardforgeGuildEvent("cardwright", "resolveEncounter", `pack-opened:${intent.batchId}`);
@@ -29576,20 +29579,21 @@ export class VoxelEngine {
         if (removableIndex >= 0) this.removeDrop(removableIndex);
       }
       const amount = Math.min(count, stackLimit);
-      let mesh: THREE.Object3D;
-      let ownsVisual = false;
-      if (ITEMS[item].dropModel) {
-        const filledCaptureOrb = item === Item.CaptureOrb
-          && Boolean(captureOrbFromInventorySlot({ item, count: 1, ...(metadata ? { metadata } : {}) })?.creature);
-        mesh = createAvatarHeldItemModel(item, { filledCaptureOrb, atlas: this.world?.atlas }) ?? new THREE.Object3D();
-        mesh.name = `dropped-${ITEMS[item].dropModel}`;
-        mesh.scale.multiplyScalar(0.52);
-        ownsVisual = true;
-      } else {
-        let material = this.dropMaterials.get(item);
-        if (!material) { material = new THREE.MeshLambertMaterial({ color: ITEMS[item].color }); this.dropMaterials.set(item, material); }
-        mesh = new THREE.Mesh(this.sharedDropGeometry, material);
+      const filledCaptureOrb = item === Item.CaptureOrb
+        && Boolean(captureOrbFromInventorySlot({ item, count: 1, ...(metadata ? { metadata } : {}) })?.creature);
+      const templateKey = `${item}:${filledCaptureOrb ? "filled" : "empty"}`;
+      // A handful of bounded engine tests construct a partial instance without
+      // running class field initializers. Keep the production cache lazy-safe.
+      const templates = this.dropModelTemplates ??= new Map<string, THREE.Object3D>();
+      let template = templates.get(templateKey);
+      if (!template) {
+        template = createAvatarHeldItemModel(item, { filledCaptureOrb, atlas: this.world?.atlas }) ?? new THREE.Object3D();
+        template.name = `drop-template-${item}`;
+        templates.set(templateKey, template);
       }
+      const mesh = template.clone(true);
+      mesh.name = `dropped-${itemPresentationFamily(item)}`;
+      mesh.scale.multiplyScalar(0.52);
       mesh.position.copy(position);
       if (!options.exactPosition) mesh.position.add(new THREE.Vector3((Math.random() - 0.5) * 0.45, 0.25, (Math.random() - 0.5) * 0.45));
       this.dropGroup.add(mesh);
@@ -29601,7 +29605,6 @@ export class VoxelEngine {
         ...(resolvedDurability !== undefined ? { durability: resolvedDurability } : {}),
         ...(metadata ? { metadata: cloneSlot({ item, count: 1, metadata })?.metadata } : {}),
         mesh,
-        ...(ownsVisual ? { ownsVisual: true } : {}),
         velocity,
         ...(options.networkReplica ? {
           networkTarget: position.clone(),
@@ -32746,10 +32749,10 @@ export class VoxelEngine {
     this.remotePlayers.clear();
     for (const light of this.remoteHeldLights.values()) this.scene.remove(light);
     this.remoteHeldLights.clear();
+    for (const template of this.dropModelTemplates?.values() ?? []) this.disposeObject(template);
+    this.dropModelTemplates?.clear();
     this.world.dispose();
     this.basicWorldRenderer.dispose();
-    this.sharedDropGeometry.dispose();
-    for (const material of this.dropMaterials.values()) material.dispose();
     this.disposePooledParticleResources();
     this.gpuTimer.dispose();
     this.longAnimationFrameSampler.dispose();

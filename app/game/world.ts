@@ -7725,6 +7725,48 @@ export class ChunkWorld {
       occlusionCache[index] = occludes ? 2 : 1;
       return occludes;
     };
+    const vertexBiomeTintCache = new Map<string, [number, number, number]>();
+    const biomeTintForColumn = (worldX: number, worldZ: number) => {
+      const sx = splitCoordinate(worldX);
+      const sz = splitCoordinate(worldZ);
+      const owner = this.chunks.get(chunkKey(sx.chunk, sz.chunk));
+      const biome = owner
+        ? owner.biomes[sx.local + sz.local * CHUNK_SIZE] as BiomeId
+        : this.sampleColumn(worldX, worldZ).biome;
+      return BIOME_TINT[biome] ?? [1, 1, 1] as [number, number, number];
+    };
+    /**
+     * Terrain tint belongs to a world-space vertex, not to whichever chunk
+     * happened to author the face. Averaging the columns that touch a vertex
+     * gives both sides of a chunk boundary byte-identical colors while still
+     * allowing biome palettes to transition over the width of a block.
+     */
+    const biomeTintForVertex = (localX: number, localZ: number) => {
+      const key = `${localX},${localZ}`;
+      const cached = vertexBiomeTintCache.get(key);
+      if (cached) return cached;
+      const worldX = chunk.cx * CHUNK_SIZE + localX;
+      const worldZ = chunk.cz * CHUNK_SIZE + localZ;
+      const x0 = Math.floor(worldX);
+      const x1 = Math.ceil(worldX);
+      const z0 = Math.floor(worldZ);
+      const z1 = Math.ceil(worldZ);
+      const samples = new Map<string, [number, number, number]>();
+      for (const sampleX of [x0, x1]) for (const sampleZ of [z0, z1]) {
+        samples.set(`${sampleX},${sampleZ}`, biomeTintForColumn(sampleX, sampleZ));
+      }
+      const result: [number, number, number] = [0, 0, 0];
+      for (const sample of samples.values()) {
+        result[0] += sample[0];
+        result[1] += sample[1];
+        result[2] += sample[2];
+      }
+      result[0] /= samples.size;
+      result[1] /= samples.size;
+      result[2] /= samples.size;
+      vertexBiomeTintCache.set(key, result);
+      return result;
+    };
     const surfaceOcclusionAt = (localX: number, localY: number, localZ: number, normalX: number, normalY: number, normalZ: number) => {
       const axis = Math.abs(normalX) >= Math.abs(normalY) && Math.abs(normalX) >= Math.abs(normalZ) ? 0
         : Math.abs(normalY) >= Math.abs(normalZ) ? 1 : 2;
@@ -7758,6 +7800,7 @@ export class ChunkWorld {
     };
     let activeEmissiveStrength = 0;
     let activeAmbientOcclusion = false;
+    let activeCellTint: [number, number, number] = [1, 1, 1];
     const addQuad = (
       bucket: GeometryBucket,
       corners: ReadonlyArray<readonly [number, number, number]>,
@@ -7779,7 +7822,8 @@ export class ChunkWorld {
         const localZ = corner[2] + offsetZ;
         bucket.positions.push(localX, localY, localZ);
         bucket.normals.push(normal[0], normal[1], normal[2]);
-        bucket.colors.push(shade * tint[0], shade * tint[1], shade * tint[2]);
+        const vertexTint = tint === activeCellTint ? biomeTintForVertex(localX, localZ) : tint;
+        bucket.colors.push(shade * vertexTint[0], shade * vertexTint[1], shade * vertexTint[2]);
         const light = this.surfaceLightAt(
           chunk.cx * CHUNK_SIZE + localX,
           localY,
@@ -7882,6 +7926,7 @@ export class ChunkWorld {
         const worldX = chunk.cx * CHUNK_SIZE + lx;
         const worldZ = chunk.cz * CHUNK_SIZE + lz;
         const facing = isDirectionallyPlacedBlock(type) ? this.blockFacingAt(worldX, y, worldZ) : BLOCK_FACING_NORTH;
+        activeCellTint = tint;
         activeEmissiveStrength = definition.emissiveStrength ?? 0;
         activeAmbientOcclusion = definition.solid
           && (!definition.shape || definition.shape === "cube")

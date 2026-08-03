@@ -1092,6 +1092,54 @@ test("adjacent blocks across a chunk seam do not render hidden faces", () => {
   world.dispose();
 });
 
+test("water and ground share world-space biome tint vertices across chunk seams", () => {
+  for (const [type, layer] of [[BlockId.Water, "transparent"], [BlockId.Grass, "opaque"]] as const) {
+    const world = new ChunkWorld();
+    world.reset(`VERTEX-TINT-SEAM-${type}`, undefined, { structures: false });
+    const left = world.generateChunk(0, 0);
+    const right = world.generateChunk(1, 0);
+    for (const chunk of [left, right]) {
+      chunk.blocks.fill(BlockId.Air);
+      chunk.sectionBlockCounts.fill(0);
+      chunk.lightIndices.clear();
+      chunk.skyTops.fill(MIN_Y - 1);
+    }
+    left.biomes.fill(BiomeId.Desert);
+    right.biomes.fill(BiomeId.Frostpine);
+    world.lightEngine.initializeChunk(left);
+    world.lightEngine.initializeChunk(right);
+    world.setBlock(CHUNK_SIZE - 1, 0, 0, type, false, false);
+    world.setBlock(CHUNK_SIZE, 0, 0, type, false, false);
+    const section = Math.floor((0 - MIN_Y) / SECTION_HEIGHT);
+    world.rebuildSection(left, section);
+    world.rebuildSection(right, section);
+
+    const seamColors = (chunk: typeof left) => {
+      const geometry = chunk.sections.get(section)?.[layer]?.geometry;
+      assert.ok(geometry);
+      const position = geometry.getAttribute("position") as THREE.BufferAttribute;
+      const normal = geometry.getAttribute("normal") as THREE.BufferAttribute;
+      const color = geometry.getAttribute("color") as THREE.BufferAttribute;
+      const raw = color.array as Uint8Array;
+      const result = new Map<number, readonly number[]>();
+      for (let index = 0; index < position.count; index += 1) {
+        const worldX = position.getX(index) + chunk.cx * CHUNK_SIZE;
+        if (Math.abs(worldX - (CHUNK_SIZE - 0.5)) > 1e-6 || normal.getY(index) < 0.99) continue;
+        const worldZ = position.getZ(index) + chunk.cz * CHUNK_SIZE;
+        result.set(worldZ, [raw[index * 3], raw[index * 3 + 1], raw[index * 3 + 2]]);
+      }
+      return result;
+    };
+
+    assert.deepEqual(
+      [...seamColors(left).entries()].sort(([a], [b]) => a - b),
+      [...seamColors(right).entries()].sort(([a], [b]) => a - b),
+      `${BLOCKS[type].name} must not reveal chunk ownership through a color discontinuity`,
+    );
+    world.dispose();
+  }
+});
+
 test("chunk meshes pack normalized attributes without losing UV or bright biome tint ranges", () => {
   const world = new ChunkWorld();
   world.reset("PACKED-CHUNK-ATTRIBUTES", undefined, { structures: false });
@@ -2079,27 +2127,21 @@ test("dropped tools preserve their remaining durability", () => {
   const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
   engine.drops = [];
   engine.nextDropId = 1;
-  engine.dropMaterials = new Map();
+  engine.dropModelTemplates = new Map();
   engine.dropGroup = new THREE.Group();
-  engine.sharedDropGeometry = new THREE.BoxGeometry(0.2, 0.2, 0.2);
   engine.spawnDrop(Item.StonePickaxe, 1, new THREE.Vector3(), 37);
   assert.equal(engine.drops[0]?.durability, 37);
-  engine.sharedDropGeometry.dispose();
-  for (const material of engine.dropMaterials.values()) material.dispose();
 });
 
 test("oversized world drops split into legal stacks instead of losing items on save", () => {
   const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
   engine.drops = [];
   engine.nextDropId = 1;
-  engine.dropMaterials = new Map();
+  engine.dropModelTemplates = new Map();
   engine.dropGroup = new THREE.Group();
-  engine.sharedDropGeometry = new THREE.BoxGeometry(0.2, 0.2, 0.2);
   engine.spawnDrop(BlockId.WildwoodLog, 96, new THREE.Vector3());
   assert.deepEqual(engine.drops.map((drop) => drop.count), [64, 32]);
   assert.equal(engine.drops.reduce((total, drop) => total + drop.count, 0), 96);
-  engine.sharedDropGeometry.dispose();
-  for (const material of engine.dropMaterials.values()) material.dispose();
 });
 
 test("mob deaths detach semantic body blocks and fully burn them away", () => {

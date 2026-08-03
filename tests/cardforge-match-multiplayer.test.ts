@@ -182,5 +182,19 @@ test("dedicated TCG network messages reject client state smuggling and malformed
     projection,
   };
   assert.equal(validateTcgNetworkAction(accepted), true);
+  const sixCardProjection = {
+    ...projection,
+    lastPackReveal: {
+      batchId: "batch:wildlight",
+      printingIds: ["a", "b", "c", "d", "e", "f"],
+      newPrintingIds: ["b", "f"],
+      openedAt: 42,
+    },
+  };
+  assert.equal(validateTcgNetworkAction({ ...accepted, projection: sixCardProjection }), true, "Wildlight bonus packs and exact NEW metadata cross the host boundary");
+  assert.equal(validateTcgNetworkAction({
+    ...accepted,
+    projection: { ...sixCardProjection, lastPackReveal: { ...sixCardProjection.lastPackReveal, newPrintingIds: undefined } },
+  }), false, "clients cannot infer or omit authoritative NEW metadata");
   assert.equal(validateTcgNetworkAction({ ...accepted, intent: request.intent }), false);
 });

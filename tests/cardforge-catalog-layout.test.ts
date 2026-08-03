@@ -4,7 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { CardforgePanel } from "../app/game/CardforgePanel.tsx";
+import { CardforgePanel, advanceCardforgePackReveal, cardforgePackRevealEntries } from "../app/game/CardforgePanel.tsx";
 import { Item } from "../app/game/data.ts";
 import { GUILDS, createGuildBook, inviteToGuild } from "../app/game/guilds.ts";
 import { MOB_ORDER } from "../app/game/mobs.ts";
@@ -153,6 +153,38 @@ test("Cardforge UI exposes the complete collection, play, exchange, and live gui
   assert.match(markup, /Cardwrights/u);
   assert.match(markup, /Waytable Circuit/u);
   assert.match(markup, /Start Teaching Match/u);
+});
+
+test("pack reveals advance one card at a time and preserve authoritative NEW ownership", () => {
+  const printingIds = TCG_CATALOG.printingOrder.slice(0, 5);
+  const player = createTcgPlayerState("reveal-player");
+  const state = {
+    catalogRevision: TCG_CATALOG.revision,
+    player: {
+      ...player,
+      holdings: Object.fromEntries(printingIds.map((printingId, index) => [printingId, { physical: index + 1, archived: 0 }])),
+    },
+    packBatches: [],
+    lastPackReveal: { batchId: "pack:reveal", printingIds, newPrintingIds: [printingIds[1], printingIds[4]], openedAt: 100 },
+    merchant: null,
+    activeMatch: null,
+    opponents: [],
+    challenges: [],
+    trades: [],
+    peers: [],
+    settlementName: null,
+    challengerStatus: "Ready",
+    recoveryIssues: [],
+  } as const;
+  const entries = cardforgePackRevealEntries(state);
+  assert.equal(entries.length, 5);
+  assert.deepEqual(entries.map((entry) => entry.isNew), [false, true, false, false, true]);
+  assert.deepEqual(entries.map((entry) => entry.ownedCount), [1, 2, 3, 4, 5]);
+
+  const start = { key: "pack:reveal:100", index: 0, summary: false } as const;
+  assert.deepEqual(advanceCardforgePackReveal(start, entries.length), { ...start, index: 1 });
+  assert.deepEqual(advanceCardforgePackReveal({ ...start, index: 4 }, entries.length), { ...start, index: 4, summary: true });
+  assert.equal(advanceCardforgePackReveal({ ...start, index: 4, summary: true }, entries.length), null);
 });
 
 test("Cardforge UI renders Full Art as an edge-to-edge generated scene", () => {
