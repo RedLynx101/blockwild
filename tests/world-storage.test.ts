@@ -101,6 +101,34 @@ test("public agent tasks and test-world provenance round-trip with the owning wo
   assert.deepEqual(loaded.value.save.agentPlatform?.waypoints[0]?.position, { x: 4, y: 30, z: -2 });
 });
 
+test("world rules can switch between Survival and Creative before loading without losing the save", () => {
+  const storage = new MemoryStorage();
+  const worlds = new WorldStorage(storage, { now: () => 2_750, idFactory: () => "mode-switch" });
+  const original = { ...save("RULES-A"), health: 2, hunger: 3, inventory: [{ item: 1, count: 7 }] } as WorldSave;
+  const created = worlds.createWorld({ name: "Rules Test", save: original, options: { weather: false } });
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+
+  const creative = worlds.updateWorldMode(created.value.id, "builder");
+  assert.equal(creative.ok, true);
+  assert.equal(creative.ok && creative.value.mode, "builder");
+  const creativeLoad = worlds.loadWorld(created.value.id, false);
+  assert.equal(creativeLoad.ok, true);
+  if (!creativeLoad.ok) return;
+  assert.equal(creativeLoad.value.metadata.mode, "builder");
+  assert.equal(creativeLoad.value.save.mode, "builder");
+  assert.equal(creativeLoad.value.save.health, 10);
+  assert.equal(creativeLoad.value.save.hunger, 10);
+  assert.deepEqual(creativeLoad.value.save.inventory, original.inventory);
+  assert.equal(creativeLoad.value.options.weather, false);
+
+  const survival = worlds.updateWorldMode(created.value.id, "survival");
+  assert.equal(survival.ok, true);
+  const survivalLoad = worlds.loadWorld(created.value.id, false);
+  assert.equal(survivalLoad.ok && survivalLoad.value.save.mode, "survival");
+  assert.deepEqual(survivalLoad.ok && survivalLoad.value.save.inventory, original.inventory);
+});
+
 test("autosaves refresh stale shells changed by another WorldStorage instance", () => {
   const storage = new MemoryStorage();
   let firstNow = 1_000;

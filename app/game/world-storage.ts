@@ -631,6 +631,23 @@ export class WorldStorage {
     return committed.ok ? ok({ ...options }) : committed;
   }
 
+  /** Change the rules used on the next load without replacing world contents. */
+  updateWorldMode(id: string, mode: GameMode): WorldStorageResult<WorldMetadata> {
+    const loaded = this.readDocument(id);
+    if (!loaded.ok) return loaded;
+    const nextMode: GameMode = mode === "builder" ? "builder" : "survival";
+    const metadata: WorldMetadata = { ...loaded.value.metadata, mode: nextMode, updatedAt: this.now() };
+    const save: WorldSave = {
+      ...loaded.value.save,
+      mode: nextMode,
+      ...(nextMode === "builder" ? { health: 10, hunger: 10 } : {}),
+    };
+    const document: StoredWorld = { ...loaded.value, metadata, save };
+    const nextCatalog = this.copyCatalog({ worlds: this.catalog.worlds.map((entry) => entry.id === id ? metadata : entry) });
+    const committed = this.commitDocument(document, nextCatalog);
+    return committed.ok ? ok({ ...metadata }) : committed;
+  }
+
   duplicateWorld(id: string, name?: string): WorldStorageResult<WorldMetadata> {
     const loaded = this.readDocument(id);
     if (!loaded.ok) return loaded;

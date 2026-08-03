@@ -45,3 +45,17 @@ test("public and in-game wiki surfaces preserve deep links and personal discover
   assert.match(game, /Open personal/u);
   assert.match(game, /href="\/wiki"/u);
 });
+
+test("the dedicated wiki owns bounded mouse, keyboard, and touch scroll surfaces", () => {
+  const client = readFileSync(new URL("../app/wiki/WikiClient.tsx", import.meta.url), "utf8");
+  const styles = readFileSync(new URL("../app/wiki/wiki.module.css", import.meta.url), "utf8");
+  assert.match(styles, /grid-template-rows:\s*auto minmax\(0, 1fr\) auto/u);
+  assert.match(styles, /\.resultList\s*\{[^}]*overflow-y:\s*auto/u);
+  assert.match(styles, /\.reader\s*\{[^}]*overflow-y:\s*auto/u);
+  assert.match(styles, /@media \(max-width: 780px\)[\s\S]*\.workspace\s*\{[^}]*overflow-y:\s*auto/u);
+  assert.match(styles, /@media \(max-width: 780px\)[\s\S]*\.workspace\s*\{[^}]*max-width:\s*100vw/u);
+  assert.match(styles, /@media \(max-width: 780px\)[\s\S]*\.readerHeader\s*\{[^}]*minmax\(0, 1fr\)/u);
+  assert.match(styles, /-webkit-overflow-scrolling:\s*touch/u);
+  assert.match(client, /reader\.current\?\.scrollTo/u);
+  assert.match(client, /tabIndex=\{-1\}/u);
+});

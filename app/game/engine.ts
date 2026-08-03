@@ -44,6 +44,7 @@ import { SHIELD_PROFILES, resolveShieldHit, shouldRaiseOffhandShield, type Shiel
 import {
   BLOCKS,
   CREATIVE_BLOCKS,
+  CREATIVE_ITEMS,
   ITEMS,
   Item,
   RECIPES,
@@ -1072,12 +1073,13 @@ import {
   type SettlementState,
 } from "./settlements";
 
-export { BLOCKS, CREATIVE_BLOCKS, ITEMS, Item, RECIPES, BlockId, BIOME_NAMES, MOB_DEFS, MOB_ORDER, WorldStorage, DEFAULT_WORLD_OPTIONS, type WorldOptions, type WorldMetadata, type GameMode, type InventorySlot, type ItemCode, type Recipe, type EquipmentSlot, type MobKind, type SleepTarget, type PlayerVariant };
+export { BLOCKS, CREATIVE_BLOCKS, CREATIVE_ITEMS, ITEMS, Item, RECIPES, BlockId, BIOME_NAMES, MOB_DEFS, MOB_ORDER, WorldStorage, DEFAULT_WORLD_OPTIONS, type WorldOptions, type WorldMetadata, type GameMode, type InventorySlot, type ItemCode, type Recipe, type EquipmentSlot, type MobKind, type SleepTarget, type PlayerVariant };
 
 export const SAVE_KEY = "blockwild-world-v2";
 export const SETTINGS_KEY = "blockwild-settings-v2";
 export const CLOVERBACK_MILK_COOLDOWN_SECONDS = 90;
 export const PLAYER_SAFE_FALL_BLOCKS = 4;
+export const CREATIVE_FLIGHT_TOGGLE_WINDOW_MS = 360;
 
 /** Falls through four blocks are safe; damage begins only beyond that distance. */
 export function fallDamageForDistance(distance: number) {
@@ -1295,6 +1297,7 @@ export type HudState = {
   cameraMode: CameraMode;
   crouching: boolean;
   sprinting: boolean;
+  flying: boolean;
   onlinePlayers: number;
   playerVariant: PlayerVariant;
   oxygen: number;
@@ -2597,6 +2600,21 @@ export function isDoubleForwardTap(previousTap: number, currentTap: number, wind
   return Number.isFinite(elapsed) && elapsed >= 45 && elapsed <= windowMilliseconds;
 }
 
+export function resolveCreativeFlightTap(
+  flying: boolean,
+  previousTap: number,
+  currentTap: number,
+  windowMilliseconds = CREATIVE_FLIGHT_TOGGLE_WINDOW_MS,
+) {
+  const elapsed = currentTap - previousTap;
+  const toggled = Number.isFinite(elapsed) && elapsed >= 45 && elapsed <= windowMilliseconds;
+  return {
+    flying: toggled ? !flying : flying,
+    previousTap: toggled ? -Infinity : currentTap,
+    toggled,
+  } as const;
+}
+
 export type UndergroundAmbientCuePlan = Readonly<{ sample: SampleKind; gain: number; playbackRate: number }>;
 
 /** Sparse habitat one-shots sit over the shared quiet cave bed. */
@@ -3464,6 +3482,12 @@ function blankInventory() {
   return Array.from({ length: INVENTORY_SIZE }, () => null as InventorySlot | null);
 }
 
+export function initialInventoryForMode(mode: GameMode) {
+  const inventory = blankInventory();
+  if (mode === "survival") inventory[0] = { item: Item.Berry, count: 3 };
+  return inventory;
+}
+
 function blankFurnace(): FurnaceState {
   return { input: null, fuel: null, output: null, progress: 0, burn: 0, burnMax: 0 };
 }
@@ -3998,6 +4022,8 @@ export class VoxelEngine {
   headSubmerged = false;
   lastForwardTap = -Infinity;
   sprintLatched = false;
+  lastCreativeJumpTap = -Infinity;
+  creativeFlying = false;
   performanceSampler = new PerformanceSampler(240);
   telemetryIntervalSampler = new PerformanceSampler(240);
   captureSystemDiagnostics = createCaptureSystemDiagnostics();
@@ -4820,6 +4846,7 @@ export class VoxelEngine {
       this.dismountBoat();
       return;
     }
+    if (event.code === "Space" && !event.repeat && !this.keys.has("Space")) this.recordCreativeFlightTap(performance.now());
     this.keys.add(event.code);
   };
 
@@ -4840,6 +4867,7 @@ export class VoxelEngine {
   clearInput = () => {
     this.keys.clear();
     this.sprintLatched = false;
+    this.lastCreativeJumpTap = -Infinity;
     this.spellKeyState = createSpellKeyState();
     this.spellWheelOpen = false;
     this.offhandUseHeld = false;
@@ -4914,6 +4942,7 @@ export class VoxelEngine {
         this.sprintLatched = isDoubleForwardTap(this.lastForwardTap, now);
         this.lastForwardTap = now;
       }
+      if (code === "Space" && !this.keys.has(code)) this.recordCreativeFlightTap(performance.now());
       this.keys.add(code);
     } else {
       this.keys.delete(code);
@@ -4946,8 +4975,26 @@ export class VoxelEngine {
   jump() {
     if (this.mountedCreatureId !== null) { this.dismountCreature(); return; }
     if (this.mountedBoatId) { this.dismountBoat(); return; }
+    this.recordCreativeFlightTap(performance.now());
     this.keys.add("Space");
     window.setTimeout(() => this.keys.delete("Space"), 130);
+  }
+
+  private recordCreativeFlightTap(now: number) {
+    if (this.mode !== "builder" || this.mountedCreatureId !== null || this.mountedBoatId !== null || this.seatedAt) return;
+    const transition = resolveCreativeFlightTap(this.creativeFlying, this.lastCreativeJumpTap, now);
+    this.lastCreativeJumpTap = transition.previousTap;
+    if (!transition.toggled) return;
+    this.creativeFlying = transition.flying;
+    this.velocity.y = 0;
+    this.fallVelocity = 0;
+    this.fallDistance = 0;
+    this.fallCuePlayed = false;
+    this.crouching = false;
+    this.events.onToast(this.creativeFlying
+      ? "Creative flight enabled · Space ascends · Shift descends · Ctrl accelerates · double-tap Space to land."
+      : "Creative flight disabled.");
+    this.emitHud(true);
   }
 
   randomSeed() {
@@ -4988,6 +5035,8 @@ export class VoxelEngine {
     this.paused = true;
     this.titleMode = true;
     this.mode = "builder";
+    this.creativeFlying = false;
+    this.lastCreativeJumpTap = -Infinity;
     this.worldTime = 0.32;
     this.visualWorldTime = this.worldTime;
     this.cloudDrift = { x: 0, z: 0 };
@@ -5053,6 +5102,8 @@ export class VoxelEngine {
     this.paused = false;
     this.titleMode = false;
     this.mode = mode;
+    this.creativeFlying = false;
+    this.lastCreativeJumpTap = -Infinity;
     this.world.setRenderDistance(this.titleMode ? Math.min(this.settings.renderDistance, this.touchMode ? 4 : 6) : this.settings.renderDistance);
     this.localPlayerModel.setVariant(this.playerVariant);
     this.worldOptions = normalizeWorldOptions(options);
@@ -5078,7 +5129,7 @@ export class VoxelEngine {
     this.xp = 0;
     this.level = 0;
     this.selected = 0;
-    this.inventory = blankInventory();
+    this.inventory = initialInventoryForMode(mode);
     this.equipment = blankEquipment();
     this.offhand = null;
     this.offhandUseHeld = false;
@@ -5208,11 +5259,6 @@ export class VoxelEngine {
     });
     this.reconcileSystemQuests(true);
     if (this.questBook.active.some((quest) => quest.questId === "main-first-dawn")) this.questBook = pinQuest(this.questBook, "main-first-dawn");
-    if (mode === "survival") {
-      this.inventory[0] = { item: Item.Berry, count: 3 };
-    } else {
-      for (let index = 0; index < Math.min(INVENTORY_SIZE, CREATIVE_BLOCKS.length); index += 1) this.inventory[index] = { item: CREATIVE_BLOCKS[index], count: 64 };
-    }
     this.spawnProtection = 22;
     const created = this.worldStorage.createWorld({ name, save: this.serialize(), options: this.worldOptions });
     if (created.ok) {
@@ -5682,6 +5728,8 @@ export class VoxelEngine {
     this.paused = false;
     this.titleMode = false;
     this.mode = save.mode === "builder" ? "builder" : "survival";
+    this.creativeFlying = false;
+    this.lastCreativeJumpTap = -Infinity;
     this.playerVariant = save.playerVariant === "female" ? "female" : "male";
     this.world.setRenderDistance(this.settings.renderDistance);
     this.localPlayerModel.setVariant(this.playerVariant);
@@ -5811,6 +5859,10 @@ export class VoxelEngine {
     this.selected = clamp(Number(save.selected) || 0, 0, 8);
     this.health = clamp(Number(save.health) || 10, 1, 10);
     this.hunger = clamp(Number(save.hunger) || 10, 0, 10);
+    if (this.mode === "builder") {
+      this.health = 10;
+      this.hunger = 10;
+    }
     this.xp = Math.max(0, Number(save.xp) || 0);
     this.level = Math.max(0, Number(save.level) || 0);
     this.worldTime = ((Number(save.time) || 0.32) % 1 + 1) % 1;
@@ -11010,6 +11062,10 @@ export class VoxelEngine {
       return;
     }
 
+    if (this.mode === "builder") {
+      if (replyPeerId) this.rejectCombatAction(action, replyPeerId, "Creative players cannot be damaged.");
+      return;
+    }
     if (!this.worldOptions.friendlyFire || action.targetId === action.actorId) {
       if (replyPeerId) this.rejectCombatAction(action, replyPeerId, "PvP is disabled for this world.");
       return;
@@ -11077,6 +11133,7 @@ export class VoxelEngine {
     }
     if (this.multiplayer.role !== "guest" || action.status !== "accepted") return;
     if (action.targetKind === "player" && action.targetId === this.multiplayer.identity.id) {
+      if (this.mode === "builder") return;
       this.playPlayerDamageSound();
       const attacker = this.remotePlayers.get(action.actorId)?.target;
       if (attacker) this.applyPlayerKnockback(attacker, action.attack === "ranged" ? 1.65 : 2.35);
@@ -11181,7 +11238,7 @@ export class VoxelEngine {
 
   private updateRemotePlayerMobDamage() {
     const session = this.multiplayer;
-    if (!session || session.role !== "host" || this.worldOptions.difficulty === "peaceful") return;
+    if (!session || session.role !== "host" || this.mode === "builder" || this.worldOptions.difficulty === "peaceful") return;
     for (const mob of this.mobs) {
       if (!mob.hostile || mob.health <= 0 || mob.attackCooldown > 0 || mob.activeMove) continue;
       for (const [playerId, remote] of this.remotePlayers) {
@@ -18203,7 +18260,7 @@ export class VoxelEngine {
       && BUTTERFLY_ORDER.includes(heldDefinition.creatureKind as ButterflyKind)) {
       if (heldDefinition.creatureKind === "bonbonwing" && this.crouching) {
         if (this.mode !== "survival" || this.hunger >= 10) {
-          this.events.onToast(this.mode === "survival" ? "You are too full to eat the Bonbonwing. Use normally to release it." : "Builder mode preserves the Bonbonwing; use normally to release it.");
+          this.events.onToast(this.mode === "survival" ? "You are too full to eat the Bonbonwing. Use normally to release it." : "Creative mode preserves the Bonbonwing; use normally to release it.");
           return;
         }
         this.hunger = Math.min(10, this.hunger + (heldDefinition.food ?? 3));
@@ -19579,7 +19636,15 @@ export class VoxelEngine {
   }
 
   updatePlayer(dt: number) {
+    if (this.mode !== "builder") this.creativeFlying = false;
+    if (this.mode === "builder") {
+      this.health = 10;
+      this.hunger = 10;
+      this.oxygenSeconds = DEFAULT_SWIM_RULES.maxOxygenSeconds;
+      this.drowningAccumulator = 0;
+    }
     if (this.mountedBoatId) {
+      this.creativeFlying = false;
       this.fallVelocity = 0;
       this.fallDistance = 0;
       this.fallCuePlayed = false;
@@ -19588,6 +19653,7 @@ export class VoxelEngine {
       return;
     }
     if (this.mountedCreatureId !== null) {
+      this.creativeFlying = false;
       this.updateMountedCreature(dt);
       this.fallVelocity = 0;
       this.fallDistance = 0;
@@ -19597,6 +19663,7 @@ export class VoxelEngine {
       return;
     }
     if (this.seatedAt) {
+      this.creativeFlying = false;
       const seatY = Math.round(this.seatedAt.y + 0.49);
       const seatStillExists = isSeatBlock(this.world.getBlock(Math.round(this.seatedAt.x), seatY, Math.round(this.seatedAt.z)));
       const wantsToStand = this.keys.has("KeyW") || this.keys.has("KeyA") || this.keys.has("KeyS") || this.keys.has("KeyD") || this.keys.has("Space");
@@ -19612,6 +19679,7 @@ export class VoxelEngine {
     const forwardAmount = (this.keys.has("KeyW") ? 1 : 0) - (this.keys.has("KeyS") ? 1 : 0);
     const rightAmount = (this.keys.has("KeyD") ? 1 : 0) - (this.keys.has("KeyA") ? 1 : 0);
     const moving = forwardAmount !== 0 || rightAmount !== 0;
+    const creativeFlight = this.mode === "builder" && this.creativeFlying;
     const liquidSampleX = Math.floor(this.position.x + 0.5);
     const liquidSampleZ = Math.floor(this.position.z + 0.5);
     const feetCellY = Math.floor(this.position.y + 0.6);
@@ -19652,12 +19720,12 @@ export class VoxelEngine {
       this.waterSurfaceBobActive = false;
     }
     const raceTraits = characterRaceTraits(this.activeCharacterProfile?.appearance.race ?? "wayfarer");
-    const wantsCrouch = Boolean(this.seatedAt) || this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
+    const wantsCrouch = !creativeFlight && (Boolean(this.seatedAt) || this.keys.has("ShiftLeft") || this.keys.has("ShiftRight"));
     if (wantsCrouch) this.crouching = true;
     else if (!this.collidesAt(this.position, PLAYER_HEIGHT * playerVariantHeightScale(this.playerVariant) * raceTraits.heightScale)) this.crouching = false;
     const wantsSprint = this.keys.has("ControlLeft") || this.keys.has("ControlRight") || (this.sprintLatched && forwardAmount > 0);
     const sprintSwimming = inWater && this.headSubmerged;
-    this.sprinting = forwardAmount > 0 && moving && wantsSprint && !this.crouching && this.hunger > 0.5 && (!inLiquid || sprintSwimming);
+    this.sprinting = moving && wantsSprint && !this.crouching && (creativeFlight || (forwardAmount > 0 && this.hunger > 0.5 && (!inLiquid || sprintSwimming)));
     const nowSeconds = this.worldSimulationSeconds();
     const timedMovement = timedMovementMultiplier(this.potionBuffs, nowSeconds);
     const explorationMultiplier = skillMultiplier(this.skillState.skills.exploration.level);
@@ -19665,8 +19733,10 @@ export class VoxelEngine {
     const raceMovement = inWater ? raceTraits.waterSpeedMultiplier : raceTraits.landSpeedMultiplier;
     const raisedShield = this.offhandUseHeld ? shieldKindForItem(this.offhand?.item) : null;
     const shieldMovement = raisedShield ? SHIELD_PROFILES[raisedShield].movementMultiplier : 1;
-    const speed = (this.crouching ? 2.15 : this.sprinting ? 6.35 : 4.35)
-      * liquidSpeed * raceMovement * timedMovement * explorationMultiplier * shieldMovement;
+    const speed = creativeFlight
+      ? (this.sprinting ? 15.5 : 9.5) * timedMovement * explorationMultiplier
+      : (this.crouching ? 2.15 : this.sprinting ? 6.35 : 4.35)
+        * liquidSpeed * raceMovement * timedMovement * explorationMultiplier * shieldMovement;
     const length = Math.hypot(forwardAmount, rightAmount) || 1;
     const f = forwardAmount / length;
     const r = rightAmount / length;
@@ -19674,11 +19744,11 @@ export class VoxelEngine {
     const cos = Math.cos(this.yaw);
     const desiredX = (-sin * f + cos * r) * speed;
     const desiredZ = (-cos * f - sin * r) * speed;
-    const acceleration = this.grounded || inLiquid ? 18 : 7;
+    const acceleration = creativeFlight ? 16 : this.grounded || inLiquid ? 18 : 7;
     this.velocity.x += (desiredX - this.velocity.x) * Math.min(1, acceleration * dt);
     this.velocity.z += (desiredZ - this.velocity.z) * Math.min(1, acceleration * dt);
     if (!moving) {
-      const drag = this.grounded ? 13 : inLiquid ? 4 : 1.2;
+      const drag = creativeFlight ? 10 : this.grounded ? 13 : inLiquid ? 4 : 1.2;
       this.velocity.x *= Math.max(0, 1 - drag * dt);
       this.velocity.z *= Math.max(0, 1 - drag * dt);
     }
@@ -19688,7 +19758,18 @@ export class VoxelEngine {
       this.stormstepDashSeconds = Math.max(0, this.stormstepDashSeconds - dt);
     }
 
-    if (inSwimmableLiquid) {
+    if (creativeFlight) {
+      this.fallVelocity = 0;
+      this.fallDistance = 0;
+      this.fallCuePlayed = false;
+      const verticalInput = (this.keys.has("Space") ? 1 : 0) - (this.keys.has("ShiftLeft") || this.keys.has("ShiftRight") ? 1 : 0);
+      const targetVerticalVelocity = verticalInput * (this.sprinting ? 12 : 8);
+      this.velocity.y += (targetVerticalVelocity - this.velocity.y) * Math.min(1, dt * 18);
+      if (verticalInput === 0) this.velocity.y *= Math.max(0, 1 - dt * 12);
+      this.oxygenSeconds = DEFAULT_SWIM_RULES.maxOxygenSeconds;
+      this.drowningAccumulator = 0;
+      this.grounded = false;
+    } else if (inSwimmableLiquid) {
       this.fallVelocity = 0;
       this.fallDistance = 0;
       this.fallCuePlayed = false;
@@ -19785,13 +19866,13 @@ export class VoxelEngine {
     this.moveWithCollisions(this.velocity.x * dt, 0, 0);
     const verticalStart = this.position.y;
     this.moveWithCollisions(0, this.velocity.y * dt, 0);
-    if (!inLiquid && !onRopeLadder && this.velocity.y < 0) {
+    if (!creativeFlight && !inLiquid && !onRopeLadder && this.velocity.y < 0) {
       this.fallDistance += Math.max(0, verticalStart - this.position.y);
     }
     this.moveWithCollisions(0, 0, this.velocity.z * dt);
     const wasGrounded = this.grounded;
     this.groundProbe.set(this.position.x, this.position.y - 0.055, this.position.z);
-    this.grounded = this.collidesAt(this.groundProbe);
+    this.grounded = creativeFlight ? false : this.collidesAt(this.groundProbe);
     if (!wasGrounded && this.grounded && !inLiquid) {
       this.audio.play("land", this.blockUnderfoot());
       const fallDamage = fallDamageForDistance(this.fallDistance);
@@ -20198,9 +20279,12 @@ export class VoxelEngine {
   }
 
   respawn(announce: boolean) {
+    announce = announce && this.mode === "survival";
     const deathPosition = this.position.clone().add(new THREE.Vector3(0, 0.55, 0));
     this.seatedAt = null;
     this.crouching = false;
+    this.creativeFlying = false;
+    this.lastCreativeJumpTap = -Infinity;
     const lostInventory = announce && this.mode === "survival" && !this.worldOptions.keepInventory;
     if (lostInventory) {
       for (const slot of this.inventory) if (slot) this.spawnDrop(slot.item, slot.count, deathPosition, slot.durability, slot.metadata);
@@ -26875,7 +26959,7 @@ export class VoxelEngine {
   }
 
   private applyCombatEventToLocalPlayer(event: CombatEvent, source: string) {
-    if (!event.legal) return false;
+    if (this.mode !== "survival" || !event.legal) return false;
     let resultingHealth = this.health;
     for (const mutation of event.mutations) {
       if (mutation.kind === "health" && mutation.actor.kind === "player" && String(mutation.actor.id) === this.localPlayerId()) {
@@ -27018,6 +27102,7 @@ export class VoxelEngine {
 
   private beginPlannedCreatureMove(mob: MobEntity, targetMob: MobEntity | null, targetPlayer: boolean | string) {
     if (mob.activeMove || this.multiplayer?.role === "guest") return false;
+    if (targetPlayer && this.mode === "builder") return false;
     const targetPlayerId = typeof targetPlayer === "string" ? targetPlayer : targetPlayer ? this.localPlayerId() : null;
     const remoteTargetPose = targetPlayerId && targetPlayerId !== this.localPlayerId()
       ? this.remotePlayers.get(targetPlayerId)?.target ?? null
@@ -28745,7 +28830,7 @@ export class VoxelEngine {
       }
       if (isNpcFactionId(mob.factionId)
         && factionStanding(this.factionRelations.alignments[mob.factionId] ?? 0) === "hostile") mob.hostile = true;
-      const aggressive = mob.hostile || (mob.definition.temperament === "Defensive" && mob.fleeTimer > 0);
+      const aggressive = this.mode === "survival" && (mob.hostile || (mob.definition.temperament === "Defensive" && mob.fleeTimer > 0));
       if (aggressive && distance < 24 && mob.sightCheckTimer <= 0) {
         mob.seesPlayer = this.mobCanSeePlayer(mob, { x: referenceX, y: referenceY, z: referenceZ });
         mob.sightCheckTimer = 0.18 + (mob.id % 5) * 0.035;
@@ -32091,7 +32176,7 @@ export class VoxelEngine {
         velocity: [Number(this.velocity.x.toFixed(2)), Number(this.velocity.y.toFixed(2)), Number(this.velocity.z.toFixed(2))],
         yaw: Number(this.yaw.toFixed(3)), pitch: Number(this.pitch.toFixed(3)),
         health: this.health, hunger: this.hunger, oxygen: Number(this.oxygenSeconds.toFixed(2)),
-        variant: this.playerVariant, camera: this.cameraMode, sprinting: this.sprinting, crouching: this.crouching, submerged: this.headSubmerged,
+        variant: this.playerVariant, camera: this.cameraMode, mode: this.mode, sprinting: this.sprinting, crouching: this.crouching, flying: this.mode === "builder" && this.creativeFlying, submerged: this.headSubmerged,
         input: { jumpHeld: this.keys.has("Space"), forwardHeld: this.keys.has("KeyW") },
         surfaceBreach: {
           ready: this.waterSurfaceBreachReady,
@@ -32282,6 +32367,7 @@ export class VoxelEngine {
       cameraMode: this.cameraMode,
       crouching: this.crouching,
       sprinting: this.sprinting,
+      flying: this.mode === "builder" && this.creativeFlying,
       onlinePlayers: 1 + (this.multiplayer?.getPeers().filter((peer) => peer.state === "connected").length ?? 0),
       playerVariant: this.playerVariant,
       oxygen: this.oxygenSeconds,

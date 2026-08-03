@@ -63,6 +63,7 @@ export default function WikiClient() {
   const [status, setStatus] = useState("Opening the field archive...");
   const shards = useRef(new Map<WikiCategory, readonly WikiEntry[]>());
   const activeResult = useRef<HTMLAnchorElement | null>(null);
+  const reader = useRef<HTMLElement | null>(null);
 
   const loadEntry = useCallback(async (key: string, updateHistory = false) => {
     const targetCategory = entryCategory(key);
@@ -126,6 +127,7 @@ export default function WikiClient() {
 
   useEffect(() => {
     activeResult.current?.scrollIntoView({ block: "nearest" });
+    reader.current?.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, [selectedKey]);
 
   const chooseCategory = (next: CategoryFilter) => {
@@ -169,7 +171,7 @@ export default function WikiClient() {
         </div>
       </section>
 
-      <article className={styles.reader} id="wiki-reader" aria-live="polite">
+      <article ref={reader} className={styles.reader} id="wiki-reader" tabIndex={-1} aria-live="polite">
         {status && <div className={styles.loading}>{status}</div>}
         {selected && <>
           <header className={styles.readerHeader}>

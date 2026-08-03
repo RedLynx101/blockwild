@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
-import { BLOCKS, TORCH_BLOCKS, BlockId, ITEMS, Item, RECIPES, type InventorySlot } from "../app/game/data.ts";
+import { BLOCKS, CREATIVE_ITEMS, TORCH_BLOCKS, BlockId, ITEMS, Item, RECIPES, type InventorySlot } from "../app/game/data.ts";
+import { LEGACY_LENS_ORB_ITEMS, LEGACY_SPECIES_ORB_ITEMS } from "../app/game/capture-orbs.ts";
 import {
   DEFAULT_UNARMED_DAMAGE,
   DEFAULT_WORLD_OPTIONS,
@@ -25,6 +26,7 @@ import {
   fallDamageForDistance,
   gatePointerLockMovement,
   isInstantBreakBlock,
+  initialInventoryForMode,
   migrateSavedWorld,
   mobPopulationCaps,
   naturalMobPopulation,
@@ -33,6 +35,7 @@ import {
   positionInPlayerViewCone,
   restoreChestStorage,
   regenerationFoodUsage,
+  resolveCreativeFlightTap,
   shouldBypassOpenableUse,
   survivalFoodUsagePerSecond,
   torchBlockForPlacement,
@@ -1090,6 +1093,35 @@ test("adjacent blocks across a chunk seam do not render hidden faces", () => {
   }, 0);
   assert.equal(vertexCount, 40, "two touching cubes should expose exactly ten quads");
   world.dispose();
+});
+
+test("Creative starts empty, exposes every player-facing item, and toggles flight on a deliberate double jump", () => {
+  assert.ok(initialInventoryForMode("builder").every((slot) => slot === null));
+  assert.deepEqual(initialInventoryForMode("survival")[0], { item: Item.Berry, count: 3 });
+
+  const retired = new Set([Item.LegacyCaptureOrb, ...LEGACY_LENS_ORB_ITEMS, ...LEGACY_SPECIES_ORB_ITEMS]);
+  const expected = Object.values(ITEMS).filter((definition) => !retired.has(definition.id));
+  assert.equal(CREATIVE_ITEMS.length, expected.length);
+  for (const definition of expected) assert.ok(CREATIVE_ITEMS.includes(definition.id), `${definition.name} is searchable in Creative`);
+  for (const item of retired) assert.equal(CREATIVE_ITEMS.includes(item), false);
+
+  const first = resolveCreativeFlightTap(false, -Infinity, 1_000);
+  assert.equal(first.toggled, false);
+  const airborne = resolveCreativeFlightTap(first.flying, first.previousTap, 1_180);
+  assert.deepEqual({ flying: airborne.flying, toggled: airborne.toggled }, { flying: true, toggled: true });
+  const armedLanding = resolveCreativeFlightTap(airborne.flying, airborne.previousTap, 2_000);
+  const landed = resolveCreativeFlightTap(armedLanding.flying, armedLanding.previousTap, 2_190);
+  assert.deepEqual({ flying: landed.flying, toggled: landed.toggled }, { flying: false, toggled: true });
+});
+
+test("Creative damage authority rejects the shared direct damage path", () => {
+  const engine = Object.create(VoxelEngine.prototype) as VoxelEngine;
+  engine.mode = "builder";
+  engine.health = 3;
+  engine.playerInvulnerability = 0;
+  engine.spawnProtection = 0;
+  engine.damagePlayer(100, "a test hazard", true);
+  assert.equal(engine.health, 3);
 });
 
 test("water and ground share world-space biome tint vertices across chunk seams", () => {

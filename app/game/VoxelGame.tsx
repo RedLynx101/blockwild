@@ -15,8 +15,9 @@ import {
 import * as THREE from "three";
 import {
   BlockId,
+  BLOCKS,
   BIOME_NAMES,
-  CREATIVE_BLOCKS,
+  CREATIVE_ITEMS,
   ITEMS,
   Item,
   MOB_DEFS,
@@ -924,6 +925,8 @@ const formatWorldDate = (timestamp: number | null) => timestamp
   ? new Date(timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
   : "Never played";
 
+const gameModeLabel = (mode: GameMode) => mode === "builder" ? "Creative" : "Survival";
+
 /** Compact combat readout: precise to hundredths without noisy zeroes. */
 export function formatHudHealth(value: number) {
   if (!Number.isFinite(value)) return "0";
@@ -975,6 +978,7 @@ const INITIAL_HUD: ExtendedHudState = {
   cameraMode: "first",
   crouching: false,
   sprinting: false,
+  flying: false,
   onlinePlayers: 1,
   playerVariant: "male",
   oxygen: 12,
@@ -2219,11 +2223,12 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
 
   const visibleCreativeBlocks = useMemo(() => {
     const query = creativeQuery.trim().toLocaleLowerCase();
-    if (!query) return CREATIVE_BLOCKS;
-    return CREATIVE_BLOCKS.filter((item) => {
+    if (!query) return CREATIVE_ITEMS;
+    return CREATIVE_ITEMS.filter((item) => {
       const definition = ITEMS[item];
-      return definition?.name.toLocaleLowerCase().includes(query)
-        || String(definition?.id ?? item).toLocaleLowerCase().includes(query);
+      const placeBlock = definition?.placeBlock === undefined ? "" : BLOCKS[definition.placeBlock]?.name ?? "";
+      return [definition?.name, definition?.id, definition?.useKind, definition?.toolKind, definition?.equipmentSlot, definition?.rarity, placeBlock, itemPresentationFamily(item)]
+        .some((value) => String(value ?? "").toLocaleLowerCase().includes(query));
     });
   }, [creativeQuery]);
 
@@ -3736,6 +3741,22 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
     setItemGuideVisible(true);
   };
 
+  const changeSelectedWorldMode = (nextMode: GameMode) => {
+    const storage = worldStorageRef.current;
+    const world = worlds.find((candidate) => candidate.id === selectedWorldId);
+    if (!storage || !world || world.mode === nextMode) return;
+    const nextLabel = gameModeLabel(nextMode);
+    if (!window.confirm(`Change “${world.name}” to ${nextLabel} before its next load? World edits and inventory are preserved.`)) return;
+    const updated = storage.updateWorldMode(world.id, nextMode);
+    if (!updated.ok) {
+      setWorldNotice(updated.error.message);
+      return;
+    }
+    setMode(nextMode);
+    setWorldNotice(`${world.name} will load in ${nextLabel}. Inventory and world progress were preserved.`);
+    refreshWorldCatalog(storage);
+  };
+
   const openGuideCraftingPattern = (process: ItemGuideProcess) => {
     if (!process.craftingRecipeId) return;
     setRecipeQuery(ITEMS[process.outputItem]?.name ?? process.name);
@@ -4246,13 +4267,14 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
           </div>
           {hud.mountedBoat && <div className="boat-hud" role="status"><strong>WAYFARER</strong><span><kbd>WASD</kbd> SAIL</span><span><kbd>MOUSE</kbd> LOOK</span><span><kbd>SPACE</kbd> DISMOUNT</span></div>}
           {hud.mountedCreature && <div className="boat-hud creature-mount-hud" role="status"><strong>{hud.mountedCreatureName ?? "MOUNT"}</strong><span className="mount-mode-label">{(hud.mountedCreatureMode ?? "land").toUpperCase()} · {hud.mountedCreatureExertion ?? 100}% EXERTION</span><span><kbd>WASD</kbd> STEER · <kbd>SPACE / SHIFT</kbd> {hud.mountedCreatureMode === "land" || hud.mountedCreatureMode === "climb" ? "JUMP / BRAKE" : "ASCEND / DESCEND"}</span><span><kbd>Z X C</kbd> MOVES · <kbd>F</kbd> DISMOUNT</span></div>}
+          {hud.mode === "builder" && !hud.mountedBoat && !hud.mountedCreature && <div className={`creative-flight-hud${hud.flying ? " active" : ""}`} role="status"><strong>CREATIVE · {hud.flying ? "FLYING" : "GROUNDED"}</strong><span><kbd>SPACE ×2</kbd> {hud.flying ? "LAND" : "FLY"}</span>{hud.flying && <span><kbd>SPACE / SHIFT</kbd> RISE / DESCEND · <kbd>CTRL</kbd> FAST</span>}</div>}
           {hud.rangedWeapon && <div className={`ranged-ammo-hud${hud.rangedWeapon.reloading ? " reloading" : ""}`} role="status"><strong>{hud.rangedWeapon.loaded}/{hud.rangedWeapon.magazine}</strong><span>{hud.rangedWeapon.reloading ? "RELOADING" : `${hud.rangedWeapon.spare} BOLTS · R TO RELOAD`}</span></div>}
           <ManaHud magic={hud.magic} magicSkillLevel={hud.skills.skills.magic.level} />
 
           {hud.debug && (
             <div className="debug-card">
               XYZ {hud.coordinates.join(" / ")}<br />
-              {hud.mode.toUpperCase()} · {hud.weatherKind.toUpperCase()} · {hud.depth.toUpperCase()}<br />
+              {gameModeLabel(hud.mode).toUpperCase()} · {hud.weatherKind.toUpperCase()} · {hud.depth.toUpperCase()}<br />
               Seed: {currentWorldSeed}<br />
               Chunks: {hud.loadedChunks} loaded · {hud.queuedChunks} queued · simulation {hud.simulationDistance}<br />
               Light: S{hud.lighting.sky} / R{hud.lighting.red} G{hud.lighting.green} B{hud.lighting.blue} / cave {Math.round(hud.lighting.subterraneanBlend * 100)}%<br />
@@ -4416,10 +4438,17 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
                     >
                       <span className="world-thumbnail" aria-hidden="true"><i /><b>{world.mode === "builder" ? "◆" : "▲"}</b></span>
                       <span className="world-card-copy"><strong>{world.name}</strong><small>Seed {world.seed}</small><small>{formatWorldDate(world.lastPlayedAt)} · {formatPlayTime(world.playTimeMs)}</small><small>Last saved in v{world.lastSavedGameVersion}</small></span>
-                      <em>{world.mode.toUpperCase()}</em>
+                      <em>{gameModeLabel(world.mode).toUpperCase()}</em>
                     </button>
                   )) : <div className="empty-world-catalog"><b>◇</b><strong>No worlds in this browser</strong><span>Create one here or import a Blockwild world file.</span></div>}
                 </div>
+                {selectedWorld && <section className="world-mode-editor" aria-label={`Game mode for ${selectedWorld.name}`}>
+                  <span><b>RULES ON NEXT LOAD</b><small>World edits and inventory stay intact.</small></span>
+                  <div role="group" aria-label="Saved world game mode">
+                    <button type="button" className={selectedWorld.mode === "survival" ? "active" : ""} aria-pressed={selectedWorld.mode === "survival"} onClick={() => changeSelectedWorldMode("survival")}><strong>SURVIVAL</strong><small>Health, hunger, crafting</small></button>
+                    <button type="button" className={selectedWorld.mode === "builder" ? "active" : ""} aria-pressed={selectedWorld.mode === "builder"} onClick={() => changeSelectedWorldMode("builder")}><strong>CREATIVE</strong><small>Flight, catalog, invulnerable</small></button>
+                  </div>
+                </section>}
                 <div className="world-catalog-actions">
                   <button type="button" disabled={!selectedWorld} onClick={renameSelectedWorld}>Rename</button>
                   <button type="button" disabled={!selectedWorld} onClick={duplicateSelectedWorld}>Duplicate</button>
@@ -4460,8 +4489,8 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
                 <span>Stack inventory, tools, durability, hunger, crafting tables, furnaces, hostile nights, mob loot, XP, and irresponsible spelunking.</span>
               </button>
               <button type="button" className={mode === "builder" ? "active" : ""} onClick={() => setMode("builder")}>
-                <strong>BUILDER</strong>
-                <span>Fast harvesting, infinite placement, creative catalog, no hunger, and fewer consequences for architectural hubris.</span>
+                <strong>CREATIVE</strong>
+                <span>Empty starting pack, complete item catalog, infinite use, flight, no hunger, and no damage.</span>
               </button>
             </fieldset>
             <details className="advanced-world-options">
@@ -4826,22 +4855,22 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
         <section className="menu-overlay inventory-overlay" aria-labelledby="inventory-title" onPointerMove={trackCursor} onPointerUp={finishInventoryDrag} onPointerCancel={cancelInventoryDrag}>
           <div className={`mc-window inventory-window ${inventoryTab === "recipes" ? "recipe-mode" : ""}`}>
             <header className="mc-window-header">
-              <div><span className="panel-eyebrow">{overlay === "crafting" ? "CRAFTING TABLE · 3×3" : hud.mode === "builder" ? "BUILDER INVENTORY" : "PACK · 2×2 CRAFTING"}</span><h2 id="inventory-title">{overlay === "crafting" ? "Crafting Table" : "Inventory"}</h2></div>
+              <div><span className="panel-eyebrow">{overlay === "crafting" ? "CRAFTING TABLE · 3×3" : hud.mode === "builder" ? "CREATIVE INVENTORY" : "PACK · 2×2 CRAFTING"}</span><h2 id="inventory-title">{overlay === "crafting" ? "Crafting Table" : "Inventory"}</h2></div>
               <button type="button" className="panel-close" onClick={resume} aria-label="Close inventory">×</button>
             </header>
             <div className="inventory-tabs">
               <button type="button" className={inventoryTab === "inventory" ? "active" : ""} onClick={() => setInventoryTab("inventory")}>PACK</button>
               <button type="button" className={inventoryTab === "recipes" ? "active" : ""} onClick={() => setInventoryTab("recipes")}>RECIPES</button>
-              {hud.mode === "builder" && <button type="button" className={inventoryTab === "creative" ? "active" : ""} onClick={() => setInventoryTab("creative")}>ALL BLOCKS</button>}
+              {hud.mode === "builder" && <button type="button" className={inventoryTab === "creative" ? "active" : ""} onClick={() => setInventoryTab("creative")}>ALL ITEMS</button>}
             </div>
             {inventoryTab === "creative" && hud.mode === "builder" ? (
               <div className="creative-browser">
-                <label className="creative-search"><span>SEARCH ALL BLOCKS</span><input type="search" value={creativeQuery} onChange={(event) => setCreativeQuery(event.target.value)} placeholder="Block or item name" autoComplete="off" /><b>{visibleCreativeBlocks.length}</b></label>
+                <label className="creative-search"><span>SEARCH EVERY ITEM</span><input type="search" value={creativeQuery} onChange={(event) => setCreativeQuery(event.target.value)} placeholder="Name, block, tool, food, relic..." autoComplete="off" /><b>{visibleCreativeBlocks.length}</b></label>
                 <div className="creative-catalog">
                   {visibleCreativeBlocks.map((item) => (
-                    <button type="button" key={item} className="creative-entry" onClick={() => engineRef.current?.setCreativeItem(item)}><ItemIcon item={item} /><span>{ITEMS[item]?.name}</span></button>
+                    <button type="button" key={item} className="creative-entry" onClick={() => engineRef.current?.setCreativeItem(item)} title={`Place ${ITEMS[item]?.name ?? "item"} in the selected hotbar slot`}><ItemIcon item={item} /><span>{ITEMS[item]?.name}</span><small>{itemPresentationFamily(item).replace(/^authored-/u, "")}</small></button>
                   ))}
-                  {!visibleCreativeBlocks.length && <p className="creative-empty">No builder items match “{creativeQuery.trim()}”.</p>}
+                  {!visibleCreativeBlocks.length && <p className="creative-empty">No Creative items match “{creativeQuery.trim()}”.</p>}
                 </div>
               </div>
             ) : (
@@ -5464,7 +5493,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
             <div className="control-grid">
               <div><kbd>W A S D</kbd><span><strong>Move</strong>Walk relative to your view.</span></div>
               <div><kbd>MOUSE</kbd><span><strong>Look</strong>Click the world to capture the cursor.</span></div>
-              <div><kbd>SPACE</kbd><span><strong>Jump / swim</strong>Hold it underwater to rise.</span></div>
+              <div><kbd>SPACE</kbd><span><strong>Jump / swim</strong>Hold it underwater to rise. In Creative, double-tap to toggle flight.</span></div>
               <div><kbd>SHIFT</kbd><span><strong>Crouch</strong>Lower your profile, move quietly, and stop at ledges.</span></div>
               <div><kbd>CTRL</kbd><span><strong>Sprint</strong>Faster, louder, hungrier.</span></div>
               <div><kbd>V</kbd><span><strong>Cycle camera</strong>First person, rear third person, then front view.</span></div>
@@ -5482,7 +5511,7 @@ export default function VoxelGame({ agentMode = false }: Readonly<{ agentMode?: 
               <div><kbd>G</kbd><span><strong>Drop item</strong>Toss one from the selected stack.</span></div>
               <div><kbd>Z / X / C</kbd><span><strong>Dragon attacks</strong>Melee, breath, and ranged attacks while riding.</span></div>
               <div><kbd>ESC</kbd><span><strong>Menu</strong>Open or close the current menu. Fullscreen remains a menu button.</span></div>
-              <div><kbd>MIDDLE</kbd><span><strong>Pick block</strong>Match the targeted block in Builder mode.</span></div>
+              <div><kbd>MIDDLE</kbd><span><strong>Pick block</strong>Match the targeted block in Creative mode.</span></div>
               <div><kbd>F3</kbd><span><strong>Debug</strong>Coordinates, depth, chunks, seed, and weather.</span></div>
               <div><kbd>ORB + RMB</kbd><span><strong>Capture creature</strong>Aim one normal Capture Orb at any ready creature, including butterflies. The Butterfly Net surveys pollinators without taking custody.</span></div>
             </div>
